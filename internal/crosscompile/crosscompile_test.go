@@ -4,6 +4,7 @@
 package crosscompile
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,6 +21,69 @@ const (
 	includePrefix     = "-I"
 	libPrefix         = "-L"
 )
+
+func resetMacOSSysrootForTest(t *testing.T) {
+	t.Helper()
+	macOSSysrootMu.Lock()
+	oldCached := macOSSysrootCached
+	oldLookup := macOSSysrootLookup
+	macOSSysrootCached = ""
+	macOSSysrootMu.Unlock()
+	t.Cleanup(func() {
+		macOSSysrootMu.Lock()
+		macOSSysrootCached = oldCached
+		macOSSysrootLookup = oldLookup
+		macOSSysrootMu.Unlock()
+	})
+}
+
+func TestGetMacOSSysrootCachesSuccess(t *testing.T) {
+	resetMacOSSysrootForTest(t)
+	calls := 0
+	macOSSysrootLookup = func() (string, error) {
+		calls++
+		return "/test/sdk", nil
+	}
+	first, err := getMacOSSysroot()
+	if err != nil {
+		t.Fatalf("first getMacOSSysroot: %v", err)
+	}
+	second, err := getMacOSSysroot()
+	if err != nil {
+		t.Fatalf("second getMacOSSysroot: %v", err)
+	}
+	if first != "/test/sdk" || second != "/test/sdk" {
+		t.Fatalf("sysroots = %q, %q; want cached /test/sdk", first, second)
+	}
+	if calls != 1 {
+		t.Fatalf("lookup calls = %d, want 1", calls)
+	}
+}
+
+func TestGetMacOSSysrootDoesNotCacheErrors(t *testing.T) {
+	resetMacOSSysrootForTest(t)
+	calls := 0
+	macOSSysrootLookup = func() (string, error) {
+		calls++
+		if calls == 1 {
+			return "", errors.New("temporary xcrun failure")
+		}
+		return "/test/sdk", nil
+	}
+	if _, err := getMacOSSysroot(); err == nil {
+		t.Fatal("first getMacOSSysroot succeeded, want error")
+	}
+	got, err := getMacOSSysroot()
+	if err != nil {
+		t.Fatalf("second getMacOSSysroot: %v", err)
+	}
+	if got != "/test/sdk" {
+		t.Fatalf("sysroot = %q, want /test/sdk", got)
+	}
+	if calls != 2 {
+		t.Fatalf("lookup calls = %d, want retry after error", calls)
+	}
+}
 
 func TestUseCrossCompileSDK(t *testing.T) {
 	// Skip long-running tests unless explicitly enabled
