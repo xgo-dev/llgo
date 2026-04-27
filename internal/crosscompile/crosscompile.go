@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/goplus/llgo/internal/crosscompile/compile"
 	"github.com/goplus/llgo/internal/env"
@@ -96,14 +97,35 @@ func getCanonicalArchName(triple string) string {
 	return arch
 }
 
-// getMacOSSysroot returns the macOS SDK path using xcrun
+var (
+	macOSSysrootMu     sync.Mutex
+	macOSSysrootCached string
+	macOSSysrootLookup = func() (string, error) {
+		cmd := exec.Command("xcrun", "--sdk", "macosx", "--show-sdk-path")
+		output, err := cmd.Output()
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(string(output)), nil
+	}
+)
+
+// getMacOSSysroot returns the macOS SDK path using xcrun.
 func getMacOSSysroot() (string, error) {
-	cmd := exec.Command("xcrun", "--sdk", "macosx", "--show-sdk-path")
-	output, err := cmd.Output()
+	macOSSysrootMu.Lock()
+	defer macOSSysrootMu.Unlock()
+	if macOSSysrootCached != "" {
+		return macOSSysrootCached, nil
+	}
+
+	sysroot, err := macOSSysrootLookup()
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(output)), nil
+	if sysroot != "" {
+		macOSSysrootCached = sysroot
+	}
+	return sysroot, nil
 }
 
 // getESPClangRoot returns the ESP Clang root directory, checking LLGoROOT first,
