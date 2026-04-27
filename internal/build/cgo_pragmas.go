@@ -23,12 +23,21 @@ func collectGoCgoPragmas(files []*ast.File) (ldflags []string, dynimports []cgoI
 				continue
 			}
 			for _, c := range cg.List {
-				if c == nil || !strings.Contains(c.Text, "go:cgo_") {
+				if c == nil {
 					continue
 				}
 				if strings.HasPrefix(c.Text, "//go:cgo_") {
+					if dynimports == nil && strings.HasPrefix(c.Text, "//go:cgo_import_dynamic") {
+						dynimports = make([]cgoImportDynamicDecl, 0, len(cg.List))
+					}
 					ldflags, dynimports = collectGoCgoPragmaLine(c.Text[2:], ldflags, dynimports)
 					continue
+				}
+				if !strings.Contains(c.Text, "go:cgo_") {
+					continue
+				}
+				if dynimports == nil && strings.Contains(c.Text, "go:cgo_import_dynamic") {
+					dynimports = make([]cgoImportDynamicDecl, 0, len(cg.List))
 				}
 				forEachCommentLine(c.Text, func(line string) {
 					ldflags, dynimports = collectGoCgoPragmaLine(line, ldflags, dynimports)
@@ -42,20 +51,19 @@ func collectGoCgoPragmas(files []*ast.File) (ldflags []string, dynimports []cgoI
 func collectGoCgoPragmaLine(line string, ldflags []string, dynimports []cgoImportDynamicDecl) ([]string, []cgoImportDynamicDecl) {
 	switch {
 	case strings.HasPrefix(line, "go:cgo_ldflag"):
-		rest := strings.TrimSpace(strings.TrimPrefix(line, "go:cgo_ldflag"))
+		rest := strings.TrimSpace(line[len("go:cgo_ldflag"):])
 		for _, tok := range splitDirectiveArgs(rest) {
 			ldflags = append(ldflags, tok)
 		}
 	case strings.HasPrefix(line, "go:cgo_import_dynamic"):
-		rest := strings.TrimSpace(strings.TrimPrefix(line, "go:cgo_import_dynamic"))
-		toks := splitDirectiveArgs(rest)
-		if len(toks) == 0 {
+		rest := strings.TrimSpace(line[len("go:cgo_import_dynamic"):])
+		local, rest, ok := nextDirectiveArg(rest)
+		if !ok {
 			return ldflags, dynimports
 		}
-		local := toks[0]
 		alias := local
-		if len(toks) > 1 && toks[1] != "" {
-			alias = toks[1]
+		if next, _, ok := nextDirectiveArg(rest); ok && next != "" {
+			alias = next
 		}
 		if local == "" || alias == "" || local == alias {
 			return ldflags, dynimports
@@ -66,6 +74,31 @@ func collectGoCgoPragmaLine(line string, ldflags []string, dynimports []cgoImpor
 		})
 	}
 	return ldflags, dynimports
+}
+
+func nextDirectiveArg(s string) (arg string, rest string, ok bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", "", false
+	}
+	end := len(s)
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case ' ', '\t', '\n', '\r':
+			end = i
+			i = len(s)
+		}
+	}
+	arg = s[:end]
+	if len(arg) >= 2 {
+		switch arg[0] {
+		case '`', '\'', '"':
+			if u, err := strconv.Unquote(arg); err == nil {
+				arg = u
+			}
+		}
+	}
+	return arg, s[end:], true
 }
 
 func goCgoLinkArgs(goos string, files []*ast.File) []string {

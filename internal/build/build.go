@@ -1306,14 +1306,14 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 	if err != nil {
 		return fmt.Errorf("build cgo of %v failed: %v", pkgPath, err)
 	}
+	goCgoLdflags, goCgoDynimports := collectGoCgoPragmas(aPkg.Package.Syntax)
 	aPkg.ObjFiles = append(aPkg.ObjFiles, cgoLLFiles...)
 	aPkg.ObjFiles = append(aPkg.ObjFiles, concatPkgLinkFiles(ctx, pkg, printCmds)...)
-	if asmObjFiles, err := compilePkgSFiles(ctx, aPkg, pkg, printCmds); err != nil {
+	if asmObjFiles, err := compilePkgSFiles(ctx, aPkg, pkg, goCgoDynimports, printCmds); err != nil {
 		return err
 	} else {
 		aPkg.ObjFiles = append(aPkg.ObjFiles, asmObjFiles...)
 	}
-	goCgoLdflags, goCgoDynimports := collectGoCgoPragmas(aPkg.Package.Syntax)
 	if aliasObjs, err := buildGoCgoAliasObjects(ctx, pkgPath, goCgoDynimports, printCmds); err != nil {
 		return err
 	} else {
@@ -1326,14 +1326,14 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 		if e != nil {
 			return fmt.Errorf("build cgo of %v failed: %v", pkgPath, e)
 		}
+		altGoCgoLdflags, altGoCgoDynimports := collectGoCgoPragmas(aPkg.AltPkg.Syntax)
 		aPkg.ObjFiles = append(aPkg.ObjFiles, altLLFiles...)
 		aPkg.ObjFiles = append(aPkg.ObjFiles, concatPkgLinkFiles(ctx, aPkg.AltPkg.Package, printCmds)...)
-		if asmObjFiles, err := compilePkgSFiles(ctx, aPkg, aPkg.AltPkg.Package, printCmds); err != nil {
+		if asmObjFiles, err := compilePkgSFiles(ctx, aPkg, aPkg.AltPkg.Package, altGoCgoDynimports, printCmds); err != nil {
 			return err
 		} else {
 			aPkg.ObjFiles = append(aPkg.ObjFiles, asmObjFiles...)
 		}
-		altGoCgoLdflags, altGoCgoDynimports := collectGoCgoPragmas(aPkg.AltPkg.Syntax)
 		if aliasObjs, err := buildGoCgoAliasObjects(ctx, pkgPath, altGoCgoDynimports, printCmds); err != nil {
 			return err
 		} else {

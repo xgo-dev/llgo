@@ -23,7 +23,7 @@ import (
 //
 // NOTE: golang.org/x/tools/go/packages.Package does not expose SFiles, so we
 // query `go list -json` here to get the exact filtered set for GOOS/GOARCH.
-func compilePkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Package, verbose bool) ([]string, error) {
+func compilePkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Package, dynimports []cgoImportDynamicDecl, verbose bool) ([]string, error) {
 	sfiles, err := pkgSFiles(ctx, pkg)
 	if err != nil {
 		return nil, err
@@ -53,7 +53,7 @@ func compilePkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Package, verbo
 		return nil, fmt.Errorf("%s: missing types (needed for asm signatures)", pkg.PkgPath)
 	}
 
-	skipDarwinDynimportTrampolines := shouldCheckDarwinDynimportTrampolineAsm(ctx, pkg)
+	skipDarwinDynimportTrampolines := shouldCheckDarwinDynimportTrampolineAsm(ctx, pkg, dynimports)
 	objFiles := make([]string, 0, len(sfiles))
 	for _, sfile := range sfiles {
 		src, err := llplan9asm.ReadFileWithOverlay(ctx.conf.Overlay, sfile)
@@ -136,7 +136,7 @@ func compilePkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Package, verbo
 	return objFiles, nil
 }
 
-func shouldCheckDarwinDynimportTrampolineAsm(ctx *context, pkg *packages.Package) bool {
+func shouldCheckDarwinDynimportTrampolineAsm(ctx *context, pkg *packages.Package, dynimports []cgoImportDynamicDecl) bool {
 	if ctx == nil || ctx.buildConf == nil || ctx.buildConf.Goos != "darwin" {
 		return false
 	}
@@ -146,7 +146,6 @@ func shouldCheckDarwinDynimportTrampolineAsm(ctx *context, pkg *packages.Package
 	if pkg == nil || pkg.PkgPath != "golang.org/x/sys/unix" {
 		return false
 	}
-	_, dynimports := collectGoCgoPragmas(pkg.Syntax)
 	return len(dynimports) != 0
 }
 
