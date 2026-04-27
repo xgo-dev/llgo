@@ -559,9 +559,15 @@ func TestSaveToCache_Success(t *testing.T) {
 		t.Errorf("metadata should be empty when no link args/runtime flags")
 	}
 
-	// Check archive exists
+	// Check archive exists and the package now links from the cache archive.
 	if _, err := os.Stat(paths.Archive); err != nil {
 		t.Errorf("archive should exist: %v", err)
+	}
+	if pkg.ArchiveFile != paths.Archive {
+		t.Fatalf("ArchiveFile = %q, want cache archive %q", pkg.ArchiveFile, paths.Archive)
+	}
+	if pkg.ObjFiles != nil {
+		t.Fatalf("ObjFiles = %v, want nil after archiving", pkg.ObjFiles)
 	}
 }
 

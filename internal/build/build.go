@@ -730,14 +730,16 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 					return err
 				}
 				if !aPkg.CacheHit {
-					if err := normalizeToArchive(ctx, aPkg, verbose); err != nil {
-						return err
-					}
 					if kind == cl.PkgLinkExtern {
 						appendExternalLinkArgs(ctx, aPkg, param)
 					}
 					if err := ctx.saveToCache(aPkg); err != nil && verbose {
 						fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", pkg.PkgPath, err)
+					}
+					if aPkg.ArchiveFile == "" {
+						if err := normalizeToArchive(ctx, aPkg, verbose); err != nil {
+							return err
+						}
 					}
 				}
 			} else {
@@ -765,11 +767,13 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 			needRuntime = needRuntime || aPkg.NeedRt
 			needPyInit = needPyInit || aPkg.NeedPyInit
 			if !aPkg.CacheHit {
-				if err := normalizeToArchive(ctx, aPkg, verbose); err != nil {
-					return err
-				}
 				if err := ctx.saveToCache(aPkg); err != nil && verbose {
 					fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", pkg.PkgPath, err)
+				}
+				if aPkg.ArchiveFile == "" {
+					if err := normalizeToArchive(ctx, aPkg, verbose); err != nil {
+						return err
+					}
 				}
 			}
 		}
