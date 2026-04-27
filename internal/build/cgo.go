@@ -83,8 +83,9 @@ static void* _Cmalloc(size_t size) {
 )
 
 func buildCgo(ctx *context, pkg *aPackage, files []*ast.File, externs []string, verbose bool) (llfiles, cgoLdflags []string, err error) {
+	metadataFiles, metadataOK := pkgSrcFilesFromMetadata(pkg)
 	var buildCtx *build.Context
-	if _, ok := pkgSrcFilesFromMetadata(pkg); !ok {
+	if !metadataOK {
 		ctxVal := build.Default
 		if ctx.buildConf.Goos != "" {
 			ctxVal.GOOS = ctx.buildConf.Goos
@@ -96,7 +97,7 @@ func buildCgo(ctx *context, pkg *aPackage, files []*ast.File, externs []string, 
 		buildCtx = &ctxVal
 	}
 
-	srcFiles, preambles, cdecls, err := parseCgo_(buildCtx, pkg, files)
+	srcFiles, preambles, cdecls, err := parseCgoWithMetadata(buildCtx, pkg, files, metadataFiles, metadataOK)
 	if err != nil {
 		return
 	}
@@ -372,7 +373,12 @@ func extractFuncNames(node *clangASTNode, funcNames map[string]bool) {
 }
 
 func parseCgo_(buildCtx *build.Context, pkg *aPackage, files []*ast.File) (srcFiles []cgoSrcFile, preambles []cgoPreamble, cdecls []cgoDecl, err error) {
-	if metadataFiles, ok := pkgSrcFilesFromMetadata(pkg); ok {
+	metadataFiles, metadataOK := pkgSrcFilesFromMetadata(pkg)
+	return parseCgoWithMetadata(buildCtx, pkg, files, metadataFiles, metadataOK)
+}
+
+func parseCgoWithMetadata(buildCtx *build.Context, pkg *aPackage, files []*ast.File, metadataFiles []cgoSrcFile, metadataOK bool) (srcFiles []cgoSrcFile, preambles []cgoPreamble, cdecls []cgoDecl, err error) {
+	if metadataOK {
 		srcFiles = metadataFiles
 	} else {
 		dirs := make(map[string]none)
@@ -433,7 +439,17 @@ func pkgSrcFilesFromMetadata(pkg *aPackage) ([]cgoSrcFile, bool) {
 	if len(pkg.OtherFiles) == 0 {
 		return nil, true
 	}
+	if len(pkg.OtherFiles) == 1 {
+		file := pkg.OtherFiles[0]
+		isCXX, ok := cgoSourceKind(file)
+		if !ok {
+			return nil, true
+		}
+		return []cgoSrcFile{{path: file, isCXX: isCXX}}, true
+	}
 	var srcFiles []cgoSrcFile
+	sorted := true
+	var prev string
 	for i, file := range pkg.OtherFiles {
 		isCXX, ok := cgoSourceKind(file)
 		if !ok {
@@ -446,9 +462,13 @@ func pkgSrcFilesFromMetadata(pkg *aPackage) ([]cgoSrcFile, bool) {
 			}
 			srcFiles = make([]cgoSrcFile, 0, capHint)
 		}
+		if len(srcFiles) > 0 && file < prev {
+			sorted = false
+		}
+		prev = file
 		srcFiles = append(srcFiles, cgoSrcFile{path: file, isCXX: isCXX})
 	}
-	if len(srcFiles) > 1 {
+	if len(srcFiles) > 1 && !sorted {
 		sort.Slice(srcFiles, func(i, j int) bool { return srcFiles[i].path < srcFiles[j].path })
 	}
 	return srcFiles, true
@@ -509,27 +529,38 @@ func dirCgoSrcFiles(buildCtx *build.Context, dir string) ([]cgoSrcFile, error) {
 }
 
 func cgoSourceKind(name string) (isCXX bool, ok bool) {
-	switch filepath.Ext(name) {
-	case ".c":
-		if strings.HasSuffix(name, "_test.c") {
-			return false, false
+	n := len(name)
+	if n < 2 {
+		return false, false
+	}
+	switch name[n-1] {
+	case 'c':
+		if name[n-2] == '.' {
+			if strings.HasSuffix(name, "_test.c") {
+				return false, false
+			}
+			return false, true
 		}
-		return false, true
-	case ".cc":
-		if strings.HasSuffix(name, "_test.cc") {
-			return false, false
+		if n >= 3 && name[n-2] == 'c' && name[n-3] == '.' {
+			if strings.HasSuffix(name, "_test.cc") {
+				return false, false
+			}
+			return true, true
 		}
-		return true, true
-	case ".cpp":
-		if strings.HasSuffix(name, "_test.cpp") {
-			return false, false
+	case 'p':
+		if n >= 4 && name[n-2] == 'p' && name[n-3] == 'c' && name[n-4] == '.' {
+			if strings.HasSuffix(name, "_test.cpp") {
+				return false, false
+			}
+			return true, true
 		}
-		return true, true
-	case ".cxx":
-		if strings.HasSuffix(name, "_test.cxx") {
-			return false, false
+	case 'x':
+		if n >= 4 && name[n-2] == 'x' && name[n-3] == 'c' && name[n-4] == '.' {
+			if strings.HasSuffix(name, "_test.cxx") {
+				return false, false
+			}
+			return true, true
 		}
-		return true, true
 	}
 	return false, false
 }

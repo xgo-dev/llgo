@@ -26,37 +26,46 @@ func collectGoCgoPragmas(files []*ast.File) (ldflags []string, dynimports []cgoI
 				if c == nil || !strings.Contains(c.Text, "go:cgo_") {
 					continue
 				}
+				if strings.HasPrefix(c.Text, "//go:cgo_") {
+					ldflags, dynimports = collectGoCgoPragmaLine(c.Text[2:], ldflags, dynimports)
+					continue
+				}
 				forEachCommentLine(c.Text, func(line string) {
-					switch {
-					case strings.HasPrefix(line, "go:cgo_ldflag"):
-						rest := strings.TrimSpace(strings.TrimPrefix(line, "go:cgo_ldflag"))
-						for _, tok := range splitDirectiveArgs(rest) {
-							ldflags = append(ldflags, tok)
-						}
-					case strings.HasPrefix(line, "go:cgo_import_dynamic"):
-						rest := strings.TrimSpace(strings.TrimPrefix(line, "go:cgo_import_dynamic"))
-						toks := splitDirectiveArgs(rest)
-						if len(toks) == 0 {
-							return
-						}
-						local := toks[0]
-						alias := local
-						if len(toks) > 1 && toks[1] != "" {
-							alias = toks[1]
-						}
-						if local == "" || alias == "" || local == alias {
-							return
-						}
-						dynimports = append(dynimports, cgoImportDynamicDecl{
-							local: local,
-							alias: alias,
-						})
-					}
+					ldflags, dynimports = collectGoCgoPragmaLine(line, ldflags, dynimports)
 				})
 			}
 		}
 	}
 	return
+}
+
+func collectGoCgoPragmaLine(line string, ldflags []string, dynimports []cgoImportDynamicDecl) ([]string, []cgoImportDynamicDecl) {
+	switch {
+	case strings.HasPrefix(line, "go:cgo_ldflag"):
+		rest := strings.TrimSpace(strings.TrimPrefix(line, "go:cgo_ldflag"))
+		for _, tok := range splitDirectiveArgs(rest) {
+			ldflags = append(ldflags, tok)
+		}
+	case strings.HasPrefix(line, "go:cgo_import_dynamic"):
+		rest := strings.TrimSpace(strings.TrimPrefix(line, "go:cgo_import_dynamic"))
+		toks := splitDirectiveArgs(rest)
+		if len(toks) == 0 {
+			return ldflags, dynimports
+		}
+		local := toks[0]
+		alias := local
+		if len(toks) > 1 && toks[1] != "" {
+			alias = toks[1]
+		}
+		if local == "" || alias == "" || local == alias {
+			return ldflags, dynimports
+		}
+		dynimports = append(dynimports, cgoImportDynamicDecl{
+			local: local,
+			alias: alias,
+		})
+	}
+	return ldflags, dynimports
 }
 
 func goCgoLinkArgs(goos string, files []*ast.File) []string {
