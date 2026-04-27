@@ -5,10 +5,12 @@ package crosscompile
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"testing"
 
+	compilepkg "github.com/goplus/llgo/internal/crosscompile/compile"
 	"github.com/goplus/llgo/internal/optlevel"
 )
 
@@ -308,6 +310,20 @@ func TestUseTarget(t *testing.T) {
 			t.Logf("Target %s: BuildTags=%v, CFlags=%v, CCFlags=%v, LDFlags=%v",
 				tc.targetName, export.BuildTags, export.CFLAGS, export.CCFLAGS, export.LDFLAGS)
 		})
+	}
+}
+
+func TestCompileWithConfigCompileError(t *testing.T) {
+	tmpDir := t.TempDir()
+	bad := filepath.Join(tmpDir, "bad.c")
+	if err := os.WriteFile(bad, []byte("int bad(void) {\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := compilepkg.CompileConfig{Groups: []compilepkg.CompileGroup{
+		{OutputFileName: "libbad.a", Files: []string{bad}},
+	}}
+	if _, err := compileWithConfig(cfg, tmpDir, compilepkg.CompileOptions{CC: "clang"}); err == nil {
+		t.Fatal("compileWithConfig should report compile errors")
 	}
 }
 

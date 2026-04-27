@@ -24,6 +24,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"unsafe"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -177,9 +178,30 @@ func (m *manifestBuilder) Build() string {
 
 // Fingerprint returns the sha256 hash of the manifest content.
 func (m *manifestBuilder) Fingerprint() string {
-	content := m.Build()
-	hash := sha256.Sum256([]byte(content))
+	return fingerprintManifest(m.Build())
+}
+
+func fingerprintManifest(content string) string {
+	hash := sha256.Sum256(readOnlyStringBytes(content))
 	return hex.EncodeToString(hash[:])
+}
+
+func readOnlyStringBytes(s string) []byte {
+	if s == "" {
+		return nil
+	}
+	// sha256.Sum256 only reads its input. Avoid copying large manifest strings
+	// solely to satisfy the []byte API.
+	return unsafe.Slice(unsafe.StringData(s), len(s))
+}
+
+func readOnlyBytesString(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	// The caller must not mutate b after this conversion. This is intended for
+	// freshly allocated read buffers whose contents become immutable manifest text.
+	return unsafe.String(unsafe.SliceData(b), len(b))
 }
 
 func sortDeps(deps []depEntry) []depEntry {
@@ -296,7 +318,9 @@ func digestFilesWithOverlay(paths []string, overlay map[string][]byte) ([]fileDi
 		})
 	}
 
-	sort.Slice(digests, func(i, j int) bool { return digests[i].Path < digests[j].Path })
+	if len(digests) > 1 {
+		sort.Slice(digests, func(i, j int) bool { return digests[i].Path < digests[j].Path })
+	}
 
 	return digests, nil
 }

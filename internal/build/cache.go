@@ -64,19 +64,29 @@ func (cm *cacheManager) PackagePaths(targetTriple, pkgPath, fingerprint string) 
 	fingerprint = sanitizeComponent(fingerprint)
 	return cachePaths{
 		Dir:      dir,
-		Archive:  filepath.Join(dir, fingerprint+cacheArchiveExt),
-		Manifest: filepath.Join(dir, fingerprint+cacheManifestExt),
+		Archive:  dir + string(os.PathSeparator) + fingerprint + cacheArchiveExt,
+		Manifest: dir + string(os.PathSeparator) + fingerprint + cacheManifestExt,
 	}
 }
 
 func (cm *cacheManager) packageDir(targetTriple, pkgPath string) string {
 	root := filepath.Clean(cm.root)
-	dir := filepath.Join(root, sanitizeComponent(targetTriple), sanitizePkgPath(pkgPath))
-	dir = filepath.Clean(dir)
+	dir := joinCachePath(root, sanitizeComponent(targetTriple), sanitizePkgPath(pkgPath))
 	if dir != root && !strings.HasPrefix(dir, root+string(os.PathSeparator)) {
 		dir = filepath.Join(root, "_")
 	}
 	return dir
+}
+
+func joinCachePath(root, first, second string) string {
+	sep := string(os.PathSeparator)
+	if root == "" || root == "." {
+		return first + sep + second
+	}
+	if strings.HasSuffix(root, sep) {
+		return root + first + sep + second
+	}
+	return root + sep + first + sep + second
 }
 
 // sanitizeComponent ensures a single path component is safe.
@@ -112,10 +122,28 @@ func isSafeComponent(s string) bool {
 	return true
 }
 
+func isSafePkgPath(pkgPath string) bool {
+	start := 0
+	for i := 0; i <= len(pkgPath); i++ {
+		if i < len(pkgPath) && pkgPath[i] != '/' {
+			continue
+		}
+		segment := pkgPath[start:i]
+		if segment == "" || segment == "." || segment == ".." || !isSafeComponent(segment) {
+			return false
+		}
+		start = i + 1
+	}
+	return true
+}
+
 // sanitizePkgPath converts a package path to a safe directory path
 func sanitizePkgPath(pkgPath string) string {
 	if pkgPath == "" {
 		return "_"
+	}
+	if isSafePkgPath(pkgPath) {
+		return filepath.FromSlash(pkgPath)
 	}
 	segments := strings.Split(pkgPath, "/")
 	for i, segment := range segments {
@@ -171,7 +199,7 @@ func readManifest(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return string(content), nil
+	return readOnlyBytesString(content), nil
 }
 
 // cacheExists checks if a valid cache entry exists

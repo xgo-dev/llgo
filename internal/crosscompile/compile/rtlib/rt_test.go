@@ -1,6 +1,8 @@
 package rtlib
 
 import (
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -33,6 +35,20 @@ func TestGetCompilerRTConfig_LibConfig(t *testing.T) {
 	expectedString := "compiler-rt-xtensa_release_19.1.2"
 	if config.String() != expectedString {
 		t.Errorf("Expected String() '%s', got '%s'", expectedString, config.String())
+	}
+}
+
+func TestJoinFileList(t *testing.T) {
+	files := "alpha/beta.c\n gamma/delta.S \n"
+	for _, root := range []string{"/tmp/root", "/tmp/root" + string(filepath.Separator)} {
+		got := joinFileList(root, files)
+		want := []string{
+			filepath.Join(root, filepath.FromSlash("alpha/beta.c")),
+			filepath.Join(root, filepath.FromSlash("gamma/delta.S")),
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("joinFileList(%q) = %#v, want %#v", root, got, want)
+		}
 	}
 }
 

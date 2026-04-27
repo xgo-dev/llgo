@@ -1,7 +1,7 @@
 package libc
 
 import (
-	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -24,6 +24,22 @@ var _libcCCFlags = []string{
 // withDefaultCCFlags appends default C compiler flags to the provided flags
 func withDefaultCCFlags(ccflags []string) []string {
 	return append(ccflags, _libcCCFlags...)
+}
+
+func joinFileList(root, files string) []string {
+	items := strings.Fields(files)
+	paths := make([]string, 0, len(items))
+	prefix := root
+	if prefix != "" {
+		prefix = filepath.Clean(prefix)
+		if !strings.HasSuffix(prefix, string(os.PathSeparator)) {
+			prefix += string(os.PathSeparator)
+		}
+	}
+	for _, item := range items {
+		paths = append(paths, prefix+filepath.FromSlash(item))
+	}
+	return paths
 }
 
 // GetNewlibESP32Config returns the configuration for downloading and building newlib for ESP32
@@ -85,10 +101,10 @@ func getNewlibESP32ConfigRISCV(baseDir, target string) compile.CompileConfig {
 		ExportCFlags: libcIncludeDir,
 		Groups: []compile.CompileGroup{
 			{
-				OutputFileName: fmt.Sprintf("libsemihost-%s.a", target),
-				Files: []string{
-					filepath.Join(baseDir, "libgloss", "riscv", "semihost-sys_exit.c"),
-				},
+				OutputFileName: "libsemihost-" + target + ".a",
+				Files: joinFileList(baseDir, `
+libgloss/riscv/semihost-sys_exit.c
+				`),
 				CFlags: []string{
 					"-DHAVE_CONFIG_H",
 					"-isystem" + filepath.Join(libcDir, "include"),
@@ -99,12 +115,12 @@ func getNewlibESP32ConfigRISCV(baseDir, target string) compile.CompileConfig {
 				CCFlags: _libcCCFlags,
 			},
 			{
-				OutputFileName: fmt.Sprintf("libcrt0-%s.a", target),
-				Files: []string{
-					filepath.Join(baseDir, "libgloss", "riscv", "esp", "esp_board.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "esp", "syscalls.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "esp", "crt1-board.S"),
-				},
+				OutputFileName: "libcrt0-" + target + ".a",
+				Files: joinFileList(baseDir, `
+libgloss/riscv/esp/esp_board.c
+libgloss/riscv/esp/syscalls.c
+libgloss/riscv/esp/crt1-board.S
+				`),
 				CFlags: []string{
 					"-DHAVE_CONFIG_H",
 					"-isystem" + filepath.Join(libcDir, "include"),
@@ -117,198 +133,198 @@ func getNewlibESP32ConfigRISCV(baseDir, target string) compile.CompileConfig {
 				CCFlags: _libcCCFlags,
 			},
 			{
-				OutputFileName: fmt.Sprintf("libgloss-%s.a", target),
-				Files: []string{
-					filepath.Join(baseDir, "libgloss", "libnosys", "chown.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "close.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "environ.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "errno.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "execve.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "fork.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "fstat.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "getpid.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "gettod.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "isatty.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "kill.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "link.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "lseek.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "open.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "read.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "readlink.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "sbrk.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "stat.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "symlink.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "times.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "unlink.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "wait.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "write.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "getentropy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "getreent.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "time.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "fcntl.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "chdir.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "chmod.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "closedir.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "dirfd.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "ftw.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "getcwd.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "mkdir.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "nftw.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "opendir.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pathconf.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "readdir.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "rewinddir.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "scandir.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "seekdir.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "telldir.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "rename.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "_pthread_cleanup_pop.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "_pthread_cleanup_pop_restore.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "_pthread_cleanup_push.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "_pthread_cleanup_push_defer.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_atfork.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getaffinity_np.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getdetachstate.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getguardsize.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getinheritsched.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getschedparam.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getschedpolicy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getscope.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getstack.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getstackaddr.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getstacksize.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setaffinity_np.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setdetachstate.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setguardsize.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setinheritsched.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setschedparam.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setschedpolicy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setscope.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setstack.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setstackaddr.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setstacksize.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_barrier_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_barrier_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_barrier_wait.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_barrierattr_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_barrierattr_getpshared.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_barrierattr_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_barrierattr_setpshared.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_cancel.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_cond_broadcast.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_cond_clockwait.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_cond_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_cond_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_cond_signal.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_cond_timedwait.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_cond_wait.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_condattr_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_condattr_getclock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_condattr_getpshared.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_condattr_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_condattr_setclock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_condattr_setpshared.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_create.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_detach.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_equal.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_exit.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_getaffinity_np.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_getattr_np.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_getconcurrency.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_getcpuclockid.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_getname_np.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_getschedparam.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_getspecific.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_join.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_key_create.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_key_delete.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutex_clocklock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutex_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutex_getprioceiling.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutex_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutex_lock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutex_setprioceiling.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutex_timedlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutex_trylock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutex_unlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_getprioceiling.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_getprotocol.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_getpshared.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_gettype.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_setprioceiling.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_setprotocol.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_setpshared.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_settype.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_once.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_clockrdlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_clockwrlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_rdlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_timedrdlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_timedwrlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_tryrdlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_trywrlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_unlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_wrlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlockattr_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlockattr_getpshared.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlockattr_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlockattr_setpshared.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_self.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_setaffinity_np.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_setcancelstate.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_setcanceltype.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_setconcurrency.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_setname_np.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_setschedparam.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_setschedprio.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_setspecific.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_spin_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_spin_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_spin_lock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_spin_trylock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_spin_unlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_testcancel.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_yield.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_access.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_chdir.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_chmod.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_chown.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_close.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_conv_stat.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_execve.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_faccessat.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_fork.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_fstat.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_fstatat.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_ftime.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_getcwd.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_getpid.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_getreent.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_gettimeofday.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_isatty.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_kill.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_link.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_lseek.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_lstat.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_open.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_openat.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_read.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_sbrk.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_stat.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_sysconf.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_times.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_unlink.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_utime.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_wait.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "sys_write.c"),
-					filepath.Join(baseDir, "libgloss", "riscv", "nanosleep.c"),
-				},
+				OutputFileName: "libgloss-" + target + ".a",
+				Files: joinFileList(baseDir, `
+libgloss/libnosys/chown.c
+libgloss/libnosys/close.c
+libgloss/libnosys/environ.c
+libgloss/libnosys/errno.c
+libgloss/libnosys/execve.c
+libgloss/libnosys/fork.c
+libgloss/libnosys/fstat.c
+libgloss/libnosys/getpid.c
+libgloss/libnosys/gettod.c
+libgloss/libnosys/isatty.c
+libgloss/libnosys/kill.c
+libgloss/libnosys/link.c
+libgloss/libnosys/lseek.c
+libgloss/libnosys/open.c
+libgloss/libnosys/read.c
+libgloss/libnosys/readlink.c
+libgloss/libnosys/sbrk.c
+libgloss/libnosys/stat.c
+libgloss/libnosys/symlink.c
+libgloss/libnosys/times.c
+libgloss/libnosys/unlink.c
+libgloss/libnosys/wait.c
+libgloss/libnosys/write.c
+libgloss/libnosys/getentropy.c
+libgloss/libnosys/getreent.c
+libgloss/libnosys/time.c
+libgloss/libnosys/fcntl.c
+libgloss/libnosys/chdir.c
+libgloss/libnosys/chmod.c
+libgloss/libnosys/closedir.c
+libgloss/libnosys/dirfd.c
+libgloss/libnosys/ftw.c
+libgloss/libnosys/getcwd.c
+libgloss/libnosys/mkdir.c
+libgloss/libnosys/nftw.c
+libgloss/libnosys/opendir.c
+libgloss/libnosys/pathconf.c
+libgloss/libnosys/readdir.c
+libgloss/libnosys/rewinddir.c
+libgloss/libnosys/scandir.c
+libgloss/libnosys/seekdir.c
+libgloss/libnosys/telldir.c
+libgloss/libnosys/rename.c
+libgloss/libnosys/_pthread_cleanup_pop.c
+libgloss/libnosys/_pthread_cleanup_pop_restore.c
+libgloss/libnosys/_pthread_cleanup_push.c
+libgloss/libnosys/_pthread_cleanup_push_defer.c
+libgloss/libnosys/pthread_atfork.c
+libgloss/libnosys/pthread_attr_destroy.c
+libgloss/libnosys/pthread_attr_getaffinity_np.c
+libgloss/libnosys/pthread_attr_getdetachstate.c
+libgloss/libnosys/pthread_attr_getguardsize.c
+libgloss/libnosys/pthread_attr_getinheritsched.c
+libgloss/libnosys/pthread_attr_getschedparam.c
+libgloss/libnosys/pthread_attr_getschedpolicy.c
+libgloss/libnosys/pthread_attr_getscope.c
+libgloss/libnosys/pthread_attr_getstack.c
+libgloss/libnosys/pthread_attr_getstackaddr.c
+libgloss/libnosys/pthread_attr_getstacksize.c
+libgloss/libnosys/pthread_attr_init.c
+libgloss/libnosys/pthread_attr_setaffinity_np.c
+libgloss/libnosys/pthread_attr_setdetachstate.c
+libgloss/libnosys/pthread_attr_setguardsize.c
+libgloss/libnosys/pthread_attr_setinheritsched.c
+libgloss/libnosys/pthread_attr_setschedparam.c
+libgloss/libnosys/pthread_attr_setschedpolicy.c
+libgloss/libnosys/pthread_attr_setscope.c
+libgloss/libnosys/pthread_attr_setstack.c
+libgloss/libnosys/pthread_attr_setstackaddr.c
+libgloss/libnosys/pthread_attr_setstacksize.c
+libgloss/libnosys/pthread_barrier_destroy.c
+libgloss/libnosys/pthread_barrier_init.c
+libgloss/libnosys/pthread_barrier_wait.c
+libgloss/libnosys/pthread_barrierattr_destroy.c
+libgloss/libnosys/pthread_barrierattr_getpshared.c
+libgloss/libnosys/pthread_barrierattr_init.c
+libgloss/libnosys/pthread_barrierattr_setpshared.c
+libgloss/libnosys/pthread_cancel.c
+libgloss/libnosys/pthread_cond_broadcast.c
+libgloss/libnosys/pthread_cond_clockwait.c
+libgloss/libnosys/pthread_cond_destroy.c
+libgloss/libnosys/pthread_cond_init.c
+libgloss/libnosys/pthread_cond_signal.c
+libgloss/libnosys/pthread_cond_timedwait.c
+libgloss/libnosys/pthread_cond_wait.c
+libgloss/libnosys/pthread_condattr_destroy.c
+libgloss/libnosys/pthread_condattr_getclock.c
+libgloss/libnosys/pthread_condattr_getpshared.c
+libgloss/libnosys/pthread_condattr_init.c
+libgloss/libnosys/pthread_condattr_setclock.c
+libgloss/libnosys/pthread_condattr_setpshared.c
+libgloss/libnosys/pthread_create.c
+libgloss/libnosys/pthread_detach.c
+libgloss/libnosys/pthread_equal.c
+libgloss/libnosys/pthread_exit.c
+libgloss/libnosys/pthread_getaffinity_np.c
+libgloss/libnosys/pthread_getattr_np.c
+libgloss/libnosys/pthread_getconcurrency.c
+libgloss/libnosys/pthread_getcpuclockid.c
+libgloss/libnosys/pthread_getname_np.c
+libgloss/libnosys/pthread_getschedparam.c
+libgloss/libnosys/pthread_getspecific.c
+libgloss/libnosys/pthread_join.c
+libgloss/libnosys/pthread_key_create.c
+libgloss/libnosys/pthread_key_delete.c
+libgloss/libnosys/pthread_mutex_clocklock.c
+libgloss/libnosys/pthread_mutex_destroy.c
+libgloss/libnosys/pthread_mutex_getprioceiling.c
+libgloss/libnosys/pthread_mutex_init.c
+libgloss/libnosys/pthread_mutex_lock.c
+libgloss/libnosys/pthread_mutex_setprioceiling.c
+libgloss/libnosys/pthread_mutex_timedlock.c
+libgloss/libnosys/pthread_mutex_trylock.c
+libgloss/libnosys/pthread_mutex_unlock.c
+libgloss/libnosys/pthread_mutexattr_destroy.c
+libgloss/libnosys/pthread_mutexattr_getprioceiling.c
+libgloss/libnosys/pthread_mutexattr_getprotocol.c
+libgloss/libnosys/pthread_mutexattr_getpshared.c
+libgloss/libnosys/pthread_mutexattr_gettype.c
+libgloss/libnosys/pthread_mutexattr_init.c
+libgloss/libnosys/pthread_mutexattr_setprioceiling.c
+libgloss/libnosys/pthread_mutexattr_setprotocol.c
+libgloss/libnosys/pthread_mutexattr_setpshared.c
+libgloss/libnosys/pthread_mutexattr_settype.c
+libgloss/libnosys/pthread_once.c
+libgloss/libnosys/pthread_rwlock_clockrdlock.c
+libgloss/libnosys/pthread_rwlock_clockwrlock.c
+libgloss/libnosys/pthread_rwlock_destroy.c
+libgloss/libnosys/pthread_rwlock_init.c
+libgloss/libnosys/pthread_rwlock_rdlock.c
+libgloss/libnosys/pthread_rwlock_timedrdlock.c
+libgloss/libnosys/pthread_rwlock_timedwrlock.c
+libgloss/libnosys/pthread_rwlock_tryrdlock.c
+libgloss/libnosys/pthread_rwlock_trywrlock.c
+libgloss/libnosys/pthread_rwlock_unlock.c
+libgloss/libnosys/pthread_rwlock_wrlock.c
+libgloss/libnosys/pthread_rwlockattr_destroy.c
+libgloss/libnosys/pthread_rwlockattr_getpshared.c
+libgloss/libnosys/pthread_rwlockattr_init.c
+libgloss/libnosys/pthread_rwlockattr_setpshared.c
+libgloss/libnosys/pthread_self.c
+libgloss/libnosys/pthread_setaffinity_np.c
+libgloss/libnosys/pthread_setcancelstate.c
+libgloss/libnosys/pthread_setcanceltype.c
+libgloss/libnosys/pthread_setconcurrency.c
+libgloss/libnosys/pthread_setname_np.c
+libgloss/libnosys/pthread_setschedparam.c
+libgloss/libnosys/pthread_setschedprio.c
+libgloss/libnosys/pthread_setspecific.c
+libgloss/libnosys/pthread_spin_destroy.c
+libgloss/libnosys/pthread_spin_init.c
+libgloss/libnosys/pthread_spin_lock.c
+libgloss/libnosys/pthread_spin_trylock.c
+libgloss/libnosys/pthread_spin_unlock.c
+libgloss/libnosys/pthread_testcancel.c
+libgloss/libnosys/pthread_yield.c
+libgloss/riscv/sys_access.c
+libgloss/riscv/sys_chdir.c
+libgloss/riscv/sys_chmod.c
+libgloss/riscv/sys_chown.c
+libgloss/riscv/sys_close.c
+libgloss/riscv/sys_conv_stat.c
+libgloss/riscv/sys_execve.c
+libgloss/riscv/sys_faccessat.c
+libgloss/riscv/sys_fork.c
+libgloss/riscv/sys_fstat.c
+libgloss/riscv/sys_fstatat.c
+libgloss/riscv/sys_ftime.c
+libgloss/riscv/sys_getcwd.c
+libgloss/riscv/sys_getpid.c
+libgloss/riscv/sys_getreent.c
+libgloss/riscv/sys_gettimeofday.c
+libgloss/riscv/sys_isatty.c
+libgloss/riscv/sys_kill.c
+libgloss/riscv/sys_link.c
+libgloss/riscv/sys_lseek.c
+libgloss/riscv/sys_lstat.c
+libgloss/riscv/sys_open.c
+libgloss/riscv/sys_openat.c
+libgloss/riscv/sys_read.c
+libgloss/riscv/sys_sbrk.c
+libgloss/riscv/sys_stat.c
+libgloss/riscv/sys_sysconf.c
+libgloss/riscv/sys_times.c
+libgloss/riscv/sys_unlink.c
+libgloss/riscv/sys_utime.c
+libgloss/riscv/sys_wait.c
+libgloss/riscv/sys_write.c
+libgloss/riscv/nanosleep.c
+				`),
 				CFlags: []string{
 					"-DHAVE_CONFIG_H",
 					"-isystem" + filepath.Join(libcDir, "include"),
@@ -322,706 +338,705 @@ func getNewlibESP32ConfigRISCV(baseDir, target string) compile.CompileConfig {
 				CCFlags: _libcCCFlags,
 			},
 			{
-				OutputFileName: fmt.Sprintf("libc-%s.a", target),
-				Files: []string{
-					filepath.Join(libcDir, "argz", "argz_add.c"),
-					filepath.Join(libcDir, "argz", "argz_add_sep.c"),
-					filepath.Join(libcDir, "argz", "argz_append.c"),
-					filepath.Join(libcDir, "argz", "argz_count.c"),
-					filepath.Join(libcDir, "argz", "argz_create.c"),
-					filepath.Join(libcDir, "argz", "argz_create_sep.c"),
-					filepath.Join(libcDir, "argz", "argz_delete.c"),
-					filepath.Join(libcDir, "argz", "argz_extract.c"),
-					filepath.Join(libcDir, "argz", "argz_insert.c"),
-					filepath.Join(libcDir, "argz", "argz_next.c"),
-					filepath.Join(libcDir, "argz", "argz_replace.c"),
-					filepath.Join(libcDir, "argz", "argz_stringify.c"),
-					filepath.Join(libcDir, "argz", "buf_findstr.c"),
-					filepath.Join(libcDir, "argz", "envz_entry.c"),
-					filepath.Join(libcDir, "argz", "envz_get.c"),
-					filepath.Join(libcDir, "argz", "envz_add.c"),
-					filepath.Join(libcDir, "argz", "envz_remove.c"),
-					filepath.Join(libcDir, "argz", "envz_merge.c"),
-					filepath.Join(libcDir, "argz", "envz_strip.c"),
-					filepath.Join(libcDir, "stdlib", "__adjust.c"),
-					filepath.Join(libcDir, "stdlib", "__atexit.c"),
-					filepath.Join(libcDir, "stdlib", "__call_atexit.c"),
-					filepath.Join(libcDir, "stdlib", "__exp10.c"),
-					filepath.Join(libcDir, "stdlib", "__ten_mu.c"),
-					filepath.Join(libcDir, "stdlib", "_Exit.c"),
-					filepath.Join(libcDir, "stdlib", "abort.c"),
-					filepath.Join(libcDir, "stdlib", "abs.c"),
-					filepath.Join(libcDir, "stdlib", "aligned_alloc.c"),
-					filepath.Join(libcDir, "stdlib", "assert.c"),
-					filepath.Join(libcDir, "stdlib", "atexit.c"),
-					filepath.Join(libcDir, "stdlib", "atof.c"),
-					filepath.Join(libcDir, "stdlib", "atoff.c"),
-					filepath.Join(libcDir, "stdlib", "atoi.c"),
-					filepath.Join(libcDir, "stdlib", "atol.c"),
-					filepath.Join(libcDir, "stdlib", "calloc.c"),
-					filepath.Join(libcDir, "stdlib", "callocr.c"),
-					filepath.Join(libcDir, "stdlib", "cfreer.c"),
-					filepath.Join(libcDir, "stdlib", "div.c"),
-					filepath.Join(libcDir, "stdlib", "dtoa.c"),
-					filepath.Join(libcDir, "stdlib", "dtoastub.c"),
-					filepath.Join(libcDir, "stdlib", "environ.c"),
-					filepath.Join(libcDir, "stdlib", "envlock.c"),
-					filepath.Join(libcDir, "stdlib", "eprintf.c"),
-					filepath.Join(libcDir, "stdlib", "exit.c"),
-					filepath.Join(libcDir, "stdlib", "freer.c"),
-					filepath.Join(libcDir, "stdlib", "gdtoa-gethex.c"),
-					filepath.Join(libcDir, "stdlib", "gdtoa-hexnan.c"),
-					filepath.Join(libcDir, "stdlib", "getenv.c"),
-					filepath.Join(libcDir, "stdlib", "getenv_r.c"),
-					filepath.Join(libcDir, "stdlib", "imaxabs.c"),
-					filepath.Join(libcDir, "stdlib", "imaxdiv.c"),
-					filepath.Join(libcDir, "stdlib", "itoa.c"),
-					filepath.Join(libcDir, "stdlib", "labs.c"),
-					filepath.Join(libcDir, "stdlib", "ldiv.c"),
-					filepath.Join(libcDir, "stdlib", "ldtoa.c"),
-					filepath.Join(libcDir, "stdlib", "gdtoa-ldtoa.c"),
-					filepath.Join(libcDir, "stdlib", "gdtoa-gdtoa.c"),
-					filepath.Join(libcDir, "stdlib", "gdtoa-dmisc.c"),
-					filepath.Join(libcDir, "stdlib", "gdtoa-gmisc.c"),
-					filepath.Join(libcDir, "stdlib", "mallinfor.c"),
-					filepath.Join(libcDir, "stdlib", "malloc.c"),
-					filepath.Join(libcDir, "stdlib", "mallocr.c"),
-					filepath.Join(libcDir, "stdlib", "mallstatsr.c"),
-					filepath.Join(libcDir, "stdlib", "mblen.c"),
-					filepath.Join(libcDir, "stdlib", "mblen_r.c"),
-					filepath.Join(libcDir, "stdlib", "mbstowcs.c"),
-					filepath.Join(libcDir, "stdlib", "mbstowcs_r.c"),
-					filepath.Join(libcDir, "stdlib", "mbtowc.c"),
-					filepath.Join(libcDir, "stdlib", "mbtowc_r.c"),
-					filepath.Join(libcDir, "stdlib", "mlock.c"),
-					filepath.Join(libcDir, "stdlib", "mprec.c"),
-					filepath.Join(libcDir, "stdlib", "msizer.c"),
-					filepath.Join(libcDir, "stdlib", "mstats.c"),
-					filepath.Join(libcDir, "stdlib", "on_exit_args.c"),
-					filepath.Join(libcDir, "stdlib", "quick_exit.c"),
-					filepath.Join(libcDir, "stdlib", "rand.c"),
-					filepath.Join(libcDir, "stdlib", "rand_r.c"),
-					filepath.Join(libcDir, "stdlib", "random.c"),
-					filepath.Join(libcDir, "stdlib", "realloc.c"),
-					filepath.Join(libcDir, "stdlib", "reallocarray.c"),
-					filepath.Join(libcDir, "stdlib", "reallocf.c"),
-					filepath.Join(libcDir, "stdlib", "reallocr.c"),
-					filepath.Join(libcDir, "stdlib", "sb_charsets.c"),
-					filepath.Join(libcDir, "stdlib", "strtod.c"),
-					filepath.Join(libcDir, "stdlib", "strtoimax.c"),
-					filepath.Join(libcDir, "stdlib", "strtol.c"),
-					filepath.Join(libcDir, "stdlib", "strtoul.c"),
-					filepath.Join(libcDir, "stdlib", "strtoumax.c"),
-					filepath.Join(libcDir, "stdlib", "utoa.c"),
-					filepath.Join(libcDir, "stdlib", "wcstod.c"),
-					filepath.Join(libcDir, "stdlib", "wcstoimax.c"),
-					filepath.Join(libcDir, "stdlib", "wcstol.c"),
-					filepath.Join(libcDir, "stdlib", "wcstoul.c"),
-					filepath.Join(libcDir, "stdlib", "wcstoumax.c"),
-					filepath.Join(libcDir, "stdlib", "wcstombs.c"),
-					filepath.Join(libcDir, "stdlib", "wcstombs_r.c"),
-					filepath.Join(libcDir, "stdlib", "wctomb.c"),
-					filepath.Join(libcDir, "stdlib", "wctomb_r.c"),
-					filepath.Join(libcDir, "stdlib", "strtodg.c"),
-					filepath.Join(libcDir, "stdlib", "strtold.c"),
-					filepath.Join(libcDir, "stdlib", "strtorx.c"),
-					filepath.Join(libcDir, "stdlib", "wcstold.c"),
-					filepath.Join(libcDir, "stdlib", "arc4random.c"),
-					filepath.Join(libcDir, "stdlib", "arc4random_uniform.c"),
-					filepath.Join(libcDir, "stdlib", "cxa_atexit.c"),
-					filepath.Join(libcDir, "stdlib", "cxa_finalize.c"),
-					filepath.Join(libcDir, "stdlib", "drand48.c"),
-					filepath.Join(libcDir, "stdlib", "ecvtbuf.c"),
-					filepath.Join(libcDir, "stdlib", "efgcvt.c"),
-					filepath.Join(libcDir, "stdlib", "erand48.c"),
-					filepath.Join(libcDir, "stdlib", "jrand48.c"),
-					filepath.Join(libcDir, "stdlib", "lcong48.c"),
-					filepath.Join(libcDir, "stdlib", "lrand48.c"),
-					filepath.Join(libcDir, "stdlib", "mrand48.c"),
-					filepath.Join(libcDir, "stdlib", "msize.c"),
-					filepath.Join(libcDir, "stdlib", "mtrim.c"),
-					filepath.Join(libcDir, "stdlib", "nrand48.c"),
-					filepath.Join(libcDir, "stdlib", "rand48.c"),
-					filepath.Join(libcDir, "stdlib", "seed48.c"),
-					filepath.Join(libcDir, "stdlib", "srand48.c"),
-					filepath.Join(libcDir, "stdlib", "strtoll.c"),
-					filepath.Join(libcDir, "stdlib", "strtoll_r.c"),
-					filepath.Join(libcDir, "stdlib", "strtoull.c"),
-					filepath.Join(libcDir, "stdlib", "strtoull_r.c"),
-					filepath.Join(libcDir, "stdlib", "wcstoll.c"),
-					filepath.Join(libcDir, "stdlib", "wcstoll_r.c"),
-					filepath.Join(libcDir, "stdlib", "wcstoull.c"),
-					filepath.Join(libcDir, "stdlib", "wcstoull_r.c"),
-					filepath.Join(libcDir, "stdlib", "atoll.c"),
-					filepath.Join(libcDir, "stdlib", "llabs.c"),
-					filepath.Join(libcDir, "stdlib", "lldiv.c"),
-					filepath.Join(libcDir, "stdlib", "a64l.c"),
-					filepath.Join(libcDir, "stdlib", "btowc.c"),
-					filepath.Join(libcDir, "stdlib", "getopt.c"),
-					filepath.Join(libcDir, "stdlib", "getsubopt.c"),
-					filepath.Join(libcDir, "stdlib", "l64a.c"),
-					filepath.Join(libcDir, "stdlib", "malign.c"),
-					filepath.Join(libcDir, "stdlib", "malignr.c"),
-					filepath.Join(libcDir, "stdlib", "malloptr.c"),
-					filepath.Join(libcDir, "stdlib", "mbrlen.c"),
-					filepath.Join(libcDir, "stdlib", "mbrtowc.c"),
-					filepath.Join(libcDir, "stdlib", "mbsinit.c"),
-					filepath.Join(libcDir, "stdlib", "mbsnrtowcs.c"),
-					filepath.Join(libcDir, "stdlib", "mbsrtowcs.c"),
-					filepath.Join(libcDir, "stdlib", "on_exit.c"),
-					filepath.Join(libcDir, "stdlib", "pvallocr.c"),
-					filepath.Join(libcDir, "stdlib", "valloc.c"),
-					filepath.Join(libcDir, "stdlib", "vallocr.c"),
-					filepath.Join(libcDir, "stdlib", "wcrtomb.c"),
-					filepath.Join(libcDir, "stdlib", "wcsnrtombs.c"),
-					filepath.Join(libcDir, "stdlib", "wcsrtombs.c"),
-					filepath.Join(libcDir, "stdlib", "wctob.c"),
-					filepath.Join(libcDir, "stdlib", "putenv.c"),
-					filepath.Join(libcDir, "stdlib", "putenv_r.c"),
-					filepath.Join(libcDir, "stdlib", "setenv.c"),
-					filepath.Join(libcDir, "stdlib", "setenv_r.c"),
-					filepath.Join(libcDir, "stdlib", "rpmatch.c"),
-					filepath.Join(libcDir, "stdlib", "system.c"),
-					filepath.Join(libcDir, "ctype", "ctype_.c"),
-					filepath.Join(libcDir, "ctype", "isalnum.c"),
-					filepath.Join(libcDir, "ctype", "isalpha.c"),
-					filepath.Join(libcDir, "ctype", "iscntrl.c"),
-					filepath.Join(libcDir, "ctype", "isdigit.c"),
-					filepath.Join(libcDir, "ctype", "islower.c"),
-					filepath.Join(libcDir, "ctype", "isupper.c"),
-					filepath.Join(libcDir, "ctype", "isprint.c"),
-					filepath.Join(libcDir, "ctype", "ispunct.c"),
-					filepath.Join(libcDir, "ctype", "isspace.c"),
-					filepath.Join(libcDir, "ctype", "isxdigit.c"),
-					filepath.Join(libcDir, "ctype", "tolower.c"),
-					filepath.Join(libcDir, "ctype", "toupper.c"),
-					filepath.Join(libcDir, "ctype", "categories.c"),
-					filepath.Join(libcDir, "ctype", "isalnum_l.c"),
-					filepath.Join(libcDir, "ctype", "isalpha_l.c"),
-					filepath.Join(libcDir, "ctype", "isascii.c"),
-					filepath.Join(libcDir, "ctype", "isascii_l.c"),
-					filepath.Join(libcDir, "ctype", "isblank.c"),
-					filepath.Join(libcDir, "ctype", "isblank_l.c"),
-					filepath.Join(libcDir, "ctype", "iscntrl_l.c"),
-					filepath.Join(libcDir, "ctype", "isdigit_l.c"),
-					filepath.Join(libcDir, "ctype", "islower_l.c"),
-					filepath.Join(libcDir, "ctype", "isupper_l.c"),
-					filepath.Join(libcDir, "ctype", "isprint_l.c"),
-					filepath.Join(libcDir, "ctype", "ispunct_l.c"),
-					filepath.Join(libcDir, "ctype", "isspace_l.c"),
-					filepath.Join(libcDir, "ctype", "iswalnum.c"),
-					filepath.Join(libcDir, "ctype", "iswalnum_l.c"),
-					filepath.Join(libcDir, "ctype", "iswalpha.c"),
-					filepath.Join(libcDir, "ctype", "iswalpha_l.c"),
-					filepath.Join(libcDir, "ctype", "iswblank.c"),
-					filepath.Join(libcDir, "ctype", "iswblank_l.c"),
-					filepath.Join(libcDir, "ctype", "iswcntrl.c"),
-					filepath.Join(libcDir, "ctype", "iswcntrl_l.c"),
-					filepath.Join(libcDir, "ctype", "iswctype.c"),
-					filepath.Join(libcDir, "ctype", "iswctype_l.c"),
-					filepath.Join(libcDir, "ctype", "iswdigit.c"),
-					filepath.Join(libcDir, "ctype", "iswdigit_l.c"),
-					filepath.Join(libcDir, "ctype", "iswgraph.c"),
-					filepath.Join(libcDir, "ctype", "iswgraph_l.c"),
-					filepath.Join(libcDir, "ctype", "iswlower.c"),
-					filepath.Join(libcDir, "ctype", "iswlower_l.c"),
-					filepath.Join(libcDir, "ctype", "iswprint.c"),
-					filepath.Join(libcDir, "ctype", "iswprint_l.c"),
-					filepath.Join(libcDir, "ctype", "iswpunct.c"),
-					filepath.Join(libcDir, "ctype", "iswpunct_l.c"),
-					filepath.Join(libcDir, "ctype", "iswspace.c"),
-					filepath.Join(libcDir, "ctype", "iswspace_l.c"),
-					filepath.Join(libcDir, "ctype", "iswupper.c"),
-					filepath.Join(libcDir, "ctype", "iswupper_l.c"),
-					filepath.Join(libcDir, "ctype", "iswxdigit.c"),
-					filepath.Join(libcDir, "ctype", "iswxdigit_l.c"),
-					filepath.Join(libcDir, "ctype", "isxdigit_l.c"),
-					filepath.Join(libcDir, "ctype", "jp2uc.c"),
-					filepath.Join(libcDir, "ctype", "toascii.c"),
-					filepath.Join(libcDir, "ctype", "toascii_l.c"),
-					filepath.Join(libcDir, "ctype", "tolower_l.c"),
-					filepath.Join(libcDir, "ctype", "toupper_l.c"),
-					filepath.Join(libcDir, "ctype", "towctrans.c"),
-					filepath.Join(libcDir, "ctype", "towctrans_l.c"),
-					filepath.Join(libcDir, "ctype", "towlower.c"),
-					filepath.Join(libcDir, "ctype", "towlower_l.c"),
-					filepath.Join(libcDir, "ctype", "towupper.c"),
-					filepath.Join(libcDir, "ctype", "towupper_l.c"),
-					filepath.Join(libcDir, "ctype", "wctrans.c"),
-					filepath.Join(libcDir, "ctype", "wctrans_l.c"),
-					filepath.Join(libcDir, "ctype", "wctype.c"),
-					filepath.Join(libcDir, "ctype", "wctype_l.c"),
-					filepath.Join(libcDir, "search", "bsearch.c"),
-					filepath.Join(libcDir, "search", "ndbm.c"),
-					filepath.Join(libcDir, "search", "qsort.c"),
-					filepath.Join(libcDir, "search", "hash.c"),
-					filepath.Join(libcDir, "search", "hash_bigkey.c"),
-					filepath.Join(libcDir, "search", "hash_buf.c"),
-					filepath.Join(libcDir, "search", "hash_func.c"),
-					filepath.Join(libcDir, "search", "hash_log2.c"),
-					filepath.Join(libcDir, "search", "hash_page.c"),
-					filepath.Join(libcDir, "search", "hcreate.c"),
-					filepath.Join(libcDir, "search", "hcreate_r.c"),
-					filepath.Join(libcDir, "search", "tdelete.c"),
-					filepath.Join(libcDir, "search", "tdestroy.c"),
-					filepath.Join(libcDir, "search", "tfind.c"),
-					filepath.Join(libcDir, "search", "tsearch.c"),
-					filepath.Join(libcDir, "search", "twalk.c"),
-					filepath.Join(libcDir, "search", "bsd_qsort_r.c"),
-					filepath.Join(libcDir, "search", "qsort_r.c"),
-					filepath.Join(libcDir, "stdio", "nano-vfprintf_float.c"),
-					filepath.Join(libcDir, "stdio", "nano-svfprintf.c"),
-					filepath.Join(libcDir, "stdio", "nano-svfscanf.c"),
-					filepath.Join(libcDir, "stdio", "nano-vfprintf.c"),
-					filepath.Join(libcDir, "stdio", "nano-vfprintf_i.c"),
-					filepath.Join(libcDir, "stdio", "nano-vfscanf.c"),
-					filepath.Join(libcDir, "stdio", "nano-vfscanf_i.c"),
-					filepath.Join(libcDir, "stdio", "nano-vfscanf_float.c"),
-					filepath.Join(libcDir, "stdio", "clearerr.c"),
-					filepath.Join(libcDir, "stdio", "fclose.c"),
-					filepath.Join(libcDir, "stdio", "fdopen.c"),
-					filepath.Join(libcDir, "stdio", "feof.c"),
-					filepath.Join(libcDir, "stdio", "ferror.c"),
-					filepath.Join(libcDir, "stdio", "fflush.c"),
-					filepath.Join(libcDir, "stdio", "fgetc.c"),
-					filepath.Join(libcDir, "stdio", "fgetpos.c"),
-					filepath.Join(libcDir, "stdio", "fgets.c"),
-					filepath.Join(libcDir, "stdio", "fileno.c"),
-					filepath.Join(libcDir, "stdio", "findfp.c"),
-					filepath.Join(libcDir, "stdio", "flags.c"),
-					filepath.Join(libcDir, "stdio", "fopen.c"),
-					filepath.Join(libcDir, "stdio", "fprintf.c"),
-					filepath.Join(libcDir, "stdio", "fputc.c"),
-					filepath.Join(libcDir, "stdio", "fputs.c"),
-					filepath.Join(libcDir, "stdio", "fread.c"),
-					filepath.Join(libcDir, "stdio", "freopen.c"),
-					filepath.Join(libcDir, "stdio", "fscanf.c"),
-					filepath.Join(libcDir, "stdio", "fseek.c"),
-					filepath.Join(libcDir, "stdio", "fsetpos.c"),
-					filepath.Join(libcDir, "stdio", "ftell.c"),
-					filepath.Join(libcDir, "stdio", "fvwrite.c"),
-					filepath.Join(libcDir, "stdio", "fwalk.c"),
-					filepath.Join(libcDir, "stdio", "fwrite.c"),
-					filepath.Join(libcDir, "stdio", "getc.c"),
-					filepath.Join(libcDir, "stdio", "getchar.c"),
-					filepath.Join(libcDir, "stdio", "getc_u.c"),
-					filepath.Join(libcDir, "stdio", "getchar_u.c"),
-					filepath.Join(libcDir, "stdio", "getdelim.c"),
-					filepath.Join(libcDir, "stdio", "getline.c"),
-					filepath.Join(libcDir, "stdio", "gets.c"),
-					filepath.Join(libcDir, "stdio", "makebuf.c"),
-					filepath.Join(libcDir, "stdio", "perror.c"),
-					filepath.Join(libcDir, "stdio", "printf.c"),
-					filepath.Join(libcDir, "stdio", "putc.c"),
-					filepath.Join(libcDir, "stdio", "putchar.c"),
-					filepath.Join(libcDir, "stdio", "putc_u.c"),
-					filepath.Join(libcDir, "stdio", "putchar_u.c"),
-					filepath.Join(libcDir, "stdio", "puts.c"),
-					filepath.Join(libcDir, "stdio", "refill.c"),
-					filepath.Join(libcDir, "stdio", "remove.c"),
-					filepath.Join(libcDir, "stdio", "rename.c"),
-					filepath.Join(libcDir, "stdio", "rewind.c"),
-					filepath.Join(libcDir, "stdio", "rget.c"),
-					filepath.Join(libcDir, "stdio", "scanf.c"),
-					filepath.Join(libcDir, "stdio", "sccl.c"),
-					filepath.Join(libcDir, "stdio", "setbuf.c"),
-					filepath.Join(libcDir, "stdio", "setbuffer.c"),
-					filepath.Join(libcDir, "stdio", "setlinebuf.c"),
-					filepath.Join(libcDir, "stdio", "setvbuf.c"),
-					filepath.Join(libcDir, "stdio", "snprintf.c"),
-					filepath.Join(libcDir, "stdio", "sprintf.c"),
-					filepath.Join(libcDir, "stdio", "sscanf.c"),
-					filepath.Join(libcDir, "stdio", "stdio.c"),
-					filepath.Join(libcDir, "stdio", "svfiwprintf.c"),
-					filepath.Join(libcDir, "stdio", "svfiwscanf.c"),
-					filepath.Join(libcDir, "stdio", "svfwprintf.c"),
-					filepath.Join(libcDir, "stdio", "svfwscanf.c"),
-					filepath.Join(libcDir, "stdio", "tmpfile.c"),
-					filepath.Join(libcDir, "stdio", "tmpnam.c"),
-					filepath.Join(libcDir, "stdio", "ungetc.c"),
-					filepath.Join(libcDir, "stdio", "vdprintf.c"),
-					filepath.Join(libcDir, "stdio", "vfiwprintf.c"),
-					filepath.Join(libcDir, "stdio", "vfiwscanf.c"),
-					filepath.Join(libcDir, "stdio", "vfwscanf.c"),
-					filepath.Join(libcDir, "stdio", "vprintf.c"),
-					filepath.Join(libcDir, "stdio", "vscanf.c"),
-					filepath.Join(libcDir, "stdio", "vsnprintf.c"),
-					filepath.Join(libcDir, "stdio", "vsprintf.c"),
-					filepath.Join(libcDir, "stdio", "vsscanf.c"),
-					filepath.Join(libcDir, "stdio", "wbuf.c"),
-					filepath.Join(libcDir, "stdio", "wsetup.c"),
-					filepath.Join(libcDir, "stdio", "asprintf.c"),
-					filepath.Join(libcDir, "stdio", "fcloseall.c"),
-					filepath.Join(libcDir, "stdio", "fseeko.c"),
-					filepath.Join(libcDir, "stdio", "ftello.c"),
-					filepath.Join(libcDir, "stdio", "getw.c"),
-					filepath.Join(libcDir, "stdio", "mktemp.c"),
-					filepath.Join(libcDir, "stdio", "putw.c"),
-					filepath.Join(libcDir, "stdio", "vasprintf.c"),
-					filepath.Join(libcDir, "stdio", "asnprintf.c"),
-					filepath.Join(libcDir, "stdio", "clearerr_u.c"),
-					filepath.Join(libcDir, "stdio", "dprintf.c"),
-					filepath.Join(libcDir, "stdio", "feof_u.c"),
-					filepath.Join(libcDir, "stdio", "ferror_u.c"),
-					filepath.Join(libcDir, "stdio", "fflush_u.c"),
-					filepath.Join(libcDir, "stdio", "fgetc_u.c"),
-					filepath.Join(libcDir, "stdio", "fgets_u.c"),
-					filepath.Join(libcDir, "stdio", "fgetwc.c"),
-					filepath.Join(libcDir, "stdio", "fgetwc_u.c"),
-					filepath.Join(libcDir, "stdio", "fgetws.c"),
-					filepath.Join(libcDir, "stdio", "fgetws_u.c"),
-					filepath.Join(libcDir, "stdio", "fileno_u.c"),
-					filepath.Join(libcDir, "stdio", "fmemopen.c"),
-					filepath.Join(libcDir, "stdio", "fopencookie.c"),
-					filepath.Join(libcDir, "stdio", "fpurge.c"),
-					filepath.Join(libcDir, "stdio", "fputc_u.c"),
-					filepath.Join(libcDir, "stdio", "fputs_u.c"),
-					filepath.Join(libcDir, "stdio", "fputwc.c"),
-					filepath.Join(libcDir, "stdio", "fputwc_u.c"),
-					filepath.Join(libcDir, "stdio", "fputws.c"),
-					filepath.Join(libcDir, "stdio", "fputws_u.c"),
-					filepath.Join(libcDir, "stdio", "fread_u.c"),
-					filepath.Join(libcDir, "stdio", "fsetlocking.c"),
-					filepath.Join(libcDir, "stdio", "funopen.c"),
-					filepath.Join(libcDir, "stdio", "fwide.c"),
-					filepath.Join(libcDir, "stdio", "fwprintf.c"),
-					filepath.Join(libcDir, "stdio", "fwrite_u.c"),
-					filepath.Join(libcDir, "stdio", "fwscanf.c"),
-					filepath.Join(libcDir, "stdio", "getwc.c"),
-					filepath.Join(libcDir, "stdio", "getwc_u.c"),
-					filepath.Join(libcDir, "stdio", "getwchar.c"),
-					filepath.Join(libcDir, "stdio", "getwchar_u.c"),
-					filepath.Join(libcDir, "stdio", "open_memstream.c"),
-					filepath.Join(libcDir, "stdio", "putwc.c"),
-					filepath.Join(libcDir, "stdio", "putwc_u.c"),
-					filepath.Join(libcDir, "stdio", "putwchar.c"),
-					filepath.Join(libcDir, "stdio", "putwchar_u.c"),
-					filepath.Join(libcDir, "stdio", "stdio_ext.c"),
-					filepath.Join(libcDir, "stdio", "swprintf.c"),
-					filepath.Join(libcDir, "stdio", "swscanf.c"),
-					filepath.Join(libcDir, "stdio", "ungetwc.c"),
-					filepath.Join(libcDir, "stdio", "vasnprintf.c"),
-					filepath.Join(libcDir, "stdio", "vswprintf.c"),
-					filepath.Join(libcDir, "stdio", "vswscanf.c"),
-					filepath.Join(libcDir, "stdio", "vwprintf.c"),
-					filepath.Join(libcDir, "stdio", "vwscanf.c"),
-					filepath.Join(libcDir, "stdio", "wprintf.c"),
-					filepath.Join(libcDir, "stdio", "wscanf.c"),
-					filepath.Join(libcDir, "string", "bcopy.c"),
-					filepath.Join(libcDir, "string", "bzero.c"),
-					filepath.Join(libcDir, "string", "explicit_bzero.c"),
-					filepath.Join(libcDir, "string", "ffsl.c"),
-					filepath.Join(libcDir, "string", "ffsll.c"),
-					filepath.Join(libcDir, "string", "fls.c"),
-					filepath.Join(libcDir, "string", "flsl.c"),
-					filepath.Join(libcDir, "string", "flsll.c"),
-					filepath.Join(libcDir, "string", "index.c"),
-					filepath.Join(libcDir, "string", "memchr.c"),
-					filepath.Join(libcDir, "string", "memcmp.c"),
-					filepath.Join(libcDir, "string", "memcpy.c"),
-					filepath.Join(libcDir, "string", "memmove.c"),
-					filepath.Join(libcDir, "string", "memset.c"),
-					filepath.Join(libcDir, "string", "rindex.c"),
-					filepath.Join(libcDir, "string", "strcasecmp.c"),
-					filepath.Join(libcDir, "string", "strcat.c"),
-					filepath.Join(libcDir, "string", "strchr.c"),
-					filepath.Join(libcDir, "string", "strcmp.c"),
-					filepath.Join(libcDir, "string", "strcoll.c"),
-					filepath.Join(libcDir, "string", "strcpy.c"),
-					filepath.Join(libcDir, "string", "strcspn.c"),
-					filepath.Join(libcDir, "string", "strdup.c"),
-					filepath.Join(libcDir, "string", "strdup_r.c"),
-					filepath.Join(libcDir, "string", "strerror.c"),
-					filepath.Join(libcDir, "string", "strerror_r.c"),
-					filepath.Join(libcDir, "string", "strlcat.c"),
-					filepath.Join(libcDir, "string", "strlcpy.c"),
-					filepath.Join(libcDir, "string", "strlen.c"),
-					filepath.Join(libcDir, "string", "strlwr.c"),
-					filepath.Join(libcDir, "string", "strncasecmp.c"),
-					filepath.Join(libcDir, "string", "strncat.c"),
-					filepath.Join(libcDir, "string", "strncmp.c"),
-					filepath.Join(libcDir, "string", "strncpy.c"),
-					filepath.Join(libcDir, "string", "strnlen.c"),
-					filepath.Join(libcDir, "string", "strnstr.c"),
-					filepath.Join(libcDir, "string", "strpbrk.c"),
-					filepath.Join(libcDir, "string", "strrchr.c"),
-					filepath.Join(libcDir, "string", "strsep.c"),
-					filepath.Join(libcDir, "string", "strsignal.c"),
-					filepath.Join(libcDir, "string", "strspn.c"),
-					filepath.Join(libcDir, "string", "strtok.c"),
-					filepath.Join(libcDir, "string", "strtok_r.c"),
-					filepath.Join(libcDir, "string", "strupr.c"),
-					filepath.Join(libcDir, "string", "strxfrm.c"),
-					filepath.Join(libcDir, "string", "strstr.c"),
-					filepath.Join(libcDir, "string", "swab.c"),
-					filepath.Join(libcDir, "string", "timingsafe_bcmp.c"),
-					filepath.Join(libcDir, "string", "timingsafe_memcmp.c"),
-					filepath.Join(libcDir, "string", "u_strerr.c"),
-					filepath.Join(libcDir, "string", "wcscat.c"),
-					filepath.Join(libcDir, "string", "wcschr.c"),
-					filepath.Join(libcDir, "string", "wcscmp.c"),
-					filepath.Join(libcDir, "string", "wcscoll.c"),
-					filepath.Join(libcDir, "string", "wcscpy.c"),
-					filepath.Join(libcDir, "string", "wcscspn.c"),
-					filepath.Join(libcDir, "string", "wcslcat.c"),
-					filepath.Join(libcDir, "string", "wcslcpy.c"),
-					filepath.Join(libcDir, "string", "wcslen.c"),
-					filepath.Join(libcDir, "string", "wcsncat.c"),
-					filepath.Join(libcDir, "string", "wcsncmp.c"),
-					filepath.Join(libcDir, "string", "wcsncpy.c"),
-					filepath.Join(libcDir, "string", "wcsnlen.c"),
-					filepath.Join(libcDir, "string", "wcspbrk.c"),
-					filepath.Join(libcDir, "string", "wcsrchr.c"),
-					filepath.Join(libcDir, "string", "wcsspn.c"),
-					filepath.Join(libcDir, "string", "wcsstr.c"),
-					filepath.Join(libcDir, "string", "wcstok.c"),
-					filepath.Join(libcDir, "string", "wcswidth.c"),
-					filepath.Join(libcDir, "string", "wcsxfrm.c"),
-					filepath.Join(libcDir, "string", "wcwidth.c"),
-					filepath.Join(libcDir, "string", "wmemchr.c"),
-					filepath.Join(libcDir, "string", "wmemcmp.c"),
-					filepath.Join(libcDir, "string", "wmemcpy.c"),
-					filepath.Join(libcDir, "string", "wmemmove.c"),
-					filepath.Join(libcDir, "string", "wmemset.c"),
-					filepath.Join(libcDir, "string", "xpg_strerror_r.c"),
-					filepath.Join(libcDir, "string", "bcmp.c"),
-					filepath.Join(libcDir, "string", "memccpy.c"),
-					filepath.Join(libcDir, "string", "mempcpy.c"),
-					filepath.Join(libcDir, "string", "stpcpy.c"),
-					filepath.Join(libcDir, "string", "stpncpy.c"),
-					filepath.Join(libcDir, "string", "strndup.c"),
-					filepath.Join(libcDir, "string", "strcasestr.c"),
-					filepath.Join(libcDir, "string", "strchrnul.c"),
-					filepath.Join(libcDir, "string", "strndup_r.c"),
-					filepath.Join(libcDir, "string", "wcpcpy.c"),
-					filepath.Join(libcDir, "string", "wcpncpy.c"),
-					filepath.Join(libcDir, "string", "wcsdup.c"),
-					filepath.Join(libcDir, "string", "gnu_basename.c"),
-					filepath.Join(libcDir, "string", "memmem.c"),
-					filepath.Join(libcDir, "string", "memrchr.c"),
-					filepath.Join(libcDir, "string", "rawmemchr.c"),
-					filepath.Join(libcDir, "string", "strcasecmp_l.c"),
-					filepath.Join(libcDir, "string", "strcoll_l.c"),
-					filepath.Join(libcDir, "string", "strncasecmp_l.c"),
-					filepath.Join(libcDir, "string", "strverscmp.c"),
-					filepath.Join(libcDir, "string", "strxfrm_l.c"),
-					filepath.Join(libcDir, "string", "wcscasecmp.c"),
-					filepath.Join(libcDir, "string", "wcscasecmp_l.c"),
-					filepath.Join(libcDir, "string", "wcscoll_l.c"),
-					filepath.Join(libcDir, "string", "wcsncasecmp.c"),
-					filepath.Join(libcDir, "string", "wcsncasecmp_l.c"),
-					filepath.Join(libcDir, "string", "wcsxfrm_l.c"),
-					filepath.Join(libcDir, "string", "wmempcpy.c"),
-					filepath.Join(libcDir, "signal", "psignal.c"),
-					filepath.Join(libcDir, "signal", "raise.c"),
-					filepath.Join(libcDir, "signal", "signal.c"),
-					filepath.Join(libcDir, "signal", "sig2str.c"),
-					filepath.Join(libcDir, "time", "asctime.c"),
-					filepath.Join(libcDir, "time", "asctime_r.c"),
-					filepath.Join(libcDir, "time", "clock.c"),
-					filepath.Join(libcDir, "time", "ctime.c"),
-					filepath.Join(libcDir, "time", "ctime_r.c"),
-					filepath.Join(libcDir, "time", "difftime.c"),
-					filepath.Join(libcDir, "time", "gettzinfo.c"),
-					filepath.Join(libcDir, "time", "gmtime.c"),
-					filepath.Join(libcDir, "time", "gmtime_r.c"),
-					filepath.Join(libcDir, "time", "lcltime.c"),
-					filepath.Join(libcDir, "time", "lcltime_r.c"),
-					filepath.Join(libcDir, "time", "mktime.c"),
-					filepath.Join(libcDir, "time", "month_lengths.c"),
-					filepath.Join(libcDir, "time", "strftime.c"),
-					filepath.Join(libcDir, "time", "strptime.c"),
-					filepath.Join(libcDir, "time", "time.c"),
-					filepath.Join(libcDir, "time", "tzcalc_limits.c"),
-					filepath.Join(libcDir, "time", "tzlock.c"),
-					filepath.Join(libcDir, "time", "tzset.c"),
-					filepath.Join(libcDir, "time", "tzset_r.c"),
-					filepath.Join(libcDir, "time", "tzvars.c"),
-					filepath.Join(libcDir, "time", "wcsftime.c"),
-					filepath.Join(libcDir, "locale", "locale.c"),
-					filepath.Join(libcDir, "locale", "localeconv.c"),
-					filepath.Join(libcDir, "locale", "duplocale.c"),
-					filepath.Join(libcDir, "locale", "freelocale.c"),
-					filepath.Join(libcDir, "locale", "lctype.c"),
-					filepath.Join(libcDir, "locale", "lmessages.c"),
-					filepath.Join(libcDir, "locale", "lnumeric.c"),
-					filepath.Join(libcDir, "locale", "lmonetary.c"),
-					filepath.Join(libcDir, "locale", "newlocale.c"),
-					filepath.Join(libcDir, "locale", "nl_langinfo.c"),
-					filepath.Join(libcDir, "locale", "timelocal.c"),
-					filepath.Join(libcDir, "locale", "uselocale.c"),
-					filepath.Join(libcDir, "reent", "closer.c"),
-					filepath.Join(libcDir, "reent", "reent.c"),
-					filepath.Join(libcDir, "reent", "impure.c"),
-					filepath.Join(libcDir, "reent", "fcntlr.c"),
-					filepath.Join(libcDir, "reent", "fstatr.c"),
-					filepath.Join(libcDir, "reent", "getentropyr.c"),
-					filepath.Join(libcDir, "reent", "getreent.c"),
-					filepath.Join(libcDir, "reent", "gettimeofdayr.c"),
-					filepath.Join(libcDir, "reent", "isattyr.c"),
-					filepath.Join(libcDir, "reent", "linkr.c"),
-					filepath.Join(libcDir, "reent", "lseekr.c"),
-					filepath.Join(libcDir, "reent", "mkdirr.c"),
-					filepath.Join(libcDir, "reent", "openr.c"),
-					filepath.Join(libcDir, "reent", "readr.c"),
-					filepath.Join(libcDir, "reent", "renamer.c"),
-					filepath.Join(libcDir, "reent", "signalr.c"),
-					filepath.Join(libcDir, "reent", "signgam.c"),
-					filepath.Join(libcDir, "reent", "sbrkr.c"),
-					filepath.Join(libcDir, "reent", "statr.c"),
-					filepath.Join(libcDir, "reent", "timesr.c"),
-					filepath.Join(libcDir, "reent", "unlinkr.c"),
-					filepath.Join(libcDir, "reent", "writer.c"),
-					filepath.Join(libcDir, "reent", "execr.c"),
-					filepath.Join(libcDir, "errno", "errno.c"),
-					filepath.Join(libcDir, "misc", "__dprintf.c"),
-					filepath.Join(libcDir, "misc", "unctrl.c"),
-					filepath.Join(libcDir, "misc", "ffs.c"),
-					filepath.Join(libcDir, "misc", "init.c"),
-					filepath.Join(libcDir, "misc", "fini.c"),
-					filepath.Join(libcDir, "misc", "lock.c"),
-					filepath.Join(libcDir, "posix", "closedir.c"),
-					filepath.Join(libcDir, "posix", "collate.c"),
-					filepath.Join(libcDir, "posix", "collcmp.c"),
-					filepath.Join(libcDir, "posix", "creat.c"),
-					filepath.Join(libcDir, "posix", "dirfd.c"),
-					// filepath.Join(libcDir, "posix", "fnmatch.c"),
-					filepath.Join(libcDir, "posix", "glob.c"),
-					filepath.Join(libcDir, "posix", "_isatty.c"),
-					filepath.Join(libcDir, "posix", "isatty.c"),
-					filepath.Join(libcDir, "posix", "opendir.c"),
-					filepath.Join(libcDir, "posix", "readdir.c"),
-					filepath.Join(libcDir, "posix", "readdir_r.c"),
-					filepath.Join(libcDir, "posix", "regcomp.c"),
-					filepath.Join(libcDir, "posix", "regerror.c"),
-					filepath.Join(libcDir, "posix", "regexec.c"),
-					filepath.Join(libcDir, "posix", "regfree.c"),
-					filepath.Join(libcDir, "posix", "rewinddir.c"),
-					filepath.Join(libcDir, "posix", "sleep.c"),
-					filepath.Join(libcDir, "posix", "usleep.c"),
-					filepath.Join(libcDir, "posix", "telldir.c"),
-					filepath.Join(libcDir, "posix", "ftw.c"),
-					filepath.Join(libcDir, "posix", "nftw.c"),
-					filepath.Join(libcDir, "posix", "scandir.c"),
-					filepath.Join(libcDir, "posix", "seekdir.c"),
-					filepath.Join(libcDir, "posix", "execl.c"),
-					filepath.Join(libcDir, "posix", "execle.c"),
-					filepath.Join(libcDir, "posix", "execlp.c"),
-					filepath.Join(libcDir, "posix", "execv.c"),
-					filepath.Join(libcDir, "posix", "execve.c"),
-					filepath.Join(libcDir, "posix", "execvp.c"),
-					filepath.Join(libcDir, "posix", "wordexp.c"),
-					filepath.Join(libcDir, "posix", "wordfree.c"),
-					filepath.Join(libcDir, "posix", "popen.c"),
-					filepath.Join(libcDir, "posix", "posix_spawn.c"),
-					filepath.Join(libcDir, "syscalls", "sysclose.c"),
-					filepath.Join(libcDir, "syscalls", "sysfcntl.c"),
-					filepath.Join(libcDir, "syscalls", "sysfstat.c"),
-					filepath.Join(libcDir, "syscalls", "sysgetentropy.c"),
-					filepath.Join(libcDir, "syscalls", "sysgetpid.c"),
-					filepath.Join(libcDir, "syscalls", "sysgettod.c"),
-					filepath.Join(libcDir, "syscalls", "sysisatty.c"),
-					filepath.Join(libcDir, "syscalls", "syskill.c"),
-					filepath.Join(libcDir, "syscalls", "syslink.c"),
-					filepath.Join(libcDir, "syscalls", "syslseek.c"),
-					filepath.Join(libcDir, "syscalls", "sysopen.c"),
-					filepath.Join(libcDir, "syscalls", "sysread.c"),
-					filepath.Join(libcDir, "syscalls", "syssbrk.c"),
-					filepath.Join(libcDir, "syscalls", "sysstat.c"),
-					filepath.Join(libcDir, "syscalls", "systimes.c"),
-					filepath.Join(libcDir, "syscalls", "sysunlink.c"),
-					filepath.Join(libcDir, "syscalls", "syswrite.c"),
-					filepath.Join(libcDir, "syscalls", "sysexecve.c"),
-					filepath.Join(libcDir, "syscalls", "sysfork.c"),
-					filepath.Join(libcDir, "syscalls", "syswait.c"),
-					filepath.Join(libcDir, "iconv", "ces", "utf-8.c"),
-					filepath.Join(libcDir, "iconv", "ces", "utf-16.c"),
-					filepath.Join(libcDir, "iconv", "ces", "ucs-2.c"),
-					filepath.Join(libcDir, "iconv", "ces", "us-ascii.c"),
-					filepath.Join(libcDir, "iconv", "ces", "ucs-4.c"),
-					filepath.Join(libcDir, "iconv", "ces", "ucs-2-internal.c"),
-					filepath.Join(libcDir, "iconv", "ces", "ucs-4-internal.c"),
-					filepath.Join(libcDir, "iconv", "ces", "cesbi.c"),
-					filepath.Join(libcDir, "iconv", "ces", "table.c"),
-					filepath.Join(libcDir, "iconv", "ces", "table-pcs.c"),
-					filepath.Join(libcDir, "iconv", "ces", "euc.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "ccsbi.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_10.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_13.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_14.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_15.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_1.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_2.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_3.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_4.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_5.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_6.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_7.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_8.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_9.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_11.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "win_1250.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "win_1252.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "win_1254.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "win_1256.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "win_1258.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "win_1251.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "win_1253.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "win_1255.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "win_1257.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "koi8_r.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "koi8_u.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "koi8_ru.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "koi8_uni.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_ir_111.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "big5.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "cp775.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "cp850.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "cp852.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "cp855.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "cp866.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "jis_x0212_1990.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "jis_x0201_1976.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "jis_x0208_1990.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "ksx1001.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "cns11643_plane1.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "cns11643_plane2.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "cns11643_plane14.c"),
-					filepath.Join(libcDir, "iconv", "lib", "aliasesi.c"),
-					filepath.Join(libcDir, "iconv", "lib", "ucsconv.c"),
-					filepath.Join(libcDir, "iconv", "lib", "nullconv.c"),
-					filepath.Join(libcDir, "iconv", "lib", "iconv.c"),
-					filepath.Join(libcDir, "iconv", "lib", "aliasesbi.c"),
-					filepath.Join(libcDir, "iconv", "lib", "iconvnls.c"),
-					filepath.Join(libcDir, "ssp", "chk_fail.c"),
-					filepath.Join(libcDir, "ssp", "stack_protector.c"),
-					filepath.Join(libcDir, "ssp", "memcpy_chk.c"),
-					filepath.Join(libcDir, "ssp", "memmove_chk.c"),
-					filepath.Join(libcDir, "ssp", "mempcpy_chk.c"),
-					filepath.Join(libcDir, "ssp", "memset_chk.c"),
-					filepath.Join(libcDir, "ssp", "stpcpy_chk.c"),
-					filepath.Join(libcDir, "ssp", "stpncpy_chk.c"),
-					filepath.Join(libcDir, "ssp", "strcat_chk.c"),
-					filepath.Join(libcDir, "ssp", "strcpy_chk.c"),
-					filepath.Join(libcDir, "ssp", "strncat_chk.c"),
-					filepath.Join(libcDir, "ssp", "strncpy_chk.c"),
-					filepath.Join(libcDir, "ssp", "gets_chk.c"),
-					filepath.Join(libcDir, "ssp", "snprintf_chk.c"),
-					filepath.Join(libcDir, "ssp", "sprintf_chk.c"),
-					filepath.Join(libcDir, "ssp", "vsnprintf_chk.c"),
-					filepath.Join(libcDir, "ssp", "vsprintf_chk.c"),
-					filepath.Join(libcDir, "machine", "riscv", "memmove.S"),
-					filepath.Join(libcDir, "machine", "riscv", "memmove-stub.c"),
-					filepath.Join(libcDir, "machine", "riscv", "memset.S"),
-					filepath.Join(libcDir, "machine", "riscv", "memcpy-asm.S"),
-					filepath.Join(libcDir, "machine", "riscv", "memcpy.c"),
-					filepath.Join(libcDir, "machine", "riscv", "strlen.c"),
-					filepath.Join(libcDir, "machine", "riscv", "strcpy.c"),
-					filepath.Join(libcDir, "machine", "riscv", "strcmp.S"),
-					filepath.Join(libcDir, "machine", "riscv", "setjmp.S"),
-					filepath.Join(libcDir, "machine", "riscv", "ieeefp.c"),
-					filepath.Join(libcDir, "machine", "riscv", "ffs.c"),
-				},
+				OutputFileName: "libc-" + target + ".a",
+				Files: joinFileList(libcDir, `
+argz/argz_add.c
+argz/argz_add_sep.c
+argz/argz_append.c
+argz/argz_count.c
+argz/argz_create.c
+argz/argz_create_sep.c
+argz/argz_delete.c
+argz/argz_extract.c
+argz/argz_insert.c
+argz/argz_next.c
+argz/argz_replace.c
+argz/argz_stringify.c
+argz/buf_findstr.c
+argz/envz_entry.c
+argz/envz_get.c
+argz/envz_add.c
+argz/envz_remove.c
+argz/envz_merge.c
+argz/envz_strip.c
+stdlib/__adjust.c
+stdlib/__atexit.c
+stdlib/__call_atexit.c
+stdlib/__exp10.c
+stdlib/__ten_mu.c
+stdlib/_Exit.c
+stdlib/abort.c
+stdlib/abs.c
+stdlib/aligned_alloc.c
+stdlib/assert.c
+stdlib/atexit.c
+stdlib/atof.c
+stdlib/atoff.c
+stdlib/atoi.c
+stdlib/atol.c
+stdlib/calloc.c
+stdlib/callocr.c
+stdlib/cfreer.c
+stdlib/div.c
+stdlib/dtoa.c
+stdlib/dtoastub.c
+stdlib/environ.c
+stdlib/envlock.c
+stdlib/eprintf.c
+stdlib/exit.c
+stdlib/freer.c
+stdlib/gdtoa-gethex.c
+stdlib/gdtoa-hexnan.c
+stdlib/getenv.c
+stdlib/getenv_r.c
+stdlib/imaxabs.c
+stdlib/imaxdiv.c
+stdlib/itoa.c
+stdlib/labs.c
+stdlib/ldiv.c
+stdlib/ldtoa.c
+stdlib/gdtoa-ldtoa.c
+stdlib/gdtoa-gdtoa.c
+stdlib/gdtoa-dmisc.c
+stdlib/gdtoa-gmisc.c
+stdlib/mallinfor.c
+stdlib/malloc.c
+stdlib/mallocr.c
+stdlib/mallstatsr.c
+stdlib/mblen.c
+stdlib/mblen_r.c
+stdlib/mbstowcs.c
+stdlib/mbstowcs_r.c
+stdlib/mbtowc.c
+stdlib/mbtowc_r.c
+stdlib/mlock.c
+stdlib/mprec.c
+stdlib/msizer.c
+stdlib/mstats.c
+stdlib/on_exit_args.c
+stdlib/quick_exit.c
+stdlib/rand.c
+stdlib/rand_r.c
+stdlib/random.c
+stdlib/realloc.c
+stdlib/reallocarray.c
+stdlib/reallocf.c
+stdlib/reallocr.c
+stdlib/sb_charsets.c
+stdlib/strtod.c
+stdlib/strtoimax.c
+stdlib/strtol.c
+stdlib/strtoul.c
+stdlib/strtoumax.c
+stdlib/utoa.c
+stdlib/wcstod.c
+stdlib/wcstoimax.c
+stdlib/wcstol.c
+stdlib/wcstoul.c
+stdlib/wcstoumax.c
+stdlib/wcstombs.c
+stdlib/wcstombs_r.c
+stdlib/wctomb.c
+stdlib/wctomb_r.c
+stdlib/strtodg.c
+stdlib/strtold.c
+stdlib/strtorx.c
+stdlib/wcstold.c
+stdlib/arc4random.c
+stdlib/arc4random_uniform.c
+stdlib/cxa_atexit.c
+stdlib/cxa_finalize.c
+stdlib/drand48.c
+stdlib/ecvtbuf.c
+stdlib/efgcvt.c
+stdlib/erand48.c
+stdlib/jrand48.c
+stdlib/lcong48.c
+stdlib/lrand48.c
+stdlib/mrand48.c
+stdlib/msize.c
+stdlib/mtrim.c
+stdlib/nrand48.c
+stdlib/rand48.c
+stdlib/seed48.c
+stdlib/srand48.c
+stdlib/strtoll.c
+stdlib/strtoll_r.c
+stdlib/strtoull.c
+stdlib/strtoull_r.c
+stdlib/wcstoll.c
+stdlib/wcstoll_r.c
+stdlib/wcstoull.c
+stdlib/wcstoull_r.c
+stdlib/atoll.c
+stdlib/llabs.c
+stdlib/lldiv.c
+stdlib/a64l.c
+stdlib/btowc.c
+stdlib/getopt.c
+stdlib/getsubopt.c
+stdlib/l64a.c
+stdlib/malign.c
+stdlib/malignr.c
+stdlib/malloptr.c
+stdlib/mbrlen.c
+stdlib/mbrtowc.c
+stdlib/mbsinit.c
+stdlib/mbsnrtowcs.c
+stdlib/mbsrtowcs.c
+stdlib/on_exit.c
+stdlib/pvallocr.c
+stdlib/valloc.c
+stdlib/vallocr.c
+stdlib/wcrtomb.c
+stdlib/wcsnrtombs.c
+stdlib/wcsrtombs.c
+stdlib/wctob.c
+stdlib/putenv.c
+stdlib/putenv_r.c
+stdlib/setenv.c
+stdlib/setenv_r.c
+stdlib/rpmatch.c
+stdlib/system.c
+ctype/ctype_.c
+ctype/isalnum.c
+ctype/isalpha.c
+ctype/iscntrl.c
+ctype/isdigit.c
+ctype/islower.c
+ctype/isupper.c
+ctype/isprint.c
+ctype/ispunct.c
+ctype/isspace.c
+ctype/isxdigit.c
+ctype/tolower.c
+ctype/toupper.c
+ctype/categories.c
+ctype/isalnum_l.c
+ctype/isalpha_l.c
+ctype/isascii.c
+ctype/isascii_l.c
+ctype/isblank.c
+ctype/isblank_l.c
+ctype/iscntrl_l.c
+ctype/isdigit_l.c
+ctype/islower_l.c
+ctype/isupper_l.c
+ctype/isprint_l.c
+ctype/ispunct_l.c
+ctype/isspace_l.c
+ctype/iswalnum.c
+ctype/iswalnum_l.c
+ctype/iswalpha.c
+ctype/iswalpha_l.c
+ctype/iswblank.c
+ctype/iswblank_l.c
+ctype/iswcntrl.c
+ctype/iswcntrl_l.c
+ctype/iswctype.c
+ctype/iswctype_l.c
+ctype/iswdigit.c
+ctype/iswdigit_l.c
+ctype/iswgraph.c
+ctype/iswgraph_l.c
+ctype/iswlower.c
+ctype/iswlower_l.c
+ctype/iswprint.c
+ctype/iswprint_l.c
+ctype/iswpunct.c
+ctype/iswpunct_l.c
+ctype/iswspace.c
+ctype/iswspace_l.c
+ctype/iswupper.c
+ctype/iswupper_l.c
+ctype/iswxdigit.c
+ctype/iswxdigit_l.c
+ctype/isxdigit_l.c
+ctype/jp2uc.c
+ctype/toascii.c
+ctype/toascii_l.c
+ctype/tolower_l.c
+ctype/toupper_l.c
+ctype/towctrans.c
+ctype/towctrans_l.c
+ctype/towlower.c
+ctype/towlower_l.c
+ctype/towupper.c
+ctype/towupper_l.c
+ctype/wctrans.c
+ctype/wctrans_l.c
+ctype/wctype.c
+ctype/wctype_l.c
+search/bsearch.c
+search/ndbm.c
+search/qsort.c
+search/hash.c
+search/hash_bigkey.c
+search/hash_buf.c
+search/hash_func.c
+search/hash_log2.c
+search/hash_page.c
+search/hcreate.c
+search/hcreate_r.c
+search/tdelete.c
+search/tdestroy.c
+search/tfind.c
+search/tsearch.c
+search/twalk.c
+search/bsd_qsort_r.c
+search/qsort_r.c
+stdio/nano-vfprintf_float.c
+stdio/nano-svfprintf.c
+stdio/nano-svfscanf.c
+stdio/nano-vfprintf.c
+stdio/nano-vfprintf_i.c
+stdio/nano-vfscanf.c
+stdio/nano-vfscanf_i.c
+stdio/nano-vfscanf_float.c
+stdio/clearerr.c
+stdio/fclose.c
+stdio/fdopen.c
+stdio/feof.c
+stdio/ferror.c
+stdio/fflush.c
+stdio/fgetc.c
+stdio/fgetpos.c
+stdio/fgets.c
+stdio/fileno.c
+stdio/findfp.c
+stdio/flags.c
+stdio/fopen.c
+stdio/fprintf.c
+stdio/fputc.c
+stdio/fputs.c
+stdio/fread.c
+stdio/freopen.c
+stdio/fscanf.c
+stdio/fseek.c
+stdio/fsetpos.c
+stdio/ftell.c
+stdio/fvwrite.c
+stdio/fwalk.c
+stdio/fwrite.c
+stdio/getc.c
+stdio/getchar.c
+stdio/getc_u.c
+stdio/getchar_u.c
+stdio/getdelim.c
+stdio/getline.c
+stdio/gets.c
+stdio/makebuf.c
+stdio/perror.c
+stdio/printf.c
+stdio/putc.c
+stdio/putchar.c
+stdio/putc_u.c
+stdio/putchar_u.c
+stdio/puts.c
+stdio/refill.c
+stdio/remove.c
+stdio/rename.c
+stdio/rewind.c
+stdio/rget.c
+stdio/scanf.c
+stdio/sccl.c
+stdio/setbuf.c
+stdio/setbuffer.c
+stdio/setlinebuf.c
+stdio/setvbuf.c
+stdio/snprintf.c
+stdio/sprintf.c
+stdio/sscanf.c
+stdio/stdio.c
+stdio/svfiwprintf.c
+stdio/svfiwscanf.c
+stdio/svfwprintf.c
+stdio/svfwscanf.c
+stdio/tmpfile.c
+stdio/tmpnam.c
+stdio/ungetc.c
+stdio/vdprintf.c
+stdio/vfiwprintf.c
+stdio/vfiwscanf.c
+stdio/vfwscanf.c
+stdio/vprintf.c
+stdio/vscanf.c
+stdio/vsnprintf.c
+stdio/vsprintf.c
+stdio/vsscanf.c
+stdio/wbuf.c
+stdio/wsetup.c
+stdio/asprintf.c
+stdio/fcloseall.c
+stdio/fseeko.c
+stdio/ftello.c
+stdio/getw.c
+stdio/mktemp.c
+stdio/putw.c
+stdio/vasprintf.c
+stdio/asnprintf.c
+stdio/clearerr_u.c
+stdio/dprintf.c
+stdio/feof_u.c
+stdio/ferror_u.c
+stdio/fflush_u.c
+stdio/fgetc_u.c
+stdio/fgets_u.c
+stdio/fgetwc.c
+stdio/fgetwc_u.c
+stdio/fgetws.c
+stdio/fgetws_u.c
+stdio/fileno_u.c
+stdio/fmemopen.c
+stdio/fopencookie.c
+stdio/fpurge.c
+stdio/fputc_u.c
+stdio/fputs_u.c
+stdio/fputwc.c
+stdio/fputwc_u.c
+stdio/fputws.c
+stdio/fputws_u.c
+stdio/fread_u.c
+stdio/fsetlocking.c
+stdio/funopen.c
+stdio/fwide.c
+stdio/fwprintf.c
+stdio/fwrite_u.c
+stdio/fwscanf.c
+stdio/getwc.c
+stdio/getwc_u.c
+stdio/getwchar.c
+stdio/getwchar_u.c
+stdio/open_memstream.c
+stdio/putwc.c
+stdio/putwc_u.c
+stdio/putwchar.c
+stdio/putwchar_u.c
+stdio/stdio_ext.c
+stdio/swprintf.c
+stdio/swscanf.c
+stdio/ungetwc.c
+stdio/vasnprintf.c
+stdio/vswprintf.c
+stdio/vswscanf.c
+stdio/vwprintf.c
+stdio/vwscanf.c
+stdio/wprintf.c
+stdio/wscanf.c
+string/bcopy.c
+string/bzero.c
+string/explicit_bzero.c
+string/ffsl.c
+string/ffsll.c
+string/fls.c
+string/flsl.c
+string/flsll.c
+string/index.c
+string/memchr.c
+string/memcmp.c
+string/memcpy.c
+string/memmove.c
+string/memset.c
+string/rindex.c
+string/strcasecmp.c
+string/strcat.c
+string/strchr.c
+string/strcmp.c
+string/strcoll.c
+string/strcpy.c
+string/strcspn.c
+string/strdup.c
+string/strdup_r.c
+string/strerror.c
+string/strerror_r.c
+string/strlcat.c
+string/strlcpy.c
+string/strlen.c
+string/strlwr.c
+string/strncasecmp.c
+string/strncat.c
+string/strncmp.c
+string/strncpy.c
+string/strnlen.c
+string/strnstr.c
+string/strpbrk.c
+string/strrchr.c
+string/strsep.c
+string/strsignal.c
+string/strspn.c
+string/strtok.c
+string/strtok_r.c
+string/strupr.c
+string/strxfrm.c
+string/strstr.c
+string/swab.c
+string/timingsafe_bcmp.c
+string/timingsafe_memcmp.c
+string/u_strerr.c
+string/wcscat.c
+string/wcschr.c
+string/wcscmp.c
+string/wcscoll.c
+string/wcscpy.c
+string/wcscspn.c
+string/wcslcat.c
+string/wcslcpy.c
+string/wcslen.c
+string/wcsncat.c
+string/wcsncmp.c
+string/wcsncpy.c
+string/wcsnlen.c
+string/wcspbrk.c
+string/wcsrchr.c
+string/wcsspn.c
+string/wcsstr.c
+string/wcstok.c
+string/wcswidth.c
+string/wcsxfrm.c
+string/wcwidth.c
+string/wmemchr.c
+string/wmemcmp.c
+string/wmemcpy.c
+string/wmemmove.c
+string/wmemset.c
+string/xpg_strerror_r.c
+string/bcmp.c
+string/memccpy.c
+string/mempcpy.c
+string/stpcpy.c
+string/stpncpy.c
+string/strndup.c
+string/strcasestr.c
+string/strchrnul.c
+string/strndup_r.c
+string/wcpcpy.c
+string/wcpncpy.c
+string/wcsdup.c
+string/gnu_basename.c
+string/memmem.c
+string/memrchr.c
+string/rawmemchr.c
+string/strcasecmp_l.c
+string/strcoll_l.c
+string/strncasecmp_l.c
+string/strverscmp.c
+string/strxfrm_l.c
+string/wcscasecmp.c
+string/wcscasecmp_l.c
+string/wcscoll_l.c
+string/wcsncasecmp.c
+string/wcsncasecmp_l.c
+string/wcsxfrm_l.c
+string/wmempcpy.c
+signal/psignal.c
+signal/raise.c
+signal/signal.c
+signal/sig2str.c
+time/asctime.c
+time/asctime_r.c
+time/clock.c
+time/ctime.c
+time/ctime_r.c
+time/difftime.c
+time/gettzinfo.c
+time/gmtime.c
+time/gmtime_r.c
+time/lcltime.c
+time/lcltime_r.c
+time/mktime.c
+time/month_lengths.c
+time/strftime.c
+time/strptime.c
+time/time.c
+time/tzcalc_limits.c
+time/tzlock.c
+time/tzset.c
+time/tzset_r.c
+time/tzvars.c
+time/wcsftime.c
+locale/locale.c
+locale/localeconv.c
+locale/duplocale.c
+locale/freelocale.c
+locale/lctype.c
+locale/lmessages.c
+locale/lnumeric.c
+locale/lmonetary.c
+locale/newlocale.c
+locale/nl_langinfo.c
+locale/timelocal.c
+locale/uselocale.c
+reent/closer.c
+reent/reent.c
+reent/impure.c
+reent/fcntlr.c
+reent/fstatr.c
+reent/getentropyr.c
+reent/getreent.c
+reent/gettimeofdayr.c
+reent/isattyr.c
+reent/linkr.c
+reent/lseekr.c
+reent/mkdirr.c
+reent/openr.c
+reent/readr.c
+reent/renamer.c
+reent/signalr.c
+reent/signgam.c
+reent/sbrkr.c
+reent/statr.c
+reent/timesr.c
+reent/unlinkr.c
+reent/writer.c
+reent/execr.c
+errno/errno.c
+misc/__dprintf.c
+misc/unctrl.c
+misc/ffs.c
+misc/init.c
+misc/fini.c
+misc/lock.c
+posix/closedir.c
+posix/collate.c
+posix/collcmp.c
+posix/creat.c
+posix/dirfd.c
+posix/glob.c
+posix/_isatty.c
+posix/isatty.c
+posix/opendir.c
+posix/readdir.c
+posix/readdir_r.c
+posix/regcomp.c
+posix/regerror.c
+posix/regexec.c
+posix/regfree.c
+posix/rewinddir.c
+posix/sleep.c
+posix/usleep.c
+posix/telldir.c
+posix/ftw.c
+posix/nftw.c
+posix/scandir.c
+posix/seekdir.c
+posix/execl.c
+posix/execle.c
+posix/execlp.c
+posix/execv.c
+posix/execve.c
+posix/execvp.c
+posix/wordexp.c
+posix/wordfree.c
+posix/popen.c
+posix/posix_spawn.c
+syscalls/sysclose.c
+syscalls/sysfcntl.c
+syscalls/sysfstat.c
+syscalls/sysgetentropy.c
+syscalls/sysgetpid.c
+syscalls/sysgettod.c
+syscalls/sysisatty.c
+syscalls/syskill.c
+syscalls/syslink.c
+syscalls/syslseek.c
+syscalls/sysopen.c
+syscalls/sysread.c
+syscalls/syssbrk.c
+syscalls/sysstat.c
+syscalls/systimes.c
+syscalls/sysunlink.c
+syscalls/syswrite.c
+syscalls/sysexecve.c
+syscalls/sysfork.c
+syscalls/syswait.c
+iconv/ces/utf-8.c
+iconv/ces/utf-16.c
+iconv/ces/ucs-2.c
+iconv/ces/us-ascii.c
+iconv/ces/ucs-4.c
+iconv/ces/ucs-2-internal.c
+iconv/ces/ucs-4-internal.c
+iconv/ces/cesbi.c
+iconv/ces/table.c
+iconv/ces/table-pcs.c
+iconv/ces/euc.c
+iconv/ccs/ccsbi.c
+iconv/ccs/iso_8859_10.c
+iconv/ccs/iso_8859_13.c
+iconv/ccs/iso_8859_14.c
+iconv/ccs/iso_8859_15.c
+iconv/ccs/iso_8859_1.c
+iconv/ccs/iso_8859_2.c
+iconv/ccs/iso_8859_3.c
+iconv/ccs/iso_8859_4.c
+iconv/ccs/iso_8859_5.c
+iconv/ccs/iso_8859_6.c
+iconv/ccs/iso_8859_7.c
+iconv/ccs/iso_8859_8.c
+iconv/ccs/iso_8859_9.c
+iconv/ccs/iso_8859_11.c
+iconv/ccs/win_1250.c
+iconv/ccs/win_1252.c
+iconv/ccs/win_1254.c
+iconv/ccs/win_1256.c
+iconv/ccs/win_1258.c
+iconv/ccs/win_1251.c
+iconv/ccs/win_1253.c
+iconv/ccs/win_1255.c
+iconv/ccs/win_1257.c
+iconv/ccs/koi8_r.c
+iconv/ccs/koi8_u.c
+iconv/ccs/koi8_ru.c
+iconv/ccs/koi8_uni.c
+iconv/ccs/iso_ir_111.c
+iconv/ccs/big5.c
+iconv/ccs/cp775.c
+iconv/ccs/cp850.c
+iconv/ccs/cp852.c
+iconv/ccs/cp855.c
+iconv/ccs/cp866.c
+iconv/ccs/jis_x0212_1990.c
+iconv/ccs/jis_x0201_1976.c
+iconv/ccs/jis_x0208_1990.c
+iconv/ccs/ksx1001.c
+iconv/ccs/cns11643_plane1.c
+iconv/ccs/cns11643_plane2.c
+iconv/ccs/cns11643_plane14.c
+iconv/lib/aliasesi.c
+iconv/lib/ucsconv.c
+iconv/lib/nullconv.c
+iconv/lib/iconv.c
+iconv/lib/aliasesbi.c
+iconv/lib/iconvnls.c
+ssp/chk_fail.c
+ssp/stack_protector.c
+ssp/memcpy_chk.c
+ssp/memmove_chk.c
+ssp/mempcpy_chk.c
+ssp/memset_chk.c
+ssp/stpcpy_chk.c
+ssp/stpncpy_chk.c
+ssp/strcat_chk.c
+ssp/strcpy_chk.c
+ssp/strncat_chk.c
+ssp/strncpy_chk.c
+ssp/gets_chk.c
+ssp/snprintf_chk.c
+ssp/sprintf_chk.c
+ssp/vsnprintf_chk.c
+ssp/vsprintf_chk.c
+machine/riscv/memmove.S
+machine/riscv/memmove-stub.c
+machine/riscv/memset.S
+machine/riscv/memcpy-asm.S
+machine/riscv/memcpy.c
+machine/riscv/strlen.c
+machine/riscv/strcpy.c
+machine/riscv/strcmp.S
+machine/riscv/setjmp.S
+machine/riscv/ieeefp.c
+machine/riscv/ffs.c
+				`),
 				CFlags: []string{
 					"-DHAVE_CONFIG_H",
 					"-D_LIBC",
@@ -1081,161 +1096,161 @@ func getNewlibESP32ConfigRISCV(baseDir, target string) compile.CompileConfig {
 				}),
 			},
 			{
-				OutputFileName: fmt.Sprintf("libm-fbuiltin_fno_math_errno-%s.a", target),
-				Files: []string{
-					filepath.Join(baseDir, "newlib", "libm", "common", "acoshl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "acosl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "asinhl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "asinl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "atan2l.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "atanhl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "atanl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "cbrtl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "ceill.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "copysignl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "cosf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "coshl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "cosl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "erfcl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "erfl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "exp.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "exp2.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "exp2l.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "exp_data.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "expl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "expm1l.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "fabsl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "fdiml.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "floorl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "fmal.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "fmaxl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "fminl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "fmodl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "frexpl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "hypotl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "ilogbl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "ldexpl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "lgammal.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "llrintl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "llroundl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "log.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "log10l.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "log1pl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "log2.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "log2_data.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "log2l.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "log_data.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "logbl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "logl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "lrintl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "lroundl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "math_err.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "math_errf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "modfl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "nanl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "nearbyintl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "nextafterl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "nexttoward.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "nexttowardf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "nexttowardl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "pow.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "pow_log_data.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "powl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "remainderl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "remquol.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "rintl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "roundl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_cbrt.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_copysign.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_exp10.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_expm1.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_fdim.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_finite.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_fma.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_fmax.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_fmin.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_fpclassify.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_ilogb.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_infinity.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_isinf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_isinfd.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_isnan.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_isnand.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_llrint.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_llround.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_log1p.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_log2.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_logb.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_lrint.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_lround.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_modf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_nan.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_nearbyint.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_nextafter.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_pow10.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_remquo.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_rint.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_round.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_scalbln.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_scalbn.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_signbit.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "s_trunc.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "scalblnl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "scalbnl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_cbrt.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_copysign.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_exp.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_exp10.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_exp2.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_exp2_data.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_expm1.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_fdim.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_finite.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_fma.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_fmax.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_fmin.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_fpclassify.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_ilogb.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_infinity.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_isinf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_isinff.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_isnan.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_isnanf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_llrint.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_llround.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_log.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_log1p.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_log2.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_log2_data.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_log_data.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_logb.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_lrint.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_lround.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_modf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_nan.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_nearbyint.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_nextafter.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_pow.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_pow10.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_pow_log2_data.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_remquo.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_rint.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_round.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_scalbln.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_scalbn.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sf_trunc.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sincosf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sincosf_data.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sinf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sinhl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sinl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sl_finite.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "sqrtl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "tanhl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "tanl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "tgammal.c"),
-					filepath.Join(baseDir, "newlib", "libm", "common", "truncl.c"),
-				},
+				OutputFileName: "libm-fbuiltin_fno_math_errno-" + target + ".a",
+				Files: joinFileList(baseDir, `
+newlib/libm/common/acoshl.c
+newlib/libm/common/acosl.c
+newlib/libm/common/asinhl.c
+newlib/libm/common/asinl.c
+newlib/libm/common/atan2l.c
+newlib/libm/common/atanhl.c
+newlib/libm/common/atanl.c
+newlib/libm/common/cbrtl.c
+newlib/libm/common/ceill.c
+newlib/libm/common/copysignl.c
+newlib/libm/common/cosf.c
+newlib/libm/common/coshl.c
+newlib/libm/common/cosl.c
+newlib/libm/common/erfcl.c
+newlib/libm/common/erfl.c
+newlib/libm/common/exp.c
+newlib/libm/common/exp2.c
+newlib/libm/common/exp2l.c
+newlib/libm/common/exp_data.c
+newlib/libm/common/expl.c
+newlib/libm/common/expm1l.c
+newlib/libm/common/fabsl.c
+newlib/libm/common/fdiml.c
+newlib/libm/common/floorl.c
+newlib/libm/common/fmal.c
+newlib/libm/common/fmaxl.c
+newlib/libm/common/fminl.c
+newlib/libm/common/fmodl.c
+newlib/libm/common/frexpl.c
+newlib/libm/common/hypotl.c
+newlib/libm/common/ilogbl.c
+newlib/libm/common/ldexpl.c
+newlib/libm/common/lgammal.c
+newlib/libm/common/llrintl.c
+newlib/libm/common/llroundl.c
+newlib/libm/common/log.c
+newlib/libm/common/log10l.c
+newlib/libm/common/log1pl.c
+newlib/libm/common/log2.c
+newlib/libm/common/log2_data.c
+newlib/libm/common/log2l.c
+newlib/libm/common/log_data.c
+newlib/libm/common/logbl.c
+newlib/libm/common/logl.c
+newlib/libm/common/lrintl.c
+newlib/libm/common/lroundl.c
+newlib/libm/common/math_err.c
+newlib/libm/common/math_errf.c
+newlib/libm/common/modfl.c
+newlib/libm/common/nanl.c
+newlib/libm/common/nearbyintl.c
+newlib/libm/common/nextafterl.c
+newlib/libm/common/nexttoward.c
+newlib/libm/common/nexttowardf.c
+newlib/libm/common/nexttowardl.c
+newlib/libm/common/pow.c
+newlib/libm/common/pow_log_data.c
+newlib/libm/common/powl.c
+newlib/libm/common/remainderl.c
+newlib/libm/common/remquol.c
+newlib/libm/common/rintl.c
+newlib/libm/common/roundl.c
+newlib/libm/common/s_cbrt.c
+newlib/libm/common/s_copysign.c
+newlib/libm/common/s_exp10.c
+newlib/libm/common/s_expm1.c
+newlib/libm/common/s_fdim.c
+newlib/libm/common/s_finite.c
+newlib/libm/common/s_fma.c
+newlib/libm/common/s_fmax.c
+newlib/libm/common/s_fmin.c
+newlib/libm/common/s_fpclassify.c
+newlib/libm/common/s_ilogb.c
+newlib/libm/common/s_infinity.c
+newlib/libm/common/s_isinf.c
+newlib/libm/common/s_isinfd.c
+newlib/libm/common/s_isnan.c
+newlib/libm/common/s_isnand.c
+newlib/libm/common/s_llrint.c
+newlib/libm/common/s_llround.c
+newlib/libm/common/s_log1p.c
+newlib/libm/common/s_log2.c
+newlib/libm/common/s_logb.c
+newlib/libm/common/s_lrint.c
+newlib/libm/common/s_lround.c
+newlib/libm/common/s_modf.c
+newlib/libm/common/s_nan.c
+newlib/libm/common/s_nearbyint.c
+newlib/libm/common/s_nextafter.c
+newlib/libm/common/s_pow10.c
+newlib/libm/common/s_remquo.c
+newlib/libm/common/s_rint.c
+newlib/libm/common/s_round.c
+newlib/libm/common/s_scalbln.c
+newlib/libm/common/s_scalbn.c
+newlib/libm/common/s_signbit.c
+newlib/libm/common/s_trunc.c
+newlib/libm/common/scalblnl.c
+newlib/libm/common/scalbnl.c
+newlib/libm/common/sf_cbrt.c
+newlib/libm/common/sf_copysign.c
+newlib/libm/common/sf_exp.c
+newlib/libm/common/sf_exp10.c
+newlib/libm/common/sf_exp2.c
+newlib/libm/common/sf_exp2_data.c
+newlib/libm/common/sf_expm1.c
+newlib/libm/common/sf_fdim.c
+newlib/libm/common/sf_finite.c
+newlib/libm/common/sf_fma.c
+newlib/libm/common/sf_fmax.c
+newlib/libm/common/sf_fmin.c
+newlib/libm/common/sf_fpclassify.c
+newlib/libm/common/sf_ilogb.c
+newlib/libm/common/sf_infinity.c
+newlib/libm/common/sf_isinf.c
+newlib/libm/common/sf_isinff.c
+newlib/libm/common/sf_isnan.c
+newlib/libm/common/sf_isnanf.c
+newlib/libm/common/sf_llrint.c
+newlib/libm/common/sf_llround.c
+newlib/libm/common/sf_log.c
+newlib/libm/common/sf_log1p.c
+newlib/libm/common/sf_log2.c
+newlib/libm/common/sf_log2_data.c
+newlib/libm/common/sf_log_data.c
+newlib/libm/common/sf_logb.c
+newlib/libm/common/sf_lrint.c
+newlib/libm/common/sf_lround.c
+newlib/libm/common/sf_modf.c
+newlib/libm/common/sf_nan.c
+newlib/libm/common/sf_nearbyint.c
+newlib/libm/common/sf_nextafter.c
+newlib/libm/common/sf_pow.c
+newlib/libm/common/sf_pow10.c
+newlib/libm/common/sf_pow_log2_data.c
+newlib/libm/common/sf_remquo.c
+newlib/libm/common/sf_rint.c
+newlib/libm/common/sf_round.c
+newlib/libm/common/sf_scalbln.c
+newlib/libm/common/sf_scalbn.c
+newlib/libm/common/sf_trunc.c
+newlib/libm/common/sincosf.c
+newlib/libm/common/sincosf_data.c
+newlib/libm/common/sinf.c
+newlib/libm/common/sinhl.c
+newlib/libm/common/sinl.c
+newlib/libm/common/sl_finite.c
+newlib/libm/common/sqrtl.c
+newlib/libm/common/tanhl.c
+newlib/libm/common/tanl.c
+newlib/libm/common/tgammal.c
+newlib/libm/common/truncl.c
+				`),
 				CFlags: append(
 					append([]string{}, libmCommonCFlags...),
 					"-fbuiltin",
@@ -1245,267 +1260,267 @@ func getNewlibESP32ConfigRISCV(baseDir, target string) compile.CompileConfig {
 				CCFlags: _libcCCFlags,
 			},
 			{
-				OutputFileName: fmt.Sprintf("libm-default-%s.a", target),
-				Files: []string{
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cabs.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cabsf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cabsl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cacos.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cacosf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cacosh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cacoshf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cacoshl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cacosl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "carg.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cargf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cargl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "casin.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "casinf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "casinh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "casinhf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "casinhl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "casinl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "catan.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "catanf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "catanh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "catanhf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "catanhl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "catanl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "ccos.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "ccosf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "ccosh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "ccoshf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "ccoshl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "ccosl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cephes_subr.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cephes_subrf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cephes_subrl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cexp.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cexpf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cexpl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cimag.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cimagf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cimagl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "clog.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "clog10.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "clog10f.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "clogf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "clogl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "conj.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "conjf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "conjl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cpow.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cpowf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cpowl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cproj.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cprojf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "cprojl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "creal.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "crealf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "creall.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "csin.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "csinf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "csinh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "csinhf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "csinhl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "csinl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "csqrt.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "csqrtf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "csqrtl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "ctan.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "ctanf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "ctanh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "ctanhf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "ctanhl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "complex", "ctanl.c"),
-					filepath.Join(baseDir, "newlib", "libm", "fenv", "fe_dfl_env.c"),
-					filepath.Join(baseDir, "newlib", "libm", "fenv", "feclearexcept.c"),
-					filepath.Join(baseDir, "newlib", "libm", "fenv", "fegetenv.c"),
-					filepath.Join(baseDir, "newlib", "libm", "fenv", "fegetexceptflag.c"),
-					filepath.Join(baseDir, "newlib", "libm", "fenv", "fegetround.c"),
-					filepath.Join(baseDir, "newlib", "libm", "fenv", "feholdexcept.c"),
-					filepath.Join(baseDir, "newlib", "libm", "fenv", "feraiseexcept.c"),
-					filepath.Join(baseDir, "newlib", "libm", "fenv", "fesetenv.c"),
-					filepath.Join(baseDir, "newlib", "libm", "fenv", "fesetexceptflag.c"),
-					filepath.Join(baseDir, "newlib", "libm", "fenv", "fesetround.c"),
-					filepath.Join(baseDir, "newlib", "libm", "fenv", "fetestexcept.c"),
-					filepath.Join(baseDir, "newlib", "libm", "fenv", "feupdateenv.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "e_sqrt.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "ef_sqrt.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "fe_dfl_env.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "feclearexcept.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "fegetenv.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "fegetexceptflag.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "fegetround.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "feholdexcept.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "feraiseexcept.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "fesetenv.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "fesetexceptflag.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "fesetround.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "fetestexcept.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "feupdateenv.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "s_copysign.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "s_fabs.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "s_finite.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "s_fma.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "s_fmax.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "s_fmin.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "s_fpclassify.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "s_isinf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "s_isnan.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "s_llrint.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "s_llround.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "s_lrint.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "s_lround.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "sf_copysign.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "sf_fabs.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "sf_finite.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "sf_fma.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "sf_fmax.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "sf_fmin.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "sf_fpclassify.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "sf_isinf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "sf_isnan.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "sf_llrint.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "sf_llround.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "sf_lrint.c"),
-					filepath.Join(baseDir, "newlib", "libm", "machine", "riscv", "sf_lround.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_acos.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_acosh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_asin.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_atan2.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_atanh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_cosh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_exp.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_fmod.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_hypot.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_j0.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_j1.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_jn.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_log.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_log10.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_pow.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_rem_pio2.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_remainder.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_scalb.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_sinh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_sqrt.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "e_tgamma.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_acos.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_acosh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_asin.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_atan2.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_atanh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_cosh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_exp.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_fmod.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_hypot.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_j0.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_j1.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_jn.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_log.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_log10.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_pow.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_rem_pio2.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_remainder.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_scalb.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_sinh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_sqrt.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "ef_tgamma.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "el_hypot.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "er_lgamma.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "erf_lgamma.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "k_cos.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "k_rem_pio2.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "k_sin.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "k_standard.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "k_tan.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "kf_cos.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "kf_rem_pio2.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "kf_sin.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "kf_tan.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "s_asinh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "s_atan.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "s_ceil.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "s_cos.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "s_erf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "s_fabs.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "s_floor.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "s_frexp.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "s_ldexp.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "s_signif.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "s_sin.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "s_tan.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "s_tanh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "sf_asinh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "sf_atan.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "sf_ceil.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "sf_cos.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "sf_erf.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "sf_fabs.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "sf_floor.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "sf_frexp.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "sf_ldexp.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "sf_signif.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "sf_sin.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "sf_tan.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "sf_tanh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_acos.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_acosh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_asin.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_atan2.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_atanh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_cosh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_drem.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_exp.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_exp2.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_fmod.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_gamma.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_hypot.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_j0.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_j1.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_jn.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_lgamma.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_log.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_log10.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_pow.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_remainder.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_scalb.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_sincos.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_sinh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_sqrt.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "w_tgamma.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_acos.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_acosh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_asin.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_atan2.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_atanh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_cosh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_drem.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_exp.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_exp2.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_fmod.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_gamma.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_hypot.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_j0.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_j1.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_jn.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_lgamma.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_log.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_log10.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_log2.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_pow.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_remainder.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_scalb.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_sincos.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_sinh.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_sqrt.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wf_tgamma.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wr_gamma.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wr_lgamma.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wrf_gamma.c"),
-					filepath.Join(baseDir, "newlib", "libm", "math", "wrf_lgamma.c"),
-				},
+				OutputFileName: "libm-default-" + target + ".a",
+				Files: joinFileList(baseDir, `
+newlib/libm/complex/cabs.c
+newlib/libm/complex/cabsf.c
+newlib/libm/complex/cabsl.c
+newlib/libm/complex/cacos.c
+newlib/libm/complex/cacosf.c
+newlib/libm/complex/cacosh.c
+newlib/libm/complex/cacoshf.c
+newlib/libm/complex/cacoshl.c
+newlib/libm/complex/cacosl.c
+newlib/libm/complex/carg.c
+newlib/libm/complex/cargf.c
+newlib/libm/complex/cargl.c
+newlib/libm/complex/casin.c
+newlib/libm/complex/casinf.c
+newlib/libm/complex/casinh.c
+newlib/libm/complex/casinhf.c
+newlib/libm/complex/casinhl.c
+newlib/libm/complex/casinl.c
+newlib/libm/complex/catan.c
+newlib/libm/complex/catanf.c
+newlib/libm/complex/catanh.c
+newlib/libm/complex/catanhf.c
+newlib/libm/complex/catanhl.c
+newlib/libm/complex/catanl.c
+newlib/libm/complex/ccos.c
+newlib/libm/complex/ccosf.c
+newlib/libm/complex/ccosh.c
+newlib/libm/complex/ccoshf.c
+newlib/libm/complex/ccoshl.c
+newlib/libm/complex/ccosl.c
+newlib/libm/complex/cephes_subr.c
+newlib/libm/complex/cephes_subrf.c
+newlib/libm/complex/cephes_subrl.c
+newlib/libm/complex/cexp.c
+newlib/libm/complex/cexpf.c
+newlib/libm/complex/cexpl.c
+newlib/libm/complex/cimag.c
+newlib/libm/complex/cimagf.c
+newlib/libm/complex/cimagl.c
+newlib/libm/complex/clog.c
+newlib/libm/complex/clog10.c
+newlib/libm/complex/clog10f.c
+newlib/libm/complex/clogf.c
+newlib/libm/complex/clogl.c
+newlib/libm/complex/conj.c
+newlib/libm/complex/conjf.c
+newlib/libm/complex/conjl.c
+newlib/libm/complex/cpow.c
+newlib/libm/complex/cpowf.c
+newlib/libm/complex/cpowl.c
+newlib/libm/complex/cproj.c
+newlib/libm/complex/cprojf.c
+newlib/libm/complex/cprojl.c
+newlib/libm/complex/creal.c
+newlib/libm/complex/crealf.c
+newlib/libm/complex/creall.c
+newlib/libm/complex/csin.c
+newlib/libm/complex/csinf.c
+newlib/libm/complex/csinh.c
+newlib/libm/complex/csinhf.c
+newlib/libm/complex/csinhl.c
+newlib/libm/complex/csinl.c
+newlib/libm/complex/csqrt.c
+newlib/libm/complex/csqrtf.c
+newlib/libm/complex/csqrtl.c
+newlib/libm/complex/ctan.c
+newlib/libm/complex/ctanf.c
+newlib/libm/complex/ctanh.c
+newlib/libm/complex/ctanhf.c
+newlib/libm/complex/ctanhl.c
+newlib/libm/complex/ctanl.c
+newlib/libm/fenv/fe_dfl_env.c
+newlib/libm/fenv/feclearexcept.c
+newlib/libm/fenv/fegetenv.c
+newlib/libm/fenv/fegetexceptflag.c
+newlib/libm/fenv/fegetround.c
+newlib/libm/fenv/feholdexcept.c
+newlib/libm/fenv/feraiseexcept.c
+newlib/libm/fenv/fesetenv.c
+newlib/libm/fenv/fesetexceptflag.c
+newlib/libm/fenv/fesetround.c
+newlib/libm/fenv/fetestexcept.c
+newlib/libm/fenv/feupdateenv.c
+newlib/libm/machine/riscv/e_sqrt.c
+newlib/libm/machine/riscv/ef_sqrt.c
+newlib/libm/machine/riscv/fe_dfl_env.c
+newlib/libm/machine/riscv/feclearexcept.c
+newlib/libm/machine/riscv/fegetenv.c
+newlib/libm/machine/riscv/fegetexceptflag.c
+newlib/libm/machine/riscv/fegetround.c
+newlib/libm/machine/riscv/feholdexcept.c
+newlib/libm/machine/riscv/feraiseexcept.c
+newlib/libm/machine/riscv/fesetenv.c
+newlib/libm/machine/riscv/fesetexceptflag.c
+newlib/libm/machine/riscv/fesetround.c
+newlib/libm/machine/riscv/fetestexcept.c
+newlib/libm/machine/riscv/feupdateenv.c
+newlib/libm/machine/riscv/s_copysign.c
+newlib/libm/machine/riscv/s_fabs.c
+newlib/libm/machine/riscv/s_finite.c
+newlib/libm/machine/riscv/s_fma.c
+newlib/libm/machine/riscv/s_fmax.c
+newlib/libm/machine/riscv/s_fmin.c
+newlib/libm/machine/riscv/s_fpclassify.c
+newlib/libm/machine/riscv/s_isinf.c
+newlib/libm/machine/riscv/s_isnan.c
+newlib/libm/machine/riscv/s_llrint.c
+newlib/libm/machine/riscv/s_llround.c
+newlib/libm/machine/riscv/s_lrint.c
+newlib/libm/machine/riscv/s_lround.c
+newlib/libm/machine/riscv/sf_copysign.c
+newlib/libm/machine/riscv/sf_fabs.c
+newlib/libm/machine/riscv/sf_finite.c
+newlib/libm/machine/riscv/sf_fma.c
+newlib/libm/machine/riscv/sf_fmax.c
+newlib/libm/machine/riscv/sf_fmin.c
+newlib/libm/machine/riscv/sf_fpclassify.c
+newlib/libm/machine/riscv/sf_isinf.c
+newlib/libm/machine/riscv/sf_isnan.c
+newlib/libm/machine/riscv/sf_llrint.c
+newlib/libm/machine/riscv/sf_llround.c
+newlib/libm/machine/riscv/sf_lrint.c
+newlib/libm/machine/riscv/sf_lround.c
+newlib/libm/math/e_acos.c
+newlib/libm/math/e_acosh.c
+newlib/libm/math/e_asin.c
+newlib/libm/math/e_atan2.c
+newlib/libm/math/e_atanh.c
+newlib/libm/math/e_cosh.c
+newlib/libm/math/e_exp.c
+newlib/libm/math/e_fmod.c
+newlib/libm/math/e_hypot.c
+newlib/libm/math/e_j0.c
+newlib/libm/math/e_j1.c
+newlib/libm/math/e_jn.c
+newlib/libm/math/e_log.c
+newlib/libm/math/e_log10.c
+newlib/libm/math/e_pow.c
+newlib/libm/math/e_rem_pio2.c
+newlib/libm/math/e_remainder.c
+newlib/libm/math/e_scalb.c
+newlib/libm/math/e_sinh.c
+newlib/libm/math/e_sqrt.c
+newlib/libm/math/e_tgamma.c
+newlib/libm/math/ef_acos.c
+newlib/libm/math/ef_acosh.c
+newlib/libm/math/ef_asin.c
+newlib/libm/math/ef_atan2.c
+newlib/libm/math/ef_atanh.c
+newlib/libm/math/ef_cosh.c
+newlib/libm/math/ef_exp.c
+newlib/libm/math/ef_fmod.c
+newlib/libm/math/ef_hypot.c
+newlib/libm/math/ef_j0.c
+newlib/libm/math/ef_j1.c
+newlib/libm/math/ef_jn.c
+newlib/libm/math/ef_log.c
+newlib/libm/math/ef_log10.c
+newlib/libm/math/ef_pow.c
+newlib/libm/math/ef_rem_pio2.c
+newlib/libm/math/ef_remainder.c
+newlib/libm/math/ef_scalb.c
+newlib/libm/math/ef_sinh.c
+newlib/libm/math/ef_sqrt.c
+newlib/libm/math/ef_tgamma.c
+newlib/libm/math/el_hypot.c
+newlib/libm/math/er_lgamma.c
+newlib/libm/math/erf_lgamma.c
+newlib/libm/math/k_cos.c
+newlib/libm/math/k_rem_pio2.c
+newlib/libm/math/k_sin.c
+newlib/libm/math/k_standard.c
+newlib/libm/math/k_tan.c
+newlib/libm/math/kf_cos.c
+newlib/libm/math/kf_rem_pio2.c
+newlib/libm/math/kf_sin.c
+newlib/libm/math/kf_tan.c
+newlib/libm/math/s_asinh.c
+newlib/libm/math/s_atan.c
+newlib/libm/math/s_ceil.c
+newlib/libm/math/s_cos.c
+newlib/libm/math/s_erf.c
+newlib/libm/math/s_fabs.c
+newlib/libm/math/s_floor.c
+newlib/libm/math/s_frexp.c
+newlib/libm/math/s_ldexp.c
+newlib/libm/math/s_signif.c
+newlib/libm/math/s_sin.c
+newlib/libm/math/s_tan.c
+newlib/libm/math/s_tanh.c
+newlib/libm/math/sf_asinh.c
+newlib/libm/math/sf_atan.c
+newlib/libm/math/sf_ceil.c
+newlib/libm/math/sf_cos.c
+newlib/libm/math/sf_erf.c
+newlib/libm/math/sf_fabs.c
+newlib/libm/math/sf_floor.c
+newlib/libm/math/sf_frexp.c
+newlib/libm/math/sf_ldexp.c
+newlib/libm/math/sf_signif.c
+newlib/libm/math/sf_sin.c
+newlib/libm/math/sf_tan.c
+newlib/libm/math/sf_tanh.c
+newlib/libm/math/w_acos.c
+newlib/libm/math/w_acosh.c
+newlib/libm/math/w_asin.c
+newlib/libm/math/w_atan2.c
+newlib/libm/math/w_atanh.c
+newlib/libm/math/w_cosh.c
+newlib/libm/math/w_drem.c
+newlib/libm/math/w_exp.c
+newlib/libm/math/w_exp2.c
+newlib/libm/math/w_fmod.c
+newlib/libm/math/w_gamma.c
+newlib/libm/math/w_hypot.c
+newlib/libm/math/w_j0.c
+newlib/libm/math/w_j1.c
+newlib/libm/math/w_jn.c
+newlib/libm/math/w_lgamma.c
+newlib/libm/math/w_log.c
+newlib/libm/math/w_log10.c
+newlib/libm/math/w_pow.c
+newlib/libm/math/w_remainder.c
+newlib/libm/math/w_scalb.c
+newlib/libm/math/w_sincos.c
+newlib/libm/math/w_sinh.c
+newlib/libm/math/w_sqrt.c
+newlib/libm/math/w_tgamma.c
+newlib/libm/math/wf_acos.c
+newlib/libm/math/wf_acosh.c
+newlib/libm/math/wf_asin.c
+newlib/libm/math/wf_atan2.c
+newlib/libm/math/wf_atanh.c
+newlib/libm/math/wf_cosh.c
+newlib/libm/math/wf_drem.c
+newlib/libm/math/wf_exp.c
+newlib/libm/math/wf_exp2.c
+newlib/libm/math/wf_fmod.c
+newlib/libm/math/wf_gamma.c
+newlib/libm/math/wf_hypot.c
+newlib/libm/math/wf_j0.c
+newlib/libm/math/wf_j1.c
+newlib/libm/math/wf_jn.c
+newlib/libm/math/wf_lgamma.c
+newlib/libm/math/wf_log.c
+newlib/libm/math/wf_log10.c
+newlib/libm/math/wf_log2.c
+newlib/libm/math/wf_pow.c
+newlib/libm/math/wf_remainder.c
+newlib/libm/math/wf_scalb.c
+newlib/libm/math/wf_sincos.c
+newlib/libm/math/wf_sinh.c
+newlib/libm/math/wf_sqrt.c
+newlib/libm/math/wf_tgamma.c
+newlib/libm/math/wr_gamma.c
+newlib/libm/math/wr_lgamma.c
+newlib/libm/math/wrf_gamma.c
+newlib/libm/math/wrf_lgamma.c
+				`),
 				CFlags:  append([]string{}, libmCommonCFlags...),
 				LDFlags: _libcLDFlags,
 				CCFlags: _libcCCFlags,
@@ -1527,16 +1542,16 @@ func getNewlibESP32ConfigXtensa(baseDir, target string) compile.CompileConfig {
 		ExportCFlags: libcIncludeDir,
 		Groups: []compile.CompileGroup{
 			{
-				OutputFileName: fmt.Sprintf("libcrt0-%s.a", target),
-				Files: []string{
-					filepath.Join(baseDir, "libgloss", "xtensa", "clibrary_init.c"),
-					filepath.Join(baseDir, "libgloss", "xtensa", "syscalls.c"),
-					filepath.Join(baseDir, "libgloss", "xtensa", "sim-call.S"),
-					filepath.Join(baseDir, "libgloss", "xtensa", "boards", "esp32", "board.c"),
-					filepath.Join(baseDir, "libgloss", "xtensa", "crt1-boards.S"),
-					filepath.Join(baseDir, "libgloss", "xtensa", "sleep.S"),
-					filepath.Join(baseDir, "libgloss", "xtensa", "window-vectors.S"),
-				},
+				OutputFileName: "libcrt0-" + target + ".a",
+				Files: joinFileList(baseDir, `
+libgloss/xtensa/clibrary_init.c
+libgloss/xtensa/syscalls.c
+libgloss/xtensa/sim-call.S
+libgloss/xtensa/boards/esp32/board.c
+libgloss/xtensa/crt1-boards.S
+libgloss/xtensa/sleep.S
+libgloss/xtensa/window-vectors.S
+				`),
 				CFlags: []string{
 					"-DHAVE_CONFIG_H",
 					"-D_LIBGLOSS",
@@ -1551,166 +1566,166 @@ func getNewlibESP32ConfigXtensa(baseDir, target string) compile.CompileConfig {
 				CCFlags: _libcCCFlags,
 			},
 			{
-				OutputFileName: fmt.Sprintf("libgloss-%s.a", target),
-				Files: []string{
-					filepath.Join(baseDir, "libgloss", "libnosys", "chown.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "close.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "environ.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "errno.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "execve.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "fork.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "fstat.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "getpid.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "gettod.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "isatty.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "kill.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "link.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "lseek.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "open.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "read.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "readlink.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "sbrk.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "stat.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "symlink.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "times.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "unlink.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "wait.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "write.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "getentropy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "_exit.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "getreent.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "time.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "fcntl.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "chdir.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "chmod.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "closedir.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "dirfd.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "ftw.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "getcwd.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "mkdir.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "nftw.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "opendir.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pathconf.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "readdir.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "rewinddir.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "scandir.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "seekdir.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "telldir.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "rename.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "_pthread_cleanup_pop.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "_pthread_cleanup_pop_restore.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "_pthread_cleanup_push.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "_pthread_cleanup_push_defer.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_atfork.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getaffinity_np.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getdetachstate.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getguardsize.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getinheritsched.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getschedparam.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getschedpolicy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getscope.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getstack.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getstackaddr.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_getstacksize.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setaffinity_np.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setdetachstate.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setguardsize.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setinheritsched.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setschedparam.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setschedpolicy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setscope.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setstack.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setstackaddr.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_attr_setstacksize.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_barrier_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_barrier_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_barrier_wait.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_barrierattr_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_barrierattr_getpshared.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_barrierattr_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_barrierattr_setpshared.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_cancel.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_cond_broadcast.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_cond_clockwait.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_cond_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_cond_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_cond_signal.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_cond_timedwait.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_cond_wait.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_condattr_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_condattr_getclock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_condattr_getpshared.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_condattr_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_condattr_setclock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_condattr_setpshared.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_create.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_detach.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_equal.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_exit.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_getaffinity_np.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_getattr_np.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_getconcurrency.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_getcpuclockid.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_getname_np.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_getschedparam.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_getspecific.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_join.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_key_create.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_key_delete.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutex_clocklock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutex_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutex_getprioceiling.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutex_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutex_lock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutex_setprioceiling.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutex_timedlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutex_trylock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutex_unlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_getprioceiling.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_getprotocol.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_getpshared.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_gettype.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_setprioceiling.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_setprotocol.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_setpshared.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_mutexattr_settype.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_once.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_clockrdlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_clockwrlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_rdlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_timedrdlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_timedwrlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_tryrdlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_trywrlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_unlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlock_wrlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlockattr_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlockattr_getpshared.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlockattr_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_rwlockattr_setpshared.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_self.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_setaffinity_np.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_setcancelstate.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_setcanceltype.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_setconcurrency.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_setname_np.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_setschedparam.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_setschedprio.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_setspecific.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_spin_destroy.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_spin_init.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_spin_lock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_spin_trylock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_spin_unlock.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_testcancel.c"),
-					filepath.Join(baseDir, "libgloss", "libnosys", "pthread_yield.c"),
-				},
+				OutputFileName: "libgloss-" + target + ".a",
+				Files: joinFileList(baseDir, `
+libgloss/libnosys/chown.c
+libgloss/libnosys/close.c
+libgloss/libnosys/environ.c
+libgloss/libnosys/errno.c
+libgloss/libnosys/execve.c
+libgloss/libnosys/fork.c
+libgloss/libnosys/fstat.c
+libgloss/libnosys/getpid.c
+libgloss/libnosys/gettod.c
+libgloss/libnosys/isatty.c
+libgloss/libnosys/kill.c
+libgloss/libnosys/link.c
+libgloss/libnosys/lseek.c
+libgloss/libnosys/open.c
+libgloss/libnosys/read.c
+libgloss/libnosys/readlink.c
+libgloss/libnosys/sbrk.c
+libgloss/libnosys/stat.c
+libgloss/libnosys/symlink.c
+libgloss/libnosys/times.c
+libgloss/libnosys/unlink.c
+libgloss/libnosys/wait.c
+libgloss/libnosys/write.c
+libgloss/libnosys/getentropy.c
+libgloss/libnosys/_exit.c
+libgloss/libnosys/getreent.c
+libgloss/libnosys/time.c
+libgloss/libnosys/fcntl.c
+libgloss/libnosys/chdir.c
+libgloss/libnosys/chmod.c
+libgloss/libnosys/closedir.c
+libgloss/libnosys/dirfd.c
+libgloss/libnosys/ftw.c
+libgloss/libnosys/getcwd.c
+libgloss/libnosys/mkdir.c
+libgloss/libnosys/nftw.c
+libgloss/libnosys/opendir.c
+libgloss/libnosys/pathconf.c
+libgloss/libnosys/readdir.c
+libgloss/libnosys/rewinddir.c
+libgloss/libnosys/scandir.c
+libgloss/libnosys/seekdir.c
+libgloss/libnosys/telldir.c
+libgloss/libnosys/rename.c
+libgloss/libnosys/_pthread_cleanup_pop.c
+libgloss/libnosys/_pthread_cleanup_pop_restore.c
+libgloss/libnosys/_pthread_cleanup_push.c
+libgloss/libnosys/_pthread_cleanup_push_defer.c
+libgloss/libnosys/pthread_atfork.c
+libgloss/libnosys/pthread_attr_destroy.c
+libgloss/libnosys/pthread_attr_getaffinity_np.c
+libgloss/libnosys/pthread_attr_getdetachstate.c
+libgloss/libnosys/pthread_attr_getguardsize.c
+libgloss/libnosys/pthread_attr_getinheritsched.c
+libgloss/libnosys/pthread_attr_getschedparam.c
+libgloss/libnosys/pthread_attr_getschedpolicy.c
+libgloss/libnosys/pthread_attr_getscope.c
+libgloss/libnosys/pthread_attr_getstack.c
+libgloss/libnosys/pthread_attr_getstackaddr.c
+libgloss/libnosys/pthread_attr_getstacksize.c
+libgloss/libnosys/pthread_attr_init.c
+libgloss/libnosys/pthread_attr_setaffinity_np.c
+libgloss/libnosys/pthread_attr_setdetachstate.c
+libgloss/libnosys/pthread_attr_setguardsize.c
+libgloss/libnosys/pthread_attr_setinheritsched.c
+libgloss/libnosys/pthread_attr_setschedparam.c
+libgloss/libnosys/pthread_attr_setschedpolicy.c
+libgloss/libnosys/pthread_attr_setscope.c
+libgloss/libnosys/pthread_attr_setstack.c
+libgloss/libnosys/pthread_attr_setstackaddr.c
+libgloss/libnosys/pthread_attr_setstacksize.c
+libgloss/libnosys/pthread_barrier_destroy.c
+libgloss/libnosys/pthread_barrier_init.c
+libgloss/libnosys/pthread_barrier_wait.c
+libgloss/libnosys/pthread_barrierattr_destroy.c
+libgloss/libnosys/pthread_barrierattr_getpshared.c
+libgloss/libnosys/pthread_barrierattr_init.c
+libgloss/libnosys/pthread_barrierattr_setpshared.c
+libgloss/libnosys/pthread_cancel.c
+libgloss/libnosys/pthread_cond_broadcast.c
+libgloss/libnosys/pthread_cond_clockwait.c
+libgloss/libnosys/pthread_cond_destroy.c
+libgloss/libnosys/pthread_cond_init.c
+libgloss/libnosys/pthread_cond_signal.c
+libgloss/libnosys/pthread_cond_timedwait.c
+libgloss/libnosys/pthread_cond_wait.c
+libgloss/libnosys/pthread_condattr_destroy.c
+libgloss/libnosys/pthread_condattr_getclock.c
+libgloss/libnosys/pthread_condattr_getpshared.c
+libgloss/libnosys/pthread_condattr_init.c
+libgloss/libnosys/pthread_condattr_setclock.c
+libgloss/libnosys/pthread_condattr_setpshared.c
+libgloss/libnosys/pthread_create.c
+libgloss/libnosys/pthread_detach.c
+libgloss/libnosys/pthread_equal.c
+libgloss/libnosys/pthread_exit.c
+libgloss/libnosys/pthread_getaffinity_np.c
+libgloss/libnosys/pthread_getattr_np.c
+libgloss/libnosys/pthread_getconcurrency.c
+libgloss/libnosys/pthread_getcpuclockid.c
+libgloss/libnosys/pthread_getname_np.c
+libgloss/libnosys/pthread_getschedparam.c
+libgloss/libnosys/pthread_getspecific.c
+libgloss/libnosys/pthread_join.c
+libgloss/libnosys/pthread_key_create.c
+libgloss/libnosys/pthread_key_delete.c
+libgloss/libnosys/pthread_mutex_clocklock.c
+libgloss/libnosys/pthread_mutex_destroy.c
+libgloss/libnosys/pthread_mutex_getprioceiling.c
+libgloss/libnosys/pthread_mutex_init.c
+libgloss/libnosys/pthread_mutex_lock.c
+libgloss/libnosys/pthread_mutex_setprioceiling.c
+libgloss/libnosys/pthread_mutex_timedlock.c
+libgloss/libnosys/pthread_mutex_trylock.c
+libgloss/libnosys/pthread_mutex_unlock.c
+libgloss/libnosys/pthread_mutexattr_destroy.c
+libgloss/libnosys/pthread_mutexattr_getprioceiling.c
+libgloss/libnosys/pthread_mutexattr_getprotocol.c
+libgloss/libnosys/pthread_mutexattr_getpshared.c
+libgloss/libnosys/pthread_mutexattr_gettype.c
+libgloss/libnosys/pthread_mutexattr_init.c
+libgloss/libnosys/pthread_mutexattr_setprioceiling.c
+libgloss/libnosys/pthread_mutexattr_setprotocol.c
+libgloss/libnosys/pthread_mutexattr_setpshared.c
+libgloss/libnosys/pthread_mutexattr_settype.c
+libgloss/libnosys/pthread_once.c
+libgloss/libnosys/pthread_rwlock_clockrdlock.c
+libgloss/libnosys/pthread_rwlock_clockwrlock.c
+libgloss/libnosys/pthread_rwlock_destroy.c
+libgloss/libnosys/pthread_rwlock_init.c
+libgloss/libnosys/pthread_rwlock_rdlock.c
+libgloss/libnosys/pthread_rwlock_timedrdlock.c
+libgloss/libnosys/pthread_rwlock_timedwrlock.c
+libgloss/libnosys/pthread_rwlock_tryrdlock.c
+libgloss/libnosys/pthread_rwlock_trywrlock.c
+libgloss/libnosys/pthread_rwlock_unlock.c
+libgloss/libnosys/pthread_rwlock_wrlock.c
+libgloss/libnosys/pthread_rwlockattr_destroy.c
+libgloss/libnosys/pthread_rwlockattr_getpshared.c
+libgloss/libnosys/pthread_rwlockattr_init.c
+libgloss/libnosys/pthread_rwlockattr_setpshared.c
+libgloss/libnosys/pthread_self.c
+libgloss/libnosys/pthread_setaffinity_np.c
+libgloss/libnosys/pthread_setcancelstate.c
+libgloss/libnosys/pthread_setcanceltype.c
+libgloss/libnosys/pthread_setconcurrency.c
+libgloss/libnosys/pthread_setname_np.c
+libgloss/libnosys/pthread_setschedparam.c
+libgloss/libnosys/pthread_setschedprio.c
+libgloss/libnosys/pthread_setspecific.c
+libgloss/libnosys/pthread_spin_destroy.c
+libgloss/libnosys/pthread_spin_init.c
+libgloss/libnosys/pthread_spin_lock.c
+libgloss/libnosys/pthread_spin_trylock.c
+libgloss/libnosys/pthread_spin_unlock.c
+libgloss/libnosys/pthread_testcancel.c
+libgloss/libnosys/pthread_yield.c
+				`),
 				CFlags: []string{
 					"-D__NO_SYSCALLS__",
 					"-D_NO_GETUT",
@@ -1745,695 +1760,693 @@ func getNewlibESP32ConfigXtensa(baseDir, target string) compile.CompileConfig {
 				CCFlags: _libcCCFlags,
 			},
 			{
-				OutputFileName: fmt.Sprintf("libc-%s.a", target),
-				Files: []string{
-					filepath.Join(libcDir, "argz", "argz_add.c"),
-					filepath.Join(libcDir, "argz", "argz_add_sep.c"),
-					filepath.Join(libcDir, "argz", "argz_append.c"),
-					filepath.Join(libcDir, "argz", "argz_count.c"),
-					filepath.Join(libcDir, "argz", "argz_create.c"),
-					filepath.Join(libcDir, "argz", "argz_create_sep.c"),
-					filepath.Join(libcDir, "argz", "argz_delete.c"),
-					filepath.Join(libcDir, "argz", "argz_extract.c"),
-					filepath.Join(libcDir, "argz", "argz_insert.c"),
-					filepath.Join(libcDir, "argz", "argz_next.c"),
-					filepath.Join(libcDir, "argz", "argz_replace.c"),
-					filepath.Join(libcDir, "argz", "argz_stringify.c"),
-					filepath.Join(libcDir, "argz", "buf_findstr.c"),
-					filepath.Join(libcDir, "argz", "envz_entry.c"),
-					filepath.Join(libcDir, "argz", "envz_get.c"),
-					filepath.Join(libcDir, "argz", "envz_add.c"),
-					filepath.Join(libcDir, "argz", "envz_remove.c"),
-					filepath.Join(libcDir, "argz", "envz_merge.c"),
-					filepath.Join(libcDir, "argz", "envz_strip.c"),
-					filepath.Join(libcDir, "stdlib", "__adjust.c"),
-					filepath.Join(libcDir, "stdlib", "__atexit.c"),
-					filepath.Join(libcDir, "stdlib", "__call_atexit.c"),
-					filepath.Join(libcDir, "stdlib", "__exp10.c"),
-					filepath.Join(libcDir, "stdlib", "__ten_mu.c"),
-					filepath.Join(libcDir, "stdlib", "_Exit.c"),
-					filepath.Join(libcDir, "stdlib", "abort.c"),
-					filepath.Join(libcDir, "stdlib", "abs.c"),
-					filepath.Join(libcDir, "stdlib", "aligned_alloc.c"),
-					filepath.Join(libcDir, "stdlib", "assert.c"),
-					filepath.Join(libcDir, "stdlib", "atexit.c"),
-					filepath.Join(libcDir, "stdlib", "atof.c"),
-					filepath.Join(libcDir, "stdlib", "atoff.c"),
-					filepath.Join(libcDir, "stdlib", "atoi.c"),
-					filepath.Join(libcDir, "stdlib", "atol.c"),
-					filepath.Join(libcDir, "stdlib", "calloc.c"),
-					filepath.Join(libcDir, "stdlib", "callocr.c"),
-					filepath.Join(libcDir, "stdlib", "cfreer.c"),
-					filepath.Join(libcDir, "stdlib", "div.c"),
-					filepath.Join(libcDir, "stdlib", "dtoa.c"),
-					filepath.Join(libcDir, "stdlib", "dtoastub.c"),
-					filepath.Join(libcDir, "stdlib", "environ.c"),
-					filepath.Join(libcDir, "stdlib", "envlock.c"),
-					filepath.Join(libcDir, "stdlib", "eprintf.c"),
-					filepath.Join(libcDir, "stdlib", "exit.c"),
-					filepath.Join(libcDir, "stdlib", "freer.c"),
-					filepath.Join(libcDir, "stdlib", "gdtoa-gethex.c"),
-					filepath.Join(libcDir, "stdlib", "gdtoa-hexnan.c"),
-					filepath.Join(libcDir, "stdlib", "getenv.c"),
-					filepath.Join(libcDir, "stdlib", "getenv_r.c"),
-					filepath.Join(libcDir, "stdlib", "imaxabs.c"),
-					filepath.Join(libcDir, "stdlib", "imaxdiv.c"),
-					filepath.Join(libcDir, "stdlib", "itoa.c"),
-					filepath.Join(libcDir, "stdlib", "labs.c"),
-					filepath.Join(libcDir, "stdlib", "ldiv.c"),
-					filepath.Join(libcDir, "stdlib", "ldtoa.c"),
-					filepath.Join(libcDir, "stdlib", "gdtoa-ldtoa.c"),
-					filepath.Join(libcDir, "stdlib", "gdtoa-gdtoa.c"),
-					filepath.Join(libcDir, "stdlib", "gdtoa-dmisc.c"),
-					filepath.Join(libcDir, "stdlib", "gdtoa-gmisc.c"),
-					filepath.Join(libcDir, "stdlib", "mallinfor.c"),
-					filepath.Join(libcDir, "stdlib", "malloc.c"),
-					filepath.Join(libcDir, "stdlib", "mallocr.c"),
-					filepath.Join(libcDir, "stdlib", "mallstatsr.c"),
-					filepath.Join(libcDir, "stdlib", "mblen.c"),
-					filepath.Join(libcDir, "stdlib", "mblen_r.c"),
-					filepath.Join(libcDir, "stdlib", "mbstowcs.c"),
-					filepath.Join(libcDir, "stdlib", "mbstowcs_r.c"),
-					filepath.Join(libcDir, "stdlib", "mbtowc.c"),
-					filepath.Join(libcDir, "stdlib", "mbtowc_r.c"),
-					filepath.Join(libcDir, "stdlib", "mlock.c"),
-					filepath.Join(libcDir, "stdlib", "mprec.c"),
-					filepath.Join(libcDir, "stdlib", "msizer.c"),
-					filepath.Join(libcDir, "stdlib", "mstats.c"),
-					filepath.Join(libcDir, "stdlib", "on_exit_args.c"),
-					filepath.Join(libcDir, "stdlib", "quick_exit.c"),
-					filepath.Join(libcDir, "stdlib", "rand.c"),
-					filepath.Join(libcDir, "stdlib", "rand_r.c"),
-					filepath.Join(libcDir, "stdlib", "random.c"),
-					filepath.Join(libcDir, "stdlib", "realloc.c"),
-					filepath.Join(libcDir, "stdlib", "reallocarray.c"),
-					filepath.Join(libcDir, "stdlib", "reallocf.c"),
-					filepath.Join(libcDir, "stdlib", "reallocr.c"),
-					filepath.Join(libcDir, "stdlib", "sb_charsets.c"),
-					filepath.Join(libcDir, "stdlib", "strtod.c"),
-					filepath.Join(libcDir, "stdlib", "strtoimax.c"),
-					filepath.Join(libcDir, "stdlib", "strtol.c"),
-					filepath.Join(libcDir, "stdlib", "strtoul.c"),
-					filepath.Join(libcDir, "stdlib", "strtoumax.c"),
-					filepath.Join(libcDir, "stdlib", "utoa.c"),
-					filepath.Join(libcDir, "stdlib", "wcstod.c"),
-					filepath.Join(libcDir, "stdlib", "wcstoimax.c"),
-					filepath.Join(libcDir, "stdlib", "wcstol.c"),
-					filepath.Join(libcDir, "stdlib", "wcstoul.c"),
-					filepath.Join(libcDir, "stdlib", "wcstoumax.c"),
-					filepath.Join(libcDir, "stdlib", "wcstombs.c"),
-					filepath.Join(libcDir, "stdlib", "wcstombs_r.c"),
-					filepath.Join(libcDir, "stdlib", "wctomb.c"),
-					filepath.Join(libcDir, "stdlib", "wctomb_r.c"),
-					filepath.Join(libcDir, "stdlib", "strtodg.c"),
-					filepath.Join(libcDir, "stdlib", "strtold.c"),
-					filepath.Join(libcDir, "stdlib", "strtorx.c"),
-					filepath.Join(libcDir, "stdlib", "wcstold.c"),
-					filepath.Join(libcDir, "stdlib", "arc4random.c"),
-					filepath.Join(libcDir, "stdlib", "arc4random_uniform.c"),
-					filepath.Join(libcDir, "stdlib", "cxa_atexit.c"),
-					filepath.Join(libcDir, "stdlib", "cxa_finalize.c"),
-					filepath.Join(libcDir, "stdlib", "drand48.c"),
-					filepath.Join(libcDir, "stdlib", "ecvtbuf.c"),
-					filepath.Join(libcDir, "stdlib", "efgcvt.c"),
-					filepath.Join(libcDir, "stdlib", "erand48.c"),
-					filepath.Join(libcDir, "stdlib", "jrand48.c"),
-					filepath.Join(libcDir, "stdlib", "lcong48.c"),
-					filepath.Join(libcDir, "stdlib", "lrand48.c"),
-					filepath.Join(libcDir, "stdlib", "mrand48.c"),
-					filepath.Join(libcDir, "stdlib", "msize.c"),
-					filepath.Join(libcDir, "stdlib", "mtrim.c"),
-					filepath.Join(libcDir, "stdlib", "nrand48.c"),
-					filepath.Join(libcDir, "stdlib", "rand48.c"),
-					filepath.Join(libcDir, "stdlib", "seed48.c"),
-					filepath.Join(libcDir, "stdlib", "srand48.c"),
-					filepath.Join(libcDir, "stdlib", "strtoll.c"),
-					filepath.Join(libcDir, "stdlib", "strtoll_r.c"),
-					filepath.Join(libcDir, "stdlib", "strtoull.c"),
-					filepath.Join(libcDir, "stdlib", "strtoull_r.c"),
-					filepath.Join(libcDir, "stdlib", "wcstoll.c"),
-					filepath.Join(libcDir, "stdlib", "wcstoll_r.c"),
-					filepath.Join(libcDir, "stdlib", "wcstoull.c"),
-					filepath.Join(libcDir, "stdlib", "wcstoull_r.c"),
-					filepath.Join(libcDir, "stdlib", "atoll.c"),
-					filepath.Join(libcDir, "stdlib", "llabs.c"),
-					filepath.Join(libcDir, "stdlib", "lldiv.c"),
-					filepath.Join(libcDir, "stdlib", "a64l.c"),
-					filepath.Join(libcDir, "stdlib", "btowc.c"),
-					filepath.Join(libcDir, "stdlib", "getopt.c"),
-					filepath.Join(libcDir, "stdlib", "getsubopt.c"),
-					filepath.Join(libcDir, "stdlib", "l64a.c"),
-					filepath.Join(libcDir, "stdlib", "malign.c"),
-					filepath.Join(libcDir, "stdlib", "malignr.c"),
-					filepath.Join(libcDir, "stdlib", "malloptr.c"),
-					filepath.Join(libcDir, "stdlib", "mbrlen.c"),
-					filepath.Join(libcDir, "stdlib", "mbrtowc.c"),
-					filepath.Join(libcDir, "stdlib", "mbsinit.c"),
-					filepath.Join(libcDir, "stdlib", "mbsnrtowcs.c"),
-					filepath.Join(libcDir, "stdlib", "mbsrtowcs.c"),
-					filepath.Join(libcDir, "stdlib", "on_exit.c"),
-					filepath.Join(libcDir, "stdlib", "pvallocr.c"),
-					filepath.Join(libcDir, "stdlib", "valloc.c"),
-					filepath.Join(libcDir, "stdlib", "vallocr.c"),
-					filepath.Join(libcDir, "stdlib", "wcrtomb.c"),
-					filepath.Join(libcDir, "stdlib", "wcsnrtombs.c"),
-					filepath.Join(libcDir, "stdlib", "wcsrtombs.c"),
-					filepath.Join(libcDir, "stdlib", "wctob.c"),
-					filepath.Join(libcDir, "stdlib", "putenv.c"),
-					filepath.Join(libcDir, "stdlib", "putenv_r.c"),
-					filepath.Join(libcDir, "stdlib", "setenv.c"),
-					filepath.Join(libcDir, "stdlib", "setenv_r.c"),
-					filepath.Join(libcDir, "stdlib", "rpmatch.c"),
-					filepath.Join(libcDir, "stdlib", "system.c"),
-					filepath.Join(libcDir, "ctype", "ctype_.c"),
-					filepath.Join(libcDir, "ctype", "isalnum.c"),
-					filepath.Join(libcDir, "ctype", "isalpha.c"),
-					filepath.Join(libcDir, "ctype", "iscntrl.c"),
-					filepath.Join(libcDir, "ctype", "isdigit.c"),
-					filepath.Join(libcDir, "ctype", "islower.c"),
-					filepath.Join(libcDir, "ctype", "isupper.c"),
-					filepath.Join(libcDir, "ctype", "isprint.c"),
-					filepath.Join(libcDir, "ctype", "ispunct.c"),
-					filepath.Join(libcDir, "ctype", "isspace.c"),
-					filepath.Join(libcDir, "ctype", "isxdigit.c"),
-					filepath.Join(libcDir, "ctype", "tolower.c"),
-					filepath.Join(libcDir, "ctype", "toupper.c"),
-					filepath.Join(libcDir, "ctype", "categories.c"),
-					filepath.Join(libcDir, "ctype", "isalnum_l.c"),
-					filepath.Join(libcDir, "ctype", "isalpha_l.c"),
-					filepath.Join(libcDir, "ctype", "isascii.c"),
-					filepath.Join(libcDir, "ctype", "isascii_l.c"),
-					filepath.Join(libcDir, "ctype", "isblank.c"),
-					filepath.Join(libcDir, "ctype", "isblank_l.c"),
-					filepath.Join(libcDir, "ctype", "iscntrl_l.c"),
-					filepath.Join(libcDir, "ctype", "isdigit_l.c"),
-					filepath.Join(libcDir, "ctype", "islower_l.c"),
-					filepath.Join(libcDir, "ctype", "isupper_l.c"),
-					filepath.Join(libcDir, "ctype", "isprint_l.c"),
-					filepath.Join(libcDir, "ctype", "ispunct_l.c"),
-					filepath.Join(libcDir, "ctype", "isspace_l.c"),
-					filepath.Join(libcDir, "ctype", "iswalnum.c"),
-					filepath.Join(libcDir, "ctype", "iswalnum_l.c"),
-					filepath.Join(libcDir, "ctype", "iswalpha.c"),
-					filepath.Join(libcDir, "ctype", "iswalpha_l.c"),
-					filepath.Join(libcDir, "ctype", "iswblank.c"),
-					filepath.Join(libcDir, "ctype", "iswblank_l.c"),
-					filepath.Join(libcDir, "ctype", "iswcntrl.c"),
-					filepath.Join(libcDir, "ctype", "iswcntrl_l.c"),
-					filepath.Join(libcDir, "ctype", "iswctype.c"),
-					filepath.Join(libcDir, "ctype", "iswctype_l.c"),
-					filepath.Join(libcDir, "ctype", "iswdigit.c"),
-					filepath.Join(libcDir, "ctype", "iswdigit_l.c"),
-					filepath.Join(libcDir, "ctype", "iswgraph.c"),
-					filepath.Join(libcDir, "ctype", "iswgraph_l.c"),
-					filepath.Join(libcDir, "ctype", "iswlower.c"),
-					filepath.Join(libcDir, "ctype", "iswlower_l.c"),
-					filepath.Join(libcDir, "ctype", "iswprint.c"),
-					filepath.Join(libcDir, "ctype", "iswprint_l.c"),
-					filepath.Join(libcDir, "ctype", "iswpunct.c"),
-					filepath.Join(libcDir, "ctype", "iswpunct_l.c"),
-					filepath.Join(libcDir, "ctype", "iswspace.c"),
-					filepath.Join(libcDir, "ctype", "iswspace_l.c"),
-					filepath.Join(libcDir, "ctype", "iswupper.c"),
-					filepath.Join(libcDir, "ctype", "iswupper_l.c"),
-					filepath.Join(libcDir, "ctype", "iswxdigit.c"),
-					filepath.Join(libcDir, "ctype", "iswxdigit_l.c"),
-					filepath.Join(libcDir, "ctype", "isxdigit_l.c"),
-					filepath.Join(libcDir, "ctype", "jp2uc.c"),
-					filepath.Join(libcDir, "ctype", "toascii.c"),
-					filepath.Join(libcDir, "ctype", "toascii_l.c"),
-					filepath.Join(libcDir, "ctype", "tolower_l.c"),
-					filepath.Join(libcDir, "ctype", "toupper_l.c"),
-					filepath.Join(libcDir, "ctype", "towctrans.c"),
-					filepath.Join(libcDir, "ctype", "towctrans_l.c"),
-					filepath.Join(libcDir, "ctype", "towlower.c"),
-					filepath.Join(libcDir, "ctype", "towlower_l.c"),
-					filepath.Join(libcDir, "ctype", "towupper.c"),
-					filepath.Join(libcDir, "ctype", "towupper_l.c"),
-					filepath.Join(libcDir, "ctype", "wctrans.c"),
-					filepath.Join(libcDir, "ctype", "wctrans_l.c"),
-					filepath.Join(libcDir, "ctype", "wctype.c"),
-					filepath.Join(libcDir, "ctype", "wctype_l.c"),
-					filepath.Join(libcDir, "search", "bsearch.c"),
-					filepath.Join(libcDir, "search", "ndbm.c"),
-					filepath.Join(libcDir, "search", "qsort.c"),
-					filepath.Join(libcDir, "search", "hash.c"),
-					filepath.Join(libcDir, "search", "hash_bigkey.c"),
-					filepath.Join(libcDir, "search", "hash_buf.c"),
-					filepath.Join(libcDir, "search", "hash_func.c"),
-					filepath.Join(libcDir, "search", "hash_log2.c"),
-					filepath.Join(libcDir, "search", "hash_page.c"),
-					filepath.Join(libcDir, "search", "hcreate.c"),
-					filepath.Join(libcDir, "search", "hcreate_r.c"),
-					filepath.Join(libcDir, "search", "tdelete.c"),
-					filepath.Join(libcDir, "search", "tdestroy.c"),
-					filepath.Join(libcDir, "search", "tfind.c"),
-					filepath.Join(libcDir, "search", "tsearch.c"),
-					filepath.Join(libcDir, "search", "twalk.c"),
-					filepath.Join(libcDir, "search", "bsd_qsort_r.c"),
-					filepath.Join(libcDir, "search", "qsort_r.c"),
-					filepath.Join(libcDir, "stdio", "nano-vfprintf_float.c"),
-					filepath.Join(libcDir, "stdio", "nano-svfprintf.c"),
-					filepath.Join(libcDir, "stdio", "nano-svfscanf.c"),
-					filepath.Join(libcDir, "stdio", "nano-vfprintf.c"),
-					filepath.Join(libcDir, "stdio", "nano-vfprintf_i.c"),
-					filepath.Join(libcDir, "stdio", "nano-vfscanf.c"),
-					filepath.Join(libcDir, "stdio", "nano-vfscanf_i.c"),
-					filepath.Join(libcDir, "stdio", "nano-vfscanf_float.c"),
-					filepath.Join(libcDir, "stdio", "clearerr.c"),
-					filepath.Join(libcDir, "stdio", "fclose.c"),
-					filepath.Join(libcDir, "stdio", "fdopen.c"),
-					filepath.Join(libcDir, "stdio", "feof.c"),
-					filepath.Join(libcDir, "stdio", "ferror.c"),
-					filepath.Join(libcDir, "stdio", "fflush.c"),
-					filepath.Join(libcDir, "stdio", "fgetc.c"),
-					filepath.Join(libcDir, "stdio", "fgetpos.c"),
-					filepath.Join(libcDir, "stdio", "fgets.c"),
-					filepath.Join(libcDir, "stdio", "fileno.c"),
-					filepath.Join(libcDir, "stdio", "findfp.c"),
-					filepath.Join(libcDir, "stdio", "flags.c"),
-					filepath.Join(libcDir, "stdio", "fopen.c"),
-					filepath.Join(libcDir, "stdio", "fprintf.c"),
-					filepath.Join(libcDir, "stdio", "fputc.c"),
-					filepath.Join(libcDir, "stdio", "fputs.c"),
-					filepath.Join(libcDir, "stdio", "fread.c"),
-					filepath.Join(libcDir, "stdio", "freopen.c"),
-					filepath.Join(libcDir, "stdio", "fscanf.c"),
-					filepath.Join(libcDir, "stdio", "fseek.c"),
-					filepath.Join(libcDir, "stdio", "fsetpos.c"),
-					filepath.Join(libcDir, "stdio", "ftell.c"),
-					filepath.Join(libcDir, "stdio", "fvwrite.c"),
-					filepath.Join(libcDir, "stdio", "fwalk.c"),
-					filepath.Join(libcDir, "stdio", "fwrite.c"),
-					filepath.Join(libcDir, "stdio", "getc.c"),
-					filepath.Join(libcDir, "stdio", "getchar.c"),
-					filepath.Join(libcDir, "stdio", "getc_u.c"),
-					filepath.Join(libcDir, "stdio", "getchar_u.c"),
-					filepath.Join(libcDir, "stdio", "getdelim.c"),
-					filepath.Join(libcDir, "stdio", "getline.c"),
-					filepath.Join(libcDir, "stdio", "gets.c"),
-					filepath.Join(libcDir, "stdio", "makebuf.c"),
-					filepath.Join(libcDir, "stdio", "perror.c"),
-					filepath.Join(libcDir, "stdio", "printf.c"),
-					filepath.Join(libcDir, "stdio", "putc.c"),
-					filepath.Join(libcDir, "stdio", "putchar.c"),
-					filepath.Join(libcDir, "stdio", "putc_u.c"),
-					filepath.Join(libcDir, "stdio", "putchar_u.c"),
-					filepath.Join(libcDir, "stdio", "puts.c"),
-					filepath.Join(libcDir, "stdio", "refill.c"),
-					filepath.Join(libcDir, "stdio", "remove.c"),
-					filepath.Join(libcDir, "stdio", "rename.c"),
-					filepath.Join(libcDir, "stdio", "rewind.c"),
-					filepath.Join(libcDir, "stdio", "rget.c"),
-					filepath.Join(libcDir, "stdio", "scanf.c"),
-					filepath.Join(libcDir, "stdio", "sccl.c"),
-					filepath.Join(libcDir, "stdio", "setbuf.c"),
-					filepath.Join(libcDir, "stdio", "setbuffer.c"),
-					filepath.Join(libcDir, "stdio", "setlinebuf.c"),
-					filepath.Join(libcDir, "stdio", "setvbuf.c"),
-					filepath.Join(libcDir, "stdio", "snprintf.c"),
-					filepath.Join(libcDir, "stdio", "sprintf.c"),
-					filepath.Join(libcDir, "stdio", "sscanf.c"),
-					filepath.Join(libcDir, "stdio", "stdio.c"),
-					filepath.Join(libcDir, "stdio", "svfiwprintf.c"),
-					filepath.Join(libcDir, "stdio", "svfiwscanf.c"),
-					filepath.Join(libcDir, "stdio", "svfwprintf.c"),
-					filepath.Join(libcDir, "stdio", "svfwscanf.c"),
-					filepath.Join(libcDir, "stdio", "tmpfile.c"),
-					filepath.Join(libcDir, "stdio", "tmpnam.c"),
-					filepath.Join(libcDir, "stdio", "ungetc.c"),
-					filepath.Join(libcDir, "stdio", "vdprintf.c"),
-					filepath.Join(libcDir, "stdio", "vfiwprintf.c"),
-					filepath.Join(libcDir, "stdio", "vfiwscanf.c"),
-					filepath.Join(libcDir, "stdio", "vfwscanf.c"),
-					filepath.Join(libcDir, "stdio", "vprintf.c"),
-					filepath.Join(libcDir, "stdio", "vscanf.c"),
-					filepath.Join(libcDir, "stdio", "vsnprintf.c"),
-					filepath.Join(libcDir, "stdio", "vsprintf.c"),
-					filepath.Join(libcDir, "stdio", "vsscanf.c"),
-					filepath.Join(libcDir, "stdio", "wbuf.c"),
-					filepath.Join(libcDir, "stdio", "wsetup.c"),
-					filepath.Join(libcDir, "stdio", "asprintf.c"),
-					filepath.Join(libcDir, "stdio", "fcloseall.c"),
-					filepath.Join(libcDir, "stdio", "fseeko.c"),
-					filepath.Join(libcDir, "stdio", "ftello.c"),
-					filepath.Join(libcDir, "stdio", "getw.c"),
-					filepath.Join(libcDir, "stdio", "mktemp.c"),
-					filepath.Join(libcDir, "stdio", "putw.c"),
-					filepath.Join(libcDir, "stdio", "vasprintf.c"),
-					filepath.Join(libcDir, "stdio", "asnprintf.c"),
-					filepath.Join(libcDir, "stdio", "clearerr_u.c"),
-					filepath.Join(libcDir, "stdio", "dprintf.c"),
-					filepath.Join(libcDir, "stdio", "feof_u.c"),
-					filepath.Join(libcDir, "stdio", "ferror_u.c"),
-					filepath.Join(libcDir, "stdio", "fflush_u.c"),
-					filepath.Join(libcDir, "stdio", "fgetc_u.c"),
-					filepath.Join(libcDir, "stdio", "fgets_u.c"),
-					filepath.Join(libcDir, "stdio", "fgetwc.c"),
-					filepath.Join(libcDir, "stdio", "fgetwc_u.c"),
-					filepath.Join(libcDir, "stdio", "fgetws.c"),
-					filepath.Join(libcDir, "stdio", "fgetws_u.c"),
-					filepath.Join(libcDir, "stdio", "fileno_u.c"),
-					filepath.Join(libcDir, "stdio", "fmemopen.c"),
-					filepath.Join(libcDir, "stdio", "fopencookie.c"),
-					filepath.Join(libcDir, "stdio", "fpurge.c"),
-					filepath.Join(libcDir, "stdio", "fputc_u.c"),
-					filepath.Join(libcDir, "stdio", "fputs_u.c"),
-					filepath.Join(libcDir, "stdio", "fputwc.c"),
-					filepath.Join(libcDir, "stdio", "fputwc_u.c"),
-					filepath.Join(libcDir, "stdio", "fputws.c"),
-					filepath.Join(libcDir, "stdio", "fputws_u.c"),
-					filepath.Join(libcDir, "stdio", "fread_u.c"),
-					filepath.Join(libcDir, "stdio", "fsetlocking.c"),
-					filepath.Join(libcDir, "stdio", "funopen.c"),
-					filepath.Join(libcDir, "stdio", "fwide.c"),
-					filepath.Join(libcDir, "stdio", "fwprintf.c"),
-					filepath.Join(libcDir, "stdio", "fwrite_u.c"),
-					filepath.Join(libcDir, "stdio", "fwscanf.c"),
-					filepath.Join(libcDir, "stdio", "getwc.c"),
-					filepath.Join(libcDir, "stdio", "getwc_u.c"),
-					filepath.Join(libcDir, "stdio", "getwchar.c"),
-					filepath.Join(libcDir, "stdio", "getwchar_u.c"),
-					filepath.Join(libcDir, "stdio", "open_memstream.c"),
-					filepath.Join(libcDir, "stdio", "putwc.c"),
-					filepath.Join(libcDir, "stdio", "putwc_u.c"),
-					filepath.Join(libcDir, "stdio", "putwchar.c"),
-					filepath.Join(libcDir, "stdio", "putwchar_u.c"),
-					filepath.Join(libcDir, "stdio", "stdio_ext.c"),
-					filepath.Join(libcDir, "stdio", "swprintf.c"),
-					filepath.Join(libcDir, "stdio", "swscanf.c"),
-					filepath.Join(libcDir, "stdio", "ungetwc.c"),
-					filepath.Join(libcDir, "stdio", "vasnprintf.c"),
-					filepath.Join(libcDir, "stdio", "vswprintf.c"),
-					filepath.Join(libcDir, "stdio", "vswscanf.c"),
-					filepath.Join(libcDir, "stdio", "vwprintf.c"),
-					filepath.Join(libcDir, "stdio", "vwscanf.c"),
-					filepath.Join(libcDir, "stdio", "wprintf.c"),
-					filepath.Join(libcDir, "stdio", "wscanf.c"),
-					filepath.Join(libcDir, "string", "bcopy.c"),
-					filepath.Join(libcDir, "string", "bzero.c"),
-					filepath.Join(libcDir, "string", "explicit_bzero.c"),
-					filepath.Join(libcDir, "string", "ffsl.c"),
-					filepath.Join(libcDir, "string", "ffsll.c"),
-					filepath.Join(libcDir, "string", "fls.c"),
-					filepath.Join(libcDir, "string", "flsl.c"),
-					filepath.Join(libcDir, "string", "flsll.c"),
-					filepath.Join(libcDir, "string", "index.c"),
-					filepath.Join(libcDir, "string", "memchr.c"),
-					filepath.Join(libcDir, "string", "memcmp.c"),
-					filepath.Join(libcDir, "string", "memmove.c"),
-					filepath.Join(libcDir, "string", "rindex.c"),
-					filepath.Join(libcDir, "string", "strcasecmp.c"),
-					filepath.Join(libcDir, "string", "strcat.c"),
-					filepath.Join(libcDir, "string", "strchr.c"),
-					filepath.Join(libcDir, "string", "strcoll.c"),
-					filepath.Join(libcDir, "string", "strcspn.c"),
-					filepath.Join(libcDir, "string", "strdup.c"),
-					filepath.Join(libcDir, "string", "strdup_r.c"),
-					filepath.Join(libcDir, "string", "strerror.c"),
-					filepath.Join(libcDir, "string", "strerror_r.c"),
-					filepath.Join(libcDir, "string", "strlcat.c"),
-					filepath.Join(libcDir, "string", "strlcpy.c"),
-					filepath.Join(libcDir, "string", "strlwr.c"),
-					filepath.Join(libcDir, "string", "strncasecmp.c"),
-					filepath.Join(libcDir, "string", "strncat.c"),
-					filepath.Join(libcDir, "string", "strncmp.c"),
-					filepath.Join(libcDir, "string", "strnlen.c"),
-					filepath.Join(libcDir, "string", "strnstr.c"),
-					filepath.Join(libcDir, "string", "strpbrk.c"),
-					filepath.Join(libcDir, "string", "strrchr.c"),
-					filepath.Join(libcDir, "string", "strsep.c"),
-					filepath.Join(libcDir, "string", "strsignal.c"),
-					filepath.Join(libcDir, "string", "strspn.c"),
-					filepath.Join(libcDir, "string", "strtok.c"),
-					filepath.Join(libcDir, "string", "strtok_r.c"),
-					filepath.Join(libcDir, "string", "strupr.c"),
-					filepath.Join(libcDir, "string", "strxfrm.c"),
-					filepath.Join(libcDir, "string", "strstr.c"),
-					filepath.Join(libcDir, "string", "swab.c"),
-					filepath.Join(libcDir, "string", "timingsafe_bcmp.c"),
-					filepath.Join(libcDir, "string", "timingsafe_memcmp.c"),
-					filepath.Join(libcDir, "string", "u_strerr.c"),
-					filepath.Join(libcDir, "string", "wcscat.c"),
-					filepath.Join(libcDir, "string", "wcschr.c"),
-					filepath.Join(libcDir, "string", "wcscmp.c"),
-					filepath.Join(libcDir, "string", "wcscoll.c"),
-					filepath.Join(libcDir, "string", "wcscpy.c"),
-					filepath.Join(libcDir, "string", "wcscspn.c"),
-					filepath.Join(libcDir, "string", "wcslcat.c"),
-					filepath.Join(libcDir, "string", "wcslcpy.c"),
-					filepath.Join(libcDir, "string", "wcslen.c"),
-					filepath.Join(libcDir, "string", "wcsncat.c"),
-					filepath.Join(libcDir, "string", "wcsncmp.c"),
-					filepath.Join(libcDir, "string", "wcsncpy.c"),
-					filepath.Join(libcDir, "string", "wcsnlen.c"),
-					filepath.Join(libcDir, "string", "wcspbrk.c"),
-					filepath.Join(libcDir, "string", "wcsrchr.c"),
-					filepath.Join(libcDir, "string", "wcsspn.c"),
-					filepath.Join(libcDir, "string", "wcsstr.c"),
-					filepath.Join(libcDir, "string", "wcstok.c"),
-					filepath.Join(libcDir, "string", "wcswidth.c"),
-					filepath.Join(libcDir, "string", "wcsxfrm.c"),
-					filepath.Join(libcDir, "string", "wcwidth.c"),
-					filepath.Join(libcDir, "string", "wmemchr.c"),
-					filepath.Join(libcDir, "string", "wmemcmp.c"),
-					filepath.Join(libcDir, "string", "wmemcpy.c"),
-					filepath.Join(libcDir, "string", "wmemmove.c"),
-					filepath.Join(libcDir, "string", "wmemset.c"),
-					filepath.Join(libcDir, "string", "xpg_strerror_r.c"),
-					filepath.Join(libcDir, "string", "bcmp.c"),
-					filepath.Join(libcDir, "string", "memccpy.c"),
-					filepath.Join(libcDir, "string", "mempcpy.c"),
-					filepath.Join(libcDir, "string", "stpcpy.c"),
-					filepath.Join(libcDir, "string", "stpncpy.c"),
-					filepath.Join(libcDir, "string", "strndup.c"),
-					filepath.Join(libcDir, "string", "strcasestr.c"),
-					filepath.Join(libcDir, "string", "strchrnul.c"),
-					filepath.Join(libcDir, "string", "strndup_r.c"),
-					filepath.Join(libcDir, "string", "wcpcpy.c"),
-					filepath.Join(libcDir, "string", "wcpncpy.c"),
-					filepath.Join(libcDir, "string", "wcsdup.c"),
-					filepath.Join(libcDir, "string", "gnu_basename.c"),
-					filepath.Join(libcDir, "string", "memmem.c"),
-					filepath.Join(libcDir, "string", "memrchr.c"),
-					filepath.Join(libcDir, "string", "rawmemchr.c"),
-					filepath.Join(libcDir, "string", "strcasecmp_l.c"),
-					filepath.Join(libcDir, "string", "strcoll_l.c"),
-					filepath.Join(libcDir, "string", "strncasecmp_l.c"),
-					filepath.Join(libcDir, "string", "strverscmp.c"),
-					filepath.Join(libcDir, "string", "strxfrm_l.c"),
-					filepath.Join(libcDir, "string", "wcscasecmp.c"),
-					filepath.Join(libcDir, "string", "wcscasecmp_l.c"),
-					filepath.Join(libcDir, "string", "wcscoll_l.c"),
-					filepath.Join(libcDir, "string", "wcsncasecmp.c"),
-					filepath.Join(libcDir, "string", "wcsncasecmp_l.c"),
-					filepath.Join(libcDir, "string", "wcsxfrm_l.c"),
-					filepath.Join(libcDir, "string", "wmempcpy.c"),
-					filepath.Join(libcDir, "signal", "psignal.c"),
-					filepath.Join(libcDir, "signal", "raise.c"),
-					filepath.Join(libcDir, "signal", "signal.c"),
-					filepath.Join(libcDir, "signal", "sig2str.c"),
-					filepath.Join(libcDir, "time", "asctime.c"),
-					filepath.Join(libcDir, "time", "asctime_r.c"),
-					filepath.Join(libcDir, "time", "clock.c"),
-					filepath.Join(libcDir, "time", "ctime.c"),
-					filepath.Join(libcDir, "time", "ctime_r.c"),
-					filepath.Join(libcDir, "time", "difftime.c"),
-					filepath.Join(libcDir, "time", "gettzinfo.c"),
-					filepath.Join(libcDir, "time", "gmtime.c"),
-					filepath.Join(libcDir, "time", "gmtime_r.c"),
-					filepath.Join(libcDir, "time", "lcltime.c"),
-					filepath.Join(libcDir, "time", "lcltime_r.c"),
-					filepath.Join(libcDir, "time", "mktime.c"),
-					filepath.Join(libcDir, "time", "month_lengths.c"),
-					filepath.Join(libcDir, "time", "strftime.c"),
-					filepath.Join(libcDir, "time", "strptime.c"),
-					filepath.Join(libcDir, "time", "time.c"),
-					filepath.Join(libcDir, "time", "tzcalc_limits.c"),
-					filepath.Join(libcDir, "time", "tzlock.c"),
-					filepath.Join(libcDir, "time", "tzset.c"),
-					filepath.Join(libcDir, "time", "tzset_r.c"),
-					filepath.Join(libcDir, "time", "tzvars.c"),
-					filepath.Join(libcDir, "time", "wcsftime.c"),
-					filepath.Join(libcDir, "locale", "locale.c"),
-					filepath.Join(libcDir, "locale", "localeconv.c"),
-					filepath.Join(libcDir, "locale", "duplocale.c"),
-					filepath.Join(libcDir, "locale", "freelocale.c"),
-					filepath.Join(libcDir, "locale", "lctype.c"),
-					filepath.Join(libcDir, "locale", "lmessages.c"),
-					filepath.Join(libcDir, "locale", "lnumeric.c"),
-					filepath.Join(libcDir, "locale", "lmonetary.c"),
-					filepath.Join(libcDir, "locale", "newlocale.c"),
-					filepath.Join(libcDir, "locale", "nl_langinfo.c"),
-					filepath.Join(libcDir, "locale", "timelocal.c"),
-					filepath.Join(libcDir, "locale", "uselocale.c"),
-					filepath.Join(libcDir, "reent", "closer.c"),
-					filepath.Join(libcDir, "reent", "reent.c"),
-					filepath.Join(libcDir, "reent", "impure.c"),
-					filepath.Join(libcDir, "reent", "fcntlr.c"),
-					filepath.Join(libcDir, "reent", "fstatr.c"),
-					filepath.Join(libcDir, "reent", "getentropyr.c"),
-					filepath.Join(libcDir, "reent", "getreent.c"),
-					filepath.Join(libcDir, "reent", "gettimeofdayr.c"),
-					filepath.Join(libcDir, "reent", "isattyr.c"),
-					filepath.Join(libcDir, "reent", "linkr.c"),
-					filepath.Join(libcDir, "reent", "lseekr.c"),
-					filepath.Join(libcDir, "reent", "mkdirr.c"),
-					filepath.Join(libcDir, "reent", "openr.c"),
-					filepath.Join(libcDir, "reent", "readr.c"),
-					filepath.Join(libcDir, "reent", "renamer.c"),
-					filepath.Join(libcDir, "reent", "signalr.c"),
-					filepath.Join(libcDir, "reent", "signgam.c"),
-					filepath.Join(libcDir, "reent", "sbrkr.c"),
-					filepath.Join(libcDir, "reent", "statr.c"),
-					filepath.Join(libcDir, "reent", "timesr.c"),
-					filepath.Join(libcDir, "reent", "unlinkr.c"),
-					filepath.Join(libcDir, "reent", "writer.c"),
-					filepath.Join(libcDir, "reent", "execr.c"),
-					filepath.Join(libcDir, "errno", "errno.c"),
-					filepath.Join(libcDir, "misc", "__dprintf.c"),
-					filepath.Join(libcDir, "misc", "unctrl.c"),
-					filepath.Join(libcDir, "misc", "ffs.c"),
-					filepath.Join(libcDir, "misc", "init.c"),
-					filepath.Join(libcDir, "misc", "fini.c"),
-					filepath.Join(libcDir, "misc", "lock.c"),
-					filepath.Join(libcDir, "posix", "closedir.c"),
-					filepath.Join(libcDir, "posix", "collate.c"),
-					filepath.Join(libcDir, "posix", "collcmp.c"),
-					filepath.Join(libcDir, "posix", "creat.c"),
-					filepath.Join(libcDir, "posix", "dirfd.c"),
-					// filepath.Join(libcDir, "posix", "fnmatch.c"),
-					filepath.Join(libcDir, "posix", "glob.c"),
-					filepath.Join(libcDir, "posix", "opendir.c"),
-					filepath.Join(libcDir, "posix", "readdir.c"),
-					filepath.Join(libcDir, "posix", "readdir_r.c"),
-					filepath.Join(libcDir, "posix", "regcomp.c"),
-					filepath.Join(libcDir, "posix", "regerror.c"),
-					filepath.Join(libcDir, "posix", "regexec.c"),
-					filepath.Join(libcDir, "posix", "regfree.c"),
-					filepath.Join(libcDir, "posix", "rewinddir.c"),
-					filepath.Join(libcDir, "posix", "sleep.c"),
-					filepath.Join(libcDir, "posix", "usleep.c"),
-					filepath.Join(libcDir, "posix", "telldir.c"),
-					filepath.Join(libcDir, "posix", "ftw.c"),
-					filepath.Join(libcDir, "posix", "nftw.c"),
-					filepath.Join(libcDir, "posix", "scandir.c"),
-					filepath.Join(libcDir, "posix", "seekdir.c"),
-					filepath.Join(libcDir, "posix", "execl.c"),
-					filepath.Join(libcDir, "posix", "execle.c"),
-					filepath.Join(libcDir, "posix", "execlp.c"),
-					filepath.Join(libcDir, "posix", "execv.c"),
-					filepath.Join(libcDir, "posix", "execve.c"),
-					filepath.Join(libcDir, "posix", "execvp.c"),
-					filepath.Join(libcDir, "posix", "wordexp.c"),
-					filepath.Join(libcDir, "posix", "wordfree.c"),
-					filepath.Join(libcDir, "posix", "popen.c"),
-					filepath.Join(libcDir, "posix", "posix_spawn.c"),
-					filepath.Join(libcDir, "syscalls", "sysclose.c"),
-					filepath.Join(libcDir, "syscalls", "sysfcntl.c"),
-					filepath.Join(libcDir, "syscalls", "sysfstat.c"),
-					filepath.Join(libcDir, "syscalls", "sysgetentropy.c"),
-					filepath.Join(libcDir, "syscalls", "sysgetpid.c"),
-					filepath.Join(libcDir, "syscalls", "sysgettod.c"),
-					filepath.Join(libcDir, "syscalls", "sysisatty.c"),
-					filepath.Join(libcDir, "syscalls", "syskill.c"),
-					filepath.Join(libcDir, "syscalls", "syslink.c"),
-					filepath.Join(libcDir, "syscalls", "syslseek.c"),
-					filepath.Join(libcDir, "syscalls", "sysopen.c"),
-					filepath.Join(libcDir, "syscalls", "sysread.c"),
-					filepath.Join(libcDir, "syscalls", "syssbrk.c"),
-					filepath.Join(libcDir, "syscalls", "sysstat.c"),
-					filepath.Join(libcDir, "syscalls", "systimes.c"),
-					filepath.Join(libcDir, "syscalls", "sysunlink.c"),
-					filepath.Join(libcDir, "syscalls", "syswrite.c"),
-					filepath.Join(libcDir, "syscalls", "sysexecve.c"),
-					filepath.Join(libcDir, "syscalls", "sysfork.c"),
-					filepath.Join(libcDir, "syscalls", "syswait.c"),
-					filepath.Join(libcDir, "iconv", "ces", "utf-8.c"),
-					filepath.Join(libcDir, "iconv", "ces", "utf-16.c"),
-					filepath.Join(libcDir, "iconv", "ces", "ucs-2.c"),
-					filepath.Join(libcDir, "iconv", "ces", "us-ascii.c"),
-					filepath.Join(libcDir, "iconv", "ces", "ucs-4.c"),
-					filepath.Join(libcDir, "iconv", "ces", "ucs-2-internal.c"),
-					filepath.Join(libcDir, "iconv", "ces", "ucs-4-internal.c"),
-					filepath.Join(libcDir, "iconv", "ces", "cesbi.c"),
-					filepath.Join(libcDir, "iconv", "ces", "table.c"),
-					filepath.Join(libcDir, "iconv", "ces", "table-pcs.c"),
-					filepath.Join(libcDir, "iconv", "ces", "euc.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "ccsbi.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_10.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_13.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_14.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_15.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_1.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_2.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_3.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_4.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_5.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_6.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_7.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_8.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_9.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_8859_11.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "win_1250.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "win_1252.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "win_1254.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "win_1256.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "win_1258.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "win_1251.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "win_1253.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "win_1255.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "win_1257.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "koi8_r.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "koi8_u.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "koi8_ru.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "koi8_uni.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "iso_ir_111.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "big5.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "cp775.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "cp850.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "cp852.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "cp855.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "cp866.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "jis_x0212_1990.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "jis_x0201_1976.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "jis_x0208_1990.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "ksx1001.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "cns11643_plane1.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "cns11643_plane2.c"),
-					filepath.Join(libcDir, "iconv", "ccs", "cns11643_plane14.c"),
-					filepath.Join(libcDir, "iconv", "lib", "aliasesi.c"),
-					filepath.Join(libcDir, "iconv", "lib", "ucsconv.c"),
-					filepath.Join(libcDir, "iconv", "lib", "nullconv.c"),
-					filepath.Join(libcDir, "iconv", "lib", "iconv.c"),
-					filepath.Join(libcDir, "iconv", "lib", "aliasesbi.c"),
-					filepath.Join(libcDir, "iconv", "lib", "iconvnls.c"),
-					filepath.Join(libcDir, "ssp", "chk_fail.c"),
-					filepath.Join(libcDir, "ssp", "stack_protector.c"),
-					filepath.Join(libcDir, "ssp", "memcpy_chk.c"),
-					filepath.Join(libcDir, "ssp", "memmove_chk.c"),
-					filepath.Join(libcDir, "ssp", "mempcpy_chk.c"),
-					filepath.Join(libcDir, "ssp", "memset_chk.c"),
-					filepath.Join(libcDir, "ssp", "stpcpy_chk.c"),
-					filepath.Join(libcDir, "ssp", "stpncpy_chk.c"),
-					filepath.Join(libcDir, "ssp", "strcat_chk.c"),
-					filepath.Join(libcDir, "ssp", "strcpy_chk.c"),
-					filepath.Join(libcDir, "ssp", "strncat_chk.c"),
-					filepath.Join(libcDir, "ssp", "strncpy_chk.c"),
-					filepath.Join(libcDir, "ssp", "gets_chk.c"),
-					filepath.Join(libcDir, "ssp", "snprintf_chk.c"),
-					filepath.Join(libcDir, "ssp", "sprintf_chk.c"),
-					filepath.Join(libcDir, "ssp", "vsnprintf_chk.c"),
-					filepath.Join(libcDir, "ssp", "vsprintf_chk.c"),
-					// TODO(MeteorsLiu): support riscv
-					filepath.Join(libcDir, "machine", "xtensa", "memcpy.S"),
-					filepath.Join(libcDir, "machine", "xtensa", "memset.S"),
-					filepath.Join(libcDir, "machine", "xtensa", "setjmp.S"),
-					filepath.Join(libcDir, "machine", "xtensa", "strcmp.S"),
-					filepath.Join(libcDir, "machine", "xtensa", "strcpy.S"),
-					filepath.Join(libcDir, "machine", "xtensa", "strlen.S"),
-					filepath.Join(libcDir, "machine", "xtensa", "strncpy.S"),
-				},
+				OutputFileName: "libc-" + target + ".a",
+				Files: joinFileList(libcDir, `
+argz/argz_add.c
+argz/argz_add_sep.c
+argz/argz_append.c
+argz/argz_count.c
+argz/argz_create.c
+argz/argz_create_sep.c
+argz/argz_delete.c
+argz/argz_extract.c
+argz/argz_insert.c
+argz/argz_next.c
+argz/argz_replace.c
+argz/argz_stringify.c
+argz/buf_findstr.c
+argz/envz_entry.c
+argz/envz_get.c
+argz/envz_add.c
+argz/envz_remove.c
+argz/envz_merge.c
+argz/envz_strip.c
+stdlib/__adjust.c
+stdlib/__atexit.c
+stdlib/__call_atexit.c
+stdlib/__exp10.c
+stdlib/__ten_mu.c
+stdlib/_Exit.c
+stdlib/abort.c
+stdlib/abs.c
+stdlib/aligned_alloc.c
+stdlib/assert.c
+stdlib/atexit.c
+stdlib/atof.c
+stdlib/atoff.c
+stdlib/atoi.c
+stdlib/atol.c
+stdlib/calloc.c
+stdlib/callocr.c
+stdlib/cfreer.c
+stdlib/div.c
+stdlib/dtoa.c
+stdlib/dtoastub.c
+stdlib/environ.c
+stdlib/envlock.c
+stdlib/eprintf.c
+stdlib/exit.c
+stdlib/freer.c
+stdlib/gdtoa-gethex.c
+stdlib/gdtoa-hexnan.c
+stdlib/getenv.c
+stdlib/getenv_r.c
+stdlib/imaxabs.c
+stdlib/imaxdiv.c
+stdlib/itoa.c
+stdlib/labs.c
+stdlib/ldiv.c
+stdlib/ldtoa.c
+stdlib/gdtoa-ldtoa.c
+stdlib/gdtoa-gdtoa.c
+stdlib/gdtoa-dmisc.c
+stdlib/gdtoa-gmisc.c
+stdlib/mallinfor.c
+stdlib/malloc.c
+stdlib/mallocr.c
+stdlib/mallstatsr.c
+stdlib/mblen.c
+stdlib/mblen_r.c
+stdlib/mbstowcs.c
+stdlib/mbstowcs_r.c
+stdlib/mbtowc.c
+stdlib/mbtowc_r.c
+stdlib/mlock.c
+stdlib/mprec.c
+stdlib/msizer.c
+stdlib/mstats.c
+stdlib/on_exit_args.c
+stdlib/quick_exit.c
+stdlib/rand.c
+stdlib/rand_r.c
+stdlib/random.c
+stdlib/realloc.c
+stdlib/reallocarray.c
+stdlib/reallocf.c
+stdlib/reallocr.c
+stdlib/sb_charsets.c
+stdlib/strtod.c
+stdlib/strtoimax.c
+stdlib/strtol.c
+stdlib/strtoul.c
+stdlib/strtoumax.c
+stdlib/utoa.c
+stdlib/wcstod.c
+stdlib/wcstoimax.c
+stdlib/wcstol.c
+stdlib/wcstoul.c
+stdlib/wcstoumax.c
+stdlib/wcstombs.c
+stdlib/wcstombs_r.c
+stdlib/wctomb.c
+stdlib/wctomb_r.c
+stdlib/strtodg.c
+stdlib/strtold.c
+stdlib/strtorx.c
+stdlib/wcstold.c
+stdlib/arc4random.c
+stdlib/arc4random_uniform.c
+stdlib/cxa_atexit.c
+stdlib/cxa_finalize.c
+stdlib/drand48.c
+stdlib/ecvtbuf.c
+stdlib/efgcvt.c
+stdlib/erand48.c
+stdlib/jrand48.c
+stdlib/lcong48.c
+stdlib/lrand48.c
+stdlib/mrand48.c
+stdlib/msize.c
+stdlib/mtrim.c
+stdlib/nrand48.c
+stdlib/rand48.c
+stdlib/seed48.c
+stdlib/srand48.c
+stdlib/strtoll.c
+stdlib/strtoll_r.c
+stdlib/strtoull.c
+stdlib/strtoull_r.c
+stdlib/wcstoll.c
+stdlib/wcstoll_r.c
+stdlib/wcstoull.c
+stdlib/wcstoull_r.c
+stdlib/atoll.c
+stdlib/llabs.c
+stdlib/lldiv.c
+stdlib/a64l.c
+stdlib/btowc.c
+stdlib/getopt.c
+stdlib/getsubopt.c
+stdlib/l64a.c
+stdlib/malign.c
+stdlib/malignr.c
+stdlib/malloptr.c
+stdlib/mbrlen.c
+stdlib/mbrtowc.c
+stdlib/mbsinit.c
+stdlib/mbsnrtowcs.c
+stdlib/mbsrtowcs.c
+stdlib/on_exit.c
+stdlib/pvallocr.c
+stdlib/valloc.c
+stdlib/vallocr.c
+stdlib/wcrtomb.c
+stdlib/wcsnrtombs.c
+stdlib/wcsrtombs.c
+stdlib/wctob.c
+stdlib/putenv.c
+stdlib/putenv_r.c
+stdlib/setenv.c
+stdlib/setenv_r.c
+stdlib/rpmatch.c
+stdlib/system.c
+ctype/ctype_.c
+ctype/isalnum.c
+ctype/isalpha.c
+ctype/iscntrl.c
+ctype/isdigit.c
+ctype/islower.c
+ctype/isupper.c
+ctype/isprint.c
+ctype/ispunct.c
+ctype/isspace.c
+ctype/isxdigit.c
+ctype/tolower.c
+ctype/toupper.c
+ctype/categories.c
+ctype/isalnum_l.c
+ctype/isalpha_l.c
+ctype/isascii.c
+ctype/isascii_l.c
+ctype/isblank.c
+ctype/isblank_l.c
+ctype/iscntrl_l.c
+ctype/isdigit_l.c
+ctype/islower_l.c
+ctype/isupper_l.c
+ctype/isprint_l.c
+ctype/ispunct_l.c
+ctype/isspace_l.c
+ctype/iswalnum.c
+ctype/iswalnum_l.c
+ctype/iswalpha.c
+ctype/iswalpha_l.c
+ctype/iswblank.c
+ctype/iswblank_l.c
+ctype/iswcntrl.c
+ctype/iswcntrl_l.c
+ctype/iswctype.c
+ctype/iswctype_l.c
+ctype/iswdigit.c
+ctype/iswdigit_l.c
+ctype/iswgraph.c
+ctype/iswgraph_l.c
+ctype/iswlower.c
+ctype/iswlower_l.c
+ctype/iswprint.c
+ctype/iswprint_l.c
+ctype/iswpunct.c
+ctype/iswpunct_l.c
+ctype/iswspace.c
+ctype/iswspace_l.c
+ctype/iswupper.c
+ctype/iswupper_l.c
+ctype/iswxdigit.c
+ctype/iswxdigit_l.c
+ctype/isxdigit_l.c
+ctype/jp2uc.c
+ctype/toascii.c
+ctype/toascii_l.c
+ctype/tolower_l.c
+ctype/toupper_l.c
+ctype/towctrans.c
+ctype/towctrans_l.c
+ctype/towlower.c
+ctype/towlower_l.c
+ctype/towupper.c
+ctype/towupper_l.c
+ctype/wctrans.c
+ctype/wctrans_l.c
+ctype/wctype.c
+ctype/wctype_l.c
+search/bsearch.c
+search/ndbm.c
+search/qsort.c
+search/hash.c
+search/hash_bigkey.c
+search/hash_buf.c
+search/hash_func.c
+search/hash_log2.c
+search/hash_page.c
+search/hcreate.c
+search/hcreate_r.c
+search/tdelete.c
+search/tdestroy.c
+search/tfind.c
+search/tsearch.c
+search/twalk.c
+search/bsd_qsort_r.c
+search/qsort_r.c
+stdio/nano-vfprintf_float.c
+stdio/nano-svfprintf.c
+stdio/nano-svfscanf.c
+stdio/nano-vfprintf.c
+stdio/nano-vfprintf_i.c
+stdio/nano-vfscanf.c
+stdio/nano-vfscanf_i.c
+stdio/nano-vfscanf_float.c
+stdio/clearerr.c
+stdio/fclose.c
+stdio/fdopen.c
+stdio/feof.c
+stdio/ferror.c
+stdio/fflush.c
+stdio/fgetc.c
+stdio/fgetpos.c
+stdio/fgets.c
+stdio/fileno.c
+stdio/findfp.c
+stdio/flags.c
+stdio/fopen.c
+stdio/fprintf.c
+stdio/fputc.c
+stdio/fputs.c
+stdio/fread.c
+stdio/freopen.c
+stdio/fscanf.c
+stdio/fseek.c
+stdio/fsetpos.c
+stdio/ftell.c
+stdio/fvwrite.c
+stdio/fwalk.c
+stdio/fwrite.c
+stdio/getc.c
+stdio/getchar.c
+stdio/getc_u.c
+stdio/getchar_u.c
+stdio/getdelim.c
+stdio/getline.c
+stdio/gets.c
+stdio/makebuf.c
+stdio/perror.c
+stdio/printf.c
+stdio/putc.c
+stdio/putchar.c
+stdio/putc_u.c
+stdio/putchar_u.c
+stdio/puts.c
+stdio/refill.c
+stdio/remove.c
+stdio/rename.c
+stdio/rewind.c
+stdio/rget.c
+stdio/scanf.c
+stdio/sccl.c
+stdio/setbuf.c
+stdio/setbuffer.c
+stdio/setlinebuf.c
+stdio/setvbuf.c
+stdio/snprintf.c
+stdio/sprintf.c
+stdio/sscanf.c
+stdio/stdio.c
+stdio/svfiwprintf.c
+stdio/svfiwscanf.c
+stdio/svfwprintf.c
+stdio/svfwscanf.c
+stdio/tmpfile.c
+stdio/tmpnam.c
+stdio/ungetc.c
+stdio/vdprintf.c
+stdio/vfiwprintf.c
+stdio/vfiwscanf.c
+stdio/vfwscanf.c
+stdio/vprintf.c
+stdio/vscanf.c
+stdio/vsnprintf.c
+stdio/vsprintf.c
+stdio/vsscanf.c
+stdio/wbuf.c
+stdio/wsetup.c
+stdio/asprintf.c
+stdio/fcloseall.c
+stdio/fseeko.c
+stdio/ftello.c
+stdio/getw.c
+stdio/mktemp.c
+stdio/putw.c
+stdio/vasprintf.c
+stdio/asnprintf.c
+stdio/clearerr_u.c
+stdio/dprintf.c
+stdio/feof_u.c
+stdio/ferror_u.c
+stdio/fflush_u.c
+stdio/fgetc_u.c
+stdio/fgets_u.c
+stdio/fgetwc.c
+stdio/fgetwc_u.c
+stdio/fgetws.c
+stdio/fgetws_u.c
+stdio/fileno_u.c
+stdio/fmemopen.c
+stdio/fopencookie.c
+stdio/fpurge.c
+stdio/fputc_u.c
+stdio/fputs_u.c
+stdio/fputwc.c
+stdio/fputwc_u.c
+stdio/fputws.c
+stdio/fputws_u.c
+stdio/fread_u.c
+stdio/fsetlocking.c
+stdio/funopen.c
+stdio/fwide.c
+stdio/fwprintf.c
+stdio/fwrite_u.c
+stdio/fwscanf.c
+stdio/getwc.c
+stdio/getwc_u.c
+stdio/getwchar.c
+stdio/getwchar_u.c
+stdio/open_memstream.c
+stdio/putwc.c
+stdio/putwc_u.c
+stdio/putwchar.c
+stdio/putwchar_u.c
+stdio/stdio_ext.c
+stdio/swprintf.c
+stdio/swscanf.c
+stdio/ungetwc.c
+stdio/vasnprintf.c
+stdio/vswprintf.c
+stdio/vswscanf.c
+stdio/vwprintf.c
+stdio/vwscanf.c
+stdio/wprintf.c
+stdio/wscanf.c
+string/bcopy.c
+string/bzero.c
+string/explicit_bzero.c
+string/ffsl.c
+string/ffsll.c
+string/fls.c
+string/flsl.c
+string/flsll.c
+string/index.c
+string/memchr.c
+string/memcmp.c
+string/memmove.c
+string/rindex.c
+string/strcasecmp.c
+string/strcat.c
+string/strchr.c
+string/strcoll.c
+string/strcspn.c
+string/strdup.c
+string/strdup_r.c
+string/strerror.c
+string/strerror_r.c
+string/strlcat.c
+string/strlcpy.c
+string/strlwr.c
+string/strncasecmp.c
+string/strncat.c
+string/strncmp.c
+string/strnlen.c
+string/strnstr.c
+string/strpbrk.c
+string/strrchr.c
+string/strsep.c
+string/strsignal.c
+string/strspn.c
+string/strtok.c
+string/strtok_r.c
+string/strupr.c
+string/strxfrm.c
+string/strstr.c
+string/swab.c
+string/timingsafe_bcmp.c
+string/timingsafe_memcmp.c
+string/u_strerr.c
+string/wcscat.c
+string/wcschr.c
+string/wcscmp.c
+string/wcscoll.c
+string/wcscpy.c
+string/wcscspn.c
+string/wcslcat.c
+string/wcslcpy.c
+string/wcslen.c
+string/wcsncat.c
+string/wcsncmp.c
+string/wcsncpy.c
+string/wcsnlen.c
+string/wcspbrk.c
+string/wcsrchr.c
+string/wcsspn.c
+string/wcsstr.c
+string/wcstok.c
+string/wcswidth.c
+string/wcsxfrm.c
+string/wcwidth.c
+string/wmemchr.c
+string/wmemcmp.c
+string/wmemcpy.c
+string/wmemmove.c
+string/wmemset.c
+string/xpg_strerror_r.c
+string/bcmp.c
+string/memccpy.c
+string/mempcpy.c
+string/stpcpy.c
+string/stpncpy.c
+string/strndup.c
+string/strcasestr.c
+string/strchrnul.c
+string/strndup_r.c
+string/wcpcpy.c
+string/wcpncpy.c
+string/wcsdup.c
+string/gnu_basename.c
+string/memmem.c
+string/memrchr.c
+string/rawmemchr.c
+string/strcasecmp_l.c
+string/strcoll_l.c
+string/strncasecmp_l.c
+string/strverscmp.c
+string/strxfrm_l.c
+string/wcscasecmp.c
+string/wcscasecmp_l.c
+string/wcscoll_l.c
+string/wcsncasecmp.c
+string/wcsncasecmp_l.c
+string/wcsxfrm_l.c
+string/wmempcpy.c
+signal/psignal.c
+signal/raise.c
+signal/signal.c
+signal/sig2str.c
+time/asctime.c
+time/asctime_r.c
+time/clock.c
+time/ctime.c
+time/ctime_r.c
+time/difftime.c
+time/gettzinfo.c
+time/gmtime.c
+time/gmtime_r.c
+time/lcltime.c
+time/lcltime_r.c
+time/mktime.c
+time/month_lengths.c
+time/strftime.c
+time/strptime.c
+time/time.c
+time/tzcalc_limits.c
+time/tzlock.c
+time/tzset.c
+time/tzset_r.c
+time/tzvars.c
+time/wcsftime.c
+locale/locale.c
+locale/localeconv.c
+locale/duplocale.c
+locale/freelocale.c
+locale/lctype.c
+locale/lmessages.c
+locale/lnumeric.c
+locale/lmonetary.c
+locale/newlocale.c
+locale/nl_langinfo.c
+locale/timelocal.c
+locale/uselocale.c
+reent/closer.c
+reent/reent.c
+reent/impure.c
+reent/fcntlr.c
+reent/fstatr.c
+reent/getentropyr.c
+reent/getreent.c
+reent/gettimeofdayr.c
+reent/isattyr.c
+reent/linkr.c
+reent/lseekr.c
+reent/mkdirr.c
+reent/openr.c
+reent/readr.c
+reent/renamer.c
+reent/signalr.c
+reent/signgam.c
+reent/sbrkr.c
+reent/statr.c
+reent/timesr.c
+reent/unlinkr.c
+reent/writer.c
+reent/execr.c
+errno/errno.c
+misc/__dprintf.c
+misc/unctrl.c
+misc/ffs.c
+misc/init.c
+misc/fini.c
+misc/lock.c
+posix/closedir.c
+posix/collate.c
+posix/collcmp.c
+posix/creat.c
+posix/dirfd.c
+posix/glob.c
+posix/opendir.c
+posix/readdir.c
+posix/readdir_r.c
+posix/regcomp.c
+posix/regerror.c
+posix/regexec.c
+posix/regfree.c
+posix/rewinddir.c
+posix/sleep.c
+posix/usleep.c
+posix/telldir.c
+posix/ftw.c
+posix/nftw.c
+posix/scandir.c
+posix/seekdir.c
+posix/execl.c
+posix/execle.c
+posix/execlp.c
+posix/execv.c
+posix/execve.c
+posix/execvp.c
+posix/wordexp.c
+posix/wordfree.c
+posix/popen.c
+posix/posix_spawn.c
+syscalls/sysclose.c
+syscalls/sysfcntl.c
+syscalls/sysfstat.c
+syscalls/sysgetentropy.c
+syscalls/sysgetpid.c
+syscalls/sysgettod.c
+syscalls/sysisatty.c
+syscalls/syskill.c
+syscalls/syslink.c
+syscalls/syslseek.c
+syscalls/sysopen.c
+syscalls/sysread.c
+syscalls/syssbrk.c
+syscalls/sysstat.c
+syscalls/systimes.c
+syscalls/sysunlink.c
+syscalls/syswrite.c
+syscalls/sysexecve.c
+syscalls/sysfork.c
+syscalls/syswait.c
+iconv/ces/utf-8.c
+iconv/ces/utf-16.c
+iconv/ces/ucs-2.c
+iconv/ces/us-ascii.c
+iconv/ces/ucs-4.c
+iconv/ces/ucs-2-internal.c
+iconv/ces/ucs-4-internal.c
+iconv/ces/cesbi.c
+iconv/ces/table.c
+iconv/ces/table-pcs.c
+iconv/ces/euc.c
+iconv/ccs/ccsbi.c
+iconv/ccs/iso_8859_10.c
+iconv/ccs/iso_8859_13.c
+iconv/ccs/iso_8859_14.c
+iconv/ccs/iso_8859_15.c
+iconv/ccs/iso_8859_1.c
+iconv/ccs/iso_8859_2.c
+iconv/ccs/iso_8859_3.c
+iconv/ccs/iso_8859_4.c
+iconv/ccs/iso_8859_5.c
+iconv/ccs/iso_8859_6.c
+iconv/ccs/iso_8859_7.c
+iconv/ccs/iso_8859_8.c
+iconv/ccs/iso_8859_9.c
+iconv/ccs/iso_8859_11.c
+iconv/ccs/win_1250.c
+iconv/ccs/win_1252.c
+iconv/ccs/win_1254.c
+iconv/ccs/win_1256.c
+iconv/ccs/win_1258.c
+iconv/ccs/win_1251.c
+iconv/ccs/win_1253.c
+iconv/ccs/win_1255.c
+iconv/ccs/win_1257.c
+iconv/ccs/koi8_r.c
+iconv/ccs/koi8_u.c
+iconv/ccs/koi8_ru.c
+iconv/ccs/koi8_uni.c
+iconv/ccs/iso_ir_111.c
+iconv/ccs/big5.c
+iconv/ccs/cp775.c
+iconv/ccs/cp850.c
+iconv/ccs/cp852.c
+iconv/ccs/cp855.c
+iconv/ccs/cp866.c
+iconv/ccs/jis_x0212_1990.c
+iconv/ccs/jis_x0201_1976.c
+iconv/ccs/jis_x0208_1990.c
+iconv/ccs/ksx1001.c
+iconv/ccs/cns11643_plane1.c
+iconv/ccs/cns11643_plane2.c
+iconv/ccs/cns11643_plane14.c
+iconv/lib/aliasesi.c
+iconv/lib/ucsconv.c
+iconv/lib/nullconv.c
+iconv/lib/iconv.c
+iconv/lib/aliasesbi.c
+iconv/lib/iconvnls.c
+ssp/chk_fail.c
+ssp/stack_protector.c
+ssp/memcpy_chk.c
+ssp/memmove_chk.c
+ssp/mempcpy_chk.c
+ssp/memset_chk.c
+ssp/stpcpy_chk.c
+ssp/stpncpy_chk.c
+ssp/strcat_chk.c
+ssp/strcpy_chk.c
+ssp/strncat_chk.c
+ssp/strncpy_chk.c
+ssp/gets_chk.c
+ssp/snprintf_chk.c
+ssp/sprintf_chk.c
+ssp/vsnprintf_chk.c
+ssp/vsprintf_chk.c
+machine/xtensa/memcpy.S
+machine/xtensa/memset.S
+machine/xtensa/setjmp.S
+machine/xtensa/strcmp.S
+machine/xtensa/strcpy.S
+machine/xtensa/strlen.S
+machine/xtensa/strncpy.S
+				`),
 				CFlags: []string{
 					"-DHAVE_CONFIG_H",
 					"-D_LIBC",

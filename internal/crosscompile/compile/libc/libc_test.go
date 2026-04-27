@@ -40,6 +40,20 @@ func TestGetNewlibESP32Config_LibConfig(t *testing.T) {
 	}
 }
 
+func TestJoinFileList(t *testing.T) {
+	files := "alpha/beta.c\n gamma/delta.S \n"
+	for _, root := range []string{"/tmp/root", "/tmp/root" + string(filepath.Separator)} {
+		got := joinFileList(root, files)
+		want := []string{
+			filepath.Join(root, filepath.FromSlash("alpha/beta.c")),
+			filepath.Join(root, filepath.FromSlash("gamma/delta.S")),
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("joinFileList(%q) = %#v, want %#v", root, got, want)
+		}
+	}
+}
+
 func TestGetPicolibcConfig_LibConfig(t *testing.T) {
 	config := GetPicolibcConfig()
 
@@ -105,8 +119,8 @@ func TestGetPicolibcCompileConfig(t *testing.T) {
 		}
 
 		// Test files list
-		if len(group.Files) == 0 {
-			t.Error("Expected non-empty files list")
+		if len(group.Files) != 112 {
+			t.Errorf("Expected 112 files, got %d", len(group.Files))
 		} else {
 			// Check a few sample files
 			sampleFiles := []string{

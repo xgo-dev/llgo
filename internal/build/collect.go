@@ -25,6 +25,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/goplus/llgo/internal/env"
 	"github.com/goplus/llgo/internal/packages"
@@ -64,21 +65,32 @@ func (c *context) collectFingerprint(pkg *aPackage) error {
 	}
 
 	pkg.Manifest = m.Build()
-	pkg.Fingerprint = m.Fingerprint()
+	pkg.Fingerprint = fingerprintManifest(pkg.Manifest)
 	return nil
 }
 
 // collectEnvInputs collects environment-related inputs.
 func (c *context) collectEnvInputs(m *manifestBuilder) {
-	m.env.Goos = c.buildConf.Goos
-	m.env.Goarch = c.buildConf.Goarch
-	m.env.LlvmTriple = c.crossCompile.LLVMTarget
-	m.env.LlgoVersion = env.Version()
-	m.env.LlgoCompilerHash = c.buildConf.CompilerHash
-	m.env.GoVersion = runtime.Version()
-	m.env.LlvmVersion = c.getLLVMVersion()
+	m.env = c.envInputs()
+}
 
-	// Environment variables that affect build
+func (c *context) envInputs() envSection {
+	if c.envInputsReady {
+		return c.envInputsCached
+	}
+	section := envSection{
+		Goos:             c.buildConf.Goos,
+		Goarch:           c.buildConf.Goarch,
+		LlvmTriple:       c.crossCompile.LLVMTarget,
+		LlgoVersion:      env.Version(),
+		LlgoCompilerHash: c.buildConf.CompilerHash,
+		GoVersion:        runtime.Version(),
+		LlvmVersion:      c.getLLVMVersion(),
+	}
+
+	// Environment variables that affect build. Treat them as per-build inputs:
+	// the build context is created for one invocation, so they only need to be
+	// captured once and can be reused for every package manifest.
 	envVars := []string{
 		llgoDebug,
 		llgoDbgSyms,
@@ -91,16 +103,19 @@ func (c *context) collectEnvInputs(m *manifestBuilder) {
 	}
 	for _, envVar := range envVars {
 		if v := os.Getenv(envVar); v != "" {
-			m.env.Vars = m.env.Vars.Add(envVar, v)
+			section.Vars = section.Vars.Add(envVar, v)
 		}
 	}
+	c.envInputsCached = section
+	c.envInputsReady = true
+	return section
 }
 
 // collectCommonInputs collects common build configuration inputs.
 func (c *context) collectCommonInputs(m *manifestBuilder) {
 	m.common.AbiMode = fmt.Sprintf("%d", c.buildConf.AbiMode)
-	if c.buildConf.Tags != "" {
-		m.common.BuildTags = strings.Split(c.buildConf.Tags, ",")
+	if buildTags := c.buildTags(); len(buildTags) > 0 {
+		m.common.BuildTags = buildTags
 	}
 	m.common.Target = c.buildConf.Target
 	m.common.TargetABI = c.crossCompile.TargetABI
@@ -238,6 +253,21 @@ func (c *context) dependencyFingerprint(dep *packages.Package) (depEntry, error)
 	return entry, nil
 }
 
+func (c *context) buildTags() []string {
+	tags := c.buildConf.Tags
+	if tags == "" {
+		return nil
+	}
+	if c.buildTagsRaw == tags && c.buildTagsCached != nil {
+		return c.buildTagsCached
+	}
+	buildTags := strings.Split(tags, ",")
+	sort.Strings(buildTags)
+	c.buildTagsRaw = tags
+	c.buildTagsCached = buildTags
+	return buildTags
+}
+
 func moduleVersion(mod *gopackages.Module) string {
 	if mod == nil {
 		return ""
@@ -252,13 +282,48 @@ func moduleVersion(mod *gopackages.Module) string {
 	return mod.Version
 }
 
+var (
+	llvmVersionCache      sync.Map
+	llvmCompilerPathCache sync.Map
+	detectLLVMVersionFunc = detectLLVMVersion
+)
+
 // getLLVMVersion returns the cached LLVM version or detects it.
 func (c *context) getLLVMVersion() string {
 	if c.llvmVersion != "" {
 		return c.llvmVersion
 	}
-	c.llvmVersion = detectLLVMVersion(c)
+	cc := c.crossCompile.CC
+	if cc == "" {
+		cc = "clang"
+	}
+	cacheKey := llvmVersionCacheKey(cc)
+	if version, ok := llvmVersionCache.Load(cacheKey); ok {
+		c.llvmVersion = version.(string)
+		return c.llvmVersion
+	}
+	c.llvmVersion = detectLLVMVersionFunc(c)
+	if c.llvmVersion != "" {
+		actual, _ := llvmVersionCache.LoadOrStore(cacheKey, c.llvmVersion)
+		c.llvmVersion = actual.(string)
+	}
 	return c.llvmVersion
+}
+
+func llvmVersionCacheKey(cc string) string {
+	if filepath.IsAbs(cc) {
+		return cc
+	}
+	pathKey := cc + "\x00" + os.Getenv("PATH")
+	if cacheKey, ok := llvmCompilerPathCache.Load(pathKey); ok {
+		return cacheKey.(string)
+	}
+	cacheKey := cc
+	if path, err := exec.LookPath(cc); err == nil {
+		cacheKey = path
+	}
+	actual, _ := llvmCompilerPathCache.LoadOrStore(pathKey, cacheKey)
+	return actual.(string)
 }
 
 // detectLLVMVersion detects LLVM version from clang --version.
@@ -282,19 +347,23 @@ func detectLLVMVersion(ctx *context) string {
 
 // targetTriple returns the target triple for cache directory.
 func (c *context) targetTriple() string {
-	return targetTriple(
+	if c.targetTripleCached != "" {
+		return c.targetTripleCached
+	}
+	c.targetTripleCached = targetTriple(
 		c.buildConf.Goos,
 		c.buildConf.Goarch,
 		c.crossCompile.LLVMTarget,
 		c.crossCompile.TargetABI,
 	)
+	return c.targetTripleCached
 }
 
 // targetTriple returns the target triple string for cache directory
 func targetTriple(goos, goarch, llvmTarget, targetABI string) string {
 	triple := llvmTarget
 	if triple == "" {
-		triple = fmt.Sprintf("%s-%s", goarch, goos)
+		triple = goarch + "-" + goos
 	}
 	if targetABI != "" {
 		triple = triple + "-" + targetABI
@@ -361,6 +430,21 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 // backward compatibility with existing cache entries.
 func parseManifestMetadata(content string) (*cacheArchiveMetadata, error) {
 	meta := &cacheArchiveMetadata{}
+	if metadataContent, ok := yamlMetadataSection(content); ok {
+		if simpleMeta, ok := parseSimpleManifestMetadata(metadataContent); ok {
+			return simpleMeta, nil
+		}
+		if data, err := decodeManifest(metadataContent); err == nil {
+			if data.Metadata != nil {
+				meta.LinkArgs = append([]string(nil), data.Metadata.LinkArgs...)
+				meta.NeedRt = data.Metadata.NeedRt
+				meta.NeedPyInit = data.Metadata.NeedPyInit
+			}
+			return meta, nil
+		}
+	} else if !strings.Contains(content, "[Package]\n") {
+		return meta, nil
+	}
 	if data, err := decodeManifest(content); err == nil {
 		if data.Metadata != nil {
 			meta.LinkArgs = append([]string(nil), data.Metadata.LinkArgs...)
@@ -371,6 +455,81 @@ func parseManifestMetadata(content string) (*cacheArchiveMetadata, error) {
 	}
 
 	return parseManifestMetadataLegacy(content, meta)
+}
+
+func parseSimpleManifestMetadata(content string) (*cacheArchiveMetadata, bool) {
+	meta := &cacheArchiveMetadata{}
+	inLinkArgs := false
+	for start := 0; start <= len(content); {
+		end := strings.IndexByte(content[start:], '\n')
+		if end < 0 {
+			end = len(content)
+		} else {
+			end += start
+		}
+		field := strings.TrimSpace(content[start:end])
+		switch field {
+		case "", "metadata:":
+			// Skip.
+		case "link_args:":
+			inLinkArgs = true
+			if meta.LinkArgs == nil {
+				meta.LinkArgs = make([]string, 0, 4)
+			}
+		case "need_rt: true":
+			inLinkArgs = false
+			meta.NeedRt = true
+		case "need_rt: false":
+			inLinkArgs = false
+			meta.NeedRt = false
+		case "need_py_init: true":
+			inLinkArgs = false
+			meta.NeedPyInit = true
+		case "need_py_init: false":
+			inLinkArgs = false
+			meta.NeedPyInit = false
+		default:
+			if !inLinkArgs || !strings.HasPrefix(field, "- ") {
+				return nil, false
+			}
+			arg := strings.TrimSpace(field[2:])
+			if !isSimpleMetadataScalar(arg) {
+				return nil, false
+			}
+			meta.LinkArgs = append(meta.LinkArgs, arg)
+		}
+		if end == len(content) {
+			break
+		}
+		start = end + 1
+	}
+	return meta, true
+}
+
+func isSimpleMetadataScalar(s string) bool {
+	return s != "" && !strings.ContainsAny(s, "\"'{}[]&*!|>@`#\t\r\n")
+}
+
+func yamlMetadataSection(content string) (string, bool) {
+	start := 0
+	if !strings.HasPrefix(content, "metadata:") {
+		idx := strings.Index(content, "\nmetadata:")
+		if idx < 0 {
+			return "", false
+		}
+		start = idx + 1
+	}
+	end := len(content)
+	searchFrom := start + len("metadata:")
+	for _, marker := range [...]string{"\nenv:", "\ncommon:", "\npackage:", "\ndeps:"} {
+		if idx := strings.Index(content[searchFrom:], marker); idx >= 0 {
+			pos := searchFrom + idx
+			if pos+1 < end {
+				end = pos + 1
+			}
+		}
+	}
+	return content[start:end], true
 }
 
 func parseManifestMetadataLegacy(content string, meta *cacheArchiveMetadata) (*cacheArchiveMetadata, error) {
@@ -464,25 +623,19 @@ func (c *context) saveToCache(pkg *aPackage) error {
 		return fmt.Errorf("package %s missing manifest for fingerprint %s", pkg.PkgPath, pkg.Fingerprint)
 	}
 
-	data, err := decodeManifest(manifestContent)
-	if err != nil {
-		return fmt.Errorf("decode manifest: %w", err)
-	}
-
 	meta := &manifestMetadata{
 		LinkArgs:   append([]string(nil), pkg.LinkArgs...),
 		NeedRt:     pkg.NeedRt,
 		NeedPyInit: pkg.NeedPyInit,
 	}
-	if len(meta.LinkArgs) == 0 && !meta.NeedRt && !meta.NeedPyInit {
-		data.Metadata = nil
-	} else {
-		data.Metadata = meta
-	}
 
-	manifestWithMeta, err := buildManifestYAML(data)
-	if err != nil {
-		return err
+	manifestWithMeta := manifestContent
+	if len(meta.LinkArgs) > 0 || meta.NeedRt || meta.NeedPyInit {
+		var err error
+		manifestWithMeta, err = appendManifestMetadata(manifestContent, meta)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Write manifest with metadata
@@ -491,6 +644,103 @@ func (c *context) saveToCache(pkg *aPackage) error {
 	}
 
 	return nil
+}
+
+func appendManifestMetadata(manifestContent string, meta *manifestMetadata) (string, error) {
+	if metaLen, ok := simpleManifestMetadataLen(meta); ok {
+		return appendSimpleManifestMetadata(manifestContent, meta, metaLen), nil
+	}
+	metaContent, err := buildManifestYAML(manifestData{Metadata: meta})
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasSuffix(manifestContent, "\n") {
+		manifestContent += "\n"
+	}
+	if idx := strings.Index(manifestContent, "\ndeps:"); idx >= 0 {
+		idx++
+		return manifestContent[:idx] + metaContent + manifestContent[idx:], nil
+	}
+	return manifestContent + metaContent, nil
+}
+
+func appendSimpleManifestMetadata(manifestContent string, meta *manifestMetadata, metaLen int) string {
+	missingNewline := !strings.HasSuffix(manifestContent, "\n")
+	idx := strings.Index(manifestContent, "\ndeps:")
+	if idx >= 0 {
+		idx++
+	}
+
+	finalLen := len(manifestContent) + metaLen
+	if missingNewline {
+		finalLen++
+	}
+	var b strings.Builder
+	b.Grow(finalLen)
+	if idx >= 0 {
+		b.WriteString(manifestContent[:idx])
+		writeSimpleManifestMetadata(&b, meta)
+		b.WriteString(manifestContent[idx:])
+		if missingNewline {
+			b.WriteByte('\n')
+		}
+		return b.String()
+	}
+	b.WriteString(manifestContent)
+	if missingNewline {
+		b.WriteByte('\n')
+	}
+	writeSimpleManifestMetadata(&b, meta)
+	return b.String()
+}
+
+func buildSimpleManifestMetadata(meta *manifestMetadata) (string, bool) {
+	metaLen, ok := simpleManifestMetadataLen(meta)
+	if !ok {
+		return "", false
+	}
+	var b strings.Builder
+	b.Grow(metaLen)
+	writeSimpleManifestMetadata(&b, meta)
+	return b.String(), true
+}
+
+func simpleManifestMetadataLen(meta *manifestMetadata) (int, bool) {
+	metaLen := len("metadata:\n")
+	if len(meta.LinkArgs) > 0 {
+		metaLen += len("    link_args:\n")
+		for _, arg := range meta.LinkArgs {
+			if !isSimpleMetadataScalar(arg) {
+				return 0, false
+			}
+			metaLen += len("        - ") + len(arg) + 1
+		}
+	}
+	if meta.NeedRt {
+		metaLen += len("    need_rt: true\n")
+	}
+	if meta.NeedPyInit {
+		metaLen += len("    need_py_init: true\n")
+	}
+	return metaLen, true
+}
+
+func writeSimpleManifestMetadata(b *strings.Builder, meta *manifestMetadata) {
+	b.WriteString("metadata:\n")
+	if len(meta.LinkArgs) > 0 {
+		b.WriteString("    link_args:\n")
+		for _, arg := range meta.LinkArgs {
+			b.WriteString("        - ")
+			b.WriteString(arg)
+			b.WriteByte('\n')
+		}
+	}
+	if meta.NeedRt {
+		b.WriteString("    need_rt: true\n")
+	}
+	if meta.NeedPyInit {
+		b.WriteString("    need_py_init: true\n")
+	}
 }
 
 // copyFileAtomic copies src to dst using a temp file for atomicity.

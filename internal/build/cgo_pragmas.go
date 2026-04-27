@@ -23,10 +23,10 @@ func collectGoCgoPragmas(files []*ast.File) (ldflags []string, dynimports []cgoI
 				continue
 			}
 			for _, c := range cg.List {
-				if c == nil {
+				if c == nil || !strings.Contains(c.Text, "go:cgo_") {
 					continue
 				}
-				for _, line := range splitCommentLines(c.Text) {
+				forEachCommentLine(c.Text, func(line string) {
 					switch {
 					case strings.HasPrefix(line, "go:cgo_ldflag"):
 						rest := strings.TrimSpace(strings.TrimPrefix(line, "go:cgo_ldflag"))
@@ -37,7 +37,7 @@ func collectGoCgoPragmas(files []*ast.File) (ldflags []string, dynimports []cgoI
 						rest := strings.TrimSpace(strings.TrimPrefix(line, "go:cgo_import_dynamic"))
 						toks := splitDirectiveArgs(rest)
 						if len(toks) == 0 {
-							continue
+							return
 						}
 						local := toks[0]
 						alias := local
@@ -45,14 +45,14 @@ func collectGoCgoPragmas(files []*ast.File) (ldflags []string, dynimports []cgoI
 							alias = toks[1]
 						}
 						if local == "" || alias == "" || local == alias {
-							continue
+							return
 						}
 						dynimports = append(dynimports, cgoImportDynamicDecl{
 							local: local,
 							alias: alias,
 						})
 					}
-				}
+				})
 			}
 		}
 	}
@@ -183,21 +183,28 @@ func emitDarwinDynimportTrampoline(b *strings.Builder, goarch string, local stri
 	}
 }
 
-func splitCommentLines(text string) []string {
-	lines := strings.Split(text, "\n")
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
+func forEachCommentLine(text string, fn func(string)) {
+	for start := 0; start <= len(text); {
+		end := strings.IndexByte(text[start:], '\n')
+		if end < 0 {
+			end = len(text)
+		} else {
+			end += start
+		}
+		line := strings.TrimSpace(text[start:end])
 		line = strings.TrimPrefix(line, "//")
 		line = strings.TrimPrefix(line, "/*")
 		line = strings.TrimSuffix(line, "*/")
 		line = strings.TrimSpace(strings.TrimPrefix(line, "*"))
 		line = strings.TrimSpace(line)
 		if line != "" {
-			out = append(out, line)
+			fn(line)
 		}
+		if end == len(text) {
+			break
+		}
+		start = end + 1
 	}
-	return out
 }
 
 func splitDirectiveArgs(s string) []string {

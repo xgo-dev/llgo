@@ -33,14 +33,36 @@ func TestSanitizePkgPath(t *testing.T) {
 		{"github.com/user/repo", filepath.Join("github.com", "user", "repo")},
 		{"example.com/pkg", filepath.Join("example.com", "pkg")},
 		{"simple", "simple"},
+		{"github.com/user/pkg.v2", filepath.Join("github.com", "user", "pkg.v2")},
 		{"", "_"},
 		{"a//b", filepath.Join("a", "_", "b")},
+		{"a/./b", filepath.Join("a", "_", "b")},
+		{"a/../b", filepath.Join("a", "_", "b")},
+		{"a/pkg+plus", filepath.Join("a", sanitizeComponent("pkg+plus"))},
 	}
 
 	for _, tt := range tests {
 		got := sanitizePkgPath(tt.input)
 		if got != tt.want {
 			t.Errorf("sanitizePkgPath(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestJoinCachePath(t *testing.T) {
+	sep := string(os.PathSeparator)
+	roots := []string{
+		"",
+		".",
+		filepath.Join(sep, "tmp", "root"),
+		filepath.Join(sep, "tmp", "root") + sep,
+		sep,
+	}
+	for _, root := range roots {
+		got := joinCachePath(root, "target", filepath.Join("pkg", "sub"))
+		want := filepath.Join(root, "target", filepath.Join("pkg", "sub"))
+		if got != want {
+			t.Fatalf("joinCachePath(%q) = %q, want %q", root, got, want)
 		}
 	}
 }

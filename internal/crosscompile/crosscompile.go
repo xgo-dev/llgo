@@ -185,11 +185,10 @@ func compileWithConfig(
 ) (ldflags []string, err error) {
 	ldflags = append(ldflags, "-nostdlib", "-L"+outputDir)
 
+	if err = compileConfig.Compile(outputDir, options); err != nil {
+		return
+	}
 	for _, group := range compileConfig.Groups {
-		err = group.Compile(outputDir, options)
-		if err != nil {
-			break
-		}
 		if filepath.Ext(group.OutputFileName) == ".o" {
 			continue
 		}

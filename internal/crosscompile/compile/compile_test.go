@@ -5,11 +5,19 @@ package compile
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/goplus/llgo/xtool/nm"
 )
+
+func skipIfRootPermissionTest(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "windows" && os.Geteuid() == 0 {
+		t.Skip("permission-denial checks are not reliable when running as root")
+	}
+}
 
 func TestIsCompiled(t *testing.T) {
 	t.Run("IsCompiled Not Exists", func(t *testing.T) {
@@ -46,6 +54,68 @@ func TestIsCompiled(t *testing.T) {
 	})
 }
 
+func TestCompileVerbose(t *testing.T) {
+	if compileVerbose(CompileOptions{}) {
+		t.Fatal("compileVerbose should be false by default")
+	}
+	if !compileVerbose(CompileOptions{Verbose: true}) {
+		t.Fatal("compileVerbose should honor CompileOptions.Verbose")
+	}
+	t.Setenv("LLGO_COMPILE_VERBOSE", "1")
+	if !compileVerbose(CompileOptions{}) {
+		t.Fatal("compileVerbose should honor LLGO_COMPILE_VERBOSE")
+	}
+}
+
+func TestCompileJobs(t *testing.T) {
+	t.Setenv("LLGO_COMPILE_JOBS", "3")
+	jobs, err := compileJobs()
+	if err != nil {
+		t.Fatalf("compileJobs: %v", err)
+	}
+	if jobs != 3 {
+		t.Fatalf("compileJobs = %d, want 3", jobs)
+	}
+
+	t.Setenv("LLGO_COMPILE_JOBS", "0")
+	if _, err := compileJobs(); err == nil {
+		t.Fatal("compileJobs should reject non-positive LLGO_COMPILE_JOBS")
+	}
+
+	t.Setenv("LLGO_COMPILE_JOBS", "bad")
+	if _, err := compileJobs(); err == nil {
+		t.Fatal("compileJobs should reject invalid LLGO_COMPILE_JOBS")
+	}
+
+	t.Setenv("LLGO_COMPILE_JOBS", "")
+	oldProcs := runtime.GOMAXPROCS(32)
+	defer runtime.GOMAXPROCS(oldProcs)
+	jobs, err = compileJobs()
+	if err != nil {
+		t.Fatalf("compileJobs default: %v", err)
+	}
+	if jobs != 16 {
+		t.Fatalf("compileJobs should cap default jobs at 16, got %d", jobs)
+	}
+}
+
+func TestCompileSkipDoesNotReadJobs(t *testing.T) {
+	tmpDir := t.TempDir()
+	archive := filepath.Join(tmpDir, "exists.a")
+	if err := os.WriteFile(archive, []byte("archive already exists"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LLGO_COMPILE_JOBS", "bad")
+
+	group := CompileGroup{OutputFileName: "exists.a"}
+	if err := group.Compile(tmpDir, CompileOptions{CC: "clang"}); err != nil {
+		t.Fatalf("Compile skipped group with invalid jobs env: %v", err)
+	}
+	if err := (CompileConfig{Groups: []CompileGroup{group}}).Compile(tmpDir, CompileOptions{CC: "clang"}); err != nil {
+		t.Fatalf("CompileConfig skipped group with invalid jobs env: %v", err)
+	}
+}
+
 func TestCompile(t *testing.T) {
 	t.Run("Skip compile", func(t *testing.T) {
 		tmpDir, err := os.MkdirTemp("", "test-compile*")
@@ -73,6 +143,8 @@ func TestCompile(t *testing.T) {
 	})
 
 	t.Run("TmpDir Fail", func(t *testing.T) {
+		skipIfRootPermissionTest(t)
+
 		tmpDir := filepath.Join(t.TempDir(), "test-compile")
 		os.RemoveAll(tmpDir)
 
@@ -206,6 +278,143 @@ func TestCompile(t *testing.T) {
 			t.Errorf("unexpected result: should nil %v", err)
 		}
 	})
+}
+
+func TestCompileConfigMultipleGroups(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	writeC := func(name, symbol string) string {
+		path := filepath.Join(tmpDir, name)
+		if err := os.WriteFile(path, []byte("int "+symbol+"(void) { return 1; }\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+
+	cfg := CompileConfig{Groups: []CompileGroup{
+		{OutputFileName: "libone.a", Files: []string{writeC("one.c", "One")}},
+		{OutputFileName: "libtwo.a", Files: []string{writeC("two.c", "Two")}},
+	}}
+	if err := cfg.Compile(tmpDir, CompileOptions{CC: "clang"}); err != nil {
+		t.Fatalf("CompileConfig.Compile: %v", err)
+	}
+
+	for _, tt := range []struct {
+		archive string
+		symbol  string
+	}{
+		{"libone.a", "One"},
+		{"libtwo.a", "Two"},
+	} {
+		archive := filepath.Join(tmpDir, tt.archive)
+		items, err := nm.New("").List(archive)
+		if err != nil {
+			t.Fatalf("nm %s: %v", tt.archive, err)
+		}
+		found := false
+		for _, item := range items {
+			for _, sym := range item.Symbols {
+				if strings.Contains(sym.Name, tt.symbol) {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("cannot find symbol %s in %s", tt.symbol, tt.archive)
+		}
+	}
+}
+
+func TestCompileSingleGroupParallel(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeC := func(name, symbol string) string {
+		path := filepath.Join(tmpDir, name)
+		if err := os.WriteFile(path, []byte("int "+symbol+"(void) { return 1; }\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+
+	t.Setenv("LLGO_COMPILE_JOBS", "2")
+	group := CompileGroup{
+		OutputFileName: "libsingle.a",
+		Files: []string{
+			writeC("one.c", "SingleOne"),
+			writeC("two.c", "SingleTwo"),
+		},
+	}
+	if err := group.Compile(tmpDir, CompileOptions{CC: "clang"}); err != nil {
+		t.Fatalf("Compile single group in parallel: %v", err)
+	}
+	archive := filepath.Join(tmpDir, "libsingle.a")
+	items, err := nm.New("").List(archive)
+	if err != nil {
+		t.Fatalf("nm %s: %v", archive, err)
+	}
+	for _, want := range []string{"SingleOne", "SingleTwo"} {
+		found := false
+		for _, item := range items {
+			for _, sym := range item.Symbols {
+				if strings.Contains(sym.Name, want) {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("cannot find symbol %s in %s", want, archive)
+		}
+	}
+}
+
+func TestCompileSingleGroupParallelError(t *testing.T) {
+	tmpDir := t.TempDir()
+	good := filepath.Join(tmpDir, "good.c")
+	if err := os.WriteFile(good, []byte("int good(void) { return 1; }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	bad := filepath.Join(tmpDir, "bad.c")
+	if err := os.WriteFile(bad, []byte("int bad(void) {\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("LLGO_COMPILE_JOBS", "2")
+	group := CompileGroup{OutputFileName: "libbad.a", Files: []string{good, bad}}
+	if err := group.Compile(tmpDir, CompileOptions{CC: "clang"}); err == nil {
+		t.Fatal("Compile should report clang error from a bad source file")
+	}
+}
+
+func TestCompileConfigMultipleGroupsParallelError(t *testing.T) {
+	tmpDir := t.TempDir()
+	good := filepath.Join(tmpDir, "good.c")
+	if err := os.WriteFile(good, []byte("int good(void) { return 1; }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	bad := filepath.Join(tmpDir, "bad.c")
+	if err := os.WriteFile(bad, []byte("int bad(void) {\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("LLGO_COMPILE_JOBS", "2")
+	cfg := CompileConfig{Groups: []CompileGroup{
+		{OutputFileName: "libgood.a", Files: []string{good}},
+		{OutputFileName: "libbad.a", Files: []string{bad}},
+	}}
+	if err := cfg.Compile(tmpDir, CompileOptions{CC: "clang"}); err == nil {
+		t.Fatal("CompileConfig should report clang error from a bad source file")
+	}
+}
+
+func TestSingleTaskGroup(t *testing.T) {
+	if _, ok := singleTaskGroup(nil); ok {
+		t.Fatal("empty task list should not be a single group")
+	}
+	if group, ok := singleTaskGroup([]compileTask{{group: 2}, {group: 2}}); !ok || group != 2 {
+		t.Fatalf("singleTaskGroup same group = %d, %v; want 2, true", group, ok)
+	}
+	if _, ok := singleTaskGroup([]compileTask{{group: 1}, {group: 2}}); ok {
+		t.Fatal("mixed task groups should not report a single group")
+	}
 }
 
 func TestLibConfig_String(t *testing.T) {

@@ -19,6 +19,8 @@
 package build
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -78,6 +80,18 @@ func TestManifestBuilder_BuildSorting(t *testing.T) {
 	sort.Strings(rvKeys)
 	if strings.Join(rvKeys, ",") != "A,Z" {
 		t.Fatalf("rewrite vars not sorted: %v", rvKeys)
+	}
+}
+
+func TestFingerprintManifestMatchesSHA256(t *testing.T) {
+	content := "env:\n  GOOS: linux\npackage:\n  pkg_path: example.com/pkg\n"
+	sum := sha256.Sum256([]byte(content))
+	want := hex.EncodeToString(sum[:])
+	if got := fingerprintManifest(content); got != want {
+		t.Fatalf("fingerprintManifest() = %q, want %q", got, want)
+	}
+	if got := fingerprintManifest(""); got != hex.EncodeToString(sha256.New().Sum(nil)) {
+		t.Fatalf("fingerprintManifest(empty) = %q", got)
 	}
 }
 

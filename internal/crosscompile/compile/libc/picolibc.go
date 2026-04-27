@@ -1,7 +1,6 @@
 package libc
 
 import (
-	"fmt"
 	"path/filepath"
 
 	"github.com/goplus/llgo/internal/crosscompile/compile"
@@ -26,123 +25,123 @@ func GetPicolibcCompileConfig(baseDir, target string) compile.CompileConfig {
 		},
 		Groups: []compile.CompileGroup{
 			{
-				OutputFileName: fmt.Sprintf("libc-%s.a", target),
-				Files: []string{
-					filepath.Join(baseDir, "newlib", "libc", "string", "bcmp.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "bcopy.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "bzero.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "explicit_bzero.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "ffsl.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "ffsll.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "fls.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "flsl.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "flsll.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "gnu_basename.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "index.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "memccpy.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "memchr.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "memcmp.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "memcpy.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "memmem.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "memmove.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "mempcpy.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "memrchr.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "memset.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "rawmemchr.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "rindex.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "stpcpy.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "stpncpy.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strcasecmp.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strcasecmp_l.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strcasestr.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strcat.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strchr.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strchrnul.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strcmp.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strcoll.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strcoll_l.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strcpy.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strcspn.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strerror_r.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strlcat.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strlcpy.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strlen.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strlwr.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strncasecmp.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strncasecmp_l.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strncat.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strncmp.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strncpy.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strndup.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strnlen.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strnstr.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strpbrk.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strrchr.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strsep.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strsignal.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strspn.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strstr.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strtok.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strtok_r.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strupr.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strverscmp.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strxfrm.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strxfrm_l.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "swab.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "timingsafe_bcmp.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "timingsafe_memcmp.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "strerror.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcpcpy.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcpncpy.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcscasecmp.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcscasecmp_l.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcscat.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcschr.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcscmp.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcscoll.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcscoll_l.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcscpy.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcscspn.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcsdup.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcslcat.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcslcpy.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcslen.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcsncasecmp.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcsncasecmp_l.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcsncat.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcsncmp.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcsncpy.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcsnlen.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcspbrk.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcsrchr.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcsspn.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcsstr.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcstok.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcswidth.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcsxfrm.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcsxfrm_l.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wcwidth.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wmemchr.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wmemcmp.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wmemcpy.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wmemmove.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wmempcpy.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "wmemset.c"),
-					filepath.Join(baseDir, "newlib", "libc", "string", "xpg_strerror_r.c"),
+				OutputFileName: "libc-" + target + ".a",
+				Files: joinFileList(baseDir, `
+newlib/libc/string/bcmp.c
+newlib/libc/string/bcopy.c
+newlib/libc/string/bzero.c
+newlib/libc/string/explicit_bzero.c
+newlib/libc/string/ffsl.c
+newlib/libc/string/ffsll.c
+newlib/libc/string/fls.c
+newlib/libc/string/flsl.c
+newlib/libc/string/flsll.c
+newlib/libc/string/gnu_basename.c
+newlib/libc/string/index.c
+newlib/libc/string/memccpy.c
+newlib/libc/string/memchr.c
+newlib/libc/string/memcmp.c
+newlib/libc/string/memcpy.c
+newlib/libc/string/memmem.c
+newlib/libc/string/memmove.c
+newlib/libc/string/mempcpy.c
+newlib/libc/string/memrchr.c
+newlib/libc/string/memset.c
+newlib/libc/string/rawmemchr.c
+newlib/libc/string/rindex.c
+newlib/libc/string/stpcpy.c
+newlib/libc/string/stpncpy.c
+newlib/libc/string/strcasecmp.c
+newlib/libc/string/strcasecmp_l.c
+newlib/libc/string/strcasestr.c
+newlib/libc/string/strcat.c
+newlib/libc/string/strchr.c
+newlib/libc/string/strchrnul.c
+newlib/libc/string/strcmp.c
+newlib/libc/string/strcoll.c
+newlib/libc/string/strcoll_l.c
+newlib/libc/string/strcpy.c
+newlib/libc/string/strcspn.c
+newlib/libc/string/strerror_r.c
+newlib/libc/string/strlcat.c
+newlib/libc/string/strlcpy.c
+newlib/libc/string/strlen.c
+newlib/libc/string/strlwr.c
+newlib/libc/string/strncasecmp.c
+newlib/libc/string/strncasecmp_l.c
+newlib/libc/string/strncat.c
+newlib/libc/string/strncmp.c
+newlib/libc/string/strncpy.c
+newlib/libc/string/strndup.c
+newlib/libc/string/strnlen.c
+newlib/libc/string/strnstr.c
+newlib/libc/string/strpbrk.c
+newlib/libc/string/strrchr.c
+newlib/libc/string/strsep.c
+newlib/libc/string/strsignal.c
+newlib/libc/string/strspn.c
+newlib/libc/string/strstr.c
+newlib/libc/string/strtok.c
+newlib/libc/string/strtok_r.c
+newlib/libc/string/strupr.c
+newlib/libc/string/strverscmp.c
+newlib/libc/string/strxfrm.c
+newlib/libc/string/strxfrm_l.c
+newlib/libc/string/swab.c
+newlib/libc/string/timingsafe_bcmp.c
+newlib/libc/string/timingsafe_memcmp.c
+newlib/libc/string/strerror.c
+newlib/libc/string/wcpcpy.c
+newlib/libc/string/wcpncpy.c
+newlib/libc/string/wcscasecmp.c
+newlib/libc/string/wcscasecmp_l.c
+newlib/libc/string/wcscat.c
+newlib/libc/string/wcschr.c
+newlib/libc/string/wcscmp.c
+newlib/libc/string/wcscoll.c
+newlib/libc/string/wcscoll_l.c
+newlib/libc/string/wcscpy.c
+newlib/libc/string/wcscspn.c
+newlib/libc/string/wcsdup.c
+newlib/libc/string/wcslcat.c
+newlib/libc/string/wcslcpy.c
+newlib/libc/string/wcslen.c
+newlib/libc/string/wcsncasecmp.c
+newlib/libc/string/wcsncasecmp_l.c
+newlib/libc/string/wcsncat.c
+newlib/libc/string/wcsncmp.c
+newlib/libc/string/wcsncpy.c
+newlib/libc/string/wcsnlen.c
+newlib/libc/string/wcspbrk.c
+newlib/libc/string/wcsrchr.c
+newlib/libc/string/wcsspn.c
+newlib/libc/string/wcsstr.c
+newlib/libc/string/wcstok.c
+newlib/libc/string/wcswidth.c
+newlib/libc/string/wcsxfrm.c
+newlib/libc/string/wcsxfrm_l.c
+newlib/libc/string/wcwidth.c
+newlib/libc/string/wmemchr.c
+newlib/libc/string/wmemcmp.c
+newlib/libc/string/wmemcpy.c
+newlib/libc/string/wmemmove.c
+newlib/libc/string/wmempcpy.c
+newlib/libc/string/wmemset.c
+newlib/libc/string/xpg_strerror_r.c
 
-					filepath.Join(baseDir, "newlib", "libc", "stdlib", "nano-calloc.c"),
-					filepath.Join(baseDir, "newlib", "libc", "stdlib", "nano-malloc.c"),
-					filepath.Join(baseDir, "newlib", "libc", "stdlib", "nano-pvalloc.c"),
-					filepath.Join(baseDir, "newlib", "libc", "stdlib", "nano-realloc.c"),
-					filepath.Join(baseDir, "newlib", "libc", "stdlib", "nano-valloc.c"),
-					filepath.Join(baseDir, "newlib", "libc", "stdlib", "rand.c"),
-					filepath.Join(baseDir, "newlib", "libc", "stdlib", "srand.c"),
-					filepath.Join(baseDir, "newlib", "libc", "stdlib", "nano-free.c"),
+newlib/libc/stdlib/nano-calloc.c
+newlib/libc/stdlib/nano-malloc.c
+newlib/libc/stdlib/nano-pvalloc.c
+newlib/libc/stdlib/nano-realloc.c
+newlib/libc/stdlib/nano-valloc.c
+newlib/libc/stdlib/rand.c
+newlib/libc/stdlib/srand.c
+newlib/libc/stdlib/nano-free.c
 
-					filepath.Join(baseDir, "newlib", "libc", "tinystdio", "printf.c"),
-					filepath.Join(baseDir, "newlib", "libc", "tinystdio", "putchar.c"),
-					filepath.Join(baseDir, "newlib", "libc", "tinystdio", "puts.c"),
-				},
+newlib/libc/tinystdio/printf.c
+newlib/libc/tinystdio/putchar.c
+newlib/libc/tinystdio/puts.c
+				`),
 				CFlags: []string{
 					"-D_COMPILING_NEWLIB",
 					"-D_HAVE_ALIAS_ATTRIBUTE",

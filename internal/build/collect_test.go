@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/goplus/llgo/internal/crosscompile"
@@ -71,6 +72,9 @@ func TestCollectFingerprint(t *testing.T) {
 	if len(pkg.Fingerprint) != 64 {
 		t.Errorf("fingerprint length = %d, want 64", len(pkg.Fingerprint))
 	}
+	if want := fingerprintManifest(pkg.Manifest); pkg.Fingerprint != want {
+		t.Errorf("fingerprint = %s, want hash of manifest %s", pkg.Fingerprint, want)
+	}
 
 	data, err := decodeManifest(pkg.Manifest)
 	if err != nil {
@@ -84,6 +88,81 @@ func TestCollectFingerprint(t *testing.T) {
 	}
 	if data.Package.PkgPath != "example.com/test" {
 		t.Error("manifest should contain PKG_PATH")
+	}
+}
+
+func TestParseManifestMetadata(t *testing.T) {
+	m := newManifestBuilder()
+	m.env.Goos = "linux"
+	m.pkg.PkgPath = "example.com/lib"
+	meta, err := parseManifestMetadata(m.Build())
+	if err != nil {
+		t.Fatalf("parseManifestMetadata no metadata: %v", err)
+	}
+	if len(meta.LinkArgs) != 0 || meta.NeedRt || meta.NeedPyInit {
+		t.Fatalf("no metadata parse = %+v, want empty", meta)
+	}
+
+	content, err := buildManifestYAML(manifestData{Metadata: &manifestMetadata{
+		LinkArgs:   []string{"-lm", "-lpthread"},
+		NeedRt:     true,
+		NeedPyInit: true,
+	}})
+	if err != nil {
+		t.Fatalf("buildManifestYAML: %v", err)
+	}
+	meta, err = parseManifestMetadata(content)
+	if err != nil {
+		t.Fatalf("parseManifestMetadata yaml metadata: %v", err)
+	}
+	if strings.Join(meta.LinkArgs, " ") != "-lm -lpthread" || !meta.NeedRt || !meta.NeedPyInit {
+		t.Fatalf("yaml metadata parse = %+v", meta)
+	}
+
+	simpleContent := "env:\n    GOOS: linux\nmetadata:\n    need_rt: true\n    need_py_init: true\n"
+	meta, err = parseManifestMetadata(simpleContent)
+	if err != nil {
+		t.Fatalf("parseManifestMetadata simple metadata: %v", err)
+	}
+	if len(meta.LinkArgs) != 0 || !meta.NeedRt || !meta.NeedPyInit {
+		t.Fatalf("simple metadata parse = %+v", meta)
+	}
+	if simple, ok := parseSimpleManifestMetadata("metadata:\n    need_rt: true\n    need_py_init: false\n"); !ok || !simple.NeedRt || simple.NeedPyInit {
+		t.Fatalf("parseSimpleManifestMetadata = %+v, %v", simple, ok)
+	}
+	if simple, ok := parseSimpleManifestMetadata("metadata:\n    link_args:\n        - -lm\n        - -Wl,--gc-sections\n"); !ok || strings.Join(simple.LinkArgs, " ") != "-lm -Wl,--gc-sections" {
+		t.Fatalf("parseSimpleManifestMetadata link_args = %+v, %v", simple, ok)
+	}
+	if _, ok := parseSimpleManifestMetadata("metadata:\n    link_args:\n        - \"-framework CoreFoundation\"\n"); ok {
+		t.Fatal("parseSimpleManifestMetadata should defer quoted link_args to YAML parser")
+	}
+	if simpleYAML, ok := buildSimpleManifestMetadata(&manifestMetadata{LinkArgs: []string{"-lm", "-Wl,--gc-sections"}, NeedRt: true}); !ok || !strings.Contains(simpleYAML, "-Wl,--gc-sections") {
+		t.Fatalf("buildSimpleManifestMetadata = %q, %v", simpleYAML, ok)
+	}
+	if _, ok := buildSimpleManifestMetadata(&manifestMetadata{LinkArgs: []string{"\"quoted\""}}); ok {
+		t.Fatal("buildSimpleManifestMetadata should defer quoted link args to YAML marshaler")
+	}
+
+	fullYAML := "env:\n    GOOS: linux\n" + content + "deps:\n    - id: example.com/dep\n      version: v1.0.0\n"
+	section, ok := yamlMetadataSection(fullYAML)
+	if !ok {
+		t.Fatal("yamlMetadataSection should find metadata section")
+	}
+	if !strings.Contains(section, "metadata:") || strings.Contains(section, "deps:") {
+		t.Fatalf("metadata section slice = %q", section)
+	}
+	section, ok = yamlMetadataSection(content + "deps:\n    - id: example.com/dep\n")
+	if !ok || !strings.HasPrefix(section, "metadata:") || strings.Contains(section, "deps:") {
+		t.Fatalf("metadata-at-start section slice = %q, %v", section, ok)
+	}
+
+	legacy := "[Package]\nLINK_ARGS = -llegacy -lm\nNEED_RT = true\nNEED_PY_INIT = false\n"
+	meta, err = parseManifestMetadata(legacy)
+	if err != nil {
+		t.Fatalf("parseManifestMetadata legacy metadata: %v", err)
+	}
+	if strings.Join(meta.LinkArgs, " ") != "-llegacy -lm" || !meta.NeedRt || meta.NeedPyInit {
+		t.Fatalf("legacy metadata parse = %+v", meta)
 	}
 }
 
@@ -339,7 +418,73 @@ func TestTargetTripleMethod(t *testing.T) {
 			if got != tt.expect {
 				t.Errorf("targetTriple() = %q, want %q", got, tt.expect)
 			}
+			if cached := tt.ctx.targetTriple(); cached != tt.expect {
+				t.Errorf("cached targetTriple() = %q, want %q", cached, tt.expect)
+			}
+			if tt.ctx.targetTripleCached != tt.expect {
+				t.Errorf("targetTripleCached = %q, want %q", tt.ctx.targetTripleCached, tt.expect)
+			}
 		})
+	}
+}
+
+func TestCollectEnvInputsCachesPerBuildInputs(t *testing.T) {
+	t.Setenv(llgoTrace, "1")
+	ctx := &context{
+		buildConf:    &Config{Goos: "linux", Goarch: "amd64", CompilerHash: "hash"},
+		crossCompile: crosscompile.Export{LLVMTarget: "x86_64-test"},
+		llvmVersion:  "LLVM test",
+	}
+	m1 := newManifestBuilder()
+	ctx.collectEnvInputs(m1)
+	if !ctx.envInputsReady {
+		t.Fatal("env inputs were not cached")
+	}
+	if m1.env.Goos != "linux" || m1.env.Goarch != "amd64" || m1.env.LlvmTriple != "x86_64-test" || m1.env.LlgoCompilerHash != "hash" || m1.env.LlvmVersion != "LLVM test" {
+		t.Fatalf("unexpected env inputs: %+v", m1.env)
+	}
+	if got := m1.env.Vars[llgoTrace]; got != "1" {
+		t.Fatalf("env var %s = %q, want 1", llgoTrace, got)
+	}
+
+	t.Setenv(llgoTrace, "2")
+	m2 := newManifestBuilder()
+	ctx.collectEnvInputs(m2)
+	if got := m2.env.Vars[llgoTrace]; got != "1" {
+		t.Fatalf("cached env var %s = %q, want original per-build value 1", llgoTrace, got)
+	}
+
+	ctx2 := &context{buildConf: &Config{}, llvmVersion: "LLVM test"}
+	m3 := newManifestBuilder()
+	ctx2.collectEnvInputs(m3)
+	if got := m3.env.Vars[llgoTrace]; got != "2" {
+		t.Fatalf("fresh context env var %s = %q, want 2", llgoTrace, got)
+	}
+}
+
+func TestCollectCommonInputsCachesBuildTags(t *testing.T) {
+	ctx := &context{buildConf: &Config{Tags: "z,a,m", AbiMode: 1}}
+	m1 := newManifestBuilder()
+	ctx.collectCommonInputs(m1)
+	if got := strings.Join(m1.common.BuildTags, ","); got != "a,m,z" {
+		t.Fatalf("BuildTags = %q, want sorted tags", got)
+	}
+	cached := ctx.buildTagsCached
+	if len(cached) != 3 {
+		t.Fatalf("buildTagsCached = %v", cached)
+	}
+
+	m2 := newManifestBuilder()
+	ctx.collectCommonInputs(m2)
+	if len(m2.common.BuildTags) == 0 || &m2.common.BuildTags[0] != &cached[0] {
+		t.Fatalf("collectCommonInputs did not reuse cached build tags")
+	}
+
+	ctx.buildConf.Tags = "b,a"
+	m3 := newManifestBuilder()
+	ctx.collectCommonInputs(m3)
+	if got := strings.Join(m3.common.BuildTags, ","); got != "a,b" {
+		t.Fatalf("BuildTags after config change = %q, want sorted refreshed tags", got)
 	}
 }
 
@@ -548,6 +693,9 @@ func TestSaveToCache_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadManifest: %v", err)
 	}
+	if content != pkg.Manifest {
+		t.Errorf("manifest without metadata should be written unchanged\ngot:\n%s\nwant:\n%s", content, pkg.Manifest)
+	}
 	data, err := decodeManifest(content)
 	if err != nil {
 		t.Fatalf("decodeManifest: %v", err)
@@ -565,19 +713,164 @@ func TestSaveToCache_Success(t *testing.T) {
 	}
 }
 
+func TestAppendManifestMetadataSimple(t *testing.T) {
+	meta := &manifestMetadata{LinkArgs: []string{"-lm", "-Wl,--gc-sections"}, NeedRt: true, NeedPyInit: true}
+
+	withDepsNoTrailingNewline := "env:\n    GOOS: linux\ndeps:\n    - id: example.com/dep"
+	got, err := appendManifestMetadata(withDepsNoTrailingNewline, meta)
+	if err != nil {
+		t.Fatalf("appendManifestMetadata: %v", err)
+	}
+	metadataIdx := strings.Index(got, "\nmetadata:")
+	depsIdx := strings.Index(got, "\ndeps:")
+	if metadataIdx < 0 || depsIdx < 0 || metadataIdx > depsIdx {
+		t.Fatalf("metadata should be inserted before deps:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "\n") {
+		t.Fatalf("missing trailing newline after appending to no-newline manifest: %q", got)
+	}
+	parsed, err := parseManifestMetadata(got)
+	if err != nil {
+		t.Fatalf("parse appended metadata: %v", err)
+	}
+	if strings.Join(parsed.LinkArgs, " ") != "-lm -Wl,--gc-sections" || !parsed.NeedRt || !parsed.NeedPyInit {
+		t.Fatalf("metadata parse = %+v", parsed)
+	}
+
+	withoutDepsNoTrailingNewline := "env:\n    GOOS: linux"
+	got, err = appendManifestMetadata(withoutDepsNoTrailingNewline, meta)
+	if err != nil {
+		t.Fatalf("appendManifestMetadata no deps: %v", err)
+	}
+	if !strings.Contains(got, "GOOS: linux\nmetadata:\n") {
+		t.Fatalf("metadata should be appended after adding separator newline:\n%s", got)
+	}
+}
+
+func TestSaveToCache_WithMetadata(t *testing.T) {
+	td := t.TempDir()
+	oldFunc := cacheRootFunc
+	cacheRootFunc = func() string { return td }
+	defer func() { cacheRootFunc = oldFunc }()
+
+	ctx := &context{
+		conf: &packages.Config{},
+		buildConf: &Config{
+			Goos:   "linux",
+			Goarch: "amd64",
+		},
+		crossCompile: crosscompile.Export{
+			LLVMTarget: "x86_64-unknown-linux-gnu",
+		},
+	}
+
+	objFile, err := os.CreateTemp(td, "test-*.o")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	objFile.WriteString("fake object file")
+	objFile.Close()
+
+	m := newManifestBuilder()
+	m.env.Goos = "linux"
+	m.pkg.PkgPath = "example.com/metadata"
+	m.deps = append(m.deps, depEntry{ID: "example.com/dep", Version: "v1.0.0"})
+	pkg := &aPackage{
+		Package: &packages.Package{
+			PkgPath: "example.com/metadata",
+			Name:    "metadata",
+		},
+		Fingerprint: "meta123",
+		Manifest:    m.Build(),
+		ObjFiles:    []string{objFile.Name()},
+		LinkArgs:    []string{"-lm", "-lpthread"},
+		NeedRt:      true,
+		NeedPyInit:  true,
+	}
+
+	if err := ctx.saveToCache(pkg); err != nil {
+		t.Fatalf("saveToCache: %v", err)
+	}
+
+	paths := ctx.ensureCacheManager().PackagePaths("x86_64-unknown-linux-gnu", "example.com/metadata", "meta123")
+	content, err := readManifest(paths.Manifest)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	metadataIdx := strings.Index(content, "\nmetadata:")
+	depsIdx := strings.Index(content, "\ndeps:")
+	if metadataIdx < 0 {
+		t.Fatalf("manifest should contain metadata section:\n%s", content)
+	}
+	if depsIdx >= 0 && metadataIdx > depsIdx {
+		t.Fatalf("metadata section should be written before deps section:\n%s", content)
+	}
+	meta, err := parseManifestMetadata(content)
+	if err != nil {
+		t.Fatalf("parseManifestMetadata: %v", err)
+	}
+	if strings.Join(meta.LinkArgs, " ") != "-lm -lpthread" || !meta.NeedRt || !meta.NeedPyInit {
+		t.Fatalf("metadata parse = %+v", meta)
+	}
+}
+
 func TestGetLLVMVersion(t *testing.T) {
+	oldDetect := detectLLVMVersionFunc
+	llvmVersionCache = sync.Map{}
+	llvmCompilerPathCache = sync.Map{}
+	detectCalls := 0
+	detectLLVMVersionFunc = func(*context) string {
+		detectCalls++
+		return "clang version test"
+	}
+	t.Cleanup(func() {
+		llvmVersionCache = sync.Map{}
+		llvmCompilerPathCache = sync.Map{}
+		detectLLVMVersionFunc = oldDetect
+	})
+
 	ctx := &context{
 		crossCompile: crosscompile.Export{},
 	}
 
-	// First call should detect version
 	v1 := ctx.getLLVMVersion()
-	// May be empty if clang is not installed, but should not panic
-
-	// Second call should return cached version
 	v2 := ctx.getLLVMVersion()
 	if v1 != v2 {
 		t.Error("getLLVMVersion should return cached value")
+	}
+	if v1 != "clang version test" {
+		t.Fatalf("getLLVMVersion = %q, want injected version", v1)
+	}
+	if detectCalls != 1 {
+		t.Fatalf("detectLLVMVersion called %d times, want 1", detectCalls)
+	}
+}
+
+func TestGetLLVMVersionCachesAcrossContexts(t *testing.T) {
+	oldDetect := detectLLVMVersionFunc
+	llvmVersionCache = sync.Map{}
+	llvmCompilerPathCache = sync.Map{}
+	detectCalls := 0
+	detectLLVMVersionFunc = func(*context) string {
+		detectCalls++
+		return "clang version test"
+	}
+	t.Cleanup(func() {
+		llvmVersionCache = sync.Map{}
+		llvmCompilerPathCache = sync.Map{}
+		detectLLVMVersionFunc = oldDetect
+	})
+
+	ctx1 := &context{crossCompile: crosscompile.Export{CC: "test-clang"}}
+	ctx2 := &context{crossCompile: crosscompile.Export{CC: "test-clang"}}
+	if got := ctx1.getLLVMVersion(); got != "clang version test" {
+		t.Fatalf("first LLVM version = %q, want injected version", got)
+	}
+	if got := ctx2.getLLVMVersion(); got != "clang version test" {
+		t.Fatalf("second LLVM version = %q, want cached injected version", got)
+	}
+	if detectCalls != 1 {
+		t.Fatalf("detectLLVMVersion called %d times, want 1", detectCalls)
 	}
 }
 
