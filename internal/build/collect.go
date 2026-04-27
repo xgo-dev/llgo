@@ -603,19 +603,24 @@ func (c *context) saveToCache(pkg *aPackage) error {
 		return err
 	}
 
-	// If ArchiveFile is already set (from normalizeToArchive), copy it to cache
+	// Publish the package archive directly at its cache path. Cache misses can
+	// then link this archive immediately instead of first creating a temporary
+	// archive and copying it into the cache.
 	if pkg.ArchiveFile != "" {
-		if err := copyFileAtomic(pkg.ArchiveFile, paths.Archive); err != nil {
-			return err
+		if pkg.ArchiveFile != paths.Archive {
+			if err := copyFileAtomic(pkg.ArchiveFile, paths.Archive); err != nil {
+				return err
+			}
 		}
 	} else if len(pkg.ObjFiles) > 0 {
-		// Otherwise, create archive from object files
 		if err := c.createArchiveFile(paths.Archive, pkg.ObjFiles); err != nil {
 			return err
 		}
 	} else {
 		return nil
 	}
+	pkg.ArchiveFile = paths.Archive
+	pkg.ObjFiles = nil
 
 	// Append metadata to existing manifest (pkg.Manifest was built in collectFingerprint).
 	manifestContent := pkg.Manifest
