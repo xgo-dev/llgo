@@ -1313,13 +1313,14 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 	} else {
 		aPkg.ObjFiles = append(aPkg.ObjFiles, asmObjFiles...)
 	}
-	if aliasObjs, err := buildGoCgoAliasObjects(ctx, pkgPath, aPkg.Package.Syntax, printCmds); err != nil {
+	goCgoLdflags, goCgoDynimports := collectGoCgoPragmas(aPkg.Package.Syntax)
+	if aliasObjs, err := buildGoCgoAliasObjects(ctx, pkgPath, goCgoDynimports, printCmds); err != nil {
 		return err
 	} else {
 		aPkg.ObjFiles = append(aPkg.ObjFiles, aliasObjs...)
 	}
 	aPkg.LinkArgs = append(aPkg.LinkArgs, cgoLdflags...)
-	aPkg.LinkArgs = append(aPkg.LinkArgs, goCgoLinkArgs(ctx.buildConf.Goos, aPkg.Package.Syntax)...)
+	aPkg.LinkArgs = append(aPkg.LinkArgs, goCgoLdflags...)
 	if aPkg.AltPkg != nil {
 		altLLFiles, altLdflags, e := buildCgo(ctx, aPkg, aPkg.AltPkg.Syntax, externs, printCmds)
 		if e != nil {
@@ -1332,13 +1333,14 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 		} else {
 			aPkg.ObjFiles = append(aPkg.ObjFiles, asmObjFiles...)
 		}
-		if aliasObjs, err := buildGoCgoAliasObjects(ctx, pkgPath, aPkg.AltPkg.Syntax, printCmds); err != nil {
+		altGoCgoLdflags, altGoCgoDynimports := collectGoCgoPragmas(aPkg.AltPkg.Syntax)
+		if aliasObjs, err := buildGoCgoAliasObjects(ctx, pkgPath, altGoCgoDynimports, printCmds); err != nil {
 			return err
 		} else {
 			aPkg.ObjFiles = append(aPkg.ObjFiles, aliasObjs...)
 		}
 		aPkg.LinkArgs = append(aPkg.LinkArgs, altLdflags...)
-		aPkg.LinkArgs = append(aPkg.LinkArgs, goCgoLinkArgs(ctx.buildConf.Goos, aPkg.AltPkg.Syntax)...)
+		aPkg.LinkArgs = append(aPkg.LinkArgs, altGoCgoLdflags...)
 	}
 	if pkg.ExportFile != "" {
 		exportFile, err := exportObject(ctx, pkg.PkgPath, pkg.ExportFile, ret)

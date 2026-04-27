@@ -83,16 +83,20 @@ static void* _Cmalloc(size_t size) {
 )
 
 func buildCgo(ctx *context, pkg *aPackage, files []*ast.File, externs []string, verbose bool) (llfiles, cgoLdflags []string, err error) {
-	buildCtx := build.Default
-	if ctx.buildConf.Goos != "" {
-		buildCtx.GOOS = ctx.buildConf.Goos
+	var buildCtx *build.Context
+	if _, ok := pkgSrcFilesFromMetadata(pkg); !ok {
+		ctxVal := build.Default
+		if ctx.buildConf.Goos != "" {
+			ctxVal.GOOS = ctx.buildConf.Goos
+		}
+		if ctx.buildConf.Goarch != "" {
+			ctxVal.GOARCH = ctx.buildConf.Goarch
+		}
+		ctxVal.BuildTags = parseSourcePatchBuildTags(ctx.conf.BuildFlags)
+		buildCtx = &ctxVal
 	}
-	if ctx.buildConf.Goarch != "" {
-		buildCtx.GOARCH = ctx.buildConf.Goarch
-	}
-	buildCtx.BuildTags = parseSourcePatchBuildTags(ctx.conf.BuildFlags)
 
-	srcFiles, preambles, cdecls, err := parseCgo_(&buildCtx, pkg, files)
+	srcFiles, preambles, cdecls, err := parseCgo_(buildCtx, pkg, files)
 	if err != nil {
 		return
 	}
@@ -430,13 +434,17 @@ func pkgSrcFilesFromMetadata(pkg *aPackage) ([]cgoSrcFile, bool) {
 		return nil, true
 	}
 	var srcFiles []cgoSrcFile
-	for _, file := range pkg.OtherFiles {
-		isCXX, ok := cgoSourceKind(filepath.Base(file))
+	for i, file := range pkg.OtherFiles {
+		isCXX, ok := cgoSourceKind(file)
 		if !ok {
 			continue
 		}
 		if srcFiles == nil {
-			srcFiles = make([]cgoSrcFile, 0, len(pkg.OtherFiles))
+			capHint := len(pkg.OtherFiles) - i
+			if i > 0 && capHint > 4 {
+				capHint = 4
+			}
+			srcFiles = make([]cgoSrcFile, 0, capHint)
 		}
 		srcFiles = append(srcFiles, cgoSrcFile{path: file, isCXX: isCXX})
 	}
@@ -501,12 +509,26 @@ func dirCgoSrcFiles(buildCtx *build.Context, dir string) ([]cgoSrcFile, error) {
 }
 
 func cgoSourceKind(name string) (isCXX bool, ok bool) {
-	switch {
-	case strings.HasSuffix(name, "_test.c"), strings.HasSuffix(name, "_test.cc"), strings.HasSuffix(name, "_test.cpp"), strings.HasSuffix(name, "_test.cxx"):
-		return false, false
-	case strings.HasSuffix(name, ".c"):
+	switch filepath.Ext(name) {
+	case ".c":
+		if strings.HasSuffix(name, "_test.c") {
+			return false, false
+		}
 		return false, true
-	case strings.HasSuffix(name, ".cc"), strings.HasSuffix(name, ".cpp"), strings.HasSuffix(name, ".cxx"):
+	case ".cc":
+		if strings.HasSuffix(name, "_test.cc") {
+			return false, false
+		}
+		return true, true
+	case ".cpp":
+		if strings.HasSuffix(name, "_test.cpp") {
+			return false, false
+		}
+		return true, true
+	case ".cxx":
+		if strings.HasSuffix(name, "_test.cxx") {
+			return false, false
+		}
 		return true, true
 	}
 	return false, false

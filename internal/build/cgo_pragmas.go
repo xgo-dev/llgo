@@ -64,12 +64,8 @@ func goCgoLinkArgs(goos string, files []*ast.File) []string {
 	return ldflags
 }
 
-func buildGoCgoAliasObjects(ctx *context, pkgPath string, files []*ast.File, verbose bool) ([]string, error) {
-	if ctx == nil || ctx.buildConf == nil || ctx.buildConf.Goos != "darwin" {
-		return nil, nil
-	}
-	_, dynimports := collectGoCgoPragmas(files)
-	if len(dynimports) == 0 {
+func buildGoCgoAliasObjects(ctx *context, pkgPath string, dynimports []cgoImportDynamicDecl, verbose bool) ([]string, error) {
+	if ctx == nil || ctx.buildConf == nil || ctx.buildConf.Goos != "darwin" || len(dynimports) == 0 {
 		return nil, nil
 	}
 
@@ -208,14 +204,17 @@ func forEachCommentLine(text string, fn func(string)) {
 }
 
 func splitDirectiveArgs(s string) []string {
-	fields := strings.Fields(strings.TrimSpace(s))
-	out := make([]string, 0, len(fields))
-	for _, f := range fields {
-		if u, err := strconv.Unquote(f); err == nil {
-			out = append(out, u)
-		} else {
-			out = append(out, f)
+	fields := strings.Fields(s)
+	for i, f := range fields {
+		if len(f) < 2 {
+			continue
+		}
+		switch f[0] {
+		case '`', '\'', '"':
+			if u, err := strconv.Unquote(f); err == nil {
+				fields[i] = u
+			}
 		}
 	}
-	return out
+	return fields
 }
