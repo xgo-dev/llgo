@@ -46,7 +46,10 @@ func GOROOTAndGOVERSIONWithEnv(env []string) (goroot, goversion string, err erro
 	return vals[0], vals[1], nil
 }
 
-var goEnvCache sync.Map
+var (
+	goEnvCache     sync.Map
+	llgoRootWarned sync.Map
+)
 
 func GoEnvWithEnv(env []string, vars ...string) ([]string, error) {
 	if len(vars) == 0 {
@@ -149,7 +152,9 @@ func LLGoROOT() string {
 			return ""
 		}
 		if root, ok := isLLGoRoot(root); ok {
-			fmt.Fprintln(os.Stderr, "WARNING: Using LLGO root for devel: "+root)
+			if _, loaded := llgoRootWarned.LoadOrStore(root, true); !loaded {
+				fmt.Fprintln(os.Stderr, "WARNING: Using LLGO root for devel: "+root)
+			}
 			return root
 		}
 	}
