@@ -95,6 +95,37 @@ func TestGOROOTAndGOVERSIONWithEnv(t *testing.T) {
 	})
 }
 
+func TestGoEnvWithEnvCachesSuccessfulResults(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake go shell script is Unix-only")
+	}
+	dir := t.TempDir()
+	countFile := filepath.Join(dir, "count")
+	goPath := filepath.Join(dir, "go")
+	script := "#!/bin/sh\ncount=0\nif [ -f " + countFile + " ]; then count=$(cat " + countFile + "); fi\ncount=$((count + 1))\necho $count > " + countFile + "\necho /tmp/fake-goroot\necho go1.99.0\n"
+	if err := os.WriteFile(goPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	for i := 0; i < 2; i++ {
+		got, err := GoEnvWithEnv(nil, "GOROOT", "GOVERSION")
+		if err != nil {
+			t.Fatalf("GoEnvWithEnv call %d: %v", i, err)
+		}
+		if strings.Join(got, ",") != "/tmp/fake-goroot,go1.99.0" {
+			t.Fatalf("GoEnvWithEnv call %d = %v", i, got)
+		}
+	}
+	count, err := os.ReadFile(countFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(count)) != "1" {
+		t.Fatalf("fake go invoked %s times, want 1", strings.TrimSpace(string(count)))
+	}
+}
+
 func TestGoEnvWithEnvErrors(t *testing.T) {
 	t.Run("without variables", func(t *testing.T) {
 		if got, err := GoEnvWithEnv(nil); err == nil || got != nil {
