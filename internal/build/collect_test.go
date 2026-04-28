@@ -639,6 +639,65 @@ func TestSaveToCache_MainPackage(t *testing.T) {
 	}
 }
 
+func TestStartCacheSaveNormalizesMainPackage(t *testing.T) {
+	td := t.TempDir()
+	oldFunc := cacheRootFunc
+	cacheRootFunc = func() string { return td }
+	defer func() { cacheRootFunc = oldFunc }()
+
+	ctx := &context{
+		conf: &packages.Config{},
+		buildConf: &Config{
+			Goos:   "darwin",
+			Goarch: "arm64",
+		},
+		crossCompile: crosscompile.Export{
+			LLVMTarget: "arm64-apple-darwin",
+		},
+	}
+
+	objFile, err := os.CreateTemp(td, "main-*.o")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	if _, err := objFile.WriteString("fake object file"); err != nil {
+		t.Fatalf("write obj: %v", err)
+	}
+	if err := objFile.Close(); err != nil {
+		t.Fatalf("close obj: %v", err)
+	}
+
+	pkg := &aPackage{
+		Package: &packages.Package{
+			PkgPath: "example.com/main",
+			Name:    "main",
+		},
+		Fingerprint: "abc123",
+		Manifest:    "test manifest",
+		ObjFiles:    []string{objFile.Name()},
+	}
+
+	ctx.startCacheSave(pkg, false)
+	if err := ctx.waitCacheSaves(false); err != nil {
+		t.Fatalf("waitCacheSaves: %v", err)
+	}
+	if pkg.ArchiveFile == "" {
+		t.Fatal("main package archive was not created")
+	}
+	if pkg.ObjFiles != nil {
+		t.Fatalf("ObjFiles = %v, want nil after archiving", pkg.ObjFiles)
+	}
+	if _, err := os.Stat(pkg.ArchiveFile); err != nil {
+		t.Fatalf("archive should exist: %v", err)
+	}
+
+	cm := ctx.ensureCacheManager()
+	paths := cm.PackagePaths("arm64-apple-darwin", "example.com/main", "abc123")
+	if _, err := os.Stat(paths.Manifest); !os.IsNotExist(err) {
+		t.Fatal("main package should not publish a cache manifest")
+	}
+}
+
 func TestSaveToCache_Success(t *testing.T) {
 	td := t.TempDir()
 	oldFunc := cacheRootFunc
