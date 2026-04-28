@@ -88,6 +88,7 @@ func (c *context) collectEnvInputs(m *manifestBuilder) {
 		llgoWasiThreads,
 		llgoStdioNobuf,
 		llgoFullRpath,
+		llgoSSASanity,
 	}
 	for _, envVar := range envVars {
 		if v := os.Getenv(envVar); v != "" {

@@ -384,7 +384,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	})
 	preCollectRuntimeLinknames(prog, altPkgs)
 
-	buildMode := ssaBuildMode
+	buildMode := ssaBuildMode()
 	cabiOptimize := true
 	passOpt := true
 	if IsDbgEnabled() || mode == ModeGen {
@@ -571,9 +571,17 @@ func (p Package) isNeedRuntimeOrPyInit() (needRuntime, needPyInit bool) {
 	return
 }
 
-const (
-	ssaBuildMode = ssa.SanityCheckFunctions | ssa.InstantiateGenerics
-)
+func ssaBuildMode() ssa.BuilderMode {
+	mode := ssa.InstantiateGenerics
+	if ssaSanityEnabled() {
+		mode |= ssa.SanityCheckFunctions
+	}
+	return mode
+}
+
+func ssaSanityEnabled() bool {
+	return isEnvOn(llgoSSASanity, false)
+}
 
 type context struct {
 	env            *llvm.Env
@@ -1708,9 +1716,11 @@ func fixUntypedShiftTypes(p *packages.Package) {
 }
 
 func applyPatches(ctx *context, p *packages.Package, verbose bool) {
-	// Fix untyped shift types before SSA build
+	// Fix untyped shift types before SSA sanity checking.
 	// See: https://github.com/golang/go/issues/77067
-	fixUntypedShiftTypes(p)
+	if ssaSanityEnabled() {
+		fixUntypedShiftTypes(p)
+	}
 
 	// fix instance patch
 	for id, inst := range p.TypesInfo.Instances {
@@ -1780,6 +1790,7 @@ const llgoWasiThreads = "LLGO_WASI_THREADS"
 const llgoStdioNobuf = "LLGO_STDIO_NOBUF"
 const llgoFullRpath = "LLGO_FULL_RPATH"
 const llgoBuildCache = "LLGO_BUILD_CACHE"
+const llgoSSASanity = "LLGO_SSA_SANITY"
 
 // for Plan9 asm translation debug
 const llgoPlan9ASMPkgs = "LLGO_PLAN9ASM_PKGS"
