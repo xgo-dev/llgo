@@ -203,6 +203,26 @@ func envGOPATH() (string, error) {
 	return filepath.Join(home, "go"), nil
 }
 
+func prependEnvPath(dir string) {
+	if dir == "" {
+		return
+	}
+	sep := string(os.PathListSeparator)
+	pathEnv := os.Getenv("PATH")
+	parts := filepath.SplitList(pathEnv)
+	if len(parts) > 0 && parts[0] == dir {
+		return
+	}
+	out := make([]string, 0, len(parts)+1)
+	out = append(out, dir)
+	for _, part := range parts {
+		if part != "" && part != dir {
+			out = append(out, part)
+		}
+	}
+	os.Setenv("PATH", strings.Join(out, sep))
+}
+
 // -----------------------------------------------------------------------------
 
 const (
@@ -382,7 +402,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	altSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
 
 	env := llvm.New("")
-	os.Setenv("PATH", env.BinDir()+":"+os.Getenv("PATH")) // TODO(xsw): check windows
+	prependEnvPath(env.BinDir())
 
 	output := conf.OutFile != ""
 	ctx := &context{env: env, conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,

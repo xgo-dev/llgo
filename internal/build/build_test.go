@@ -32,6 +32,26 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+func TestPrependEnvPath(t *testing.T) {
+	sep := string(os.PathListSeparator)
+	t.Setenv("PATH", strings.Join([]string{"/usr/bin", "/opt/llvm/bin", "/bin", "/opt/llvm/bin"}, sep))
+	prependEnvPath("/opt/llvm/bin")
+	want := strings.Join([]string{"/opt/llvm/bin", "/usr/bin", "/bin"}, sep)
+	if got := os.Getenv("PATH"); got != want {
+		t.Fatalf("PATH = %q, want %q", got, want)
+	}
+
+	prependEnvPath("/opt/llvm/bin")
+	if got := os.Getenv("PATH"); got != want {
+		t.Fatalf("second prepend changed PATH to %q, want %q", got, want)
+	}
+
+	prependEnvPath("")
+	if got := os.Getenv("PATH"); got != want {
+		t.Fatalf("empty prepend changed PATH to %q, want %q", got, want)
+	}
+}
+
 func TestNeedsLinuxNoPIE(t *testing.T) {
 	ctx := &context{buildConf: &Config{Goos: "linux"}}
 	if !needsLinuxNoPIE(ctx, nil) {
