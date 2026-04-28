@@ -610,8 +610,10 @@ type context struct {
 	testFail bool
 
 	// Cache related fields
-	cacheManager *cacheManager
-	llvmVersion  string
+	cacheManager      *cacheManager
+	pendingCacheSaves []*pendingCacheSave
+	cacheSaveSem      chan struct{}
+	llvmVersion       string
 
 	// Plan9 assembly file discovery caches.
 	sfilesCache map[string][]string // pkg.ID -> absolute .s/.S file paths
@@ -621,6 +623,49 @@ type context struct {
 	plan9asmOnce sync.Once
 	plan9asmMode plan9asmPkgsEnvMode
 	plan9asmPkgs map[string]bool
+}
+
+type pendingCacheSave struct {
+	pkg  *aPackage
+	done chan error
+}
+
+func (c *context) startCacheSave(pkg *aPackage) {
+	c.ensureCacheManager()
+	c.targetTriple()
+	if c.cacheSaveSem == nil {
+		limit := runtime.GOMAXPROCS(0) / 2
+		if limit < 1 {
+			limit = 1
+		} else if limit > 4 {
+			limit = 4
+		}
+		c.cacheSaveSem = make(chan struct{}, limit)
+	}
+	pending := &pendingCacheSave{pkg: pkg, done: make(chan error, 1)}
+	c.pendingCacheSaves = append(c.pendingCacheSaves, pending)
+	go func() {
+		c.cacheSaveSem <- struct{}{}
+		defer func() { <-c.cacheSaveSem }()
+		pending.done <- c.saveToCache(pkg)
+	}()
+}
+
+func (c *context) waitCacheSaves(verbose bool) error {
+	for _, pending := range c.pendingCacheSaves {
+		err := <-pending.done
+		pkg := pending.pkg
+		if err != nil && verbose {
+			fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", pkg.PkgPath, err)
+		}
+		if pkg.ArchiveFile == "" {
+			if err := normalizeToArchive(c, pkg, verbose); err != nil {
+				return err
+			}
+		}
+	}
+	c.pendingCacheSaves = nil
+	return nil
 }
 
 func (c *context) compiler() *clang.Cmd {
@@ -733,14 +778,7 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 					if kind == cl.PkgLinkExtern {
 						appendExternalLinkArgs(ctx, aPkg, param)
 					}
-					if err := ctx.saveToCache(aPkg); err != nil && verbose {
-						fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", pkg.PkgPath, err)
-					}
-					if aPkg.ArchiveFile == "" {
-						if err := normalizeToArchive(ctx, aPkg, verbose); err != nil {
-							return err
-						}
-					}
+					ctx.startCacheSave(aPkg)
 				}
 			} else {
 				pkg.ExportFile = ""
@@ -767,14 +805,7 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 			needRuntime = needRuntime || aPkg.NeedRt
 			needPyInit = needPyInit || aPkg.NeedPyInit
 			if !aPkg.CacheHit {
-				if err := ctx.saveToCache(aPkg); err != nil && verbose {
-					fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", pkg.PkgPath, err)
-				}
-				if aPkg.ArchiveFile == "" {
-					if err := normalizeToArchive(ctx, aPkg, verbose); err != nil {
-						return err
-					}
-				}
+				ctx.startCacheSave(aPkg)
 			}
 		}
 		return nil
@@ -783,6 +814,7 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 	// Build non-runtime packages first, so we know whether runtime is actually needed.
 	for _, p := range normalPkgs {
 		if err := buildOne(p); err != nil {
+			_ = ctx.waitCacheSaves(verbose)
 			return nil, err
 		}
 	}
@@ -791,9 +823,14 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 	if needRuntime || needPyInit || ctx.buildConf.Target == "" {
 		for _, p := range runtimePkgs {
 			if err := buildOne(p); err != nil {
+				_ = ctx.waitCacheSaves(verbose)
 				return nil, err
 			}
 		}
+	}
+
+	if err := ctx.waitCacheSaves(verbose); err != nil {
+		return nil, err
 	}
 
 	return pkgs, nil
