@@ -346,14 +346,26 @@ func loadPackageEx(dedup Deduper, ld *loader, lpkg *loaderPackage) {
 		return
 	}
 
+	typeInfoCap := len(lpkg.Syntax) * 1024
+	if typeInfoCap < 16 {
+		typeInfoCap = 16
+	}
+	identCap := typeInfoCap / 2
+	if identCap < 16 {
+		identCap = 16
+	}
+	smallCap := len(lpkg.Syntax) * 8
+	if smallCap < 4 {
+		smallCap = 4
+	}
 	lpkg.TypesInfo = &types.Info{
-		Types:      make(map[ast.Expr]types.TypeAndValue),
-		Defs:       make(map[*ast.Ident]types.Object),
-		Uses:       make(map[*ast.Ident]types.Object),
-		Implicits:  make(map[ast.Node]types.Object),
-		Instances:  make(map[*ast.Ident]types.Instance),
-		Scopes:     make(map[ast.Node]*types.Scope),
-		Selections: make(map[*ast.SelectorExpr]*types.Selection),
+		Types:      make(map[ast.Expr]types.TypeAndValue, typeInfoCap),
+		Defs:       make(map[*ast.Ident]types.Object, identCap),
+		Uses:       make(map[*ast.Ident]types.Object, identCap),
+		Implicits:  make(map[ast.Node]types.Object, smallCap),
+		Instances:  make(map[*ast.Ident]types.Instance, smallCap),
+		Scopes:     make(map[ast.Node]*types.Scope, smallCap),
+		Selections: make(map[*ast.SelectorExpr]*types.Selection, smallCap),
 	}
 	lpkg.TypesSizes = ld.sizes
 
