@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/goplus/llgo/internal/env"
 	"github.com/goplus/llgo/xtool/clang"
@@ -69,17 +70,29 @@ type Env struct {
 	binDir string
 }
 
+var bindirCache sync.Map
+
 // New creates a new [Env] instance.
 func New(llvmConfigBin string) *Env {
+	cacheKey := llvmConfigBin
 	if llvmConfigBin == "" {
 		llvmConfigBin = defaultLLVMConfigBin()
+		cacheKey = "default\x00" + os.Getenv("LLVM_CONFIG") + "\x00" + os.Getenv("PATH") + "\x00" + llvmConfigBin
+	}
+	if cached, ok := bindirCache.Load(cacheKey); ok {
+		return &Env{binDir: cached.(string)}
 	}
 
 	// Note that an empty binDir is acceptable. In this case, LLVM
 	// executables are assumed to be in PATH.
-	binDir, _ := exec.Command(llvmConfigBin, "--bindir").Output()
+	binDir, err := exec.Command(llvmConfigBin, "--bindir").Output()
+	trimmed := strings.TrimSpace(string(binDir))
+	if err == nil {
+		actual, _ := bindirCache.LoadOrStore(cacheKey, trimmed)
+		trimmed = actual.(string)
+	}
 
-	e := &Env{binDir: strings.TrimSpace(string(binDir))}
+	e := &Env{binDir: trimmed}
 	return e
 }
 
