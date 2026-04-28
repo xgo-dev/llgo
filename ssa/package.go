@@ -23,6 +23,7 @@ import (
 	"log"
 	"runtime"
 	"strconv"
+	"sync"
 	"unsafe"
 
 	"github.com/goplus/llgo/internal/env"
@@ -87,8 +88,19 @@ const (
 	InitAll    = InitAllTargets | InitAllAsmParsers | InitAllAsmPrinters | InitAllTargetInfos | InitAllTargetMCs
 )
 
+var (
+	initializeMu    sync.Mutex
+	initializedLLVM InitFlags
+)
+
 // Initialize initializes the LLVM library.
 func Initialize(flags InitFlags) {
+	initializeMu.Lock()
+	defer initializeMu.Unlock()
+	flags &^= initializedLLVM
+	if flags == 0 {
+		return
+	}
 	if flags&InitAllTargetInfos != 0 {
 		llvm.InitializeAllTargetInfos()
 	}
@@ -110,6 +122,7 @@ func Initialize(flags InitFlags) {
 	if flags&InitNativeAsmPrinter != 0 {
 		llvm.InitializeNativeAsmPrinter()
 	}
+	initializedLLVM |= flags
 }
 
 // -----------------------------------------------------------------------------
