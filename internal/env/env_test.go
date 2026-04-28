@@ -4,12 +4,48 @@
 package env
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
+
+func TestLLGoROOTWarnsOnceForDevelRoot(t *testing.T) {
+	origLLGoRoot := os.Getenv("LLGO_ROOT")
+	os.Setenv("LLGO_ROOT", "")
+	t.Cleanup(func() { os.Setenv("LLGO_ROOT", origLLGoRoot) })
+
+	oldWarned := llgoRootWarned
+	llgoRootWarned = sync.Map{}
+	t.Cleanup(func() { llgoRootWarned = oldWarned })
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	root1 := LLGoROOT()
+	root2 := LLGoROOT()
+	w.Close()
+	os.Stderr = oldStderr
+	defer r.Close()
+
+	if root1 == "" || root2 == "" {
+		t.Skip("LLGoROOT did not resolve a development root")
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "WARNING: Using LLGO root for devel: " + root1
+	if got := strings.Count(string(out), want); got != 1 {
+		t.Fatalf("devel root warning count = %d, output %q", got, out)
+	}
+}
 
 func TestGOROOT(t *testing.T) {
 	// Test with GOROOT environment variable set

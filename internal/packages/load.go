@@ -468,19 +468,29 @@ func loadPackageEx(dedup Deduper, ld *loader, lpkg *loaderPackage) {
 	lpkg.IllTyped = illTyped
 }
 
+const packageLoadParallelFanout = 4
+
 func loadRecursiveEx(dedup Deduper, ld *loader, lpkg *loaderPackage) {
 	lpkg.loadOnce.Do(func() {
-		// Load the direct dependencies, in parallel.
-		var wg sync.WaitGroup
-		for _, ipkg := range lpkg.Imports {
-			imp := ld.pkgs[ipkg.ID]
-			wg.Add(1)
-			go func(imp *loaderPackage) {
-				loadRecursiveEx(dedup, ld, imp)
-				wg.Done()
-			}(imp)
+		// Most packages have a narrow import fanout; loading those branches
+		// sequentially avoids a large number of short-lived goroutines while
+		// still using parallelism for wider parts of the graph.
+		if len(lpkg.Imports) <= packageLoadParallelFanout {
+			for _, ipkg := range lpkg.Imports {
+				loadRecursiveEx(dedup, ld, ld.pkgs[ipkg.ID])
+			}
+		} else {
+			var wg sync.WaitGroup
+			for _, ipkg := range lpkg.Imports {
+				imp := ld.pkgs[ipkg.ID]
+				wg.Add(1)
+				go func(imp *loaderPackage) {
+					loadRecursiveEx(dedup, ld, imp)
+					wg.Done()
+				}(imp)
+			}
+			wg.Wait()
 		}
-		wg.Wait()
 		loadPackageEx(dedup, ld, lpkg)
 	})
 }
@@ -621,15 +631,19 @@ func refineEx(dedup Deduper, ld *loader, response *packages.DriverResponse) ([]*
 	// Load type data and syntax if needed, starting at
 	// the initial packages (roots of the import DAG).
 	if ld.Mode&NeedTypes != 0 || ld.Mode&NeedSyntax != 0 {
-		var wg sync.WaitGroup
-		for _, lpkg := range initial {
-			wg.Add(1)
-			go func(lpkg *loaderPackage) {
-				loadRecursiveEx(dedup, ld, lpkg)
-				wg.Done()
-			}(lpkg)
+		if len(initial) == 1 {
+			loadRecursiveEx(dedup, ld, initial[0])
+		} else {
+			var wg sync.WaitGroup
+			for _, lpkg := range initial {
+				wg.Add(1)
+				go func(lpkg *loaderPackage) {
+					loadRecursiveEx(dedup, ld, lpkg)
+					wg.Done()
+				}(lpkg)
+			}
+			wg.Wait()
 		}
-		wg.Wait()
 	}
 
 	// If the context is done, return its error and
