@@ -654,7 +654,7 @@ func (c *context) startCacheSave(pkg *aPackage, verbose bool) {
 		defer func() { <-c.cacheSaveSem }()
 
 		var res cacheSaveResult
-		if cacheEnabled() && !c.buildConf.ForceRebuild && pkg.Name != "main" && pkg.Fingerprint != "" && pkg.Manifest != "" {
+		if cacheEnabled() && pkg.Name != "main" && pkg.Fingerprint != "" && pkg.Manifest != "" {
 			res.saveErr = c.saveToCache(pkg)
 		}
 		if pkg.ArchiveFile == "" {
