@@ -627,10 +627,15 @@ type context struct {
 
 type pendingCacheSave struct {
 	pkg  *aPackage
-	done chan error
+	done chan cacheSaveResult
 }
 
-func (c *context) startCacheSave(pkg *aPackage) {
+type cacheSaveResult struct {
+	saveErr error
+	err     error
+}
+
+func (c *context) startCacheSave(pkg *aPackage, verbose bool) {
 	c.ensureCacheManager()
 	c.targetTriple()
 	if c.cacheSaveSem == nil {
@@ -642,30 +647,36 @@ func (c *context) startCacheSave(pkg *aPackage) {
 		}
 		c.cacheSaveSem = make(chan struct{}, limit)
 	}
-	pending := &pendingCacheSave{pkg: pkg, done: make(chan error, 1)}
+	pending := &pendingCacheSave{pkg: pkg, done: make(chan cacheSaveResult, 1)}
 	c.pendingCacheSaves = append(c.pendingCacheSaves, pending)
 	go func() {
 		c.cacheSaveSem <- struct{}{}
 		defer func() { <-c.cacheSaveSem }()
-		pending.done <- c.saveToCache(pkg)
+
+		var res cacheSaveResult
+		if cacheEnabled() && !c.buildConf.ForceRebuild && pkg.Name != "main" && pkg.Fingerprint != "" && pkg.Manifest != "" {
+			res.saveErr = c.saveToCache(pkg)
+		}
+		if pkg.ArchiveFile == "" {
+			res.err = normalizeToArchive(c, pkg, verbose)
+		}
+		pending.done <- res
 	}()
 }
 
 func (c *context) waitCacheSaves(verbose bool) error {
+	var firstErr error
 	for _, pending := range c.pendingCacheSaves {
-		err := <-pending.done
-		pkg := pending.pkg
-		if err != nil && verbose {
-			fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", pkg.PkgPath, err)
+		res := <-pending.done
+		if res.saveErr != nil && verbose {
+			fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", pending.pkg.PkgPath, res.saveErr)
 		}
-		if pkg.ArchiveFile == "" {
-			if err := normalizeToArchive(c, pkg, verbose); err != nil {
-				return err
-			}
+		if firstErr == nil && res.err != nil {
+			firstErr = res.err
 		}
 	}
 	c.pendingCacheSaves = nil
-	return nil
+	return firstErr
 }
 
 func (c *context) compiler() *clang.Cmd {
@@ -778,7 +789,7 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 					if kind == cl.PkgLinkExtern {
 						appendExternalLinkArgs(ctx, aPkg, param)
 					}
-					ctx.startCacheSave(aPkg)
+					ctx.startCacheSave(aPkg, verbose)
 				}
 			} else {
 				pkg.ExportFile = ""
@@ -805,7 +816,7 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 			needRuntime = needRuntime || aPkg.NeedRt
 			needPyInit = needPyInit || aPkg.NeedPyInit
 			if !aPkg.CacheHit {
-				ctx.startCacheSave(aPkg)
+				ctx.startCacheSave(aPkg, verbose)
 			}
 		}
 		return nil
