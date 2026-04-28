@@ -20,6 +20,7 @@ import (
 	"github.com/goplus/llgo/internal/mockable"
 	"github.com/goplus/llgo/internal/packages"
 	llssa "github.com/goplus/llgo/ssa"
+	gossa "golang.org/x/tools/go/ssa"
 )
 
 func TestMain(m *testing.M) {
@@ -49,6 +50,27 @@ func TestPrependEnvPath(t *testing.T) {
 	prependEnvPath("")
 	if got := os.Getenv("PATH"); got != want {
 		t.Fatalf("empty prepend changed PATH to %q, want %q", got, want)
+	}
+}
+
+func TestSSABuildModeSanityOptIn(t *testing.T) {
+	t.Setenv(llgoSSASanity, "")
+	if ssaSanityEnabled() {
+		t.Fatal("SSA sanity should default to disabled")
+	}
+	if got := ssaBuildMode(); got&gossa.SanityCheckFunctions != 0 {
+		t.Fatalf("default SSA build mode enables sanity checks: %v", got)
+	}
+	if got := ssaBuildMode(); got&gossa.InstantiateGenerics == 0 {
+		t.Fatalf("default SSA build mode does not instantiate generics: %v", got)
+	}
+
+	t.Setenv(llgoSSASanity, "1")
+	if !ssaSanityEnabled() {
+		t.Fatal("SSA sanity should be enabled by LLGO_SSA_SANITY=1")
+	}
+	if got := ssaBuildMode(); got&gossa.SanityCheckFunctions == 0 {
+		t.Fatalf("opt-in SSA build mode does not enable sanity checks: %v", got)
 	}
 }
 
