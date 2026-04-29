@@ -234,51 +234,87 @@ func (p goTypes) cvtFunc(sig *types.Signature, recv *types.Var) (raw *types.Sign
 
 func (p goTypes) cvtTuple(t *types.Tuple) (*types.Tuple, bool) {
 	n := t.Len()
-	vars := make([]*types.Var, n)
-	needcvt := false
+	var vars []*types.Var
 	for i := 0; i < n; i++ {
 		v := t.At(i)
-		if t, cvt := p.cvtType(v.Type()); cvt {
-			v = types.NewParam(v.Pos(), v.Pkg(), v.Name(), t)
-			needcvt = true
+		if raw, cvt := p.cvtType(v.Type()); cvt {
+			if vars == nil {
+				vars = make([]*types.Var, n)
+				for j := 0; j < i; j++ {
+					vars[j] = t.At(j)
+				}
+			}
+			v = types.NewParam(v.Pos(), v.Pkg(), v.Name(), raw)
 		}
-		vars[i] = v
+		if vars != nil {
+			vars[i] = v
+		}
 	}
-	if needcvt {
+	if vars != nil {
 		return types.NewTuple(vars...), true
 	}
 	return t, false
 }
 
-func (p goTypes) cvtExplicitMethods(typ *types.Interface) ([]*types.Func, bool) {
+func explicitMethods(typ *types.Interface) []*types.Func {
 	n := typ.NumExplicitMethods()
 	methods := make([]*types.Func, n)
-	needcvt := false
+	for i := 0; i < n; i++ {
+		methods[i] = typ.ExplicitMethod(i)
+	}
+	return methods
+}
+
+func embeddedTypes(typ *types.Interface) []types.Type {
+	n := typ.NumEmbeddeds()
+	embeddeds := make([]types.Type, n)
+	for i := 0; i < n; i++ {
+		embeddeds[i] = typ.EmbeddedType(i)
+	}
+	return embeddeds
+}
+
+func (p goTypes) cvtExplicitMethods(typ *types.Interface) ([]*types.Func, bool) {
+	n := typ.NumExplicitMethods()
+	var methods []*types.Func
 	for i := 0; i < n; i++ {
 		m := typ.ExplicitMethod(i)
 		sig := m.Type().(*types.Signature)
 		if raw := p.cvtFunc(sig, nil); sig != raw {
+			if methods == nil {
+				methods = make([]*types.Func, n)
+				for j := 0; j < i; j++ {
+					methods[j] = typ.ExplicitMethod(j)
+				}
+			}
 			m = types.NewFunc(m.Pos(), m.Pkg(), m.Name(), raw)
-			needcvt = true
 		}
-		methods[i] = m
+		if methods != nil {
+			methods[i] = m
+		}
 	}
-	return methods, needcvt
+	return methods, methods != nil
 }
 
 func (p goTypes) cvtEmbeddedTypes(typ *types.Interface) ([]types.Type, bool) {
 	n := typ.NumEmbeddeds()
-	embeddeds := make([]types.Type, n)
-	needcvt := false
+	var embeddeds []types.Type
 	for i := 0; i < n; i++ {
 		t := typ.EmbeddedType(i)
 		if raw, cvt := p.cvtType(t); cvt {
+			if embeddeds == nil {
+				embeddeds = make([]types.Type, n)
+				for j := 0; j < i; j++ {
+					embeddeds[j] = typ.EmbeddedType(j)
+				}
+			}
 			t = raw
-			needcvt = true
 		}
-		embeddeds[i] = t
+		if embeddeds != nil {
+			embeddeds[i] = t
+		}
 	}
-	return embeddeds, needcvt
+	return embeddeds, embeddeds != nil
 }
 
 func (p goTypes) cvtInterface(typ *types.Interface) (raw *types.Interface, cvt bool) {
@@ -293,6 +329,12 @@ func (p goTypes) cvtInterface(typ *types.Interface) (raw *types.Interface, cvt b
 	methods, cvt1 := p.cvtExplicitMethods(typ)
 	embeddeds, cvt2 := p.cvtEmbeddedTypes(typ)
 	if cvt1 || cvt2 {
+		if !cvt1 {
+			methods = explicitMethods(typ)
+		}
+		if !cvt2 {
+			embeddeds = embeddedTypes(typ)
+		}
 		return types.NewInterfaceType(methods, embeddeds), true
 	}
 	return typ, false
@@ -308,17 +350,23 @@ func (p goTypes) cvtStruct(typ *types.Struct) (raw *types.Struct, cvt bool) {
 		p.typs[unsafe.Pointer(typ)] = unsafe.Pointer(raw)
 	}()
 	n := typ.NumFields()
-	flds := make([]*types.Var, n)
-	needcvt := false
+	var flds []*types.Var
 	for i := 0; i < n; i++ {
 		f := typ.Field(i)
-		if t, cvt := p.cvtType(f.Type()); cvt {
-			f = types.NewField(f.Pos(), f.Pkg(), f.Name(), t, f.Anonymous())
-			needcvt = true
+		if raw, cvt := p.cvtType(f.Type()); cvt {
+			if flds == nil {
+				flds = make([]*types.Var, n)
+				for j := 0; j < i; j++ {
+					flds[j] = typ.Field(j)
+				}
+			}
+			f = types.NewField(f.Pos(), f.Pkg(), f.Name(), raw, f.Anonymous())
 		}
-		flds[i] = f
+		if flds != nil {
+			flds[i] = f
+		}
 	}
-	if needcvt {
+	if flds != nil {
 		return types.NewStruct(flds, nil), true
 	}
 	return typ, false

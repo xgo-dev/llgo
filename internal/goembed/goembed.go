@@ -27,7 +27,7 @@ type VarData struct {
 type VarMap map[string]VarData
 
 func LoadDirectives(fset *token.FileSet, files []*ast.File) (VarMap, error) {
-	if len(files) == 0 {
+	if len(files) == 0 || !hasEmbedDirective(files) {
 		return nil, nil
 	}
 	byVar := make(VarMap)
@@ -87,6 +87,25 @@ func LoadDirectives(fset *token.FileSet, files []*ast.File) (VarMap, error) {
 		}
 	}
 	return byVar, nil
+}
+
+func hasEmbedDirective(files []*ast.File) bool {
+	for _, file := range files {
+		if file == nil {
+			continue
+		}
+		for _, group := range file.Comments {
+			if group == nil {
+				continue
+			}
+			for _, comment := range group.List {
+				if comment != nil && strings.Contains(comment.Text, "go:embed") {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func FileImportsEmbed(file *ast.File) bool {
