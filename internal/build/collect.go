@@ -101,6 +101,7 @@ func (c *context) envInputs() envSection {
 		llgoStdioNobuf,
 		llgoFullRpath,
 		llgoSSASanity,
+		llgoParallelObjectEmit,
 	}
 	for _, envVar := range envVars {
 		if v := os.Getenv(envVar); v != "" {

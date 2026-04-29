@@ -613,6 +613,7 @@ type context struct {
 	cacheManager       *cacheManager
 	pendingCacheSaves  []*pendingCacheSave
 	cacheSaveSem       chan struct{}
+	objectEmitSem      chan struct{}
 	llvmVersion        string
 	targetTripleCached string
 	buildTagsRaw       string
@@ -658,6 +659,10 @@ func (c *context) startCacheSave(pkg *aPackage, verbose bool) {
 		defer func() { <-c.cacheSaveSem }()
 
 		var res cacheSaveResult
+		if res.err = waitPackageObjectEmit(pkg); res.err != nil {
+			pending.done <- res
+			return
+		}
 		if cacheEnabled() && pkg.Name != "main" && pkg.Fingerprint != "" && pkg.Manifest != "" {
 			res.saveErr = c.saveToCache(pkg)
 		}
@@ -845,6 +850,9 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 	}
 
 	if err := ctx.waitCacheSaves(verbose); err != nil {
+		return nil, err
+	}
+	if err := ctx.waitObjectEmits(pkgs); err != nil {
 		return nil, err
 	}
 
@@ -1429,11 +1437,15 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 		aPkg.LinkArgs = append(aPkg.LinkArgs, altGoCgoLdflags...)
 	}
 	if pkg.ExportFile != "" {
-		exportFile, err := exportObject(ctx, pkg.PkgPath, pkg.ExportFile, ret)
-		if err != nil {
-			return fmt.Errorf("export object of %v failed: %v", pkgPath, err)
+		if parallelObjectEmitEnabled(ctx) && !verbose {
+			ctx.startObjectEmit(aPkg, pkg.PkgPath, pkg.ExportFile, ret)
+		} else {
+			exportFile, err := exportObject(ctx, pkg.PkgPath, pkg.ExportFile, ret)
+			if err != nil {
+				return fmt.Errorf("export object of %v failed: %v", pkgPath, err)
+			}
+			aPkg.ObjFiles = append(aPkg.ObjFiles, exportFile)
 		}
-		aPkg.ObjFiles = append(aPkg.ObjFiles, exportFile)
 		if debugBuild || verbose {
 			fmt.Fprintf(os.Stderr, "==> Export %s: %s\n", aPkg.PkgPath, pkg.ExportFile)
 		}
@@ -1458,6 +1470,70 @@ func useInMemoryNativeCodegenConf(conf *Config) bool {
 		conf.Goos == runtime.GOOS &&
 		conf.Goarch == runtime.GOARCH &&
 		conf.Goarch != "wasm"
+}
+
+// parallelObjectEmitEnabled overlaps native object emission with later package
+// work by sending serialized LLVM IR to bounded external clang workers. It is
+// disabled for debug/tracing paths so command output and .ll generation remain
+// synchronous and deterministic.
+func parallelObjectEmitEnabled(ctx *context) bool {
+	return isEnvOn(llgoParallelObjectEmit, true) &&
+		useInMemoryNativeCodegen(ctx) &&
+		!ctx.buildConf.CheckLLFiles &&
+		!ctx.shouldPrintCommands(false)
+}
+
+type objectEmitResult struct {
+	path string
+	err  error
+}
+
+func (c *context) objectEmitSemaphore() chan struct{} {
+	if c.objectEmitSem == nil {
+		limit := runtime.GOMAXPROCS(0)
+		if limit < 1 {
+			limit = 1
+		} else if limit > 4 {
+			limit = 4
+		}
+		c.objectEmitSem = make(chan struct{}, limit)
+	}
+	return c.objectEmitSem
+}
+
+func (c *context) startObjectEmit(pkg *aPackage, pkgPath string, exportFile string, llpkg llssa.Package) {
+	data := []byte(llpkg.String())
+	done := make(chan objectEmitResult, 1)
+	sem := c.objectEmitSemaphore()
+	pkg.pendingObj = done
+	go func() {
+		sem <- struct{}{}
+		defer func() { <-sem }()
+		obj, err := exportObjectWithClang(c, pkgPath, exportFile, data)
+		done <- objectEmitResult{path: obj, err: err}
+	}()
+}
+
+func waitPackageObjectEmit(pkg *aPackage) error {
+	if pkg == nil || pkg.pendingObj == nil {
+		return nil
+	}
+	res := <-pkg.pendingObj
+	pkg.pendingObj = nil
+	if res.err != nil {
+		return fmt.Errorf("export object of %v failed: %v", pkg.PkgPath, res.err)
+	}
+	pkg.ObjFiles = append(pkg.ObjFiles, res.path)
+	return nil
+}
+
+func (c *context) waitObjectEmits(pkgs []*aPackage) error {
+	for _, pkg := range pkgs {
+		if err := waitPackageObjectEmit(pkg); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func dumpLLVMIRIfNeeded(ctx *context, pkgPath string, exportFile string, data string) error {
@@ -1648,6 +1724,7 @@ type aPackage struct {
 	ObjFiles    []string // object files: .o or .ll (output of compiler, input to archiver)
 	ArchiveFile string   // archive file: .a (output of archiver, used for linking)
 	rewriteVars map[string]string
+	pendingObj  chan objectEmitResult
 
 	// Cache related fields
 	Fingerprint string // fingerprint digest
@@ -1856,6 +1933,7 @@ const llgoStdioNobuf = "LLGO_STDIO_NOBUF"
 const llgoFullRpath = "LLGO_FULL_RPATH"
 const llgoBuildCache = "LLGO_BUILD_CACHE"
 const llgoSSASanity = "LLGO_SSA_SANITY"
+const llgoParallelObjectEmit = "LLGO_PARALLEL_OBJECT_EMIT"
 
 // for Plan9 asm translation debug
 const llgoPlan9ASMPkgs = "LLGO_PLAN9ASM_PKGS"
