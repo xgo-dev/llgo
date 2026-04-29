@@ -33,6 +33,26 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+func TestParseBuildFileSkipsObjectResolutionAndKeepsComments(t *testing.T) {
+	src := []byte("package p\n//go:linkname f C.f\nfunc f() {}\n")
+	file, err := parseBuildFile(token.NewFileSet(), "p.go", src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.Scope != nil {
+		t.Fatalf("file.Scope = %v, want nil with parser.SkipObjectResolution", file.Scope)
+	}
+	if len(file.Comments) == 0 {
+		t.Fatal("parseBuildFile should preserve comments for LLGo directives")
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		if ident, ok := n.(*ast.Ident); ok && ident.Obj != nil {
+			t.Fatalf("identifier %q has parser object %v, want nil", ident.Name, ident.Obj)
+		}
+		return true
+	})
+}
+
 func TestPrependEnvPath(t *testing.T) {
 	sep := string(os.PathListSeparator)
 	t.Setenv("PATH", strings.Join([]string{"/usr/bin", "/opt/llvm/bin", "/bin", "/opt/llvm/bin"}, sep))

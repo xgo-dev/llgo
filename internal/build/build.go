@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/constant"
+	"go/parser"
 	"go/token"
 	"go/types"
 	"log"
@@ -293,6 +294,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 		Fset:       token.NewFileSet(),
 		Tests:      conf.Mode == ModeTest,
 		Env:        append(slices.Clone(os.Environ()), "GOOS="+conf.Goos, "GOARCH="+conf.Goarch),
+		ParseFile:  parseBuildFile,
 	}
 	if conf.Mode == ModeTest {
 		cfg.Mode |= packages.NeedForTest
@@ -738,6 +740,10 @@ func normalizeToArchive(ctx *context, aPkg *aPackage, verbose bool) error {
 	aPkg.ObjFiles = nil
 	aPkg.ArchiveFile = archivePath
 	return nil
+}
+
+func parseBuildFile(fset *token.FileSet, filename string, src []byte) (*ast.File, error) {
+	return parser.ParseFile(fset, filename, src, parser.AllErrors|parser.ParseComments|parser.SkipObjectResolution)
 }
 
 func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, error) {
