@@ -359,12 +359,13 @@ func loadPackageEx(dedup Deduper, ld *loader, lpkg *loaderPackage) {
 		smallCap = 4
 	}
 	lpkg.TypesInfo = &types.Info{
-		Types:      make(map[ast.Expr]types.TypeAndValue, typeInfoCap),
-		Defs:       make(map[*ast.Ident]types.Object, identCap),
-		Uses:       make(map[*ast.Ident]types.Object, identCap),
-		Implicits:  make(map[ast.Node]types.Object, smallCap),
-		Instances:  make(map[*ast.Ident]types.Instance, smallCap),
-		Scopes:     make(map[ast.Node]*types.Scope, smallCap),
+		Types:     make(map[ast.Expr]types.TypeAndValue, typeInfoCap),
+		Defs:      make(map[*ast.Ident]types.Object, identCap),
+		Uses:      make(map[*ast.Ident]types.Object, identCap),
+		Implicits: make(map[ast.Node]types.Object, smallCap),
+		Instances: make(map[*ast.Ident]types.Instance, smallCap),
+		// Scopes are not consumed by LLGo or x/tools/go/ssa during compilation.
+		// Leaving it nil avoids recording every lexical scope during type checking.
 		Selections: make(map[*ast.SelectorExpr]*types.Selection, smallCap),
 	}
 	lpkg.TypesSizes = ld.sizes
