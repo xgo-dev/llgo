@@ -233,7 +233,7 @@ func buildManifestYAML(data manifestData) (string, error) {
 		return "", nil
 	}
 	out, err := yaml.Marshal(data)
-	return string(out), err
+	return readOnlyBytesString(out), err
 }
 
 const maxManifestSize = 10 * 1024 * 1024 // 10MB safety bound
