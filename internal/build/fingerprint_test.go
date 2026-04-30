@@ -101,8 +101,8 @@ func TestManifestBuilder_Fingerprint(t *testing.T) {
 	m.env.Goarch = "amd64"
 	m.pkg.PkgPath = "test/pkg"
 
-	fp1 := m.Fingerprint()
-	fp2 := m.Fingerprint()
+	fp1 := fingerprintManifest(m.Build())
+	fp2 := fingerprintManifest(m.Build())
 
 	if fp1 != fp2 {
 		t.Error("fingerprint not stable")
@@ -124,7 +124,7 @@ func TestManifestBuilder_FingerprintDeterminism(t *testing.T) {
 	m2.env.Vars = orderedStringMap{"B": "2", "A": "1"}
 	m2.common.BuildTags = []string{"20", "10"}
 
-	if m1.Fingerprint() != m2.Fingerprint() {
+	if fingerprintManifest(m1.Build()) != fingerprintManifest(m2.Build()) {
 		t.Error("order should not affect fingerprint")
 	}
 
@@ -140,7 +140,7 @@ func TestManifestBuilder_FingerprintDifferentValues(t *testing.T) {
 	m2 := newManifestBuilder()
 	m2.env.Vars = orderedStringMap{"KEY": "value2"}
 
-	if m1.Fingerprint() == m2.Fingerprint() {
+	if fingerprintManifest(m1.Build()) == fingerprintManifest(m2.Build()) {
 		t.Error("different values should produce different fingerprints")
 	}
 }
@@ -156,7 +156,7 @@ func TestManifestBuilder_EmptySections(t *testing.T) {
 	}
 
 	// Should still produce a valid fingerprint
-	fp := m.Fingerprint()
+	fp := fingerprintManifest(m.Build())
 	if len(fp) != 64 {
 		t.Errorf("fingerprint length = %d, want 64", len(fp))
 	}

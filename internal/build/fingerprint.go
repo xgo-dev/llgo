@@ -20,7 +20,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"os"
 	"sort"
 	"strconv"
@@ -75,26 +74,6 @@ func (m orderedStringMap) AddMap(src map[string]string) orderedStringMap {
 		m[k] = v
 	}
 	return m
-}
-
-func (m orderedStringMap) MarshalYAML() (interface{}, error) {
-	if len(m) == 0 {
-		return nil, nil
-	}
-	type kv struct{ K, V string }
-	list := make([]kv, 0, len(m))
-	for k, v := range m {
-		list = append(list, kv{k, v})
-	}
-	sort.Slice(list, func(i, j int) bool { return list[i].K < list[j].K })
-	out := &yaml.Node{Kind: yaml.MappingNode}
-	for _, item := range list {
-		out.Content = append(out.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: item.K},
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: item.V},
-		)
-	}
-	return out, nil
 }
 
 // envSection holds fixed environment fields and optional vars.
@@ -177,11 +156,6 @@ func (m *manifestBuilder) Build() string {
 	return content
 }
 
-// Fingerprint returns the sha256 hash of the manifest content.
-func (m *manifestBuilder) Fingerprint() string {
-	return fingerprintManifest(m.Build())
-}
-
 func fingerprintManifest(content string) string {
 	hash := sha256.Sum256(readOnlyStringBytes(content))
 	return hex.EncodeToString(hash[:])
@@ -233,14 +207,10 @@ func buildManifestYAML(data manifestData) (string, error) {
 	if data.isEmpty() {
 		return "", nil
 	}
-	if content, ok := buildManifestYAMLFast(data); ok {
-		return content, nil
-	}
-	out, err := yaml.Marshal(data)
-	return readOnlyBytesString(out), err
+	return buildManifestYAMLFast(data), nil
 }
 
-func buildManifestYAMLFast(data manifestData) (string, bool) {
+func buildManifestYAMLFast(data manifestData) string {
 	var b strings.Builder
 	if data.Env != nil && !data.Env.empty() {
 		b.WriteString("env:\n")
@@ -282,7 +252,7 @@ func buildManifestYAMLFast(data manifestData) (string, bool) {
 		writeBoolField(&b, 4, "need_py_init", data.Metadata.NeedPyInit)
 	}
 	writeDepList(&b, data.Deps)
-	return b.String(), true
+	return b.String()
 }
 
 func writeIndent(b *strings.Builder, n int) {
@@ -428,23 +398,6 @@ func decodeManifest(content string) (manifestData, error) {
 		return manifestData{}, err
 	}
 	return data, nil
-}
-
-// digestFile calculates the sha256 hash of a file.
-func digestFile(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	h := sha256.New()
-	buf := make([]byte, 32*1024)
-	if _, err := io.CopyBuffer(h, f, buf); err != nil {
-		return "", err
-	}
-
-	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // digestBytes calculates the sha256 hash of bytes.
