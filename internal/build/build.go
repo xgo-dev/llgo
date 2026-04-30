@@ -1621,8 +1621,32 @@ func exportObjectInMemory(ctx *context, pkgPath string, exportFile string, pkg l
 	return objFileName, nil
 }
 
+func (c *context) objectCompiler() *clang.Cmd {
+	cmd := c.compiler()
+	if parallelObjectEmitEnabled(c) && useInMemoryNativeCodegen(c) {
+		cmd = c.irCompiler()
+	}
+	return cmd
+}
+
 func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data string) (string, error) {
 	base := filepath.Base(exportFile)
+	if !ctx.buildConf.CheckLLFiles && !ctx.buildConf.GenLL && parallelObjectEmitEnabled(ctx) {
+		objFile, err := os.CreateTemp("", base+"-*.o")
+		if err != nil {
+			return "", err
+		}
+		objFile.Close()
+		args := []string{"-x", "ir", "-o", objFile.Name(), "-c", "-", "-Wno-override-module"}
+		if ctx.shouldPrintCommands(false) {
+			fmt.Fprintf(os.Stderr, "# compiling LLVM IR from stdin for pkg: %s\n", pkgPath)
+			fmt.Fprintln(os.Stderr, "clang", args)
+		}
+		cmd := ctx.objectCompiler()
+		cmd.Stdin = strings.NewReader(data)
+		return objFile.Name(), cmd.Compile(args...)
+	}
+
 	f, err := os.CreateTemp("", base+"-*.ll")
 	if err != nil {
 		return "", err
@@ -1660,11 +1684,7 @@ func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data
 		fmt.Fprintf(os.Stderr, "# compiling %s for pkg: %s\n", f.Name(), pkgPath)
 		fmt.Fprintln(os.Stderr, "clang", args)
 	}
-	cmd := ctx.compiler()
-	if parallelObjectEmitEnabled(ctx) && useInMemoryNativeCodegen(ctx) {
-		cmd = ctx.irCompiler()
-	}
-	return objFile.Name(), cmd.Compile(args...)
+	return objFile.Name(), ctx.objectCompiler().Compile(args...)
 }
 
 func llcCheck(env *llvm.Env, exportFile string) (msg string, err error) {

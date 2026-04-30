@@ -55,11 +55,13 @@ func TestExportObjectWithClangUsesTargetCompilerForExternalAsyncBuild(t *testing
 	t.Setenv(llgoParallelObjectEmit, "")
 	tmp := t.TempDir()
 	stamp := filepath.Join(tmp, "fake-cc.args")
+	stdin := filepath.Join(tmp, "fake-cc.stdin")
 	cc := filepath.Join(tmp, "fake-cc")
-	if err := os.WriteFile(cc, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$LLGO_FAKE_CC_STAMP\"\nexit 0\n"), 0755); err != nil {
+	if err := os.WriteFile(cc, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$LLGO_FAKE_CC_STAMP\"\ncat > \"$LLGO_FAKE_CC_STDIN\"\nexit 0\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("LLGO_FAKE_CC_STAMP", stamp)
+	t.Setenv("LLGO_FAKE_CC_STDIN", stdin)
 
 	ctx := &context{
 		buildConf: &Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH, Target: "esp32"},
@@ -75,6 +77,11 @@ func TestExportObjectWithClangUsesTargetCompilerForExternalAsyncBuild(t *testing
 	defer os.Remove(obj)
 	if _, err := os.Stat(stamp); err != nil {
 		t.Fatalf("expected target compiler to be invoked: %v", err)
+	}
+	if got, err := os.ReadFile(stdin); err != nil {
+		t.Fatalf("expected LLVM IR to be sent on stdin: %v", err)
+	} else if string(got) != "target triple = \"xtensa\"\n" {
+		t.Fatalf("unexpected stdin: %q", got)
 	}
 }
 
