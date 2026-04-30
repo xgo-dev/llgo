@@ -1478,8 +1478,8 @@ func (c *context) objectEmitSemaphore() chan struct{} {
 		limit := runtime.GOMAXPROCS(0)
 		if limit < 1 {
 			limit = 1
-		} else if limit > 4 {
-			limit = 4
+		} else if limit > 2 {
+			limit = 2
 		}
 		c.objectEmitSem = make(chan struct{}, limit)
 	}
