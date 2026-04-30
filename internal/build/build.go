@@ -1457,7 +1457,7 @@ func exportObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Pac
 	if useInMemoryNativeCodegen(ctx) {
 		return exportObjectInMemory(ctx, pkgPath, exportFile, pkg)
 	}
-	return exportObjectWithClang(ctx, pkgPath, exportFile, []byte(pkg.String()))
+	return exportObjectWithClang(ctx, pkgPath, exportFile, pkg.String())
 }
 
 func useInMemoryNativeCodegen(ctx *context) bool {
@@ -1502,7 +1502,7 @@ func (c *context) objectEmitSemaphore() chan struct{} {
 }
 
 func (c *context) startObjectEmit(pkg *aPackage, pkgPath string, exportFile string, llpkg llssa.Package) {
-	data := []byte(llpkg.String())
+	data := llpkg.String()
 	done := make(chan objectEmitResult, 1)
 	sem := c.objectEmitSemaphore()
 	pkg.pendingObj = done
@@ -1608,13 +1608,13 @@ func exportObjectInMemory(ctx *context, pkgPath string, exportFile string, pkg l
 	return objFileName, nil
 }
 
-func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data []byte) (string, error) {
+func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data string) (string, error) {
 	base := filepath.Base(exportFile)
 	f, err := os.CreateTemp("", base+"-*.ll")
 	if err != nil {
 		return "", err
 	}
-	if _, err := f.Write(data); err != nil {
+	if _, err := f.WriteString(data); err != nil {
 		f.Close()
 		return "", err
 	}
