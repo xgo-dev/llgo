@@ -1816,6 +1816,10 @@ func buildSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([]*a
 		}
 		return nil, fmt.Errorf("cannot build SSA for packages")
 	}
+	prog.Build()
+	for _, pkg := range all {
+		fixSSAOrder(pkg.SSA, pkg.Syntax)
+	}
 	return all, nil
 }
 
@@ -1931,9 +1935,6 @@ func createSSAPkg(ctx *context, prog *ssa.Program, p *packages.Package, verbose 
 		}
 		applyPatches(ctx, p, verbose)
 		pkgSSA = prog.CreatePackage(p.Types, p.Syntax, p.TypesInfo, true)
-		pkgSSA.Build() // TODO(xsw): build concurrently
-		// Apply local SSA fixups once when package SSA is first built.
-		fixSSAOrder(pkgSSA, p.Syntax)
 	}
 	return pkgSSA
 }
