@@ -48,7 +48,6 @@ func fixSSAOrder(pkg *ssa.Package, files []*ast.File) {
 		case *ssa.Type:
 			if tn, ok := m.Object().(*types.TypeName); ok {
 				fixSSAOrderMethods(pkg, tn.Type(), visitFn)
-				fixSSAOrderMethods(pkg, types.NewPointer(tn.Type()), visitFn)
 			}
 		}
 	}
@@ -58,9 +57,12 @@ func fixSSAOrderMethods(pkg *ssa.Package, typ types.Type, visitFn func(*ssa.Func
 	if pkg == nil || pkg.Prog == nil || typ == nil {
 		return
 	}
-	mset := pkg.Prog.MethodSets.MethodSet(typ)
-	for i, n := 0, mset.Len(); i < n; i++ {
-		if fn := pkg.Prog.MethodValue(mset.At(i)); fn != nil {
+	named, ok := typ.(*types.Named)
+	if !ok {
+		return
+	}
+	for i, n := 0, named.NumMethods(); i < n; i++ {
+		if fn := pkg.Prog.FuncValue(named.Method(i)); fn != nil {
 			visitFn(fn)
 		}
 	}
