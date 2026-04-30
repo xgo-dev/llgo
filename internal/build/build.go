@@ -1646,7 +1646,7 @@ func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data
 		fmt.Fprintln(os.Stderr, "clang", args)
 	}
 	cmd := ctx.compiler()
-	if parallelObjectEmitEnabled(ctx) {
+	if parallelObjectEmitEnabled(ctx) && useInMemoryNativeCodegen(ctx) {
 		cmd = ctx.irCompiler()
 	}
 	return objFile.Name(), cmd.Compile(args...)

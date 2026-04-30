@@ -1,8 +1,12 @@
 package build
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/goplus/llgo/internal/crosscompile"
 )
 
 func TestParallelObjectEmitEnabled(t *testing.T) {
@@ -11,6 +15,14 @@ func TestParallelObjectEmitEnabled(t *testing.T) {
 		ctx := &context{buildConf: &Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH}}
 		if !parallelObjectEmitEnabled(ctx) {
 			t.Fatal("expected native host build to use async object emission by default")
+		}
+	})
+
+	t.Run("external target default", func(t *testing.T) {
+		t.Setenv(llgoParallelObjectEmit, "")
+		ctx := &context{buildConf: &Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH, Target: "esp32"}}
+		if !parallelObjectEmitEnabled(ctx) {
+			t.Fatal("expected external clang target build to use async object emission by default")
 		}
 	})
 
@@ -37,6 +49,33 @@ func TestParallelObjectEmitEnabled(t *testing.T) {
 			t.Fatal("expected command tracing to keep synchronous object emission")
 		}
 	})
+}
+
+func TestExportObjectWithClangUsesTargetCompilerForExternalAsyncBuild(t *testing.T) {
+	t.Setenv(llgoParallelObjectEmit, "")
+	tmp := t.TempDir()
+	stamp := filepath.Join(tmp, "fake-cc.args")
+	cc := filepath.Join(tmp, "fake-cc")
+	if err := os.WriteFile(cc, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$LLGO_FAKE_CC_STAMP\"\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LLGO_FAKE_CC_STAMP", stamp)
+
+	ctx := &context{
+		buildConf: &Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH, Target: "esp32"},
+		crossCompile: crosscompile.Export{
+			CC:      cc,
+			CCFLAGS: []string{"-target", "xtensa"},
+		},
+	}
+	obj, err := exportObjectWithClang(ctx, "testpkg", filepath.Join(tmp, "testpkg.a"), "target triple = \"xtensa\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(obj)
+	if _, err := os.Stat(stamp); err != nil {
+		t.Fatalf("expected target compiler to be invoked: %v", err)
+	}
 }
 
 func TestUseInMemoryNativeCodegenConf(t *testing.T) {
