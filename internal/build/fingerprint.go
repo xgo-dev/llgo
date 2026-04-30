@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"unsafe"
 
@@ -232,8 +233,160 @@ func buildManifestYAML(data manifestData) (string, error) {
 	if data.isEmpty() {
 		return "", nil
 	}
+	if content, ok := buildManifestYAMLFast(data); ok {
+		return content, nil
+	}
 	out, err := yaml.Marshal(data)
 	return readOnlyBytesString(out), err
+}
+
+func buildManifestYAMLFast(data manifestData) (string, bool) {
+	var b strings.Builder
+	if data.Env != nil && !data.Env.empty() {
+		b.WriteString("env:\n")
+		writeStringField(&b, 4, "GOOS", data.Env.Goos)
+		writeStringField(&b, 4, "GOARCH", data.Env.Goarch)
+		writeStringField(&b, 4, "GO_VERSION", data.Env.GoVersion)
+		writeStringField(&b, 4, "LLGO_VERSION", data.Env.LlgoVersion)
+		writeStringField(&b, 4, "LLGO_COMPILER_HASH", data.Env.LlgoCompilerHash)
+		writeStringField(&b, 4, "LLVM_TRIPLE", data.Env.LlvmTriple)
+		writeStringField(&b, 4, "LLVM_VERSION", data.Env.LlvmVersion)
+		writeStringMap(&b, 4, "VARS", data.Env.Vars)
+	}
+	if data.Common != nil && !data.Common.empty() {
+		b.WriteString("common:\n")
+		writeStringField(&b, 4, "ABI_MODE", data.Common.AbiMode)
+		writeStringList(&b, 4, "BUILD_TAGS", data.Common.BuildTags)
+		writeStringField(&b, 4, "TARGET", data.Common.Target)
+		writeStringField(&b, 4, "TARGET_ABI", data.Common.TargetABI)
+		writeStringField(&b, 4, "CC", data.Common.CC)
+		writeStringList(&b, 4, "CCFLAGS", data.Common.CCFlags)
+		writeStringList(&b, 4, "CFLAGS", data.Common.CFlags)
+		writeStringList(&b, 4, "LDFLAGS", data.Common.LDFlags)
+		writeStringField(&b, 4, "LINKER", data.Common.Linker)
+		writeFileDigestList(&b, 4, "EXTRA_FILES", data.Common.ExtraFiles)
+	}
+	if data.Package != nil && !data.Package.empty() {
+		b.WriteString("package:\n")
+		writeStringField(&b, 4, "pkg_path", data.Package.PkgPath)
+		writeStringField(&b, 4, "pkg_id", data.Package.PkgID)
+		writeFileDigestList(&b, 4, "go_files", data.Package.GoFiles)
+		writeFileDigestList(&b, 4, "alt_go_files", data.Package.AltGoFiles)
+		writeFileDigestList(&b, 4, "other_files", data.Package.OtherFiles)
+		writeStringMap(&b, 4, "rewrite_vars", data.Package.RewriteVars)
+	}
+	if data.Metadata != nil {
+		b.WriteString("metadata:\n")
+		writeStringList(&b, 4, "link_args", data.Metadata.LinkArgs)
+		writeBoolField(&b, 4, "need_rt", data.Metadata.NeedRt)
+		writeBoolField(&b, 4, "need_py_init", data.Metadata.NeedPyInit)
+	}
+	writeDepList(&b, data.Deps)
+	return b.String(), true
+}
+
+func writeIndent(b *strings.Builder, n int) {
+	for ; n > 0; n-- {
+		b.WriteByte(' ')
+	}
+}
+
+func writeYAMLString(b *strings.Builder, s string) {
+	b.WriteString(strconv.Quote(s))
+}
+
+func writeStringField(b *strings.Builder, indent int, key, val string) {
+	if val == "" {
+		return
+	}
+	writeIndent(b, indent)
+	b.WriteString(key)
+	b.WriteString(": ")
+	writeYAMLString(b, val)
+	b.WriteByte('\n')
+}
+
+func writeBoolField(b *strings.Builder, indent int, key string, val bool) {
+	if !val {
+		return
+	}
+	writeIndent(b, indent)
+	b.WriteString(key)
+	b.WriteString(": true\n")
+}
+
+func writeStringList(b *strings.Builder, indent int, key string, vals []string) {
+	if len(vals) == 0 {
+		return
+	}
+	writeIndent(b, indent)
+	b.WriteString(key)
+	b.WriteString(":\n")
+	for _, val := range vals {
+		writeIndent(b, indent+4)
+		b.WriteString("- ")
+		writeYAMLString(b, val)
+		b.WriteByte('\n')
+	}
+}
+
+func writeStringMap(b *strings.Builder, indent int, key string, vals orderedStringMap) {
+	if len(vals) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(vals))
+	for k := range vals {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	writeIndent(b, indent)
+	b.WriteString(key)
+	b.WriteString(":\n")
+	for _, k := range keys {
+		writeIndent(b, indent+4)
+		writeYAMLString(b, k)
+		b.WriteString(": ")
+		writeYAMLString(b, vals[k])
+		b.WriteByte('\n')
+	}
+}
+
+func writeFileDigestList(b *strings.Builder, indent int, key string, vals []fileDigest) {
+	if len(vals) == 0 {
+		return
+	}
+	writeIndent(b, indent)
+	b.WriteString(key)
+	b.WriteString(":\n")
+	for _, val := range vals {
+		writeIndent(b, indent+4)
+		b.WriteString("- path: ")
+		writeYAMLString(b, val.Path)
+		b.WriteByte('\n')
+		writeIndent(b, indent+6)
+		b.WriteString("size: ")
+		b.WriteString(strconv.FormatInt(val.Size, 10))
+		b.WriteByte('\n')
+		writeIndent(b, indent+6)
+		b.WriteString("mtime: ")
+		b.WriteString(strconv.FormatInt(val.ModTime, 10))
+		b.WriteByte('\n')
+		writeStringField(b, indent+6, "overlay_hash", val.OverlayHash)
+	}
+}
+
+func writeDepList(b *strings.Builder, vals []depEntry) {
+	if len(vals) == 0 {
+		return
+	}
+	b.WriteString("deps:\n")
+	for _, val := range vals {
+		b.WriteString("    - id: ")
+		writeYAMLString(b, val.ID)
+		b.WriteByte('\n')
+		writeStringField(b, 6, "version", val.Version)
+		writeStringField(b, 6, "fingerprint", val.Fingerprint)
+	}
 }
 
 const maxManifestSize = 10 * 1024 * 1024 // 10MB safety bound
