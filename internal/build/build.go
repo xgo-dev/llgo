@@ -1491,7 +1491,7 @@ func useInMemoryNativeCodegenConf(conf *Config) bool {
 // synchronous and deterministic.
 func parallelObjectEmitEnabled(ctx *context) bool {
 	return isEnvOn(llgoParallelObjectEmit, true) &&
-		useInMemoryNativeCodegen(ctx) &&
+		!ctx.buildConf.GenLL &&
 		!ctx.buildConf.CheckLLFiles &&
 		!ctx.shouldPrintCommands(false)
 }
