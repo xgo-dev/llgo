@@ -292,7 +292,31 @@ func writeIndent(b *strings.Builder, n int) {
 }
 
 func writeYAMLString(b *strings.Builder, s string) {
+	if isPlainYAMLString(s) {
+		b.WriteString(s)
+		return
+	}
 	b.WriteString(strconv.Quote(s))
+}
+
+func isPlainYAMLString(s string) bool {
+	if s == "" || s == "true" || s == "false" || s == "null" || s == "~" {
+		return false
+	}
+	hasNonDigit := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case 'a' <= c && c <= 'z', 'A' <= c && c <= 'Z':
+			hasNonDigit = true
+		case '0' <= c && c <= '9':
+		case c == '/', c == '.', c == '_', c == '-', c == '+':
+			hasNonDigit = true
+		default:
+			return false
+		}
+	}
+	return hasNonDigit
 }
 
 func writeStringField(b *strings.Builder, indent int, key, val string) {
