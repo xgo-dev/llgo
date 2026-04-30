@@ -710,6 +710,19 @@ func (c *context) linker() *clang.Cmd {
 	return cmd
 }
 
+func (c *context) irCompiler() *clang.Cmd {
+	config := clang.NewConfig(
+		filepath.Join(c.env.BinDir(), "clang"),
+		c.crossCompile.CCFLAGS,
+		c.crossCompile.CFLAGS,
+		c.crossCompile.LDFLAGS,
+		c.crossCompile.Linker,
+	)
+	cmd := clang.NewCompiler(config)
+	cmd.Verbose = c.shouldPrintCommands(false)
+	return cmd
+}
+
 // shouldPrintCommands reports whether command tracing should be enabled.
 func (c *context) shouldPrintCommands(verbose bool) bool {
 	return c.buildConf.PrintCommands || c.buildConf.Verbose || verbose
@@ -1633,6 +1646,9 @@ func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data
 		fmt.Fprintln(os.Stderr, "clang", args)
 	}
 	cmd := ctx.compiler()
+	if parallelObjectEmitEnabled(ctx) {
+		cmd = ctx.irCompiler()
+	}
 	return objFile.Name(), cmd.Compile(args...)
 }
 
