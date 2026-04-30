@@ -1774,6 +1774,7 @@ func buildSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([]*a
 	prog := ctx.progSSA
 	var all []*aPackage
 	var errs []*packages.Package
+	var createdSSA bool
 	packages.Visit(initial, nil, func(p *packages.Package) {
 		if p.Types != nil && !p.IllTyped {
 			pkgPath := p.PkgPath
@@ -1782,7 +1783,10 @@ func buildSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([]*a
 				return
 			}
 			var altPkg *packages.Cached
-			var ssaPkg = createSSAPkg(ctx, prog, p, verbose)
+			ssaPkg, created := createSSAPkg(ctx, prog, p, verbose)
+			if created {
+				createdSSA = true
+			}
 			if ctx.hasAltPkg(pkgPath) {
 				if altPkg = ctx.dedup.Check(altPkgPathPrefix + pkgPath); altPkg == nil {
 					return
@@ -1816,7 +1820,9 @@ func buildSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([]*a
 		}
 		return nil, fmt.Errorf("cannot build SSA for packages")
 	}
-	prog.Build()
+	if createdSSA {
+		prog.Build()
+	}
 	for _, pkg := range all {
 		fixSSAOrder(pkg.SSA, pkg.Syntax)
 	}
@@ -1927,16 +1933,17 @@ func applyPatches(ctx *context, p *packages.Package, verbose bool) {
 	}
 }
 
-func createSSAPkg(ctx *context, prog *ssa.Program, p *packages.Package, verbose bool) *ssa.Package {
+func createSSAPkg(ctx *context, prog *ssa.Program, p *packages.Package, verbose bool) (*ssa.Package, bool) {
 	pkgSSA := prog.ImportedPackage(p.ID)
-	if pkgSSA == nil {
-		if debugBuild || verbose {
-			log.Println("==> BuildSSA", p.ID)
-		}
-		applyPatches(ctx, p, verbose)
-		pkgSSA = prog.CreatePackage(p.Types, p.Syntax, p.TypesInfo, true)
+	if pkgSSA != nil {
+		return pkgSSA, false
 	}
-	return pkgSSA
+	if debugBuild || verbose {
+		log.Println("==> BuildSSA", p.ID)
+	}
+	applyPatches(ctx, p, verbose)
+	pkgSSA = prog.CreatePackage(p.Types, p.Syntax, p.TypesInfo, true)
+	return pkgSSA, true
 }
 
 /*
