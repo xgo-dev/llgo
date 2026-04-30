@@ -400,12 +400,6 @@ func decodeManifest(content string) (manifestData, error) {
 	return data, nil
 }
 
-// digestBytes calculates the sha256 hash of bytes.
-func digestBytes(data []byte) string {
-	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:])
-}
-
 // fileDigest represents a file with its path and metadata.
 type fileDigest struct {
 	Path        string `yaml:"path"`
@@ -433,7 +427,8 @@ func digestFilesWithOverlay(paths []string, overlay map[string][]byte) ([]fileDi
 				Size:    int64(len(content)),
 				ModTime: 0,
 			}
-			fd.OverlayHash = digestBytes(content)
+			hash := sha256.Sum256(content)
+			fd.OverlayHash = hex.EncodeToString(hash[:])
 			digests = append(digests, fd)
 			continue
 		}

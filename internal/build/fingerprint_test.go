@@ -145,6 +145,11 @@ func TestManifestBuilder_FingerprintDifferentValues(t *testing.T) {
 	}
 }
 
+func testDigestBytes(data []byte) string {
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:])
+}
+
 func TestManifestBuilder_EmptySections(t *testing.T) {
 	m := newManifestBuilder()
 	content := m.Build()
@@ -164,7 +169,7 @@ func TestManifestBuilder_EmptySections(t *testing.T) {
 
 func TestDigestBytes(t *testing.T) {
 	data := []byte("hello world")
-	hash := digestBytes(data)
+	hash := testDigestBytes(data)
 
 	// Known sha256 of "hello world"
 	expected := "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
@@ -173,7 +178,7 @@ func TestDigestBytes(t *testing.T) {
 	}
 
 	// Empty data
-	emptyHash := digestBytes([]byte{})
+	emptyHash := testDigestBytes([]byte{})
 	if len(emptyHash) != 64 {
 		t.Errorf("empty hash length = %d, want 64", len(emptyHash))
 	}
@@ -274,7 +279,7 @@ func TestDigestFilesWithOverlay(t *testing.T) {
 		t.Fatalf("digestFilesWithOverlay: %v", err)
 	}
 
-	hashOverlay := digestBytes(overlayContent)
+	hashOverlay := testDigestBytes(overlayContent)
 
 	// Should be sorted by path
 	if len(list) != 2 {
