@@ -1,12 +1,15 @@
 package build
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 
 	"github.com/goplus/llgo/internal/crosscompile"
+	llvmenv "github.com/goplus/llgo/xtool/env/llvm"
+	gllvm "github.com/goplus/llvm"
 )
 
 func TestParallelObjectEmitEnabled(t *testing.T) {
@@ -49,6 +52,39 @@ func TestParallelObjectEmitEnabled(t *testing.T) {
 			t.Fatal("expected command tracing to keep synchronous object emission")
 		}
 	})
+}
+
+func TestParallelObjectEmitChecksNativeIRCompilerVersion(t *testing.T) {
+	major := parseMajorVersion(gllvm.Version)
+	if major == 0 {
+		t.Fatal("could not parse linked LLVM major version")
+	}
+	for _, tc := range []struct {
+		name        string
+		clangMajor  int
+		wantEnabled bool
+	}{
+		{name: "matching", clangMajor: major, wantEnabled: true},
+		{name: "mismatched", clangMajor: major + 1, wantEnabled: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(llgoParallelObjectEmit, "")
+			tmp := t.TempDir()
+			llvmConfig := filepath.Join(tmp, "llvm-config")
+			if err := os.WriteFile(llvmConfig, []byte("#!/bin/sh\nprintf '%s\\n' \"$LLGO_FAKE_LLVM_BINDIR\"\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			clang := filepath.Join(tmp, "clang")
+			if err := os.WriteFile(clang, []byte(fmt.Sprintf("#!/bin/sh\nprintf 'clang version %d.0.0\\n'\n", tc.clangMajor)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("LLGO_FAKE_LLVM_BINDIR", tmp)
+			ctx := &context{env: llvmenv.New(llvmConfig), buildConf: &Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH}}
+			if got := parallelObjectEmitEnabled(ctx); got != tc.wantEnabled {
+				t.Fatalf("parallelObjectEmitEnabled = %v, want %v", got, tc.wantEnabled)
+			}
+		})
+	}
 }
 
 func TestExportObjectWithClangUsesTargetCompilerForExternalAsyncBuild(t *testing.T) {
