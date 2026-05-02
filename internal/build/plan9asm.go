@@ -411,6 +411,20 @@ func pkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 		return v, nil
 	}
 
+	// internal/chacha8rand has highly optimized arch asm on amd64/arm64.
+	// Until full vector lowering lands, force the generic stub entry, which
+	// tail-jumps to block_generic and preserves package behavior. Do this before
+	// trusting OtherFiles because go/packages may expose the selected optimized
+	// assembly there on some platforms.
+	if pkg.PkgPath == "internal/chacha8rand" {
+		stub := filepath.Join(pkg.Dir, "chacha8_stub.s")
+		if _, err := os.Stat(stub); err == nil {
+			paths := []string{stub}
+			ctx.sfilesCache[pkg.ID] = paths
+			return paths, nil
+		}
+	}
+
 	var metadataSFiles []string
 	for _, file := range pkg.OtherFiles {
 		if strings.HasSuffix(file, ".s") || strings.HasSuffix(file, ".S") {
@@ -437,18 +451,6 @@ func pkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 	bp, err := buildCtx.ImportDir(pkg.Dir, 0)
 	if err != nil {
 		return nil, fmt.Errorf("inspect asm files for %s: %w", pkg.PkgPath, err)
-	}
-
-	// internal/chacha8rand has highly optimized arch asm on amd64/arm64.
-	// Until full vector lowering lands, force the generic stub entry, which
-	// tail-jumps to block_generic and preserves package behavior.
-	if pkg.PkgPath == "internal/chacha8rand" && bp.Dir != "" {
-		stub := filepath.Join(bp.Dir, "chacha8_stub.s")
-		if _, err := os.Stat(stub); err == nil {
-			paths := []string{stub}
-			ctx.sfilesCache[pkg.ID] = paths
-			return paths, nil
-		}
 	}
 
 	paths := make([]string, 0, len(bp.SFiles))

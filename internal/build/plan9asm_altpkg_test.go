@@ -64,6 +64,29 @@ func TestPkgSFilesUsesOtherFiles(t *testing.T) {
 	}
 }
 
+func TestPkgSFilesChacha8UsesStubBeforeOtherFiles(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "chacha8_stub.s")
+	if err := os.WriteFile(stub, []byte("TEXT ·stub(SB),$0-0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	optimized := filepath.Join(dir, "chacha8_amd64.s")
+	pkg := &packages.Package{
+		ID:         "internal/chacha8rand",
+		PkgPath:    "internal/chacha8rand",
+		Dir:        dir,
+		OtherFiles: []string{optimized},
+	}
+	ctx := &context{conf: &packages.Config{}, buildConf: &Config{Goos: "linux", Goarch: "amd64"}}
+	files, err := pkgSFiles(ctx, pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0] != stub {
+		t.Fatalf("pkgSFiles returned %v, want stub %s", files, stub)
+	}
+}
+
 func TestPkgSFilesUsesBuildContextSelection(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package p\n"), 0o644); err != nil {
