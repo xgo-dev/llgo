@@ -38,7 +38,55 @@ func TestDirHasAsmFile(t *testing.T) {
 		t.Fatal("directory with .S file should have asm files")
 	}
 	if !dirHasAsmFile(filepath.Join(t.TempDir(), "missing")) {
-		t.Fatal("unreadable/missing directory should fall back to go list")
+		t.Fatal("unreadable/missing directory should fall back to source selection")
+	}
+}
+
+func TestPkgSFilesUsesOtherFiles(t *testing.T) {
+	dir := t.TempDir()
+	pkg := &packages.Package{
+		ID:         "example.com/otherfiles",
+		PkgPath:    "example.com/otherfiles",
+		Dir:        dir,
+		OtherFiles: []string{filepath.Join(dir, "selected.s"), filepath.Join(dir, "note.txt")},
+	}
+	ctx := &context{conf: &packages.Config{}, buildConf: &Config{Goos: "linux", Goarch: "amd64"}}
+	files, err := pkgSFiles(ctx, pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(dir, "selected.s")
+	if len(files) != 1 || files[0] != want {
+		t.Fatalf("pkgSFiles returned %v, want [%s]", files, want)
+	}
+	if got := ctx.sfilesCache[pkg.ID]; len(got) != 1 || got[0] != want {
+		t.Fatalf("sfiles cache = %v, want [%s]", got, want)
+	}
+}
+
+func TestPkgSFilesUsesBuildContextSelection(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "selected_amd64.s"), []byte("TEXT ·selected(SB),$0-0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "skipped_arm64.s"), []byte("TEXT ·skipped(SB),$0-0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := &context{conf: &packages.Config{}, buildConf: &Config{Goos: "linux", Goarch: "amd64"}}
+	pkg := &packages.Package{ID: "example.com/asmselect", PkgPath: "example.com/asmselect", Dir: dir}
+	files, err := pkgSFiles(ctx, pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(dir, "selected_amd64.s")
+	if len(files) != 1 || files[0] != want {
+		t.Fatalf("pkgSFiles returned %v, want [%s]", files, want)
+	}
+	if has, ok := ctx.asmDirCache[dir]; !ok || !has {
+		t.Fatalf("asm dir cache[%s] = %v, %v; want true", dir, has, ok)
 	}
 }
 
@@ -61,6 +109,9 @@ func TestPkgSFilesCachesNoAsmResult(t *testing.T) {
 	}
 	if _, ok := ctx.sfilesCache[pkg.ID]; !ok {
 		t.Fatal("no-asm result was not cached")
+	}
+	if has, ok := ctx.asmDirCache[dir]; !ok || has {
+		t.Fatalf("asm dir cache[%s] = %v, %v; want false", dir, has, ok)
 	}
 }
 

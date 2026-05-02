@@ -2,10 +2,9 @@ package build
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
+	"go/build"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -17,12 +16,9 @@ import (
 	gllvm "github.com/xgo-dev/llvm"
 )
 
-// compilePkgSFiles translates Go/Plan9 assembly files selected by `go list -json`
-// for this package/target into LLVM IR, compiles them to .o, and returns the
-// object files for linking.
-//
-// NOTE: golang.org/x/tools/go/packages.Package does not expose SFiles, so we
-// query `go list -json` here to get the exact filtered set for GOOS/GOARCH.
+// compilePkgSFiles translates Go/Plan9 assembly files selected for this
+// package/target into LLVM IR, compiles them to .o, and returns the object files
+// for linking.
 func compilePkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Package, dynimports []cgoImportDynamicDecl, verbose bool) ([]string, error) {
 	sfiles, err := pkgSFiles(ctx, pkg)
 	if err != nil {
@@ -365,6 +361,21 @@ func plan9asmEnabledByDefault(conf *Config, pkgPath string) bool {
 	return !llruntime.HasAltPkg(pkgPath) || llruntime.HasAdditiveAltPkg(pkgPath)
 }
 
+func (c *context) dirHasAsmFile(dir string) bool {
+	if c == nil {
+		return dirHasAsmFile(dir)
+	}
+	if c.asmDirCache == nil {
+		c.asmDirCache = make(map[string]bool)
+	}
+	if has, ok := c.asmDirCache[dir]; ok {
+		return has
+	}
+	has := dirHasAsmFile(dir)
+	c.asmDirCache[dir] = has
+	return has
+}
+
 func dirHasAsmFile(dir string) bool {
 	f, err := os.Open(dir)
 	if err != nil {
@@ -400,46 +411,39 @@ func pkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 		return v, nil
 	}
 
-	// Fast path: if directory has no .s/.S at all, skip `go list`.
-	if !dirHasAsmFile(pkg.Dir) {
+	var metadataSFiles []string
+	for _, file := range pkg.OtherFiles {
+		if strings.HasSuffix(file, ".s") || strings.HasSuffix(file, ".S") {
+			metadataSFiles = append(metadataSFiles, file)
+		}
+	}
+	if len(metadataSFiles) > 0 {
+		ctx.sfilesCache[pkg.ID] = metadataSFiles
+		return metadataSFiles, nil
+	}
+
+	// Fast path: if directory has no .s/.S at all, skip source selection.
+	if !ctx.dirHasAsmFile(pkg.Dir) {
 		ctx.sfilesCache[pkg.ID] = nil
 		return nil, nil
 	}
 
-	args := []string{"list", "-json"}
-	if ctx.conf != nil && len(ctx.conf.BuildFlags) > 0 {
-		args = append(args, ctx.conf.BuildFlags...)
+	buildCtx := build.Default
+	buildCtx.GOOS = ctx.buildConf.Goos
+	buildCtx.GOARCH = ctx.buildConf.Goarch
+	if ctx.conf != nil {
+		buildCtx.BuildTags = parseSourcePatchBuildTags(ctx.conf.BuildFlags)
 	}
-	args = append(args, pkg.PkgPath)
-
-	cmd := exec.Command("go", args...)
-	cmd.Dir = pkg.Dir
-	cmd.Env = append(os.Environ(),
-		"GOOS="+ctx.buildConf.Goos,
-		"GOARCH="+ctx.buildConf.Goarch,
-	)
-	out, err := cmd.Output()
+	bp, err := buildCtx.ImportDir(pkg.Dir, 0)
 	if err != nil {
-		var errBuf bytes.Buffer
-		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
-			errBuf.Write(ee.Stderr)
-		}
-		return nil, fmt.Errorf("go list -json %s failed: %w\n%s", pkg.PkgPath, err, strings.TrimSpace(errBuf.String()))
-	}
-
-	var lp struct {
-		Dir    string   `json:"Dir"`
-		SFiles []string `json:"SFiles"`
-	}
-	if err := json.Unmarshal(out, &lp); err != nil {
-		return nil, fmt.Errorf("go list -json %s: parse: %w", pkg.PkgPath, err)
+		return nil, fmt.Errorf("inspect asm files for %s: %w", pkg.PkgPath, err)
 	}
 
 	// internal/chacha8rand has highly optimized arch asm on amd64/arm64.
 	// Until full vector lowering lands, force the generic stub entry, which
 	// tail-jumps to block_generic and preserves package behavior.
-	if pkg.PkgPath == "internal/chacha8rand" && lp.Dir != "" {
-		stub := filepath.Join(lp.Dir, "chacha8_stub.s")
+	if pkg.PkgPath == "internal/chacha8rand" && bp.Dir != "" {
+		stub := filepath.Join(bp.Dir, "chacha8_stub.s")
 		if _, err := os.Stat(stub); err == nil {
 			paths := []string{stub}
 			ctx.sfilesCache[pkg.ID] = paths
@@ -447,12 +451,12 @@ func pkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 		}
 	}
 
-	paths := make([]string, 0, len(lp.SFiles))
-	for _, f := range lp.SFiles {
-		if lp.Dir == "" {
+	paths := make([]string, 0, len(bp.SFiles))
+	for _, f := range bp.SFiles {
+		if bp.Dir == "" {
 			continue
 		}
-		paths = append(paths, filepath.Join(lp.Dir, f))
+		paths = append(paths, filepath.Join(bp.Dir, f))
 	}
 	ctx.sfilesCache[pkg.ID] = paths
 	return paths, nil

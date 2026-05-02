@@ -621,8 +621,9 @@ type context struct {
 	envInputsCached    envSection
 	envInputsReady     bool
 
-	// go list derived file lists (SFiles, etc.)
+	// Plan9 assembly file discovery caches.
 	sfilesCache map[string][]string // pkg.ID -> absolute .s/.S file paths
+	asmDirCache map[string]bool     // package directory -> whether it contains any .s/.S files
 
 	// plan9asm package policy parsed from env.
 	plan9asmOnce sync.Once
