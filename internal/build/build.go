@@ -1475,15 +1475,80 @@ func useInMemoryNativeCodegenConf(conf *Config) bool {
 // disabled for debug/tracing paths so command output and .ll generation remain
 // synchronous and deterministic.
 func parallelObjectEmitEnabled(ctx *context) bool {
-	return isEnvOn(llgoParallelObjectEmit, true) &&
-		!ctx.buildConf.GenLL &&
-		!ctx.buildConf.CheckLLFiles &&
-		!ctx.shouldPrintCommands(false)
+	if !isEnvOn(llgoParallelObjectEmit, true) ||
+		ctx.buildConf.GenLL ||
+		ctx.buildConf.CheckLLFiles ||
+		ctx.shouldPrintCommands(false) {
+		return false
+	}
+	// Native async object emission sends text IR from the linked LLVM library to
+	// clang. If the clang binary is from an older LLVM install, it may not
+	// parse newer IR attributes (for example LLVM 19's range/trunc flags). In
+	// that case, fall back to the native in-process object writer.
+	return !useInMemoryNativeCodegen(ctx) || ctx.asyncIRCompilerMatchesLLVM()
 }
+
+var asyncIRCompilerMajorCache sync.Map
 
 type objectEmitResult struct {
 	path string
 	err  error
+}
+
+func (c *context) asyncIRCompilerMatchesLLVM() bool {
+	if c == nil || c.env == nil {
+		return true
+	}
+	want := parseMajorVersion(gllvm.Version)
+	if want == 0 {
+		return false
+	}
+	clangPath := filepath.Join(c.env.BinDir(), "clang")
+	cacheKey := clangPath + "\x00" + os.Getenv("PATH")
+	if cached, ok := asyncIRCompilerMajorCache.Load(cacheKey); ok {
+		return cached.(int) == want
+	}
+	got := detectToolMajorVersion(clangPath)
+	actual, _ := asyncIRCompilerMajorCache.LoadOrStore(cacheKey, got)
+	return actual.(int) == want
+}
+
+func detectToolMajorVersion(tool string) int {
+	out, err := exec.Command(tool, "--version").Output()
+	if err != nil {
+		return 0
+	}
+	return parseVersionOutputMajor(string(out))
+}
+
+func parseVersionOutputMajor(output string) int {
+	fields := strings.Fields(output)
+	for i, field := range fields {
+		if field == "version" && i+1 < len(fields) {
+			return parseMajorVersion(fields[i+1])
+		}
+	}
+	for _, field := range fields {
+		if major := parseMajorVersion(field); major != 0 {
+			return major
+		}
+	}
+	return 0
+}
+
+func parseMajorVersion(version string) int {
+	major := 0
+	for i := 0; i < len(version); i++ {
+		c := version[i]
+		if c < '0' || c > '9' {
+			if major != 0 {
+				return major
+			}
+			continue
+		}
+		major = major*10 + int(c-'0')
+	}
+	return major
 }
 
 func (c *context) objectEmitSemaphore() chan struct{} {
