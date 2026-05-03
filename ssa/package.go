@@ -740,18 +740,14 @@ type aPackage struct {
 
 	iRoutine int
 
-	NeedRuntime   bool
-	NeedPyInit    bool
-	NeedAbiInit   int // bitmask of Reflect* flags indicating which reflect type-construction operations are used
-	MethodByIndex map[int]none
-	MethodByName  map[string]none
+	NeedRuntime bool
+	NeedPyInit  bool
+	NeedAbiInit int // bitmask of Reflect* flags indicating which reflect type-construction operations are used
 
 	export         map[string]string   // pkgPath.nameInPkg => exportname
 	preserveSyms   map[string]struct{} // set of exported symbol names
 	llvmUsedValues []llvm.Value
 }
-
-type none struct{}
 
 type Package = *aPackage
 

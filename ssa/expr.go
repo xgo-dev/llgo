@@ -1180,11 +1180,7 @@ func (b Builder) checkReflect(fn Expr, args []Expr) {
 		pkg.NeedAbiInit |= ReflectStructOf
 	case "reflect.Value.Method":
 		if len(args) == 2 {
-			if v, ok := extractConstInt(args[1].impl); ok {
-				if pkg.MethodByIndex == nil {
-					pkg.MethodByIndex = make(map[int]none)
-				}
-				pkg.MethodByIndex[v] = none{}
+			if _, ok := extractConstInt(args[1].impl); ok {
 				pkg.NeedAbiInit |= ReflectMethodByIndex
 				return
 			}
@@ -1192,11 +1188,7 @@ func (b Builder) checkReflect(fn Expr, args []Expr) {
 		}
 	case "reflect.Value.MethodByName":
 		if len(args) == 2 {
-			if v, ok := extractConstString(args[1].impl); ok {
-				if pkg.MethodByName == nil {
-					pkg.MethodByName = make(map[string]none)
-				}
-				pkg.MethodByName[v] = none{}
+			if _, ok := extractConstString(args[1].impl); ok {
 				pkg.NeedAbiInit |= ReflectMethodByName
 				return
 			}
