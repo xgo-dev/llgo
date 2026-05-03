@@ -67,6 +67,24 @@ const (
 	DebugPackagesLoad = false
 )
 
+var runtimeGoMinor = parseRuntimeGoMinor(runtime.Version())
+
+func parseRuntimeGoMinor(version string) int {
+	const prefix = "go1."
+	if !strings.HasPrefix(version, prefix) {
+		return 0
+	}
+	minor := 0
+	for i := len(prefix); i < len(version); i++ {
+		c := version[i]
+		if c < '0' || c > '9' {
+			break
+		}
+		minor = minor*10 + int(c-'0')
+	}
+	return minor
+}
+
 // A Config specifies details about how packages should be loaded.
 // The zero value is a valid configuration.
 // Calls to Load do not modify this struct.
@@ -303,8 +321,7 @@ func loadPackageEx(dedup Deduper, ld *loader, lpkg *loaderPackage) {
 	// - golang.org/issue/55883 (go/packages confusing error)
 	//
 	// Should we assert a hard minimum of (currently) go1.16 here?
-	var runtimeVersion int
-	if _, err := fmt.Sscanf(runtime.Version(), "go1.%d", &runtimeVersion); err == nil && runtimeVersion < lpkg.goVersion {
+	if runtimeVersion := runtimeGoMinor; runtimeVersion != 0 && runtimeVersion < lpkg.goVersion {
 		defer func() {
 			if len(lpkg.Errors) > 0 {
 				appendError(packages.Error{
