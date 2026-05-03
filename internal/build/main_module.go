@@ -37,12 +37,10 @@ import (
 )
 
 type genConfig struct {
-	rtInit        bool
-	pyInit        bool
-	abiInit       int
-	methodByIndex map[int]none
-	methodByName  map[string]none
-	abiSymbols    map[string]none
+	rtInit     bool
+	pyInit     bool
+	abiInit    int
+	abiSymbols map[string]none
 }
 
 // genMainModule generates the main entry module for an llgo program.
