@@ -972,7 +972,8 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 	needRuntime := false
 	needPyInit := false
 	var needAbiInit int
-	allPkgs := []*packages.Package{pkg}
+	allPkgs := make([]*packages.Package, 1, len(pkgs)+1)
+	allPkgs[0] = pkg
 	for _, v := range pkgs {
 		allPkgs = append(allPkgs, v.Package)
 	}
@@ -987,12 +988,12 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 	}
 	// archiveInputs contains package .a files. Object files are prepended later so
 	// archive extraction can see their undefined references in a single linker pass.
-	var archiveInputs []string
-	var linkArgs []string
+	archiveInputs := make([]string, 0, len(pkgs)+1)
+	linkArgs := make([]string, 0, len(pkgs))
 	var rtLinkInputs []string
 	var rtLinkArgs []string
-	linkedPkgs := make(map[string]bool) // Track linked packages by ID to avoid duplicates
-	var linkedOrder []Package
+	linkedPkgs := make(map[string]bool, len(pkgs)+1) // Track linked packages by ID to avoid duplicates
+	linkedOrder := make([]Package, 0, len(pkgs)+1)
 	packages.Visit(visitRoots, nil, func(p *packages.Package) {
 		// Skip if already linked this package (by ID)
 		if linkedPkgs[p.ID] {
