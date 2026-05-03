@@ -1050,8 +1050,6 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 	needRuntime := false
 	needPyInit := false
 	var needAbiInit int
-	methodByIndex := make(map[int]none)
-	methodByName := make(map[string]none)
 	allPkgs := []*packages.Package{pkg}
 	for _, v := range pkgs {
 		allPkgs = append(allPkgs, v.Package)
@@ -1107,12 +1105,6 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 		needRuntime = needRuntime || need1
 		needPyInit = needPyInit || need2
 		needAbiInit |= aPkg.LPkg.NeedAbiInit
-		for k, _ := range aPkg.LPkg.MethodByIndex {
-			methodByIndex[k] = none{}
-		}
-		for k, _ := range aPkg.LPkg.MethodByName {
-			methodByName[k] = none{}
-		}
 
 		linkArgs = append(linkArgs, aPkg.LinkArgs...)
 		if aPkg.ArchiveFile != "" {
@@ -1130,12 +1122,10 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 	// This is compiled directly to .o and added to linkInputs (not cached)
 	// Use a stable synthetic name to avoid confusing it with the real main package in traces/logs.
 	entryPkg := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{
-		rtInit:        needRuntime,
-		pyInit:        needPyInit,
-		abiInit:       needAbiInit,
-		methodByIndex: methodByIndex,
-		methodByName:  methodByName,
-		abiSymbols:    linkedModuleGlobals(linkedOrder),
+		rtInit:     needRuntime,
+		pyInit:     needPyInit,
+		abiInit:    needAbiInit,
+		abiSymbols: linkedModuleGlobals(linkedOrder),
 	})
 	entryObjFile, err := exportObject(ctx, "entry_main", entryPkg.ExportFile, entryPkg.LPkg)
 	if err != nil {
