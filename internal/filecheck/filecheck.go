@@ -127,9 +127,9 @@ func Match(filename, checks, input string) error {
 		if !ok {
 			switch dir.kind {
 			case kindNext:
-				return fmt.Errorf("%s:%d: CHECK-NEXT %q did not match input:%d", filename, dir.line, dir.pattern, prev.start.line+2)
+				return fmt.Errorf("%s:%d: CHECK-NEXT %q did not match input:%d, input: %s", filename, dir.line, dir.pattern, prev.start.line+2, input)
 			case kindSame:
-				return fmt.Errorf("%s:%d: CHECK-SAME %q did not match input:%d", filename, dir.line, dir.pattern, prev.start.line+1)
+				return fmt.Errorf("%s:%d: CHECK-SAME %q did not match input:%d, input: %s", filename, dir.line, dir.pattern, prev.start.line+1, input)
 			default:
 				return fmt.Errorf("%s:%d: %s %q was not found", filename, dir.line, dir.kind, dir.pattern)
 			}
