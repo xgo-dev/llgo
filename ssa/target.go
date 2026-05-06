@@ -21,7 +21,7 @@ import (
 	"strings"
 
 	"github.com/goplus/llgo/internal/optlevel"
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 )
 
 // -----------------------------------------------------------------------------

@@ -31,7 +31,7 @@ import (
 	"go/types"
 
 	"github.com/goplus/llgo/internal/packages"
-	llvm "github.com/goplus/llvm"
+	llvm "github.com/xgo-dev/llvm"
 
 	llssa "github.com/goplus/llgo/ssa"
 )

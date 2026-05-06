@@ -25,7 +25,7 @@ import (
 	"sort"
 
 	"github.com/goplus/llgo/ssa/abi"
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 )
 
 // -----------------------------------------------------------------------------

@@ -24,7 +24,7 @@ import (
 	"go/types"
 	"log"
 
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 )
 
 type AtomicOrdering = llvm.AtomicOrdering

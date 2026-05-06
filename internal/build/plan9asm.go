@@ -14,7 +14,7 @@ import (
 	"github.com/goplus/llgo/internal/packages"
 	llplan9asm "github.com/goplus/llgo/internal/plan9asm"
 	llruntime "github.com/goplus/llgo/runtime"
-	gllvm "github.com/goplus/llvm"
+	gllvm "github.com/xgo-dev/llvm"
 )
 
 // compilePkgSFiles translates Go/Plan9 assembly files selected by `go list -json`

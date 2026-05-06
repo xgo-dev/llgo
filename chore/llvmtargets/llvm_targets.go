@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 )
 
 func main() {

@@ -14,7 +14,7 @@ import (
 	"testing"
 
 	llpackages "github.com/goplus/llgo/internal/packages"
-	extplan9asm "github.com/goplus/plan9asm"
+	extplan9asm "github.com/xgo-dev/plan9asm"
 )
 
 func mustTestPackage(t *testing.T, pkgPath, src string) *llpackages.Package {

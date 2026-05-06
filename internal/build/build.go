@@ -54,7 +54,7 @@ import (
 	"github.com/goplus/llgo/ssa/abi"
 	xenv "github.com/goplus/llgo/xtool/env"
 	"github.com/goplus/llgo/xtool/env/llvm"
-	gllvm "github.com/goplus/llvm"
+	gllvm "github.com/xgo-dev/llvm"
 
 	llruntime "github.com/goplus/llgo/runtime"
 	llssa "github.com/goplus/llgo/ssa"

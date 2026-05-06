@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 
 	"github.com/goplus/llgo/internal/packages"
 	llssa "github.com/goplus/llgo/ssa"
