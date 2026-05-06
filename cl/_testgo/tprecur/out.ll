@@ -145,3 +145,7 @@ _llgo_6:                                          ; preds = %_llgo_4
 declare %"github.com/goplus/llgo/runtime/internal/runtime.Slice" @"github.com/goplus/llgo/runtime/internal/runtime.MakeSlice"(i64, i64, i64)
 
 declare void @"github.com/goplus/llgo/runtime/internal/runtime.AssertIndexRange"(i1)
+
+!llgo.useiface = !{!0}
+
+!0 = !{!"github.com/goplus/llgo/cl/_testgo/tprecur.recursive", !"_llgo_string"}

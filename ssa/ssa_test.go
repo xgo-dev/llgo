@@ -33,6 +33,7 @@ import (
 	"unsafe"
 
 	"github.com/goplus/gogen/packages"
+	"github.com/goplus/llgo/internal/semmeta"
 	"github.com/goplus/llvm"
 )
 
@@ -566,6 +567,7 @@ func TestIfaceMethodClosureCallIR(t *testing.T) {
 	rawIface := types.NewInterfaceType([]*types.Func{rawMeth}, nil)
 	rawIface.Complete()
 	namedIface := types.NewNamed(types.NewTypeName(0, pkgTypes, "IFmt", nil), rawIface, nil)
+	pkgTypes.Scope().Insert(namedIface.Obj())
 	recv := types.NewVar(0, pkgTypes, "recv", namedIface)
 	recvSig := types.NewSignatureType(recv, nil, nil, types.NewTuple(VArg()),
 		types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int])), true)
@@ -605,7 +607,195 @@ _llgo_0:
 declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.IfacePtrData"(%"github.com/goplus/llgo/runtime/internal/runtime.iface") #0
 
 attributes #0 = { null_pointer_is_valid }
+
+!llgo.useifacemethod = !{!0}
+!llgo.interfaceinfo = !{!1}
+
+!0 = !{!"caller", !"_llgo_foo/bar.IFmt", !"Printf", !"_llgo_func$_RYiBYcSxJjuvzYmA4xYm18hT18pH0_ng6z76aK77Bk"}
+!1 = !{!"_llgo_foo/bar.IFmt", !"Printf", !"_llgo_func$_RYiBYcSxJjuvzYmA4xYm18hT18pH0_ng6z76aK77Bk"}
 `)
+
+	useIfaceMethodRows := pkg.Module().NamedMetadataOperands(semmeta.UseIfaceMethodMetadata)
+	requireMetadataRows(t, semmeta.UseIfaceMethodMetadata, useIfaceMethodRows, 1)
+	useIfaceMethodFields := requireMetadataFields(t, semmeta.UseIfaceMethodMetadata, useIfaceMethodRows[0], 4)
+	requireMDString(t, semmeta.UseIfaceMethodMetadata, useIfaceMethodFields, 0, "caller")
+	requireMDString(t, semmeta.UseIfaceMethodMetadata, useIfaceMethodFields, 1, "_llgo_foo/bar.IFmt")
+	requireMDString(t, semmeta.UseIfaceMethodMetadata, useIfaceMethodFields, 2, "Printf")
+	requireMDString(t, semmeta.UseIfaceMethodMetadata, useIfaceMethodFields, 3, "_llgo_func$_RYiBYcSxJjuvzYmA4xYm18hT18pH0_ng6z76aK77Bk")
+
+	interfaceInfoRows := pkg.Module().NamedMetadataOperands(semmeta.InterfaceInfoMetadata)
+	requireMetadataRows(t, semmeta.InterfaceInfoMetadata, interfaceInfoRows, 1)
+	interfaceInfoFields := requireMetadataFields(t, semmeta.InterfaceInfoMetadata, interfaceInfoRows[0], 3)
+	requireMDString(t, semmeta.InterfaceInfoMetadata, interfaceInfoFields, 0, "_llgo_foo/bar.IFmt")
+	requireMDString(t, semmeta.InterfaceInfoMetadata, interfaceInfoFields, 1, "Printf")
+	requireMDString(t, semmeta.InterfaceInfoMetadata, interfaceInfoFields, 2, "_llgo_func$_RYiBYcSxJjuvzYmA4xYm18hT18pH0_ng6z76aK77Bk")
+}
+
+func TestNamedMetadataReadback(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+
+	pkgTypes := types.NewPackage("foo/bar", "bar")
+
+	rawIfaceSig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(0, nil, "x", types.Typ[types.Int])),
+		types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int])),
+		false)
+	rawIfaceMeth := types.NewFunc(0, pkgTypes, "Add", rawIfaceSig)
+	rawIface := types.NewInterfaceType([]*types.Func{rawIfaceMeth}, nil)
+	rawIface.Complete()
+
+	namedIface := types.NewNamed(types.NewTypeName(0, pkgTypes, "IFmt", nil), rawIface, nil)
+	pkgTypes.Scope().Insert(namedIface.Obj())
+
+	ifaceRecv := types.NewVar(0, pkgTypes, "recv", namedIface)
+	ifaceMethSig := types.NewSignatureType(ifaceRecv, nil, nil,
+		types.NewTuple(types.NewVar(0, nil, "x", types.Typ[types.Int])),
+		types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int])),
+		false)
+	ifaceMeth := types.NewFunc(0, pkgTypes, "Add", ifaceMethSig)
+
+	namedStruct := types.NewNamed(types.NewTypeName(0, pkgTypes, "S", nil), types.NewStruct(nil, nil), nil)
+	pkgTypes.Scope().Insert(namedStruct.Obj())
+	structRecv := types.NewVar(0, pkgTypes, "recv", types.NewPointer(namedStruct))
+	structMethSig := types.NewSignatureType(structRecv, nil, nil,
+		types.NewTuple(types.NewVar(0, nil, "x", types.Typ[types.Int])),
+		types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int])),
+		false)
+	structMeth := types.NewFunc(0, pkgTypes, "Add", structMethSig)
+	namedStruct.AddMethod(structMeth)
+
+	pkg := prog.NewPackage("bar", "foo/bar")
+	caller := pkg.NewFunc("caller", types.NewSignatureType(nil, nil, nil, nil,
+		types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int])), false), InGo)
+	b := caller.MakeBody(1)
+	ptrType := prog.Type(types.NewPointer(namedStruct), InGo)
+	ifaceType := prog.Type(namedIface, InGo)
+	x := prog.Zero(ptrType)
+	intf := b.MakeInterface(ifaceType, x)
+	closure := b.Imethod(intf, ifaceMeth)
+	b.Return(b.Call(closure, prog.Val(1)))
+
+	mtypName, _ := prog.abi.TypeName(funcType(prog, structMeth.Type()))
+	structTypeName, _ := prog.abi.TypeName(types.NewPointer(namedStruct))
+	ifaceTypeName, _ := prog.abi.TypeName(namedIface)
+
+	useIfaceRows := pkg.Module().NamedMetadataOperands(semmeta.UseIfaceMetadata)
+	requireMetadataRows(t, semmeta.UseIfaceMetadata, useIfaceRows, 1)
+	useIfaceFields := requireMetadataFields(t, semmeta.UseIfaceMetadata, useIfaceRows[0], 2)
+	requireMDString(t, semmeta.UseIfaceMetadata, useIfaceFields, 0, "caller")
+	requireMDString(t, semmeta.UseIfaceMetadata, useIfaceFields, 1, structTypeName)
+
+	methodInfoRows := pkg.Module().NamedMetadataOperands(semmeta.MethodInfoMetadata)
+	if len(methodInfoRows) == 0 {
+		t.Fatalf("%s rows len = 0, want at least 1", semmeta.MethodInfoMetadata)
+	}
+	methodInfoFields := requireMetadataFields(t, semmeta.MethodInfoMetadata, findMetadataRowByFirstString(t, semmeta.MethodInfoMetadata, methodInfoRows, structTypeName), 6)
+	requireMDString(t, semmeta.MethodInfoMetadata, methodInfoFields, 0, structTypeName)
+	requireMDUint(t, semmeta.MethodInfoMetadata, methodInfoFields, 1, 0)
+	requireMDString(t, semmeta.MethodInfoMetadata, methodInfoFields, 2, "Add")
+	requireMDString(t, semmeta.MethodInfoMetadata, methodInfoFields, 3, mtypName)
+
+	useIfaceMethodRows := pkg.Module().NamedMetadataOperands(semmeta.UseIfaceMethodMetadata)
+	requireMetadataRows(t, semmeta.UseIfaceMethodMetadata, useIfaceMethodRows, 1)
+	useIfaceMethodFields := requireMetadataFields(t, semmeta.UseIfaceMethodMetadata, useIfaceMethodRows[0], 4)
+	requireMDString(t, semmeta.UseIfaceMethodMetadata, useIfaceMethodFields, 0, "caller")
+	requireMDString(t, semmeta.UseIfaceMethodMetadata, useIfaceMethodFields, 1, ifaceTypeName)
+	requireMDString(t, semmeta.UseIfaceMethodMetadata, useIfaceMethodFields, 2, "Add")
+	requireMDString(t, semmeta.UseIfaceMethodMetadata, useIfaceMethodFields, 3, mtypName)
+
+	interfaceInfoRows := pkg.Module().NamedMetadataOperands(semmeta.InterfaceInfoMetadata)
+	if len(interfaceInfoRows) == 0 {
+		t.Fatalf("%s rows len = 0, want at least 1", semmeta.InterfaceInfoMetadata)
+	}
+	interfaceInfoFields := requireMetadataFields(t, semmeta.InterfaceInfoMetadata, findMetadataRowByFirstString(t, semmeta.InterfaceInfoMetadata, interfaceInfoRows, ifaceTypeName), 3)
+	requireMDString(t, semmeta.InterfaceInfoMetadata, interfaceInfoFields, 0, ifaceTypeName)
+	requireMDString(t, semmeta.InterfaceInfoMetadata, interfaceInfoFields, 1, "Add")
+	requireMDString(t, semmeta.InterfaceInfoMetadata, interfaceInfoFields, 2, mtypName)
+}
+
+func TestInterfaceInfoMetadataSingleRow(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	pkg.semMetaEmitter.AddInterfaceInfo("_llgo_foo/bar.IFmt", []semmeta.MethodSig{
+		{Name: "Read", MType: "_llgo_func$read"},
+		{Name: "Write", MType: "_llgo_func$write"},
+	})
+
+	rows := pkg.Module().NamedMetadataOperands(semmeta.InterfaceInfoMetadata)
+	requireMetadataRows(t, semmeta.InterfaceInfoMetadata, rows, 2)
+	fields := requireMetadataFields(t, semmeta.InterfaceInfoMetadata, rows[0], 3)
+	requireMDString(t, semmeta.InterfaceInfoMetadata, fields, 0, "_llgo_foo/bar.IFmt")
+	requireMDString(t, semmeta.InterfaceInfoMetadata, fields, 1, "Read")
+	requireMDString(t, semmeta.InterfaceInfoMetadata, fields, 2, "_llgo_func$read")
+	fields = requireMetadataFields(t, semmeta.InterfaceInfoMetadata, rows[1], 3)
+	requireMDString(t, semmeta.InterfaceInfoMetadata, fields, 0, "_llgo_foo/bar.IFmt")
+	requireMDString(t, semmeta.InterfaceInfoMetadata, fields, 1, "Write")
+	requireMDString(t, semmeta.InterfaceInfoMetadata, fields, 2, "_llgo_func$write")
+}
+
+func requireMetadataRows(t *testing.T, table string, rows []llvm.Value, want int) {
+	t.Helper()
+	if got := len(rows); got != want {
+		t.Fatalf("%s rows len = %d, want %d", table, got, want)
+	}
+}
+
+func requireMetadataFields(t *testing.T, table string, row llvm.Value, want int) []llvm.Value {
+	t.Helper()
+	fields := row.MDNodeOperands()
+	if got := len(fields); got != want {
+		t.Fatalf("%s field len = %d, want %d", table, got, want)
+	}
+	return fields
+}
+
+func findMetadataRowByFirstString(t *testing.T, table string, rows []llvm.Value, want string) llvm.Value {
+	t.Helper()
+	for _, row := range rows {
+		fields := row.MDNodeOperands()
+		if len(fields) == 0 || !fields[0].IsAMDString() {
+			continue
+		}
+		if fields[0].MDString() == want {
+			return row
+		}
+	}
+	t.Fatalf("%s missing row for %q", table, want)
+	return llvm.Value{}
+}
+
+func requireMDString(t *testing.T, table string, fields []llvm.Value, index int, want string) {
+	t.Helper()
+	if index >= len(fields) {
+		t.Fatalf("%s field index %d out of range", table, index)
+	}
+	if !fields[index].IsAMDString() {
+		t.Fatalf("%s field[%d] should be MDString", table, index)
+	}
+	got := fields[index].MDString()
+	if got != want {
+		t.Fatalf("%s field[%d] string = %q, want %q", table, index, got, want)
+	}
+}
+
+func requireMDUint(t *testing.T, table string, fields []llvm.Value, index int, want uint64) {
+	t.Helper()
+	if index >= len(fields) {
+		t.Fatalf("%s field index %d out of range", table, index)
+	}
+	got := fields[index].ZExtValue()
+	if got != want {
+		t.Fatalf("%s field[%d] uint = %d, want %d", table, index, got, want)
+	}
 }
 
 func TestClosureCtxHelpers(t *testing.T) {

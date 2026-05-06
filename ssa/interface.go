@@ -20,6 +20,7 @@ import (
 	"go/token"
 	"go/types"
 
+	"github.com/goplus/llgo/internal/semmeta"
 	"github.com/goplus/llgo/ssa/abi"
 	"github.com/goplus/llvm"
 )
@@ -62,6 +63,32 @@ func iMethodOf(rawIntf *types.Interface, name string) int {
 	return -1
 }
 
+func (b Builder) emitIfaceMethodUse(ownerName, intfTypeName string, method *types.Func) {
+	prog := b.Prog
+	mtypName, _ := prog.abi.TypeName(funcType(prog, method.Type()))
+	b.Pkg.semMetaEmitter.AddUseIfaceMethod(semmeta.Symbol(ownerName), semmeta.IfaceMethodUse{
+		Target: semmeta.Symbol(intfTypeName),
+		Sig: semmeta.MethodSig{
+			Name:  mthName(method),
+			MType: semmeta.Symbol(mtypName),
+		},
+	})
+}
+
+func (b Builder) emitInterfaceInfo(intfTypeName string, rawIntf *types.Interface) {
+	prog := b.Prog
+	methods := make([]semmeta.MethodSig, 0, rawIntf.NumMethods())
+	for i := 0; i < rawIntf.NumMethods(); i++ {
+		im := rawIntf.Method(i)
+		imtypName, _ := prog.abi.TypeName(funcType(prog, im.Type()))
+		methods = append(methods, semmeta.MethodSig{
+			Name:  mthName(im),
+			MType: semmeta.Symbol(imtypName),
+		})
+	}
+	b.Pkg.semMetaEmitter.AddInterfaceInfo(semmeta.Symbol(intfTypeName), methods)
+}
+
 // Imethod returns closure of an interface method.
 func (b Builder) Imethod(intf Expr, method *types.Func) Expr {
 	prog := b.Prog
@@ -80,6 +107,15 @@ func (b Builder) Imethod(intf Expr, method *types.Func) Expr {
 	}
 	tclosure := prog.Type(sig, InGo)
 	i := iMethodOf(rawIntf, method.Name())
+	ownerName := b.Func.impl.Name()
+	intfTypeName, _ := prog.abi.TypeName(intf.raw.Type)
+	b.emitIfaceMethodUse(ownerName, intfTypeName, method)
+	// Emit the complete interface shape at use sites as well. In current LLGo
+	// lowering, named interfaces may be erased to their underlying
+	// *types.Interface before later materialization, and anonymous interfaces
+	// have no definition-side fallback at all. Whole-program analysis still
+	// needs the full method set for the interface symbol used in UseIfaceMethod.
+	b.emitInterfaceInfo(intfTypeName, rawIntf)
 	data := b.InlineCall(b.Pkg.rtFunc("IfacePtrData"), intf)
 	impl := intf.impl
 	itab := Expr{b.faceItab(impl), prog.VoidPtrPtr()}
@@ -114,6 +150,14 @@ func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
 	}
 	prog := b.Prog
 	typ := x.Type
+	// Emit useiface only for concrete-to-interface conversions. If the source
+	// value is already an interface, this conversion does not expose a new
+	// concrete type to deadcode analysis.
+	if _, ok := typ.raw.Type.Underlying().(*types.Interface); !ok {
+		ownerName := b.Func.impl.Name()
+		typeName, _ := prog.abi.TypeName(typ.raw.Type)
+		b.Pkg.semMetaEmitter.AddUseIface(semmeta.Symbol(ownerName), semmeta.Symbol(typeName))
+	}
 	tabi := b.abiType(typ.raw.Type)
 	if !directIfaceType(typ.raw.Type) {
 		vptr := b.AllocU(typ)

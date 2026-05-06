@@ -23,12 +23,22 @@ import (
 	"strings"
 
 	"github.com/goplus/llgo/internal/build"
+	"github.com/goplus/llvm"
 )
 
 func GenFrom(fileOrPkg string) string {
-	pkg, err := genFrom(fileOrPkg, 0)
+	mod, err := GenModuleFrom(fileOrPkg)
 	check(err)
-	return pkg.LPkg.String()
+	defer mod.Dispose()
+	return mod.String()
+}
+
+func GenModuleFrom(fileOrPkg string) (llvm.Module, error) {
+	pkg, err := genFrom(fileOrPkg, 0)
+	if err != nil {
+		return llvm.Module{}, err
+	}
+	return pkg.LPkg.Module(), nil
 }
 
 func genFrom(pkgPath string, abiMode build.AbiMode) (build.Package, error) {

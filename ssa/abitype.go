@@ -24,6 +24,7 @@ import (
 	"go/types"
 	"sort"
 
+	"github.com/goplus/llgo/internal/semmeta"
 	"github.com/goplus/llgo/ssa/abi"
 	"github.com/goplus/llvm"
 )
@@ -215,10 +216,7 @@ func (b Builder) abiInterfaceImethods(t *types.Interface, name string) llvm.Valu
 		for i := 0; i < n; i++ {
 			f := t.Method(i)
 			var values []llvm.Value
-			name := f.Name()
-			if !token.IsExported(name) {
-				name = abi.FullName(f.Pkg(), name)
-			}
+			name := mthName(f)
 			values = append(values, b.Str(name).impl)
 			ftyp := funcType(prog, f.Type())
 			values = append(values, b.abiType(ftyp).impl)
@@ -424,6 +422,8 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 	ft := prog.rtType("Method")
 	n := mset.Len()
 	fields := make([]llvm.Value, n)
+	slots := make([]semmeta.MethodSlot, 0, n)
+	typeName, _ := prog.abi.TypeName(t)
 	pkg, _ := b.abiUncommonPkg(t)
 	anonymous := pkg == nil
 	if anonymous {
@@ -431,11 +431,12 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 	}
 	for i := 0; i < n; i++ {
 		m := mset.At(i)
-		obj := m.Obj()
+		obj := m.Obj().(*types.Func)
 		mName := obj.Name()
+		fullName := mthName(obj)
 		name := b.Str(mName).impl
 		if !token.IsExported(mName) {
-			name = b.Str(abi.FullName(obj.Pkg(), mName)).impl
+			name = b.Str(fullName).impl
 		}
 		mSig := m.Type().(*types.Signature)
 		var tfn, ifn llvm.Value
@@ -453,8 +454,36 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 		values = append(values, ifn)
 		values = append(values, tfn)
 		fields[i] = llvm.ConstNamedStruct(ft.ll, values)
+		mtypName, _ := prog.abi.TypeName(ftyp)
+		slots = append(slots, semmeta.MethodSlot{
+			Index: i,
+			Sig: semmeta.MethodSig{
+				Name:  fullName,
+				MType: semmeta.Symbol(mtypName),
+			},
+			IFn: semmeta.Symbol(ifn.Name()),
+			TFn: semmeta.Symbol(tfn.Name()),
+		})
 	}
+	b.Pkg.semMetaEmitter.AddMethodInfo(semmeta.Symbol(typeName), slots)
 	return llvm.ConstArray(ft.ll, fields)
+}
+
+// mthName returns the semantic method name used in ABI metadata.
+//
+// Exported methods keep their declared identifier because that is already
+// globally visible, for example:
+//   - bytes.Buffer.Read -> "Read"
+//
+// Unexported methods are qualified with their package path so they stay unique
+// across packages, for example:
+//   - github.com/goplus/llgo/demo.(*T).close -> "github.com/goplus/llgo/demo.close"
+func mthName(method *types.Func) string {
+	rawName := method.Name()
+	if token.IsExported(rawName) {
+		return rawName
+	}
+	return abi.FullName(method.Pkg(), rawName)
 }
 
 // closure func type

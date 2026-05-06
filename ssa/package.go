@@ -26,6 +26,7 @@ import (
 	"unsafe"
 
 	"github.com/goplus/llgo/internal/env"
+	"github.com/goplus/llgo/internal/semmeta"
 	"github.com/goplus/llgo/ssa/abi"
 	"github.com/goplus/llvm"
 	"golang.org/x/tools/go/types/typeutil"
@@ -462,7 +463,10 @@ func (p Program) NewPackage(name, pkgPath string) Package {
 		mod: mod, path: pkgPath, Prog: p, vars: gbls, fns: fns,
 		nullPointerIsValidAttr: nullPointerIsValidAttr,
 		pyobjs:                 pyobjs, pymods: pymods, strs: strs,
-		di: nil, cu: nil, glbDbgVars: glbDbgVars,
+		semMetaEmitter: semmeta.NewEmitter(mod),
+		di:             nil,
+		cu:             nil,
+		glbDbgVars:     glbDbgVars,
 		export:         make(map[string]string),
 		preserveSyms:   make(map[string]struct{}),
 		llvmUsedValues: make([]llvm.Value, 0, 4),
@@ -709,7 +713,8 @@ type aPackage struct {
 	mod  llvm.Module
 	path string
 
-	Prog Program
+	Prog           Program
+	semMetaEmitter *semmeta.Emitter
 
 	nullPointerIsValidAttr llvm.Attribute
 
