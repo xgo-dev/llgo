@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode"
@@ -30,21 +31,22 @@ import (
 )
 
 var (
-	flagGOROOT  = flag.String("goroot", os.Getenv("LLGO_GOROOT"), "Go toolchain root whose GOROOT/test sources should be used")
-	flagGoCmd   = flag.String("go", os.Getenv("LLGO_GO"), "go binary used as baseline (default: <goroot>/bin/go)")
-	flagLLGO    = flag.String("llgo", os.Getenv("LLGO_TEST_LLGO"), "llgo binary used for comparisons (default: build from current checkout)")
-	flagDirs    = flag.String("dirs", strings.Join(defaultGoRootTestDirs, ","), "comma-separated GOROOT/test subdirectories to scan")
-	flagCase    = flag.String("case", os.Getenv("LLGO_GOROOT_CASE"), "regexp selecting cases by relative path")
-	flagLimit   = flag.Int("limit", 0, "maximum number of matching cases to run")
-	flagShardI  = flag.Int("shard-index", 0, "0-based shard index used to partition matching cases")
-	flagShardN  = flag.Int("shard-total", 1, "number of shards used to partition matching cases")
-	flagKeep    = flag.Bool("keepwork", false, "keep temporary work directories for debugging")
-	flagDirMode = flag.String("directive-mode", "legacy", "case discovery mode: legacy, ci, or runlike")
-	flagXFail   = flag.String("xfail", filepath.Join("test", "goroot", "xfail.yaml"), "xfail configuration path relative to repo root")
-	flagBuildTO = flag.Duration("build-timeout", 3*time.Minute, "timeout for each go/llgo build step; 0 disables the timeout")
-	flagRunTO   = flag.Duration("run-timeout", time.Minute, "timeout for the compiled program run step; 0 disables the timeout")
-	flagSlowBld = flag.Duration("slow-build", 10*time.Second, "log build steps that exceed this duration; 0 disables slow-build logging")
-	flagSlowRun = flag.Duration("slow-run", 5*time.Second, "log run steps that exceed this duration; 0 disables slow-run logging")
+	flagGOROOT   = flag.String("goroot", os.Getenv("LLGO_GOROOT"), "Go toolchain root whose GOROOT/test sources should be used")
+	flagGoCmd    = flag.String("go", os.Getenv("LLGO_GO"), "go binary used as baseline (default: <goroot>/bin/go)")
+	flagLLGO     = flag.String("llgo", os.Getenv("LLGO_TEST_LLGO"), "llgo binary used for comparisons (default: build from current checkout)")
+	flagDirs     = flag.String("dirs", strings.Join(defaultGoRootTestDirs, ","), "comma-separated GOROOT/test subdirectories to scan")
+	flagCase     = flag.String("case", os.Getenv("LLGO_GOROOT_CASE"), "regexp selecting cases by relative path")
+	flagLimit    = flag.Int("limit", 0, "maximum number of matching cases to run")
+	flagShardI   = flag.Int("shard-index", 0, "0-based shard index used to partition matching cases")
+	flagShardN   = flag.Int("shard-total", 1, "number of shards used to partition matching cases")
+	flagKeep     = flag.Bool("keepwork", false, "keep temporary work directories for debugging")
+	flagDirMode  = flag.String("directive-mode", "legacy", "case discovery mode: legacy, ci, or runlike")
+	flagXFail    = flag.String("xfail", filepath.Join("test", "goroot", "xfail.yaml"), "xfail configuration path relative to repo root")
+	flagBuildTO  = flag.Duration("build-timeout", 3*time.Minute, "timeout for each go/llgo build step; 0 disables the timeout")
+	flagRunTO    = flag.Duration("run-timeout", time.Minute, "timeout for the compiled program run step; 0 disables the timeout")
+	flagSlowBld  = flag.Duration("slow-build", 10*time.Second, "log build steps that exceed this duration; 0 disables slow-build logging")
+	flagSlowRun  = flag.Duration("slow-run", 5*time.Second, "log run steps that exceed this duration; 0 disables slow-run logging")
+	flagProgress = flag.Duration("progress", 0, "log current GOROOT case progress at this interval; 0 disables progress logging")
 )
 
 var defaultGoRootTestDirs = []string{
@@ -149,6 +151,93 @@ type caseWorkspace struct {
 	cleanup func()
 }
 
+type gorootProgress struct {
+	mu         sync.Mutex
+	total      int
+	current    int
+	casePath   string
+	caseStart  time.Time
+	suiteStart time.Time
+	done       bool
+}
+
+func startGorootProgress(total int, interval time.Duration) (*gorootProgress, func()) {
+	progress := &gorootProgress{
+		total:      total,
+		suiteStart: time.Now(),
+	}
+	if interval <= 0 {
+		return progress, func() {}
+	}
+	stopCh := make(chan struct{})
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				progress.Log()
+			case <-stopCh:
+				return
+			}
+		}
+	}()
+	return progress, func() {
+		close(stopCh)
+		<-doneCh
+	}
+}
+
+func (p *gorootProgress) StartCase(index int, casePath string) {
+	p.mu.Lock()
+	p.current = index
+	p.casePath = casePath
+	p.caseStart = time.Now()
+	p.done = false
+	p.mu.Unlock()
+}
+
+func (p *gorootProgress) FinishCase(casePath string) {
+	p.mu.Lock()
+	if p.casePath != casePath {
+		p.mu.Unlock()
+		return
+	}
+	elapsed := time.Since(p.caseStart)
+	current := p.current
+	total := p.total
+	p.casePath = ""
+	p.caseStart = time.Time{}
+	p.done = current >= total
+	p.mu.Unlock()
+
+	if *flagProgress > 0 && elapsed >= *flagProgress {
+		fmt.Fprintf(os.Stderr, "goroot case %d/%d done after %s: %s\n", current, total, elapsed.Round(time.Millisecond), casePath)
+	}
+}
+
+func (p *gorootProgress) Log() {
+	p.mu.Lock()
+	current := p.current
+	total := p.total
+	casePath := p.casePath
+	caseElapsed := time.Since(p.caseStart)
+	totalElapsed := time.Since(p.suiteStart)
+	done := p.done
+	p.mu.Unlock()
+
+	if done {
+		return
+	}
+	if casePath == "" {
+		fmt.Fprintf(os.Stderr, "goroot runner progress: waiting for next case after %s\n", totalElapsed.Round(time.Second))
+		return
+	}
+	fmt.Fprintf(os.Stderr, "goroot runner progress: case %d/%d running for %s, total %s: %s\n", current, total, caseElapsed.Round(time.Second), totalElapsed.Round(time.Second), casePath)
+}
+
 func TestGoRootRunCases(t *testing.T) {
 	if *flagGOROOT == "" {
 		t.Skip("set -goroot or LLGO_GOROOT to run external GOROOT/test cases")
@@ -193,10 +282,14 @@ func TestGoRootRunCases(t *testing.T) {
 		t.Skipf("no matching cases selected for shard %d/%d", *flagShardI, *flagShardN)
 	}
 
-	t.Logf("goroot=%s goversion=%s goos=%s goarch=%s shard=%d/%d cases=%d directive_mode=%s", goroot, envInfo.GOVERSION, envInfo.GOOS, envInfo.GOARCH, *flagShardI, *flagShardN, len(cases), mode.Name)
-	for _, tc := range cases {
+	fmt.Fprintf(os.Stderr, "goroot=%s goversion=%s goos=%s goarch=%s shard=%d/%d cases=%d directive_mode=%s\n", goroot, envInfo.GOVERSION, envInfo.GOOS, envInfo.GOARCH, *flagShardI, *flagShardN, len(cases), mode.Name)
+	progress, stopProgress := startGorootProgress(len(cases), *flagProgress)
+	defer stopProgress()
+	for i, tc := range cases {
 		tc := tc
 		t.Run(tc.RelPath, func(t *testing.T) {
+			progress.StartCase(i+1, tc.RelPath)
+			defer progress.FinishCase(tc.RelPath)
 			if match, reason := xfails.MatchHostSkip(envInfo.GOVERSION, runtime.GOOS+"/"+runtime.GOARCH, tc); match {
 				t.Skipf("skipping host-unsafe case: %s", reason)
 			}
@@ -259,11 +352,13 @@ func loadToolchainEnv(t *testing.T, goCmd string) toolchainEnv {
 
 func buildLLGOBinary(t *testing.T, repoRoot, goCmd string) string {
 	t.Helper()
+	start := time.Now()
 	outDir := t.TempDir()
 	outPath := filepath.Join(outDir, "llgo")
 	if runtime.GOOS == "windows" {
 		outPath += ".exe"
 	}
+	fmt.Fprintf(os.Stderr, "building llgo test binary: %s build -tags=dev -o %s ./cmd/llgo\n", goCmd, outPath)
 	cmd := exec.Command(goCmd, "build", "-tags=dev", "-o", outPath, "./cmd/llgo")
 	cmd.Dir = repoRoot
 	var out bytes.Buffer
@@ -272,6 +367,7 @@ func buildLLGOBinary(t *testing.T, repoRoot, goCmd string) string {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("build llgo failed: %v\n%s", err, out.Bytes())
 	}
+	fmt.Fprintf(os.Stderr, "built llgo test binary in %s: %s\n", time.Since(start).Round(time.Millisecond), outPath)
 	return outPath
 }
 
@@ -655,8 +751,9 @@ func logSlowCase(t *testing.T, casePath string, goBuildDur, llgoBuildDur, goRunD
 	if !slowBuild && !slowRun {
 		return
 	}
-	t.Logf(
-		"slow case %s: go build=%s llgo build=%s go run=%s llgo run=%s",
+	fmt.Fprintf(
+		os.Stderr,
+		"slow goroot case %s: go build=%s llgo build=%s go run=%s llgo run=%s\n",
 		casePath,
 		goBuildDur.Round(time.Millisecond),
 		llgoBuildDur.Round(time.Millisecond),
