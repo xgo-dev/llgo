@@ -18,6 +18,10 @@ jobs:
     name: GOROOT (${{ matrix.os }}, Go ${{ matrix.go-version }}, shard ${{ matrix.shard-index }}/4)
     continue-on-error: ${{ matrix.go-version != '1.25.0' }}
     timeout-minutes: 180
+    env:
+      GOPROXY: https://proxy.golang.org,direct
+      LLGO_GOROOT_HEARTBEAT_SECONDS: "60"
+      LLGO_GOROOT_VERBOSE: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -41,11 +45,17 @@ jobs:
       - name: Show toolchain versions
         run: |
           go version
+          go env GOPROXY GOMODCACHE
           clang --version
+
+      - name: Download Go modules
+        timeout-minutes: 10
+        run: go mod download
 
       - name: Run GOROOT runner
         run: |
           bash dev/test_goroot.sh -- \
             -directive-mode ci \
+            -progress 60s \
             -shard-index "${{ matrix.shard-index }}" \
             -shard-total "4"
