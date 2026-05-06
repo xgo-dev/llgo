@@ -9,8 +9,8 @@ import (
 
 	"github.com/goplus/llgo/internal/packages"
 	intllvm "github.com/goplus/llgo/internal/xtool/llvm"
-	gllvm "github.com/goplus/llvm"
-	extplan9asm "github.com/goplus/plan9asm"
+	gllvm "github.com/xgo-dev/llvm"
+	extplan9asm "github.com/xgo-dev/plan9asm"
 )
 
 type FunctionInfo struct {

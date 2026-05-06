@@ -1,7 +1,7 @@
 package cabi
 
 import (
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 )
 
 func elementTypesCount(typ llvm.Type) int {

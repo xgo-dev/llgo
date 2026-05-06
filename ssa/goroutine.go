@@ -21,7 +21,7 @@ import (
 	"go/types"
 	"strconv"
 
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 )
 
 // -----------------------------------------------------------------------------

@@ -16,7 +16,7 @@ import (
 
 	"github.com/goplus/gogen/packages"
 	llssa "github.com/goplus/llgo/ssa"
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 	gossa "golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )

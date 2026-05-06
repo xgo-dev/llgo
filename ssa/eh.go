@@ -21,7 +21,7 @@ import (
 	"go/types"
 	"unsafe"
 
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 )
 
 // -----------------------------------------------------------------------------

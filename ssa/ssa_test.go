@@ -33,7 +33,7 @@ import (
 	"unsafe"
 
 	"github.com/goplus/gogen/packages"
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 )
 
 func TestEndDefer(t *testing.T) {

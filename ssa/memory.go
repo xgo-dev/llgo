@@ -20,7 +20,7 @@ import (
 	"go/token"
 	"go/types"
 
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 )
 
 // -----------------------------------------------------------------------------

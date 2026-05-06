@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 
 	"github.com/goplus/llgo/internal/build"
 	"github.com/goplus/llgo/internal/cabi"
