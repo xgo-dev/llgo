@@ -85,6 +85,34 @@ func TestGetMacOSSysrootDoesNotCacheErrors(t *testing.T) {
 	}
 }
 
+func TestMacOSSysrootLookupRunsXcrun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script fake xcrun is Unix-only")
+	}
+	resetMacOSSysrootForTest(t)
+	dir := t.TempDir()
+	xcrun := filepath.Join(dir, "xcrun")
+	if err := os.WriteFile(xcrun, []byte("#!/bin/sh\nexit 42\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	if _, err := macOSSysrootLookup(); err == nil {
+		t.Fatal("macOSSysrootLookup succeeded with failing xcrun, want error")
+	}
+
+	if err := os.WriteFile(xcrun, []byte("#!/bin/sh\nprintf '/fake/sdk\\n'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := macOSSysrootLookup()
+	if err != nil {
+		t.Fatalf("macOSSysrootLookup: %v", err)
+	}
+	if got != "/fake/sdk" {
+		t.Fatalf("macOSSysrootLookup = %q, want /fake/sdk", got)
+	}
+}
+
 func TestUseCrossCompileSDK(t *testing.T) {
 	// Skip long-running tests unless explicitly enabled
 	if testing.Short() {

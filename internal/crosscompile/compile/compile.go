@@ -47,9 +47,6 @@ func compileJobs() (int, error) {
 		return jobs, nil
 	}
 	jobs := runtime.GOMAXPROCS(0)
-	if jobs < 1 {
-		return 1, nil
-	}
 	if jobs > 16 {
 		return 16, nil
 	}
@@ -155,9 +152,6 @@ func (cfg CompileConfig) Compile(outputDir string, options CompileOptions) error
 		if jobs > len(tasks) {
 			jobs = len(tasks)
 		}
-		if jobs < 1 {
-			jobs = 1
-		}
 		archiveJobs = jobs
 		if jobs == 1 {
 			for _, task := range tasks {
@@ -250,9 +244,6 @@ func compileSingleGroupTasks(state *compileGroupState, jobs int, verbose bool) e
 	var errMu sync.Mutex
 	var firstErr error
 	setErr := func(err error) {
-		if err == nil {
-			return
-		}
 		errMu.Lock()
 		if firstErr == nil {
 			firstErr = err
@@ -299,9 +290,6 @@ func compileTasks(states []compileGroupState, tasks []compileTask, jobs int, ver
 	var errMu sync.Mutex
 	var firstErr error
 	setErr := func(err error) {
-		if err == nil {
-			return
-		}
 		errMu.Lock()
 		if firstErr == nil {
 			firstErr = err
