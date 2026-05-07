@@ -3604,15 +3604,7 @@ xfails:
     reason: go1.25 goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: fixedbugs/issue12133.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: fixedbugs/issue13169.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue15175.go
     reason: current main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
@@ -3802,15 +3794,7 @@ xfails:
     reason: go1.25 goroot run failure on linux/amd64
   - platform: linux/amd64
     directive: run
-    case: fixedbugs/issue12133.go
-    reason: current main goroot run failure on linux/amd64
-  - platform: linux/amd64
-    directive: run
     case: fixedbugs/issue15002.go
-    reason: current main goroot run failure on linux/amd64
-  - platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue15175.go
     reason: current main goroot run failure on linux/amd64
   - platform: linux/amd64
     directive: run

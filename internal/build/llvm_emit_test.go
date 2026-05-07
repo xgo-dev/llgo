@@ -9,7 +9,7 @@ import (
 
 	"github.com/goplus/llgo/internal/crosscompile"
 	llvmenv "github.com/goplus/llgo/xtool/env/llvm"
-	gllvm "github.com/goplus/llvm"
+	gllvm "github.com/xgo-dev/llvm"
 )
 
 func TestParallelObjectEmitEnabled(t *testing.T) {
