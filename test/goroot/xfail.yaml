@@ -213,8 +213,8 @@ timeouts:
     platform: darwin/arm64
     directive: runoutput
     case: fixedbugs/bug449.go
-    timeout: 12m
-    reason: bug449 runoutput generation runs past the 4m timeout on darwin/arm64
+    timeout: 16m
+    reason: bug449 runoutput generation can run past the 12m timeout on loaded Go 1.26 darwin/arm64 runners
   - version: go1.24
     platform: darwin/arm64
     directive: run
