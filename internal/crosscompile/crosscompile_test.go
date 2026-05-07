@@ -391,6 +391,32 @@ func TestCompileWithConfigCompileError(t *testing.T) {
 	}
 }
 
+func TestCompileWithConfigSkipsObjectOutputLinkFlags(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeC := func(name, symbol string) string {
+		path := filepath.Join(tmpDir, name)
+		if err := os.WriteFile(path, []byte("int "+symbol+"(void) { return 1; }\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	cfg := compilepkg.CompileConfig{Groups: []compilepkg.CompileGroup{
+		{OutputFileName: "libkeep.a", Files: []string{writeC("keep.c", "keep")}},
+		{OutputFileName: "startup.o", Files: []string{writeC("startup.c", "startup")}},
+	}}
+
+	ldflags, err := compileWithConfig(cfg, tmpDir, compilepkg.CompileOptions{CC: "clang"})
+	if err != nil {
+		t.Fatalf("compileWithConfig: %v", err)
+	}
+	if !slices.Contains(ldflags, "-lkeep") {
+		t.Fatalf("ldflags = %v, want -lkeep", ldflags)
+	}
+	if slices.Contains(ldflags, "-lstartup.o") {
+		t.Fatalf("ldflags = %v, object outputs should not become library flags", ldflags)
+	}
+}
+
 func TestUseWithTarget(t *testing.T) {
 	// Test target-based configuration takes precedence
 	export, err := Use("linux", "amd64", "esp32", false, true, optlevel.Oz)

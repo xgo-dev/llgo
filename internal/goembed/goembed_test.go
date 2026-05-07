@@ -347,6 +347,54 @@ func TestLoadDirectivesEarlyReturnsAndSkips(t *testing.T) {
 	}
 }
 
+func TestLoadDirectivesSkipsNilAndNoFilenameFiles(t *testing.T) {
+	dir := t.TempDir()
+	mainFile := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatalf("write hello.txt: %v", err)
+	}
+	src := `package foo
+import "embed"
+
+//go:embed hello.txt
+var content string
+`
+	fset := token.NewFileSet()
+	noFilename, err := parser.ParseFile(fset, "", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("ParseFile no filename: %v", err)
+	}
+	withFilename, err := parser.ParseFile(fset, mainFile, src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("ParseFile with filename: %v", err)
+	}
+
+	embedMap, err := LoadDirectives(fset, []*ast.File{nil, noFilename, withFilename})
+	if err != nil {
+		t.Fatalf("LoadDirectives: %v", err)
+	}
+	if len(embedMap) != 1 || len(embedMap["content"].Files) != 1 {
+		t.Fatalf("LoadDirectives should skip nil/no-filename files and load content: %+v", embedMap)
+	}
+}
+
+func TestHasEmbedDirectiveSkipsNilEntries(t *testing.T) {
+	file := &ast.File{
+		Comments: []*ast.CommentGroup{
+			nil,
+			{
+				List: []*ast.Comment{
+					nil,
+					{Text: "//go:embed hello.txt"},
+				},
+			},
+		},
+	}
+	if !hasEmbedDirective([]*ast.File{nil, file}) {
+		t.Fatal("hasEmbedDirective should find directives after nil files, groups, and comments")
+	}
+}
+
 func TestLoadDirectivesErrors(t *testing.T) {
 	makeFile := func(t *testing.T, src string, extras map[string]string) (*token.FileSet, []*ast.File) {
 		t.Helper()

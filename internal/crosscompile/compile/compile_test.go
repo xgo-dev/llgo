@@ -116,6 +116,22 @@ func TestCompileSkipDoesNotReadJobs(t *testing.T) {
 	}
 }
 
+func TestCompileConfigRejectsInvalidJobsWithWork(t *testing.T) {
+	tmpDir := t.TempDir()
+	src := filepath.Join(tmpDir, "one.c")
+	if err := os.WriteFile(src, []byte("int one(void) { return 1; }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("LLGO_COMPILE_JOBS", "bad")
+	cfg := CompileConfig{Groups: []CompileGroup{
+		{OutputFileName: "libone.a", Files: []string{src}},
+	}}
+	if err := cfg.Compile(tmpDir, CompileOptions{CC: "clang"}); err == nil || !strings.Contains(err.Error(), "invalid LLGO_COMPILE_JOBS") {
+		t.Fatalf("CompileConfig invalid jobs error = %v, want invalid LLGO_COMPILE_JOBS", err)
+	}
+}
+
 func TestCompile(t *testing.T) {
 	t.Run("Skip compile", func(t *testing.T) {
 		tmpDir, err := os.MkdirTemp("", "test-compile*")
@@ -402,6 +418,67 @@ func TestCompileConfigMultipleGroupsParallelError(t *testing.T) {
 	}}
 	if err := cfg.Compile(tmpDir, CompileOptions{CC: "clang"}); err == nil {
 		t.Fatal("CompileConfig should report clang error from a bad source file")
+	}
+}
+
+func TestArchiveGroupsReportsArchiveErrors(t *testing.T) {
+	tmpDir := t.TempDir()
+	missingToolOptions := CompileOptions{CC: filepath.Join(tmpDir, "missing-clang")}
+	states := []compileGroupState{
+		{group: CompileGroup{OutputFileName: "libone.a"}},
+		{group: CompileGroup{OutputFileName: "libtwo.a"}},
+	}
+
+	if err := archiveGroups(tmpDir, missingToolOptions, states[:1], 1); err == nil {
+		t.Fatal("archiveGroups should report serial archive errors")
+	}
+	if err := archiveGroups(tmpDir, missingToolOptions, states, 2); err == nil {
+		t.Fatal("archiveGroups should report parallel archive errors")
+	}
+}
+
+func TestCompileWorkerPoolsStopAfterFirstError(t *testing.T) {
+	tmpDir := t.TempDir()
+	bad := filepath.Join(tmpDir, "bad.c")
+	if err := os.WriteFile(bad, []byte("int bad(void) {\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	good := filepath.Join(tmpDir, "good.c")
+	if err := os.WriteFile(good, []byte("int good(void) { return 1; }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	singleGroup := compileGroupState{
+		group: CompileGroup{OutputFileName: "libsingle.a", Files: []string{bad, good, good}},
+		cfg:   groupCompilerConfig(CompileGroup{Files: []string{bad, good, good}}, CompileOptions{CC: "clang"}),
+		tmp:   t.TempDir(),
+		objs:  make([]string, 3),
+	}
+	if err := compileSingleGroupTasks(&singleGroup, 1, false); err == nil {
+		t.Fatal("compileSingleGroupTasks should stop and report the first compile error")
+	}
+
+	multiGroups := []compileGroupState{
+		{
+			group: CompileGroup{OutputFileName: "libbad.a", Files: []string{bad}},
+			cfg:   groupCompilerConfig(CompileGroup{Files: []string{bad}}, CompileOptions{CC: "clang"}),
+			tmp:   t.TempDir(),
+			objs:  make([]string, 1),
+		},
+		{
+			group: CompileGroup{OutputFileName: "libgood.a", Files: []string{good, good}},
+			cfg:   groupCompilerConfig(CompileGroup{Files: []string{good, good}}, CompileOptions{CC: "clang"}),
+			tmp:   t.TempDir(),
+			objs:  make([]string, 2),
+		},
+	}
+	tasks := []compileTask{
+		{group: 0, file: 0},
+		{group: 1, file: 0},
+		{group: 1, file: 1},
+	}
+	if err := compileTasks(multiGroups, tasks, 1, false); err == nil {
+		t.Fatal("compileTasks should stop and report the first compile error")
 	}
 }
 
