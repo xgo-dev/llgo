@@ -1,13 +1,7 @@
 name: GOROOT
 
 on:
-  push:
-    branches:
-      - "**"
-      - "!dependabot/**"
-      - "!xgopilot/**"
-  pull_request:
-    branches: ["**"]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
