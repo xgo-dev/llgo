@@ -1,0 +1,34 @@
+[TypeChildren]
+*_llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
+    _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
+*_llgo_github.com/goplus/llgo/cl/_testmeta/iface.MyType:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/iface.MyType
+*_llgo_iface$O6rEVxIuA5O1E0KWpQBCgGx26X5gYhJ_nnJnHVL8_7U:
+    _llgo_iface$O6rEVxIuA5O1E0KWpQBCgGx26X5gYhJ_nnJnHVL8_7U
+*_llgo_int:
+    _llgo_int
+*_llgo_string:
+    _llgo_string
+_llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
+    _llgo_string
+_llgo_github.com/goplus/llgo/cl/_testmeta/iface.MyType:
+    _llgo_int
+
+[InterfaceInfo]
+_llgo_github.com/goplus/llgo/cl/_testmeta/iface.Stringer:
+    String _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
+
+[UseIface]
+github.com/goplus/llgo/cl/_testmeta/iface.main:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/iface.MyType
+
+[UseIfaceMethod]
+github.com/goplus/llgo/cl/_testmeta/iface.useIface:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/iface.Stringer String _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
+
+[MethodInfo]
+*_llgo_github.com/goplus/llgo/cl/_testmeta/iface.MyType:
+    String _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to github.com/goplus/llgo/cl/_testmeta/iface.(*MyType).String github.com/goplus/llgo/cl/_testmeta/iface.(*MyType).String
+_llgo_github.com/goplus/llgo/cl/_testmeta/iface.MyType:
+    String _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to github.com/goplus/llgo/cl/_testmeta/iface.(*MyType).String github.com/goplus/llgo/cl/_testmeta/iface.MyType.String
+

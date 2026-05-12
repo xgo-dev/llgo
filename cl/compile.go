@@ -31,6 +31,7 @@ import (
 
 	"github.com/goplus/llgo/cl/blocks"
 	"github.com/goplus/llgo/internal/goembed"
+	"github.com/goplus/llgo/internal/metadata"
 	"github.com/goplus/llgo/internal/typepatch"
 	"golang.org/x/tools/go/ssa"
 
@@ -1432,6 +1433,7 @@ func newPackageEx(prog llssa.Program, patches Patches, rewrites map[string]strin
 		prog.SetRuntime(pkgTypes)
 	}
 	ret = prog.NewPackage(pkgName, pkgPath)
+	ret.SetMetaBuilder(metadata.NewBuilder())
 	if enableDbg {
 		ret.InitDebug(pkgName, pkgPath, pkgProg.Fset)
 	}
@@ -1493,6 +1495,7 @@ func newPackageEx(prog llssa.Program, patches Patches, rewrites map[string]strin
 		ctx.initAfter = nil
 		fn()
 	}
+	ret.BuildMeta()
 	ret.MaterializePreserveSyms()
 	externs = ctx.cgoSymbols
 	return

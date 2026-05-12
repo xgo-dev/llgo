@@ -20,6 +20,7 @@ import (
 	"go/token"
 	"go/types"
 
+	"github.com/goplus/llgo/internal/metadata"
 	"github.com/goplus/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
 )
@@ -48,6 +49,50 @@ func (b Builder) unsafeInterface(rawIntf *types.Interface, t Expr, data llvm.Val
 	tintf := b.abiType(rawIntf)
 	itab := b.newItab(tintf, t)
 	return b.unsafeIface(itab.impl, data)
+}
+
+// emitIfaceMethodUse records an interface method call for metadata.
+func (b Builder) emitIfaceMethodUse(ownerName, intfTypeName string, method *types.Func) {
+	mb := b.Pkg.MetaBuilder()
+	if mb == nil {
+		return
+	}
+	prog := b.Prog
+	mtypName, _ := prog.abi.TypeName(funcType(prog, method.Type()))
+	mb.AddUseIfaceMethod(mb.String(ownerName), []metadata.IfaceMethodDemand{{
+		Target: mb.String(intfTypeName),
+		Sig: metadata.MethodSig{
+			Name:  mb.String(mthName(method)),
+			MType: mb.String(mtypName),
+		},
+	}})
+}
+
+// emitInterfaceInfo records the complete method set of an interface.
+func (b Builder) emitInterfaceInfo(intfTypeName string, rawIntf *types.Interface) {
+	mb := b.Pkg.MetaBuilder()
+	if mb == nil {
+		return
+	}
+	prog := b.Prog
+	n := rawIntf.NumMethods()
+	methods := make([]metadata.MethodSig, 0, n)
+	for i := 0; i < n; i++ {
+		im := rawIntf.Method(i)
+		imtypName, _ := prog.abi.TypeName(funcType(prog, im.Type()))
+		methods = append(methods, metadata.MethodSig{
+			Name:  mb.String(mthName(im)),
+			MType: mb.String(imtypName),
+		})
+	}
+	mb.AddIfaceEntry(mb.String(intfTypeName), methods)
+}
+
+// emitUseIface records that a concrete type enters the interface domain.
+func (b Builder) emitUseIface(ownerName, typeName string) {
+	if mb := b.Pkg.MetaBuilder(); mb != nil {
+		mb.AddUseIface(mb.String(ownerName), []metadata.Symbol{mb.String(typeName)})
+	}
 }
 
 func iMethodOf(rawIntf *types.Interface, name string) int {
@@ -80,6 +125,10 @@ func (b Builder) Imethod(intf Expr, method *types.Func) Expr {
 	}
 	tclosure := prog.Type(sig, InGo)
 	i := iMethodOf(rawIntf, method.Name())
+	ownerName := b.Func.impl.Name()
+	intfTypeName, _ := prog.abi.TypeName(intf.raw.Type)
+	b.emitIfaceMethodUse(ownerName, intfTypeName, method)
+	b.emitInterfaceInfo(intfTypeName, rawIntf)
 	data := b.InlineCall(b.Pkg.rtFunc("IfacePtrData"), intf)
 	impl := intf.impl
 	itab := Expr{b.faceItab(impl), prog.VoidPtrPtr()}
@@ -115,6 +164,11 @@ func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
 	prog := b.Prog
 	typ := x.Type
 	tabi := b.abiType(typ.raw.Type)
+	if _, ok := typ.raw.Type.Underlying().(*types.Interface); !ok {
+		ownerName := b.Func.impl.Name()
+		typeName, _ := prog.abi.TypeName(typ.raw.Type)
+		b.emitUseIface(ownerName, typeName)
+	}
 	if !directIfaceType(typ.raw.Type) {
 		vptr := b.AllocU(typ)
 		b.Store(vptr, x)
