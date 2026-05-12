@@ -8,38 +8,48 @@ on:
 
 jobs:
   bench:
-    runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         scale: [Small, Medium, Large, XL]
+        os:
+          - { runner: ubuntu-latest,      label: linux-amd64 }
+          - { runner: ubuntu-24.04-arm,   label: linux-arm64 }
+          - { runner: macos-latest,       label: macos-arm64 }
+          - { runner: macos-15-intel,     label: macos-amd64 }
+    runs-on: ${{ matrix.os.runner }}
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-      - name: Run ${{ matrix.scale }} benchmark
+      - name: Run ${{ matrix.os.label }} / ${{ matrix.scale }}
         run: |
           go test -bench="/${{ matrix.scale }}$" -benchmem -benchtime=1s ./internal/metadata/ \
-            | tee bench-${{ matrix.scale }}.txt
-      - name: Upload ${{ matrix.scale }} results
+            | tee bench.txt
+      - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: bench-${{ matrix.scale }}
-          path: bench-${{ matrix.scale }}.txt
+          name: bench-${{ matrix.os.label }}-${{ matrix.scale }}
+          path: bench.txt
 
   report:
     needs: bench
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
-      - name: Output benchmark comparison
+      - name: Generate comparison tables
         run: |
-          echo '##  Benchmark: V1 (LLPS uvarint) vs V2 (LLP2 fixed-width)'
-          echo ''
+          printf '##  Benchmark: V1 (LLPS uvarint) vs V2 (LLP2 fixed-width)\n\n'
 
-          # Parse all results into a temp file: scale|cat|ns|bop|alloc
-          for scale in Small Medium Large XL; do
-            awk -v scale="$scale" '
+          # Collect all data: platform|scale|cat|ns|bop|alloc
+          for dir in bench-*/; do
+            f="${dir}bench.txt"
+            [ -f "$f" ] || continue
+            # Extract platform label from directory name: bench-{platform}-{scale}/
+            platform=$(echo "$dir" | sed 's/^bench-//; s/-Small\/$//; s/-Medium\/$//; s/-Large\/$//; s/-XL\/$//')
+            awk -v plat="$platform" '
               /^Benchmark/ {
                 name=$1; sub(/-[0-9]+$/, "", name)
                 ns=$3; bop=$5; alloc=$7
@@ -48,66 +58,105 @@ jobs:
                 else if (name ~ /Encode\//)     { cat="V1E" }
                 else if (name ~ /Decode\//)     { cat="V1D" }
                 else { next }
-                printf "%s|%s|%s|%s|%s\n", scale, cat, ns, bop, alloc
+                # Extract scale from name (e.g. BenchmarkEncode/Small -> Small)
+                split(name, parts, "/"); scale=parts[2]
+                printf "%s|%s|%s|%s|%s|%s\n", plat, scale, cat, ns, bop, alloc
               }
-            ' bench-${scale}/bench-${scale}.txt >> /tmp/bench-data.txt
+            ' "$f"
+          done > /tmp/data.txt
+
+          # ---- Per-platform tables ----
+          echo '## Per-Platform Results'
+          echo ''
+
+          # Get unique platforms from data
+          cut -d'|' -f1 /tmp/data.txt | sort -u | while read plat; do
+            [ -z "$plat" ] && continue
+            echo "### ${plat}"
+            echo ''
+
+            # --- Encode ---
+            echo '**Encode**'
+            echo ''
+            printf '| Scale  | V1       | V2       | Ratio  | V1 Mem   | V2 Mem   | V1 Alloc | V2 Alloc |\n'
+            printf '|--------|---------:|---------:|-------:|---------:|---------:|---------:|---------:|\n'
+            awk -F'|' -v plat="$plat" '
+              $1==plat && $3=="V1E" { s=$2; v1e_ns[s]=$4; v1e_bop[s]=$5; v1e_alloc[s]=$6 }
+              $1==plat && $3=="V2E" { s=$2; v2e_ns[s]=$4; v2e_bop[s]=$5; v2e_alloc[s]=$6 }
+              END {
+                for (s in v1e_ns) {
+                  if (v2e_ns[s] != "") {
+                    r = v2e_ns[s] / v1e_ns[s]
+                    printf "| %-6s | %8s | %8s | %s%.1fx | %8s | %8s | %8s | %8s |\n",
+                      s, v1e_ns[s], v2e_ns[s], (r<=1.0 ? "🟢 " : "🔴 "), r,
+                      v1e_bop[s], v2e_bop[s], v1e_alloc[s], v2e_alloc[s]
+                  }
+                }
+              }
+            ' /tmp/data.txt | sort
+            echo ''
+
+            # --- Decode ---
+            echo '**Decode**'
+            echo ''
+            printf '| Scale  | V1       | V2       | Speedup | V1 Mem   | V2 Mem   | V1 Alloc | V2 Alloc |\n'
+            printf '|--------|---------:|---------:|--------:|---------:|---------:|---------:|---------:|\n'
+            awk -F'|' -v plat="$plat" '
+              $1==plat && $3=="V1D" { s=$2; v1d_ns[s]=$4; v1d_bop[s]=$5; v1d_alloc[s]=$6 }
+              $1==plat && $3=="V2D" { s=$2; v2d_ns[s]=$4; v2d_bop[s]=$5; v2d_alloc[s]=$6 }
+              END {
+                for (s in v1d_ns) {
+                  if (v2d_ns[s] != "") {
+                    r = v1d_ns[s] / v2d_ns[s]
+                    printf "| %-6s | %8s | %8s | 🟢 %.1fx | %8s | %8s | %8s | %8s |\n",
+                      s, v1d_ns[s], v2d_ns[s], r,
+                      v1d_bop[s], v2d_bop[s], v1d_alloc[s], v2d_alloc[s]
+                  }
+                }
+              }
+            ' /tmp/data.txt | sort
+            echo ''
           done
 
-          # Encode table
-          echo '### Encode'
+          # ---- Cross-platform decode speedup ----
+          echo '##  Cross-Platform Decode Speedup (V2 vs V1)'
           echo ''
-          printf '| Scale   | V1 (ns/op) | V2 (ns/op) | Ratio  | V1 Mem   | V2 Mem   | V1 Alloc | V2 Alloc |\n'
-          printf '|---------|-----------|-----------|--------|----------|----------|----------|----------|\n'
 
+          # Collect decode speedups: plat|scale|speedup
           awk -F'|' '
-            $1=="Small"  && $2=="V1E" { v1e_ns["Small"]=$3;  v1e_bop["Small"]=$4;  v1e_alloc["Small"]=$5 }
-            $1=="Small"  && $2=="V2E" { v2e_ns["Small"]=$3;  v2e_bop["Small"]=$4;  v2e_alloc["Small"]=$5 }
-            $1=="Medium" && $2=="V1E" { v1e_ns["Medium"]=$3; v1e_bop["Medium"]=$4; v1e_alloc["Medium"]=$5 }
-            $1=="Medium" && $2=="V2E" { v2e_ns["Medium"]=$3; v2e_bop["Medium"]=$4; v2e_alloc["Medium"]=$5 }
-            $1=="Large"  && $2=="V1E" { v1e_ns["Large"]=$3;  v1e_bop["Large"]=$4;  v1e_alloc["Large"]=$5 }
-            $1=="Large"  && $2=="V2E" { v2e_ns["Large"]=$3;  v2e_bop["Large"]=$4;  v2e_alloc["Large"]=$5 }
-            $1=="XL"     && $2=="V1E" { v1e_ns["XL"]=$3;     v1e_bop["XL"]=$4;     v1e_alloc["XL"]=$5 }
-            $1=="XL"     && $2=="V2E" { v2e_ns["XL"]=$3;     v2e_bop["XL"]=$4;     v2e_alloc["XL"]=$5 }
+            $3=="V1D" { p=$1; s=$2; v1d[p "|" s]=$4 }
+            $3=="V2D" { p=$1; s=$2; v2d[p "|" s]=$4 }
             END {
-              for (s in v1e_ns) {
-                if (v2e_ns[s] != "") {
-                  r = v2e_ns[s] / v1e_ns[s]
-                  printf "| %-7s | %9s | %9s | %s%.1fx | %8s | %8s | %8s | %8s |\n",
-                    s, v1e_ns[s], v2e_ns[s], (r<=1.0 ? "🟢 " : "🔴 "), r,
-                    v1e_bop[s], v2e_bop[s], v1e_alloc[s], v2e_alloc[s]
+              for (k in v1d) {
+                if (v2d[k] != "") {
+                  split(k, ps, "|"); plat=ps[1]; scale=ps[2]
+                  r = v1d[k] / v2d[k]
+                  printf "%s|%s|%.1f\n", plat, scale, r
                 }
               }
             }
-          ' /tmp/bench-data.txt
+          ' /tmp/data.txt | sort -t'|' -k2,2 -k1,1 > /tmp/speedup.txt
 
-          echo ''
+          # Get platform list and build table header
+          plats=$(cut -d'|' -f1 /tmp/speedup.txt | sort -u)
+          header="| Scale  "
+          sep="|--------"
+          for p in $plats; do
+            header="$header | $p"
+            sep="$sep |------:"
+          done
+          printf '%s |\n' "$header"
+          printf '%s |\n' "$sep"
 
-          # Decode table
-          echo '### Decode'
-          echo ''
-          printf '| Scale   | V1 (ns/op) | V2 (ns/op) | Speedup | V1 Mem   | V2 Mem   | V1 Alloc | V2 Alloc |\n'
-          printf '|---------|-----------|-----------|---------|----------|----------|----------|----------|\n'
-
-          awk -F'|' '
-            $1=="Small"  && $2=="V1D" { v1d_ns["Small"]=$3;  v1d_bop["Small"]=$4;  v1d_alloc["Small"]=$5 }
-            $1=="Small"  && $2=="V2D" { v2d_ns["Small"]=$3;  v2d_bop["Small"]=$4;  v2d_alloc["Small"]=$5 }
-            $1=="Medium" && $2=="V1D" { v1d_ns["Medium"]=$3; v1d_bop["Medium"]=$4; v1d_alloc["Medium"]=$5 }
-            $1=="Medium" && $2=="V2D" { v2d_ns["Medium"]=$3; v2d_bop["Medium"]=$4; v2d_alloc["Medium"]=$5 }
-            $1=="Large"  && $2=="V1D" { v1d_ns["Large"]=$3;  v1d_bop["Large"]=$4;  v1d_alloc["Large"]=$5 }
-            $1=="Large"  && $2=="V2D" { v2d_ns["Large"]=$3;  v2d_bop["Large"]=$4;  v2d_alloc["Large"]=$5 }
-            $1=="XL"     && $2=="V1D" { v1d_ns["XL"]=$3;     v1d_bop["XL"]=$4;     v1d_alloc["XL"]=$5 }
-            $1=="XL"     && $2=="V2D" { v2d_ns["XL"]=$3;     v2d_bop["XL"]=$4;     v2d_alloc["XL"]=$5 }
-            END {
-              for (s in v1d_ns) {
-                if (v2d_ns[s] != "") {
-                  r = v1d_ns[s] / v2d_ns[s]
-                  printf "| %-7s | %9s | %9s | 🟢 %.1fx | %8s | %8s | %8s | %8s |\n",
-                    s, v1d_ns[s], v2d_ns[s], r,
-                    v1d_bop[s], v2d_bop[s], v1d_alloc[s], v2d_alloc[s]
-                }
-              }
-            }
-          ' /tmp/bench-data.txt
+          for scale in Small Medium Large XL; do
+            row="| $scale"
+            for p in $plats; do
+              val=$(awk -F'|' -v p="$p" -v s="$scale" '$1==p && $2==s {printf "🟢 %.1fx", $3}' /tmp/speedup.txt)
+              [ -z "$val" ] && val=" — "
+              row="$row | $val"
+            done
+            printf '%s |\n' "$row"
+          done
 
           echo ''
           echo '---'
