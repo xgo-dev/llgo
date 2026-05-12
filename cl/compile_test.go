@@ -301,6 +301,10 @@ func TestRunAndTestFromTestdata(t *testing.T) {
 	cltest.RunAndTestFromDir(t, "", "./_testdata", nil)
 }
 
+func TestMeta(t *testing.T) {
+	cltest.TestMetaFromDir(t, "./_testmeta")
+}
+
 func TestCgofullGeneratesC2func(t *testing.T) {
 	ir := llgen.GenFrom("./_testgo/cgofull")
 	if !strings.Contains(ir, "_C2func_test_structs") {

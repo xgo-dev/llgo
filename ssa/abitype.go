@@ -24,6 +24,7 @@ import (
 	"go/types"
 	"sort"
 
+	"github.com/goplus/llgo/internal/metadata"
 	"github.com/goplus/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
 )
@@ -429,13 +430,17 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 	if anonymous {
 		pkg = types.NewPackage(b.Pkg.Path(), "")
 	}
+	typeName, _ := prog.abi.TypeName(t)
+	mb := b.Pkg.MetaBuilder()
+	var slots []metadata.MethodSlot
 	for i := 0; i < n; i++ {
 		m := mset.At(i)
 		obj := m.Obj()
 		mName := obj.Name()
+		fullName := mthName(obj)
 		name := b.Str(mName).impl
 		if !token.IsExported(mName) {
-			name = b.Str(abi.FullName(obj.Pkg(), mName)).impl
+			name = b.Str(fullName).impl
 		}
 		mSig := m.Type().(*types.Signature)
 		var tfn, ifn llvm.Value
@@ -453,8 +458,91 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 		values = append(values, ifn)
 		values = append(values, tfn)
 		fields[i] = llvm.ConstNamedStruct(ft.ll, values)
+		if mb != nil {
+			mtypName, _ := prog.abi.TypeName(ftyp)
+			slots = append(slots, metadata.MethodSlot{
+				Sig: metadata.MethodSig{
+					Name:  mb.String(fullName),
+					MType: mb.String(mtypName),
+				},
+				IFn: mb.String(ifn.Name()),
+				TFn: mb.String(tfn.Name()),
+			})
+		}
+	}
+	if mb != nil && len(slots) > 0 {
+		mb.AddMethodInfo(mb.String(typeName), slots)
 	}
 	return llvm.ConstArray(ft.ll, fields)
+}
+
+// mthName returns the semantic method name used in ABI metadata.
+// Exported methods keep their declared identifier; unexported methods
+// are qualified with their package path.
+func mthName(obj types.Object) string {
+	rawName := obj.Name()
+	if token.IsExported(rawName) {
+		return rawName
+	}
+	return abi.FullName(obj.Pkg(), rawName)
+}
+
+// collectTypeChildren records parent → child ABI type symbol relationships
+// for whole-program TypeChildren analysis.
+func (b Builder) collectTypeChildren(t types.Type, parentName string) {
+	mb := b.Pkg.MetaBuilder()
+	if mb == nil {
+		return
+	}
+	prog := b.Prog
+	parent := mb.String(parentName)
+
+	switch ut := types.Unalias(t).(type) {
+	case *types.Named:
+		b.collectTypeChildren(ut.Underlying(), parentName)
+	case *types.Pointer:
+		if childName, ok := prog.abi.TypeName(ut.Elem()); ok && childName != "" {
+			mb.AddTypeChild(parent, mb.String(childName))
+		}
+	case *types.Struct:
+		for i := 0; i < ut.NumFields(); i++ {
+			if childName, ok := prog.abi.TypeName(ut.Field(i).Type()); ok && childName != "" {
+				mb.AddTypeChild(parent, mb.String(childName))
+			}
+		}
+	case *types.Array:
+		if childName, ok := prog.abi.TypeName(ut.Elem()); ok && childName != "" {
+			mb.AddTypeChild(parent, mb.String(childName))
+		}
+	case *types.Slice:
+		if childName, ok := prog.abi.TypeName(ut.Elem()); ok && childName != "" {
+			mb.AddTypeChild(parent, mb.String(childName))
+		}
+	case *types.Chan:
+		if childName, ok := prog.abi.TypeName(ut.Elem()); ok && childName != "" {
+			mb.AddTypeChild(parent, mb.String(childName))
+		}
+	case *types.Map:
+		if childName, ok := prog.abi.TypeName(ut.Key()); ok && childName != "" {
+			mb.AddTypeChild(parent, mb.String(childName))
+		}
+		if childName, ok := prog.abi.TypeName(ut.Elem()); ok && childName != "" {
+			mb.AddTypeChild(parent, mb.String(childName))
+		}
+	case *types.Signature:
+		params := ut.Params()
+		results := ut.Results()
+		for i := 0; i < params.Len(); i++ {
+			if childName, ok := prog.abi.TypeName(params.At(i).Type()); ok && childName != "" {
+				mb.AddTypeChild(parent, mb.String(childName))
+			}
+		}
+		for i := 0; i < results.Len(); i++ {
+			if childName, ok := prog.abi.TypeName(results.At(i).Type()); ok && childName != "" {
+				mb.AddTypeChild(parent, mb.String(childName))
+			}
+		}
+	}
 }
 
 // closure func type
@@ -528,6 +616,7 @@ func (b Builder) abiType(t types.Type) Expr {
 		g.impl.SetGlobalConstant(true)
 		g.impl.SetLinkage(llvm.WeakODRLinkage)
 		prog.abiSymbol[name] = &AbiSymbol{Name: name, PkgPath: pkg.Path(), Raw: t, Typ: g.Type, MSet: mset}
+		b.collectTypeChildren(t, name)
 	}
 	return Expr{llvm.ConstGEP(g.impl.GlobalValueType(), g.impl, []llvm.Value{
 		llvm.ConstInt(prog.Int32().ll, 0, false),

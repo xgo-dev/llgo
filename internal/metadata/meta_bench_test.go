@@ -439,7 +439,7 @@ func (m *memWriteSeeker) Bytes() []byte { return m.buf }
 
 // estimateV2Size estimates the LLP2 file size.
 func estimateV2Size(meta *PackageMeta) int {
-	n := 88 // header
+	n := 88      // header
 	n += 40 * 32 // section directory (max 32 sections)
 	// string offsets: len+1 uint32s
 	n += (len(meta.stringTable) + 1) * 4
@@ -466,10 +466,34 @@ func estimateV2Size(meta *PackageMeta) int {
 	return n
 }
 
-func countValuesSlice(m map[Symbol][]Symbol) int { n := 0; for _, v := range m { n += len(v) }; return n }
-func countInterfaceValues(m map[Symbol][]MethodSig) int { n := 0; for _, v := range m { n += len(v) }; return n }
-func countDemandValues(m map[Symbol][]IfaceMethodDemand) int { n := 0; for _, v := range m { n += len(v) }; return n }
-func countSlotValues(m map[Symbol][]MethodSlot) int { n := 0; for _, v := range m { n += len(v) }; return n }
+func countValuesSlice(m map[Symbol][]Symbol) int {
+	n := 0
+	for _, v := range m {
+		n += len(v)
+	}
+	return n
+}
+func countInterfaceValues(m map[Symbol][]MethodSig) int {
+	n := 0
+	for _, v := range m {
+		n += len(v)
+	}
+	return n
+}
+func countDemandValues(m map[Symbol][]IfaceMethodDemand) int {
+	n := 0
+	for _, v := range m {
+		n += len(v)
+	}
+	return n
+}
+func countSlotValues(m map[Symbol][]MethodSlot) int {
+	n := 0
+	for _, v := range m {
+		n += len(v)
+	}
+	return n
+}
 
 func TestRoundTripV2(t *testing.T) {
 	for name, s := range scales {

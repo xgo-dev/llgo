@@ -31,14 +31,14 @@ type IfaceMethodDemand struct {
 type PackageMeta struct {
 	stringTable []string
 
-	OrdinaryEdges  map[Symbol][]Symbol          // top-level symbol -> direct references
-	TypeChildren   map[Symbol][]Symbol          // parent type -> child types
-	InterfaceInfo  map[Symbol][]MethodSig       // interface type -> method signatures
-	UseIface       map[Symbol][]Symbol          // function -> types converted to interface
+	OrdinaryEdges  map[Symbol][]Symbol            // top-level symbol -> direct references
+	TypeChildren   map[Symbol][]Symbol            // parent type -> child types
+	InterfaceInfo  map[Symbol][]MethodSig         // interface type -> method signatures
+	UseIface       map[Symbol][]Symbol            // function -> types converted to interface
 	UseIfaceMethod map[Symbol][]IfaceMethodDemand // function -> interface method calls
-	MethodInfo     map[Symbol][]MethodSlot      // concrete type -> method slots
-	UseNamedMethod map[Symbol][]Symbol          // function -> method names from MethodByName
-	ReflectMethod  map[Symbol]struct{}          // functions with conservative reflection
+	MethodInfo     map[Symbol][]MethodSlot        // concrete type -> method slots
+	UseNamedMethod map[Symbol][]Symbol            // function -> method names from MethodByName
+	ReflectMethod  map[Symbol]struct{}            // functions with conservative reflection
 }
 
 // StringTable returns the string table (read-only).

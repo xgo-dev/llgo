@@ -21,32 +21,32 @@ const (
 type sectionKind uint32
 
 const (
-	secStringOffsets      sectionKind = 1
-	secStringData         sectionKind = 2
-	secOrdinaryGroups     sectionKind = 10
-	secOrdinaryValues     sectionKind = 11
-	secTypeChildGroups    sectionKind = 20
-	secTypeChildValues    sectionKind = 21
-	secInterfaceGroups    sectionKind = 30
-	secInterfaceValues    sectionKind = 31
-	secUseIfaceGroups     sectionKind = 40
-	secUseIfaceValues     sectionKind = 41
-	secUseIfaceMGroups    sectionKind = 50
-	secUseIfaceMValues    sectionKind = 51
-	secMethodInfoGroups   sectionKind = 60
-	secMethodInfoValues   sectionKind = 61
-	secUseNamedMGroups    sectionKind = 70
-	secUseNamedMValues    sectionKind = 71
-	secReflectMValues     sectionKind = 80
+	secStringOffsets    sectionKind = 1
+	secStringData       sectionKind = 2
+	secOrdinaryGroups   sectionKind = 10
+	secOrdinaryValues   sectionKind = 11
+	secTypeChildGroups  sectionKind = 20
+	secTypeChildValues  sectionKind = 21
+	secInterfaceGroups  sectionKind = 30
+	secInterfaceValues  sectionKind = 31
+	secUseIfaceGroups   sectionKind = 40
+	secUseIfaceValues   sectionKind = 41
+	secUseIfaceMGroups  sectionKind = 50
+	secUseIfaceMValues  sectionKind = 51
+	secMethodInfoGroups sectionKind = 60
+	secMethodInfoValues sectionKind = 61
+	secUseNamedMGroups  sectionKind = 70
+	secUseNamedMValues  sectionKind = 71
+	secReflectMValues   sectionKind = 80
 )
 
 // ---- v2 on-disk types ----
 
 type rawHeader struct {
-	Magic        [4]byte  // "LLP2"
-	Version      uint16   // 2
-	HeaderSize   uint16   // sizeof(rawHeader)
-	EndianTag    uint32   // 0x01020304
+	Magic        [4]byte // "LLP2"
+	Version      uint16  // 2
+	HeaderSize   uint16  // sizeof(rawHeader)
+	EndianTag    uint32  // 0x01020304
 	SectionCount uint32
 	Flags        uint32
 	FileSize     uint64
@@ -91,16 +91,16 @@ type rawMethodSlot struct {
 type rawIfaceMethodDemand struct {
 	Target uint32
 	Name   uint32
-	MType uint32
+	MType  uint32
 }
 
 // ---- v2 writer ----
 
 type v2Writer struct {
-	w       io.WriteSeeker
-	base    int64
-	offset  int64
-	align8  bool
+	w        io.WriteSeeker
+	base     int64
+	offset   int64
+	align8   bool
 	sections []rawSectionDesc
 }
 
@@ -264,7 +264,7 @@ func buildGroups[T any](m map[Symbol][]T, keepOrder bool) ([]rawGroup, []T) {
 // It is produced by (*PackageMeta).ToV2Format() and written by (*V2Format).WriteTo().
 // Conversion from PackageMeta to V2Format is explicit and not part of the encode path.
 type V2Format struct {
-	stringCount  int // original number of strings
+	stringCount   int // original number of strings
 	stringOffsets []uint32
 	stringData    []byte
 

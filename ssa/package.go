@@ -26,6 +26,7 @@ import (
 	"unsafe"
 
 	"github.com/goplus/llgo/internal/env"
+	"github.com/goplus/llgo/internal/metadata"
 	"github.com/goplus/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/types/typeutil"
@@ -709,7 +710,9 @@ type aPackage struct {
 	mod  llvm.Module
 	path string
 
-	Prog Program
+	Prog        Program
+	metaBuilder *metadata.Builder
+	pkgMeta     *metadata.PackageMeta
 
 	nullPointerIsValidAttr llvm.Attribute
 
@@ -741,6 +744,23 @@ type aPackage struct {
 type none struct{}
 
 type Package = *aPackage
+
+// SetMetaBuilder sets the metadata builder for this package.
+func (p Package) SetMetaBuilder(b *metadata.Builder) { p.metaBuilder = b }
+
+// MetaBuilder returns the package's metadata builder, or nil.
+func (p Package) MetaBuilder() *metadata.Builder { return p.metaBuilder }
+
+// BuildMeta finalizes the metadata builder and stores the PackageMeta.
+func (p Package) BuildMeta() {
+	if p.metaBuilder != nil {
+		p.pkgMeta = p.metaBuilder.Build()
+		p.metaBuilder = nil
+	}
+}
+
+// Meta returns the finalized PackageMeta, or nil.
+func (p Package) Meta() *metadata.PackageMeta { return p.pkgMeta }
 
 func (p Package) Module() llvm.Module {
 	return p.mod
