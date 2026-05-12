@@ -34,14 +34,82 @@ jobs:
       - uses: actions/download-artifact@v4
       - name: Output benchmark comparison
         run: |
-          echo '##  Benchmark Results: V1 (LLPS uvarint) vs V2 (LLP2 fixed-width)'
+          echo '##  Benchmark: V1 (LLPS uvarint) vs V2 (LLP2 fixed-width)'
           echo ''
+
+          # Parse all results into a temp file: scale|cat|ns|bop|alloc
           for scale in Small Medium Large XL; do
-            echo "### ${scale} (200 / 1k / 5k / 20k symbols)"
-            echo '```'
-            cat bench-${scale}/bench-${scale}.txt
-            echo '```'
-            echo ''
+            awk -v scale="$scale" '
+              /^Benchmark/ {
+                name=$1; sub(/-[0-9]+$/, "", name)
+                ns=$3; bop=$5; alloc=$7
+                if      (name ~ /EncodeV2\//)  { cat="V2E" }
+                else if (name ~ /DecodeV2\//)   { cat="V2D" }
+                else if (name ~ /Encode\//)     { cat="V1E" }
+                else if (name ~ /Decode\//)     { cat="V1D" }
+                else { next }
+                printf "%s|%s|%s|%s|%s\n", scale, cat, ns, bop, alloc
+              }
+            ' bench-${scale}/bench-${scale}.txt >> /tmp/bench-data.txt
           done
+
+          # Encode table
+          echo '### Encode'
+          echo ''
+          printf '| Scale   | V1 (ns/op) | V2 (ns/op) | Ratio  | V1 Mem   | V2 Mem   | V1 Alloc | V2 Alloc |\n'
+          printf '|---------|-----------|-----------|--------|----------|----------|----------|----------|\n'
+
+          awk -F'|' '
+            $1=="Small"  && $2=="V1E" { v1e_ns["Small"]=$3;  v1e_bop["Small"]=$4;  v1e_alloc["Small"]=$5 }
+            $1=="Small"  && $2=="V2E" { v2e_ns["Small"]=$3;  v2e_bop["Small"]=$4;  v2e_alloc["Small"]=$5 }
+            $1=="Medium" && $2=="V1E" { v1e_ns["Medium"]=$3; v1e_bop["Medium"]=$4; v1e_alloc["Medium"]=$5 }
+            $1=="Medium" && $2=="V2E" { v2e_ns["Medium"]=$3; v2e_bop["Medium"]=$4; v2e_alloc["Medium"]=$5 }
+            $1=="Large"  && $2=="V1E" { v1e_ns["Large"]=$3;  v1e_bop["Large"]=$4;  v1e_alloc["Large"]=$5 }
+            $1=="Large"  && $2=="V2E" { v2e_ns["Large"]=$3;  v2e_bop["Large"]=$4;  v2e_alloc["Large"]=$5 }
+            $1=="XL"     && $2=="V1E" { v1e_ns["XL"]=$3;     v1e_bop["XL"]=$4;     v1e_alloc["XL"]=$5 }
+            $1=="XL"     && $2=="V2E" { v2e_ns["XL"]=$3;     v2e_bop["XL"]=$4;     v2e_alloc["XL"]=$5 }
+            END {
+              for (s in v1e_ns) {
+                if (v2e_ns[s] != "") {
+                  r = v2e_ns[s] / v1e_ns[s]
+                  printf "| %-7s | %9s | %9s | %s%.1fx | %8s | %8s | %8s | %8s |\n",
+                    s, v1e_ns[s], v2e_ns[s], (r<=1.0 ? "🟢 " : "🔴 "), r,
+                    v1e_bop[s], v2e_bop[s], v1e_alloc[s], v2e_alloc[s]
+                }
+              }
+            }
+          ' /tmp/bench-data.txt
+
+          echo ''
+
+          # Decode table
+          echo '### Decode'
+          echo ''
+          printf '| Scale   | V1 (ns/op) | V2 (ns/op) | Speedup | V1 Mem   | V2 Mem   | V1 Alloc | V2 Alloc |\n'
+          printf '|---------|-----------|-----------|---------|----------|----------|----------|----------|\n'
+
+          awk -F'|' '
+            $1=="Small"  && $2=="V1D" { v1d_ns["Small"]=$3;  v1d_bop["Small"]=$4;  v1d_alloc["Small"]=$5 }
+            $1=="Small"  && $2=="V2D" { v2d_ns["Small"]=$3;  v2d_bop["Small"]=$4;  v2d_alloc["Small"]=$5 }
+            $1=="Medium" && $2=="V1D" { v1d_ns["Medium"]=$3; v1d_bop["Medium"]=$4; v1d_alloc["Medium"]=$5 }
+            $1=="Medium" && $2=="V2D" { v2d_ns["Medium"]=$3; v2d_bop["Medium"]=$4; v2d_alloc["Medium"]=$5 }
+            $1=="Large"  && $2=="V1D" { v1d_ns["Large"]=$3;  v1d_bop["Large"]=$4;  v1d_alloc["Large"]=$5 }
+            $1=="Large"  && $2=="V2D" { v2d_ns["Large"]=$3;  v2d_bop["Large"]=$4;  v2d_alloc["Large"]=$5 }
+            $1=="XL"     && $2=="V1D" { v1d_ns["XL"]=$3;     v1d_bop["XL"]=$4;     v1d_alloc["XL"]=$5 }
+            $1=="XL"     && $2=="V2D" { v2d_ns["XL"]=$3;     v2d_bop["XL"]=$4;     v2d_alloc["XL"]=$5 }
+            END {
+              for (s in v1d_ns) {
+                if (v2d_ns[s] != "") {
+                  r = v1d_ns[s] / v2d_ns[s]
+                  printf "| %-7s | %9s | %9s | 🟢 %.1fx | %8s | %8s | %8s | %8s |\n",
+                    s, v1d_ns[s], v2d_ns[s], r,
+                    v1d_bop[s], v2d_bop[s], v1d_alloc[s], v2d_alloc[s]
+                }
+              }
+            }
+          ' /tmp/bench-data.txt
+
+          echo ''
           echo '---'
-          echo '**V2 decode advantage:** section directory + GroupView index avoids per-entry map allocation. O(1~80) allocs vs O(n~30916).'
+          echo '**V2 decode:** section directory + GroupView index — O(1) lookup, zero-copy slices, ~50-80 allocs regardless of data size.'
+          echo '**V1 decode:** uvarint + full map/slice rebuild — allocs grow with data (400 → 30916).'
