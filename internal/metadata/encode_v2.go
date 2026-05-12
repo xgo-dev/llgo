@@ -260,6 +260,208 @@ func buildGroups[T any](m map[Symbol][]T, keepOrder bool) ([]rawGroup, []T) {
 	return groups, values
 }
 
+// V2Format holds all data in the LLP2 native layout (uint32, raw* structs).
+// It is produced by (*PackageMeta).ToV2Format() and written by (*V2Format).WriteTo().
+// Conversion from PackageMeta to V2Format is explicit and not part of the encode path.
+type V2Format struct {
+	stringCount  int // original number of strings
+	stringOffsets []uint32
+	stringData    []byte
+
+	ordinaryGroups []rawGroup
+	ordinaryValues []uint32
+
+	typeChildGroups []rawGroup
+	typeChildValues []uint32
+
+	interfaceGroups []rawGroup
+	interfaceValues []rawMethodSig
+
+	useIfaceGroups []rawGroup
+	useIfaceValues []uint32
+
+	useIfaceMGroups []rawGroup
+	useIfaceMValues []rawIfaceMethodDemand
+
+	methodInfoGroups []rawGroup
+	methodInfoValues []rawMethodSlot
+
+	useNamedMGroups []rawGroup
+	useNamedMValues []uint32
+
+	reflectMValues []uint32
+}
+
+// ToV2Format converts PackageMeta to the LLP2-native V2Format.
+func (pm *PackageMeta) ToV2Format() (*V2Format, error) {
+	var v V2Format
+
+	so, sd, err := buildStringSections(pm.stringTable)
+	if err != nil {
+		return nil, err
+	}
+	v.stringCount = len(pm.stringTable)
+	v.stringOffsets = so
+	v.stringData = sd
+
+	v.ordinaryGroups, v.ordinaryValues = buildGroupsU32(pm.OrdinaryEdges)
+	v.typeChildGroups, v.typeChildValues = buildGroupsU32(pm.TypeChildren)
+
+	mi := convertMapSlice(pm.InterfaceInfo, convertMethodSig)
+	v.interfaceGroups, v.interfaceValues = buildGroups(mi, true)
+
+	v.useIfaceGroups, v.useIfaceValues = buildGroupsU32(pm.UseIface)
+
+	uim := convertMapSlice(pm.UseIfaceMethod, convertIfaceDemand)
+	v.useIfaceMGroups, v.useIfaceMValues = buildGroups(uim, false)
+
+	msi := convertMapSlice(pm.MethodInfo, convertMethodSlot)
+	v.methodInfoGroups, v.methodInfoValues = buildGroups(msi, true)
+
+	v.useNamedMGroups, v.useNamedMValues = buildGroupsU32(pm.UseNamedMethod)
+
+	reflectVals := setToSortedSlice(pm.ReflectMethod)
+	v.reflectMValues = make([]uint32, len(reflectVals))
+	for i, rv := range reflectVals {
+		v.reflectMValues[i] = uint32(rv)
+	}
+
+	return &v, nil
+}
+
+// buildGroupsU32 is like buildGroups but for Symbol-valued maps, returning []uint32 directly.
+func buildGroupsU32(m map[Symbol][]Symbol) ([]rawGroup, []uint32) {
+	if len(m) == 0 {
+		return nil, nil
+	}
+	keys := make([]int, 0, len(m))
+	for k := range m {
+		keys = append(keys, int(k))
+	}
+	sort.Ints(keys)
+
+	var groups []rawGroup
+	var values []uint32
+	for _, ki := range keys {
+		k := Symbol(ki)
+		vals := m[k]
+		begin := len(values)
+		for _, v := range vals {
+			values = append(values, uint32(v))
+		}
+		groups = append(groups, rawGroup{
+			Key:   uint32(k),
+			Begin: uint32(begin),
+			Count: uint32(len(vals)),
+		})
+	}
+	return groups, values
+}
+
+// ---- WriteTo ----
+
+// WriteTo writes the V2Format to w in the LLP2 binary format.
+func (v *V2Format) WriteTo(w io.WriteSeeker) error {
+	wr := &v2Writer{w: w}
+
+	headerSize := uint16(unsafe.Sizeof(rawHeader{}))
+	descSize := uint32(unsafe.Sizeof(rawSectionDesc{}))
+	maxSections := uint32(32)
+
+	header := rawHeader{
+		Magic:      [4]byte{'L', 'L', 'P', '2'},
+		Version:    version2,
+		HeaderSize: headerSize,
+		EndianTag:  endianTag,
+		DirOffset:  uint64(headerSize),
+		DirSize:    uint64(maxSections) * uint64(descSize),
+	}
+
+	buf := make([]byte, headerSize)
+	packHeader(buf, header)
+	if _, err := wr.Write(buf); err != nil {
+		return fmt.Errorf("write header: %w", err)
+	}
+
+	placeholder := make([]byte, maxSections*descSize)
+	if _, err := wr.Write(placeholder); err != nil {
+		return fmt.Errorf("write dir placeholder: %w", err)
+	}
+
+	// String sections
+	if err := writeTypedSection(wr, secStringOffsets, v.stringOffsets); err != nil {
+		return fmt.Errorf("stringOffsets: %w", err)
+	}
+	if err := writeBytesSection(wr, secStringData, v.stringData); err != nil {
+		return fmt.Errorf("stringData: %w", err)
+	}
+
+	// Group/value sections
+	if err := writeGroupPrebuilt(wr, secOrdinaryGroups, secOrdinaryValues, v.ordinaryGroups, v.ordinaryValues); err != nil {
+		return fmt.Errorf("ordinaryEdges: %w", err)
+	}
+	if err := writeGroupPrebuilt(wr, secTypeChildGroups, secTypeChildValues, v.typeChildGroups, v.typeChildValues); err != nil {
+		return fmt.Errorf("typeChildren: %w", err)
+	}
+	if err := writeGroupPrebuilt(wr, secInterfaceGroups, secInterfaceValues, v.interfaceGroups, v.interfaceValues); err != nil {
+		return fmt.Errorf("interfaceInfo: %w", err)
+	}
+	if err := writeGroupPrebuilt(wr, secUseIfaceGroups, secUseIfaceValues, v.useIfaceGroups, v.useIfaceValues); err != nil {
+		return fmt.Errorf("useIface: %w", err)
+	}
+	if err := writeGroupPrebuilt(wr, secUseIfaceMGroups, secUseIfaceMValues, v.useIfaceMGroups, v.useIfaceMValues); err != nil {
+		return fmt.Errorf("useIfaceMethod: %w", err)
+	}
+	if err := writeGroupPrebuilt(wr, secMethodInfoGroups, secMethodInfoValues, v.methodInfoGroups, v.methodInfoValues); err != nil {
+		return fmt.Errorf("methodInfo: %w", err)
+	}
+	if err := writeGroupPrebuilt(wr, secUseNamedMGroups, secUseNamedMValues, v.useNamedMGroups, v.useNamedMValues); err != nil {
+		return fmt.Errorf("useNamedMethod: %w", err)
+	}
+	if err := writeTypedSection(wr, secReflectMValues, v.reflectMValues); err != nil {
+		return fmt.Errorf("reflectMethod: %w", err)
+	}
+
+	// Patch header and directory
+	fileSize := uint64(wr.offset)
+	sectionCount := uint32(len(wr.sections))
+
+	if _, err := wr.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("seek start: %w", err)
+	}
+
+	header.FileSize = fileSize
+	header.SectionCount = sectionCount
+	header.DirSize = uint64(sectionCount) * uint64(descSize)
+	header.StringCount = uint32(v.stringCount)
+
+	hdrBuf := make([]byte, headerSize)
+	packHeader(hdrBuf, header)
+	if _, err := wr.Write(hdrBuf); err != nil {
+		return fmt.Errorf("write header: %w", err)
+	}
+
+	for _, s := range wr.sections {
+		descBuf := make([]byte, descSize)
+		packSectionDesc(descBuf, s)
+		if _, err := wr.Write(descBuf); err != nil {
+			return fmt.Errorf("write section desc: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func writeGroupPrebuilt[T any](w *v2Writer, gk, vk sectionKind, groups []rawGroup, values []T) error {
+	if err := writeTypedSection(w, gk, groups); err != nil {
+		return err
+	}
+	if err := writeTypedSection(w, vk, values); err != nil {
+		return err
+	}
+	return nil
+}
+
 // buildStringSections builds the StringOffsets and StringData sections.
 func buildStringSections(strings []string) ([]uint32, []byte, error) {
 	if len(strings) == 0 {
@@ -340,145 +542,13 @@ func convertMapSlice[T, U any](m map[Symbol][]T, fn func(T) U) map[Symbol][]U {
 }
 
 // WriteMetaV2 serializes PackageMeta to the LLP2 v2 binary format.
+// It is a convenience wrapper around ToV2Format + WriteTo.
 func (pm *PackageMeta) WriteMetaV2(w io.WriteSeeker) error {
-	wr := &v2Writer{w: w}
-
-	headerSize := uint16(unsafe.Sizeof(rawHeader{}))
-	descSize := uint32(unsafe.Sizeof(rawSectionDesc{}))
-
-	// Reserve space for header + directory: we'll patch at the end.
-	// We know the section count: 2 string + 8*2 group/value + 1 reflect = 19 sections
-	maxSections := uint32(32) // generous upper bound
-
-	// Write placeholder header
-	header := rawHeader{
-		Magic:        [4]byte{'L', 'L', 'P', '2'},
-		Version:      version2,
-		HeaderSize:   headerSize,
-		EndianTag:    endianTag,
-		DirOffset:    uint64(headerSize),
-		DirSize:      uint64(maxSections) * uint64(descSize),
-	}
-
-	buf := make([]byte, headerSize)
-	packHeader(buf, header)
-	if _, err := wr.Write(buf); err != nil {
-		return fmt.Errorf("write header: %w", err)
-	}
-
-	// Write placeholder directory entries
-	placeholder := make([]byte, maxSections*descSize)
-	if _, err := wr.Write(placeholder); err != nil {
-		return fmt.Errorf("write dir placeholder: %w", err)
-	}
-
-	// Build string sections
-	strOffs, strData, err := buildStringSections(pm.stringTable)
+	v2f, err := pm.ToV2Format()
 	if err != nil {
 		return err
 	}
-	if err := writeTypedSection(wr, secStringOffsets, convertSlice(strOffs, func(v uint32) uint32 { return v })); err != nil {
-		return fmt.Errorf("stringOffsets: %w", err)
-	}
-	if err := writeBytesSection(wr, secStringData, strData); err != nil {
-		return fmt.Errorf("stringData: %w", err)
-	}
-
-	// OrdinaryEdges
-	if err := writeGroupSection(wr, secOrdinaryGroups, secOrdinaryValues,
-		pm.OrdinaryEdges, false); err != nil {
-		return fmt.Errorf("ordinaryEdges: %w", err)
-	}
-
-	// TypeChildren
-	if err := writeGroupSection(wr, secTypeChildGroups, secTypeChildValues,
-		pm.TypeChildren, false); err != nil {
-		return fmt.Errorf("typeChildren: %w", err)
-	}
-
-	// InterfaceInfo
-	im := convertMapSlice(pm.InterfaceInfo, convertMethodSig)
-	if err := writeGroupSection(wr, secInterfaceGroups, secInterfaceValues,
-		im, true); err != nil {
-		return fmt.Errorf("interfaceInfo: %w", err)
-	}
-
-	// UseIface
-	if err := writeGroupSection(wr, secUseIfaceGroups, secUseIfaceValues,
-		pm.UseIface, false); err != nil {
-		return fmt.Errorf("useIface: %w", err)
-	}
-
-	// UseIfaceMethod
-	uim := convertMapSlice(pm.UseIfaceMethod, convertIfaceDemand)
-	if err := writeGroupSection(wr, secUseIfaceMGroups, secUseIfaceMValues,
-		uim, false); err != nil {
-		return fmt.Errorf("useIfaceMethod: %w", err)
-	}
-
-	// MethodInfo
-	mi := convertMapSlice(pm.MethodInfo, convertMethodSlot)
-	if err := writeGroupSection(wr, secMethodInfoGroups, secMethodInfoValues,
-		mi, true); err != nil {
-		return fmt.Errorf("methodInfo: %w", err)
-	}
-
-	// UseNamedMethod
-	if err := writeGroupSection(wr, secUseNamedMGroups, secUseNamedMValues,
-		pm.UseNamedMethod, false); err != nil {
-		return fmt.Errorf("useNamedMethod: %w", err)
-	}
-
-	// ReflectMethod
-	reflectVals := setToSortedSlice(pm.ReflectMethod)
-	reflectU32 := convertSlice(reflectVals, func(v Symbol) uint32 { return uint32(v) })
-	if err := writeTypedSection(wr, secReflectMValues, reflectU32); err != nil {
-		return fmt.Errorf("reflectMethod: %w", err)
-	}
-
-	// Now patch header and directory
-	fileSize := uint64(wr.offset)
-
-	// Count actual sections
-	sectionCount := uint32(len(wr.sections))
-
-	// Go back and write header + directory
-	if _, err := wr.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("seek start: %w", err)
-	}
-
-	header.FileSize = fileSize
-	header.SectionCount = sectionCount
-	header.DirSize = uint64(sectionCount) * uint64(descSize)
-	header.StringCount = uint32(len(pm.stringTable))
-
-	hdrBuf := make([]byte, headerSize)
-	packHeader(hdrBuf, header)
-	if _, err := wr.Write(hdrBuf); err != nil {
-		return fmt.Errorf("write header: %w", err)
-	}
-
-	// Write directory
-	for _, s := range wr.sections {
-		descBuf := make([]byte, descSize)
-		packSectionDesc(descBuf, s)
-		if _, err := wr.Write(descBuf); err != nil {
-			return fmt.Errorf("write section desc: %w", err)
-		}
-	}
-
-	return nil
-}
-
-func writeGroupSection[T any](w *v2Writer, gk, vk sectionKind, m map[Symbol][]T, keepOrder bool) error {
-	groups, values := buildGroups(m, keepOrder)
-	if err := writeTypedSection(w, gk, groups); err != nil {
-		return err
-	}
-	if err := writeTypedSection(w, vk, values); err != nil {
-		return err
-	}
-	return nil
+	return v2f.WriteTo(w)
 }
 
 func packHeader(buf []byte, h rawHeader) {

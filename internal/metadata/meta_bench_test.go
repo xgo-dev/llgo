@@ -475,8 +475,12 @@ func TestRoundTripV2(t *testing.T) {
 	for name, s := range scales {
 		t.Run(name, func(t *testing.T) {
 			orig := genMeta(s)
+			v2f, err := orig.ToV2Format()
+			if err != nil {
+				t.Fatalf("ToV2Format: %v", err)
+			}
 			var ws memWriteSeeker
-			if err := orig.WriteMetaV2(&ws); err != nil {
+			if err := v2f.WriteTo(&ws); err != nil {
 				t.Fatalf("encode v2: %v", err)
 			}
 			view, err := ParseMetaV2(ws.Bytes())
@@ -595,11 +599,15 @@ func BenchmarkEncodeV2(b *testing.B) {
 	for name, s := range scales {
 		b.Run(name, func(b *testing.B) {
 			meta := genMeta(s)
+			v2f, err := meta.ToV2Format()
+			if err != nil {
+				b.Fatalf("ToV2Format: %v", err)
+			}
 			b.ReportMetric(float64(estimateV2Size(meta)), "est-filesize")
 			b.ResetTimer()
 			for b.Loop() {
 				var ws memWriteSeeker
-				_ = meta.WriteMetaV2(&ws)
+				_ = v2f.WriteTo(&ws)
 			}
 		})
 	}
@@ -609,8 +617,12 @@ func BenchmarkDecodeV2(b *testing.B) {
 	for name, s := range scales {
 		b.Run(name, func(b *testing.B) {
 			meta := genMeta(s)
+			v2f, err := meta.ToV2Format()
+			if err != nil {
+				b.Fatalf("ToV2Format: %v", err)
+			}
 			var ws memWriteSeeker
-			if err := meta.WriteMetaV2(&ws); err != nil {
+			if err := v2f.WriteTo(&ws); err != nil {
 				b.Fatalf("encode v2: %v", err)
 			}
 			encoded := ws.Bytes()
