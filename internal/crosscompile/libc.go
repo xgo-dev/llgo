@@ -6,6 +6,7 @@ import (
 
 	"github.com/goplus/llgo/internal/crosscompile/compile"
 	"github.com/goplus/llgo/internal/crosscompile/compile/libc"
+	"github.com/goplus/llgo/internal/crosscompile/compile/mquickjs"
 	"github.com/goplus/llgo/internal/crosscompile/compile/rtlib"
 )
 
@@ -75,4 +76,42 @@ func getRTCompileConfigByName(baseDir, rtName, target string) (outputDir string,
 	}
 
 	return rtDir, compileConfig, nil
+}
+
+// getJSLibCompileConfigByName retrieves JavaScript engine compilation configuration by name
+// Returns the actual jslib output dir, compilation config and err
+func getJSLibCompileConfigByName(baseDir, jslibName, target string) (outputDir string, cfg compile.CompileConfig, err error) {
+	if jslibName == "" {
+		err = fmt.Errorf("jslib name cannot be empty")
+		return
+	}
+	var jslibDir string
+	var config compile.LibConfig
+	var compileConfig compile.CompileConfig
+
+	switch jslibName {
+	case "mquickjs":
+		config = mquickjs.GetMquickjsConfig()
+		jslibDir = filepath.Join(baseDir, config.String())
+		compileConfig = mquickjs.GetMquickjsCompileConfig(jslibDir, target)
+	default:
+		err = fmt.Errorf("unsupported jslib: %s", jslibName)
+		return
+	}
+	if needSkipDownload {
+		return jslibDir, compileConfig, err
+	}
+
+	if err = checkDownloadAndExtractLib(config.Url, jslibDir, config.ResourceSubDir); err != nil {
+		return
+	}
+
+	// Generate headers for mquickjs (mquickjs_atom.h and mqjs_stdlib.h)
+	if jslibName == "mquickjs" {
+		if err = mquickjs.GenerateHeaders(jslibDir); err != nil {
+			return
+		}
+	}
+
+	return jslibDir, compileConfig, nil
 }

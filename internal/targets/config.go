@@ -18,6 +18,7 @@ type Config struct {
 	// Compiler and linker configuration
 	Libc         string   `json:"libc"`
 	RTLib        string   `json:"rtlib"`
+	JSLib        string   `json:"jslib"` // JavaScript engine library (e.g., "mquickjs")
 	Linker       string   `json:"linker"`
 	LinkerScript string   `json:"linkerscript"`
 	CFlags       []string `json:"cflags"`
