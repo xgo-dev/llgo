@@ -190,7 +190,7 @@ func (p *context) cgoGoString(b llssa.Builder, args []ssa.Value) (ret llssa.Expr
 // func _Cfunc_GoStringN(s *int8, n int) string
 func (p *context) cgoGoStringN(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
 	if len(args) == 2 {
-		return b.GoStringN(p.compileValue(b, args[0]), p.compileValue(b, args[1]))
+		return b.GoStringN(p.compileValue(b, args[0]), b.FitIntSize(p.compileValue(b, args[1])))
 	}
 	panic("cgoGoStringN(<cstr>, n int): invalid arguments")
 }
@@ -198,7 +198,7 @@ func (p *context) cgoGoStringN(b llssa.Builder, args []ssa.Value) (ret llssa.Exp
 // func _Cfunc_GoBytes(s *int8, n int) []byte
 func (p *context) cgoGoBytes(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
 	if len(args) == 2 {
-		return b.GoBytes(p.compileValue(b, args[0]), p.compileValue(b, args[1]))
+		return b.GoBytes(p.compileValue(b, args[0]), b.FitIntSize(p.compileValue(b, args[1])))
 	}
 	panic("cgoGoBytes(<cstr>, n int): invalid arguments")
 }

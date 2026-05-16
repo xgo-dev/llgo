@@ -317,13 +317,13 @@ func (b Builder) Slice(x, low, high, max Expr) (ret Expr) {
 	if lowIsNil {
 		low = prog.IntVal(0, prog.Int())
 	} else {
-		low = b.fitIntSize(low)
+		low = b.FitIntSize(low)
 	}
 	if !high.IsNil() {
-		high = b.fitIntSize(high)
+		high = b.FitIntSize(high)
 	}
 	if !max.IsNil() {
-		max = b.fitIntSize(max)
+		max = b.FitIntSize(max)
 	}
 	switch t := x.raw.Type.Underlying().(type) {
 	case *types.Basic:
@@ -398,8 +398,8 @@ func (b Builder) SliceLit(t Type, elts ...Expr) Expr {
 func (b Builder) MakeSlice(t Type, len, cap Expr) (ret Expr) {
 	dbgInstrf("MakeSlice %v, %v, %v\n", t.RawType(), len.impl, cap.impl)
 	prog := b.Prog
-	len = b.fitIntSize(len)
-	cap = b.fitIntSize(cap)
+	len = b.FitIntSize(len)
+	cap = b.FitIntSize(cap)
 	telem := prog.Index(t)
 	ret = b.InlineCall(b.Pkg.rtFunc("MakeSlice"), len, cap, prog.IntVal(prog.SizeOf(telem), prog.Int()))
 	ret.Type = t
@@ -407,7 +407,7 @@ func (b Builder) MakeSlice(t Type, len, cap Expr) (ret Expr) {
 }
 
 // fit size to int
-func (b Builder) fitIntSize(n Expr) Expr {
+func (b Builder) FitIntSize(n Expr) Expr {
 	prog := b.Prog
 	typ := prog.Int()
 	if prog.SizeOf(n.Type) != prog.SizeOf(typ) {
