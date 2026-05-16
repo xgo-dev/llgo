@@ -121,6 +121,8 @@ func (p goTypes) cvtType(typ types.Type) (raw types.Type, cvt bool) {
 		return typ.Underlying(), false
 	case *types.Alias:
 		return p.cvtType(types.Unalias(t))
+	case *types.Union:
+		return p.cvtUnion(t)
 	default:
 		panic(fmt.Sprintf("cvtType: unexpected type - %T", typ))
 	}
@@ -322,6 +324,27 @@ func (p goTypes) cvtStruct(typ *types.Struct) (raw *types.Struct, cvt bool) {
 		return types.NewStruct(flds, nil), true
 	}
 	return typ, false
+}
+
+func (p goTypes) cvtUnion(typ *types.Union) (raw *types.Union, cvt bool) {
+	if v, ok := p.typs[unsafe.Pointer(typ)]; ok {
+		raw = (*types.Union)(v)
+		cvt = typ != raw
+		return
+	}
+	defer func() {
+		p.typs[unsafe.Pointer(typ)] = unsafe.Pointer(raw)
+	}()
+	n := typ.Len()
+	terms := make([]*types.Term, n)
+	for i := 0; i < n; i++ {
+		f := typ.Term(i)
+		if t, cvt := p.cvtType(f.Type()); cvt {
+			f = types.NewTerm(f.Tilde(), t)
+		}
+		terms[i] = f
+	}
+	return types.NewUnion(terms), true
 }
 
 // -----------------------------------------------------------------------------
