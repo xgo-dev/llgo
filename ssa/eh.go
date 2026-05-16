@@ -197,7 +197,14 @@ func (b Builder) getDefer(kind DoAction) *aDefer {
 		deferState.panicBlk = panicBlk
 
 		b.SetBlockEx(rethrowBlk, AtEnd, false) // rethrow
-		b.Call(b.Pkg.rtFunc("Rethrow"), link)
+		// NOTE: We must re-fetch the defer link here instead of reusing the 'link'
+		// variable captured above. After siglongjmp returns (via panic path), only
+		// the stack pointer and a few callee-saved registers are restored by longjmp.
+		// The 'link' variable may reside in a register that longjmp does not restore,
+		// leaving it with stale/garbage data. By calling GetThreadDefer() again, we
+		// ensure we always read the current value from thread-local storage.
+		freshLink := b.Call(b.Pkg.rtFunc("GetThreadDefer"))
+		b.Call(b.Pkg.rtFunc("Rethrow"), freshLink)
 		b.Jump(self.recov)
 
 		if kind == DeferAlways {
