@@ -61,8 +61,8 @@ func TestGetLibcCompileConfigByName(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		if len(cfg.Groups) != 3 {
-			t.Fatalf("Expected 3 group, got %d", len(cfg.Groups))
+		if len(cfg.Groups) != 6 {
+			t.Fatalf("Expected 6 groups, got %d", len(cfg.Groups))
 		}
 		group := cfg.Groups[0]
 
