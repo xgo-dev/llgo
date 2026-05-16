@@ -1,0 +1,29 @@
+[TypeChildren]
+*_llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
+    _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
+*_llgo_github.com/goplus/llgo/cl/_testmeta/nested.Inner:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/nested.Inner
+*_llgo_github.com/goplus/llgo/cl/_testmeta/nested.Outer:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/nested.Outer
+*_llgo_int:
+    _llgo_int
+*_llgo_string:
+    _llgo_string
+_llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
+    _llgo_string
+_llgo_github.com/goplus/llgo/cl/_testmeta/nested.Inner:
+    _llgo_string
+_llgo_github.com/goplus/llgo/cl/_testmeta/nested.Outer:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/nested.Inner
+    _llgo_int
+
+[UseIface]
+github.com/goplus/llgo/cl/_testmeta/nested.main:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/nested.Outer
+
+[MethodInfo]
+*_llgo_github.com/goplus/llgo/cl/_testmeta/nested.Outer:
+    Method _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to github.com/goplus/llgo/cl/_testmeta/nested.(*Outer).Method github.com/goplus/llgo/cl/_testmeta/nested.(*Outer).Method
+_llgo_github.com/goplus/llgo/cl/_testmeta/nested.Outer:
+    Method _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to github.com/goplus/llgo/cl/_testmeta/nested.(*Outer).Method github.com/goplus/llgo/cl/_testmeta/nested.Outer.Method
+
