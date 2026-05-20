@@ -34,7 +34,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"golang.org/x/tools/go/ssa"
 
@@ -695,7 +694,7 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 				ctx.tryLoadFromCache(aPkg)
 				if verbose {
 					if aPkg.CacheHit {
-						fmt.Fprintf(os.Stderr, "CACHE HIT: %s (meta read: %s)\n", pkg.PkgPath, aPkg.MetaReadDuration)
+						fmt.Fprintf(os.Stderr, "CACHE HIT: %s\n", pkg.PkgPath)
 					} else {
 						fmt.Fprintf(os.Stderr, "CACHE MISS: %s\n", pkg.PkgPath)
 					}
@@ -727,7 +726,7 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 			ctx.tryLoadFromCache(aPkg)
 			if verbose {
 				if aPkg.CacheHit {
-					fmt.Fprintf(os.Stderr, "CACHE HIT: %s (meta read: %s)\n", pkg.PkgPath, aPkg.MetaReadDuration)
+					fmt.Fprintf(os.Stderr, "CACHE HIT: %s\n", pkg.PkgPath)
 				} else {
 					fmt.Fprintf(os.Stderr, "CACHE MISS: %s\n", pkg.PkgPath)
 				}
@@ -1640,10 +1639,9 @@ type aPackage struct {
 	rewriteVars map[string]string
 
 	// Cache related fields
-	Fingerprint      string // fingerprint digest
-	Manifest         string // manifest text content
-	CacheHit         bool   // whether cache was hit
-	MetaReadDuration time.Duration
+	Fingerprint string // fingerprint digest
+	Manifest    string // manifest text content
+	CacheHit    bool   // whether cache was hit
 }
 
 type Package = *aPackage
