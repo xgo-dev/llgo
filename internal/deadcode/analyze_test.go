@@ -288,6 +288,79 @@ func TestAnalyze(t *testing.T) {
 				"_llgo_pkg.U": {0},
 			},
 		},
+		// type Type interface{ Elem() Type }
+		// type rtype struct{}
+		// func (rtype) Elem() Type { return toType() }
+		// func main() { init(); toType() }
+		// func init() { reflectType.Elem() }
+		// func toType() Type { return rtype{} }
+		{
+			name:  "interface demand and conversion from different reachable functions meet",
+			roots: []string{"pkg.main"},
+			summary: buildPackage(func(b *metadata.Builder) {
+				main := b.Symbol("pkg.main")
+				init := b.Symbol("pkg.init")
+				toType := b.Symbol("pkg.toType")
+				typ := b.Symbol("_llgo_pkg.rtype")
+				iface := b.Symbol("_llgo_pkg.Type")
+				elemSig := methodSig(b, "Elem")
+
+				b.AddIfaceEntry(iface, []metadata.MethodSig{elemSig})
+				b.AddMethodInfo(typ, []metadata.MethodSlot{
+					methodSlot(b, elemSig, "pkg.(*rtype).Elem", "pkg.rtype.Elem"),
+				})
+				b.AddEdge(main, init)
+				b.AddEdge(main, toType)
+				b.AddEdge(toType, typ)
+				b.AddUseIface(toType, []metadata.Symbol{typ})
+				b.AddUseIfaceMethod(init, []metadata.IfaceMethodDemand{{
+					Target: iface,
+					Sig:    elemSig,
+				}})
+			}),
+			want: map[string][]int{"_llgo_pkg.rtype": {0}},
+		},
+		// type Type interface{ Elem() Type; Kind() Kind }
+		// type rtype struct{}
+		// func (rtype) Elem() Type { return toType() }
+		// func (rtype) Kind() Kind { return 0 }
+		// func main() { init(); toType() }
+		// func init() { reflectType.Elem() }
+		// func toType() Type { return rtype{} }
+		//
+		// Some patched packages may report the same interface symbol with an
+		// alternate signature for one method name. That must not make the
+		// interface look larger than it is when checking whether rtype implements
+		// Type.
+		{
+			name:  "duplicate interface method names do not inflate interface size",
+			roots: []string{"pkg.main"},
+			summary: buildPackage(func(b *metadata.Builder) {
+				main := b.Symbol("pkg.main")
+				init := b.Symbol("pkg.init")
+				toType := b.Symbol("pkg.toType")
+				typ := b.Symbol("_llgo_pkg.rtype")
+				iface := b.Symbol("_llgo_pkg.Type")
+				elemSig := methodSig(b, "Elem")
+				kindSig := methodSigWithType(b, "Kind", "_llgo_func$kind")
+				altKindSig := methodSigWithType(b, "Kind", "_llgo_func$altKind")
+
+				b.AddIfaceEntry(iface, []metadata.MethodSig{elemSig, kindSig, altKindSig})
+				b.AddMethodInfo(typ, []metadata.MethodSlot{
+					methodSlot(b, elemSig, "pkg.(*rtype).Elem", "pkg.rtype.Elem"),
+					methodSlot(b, kindSig, "pkg.(*rtype).Kind", "pkg.rtype.Kind"),
+				})
+				b.AddEdge(main, init)
+				b.AddEdge(main, toType)
+				b.AddEdge(toType, typ)
+				b.AddUseIface(toType, []metadata.Symbol{typ})
+				b.AddUseIfaceMethod(init, []metadata.IfaceMethodDemand{{
+					Target: iface,
+					Sig:    elemSig,
+				}})
+			}),
+			want: map[string][]int{"_llgo_pkg.rtype": {0}},
+		},
 		// type I interface{ M() }
 		// type T struct{}
 		// func (T) M() {}

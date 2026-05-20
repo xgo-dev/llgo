@@ -12,6 +12,11 @@ type ifaceMethodKey struct {
 	sig   metadata.MethodSig
 }
 
+type ifaceMethodName struct {
+	iface metadata.Symbol
+	name  metadata.Name
+}
+
 type methodID struct {
 	owner metadata.Symbol
 	slot  int
@@ -91,20 +96,27 @@ func deadcode(info *metadata.GlobalSummary, roots []metadata.Symbol) map[metadat
 
 func (d *pass) buildMethodImplKeys() {
 	methodRefs := make(map[metadata.MethodSig][]metadata.Symbol)
+	ifaceMethodCounts := make(map[metadata.Symbol]int)
 	for _, iface := range d.info.Interfaces() {
+		seenNames := make(map[metadata.Name]struct{})
 		for _, sig := range d.info.InterfaceMethods(iface) {
 			methodRefs[sig] = appendSymbolUnique(methodRefs[sig], iface)
+			if _, ok := seenNames[sig.Name]; ok {
+				continue
+			}
+			seenNames[sig.Name] = struct{}{}
+			ifaceMethodCounts[iface]++
 		}
 	}
 
 	for _, typ := range d.info.ConcreteTypes() {
 		slots := d.info.MethodSlots(typ)
 		impls := make(map[metadata.Symbol]int)
-		seen := make(map[ifaceMethodKey]struct{})
+		seen := make(map[ifaceMethodName]struct{})
 
 		for _, slot := range slots {
 			for _, iface := range methodRefs[slot.Sig] {
-				key := ifaceMethodKey{iface: iface, sig: slot.Sig}
+				key := ifaceMethodName{iface: iface, name: slot.Sig.Name}
 				if _, ok := seen[key]; ok {
 					continue
 				}
@@ -116,7 +128,7 @@ func (d *pass) buildMethodImplKeys() {
 		for slotIndex, slot := range slots {
 			id := methodID{owner: typ, slot: slotIndex}
 			for _, iface := range methodRefs[slot.Sig] {
-				if impls[iface] == len(d.info.InterfaceMethods(iface)) {
+				if impls[iface] == ifaceMethodCounts[iface] {
 					key := ifaceMethodKey{iface: iface, sig: slot.Sig}
 					d.methodImplKeys[id] = append(d.methodImplKeys[id], key)
 				}

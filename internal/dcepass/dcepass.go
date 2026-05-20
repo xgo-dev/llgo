@@ -4,6 +4,7 @@ package dcepass
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/xgo-dev/llvm"
@@ -15,6 +16,13 @@ import (
 // global with a method array, this function creates a same-name strong global in
 // dst and clears IFn/TFn for method slots not listed in liveSlots[typeName].
 func EmitStrongTypeOverrides(dst llvm.Module, srcMods []llvm.Module, liveSlots map[string][]int) error {
+	return EmitStrongTypeOverridesDebug(dst, srcMods, liveSlots, nil)
+}
+
+// EmitStrongTypeOverridesDebug is like EmitStrongTypeOverrides, and writes one
+// debug line per method slot whose IFn/TFn references are cleared when logw is
+// non-nil.
+func EmitStrongTypeOverridesDebug(dst llvm.Module, srcMods []llvm.Module, liveSlots map[string][]int, logw io.Writer) error {
 	if dst.IsNil() {
 		return fmt.Errorf("destination module is nil")
 	}
@@ -37,7 +45,7 @@ func EmitStrongTypeOverrides(dst llvm.Module, srcMods []llvm.Module, liveSlots m
 			if !ok || methodsVal.OperandsCount() == 0 {
 				continue
 			}
-			if err := emitter.emitTypeOverride(g, methodsVal, elemTy, liveSlotSet(liveSlots[name])); err != nil {
+			if err := emitter.emitTypeOverride(g, methodsVal, elemTy, liveSlotSet(liveSlots[name]), logw); err != nil {
 				return fmt.Errorf("emit override %q: %w", name, err)
 			}
 			emitted[name] = true
@@ -58,7 +66,7 @@ func newOverrideEmitter(dst llvm.Module) *overrideEmitter {
 	}
 }
 
-func (e *overrideEmitter) emitTypeOverride(srcType, methodsVal llvm.Value, elemTy llvm.Type, keepIdx map[int]bool) error {
+func (e *overrideEmitter) emitTypeOverride(srcType, methodsVal llvm.Value, elemTy llvm.Type, keepIdx map[int]bool, logw io.Writer) error {
 	init := srcType.Initializer()
 	dstType, err := e.ensureOverrideGlobal(srcType)
 	if err != nil {
@@ -92,6 +100,9 @@ func (e *overrideEmitter) emitTypeOverride(srcType, methodsVal llvm.Value, elemT
 			}
 			methods[i] = clone
 			continue
+		}
+		if logw != nil {
+			fmt.Fprintf(logw, "[dce] drop method %s[%d] ifn=%s tfn=%s\n", srcType.Name(), i, valueName(orig.Operand(2)), valueName(orig.Operand(3)))
 		}
 		nameField, err := e.cloneConst(orig.Operand(0))
 		if err != nil {
@@ -276,6 +287,27 @@ func copyGlobalAttrs(dst, src llvm.Value) {
 
 func isLocalLinkage(linkage llvm.Linkage) bool {
 	return linkage == llvm.PrivateLinkage || linkage == llvm.InternalLinkage
+}
+
+func valueName(v llvm.Value) string {
+	if v.IsNil() {
+		return "<nil>"
+	}
+	if !v.IsAGlobalValue().IsNil() {
+		if name := v.Name(); name != "" {
+			return name
+		}
+	}
+	if !v.IsAConstantExpr().IsNil() && v.OperandsCount() > 0 {
+		return valueName(v.Operand(0))
+	}
+	if !v.IsAConstantPointerNull().IsNil() || v.IsNull() {
+		return "<nil>"
+	}
+	if name := v.Name(); name != "" {
+		return name
+	}
+	return v.String()
 }
 
 func constStructOfType(typ llvm.Type, fields []llvm.Value) llvm.Value {

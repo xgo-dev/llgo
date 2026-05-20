@@ -1113,6 +1113,7 @@ func applyDCEOverrides(ctx *context, mainPkg *packages.Package, pkgs []Package, 
 			liveCount += len(slots)
 		}
 		fmt.Fprintf(os.Stderr, "[dce] roots=%s live method slots=%d types=%d\n", strings.Join(roots, ","), liveCount, len(liveSlots))
+		return dcepass.EmitStrongTypeOverridesDebug(entryPkg.LPkg.Module(), dceSourceModules(pkgs), liveSlots, os.Stderr)
 	}
 	return dcepass.EmitStrongTypeOverrides(entryPkg.LPkg.Module(), dceSourceModules(pkgs), liveSlots)
 }
