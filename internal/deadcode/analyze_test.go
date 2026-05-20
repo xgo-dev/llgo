@@ -179,6 +179,44 @@ func TestAnalyze(t *testing.T) {
 				"_llgo_pkg.T":     {0},
 			},
 		},
+		// type Unmarshaler interface{ UnmarshalJSON([]byte) error }
+		// type RawMessage []byte
+		// func (*RawMessage) UnmarshalJSON([]byte) error { return nil }
+		// type Container struct{ Raw RawMessage }
+		// func main() { unmarshal(&Container{}) }
+		// func unmarshal(v any) { field.Addr().Interface().(Unmarshaler).UnmarshalJSON(nil) }
+		{
+			name:  "value type entering interface semantics keeps pointer method implementation",
+			roots: []string{"pkg.main"},
+			summary: buildPackage(func(b *metadata.Builder) {
+				main := b.Symbol("pkg.main")
+				unmarshal := b.Symbol("pkg.unmarshal")
+				containerPtr := b.Symbol("*_llgo_pkg.Container")
+				container := b.Symbol("_llgo_pkg.Container")
+				raw := b.Symbol("_llgo_pkg.RawMessage")
+				rawPtr := b.Symbol("*_llgo_pkg.RawMessage")
+				iface := b.Symbol("_llgo_pkg.Unmarshaler")
+				unmarshalSig := methodSigWithType(b, "UnmarshalJSON", "_llgo_func$bytes_error")
+
+				b.AddIfaceEntry(iface, []metadata.MethodSig{unmarshalSig})
+				b.AddMethodInfo(rawPtr, []metadata.MethodSlot{
+					methodSlot(b, unmarshalSig, "pkg.(*RawMessage).UnmarshalJSON", "pkg.(*RawMessage).UnmarshalJSON"),
+				})
+				b.AddTypeChild(containerPtr, container)
+				b.AddTypeChild(container, raw)
+				b.AddEdge(main, unmarshal)
+				b.AddEdge(main, containerPtr)
+				b.AddEdge(containerPtr, container)
+				b.AddEdge(container, raw)
+				b.AddEdge(raw, rawPtr)
+				b.AddUseIface(main, []metadata.Symbol{containerPtr})
+				b.AddUseIfaceMethod(unmarshal, []metadata.IfaceMethodDemand{{
+					Target: iface,
+					Sig:    unmarshalSig,
+				}})
+			}),
+			want: map[string][]int{"*_llgo_pkg.RawMessage": {0}},
+		},
 		// type T struct{}
 		// func (T) M() {}
 		// func (T) N() {}

@@ -32,6 +32,7 @@ type pass struct {
 	info *metadata.GlobalSummary
 
 	methodImplKeys map[methodID][]ifaceMethodKey
+	typeSymbols    map[metadata.Symbol]struct{}
 
 	reachable        map[metadata.Symbol]struct{}
 	usedInIface      map[metadata.Symbol]struct{}
@@ -71,6 +72,7 @@ func deadcode(info *metadata.GlobalSummary, roots []metadata.Symbol) map[metadat
 	d := &pass{
 		info:               info,
 		methodImplKeys:     make(map[methodID][]ifaceMethodKey),
+		typeSymbols:        make(map[metadata.Symbol]struct{}),
 		reachable:          make(map[metadata.Symbol]struct{}),
 		usedInIface:        make(map[metadata.Symbol]struct{}),
 		processedIfaceTy:   make(map[metadata.Symbol]struct{}),
@@ -98,6 +100,7 @@ func (d *pass) buildMethodImplKeys() {
 	methodRefs := make(map[metadata.MethodSig][]metadata.Symbol)
 	ifaceMethodCounts := make(map[metadata.Symbol]int)
 	for _, iface := range d.info.Interfaces() {
+		d.typeSymbols[iface] = struct{}{}
 		seenNames := make(map[metadata.Name]struct{})
 		for _, sig := range d.info.InterfaceMethods(iface) {
 			methodRefs[sig] = appendSymbolUnique(methodRefs[sig], iface)
@@ -110,6 +113,7 @@ func (d *pass) buildMethodImplKeys() {
 	}
 
 	for _, typ := range d.info.ConcreteTypes() {
+		d.typeSymbols[typ] = struct{}{}
 		slots := d.info.MethodSlots(typ)
 		impls := make(map[metadata.Symbol]int)
 		seen := make(map[ifaceMethodName]struct{})
@@ -145,7 +149,11 @@ func (d *pass) flood() {
 			d.reflectSeen = true
 		}
 
+		_, usedInIface := d.usedInIface[sym]
 		for _, dst := range d.info.OrdinaryEdges(sym) {
+			if usedInIface {
+				d.markTypeUsedInIface(dst)
+			}
 			d.markReachable(dst)
 		}
 
@@ -246,6 +254,13 @@ func (d *pass) markUsedInIface(typ metadata.Symbol) {
 	for _, child := range d.info.TypeChildren(typ) {
 		d.markUsedInIface(child)
 	}
+}
+
+func (d *pass) markTypeUsedInIface(sym metadata.Symbol) {
+	if _, ok := d.typeSymbols[sym]; !ok {
+		return
+	}
+	d.markUsedInIface(sym)
 }
 
 func (d *pass) popWork() metadata.Symbol {
