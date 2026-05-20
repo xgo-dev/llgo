@@ -1268,12 +1268,16 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 		return fmt.Errorf("load go:embed directives for %s failed: %w", pkgPath, err)
 	}
 
-	ret, externs, err := cl.NewPackageExWithEmbed(ctx.prog, ctx.patches, aPkg.rewriteVars, aPkg.SSA, syntax, embedMap)
+	var metaBuilder *metadata.Builder
+	if !aPkg.CacheHit {
+		metaBuilder = metadata.NewBuilder()
+	}
+	ret, externs, err := cl.NewPackageExWithEmbed(ctx.prog, ctx.patches, aPkg.rewriteVars, aPkg.SSA, syntax, embedMap, metaBuilder)
 	check(err)
 
 	aPkg.LPkg = ret
-	if !aPkg.CacheHit && aPkg.Meta == nil {
-		aPkg.Meta = metadata.NewBuilder().Build()
+	if metaBuilder != nil {
+		aPkg.Meta = metaBuilder.Build()
 	}
 	if hook := ctx.buildConf.ModuleHook; hook != nil {
 		hook(aPkg)

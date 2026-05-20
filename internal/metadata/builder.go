@@ -35,37 +35,47 @@ func (b *Builder) intern(s string) uint32 {
 
 // AddEdge records an ordinary reachability edge src -> dst.
 func (b *Builder) AddEdge(src, dst Symbol) {
-	b.pm.ordinaryEdges[src] = append(b.pm.ordinaryEdges[src], dst)
+	b.pm.ordinaryEdges[src] = appendSymbolUnique(b.pm.ordinaryEdges[src], dst)
 }
 
 // AddTypeChild records that parent type references child type.
 func (b *Builder) AddTypeChild(parent, child Symbol) {
-	b.pm.typeChildren[parent] = append(b.pm.typeChildren[parent], child)
+	b.pm.typeChildren[parent] = appendSymbolUnique(b.pm.typeChildren[parent], child)
 }
 
 // AddIfaceEntry records the method set of an interface type.
 func (b *Builder) AddIfaceEntry(iface Symbol, methods []MethodSig) {
-	b.pm.interfaceInfo[iface] = append(b.pm.interfaceInfo[iface], methods...)
+	for _, method := range methods {
+		b.pm.interfaceInfo[iface] = appendMethodSigUnique(b.pm.interfaceInfo[iface], method)
+	}
 }
 
 // AddUseIface records types converted to interface when owner is reachable.
 func (b *Builder) AddUseIface(owner Symbol, types []Symbol) {
-	b.pm.useIface[owner] = append(b.pm.useIface[owner], types...)
+	for _, typ := range types {
+		b.pm.useIface[owner] = appendSymbolUnique(b.pm.useIface[owner], typ)
+	}
 }
 
 // AddUseIfaceMethod records interface method calls when owner is reachable.
 func (b *Builder) AddUseIfaceMethod(owner Symbol, demands []IfaceMethodDemand) {
-	b.pm.useIfaceMethod[owner] = append(b.pm.useIfaceMethod[owner], demands...)
+	for _, demand := range demands {
+		b.pm.useIfaceMethod[owner] = appendIfaceMethodDemandUnique(b.pm.useIfaceMethod[owner], demand)
+	}
 }
 
 // AddMethodInfo records concrete type method table slots.
 func (b *Builder) AddMethodInfo(typeID Symbol, slots []MethodSlot) {
-	b.pm.methodInfo[typeID] = append(b.pm.methodInfo[typeID], slots...)
+	for _, slot := range slots {
+		b.pm.methodInfo[typeID] = appendMethodSlotUnique(b.pm.methodInfo[typeID], slot)
+	}
 }
 
 // AddUseNamedMethod records constant MethodByName method names.
 func (b *Builder) AddUseNamedMethod(owner Symbol, names []Name) {
-	b.pm.useNamedMethod[owner] = append(b.pm.useNamedMethod[owner], names...)
+	for _, name := range names {
+		b.pm.useNamedMethod[owner] = appendNameUnique(b.pm.useNamedMethod[owner], name)
+	}
 }
 
 // AddReflectMethod records that owner triggers conservative reflection handling.
@@ -81,4 +91,49 @@ func (b *Builder) Build() *PackageMeta {
 	}
 	b.pm.stringTable = table
 	return b.pm
+}
+
+func appendSymbolUnique(items []Symbol, item Symbol) []Symbol {
+	for _, existing := range items {
+		if existing == item {
+			return items
+		}
+	}
+	return append(items, item)
+}
+
+func appendNameUnique(items []Name, item Name) []Name {
+	for _, existing := range items {
+		if existing == item {
+			return items
+		}
+	}
+	return append(items, item)
+}
+
+func appendMethodSigUnique(items []MethodSig, item MethodSig) []MethodSig {
+	for _, existing := range items {
+		if existing == item {
+			return items
+		}
+	}
+	return append(items, item)
+}
+
+func appendIfaceMethodDemandUnique(items []IfaceMethodDemand, item IfaceMethodDemand) []IfaceMethodDemand {
+	for _, existing := range items {
+		if existing == item {
+			return items
+		}
+	}
+	return append(items, item)
+}
+
+func appendMethodSlotUnique(items []MethodSlot, item MethodSlot) []MethodSlot {
+	for _, existing := range items {
+		if existing == item {
+			return items
+		}
+	}
+	return append(items, item)
 }

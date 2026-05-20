@@ -26,6 +26,8 @@ import (
 
 	"github.com/goplus/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
+
+	"github.com/goplus/llgo/internal/metadata"
 )
 
 // -----------------------------------------------------------------------------
@@ -424,6 +426,11 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 	ft := prog.rtType("Method")
 	n := mset.Len()
 	fields := make([]llvm.Value, n)
+	var slots []metadata.MethodSlot
+	typeName, _ := prog.abi.TypeName(t)
+	if b.Pkg.MetaBuilder != nil {
+		slots = make([]metadata.MethodSlot, 0, n)
+	}
 	pkg, _ := b.abiUncommonPkg(t)
 	anonymous := pkg == nil
 	if anonymous {
@@ -431,11 +438,12 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 	}
 	for i := 0; i < n; i++ {
 		m := mset.At(i)
-		obj := m.Obj()
+		obj := m.Obj().(*types.Func)
 		mName := obj.Name()
+		fullName := mthName(obj)
 		name := b.Str(mName).impl
 		if !token.IsExported(mName) {
-			name = b.Str(abi.FullName(obj.Pkg(), mName)).impl
+			name = b.Str(fullName).impl
 		}
 		mSig := m.Type().(*types.Signature)
 		var tfn, ifn llvm.Value
@@ -453,6 +461,20 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 		values = append(values, ifn)
 		values = append(values, tfn)
 		fields[i] = llvm.ConstNamedStruct(ft.ll, values)
+		if mb := b.Pkg.MetaBuilder; mb != nil {
+			mtypeName, _ := prog.abi.TypeName(ftyp)
+			slots = append(slots, metadata.MethodSlot{
+				Sig: metadata.MethodSig{
+					Name:  mb.Name(fullName),
+					MType: mb.Symbol(mtypeName),
+				},
+				IFn: mb.Symbol(ifn.Name()),
+				TFn: mb.Symbol(tfn.Name()),
+			})
+		}
+	}
+	if mb := b.Pkg.MetaBuilder; mb != nil {
+		mb.AddMethodInfo(mb.Symbol(typeName), slots)
 	}
 	return llvm.ConstArray(ft.ll, fields)
 }
@@ -461,6 +483,14 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 func funcType(prog Program, typ types.Type) types.Type {
 	ftyp := prog.Type(typ, InGo)
 	return ftyp.raw.Type.(*types.Struct).Field(0).Type()
+}
+
+func mthName(method *types.Func) string {
+	name := method.Name()
+	if token.IsExported(name) {
+		return name
+	}
+	return abi.FullName(method.Pkg(), name)
 }
 
 func (b Builder) abiMethodFunc(anonymous bool, mPkg *types.Package, mName string, mSig *types.Signature) (tfn llvm.Value) {
