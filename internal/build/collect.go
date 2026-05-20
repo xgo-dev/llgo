@@ -25,6 +25,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/goplus/llgo/internal/env"
 	"github.com/goplus/llgo/internal/metadata"
@@ -340,10 +341,12 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 	if err != nil {
 		return false
 	}
+	metaStart := time.Now()
 	pkgMeta, err := readMeta(paths.Meta)
 	if err != nil {
 		return false
 	}
+	pkg.MetaReadDuration = time.Since(metaStart)
 
 	// Parse metadata from manifest [Package] section (INI format)
 	meta, err := parseManifestMetadata(content)
