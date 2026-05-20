@@ -13,6 +13,51 @@ _llgo_github.com/goplus/llgo/cl/_testmeta/typechildren_basic.Outer:
     _llgo_github.com/goplus/llgo/cl/_testmeta/typechildren_basic.Inner
     _llgo_int
 
+[OrdinaryEdges]
+*_llgo_github.com/goplus/llgo/cl/_testmeta/typechildren_basic.Inner:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    _llgo_github.com/goplus/llgo/cl/_testmeta/typechildren_basic.Inner
+*_llgo_github.com/goplus/llgo/cl/_testmeta/typechildren_basic.Outer:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    _llgo_github.com/goplus/llgo/cl/_testmeta/typechildren_basic.Outer
+*_llgo_int:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    _llgo_int
+*_llgo_string:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    _llgo_string
+__llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequal64:
+    github.com/goplus/llgo/runtime/internal/runtime.memequal64
+__llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr:
+    github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+__llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.strequal:
+    github.com/goplus/llgo/runtime/internal/runtime.strequal
+_llgo_github.com/goplus/llgo/cl/_testmeta/typechildren_basic.Inner:
+    github.com/goplus/llgo/runtime/internal/runtime.structequal
+    *_llgo_github.com/goplus/llgo/cl/_testmeta/typechildren_basic.Inner
+    _llgo_struct$MTAKiWNMPODH0G9-y5PI3BUGLd6hRciSbX1QTpCDOZg$fields
+_llgo_github.com/goplus/llgo/cl/_testmeta/typechildren_basic.Outer:
+    github.com/goplus/llgo/runtime/internal/runtime.structequal
+    *_llgo_github.com/goplus/llgo/cl/_testmeta/typechildren_basic.Outer
+    _llgo_struct$VaHvQdd7oPMFznC6BSA9M_OXdmuO77w_Ys1GnWZpjRM$fields
+_llgo_int:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequal64
+    *_llgo_int
+_llgo_string:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.strequal
+    *_llgo_string
+_llgo_struct$MTAKiWNMPODH0G9-y5PI3BUGLd6hRciSbX1QTpCDOZg$fields:
+    _llgo_string
+_llgo_struct$VaHvQdd7oPMFznC6BSA9M_OXdmuO77w_Ys1GnWZpjRM$fields:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/typechildren_basic.Inner
+    _llgo_int
+github.com/goplus/llgo/cl/_testmeta/typechildren_basic.init:
+    github.com/goplus/llgo/cl/_testmeta/typechildren_basic.init$guard
+github.com/goplus/llgo/cl/_testmeta/typechildren_basic.main:
+    github.com/goplus/llgo/runtime/internal/runtime.AllocU
+    _llgo_github.com/goplus/llgo/cl/_testmeta/typechildren_basic.Outer
+    github.com/goplus/llgo/cl/_testmeta/typechildren_basic.use
+
 [UseIface]
 github.com/goplus/llgo/cl/_testmeta/typechildren_basic.main:
     _llgo_github.com/goplus/llgo/cl/_testmeta/typechildren_basic.Outer

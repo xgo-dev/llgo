@@ -44,6 +44,35 @@ _llgo_reflect.Type:
     reflect.common _llgo_func$w6XuV-1SmW103DbauPseXBpW50HpxXAEsUsGFibl0Uw
     reflect.uncommon _llgo_func$iG49bujiXjI2lVflYdE0hPXlCAABL-XKRANSNJEKOio
 
+[OrdinaryEdges]
+*_llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+*_llgo_github.com/goplus/llgo/cl/_testmeta/reflect_named.T:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    _llgo_github.com/goplus/llgo/cl/_testmeta/reflect_named.T
+__llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequal0:
+    github.com/goplus/llgo/runtime/internal/runtime.memequal0
+__llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr:
+    github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+_llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac:
+    *_llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+_llgo_github.com/goplus/llgo/cl/_testmeta/reflect_named.T:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequal0
+    *_llgo_github.com/goplus/llgo/cl/_testmeta/reflect_named.T
+github.com/goplus/llgo/cl/_testmeta/reflect_named.(*T).M:
+    github.com/goplus/llgo/cl/_testmeta/reflect_named.T.M
+github.com/goplus/llgo/cl/_testmeta/reflect_named.(*T).m:
+    github.com/goplus/llgo/cl/_testmeta/reflect_named.T.m
+github.com/goplus/llgo/cl/_testmeta/reflect_named.init:
+    github.com/goplus/llgo/cl/_testmeta/reflect_named.init$guard
+    reflect.init
+github.com/goplus/llgo/cl/_testmeta/reflect_named.main:
+    github.com/goplus/llgo/runtime/internal/runtime.AllocU
+    _llgo_github.com/goplus/llgo/cl/_testmeta/reflect_named.T
+    reflect.TypeOf
+    github.com/goplus/llgo/runtime/internal/runtime.IfacePtrData
+
 [UseIface]
 github.com/goplus/llgo/cl/_testmeta/reflect_named.main:
     _llgo_github.com/goplus/llgo/cl/_testmeta/reflect_named.T

@@ -1277,6 +1277,7 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 
 	aPkg.LPkg = ret
 	if metaBuilder != nil {
+		extractOrdinaryEdges(metaBuilder, ret.Module())
 		aPkg.Meta = metaBuilder.Build()
 	}
 	if hook := ctx.buildConf.ModuleHook; hook != nil {
