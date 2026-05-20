@@ -345,6 +345,71 @@ func (b Builder) abiExtendedFields(t types.Type, name string) (fields []llvm.Val
 	return
 }
 
+func (b Builder) recordTypeChildren(parentName string, t types.Type) {
+	mb := b.Pkg.MetaBuilder
+	if mb == nil {
+		return
+	}
+	parent := mb.Symbol(parentName)
+	for _, child := range b.directTypeChildren(t) {
+		childName, _ := b.Prog.abi.TypeName(child)
+		mb.AddTypeChild(parent, mb.Symbol(childName))
+	}
+}
+
+func (b Builder) directTypeChildren(t types.Type) []types.Type {
+	switch t := types.Unalias(t).(type) {
+	case *types.Basic:
+		return nil
+	case *types.Pointer:
+		return []types.Type{abi.PublicType(t.Elem())}
+	case *types.Chan:
+		return []types.Type{abi.PublicType(t.Elem())}
+	case *types.Slice:
+		return []types.Type{abi.PublicType(t.Elem())}
+	case *types.Array:
+		elem := abi.PublicType(t.Elem())
+		return []types.Type{elem, types.NewSlice(elem)}
+	case *types.Map:
+		return []types.Type{
+			abi.PublicType(t.Key()),
+			abi.PublicType(t.Elem()),
+			// Map type descriptors reference their runtime bucket type too.
+			b.Prog.abi.MapBucket(t),
+		}
+	case *types.Signature:
+		var children []types.Type
+		children = appendTupleTypeChildren(children, t.Params())
+		children = appendTupleTypeChildren(children, t.Results())
+		return children
+	case *types.Struct:
+		children := make([]types.Type, 0, t.NumFields())
+		for i := 0; i < t.NumFields(); i++ {
+			children = append(children, abi.PublicType(t.Field(i).Type()))
+		}
+		return children
+	case *types.Interface:
+		children := make([]types.Type, 0, t.NumMethods())
+		for i := 0; i < t.NumMethods(); i++ {
+			children = append(children, funcType(b.Prog, t.Method(i).Type()))
+		}
+		return children
+	case *types.Named:
+		return b.directTypeChildren(t.Underlying())
+	}
+	return nil
+}
+
+func appendTupleTypeChildren(children []types.Type, tuple *types.Tuple) []types.Type {
+	if tuple == nil {
+		return children
+	}
+	for i := 0; i < tuple.Len(); i++ {
+		children = append(children, abi.PublicType(tuple.At(i).Type()))
+	}
+	return children
+}
+
 func (b Builder) abiUncommonPkg(t types.Type) (*types.Package, string) {
 retry:
 	switch typ := types.Unalias(t).(type) {
@@ -527,6 +592,7 @@ func (b Builder) abiType(t types.Type) Expr {
 		if prog.patchType != nil {
 			t = prog.patchType(t)
 		}
+		b.recordTypeChildren(name, t)
 		mset, hasUncommon := b.abiUncommonMethodSet(t)
 		rt := prog.rtNamed(prog.abi.RuntimeName(t))
 		var typ types.Type = rt
