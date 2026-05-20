@@ -10,6 +10,8 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
+const unreachableMethodName = "github.com/goplus/llgo/runtime/internal/runtime.unreachableMethod"
+
 // EmitStrongTypeOverrides emits method-pruned strong ABI type symbols into dst.
 //
 // srcMods contain the original package modules. For each constant ABI type
@@ -88,7 +90,7 @@ func (e *overrideEmitter) emitTypeOverride(srcType, methodsVal llvm.Value, elemT
 	if len(elemFields) < 4 {
 		return fmt.Errorf("method element type has %d fields", len(elemFields))
 	}
-	zeroPtr := llvm.ConstPointerNull(elemFields[2])
+	unreachableMethod := e.unreachableMethod(elemFields[2])
 	methodCount := methodsVal.OperandsCount()
 	methods := make([]llvm.Value, methodCount)
 	for i := 0; i < methodCount; i++ {
@@ -112,7 +114,7 @@ func (e *overrideEmitter) emitTypeOverride(srcType, methodsVal llvm.Value, elemT
 		if err != nil {
 			return err
 		}
-		methods[i] = llvm.ConstNamedStruct(elemTy, []llvm.Value{nameField, mtypField, zeroPtr, zeroPtr})
+		methods[i] = llvm.ConstNamedStruct(elemTy, []llvm.Value{nameField, mtypField, unreachableMethod, unreachableMethod})
 	}
 	fields[fieldCount-1] = llvm.ConstArray(elemTy, methods)
 
@@ -121,6 +123,18 @@ func (e *overrideEmitter) emitTypeOverride(srcType, methodsVal llvm.Value, elemT
 	dstType.SetLinkage(llvm.ExternalLinkage)
 	copyGlobalAttrs(dstType, srcType)
 	return nil
+}
+
+func (e *overrideEmitter) unreachableMethod(ptrTy llvm.Type) llvm.Value {
+	fn := e.dst.NamedFunction(unreachableMethodName)
+	if fn.IsNil() {
+		fnTy := llvm.FunctionType(e.dst.Context().VoidType(), nil, false)
+		fn = llvm.AddFunction(e.dst, unreachableMethodName, fnTy)
+	}
+	if fn.Type() == ptrTy {
+		return fn
+	}
+	return llvm.ConstBitCast(fn, ptrTy)
 }
 
 func (e *overrideEmitter) ensureOverrideGlobal(src llvm.Value) (llvm.Value, error) {

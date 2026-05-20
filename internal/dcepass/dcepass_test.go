@@ -70,6 +70,9 @@ func TestEmitStrongTypeOverridesPrunesDeadMethodSlots(t *testing.T) {
 	if strings.Contains(out, `ptr @"pkg.(*T).N"`) || strings.Contains(out, `ptr @pkg.T.N`) {
 		t.Fatalf("dead method slot still references N functions:\n%s", out)
 	}
+	if !strings.Contains(out, `ptr @"github.com/goplus/llgo/runtime/internal/runtime.unreachableMethod"`) {
+		t.Fatalf("dead method slot was not redirected to unreachableMethod:\n%s", out)
+	}
 }
 
 func TestEmitStrongTypeOverridesLogsDroppedMethodSlots(t *testing.T) {
