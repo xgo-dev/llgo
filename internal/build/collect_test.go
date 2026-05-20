@@ -27,6 +27,7 @@ import (
 	"testing"
 
 	"github.com/goplus/llgo/internal/crosscompile"
+	"github.com/goplus/llgo/internal/metadata"
 	"github.com/goplus/llgo/internal/packages"
 	gopackages "golang.org/x/tools/go/packages"
 )
@@ -409,6 +410,7 @@ func TestTryLoadFromCache_ForceRebuild(t *testing.T) {
 			m.pkg.PkgPath = "example.com/cached"
 			return m.Build()
 		}(),
+		Meta: metadata.NewBuilder().Build(),
 	}
 
 	// Create a temporary .o file
@@ -533,6 +535,7 @@ func TestSaveToCache_Success(t *testing.T) {
 			return m.Build()
 		}(),
 		ObjFiles: []string{objFile.Name()},
+		Meta:     metadata.NewBuilder().Build(),
 	}
 
 	if err := ctx.saveToCache(pkg); err != nil {
@@ -562,6 +565,134 @@ func TestSaveToCache_Success(t *testing.T) {
 	// Check archive exists
 	if _, err := os.Stat(paths.Archive); err != nil {
 		t.Errorf("archive should exist: %v", err)
+	}
+
+	metaFile, err := os.Open(paths.Meta)
+	if err != nil {
+		t.Errorf("meta should exist: %v", err)
+	} else {
+		defer metaFile.Close()
+		if _, err := metadata.ReadMeta(metaFile); err != nil {
+			t.Errorf("meta should be readable: %v", err)
+		}
+	}
+}
+
+func TestTryLoadFromCache_LoadsPackageMeta(t *testing.T) {
+	td := t.TempDir()
+	oldFunc := cacheRootFunc
+	cacheRootFunc = func() string { return td }
+	defer func() { cacheRootFunc = oldFunc }()
+
+	ctx := &context{
+		conf: &packages.Config{},
+		buildConf: &Config{
+			Goos:   "darwin",
+			Goarch: "arm64",
+		},
+		crossCompile: crosscompile.Export{
+			LLVMTarget: "arm64-apple-darwin",
+		},
+	}
+
+	objFile, err := os.CreateTemp(td, "test-*.o")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	objFile.WriteString("fake object file")
+	objFile.Close()
+
+	builder := metadata.NewBuilder()
+	main := builder.Symbol("pkg.main")
+	helper := builder.Symbol("pkg.helper")
+	builder.AddEdge(main, helper)
+
+	pkg := &aPackage{
+		Package: &packages.Package{
+			PkgPath: "example.com/loadmeta",
+			Name:    "loadmeta",
+		},
+		Fingerprint: "loadmeta123",
+		Manifest: func() string {
+			m := newManifestBuilder()
+			m.env.Goos = "darwin"
+			m.pkg.PkgPath = "example.com/loadmeta"
+			return m.Build()
+		}(),
+		ObjFiles: []string{objFile.Name()},
+		Meta:     builder.Build(),
+	}
+
+	if err := ctx.saveToCache(pkg); err != nil {
+		t.Fatalf("saveToCache: %v", err)
+	}
+
+	pkg.ObjFiles = nil
+	pkg.ArchiveFile = ""
+	pkg.CacheHit = false
+	pkg.Meta = nil
+
+	if !ctx.tryLoadFromCache(pkg) {
+		t.Fatal("tryLoadFromCache = false, want true")
+	}
+	if pkg.Meta == nil {
+		t.Fatal("Meta was not loaded from cache")
+	}
+	var edges []metadata.Symbol
+	pkg.Meta.ForEachOrdinaryEdge(func(src metadata.Symbol, dsts []metadata.Symbol) {
+		if pkg.Meta.SymbolName(src) == "pkg.main" {
+			edges = append(edges, dsts...)
+		}
+	})
+	if len(edges) != 1 || pkg.Meta.SymbolName(edges[0]) != "pkg.helper" {
+		t.Fatalf("cached metadata edge mismatch: %#v", edges)
+	}
+}
+
+func TestTryLoadFromCacheRejectsBadMeta(t *testing.T) {
+	td := t.TempDir()
+	oldFunc := cacheRootFunc
+	cacheRootFunc = func() string { return td }
+	defer func() { cacheRootFunc = oldFunc }()
+
+	ctx := &context{
+		conf: &packages.Config{},
+		buildConf: &Config{
+			Goos:   "darwin",
+			Goarch: "arm64",
+		},
+		crossCompile: crosscompile.Export{
+			LLVMTarget: "arm64-apple-darwin",
+		},
+	}
+
+	pkg := &aPackage{
+		Package: &packages.Package{
+			PkgPath: "example.com/badmeta",
+			Name:    "badmeta",
+		},
+		Fingerprint: "badmeta123",
+	}
+	cm := ctx.ensureCacheManager()
+	paths := cm.PackagePaths("arm64-apple-darwin", "example.com/badmeta", "badmeta123")
+	if err := cm.EnsureDir(paths); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.Archive, []byte("archive"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := newManifestBuilder()
+	m.env.Goos = "darwin"
+	m.pkg.PkgPath = "example.com/badmeta"
+	if err := writeManifest(paths.Manifest, m.Build()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.Meta, []byte("bad meta"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if ctx.tryLoadFromCache(pkg) {
+		t.Fatal("tryLoadFromCache accepted invalid meta")
 	}
 }
 

@@ -46,6 +46,7 @@ import (
 	"github.com/goplus/llgo/internal/flash"
 	"github.com/goplus/llgo/internal/goembed"
 	"github.com/goplus/llgo/internal/header"
+	"github.com/goplus/llgo/internal/metadata"
 	"github.com/goplus/llgo/internal/mockable"
 	"github.com/goplus/llgo/internal/monitor"
 	"github.com/goplus/llgo/internal/optlevel"
@@ -1271,6 +1272,9 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 	check(err)
 
 	aPkg.LPkg = ret
+	if !aPkg.CacheHit && aPkg.Meta == nil {
+		aPkg.Meta = metadata.NewBuilder().Build()
+	}
 	if hook := ctx.buildConf.ModuleHook; hook != nil {
 		hook(aPkg)
 	}
@@ -1554,6 +1558,7 @@ type aPackage struct {
 	LinkArgs    []string
 	ObjFiles    []string // object files: .o or .ll (output of compiler, input to archiver)
 	ArchiveFile string   // archive file: .a (output of archiver, used for linking)
+	Meta        *metadata.PackageMeta
 	rewriteVars map[string]string
 
 	// Cache related fields
