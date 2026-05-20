@@ -42,6 +42,8 @@ import (
 	"github.com/goplus/llgo/internal/cabi"
 	"github.com/goplus/llgo/internal/clang"
 	"github.com/goplus/llgo/internal/crosscompile"
+	"github.com/goplus/llgo/internal/dcepass"
+	"github.com/goplus/llgo/internal/deadcode"
 	"github.com/goplus/llgo/internal/env"
 	"github.com/goplus/llgo/internal/firmware"
 	"github.com/goplus/llgo/internal/flash"
@@ -144,6 +146,7 @@ type Config struct {
 	Verbose       bool
 	PrintCommands bool
 	GenLL         bool // generate pkg .ll files
+	DCE           bool // enable experimental Go-like link-time DCE
 	CheckLLFiles  bool // check .ll files valid
 	CheckLinkArgs bool // check linkargs valid
 	ForceEspClang bool // force to use esp-clang
@@ -190,6 +193,7 @@ func NewDefaultConf(mode Mode) *Config {
 		Mode:      mode,
 		BuildMode: BuildModeExe,
 		AbiMode:   cabi.ModeAllFunc,
+		DCE:       true,
 	}
 	return conf
 }
@@ -226,6 +230,9 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	}
 	if conf.BuildMode == "" {
 		conf.BuildMode = BuildModeExe
+	}
+	if conf.BuildMode != BuildModeExe {
+		conf.DCE = false
 	}
 	if conf.SizeReport && conf.SizeFormat == "" {
 		conf.SizeFormat = "text"
@@ -1026,6 +1033,11 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 		methodByName:  methodByName,
 		abiSymbols:    linkedModuleGlobals(linkedOrder),
 	})
+	if ctx.buildConf.DCE {
+		if err := applyDCEOverrides(ctx, pkg, linkedOrder, entryPkg, verbose); err != nil {
+			return err
+		}
+	}
 	entryObjFile, err := exportObject(ctx, "entry_main", entryPkg.ExportFile, entryPkg.LPkg)
 	if err != nil {
 		return err
@@ -1079,6 +1091,65 @@ func linkedModuleGlobals(pkgs []Package) map[string]none {
 		}
 	}
 	return seen
+}
+
+func applyDCEOverrides(ctx *context, mainPkg *packages.Package, pkgs []Package, entryPkg Package, verbose bool) error {
+	metas := linkedPackageMetas(pkgs)
+	if len(metas) == 0 {
+		return nil
+	}
+	summary, err := metadata.NewGlobalSummary(metas)
+	if err != nil {
+		return err
+	}
+	roots := dceEntryRootCandidates(mainPkg)
+	liveSlots := deadcode.Analyze(summary, roots)
+	if len(liveSlots) == 0 {
+		return nil
+	}
+	if verbose {
+		liveCount := 0
+		for _, slots := range liveSlots {
+			liveCount += len(slots)
+		}
+		fmt.Fprintf(os.Stderr, "[dce] roots=%s live method slots=%d types=%d\n", strings.Join(roots, ","), liveCount, len(liveSlots))
+	}
+	return dcepass.EmitStrongTypeOverrides(entryPkg.LPkg.Module(), dceSourceModules(pkgs), liveSlots)
+}
+
+func linkedPackageMetas(pkgs []Package) []*metadata.PackageMeta {
+	metas := make([]*metadata.PackageMeta, 0, len(pkgs))
+	for _, pkg := range pkgs {
+		if pkg == nil || pkg.Meta == nil {
+			continue
+		}
+		metas = append(metas, pkg.Meta)
+	}
+	return metas
+}
+
+func dceSourceModules(pkgs []Package) []gllvm.Module {
+	mods := make([]gllvm.Module, 0, len(pkgs))
+	seen := make(map[gllvm.Module]bool)
+	for _, pkg := range pkgs {
+		if pkg == nil || pkg.LPkg == nil {
+			continue
+		}
+		mod := pkg.LPkg.Module()
+		if mod.IsNil() || seen[mod] {
+			continue
+		}
+		seen[mod] = true
+		mods = append(mods, mod)
+	}
+	return mods
+}
+
+func dceEntryRootCandidates(pkg *packages.Package) []string {
+	if pkg == nil || pkg.PkgPath == "" {
+		return nil
+	}
+	return []string{pkg.PkgPath + ".init", pkg.PkgPath + ".main"}
 }
 
 // isRuntimePkg reports whether the package path belongs to the llgo runtime tree.
