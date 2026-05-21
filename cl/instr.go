@@ -26,6 +26,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/goplus/llgo/internal/metadata"
 	"golang.org/x/tools/go/ssa"
 
 	llssa "github.com/goplus/llgo/ssa"
@@ -51,6 +52,65 @@ func constBool(v ssa.Value) (ret bool, ok bool) {
 		}
 	}
 	return
+}
+
+func isNamedType(t types.Type, pkgPath, name string) bool {
+	named, ok := types.Unalias(t).(*types.Named)
+	if !ok {
+		return false
+	}
+	obj := named.Obj()
+	return obj != nil && obj.Name() == name && obj.Pkg() != nil && obj.Pkg().Path() == pkgPath
+}
+
+func staticCallMethod(call *ssa.CallCommon) (recv types.Type, method string, ok bool) {
+	fn := call.StaticCallee()
+	if fn == nil || fn.Signature == nil || fn.Signature.Recv() == nil {
+		return nil, "", false
+	}
+	return fn.Signature.Recv().Type(), fn.Name(), true
+}
+
+func reflectMethodNameArg(call *ssa.CallCommon) (nameArg ssa.Value, ok bool) {
+	if method := call.Method; method != nil {
+		if !isNamedType(call.Value.Type(), "reflect", "Type") {
+			return nil, false
+		}
+		if method.Name() != "MethodByName" {
+			return nil, method.Name() == "Method"
+		}
+		return call.Args[0], true
+	}
+
+	recv, methodName, ok := staticCallMethod(call)
+	if !ok || !isNamedType(recv, "reflect", "Value") {
+		return nil, false
+	}
+	if methodName != "MethodByName" {
+		return nil, methodName == "Method"
+	}
+	return call.Args[len(call.Args)-1], true
+}
+
+func (p *context) markReflectMethodCall(call *ssa.CallCommon) {
+	if p.fn == nil || p.pkg.MetaBuilder == nil {
+		return
+	}
+	nameArg, ok := reflectMethodNameArg(call)
+	if !ok {
+		return
+	}
+	mb := p.pkg.MetaBuilder
+	owner := mb.Symbol(p.fn.Name())
+	if nameArg == nil {
+		mb.AddReflectMethod(owner)
+		return
+	}
+	if name, ok := constStr(nameArg); ok {
+		mb.AddUseNamedMethod(owner, []metadata.Name{mb.Name(name)})
+		return
+	}
+	mb.AddReflectMethod(owner)
 }
 
 // func pystr(string) *py.Object
@@ -839,6 +899,7 @@ func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, ds *explicitDeferS
 }
 
 func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallCommon, ds *explicitDeferStack) (ret llssa.Expr) {
+	p.markReflectMethodCall(call)
 	cv := call.Value
 	if mthd := call.Method; mthd != nil {
 		o := p.compileValue(b, cv)
