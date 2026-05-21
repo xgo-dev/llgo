@@ -25,12 +25,8 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-func (b Builder) meta() *metadata.Builder {
-	return b.Pkg.MetaBuilder
-}
-
 func (b Builder) recordTypeChildren(parentName string, t types.Type) {
-	mb := b.meta()
+	mb := b.Pkg.MetaBuilder
 	if mb == nil {
 		return
 	}
@@ -95,7 +91,7 @@ func appendTupleTypeChildren(children []types.Type, tuple *types.Tuple) []types.
 }
 
 func (b Builder) recordInterfaceMethodCall(intf Expr, rawIntf *types.Interface, method *types.Func) {
-	mb := b.meta()
+	mb := b.Pkg.MetaBuilder
 	if mb == nil {
 		return
 	}
@@ -122,7 +118,7 @@ func (b Builder) recordInterfaceMethodCall(intf Expr, rawIntf *types.Interface, 
 }
 
 func (b Builder) recordInterfaceUse(t types.Type) {
-	mb := b.meta()
+	mb := b.Pkg.MetaBuilder
 	if mb == nil {
 		return
 	}
@@ -141,7 +137,7 @@ type methodInfoRecorder struct {
 }
 
 func (b Builder) newMethodInfoRecorder(t types.Type, n int) methodInfoRecorder {
-	mb := b.meta()
+	mb := b.Pkg.MetaBuilder
 	if mb == nil {
 		return methodInfoRecorder{}
 	}
