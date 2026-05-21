@@ -1033,7 +1033,7 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 		abiSymbols:    linkedModuleGlobals(linkedOrder),
 	})
 	if ctx.buildConf.DCE {
-		if err := applyDCEOverrides(ctx, pkg, linkedOrder, entryPkg, verbose); err != nil {
+		if err := applyDCEOverrides(ctx, pkg, linkedOrder, entryPkg, needRuntime, verbose); err != nil {
 			return err
 		}
 	}
@@ -1092,7 +1092,7 @@ func linkedModuleGlobals(pkgs []Package) map[string]none {
 	return seen
 }
 
-func applyDCEOverrides(ctx *context, mainPkg *packages.Package, pkgs []Package, entryPkg Package, verbose bool) error {
+func applyDCEOverrides(ctx *context, mainPkg *packages.Package, pkgs []Package, entryPkg Package, needRuntime bool, verbose bool) error {
 	metas := linkedPackageMetas(pkgs)
 	if len(metas) == 0 {
 		return nil
@@ -1101,7 +1101,7 @@ func applyDCEOverrides(ctx *context, mainPkg *packages.Package, pkgs []Package, 
 	if err != nil {
 		return err
 	}
-	roots := dceEntryRootCandidates(mainPkg)
+	roots := dceEntryRootCandidates(mainPkg, needRuntime)
 	liveSlots := deadcode.Analyze(summary, roots)
 	if len(liveSlots) == 0 {
 		return nil
@@ -1145,11 +1145,15 @@ func dceSourceModules(pkgs []Package) []gllvm.Module {
 	return mods
 }
 
-func dceEntryRootCandidates(pkg *packages.Package) []string {
+func dceEntryRootCandidates(pkg *packages.Package, needRuntime bool) []string {
 	if pkg == nil || pkg.PkgPath == "" {
 		return nil
 	}
-	return []string{pkg.PkgPath + ".init", pkg.PkgPath + ".main"}
+	roots := []string{pkg.PkgPath + ".init", pkg.PkgPath + ".main"}
+	if needRuntime {
+		roots = append(roots, llssa.PkgRuntime+".init")
+	}
+	return roots
 }
 
 // isRuntimePkg reports whether the package path belongs to the llgo runtime tree.

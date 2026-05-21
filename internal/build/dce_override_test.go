@@ -40,7 +40,7 @@ func TestApplyDCEOverridesWritesStrongTypeOverride(t *testing.T) {
 		ExportFile: "pkg.a",
 	}, &genConfig{})
 
-	if err := applyDCEOverrides(ctx, &packages.Package{PkgPath: "pkg"}, []Package{srcAPkg}, entryPkg, false); err != nil {
+	if err := applyDCEOverrides(ctx, &packages.Package{PkgPath: "pkg"}, []Package{srcAPkg}, entryPkg, false, false); err != nil {
 		t.Fatalf("applyDCEOverrides: %v", err)
 	}
 
@@ -53,6 +53,22 @@ func TestApplyDCEOverridesWritesStrongTypeOverride(t *testing.T) {
 	}
 	if strings.Contains(out, `ptr @"pkg.(*T).N"`) || strings.Contains(out, `ptr @pkg.T.N`) {
 		t.Fatalf("dead method slot still references N functions:\n%s", out)
+	}
+}
+
+func TestDCEEntryRootCandidatesIncludesRuntimeWhenNeeded(t *testing.T) {
+	roots := dceEntryRootCandidates(&packages.Package{PkgPath: "pkg"}, true)
+	want := []string{"pkg.init", "pkg.main", llssa.PkgRuntime + ".init"}
+	if strings.Join(roots, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("roots mismatch:\ngot  %q\nwant %q", roots, want)
+	}
+}
+
+func TestDCEEntryRootCandidatesSkipsRuntimeWhenNotNeeded(t *testing.T) {
+	roots := dceEntryRootCandidates(&packages.Package{PkgPath: "pkg"}, false)
+	want := []string{"pkg.init", "pkg.main"}
+	if strings.Join(roots, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("roots mismatch:\ngot  %q\nwant %q", roots, want)
 	}
 }
 
