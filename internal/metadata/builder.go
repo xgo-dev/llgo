@@ -2,15 +2,27 @@ package metadata
 
 // Builder accumulates per-package metadata facts and builds a PackageMeta.
 type Builder struct {
-	pm      *PackageMeta
-	strToID map[string]uint32
+	pm                 *PackageMeta
+	strToID            map[string]uint32
+	seenEdge           map[[2]Symbol]struct{}
+	seenTypeChild      map[[2]Symbol]struct{}
+	seenInterfaceInfo  map[interfaceInfoKey]struct{}
+	seenUseIface       map[[2]Symbol]struct{}
+	seenUseIfaceMethod map[useIfaceMethodKey]struct{}
+	seenUseNamedMethod map[useNamedMethodKey]struct{}
 }
 
 // NewBuilder creates an empty metadata builder.
 func NewBuilder() *Builder {
 	return &Builder{
-		pm:      NewPackageMeta(nil),
-		strToID: make(map[string]uint32),
+		pm:                 NewPackageMeta(nil),
+		strToID:            make(map[string]uint32),
+		seenEdge:           make(map[[2]Symbol]struct{}),
+		seenTypeChild:      make(map[[2]Symbol]struct{}),
+		seenInterfaceInfo:  make(map[interfaceInfoKey]struct{}),
+		seenUseIface:       make(map[[2]Symbol]struct{}),
+		seenUseIfaceMethod: make(map[useIfaceMethodKey]struct{}),
+		seenUseNamedMethod: make(map[useNamedMethodKey]struct{}),
 	}
 }
 
@@ -35,32 +47,57 @@ func (b *Builder) intern(s string) uint32 {
 
 // AddEdge records an ordinary reachability edge src -> dst.
 func (b *Builder) AddEdge(src, dst Symbol) {
-	addUniqueSymbol(&b.pm.ordinaryEdges, src, dst)
+	key := [2]Symbol{src, dst}
+	if _, ok := b.seenEdge[key]; ok {
+		return
+	}
+	b.seenEdge[key] = struct{}{}
+	b.pm.ordinaryEdges[src] = append(b.pm.ordinaryEdges[src], dst)
 }
 
 // AddTypeChild records that parent type references child type.
 func (b *Builder) AddTypeChild(parent, child Symbol) {
-	addUniqueSymbol(&b.pm.typeChildren, parent, child)
+	key := [2]Symbol{parent, child}
+	if _, ok := b.seenTypeChild[key]; ok {
+		return
+	}
+	b.seenTypeChild[key] = struct{}{}
+	b.pm.typeChildren[parent] = append(b.pm.typeChildren[parent], child)
 }
 
 // AddIfaceEntry records the method set of an interface type.
 func (b *Builder) AddIfaceEntry(iface Symbol, methods []MethodSig) {
 	for _, method := range methods {
-		addUniqueMethodSig(&b.pm.interfaceInfo, iface, method)
+		key := interfaceInfoKey{Iface: iface, Sig: method}
+		if _, ok := b.seenInterfaceInfo[key]; ok {
+			continue
+		}
+		b.seenInterfaceInfo[key] = struct{}{}
+		b.pm.interfaceInfo[iface] = append(b.pm.interfaceInfo[iface], method)
 	}
 }
 
 // AddUseIface records types converted to interface when owner is reachable.
 func (b *Builder) AddUseIface(owner Symbol, types []Symbol) {
 	for _, typ := range types {
-		addUniqueSymbol(&b.pm.useIface, owner, typ)
+		key := [2]Symbol{owner, typ}
+		if _, ok := b.seenUseIface[key]; ok {
+			continue
+		}
+		b.seenUseIface[key] = struct{}{}
+		b.pm.useIface[owner] = append(b.pm.useIface[owner], typ)
 	}
 }
 
 // AddUseIfaceMethod records interface method calls when owner is reachable.
 func (b *Builder) AddUseIfaceMethod(owner Symbol, demands []IfaceMethodDemand) {
 	for _, demand := range demands {
-		addUniqueIfaceMethodDemand(&b.pm.useIfaceMethod, owner, demand)
+		key := useIfaceMethodKey{Owner: owner, Demand: demand}
+		if _, ok := b.seenUseIfaceMethod[key]; ok {
+			continue
+		}
+		b.seenUseIfaceMethod[key] = struct{}{}
+		b.pm.useIfaceMethod[owner] = append(b.pm.useIfaceMethod[owner], demand)
 	}
 }
 
@@ -75,7 +112,12 @@ func (b *Builder) AddMethodInfo(typeID Symbol, slots []MethodSlot) {
 // AddUseNamedMethod records constant MethodByName method names.
 func (b *Builder) AddUseNamedMethod(owner Symbol, names []Name) {
 	for _, name := range names {
-		addUniqueName(&b.pm.useNamedMethod, owner, name)
+		key := useNamedMethodKey{Owner: owner, Name: name}
+		if _, ok := b.seenUseNamedMethod[key]; ok {
+			continue
+		}
+		b.seenUseNamedMethod[key] = struct{}{}
+		b.pm.useNamedMethod[owner] = append(b.pm.useNamedMethod[owner], name)
 	}
 }
 
@@ -94,42 +136,17 @@ func (b *Builder) Build() *PackageMeta {
 	return b.pm
 }
 
-func addUniqueSymbol(m *map[Symbol][]Symbol, key, value Symbol) {
-	values := (*m)[key]
-	for _, existing := range values {
-		if existing == value {
-			return
-		}
-	}
-	(*m)[key] = append(values, value)
+type interfaceInfoKey struct {
+	Iface Symbol
+	Sig   MethodSig
 }
 
-func addUniqueName(m *map[Symbol][]Name, key Symbol, value Name) {
-	values := (*m)[key]
-	for _, existing := range values {
-		if existing == value {
-			return
-		}
-	}
-	(*m)[key] = append(values, value)
+type useIfaceMethodKey struct {
+	Owner  Symbol
+	Demand IfaceMethodDemand
 }
 
-func addUniqueMethodSig(m *map[Symbol][]MethodSig, key Symbol, value MethodSig) {
-	values := (*m)[key]
-	for _, existing := range values {
-		if existing == value {
-			return
-		}
-	}
-	(*m)[key] = append(values, value)
-}
-
-func addUniqueIfaceMethodDemand(m *map[Symbol][]IfaceMethodDemand, key Symbol, value IfaceMethodDemand) {
-	values := (*m)[key]
-	for _, existing := range values {
-		if existing == value {
-			return
-		}
-	}
-	(*m)[key] = append(values, value)
+type useNamedMethodKey struct {
+	Owner Symbol
+	Name  Name
 }

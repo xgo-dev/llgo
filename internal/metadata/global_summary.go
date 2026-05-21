@@ -27,39 +27,36 @@ type GlobalSummary struct {
 func NewGlobalSummary(pkgs []*PackageMeta) (*GlobalSummary, error) {
 	b := newGlobalSummaryBuilder()
 	for _, pm := range pkgs {
-		if pm == nil {
-			continue
-		}
 		r := newPackageRemapper(pm, b)
 
 		pm.ForEachOrdinaryEdge(func(src Symbol, dsts []Symbol) {
 			gsrc := r.symbol(src)
 			for _, dst := range dsts {
-				addUniqueSymbol(&b.summary.ordinaryEdges, gsrc, r.symbol(dst))
+				b.addEdge(gsrc, r.symbol(dst))
 			}
 		})
 		pm.ForEachTypeChild(func(parent Symbol, children []Symbol) {
 			gparent := r.symbol(parent)
 			for _, child := range children {
-				addUniqueSymbol(&b.summary.typeChildren, gparent, r.symbol(child))
+				b.addTypeChild(gparent, r.symbol(child))
 			}
 		})
 		pm.ForEachInterface(func(iface Symbol, methods []MethodSig) {
 			giface := r.symbol(iface)
 			for _, method := range methods {
-				addUniqueMethodSig(&b.summary.interfaceInfo, giface, r.methodSig(method))
+				b.addInterfaceMethod(giface, r.methodSig(method))
 			}
 		})
 		pm.ForEachUseIface(func(owner Symbol, types []Symbol) {
 			gowner := r.symbol(owner)
 			for _, typ := range types {
-				addUniqueSymbol(&b.summary.useIface, gowner, r.symbol(typ))
+				b.addUseIface(gowner, r.symbol(typ))
 			}
 		})
 		pm.ForEachUseIfaceMethod(func(owner Symbol, demands []IfaceMethodDemand) {
 			gowner := r.symbol(owner)
 			for _, demand := range demands {
-				addUniqueIfaceMethodDemand(&b.summary.useIfaceMethod, gowner, IfaceMethodDemand{
+				b.addUseIfaceMethod(gowner, IfaceMethodDemand{
 					Target: r.symbol(demand.Target),
 					Sig:    r.methodSig(demand.Sig),
 				})
@@ -67,9 +64,6 @@ func NewGlobalSummary(pkgs []*PackageMeta) (*GlobalSummary, error) {
 		})
 		var methodErr error
 		pm.ForEachMethodInfo(func(typ Symbol, slots []MethodSlot) {
-			if methodErr != nil {
-				return
-			}
 			gtyp := r.symbol(typ)
 			gslots := make([]MethodSlot, 0, len(slots))
 			for _, slot := range slots {
@@ -87,7 +81,7 @@ func NewGlobalSummary(pkgs []*PackageMeta) (*GlobalSummary, error) {
 		pm.ForEachUseNamedMethod(func(owner Symbol, names []Name) {
 			gowner := r.symbol(owner)
 			for _, name := range names {
-				addUniqueName(&b.summary.useNamedMethod, gowner, r.name(name))
+				b.addUseNamedMethod(gowner, r.name(name))
 			}
 		})
 		pm.ForEachReflectMethod(func(owner Symbol) {
@@ -99,16 +93,13 @@ func NewGlobalSummary(pkgs []*PackageMeta) (*GlobalSummary, error) {
 
 // LookupSymbol returns a global Symbol for a module-level symbol name.
 func (g *GlobalSummary) LookupSymbol(name string) (Symbol, bool) {
-	if g == nil {
-		return 0, false
-	}
 	sym, ok := g.symbolByText[name]
 	return sym, ok
 }
 
 // SymbolName returns the text referenced by a global Symbol.
 func (g *GlobalSummary) SymbolName(sym Symbol) string {
-	if g == nil || int(sym) >= len(g.stringTable) {
+	if int(sym) >= len(g.stringTable) {
 		return ""
 	}
 	return g.stringTable[sym]
@@ -116,7 +107,7 @@ func (g *GlobalSummary) SymbolName(sym Symbol) string {
 
 // Name returns the text referenced by a global Name.
 func (g *GlobalSummary) Name(ref Name) string {
-	if g == nil || int(ref) >= len(g.stringTable) {
+	if int(ref) >= len(g.stringTable) {
 		return ""
 	}
 	return g.stringTable[ref]
@@ -124,88 +115,64 @@ func (g *GlobalSummary) Name(ref Name) string {
 
 // Interfaces returns all interface type symbols known to the summary.
 func (g *GlobalSummary) Interfaces() []Symbol {
-	if g == nil {
-		return nil
-	}
 	return sortedGlobalKeys(g.interfaceInfo, g.SymbolName)
 }
 
 // ConcreteTypes returns all concrete type symbols with method slots.
 func (g *GlobalSummary) ConcreteTypes() []Symbol {
-	if g == nil {
-		return nil
-	}
 	return sortedGlobalKeys(g.methodInfo, g.SymbolName)
 }
 
 // OrdinaryEdges returns direct ordinary references from sym.
 func (g *GlobalSummary) OrdinaryEdges(sym Symbol) []Symbol {
-	if g == nil {
-		return nil
-	}
 	return cloneSymbols(g.ordinaryEdges[sym])
 }
 
 // TypeChildren returns child type symbols for typ.
 func (g *GlobalSummary) TypeChildren(typ Symbol) []Symbol {
-	if g == nil {
-		return nil
-	}
 	return cloneSymbols(g.typeChildren[typ])
 }
 
 // InterfaceMethods returns the method set for iface.
 func (g *GlobalSummary) InterfaceMethods(iface Symbol) []MethodSig {
-	if g == nil {
-		return nil
-	}
 	return cloneMethodSigs(g.interfaceInfo[iface])
 }
 
 // UseIface returns concrete types that enter interface semantics from fn.
 func (g *GlobalSummary) UseIface(fn Symbol) []Symbol {
-	if g == nil {
-		return nil
-	}
 	return cloneSymbols(g.useIface[fn])
 }
 
 // UseIfaceMethod returns interface method demands emitted by fn.
 func (g *GlobalSummary) UseIfaceMethod(fn Symbol) []IfaceMethodDemand {
-	if g == nil {
-		return nil
-	}
 	return cloneIfaceMethodDemands(g.useIfaceMethod[fn])
 }
 
 // MethodSlots returns ABI method slots for typ.
 func (g *GlobalSummary) MethodSlots(typ Symbol) []MethodSlot {
-	if g == nil {
-		return nil
-	}
 	return cloneMethodSlots(g.methodInfo[typ])
 }
 
 // UseNamedMethod returns constant MethodByName names emitted by fn.
 func (g *GlobalSummary) UseNamedMethod(fn Symbol) []Name {
-	if g == nil {
-		return nil
-	}
 	return cloneNames(g.useNamedMethod[fn])
 }
 
 // HasReflectMethod reports whether fn triggers conservative reflection handling.
 func (g *GlobalSummary) HasReflectMethod(fn Symbol) bool {
-	if g == nil {
-		return false
-	}
 	_, ok := g.reflectMethod[fn]
 	return ok
 }
 
 type globalSummaryBuilder struct {
-	summary  *GlobalSummary
-	idByText map[string]uint32
+	summary            *GlobalSummary
+	idByText           map[string]uint32
+	seenEdge           map[[2]Symbol]struct{}
+	seenTypeChild      map[[2]Symbol]struct{}
+	seenInterfaceInfo  map[interfaceInfoKey]struct{}
+	seenUseIface       map[[2]Symbol]struct{}
+	seenUseIfaceMethod map[useIfaceMethodKey]struct{}
+	seenUseNamedMethod map[useNamedMethodKey]struct{}
 }
 
 func newGlobalSummaryBuilder() *globalSummaryBuilder {
@@ -222,7 +189,13 @@ func newGlobalSummaryBuilder() *globalSummaryBuilder {
 			useNamedMethod: make(map[Symbol][]Name),
 			reflectMethod:  make(map[Symbol]struct{}),
 		},
-		idByText: make(map[string]uint32),
+		idByText:           make(map[string]uint32),
+		seenEdge:           make(map[[2]Symbol]struct{}),
+		seenTypeChild:      make(map[[2]Symbol]struct{}),
+		seenInterfaceInfo:  make(map[interfaceInfoKey]struct{}),
+		seenUseIface:       make(map[[2]Symbol]struct{}),
+		seenUseIfaceMethod: make(map[useIfaceMethodKey]struct{}),
+		seenUseNamedMethod: make(map[useNamedMethodKey]struct{}),
 	}
 }
 
@@ -259,6 +232,60 @@ func (b *globalSummaryBuilder) addMethodSlots(typ Symbol, slots []MethodSlot) er
 	}
 	b.summary.methodInfo[typ] = cloneMethodSlots(slots)
 	return nil
+}
+
+func (b *globalSummaryBuilder) addEdge(src, dst Symbol) {
+	key := [2]Symbol{src, dst}
+	if _, ok := b.seenEdge[key]; ok {
+		return
+	}
+	b.seenEdge[key] = struct{}{}
+	b.summary.ordinaryEdges[src] = append(b.summary.ordinaryEdges[src], dst)
+}
+
+func (b *globalSummaryBuilder) addTypeChild(parent, child Symbol) {
+	key := [2]Symbol{parent, child}
+	if _, ok := b.seenTypeChild[key]; ok {
+		return
+	}
+	b.seenTypeChild[key] = struct{}{}
+	b.summary.typeChildren[parent] = append(b.summary.typeChildren[parent], child)
+}
+
+func (b *globalSummaryBuilder) addInterfaceMethod(iface Symbol, method MethodSig) {
+	key := interfaceInfoKey{Iface: iface, Sig: method}
+	if _, ok := b.seenInterfaceInfo[key]; ok {
+		return
+	}
+	b.seenInterfaceInfo[key] = struct{}{}
+	b.summary.interfaceInfo[iface] = append(b.summary.interfaceInfo[iface], method)
+}
+
+func (b *globalSummaryBuilder) addUseIface(owner, typ Symbol) {
+	key := [2]Symbol{owner, typ}
+	if _, ok := b.seenUseIface[key]; ok {
+		return
+	}
+	b.seenUseIface[key] = struct{}{}
+	b.summary.useIface[owner] = append(b.summary.useIface[owner], typ)
+}
+
+func (b *globalSummaryBuilder) addUseIfaceMethod(owner Symbol, demand IfaceMethodDemand) {
+	key := useIfaceMethodKey{Owner: owner, Demand: demand}
+	if _, ok := b.seenUseIfaceMethod[key]; ok {
+		return
+	}
+	b.seenUseIfaceMethod[key] = struct{}{}
+	b.summary.useIfaceMethod[owner] = append(b.summary.useIfaceMethod[owner], demand)
+}
+
+func (b *globalSummaryBuilder) addUseNamedMethod(owner Symbol, name Name) {
+	key := useNamedMethodKey{Owner: owner, Name: name}
+	if _, ok := b.seenUseNamedMethod[key]; ok {
+		return
+	}
+	b.seenUseNamedMethod[key] = struct{}{}
+	b.summary.useNamedMethod[owner] = append(b.summary.useNamedMethod[owner], name)
 }
 
 func (b *globalSummaryBuilder) build() *GlobalSummary {

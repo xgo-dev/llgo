@@ -54,8 +54,6 @@ func (b Builder) directTypeChildren(t types.Type) []types.Type {
 		return []types.Type{
 			abi.PublicType(t.Key()),
 			abi.PublicType(t.Elem()),
-			// Map type descriptors reference their runtime bucket type too.
-			b.Prog.abi.MapBucket(t),
 		}
 	case *types.Signature:
 		var children []types.Type
@@ -122,6 +120,9 @@ func (b Builder) recordInterfaceUse(t types.Type) {
 	if mb == nil {
 		return
 	}
+	// UseIface tracks concrete types that may provide interface method
+	// implementations; interface-to-interface conversions do not contribute
+	// concrete method slots.
 	if _, ok := types.Unalias(t).Underlying().(*types.Interface); ok {
 		return
 	}
@@ -136,13 +137,13 @@ type methodInfoRecorder struct {
 	slots   []metadata.MethodSlot
 }
 
-func (b Builder) newMethodInfoRecorder(t types.Type, n int) methodInfoRecorder {
+func (b Builder) newMethodInfoRecorder(t types.Type, n int) *methodInfoRecorder {
 	mb := b.Pkg.MetaBuilder
 	if mb == nil {
-		return methodInfoRecorder{}
+		return nil
 	}
 	typeName, _ := b.Prog.abi.TypeName(t)
-	return methodInfoRecorder{
+	return &methodInfoRecorder{
 		b:       b,
 		mb:      mb,
 		typeSym: mb.Symbol(typeName),
@@ -151,9 +152,6 @@ func (b Builder) newMethodInfoRecorder(t types.Type, n int) methodInfoRecorder {
 }
 
 func (r *methodInfoRecorder) add(method *types.Func, ftyp types.Type, ifn, tfn llvm.Value) {
-	if r.mb == nil {
-		return
-	}
 	mtypeName, _ := r.b.Prog.abi.TypeName(ftyp)
 	r.slots = append(r.slots, metadata.MethodSlot{
 		Sig: metadata.MethodSig{
@@ -166,9 +164,6 @@ func (r *methodInfoRecorder) add(method *types.Func, ftyp types.Type, ifn, tfn l
 }
 
 func (r *methodInfoRecorder) finish() {
-	if r.mb == nil {
-		return
-	}
 	r.mb.AddMethodInfo(r.typeSym, r.slots)
 }
 

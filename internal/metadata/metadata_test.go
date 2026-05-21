@@ -41,6 +41,80 @@ func TestBuilderSeparatesSymbolAndNameReferences(t *testing.T) {
 	}
 }
 
+func TestBuilderDeduplicatesFacts(t *testing.T) {
+	b := NewBuilder()
+	main := b.Symbol("main")
+	use := b.Symbol("use")
+	typ := b.Symbol("_llgo_T")
+	iface := b.Symbol("_llgo_I")
+	name := b.Name("M")
+	mtype := b.Symbol("_llgo_func")
+	sig := MethodSig{Name: name, MType: mtype}
+	demand := IfaceMethodDemand{Target: iface, Sig: sig}
+
+	for range 2 {
+		b.AddEdge(main, use)
+		b.AddTypeChild(typ, mtype)
+		b.AddIfaceEntry(iface, []MethodSig{sig})
+		b.AddUseIface(main, []Symbol{typ})
+		b.AddUseIfaceMethod(use, []IfaceMethodDemand{demand})
+		b.AddUseNamedMethod(use, []Name{name})
+	}
+
+	pm := b.Build()
+	assertSymbolGroup(t, "OrdinaryEdges", pm, pm.ForEachOrdinaryEdge, main, []Symbol{use})
+	assertSymbolGroup(t, "TypeChildren", pm, pm.ForEachTypeChild, typ, []Symbol{mtype})
+	assertSymbolGroup(t, "UseIface", pm, pm.ForEachUseIface, main, []Symbol{typ})
+
+	var ifaceMethods []MethodSig
+	pm.ForEachInterface(func(gotIface Symbol, methods []MethodSig) {
+		if gotIface == iface {
+			ifaceMethods = append(ifaceMethods, methods...)
+		}
+	})
+	if len(ifaceMethods) != 1 || ifaceMethods[0] != sig {
+		t.Fatalf("InterfaceInfo = %#v, want %#v", ifaceMethods, []MethodSig{sig})
+	}
+
+	var demands []IfaceMethodDemand
+	pm.ForEachUseIfaceMethod(func(owner Symbol, got []IfaceMethodDemand) {
+		if owner == use {
+			demands = append(demands, got...)
+		}
+	})
+	if len(demands) != 1 || demands[0] != demand {
+		t.Fatalf("UseIfaceMethod = %#v, want %#v", demands, []IfaceMethodDemand{demand})
+	}
+
+	var names []Name
+	pm.ForEachUseNamedMethod(func(owner Symbol, got []Name) {
+		if owner == use {
+			names = append(names, got...)
+		}
+	})
+	if len(names) != 1 || names[0] != name {
+		t.Fatalf("UseNamedMethod = %#v, want %#v", names, []Name{name})
+	}
+}
+
+func TestBuilderSkipsEmptyMethodInfo(t *testing.T) {
+	b := NewBuilder()
+	typ := b.Symbol("_llgo_T")
+
+	b.AddMethodInfo(typ, nil)
+
+	pm := b.Build()
+	var got []MethodSlot
+	pm.ForEachMethodInfo(func(candidate Symbol, slots []MethodSlot) {
+		if candidate == typ {
+			got = append(got, slots...)
+		}
+	})
+	if len(got) != 0 {
+		t.Fatalf("MethodInfo for empty slots = %#v, want none", got)
+	}
+}
+
 func TestFormatMetaStableOutput(t *testing.T) {
 	got := MetaString(buildFullTestMeta())
 	want := `[TypeChildren]
@@ -98,6 +172,25 @@ github.com/goplus/llgo/cl/_testmeta/interface_anonymous.use
 `
 	if got != want {
 		t.Fatalf("MetaString mismatch\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func assertSymbolGroup(t *testing.T, group string, pm *PackageMeta, visit func(func(Symbol, []Symbol)), key Symbol, want []Symbol) {
+	t.Helper()
+
+	var got []Symbol
+	visit(func(candidate Symbol, values []Symbol) {
+		if candidate == key {
+			got = append(got, values...)
+		}
+	})
+	if len(got) != len(want) {
+		t.Fatalf("%s len = %d (%#v), want %d (%#v)", group, len(got), got, len(want), want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("%s = %#v, want %#v", group, got, want)
+		}
 	}
 }
 

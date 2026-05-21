@@ -455,9 +455,13 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 		values = append(values, ifn)
 		values = append(values, tfn)
 		fields[i] = llvm.ConstNamedStruct(ft.ll, values)
-		methodInfo.add(obj, ftyp, ifn, tfn)
+		if methodInfo != nil {
+			methodInfo.add(obj, ftyp, ifn, tfn)
+		}
 	}
-	methodInfo.finish()
+	if methodInfo != nil {
+		methodInfo.finish()
+	}
 	return llvm.ConstArray(ft.ll, fields)
 }
 
