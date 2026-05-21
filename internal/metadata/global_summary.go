@@ -125,37 +125,37 @@ func (g *GlobalSummary) ConcreteTypes() []Symbol {
 
 // OrdinaryEdges returns direct ordinary references from sym.
 func (g *GlobalSummary) OrdinaryEdges(sym Symbol) []Symbol {
-	return cloneSymbols(g.ordinaryEdges[sym])
+	return g.ordinaryEdges[sym]
 }
 
 // TypeChildren returns child type symbols for typ.
 func (g *GlobalSummary) TypeChildren(typ Symbol) []Symbol {
-	return cloneSymbols(g.typeChildren[typ])
+	return g.typeChildren[typ]
 }
 
 // InterfaceMethods returns the method set for iface.
 func (g *GlobalSummary) InterfaceMethods(iface Symbol) []MethodSig {
-	return cloneMethodSigs(g.interfaceInfo[iface])
+	return g.interfaceInfo[iface]
 }
 
 // UseIface returns concrete types that enter interface semantics from fn.
 func (g *GlobalSummary) UseIface(fn Symbol) []Symbol {
-	return cloneSymbols(g.useIface[fn])
+	return g.useIface[fn]
 }
 
 // UseIfaceMethod returns interface method demands emitted by fn.
 func (g *GlobalSummary) UseIfaceMethod(fn Symbol) []IfaceMethodDemand {
-	return cloneIfaceMethodDemands(g.useIfaceMethod[fn])
+	return g.useIfaceMethod[fn]
 }
 
 // MethodSlots returns ABI method slots for typ.
 func (g *GlobalSummary) MethodSlots(typ Symbol) []MethodSlot {
-	return cloneMethodSlots(g.methodInfo[typ])
+	return g.methodInfo[typ]
 }
 
 // UseNamedMethod returns constant MethodByName names emitted by fn.
 func (g *GlobalSummary) UseNamedMethod(fn Symbol) []Name {
-	return cloneNames(g.useNamedMethod[fn])
+	return g.useNamedMethod[fn]
 }
 
 // HasReflectMethod reports whether fn triggers conservative reflection handling.
@@ -230,7 +230,7 @@ func (b *globalSummaryBuilder) addMethodSlots(typ Symbol, slots []MethodSlot) er
 		}
 		return fmt.Errorf("conflicting MethodInfo for %s", b.summary.SymbolName(typ))
 	}
-	b.summary.methodInfo[typ] = cloneMethodSlots(slots)
+	b.summary.methodInfo[typ] = slots
 	return nil
 }
 

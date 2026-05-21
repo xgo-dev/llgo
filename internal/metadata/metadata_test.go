@@ -41,6 +41,17 @@ func TestBuilderSeparatesSymbolAndNameReferences(t *testing.T) {
 	}
 }
 
+func TestPackageMetaNameLookupsReturnEmptyStringForOutOfRangeIDs(t *testing.T) {
+	pm := NewPackageMeta([]string{"main"})
+
+	if got := pm.SymbolName(Symbol(1)); got != "" {
+		t.Fatalf("SymbolName(out-of-range) = %q, want empty string", got)
+	}
+	if got := pm.Name(Name(1)); got != "" {
+		t.Fatalf("Name(out-of-range) = %q, want empty string", got)
+	}
+}
+
 func TestBuilderDeduplicatesFacts(t *testing.T) {
 	b := NewBuilder()
 	main := b.Symbol("main")
@@ -168,6 +179,26 @@ github.com/goplus/llgo/cl/_testmeta/interface_anonymous.use:
 
 [ReflectMethod]
 github.com/goplus/llgo/cl/_testmeta/interface_anonymous.use
+
+`
+	if got != want {
+		t.Fatalf("MetaString mismatch\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestFormatMetaPrintsUnknownSymbolAndNameReferences(t *testing.T) {
+	pm := NewPackageMeta([]string{"owner"})
+	pm.useIface[Symbol(0)] = []Symbol{Symbol(2)}
+	pm.useNamedMethod[Symbol(0)] = []Name{Name(3)}
+
+	got := MetaString(pm)
+	want := `[UseIface]
+owner:
+    ?2
+
+[UseNamedMethod]
+owner:
+    ?3
 
 `
 	if got != want {

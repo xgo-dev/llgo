@@ -56,17 +56,9 @@ func NewPackageMeta(stringTable []string) *PackageMeta {
 	}
 }
 
-// StringTable returns a copy of the package-local string table.
-func (pm *PackageMeta) StringTable() []string {
-	if pm == nil {
-		return nil
-	}
-	return append([]string(nil), pm.stringTable...)
-}
-
 // SymbolName returns the string referenced by a Symbol.
 func (pm *PackageMeta) SymbolName(sym Symbol) string {
-	if pm == nil || int(sym) >= len(pm.stringTable) {
+	if int(sym) >= len(pm.stringTable) {
 		return ""
 	}
 	return pm.stringTable[sym]
@@ -74,7 +66,7 @@ func (pm *PackageMeta) SymbolName(sym Symbol) string {
 
 // Name returns the string referenced by a Name.
 func (pm *PackageMeta) Name(ref Name) string {
-	if pm == nil || int(ref) >= len(pm.stringTable) {
+	if int(ref) >= len(pm.stringTable) {
 		return ""
 	}
 	return pm.stringTable[ref]
@@ -82,100 +74,56 @@ func (pm *PackageMeta) Name(ref Name) string {
 
 // ForEachOrdinaryEdge visits each ordinary reachability edge group.
 func (pm *PackageMeta) ForEachOrdinaryEdge(fn func(src Symbol, dsts []Symbol)) {
-	if pm == nil {
-		return
-	}
 	for src, dsts := range pm.ordinaryEdges {
-		fn(src, cloneSymbols(dsts))
+		fn(src, dsts)
 	}
 }
 
 // ForEachTypeChild visits each type-child edge group.
 func (pm *PackageMeta) ForEachTypeChild(fn func(parent Symbol, children []Symbol)) {
-	if pm == nil {
-		return
-	}
 	for parent, children := range pm.typeChildren {
-		fn(parent, cloneSymbols(children))
+		fn(parent, children)
 	}
 }
 
 // ForEachInterface visits each interface method set.
 func (pm *PackageMeta) ForEachInterface(fn func(iface Symbol, methods []MethodSig)) {
-	if pm == nil {
-		return
-	}
 	for iface, methods := range pm.interfaceInfo {
-		fn(iface, cloneMethodSigs(methods))
+		fn(iface, methods)
 	}
 }
 
 // ForEachUseIface visits each function's concrete types used as interfaces.
 func (pm *PackageMeta) ForEachUseIface(fn func(owner Symbol, types []Symbol)) {
-	if pm == nil {
-		return
-	}
 	for owner, types := range pm.useIface {
-		fn(owner, cloneSymbols(types))
+		fn(owner, types)
 	}
 }
 
 // ForEachUseIfaceMethod visits each function's interface method demands.
 func (pm *PackageMeta) ForEachUseIfaceMethod(fn func(owner Symbol, demands []IfaceMethodDemand)) {
-	if pm == nil {
-		return
-	}
 	for owner, demands := range pm.useIfaceMethod {
-		fn(owner, cloneIfaceMethodDemands(demands))
+		fn(owner, demands)
 	}
 }
 
 // ForEachMethodInfo visits each concrete type's method slots.
 func (pm *PackageMeta) ForEachMethodInfo(fn func(typ Symbol, slots []MethodSlot)) {
-	if pm == nil {
-		return
-	}
 	for typ, slots := range pm.methodInfo {
-		fn(typ, cloneMethodSlots(slots))
+		fn(typ, slots)
 	}
 }
 
 // ForEachUseNamedMethod visits each function's constant MethodByName names.
 func (pm *PackageMeta) ForEachUseNamedMethod(fn func(owner Symbol, names []Name)) {
-	if pm == nil {
-		return
-	}
 	for owner, names := range pm.useNamedMethod {
-		fn(owner, cloneNames(names))
+		fn(owner, names)
 	}
 }
 
 // ForEachReflectMethod visits each function that needs conservative reflection handling.
 func (pm *PackageMeta) ForEachReflectMethod(fn func(owner Symbol)) {
-	if pm == nil {
-		return
-	}
 	for owner := range pm.reflectMethod {
 		fn(owner)
 	}
-}
-
-func cloneSymbols(in []Symbol) []Symbol {
-	return append([]Symbol(nil), in...)
-}
-
-func cloneNames(in []Name) []Name {
-	return append([]Name(nil), in...)
-}
-
-func cloneMethodSigs(in []MethodSig) []MethodSig {
-	return append([]MethodSig(nil), in...)
-}
-
-func cloneIfaceMethodDemands(in []IfaceMethodDemand) []IfaceMethodDemand {
-	return append([]IfaceMethodDemand(nil), in...)
-}
-
-func cloneMethodSlots(in []MethodSlot) []MethodSlot {
-	return append([]MethodSlot(nil), in...)
 }

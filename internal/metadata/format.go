@@ -9,10 +9,6 @@ import (
 
 // FormatMeta writes a stable human-readable representation for tests.
 func FormatMeta(w io.Writer, pm *PackageMeta) {
-	if pm == nil {
-		return
-	}
-
 	sym := func(s Symbol) string {
 		if int(s) < len(pm.stringTable) {
 			return pm.stringTable[s]

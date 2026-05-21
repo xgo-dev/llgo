@@ -358,7 +358,9 @@ func withModuleCapture(conf *build.Config, pkgDir string) (*build.Config, *strin
 			return filepath.Dir(file) == pkgDir
 		}) {
 			module = pkg.LPkg.String()
-			meta = metadata.MetaString(pkg.Meta)
+			if pkg.Meta != nil {
+				meta = metadata.MetaString(pkg.Meta)
+			}
 		}
 	}
 	return &localConf, &module, &meta

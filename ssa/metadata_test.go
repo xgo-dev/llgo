@@ -342,6 +342,40 @@ func TestMethodInfoRecorderSkipsWhenMetaBuilderDisabled(t *testing.T) {
 	}
 }
 
+func TestAbiUncommonMethodsRecordsMethodInfoWhenMetaBuilderEnabled(t *testing.T) {
+	b, mb := newMetadataTestBuilder(t)
+	recvType, sig := newMetadataMethodType()
+	mset := types.NewMethodSet(recvType)
+	if mset.Len() == 0 {
+		t.Fatal("test setup: method set should not be empty")
+	}
+
+	if got := b.abiUncommonMethods(recvType, mset); got.IsNil() {
+		t.Fatal("abiUncommonMethods returned nil")
+	}
+
+	meta := mb.Build()
+	var got []metadata.MethodSlot
+	meta.ForEachMethodInfo(func(typ metadata.Symbol, slots []metadata.MethodSlot) {
+		if meta.SymbolName(typ) == "_llgo_foo.T" {
+			got = append(got, slots...)
+		}
+	})
+	if len(got) != 1 {
+		t.Fatalf("MethodInfo slot count = %d (%#v), want 1", len(got), got)
+	}
+	wantMType, _ := b.Prog.abi.TypeName(funcType(b.Prog, sig))
+	if meta.Name(got[0].Sig.Name) != "M" {
+		t.Fatalf("MethodInfo name = %q, want M", meta.Name(got[0].Sig.Name))
+	}
+	if meta.SymbolName(got[0].Sig.MType) != wantMType {
+		t.Fatalf("MethodInfo mtype = %q, want %q", meta.SymbolName(got[0].Sig.MType), wantMType)
+	}
+	if meta.SymbolName(got[0].IFn) == "" || meta.SymbolName(got[0].TFn) == "" {
+		t.Fatalf("MethodInfo function symbols should be recorded: %#v", got[0])
+	}
+}
+
 func typeNames(t *testing.T, b Builder, typs []types.Type) []string {
 	t.Helper()
 
@@ -351,4 +385,29 @@ func typeNames(t *testing.T, b Builder, typs []types.Type) []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+func newMetadataDisabledTestBuilder(t *testing.T) Builder {
+	t.Helper()
+
+	prog := NewProgram(nil)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("foo", "foo")
+	fn := pkg.NewFunc("foo.main", NoArgsNoRet, InGo)
+	return fn.MakeBody(1)
+}
+
+func newMetadataMethodType() (*types.Named, *types.Signature) {
+	typePkg := types.NewPackage("foo", "foo")
+	recvType := types.NewNamed(types.NewTypeName(token.NoPos, typePkg, "T", nil), types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, typePkg, "", recvType)
+	sig := types.NewSignatureType(recv, nil, nil, nil, nil, false)
+	recvType.AddMethod(types.NewFunc(token.NoPos, typePkg, "M", sig))
+	return recvType, sig
 }
