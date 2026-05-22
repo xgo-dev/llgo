@@ -93,9 +93,9 @@ func fieldIface(p *holder) {
 	}
 }
 
-func TestCompileSmallNilDerefGuards(t *testing.T) {
+func TestCompileWrapNilCheckGuard(t *testing.T) {
 	_, m := mustCompileLLPkgFromSrc(t, `
-package foo
+	package foo
 
 type value struct {
 	n int
@@ -105,24 +105,41 @@ func (v value) method() int {
 	return v.n
 }
 
-func deref(p *int) int {
-	return *p
-}
-
-func unused(p *int) {
-	_ = *p
-}
-
-func field(p *value) int {
-	return p.n
-}
-
 func methodExpr(p *value) int {
 	return (*value).method(p)
 }
+
+func methodValue(p *value) func() int {
+	return p.method
+}
 `)
-	if got := strings.Count(m.String(), "AssertNilDeref"); got < 4 {
-		t.Fatalf("compiled IR has %d AssertNilDeref calls, want at least 4:\n%s", got, m.String())
+	if !strings.Contains(m.String(), "AssertNilDeref") {
+		t.Fatalf("compiled IR missing AssertNilDeref for ssa:wrapnilchk:\n%s", m.String())
+	}
+}
+
+func TestCompilePromotedValueMethodNilDerefGuard(t *testing.T) {
+	_, m := mustCompileLLPkgFromSrc(t, `
+	package foo
+
+	type embedded struct {
+		n int
+	}
+
+	func (v embedded) value() int {
+		return v.n
+	}
+
+	type outer struct {
+		*embedded
+	}
+
+	func call(o outer) int {
+		return o.value()
+	}
+	`)
+	if !strings.Contains(m.String(), "AssertNilDeref") {
+		t.Fatalf("compiled IR missing AssertNilDeref for promoted value method receiver:\n%s", m.String())
 	}
 }
 

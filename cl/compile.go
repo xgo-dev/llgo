@@ -973,16 +973,18 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		ret = b.BinOp(v.Op, x, y)
 	case *ssa.UnOp:
 		if v.Op == token.MUL {
-			if skipUnusedArrayDeref(v) {
-				return
-			}
 			if refs := v.Referrers(); refs != nil && len(*refs) == 0 {
 				if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil {
-					x := p.compileValue(b, v.X)
-					p.assertNilDerefBase(b, v.X)
-					b.AssertNilDeref(x)
-					return
+					if p.isLargeNonPointerValue(t) {
+						x := p.compileValue(b, v.X)
+						p.assertNilDerefBase(b, v.X)
+						b.AssertNilDeref(x)
+						return
+					}
 				}
+			}
+			if skipUnusedArrayDeref(v) {
+				return
 			}
 			if refs := v.Referrers(); refs != nil && len(*refs) == 1 {
 				if _, ok := (*refs)[0].(*ssa.MakeInterface); ok {
@@ -1012,10 +1014,6 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		if v.Op == token.ARROW {
 			ret = b.Recv(x, v.CommaOk)
 		} else {
-			if v.Op == token.MUL {
-				p.assertNilDerefBase(b, v.X)
-				b.AssertNilDeref(x)
-			}
 			ret = b.UnOp(v.Op, x)
 		}
 	case *ssa.ChangeType:

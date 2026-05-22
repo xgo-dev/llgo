@@ -846,6 +846,49 @@ func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, ds *explicitDeferS
 	return b.Do(act, fn, buildCall, args...)
 }
 
+func isPointerGoType(t types.Type) bool {
+	_, ok := types.Unalias(t).Underlying().(*types.Pointer)
+	return ok
+}
+
+func isKnownNonNilAddr(v ssa.Value) bool {
+	switch v := v.(type) {
+	case *ssa.Alloc, *ssa.Global:
+		return true
+	case *ssa.FieldAddr:
+		return isKnownNonNilAddr(v.X)
+	case *ssa.IndexAddr:
+		return isKnownNonNilAddr(v.X)
+	}
+	return false
+}
+
+func isWrapNilCheckCall(v ssa.Value) bool {
+	call, ok := v.(*ssa.Call)
+	if !ok {
+		return false
+	}
+	builtin, ok := call.Call.Value.(*ssa.Builtin)
+	return ok && builtin.Name() == "ssa:wrapnilchk"
+}
+
+func (p *context) assertValueReceiverNilDeref(b llssa.Builder, fn *ssa.Function, args []ssa.Value) {
+	if fn == nil || len(args) == 0 {
+		return
+	}
+	recv := fn.Signature.Recv()
+	if recv == nil || isPointerGoType(recv.Type()) {
+		return
+	}
+	arg, ok := args[0].(*ssa.UnOp)
+	if !ok || arg.Op != token.MUL || isKnownNonNilAddr(arg.X) || isWrapNilCheckCall(arg.X) {
+		return
+	}
+	ptr := p.compileValue(b, arg.X)
+	p.assertNilDerefBase(b, arg.X)
+	b.AssertNilDeref(ptr)
+}
+
 func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallCommon, ds *explicitDeferStack) (ret llssa.Expr) {
 	cv := call.Value
 	if mthd := call.Method; mthd != nil {
@@ -884,6 +927,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		ret = p.emitDo(b, act, ds, llssa.Builtin(fn), llssa.Builder.Call, args...)
 	case *ssa.Function:
 		aFn, pyFn, ftype := p.compileFunction(cv)
+		p.assertValueReceiverNilDeref(b, cv, args)
 		// TODO(xsw): check ca != llssa.Call
 		switch ftype {
 		case cFunc:
