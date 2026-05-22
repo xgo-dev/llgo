@@ -1261,9 +1261,15 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 }
 
 func (p *context) assertNilDerefAddr(b llssa.Builder, addr ssa.Value, ptr llssa.Expr) {
-	switch addr.(type) {
-	case *ssa.FieldAddr, *ssa.IndexAddr:
-		return
+	switch addr := addr.(type) {
+	case *ssa.FieldAddr:
+		base := p.compileValue(b, addr.X)
+		p.assertNilDerefAddr(b, addr.X, base)
+	case *ssa.IndexAddr:
+		if _, ok := types.Unalias(addr.X.Type()).Underlying().(*types.Pointer); ok {
+			base := p.compileValue(b, addr.X)
+			p.assertNilDerefAddr(b, addr.X, base)
+		}
 	default:
 		b.AssertNilDeref(ptr)
 	}

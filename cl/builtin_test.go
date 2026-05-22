@@ -91,6 +91,11 @@ func fieldIface(p *holder) {
 			t.Fatalf("compiled IR missing %s for large nil-deref guard path:\n%s", want, ir)
 		}
 	}
+
+	fieldIR := mustNamedFunction(t, m, "foo.fieldIface").String()
+	if !strings.Contains(fieldIR, "icmp eq ptr %0, null") {
+		t.Fatalf("large field-to-interface should nil-check the base pointer, got:\n%s", fieldIR)
+	}
 }
 
 func TestToBackground(t *testing.T) {
