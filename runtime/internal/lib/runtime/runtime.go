@@ -49,6 +49,22 @@ func Goexit() {
 func KeepAlive(x any) {
 }
 
+//go:linkname c_clobber_pointer_regs C.llgo_clobber_pointer_regs
+func c_clobber_pointer_regs(a0, a1, a2, a3, a4, a5, a6, a7 uintptr)
+
+//go:linkname c_clear_stack_ptr C.llgo_clear_stack_ptr
+func c_clear_stack_ptr(target uintptr)
+
+//go:noinline
+func ClobberPointerRegs() {
+	c_clobber_pointer_regs(0, 0, 0, 0, 0, 0, 0, 0)
+}
+
+//go:noinline
+func ClearStackPointer(target unsafe.Pointer) {
+	c_clear_stack_ptr(uintptr(target))
+}
+
 //go:linkname c_write C.write
 func c_write(fd c.Int, p unsafe.Pointer, n c.SizeT) c.SsizeT
 

@@ -103,6 +103,9 @@ func GetGCNo() uintptr
 //go:linkname GetHeapUsageSafe C.GC_get_heap_usage_safe
 func GetHeapUsageSafe(heapSize, freeBytes, unmappedBytes, bytesSinceGC, totalBytes *uintptr)
 
+//go:linkname ClearStack C.GC_clear_stack
+func ClearStack(arg c.Pointer) c.Pointer
+
 //go:linkname GetMemoryUse C.GC_get_memory_use
 func GetMemoryUse() uintptr
 
