@@ -2747,16 +2747,6 @@ xfails:
   - version: go1.24
     platform: darwin/arm64
     directive: run
-    case: inline_caller.go
-    reason: go1.24 goroot ci-mode run failure on darwin/arm64
-  - version: go1.24
-    platform: darwin/arm64
-    directive: run
-    case: inline_callers.go
-    reason: go1.24 goroot ci-mode run failure on darwin/arm64
-  - version: go1.24
-    platform: darwin/arm64
-    directive: run
     case: maymorestack.go
     reason: go1.24 goroot ci-mode run failure on darwin/arm64
   - version: go1.25
