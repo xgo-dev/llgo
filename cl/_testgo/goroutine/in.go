@@ -5,14 +5,14 @@ package main
 func main() {
 	// CHECK: call ptr @"{{.*}}AllocZ"(i64 1)
 	// CHECK: store i1 false, ptr %0, align 1
-	// CHECK: call ptr @"{{.*}}AllocU"(i64 16)
+	// CHECK: call ptr @"{{.*}}AllocRoot"(i64 16)
 	// CHECK: call i32 @"{{.*}}CreateThread"(ptr %3, ptr null, ptr @"{{.*}}goroutine._llgo_routine$1", ptr %1)
 	done := false
 	go println("hello")
 	go func(s string) {
 		// CHECK: call ptr @"{{.*}}AllocU"(i64 8)
 		// CHECK: { ptr @"{{.*}}goroutine.main$1", ptr undef }
-		// CHECK: call ptr @"{{.*}}AllocU"(i64 32)
+		// CHECK: call ptr @"{{.*}}AllocRoot"(i64 32)
 		// CHECK: call i32 @"{{.*}}CreateThread"(ptr %11, ptr null, ptr @"{{.*}}goroutine._llgo_routine$2", ptr %8)
 		// CHECK: call void @"{{.*}}PrintString"(%"{{.*}}String" { ptr @2, i64 1 })
 		// CHECK: ret void
@@ -38,6 +38,7 @@ func main() {
 // CHECK-NEXT:   %2 = extractvalue { %"{{.*}}String" } %1, 0
 // CHECK-NEXT:   call void @"{{.*}}PrintString"(%"{{.*}}String" %2)
 // CHECK-NEXT:   call void @"{{.*}}PrintByte"(i8 10)
+// CHECK-NEXT:   call void @"{{.*}}FreeRoot"(ptr %0)
 // CHECK-NEXT:   ret ptr null
 
 // CHECK-LABEL: define ptr @"{{.*}}goroutine._llgo_routine$2"(ptr %0){{.*}} {
@@ -48,4 +49,5 @@ func main() {
 // CHECK-NEXT:   %4 = extractvalue { ptr, ptr } %2, 1
 // CHECK-NEXT:   %5 = extractvalue { ptr, ptr } %2, 0
 // CHECK-NEXT:   call void %5(ptr %4, %"{{.*}}String" %3)
+// CHECK-NEXT:   call void @"{{.*}}FreeRoot"(ptr %0)
 // CHECK-NEXT:   ret ptr null
