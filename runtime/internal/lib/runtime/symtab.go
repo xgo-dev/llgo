@@ -5,7 +5,6 @@
 package runtime
 
 import (
-	"strings"
 	"unsafe"
 
 	c "github.com/goplus/llgo/runtime/internal/clite"
@@ -252,7 +251,7 @@ func funcForPC(pc uintptr) *Func {
 
 func normalizeLLGoSymbolName(name string) string {
 	const commandLineArguments = "command-line-arguments."
-	if strings.HasPrefix(name, commandLineArguments) {
+	if len(name) >= len(commandLineArguments) && name[:len(commandLineArguments)] == commandLineArguments {
 		return "main." + name[len(commandLineArguments):]
 	}
 	return name
