@@ -1093,6 +1093,12 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		ret = p.emitDo(b, act, ds, llssa.Builtin(fn), llssa.Builder.Call, args...)
 	case *ssa.Function:
 		aFn, pyFn, ftype := p.compileFunction(cv)
+		if p.isRuntimeSetFinalizerCall(call) && len(args) == 2 && act == llssa.Call && ds == nil {
+			finalizer := p.compileLateValue(b, args[1])
+			obj := p.compileLateValue(b, args[0])
+			ret = p.emitDo(b, act, nil, aFn.Expr, llssa.Builder.Call, obj, finalizer)
+			return
+		}
 		// TODO(xsw): check ca != llssa.Call
 		switch ftype {
 		case cFunc:

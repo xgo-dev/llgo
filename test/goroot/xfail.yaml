@@ -2073,10 +2073,6 @@ xfails:
     reason: go1.26 goroot ci-mode runoutput failure on linux/amd64
   - platform: darwin/arm64
     directive: run
-    case: deferfin.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: heapsampling.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
@@ -2098,14 +2094,6 @@ xfails:
   - platform: darwin/arm64
     directive: run
     case: recover4.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: stackobj.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: stackobj3.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
