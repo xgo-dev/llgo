@@ -853,6 +853,54 @@ func (p *context) sourceLine(filename string, line int) (string, bool) {
 	return lines[line-1], true
 }
 
+func (p *context) shouldTrackCallerFrames() bool {
+	if p == nil || p.pkg == nil || p.fn == nil {
+		return false
+	}
+	pkgPath := p.pkg.Path()
+	return pkgPath != llssa.PkgRuntime &&
+		pkgPath != "runtime" &&
+		!strings.HasPrefix(pkgPath, "github.com/goplus/llgo/runtime/internal/")
+}
+
+func (p *context) pushCallerFrame(b llssa.Builder, fn *ssa.Function) {
+	if fn == nil {
+		return
+	}
+	pos := p.fset.Position(fn.Pos())
+	entry := b.Convert(p.prog.Uintptr(), p.fn.Expr)
+	b.Call(
+		p.pkg.RuntimeFunc("PushCallerFrame"),
+		entry,
+		b.Str(runtimeFrameName(p.fn.Name())),
+		b.Str(pos.Filename),
+		p.prog.IntVal(uint64(pos.Line), p.prog.Int()),
+	)
+}
+
+func (p *context) setCallerLine(b llssa.Builder, pos token.Pos) {
+	if !p.shouldTrackCallerFrames() {
+		return
+	}
+	line := p.fset.Position(pos).Line
+	if line <= 0 {
+		return
+	}
+	b.Call(p.pkg.RuntimeFunc("SetCallerLine"), p.prog.IntVal(uint64(line), p.prog.Int()))
+}
+
+func (p *context) popCallerFrame(b llssa.Builder) {
+	b.Call(p.pkg.RuntimeFunc("PopCallerFrame"))
+}
+
+func runtimeFrameName(name string) string {
+	const commandLineArguments = "command-line-arguments."
+	if strings.HasPrefix(name, commandLineArguments) {
+		return "main." + name[len(commandLineArguments):]
+	}
+	return name
+}
+
 // -----------------------------------------------------------------------------
 
 type explicitDeferStack struct {
@@ -892,7 +940,8 @@ func (p *context) deferStackOwner(fn *ssa.Function) llssa.Function {
 	return owner
 }
 
-func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, ds *explicitDeferStack, fn llssa.Expr, buildCall func(llssa.Builder, llssa.Expr, ...llssa.Expr) llssa.Expr, args ...llssa.Expr) llssa.Expr {
+func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, pos token.Pos, ds *explicitDeferStack, fn llssa.Expr, buildCall func(llssa.Builder, llssa.Expr, ...llssa.Expr) llssa.Expr, args ...llssa.Expr) llssa.Expr {
+	p.setCallerLine(b, pos)
 	if ds != nil {
 		b.DeferTo(ds.owner, ds.stack, fn, buildCall, args...)
 		return llssa.Nil
@@ -1059,7 +1108,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			hasVArg = fnHasVArg
 		}
 		args := p.compileValues(b, call.Args, hasVArg)
-		ret = p.emitDo(b, act, ds, fn, llssa.Builder.Call, args...)
+		ret = p.emitDo(b, act, call.Pos(), ds, fn, llssa.Builder.Call, args...)
 		b.EmitReflectTypeMethodCheckedLoad(ret, reflectCheck)
 		return
 	}
@@ -1090,7 +1139,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			}
 		}
 		args := p.compileValues(b, args, kind)
-		ret = p.emitDo(b, act, ds, llssa.Builtin(fn), llssa.Builder.Call, args...)
+		ret = p.emitDo(b, act, call.Pos(), ds, llssa.Builtin(fn), llssa.Builder.Call, args...)
 	case *ssa.Function:
 		aFn, pyFn, ftype := p.compileFunction(cv)
 		// TODO(xsw): check ca != llssa.Call
@@ -1099,13 +1148,13 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			p.inCFunc = true
 			args := p.compileValues(b, args, kind)
 			p.inCFunc = false
-			ret = p.emitDo(b, act, ds, aFn.Expr, llssa.Builder.Call, args...)
+			ret = p.emitDo(b, act, call.Pos(), ds, aFn.Expr, llssa.Builder.Call, args...)
 		case goFunc:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, aFn.Expr, llssa.Builder.Call, args...)
+			ret = p.emitDo(b, act, call.Pos(), ds, aFn.Expr, llssa.Builder.Call, args...)
 		case pyFunc:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, pyFn.Expr, llssa.Builder.Call, args...)
+			ret = p.emitDo(b, act, call.Pos(), ds, pyFn.Expr, llssa.Builder.Call, args...)
 		case llgoPyList:
 			args := p.compileValues(b, args, fnHasVArg)
 			ret = b.PyList(args...)
@@ -1179,33 +1228,33 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			b.Unreachable()
 		case llgoAtomicLoad:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call.Pos(), ds, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return p.atomicLoad(b, args)
 			}, args...)
 		case llgoAtomicStore:
 			args := p.compileValues(b, args, kind)
-			p.emitDo(b, act, ds, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			p.emitDo(b, act, call.Pos(), ds, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return p.atomicStore(b, args)
 			}, args...)
 		case llgoAtomicCmpXchg:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call.Pos(), ds, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return p.atomicCmpXchg(b, args)
 			}, args...)
 		case llgoAtomicCmpXchgOK:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call.Pos(), ds, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return p.atomicCmpXchgOK(b, args)
 			}, args...)
 		case llgoAtomicAddReturnNew:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call.Pos(), ds, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return b.BinOp(token.ADD, p.atomic(b, llssa.OpAdd, args), args[1])
 			}, args...)
 		default:
 			if ftype >= llgoAtomicOpBase && ftype <= llgoAtomicOpLast {
 				args := p.compileValues(b, args, kind)
-				ret = p.emitDo(b, act, ds, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+				ret = p.emitDo(b, act, call.Pos(), ds, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 					return p.atomic(b, llssa.AtomicOp(ftype-llgoAtomicOpBase), args)
 				}, args...)
 			} else {
@@ -1215,7 +1264,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 	default:
 		fn := p.compileValue(b, cv)
 		args := p.compileValues(b, args, kind)
-		ret = p.emitDo(b, act, ds, fn, llssa.Builder.Call, args...)
+		ret = p.emitDo(b, act, call.Pos(), ds, fn, llssa.Builder.Call, args...)
 	}
 	return
 }
