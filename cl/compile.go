@@ -973,21 +973,11 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		ret = b.BinOp(v.Op, x, y)
 	case *ssa.UnOp:
 		if v.Op == token.MUL {
+			if skipUnusedArrayDeref(v) {
+				return
+			}
 			if refs := v.Referrers(); refs != nil && len(*refs) == 0 {
 				if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil {
-					if p.isLargeNonPointerValue(t) {
-						x := p.compileValue(b, v.X)
-						p.assertNilDerefBase(b, v.X)
-						b.AssertNilDeref(x)
-						return
-					}
-				}
-				if skipUnusedArrayDeref(v) {
-					return
-				}
-				if _, ok := types.Unalias(v.Type()).Underlying().(*types.Slice); ok {
-					// Zero-length slice-to-array conversions can leave only
-					// an unused slice deref; preserve its required nil check.
 					x := p.compileValue(b, v.X)
 					p.assertNilDerefBase(b, v.X)
 					b.AssertNilDeref(x)
@@ -1023,9 +1013,8 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			ret = b.Recv(x, v.CommaOk)
 		} else {
 			if v.Op == token.MUL {
-				if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil && p.prog.SizeOf(t) == 0 {
-					p.assertNilDerefBase(b, v.X)
-				}
+				p.assertNilDerefBase(b, v.X)
+				b.AssertNilDeref(x)
 			}
 			ret = b.UnOp(v.Op, x)
 		}
@@ -1196,6 +1185,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 
 func (p *context) assertNilDerefBase(b llssa.Builder, addr ssa.Value) {
 	if field, ok := addr.(*ssa.FieldAddr); ok {
+		p.assertNilDerefBase(b, field.X)
 		base := p.compileValue(b, field.X)
 		b.AssertNilDeref(base)
 	}
