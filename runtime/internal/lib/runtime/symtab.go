@@ -9,6 +9,7 @@ import (
 
 	c "github.com/goplus/llgo/runtime/internal/clite"
 	clitedebug "github.com/goplus/llgo/runtime/internal/clite/debug"
+	llrt "github.com/goplus/llgo/runtime/internal/runtime"
 )
 
 // Frames may be used to get function/file/line information for a
@@ -118,6 +119,16 @@ func (ci *Frames) Next() (frame Frame, more bool) {
 			pc, ci.nextPC = ci.nextPC, 0
 		} else {
 			pc, ci.callers = ci.callers[0], ci.callers[1:]
+		}
+		if fn, line, ok := llrt.MemProfileSyntheticFrame(pc); ok {
+			ci.frames = append(ci.frames, Frame{
+				PC:        pc,
+				Function:  fn,
+				Line:      line,
+				startLine: line,
+				Entry:     pc,
+			})
+			continue
 		}
 		info := &clitedebug.Info{}
 		if clitedebug.Addrinfo(unsafe.Pointer(pc), info) == 0 {
