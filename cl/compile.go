@@ -177,6 +177,7 @@ type context struct {
 	anonDefers            map[*ssa.Function]bool
 	paramDIVars           map[*types.Var]llssa.DIVar
 	noInlineForMemProfile bool
+	memProfileInstrument  bool
 
 	patches          Patches
 	blkInfos         []blocks.Info
@@ -442,6 +443,14 @@ func (p *context) applyNoInline(fn llssa.Function) {
 	}
 }
 
+func memProfileFunctionName(name string) string {
+	const commandLineArguments = "command-line-arguments."
+	if strings.HasPrefix(name, commandLineArguments) {
+		return "main." + name[len(commandLineArguments):]
+	}
+	return name
+}
+
 func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Function, llssa.PyObjRef, int) {
 	pkgTypes, name, ftype := p.funcName(f)
 	if ftype != goFunc {
@@ -507,13 +516,15 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		}
 		dbgEnabled := enableDbg && (f == nil || f.Origin() == nil)
 		dbgSymsEnabled := enableDbgSyms && (f == nil || f.Origin() == nil)
+		instrumentMemProfile := p.noInlineForMemProfile && !isCgo
 		p.inits = append(p.inits, func() {
-			oldFn, oldGoFn, oldMethodNilDerefChecks := p.fn, p.goFn, p.methodNilDerefChecks
+			oldFn, oldGoFn, oldMethodNilDerefChecks, oldMemProfileInstrument := p.fn, p.goFn, p.methodNilDerefChecks, p.memProfileInstrument
 			p.fn = fn
 			p.goFn = f
+			p.memProfileInstrument = instrumentMemProfile
 			p.state = state // restore pkgState when compiling funcBody
 			defer func() {
-				p.fn, p.goFn, p.methodNilDerefChecks = oldFn, oldGoFn, oldMethodNilDerefChecks
+				p.fn, p.goFn, p.methodNilDerefChecks, p.memProfileInstrument = oldFn, oldGoFn, oldMethodNilDerefChecks, oldMemProfileInstrument
 			}()
 			p.phis = nil
 			if dbgSymsEnabled {
@@ -635,6 +646,9 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 	var instrs = block.Instrs[n:]
 	var ret = fn.Block(block.Index)
 	b.SetBlock(ret)
+	if block.Index == 0 && p.memProfileInstrument {
+		b.MemProfileEnter(memProfileFunctionName(fn.Name()))
+	}
 	if block.Index == 0 && enableCallTracing && !strings.HasPrefix(fn.Name(), "github.com/goplus/llgo/runtime/internal/runtime.Print") {
 		b.Printf("call " + fn.Name() + "\n\x00")
 	}
@@ -1390,6 +1404,9 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		}
 		if p.returnNeedsImplicitRunDefers(v) {
 			b.RunDefers()
+		}
+		if p.memProfileInstrument {
+			b.MemProfileExit()
 		}
 		b.Return(results...)
 	case *ssa.If:

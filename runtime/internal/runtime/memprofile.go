@@ -43,16 +43,34 @@ type memProfileSizeLine struct {
 }
 
 var (
-	memProfileBusy     bool
-	memProfileBuckets  []memProfileBucket
-	memProfileLines    []memProfileLineState
-	memProfileFrames   []memProfileFrame
-	memProfileRate     = defaultMemProfileRate
-	memProfileNextLine = 1000
+	memProfileBusy         bool
+	memProfileBuckets      []memProfileBucket
+	memProfileLines        []memProfileLineState
+	memProfileFrames       []memProfileFrame
+	memProfileCallStack    [64]memProfileFrame
+	memProfileCallStackLen int
+	memProfileRate         = defaultMemProfileRate
+	memProfileNextLine     = 1000
 )
 
 func SetMemProfileRate(rate int) {
 	memProfileRate = rate
+}
+
+func MemProfileEnter(function string) {
+	if function == "" || memProfileCallStackLen >= len(memProfileCallStack) {
+		return
+	}
+	memProfileCallStack[memProfileCallStackLen] = memProfileFrame{Function: function}
+	memProfileCallStackLen++
+}
+
+func MemProfileExit() {
+	if memProfileCallStackLen == 0 {
+		return
+	}
+	memProfileCallStackLen--
+	memProfileCallStack[memProfileCallStackLen] = memProfileFrame{}
 }
 
 func recordMemProfileAlloc(size uintptr) {
@@ -116,6 +134,13 @@ func memProfileStack(size uintptr) ([32]memProfileFrame, int) {
 func memProfileCallFrames() ([32]memProfileFrame, int) {
 	var frames [32]memProfileFrame
 	n := 0
+	if memProfileCallStackLen > 0 {
+		for i := memProfileCallStackLen - 1; i >= 0 && n < len(frames); i-- {
+			frames[n] = memProfileCallStack[i]
+			n++
+		}
+		return frames, n
+	}
 	clitedebug.StackTrace(0, func(fr *clitedebug.Frame) bool {
 		name := normalizeMemProfileFunction(fr.Name)
 		if skipMemProfileFrame(name) {
