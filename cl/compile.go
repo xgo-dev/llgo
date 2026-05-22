@@ -627,6 +627,9 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 	var instrs = block.Instrs[n:]
 	var ret = fn.Block(block.Index)
 	b.SetBlock(ret)
+	if block.Index == 0 && p.shouldTrackCallerFrames() {
+		p.pushCallerFrame(b, block.Parent())
+	}
 	if block.Index == 0 && enableCallTracing && !strings.HasPrefix(fn.Name(), "github.com/goplus/llgo/runtime/internal/runtime.Print") {
 		b.Printf("call " + fn.Name() + "\n\x00")
 	}
@@ -1382,6 +1385,9 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		}
 		if p.returnNeedsImplicitRunDefers(v) {
 			b.RunDefers()
+		}
+		if p.shouldTrackCallerFrames() {
+			p.popCallerFrame(b)
 		}
 		b.Return(results...)
 	case *ssa.If:
