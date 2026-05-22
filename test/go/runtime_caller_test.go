@@ -74,6 +74,62 @@ func TestRuntimeCallersFramesMetadata(t *testing.T) {
 	}
 }
 
+func TestRuntimeCallerLineDirectiveCallSites(t *testing.T) {
+	got := runtimeCallerLineDirectiveChecks()
+	want := []struct {
+		file string
+		line int
+	}{
+		{"/foo/bar.go", 123},
+		{"c:/foo/bar.go", 987},
+		{"??", 1},
+		{"foo.go", 1},
+		{"bar.go", 10},
+		{"bar.go", 11},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d caller snapshots, want %d", len(got), len(want))
+	}
+	for i, tt := range want {
+		if !got[i].ok {
+			t.Fatalf("snapshot %d runtime.Caller failed", i)
+		}
+		if got[i].file != tt.file || got[i].line != tt.line {
+			t.Fatalf("snapshot %d = %s:%d, want %s:%d", i, got[i].file, got[i].line, tt.file, tt.line)
+		}
+		fn := runtime.FuncForPC(got[i].pc)
+		if fn == nil {
+			t.Fatalf("snapshot %d FuncForPC = nil", i)
+		}
+		file, line := fn.FileLine(got[i].pc)
+		if file != tt.file || line != tt.line {
+			t.Fatalf("snapshot %d FuncForPC.FileLine = %s:%d, want %s:%d", i, file, line, tt.file, tt.line)
+		}
+	}
+}
+
+func runtimeCallerLineDirectiveChecks() []runtimeCallerSnapshot {
+	var out []runtimeCallerSnapshot
+//line /foo/bar.go:123
+	out = append(out, runtimeCallerAtCallSite())
+//line c:/foo/bar.go:987
+	out = append(out, runtimeCallerAtCallSite())
+//line :1
+	out = append(out, runtimeCallerAtCallSite())
+//line foo.go:1
+	out = append(out, runtimeCallerAtCallSite())
+//line bar.go:10:20
+	out = append(out, runtimeCallerAtCallSite())
+//line :11:22
+	out = append(out, runtimeCallerAtCallSite())
+	return out
+}
+
+func runtimeCallerAtCallSite() runtimeCallerSnapshot {
+	pc, file, line, ok := runtime.Caller(1)
+	return runtimeCallerSnapshot{pc: pc, file: file, line: line, ok: ok}
+}
+
 //line runtime_caller_metadata.go:100
 func runtimeCallerLeaf(skip int) runtimeCallerSnapshot {
 	pc, file, line, ok := runtime.Caller(skip)

@@ -56,6 +56,15 @@ func SetCallerLine(line int) {
 	callerFrames[len(callerFrames)-1].Line = line
 }
 
+func SetCallerLocation(file string, line int) {
+	if line <= 0 || len(callerFrames) == 0 {
+		return
+	}
+	frame := &callerFrames[len(callerFrames)-1]
+	frame.File = file
+	frame.Line = line
+}
+
 func PopCallerFrame() {
 	if len(callerFrames) == 0 {
 		return

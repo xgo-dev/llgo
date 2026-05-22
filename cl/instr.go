@@ -24,6 +24,7 @@ import (
 	"go/types"
 	"log"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -873,20 +874,25 @@ func (p *context) pushCallerFrame(b llssa.Builder, fn *ssa.Function) {
 		p.pkg.RuntimeFunc("PushCallerFrame"),
 		entry,
 		b.Str(runtimeFrameName(p.fn.Name())),
-		b.Str(pos.Filename),
+		b.Str(p.callerFrameFile(fn.Pos(), pos.Filename)),
 		p.prog.IntVal(uint64(pos.Line), p.prog.Int()),
 	)
 }
 
-func (p *context) setCallerLine(b llssa.Builder, pos token.Pos) {
+func (p *context) setCallerLocation(b llssa.Builder, pos token.Pos) {
 	if !p.shouldTrackCallerFrames() {
 		return
 	}
-	line := p.fset.Position(pos).Line
+	position := p.fset.Position(pos)
+	line := position.Line
 	if line <= 0 {
 		return
 	}
-	b.Call(p.pkg.RuntimeFunc("SetCallerLine"), p.prog.IntVal(uint64(line), p.prog.Int()))
+	b.Call(
+		p.pkg.RuntimeFunc("SetCallerLocation"),
+		b.Str(p.callerFrameFile(pos, position.Filename)),
+		p.prog.IntVal(uint64(line), p.prog.Int()),
+	)
 }
 
 func (p *context) popCallerFrame(b llssa.Builder) {
@@ -899,6 +905,31 @@ func runtimeFrameName(name string) string {
 		return "main." + name[len(commandLineArguments):]
 	}
 	return name
+}
+
+func (p *context) callerFrameFile(pos token.Pos, filename string) string {
+	if filename == "" {
+		return "??"
+	}
+	original := p.fset.PositionFor(pos, false).Filename
+	if original == "" || original == filename {
+		return filename
+	}
+	if rel, ok := relativeLineDirectiveFile(original, filename); ok {
+		return rel
+	}
+	return filename
+}
+
+func relativeLineDirectiveFile(original, adjusted string) (string, bool) {
+	rel, err := filepath.Rel(filepath.Dir(original), adjusted)
+	if err != nil || rel == "." || rel == ".." {
+		return "", false
+	}
+	if strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return filepath.ToSlash(rel), true
 }
 
 // -----------------------------------------------------------------------------
@@ -941,7 +972,7 @@ func (p *context) deferStackOwner(fn *ssa.Function) llssa.Function {
 }
 
 func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, pos token.Pos, ds *explicitDeferStack, fn llssa.Expr, buildCall func(llssa.Builder, llssa.Expr, ...llssa.Expr) llssa.Expr, args ...llssa.Expr) llssa.Expr {
-	p.setCallerLine(b, pos)
+	p.setCallerLocation(b, pos)
 	if ds != nil {
 		b.DeferTo(ds.owner, ds.stack, fn, buildCall, args...)
 		return llssa.Nil
