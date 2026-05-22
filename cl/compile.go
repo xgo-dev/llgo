@@ -157,25 +157,26 @@ type pkgInfo struct {
 type none = struct{}
 
 type context struct {
-	prog                 llssa.Program
-	pkg                  llssa.Package
-	fn                   llssa.Function
-	goFn                 *ssa.Function
-	fset                 *token.FileSet
-	goProg               *ssa.Program
-	goTyps               *types.Package
-	goPkg                *ssa.Package
-	pyMod                string
-	skips                map[string]none
-	loaded               map[*types.Package]*pkgInfo // loaded packages
-	bvals                map[ssa.Value]llssa.Expr    // block values
-	methodNilDerefChecks map[*ssa.UnOp]none
-	vargs                map[*ssa.Alloc][]llssa.Expr // varargs
-	funcs                map[*ssa.Function]llssa.Function
-	linkOnceFns          map[*ssa.Function]none
-	stackDefers          map[*ssa.Function]bool
-	anonDefers           map[*ssa.Function]bool
-	paramDIVars          map[*types.Var]llssa.DIVar
+	prog                  llssa.Program
+	pkg                   llssa.Package
+	fn                    llssa.Function
+	goFn                  *ssa.Function
+	fset                  *token.FileSet
+	goProg                *ssa.Program
+	goTyps                *types.Package
+	goPkg                 *ssa.Package
+	pyMod                 string
+	skips                 map[string]none
+	loaded                map[*types.Package]*pkgInfo // loaded packages
+	bvals                 map[ssa.Value]llssa.Expr    // block values
+	methodNilDerefChecks  map[*ssa.UnOp]none
+	vargs                 map[*ssa.Alloc][]llssa.Expr // varargs
+	funcs                 map[*ssa.Function]llssa.Function
+	linkOnceFns           map[*ssa.Function]none
+	stackDefers           map[*ssa.Function]bool
+	anonDefers            map[*ssa.Function]bool
+	paramDIVars           map[*types.Var]llssa.DIVar
+	noInlineForMemProfile bool
 
 	patches          Patches
 	blkInfos         []blocks.Info
@@ -432,6 +433,15 @@ func hasInstantiatedRecv(recv *types.Var) bool {
 	return false
 }
 
+func (p *context) applyNoInline(fn llssa.Function) {
+	if disableInline || p.noInlineForMemProfile {
+		fn.Inline(llssa.NoInline)
+	}
+	if p.noInlineForMemProfile {
+		fn.DisableTailCalls()
+	}
+}
+
 func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Function, llssa.PyObjRef, int) {
 	pkgTypes, name, ftype := p.funcName(f)
 	if ftype != goFunc {
@@ -469,10 +479,8 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	}
 	if fn == nil {
 		fn = pkg.NewFuncEx(name, sig, llssa.Background(ftype), hasCtx, p.needsLinkOnce(f))
-		if disableInline {
-			fn.Inline(llssa.NoInline)
-		}
 	}
+	p.applyNoInline(fn)
 	p.funcs[f] = fn
 	isCgo := isCgoExternSymbol(f)
 	if nblk := len(f.Blocks); nblk > 0 {
@@ -1683,6 +1691,52 @@ func NewPackageEx(prog llssa.Program, patches Patches, rewrites map[string]strin
 	return newPackageEx(prog, patches, rewrites, pkg, files, nil)
 }
 
+func packageUsesRuntimeMemProfile(files []*ast.File) bool {
+	for _, file := range files {
+		runtimeNames := make(map[string]none)
+		for _, imp := range file.Imports {
+			path, err := strconv.Unquote(imp.Path.Value)
+			if err != nil || path != "runtime" {
+				continue
+			}
+			if imp.Name != nil {
+				if imp.Name.Name == "_" || imp.Name.Name == "." {
+					continue
+				}
+				runtimeNames[imp.Name.Name] = none{}
+				continue
+			}
+			runtimeNames["runtime"] = none{}
+		}
+		if len(runtimeNames) == 0 {
+			continue
+		}
+		found := false
+		ast.Inspect(file, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if sel.Sel.Name != "MemProfile" && sel.Sel.Name != "MemProfileRate" {
+				return true
+			}
+			x, ok := sel.X.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if _, ok := runtimeNames[x.Name]; !ok {
+				return true
+			}
+			found = true
+			return false
+		})
+		if found {
+			return true
+		}
+	}
+	return false
+}
+
 // NewPackageExWithEmbed compiles a package using pre-loaded go:embed metadata.
 //
 // This avoids re-scanning directives when the caller already loaded them.
@@ -1710,18 +1764,19 @@ func newPackageEx(prog llssa.Program, patches Patches, rewrites map[string]strin
 	}
 
 	ctx := &context{
-		prog:             prog,
-		pkg:              ret,
-		fset:             pkgProg.Fset,
-		goProg:           pkgProg,
-		goTyps:           pkgTypes,
-		goPkg:            pkg,
-		patches:          patches,
-		skips:            make(map[string]none),
-		vargs:            make(map[*ssa.Alloc][]llssa.Expr),
-		funcs:            make(map[*ssa.Function]llssa.Function),
-		linkOnceFns:      make(map[*ssa.Function]none),
-		addrOfFieldAddrs: collectAddrOfFieldSelectors(files),
+		prog:                  prog,
+		pkg:                   ret,
+		fset:                  pkgProg.Fset,
+		goProg:                pkgProg,
+		goTyps:                pkgTypes,
+		goPkg:                 pkg,
+		patches:               patches,
+		noInlineForMemProfile: packageUsesRuntimeMemProfile(files),
+		skips:                 make(map[string]none),
+		vargs:                 make(map[*ssa.Alloc][]llssa.Expr),
+		funcs:                 make(map[*ssa.Function]llssa.Function),
+		linkOnceFns:           make(map[*ssa.Function]none),
+		addrOfFieldAddrs:      collectAddrOfFieldSelectors(files),
 		loaded: map[*types.Package]*pkgInfo{
 			types.Unsafe: {kind: PkgDeclOnly}, // TODO(xsw): PkgNoInit or PkgDeclOnly?
 		},
