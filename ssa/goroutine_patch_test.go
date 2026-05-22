@@ -41,9 +41,15 @@ func TestGoClosureStartupUsesGCManagedMemory(t *testing.T) {
 	if strings.Contains(ir, "@free") {
 		t.Fatalf("goroutine startup data should not use free:\n%s", ir)
 	}
-	// The closure context and the goroutine startup record both must remain
-	// visible to the runtime GC until the new goroutine consumes them.
-	if got := strings.Count(ir, `"github.com/goplus/llgo/runtime/internal/runtime.AllocU"`); got < 2 {
-		t.Fatalf("expected closure ctx and goroutine startup data to use AllocU, got %d:\n%s", got, ir)
+	if !strings.Contains(ir, `"github.com/goplus/llgo/runtime/internal/runtime.AllocRoot"`) {
+		t.Fatalf("goroutine startup data should use scanned uncollectable memory:\n%s", ir)
+	}
+	if !strings.Contains(ir, `"github.com/goplus/llgo/runtime/internal/runtime.FreeRoot"`) {
+		t.Fatalf("goroutine startup data should be freed after the entry call returns:\n%s", ir)
+	}
+	// The closure context must remain visible to the runtime GC until the
+	// uncollectable startup record is initialized.
+	if got := strings.Count(ir, `"github.com/goplus/llgo/runtime/internal/runtime.AllocU"`); got < 1 {
+		t.Fatalf("expected closure ctx to use AllocU, got %d:\n%s", got, ir)
 	}
 }

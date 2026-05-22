@@ -28,12 +28,20 @@ import (
 	"github.com/goplus/llgo/runtime/abi"
 	c "github.com/goplus/llgo/runtime/internal/clite"
 	"github.com/goplus/llgo/runtime/internal/ffi"
+	"github.com/goplus/llgo/runtime/internal/runtime"
 )
 
 type funcData struct {
-	ftyp *funcType
-	fn   func(args []Value) (results []Value)
-	nin  int
+	closure *ffi.Closure
+	sig     *ffi.Signature
+	ftyp    *funcType
+	fn      func(args []Value) (results []Value)
+	nin     int
+}
+
+type funcValue struct {
+	fn  unsafe.Pointer
+	env unsafe.Pointer
 }
 
 func MakeFunc(typ Type, fn func(args []Value) (results []Value)) Value {
@@ -48,6 +56,10 @@ func MakeFunc(typ Type, fn func(args []Value) (results []Value)) Value {
 		panic(err)
 	}
 	closure := ffi.NewClosure()
+	// libffi keeps sig and userdata after Bind returns. Make them reachable
+	// through the returned function's closure env for later calls.
+	fd := (*funcData)(runtime.AllocU(unsafe.Sizeof(funcData{})))
+	*fd = funcData{closure: closure, sig: sig, ftyp: ftyp, fn: fn, nin: len(ftyp.In)}
 
 	switch len(ftyp.Out) {
 	case 0:
@@ -58,7 +70,7 @@ func MakeFunc(typ Type, fn func(args []Value) (results []Value)) Value {
 				ins[i] = ffiToValue(ffi.Index(args, uintptr(i+1)), fd.ftyp.In[i])
 			}
 			validateMakeFuncResults(fd.fn(ins), fd.ftyp)
-		}, unsafe.Pointer(&funcData{ftyp: ftyp, fn: fn, nin: len(ftyp.In)}))
+		}, unsafe.Pointer(fd))
 	case 1:
 		err = closure.Bind(sig, func(cif *ffi.Signature, ret unsafe.Pointer, args *unsafe.Pointer, userdata unsafe.Pointer) {
 			fd := (*funcData)(userdata)
@@ -68,7 +80,7 @@ func MakeFunc(typ Type, fn func(args []Value) (results []Value)) Value {
 			}
 			out := validateMakeFuncResults(fd.fn(ins), fd.ftyp)
 			storeMakeFuncResult(ret, out[0], fd.ftyp.Out[0])
-		}, unsafe.Pointer(&funcData{ftyp: ftyp, fn: fn, nin: len(ftyp.In)}))
+		}, unsafe.Pointer(fd))
 	default:
 		err = closure.Bind(sig, func(cif *ffi.Signature, ret unsafe.Pointer, args *unsafe.Pointer, userdata unsafe.Pointer) {
 			fd := (*funcData)(userdata)
@@ -84,16 +96,14 @@ func MakeFunc(typ Type, fn func(args []Value) (results []Value)) Value {
 				storeMakeFuncResult(add(ret, offset, ""), out, typ)
 				offset += (typ.Size_ + alignment - 1) &^ (alignment - 1)
 			}
-		}, unsafe.Pointer(&funcData{ftyp: ftyp, fn: fn, nin: len(ftyp.In)}))
+		}, unsafe.Pointer(fd))
 	}
 	if err != nil {
 		panic("libffi error: " + err.Error())
 	}
 	styp := closureOf(ftyp)
-	fv := &struct {
-		fn  unsafe.Pointer
-		env unsafe.Pointer
-	}{closure.Fn, unsafe.Pointer(&fn)}
+	fv := (*funcValue)(runtime.AllocU(unsafe.Sizeof(funcValue{})))
+	*fv = funcValue{closure.Fn, unsafe.Pointer(fd)}
 	return Value{styp, unsafe.Pointer(fv), flagIndir | flag(Func)}
 }
 
