@@ -184,6 +184,9 @@ func explicit[T any](v *outer[T]) uintptr {
 		X:     fakeSSAValue{typ: types.NewPointer(stubStruct)},
 		Field: 0,
 	}
+	if _, ok := ctx.offsetOfBuiltinArg(validSynthetic); !ok {
+		t.Fatal("offsetOfBuiltinArg returned false for a direct FieldAddr")
+	}
 	if ctx.isExplicitFieldAddr(validSynthetic) {
 		t.Fatal("FieldAddr without source position should not be considered explicit")
 	}

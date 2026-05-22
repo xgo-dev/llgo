@@ -697,12 +697,20 @@ func (p *context) pkgNoInit(pkg *types.Package) bool {
 }
 
 func (p *context) offsetOfBuiltinArg(arg ssa.Value) (llssa.Expr, bool) {
-	load, ok := arg.(*ssa.UnOp)
-	if !ok || load.Op != token.MUL {
-		return llssa.Expr{}, false
-	}
-	field, ok := load.X.(*ssa.FieldAddr)
-	if !ok {
+	var field *ssa.FieldAddr
+	switch arg := arg.(type) {
+	case *ssa.UnOp:
+		if arg.Op != token.MUL {
+			return llssa.Expr{}, false
+		}
+		var ok bool
+		field, ok = arg.X.(*ssa.FieldAddr)
+		if !ok {
+			return llssa.Expr{}, false
+		}
+	case *ssa.FieldAddr:
+		field = arg
+	default:
 		return llssa.Expr{}, false
 	}
 	offset, ok := p.offsetOfFieldChain(field)
@@ -710,6 +718,18 @@ func (p *context) offsetOfBuiltinArg(arg ssa.Value) (llssa.Expr, bool) {
 		return llssa.Expr{}, false
 	}
 	return p.prog.Val(offset), true
+}
+
+func (p *context) sizeOrAlignOfBuiltinArg(fn string, arg ssa.Value) (llssa.Expr, bool) {
+	t := p.type_(arg.Type(), llssa.InGo)
+	switch fn {
+	case "Sizeof":
+		return p.prog.Val(int(p.prog.SizeOf(t))), true
+	case "Alignof":
+		return p.prog.Val(int(p.prog.AlignOf(t))), true
+	default:
+		return llssa.Expr{}, false
+	}
 }
 
 func (p *context) offsetOfFieldChain(field *ssa.FieldAddr) (int, bool) {
@@ -874,6 +894,11 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			methodName := p.compileValue(b, args[2])
 			ret = b.WrapNilCheck(ptr, recvType, methodName)
 			return
+		} else if (fn == "Sizeof" || fn == "Alignof") && act == llssa.Call {
+			if value, ok := p.sizeOrAlignOfBuiltinArg(fn, args[0]); ok {
+				ret = value
+				return
+			}
 		} else if fn == "Offsetof" && act == llssa.Call {
 			if offset, ok := p.offsetOfBuiltinArg(args[0]); ok {
 				ret = offset

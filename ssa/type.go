@@ -194,6 +194,11 @@ func (p Program) SizeOf(typ Type, n ...int64) uint64 {
 	return size
 }
 
+// AlignOf returns the ABI alignment of a type.
+func (p Program) AlignOf(typ Type) uint64 {
+	return uint64(p.td.ABITypeAlignment(typ.ll))
+}
+
 // OffsetOf returns the offset of a field in a struct.
 func (p Program) OffsetOf(typ Type, i int) uint64 {
 	return p.td.ElementOffset(typ.ll, i)

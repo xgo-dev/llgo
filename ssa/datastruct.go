@@ -158,6 +158,7 @@ func (b Builder) IndexAddr(x, idx Expr) Expr {
 	case *types.Pointer:
 		ar := t.Elem().Underlying().(*types.Array)
 		max := prog.IntVal(uint64(ar.Len()), prog.Int())
+		b.AssertNilDeref(x)
 		idx = b.checkIndex(idx, max)
 		if !isKnownNonNilArrayBase(x.impl) {
 			b.AssertNilDeref(x)
