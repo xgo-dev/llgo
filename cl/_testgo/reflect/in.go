@@ -7,7 +7,6 @@ import (
 )
 
 // CHECK: @0 = private unnamed_addr constant [11 x i8] c"call.method", align 1
-// CHECK: @2 = private unnamed_addr constant [3 x i8] c"int", align 1
 // CHECK: @6 = private unnamed_addr constant [7 x i8] c"closure", align 1
 // CHECK: @7 = private unnamed_addr constant [5 x i8] c"error", align 1
 // CHECK: @9 = private unnamed_addr constant [12 x i8] c"call.closure", align 1
@@ -724,7 +723,8 @@ func callMethod() {
 // CHECK-NEXT:   br label %_llgo_1
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %22, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 3 }, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
+// CHECK-NEXT:   %37 = call %"{{.*}}/runtime/internal/runtime.eface" @"{{.*}}/runtime/internal/runtime.TypeAssertError"(ptr %22, ptr @_llgo_int, ptr @_llgo_any)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %37)
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 

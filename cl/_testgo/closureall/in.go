@@ -7,10 +7,9 @@ import "github.com/goplus/lib/c"
 
 // CHECK: @0 = private unnamed_addr constant [46 x i8] c"{{.*}}/cl/_testgo/closureall.S", align 1
 // CHECK: @1 = private unnamed_addr constant [3 x i8] c"Inc", align 1
-// CHECK: @7 = private unnamed_addr constant [3 x i8] c"Add", align 1
-// CHECK: @9 = private unnamed_addr constant [23 x i8] c"interface{Add(int) int}", align 1
 
 //go:linkname cSqrt C.sqrt
+
 func cSqrt(x c.Double) c.Double
 
 // llgo:link cAbs C.abs
@@ -173,7 +172,8 @@ func makeWithFree(base int) Fn {
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %21, %"{{.*}}/runtime/internal/runtime.String" { ptr @9, i64 23 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @7, i64 3 })
+// CHECK-NEXT:   %32 = call %"{{.*}}/runtime/internal/runtime.eface" @"{{.*}}/runtime/internal/runtime.TypeAssertError"(ptr %21, ptr @"_llgo_iface$VdBKYV8-gcMjZtZfcf-u2oKoj9Lu3VXwuG8TGCW2S4A", ptr @"_llgo_iface$VdBKYV8-gcMjZtZfcf-u2oKoj9Lu3VXwuG8TGCW2S4A")
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %32)
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 

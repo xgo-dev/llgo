@@ -8,9 +8,6 @@ package main
 // CHECK: @22 = private unnamed_addr constant [2 x i8] c"go", align 1
 // CHECK: @23 = private unnamed_addr constant [7 x i8] c"bad key", align 1
 // CHECK: @24 = private unnamed_addr constant [7 x i8] c"bad len", align 1
-// CHECK: @32 = private unnamed_addr constant [44 x i8] c"{{.*}}/cl/_testrt/makemap.N1", align 1
-// CHECK: @39 = private unnamed_addr constant [43 x i8] c"{{.*}}/cl/_testrt/makemap.K", align 1
-// CHECK: @42 = private unnamed_addr constant [44 x i8] c"{{.*}}/cl/_testrt/makemap.K2", align 1
 
 func main() {
 	make1()
@@ -377,7 +374,8 @@ type N1 [1]int
 // CHECK-NEXT:   br label %_llgo_1
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %39, %"{{.*}}/runtime/internal/runtime.String" { ptr @32, i64 44 }, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
+// CHECK-NEXT:   %54 = call %"{{.*}}/runtime/internal/runtime.eface" @"{{.*}}/runtime/internal/runtime.TypeAssertError"(ptr %39, ptr @"_llgo_{{.*}}/cl/_testrt/makemap.N1", ptr @_llgo_any)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %54)
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 
@@ -514,7 +512,8 @@ type K2 [1]*N
 // CHECK-NEXT:   br label %_llgo_1
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %39, %"{{.*}}/runtime/internal/runtime.String" { ptr @39, i64 43 }, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
+// CHECK-NEXT:   %56 = call %"{{.*}}/runtime/internal/runtime.eface" @"{{.*}}/runtime/internal/runtime.TypeAssertError"(ptr %39, ptr @"_llgo_{{.*}}/cl/_testrt/makemap.K", ptr @_llgo_any)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %56)
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 
@@ -646,7 +645,8 @@ func make3() {
 // CHECK-NEXT:   br label %_llgo_1
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %43, %"{{.*}}/runtime/internal/runtime.String" { ptr @42, i64 44 }, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
+// CHECK-NEXT:   %61 = call %"{{.*}}/runtime/internal/runtime.eface" @"{{.*}}/runtime/internal/runtime.TypeAssertError"(ptr %43, ptr @"_llgo_{{.*}}/cl/_testrt/makemap.K2", ptr @_llgo_any)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %61)
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 

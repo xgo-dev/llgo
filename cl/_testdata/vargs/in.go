@@ -3,7 +3,6 @@ package main
 
 import "github.com/goplus/lib/c"
 
-// CHECK: @0 = private unnamed_addr constant [3 x i8] c"int", align 1
 // CHECK: @1 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
 
 func main() {
@@ -88,12 +87,19 @@ func test(a ...any) {
 // CHECK-NEXT:   br label %_llgo_1
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %12, %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 3 }, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
+// CHECK-NEXT:   %17 = call %"{{.*}}/runtime/internal/runtime.eface" @"{{.*}}/runtime/internal/runtime.TypeAssertError"(ptr %12, ptr @_llgo_int, ptr @_llgo_any)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %17)
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal64"(ptr %0, ptr %1, ptr %2){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal64"(ptr %1, ptr %2)
+// CHECK-NEXT:   ret i1 %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.nilinterequal"(ptr %0, ptr %1, ptr %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.nilinterequal"(ptr %1, ptr %2)
 // CHECK-NEXT:   ret i1 %3
 // CHECK-NEXT: }
