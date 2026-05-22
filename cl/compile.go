@@ -948,7 +948,48 @@ func (p *context) enableConservativeLivenessClears(fn *ssa.Function) bool {
 	}
 	path := fn.Pkg.Pkg.Path()
 	if path == "command-line-arguments" {
-		return true
+		return p.packageUsesRuntimeSetFinalizer(fn.Pkg)
+	}
+	return false
+}
+
+func (p *context) packageUsesRuntimeSetFinalizer(pkg *ssa.Package) bool {
+	for _, member := range pkg.Members {
+		fn, ok := member.(*ssa.Function)
+		if ok && p.functionUsesRuntimeSetFinalizer(fn, map[*ssa.Function]bool{}) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *context) functionUsesRuntimeSetFinalizer(fn *ssa.Function, seen map[*ssa.Function]bool) bool {
+	if fn == nil || seen[fn] {
+		return false
+	}
+	seen[fn] = true
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			switch instr := instr.(type) {
+			case *ssa.Call:
+				if p.isRuntimeSetFinalizerCall(&instr.Call) {
+					return true
+				}
+			case *ssa.Defer:
+				if p.isRuntimeSetFinalizerCall(&instr.Call) {
+					return true
+				}
+			case *ssa.Go:
+				if p.isRuntimeSetFinalizerCall(&instr.Call) {
+					return true
+				}
+			}
+		}
+	}
+	for _, anon := range fn.AnonFuncs {
+		if p.functionUsesRuntimeSetFinalizer(anon, seen) {
+			return true
+		}
 	}
 	return false
 }
@@ -1424,12 +1465,12 @@ func (p *context) compileLateValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 
 func (p *context) scanStackPointer(b llssa.Builder, val llssa.Expr) {
 	b.Pkg.NeedRuntime = true
-	t := p.type_(types.Typ[types.UnsafePointer], llssa.InGo)
+	t := p.type_(types.Typ[types.Uintptr], llssa.InGo)
 	if !types.Identical(val.RawType(), t.RawType()) {
 		val = b.Convert(t, val)
 	}
-	fn := b.Pkg.NewFunc("runtime.ClearStackPointer",
-		types.NewSignatureType(nil, nil, nil, types.NewTuple(types.NewParam(token.NoPos, nil, "target", types.Typ[types.UnsafePointer])), nil, false), llssa.InGo)
+	fn := b.Pkg.NewFunc("llgo_clear_stack_ptr",
+		types.NewSignatureType(nil, nil, nil, types.NewTuple(types.NewParam(token.NoPos, nil, "target", types.Typ[types.Uintptr])), nil, false), llssa.InC)
 	b.Call(fn.Expr, val)
 }
 
@@ -1506,9 +1547,16 @@ func (p *context) clearEntryAllocs(b llssa.Builder, block *ssa.BasicBlock) {
 
 func (p *context) clobberPointerRegs(b llssa.Builder) {
 	b.Pkg.NeedRuntime = true
-	fn := b.Pkg.NewFunc("runtime.ClobberPointerRegs",
-		types.NewSignatureType(nil, nil, nil, nil, nil, false), llssa.InGo)
-	b.Call(fn.Expr)
+	uintptrParam := func(name string) *types.Var {
+		return types.NewParam(token.NoPos, nil, name, types.Typ[types.Uintptr])
+	}
+	fn := b.Pkg.NewFunc("llgo_clobber_pointer_regs",
+		types.NewSignatureType(nil, nil, nil, types.NewTuple(
+			uintptrParam("a0"), uintptrParam("a1"), uintptrParam("a2"), uintptrParam("a3"),
+			uintptrParam("a4"), uintptrParam("a5"), uintptrParam("a6"), uintptrParam("a7"),
+		), nil, false), llssa.InC)
+	zero := b.Prog.IntVal(0, b.Prog.Uintptr())
+	b.Call(fn.Expr, zero, zero, zero, zero, zero, zero, zero, zero)
 }
 
 func isPhi(i ssa.Instruction) bool {
