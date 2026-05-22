@@ -145,6 +145,14 @@ func (b Builder) AllocZ(n Expr) (ret Expr) {
 	return b.InlineCall(b.Pkg.rtFunc("AllocZ"), n)
 }
 
+func (b Builder) MemProfileEnter(function string) {
+	b.Call(b.Pkg.rtFunc("MemProfileEnter"), b.Str(function))
+}
+
+func (b Builder) MemProfileExit() {
+	b.Call(b.Pkg.rtFunc("MemProfileExit"))
+}
+
 // Alloca allocates uninitialized space for n bytes.
 func (b Builder) Alloca(n Expr) (ret Expr) {
 	dbgInstrf("Alloca %v\n", n.impl)
