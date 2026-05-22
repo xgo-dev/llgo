@@ -801,13 +801,80 @@ func (p *context) sourceLine(filename string, line int) (string, bool) {
 }
 
 func (p *context) shouldTrackCallerFrames() bool {
-	if p == nil || p.pkg == nil || p.fn == nil {
+	if p == nil || p.pkg == nil || p.fn == nil || !p.trackCallerFrames {
+		return false
+	}
+	if target := p.prog.Target(); target != nil && (target.Target != "" || target.GOARCH == "wasm") {
 		return false
 	}
 	pkgPath := p.pkg.Path()
+	return canTrackCallerFramesForPackage(pkgPath)
+}
+
+func canTrackCallerFramesForPackage(pkgPath string) bool {
 	return pkgPath != llssa.PkgRuntime &&
 		pkgPath != "runtime" &&
+		!isStandardLibraryPackage(pkgPath) &&
 		!strings.HasPrefix(pkgPath, "github.com/goplus/llgo/runtime/internal/")
+}
+
+func isStandardLibraryPackage(pkgPath string) bool {
+	return pkgPath != "command-line-arguments" && !strings.Contains(pkgPath, ".")
+}
+
+func packageUsesRuntimeCaller(pkg *ssa.Package) bool {
+	if pkg == nil {
+		return false
+	}
+	for _, member := range pkg.Members {
+		fn, ok := member.(*ssa.Function)
+		if ok && fnUsesRuntimeCaller(fn) {
+			return true
+		}
+	}
+	return false
+}
+
+func fnUsesRuntimeCaller(fn *ssa.Function) bool {
+	if fn == nil {
+		return false
+	}
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			call, ok := instr.(ssa.CallInstruction)
+			if !ok {
+				continue
+			}
+			if isRuntimeCallerFunc(call.Common().StaticCallee()) {
+				return true
+			}
+		}
+	}
+	for _, anon := range fn.AnonFuncs {
+		if fnUsesRuntimeCaller(anon) {
+			return true
+		}
+	}
+	return false
+}
+
+func isRuntimeCallerFunc(fn *ssa.Function) bool {
+	if fn == nil || fn.Pkg == nil || fn.Pkg.Pkg == nil {
+		return false
+	}
+	if fn.Pkg.Pkg.Path() != "runtime" {
+		return false
+	}
+	return isRuntimeCallerName(fn.Name())
+}
+
+func isRuntimeCallerName(name string) bool {
+	switch name {
+	case "Caller", "Callers", "CallersFrames", "FuncForPC":
+		return true
+	default:
+		return false
+	}
 }
 
 func (p *context) pushCallerFrame(b llssa.Builder, fn *ssa.Function) {
