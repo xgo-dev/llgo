@@ -5,10 +5,12 @@
 package runtime
 
 import (
+	"strings"
 	"unsafe"
 
 	c "github.com/goplus/llgo/runtime/internal/clite"
 	clitedebug "github.com/goplus/llgo/runtime/internal/clite/debug"
+	rtdebug "github.com/goplus/llgo/runtime/internal/runtime"
 )
 
 // Frames may be used to get function/file/line information for a
@@ -119,6 +121,19 @@ func (ci *Frames) Next() (frame Frame, more bool) {
 		} else {
 			pc, ci.callers = ci.callers[0], ci.callers[1:]
 		}
+		if known, ok := rtdebug.FrameForPC(pc); ok {
+			fn := newFunc(known.Function, known.Entry, known.File, known.StartLine)
+			ci.frames = append(ci.frames, Frame{
+				PC:        pc,
+				Func:      fn,
+				Function:  known.Function,
+				File:      known.File,
+				Line:      known.Line,
+				startLine: known.StartLine,
+				Entry:     known.Entry,
+			})
+			continue
+		}
 		info := &clitedebug.Info{}
 		if clitedebug.Addrinfo(unsafe.Pointer(pc), info) == 0 {
 			ci.frames = append(ci.frames, Frame{
@@ -135,8 +150,10 @@ func (ci *Frames) Next() (frame Frame, more bool) {
 		if fn == "" {
 			fn = unknownFunctionName(pc)
 		}
+		fn = normalizeLLGoSymbolName(fn)
 		ci.frames = append(ci.frames, Frame{
 			PC:        pc,
+			Func:      newFunc(fn, uintptr(info.Saddr), "", 0),
 			Function:  fn,
 			File:      "",
 			Line:      0,
@@ -176,11 +193,69 @@ func CallersFrames(callers []uintptr) *Frames {
 
 // A Func represents a Go function in the running binary.
 type Func struct {
-	opaque struct{} // unexported field to disallow conversions
+	name      string
+	entry     uintptr
+	file      string
+	startLine int
 }
 
 func (f *Func) Name() string {
-	panic("todo")
+	if f == nil {
+		return ""
+	}
+	return f.name
+}
+
+func (f *Func) Entry() uintptr {
+	if f == nil {
+		return 0
+	}
+	return f.entry
+}
+
+func (f *Func) FileLine(pc uintptr) (file string, line int) {
+	if f == nil {
+		return "", 0
+	}
+	if frame, ok := rtdebug.FrameForPC(pc); ok {
+		return frame.File, frame.Line
+	}
+	return f.file, f.startLine
+}
+
+func newFunc(name string, entry uintptr, file string, startLine int) *Func {
+	return &Func{name: name, entry: entry, file: file, startLine: startLine}
+}
+
+func funcForPC(pc uintptr) *Func {
+	if frame, ok := rtdebug.FrameForPC(pc); ok {
+		return newFunc(frame.Function, frame.Entry, frame.File, frame.StartLine)
+	}
+	if pc > 0 {
+		if frame, ok := rtdebug.FrameForPC(pc - 1); ok {
+			return newFunc(frame.Function, frame.Entry, frame.File, frame.StartLine)
+		}
+	}
+	if frame, ok := rtdebug.FrameForPC(pc + 1); ok {
+		return newFunc(frame.Function, frame.Entry, frame.File, frame.StartLine)
+	}
+	info := &clitedebug.Info{}
+	if clitedebug.Addrinfo(unsafe.Pointer(pc), info) == 0 {
+		return nil
+	}
+	fn := safeGoString(info.Sname, "")
+	if fn == "" {
+		return nil
+	}
+	return newFunc(normalizeLLGoSymbolName(fn), uintptr(info.Saddr), "", 0)
+}
+
+func normalizeLLGoSymbolName(name string) string {
+	const commandLineArguments = "command-line-arguments."
+	if strings.HasPrefix(name, commandLineArguments) {
+		return "main." + name[len(commandLineArguments):]
+	}
+	return name
 }
 
 func (f *Func) FileLine(pc uintptr) (file string, line int) {

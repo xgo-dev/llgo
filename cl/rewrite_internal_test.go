@@ -328,8 +328,8 @@ func TestEmitDoWithExplicitDeferStack(t *testing.T) {
 	b.SetBlockEx(owner.Block(0), llssa.BeforeLast, true)
 
 	ctx := &context{}
-	ctx.emitDo(b, llssa.DeferInLoop, &explicitDeferStack{stack: stack, owner: owner}, callee.Expr, llssa.Builder.Call)
-	ctx.emitDo(b, llssa.DeferAlways, nil, callee.Expr, llssa.Builder.Call)
+	ctx.emitDo(b, llssa.DeferInLoop, token.NoPos, &explicitDeferStack{stack: stack, owner: owner}, callee.Expr, llssa.Builder.Call)
+	ctx.emitDo(b, llssa.DeferAlways, token.NoPos, nil, callee.Expr, llssa.Builder.Call)
 	b.DeferStackDrain()
 	b.RunDefers()
 	b.Return()
@@ -465,7 +465,7 @@ func TestEmitDoWithoutExplicitDeferStack(t *testing.T) {
 	b := fn.MakeBody(1)
 
 	ctx := &context{}
-	got := ctx.emitDo(b, llssa.Call, nil, callee.Expr, llssa.Builder.Call)
+	got := ctx.emitDo(b, llssa.Call, token.NoPos, nil, callee.Expr, llssa.Builder.Call)
 	if got.IsNil() {
 		t.Fatal("emitDo without explicit defer stack should return direct call result")
 	}
