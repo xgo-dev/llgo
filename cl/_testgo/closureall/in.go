@@ -5,12 +5,11 @@ import _ "unsafe" // for go:linkname
 
 import "github.com/goplus/lib/c"
 
+//go:linkname cSqrt C.sqrt
+
 // CHECK-LINE: @0 = private unnamed_addr constant [46 x i8] c"{{.*}}/cl/_testgo/closureall.S", align 1
 // CHECK-LINE: @1 = private unnamed_addr constant [3 x i8] c"Inc", align 1
-// CHECK-LINE: @7 = private unnamed_addr constant [3 x i8] c"Add", align 1
-// CHECK-LINE: @9 = private unnamed_addr constant [23 x i8] c"interface{Add(int) int}", align 1
 
-//go:linkname cSqrt C.sqrt
 func cSqrt(x c.Double) c.Double
 
 // llgo:link cAbs C.abs
@@ -167,13 +166,14 @@ func makeWithFree(base int) Fn {
 // CHECK-NEXT:   %26 = extractvalue { ptr, ptr } %25, 1
 // CHECK-NEXT:   %27 = extractvalue { ptr, ptr } %25, 0
 // CHECK-NEXT:   %28 = call i64 %27(ptr %26, i64 9)
-// CHECK-NEXT:   %29 = call double @sqrt(double 4.000000e+00)
+// CHECK-NEXT:   %29 = call double @"{{.*}}/cl/_testgo/closureall.cSqrt"(double 4.000000e+00)
 // CHECK-NEXT:   %30 = call i32 @abs(i32 -3)
 // CHECK-NEXT:   %31 = call i32 @"{{.*}}/cl/_testgo/closureall.callCallback"(ptr @"{{.*}}/cl/_testgo/closureall.main$1", i32 7)
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %21, %"{{.*}}/runtime/internal/runtime.String" { ptr @9, i64 23 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @7, i64 3 })
+// CHECK-NEXT:   %32 = call %"{{.*}}/runtime/internal/runtime.eface" @"{{.*}}/runtime/internal/runtime.TypeAssertError"(ptr %21, ptr @"_llgo_iface$VdBKYV8-gcMjZtZfcf-u2oKoj9Lu3VXwuG8TGCW2S4A", ptr @"_llgo_iface$VdBKYV8-gcMjZtZfcf-u2oKoj9Lu3VXwuG8TGCW2S4A")
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %32)
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 
