@@ -164,11 +164,12 @@ type aDefer struct {
 // The id uniquely identifies the defer call site for dispatch during drain.
 // typ is the node struct type needed to decode the linked-list node.
 type loopDeferCase struct {
-	id        Expr
-	typ       Type
-	fn        Expr
-	args      []Expr
-	buildCall func(Builder, Expr, ...Expr) Expr
+	id         Expr
+	typ        Type
+	mayRecover bool
+	fn         Expr
+	args       []Expr
+	buildCall  func(Builder, Expr, ...Expr) Expr
 }
 
 const (
@@ -318,6 +319,11 @@ func (b Builder) DeferStackDrain() {
 
 // Defer emits a defer instruction.
 func (b Builder) Defer(kind DoAction, fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args ...Expr) {
+	b.DeferRecover(kind, deferMayRecover(fn), fn, buildCall, args...)
+}
+
+// DeferRecover emits a defer instruction with explicit recover capability.
+func (b Builder) DeferRecover(kind DoAction, mayRecover bool, fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args ...Expr) {
 	dbgInstrCall("Defer", fn, args)
 	var prog Program
 	var nextbit Expr
@@ -345,14 +351,20 @@ func (b Builder) Defer(kind DoAction, fn Expr, buildCall func(Builder, Expr, ...
 	}
 	typ := b.saveDeferArgs(self, kind, id, fn, args)
 	if kind == DeferInLoop {
-		loopCase := loopDeferCase{id: id, typ: typ, fn: fn, args: args, buildCall: buildCall}
+		loopCase := loopDeferCase{id: id, typ: typ, mayRecover: mayRecover, fn: fn, args: args, buildCall: buildCall}
 		self.loopCases = append(self.loopCases, loopCase)
 	}
-	b.appendDeferStmt(self, kind, typ, buildCall, fn, args, nextbit)
+	b.appendDeferStmt(self, kind, typ, mayRecover, buildCall, fn, args, nextbit)
 }
 
 // DeferTo emits a defer instruction into an explicit runtime defer stack.
 func (b Builder) DeferTo(owner Function, stack Expr, fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args ...Expr) {
+	b.DeferToRecover(owner, stack, deferMayRecover(fn), fn, buildCall, args...)
+}
+
+// DeferToRecover emits a defer instruction into an explicit runtime defer
+// stack with explicit recover capability.
+func (b Builder) DeferToRecover(owner Function, stack Expr, mayRecover bool, fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args ...Expr) {
 	if debugInstr {
 		logCall("DeferTo", fn, args)
 	}
@@ -366,11 +378,12 @@ func (b Builder) DeferTo(owner Function, stack Expr, fn Expr, buildCall func(Bui
 	argsPtr := b.PtrCast(b.Prog.Pointer(b.Prog.VoidPtr()), stack)
 	typ := b.saveDeferArgsTo(argsPtr, DeferInLoop, id, fn, args)
 	loopCase := loopDeferCase{
-		id:        id,
-		typ:       typ,
-		fn:        fn,
-		args:      args,
-		buildCall: buildCall,
+		id:         id,
+		typ:        typ,
+		mayRecover: mayRecover,
+		fn:         fn,
+		args:       args,
+		buildCall:  buildCall,
 	}
 	if self == nil {
 		owner.pendingLoopCases = append(owner.pendingLoopCases, loopCase)
@@ -379,7 +392,7 @@ func (b Builder) DeferTo(owner Function, stack Expr, fn Expr, buildCall func(Bui
 	self.loopCases = append(self.loopCases, loopCase)
 }
 
-func (b Builder) appendDeferStmt(self *aDefer, kind DoAction, typ Type, buildCall func(Builder, Expr, ...Expr) Expr, fn Expr, args []Expr, nextbit Expr) {
+func (b Builder) appendDeferStmt(self *aDefer, kind DoAction, typ Type, mayRecover bool, buildCall func(Builder, Expr, ...Expr) Expr, fn Expr, args []Expr, nextbit Expr) {
 	self.stmts = append(self.stmts, func(bits Expr) {
 		switch kind {
 		case DeferInCond:
@@ -390,13 +403,13 @@ func (b Builder) appendDeferStmt(self *aDefer, kind DoAction, typ Type, buildCal
 			zero := prog.Val(uintptr(0))
 			has := b.BinOp(token.NEQ, b.BinOp(token.AND, bits, nextbit), zero)
 			b.IfThen(has, func() {
-				b.callDefer(self, typ, buildCall, fn, args)
+				b.callDefer(self, typ, mayRecover, buildCall, fn, args)
 			})
 		case DeferAlways:
 			// Leaving a run of loop defers; allow the next loop-defer statement
 			// (earlier in source order) to generate its own drainer.
 			self.loopDrainerGenerated = false
-			b.callDefer(self, typ, buildCall, fn, args)
+			b.callDefer(self, typ, mayRecover, buildCall, fn, args)
 		case DeferInLoop:
 			b.loopDeferDrainer(self)
 		}
@@ -456,7 +469,7 @@ func (b Builder) loopDeferDrainer(self *aDefer) {
 
 		b.SetBlockEx(caseBlks[i], AtEnd, true)
 		b.Store(self.rethPtr, drainEntryAddr)
-		b.callDefer(self, c.typ, c.buildCall, c.fn, c.args)
+		b.callDefer(self, c.typ, c.mayRecover, c.buildCall, c.fn, c.args)
 		b.Jump(condBlk)
 	}
 
@@ -511,9 +524,11 @@ func (b Builder) saveDeferArgsTo(argsPtr Expr, kind DoAction, id Expr, fn Expr, 
 	return typ
 }
 
-func (b Builder) callDefer(self *aDefer, typ Type, buildCall func(Builder, Expr, ...Expr) Expr, fn Expr, args []Expr) {
+func (b Builder) callDefer(self *aDefer, typ Type, mayRecover bool, buildCall func(Builder, Expr, ...Expr) Expr, fn Expr, args []Expr) {
 	if typ == nil {
-		buildCall(b, fn, args...)
+		b.callRecoverScopedDefer(fn, mayRecover, func() {
+			buildCall(b, fn, args...)
+		})
 		return
 	}
 	prog := b.Prog
@@ -536,8 +551,67 @@ func (b Builder) callDefer(self *aDefer, typ Type, buildCall func(Builder, Expr,
 			args[i] = b.getField(data, i+offset)
 		}
 		b.Call(b.Pkg.rtFunc("FreeDeferNode"), ptr)
-		buildCall(b, fn, args...)
+		b.callRecoverScopedDefer(fn, mayRecover, func() {
+			buildCall(b, fn, args...)
+		})
 	})
+}
+
+func (b Builder) callRecoverScopedDefer(fn Expr, mayRecover bool, call func()) {
+	if fn.IsNil() || fn.impl.IsNil() || isRecoverBuiltin(fn) {
+		call()
+		return
+	}
+	token := b.recoverDeferToken(fn, mayRecover)
+	if token.IsNil() {
+		call()
+		return
+	}
+	prev := b.Call(b.Pkg.rtFunc("StartRecoverFrame"), token)
+	call()
+	b.Call(b.Pkg.rtFunc("EndRecoverFrame"), prev)
+}
+
+func (b Builder) recoverDeferToken(fn Expr, mayRecover bool) Expr {
+	switch fn.kind {
+	case vkClosure:
+		if !mayRecover {
+			return Nil
+		}
+		return b.PtrCast(b.Prog.VoidPtr(), b.Field(fn, 0))
+	case vkFuncDecl:
+		if !mayRecover {
+			return Nil
+		}
+		return b.PtrCast(b.Prog.VoidPtr(), fn)
+	case vkFuncPtr:
+		return b.PtrCast(b.Prog.VoidPtr(), fn)
+	}
+	return Nil
+}
+
+func deferMayRecover(fn Expr) bool {
+	if fn.IsNil() || fn.Type == nil {
+		return false
+	}
+	switch fn.kind {
+	case vkClosure, vkFuncDecl:
+		return fn.Type.mayRecover
+	case vkFuncPtr:
+		return true
+	}
+	return false
+}
+
+func isRecoverBuiltin(fn Expr) bool {
+	if fn.IsNil() {
+		return false
+	}
+	if fn.kind != vkBuiltin {
+		return false
+	}
+	bi, ok := fn.raw.Type.(*builtinTy)
+	return ok && bi.name == "recover"
 }
 
 // RunDefers emits instructions to run deferred instructions.
@@ -609,8 +683,7 @@ func (b Builder) Unreachable() {
 // Recover emits a recover instruction.
 func (b Builder) Recover() Expr {
 	dbgInstrln("Recover")
-	// TODO(xsw): recover can't be a function call in Go
-	return b.Call(b.Pkg.rtFunc("Recover"))
+	return b.Call(b.Pkg.rtFunc("Recover"), b.PtrCast(b.Prog.VoidPtr(), b.Func.Expr))
 }
 
 // Panic emits a panic instruction.

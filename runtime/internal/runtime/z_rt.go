@@ -36,30 +36,55 @@ type Defer struct {
 	Args unsafe.Pointer // defer func and args links
 }
 
+type panicNode struct {
+	prev unsafe.Pointer
+	arg  any
+}
+
 // Recover recovers a panic.
-func Recover() (ret any) {
-	ptr := excepKey.Get()
+func Recover(token unsafe.Pointer) (ret any) {
+	if token == nil || token != recoverFrameKey.Get() {
+		return nil
+	}
+	ptr := panicKey.Get()
 	if ptr != nil {
-		excepKey.Set(nil)
-		ret = *(*any)(ptr)
-		c.Free(ptr)
+		node := (*panicNode)(ptr)
+		panicKey.Set(node.prev)
+		recoverFrameKey.Set(nil)
+		ret = node.arg
+		c.Free(unsafe.Pointer(node))
 	}
 	return
 }
 
+// StartRecoverFrame enables direct recover calls made by the deferred function
+// currently being invoked from frame.
+func StartRecoverFrame(frame unsafe.Pointer) unsafe.Pointer {
+	old := recoverFrameKey.Get()
+	recoverFrameKey.Set(frame)
+	return old
+}
+
+// EndRecoverFrame restores direct recover permission after a deferred call.
+func EndRecoverFrame(frame unsafe.Pointer) {
+	recoverFrameKey.Set(frame)
+}
+
 // Panic panics with a value.
 func Panic(v any) {
-	ptr := c.Malloc(unsafe.Sizeof(v))
-	*(*any)(ptr) = v
-	excepKey.Set(ptr)
+	ptr := (*panicNode)(c.Malloc(unsafe.Sizeof(panicNode{})))
+	ptr.prev = panicKey.Get()
+	ptr.arg = v
+	panicKey.Set(unsafe.Pointer(ptr))
 
 	Rethrow((*Defer)(c.GoDeferData()))
 }
 
 var (
-	excepKey   pthread.Key
-	goexitKey  pthread.Key
-	mainThread pthread.Thread
+	panicKey        pthread.Key
+	recoverFrameKey pthread.Key
+	goexitKey       pthread.Key
+	mainThread      pthread.Thread
 )
 
 func Goexit() {
@@ -68,7 +93,8 @@ func Goexit() {
 }
 
 func init() {
-	excepKey.Create(nil)
+	panicKey.Create(nil)
+	recoverFrameKey.Create(nil)
 	goexitKey.Create(nil)
 	mainThread = pthread.Self()
 }
