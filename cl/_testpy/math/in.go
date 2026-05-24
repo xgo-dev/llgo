@@ -7,6 +7,8 @@ import (
 	"github.com/goplus/lib/py"
 )
 
+// CHECK-LINE: @0 = private unnamed_addr constant [5 x i8] c"math\00", align 1
+
 // CHECK-LABEL: define void @"{{.*}}/cl/_testpy/math.init"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = load i1, ptr @"{{.*}}/cl/_testpy/math.init$guard", align 1

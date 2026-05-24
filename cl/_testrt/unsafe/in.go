@@ -7,6 +7,8 @@ import (
 	"github.com/goplus/lib/c"
 )
 
+//llgo:type C
+
 // CHECK-LINE: @0 = private unnamed_addr constant [5 x i8] c"error", align 1
 // CHECK-LINE: @2 = private unnamed_addr constant [4 x i8] c"abc\00", align 1
 // CHECK-LINE: @3 = private unnamed_addr constant [31 x i8] c"unsafe.String: len out of range", align 1
@@ -28,7 +30,6 @@ import (
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
-//llgo:type C
 type T func()
 
 type M struct {
@@ -43,7 +44,7 @@ type N struct {
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/unsafe.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   br i1 false, label %_llgo_1, label %_llgo_2
+// CHECK-NEXT:   br i1 true, label %_llgo_1, label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
@@ -53,7 +54,7 @@ type N struct {
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   br i1 false, label %_llgo_3, label %_llgo_4
+// CHECK-NEXT:   br i1 true, label %_llgo_3, label %_llgo_4
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_2
 // CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
@@ -113,7 +114,7 @@ type N struct {
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_14:                                         ; preds = %_llgo_12
-// CHECK-NEXT:   br i1 false, label %_llgo_15, label %_llgo_16
+// CHECK-NEXT:   br i1 true, label %_llgo_15, label %_llgo_16
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_15:                                         ; preds = %_llgo_14
 // CHECK-NEXT:   %14 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)

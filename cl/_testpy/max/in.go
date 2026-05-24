@@ -6,6 +6,39 @@ import (
 	"github.com/goplus/lib/py/std"
 )
 
+// CHECK-LINE: @0 = private unnamed_addr constant [5 x i8] c"iter\00", align 1
+// CHECK-LINE: @1 = private unnamed_addr constant [4 x i8] c"max\00", align 1
+// CHECK-LINE: @2 = private unnamed_addr constant [6 x i8] c"print\00", align 1
+
+func main() {
+	x := std.Max(py.Float(3.0), py.Float(9.0), py.Float(23.0), py.Float(100.0))
+	std.Print(x)
+
+	list := py.List(3.0, 9.0, 23.0, 100.0)
+	y := std.Max(std.Iter(list))
+	std.Print(y)
+
+	tuple := py.Tuple(1.0, 2.0, 3.0)
+	z := std.Max(std.Iter(tuple))
+	std.Print(z)
+}
+
+// CHECK-LABEL: define void @"{{.*}}/cl/_testpy/max.init"(){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %0 = load i1, ptr @"{{.*}}/cl/_testpy/max.init$guard", align 1
+// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
+// CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testpy/max.init$guard", align 1
+// CHECK-NEXT:   call void @"github.com/goplus/lib/py/std.init"()
+// CHECK-NEXT:   %1 = load ptr, ptr @__llgo_py.builtins, align 8
+// CHECK-NEXT:   call void (ptr, ...) @llgoLoadPyModSyms(ptr %1, ptr @0, ptr @__llgo_py.builtins.iter, ptr @1, ptr @__llgo_py.builtins.max, ptr @2, ptr @__llgo_py.builtins.print, ptr null)
+// CHECK-NEXT:   br label %_llgo_2
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
+
 // CHECK-LABEL: define void @"{{.*}}/cl/_testpy/max.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @PyFloat_FromDouble(double 3.000000e+00)
@@ -46,15 +79,3 @@ import (
 // CHECK-NEXT:   %35 = call ptr (ptr, ...) @PyObject_CallFunctionObjArgs(ptr %34, ptr %33, ptr null)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
-func main() {
-	x := std.Max(py.Float(3.0), py.Float(9.0), py.Float(23.0), py.Float(100.0))
-	std.Print(x)
-
-	list := py.List(3.0, 9.0, 23.0, 100.0)
-	y := std.Max(std.Iter(list))
-	std.Print(y)
-
-	tuple := py.Tuple(1.0, 2.0, 3.0)
-	z := std.Max(std.Iter(tuple))
-	std.Print(z)
-}

@@ -5,6 +5,7 @@ package main
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
+
 func foo(bar) {
 }
 
@@ -35,6 +36,7 @@ type bar interface {
 // CHECK-NEXT:   call void @"{{.*}}/cl/_testrt/gotypes.foo"(%"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
+
 func main() {
 	foo(nil)
 }

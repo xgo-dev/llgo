@@ -5,12 +5,13 @@ import _ "unsafe" // for go:linkname
 
 import "github.com/goplus/lib/c"
 
+//go:linkname cSqrt C.sqrt
+
 // CHECK-LINE: @0 = private unnamed_addr constant [46 x i8] c"{{.*}}/cl/_testgo/closureall.S", align 1
 // CHECK-LINE: @1 = private unnamed_addr constant [3 x i8] c"Inc", align 1
 // CHECK-LINE: @7 = private unnamed_addr constant [3 x i8] c"Add", align 1
 // CHECK-LINE: @9 = private unnamed_addr constant [23 x i8] c"interface{Add(int) int}", align 1
 
-//go:linkname cSqrt C.sqrt
 func cSqrt(x c.Double) c.Double
 
 // llgo:link cAbs C.abs
@@ -30,10 +31,12 @@ type S struct {
 // CHECK-NEXT:   %2 = alloca %"{{.*}}/cl/_testgo/closureall.S", align 8
 // CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 8, i1 false)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testgo/closureall.S" %0, ptr %2, align 8
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/closureall.S", ptr %2, i32 0, i32 0
-// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
-// CHECK-NEXT:   %5 = add i64 %4, %1
-// CHECK-NEXT:   ret i64 %5
+// CHECK-NEXT:   %3 = icmp eq ptr %2, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testgo/closureall.S", ptr %2, i32 0, i32 0
+// CHECK-NEXT:   %5 = load i64, ptr %4, align 8
+// CHECK-NEXT:   %6 = add i64 %5, %1
+// CHECK-NEXT:   ret i64 %6
 // CHECK-NEXT: }
 
 func (s S) Inc(x int) int {
@@ -42,10 +45,12 @@ func (s S) Inc(x int) int {
 
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/closureall.(*S).Add"(ptr %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/closureall.S", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load i64, ptr %2, align 8
-// CHECK-NEXT:   %4 = add i64 %3, %1
-// CHECK-NEXT:   ret i64 %4
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/closureall.S", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
+// CHECK-NEXT:   %5 = add i64 %4, %1
+// CHECK-NEXT:   ret i64 %5
 // CHECK-NEXT: }
 
 func (s *S) Add(x int) int {
@@ -142,38 +147,40 @@ func makeWithFree(base int) Fn {
 // CHECK-NEXT:   %7 = call i64 %6(ptr %5, i64 2)
 // CHECK-NEXT:   %8 = call i64 @"{{.*}}/cl/_testgo/closureall.globalAdd"(i64 1, i64 2)
 // CHECK-NEXT:   %9 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/cl/_testgo/closureall.S", ptr %9, i32 0, i32 0
-// CHECK-NEXT:   store i64 5, ptr %10, align 8
-// CHECK-NEXT:   %11 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   %12 = getelementptr inbounds { ptr }, ptr %11, i32 0, i32 0
-// CHECK-NEXT:   store ptr %9, ptr %12, align 8
-// CHECK-NEXT:   %13 = insertvalue { ptr, ptr } { ptr @"{{.*}}/cl/_testgo/closureall.(*S).Add$bound", ptr undef }, ptr %11, 1
-// CHECK-NEXT:   %14 = extractvalue { ptr, ptr } %13, 1
-// CHECK-NEXT:   %15 = extractvalue { ptr, ptr } %13, 0
-// CHECK-NEXT:   %16 = call i64 %15(ptr %14, i64 7)
-// CHECK-NEXT:   %17 = call i64 @"{{.*}}/cl/_testgo/closureall.(*S).Add$thunk"(ptr %9, i64 8)
-// CHECK-NEXT:   %18 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$VdBKYV8-gcMjZtZfcf-u2oKoj9Lu3VXwuG8TGCW2S4A", ptr @"*_llgo_{{.*}}/cl/_testgo/closureall.S")
-// CHECK-NEXT:   %19 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %18, 0
-// CHECK-NEXT:   %20 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %19, ptr %9, 1
-// CHECK-NEXT:   %21 = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}/runtime/internal/runtime.iface" %20)
-// CHECK-NEXT:   %22 = icmp ne ptr %21, null
-// CHECK-NEXT:   br i1 %22, label %_llgo_1, label %_llgo_2
+// CHECK-NEXT:   %10 = icmp eq ptr %9, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %10)
+// CHECK-NEXT:   %11 = getelementptr inbounds %"{{.*}}/cl/_testgo/closureall.S", ptr %9, i32 0, i32 0
+// CHECK-NEXT:   store i64 5, ptr %11, align 8
+// CHECK-NEXT:   %12 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT:   %13 = getelementptr inbounds { ptr }, ptr %12, i32 0, i32 0
+// CHECK-NEXT:   store ptr %9, ptr %13, align 8
+// CHECK-NEXT:   %14 = insertvalue { ptr, ptr } { ptr @"{{.*}}/cl/_testgo/closureall.(*S).Add$bound", ptr undef }, ptr %12, 1
+// CHECK-NEXT:   %15 = extractvalue { ptr, ptr } %14, 1
+// CHECK-NEXT:   %16 = extractvalue { ptr, ptr } %14, 0
+// CHECK-NEXT:   %17 = call i64 %16(ptr %15, i64 7)
+// CHECK-NEXT:   %18 = call i64 @"{{.*}}/cl/_testgo/closureall.(*S).Add$thunk"(ptr %9, i64 8)
+// CHECK-NEXT:   %19 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$VdBKYV8-gcMjZtZfcf-u2oKoj9Lu3VXwuG8TGCW2S4A", ptr @"*_llgo_{{.*}}/cl/_testgo/closureall.S")
+// CHECK-NEXT:   %20 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %19, 0
+// CHECK-NEXT:   %21 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %20, ptr %9, 1
+// CHECK-NEXT:   %22 = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}/runtime/internal/runtime.iface" %21)
+// CHECK-NEXT:   %23 = icmp ne ptr %22, null
+// CHECK-NEXT:   br i1 %23, label %_llgo_1, label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %23 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   %24 = getelementptr inbounds { %"{{.*}}/runtime/internal/runtime.iface" }, ptr %23, i32 0, i32 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %20, ptr %24, align 8
-// CHECK-NEXT:   %25 = insertvalue { ptr, ptr } { ptr @"{{.*}}/cl/_testgo/closureall.interface{Add(int) int}.Add$bound", ptr undef }, ptr %23, 1
-// CHECK-NEXT:   %26 = extractvalue { ptr, ptr } %25, 1
-// CHECK-NEXT:   %27 = extractvalue { ptr, ptr } %25, 0
-// CHECK-NEXT:   %28 = call i64 %27(ptr %26, i64 9)
-// CHECK-NEXT:   %29 = call double @sqrt(double 4.000000e+00)
-// CHECK-NEXT:   %30 = call i32 @abs(i32 -3)
-// CHECK-NEXT:   %31 = call i32 @"{{.*}}/cl/_testgo/closureall.callCallback"(ptr @"{{.*}}/cl/_testgo/closureall.main$1", i32 7)
+// CHECK-NEXT:   %24 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   %25 = getelementptr inbounds { %"{{.*}}/runtime/internal/runtime.iface" }, ptr %24, i32 0, i32 0
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %21, ptr %25, align 8
+// CHECK-NEXT:   %26 = insertvalue { ptr, ptr } { ptr @"{{.*}}/cl/_testgo/closureall.interface{Add(int) int}.Add$bound", ptr undef }, ptr %24, 1
+// CHECK-NEXT:   %27 = extractvalue { ptr, ptr } %26, 1
+// CHECK-NEXT:   %28 = extractvalue { ptr, ptr } %26, 0
+// CHECK-NEXT:   %29 = call i64 %28(ptr %27, i64 9)
+// CHECK-NEXT:   %30 = call double @"{{.*}}/cl/_testgo/closureall.cSqrt"(double 4.000000e+00)
+// CHECK-NEXT:   %31 = call i32 @abs(i32 -3)
+// CHECK-NEXT:   %32 = call i32 @"{{.*}}/cl/_testgo/closureall.callCallback"(ptr @"{{.*}}/cl/_testgo/closureall.main$1", i32 7)
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %21, %"{{.*}}/runtime/internal/runtime.String" { ptr @9, i64 23 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @7, i64 3 })
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %22, %"{{.*}}/runtime/internal/runtime.String" { ptr @9, i64 23 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @7, i64 3 })
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 

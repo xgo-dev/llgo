@@ -93,14 +93,20 @@ type T struct {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 11 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/reflect.T", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load i64, ptr %2, align 8
-// CHECK-NEXT:   %4 = add i64 %3, %1
-// CHECK-NEXT:   %5 = getelementptr inbounds %"{{.*}}/cl/_testgo/reflect.T", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store i64 %4, ptr %5, align 8
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/cl/_testgo/reflect.T", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %7 = load i64, ptr %6, align 8
-// CHECK-NEXT:   ret i64 %7
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/reflect.T", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
+// CHECK-NEXT:   %5 = add i64 %4, %1
+// CHECK-NEXT:   %6 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
+// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/cl/_testgo/reflect.T", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   store i64 %5, ptr %7, align 8
+// CHECK-NEXT:   %8 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %8)
+// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/cl/_testgo/reflect.T", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %10 = load i64, ptr %9, align 8
+// CHECK-NEXT:   ret i64 %10
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/reflect.callClosure"(){{.*}} {
@@ -320,211 +326,215 @@ func callMethod() {
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/reflect.callIMethod"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}/cl/_testgo/reflect.T", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store i64 1, ptr %1, align 8
-// CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$VdBKYV8-gcMjZtZfcf-u2oKoj9Lu3VXwuG8TGCW2S4A", ptr @"*_llgo_{{.*}}/cl/_testgo/reflect.T")
-// CHECK-NEXT:   %3 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %2, 0
-// CHECK-NEXT:   %4 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %3, ptr %0, 1
-// CHECK-NEXT:   %5 = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}/runtime/internal/runtime.iface" %4)
-// CHECK-NEXT:   %6 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %4, 1
-// CHECK-NEXT:   %7 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" undef, ptr %5, 0
-// CHECK-NEXT:   %8 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" %7, ptr %6, 1
-// CHECK-NEXT:   %9 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %8)
-// CHECK-NEXT:   %10 = call %reflect.Value @reflect.Value.Method(%reflect.Value %9, i64 0)
-// CHECK-NEXT:   %11 = call i64 @reflect.Value.Kind(%reflect.Value %10)
-// CHECK-NEXT:   %12 = call %"{{.*}}/runtime/internal/runtime.iface" @reflect.Value.Type(%reflect.Value %10)
-// CHECK-NEXT:   %13 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %12)
-// CHECK-NEXT:   %14 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %12, 0
-// CHECK-NEXT:   %15 = getelementptr ptr, ptr %14, i64 37
-// CHECK-NEXT:   %16 = load ptr, ptr %15, align 8
-// CHECK-NEXT:   %17 = insertvalue { ptr, ptr } undef, ptr %16, 0
-// CHECK-NEXT:   %18 = insertvalue { ptr, ptr } %17, ptr %13, 1
-// CHECK-NEXT:   %19 = extractvalue { ptr, ptr } %18, 1
-// CHECK-NEXT:   %20 = extractvalue { ptr, ptr } %18, 0
-// CHECK-NEXT:   %21 = call %"{{.*}}/runtime/internal/runtime.String" %20(ptr %19)
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
+// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/reflect.T", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   store i64 1, ptr %2, align 8
+// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$VdBKYV8-gcMjZtZfcf-u2oKoj9Lu3VXwuG8TGCW2S4A", ptr @"*_llgo_{{.*}}/cl/_testgo/reflect.T")
+// CHECK-NEXT:   %4 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %3, 0
+// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %4, ptr %0, 1
+// CHECK-NEXT:   %6 = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}/runtime/internal/runtime.iface" %5)
+// CHECK-NEXT:   %7 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %5, 1
+// CHECK-NEXT:   %8 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" undef, ptr %6, 0
+// CHECK-NEXT:   %9 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" %8, ptr %7, 1
+// CHECK-NEXT:   %10 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %9)
+// CHECK-NEXT:   %11 = call %reflect.Value @reflect.Value.Method(%reflect.Value %10, i64 0)
+// CHECK-NEXT:   %12 = call i64 @reflect.Value.Kind(%reflect.Value %11)
+// CHECK-NEXT:   %13 = call %"{{.*}}/runtime/internal/runtime.iface" @reflect.Value.Type(%reflect.Value %11)
+// CHECK-NEXT:   %14 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %13)
+// CHECK-NEXT:   %15 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %13, 0
+// CHECK-NEXT:   %16 = getelementptr ptr, ptr %15, i64 37
+// CHECK-NEXT:   %17 = load ptr, ptr %16, align 8
+// CHECK-NEXT:   %18 = insertvalue { ptr, ptr } undef, ptr %17, 0
+// CHECK-NEXT:   %19 = insertvalue { ptr, ptr } %18, ptr %14, 1
+// CHECK-NEXT:   %20 = extractvalue { ptr, ptr } %19, 1
+// CHECK-NEXT:   %21 = extractvalue { ptr, ptr } %19, 0
+// CHECK-NEXT:   %22 = call %"{{.*}}/runtime/internal/runtime.String" %21(ptr %20)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @17, i64 7 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %11)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %12)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %21)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %22)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %22 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
-// CHECK-NEXT:   %23 = getelementptr inbounds %reflect.Value, ptr %22, i64 0
-// CHECK-NEXT:   %24 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   store i64 100, ptr %24, align 8
-// CHECK-NEXT:   %25 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %24, 1
-// CHECK-NEXT:   %26 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %25)
-// CHECK-NEXT:   store %reflect.Value %26, ptr %23, align 8
-// CHECK-NEXT:   %27 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %22, 0
-// CHECK-NEXT:   %28 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %27, i64 1, 1
-// CHECK-NEXT:   %29 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %28, i64 1, 2
-// CHECK-NEXT:   %30 = call %"{{.*}}/runtime/internal/runtime.Slice" @reflect.Value.Call(%reflect.Value %10, %"{{.*}}/runtime/internal/runtime.Slice" %29)
-// CHECK-NEXT:   %31 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %30, 0
-// CHECK-NEXT:   %32 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %30, 1
-// CHECK-NEXT:   %33 = icmp uge i64 0, %32
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %33, i64 0, i1 true, i64 %32)
-// CHECK-NEXT:   %34 = getelementptr inbounds %reflect.Value, ptr %31, i64 0
-// CHECK-NEXT:   %35 = load %reflect.Value, ptr %34, align 8
-// CHECK-NEXT:   %36 = call i64 @reflect.Value.Int(%reflect.Value %35)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %36)
+// CHECK-NEXT:   %23 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
+// CHECK-NEXT:   %24 = getelementptr inbounds %reflect.Value, ptr %23, i64 0
+// CHECK-NEXT:   %25 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT:   store i64 100, ptr %25, align 8
+// CHECK-NEXT:   %26 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %25, 1
+// CHECK-NEXT:   %27 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %26)
+// CHECK-NEXT:   store %reflect.Value %27, ptr %24, align 8
+// CHECK-NEXT:   %28 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %23, 0
+// CHECK-NEXT:   %29 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %28, i64 1, 1
+// CHECK-NEXT:   %30 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %29, i64 1, 2
+// CHECK-NEXT:   %31 = call %"{{.*}}/runtime/internal/runtime.Slice" @reflect.Value.Call(%reflect.Value %11, %"{{.*}}/runtime/internal/runtime.Slice" %30)
+// CHECK-NEXT:   %32 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %31, 0
+// CHECK-NEXT:   %33 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %31, 1
+// CHECK-NEXT:   %34 = icmp uge i64 0, %33
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %34, i64 0, i1 true, i64 %33)
+// CHECK-NEXT:   %35 = getelementptr inbounds %reflect.Value, ptr %32, i64 0
+// CHECK-NEXT:   %36 = load %reflect.Value, ptr %35, align 8
+// CHECK-NEXT:   %37 = call i64 @reflect.Value.Int(%reflect.Value %36)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %37)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %37 = call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %10)
-// CHECK-NEXT:   %38 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %37, 0
-// CHECK-NEXT:   %39 = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure$QIHBTaw1IFobr8yvWpq-2AJFm3xBNhdW_aNBicqUBGk", ptr %38)
-// CHECK-NEXT:   br i1 %39, label %_llgo_3, label %_llgo_4
+// CHECK-NEXT:   %38 = call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %11)
+// CHECK-NEXT:   %39 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %38, 0
+// CHECK-NEXT:   %40 = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure$QIHBTaw1IFobr8yvWpq-2AJFm3xBNhdW_aNBicqUBGk", ptr %39)
+// CHECK-NEXT:   br i1 %40, label %_llgo_3, label %_llgo_4
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_5
-// CHECK-NEXT:   %40 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @7, i64 5 }, ptr %40, align 8
-// CHECK-NEXT:   %41 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %40, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %41)
+// CHECK-NEXT:   %41 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @7, i64 5 }, ptr %41, align 8
+// CHECK-NEXT:   %42 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %41, 1
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %42)
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_5
-// CHECK-NEXT:   %42 = extractvalue { ptr, ptr } %67, 1
-// CHECK-NEXT:   %43 = extractvalue { ptr, ptr } %67, 0
-// CHECK-NEXT:   %44 = call i64 %43(ptr %42, i64 1)
-// CHECK-NEXT:   %45 = call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %10)
-// CHECK-NEXT:   %46 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %45)
-// CHECK-NEXT:   %47 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
-// CHECK-NEXT:   %48 = getelementptr inbounds %reflect.Value, ptr %47, i64 0
-// CHECK-NEXT:   %49 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   store i64 100, ptr %49, align 8
-// CHECK-NEXT:   %50 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %49, 1
-// CHECK-NEXT:   %51 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %50)
-// CHECK-NEXT:   store %reflect.Value %51, ptr %48, align 8
-// CHECK-NEXT:   %52 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %47, 0
-// CHECK-NEXT:   %53 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %52, i64 1, 1
-// CHECK-NEXT:   %54 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %53, i64 1, 2
-// CHECK-NEXT:   %55 = call %"{{.*}}/runtime/internal/runtime.Slice" @reflect.Value.Call(%reflect.Value %46, %"{{.*}}/runtime/internal/runtime.Slice" %54)
-// CHECK-NEXT:   %56 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %55, 0
-// CHECK-NEXT:   %57 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %55, 1
-// CHECK-NEXT:   %58 = icmp uge i64 0, %57
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %58, i64 0, i1 true, i64 %57)
-// CHECK-NEXT:   %59 = getelementptr inbounds %reflect.Value, ptr %56, i64 0
-// CHECK-NEXT:   %60 = load %reflect.Value, ptr %59, align 8
-// CHECK-NEXT:   %61 = call i64 @reflect.Value.Int(%reflect.Value %60)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %61)
+// CHECK-NEXT:   %43 = extractvalue { ptr, ptr } %68, 1
+// CHECK-NEXT:   %44 = extractvalue { ptr, ptr } %68, 0
+// CHECK-NEXT:   %45 = call i64 %44(ptr %43, i64 1)
+// CHECK-NEXT:   %46 = call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %11)
+// CHECK-NEXT:   %47 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %46)
+// CHECK-NEXT:   %48 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
+// CHECK-NEXT:   %49 = getelementptr inbounds %reflect.Value, ptr %48, i64 0
+// CHECK-NEXT:   %50 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT:   store i64 100, ptr %50, align 8
+// CHECK-NEXT:   %51 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %50, 1
+// CHECK-NEXT:   %52 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %51)
+// CHECK-NEXT:   store %reflect.Value %52, ptr %49, align 8
+// CHECK-NEXT:   %53 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %48, 0
+// CHECK-NEXT:   %54 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %53, i64 1, 1
+// CHECK-NEXT:   %55 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %54, i64 1, 2
+// CHECK-NEXT:   %56 = call %"{{.*}}/runtime/internal/runtime.Slice" @reflect.Value.Call(%reflect.Value %47, %"{{.*}}/runtime/internal/runtime.Slice" %55)
+// CHECK-NEXT:   %57 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %56, 0
+// CHECK-NEXT:   %58 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %56, 1
+// CHECK-NEXT:   %59 = icmp uge i64 0, %58
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %59, i64 0, i1 true, i64 %58)
+// CHECK-NEXT:   %60 = getelementptr inbounds %reflect.Value, ptr %57, i64 0
+// CHECK-NEXT:   %61 = load %reflect.Value, ptr %60, align 8
+// CHECK-NEXT:   %62 = call i64 @reflect.Value.Int(%reflect.Value %61)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %62)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %62 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %37, 1
-// CHECK-NEXT:   %63 = load { ptr, ptr }, ptr %62, align 8
-// CHECK-NEXT:   %64 = insertvalue { { ptr, ptr }, i1 } undef, { ptr, ptr } %63, 0
-// CHECK-NEXT:   %65 = insertvalue { { ptr, ptr }, i1 } %64, i1 true, 1
+// CHECK-NEXT:   %63 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %38, 1
+// CHECK-NEXT:   %64 = load { ptr, ptr }, ptr %63, align 8
+// CHECK-NEXT:   %65 = insertvalue { { ptr, ptr }, i1 } undef, { ptr, ptr } %64, 0
+// CHECK-NEXT:   %66 = insertvalue { { ptr, ptr }, i1 } %65, i1 true, 1
 // CHECK-NEXT:   br label %_llgo_5
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_0
 // CHECK-NEXT:   br label %_llgo_5
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_4, %_llgo_3
-// CHECK-NEXT:   %66 = phi { { ptr, ptr }, i1 } [ %65, %_llgo_3 ], [ zeroinitializer, %_llgo_4 ]
-// CHECK-NEXT:   %67 = extractvalue { { ptr, ptr }, i1 } %66, 0
-// CHECK-NEXT:   %68 = extractvalue { { ptr, ptr }, i1 } %66, 1
-// CHECK-NEXT:   br i1 %68, label %_llgo_2, label %_llgo_1
+// CHECK-NEXT:   %67 = phi { { ptr, ptr }, i1 } [ %66, %_llgo_3 ], [ zeroinitializer, %_llgo_4 ]
+// CHECK-NEXT:   %68 = extractvalue { { ptr, ptr }, i1 } %67, 0
+// CHECK-NEXT:   %69 = extractvalue { { ptr, ptr }, i1 } %67, 1
+// CHECK-NEXT:   br i1 %69, label %_llgo_2, label %_llgo_1
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/reflect.callMethod"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}/cl/_testgo/reflect.T", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store i64 1, ptr %1, align 8
-// CHECK-NEXT:   %2 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_{{.*}}/cl/_testgo/reflect.T", ptr undef }, ptr %0, 1
-// CHECK-NEXT:   %3 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %2)
-// CHECK-NEXT:   %4 = call %reflect.Value @reflect.Value.Method(%reflect.Value %3, i64 0)
-// CHECK-NEXT:   %5 = call i64 @reflect.Value.Kind(%reflect.Value %4)
-// CHECK-NEXT:   %6 = call %"{{.*}}/runtime/internal/runtime.iface" @reflect.Value.Type(%reflect.Value %4)
-// CHECK-NEXT:   %7 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %6)
-// CHECK-NEXT:   %8 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %6, 0
-// CHECK-NEXT:   %9 = getelementptr ptr, ptr %8, i64 37
-// CHECK-NEXT:   %10 = load ptr, ptr %9, align 8
-// CHECK-NEXT:   %11 = insertvalue { ptr, ptr } undef, ptr %10, 0
-// CHECK-NEXT:   %12 = insertvalue { ptr, ptr } %11, ptr %7, 1
-// CHECK-NEXT:   %13 = extractvalue { ptr, ptr } %12, 1
-// CHECK-NEXT:   %14 = extractvalue { ptr, ptr } %12, 0
-// CHECK-NEXT:   %15 = call %"{{.*}}/runtime/internal/runtime.String" %14(ptr %13)
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
+// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/reflect.T", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   store i64 1, ptr %2, align 8
+// CHECK-NEXT:   %3 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_{{.*}}/cl/_testgo/reflect.T", ptr undef }, ptr %0, 1
+// CHECK-NEXT:   %4 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %3)
+// CHECK-NEXT:   %5 = call %reflect.Value @reflect.Value.Method(%reflect.Value %4, i64 0)
+// CHECK-NEXT:   %6 = call i64 @reflect.Value.Kind(%reflect.Value %5)
+// CHECK-NEXT:   %7 = call %"{{.*}}/runtime/internal/runtime.iface" @reflect.Value.Type(%reflect.Value %5)
+// CHECK-NEXT:   %8 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %7)
+// CHECK-NEXT:   %9 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %7, 0
+// CHECK-NEXT:   %10 = getelementptr ptr, ptr %9, i64 37
+// CHECK-NEXT:   %11 = load ptr, ptr %10, align 8
+// CHECK-NEXT:   %12 = insertvalue { ptr, ptr } undef, ptr %11, 0
+// CHECK-NEXT:   %13 = insertvalue { ptr, ptr } %12, ptr %8, 1
+// CHECK-NEXT:   %14 = extractvalue { ptr, ptr } %13, 1
+// CHECK-NEXT:   %15 = extractvalue { ptr, ptr } %13, 0
+// CHECK-NEXT:   %16 = call %"{{.*}}/runtime/internal/runtime.String" %15(ptr %14)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @18, i64 6 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %5)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %6)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %15)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %16)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %16 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
-// CHECK-NEXT:   %17 = getelementptr inbounds %reflect.Value, ptr %16, i64 0
-// CHECK-NEXT:   %18 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   store i64 100, ptr %18, align 8
-// CHECK-NEXT:   %19 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %18, 1
-// CHECK-NEXT:   %20 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %19)
-// CHECK-NEXT:   store %reflect.Value %20, ptr %17, align 8
-// CHECK-NEXT:   %21 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %16, 0
-// CHECK-NEXT:   %22 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %21, i64 1, 1
-// CHECK-NEXT:   %23 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %22, i64 1, 2
-// CHECK-NEXT:   %24 = call %"{{.*}}/runtime/internal/runtime.Slice" @reflect.Value.Call(%reflect.Value %4, %"{{.*}}/runtime/internal/runtime.Slice" %23)
-// CHECK-NEXT:   %25 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %24, 0
-// CHECK-NEXT:   %26 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %24, 1
-// CHECK-NEXT:   %27 = icmp uge i64 0, %26
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %27, i64 0, i1 true, i64 %26)
-// CHECK-NEXT:   %28 = getelementptr inbounds %reflect.Value, ptr %25, i64 0
-// CHECK-NEXT:   %29 = load %reflect.Value, ptr %28, align 8
-// CHECK-NEXT:   %30 = call i64 @reflect.Value.Int(%reflect.Value %29)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %30)
+// CHECK-NEXT:   %17 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
+// CHECK-NEXT:   %18 = getelementptr inbounds %reflect.Value, ptr %17, i64 0
+// CHECK-NEXT:   %19 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT:   store i64 100, ptr %19, align 8
+// CHECK-NEXT:   %20 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %19, 1
+// CHECK-NEXT:   %21 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %20)
+// CHECK-NEXT:   store %reflect.Value %21, ptr %18, align 8
+// CHECK-NEXT:   %22 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %17, 0
+// CHECK-NEXT:   %23 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %22, i64 1, 1
+// CHECK-NEXT:   %24 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %23, i64 1, 2
+// CHECK-NEXT:   %25 = call %"{{.*}}/runtime/internal/runtime.Slice" @reflect.Value.Call(%reflect.Value %5, %"{{.*}}/runtime/internal/runtime.Slice" %24)
+// CHECK-NEXT:   %26 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %25, 0
+// CHECK-NEXT:   %27 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %25, 1
+// CHECK-NEXT:   %28 = icmp uge i64 0, %27
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %28, i64 0, i1 true, i64 %27)
+// CHECK-NEXT:   %29 = getelementptr inbounds %reflect.Value, ptr %26, i64 0
+// CHECK-NEXT:   %30 = load %reflect.Value, ptr %29, align 8
+// CHECK-NEXT:   %31 = call i64 @reflect.Value.Int(%reflect.Value %30)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %31)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %31 = call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %4)
-// CHECK-NEXT:   %32 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %31, 0
-// CHECK-NEXT:   %33 = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure$QIHBTaw1IFobr8yvWpq-2AJFm3xBNhdW_aNBicqUBGk", ptr %32)
-// CHECK-NEXT:   br i1 %33, label %_llgo_3, label %_llgo_4
+// CHECK-NEXT:   %32 = call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %5)
+// CHECK-NEXT:   %33 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %32, 0
+// CHECK-NEXT:   %34 = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure$QIHBTaw1IFobr8yvWpq-2AJFm3xBNhdW_aNBicqUBGk", ptr %33)
+// CHECK-NEXT:   br i1 %34, label %_llgo_3, label %_llgo_4
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_5
-// CHECK-NEXT:   %34 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @7, i64 5 }, ptr %34, align 8
-// CHECK-NEXT:   %35 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %34, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %35)
+// CHECK-NEXT:   %35 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @7, i64 5 }, ptr %35, align 8
+// CHECK-NEXT:   %36 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %35, 1
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %36)
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_5
-// CHECK-NEXT:   %36 = extractvalue { ptr, ptr } %61, 1
-// CHECK-NEXT:   %37 = extractvalue { ptr, ptr } %61, 0
-// CHECK-NEXT:   %38 = call i64 %37(ptr %36, i64 1)
-// CHECK-NEXT:   %39 = call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %4)
-// CHECK-NEXT:   %40 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %39)
-// CHECK-NEXT:   %41 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
-// CHECK-NEXT:   %42 = getelementptr inbounds %reflect.Value, ptr %41, i64 0
-// CHECK-NEXT:   %43 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   store i64 100, ptr %43, align 8
-// CHECK-NEXT:   %44 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %43, 1
-// CHECK-NEXT:   %45 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %44)
-// CHECK-NEXT:   store %reflect.Value %45, ptr %42, align 8
-// CHECK-NEXT:   %46 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %41, 0
-// CHECK-NEXT:   %47 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %46, i64 1, 1
-// CHECK-NEXT:   %48 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %47, i64 1, 2
-// CHECK-NEXT:   %49 = call %"{{.*}}/runtime/internal/runtime.Slice" @reflect.Value.Call(%reflect.Value %40, %"{{.*}}/runtime/internal/runtime.Slice" %48)
-// CHECK-NEXT:   %50 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %49, 0
-// CHECK-NEXT:   %51 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %49, 1
-// CHECK-NEXT:   %52 = icmp uge i64 0, %51
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %52, i64 0, i1 true, i64 %51)
-// CHECK-NEXT:   %53 = getelementptr inbounds %reflect.Value, ptr %50, i64 0
-// CHECK-NEXT:   %54 = load %reflect.Value, ptr %53, align 8
-// CHECK-NEXT:   %55 = call i64 @reflect.Value.Int(%reflect.Value %54)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %55)
+// CHECK-NEXT:   %37 = extractvalue { ptr, ptr } %62, 1
+// CHECK-NEXT:   %38 = extractvalue { ptr, ptr } %62, 0
+// CHECK-NEXT:   %39 = call i64 %38(ptr %37, i64 1)
+// CHECK-NEXT:   %40 = call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %5)
+// CHECK-NEXT:   %41 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %40)
+// CHECK-NEXT:   %42 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
+// CHECK-NEXT:   %43 = getelementptr inbounds %reflect.Value, ptr %42, i64 0
+// CHECK-NEXT:   %44 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT:   store i64 100, ptr %44, align 8
+// CHECK-NEXT:   %45 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %44, 1
+// CHECK-NEXT:   %46 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %45)
+// CHECK-NEXT:   store %reflect.Value %46, ptr %43, align 8
+// CHECK-NEXT:   %47 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %42, 0
+// CHECK-NEXT:   %48 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %47, i64 1, 1
+// CHECK-NEXT:   %49 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %48, i64 1, 2
+// CHECK-NEXT:   %50 = call %"{{.*}}/runtime/internal/runtime.Slice" @reflect.Value.Call(%reflect.Value %41, %"{{.*}}/runtime/internal/runtime.Slice" %49)
+// CHECK-NEXT:   %51 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %50, 0
+// CHECK-NEXT:   %52 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %50, 1
+// CHECK-NEXT:   %53 = icmp uge i64 0, %52
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %53, i64 0, i1 true, i64 %52)
+// CHECK-NEXT:   %54 = getelementptr inbounds %reflect.Value, ptr %51, i64 0
+// CHECK-NEXT:   %55 = load %reflect.Value, ptr %54, align 8
+// CHECK-NEXT:   %56 = call i64 @reflect.Value.Int(%reflect.Value %55)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %56)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %56 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %31, 1
-// CHECK-NEXT:   %57 = load { ptr, ptr }, ptr %56, align 8
-// CHECK-NEXT:   %58 = insertvalue { { ptr, ptr }, i1 } undef, { ptr, ptr } %57, 0
-// CHECK-NEXT:   %59 = insertvalue { { ptr, ptr }, i1 } %58, i1 true, 1
+// CHECK-NEXT:   %57 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %32, 1
+// CHECK-NEXT:   %58 = load { ptr, ptr }, ptr %57, align 8
+// CHECK-NEXT:   %59 = insertvalue { { ptr, ptr }, i1 } undef, { ptr, ptr } %58, 0
+// CHECK-NEXT:   %60 = insertvalue { { ptr, ptr }, i1 } %59, i1 true, 1
 // CHECK-NEXT:   br label %_llgo_5
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_0
 // CHECK-NEXT:   br label %_llgo_5
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_4, %_llgo_3
-// CHECK-NEXT:   %60 = phi { { ptr, ptr }, i1 } [ %59, %_llgo_3 ], [ zeroinitializer, %_llgo_4 ]
-// CHECK-NEXT:   %61 = extractvalue { { ptr, ptr }, i1 } %60, 0
-// CHECK-NEXT:   %62 = extractvalue { { ptr, ptr }, i1 } %60, 1
-// CHECK-NEXT:   br i1 %62, label %_llgo_2, label %_llgo_1
+// CHECK-NEXT:   %61 = phi { { ptr, ptr }, i1 } [ %60, %_llgo_3 ], [ zeroinitializer, %_llgo_4 ]
+// CHECK-NEXT:   %62 = extractvalue { { ptr, ptr }, i1 } %61, 0
+// CHECK-NEXT:   %63 = extractvalue { { ptr, ptr }, i1 } %61, 1
+// CHECK-NEXT:   br i1 %63, label %_llgo_2, label %_llgo_1
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/reflect.callSlice"(){{.*}} {

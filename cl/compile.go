@@ -762,6 +762,20 @@ func skipUnusedArrayDeref(v *ssa.UnOp) bool {
 	return true
 }
 
+func shouldAssertDirectNilDeref(v *ssa.UnOp) bool {
+	if v.Op != token.MUL {
+		return false
+	}
+	if _, ok := v.X.(*ssa.Parameter); !ok {
+		return false
+	}
+	switch types.Unalias(v.Type()).Underlying().(type) {
+	case *types.Basic, *types.Pointer, *types.Chan, *types.Map, *types.Slice, *types.Interface:
+		return true
+	}
+	return false
+}
+
 func (p *context) cgoErrnoType() types.Type {
 	if p.cgoErrnoTy != nil {
 		return p.cgoErrnoTy
@@ -983,6 +997,10 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 					}
 				}
 				if skipUnusedArrayDeref(v) {
+					x := p.compileValue(b, v.X)
+					if _, ok := v.X.(*ssa.Call); ok {
+						b.AssertNilDeref(x)
+					}
 					return
 				}
 				if _, ok := types.Unalias(v.Type()).Underlying().(*types.Slice); ok {
@@ -1019,6 +1037,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			}
 		}
 		x := p.compileValue(b, v.X)
+		if shouldAssertDirectNilDeref(v) {
+			b.AssertNilDeref(x)
+		}
 		if v.Op == token.ARROW {
 			ret = b.Recv(x, v.CommaOk)
 		} else {

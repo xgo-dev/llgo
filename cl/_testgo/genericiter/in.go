@@ -27,6 +27,19 @@ type Iterator IteratorG[int]
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
+// CHECK-LABEL: define void @"{{.*}}/cl/_testgo/genericiter.init"(){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %0 = load i1, ptr @"{{.*}}/cl/_testgo/genericiter.init$guard", align 1
+// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
+// CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testgo/genericiter.init$guard", align 1
+// CHECK-NEXT:   br label %_llgo_2
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
+
 func (t *Tree) Ascend(iterator Iterator) {
 	(*TreeG[int])(t).Ascend((IteratorG[int])(iterator))
 }
@@ -62,6 +75,7 @@ func (t *Tree) Ascend(iterator Iterator) {
 func main() {
 	var got int
 	tree := (*Tree)(new(TreeG[int]))
+
 	// CHECK-LABEL: define i1 @"{{.*}}/cl/_testgo/genericiter.main$1"(ptr %0, i64 %1){{.*}} {
 	// CHECK-NEXT: _llgo_0:
 	// CHECK-NEXT:   %2 = add i64 %1, 1

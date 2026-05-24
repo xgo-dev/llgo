@@ -1,6 +1,60 @@
 // LITTEST
 package main
 
+func main() {
+	println(mask(1))
+	println(mask_shl(127, 5))
+	println(mask_shl8(127, 5))
+	println(mask_shl8u(127, 5))
+	println(mask_shl8(127, 16))
+	println(mask_shl8u(127, 16))
+	println(mask_shr(127, 5))
+	println(mask_shr8(127, 5))
+	println(mask_shr8u(127, 5))
+	println(mask_shr8(127, 16))
+}
+
+func mask(x int8) int32 {
+	return int32(x) << 31 >> 31
+}
+
+func mask_shl(x int, y int) int {
+	return x << y
+}
+
+func mask_shl8(x int8, y int) int8 {
+	return x << y
+}
+
+func mask_shl8u(x uint8, y int) uint8 {
+	return x << y
+}
+
+func mask_shr(x int, y int) int {
+	return x >> y
+}
+
+func mask_shr8(x int8, y int) int8 {
+	return x >> y
+}
+
+func mask_shr8u(x uint8, y int) uint8 {
+	return x >> y
+}
+
+// CHECK-LABEL: define void @"{{.*}}/cl/_testrt/mask.init"(){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %0 = load i1, ptr @"{{.*}}/cl/_testrt/mask.init$guard", align 1
+// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
+// CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testrt/mask.init$guard", align 1
+// CHECK-NEXT:   br label %_llgo_2
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
+
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/mask.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call i32 @"{{.*}}/cl/_testrt/mask.mask"(i8 1)
@@ -43,18 +97,6 @@ package main
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
-func main() {
-	println(mask(1))
-	println(mask_shl(127, 5))
-	println(mask_shl8(127, 5))
-	println(mask_shl8u(127, 5))
-	println(mask_shl8(127, 16))
-	println(mask_shl8u(127, 16))
-	println(mask_shr(127, 5))
-	println(mask_shr8(127, 5))
-	println(mask_shr8u(127, 5))
-	println(mask_shr8(127, 16))
-}
 
 // CHECK-LABEL: define i32 @"{{.*}}/cl/_testrt/mask.mask"(i8 %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -64,9 +106,6 @@ func main() {
 // CHECK-NEXT:   %4 = ashr i32 %3, 31
 // CHECK-NEXT:   ret i32 %4
 // CHECK-NEXT: }
-func mask(x int8) int32 {
-	return int32(x) << 31 >> 31
-}
 
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testrt/mask.mask_shl"(i64 %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -77,9 +116,6 @@ func mask(x int8) int32 {
 // CHECK-NEXT:   %5 = select i1 %3, i64 0, i64 %4
 // CHECK-NEXT:   ret i64 %5
 // CHECK-NEXT: }
-func mask_shl(x int, y int) int {
-	return x << y
-}
 
 // CHECK-LABEL: define i8 @"{{.*}}/cl/_testrt/mask.mask_shl8"(i8 %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -91,9 +127,6 @@ func mask_shl(x int, y int) int {
 // CHECK-NEXT:   %6 = select i1 %4, i8 0, i8 %5
 // CHECK-NEXT:   ret i8 %6
 // CHECK-NEXT: }
-func mask_shl8(x int8, y int) int8 {
-	return x << y
-}
 
 // CHECK-LABEL: define i8 @"{{.*}}/cl/_testrt/mask.mask_shl8u"(i8 %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -105,9 +138,6 @@ func mask_shl8(x int8, y int) int8 {
 // CHECK-NEXT:   %6 = select i1 %4, i8 0, i8 %5
 // CHECK-NEXT:   ret i8 %6
 // CHECK-NEXT: }
-func mask_shl8u(x uint8, y int) uint8 {
-	return x << y
-}
 
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testrt/mask.mask_shr"(i64 %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -118,9 +148,6 @@ func mask_shl8u(x uint8, y int) uint8 {
 // CHECK-NEXT:   %5 = ashr i64 %0, %4
 // CHECK-NEXT:   ret i64 %5
 // CHECK-NEXT: }
-func mask_shr(x int, y int) int {
-	return x >> y
-}
 
 // CHECK-LABEL: define i8 @"{{.*}}/cl/_testrt/mask.mask_shr8"(i8 %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -132,9 +159,6 @@ func mask_shr(x int, y int) int {
 // CHECK-NEXT:   %6 = ashr i8 %0, %5
 // CHECK-NEXT:   ret i8 %6
 // CHECK-NEXT: }
-func mask_shr8(x int8, y int) int8 {
-	return x >> y
-}
 
 // CHECK-LABEL: define i8 @"{{.*}}/cl/_testrt/mask.mask_shr8u"(i8 %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -146,6 +170,3 @@ func mask_shr8(x int8, y int) int8 {
 // CHECK-NEXT:   %6 = select i1 %4, i8 0, i8 %5
 // CHECK-NEXT:   ret i8 %6
 // CHECK-NEXT: }
-func mask_shr8u(x uint8, y int) uint8 {
-	return x >> y
-}
