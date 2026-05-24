@@ -2910,16 +2910,6 @@ xfails:
     directive: run
     case: fixedbugs/issue47928.go
     reason: current main goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue73917.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue73920.go
-    reason: go1.26 goroot run failure on linux/amd64
   - platform: linux/amd64
     directive: run
     case: fixedbugs/issue8048.go
