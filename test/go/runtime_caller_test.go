@@ -121,6 +121,121 @@ func TestRuntimeCallersFramesRecoveredNilPanicMetadata(t *testing.T) {
 	}
 }
 
+var (
+	runtimeInlineCallerSkip  int
+	runtimeInlineCallerFrame runtimeCallerSnapshot
+)
+
+func TestRuntimeCallerInlineMetadata(t *testing.T) {
+	tests := []struct {
+		skip       int
+		nameSuffix string
+		line       int
+	}{
+		{0, ".runtimeInlineCallerH", 422},
+		{1, ".runtimeInlineCallerG", 411},
+		{2, ".runtimeInlineCallerF", 401},
+		{3, ".runtimeInlineCallerProbe", 432},
+	}
+	for _, tt := range tests {
+		got := runtimeInlineCallerProbe(tt.skip)
+		if !got.ok {
+			t.Fatalf("runtime.Caller(%d) failed", tt.skip)
+		}
+		if !strings.HasSuffix(got.file, "runtime_inline_caller_metadata.go") {
+			t.Fatalf("runtime.Caller(%d) file = %q", tt.skip, got.file)
+		}
+		if got.line != tt.line {
+			t.Fatalf("runtime.Caller(%d) line = %d, want %d", tt.skip, got.line, tt.line)
+		}
+		fn := runtime.FuncForPC(got.pc)
+		if fn == nil {
+			t.Fatalf("FuncForPC(runtime.Caller(%d) pc) = nil", tt.skip)
+		}
+		if name := fn.Name(); !strings.HasSuffix(name, tt.nameSuffix) {
+			t.Fatalf("FuncForPC(runtime.Caller(%d) pc).Name = %q, want suffix %q", tt.skip, name, tt.nameSuffix)
+		}
+		file, line := fn.FileLine(got.pc)
+		if !strings.HasSuffix(file, "runtime_inline_caller_metadata.go") {
+			t.Fatalf("FuncForPC(runtime.Caller(%d) pc).FileLine file = %q", tt.skip, file)
+		}
+		if line != tt.line {
+			t.Fatalf("FuncForPC(runtime.Caller(%d) pc).FileLine line = %d, want %d", tt.skip, line, tt.line)
+		}
+	}
+}
+
+var (
+	runtimeInlineCallersSkip int
+	runtimeInlineCallersN    int
+	runtimeInlineCallersPCs  [32]uintptr
+)
+
+func TestRuntimeCallersInlineMetadata(t *testing.T) {
+	funcForPCWant := [][]string{
+		0: {"runtime.Callers", ".runtimeInlineCallersH", ".runtimeInlineCallersG", ".runtimeInlineCallersF", ".runtimeInlineCallersFuncForPC"},
+		1: {".runtimeInlineCallersH", ".runtimeInlineCallersG", ".runtimeInlineCallersF", ".runtimeInlineCallersFuncForPC"},
+		2: {".runtimeInlineCallersG", ".runtimeInlineCallersF", ".runtimeInlineCallersFuncForPC"},
+		3: {".runtimeInlineCallersF", ".runtimeInlineCallersFuncForPC"},
+		4: {".runtimeInlineCallersFuncForPC"},
+	}
+	for skip, want := range funcForPCWant {
+		got := runtimeInlineCallersFuncForPC(skip)
+		if !runtimeFrameNameSuffixes(got, want) {
+			t.Fatalf("runtime.Callers FuncForPC(%d) = %#v, want suffixes %#v", skip, got, want)
+		}
+	}
+
+	framesWant := []struct {
+		nameSuffix string
+		line       int
+	}{
+		{"runtime.Callers", 0},
+		{".runtimeInlineCallersH", 521},
+		{".runtimeInlineCallersG", 511},
+		{".runtimeInlineCallersF", 501},
+		{".runtimeInlineCallersFrames", 562},
+	}
+	for skip := range framesWant {
+		frames := runtimeInlineCallersFrames(skip)
+		want := framesWant[skip:]
+		if len(frames) < len(want) {
+			t.Fatalf("runtime.CallersFrames(%d) returned %d frames, want at least %d: %#v", skip, len(frames), len(want), frames)
+		}
+		for i, tt := range want {
+			frame := frames[i]
+			if !strings.HasSuffix(frame.Function, tt.nameSuffix) {
+				t.Fatalf("runtime.CallersFrames(%d) frame %d function = %q, want suffix %q", skip, i, frame.Function, tt.nameSuffix)
+			}
+			if tt.line != 0 {
+				if !strings.HasSuffix(frame.File, "runtime_inline_callers_metadata.go") {
+					t.Fatalf("runtime.CallersFrames(%d) frame %d file = %q", skip, i, frame.File)
+				}
+				if frame.Line != tt.line {
+					t.Fatalf("runtime.CallersFrames(%d) frame %d line = %d, want %d", skip, i, frame.Line, tt.line)
+				}
+			}
+			if frame.Func != nil {
+				if name := frame.Func.Name(); !strings.HasSuffix(name, tt.nameSuffix) {
+					t.Fatalf("runtime.CallersFrames(%d) frame %d Func.Name = %q, want suffix %q", skip, i, name, tt.nameSuffix)
+				}
+			}
+		}
+	}
+}
+
+func runtimeFrameNameSuffixes(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if !strings.HasSuffix(got[i], want[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 func runtimeRecoveredNilPanicFrame(wantSuffix string, f func()) (frame runtime.Frame, ok bool) {
 	defer func() {
 		if recover() == nil {
@@ -160,6 +275,83 @@ func runtimeRecoveredNilPanicSplitClosureFrame() (runtime.Frame, bool) {
 		v. // method name is on the following line
 			runtimeCallerNilMethod()
 	})
+}
+
+//line runtime_inline_caller_metadata.go:400
+func runtimeInlineCallerF() {
+	runtimeInlineCallerG()
+}
+
+//line runtime_inline_caller_metadata.go:410
+func runtimeInlineCallerG() {
+	runtimeInlineCallerH()
+}
+
+//line runtime_inline_caller_metadata.go:420
+func runtimeInlineCallerH() {
+	x := &runtimeInlineCallerFrame
+	x.pc, x.file, x.line, x.ok = runtime.Caller(runtimeInlineCallerSkip)
+}
+
+//line runtime_inline_caller_metadata.go:430
+func runtimeInlineCallerProbe(skip int) runtimeCallerSnapshot {
+	runtimeInlineCallerSkip = skip
+	runtimeInlineCallerF()
+	frame := runtimeInlineCallerFrame
+	runtimeInlineCallerFrame = runtimeCallerSnapshot{}
+	if !frame.ok {
+		return runtimeCallerSnapshot{}
+	}
+	return frame
+}
+
+//line runtime_inline_callers_metadata.go:500
+func runtimeInlineCallersF() {
+	runtimeInlineCallersG()
+}
+
+//line runtime_inline_callers_metadata.go:510
+func runtimeInlineCallersG() {
+	runtimeInlineCallersH()
+}
+
+//line runtime_inline_callers_metadata.go:520
+func runtimeInlineCallersH() {
+	runtimeInlineCallersN = runtime.Callers(runtimeInlineCallersSkip, runtimeInlineCallersPCs[:])
+}
+
+//line runtime_inline_callers_metadata.go:530
+func runtimeInlineCallersFuncForPC(skip int) (frames []string) {
+	runtimeInlineCallersSkip = skip
+	runtimeInlineCallersF()
+	for i := 0; i < runtimeInlineCallersN; i++ {
+		fn := runtime.FuncForPC(runtimeInlineCallersPCs[i] - 1)
+		if fn == nil {
+			frames = append(frames, "")
+			continue
+		}
+		frames = append(frames, fn.Name())
+		if strings.HasSuffix(fn.Name(), ".runtimeInlineCallersFuncForPC") {
+			break
+		}
+	}
+	return frames
+}
+
+//line runtime_inline_callers_metadata.go:560
+func runtimeInlineCallersFrames(skip int) (frames []runtime.Frame) {
+	runtimeInlineCallersSkip = skip
+	runtimeInlineCallersF()
+	callers := runtimeInlineCallersPCs[:runtimeInlineCallersN]
+	iter := runtime.CallersFrames(callers)
+	for {
+		frame, more := iter.Next()
+		frames = append(frames, frame)
+		if !more || strings.HasSuffix(frame.Function, ".runtimeInlineCallersFrames") {
+			break
+		}
+	}
+	return frames
 }
 
 //line runtime_caller_metadata.go:100
