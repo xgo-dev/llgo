@@ -120,3 +120,44 @@ func TestDeferredRecoverBuiltinCanRecoverOuterPanicAfterNestedRecover(t *testing
 		t.Fatalf("recover stack after outer deferred recover builtin = %v, want %v", recovered, want)
 	}
 }
+
+type recoverValueMethod uintptr
+
+var methodWrapperRecovered any
+
+func (recoverValueMethod) recoverViaValueMethod() {
+	methodWrapperRecovered = recover()
+}
+
+func TestRecoverThroughDeferredPointerToValueMethodWrapper(t *testing.T) {
+	methodWrapperRecovered = nil
+	var x recoverValueMethod
+	func() {
+		defer (*recoverValueMethod).recoverViaValueMethod(&x)
+		panic("method-wrapper-sentinel")
+	}()
+
+	if methodWrapperRecovered != "method-wrapper-sentinel" {
+		t.Fatalf("method wrapper recover = %v, want method-wrapper-sentinel", methodWrapperRecovered)
+	}
+}
+
+func TestRecoverThroughMethodWrapperStillRequiresDirectDeferredCall(t *testing.T) {
+	methodWrapperRecovered = "unset"
+	var direct any
+	var x recoverValueMethod
+	func() {
+		defer func() {
+			(*recoverValueMethod).recoverViaValueMethod(&x)
+			direct = recover()
+		}()
+		panic("outer-sentinel")
+	}()
+
+	if methodWrapperRecovered != nil {
+		t.Fatalf("nested method wrapper recover = %v, want nil", methodWrapperRecovered)
+	}
+	if direct != "outer-sentinel" {
+		t.Fatalf("direct recover after nested method wrapper = %v, want outer-sentinel", direct)
+	}
+}
