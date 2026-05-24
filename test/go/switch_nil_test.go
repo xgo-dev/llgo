@@ -60,3 +60,56 @@ func TestSwitchNilCases(t *testing.T) {
 		t.Fatal("typed nil pointer did not match nil")
 	}
 }
+
+func TestGenericSwitchNilCases(t *testing.T) {
+	checkGenericNilSwitch[int](t)
+	checkGenericNilSwitch[string](t)
+}
+
+func checkGenericNilSwitch[T any](t *testing.T) {
+	switch []T(nil) {
+	case nil:
+	default:
+		t.Fatal("nil generic slice did not match nil")
+	}
+	if []T(nil) != nil {
+		t.Fatal("nil generic slice compared non-nil")
+	}
+
+	switch make([]T, 1) {
+	case nil:
+		t.Fatal("non-nil generic slice matched nil")
+	default:
+	}
+
+	switch (func() T)(nil) {
+	case nil:
+	default:
+		t.Fatal("nil generic func did not match nil")
+	}
+	if (func() T)(nil) != nil {
+		t.Fatal("nil generic func compared non-nil")
+	}
+
+	var zero T
+	switch func() T { return zero } {
+	case nil:
+		t.Fatal("non-nil generic func matched nil")
+	default:
+	}
+
+	switch (map[int]T)(nil) {
+	case nil:
+	default:
+		t.Fatal("nil generic map did not match nil")
+	}
+	if (map[int]T)(nil) != nil {
+		t.Fatal("nil generic map compared non-nil")
+	}
+
+	switch make(map[int]T) {
+	case nil:
+		t.Fatal("non-nil generic map matched nil")
+	default:
+	}
+}
