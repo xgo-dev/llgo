@@ -2,6 +2,7 @@ package gotest
 
 import (
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -159,5 +160,90 @@ func TestRecoverThroughMethodWrapperStillRequiresDirectDeferredCall(t *testing.T
 	}
 	if direct != "outer-sentinel" {
 		t.Fatalf("direct recover after nested method wrapper = %v, want outer-sentinel", direct)
+	}
+}
+
+type embeddedRecoverTarget int
+
+// Keep issue73917/issue73920 as a real helper call outside the wrapper target.
+//
+//go:noinline
+func recoverForEmbeddedWrapper() {
+	if r := recover(); r != nil {
+		methodWrapperRecovered = r
+	}
+}
+
+func (*embeddedRecoverTarget) recoverViaIndirectCall() {
+	recoverForEmbeddedWrapper()
+}
+
+type embeddedValueWrapper struct{ *embeddedRecoverTarget }
+type embeddedPointerWrapper struct{ *embeddedRecoverTarget }
+
+func requireGo126RecoverWrapperSemantics(t *testing.T) {
+	t.Helper()
+
+	const prefix = "go1."
+	version := runtime.Version()
+	if len(version) <= len(prefix) || version[:len(prefix)] != prefix {
+		return
+	}
+
+	minor := 0
+	for _, c := range version[len(prefix):] {
+		if c < '0' || c > '9' {
+			break
+		}
+		minor = minor*10 + int(c-'0')
+	}
+	if minor != 0 && minor < 26 {
+		t.Skipf("%s has pre-Go 1.26 embedded wrapper recover semantics", version)
+	}
+}
+
+func TestDeferredEmbeddedValueMethodWrapperKeepsIndirectRecoverNil(t *testing.T) {
+	requireGo126RecoverWrapperSemantics(t)
+
+	methodWrapperRecovered = nil
+	var direct any
+	x := embeddedValueWrapper{new(embeddedRecoverTarget)}
+	fn := embeddedValueWrapper.recoverViaIndirectCall
+	func() {
+		defer func() {
+			direct = recover()
+		}()
+		defer fn(x)
+		panic("embedded-value-wrapper-sentinel")
+	}()
+
+	if methodWrapperRecovered != nil {
+		t.Fatalf("indirect recover through embedded value wrapper = %v, want nil", methodWrapperRecovered)
+	}
+	if direct != "embedded-value-wrapper-sentinel" {
+		t.Fatalf("direct recover after embedded value wrapper = %v, want embedded-value-wrapper-sentinel", direct)
+	}
+}
+
+func TestDeferredEmbeddedPointerMethodWrapperKeepsIndirectRecoverNil(t *testing.T) {
+	requireGo126RecoverWrapperSemantics(t)
+
+	methodWrapperRecovered = nil
+	var direct any
+	x := &embeddedPointerWrapper{new(embeddedRecoverTarget)}
+	fn := (*embeddedPointerWrapper).recoverViaIndirectCall
+	func() {
+		defer func() {
+			direct = recover()
+		}()
+		defer fn(x)
+		panic("embedded-pointer-wrapper-sentinel")
+	}()
+
+	if methodWrapperRecovered != nil {
+		t.Fatalf("indirect recover through embedded pointer wrapper = %v, want nil", methodWrapperRecovered)
+	}
+	if direct != "embedded-pointer-wrapper-sentinel" {
+		t.Fatalf("direct recover after embedded pointer wrapper = %v, want embedded-pointer-wrapper-sentinel", direct)
 	}
 }
