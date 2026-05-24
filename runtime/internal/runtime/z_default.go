@@ -16,13 +16,14 @@ var (
 
 // Rethrow rethrows a panic.
 func Rethrow(link *Defer) {
-	if ptr := excepKey.Get(); ptr != nil {
+	if ptr := panicKey.Get(); ptr != nil {
+		node := (*panicNode)(ptr)
 		if link == nil {
-			TracePanic(*(*any)(ptr))
+			TracePanic(node.arg)
 			debug.PrintStack(2)
-			c.Free(ptr)
 			c.Exit(2)
 		} else {
+			node.frame = link.Frame
 			c.Siglongjmp(link.Addr, 1)
 		}
 	} else if ptr := goexitKey.Get(); ptr != nil {
