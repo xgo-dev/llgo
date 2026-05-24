@@ -494,9 +494,8 @@ func TestDevLTOGlobalDCEAddMethodTypeMetadataEarlyReturns(t *testing.T) {
 	prog.EnableGoGlobalDCE(true)
 	pkg := prog.NewPackage("main", "main")
 	g := pkg.NewVarEx("g", prog.Pointer(prog.Int()))
-	mset := types.NewMethodSet(types.Typ[types.Int])
 
-	prog.addMethodTypeMetadata(g.impl, prog.Pointer(prog.Int()), mset, 0)
+	prog.addMethodTypeMetadata(g.impl, prog.Pointer(prog.Int()), nil)
 
 	ir := pkg.String()
 	if strings.Contains(ir, "!vcall_visibility") || strings.Contains(ir, "!type !") {
@@ -527,7 +526,7 @@ func TestDevLTOGlobalDCEAddMethodTypeMetadataMarksIFnAndTFnForReflectContexts(t 
 
 	methodArray := prog.Type(types.NewArray(prog.rtNamed("Method"), 1), InGo)
 	fullType := prog.Struct(prog.Int(), prog.Int(), methodArray)
-	prog.addMethodTypeMetadata(g.impl, fullType, mset, mset.Len())
+	prog.addMethodTypeMetadata(g.impl, fullType, []*types.Selection{mset.At(0)})
 
 	methodType := prog.Type(prog.rtNamed("Method"), InGo)
 	methodArrayOffset := prog.OffsetOf(fullType, 2)

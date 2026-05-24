@@ -1789,11 +1789,10 @@ xfails:
     directive: run
     case: typeparam/mdempsky/16.go
     reason: nil-deref panic value does not implement runtime.Error on darwin/arm64
-  - version: go1.26
-    platform: darwin/arm64
+  - platform: darwin/arm64
     directive: run
-    case: typeparam/mdempsky/15.go
-    reason: go1.26 go:nointerface methods still satisfy interfaces on darwin/arm64
+    case: typeparam/nested.go
+    reason: current main goroot run failure on darwin/arm64
   - version: go1.24
     platform: linux/amd64
     directive: run
@@ -2047,8 +2046,8 @@ xfails:
   - version: go1.26
     platform: linux/amd64
     directive: run
-    case: typeparam/mdempsky/15.go
-    reason: go1.26 go:nointerface methods still satisfy interfaces on linux/amd64
+    case: typeparam/nested.go
+    reason: go1.26 goroot run failure on linux/amd64
   - version: go1.24
     platform: linux/amd64
     directive: run
@@ -2990,7 +2989,7 @@ xfails:
     reason: current main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: fixedbugs/issue47928.go
+    case: fixedbugs/issue53635.go
     reason: current main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
@@ -3023,10 +3022,6 @@ xfails:
     case: typeparam/chans.go
     reason: select over unbuffered channel misses final receive on darwin/arm64
   - platform: darwin/arm64
-    directive: run
-    case: typeparam/mdempsky/15.go
-    reason: go:nointerface methods still satisfy interfaces on darwin/arm64
-  - platform: darwin/arm64
     directive: runoutput
     case: index0.go
     reason: current main goroot runoutput failure on darwin/arm64
@@ -3048,7 +3043,7 @@ xfails:
     reason: current main goroot run failure on linux/amd64
   - platform: linux/amd64
     directive: run
-    case: fixedbugs/issue47928.go
+    case: fixedbugs/issue53635.go
     reason: current main goroot run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64
@@ -3094,10 +3089,6 @@ xfails:
     directive: run
     case: typeparam/chans.go
     reason: select over unbuffered channel misses final receive on linux/amd64
-  - platform: linux/amd64
-    directive: run
-    case: typeparam/mdempsky/15.go
-    reason: go:nointerface methods still satisfy interfaces on linux/amd64
   - platform: linux/amd64
     directive: runoutput
     case: index0.go

@@ -224,6 +224,7 @@ type aProgram struct {
 
 	paramObjPtr_ *types.Var
 	linkname     map[string]string     // pkgPath.nameInPkg => linkname
+	noInterface  map[string]none       // pkgPath.T.method or pkgPath.(*T).method
 	abiSymbol    map[string]*AbiSymbol // abi symbol name => AbiSymbol
 
 	ptrSize int
@@ -287,7 +288,7 @@ func NewProgram(target *Target) Program {
 		ctx: ctx, gocvt: newGoTypes(),
 		target: target, td: td, tm: tm, is32Bits: is32Bits,
 		ptrSize: td.PointerSize(), named: make(map[string]Type), fnnamed: make(map[string]int),
-		linkname: make(map[string]string), abiSymbol: make(map[string]*AbiSymbol),
+		linkname: make(map[string]string), noInterface: make(map[string]none), abiSymbol: make(map[string]*AbiSymbol),
 	}
 	prog.abi.Init(uintptr(prog.ptrSize), (*goProgram)(unsafe.Pointer(prog)))
 	return prog
@@ -326,6 +327,22 @@ func (p Program) SetCompileMethods(check func(Package, types.Type)) {
 
 func (p Program) EnableGoGlobalDCE(enable bool) {
 	p.enableGoGlobalDCE = enable
+}
+
+func (p Program) SetNoInterfaceMethod(fullName string) {
+	p.noInterface[fullName] = none{}
+}
+
+func (p Program) isNoInterfaceMethod(fn *types.Func) bool {
+	if fn == nil {
+		return false
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok || sig.Recv() == nil {
+		return false
+	}
+	_, ok = p.noInterface[FuncName(fn.Pkg(), fn.Name(), sig.Recv(), true)]
+	return ok
 }
 
 // SetRuntime sets the runtime.

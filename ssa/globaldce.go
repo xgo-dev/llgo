@@ -209,8 +209,8 @@ func (p Function) recordFakeUse(v llvm.Value) {
 	p.fakeUses = append(p.fakeUses, v)
 }
 
-func (p Program) addMethodTypeMetadata(global llvm.Value, fullType Type, mset *types.MethodSet, methodCount int) {
-	if methodCount == 0 {
+func (p Program) addMethodTypeMetadata(global llvm.Value, fullType Type, methods []*types.Selection) {
+	if len(methods) == 0 {
 		return
 	}
 	p.setVCallVisibilityMetadata(global, vcallVisibilityLinkageUnit)
@@ -220,8 +220,7 @@ func (p Program) addMethodTypeMetadata(global llvm.Value, fullType Type, mset *t
 	ifnOffset := p.OffsetOf(methodType, abiMethodIFnFieldIndex)
 	tfnOffset := p.OffsetOf(methodType, abiMethodTFnFieldIndex)
 	methodStride := p.SizeOf(methodType)
-	for i := 0; i < methodCount; i++ {
-		sel := mset.At(i)
+	for i, sel := range methods {
 		baseOffset := methodArrayOffset + uint64(i)*methodStride
 		p.addTypeMetadata(global, baseOffset+ifnOffset, methodCapabilityKey(sel.Obj().(*types.Func)))
 		if sel.Obj().Exported() {
