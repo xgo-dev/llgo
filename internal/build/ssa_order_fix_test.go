@@ -35,6 +35,26 @@ func f() {
 	}
 }
 
+func TestFixSSAOrderSingleCaseSelectRecvAssignWithGlobalDebug(t *testing.T) {
+	const src = `package p
+var c = make(chan int, 1)
+var x int
+func checkorder(o int) {}
+func fc(c chan int, o int) chan int { checkorder(o); return c }
+func fp(p *int, o int) *int { checkorder(o); return p }
+func f() {
+	c <- 1
+	select {
+	case *fp(&x, 100) = <-fc(c, 1):
+	}
+}`
+	fn := buildSSAOrderTestPackageMode(t, src, ssa.GlobalDebug)
+	got := instrOrder(fn, "fc(", "<-", "fp(", "*t")
+	if !inOrder(got, "fc(", "<-", "fp(") {
+		t.Fatalf("single-case select receive assignment order with debug refs = %v, want fc/receive before fp", got)
+	}
+}
+
 func TestFixSSAOrderPlainRecvAssignKeepsLeftToRight(t *testing.T) {
 	const src = `package p
 var c = make(chan int, 1)
@@ -50,6 +70,24 @@ func f() {
 	got := instrOrder(fn, "fp(", "fc(", "<-")
 	if !inOrder(got, "fp(", "fc(", "<-") {
 		t.Fatalf("plain receive assignment order = %v, want fp before fc/receive", got)
+	}
+}
+
+func TestFixSSAOrderReturnLoadWithGlobalDebug(t *testing.T) {
+	const src = `package p
+type state struct{ value int }
+func (s *state) mutate(next int) int {
+	s.value = next
+	return s.value
+}
+func f() (state, int) {
+	x := state{value: 1}
+	return x, x.mutate(2)
+}`
+	fn := buildSSAOrderTestPackageMode(t, src, ssa.GlobalDebug)
+	callIdx, loadIdx := returnCallAndLoadIndexes(t, fn, "mutate(")
+	if !(callIdx >= 0 && loadIdx > callIdx) {
+		t.Fatalf("return load order with debug refs: call index %d, load index %d; want load after call", callIdx, loadIdx)
 	}
 }
 
@@ -116,6 +154,10 @@ func f() {
 }
 
 func buildSSAOrderTestPackage(t *testing.T, src string) *ssa.Function {
+	return buildSSAOrderTestPackageMode(t, src, 0)
+}
+
+func buildSSAOrderTestPackageMode(t *testing.T, src string, mode ssa.BuilderMode) *ssa.Function {
 	t.Helper()
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "p.go", src, 0)
@@ -129,7 +171,7 @@ func buildSSAOrderTestPackage(t *testing.T, src string) *ssa.Function {
 		fset,
 		pkg,
 		files,
-		ssa.SanityCheckFunctions|ssa.InstantiateGenerics,
+		ssa.SanityCheckFunctions|ssa.InstantiateGenerics|mode,
 	)
 	if err != nil {
 		t.Fatalf("BuildPackage: %v", err)
@@ -166,4 +208,22 @@ func inOrder(instrs []string, needles ...string) bool {
 		}
 	}
 	return pos == len(needles)
+}
+
+func returnCallAndLoadIndexes(t *testing.T, fn *ssa.Function, callNeedle string) (callIdx, loadIdx int) {
+	t.Helper()
+	callIdx, loadIdx = -1, -1
+	for _, block := range fn.Blocks {
+		for i, instr := range block.Instrs {
+			if strings.Contains(instr.String(), callNeedle) {
+				callIdx = i
+			}
+			if ret, ok := instr.(*ssa.Return); ok && len(ret.Results) > 0 {
+				if load, ok := ret.Results[0].(ssa.Instruction); ok {
+					loadIdx = indexOfInstr(block.Instrs, load)
+				}
+			}
+		}
+	}
+	return callIdx, loadIdx
 }

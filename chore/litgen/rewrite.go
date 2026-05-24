@@ -66,7 +66,7 @@ var (
 	globalPlainRE   = regexp.MustCompile(`^@([A-Za-z0-9$._-]+)\s*=`)
 	globalRefRE     = regexp.MustCompile(`@"([^"]+)"|@([A-Za-z0-9$._-]+)`)
 	checkLineRE     = regexp.MustCompile(`^\s*//\s*CHECK(?:-[A-Z]+)?:`)
-	debugMetaRE     = regexp.MustCompile(`, ![A-Za-z0-9_.-]+ ![0-9]+`)
+	debugMetaRE     = regexp.MustCompile(`(?:,\s*|\s+)![A-Za-z0-9_.-]+ ![0-9]+`)
 	attrGroupTailRE = regexp.MustCompile(`\s+#\d+$`)
 	numericNameRE   = regexp.MustCompile(`^\d+$`)
 )

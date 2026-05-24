@@ -278,7 +278,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 		cfg.Mode |= packages.NeedForTest
 	}
 
-	cl.EnableDebug(IsDbgEnabled())
+	cl.EnableDebug(IsLineInfoEnabled())
 	cl.EnableDbgSyms(IsDbgSymsEnabled())
 	cl.EnableTrace(IsTraceEnabled())
 	llssa.Initialize(llssa.InitAll)
@@ -367,11 +367,13 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	buildMode := ssaBuildMode
 	cabiOptimize := true
 	passOpt := true
-	if IsDbgEnabled() || mode == ModeGen {
+	if IsLineInfoEnabled() || mode == ModeGen {
 		passOpt = false
 	}
-	if IsDbgEnabled() {
+	if IsLineInfoEnabled() {
 		buildMode |= ssa.GlobalDebug
+	}
+	if IsDbgEnabled() {
 		cabiOptimize = false
 	}
 	if !IsOptimizeEnabled() {
@@ -1105,8 +1107,8 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 		}
 	}
 
-	// Add common linker arguments based on target OS and architecture
-	if IsDbgSymsEnabled() {
+	// Add common linker arguments based on target OS and architecture.
+	if useDWARFLinkFlag(ctx) {
 		buildArgs = append(buildArgs, "-gdwarf-4")
 	}
 
@@ -1134,7 +1136,36 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 
 	cmd := ctx.linker()
 	cmd.Verbose = printCmds
-	return cmd.Link(buildArgs...)
+	if err := cmd.Link(buildArgs...); err != nil {
+		return err
+	}
+	return emitDarwinDSYM(ctx, app, printCmds)
+}
+
+func useDWARFLinkFlag(ctx *context) bool {
+	if !IsLineInfoEnabled() && !IsDbgSymsEnabled() {
+		return false
+	}
+	// -g/-gdwarf flags are driver options. Bare linker frontends such as
+	// ld.lld and wasm-ld reject them.
+	return ctx.crossCompile.Linker == ""
+}
+
+func emitDarwinDSYM(ctx *context, app string, verbose bool) error {
+	if !IsLineInfoEnabled() || ctx.buildConf.Goos != "darwin" || runtime.GOOS != "darwin" || ctx.buildConf.Target != "" {
+		return nil
+	}
+	if _, err := exec.LookPath("dsymutil"); err != nil {
+		return nil
+	}
+	args := []string{"-f", "-o", app + ".dSYM", app}
+	if verbose {
+		fmt.Fprintf(os.Stderr, "dsymutil %s\n", strings.Join(args, " "))
+	}
+	cmd := exec.Command("dsymutil", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func needsLinuxNoPIE(ctx *context, linkArgs []string) bool {
@@ -1753,6 +1784,7 @@ var (
 
 const llgoDebug = "LLGO_DEBUG"
 const llgoDbgSyms = "LLGO_DEBUG_SYMBOLS"
+const llgoLineInfo = "LLGO_LINEINFO"
 const llgoTrace = "LLGO_TRACE"
 const llgoOptimize = "LLGO_OPTIMIZE"
 const llgoWasmRuntime = "LLGO_WASM_RUNTIME"
@@ -1798,6 +1830,10 @@ func IsStdioNobuf() bool {
 
 func IsDbgEnabled() bool {
 	return isEnvOn(llgoDebug, false) || isEnvOn(llgoDbgSyms, false)
+}
+
+func IsLineInfoEnabled() bool {
+	return isEnvOn(llgoLineInfo, true) || IsDbgEnabled()
 }
 
 func IsDbgSymsEnabled() bool {

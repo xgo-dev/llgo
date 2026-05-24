@@ -53,6 +53,30 @@ func TestNeedsLinuxNoPIE(t *testing.T) {
 	}
 }
 
+func TestUseDWARFLinkFlag(t *testing.T) {
+	t.Setenv(llgoLineInfo, "1")
+	t.Setenv(llgoDebug, "0")
+	t.Setenv(llgoDbgSyms, "0")
+
+	ctx := &context{}
+	if !useDWARFLinkFlag(ctx) {
+		t.Fatal("clang driver link should accept -gdwarf-4 when line info is enabled")
+	}
+
+	for _, linker := range []string{"ld.lld", "wasm-ld"} {
+		ctx.crossCompile.Linker = linker
+		if useDWARFLinkFlag(ctx) {
+			t.Fatalf("%s should not receive clang driver debug flags", linker)
+		}
+	}
+
+	t.Setenv(llgoLineInfo, "0")
+	ctx.crossCompile.Linker = ""
+	if useDWARFLinkFlag(ctx) {
+		t.Fatal("disabled line info should not add -gdwarf-4")
+	}
+}
+
 func mockRun(args []string, cfg *Config) {
 	defer mockable.DisableMock()
 	mockable.EnableMock()
