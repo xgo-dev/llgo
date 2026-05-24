@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/goplus/llgo/internal/filecheck"
@@ -43,6 +44,8 @@ type Spec struct {
 }
 
 const Marker = "LITTEST"
+
+var debugMetadataRE = regexp.MustCompile(`(?:,\s*|\s+)!dbg ![0-9]+`)
 
 func LoadSpec(pkgDir string) (Spec, error) {
 	if spec, ok, err := loadSourceSpec(pkgDir); err != nil {
@@ -67,7 +70,7 @@ func Check(spec Spec, actual string) error {
 	case ModeSkip:
 		return nil
 	case ModeFileCheck:
-		return filecheck.Match(spec.Path, spec.Text, actual)
+		return filecheck.Match(spec.Path, spec.Text, stripDebugMetadata(actual))
 	case ModeLiteral:
 		if actual != spec.Text {
 			return fmt.Errorf("%s: literal LLVM IR mismatch", spec.Path)
@@ -76,6 +79,10 @@ func Check(spec Spec, actual string) error {
 	default:
 		return errors.New("unknown lit spec mode")
 	}
+}
+
+func stripDebugMetadata(actual string) string {
+	return debugMetadataRE.ReplaceAllString(actual, "")
 }
 
 func loadSourceSpec(pkgDir string) (Spec, bool, error) {

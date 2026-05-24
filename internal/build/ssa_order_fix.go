@@ -186,6 +186,7 @@ func moveAssignDepsAfterRecv(b *ssa.BasicBlock, roots []ssa.Value, recv ssa.Valu
 	if len(move) == 0 {
 		return false
 	}
+	addDebugRefsToMove(b.Instrs, move, recvIdx)
 	if moveWouldBreakSSA(b.Instrs, move, recvIdx) {
 		return false
 	}
@@ -203,6 +204,55 @@ func moveAssignDepsAfterRecv(b *ssa.BasicBlock, roots []ssa.Value, recv ssa.Valu
 	}
 	b.Instrs = next
 	return true
+}
+
+func addDebugRefsToMove(instrs []ssa.Instruction, move map[int]struct{}, beforeOrAt int) {
+	if beforeOrAt >= len(instrs) {
+		beforeOrAt = len(instrs) - 1
+	}
+	for {
+		moved := valuesAtIndexes(instrs, move)
+		changed := false
+		for i := 0; i <= beforeOrAt && i < len(instrs); i++ {
+			if _, ok := move[i]; ok {
+				continue
+			}
+			if _, ok := instrs[i].(*ssa.DebugRef); ok && instrUsesAnyValue(instrs[i], moved) {
+				move[i] = struct{}{}
+				changed = true
+			}
+		}
+		if !changed {
+			return
+		}
+	}
+}
+
+func valuesAtIndexes(instrs []ssa.Instruction, indexes map[int]struct{}) map[ssa.Value]struct{} {
+	ret := make(map[ssa.Value]struct{}, len(indexes))
+	for i := range indexes {
+		if i < 0 || i >= len(instrs) {
+			continue
+		}
+		if v, ok := instrs[i].(ssa.Value); ok && v != nil {
+			ret[v] = struct{}{}
+		}
+	}
+	return ret
+}
+
+func instrUsesAnyValue(ins ssa.Instruction, values map[ssa.Value]struct{}) bool {
+	if ins == nil || len(values) == 0 {
+		return false
+	}
+	for _, op := range ins.Operands(nil) {
+		if op != nil {
+			if _, ok := values[*op]; ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func moveWouldBreakSSA(instrs []ssa.Instruction, move map[int]struct{}, recvIdx int) bool {
@@ -305,9 +355,14 @@ func fixSSAOrderBlock(b *ssa.BasicBlock) {
 		// If the loaded value is used by any instruction between its current
 		// position and the return (excluding return itself), moving it may place
 		// its definition after one of those uses and break SSA form.
+		var debugRefs []int
 		usedBeforeReturn := false
 		for i := loadIdx + 1; i < retIdx; i++ {
 			if instrUsesValue(b.Instrs[i], u) {
+				if _, ok := b.Instrs[i].(*ssa.DebugRef); ok {
+					debugRefs = append(debugRefs, i)
+					continue
+				}
 				usedBeforeReturn = true
 				break
 			}
@@ -316,8 +371,10 @@ func fixSSAOrderBlock(b *ssa.BasicBlock) {
 			continue
 		}
 
-		// Move the load right after the last call (but before Return).
-		b.Instrs = moveInstr(b.Instrs, loadIdx, lastCallIdx+1)
+		// Move the load right after the last call (but before Return). Keep
+		// DebugRefs that use the load with it so debug SSA cannot leave a
+		// use before the moved definition.
+		b.Instrs = moveInstrsAfter(b.Instrs, append([]int{loadIdx}, debugRefs...), lastCallIdx)
 		// Adjust retIdx for subsequent moves in this block.
 		retIdx = indexOfInstr(b.Instrs, ret)
 	}
@@ -428,4 +485,42 @@ func moveInstr(instrs []ssa.Instruction, from, to int) []ssa.Instruction {
 	copy(instrs[to+1:], instrs[to:])
 	instrs[to] = ins
 	return instrs
+}
+
+func moveInstrsAfter(instrs []ssa.Instruction, indexes []int, after int) []ssa.Instruction {
+	if len(indexes) == 0 || after < 0 || after >= len(instrs) {
+		return instrs
+	}
+	moveSet := make(map[int]struct{}, len(indexes))
+	moveList := make([]ssa.Instruction, 0, len(indexes))
+	for _, idx := range indexes {
+		if idx < 0 || idx >= len(instrs) {
+			continue
+		}
+		if _, ok := moveSet[idx]; ok {
+			continue
+		}
+		moveSet[idx] = struct{}{}
+		moveList = append(moveList, instrs[idx])
+	}
+	if len(moveList) == 0 {
+		return instrs
+	}
+
+	next := make([]ssa.Instruction, 0, len(instrs))
+	inserted := false
+	for i, ins := range instrs {
+		if _, moving := moveSet[i]; moving {
+			continue
+		}
+		next = append(next, ins)
+		if i == after {
+			next = append(next, moveList...)
+			inserted = true
+		}
+	}
+	if !inserted {
+		next = append(next, moveList...)
+	}
+	return next
 }

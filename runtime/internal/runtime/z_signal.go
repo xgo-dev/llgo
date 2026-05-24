@@ -40,9 +40,11 @@ const (
 func init() {
 	signal.Signal(SIGSEGV, func(v c.Int) {
 		if v == SIGSEGV {
+			skipPanicStack = true
 			panic(errorString("invalid memory address or nil pointer dereference"))
 		}
 		var buf [20]byte
+		skipPanicStack = true
 		panic(errorString("unexpected signal value: " + string(itoa(buf[:], uint64(v)))))
 	})
 }

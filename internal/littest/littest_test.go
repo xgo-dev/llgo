@@ -231,6 +231,11 @@ func TestCheck(t *testing.T) {
 			text: "ok\n",
 		},
 		{
+			name: "filecheck ignores debug metadata",
+			spec: Spec{Path: "check.go", Text: "// CHECK-LABEL: define void @main() #0 {\n// CHECK-NEXT: ret void\n// CHECK-NEXT: }\n", Mode: ModeFileCheck},
+			text: "define void @main() #0 !dbg !9 {\nret void, !dbg !10\n}\n",
+		},
+		{
 			name: "invalid mode",
 			spec: Spec{Path: "bad", Mode: Mode(99)},
 			want: "unknown lit spec mode",

@@ -19,11 +19,24 @@ type Info struct {
 	Saddr c.Pointer
 }
 
+type SymbolInfo struct {
+	Function *c.Char
+	File     *c.Char
+	Line     c.Int
+	Entry    c.Pointer
+}
+
 //go:linkname Address C.llgo_address
 func Address() unsafe.Pointer
 
 //go:linkname Addrinfo C.llgo_addrinfo
 func Addrinfo(addr unsafe.Pointer, info *Info) c.Int
+
+//go:linkname Symbolize C.llgo_symbolize
+func Symbolize(addr unsafe.Pointer, info *SymbolInfo) c.Int
+
+//go:linkname FreeSymbolInfo C.llgo_symbolinfo_free
+func FreeSymbolInfo(info *SymbolInfo)
 
 //go:linkname stacktrace C.llgo_stacktrace
 func stacktrace(skip c.Int, ctx unsafe.Pointer, fn func(ctx, pc, offset, sp unsafe.Pointer, name *c.Char) c.Int)

@@ -105,6 +105,104 @@ func unknownFunctionName(pc uintptr) string {
 	return "pc=" + uintptrHex(pc)
 }
 
+type pcSymbol struct {
+	pc       uintptr
+	entry    uintptr
+	function string
+	file     string
+	line     int
+	ok       bool
+}
+
+var pcSymbolCache map[uintptr]pcSymbol
+
+func hasStringPrefix(s, prefix string) bool {
+	if len(s) < len(prefix) {
+		return false
+	}
+	for i := 0; i < len(prefix); i++ {
+		if s[i] != prefix[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func publicFunctionName(name string) string {
+	const commandLineArguments = "command-line-arguments."
+	if hasStringPrefix(name, commandLineArguments) {
+		return "main." + name[len(commandLineArguments):]
+	}
+	if len(name) > 0 && name[0] == '_' {
+		name = name[1:]
+	}
+	return name
+}
+
+func pcForFileLine(pc uintptr, entry uintptr) uintptr {
+	if entry != 0 && pc > entry {
+		return pc - 1
+	}
+	if entry == 0 && pc > 0 {
+		return pc - 1
+	}
+	return pc
+}
+
+func symbolizePC(pc uintptr) pcSymbol {
+	if pcSymbolCache != nil {
+		if sym, ok := pcSymbolCache[pc]; ok {
+			return sym
+		}
+	}
+	var info clitedebug.SymbolInfo
+	if clitedebug.Symbolize(unsafe.Pointer(pc), &info) == 0 {
+		sym := pcSymbol{pc: pc}
+		if pcSymbolCache == nil {
+			pcSymbolCache = make(map[uintptr]pcSymbol)
+		}
+		pcSymbolCache[pc] = sym
+		return sym
+	}
+	defer clitedebug.FreeSymbolInfo(&info)
+	fn := publicFunctionName(safeGoString(info.Function, ""))
+	file := safeGoString(info.File, "")
+	line := int(info.Line)
+	sym := pcSymbol{
+		pc:       pc,
+		entry:    uintptr(info.Entry),
+		function: fn,
+		file:     file,
+		line:     line,
+		ok:       fn != "" || file != "",
+	}
+	if pcSymbolCache == nil {
+		pcSymbolCache = make(map[uintptr]pcSymbol)
+	}
+	pcSymbolCache[pc] = sym
+	return sym
+}
+
+func frameSymbol(pc uintptr) pcSymbol {
+	sym := symbolizePC(pc)
+	linePC := pcForFileLine(pc, sym.entry)
+	if linePC != pc {
+		lineSym := symbolizePC(linePC)
+		if lineSym.file != "" || lineSym.line != 0 {
+			sym.file = lineSym.file
+			sym.line = lineSym.line
+		}
+		if sym.function == "" {
+			sym.function = lineSym.function
+		}
+		if sym.entry == 0 {
+			sym.entry = lineSym.entry
+		}
+		sym.ok = sym.ok || lineSym.ok
+	}
+	return sym
+}
+
 func (ci *Frames) Next() (frame Frame, more bool) {
 	for len(ci.frames) < 2 {
 		// Find the next frame.
@@ -119,8 +217,8 @@ func (ci *Frames) Next() (frame Frame, more bool) {
 		} else {
 			pc, ci.callers = ci.callers[0], ci.callers[1:]
 		}
-		info := &clitedebug.Info{}
-		if clitedebug.Addrinfo(unsafe.Pointer(pc), info) == 0 {
+		sym := frameSymbol(pc)
+		if !sym.ok {
 			ci.frames = append(ci.frames, Frame{
 				PC:        pc,
 				Function:  unknownFunctionName(pc),
@@ -131,17 +229,22 @@ func (ci *Frames) Next() (frame Frame, more bool) {
 			})
 			continue
 		}
-		fn := safeGoString(info.Sname, "")
+		fn := sym.function
 		if fn == "" {
 			fn = unknownFunctionName(pc)
 		}
+		var f *Func
+		if sym.entry != 0 || fn != "" {
+			f = &Func{entry: sym.entry, name: fn}
+		}
 		ci.frames = append(ci.frames, Frame{
 			PC:        pc,
+			Func:      f,
 			Function:  fn,
-			File:      "",
-			Line:      0,
+			File:      sym.file,
+			Line:      sym.line,
 			startLine: 0,
-			Entry:     uintptr(info.Saddr),
+			Entry:     sym.entry,
 		})
 	}
 
@@ -176,11 +279,27 @@ func CallersFrames(callers []uintptr) *Frames {
 
 // A Func represents a Go function in the running binary.
 type Func struct {
-	opaque struct{} // unexported field to disallow conversions
+	entry uintptr
+	name  string
 }
 
 func (f *Func) Name() string {
-	panic("todo")
+	if f == nil {
+		return ""
+	}
+	return f.name
+}
+
+func (f *Func) Entry() uintptr {
+	if f == nil {
+		return 0
+	}
+	return f.entry
+}
+
+func (f *Func) FileLine(pc uintptr) (file string, line int) {
+	sym := frameSymbol(pc)
+	return sym.file, sym.line
 }
 
 func (f *Func) FileLine(pc uintptr) (file string, line int) {

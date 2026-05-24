@@ -19,12 +19,26 @@ type Info struct {
 	Saddr c.Pointer
 }
 
+type SymbolInfo struct {
+	Function *c.Char
+	File     *c.Char
+	Line     c.Int
+	Entry    c.Pointer
+}
+
 func Address() unsafe.Pointer {
 	panic("not implemented")
 }
 
 func Addrinfo(addr unsafe.Pointer, info *Info) c.Int {
 	panic("not implemented")
+}
+
+func Symbolize(addr unsafe.Pointer, info *SymbolInfo) c.Int {
+	panic("not implemented")
+}
+
+func FreeSymbolInfo(info *SymbolInfo) {
 }
 
 type Frame struct {
