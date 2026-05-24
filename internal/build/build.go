@@ -153,6 +153,7 @@ type Config struct {
 	SizeFormat    string // size report format: text,json (default text)
 	SizeLevel     string // size aggregation level: full,module,package (default module)
 	CompilerHash  string // metadata hash for the running compiler (development builds only)
+	MayMoreStack  string // function hook from -gcflags=-d=maymorestack=...
 	// GlobalRewrites specifies compile-time overrides for global string variables.
 	// Keys are fully qualified package paths (e.g. "main" or "github.com/user/pkg").
 	// Each Rewrites entry maps variable names to replacement string values. Only
@@ -294,6 +295,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	cl.EnableDebug(IsDbgEnabled())
 	cl.EnableDbgSyms(IsDbgSymsEnabled())
 	cl.EnableTrace(IsTraceEnabled())
+	cl.SetMayMoreStackHook(conf.MayMoreStack)
 	llssa.Initialize(llssa.InitAll)
 
 	target := &llssa.Target{

@@ -56,6 +56,7 @@ var (
 	enableDbg         bool
 	enableDbgSyms     bool
 	disableInline     bool
+	mayMoreStackHook  string
 
 	// enableExportRename enables //export to use different C symbol names than Go function names.
 	// This is for TinyGo compatibility when using -target flag for embedded targets.
@@ -125,6 +126,12 @@ func EnableTrace(b bool) {
 	enableCallTracing = b
 }
 
+// SetMayMoreStackHook sets the function called at ordinary Go function entry
+// when -gcflags=-d=maymorestack=... is supplied.
+func SetMayMoreStackHook(name string) {
+	mayMoreStackHook = name
+}
+
 // EnableExportRename enables or disables //export with different C symbol names.
 // This is enabled when using -target flag for TinyGo compatibility.
 func EnableExportRename(b bool) {
@@ -156,24 +163,25 @@ type pkgInfo struct {
 type none = struct{}
 
 type context struct {
-	prog        llssa.Program
-	pkg         llssa.Package
-	fn          llssa.Function
-	goFn        *ssa.Function
-	fset        *token.FileSet
-	goProg      *ssa.Program
-	goTyps      *types.Package
-	goPkg       *ssa.Package
-	pyMod       string
-	skips       map[string]none
-	loaded      map[*types.Package]*pkgInfo // loaded packages
-	bvals       map[ssa.Value]llssa.Expr    // block values
-	vargs       map[*ssa.Alloc][]llssa.Expr // varargs
-	funcs       map[*ssa.Function]llssa.Function
-	linkOnceFns map[*ssa.Function]none
-	stackDefers map[*ssa.Function]bool
-	anonDefers  map[*ssa.Function]bool
-	paramDIVars map[*types.Var]llssa.DIVar
+	prog         llssa.Program
+	pkg          llssa.Package
+	fn           llssa.Function
+	goFn         *ssa.Function
+	fset         *token.FileSet
+	goProg       *ssa.Program
+	goTyps       *types.Package
+	goPkg        *ssa.Package
+	pyMod        string
+	skips        map[string]none
+	loaded       map[*types.Package]*pkgInfo // loaded packages
+	bvals        map[ssa.Value]llssa.Expr    // block values
+	vargs        map[*ssa.Alloc][]llssa.Expr // varargs
+	funcs        map[*ssa.Function]llssa.Function
+	linkOnceFns  map[*ssa.Function]none
+	stackDefers  map[*ssa.Function]bool
+	anonDefers   map[*ssa.Function]bool
+	maymorestack string
+	paramDIVars  map[*types.Var]llssa.DIVar
 
 	patches  Patches
 	blkInfos []blocks.Info
@@ -626,6 +634,9 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 	if block.Index == 0 && enableCallTracing && !strings.HasPrefix(fn.Name(), "github.com/goplus/llgo/runtime/internal/runtime.Print") {
 		b.Printf("call " + fn.Name() + "\n\x00")
 	}
+	if block.Index == 0 {
+		p.emitMayMoreStackHook(b)
+	}
 	// place here to avoid wrong current-block
 	if enableDbgSyms && block.Parent().Origin() == nil && block.Index == 0 {
 		p.debugParams(b, block.Parent())
@@ -726,6 +737,48 @@ end:
 		b.Jump(jumpTo)
 	}
 	return ret
+}
+
+func (p *context) emitMayMoreStackHook(b llssa.Builder) {
+	if p.goFn == nil || p.goFn.Synthetic != "" {
+		return
+	}
+	hook := p.mayMoreStackHookName()
+	if hook == "" || hook == p.fn.Name() {
+		return
+	}
+	fn := p.pkg.FuncOf(hook)
+	if fn == nil {
+		fn = p.pkg.NewFunc(hook, llssa.NoArgsNoRet, llssa.InGo)
+	}
+	b.Call(fn.Expr)
+}
+
+func (p *context) mayMoreStackHookName() string {
+	if p.maymorestack != "" || mayMoreStackHook == "" || p.goTyps == nil {
+		return p.maymorestack
+	}
+	hook := strings.TrimSpace(mayMoreStackHook)
+	if hook == "" {
+		return ""
+	}
+	pkgPath := llssa.PathOf(p.goTyps)
+	pkgName := p.goTyps.Name()
+	if name, ok := strings.CutPrefix(hook, pkgName+"."); ok {
+		p.maymorestack = pkgPath + "." + name
+		return p.maymorestack
+	}
+	if pkgName == "main" {
+		if name, ok := strings.CutPrefix(hook, "main."); ok {
+			p.maymorestack = pkgPath + "." + name
+			return p.maymorestack
+		}
+	}
+	if strings.HasPrefix(hook, pkgPath+".") {
+		p.maymorestack = hook
+		return p.maymorestack
+	}
+	return ""
 }
 
 const (

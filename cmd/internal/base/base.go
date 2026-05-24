@@ -42,6 +42,9 @@ type Command struct {
 	// Flag is a set of flags specific to this command.
 	Flag flag.FlagSet
 
+	// PassArgs records build flags accepted for compatibility with cmd/go.
+	PassArgs *PassArgs
+
 	// Commands lists the available commands and help topics.
 	// The order here is the order in which they are printed by 'gop help'.
 	// Note that subcommands are in general best avoided.

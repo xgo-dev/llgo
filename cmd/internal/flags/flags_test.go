@@ -143,3 +143,67 @@ func TestUpdateConfigPreservesLTOWhenUnspecified(t *testing.T) {
 		t.Fatalf("conf.LTO = %v, want %v", conf.LTO, lto.Full)
 	}
 }
+
+func TestUpdatePassBuildConfigMayMoreStack(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "direct gcflags",
+			args: []string{"-gcflags=-d=maymorestack=main.mayMoreStack"},
+			want: "main.mayMoreStack",
+		},
+		{
+			name: "pattern gcflags",
+			args: []string{"-gcflags=all=-d=maymorestack=main.mayMoreStack"},
+			want: "main.mayMoreStack",
+		},
+		{
+			name: "space separated gcflags",
+			args: []string{"-gcflags", "-N -d=maymorestack=main.mayMoreStack -l"},
+			want: "main.mayMoreStack",
+		},
+		{
+			name: "comma debug options",
+			args: []string{"-gcflags=-d=checkptr,maymorestack=main.mayMoreStack"},
+			want: "main.mayMoreStack",
+		},
+		{
+			name: "unrelated gcflags",
+			args: []string{"-gcflags=-N -l"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := &build.Config{}
+			if err := UpdatePassBuildConfig(conf, tt.args); err != nil {
+				t.Fatalf("UpdatePassBuildConfig() error = %v", err)
+			}
+			if conf.MayMoreStack != tt.want {
+				t.Fatalf("MayMoreStack = %q, want %q", conf.MayMoreStack, tt.want)
+			}
+		})
+	}
+}
+
+func TestUpdatePassBuildConfigMayMoreStackErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "missing gcflags value", args: []string{"-gcflags"}},
+		{name: "empty hook", args: []string{"-gcflags=-d=maymorestack="}},
+		{name: "bad quoting", args: []string{"-gcflags='-d=maymorestack=main.mayMoreStack"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := UpdatePassBuildConfig(&build.Config{}, tt.args); err == nil {
+				t.Fatal("UpdatePassBuildConfig() expected error")
+			}
+		})
+	}
+}

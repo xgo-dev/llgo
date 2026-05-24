@@ -71,6 +71,7 @@ func NewPassArgs(flag *flag.FlagSet) *PassArgs {
 
 func PassBuildFlags(cmd *Command) *PassArgs {
 	p := NewPassArgs(&cmd.Flag)
+	cmd.PassArgs = p
 	p.Bool("n")
 	// Note: "a" flag removed - now handled by flags.AddBuildFlags()
 	p.Bool("linkshared", "race", "msan", "asan",

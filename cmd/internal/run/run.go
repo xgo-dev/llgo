@@ -80,6 +80,10 @@ func runCmdEx(cmd *base.Command, args []string, mode build.Mode) {
 		fmt.Fprintln(os.Stderr, err)
 		mockable.Exit(1)
 	}
+	if err := flags.UpdatePassBuildConfig(conf, cmd.PassArgs.Args); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		mockable.Exit(1)
+	}
 
 	args = cmd.Flag.Args()
 	args, runArgs, err := parseRunArgs(args)

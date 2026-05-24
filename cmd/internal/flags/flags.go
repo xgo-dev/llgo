@@ -3,12 +3,14 @@ package flags
 import (
 	"flag"
 	"fmt"
+	"strings"
 
 	"github.com/goplus/llgo/cmd/internal/compilerhash"
 	"github.com/goplus/llgo/internal/build"
 	"github.com/goplus/llgo/internal/buildenv"
 	"github.com/goplus/llgo/internal/lto"
 	"github.com/goplus/llgo/internal/optlevel"
+	"github.com/goplus/llgo/internal/shellparse"
 )
 
 var OutputFile string
@@ -309,4 +311,67 @@ func UpdateBuildConfig(conf *build.Config) error {
 	conf.BuildMode = build.BuildMode(BuildMode)
 
 	return nil
+}
+
+func UpdatePassBuildConfig(conf *build.Config, args []string) error {
+	hook, err := mayMoreStackHookFromBuildFlags(args)
+	if err != nil {
+		return err
+	}
+	conf.MayMoreStack = hook
+	return nil
+}
+
+func mayMoreStackHookFromBuildFlags(args []string) (string, error) {
+	var hook string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		var gcflags string
+		switch {
+		case arg == "-gcflags":
+			i++
+			if i >= len(args) {
+				return "", fmt.Errorf("-gcflags requires an argument")
+			}
+			gcflags = args[i]
+		case strings.HasPrefix(arg, "-gcflags="):
+			gcflags = strings.TrimPrefix(arg, "-gcflags=")
+		default:
+			continue
+		}
+		got, err := mayMoreStackHookFromGCFlags(gcflags)
+		if err != nil {
+			return "", err
+		}
+		if got != "" {
+			hook = got
+		}
+	}
+	return hook, nil
+}
+
+func mayMoreStackHookFromGCFlags(gcflags string) (string, error) {
+	fields, err := shellparse.Parse(gcflags)
+	if err != nil {
+		return "", fmt.Errorf("parse -gcflags: %w", err)
+	}
+	for _, field := range fields {
+		if pattern, rest, ok := strings.Cut(field, "="); ok && !strings.HasPrefix(pattern, "-") {
+			field = rest
+		}
+		if !strings.HasPrefix(field, "-d=") {
+			continue
+		}
+		for _, opt := range strings.Split(strings.TrimPrefix(field, "-d="), ",") {
+			hook, ok := strings.CutPrefix(opt, "maymorestack=")
+			if !ok {
+				continue
+			}
+			if hook == "" {
+				return "", fmt.Errorf("-d=maymorestack requires a function name")
+			}
+			return hook, nil
+		}
+	}
+	return "", nil
 }

@@ -21,6 +21,7 @@ var Cmd = &base.Command{
 
 func init() {
 	Cmd.Run = runCmd
+	base.PassBuildFlags(Cmd)
 	flags.AddCommonFlags(&Cmd.Flag)
 	flags.AddBuildFlags(&Cmd.Flag)
 	flags.AddTestFlags(&Cmd.Flag)
@@ -40,6 +41,10 @@ func runCmd(cmd *base.Command, args []string) {
 
 	conf := build.NewDefaultConf(build.ModeTest)
 	if err := flags.UpdateConfig(conf); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		mockable.Exit(1)
+	}
+	if err := flags.UpdatePassBuildConfig(conf, cmd.PassArgs.Args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		mockable.Exit(1)
 	}
