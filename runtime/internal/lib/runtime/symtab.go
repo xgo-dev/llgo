@@ -105,6 +105,43 @@ func unknownFunctionName(pc uintptr) string {
 	return "pc=" + uintptrHex(pc)
 }
 
+func normalizeFunctionName(name string) string {
+	const stubPrefix = "__llgo_stub."
+	if len(name) > len(stubPrefix) && name[:len(stubPrefix)] == stubPrefix {
+		name = name[len(stubPrefix):]
+	}
+	const funcPCStubPrefix = "__llgo_funcpc_stub."
+	if len(name) > len(funcPCStubPrefix) && name[:len(funcPCStubPrefix)] == funcPCStubPrefix {
+		name = name[len(funcPCStubPrefix):]
+	}
+	switch name {
+	case "":
+		return ""
+	case "main":
+		return "main.main"
+	}
+	const mainPkg = "command-line-arguments."
+	if len(name) > len(mainPkg) && name[:len(mainPkg)] == mainPkg {
+		return "main." + name[len(mainPkg):]
+	}
+	return name
+}
+
+func pcInfo(pc uintptr) (name string, entry uintptr, ok bool) {
+	info := &clitedebug.Info{}
+	if clitedebug.Addrinfo(unsafe.Pointer(pc), info) == 0 && pc > 0 {
+		info = &clitedebug.Info{}
+		if clitedebug.Addrinfo(unsafe.Pointer(pc-1), info) == 0 {
+			return "", 0, false
+		}
+	}
+	name = normalizeFunctionName(safeGoString(info.Sname, ""))
+	if name == "" {
+		return "", 0, false
+	}
+	return name, uintptr(info.Saddr), true
+}
+
 func (ci *Frames) Next() (frame Frame, more bool) {
 	for len(ci.frames) < 2 {
 		// Find the next frame.
@@ -176,11 +213,37 @@ func CallersFrames(callers []uintptr) *Frames {
 
 // A Func represents a Go function in the running binary.
 type Func struct {
-	opaque struct{} // unexported field to disallow conversions
+	entry uintptr
+	name  string
 }
 
 func (f *Func) Name() string {
-	panic("todo")
+	if f == nil {
+		return ""
+	}
+	return f.name
+}
+
+func (f *Func) Entry() uintptr {
+	if f == nil {
+		return 0
+	}
+	return f.entry
+}
+
+func (f *Func) FileLine(pc uintptr) (file string, line int) {
+	return "", 0
+}
+
+func FuncForPC(pc uintptr) *Func {
+	if pc == 0 {
+		return nil
+	}
+	name, entry, ok := pcInfo(pc)
+	if !ok {
+		return nil
+	}
+	return &Func{entry: entry, name: name}
 }
 
 func (f *Func) FileLine(pc uintptr) (file string, line int) {

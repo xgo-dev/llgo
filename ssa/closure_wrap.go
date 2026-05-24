@@ -69,8 +69,12 @@ func closureWrapReturn(b Builder, sig *types.Signature, ret Expr) {
 
 // closureWrapDecl wraps a function declaration that lacks __llgo_ctx.
 // It directly calls the target symbol and ignores the ctx parameter.
-func (p Package) closureWrapDecl(fn Expr, sig *types.Signature) Function {
-	name := closureStub + fn.impl.Name()
+func (p Package) closureWrapDecl(fn Expr, sig *types.Signature, keepFuncPC bool) Function {
+	prefix := closureStub
+	if keepFuncPC {
+		prefix = closureFuncPCStub
+	}
+	name := prefix + fn.impl.Name()
 	if wrap := p.FuncOf(name); wrap != nil {
 		return wrap
 	}
@@ -79,10 +83,27 @@ func (p Package) closureWrapDecl(fn Expr, sig *types.Signature) Function {
 	wrap := p.NewFunc(name, sigCtx, InC)
 	wrap.impl.SetLinkage(llvm.LinkOnceAnyLinkage)
 	b := wrap.MakeBody(1)
+	if keepFuncPC {
+		closureWrapKeepUnique(b, p.closureWrapIdentity(name))
+	}
 	args := closureWrapArgs(wrap)
 	ret := b.Call(fn, args...)
 	closureWrapReturn(b, sig, ret)
 	return wrap
+}
+
+func (p Package) closureWrapIdentity(name string) Expr {
+	g := p.NewVar(name+"$identity", types.NewPointer(types.Typ[types.Byte]), InGo)
+	g.Init(p.Prog.Zero(p.Prog.Byte()))
+	g.impl.SetLinkage(llvm.PrivateLinkage)
+	g.impl.SetGlobalConstant(true)
+	return g.Expr
+}
+
+func closureWrapKeepUnique(b Builder, marker Expr) {
+	elem := b.Prog.Elem(marker.Type)
+	load := llvm.CreateLoad(b.impl, elem.ll, marker.impl)
+	load.SetVolatile(true)
 }
 
 // closureWrapPtr wraps a raw function pointer by loading it from ctx.

@@ -720,10 +720,18 @@ func TestClosureWrapCache(t *testing.T) {
 	b := fn.MakeBody(1)
 	b.Return(fn.Param(0))
 
-	w1 := pkg.closureWrapDecl(fn.Expr, sig)
-	w2 := pkg.closureWrapDecl(fn.Expr, sig)
+	w1 := pkg.closureWrapDecl(fn.Expr, sig, false)
+	w2 := pkg.closureWrapDecl(fn.Expr, sig, false)
 	if w1 != w2 {
 		t.Fatal("closureWrapDecl should reuse existing wrapper")
+	}
+	wFuncPC1 := pkg.closureWrapDecl(fn.Expr, sig, true)
+	wFuncPC2 := pkg.closureWrapDecl(fn.Expr, sig, true)
+	if wFuncPC1 != wFuncPC2 {
+		t.Fatal("closureWrapDecl should reuse existing FuncForPC wrapper")
+	}
+	if w1 == wFuncPC1 {
+		t.Fatal("FuncForPC wrapper should be distinct from the normal closure wrapper")
 	}
 
 	p1 := pkg.closureWrapPtr(sig)
@@ -982,7 +990,7 @@ func TestPackageCoverageHelpers(t *testing.T) {
 	fn := pkg.NewFunc("noop", NoArgsNoRet, InGo)
 	b := fn.MakeBody(1)
 	expr := prog.Val(1)
-	got, data := pkg.closureStub(b, expr, nil, vkString)
+	got, data := pkg.closureStub(b, expr, nil, vkString, false)
 	if got.impl.IsNil() || !data.impl.IsNull() {
 		t.Fatal("closureStub default branch should return expr and nil data")
 	}

@@ -1103,6 +1103,9 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 		if needsLinuxNoPIE(ctx, linkArgs) {
 			buildArgs = append(buildArgs, "-no-pie")
 		}
+		if needsLinuxFuncPCDynamicSymbolExport(ctx, linkArgs) {
+			buildArgs = append(buildArgs, "-Wl,--export-dynamic-symbol=__llgo_funcpc_stub.*")
+		}
 	}
 
 	// Add common linker arguments based on target OS and architecture
@@ -1145,6 +1148,21 @@ func needsLinuxNoPIE(ctx *context, linkArgs []string) bool {
 	// break runtime assumptions unless the user explicitly requested a PIE mode.
 	for _, arg := range linkArgs {
 		if arg == "-pie" || arg == "-static-pie" || arg == "-no-pie" || arg == "-nopie" {
+			return false
+		}
+	}
+	return true
+}
+
+func needsLinuxFuncPCDynamicSymbolExport(ctx *context, linkArgs []string) bool {
+	if ctx.buildConf.Target != "" || ctx.buildConf.Goos != "linux" {
+		return false
+	}
+	for _, arg := range linkArgs {
+		if arg == "-rdynamic" || arg == "-Wl,-E" || arg == "-Wl,--export-dynamic" {
+			return false
+		}
+		if strings.HasPrefix(arg, "-Wl,--export-dynamic-symbol=__llgo_funcpc_stub.") {
 			return false
 		}
 	}
