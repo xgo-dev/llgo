@@ -122,6 +122,43 @@ func TestDeferredRecoverBuiltinCanRecoverOuterPanicAfterNestedRecover(t *testing
 	}
 }
 
+func TestRecoverAfterPanicDoesNotKeepPartialResultWrites(t *testing.T) {
+	if got := recoverAfterResultAssignmentPanic(); got {
+		t.Fatalf("assignment result = %v, want false", got)
+	}
+	if got, _ := recoverAfterReturnExpressionPanic(); got {
+		t.Fatalf("return expression result = %v, want false", got)
+	}
+	if got, _ := recoverAfterNamedReturnExpressionPanic(); got {
+		t.Fatalf("named return expression result = %v, want false", got)
+	}
+}
+
+func recoverAfterResultAssignmentPanic() (bad bool) {
+	defer func() {
+		recover()
+	}()
+	var p *int
+	bad, _ = true, *p
+	return
+}
+
+func recoverAfterReturnExpressionPanic() (bool, int) {
+	defer func() {
+		recover()
+	}()
+	var p *int
+	return true, *p
+}
+
+func recoverAfterNamedReturnExpressionPanic() (_ bool, _ int) {
+	defer func() {
+		recover()
+	}()
+	var p *int
+	return true, *p
+}
+
 type recoverValueMethod uintptr
 
 var methodWrapperRecovered any

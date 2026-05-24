@@ -1053,8 +1053,15 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		if v.Op == token.ARROW {
 			ret = b.Recv(x, v.CommaOk)
 		} else if v.Op == token.MUL {
+			// A recovered panic resumes through the recover block, which reads
+			// result slots. Keep nil derefs in recover-capable functions ordered
+			// so the panic cannot be removed or moved past partial result writes.
+			recoverVolatile := p.isRecoverVolatileAddr(v.X)
+			if p.recoverVolatileAllocs != nil && !recoverVolatile {
+				b.AssertNilDeref(x)
+			}
 			ret = b.Load(x)
-			if p.isRecoverVolatileAddr(v.X) {
+			if recoverVolatile {
 				ret = ret.SetVolatile(true)
 			}
 		} else {
