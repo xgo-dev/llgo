@@ -157,25 +157,26 @@ type pkgInfo struct {
 type none = struct{}
 
 type context struct {
-	prog                 llssa.Program
-	pkg                  llssa.Package
-	fn                   llssa.Function
-	goFn                 *ssa.Function
-	fset                 *token.FileSet
-	goProg               *ssa.Program
-	goTyps               *types.Package
-	goPkg                *ssa.Package
-	pyMod                string
-	skips                map[string]none
-	loaded               map[*types.Package]*pkgInfo // loaded packages
-	bvals                map[ssa.Value]llssa.Expr    // block values
-	methodNilDerefChecks map[*ssa.UnOp]none
-	vargs                map[*ssa.Alloc][]llssa.Expr // varargs
-	funcs                map[*ssa.Function]llssa.Function
-	linkOnceFns          map[*ssa.Function]none
-	stackDefers          map[*ssa.Function]bool
-	anonDefers           map[*ssa.Function]bool
-	paramDIVars          map[*types.Var]llssa.DIVar
+	prog                  llssa.Program
+	pkg                   llssa.Package
+	fn                    llssa.Function
+	goFn                  *ssa.Function
+	fset                  *token.FileSet
+	goProg                *ssa.Program
+	goTyps                *types.Package
+	goPkg                 *ssa.Package
+	pyMod                 string
+	skips                 map[string]none
+	loaded                map[*types.Package]*pkgInfo // loaded packages
+	bvals                 map[ssa.Value]llssa.Expr    // block values
+	methodNilDerefChecks  map[*ssa.UnOp]none
+	vargs                 map[*ssa.Alloc][]llssa.Expr // varargs
+	funcs                 map[*ssa.Function]llssa.Function
+	linkOnceFns           map[*ssa.Function]none
+	stackDefers           map[*ssa.Function]bool
+	anonDefers            map[*ssa.Function]bool
+	paramDIVars           map[*types.Var]llssa.DIVar
+	recoverVolatileAllocs map[*ssa.Alloc]none
 
 	patches          Patches
 	blkInfos         []blocks.Info
@@ -500,12 +501,17 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		dbgEnabled := enableDbg && (f == nil || f.Origin() == nil)
 		dbgSymsEnabled := enableDbgSyms && (f == nil || f.Origin() == nil)
 		p.inits = append(p.inits, func() {
-			oldFn, oldGoFn, oldMethodNilDerefChecks := p.fn, p.goFn, p.methodNilDerefChecks
+			oldFn, oldGoFn, oldMethodNilDerefChecks, oldRecoverVolatileAllocs := p.fn, p.goFn, p.methodNilDerefChecks, p.recoverVolatileAllocs
 			p.fn = fn
 			p.goFn = f
 			p.state = state // restore pkgState when compiling funcBody
+			if f.Recover != nil {
+				p.recoverVolatileAllocs = make(map[*ssa.Alloc]none)
+			} else {
+				p.recoverVolatileAllocs = nil
+			}
 			defer func() {
-				p.fn, p.goFn, p.methodNilDerefChecks = oldFn, oldGoFn, oldMethodNilDerefChecks
+				p.fn, p.goFn, p.methodNilDerefChecks, p.recoverVolatileAllocs = oldFn, oldGoFn, oldMethodNilDerefChecks, oldRecoverVolatileAllocs
 			}()
 			p.phis = nil
 			if dbgSymsEnabled {
@@ -902,6 +908,29 @@ func (p *context) syntheticMakeSliceCap(v *ssa.Slice) (llssa.Expr, bool) {
 	return p.prog.IntVal(uint64(arr.Len()), p.prog.Int()), true
 }
 
+func (p *context) markRecoverVolatileAlloc(v *ssa.Alloc) {
+	if p.recoverVolatileAllocs == nil || v.Heap {
+		return
+	}
+	p.recoverVolatileAllocs[v] = none{}
+}
+
+func (p *context) isRecoverVolatileAddr(v ssa.Value) bool {
+	if p.recoverVolatileAllocs == nil {
+		return false
+	}
+	switch v := v.(type) {
+	case *ssa.Alloc:
+		_, ok := p.recoverVolatileAllocs[v]
+		return ok
+	case *ssa.FieldAddr:
+		return p.isRecoverVolatileAddr(v.X)
+	case *ssa.IndexAddr:
+		return p.isRecoverVolatileAddr(v.X)
+	}
+	return false
+}
+
 func isAllocVargs(ctx *context, v *ssa.Alloc) bool {
 	refs := *v.Referrers()
 	n := len(refs)
@@ -1063,6 +1092,11 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		}
 		if v.Op == token.ARROW {
 			ret = b.Recv(x, v.CommaOk)
+		} else if v.Op == token.MUL {
+			ret = b.Load(x)
+			if p.isRecoverVolatileAddr(v.X) {
+				ret = ret.SetVolatile(true)
+			}
 		} else {
 			if v.Op == token.MUL {
 				if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil && p.prog.SizeOf(t) == 0 {
@@ -1107,6 +1141,10 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		}
 		elem := p.type_(t.Elem(), llssa.InGo)
 		ret = b.Alloc(elem, v.Heap)
+		p.markRecoverVolatileAlloc(v)
+		if p.isRecoverVolatileAddr(v) {
+			b.Store(ret, p.prog.Zero(elem)).SetVolatile(true)
+		}
 	case *ssa.IndexAddr:
 		vx := v.X
 		if _, ok := p.isVArgs(vx); ok { // varargs: this is a varargs index
@@ -1368,7 +1406,10 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		}
 		ptr := p.compileValue(b, va)
 		val := p.compileValue(b, v.Val)
-		b.Store(ptr, val)
+		store := b.Store(ptr, val)
+		if p.isRecoverVolatileAddr(va) {
+			store.SetVolatile(true)
+		}
 	case *ssa.Jump:
 		jmpb := p.jumpTo(v)
 		b.Jump(jmpb)

@@ -70,6 +70,16 @@ func StartRecoverFrame(frame unsafe.Pointer) unsafe.Pointer {
 	return old
 }
 
+// StartRecoverWrapperFrame forwards a direct recover permission through a
+// compiler-generated wrapper only when the wrapper is itself the deferred call.
+func StartRecoverWrapperFrame(caller, frame unsafe.Pointer) unsafe.Pointer {
+	old := recoverFrameKey.Get()
+	if old == caller {
+		recoverFrameKey.Set(frame)
+	}
+	return old
+}
+
 // EndRecoverFrame restores the direct recover frame after a deferred call
 // returns normally.
 func EndRecoverFrame(frame unsafe.Pointer) {

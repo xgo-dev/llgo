@@ -583,6 +583,13 @@ func (b Builder) MaskRecoverCall(fn Expr, buildCall func(Builder, Expr, ...Expr)
 	return ret
 }
 
+func (b Builder) ForwardRecoverFrameCall(fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args ...Expr) Expr {
+	prev := b.Call(b.Pkg.rtFunc("StartRecoverWrapperFrame"), b.FrameAddress(1), b.FrameAddress(0))
+	ret := buildCall(b, fn, args...)
+	b.Call(b.Pkg.rtFunc("EndRecoverFrame"), prev)
+	return ret
+}
+
 func isRecoverBuiltin(fn Expr) bool {
 	if fn.IsNil() {
 		return false
