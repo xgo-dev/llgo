@@ -1102,7 +1102,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		ret = b.Convert(p.type_(t, llssa.InGo), x)
 	case *ssa.FieldAddr:
 		x := p.compileValue(b, v.X)
-		if !p.addrIsStaticNonNil(v.X) && !p.addrBaseIsCall(v.X) && !p.addrBaseIsParam(v.X) && (p.addrNeedsExplicitNilCheck(v, nil) || p.valueFeedsBuiltinPrint(v, nil)) {
+		if !p.addrIsStaticNonNil(v.X) && (p.fieldAddrNeedsExplicitNilCheck(v) ||
+			(!p.addrBaseIsCall(v.X) && !p.addrBaseIsParam(v.X) &&
+				(p.addrNeedsExplicitNilCheck(v, nil) || p.valueFeedsBuiltinPrint(v, nil)))) {
 			b.AssertNilDeref(x)
 		}
 		ret = b.FieldAddr(x, v.Field)
@@ -1286,6 +1288,11 @@ func (p *context) addrIsStaticNonNil(addr ssa.Value) bool {
 	default:
 		return false
 	}
+}
+
+func (p *context) fieldAddrNeedsExplicitNilCheck(addr *ssa.FieldAddr) bool {
+	offset, ok := p.offsetOfFieldChain(addr)
+	return ok && offset > maxDirectDerefSize
 }
 
 func (p *context) addrBaseIsCall(addr ssa.Value) bool {
