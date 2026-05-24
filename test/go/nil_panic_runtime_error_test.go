@@ -40,6 +40,13 @@ func TestNilPanicValuesAreRuntimeErrors(t *testing.T) {
 			},
 		},
 		{
+			name: "array element pointer load",
+			f: func() {
+				var m [2]*int
+				_ = *m[1]
+			},
+		},
+		{
 			name: "large field from call",
 			f: func() {
 				_ = nilPanicRuntimeLargeStructPtr().i
