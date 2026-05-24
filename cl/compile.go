@@ -630,6 +630,18 @@ func (p *context) getFuncBodyPos(f *ssa.Function) token.Position {
 	return p.goProg.Fset.Position(f.Pos())
 }
 
+func (p *context) getFuncEndPos(f *ssa.Function) token.Position {
+	if syntax := f.Syntax(); syntax != nil && syntax.End().IsValid() {
+		return p.goProg.Fset.Position(syntax.End())
+	}
+	if f.Object() != nil {
+		if fn, ok := f.Object().(*types.Func); ok && fn.Scope() != nil && fn.Scope().End().IsValid() {
+			return p.goProg.Fset.Position(fn.Scope().End())
+		}
+	}
+	return p.getFuncBodyPos(f)
+}
+
 func isGlobal(v *types.Var) bool {
 	// TODO(lijie): better implementation
 	return strings.HasPrefix(v.Parent().String(), "package ")
@@ -1079,6 +1091,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 				if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil {
 					if p.isLargeNonPointerValue(t) {
 						x := p.compileValue(b, v.X)
+						p.setCallerLine(b, v.Pos())
 						p.assertNilDerefBase(b, v.X)
 						b.AssertNilDeref(x)
 						return
@@ -1092,6 +1105,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 					// Zero-length slice-to-array conversions can leave only
 					// an unused slice deref; preserve its required nil check.
 					x := p.compileValue(b, v.X)
+					p.setCallerLine(b, v.Pos())
 					p.assertNilDerefBase(b, v.X)
 					b.AssertNilDeref(x)
 					return
@@ -1122,6 +1136,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			}
 		}
 		x := p.compileValue(b, v.X)
+		if v.Op != token.ARROW {
+			p.setCallerLine(b, v.Pos())
+		}
 		if shouldAssertDirectNilDeref(v) {
 			b.AssertNilDeref(x)
 		}
@@ -1157,6 +1174,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		ret = b.Convert(p.type_(t, llssa.InGo), x)
 	case *ssa.FieldAddr:
 		x := p.compileValue(b, v.X)
+		p.setCallerLine(b, v.Pos())
 		if p.isAddressOfFieldAddr(v) {
 			b.AssertNilDeref(x)
 		}
@@ -1178,10 +1196,12 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		}
 		x := p.compileValue(b, vx)
 		idx := p.compileValue(b, v.Index)
+		p.setCallerLine(b, v.Pos())
 		ret = b.IndexAddr(x, idx)
 	case *ssa.Index:
 		x := p.compileValue(b, v.X)
 		idx := p.compileValue(b, v.Index)
+		p.setCallerLine(b, v.Pos())
 		ret = b.Index(x, idx, func() (addr llssa.Expr, zero bool) {
 			switch n := v.X.(type) {
 			case *ssa.Const:
@@ -1215,6 +1235,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		if v.Max != nil {
 			max = p.compileValue(b, v.Max)
 		}
+		p.setCallerLine(b, v.Pos())
 		ret = b.Slice(x, low, high, max)
 		ret.Type = p.type_(v.Type(), llssa.InGo)
 	case *ssa.MakeInterface:
@@ -1243,6 +1264,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			if vt := p.type_(unop.Type(), llssa.InGo); vt.RawType() != nil {
 				if p.isLargeNonPointerValue(vt) || p.isZeroSizedValue(vt) {
 					if ptr := p.compileValue(b, unop.X); ptr.Type != nil {
+						p.setCallerLine(b, unop.Pos())
 						p.assertNilDerefBase(b, unop.X)
 						ret = b.MakeInterfaceFromPtr(t, ptr)
 						break
@@ -1445,6 +1467,7 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 			}
 		}
 		if p.returnNeedsImplicitRunDefers(v) {
+			p.setCallerLineNumber(b, p.getFuncEndPos(v.Parent()).Line)
 			b.RunDefers()
 		}
 		if p.shouldTrackCallerFrames() {
@@ -1472,9 +1495,11 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 	case *ssa.Go:
 		p.call(b, llssa.Go, &v.Call)
 	case *ssa.RunDefers:
+		p.setCallerLineNumber(b, p.getFuncEndPos(v.Parent()).Line)
 		b.RunDefers()
 	case *ssa.Panic:
 		arg := p.compileValue(b, v.X)
+		p.setCallerLine(b, v.Pos())
 		b.Panic(arg)
 	case *ssa.Send:
 		ch := p.compileValue(b, v.Chan)

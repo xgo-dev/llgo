@@ -2079,15 +2079,7 @@ xfails:
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: fixedbugs/bug347.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/bug348.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue14646.go
+    case: tinyfin.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
@@ -2127,10 +2119,6 @@ xfails:
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: fixedbugs/issue29504.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: fixedbugs/issue29735.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
@@ -2144,10 +2132,6 @@ xfails:
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue45045.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue4562.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
@@ -2172,10 +2156,6 @@ xfails:
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue58300b.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue5856.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run

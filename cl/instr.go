@@ -946,10 +946,13 @@ func (p *context) pushCallerFrame(b llssa.Builder, fn *ssa.Function) {
 }
 
 func (p *context) setCallerLine(b llssa.Builder, pos token.Pos) {
+	p.setCallerLineNumber(b, p.fset.Position(pos).Line)
+}
+
+func (p *context) setCallerLineNumber(b llssa.Builder, line int) {
 	if !p.shouldTrackCallerFrames() {
 		return
 	}
-	line := p.fset.Position(pos).Line
 	if line <= 0 {
 		return
 	}

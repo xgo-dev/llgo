@@ -30,6 +30,8 @@ type CallerFrame struct {
 var (
 	callerFrames []CallerFrame
 	pcFrames     []*CallerFrame
+
+	panicCallerFrames []CallerFrame
 )
 
 var (
@@ -59,15 +61,25 @@ func SetCallerLine(line int) {
 }
 
 func PopCallerFrame(mark int) {
+	oldLen := len(callerFrames)
 	if mark < 0 || mark > len(callerFrames) {
 		return
 	}
 	callerFrames = callerFrames[:mark]
+	if len(panicCallerFrames) > 0 && oldLen > len(panicCallerFrames) && len(callerFrames) <= len(panicCallerFrames) {
+		panicCallerFrames = nil
+	}
 }
 
 func Caller(skip int) (CallerFrame, bool) {
 	if skip < 0 {
 		return CallerFrame{}, false
+	}
+	if skip >= 2 && len(panicCallerFrames) > 0 {
+		idx := len(panicCallerFrames) - 1 - (skip - 2)
+		if idx >= 0 {
+			return captureFrame(panicCallerFrames[idx], false), true
+		}
 	}
 	if skip < len(callerFrames) {
 		return captureFrame(callerFrames[len(callerFrames)-1-skip], false), true
@@ -110,6 +122,10 @@ func Callers(skip int, pcs []uintptr) int {
 	_ = add(runtimeMainFrame)
 	_ = add(runtimeGoexitFrame)
 	return n
+}
+
+func SavePanicCallerFrames() {
+	panicCallerFrames = append(panicCallerFrames[:0], callerFrames...)
 }
 
 func FrameForPC(pc uintptr) (CallerFrame, bool) {
