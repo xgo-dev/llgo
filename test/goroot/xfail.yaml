@@ -2780,11 +2780,6 @@ xfails:
     case: maymorestack.go
     reason: go1.26 goroot ci-mode run failure on darwin/arm64
   - version: go1.26
-    platform: darwin/arm64
-    directive: run
-    case: devirtualization_nil_panics.go
-    reason: go1.26 goroot run failure on darwin/arm64
-  - version: go1.26
     platform: linux/amd64
     directive: run
     case: deferfin.go
@@ -2923,11 +2918,6 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue7690.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: devirtualization_nil_panics.go
     reason: go1.26 goroot run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64

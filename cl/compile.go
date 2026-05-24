@@ -198,6 +198,7 @@ type context struct {
 	embedInits []embedInit
 
 	trackCallerFrames bool
+	callerFrameMark   llssa.Expr
 }
 
 func (p *context) rewriteValue(name string) (string, bool) {
@@ -556,12 +557,13 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		dbgEnabled := enableDbg && (f == nil || f.Origin() == nil)
 		dbgSymsEnabled := enableDbgSyms && (f == nil || f.Origin() == nil)
 		p.inits = append(p.inits, func() {
-			oldFn, oldGoFn := p.fn, p.goFn
+			oldFn, oldGoFn, oldCallerFrameMark := p.fn, p.goFn, p.callerFrameMark
 			p.fn = fn
 			p.goFn = f
+			p.callerFrameMark = llssa.Nil
 			p.state = state // restore pkgState when compiling funcBody
 			defer func() {
-				p.fn, p.goFn = oldFn, oldGoFn
+				p.fn, p.goFn, p.callerFrameMark = oldFn, oldGoFn, oldCallerFrameMark
 			}()
 			p.phis = nil
 			if dbgSymsEnabled {
