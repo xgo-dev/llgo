@@ -52,7 +52,3 @@ func NumGoroutine() int {
 }
 
 func SetCPUProfileRate(hz int) {}
-
-func FuncForPC(pc uintptr) *Func {
-	return nil
-}
