@@ -936,7 +936,7 @@ func (p *context) pushCallerFrame(b llssa.Builder, fn *ssa.Function) {
 	}
 	pos := p.fset.Position(fn.Pos())
 	entry := b.Convert(p.prog.Uintptr(), p.fn.Expr)
-	b.Call(
+	p.callerFrameMark = b.Call(
 		p.pkg.RuntimeFunc("PushCallerFrame"),
 		entry,
 		b.Str(runtimeFrameName(p.fn.Name())),
@@ -957,15 +957,31 @@ func (p *context) setCallerLine(b llssa.Builder, pos token.Pos) {
 }
 
 func (p *context) popCallerFrame(b llssa.Builder) {
-	b.Call(p.pkg.RuntimeFunc("PopCallerFrame"))
+	if p.callerFrameMark.IsNil() {
+		return
+	}
+	b.Call(p.pkg.RuntimeFunc("PopCallerFrame"), p.callerFrameMark)
 }
 
 func runtimeFrameName(name string) string {
 	const commandLineArguments = "command-line-arguments."
 	if strings.HasPrefix(name, commandLineArguments) {
-		return "main." + name[len(commandLineArguments):]
+		name = "main." + name[len(commandLineArguments):]
 	}
-	return name
+	return normalizeRuntimeAnonFuncName(name)
+}
+
+func normalizeRuntimeAnonFuncName(name string) string {
+	dollar := strings.LastIndexByte(name, '$')
+	if dollar < 0 || dollar == len(name)-1 {
+		return name
+	}
+	for i := dollar + 1; i < len(name); i++ {
+		if name[i] < '0' || name[i] > '9' {
+			return name
+		}
+	}
+	return name[:dollar] + ".func" + name[dollar+1:]
 }
 
 // -----------------------------------------------------------------------------
@@ -1165,6 +1181,7 @@ func collectMethodNilDerefChecks(fn *ssa.Function) map[*ssa.UnOp]none {
 }
 
 func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallCommon, ds *explicitDeferStack) (ret llssa.Expr) {
+	p.setCallerLine(b, call.Pos())
 	cv := call.Value
 	if mthd := call.Method; mthd != nil {
 		reflectCheck := p.reflectTypeMethodCheck(call, mthd)

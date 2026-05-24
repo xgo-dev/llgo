@@ -74,6 +74,94 @@ func TestRuntimeCallersFramesMetadata(t *testing.T) {
 	}
 }
 
+type runtimeCallerNilIface interface{ runtimeCallerNilMethod() }
+
+type runtimeCallerNilImpl struct{}
+
+func (*runtimeCallerNilImpl) runtimeCallerNilMethod() {}
+
+func TestRuntimeCallersFramesRecoveredNilPanicMetadata(t *testing.T) {
+	tests := []struct {
+		nameSuffix string
+		line       int
+		run        func() (runtime.Frame, bool)
+	}{
+		{".runtimeRecoveredNilPanicClosureFrame.func1", 303, runtimeRecoveredNilPanicClosureFrame},
+		{".runtimeRecoveredNilPanicSplitClosureFrame.func1", 314, runtimeRecoveredNilPanicSplitClosureFrame},
+	}
+	for _, tt := range tests {
+		frame, ok := tt.run()
+		if !ok {
+			t.Fatalf("CallersFrames did not include %s", tt.nameSuffix)
+		}
+		if name := frame.Function; !strings.HasSuffix(name, tt.nameSuffix) {
+			t.Fatalf("recovered panic frame function = %q, want suffix %q", name, tt.nameSuffix)
+		}
+		if frame.Func == nil {
+			t.Fatalf("recovered panic frame Func = nil for %s", tt.nameSuffix)
+		}
+		if name := frame.Func.Name(); !strings.HasSuffix(name, tt.nameSuffix) {
+			t.Fatalf("recovered panic frame Func.Name = %q, want suffix %q", name, tt.nameSuffix)
+		}
+		if frame.Line != tt.line {
+			t.Fatalf("recovered panic frame line = %d, want %d", frame.Line, tt.line)
+		}
+	}
+
+	pc, _, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller(0) failed after recovered panic")
+	}
+	fn := runtime.FuncForPC(pc)
+	if fn == nil {
+		t.Fatal("FuncForPC(runtime.Caller(0) pc) = nil after recovered panic")
+	}
+	if name := fn.Name(); !strings.HasSuffix(name, ".TestRuntimeCallersFramesRecoveredNilPanicMetadata") {
+		t.Fatalf("runtime.Caller(0) after recovered panic = %q, want current test frame", name)
+	}
+}
+
+func runtimeRecoveredNilPanicFrame(wantSuffix string, f func()) (frame runtime.Frame, ok bool) {
+	defer func() {
+		if recover() == nil {
+			return
+		}
+		var pcs [32]uintptr
+		n := runtime.Callers(0, pcs[:])
+		frames := runtime.CallersFrames(pcs[:n])
+		for {
+			next, more := frames.Next()
+			if strings.HasSuffix(next.Function, wantSuffix) {
+				frame = next
+				ok = true
+				return
+			}
+			if !more {
+				return
+			}
+		}
+	}()
+	f()
+	return
+}
+
+//line runtime_callers_recovered_nil_metadata.go:300
+func runtimeRecoveredNilPanicClosureFrame() (runtime.Frame, bool) {
+	return runtimeRecoveredNilPanicFrame(".runtimeRecoveredNilPanicClosureFrame.func1", func() {
+		var v runtimeCallerNilIface
+		v.runtimeCallerNilMethod()
+	})
+}
+
+//line runtime_callers_recovered_nil_metadata.go:310
+func runtimeRecoveredNilPanicSplitClosureFrame() (runtime.Frame, bool) {
+	return runtimeRecoveredNilPanicFrame(".runtimeRecoveredNilPanicSplitClosureFrame.func1", func() {
+		var v runtimeCallerNilIface
+		v. // method name is on the following line
+			runtimeCallerNilMethod()
+	})
+}
+
 //line runtime_caller_metadata.go:100
 func runtimeCallerLeaf(skip int) runtimeCallerSnapshot {
 	pc, file, line, ok := runtime.Caller(skip)

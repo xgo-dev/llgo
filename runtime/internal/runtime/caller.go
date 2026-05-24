@@ -38,7 +38,8 @@ var (
 	runtimeGoexitFrame  = CallerFrame{Function: "runtime.goexit"}
 )
 
-func PushCallerFrame(entry uintptr, name, file string, startLine int) {
+func PushCallerFrame(entry uintptr, name, file string, startLine int) int {
+	mark := len(callerFrames)
 	callerFrames = append(callerFrames, CallerFrame{
 		PC:        entry,
 		Entry:     entry,
@@ -47,6 +48,7 @@ func PushCallerFrame(entry uintptr, name, file string, startLine int) {
 		Line:      startLine,
 		StartLine: startLine,
 	})
+	return mark
 }
 
 func SetCallerLine(line int) {
@@ -56,11 +58,11 @@ func SetCallerLine(line int) {
 	callerFrames[len(callerFrames)-1].Line = line
 }
 
-func PopCallerFrame() {
-	if len(callerFrames) == 0 {
+func PopCallerFrame(mark int) {
+	if mark < 0 || mark > len(callerFrames) {
 		return
 	}
-	callerFrames = callerFrames[:len(callerFrames)-1]
+	callerFrames = callerFrames[:mark]
 }
 
 func Caller(skip int) (CallerFrame, bool) {
