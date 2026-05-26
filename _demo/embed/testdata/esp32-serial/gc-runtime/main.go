@@ -714,6 +714,7 @@ func testInterfaceLiveness() bool {
 	}
 
 	globalIface = nil
+	scrubStack()
 	_, afterDrop := collectAndPrint("iface-drop")
 	if afterDrop.Frees <= after.Frees {
 		return fail("clearing interface did not free heap object")
@@ -976,6 +977,7 @@ func testNestedStructPointers() bool {
 	}
 
 	globalNested = nil
+	scrubStack()
 	_, afterDrop := collectAndPrint("nested-drop")
 	// 3 nested + 3 node = 6 objects (at minimum)
 	if afterDrop.Frees < after.Frees+6 {
@@ -1190,6 +1192,7 @@ func testMultipleCyclesDisjoint() bool {
 
 	// Drop cycle B.
 	cycleB = nil
+	scrubStack()
 	_, afterDropB := collectAndPrint("disjoint-dropB")
 	if afterDropB.Frees < afterDropA.Frees+2 {
 		return fail("dropping cycle B did not free 2 nodes")
