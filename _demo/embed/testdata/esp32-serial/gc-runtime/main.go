@@ -983,6 +983,10 @@ func testNestedStructPointers_build() (bool, gcStats) {
 func testNestedStructPointers_drop(after gcStats) bool {
 	globalNested = nil
 	_, afterDrop := collectAndPrint("nested-drop")
+	if afterDrop.Frees < after.Frees+6 {
+		scrubStack()
+		_, afterDrop = collectAndPrint("nested-drop-retry")
+	}
 	// 3 nested + 3 node = 6 objects (at minimum)
 	if afterDrop.Frees < after.Frees+6 {
 		return fail("clearing nested struct did not free all objects")
