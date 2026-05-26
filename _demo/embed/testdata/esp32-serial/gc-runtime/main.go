@@ -697,7 +697,7 @@ func testRegisterRootProbe() bool {
 // GC, and being reclaimed once the interface is nilled.
 // ---------------------------------------------------------------------------
 
-func testInterfaceLiveness() bool {
+func testInterfaceLiveness_build() (bool, gcStats) {
 	globalIface = nil
 	_, base := collectAndPrint("iface-base")
 
@@ -707,14 +707,16 @@ func testInterfaceLiveness() bool {
 
 	got, ok := globalIface.(*node)
 	if !ok || got == nil || got.id != 900 {
-		return fail("interface-boxed heap object lost after GC")
+		return fail("interface-boxed heap object lost after GC"), after
 	}
 	if after.Mallocs <= base.Mallocs {
-		return fail("interface allocation did not increase malloc count")
+		return fail("interface allocation did not increase malloc count"), after
 	}
+	return true, after
+}
 
+func testInterfaceLiveness_drop(after gcStats) bool {
 	globalIface = nil
-	scrubStack()
 	_, afterDrop := collectAndPrint("iface-drop")
 	if afterDrop.Frees <= after.Frees {
 		return fail("clearing interface did not free heap object")
@@ -942,7 +944,7 @@ func testAllocAfterGCReclaim() bool {
 // leaf), verifying the full tree survives GC and is freed when unrooted.
 // ---------------------------------------------------------------------------
 
-func testNestedStructPointers() bool {
+func testNestedStructPointers_build() (bool, gcStats) {
 	globalNested = nil
 	_, base := collectAndPrint("nested-base")
 
@@ -955,29 +957,31 @@ func testNestedStructPointers() bool {
 	_, after := collectAndPrint("nested-after")
 
 	if globalNested == nil || globalNested.id != 100 {
-		return fail("nested root lost")
+		return fail("nested root lost"), after
 	}
 	if globalNested.leaf == nil || globalNested.leaf.id != 101 {
-		return fail("nested root leaf lost")
+		return fail("nested root leaf lost"), after
 	}
 	if globalNested.child == nil || globalNested.child.id != 102 {
-		return fail("nested child lost")
+		return fail("nested child lost"), after
 	}
 	if globalNested.child.leaf == nil || globalNested.child.leaf.id != 103 {
-		return fail("nested child leaf lost")
+		return fail("nested child leaf lost"), after
 	}
 	if globalNested.child.child == nil || globalNested.child.child.id != 104 {
-		return fail("nested grandchild lost")
+		return fail("nested grandchild lost"), after
 	}
 	if globalNested.child.child.leaf == nil || globalNested.child.child.leaf.id != 105 {
-		return fail("nested grandchild leaf lost")
+		return fail("nested grandchild leaf lost"), after
 	}
 	if after.Mallocs <= base.Mallocs {
-		return fail("nested struct allocation did not increase malloc count")
+		return fail("nested struct allocation did not increase malloc count"), after
 	}
+	return true, after
+}
 
+func testNestedStructPointers_drop(after gcStats) bool {
 	globalNested = nil
-	scrubStack()
 	_, afterDrop := collectAndPrint("nested-drop")
 	// 3 nested + 3 node = 6 objects (at minimum)
 	if afterDrop.Frees < after.Frees+6 {
@@ -1157,7 +1161,7 @@ func testPartialGraphUnlinking() bool {
 // only that cycle while the other remains live.
 // ---------------------------------------------------------------------------
 
-func testMultipleCyclesDisjoint() bool {
+func testMultipleCyclesDisjoint_build() (bool, gcStats) {
 	cycleA = nil
 	cycleB = nil
 	collectAndPrint("disjoint-base")
@@ -1174,25 +1178,30 @@ func testMultipleCyclesDisjoint() bool {
 	cycleB.next.next = cycleB
 
 	_, afterBuild := collectAndPrint("disjoint-build")
+	return true, afterBuild
+}
 
+func testMultipleCyclesDisjoint_dropA(afterBuild gcStats) (bool, gcStats) {
 	// Drop cycle A only.
 	cycleA = nil
 	_, afterDropA := collectAndPrint("disjoint-dropA")
 	if afterDropA.Frees < afterBuild.Frees+3 {
-		return fail("dropping cycle A did not free 3 nodes")
+		return fail("dropping cycle A did not free 3 nodes"), afterDropA
 	}
 
 	// Cycle B still alive.
 	if cycleB == nil || cycleB.id != 12000 || cycleB.next == nil || cycleB.next.id != 12001 {
-		return fail("cycle B was corrupted after dropping cycle A")
+		return fail("cycle B was corrupted after dropping cycle A"), afterDropA
 	}
 	if cycleB.next.next != cycleB {
-		return fail("cycle B lost its cycle link")
+		return fail("cycle B lost its cycle link"), afterDropA
 	}
+	return true, afterDropA
+}
 
+func testMultipleCyclesDisjoint_dropB(afterDropA gcStats) bool {
 	// Drop cycle B.
 	cycleB = nil
-	scrubStack()
 	_, afterDropB := collectAndPrint("disjoint-dropB")
 	if afterDropB.Frees < afterDropA.Frees+2 {
 		return fail("dropping cycle B did not free 2 nodes")
@@ -1353,8 +1362,16 @@ func main() {
 	if !runTest("RegisterRootProbe", testRegisterRootProbe) {
 		ok = false
 	}
-	if !runTest("InterfaceLiveness", testInterfaceLiveness) {
-		ok = false
+	{
+		buildOk, afterStats := testInterfaceLiveness_build()
+		scrubStack()
+		if buildOk && testInterfaceLiveness_drop(afterStats) {
+			if debugGC {
+				println("PASS: InterfaceLiveness")
+			}
+		} else {
+			ok = false
+		}
 	}
 	if !runTest("SliceAppendGrowth", testSliceAppendGrowth) {
 		ok = false
@@ -1379,8 +1396,16 @@ func main() {
 	if !runTest("AllocAfterGCReclaim", testAllocAfterGCReclaim) {
 		ok = false
 	}
-	if !runTest("NestedStructPointers", testNestedStructPointers) {
-		ok = false
+	{
+		buildOk, afterStats := testNestedStructPointers_build()
+		scrubStack()
+		if buildOk && testNestedStructPointers_drop(afterStats) {
+			if debugGC {
+				println("PASS: NestedStructPointers")
+			}
+		} else {
+			ok = false
+		}
 	}
 	if !runTest("TotalAllocMonotonicity", testTotalAllocMonotonicity) {
 		ok = false
@@ -1394,8 +1419,21 @@ func main() {
 	if !runTest("PartialGraphUnlinking", testPartialGraphUnlinking) {
 		ok = false
 	}
-	if !runTest("MultipleCyclesDisjoint", testMultipleCyclesDisjoint) {
-		ok = false
+	{
+		buildOk, afterBuild := testMultipleCyclesDisjoint_build()
+		scrubStack()
+		dropAOk, afterDropA := false, gcStats{}
+		if buildOk {
+			dropAOk, afterDropA = testMultipleCyclesDisjoint_dropA(afterBuild)
+		}
+		scrubStack()
+		if buildOk && dropAOk && testMultipleCyclesDisjoint_dropB(afterDropA) {
+			if debugGC {
+				println("PASS: MultipleCyclesDisjoint")
+			}
+		} else {
+			ok = false
+		}
 	}
 	if !runTest("MixedObjectSizes", testMixedObjectSizes) {
 		ok = false
