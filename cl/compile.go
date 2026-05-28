@@ -752,6 +752,10 @@ func skipUnusedArrayDeref(v *ssa.UnOp) bool {
 	if v.Op != token.MUL {
 		return false
 	}
+	block := v.Block()
+	if block == nil || len(block.Succs) != 1 || !strings.HasPrefix(block.Succs[0].Comment, "rangeindex.") {
+		return false
+	}
 	refs := v.Referrers()
 	if refs == nil || len(*refs) != 0 {
 		return false
@@ -987,6 +991,13 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		ret = b.BinOp(v.Op, x, y)
 	case *ssa.UnOp:
 		if v.Op == token.MUL {
+			if skipUnusedArrayDeref(v) {
+				x := p.compileValue(b, v.X)
+				if _, ok := v.X.(*ssa.Call); ok {
+					b.AssertNilDeref(x)
+				}
+				return
+			}
 			if refs := v.Referrers(); refs != nil && len(*refs) == 0 {
 				if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil {
 					if p.isLargeNonPointerValue(t) {
@@ -995,13 +1006,6 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 						b.AssertNilDeref(x)
 						return
 					}
-				}
-				if skipUnusedArrayDeref(v) {
-					x := p.compileValue(b, v.X)
-					if _, ok := v.X.(*ssa.Call); ok {
-						b.AssertNilDeref(x)
-					}
-					return
 				}
 				if _, ok := types.Unalias(v.Type()).Underlying().(*types.Slice); ok {
 					// Zero-length slice-to-array conversions can leave only

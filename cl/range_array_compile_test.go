@@ -20,17 +20,33 @@ func TestSkipUnusedArrayDeref(t *testing.T) {
 	ssaPkg, _, _ := buildGoSSAPkg(t, `
 package foo
 
-var sink int
+	var sink int
+	var calls int
 
-func rangeArray(p *[3]int) {
-	for i := range *p {
-		sink += i
+	func rangeArray(p *[3]int) {
+		for i := range *p {
+			sink += i
+		}
 	}
-}
 
-func copyArray(p *[3]int) [3]int {
-	return *p
-}
+	func nextArray() *[3]int {
+		calls++
+		return nil
+	}
+
+	func rangeArrayCall() {
+		for i := range *nextArray() {
+			sink += i
+		}
+	}
+
+	func explicitDiscard(p *[3]int) {
+		_ = *p
+	}
+
+	func copyArray(p *[3]int) [3]int {
+		return *p
+	}
 
 func useNonArray(p *int) int {
 	return *p
@@ -39,6 +55,12 @@ func useNonArray(p *int) int {
 
 	if !skipUnusedArrayDeref(findUnOp(t, ssaPkg.Func("rangeArray"), token.MUL, true)) {
 		t.Fatal("range array deref should be skipped")
+	}
+	if !skipUnusedArrayDeref(findUnOp(t, ssaPkg.Func("rangeArrayCall"), token.MUL, true)) {
+		t.Fatal("range array call deref should be skipped")
+	}
+	if skipUnusedArrayDeref(findUnOp(t, ssaPkg.Func("explicitDiscard"), token.MUL, true)) {
+		t.Fatal("explicit array deref discard should not be skipped")
 	}
 	if skipUnusedArrayDeref(findUnOp(t, ssaPkg.Func("copyArray"), token.MUL, true)) {
 		t.Fatal("referenced array deref should not be skipped")

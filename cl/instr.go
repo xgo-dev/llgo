@@ -846,6 +846,27 @@ func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, ds *explicitDeferS
 	return b.Do(act, fn, buildCall, args...)
 }
 
+func (p *context) staticArrayLenBuiltinArg(b llssa.Builder, arg ssa.Value) (llssa.Expr, bool) {
+	var arr *types.Array
+	var sideEffect ssa.Value
+	if load, ok := arg.(*ssa.UnOp); ok && load.Op == token.MUL {
+		if t, ok := types.Unalias(load.Type()).Underlying().(*types.Array); ok {
+			arr = t
+			sideEffect = load.X
+		}
+	} else if ptr, ok := types.Unalias(arg.Type()).Underlying().(*types.Pointer); ok {
+		if t, ok := types.Unalias(ptr.Elem()).Underlying().(*types.Array); ok {
+			arr = t
+			sideEffect = arg
+		}
+	}
+	if arr == nil {
+		return llssa.Expr{}, false
+	}
+	p.compileValue(b, sideEffect)
+	return b.Const(constant.MakeInt64(arr.Len()), p.type_(types.Typ[types.Int], llssa.InGo)), true
+}
+
 func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallCommon, ds *explicitDeferStack) (ret llssa.Expr) {
 	cv := call.Value
 	if mthd := call.Method; mthd != nil {
@@ -874,6 +895,11 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			methodName := p.compileValue(b, args[2])
 			ret = b.WrapNilCheck(ptr, recvType, methodName)
 			return
+		} else if (fn == "len" || fn == "cap") && len(args) == 1 && act == llssa.Call {
+			if n, ok := p.staticArrayLenBuiltinArg(b, args[0]); ok {
+				ret = n
+				return
+			}
 		} else if fn == "Offsetof" && act == llssa.Call {
 			if offset, ok := p.offsetOfBuiltinArg(args[0]); ok {
 				ret = offset
