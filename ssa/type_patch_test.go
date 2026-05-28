@@ -249,3 +249,99 @@ func TestCvtStructPreservesTags(t *testing.T) {
 		t.Fatalf("converted struct tag = %q, want %q", got, want)
 	}
 }
+
+func TestRawTypeNamedFunctionClosureCacheKey(t *testing.T) {
+	pkg := types.NewPackage("example.com/p", "p")
+	sig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "x", types.Typ[types.Int])),
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "", types.Typ[types.Int])),
+		false)
+	original := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "RouteFunction", nil), sig, nil)
+
+	raw, cvt := newGoTypes().cvtType(original)
+	if !cvt {
+		t.Fatalf("cvtType(%v) did not convert named function", original)
+	}
+	converted := raw.(*types.Named)
+	if converted.Obj() != original.Obj() {
+		t.Fatalf("converted named function changed TypeName object")
+	}
+	if st, ok := converted.Underlying().(*types.Struct); !ok || !IsClosure(st) {
+		t.Fatalf("converted named function underlying = %T %v, want closure struct", converted.Underlying(), converted.Underlying())
+	}
+
+	for _, tc := range []struct {
+		name           string
+		convertedFirst bool
+	}{
+		{name: "original first"},
+		{name: "converted first", convertedFirst: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog := NewProgram(nil)
+			if tc.convertedFirst {
+				if got := prog.rawType(converted).kind; got != vkClosure {
+					t.Fatalf("raw converted kind = %v, want vkClosure", got)
+				}
+				if got := prog.rawType(original).kind; got != vkFuncPtr {
+					t.Fatalf("raw original kind = %v, want vkFuncPtr", got)
+				}
+				return
+			}
+			if got := prog.rawType(original).kind; got != vkFuncPtr {
+				t.Fatalf("raw original kind = %v, want vkFuncPtr", got)
+			}
+			if got := prog.rawType(converted).kind; got != vkClosure {
+				t.Fatalf("raw converted kind = %v, want vkClosure", got)
+			}
+		})
+	}
+}
+
+func TestRawTypeNamedStructWithNamedFunctionCacheKey(t *testing.T) {
+	pkg := types.NewPackage("example.com/p", "p")
+	sig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "req", types.Typ[types.Int])),
+		nil,
+		false)
+	fn := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "RouteFunction", nil), sig, nil)
+	route := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "Route", nil),
+		types.NewStruct([]*types.Var{types.NewField(token.NoPos, pkg, "Function", fn, false)}, nil),
+		nil)
+
+	raw, cvt := newGoTypes().cvtType(route)
+	if !cvt {
+		t.Fatalf("cvtType(%v) did not convert named struct", route)
+	}
+	converted := raw.(*types.Named)
+	if converted.Obj() != route.Obj() {
+		t.Fatalf("converted named struct changed TypeName object")
+	}
+
+	for _, tc := range []struct {
+		name           string
+		convertedFirst bool
+	}{
+		{name: "original first"},
+		{name: "converted first", convertedFirst: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog := NewProgram(nil)
+			if tc.convertedFirst {
+				if got := prog.Field(prog.rawType(converted), 0).kind; got != vkClosure {
+					t.Fatalf("converted field kind = %v, want vkClosure", got)
+				}
+				if got := prog.Field(prog.rawType(route), 0).kind; got != vkFuncPtr {
+					t.Fatalf("original field kind = %v, want vkFuncPtr", got)
+				}
+				return
+			}
+			if got := prog.Field(prog.rawType(route), 0).kind; got != vkFuncPtr {
+				t.Fatalf("original field kind = %v, want vkFuncPtr", got)
+			}
+			if got := prog.Field(prog.rawType(converted), 0).kind; got != vkClosure {
+				t.Fatalf("converted field kind = %v, want vkClosure", got)
+			}
+		})
+	}
+}

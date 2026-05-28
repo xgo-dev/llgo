@@ -266,12 +266,112 @@ func typeStringWithPkg(t types.Type) string {
 }
 
 func (p Program) rawType(raw types.Type) Type {
+	if useIdentityTypeKey(raw) {
+		if v := p.identityTyps[raw]; v != nil {
+			return v
+		}
+		ret := p.toType(raw)
+		p.identityTyps[raw] = ret
+		return ret
+	}
 	if v := p.typs.At(raw); v != nil {
 		return v.(Type)
 	}
 	ret := p.toType(raw)
 	p.typs.Set(raw, ret)
 	return ret
+}
+
+func (p Program) cacheRawType(raw types.Type, typ Type) {
+	if useIdentityTypeKey(raw) {
+		p.identityTyps[raw] = typ
+		return
+	}
+	p.typs.Set(raw, typ)
+}
+
+func useIdentityTypeKey(t types.Type) bool {
+	return containsLayoutSensitiveNamed(t, nil)
+}
+
+func containsLayoutSensitiveNamed(t types.Type, seen map[types.Type]bool) bool {
+	if t == nil {
+		return false
+	}
+	if seen == nil {
+		seen = make(map[types.Type]bool)
+	}
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
+
+	switch t := types.Unalias(t).(type) {
+	case *types.Named:
+		switch u := t.Underlying().(type) {
+		case *types.Signature:
+			return true
+		case *types.Struct:
+			if IsClosure(u) {
+				return true
+			}
+		}
+		if targs := t.TypeArgs(); targs != nil {
+			for i := 0; i < targs.Len(); i++ {
+				if containsLayoutSensitiveNamed(targs.At(i), seen) {
+					return true
+				}
+			}
+		}
+		return containsLayoutSensitiveNamed(t.Underlying(), seen)
+	case *types.Pointer:
+		return containsLayoutSensitiveNamed(t.Elem(), seen)
+	case *types.Slice:
+		return containsLayoutSensitiveNamed(t.Elem(), seen)
+	case *types.Array:
+		return containsLayoutSensitiveNamed(t.Elem(), seen)
+	case *types.Map:
+		return containsLayoutSensitiveNamed(t.Key(), seen) || containsLayoutSensitiveNamed(t.Elem(), seen)
+	case *types.Chan:
+		return containsLayoutSensitiveNamed(t.Elem(), seen)
+	case *types.Struct:
+		for i := 0; i < t.NumFields(); i++ {
+			if containsLayoutSensitiveNamed(t.Field(i).Type(), seen) {
+				return true
+			}
+		}
+	case *types.Interface:
+		for i := 0; i < t.NumExplicitMethods(); i++ {
+			if containsLayoutSensitiveNamed(t.ExplicitMethod(i).Type(), seen) {
+				return true
+			}
+		}
+		for i := 0; i < t.NumEmbeddeds(); i++ {
+			if containsLayoutSensitiveNamed(t.EmbeddedType(i), seen) {
+				return true
+			}
+		}
+	case *types.Signature:
+		if recv := t.Recv(); recv != nil && containsLayoutSensitiveNamed(recv.Type(), seen) {
+			return true
+		}
+		return containsLayoutSensitiveNamed(t.Params(), seen) || containsLayoutSensitiveNamed(t.Results(), seen)
+	case *types.Tuple:
+		for i := 0; i < t.Len(); i++ {
+			if containsLayoutSensitiveNamed(t.At(i).Type(), seen) {
+				return true
+			}
+		}
+	case *types.TypeParam:
+		return containsLayoutSensitiveNamed(t.Constraint(), seen)
+	case *types.Union:
+		for i := 0; i < t.Len(); i++ {
+			if containsLayoutSensitiveNamed(t.Term(i).Type(), seen) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (p Program) tyVoidPtr() llvm.Type {
@@ -425,7 +525,7 @@ func (p Program) toLLVMNamedStruct(name string, raw *types.Named, st *types.Stru
 	t := p.ctx.StructCreateNamed(name)
 	typ := &aType{t, rawType{raw}, kind}
 	p.named[name] = typ
-	p.typs.Set(raw, typ)
+	p.cacheRawType(raw, typ)
 	fields := p.toLLVMFields(st)
 	t.StructSetBody(fields, false)
 	return typ
@@ -577,11 +677,14 @@ func namedTypeEquivalent(a, b types.Type) bool {
 	if !okA || !okB {
 		return false
 	}
-	if types.Identical(na, nb) {
-		return true
-	}
 	if NameOf(na) != NameOf(nb) {
 		return false
+	}
+	if na == nb {
+		return true
+	}
+	if types.Identical(na, nb) {
+		return !useIdentityTypeKey(na) && !useIdentityTypeKey(nb)
 	}
 	_, sigA := na.Underlying().(*types.Signature)
 	_, sigB := nb.Underlying().(*types.Signature)

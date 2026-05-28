@@ -115,10 +115,11 @@ func Initialize(flags InitFlags) {
 // -----------------------------------------------------------------------------
 
 type aProgram struct {
-	ctx   llvm.Context
-	typs  typeutil.Map // rawType -> Type
-	sizes types.Sizes  // provided by Go compiler
-	gocvt goTypes
+	ctx          llvm.Context
+	typs         typeutil.Map        // rawType -> Type
+	identityTyps map[types.Type]Type // rawTypes whose layout is not fully captured by types.Identical
+	sizes        types.Sizes         // provided by Go compiler
+	gocvt        goTypes
 
 	patchType func(types.Type) types.Type
 
@@ -283,7 +284,8 @@ func NewProgram(target *Target) Program {
 	prog := &aProgram{
 		ctx: ctx, gocvt: newGoTypes(),
 		target: target, td: td, tm: tm, is32Bits: is32Bits,
-		ptrSize: td.PointerSize(), named: make(map[string]Type), fnnamed: make(map[string]int),
+		identityTyps: make(map[types.Type]Type),
+		ptrSize:      td.PointerSize(), named: make(map[string]Type), fnnamed: make(map[string]int),
 		linkname: make(map[string]string), abiSymbol: make(map[string]*AbiSymbol),
 	}
 	prog.abi.Init(uintptr(prog.ptrSize), (*goProgram)(unsafe.Pointer(prog)))
