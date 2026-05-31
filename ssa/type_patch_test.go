@@ -249,3 +249,32 @@ func TestCvtStructPreservesTags(t *testing.T) {
 		t.Fatalf("converted struct tag = %q, want %q", got, want)
 	}
 }
+
+func TestCvtNamedCycleUsesConvertedNamed(t *testing.T) {
+	pkg := types.NewPackage("example.com/p", "p")
+	request := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "Request", nil), nil, nil)
+	routeFunction := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "RouteFunction", nil), nil, nil)
+	routeFunction.SetUnderlying(types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "req", types.NewPointer(request))),
+		nil,
+		false))
+	request.SetUnderlying(types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, pkg, "Function", routeFunction, false),
+	}, nil))
+
+	raw, cvt := newGoTypes().cvtType(routeFunction)
+	if !cvt {
+		t.Fatal("recursive named function was not converted")
+	}
+	converted := raw.(*types.Named)
+	closure, ok := converted.Underlying().(*types.Struct)
+	if !ok || !IsClosure(closure) {
+		t.Fatalf("converted RouteFunction underlying = %T, want closure struct", converted.Underlying())
+	}
+	fnSig := closure.Field(0).Type().(*types.Signature)
+	convertedReq := fnSig.Params().At(0).Type().(*types.Pointer).Elem().(*types.Named)
+	reqStruct := convertedReq.Underlying().(*types.Struct)
+	if fieldType := reqStruct.Field(0).Type(); fieldType != converted {
+		t.Fatalf("Request.Function = %v, want converted RouteFunction", fieldType)
+	}
+}

@@ -167,6 +167,38 @@ func (p goTypes) cvtNamed(t *types.Named) (raw *types.Named, cvt bool) {
 		cvt = t != raw
 		return
 	}
+	if cycle := p.findCvtNamedCycle(t); len(cycle) > 0 {
+		p.cvtNamedCycle(cycle)
+		if v, ok := p.typs[unsafe.Pointer(t)]; ok {
+			raw = (*types.Named)(v)
+			return raw, raw != t
+		}
+	}
+	named := cloneNamed(t)
+	p.typs[unsafe.Pointer(t)] = unsafe.Pointer(t)
+	if tund, cvt := p.cvtType(t.Underlying()); cvt {
+		named.SetUnderlying(tund)
+		if typ, ok := Instantiate(named, t); ok {
+			named = typ.(*types.Named)
+		}
+		p.typs[unsafe.Pointer(t)] = unsafe.Pointer(named)
+		return named, true
+	}
+	return t, false
+}
+
+func (p goTypes) cvtNamedCycle(cycle []*types.Named) {
+	for _, named := range cycle {
+		p.typs[unsafe.Pointer(named)] = unsafe.Pointer(cloneNamed(named))
+	}
+	for _, named := range cycle {
+		raw := (*types.Named)(p.typs[unsafe.Pointer(named)])
+		tund, _ := p.cvtType(named.Underlying())
+		raw.SetUnderlying(tund)
+	}
+}
+
+func cloneNamed(t *types.Named) *types.Named {
 	n := t.NumMethods()
 	methods := make([]*types.Func, n)
 	for i := 0; i < n; i++ {
@@ -182,16 +214,7 @@ func (p goTypes) cvtNamed(t *types.Named) (raw *types.Named, cvt bool) {
 		}
 		named.SetTypeParams(list)
 	}
-	p.typs[unsafe.Pointer(t)] = unsafe.Pointer(t)
-	if tund, cvt := p.cvtType(t.Underlying()); cvt {
-		named.SetUnderlying(tund)
-		if typ, ok := Instantiate(named, t); ok {
-			named = typ.(*types.Named)
-		}
-		p.typs[unsafe.Pointer(t)] = unsafe.Pointer(named)
-		return named, true
-	}
-	return t, false
+	return named
 }
 
 func Instantiate(orig types.Type, t *types.Named) (types.Type, bool) {
@@ -208,6 +231,183 @@ func Instantiate(orig types.Type, t *types.Named) (types.Type, bool) {
 		}
 	}
 	return orig, false
+}
+
+func (p goTypes) findCvtNamedCycle(root *types.Named) []*types.Named {
+	var cycle []*types.Named
+	stack := make([]*types.Named, 0, 4)
+	index := make(map[*types.Named]int)
+	seen := make(map[*types.Named]bool)
+
+	var walkType func(types.Type) bool
+	var walkNamed func(*types.Named) bool
+	walkNamed = func(t *types.Named) bool {
+		if v, ok := p.typbg.Load(namedLinkname(t)); ok && v.(Background) == InC {
+			return false
+		}
+		if _, ok := p.typs[unsafe.Pointer(t)]; ok {
+			return false
+		}
+		if i, ok := index[t]; ok {
+			candidate := append([]*types.Named(nil), stack[i:]...)
+			if !hasGenericNamed(candidate) && p.needsCvtNamedCycle(candidate) {
+				cycle = candidate
+				return true
+			}
+			return false
+		}
+		if seen[t] {
+			return false
+		}
+		seen[t] = true
+		index[t] = len(stack)
+		stack = append(stack, t)
+		if walkType(t.Underlying()) {
+			return true
+		}
+		delete(index, t)
+		stack = stack[:len(stack)-1]
+		return false
+	}
+	walkType = func(typ types.Type) bool {
+		switch t := typ.(type) {
+		case *types.Basic:
+		case *types.Pointer:
+			return walkType(t.Elem())
+		case *types.Interface:
+			for i := 0; i < t.NumExplicitMethods(); i++ {
+				if walkType(t.ExplicitMethod(i).Type()) {
+					return true
+				}
+			}
+			for i := 0; i < t.NumEmbeddeds(); i++ {
+				if walkType(t.EmbeddedType(i)) {
+					return true
+				}
+			}
+		case *types.Slice:
+			return walkType(t.Elem())
+		case *types.Map:
+			return walkType(t.Key()) || walkType(t.Elem())
+		case *types.Struct:
+			for i := 0; i < t.NumFields(); i++ {
+				if walkType(t.Field(i).Type()) {
+					return true
+				}
+			}
+		case *types.Named:
+			return walkNamed(t)
+		case *types.Signature:
+			return walkType(t.Params()) || walkType(t.Results())
+		case *types.Array:
+			return walkType(t.Elem())
+		case *types.Chan:
+			return walkType(t.Elem())
+		case *types.Tuple:
+			for i := 0; i < t.Len(); i++ {
+				if walkType(t.At(i).Type()) {
+					return true
+				}
+			}
+		case *types.TypeParam:
+		case *types.Alias:
+			return walkType(types.Unalias(t))
+		case *types.Union:
+			for i := 0; i < t.Len(); i++ {
+				if walkType(t.Term(i).Type()) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	walkNamed(root)
+	return cycle
+}
+
+func hasGenericNamed(cycle []*types.Named) bool {
+	for _, t := range cycle {
+		if t.TypeArgs() != nil || t.TypeParams() != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (p goTypes) needsCvtNamedCycle(cycle []*types.Named) bool {
+	seen := make(map[types.Type]bool)
+	for _, t := range cycle {
+		if p.needsCvtType(t.Underlying(), seen) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p goTypes) needsCvtType(typ types.Type, seen map[types.Type]bool) bool {
+	if _, ok := cvtGoSSAOpaqueType(typ); ok {
+		return true
+	}
+	switch t := typ.(type) {
+	case *types.Basic:
+	case *types.Pointer:
+		return p.needsCvtType(t.Elem(), seen)
+	case *types.Interface:
+		for i := 0; i < t.NumExplicitMethods(); i++ {
+			if p.needsCvtType(t.ExplicitMethod(i).Type(), seen) {
+				return true
+			}
+		}
+		for i := 0; i < t.NumEmbeddeds(); i++ {
+			if p.needsCvtType(t.EmbeddedType(i), seen) {
+				return true
+			}
+		}
+	case *types.Slice:
+		return p.needsCvtType(t.Elem(), seen)
+	case *types.Map:
+		return p.needsCvtType(t.Key(), seen) || p.needsCvtType(t.Elem(), seen)
+	case *types.Struct:
+		if IsClosure(t) {
+			return false
+		}
+		for i := 0; i < t.NumFields(); i++ {
+			if p.needsCvtType(t.Field(i).Type(), seen) {
+				return true
+			}
+		}
+	case *types.Named:
+		if v, ok := p.typbg.Load(namedLinkname(t)); ok && v.(Background) == InC {
+			return false
+		}
+		if seen[t] {
+			return false
+		}
+		seen[t] = true
+		return p.needsCvtType(t.Underlying(), seen)
+	case *types.Signature:
+		return true
+	case *types.Array:
+		return p.needsCvtType(t.Elem(), seen)
+	case *types.Chan:
+		return p.needsCvtType(t.Elem(), seen)
+	case *types.Tuple:
+		for i := 0; i < t.Len(); i++ {
+			if p.needsCvtType(t.At(i).Type(), seen) {
+				return true
+			}
+		}
+	case *types.TypeParam:
+	case *types.Alias:
+		return p.needsCvtType(types.Unalias(t), seen)
+	case *types.Union:
+		for i := 0; i < t.Len(); i++ {
+			if p.needsCvtType(t.Term(i).Type(), seen) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (p goTypes) cvtClosure(sig *types.Signature) *types.Struct {
