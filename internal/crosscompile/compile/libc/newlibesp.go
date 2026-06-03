@@ -29,10 +29,10 @@ func withDefaultCCFlags(ccflags []string) []string {
 // GetNewlibESP32Config returns the configuration for downloading and building newlib for ESP32
 func GetNewlibESP32Config() compile.LibConfig {
 	return compile.LibConfig{
-		Url:            "https://github.com/goplus/newlib/archive/refs/tags/esp-4.3.0_20250211-patch6.tar.gz",
+		Url:            "https://github.com/goplus/newlib/archive/refs/tags/esp-4.3.0_20250211-patch7.tar.gz",
 		Name:           "newlib-esp32",
-		Version:        "esp-4.3.0_20250211-patch6",
-		ResourceSubDir: "newlib-esp-4.3.0_20250211-patch6",
+		Version:        "esp-4.3.0_20250211-patch7",
+		ResourceSubDir: "newlib-esp-4.3.0_20250211-patch7",
 	}
 }
 

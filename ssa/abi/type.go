@@ -3,6 +3,7 @@ package abi
 import (
 	"go/types"
 	"strconv"
+	"strings"
 
 	"github.com/goplus/llgo/runtime/abi"
 )
@@ -21,13 +22,27 @@ func (b *Builder) MapFlags(t *types.Map) (flags int) {
 }
 
 func (b *Builder) realStr(t types.Type) string {
+	t = PublicType(t)
+	// The TFlag check must use the public type; Str also normalizes its input
+	// so callers that bypass realStr still get public reflected names.
 	if b.TFlag(t)&abi.TFlagExtraStar != 0 {
 		return "*" + b.Str(t)
 	}
 	return b.Str(t)
 }
 
+// PublicType maps LLGo's internal closure representation back to the source
+// function type when emitting reflected type names and type references. It must
+// not be used for physical layout computations such as size, align, or offsets.
+func PublicType(t types.Type) types.Type {
+	if st, ok := types.Unalias(t).(*types.Struct); ok && IsClosure(st) {
+		return st.Field(0).Type()
+	}
+	return t
+}
+
 func (b *Builder) Str(t types.Type) string {
+	t = PublicType(t)
 	switch t := types.Unalias(t).(type) {
 	case *types.Basic:
 		switch t.Kind() {
@@ -61,14 +76,82 @@ func (b *Builder) Str(t types.Type) string {
 		_, s := ChanDir(t.Dir())
 		return s + " " + b.realStr(t.Elem())
 	case *types.Named:
-		obj := t.Obj()
-		name := NamedName(t)
-		if pkg := obj.Pkg(); pkg != nil {
+		name := b.namedStr(t)
+		if pkg := t.Obj().Pkg(); pkg != nil {
 			return pkg.Name() + "." + name
 		}
 		return name
 	}
 	panic("unsupported str: " + t.String())
+}
+
+func (b *Builder) namedStr(t *types.Named) string {
+	name := t.Obj().Name()
+	if targs := t.TypeArgs(); targs != nil {
+		n := targs.Len()
+		infos := make([]string, n)
+		for i := 0; i < n; i++ {
+			infos[i] = b.reflectTypeArgString(targs.At(i))
+		}
+		name += "[" + strings.Join(infos, ",") + "]"
+	}
+	return name
+}
+
+func (b *Builder) reflectTypeArgString(t types.Type) string {
+	if b.TFlag(t)&abi.TFlagExtraStar != 0 {
+		return "*" + b.reflectTypeArgBaseString(t)
+	}
+	return b.reflectTypeArgBaseString(t)
+}
+
+func (b *Builder) reflectTypeArgBaseString(t types.Type) string {
+	switch t := types.Unalias(t).(type) {
+	case *types.Basic:
+		switch t.Kind() {
+		case types.UnsafePointer:
+			return "unsafe.Pointer"
+		case types.Byte:
+			return "uint8"
+		case types.Rune:
+			return "int32"
+		}
+		return t.String()
+	case *types.Named:
+		name := b.namedStr(t)
+		if pkg := t.Obj().Pkg(); pkg != nil {
+			return reflectTypeArgPkgPath(pkg) + "." + name
+		}
+		return name
+	case *types.Interface:
+		return b.interfaceStr(t)
+	case *types.Pointer:
+		elem := t.Elem()
+		if b.TFlag(elem)&abi.TFlagExtraStar != 0 {
+			return "**" + b.reflectTypeArgBaseString(elem)
+		}
+		return b.reflectTypeArgBaseString(elem)
+	case *types.Slice:
+		return "[]" + b.reflectTypeArgString(t.Elem())
+	case *types.Array:
+		return "[" + strconv.Itoa(int(t.Len())) + "]" + b.reflectTypeArgString(t.Elem())
+	case *types.Map:
+		return "map[" + b.reflectTypeArgBaseString(t.Key()) + "]" + b.reflectTypeArgString(t.Elem())
+	case *types.Chan:
+		_, s := ChanDir(t.Dir())
+		return s + " " + b.reflectTypeArgString(t.Elem())
+	}
+	return types.TypeString(t, reflectTypeArgPkgPath)
+}
+
+func reflectTypeArgPkgPath(pkg *types.Package) string {
+	if pkg == nil {
+		return ""
+	}
+	if pkg.Path() == "command-line-arguments" && pkg.Name() != "" {
+		return pkg.Name()
+	}
+	return PathOf(pkg)
 }
 
 func (b *Builder) structStr(t *types.Struct) string {

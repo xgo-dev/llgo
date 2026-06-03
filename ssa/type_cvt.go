@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
+	"reflect"
 	"sync"
 	"unsafe"
 )
@@ -73,6 +74,9 @@ func (p Program) Closure(sig *types.Signature) Type {
 }
 
 func (p goTypes) cvtType(typ types.Type) (raw types.Type, cvt bool) {
+	if raw, ok := cvtGoSSAOpaqueType(typ); ok {
+		return raw, true
+	}
 	switch t := typ.(type) {
 	case *types.Basic:
 	case *types.Pointer:
@@ -117,10 +121,36 @@ func (p goTypes) cvtType(typ types.Type) (raw types.Type, cvt bool) {
 		return typ.Underlying(), false
 	case *types.Alias:
 		return p.cvtType(types.Unalias(t))
+	case *types.Union:
+		return p.cvtUnion(t)
 	default:
 		panic(fmt.Sprintf("cvtType: unexpected type - %T", typ))
 	}
 	return typ, false
+}
+
+func cvtGoSSAOpaqueType(typ types.Type) (types.Type, bool) {
+	if ptr, ok := typ.(*types.Pointer); ok && isGoSSAOpaqueType(ptr.Elem()) {
+		return types.Typ[types.UnsafePointer], true
+	}
+	if isGoSSAOpaqueType(typ) {
+		return types.Typ[types.UnsafePointer], true
+	}
+	return nil, false
+}
+
+func isGoSSAOpaqueType(typ types.Type) bool {
+	// opaqueType is unexported in x/tools/go/ssa with no public detection API.
+	// We fall back to reflection here; TestGoSSAOpaqueTypeConversion guards
+	// against upstream renames or representation changes.
+	rt := reflect.TypeOf(typ)
+	if rt == nil {
+		return false
+	}
+	if rt.Kind() == reflect.Pointer {
+		rt = rt.Elem()
+	}
+	return rt.PkgPath() == "golang.org/x/tools/go/ssa" && rt.Name() == "opaqueType"
 }
 
 func namedLinkname(t *types.Named) string {
@@ -281,6 +311,7 @@ func (p goTypes) cvtStruct(typ *types.Struct) (raw *types.Struct, cvt bool) {
 	}()
 	n := typ.NumFields()
 	flds := make([]*types.Var, n)
+	tags := make([]string, n)
 	needcvt := false
 	for i := 0; i < n; i++ {
 		f := typ.Field(i)
@@ -289,11 +320,33 @@ func (p goTypes) cvtStruct(typ *types.Struct) (raw *types.Struct, cvt bool) {
 			needcvt = true
 		}
 		flds[i] = f
+		tags[i] = typ.Tag(i)
 	}
 	if needcvt {
-		return types.NewStruct(flds, nil), true
+		return types.NewStruct(flds, tags), true
 	}
 	return typ, false
+}
+
+func (p goTypes) cvtUnion(typ *types.Union) (raw *types.Union, cvt bool) {
+	if v, ok := p.typs[unsafe.Pointer(typ)]; ok {
+		raw = (*types.Union)(v)
+		cvt = typ != raw
+		return
+	}
+	defer func() {
+		p.typs[unsafe.Pointer(typ)] = unsafe.Pointer(raw)
+	}()
+	n := typ.Len()
+	terms := make([]*types.Term, n)
+	for i := 0; i < n; i++ {
+		f := typ.Term(i)
+		if t, cvt := p.cvtType(f.Type()); cvt {
+			f = types.NewTerm(f.Tilde(), t)
+		}
+		terms[i] = f
+	}
+	return types.NewUnion(terms), true
 }
 
 // -----------------------------------------------------------------------------

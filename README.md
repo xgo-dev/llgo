@@ -1,11 +1,11 @@
 llgo - A Go compiler based on LLVM
 =====
 
-[![Build Status](https://github.com/goplus/llgo/actions/workflows/go.yml/badge.svg)](https://github.com/goplus/llgo/actions/workflows/go.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/goplus/llgo)](https://goreportcard.com/report/github.com/goplus/llgo)
-[![GitHub release](https://img.shields.io/github/v/tag/goplus/llgo.svg?label=release)](https://github.com/goplus/llgo/releases)
-[![Coverage Status](https://codecov.io/gh/goplus/llgo/branch/main/graph/badge.svg)](https://codecov.io/gh/goplus/llgo)
-[![GoDoc](https://pkg.go.dev/badge/github.com/goplus/llgo.svg)](https://pkg.go.dev/github.com/goplus/llgo)
+[![Build Status](https://github.com/xgo-dev/llgo/actions/workflows/go.yml/badge.svg)](https://github.com/xgo-dev/llgo/actions/workflows/go.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/xgo-dev/llgo)](https://goreportcard.com/report/github.com/xgo-dev/llgo)
+[![GitHub release](https://img.shields.io/github/v/tag/xgo-dev/llgo.svg?label=release)](https://github.com/xgo-dev/llgo/releases)
+[![Coverage Status](https://codecov.io/gh/xgo-dev/llgo/branch/main/graph/badge.svg)](https://codecov.io/gh/xgo-dev/llgo)
+[![GoDoc](https://pkg.go.dev/badge/github.com/xgo-dev/llgo.svg)](https://pkg.go.dev/github.com/xgo-dev/llgo)
 [![Language](https://img.shields.io/badge/language-XGo-blue.svg)](https://github.com/goplus/xgo)
 
 LLGo is a Go compiler based on LLVM in order to better integrate Go with the C ecosystem including Python and JavaScript. It's a subproject of [the XGo project](https://github.com/goplus/gop).
@@ -364,7 +364,7 @@ brew update
 brew install llvm@19 lld@19 bdw-gc openssl cjson libffi libuv pkg-config
 brew install python@3.12 # optional
 brew link --overwrite llvm@19 lld@19 libffi
-# curl https://raw.githubusercontent.com/goplus/llgo/refs/heads/main/install.sh | bash
+# curl https://raw.githubusercontent.com/xgo-dev/llgo/refs/heads/main/install.sh | bash
 ./install.sh
 ```
 
@@ -380,7 +380,7 @@ wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
 sudo apt-get update
 sudo apt-get install -y llvm-19-dev clang-19 libclang-19-dev lld-19 libunwind-19-dev libc++-19-dev pkg-config libgc-dev libssl-dev zlib1g-dev libcjson-dev libsqlite3-dev libuv1-dev
 sudo apt-get install -y python3.12-dev # optional
-#curl https://raw.githubusercontent.com/goplus/llgo/refs/heads/main/install.sh | bash
+#curl https://raw.githubusercontent.com/xgo-dev/llgo/refs/heads/main/install.sh | bash
 ./install.sh
 ```
 
@@ -394,7 +394,7 @@ export LLVM_CONFIG=/usr/lib/llvm19/bin/llvm-config
 export CGO_CPPFLAGS="$($LLVM_CONFIG --cppflags)"
 export CGO_CXXFLAGS=-std=c++17
 export CGO_LDFLAGS="$($LLVM_CONFIG --ldflags) $($LLVM_CONFIG --libs all)"
-curl https://raw.githubusercontent.com/goplus/llgo/refs/heads/main/install.sh | bash
+curl https://raw.githubusercontent.com/xgo-dev/llgo/refs/heads/main/install.sh | bash
 ```
 
 docker alpine 386 llgo environment
@@ -413,7 +413,7 @@ TODO
 <!-- embedme doc/_readme/scripts/install_llgo.sh#L2-L1000 -->
 
 ```sh
-git clone https://github.com/goplus/llgo.git
+git clone https://github.com/xgo-dev/llgo.git
 cd llgo
 ./install.sh
 ```
@@ -424,14 +424,18 @@ cd llgo
 * [pysigfetch](https://github.com/goplus/hdq/tree/main/chore/pysigfetch): It generates symbol information by extracting information from Python's documentation site. This tool is not part of the `llgo` project, but we depend on it.
 * [llpyg](chore/llpyg): It is used to automatically convert Python libraries into Go packages that `llgo` can import. It depends on `pydump` and `pysigfetch` to accomplish the task.
 * [llgen](chore/llgen): It is used to compile Go packages into LLVM IR files (*.ll).
+* [gentests](chore/gentests): It refreshes the built-in golden test data under `cl/_test*`, including `out.ll` and `expect.txt`. Directories that use source-embedded `// LITTEST` checks are skipped for `out.ll` regeneration.
+* [litgen](chore/litgen): It generates and refreshes source-embedded `// LITTEST` FileCheck directives from the current LLVM IR for marked Go source files.
 * [ssadump](chore/ssadump): It is a Go SSA builder and interpreter.
+
+For local workflows and test-golden refresh commands, see [dev/README.md](dev/README.md#6-refresh-test-goldens).
 
 How do I generate these tools?
 
 <!-- embedme doc/_readme/scripts/install_full.sh#L2-L1000 -->
 
 ```sh
-git clone https://github.com/goplus/llgo.git
+git clone https://github.com/xgo-dev/llgo.git
 cd llgo
 go install -v ./cmd/...
 go install -v ./chore/...  # compile all tools except pydump
@@ -446,6 +450,6 @@ go install github.com/goplus/hdq/chore/pysigfetch@v0.8.1  # compile pysigfetch
 
 Below are the key modules for understanding the implementation principles of `llgo`:
 
-* [ssa](https://pkg.go.dev/github.com/goplus/llgo/ssa): It generates LLVM IR files (LLVM SSA) using the semantics (interfaces) of Go SSA. Although `LLVM SSA` and `Go SSA` are both IR languages, they work at completely different levels. `LLVM SSA` is closer to machine code, which abstracts different instruction sets. While `Go SSA` is closer to a high-level language. We can think of it as the instruction set of the `Go computer`. `llgo/ssa` is not just limited to the `llgo` compiler. If we view it as the high-level expressive power of `LLVM`, you'll find it very useful. Prior to `llgo/ssa`, you had to operate `LLVM` using machine code semantics. But now, with the advanced SSA form (in the semantics of Go SSA), you can conveniently utilize `LLVM`.
-* [cl](https://pkg.go.dev/github.com/goplus/llgo/cl): It is the core of the llgo compiler. It converts a Go package into LLVM IR files. It depends on `llgo/ssa`.
-* [internal/build](https://pkg.go.dev/github.com/goplus/llgo/internal/build): It strings together the entire compilation process of `llgo`. It depends on `llgo/ssa` and `llgo/cl`.
+* [ssa](https://pkg.go.dev/github.com/xgo-dev/llgo/ssa): It generates LLVM IR files (LLVM SSA) using the semantics (interfaces) of Go SSA. Although `LLVM SSA` and `Go SSA` are both IR languages, they work at completely different levels. `LLVM SSA` is closer to machine code, which abstracts different instruction sets. While `Go SSA` is closer to a high-level language. We can think of it as the instruction set of the `Go computer`. `llgo/ssa` is not just limited to the `llgo` compiler. If we view it as the high-level expressive power of `LLVM`, you'll find it very useful. Prior to `llgo/ssa`, you had to operate `LLVM` using machine code semantics. But now, with the advanced SSA form (in the semantics of Go SSA), you can conveniently utilize `LLVM`.
+* [cl](https://pkg.go.dev/github.com/xgo-dev/llgo/cl): It is the core of the llgo compiler. It converts a Go package into LLVM IR files. It depends on `llgo/ssa`.
+* [internal/build](https://pkg.go.dev/github.com/xgo-dev/llgo/internal/build): It strings together the entire compilation process of `llgo`. It depends on `llgo/ssa` and `llgo/cl`.

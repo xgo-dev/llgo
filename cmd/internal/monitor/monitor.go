@@ -24,6 +24,7 @@ import (
 	"github.com/goplus/llgo/cmd/internal/flags"
 	"github.com/goplus/llgo/internal/crosscompile"
 	"github.com/goplus/llgo/internal/monitor"
+	"github.com/goplus/llgo/internal/optlevel"
 )
 
 // Cmd represents the monitor command.
@@ -34,6 +35,7 @@ var Cmd = &base.Command{
 
 func init() {
 	flags.AddCommonFlags(&Cmd.Flag)
+	flags.AddOptLevelFlags(&Cmd.Flag)
 	flags.AddEmbeddedFlags(&Cmd.Flag)
 	Cmd.Run = runMonitor
 }
@@ -54,7 +56,11 @@ func runMonitor(cmd *base.Command, args []string) {
 
 	var serialPort []string
 	if flags.Target != "" {
-		conf, err := crosscompile.UseTarget(flags.Target)
+		level := flags.OptLevel
+		if !level.IsValid() {
+			level = optlevel.Oz
+		}
+		conf, err := crosscompile.UseTarget(flags.Target, level)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "llgo monitor: %v\n", err)
 			os.Exit(1)

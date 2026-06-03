@@ -34,8 +34,14 @@ type Slice struct {
 }
 
 func NewSlice3(base unsafe.Pointer, eltSize, cap, i, j, k int) (s Slice) {
-	if i < 0 || j < i || k < j || k > cap {
-		panic("slice index out of bounds")
+	if k < 0 || k > cap {
+		panic(boundsError{x: int64(k), signed: true, y: cap, code: boundsSlice3Acap})
+	}
+	if j < 0 || j > k {
+		panic(boundsError{x: int64(j), signed: true, y: k, code: boundsSlice3B})
+	}
+	if i < 0 || i > j {
+		panic(boundsError{x: int64(i), signed: true, y: j, code: boundsSlice3C})
 	}
 	s.len = j - i
 	s.cap = k - i

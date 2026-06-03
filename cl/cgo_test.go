@@ -16,7 +16,7 @@ import (
 
 	"github.com/goplus/gogen/packages"
 	llssa "github.com/goplus/llgo/ssa"
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 	gossa "golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
@@ -106,6 +106,26 @@ func _Cfunc_add(a int32, b int32) int32 {
 	}
 	if strings.Contains(ir, "cliteErrno") {
 		t.Fatalf("unexpected cliteErrno in Cfunc wrapper, got:\n%s", ir)
+	}
+}
+
+func TestIsCgoVar(t *testing.T) {
+	for _, name := range []string{
+		"_cgo_96608f8de8c8_Cfunc__Cmalloc",
+		"__cgo_callback",
+	} {
+		if !isCgoVar(name) {
+			t.Fatalf("isCgoVar(%q) = false, want true", name)
+		}
+	}
+	if isCgoVar("_Cfunc_malloc") {
+		t.Fatal("isCgoVar should not match cgo wrapper functions")
+	}
+	if isCgoFuncPtrVar("_cgo_96608f8de8c8_Cfunc__Cmalloc") {
+		t.Fatal("isCgoFuncPtrVar should not match package cgo globals")
+	}
+	if !isCgoFuncPtrVar("__cgo_callback") {
+		t.Fatal("isCgoFuncPtrVar should match __cgo function pointer vars")
 	}
 }
 

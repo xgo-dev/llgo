@@ -1,4 +1,4 @@
-//go:build !testGC
+//go:build baremetal
 
 package tinygogc
 

@@ -57,7 +57,7 @@ func MakeFunc(typ Type, fn func(args []Value) (results []Value)) Value {
 			for i := 0; i < fd.nin; i++ {
 				ins[i] = ffiToValue(ffi.Index(args, uintptr(i+1)), fd.ftyp.In[i])
 			}
-			fd.fn(ins)
+			validateMakeFuncResults(fd.fn(ins), fd.ftyp)
 		}, unsafe.Pointer(&funcData{ftyp: ftyp, fn: fn, nin: len(ftyp.In)}))
 	case 1:
 		err = closure.Bind(sig, func(cif *ffi.Signature, ret unsafe.Pointer, args *unsafe.Pointer, userdata unsafe.Pointer) {
@@ -66,12 +66,8 @@ func MakeFunc(typ Type, fn func(args []Value) (results []Value)) Value {
 			for i := 0; i < fd.nin; i++ {
 				ins[i] = ffiToValue(ffi.Index(args, uintptr(i+1)), fd.ftyp.In[i])
 			}
-			out := fd.fn(ins)
-			if fd.ftyp.Out[0].IfaceIndir() {
-				c.Memmove(ret, out[0].ptr, fd.ftyp.Out[0].Size_)
-			} else {
-				*(*unsafe.Pointer)(ret) = unsafe.Pointer(out[0].ptr)
-			}
+			out := validateMakeFuncResults(fd.fn(ins), fd.ftyp)
+			storeMakeFuncResult(ret, out[0], fd.ftyp.Out[0])
 		}, unsafe.Pointer(&funcData{ftyp: ftyp, fn: fn, nin: len(ftyp.In)}))
 	default:
 		err = closure.Bind(sig, func(cif *ffi.Signature, ret unsafe.Pointer, args *unsafe.Pointer, userdata unsafe.Pointer) {
@@ -80,15 +76,13 @@ func MakeFunc(typ Type, fn func(args []Value) (results []Value)) Value {
 			for i := 0; i < fd.nin; i++ {
 				ins[i] = ffiToValue(ffi.Index(args, uintptr(i+1)), fd.ftyp.In[i])
 			}
-			outs := fd.fn(ins)
+			outs := validateMakeFuncResults(fd.fn(ins), fd.ftyp)
 			var offset uintptr = 0
+			alignment := uintptr(cif.RType.Alignment)
 			for i, out := range outs {
-				if fd.ftyp.Out[i].IfaceIndir() {
-					c.Memmove(add(ret, offset, ""), out.ptr, fd.ftyp.Out[i].Size_)
-				} else {
-					*(*unsafe.Pointer)(add(ret, offset, "")) = unsafe.Pointer(out.ptr)
-				}
-				offset += fd.ftyp.Out[i].Size_
+				typ := fd.ftyp.Out[i]
+				storeMakeFuncResult(add(ret, offset, ""), out, typ)
+				offset += (typ.Size_ + alignment - 1) &^ (alignment - 1)
 			}
 		}, unsafe.Pointer(&funcData{ftyp: ftyp, fn: fn, nin: len(ftyp.In)}))
 	}
@@ -101,6 +95,30 @@ func MakeFunc(typ Type, fn func(args []Value) (results []Value)) Value {
 		env unsafe.Pointer
 	}{closure.Fn, unsafe.Pointer(&fn)}
 	return Value{styp, unsafe.Pointer(fv), flagIndir | flag(Func)}
+}
+
+func validateMakeFuncResults(out []Value, ftyp *funcType) []Value {
+	if len(out) != len(ftyp.Out) {
+		panic("reflect: wrong return count from function created by MakeFunc")
+	}
+	for i, typ := range ftyp.Out {
+		v := out[i]
+		if v.typ() == nil {
+			panic("reflect: function created by MakeFunc returned zero Value")
+		}
+		if v.flag&flagRO != 0 {
+			panic("reflect: function created by MakeFunc returned value obtained from unexported field")
+		}
+		out[i] = v.assignTo("reflect: function created by MakeFunc", typ, nil)
+	}
+	return out
+}
+
+func storeMakeFuncResult(ret unsafe.Pointer, v Value, typ *abi.Type) {
+	if typ.Size_ == 0 {
+		return
+	}
+	c.Memmove(ret, toFFIArg(v, typ), typ.Size_)
 }
 
 func ffiToValue(ptr unsafe.Pointer, typ *abi.Type) (v Value) {

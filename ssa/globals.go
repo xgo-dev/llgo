@@ -19,7 +19,7 @@ package ssa
 import (
 	"fmt"
 
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 )
 
 func (pkg Package) AddGlobalString(name string, value string) {

@@ -1,0 +1,13 @@
+package demo
+
+// import "fmt"
+
+const Keep = "keep"
+
+// var Drop = fmt.Sprint("drop")
+
+type T struct{}
+
+// func Old() string    { return fmt.Sprint("old") }
+func KeepFn() string { return Keep }
+// func (T) M() string  { return fmt.Sprint("old method") }

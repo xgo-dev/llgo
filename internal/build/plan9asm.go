@@ -14,7 +14,7 @@ import (
 	"github.com/goplus/llgo/internal/packages"
 	llplan9asm "github.com/goplus/llgo/internal/plan9asm"
 	llruntime "github.com/goplus/llgo/runtime"
-	gllvm "github.com/goplus/llvm"
+	gllvm "github.com/xgo-dev/llvm"
 )
 
 // compilePkgSFiles translates Go/Plan9 assembly files selected by `go list -json`
@@ -53,11 +53,15 @@ func compilePkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Package, verbo
 		return nil, fmt.Errorf("%s: missing types (needed for asm signatures)", pkg.PkgPath)
 	}
 
+	skipDarwinDynimportTrampolines := shouldCheckDarwinDynimportTrampolineAsm(ctx, pkg)
 	objFiles := make([]string, 0, len(sfiles))
 	for _, sfile := range sfiles {
 		src, err := llplan9asm.ReadFileWithOverlay(ctx.conf.Overlay, sfile)
 		if err != nil {
 			return nil, fmt.Errorf("%s: read %s: %w", pkg.PkgPath, sfile, err)
+		}
+		if shouldSkipDarwinDynimportTrampolineAsm(skipDarwinDynimportTrampolines, sfile, src) {
+			continue
 		}
 		tr, err := llplan9asm.TranslateSourceModuleForPkg(pkg, sfile, src, ctx.buildConf.Goos, ctx.buildConf.Goarch)
 		if err != nil {
@@ -130,6 +134,31 @@ func compilePkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Package, verbo
 	}
 
 	return objFiles, nil
+}
+
+func shouldCheckDarwinDynimportTrampolineAsm(ctx *context, pkg *packages.Package) bool {
+	if ctx == nil || ctx.buildConf == nil || ctx.buildConf.Goos != "darwin" {
+		return false
+	}
+	// golang.org/x/sys/unix generates zsyscall_darwin_*.s trampolines for
+	// go:cgo_import_dynamic symbols. llgo emits equivalent trampolines from
+	// the Go pragmas, so the generated asm trampolines must be skipped there.
+	if pkg == nil || pkg.PkgPath != "golang.org/x/sys/unix" {
+		return false
+	}
+	_, dynimports := collectGoCgoPragmas(pkg.Syntax)
+	return len(dynimports) != 0
+}
+
+func shouldSkipDarwinDynimportTrampolineAsm(enabled bool, sfile string, src []byte) bool {
+	if !enabled {
+		return false
+	}
+	if !strings.HasPrefix(filepath.Base(sfile), "zsyscall_darwin_") {
+		return false
+	}
+	return bytes.Contains(src, []byte("_trampoline<>(SB)")) &&
+		bytes.Contains(src, []byte("_trampoline_addr(SB)"))
 }
 
 type plan9AsmSigCacheKey struct {
@@ -374,7 +403,7 @@ func pkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 	args = append(args, pkg.PkgPath)
 
 	cmd := exec.Command("go", args...)
-	cmd.Dir = ctx.conf.Dir
+	cmd.Dir = pkg.Dir
 	cmd.Env = append(os.Environ(),
 		"GOOS="+ctx.buildConf.Goos,
 		"GOARCH="+ctx.buildConf.Goarch,

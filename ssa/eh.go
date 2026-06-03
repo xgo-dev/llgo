@@ -19,10 +19,9 @@ package ssa
 import (
 	"go/token"
 	"go/types"
-	"log"
 	"unsafe"
 
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 )
 
 // -----------------------------------------------------------------------------
@@ -50,29 +49,6 @@ func (p Program) tyLongjmp() *types.Signature {
 	return p.longjmpTy
 }
 
-// func(env unsafe.Pointer, savemask c.Int) c.Int
-func (p Program) tySigsetjmp() *types.Signature {
-	if p.sigsetjmpTy == nil {
-		paramPtr := types.NewParam(token.NoPos, nil, "", p.VoidPtr().raw.Type)
-		paramCInt := types.NewParam(token.NoPos, nil, "", p.CInt().raw.Type)
-		params := types.NewTuple(paramPtr, paramCInt)
-		results := types.NewTuple(paramCInt)
-		p.sigsetjmpTy = types.NewSignatureType(nil, nil, nil, params, results, false)
-	}
-	return p.sigsetjmpTy
-}
-
-// func(env unsafe.Pointer, retval c.Int)
-func (p Program) tySiglongjmp() *types.Signature {
-	if p.sigljmpTy == nil {
-		paramPtr := types.NewParam(token.NoPos, nil, "", p.VoidPtr().raw.Type)
-		paramCInt := types.NewParam(token.NoPos, nil, "", p.CInt().raw.Type)
-		params := types.NewTuple(paramPtr, paramCInt)
-		p.sigljmpTy = types.NewSignatureType(nil, nil, nil, params, nil, false)
-	}
-	return p.sigljmpTy
-}
-
 // func() unsafe.Pointer
 func (p Program) tyStacksave() *types.Signature {
 	if p.stackSaveTy == nil {
@@ -81,6 +57,16 @@ func (p Program) tyStacksave() *types.Signature {
 		p.stackSaveTy = types.NewSignatureType(nil, nil, nil, nil, params, false)
 	}
 	return p.stackSaveTy
+}
+
+// func(unsafe.Pointer)
+func (p Program) tyStackrestore() *types.Signature {
+	if p.stackRestoreTy == nil {
+		paramPtr := types.NewParam(token.NoPos, nil, "", p.VoidPtr().raw.Type)
+		params := types.NewTuple(paramPtr)
+		p.stackRestoreTy = types.NewSignatureType(nil, nil, nil, params, nil, false)
+	}
+	return p.stackRestoreTy
 }
 
 func (b Builder) AllocaSigjmpBuf() Expr {
@@ -95,6 +81,12 @@ func (b Builder) AllocaSigjmpBuf() Expr {
 func (b Builder) StackSave() Expr {
 	fn := b.Pkg.cFunc("llvm.stacksave", b.Prog.tyStacksave())
 	return b.InlineCall(fn)
+}
+
+// declare void @llvm.stackrestore.p0(ptr)
+func (b Builder) StackRestore(sp Expr) {
+	fn := b.Pkg.cFunc("llvm.stackrestore", b.Prog.tyStackrestore())
+	b.InlineCall(fn, sp)
 }
 
 // addReturnsTwiceAttr adds the returns_twice attribute to a function.
@@ -113,11 +105,7 @@ func (b Builder) Sigsetjmp(jb, savemask Expr) Expr {
 	if b.Prog.target.GOARCH == "wasm" || b.Prog.target.Target != "" {
 		return b.Setjmp(jb)
 	}
-	fname := "sigsetjmp"
-	if b.Prog.target.GOOS == "linux" {
-		fname = "__sigsetjmp"
-	}
-	fn := b.Pkg.cFunc(fname, b.Prog.tySigsetjmp())
+	fn := b.Pkg.rtFunc("Sigsetjmp")
 	b.addReturnsTwiceAttr(fn)
 	return b.Call(fn, jb, savemask)
 }
@@ -128,7 +116,7 @@ func (b Builder) Siglongjmp(jb, retval Expr) {
 		b.Longjmp(jb, retval)
 		return
 	}
-	fn := b.Pkg.cFunc("siglongjmp", b.Prog.tySiglongjmp()) // TODO(xsw): mark as noreturn
+	fn := b.Pkg.rtFunc("Siglongjmp") // TODO(xsw): mark as noreturn
 	b.Call(fn, jb, retval)
 	// b.Unreachable()
 }
@@ -156,7 +144,6 @@ func (p Function) deferInitBuilder() (b Builder, next BasicBlock) {
 
 type aDefer struct {
 	nextBit   int          // next defer bit
-	nextID    uintptr      // next defer statement id
 	data      Expr         // pointer to runtime.Defer
 	bitsPtr   Expr         // pointer to defer bits
 	rethPtr   Expr         // next block of Rethrow
@@ -212,26 +199,10 @@ func (b Builder) getDefer(kind DoAction) *aDefer {
 			b, next = self.deferInitBuilder()
 		}
 
-		prog := b.Prog
 		blks := self.MakeBlocks(2)
 		procBlk, rethrowBlk := blks[0], blks[1]
-
-		zero := prog.Val(uintptr(0))
-		link := b.Call(b.Pkg.rtFunc("GetThreadDefer"))
-		jb := b.AllocaSigjmpBuf()
-		ptr := b.aggregateAllocU(prog.Defer(), jb.impl, zero.impl, link.impl, procBlk.Addr().impl)
-		deferData := Expr{ptr, prog.DeferPtr()}
-		b.Call(b.Pkg.rtFunc("SetThreadDefer"), deferData)
-		bitsPtr := b.FieldAddr(deferData, deferBits)
-		rethPtr := b.FieldAddr(deferData, deferRethrow)
-		rundPtr := b.FieldAddr(deferData, deferRunDefers)
-		argsPtr := b.FieldAddr(deferData, deferArgs)
-		// Initialize the args list so later guards (e.g. DeferAlways/DeferInLoop)
-		// can safely detect an empty chain without a prior push.
-		b.Store(argsPtr, prog.Nil(prog.VoidPtr()))
-
-		czero := prog.IntVal(0, prog.CInt())
-		retval := b.Sigsetjmp(jb, czero)
+		deferState, link, retval := b.initDeferState(procBlk, rethrowBlk)
+		czero := b.Prog.IntVal(0, b.Prog.CInt())
 		if kind != DeferAlways {
 			panicBlk = self.MakeBlock()
 		} else {
@@ -239,17 +210,7 @@ func (b Builder) getDefer(kind DoAction) *aDefer {
 			next, panicBlk = blks[0], blks[1]
 		}
 		b.If(b.BinOp(token.EQL, retval, czero), next, panicBlk)
-
-		self.defer_ = &aDefer{
-			data:      deferData,
-			bitsPtr:   bitsPtr,
-			rethPtr:   rethPtr,
-			rundPtr:   rundPtr,
-			argsPtr:   argsPtr,
-			procBlk:   procBlk,
-			panicBlk:  panicBlk,
-			rundsNext: []BasicBlock{rethrowBlk},
-		}
+		deferState.panicBlk = panicBlk
 
 		b.SetBlockEx(rethrowBlk, AtEnd, false) // rethrow
 		b.Call(b.Pkg.rtFunc("Rethrow"), link)
@@ -268,16 +229,104 @@ func (b Builder) DeferData() Expr {
 	return b.Call(b.Pkg.rtFunc("GetThreadDefer"))
 }
 
+func (b Builder) getDeferInCurrentBlock() *aDefer {
+	if b.Func.recov == nil {
+		return nil
+	}
+	self := b.Func
+	if self.defer_ != nil {
+		return self.defer_
+	}
+
+	// Range-over-func yield bodies need an addressable defer stack in the
+	// current block so the synthetic frame can push into its enclosing owner.
+	logicalBlk := b.blk
+	blks := self.MakeBlocks(4)
+	procBlk, rethrowBlk, next, panicBlk := blks[0], blks[1], blks[2], blks[3]
+	deferState, link, retval := b.initDeferState(procBlk, rethrowBlk)
+	czero := b.Prog.IntVal(0, b.Prog.CInt())
+	b.If(b.BinOp(token.EQL, retval, czero), next, panicBlk)
+	deferState.panicBlk = panicBlk
+
+	b.SetBlockEx(rethrowBlk, AtEnd, false)
+	b.Call(b.Pkg.rtFunc("Rethrow"), link)
+	b.Jump(self.recov)
+
+	b.SetBlockEx(next, AtEnd, false)
+	if logicalBlk != nil {
+		logicalBlk.last = next.last
+	}
+	b.blk = logicalBlk
+	return self.defer_
+}
+
+func (b Builder) initDeferState(procBlk, rethrowBlk BasicBlock) (*aDefer, Expr, Expr) {
+	self := b.Func
+	prog := b.Prog
+	zero := prog.Val(uintptr(0))
+	link := b.Call(b.Pkg.rtFunc("GetThreadDefer"))
+	jb := b.AllocaSigjmpBuf()
+	ptr := b.aggregateAllocU(prog.Defer(), jb.impl, zero.impl, link.impl, procBlk.Addr().impl)
+	deferData := Expr{ptr, prog.DeferPtr()}
+	b.Call(b.Pkg.rtFunc("SetThreadDefer"), deferData)
+	bitsPtr := b.FieldAddr(deferData, deferBits)
+	rethPtr := b.FieldAddr(deferData, deferRethrow)
+	rundPtr := b.FieldAddr(deferData, deferRunDefers)
+	argsPtr := b.FieldAddr(deferData, deferArgs)
+	// Initialize the args list so later guards (e.g. DeferAlways/DeferInLoop)
+	// can safely detect an empty chain without a prior push.
+	b.Store(argsPtr, prog.Nil(prog.VoidPtr()))
+
+	czero := prog.IntVal(0, prog.CInt())
+	retval := b.Sigsetjmp(jb, czero)
+
+	self.defer_ = &aDefer{
+		data:      deferData,
+		bitsPtr:   bitsPtr,
+		rethPtr:   rethPtr,
+		rundPtr:   rundPtr,
+		argsPtr:   argsPtr,
+		procBlk:   procBlk,
+		rundsNext: []BasicBlock{rethrowBlk},
+	}
+	if len(self.pendingLoopCases) > 0 {
+		self.defer_.loopCases = append(self.defer_.loopCases, self.pendingLoopCases...)
+		self.pendingLoopCases = nil
+	}
+	return self.defer_, link, retval
+}
+
+// DeferStack returns a stable handle to the current function's explicit
+// loop-defer list.
+func (b Builder) DeferStack() Expr {
+	self := b.getDeferInCurrentBlock()
+	if self == nil {
+		return b.Prog.Nil(b.Prog.VoidPtr())
+	}
+	return b.PtrCast(b.Prog.VoidPtr(), self.argsPtr)
+}
+
+// DeferStackDrain registers a drain point for defers pushed through an
+// explicit stack, such as range-over-func yield bodies.
+func (b Builder) DeferStackDrain() {
+	self := b.getDefer(DeferInLoop)
+	if self == nil {
+		return
+	}
+	b.appendLoopDeferDrainer(self)
+}
+
 // Defer emits a defer instruction.
 func (b Builder) Defer(kind DoAction, fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args ...Expr) {
-	if debugInstr {
-		logCall("Defer", fn, args)
-	}
+	dbgInstrCall("Defer", fn, args)
 	var prog Program
 	var nextbit Expr
 	var self = b.getDefer(kind)
-	id := b.Prog.Val(self.nextID)
-	self.nextID++
+	if self == nil {
+		return
+	}
+	id := b.Prog.Val(b.Func.nextDeferID)
+	b.Func.nextDeferID++
 	switch kind {
 	case DeferInCond:
 		prog = b.Prog
@@ -299,12 +348,45 @@ func (b Builder) Defer(kind DoAction, fn Expr, buildCall func(Builder, Expr, ...
 		loopCase := loopDeferCase{id: id, typ: typ, fn: fn, args: args, buildCall: buildCall}
 		self.loopCases = append(self.loopCases, loopCase)
 	}
+	b.appendDeferStmt(self, kind, typ, buildCall, fn, args, nextbit)
+}
+
+// DeferTo emits a defer instruction into an explicit runtime defer stack.
+func (b Builder) DeferTo(owner Function, stack Expr, fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args ...Expr) {
+	if debugInstr {
+		logCall("DeferTo", fn, args)
+	}
+	if owner == nil {
+		b.Defer(DeferInLoop, fn, buildCall, args...)
+		return
+	}
+	self := owner.defer_
+	id := b.Prog.Val(owner.nextDeferID)
+	owner.nextDeferID++
+	argsPtr := b.PtrCast(b.Prog.Pointer(b.Prog.VoidPtr()), stack)
+	typ := b.saveDeferArgsTo(argsPtr, DeferInLoop, id, fn, args)
+	loopCase := loopDeferCase{
+		id:        id,
+		typ:       typ,
+		fn:        fn,
+		args:      args,
+		buildCall: buildCall,
+	}
+	if self == nil {
+		owner.pendingLoopCases = append(owner.pendingLoopCases, loopCase)
+		return
+	}
+	self.loopCases = append(self.loopCases, loopCase)
+}
+
+func (b Builder) appendDeferStmt(self *aDefer, kind DoAction, typ Type, buildCall func(Builder, Expr, ...Expr) Expr, fn Expr, args []Expr, nextbit Expr) {
 	self.stmts = append(self.stmts, func(bits Expr) {
 		switch kind {
 		case DeferInCond:
 			// Leaving a run of loop defers; allow the next loop-defer statement
 			// (earlier in source order) to generate its own drainer.
 			self.loopDrainerGenerated = false
+			prog := b.Prog
 			zero := prog.Val(uintptr(0))
 			has := b.BinOp(token.NEQ, b.BinOp(token.AND, bits, nextbit), zero)
 			b.IfThen(has, func() {
@@ -316,73 +398,69 @@ func (b Builder) Defer(kind DoAction, fn Expr, buildCall func(Builder, Expr, ...
 			self.loopDrainerGenerated = false
 			b.callDefer(self, typ, buildCall, fn, args)
 		case DeferInLoop:
-			// Only one drainer is needed per contiguous run of loop defers.
-			// (Multiple loop-defer statements inside the same loop share the same
-			// runtime node list and must be drained in strict LIFO order.)
-			if self.loopDrainerGenerated {
-				return
-			}
-			self.loopDrainerGenerated = true
-			if len(self.loopCases) == 0 {
-				return
-			}
-
-			// If a deferred call panics while draining loop defers, we must keep
-			// draining the remaining nodes in this frame before unwinding to the
-			// next defer statement. To achieve this, rethrow should resume at the
-			// current stmt block (which is a valid indirectbr destination),
-			// re-entering the drain loop with the next node already popped.
-			drainEntry := b.blk
-			drainEntryAddr := drainEntry.Addr()
-
-			prog := b.Prog
-			condBlk := b.Func.MakeBlock()
-			exitBlk := b.Func.MakeBlock()
-			idBlk := b.Func.MakeBlock()
-			// Control flow:
-			//   condBlk: check argsPtr for non-nil to see if there's work to drain.
-			//   idBlk:   load node id and dispatch to the matching loop defer statement.
-			//   exitBlk: reached when list is empty or head doesn't belong to any loop defer.
-
-			b.Jump(condBlk)
-			b.SetBlockEx(condBlk, AtEnd, true)
-			list := b.Load(self.argsPtr)
-			has := b.BinOp(token.NEQ, list, prog.Nil(prog.VoidPtr()))
-			b.If(has, idBlk, exitBlk)
-
-			b.SetBlockEx(idBlk, AtEnd, true)
-			hdr := prog.Struct(prog.VoidPtr(), prog.Uintptr())
-			hdrData := b.Load(Expr{list.impl, prog.Pointer(hdr)})
-			nodeID := b.getField(hdrData, 1)
-
-			cases := self.loopCases
-			chkBlks := make([]BasicBlock, len(cases))
-			caseBlks := make([]BasicBlock, len(cases))
-			for i := range cases {
-				chkBlks[i] = b.Func.MakeBlock()
-				caseBlks[i] = b.Func.MakeBlock()
-			}
-
-			// Start dispatch chain.
-			b.Jump(chkBlks[0])
-			for i, c := range cases {
-				nextBlk := exitBlk
-				if i+1 < len(cases) {
-					nextBlk = chkBlks[i+1]
-				}
-				b.SetBlockEx(chkBlks[i], AtEnd, true)
-				match := b.BinOp(token.EQL, nodeID, c.id)
-				b.If(match, caseBlks[i], nextBlk)
-
-				b.SetBlockEx(caseBlks[i], AtEnd, true)
-				b.Store(self.rethPtr, drainEntryAddr)
-				b.callDefer(self, c.typ, c.buildCall, c.fn, c.args)
-				b.Jump(condBlk)
-			}
-
-			b.SetBlockEx(exitBlk, AtEnd, true)
+			b.loopDeferDrainer(self)
 		}
 	})
+}
+
+func (b Builder) appendLoopDeferDrainer(self *aDefer) {
+	self.stmts = append(self.stmts, func(Expr) {
+		b.loopDeferDrainer(self)
+	})
+}
+
+func (b Builder) loopDeferDrainer(self *aDefer) {
+	if self.loopDrainerGenerated {
+		return
+	}
+	self.loopDrainerGenerated = true
+	if len(self.loopCases) == 0 {
+		return
+	}
+
+	drainEntry := b.blk
+	drainEntryAddr := drainEntry.Addr()
+
+	prog := b.Prog
+	condBlk := b.Func.MakeBlock()
+	exitBlk := b.Func.MakeBlock()
+	idBlk := b.Func.MakeBlock()
+
+	b.Jump(condBlk)
+	b.SetBlockEx(condBlk, AtEnd, true)
+	list := b.Load(self.argsPtr)
+	has := b.BinOp(token.NEQ, list, prog.Nil(prog.VoidPtr()))
+	b.If(has, idBlk, exitBlk)
+
+	b.SetBlockEx(idBlk, AtEnd, true)
+	hdr := prog.Struct(prog.VoidPtr(), prog.Uintptr())
+	hdrData := b.Load(Expr{list.impl, prog.Pointer(hdr)})
+	nodeID := b.getField(hdrData, 1)
+
+	chkBlks := make([]BasicBlock, len(self.loopCases))
+	caseBlks := make([]BasicBlock, len(self.loopCases))
+	for i := range self.loopCases {
+		chkBlks[i] = b.Func.MakeBlock()
+		caseBlks[i] = b.Func.MakeBlock()
+	}
+
+	b.Jump(chkBlks[0])
+	for i, c := range self.loopCases {
+		nextBlk := exitBlk
+		if i+1 < len(self.loopCases) {
+			nextBlk = chkBlks[i+1]
+		}
+		b.SetBlockEx(chkBlks[i], AtEnd, true)
+		match := b.BinOp(token.EQL, nodeID, c.id)
+		b.If(match, caseBlks[i], nextBlk)
+
+		b.SetBlockEx(caseBlks[i], AtEnd, true)
+		b.Store(self.rethPtr, drainEntryAddr)
+		b.callDefer(self, c.typ, c.buildCall, c.fn, c.args)
+		b.Jump(condBlk)
+	}
+
+	b.SetBlockEx(exitBlk, AtEnd, true)
 }
 
 /*
@@ -401,6 +479,10 @@ free(node)
 */
 
 func (b Builder) saveDeferArgs(self *aDefer, kind DoAction, id Expr, fn Expr, args []Expr) Type {
+	return b.saveDeferArgsTo(self.argsPtr, kind, id, fn, args)
+}
+
+func (b Builder) saveDeferArgsTo(argsPtr Expr, kind DoAction, id Expr, fn Expr, args []Expr) Type {
 	if kind != DeferInLoop && fn != Nil && fn.kind != vkClosure && len(args) == 0 {
 		return nil
 	}
@@ -412,7 +494,7 @@ func (b Builder) saveDeferArgs(self *aDefer, kind DoAction, id Expr, fn Expr, ar
 	typs := make([]Type, len(args)+offset)
 	flds := make([]llvm.Value, len(args)+offset)
 	typs[0] = prog.VoidPtr()
-	flds[0] = b.Load(self.argsPtr).impl
+	flds[0] = b.Load(argsPtr).impl
 	typs[1] = prog.Uintptr()
 	flds[1] = id.impl
 	if fn != Nil && fn.kind == vkClosure {
@@ -425,7 +507,7 @@ func (b Builder) saveDeferArgs(self *aDefer, kind DoAction, id Expr, fn Expr, ar
 	}
 	typ := prog.Struct(typs...)
 	ptr := Expr{b.aggregateAllocU(typ, flds...), prog.VoidPtr()}
-	b.Store(self.argsPtr, ptr)
+	b.Store(argsPtr, ptr)
 	return typ
 }
 
@@ -526,9 +608,7 @@ func (b Builder) Unreachable() {
 
 // Recover emits a recover instruction.
 func (b Builder) Recover() Expr {
-	if debugInstr {
-		log.Println("Recover")
-	}
+	dbgInstrln("Recover")
 	// TODO(xsw): recover can't be a function call in Go
 	return b.Call(b.Pkg.rtFunc("Recover"))
 }

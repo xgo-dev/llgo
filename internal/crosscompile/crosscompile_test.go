@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"slices"
 	"testing"
+
+	"github.com/goplus/llgo/internal/optlevel"
 )
 
 const (
@@ -76,7 +78,7 @@ func TestUseCrossCompileSDK(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			export, err := use(tc.goos, tc.goarch, false, false)
+			export, err := use(tc.goos, tc.goarch, false, false, optlevel.O2)
 
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
@@ -231,7 +233,7 @@ func TestUseTarget(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			export, err := UseTarget(tc.targetName)
+			export, err := UseTarget(tc.targetName, optlevel.Oz)
 
 			if tc.expectError {
 				if err == nil {
@@ -311,7 +313,7 @@ func TestUseTarget(t *testing.T) {
 
 func TestUseWithTarget(t *testing.T) {
 	// Test target-based configuration takes precedence
-	export, err := Use("linux", "amd64", "esp32", false, true)
+	export, err := Use("linux", "amd64", "esp32", false, true, optlevel.Oz)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -323,7 +325,7 @@ func TestUseWithTarget(t *testing.T) {
 	}
 
 	// Test fallback to goos/goarch when no target specified
-	export, err = Use(runtime.GOOS, runtime.GOARCH, "", false, false)
+	export, err = Use(runtime.GOOS, runtime.GOARCH, "", false, false, optlevel.O2)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -331,5 +333,23 @@ func TestUseWithTarget(t *testing.T) {
 	// Should use native configuration (only check for macOS since that's where tests run)
 	if runtime.GOOS == "darwin" && len(export.LDFLAGS) == 0 {
 		t.Error("Expected LDFLAGS to be set for native build")
+	}
+}
+
+func TestOptimizationFlagPlacement(t *testing.T) {
+	export, err := UseTarget("rp2040", optlevel.Oz)
+	if err != nil {
+		t.Fatalf("UseTargetWithOptLevel(rp2040) failed: %v", err)
+	}
+	if len(export.CCFLAGS) == 0 || export.CCFLAGS[0] != "-Oz" {
+		t.Fatalf("target CCFLAGS = %v, want first flag -Oz", export.CCFLAGS)
+	}
+
+	export, err = Use(runtime.GOOS, runtime.GOARCH, "", false, false, optlevel.O3)
+	if err != nil {
+		t.Fatalf("UseWithOptLevel(host, O3) failed: %v", err)
+	}
+	if !slices.Contains(export.CCFLAGS, "-O3") {
+		t.Fatalf("host CCFLAGS = %v, want -O3", export.CCFLAGS)
 	}
 }

@@ -4,7 +4,7 @@ import (
 	"go/token"
 	"go/types"
 
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 )
 
 // removeCtx drops the leading __llgo_ctx parameter, if present.
@@ -88,7 +88,7 @@ func (p Package) closureWrapDecl(fn Expr, sig *types.Signature) Function {
 // closureWrapPtr wraps a raw function pointer by loading it from ctx.
 // The ctx parameter is treated as a pointer to a stored function pointer cell.
 func (p Package) closureWrapPtr(sig *types.Signature) Function {
-	name := closureStub + p.abi.FuncName(sig)
+	name := closureStub + p.Prog.abi.FuncName(sig)
 	if wrap := p.FuncOf(name); wrap != nil {
 		return wrap
 	}

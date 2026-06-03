@@ -1,0 +1,13 @@
+package demo
+
+type Text = string
+
+const (
+	ReplaceConst = "old"
+	KeepConst    = "keep"
+)
+
+var (
+	ReplaceVar = "old"
+	KeepVar    = "keep"
+)

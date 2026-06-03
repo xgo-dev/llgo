@@ -6,6 +6,9 @@ package build
 import (
 	"bytes"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"os"
 	"os/exec"
@@ -16,6 +19,7 @@ import (
 
 	"github.com/goplus/llgo/internal/mockable"
 	"github.com/goplus/llgo/internal/packages"
+	llssa "github.com/goplus/llgo/ssa"
 )
 
 func TestMain(m *testing.M) {
@@ -26,6 +30,27 @@ func TestMain(m *testing.M) {
 	cacheRootFunc = old
 	_ = os.RemoveAll(td)
 	os.Exit(code)
+}
+
+func TestNeedsLinuxNoPIE(t *testing.T) {
+	ctx := &context{buildConf: &Config{Goos: "linux"}}
+	if !needsLinuxNoPIE(ctx, nil) {
+		t.Fatal("linux executable link should default to -no-pie")
+	}
+	for _, flag := range []string{"-pie", "-static-pie", "-no-pie", "-nopie"} {
+		if needsLinuxNoPIE(ctx, []string{flag}) {
+			t.Fatalf("explicit %s should not be overridden", flag)
+		}
+	}
+	ctx.buildConf.Goos = "darwin"
+	if needsLinuxNoPIE(ctx, nil) {
+		t.Fatal("non-linux executable link should not force -no-pie")
+	}
+	ctx.buildConf.Goos = "linux"
+	ctx.buildConf.Target = "wasi"
+	if needsLinuxNoPIE(ctx, nil) {
+		t.Fatal("named targets should not force host linux -no-pie")
+	}
 }
 
 func mockRun(args []string, cfg *Config) {
@@ -316,5 +341,25 @@ func TestCmpTestNonexistentPatternReturnsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cannot build SSA for packages") && !strings.Contains(err.Error(), "no such file or directory") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPreCollectRuntimeLinknames(t *testing.T) {
+	prog := llssa.NewProgram(nil)
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "runtime.go", `package runtime
+import _ "unsafe"
+//go:linkname Sigsetjmp C.sigsetjmp
+func Sigsetjmp()
+`, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("ParseFile failed: %v", err)
+	}
+	preCollectRuntimeLinknames(prog, []*packages.Package{{
+		PkgPath: llssa.PkgRuntime,
+		Syntax:  []*ast.File{file},
+	}})
+	if got, ok := prog.Linkname(llssa.PkgRuntime + ".Sigsetjmp"); !ok || got != "C.sigsetjmp" {
+		t.Fatalf("pre-collected runtime linkname = (%q,%v), want (%q,%v)", got, ok, "C.sigsetjmp", true)
 	}
 }

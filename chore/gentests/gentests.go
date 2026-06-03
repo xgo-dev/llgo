@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/goplus/llgo/cl/cltest"
+	"github.com/goplus/llgo/internal/littest"
 	"github.com/goplus/llgo/internal/llgen"
 	"github.com/goplus/mod"
 )
@@ -50,6 +51,12 @@ func llgenDir(dir string) {
 			continue
 		}
 		testDir := dir + "/" + name
+		skip, err := dirHasLITTESTSource(testDir)
+		check(err)
+		if skip {
+			fmt.Fprintln(os.Stderr, "skip llgen", testDir, "(// LITTEST)")
+			continue
+		}
 		fmt.Fprintln(os.Stderr, "llgen", testDir)
 		check(os.Chdir(testDir))
 		llgen.SmartDoFile(testDir)
@@ -97,4 +104,12 @@ func check(err error) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func dirHasLITTESTSource(dir string) (bool, error) {
+	_, ok, err := littest.FindMarkedSourceFile(dir)
+	if err != nil {
+		return false, err
+	}
+	return ok, nil
 }

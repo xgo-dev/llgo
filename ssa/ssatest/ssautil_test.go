@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/goplus/llgo/ssa"
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 )
 
 func init() {

@@ -36,82 +36,165 @@ embedded_targets=()
 emulator=0
 if [ "$mode" = "embedded" ]; then
   emulator=1
-  embedded_targets=(esp32c3-basic)
+  embedded_targets=(esp32 esp32c3-basic)
 fi
 
+ignore_esp32=(
+  "./_demo/c/asmcall" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/c/asmfullcall" # panic: cannot build SSA for packages
+  "./_demo/c/cabisret" # timeout: emulator did not auto-exit
+  "./_demo/c/cargs" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/c/cexec" # link error: ld.lld undefined symbol execlp
+  "./_demo/c/cgofull" # fast fail: build constraints exclude all Go files
+  "./_demo/c/cgofull/pymod1" # fast fail: build constraints exclude all Go files
+  "./_demo/c/cgofull/pymod2" # fast fail: build constraints exclude all Go files
+  "./_demo/c/concat" # link error: ld.lld undefined symbol stderr
+  "./_demo/c/cppintf" # C++ compile error: libc++ reports "No thread API"
+  "./_demo/c/cppintf/foo" # C++ compile error: libc++ reports "No thread API"
+  "./_demo/c/cppmintf" # C++ compile error: libc++ reports "No thread API"
+  "./_demo/c/cppmintf/foo" # C++ compile error: libc++ reports "No thread API"
+  "./_demo/c/cppstr" # C++ compile error: libc++ reports "No thread API"
+  "./_demo/c/crand" # fast fail: build constraints exclude all Go files in lib/c/time
+  "./_demo/c/ctime" # fast fail: build constraints exclude all Go files in lib/c/time
+  "./_demo/c/getcwd" # timeout: emulator did not auto-exit
+  "./_demo/c/hello" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/c/llama2-c" # fast fail: build constraints exclude all Go files in lib/c/time
+  "./_demo/c/netdbdemo" # link error: ld.lld undefined symbol getaddrinfo
+  "./_demo/c/setjmp" # panic: cannot build SSA for packages
+  "./_demo/c/socket/client" # link error: ld.lld undefined symbol socket
+  "./_demo/c/socket/server" # link error: ld.lld undefined symbol socket
+  "./_demo/c/stacksave" # fast fail: build constraints exclude all Go files
+  "./_demo/c/syncdebug" # fast fail: build constraints exclude all Go files in pthread/sync
+  "./_demo/c/thread" # link error: ld.lld undefined symbol GC_pthread_create
+  "./_demo/go/abimethod" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/async" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/async/timeout" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/cabi" # runtime output: fatal error
+  "./_demo/go/cgo" # fast fail: build constraints exclude all Go files
+  "./_demo/go/checkfile" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/commandrun" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/createtemp-1654" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/defer" # runtime output: fatal error
+  "./_demo/go/embedunexport-1598" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/export" # timeout: emulator did not auto-exit
+  "./_demo/go/failed/stacktrace" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/gobuild" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/gobuild-1389" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/goimporter-1389" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/goroutine" # timeout: emulator did not auto-exit
+  "./_demo/go/gotime" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/gotoken" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/gotypes" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/issue1538" # timeout: emulator did not auto-exit
+  "./_demo/go/issue1538-floatcvtuint-over" # timeout: emulator did not auto-exit
+  "./_demo/go/logdemo" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/maphash" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/mimeheader" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/mkdirdemo" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/netip" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/osfile" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/oslookpath" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/oswritestring" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/randcrypt" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/randdemo" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/readdir" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectcopy" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectfunc" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectindirect" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectmake" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectmethod" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectname-1412" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectpointerto" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/return-1605" # runtime output: fatal error
+  "./_demo/go/runtime" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/sync" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/syscall" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/sysexec" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/sysopen-1654" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/texttemplate" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/timedur" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/timer" # panic: internal/bytealg selected .s files require plan9asm translation
+)
+
 ignore_esp32c3_basic=(
-  "./_demo/go/mkdirdemo"
-  "./_demo/c/asmcall"
-  "./_demo/c/asmfullcall"
-  "./_demo/c/cargs"
-  "./_demo/c/cabi" # timeout: emulator panic (Store/AMO access fault), no auto-exit
-  "./_demo/c/catomic"
-  "./_demo/c/cexec"
-  "./_demo/c/cgofull"
-  "./_demo/c/cgofull/pymod1"
-  "./_demo/c/cgofull/pymod2"
-  "./_demo/c/concat"
-  "./_demo/c/cppstr"
-  "./_demo/c/crand"
-  "./_demo/c/ctime"
-  "./_demo/c/getcwd"
-  "./_demo/c/hello"
-  "./_demo/c/llama2-c"
-  "./_demo/c/netdbdemo"
-  "./_demo/c/setjmp"
-  "./_demo/c/socket/client"
-  "./_demo/c/socket/server"
-  "./_demo/c/stacksave"
-  "./_demo/c/syncdebug"
-  "./_demo/c/thread"
-  "./_demo/go/abimethod"
-  "./_demo/go/async"
-  "./_demo/go/async/timeout" # fast fail: missing runtime/internal/lib modules ("no required module provides package ..."; suggests go get)
-  "./_demo/go/checkfile"
-  "./_demo/go/commandrun"
-  "./_demo/go/complex" # timeout: emulator panic (Store/AMO access fault), no auto-exit
-  "./_demo/go/createtemp-1654" # fast fail: panic internal/bytealg selected .s files require plan9asm translation
-  "./_demo/go/cgo" # fast fail: build constraints exclude all Go files for esp32c3-basic
-  "./_demo/go/embedunexport-1598" # fast fail: missing runtime/internal/lib modules ("no required module provides package ..."; suggests go get)
-  "./_demo/go/export"
-  "./_demo/go/failed/stacktrace"
-  "./_demo/go/gobuild"
-  "./_demo/go/gobuild-1389"
-  "./_demo/go/goimporter-1389"
-  "./_demo/go/goroutine"
-  "./_demo/go/gotime"
-  "./_demo/go/gotoken"
-  "./_demo/go/gotypes"
-  "./_demo/go/logdemo"
-  "./_demo/go/maphash"
-  "./_demo/go/mimeheader"
-  "./_demo/go/netip"
-  "./_demo/go/osfile"
-  "./_demo/go/oslookpath"
-  "./_demo/go/oswritestring"
-  "./_demo/go/randcrypt"
-  "./_demo/go/randdemo"
-  "./_demo/go/readdir"
-  "./_demo/go/reflectfunc"
-  "./_demo/go/reflectindirect"
-  "./_demo/go/reflectcopy" # fast fail: missing runtime/internal/lib modules ("no required module provides package ..."; suggests go get)
-  "./_demo/go/reflectmethod" # fast fail: missing runtime/internal/lib modules ("no required module provides package ..."; suggests go get)
-  "./_demo/go/reflectmake"
-  "./_demo/go/reflectname-1412"
-  "./_demo/go/reflectpointerto" # fast fail: missing runtime/internal/lib modules ("no required module provides package ..."; suggests go get)
-  "./_demo/go/sync"
-  "./_demo/go/sysopen-1654" # fast fail: panic internal/bytealg selected .s files require plan9asm translation
-  "./_demo/go/syscall" # fast fail: missing runtime/internal/lib modules ("no required module provides package ..."; suggests go get)
-  "./_demo/go/sysexec"
-  "./_demo/go/texttemplate"
-  "./_demo/go/timedur"
-  "./_demo/go/timer"
+  "./_demo/go/mkdirdemo" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/c/asmcall" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/c/asmfullcall" # panic: cannot build SSA for packages (undefined: verify)
+  "./_demo/c/cargs" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/c/catomic" # link error: ld.lld undefined symbol __atomic_store
+  "./_demo/c/cexec" # link error: ld.lld undefined symbol execlp
+  "./_demo/c/cgofull" # fast fail: build constraints exclude all Go files
+  "./_demo/c/cgofull/pymod1" # fast fail: build constraints exclude all Go files
+  "./_demo/c/cgofull/pymod2" # fast fail: build constraints exclude all Go files
+  "./_demo/c/concat" # link error: ld.lld undefined symbol stderr
+  "./_demo/c/cppstr" # C++ compile error: '<string>' file not found
+  "./_demo/c/crand" # fast fail: build constraints exclude all Go files in lib/c/time
+  "./_demo/c/ctime" # fast fail: build constraints exclude all Go files in lib/c/time
+  "./_demo/c/getcwd" # timeout: emulator did not auto-exit
+  "./_demo/c/hello" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/c/llama2-c" # fast fail: build constraints exclude all Go files in lib/c/time
+  "./_demo/c/netdbdemo" # link error: ld.lld undefined symbol getaddrinfo
+  "./_demo/c/setjmp" # panic: cannot build SSA for packages (undefined SigjmpBuf/Siglongjmp)
+  "./_demo/c/socket/client" # link error: ld.lld undefined symbol socket
+  "./_demo/c/socket/server" # link error: ld.lld undefined symbol socket
+  "./_demo/c/stacksave" # fast fail: build constraints exclude all Go files
+  "./_demo/c/syncdebug" # fast fail: build constraints exclude all Go files in pthread/sync
+  "./_demo/c/thread" # link error: ld.lld undefined symbol GC_pthread_create
+  "./_demo/go/abimethod" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/async" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/async/timeout" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/checkfile" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/commandrun" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/createtemp-1654" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/cgo" # fast fail: build constraints exclude all Go files
+  "./_demo/go/embedunexport-1598" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/export" # link error: ld.lld undefined symbol __atomic_fetch_or_4
+  "./_demo/go/failed/stacktrace" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/gobuild" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/gobuild-1389" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/goimporter-1389" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/goroutine" # timeout: emulator did not auto-exit
+  "./_demo/go/gotime" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/gotoken" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/gotypes" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/logdemo" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/maphash" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/mimeheader" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/netip" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/osfile" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/oslookpath" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/oswritestring" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/randcrypt" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/randdemo" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/readdir" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectfunc" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectindirect" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectcopy" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectmethod" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectmake" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectname-1412" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectpointerto" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/runtime" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/sync" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/sysopen-1654" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/syscall" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/sysexec" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/texttemplate" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/timedur" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/timer" # panic: internal/bytealg selected .s files require plan9asm translation
 )
 
 should_ignore() {
   local dir="$1"
   local target="$2"
   case "$target" in
+    esp32)
+      for ignore in "${ignore_esp32[@]}"; do
+        if [ "$dir" = "$ignore" ]; then
+          return 0
+        fi
+      done
+      ;;
     esp32c3-basic)
       for ignore in "${ignore_esp32c3_basic[@]}"; do
         if [ "$dir" = "$ignore" ]; then

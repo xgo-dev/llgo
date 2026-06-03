@@ -24,7 +24,7 @@ import (
 	"go/types"
 	"log"
 
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 )
 
 type AtomicOrdering = llvm.AtomicOrdering
@@ -163,7 +163,7 @@ func (p Program) Zero(t Type) Expr {
 		}
 		ret = p.Zero(p.rtType(name)).impl
 	case *types.Map:
-		ret = p.Zero(p.rtType("Map")).impl
+		ret = p.Zero(p.Pointer(p.rtType("Map"))).impl
 	case *types.Tuple:
 		n := u.Len()
 		flds := make([]llvm.Value, n)
@@ -289,9 +289,7 @@ func (b Builder) CBytes(v Expr) Expr {
 
 // InlineAsm generates inline assembly instruction
 func (b Builder) InlineAsm(instruction string) {
-	if debugInstr {
-		log.Printf("InlineAsm %s\n", instruction)
-	}
+	dbgInstrf("InlineAsm %s\n", instruction)
 
 	typ := llvm.FunctionType(b.Prog.tyVoid(), nil, false)
 	asm := llvm.InlineAsm(typ, instruction, "", true, false, llvm.InlineAsmDialectATT, false)
@@ -458,9 +456,7 @@ func isPredOp(op token.Token) bool {
 // AND OR XOR SHL SHR AND_NOT   & | ^ << >> &^
 // EQL NEQ LSS LEQ GTR GEQ      == != < <= > >=
 func (b Builder) BinOp(op token.Token, x, y Expr) Expr {
-	if debugInstr {
-		log.Printf("BinOp %d, %v, %v\n", op, x.impl, y.impl)
-	}
+	dbgInstrf("BinOp %d, %v, %v\n", op, x.impl, y.impl)
 	switch {
 	case isMathOp(op): // op: + - * / %
 		kind := x.kind
@@ -492,36 +488,21 @@ func (b Builder) BinOp(op token.Token, x, y Expr) Expr {
 				)
 				return b.aggregateValue(x.Type, r, i)
 			case token.QUO:
-				d := llvm.CreateBinOp(b.impl, llvm.FAdd, llvm.CreateBinOp(b.impl, llvm.FMul, yr, yr), llvm.CreateBinOp(b.impl, llvm.FMul, yi, yi))
-				zero := llvm.CreateFCmp(b.impl, llvm.FloatOEQ, d, llvm.ConstNull(d.Type()))
-				r := llvm.CreateSelect(b.impl, zero,
-					llvm.CreateBinOp(b.impl, llvm.FDiv, xr, d),
-					llvm.CreateBinOp(b.impl, llvm.FDiv,
-						llvm.CreateBinOp(b.impl, llvm.FAdd,
-							llvm.CreateBinOp(b.impl, llvm.FMul, xr, yr),
-							llvm.CreateBinOp(b.impl, llvm.FMul, xi, yi),
-						),
-						d,
-					),
-				)
-				i := llvm.CreateSelect(b.impl, zero,
-					llvm.CreateBinOp(b.impl, llvm.FDiv, xi, d),
-					llvm.CreateBinOp(b.impl, llvm.FDiv,
-						llvm.CreateBinOp(b.impl, llvm.FSub,
-							llvm.CreateBinOp(b.impl, llvm.FMul, xi, yr),
-							llvm.CreateBinOp(b.impl, llvm.FMul, xr, yi),
-						),
-						d,
-					),
-				)
-				return b.aggregateValue(x.Type, r, i)
+				x128 := b.Convert(b.Prog.Complex128(), x)
+				y128 := b.Convert(b.Prog.Complex128(), y)
+				ret := b.InlineCall(b.Pkg.rtFunc("Complex128Div"), x128, y128)
+				return b.Convert(x.Type, ret)
 			}
 		default:
 			idx := mathOpIdx(op, kind)
 			if llop := mathOpToLLVM[idx]; llop != 0 {
 				// Go requires integer division/modulo by zero to panic.
 				// LLVM's integer div/rem are undefined on zero divisor, so
-				// we insert an explicit runtime check here.
+				// we insert an explicit runtime check here and lower through a
+				// safe non-zero divisor so targets like x86 don't trap first.
+				// safeY carries the zero-safe divisor into the signed overflow
+				// lowering below when both guards are needed.
+				var safeY llvm.Value
 				if (op == token.QUO || op == token.REM) && (kind == vkSigned || kind == vkUnsigned) {
 					needsCheck := true
 					if rv := y.impl.IsAConstantInt(); !rv.IsNil() {
@@ -529,9 +510,56 @@ func (b Builder) BinOp(op token.Token, x, y Expr) Expr {
 					}
 					if needsCheck {
 						zero := llvm.ConstInt(y.ll, 0, false)
-						check := Expr{llvm.CreateICmp(b.impl, llvm.IntEQ, y.impl, zero), b.Prog.Bool()}
+						isZero := llvm.CreateICmp(b.impl, llvm.IntEQ, y.impl, zero)
+						check := Expr{isZero, b.Prog.Bool()}
 						b.InlineCall(b.Pkg.rtFunc("AssertDivideByZero"), check)
+						safeY = llvm.CreateSelect(b.impl, isZero, llvm.ConstInt(y.ll, 1, false), y.impl)
 					}
+				}
+				// On x86/x86_64, signed div/rem of minInt by -1 traps even
+				// though Go defines it to produce quotient=minInt and
+				// remainder=0. Lower through safe operands and select the
+				// Go-defined result for that overflow case.
+				needsOverflowCheck := false
+				if (op == token.QUO || op == token.REM) && kind == vkSigned {
+					needsOverflowCheck = true
+					if rv := y.impl.IsAConstantInt(); !rv.IsNil() {
+						needsOverflowCheck = rv.SExtValue() == -1
+					}
+				}
+				var minIntVal uint64
+				if needsOverflowCheck {
+					bits := b.Prog.SizeOf(x.Type) * 8
+					if bits == 0 || bits > 64 {
+						panic("unexpected integer bit width")
+					}
+					minIntVal = uint64(1) << (bits - 1)
+					if rv := x.impl.IsAConstantInt(); !rv.IsNil() {
+						needsOverflowCheck = rv.ZExtValue() == minIntVal
+					}
+				}
+				if needsOverflowCheck {
+					minInt := llvm.ConstInt(x.ll, minIntVal, false)
+					negOne := llvm.ConstAllOnes(y.ll)
+					isMinInt := llvm.CreateICmp(b.impl, llvm.IntEQ, x.impl, minInt)
+					isNegOne := llvm.CreateICmp(b.impl, llvm.IntEQ, y.impl, negOne)
+					overflow := llvm.CreateAnd(b.impl, isMinInt, isNegOne)
+
+					safeX := llvm.CreateSelect(b.impl, overflow, llvm.ConstInt(x.ll, 0, false), x.impl)
+					if safeY.IsNil() {
+						safeY = y.impl
+					}
+					safeY = llvm.CreateSelect(b.impl, overflow, llvm.ConstInt(y.ll, 1, false), safeY)
+					v := llvm.CreateBinOp(b.impl, llop, safeX, safeY)
+					if op == token.QUO {
+						v = llvm.CreateSelect(b.impl, overflow, x.impl, v)
+					} else {
+						v = llvm.CreateSelect(b.impl, overflow, llvm.ConstInt(x.ll, 0, false), v)
+					}
+					return Expr{v, x.Type}
+				}
+				if !safeY.IsNil() {
+					return Expr{llvm.CreateBinOp(b.impl, llop, x.impl, safeY), x.Type}
 				}
 				return Expr{llvm.CreateBinOp(b.impl, llop, x.impl, y.impl), x.Type}
 			}
@@ -659,6 +687,9 @@ func (b Builder) BinOp(op token.Token, x, y Expr) Expr {
 			typ := x.raw.Type.Underlying().(*types.Struct)
 			ret := prog.BoolVal(true)
 			for i, n := 0, typ.NumFields(); i < n; i++ {
+				if typ.Field(i).Name() == "_" {
+					continue
+				}
 				ft := prog.Type(typ.Field(i).Type(), InGo)
 				fx := b.impl.CreateExtractValue(x.impl, i, "")
 				fy := b.impl.CreateExtractValue(y.impl, i, "")
@@ -707,9 +738,7 @@ func (b Builder) BinOp(op token.Token, x, y Expr) Expr {
 // SUB is negation.
 // NOT is logical negation.
 func (b Builder) UnOp(op token.Token, x Expr) (ret Expr) {
-	if debugInstr {
-		log.Printf("UnOp %v, %v\n", op, x.impl)
-	}
+	dbgInstrf("UnOp %v, %v\n", op, x.impl)
 	switch op {
 	case token.MUL:
 		return b.Load(x)
@@ -769,9 +798,7 @@ func (b Builder) UnOp(op token.Token, x Expr) (ret Expr) {
 //
 //	t1 = changetype *int <- IntPtr (t0)
 func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
-	if debugInstr {
-		log.Printf("ChangeType %v, %v\n", t.RawType(), x.impl)
-	}
+	dbgInstrf("ChangeType %v, %v\n", t.RawType(), x.impl)
 	if t.kind == vkClosure {
 		switch x.kind {
 		case vkFuncDecl:
@@ -783,10 +810,23 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 				b.Store(r, x)
 				return b.Load(r)
 			}
+			convNamedType := func() Expr {
+				agg := llvm.Undef(t.ll)
+				for i := range t.ll.StructElementTypes() {
+					field := b.impl.CreateExtractValue(x.impl, i, "")
+					agg = b.impl.CreateInsertValue(agg, field, i, "")
+				}
+				return Expr{agg, t}
+			}
 			switch t.RawType().(type) {
 			case *types.Named:
-				if _, ok := x.RawType().(*types.Struct); ok {
+				switch x.RawType().(type) {
+				case *types.Struct:
 					return convType()
+				case *types.Named:
+					if !types.Identical(x.RawType(), t.RawType()) {
+						return convNamedType()
+					}
 				}
 			case *types.Struct:
 				if _, ok := x.RawType().(*types.Named); ok {
@@ -845,9 +885,7 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 //
 //	t1 = convert []byte <- string (t0)
 func (b Builder) Convert(t Type, x Expr) (ret Expr) {
-	if debugInstr {
-		log.Printf("Convert %v <- %v\n", t.RawType(), x.RawType())
-	}
+	dbgInstrf("Convert %v <- %v\n", t.RawType(), x.RawType())
 	dst := t.raw.Type
 	ret.Type = b.Prog.rawType(dst)
 	switch typ := dst.Underlying().(type) {
@@ -873,12 +911,24 @@ func (b Builder) Convert(t Type, x Expr) (ret Expr) {
 					}
 				}
 			case *types.Basic:
-				if x.Type != b.Prog.Int32() {
-					srcType := x.Type
-					x.Type = b.Prog.Int32()
-					x.impl = castInt(b, x.impl, srcType, b.Prog.Int32())
+				if xtyp.Info()&types.IsInteger == 0 {
+					panic("unreachable: string conversion from non-integer basic type")
 				}
-				ret.impl = b.InlineCall(b.Func.Pkg.rtFunc("StringFromRune"), x).impl
+				srcType := x.Type
+				var arg Expr
+				var fn string
+				if xtyp.Info()&types.IsUnsigned != 0 {
+					arg.Type = b.Prog.Uint64()
+					fn = "StringFromUint64"
+				} else {
+					arg.Type = b.Prog.Int64()
+					fn = "StringFromInt64"
+				}
+				arg.impl = x.impl
+				if arg.impl.Type() != arg.Type.ll {
+					arg.impl = castInt(b, x.impl, srcType, arg.Type)
+				}
+				ret.impl = b.InlineCall(b.Func.Pkg.rtFunc(fn), arg).impl
 				return
 			}
 		case types.Complex128:
@@ -956,6 +1006,9 @@ func (b Builder) Convert(t Type, x Expr) (ret Expr) {
 func castUintptr(b Builder, x llvm.Value, xtyp Type, typ Type) llvm.Value {
 	if x.Type().TypeKind() == llvm.PointerTypeKind {
 		return llvm.CreatePtrToInt(b.impl, x, typ.ll)
+	}
+	if xtyp.kind == vkFloat {
+		return castFloatToInt(b, x, typ)
 	}
 	return castInt(b, x, xtyp, typ)
 }
@@ -1036,9 +1089,7 @@ func (b Builder) PtrCast(t Type, x Expr) Expr {
 //	t0 = make closure anon@1.2 [x y z]
 //	t1 = make closure bound$(main.I).add [i]
 func (b Builder) MakeClosure(fn Expr, bindings []Expr) Expr {
-	if debugInstr {
-		log.Printf("MakeClosure %v, %v\n", fn, bindings)
-	}
+	dbgInstrf("MakeClosure %v, %v\n", fn, bindings)
 	prog := b.Prog
 	tfn := fn.Type
 	sig := tfn.raw.Type.(*types.Signature)
@@ -1069,9 +1120,7 @@ func (b Builder) InlineCall(fn Expr, args ...Expr) (ret Expr) {
 //	t2 = println(t0, t1)
 //	t4 = t3()
 func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
-	if debugInstr {
-		logCall("Call", fn, args)
-	}
+	dbgInstrCall("Call", fn, args)
 	var kind = fn.kind
 	if kind == vkPyFuncRef {
 		return b.pyCall(fn, args)
@@ -1103,31 +1152,87 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 	default:
 		log.Panicf("unreachable: %d(%T), %v\n", kind, raw, fn.RawType())
 	}
-	pkg := b.Pkg
-	if !pkg.NeedAbiInit && pkg.Path() != "reflect" {
-		if _, ok := reflectFunc[fn.Name()]; ok {
-			pkg.NeedAbiInit = true
-		}
+	if b.Pkg.Path() != "reflect" {
+		b.checkReflect(fn, args)
 	}
 	ret.Type = b.Prog.retType(sig)
 	ret.impl = llvm.CreateCall(b.impl, ll, fn.impl, llvmParamsEx(data, args, sig.Params(), b))
 	return
 }
 
-var (
-	reflectFunc = map[string]struct{}{
-		"reflect.ArrayOf":            {},
-		"reflect.ChanOf":             {},
-		"reflect.FuncOf":             {},
-		"reflect.MapOf":              {},
-		"reflect.SliceOf":            {},
-		"reflect.StructOf":           {},
-		"reflect.PointerTo":          {},
-		"reflect.PtrTo":              {},
-		"reflect.Value.Method":       {},
-		"reflect.Value.MethodByName": {},
-	}
+const (
+	ReflectArrayOf = 1 << iota
+	ReflectChanOf
+	ReflectFuncOf
+	ReflectMapOf
+	ReflectPointerTo
+	ReflectSliceOf
+	ReflectStructOf
+	ReflectMethodByIndex
+	ReflectMethodByName
+	ReflectMethodDynamic
+	ReflectMethodMask = ReflectMethodByIndex | ReflectMethodByName | ReflectMethodDynamic
 )
+
+func (b Builder) checkReflect(fn Expr, args []Expr) {
+	pkg := b.Pkg
+	switch fn.Name() {
+	case "reflect.ArrayOf":
+		pkg.NeedAbiInit |= ReflectArrayOf
+	case "reflect.ChanOf":
+		pkg.NeedAbiInit |= ReflectChanOf
+	case "reflect.FuncOf":
+		pkg.NeedAbiInit |= ReflectFuncOf
+	case "reflect.MapOf":
+		pkg.NeedAbiInit |= ReflectMapOf
+	case "reflect.PointerTo", "reflect.PtrTo":
+		pkg.NeedAbiInit |= ReflectPointerTo
+	case "reflect.SliceOf":
+		pkg.NeedAbiInit |= ReflectSliceOf
+	case "reflect.StructOf":
+		pkg.NeedAbiInit |= ReflectStructOf
+	case "reflect.Value.Method":
+		if len(args) == 2 {
+			if v, ok := extractConstInt(args[1].impl); ok {
+				if pkg.MethodByIndex == nil {
+					pkg.MethodByIndex = make(map[int]none)
+				}
+				pkg.MethodByIndex[v] = none{}
+				pkg.NeedAbiInit |= ReflectMethodByIndex
+				return
+			}
+			pkg.NeedAbiInit |= ReflectMethodDynamic
+		}
+	case "reflect.Value.MethodByName":
+		if len(args) == 2 {
+			if v, ok := extractConstString(args[1].impl); ok {
+				if pkg.MethodByName == nil {
+					pkg.MethodByName = make(map[string]none)
+				}
+				pkg.MethodByName[v] = none{}
+				pkg.NeedAbiInit |= ReflectMethodByName
+				return
+			}
+			pkg.NeedAbiInit |= ReflectMethodDynamic
+		}
+	}
+}
+
+func extractConstInt(v llvm.Value) (r int, ok bool) {
+	if rv := v.IsAConstantInt(); !rv.IsNil() {
+		return int(rv.SExtValue()), true
+	}
+	return
+}
+
+func extractConstString(v llvm.Value) (str string, ok bool) {
+	if st := v.IsAConstantStruct(); !st.IsNil() {
+		if init := st.Operand(0).Initializer(); !init.IsNil() {
+			return init.ConstGetAsString(), true
+		}
+	}
+	return
+}
 
 func logCall(da string, fn Expr, args []Expr) {
 	if fn == Nil || fn.kind == vkBuiltin {
@@ -1145,6 +1250,12 @@ func logCall(da string, fn Expr, args []Expr) {
 		sep = ", "
 	}
 	log.Println(b.String())
+}
+
+func dbgInstrCall(da string, fn Expr, args []Expr) {
+	if debugInstr {
+		logCall(da, fn, args)
+	}
 }
 
 type DoAction int
@@ -1304,6 +1415,8 @@ func (b Builder) BuiltinCall(fn string, args ...Expr) (ret Expr) {
 		}
 	case "recover":
 		return b.Recover()
+	case "ssa:deferstack":
+		return b.DeferStack()
 	case "print", "println":
 		return b.PrintEx(fn == "println", args...)
 	case "complex":
@@ -1315,7 +1428,7 @@ func (b Builder) BuiltinCall(fn string, args ...Expr) (ret Expr) {
 	case "String": // unsafe.String
 		return b.unsafeString(args[0].impl, args[1].impl)
 	case "Slice": // unsafe.Slice
-		size := b.fitIntSize(args[1])
+		size := b.FitIntSize(args[1])
 		return b.unsafeSlice(args[0], size.impl, size.impl)
 	case "StringData":
 		return b.StringData(args[0]) // TODO(xsw): check return type
@@ -1357,7 +1470,7 @@ func (b Builder) BuiltinCall(fn string, args ...Expr) (ret Expr) {
 		return b.Advance(args[0], args[1])
 	case "Sizeof":
 		// instance of generic function
-		return b.Prog.Val(int(b.Prog.SizeOf(args[0].Type)))
+		return b.Prog.IntVal(b.Prog.SizeOf(args[0].Type), b.Prog.Uintptr())
 	case "Alignof":
 		// instance of generic function
 		return b.Prog.Val(int(b.Prog.td.ABITypeAlignment(args[0].ll)))
@@ -1373,7 +1486,11 @@ func (b Builder) BuiltinCall(fn string, args ...Expr) (ret Expr) {
 			}
 		}
 		panic("invalid argument for unsafe.Offsetof: must be a selector expression")
+	case "panic":
+		b.Panic(args[0])
+		return
 	}
+
 	panic("todo: " + fn)
 }
 
@@ -1483,7 +1600,20 @@ func checkExpr(v Expr, t types.Type, b Builder) Expr {
 		}
 		return b.aggregateValue(tclosure, v.impl, data.impl)
 	}
-	return v
+	if types.Identical(v.raw.Type, t) || !types.AssignableTo(v.raw.Type, t) {
+		return v
+	}
+	dst := b.Prog.Type(t, InGo)
+	// Range and assignment lowering can produce a value whose source type is
+	// assignable but not identical to the destination, so preserve the value
+	// while retagging it with the destination runtime type.
+	if _, ok := t.Underlying().(*types.Interface); ok {
+		if _, srcIsInterface := v.raw.Type.Underlying().(*types.Interface); srcIsInterface {
+			return b.ChangeInterface(dst, v)
+		}
+		return b.MakeInterface(dst, v)
+	}
+	return b.ChangeType(dst, v)
 }
 
 func needsNegativeCheck(x Expr) bool {

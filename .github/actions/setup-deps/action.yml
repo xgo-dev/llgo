@@ -23,9 +23,35 @@ runs:
         
         # Install LLVM if requested
         if [[ "${{ inputs.install-llvm }}" == "true" ]]; then
-          brew install llvm@${{inputs.llvm-version}} lld@${{inputs.llvm-version}}
-          brew link --overwrite llvm@${{inputs.llvm-version}} lld@${{inputs.llvm-version}}
-          echo "$(brew --prefix llvm@${{inputs.llvm-version}})/bin" >> $GITHUB_PATH
+          llvm_formula="llvm@${{inputs.llvm-version}}"
+          lld_formula="lld@${{inputs.llvm-version}}"
+
+          # GitHub macOS runners may pre-link another LLVM/LLD version (for example llvm@18),
+          # which makes lld@<target> fail during Homebrew's automatic link step.
+          while IFS= read -r formula; do
+            case "${formula}" in
+              llvm|llvm@*|lld|lld@*)
+                if [[ "${formula}" != "${llvm_formula}" && "${formula}" != "${lld_formula}" ]]; then
+                  brew unlink "${formula}" || true
+                fi
+                ;;
+            esac
+          done < <(brew list --formula)
+
+          brew install "${llvm_formula}" "${lld_formula}"
+          brew link --force --overwrite "${llvm_formula}" "${lld_formula}"
+          llvm_bin="$(brew --prefix "${llvm_formula}")/bin"
+          lld_bin="$(brew --prefix "${lld_formula}")/bin"
+          echo "${llvm_bin}" >> "$GITHUB_PATH"
+
+          # Print resolved toolchain versions for CI diagnostics.
+          echo "LLVM/LLD versions:"
+          brew list --versions "${llvm_formula}" "${lld_formula}"
+          clang_version="$("${llvm_bin}/clang" --version | head -n 1)"
+          lld_version="$("${lld_bin}/ld.lld" --version | head -n 1)"
+          echo "clang: ${clang_version}"
+          echo "ld.lld: ${lld_version}"
+          echo "linked ld.lld path: $(command -v ld.lld || true)"
         fi
         
         # Install common dependencies
@@ -71,4 +97,3 @@ runs:
           python3.12-dev # for github.com/goplus/lib/py
         )
         sudo apt-get install -y "${opt_deps[@]}"
-

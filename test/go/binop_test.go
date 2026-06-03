@@ -18,6 +18,7 @@ package gotest
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 )
@@ -228,6 +229,31 @@ func TestComplexDivisionAndMultiplication(t *testing.T) {
 	expectedMul := complex64(-3 + 4i)
 	if resultMul != expectedMul {
 		t.Errorf("complex multiplication: got %v, want %v", resultMul, expectedMul)
+	}
+}
+
+func TestComplexDivisionSpecialValues(t *testing.T) {
+	cases := []struct {
+		name string
+		num  complex128
+		den  complex128
+	}{
+		{
+			name: "finite over infinite denominator",
+			num:  complex(1, 1),
+			den:  complex(math.Inf(1), math.Inf(1)),
+		},
+		{
+			name: "finite over max finite denominator",
+			num:  complex(1, 1),
+			den:  complex(math.MaxFloat64, math.MaxFloat64),
+		},
+	}
+	for _, tc := range cases {
+		got := tc.num / tc.den
+		if real(got) != 0 || imag(got) != 0 {
+			t.Fatalf("%s: got %v, want 0+0i", tc.name, got)
+		}
 	}
 }
 
@@ -664,6 +690,73 @@ func TestBinOpIntegerDivision(t *testing.T) {
 	if untypedA/u64 != 30 {
 		t.Errorf("untyped / uint64: got %d, want 30", untypedA/u64)
 	}
+}
+
+func TestBinOpSignedMinIntDivisionOverflow(t *testing.T) {
+	minInt := -int(^uint(0)>>1) - 1
+	negOne := -1
+	if got := minInt / negOne; got != minInt {
+		t.Fatalf("minInt / -1 = %d, want %d", got, minInt)
+	}
+	if got := minInt % negOne; got != 0 {
+		t.Fatalf("minInt %% -1 = %d, want 0", got)
+	}
+
+	var minInt8 int8 = -128
+	var negOne8 int8 = -1
+	if got := minInt8 / negOne8; got != minInt8 {
+		t.Fatalf("int8 min / -1 = %d, want %d", got, minInt8)
+	}
+	if got := minInt8 % negOne8; got != 0 {
+		t.Fatalf("int8 min %% -1 = %d, want 0", got)
+	}
+
+	var minInt16 int16 = -32768
+	var negOne16 int16 = -1
+	if got := minInt16 / negOne16; got != minInt16 {
+		t.Fatalf("int16 min / -1 = %d, want %d", got, minInt16)
+	}
+	if got := minInt16 % negOne16; got != 0 {
+		t.Fatalf("int16 min %% -1 = %d, want 0", got)
+	}
+
+	var minInt32 int32 = -2147483648
+	var negOne32 int32 = -1
+	if got := minInt32 / negOne32; got != minInt32 {
+		t.Fatalf("int32 min / -1 = %d, want %d", got, minInt32)
+	}
+	if got := minInt32 % negOne32; got != 0 {
+		t.Fatalf("int32 min %% -1 = %d, want 0", got)
+	}
+
+	var minInt64 int64 = -9223372036854775808
+	var negOne64 int64 = -1
+	if got := minInt64 / negOne64; got != minInt64 {
+		t.Fatalf("int64 min / -1 = %d, want %d", got, minInt64)
+	}
+	if got := minInt64 % negOne64; got != 0 {
+		t.Fatalf("int64 min %% -1 = %d, want 0", got)
+	}
+}
+
+func TestBinOpIntegerDivideByZeroPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("division by zero did not panic")
+		}
+	}()
+	zero := 0
+	_ = 1 / zero
+}
+
+func TestBinOpIntegerRemainderByZeroPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("remainder by zero did not panic")
+		}
+	}()
+	zero := 0
+	_ = 1 % zero
 }
 
 // TestBinOpIntegerModulo tests modulo for all integer types

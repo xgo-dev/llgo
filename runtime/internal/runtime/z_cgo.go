@@ -34,10 +34,16 @@ func CBytes(b []byte) *int8 {
 }
 
 func GoString(p *int8) string {
+	if p == nil {
+		return ""
+	}
 	return GoStringN(p, int(c.Strlen(p)))
 }
 
 func GoStringN(p *int8, n int) string {
+	if n <= 0 {
+		return ""
+	}
 	return string((*[1 << 30]byte)(unsafe.Pointer(p))[:n:n])
 }
 

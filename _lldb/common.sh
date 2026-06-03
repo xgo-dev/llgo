@@ -32,6 +32,7 @@ export LLDB_PATH
 
 # Default package path
 export DEFAULT_PACKAGE_PATH="./_lldb/lldbtest"
+export LLDB_TEST_OPTLEVEL="${LLDB_TEST_OPTLEVEL:--O0}"
 
 # Function to build the project
 build_project() {
@@ -44,7 +45,7 @@ build_project() {
         return 1
     fi
 
-    LLGO_DEBUG_SYMBOLS=1 llgo build -o "debug.out" . || {
+    LLGO_DEBUG_SYMBOLS=1 llgo build "${LLDB_TEST_OPTLEVEL}" -o "debug.out" . || {
         local ret=$?
         cd "$current_dir" || return
         return $ret

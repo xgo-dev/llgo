@@ -13,6 +13,7 @@ import (
 	"github.com/goplus/llgo/internal/crosscompile/compile"
 	"github.com/goplus/llgo/internal/env"
 	"github.com/goplus/llgo/internal/flash"
+	"github.com/goplus/llgo/internal/optlevel"
 	"github.com/goplus/llgo/internal/targets"
 	"github.com/goplus/llgo/internal/xtool/llvm"
 	envllvm "github.com/goplus/llgo/xtool/env/llvm"
@@ -197,7 +198,7 @@ func compileWithConfig(
 	return
 }
 
-func use(goos, goarch string, wasiThreads, forceEspClang bool) (export Export, err error) {
+func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Level) (export Export, err error) {
 	targetTriple := llvm.GetTargetTriple(goos, goarch)
 	llgoRoot := env.LLGoROOT()
 
@@ -247,6 +248,7 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool) (export Export, e
 			}
 		}
 		export.CCFLAGS = []string{
+			level.Flag(),
 			"-Qunused-arguments",
 			"-Wno-unused-command-line-argument",
 		}
@@ -323,6 +325,7 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool) (export Export, e
 		// Use system clang and sysroot of wasi-sdk
 		// Add compiler flags
 		export.CCFLAGS = []string{
+			level.Flag(),
 			"-target", targetTriple,
 			"--sysroot=" + sysrootDir,
 			"-resource-dir=" + libclangDir,
@@ -382,6 +385,7 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool) (export Export, e
 		export.CC = "emcc"
 		// Add compiler flags
 		export.CCFLAGS = []string{
+			level.Flag(),
 			"-target", targetTriple,
 			"-Qunused-arguments",
 			"-Wno-unused-command-line-argument",
@@ -424,7 +428,7 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool) (export Export, e
 }
 
 // UseTarget loads configuration from a target name (e.g., "rp2040", "wasi")
-func UseTarget(targetName string) (export Export, err error) {
+func UseTarget(targetName string, level optlevel.Level) (export Export, err error) {
 	resolver := targets.NewDefaultResolver()
 
 	config, err := resolver.Resolve(targetName)
@@ -489,7 +493,7 @@ func UseTarget(targetName string) (export Export, err error) {
 	// Convert LLVMTarget, CPU, Features to CCFLAGS/LDFLAGS
 	// Enable ICF (Identical Code Folding) to reduce binary size
 	ldflags := []string{"-S", "--icf=safe"}
-	ccflags := []string{"-Oz"}
+	ccflags := []string{level.Flag()}
 	cflags := []string{"-Wno-override-module", "-Qunused-arguments", "-Wno-unused-command-line-argument"}
 	if config.LLVMTarget != "" {
 		cflags = append(cflags, "--target="+config.LLVMTarget)
@@ -658,9 +662,9 @@ func UseTarget(targetName string) (export Export, err error) {
 
 // Use extends the original Use function to support target-based configuration
 // If targetName is provided, it takes precedence over goos/goarch
-func Use(goos, goarch, targetName string, wasiThreads, forceEspClang bool) (export Export, err error) {
+func Use(goos, goarch, targetName string, wasiThreads, forceEspClang bool, level optlevel.Level) (export Export, err error) {
 	if targetName != "" && !strings.HasPrefix(targetName, "wasm") && !strings.HasPrefix(targetName, "wasi") {
-		return UseTarget(targetName)
+		return UseTarget(targetName, level)
 	}
-	return use(goos, goarch, wasiThreads, forceEspClang)
+	return use(goos, goarch, wasiThreads, forceEspClang, level)
 }

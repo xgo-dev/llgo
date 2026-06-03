@@ -33,7 +33,7 @@ import (
 	"unsafe"
 
 	"github.com/goplus/gogen/packages"
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 )
 
 func TestEndDefer(t *testing.T) {
@@ -43,6 +43,68 @@ func TestEndDefer(t *testing.T) {
 	b := fn.MakeBody(1)
 	fn.defer_ = &aDefer{}
 	fn.endDefer(b)
+}
+
+func TestDeferToPendingLoopCasesAndFallback(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.SetRuntime(func() *types.Package {
+		fset := token.NewFileSet()
+		imp := packages.NewImporter(fset)
+		pkg, _ := imp.Import(PkgRuntime)
+		return pkg
+	})
+	pkg := prog.NewPackage("foo", "foo")
+
+	callee := pkg.NewFunc("callee", NoArgsNoRet, InGo)
+	cb := callee.MakeBody(1)
+	cb.Return()
+	cb.EndBuild()
+
+	fn := pkg.NewFunc("main", NoArgsNoRet, InGo)
+	fn.SetRecover(fn.MakeBlock())
+	b := fn.MakeBody(1)
+
+	stack := b.DeferStack()
+	if stack.IsNil() {
+		t.Fatal("defer stack should be available with recover")
+	}
+	fn.defer_ = nil
+	fn.pendingLoopCases = nil
+	fn.nextDeferID = 0
+
+	b.DeferTo(fn, stack, callee.Expr, Builder.Call)
+	if got := len(fn.pendingLoopCases); got != 1 {
+		t.Fatalf("pendingLoopCases len = %d, want 1", got)
+	}
+	if fn.nextDeferID != 1 {
+		t.Fatalf("nextDeferID = %d, want 1", fn.nextDeferID)
+	}
+
+	self := b.getDeferInCurrentBlock()
+	if self == nil {
+		t.Fatal("expected current-block defer stack")
+	}
+	if len(fn.pendingLoopCases) != 0 {
+		t.Fatal("pendingLoopCases should be consumed once defer stack is materialized")
+	}
+	if got := len(self.loopCases); got != 1 {
+		t.Fatalf("loopCases len = %d, want 1", got)
+	}
+
+	b.DeferTo(fn, stack, callee.Expr, Builder.Call)
+	if got := len(self.loopCases); got != 2 {
+		t.Fatalf("loopCases len after direct append = %d, want 2", got)
+	}
+
+	fallback := pkg.NewFunc("fallback", NoArgsNoRet, InGo)
+	fallback.SetRecover(fallback.MakeBlock())
+	fb := fallback.MakeBody(1)
+	fb.Return()
+	fb.SetBlockEx(fallback.Block(0), BeforeLast, true)
+	fb.DeferTo(nil, prog.Nil(prog.VoidPtr()), callee.Expr, Builder.Call)
+	if fallback.defer_ == nil || len(fallback.defer_.loopCases) != 1 {
+		t.Fatal("owner=nil should fall back to normal loop defer")
+	}
 }
 
 func TestUnsafeString(t *testing.T) {
@@ -195,12 +257,14 @@ func TestClosureNoCtxValue(t *testing.T) {
 	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
 source_filename = "foo/bar"
 
-define i64 @fn(i64 %0) {
+; Function Attrs: null_pointer_is_valid
+define i64 @fn(i64 %0) #0 {
 _llgo_0:
   ret i64 %0
 }
 
-define void @holder() {
+; Function Attrs: null_pointer_is_valid
+define void @holder() #0 {
 _llgo_0:
   %0 = alloca { ptr, ptr }, align 8
   store { ptr, ptr } { ptr @__llgo_stub.fn, ptr null }, ptr %0, align 8
@@ -212,6 +276,8 @@ _llgo_0:
   %2 = tail call i64 @fn(i64 %1)
   ret i64 %2
 }
+
+attributes #0 = { null_pointer_is_valid }
 `)
 }
 
@@ -242,7 +308,7 @@ func TestClosureFuncPtrValue(t *testing.T) {
 	hb.Store(ptr, fnPtr)
 	hb.Return()
 
-	wrapName := "__llgo_stub." + pkg.abi.FuncName(sig)
+	wrapName := "__llgo_stub." + prog.abi.FuncName(sig)
 	wrapRef := wrapName
 	if strings.Contains(wrapName, "$") {
 		wrapRef = fmt.Sprintf("\"%s\"", wrapName)
@@ -250,12 +316,14 @@ func TestClosureFuncPtrValue(t *testing.T) {
 	expected := fmt.Sprintf(`; ModuleID = 'foo/bar'
 source_filename = "foo/bar"
 
-define i64 @fn(i64 %%0) {
+; Function Attrs: null_pointer_is_valid
+define i64 @fn(i64 %%0) #0 {
 _llgo_0:
   ret i64 %%0
 }
 
-define void @holder() {
+; Function Attrs: null_pointer_is_valid
+define void @holder() #0 {
 _llgo_0:
   %%0 = alloca { ptr, ptr }, align 8
   %%1 = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
@@ -272,9 +340,64 @@ _llgo_0:
   ret i64 %%3
 }
 
-declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64)
+; Function Attrs: null_pointer_is_valid
+declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64) #0
+
+attributes #0 = { null_pointer_is_valid }
 `, wrapRef, wrapRef)
 	assertPkg(t, pkg, expected)
+}
+
+func TestChangeTypeNamedClosureUsesGoTypeIdentity(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	tpkg := types.NewPackage("foo/bar", "bar")
+
+	params := types.NewTuple(types.NewVar(0, tpkg, "x", types.Typ[types.Int]))
+	rets := types.NewTuple(types.NewVar(0, tpkg, "", types.Typ[types.Int]))
+	baseSig := types.NewSignatureType(nil, nil, nil, params, rets, false)
+	srcNamed := types.NewNamed(types.NewTypeName(0, tpkg, "SrcFn", nil), baseSig, nil)
+	dstNamed := types.NewNamed(types.NewTypeName(0, tpkg, "DstFn", nil), baseSig, nil)
+
+	convertSig := types.NewSignatureType(
+		nil,
+		nil,
+		nil,
+		types.NewTuple(types.NewParam(0, tpkg, "v", srcNamed)),
+		types.NewTuple(types.NewParam(0, tpkg, "", dstNamed)),
+		false,
+	)
+	convertFn := pkg.NewFunc("convertNamedClosure", convertSig, InGo)
+	b := convertFn.MakeBody(1)
+	b.Return(b.ChangeType(prog.Type(dstNamed, InGo), convertFn.Param(0)))
+
+	ir := convertFn.impl.String()
+	if !strings.Contains(ir, `insertvalue %"foo/bar.DstFn"`) {
+		t.Fatalf("named closure conversion did not rebuild destination type:\n%s", ir)
+	}
+	if strings.Contains(ir, `ret %"foo/bar.SrcFn"`) {
+		t.Fatalf("named closure conversion returned source type:\n%s", ir)
+	}
+	if !strings.Contains(ir, `ret %"foo/bar.DstFn"`) {
+		t.Fatalf("named closure conversion did not return destination type:\n%s", ir)
+	}
+
+	sameSig := types.NewSignatureType(
+		nil,
+		nil,
+		nil,
+		types.NewTuple(types.NewParam(0, tpkg, "v", srcNamed)),
+		types.NewTuple(types.NewParam(0, tpkg, "", srcNamed)),
+		false,
+	)
+	sameFn := pkg.NewFunc("sameNamedClosure", sameSig, InGo)
+	sb := sameFn.MakeBody(1)
+	sb.Return(sb.ChangeType(prog.Type(srcNamed, InGo), sameFn.Param(0)))
+
+	sameIR := sameFn.impl.String()
+	if strings.Contains(sameIR, "insertvalue") {
+		t.Fatalf("identical named closure type should not be rebuilt:\n%s", sameIR)
+	}
 }
 
 func TestConvertNamedStructValue(t *testing.T) {
@@ -313,6 +436,54 @@ func TestConvertNamedStructValue(t *testing.T) {
 	}
 }
 
+func TestConvertStringFromWideIntegers(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.SetRuntime(func() *types.Package {
+		fset := token.NewFileSet()
+		imp := packages.NewImporter(fset)
+		pkg, _ := imp.Import(PkgRuntime)
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	params := types.NewTuple(
+		types.NewVar(0, nil, "i64", types.Typ[types.Int64]),
+		types.NewVar(0, nil, "u64", types.Typ[types.Uint64]),
+		types.NewVar(0, nil, "i32", types.Typ[types.Int32]),
+		types.NewVar(0, nil, "u32", types.Typ[types.Uint32]),
+	)
+	rets := types.NewTuple(
+		types.NewVar(0, nil, "", types.Typ[types.String]),
+		types.NewVar(0, nil, "", types.Typ[types.String]),
+		types.NewVar(0, nil, "", types.Typ[types.String]),
+		types.NewVar(0, nil, "", types.Typ[types.String]),
+	)
+	sig := types.NewSignatureType(nil, nil, nil, params, rets, false)
+	fn := pkg.NewFunc("convertStrings", sig, InGo)
+	b := fn.MakeBody(1)
+	str := prog.Type(types.Typ[types.String], InGo)
+	b.Return(
+		b.Convert(str, fn.Param(0)),
+		b.Convert(str, fn.Param(1)),
+		b.Convert(str, fn.Param(2)),
+		b.Convert(str, fn.Param(3)),
+	)
+
+	ir := fn.impl.String()
+	for _, want := range []string{
+		`StringFromInt64"(i64 %0)`,
+		`StringFromUint64"(i64 %1)`,
+		`sext i32 %2 to i64`,
+		`StringFromInt64"(i64 %6)`,
+		`zext i32 %3 to i64`,
+		`StringFromUint64"(i64 %8)`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("missing %q in IR:\n%s", want, ir)
+		}
+	}
+}
+
 func TestCallClosureDynamic(t *testing.T) {
 	prog := NewProgram(nil)
 	pkg := prog.NewPackage("bar", "foo/bar")
@@ -332,13 +503,16 @@ func TestCallClosureDynamic(t *testing.T) {
 	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
 source_filename = "foo/bar"
 
-define i64 @caller({ ptr, ptr } %0, i64 %1) {
+; Function Attrs: null_pointer_is_valid
+define i64 @caller({ ptr, ptr } %0, i64 %1) #0 {
 _llgo_0:
   %2 = extractvalue { ptr, ptr } %0, 1
   %3 = extractvalue { ptr, ptr } %0, 0
   %4 = call i64 %3(ptr %2, i64 %1)
   ret i64 %4
 }
+
+attributes #0 = { null_pointer_is_valid }
 `)
 }
 
@@ -376,21 +550,26 @@ func TestMakeClosureWithCtx(t *testing.T) {
 	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
 source_filename = "foo/bar"
 
-define i64 @inner(ptr %0, i64 %1) {
+; Function Attrs: null_pointer_is_valid
+define i64 @inner(ptr %0, i64 %1) #0 {
 _llgo_0:
   ret i64 %1
 }
 
-define { ptr, ptr } @outer(i64 %0) {
+; Function Attrs: null_pointer_is_valid
+define { ptr, ptr } @outer(i64 %0) #0 {
 _llgo_0:
   %1 = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
   %2 = getelementptr inbounds { i64 }, ptr %1, i32 0, i32 0
-  store i64 %0, ptr %2, align 4
+  store i64 %0, ptr %2, align 8
   %3 = insertvalue { ptr, ptr } { ptr @inner, ptr undef }, ptr %1, 1
   ret { ptr, ptr } %3
 }
 
-declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64)
+; Function Attrs: null_pointer_is_valid
+declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64) #0
+
+attributes #0 = { null_pointer_is_valid }
 `)
 }
 
@@ -459,7 +638,8 @@ source_filename = "foo/bar"
 
 %"github.com/goplus/llgo/runtime/internal/runtime.iface" = type { ptr, ptr }
 
-define i64 @caller(%"github.com/goplus/llgo/runtime/internal/runtime.iface" %0) {
+; Function Attrs: null_pointer_is_valid
+define i64 @caller(%"github.com/goplus/llgo/runtime/internal/runtime.iface" %0) #0 {
 _llgo_0:
   %1 = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.IfacePtrData"(%"github.com/goplus/llgo/runtime/internal/runtime.iface" %0)
   %2 = extractvalue %"github.com/goplus/llgo/runtime/internal/runtime.iface" %0, 0
@@ -473,7 +653,10 @@ _llgo_0:
   ret i64 %9
 }
 
-declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.IfacePtrData"(%"github.com/goplus/llgo/runtime/internal/runtime.iface")
+; Function Attrs: null_pointer_is_valid
+declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.IfacePtrData"(%"github.com/goplus/llgo/runtime/internal/runtime.iface") #0
+
+attributes #0 = { null_pointer_is_valid }
 `)
 }
 
@@ -599,6 +782,121 @@ func TestMakeInterfaceKinds(t *testing.T) {
 	fnNE := pkg.NewFunc("nonEmptyIface", sigNE, InGo)
 	bNE := fnNE.MakeBody(1)
 	bNE.Return(bNE.MakeInterface(nonEmptyType, prog.Val(7)))
+}
+
+func TestCheckExprAssignmentConversions(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+	fn := pkg.NewFunc("checkExprAssignmentConversions", NoArgsNoRet, InGo)
+	b := fn.MakeBody(1)
+
+	pkgTypes := types.NewPackage("foo/bar", "bar")
+	intSlice := types.NewSlice(types.Typ[types.Int])
+	namedSlice := types.NewNamed(types.NewTypeName(token.NoPos, pkgTypes, "checkExprSlice", nil), intSlice, nil)
+	concrete := checkExpr(prog.Zero(prog.Type(namedSlice, InGo)), intSlice, b)
+	if !types.Identical(concrete.RawType(), intSlice) {
+		t.Fatalf("concrete retag type = %v, want %v", concrete.RawType(), intSlice)
+	}
+
+	emptyIface := types.NewInterfaceType(nil, nil)
+	emptyIface.Complete()
+	toIface := checkExpr(prog.Val(7), emptyIface, b)
+	if !types.Identical(toIface.RawType(), emptyIface) {
+		t.Fatalf("concrete-to-interface type = %v, want %v", toIface.RawType(), emptyIface)
+	}
+
+	namedIface := types.NewNamed(types.NewTypeName(token.NoPos, pkgTypes, "checkExprIface", nil), emptyIface, nil)
+	fromIface := b.MakeInterface(prog.Type(namedIface, InGo), prog.Val(7))
+	changedIface := checkExpr(fromIface, emptyIface, b)
+	if !types.Identical(changedIface.RawType(), emptyIface) {
+		t.Fatalf("interface-to-interface type = %v, want %v", changedIface.RawType(), emptyIface)
+	}
+
+	b.Return()
+}
+
+func TestMakeInterfaceFromPtrKinds(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	emptyIface := types.NewInterfaceType(nil, nil)
+	emptyIface.Complete()
+	emptyType := prog.Type(emptyIface, InGo)
+	returns := types.NewTuple(types.NewVar(0, nil, "", emptyIface))
+
+	makePtrIface := func(name string, elem types.Type) {
+		ptrTyp := types.NewPointer(elem)
+		params := types.NewTuple(types.NewVar(0, nil, "p", ptrTyp))
+		sig := types.NewSignatureType(nil, nil, nil, params, returns, false)
+		fn := pkg.NewFunc(name, sig, InGo)
+		b := fn.MakeBody(1)
+		b.Return(b.MakeInterfaceFromPtr(emptyType, fn.Param(0)))
+		b.EndBuild()
+	}
+
+	makePtrIface("smallPtrIface", types.Typ[types.Int])
+	makePtrIface("largePtrIface", types.NewArray(types.Typ[types.Byte], 1<<21))
+
+	ir := pkg.Module().String()
+	if !strings.Contains(ir, "AssertNilDeref") {
+		t.Fatalf("MakeInterfaceFromPtr should emit nil-deref guard, got:\n%s", ir)
+	}
+	if !strings.Contains(ir, "Typedmemmove") {
+		t.Fatalf("large MakeInterfaceFromPtr should copy via Typedmemmove, got:\n%s", ir)
+	}
+}
+
+func TestTypeAssertSingleElemArrayUsesInsertValue(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	emptyIface := types.NewInterfaceType(nil, nil)
+	emptyIface.Complete()
+	arrayRaw := types.NewArray(types.Typ[types.Int], 1)
+	arrayType := prog.Type(arrayRaw, InGo)
+
+	params := types.NewTuple(types.NewVar(0, nil, "x", emptyIface))
+	results := types.NewTuple(
+		types.NewVar(0, nil, "", arrayRaw),
+		types.NewVar(0, nil, "", types.Typ[types.Bool]),
+	)
+	sig := types.NewSignatureType(nil, nil, nil, params, results, false)
+	fn := pkg.NewFunc("assertArray", sig, InGo)
+	b := fn.MakeBody(1)
+	ret := b.TypeAssert(fn.Param(0), arrayType, true)
+	b.Return(b.Extract(ret, 0), b.Extract(ret, 1))
+
+	ir := fn.impl.String()
+	if !strings.Contains(ir, "insertvalue { [1 x i") {
+		t.Fatalf("single element array type assert should rebuild via insertvalue:\n%s", ir)
+	}
+	if strings.Contains(ir, "alloca [1 x i") {
+		t.Fatalf("single element array type assert should not rebuild via alloca:\n%s", ir)
+	}
 }
 
 func TestInterfaceHelpers(t *testing.T) {
@@ -775,8 +1073,10 @@ func TestAny(t *testing.T) {
 
 func assertPkg(t *testing.T, p Package, expected string) {
 	t.Helper()
-	if v := p.String(); v != expected {
-		t.Fatalf("\n==> got:\n%s\n==> expected:\n%s\n", v, expected)
+	got := StripModuleTarget(p.String())
+	want := StripModuleTarget(expected)
+	if got != want {
+		t.Fatalf("\n==> got:\n%s\n==> expected:\n%s\n", got, want)
 	}
 }
 
@@ -809,12 +1109,12 @@ func TestVar(t *testing.T) {
 	pkg.NewVarEx("a", prog.Type(typ, InGo))
 	a.Init(prog.Val(100))
 	b := pkg.NewVar("b", typ, InGo)
-	b.Init(a.Expr)
+	b.Init(Expr{llvm.ConstPtrToInt(a.impl, prog.Int().ll), prog.Int()})
 	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
 source_filename = "foo/bar"
 
 @a = global i64 100, align 8
-@b = global i64 @a, align 8
+@b = global i64 ptrtoint (ptr @a to i64), align 8
 `)
 }
 
@@ -828,10 +1128,13 @@ func TestConst(t *testing.T) {
 	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
 source_filename = "foo/bar"
 
-define i1 @fn() {
+; Function Attrs: null_pointer_is_valid
+define i1 @fn() #0 {
 _llgo_0:
   ret i1 true
 }
+
+attributes #0 = { null_pointer_is_valid }
 `)
 }
 
@@ -885,7 +1188,10 @@ func TestDeclFunc(t *testing.T) {
 	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
 source_filename = "foo/bar"
 
-declare void @fn(i64)
+; Function Attrs: null_pointer_is_valid
+declare void @fn(i64) #0
+
+attributes #0 = { null_pointer_is_valid }
 `)
 }
 
@@ -902,10 +1208,13 @@ func TestBasicFunc(t *testing.T) {
 	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
 source_filename = "foo/bar"
 
-define i64 @fn(i64 %0, double %1) {
+; Function Attrs: null_pointer_is_valid
+define i64 @fn(i64 %0, double %1) #0 {
 _llgo_0:
   ret i64 1
 }
+
+attributes #0 = { null_pointer_is_valid }
 `)
 }
 
@@ -922,10 +1231,13 @@ func TestFuncParam(t *testing.T) {
 	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
 source_filename = "foo/bar"
 
-define i64 @fn(i64 %0, double %1) {
+; Function Attrs: null_pointer_is_valid
+define i64 @fn(i64 %0, double %1) #0 {
 _llgo_0:
   ret i64 %0
 }
+
+attributes #0 = { null_pointer_is_valid }
 `)
 }
 
@@ -949,16 +1261,20 @@ func TestFuncCall(t *testing.T) {
 	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
 source_filename = "foo/bar"
 
-define i64 @fn(i64 %0, double %1) {
+; Function Attrs: null_pointer_is_valid
+define i64 @fn(i64 %0, double %1) #0 {
 _llgo_0:
   ret i64 1
 }
 
-define void @main() {
+; Function Attrs: null_pointer_is_valid
+define void @main() #0 {
 _llgo_0:
   %0 = call i64 @fn(i64 1, double 1.200000e+00)
   ret void
 }
+
+attributes #0 = { null_pointer_is_valid }
 `)
 }
 
@@ -974,17 +1290,21 @@ func TestFuncMultiRet(t *testing.T) {
 	a := pkg.NewVar("a", types.NewPointer(types.Typ[types.Int]), InGo)
 	fn := pkg.NewFunc("fn", sig, InGo)
 	b := fn.MakeBody(1)
-	b.Return(a.Expr, fn.Param(0))
+	aInt := Expr{llvm.ConstPtrToInt(a.impl, prog.Int().ll), prog.Int()}
+	b.Return(aInt, fn.Param(0))
 	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
 source_filename = "foo/bar"
 
 @a = external global i64, align 8
 
-define { i64, double } @fn(double %0) {
+; Function Attrs: null_pointer_is_valid
+define { i64, double } @fn(double %0) #0 {
 _llgo_0:
-  %1 = insertvalue { i64, double } { ptr @a, double undef }, double %0, 1
+  %1 = insertvalue { i64, double } { i64 ptrtoint (ptr @a to i64), double undef }, double %0, 1
   ret { i64, double } %1
 }
+
+attributes #0 = { null_pointer_is_valid }
 `)
 }
 
@@ -997,10 +1317,13 @@ func TestJump(t *testing.T) {
 	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
 source_filename = "foo/bar"
 
-define void @loop() {
+; Function Attrs: null_pointer_is_valid
+define void @loop() #0 {
 _llgo_0:
   br label %_llgo_0
 }
+
+attributes #0 = { null_pointer_is_valid }
 `)
 }
 
@@ -1024,7 +1347,8 @@ func TestIf(t *testing.T) {
 	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
 source_filename = "foo/bar"
 
-define i64 @fn(i64 %0) {
+; Function Attrs: null_pointer_is_valid
+define i64 @fn(i64 %0) #0 {
 _llgo_0:
   %1 = icmp sgt i64 %0, 0
   br i1 %1, label %_llgo_1, label %_llgo_2
@@ -1035,6 +1359,8 @@ _llgo_1:                                          ; preds = %_llgo_0
 _llgo_2:                                          ; preds = %_llgo_0
   ret i64 0
 }
+
+attributes #0 = { null_pointer_is_valid }
 `)
 }
 
@@ -1068,11 +1394,14 @@ func TestBinOp(t *testing.T) {
 	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
 source_filename = "foo/bar"
 
-define i64 @fn(i64 %0, double %1) {
+; Function Attrs: null_pointer_is_valid
+define i64 @fn(i64 %0, double %1) #0 {
 _llgo_0:
   %2 = add i64 %0, 1
   ret i64 %2
 }
+
+attributes #0 = { null_pointer_is_valid }
 `)
 }
 
@@ -1094,13 +1423,16 @@ func TestUnOp(t *testing.T) {
 	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
 source_filename = "foo/bar"
 
-define i64 @fn(ptr %0) {
+; Function Attrs: null_pointer_is_valid
+define i64 @fn(ptr %0) #0 {
 _llgo_0:
-  %1 = load i64, ptr %0, align 4
+  %1 = load i64, ptr %0, align 8
   %2 = xor i64 %1, 1
-  store i64 %2, ptr %0, align 4
+  store i64 %2, ptr %0, align 8
   ret i64 %2
 }
+
+attributes #0 = { null_pointer_is_valid }
 `)
 }
 
@@ -1149,7 +1481,8 @@ func TestCompareSelect(t *testing.T) {
 	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
 source_filename = "foo/bar"
 
-define i64 @fn(i64 %0, i64 %1, i64 %2) {
+; Function Attrs: null_pointer_is_valid
+define i64 @fn(i64 %0, i64 %1, i64 %2) #0 {
 _llgo_0:
   %3 = icmp sgt i64 %0, %1
   %4 = select i1 %3, i64 %0, i64 %1
@@ -1157,6 +1490,8 @@ _llgo_0:
   %6 = select i1 %5, i64 %4, i64 %2
   ret i64 %6
 }
+
+attributes #0 = { null_pointer_is_valid }
 `)
 }
 
@@ -1222,6 +1557,36 @@ source_filename = "global"
 `)
 }
 
+func TestZeroSizedGlobalEmitsAliasSymbol(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Chdir("../../runtime")
+	defer os.Chdir(wd)
+
+	prog := NewProgram(nil)
+	prog.SetRuntime(func() *types.Package {
+		fset := token.NewFileSet()
+		imp := packages.NewImporter(fset)
+		pkg, _ := imp.Import(PkgRuntime)
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+	typ := types.NewPointer(types.NewArray(types.Typ[types.Int], 0))
+	a := pkg.NewVar("foo/bar.a", typ, InGo)
+	a.InitNil()
+	pkg.NewVar("other/pkg.a", typ, InGo)
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+@"__llgo.moduleZeroSizedAlloc$" = linkonce_odr unnamed_addr global i8 0
+@"other/pkg.a" = external global [0 x i64], align 8
+
+@"foo/bar.a" = alias [0 x i64], ptr @"__llgo.moduleZeroSizedAlloc$"
+`)
+}
+
 func TestGlobalConstLiterals(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.SetRuntime(func() *types.Package {
@@ -1274,16 +1639,18 @@ func TestSetjmpReturnsTwice(t *testing.T) {
 	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
 source_filename = "foo/bar"
 
-define i32 @test(ptr %0) {
+; Function Attrs: null_pointer_is_valid
+define i32 @test(ptr %0) #0 {
 _llgo_0:
   %1 = call i32 @setjmp(ptr %0)
   ret i32 %1
 }
 
 ; Function Attrs: returns_twice
-declare i32 @setjmp(ptr) #0
+declare i32 @setjmp(ptr) #1
 
-attributes #0 = { returns_twice }
+attributes #0 = { null_pointer_is_valid }
+attributes #1 = { returns_twice }
 `)
 }
 
@@ -1317,6 +1684,11 @@ func TestTargetMachineAndDataLayout(t *testing.T) {
 		// Test DataLayout() returns the expected data layout string
 		if dl := prog.DataLayout(); dl != tt.dataLayout {
 			t.Fatalf("%s/%s DataLayout mismatch: got %q, want %q", tt.goos, tt.goarch, dl, tt.dataLayout)
+		}
+
+		pkg := prog.NewPackage("foo", "foo/bar")
+		if dl := pkg.Module().DataLayout(); dl != tt.dataLayout {
+			t.Fatalf("%s/%s module DataLayout mismatch: got %q, want %q", tt.goos, tt.goarch, dl, tt.dataLayout)
 		}
 
 		// Test Target().Spec().Triple returns the expected triple
@@ -1419,7 +1791,12 @@ func TestInitAbiTypesForSubset(t *testing.T) {
 	}
 	sort.Strings(names)
 
-	pkg.getAbiTypesFor("subset", []string{names[0], "missing.symbol"})
+	pkg.getAbiTypesFor("subset", func(sym *AbiSymbol) bool {
+		if sym.Name == names[0] || sym.Name == "missing.symbol" {
+			return true
+		}
+		return false
+	})
 	subsetArray := pkg.Module().NamedGlobal("subset$array")
 	if subsetArray.IsNil() {
 		t.Fatal("missing subset abi array global")
@@ -1445,7 +1822,40 @@ func TestInitAbiTypesForEmptySelection(t *testing.T) {
 	if fn := pkg.InitAbiTypes("empty"); fn != nil {
 		t.Fatalf("InitAbiTypes on empty abi symbol set = %v, want nil", fn)
 	}
-	if fn := pkg.InitAbiTypesFor("subset", []string{}); fn != nil {
+	if fn := pkg.InitAbiTypesFor("subset", nil); fn != nil {
 		t.Fatalf("InitAbiTypesFor with empty selection = %v, want nil", fn)
+	}
+}
+
+func TestRtFuncResolvesLinkname(t *testing.T) {
+	prog := NewProgram(nil)
+	rt := types.NewPackage(PkgRuntime, PkgRuntime)
+	sig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(
+			types.NewVar(0, nil, "env", types.NewPointer(types.NewStruct(nil, nil))),
+			types.NewVar(0, nil, "savemask", types.Typ[types.Int32]),
+		),
+		types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int32])),
+		false,
+	)
+	if err := rt.Scope().Insert(types.NewFunc(token.NoPos, rt, "Sigsetjmp", sig)); err != nil {
+		t.Fatal(err)
+	}
+	prog.SetRuntime(rt)
+	prog.SetLinkname(PkgRuntime+".Sigsetjmp", "C.sigsetjmp")
+
+	pkg := prog.NewPackage("foo", "foo")
+	pkg.SetResolveLinkname(func(name string) string {
+		if link, ok := prog.Linkname(name); ok {
+			prefix, target, _ := strings.Cut(link, ".")
+			if prefix == "C" {
+				return target
+			}
+		}
+		return name
+	})
+
+	if got := pkg.rtFunc("Sigsetjmp").impl.Name(); got != "sigsetjmp" {
+		t.Fatalf("rtFunc linkname = %q, want %q", got, "sigsetjmp")
 	}
 }

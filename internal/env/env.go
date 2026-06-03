@@ -18,16 +18,58 @@ const (
 )
 
 func GOROOT() (string, error) {
-	cmd := exec.Command("go", "env", "GOROOT")
+	return GOROOTWithEnv(nil)
+}
+
+func GOROOTWithEnv(env []string) (string, error) {
+	vals, err := GoEnvWithEnv(env, "GOROOT")
+	if err != nil {
+		return "", err
+	}
+	return vals[0], nil
+}
+
+func GOVERSIONWithEnv(env []string) (string, error) {
+	vals, err := GoEnvWithEnv(env, "GOVERSION")
+	if err != nil {
+		return "", err
+	}
+	return vals[0], nil
+}
+
+func GOROOTAndGOVERSIONWithEnv(env []string) (goroot, goversion string, err error) {
+	vals, err := GoEnvWithEnv(env, "GOROOT", "GOVERSION")
+	if err != nil {
+		return "", "", err
+	}
+	return vals[0], vals[1], nil
+}
+
+func GoEnvWithEnv(env []string, vars ...string) ([]string, error) {
+	if len(vars) == 0 {
+		return nil, fmt.Errorf("go env requires at least one variable")
+	}
+	args := append([]string{"env"}, vars...)
+	cmd := exec.Command("go", args...)
+	if len(env) != 0 {
+		cmd.Env = env
+	}
 	var out bytes.Buffer
 	var buf bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &buf
 	err := cmd.Run()
 	if err != nil {
-		return "", fmt.Errorf("%s, %w", buf.String(), err)
+		return nil, fmt.Errorf("%s, %w", buf.String(), err)
 	}
-	return strings.TrimSpace(out.String()), nil
+	got := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	if len(got) != len(vars) {
+		return nil, fmt.Errorf("go env returned %d values for %d variables", len(got), len(vars))
+	}
+	for i := range got {
+		got[i] = strings.TrimSpace(got[i])
+	}
+	return got, nil
 }
 
 func LLGoCacheDir() string {

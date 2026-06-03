@@ -2,10 +2,12 @@ package flags
 
 import (
 	"flag"
+	"fmt"
 
 	"github.com/goplus/llgo/cmd/internal/compilerhash"
 	"github.com/goplus/llgo/internal/build"
 	"github.com/goplus/llgo/internal/buildenv"
+	"github.com/goplus/llgo/internal/optlevel"
 )
 
 var OutputFile string
@@ -42,6 +44,7 @@ var SizeFormat string
 var SizeLevel string
 var ForceRebuild bool
 var PrintCommands bool
+var OptLevel optlevel.Level
 
 const DefaultTestTimeout = "10m" // Matches Go's default test timeout
 
@@ -49,9 +52,42 @@ func AddCommonFlags(fs *flag.FlagSet) {
 	fs.BoolVar(&Verbose, "v", false, "Verbose output")
 }
 
+func AddOptLevelFlags(fs *flag.FlagSet) {
+	OptLevel = optlevel.Unset
+	var optSource string
+	setOptLevel := func(level optlevel.Level, source string) error {
+		if optSource != "" {
+			return fmt.Errorf("optimization flags are mutually exclusive: %s and %s", optSource, source)
+		}
+		OptLevel = level
+		optSource = source
+		return nil
+	}
+	optLevelBoolFunc := func(level optlevel.Level, source string) func(string) error {
+		return func(string) error {
+			return setOptLevel(level, source)
+		}
+	}
+
+	fs.BoolFunc("O0", "Disable optimizations", optLevelBoolFunc(optlevel.O0, "-O0"))
+	fs.BoolFunc("O1", "Optimize lightly", optLevelBoolFunc(optlevel.O1, "-O1"))
+	fs.BoolFunc("O2", "Optimize for performance", optLevelBoolFunc(optlevel.O2, "-O2"))
+	fs.BoolFunc("O3", "Optimize aggressively", optLevelBoolFunc(optlevel.O3, "-O3"))
+	fs.BoolFunc("Os", "Optimize for size", optLevelBoolFunc(optlevel.Os, "-Os"))
+	fs.BoolFunc("Oz", "Optimize aggressively for size", optLevelBoolFunc(optlevel.Oz, "-Oz"))
+	fs.Func("O", "Optimization level (0,1,2,3,s,z)", func(val string) error {
+		level, err := optlevel.Parse(val)
+		if err != nil {
+			return err
+		}
+		return setOptLevel(level, "-O="+val)
+	})
+}
+
 func AddBuildFlags(fs *flag.FlagSet) {
 	fs.BoolVar(&ForceRebuild, "a", false, "Force rebuilding of packages that are already up-to-date")
 	fs.BoolVar(&PrintCommands, "x", false, "Print the commands")
+	AddOptLevelFlags(fs)
 	fs.StringVar(&Tags, "tags", "", "Build tags")
 	fs.StringVar(&BuildEnv, "buildenv", "", "Build environment")
 	if buildenv.Dev {
@@ -177,6 +213,7 @@ func UpdateConfig(conf *build.Config) error {
 	conf.Tags = Tags
 	conf.Verbose = Verbose
 	conf.PrintCommands = PrintCommands
+	conf.OptLevel = OptLevel
 	conf.Target = Target
 	conf.Port = Port
 	conf.BaudRate = BaudRate

@@ -1,0 +1,4 @@
+package demo
+
+func Old() string  { return "old" }
+func Keep() string { return "keep" }

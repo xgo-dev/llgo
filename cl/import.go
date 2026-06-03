@@ -73,7 +73,7 @@ func (p *pkgSymInfo) initLinknames(ctx *context) {
 		lines := bytes.Split(b, sep)
 		for _, line := range lines {
 			if bytes.HasPrefix(line, commentPrefix) {
-				ctx.initLinkname(string(line), func(inPkgName string, isExport bool) (fullName string, isVar, ok bool) {
+				ctx.initLinkname(string(line), true, func(inPkgName string, isExport bool) (fullName string, isVar, ok bool) {
 					if sym, ok := p.syms[inPkgName]; ok && file == sym.file {
 						return sym.fullName, sym.isVar, true
 					}
@@ -180,7 +180,7 @@ func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
 			switch decl := decl.(type) {
 			case *ast.FuncDecl:
 				fullName, inPkgName := astFuncName(pkgPath, decl)
-				if !p.initLinknameByDoc(decl.Doc, fullName, inPkgName, false) && cPkg {
+				if !p.processLinknameByDoc(decl.Doc, fullName, inPkgName, false, true) && cPkg {
 					// package C (https://github.com/goplus/llgo/issues/1165)
 					if decl.Recv == nil && token.IsExported(inPkgName) {
 						exportName := strings.TrimPrefix(inPkgName, "X")
@@ -194,7 +194,7 @@ func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
 					if len(decl.Specs) == 1 {
 						if names := decl.Specs[0].(*ast.ValueSpec).Names; len(names) == 1 {
 							inPkgName := names[0].Name
-							p.initLinknameByDoc(decl.Doc, pkgPath+"."+inPkgName, inPkgName, true)
+							p.processLinknameByDoc(decl.Doc, pkgPath+"."+inPkgName, inPkgName, true, true)
 						}
 					}
 				case token.CONST:
@@ -210,6 +210,30 @@ func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
 								fmt.Fprintf(os.Stderr, "DEPRECATED: llgo:skip on import is deprecated %v\n", line)
 							}
 						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// PreCollectLinknames scans syntax files before SSA compilation and populates
+// prog.Linkname for package-level //go:linkname / //llgo:link declarations.
+// It intentionally ignores //export because there is no package export context
+// during the pre-collection phase.
+func PreCollectLinknames(prog llssa.Program, pkgPath string, files []*ast.File) {
+	ctx := &context{prog: prog}
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			switch decl := decl.(type) {
+			case *ast.FuncDecl:
+				fullName, inPkgName := astFuncName(pkgPath, decl)
+				ctx.processLinknameByDoc(decl.Doc, fullName, inPkgName, false, false)
+			case *ast.GenDecl:
+				if decl.Tok == token.VAR && len(decl.Specs) == 1 {
+					if names := decl.Specs[0].(*ast.ValueSpec).Names; len(names) == 1 {
+						inPkgName := names[0].Name
+						ctx.processLinknameByDoc(decl.Doc, pkgPath+"."+inPkgName, inPkgName, true, false)
 					}
 				}
 			}
@@ -273,11 +297,11 @@ func (p *context) collectSkip(line string, prefix int) {
 	}
 }
 
-func (p *context) initLinknameByDoc(doc *ast.CommentGroup, fullName, inPkgName string, isVar bool) bool {
+func (p *context) processLinknameByDoc(doc *ast.CommentGroup, fullName, inPkgName string, isVar, allowExport bool) bool {
 	if doc != nil {
 		for n := len(doc.List) - 1; n >= 0; n-- {
 			line := doc.List[n].Text
-			ret := p.initLinkname(line, func(name string, isExport bool) (_ string, _, ok bool) {
+			ret := p.initLinkname(line, allowExport, func(name string, isExport bool) (_ string, _, ok bool) {
 				return fullName, isVar, name == inPkgName || (isExport && enableExportRename)
 			})
 			if ret != unknownDirective {
@@ -294,7 +318,7 @@ const (
 	unknownDirective = -1
 )
 
-func (p *context) initLinkname(line string, f func(inPkgName string, isExport bool) (fullName string, isVar, ok bool)) int {
+func (p *context) initLinkname(line string, allowExport bool, f func(inPkgName string, isExport bool) (fullName string, isVar, ok bool)) int {
 	const (
 		linkname  = "//go:linkname "
 		llgolink  = "//llgo:link "
@@ -311,7 +335,7 @@ func (p *context) initLinkname(line string, f func(inPkgName string, isExport bo
 	} else if strings.HasPrefix(line, llgolink) {
 		p.initLink(line, len(llgolink), false, f)
 		return hasLinkname
-	} else if strings.HasPrefix(line, export) {
+	} else if allowExport && strings.HasPrefix(line, export) {
 		// rewrite //export FuncName to //export FuncName FuncName
 		funcName := strings.TrimSpace(line[len(export):])
 		line = line + " " + funcName
@@ -528,11 +552,19 @@ const (
 	llgoSyscall            = llgoInstrBase + 0x44
 	llgoAtomicCmpXchgOK    = llgoInstrBase + 0x45
 	llgoAtomicAddReturnNew = llgoInstrBase + 0x46
+	llgoBoolToUint8        = llgoInstrBase + 0x47
 
 	llgoAtomicOpLast = llgoAtomicOpBase + int(llssa.OpUMin)
 )
 
 func recvNamed(typ types.Type) *types.Named {
+	if named := recvNamedOk(typ); named != nil {
+		return named
+	}
+	panic(fmt.Errorf("invalid recv type: %v", typ))
+}
+
+func recvNamedOk(typ types.Type) *types.Named {
 retry:
 	switch t := types.Unalias(typ).(type) {
 	case *types.Named:
@@ -541,7 +573,12 @@ retry:
 		typ = t.Elem()
 		goto retry
 	}
-	panic(fmt.Errorf("invalid recv type: %v", typ))
+	return nil
+}
+
+func hasTypeArgs(named *types.Named) bool {
+	targs := named.TypeArgs()
+	return targs != nil && targs.Len() > 0
 }
 
 // extractTrampolineCName extracts the C function name from a trampoline function name.
@@ -590,9 +627,12 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 		}
 		if fnPkg := fn.Pkg; fnPkg != nil {
 			pkg = fnPkg.Pkg
-		} else if recv := fn.Type().(*types.Signature).Recv(); recv != nil && recv.Origin() != recv {
-			/* check if this is an instantiated generic method (receiver's origin differs from receiver itself)*/
-			pkg = recvNamed(recv.Type()).Obj().Pkg()
+		} else if recv := fn.Type().(*types.Signature).Recv(); recv != nil {
+			if named := recvNamedOk(recv.Type()); named != nil && named.Obj().Pkg() != nil && hasTypeArgs(named) {
+				pkg = named.Obj().Pkg()
+			} else {
+				pkg = p.goTyps
+			}
 		} else {
 			pkg = p.goTyps
 		}

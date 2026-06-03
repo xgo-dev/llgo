@@ -213,16 +213,16 @@ func TestBuildDo_DepFingerprintAndVersion(t *testing.T) {
 	must(os.MkdirAll(depPathDir, 0o755))
 	must(os.MkdirAll(depWorkDir, 0o755))
 
-	writeFile(t, filepath.Join(depPathDir, "go.mod"), "module github.com/matryer/is\n\ngo 1.23\n")
+	writeFile(t, filepath.Join(depPathDir, "go.mod"), "module github.com/matryer/is\n\ngo 1.24\n")
 	writeFile(t, filepath.Join(depPathDir, "is.go"), "package is\nfunc OK(v bool) bool { return v }\n")
 
-	writeFile(t, filepath.Join(depWorkDir, "go.mod"), "module github.com/pmezard/go-difflib\n\ngo 1.23\n")
+	writeFile(t, filepath.Join(depWorkDir, "go.mod"), "module github.com/pmezard/go-difflib\n\ngo 1.24\n")
 	must(os.MkdirAll(filepath.Join(depWorkDir, "difflib"), 0o755))
 	writeFile(t, filepath.Join(depWorkDir, "difflib", "difflib.go"), "package difflib\nconst Name = \"work\"\n")
 
 	mainMod := `module example.com/main
 
-go 1.23
+go 1.24
 
 require (
   github.com/davecgh/go-spew v1.1.1

@@ -28,7 +28,6 @@ import (
 	"github.com/goplus/llgo/runtime/abi"
 	"github.com/goplus/llgo/runtime/internal/clite/bitcast"
 	"github.com/goplus/llgo/runtime/internal/ffi"
-	"github.com/goplus/llgo/runtime/internal/lib/internal/itoa"
 	"github.com/goplus/llgo/runtime/internal/runtime"
 	"github.com/goplus/llgo/runtime/internal/runtime/goarch"
 )
@@ -141,36 +140,42 @@ func packEface(v Value) any {
 	t := v.typ()
 	var i any
 	e := (*emptyInterface)(unsafe.Pointer(&i))
-	// First, fill in the data portion of the interface.
-	switch {
-	case t.IfaceIndir():
-		if v.flag&flagIndir == 0 {
-			panic("bad indir")
-		}
-		// Value is indirect, and so is the interface we're making.
-		ptr := v.ptr
-		if v.flag&flagAddr != 0 {
-			// TODO: pass safe boolean from valueInterface so
-			// we don't need to copy if safe==true?
-			c := unsafe_New(t)
-			typedmemmove(t, c, ptr)
-			ptr = c
-		}
-		e.word = ptr
-	case v.flag&flagIndir != 0:
-		// Value is indirect, but interface is direct. We need
-		// to load the data at v.ptr into the interface data word.
-		e.word = *(*unsafe.Pointer)(v.ptr)
-	default:
-		// Value is direct, and so is the interface.
-		e.word = v.ptr
-	}
+	e.word = packEfaceData(v)
 	// Now, fill in the type portion. We're very careful here not
 	// to have any operation between the e.word and e.typ assignments
 	// that would let the garbage collector observe the partially-built
 	// interface value.
 	e.typ = t
 	return i
+}
+
+// packEfaceData is a helper that packs the data word as if v were stored in
+// an empty interface. Go 1.26's reflect.TypeAssert refers to it directly.
+func packEfaceData(v Value) unsafe.Pointer {
+	t := v.typ()
+	switch {
+	case t.IfaceIndir():
+		if v.flag&flagIndir == 0 {
+			panic("bad indir")
+		}
+		ptr := v.ptr
+		if v.flag&flagAddr != 0 {
+			c := unsafe_New(t)
+			typedmemmove(t, c, ptr)
+			ptr = c
+		}
+		return ptr
+	case v.flag&flagIndir != 0:
+		return *(*unsafe.Pointer)(v.ptr)
+	default:
+		return v.ptr
+	}
+}
+
+// packIfaceValueIntoEmptyIface is used by Go 1.26's reflect.TypeAssert helpers
+// when reboxing a non-empty interface value into an empty interface.
+func packIfaceValueIntoEmptyIface(v Value) any {
+	return packEface(v)
 }
 
 // unpackEface converts the empty interface i to a Value.
@@ -395,7 +400,7 @@ func (v Value) Bool() bool {
 	if v.kind() != Bool {
 		v.panicNotBool()
 	}
-	if v.flag&flagAddr != 0 {
+	if v.flag&flagIndir != 0 {
 		return *(*bool)(v.ptr)
 	}
 	return uintptr(v.ptr) != 0
@@ -2258,6 +2263,13 @@ type closure struct {
 	env unsafe.Pointer
 }
 
+func toFFIWordArg(v Value) unsafe.Pointer {
+	if v.flag&flagIndir != 0 {
+		return v.ptr
+	}
+	return unsafe.Pointer(&v.ptr)
+}
+
 func toFFIArg(v Value, typ *abi.Type) unsafe.Pointer {
 	kind := typ.Kind()
 	switch kind {
@@ -2277,16 +2289,19 @@ func toFFIArg(v Value, typ *abi.Type) unsafe.Pointer {
 		}
 		return unsafe.Pointer(&v.ptr)
 	case abi.Chan:
-		return unsafe.Pointer(&v.ptr)
+		return toFFIWordArg(v)
 	case abi.Func:
+		if v.flag&flagIndir != 0 {
+			return v.ptr
+		}
 		return unsafe.Pointer(&v.ptr)
 	case abi.Interface:
 		i := v.Interface()
 		return unsafe.Pointer(&i)
 	case abi.Map:
-		return unsafe.Pointer(&v.ptr)
+		return toFFIWordArg(v)
 	case abi.Pointer:
-		return unsafe.Pointer(&v.ptr)
+		return toFFIWordArg(v)
 	case abi.Slice:
 		return v.ptr
 	case abi.String:
@@ -2297,7 +2312,7 @@ func toFFIArg(v Value, typ *abi.Type) unsafe.Pointer {
 		}
 		return unsafe.Pointer(&v.ptr)
 	case abi.UnsafePointer:
-		return unsafe.Pointer(&v.ptr)
+		return toFFIWordArg(v)
 	}
 	panic("reflect.toFFIArg unsupport type " + v.typ().String())
 }
@@ -2331,16 +2346,54 @@ func toFFIType(typ *abi.Type) *ffi.Type {
 	case abi.String:
 		return ffi.TypeString
 	case abi.Struct:
-		st := typ.StructType()
-		fields := make([]*ffi.Type, len(st.Fields))
-		for i, fs := range st.Fields {
-			fields[i] = toFFIType(fs.Typ)
-		}
-		return ffi.StructOf(fields...)
+		return toFFIStructType(typ)
 	case abi.UnsafePointer:
 		return ffi.TypePointer
 	}
 	panic("reflect.toFFIType unsupport type " + typ.String())
+}
+
+func toFFIStructType(typ *abi.Type) *ffi.Type {
+	st := typ.StructType()
+	fields := make([]*ffi.Type, 0, len(st.Fields))
+	var off uintptr
+	for _, fs := range st.Fields {
+		if fs.Offset > off {
+			fields, off = appendFFIPadding(fields, off, fs.Offset-off)
+		}
+		if fs.Typ.Size_ == 0 {
+			continue
+		}
+		fields = append(fields, toFFIType(fs.Typ))
+		off = fs.Offset + fs.Typ.Size_
+	}
+	// Do not pad to typ.Size_: trailing zero-sized fields can enlarge the
+	// Go-visible size without consuming registers in llgo's callable ABI.
+	return ffi.StructOf(fields...)
+}
+
+func appendFFIPadding(fields []*ffi.Type, off, size uintptr) ([]*ffi.Type, uintptr) {
+	for size > 0 {
+		switch {
+		case off%8 == 0 && size >= 8:
+			fields = append(fields, ffi.TypeUint64)
+			off += 8
+			size -= 8
+		case off%4 == 0 && size >= 4:
+			fields = append(fields, ffi.TypeUint32)
+			off += 4
+			size -= 4
+		case off%2 == 0 && size >= 2:
+			fields = append(fields, ffi.TypeUint16)
+			off += 2
+			size -= 2
+		default:
+			fields = append(fields, ffi.TypeUint8)
+			off++
+			size--
+		}
+	}
+	return fields, off
 }
 
 func toFFISig(tin, tout []*abi.Type) (*ffi.Signature, error) {
@@ -3166,7 +3219,7 @@ func cvtStringRunes(v Value, t Type) Value {
 func cvtSliceArrayPtr(v Value, t Type) Value {
 	n := t.Elem().Len()
 	if n > v.Len() {
-		panic("reflect: cannot convert slice with length " + itoa.Itoa(v.Len()) + " to pointer to array with length " + itoa.Itoa(n))
+		panic("reflect: cannot convert slice with length " + itoa(v.Len()) + " to pointer to array with length " + itoa(n))
 	}
 	h := (*unsafeheaderSlice)(v.ptr)
 	return Value{t.common(), h.Data, v.flag&^(flagIndir|flagAddr|flagKindMask) | flag(Pointer)}
@@ -3176,7 +3229,7 @@ func cvtSliceArrayPtr(v Value, t Type) Value {
 func cvtSliceArray(v Value, t Type) Value {
 	n := t.Len()
 	if n > v.Len() {
-		panic("reflect: cannot convert slice with length " + itoa.Itoa(v.Len()) + " to array with length " + itoa.Itoa(n))
+		panic("reflect: cannot convert slice with length " + itoa(v.Len()) + " to array with length " + itoa(n))
 	}
 	h := (*unsafeheaderSlice)(v.ptr)
 	typ := t.common()
@@ -3285,6 +3338,9 @@ func mapclear(t *abi.Type, m unsafe.Pointer)
 //go:linkname typehash github.com/goplus/llgo/runtime/internal/runtime.typehash
 func typehash(t *abi.Type, p unsafe.Pointer, h uintptr) uintptr
 
+//go:linkname makechan github.com/goplus/llgo/runtime/internal/runtime.NewChan
+func makechan(eltSize, cap int) unsafe.Pointer
+
 // MakeSlice creates a new zero-initialized slice value
 // for the specified slice type, length, and capacity.
 func MakeSlice(typ Type, len, cap int) Value {
@@ -3303,6 +3359,22 @@ func MakeSlice(typ Type, len, cap int) Value {
 
 	s := unsafeheaderSlice{Data: unsafe_NewArray(&(typ.Elem().(*rtype).t), cap), Len: len, Cap: cap}
 	return Value{&typ.(*rtype).t, unsafe.Pointer(&s), flagIndir | flag(Slice)}
+}
+
+// MakeChan creates a new channel with the specified type and buffer size.
+func MakeChan(typ Type, buffer int) Value {
+	if typ.Kind() != Chan {
+		panic("reflect.MakeChan of non-chan type")
+	}
+	if buffer < 0 {
+		panic("reflect.MakeChan: negative buffer size")
+	}
+	if typ.ChanDir() != BothDir {
+		panic("reflect.MakeChan: unidirectional channel type")
+	}
+	t := typ.common()
+	ch := makechan(int(t.Elem().Size()), buffer)
+	return Value{t, ch, flag(Chan)}
 }
 
 // MakeMap creates a new map with the specified type.

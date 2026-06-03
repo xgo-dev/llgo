@@ -25,7 +25,7 @@ import (
 	"sort"
 
 	"github.com/goplus/llgo/ssa/abi"
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 )
 
 // -----------------------------------------------------------------------------
@@ -62,10 +62,27 @@ var (
 		types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Uintptr])), false)
 )
 
+func directIfaceType(t types.Type) bool {
+	switch t := types.Unalias(t).(type) {
+	case *types.Named:
+		return directIfaceType(t.Underlying())
+	case *types.Pointer:
+		return true
+	case *types.Chan, *types.Map, *types.Signature:
+		return true
+	case *types.Basic:
+		return t.Kind() == types.UnsafePointer
+	case *types.Array:
+		return t.Len() == 1 && directIfaceType(t.Elem())
+	case *types.Struct:
+		return t.NumFields() == 1 && directIfaceType(t.Field(0).Type())
+	}
+	return false
+}
+
 func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool) (fields []llvm.Value) {
 	prog := b.Prog
-	pkg := b.Pkg
-	ab := pkg.abi
+	ab := prog.abi
 	// Size uintptr
 	fields = append(fields, prog.IntVal(uint64(ab.Size(t)), prog.Uintptr()).impl)
 	// PtrBytes uintptr
@@ -88,7 +105,7 @@ func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool) (f
 	fields = append(fields, fieldAlign)
 	// Kind uint8
 	kind := uint8(ab.Kind(t))
-	if k, _, _ := abi.DataKindOf(t, 0, prog.is32Bits); k != abi.Indirect {
+	if directIfaceType(t) {
 		kind |= uint8(abi.KindDirectIface)
 	}
 	fields = append(fields, prog.IntVal(uint64(kind), prog.Byte()).impl)
@@ -151,7 +168,7 @@ func (b Builder) abiStructFields(t *types.Struct, name string) llvm.Value {
 			f := t.Field(i)
 			var values []llvm.Value
 			values = append(values, b.Str(f.Name()).impl)
-			values = append(values, b.abiType(f.Type()).impl)
+			values = append(values, b.abiType(abi.PublicType(f.Type())).impl)
 			values = append(values, prog.IntVal(prog.OffsetOf(typ, i), prog.Uintptr()).impl)
 			values = append(values, b.Str(t.Tag(i)).impl)
 			values = append(values, prog.BoolVal(f.Embedded()).impl)
@@ -232,7 +249,7 @@ func (b Builder) abiTuples(t *types.Tuple, name string) llvm.Value {
 	if g == nil {
 		fields := make([]llvm.Value, n)
 		for i := 0; i < n; i++ {
-			fields[i] = b.abiType(t.At(i).Type()).impl
+			fields[i] = b.abiType(abi.PublicType(t.At(i).Type())).impl
 		}
 		ft := prog.AbiTypePtr()
 		atyp := prog.rawType(types.NewArray(ft.RawType(), int64(n)))
@@ -257,54 +274,55 @@ func (b Builder) abiExtendedFields(t types.Type, name string) (fields []llvm.Val
 	case *types.Basic:
 	case *types.Pointer:
 		fields = []llvm.Value{
-			b.abiType(t.Elem()).impl,
+			b.abiType(abi.PublicType(t.Elem())).impl,
 		}
 	case *types.Chan:
 		dir, _ := abi.ChanDir(t.Dir())
 		fields = []llvm.Value{
-			b.abiType(t.Elem()).impl,
+			b.abiType(abi.PublicType(t.Elem())).impl,
 			prog.IntVal(uint64(dir), prog.Int()).impl,
 		}
 	case *types.Slice:
 		fields = []llvm.Value{
-			b.abiType(t.Elem()).impl,
+			b.abiType(abi.PublicType(t.Elem())).impl,
 		}
 	case *types.Array:
+		elem := abi.PublicType(t.Elem())
 		fields = []llvm.Value{
-			b.abiType(t.Elem()).impl,
-			b.abiType(types.NewSlice(t.Elem())).impl,
+			b.abiType(elem).impl,
+			b.abiType(types.NewSlice(elem)).impl,
 			prog.IntVal(uint64(t.Len()), prog.Uintptr()).impl,
 		}
 	case *types.Map:
-		bucket := pkg.abi.MapBucket(t)
-		flags := pkg.abi.MapFlags(t)
+		bucket := prog.abi.MapBucket(t)
+		flags := prog.abi.MapFlags(t)
 		hash := b.Pkg.rtFunc("typehash")
 		env := b.abiType(t.Key())
 		hasher := b.aggregateValue(prog.Type(hashFunc, InGo), hash.impl, env.impl)
 		fields = []llvm.Value{
-			b.abiType(t.Key()).impl,
-			b.abiType(t.Elem()).impl,
+			b.abiType(abi.PublicType(t.Key())).impl,
+			b.abiType(abi.PublicType(t.Elem())).impl,
 			b.abiType(bucket).impl,
 			hasher.impl,
-			prog.IntVal(uint64(pkg.abi.Size(t.Key())), prog.Byte()).impl,
-			prog.IntVal(uint64(pkg.abi.Size(t.Elem())), prog.Byte()).impl,
-			prog.IntVal(uint64(pkg.abi.Size(bucket)), prog.Uint16()).impl,
+			prog.IntVal(uint64(prog.abi.Size(t.Key())), prog.Byte()).impl,
+			prog.IntVal(uint64(prog.abi.Size(t.Elem())), prog.Byte()).impl,
+			prog.IntVal(uint64(prog.abi.Size(bucket)), prog.Uint16()).impl,
 			prog.IntVal(uint64(flags), prog.Uint32()).impl,
 		}
 	case *types.Signature:
-		name, _ := b.Pkg.abi.TypeName(t)
+		name, _ := prog.abi.TypeName(t)
 		fields = []llvm.Value{
 			b.abiTuples(t.Params(), name+"$in"),
 			b.abiTuples(t.Results(), name+"$out"),
 		}
 	case *types.Struct:
-		name, _ = b.Pkg.abi.TypeName(t)
+		name, _ = prog.abi.TypeName(t)
 		var pkgPath string
 		n := t.NumFields()
 		for i := 0; i < n; i++ {
 			if f := t.Field(i); !f.Exported() {
 				if pkg := f.Pkg(); pkg != nil {
-					pkgPath = pkg.Path()
+					pkgPath = reflectPkgPath(pkg)
 					break
 				}
 			}
@@ -314,7 +332,7 @@ func (b Builder) abiExtendedFields(t types.Type, name string) (fields []llvm.Val
 			b.abiStructFields(t, name+"$fields"),
 		}
 	case *types.Interface:
-		name, _ = b.Pkg.abi.TypeName(t)
+		name, _ = prog.abi.TypeName(t)
 		fields = []llvm.Value{
 			b.Str(pkg.Path()).impl,
 			b.abiInterfaceImethods(t, name+"$imethods"),
@@ -333,9 +351,19 @@ retry:
 		goto retry
 	case *types.Named:
 		pkg := typ.Obj().Pkg()
-		return pkg, abi.PathOf(pkg)
+		return pkg, reflectPkgPath(pkg)
 	}
 	return nil, b.Pkg.Path()
+}
+
+func reflectPkgPath(pkg *types.Package) string {
+	if pkg == nil {
+		return ""
+	}
+	if pkg.Path() == "command-line-arguments" && pkg.Name() != "" {
+		return pkg.Name()
+	}
+	return abi.PathOf(pkg)
 }
 
 func (b Builder) abiUncommonMethodSet(t types.Type) (mset *types.MethodSet, ok bool) {
@@ -471,16 +499,16 @@ func (b Builder) abiMethodFunc(anonymous bool, mPkg *types.Package, mName string
 	}
 */
 func (b Builder) abiType(t types.Type) Expr {
-	name, _ := b.Pkg.abi.TypeName(t)
-	g := b.Pkg.VarOf(name)
 	prog := b.Prog
 	pkg := b.Pkg
+	name, _ := prog.abi.TypeName(t)
+	g := pkg.VarOf(name)
 	if g == nil {
 		if prog.patchType != nil {
 			t = prog.patchType(t)
 		}
 		mset, hasUncommon := b.abiUncommonMethodSet(t)
-		rt := prog.rtNamed(pkg.abi.RuntimeName(t))
+		rt := prog.rtNamed(prog.abi.RuntimeName(t))
 		var typ types.Type = rt
 		if hasUncommon {
 			ut := prog.rtNamed("uncommonType")
@@ -509,7 +537,7 @@ func (b Builder) abiType(t types.Type) Expr {
 		g.impl.SetInitializer(llvm.ConstNamedStruct(g.impl.GlobalValueType(), fields))
 		g.impl.SetGlobalConstant(true)
 		g.impl.SetLinkage(llvm.WeakODRLinkage)
-		prog.abiSymbol[name] = g.Type
+		prog.abiSymbol[name] = &AbiSymbol{Name: name, PkgPath: pkg.Path(), Raw: t, Typ: g.Type, MSet: mset}
 	}
 	return Expr{llvm.ConstGEP(g.impl.GlobalValueType(), g.impl, []llvm.Value{
 		llvm.ConstInt(prog.Int32().ll, 0, false),
@@ -517,18 +545,18 @@ func (b Builder) abiType(t types.Type) Expr {
 	}), prog.AbiTypePtr()}
 }
 
-func (p Package) getAbiTypesFor(name string, selected []string) Expr {
+func (p Package) getAbiTypesFor(name string, filter func(sym *AbiSymbol) bool) Expr {
 	prog := p.Prog
 	var names []string
-	if selected == nil {
+	if filter == nil {
 		names = make([]string, 0, len(prog.abiSymbol))
 		for k := range prog.abiSymbol {
 			names = append(names, k)
 		}
 	} else {
-		names = make([]string, 0, len(selected))
-		for _, k := range selected {
-			if _, ok := prog.abiSymbol[k]; ok {
+		names = make([]string, 0, len(prog.abiSymbol))
+		for k, sym := range prog.abiSymbol {
+			if filter(sym) {
 				names = append(names, k)
 			}
 		}
@@ -536,7 +564,7 @@ func (p Package) getAbiTypesFor(name string, selected []string) Expr {
 	sort.Strings(names)
 	fields := make([]llvm.Value, len(names))
 	for i, name := range names {
-		g := p.doNewVar(name, prog.abiSymbol[name])
+		g := p.doNewVar(name, prog.abiSymbol[name].Typ)
 		g.impl.SetLinkage(llvm.ExternalLinkage)
 		g.impl.SetGlobalConstant(true)
 		ptr := Expr{llvm.ConstGEP(g.impl.GlobalValueType(), g.impl, []llvm.Value{
@@ -554,11 +582,11 @@ func (p Package) getAbiTypesFor(name string, selected []string) Expr {
 	size := uint64(len(names))
 	typ := prog.Slice(prog.AbiTypePtr())
 	g := p.doNewVar(name+"$slice", prog.Pointer(typ))
-	g.impl.SetInitializer(prog.ctx.ConstStruct([]llvm.Value{
+	g.impl.SetInitializer(llvm.ConstNamedStruct(typ.ll, []llvm.Value{
 		array.impl,
 		prog.IntVal(size, prog.Int()).impl,
 		prog.IntVal(size, prog.Int()).impl,
-	}, false))
+	}))
 	g.impl.SetGlobalConstant(true)
 	return g.Expr
 }
@@ -567,19 +595,15 @@ func (p Package) getAbiTypes(name string) Expr {
 	return p.getAbiTypesFor(name, nil)
 }
 
-func (p Package) InitAbiTypesFor(fname string, selected []string) Function {
-	if selected == nil {
-		if len(p.Prog.abiSymbol) == 0 {
-			return nil
-		}
-	} else if len(selected) == 0 {
+func (p Package) InitAbiTypesFor(fname string, filter func(sym *AbiSymbol) bool) Function {
+	if len(p.Prog.abiSymbol) == 0 {
 		return nil
 	}
 	prog := p.Prog
 	initFn := p.NewFunc(fname, NoArgsNoRet, InC)
 	b := initFn.MakeBody(1)
 	g := p.NewVarEx(PkgRuntime+".typelist", prog.Pointer(prog.Slice(prog.AbiTypePtr())))
-	b.Store(g.Expr, b.Load(p.getAbiTypesFor(fname, selected)))
+	b.Store(g.Expr, b.Load(p.getAbiTypesFor(fname, filter)))
 	b.Return()
 	return initFn
 }

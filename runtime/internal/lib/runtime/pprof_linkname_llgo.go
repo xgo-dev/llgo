@@ -60,6 +60,19 @@ func pprof_goroutineProfileWithLabels(p []StackRecord, labels []unsafe.Pointer) 
 	return 0, true
 }
 
+//go:linkname runtime_goroutineLeakGC runtime/pprof.runtime_goroutineLeakGC
+func runtime_goroutineLeakGC() {}
+
+//go:linkname runtime_goroutineleakcount runtime/pprof.runtime_goroutineleakcount
+func runtime_goroutineleakcount() int {
+	return 0
+}
+
+//go:linkname pprof_goroutineLeakProfileWithLabels runtime.pprof_goroutineLeakProfileWithLabels
+func pprof_goroutineLeakProfileWithLabels(p []StackRecord, labels []unsafe.Pointer) (n int, ok bool) {
+	return 0, true
+}
+
 //go:linkname pprof_memProfileInternal runtime.pprof_memProfileInternal
 func pprof_memProfileInternal(p []MemProfileRecord, inuseZero bool) (n int, ok bool) {
 	return 0, true

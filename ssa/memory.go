@@ -19,9 +19,8 @@ package ssa
 import (
 	"go/token"
 	"go/types"
-	"log"
 
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 )
 
 // -----------------------------------------------------------------------------
@@ -111,15 +110,18 @@ func (b Builder) dupMalloc(v Expr) Expr {
 //	t0 = local int
 //	t1 = new int
 func (b Builder) Alloc(elem Type, heap bool) (ret Expr) {
-	if debugInstr {
-		log.Printf("Alloc %v, %v\n", elem.RawType(), heap)
-	}
+	dbgInstrf("Alloc %v, %v\n", elem.RawType(), heap)
 	prog := b.Prog
 	pkg := b.Pkg
 	size := SizeOf(prog, elem)
 	if heap {
+		if prog.SizeOf(elem) == 0 {
+			return pkg.moduleZeroSizedAlloc(elem)
+		}
 		ret = b.InlineCall(pkg.rtFunc("AllocZ"), size)
 	} else {
+		// Stack-local zero-sized variables keep a distinct alloca. Only heap
+		// allocations and package globals use the shared module sentinel.
 		ret = Expr{llvm.CreateAlloca(b.impl, elem.ll), prog.VoidPtr()}
 		ret.impl = b.zeroinit(ret, size).impl
 	}
@@ -145,9 +147,7 @@ func (b Builder) AllocZ(n Expr) (ret Expr) {
 
 // Alloca allocates uninitialized space for n bytes.
 func (b Builder) Alloca(n Expr) (ret Expr) {
-	if debugInstr {
-		log.Printf("Alloca %v\n", n.impl)
-	}
+	dbgInstrf("Alloca %v\n", n.impl)
 	prog := b.Prog
 	telem := prog.tyInt8()
 	ret.impl = llvm.CreateArrayAlloca(b.impl, telem, n.impl)
@@ -156,9 +156,7 @@ func (b Builder) Alloca(n Expr) (ret Expr) {
 }
 
 func (b Builder) AllocaT(t Type) (ret Expr) {
-	if debugInstr {
-		log.Printf("AllocaT %v\n", t.RawType())
-	}
+	dbgInstrf("AllocaT %v\n", t.RawType())
 	prog := b.Prog
 	ret.impl = llvm.CreateAlloca(b.impl, t.ll)
 	ret.Type = prog.Pointer(t)
@@ -176,9 +174,7 @@ func (b Builder) AllocaU(elem Type, n ...int64) (ret Expr) {
 
 // AllocaCStr allocates space for copy it from a Go string.
 func (b Builder) AllocaCStr(gostr Expr) (ret Expr) {
-	if debugInstr {
-		log.Printf("AllocaCStr %v\n", gostr.impl)
-	}
+	dbgInstrf("AllocaCStr %v\n", gostr.impl)
 	n := b.StringLen(gostr)
 	n1 := b.BinOp(token.ADD, n, b.Prog.Val(1))
 	cstr := b.Alloca(n1)
@@ -187,9 +183,7 @@ func (b Builder) AllocaCStr(gostr Expr) (ret Expr) {
 
 // AllocCStr allocates space on the heap for copy it from a Go string.
 func (b Builder) AllocCStr(gostr Expr) (ret Expr) {
-	if debugInstr {
-		log.Printf("AllocCStr %v\n", gostr.impl)
-	}
+	dbgInstrf("AllocCStr %v\n", gostr.impl)
 	n := b.StringLen(gostr)
 	n1 := b.BinOp(token.ADD, n, b.Prog.Val(1))
 	cstr := b.allocUninited(n1)
@@ -198,9 +192,7 @@ func (b Builder) AllocCStr(gostr Expr) (ret Expr) {
 
 // func allocaCStrs(strs []string, endWithNil bool) **int8
 func (b Builder) AllocaCStrs(strs Expr, endWithNil bool) (cstrs Expr) {
-	if debugInstr {
-		log.Printf("AllocaCStrs %v, %v\n", strs.impl, endWithNil)
-	}
+	dbgInstrf("AllocaCStrs %v, %v\n", strs.impl, endWithNil)
 	prog := b.Prog
 	n := b.SliceLen(strs)
 	n1 := n
@@ -280,9 +272,7 @@ func (b Builder) zeroinit(ptr, size Expr) Expr {
 
 // ArrayAlloca reserves space for an array of n elements of type telem.
 func (b Builder) ArrayAlloca(telem Type, n Expr) (ret Expr) {
-	if debugInstr {
-		log.Printf("ArrayAlloca %v, %v\n", telem.raw.Type, n.impl)
-	}
+	dbgInstrf("ArrayAlloca %v, %v\n", telem.raw.Type, n.impl)
 	ret.impl = llvm.CreateArrayAlloca(b.impl, telem.ll, n.impl)
 	ret.Type = b.Prog.Pointer(telem)
 	return
@@ -321,9 +311,7 @@ const (
 
 // Atomic performs an atomic operation on the memory location pointed to by ptr.
 func (b Builder) Atomic(op AtomicOp, ptr, val Expr) Expr {
-	if debugInstr {
-		log.Printf("Atomic %v, %v, %v\n", op, ptr.impl, val.impl)
-	}
+	dbgInstrf("Atomic %v, %v, %v\n", op, ptr.impl, val.impl)
 	t := b.Prog.Elem(ptr.Type)
 	val = b.ChangeType(t, val)
 	ret := b.impl.CreateAtomicRMW(op, ptr.impl, val.impl, llvm.AtomicOrderingSequentiallyConsistent, false)
@@ -332,9 +320,7 @@ func (b Builder) Atomic(op AtomicOp, ptr, val Expr) Expr {
 
 // AtomicCmpXchg performs an atomic compare-and-swap operation on the memory location pointed to by ptr.
 func (b Builder) AtomicCmpXchg(ptr, old, new Expr) Expr {
-	if debugInstr {
-		log.Printf("AtomicCmpXchg %v, %v, %v\n", ptr.impl, old.impl, new.impl)
-	}
+	dbgInstrf("AtomicCmpXchg %v, %v, %v\n", ptr.impl, old.impl, new.impl)
 	prog := b.Prog
 	t := prog.Elem(ptr.Type)
 	old = b.ChangeType(t, old)
@@ -345,11 +331,21 @@ func (b Builder) AtomicCmpXchg(ptr, old, new Expr) Expr {
 	return Expr{ret, prog.Struct(t, prog.Bool())}
 }
 
+func (b Builder) AssertNilDeref(ptr Expr) {
+	nilPtr := llvm.ConstNull(ptr.impl.Type())
+	isNil := Expr{llvm.CreateICmp(b.impl, llvm.IntEQ, ptr.impl, nilPtr), b.Prog.Bool()}
+	b.InlineCall(b.Pkg.rtFunc("AssertNilDeref"), isNil)
+}
+
+func (b Builder) WrapNilCheck(ptr, recvType, methodName Expr) Expr {
+	isNil := b.BinOp(token.EQL, ptr, b.Prog.Nil(ptr.Type))
+	b.Call(b.Pkg.rtFunc("PanicWrapNilPointer"), isNil, recvType, methodName)
+	return ptr
+}
+
 // Load returns the value at the pointer ptr.
 func (b Builder) Load(ptr Expr) Expr {
-	if debugInstr {
-		log.Printf("Load %v\n", ptr.impl)
-	}
+	dbgInstrf("Load %v\n", ptr.impl)
 	if ptr.kind == vkPyVarRef {
 		return b.pyLoad(ptr)
 	}
@@ -360,18 +356,14 @@ func (b Builder) Load(ptr Expr) Expr {
 // Store stores val at the pointer ptr.
 func (b Builder) Store(ptr, val Expr) Expr {
 	raw := ptr.raw.Type
-	if debugInstr {
-		log.Printf("Store %v, %v, %v\n", raw, ptr.impl, val.impl)
-	}
+	dbgInstrf("Store %v, %v, %v\n", raw, ptr.impl, val.impl)
 	val = checkExpr(val, raw.(*types.Pointer).Elem(), b)
 	return Expr{b.impl.CreateStore(val.impl, ptr.impl), b.Prog.Void()}
 }
 
 // Advance returns the pointer ptr advanced by offset.
 func (b Builder) Advance(ptr Expr, offset Expr) Expr {
-	if debugInstr {
-		log.Printf("Advance %v, %v\n", ptr.impl, offset.impl)
-	}
+	dbgInstrf("Advance %v, %v\n", ptr.impl, offset.impl)
 	var elem llvm.Type
 	var prog = b.Prog
 	switch t := ptr.raw.Type.(type) {

@@ -10,6 +10,7 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/goplus/llgo/internal/env"
@@ -149,4 +150,45 @@ func TestAstAndTypesFuncNameCoverage(t *testing.T) {
 	if full != "example.com/p.Top" || inPkg != "Top" {
 		t.Fatalf("typesFuncName(func)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.Top", "Top")
 	}
+}
+
+func TestPreCollectLinknames(t *testing.T) {
+	cases := []struct {
+		name      string
+		directive string
+		want      string
+	}{
+		{name: "go-linkname", directive: "//go:linkname Sigsetjmp C.sigsetjmp", want: "C.sigsetjmp"},
+		{name: "llgo-linkname", directive: "//llgo:link Sigsetjmp C.sigsetjmp", want: "C.sigsetjmp"},
+		{name: "llgo-linkname-spaced", directive: "// llgo:link Sigsetjmp C.sigsetjmp", want: "C.sigsetjmp"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			src := "package runtime\nimport _ \"unsafe\"\n" + tt.directive + "\nfunc Sigsetjmp()\n"
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "runtime.go", src, parser.ParseComments)
+			if err != nil {
+				t.Fatalf("ParseFile failed: %v", err)
+			}
+			prog := llssa.NewProgram(nil)
+			PreCollectLinknames(prog, llssa.PkgRuntime, []*ast.File{file})
+			if got, ok := prog.Linkname(llssa.PkgRuntime + ".Sigsetjmp"); !ok || got != tt.want {
+				t.Fatalf("pre-collected linkname = (%q,%v), want (%q,%v)", got, ok, tt.want, true)
+			}
+		})
+	}
+}
+
+func TestBoolToUint8InvalidArgs(t *testing.T) {
+	ctx := &context{}
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("boolToUint8 should panic on invalid arguments")
+		}
+		if msg := r.(string); !strings.Contains(msg, "invalid arguments") {
+			t.Fatalf("panic = %q, want invalid arguments", msg)
+		}
+	}()
+	_ = ctx.boolToUint8(nil, []llssa.Expr{})
 }

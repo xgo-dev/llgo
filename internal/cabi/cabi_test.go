@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 
 	"github.com/goplus/llgo/internal/build"
 	"github.com/goplus/llgo/internal/cabi"
@@ -370,6 +370,81 @@ entry:
 	// Compare IR
 	if actualFuncIR != expectedFuncIRTrimmed {
 		t.Errorf("Transformed IR mismatch!\n\nExpected:\n%s\n\nActual:\n%s", expectedFuncIRTrimmed, actualFuncIR)
+	}
+}
+
+func TestAttrPointerCallParamNoLoadSourceReuse(t *testing.T) {
+	for _, arch := range []string{"arm64", "amd64"} {
+		t.Run(arch, func(t *testing.T) {
+			testAttrPointerCallParamNoLoadSourceReuse(t, arch)
+		})
+	}
+}
+
+func testAttrPointerCallParamNoLoadSourceReuse(t *testing.T, arch string) {
+	testIR := `; ModuleID = 'test'
+source_filename = "test"
+
+%Slice = type { ptr, i64, i64 }
+
+declare void @sink(%Slice)
+declare void @llvm.memset(ptr, i8, i64, i1)
+
+define void @caller() {
+entry:
+  %src = alloca %Slice, align 8
+  %first0 = insertvalue %Slice undef, ptr null, 0
+  %first1 = insertvalue %Slice %first0, i64 3, 1
+  %first2 = insertvalue %Slice %first1, i64 3, 2
+  store %Slice %first2, ptr %src, align 8
+  %val = load %Slice, ptr %src, align 8
+  call void @llvm.memset(ptr %src, i8 0, i64 24, i1 false)
+  call void @sink(%Slice %val)
+  ret void
+}
+`
+
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+
+	tmpfile := filepath.Join(t.TempDir(), "test.ll")
+	if err := os.WriteFile(tmpfile, []byte(testIR), 0644); err != nil {
+		t.Fatalf("Failed to write test IR: %v", err)
+	}
+	buf, err := llvm.NewMemoryBufferFromFile(tmpfile)
+	if err != nil {
+		t.Fatalf("Failed to read test IR: %v", err)
+	}
+	mod, err := ctx.ParseIR(buf)
+	if err != nil {
+		t.Fatalf("Failed to parse test IR: %v", err)
+	}
+	defer mod.Dispose()
+
+	conf, _ := buildConf(cabi.ModeAllFunc, arch)
+	pkgs, err := build.Do([]string{"./_testdata/demo/demo.go"}, conf)
+	if err != nil {
+		t.Fatalf("Failed to build demo: %v", err)
+	}
+	tr := cabi.NewTransformer(pkgs[0].LPkg.Prog, "", "", cabi.ModeAllFunc, true)
+	tr.TransformModule("test", mod)
+
+	caller := mod.NamedFunction("caller")
+	if caller.IsNil() {
+		t.Fatal("caller not found")
+	}
+	ir := caller.String()
+	if strings.Contains(ir, "call void @sink(ptr byval(%Slice) %src)") {
+		t.Fatalf("call reused load source that is later cleared:\n%s", ir)
+	}
+	if strings.Contains(ir, "call void @sink(ptr %src)") {
+		t.Fatalf("call reused load source that is later cleared:\n%s", ir)
+	}
+	if !strings.Contains(ir, "store %Slice %val, ptr") {
+		t.Fatalf("call argument should be materialized from loaded value:\n%s", ir)
+	}
+	if !strings.Contains(ir, "call void @sink(ptr") {
+		t.Fatalf("sink call was not rewritten to pointer argument:\n%s", ir)
 	}
 }
 

@@ -22,9 +22,11 @@ import (
 	"go/constant"
 	"go/token"
 	"go/types"
+	"io"
 	"log"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/goplus/llgo/cl/blocks"
@@ -65,6 +67,50 @@ var (
 func SetDebug(dbgFlags dbgFlags) {
 	debugInstr = (dbgFlags & DbgFlagInstruction) != 0
 	debugGoSSA = (dbgFlags & DbgFlagGoSSA) != 0
+}
+
+func dbgInstrf(format string, args ...any) {
+	if debugInstr {
+		log.Printf(format, args...)
+	}
+}
+
+func dbgInstrln(args ...any) {
+	if debugInstr {
+		log.Println(args...)
+	}
+}
+
+const maxDirectDerefSize = 1 << 20
+
+func (p *context) isLargeNonPointerValue(t llssa.Type) bool {
+	raw := types.Unalias(t.RawType())
+	if _, ok := raw.Underlying().(*types.Pointer); ok {
+		return false
+	}
+	// Very large values may be addressed far beyond the first guard page. Emit
+	// an explicit nil check instead of relying on the eventual load to fault.
+	ptrSize := int64(p.prog.PointerSize())
+	sizes := &types.StdSizes{WordSize: ptrSize, MaxAlign: ptrSize}
+	return sizes.Sizeof(raw) > maxDirectDerefSize
+}
+
+func (p *context) isZeroSizedValue(t llssa.Type) bool {
+	return p.prog.SizeOf(t) == 0
+}
+
+func dbgGoSSADump(f interface {
+	WriteTo(io.Writer) (int64, error)
+}) {
+	if debugGoSSA {
+		f.WriteTo(os.Stderr)
+	}
+}
+
+func dbgGoSSAln(args ...any) {
+	if debugGoSSA {
+		log.Println(args...)
+	}
 }
 
 func EnableDebug(b bool) {
@@ -113,6 +159,7 @@ type context struct {
 	prog        llssa.Program
 	pkg         llssa.Package
 	fn          llssa.Function
+	goFn        *ssa.Function
 	fset        *token.FileSet
 	goProg      *ssa.Program
 	goTyps      *types.Package
@@ -122,10 +169,14 @@ type context struct {
 	loaded      map[*types.Package]*pkgInfo // loaded packages
 	bvals       map[ssa.Value]llssa.Expr    // block values
 	vargs       map[*ssa.Alloc][]llssa.Expr // varargs
+	funcs       map[*ssa.Function]llssa.Function
+	stackDefers map[*ssa.Function]bool
+	anonDefers  map[*ssa.Function]bool
 	paramDIVars map[*types.Var]llssa.DIVar
 
 	patches  Patches
 	blkInfos []blocks.Info
+	srcLines map[string][]string
 
 	inits     []func()
 	phis      []func()
@@ -215,9 +266,7 @@ func (p *context) compileType(pkg llssa.Package, t *ssa.Type) {
 	tnName := tn.Name()
 	typ := tn.Type()
 	name := llssa.FullName(tn.Pkg(), tnName)
-	if debugInstr {
-		log.Println("==> NewType", name, typ)
-	}
+	dbgInstrln("==> NewType", name, typ)
 	p.compileMethods(pkg, typ)
 	p.compileMethods(pkg, types.NewPointer(typ))
 }
@@ -240,9 +289,7 @@ func (p *context) compileGlobal(pkg llssa.Package, gbl *ssa.Global) {
 	if vtype == pyVar {
 		return
 	}
-	if debugInstr {
-		log.Println("==> NewVar", name, typ)
-	}
+	dbgInstrln("==> NewVar", name, typ)
 	g := pkg.NewVar(name, typ, llssa.Background(vtype))
 	if p.tryEmbedGlobalInit(pkg, gbl, g, name) {
 		return
@@ -265,7 +312,11 @@ func makeClosureCtx(pkg *types.Package, vars []*ssa.FreeVar) *types.Var {
 	n := len(vars)
 	flds := make([]*types.Var, n)
 	for i, v := range vars {
-		flds[i] = types.NewField(token.NoPos, pkg, v.Name(), v.Type(), false)
+		name := v.Name()
+		if name == "" {
+			name = "_"
+		}
+		flds[i] = types.NewField(token.NoPos, pkg, name, v.Type(), false)
 	}
 	t := types.NewPointer(types.NewStruct(flds, nil))
 	return types.NewParam(token.NoPos, pkg, "__llgo_ctx", t)
@@ -293,6 +344,10 @@ func isCgoCmacro(name string) bool {
 }
 
 func isCgoVar(name string) bool {
+	return strings.HasPrefix(name, "_cgo_") || isCgoFuncPtrVar(name)
+}
+
+func isCgoFuncPtrVar(name string) bool {
 	return strings.HasPrefix(name, "__cgo_")
 }
 
@@ -302,7 +357,14 @@ func isInstance(f *ssa.Function) bool {
 		return true
 	}
 	if recv := f.Type().(*types.Signature).Recv(); recv != nil {
-		return recv.Origin() != recv
+		if recv.Origin() != recv {
+			return true
+		}
+		if named := recvNamedOk(recv.Type()); named != nil {
+			if hasTypeArgs(named) {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -312,7 +374,14 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	if ftype != goFunc {
 		return nil, nil, ignoredFunc
 	}
-	sig := p.patchType(f.Signature).(*types.Signature)
+	sig := func() *types.Signature {
+		oldGoFn := p.goFn
+		p.goFn = f
+		defer func() {
+			p.goFn = oldGoFn
+		}()
+		return p.patchType(f.Signature).(*types.Signature)
+	}()
 	state := p.state
 	isInit := (f.Name() == "init" && sig.Recv() == nil)
 	if isInit && state == pkgHasPatch {
@@ -329,15 +398,11 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 
 	var hasCtx = len(f.FreeVars) > 0
 	if hasCtx {
-		if debugInstr {
-			log.Println("==> NewClosure", name, "type:", sig)
-		}
+		dbgInstrln("==> NewClosure", name, "type:", sig)
 		ctx := makeClosureCtx(pkgTypes, f.FreeVars)
 		sig = llssa.FuncAddCtx(ctx, sig)
 	} else {
-		if debugInstr {
-			log.Println("==> NewFunc", name, "type:", sig.Recv(), sig, "ftype:", ftype)
-		}
+		dbgInstrln("==> NewFunc", name, "type:", sig.Recv(), sig, "ftype:", ftype)
 	}
 	if fn == nil {
 		fn = pkg.NewFuncEx(name, sig, llssa.Background(ftype), hasCtx, isInstance(f))
@@ -345,8 +410,19 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			fn.Inline(llssa.NoInline)
 		}
 	}
+	p.funcs[f] = fn
 	isCgo := isCgoExternSymbol(f)
 	if nblk := len(f.Blocks); nblk > 0 {
+		var childInits []func()
+		if len(f.AnonFuncs) > 0 {
+			parentInits := p.inits
+			p.inits = nil
+			for _, af := range f.AnonFuncs {
+				p.compileFuncDecl(pkg, af)
+			}
+			childInits = append(childInits, p.inits...)
+			p.inits = parentInits
+		}
 		p.cgoCalled = false
 		p.cgoArgs = nil
 		p.cgoErrno = llssa.Nil
@@ -361,10 +437,12 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		dbgEnabled := enableDbg && (f == nil || f.Origin() == nil)
 		dbgSymsEnabled := enableDbgSyms && (f == nil || f.Origin() == nil)
 		p.inits = append(p.inits, func() {
+			oldFn, oldGoFn := p.fn, p.goFn
 			p.fn = fn
+			p.goFn = f
 			p.state = state // restore pkgState when compiling funcBody
 			defer func() {
-				p.fn = nil
+				p.fn, p.goFn = oldFn, oldGoFn
 			}()
 			p.phis = nil
 			if dbgSymsEnabled {
@@ -372,12 +450,8 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			} else {
 				p.paramDIVars = nil
 			}
-			if debugGoSSA {
-				f.WriteTo(os.Stderr)
-			}
-			if debugInstr {
-				log.Println("==> FuncBody", name)
-			}
+			dbgGoSSADump(f)
+			dbgInstrln("==> FuncBody", name)
 			b := fn.NewBuilder()
 			if dbgEnabled {
 				pos := p.goProg.Fset.Position(f.Pos())
@@ -413,11 +487,11 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			for _, phi := range p.phis {
 				phi()
 			}
+			for _, childInit := range childInits {
+				childInit()
+			}
 			b.EndBuild()
 		})
-		for _, af := range f.AnonFuncs {
-			p.compileFuncDecl(pkg, af)
-		}
 	}
 	return fn, nil, goFunc
 }
@@ -614,6 +688,20 @@ func intVal(v ssa.Value) int64 {
 	panic("intVal: ssa.Value is not a const int")
 }
 
+func skipUnusedArrayDeref(v *ssa.UnOp) bool {
+	if v.Op != token.MUL {
+		return false
+	}
+	refs := v.Referrers()
+	if refs == nil || len(*refs) != 0 {
+		return false
+	}
+	if _, ok := v.Type().Underlying().(*types.Array); !ok {
+		return false
+	}
+	return true
+}
+
 func (p *context) cgoErrnoType() types.Type {
 	if p.cgoErrnoTy != nil {
 		return p.cgoErrnoTy
@@ -686,6 +774,50 @@ func (p *context) checkVArgs(v *ssa.Alloc, t *types.Pointer) bool {
 		}
 	}
 	return false
+}
+
+func (p *context) skipSyntheticMakeSliceAlloc(v *ssa.Alloc) bool {
+	refs := v.Referrers()
+	if refs == nil || len(*refs) != 1 {
+		return false
+	}
+	slice, ok := (*refs)[0].(*ssa.Slice)
+	if !ok {
+		return false
+	}
+	_, ok = p.syntheticMakeSliceCap(slice)
+	return ok
+}
+
+func (p *context) compileSyntheticMakeSlice(b llssa.Builder, v *ssa.Slice) (llssa.Expr, bool) {
+	capacity, ok := p.syntheticMakeSliceCap(v)
+	if !ok {
+		return llssa.Expr{}, false
+	}
+	t := p.type_(v.Type(), llssa.InGo)
+	length := p.compileValue(b, v.High)
+	return b.MakeSlice(t, length, capacity), true
+}
+
+func (p *context) syntheticMakeSliceCap(v *ssa.Slice) (llssa.Expr, bool) {
+	alloc, ok := v.X.(*ssa.Alloc)
+	if !ok || alloc.Comment != "makeslice" || v.Low != nil || v.High == nil || v.Max != nil {
+		return llssa.Expr{}, false
+	}
+	t, ok := alloc.Type().(*types.Pointer)
+	if !ok {
+		return llssa.Expr{}, false
+	}
+	arr, ok := t.Elem().(*types.Array)
+	if !ok {
+		return llssa.Expr{}, false
+	}
+	if high, ok := v.High.(*ssa.Const); ok {
+		if n, exact := constant.Int64Val(high.Value); exact && n >= 0 && n <= arr.Len() {
+			return llssa.Expr{}, false
+		}
+	}
+	return p.prog.IntVal(uint64(arr.Len()), p.prog.Int()), true
 }
 
 func isAllocVargs(ctx *context, v *ssa.Alloc) bool {
@@ -772,11 +904,52 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	switch v := iv.(type) {
 	case *ssa.Call:
 		ret = p.call(b, llssa.Call, &v.Call)
+		if p.rangeFuncCallNeedsDeferDrain(&v.Call) {
+			b.DeferStackDrain()
+		}
 	case *ssa.BinOp:
 		x := p.compileValue(b, v.X)
 		y := p.compileValue(b, v.Y)
 		ret = b.BinOp(v.Op, x, y)
 	case *ssa.UnOp:
+		if v.Op == token.MUL {
+			if refs := v.Referrers(); refs != nil && len(*refs) == 0 {
+				if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil {
+					if p.isLargeNonPointerValue(t) {
+						x := p.compileValue(b, v.X)
+						p.assertNilDerefBase(b, v.X)
+						b.AssertNilDeref(x)
+						return
+					}
+				}
+			}
+			if skipUnusedArrayDeref(v) {
+				return
+			}
+			if refs := v.Referrers(); refs != nil && len(*refs) == 1 {
+				if _, ok := (*refs)[0].(*ssa.MakeInterface); ok {
+					if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil {
+						if p.isLargeNonPointerValue(t) {
+							// Skip the load: the MakeInterface handler below copies
+							// from the original pointer and preserves the nil check.
+							return
+						}
+					}
+				}
+			}
+			// "libc_XXX_trampoline_addr" -> "XXX"
+			if strings.HasSuffix(v.X.Name(), "_trampoline_addr") {
+				name := v.X.Name()
+				if cname := strings.TrimPrefix(name[:len(name)-16], "libc_"); cname != "" {
+					cname = p.remapTrampolineCName(cname)
+					fnSig := p.syscallFnSig(0)
+					cfn := b.Pkg.NewFunc(cname, fnSig, llssa.InC)
+					ret = b.Convert(p.type_(types.Typ[types.Uintptr], llssa.InGo), cfn.Expr)
+					p.bvals[iv] = ret
+					return ret
+				}
+			}
+		}
 		x := p.compileValue(b, v.X)
 		if v.Op == token.ARROW {
 			ret = b.Recv(x, v.CommaOk)
@@ -797,6 +970,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	case *ssa.Alloc:
 		t := v.Type().(*types.Pointer)
 		if p.checkVArgs(v, t) { // varargs: this maybe a varargs allocation
+			return
+		}
+		if p.skipSyntheticMakeSliceAlloc(v) {
 			return
 		}
 		elem := p.type_(t.Elem(), llssa.InGo)
@@ -826,6 +1002,10 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		idx := p.compileValue(b, v.Index)
 		ret = b.Lookup(x, idx, v.CommaOk)
 	case *ssa.Slice:
+		if makeSlice, ok := p.compileSyntheticMakeSlice(b, v); ok {
+			ret = makeSlice
+			break
+		}
 		vx := v.X
 		if _, ok := p.isVArgs(vx); ok { // varargs: this is a varargs slice
 			return
@@ -842,7 +1022,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			max = p.compileValue(b, v.Max)
 		}
 		ret = b.Slice(x, low, high, max)
-		ret.Type = b.Prog.Type(v.Type(), llssa.InGo)
+		ret.Type = p.type_(v.Type(), llssa.InGo)
 	case *ssa.MakeInterface:
 		if refs := *v.Referrers(); len(refs) == 1 {
 			switch ref := refs[0].(type) {
@@ -861,6 +1041,17 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			}
 		}
 		t := p.type_(v.Type(), llssa.InGo)
+		if unop, ok := v.X.(*ssa.UnOp); ok && unop.Op == token.MUL {
+			if vt := p.type_(unop.Type(), llssa.InGo); vt.RawType() != nil {
+				if p.isLargeNonPointerValue(vt) || p.isZeroSizedValue(vt) {
+					if ptr := p.compileValue(b, unop.X); ptr.Type != nil {
+						p.assertNilDerefBase(b, unop.X)
+						ret = b.MakeInterfaceFromPtr(t, ptr)
+						break
+					}
+				}
+			}
+		}
 		x := p.compileValue(b, v.X)
 		ret = b.MakeInterface(t, x)
 	case *ssa.MakeSlice:
@@ -930,6 +1121,13 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	return ret
 }
 
+func (p *context) assertNilDerefBase(b llssa.Builder, addr ssa.Value) {
+	if field, ok := addr.(*ssa.FieldAddr); ok {
+		base := p.compileValue(b, field.X)
+		b.AssertNilDeref(base)
+	}
+}
+
 func (p *context) jumpTo(v *ssa.Jump) llssa.BasicBlock {
 	fn := p.fn
 	succs := v.Block().Succs
@@ -974,6 +1172,10 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 				return
 			}
 		}
+		if isBlankFieldStore(va) {
+			_ = p.compileValue(b, v.Val)
+			return
+		}
 		if p.rewrites != nil {
 			if g, ok := va.(*ssa.Global); ok {
 				if _, ok := p.rewriteInitStore(v, g); ok {
@@ -995,6 +1197,9 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 				results[i] = p.compileValue(b, r)
 			}
 		}
+		if p.returnNeedsImplicitRunDefers(v) {
+			b.RunDefers()
+		}
 		b.Return(results...)
 	case *ssa.If:
 		fn := p.fn
@@ -1009,6 +1214,10 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		val := p.compileValue(b, v.Value)
 		b.MapUpdate(m, key, val)
 	case *ssa.Defer:
+		if v.DeferStack != nil {
+			p.callDeferStack(b, p.blkInfos[v.Block().Index].Kind, &v.Call, v.DeferStack, v.Parent())
+			return
+		}
 		p.call(b, p.blkInfos[v.Block().Index].Kind, &v.Call)
 	case *ssa.Go:
 		p.call(b, llssa.Go, &v.Call)
@@ -1099,6 +1308,130 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 		}
 	}
 	panic(fmt.Sprintf("compileValue: unknown value - %T\n", v))
+}
+
+func isBlankFieldStore(addr ssa.Value) bool {
+	field, ok := addr.(*ssa.FieldAddr)
+	if !ok {
+		return false
+	}
+	_, st, ok := fieldAddrStruct(field)
+	return ok && st.Field(field.Field).Name() == "_"
+}
+
+const rangeOverFuncYieldSynthetic = "range-over-func yield"
+
+func (p *context) rangeFuncCallNeedsDeferDrain(call *ssa.CallCommon) bool {
+	for _, arg := range call.Args {
+		closure, ok := arg.(*ssa.MakeClosure)
+		if !ok {
+			continue
+		}
+		fn, ok := closure.Fn.(*ssa.Function)
+		if !ok || fn.Synthetic != rangeOverFuncYieldSynthetic {
+			continue
+		}
+		if p.functionHasExplicitStackDefer(fn) {
+			return true
+		}
+	}
+	return false
+}
+
+// Explicit defer stacks live in nested yield closures, but their drain point
+// belongs to the enclosing function immediately after the rangefunc call.
+func (p *context) functionHasExplicitStackDefer(fn *ssa.Function) bool {
+	if p.stackDefers == nil {
+		p.stackDefers = make(map[*ssa.Function]bool)
+	}
+	return p.functionHasExplicitStackDeferSeen(fn, make(map[*ssa.Function]bool))
+}
+
+func (p *context) functionHasExplicitStackDeferSeen(fn *ssa.Function, seen map[*ssa.Function]bool) bool {
+	if fn == nil || seen[fn] {
+		return false
+	}
+	if p.stackDefers == nil {
+		p.stackDefers = make(map[*ssa.Function]bool)
+	}
+	if has, ok := p.stackDefers[fn]; ok {
+		return has
+	}
+	seen[fn] = true
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			if d, ok := instr.(*ssa.Defer); ok && d.DeferStack != nil {
+				p.stackDefers[fn] = true
+				return true
+			}
+		}
+	}
+	for _, child := range fn.AnonFuncs {
+		if p.functionHasExplicitStackDeferSeen(child, seen) {
+			p.stackDefers[fn] = true
+			return true
+		}
+	}
+	p.stackDefers[fn] = false
+	return false
+}
+
+func (p *context) returnNeedsImplicitRunDefers(ret *ssa.Return) bool {
+	fn := ret.Parent()
+	if fn == nil || fn.Synthetic != "" || ret.Block() == fn.Recover {
+		return false
+	}
+	if previousNonDebugInstrIsRunDefers(ret) {
+		return false
+	}
+	return p.functionHasExplicitStackDeferInAnon(fn)
+}
+
+func previousNonDebugInstrIsRunDefers(ret *ssa.Return) bool {
+	block := ret.Block()
+	if block == nil {
+		return false
+	}
+	for i := len(block.Instrs) - 1; i >= 0; i-- {
+		instr := block.Instrs[i]
+		if instr == ret {
+			continue
+		}
+		if _, ok := instr.(*ssa.DebugRef); ok {
+			continue
+		}
+		_, ok := instr.(*ssa.RunDefers)
+		return ok
+	}
+	return false
+}
+
+func (p *context) functionHasExplicitStackDeferInAnon(fn *ssa.Function) bool {
+	if p.anonDefers == nil {
+		p.anonDefers = make(map[*ssa.Function]bool)
+	}
+	return p.functionHasExplicitStackDeferInAnonSeen(fn, make(map[*ssa.Function]bool))
+}
+
+func (p *context) functionHasExplicitStackDeferInAnonSeen(fn *ssa.Function, seen map[*ssa.Function]bool) bool {
+	if fn == nil || seen[fn] {
+		return false
+	}
+	if p.anonDefers == nil {
+		p.anonDefers = make(map[*ssa.Function]bool)
+	}
+	if has, ok := p.anonDefers[fn]; ok {
+		return has
+	}
+	seen[fn] = true
+	for _, child := range fn.AnonFuncs {
+		if p.functionHasExplicitStackDeferSeen(child, seen) {
+			p.anonDefers[fn] = true
+			return true
+		}
+	}
+	p.anonDefers[fn] = false
+	return false
 }
 
 func (p *context) compileVArg(ret []llssa.Expr, b llssa.Builder, v ssa.Value) []llssa.Expr {
@@ -1200,6 +1533,7 @@ func newPackageEx(prog llssa.Program, patches Patches, rewrites map[string]strin
 		patches: patches,
 		skips:   make(map[string]none),
 		vargs:   make(map[*ssa.Alloc][]llssa.Expr),
+		funcs:   make(map[*ssa.Function]llssa.Function),
 		loaded: map[*types.Package]*pkgInfo{
 			types.Unsafe: {kind: PkgDeclOnly}, // TODO(xsw): PkgNoInit or PkgDeclOnly?
 		},
@@ -1288,7 +1622,7 @@ func processPkg(ctx *context, ret llssa.Package, pkg *ssa.Package) {
 		case *ssa.Type:
 			ctx.compileType(ret, member)
 		case *ssa.Global:
-			if !isCgoVar(member.Name()) {
+			if !isCgoFuncPtrVar(member.Name()) {
 				ctx.compileGlobal(ret, member)
 			}
 		}
@@ -1310,7 +1644,54 @@ func (p *context) _patchType(typ types.Type) (types.Type, bool) {
 		if t, ok := p._patchType(typ.Elem()); ok {
 			return types.NewPointer(t), true
 		}
+	case *types.Slice:
+		if t, ok := p._patchType(typ.Elem()); ok {
+			return types.NewSlice(t), true
+		}
+	case *types.Array:
+		if t, ok := p._patchType(typ.Elem()); ok {
+			return types.NewArray(t, typ.Len()), true
+		}
+	case *types.Map:
+		var patched bool
+		key := typ.Key()
+		elem := typ.Elem()
+		if t, ok := p._patchType(key); ok {
+			key = t
+			patched = true
+		}
+		if t, ok := p._patchType(elem); ok {
+			elem = t
+			patched = true
+		}
+		if patched {
+			return types.NewMap(key, elem), true
+		}
+	case *types.Chan:
+		if t, ok := p._patchType(typ.Elem()); ok {
+			return types.NewChan(typ.Dir(), t), true
+		}
+	case *types.Struct:
+		var patched bool
+		vars := make([]*types.Var, typ.NumFields())
+		tags := make([]string, typ.NumFields())
+		for i := 0; i < typ.NumFields(); i++ {
+			v := typ.Field(i)
+			if t, ok := p._patchType(v.Type()); ok {
+				vars[i] = types.NewField(v.Pos(), v.Pkg(), v.Name(), t, v.Anonymous())
+				patched = true
+			} else {
+				vars[i] = v
+			}
+			tags[i] = typ.Tag(i)
+		}
+		if patched {
+			return types.NewStruct(vars, tags), true
+		}
 	case *types.Named:
+		if t, ok := p.patchLocalGenericNamed(typ); ok {
+			return t, true
+		}
 		o := typ.Obj()
 		if pkg := o.Pkg(); typepatch.IsPatched(pkg) {
 			if patch, ok := p.patches[pkg.Path()]; ok {
@@ -1343,6 +1724,228 @@ func (p *context) _patchType(typ types.Type) (types.Type, bool) {
 		}
 	}
 	return typ, false
+}
+
+func (p *context) patchLocalGenericNamed(t *types.Named) (*types.Named, bool) {
+	if p.goFn == nil || len(p.goFn.TypeArgs()) == 0 || !p.isGenericLocalType(t.Obj()) {
+		return nil, false
+	}
+	if isPatchedLocalGenericName(t.Obj().Name()) {
+		return nil, false
+	}
+	obj := types.NewTypeName(t.Obj().Pos(), t.Obj().Pkg(), p.localNamedName(t, true), nil)
+	return types.NewNamed(obj, t.Underlying(), nil), true
+}
+
+func isPatchedLocalGenericName(name string) bool {
+	// The patched name embeds type arguments in brackets. Go identifiers cannot
+	// contain '[', so this also prevents repeatedly expanding the generated name.
+	return strings.Contains(name, "[")
+}
+
+func (p *context) localNamedName(t *types.Named, suffix bool) string {
+	obj := t.Obj()
+	name := obj.Name()
+	if isPatchedLocalGenericName(name) {
+		return name
+	}
+	outer := p.localTypeOuterArgs(obj)
+	own := typeListArgs(t.TypeArgs(), p.typeArgName)
+	switch {
+	case len(outer) != 0 && len(own) != 0:
+		name += "[" + strings.Join(outer, ",") + ";" + strings.Join(own, ",") + "]"
+	case len(outer) != 0:
+		name += "[" + strings.Join(outer, ",") + "]"
+	case len(own) != 0:
+		name += "[" + strings.Join(own, ",") + "]"
+	}
+	if suffix {
+		if n := p.localTypeOrdinal(obj); n != 0 {
+			name += "·" + strconv.Itoa(n)
+		}
+	}
+	return name
+}
+
+func (p *context) localTypeOuterArgs(obj types.Object) []string {
+	// localNamedName is also used by non-local type arguments, so keep this
+	// guard here even though patchLocalGenericNamed has already checked it.
+	if p.goFn == nil || len(p.goFn.TypeArgs()) == 0 || !p.isGenericLocalType(obj) {
+		return nil
+	}
+	args := p.goFn.TypeArgs()
+	ret := make([]string, len(args))
+	for i, arg := range args {
+		ret[i] = p.typeArgName(arg)
+	}
+	return ret
+}
+
+func typeListArgs(list *types.TypeList, nameOf func(types.Type) string) []string {
+	if list == nil {
+		return nil
+	}
+	ret := make([]string, list.Len())
+	for i := 0; i < list.Len(); i++ {
+		ret[i] = nameOf(list.At(i))
+	}
+	return ret
+}
+
+func (p *context) typeArgName(t types.Type) string {
+	// Keep this formatter aligned with ssa/abi.typeArgString; this variant must
+	// additionally encode local generic type names while patching frontend types.
+	switch t := t.(type) {
+	case *types.Alias:
+		return p.typeArgName(types.Unalias(t))
+	case *types.Basic:
+		return t.String()
+	case *types.Named:
+		name := p.localNamedName(t, p.isLocalType(t.Obj()))
+		if pkg := t.Obj().Pkg(); pkg != nil {
+			return pkg.Path() + "." + name
+		}
+		return name
+	case *types.Pointer:
+		return "*" + p.typeArgName(t.Elem())
+	case *types.Slice:
+		return "[]" + p.typeArgName(t.Elem())
+	case *types.Array:
+		return fmt.Sprintf("[%v]%s", t.Len(), p.typeArgName(t.Elem()))
+	case *types.Map:
+		return fmt.Sprintf("map[%s]%s", p.typeArgName(t.Key()), p.typeArgName(t.Elem()))
+	case *types.Chan:
+		s := chanDirName(t.Dir())
+		elem := p.typeArgName(t.Elem())
+		if t.Dir() == types.SendRecv {
+			if ch, ok := t.Elem().(*types.Chan); ok && ch.Dir() == types.RecvOnly {
+				elem = "(" + elem + ")"
+			}
+		}
+		return fmt.Sprintf("%s %s", s, elem)
+	default:
+		return types.TypeString(t, func(pkg *types.Package) string {
+			if pkg == nil {
+				return ""
+			}
+			return pkg.Name()
+		})
+	}
+}
+
+func chanDirName(dir types.ChanDir) string {
+	switch dir {
+	case types.SendRecv:
+		return "chan"
+	case types.SendOnly:
+		return "chan<-"
+	case types.RecvOnly:
+		return "<-chan"
+	default:
+		panic("invalid channel direction")
+	}
+}
+
+func (p *context) isGenericLocalType(obj types.Object) bool {
+	if !p.isLocalType(obj) {
+		return false
+	}
+	if obj.Parent() == nil {
+		return p.inCurrentFunction(obj.Pos())
+	}
+	for scope := obj.Parent(); scope != nil; scope = scope.Parent() {
+		if pkg := obj.Pkg(); pkg != nil && scope == pkg.Scope() {
+			return false
+		}
+		if scopeHasTypeParams(scope) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *context) isLocalType(obj types.Object) bool {
+	if obj == nil || obj.Pkg() == nil {
+		return false
+	}
+	parent := obj.Parent()
+	if parent == nil {
+		return obj.Pos().IsValid()
+	}
+	return parent != obj.Pkg().Scope()
+}
+
+func scopeHasTypeParams(scope *types.Scope) bool {
+	for _, name := range scope.Names() {
+		if isTypeParamObject(scope.Lookup(name)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *context) localTypeOrdinal(obj types.Object) int {
+	scope := obj.Parent()
+	if scope == nil || !obj.Pos().IsValid() {
+		return p.localTypeOrdinalBySyntax(obj.Pos())
+	}
+	n := 0
+	for _, name := range scope.Names() {
+		o := scope.Lookup(name)
+		if _, ok := o.(*types.TypeName); !ok || isTypeParamObject(o) {
+			continue
+		}
+		if pos := o.Pos(); pos.IsValid() && pos <= obj.Pos() {
+			n++
+		}
+	}
+	return n
+}
+
+func (p *context) inCurrentFunction(pos token.Pos) bool {
+	if !pos.IsValid() {
+		return false
+	}
+	syntax := p.currentFunctionSyntax()
+	return syntax != nil && syntax.Pos() <= pos && pos <= syntax.End()
+}
+
+func (p *context) localTypeOrdinalBySyntax(pos token.Pos) int {
+	if !p.inCurrentFunction(pos) {
+		return 0
+	}
+	n := 0
+	ast.Inspect(p.currentFunctionSyntax(), func(node ast.Node) bool {
+		spec, ok := node.(*ast.TypeSpec)
+		if !ok {
+			return true
+		}
+		if spec.Name != nil && spec.Name.Pos().IsValid() && spec.Name.Pos() <= pos {
+			n++
+		}
+		return true
+	})
+	return n
+}
+
+func (p *context) currentFunctionSyntax() ast.Node {
+	if p.goFn == nil {
+		return nil
+	}
+	fn := p.goFn
+	if origin := fn.Origin(); origin != nil {
+		fn = origin
+	}
+	return fn.Syntax()
+}
+
+func isTypeParamObject(obj types.Object) bool {
+	tn, ok := obj.(*types.TypeName)
+	if !ok {
+		return false
+	}
+	_, ok = tn.Type().(*types.TypeParam)
+	return ok
 }
 
 func instantiate(orig types.Type, t *types.Named) (typ types.Type) {

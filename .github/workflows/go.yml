@@ -86,6 +86,6 @@ jobs:
         run: bash doc/_readme/scripts/check_std_cover.sh
 
       - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{secrets.CODECOV_TOKEN}}

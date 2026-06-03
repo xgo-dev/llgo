@@ -38,6 +38,61 @@ func TestConstBool(t *testing.T) {
 	}
 }
 
+func TestIsLargeNonPointerValue(t *testing.T) {
+	prog := llssa.NewProgram(nil)
+	ctx := &context{prog: prog}
+
+	largeArray := prog.Type(types.NewArray(types.Typ[types.Byte], int64(maxDirectDerefSize)+1), llssa.InGo)
+	if !ctx.isLargeNonPointerValue(largeArray) {
+		t.Fatal("large array should require explicit nil-deref guard")
+	}
+
+	smallArray := prog.Type(types.NewArray(types.Typ[types.Byte], 16), llssa.InGo)
+	if ctx.isLargeNonPointerValue(smallArray) {
+		t.Fatal("small array should not require explicit nil-deref guard")
+	}
+
+	largePointer := prog.Type(types.NewPointer(types.NewArray(types.Typ[types.Byte], int64(maxDirectDerefSize)+1)), llssa.InGo)
+	if ctx.isLargeNonPointerValue(largePointer) {
+		t.Fatal("pointer values should not be classified as large direct values")
+	}
+}
+
+func TestCompileLargeNilDerefInterfaceGuards(t *testing.T) {
+	_, m := mustCompileLLPkgFromSrc(t, `
+package foo
+
+type large [1 << 21]byte
+type largeStruct struct {
+	data [1 << 21]byte
+}
+type holder struct {
+	pad [1 << 21]byte
+	value largeStruct
+}
+
+var sink any
+
+func arrayIface(p *large) {
+	sink = *p
+}
+
+func standalone(p *large) {
+	_ = *p
+}
+
+func fieldIface(p *holder) {
+	sink = p.value
+}
+`)
+	ir := m.String()
+	for _, want := range []string{"AssertNilDeref", "Typedmemmove"} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("compiled IR missing %s for large nil-deref guard path:\n%s", want, ir)
+		}
+	}
+}
+
 func TestToBackground(t *testing.T) {
 	if v := toBackground(""); v != llssa.InGo {
 		t.Fatal("toBackground:", v)
@@ -413,10 +468,10 @@ func TestErrImport(t *testing.T) {
 
 func TestErrInitLinkname(t *testing.T) {
 	var ctx context
-	ctx.initLinkname("//llgo:link abc", func(name string, isExport bool) (string, bool, bool) {
+	ctx.initLinkname("//llgo:link abc", true, func(name string, isExport bool) (string, bool, bool) {
 		return "", false, false
 	})
-	ctx.initLinkname("//go:linkname Printf printf", func(name string, isExport bool) (string, bool, bool) {
+	ctx.initLinkname("//go:linkname Printf printf", true, func(name string, isExport bool) (string, bool, bool) {
 		return "", false, false
 	})
 	defer func() {
@@ -424,7 +479,7 @@ func TestErrInitLinkname(t *testing.T) {
 			t.Fatal("initLinkname: no error?")
 		}
 	}()
-	ctx.initLinkname("//go:linkname Printf printf", func(name string, isExport bool) (string, bool, bool) {
+	ctx.initLinkname("//go:linkname Printf printf", true, func(name string, isExport bool) (string, bool, bool) {
 		return "foo.Printf", false, name == "Printf"
 	})
 }
@@ -598,7 +653,7 @@ func TestHandleExportDiffName(t *testing.T) {
 			}
 
 			// Call initLinkname with closure that mimics initLinknameByDoc behavior
-			ret := ctx.initLinkname(tt.line, func(name string, isExport bool) (string, bool, bool) {
+			ret := ctx.initLinkname(tt.line, true, func(name string, isExport bool) (string, bool, bool) {
 				return tt.fullName, false, name == tt.inPkgName || (isExport && enableExportRename)
 			})
 
@@ -692,7 +747,7 @@ func TestInitLinknameByDocExportDiffNames(t *testing.T) {
 			}
 
 			// Call initLinknameByDoc
-			ctx.initLinknameByDoc(tt.doc, tt.fullName, tt.inPkgName, false)
+			ctx.processLinknameByDoc(tt.doc, tt.fullName, tt.inPkgName, false, true)
 
 			// Verify export behavior
 			exports := pkg.ExportFuncs()
@@ -754,7 +809,7 @@ func TestInitLinkExportDiffNames(t *testing.T) {
 				pkg:  pkg,
 			}
 
-			ctx.initLinkname(tt.line, func(inPkgName string, isExport bool) (fullName string, isVar, ok bool) {
+			ctx.initLinkname(tt.line, true, func(inPkgName string, isExport bool) (fullName string, isVar, ok bool) {
 				// Simulate initLinknames scenario: symbol not found (like in decl packages)
 				return "", false, false
 			})

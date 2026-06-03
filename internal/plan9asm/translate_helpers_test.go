@@ -14,7 +14,7 @@ import (
 	"testing"
 
 	llpackages "github.com/goplus/llgo/internal/packages"
-	extplan9asm "github.com/goplus/plan9asm"
+	extplan9asm "github.com/xgo-dev/plan9asm"
 )
 
 func mustTestPackage(t *testing.T, pkgPath, src string) *llpackages.Package {
@@ -205,6 +205,10 @@ func TestExtraAsmSigsAndDeclMap(t *testing.T) {
 		}
 	}
 
+	if got := extraAsmSigsAndDeclMap("internal/runtime/gc/scan", "arm64"); len(got) != 0 {
+		t.Fatalf("unexpected manual sigs for scan/arm64: %#v", got)
+	}
+
 	arm64 := extraAsmSigsAndDeclMap("internal/bytealg", "arm64")
 	for _, name := range []string{
 		"internal/bytealg.cmpbody",
@@ -228,6 +232,30 @@ func TestExtraAsmSigsAndDeclMap(t *testing.T) {
 	} {
 		if _, ok := amd64[name]; !ok {
 			t.Fatalf("missing amd64 manual sig %s", name)
+		}
+	}
+
+	scan := extraAsmSigsAndDeclMap("internal/runtime/gc/scan", "amd64")
+	if got, want := len(scan), 26; got != want {
+		t.Fatalf("scan manual sig count = %d, want %d", got, want)
+	}
+	for _, name := range []string{
+		"internal/runtime/gc/scan.expandAVX512_1",
+		"internal/runtime/gc/scan.expandAVX512_32",
+		"internal/runtime/gc/scan.expandAVX512_64",
+	} {
+		sig, ok := scan[name]
+		if !ok {
+			t.Fatalf("missing scan manual sig %s", name)
+		}
+		if len(sig.Args) != 1 || sig.Args[0] != extplan9asm.Ptr {
+			t.Fatalf("%s args = %#v, want [Ptr]", name, sig.Args)
+		}
+		if sig.Ret != extplan9asm.Void {
+			t.Fatalf("%s ret = %#v, want Void", name, sig.Ret)
+		}
+		if len(sig.ArgRegs) != 1 || sig.ArgRegs[0] != extplan9asm.AX {
+			t.Fatalf("%s arg regs = %#v, want [AX]", name, sig.ArgRegs)
 		}
 	}
 }

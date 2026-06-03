@@ -67,19 +67,37 @@ func MapClear(t *maptype, h *hmap) {
 	mapclear(t, h)
 }
 
-func NewMapIter(t *maptype, h *hmap) *hiter {
-	var it hiter
-	mapiterinit(t, h, &it)
+type llgoMapIter struct {
+	hiter
+	// ready reports whether hiter.key/elem is still waiting to be yielded.
+	// Advancing is delayed until the next call so mutation after yield can stop
+	// iteration before mapiternext touches cleared map state.
+	ready bool
+}
+
+func NewMapIter(t *maptype, h *hmap) *llgoMapIter {
+	var it llgoMapIter
+	mapiterinit(t, h, &it.hiter)
+	it.ready = true
 	return &it
 }
 
-func MapIterNext(it *hiter) (ok bool, k unsafe.Pointer, v unsafe.Pointer) {
+func MapIterNext(it *llgoMapIter) (ok bool, k unsafe.Pointer, v unsafe.Pointer) {
+	if it.h == nil || it.h.count == 0 {
+		it.key = nil
+		it.elem = nil
+		return
+	}
+	if !it.ready {
+		mapiternext(&it.hiter)
+		it.ready = true
+	}
 	if it.key == nil {
 		return
 	}
 	ok = true
 	k, v = it.key, it.elem
-	mapiternext(it)
+	it.ready = false
 	return
 }
 

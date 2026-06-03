@@ -31,7 +31,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -49,12 +48,13 @@ import (
 	"github.com/goplus/llgo/internal/header"
 	"github.com/goplus/llgo/internal/mockable"
 	"github.com/goplus/llgo/internal/monitor"
+	"github.com/goplus/llgo/internal/optlevel"
 	"github.com/goplus/llgo/internal/packages"
 	"github.com/goplus/llgo/internal/typepatch"
 	"github.com/goplus/llgo/ssa/abi"
 	xenv "github.com/goplus/llgo/xtool/env"
 	"github.com/goplus/llgo/xtool/env/llvm"
-	gllvm "github.com/goplus/llvm"
+	gllvm "github.com/xgo-dev/llvm"
 
 	llruntime "github.com/goplus/llgo/runtime"
 	llssa "github.com/goplus/llgo/ssa"
@@ -114,10 +114,18 @@ type OutFmtDetails struct {
 	Zip string // ZIP/DFU output file path (.zip)
 }
 
+// ModuleHook observes a package module immediately after it is generated and
+// before TransformModule mutates it. The callback runs synchronously and
+// receives the live llvm.Module, so callers that need a stable snapshot should
+// consume it immediately (for example, by calling mod.String() inside the
+// hook).
+type ModuleHook func(pkg Package)
+
 type Config struct {
 	Goos          string
 	Goarch        string
 	Target        string // target name (e.g., "rp2040", "wasi") - takes precedence over Goos/Goarch
+	OptLevel      optlevel.Level
 	BinPath       string
 	AppExt        string  // ".exe" on Windows, empty on Unix
 	OutFile       string  // only valid for ModeBuild when len(pkgs) == 1
@@ -149,6 +157,7 @@ type Config struct {
 	// string-typed globals are supported and "main" applies to all root main
 	// packages in the current build.
 	GlobalRewrites map[string]Rewrites
+	ModuleHook     ModuleHook
 }
 
 type Rewrites map[string]string
@@ -225,9 +234,10 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	if err := ensureSizeReporting(conf); err != nil {
 		return nil, err
 	}
+	conf.OptLevel = effectiveOptLevel(conf)
 	// Handle crosscompile configuration first to set correct GOOS/GOARCH
 	forceEspClang := conf.ForceEspClang || conf.Target != ""
-	export, err := crosscompile.Use(conf.Goos, conf.Goarch, conf.Target, IsWasiThreadsEnabled(), forceEspClang)
+	export, err := crosscompile.Use(conf.Goos, conf.Goarch, conf.Target, IsWasiThreadsEnabled(), forceEspClang, conf.OptLevel)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup crosscompile: %w", err)
 	}
@@ -274,9 +284,10 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	llssa.Initialize(llssa.InitAll)
 
 	target := &llssa.Target{
-		GOOS:   conf.Goos,
-		GOARCH: conf.Goarch,
-		Target: conf.Target,
+		GOOS:     conf.Goos,
+		GOARCH:   conf.Goarch,
+		Target:   conf.Target,
+		OptLevel: conf.OptLevel,
 	}
 
 	prog := llssa.NewProgram(target)
@@ -296,6 +307,19 @@ func Do(args []string, conf *Config) ([]Package, error) {
 
 	if patterns == nil {
 		patterns = []string{"."}
+	}
+	sourcePatchGOROOT, sourcePatchGoVersion, err := env.GOROOTAndGOVERSIONWithEnv(cfg.Env)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Overlay, err = buildSourcePatchOverlayForGOROOT(cfg.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourcePatchBuildContext{
+		goos:       conf.Goos,
+		goarch:     conf.Goarch,
+		goversion:  sourcePatchGoVersion,
+		buildFlags: cfg.BuildFlags,
+	})
+	if err != nil {
+		return nil, err
 	}
 	initial, err := packages.LoadEx(dedup, sizes, cfg, patterns...)
 	if err != nil {
@@ -338,6 +362,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	prog.SetPython(func() *types.Package {
 		return dedup.Check(llssa.PkgPython).Types
 	})
+	preCollectRuntimeLinknames(prog, altPkgs)
 
 	buildMode := ssaBuildMode
 	cabiOptimize := true
@@ -911,7 +936,9 @@ func compileExtraFiles(ctx *context, verbose bool) ([]string, error) {
 func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPath string, verbose bool) error {
 	needRuntime := false
 	needPyInit := false
-	needAbiInit := false
+	var needAbiInit int
+	methodByIndex := make(map[int]none)
+	methodByName := make(map[string]none)
 	allPkgs := []*packages.Package{pkg}
 	for _, v := range pkgs {
 		allPkgs = append(allPkgs, v.Package)
@@ -966,8 +993,12 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 		need1, need2 := aPkg.isNeedRuntimeOrPyInit()
 		needRuntime = needRuntime || need1
 		needPyInit = needPyInit || need2
-		if aPkg.LPkg.NeedAbiInit {
-			needAbiInit = true
+		needAbiInit |= aPkg.LPkg.NeedAbiInit
+		for k, _ := range aPkg.LPkg.MethodByIndex {
+			methodByIndex[k] = none{}
+		}
+		for k, _ := range aPkg.LPkg.MethodByName {
+			methodByName[k] = none{}
 		}
 
 		linkArgs = append(linkArgs, aPkg.LinkArgs...)
@@ -982,13 +1013,18 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 		archiveInputs = append(archiveInputs, rtLinkInputs...)
 	}
 
-	abiSymbols := linkedModuleGlobals(linkedOrder)
-
 	// Generate main module file (needed for global variables even in library modes)
 	// This is compiled directly to .o and added to linkInputs (not cached)
 	// Use a stable synthetic name to avoid confusing it with the real main package in traces/logs.
-	entryPkg := genMainModule(ctx, llssa.PkgRuntime, pkg, needRuntime, needPyInit, needAbiInit, abiSymbols)
-	entryObjFile, err := exportObject(ctx, "entry_main", entryPkg.ExportFile, []byte(entryPkg.LPkg.String()))
+	entryPkg := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{
+		rtInit:        needRuntime,
+		pyInit:        needPyInit,
+		abiInit:       needAbiInit,
+		methodByIndex: methodByIndex,
+		methodByName:  methodByName,
+		abiSymbols:    linkedModuleGlobals(linkedOrder),
+	})
+	entryObjFile, err := exportObject(ctx, "entry_main", entryPkg.ExportFile, entryPkg.LPkg)
 	if err != nil {
 		return err
 	}
@@ -1027,25 +1063,20 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 	return nil
 }
 
-func linkedModuleGlobals(pkgs []Package) []string {
+func linkedModuleGlobals(pkgs []Package) map[string]none {
 	if len(pkgs) == 0 {
 		return nil
 	}
-	seen := make(map[string]struct{})
+	seen := make(map[string]none)
 	for _, pkg := range pkgs {
 		if pkg == nil || pkg.LPkg == nil {
 			continue
 		}
 		for g := pkg.LPkg.Module().FirstGlobal(); !g.IsNil(); g = gllvm.NextGlobal(g) {
-			seen[g.Name()] = struct{}{}
+			seen[g.Name()] = none{}
 		}
 	}
-	names := make([]string, 0, len(seen))
-	for name := range seen {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return seen
 }
 
 // isRuntimePkg reports whether the package path belongs to the llgo runtime tree.
@@ -1069,7 +1100,9 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 	case BuildModeCShared:
 		buildArgs = append(buildArgs, "-shared", "-fPIC")
 	case BuildModeExe:
-		// Default executable mode, no additional flags needed
+		if needsLinuxNoPIE(ctx, linkArgs) {
+			buildArgs = append(buildArgs, "-no-pie")
+		}
 	}
 
 	// Add common linker arguments based on target OS and architecture
@@ -1102,6 +1135,20 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 	cmd := ctx.linker()
 	cmd.Verbose = printCmds
 	return cmd.Link(buildArgs...)
+}
+
+func needsLinuxNoPIE(ctx *context, linkArgs []string) bool {
+	if ctx.buildConf.Target != "" || ctx.buildConf.Goos != "linux" {
+		return false
+	}
+	// Host Linux toolchains commonly default to PIE executables, which can
+	// break runtime assumptions unless the user explicitly requested a PIE mode.
+	for _, arg := range linkArgs {
+		if arg == "-pie" || arg == "-static-pie" || arg == "-no-pie" || arg == "-nopie" {
+			return false
+		}
+	}
+	return true
 }
 
 // archiver returns the archiving tool to use for the current context.
@@ -1224,6 +1271,9 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 	check(err)
 
 	aPkg.LPkg = ret
+	if hook := ctx.buildConf.ModuleHook; hook != nil {
+		hook(aPkg)
+	}
 
 	// If cache hit, we only needed to register types - skip compilation
 	if aPkg.CacheHit {
@@ -1234,14 +1284,14 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 	ctx.cTransformer.TransformModule(ret.Path(), ret.Module())
 	ctx.cTransformer.SetSkipFuncs(nil)
 
-	// Run LLVM optimization passes (memcpyopt converts load/store to memcpy)
+	// Run the default LLVM optimization pipeline selected by the requested -O level.
 	if ctx.passOpt {
 		mod := ret.Module()
 		mod.SetDataLayout(ctx.prog.DataLayout())
 		mod.SetTarget(ctx.prog.Target().Spec().Triple)
 		pbo := gllvm.NewPassBuilderOptions()
 		defer pbo.Dispose()
-		if err := mod.RunPasses("memcpyopt", ctx.prog.TargetMachine(), pbo); err != nil {
+		if err := mod.RunPasses(llvmPassPipeline(ctx.buildConf.OptLevel), ctx.prog.TargetMachine(), pbo); err != nil {
 			return fmt.Errorf("run LLVM passes failed for %v: %v", pkgPath, err)
 		}
 	}
@@ -1288,7 +1338,7 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 		aPkg.LinkArgs = append(aPkg.LinkArgs, goCgoLinkArgs(ctx.buildConf.Goos, aPkg.AltPkg.Syntax)...)
 	}
 	if pkg.ExportFile != "" {
-		exportFile, err := exportObject(ctx, pkg.PkgPath, pkg.ExportFile, []byte(ret.String()))
+		exportFile, err := exportObject(ctx, pkg.PkgPath, pkg.ExportFile, ret)
 		if err != nil {
 			return fmt.Errorf("export object of %v failed: %v", pkgPath, err)
 		}
@@ -1300,7 +1350,98 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 	return nil
 }
 
-func exportObject(ctx *context, pkgPath string, exportFile string, data []byte) (string, error) {
+func exportObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Package) (string, error) {
+	if useInMemoryNativeCodegen(ctx) {
+		return exportObjectInMemory(ctx, pkgPath, exportFile, pkg)
+	}
+	return exportObjectWithClang(ctx, pkgPath, exportFile, []byte(pkg.String()))
+}
+
+func useInMemoryNativeCodegen(ctx *context) bool {
+	return useInMemoryNativeCodegenConf(ctx.buildConf)
+}
+
+func useInMemoryNativeCodegenConf(conf *Config) bool {
+	return conf != nil && !conf.GenLL &&
+		conf.Target == "" &&
+		conf.Goos == runtime.GOOS &&
+		conf.Goarch == runtime.GOARCH &&
+		conf.Goarch != "wasm"
+}
+
+func dumpLLVMIRIfNeeded(ctx *context, pkgPath string, exportFile string, data string) error {
+	if !ctx.buildConf.CheckLLFiles && !ctx.buildConf.GenLL {
+		return nil
+	}
+
+	base := filepath.Base(exportFile)
+	f, err := os.CreateTemp("", base+"-*.ll")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(data); err != nil {
+		f.Close()
+		return err
+	}
+	err = f.Close()
+	if err != nil {
+		return err
+	}
+	if ctx.buildConf.CheckLLFiles {
+		if msg, err := llcCheck(ctx.env, f.Name()); err != nil {
+			fmt.Fprintf(os.Stderr, "==> llc %v: %v\n%v\n", pkgPath, f.Name(), msg)
+		}
+	}
+	// If GenLL is enabled, keep a copy of the .ll file for debugging
+	if ctx.buildConf.GenLL {
+		llFile := exportFile + ".ll"
+		if err := os.Chmod(f.Name(), 0644); err != nil {
+			return err
+		}
+		if err := copyFileAtomic(f.Name(), llFile); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func exportObjectInMemory(ctx *context, pkgPath string, exportFile string, pkg llssa.Package) (string, error) {
+	if ctx.buildConf.CheckLLFiles || ctx.buildConf.GenLL {
+		// Avoid formatting large IR unless a debug/check path needs it.
+		if err := dumpLLVMIRIfNeeded(ctx, pkgPath, exportFile, pkg.String()); err != nil {
+			return "", err
+		}
+	}
+	buf, err := ctx.prog.TargetMachine().EmitToMemoryBuffer(pkg.Module(), gllvm.ObjectFile)
+	if err != nil {
+		return "", err
+	}
+	defer buf.Dispose()
+
+	base := filepath.Base(exportFile)
+	objFile, err := os.CreateTemp("", base+"-*.o")
+	if err != nil {
+		return "", err
+	}
+	objFileName := objFile.Name()
+	if ctx.shouldPrintCommands(false) {
+		fmt.Fprintf(os.Stderr, "# compiling %s for pkg: %s\n", objFileName, pkgPath)
+		fmt.Fprintln(os.Stderr, "# using in-memory LLVM object emission")
+	}
+	if _, err := objFile.Write(buf.Bytes()); err != nil {
+		objFile.Close()
+		os.Remove(objFileName)
+		return "", err
+	}
+	if err := objFile.Close(); err != nil {
+		os.Remove(objFileName)
+		return "", err
+	}
+	return objFileName, nil
+}
+
+func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data []byte) (string, error) {
 	base := filepath.Base(exportFile)
 	f, err := os.CreateTemp("", base+"-*.ll")
 	if err != nil {
@@ -1316,10 +1457,9 @@ func exportObject(ctx *context, pkgPath string, exportFile string, data []byte) 
 	}
 	if ctx.buildConf.CheckLLFiles {
 		if msg, err := llcCheck(ctx.env, f.Name()); err != nil {
-			fmt.Fprintf(os.Stderr, "==> lcc %v: %v\n%v\n", pkgPath, f.Name(), msg)
+			fmt.Fprintf(os.Stderr, "==> llc %v: %v\n%v\n", pkgPath, f.Name(), msg)
 		}
 	}
-	// If GenLL is enabled, keep a copy of the .ll file for debugging
 	if ctx.buildConf.GenLL {
 		llFile := exportFile + ".ll"
 		if err := os.Chmod(f.Name(), 0644); err != nil {
@@ -1330,7 +1470,6 @@ func exportObject(ctx *context, pkgPath string, exportFile string, data []byte) 
 			return "", err
 		}
 	}
-	// Always compile .ll to .o for linking
 	objFile, err := os.CreateTemp("", base+"-*.o")
 	if err != nil {
 		return "", err
@@ -1369,6 +1508,15 @@ func altPkgs(initial []*packages.Package, conf *Config, alts ...string) []string
 		}
 	})
 	return alts
+}
+
+func preCollectRuntimeLinknames(prog llssa.Program, pkgs []*packages.Package) {
+	for _, pkg := range pkgs {
+		if pkg != nil && pkg.PkgPath == llssa.PkgRuntime && len(pkg.Syntax) != 0 {
+			cl.PreCollectLinknames(prog, pkg.PkgPath, pkg.Syntax)
+			return
+		}
+	}
 }
 
 func altSSAPkgs(prog *ssa.Program, patches cl.Patches, alts []*packages.Package, conf *Config, verbose bool) {
@@ -1579,7 +1727,7 @@ func createSSAPkg(ctx *context, prog *ssa.Program, p *packages.Package, verbose 
 		pkgSSA = prog.CreatePackage(p.Types, p.Syntax, p.TypesInfo, true)
 		pkgSSA.Build() // TODO(xsw): build concurrently
 		// Apply local SSA fixups once when package SSA is first built.
-		fixSSAOrder(pkgSSA)
+		fixSSAOrder(pkgSSA, p.Syntax)
 	}
 	return pkgSSA
 }
@@ -1660,6 +1808,20 @@ func IsDbgSymsEnabled() bool {
 
 func IsOptimizeEnabled() bool {
 	return isEnvOn(llgoOptimize, true)
+}
+
+func effectiveOptLevel(conf *Config) optlevel.Level {
+	if conf != nil && conf.OptLevel.IsValid() {
+		return conf.OptLevel
+	}
+	if conf != nil && conf.Target != "" {
+		return optlevel.Oz
+	}
+	return optlevel.O2
+}
+
+func llvmPassPipeline(level optlevel.Level) string {
+	return "default<" + level.Name() + ">"
 }
 
 func IsWasiThreadsEnabled() bool {

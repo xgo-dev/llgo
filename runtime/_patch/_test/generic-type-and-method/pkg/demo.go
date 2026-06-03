@@ -1,0 +1,7 @@
+package demo
+
+type Box[T any] struct{ V T }
+
+func (b Box[T]) Old() T { return b.V }
+
+func Keep[T any](v T) T { return v }

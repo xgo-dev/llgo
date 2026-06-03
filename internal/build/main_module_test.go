@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 
 	"github.com/goplus/llgo/internal/packages"
 	llssa "github.com/goplus/llgo/ssa"
@@ -29,7 +29,8 @@ func TestGenMainModuleExecutable(t *testing.T) {
 		},
 	}
 	pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
-	mod := genMainModule(ctx, llssa.PkgRuntime, pkg, true, true, true, nil)
+	mod := genMainModule(ctx, llssa.PkgRuntime, pkg,
+		&genConfig{rtInit: true, pyInit: true})
 	if mod.ExportFile != "foo.a-main" {
 		t.Fatalf("unexpected export file: %s", mod.ExportFile)
 	}
@@ -59,7 +60,7 @@ func TestGenMainModuleLibrary(t *testing.T) {
 		},
 	}
 	pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
-	mod := genMainModule(ctx, llssa.PkgRuntime, pkg, false, false, false, nil)
+	mod := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{})
 	ir := mod.LPkg.String()
 	if strings.Contains(ir, "define i32 @main") {
 		t.Fatalf("library mode should not emit main function:\n%s", ir)

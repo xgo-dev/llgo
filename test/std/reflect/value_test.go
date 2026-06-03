@@ -500,7 +500,7 @@ func TestValueFieldByIndexErr(t *testing.T) {
 	// FieldByIndexErr exists but still panics on invalid index
 }
 
-// Test Value.Seq and Seq2 (Go 1.23+ iterators)
+// Test Value.Seq and Seq2 (Go 1.24+ iterators)
 func TestValueSeq(t *testing.T) {
 	// Seq returns an iterator for array/slice
 	s := []int{1, 2, 3}

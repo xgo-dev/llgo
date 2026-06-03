@@ -1,0 +1,11 @@
+//line {{PATCH_ROOT}}/demo/patch.go:1
+package demo
+
+//llgo_skip Drop
+
+import "strings"
+
+var Added = strings.ToUpper("added")
+
+func Old() string   { return "new" }
+func (T) M() string { return "new method" }

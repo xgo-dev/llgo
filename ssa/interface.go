@@ -17,13 +17,11 @@
 package ssa
 
 import (
-	"go/constant"
 	"go/token"
 	"go/types"
-	"log"
 
 	"github.com/goplus/llgo/ssa/abi"
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 )
 
 // -----------------------------------------------------------------------------
@@ -109,9 +107,7 @@ func (b Builder) Imethod(intf Expr, method *types.Func) Expr {
 //	t2 = make Stringer <- t0
 func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
 	rawIntf := tinter.raw.Type.Underlying().(*types.Interface)
-	if debugInstr {
-		log.Printf("MakeInterface %v, %v\n", rawIntf, x.impl)
-	}
+	dbgInstrf("MakeInterface %v, %v\n", rawIntf, x.impl)
 	if x.kind == vkFuncDecl {
 		typ := b.Prog.Type(x.raw.Type, InGo)
 		x = checkExpr(x, typ.raw.Type, b)
@@ -119,6 +115,11 @@ func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
 	prog := b.Prog
 	typ := x.Type
 	tabi := b.abiType(typ.raw.Type)
+	if !directIfaceType(typ.raw.Type) {
+		vptr := b.AllocU(typ)
+		b.Store(vptr, x)
+		return Expr{b.unsafeInterface(rawIntf, tabi, vptr.impl), tinter}
+	}
 	kind, _, lvl := abi.DataKindOf(typ.raw.Type, 0, prog.is32Bits)
 	switch kind {
 	case abi.Indirect:
@@ -151,8 +152,33 @@ func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
 	return Expr{b.unsafeInterface(rawIntf, tabi, data), tinter}
 }
 
+func (b Builder) MakeInterfaceFromPtr(tinter Type, ptr Expr) (ret Expr) {
+	rawIntf := tinter.raw.Type.Underlying().(*types.Interface)
+	prog := b.Prog
+	b.AssertNilDeref(ptr)
+
+	typ := prog.Elem(ptr.Type)
+	tabi := b.abiType(typ.raw.Type)
+	if kind, _, _ := abi.DataKindOf(typ.raw.Type, 0, prog.is32Bits); kind != abi.Indirect {
+		return b.MakeInterface(tinter, b.Load(ptr))
+	}
+
+	vptr := b.AllocU(typ)
+	dst := b.Convert(prog.VoidPtr(), vptr)
+	src := b.Convert(prog.VoidPtr(), ptr)
+	b.Call(b.Pkg.rtFunc("Typedmemmove"), tabi, dst, src)
+	return Expr{b.unsafeInterface(rawIntf, tabi, vptr.impl), tinter}
+}
+
 func (b Builder) valFromData(typ Type, data llvm.Value) Expr {
 	prog := b.Prog
+	if !directIfaceType(typ.raw.Type) {
+		impl := b.impl
+		tll := typ.ll
+		tptr := llvm.PointerType(tll, 0)
+		ptr := llvm.CreatePointerCast(impl, data, tptr)
+		return Expr{llvm.CreateLoad(impl, tll, ptr), typ}
+	}
 	kind, real, lvl := abi.DataKindOf(typ.raw.Type, 0, prog.is32Bits)
 	switch kind {
 	case abi.Indirect:
@@ -203,7 +229,7 @@ func (b Builder) buildVal(typ Type, val llvm.Value, lvl int) Expr {
 	case *types.Array:
 		telem := b.Prog.rawType(t.Elem())
 		elem := b.buildVal(telem, val, lvl-1)
-		return Expr{llvm.ConstArray(typ.ll, []llvm.Value{elem.impl}), typ}
+		return Expr{aggregateValue(b.impl, typ.ll, elem.impl), typ}
 	}
 	panic("todo")
 }
@@ -248,15 +274,13 @@ func (b Builder) buildVal(typ Type, val llvm.Value, lvl int) Expr {
 //	t1 = typeassert t0.(int)
 //	t3 = typeassert,ok t2.(T)
 func (b Builder) TypeAssert(x Expr, assertedTyp Type, commaOk bool) Expr {
-	if debugInstr {
-		log.Printf("TypeAssert %v, %v, %v\n", x.impl, assertedTyp.raw.Type, commaOk)
-	}
+	dbgInstrf("TypeAssert %v, %v, %v\n", x.impl, assertedTyp.raw.Type, commaOk)
 	tx := b.faceAbiType(x)
 	tabi := b.abiType(assertedTyp.raw.Type)
 	var eq Expr
 	var val func() Expr
 	if x.RawType() == assertedTyp.RawType() {
-		eq = b.Const(constant.MakeBool(!b.faceData(x.impl).IsNull()), b.Prog.Bool())
+		eq = b.BinOp(token.NEQ, tx, b.Prog.Zero(b.Prog.AbiTypePtr()))
 		val = func() Expr { return x }
 	} else {
 		if rawIntf, ok := assertedTyp.raw.Type.Underlying().(*types.Interface); ok {
@@ -327,9 +351,7 @@ func (b Builder) ChangeInterface(typ Type, x Expr) (ret Expr) {
 
 // InterfaceData returns the data pointer of an interface.
 func (b Builder) InterfaceData(x Expr) Expr {
-	if debugInstr {
-		log.Printf("InterfaceData %v\n", x.impl)
-	}
+	dbgInstrf("InterfaceData %v\n", x.impl)
 	return Expr{b.faceData(x.impl), b.Prog.VoidPtr()}
 }
 

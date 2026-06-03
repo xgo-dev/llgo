@@ -130,6 +130,8 @@ func emitDarwinDynimportTrampoline(b *strings.Builder, goarch string, local stri
 	if b == nil || local == "" || alias == "" {
 		return
 	}
+	trampoline := local + "_trampoline"
+	addr := local + "_trampoline_addr"
 	// Mach-O external C symbols use a leading underscore.
 	switch goarch {
 	case "arm64":
@@ -141,6 +143,19 @@ func emitDarwinDynimportTrampoline(b *strings.Builder, goarch string, local stri
 		b.WriteString(":\n\tb _")
 		b.WriteString(alias)
 		b.WriteString("\n")
+		b.WriteString(".globl _")
+		b.WriteString(trampoline)
+		b.WriteString("\n.p2align 2\n_")
+		b.WriteString(trampoline)
+		b.WriteString(":\n\tb _")
+		b.WriteString(local)
+		b.WriteString("\n.data\n.globl _")
+		b.WriteString(addr)
+		b.WriteString("\n.p2align 3\n_")
+		b.WriteString(addr)
+		b.WriteString(":\n\t.quad _")
+		b.WriteString(trampoline)
+		b.WriteString("\n")
 	case "amd64":
 		b.WriteString(".text\n")
 		b.WriteString(".globl _")
@@ -149,6 +164,19 @@ func emitDarwinDynimportTrampoline(b *strings.Builder, goarch string, local stri
 		b.WriteString(local)
 		b.WriteString(":\n\tjmp _")
 		b.WriteString(alias)
+		b.WriteString("\n")
+		b.WriteString(".globl _")
+		b.WriteString(trampoline)
+		b.WriteString("\n.p2align 4, 0x90\n_")
+		b.WriteString(trampoline)
+		b.WriteString(":\n\tjmp _")
+		b.WriteString(local)
+		b.WriteString("\n.data\n.globl _")
+		b.WriteString(addr)
+		b.WriteString("\n.p2align 3\n_")
+		b.WriteString(addr)
+		b.WriteString(":\n\t.quad _")
+		b.WriteString(trampoline)
 		b.WriteString("\n")
 	default:
 		// Keep unsupported arch silent for now; caller already gates by darwin.

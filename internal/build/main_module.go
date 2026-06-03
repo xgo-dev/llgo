@@ -31,17 +31,26 @@ import (
 	"go/types"
 
 	"github.com/goplus/llgo/internal/packages"
-	llvm "github.com/goplus/llvm"
+	llvm "github.com/xgo-dev/llvm"
 
 	llssa "github.com/goplus/llgo/ssa"
 )
+
+type genConfig struct {
+	rtInit        bool
+	pyInit        bool
+	abiInit       int
+	methodByIndex map[int]none
+	methodByName  map[string]none
+	abiSymbols    map[string]none
+}
 
 // genMainModule generates the main entry module for an llgo program.
 //
 // The module contains argc/argv globals and, for executable build modes,
 // the entry function that wires initialization and main. For C archive or
 // shared library modes, only the globals are emitted.
-func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, needRuntime, needPyInit, needAbiInit bool, abiSymbols []string) Package {
+func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *genConfig) Package {
 	prog := ctx.prog
 	mainPkg := prog.NewPackage("", pkg.ID+".main")
 
@@ -73,18 +82,23 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, needRu
 	defineWeakNoArgStub(mainPkg, "syscall.init")
 
 	var pyInit llssa.Function
-	if needPyInit {
+	if cfg.pyInit {
 		pyInit = declareNoArgFunc(mainPkg, "Py_Initialize")
 	}
 
 	var rtInit llssa.Function
-	if needRuntime {
+	if cfg.rtInit {
 		rtInit = declareNoArgFunc(mainPkg, rtPkgPath+".init")
 	}
 
 	var abiInit llssa.Function
-	if needAbiInit {
-		abiInit = mainPkg.InitAbiTypesFor("init$abitypes", abiSymbols)
+	if cfg.abiInit != 0 {
+		abiInit = mainPkg.InitAbiTypesFor("init$abitypes", func(sym *llssa.AbiSymbol) bool {
+			if _, ok := cfg.abiSymbols[sym.Name]; !ok {
+				return false
+			}
+			return filterAbiSymbol(cfg.abiInit, sym)
+		})
 	}
 
 	mainInit := declareNoArgFunc(mainPkg, pkg.PkgPath+".init")
@@ -97,6 +111,43 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, needRu
 	}
 
 	return mainAPkg
+}
+
+func filterAbiSymbol(abiInit int, sym *llssa.AbiSymbol) bool {
+	switch sym.Raw.(type) {
+	case *types.Array:
+		if abiInit&llssa.ReflectArrayOf != 0 {
+			return true
+		}
+	case *types.Chan:
+		if abiInit&llssa.ReflectChanOf != 0 {
+			return true
+		}
+	case *types.Signature:
+		if abiInit&llssa.ReflectFuncOf != 0 {
+			return true
+		}
+		if abiInit&llssa.ReflectMethodMask != 0 {
+			return true
+		}
+	case *types.Map:
+		if abiInit&llssa.ReflectMapOf != 0 {
+			return true
+		}
+	case *types.Pointer:
+		if abiInit&llssa.ReflectPointerTo != 0 {
+			return true
+		}
+	case *types.Slice:
+		if abiInit&llssa.ReflectSliceOf != 0 {
+			return true
+		}
+	case *types.Struct:
+		if abiInit&llssa.ReflectStructOf != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // defineEntryFunction creates the program's entry function. The name is

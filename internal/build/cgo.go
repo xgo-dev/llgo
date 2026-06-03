@@ -20,12 +20,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/token"
 	"go/types"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/goplus/llgo/internal/buildtags"
@@ -34,9 +36,15 @@ import (
 )
 
 type cgoDecl struct {
-	tag     string
-	cflags  []string
-	ldflags []string
+	tag      string
+	cflags   []string
+	cxxflags []string
+	ldflags  []string
+}
+
+type cgoSrcFile struct {
+	path  string
+	isCXX bool
 }
 
 type cgoPreamble struct {
@@ -53,8 +61,19 @@ static void* _Cmalloc(size_t size) {
 `
 )
 
+var cgoExternRE = regexp.MustCompile(`^(_cgo_[^_]+_(C2func|Cfunc|Cmacro)_)(.*)$`)
+
 func buildCgo(ctx *context, pkg *aPackage, files []*ast.File, externs []string, verbose bool) (llfiles, cgoLdflags []string, err error) {
-	cfiles, preambles, cdecls, err := parseCgo_(pkg, files)
+	buildCtx := build.Default
+	if ctx.buildConf.Goos != "" {
+		buildCtx.GOOS = ctx.buildConf.Goos
+	}
+	if ctx.buildConf.Goarch != "" {
+		buildCtx.GOARCH = ctx.buildConf.Goarch
+	}
+	buildCtx.BuildTags = parseSourcePatchBuildTags(ctx.conf.BuildFlags)
+
+	srcFiles, preambles, cdecls, err := parseCgo_(&buildCtx, pkg, files)
 	if err != nil {
 		return
 	}
@@ -66,11 +85,15 @@ func buildCgo(ctx *context, pkg *aPackage, files []*ast.File, externs []string, 
 	}
 	buildtags.CheckTags(ctx.conf.BuildFlags, tagUsed)
 	cflags := []string{}
+	cxxflags := []string{}
 	ldflags := []string{}
 	for _, cdecl := range cdecls {
 		if cdecl.tag == "" || tagUsed[cdecl.tag] {
 			if len(cdecl.cflags) > 0 {
 				cflags = append(cflags, cdecl.cflags...)
+			}
+			if len(cdecl.cxxflags) > 0 {
+				cxxflags = append(cxxflags, cdecl.cxxflags...)
 			}
 			if len(cdecl.ldflags) > 0 {
 				ldflags = append(ldflags, cdecl.ldflags...)
@@ -85,35 +108,16 @@ func buildCgo(ctx *context, pkg *aPackage, files []*ast.File, externs []string, 
 			cflags = append(cflags, "-I"+dir)
 		}
 	}
-	for _, cfile := range cfiles {
-		clFile(ctx, cflags, cfile, pkg.ExportFile, pkg.PkgPath, func(linkFile string) {
+	for _, src := range srcFiles {
+		args := slices.Clone(cflags)
+		if src.isCXX {
+			args = append(args, cxxflags...)
+		}
+		clFile(ctx, args, src.path, pkg.ExportFile, pkg.PkgPath, func(linkFile string) {
 			llfiles = append(llfiles, linkFile)
 		}, verbose)
 	}
-	re := regexp.MustCompile(`^(_cgo_[^_]+_(C2func|Cfunc|Cmacro)_)(.*)$`)
-	cgoSymbols := make(map[string]string)
-	mallocFix := false
-	for _, symbolName := range externs {
-		lastPart := symbolName
-		lastDot := strings.LastIndex(symbolName, ".")
-		if lastDot != -1 {
-			lastPart = symbolName[lastDot+1:]
-		}
-		if strings.HasPrefix(lastPart, "__cgo_") {
-			// func ptr var: main.__cgo_func_name
-			cgoSymbols[symbolName] = lastPart
-		} else if m := re.FindStringSubmatch(symbolName); len(m) > 0 {
-			prefix := m[1] // _cgo_hash_(Cfunc|Cmacro)_
-			name := m[3]   // remaining part
-			cgoSymbols[symbolName] = name
-			// fix missing _cgo_9113e32b6599_Cfunc__Cmalloc
-			if !mallocFix && m[2] == "Cfunc" {
-				mallocName := prefix + "_Cmalloc"
-				cgoSymbols[mallocName] = "_Cmalloc"
-				mallocFix = true
-			}
-		}
-	}
+	cgoSymbols := collectCgoSymbols(externs)
 	for _, preamble := range preambles {
 		tmpFile, err := os.CreateTemp("", "-cgo-*.c")
 		if err != nil {
@@ -137,6 +141,34 @@ func buildCgo(ctx *context, pkg *aPackage, files []*ast.File, externs []string, 
 		cgoLdflags = append(cgoLdflags, safesplit.SplitPkgConfigFlags(ldflag)...)
 	}
 	return
+}
+
+func collectCgoSymbols(externs []string) map[string]string {
+	cgoSymbols := make(map[string]string, len(externs))
+	mallocFix := false
+	for _, symbolName := range externs {
+		lastPart := symbolName
+		lastDot := strings.LastIndex(symbolName, ".")
+		if lastDot != -1 {
+			lastPart = symbolName[lastDot+1:]
+		}
+		if strings.HasPrefix(lastPart, "__cgo_") {
+			// Func pointer vars are looked up in the Go package by their
+			// qualified names, but emitted C globals must use bare _cgo_* names.
+			cgoSymbols[symbolName] = lastPart
+		} else if m := cgoExternRE.FindStringSubmatch(lastPart); len(m) > 0 {
+			prefix := m[1] // _cgo_hash_(Cfunc|Cmacro)_
+			name := m[3]   // remaining part
+			cgoSymbols[lastPart] = name
+			// fix missing _cgo_9113e32b6599_Cfunc__Cmalloc
+			if !mallocFix && m[2] == "Cfunc" {
+				mallocName := prefix + "_Cmalloc"
+				cgoSymbols[mallocName] = "_Cmalloc"
+				mallocFix = true
+			}
+		}
+	}
+	return cgoSymbols
 }
 
 // clangASTNode represents a node in clang's AST
@@ -278,24 +310,62 @@ func extractFuncNames(node *clangASTNode, funcNames map[string]bool) {
 	}
 }
 
-func parseCgo_(pkg *aPackage, files []*ast.File) (cfiles []string, preambles []cgoPreamble, cdecls []cgoDecl, err error) {
+func parseCgo_(buildCtx *build.Context, pkg *aPackage, files []*ast.File) (srcFiles []cgoSrcFile, preambles []cgoPreamble, cdecls []cgoDecl, err error) {
 	dirs := make(map[string]none)
 	for _, file := range files {
 		pos := pkg.Fset.Position(file.Name.NamePos)
 		dir, _ := filepath.Split(pos.Filename)
 		dirs[dir] = none{}
 	}
-	for dir := range dirs {
-		matches, err := filepath.Glob(filepath.Join(dir, "*.c"))
-		if err != nil {
-			continue
+	addFile := func(dir, match string, isCXX bool) error {
+		fi, statErr := os.Stat(match)
+		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				return nil
+			}
+			return statErr
 		}
-		for _, match := range matches {
-			if strings.HasSuffix(match, "_test.c") {
+		if fi.IsDir() {
+			return nil
+		}
+		name := filepath.Base(match)
+		switch {
+		case strings.HasSuffix(name, "_test.c"),
+			strings.HasSuffix(name, "_test.cc"),
+			strings.HasSuffix(name, "_test.cpp"),
+			strings.HasSuffix(name, "_test.cxx"):
+			return nil
+		}
+		if buildCtx != nil {
+			matchFile, err := buildCtx.MatchFile(dir, name)
+			if err != nil {
+				return fmt.Errorf("match cgo file %s: %w", match, err)
+			}
+			if !matchFile {
+				return nil
+			}
+		}
+		srcFiles = append(srcFiles, cgoSrcFile{path: match, isCXX: isCXX})
+		return nil
+	}
+	for dir := range dirs {
+		for _, pattern := range []struct {
+			glob  string
+			isCXX bool
+		}{
+			{glob: "*.c"},
+			{glob: "*.cc", isCXX: true},
+			{glob: "*.cpp", isCXX: true},
+			{glob: "*.cxx", isCXX: true},
+		} {
+			matches, err := filepath.Glob(filepath.Join(dir, pattern.glob))
+			if err != nil {
 				continue
 			}
-			if fi, err := os.Stat(match); err == nil && !fi.IsDir() {
-				cfiles = append(cfiles, match)
+			for _, match := range matches {
+				if err := addFile(dir, match, pattern.isCXX); err != nil {
+					return nil, nil, nil, err
+				}
 			}
 		}
 	}
@@ -359,6 +429,7 @@ func parseCgoPreamble(pos token.Position, text string) (preamble cgoPreamble, de
 // #cgo windows LDFLAGS: -LC:/Python312/libs -lpython312
 // #cgo linux CPPFLAGS: -I/usr/lib/llvm-19/include -D_GNU_SOURCE
 // #cgo CFLAGS: -I/usr/include/python3.12
+// #cgo CXXFLAGS: -I/usr/include/c++/v1
 // #cgo LDFLAGS: -L/usr/lib/python3.12/config-3.12-x86_64-linux-gnu -lpython3.12
 func parseCgoDecl(line string) (cgoDecls []cgoDecl, err error) {
 	idx := strings.Index(line, ":")
@@ -410,6 +481,11 @@ func parseCgoDecl(line string) (cgoDecls []cgoDecl, err error) {
 		cgoDecls = append(cgoDecls, cgoDecl{
 			tag:    tag,
 			cflags: safesplit.SplitPkgConfigFlags(arg),
+		})
+	case "CXXFLAGS":
+		cgoDecls = append(cgoDecls, cgoDecl{
+			tag:      tag,
+			cxxflags: safesplit.SplitPkgConfigFlags(arg),
 		})
 	case "LDFLAGS":
 		cgoDecls = append(cgoDecls, cgoDecl{

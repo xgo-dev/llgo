@@ -34,7 +34,6 @@ import (
 
 func TestMain(m *testing.M) {
 	flag.Parse()
-	ssa.SetDebug(ssa.DbgFlagAll)
 	if !testing.Verbose() {
 		log.SetOutput(io.Discard)
 	}

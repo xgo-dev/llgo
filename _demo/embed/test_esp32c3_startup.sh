@@ -230,7 +230,13 @@ fi
 echo ""
 echo "=== Test 4: ESP32-C3 float output regressions (temporary) ==="
 pushd "$SCRIPT_DIR" > /dev/null
-run_case_and_compare "./esp32c3/float-1664" $'+5.000000e+00 +8.000000e+00\n1 +2.000000e+00\n0x0 +0.000000e+00 notOk: true\n0x0 +0.000000e+00 true\n3 +6.280000e+00'
+FLOAT_1664_EXPECT=$'+5.000000e+00 +8.000000e+00\n1 +2.000000e+00\n0x0 +0.000000e+00 notOk: true\n0x0 +0.000000e+00 true\n3 +6.280000e+00'
+if [[ "$(go env GOVERSION)" == go1.26* ]]; then
+    FLOAT_1664_EXPECT=$'5 8\n1 2\n0x0 0 notOk: true\n0x0 0 true\n3 6.28'
+fi
+run_case_and_compare "./esp32c3/float-1664" "$FLOAT_1664_EXPECT"
+# Mixed Go println + C printf(%f) regression tracking for issue #1723.
+run_case_and_compare "./esp32c3/print-float-1723" $'go 0\nf=1.100000'
 popd > /dev/null
 
 echo ""

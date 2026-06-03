@@ -1,6 +1,7 @@
 package build
 
 import (
+	"go/ast"
 	"go/token"
 	"go/types"
 
@@ -23,10 +24,11 @@ import (
 // This pass moves loads of local allocs used only for the final Return results
 // to after any intervening calls that use the same alloc pointer, matching the
 // behavior of the Go compiler for the stdlib cases we rely on (e.g. crypto/x509.ParseOID).
-func fixSSAOrder(pkg *ssa.Package) {
+func fixSSAOrder(pkg *ssa.Package, files []*ast.File) {
 	if pkg == nil {
 		return
 	}
+	selectRecvAssigns := collectSingleCaseSelectRecvAssigns(files)
 	visited := make(map[*ssa.Function]struct{})
 	visitFn := func(fn *ssa.Function) {
 		if fn == nil {
@@ -36,7 +38,7 @@ func fixSSAOrder(pkg *ssa.Package) {
 			return
 		}
 		visited[fn] = struct{}{}
-		fixSSAOrderFunc(fn)
+		fixSSAOrderFunc(fn, selectRecvAssigns)
 	}
 
 	for _, mem := range pkg.Members {
@@ -64,16 +66,177 @@ func fixSSAOrderMethods(pkg *ssa.Package, typ types.Type, visitFn func(*ssa.Func
 	}
 }
 
-func fixSSAOrderFunc(fn *ssa.Function) {
+func fixSSAOrderFunc(fn *ssa.Function, selectRecvAssigns map[token.Pos]struct{}) {
 	if fn == nil || len(fn.Blocks) == 0 {
 		return
 	}
 	for _, b := range fn.Blocks {
 		fixSSAOrderBlock(b)
+		fixSingleCaseSelectRecvAssignBlock(b, selectRecvAssigns)
 	}
 	for _, anon := range fn.AnonFuncs {
-		fixSSAOrderFunc(anon)
+		fixSSAOrderFunc(anon, selectRecvAssigns)
 	}
+}
+
+func collectSingleCaseSelectRecvAssigns(files []*ast.File) map[token.Pos]struct{} {
+	ret := make(map[token.Pos]struct{})
+	for _, file := range files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			sel, ok := node.(*ast.SelectStmt)
+			if !ok || sel.Body == nil || len(sel.Body.List) != 1 {
+				return true
+			}
+			clause, ok := sel.Body.List[0].(*ast.CommClause)
+			if !ok {
+				return true
+			}
+			assign, ok := clause.Comm.(*ast.AssignStmt)
+			if !ok || len(assign.Rhs) != 1 {
+				return true
+			}
+			recv, ok := ast.Unparen(assign.Rhs[0]).(*ast.UnaryExpr)
+			if !ok || recv.Op != token.ARROW {
+				return true
+			}
+			ret[recv.OpPos] = struct{}{}
+			return true
+		})
+	}
+	return ret
+}
+
+func fixSingleCaseSelectRecvAssignBlock(b *ssa.BasicBlock, recvAssigns map[token.Pos]struct{}) {
+	if b == nil || len(b.Instrs) == 0 || len(recvAssigns) == 0 {
+		return
+	}
+	for {
+		changed := false
+		instrIndex := make(map[ssa.Instruction]int, len(b.Instrs))
+		for i, ins := range b.Instrs {
+			instrIndex[ins] = i
+		}
+		// Restart after a move because instruction indexes change. Each move
+		// removes at least one root dependency from before its receive, so the
+		// loop converges once no safely movable dependencies remain.
+		for assignIdx, ins := range b.Instrs {
+			var roots []ssa.Value
+			var val ssa.Value
+			switch instr := ins.(type) {
+			case *ssa.Store:
+				roots = []ssa.Value{instr.Addr}
+				val = instr.Val
+			case *ssa.MapUpdate:
+				roots = []ssa.Value{instr.Map, instr.Key}
+				val = instr.Value
+			default:
+				continue
+			}
+			recv, ok := selectRecvRoot(val, recvAssigns)
+			if !ok {
+				continue
+			}
+			recvInstr, ok := recv.(ssa.Instruction)
+			if !ok {
+				continue
+			}
+			recvIdx, found := instrIndex[recvInstr]
+			if !found || recvIdx >= assignIdx {
+				continue
+			}
+			if moveAssignDepsAfterRecv(b, roots, recv, recvIdx, assignIdx) {
+				changed = true
+				break
+			}
+		}
+		if !changed {
+			return
+		}
+	}
+}
+
+func selectRecvRoot(v ssa.Value, recvAssigns map[token.Pos]struct{}) (ssa.Value, bool) {
+	switch v := v.(type) {
+	case *ssa.UnOp:
+		if v.Op == token.ARROW {
+			_, ok := recvAssigns[v.Pos()]
+			return v, ok
+		}
+	case *ssa.Extract:
+		if u, ok := v.Tuple.(*ssa.UnOp); ok && u.Op == token.ARROW {
+			_, found := recvAssigns[u.Pos()]
+			return u, found
+		}
+	}
+	return nil, false
+}
+
+func moveAssignDepsAfterRecv(b *ssa.BasicBlock, roots []ssa.Value, recv ssa.Value, recvIdx, assignIdx int) bool {
+	move := make(map[int]struct{})
+	seen := make(map[ssa.Value]struct{})
+	for i := 0; i < recvIdx; i++ {
+		v, ok := b.Instrs[i].(ssa.Value)
+		if !ok || v == nil {
+			continue
+		}
+		if valueDependsOnAny(roots, v, seen) && !valueDependsOnReusing(recv, v, seen) {
+			move[i] = struct{}{}
+		}
+	}
+	if len(move) == 0 {
+		return false
+	}
+	if moveWouldBreakSSA(b.Instrs, move, recvIdx) {
+		return false
+	}
+	deps := make([]ssa.Instruction, 0, len(move))
+	next := make([]ssa.Instruction, 0, len(b.Instrs))
+	for i, ins := range b.Instrs {
+		if _, ok := move[i]; ok {
+			deps = append(deps, ins)
+			continue
+		}
+		next = append(next, ins)
+		if i == recvIdx {
+			next = append(next, deps...)
+		}
+	}
+	b.Instrs = next
+	return true
+}
+
+func moveWouldBreakSSA(instrs []ssa.Instruction, move map[int]struct{}, recvIdx int) bool {
+	moved := make(map[ssa.Value]struct{}, len(move))
+	for i := range move {
+		if v, ok := instrs[i].(ssa.Value); ok && v != nil {
+			moved[v] = struct{}{}
+		}
+	}
+	for i := 0; i <= recvIdx && i < len(instrs); i++ {
+		if _, moving := move[i]; moving {
+			continue
+		}
+		for v := range moved {
+			if instrUsesValue(instrs[i], v) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func valueDependsOnAny(values []ssa.Value, target ssa.Value, seen map[ssa.Value]struct{}) bool {
+	for _, v := range values {
+		if valueDependsOnReusing(v, target, seen) {
+			return true
+		}
+	}
+	return false
+}
+
+func valueDependsOnReusing(v, target ssa.Value, seen map[ssa.Value]struct{}) bool {
+	clear(seen)
+	return valueDependsOn(v, target, seen)
 }
 
 func fixSSAOrderBlock(b *ssa.BasicBlock) {

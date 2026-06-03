@@ -161,6 +161,9 @@ func (t rtype) PkgPath() string {
 	if t.TFlag&abi.TFlagNamed == 0 {
 		return ""
 	}
+	if t.Kind() == abi.UnsafePointer {
+		return "unsafe"
+	}
 	ut := t.uncommon()
 	if ut == nil {
 		return ""

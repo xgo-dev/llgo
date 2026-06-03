@@ -57,8 +57,48 @@ func AssertIndexRange(b bool) {
 
 func AssertDivideByZero(b bool) {
 	if b {
-		panic(errorString("integer divide by zero").Error())
+		panic(errorString("integer divide by zero"))
 	}
+}
+
+func AssertNilDeref(b bool) {
+	if b {
+		panic(errorString("invalid memory address or nil pointer dereference").Error())
+	}
+}
+
+func PanicWrapNilPointer(b bool, recvType, methodName string) {
+	if b {
+		recvType = panicWrapRecvType(recvType)
+		panic(plainError("value method " + recvType + "." + methodName + " called using nil *" + panicWrapTypeName(recvType) + " pointer"))
+	}
+}
+
+func panicWrapRecvType(recvType string) string {
+	const commandLineArguments = "command-line-arguments."
+	if len(recvType) > len(commandLineArguments) && recvType[:len(commandLineArguments)] == commandLineArguments {
+		return "main." + recvType[len(commandLineArguments):]
+	}
+	return recvType
+}
+
+func panicWrapTypeName(recvType string) string {
+	depth := 0
+	for i := len(recvType) - 1; i >= 0; i-- {
+		switch recvType[i] {
+		case ']':
+			depth++
+		case '[':
+			if depth > 0 {
+				depth--
+			}
+		case '.':
+			if depth == 0 {
+				return recvType[i+1:]
+			}
+		}
+	}
+	return recvType
 }
 
 // printany prints an argument passed to panic.

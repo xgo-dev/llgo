@@ -20,13 +20,14 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
+	"log"
 	"runtime"
 	"strconv"
 	"unsafe"
 
 	"github.com/goplus/llgo/internal/env"
 	"github.com/goplus/llgo/ssa/abi"
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/types/typeutil"
 )
 
@@ -52,6 +53,18 @@ var (
 // SetDebug sets debug flags.
 func SetDebug(dbgFlags dbgFlags) {
 	debugInstr = (dbgFlags & DbgFlagInstruction) != 0
+}
+
+func dbgInstrf(format string, args ...any) {
+	if debugInstr {
+		log.Printf(format, args...)
+	}
+}
+
+func dbgInstrln(args ...any) {
+	if debugInstr {
+		log.Println(args...)
+	}
 }
 
 // -----------------------------------------------------------------------------
@@ -197,6 +210,7 @@ type aProgram struct {
 	freeTy         *types.Signature
 	memsetInlineTy *types.Signature
 	stackSaveTy    *types.Signature
+	stackRestoreTy *types.Signature
 
 	createKeyTy *types.Signature
 	getSpecTy   *types.Signature
@@ -205,18 +219,26 @@ type aProgram struct {
 	destructTy  *types.Signature
 	setjmpTy    *types.Signature
 	longjmpTy   *types.Signature
-	sigsetjmpTy *types.Signature
-	sigljmpTy   *types.Signature
 
 	printfTy *types.Signature
 
 	paramObjPtr_ *types.Var
-	linkname     map[string]string // pkgPath.nameInPkg => linkname
-	abiSymbol    map[string]Type   // abi symbol name => Type
+	linkname     map[string]string     // pkgPath.nameInPkg => linkname
+	abiSymbol    map[string]*AbiSymbol // abi symbol name => AbiSymbol
 
 	ptrSize int
 
+	abi abi.Builder
+
 	is32Bits bool
+}
+
+type AbiSymbol struct {
+	Name    string
+	PkgPath string
+	Raw     types.Type
+	Typ     Type
+	MSet    *types.MethodSet
 }
 
 // A Program presents a program.
@@ -259,12 +281,14 @@ func NewProgram(target *Target) Program {
 		ctx.Finalize()
 	*/
 	is32Bits := (td.PointerSize() == 4 || is32Bits(target.GOARCH))
-	return &aProgram{
+	prog := &aProgram{
 		ctx: ctx, gocvt: newGoTypes(),
 		target: target, td: td, tm: tm, is32Bits: is32Bits,
 		ptrSize: td.PointerSize(), named: make(map[string]Type), fnnamed: make(map[string]int),
-		linkname: make(map[string]string), abiSymbol: make(map[string]Type),
+		linkname: make(map[string]string), abiSymbol: make(map[string]*AbiSymbol),
 	}
+	prog.abi.Init(uintptr(prog.ptrSize), (*goProgram)(unsafe.Pointer(prog)))
+	return prog
 }
 
 func (p Program) Target() *Target {
@@ -416,6 +440,8 @@ func (p Program) tyComplex128() llvm.Type {
 // NewPackage creates a new package.
 func (p Program) NewPackage(name, pkgPath string) Package {
 	mod := p.ctx.NewModule(pkgPath)
+	mod.SetDataLayout(p.DataLayout())
+	mod.SetTarget(p.Target().Spec().Triple)
 	// TODO(lijie): enable target output will check module override, but can't
 	// pass the snapshot test, so disable it for now
 	// if p.target.GOARCH != runtime.GOARCH && p.target.GOOS != runtime.GOOS {
@@ -430,17 +456,18 @@ func (p Program) NewPackage(name, pkgPath string) Package {
 	pymods := make(map[string]Global)
 	strs := make(map[string]llvm.Value)
 	glbDbgVars := make(map[Expr]bool)
+	nullPointerIsValidAttr := mod.Context().CreateEnumAttribute(llvm.AttributeKindID("null_pointer_is_valid"), 0)
 	// Don't need reset p.needPyInit here
 	// p.needPyInit = false
 	ret := &aPackage{
-		mod: mod, Prog: p, vars: gbls, fns: fns,
-		pyobjs: pyobjs, pymods: pymods, strs: strs,
+		mod: mod, path: pkgPath, Prog: p, vars: gbls, fns: fns,
+		nullPointerIsValidAttr: nullPointerIsValidAttr,
+		pyobjs:                 pyobjs, pymods: pymods, strs: strs,
 		di: nil, cu: nil, glbDbgVars: glbDbgVars,
 		export:         make(map[string]string),
 		preserveSyms:   make(map[string]struct{}),
 		llvmUsedValues: make([]llvm.Value, 0, 4),
 	}
-	ret.abi.Init(pkgPath, uintptr(p.ptrSize), (*goProgram)(unsafe.Pointer(p)))
 	return ret
 }
 
@@ -680,10 +707,12 @@ func (p Program) Uint64() Type {
 // initializer) and "init#%d", the nth declared init function,
 // and unspecified other things too.
 type aPackage struct {
-	mod llvm.Module
-	abi abi.Builder
+	mod  llvm.Module
+	path string
 
 	Prog Program
+
+	nullPointerIsValidAttr llvm.Attribute
 
 	di         diBuilder
 	cu         CompilationUnit
@@ -699,14 +728,18 @@ type aPackage struct {
 
 	iRoutine int
 
-	NeedRuntime bool
-	NeedPyInit  bool
-	NeedAbiInit bool // need load all abi types for reflect make type
+	NeedRuntime   bool
+	NeedPyInit    bool
+	NeedAbiInit   int // bitmask of Reflect* flags indicating which reflect type-construction operations are used
+	MethodByIndex map[int]none
+	MethodByName  map[string]none
 
 	export         map[string]string   // pkgPath.nameInPkg => exportname
 	preserveSyms   map[string]struct{} // set of exported symbol names
 	llvmUsedValues []llvm.Value
 }
+
+type none struct{}
 
 type Package = *aPackage
 
@@ -749,6 +782,9 @@ func (p Package) rtFunc(fnName string) Expr {
 	p.NeedRuntime = true
 	fn := p.Prog.runtime().Scope().Lookup(fnName).(*types.Func)
 	name := FullName(fn.Pkg(), fnName)
+	if p.fnlink != nil {
+		name = p.fnlink(name)
+	}
 	sig := fn.Type().(*types.Signature)
 	return p.NewFunc(name, sig, InGo).Expr
 }
@@ -785,7 +821,7 @@ func (p Package) closureStub(b Builder, fn Expr, sig *types.Signature, origKind 
 
 // Path returns the package path.
 func (p Package) Path() string {
-	return p.abi.Pkg
+	return p.path
 }
 
 // String returns a string representation of the package.

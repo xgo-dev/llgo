@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	extplan9asm "github.com/goplus/plan9asm"
+	extplan9asm "github.com/xgo-dev/plan9asm"
 )
 
 func TestFilterPlan9AsmFuncsKeepsDarwinRawSyscallAsm(t *testing.T) {

@@ -15,7 +15,7 @@ import (
 )
 
 func TestBasic(t *testing.T) {
-	b := newBuilder("main")
+	b := newBuilder()
 	tests := []struct {
 		kind types.BasicKind
 		v    interface{}
@@ -54,7 +54,7 @@ func TestBasicAlias(t *testing.T) {
 }
 
 func TestPointer(t *testing.T) {
-	b := newBuilder("main")
+	b := newBuilder()
 	var v int
 	ptyp := types.NewPointer(types.Typ[types.Int])
 	pv := &v
@@ -68,13 +68,13 @@ func TestPointer(t *testing.T) {
 }
 
 func TestSlice(t *testing.T) {
-	b := newBuilder("main")
+	b := newBuilder()
 	testValue(t, b, types.NewSlice(types.Typ[types.Int]), []int{})
 	testValue(t, b, types.NewSlice(types.NewPointer(types.Typ[types.Int])), []*int{})
 }
 
 func TestArray(t *testing.T) {
-	b := newBuilder("main")
+	b := newBuilder()
 	testValue(t, b, types.NewArray(types.Typ[types.Int], 0), [0]int{})
 	testValue(t, b, types.NewArray(types.Typ[types.Int], 1), [1]int{})
 	testValue(t, b, types.NewArray(types.Typ[types.Int], 2), [2]int{})
@@ -87,7 +87,7 @@ func TestArray(t *testing.T) {
 }
 
 func TestChan(t *testing.T) {
-	b := newBuilder("main")
+	b := newBuilder()
 	testValue(t, b, types.NewChan(types.SendRecv, types.Typ[types.Int]), make(chan int))
 	testValue(t, b, types.NewChan(types.SendOnly, types.Typ[types.Int]), make(chan<- int))
 	testValue(t, b, types.NewChan(types.RecvOnly, types.Typ[types.Int]), make(<-chan int))
@@ -97,13 +97,13 @@ func TestChan(t *testing.T) {
 }
 
 func TestMap(t *testing.T) {
-	b := newBuilder("main")
+	b := newBuilder()
 	testValue(t, b, types.NewMap(types.Typ[types.Int], types.NewPointer(types.Typ[types.Int])), map[int]*int{})
 	testValue(t, b, types.NewMap(types.Typ[types.Int], types.Typ[types.String]), map[int]string{})
 }
 
 func TestStruct(t *testing.T) {
-	b := newBuilder("main")
+	b := newBuilder()
 	pkg := types.NewPackage("", "main")
 	testValue(t, b, types.NewStruct(nil, nil), struct{}{})
 	testValue(t, b, types.NewStruct([]*types.Var{
@@ -142,7 +142,7 @@ func TestStruct(t *testing.T) {
 }
 
 func TestInterface(t *testing.T) {
-	b := newBuilder("main")
+	b := newBuilder()
 	pkg := types.NewPackage("github.com/goplus/ssa/abi", "abi_test")
 	testType(t, b, types.NewInterface(nil, nil), reflect.ValueOf(struct{ E any }{}).Field(0).Type())
 	testType(t, b, types.NewInterface([]*types.Func{
@@ -159,7 +159,7 @@ func TestInterface(t *testing.T) {
 }
 
 func TestSignature(t *testing.T) {
-	b := newBuilder("main")
+	b := newBuilder()
 	pkg := types.NewPackage("github.com/goplus/ssa/abi", "abi_test")
 	testType(t, b, types.NewSignature(nil, types.NewTuple(types.NewVar(0, pkg, "", types.Typ[types.Int])),
 		types.NewTuple(types.NewVar(0, pkg, "", types.NewPointer(types.Typ[types.Int]))), false),
@@ -171,10 +171,30 @@ func TestSignature(t *testing.T) {
 	)
 }
 
+func TestClosurePublicFuncType(t *testing.T) {
+	b := newBuilder()
+	pkg := types.NewPackage("github.com/goplus/ssa/abi", "abi_test")
+	inner := types.NewSignature(nil,
+		types.NewTuple(types.NewVar(0, pkg, "", types.Typ[types.Int])),
+		types.NewTuple(types.NewVar(0, pkg, "", types.Typ[types.Bool])),
+		false)
+	closure := types.NewStruct([]*types.Var{
+		types.NewField(0, nil, "$f", inner, false),
+		types.NewField(0, nil, "$data", types.Typ[types.UnsafePointer], false),
+	}, nil)
+	outer := types.NewSignature(nil,
+		types.NewTuple(types.NewVar(0, pkg, "", closure)),
+		nil,
+		false)
+	if got, want := typeString(b, outer), "func(func(int) bool)"; got != want {
+		t.Fatalf("closure parameter string = %q, want %q", got, want)
+	}
+}
+
 type T int
 
 func TestNamed(t *testing.T) {
-	b := newBuilder("main")
+	b := newBuilder()
 	pkg := types.NewPackage("github.com/goplus/ssa/abi", "abi_test")
 	obj := types.NewTypeName(0, pkg, "T", nil)
 	typ := types.NewNamed(obj, types.Typ[types.Int], nil)
@@ -182,7 +202,7 @@ func TestNamed(t *testing.T) {
 }
 
 func TestScope(t *testing.T) {
-	b := newBuilder("main")
+	b := newBuilder()
 	pkg := types.NewPackage("github.com/goplus/ssa/abi", "abi_test")
 	obj := types.NewTypeName(0, pkg, "T", nil)
 	typ := types.NewNamed(obj, types.Typ[types.Int], nil)
@@ -202,8 +222,8 @@ func TestScope(t *testing.T) {
 	}
 }
 
-func newBuilder(pkg string) *abi.Builder {
-	return abi.New(pkg, unsafe.Sizeof(0), types.SizesFor("gc", runtime.GOARCH))
+func newBuilder() *abi.Builder {
+	return abi.New(unsafe.Sizeof(0), types.SizesFor("gc", runtime.GOARCH))
 }
 
 func testValue(t *testing.T, b *abi.Builder, typ types.Type, i any) {

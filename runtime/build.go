@@ -1,5 +1,7 @@
 package runtime
 
+import "sort"
+
 type altPkgMode uint8
 
 const (
@@ -50,16 +52,37 @@ func HasAdditiveAltPkgForGOARCH(path, goarch string) bool {
 	return ok && spec.mode == altPkgAdditive && spec.enabledFor(goarch)
 }
 
+func HasSourcePatchPkg(path string) bool {
+	_, ok := sourcePatchPkgs[path]
+	return ok
+}
+
+func SourcePatchPkgPaths() []string {
+	paths := make([]string, 0, len(sourcePatchPkgs))
+	for path := range sourcePatchPkgs {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
 var altPkgs = map[string]altPkgSpec{
 	"internal/abi":            {mode: altPkgReplace},
 	"internal/runtime/atomic": {mode: altPkgReplace, goarchs: map[string]struct{}{"arm": {}}},
 	"internal/reflectlite":    {mode: altPkgReplace},
 	"internal/runtime/maps":   {mode: altPkgReplace},
 	"internal/runtime/sys":    {mode: altPkgAdditive},
-	"iter":                    {mode: altPkgReplace},
 	"reflect":                 {mode: altPkgReplace},
 	"runtime":                 {mode: altPkgReplace},
 	"sync/atomic":             {mode: altPkgReplace},
-	"unique":                  {mode: altPkgReplace},
 	"syscall/js":              {mode: altPkgReplace},
+	"unique":                  {mode: altPkgReplace},
+	"golang.org/x/sys/unix":   {mode: altPkgReplace},
+}
+
+var sourcePatchPkgs = map[string]struct{}{
+	"crypto/internal/constanttime": {},
+	"internal/sync":                {},
+	"iter":                         {},
+	"runtime/metrics":              {},
 }

@@ -1,0 +1,12 @@
+package demo
+
+type Number interface {
+	~int | ~int32 | ~int64
+}
+
+type Set[T comparable] interface {
+	Has(T) bool
+	Len() int
+}
+
+func Sum[T Number](a, b T) T { return a }

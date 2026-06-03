@@ -19,7 +19,6 @@
 package ssa_test
 
 import (
-	"fmt"
 	"go/constant"
 	"go/token"
 	"go/types"
@@ -84,7 +83,6 @@ func TestDeferAtomicInLoopIR(t *testing.T) {
 	b.EndBuild()
 
 	ir := pkg.Module().String()
-	fmt.Println(ir)
 	atomicIdx := strings.Index(ir, "store atomic i64 1, ptr %0 seq_cst")
 	if atomicIdx == -1 {
 		t.Fatalf("expected store atomic in IR, got:\n%s", ir)

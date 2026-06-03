@@ -19,9 +19,8 @@ package ssa
 import (
 	"fmt"
 	"go/types"
-	"log"
 
-	"github.com/goplus/llvm"
+	"github.com/xgo-dev/llvm"
 )
 
 // -----------------------------------------------------------------------------
@@ -40,9 +39,7 @@ import (
 //
 //	t1 = &t0.name [#1]
 func (b Builder) FieldAddr(x Expr, idx int) Expr {
-	if debugInstr {
-		log.Printf("FieldAddr %v, %d\n", x.impl, idx)
-	}
+	dbgInstrf("FieldAddr %v, %d\n", x.impl, idx)
 	prog := b.Prog
 	tstruc := prog.Elem(x.Type)
 	telem := prog.Field(tstruc, idx)
@@ -52,9 +49,7 @@ func (b Builder) FieldAddr(x Expr, idx int) Expr {
 
 // The Field instruction yields the value of Field of struct X.
 func (b Builder) Field(x Expr, idx int) Expr {
-	if debugInstr {
-		log.Printf("Field %v, %d\n", x.impl, idx)
-	}
+	dbgInstrf("Field %v, %d\n", x.impl, idx)
 	return b.getField(x, idx)
 }
 
@@ -67,9 +62,7 @@ func (b Builder) getField(x Expr, idx int) Expr {
 // -----------------------------------------------------------------------------
 
 func (b Builder) Complex(r, i Expr) Expr {
-	if debugInstr {
-		log.Printf("Complex %v, %v\n", r.impl, i.impl)
-	}
+	dbgInstrf("Complex %v, %v\n", r.impl, i.impl)
 	prog := b.Prog
 	var t Type
 	switch kind := r.raw.Type.Underlying().(*types.Basic).Kind(); kind {
@@ -83,9 +76,7 @@ func (b Builder) Complex(r, i Expr) Expr {
 
 // MakeString creates a new string from a C string pointer and length.
 func (b Builder) MakeString(cstr Expr, n ...Expr) (ret Expr) {
-	if debugInstr {
-		log.Printf("MakeString %v\n", cstr.impl)
-	}
+	dbgInstrf("MakeString %v\n", cstr.impl)
 	pkg := b.Pkg
 	prog := b.Prog
 	ret.Type = prog.String()
@@ -100,18 +91,14 @@ func (b Builder) MakeString(cstr Expr, n ...Expr) (ret Expr) {
 
 // StringData returns the data pointer of a string.
 func (b Builder) StringData(x Expr) Expr {
-	if debugInstr {
-		log.Printf("StringData %v\n", x.impl)
-	}
+	dbgInstrf("StringData %v\n", x.impl)
 	ptr := llvm.CreateExtractValue(b.impl, x.impl, 0)
 	return Expr{ptr, b.Prog.CStr()}
 }
 
 // StringLen returns the length of a string.
 func (b Builder) StringLen(x Expr) Expr {
-	if debugInstr {
-		log.Printf("StringLen %v\n", x.impl)
-	}
+	dbgInstrf("StringLen %v\n", x.impl)
 	ptr := llvm.CreateExtractValue(b.impl, x.impl, 1)
 	return Expr{ptr, b.Prog.Int()}
 }
@@ -120,9 +107,7 @@ func (b Builder) StringLen(x Expr) Expr {
 
 // SliceData returns the data pointer of a slice.
 func (b Builder) SliceData(x Expr) Expr {
-	if debugInstr {
-		log.Printf("SliceData %v\n", x.impl)
-	}
+	dbgInstrf("SliceData %v\n", x.impl)
 	ptr := llvm.CreateExtractValue(b.impl, x.impl, 0)
 	ty := x.Type.RawType()
 	tySlice := ty.Underlying().(*types.Slice)
@@ -131,18 +116,14 @@ func (b Builder) SliceData(x Expr) Expr {
 
 // SliceLen returns the length of a slice.
 func (b Builder) SliceLen(x Expr) Expr {
-	if debugInstr {
-		log.Printf("SliceLen %v\n", x.impl)
-	}
+	dbgInstrf("SliceLen %v\n", x.impl)
 	ptr := llvm.CreateExtractValue(b.impl, x.impl, 1)
 	return Expr{ptr, b.Prog.Int()}
 }
 
 // SliceCap returns the length of a slice cap.
 func (b Builder) SliceCap(x Expr) Expr {
-	if debugInstr {
-		log.Printf("SliceCap %v\n", x.impl)
-	}
+	dbgInstrf("SliceCap %v\n", x.impl)
 	ptr := llvm.CreateExtractValue(b.impl, x.impl, 2)
 	return Expr{ptr, b.Prog.Int()}
 }
@@ -162,9 +143,7 @@ func (b Builder) SliceCap(x Expr) Expr {
 //
 //	t2 = &t0[t1]
 func (b Builder) IndexAddr(x, idx Expr) Expr {
-	if debugInstr {
-		log.Printf("IndexAddr %v, %v\n", x.impl, idx.impl)
-	}
+	dbgInstrf("IndexAddr %v, %v\n", x.impl, idx.impl)
 	prog := b.Prog
 	telem := prog.Index(x.Type)
 	pt := prog.Pointer(telem)
@@ -257,7 +236,10 @@ func (b Builder) checkIndex(idx Expr, max Expr) Expr {
 		check = Expr{llvm.CreateICmp(b.impl, llvm.IntSLT, idx.impl, zero), prog.Bool()}
 	}
 	if checkMax {
-		r := Expr{llvm.CreateICmp(b.impl, llvm.IntSGE, idx.impl, max.impl), prog.Bool()}
+		// max is a non-negative len/cap value. Unsigned comparison is valid for
+		// both signed and unsigned indexes, and signed negatives fail as large
+		// unsigned values.
+		r := Expr{llvm.CreateICmp(b.impl, llvm.IntUGE, idx.impl, max.impl), prog.Bool()}
 		if check.IsNil() {
 			check = r
 		} else {
@@ -278,9 +260,7 @@ func (b Builder) checkIndex(idx Expr, max Expr) Expr {
 //
 //	t2 = t0[t1]
 func (b Builder) Index(x, idx Expr, takeAddr func() (addr Expr, zero bool)) Expr {
-	if debugInstr {
-		log.Printf("Index %v, %v\n", x.impl, idx.impl)
-	}
+	dbgInstrf("Index %v, %v\n", x.impl, idx.impl)
 	prog := b.Prog
 	var telem Type
 	var ptr Expr
@@ -304,9 +284,6 @@ func (b Builder) Index(x, idx Expr, takeAddr func() (addr Expr, zero bool)) Expr
 		return prog.Zero(telem)
 	}
 	if ptr.IsNil() {
-		if x.impl.IsConstant() {
-			return Expr{llvm.ConstExtractElement(x.impl, idx.impl), telem}
-		}
 		ptr = b.Alloc(x.Type, false)
 		b.impl.CreateStore(x.impl, ptr.impl)
 	}
@@ -331,9 +308,7 @@ func (b Builder) Index(x, idx Expr, takeAddr func() (addr Expr, zero bool)) Expr
 //
 //	t1 = slice t0[1:]
 func (b Builder) Slice(x, low, high, max Expr) (ret Expr) {
-	if debugInstr {
-		log.Printf("Slice %v, %v, %v\n", x.impl, low.impl, high.impl)
-	}
+	dbgInstrf("Slice %v, %v, %v\n", x.impl, low.impl, high.impl)
 	prog := b.Prog
 	var nCap Expr
 	var nEltSize Expr
@@ -342,13 +317,13 @@ func (b Builder) Slice(x, low, high, max Expr) (ret Expr) {
 	if lowIsNil {
 		low = prog.IntVal(0, prog.Int())
 	} else {
-		low = b.fitIntSize(low)
+		low = b.FitIntSize(low)
 	}
 	if !high.IsNil() {
-		high = b.fitIntSize(high)
+		high = b.FitIntSize(high)
 	}
 	if !max.IsNil() {
-		max = b.fitIntSize(max)
+		max = b.FitIntSize(max)
 	}
 	switch t := x.raw.Type.Underlying().(type) {
 	case *types.Basic:
@@ -421,12 +396,10 @@ func (b Builder) SliceLit(t Type, elts ...Expr) Expr {
 //	t1 = make []string 1:int t0
 //	t1 = make StringSlice 1:int t0
 func (b Builder) MakeSlice(t Type, len, cap Expr) (ret Expr) {
-	if debugInstr {
-		log.Printf("MakeSlice %v, %v, %v\n", t.RawType(), len.impl, cap.impl)
-	}
+	dbgInstrf("MakeSlice %v, %v, %v\n", t.RawType(), len.impl, cap.impl)
 	prog := b.Prog
-	len = b.fitIntSize(len)
-	cap = b.fitIntSize(cap)
+	len = b.FitIntSize(len)
+	cap = b.FitIntSize(cap)
 	telem := prog.Index(t)
 	ret = b.InlineCall(b.Pkg.rtFunc("MakeSlice"), len, cap, prog.IntVal(prog.SizeOf(telem), prog.Int()))
 	ret.Type = t
@@ -434,7 +407,7 @@ func (b Builder) MakeSlice(t Type, len, cap Expr) (ret Expr) {
 }
 
 // fit size to int
-func (b Builder) fitIntSize(n Expr) Expr {
+func (b Builder) FitIntSize(n Expr) Expr {
 	prog := b.Prog
 	typ := prog.Int()
 	if prog.SizeOf(n.Type) != prog.SizeOf(typ) {
@@ -457,9 +430,7 @@ func (b Builder) fitIntSize(n Expr) Expr {
 //	t1 = make map[string]int t0
 //	t1 = make StringIntMap t0
 func (b Builder) MakeMap(t Type, nReserve Expr) (ret Expr) {
-	if debugInstr {
-		log.Printf("MakeMap %v, %v\n", t.RawType(), nReserve.impl)
-	}
+	dbgInstrf("MakeMap %v, %v\n", t.RawType(), nReserve.impl)
 	if nReserve.IsNil() {
 		nReserve = b.Prog.Val(0)
 	}
@@ -481,9 +452,7 @@ func (b Builder) MakeMap(t Type, nReserve Expr) (ret Expr) {
 //	t2 = t0[t1]
 //	t5 = t3[t4],ok
 func (b Builder) Lookup(x, key Expr, commaOk bool) (ret Expr) {
-	if debugInstr {
-		log.Printf("Lookup %v, %v, %v\n", x.impl, key.impl, commaOk)
-	}
+	dbgInstrf("Lookup %v, %v, %v\n", x.impl, key.impl, commaOk)
 	prog := b.Prog
 	typ := b.abiType(x.raw.Type)
 	vtyp := prog.Elem(x.Type)
@@ -519,9 +488,7 @@ func (b Builder) MapUpdate(m, k, v Expr) {
 		typ := b.Prog.Type(v.raw.Type, InGo)
 		v = checkExpr(v, typ.raw.Type, b)
 	}
-	if debugInstr {
-		log.Printf("MapUpdate %v[%v] = %v\n", m.impl, k.impl, v.impl)
-	}
+	dbgInstrf("MapUpdate %v[%v] = %v\n", m.impl, k.impl, v.impl)
 	typ := b.abiType(m.raw.Type)
 	ptr := b.mapKeyPtr(k)
 	ret := b.Call(b.Pkg.rtFunc("MapAssign"), typ, m, ptr)
@@ -635,9 +602,7 @@ func (b Builder) Next(typ Type, iter Expr, isString bool) Expr {
 //		Size Value // int; size of buffer; zero => synchronous.
 //	}
 func (b Builder) MakeChan(t Type, size Expr) (ret Expr) {
-	if debugInstr {
-		log.Printf("MakeChan %v, %v\n", t.RawType(), size.impl)
-	}
+	dbgInstrf("MakeChan %v, %v\n", t.RawType(), size.impl)
 	prog := b.Prog
 	eltSize := prog.IntVal(prog.SizeOf(prog.Elem(t)), prog.Int())
 	ret.Type = t
@@ -653,12 +618,12 @@ func (b Builder) MakeChan(t Type, size Expr) (ret Expr) {
 //
 //	send t0 <- t1
 func (b Builder) Send(ch Expr, x Expr) (ret Expr) {
-	if debugInstr {
-		log.Printf("Send %v, %v\n", ch.impl, x.impl)
-	}
+	dbgInstrf("Send %v, %v\n", ch.impl, x.impl)
 	prog := b.Prog
 	eltSize := prog.IntVal(prog.SizeOf(prog.Elem(ch.Type)), prog.Int())
+	sp := b.StackSave()
 	ret = b.InlineCall(b.Pkg.rtFunc("ChanSend"), ch, b.toPtr(x), eltSize)
+	b.StackRestore(sp)
 	return
 }
 
@@ -671,20 +636,20 @@ func (b Builder) toPtr(x Expr) Expr {
 }
 
 func (b Builder) Recv(ch Expr, commaOk bool) (ret Expr) {
-	if debugInstr {
-		log.Printf("Recv %v, %v\n", ch.impl, commaOk)
-	}
+	dbgInstrf("Recv %v, %v\n", ch.impl, commaOk)
 	prog := b.Prog
 	eltSize := prog.IntVal(prog.SizeOf(prog.Elem(ch.Type)), prog.Int())
 	etyp := prog.Elem(ch.Type)
+	sp := b.StackSave()
 	ptr := b.Alloc(etyp, false)
 	ok := b.InlineCall(b.Pkg.rtFunc("ChanRecv"), ch, ptr, eltSize)
+	val := b.Load(ptr)
+	b.StackRestore(sp)
 	if commaOk {
-		val := b.Load(ptr)
 		t := prog.Struct(etyp, prog.Bool())
 		return b.aggregateValue(t, val.impl, ok.impl)
 	} else {
-		return b.Load(ptr)
+		return val
 	}
 }
 
@@ -732,6 +697,7 @@ type SelectState struct {
 //	t3 = select nonblocking [<-t0, t1<-t2]
 //	t4 = select blocking []
 func (b Builder) Select(states []*SelectState, blocking bool) (ret Expr) {
+	sp := b.StackSave()
 	ops := make([]Expr, len(states))
 	for i, s := range states {
 		ops[i] = b.chanOp(s)
@@ -744,7 +710,7 @@ func (b Builder) Select(states []*SelectState, blocking bool) (ret Expr) {
 	}
 	prog := b.Prog
 	tSlice := lastParamType(prog, fn)
-	slice := b.SliceLit(tSlice, ops...)
+	slice := b.selectOpsSlice(tSlice, ops)
 	ret = b.Call(fn, slice)
 	chosen := b.impl.CreateExtractValue(ret.impl, 0, "")
 	recvOK := b.impl.CreateExtractValue(ret.impl, 1, "")
@@ -764,7 +730,20 @@ func (b Builder) Select(states []*SelectState, blocking bool) (ret Expr) {
 			results = append(results, r.impl)
 		}
 	}
+	b.StackRestore(sp)
 	return b.aggregateValue(b.Prog.Struct(typs...), results...)
+}
+
+func (b Builder) selectOpsSlice(t Type, ops []Expr) Expr {
+	prog := b.Prog
+	telem := prog.Index(t)
+	size := SizeOf(prog, telem, int64(len(ops)))
+	opPtr := Expr{b.Alloca(size).impl, prog.Pointer(telem)}
+	for i, op := range ops {
+		b.Store(b.Advance(opPtr, prog.Val(i)), op)
+	}
+	n := llvm.ConstInt(prog.tyInt(), uint64(len(ops)), false)
+	return b.unsafeSlice(opPtr, n, n)
 }
 
 func lastParamType(prog Program, fn Expr) Type {

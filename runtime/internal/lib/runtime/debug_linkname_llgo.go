@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"time"
 	_ "unsafe"
 )
 
@@ -16,7 +15,7 @@ var (
 func setTraceback(level string) {}
 
 //go:linkname readGCStats runtime/debug.readGCStats
-func readGCStats(_ *[]time.Duration) {}
+func readGCStats(_ *[]uint64) {}
 
 //go:linkname freeOSMemory runtime/debug.freeOSMemory
 func freeOSMemory() {}

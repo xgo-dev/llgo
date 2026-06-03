@@ -52,7 +52,7 @@ func NewProgramEx(t *testing.T, target *ssa.Target, imp types.Importer) ssa.Prog
 
 func Assert(t *testing.T, p ssa.Package, expected string) {
 	t.Helper()
-	if v := p.String(); v != expected {
+	if v := p.String(); ssa.StripModuleTarget(v) != expected {
 		t.Fatalf("\n==> got:\n%s\n==> expected:\n%s\n", v, expected)
 	}
 }
