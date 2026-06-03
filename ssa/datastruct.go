@@ -743,7 +743,7 @@ func (b Builder) selectOpsSlice(t Type, ops []Expr) Expr {
 		b.Store(b.Advance(opPtr, prog.Val(i)), op)
 	}
 	n := llvm.ConstInt(prog.tyInt(), uint64(len(ops)), false)
-	return b.unsafeSlice(opPtr, n, n)
+	return b.unsafeSliceHeader(opPtr, n, n)
 }
 
 func lastParamType(prog Program, fn Expr) Type {
