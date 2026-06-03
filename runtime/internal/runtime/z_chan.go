@@ -214,8 +214,8 @@ func chanTryRecv(p *Chan, v unsafe.Pointer, eltSize int, acceptSelectSend bool) 
 		for p.getp == chanHasRecv && !p.close {
 			p.cond.Wait(&p.mutex)
 		}
-		recvOK = p.getp != chanHasRecv
-		tryOK = recvOK || p.close
+		recvOK = !p.close
+		tryOK = recvOK
 		p.mutex.Unlock()
 	} else {
 		recvOK, tryOK = true, true
@@ -262,7 +262,7 @@ func ChanRecv(p *Chan, v unsafe.Pointer, eltSize int) (recvOK bool) {
 		for p.getp == chanHasRecv && !p.close {
 			p.cond.Wait(&p.mutex)
 		}
-		recvOK = p.getp != chanHasRecv
+		recvOK = !p.close
 		p.mutex.Unlock()
 	} else {
 		recvOK = true

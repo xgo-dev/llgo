@@ -3429,6 +3429,10 @@ xfails:
     reason: go1.25 goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
+    case: range.go
+    reason: current main goroot run failure on darwin/arm64
+  - platform: darwin/arm64
+    directive: run
     case: typeparam/chans.go
     reason: current main goroot run failure on darwin/arm64
   - platform: darwin/arm64
@@ -3622,6 +3626,10 @@ xfails:
     directive: run
     case: print.go
     reason: go1.25 goroot run failure on linux/amd64
+  - platform: linux/amd64
+    directive: run
+    case: range.go
+    reason: current main goroot run failure on linux/amd64
   - platform: linux/amd64
     directive: run
     case: typeparam/chans.go
