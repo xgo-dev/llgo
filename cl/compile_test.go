@@ -21,6 +21,7 @@ package cl_test
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -315,6 +316,316 @@ func TestGoPkgMath(t *testing.T) {
 	conf := build.NewDefaultConf(build.ModeInstall)
 	_, err := build.Do([]string{"math"}, conf)
 	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBuildGenericMethodTableSymbols(t *testing.T) {
+	buildTempModule(t, map[string]string{
+		"go.mod": `module repro.methods
+
+go 1.24
+`,
+		"lib/lib.go": `package lib
+
+type Typed[T comparable] struct{}
+
+func (q *Typed[T]) Add(item T) {}
+func (q *Typed[T]) Len() int { return 0 }
+
+type Type = Typed[any]
+
+func NewQueue() *Type { return &Typed[any]{} }
+
+type inner[T any] struct{}
+
+func (i *inner[T]) M() {}
+func (i *inner[T]) N() int { return 1 }
+
+type Outer struct{ *inner[int] }
+
+func NewOuter() *Outer { return &Outer{inner: &inner[int]{}} }
+`,
+		"app/main.go": `package main
+
+import "repro.methods/lib"
+
+type Queue interface {
+	Add(any)
+	Len() int
+}
+
+type Promoted interface {
+	M()
+	N() int
+}
+
+func main() {
+	var q Queue = lib.NewQueue()
+	var p Promoted = lib.NewOuter()
+	_, _ = q, p
+}
+`,
+	})
+}
+
+func TestBuildReflectPrivateLinknames(t *testing.T) {
+	buildTempModule(t, map[string]string{
+		"go.mod": `module repro.reflectlink
+
+go 1.24
+`,
+		"app/main.go": `package main
+
+import (
+	"unsafe"
+	_ "unsafe"
+)
+
+//go:linkname unsafeNew reflect.unsafe_New
+func unsafeNew(unsafe.Pointer) unsafe.Pointer
+
+//go:linkname typedmemmove reflect.typedmemmove
+func typedmemmove(unsafe.Pointer, unsafe.Pointer, unsafe.Pointer)
+
+//go:linkname unsafeNewArray reflect.unsafe_NewArray
+func unsafeNewArray(unsafe.Pointer, int) unsafe.Pointer
+
+//go:linkname makemap reflect.makemap
+func makemap(unsafe.Pointer, int) unsafe.Pointer
+
+//go:linkname mapaccess reflect.mapaccess
+func mapaccess(unsafe.Pointer, unsafe.Pointer, unsafe.Pointer) unsafe.Pointer
+
+//go:linkname mapiterinit reflect.mapiterinit
+func mapiterinit(unsafe.Pointer, unsafe.Pointer, unsafe.Pointer)
+
+//go:linkname mapiternext reflect.mapiternext
+func mapiternext(unsafe.Pointer)
+
+//go:linkname ifaceE2I reflect.ifaceE2I
+func ifaceE2I(unsafe.Pointer, any, unsafe.Pointer)
+
+func main() {
+	_ = unsafeNew(nil)
+	typedmemmove(nil, nil, nil)
+	_ = unsafeNewArray(nil, 0)
+	_ = makemap(nil, 0)
+	_ = mapaccess(nil, nil, nil)
+	mapiterinit(nil, nil, nil)
+	mapiternext(nil)
+	ifaceE2I(nil, nil, nil)
+}
+`,
+	})
+}
+
+func TestBuildReflectValueGo126Symbols(t *testing.T) {
+	buildTempModule(t, map[string]string{
+		"go.mod": `module repro.reflectvalue
+
+go 1.24
+`,
+		"app/main.go": `package main
+
+import (
+	"iter"
+	"reflect"
+	"runtime"
+	"unsafe"
+	_ "unsafe"
+)
+
+type addressableValue struct {
+	reflect.Value
+	forcedAddr bool
+}
+
+//go:linkname valueAbiType reflect.Value.abiType
+func valueAbiType(reflect.Value) unsafe.Pointer
+
+//go:linkname valueAbiTypeSlow reflect.Value.abiTypeSlow
+func valueAbiTypeSlow(reflect.Value) unsafe.Pointer
+
+var _ interface {
+	Fields() iter.Seq2[reflect.StructField, reflect.Value]
+	Methods() iter.Seq2[reflect.Method, reflect.Value]
+} = addressableValue{}
+
+func main() {
+	v := reflect.ValueOf(struct{ A int }{A: 1})
+	_, _ = valueAbiType(v), valueAbiTypeSlow(v)
+	_ = reflect.TypeOf(addressableValue{Value: v})
+	if f := runtime.FuncForPC(0); f != nil {
+		_, _ = f.FileLine(0)
+	}
+}
+`,
+	})
+}
+
+func TestBuildGenericFunctionInstanceLinkOnce(t *testing.T) {
+	buildTempModule(t, map[string]string{
+		"go.mod": `module repro.genericfn
+
+go 1.24
+`,
+		"lib/lib.go": `package lib
+
+func Identity[T any](v T) T { return v }
+`,
+		"a/a.go": `package a
+
+import "repro.genericfn/lib"
+
+func A() string { return lib.Identity("a") }
+`,
+		"b/b.go": `package b
+
+import "repro.genericfn/lib"
+
+func B() string { return lib.Identity("b") }
+`,
+		"app/main.go": `package main
+
+import (
+	"repro.genericfn/a"
+	"repro.genericfn/b"
+)
+
+func main() {
+	_, _ = a.A(), b.B()
+}
+`,
+	})
+}
+
+func TestBuildGenericFunctionClosureLinkOnce(t *testing.T) {
+	buildTempModule(t, map[string]string{
+		"go.mod": `module repro.genericclosure
+
+go 1.24
+`,
+		"lib/lib.go": `package lib
+
+func WithClosure[T any](v T) T {
+	fn := func() T {
+		return v
+	}
+	return fn()
+}
+`,
+		"a/a.go": `package a
+
+import "repro.genericclosure/lib"
+
+func A() string { return lib.WithClosure("a") }
+`,
+		"b/b.go": `package b
+
+import "repro.genericclosure/lib"
+
+func B() string { return lib.WithClosure("b") }
+`,
+		"app/main.go": `package main
+
+import (
+	"repro.genericclosure/a"
+	"repro.genericclosure/b"
+)
+
+func main() {
+	_, _ = a.A(), b.B()
+}
+`,
+	})
+}
+
+func TestBuildXSysUnixRawSyscallNoError(t *testing.T) {
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("RawSyscallNoError repro uses linux/amd64 x/sys/unix asm")
+	}
+	buildTempModulePatterns(t, build.ModeInstall, []string{"golang.org/x/sys/unix"}, map[string]string{
+		"go.mod": `module repro.xsys
+
+go 1.24
+
+require golang.org/x/sys v0.0.0
+
+replace golang.org/x/sys => ./xsys
+`,
+		"xsys/go.mod": `module golang.org/x/sys
+
+go 1.24
+`,
+		"xsys/unix/syscall_linux_gc.go": `//go:build linux && gc
+
+package unix
+
+func RawSyscallNoError(trap, a1, a2, a3 uintptr) (r1, r2 uintptr)
+func SyscallNoError(trap, a1, a2, a3 uintptr) (r1, r2 uintptr)
+
+func Gettid() int {
+	r1, _ := RawSyscallNoError(186, 0, 0, 0)
+	return int(r1)
+}
+
+func Sync() {
+	SyscallNoError(162, 0, 0, 0)
+}
+`,
+		"xsys/unix/asm_linux_amd64.s": `//go:build linux && gc && amd64
+
+#include "textflag.h"
+
+TEXT ·SyscallNoError(SB),NOSPLIT,$0-48
+	RET
+
+TEXT ·RawSyscallNoError(SB),NOSPLIT,$0-48
+	RET
+`,
+	})
+}
+
+func buildTempModule(t *testing.T, files map[string]string) {
+	t.Helper()
+	buildTempModulePatterns(t, build.ModeBuild, []string{"./app"}, files)
+}
+
+func buildTempModulePatterns(t *testing.T, mode build.Mode, patterns []string, files map[string]string) {
+	t.Helper()
+	dir := t.TempDir()
+	for name, data := range files {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoRoot := filepath.Dir(oldWD)
+	t.Setenv("LLGO_ROOT", repoRoot)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	out := filepath.Join(t.TempDir(), "app")
+	if runtime.GOOS == "windows" {
+		out += ".exe"
+	}
+	conf := build.NewDefaultConf(mode)
+	if mode == build.ModeBuild {
+		conf.OutFile = out
+	}
+	conf.ForceRebuild = true
+	if _, err := build.Do(patterns, conf); err != nil {
 		t.Fatal(err)
 	}
 }

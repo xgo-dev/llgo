@@ -628,7 +628,7 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 		if fnPkg := fn.Pkg; fnPkg != nil {
 			pkg = fnPkg.Pkg
 		} else if recv := fn.Type().(*types.Signature).Recv(); recv != nil {
-			if named := recvNamedOk(recv.Type()); named != nil && named.Obj().Pkg() != nil && hasTypeArgs(named) {
+			if named := recvNamedOk(recv.Type()); named != nil && named.Obj().Pkg() != nil && (hasTypeArgs(named) || isWrapperOrInstance(fn)) {
 				pkg = named.Obj().Pkg()
 			} else {
 				pkg = p.goTyps

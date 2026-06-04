@@ -272,11 +272,24 @@ func (p *context) compileType(pkg llssa.Package, t *ssa.Type) {
 }
 
 func (p *context) compileMethods(pkg llssa.Package, typ types.Type) {
+	p.compileMethodsIf(pkg, typ, nil)
+}
+
+func (p *context) compileSyntheticMethods(pkg llssa.Package, typ types.Type) {
+	p.compileMethodsIf(pkg, typ, func(m *ssa.Function) bool {
+		return isWrapperOrInstance(m)
+	})
+}
+
+func (p *context) compileMethodsIf(pkg llssa.Package, typ types.Type, keep func(*ssa.Function) bool) {
 	prog := p.goProg
 	mthds := prog.MethodSets.MethodSet(typ)
 	for i, n := 0, mthds.Len(); i < n; i++ {
 		mthd := mthds.At(i)
 		if ssaMthd := prog.MethodValue(mthd); ssaMthd != nil {
+			if keep != nil && !keep(ssaMthd) {
+				continue
+			}
 			p.compileFuncDecl(pkg, ssaMthd)
 		}
 	}
@@ -351,18 +364,30 @@ func isCgoFuncPtrVar(name string) bool {
 	return strings.HasPrefix(name, "__cgo_")
 }
 
-// isInstance reports whether f is an instance method or generic instantiation.
-func isInstance(f *ssa.Function) bool {
-	if f.Origin() != nil {
-		return true
-	}
-	if recv := f.Type().(*types.Signature).Recv(); recv != nil {
-		if recv.Origin() != recv {
+// isWrapperOrInstance reports whether f may be synthesized in multiple
+// packages and therefore needs linkonce linkage when emitted on demand.
+func isWrapperOrInstance(f *ssa.Function) bool {
+	for ; f != nil; f = f.Parent() {
+		if syn := f.Synthetic; syn != "" {
+			if strings.HasPrefix(syn, "wrapper ") ||
+				strings.HasPrefix(syn, "thunk ") ||
+				strings.HasPrefix(syn, "bound ") ||
+				strings.HasPrefix(syn, "instance ") ||
+				strings.HasPrefix(syn, "instantiation ") {
+				return true
+			}
+		}
+		if f.Origin() != nil {
 			return true
 		}
-		if named := recvNamedOk(recv.Type()); named != nil {
-			if hasTypeArgs(named) {
+		if recv := f.Type().(*types.Signature).Recv(); recv != nil {
+			if recv.Origin() != recv {
 				return true
+			}
+			if named := recvNamedOk(recv.Type()); named != nil {
+				if hasTypeArgs(named) {
+					return true
+				}
 			}
 		}
 	}
@@ -405,7 +430,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		dbgInstrln("==> NewFunc", name, "type:", sig.Recv(), sig, "ftype:", ftype)
 	}
 	if fn == nil {
-		fn = pkg.NewFuncEx(name, sig, llssa.Background(ftype), hasCtx, isInstance(f))
+		fn = pkg.NewFuncEx(name, sig, llssa.Background(ftype), hasCtx, isWrapperOrInstance(f))
 		if disableInline {
 			fn.Inline(llssa.NoInline)
 		}
@@ -1964,20 +1989,22 @@ func (p *context) resolveLinkname(name string) string {
 	return name
 }
 
-// checkCompileMethods ensures that all methods attached to the given type
-// (and to the types it refers to) are compiled and emitted into the
-// current SSA package. Generic named types and struct types are the
-// primary targets; pointer types are followed until a non-pointer is
-// reached. non-generic named have their methods compiled elsewhere.
+// checkCompileMethods ensures that methods referenced from ABI method tables
+// are available to the linker. Generic instances and anonymous structural
+// types are emitted in the current SSA package. Package-level non-generic
+// named types normally have source methods emitted by their defining package,
+// but promoted wrappers can be synthesized only when a use-site asks for a
+// method table, so emit those wrappers on demand.
 func (p *context) checkCompileMethods(pkg llssa.Package, typ types.Type) {
 	nt := typ
 retry:
-	switch t := nt.(type) {
+	switch t := types.Unalias(nt).(type) {
 	case *types.Named:
 		if t.TypeArgs() == nil {
 			obj := t.Obj()
 			// skip package-level type
 			if obj.Parent() == obj.Pkg().Scope() {
+				p.compileSyntheticMethods(pkg, typ)
 				return
 			}
 		}
