@@ -3,6 +3,7 @@ package main
 
 import _ "unsafe"
 
+//
 //go:linkname asmFull llgo.asm
 // CHECK-LINE: @18 = private unnamed_addr constant [5 x i8] c"value", align 1
 // CHECK-LINE: @19 = private unnamed_addr constant [7 x i8] c"Result:", align 1

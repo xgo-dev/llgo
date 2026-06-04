@@ -8,6 +8,7 @@ import (
 	_ "github.com/goplus/llgo/cl/_testrt/linkname/linktarget"
 )
 
+//
 //go:linkname print github.com/goplus/llgo/cl/_testrt/linkname/linktarget.F
 // CHECK-LINE: @0 = private unnamed_addr constant [2 x i8] c"a\00", align 1
 // CHECK-LINE: @1 = private unnamed_addr constant [2 x i8] c"b\00", align 1

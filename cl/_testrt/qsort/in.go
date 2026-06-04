@@ -7,6 +7,7 @@ import (
 	"github.com/goplus/lib/c"
 )
 
+//
 //go:linkname qsort C.qsort
 // CHECK-LINE: @0 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
 
