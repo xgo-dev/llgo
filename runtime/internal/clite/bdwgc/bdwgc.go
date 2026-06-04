@@ -97,6 +97,12 @@ func IsDisabled() c.Int
 //go:linkname Gcollect C.GC_gcollect
 func Gcollect()
 
+//go:linkname GetGCNo C.GC_get_gc_no
+func GetGCNo() uintptr
+
+//go:linkname GetHeapUsageSafe C.GC_get_heap_usage_safe
+func GetHeapUsageSafe(heapSize, freeBytes, unmappedBytes, bytesSinceGC, totalBytes *uintptr)
+
 //go:linkname GetMemoryUse C.GC_get_memory_use
 func GetMemoryUse() uintptr
 

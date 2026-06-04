@@ -73,11 +73,6 @@ func pprof_goroutineLeakProfileWithLabels(p []StackRecord, labels []unsafe.Point
 	return 0, true
 }
 
-//go:linkname pprof_memProfileInternal runtime.pprof_memProfileInternal
-func pprof_memProfileInternal(p []MemProfileRecord, inuseZero bool) (n int, ok bool) {
-	return 0, true
-}
-
 //go:linkname pprof_blockProfileInternal runtime.pprof_blockProfileInternal
 func pprof_blockProfileInternal(p []BlockProfileRecord) (n int, ok bool) {
 	return 0, true

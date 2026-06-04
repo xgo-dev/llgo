@@ -26,12 +26,16 @@ import (
 
 // AllocU allocates uninitialized memory.
 func AllocU(size uintptr) unsafe.Pointer {
-	return tinygogc.Alloc(size)
+	ret := tinygogc.Alloc(size)
+	recordMemProfileAlloc(size)
+	return ret
 }
 
 // AllocZ allocates zero-initialized memory.
 func AllocZ(size uintptr) unsafe.Pointer {
-	return tinygogc.Alloc(size)
+	ret := tinygogc.Alloc(size)
+	recordMemProfileAlloc(size)
+	return ret
 }
 
 // AddCleanupPtr is not implemented in baremetal builds because tinygogc

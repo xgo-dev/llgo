@@ -93,7 +93,7 @@ func (b Builder) MakeString(cstr Expr, n ...Expr) (ret Expr) {
 func (b Builder) StringData(x Expr) Expr {
 	dbgInstrf("StringData %v\n", x.impl)
 	ptr := llvm.CreateExtractValue(b.impl, x.impl, 0)
-	return Expr{ptr, b.Prog.CStr()}
+	return Expr{ptr, b.Prog.Pointer(b.Prog.Byte())}
 }
 
 // StringLen returns the length of a string.
@@ -412,9 +412,9 @@ func (b Builder) FitIntSize(n Expr) Expr {
 	typ := prog.Int()
 	if prog.SizeOf(n.Type) != prog.SizeOf(typ) {
 		srcType := n.Type
-		n.Type = typ
 		n.impl = castInt(b, n.impl, srcType, typ)
 	}
+	n.Type = typ
 	return n
 }
 

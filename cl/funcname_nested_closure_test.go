@@ -103,8 +103,8 @@ func localType[T any]() any {
 		t.Fatalf("patchLocalGenericNamed(%v) was not patched", local)
 	}
 	name := patched.Obj().Name()
-	if !strings.Contains(name, "[") || !strings.Contains(name, "·") {
-		t.Fatalf("patched local generic name = %q, want type args and ordinal suffix", name)
+	if !strings.Contains(name, "[") || strings.Contains(name, "·") {
+		t.Fatalf("patched local generic name = %q, want type args without ordinal suffix", name)
 	}
 	if _, ok := ctx.patchLocalGenericNamed(patched); ok {
 		t.Fatalf("already-patched local generic name %q should not be patched again", name)
@@ -234,7 +234,7 @@ func use() {
 	sigWithPkg := types.NewSignatureType(nil, nil, nil,
 		types.NewTuple(types.NewParam(token.NoPos, otherPkg, "x", other)),
 		nil, false)
-	if got := ctx.typeArgName(sigWithPkg); !strings.Contains(got, "bar.Other") {
+	if got := ctx.typeArgName(sigWithPkg); !strings.Contains(got, "example.com/bar.Other") {
 		t.Fatalf("typeArgName(signature with package) = %q, want package-qualified param", got)
 	}
 
