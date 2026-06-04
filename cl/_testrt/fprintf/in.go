@@ -4,8 +4,7 @@ package main
 import "unsafe"
 
 //go:linkname cstr llgo.cstr
-
-// CHECK-LINE: @0 = private unnamed_addr constant [9 x i8] c"Hello %d\0A", align 1
+// CHECK-LINE: @0 = private unnamed_addr constant [10 x i8] c"Hello %d\0A\00", align 1
 
 func cstr(string) *int8
 
@@ -31,8 +30,7 @@ func fprintf(fp unsafe.Pointer, format *int8, __llgo_va_list ...any)
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/fprintf.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = load ptr, ptr @__stderrp, align 8
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/cl/_testrt/fprintf.cstr"(%"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 9 })
-// CHECK-NEXT:   call void (ptr, ptr, ...) @fprintf(ptr %0, ptr %1, i64 100)
+// CHECK-NEXT:   call void (ptr, ptr, ...) @fprintf(ptr %0, ptr @0, i64 100)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 

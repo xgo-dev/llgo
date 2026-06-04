@@ -9,7 +9,6 @@ import (
 )
 
 //go:linkname print github.com/goplus/llgo/cl/_testrt/linkname/linktarget.F
-
 // CHECK-LINE: @0 = private unnamed_addr constant [2 x i8] c"a\00", align 1
 // CHECK-LINE: @1 = private unnamed_addr constant [2 x i8] c"b\00", align 1
 // CHECK-LINE: @2 = private unnamed_addr constant [2 x i8] c"c\00", align 1
@@ -48,8 +47,8 @@ func info(m) string
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/linkname.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @"{{.*}}/cl/_testrt/linkname.print"(ptr @0, ptr @1, ptr @2, ptr @3)
-// CHECK-NEXT:   call void @"{{.*}}/cl/_testrt/linkname.print"(ptr @4, ptr @5, ptr @6, ptr @7)
+// CHECK-NEXT:   call void @"{{.*}}/cl/_testrt/linkname/linktarget.F"(ptr @0, ptr @1, ptr @2, ptr @3)
+// CHECK-NEXT:   call void @"{{.*}}/cl/_testrt/linkname/linktarget.F"(ptr @4, ptr @5, ptr @6, ptr @7)
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK-NEXT:   call void @"{{.*}}/cl/_testrt/linkname/linktarget.(*m).setInfo"(ptr %0, %"{{.*}}/runtime/internal/runtime.String" { ptr @8, i64 5 })
 // CHECK-NEXT:   %1 = load %"{{.*}}/cl/_testrt/linkname.m", ptr %0, align 8

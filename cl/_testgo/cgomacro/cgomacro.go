@@ -39,7 +39,7 @@ func main() {
 // CHECK-LABEL: define i32 @"{{.*}}/cl/_testgo/cgomacro._Cfunc_PyObject_Print"(ptr %0, ptr %1, i32 %2){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %4 = load ptr, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_6094269d1ec2_Cfunc_PyObject_Print", align 8
+// CHECK-NEXT:   %4 = load ptr, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_0c963f77ad5b_Cfunc_PyObject_Print", align 8
 // CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
 // CHECK-NEXT:   %6 = call i32 %5(ptr %0, ptr %1, i32 %2)
 // CHECK-NEXT:   ret i32 %6
@@ -47,7 +47,7 @@ func main() {
 
 // CHECK-LABEL: define [0 x i8] @"{{.*}}/cl/_testgo/cgomacro._Cfunc_Py_Finalize"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load ptr, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_6094269d1ec2_Cfunc_Py_Finalize", align 8
+// CHECK-NEXT:   %0 = load ptr, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_0c963f77ad5b_Cfunc_Py_Finalize", align 8
 // CHECK-NEXT:   %1 = load ptr, ptr %0, align 8
 // CHECK-NEXT:   %2 = call [0 x i8] %1()
 // CHECK-NEXT:   ret [0 x i8] %2
@@ -55,7 +55,7 @@ func main() {
 
 // CHECK-LABEL: define [0 x i8] @"{{.*}}/cl/_testgo/cgomacro._Cfunc_Py_Initialize"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load ptr, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_6094269d1ec2_Cfunc_Py_Initialize", align 8
+// CHECK-NEXT:   %0 = load ptr, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_0c963f77ad5b_Cfunc_Py_Initialize", align 8
 // CHECK-NEXT:   %1 = load ptr, ptr %0, align 8
 // CHECK-NEXT:   %2 = call [0 x i8] %1()
 // CHECK-NEXT:   ret [0 x i8] %2
@@ -64,7 +64,7 @@ func main() {
 // CHECK-LABEL: define i32 @"{{.*}}/cl/_testgo/cgomacro._Cfunc_fputs"(ptr %0, ptr %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %3 = load ptr, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_6094269d1ec2_Cfunc_fputs", align 8
+// CHECK-NEXT:   %3 = load ptr, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_0c963f77ad5b_Cfunc_fputs", align 8
 // CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
 // CHECK-NEXT:   %5 = call i32 %4(ptr %0, ptr %1)
 // CHECK-NEXT:   ret i32 %5
@@ -72,7 +72,7 @@ func main() {
 
 // CHECK-LABEL: define [0 x i8] @"{{.*}}/cl/_testgo/cgomacro._Cfunc_test_stdout"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load ptr, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_6094269d1ec2_Cfunc_test_stdout", align 8
+// CHECK-NEXT:   %0 = load ptr, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_0c963f77ad5b_Cfunc_test_stdout", align 8
 // CHECK-NEXT:   %1 = load ptr, ptr %0, align 8
 // CHECK-NEXT:   %2 = call [0 x i8] %1()
 // CHECK-NEXT:   ret [0 x i8] %2
@@ -86,7 +86,7 @@ func main() {
 // CHECK-LABEL: define ptr @"{{.*}}/cl/_testgo/cgomacro._Cmacro_Py_False"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %1 = load ptr, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_6094269d1ec2_Cmacro_Py_False", align 8
+// CHECK-NEXT:   %1 = load ptr, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_0c963f77ad5b_Cmacro_Py_False", align 8
 // CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
 // CHECK-NEXT:   ret ptr %2
 // CHECK-NEXT: }
@@ -94,7 +94,7 @@ func main() {
 // CHECK-LABEL: define ptr @"{{.*}}/cl/_testgo/cgomacro._Cmacro_Py_None"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %1 = load ptr, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_6094269d1ec2_Cmacro_Py_None", align 8
+// CHECK-NEXT:   %1 = load ptr, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_0c963f77ad5b_Cmacro_Py_None", align 8
 // CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
 // CHECK-NEXT:   ret ptr %2
 // CHECK-NEXT: }
@@ -102,7 +102,7 @@ func main() {
 // CHECK-LABEL: define ptr @"{{.*}}/cl/_testgo/cgomacro._Cmacro_Py_True"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %1 = load ptr, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_6094269d1ec2_Cmacro_Py_True", align 8
+// CHECK-NEXT:   %1 = load ptr, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_0c963f77ad5b_Cmacro_Py_True", align 8
 // CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
 // CHECK-NEXT:   ret ptr %2
 // CHECK-NEXT: }
@@ -110,7 +110,7 @@ func main() {
 // CHECK-LABEL: define ptr @"{{.*}}/cl/_testgo/cgomacro._Cmacro_stdout"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %1 = load ptr, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_6094269d1ec2_Cmacro_stdout", align 8
+// CHECK-NEXT:   %1 = load ptr, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_0c963f77ad5b_Cmacro_stdout", align 8
 // CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
 // CHECK-NEXT:   ret ptr %2
 // CHECK-NEXT: }
@@ -123,15 +123,15 @@ func main() {
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
 // CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testgo/cgomacro.init$guard", align 1
 // CHECK-NEXT:   call void @syscall.init()
-// CHECK-NEXT:   store ptr @_cgo_6094269d1ec2_Cfunc_PyObject_Print, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_6094269d1ec2_Cfunc_PyObject_Print", align 8
-// CHECK-NEXT:   store ptr @_cgo_6094269d1ec2_Cmacro_Py_False, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_6094269d1ec2_Cmacro_Py_False", align 8
-// CHECK-NEXT:   store ptr @_cgo_6094269d1ec2_Cfunc_Py_Finalize, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_6094269d1ec2_Cfunc_Py_Finalize", align 8
-// CHECK-NEXT:   store ptr @_cgo_6094269d1ec2_Cfunc_Py_Initialize, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_6094269d1ec2_Cfunc_Py_Initialize", align 8
-// CHECK-NEXT:   store ptr @_cgo_6094269d1ec2_Cmacro_Py_None, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_6094269d1ec2_Cmacro_Py_None", align 8
-// CHECK-NEXT:   store ptr @_cgo_6094269d1ec2_Cmacro_Py_True, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_6094269d1ec2_Cmacro_Py_True", align 8
-// CHECK-NEXT:   store ptr @_cgo_6094269d1ec2_Cfunc_fputs, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_6094269d1ec2_Cfunc_fputs", align 8
-// CHECK-NEXT:   store ptr @_cgo_6094269d1ec2_Cmacro_stdout, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_6094269d1ec2_Cmacro_stdout", align 8
-// CHECK-NEXT:   store ptr @_cgo_6094269d1ec2_Cfunc_test_stdout, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_6094269d1ec2_Cfunc_test_stdout", align 8
+// CHECK-NEXT:   store ptr @_cgo_0c963f77ad5b_Cfunc_PyObject_Print, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_0c963f77ad5b_Cfunc_PyObject_Print", align 8
+// CHECK-NEXT:   store ptr @_cgo_0c963f77ad5b_Cmacro_Py_False, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_0c963f77ad5b_Cmacro_Py_False", align 8
+// CHECK-NEXT:   store ptr @_cgo_0c963f77ad5b_Cfunc_Py_Finalize, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_0c963f77ad5b_Cfunc_Py_Finalize", align 8
+// CHECK-NEXT:   store ptr @_cgo_0c963f77ad5b_Cfunc_Py_Initialize, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_0c963f77ad5b_Cfunc_Py_Initialize", align 8
+// CHECK-NEXT:   store ptr @_cgo_0c963f77ad5b_Cmacro_Py_None, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_0c963f77ad5b_Cmacro_Py_None", align 8
+// CHECK-NEXT:   store ptr @_cgo_0c963f77ad5b_Cmacro_Py_True, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_0c963f77ad5b_Cmacro_Py_True", align 8
+// CHECK-NEXT:   store ptr @_cgo_0c963f77ad5b_Cfunc_fputs, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_0c963f77ad5b_Cfunc_fputs", align 8
+// CHECK-NEXT:   store ptr @_cgo_0c963f77ad5b_Cmacro_stdout, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_0c963f77ad5b_Cmacro_stdout", align 8
+// CHECK-NEXT:   store ptr @_cgo_0c963f77ad5b_Cfunc_test_stdout, ptr @"{{.*}}/cl/_testgo/cgomacro._cgo_0c963f77ad5b_Cfunc_test_stdout", align 8
 // CHECK-NEXT:   br label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0

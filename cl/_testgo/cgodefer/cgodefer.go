@@ -14,7 +14,7 @@ func main() {
 // CHECK-LABEL: define [0 x i8] @"{{.*}}/cl/_testgo/cgodefer._Cfunc_free"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %2 = load ptr, ptr @"{{.*}}/cl/_testgo/cgodefer._cgo_73a35cf48340_Cfunc_free", align 8
+// CHECK-NEXT:   %2 = load ptr, ptr @"{{.*}}/cl/_testgo/cgodefer._cgo_2f44c9196013_Cfunc_free", align 8
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
 // CHECK-NEXT:   %4 = call [0 x i8] %3(ptr %0)
 // CHECK-NEXT:   ret [0 x i8] %4
@@ -33,8 +33,8 @@ func main() {
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
 // CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testgo/cgodefer.init$guard", align 1
 // CHECK-NEXT:   call void @syscall.init()
-// CHECK-NEXT:   store ptr @_cgo_73a35cf48340_Cfunc_free, ptr @"{{.*}}/cl/_testgo/cgodefer._cgo_73a35cf48340_Cfunc_free", align 8
-// CHECK-NEXT:   store ptr @_cgo_73a35cf48340_Cfunc__Cmalloc, ptr @"{{.*}}/cl/_testgo/cgodefer._cgo_73a35cf48340_Cfunc__Cmalloc", align 8
+// CHECK-NEXT:   store ptr @_cgo_2f44c9196013_Cfunc_free, ptr @"{{.*}}/cl/_testgo/cgodefer._cgo_2f44c9196013_Cfunc_free", align 8
+// CHECK-NEXT:   store ptr @_cgo_2f44c9196013_Cfunc__Cmalloc, ptr @"{{.*}}/cl/_testgo/cgodefer._cgo_2f44c9196013_Cfunc__Cmalloc", align 8
 // CHECK-NEXT:   br label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0

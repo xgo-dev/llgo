@@ -18,7 +18,7 @@ func main() {
 // CHECK-LABEL: define i32 @"{{.*}}/cl/_testgo/cgopython._Cfunc_PyRun_SimpleString"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %2 = load ptr, ptr @"{{.*}}/cl/_testgo/cgopython._cgo_3b35f2cc76e7_Cfunc_PyRun_SimpleString", align 8
+// CHECK-NEXT:   %2 = load ptr, ptr @"{{.*}}/cl/_testgo/cgopython._cgo_42e288c3b722_Cfunc_PyRun_SimpleString", align 8
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
 // CHECK-NEXT:   %4 = call i32 %3(ptr %0)
 // CHECK-NEXT:   ret i32 %4
@@ -26,7 +26,7 @@ func main() {
 
 // CHECK-LABEL: define [0 x i8] @"{{.*}}/cl/_testgo/cgopython._Cfunc_Py_Finalize"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load ptr, ptr @"{{.*}}/cl/_testgo/cgopython._cgo_3b35f2cc76e7_Cfunc_Py_Finalize", align 8
+// CHECK-NEXT:   %0 = load ptr, ptr @"{{.*}}/cl/_testgo/cgopython._cgo_42e288c3b722_Cfunc_Py_Finalize", align 8
 // CHECK-NEXT:   %1 = load ptr, ptr %0, align 8
 // CHECK-NEXT:   %2 = call [0 x i8] %1()
 // CHECK-NEXT:   ret [0 x i8] %2
@@ -34,7 +34,7 @@ func main() {
 
 // CHECK-LABEL: define [0 x i8] @"{{.*}}/cl/_testgo/cgopython._Cfunc_Py_Initialize"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load ptr, ptr @"{{.*}}/cl/_testgo/cgopython._cgo_3b35f2cc76e7_Cfunc_Py_Initialize", align 8
+// CHECK-NEXT:   %0 = load ptr, ptr @"{{.*}}/cl/_testgo/cgopython._cgo_42e288c3b722_Cfunc_Py_Initialize", align 8
 // CHECK-NEXT:   %1 = load ptr, ptr %0, align 8
 // CHECK-NEXT:   %2 = call [0 x i8] %1()
 // CHECK-NEXT:   ret [0 x i8] %2
@@ -53,10 +53,10 @@ func main() {
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
 // CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testgo/cgopython.init$guard", align 1
 // CHECK-NEXT:   call void @syscall.init()
-// CHECK-NEXT:   store ptr @_cgo_3b35f2cc76e7_Cfunc_PyRun_SimpleString, ptr @"{{.*}}/cl/_testgo/cgopython._cgo_3b35f2cc76e7_Cfunc_PyRun_SimpleString", align 8
-// CHECK-NEXT:   store ptr @_cgo_3b35f2cc76e7_Cfunc_Py_Finalize, ptr @"{{.*}}/cl/_testgo/cgopython._cgo_3b35f2cc76e7_Cfunc_Py_Finalize", align 8
-// CHECK-NEXT:   store ptr @_cgo_3b35f2cc76e7_Cfunc_Py_Initialize, ptr @"{{.*}}/cl/_testgo/cgopython._cgo_3b35f2cc76e7_Cfunc_Py_Initialize", align 8
-// CHECK-NEXT:   store ptr @_cgo_3b35f2cc76e7_Cfunc__Cmalloc, ptr @"{{.*}}/cl/_testgo/cgopython._cgo_3b35f2cc76e7_Cfunc__Cmalloc", align 8
+// CHECK-NEXT:   store ptr @_cgo_42e288c3b722_Cfunc_PyRun_SimpleString, ptr @"{{.*}}/cl/_testgo/cgopython._cgo_42e288c3b722_Cfunc_PyRun_SimpleString", align 8
+// CHECK-NEXT:   store ptr @_cgo_42e288c3b722_Cfunc_Py_Finalize, ptr @"{{.*}}/cl/_testgo/cgopython._cgo_42e288c3b722_Cfunc_Py_Finalize", align 8
+// CHECK-NEXT:   store ptr @_cgo_42e288c3b722_Cfunc_Py_Initialize, ptr @"{{.*}}/cl/_testgo/cgopython._cgo_42e288c3b722_Cfunc_Py_Initialize", align 8
+// CHECK-NEXT:   store ptr @_cgo_42e288c3b722_Cfunc__Cmalloc, ptr @"{{.*}}/cl/_testgo/cgopython._cgo_42e288c3b722_Cfunc__Cmalloc", align 8
 // CHECK-NEXT:   br label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0

@@ -8,7 +8,6 @@ import (
 )
 
 //go:linkname qsort C.qsort
-
 // CHECK-LINE: @0 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
 
 func qsort(base c.Pointer, count, elem uintptr, compar func(a, b c.Pointer) c.Int)
@@ -50,7 +49,7 @@ func main() {
 // CHECK-NEXT:   store i64 2, ptr %4, align 8
 // CHECK-NEXT:   store i64 7, ptr %5, align 8
 // CHECK-NEXT:   %6 = getelementptr inbounds i64, ptr %0, i64 0
-// CHECK-NEXT:   call void @"{{.*}}/cl/_testrt/qsort.qsort"(ptr %6, i64 5, i64 8, { ptr, ptr } { ptr @"__llgo_stub.{{.*}}/cl/_testrt/qsort.main$1", ptr null })
+// CHECK-NEXT:   call void @qsort(ptr %6, i64 5, i64 8, ptr @"{{.*}}/cl/_testrt/qsort.main$1")
 // CHECK-NEXT:   %7 = load [5 x i64], ptr %0, align 8
 // CHECK-NEXT:   br label %_llgo_1
 // CHECK-EMPTY:
@@ -81,10 +80,4 @@ func main() {
 // CHECK-NEXT:   %4 = sub i64 %2, %3
 // CHECK-NEXT:   %5 = trunc i64 %4 to i32
 // CHECK-NEXT:   ret i32 %5
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i32 @"__llgo_stub.{{.*}}/cl/_testrt/qsort.main$1"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i32 @"{{.*}}/cl/_testrt/qsort.main$1"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i32 %3
 // CHECK-NEXT: }

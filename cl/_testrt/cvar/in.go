@@ -4,7 +4,6 @@ package main
 import _ "unsafe"
 
 //go:linkname barX _bar_x
-
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/cvar.init"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = load i1, ptr @"{{.*}}/cl/_testrt/cvar.init$guard", align 1
@@ -31,7 +30,7 @@ var barY struct {
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/cvar.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load { [16 x i8], [2 x { ptr, ptr }] }, ptr @"{{.*}}/cl/_testrt/cvar.barX", align 8
+// CHECK-NEXT:   %0 = load { [16 x i8], [2 x ptr] }, ptr @_bar_x, align 8
 // CHECK-NEXT:   %1 = load { [16 x i8] }, ptr @_bar_y, align 1
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
