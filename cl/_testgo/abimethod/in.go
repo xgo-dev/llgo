@@ -849,9 +849,14 @@ type I2 interface {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
 // CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = load %"{{.*}}/cl/_testgo/abimethod.T", ptr %2, align 8
-// CHECK-NEXT:   %4 = call i64 @"{{.*}}/cl/_testgo/abimethod.T.Demo1"(%"{{.*}}/cl/_testgo/abimethod.T" %3)
-// CHECK-NEXT:   ret i64 %4
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %4)
+// CHECK-NEXT:   %5 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %2)
+// CHECK-NEXT:   %6 = load %"{{.*}}/cl/_testgo/abimethod.T", ptr %5, align 8
+// CHECK-NEXT:   %7 = call i64 @"{{.*}}/cl/_testgo/abimethod.T.Demo1"(%"{{.*}}/cl/_testgo/abimethod.T" %6)
+// CHECK-NEXT:   ret i64 %7
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/abimethod.*struct{m int; *{{.*}}/cl/_testgo/abimethod.T}.Demo2"(ptr %0){{.*}} {
@@ -877,9 +882,10 @@ type I2 interface {
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = load %"{{.*}}/cl/_testgo/abimethod.T", ptr %3, align 8
-// CHECK-NEXT:   %5 = call i64 @"{{.*}}/cl/_testgo/abimethod.T.Demo1"(%"{{.*}}/cl/_testgo/abimethod.T" %4)
-// CHECK-NEXT:   ret i64 %5
+// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %3)
+// CHECK-NEXT:   %5 = load %"{{.*}}/cl/_testgo/abimethod.T", ptr %4, align 8
+// CHECK-NEXT:   %6 = call i64 @"{{.*}}/cl/_testgo/abimethod.T.Demo1"(%"{{.*}}/cl/_testgo/abimethod.T" %5)
+// CHECK-NEXT:   ret i64 %6
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/abimethod.struct{m int; *{{.*}}/cl/_testgo/abimethod.T}.Demo2"({ i64, ptr } %0){{.*}} {
@@ -990,9 +996,12 @@ type I2 interface {
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/abimethod.*struct{m int; {{.*}}/cl/_testgo/abimethod.T}.Demo1"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds { i64, %"{{.*}}/cl/_testgo/abimethod.T" }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = load %"{{.*}}/cl/_testgo/abimethod.T", ptr %1, align 8
-// CHECK-NEXT:   %3 = call i64 @"{{.*}}/cl/_testgo/abimethod.T.Demo1"(%"{{.*}}/cl/_testgo/abimethod.T" %2)
-// CHECK-NEXT:   ret i64 %3
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %1)
+// CHECK-NEXT:   %4 = load %"{{.*}}/cl/_testgo/abimethod.T", ptr %3, align 8
+// CHECK-NEXT:   %5 = call i64 @"{{.*}}/cl/_testgo/abimethod.T.Demo1"(%"{{.*}}/cl/_testgo/abimethod.T" %4)
+// CHECK-NEXT:   ret i64 %5
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/abimethod.*struct{m int; {{.*}}/cl/_testgo/abimethod.T}.Demo2"(ptr %0){{.*}} {
