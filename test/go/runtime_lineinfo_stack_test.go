@@ -107,7 +107,7 @@ func TestRuntimeLineInfoAndStack(t *testing.T) {
 	t.Setenv("LLGO_ROOT", repoRoot)
 	cmd := exec.Command("go", "run", "./cmd/llgo", "run", file)
 	cmd.Dir = repoRoot
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), "LLGO_LINEINFO=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("llgo lineinfo probe failed: %v\n%s", err, out)
 	}

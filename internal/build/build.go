@@ -1860,7 +1860,7 @@ func IsDbgEnabled() bool {
 }
 
 func IsLineInfoEnabled() bool {
-	return isEnvOn(llgoLineInfo, true) || IsDbgEnabled()
+	return isEnvOn(llgoLineInfo, false) || IsDbgEnabled()
 }
 
 func IsDbgSymsEnabled() bool {
