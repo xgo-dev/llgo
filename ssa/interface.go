@@ -20,6 +20,7 @@ import (
 	"go/token"
 	"go/types"
 
+	"github.com/goplus/llgo/internal/metadata"
 	"github.com/goplus/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
 )
@@ -80,6 +81,28 @@ func (b Builder) Imethod(intf Expr, method *types.Func) Expr {
 	}
 	tclosure := prog.Type(sig, InGo)
 	i := iMethodOf(rawIntf, method.Name())
+	if mb := b.Pkg.MetaBuilder; mb != nil {
+		intfTypeName, _ := prog.abi.TypeName(intf.raw.Type)
+		mtypeName, _ := prog.abi.TypeName(funcType(prog, method.Type()))
+		mb.AddUseIfaceMethod(mb.Symbol(b.Func.Name()), []metadata.IfaceMethodDemand{{
+			Target: mb.Symbol(intfTypeName),
+			Sig: metadata.MethodSig{
+				Name:  mb.Name(mthName(method)),
+				MType: mb.Symbol(mtypeName),
+			},
+		}})
+
+		methods := make([]metadata.MethodSig, 0, rawIntf.NumMethods())
+		for i := 0; i < rawIntf.NumMethods(); i++ {
+			im := rawIntf.Method(i)
+			imtypeName, _ := prog.abi.TypeName(funcType(prog, im.Type()))
+			methods = append(methods, metadata.MethodSig{
+				Name:  mb.Name(mthName(im)),
+				MType: mb.Symbol(imtypeName),
+			})
+		}
+		mb.AddIfaceEntry(mb.Symbol(intfTypeName), methods)
+	}
 	data := b.InlineCall(b.Pkg.rtFunc("IfacePtrData"), intf)
 	impl := intf.impl
 	itab := Expr{b.faceItab(impl), prog.VoidPtrPtr()}
@@ -114,6 +137,12 @@ func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
 	}
 	prog := b.Prog
 	typ := x.Type
+	if mb := b.Pkg.MetaBuilder; mb != nil {
+		if _, ok := types.Unalias(typ.raw.Type).Underlying().(*types.Interface); !ok {
+			typeName, _ := prog.abi.TypeName(typ.raw.Type)
+			mb.AddUseIface(mb.Symbol(b.Func.Name()), []metadata.Symbol{mb.Symbol(typeName)})
+		}
+	}
 	tabi := b.abiType(typ.raw.Type)
 	if !directIfaceType(typ.raw.Type) {
 		vptr := b.AllocU(typ)

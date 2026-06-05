@@ -26,6 +26,8 @@ import (
 
 	"github.com/goplus/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
+
+	"github.com/goplus/llgo/internal/metadata"
 )
 
 // -----------------------------------------------------------------------------
@@ -343,6 +345,71 @@ func (b Builder) abiExtendedFields(t types.Type, name string) (fields []llvm.Val
 	return
 }
 
+func (b Builder) recordTypeChildren(parentName string, t types.Type) {
+	mb := b.Pkg.MetaBuilder
+	if mb == nil {
+		return
+	}
+	parent := mb.Symbol(parentName)
+	for _, child := range b.directTypeChildren(t) {
+		childName, _ := b.Prog.abi.TypeName(child)
+		mb.AddTypeChild(parent, mb.Symbol(childName))
+	}
+}
+
+func (b Builder) directTypeChildren(t types.Type) []types.Type {
+	switch t := types.Unalias(t).(type) {
+	case *types.Basic:
+		return nil
+	case *types.Pointer:
+		return []types.Type{abi.PublicType(t.Elem())}
+	case *types.Chan:
+		return []types.Type{abi.PublicType(t.Elem())}
+	case *types.Slice:
+		return []types.Type{abi.PublicType(t.Elem())}
+	case *types.Array:
+		elem := abi.PublicType(t.Elem())
+		return []types.Type{elem, types.NewSlice(elem)}
+	case *types.Map:
+		return []types.Type{
+			abi.PublicType(t.Key()),
+			abi.PublicType(t.Elem()),
+			// Map type descriptors reference their runtime bucket type too.
+			b.Prog.abi.MapBucket(t),
+		}
+	case *types.Signature:
+		var children []types.Type
+		children = appendTupleTypeChildren(children, t.Params())
+		children = appendTupleTypeChildren(children, t.Results())
+		return children
+	case *types.Struct:
+		children := make([]types.Type, 0, t.NumFields())
+		for i := 0; i < t.NumFields(); i++ {
+			children = append(children, abi.PublicType(t.Field(i).Type()))
+		}
+		return children
+	case *types.Interface:
+		children := make([]types.Type, 0, t.NumMethods())
+		for i := 0; i < t.NumMethods(); i++ {
+			children = append(children, funcType(b.Prog, t.Method(i).Type()))
+		}
+		return children
+	case *types.Named:
+		return b.directTypeChildren(t.Underlying())
+	}
+	return nil
+}
+
+func appendTupleTypeChildren(children []types.Type, tuple *types.Tuple) []types.Type {
+	if tuple == nil {
+		return children
+	}
+	for i := 0; i < tuple.Len(); i++ {
+		children = append(children, abi.PublicType(tuple.At(i).Type()))
+	}
+	return children
+}
+
 func (b Builder) abiUncommonPkg(t types.Type) (*types.Package, string) {
 retry:
 	switch typ := types.Unalias(t).(type) {
@@ -434,6 +501,11 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 	ft := prog.rtType("Method")
 	n := mset.Len()
 	fields := make([]llvm.Value, n)
+	var slots []metadata.MethodSlot
+	typeName, _ := prog.abi.TypeName(t)
+	if b.Pkg.MetaBuilder != nil {
+		slots = make([]metadata.MethodSlot, 0, n)
+	}
 	pkg, _ := b.abiUncommonPkg(t)
 	anonymous := pkg == nil
 	if anonymous {
@@ -441,11 +513,12 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 	}
 	for i := 0; i < n; i++ {
 		m := mset.At(i)
-		obj := m.Obj()
+		obj := m.Obj().(*types.Func)
 		mName := obj.Name()
+		fullName := mthName(obj)
 		name := b.Str(mName).impl
 		if !token.IsExported(mName) {
-			name = b.Str(abi.FullName(obj.Pkg(), mName)).impl
+			name = b.Str(fullName).impl
 		}
 		mSig := m.Type().(*types.Signature)
 		var tfn, ifn llvm.Value
@@ -463,6 +536,20 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 		values = append(values, ifn)
 		values = append(values, tfn)
 		fields[i] = llvm.ConstNamedStruct(ft.ll, values)
+		if mb := b.Pkg.MetaBuilder; mb != nil {
+			mtypeName, _ := prog.abi.TypeName(ftyp)
+			slots = append(slots, metadata.MethodSlot{
+				Sig: metadata.MethodSig{
+					Name:  mb.Name(fullName),
+					MType: mb.Symbol(mtypeName),
+				},
+				IFn: mb.Symbol(ifn.Name()),
+				TFn: mb.Symbol(tfn.Name()),
+			})
+		}
+	}
+	if mb := b.Pkg.MetaBuilder; mb != nil {
+		mb.AddMethodInfo(mb.Symbol(typeName), slots)
 	}
 	return llvm.ConstArray(ft.ll, fields)
 }
@@ -471,6 +558,14 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 func funcType(prog Program, typ types.Type) types.Type {
 	ftyp := prog.Type(typ, InGo)
 	return ftyp.raw.Type.(*types.Struct).Field(0).Type()
+}
+
+func mthName(method *types.Func) string {
+	name := method.Name()
+	if token.IsExported(name) {
+		return name
+	}
+	return abi.FullName(method.Pkg(), name)
 }
 
 func (b Builder) abiMethodFunc(anonymous bool, mPkg *types.Package, mName string, mSig *types.Signature) (tfn llvm.Value) {
@@ -507,6 +602,7 @@ func (b Builder) abiType(t types.Type) Expr {
 		if prog.patchType != nil {
 			t = prog.patchType(t)
 		}
+		b.recordTypeChildren(name, t)
 		mset, hasUncommon := b.abiUncommonMethodSet(t)
 		rt := prog.rtNamed(prog.abi.RuntimeName(t))
 		var typ types.Type = rt

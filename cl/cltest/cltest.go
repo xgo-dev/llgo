@@ -39,6 +39,7 @@ import (
 	"github.com/goplus/llgo/internal/build"
 	"github.com/goplus/llgo/internal/littest"
 	"github.com/goplus/llgo/internal/llgen"
+	"github.com/goplus/llgo/internal/metadata"
 	"github.com/goplus/llgo/internal/mockable"
 	"github.com/goplus/llgo/ssa/ssatest"
 	"github.com/qiniu/x/test"
@@ -66,6 +67,7 @@ type runOptions struct {
 	filter      func(string) string
 	checkIR     bool
 	checkOutput bool
+	checkMeta   bool
 }
 
 // RunOption customizes directory-based test behavior.
@@ -96,6 +98,13 @@ func WithOutputCheck(enabled bool) RunOption {
 func WithIRCheck(enabled bool) RunOption {
 	return func(opts *runOptions) {
 		opts.checkIR = enabled
+	}
+}
+
+// WithMetaCheck enables or disables package metadata golden checks.
+func WithMetaCheck(enabled bool) RunOption {
+	return func(opts *runOptions) {
+		opts.checkMeta = enabled
 	}
 }
 
@@ -243,12 +252,22 @@ func testRunAndTestFrom(t *testing.T, pkgDir, relPkg, sel string, opts runOption
 		if opts.checkIR {
 			testFrom(t, pkgDir, sel)
 		}
+		if opts.checkMeta {
+			conf, _, capturedMeta := withModuleCapture(opts.conf, pkgDir)
+			output, err := runWithConf(relPkg, pkgDir, conf)
+			if err != nil {
+				t.Logf("raw output:\n%s", string(output))
+				t.Fatalf("run failed: %v\noutput: %s", err, string(output))
+			}
+			assertExpectedMeta(t, pkgDir, relPkg, capturedMeta)
+		}
 		return
 	}
 
 	var irSpec littest.Spec
 	conf := opts.conf
 	var capturedIR *string
+	var capturedMeta *string
 	var checkIR bool
 	if opts.checkIR {
 		irSpec, checkIR, err = readIRSpec(pkgDir)
@@ -256,8 +275,11 @@ func testRunAndTestFrom(t *testing.T, pkgDir, relPkg, sel string, opts runOption
 			t.Fatal("LoadSpec failed:", err)
 		}
 		if checkIR {
-			conf, capturedIR = withModuleCapture(opts.conf, pkgDir)
+			conf, capturedIR, capturedMeta = withModuleCapture(opts.conf, pkgDir)
 		}
+	}
+	if opts.checkMeta && capturedMeta == nil {
+		conf, capturedIR, capturedMeta = withModuleCapture(conf, pkgDir)
 	}
 
 	output, err := runWithConf(relPkg, pkgDir, conf)
@@ -267,6 +289,9 @@ func testRunAndTestFrom(t *testing.T, pkgDir, relPkg, sel string, opts runOption
 	}
 
 	assertExpectedOutput(t, pkgDir, expectedOutput, output, opts)
+	if opts.checkMeta {
+		assertExpectedMeta(t, pkgDir, relPkg, capturedMeta)
+	}
 	if !checkIR {
 		return
 	}
@@ -279,9 +304,36 @@ func testRunAndTestFrom(t *testing.T, pkgDir, relPkg, sel string, opts runOption
 	}
 }
 
+func assertExpectedMeta(t *testing.T, pkgDir, relPkg string, capturedMeta *string) {
+	t.Helper()
+	expectedMeta, hasMeta, err := readGolden(filepath.Join(pkgDir, "meta-expect.txt"))
+	if err != nil {
+		t.Fatal("ReadFile failed:", err)
+	}
+	if !hasMeta {
+		t.Fatal("missing meta-expect.txt")
+	}
+	if capturedMeta == nil {
+		t.Fatalf("metadata snapshot missing for %s", relPkg)
+	}
+	if test.Diff(t, filepath.Join(pkgDir, "meta-expect.txt.new"), []byte(*capturedMeta), expectedMeta) {
+		t.Fatal("metadata: unexpected result")
+	}
+}
+
 func RunAndCapture(relPkg, pkgDir string) ([]byte, error) {
 	conf := build.NewDefaultConf(build.ModeRun)
 	return RunAndCaptureWithConf(relPkg, pkgDir, conf)
+}
+
+// CaptureMeta builds relPkg and returns the package metadata captured for pkgDir.
+func CaptureMeta(relPkg, pkgDir string) (string, error) {
+	conf, _, capturedMeta := withModuleCapture(build.NewDefaultConf(build.ModeRun), pkgDir)
+	output, err := runWithConf(relPkg, pkgDir, conf)
+	if err != nil {
+		return "", fmt.Errorf("%w\noutput: %s", err, string(output))
+	}
+	return *capturedMeta, nil
 }
 
 // RunAndCaptureWithConf runs llgo with a custom build config and captures output.
@@ -289,12 +341,13 @@ func RunAndCaptureWithConf(relPkg, pkgDir string, conf *build.Config) ([]byte, e
 	return runWithConf(relPkg, pkgDir, conf)
 }
 
-func withModuleCapture(conf *build.Config, pkgDir string) (*build.Config, *string) {
+func withModuleCapture(conf *build.Config, pkgDir string) (*build.Config, *string, *string) {
 	if conf == nil {
 		conf = build.NewDefaultConf(build.ModeRun)
 	}
 	localConf := *conf
 	var module string
+	var meta string
 	prevHook := localConf.ModuleHook
 	localConf.ModuleHook = func(pkg build.Package) {
 		if prevHook != nil {
@@ -304,9 +357,10 @@ func withModuleCapture(conf *build.Config, pkgDir string) (*build.Config, *strin
 			return filepath.Dir(file) == pkgDir
 		}) {
 			module = pkg.LPkg.String()
+			meta = metadata.MetaString(pkg.Meta)
 		}
 	}
-	return &localConf, &module
+	return &localConf, &module, &meta
 }
 
 func runWithConf(relPkg, pkgDir string, conf *build.Config) ([]byte, error) {

@@ -26,6 +26,7 @@ import (
 	"unsafe"
 
 	"github.com/goplus/llgo/internal/env"
+	"github.com/goplus/llgo/internal/metadata"
 	"github.com/goplus/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/types/typeutil"
@@ -733,6 +734,7 @@ type aPackage struct {
 	NeedAbiInit   int // bitmask of Reflect* flags indicating which reflect type-construction operations are used
 	MethodByIndex map[int]none
 	MethodByName  map[string]none
+	MetaBuilder   *metadata.Builder
 
 	export         map[string]string   // pkgPath.nameInPkg => exportname
 	preserveSyms   map[string]struct{} // set of exported symbol names
