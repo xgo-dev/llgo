@@ -25,8 +25,10 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/goplus/llgo/internal/env"
+	"github.com/goplus/llgo/internal/metadata"
 	"github.com/goplus/llgo/internal/packages"
 	gopackages "golang.org/x/tools/go/packages"
 )
@@ -339,6 +341,12 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 	if err != nil {
 		return false
 	}
+	metaStart := time.Now()
+	pkgMeta, err := readMeta(paths.Meta)
+	if err != nil {
+		return false
+	}
+	pkg.MetaReadDuration = time.Since(metaStart)
 
 	// Parse metadata from manifest [Package] section (INI format)
 	meta, err := parseManifestMetadata(content)
@@ -351,6 +359,7 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 	pkg.LinkArgs = meta.LinkArgs
 	pkg.NeedRt = meta.NeedRt
 	pkg.NeedPyInit = meta.NeedPyInit
+	pkg.Meta = pkgMeta
 	pkg.CacheHit = true
 
 	return true
@@ -456,6 +465,13 @@ func (c *context) saveToCache(pkg *aPackage) error {
 		}
 	} else {
 		return nil
+	}
+
+	if pkg.Meta == nil {
+		pkg.Meta = metadata.NewBuilder().Build()
+	}
+	if err := writeMeta(paths.Meta, pkg.Meta); err != nil {
+		return err
 	}
 
 	// Append metadata to existing manifest (pkg.Manifest was built in collectFingerprint).

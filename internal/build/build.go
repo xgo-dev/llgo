@@ -34,6 +34,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/tools/go/ssa"
 
@@ -46,6 +47,7 @@ import (
 	"github.com/goplus/llgo/internal/flash"
 	"github.com/goplus/llgo/internal/goembed"
 	"github.com/goplus/llgo/internal/header"
+	"github.com/goplus/llgo/internal/metadata"
 	"github.com/goplus/llgo/internal/mockable"
 	"github.com/goplus/llgo/internal/monitor"
 	"github.com/goplus/llgo/internal/optlevel"
@@ -686,7 +688,7 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 				ctx.tryLoadFromCache(aPkg)
 				if verbose {
 					if aPkg.CacheHit {
-						fmt.Fprintf(os.Stderr, "CACHE HIT: %s\n", pkg.PkgPath)
+						fmt.Fprintf(os.Stderr, "CACHE HIT: %s (meta read: %s)\n", pkg.PkgPath, aPkg.MetaReadDuration)
 					} else {
 						fmt.Fprintf(os.Stderr, "CACHE MISS: %s\n", pkg.PkgPath)
 					}
@@ -718,7 +720,7 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 			ctx.tryLoadFromCache(aPkg)
 			if verbose {
 				if aPkg.CacheHit {
-					fmt.Fprintf(os.Stderr, "CACHE HIT: %s\n", pkg.PkgPath)
+					fmt.Fprintf(os.Stderr, "CACHE HIT: %s (meta read: %s)\n", pkg.PkgPath, aPkg.MetaReadDuration)
 				} else {
 					fmt.Fprintf(os.Stderr, "CACHE MISS: %s\n", pkg.PkgPath)
 				}
@@ -1267,10 +1269,18 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 		return fmt.Errorf("load go:embed directives for %s failed: %w", pkgPath, err)
 	}
 
-	ret, externs, err := cl.NewPackageExWithEmbed(ctx.prog, ctx.patches, aPkg.rewriteVars, aPkg.SSA, syntax, embedMap)
+	var metaBuilder *metadata.Builder
+	if !aPkg.CacheHit {
+		metaBuilder = metadata.NewBuilder()
+	}
+	ret, externs, err := cl.NewPackageExWithEmbed(ctx.prog, ctx.patches, aPkg.rewriteVars, aPkg.SSA, syntax, embedMap, metaBuilder)
 	check(err)
 
 	aPkg.LPkg = ret
+	if metaBuilder != nil {
+		extractOrdinaryEdges(metaBuilder, ret.Module())
+		aPkg.Meta = metaBuilder.Build()
+	}
 	if hook := ctx.buildConf.ModuleHook; hook != nil {
 		hook(aPkg)
 	}
@@ -1554,12 +1564,14 @@ type aPackage struct {
 	LinkArgs    []string
 	ObjFiles    []string // object files: .o or .ll (output of compiler, input to archiver)
 	ArchiveFile string   // archive file: .a (output of archiver, used for linking)
+	Meta        *metadata.PackageMeta
 	rewriteVars map[string]string
 
 	// Cache related fields
-	Fingerprint string // fingerprint digest
-	Manifest    string // manifest text content
-	CacheHit    bool   // whether cache was hit
+	Fingerprint      string // fingerprint digest
+	Manifest         string // manifest text content
+	CacheHit         bool   // whether cache was hit
+	MetaReadDuration time.Duration
 }
 
 type Package = *aPackage

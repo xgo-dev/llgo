@@ -1,0 +1,68 @@
+[TypeChildren]
+*_llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac:
+    _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+*_llgo_github.com/goplus/llgo/cl/_testmeta/interface_unexported.T:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/interface_unexported.T
+*github.com/goplus/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo:
+    github.com/goplus/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo
+github.com/goplus/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo:
+    _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+
+[InterfaceInfo]
+_llgo_github.com/goplus/llgo/cl/_testmeta/interface_unexported.I:
+    github.com/goplus/llgo/cl/_testmeta/interface_unexported.m _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+
+[OrdinaryEdges]
+*_llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+*_llgo_github.com/goplus/llgo/cl/_testmeta/interface_unexported.T:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    _llgo_github.com/goplus/llgo/cl/_testmeta/interface_unexported.T
+*github.com/goplus/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    github.com/goplus/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo
+__llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.interequal:
+    github.com/goplus/llgo/runtime/internal/runtime.interequal
+__llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequal0:
+    github.com/goplus/llgo/runtime/internal/runtime.memequal0
+__llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr:
+    github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+_llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac:
+    *_llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+_llgo_github.com/goplus/llgo/cl/_testmeta/interface_unexported.T:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequal0
+    *_llgo_github.com/goplus/llgo/cl/_testmeta/interface_unexported.T
+github.com/goplus/llgo/cl/_testmeta/interface_unexported.(*T).m:
+    github.com/goplus/llgo/cl/_testmeta/interface_unexported.T.m
+github.com/goplus/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.interequal
+    *github.com/goplus/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo
+    github.com/goplus/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo$imethods
+github.com/goplus/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo$imethods:
+    _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+github.com/goplus/llgo/cl/_testmeta/interface_unexported.init:
+    github.com/goplus/llgo/cl/_testmeta/interface_unexported.init$guard
+github.com/goplus/llgo/cl/_testmeta/interface_unexported.main:
+    github.com/goplus/llgo/runtime/internal/runtime.AllocU
+    github.com/goplus/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo
+    _llgo_github.com/goplus/llgo/cl/_testmeta/interface_unexported.T
+    github.com/goplus/llgo/runtime/internal/runtime.NewItab
+    github.com/goplus/llgo/cl/_testmeta/interface_unexported.use
+github.com/goplus/llgo/cl/_testmeta/interface_unexported.use:
+    github.com/goplus/llgo/runtime/internal/runtime.IfacePtrData
+
+[UseIface]
+github.com/goplus/llgo/cl/_testmeta/interface_unexported.main:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/interface_unexported.T
+
+[UseIfaceMethod]
+github.com/goplus/llgo/cl/_testmeta/interface_unexported.use:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/interface_unexported.I github.com/goplus/llgo/cl/_testmeta/interface_unexported.m _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+
+[MethodInfo]
+*_llgo_github.com/goplus/llgo/cl/_testmeta/interface_unexported.T:
+    0 github.com/goplus/llgo/cl/_testmeta/interface_unexported.m _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac github.com/goplus/llgo/cl/_testmeta/interface_unexported.(*T).m github.com/goplus/llgo/cl/_testmeta/interface_unexported.(*T).m
+_llgo_github.com/goplus/llgo/cl/_testmeta/interface_unexported.T:
+    0 github.com/goplus/llgo/cl/_testmeta/interface_unexported.m _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac github.com/goplus/llgo/cl/_testmeta/interface_unexported.(*T).m github.com/goplus/llgo/cl/_testmeta/interface_unexported.T.m
+
