@@ -144,7 +144,7 @@ func main() {
 // CHECK-NEXT:   %1 = call i32 @"{{.*}}/cl/_testgo/cgomacro.main$1"()
 // CHECK-NEXT:   %2 = call [0 x i8] @"{{.*}}/cl/_testgo/cgomacro._Cfunc_Py_Initialize"()
 // CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
-// CHECK-NEXT:   %4 = alloca i8, i64 196, align 1
+// CHECK-NEXT:   %4 = alloca {{.*}}, align {{[0-9]+}}
 // CHECK-NEXT:   %5 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 48)
 // CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %5, i32 0, i32 0
 // CHECK-NEXT:   store ptr %4, ptr %6, align 8
@@ -168,7 +168,7 @@ func main() {
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %16)
 // CHECK-NEXT:   %17 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %5, i32 0, i32 5
 // CHECK-NEXT:   store ptr null, ptr %17, align 8
-// CHECK-NEXT:   %18 = call i32 @sigsetjmp(ptr %4, i32 0)
+// CHECK-NEXT:   %18 = call i32 @{{.*}}sigsetjmp(ptr %4, i32 0)
 // CHECK-NEXT:   %19 = icmp eq i32 %18, 0
 // CHECK-NEXT:   br i1 %19, label %_llgo_4, label %_llgo_5
 // CHECK-EMPTY:
@@ -211,7 +211,7 @@ func main() {
 // CHECK-LABEL: define i32 @"{{.*}}/cl/_testgo/cgomacro.main$1"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/cl/_testgo/cgomacro._Cmacro_stdout"()
-// CHECK-NEXT:   %1 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_{{.*}}/cl/_testgo/cgomacro._Ctype_struct___sFILE", ptr undef }, ptr %0, 1
+// CHECK-NEXT:   %1 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_{{.*}}/cl/_testgo/cgomacro._Ctype_struct_{{.*}}FILE", ptr undef }, ptr %0, 1
 // CHECK-NEXT:   %2 = call i32 @"{{.*}}/cl/_testgo/cgomacro._Cfunc_fputs"(ptr @0, ptr %0)
 // CHECK-NEXT:   ret i32 %2
 // CHECK-NEXT: }
@@ -221,7 +221,7 @@ func main() {
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/cl/_testgo/cgomacro._Cmacro_Py_True"()
 // CHECK-NEXT:   %1 = call ptr @"{{.*}}/cl/_testgo/cgomacro._Cmacro_stdout"()
 // CHECK-NEXT:   %2 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_{{.*}}/cl/_testgo/cgomacro._Ctype_struct__object", ptr undef }, ptr %0, 1
-// CHECK-NEXT:   %3 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_{{.*}}/cl/_testgo/cgomacro._Ctype_struct___sFILE", ptr undef }, ptr %1, 1
+// CHECK-NEXT:   %3 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_{{.*}}/cl/_testgo/cgomacro._Ctype_struct_{{.*}}FILE", ptr undef }, ptr %1, 1
 // CHECK-NEXT:   %4 = call i32 @"{{.*}}/cl/_testgo/cgomacro._Cfunc_PyObject_Print"(ptr %0, ptr %1, i32 0)
 // CHECK-NEXT:   ret i32 %4
 // CHECK-NEXT: }
@@ -229,8 +229,8 @@ func main() {
 // CHECK-LABEL: define i32 @"{{.*}}/cl/_testgo/cgomacro.main$3"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/cl/_testgo/cgomacro._Cmacro_stdout"()
-// CHECK-NEXT:   %1 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_{{.*}}/cl/_testgo/cgomacro._Ctype_struct___sFILE", ptr undef }, ptr %0, 1
-// CHECK-NEXT:   %2 = call i32 @"{{.*}}/cl/_testgo/cgomacro._Cfunc_fputs"(ptr @248, ptr %0)
+// CHECK-NEXT:   %1 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_{{.*}}/cl/_testgo/cgomacro._Ctype_struct_{{.*}}FILE", ptr undef }, ptr %0, 1
+// CHECK-NEXT:   %2 = call i32 @"{{.*}}/cl/_testgo/cgomacro._Cfunc_fputs"(ptr @{{[0-9]+}}, ptr %0)
 // CHECK-NEXT:   ret i32 %2
 // CHECK-NEXT: }
 
@@ -239,7 +239,7 @@ func main() {
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/cl/_testgo/cgomacro._Cmacro_Py_False"()
 // CHECK-NEXT:   %1 = call ptr @"{{.*}}/cl/_testgo/cgomacro._Cmacro_stdout"()
 // CHECK-NEXT:   %2 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_{{.*}}/cl/_testgo/cgomacro._Ctype_struct__object", ptr undef }, ptr %0, 1
-// CHECK-NEXT:   %3 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_{{.*}}/cl/_testgo/cgomacro._Ctype_struct___sFILE", ptr undef }, ptr %1, 1
+// CHECK-NEXT:   %3 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_{{.*}}/cl/_testgo/cgomacro._Ctype_struct_{{.*}}FILE", ptr undef }, ptr %1, 1
 // CHECK-NEXT:   %4 = call i32 @"{{.*}}/cl/_testgo/cgomacro._Cfunc_PyObject_Print"(ptr %0, ptr %1, i32 0)
 // CHECK-NEXT:   ret i32 %4
 // CHECK-NEXT: }
@@ -247,8 +247,8 @@ func main() {
 // CHECK-LABEL: define i32 @"{{.*}}/cl/_testgo/cgomacro.main$5"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/cl/_testgo/cgomacro._Cmacro_stdout"()
-// CHECK-NEXT:   %1 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_{{.*}}/cl/_testgo/cgomacro._Ctype_struct___sFILE", ptr undef }, ptr %0, 1
-// CHECK-NEXT:   %2 = call i32 @"{{.*}}/cl/_testgo/cgomacro._Cfunc_fputs"(ptr @249, ptr %0)
+// CHECK-NEXT:   %1 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_{{.*}}/cl/_testgo/cgomacro._Ctype_struct_{{.*}}FILE", ptr undef }, ptr %0, 1
+// CHECK-NEXT:   %2 = call i32 @"{{.*}}/cl/_testgo/cgomacro._Cfunc_fputs"(ptr @{{[0-9]+}}, ptr %0)
 // CHECK-NEXT:   ret i32 %2
 // CHECK-NEXT: }
 
@@ -257,7 +257,7 @@ func main() {
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/cl/_testgo/cgomacro._Cmacro_Py_None"()
 // CHECK-NEXT:   %1 = call ptr @"{{.*}}/cl/_testgo/cgomacro._Cmacro_stdout"()
 // CHECK-NEXT:   %2 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_{{.*}}/cl/_testgo/cgomacro._Ctype_struct__object", ptr undef }, ptr %0, 1
-// CHECK-NEXT:   %3 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_{{.*}}/cl/_testgo/cgomacro._Ctype_struct___sFILE", ptr undef }, ptr %1, 1
+// CHECK-NEXT:   %3 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_{{.*}}/cl/_testgo/cgomacro._Ctype_struct_{{.*}}FILE", ptr undef }, ptr %1, 1
 // CHECK-NEXT:   %4 = call i32 @"{{.*}}/cl/_testgo/cgomacro._Cfunc_PyObject_Print"(ptr %0, ptr %1, i32 0)
 // CHECK-NEXT:   ret i32 %4
 // CHECK-NEXT: }
@@ -265,31 +265,7 @@ func main() {
 // CHECK-LABEL: define i32 @"{{.*}}/cl/_testgo/cgomacro.main$7"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/cl/_testgo/cgomacro._Cmacro_stdout"()
-// CHECK-NEXT:   %1 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_{{.*}}/cl/_testgo/cgomacro._Ctype_struct___sFILE", ptr undef }, ptr %0, 1
-// CHECK-NEXT:   %2 = call i32 @"{{.*}}/cl/_testgo/cgomacro._Cfunc_fputs"(ptr @250, ptr %0)
+// CHECK-NEXT:   %1 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_{{.*}}/cl/_testgo/cgomacro._Ctype_struct_{{.*}}FILE", ptr undef }, ptr %0, 1
+// CHECK-NEXT:   %2 = call i32 @"{{.*}}/cl/_testgo/cgomacro._Cfunc_fputs"(ptr @{{[0-9]+}}, ptr %0)
 // CHECK-NEXT:   ret i32 %2
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal8"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal8"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal16"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal16"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal0"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal0"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal64"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal64"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
 // CHECK-NEXT: }

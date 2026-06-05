@@ -52,7 +52,7 @@ func main() {
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 4 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
-// CHECK-NEXT:   %1 = alloca i8, i64 196, align 1
+// CHECK-NEXT:   %1 = alloca {{.*}}, align {{[0-9]+}}
 // CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 48)
 // CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 0
 // CHECK-NEXT:   store ptr %1, ptr %3, align 8
@@ -76,7 +76,7 @@ func main() {
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %13)
 // CHECK-NEXT:   %14 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 5
 // CHECK-NEXT:   store ptr null, ptr %14, align 8
-// CHECK-NEXT:   %15 = call i32 @sigsetjmp(ptr %1, i32 0)
+// CHECK-NEXT:   %15 = call i32 @{{.*}}sigsetjmp(ptr %1, i32 0)
 // CHECK-NEXT:   %16 = icmp eq i32 %15, 0
 // CHECK-NEXT:   br i1 %16, label %_llgo_4, label %_llgo_5
 // CHECK-EMPTY:

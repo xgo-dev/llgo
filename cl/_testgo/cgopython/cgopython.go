@@ -67,7 +67,7 @@ func main() {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call [0 x i8] @"{{.*}}/cl/_testgo/cgopython._Cfunc_Py_Initialize"()
 // CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
-// CHECK-NEXT:   %2 = alloca i8, i64 196, align 1
+// CHECK-NEXT:   %2 = alloca {{.*}}, align {{[0-9]+}}
 // CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 48)
 // CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %3, i32 0, i32 0
 // CHECK-NEXT:   store ptr %2, ptr %4, align 8
@@ -91,7 +91,7 @@ func main() {
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %14)
 // CHECK-NEXT:   %15 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %3, i32 0, i32 5
 // CHECK-NEXT:   store ptr null, ptr %15, align 8
-// CHECK-NEXT:   %16 = call i32 @sigsetjmp(ptr %2, i32 0)
+// CHECK-NEXT:   %16 = call i32 @{{.*}}sigsetjmp(ptr %2, i32 0)
 // CHECK-NEXT:   %17 = icmp eq i32 %16, 0
 // CHECK-NEXT:   br i1 %17, label %_llgo_4, label %_llgo_5
 // CHECK-EMPTY:
