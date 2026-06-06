@@ -1885,4 +1885,7 @@ func TestRtFuncResolvesLinkname(t *testing.T) {
 	if got := pkg.rtFunc("Sigsetjmp").impl.Name(); got != "sigsetjmp" {
 		t.Fatalf("rtFunc linkname = %q, want %q", got, "sigsetjmp")
 	}
+	if got := pkg.RuntimeFunc("Sigsetjmp").impl.Name(); got != "sigsetjmp" {
+		t.Fatalf("RuntimeFunc linkname = %q, want %q", got, "sigsetjmp")
+	}
 }
