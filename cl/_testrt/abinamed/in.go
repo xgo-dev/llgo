@@ -51,7 +51,7 @@ import (
 // CHECK-NEXT:   %{{[0-9]+}} = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %{{[0-9]+}}, 0
 // CHECK-NEXT:   %{{[0-9]+}} = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %{{[0-9]+}}, 1
 // CHECK-NEXT:   %{{[0-9]+}} = icmp uge i64 0, %{{[0-9]+}}
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %{{[0-9]+}})
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %{{[0-9]+}}, {{.*}})
 // CHECK-NEXT:   %{{[0-9]+}} = getelementptr inbounds %"{{.*}}/runtime/abi.StructField", ptr %{{[0-9]+}}, i64 0
 // CHECK-NEXT:   %{{[0-9]+}} = load %"{{.*}}/runtime/abi.StructField", ptr %{{[0-9]+}}, align 8
 // CHECK-NEXT:   store %"{{.*}}/runtime/abi.StructField" %{{[0-9]+}}, ptr %{{[0-9]+}}, align 8
@@ -98,7 +98,7 @@ import (
 // CHECK-NEXT:   %{{[0-9]+}} = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %{{[0-9]+}}, 0
 // CHECK-NEXT:   %{{[0-9]+}} = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %{{[0-9]+}}, 1
 // CHECK-NEXT:   %{{[0-9]+}} = icmp uge i64 1, %{{[0-9]+}}
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %{{[0-9]+}})
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %{{[0-9]+}}, {{.*}})
 // CHECK-NEXT:   %{{[0-9]+}} = getelementptr inbounds %"{{.*}}/runtime/abi.StructField", ptr %{{[0-9]+}}, i64 1
 // CHECK-NEXT:   %{{[0-9]+}} = load %"{{.*}}/runtime/abi.StructField", ptr %{{[0-9]+}}, align 8
 // CHECK-NEXT:   store %"{{.*}}/runtime/abi.StructField" %{{[0-9]+}}, ptr %{{[0-9]+}}, align 8
@@ -145,7 +145,7 @@ import (
 // CHECK-NEXT:   %{{[0-9]+}} = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %{{[0-9]+}}, 0
 // CHECK-NEXT:   %{{[0-9]+}} = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %{{[0-9]+}}, 1
 // CHECK-NEXT:   %{{[0-9]+}} = icmp uge i64 2, %{{[0-9]+}}
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %{{[0-9]+}})
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %{{[0-9]+}}, {{.*}})
 // CHECK-NEXT:   %{{[0-9]+}} = getelementptr inbounds %"{{.*}}/runtime/abi.StructField", ptr %{{[0-9]+}}, i64 2
 // CHECK-NEXT:   %{{[0-9]+}} = load %"{{.*}}/runtime/abi.StructField", ptr %{{[0-9]+}}, align 8
 // CHECK-NEXT:   store %"{{.*}}/runtime/abi.StructField" %{{[0-9]+}}, ptr %{{[0-9]+}}, align 8
@@ -159,7 +159,7 @@ import (
 // CHECK-NEXT:   %{{[0-9]+}} = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %{{[0-9]+}}, 0
 // CHECK-NEXT:   %{{[0-9]+}} = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %{{[0-9]+}}, 1
 // CHECK-NEXT:   %{{[0-9]+}} = icmp uge i64 0, %{{[0-9]+}}
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %{{[0-9]+}})
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %{{[0-9]+}}, {{.*}})
 // CHECK-NEXT:   %{{[0-9]+}} = getelementptr inbounds %"{{.*}}/runtime/abi.StructField", ptr %{{[0-9]+}}, i64 0
 // CHECK-NEXT:   %{{[0-9]+}} = getelementptr inbounds %"{{.*}}/runtime/abi.StructField", ptr %{{[0-9]+}}, i32 0, i32 1
 // CHECK-NEXT:   %{{[0-9]+}} = load ptr, ptr %{{[0-9]+}}, align 8
@@ -184,7 +184,7 @@ import (
 // CHECK-NEXT:   %{{[0-9]+}} = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %{{[0-9]+}}, 0
 // CHECK-NEXT:   %{{[0-9]+}} = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %{{[0-9]+}}, 1
 // CHECK-NEXT:   %{{[0-9]+}} = icmp uge i64 3, %{{[0-9]+}}
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %{{[0-9]+}})
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %{{[0-9]+}}, {{.*}})
 // CHECK-NEXT:   %{{[0-9]+}} = getelementptr inbounds %"{{.*}}/runtime/abi.StructField", ptr %{{[0-9]+}}, i64 3
 // CHECK-NEXT:   %{{[0-9]+}} = load %"{{.*}}/runtime/abi.StructField", ptr %{{[0-9]+}}, align 8
 // CHECK-NEXT:   store %"{{.*}}/runtime/abi.StructField" %{{[0-9]+}}, ptr %{{[0-9]+}}, align 8
