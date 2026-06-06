@@ -503,7 +503,7 @@ func methodByName(name string) {
 // CHECK-NEXT:   %257 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %256, 0
 // CHECK-NEXT:   %258 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %256, 1
 // CHECK-NEXT:   %259 = icmp uge i64 0, %258
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %259)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %259, i64 0, i1 true, i64 %258)
 // CHECK-NEXT:   %260 = getelementptr inbounds %reflect.Value, ptr %257, i64 0
 // CHECK-NEXT:   %261 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %260)
 // CHECK-NEXT:   %262 = load %reflect.Value, ptr %261, align 8
@@ -532,7 +532,7 @@ func methodByName(name string) {
 // CHECK-NEXT:   %274 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %273, 0
 // CHECK-NEXT:   %275 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %273, 1
 // CHECK-NEXT:   %276 = icmp uge i64 0, %275
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %276)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %276, i64 0, i1 true, i64 %275)
 // CHECK-NEXT:   %277 = getelementptr inbounds %reflect.Value, ptr %274, i64 0
 // CHECK-NEXT:   %278 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %277)
 // CHECK-NEXT:   %279 = load %reflect.Value, ptr %278, align 8
@@ -568,7 +568,7 @@ func methodByName(name string) {
 // CHECK-NEXT:   %8 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 0
 // CHECK-NEXT:   %9 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 1
 // CHECK-NEXT:   %10 = icmp uge i64 0, %9
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %10)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %10, i64 0, i1 true, i64 %9)
 // CHECK-NEXT:   %11 = getelementptr inbounds %reflect.Value, ptr %8, i64 0
 // CHECK-NEXT:   %12 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %11)
 // CHECK-NEXT:   %13 = load %reflect.Value, ptr %12, align 8
@@ -602,7 +602,7 @@ func methodByName(name string) {
 // CHECK-NEXT:   %8 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 0
 // CHECK-NEXT:   %9 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 1
 // CHECK-NEXT:   %10 = icmp uge i64 0, %9
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %10)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %10, i64 0, i1 true, i64 %9)
 // CHECK-NEXT:   %11 = getelementptr inbounds %reflect.Value, ptr %8, i64 0
 // CHECK-NEXT:   %12 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %11)
 // CHECK-NEXT:   %13 = load %reflect.Value, ptr %12, align 8
