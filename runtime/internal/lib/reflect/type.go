@@ -311,26 +311,11 @@ func (t *rtype) Method(i int) (m Method) {
 }
 
 func methodFuncValue(ft *abi.Type, fn unsafe.Pointer, fl flag) Value {
-	if ct := closureTypeForFunc(ft); ct != nil {
-		c := unsafe_New(ct)
-		*(*unsafe.Pointer)(c) = fn
-		*(*unsafe.Pointer)(add(c, goarch.PtrSize, "closure data field")) = nil
-		return Value{ct, c, fl | flagIndir}
-	}
-	return Value{ft, fn, fl}
-}
-
-func closureTypeForFunc(ft *abi.Type) *abi.Type {
-	for _, t := range typelist {
-		if !t.IsClosure() {
-			continue
-		}
-		st := t.StructType()
-		if len(st.Fields) == 2 && st.Fields[0].Typ == ft {
-			return t
-		}
-	}
-	return nil
+	ct := closureOf((*funcType)(unsafe.Pointer(ft)))
+	c := unsafe_New(ct)
+	*(*unsafe.Pointer)(c) = fn
+	*(*unsafe.Pointer)(add(c, goarch.PtrSize, "closure data field")) = nil
+	return Value{ct, c, fl | flagIndir}
 }
 
 func (t *rtype) MethodByName(name string) (m Method, ok bool) {
