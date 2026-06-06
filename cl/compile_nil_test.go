@@ -59,6 +59,41 @@ func TestCompileNilBinOpAndHelpers(t *testing.T) {
 		t.Fatal("compileValueAs did not compile non-nil const")
 	}
 
+	nilableTypes := []struct {
+		name string
+		typ  types.Type
+	}{
+		{"pointer", types.NewPointer(types.Typ[types.Int])},
+		{"slice", types.NewSlice(types.Typ[types.Int])},
+		{"map", types.NewMap(types.Typ[types.Int], types.Typ[types.String])},
+		{"func", types.NewSignatureType(nil, nil, nil, nil, nil, false)},
+		{"chan", types.NewChan(types.SendRecv, types.Typ[types.Int])},
+	}
+	for _, tt := range nilableTypes {
+		t.Run(tt.name, func(t *testing.T) {
+			typedNil := gossa.NewConst(nil, tt.typ)
+			for _, tc := range []struct {
+				name string
+				op   token.Token
+				x    gossa.Value
+				y    gossa.Value
+			}{
+				{"left-untyped-nil-eq", token.EQL, untypedNil, typedNil},
+				{"right-untyped-nil-eq", token.EQL, typedNil, untypedNil},
+				{"right-untyped-nil-neq", token.NEQ, typedNil, untypedNil},
+			} {
+				ret := ctx.compileInstrOrValue(b, &gossa.BinOp{
+					Op: tc.op,
+					X:  tc.x,
+					Y:  tc.y,
+				}, false)
+				if ret.IsNil() {
+					t.Fatalf("%s lowered to an empty expression", tc.name)
+				}
+			}
+		})
+	}
+
 	for _, op := range []token.Token{token.EQL, token.NEQ} {
 		ret := ctx.compileInstrOrValue(b, &gossa.BinOp{
 			Op: op,
