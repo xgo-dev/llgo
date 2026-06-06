@@ -231,10 +231,6 @@ func (f *Func) Entry() uintptr {
 	return f.entry
 }
 
-func (f *Func) FileLine(pc uintptr) (file string, line int) {
-	return "", 0
-}
-
 func FuncForPC(pc uintptr) *Func {
 	if pc == 0 {
 		return nil
