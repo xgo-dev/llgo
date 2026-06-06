@@ -69,11 +69,11 @@ func TestBuiltinPrintLegacyExponentWidth(t *testing.T) {
 
 	got := filterPrintProbeOutput(stderr.String())
 	want := "" +
-		"+5.000000e+00 +8.000000e+00\n" +
-		"+1.001000e+02\n" +
-		"(+1.000000e+00+2.000000e+00i)\n" +
-		"(+1.000000e+00+2.000000e+00i)\n" +
-		"(+4.000000e+00+6.000000e+00i)\n"
+		"+5.000000e+000 +8.000000e+000\n" +
+		"+1.001000e+002\n" +
+		"(+1.000000e+000+2.000000e+000i)\n" +
+		"(+1.000000e+000+2.000000e+000i)\n" +
+		"(+4.000000e+000+6.000000e+000i)\n"
 	if got != want {
 		t.Fatalf("builtin print output mismatch:\n got %q\nwant %q", got, want)
 	}
