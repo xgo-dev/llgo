@@ -44,17 +44,33 @@ type memProfileSizeLine struct {
 
 var (
 	memProfileBusy         bool
+	memProfileSuppressed   bool
 	memProfileBuckets      []memProfileBucket
 	memProfileLines        []memProfileLineState
 	memProfileFrames       []memProfileFrame
 	memProfileCallStack    [64]memProfileFrame
 	memProfileCallStackLen int
 	memProfileRate         = defaultMemProfileRate
+	memProfileRatePtr      *int
 	memProfileNextLine     = 1000
 )
 
 func SetMemProfileRate(rate int) {
 	memProfileRate = rate
+}
+
+func SetMemProfileRatePtr(rate *int) {
+	memProfileRatePtr = rate
+}
+
+func MemProfileSuppress() bool {
+	old := memProfileSuppressed
+	memProfileSuppressed = true
+	return old
+}
+
+func MemProfileRestoreSuppressed(old bool) {
+	memProfileSuppressed = old
 }
 
 func MemProfileEnter(function string) {
@@ -74,10 +90,11 @@ func MemProfileExit() {
 }
 
 func recordMemProfileAlloc(size uintptr) {
-	if size == 0 || memProfileBusy {
+	if size == 0 || memProfileBusy || memProfileSuppressed {
 		return
 	}
-	if memProfileRate == 0 || memProfileRate == defaultMemProfileRate {
+	rate := currentMemProfileRate()
+	if rate == 0 || rate == defaultMemProfileRate {
 		return
 	}
 	memProfileBusy = true
@@ -99,6 +116,13 @@ func recordMemProfileAlloc(size uintptr) {
 	b.allocObjects++
 	b.allocBytes += int64(size)
 	memProfileBusy = false
+}
+
+func currentMemProfileRate() int {
+	if memProfileRatePtr != nil {
+		return *memProfileRatePtr
+	}
+	return memProfileRate
 }
 
 func memProfileBucketFor(key memProfileStackKey) *memProfileBucket {

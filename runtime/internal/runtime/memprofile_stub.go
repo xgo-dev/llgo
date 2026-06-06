@@ -14,6 +14,16 @@ func recordMemProfileAlloc(size uintptr) {
 func SetMemProfileRate(rate int) {
 }
 
+func SetMemProfileRatePtr(rate *int) {
+}
+
+func MemProfileSuppress() bool {
+	return false
+}
+
+func MemProfileRestoreSuppressed(old bool) {
+}
+
 func MemProfileEnter(function string) {
 }
 
