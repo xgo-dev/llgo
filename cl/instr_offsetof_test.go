@@ -104,6 +104,42 @@ func genericExplicit[T any](v *genericNested[T]) uintptr {
 	}
 }
 
+func TestUnsafeBuiltinHelpersReturnUintptr(t *testing.T) {
+	ctx := &context{prog: newLLSSAProg(t)}
+	arg := gossa.NewConst(constant.MakeInt64(0), types.Typ[types.Int])
+	for _, name := range []string{"Sizeof", "Alignof"} {
+		value, ok := ctx.sizeOrAlignOfBuiltinArg(name, arg)
+		if !ok {
+			t.Fatalf("sizeOrAlignOfBuiltinArg(%s) returned false", name)
+		}
+		assertUintptrExpr(t, name, value)
+	}
+	if _, ok := ctx.sizeOrAlignOfBuiltinArg("Offsetof", arg); ok {
+		t.Fatal("sizeOrAlignOfBuiltinArg returned true for unsupported builtin")
+	}
+
+	src := `package foo
+
+import "unsafe"
+
+type outer[T any] struct {
+	A T
+	B byte
+}
+
+func offset[T any](v *outer[T]) uintptr {
+	return unsafe.Offsetof(v.B)
+}
+`
+	ssaPkg, fset := buildOffsetofPackage(t, src)
+	ctx = &context{prog: newLLSSAProg(t), fset: fset}
+	value, ok := ctx.offsetOfBuiltinArg(offsetofArgs(t, ssaPkg.Func("offset"), 1)[0])
+	if !ok {
+		t.Fatal("offsetOfBuiltinArg returned false")
+	}
+	assertUintptrExpr(t, "Offsetof", value)
+}
+
 func TestOffsetOfHelpersAndSourceLineCache(t *testing.T) {
 	src := `package foo
 
@@ -281,6 +317,41 @@ func Offset(v *outer[int]) uintptr {
 	}
 }
 
+func TestNilDerefAddressHelperEdges(t *testing.T) {
+	ctx := &context{prog: newLLSSAProg(t)}
+	v := fakeSSAValue{typ: types.Typ[types.Int]}
+
+	if ctx.valueFeedsBuiltinPrint(v, nil) {
+		t.Fatal("value without referrers should not feed builtin print")
+	}
+	if ctx.addrNeedsExplicitNilCheck(v, map[gossa.Value]bool{v: true}) {
+		t.Fatal("seen address should not need another explicit nil check")
+	}
+	if !ctx.addrNeedsExplicitNilCheck(v, nil) {
+		t.Fatal("address without referrers should need an explicit nil check")
+	}
+	if !ctx.onlyFeedsUnsafeSizeofLikeBuiltin(v, map[gossa.Value]bool{v: true}) {
+		t.Fatal("seen value should be treated as already verified")
+	}
+
+	ssaPkg, _ := buildOffsetofPackage(t, `package foo
+import "unsafe"
+type outer[T any] struct {
+	A T
+	B byte
+}
+func offset[T any](p *outer[T]) uintptr {
+	return unsafe.Offsetof(p.B)
+}
+`)
+	offsetCall := builtinCalls(t, ssaPkg.Func("offset"), "Offsetof", 1)[0]
+	refs := []gossa.Instruction{offsetCall}
+	unsafeOnly := fakeSSAValue{typ: types.Typ[types.Int], refs: &refs}
+	if ctx.addrNeedsExplicitNilCheck(unsafeOnly, nil) {
+		t.Fatal("address used only by unsafe.Offsetof should not need an explicit nil check")
+	}
+}
+
 func TestInstrHelperEdges(t *testing.T) {
 	ctx := &context{prog: newLLSSAProg(t)}
 
@@ -342,14 +413,15 @@ func mustPanic(t *testing.T, name string, fn func()) {
 }
 
 type fakeSSAValue struct {
-	typ types.Type
+	typ  types.Type
+	refs *[]gossa.Instruction
 }
 
 func (v fakeSSAValue) Name() string                    { return "fake" }
 func (v fakeSSAValue) String() string                  { return "fake" }
 func (v fakeSSAValue) Type() types.Type                { return v.typ }
 func (v fakeSSAValue) Parent() *gossa.Function         { return nil }
-func (v fakeSSAValue) Referrers() *[]gossa.Instruction { return nil }
+func (v fakeSSAValue) Referrers() *[]gossa.Instruction { return v.refs }
 func (v fakeSSAValue) Pos() token.Pos                  { return token.NoPos }
 
 func buildOffsetofPackage(t *testing.T, src string) (*gossa.Package, *token.FileSet) {
@@ -411,4 +483,35 @@ func offsetofArgs(t *testing.T, fn *gossa.Function, want int) []gossa.Value {
 		t.Fatalf("found %d Offsetof calls in %s, want %d", len(args), fn.Name(), want)
 	}
 	return args
+}
+
+func builtinCalls(t *testing.T, fn *gossa.Function, name string, want int) []*gossa.Call {
+	t.Helper()
+	if fn == nil {
+		t.Fatal("missing function")
+	}
+	var calls []*gossa.Call
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			call, ok := instr.(*gossa.Call)
+			if !ok {
+				continue
+			}
+			builtin, ok := call.Call.Value.(*gossa.Builtin)
+			if ok && builtin.Name() == name {
+				calls = append(calls, call)
+			}
+		}
+	}
+	if len(calls) != want {
+		t.Fatalf("found %d %s calls in %s, want %d", len(calls), name, fn.Name(), want)
+	}
+	return calls
+}
+
+func assertUintptrExpr(t *testing.T, name string, value llssa.Expr) {
+	t.Helper()
+	if !types.Identical(value.Type.RawType(), types.Typ[types.Uintptr]) {
+		t.Fatalf("%s helper type = %s, want uintptr", name, value.Type.RawType())
+	}
 }

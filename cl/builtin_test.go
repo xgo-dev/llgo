@@ -98,6 +98,35 @@ func fieldIface(p *holder) {
 	}
 }
 
+func TestCompileNilDerefLoadAddressGuards(t *testing.T) {
+	_, m := mustCompileLLPkgFromSrc(t, `
+package foo
+
+type inner struct {
+	s string
+}
+type outer struct {
+	inner inner
+}
+
+var gp *outer
+
+func printGlobalField() {
+	println(gp.inner.s)
+}
+
+func printArrayElement(p *[2]string, i int) {
+	println(p[i])
+}
+`)
+	for _, name := range []string{"foo.printGlobalField", "foo.printArrayElement"} {
+		fn := mustNamedFunction(t, m, name).String()
+		if !strings.Contains(fn, "AssertNilDeref") {
+			t.Fatalf("%s missing explicit nil-deref guard:\n%s", name, fn)
+		}
+	}
+}
+
 func TestToBackground(t *testing.T) {
 	if v := toBackground(""); v != llssa.InGo {
 		t.Fatal("toBackground:", v)

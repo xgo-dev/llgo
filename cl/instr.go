@@ -717,16 +717,16 @@ func (p *context) offsetOfBuiltinArg(arg ssa.Value) (llssa.Expr, bool) {
 	if !ok {
 		return llssa.Expr{}, false
 	}
-	return p.prog.Val(offset), true
+	return p.prog.Val(uintptr(offset)), true
 }
 
 func (p *context) sizeOrAlignOfBuiltinArg(fn string, arg ssa.Value) (llssa.Expr, bool) {
 	t := p.type_(arg.Type(), llssa.InGo)
 	switch fn {
 	case "Sizeof":
-		return p.prog.Val(int(p.prog.SizeOf(t))), true
+		return p.prog.Val(uintptr(p.prog.SizeOf(t))), true
 	case "Alignof":
-		return p.prog.Val(int(p.prog.AlignOf(t))), true
+		return p.prog.Val(uintptr(p.prog.AlignOf(t))), true
 	default:
 		return llssa.Expr{}, false
 	}
