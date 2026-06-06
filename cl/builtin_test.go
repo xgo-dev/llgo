@@ -93,6 +93,55 @@ func fieldIface(p *holder) {
 	}
 }
 
+func setReferrersForTest(t *testing.T, v ssa.Value, refs ...ssa.Instruction) {
+	t.Helper()
+	referrers := v.Referrers()
+	if referrers == nil {
+		t.Fatalf("%T does not expose referrers", v)
+	}
+	*referrers = refs
+}
+
+func TestDebugOnlyValueReferrerHelpers(t *testing.T) {
+	debugRef := &ssa.DebugRef{}
+	semanticRef := &ssa.Return{}
+	constVal := ssa.NewConst(constant.MakeInt64(1), types.Typ[types.Int])
+	if !hasNoSemanticReferrers(constVal) {
+		t.Fatal("constant with nil referrers should have no semantic referrers")
+	}
+	if debugOnlyPureValue(constVal) {
+		t.Fatal("constant with nil referrers should not be debug-only pure")
+	}
+
+	extract := &ssa.Extract{}
+	setReferrersForTest(t, extract, debugRef)
+	if !hasNoSemanticReferrers(extract) {
+		t.Fatal("debug-only extract should have no semantic referrers")
+	}
+	if !debugOnlyPureValue(extract) {
+		t.Fatal("debug-only extract should be treated as a pure debug value")
+	}
+	oldDbgSyms := enableDbgSyms
+	EnableDbgSyms(false)
+	defer EnableDbgSyms(oldDbgSyms)
+	(&context{}).compileInstr(nil, extract)
+
+	convert := &ssa.Convert{}
+	setReferrersForTest(t, convert, semanticRef)
+	if hasNoSemanticReferrers(convert) {
+		t.Fatal("convert with semantic referrer should be semantic")
+	}
+	if debugOnlyPureValue(convert) {
+		t.Fatal("convert with semantic referrer should not be debug-only pure")
+	}
+
+	binop := &ssa.BinOp{}
+	setReferrersForTest(t, binop, debugRef)
+	if debugOnlyPureValue(binop) {
+		t.Fatal("debug-only non-pure value should not be skipped")
+	}
+}
+
 func TestToBackground(t *testing.T) {
 	if v := toBackground(""); v != llssa.InGo {
 		t.Fatal("toBackground:", v)
