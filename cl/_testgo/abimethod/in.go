@@ -37,9 +37,11 @@ type T struct {
 // CHECK-NEXT:   store %"{{.*}}/cl/_testgo/abimethod.T" %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = icmp eq ptr %1, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.T", ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
-// CHECK-NEXT:   ret i64 %4
+// CHECK-NEXT:   %3 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.T", ptr %1, i32 0, i32 0
+// CHECK-NEXT:   %5 = load i64, ptr %4, align 8
+// CHECK-NEXT:   ret i64 %5
 // CHECK-NEXT: }
 
 func (t T) Demo1() int {
@@ -248,18 +250,22 @@ type I2 interface {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.T", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load i64, ptr %2, align 8
-// CHECK-NEXT:   ret i64 %3
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.T", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
+// CHECK-NEXT:   ret i64 %4
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/abimethod.(*T).demo3"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.T", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load i64, ptr %2, align 8
-// CHECK-NEXT:   ret i64 %3
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.T", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
+// CHECK-NEXT:   ret i64 %4
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/abimethod.init"(){{.*}} {
@@ -393,35 +399,37 @@ type I2 interface {
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, %"{{.*}}/cl/_testgo/abimethod.T" }, ptr %0, i32 0, i32 0
 // CHECK-NEXT:   %3 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
-// CHECK-NEXT:   %4 = getelementptr inbounds { i64, %"{{.*}}/cl/_testgo/abimethod.T" }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %5 = icmp eq ptr %4, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %5)
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.T", ptr %4, i32 0, i32 0
+// CHECK-NEXT:   %4 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %4)
+// CHECK-NEXT:   %5 = getelementptr inbounds { i64, %"{{.*}}/cl/_testgo/abimethod.T" }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %6 = icmp eq ptr %5, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
+// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.T", ptr %5, i32 0, i32 0
 // CHECK-NEXT:   store i64 10, ptr %2, align 8
-// CHECK-NEXT:   store i64 100, ptr %6, align 8
-// CHECK-NEXT:   %7 = load { i64, %"{{.*}}/cl/_testgo/abimethod.T" }, ptr %0, align 8
-// CHECK-NEXT:   %8 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store { i64, %"{{.*}}/cl/_testgo/abimethod.T" } %7, ptr %8, align 8
-// CHECK-NEXT:   %9 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$WkyTd7mXEW0USaC6FIo7OG9IdUUyjAJl_h3PFrMEtHc", ptr @"{{.*}}/cl/_testgo/abimethod.struct$F3FioEGWwXQRUdV6xoxVUEDjRNgBQIpL0XIyBECp088")
-// CHECK-NEXT:   %10 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %9, 0
-// CHECK-NEXT:   %11 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %10, ptr %8, 1
-// CHECK-NEXT:   %12 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %11)
-// CHECK-NEXT:   %13 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %11, 0
-// CHECK-NEXT:   %14 = getelementptr ptr, ptr %13, i64 3
-// CHECK-NEXT:   %15 = load ptr, ptr %14, align 8
-// CHECK-NEXT:   %16 = insertvalue { ptr, ptr } undef, ptr %15, 0
-// CHECK-NEXT:   %17 = insertvalue { ptr, ptr } %16, ptr %12, 1
-// CHECK-NEXT:   %18 = extractvalue { ptr, ptr } %17, 1
-// CHECK-NEXT:   %19 = extractvalue { ptr, ptr } %17, 0
-// CHECK-NEXT:   %20 = call i64 %19(ptr %18)
-// CHECK-NEXT:   %21 = icmp ne i64 %20, 100
-// CHECK-NEXT:   br i1 %21, label %_llgo_1, label %_llgo_2
+// CHECK-NEXT:   store i64 100, ptr %7, align 8
+// CHECK-NEXT:   %8 = load { i64, %"{{.*}}/cl/_testgo/abimethod.T" }, ptr %0, align 8
+// CHECK-NEXT:   %9 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   store { i64, %"{{.*}}/cl/_testgo/abimethod.T" } %8, ptr %9, align 8
+// CHECK-NEXT:   %10 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$WkyTd7mXEW0USaC6FIo7OG9IdUUyjAJl_h3PFrMEtHc", ptr @"{{.*}}/cl/_testgo/abimethod.struct$F3FioEGWwXQRUdV6xoxVUEDjRNgBQIpL0XIyBECp088")
+// CHECK-NEXT:   %11 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %10, 0
+// CHECK-NEXT:   %12 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %11, ptr %9, 1
+// CHECK-NEXT:   %13 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %12)
+// CHECK-NEXT:   %14 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %12, 0
+// CHECK-NEXT:   %15 = getelementptr ptr, ptr %14, i64 3
+// CHECK-NEXT:   %16 = load ptr, ptr %15, align 8
+// CHECK-NEXT:   %17 = insertvalue { ptr, ptr } undef, ptr %16, 0
+// CHECK-NEXT:   %18 = insertvalue { ptr, ptr } %17, ptr %13, 1
+// CHECK-NEXT:   %19 = extractvalue { ptr, ptr } %18, 1
+// CHECK-NEXT:   %20 = extractvalue { ptr, ptr } %18, 0
+// CHECK-NEXT:   %21 = call i64 %20(ptr %19)
+// CHECK-NEXT:   %22 = icmp ne i64 %21, 100
+// CHECK-NEXT:   br i1 %22, label %_llgo_1, label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %22 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @18, i64 20 }, ptr %22, align 8
-// CHECK-NEXT:   %23 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %22, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %23)
+// CHECK-NEXT:   %23 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @18, i64 20 }, ptr %23, align 8
+// CHECK-NEXT:   %24 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %23, 1
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %24)
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
@@ -436,32 +444,34 @@ type I2 interface {
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, %"{{.*}}/cl/_testgo/abimethod.T" }, ptr %0, i32 0, i32 0
 // CHECK-NEXT:   %3 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
-// CHECK-NEXT:   %4 = getelementptr inbounds { i64, %"{{.*}}/cl/_testgo/abimethod.T" }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %5 = icmp eq ptr %4, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %5)
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.T", ptr %4, i32 0, i32 0
+// CHECK-NEXT:   %4 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %4)
+// CHECK-NEXT:   %5 = getelementptr inbounds { i64, %"{{.*}}/cl/_testgo/abimethod.T" }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %6 = icmp eq ptr %5, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
+// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.T", ptr %5, i32 0, i32 0
 // CHECK-NEXT:   store i64 10, ptr %2, align 8
-// CHECK-NEXT:   store i64 100, ptr %6, align 8
-// CHECK-NEXT:   %7 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$WkyTd7mXEW0USaC6FIo7OG9IdUUyjAJl_h3PFrMEtHc", ptr @"*{{.*}}/cl/_testgo/abimethod.struct$F3FioEGWwXQRUdV6xoxVUEDjRNgBQIpL0XIyBECp088")
-// CHECK-NEXT:   %8 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %7, 0
-// CHECK-NEXT:   %9 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %8, ptr %0, 1
-// CHECK-NEXT:   %10 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %9)
-// CHECK-NEXT:   %11 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %9, 0
-// CHECK-NEXT:   %12 = getelementptr ptr, ptr %11, i64 3
-// CHECK-NEXT:   %13 = load ptr, ptr %12, align 8
-// CHECK-NEXT:   %14 = insertvalue { ptr, ptr } undef, ptr %13, 0
-// CHECK-NEXT:   %15 = insertvalue { ptr, ptr } %14, ptr %10, 1
-// CHECK-NEXT:   %16 = extractvalue { ptr, ptr } %15, 1
-// CHECK-NEXT:   %17 = extractvalue { ptr, ptr } %15, 0
-// CHECK-NEXT:   %18 = call i64 %17(ptr %16)
-// CHECK-NEXT:   %19 = icmp ne i64 %18, 100
-// CHECK-NEXT:   br i1 %19, label %_llgo_1, label %_llgo_2
+// CHECK-NEXT:   store i64 100, ptr %7, align 8
+// CHECK-NEXT:   %8 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$WkyTd7mXEW0USaC6FIo7OG9IdUUyjAJl_h3PFrMEtHc", ptr @"*{{.*}}/cl/_testgo/abimethod.struct$F3FioEGWwXQRUdV6xoxVUEDjRNgBQIpL0XIyBECp088")
+// CHECK-NEXT:   %9 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %8, 0
+// CHECK-NEXT:   %10 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %9, ptr %0, 1
+// CHECK-NEXT:   %11 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %10)
+// CHECK-NEXT:   %12 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %10, 0
+// CHECK-NEXT:   %13 = getelementptr ptr, ptr %12, i64 3
+// CHECK-NEXT:   %14 = load ptr, ptr %13, align 8
+// CHECK-NEXT:   %15 = insertvalue { ptr, ptr } undef, ptr %14, 0
+// CHECK-NEXT:   %16 = insertvalue { ptr, ptr } %15, ptr %11, 1
+// CHECK-NEXT:   %17 = extractvalue { ptr, ptr } %16, 1
+// CHECK-NEXT:   %18 = extractvalue { ptr, ptr } %16, 0
+// CHECK-NEXT:   %19 = call i64 %18(ptr %17)
+// CHECK-NEXT:   %20 = icmp ne i64 %19, 100
+// CHECK-NEXT:   br i1 %20, label %_llgo_1, label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %20 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @19, i64 20 }, ptr %20, align 8
-// CHECK-NEXT:   %21 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %20, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %21)
+// CHECK-NEXT:   %21 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @19, i64 20 }, ptr %21, align 8
+// CHECK-NEXT:   %22 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %21, 1
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %22)
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
@@ -476,32 +486,34 @@ type I2 interface {
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, %"{{.*}}/cl/_testgo/abimethod.T" }, ptr %0, i32 0, i32 0
 // CHECK-NEXT:   %3 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
-// CHECK-NEXT:   %4 = getelementptr inbounds { i64, %"{{.*}}/cl/_testgo/abimethod.T" }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %5 = icmp eq ptr %4, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %5)
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.T", ptr %4, i32 0, i32 0
+// CHECK-NEXT:   %4 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %4)
+// CHECK-NEXT:   %5 = getelementptr inbounds { i64, %"{{.*}}/cl/_testgo/abimethod.T" }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %6 = icmp eq ptr %5, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
+// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.T", ptr %5, i32 0, i32 0
 // CHECK-NEXT:   store i64 10, ptr %2, align 8
-// CHECK-NEXT:   store i64 100, ptr %6, align 8
-// CHECK-NEXT:   %7 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$GIQLduxo5T_xLwYbboAKy8LzikHgsGzb7WxrkOH3Lr4", ptr @"*{{.*}}/cl/_testgo/abimethod.struct$F3FioEGWwXQRUdV6xoxVUEDjRNgBQIpL0XIyBECp088")
-// CHECK-NEXT:   %8 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %7, 0
-// CHECK-NEXT:   %9 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %8, ptr %0, 1
-// CHECK-NEXT:   %10 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %9)
-// CHECK-NEXT:   %11 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %9, 0
-// CHECK-NEXT:   %12 = getelementptr ptr, ptr %11, i64 3
-// CHECK-NEXT:   %13 = load ptr, ptr %12, align 8
-// CHECK-NEXT:   %14 = insertvalue { ptr, ptr } undef, ptr %13, 0
-// CHECK-NEXT:   %15 = insertvalue { ptr, ptr } %14, ptr %10, 1
-// CHECK-NEXT:   %16 = extractvalue { ptr, ptr } %15, 1
-// CHECK-NEXT:   %17 = extractvalue { ptr, ptr } %15, 0
-// CHECK-NEXT:   %18 = call i64 %17(ptr %16)
-// CHECK-NEXT:   %19 = icmp ne i64 %18, 100
-// CHECK-NEXT:   br i1 %19, label %_llgo_1, label %_llgo_2
+// CHECK-NEXT:   store i64 100, ptr %7, align 8
+// CHECK-NEXT:   %8 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$GIQLduxo5T_xLwYbboAKy8LzikHgsGzb7WxrkOH3Lr4", ptr @"*{{.*}}/cl/_testgo/abimethod.struct$F3FioEGWwXQRUdV6xoxVUEDjRNgBQIpL0XIyBECp088")
+// CHECK-NEXT:   %9 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %8, 0
+// CHECK-NEXT:   %10 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %9, ptr %0, 1
+// CHECK-NEXT:   %11 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %10)
+// CHECK-NEXT:   %12 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %10, 0
+// CHECK-NEXT:   %13 = getelementptr ptr, ptr %12, i64 3
+// CHECK-NEXT:   %14 = load ptr, ptr %13, align 8
+// CHECK-NEXT:   %15 = insertvalue { ptr, ptr } undef, ptr %14, 0
+// CHECK-NEXT:   %16 = insertvalue { ptr, ptr } %15, ptr %11, 1
+// CHECK-NEXT:   %17 = extractvalue { ptr, ptr } %16, 1
+// CHECK-NEXT:   %18 = extractvalue { ptr, ptr } %16, 0
+// CHECK-NEXT:   %19 = call i64 %18(ptr %17)
+// CHECK-NEXT:   %20 = icmp ne i64 %19, 100
+// CHECK-NEXT:   br i1 %20, label %_llgo_1, label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %20 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @21, i64 20 }, ptr %20, align 8
-// CHECK-NEXT:   %21 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %20, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %21)
+// CHECK-NEXT:   %21 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @21, i64 20 }, ptr %21, align 8
+// CHECK-NEXT:   %22 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %21, 1
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %22)
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
@@ -2334,17 +2346,21 @@ type I2 interface {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.Pointer[any]", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %3 = load atomic ptr, ptr %2 seq_cst, align 8
-// CHECK-NEXT:   ret ptr %3
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.Pointer[any]", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %4 = load atomic ptr, ptr %3 seq_cst, align 8
+// CHECK-NEXT:   ret ptr %4
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce void @"{{.*}}/cl/_testgo/abimethod.(*Pointer[any]).Store"(ptr %0, ptr %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.Pointer[any]", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   store atomic ptr %1, ptr %3 seq_cst, align 8
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.Pointer[any]", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   store atomic ptr %1, ptr %4 seq_cst, align 8
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 

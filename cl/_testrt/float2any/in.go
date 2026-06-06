@@ -39,44 +39,46 @@ type u64parts struct {
 // CHECK-NEXT:   store %"{{.*}}/cl/_testrt/float2any.eface" %6, ptr %5, align 8
 // CHECK-NEXT:   %7 = icmp eq ptr %5, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
-// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/cl/_testrt/float2any.eface", ptr %5, i32 0, i32 1
-// CHECK-NEXT:   %9 = load ptr, ptr %8, align 8
-// CHECK-NEXT:   %10 = load i32, ptr %9, align 4
-// CHECK-NEXT:   %11 = icmp ne i32 %10, 1078530011
-// CHECK-NEXT:   br i1 %11, label %_llgo_3, label %_llgo_4
+// CHECK-NEXT:   %8 = icmp eq ptr %5, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %8)
+// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/cl/_testrt/float2any.eface", ptr %5, i32 0, i32 1
+// CHECK-NEXT:   %10 = load ptr, ptr %9, align 8
+// CHECK-NEXT:   %11 = load i32, ptr %10, align 4
+// CHECK-NEXT:   %12 = icmp ne i32 %11, 1078530011
+// CHECK-NEXT:   br i1 %12, label %_llgo_3, label %_llgo_4
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_7
-// CHECK-NEXT:   %12 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @1, i64 14 }, ptr %12, align 8
-// CHECK-NEXT:   %13 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %12, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %13)
+// CHECK-NEXT:   %13 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @1, i64 14 }, ptr %13, align 8
+// CHECK-NEXT:   %14 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %13, 1
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %14)
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_1
-// CHECK-NEXT:   %14 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @3, i64 14 }, ptr %14, align 8
-// CHECK-NEXT:   %15 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %14, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %15)
+// CHECK-NEXT:   %15 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @3, i64 14 }, ptr %15, align 8
+// CHECK-NEXT:   %16 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %15, 1
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %16)
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_1
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %16 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %2, 1
-// CHECK-NEXT:   %17 = load float, ptr %16, align 4
-// CHECK-NEXT:   %18 = insertvalue { float, i1 } undef, float %17, 0
-// CHECK-NEXT:   %19 = insertvalue { float, i1 } %18, i1 true, 1
+// CHECK-NEXT:   %17 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %2, 1
+// CHECK-NEXT:   %18 = load float, ptr %17, align 4
+// CHECK-NEXT:   %19 = insertvalue { float, i1 } undef, float %18, 0
+// CHECK-NEXT:   %20 = insertvalue { float, i1 } %19, i1 true, 1
 // CHECK-NEXT:   br label %_llgo_7
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_6:                                          ; preds = %_llgo_0
 // CHECK-NEXT:   br label %_llgo_7
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_7:                                          ; preds = %_llgo_6, %_llgo_5
-// CHECK-NEXT:   %20 = phi { float, i1 } [ %19, %_llgo_5 ], [ zeroinitializer, %_llgo_6 ]
-// CHECK-NEXT:   %21 = extractvalue { float, i1 } %20, 0
-// CHECK-NEXT:   %22 = extractvalue { float, i1 } %20, 1
-// CHECK-NEXT:   br i1 %22, label %_llgo_1, label %_llgo_2
+// CHECK-NEXT:   %21 = phi { float, i1 } [ %20, %_llgo_5 ], [ zeroinitializer, %_llgo_6 ]
+// CHECK-NEXT:   %22 = extractvalue { float, i1 } %21, 0
+// CHECK-NEXT:   %23 = extractvalue { float, i1 } %21, 1
+// CHECK-NEXT:   br i1 %23, label %_llgo_1, label %_llgo_2
 // CHECK-NEXT: }
 
 func check32(v any) {
@@ -109,57 +111,63 @@ func check32(v any) {
 // CHECK-NEXT:   call void @llvm.memset(ptr %7, i8 0, i64 8, i1 false)
 // CHECK-NEXT:   %8 = icmp eq ptr %5, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %8)
-// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/cl/_testrt/float2any.eface", ptr %5, i32 0, i32 1
-// CHECK-NEXT:   %10 = load ptr, ptr %9, align 8
-// CHECK-NEXT:   %11 = load %"{{.*}}/cl/_testrt/float2any.u64parts", ptr %10, align 4
-// CHECK-NEXT:   store %"{{.*}}/cl/_testrt/float2any.u64parts" %11, ptr %7, align 4
-// CHECK-NEXT:   %12 = icmp eq ptr %7, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %12)
-// CHECK-NEXT:   %13 = getelementptr inbounds %"{{.*}}/cl/_testrt/float2any.u64parts", ptr %7, i32 0, i32 0
-// CHECK-NEXT:   %14 = load i32, ptr %13, align 4
-// CHECK-NEXT:   %15 = icmp ne i32 %14, 1405670641
-// CHECK-NEXT:   br i1 %15, label %_llgo_3, label %_llgo_5
+// CHECK-NEXT:   %9 = icmp eq ptr %5, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %9)
+// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/cl/_testrt/float2any.eface", ptr %5, i32 0, i32 1
+// CHECK-NEXT:   %11 = load ptr, ptr %10, align 8
+// CHECK-NEXT:   %12 = load %"{{.*}}/cl/_testrt/float2any.u64parts", ptr %11, align 4
+// CHECK-NEXT:   store %"{{.*}}/cl/_testrt/float2any.u64parts" %12, ptr %7, align 4
+// CHECK-NEXT:   %13 = icmp eq ptr %7, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %13)
+// CHECK-NEXT:   %14 = icmp eq ptr %7, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %14)
+// CHECK-NEXT:   %15 = getelementptr inbounds %"{{.*}}/cl/_testrt/float2any.u64parts", ptr %7, i32 0, i32 0
+// CHECK-NEXT:   %16 = load i32, ptr %15, align 4
+// CHECK-NEXT:   %17 = icmp ne i32 %16, 1405670641
+// CHECK-NEXT:   br i1 %17, label %_llgo_3, label %_llgo_5
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_8
-// CHECK-NEXT:   %16 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @5, i64 14 }, ptr %16, align 8
-// CHECK-NEXT:   %17 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %16, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %17)
+// CHECK-NEXT:   %18 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @5, i64 14 }, ptr %18, align 8
+// CHECK-NEXT:   %19 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %18, 1
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %19)
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_5, %_llgo_1
-// CHECK-NEXT:   %18 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @6, i64 14 }, ptr %18, align 8
-// CHECK-NEXT:   %19 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %18, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %19)
+// CHECK-NEXT:   %20 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @6, i64 14 }, ptr %20, align 8
+// CHECK-NEXT:   %21 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %20, 1
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %21)
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_5
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_1
-// CHECK-NEXT:   %20 = icmp eq ptr %7, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %20)
-// CHECK-NEXT:   %21 = getelementptr inbounds %"{{.*}}/cl/_testrt/float2any.u64parts", ptr %7, i32 0, i32 1
-// CHECK-NEXT:   %22 = load i32, ptr %21, align 4
-// CHECK-NEXT:   %23 = icmp ne i32 %22, 1074340347
-// CHECK-NEXT:   br i1 %23, label %_llgo_3, label %_llgo_4
+// CHECK-NEXT:   %22 = icmp eq ptr %7, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %22)
+// CHECK-NEXT:   %23 = icmp eq ptr %7, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %23)
+// CHECK-NEXT:   %24 = getelementptr inbounds %"{{.*}}/cl/_testrt/float2any.u64parts", ptr %7, i32 0, i32 1
+// CHECK-NEXT:   %25 = load i32, ptr %24, align 4
+// CHECK-NEXT:   %26 = icmp ne i32 %25, 1074340347
+// CHECK-NEXT:   br i1 %26, label %_llgo_3, label %_llgo_4
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_6:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %24 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %2, 1
-// CHECK-NEXT:   %25 = load double, ptr %24, align 8
-// CHECK-NEXT:   %26 = insertvalue { double, i1 } undef, double %25, 0
-// CHECK-NEXT:   %27 = insertvalue { double, i1 } %26, i1 true, 1
+// CHECK-NEXT:   %27 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %2, 1
+// CHECK-NEXT:   %28 = load double, ptr %27, align 8
+// CHECK-NEXT:   %29 = insertvalue { double, i1 } undef, double %28, 0
+// CHECK-NEXT:   %30 = insertvalue { double, i1 } %29, i1 true, 1
 // CHECK-NEXT:   br label %_llgo_8
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_7:                                          ; preds = %_llgo_0
 // CHECK-NEXT:   br label %_llgo_8
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_7, %_llgo_6
-// CHECK-NEXT:   %28 = phi { double, i1 } [ %27, %_llgo_6 ], [ zeroinitializer, %_llgo_7 ]
-// CHECK-NEXT:   %29 = extractvalue { double, i1 } %28, 0
-// CHECK-NEXT:   %30 = extractvalue { double, i1 } %28, 1
-// CHECK-NEXT:   br i1 %30, label %_llgo_1, label %_llgo_2
+// CHECK-NEXT:   %31 = phi { double, i1 } [ %30, %_llgo_6 ], [ zeroinitializer, %_llgo_7 ]
+// CHECK-NEXT:   %32 = extractvalue { double, i1 } %31, 0
+// CHECK-NEXT:   %33 = extractvalue { double, i1 } %31, 1
+// CHECK-NEXT:   br i1 %33, label %_llgo_1, label %_llgo_2
 // CHECK-NEXT: }
 
 func check64(v any) {

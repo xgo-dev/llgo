@@ -95,18 +95,24 @@ type T struct {
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %2 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/reflect.T", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
-// CHECK-NEXT:   %5 = add i64 %4, %1
-// CHECK-NEXT:   %6 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
-// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/cl/_testgo/reflect.T", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store i64 %5, ptr %7, align 8
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testgo/reflect.T", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %5 = load i64, ptr %4, align 8
+// CHECK-NEXT:   %6 = add i64 %5, %1
+// CHECK-NEXT:   %7 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
 // CHECK-NEXT:   %8 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %8)
 // CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/cl/_testgo/reflect.T", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %10 = load i64, ptr %9, align 8
-// CHECK-NEXT:   ret i64 %10
+// CHECK-NEXT:   store i64 %6, ptr %9, align 8
+// CHECK-NEXT:   %10 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %10)
+// CHECK-NEXT:   %11 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %11)
+// CHECK-NEXT:   %12 = getelementptr inbounds %"{{.*}}/cl/_testgo/reflect.T", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %13 = load i64, ptr %12, align 8
+// CHECK-NEXT:   ret i64 %13
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/reflect.callClosure"(){{.*}} {

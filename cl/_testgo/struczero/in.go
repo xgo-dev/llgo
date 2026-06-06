@@ -94,43 +94,49 @@ func Foo(v any) (ret bar, ok bool) {
 // CHECK-NEXT:   %3 = extractvalue { %"{{.*}}/cl/_testgo/struczero.bar", i1 } %1, 1
 // CHECK-NEXT:   %4 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %4)
-// CHECK-NEXT:   %5 = getelementptr inbounds %"{{.*}}/cl/_testgo/struczero.bar", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
-// CHECK-NEXT:   %7 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
-// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/cl/_testgo/struczero.bar", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %9 = load float, ptr %8, align 4
-// CHECK-NEXT:   %10 = xor i1 %3, true
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %6)
+// CHECK-NEXT:   %5 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %5)
+// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/cl/_testgo/struczero.bar", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %7 = load ptr, ptr %6, align 8
+// CHECK-NEXT:   %8 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %8)
+// CHECK-NEXT:   %9 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %9)
+// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/cl/_testgo/struczero.bar", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %11 = load float, ptr %10, align 4
+// CHECK-NEXT:   %12 = xor i1 %3, true
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %7)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %11 = fpext float %9 to double
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintFloat"(double %11)
+// CHECK-NEXT:   %13 = fpext float %11 to double
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintFloat"(double %13)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @11, i64 6 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %10)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %12)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %12 = alloca %"{{.*}}/cl/_testdata/foo.Foo", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %12, i8 0, i64 16, i1 false)
-// CHECK-NEXT:   %13 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/cl/_testdata/foo.Foo" zeroinitializer, ptr %13, align 8
-// CHECK-NEXT:   %14 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_{{.*}}/cl/_testdata/foo.Foo", ptr undef }, ptr %13, 1
-// CHECK-NEXT:   %15 = call { %"{{.*}}/cl/_testdata/foo.Foo", i1 } @"{{.*}}/cl/_testgo/struczero.Bar"(%"{{.*}}/runtime/internal/runtime.eface" %14)
-// CHECK-NEXT:   %16 = extractvalue { %"{{.*}}/cl/_testdata/foo.Foo", i1 } %15, 0
-// CHECK-NEXT:   store %"{{.*}}/cl/_testdata/foo.Foo" %16, ptr %12, align 8
-// CHECK-NEXT:   %17 = extractvalue { %"{{.*}}/cl/_testdata/foo.Foo", i1 } %15, 1
-// CHECK-NEXT:   %18 = load %"{{.*}}/cl/_testdata/foo.Foo", ptr %12, align 8
-// CHECK-NEXT:   %19 = call ptr @"{{.*}}/cl/_testdata/foo.Foo.Pb"(%"{{.*}}/cl/_testdata/foo.Foo" %18)
-// CHECK-NEXT:   %20 = icmp eq ptr %12, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %20)
-// CHECK-NEXT:   %21 = getelementptr inbounds %"{{.*}}/cl/_testdata/foo.Foo", ptr %12, i32 0, i32 1
-// CHECK-NEXT:   %22 = load float, ptr %21, align 4
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %19)
+// CHECK-NEXT:   %14 = alloca %"{{.*}}/cl/_testdata/foo.Foo", align 8
+// CHECK-NEXT:   call void @llvm.memset(ptr %14, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   %15 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   store %"{{.*}}/cl/_testdata/foo.Foo" zeroinitializer, ptr %15, align 8
+// CHECK-NEXT:   %16 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_{{.*}}/cl/_testdata/foo.Foo", ptr undef }, ptr %15, 1
+// CHECK-NEXT:   %17 = call { %"{{.*}}/cl/_testdata/foo.Foo", i1 } @"{{.*}}/cl/_testgo/struczero.Bar"(%"{{.*}}/runtime/internal/runtime.eface" %16)
+// CHECK-NEXT:   %18 = extractvalue { %"{{.*}}/cl/_testdata/foo.Foo", i1 } %17, 0
+// CHECK-NEXT:   store %"{{.*}}/cl/_testdata/foo.Foo" %18, ptr %14, align 8
+// CHECK-NEXT:   %19 = extractvalue { %"{{.*}}/cl/_testdata/foo.Foo", i1 } %17, 1
+// CHECK-NEXT:   %20 = load %"{{.*}}/cl/_testdata/foo.Foo", ptr %14, align 8
+// CHECK-NEXT:   %21 = call ptr @"{{.*}}/cl/_testdata/foo.Foo.Pb"(%"{{.*}}/cl/_testdata/foo.Foo" %20)
+// CHECK-NEXT:   %22 = icmp eq ptr %14, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %22)
+// CHECK-NEXT:   %23 = icmp eq ptr %14, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %23)
+// CHECK-NEXT:   %24 = getelementptr inbounds %"{{.*}}/cl/_testdata/foo.Foo", ptr %14, i32 0, i32 1
+// CHECK-NEXT:   %25 = load float, ptr %24, align 4
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %21)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %23 = fpext float %22 to double
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintFloat"(double %23)
+// CHECK-NEXT:   %26 = fpext float %25 to double
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintFloat"(double %26)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %17)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %19)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }

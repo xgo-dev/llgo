@@ -29,22 +29,30 @@ func main() {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %3 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
-// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %5 = load double, ptr %4, align 8
-// CHECK-NEXT:   %6 = fadd double %5, %1
-// CHECK-NEXT:   %7 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
-// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store double %6, ptr %8, align 8
+// CHECK-NEXT:   %4 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %4)
+// CHECK-NEXT:   %5 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %6 = load double, ptr %5, align 8
+// CHECK-NEXT:   %7 = fadd double %6, %1
+// CHECK-NEXT:   %8 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %8)
 // CHECK-NEXT:   %9 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %9)
-// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %11 = load double, ptr %10, align 8
-// CHECK-NEXT:   %12 = fadd double %11, %2
-// CHECK-NEXT:   %13 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %13)
-// CHECK-NEXT:   %14 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   store double %12, ptr %14, align 8
+// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   store double %7, ptr %10, align 8
+// CHECK-NEXT:   %11 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %11)
+// CHECK-NEXT:   %12 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %12)
+// CHECK-NEXT:   %13 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %14 = load double, ptr %13, align 8
+// CHECK-NEXT:   %15 = fadd double %14, %2
+// CHECK-NEXT:   %16 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %16)
+// CHECK-NEXT:   %17 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %17)
+// CHECK-NEXT:   %18 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   store double %15, ptr %18, align 8
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
@@ -52,22 +60,30 @@ func main() {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %4 = load double, ptr %3, align 8
-// CHECK-NEXT:   %5 = fmul double %4, %1
-// CHECK-NEXT:   %6 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
-// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store double %5, ptr %7, align 8
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %5 = load double, ptr %4, align 8
+// CHECK-NEXT:   %6 = fmul double %5, %1
+// CHECK-NEXT:   %7 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
 // CHECK-NEXT:   %8 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %8)
-// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %10 = load double, ptr %9, align 8
-// CHECK-NEXT:   %11 = fmul double %10, %1
-// CHECK-NEXT:   %12 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %12)
-// CHECK-NEXT:   %13 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   store double %11, ptr %13, align 8
+// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   store double %6, ptr %9, align 8
+// CHECK-NEXT:   %10 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %10)
+// CHECK-NEXT:   %11 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %11)
+// CHECK-NEXT:   %12 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %13 = load double, ptr %12, align 8
+// CHECK-NEXT:   %14 = fmul double %13, %1
+// CHECK-NEXT:   %15 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %15)
+// CHECK-NEXT:   %16 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %16)
+// CHECK-NEXT:   %17 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   store double %14, ptr %17, align 8
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
@@ -99,15 +115,19 @@ func main() {
 // CHECK-NEXT:   call void @"{{.*}}/cl/_testgo/alias.(*Point).Move"(ptr %0, double 3.000000e+00, double 4.000000e+00)
 // CHECK-NEXT:   %5 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %5)
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %7 = load double, ptr %6, align 8
-// CHECK-NEXT:   %8 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %8)
-// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %10 = load double, ptr %9, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintFloat"(double %7)
+// CHECK-NEXT:   %6 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
+// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %8 = load double, ptr %7, align 8
+// CHECK-NEXT:   %9 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %9)
+// CHECK-NEXT:   %10 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %10)
+// CHECK-NEXT:   %11 = getelementptr inbounds %"{{.*}}/cl/_testgo/alias.Point", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %12 = load double, ptr %11, align 8
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintFloat"(double %8)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintFloat"(double %10)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintFloat"(double %12)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }

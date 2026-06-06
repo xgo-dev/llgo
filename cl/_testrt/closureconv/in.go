@@ -14,10 +14,12 @@ type Call struct {
 // CHECK-NEXT:   %3 = add i64 %1, %2
 // CHECK-NEXT:   %4 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %4)
-// CHECK-NEXT:   %5 = getelementptr inbounds %"{{.*}}/cl/_testrt/closureconv.Call", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %6 = load i64, ptr %5, align 8
-// CHECK-NEXT:   %7 = add i64 %3, %6
-// CHECK-NEXT:   ret i64 %7
+// CHECK-NEXT:   %5 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %5)
+// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/cl/_testrt/closureconv.Call", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %7 = load i64, ptr %6, align 8
+// CHECK-NEXT:   %8 = add i64 %3, %7
+// CHECK-NEXT:   ret i64 %8
 // CHECK-NEXT: }
 
 func (c *Call) add(a int, b int) int {
@@ -47,16 +49,20 @@ func add(a int, b int) int {
 // CHECK-NEXT:   %6 = insertvalue { ptr, ptr } { ptr @"{{.*}}/cl/_testrt/closureconv.(*Call).add$bound", ptr undef }, ptr %4, 1
 // CHECK-NEXT:   %7 = icmp eq ptr %1, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
-// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/cl/_testrt/closureconv.Call", ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %9 = alloca %"{{.*}}/cl/_testrt/closureconv.Func", align 8
-// CHECK-NEXT:   store { ptr, ptr } %6, ptr %9, align 8
-// CHECK-NEXT:   %10 = load %"{{.*}}/cl/_testrt/closureconv.Func", ptr %9, align 8
-// CHECK-NEXT:   store %"{{.*}}/cl/_testrt/closureconv.Func" %10, ptr %8, align 8
-// CHECK-NEXT:   %11 = icmp eq ptr %1, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %11)
-// CHECK-NEXT:   %12 = getelementptr inbounds %"{{.*}}/cl/_testrt/closureconv.Call", ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %13 = load %"{{.*}}/cl/_testrt/closureconv.Func", ptr %12, align 8
-// CHECK-NEXT:   ret %"{{.*}}/cl/_testrt/closureconv.Func" %13
+// CHECK-NEXT:   %8 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %8)
+// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/cl/_testrt/closureconv.Call", ptr %1, i32 0, i32 0
+// CHECK-NEXT:   %10 = alloca %"{{.*}}/cl/_testrt/closureconv.Func", align 8
+// CHECK-NEXT:   store { ptr, ptr } %6, ptr %10, align 8
+// CHECK-NEXT:   %11 = load %"{{.*}}/cl/_testrt/closureconv.Func", ptr %10, align 8
+// CHECK-NEXT:   store %"{{.*}}/cl/_testrt/closureconv.Func" %11, ptr %9, align 8
+// CHECK-NEXT:   %12 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %12)
+// CHECK-NEXT:   %13 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %13)
+// CHECK-NEXT:   %14 = getelementptr inbounds %"{{.*}}/cl/_testrt/closureconv.Call", ptr %1, i32 0, i32 0
+// CHECK-NEXT:   %15 = load %"{{.*}}/cl/_testrt/closureconv.Func", ptr %14, align 8
+// CHECK-NEXT:   ret %"{{.*}}/cl/_testrt/closureconv.Func" %15
 // CHECK-NEXT: }
 
 func demo1(n int) Func {

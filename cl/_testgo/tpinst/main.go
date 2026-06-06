@@ -160,18 +160,22 @@ func (pt *M[T]) value() T {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/tpinst.M[int]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load i64, ptr %2, align 8
-// CHECK-NEXT:   ret i64 %3
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/tpinst.M[int]", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
+// CHECK-NEXT:   ret i64 %4
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce i64 @"{{.*}}/cl/_testgo/tpinst.(*M[int]).value"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/tpinst.M[int]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load i64, ptr %2, align 8
-// CHECK-NEXT:   ret i64 %3
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/tpinst.M[int]", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
+// CHECK-NEXT:   ret i64 %4
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal64"(ptr %0, ptr %1, ptr %2){{.*}} {
@@ -202,18 +206,22 @@ func (pt *M[T]) value() T {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/tpinst.M[float64]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load double, ptr %2, align 8
-// CHECK-NEXT:   ret double %3
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/tpinst.M[float64]", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %4 = load double, ptr %3, align 8
+// CHECK-NEXT:   ret double %4
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce double @"{{.*}}/cl/_testgo/tpinst.(*M[float64]).value"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/tpinst.M[float64]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load double, ptr %2, align 8
-// CHECK-NEXT:   ret double %3
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/tpinst.M[float64]", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %4 = load double, ptr %3, align 8
+// CHECK-NEXT:   ret double %4
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.f64equal"(ptr %0, ptr %1, ptr %2){{.*}} {

@@ -33,15 +33,19 @@ type My[T any] struct {
 // CHECK-NEXT:   store ptr %3, ptr %2, align 8
 // CHECK-NEXT:   %6 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
-// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/cl/_testgo/tprecurfn.My[int]", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %8 = load ptr, ptr %7, align 8
-// CHECK-NEXT:   %9 = icmp eq ptr %8, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %9)
-// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/cl/_testgo/tprecurfn.My[int]", ptr %8, i32 0, i32 0
-// CHECK-NEXT:   %11 = load { ptr, ptr }, ptr %10, align 8
-// CHECK-NEXT:   %12 = extractvalue { ptr, ptr } %11, 1
-// CHECK-NEXT:   %13 = extractvalue { ptr, ptr } %11, 0
-// CHECK-NEXT:   call void %13(ptr %12, i64 100)
+// CHECK-NEXT:   %7 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
+// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/cl/_testgo/tprecurfn.My[int]", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %9 = load ptr, ptr %8, align 8
+// CHECK-NEXT:   %10 = icmp eq ptr %9, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %10)
+// CHECK-NEXT:   %11 = icmp eq ptr %9, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %11)
+// CHECK-NEXT:   %12 = getelementptr inbounds %"{{.*}}/cl/_testgo/tprecurfn.My[int]", ptr %9, i32 0, i32 0
+// CHECK-NEXT:   %13 = load { ptr, ptr }, ptr %12, align 8
+// CHECK-NEXT:   %14 = extractvalue { ptr, ptr } %13, 1
+// CHECK-NEXT:   %15 = extractvalue { ptr, ptr } %13, 0
+// CHECK-NEXT:   call void %15(ptr %14, i64 100)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 

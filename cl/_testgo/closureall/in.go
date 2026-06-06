@@ -6,6 +6,7 @@ import _ "unsafe" // for go:linkname
 import "github.com/goplus/lib/c"
 
 //go:linkname cSqrt C.sqrt
+
 // CHECK-LINE: @0 = private unnamed_addr constant [46 x i8] c"{{.*}}/cl/_testgo/closureall.S", align 1
 // CHECK-LINE: @1 = private unnamed_addr constant [3 x i8] c"Inc", align 1
 // CHECK-LINE: @7 = private unnamed_addr constant [3 x i8] c"Add", align 1
@@ -32,10 +33,12 @@ type S struct {
 // CHECK-NEXT:   store %"{{.*}}/cl/_testgo/closureall.S" %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = icmp eq ptr %2, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
-// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testgo/closureall.S", ptr %2, i32 0, i32 0
-// CHECK-NEXT:   %5 = load i64, ptr %4, align 8
-// CHECK-NEXT:   %6 = add i64 %5, %1
-// CHECK-NEXT:   ret i64 %6
+// CHECK-NEXT:   %4 = icmp eq ptr %2, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %4)
+// CHECK-NEXT:   %5 = getelementptr inbounds %"{{.*}}/cl/_testgo/closureall.S", ptr %2, i32 0, i32 0
+// CHECK-NEXT:   %6 = load i64, ptr %5, align 8
+// CHECK-NEXT:   %7 = add i64 %6, %1
+// CHECK-NEXT:   ret i64 %7
 // CHECK-NEXT: }
 
 func (s S) Inc(x int) int {
@@ -46,10 +49,12 @@ func (s S) Inc(x int) int {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/closureall.S", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
-// CHECK-NEXT:   %5 = add i64 %4, %1
-// CHECK-NEXT:   ret i64 %5
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testgo/closureall.S", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %5 = load i64, ptr %4, align 8
+// CHECK-NEXT:   %6 = add i64 %5, %1
+// CHECK-NEXT:   ret i64 %6
 // CHECK-NEXT: }
 
 func (s *S) Add(x int) int {
@@ -173,7 +178,7 @@ func makeWithFree(base int) Fn {
 // CHECK-NEXT:   %27 = extractvalue { ptr, ptr } %26, 1
 // CHECK-NEXT:   %28 = extractvalue { ptr, ptr } %26, 0
 // CHECK-NEXT:   %29 = call i64 %28(ptr %27, i64 9)
-// CHECK-NEXT:   %30 = call double @sqrt(double 4.000000e+00)
+// CHECK-NEXT:   %30 = call double @"{{.*}}/cl/_testgo/closureall.cSqrt"(double 4.000000e+00)
 // CHECK-NEXT:   %31 = call i32 @abs(i32 -3)
 // CHECK-NEXT:   %32 = call i32 @"{{.*}}/cl/_testgo/closureall.callCallback"(ptr @"{{.*}}/cl/_testgo/closureall.main$1", i32 7)
 // CHECK-NEXT:   ret void

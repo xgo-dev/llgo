@@ -40,39 +40,43 @@ type eface struct {
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %2, ptr %0, align 8
 // CHECK-NEXT:   %3 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
-// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testrt/abitype.eface", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
-// CHECK-NEXT:   %6 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/abi.(*Type).String"(ptr %5)
-// CHECK-NEXT:   %7 = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" %6, %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 })
-// CHECK-NEXT:   %8 = xor i1 %7, true
-// CHECK-NEXT:   br i1 %8, label %_llgo_1, label %_llgo_2
+// CHECK-NEXT:   %4 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %4)
+// CHECK-NEXT:   %5 = getelementptr inbounds %"{{.*}}/cl/_testrt/abitype.eface", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
+// CHECK-NEXT:   %7 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/abi.(*Type).String"(ptr %6)
+// CHECK-NEXT:   %8 = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" %7, %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 })
+// CHECK-NEXT:   %9 = xor i1 %8, true
+// CHECK-NEXT:   br i1 %9, label %_llgo_1, label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %9 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @1, i64 14 }, ptr %9, align 8
-// CHECK-NEXT:   %10 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %9, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %10)
+// CHECK-NEXT:   %10 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @1, i64 14 }, ptr %10, align 8
+// CHECK-NEXT:   %11 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %10, 1
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %11)
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %11 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 1)
-// CHECK-NEXT:   store i8 0, ptr %11, align 1
-// CHECK-NEXT:   %12 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_uint8, ptr undef }, ptr %11, 1
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %12, ptr %0, align 8
-// CHECK-NEXT:   %13 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %13)
-// CHECK-NEXT:   %14 = getelementptr inbounds %"{{.*}}/cl/_testrt/abitype.eface", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %15 = load ptr, ptr %14, align 8
-// CHECK-NEXT:   %16 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/abi.(*Type).String"(ptr %15)
-// CHECK-NEXT:   %17 = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" %16, %"{{.*}}/runtime/internal/runtime.String" { ptr @3, i64 5 })
-// CHECK-NEXT:   %18 = xor i1 %17, true
-// CHECK-NEXT:   br i1 %18, label %_llgo_3, label %_llgo_4
+// CHECK-NEXT:   %12 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 1)
+// CHECK-NEXT:   store i8 0, ptr %12, align 1
+// CHECK-NEXT:   %13 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_uint8, ptr undef }, ptr %12, 1
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %13, ptr %0, align 8
+// CHECK-NEXT:   %14 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %14)
+// CHECK-NEXT:   %15 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %15)
+// CHECK-NEXT:   %16 = getelementptr inbounds %"{{.*}}/cl/_testrt/abitype.eface", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %17 = load ptr, ptr %16, align 8
+// CHECK-NEXT:   %18 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/abi.(*Type).String"(ptr %17)
+// CHECK-NEXT:   %19 = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" %18, %"{{.*}}/runtime/internal/runtime.String" { ptr @3, i64 5 })
+// CHECK-NEXT:   %20 = xor i1 %19, true
+// CHECK-NEXT:   br i1 %20, label %_llgo_3, label %_llgo_4
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   %19 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @4, i64 14 }, ptr %19, align 8
-// CHECK-NEXT:   %20 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %19, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %20)
+// CHECK-NEXT:   %21 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @4, i64 14 }, ptr %21, align 8
+// CHECK-NEXT:   %22 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %21, 1
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %22)
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_2

@@ -142,57 +142,69 @@ type (
 // CHECK-NEXT:   %52 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/cl/_testgo/tptypes.(*Slice[[]int,int]).Append2"(ptr %34, %"{{.*}}/runtime/internal/runtime.Slice" %51)
 // CHECK-NEXT:   %53 = icmp eq ptr %20, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %53)
-// CHECK-NEXT:   %54 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]int,int]", ptr %20, i32 0, i32 0
-// CHECK-NEXT:   %55 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %54, align 8
-// CHECK-NEXT:   %56 = icmp eq ptr %20, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %56)
-// CHECK-NEXT:   %57 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]int,int]", ptr %20, i32 0, i32 0
-// CHECK-NEXT:   %58 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %57, align 8
-// CHECK-NEXT:   %59 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %58, 0
-// CHECK-NEXT:   %60 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %58, 1
-// CHECK-NEXT:   %61 = icmp uge i64 0, %60
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %61, i64 0, i1 true, i64 %60)
-// CHECK-NEXT:   %62 = getelementptr inbounds i64, ptr %59, i64 0
-// CHECK-NEXT:   %63 = load i64, ptr %62, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %55)
+// CHECK-NEXT:   %54 = icmp eq ptr %20, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %54)
+// CHECK-NEXT:   %55 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]int,int]", ptr %20, i32 0, i32 0
+// CHECK-NEXT:   %56 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %55, align 8
+// CHECK-NEXT:   %57 = icmp eq ptr %20, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %57)
+// CHECK-NEXT:   %58 = icmp eq ptr %20, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %58)
+// CHECK-NEXT:   %59 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]int,int]", ptr %20, i32 0, i32 0
+// CHECK-NEXT:   %60 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %59, align 8
+// CHECK-NEXT:   %61 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %60, 0
+// CHECK-NEXT:   %62 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %60, 1
+// CHECK-NEXT:   %63 = icmp uge i64 0, %62
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %63, i64 0, i1 true, i64 %62)
+// CHECK-NEXT:   %64 = getelementptr inbounds i64, ptr %61, i64 0
+// CHECK-NEXT:   %65 = load i64, ptr %64, align 8
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %56)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %63)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %65)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %64 = icmp eq ptr %27, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %64)
-// CHECK-NEXT:   %65 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]string,string]", ptr %27, i32 0, i32 0
-// CHECK-NEXT:   %66 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %65, align 8
+// CHECK-NEXT:   %66 = icmp eq ptr %27, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %66)
 // CHECK-NEXT:   %67 = icmp eq ptr %27, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %67)
 // CHECK-NEXT:   %68 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]string,string]", ptr %27, i32 0, i32 0
 // CHECK-NEXT:   %69 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %68, align 8
-// CHECK-NEXT:   %70 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %69, 0
-// CHECK-NEXT:   %71 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %69, 1
-// CHECK-NEXT:   %72 = icmp uge i64 0, %71
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %72, i64 0, i1 true, i64 %71)
-// CHECK-NEXT:   %73 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.String", ptr %70, i64 0
-// CHECK-NEXT:   %74 = load %"{{.*}}/runtime/internal/runtime.String", ptr %73, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %66)
+// CHECK-NEXT:   %70 = icmp eq ptr %27, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %70)
+// CHECK-NEXT:   %71 = icmp eq ptr %27, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %71)
+// CHECK-NEXT:   %72 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]string,string]", ptr %27, i32 0, i32 0
+// CHECK-NEXT:   %73 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %72, align 8
+// CHECK-NEXT:   %74 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %73, 0
+// CHECK-NEXT:   %75 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %73, 1
+// CHECK-NEXT:   %76 = icmp uge i64 0, %75
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %76, i64 0, i1 true, i64 %75)
+// CHECK-NEXT:   %77 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.String", ptr %74, i64 0
+// CHECK-NEXT:   %78 = load %"{{.*}}/runtime/internal/runtime.String", ptr %77, align 8
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %69)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %74)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %78)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %75 = icmp eq ptr %34, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %75)
-// CHECK-NEXT:   %76 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]int,int]", ptr %34, i32 0, i32 0
-// CHECK-NEXT:   %77 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %76, align 8
-// CHECK-NEXT:   %78 = icmp eq ptr %34, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %78)
-// CHECK-NEXT:   %79 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]int,int]", ptr %34, i32 0, i32 0
-// CHECK-NEXT:   %80 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %79, align 8
-// CHECK-NEXT:   %81 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %80, 0
-// CHECK-NEXT:   %82 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %80, 1
-// CHECK-NEXT:   %83 = icmp uge i64 0, %82
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %83, i64 0, i1 true, i64 %82)
-// CHECK-NEXT:   %84 = getelementptr inbounds i64, ptr %81, i64 0
-// CHECK-NEXT:   %85 = load i64, ptr %84, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %77)
+// CHECK-NEXT:   %79 = icmp eq ptr %34, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %79)
+// CHECK-NEXT:   %80 = icmp eq ptr %34, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %80)
+// CHECK-NEXT:   %81 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]int,int]", ptr %34, i32 0, i32 0
+// CHECK-NEXT:   %82 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %81, align 8
+// CHECK-NEXT:   %83 = icmp eq ptr %34, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %83)
+// CHECK-NEXT:   %84 = icmp eq ptr %34, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %84)
+// CHECK-NEXT:   %85 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]int,int]", ptr %34, i32 0, i32 0
+// CHECK-NEXT:   %86 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %85, align 8
+// CHECK-NEXT:   %87 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %86, 0
+// CHECK-NEXT:   %88 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %86, 1
+// CHECK-NEXT:   %89 = icmp uge i64 0, %88
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %89, i64 0, i1 true, i64 %88)
+// CHECK-NEXT:   %90 = getelementptr inbounds i64, ptr %87, i64 0
+// CHECK-NEXT:   %91 = load i64, ptr %90, align 8
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %82)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %85)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %91)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
@@ -226,58 +238,76 @@ func main() {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]int,int]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %4 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %3, align 8
-// CHECK-NEXT:   %5 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 0
-// CHECK-NEXT:   %6 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 1
-// CHECK-NEXT:   %7 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %4, ptr %5, i64 %6, i64 8)
-// CHECK-NEXT:   %8 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %8)
-// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]int,int]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %7, ptr %9, align 8
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]int,int]", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %5 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %4, align 8
+// CHECK-NEXT:   %6 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 0
+// CHECK-NEXT:   %7 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 1
+// CHECK-NEXT:   %8 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %5, ptr %6, i64 %7, i64 8)
+// CHECK-NEXT:   %9 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %9)
 // CHECK-NEXT:   %10 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %10)
 // CHECK-NEXT:   %11 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]int,int]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %12 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %11, align 8
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %12
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %8, ptr %11, align 8
+// CHECK-NEXT:   %12 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %12)
+// CHECK-NEXT:   %13 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %13)
+// CHECK-NEXT:   %14 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]int,int]", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %15 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %14, align 8
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %15
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/cl/_testgo/tptypes.(*Slice[[]string,string]).Append"(ptr %0, %"{{.*}}/runtime/internal/runtime.Slice" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]string,string]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %4 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %3, align 8
-// CHECK-NEXT:   %5 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 0
-// CHECK-NEXT:   %6 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 1
-// CHECK-NEXT:   %7 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %4, ptr %5, i64 %6, i64 16)
-// CHECK-NEXT:   %8 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %8)
-// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]string,string]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %7, ptr %9, align 8
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]string,string]", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %5 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %4, align 8
+// CHECK-NEXT:   %6 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 0
+// CHECK-NEXT:   %7 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 1
+// CHECK-NEXT:   %8 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %5, ptr %6, i64 %7, i64 16)
+// CHECK-NEXT:   %9 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %9)
 // CHECK-NEXT:   %10 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %10)
 // CHECK-NEXT:   %11 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]string,string]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %12 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %11, align 8
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %12
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %8, ptr %11, align 8
+// CHECK-NEXT:   %12 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %12)
+// CHECK-NEXT:   %13 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %13)
+// CHECK-NEXT:   %14 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]string,string]", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %15 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %14, align 8
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %15
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/cl/_testgo/tptypes.(*Slice[[]int,int]).Append2"(ptr %0, %"{{.*}}/runtime/internal/runtime.Slice" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]int,int]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %4 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %3, align 8
-// CHECK-NEXT:   %5 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 0
-// CHECK-NEXT:   %6 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 1
-// CHECK-NEXT:   %7 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %4, ptr %5, i64 %6, i64 8)
-// CHECK-NEXT:   %8 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %8)
-// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]int,int]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %7, ptr %9, align 8
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]int,int]", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %5 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %4, align 8
+// CHECK-NEXT:   %6 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 0
+// CHECK-NEXT:   %7 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 1
+// CHECK-NEXT:   %8 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %5, ptr %6, i64 %7, i64 8)
+// CHECK-NEXT:   %9 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %9)
 // CHECK-NEXT:   %10 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %10)
 // CHECK-NEXT:   %11 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]int,int]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %12 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %11, align 8
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %12
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %8, ptr %11, align 8
+// CHECK-NEXT:   %12 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %12)
+// CHECK-NEXT:   %13 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %13)
+// CHECK-NEXT:   %14 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Slice[[]int,int]", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %15 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %14, align 8
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %15
 // CHECK-NEXT: }

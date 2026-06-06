@@ -15,31 +15,41 @@ type counter struct {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/typerecur.counter", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load i64, ptr %2, align 8
-// CHECK-NEXT:   %4 = add i64 %3, 1
-// CHECK-NEXT:   %5 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %5)
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/cl/_testgo/typerecur.counter", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store i64 %4, ptr %6, align 8
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/typerecur.counter", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
+// CHECK-NEXT:   %5 = add i64 %4, 1
+// CHECK-NEXT:   %6 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
 // CHECK-NEXT:   %7 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
 // CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/cl/_testgo/typerecur.counter", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %9 = load i64, ptr %8, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 6 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %9)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// CHECK-NEXT:   store i64 %5, ptr %8, align 8
+// CHECK-NEXT:   %9 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %9)
 // CHECK-NEXT:   %10 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %10)
 // CHECK-NEXT:   %11 = getelementptr inbounds %"{{.*}}/cl/_testgo/typerecur.counter", ptr %0, i32 0, i32 0
 // CHECK-NEXT:   %12 = load i64, ptr %11, align 8
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 6 })
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %12)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %13 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %13)
-// CHECK-NEXT:   %14 = getelementptr inbounds %"{{.*}}/cl/_testgo/typerecur.counter", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %15 = load i64, ptr %14, align 8
-// CHECK-NEXT:   %16 = icmp sge i64 %12, %15
-// CHECK-NEXT:   br i1 %16, label %_llgo_1, label %_llgo_2
+// CHECK-NEXT:   %14 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %14)
+// CHECK-NEXT:   %15 = getelementptr inbounds %"{{.*}}/cl/_testgo/typerecur.counter", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %16 = load i64, ptr %15, align 8
+// CHECK-NEXT:   %17 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %17)
+// CHECK-NEXT:   %18 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %18)
+// CHECK-NEXT:   %19 = getelementptr inbounds %"{{.*}}/cl/_testgo/typerecur.counter", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %20 = load i64, ptr %19, align 8
+// CHECK-NEXT:   %21 = icmp sge i64 %16, %20
+// CHECK-NEXT:   br i1 %21, label %_llgo_1, label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
 // CHECK-NEXT:   ret %"{{.*}}/cl/_testgo/typerecur.stateFn" zeroinitializer
@@ -87,28 +97,34 @@ func countState(c *counter) stateFn {
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_3
 // CHECK-NEXT:   %5 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %5)
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/cl/_testgo/typerecur.counter", ptr %0, i32 0, i32 2
-// CHECK-NEXT:   %7 = load %"{{.*}}/cl/_testgo/typerecur.stateFn", ptr %6, align 8
-// CHECK-NEXT:   %8 = extractvalue %"{{.*}}/cl/_testgo/typerecur.stateFn" %7, 1
-// CHECK-NEXT:   %9 = extractvalue %"{{.*}}/cl/_testgo/typerecur.stateFn" %7, 0
-// CHECK-NEXT:   %10 = call %"{{.*}}/cl/_testgo/typerecur.stateFn" %9(ptr %8, ptr %0)
-// CHECK-NEXT:   %11 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %11)
-// CHECK-NEXT:   %12 = getelementptr inbounds %"{{.*}}/cl/_testgo/typerecur.counter", ptr %0, i32 0, i32 2
-// CHECK-NEXT:   store %"{{.*}}/cl/_testgo/typerecur.stateFn" %10, ptr %12, align 8
+// CHECK-NEXT:   %6 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
+// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/cl/_testgo/typerecur.counter", ptr %0, i32 0, i32 2
+// CHECK-NEXT:   %8 = load %"{{.*}}/cl/_testgo/typerecur.stateFn", ptr %7, align 8
+// CHECK-NEXT:   %9 = extractvalue %"{{.*}}/cl/_testgo/typerecur.stateFn" %8, 1
+// CHECK-NEXT:   %10 = extractvalue %"{{.*}}/cl/_testgo/typerecur.stateFn" %8, 0
+// CHECK-NEXT:   %11 = call %"{{.*}}/cl/_testgo/typerecur.stateFn" %10(ptr %9, ptr %0)
+// CHECK-NEXT:   %12 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %12)
+// CHECK-NEXT:   %13 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %13)
+// CHECK-NEXT:   %14 = getelementptr inbounds %"{{.*}}/cl/_testgo/typerecur.counter", ptr %0, i32 0, i32 2
+// CHECK-NEXT:   store %"{{.*}}/cl/_testgo/typerecur.stateFn" %11, ptr %14, align 8
 // CHECK-NEXT:   br label %_llgo_3
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_3
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   %13 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %13)
-// CHECK-NEXT:   %14 = getelementptr inbounds %"{{.*}}/cl/_testgo/typerecur.counter", ptr %0, i32 0, i32 2
-// CHECK-NEXT:   %15 = load %"{{.*}}/cl/_testgo/typerecur.stateFn", ptr %14, align 8
-// CHECK-NEXT:   %16 = extractvalue %"{{.*}}/cl/_testgo/typerecur.stateFn" %15, 0
-// CHECK-NEXT:   %17 = icmp ne ptr %16, null
-// CHECK-NEXT:   br i1 %17, label %_llgo_1, label %_llgo_2
+// CHECK-NEXT:   %15 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %15)
+// CHECK-NEXT:   %16 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %16)
+// CHECK-NEXT:   %17 = getelementptr inbounds %"{{.*}}/cl/_testgo/typerecur.counter", ptr %0, i32 0, i32 2
+// CHECK-NEXT:   %18 = load %"{{.*}}/cl/_testgo/typerecur.stateFn", ptr %17, align 8
+// CHECK-NEXT:   %19 = extractvalue %"{{.*}}/cl/_testgo/typerecur.stateFn" %18, 0
+// CHECK-NEXT:   %20 = icmp ne ptr %19, null
+// CHECK-NEXT:   br i1 %20, label %_llgo_1, label %_llgo_2
 // CHECK-NEXT: }
 
 func main() {

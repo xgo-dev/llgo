@@ -84,14 +84,18 @@ var (
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/cl/_testrt/gblarray.Basic"(i64 24)
 // CHECK-NEXT:   %1 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 6
-// CHECK-NEXT:   %3 = load i8, ptr %2, align 1
-// CHECK-NEXT:   %4 = zext i8 %3 to i64
-// CHECK-NEXT:   %5 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %5)
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %7 = load i64, ptr %6, align 8
-// CHECK-NEXT:   %8 = call i32 (ptr, ...) @printf(ptr @0, i64 %4, i64 %7)
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 6
+// CHECK-NEXT:   %4 = load i8, ptr %3, align 1
+// CHECK-NEXT:   %5 = zext i8 %4 to i64
+// CHECK-NEXT:   %6 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
+// CHECK-NEXT:   %7 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
+// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %9 = load i64, ptr %8, align 8
+// CHECK-NEXT:   %10 = call i32 (ptr, ...) @printf(ptr @0, i64 %5, i64 %9)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 

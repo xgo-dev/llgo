@@ -51,18 +51,24 @@ func genInts(n int, gen func() c.Int) []c.Int {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/intgen.generator", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load i32, ptr %2, align 4
-// CHECK-NEXT:   %4 = add i32 %3, 1
-// CHECK-NEXT:   %5 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %5)
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/cl/_testrt/intgen.generator", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store i32 %4, ptr %6, align 4
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testrt/intgen.generator", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %4 = load i32, ptr %3, align 4
+// CHECK-NEXT:   %5 = add i32 %4, 1
+// CHECK-NEXT:   %6 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
 // CHECK-NEXT:   %7 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
 // CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/cl/_testrt/intgen.generator", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %9 = load i32, ptr %8, align 4
-// CHECK-NEXT:   ret i32 %9
+// CHECK-NEXT:   store i32 %5, ptr %8, align 4
+// CHECK-NEXT:   %9 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %9)
+// CHECK-NEXT:   %10 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %10)
+// CHECK-NEXT:   %11 = getelementptr inbounds %"{{.*}}/cl/_testrt/intgen.generator", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %12 = load i32, ptr %11, align 4
+// CHECK-NEXT:   ret i32 %12
 // CHECK-NEXT: }
 
 func (g *generator) next() c.Int {
