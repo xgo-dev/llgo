@@ -769,6 +769,21 @@ func TestMakeInterfaceKinds(t *testing.T) {
 	makeFn("ptrIface", prog.Nil(prog.VoidPtr()))
 	makeFn("floatIface", prog.FloatVal(3.5, prog.Float32()))
 
+	funcSig := types.NewSignatureType(nil, nil, nil, nil,
+		types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int])), false)
+	funcDecl := pkg.NewFunc("funcPCIfaceTarget", funcSig, InGo)
+	bFuncDecl := funcDecl.MakeBody(1)
+	bFuncDecl.Return(prog.Val(1))
+
+	sigFuncPC := types.NewSignatureType(nil, nil, nil, nil,
+		types.NewTuple(types.NewVar(0, nil, "", emptyIface)), false)
+	fnFuncPC := pkg.NewFunc("funcPCIface", sigFuncPC, InGo)
+	bFuncPC := fnFuncPC.MakeBody(1)
+	bFuncPC.Return(bFuncPC.MakeInterfaceFuncPC(emptyType, funcDecl.Expr))
+	if pkg.FuncOf(closureFuncPCStub+funcDecl.Expr.impl.Name()) == nil {
+		t.Fatal("MakeInterfaceFuncPC should create a FuncForPC-preserving wrapper")
+	}
+
 	st := types.NewStruct([]*types.Var{
 		types.NewVar(0, nil, "a", types.Typ[types.Int]),
 		types.NewVar(0, nil, "b", types.Typ[types.Int]),
