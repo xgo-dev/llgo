@@ -38,11 +38,12 @@ func TestRuntimeMemProfileReportsTinyAllocations(t *testing.T) {
 		if got := len(r.Stack()); got > len(r.Stack0) {
 			t.Fatalf("MemProfileRecord.Stack length = %d, want <= %d", got, len(r.Stack0))
 		}
-		if inUseBytes/inUseObjects == 16 && inUseBytes >= wantBytes {
+		if inUseObjects >= n && inUseBytes >= wantBytes {
 			return
 		}
 	}
-	t.Fatalf("MemProfile did not report tiny allocations totaling at least %d bytes: %#v", wantBytes, records)
+	t.Fatalf("MemProfile did not report tiny allocations totaling at least %d bytes across %d objects; got %d record(s)",
+		wantBytes, n, len(records))
 }
 
 func TestRuntimePprofHeapProfileReportsTinyAllocations(t *testing.T) {

@@ -2,7 +2,10 @@
 
 package runtime
 
-import _ "unsafe"
+import (
+	llrt "github.com/goplus/llgo/runtime/internal/runtime"
+	_ "unsafe"
+)
 
 type pprofMemProfileRecord struct {
 	AllocBytes, FreeBytes     int64
@@ -12,6 +15,9 @@ type pprofMemProfileRecord struct {
 
 //go:linkname pprof_memProfileInternal runtime.pprof_memProfileInternal
 func pprof_memProfileInternal(p []pprofMemProfileRecord, inuseZero bool) (n int, ok bool) {
+	suppressed := llrt.MemProfileSuppress()
+	defer llrt.MemProfileRestoreSuppressed(suppressed)
+
 	n, _ = MemProfile(nil, inuseZero)
 	if len(p) < n {
 		return n, false
