@@ -29,6 +29,9 @@ func TestRuntimeMemProfileReportsTinyAllocations(t *testing.T) {
 
 	records := readMemProfile(t)
 	wantBytes := int64(n * 4)
+	// Go's tiny allocator may report four int32 allocations as one
+	// 16-byte block; LLGo records the individual 4-byte allocations.
+	wantObjects := int64(n / 4)
 	for _, r := range records {
 		inUseObjects := r.InUseObjects()
 		inUseBytes := r.InUseBytes()
@@ -38,12 +41,12 @@ func TestRuntimeMemProfileReportsTinyAllocations(t *testing.T) {
 		if got := len(r.Stack()); got > len(r.Stack0) {
 			t.Fatalf("MemProfileRecord.Stack length = %d, want <= %d", got, len(r.Stack0))
 		}
-		if inUseObjects >= n && inUseBytes >= wantBytes {
+		if inUseObjects >= wantObjects && inUseBytes >= wantBytes {
 			return
 		}
 	}
-	t.Fatalf("MemProfile did not report tiny allocations totaling at least %d bytes across %d objects; got %d record(s)",
-		wantBytes, n, len(records))
+	t.Fatalf("MemProfile did not report tiny allocations totaling at least %d bytes across %d objects/blocks; got %d record(s)",
+		wantBytes, wantObjects, len(records))
 }
 
 func TestRuntimePprofHeapProfileReportsTinyAllocations(t *testing.T) {
