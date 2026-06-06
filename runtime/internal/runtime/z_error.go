@@ -67,6 +67,11 @@ func AssertNilDeref(b bool) {
 	}
 }
 
+func AssertNilDerefPtr(ptr unsafe.Pointer) unsafe.Pointer {
+	AssertNilDeref(ptr == nil)
+	return ptr
+}
+
 func PanicWrapNilPointer(b bool, recvType, methodName string) {
 	if b {
 		recvType = panicWrapRecvType(recvType)

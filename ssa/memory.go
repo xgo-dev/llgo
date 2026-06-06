@@ -337,6 +337,11 @@ func (b Builder) AssertNilDeref(ptr Expr) {
 	b.InlineCall(b.Pkg.rtFunc("AssertNilDeref"), isNil)
 }
 
+func (b Builder) NilDerefCheck(ptr Expr) Expr {
+	checked := b.Call(b.Pkg.rtFunc("AssertNilDerefPtr"), b.Convert(b.Prog.VoidPtr(), ptr))
+	return b.Convert(ptr.Type, checked)
+}
+
 func (b Builder) assertStaticNilDeref(ptr Expr) {
 	if ptr.impl.IsNull() {
 		b.AssertNilDeref(ptr)
