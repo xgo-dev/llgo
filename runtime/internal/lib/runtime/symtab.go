@@ -257,14 +257,6 @@ func normalizeLLGoSymbolName(name string) string {
 	return name
 }
 
-func (f *Func) FileLine(pc uintptr) (file string, line int) {
-	var info clitedebug.Info
-	if pc == 0 || clitedebug.Addrinfo(unsafe.Pointer(pc), &info) == 0 {
-		return "", 0
-	}
-	return safeGoString(info.Fname, ""), 0
-}
-
 // moduledata records information about the layout of the executable
 // image. It is written by the linker. Any changes here must be
 // matched changes to the code in cmd/link/internal/ld/symtab.go:symtab.
