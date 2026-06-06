@@ -55,9 +55,11 @@ type Foo struct {
 // CHECK-NEXT:   store %"{{.*}}/cl/_testdata/foo.Foo" %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = icmp eq ptr %1, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testdata/foo.Foo", ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
-// CHECK-NEXT:   ret ptr %4
+// CHECK-NEXT:   %3 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testdata/foo.Foo", ptr %1, i32 0, i32 0
+// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
+// CHECK-NEXT:   ret ptr %5
 // CHECK-NEXT: }
 
 func (v Foo) Pb() *byte {

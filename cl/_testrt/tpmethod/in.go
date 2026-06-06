@@ -132,20 +132,24 @@ func main() {
 // CHECK-NEXT:   store %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]" %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = icmp eq ptr %1, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]", ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %4 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %3, align 8
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %4
+// CHECK-NEXT:   %3 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]", ptr %1, i32 0, i32 0
+// CHECK-NEXT:   %5 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %4, align 8
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %5
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce void @"{{.*}}/cl/_testrt/tpmethod.(*future[{{.*}}/cl/_testrt/tpmethod.Tuple[error]]).Then"(ptr %0, { ptr, ptr } %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmethod.future[{{.*}}/cl/_testrt/tpmethod.Tuple[error]]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %4 = load { ptr, ptr }, ptr %3, align 8
-// CHECK-NEXT:   %5 = extractvalue { ptr, ptr } %4, 1
-// CHECK-NEXT:   %6 = extractvalue { ptr, ptr } %4, 0
-// CHECK-NEXT:   call void %6(ptr %5, { ptr, ptr } %1)
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmethod.future[{{.*}}/cl/_testrt/tpmethod.Tuple[error]]", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %5 = load { ptr, ptr }, ptr %4, align 8
+// CHECK-NEXT:   %6 = extractvalue { ptr, ptr } %5, 1
+// CHECK-NEXT:   %7 = extractvalue { ptr, ptr } %5, 0
+// CHECK-NEXT:   call void %7(ptr %6, { ptr, ptr } %1)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 

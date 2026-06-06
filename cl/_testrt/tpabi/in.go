@@ -132,15 +132,19 @@ func main() {
 // CHECK-NEXT:   store %"{{.*}}/cl/_testrt/tpabi.T[string,int]" %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = icmp eq ptr %1, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %4 = load %"{{.*}}/runtime/internal/runtime.String", ptr %3, align 8
-// CHECK-NEXT:   %5 = icmp eq ptr %1, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %5)
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %1, i32 0, i32 1
-// CHECK-NEXT:   %7 = load i64, ptr %6, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %4)
+// CHECK-NEXT:   %3 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %1, i32 0, i32 0
+// CHECK-NEXT:   %5 = load %"{{.*}}/runtime/internal/runtime.String", ptr %4, align 8
+// CHECK-NEXT:   %6 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
+// CHECK-NEXT:   %7 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
+// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %1, i32 0, i32 1
+// CHECK-NEXT:   %9 = load i64, ptr %8, align 8
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %5)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %7)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %9)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
@@ -149,15 +153,19 @@ func main() {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.String", ptr %2, align 8
-// CHECK-NEXT:   %4 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %4)
-// CHECK-NEXT:   %5 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %6 = load i64, ptr %5, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %3)
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %4 = load %"{{.*}}/runtime/internal/runtime.String", ptr %3, align 8
+// CHECK-NEXT:   %5 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %5)
+// CHECK-NEXT:   %6 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
+// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %8 = load i64, ptr %7, align 8
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %4)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %6)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %8)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }

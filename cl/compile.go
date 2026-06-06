@@ -1064,6 +1064,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		ret = b.Convert(p.type_(t, llssa.InGo), x)
 	case *ssa.FieldAddr:
 		x := p.compileValue(b, v.X)
+		if p.isExplicitFieldAddr(v) {
+			b.AssertNilDeref(x)
+		}
 		ret = b.FieldAddr(x, v.Field)
 	case *ssa.Alloc:
 		t := v.Type().(*types.Pointer)

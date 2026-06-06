@@ -27,9 +27,11 @@ type OuterInt struct {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/methodthunk.InnerInt", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load i64, ptr %2, align 8
-// CHECK-NEXT:   ret i64 %3
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testrt/methodthunk.InnerInt", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
+// CHECK-NEXT:   ret i64 %4
 // CHECK-NEXT: }
 
 func (i *InnerInt) M() int {

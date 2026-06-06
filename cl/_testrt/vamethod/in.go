@@ -80,8 +80,10 @@ func main() {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testrt/vamethod.CFmt", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store ptr %1, ptr %3, align 8
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testrt/vamethod.CFmt", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   store ptr %1, ptr %4, align 8
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 

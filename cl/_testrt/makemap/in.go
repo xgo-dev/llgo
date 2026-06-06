@@ -670,10 +670,12 @@ func make3() {
 // CHECK-NEXT:   %65 = load ptr, ptr %64, align 8
 // CHECK-NEXT:   %66 = icmp eq ptr %65, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %66)
-// CHECK-NEXT:   %67 = getelementptr inbounds %"{{.*}}/cl/_testrt/makemap.N", ptr %65, i32 0, i32 0
-// CHECK-NEXT:   %68 = load i8, ptr %67, align 1
-// CHECK-NEXT:   %69 = sext i8 %68 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %69)
+// CHECK-NEXT:   %67 = icmp eq ptr %65, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %67)
+// CHECK-NEXT:   %68 = getelementptr inbounds %"{{.*}}/cl/_testrt/makemap.N", ptr %65, i32 0, i32 0
+// CHECK-NEXT:   %69 = load i8, ptr %68, align 1
+// CHECK-NEXT:   %70 = sext i8 %69 to i64
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %70)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %50)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)

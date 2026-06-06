@@ -14,16 +14,20 @@ import _ "unsafe"
 // CHECK-NEXT:   store %"{{.*}}/cl/_testrt/struct.Foo" %0, ptr %1, align 4
 // CHECK-NEXT:   %2 = icmp eq ptr %1, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testrt/struct.Foo", ptr %1, i32 0, i32 1
-// CHECK-NEXT:   %4 = load i1, ptr %3, align 1
-// CHECK-NEXT:   br i1 %4, label %_llgo_1, label %_llgo_2
+// CHECK-NEXT:   %3 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testrt/struct.Foo", ptr %1, i32 0, i32 1
+// CHECK-NEXT:   %5 = load i1, ptr %4, align 1
+// CHECK-NEXT:   br i1 %5, label %_llgo_1, label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %5 = icmp eq ptr %1, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %5)
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/cl/_testrt/struct.Foo", ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %7 = load i32, ptr %6, align 4
-// CHECK-NEXT:   call void (ptr, ...) @printf(ptr @"{{.*}}/cl/_testrt/struct.format", i32 %7)
+// CHECK-NEXT:   %6 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
+// CHECK-NEXT:   %7 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
+// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/cl/_testrt/struct.Foo", ptr %1, i32 0, i32 0
+// CHECK-NEXT:   %9 = load i32, ptr %8, align 4
+// CHECK-NEXT:   call void (ptr, ...) @printf(ptr @"{{.*}}/cl/_testrt/struct.format", i32 %9)
 // CHECK-NEXT:   br label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0

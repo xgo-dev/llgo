@@ -18,16 +18,20 @@ var format = [...]int8{'H', 'e', 'l', 'l', 'o', ' ', '%', 'd', '\n', 0}
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
-// CHECK-NEXT:   %2 = getelementptr inbounds { i32, i1 }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %3 = load i1, ptr %2, align 1
-// CHECK-NEXT:   br i1 %3, label %_llgo_1, label %_llgo_2
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds { i32, i1 }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %4 = load i1, ptr %3, align 1
+// CHECK-NEXT:   br i1 %4, label %_llgo_1, label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %4 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %4)
-// CHECK-NEXT:   %5 = getelementptr inbounds { i32, i1 }, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %6 = load i32, ptr %5, align 4
-// CHECK-NEXT:   call void (ptr, ...) @printf(ptr @"{{.*}}/cl/_testrt/typalias.format", i32 %6)
+// CHECK-NEXT:   %5 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %5)
+// CHECK-NEXT:   %6 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
+// CHECK-NEXT:   %7 = getelementptr inbounds { i32, i1 }, ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %8 = load i32, ptr %7, align 4
+// CHECK-NEXT:   call void (ptr, ...) @printf(ptr @"{{.*}}/cl/_testrt/typalias.format", i32 %8)
 // CHECK-NEXT:   br label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0

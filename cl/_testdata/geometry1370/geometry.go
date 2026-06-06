@@ -34,14 +34,18 @@ func NewRectangle(width, height float64) *Rectangle {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testdata/geometry1370.Rectangle", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load double, ptr %2, align 8
-// CHECK-NEXT:   %4 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %4)
-// CHECK-NEXT:   %5 = getelementptr inbounds %"{{.*}}/cl/_testdata/geometry1370.Rectangle", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %6 = load double, ptr %5, align 8
-// CHECK-NEXT:   %7 = fmul double %3, %6
-// CHECK-NEXT:   ret double %7
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testdata/geometry1370.Rectangle", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %4 = load double, ptr %3, align 8
+// CHECK-NEXT:   %5 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %5)
+// CHECK-NEXT:   %6 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
+// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/cl/_testdata/geometry1370.Rectangle", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %8 = load double, ptr %7, align 8
+// CHECK-NEXT:   %9 = fmul double %4, %8
+// CHECK-NEXT:   ret double %9
 // CHECK-NEXT: }
 
 func (r *Rectangle) Area() float64 { return r.Width * r.Height }
@@ -50,9 +54,11 @@ func (r *Rectangle) Area() float64 { return r.Width * r.Height }
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testdata/geometry1370.Rectangle", ptr %0, i32 0, i32 2
-// CHECK-NEXT:   %3 = load i64, ptr %2, align 8
-// CHECK-NEXT:   ret i64 %3
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testdata/geometry1370.Rectangle", ptr %0, i32 0, i32 2
+// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
+// CHECK-NEXT:   ret i64 %4
 // CHECK-NEXT: }
 
 func (r *Rectangle) GetID() int { return r.id }
@@ -61,8 +67,10 @@ func (r *Rectangle) GetID() int { return r.id }
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testdata/geometry1370.Rectangle", ptr %0, i32 0, i32 2
-// CHECK-NEXT:   store i64 %1, ptr %3, align 8
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testdata/geometry1370.Rectangle", ptr %0, i32 0, i32 2
+// CHECK-NEXT:   store i64 %1, ptr %4, align 8
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
@@ -72,22 +80,26 @@ func (r *Rectangle) setID(id int) { r.id = id }
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = icmp eq ptr %0, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testdata/geometry1370.Rectangle", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load double, ptr %2, align 8
-// CHECK-NEXT:   %4 = fcmp ogt double %3, 0.000000e+00
-// CHECK-NEXT:   br i1 %4, label %_llgo_1, label %_llgo_2
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testdata/geometry1370.Rectangle", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %4 = load double, ptr %3, align 8
+// CHECK-NEXT:   %5 = fcmp ogt double %4, 0.000000e+00
+// CHECK-NEXT:   br i1 %5, label %_llgo_1, label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %5 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %5)
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/cl/_testdata/geometry1370.Rectangle", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %7 = load double, ptr %6, align 8
-// CHECK-NEXT:   %8 = fcmp ogt double %7, 0.000000e+00
+// CHECK-NEXT:   %6 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
+// CHECK-NEXT:   %7 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
+// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/cl/_testdata/geometry1370.Rectangle", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %9 = load double, ptr %8, align 8
+// CHECK-NEXT:   %10 = fcmp ogt double %9, 0.000000e+00
 // CHECK-NEXT:   br label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   %9 = phi i1 [ false, %_llgo_0 ], [ %8, %_llgo_1 ]
-// CHECK-NEXT:   ret i1 %9
+// CHECK-NEXT:   %11 = phi i1 [ false, %_llgo_0 ], [ %10, %_llgo_1 ]
+// CHECK-NEXT:   ret i1 %11
 // CHECK-NEXT: }
 
 func (r *Rectangle) validate() bool { return r.Width > 0 && r.Height > 0 }
