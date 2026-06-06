@@ -165,6 +165,62 @@ func TestTooManyConditionalDefers(t *testing.T) {
 	}
 }
 
+func TestRecoverDeferTokenHelpers(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("foo", "foo")
+
+	callee := pkg.NewFunc("callee", NoArgsNoRet, InGo)
+	b := callee.MakeBody(1)
+
+	if deferMayRecover(callee.Expr) {
+		t.Fatal("unmarked function declaration should not be recover-capable")
+	}
+	if token := b.recoverDeferToken(callee.Expr, false); !token.IsNil() {
+		t.Fatalf("recover token without mayRecover = %v, want nil", token)
+	}
+
+	callee.Expr.MarkMayRecover()
+	if !deferMayRecover(callee.Expr) {
+		t.Fatal("marked function declaration should be recover-capable")
+	}
+	if token := b.recoverDeferToken(callee.Expr, true); token.IsNil() {
+		t.Fatal("marked function declaration should produce a recover token")
+	}
+
+	fnPtr := b.ChangeType(prog.rawType(NoArgsNoRet), callee.Expr)
+	if !deferMayRecover(fnPtr) {
+		t.Fatal("function pointer should be treated as recover-capable")
+	}
+	if token := b.recoverDeferToken(fnPtr, false); token.IsNil() {
+		t.Fatal("function pointer should produce a recover token")
+	}
+	if token := b.recoverDeferToken(prog.Val(1), true); !token.IsNil() {
+		t.Fatalf("non-function recover token = %v, want nil", token)
+	}
+
+	if deferMayRecover(Nil) {
+		t.Fatal("nil expression should not be recover-capable")
+	}
+	if deferMayRecover(prog.Val(1)) {
+		t.Fatal("non-function expression should not be recover-capable")
+	}
+	if !isRecoverBuiltin(Builtin("recover")) {
+		t.Fatal("recover builtin should be recognized")
+	}
+	if isRecoverBuiltin(Builtin("panic")) {
+		t.Fatal("non-recover builtin should not be recognized")
+	}
+	if isRecoverBuiltin(Nil) {
+		t.Fatal("nil expression should not be a recover builtin")
+	}
+	if isRecoverBuiltin(callee.Expr) {
+		t.Fatal("function declaration should not be a recover builtin")
+	}
+
+	b.Return()
+	b.EndBuild()
+}
+
 func TestPointerSize(t *testing.T) {
 	expected := unsafe.Sizeof(uintptr(0))
 	if size := NewProgram(nil).PointerSize(); size != int(expected) {
