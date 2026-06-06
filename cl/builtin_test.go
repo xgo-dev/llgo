@@ -24,6 +24,7 @@ import (
 	"go/constant"
 	"go/token"
 	"go/types"
+	"reflect"
 	"strings"
 	"testing"
 	"unsafe"
@@ -102,6 +103,18 @@ func setReferrersForTest(t *testing.T, v ssa.Value, refs ...ssa.Instruction) {
 	*referrers = refs
 }
 
+func swapFunctionSyntaxForTest(t *testing.T, f *ssa.Function, syntax ast.Node) ast.Node {
+	t.Helper()
+	field := reflect.ValueOf(f).Elem().FieldByName("syntax")
+	if !field.IsValid() {
+		t.Fatal("ssa.Function.syntax field not found")
+	}
+	ptr := (*ast.Node)(unsafe.Pointer(field.UnsafeAddr()))
+	old := *ptr
+	*ptr = syntax
+	return old
+}
+
 func TestDebugOnlyValueReferrerHelpers(t *testing.T) {
 	debugRef := &ssa.DebugRef{}
 	semanticRef := &ssa.Return{}
@@ -140,6 +153,63 @@ func TestDebugOnlyValueReferrerHelpers(t *testing.T) {
 	if debugOnlyPureValue(binop) {
 		t.Fatal("debug-only non-pure value should not be skipped")
 	}
+}
+
+func TestGetFuncEndPos(t *testing.T) {
+	ssaPkg, fset, _ := buildGoSSAPkg(t, `package foo
+
+func withSyntax() {
+	var x int
+	_ = x
+}
+`)
+	ctx := &context{goProg: ssaPkg.Prog}
+	fn := ssaPkg.Func("withSyntax")
+	if fn == nil {
+		t.Fatal("missing withSyntax")
+	}
+
+	if got, want := ctx.getFuncEndPos(fn), fset.Position(fn.Syntax().End()); got != want {
+		t.Fatalf("getFuncEndPos with syntax = %v, want %v", got, want)
+	}
+
+	oldSyntax := swapFunctionSyntaxForTest(t, fn, nil)
+	defer swapFunctionSyntaxForTest(t, fn, oldSyntax)
+	scopeEnd := fn.Object().(*types.Func).Scope().End()
+	if got, want := ctx.getFuncEndPos(fn), fset.Position(scopeEnd); got != want {
+		t.Fatalf("getFuncEndPos with object scope = %v, want %v", got, want)
+	}
+
+	empty := &ssa.Function{}
+	if got, want := ctx.getFuncEndPos(empty), ctx.getFuncBodyPos(empty); got != want {
+		t.Fatalf("getFuncEndPos fallback = %v, want %v", got, want)
+	}
+}
+
+func TestCompileDebugFunctionEndLocations(t *testing.T) {
+	oldDbg := enableDbg
+	EnableDebug(true)
+	defer EnableDebug(oldDbg)
+
+	_, m := mustCompileLLPkgFromSrc(t, `package foo
+
+func seq(yield func(int) bool) {
+	_ = yield(1)
+}
+
+func plain() {
+	var x int
+	_ = x
+}
+
+func withRangeDefer() {
+	for v := range seq {
+		defer func() { _ = v }()
+	}
+}
+`)
+	mustNamedFunction(t, m, "foo.plain")
+	mustNamedFunction(t, m, "foo.withRangeDefer")
 }
 
 func TestToBackground(t *testing.T) {
