@@ -219,6 +219,10 @@ func (f *Func) FileLine(pc uintptr) (file string, line int) {
 	if frame, ok := rtdebug.FrameForPC(pc); ok {
 		return frame.File, frame.Line
 	}
+	var info clitedebug.Info
+	if pc != 0 && clitedebug.Addrinfo(unsafe.Pointer(pc), &info) != 0 {
+		return safeGoString(info.Fname, ""), 0
+	}
 	return f.file, f.startLine
 }
 
@@ -255,14 +259,6 @@ func normalizeLLGoSymbolName(name string) string {
 		return "main." + name[len(commandLineArguments):]
 	}
 	return name
-}
-
-func (f *Func) FileLine(pc uintptr) (file string, line int) {
-	var info clitedebug.Info
-	if pc == 0 || clitedebug.Addrinfo(unsafe.Pointer(pc), &info) == 0 {
-		return "", 0
-	}
-	return safeGoString(info.Fname, ""), 0
 }
 
 // moduledata records information about the layout of the executable
