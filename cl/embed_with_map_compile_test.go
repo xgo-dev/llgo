@@ -57,7 +57,7 @@ var files embed.FS
 
 	prog := ssatest.NewProgramEx(t, nil, imp)
 	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
-	ret, _, err := cl.NewPackageExWithEmbed(prog, nil, nil, fooPkg, files, embedMap)
+	ret, _, err := cl.NewPackageExWithEmbed(prog, nil, nil, fooPkg, files, embedMap, nil)
 	if err != nil {
 		t.Fatalf("NewPackageExWithEmbed failed: %v", err)
 	}

@@ -46,6 +46,7 @@ import (
 	"github.com/goplus/llgo/internal/flash"
 	"github.com/goplus/llgo/internal/goembed"
 	"github.com/goplus/llgo/internal/header"
+	"github.com/goplus/llgo/internal/metadata"
 	"github.com/goplus/llgo/internal/mockable"
 	"github.com/goplus/llgo/internal/monitor"
 	"github.com/goplus/llgo/internal/optlevel"
@@ -158,6 +159,7 @@ type Config struct {
 	// packages in the current build.
 	GlobalRewrites map[string]Rewrites
 	ModuleHook     ModuleHook
+	CaptureMeta    bool // collect in-memory package metadata for tests/debugging
 }
 
 type Rewrites map[string]string
@@ -1267,10 +1269,18 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 		return fmt.Errorf("load go:embed directives for %s failed: %w", pkgPath, err)
 	}
 
-	ret, externs, err := cl.NewPackageExWithEmbed(ctx.prog, ctx.patches, aPkg.rewriteVars, aPkg.SSA, syntax, embedMap)
+	var metaBuilder *metadata.Builder
+	if ctx.buildConf.CaptureMeta && !aPkg.CacheHit {
+		metaBuilder = metadata.NewBuilder()
+	}
+	ret, externs, err := cl.NewPackageExWithEmbed(ctx.prog, ctx.patches, aPkg.rewriteVars, aPkg.SSA, syntax, embedMap, metaBuilder)
 	check(err)
 
 	aPkg.LPkg = ret
+	if metaBuilder != nil {
+		extractOrdinaryEdges(metaBuilder, ret.Module())
+		aPkg.Meta = metaBuilder.Build()
+	}
 	if hook := ctx.buildConf.ModuleHook; hook != nil {
 		hook(aPkg)
 	}
@@ -1554,6 +1564,7 @@ type aPackage struct {
 	LinkArgs    []string
 	ObjFiles    []string // object files: .o or .ll (output of compiler, input to archiver)
 	ArchiveFile string   // archive file: .a (output of archiver, used for linking)
+	Meta        *metadata.PackageMeta
 	rewriteVars map[string]string
 
 	// Cache related fields

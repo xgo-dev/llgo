@@ -434,6 +434,7 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 	ft := prog.rtType("Method")
 	n := mset.Len()
 	fields := make([]llvm.Value, n)
+	methodInfo := b.newMethodInfoRecorder(t, n)
 	pkg, _ := b.abiUncommonPkg(t)
 	anonymous := pkg == nil
 	if anonymous {
@@ -441,11 +442,12 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 	}
 	for i := 0; i < n; i++ {
 		m := mset.At(i)
-		obj := m.Obj()
+		obj := m.Obj().(*types.Func)
 		mName := obj.Name()
+		fullName := mthName(obj)
 		name := b.Str(mName).impl
 		if !token.IsExported(mName) {
-			name = b.Str(abi.FullName(obj.Pkg(), mName)).impl
+			name = b.Str(fullName).impl
 		}
 		mSig := m.Type().(*types.Signature)
 		var tfn, ifn llvm.Value
@@ -465,6 +467,12 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 		values = append(values, ifn)
 		values = append(values, tfn)
 		fields[i] = llvm.ConstNamedStruct(ft.ll, values)
+		if methodInfo != nil {
+			methodInfo.add(obj, ftyp, ifn, tfn)
+		}
+	}
+	if methodInfo != nil {
+		methodInfo.finish()
 	}
 	return llvm.ConstArray(ft.ll, fields)
 }
@@ -524,6 +532,7 @@ func (b Builder) abiType(t types.Type) Expr {
 		if prog.patchType != nil {
 			t = prog.patchType(t)
 		}
+		b.recordTypeChildren(name, t)
 		mset, hasUncommon := b.abiUncommonMethodSet(t)
 		rt := prog.rtNamed(prog.abi.RuntimeName(t))
 		var typ types.Type = rt
