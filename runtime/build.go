@@ -48,7 +48,6 @@ var altPkgs = map[string]altPkgMode{
 	"runtime":               altPkgReplace,
 	"sync/atomic":           altPkgReplace,
 	"syscall/js":            altPkgReplace,
-	"syscall":               altPkgReplace,
 	"unique":                altPkgReplace,
 	"golang.org/x/sys/unix": altPkgReplace,
 }

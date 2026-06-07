@@ -109,7 +109,6 @@ ignore_esp32=(
   "./_demo/go/runtime" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/sync" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/syscall" # panic: internal/bytealg selected .s files require plan9asm translation
-  "./_demo/go/syscallraw" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/sysexec" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/sysopen-1654" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/texttemplate" # panic: internal/bytealg selected .s files require plan9asm translation
@@ -179,7 +178,6 @@ ignore_esp32c3_basic=(
   "./_demo/go/sync" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/sysopen-1654" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/syscall" # panic: internal/bytealg selected .s files require plan9asm translation
-  "./_demo/go/syscallraw" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/sysexec" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/texttemplate" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/timedur" # panic: internal/bytealg selected .s files require plan9asm translation
