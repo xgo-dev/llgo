@@ -147,25 +147,30 @@ jobs:
 
       - name: Test export with different symbol names on embedded targets
         run: |
+          source .github/workflows/ci-download-helpers.sh
           echo "Testing //export with different symbol names on embedded targets..."
           cd _demo/embed/export
           chmod +x verify_export.sh
-          ./verify_export.sh
+          ci_run_optional_download_test "embedded export smoke" ./verify_export.sh
 
       - name: Test ESP serial smoke (build + emulator)
+        if: env.LLGO_EMBEDDED_QEMU == '1'
         run: |
+          source .github/workflows/ci-download-helpers.sh
           echo "Testing ESP32/ESP32-C3 build + emulator smoke..."
           cd _demo/embed
           chmod +x test-esp-serial-startup.sh
-          ./test-esp-serial-startup.sh
+          ci_run_optional_download_test "ESP serial smoke" ./test-esp-serial-startup.sh
 
       - name: Test ESP32-C3 startup regression
+        if: env.LLGO_EMBEDDED_QEMU == '1'
         run: |
+          source .github/workflows/ci-download-helpers.sh
           echo "Testing ESP32-C3 startup regressions..."
           pip3 install --break-system-packages esptool==5.1.0
           cd _demo/embed
           chmod +x test_esp32c3_startup.sh
-          ./test_esp32c3_startup.sh
+          ci_run_optional_download_test "ESP32-C3 startup regression" ./test_esp32c3_startup.sh
 
       - name: _xtool build tests
         run: |

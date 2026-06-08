@@ -51,6 +51,7 @@ runs:
         fi
 
         cd ../..
+        source .github/workflows/ci-download-helpers.sh
         mkdir -p _test/emb && cd _test/emb
         cat > main.go << 'EOL'
         package main
@@ -58,6 +59,7 @@ runs:
         func main() {
         }
         EOL
-        llgo build -v -target esp32-coreboard-v2 -o demo.out .
-        test -f demo.out.elf && echo "ESP32 cross-compilation test passed: demo.out.elf generated"
-        exit $?
+        ci_run_optional_download_test "ESP32 cross-compilation smoke" bash -c '
+          llgo build -v -target esp32-coreboard-v2 -o demo.out .
+          test -f demo.out.elf && echo "ESP32 cross-compilation test passed: demo.out.elf generated"
+        '

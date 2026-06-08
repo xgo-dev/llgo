@@ -14,6 +14,7 @@ NC='\033[0m' # No Color
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SNAPSHOTS_DIR="$SCRIPT_DIR/snapshots"
+source "$SCRIPT_DIR/../../.github/workflows/ci-download-helpers.sh"
 
 # Create temp directory for build outputs
 get_temp_dir() {
@@ -326,9 +327,16 @@ fi
 # ESP32-C3 tests use the same buildcache project, just with different target
 echo ""
 echo -e "${BLUE}Running ESP32-C3 tests...${NC}"
-run_test_suite "esp32c3" \
-    "llgo build -target=esp32c3 -o $BUILD_TEMP_DIR/buildcache.elf -v ." \
-    "$BUILD_TEMP_DIR/buildcache.elf"
+clear_cache
+ci_run_optional_download_test "ESP32-C3 build cache preflight" \
+    llgo build -target=esp32c3 -o "$BUILD_TEMP_DIR/buildcache-preflight.elf" -v .
+if [ "${CI_OPTIONAL_DOWNLOAD_TEST_SKIPPED:-0}" = "1" ]; then
+    echo -e "${BLUE}Skipping ESP32-C3 tests (external download unavailable)${NC}"
+else
+    run_test_suite "esp32c3" \
+        "llgo build -target=esp32c3 -o $BUILD_TEMP_DIR/buildcache.elf -v ." \
+        "$BUILD_TEMP_DIR/buildcache.elf"
+fi
 
 # ===========================================================
 # Summary
