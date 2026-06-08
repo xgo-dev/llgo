@@ -20,7 +20,6 @@ import (
 	"unsafe"
 
 	c "github.com/goplus/llgo/runtime/internal/clite"
-	clitedebug "github.com/goplus/llgo/runtime/internal/clite/debug"
 	"github.com/goplus/llgo/runtime/internal/clite/pthread"
 	"github.com/goplus/llgo/runtime/internal/clite/setjmp"
 )
@@ -67,32 +66,7 @@ var (
 	goexitKey      pthread.Key
 	mainThread     pthread.Thread
 	skipPanicStack bool
-	savedPanicPCs  []uintptr
 )
-
-func savePanicStack(skip int) {
-	var pcs [64]uintptr
-	n := 0
-	clitedebug.StackTrace(skip+2, func(fr *clitedebug.Frame) bool {
-		if n >= len(pcs) {
-			return false
-		}
-		pcs[n] = fr.PC
-		n++
-		return true
-	})
-	if cap(savedPanicPCs) < n {
-		savedPanicPCs = make([]uintptr, n)
-	} else {
-		savedPanicPCs = savedPanicPCs[:n]
-	}
-	copy(savedPanicPCs, pcs[:n])
-}
-
-func savedPanicStack(pc []uintptr) int {
-	n := copy(pc, savedPanicPCs)
-	return n
-}
 
 func Goexit() {
 	goexitKey.Set(unsafe.Pointer(&goexitKey))
