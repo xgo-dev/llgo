@@ -2358,6 +2358,48 @@ func TestInitAbiTypesForEmptySelection(t *testing.T) {
 	}
 }
 
+func TestNoInterfaceMethodRegistryAndFiltering(t *testing.T) {
+	prog := NewProgram(nil)
+	if prog.isNoInterfaceMethod(nil) {
+		t.Fatal("nil function should not be nointerface")
+	}
+
+	pkgTypes := types.NewPackage("example.com/p", "p")
+	named := types.NewNamed(types.NewTypeName(token.NoPos, pkgTypes, "T", nil), types.NewStruct(nil, nil), nil)
+	sig := types.NewSignatureType(types.NewVar(token.NoPos, pkgTypes, "", named), nil, nil, nil, nil, false)
+	hidden := types.NewFunc(token.NoPos, pkgTypes, "Hidden", sig)
+	visible := types.NewFunc(token.NoPos, pkgTypes, "Visible", sig)
+	named.AddMethod(hidden)
+	named.AddMethod(visible)
+
+	top := types.NewFunc(token.NoPos, pkgTypes, "Top", types.NewSignatureType(nil, nil, nil, nil, nil, false))
+	if prog.isNoInterfaceMethod(top) {
+		t.Fatal("function without receiver should not be nointerface")
+	}
+	if prog.isNoInterfaceMethod(hidden) {
+		t.Fatal("unregistered method should not be nointerface")
+	}
+	prog.SetNoInterfaceMethod("example.com/p.T.Hidden")
+	if !prog.isNoInterfaceMethod(hidden) {
+		t.Fatal("registered value receiver method should be nointerface")
+	}
+	if prog.isNoInterfaceMethod(visible) {
+		t.Fatal("unregistered sibling method should not be nointerface")
+	}
+
+	methods := (&aBuilder{Prog: prog}).abiInterfaceMethods(types.NewMethodSet(named))
+	if len(methods) != 1 || methods[0].Obj().Name() != "Visible" {
+		t.Fatalf("filtered methods = %v, want only Visible", methods)
+	}
+
+	ptrSig := types.NewSignatureType(types.NewVar(token.NoPos, pkgTypes, "", types.NewPointer(named)), nil, nil, nil, nil, false)
+	ptrHidden := types.NewFunc(token.NoPos, pkgTypes, "PtrHidden", ptrSig)
+	prog.SetNoInterfaceMethod("example.com/p.(*T).PtrHidden")
+	if !prog.isNoInterfaceMethod(ptrHidden) {
+		t.Fatal("registered pointer receiver method should be nointerface")
+	}
+}
+
 func TestRtFuncResolvesLinkname(t *testing.T) {
 	prog := NewProgram(nil)
 	rt := types.NewPackage(PkgRuntime, PkgRuntime)
