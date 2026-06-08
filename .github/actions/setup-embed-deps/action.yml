@@ -25,10 +25,16 @@ runs:
       run: |
         chmod +x .github/workflows/install-esp-qemu.sh
         QEMU_DIR=".cache/qemu"
-        .github/workflows/install-esp-qemu.sh "$QEMU_DIR"
-        echo "${PWD}/${QEMU_DIR}/bin" >> $GITHUB_PATH
+        if .github/workflows/install-esp-qemu.sh "$QEMU_DIR"; then
+          echo "${PWD}/${QEMU_DIR}/bin" >> $GITHUB_PATH
+          echo "LLGO_EMBEDDED_QEMU=1" >> "$GITHUB_ENV"
+        else
+          echo "::warning::ESP QEMU download failed; embedded emulator tests will be skipped"
+          echo "LLGO_EMBEDDED_QEMU=0" >> "$GITHUB_ENV"
+        fi
 
     - name: Verify ESP QEMU installation
+      if: env.LLGO_EMBEDDED_QEMU == '1'
       shell: bash
       run: |
         which qemu-system-riscv32

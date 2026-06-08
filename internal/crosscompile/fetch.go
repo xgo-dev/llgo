@@ -217,6 +217,9 @@ func (e downloadStatusError) Error() string {
 }
 
 func downloadFile(url, filepath string) error {
+	if fallback := githubArchiveCodeloadURL(url); fallback != "" {
+		url = fallback
+	}
 	var lastErr error
 	for attempt := 1; attempt <= downloadMaxAttempts; attempt++ {
 		err := downloadFileOnce(url, filepath)
@@ -231,6 +234,26 @@ func downloadFile(url, filepath string) error {
 		time.Sleep(downloadRetryDelay)
 	}
 	return lastErr
+}
+
+func githubArchiveCodeloadURL(url string) string {
+	const prefix = "https://github.com/"
+	const marker = "/archive/refs/tags/"
+	const suffix = ".tar.gz"
+	if !strings.HasPrefix(url, prefix) || !strings.HasSuffix(url, suffix) {
+		return ""
+	}
+	rest := strings.TrimPrefix(url, prefix)
+	parts := strings.SplitN(rest, marker, 2)
+	if len(parts) != 2 {
+		return ""
+	}
+	repoParts := strings.Split(parts[0], "/")
+	if len(repoParts) != 2 {
+		return ""
+	}
+	tag := strings.TrimSuffix(parts[1], suffix)
+	return fmt.Sprintf("https://codeload.github.com/%s/%s/tar.gz/refs/tags/%s", repoParts[0], repoParts[1], tag)
 }
 
 func retryableDownloadError(err error) bool {

@@ -200,6 +200,17 @@ func TestDownloadFileRetriesServerError(t *testing.T) {
 	}
 }
 
+func TestGithubArchiveCodeloadURL(t *testing.T) {
+	got := githubArchiveCodeloadURL("https://github.com/goplus/compiler-rt/archive/refs/tags/xtensa_release_19.1.2.tar.gz")
+	want := "https://codeload.github.com/goplus/compiler-rt/tar.gz/refs/tags/xtensa_release_19.1.2"
+	if got != want {
+		t.Fatalf("githubArchiveCodeloadURL = %q, want %q", got, want)
+	}
+	if got := githubArchiveCodeloadURL("https://github.com/espressif/qemu/releases/download/tag/file.tar.xz"); got != "" {
+		t.Fatalf("release asset fallback = %q, want empty", got)
+	}
+}
+
 func TestExtractTarGz(t *testing.T) {
 	// Create test archive
 	files := map[string]string{

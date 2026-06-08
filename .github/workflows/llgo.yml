@@ -135,6 +135,7 @@ jobs:
           bash .github/workflows/test_demo.sh
 
       - name: Test demos (embedded target)
+        if: env.LLGO_EMBEDDED_QEMU == '1'
         run: bash .github/workflows/test_demo.sh --embedded
 
       - name: Test C header generation
