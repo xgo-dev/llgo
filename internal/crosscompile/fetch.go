@@ -217,23 +217,25 @@ func (e downloadStatusError) Error() string {
 }
 
 func downloadFile(url, filepath string) error {
-	if fallback := githubArchiveCodeloadURL(url); fallback != "" {
-		url = fallback
-	}
-	var lastErr error
-	for attempt := 1; attempt <= downloadMaxAttempts; attempt++ {
+	url = normalizeDownloadURL(url)
+	for attempt := 1; ; attempt++ {
 		err := downloadFileOnce(url, filepath)
 		if err == nil {
 			return nil
 		}
-		lastErr = err
-		if !retryableDownloadError(err) || attempt == downloadMaxAttempts {
+		if !retryableDownloadError(err) || attempt >= downloadMaxAttempts {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "download failed (%v), retrying %d/%d...\n", err, attempt+1, downloadMaxAttempts)
 		time.Sleep(downloadRetryDelay)
 	}
-	return lastErr
+}
+
+func normalizeDownloadURL(url string) string {
+	if fallback := githubArchiveCodeloadURL(url); fallback != "" {
+		return fallback
+	}
+	return url
 }
 
 func githubArchiveCodeloadURL(url string) string {

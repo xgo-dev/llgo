@@ -7,6 +7,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -208,6 +209,32 @@ func TestGithubArchiveCodeloadURL(t *testing.T) {
 	}
 	if got := githubArchiveCodeloadURL("https://github.com/espressif/qemu/releases/download/tag/file.tar.xz"); got != "" {
 		t.Fatalf("release asset fallback = %q, want empty", got)
+	}
+	if got := githubArchiveCodeloadURL("https://github.com/goplus/compiler-rt/archive/refs/heads/main.tar.gz"); got != "" {
+		t.Fatalf("non-tag archive fallback = %q, want empty", got)
+	}
+	if got := githubArchiveCodeloadURL("https://github.com/goplus/nested/repo/archive/refs/tags/v1.tar.gz"); got != "" {
+		t.Fatalf("nested repo fallback = %q, want empty", got)
+	}
+}
+
+func TestNormalizeDownloadURL(t *testing.T) {
+	got := normalizeDownloadURL("https://github.com/goplus/newlib/archive/refs/tags/esp-4.3.0_20250211-patch7.tar.gz")
+	want := "https://codeload.github.com/goplus/newlib/tar.gz/refs/tags/esp-4.3.0_20250211-patch7"
+	if got != want {
+		t.Fatalf("normalizeDownloadURL = %q, want %q", got, want)
+	}
+	if got := normalizeDownloadURL("https://example.com/archive.tar.gz"); got != "https://example.com/archive.tar.gz" {
+		t.Fatalf("normalizeDownloadURL non-github = %q", got)
+	}
+}
+
+func TestRetryableDownloadError(t *testing.T) {
+	if retryableDownloadError(downloadStatusError{statusCode: http.StatusNotFound, status: "404 Not Found"}) {
+		t.Fatal("404 should not be retryable")
+	}
+	if !retryableDownloadError(errors.New("temporary network failure")) {
+		t.Fatal("network errors should be retryable")
 	}
 }
 
