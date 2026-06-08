@@ -46,6 +46,18 @@ PACKAGES=(
 echo "Detected platform: $PLATFORM"
 echo "Installing to: ${INSTALL_DIR}"
 
+download_and_extract() {
+  local url="$1"
+  local tmp
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' RETURN
+
+  curl -fL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30 -o "$tmp" "$url"
+  tar -xJ -f "$tmp" -C "$INSTALL_DIR" --strip-components=1
+  rm -f "$tmp"
+  trap - RETURN
+}
+
 # Download and extract
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
@@ -53,7 +65,7 @@ mkdir -p "$INSTALL_DIR"
 for filename in "${PACKAGES[@]}"; do
   url="https://github.com/espressif/qemu/releases/download/${RELEASE_TAG}/${filename}"
   echo "Downloading: $url"
-  curl -fsSL "$url" | tar -xJ -C "$INSTALL_DIR" --strip-components=1
+  download_and_extract "$url"
 done
 
 # Verify installation
