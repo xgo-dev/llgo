@@ -13,7 +13,7 @@ ci_run_optional_download_test() {
 
   local log_dir="${RUNNER_TEMP:-/tmp}"
   local log_file
-  log_file="$(mktemp "${log_dir}/optional-download-test.XXXXXX.log")"
+  log_file="$(mktemp "${log_dir}/optional-download-test.XXXXXX")"
 
   CI_OPTIONAL_DOWNLOAD_TEST_SKIPPED=0
   local errexit_state
