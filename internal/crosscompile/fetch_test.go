@@ -131,6 +131,10 @@ func TestAcquireLockConcurrency(t *testing.T) {
 }
 
 func TestDownloadFile(t *testing.T) {
+	oldDelay := downloadRetryDelay
+	downloadRetryDelay = 0
+	defer func() { downloadRetryDelay = oldDelay }()
+
 	// Create test server
 	testContent := "test file content"
 	server := createTestServer(t, map[string]string{
@@ -161,6 +165,38 @@ func TestDownloadFile(t *testing.T) {
 	err = downloadFile(server.URL+"/nonexistent.txt", targetFile)
 	if err == nil {
 		t.Error("Expected error for non-existent file, got nil")
+	}
+}
+
+func TestDownloadFileRetriesServerError(t *testing.T) {
+	oldDelay := downloadRetryDelay
+	downloadRetryDelay = 0
+	defer func() { downloadRetryDelay = oldDelay }()
+
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			http.Error(w, "temporary error", http.StatusBadGateway)
+			return
+		}
+		w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	targetFile := filepath.Join(t.TempDir(), "downloaded.txt")
+	if err := downloadFile(server.URL+"/archive.tar.gz", targetFile); err != nil {
+		t.Fatalf("downloadFile failed after retry: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("download attempts = %d, want 2", attempts)
+	}
+	content, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	if string(content) != "ok" {
+		t.Fatalf("downloaded content = %q, want ok", content)
 	}
 }
 

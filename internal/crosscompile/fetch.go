@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,7 +14,12 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 )
+
+const downloadMaxAttempts = 5
+
+var downloadRetryDelay = 2 * time.Second
 
 // checkDownloadAndExtractWasiSDK downloads and extracts WASI SDK
 func checkDownloadAndExtractWasiSDK(dir string) (wasiSdkRoot string, err error) {
@@ -201,7 +207,41 @@ func downloadAndExtractArchive(url, destDir, description string) error {
 	return nil
 }
 
+type downloadStatusError struct {
+	statusCode int
+	status     string
+}
+
+func (e downloadStatusError) Error() string {
+	return "bad status: " + e.status
+}
+
 func downloadFile(url, filepath string) error {
+	var lastErr error
+	for attempt := 1; attempt <= downloadMaxAttempts; attempt++ {
+		err := downloadFileOnce(url, filepath)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !retryableDownloadError(err) || attempt == downloadMaxAttempts {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "download failed (%v), retrying %d/%d...\n", err, attempt+1, downloadMaxAttempts)
+		time.Sleep(downloadRetryDelay)
+	}
+	return lastErr
+}
+
+func retryableDownloadError(err error) bool {
+	var statusErr downloadStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.statusCode >= 500
+	}
+	return true
+}
+
+func downloadFileOnce(url, filepath string) error {
 	out, err := os.Create(filepath)
 	if err != nil {
 		return err
@@ -213,7 +253,7 @@ func downloadFile(url, filepath string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("bad status: %s", resp.Status)
+		return downloadStatusError{statusCode: resp.StatusCode, status: resp.Status}
 	}
 	_, err = io.Copy(out, resp.Body)
 	return err
