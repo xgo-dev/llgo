@@ -442,6 +442,9 @@ func scopeIndices(obj types.Object) string {
 		return ""
 	}
 	if obj.Parent() != pkg.Scope() {
+		if strings.Contains(obj.Name(), "[") {
+			return ""
+		}
 		if ids, ok := scopeIndex(obj.Parent(), pkg.Scope(), ""); ok {
 			return ids
 		}

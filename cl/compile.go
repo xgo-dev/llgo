@@ -1227,7 +1227,7 @@ func (p *context) getDebugLocScope(v *ssa.Function, pos token.Pos) *types.Scope 
 
 func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 	if iv, ok := instr.(instrOrValue); ok {
-		if !enableDbgSyms && debugOnlyPureValue(iv) {
+		if enableDbg && !enableDbgSyms && debugOnlyPureValue(iv) {
 			return
 		}
 		p.compileInstrOrValue(b, iv, false)
@@ -1349,7 +1349,7 @@ func debugOnlyPureValue(v ssa.Value) bool {
 		}
 	}
 	switch v.(type) {
-	case *ssa.Extract, *ssa.ChangeType, *ssa.Convert, *ssa.ChangeInterface, *ssa.MakeInterface:
+	case *ssa.Extract:
 		return true
 	default:
 		return false

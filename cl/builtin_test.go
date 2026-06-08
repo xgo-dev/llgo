@@ -134,8 +134,11 @@ func TestDebugOnlyValueReferrerHelpers(t *testing.T) {
 	if !debugOnlyPureValue(extract) {
 		t.Fatal("debug-only extract should be treated as a pure debug value")
 	}
+	oldDbg := enableDbg
 	oldDbgSyms := enableDbgSyms
+	EnableDebug(true)
 	EnableDbgSyms(false)
+	defer EnableDebug(oldDbg)
 	defer EnableDbgSyms(oldDbgSyms)
 	(&context{}).compileInstr(nil, extract)
 

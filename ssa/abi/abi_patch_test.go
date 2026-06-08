@@ -154,6 +154,18 @@ func TestTypeName_DetachedLocalScopeUsesPosition(t *testing.T) {
 	}
 }
 
+func TestTypeName_PatchedLocalGenericNameSkipsPosition(t *testing.T) {
+	b := New(unsafe.Sizeof(uintptr(0)), types.SizesFor("gc", runtime.GOARCH))
+	pkg := types.NewPackage("example.com/p", "p")
+	obj := types.NewTypeName(token.Pos(123), pkg, "Local[int]", nil)
+	named := types.NewNamed(obj, types.Typ[types.Int], nil)
+
+	got, _ := b.TypeName(named)
+	if strings.Contains(got, ".p123") {
+		t.Fatalf("TypeName = %q, want patched local generic name without position suffix", got)
+	}
+}
+
 func TestScopeIndexHandlesRootAndInvalidScopes(t *testing.T) {
 	pkg := types.NewPackage("example.com/p", "p")
 	root := pkg.Scope()
