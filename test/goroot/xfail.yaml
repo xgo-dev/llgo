@@ -1773,10 +1773,6 @@ xfails:
     reason: current main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: fixedbugs/bug336.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: fixedbugs/issue19040.go
     reason: current main goroot run failure on darwin/arm64
   - platform: darwin/arm64
@@ -1816,10 +1812,6 @@ xfails:
     directive: run
     case: fixedbugs/issue72844.go
     reason: go1.26 goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: typeparam/nested.go
-    reason: current main goroot run failure on darwin/arm64
   - version: go1.24
     platform: linux/amd64
     directive: run
@@ -1869,11 +1861,6 @@ xfails:
     platform: linux/amd64
     directive: run
     case: zerodivide.go
-    reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/bug336.go
     reason: go1.24 goroot run failure on linux/amd64
   - version: go1.24
     platform: linux/amd64
@@ -1895,11 +1882,6 @@ xfails:
     directive: run
     case: fixedbugs/issue65417.go
     reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
-    case: typeparam/nested.go
-    reason: go1.24 goroot run failure on linux/amd64
   - version: go1.25
     platform: linux/amd64
     directive: run
@@ -1949,11 +1931,6 @@ xfails:
     platform: linux/amd64
     directive: run
     case: zerodivide.go
-    reason: go1.25 goroot run failure on linux/amd64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/bug336.go
     reason: go1.25 goroot run failure on linux/amd64
   - version: go1.25
     platform: linux/amd64
@@ -1980,11 +1957,6 @@ xfails:
     directive: run
     case: fixedbugs/issue72844.go
     reason: go1.25 goroot run failure on linux/amd64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
-    case: typeparam/nested.go
-    reason: go1.25 goroot run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64
     directive: run
@@ -2034,11 +2006,6 @@ xfails:
     platform: linux/amd64
     directive: run
     case: zerodivide.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/bug336.go
     reason: go1.26 goroot run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64
@@ -2079,11 +2046,6 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue75327.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: typeparam/nested.go
     reason: go1.26 goroot run failure on linux/amd64
   - version: go1.24
     platform: linux/amd64
@@ -3036,14 +2998,6 @@ xfails:
     reason: current main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: fixedbugs/issue23017.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue29190.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: fixedbugs/issue32187.go
     reason: current main goroot run failure on darwin/arm64
   - platform: darwin/arm64
@@ -3107,14 +3061,6 @@ xfails:
   - platform: linux/amd64
     directive: run
     case: fixedbugs/issue19246.go
-    reason: current main goroot run failure on linux/amd64
-  - platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue23017.go
-    reason: current main goroot run failure on linux/amd64
-  - platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue29190.go
     reason: current main goroot run failure on linux/amd64
   - platform: linux/amd64
     directive: run
