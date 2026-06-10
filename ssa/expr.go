@@ -1631,6 +1631,10 @@ func (b Builder) PrintEx(ln bool, args ...Expr) (ret Expr) {
 // -----------------------------------------------------------------------------
 
 func checkExpr(v Expr, t types.Type, b Builder) Expr {
+	return checkExprEx(v, t, b, false)
+}
+
+func checkExprEx(v Expr, t types.Type, b Builder, keepFuncPC bool) Expr {
 	if st, ok := t.Underlying().(*types.Struct); ok && IsClosure(st) {
 		if v.kind == vkClosure {
 			return v
@@ -1650,7 +1654,7 @@ func checkExpr(v Expr, t types.Type, b Builder) Expr {
 		data := prog.Nil(prog.VoidPtr())
 		if origKind == vkFuncDecl || origKind == vkFuncPtr {
 			if sig, ok := fnType.raw.Type.(*types.Signature); ok && closureCtxParam(sig) == nil {
-				v, data = b.Pkg.closureStub(b, v, sig, origKind)
+				v, data = b.Pkg.closureStub(b, v, sig, origKind, keepFuncPC)
 			}
 		}
 		return b.aggregateValue(tclosure, v.impl, data.impl)
