@@ -573,12 +573,18 @@ func (b Builder) callRecoverScopedDefer(fn Expr, call func()) {
 	}
 	prev := b.Call(b.Pkg.rtFunc("StartRecoverFrame"), b.FrameAddress(0))
 	call()
+	if b.currentBlockEndsUnreachable() {
+		return
+	}
 	b.Call(b.Pkg.rtFunc("EndRecoverFrame"), prev)
 }
 
 func (b Builder) MaskRecoverCall(fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args ...Expr) Expr {
 	prev := b.Call(b.Pkg.rtFunc("StartRecoverFrame"), b.Prog.Nil(b.Prog.VoidPtr()))
 	ret := buildCall(b, fn, args...)
+	if b.currentBlockEndsUnreachable() {
+		return ret
+	}
 	b.Call(b.Pkg.rtFunc("EndRecoverFrame"), prev)
 	return ret
 }
@@ -586,8 +592,16 @@ func (b Builder) MaskRecoverCall(fn Expr, buildCall func(Builder, Expr, ...Expr)
 func (b Builder) ForwardRecoverFrameCall(fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args ...Expr) Expr {
 	prev := b.Call(b.Pkg.rtFunc("StartRecoverWrapperFrame"), b.FrameAddress(1), b.FrameAddress(0))
 	ret := buildCall(b, fn, args...)
+	if b.currentBlockEndsUnreachable() {
+		return ret
+	}
 	b.Call(b.Pkg.rtFunc("EndRecoverFrame"), prev)
 	return ret
+}
+
+func (b Builder) currentBlockEndsUnreachable() bool {
+	lastInst := b.impl.GetInsertBlock().LastInstruction()
+	return !lastInst.IsNil() && !lastInst.IsAUnreachableInst().IsNil()
 }
 
 func isRecoverBuiltin(fn Expr) bool {
