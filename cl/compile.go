@@ -1055,11 +1055,6 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		x := p.compileValue(b, v.X)
 		if v.Op == token.ARROW {
 			ret = b.Recv(x, v.CommaOk)
-		} else if v.Op == token.MUL {
-			ret = b.Load(x)
-			if p.isRecoverSlotAddr(v.X) {
-				ret = ret.SetVolatile(true)
-			}
 		} else {
 			if v.Op == token.MUL {
 				if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil && p.prog.SizeOf(t) == 0 {
@@ -1067,6 +1062,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 				}
 			}
 			ret = b.UnOp(v.Op, x)
+			if v.Op == token.MUL && p.isRecoverSlotAddr(v.X) {
+				ret = ret.SetVolatile(true)
+			}
 		}
 	case *ssa.ChangeType:
 		t := v.Type()
