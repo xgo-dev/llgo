@@ -40,6 +40,14 @@ func AllocZ(size uintptr) unsafe.Pointer {
 	return c.Memset(ret, 0, size)
 }
 
+func AllocRoot(size uintptr) unsafe.Pointer {
+	return bdwgc.MallocUncollectable(size)
+}
+
+func FreeRoot(ptr unsafe.Pointer) {
+	bdwgc.Free(ptr)
+}
+
 type entry struct {
 	fn   func()         // cleanup func
 	prev unsafe.Pointer // prev cleanup func ptr

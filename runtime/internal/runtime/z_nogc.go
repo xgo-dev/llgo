@@ -39,6 +39,14 @@ func AllocZ(size uintptr) unsafe.Pointer {
 	return c.Memset(ret, 0, size)
 }
 
+func AllocRoot(size uintptr) unsafe.Pointer {
+	return c.Malloc(size)
+}
+
+func FreeRoot(ptr unsafe.Pointer) {
+	c.Free(ptr)
+}
+
 // AddCleanupPtr is not implemented when GC is disabled.
 // Cleanup functions will never be called.
 func AddCleanupPtr(ptr unsafe.Pointer, cleanup func()) (cancel func()) {

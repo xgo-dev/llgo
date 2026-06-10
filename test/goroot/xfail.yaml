@@ -2364,16 +2364,6 @@ xfails:
     case: fixedbugs/issue24491b.go
     reason: go1.25 goroot run failure on linux/amd64
   - version: go1.25
-    platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue25897a.go
-    reason: go1.25 goroot run failure on darwin/arm64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue25897a.go
-    reason: go1.25 goroot run failure on linux/amd64
-  - version: go1.25
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue26335.go
@@ -2670,16 +2660,6 @@ xfails:
     case: fixedbugs/issue21879.go
     reason: go1.24 goroot run failure on linux/amd64
   - version: go1.24
-    platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue25897a.go
-    reason: go1.24 goroot run failure on darwin/arm64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue25897a.go
-    reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.24
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue26335.go
@@ -2853,16 +2833,6 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue21879.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue25897a.go
-    reason: go1.26 goroot run failure on darwin/arm64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue25897a.go
     reason: go1.26 goroot run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64

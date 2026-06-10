@@ -74,8 +74,11 @@ func (b Builder) Go(fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args .
 	t := prog.Struct(typs...)
 	voidPtr := prog.VoidPtr()
 	// Goroutine startup data may carry Go pointers, including closure ctx.
-	// Keep it in GC-managed memory so it remains visible across the thread start.
-	data := Expr{b.aggregateAllocU(t, flds...), voidPtr}
+	// Keep the startup record in scanned, uncollectable GC memory until the
+	// new routine has finished its entry call.
+	dataPtr := b.Call(pkg.rtFunc("AllocRoot"), prog.IntVal(prog.SizeOf(t), prog.Uintptr())).impl
+	aggregateInit(b.impl, dataPtr, t.ll, flds...)
+	data := Expr{dataPtr, voidPtr}
 	size := prog.SizeOf(voidPtr)
 	pthd := b.Alloca(prog.IntVal(uint64(size), prog.Uintptr()))
 	b.pthreadCreate(pthd, prog.Nil(voidPtr), pkg.routine(t, fn, buildCall, len(args)), data)
@@ -102,6 +105,7 @@ func (p Package) routine(t Type, fn Expr, buildCall func(Builder, Expr, ...Expr)
 		args[i] = b.getField(data, i+offset)
 	}
 	buildCall(b, fn, args...)
+	b.Call(p.rtFunc("FreeRoot"), param)
 	b.Return(prog.Nil(prog.VoidPtr()))
 	return routine.Expr
 }

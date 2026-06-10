@@ -34,6 +34,11 @@ func Init()
 //go:linkname Malloc C.GC_malloc
 func Malloc(size uintptr) c.Pointer
 
+// MallocUncollectable allocates scanned memory that is not reclaimed until Free.
+//
+//go:linkname MallocUncollectable C.GC_malloc_uncollectable
+func MallocUncollectable(size uintptr) c.Pointer
+
 //go:linkname Realloc C.GC_realloc
 func Realloc(ptr c.Pointer, size uintptr) c.Pointer
 
