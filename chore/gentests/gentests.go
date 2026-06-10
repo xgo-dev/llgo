@@ -40,6 +40,7 @@ func main() {
 	llgenDir(dir + "/cl/_testdata")
 
 	genExpects(dir)
+	genMetaDir(dir + "/cl/_testmeta")
 }
 
 func llgenDir(dir string) {
@@ -97,6 +98,35 @@ func runExpectDir(root, relDir string) {
 			continue
 		}
 		check(os.WriteFile(expectFile, output, 0644))
+	}
+}
+
+func genMetaDir(dir string) {
+	fis, err := os.ReadDir(dir)
+	check(err)
+	for _, fi := range fis {
+		name := fi.Name()
+		if !fi.IsDir() || strings.HasPrefix(name, "_") {
+			continue
+		}
+		testDir := filepath.Join(dir, name)
+		expectFile := filepath.Join(testDir, "meta-expect.txt")
+		expect, err := os.ReadFile(expectFile)
+		if err != nil && !os.IsNotExist(err) {
+			fmt.Fprintln(os.Stderr, "error reading", expectFile, ":", err)
+			continue
+		}
+		fmt.Fprintln(os.Stderr, "meta", testDir)
+		meta, err := cltest.CaptureMeta(testDir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", testDir, err)
+			if len(expect) == 0 {
+				continue
+			}
+			check(os.WriteFile(expectFile, []byte{';'}, 0644))
+			continue
+		}
+		check(os.WriteFile(expectFile, []byte(meta), 0644))
 	}
 }
 

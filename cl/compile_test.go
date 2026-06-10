@@ -311,6 +311,10 @@ func TestCgofullGeneratesC2func(t *testing.T) {
 	}
 }
 
+func TestMeta(t *testing.T) {
+	cltest.TestMetaFromDir(t, "./_testmeta")
+}
+
 func TestGoPkgMath(t *testing.T) {
 	conf := build.NewDefaultConf(build.ModeInstall)
 	_, err := build.Do([]string{"math"}, conf)
