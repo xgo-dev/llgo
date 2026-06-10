@@ -1053,6 +1053,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		if v.Op == token.ARROW {
 			ret = b.Recv(x, v.CommaOk)
 		} else if v.Op == token.MUL {
+			if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil && p.prog.SizeOf(t) == 0 {
+				p.assertNilDerefBase(b, v.X)
+			}
 			// A recovered panic resumes through the recover block, which reads
 			// result slots. Keep nil derefs in recover-capable functions ordered
 			// so the panic cannot be removed or moved past partial result writes.
