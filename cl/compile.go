@@ -987,9 +987,17 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 						return
 					}
 				}
-			}
-			if skipUnusedArrayDeref(v) {
-				return
+				if skipUnusedArrayDeref(v) {
+					return
+				}
+				if _, ok := types.Unalias(v.Type()).Underlying().(*types.Slice); ok {
+					// Zero-length slice-to-array conversions can leave only
+					// an unused slice deref; preserve its required nil check.
+					x := p.compileValue(b, v.X)
+					p.assertNilDerefBase(b, v.X)
+					b.AssertNilDeref(x)
+					return
+				}
 			}
 			if refs := v.Referrers(); refs != nil && len(*refs) == 1 {
 				if _, ok := (*refs)[0].(*ssa.MakeInterface); ok {
@@ -1019,6 +1027,11 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		if v.Op == token.ARROW {
 			ret = b.Recv(x, v.CommaOk)
 		} else {
+			if v.Op == token.MUL {
+				if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil && p.prog.SizeOf(t) == 0 {
+					p.assertNilDerefBase(b, v.X)
+				}
+			}
 			ret = b.UnOp(v.Op, x)
 		}
 	case *ssa.ChangeType:
