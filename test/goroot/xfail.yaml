@@ -2193,10 +2193,6 @@ xfails:
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: tinyfin.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: fixedbugs/bug347.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
