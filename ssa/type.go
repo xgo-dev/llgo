@@ -166,9 +166,10 @@ type rawType struct {
 }
 
 type aType struct {
-	ll   llvm.Type
-	raw  rawType
-	kind valueKind // value kind of llvm.Type
+	ll         llvm.Type
+	raw        rawType
+	kind       valueKind // value kind of llvm.Type
+	mayRecover bool      // function/closure may call recover directly
 }
 
 type Type = *aType
@@ -343,7 +344,7 @@ func (p Program) tyInt64() llvm.Type {
 
 /*
 func (p Program) toTuple(typ *types.Tuple) Type {
-	return &aType{p.toLLVMTuple(typ), rawType{typ}, vkTuple}
+	return &aType{ll: p.toLLVMTuple(typ), raw: rawType{typ}, kind: vkTuple}
 }
 */
 
@@ -356,68 +357,68 @@ func (p Program) toType(raw types.Type) Type {
 	case *types.Basic:
 		switch t.Kind() {
 		case types.Int:
-			return &aType{p.tyInt(), typ, vkSigned}
+			return &aType{ll: p.tyInt(), raw: typ, kind: vkSigned}
 		case types.Uint, types.Uintptr:
-			return &aType{p.tyInt(), typ, vkUnsigned}
+			return &aType{ll: p.tyInt(), raw: typ, kind: vkUnsigned}
 		case types.Bool:
-			return &aType{p.tyInt1(), typ, vkBool}
+			return &aType{ll: p.tyInt1(), raw: typ, kind: vkBool}
 		case types.Uint8:
-			return &aType{p.tyInt8(), typ, vkUnsigned}
+			return &aType{ll: p.tyInt8(), raw: typ, kind: vkUnsigned}
 		case types.Int8:
-			return &aType{p.tyInt8(), typ, vkSigned}
+			return &aType{ll: p.tyInt8(), raw: typ, kind: vkSigned}
 		case types.Int16:
-			return &aType{p.tyInt16(), typ, vkSigned}
+			return &aType{ll: p.tyInt16(), raw: typ, kind: vkSigned}
 		case types.Uint16:
-			return &aType{p.tyInt16(), typ, vkUnsigned}
+			return &aType{ll: p.tyInt16(), raw: typ, kind: vkUnsigned}
 		case types.Int32:
-			return &aType{p.tyInt32(), typ, vkSigned}
+			return &aType{ll: p.tyInt32(), raw: typ, kind: vkSigned}
 		case types.Uint32:
-			return &aType{p.tyInt32(), typ, vkUnsigned}
+			return &aType{ll: p.tyInt32(), raw: typ, kind: vkUnsigned}
 		case types.Int64:
-			return &aType{p.tyInt64(), typ, vkSigned}
+			return &aType{ll: p.tyInt64(), raw: typ, kind: vkSigned}
 		case types.Uint64:
-			return &aType{p.tyInt64(), typ, vkUnsigned}
+			return &aType{ll: p.tyInt64(), raw: typ, kind: vkUnsigned}
 		case types.Float32:
-			return &aType{p.ctx.FloatType(), typ, vkFloat}
+			return &aType{ll: p.ctx.FloatType(), raw: typ, kind: vkFloat}
 		case types.Float64:
-			return &aType{p.ctx.DoubleType(), typ, vkFloat}
+			return &aType{ll: p.ctx.DoubleType(), raw: typ, kind: vkFloat}
 		case types.Complex64:
-			return &aType{p.tyComplex64(), typ, vkComplex}
+			return &aType{ll: p.tyComplex64(), raw: typ, kind: vkComplex}
 		case types.Complex128:
-			return &aType{p.tyComplex128(), typ, vkComplex}
+			return &aType{ll: p.tyComplex128(), raw: typ, kind: vkComplex}
 		case types.String:
-			return &aType{p.rtString(), typ, vkString}
+			return &aType{ll: p.rtString(), raw: typ, kind: vkString}
 		case types.UnsafePointer:
-			return &aType{p.tyVoidPtr(), typ, vkPtr}
+			return &aType{ll: p.tyVoidPtr(), raw: typ, kind: vkPtr}
 		}
 	case *types.Pointer:
 		// LLVM pointers are opaque, so the element LLVM type is not needed here.
 		// Avoid expanding it eagerly: legal Go recursive types often close their
 		// cycle through a pointer.
-		return &aType{p.tyVoidPtr(), typ, vkPtr}
+		return &aType{ll: p.tyVoidPtr(), raw: typ, kind: vkPtr}
 	case *types.Interface:
 		if t.Empty() {
-			return &aType{p.rtEface(), typ, vkEface}
+			return &aType{ll: p.rtEface(), raw: typ, kind: vkEface}
 		}
-		return &aType{p.rtIface(), typ, vkIface}
+		return &aType{ll: p.rtIface(), raw: typ, kind: vkIface}
 	case *types.Slice:
-		return &aType{p.rtSlice(), typ, vkSlice}
+		return &aType{ll: p.rtSlice(), raw: typ, kind: vkSlice}
 	case *types.Map:
-		return &aType{llvm.PointerType(p.rtMap(), 0), typ, vkMap}
+		return &aType{ll: llvm.PointerType(p.rtMap(), 0), raw: typ, kind: vkMap}
 	case *types.Struct:
 		ll, kind := p.toLLVMStruct(t)
-		return &aType{ll, typ, kind}
+		return &aType{ll: ll, raw: typ, kind: kind}
 	case *types.Named:
 		return p.toNamed(t)
 	case *types.Signature: // represents a C function pointer in raw type
-		return &aType{p.toLLVMFuncPtr(t), typ, vkFuncPtr}
+		return &aType{ll: p.toLLVMFuncPtr(t), raw: typ, kind: vkFuncPtr}
 	case *types.Tuple:
-		return &aType{p.toLLVMTuple(t), typ, vkTuple}
+		return &aType{ll: p.toLLVMTuple(t), raw: typ, kind: vkTuple}
 	case *types.Array:
 		elem := p.rawType(t.Elem())
-		return &aType{llvm.ArrayType(elem.ll, int(t.Len())), typ, vkArray}
+		return &aType{ll: llvm.ArrayType(elem.ll, int(t.Len())), raw: typ, kind: vkArray}
 	case *types.Chan:
-		return &aType{llvm.PointerType(p.rtChan(), 0), typ, vkChan}
+		return &aType{ll: llvm.PointerType(p.rtChan(), 0), raw: typ, kind: vkChan}
 	case *types.Alias:
 		return p.toType(types.Unalias(t))
 	case *types.TypeParam:
@@ -428,7 +429,7 @@ func (p Program) toType(raw types.Type) Type {
 
 func (p Program) toLLVMNamedStruct(name string, raw *types.Named, st *types.Struct, kind valueKind) Type {
 	t := p.ctx.StructCreateNamed(name)
-	typ := &aType{t, rawType{raw}, kind}
+	typ := &aType{ll: t, raw: rawType{raw}, kind: kind}
 	p.named[name] = typ
 	p.typs.Set(raw, typ)
 	fields := p.toLLVMFields(st)
@@ -511,7 +512,7 @@ func (p Program) retType(raw *types.Signature) Type {
 	case 1:
 		return p.rawType(out.At(0).Type())
 	default:
-		return &aType{p.toLLVMTuple(out), rawType{out}, vkTuple}
+		return &aType{ll: p.toLLVMTuple(out), raw: rawType{out}, kind: vkTuple}
 	}
 }
 
@@ -572,7 +573,7 @@ func (p Program) toNamed(raw *types.Named) Type {
 		return p.toLLVMNamedStruct(name, raw, t, kind)
 	default:
 		typ := p.rawType(t)
-		return &aType{typ.ll, rawType{raw}, typ.kind}
+		return &aType{ll: typ.ll, raw: rawType{raw}, kind: typ.kind}
 	}
 }
 

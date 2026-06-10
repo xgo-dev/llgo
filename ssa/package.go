@@ -515,7 +515,7 @@ func (p Program) AbiTypePtr() Type {
 // Void returns void type.
 func (p Program) Void() Type {
 	if p.voidTy == nil {
-		p.voidTy = &aType{p.tyVoid(), rawType{types.Typ[types.Invalid]}, vkInvalid}
+		p.voidTy = &aType{ll: p.tyVoid(), raw: rawType{types.Typ[types.Invalid]}, kind: vkInvalid}
 	}
 	return p.voidTy
 }
