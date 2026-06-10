@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -46,8 +47,8 @@ func TestProcessPath_SingleFileUsesContainingDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `// CHECK-LABEL: define void @"{{.*}}/` + filepath.ToSlash(relPath) + `.main"(){{.*}} {`
-	if !strings.Contains(text, want) {
+	want := regexp.MustCompile(`(?m)^// CHECK-LABEL: define void @"\{\{.*\}\}/` + regexp.QuoteMeta(filepath.ToSlash(relPath)) + `\.main"\(\)(?:\{\{.*\}\}|(?: #[0-9]+)?(?: !dbg ![0-9]+)?) \{$`)
+	if !want.MatchString(text) {
 		t.Fatalf("missing package-qualified main check:\n%s", text)
 	}
 }

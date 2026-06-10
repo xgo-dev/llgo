@@ -550,6 +550,9 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			for _, childInit := range childInits {
 				childInit()
 			}
+			if dbgEnabled {
+				b.DISetCurrentDebugLocation(p.fn, p.getFuncEndPos(f))
+			}
 			b.EndBuild()
 		})
 	}
@@ -563,6 +566,18 @@ func (p *context) getFuncBodyPos(f *ssa.Function) token.Position {
 		}
 	}
 	return p.goProg.Fset.Position(f.Pos())
+}
+
+func (p *context) getFuncEndPos(f *ssa.Function) token.Position {
+	if syntax := f.Syntax(); syntax != nil && syntax.End().IsValid() {
+		return p.goProg.Fset.Position(syntax.End())
+	}
+	if f.Object() != nil {
+		if fn, ok := f.Object().(*types.Func); ok && fn.Scope() != nil && fn.Scope().End().IsValid() {
+			return p.goProg.Fset.Position(fn.Scope().End())
+		}
+	}
+	return p.getFuncBodyPos(f)
 }
 
 func isGlobal(v *types.Var) bool {
@@ -973,7 +988,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		ret = b.BinOp(v.Op, x, y)
 	case *ssa.UnOp:
 		if v.Op == token.MUL {
-			if refs := v.Referrers(); refs != nil && len(*refs) == 0 {
+			if hasNoSemanticReferrers(v) {
 				if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil {
 					if p.isLargeNonPointerValue(t) {
 						x := p.compileValue(b, v.X)
@@ -1212,6 +1227,9 @@ func (p *context) getDebugLocScope(v *ssa.Function, pos token.Pos) *types.Scope 
 
 func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 	if iv, ok := instr.(instrOrValue); ok {
+		if enableDbg && !enableDbgSyms && debugOnlyPureValue(iv) {
+			return
+		}
 		p.compileInstrOrValue(b, iv, false)
 		return
 	}
@@ -1263,6 +1281,9 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 			}
 		}
 		if p.returnNeedsImplicitRunDefers(v) {
+			if enableDbg {
+				b.DISetCurrentDebugLocation(p.fn, p.getFuncEndPos(v.Parent()))
+			}
 			b.RunDefers()
 		}
 		b.Return(results...)
@@ -1301,6 +1322,37 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		}
 	default:
 		panic(fmt.Sprintf("compileInstr: unknown instr - %T\n", instr))
+	}
+}
+
+func hasNoSemanticReferrers(v ssa.Value) bool {
+	refs := v.Referrers()
+	if refs == nil || len(*refs) == 0 {
+		return true
+	}
+	for _, ref := range *refs {
+		if _, ok := ref.(*ssa.DebugRef); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func debugOnlyPureValue(v ssa.Value) bool {
+	refs := v.Referrers()
+	if refs == nil || len(*refs) == 0 {
+		return false
+	}
+	for _, ref := range *refs {
+		if _, ok := ref.(*ssa.DebugRef); !ok {
+			return false
+		}
+	}
+	switch v.(type) {
+	case *ssa.Extract:
+		return true
+	default:
+		return false
 	}
 }
 

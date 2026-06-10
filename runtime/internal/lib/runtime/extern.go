@@ -5,20 +5,39 @@
 package runtime
 
 import (
+	_ "unsafe"
+
 	clitedebug "github.com/goplus/llgo/runtime/internal/clite/debug"
 )
 
+//go:linkname savedPanicStack github.com/goplus/llgo/runtime/internal/runtime.savedPanicStack
+func savedPanicStack(pc []uintptr) int
+
 func Caller(skip int) (pc uintptr, file string, line int, ok bool) {
-	// llgo currently doesn't have reliable source file/line mapping from PC.
-	// Return a stable placeholder location so stdlib log/testing can proceed.
 	var pcs [1]uintptr
-	if Callers(skip+1, pcs[:]) < 1 {
+	if Callers(skip+2, pcs[:]) < 1 {
 		return 0, "", 0, false
 	}
-	return pcs[0], "???", 1, true
+	sym := frameSymbol(pcs[0])
+	file, line = sym.file, sym.line
+	if file == "" {
+		file = "???"
+	}
+	if line == 0 {
+		line = 1
+	}
+	return pcs[0], file, line, true
 }
 
 func Callers(skip int, pc []uintptr) int {
+	n := callers(skip+1, pc)
+	if n < len(pc) {
+		n += savedPanicStack(pc[n:])
+	}
+	return n
+}
+
+func callers(skip int, pc []uintptr) int {
 	if len(pc) == 0 {
 		return 0
 	}

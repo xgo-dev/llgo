@@ -2268,10 +2268,6 @@ xfails:
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: fixedbugs/issue22083.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: fixedbugs/issue22662.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
@@ -2289,10 +2285,6 @@ xfails:
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue29504.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue29735.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
@@ -2341,10 +2333,6 @@ xfails:
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue5963.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue7690.go
     reason: latest main goroot run failure on darwin/arm64
   - version: go1.25
     platform: linux/amd64

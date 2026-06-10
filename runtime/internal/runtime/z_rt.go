@@ -49,6 +49,11 @@ func Recover() (ret any) {
 
 // Panic panics with a value.
 func Panic(v any) {
+	if skipPanicStack {
+		skipPanicStack = false
+	} else {
+		savePanicStack(1)
+	}
 	ptr := c.Malloc(unsafe.Sizeof(v))
 	*(*any)(ptr) = v
 	excepKey.Set(ptr)
@@ -57,9 +62,10 @@ func Panic(v any) {
 }
 
 var (
-	excepKey   pthread.Key
-	goexitKey  pthread.Key
-	mainThread pthread.Thread
+	excepKey       pthread.Key
+	goexitKey      pthread.Key
+	mainThread     pthread.Thread
+	skipPanicStack bool
 )
 
 func Goexit() {

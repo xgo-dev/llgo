@@ -1,0 +1,125 @@
+/*
+ * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package gotest
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+const runtimeLineInfoProbe = `package main
+
+import (
+	"strconv"
+	"runtime"
+	"runtime/debug"
+	"strings"
+)
+
+func main() {
+	checkCaller()
+	checkFrames()
+	checkFuncForPC()
+	checkPanicStack()
+}
+
+func checkCaller() {
+	_, file, line, ok := runtime.Caller(0) // CALLER_MARK
+	if !ok || !strings.HasSuffix(file, "main.go") || line != CALLER_LINE {
+		panic("bad caller: " + file + ":" + strconv.Itoa(line))
+	}
+}
+
+func checkFrames() {
+	var pcs [8]uintptr
+	n := runtime.Callers(0, pcs[:])
+	frames := runtime.CallersFrames(pcs[:n])
+	for {
+		frame, more := frames.Next()
+		if frame.Function == "main.checkFrames" {
+			if !strings.HasSuffix(frame.File, "main.go") || frame.Line == 0 {
+				panic("bad frame")
+			}
+			return
+		}
+		if !more {
+			break
+		}
+	}
+	panic("missing frame")
+}
+
+func checkFuncForPC() {
+	pc, _, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("missing pc")
+	}
+	if name := runtime.FuncForPC(pc).Name(); name != "main.checkFuncForPC" {
+		panic("bad func: " + name)
+	}
+}
+
+func checkPanicStack() {
+	defer func() {
+		if recover() == nil {
+			panic("missing panic")
+		}
+		stack := string(debug.Stack())
+		if !strings.Contains(stack, "main.go:STACK_LINE") {
+			panic("bad stack: " + stack)
+		}
+	}()
+	s := []int{1, 2, 3}
+	_ = s[3] // STACK_MARK
+}
+`
+
+func TestRuntimeLineInfoAndStack(t *testing.T) {
+	source := runtimeLineInfoProbe
+	source = strings.ReplaceAll(source, "CALLER_LINE", strconv.Itoa(markerLine(source, "CALLER_MARK")))
+	source = strings.ReplaceAll(source, "STACK_LINE", strconv.Itoa(markerLine(source, "STACK_MARK")))
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(file, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	repoRoot := findStringConversionRepoRoot(t)
+	t.Setenv("LLGO_ROOT", repoRoot)
+	cmd := exec.Command("go", "run", "./cmd/llgo", "run", file)
+	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(), "LLGO_LINEINFO=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("llgo lineinfo probe failed: %v\n%s", err, out)
+	}
+}
+
+func markerLine(source, marker string) int {
+	line := 1
+	for _, part := range strings.SplitAfter(source, "\n") {
+		if strings.Contains(part, marker) {
+			return line
+		}
+		line++
+	}
+	panic("missing marker " + marker)
+}
