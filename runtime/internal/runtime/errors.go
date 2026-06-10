@@ -171,7 +171,12 @@ func PanicTypeAssert(concrete *_type, asserted string, missingMethod string) {
 	if missingMethod != "" {
 		panic(errorString("interface conversion: " + concrete.String() + " is not " + asserted + ": missing method " + missingMethod))
 	}
-	panic(errorString("interface conversion: interface is " + concrete.String() + ", not " + asserted))
+	cs := concrete.String()
+	msg := "interface conversion: interface is " + cs + ", not " + asserted
+	if cs == asserted {
+		msg += " (types from different scopes)"
+	}
+	panic(errorString(msg))
 }
 
 func (e *TypeAssertionError) Error() string {
