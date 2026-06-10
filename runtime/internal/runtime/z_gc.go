@@ -36,8 +36,9 @@ func AllocU(size uintptr) unsafe.Pointer {
 // AllocZ allocates zero-initialized memory.
 func AllocZ(size uintptr) unsafe.Pointer {
 	ret := bdwgc.Malloc(size)
+	ret = c.Memset(ret, 0, size)
 	recordMemProfileAlloc(size)
-	return c.Memset(ret, 0, size)
+	return ret
 }
 
 type entry struct {

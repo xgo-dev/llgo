@@ -6,6 +6,7 @@ import (
 	"runtime"
 
 	"github.com/goplus/llgo/runtime/internal/clite/bdwgc"
+	llrt "github.com/goplus/llgo/runtime/internal/runtime"
 )
 
 func init() {
@@ -36,6 +37,7 @@ func ReadMemStats(m *runtime.MemStats) {
 }
 
 func GC() {
+	llrt.SetMemProfileRate(MemProfileRate)
 	bdwgc.Gcollect()
 	// BDW finalizers are observed on a subsequent collection cycle.
 	// Run one extra cycle so weak-pointer cleanup hooks (unique/weak) see

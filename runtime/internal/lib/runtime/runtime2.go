@@ -6,6 +6,7 @@ package runtime
 
 import (
 	psync "github.com/goplus/llgo/runtime/internal/clite/pthread/sync"
+	llrt "github.com/goplus/llgo/runtime/internal/runtime"
 )
 
 // Layout of in-memory per-function information prepared by linker
@@ -125,3 +126,7 @@ func SetBlockProfileRate(rate int) {
 }
 
 var MemProfileRate int = 512 * 1024
+
+func init() {
+	llrt.SetMemProfileRatePtr(&MemProfileRate)
+}

@@ -652,9 +652,7 @@ func (p *context) funcOf(fn *ssa.Function) (aFn llssa.Function, pyFn llssa.PyObj
 			}
 			sig := p.patchType(fn.Signature).(*types.Signature)
 			aFn = pkg.NewFuncEx(name, sig, llssa.Background(ftype), false, p.needsLinkOnce(fn))
-			if disableInline {
-				aFn.Inline(llssa.NoInline)
-			}
+			p.applyNoInline(aFn)
 		}
 	}
 	return
