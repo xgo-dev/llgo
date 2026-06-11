@@ -1749,10 +1749,6 @@ xfails:
     reason: current main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: nilptr2.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: noinit.go
     reason: current main goroot run failure on darwin/arm64
   - platform: darwin/arm64
@@ -1848,11 +1844,6 @@ xfails:
   - version: go1.24
     platform: linux/amd64
     directive: run
-    case: nilptr2.go
-    reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
     case: noinit.go
     reason: go1.24 goroot run failure on linux/amd64
   - version: go1.24
@@ -1924,11 +1915,6 @@ xfails:
     platform: linux/amd64
     directive: run
     case: method5.go
-    reason: go1.25 goroot run failure on linux/amd64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
-    case: nilptr2.go
     reason: go1.25 goroot run failure on linux/amd64
   - version: go1.25
     platform: linux/amd64
@@ -2009,11 +1995,6 @@ xfails:
     platform: linux/amd64
     directive: run
     case: method5.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: nilptr2.go
     reason: go1.26 goroot run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64
@@ -3054,10 +3035,6 @@ xfails:
     reason: current main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: fixedbugs/issue38496.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: fixedbugs/issue43835.go
     reason: current main goroot run failure on darwin/arm64
   - platform: darwin/arm64
@@ -3096,10 +3073,6 @@ xfails:
     reason: select over unbuffered channel misses final receive on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: typeparam/issue51521.go
-    reason: nil-deref panic value does not implement error on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: typeparam/mdempsky/15.go
     reason: go:nointerface methods still satisfy interfaces on darwin/arm64
   - platform: darwin/arm64
@@ -3129,10 +3102,6 @@ xfails:
   - platform: linux/amd64
     directive: run
     case: fixedbugs/issue32187.go
-    reason: current main goroot run failure on linux/amd64
-  - platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue38496.go
     reason: current main goroot run failure on linux/amd64
   - platform: linux/amd64
     directive: run
@@ -3180,16 +3149,8 @@ xfails:
     reason: current main goroot run failure on linux/amd64
   - platform: linux/amd64
     directive: run
-    case: nilptr.go
-    reason: current main goroot run failure on linux/amd64
-  - platform: linux/amd64
-    directive: run
     case: typeparam/chans.go
     reason: select over unbuffered channel misses final receive on linux/amd64
-  - platform: linux/amd64
-    directive: run
-    case: typeparam/issue51521.go
-    reason: nil-deref panic value does not implement error on linux/amd64
   - platform: linux/amd64
     directive: run
     case: typeparam/mdempsky/15.go

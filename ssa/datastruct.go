@@ -158,6 +158,7 @@ func (b Builder) IndexAddr(x, idx Expr) Expr {
 	case *types.Pointer:
 		ar := t.Elem().Underlying().(*types.Array)
 		max := prog.IntVal(uint64(ar.Len()), prog.Int())
+		b.AssertNilDeref(x)
 		idx = b.checkIndex(idx, max)
 		if !isKnownNonNilArrayBase(x.impl) {
 			b.AssertNilDeref(x)
@@ -398,6 +399,7 @@ func (b Builder) Slice(x, low, high, max Expr) (ret Expr) {
 			nEltSize = SizeOf(prog, elem)
 			nCap = prog.IntVal(uint64(te.Len()), prog.Int())
 			upperIsLen = true
+			b.AssertNilDeref(x)
 			if high.IsNil() {
 				if lowIsNil && max.IsNil() {
 					ret.impl = b.unsafeSlice(x, nCap.impl, nCap.impl).impl

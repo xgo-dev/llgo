@@ -99,6 +99,26 @@ func (p *context) isZeroSizedValue(t llssa.Type) bool {
 	return p.prog.SizeOf(t) == 0
 }
 
+func (p *context) makeInterfaceFromPtrForDeref(t llssa.Type) bool {
+	switch types.Unalias(t.RawType()).Underlying().(type) {
+	case *types.Array, *types.Struct:
+		return true
+	default:
+		return p.isLargeNonPointerValue(t)
+	}
+}
+
+func (p *context) needsExplicitNilDerefLoad(t types.Type) bool {
+	switch typ := types.Unalias(t).Underlying().(type) {
+	case *types.Slice, *types.Interface:
+		return true
+	case *types.Basic:
+		return typ.Kind() == types.String
+	default:
+		return false
+	}
+}
+
 func dbgGoSSADump(f interface {
 	WriteTo(io.Writer) (int64, error)
 }) {
@@ -166,6 +186,8 @@ type context struct {
 	goPkg       *ssa.Package
 	pyMod       string
 	skips       map[string]none
+	rangeDerefs map[token.Pos]none
+	addrDerefs  map[token.Pos]none
 	loaded      map[*types.Package]*pkgInfo // loaded packages
 	bvals       map[ssa.Value]llssa.Expr    // block values
 	vargs       map[*ssa.Alloc][]llssa.Expr // varargs
@@ -748,18 +770,51 @@ func intVal(v ssa.Value) int64 {
 	panic("intVal: ssa.Value is not a const int")
 }
 
-func skipUnusedArrayDeref(v *ssa.UnOp) bool {
-	if v.Op != token.MUL {
+func collectRangeDerefs(files []*ast.File) map[token.Pos]none {
+	ret := make(map[token.Pos]none)
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			rng, ok := n.(*ast.RangeStmt)
+			if !ok {
+				return true
+			}
+			if star, ok := rng.X.(*ast.StarExpr); ok {
+				ret[star.Star] = none{}
+			}
+			return true
+		})
+	}
+	return ret
+}
+
+func collectAddressDerefs(files []*ast.File) map[token.Pos]none {
+	ret := make(map[token.Pos]none)
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			expr, ok := n.(*ast.UnaryExpr)
+			if !ok || expr.Op != token.AND {
+				return true
+			}
+			if star, ok := expr.X.(*ast.StarExpr); ok {
+				ret[star.Star] = none{}
+			}
+			return true
+		})
+	}
+	return ret
+}
+
+func (p *context) isRangeArrayDeref(v *ssa.UnOp) bool {
+	if _, ok := types.Unalias(v.Type()).Underlying().(*types.Array); !ok {
 		return false
 	}
-	refs := v.Referrers()
-	if refs == nil || len(*refs) != 0 {
-		return false
-	}
-	if _, ok := v.Type().Underlying().(*types.Array); !ok {
-		return false
-	}
-	return true
+	_, ok := p.rangeDerefs[v.Pos()]
+	return ok
+}
+
+func (p *context) isAddressDeref(v *ssa.UnOp) bool {
+	_, ok := p.addrDerefs[v.Pos()]
+	return ok
 }
 
 func (p *context) cgoErrnoType() types.Type {
@@ -961,6 +1016,13 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		}
 		log.Panicln("unreachable:", iv)
 	}
+	if v, ok := iv.(ssa.Value); ok {
+		if call, ok := iv.(*ssa.Call); !ok || !p.isUnsafeSizeofLikeCall(call) {
+			if p.onlyFeedsUnsafeSizeofLikeBuiltin(v, nil) {
+				return
+			}
+		}
+	}
 	switch v := iv.(type) {
 	case *ssa.Call:
 		ret = p.call(b, llssa.Call, &v.Call)
@@ -974,30 +1036,28 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	case *ssa.UnOp:
 		if v.Op == token.MUL {
 			if refs := v.Referrers(); refs != nil && len(*refs) == 0 {
-				if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil {
-					if p.isLargeNonPointerValue(t) {
-						x := p.compileValue(b, v.X)
-						p.assertNilDerefBase(b, v.X)
-						b.AssertNilDeref(x)
-						return
-					}
-				}
-				if skipUnusedArrayDeref(v) {
+				if p.isRangeArrayDeref(v) {
 					return
 				}
 				if _, ok := types.Unalias(v.Type()).Underlying().(*types.Slice); ok {
 					// Zero-length slice-to-array conversions can leave only
 					// an unused slice deref; preserve its required nil check.
 					x := p.compileValue(b, v.X)
-					p.assertNilDerefBase(b, v.X)
-					b.AssertNilDeref(x)
+					p.assertNilDerefAddr(b, v.X, x)
 					return
 				}
+				x := p.compileValue(b, v.X)
+				p.assertNilDerefAddr(b, v.X, x)
+				if p.isAddressDeref(v) {
+					return
+				}
+				ret = b.UnOp(v.Op, x)
+				return
 			}
 			if refs := v.Referrers(); refs != nil && len(*refs) == 1 {
 				if _, ok := (*refs)[0].(*ssa.MakeInterface); ok {
 					if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil {
-						if p.isLargeNonPointerValue(t) {
+						if p.makeInterfaceFromPtrForDeref(t) && !p.addrIsStaticNonNil(v.X) {
 							// Skip the load: the MakeInterface handler below copies
 							// from the original pointer and preserves the nil check.
 							return
@@ -1024,7 +1084,10 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		} else {
 			if v.Op == token.MUL {
 				if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil && p.prog.SizeOf(t) == 0 {
-					p.assertNilDerefBase(b, v.X)
+					p.assertNilDerefAddr(b, v.X, x)
+				}
+				if p.needsExplicitNilDerefLoad(v.Type()) && !p.addrIsStaticNonNil(v.X) && p.valueFeedsBuiltinPrint(v, nil) {
+					p.assertNilDerefLoadAddr(b, v.X, x)
 				}
 			}
 			ret = b.UnOp(v.Op, x)
@@ -1039,6 +1102,11 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		ret = b.Convert(p.type_(t, llssa.InGo), x)
 	case *ssa.FieldAddr:
 		x := p.compileValue(b, v.X)
+		if !p.addrIsStaticNonNil(v.X) && (p.fieldAddrNeedsExplicitNilCheck(v) ||
+			(!p.addrBaseIsCall(v.X) && !p.addrBaseIsParam(v.X) &&
+				(p.addrNeedsExplicitNilCheck(v, nil) || p.valueFeedsBuiltinPrint(v, nil)))) {
+			b.AssertNilDeref(x)
+		}
 		ret = b.FieldAddr(x, v.Field)
 	case *ssa.Alloc:
 		t := v.Type().(*types.Pointer)
@@ -1116,9 +1184,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		t := p.type_(v.Type(), llssa.InGo)
 		if unop, ok := v.X.(*ssa.UnOp); ok && unop.Op == token.MUL {
 			if vt := p.type_(unop.Type(), llssa.InGo); vt.RawType() != nil {
-				if p.isLargeNonPointerValue(vt) || p.isZeroSizedValue(vt) {
+				if (p.makeInterfaceFromPtrForDeref(vt) || p.isZeroSizedValue(vt)) && !p.addrIsStaticNonNil(unop.X) {
 					if ptr := p.compileValue(b, unop.X); ptr.Type != nil {
-						p.assertNilDerefBase(b, unop.X)
+						p.assertNilDerefAddr(b, unop.X, ptr)
 						ret = b.MakeInterfaceFromPtr(t, ptr)
 						break
 					}
@@ -1194,11 +1262,196 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	return ret
 }
 
-func (p *context) assertNilDerefBase(b llssa.Builder, addr ssa.Value) {
-	if field, ok := addr.(*ssa.FieldAddr); ok {
-		base := p.compileValue(b, field.X)
-		b.AssertNilDeref(base)
+func (p *context) assertNilDerefAddr(b llssa.Builder, addr ssa.Value, ptr llssa.Expr) {
+	switch addr := addr.(type) {
+	case *ssa.FieldAddr:
+		base := p.compileValue(b, addr.X)
+		p.assertNilDerefAddr(b, addr.X, base)
+	case *ssa.IndexAddr:
+		if _, ok := types.Unalias(addr.X.Type()).Underlying().(*types.Pointer); ok {
+			base := p.compileValue(b, addr.X)
+			p.assertNilDerefAddr(b, addr.X, base)
+		}
+	default:
+		b.AssertNilDeref(ptr)
 	}
+}
+
+func (p *context) addrIsStaticNonNil(addr ssa.Value) bool {
+	switch addr := addr.(type) {
+	case *ssa.Alloc, *ssa.Global, *ssa.FreeVar:
+		return true
+	case *ssa.FieldAddr:
+		return p.addrIsStaticNonNil(addr.X)
+	case *ssa.IndexAddr:
+		return p.addrIsStaticNonNil(addr.X)
+	default:
+		return false
+	}
+}
+
+func (p *context) fieldAddrNeedsExplicitNilCheck(addr *ssa.FieldAddr) bool {
+	offset, ok := p.offsetOfFieldChain(addr)
+	return ok && offset > maxDirectDerefSize
+}
+
+func (p *context) addrBaseIsCall(addr ssa.Value) bool {
+	switch addr := addr.(type) {
+	case *ssa.Call:
+		return true
+	case *ssa.FieldAddr:
+		return p.addrBaseIsCall(addr.X)
+	case *ssa.IndexAddr:
+		return p.addrBaseIsCall(addr.X)
+	default:
+		return false
+	}
+}
+
+func (p *context) addrBaseIsParam(addr ssa.Value) bool {
+	switch addr := addr.(type) {
+	case *ssa.Parameter:
+		return true
+	case *ssa.FieldAddr:
+		return p.addrBaseIsParam(addr.X)
+	case *ssa.IndexAddr:
+		return p.addrBaseIsParam(addr.X)
+	default:
+		return false
+	}
+}
+
+func (p *context) assertNilDerefLoadAddr(b llssa.Builder, addr ssa.Value, ptr llssa.Expr) {
+	switch addr := addr.(type) {
+	case *ssa.FieldAddr:
+		if p.addrBaseIsCall(addr.X) || p.addrBaseIsParam(addr.X) {
+			return
+		}
+		base := p.compileValue(b, addr.X)
+		b.AssertNilDeref(base)
+	case *ssa.IndexAddr:
+		if _, ok := types.Unalias(addr.X.Type()).Underlying().(*types.Pointer); ok {
+			base := p.compileValue(b, addr.X)
+			b.AssertNilDeref(base)
+		}
+	default:
+		b.AssertNilDeref(ptr)
+	}
+}
+
+func (p *context) valueFeedsBuiltinPrint(v ssa.Value, seen map[ssa.Value]bool) bool {
+	if seen[v] {
+		return false
+	}
+	if seen == nil {
+		seen = make(map[ssa.Value]bool)
+	}
+	seen[v] = true
+	refs := v.Referrers()
+	if refs == nil {
+		return false
+	}
+	for _, ref := range *refs {
+		if call, ok := ref.(*ssa.Call); ok {
+			if builtin, ok := call.Call.Value.(*ssa.Builtin); ok {
+				switch builtin.Name() {
+				case "print", "println":
+					return true
+				}
+			}
+		}
+		if value, ok := ref.(ssa.Value); ok && p.valueFeedsBuiltinPrint(value, seen) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *context) addrNeedsExplicitNilCheck(addr ssa.Value, seen map[ssa.Value]bool) bool {
+	if seen[addr] {
+		return false
+	}
+	if seen == nil {
+		seen = make(map[ssa.Value]bool)
+	}
+	seen[addr] = true
+	refs := addr.Referrers()
+	if refs == nil || len(*refs) == 0 {
+		return true
+	}
+	for _, ref := range *refs {
+		switch ref := ref.(type) {
+		case *ssa.UnOp:
+			if ref.Op == token.MUL {
+				continue
+			}
+		case *ssa.Store:
+			if ref.Addr == addr {
+				continue
+			}
+		case *ssa.Call:
+			if p.isUnsafeSizeofLikeCall(ref) {
+				continue
+			}
+		case *ssa.FieldAddr:
+			if ref.X == addr && !p.addrNeedsExplicitNilCheck(ref, seen) {
+				continue
+			}
+		case *ssa.IndexAddr:
+			if ref.X == addr && !p.addrNeedsExplicitNilCheck(ref, seen) {
+				continue
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func (p *context) isUnsafeSizeofLikeCall(call *ssa.Call) bool {
+	if builtin, ok := call.Call.Value.(*ssa.Builtin); ok {
+		switch builtin.Name() {
+		case "Sizeof", "Alignof", "Offsetof":
+			return true
+		}
+	}
+	return false
+}
+
+func (p *context) onlyFeedsUnsafeSizeofLikeBuiltin(v ssa.Value, seen map[ssa.Value]bool) bool {
+	if seen[v] {
+		return true
+	}
+	if seen == nil {
+		seen = make(map[ssa.Value]bool)
+	}
+	seen[v] = true
+	refs := v.Referrers()
+	if refs == nil || len(*refs) == 0 {
+		return false
+	}
+	for _, ref := range *refs {
+		switch ref := ref.(type) {
+		case *ssa.Call:
+			if !p.isUnsafeSizeofLikeCall(ref) {
+				return false
+			}
+		case *ssa.UnOp:
+			if ref.Op != token.MUL || !p.onlyFeedsUnsafeSizeofLikeBuiltin(ref, seen) {
+				return false
+			}
+		case *ssa.FieldAddr:
+			if ref.X != v || !p.onlyFeedsUnsafeSizeofLikeBuiltin(ref, seen) {
+				return false
+			}
+		case *ssa.IndexAddr:
+			if ref.X != v || !p.onlyFeedsUnsafeSizeofLikeBuiltin(ref, seen) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (p *context) jumpTo(v *ssa.Jump) llssa.BasicBlock {
@@ -1605,6 +1858,8 @@ func newPackageEx(prog llssa.Program, patches Patches, rewrites map[string]strin
 		goPkg:       pkg,
 		patches:     patches,
 		skips:       make(map[string]none),
+		rangeDerefs: collectRangeDerefs(files),
+		addrDerefs:  collectAddressDerefs(files),
 		vargs:       make(map[*ssa.Alloc][]llssa.Expr),
 		funcs:       make(map[*ssa.Function]llssa.Function),
 		linkOnceFns: make(map[*ssa.Function]none),

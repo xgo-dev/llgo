@@ -170,6 +170,11 @@ func TestPointerSize(t *testing.T) {
 	}
 }
 
+func TestAssertNilDerefIgnoresEmptyExpr(t *testing.T) {
+	var b Builder
+	b.AssertNilDeref(Expr{})
+}
+
 func TestNewFuncExLLVMUsed(t *testing.T) {
 	prog := NewProgram(nil)
 	pkg := prog.NewPackage("main", "main")

@@ -91,6 +91,40 @@ func fieldIface(p *holder) {
 			t.Fatalf("compiled IR missing %s for large nil-deref guard path:\n%s", want, ir)
 		}
 	}
+
+	fieldIR := mustNamedFunction(t, m, "foo.fieldIface").String()
+	if !strings.Contains(fieldIR, "icmp eq ptr %0, null") {
+		t.Fatalf("large field-to-interface should nil-check the base pointer, got:\n%s", fieldIR)
+	}
+}
+
+func TestCompileNilDerefLoadAddressGuards(t *testing.T) {
+	_, m := mustCompileLLPkgFromSrc(t, `
+package foo
+
+type inner struct {
+	s string
+}
+type outer struct {
+	inner inner
+}
+
+var gp *outer
+
+func printGlobalField() {
+	println(gp.inner.s)
+}
+
+func printArrayElement(p *[2]string, i int) {
+	println(p[i])
+}
+`)
+	for _, name := range []string{"foo.printGlobalField", "foo.printArrayElement"} {
+		fn := mustNamedFunction(t, m, name).String()
+		if !strings.Contains(fn, "AssertNilDeref") {
+			t.Fatalf("%s missing explicit nil-deref guard:\n%s", name, fn)
+		}
+	}
 }
 
 func TestToBackground(t *testing.T) {

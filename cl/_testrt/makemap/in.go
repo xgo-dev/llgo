@@ -636,10 +636,12 @@ func make3() {
 // CHECK-NEXT:   store [1 x ptr] %54, ptr %55, align 8
 // CHECK-NEXT:   %56 = getelementptr inbounds ptr, ptr %55, i64 0
 // CHECK-NEXT:   %57 = load ptr, ptr %56, align 8
-// CHECK-NEXT:   %58 = getelementptr inbounds %"{{.*}}/cl/_testrt/makemap.N", ptr %57, i32 0, i32 0
-// CHECK-NEXT:   %59 = load i8, ptr %58, align 1
-// CHECK-NEXT:   %60 = sext i8 %59 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %60)
+// CHECK-NEXT:   %58 = icmp eq ptr %57, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %58)
+// CHECK-NEXT:   %59 = getelementptr inbounds %"{{.*}}/cl/_testrt/makemap.N", ptr %57, i32 0, i32 0
+// CHECK-NEXT:   %60 = load i8, ptr %59, align 1
+// CHECK-NEXT:   %61 = sext i8 %60 to i64
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %61)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %42)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)

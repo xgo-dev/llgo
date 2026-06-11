@@ -19,6 +19,7 @@ package ssa
 import (
 	"go/token"
 	"go/types"
+	"strings"
 
 	"github.com/xgo-dev/llvm"
 )
@@ -332,9 +333,33 @@ func (b Builder) AtomicCmpXchg(ptr, old, new Expr) Expr {
 }
 
 func (b Builder) AssertNilDeref(ptr Expr) {
+	if ptr.Type == nil || ptr.impl.IsNil() {
+		return
+	}
+	if knownNonNilPointer(ptr.impl) {
+		return
+	}
 	nilPtr := llvm.ConstNull(ptr.impl.Type())
 	isNil := Expr{llvm.CreateICmp(b.impl, llvm.IntEQ, ptr.impl, nilPtr), b.Prog.Bool()}
 	b.InlineCall(b.Pkg.rtFunc("AssertNilDeref"), isNil)
+}
+
+func knownNonNilPointer(v llvm.Value) bool {
+	if !v.IsAConstant().IsNil() && !v.IsNull() {
+		return true
+	}
+	if !v.IsAAllocaInst().IsNil() || !v.IsAGlobalValue().IsNil() {
+		return true
+	}
+	if call := v.IsACallInst(); !call.IsNil() {
+		if callee := call.CalledValue(); !callee.IsNil() && strings.HasSuffix(callee.Name(), ".AllocZ") {
+			return true
+		}
+	}
+	if gep := v.IsAGetElementPtrInst(); !gep.IsNil() && v.OperandsCount() > 0 {
+		return knownNonNilPointer(v.Operand(0))
+	}
+	return false
 }
 
 func (b Builder) assertStaticNilDeref(ptr Expr) {

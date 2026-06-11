@@ -4,20 +4,12 @@
 package cl
 
 import (
-	"go/token"
-	"go/types"
 	"strings"
 	"testing"
-
-	"golang.org/x/tools/go/ssa"
 )
 
-func TestSkipUnusedArrayDeref(t *testing.T) {
-	if skipUnusedArrayDeref(&ssa.UnOp{Op: token.SUB}) {
-		t.Fatal("non-deref unop should not be skipped")
-	}
-
-	ssaPkg, _, _ := buildGoSSAPkg(t, `
+func TestUnusedDerefNilChecks(t *testing.T) {
+	_, m := mustCompileLLPkgFromSrc(t, `
 package foo
 
 var sink int
@@ -28,23 +20,22 @@ func rangeArray(p *[3]int) {
 	}
 }
 
-func copyArray(p *[3]int) [3]int {
-	return *p
-}
-
-func useNonArray(p *int) int {
-	return *p
+func addressOfDeref(p *int) *int {
+	return &*p
 }
 `)
 
-	if !skipUnusedArrayDeref(findUnOp(t, ssaPkg.Func("rangeArray"), token.MUL, true)) {
-		t.Fatal("range array deref should be skipped")
+	rangeIR := mustNamedFunction(t, m, "foo.rangeArray").String()
+	if strings.Contains(rangeIR, "AssertNilDeref") {
+		t.Fatalf("range over array pointer should not emit nil-deref guard, got:\n%s", rangeIR)
 	}
-	if skipUnusedArrayDeref(findUnOp(t, ssaPkg.Func("copyArray"), token.MUL, true)) {
-		t.Fatal("referenced array deref should not be skipped")
+
+	ir := mustNamedFunction(t, m, "foo.addressOfDeref").String()
+	if !strings.Contains(ir, "AssertNilDeref") {
+		t.Fatalf("address-of deref should emit nil-deref guard, got:\n%s", ir)
 	}
-	if skipUnusedArrayDeref(findUnOp(t, ssaPkg.Func("useNonArray"), token.MUL, false)) {
-		t.Fatal("non-array deref should not be skipped")
+	if strings.Contains(ir, "load i64, ptr %0") {
+		t.Fatalf("address-of deref should not load the pointee, got:\n%s", ir)
 	}
 }
 
@@ -61,22 +52,4 @@ func convert(p *[]byte) {
 	if !strings.Contains(ir, "AssertNilDeref") {
 		t.Fatalf("zero-length slice-to-array conversion should keep operand nil check:\n%s", ir)
 	}
-}
-
-func findUnOp(t *testing.T, fn *ssa.Function, op token.Token, wantArray bool) *ssa.UnOp {
-	t.Helper()
-	for _, block := range fn.Blocks {
-		for _, instr := range block.Instrs {
-			unop, ok := instr.(*ssa.UnOp)
-			if !ok || unop.Op != op {
-				continue
-			}
-			_, isArray := unop.Type().Underlying().(*types.Array)
-			if isArray == wantArray {
-				return unop
-			}
-		}
-	}
-	t.Fatalf("missing %s unop in %s", op, fn.Name())
-	return nil
 }
