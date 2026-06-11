@@ -179,6 +179,40 @@ func TestPreCollectLinknames(t *testing.T) {
 	}
 }
 
+func TestInitFilesCollectsDetachedLinkname(t *testing.T) {
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "p.go")
+	src := `package p
+
+import _ "unsafe"
+
+//go:linkname Foo C.foo
+// CHECK-LINE: unrelated generated check between directive and declaration
+
+func Foo()
+`
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, srcPath, src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("ParseFile failed: %v", err)
+	}
+
+	prog := llssa.NewProgram(nil)
+	ctx := &context{
+		prog: prog,
+		pkg:  prog.NewPackage("p", "example.com/p"),
+		fset: fset,
+	}
+	ctx.initFiles("example.com/p", []*ast.File{file}, false)
+	if got, ok := prog.Linkname("example.com/p.Foo"); !ok || got != "C.foo" {
+		t.Fatalf("detached linkname = (%q,%v), want (%q,%v)", got, ok, "C.foo", true)
+	}
+}
+
 func TestBoolToUint8InvalidArgs(t *testing.T) {
 	ctx := &context{}
 	defer func() {
