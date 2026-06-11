@@ -36,16 +36,19 @@ func Async[T any](fn func(func(T))) Future[T] {
 // CHECK-NEXT: }
 
 func ReadFile(fileName string) Future[Tuple[error]] {
+
 	// CHECK-LABEL: define void @"{{.*}}/cl/_testrt/tpmethod.ReadFile$1"({ ptr, ptr } %0){{.*}} {
 	// CHECK-NEXT: _llgo_0:
 	// CHECK-NEXT:   %1 = alloca %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]", align 8
 	// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
-	// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]", ptr %1, i32 0, i32 0
-	// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer, ptr %2, align 8
-	// CHECK-NEXT:   %3 = load %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]", ptr %1, align 8
-	// CHECK-NEXT:   %4 = extractvalue { ptr, ptr } %0, 1
-	// CHECK-NEXT:   %5 = extractvalue { ptr, ptr } %0, 0
-	// CHECK-NEXT:   call void %5(ptr %4, %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]" %3)
+	// CHECK-NEXT:   %2 = icmp eq ptr %1, null
+	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+	// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]", ptr %1, i32 0, i32 0
+	// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer, ptr %3, align 8
+	// CHECK-NEXT:   %4 = load %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]", ptr %1, align 8
+	// CHECK-NEXT:   %5 = extractvalue { ptr, ptr } %0, 1
+	// CHECK-NEXT:   %6 = extractvalue { ptr, ptr } %0, 0
+	// CHECK-NEXT:   call void %6(ptr %5, %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]" %4)
 	// CHECK-NEXT:   ret void
 	// CHECK-NEXT: }
 
@@ -83,6 +86,7 @@ func ReadFile(fileName string) Future[Tuple[error]] {
 // CHECK-NEXT: }
 
 func main() {
+
 	// CHECK-LABEL: define void @"{{.*}}/cl/_testrt/tpmethod.main$1"(%"{{.*}}/cl/_testrt/tpmethod.Tuple[error]" %0){{.*}} {
 	// CHECK-NEXT: _llgo_0:
 	// CHECK-NEXT:   %1 = call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testrt/tpmethod.Tuple[error].Get"(%"{{.*}}/cl/_testrt/tpmethod.Tuple[error]" %0)
@@ -99,12 +103,14 @@ func main() {
 // CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testrt/tpmethod.Async[{{.*}}/cl/_testrt/tpmethod.Tuple[error]]"({ ptr, ptr } %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmethod.future[{{.*}}/cl/_testrt/tpmethod.Tuple[error]]", ptr %1, i32 0, i32 0
-// CHECK-NEXT:   store { ptr, ptr } %0, ptr %2, align 8
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$S25w7h931TxiY5HCyBzDrZdIDRx-V5waLTlYXjrsYWc", ptr @"*_llgo_{{.*}}/cl/_testrt/tpmethod.future[{{.*}}/cl/_testrt/tpmethod.Tuple[error]]")
-// CHECK-NEXT:   %4 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %3, 0
-// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %4, ptr %1, 1
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %5
+// CHECK-NEXT:   %2 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmethod.future[{{.*}}/cl/_testrt/tpmethod.Tuple[error]]", ptr %1, i32 0, i32 0
+// CHECK-NEXT:   store { ptr, ptr } %0, ptr %3, align 8
+// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$S25w7h931TxiY5HCyBzDrZdIDRx-V5waLTlYXjrsYWc", ptr @"*_llgo_{{.*}}/cl/_testrt/tpmethod.future[{{.*}}/cl/_testrt/tpmethod.Tuple[error]]")
+// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %4, 0
+// CHECK-NEXT:   %6 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %5, ptr %1, 1
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %6
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce void @"__llgo_stub.{{.*}}/cl/_testrt/tpmethod.ReadFile$1"(ptr %0, { ptr, ptr } %1){{.*}} {
@@ -124,18 +130,26 @@ func main() {
 // CHECK-NEXT:   %1 = alloca %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]", align 8
 // CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]" %0, ptr %1, align 8
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]", ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %2, align 8
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %3
+// CHECK-NEXT:   %2 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]", ptr %1, i32 0, i32 0
+// CHECK-NEXT:   %5 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %4, align 8
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %5
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce void @"{{.*}}/cl/_testrt/tpmethod.(*future[{{.*}}/cl/_testrt/tpmethod.Tuple[error]]).Then"(ptr %0, { ptr, ptr } %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmethod.future[{{.*}}/cl/_testrt/tpmethod.Tuple[error]]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load { ptr, ptr }, ptr %2, align 8
-// CHECK-NEXT:   %4 = extractvalue { ptr, ptr } %3, 1
-// CHECK-NEXT:   %5 = extractvalue { ptr, ptr } %3, 0
-// CHECK-NEXT:   call void %5(ptr %4, { ptr, ptr } %1)
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmethod.future[{{.*}}/cl/_testrt/tpmethod.Tuple[error]]", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %5 = load { ptr, ptr }, ptr %4, align 8
+// CHECK-NEXT:   %6 = extractvalue { ptr, ptr } %5, 1
+// CHECK-NEXT:   %7 = extractvalue { ptr, ptr } %5, 0
+// CHECK-NEXT:   call void %7(ptr %6, { ptr, ptr } %1)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
@@ -148,8 +162,26 @@ func main() {
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %3
 // CHECK-NEXT: }
 
+// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.iface" @"__llgo_stub.{{.*}}/cl/_testrt/tpmethod.(*Tuple[error]).Get"(ptr %0, ptr %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %2 = tail call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testrt/tpmethod.(*Tuple[error]).Get"(ptr %1)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %2
+// CHECK-NEXT: }
+
 // CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.interequal"(ptr %0, ptr %1, ptr %2){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.interequal"(ptr %1, ptr %2)
 // CHECK-NEXT:   ret i1 %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.iface" @"__llgo_stub.{{.*}}/cl/_testrt/tpmethod.Tuple[error].Get"(ptr %0, %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]" %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %2 = tail call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testrt/tpmethod.Tuple[error].Get"(%"{{.*}}/cl/_testrt/tpmethod.Tuple[error]" %1)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %2
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce void @"__llgo_stub.{{.*}}/cl/_testrt/tpmethod.(*future[{{.*}}/cl/_testrt/tpmethod.Tuple[error]]).Then"(ptr %0, ptr %1, { ptr, ptr } %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   tail call void @"{{.*}}/cl/_testrt/tpmethod.(*future[{{.*}}/cl/_testrt/tpmethod.Tuple[error]]).Then"(ptr %1, { ptr, ptr } %2)
+// CHECK-NEXT:   ret void
 // CHECK-NEXT: }

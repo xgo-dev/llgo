@@ -49,60 +49,68 @@ func (t *K[N]) Advance(n int) *K[N] {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = alloca %"{{.*}}/cl/_testrt/tpabi.T[string,int]", align 8
 // CHECK-NEXT:   call void @llvm.memset(ptr %0, i8 0, i64 24, i1 false)
-// CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 1 }, ptr %1, align 8
-// CHECK-NEXT:   store i64 1, ptr %2, align 8
-// CHECK-NEXT:   %3 = load %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %0, align 8
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 24)
-// CHECK-NEXT:   store %"{{.*}}/cl/_testrt/tpabi.T[string,int]" %3, ptr %4, align 8
-// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr undef }, ptr %4, 1
-// CHECK-NEXT:   %6 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %5, 0
-// CHECK-NEXT:   %7 = icmp eq ptr %6, @"_llgo_{{.*}}/cl/_testrt/tpabi.T[string,int]"
-// CHECK-NEXT:   br i1 %7, label %_llgo_1, label %_llgo_2
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
+// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 1 }, ptr %2, align 8
+// CHECK-NEXT:   store i64 1, ptr %4, align 8
+// CHECK-NEXT:   %5 = load %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %0, align 8
+// CHECK-NEXT:   %6 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 24)
+// CHECK-NEXT:   store %"{{.*}}/cl/_testrt/tpabi.T[string,int]" %5, ptr %6, align 8
+// CHECK-NEXT:   %7 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr undef }, ptr %6, 1
+// CHECK-NEXT:   %8 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %7, 0
+// CHECK-NEXT:   %9 = icmp eq ptr %8, @"_llgo_{{.*}}/cl/_testrt/tpabi.T[string,int]"
+// CHECK-NEXT:   br i1 %9, label %_llgo_1, label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %8 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %5, 1
-// CHECK-NEXT:   %9 = load %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %8, align 8
-// CHECK-NEXT:   %10 = extractvalue %"{{.*}}/cl/_testrt/tpabi.T[string,int]" %9, 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %10)
+// CHECK-NEXT:   %10 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %7, 1
+// CHECK-NEXT:   %11 = load %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %10, align 8
+// CHECK-NEXT:   %12 = extractvalue %"{{.*}}/cl/_testrt/tpabi.T[string,int]" %11, 0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %12)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %11 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
-// CHECK-NEXT:   %12 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %11, i32 0, i32 0
-// CHECK-NEXT:   %13 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %11, i32 0, i32 1
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @11, i64 5 }, ptr %12, align 8
-// CHECK-NEXT:   store i64 100, ptr %13, align 8
-// CHECK-NEXT:   %14 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$BP0p_lUsEd-IbbtJVukGmgrdQkqzcoYzSiwgUvgFvUs", ptr @"*_llgo_{{.*}}/cl/_testrt/tpabi.T[string,int]")
-// CHECK-NEXT:   %15 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %14, 0
-// CHECK-NEXT:   %16 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %15, ptr %11, 1
-// CHECK-NEXT:   %17 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %16)
-// CHECK-NEXT:   %18 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %16, 0
-// CHECK-NEXT:   %19 = getelementptr ptr, ptr %18, i64 3
-// CHECK-NEXT:   %20 = load ptr, ptr %19, align 8
-// CHECK-NEXT:   %21 = insertvalue { ptr, ptr } undef, ptr %20, 0
-// CHECK-NEXT:   %22 = insertvalue { ptr, ptr } %21, ptr %17, 1
-// CHECK-NEXT:   %23 = extractvalue { ptr, ptr } %22, 1
-// CHECK-NEXT:   %24 = extractvalue { ptr, ptr } %22, 0
-// CHECK-NEXT:   call void %24(ptr %23)
-// CHECK-NEXT:   %25 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 32)
-// CHECK-NEXT:   %26 = getelementptr inbounds i64, ptr %25, i64 0
-// CHECK-NEXT:   %27 = getelementptr inbounds i64, ptr %25, i64 1
-// CHECK-NEXT:   %28 = getelementptr inbounds i64, ptr %25, i64 2
-// CHECK-NEXT:   %29 = getelementptr inbounds i64, ptr %25, i64 3
-// CHECK-NEXT:   store i64 1, ptr %26, align 8
-// CHECK-NEXT:   store i64 2, ptr %27, align 8
-// CHECK-NEXT:   store i64 3, ptr %28, align 8
-// CHECK-NEXT:   store i64 4, ptr %29, align 8
-// CHECK-NEXT:   %30 = getelementptr [4 x i64], ptr %25, i64 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %30)
+// CHECK-NEXT:   %13 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
+// CHECK-NEXT:   %14 = icmp eq ptr %13, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %14)
+// CHECK-NEXT:   %15 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %13, i32 0, i32 0
+// CHECK-NEXT:   %16 = icmp eq ptr %13, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %16)
+// CHECK-NEXT:   %17 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %13, i32 0, i32 1
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @11, i64 5 }, ptr %15, align 8
+// CHECK-NEXT:   store i64 100, ptr %17, align 8
+// CHECK-NEXT:   %18 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$BP0p_lUsEd-IbbtJVukGmgrdQkqzcoYzSiwgUvgFvUs", ptr @"*_llgo_{{.*}}/cl/_testrt/tpabi.T[string,int]")
+// CHECK-NEXT:   %19 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %18, 0
+// CHECK-NEXT:   %20 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %19, ptr %13, 1
+// CHECK-NEXT:   %21 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %20)
+// CHECK-NEXT:   %22 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %20, 0
+// CHECK-NEXT:   %23 = getelementptr ptr, ptr %22, i64 3
+// CHECK-NEXT:   %24 = load ptr, ptr %23, align 8
+// CHECK-NEXT:   %25 = insertvalue { ptr, ptr } undef, ptr %24, 0
+// CHECK-NEXT:   %26 = insertvalue { ptr, ptr } %25, ptr %21, 1
+// CHECK-NEXT:   %27 = extractvalue { ptr, ptr } %26, 1
+// CHECK-NEXT:   %28 = extractvalue { ptr, ptr } %26, 0
+// CHECK-NEXT:   call void %28(ptr %27)
+// CHECK-NEXT:   %29 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 32)
+// CHECK-NEXT:   %30 = getelementptr inbounds i64, ptr %29, i64 0
+// CHECK-NEXT:   %31 = getelementptr inbounds i64, ptr %29, i64 1
+// CHECK-NEXT:   %32 = getelementptr inbounds i64, ptr %29, i64 2
+// CHECK-NEXT:   %33 = getelementptr inbounds i64, ptr %29, i64 3
+// CHECK-NEXT:   store i64 1, ptr %30, align 8
+// CHECK-NEXT:   store i64 2, ptr %31, align 8
+// CHECK-NEXT:   store i64 3, ptr %32, align 8
+// CHECK-NEXT:   store i64 4, ptr %33, align 8
+// CHECK-NEXT:   %34 = getelementptr [4 x i64], ptr %29, i64 1
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %34)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %31 = getelementptr [4 x i64], ptr %25, i64 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %31)
+// CHECK-NEXT:   %35 = getelementptr [4 x i64], ptr %29, i64 1
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %35)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %6, %"{{.*}}/runtime/internal/runtime.String" { ptr @10, i64 54 }, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %8, %"{{.*}}/runtime/internal/runtime.String" { ptr @10, i64 54 }, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 
@@ -122,26 +130,42 @@ func main() {
 // CHECK-NEXT:   %1 = alloca %"{{.*}}/cl/_testrt/tpabi.T[string,int]", align 8
 // CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 24, i1 false)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testrt/tpabi.T[string,int]" %0, ptr %1, align 8
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.String", ptr %2, align 8
-// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %1, i32 0, i32 1
-// CHECK-NEXT:   %5 = load i64, ptr %4, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %3)
+// CHECK-NEXT:   %2 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %1, i32 0, i32 0
+// CHECK-NEXT:   %5 = load %"{{.*}}/runtime/internal/runtime.String", ptr %4, align 8
+// CHECK-NEXT:   %6 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
+// CHECK-NEXT:   %7 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
+// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %1, i32 0, i32 1
+// CHECK-NEXT:   %9 = load i64, ptr %8, align 8
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %5)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %5)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %9)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce void @"{{.*}}/cl/_testrt/tpabi.(*T[string,int]).Demo"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load %"{{.*}}/runtime/internal/runtime.String", ptr %1, align 8
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %2)
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %4 = load %"{{.*}}/runtime/internal/runtime.String", ptr %3, align 8
+// CHECK-NEXT:   %5 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %5)
+// CHECK-NEXT:   %6 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
+// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %8 = load i64, ptr %7, align 8
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %4)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %4)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %8)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }

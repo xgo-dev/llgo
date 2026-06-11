@@ -9,13 +9,15 @@ package foo
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = alloca { i64 }, align 8
 // CHECK-NEXT:   call void @llvm.memset(ptr %0, i8 0, i64 8, i1 false)
-// CHECK-NEXT:   %1 = getelementptr inbounds { i64 }, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store i64 1, ptr %1, align 8
-// CHECK-NEXT:   %2 = load { i64 }, ptr %0, align 8
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   store { i64 } %2, ptr %3, align 8
-// CHECK-NEXT:   %4 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_struct$K-dZ9QotZfVPz2a0YdRa9vmZUuDXPTqZOlMShKEDJtk", ptr undef }, ptr %3, 1
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.eface" %4
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
+// CHECK-NEXT:   %2 = getelementptr inbounds { i64 }, ptr %0, i32 0, i32 0
+// CHECK-NEXT:   store i64 1, ptr %2, align 8
+// CHECK-NEXT:   %3 = load { i64 }, ptr %0, align 8
+// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT:   store { i64 } %3, ptr %4, align 8
+// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_struct$K-dZ9QotZfVPz2a0YdRa9vmZUuDXPTqZOlMShKEDJtk", ptr undef }, ptr %4, 1
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.eface" %5
 // CHECK-NEXT: }
 
 func Bar() any {
@@ -26,13 +28,15 @@ func Bar() any {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = alloca { i64 }, align 8
 // CHECK-NEXT:   call void @llvm.memset(ptr %0, i8 0, i64 8, i1 false)
-// CHECK-NEXT:   %1 = getelementptr inbounds { i64 }, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store i64 1, ptr %1, align 8
-// CHECK-NEXT:   %2 = load { i64 }, ptr %0, align 8
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   store { i64 } %2, ptr %3, align 8
-// CHECK-NEXT:   %4 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"{{.*}}/cl/_testdata/foo.struct$MYpsoM99ZwFY087IpUOkIw1zjBA_sgFXVodmn1m-G88", ptr undef }, ptr %3, 1
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.eface" %4
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
+// CHECK-NEXT:   %2 = getelementptr inbounds { i64 }, ptr %0, i32 0, i32 0
+// CHECK-NEXT:   store i64 1, ptr %2, align 8
+// CHECK-NEXT:   %3 = load { i64 }, ptr %0, align 8
+// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT:   store { i64 } %3, ptr %4, align 8
+// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"{{.*}}/cl/_testdata/foo.struct$MYpsoM99ZwFY087IpUOkIw1zjBA_sgFXVodmn1m-G88", ptr undef }, ptr %4, 1
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.eface" %5
 // CHECK-NEXT: }
 
 func F() any {
@@ -49,9 +53,13 @@ type Foo struct {
 // CHECK-NEXT:   %1 = alloca %"{{.*}}/cl/_testdata/foo.Foo", align 8
 // CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testdata/foo.Foo" %0, ptr %1, align 8
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testdata/foo.Foo", ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   ret ptr %3
+// CHECK-NEXT:   %2 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testdata/foo.Foo", ptr %1, i32 0, i32 0
+// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
+// CHECK-NEXT:   ret ptr %5
 // CHECK-NEXT: }
 
 func (v Foo) Pb() *byte {

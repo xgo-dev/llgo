@@ -31,21 +31,23 @@ type ReflectionServer interface {
 // CHECK-NEXT:   %6 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %5, 0
 // CHECK-NEXT:   %7 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %6, ptr %4, 1
 // CHECK-NEXT:   %8 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[{{.*}}/cl/_testgo/genericembediface.Request,{{.*}}/cl/_testgo/genericembediface.Response]", ptr %8, i32 0, i32 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %1, ptr %9, align 8
-// CHECK-NEXT:   %10 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$v_XV1q3uiNvAZy1sSF5r_9UE2XfxcttHV0UKe3XpAeo", ptr @"*_llgo_{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[{{.*}}/cl/_testgo/genericembediface.Request,{{.*}}/cl/_testgo/genericembediface.Response]")
-// CHECK-NEXT:   %11 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %10, 0
-// CHECK-NEXT:   %12 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %11, ptr %8, 1
-// CHECK-NEXT:   %13 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %7)
-// CHECK-NEXT:   %14 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %7, 0
-// CHECK-NEXT:   %15 = getelementptr ptr, ptr %14, i64 3
-// CHECK-NEXT:   %16 = load ptr, ptr %15, align 8
-// CHECK-NEXT:   %17 = insertvalue { ptr, ptr } undef, ptr %16, 0
-// CHECK-NEXT:   %18 = insertvalue { ptr, ptr } %17, ptr %13, 1
-// CHECK-NEXT:   %19 = extractvalue { ptr, ptr } %18, 1
-// CHECK-NEXT:   %20 = extractvalue { ptr, ptr } %18, 0
-// CHECK-NEXT:   %21 = call %"{{.*}}/runtime/internal/runtime.iface" %20(ptr %19, %"{{.*}}/runtime/internal/runtime.iface" %12)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %21
+// CHECK-NEXT:   %9 = icmp eq ptr %8, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %9)
+// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[{{.*}}/cl/_testgo/genericembediface.Request,{{.*}}/cl/_testgo/genericembediface.Response]", ptr %8, i32 0, i32 0
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %1, ptr %10, align 8
+// CHECK-NEXT:   %11 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$v_XV1q3uiNvAZy1sSF5r_9UE2XfxcttHV0UKe3XpAeo", ptr @"*_llgo_{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[{{.*}}/cl/_testgo/genericembediface.Request,{{.*}}/cl/_testgo/genericembediface.Response]")
+// CHECK-NEXT:   %12 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %11, 0
+// CHECK-NEXT:   %13 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %12, ptr %8, 1
+// CHECK-NEXT:   %14 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %7)
+// CHECK-NEXT:   %15 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %7, 0
+// CHECK-NEXT:   %16 = getelementptr ptr, ptr %15, i64 3
+// CHECK-NEXT:   %17 = load ptr, ptr %16, align 8
+// CHECK-NEXT:   %18 = insertvalue { ptr, ptr } undef, ptr %17, 0
+// CHECK-NEXT:   %19 = insertvalue { ptr, ptr } %18, ptr %14, 1
+// CHECK-NEXT:   %20 = extractvalue { ptr, ptr } %19, 1
+// CHECK-NEXT:   %21 = extractvalue { ptr, ptr } %19, 0
+// CHECK-NEXT:   %22 = call %"{{.*}}/runtime/internal/runtime.iface" %21(ptr %20, %"{{.*}}/runtime/internal/runtime.iface" %13)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %22
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %2, %"{{.*}}/runtime/internal/runtime.String" { ptr @10, i64 68 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 20 })
@@ -141,26 +143,9 @@ func main() {
 
 // CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/cl/_testgo/genericembediface/streamlib.(*GenericServerStream[{{.*}}/cl/_testgo/genericembediface.Request,{{.*}}/cl/_testgo/genericembediface.Response]).Context"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[{{.*}}/cl/_testgo/genericembediface.Request,{{.*}}/cl/_testgo/genericembediface.Response]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %1, align 8
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %2)
-// CHECK-NEXT:   %4 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %2, 0
-// CHECK-NEXT:   %5 = getelementptr ptr, ptr %4, i64 3
-// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
-// CHECK-NEXT:   %7 = insertvalue { ptr, ptr } undef, ptr %6, 0
-// CHECK-NEXT:   %8 = insertvalue { ptr, ptr } %7, ptr %3, 1
-// CHECK-NEXT:   %9 = extractvalue { ptr, ptr } %8, 1
-// CHECK-NEXT:   %10 = extractvalue { ptr, ptr } %8, 0
-// CHECK-NEXT:   %11 = call %"{{.*}}/runtime/internal/runtime.String" %10(ptr %9)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %11
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[{{.*}}/cl/_testgo/genericembediface.Request,{{.*}}/cl/_testgo/genericembediface.Response].Context"(%"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[{{.*}}/cl/_testgo/genericembediface.Request,{{.*}}/cl/_testgo/genericembediface.Response]" %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = alloca %"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[{{.*}}/cl/_testgo/genericembediface.Request,{{.*}}/cl/_testgo/genericembediface.Response]", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
-// CHECK-NEXT:   store %"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[{{.*}}/cl/_testgo/genericembediface.Request,{{.*}}/cl/_testgo/genericembediface.Response]" %0, ptr %1, align 8
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[{{.*}}/cl/_testgo/genericembediface.Request,{{.*}}/cl/_testgo/genericembediface.Response]", ptr %1, i32 0, i32 0
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
+// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[{{.*}}/cl/_testgo/genericembediface.Request,{{.*}}/cl/_testgo/genericembediface.Response]", ptr %0, i32 0, i32 0
 // CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %2, align 8
 // CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %3)
 // CHECK-NEXT:   %5 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %3, 0
@@ -172,6 +157,27 @@ func main() {
 // CHECK-NEXT:   %11 = extractvalue { ptr, ptr } %9, 0
 // CHECK-NEXT:   %12 = call %"{{.*}}/runtime/internal/runtime.String" %11(ptr %10)
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %12
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[{{.*}}/cl/_testgo/genericembediface.Request,{{.*}}/cl/_testgo/genericembediface.Response].Context"(%"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[{{.*}}/cl/_testgo/genericembediface.Request,{{.*}}/cl/_testgo/genericembediface.Response]" %0){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %1 = alloca %"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[{{.*}}/cl/_testgo/genericembediface.Request,{{.*}}/cl/_testgo/genericembediface.Response]", align 8
+// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   store %"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[{{.*}}/cl/_testgo/genericembediface.Request,{{.*}}/cl/_testgo/genericembediface.Response]" %0, ptr %1, align 8
+// CHECK-NEXT:   %2 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[{{.*}}/cl/_testgo/genericembediface.Request,{{.*}}/cl/_testgo/genericembediface.Response]", ptr %1, i32 0, i32 0
+// CHECK-NEXT:   %4 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %3, align 8
+// CHECK-NEXT:   %5 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %4)
+// CHECK-NEXT:   %6 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %4, 0
+// CHECK-NEXT:   %7 = getelementptr ptr, ptr %6, i64 3
+// CHECK-NEXT:   %8 = load ptr, ptr %7, align 8
+// CHECK-NEXT:   %9 = insertvalue { ptr, ptr } undef, ptr %8, 0
+// CHECK-NEXT:   %10 = insertvalue { ptr, ptr } %9, ptr %5, 1
+// CHECK-NEXT:   %11 = extractvalue { ptr, ptr } %10, 1
+// CHECK-NEXT:   %12 = extractvalue { ptr, ptr } %10, 0
+// CHECK-NEXT:   %13 = call %"{{.*}}/runtime/internal/runtime.String" %12(ptr %11)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %13
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.String" @"__llgo_stub.{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[{{.*}}/cl/_testgo/genericembediface.Request,{{.*}}/cl/_testgo/genericembediface.Response].Context"(ptr %0, %"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[{{.*}}/cl/_testgo/genericembediface.Request,{{.*}}/cl/_testgo/genericembediface.Response]" %1){{.*}} {

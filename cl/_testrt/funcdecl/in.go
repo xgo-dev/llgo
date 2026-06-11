@@ -75,11 +75,19 @@ func check(fn func()) {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %0, ptr %1, align 8
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/funcdecl.rtype", ptr %1, i32 0, i32 1
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = getelementptr inbounds { ptr, ptr }, ptr %3, i32 0, i32 0
+// CHECK-NEXT:   %2 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testrt/funcdecl.rtype", ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
-// CHECK-NEXT:   ret ptr %5
+// CHECK-NEXT:   %6 = icmp eq ptr %5, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
+// CHECK-NEXT:   %7 = icmp eq ptr %5, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
+// CHECK-NEXT:   %8 = getelementptr inbounds { ptr, ptr }, ptr %5, i32 0, i32 0
+// CHECK-NEXT:   %9 = load ptr, ptr %8, align 8
+// CHECK-NEXT:   ret ptr %9
 // CHECK-NEXT: }
 
 func closurePtr(a any) unsafe.Pointer {

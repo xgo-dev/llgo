@@ -7,6 +7,7 @@ import (
 	"github.com/goplus/lib/c"
 )
 
+//llgo:type C
 // CHECK-LINE: @0 = private unnamed_addr constant [5 x i8] c"error", align 1
 // CHECK-LINE: @2 = private unnamed_addr constant [4 x i8] c"abc\00", align 1
 // CHECK-LINE: @3 = private unnamed_addr constant [31 x i8] c"unsafe.String: len out of range", align 1
@@ -28,7 +29,6 @@ import (
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
-//llgo:type C
 type T func()
 
 type M struct {

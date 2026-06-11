@@ -12,11 +12,16 @@ type Call struct {
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testrt/closureconv.(*Call).add"(ptr %0, i64 %1, i64 %2){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %3 = add i64 %1, %2
-// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testrt/closureconv.Call", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %5 = load i64, ptr %4, align 8
-// CHECK-NEXT:   %6 = add i64 %3, %5
-// CHECK-NEXT:   ret i64 %6
+// CHECK-NEXT:   %4 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %4)
+// CHECK-NEXT:   %5 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %5)
+// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/cl/_testrt/closureconv.Call", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %7 = load i64, ptr %6, align 8
+// CHECK-NEXT:   %8 = add i64 %3, %7
+// CHECK-NEXT:   ret i64 %8
 // CHECK-NEXT: }
+
 func (c *Call) add(a int, b int) int {
 	return a + b + c.n
 }
@@ -26,6 +31,7 @@ func (c *Call) add(a int, b int) int {
 // CHECK-NEXT:   %2 = add i64 %0, %1
 // CHECK-NEXT:   ret i64 %2
 // CHECK-NEXT: }
+
 func add(a int, b int) int {
 	return a + b
 }
@@ -33,21 +39,32 @@ func add(a int, b int) int {
 // CHECK-LABEL: define %"{{.*}}/cl/_testrt/closureconv.Func" @"{{.*}}/cl/_testrt/closureconv.demo1"(i64 %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/closureconv.Call", ptr %1, i32 0, i32 1
-// CHECK-NEXT:   store i64 %0, ptr %2, align 8
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   %4 = getelementptr inbounds { ptr }, ptr %3, i32 0, i32 0
-// CHECK-NEXT:   store ptr %1, ptr %4, align 8
-// CHECK-NEXT:   %5 = insertvalue { ptr, ptr } { ptr @"{{.*}}/cl/_testrt/closureconv.(*Call).add$bound", ptr undef }, ptr %3, 1
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/cl/_testrt/closureconv.Call", ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %7 = alloca %"{{.*}}/cl/_testrt/closureconv.Func", align 8
-// CHECK-NEXT:   store { ptr, ptr } %5, ptr %7, align 8
-// CHECK-NEXT:   %8 = load %"{{.*}}/cl/_testrt/closureconv.Func", ptr %7, align 8
-// CHECK-NEXT:   store %"{{.*}}/cl/_testrt/closureconv.Func" %8, ptr %6, align 8
+// CHECK-NEXT:   %2 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testrt/closureconv.Call", ptr %1, i32 0, i32 1
+// CHECK-NEXT:   store i64 %0, ptr %3, align 8
+// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT:   %5 = getelementptr inbounds { ptr }, ptr %4, i32 0, i32 0
+// CHECK-NEXT:   store ptr %1, ptr %5, align 8
+// CHECK-NEXT:   %6 = insertvalue { ptr, ptr } { ptr @"{{.*}}/cl/_testrt/closureconv.(*Call).add$bound", ptr undef }, ptr %4, 1
+// CHECK-NEXT:   %7 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
+// CHECK-NEXT:   %8 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %8)
 // CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/cl/_testrt/closureconv.Call", ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %10 = load %"{{.*}}/cl/_testrt/closureconv.Func", ptr %9, align 8
-// CHECK-NEXT:   ret %"{{.*}}/cl/_testrt/closureconv.Func" %10
+// CHECK-NEXT:   %10 = alloca %"{{.*}}/cl/_testrt/closureconv.Func", align 8
+// CHECK-NEXT:   store { ptr, ptr } %6, ptr %10, align 8
+// CHECK-NEXT:   %11 = load %"{{.*}}/cl/_testrt/closureconv.Func", ptr %10, align 8
+// CHECK-NEXT:   store %"{{.*}}/cl/_testrt/closureconv.Func" %11, ptr %9, align 8
+// CHECK-NEXT:   %12 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %12)
+// CHECK-NEXT:   %13 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %13)
+// CHECK-NEXT:   %14 = getelementptr inbounds %"{{.*}}/cl/_testrt/closureconv.Call", ptr %1, i32 0, i32 0
+// CHECK-NEXT:   %15 = load %"{{.*}}/cl/_testrt/closureconv.Func", ptr %14, align 8
+// CHECK-NEXT:   ret %"{{.*}}/cl/_testrt/closureconv.Func" %15
 // CHECK-NEXT: }
+
 func demo1(n int) Func {
 	m := &Call{n: n}
 	m.fn = m.add
@@ -74,7 +91,7 @@ func demo2() Func {
 
 // CHECK-LABEL: define %"{{.*}}/cl/_testrt/closureconv.Func" @"{{.*}}/cl/_testrt/closureconv.demo3"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   ret %"{{.*}}/cl/_testrt/closureconv.Func" { ptr @"__llgo_stub.github.com/goplus/llgo/cl/_testrt/closureconv.add", ptr null }
+// CHECK-NEXT:   ret %"{{.*}}/cl/_testrt/closureconv.Func" { ptr @"__llgo_stub.{{.*}}/cl/_testrt/closureconv.add", ptr null }
 // CHECK-NEXT: }
 
 func demo3() Func {
@@ -83,15 +100,17 @@ func demo3() Func {
 
 // CHECK-LABEL: define %"{{.*}}/cl/_testrt/closureconv.Func" @"{{.*}}/cl/_testrt/closureconv.demo4"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   ret %"{{.*}}/cl/_testrt/closureconv.Func" { ptr @"__llgo_stub.github.com/goplus/llgo/cl/_testrt/closureconv.demo4$1", ptr null }
+// CHECK-NEXT:   ret %"{{.*}}/cl/_testrt/closureconv.Func" { ptr @"__llgo_stub.{{.*}}/cl/_testrt/closureconv.demo4$1", ptr null }
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define i64 @"{{.*}}/cl/_testrt/closureconv.demo4$1"(i64 %0, i64 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = add i64 %0, %1
-// CHECK-NEXT:   ret i64 %2
-// CHECK-NEXT: }
 func demo4() Func {
+
+	// CHECK-LABEL: define i64 @"{{.*}}/cl/_testrt/closureconv.demo4$1"(i64 %0, i64 %1){{.*}} {
+	// CHECK-NEXT: _llgo_0:
+	// CHECK-NEXT:   %2 = add i64 %0, %1
+	// CHECK-NEXT:   ret i64 %2
+	// CHECK-NEXT: }
+
 	return func(a, b int) int { return a + b }
 }
 
@@ -109,16 +128,31 @@ func demo4() Func {
 // CHECK-NEXT:   ret %"{{.*}}/cl/_testrt/closureconv.Func" %6
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define i64 @"{{.*}}/cl/_testrt/closureconv.demo5$1"(ptr %0, i64 %1, i64 %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = add i64 %1, %2
-// CHECK-NEXT:   %4 = load { ptr }, ptr %0, align 8
-// CHECK-NEXT:   %5 = extractvalue { ptr } %4, 0
-// CHECK-NEXT:   %6 = load i64, ptr %5, align 8
-// CHECK-NEXT:   %7 = add i64 %3, %6
-// CHECK-NEXT:   ret i64 %7
-// CHECK-NEXT: }
 func demo5(n int) Func {
+
+	// CHECK-LABEL: define i64 @"{{.*}}/cl/_testrt/closureconv.demo5$1"(ptr %0, i64 %1, i64 %2){{.*}} {
+	// CHECK-NEXT: _llgo_0:
+	// CHECK-NEXT:   %3 = add i64 %1, %2
+	// CHECK-NEXT:   %4 = load { ptr }, ptr %0, align 8
+	// CHECK-NEXT:   %5 = extractvalue { ptr } %4, 0
+	// CHECK-NEXT:   %6 = load i64, ptr %5, align 8
+	// CHECK-NEXT:   %7 = add i64 %3, %6
+	// CHECK-NEXT:   ret i64 %7
+	// CHECK-NEXT: }
+
+	// CHECK-LABEL: define void @"{{.*}}/cl/_testrt/closureconv.init"(){{.*}} {
+	// CHECK-NEXT: _llgo_0:
+	// CHECK-NEXT:   %0 = load i1, ptr @"{{.*}}/cl/_testrt/closureconv.init$guard", align 1
+	// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
+	// CHECK-EMPTY:
+	// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
+	// CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testrt/closureconv.init$guard", align 1
+	// CHECK-NEXT:   br label %_llgo_2
+	// CHECK-EMPTY:
+	// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
+	// CHECK-NEXT:   ret void
+	// CHECK-NEXT: }
+
 	return func(a, b int) int { return a + b + n }
 }
 
@@ -207,13 +241,13 @@ func main() {
 // CHECK-NEXT:   ret i64 %5
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define linkonce i64 @"__llgo_stub.github.com/goplus/llgo/cl/_testrt/closureconv.add"(ptr %0, i64 %1, i64 %2){{.*}} {
+// CHECK-LABEL: define linkonce i64 @"__llgo_stub.{{.*}}/cl/_testrt/closureconv.add"(ptr %0, i64 %1, i64 %2){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %3 = tail call i64 @"{{.*}}/cl/_testrt/closureconv.add"(i64 %1, i64 %2)
 // CHECK-NEXT:   ret i64 %3
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define linkonce i64 @"__llgo_stub.github.com/goplus/llgo/cl/_testrt/closureconv.demo4$1"(ptr %0, i64 %1, i64 %2){{.*}} {
+// CHECK-LABEL: define linkonce i64 @"__llgo_stub.{{.*}}/cl/_testrt/closureconv.demo4$1"(ptr %0, i64 %1, i64 %2){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %3 = tail call i64 @"{{.*}}/cl/_testrt/closureconv.demo4$1"(i64 %1, i64 %2)
 // CHECK-NEXT:   ret i64 %3

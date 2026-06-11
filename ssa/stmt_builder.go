@@ -260,17 +260,19 @@ func (b Builder) Times(n Expr, loop func(i Expr)) {
 	typ := n.Type
 	phi := b.Phi(typ)
 	b.If(b.BinOp(token.LSS, phi.Expr, n), blks[1], blks[2])
-	b.SetBlockEx(blks[1], AtEnd, false)
+	b.SetBlockEx(blks[1], AtEnd, true)
 	loop(phi.Expr)
 	post := b.BinOp(token.ADD, phi.Expr, b.Prog.IntVal(1, typ))
+	body := b.blk
 	b.Jump(blks[0])
-	phi.AddIncoming(b, []BasicBlock{at, blks[1]}, func(i int, blk BasicBlock) Expr {
+	phi.AddIncoming(b, []BasicBlock{at, body}, func(i int, blk BasicBlock) Expr {
 		if i == 0 {
 			return b.Prog.IntVal(0, typ)
 		}
 		return post
 	})
 	b.SetBlockEx(blks[2], AtEnd, false)
+	b.blk = at
 	b.blk.last = blks[2].last
 }
 
@@ -320,12 +322,12 @@ type Phi struct {
 // AddIncoming adds incoming values to a phi node.
 func (p Phi) AddIncoming(b Builder, preds []BasicBlock, f func(i int, blk BasicBlock) Expr) {
 	raw := p.raw.Type
-	bs := llvmPredBlocks(preds)
 	vals := make([]llvm.Value, len(preds))
 	for iblk, blk := range preds {
 		val := f(iblk, blk)
 		vals[iblk] = checkExpr(val, raw, b).impl
 	}
+	bs := llvmPredBlocks(preds)
 	p.impl.AddIncoming(vals, bs)
 }
 

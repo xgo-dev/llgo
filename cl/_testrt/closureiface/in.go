@@ -1,6 +1,34 @@
 // LITTEST
 package main
 
+// CHECK-LINE: @5 = private unnamed_addr constant [5 x i8] c"error", align 1
+
+func main() {
+	var m int = 200
+	fn := func(n int) int {
+		return m + n
+	}
+	var i any = fn
+	f, ok := i.(func(int) int)
+	if !ok {
+		panic("error")
+	}
+	println(f(100))
+}
+
+// CHECK-LABEL: define void @"{{.*}}/cl/_testrt/closureiface.init"(){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %0 = load i1, ptr @"{{.*}}/cl/_testrt/closureiface.init$guard", align 1
+// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
+// CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testrt/closureiface.init$guard", align 1
+// CHECK-NEXT:   br label %_llgo_2
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
+
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/closureiface.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
@@ -18,7 +46,7 @@ package main
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_5
 // CHECK-NEXT:   %8 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @{{.*}}, i64 5 }, ptr %8, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @5, i64 5 }, ptr %8, align 8
 // CHECK-NEXT:   %9 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %8, 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %9)
 // CHECK-NEXT:   unreachable
@@ -47,23 +75,18 @@ package main
 // CHECK-NEXT:   %19 = extractvalue { { ptr, ptr }, i1 } %17, 1
 // CHECK-NEXT:   br i1 %19, label %_llgo_2, label %_llgo_1
 // CHECK-NEXT: }
-func main() {
-	var m int = 200
-	// CHECK-LABEL: define i64 @"{{.*}}/cl/_testrt/closureiface.main$1"(ptr %0, i64 %1){{.*}} {
-	// CHECK-NEXT: _llgo_0:
-	// CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
-	// CHECK-NEXT:   %3 = extractvalue { ptr } %2, 0
-	// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
-	// CHECK-NEXT:   %5 = add i64 %4, %1
-	// CHECK-NEXT:   ret i64 %5
-	// CHECK-NEXT: }
-	fn := func(n int) int {
-		return m + n
-	}
-	var i any = fn
-	f, ok := i.(func(int) int)
-	if !ok {
-		panic("error")
-	}
-	println(f(100))
-}
+
+// CHECK-LABEL: define i64 @"{{.*}}/cl/_testrt/closureiface.main$1"(ptr %0, i64 %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
+// CHECK-NEXT:   %3 = extractvalue { ptr } %2, 0
+// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
+// CHECK-NEXT:   %5 = add i64 %4, %1
+// CHECK-NEXT:   ret i64 %5
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal64"(ptr %0, ptr %1, ptr %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal64"(ptr %1, ptr %2)
+// CHECK-NEXT:   ret i1 %3
+// CHECK-NEXT: }

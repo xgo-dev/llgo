@@ -55,6 +55,14 @@ func AssertIndexRange(b bool) {
 	}
 }
 
+func PanicIndex(x int, y int) {
+	panic(boundsError{x: int64(x), signed: true, y: y, code: boundsIndex})
+}
+
+func PanicIndexU(x uint, y int) {
+	panic(boundsError{x: int64(x), signed: false, y: y, code: boundsIndex})
+}
+
 func AssertDivideByZero(b bool) {
 	if b {
 		panic(errorString("integer divide by zero"))

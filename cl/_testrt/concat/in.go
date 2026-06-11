@@ -1,6 +1,11 @@
 // LITTEST
 package main
 
+// CHECK-LINE: @0 = private unnamed_addr constant [3 x i8] c"...", align 1
+// CHECK-LINE: @1 = private unnamed_addr constant [5 x i8] c"Hello", align 1
+// CHECK-LINE: @2 = private unnamed_addr constant [1 x i8] c" ", align 1
+// CHECK-LINE: @3 = private unnamed_addr constant [5 x i8] c"World", align 1
+
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/cl/_testrt/concat.concat"(%"{{.*}}/runtime/internal/runtime.Slice" %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %0, 1
@@ -19,7 +24,7 @@ package main
 // CHECK-NEXT:   %8 = icmp slt i64 %4, 0
 // CHECK-NEXT:   %9 = icmp uge i64 %4, %7
 // CHECK-NEXT:   %10 = or i1 %9, %8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %10, {{.*}})
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %10, i64 %4, i1 true, i64 %7)
 // CHECK-NEXT:   %11 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.String", ptr %6, i64 %4
 // CHECK-NEXT:   %12 = load %"{{.*}}/runtime/internal/runtime.String", ptr %11, align 8
 // CHECK-NEXT:   %13 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" %2, %"{{.*}}/runtime/internal/runtime.String" %12)
@@ -28,6 +33,7 @@ package main
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_1
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %2
 // CHECK-NEXT: }
+
 func concat(args ...string) (ret string) {
 	for _, v := range args {
 		ret += v
@@ -41,9 +47,28 @@ func concat(args ...string) (ret string) {
 // CHECK-NEXT:   %2 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 3 })
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %2
 // CHECK-NEXT: }
+
 func info(s string) string {
 	return "" + s + "..."
 }
+
+func main() {
+	result := concat("Hello", " ", "World")
+	println(result)
+}
+
+// CHECK-LABEL: define void @"{{.*}}/cl/_testrt/concat.init"(){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %0 = load i1, ptr @"{{.*}}/cl/_testrt/concat.init$guard", align 1
+// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
+// CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testrt/concat.init$guard", align 1
+// CHECK-NEXT:   br label %_llgo_2
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/concat.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -62,7 +87,3 @@ func info(s string) string {
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
-func main() {
-	result := concat("Hello", " ", "World")
-	println(result)
-}

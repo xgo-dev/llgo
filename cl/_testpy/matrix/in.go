@@ -7,6 +7,44 @@ import (
 	"github.com/goplus/lib/py/numpy"
 )
 
+// CHECK-LINE: @0 = private unnamed_addr constant [8 x i8] c"a = %s\0A\00", align 1
+// CHECK-LINE: @1 = private unnamed_addr constant [8 x i8] c"a = %s\0A\00", align 1
+// CHECK-LINE: @2 = private unnamed_addr constant [10 x i8] c"a+b = %s\0A\00", align 1
+// CHECK-LINE: @3 = private unnamed_addr constant [4 x i8] c"add\00", align 1
+
+func main() {
+	a := py.List(
+		py.List(1.0, 2.0, 3.0),
+		py.List(4.0, 5.0, 6.0),
+		py.List(7.0, 8.0, 9.0),
+	)
+	b := py.List(
+		py.List(9.0, 8.0, 7.0),
+		py.List(6.0, 5.0, 4.0),
+		py.List(3.0, 2.0, 1.0),
+	)
+	x := numpy.Add(a, b)
+	c.Printf(c.Str("a = %s\n"), a.Str().CStr())
+	c.Printf(c.Str("a = %s\n"), b.Str().CStr())
+	c.Printf(c.Str("a+b = %s\n"), x.Str().CStr())
+}
+
+// CHECK-LABEL: define void @"{{.*}}/cl/_testpy/matrix.init"(){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %0 = load i1, ptr @"{{.*}}/cl/_testpy/matrix.init$guard", align 1
+// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
+// CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testpy/matrix.init$guard", align 1
+// CHECK-NEXT:   call void @"github.com/goplus/lib/py/numpy.init"()
+// CHECK-NEXT:   %1 = load ptr, ptr @__llgo_py.numpy, align 8
+// CHECK-NEXT:   call void (ptr, ...) @llgoLoadPyModSyms(ptr %1, ptr @3, ptr @__llgo_py.numpy.add, ptr null)
+// CHECK-NEXT:   br label %_llgo_2
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
+
 // CHECK-LABEL: define void @"{{.*}}/cl/_testpy/matrix.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @PyList_New(i64 3)
@@ -72,19 +110,3 @@ import (
 // CHECK-NEXT:   %60 = call i32 (ptr, ...) @printf(ptr @2, ptr %59)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
-func main() {
-	a := py.List(
-		py.List(1.0, 2.0, 3.0),
-		py.List(4.0, 5.0, 6.0),
-		py.List(7.0, 8.0, 9.0),
-	)
-	b := py.List(
-		py.List(9.0, 8.0, 7.0),
-		py.List(6.0, 5.0, 4.0),
-		py.List(3.0, 2.0, 1.0),
-	)
-	x := numpy.Add(a, b)
-	c.Printf(c.Str("a = %s\n"), a.Str().CStr())
-	c.Printf(c.Str("a = %s\n"), b.Str().CStr())
-	c.Printf(c.Str("a+b = %s\n"), x.Str().CStr())
-}

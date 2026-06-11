@@ -6,14 +6,17 @@ import (
 	"github.com/goplus/llgo/runtime/abi"
 )
 
+// CHECK-LINE: @0 = private unnamed_addr constant [20 x i8] c"Kind: %d, Size: %d\0A\00", align 1
+
 // CHECK-LABEL: define ptr @"{{.*}}/cl/_testrt/gblarray.Basic"(i64 %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = icmp uge i64 %0, 25
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %1, {{.*}})
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %1, i64 %0, i1 false, i64 25)
 // CHECK-NEXT:   %2 = getelementptr inbounds ptr, ptr @"{{.*}}/cl/_testrt/gblarray.basicTypes", i64 %0
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
 // CHECK-NEXT:   ret ptr %3
 // CHECK-NEXT: }
+
 func Basic(kind abi.Kind) *abi.Type {
 	return basicTypes[kind]
 }
@@ -21,20 +24,27 @@ func Basic(kind abi.Kind) *abi.Type {
 // CHECK-LABEL: define ptr @"{{.*}}/cl/_testrt/gblarray.basicType"(i64 %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 72)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %3 = icmp uge i64 %0, 25
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %3, {{.*}})
-// CHECK-NEXT:   %4 = getelementptr inbounds i64, ptr @"{{.*}}/cl/_testrt/gblarray.sizeBasicTypes", i64 %0
-// CHECK-NEXT:   %5 = load i64, ptr %4, align 8
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %1, i32 0, i32 2
-// CHECK-NEXT:   %7 = trunc i64 %0 to i32
-// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %1, i32 0, i32 6
-// CHECK-NEXT:   %9 = trunc i64 %0 to i8
-// CHECK-NEXT:   store i64 %5, ptr %2, align 8
-// CHECK-NEXT:   store i32 %7, ptr %6, align 4
-// CHECK-NEXT:   store i8 %9, ptr %8, align 1
+// CHECK-NEXT:   %2 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %1, i32 0, i32 0
+// CHECK-NEXT:   %4 = icmp uge i64 %0, 25
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %4, i64 %0, i1 false, i64 25)
+// CHECK-NEXT:   %5 = getelementptr inbounds i64, ptr @"{{.*}}/cl/_testrt/gblarray.sizeBasicTypes", i64 %0
+// CHECK-NEXT:   %6 = load i64, ptr %5, align 8
+// CHECK-NEXT:   %7 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
+// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %1, i32 0, i32 2
+// CHECK-NEXT:   %9 = trunc i64 %0 to i32
+// CHECK-NEXT:   %10 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %10)
+// CHECK-NEXT:   %11 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %1, i32 0, i32 6
+// CHECK-NEXT:   %12 = trunc i64 %0 to i8
+// CHECK-NEXT:   store i64 %6, ptr %3, align 8
+// CHECK-NEXT:   store i32 %9, ptr %8, align 4
+// CHECK-NEXT:   store i8 %12, ptr %11, align 1
 // CHECK-NEXT:   ret ptr %1
 // CHECK-NEXT: }
+
 func basicType(kind abi.Kind) *abi.Type {
 	return &abi.Type{
 		Size_: sizeBasicTypes[kind],
@@ -59,6 +69,7 @@ func basicType(kind abi.Kind) *abi.Type {
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
+
 var (
 	basicTypes = [...]*abi.Type{
 		abi.String: basicType(abi.String),
@@ -71,14 +82,23 @@ var (
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/gblarray.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/cl/_testrt/gblarray.Basic"(i64 24)
-// CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 6
-// CHECK-NEXT:   %2 = load i8, ptr %1, align 1
-// CHECK-NEXT:   %3 = zext i8 %2 to i64
-// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %5 = load i64, ptr %4, align 8
-// CHECK-NEXT:   %6 = call i32 (ptr, ...) @printf(ptr @0, i64 %3, i64 %5)
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 6
+// CHECK-NEXT:   %4 = load i8, ptr %3, align 1
+// CHECK-NEXT:   %5 = zext i8 %4 to i64
+// CHECK-NEXT:   %6 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
+// CHECK-NEXT:   %7 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
+// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %9 = load i64, ptr %8, align 8
+// CHECK-NEXT:   %10 = call i32 (ptr, ...) @printf(ptr @0, i64 %5, i64 %9)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
+
 func main() {
 	t := Basic(abi.String)
 	c.Printf(c.Str("Kind: %d, Size: %d\n"), int(t.Kind_), t.Size_)

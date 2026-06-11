@@ -1,6 +1,8 @@
 // LITTEST
 package main
 
+// CHECK-LINE: @17 = private unnamed_addr constant [47 x i8] c"type assertion should have failed but succeeded", align 1
+
 type inner struct {
 	x int
 }
@@ -10,40 +12,80 @@ type outer struct {
 	inner
 }
 
-// CHECK-LABEL: define i64 @"{{.*}}/cl/_testrt/methodthunk.(*InnerInt).M"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}/cl/_testrt/methodthunk.InnerInt", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load i64, ptr %1, align 8
-// CHECK-NEXT:   ret i64 %2
-// CHECK-NEXT: }
 func (*inner) M() {}
 
 type InnerInt struct {
 	X int
 }
 
-// CHECK-LABEL: define i64 @"{{.*}}/cl/_testrt/methodthunk.(*OuterInt).M"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}/cl/_testrt/methodthunk.OuterInt", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = call i64 @"{{.*}}/cl/_testrt/methodthunk.(*InnerInt).M"(ptr %1)
-// CHECK-NEXT:   ret i64 %2
-// CHECK-NEXT: }
 type OuterInt struct {
 	Y int
 	InnerInt
 }
 
+// CHECK-LABEL: define i64 @"{{.*}}/cl/_testrt/methodthunk.(*InnerInt).M"(ptr %0){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testrt/methodthunk.InnerInt", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
+// CHECK-NEXT:   ret i64 %4
+// CHECK-NEXT: }
+
 func (i *InnerInt) M() int {
 	return i.X
 }
 
+func main() {
+	var v1 any = (*outer).M
+	var v2 any = (*InnerInt).M
+	f1, ok := v1.(func(*outer))
+	println(f1, ok)
+	f2, ok := v2.(func(*outer))
+	println(f2, ok)
+	if ok {
+		panic("type assertion should have failed but succeeded")
+	}
+}
+
+func (m *outer) M() {}
+
+// CHECK-LABEL: define i64 @"{{.*}}/cl/_testrt/methodthunk.(*OuterInt).M"(ptr %0){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
+// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/methodthunk.OuterInt", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %3 = call i64 @"{{.*}}/cl/_testrt/methodthunk.(*InnerInt).M"(ptr %2)
+// CHECK-NEXT:   ret i64 %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define void @"{{.*}}/cl/_testrt/methodthunk.init"(){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %0 = load i1, ptr @"{{.*}}/cl/_testrt/methodthunk.init$guard", align 1
+// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
+// CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testrt/methodthunk.init$guard", align 1
+// CHECK-NEXT:   br label %_llgo_2
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define void @"{{.*}}/cl/_testrt/methodthunk.(*inner).M"(ptr %0){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
+
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/methodthunk.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store { ptr, ptr } { ptr @"__llgo_stub.github.com/goplus/llgo/cl/_testrt/methodthunk.(*outer).M$thunk", ptr null }, ptr %0, align 8
+// CHECK-NEXT:   store { ptr, ptr } { ptr @"__llgo_stub.{{.*}}/cl/_testrt/methodthunk.(*outer).M$thunk", ptr null }, ptr %0, align 8
 // CHECK-NEXT:   %1 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_closure$31N-NdXOzvOy55m3NGAY_hdZ_NIdtCAe5V7uk7-a5HU", ptr undef }, ptr %0, 1
 // CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store { ptr, ptr } { ptr @"__llgo_stub.github.com/goplus/llgo/cl/_testrt/methodthunk.(*InnerInt).M$thunk", ptr null }, ptr %2, align 8
+// CHECK-NEXT:   store { ptr, ptr } { ptr @"__llgo_stub.{{.*}}/cl/_testrt/methodthunk.(*InnerInt).M$thunk", ptr null }, ptr %2, align 8
 // CHECK-NEXT:   %3 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_closure$ygdobeQSbhO1hSbeWA66ORl_cNKHor-iD8MqRFtuWHg", ptr undef }, ptr %2, 1
 // CHECK-NEXT:   %4 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %1, 0
 // CHECK-NEXT:   %5 = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure$31N-NdXOzvOy55m3NGAY_hdZ_NIdtCAe5V7uk7-a5HU", ptr %4)
@@ -103,23 +145,11 @@ func (i *InnerInt) M() int {
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   br i1 %24, label %_llgo_1, label %_llgo_2
 // CHECK-NEXT: }
-func main() {
-	var v1 any = (*outer).M
-	var v2 any = (*InnerInt).M
-	f1, ok := v1.(func(*outer))
-	println(f1, ok)
-	f2, ok := v2.(func(*outer))
-	println(f2, ok)
-	if ok {
-		panic("type assertion should have failed but succeeded")
-	}
-}
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/methodthunk.(*outer).M"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
-func (m *outer) M() {}
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/methodthunk.(*outer).M$thunk"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -127,16 +157,28 @@ func (m *outer) M() {}
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define linkonce void @"__llgo_stub.github.com/goplus/llgo/cl/_testrt/methodthunk.(*outer).M$thunk"(ptr %0, ptr %1){{.*}} {
+// CHECK-LABEL: define linkonce void @"__llgo_stub.{{.*}}/cl/_testrt/methodthunk.(*outer).M$thunk"(ptr %0, ptr %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   tail call void @"{{.*}}/cl/_testrt/methodthunk.(*outer).M$thunk"(ptr %1)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequal64"(ptr %0, ptr %1, ptr %2){{.*}} {
+// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal64"(ptr %0, ptr %1, ptr %2){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal64"(ptr %1, ptr %2)
 // CHECK-NEXT:   ret i1 %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce void @"__llgo_stub.{{.*}}/cl/_testrt/methodthunk.(*inner).M"(ptr %0, ptr %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   tail call void @"{{.*}}/cl/_testrt/methodthunk.(*inner).M"(ptr %1)
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce void @"__llgo_stub.{{.*}}/cl/_testrt/methodthunk.(*outer).M"(ptr %0, ptr %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   tail call void @"{{.*}}/cl/_testrt/methodthunk.(*outer).M"(ptr %1)
+// CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testrt/methodthunk.(*InnerInt).M$thunk"(ptr %0){{.*}} {
@@ -145,8 +187,14 @@ func (m *outer) M() {}
 // CHECK-NEXT:   ret i64 %1
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define linkonce i64 @"__llgo_stub.github.com/goplus/llgo/cl/_testrt/methodthunk.(*InnerInt).M$thunk"(ptr %0, ptr %1){{.*}} {
+// CHECK-LABEL: define linkonce i64 @"__llgo_stub.{{.*}}/cl/_testrt/methodthunk.(*InnerInt).M$thunk"(ptr %0, ptr %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = tail call i64 @"{{.*}}/cl/_testrt/methodthunk.(*InnerInt).M$thunk"(ptr %1)
+// CHECK-NEXT:   ret i64 %2
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce i64 @"__llgo_stub.{{.*}}/cl/_testrt/methodthunk.(*InnerInt).M"(ptr %0, ptr %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %2 = tail call i64 @"{{.*}}/cl/_testrt/methodthunk.(*InnerInt).M"(ptr %1)
 // CHECK-NEXT:   ret i64 %2
 // CHECK-NEXT: }

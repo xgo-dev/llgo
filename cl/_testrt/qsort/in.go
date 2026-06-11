@@ -7,8 +7,34 @@ import (
 	"github.com/goplus/lib/c"
 )
 
+//
+// CHECK-LINE: @0 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
+
 //go:linkname qsort C.qsort
 func qsort(base c.Pointer, count, elem uintptr, compar func(a, b c.Pointer) c.Int)
+
+func main() {
+	a := [...]int{100, 8, 23, 2, 7}
+	qsort(c.Pointer(&a[0]), 5, unsafe.Sizeof(0), func(a, b c.Pointer) c.Int {
+		return c.Int(*(*int)(a) - *(*int)(b))
+	})
+	for _, v := range a {
+		c.Printf(c.Str("%d\n"), v)
+	}
+}
+
+// CHECK-LABEL: define void @"{{.*}}/cl/_testrt/qsort.init"(){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %0 = load i1, ptr @"{{.*}}/cl/_testrt/qsort.init$guard", align 1
+// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
+// CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testrt/qsort.init$guard", align 1
+// CHECK-NEXT:   br label %_llgo_2
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/qsort.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -38,7 +64,7 @@ func qsort(base c.Pointer, count, elem uintptr, compar func(a, b c.Pointer) c.In
 // CHECK-NEXT:   %11 = icmp slt i64 %9, 0
 // CHECK-NEXT:   %12 = icmp uge i64 %9, 5
 // CHECK-NEXT:   %13 = or i1 %12, %11
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %13, {{.*}})
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %13, i64 %9, i1 true, i64 5)
 // CHECK-NEXT:   %14 = getelementptr inbounds i64, ptr %0, i64 %9
 // CHECK-NEXT:   %15 = load i64, ptr %14, align 8
 // CHECK-NEXT:   %16 = call i32 (ptr, ...) @printf(ptr @0, i64 %15)
@@ -47,20 +73,12 @@ func qsort(base c.Pointer, count, elem uintptr, compar func(a, b c.Pointer) c.In
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_1
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
-func main() {
-	a := [...]int{100, 8, 23, 2, 7}
-	qsort(c.Pointer(&a[0]), 5, unsafe.Sizeof(0), func(a, b c.Pointer) c.Int {
-		return c.Int(*(*int)(a) - *(*int)(b))
-	})
-	// CHECK-LABEL: define i32 @"{{.*}}/cl/_testrt/qsort.main$1"(ptr %0, ptr %1){{.*}} {
-	// CHECK-NEXT: _llgo_0:
-	// CHECK-NEXT:   %2 = load i64, ptr %0, align 8
-	// CHECK-NEXT:   %3 = load i64, ptr %1, align 8
-	// CHECK-NEXT:   %4 = sub i64 %2, %3
-	// CHECK-NEXT:   %5 = trunc i64 %4 to i32
-	// CHECK-NEXT:   ret i32 %5
-	// CHECK-NEXT: }
-	for _, v := range a {
-		c.Printf(c.Str("%d\n"), v)
-	}
-}
+
+// CHECK-LABEL: define i32 @"{{.*}}/cl/_testrt/qsort.main$1"(ptr %0, ptr %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %2 = load i64, ptr %0, align 8
+// CHECK-NEXT:   %3 = load i64, ptr %1, align 8
+// CHECK-NEXT:   %4 = sub i64 %2, %3
+// CHECK-NEXT:   %5 = trunc i64 %4 to i32
+// CHECK-NEXT:   ret i32 %5
+// CHECK-NEXT: }

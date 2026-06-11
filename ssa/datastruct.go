@@ -41,7 +41,7 @@ import (
 func (b Builder) FieldAddr(x Expr, idx int) Expr {
 	dbgInstrf("FieldAddr %v, %d\n", x.impl, idx)
 	prog := b.Prog
-	b.assertStaticNilDeref(x)
+	b.AssertNilDeref(x)
 	tstruc := prog.Elem(x.Type)
 	telem := prog.Field(tstruc, idx)
 	pt := prog.Pointer(telem)

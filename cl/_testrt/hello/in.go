@@ -3,8 +3,6 @@ package main
 
 import "github.com/goplus/llgo/cl/_testrt/hello/libc"
 
-// CHECK-LINE: @"{{.*}}/cl/_testrt/hello.format" = global [10 x i8] zeroinitializer, align 1
-
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/hello.init"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = load i1, ptr @"{{.*}}/cl/_testrt/hello.init$guard", align 1
@@ -27,6 +25,7 @@ import "github.com/goplus/llgo/cl/_testrt/hello/libc"
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
+
 var format = [...]int8{'H', 'e', 'l', 'l', 'o', ' ', '%', 'd', '\n', 0}
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/hello.main"(){{.*}} {
@@ -35,6 +34,7 @@ var format = [...]int8{'H', 'e', 'l', 'l', 'o', ' ', '%', 'd', '\n', 0}
 // CHECK-NEXT:   call void (ptr, ...) @printf(ptr @"{{.*}}/cl/_testrt/hello.format", i32 %0)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
+
 func main() {
 	sfmt := &format[0]
 	libc.Printf(sfmt, libc.Strlen(sfmt))

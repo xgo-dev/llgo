@@ -132,6 +132,9 @@ retry:
 		if v, ok := p.gocvt.typbg.Load(namedLinkname(t)); ok && v.(Background) == InC {
 			return 0
 		}
+		if _, ok := t.Underlying().(*types.Signature); ok {
+			return 0
+		}
 		typ = t.Underlying()
 		goto retry
 	case *types.Alias:

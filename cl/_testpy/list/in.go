@@ -16,17 +16,26 @@ import (
 // CHECK-LINE: @3 = private unnamed_addr constant [14 x i8] c"lens = %d %d\0A\00", align 1
 // CHECK-LINE: @4 = private unnamed_addr constant [14 x i8] c"ptrs = %d %d\0A\00", align 1
 // CHECK-LINE: @5 = private unnamed_addr constant [12 x i8] c"pi = %.15g\0A\00", align 1
-// CHECK-LINE: @6 = private unnamed_addr constant [4 x i8] c"abs\00", align 1
-// CHECK-LINE: @7 = private unnamed_addr constant [6 x i8] c"print\00", align 1
+// CHECK-LINE: @6 = private unnamed_addr constant [3 x i8] c"pi\00", align 1
+// CHECK-LINE: @7 = private unnamed_addr constant [4 x i8] c"abs\00", align 1
+// CHECK-LINE: @8 = private unnamed_addr constant [6 x i8] c"print\00", align 1
 
 func main() {
 	v := 100
 	x := py.List(true, false, 1, float32(2.1), 3.1, uint(4), 1+2i, complex64(3+4i),
 		"hello", []byte("world"), [...]byte{1, 2, 3}, [...]byte{}, &v, unsafe.Pointer(&v))
 	y := py.List(std.Abs, std.Print, math.Pi)
+	ptr := uintptr(unsafe.Pointer(&v))
 	c.Printf(c.Str("lens = %d %d\n"), x.ListLen(), y.ListLen())
-	c.Printf(c.Str("ptrs = %d %d\n"), x.ListItem(12).IsTrue(), x.ListItem(13).IsTrue())
-	c.Printf(c.Str("pi = %.15g\n"), y.ListItem(2).Float64())
+	c.Printf(c.Str("ptrs = %d %d\n"), intOf(x.ListItem(12).Uintptr() == ptr), intOf(x.ListItem(13).Uintptr() == ptr))
+	c.Printf(c.Str("pi = %.15g\n"), math.Pi.Float64())
+}
+
+func intOf(ok bool) int {
+	if ok {
+		return 1
+	}
+	return 0
 }
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testpy/list.init"(){{.*}} {
@@ -39,11 +48,22 @@ func main() {
 // CHECK-NEXT:   call void @"github.com/goplus/lib/py/math.init"()
 // CHECK-NEXT:   call void @"github.com/goplus/lib/py/std.init"()
 // CHECK-NEXT:   %1 = load ptr, ptr @__llgo_py.builtins, align 8
-// CHECK-NEXT:   call void (ptr, ...) @llgoLoadPyModSyms(ptr %1, ptr @6, ptr @__llgo_py.builtins.abs, ptr @7, ptr @__llgo_py.builtins.print, ptr null)
+// CHECK-NEXT:   call void (ptr, ...) @llgoLoadPyModSyms(ptr %1, ptr @7, ptr @__llgo_py.builtins.abs, ptr @8, ptr @__llgo_py.builtins.print, ptr null)
 // CHECK-NEXT:   br label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
 // CHECK-NEXT:   ret void
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define i64 @"{{.*}}/cl/_testpy/list.intOf"(i1 %0){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   br i1 %0, label %_llgo_1, label %_llgo_2
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
+// CHECK-NEXT:   ret i64 1
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
+// CHECK-NEXT:   ret i64 0
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testpy/list.main"(){{.*}} {
@@ -105,16 +125,22 @@ func main() {
 // CHECK-NEXT:   %47 = load ptr, ptr @__llgo_py.builtins.print, align 8
 // CHECK-NEXT:   %48 = call i32 @PyList_SetItem(ptr %44, i64 1, ptr %47)
 // CHECK-NEXT:   %49 = call i32 @PyList_SetItem(ptr %44, i64 2, ptr %43)
-// CHECK-NEXT:   %50 = call i64 @PyList_Size(ptr %7)
-// CHECK-NEXT:   %51 = call i64 @PyList_Size(ptr %44)
-// CHECK-NEXT:   %52 = call i32 (ptr, ...) @printf(ptr @3, i64 %50, i64 %51)
-// CHECK-NEXT:   %53 = call ptr @PyList_GetItem(ptr %7, i64 12)
-// CHECK-NEXT:   %54 = call i32 @PyObject_IsTrue(ptr %53)
-// CHECK-NEXT:   %55 = call ptr @PyList_GetItem(ptr %7, i64 13)
-// CHECK-NEXT:   %56 = call i32 @PyObject_IsTrue(ptr %55)
-// CHECK-NEXT:   %57 = call i32 (ptr, ...) @printf(ptr @4, i32 %54, i32 %56)
-// CHECK-NEXT:   %58 = call ptr @PyList_GetItem(ptr %44, i64 2)
-// CHECK-NEXT:   %59 = call double @PyFloat_AsDouble(ptr %58)
-// CHECK-NEXT:   %60 = call i32 (ptr, ...) @printf(ptr @5, double %59)
+// CHECK-NEXT:   %50 = ptrtoint ptr %0 to i64
+// CHECK-NEXT:   %51 = call i64 @PyList_Size(ptr %7)
+// CHECK-NEXT:   %52 = call i64 @PyList_Size(ptr %44)
+// CHECK-NEXT:   %53 = call i32 (ptr, ...) @printf(ptr @3, i64 %51, i64 %52)
+// CHECK-NEXT:   %54 = call ptr @PyList_GetItem(ptr %7, i64 12)
+// CHECK-NEXT:   %55 = call i64 @PyLong_AsSize_t(ptr %54)
+// CHECK-NEXT:   %56 = icmp eq i64 %55, %50
+// CHECK-NEXT:   %57 = call i64 @"{{.*}}/cl/_testpy/list.intOf"(i1 %56)
+// CHECK-NEXT:   %58 = call ptr @PyList_GetItem(ptr %7, i64 13)
+// CHECK-NEXT:   %59 = call i64 @PyLong_AsSize_t(ptr %58)
+// CHECK-NEXT:   %60 = icmp eq i64 %59, %50
+// CHECK-NEXT:   %61 = call i64 @"{{.*}}/cl/_testpy/list.intOf"(i1 %60)
+// CHECK-NEXT:   %62 = call i32 (ptr, ...) @printf(ptr @4, i64 %57, i64 %61)
+// CHECK-NEXT:   %63 = load ptr, ptr @__llgo_py.math, align 8
+// CHECK-NEXT:   %64 = call ptr @PyObject_GetAttrString(ptr %63, ptr @6)
+// CHECK-NEXT:   %65 = call double @PyFloat_AsDouble(ptr %64)
+// CHECK-NEXT:   %66 = call i32 (ptr, ...) @printf(ptr @5, double %65)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }

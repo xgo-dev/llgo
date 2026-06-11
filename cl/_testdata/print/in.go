@@ -42,20 +42,44 @@ type stringStruct struct {
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
 // CHECK-NEXT:   %3 = call ptr @"{{.*}}/cl/_testdata/print.stringStructOf"(ptr %1)
-// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testdata/print.stringStruct", ptr %3, i32 0, i32 0
-// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/cl/_testdata/print.slice", ptr %2, i32 0, i32 0
-// CHECK-NEXT:   store ptr %5, ptr %6, align 8
-// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/cl/_testdata/print.stringStruct", ptr %3, i32 0, i32 1
-// CHECK-NEXT:   %8 = load i64, ptr %7, align 8
-// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/cl/_testdata/print.slice", ptr %2, i32 0, i32 1
-// CHECK-NEXT:   store i64 %8, ptr %9, align 8
-// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/cl/_testdata/print.stringStruct", ptr %3, i32 0, i32 1
-// CHECK-NEXT:   %11 = load i64, ptr %10, align 8
-// CHECK-NEXT:   %12 = getelementptr inbounds %"{{.*}}/cl/_testdata/print.slice", ptr %2, i32 0, i32 2
-// CHECK-NEXT:   store i64 %11, ptr %12, align 8
-// CHECK-NEXT:   %13 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %2, align 8
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %13
+// CHECK-NEXT:   %4 = icmp eq ptr %3, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %4)
+// CHECK-NEXT:   %5 = icmp eq ptr %3, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %5)
+// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/cl/_testdata/print.stringStruct", ptr %3, i32 0, i32 0
+// CHECK-NEXT:   %7 = load ptr, ptr %6, align 8
+// CHECK-NEXT:   %8 = icmp eq ptr %2, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %8)
+// CHECK-NEXT:   %9 = icmp eq ptr %2, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %9)
+// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/cl/_testdata/print.slice", ptr %2, i32 0, i32 0
+// CHECK-NEXT:   store ptr %7, ptr %10, align 8
+// CHECK-NEXT:   %11 = icmp eq ptr %3, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %11)
+// CHECK-NEXT:   %12 = icmp eq ptr %3, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %12)
+// CHECK-NEXT:   %13 = getelementptr inbounds %"{{.*}}/cl/_testdata/print.stringStruct", ptr %3, i32 0, i32 1
+// CHECK-NEXT:   %14 = load i64, ptr %13, align 8
+// CHECK-NEXT:   %15 = icmp eq ptr %2, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %15)
+// CHECK-NEXT:   %16 = icmp eq ptr %2, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %16)
+// CHECK-NEXT:   %17 = getelementptr inbounds %"{{.*}}/cl/_testdata/print.slice", ptr %2, i32 0, i32 1
+// CHECK-NEXT:   store i64 %14, ptr %17, align 8
+// CHECK-NEXT:   %18 = icmp eq ptr %3, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %18)
+// CHECK-NEXT:   %19 = icmp eq ptr %3, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %19)
+// CHECK-NEXT:   %20 = getelementptr inbounds %"{{.*}}/cl/_testdata/print.stringStruct", ptr %3, i32 0, i32 1
+// CHECK-NEXT:   %21 = load i64, ptr %20, align 8
+// CHECK-NEXT:   %22 = icmp eq ptr %2, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %22)
+// CHECK-NEXT:   %23 = icmp eq ptr %2, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %23)
+// CHECK-NEXT:   %24 = getelementptr inbounds %"{{.*}}/cl/_testdata/print.slice", ptr %2, i32 0, i32 2
+// CHECK-NEXT:   store i64 %21, ptr %24, align 8
+// CHECK-NEXT:   %25 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %2, align 8
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %25
 // CHECK-NEXT: }
 
 func bytes(s string) (ret []byte) {
