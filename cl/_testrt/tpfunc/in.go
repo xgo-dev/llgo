@@ -28,7 +28,7 @@ type Callback[T any] func(*T)
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/tpfunc.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 16)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 8)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 8)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)

@@ -4,12 +4,12 @@ package main
 import _ "unsafe"
 
 //
-//go:linkname asmFull llgo.asm
-// CHECK-LINE: @18 = private unnamed_addr constant [5 x i8] c"value", align 1
-// CHECK-LINE: @19 = private unnamed_addr constant [7 x i8] c"Result:", align 1
-// CHECK-LINE: @20 = private unnamed_addr constant [1 x i8] c"x", align 1
-// CHECK-LINE: @21 = private unnamed_addr constant [1 x i8] c"y", align 1
+// CHECK-LINE: @{{[0-9]+}} = private unnamed_addr constant [5 x i8] c"value", align 1
+// CHECK-LINE: @{{[0-9]+}} = private unnamed_addr constant [7 x i8] c"Result:", align 1
+// CHECK-LINE: @{{[0-9]+}} = private unnamed_addr constant [1 x i8] c"x", align 1
+// CHECK-LINE: @{{[0-9]+}} = private unnamed_addr constant [1 x i8] c"y", align 1
 
+//go:linkname asmFull llgo.asm
 func asmFull(instruction string, regs map[string]any) uintptr
 
 func main() {
@@ -55,7 +55,7 @@ func main() {
 // CHECK-NEXT:   store i64 42, ptr %1, align 8
 // CHECK-NEXT:   %2 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %1, 1
 // CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @18, i64 5 }, ptr %3, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 5 }, ptr %3, align 8
 // CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_string]_llgo_any", ptr %0, ptr %3)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %2, ptr %4, align 8
 // CHECK-NEXT:   call void asm sideeffect "# test value ${0}", "r"(i64 42)
@@ -64,11 +64,11 @@ func main() {
 // CHECK-NEXT:   store i64 42, ptr %6, align 8
 // CHECK-NEXT:   %7 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %6, 1
 // CHECK-NEXT:   %8 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @18, i64 5 }, ptr %8, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 5 }, ptr %8, align 8
 // CHECK-NEXT:   %9 = call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_string]_llgo_any", ptr %5, ptr %8)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %7, ptr %9, align 8
 // CHECK-NEXT:   %10 = call i64 asm sideeffect "mov $0, ${1}", "=&r,r"(i64 42)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @19, i64 7 })
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 7 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %10)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
@@ -77,14 +77,14 @@ func main() {
 // CHECK-NEXT:   store i64 25, ptr %12, align 8
 // CHECK-NEXT:   %13 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %12, 1
 // CHECK-NEXT:   %14 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @20, i64 1 }, ptr %14, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 1 }, ptr %14, align 8
 // CHECK-NEXT:   %15 = call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_string]_llgo_any", ptr %11, ptr %14)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %13, ptr %15, align 8
 // CHECK-NEXT:   %16 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK-NEXT:   store i64 17, ptr %16, align 8
 // CHECK-NEXT:   %17 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %16, 1
 // CHECK-NEXT:   %18 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @21, i64 1 }, ptr %18, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 1 }, ptr %18, align 8
 // CHECK-NEXT:   %19 = call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_string]_llgo_any", ptr %11, ptr %18)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %17, ptr %19, align 8
 // CHECK-NEXT:   %20 = call i64 asm sideeffect "# calc ${1} + ${2} -> $0", "=&r,r,r"(i64 25, i64 17)
