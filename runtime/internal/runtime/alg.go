@@ -240,7 +240,7 @@ func efaceeq(t *_type, x, y unsafe.Pointer) bool {
 	}
 	eq := t.Equal
 	if eq == nil {
-		panic(errorString("comparing uncomparable type " + t.Str_).Error())
+		panic(errorString("comparing uncomparable type " + t.Str_))
 	}
 	if isDirectIface(t) {
 		// Direct interface types are ptr, chan, map, func, and single-element structs/arrays thereof.
@@ -257,7 +257,7 @@ func ifaceeq(tab *itab, x, y unsafe.Pointer) bool {
 	t := tab._type
 	eq := t.Equal
 	if eq == nil {
-		panic(errorString("comparing uncomparable type " + t.Str_).Error())
+		panic(errorString("comparing uncomparable type " + t.Str_))
 	}
 	if isDirectIface(t) {
 		// See comment in efaceeq.

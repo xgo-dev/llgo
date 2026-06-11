@@ -180,7 +180,7 @@ func IfaceType(i iface) *abi.Type {
 
 func IfacePtrData(i iface) unsafe.Pointer {
 	if i.tab == nil {
-		panic(errorString("invalid memory address or nil pointer dereference").Error())
+		panic(errorString("invalid memory address or nil pointer dereference"))
 	}
 	if DirectIfaceData(i.tab._type) {
 		// For direct-iface values, i.data holds the value bits (not a stable

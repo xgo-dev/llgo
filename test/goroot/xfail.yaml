@@ -1756,20 +1756,12 @@ xfails:
     case: noinit.go
     reason: current main goroot run failure on darwin/arm64
   - platform: darwin/arm64
-    directive: run
-    case: recover2.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
     directive: runoutput
     case: rangegen.go
     reason: current main goroot runoutput failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
     case: switch.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: zerodivide.go
     reason: current main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
@@ -1858,22 +1850,12 @@ xfails:
   - version: go1.24
     platform: linux/amd64
     directive: run
-    case: recover2.go
-    reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
     case: recover3.go
     reason: go1.24 goroot run failure on linux/amd64
   - version: go1.24
     platform: linux/amd64
     directive: run
     case: switch.go
-    reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
-    case: zerodivide.go
     reason: go1.24 goroot run failure on linux/amd64
   - version: go1.24
     platform: linux/amd64
@@ -1938,22 +1920,12 @@ xfails:
   - version: go1.25
     platform: linux/amd64
     directive: run
-    case: recover2.go
-    reason: go1.25 goroot run failure on linux/amd64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
     case: recover3.go
     reason: go1.25 goroot run failure on linux/amd64
   - version: go1.25
     platform: linux/amd64
     directive: run
     case: switch.go
-    reason: go1.25 goroot run failure on linux/amd64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
-    case: zerodivide.go
     reason: go1.25 goroot run failure on linux/amd64
   - version: go1.25
     platform: linux/amd64
@@ -2023,22 +1995,12 @@ xfails:
   - version: go1.26
     platform: linux/amd64
     directive: run
-    case: recover2.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
     case: recover3.go
     reason: go1.26 goroot run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64
     directive: run
     case: switch.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: zerodivide.go
     reason: go1.26 goroot run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64
@@ -2177,14 +2139,6 @@ xfails:
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: recover1.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: recover4.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: stackobj.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
@@ -2502,16 +2456,6 @@ xfails:
     platform: linux/amd64
     directive: run
     case: recover.go
-    reason: go1.25 goroot run failure on linux/amd64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
-    case: recover1.go
-    reason: go1.25 goroot run failure on linux/amd64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
-    case: recover4.go
     reason: go1.25 goroot run failure on linux/amd64
   - version: go1.25
     platform: linux/amd64
@@ -2632,11 +2576,6 @@ xfails:
   - version: go1.24
     platform: linux/amd64
     directive: run
-    case: recover1.go
-    reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
     case: stackobj.go
     reason: go1.24 goroot run failure on linux/amd64
   - version: go1.24
@@ -2727,11 +2666,6 @@ xfails:
   - version: go1.24
     platform: linux/amd64
     directive: run
-    case: recover4.go
-    reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
     case: fixedbugs/issue5493.go
     reason: go1.24 goroot run failure on linux/amd64
   - version: go1.24
@@ -2808,16 +2742,6 @@ xfails:
     platform: linux/amd64
     directive: run
     case: mallocfin.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: recover1.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: recover4.go
     reason: go1.26 goroot run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64
@@ -3068,16 +2992,6 @@ xfails:
     directive: run
     case: fixedbugs/issue53635.go
     reason: current main goroot run failure on darwin/arm64
-  - version: go1.26
-    platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue73917.go
-    reason: go1.26 goroot run failure on darwin/arm64
-  - version: go1.26
-    platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue73920.go
-    reason: go1.26 goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue8048.go
@@ -3146,16 +3060,6 @@ xfails:
     directive: run
     case: fixedbugs/issue53635.go
     reason: current main goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue73917.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue73920.go
-    reason: go1.26 goroot run failure on linux/amd64
   - platform: linux/amd64
     directive: run
     case: fixedbugs/issue8048.go

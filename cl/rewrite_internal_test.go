@@ -474,6 +474,76 @@ func TestEmitDoWithoutExplicitDeferStack(t *testing.T) {
 	}
 }
 
+func TestEmitDoRecoverFrameModes(t *testing.T) {
+	prog := ssatest.NewProgram(t, nil)
+	pkg := prog.NewPackage("foo", "foo")
+
+	callee := pkg.NewFunc("callee", llssa.NoArgsNoRet, llssa.InGo)
+	cb := callee.MakeBody(1)
+	cb.Return()
+	cb.EndBuild()
+
+	fn := pkg.NewFunc("main", llssa.NoArgsNoRet, llssa.InGo)
+	b := fn.MakeBody(1)
+
+	ctx := &context{}
+	ctx.emitDoEx(b, llssa.Call, nil, true, false, callee.Expr, llssa.Builder.Call)
+	ctx.emitDoEx(b, llssa.Call, nil, false, true, callee.Expr, llssa.Builder.Call)
+	b.Return()
+	b.EndBuild()
+
+	ir := pkg.String()
+	for _, want := range []string{
+		"runtime/internal/runtime.StartRecoverFrame",
+		"runtime/internal/runtime.StartRecoverWrapperFrame",
+		"runtime/internal/runtime.EndRecoverFrame",
+		"llvm.frameaddress.p0",
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("missing %s in recover-frame emitDoEx IR:\n%s", want, ir)
+		}
+	}
+}
+
+func TestRecoverTransparentWrapperCall(t *testing.T) {
+	const src = `package foo
+
+func usesRecover() { recover() }
+
+func caller() { usesRecover() }
+`
+	ssapkg := buildSSAPackage(t, src)
+	callee := ssapkg.Func("usesRecover")
+	caller := ssapkg.Func("caller")
+	call := findStaticCallByName(t, caller, "usesRecover")
+
+	if !functionUsesRecover(callee) {
+		t.Fatal("usesRecover should be detected as using recover")
+	}
+	if functionUsesRecover(caller) {
+		t.Fatal("caller should not be detected as using recover directly")
+	}
+
+	ctx := &context{}
+	if ctx.recoverTransparentWrapperCall(call.Common()) {
+		t.Fatal("nil current function should not be recover transparent")
+	}
+	ctx.goFn = caller
+	if ctx.recoverTransparentWrapperCall(call.Common()) {
+		t.Fatal("plain caller should not be recover transparent")
+	}
+
+	caller.Synthetic = "bound method wrapper"
+	if !ctx.recoverTransparentWrapperCall(call.Common()) {
+		t.Fatal("synthetic wrapper caller should be recover transparent")
+	}
+
+	ctx.goFn = ssapkg.Prog.NewFunction("caller$thunk", caller.Signature, "test")
+	if !ctx.recoverTransparentWrapperCall(call.Common()) {
+		t.Fatal("thunk-suffixed caller should be recover transparent")
+	}
+}
+
 func TestNestedRangeFuncDeferAnalysisCombinations(t *testing.T) {
 	const src = `package foo
 

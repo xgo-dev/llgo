@@ -7,7 +7,6 @@ import (
 
 // CHECK-LINE: @2 = private unnamed_addr constant [20 x i8] c"ServerReflectionInfo", align 1
 // CHECK-LINE: @5 = private unnamed_addr constant [7 x i8] c"Context", align 1
-// CHECK-LINE: @10 = private unnamed_addr constant [68 x i8] c"{{.*}}/cl/_testgo/genericembediface.ReflectionServer", align 1
 // CHECK-LINE: @19 = private unnamed_addr constant [4 x i8] c"pass", align 1
 // CHECK-LINE: @20 = private unnamed_addr constant [58 x i8] c"{{.*}}/cl/_testgo/genericembediface.server", align 1
 // CHECK-LINE: @21 = private unnamed_addr constant [58 x i8] c"{{.*}}/cl/_testgo/genericembediface.stream", align 1
@@ -48,7 +47,8 @@ type ReflectionServer interface {
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %21
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %2, %"{{.*}}/runtime/internal/runtime.String" { ptr @10, i64 68 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 20 })
+// CHECK-NEXT:   %22 = call %"{{.*}}/runtime/internal/runtime.eface" @"{{.*}}/runtime/internal/runtime.TypeAssertError"(ptr %2, ptr @"_llgo_{{.*}}/cl/_testgo/genericembediface.ReflectionServer", ptr @_llgo_any)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %22)
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 
@@ -136,6 +136,12 @@ func main() {
 // CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.interequal"(ptr %0, ptr %1, ptr %2){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.interequal"(ptr %1, ptr %2)
+// CHECK-NEXT:   ret i1 %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.nilinterequal"(ptr %0, ptr %1, ptr %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.nilinterequal"(ptr %1, ptr %2)
 // CHECK-NEXT:   ret i1 %3
 // CHECK-NEXT: }
 

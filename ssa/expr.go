@@ -59,6 +59,12 @@ func (v Expr) SetOrdering(ordering AtomicOrdering) Expr {
 	return v
 }
 
+// SetVolatile marks a load or store as volatile.
+func (v Expr) SetVolatile(volatile bool) Expr {
+	v.impl.SetVolatile(volatile)
+	return v
+}
+
 func (v Expr) SetName(alias string) Expr {
 	v.impl.SetName(alias)
 	return v

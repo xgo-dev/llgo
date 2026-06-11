@@ -5,10 +5,8 @@ import (
 	"github.com/goplus/lib/c"
 )
 
-// CHECK-LINE: @1 = private unnamed_addr constant [29 x i8] c"*github.com/goplus/lib/c.Char", align 1
-// CHECK-LINE: @2 = private unnamed_addr constant [3 x i8] c"int", align 1
-// CHECK-LINE: @3 = private unnamed_addr constant [7 x i8] c"%s %d\0A\00", align 1
-// CHECK-LINE: @4 = private unnamed_addr constant [6 x i8] c"Hello\00", align 1
+// CHECK-LINE: @4 = private unnamed_addr constant [7 x i8] c"%s %d\0A\00", align 1
+// CHECK-LINE: @5 = private unnamed_addr constant [6 x i8] c"Hello\00", align 1
 
 // CHECK-LABEL: define ptr @"{{.*}}/cl/_testrt/any.hi"(%"{{.*}}/runtime/internal/runtime.eface" %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -21,7 +19,8 @@ import (
 // CHECK-NEXT:   ret ptr %3
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @1, i64 29 }, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
+// CHECK-NEXT:   %4 = call %"{{.*}}/runtime/internal/runtime.eface" @"{{.*}}/runtime/internal/runtime.TypeAssertError"(ptr %1, ptr @"*_llgo_int8", ptr @_llgo_any)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %4)
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 
@@ -42,7 +41,8 @@ func hi(a any) *c.Char {
 // CHECK-NEXT:   ret i64 %5
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 3 }, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
+// CHECK-NEXT:   %6 = call %"{{.*}}/runtime/internal/runtime.eface" @"{{.*}}/runtime/internal/runtime.TypeAssertError"(ptr %1, ptr @_llgo_int, ptr @_llgo_any)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %6)
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 
@@ -69,18 +69,24 @@ func main() {
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/any.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @"{{.*}}/cl/_testrt/any.hi"(%"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_int8", ptr @4 })
+// CHECK-NEXT:   %0 = call ptr @"{{.*}}/cl/_testrt/any.hi"(%"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_int8", ptr @5 })
 // CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK-NEXT:   store i64 100, ptr %1, align 8
 // CHECK-NEXT:   %2 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %1, 1
 // CHECK-NEXT:   %3 = call i64 @"{{.*}}/cl/_testrt/any.incVal"(%"{{.*}}/runtime/internal/runtime.eface" %2)
-// CHECK-NEXT:   %4 = call i32 (ptr, ...) @printf(ptr @3, ptr %0, i64 %3)
+// CHECK-NEXT:   %4 = call i32 (ptr, ...) @printf(ptr @4, ptr %0, i64 %3)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal8"(ptr %0, ptr %1, ptr %2){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal8"(ptr %1, ptr %2)
+// CHECK-NEXT:   ret i1 %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.nilinterequal"(ptr %0, ptr %1, ptr %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.nilinterequal"(ptr %1, ptr %2)
 // CHECK-NEXT:   ret i1 %3
 // CHECK-NEXT: }
 

@@ -69,6 +69,18 @@ func (p Program) tyStackrestore() *types.Signature {
 	return p.stackRestoreTy
 }
 
+// func(level int32) unsafe.Pointer
+func (p Program) tyFrameaddress() *types.Signature {
+	if p.frameAddressTy == nil {
+		paramLevel := types.NewParam(token.NoPos, nil, "", types.Typ[types.Int32])
+		paramPtr := types.NewParam(token.NoPos, nil, "", p.VoidPtr().raw.Type)
+		params := types.NewTuple(paramLevel)
+		results := types.NewTuple(paramPtr)
+		p.frameAddressTy = types.NewSignatureType(nil, nil, nil, params, results, false)
+	}
+	return p.frameAddressTy
+}
+
 func (b Builder) AllocaSigjmpBuf() Expr {
 	prog := b.Prog
 	sigjmpBufTy := prog.rtType("SigjmpBuf") // Get type from runtime (target architecture)
@@ -87,6 +99,12 @@ func (b Builder) StackSave() Expr {
 func (b Builder) StackRestore(sp Expr) {
 	fn := b.Pkg.cFunc("llvm.stackrestore", b.Prog.tyStackrestore())
 	b.InlineCall(fn, sp)
+}
+
+// declare ptr @llvm.frameaddress.p0(i32 immarg)
+func (b Builder) FrameAddress(level uint64) Expr {
+	fn := b.Pkg.cFunc("llvm.frameaddress.p0", b.Prog.tyFrameaddress())
+	return b.InlineCall(fn, b.Prog.IntVal(level, b.Prog.Int32()))
 }
 
 // addReturnsTwiceAttr adds the returns_twice attribute to a function.
@@ -178,12 +196,14 @@ const (
 	// 3: reth voidptr: block address after Rethrow
 	// 4: rund voidptr: block address after RunDefers
 	// 5: func and args links
+	// 6: stack frame that owns this defer chain
 	deferSigjmpbuf = iota
 	deferBits
 	deferLink
 	deferRethrow
 	deferRunDefers
 	deferArgs
+	deferFrame
 )
 
 func (b Builder) getDefer(kind DoAction) *aDefer {
@@ -264,9 +284,10 @@ func (b Builder) initDeferState(procBlk, rethrowBlk BasicBlock) (*aDefer, Expr, 
 	self := b.Func
 	prog := b.Prog
 	zero := prog.Val(uintptr(0))
+	nilPtr := prog.Nil(prog.VoidPtr())
 	link := b.Call(b.Pkg.rtFunc("GetThreadDefer"))
 	jb := b.AllocaSigjmpBuf()
-	ptr := b.aggregateAllocU(prog.Defer(), jb.impl, zero.impl, link.impl, procBlk.Addr().impl)
+	ptr := b.aggregateAllocU(prog.Defer(), jb.impl, zero.impl, link.impl, procBlk.Addr().impl, nilPtr.impl, nilPtr.impl, b.FrameAddress(0).impl)
 	deferData := Expr{ptr, prog.DeferPtr()}
 	b.Call(b.Pkg.rtFunc("SetThreadDefer"), deferData)
 	bitsPtr := b.FieldAddr(deferData, deferBits)
@@ -513,7 +534,9 @@ func (b Builder) saveDeferArgsTo(argsPtr Expr, kind DoAction, id Expr, fn Expr, 
 
 func (b Builder) callDefer(self *aDefer, typ Type, buildCall func(Builder, Expr, ...Expr) Expr, fn Expr, args []Expr) {
 	if typ == nil {
-		buildCall(b, fn, args...)
+		b.callRecoverScopedDefer(fn, func() {
+			buildCall(b, fn, args...)
+		})
 		return
 	}
 	prog := b.Prog
@@ -536,8 +559,59 @@ func (b Builder) callDefer(self *aDefer, typ Type, buildCall func(Builder, Expr,
 			args[i] = b.getField(data, i+offset)
 		}
 		b.Call(b.Pkg.rtFunc("FreeDeferNode"), ptr)
-		buildCall(b, fn, args...)
+		b.callRecoverScopedDefer(fn, func() {
+			buildCall(b, fn, args...)
+		})
 	})
+}
+
+func (b Builder) callRecoverScopedDefer(fn Expr, call func()) {
+	if isRecoverBuiltin(fn) {
+		call()
+		return
+	}
+	prev := b.Call(b.Pkg.rtFunc("StartRecoverFrame"), b.FrameAddress(0))
+	call()
+	if b.currentBlockEndsUnreachable() {
+		return
+	}
+	b.Call(b.Pkg.rtFunc("EndRecoverFrame"), prev)
+}
+
+func (b Builder) MaskRecoverCall(fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args ...Expr) Expr {
+	prev := b.Call(b.Pkg.rtFunc("StartRecoverFrame"), b.Prog.Nil(b.Prog.VoidPtr()))
+	ret := buildCall(b, fn, args...)
+	if b.currentBlockEndsUnreachable() {
+		return ret
+	}
+	b.Call(b.Pkg.rtFunc("EndRecoverFrame"), prev)
+	return ret
+}
+
+func (b Builder) ForwardRecoverFrameCall(fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args ...Expr) Expr {
+	prev := b.Call(b.Pkg.rtFunc("StartRecoverWrapperFrame"), b.FrameAddress(1), b.FrameAddress(0))
+	ret := buildCall(b, fn, args...)
+	if b.currentBlockEndsUnreachable() {
+		return ret
+	}
+	b.Call(b.Pkg.rtFunc("EndRecoverFrame"), prev)
+	return ret
+}
+
+func (b Builder) currentBlockEndsUnreachable() bool {
+	lastInst := b.impl.GetInsertBlock().LastInstruction()
+	return !lastInst.IsNil() && !lastInst.IsAUnreachableInst().IsNil()
+}
+
+func isRecoverBuiltin(fn Expr) bool {
+	if fn.IsNil() {
+		return false
+	}
+	if fn.kind != vkBuiltin {
+		return false
+	}
+	bi, ok := fn.raw.Type.(*builtinTy)
+	return ok && bi.name == "recover"
 }
 
 // RunDefers emits instructions to run deferred instructions.
@@ -609,8 +683,7 @@ func (b Builder) Unreachable() {
 // Recover emits a recover instruction.
 func (b Builder) Recover() Expr {
 	dbgInstrln("Recover")
-	// TODO(xsw): recover can't be a function call in Go
-	return b.Call(b.Pkg.rtFunc("Recover"))
+	return b.Call(b.Pkg.rtFunc("Recover"), b.FrameAddress(1))
 }
 
 // Panic emits a panic instruction.

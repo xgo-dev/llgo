@@ -17,9 +17,6 @@ package main
 // CHECK-LINE: @13 = private unnamed_addr constant [43 x i8] c"{{.*}}/cl/_testgo/invoke.T6", align 1
 // CHECK-LINE: @14 = private unnamed_addr constant [5 x i8] c"hello", align 1
 // CHECK-LINE: @36 = private unnamed_addr constant [5 x i8] c"world", align 1
-// CHECK-LINE: @38 = private unnamed_addr constant [42 x i8] c"{{.*}}/cl/_testgo/invoke.I", align 1
-// CHECK-LINE: @40 = private unnamed_addr constant [3 x i8] c"any", align 1
-// CHECK-LINE: @41 = private unnamed_addr constant [23 x i8] c"interface{Invoke() int}", align 1
 
 type T struct {
 	s string
@@ -443,28 +440,31 @@ type M interface {
 // CHECK-NEXT:   br i1 %85, label %_llgo_3, label %_llgo_4
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %78, %"{{.*}}/runtime/internal/runtime.String" { ptr @38, i64 42 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 6 })
+// CHECK-NEXT:   %86 = call %"{{.*}}/runtime/internal/runtime.eface" @"{{.*}}/runtime/internal/runtime.TypeAssertError"(ptr %78, ptr @"_llgo_{{.*}}/cl/_testgo/invoke.I", ptr @_llgo_any)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %86)
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_1
-// CHECK-NEXT:   %86 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %77, 0
-// CHECK-NEXT:   %87 = call i1 @"{{.*}}/runtime/internal/runtime.Implements"(ptr @"_llgo_iface$uRUteI7wmSy7y7ODhGzk0FdDaxGKMhVSSu6HZEv9aa0", ptr %86)
-// CHECK-NEXT:   br i1 %87, label %_llgo_5, label %_llgo_6
+// CHECK-NEXT:   %87 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %77, 0
+// CHECK-NEXT:   %88 = call i1 @"{{.*}}/runtime/internal/runtime.Implements"(ptr @"_llgo_iface$uRUteI7wmSy7y7ODhGzk0FdDaxGKMhVSSu6HZEv9aa0", ptr %87)
+// CHECK-NEXT:   br i1 %88, label %_llgo_5, label %_llgo_6
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %84, %"{{.*}}/runtime/internal/runtime.String" { ptr @40, i64 3 }, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
+// CHECK-NEXT:   %89 = call %"{{.*}}/runtime/internal/runtime.eface" @"{{.*}}/runtime/internal/runtime.TypeAssertError"(ptr %84, ptr @_llgo_any, ptr @_llgo_any)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %89)
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_3
-// CHECK-NEXT:   %88 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %77, 1
-// CHECK-NEXT:   %89 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$uRUteI7wmSy7y7ODhGzk0FdDaxGKMhVSSu6HZEv9aa0", ptr %86)
-// CHECK-NEXT:   %90 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %89, 0
-// CHECK-NEXT:   %91 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %90, ptr %88, 1
-// CHECK-NEXT:   call void @"{{.*}}/cl/_testgo/invoke.invoke"(%"{{.*}}/runtime/internal/runtime.iface" %91)
+// CHECK-NEXT:   %90 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %77, 1
+// CHECK-NEXT:   %91 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$uRUteI7wmSy7y7ODhGzk0FdDaxGKMhVSSu6HZEv9aa0", ptr %87)
+// CHECK-NEXT:   %92 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %91, 0
+// CHECK-NEXT:   %93 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %92, ptr %90, 1
+// CHECK-NEXT:   call void @"{{.*}}/cl/_testgo/invoke.invoke"(%"{{.*}}/runtime/internal/runtime.iface" %93)
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_6:                                          ; preds = %_llgo_3
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %86, %"{{.*}}/runtime/internal/runtime.String" { ptr @41, i64 23 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 6 })
+// CHECK-NEXT:   %94 = call %"{{.*}}/runtime/internal/runtime.eface" @"{{.*}}/runtime/internal/runtime.TypeAssertError"(ptr %87, ptr @"_llgo_iface$uRUteI7wmSy7y7ODhGzk0FdDaxGKMhVSSu6HZEv9aa0", ptr @_llgo_any)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %94)
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 
