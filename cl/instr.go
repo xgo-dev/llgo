@@ -846,6 +846,133 @@ func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, ds *explicitDeferS
 	return b.Do(act, fn, buildCall, args...)
 }
 
+func isPointerGoType(t types.Type) bool {
+	_, ok := types.Unalias(t).Underlying().(*types.Pointer)
+	return ok
+}
+
+func isKnownNonNilAddr(v ssa.Value) bool {
+	switch v := v.(type) {
+	case *ssa.Alloc, *ssa.Global:
+		return true
+	case *ssa.FieldAddr:
+		return isKnownNonNilAddr(v.X)
+	case *ssa.IndexAddr:
+		return isKnownNonNilAddr(v.X)
+	}
+	return false
+}
+
+func isWrapNilCheckCall(v ssa.Value) bool {
+	call, ok := v.(*ssa.Call)
+	if !ok {
+		return false
+	}
+	builtin, ok := call.Call.Value.(*ssa.Builtin)
+	return ok && builtin.Name() == "ssa:wrapnilchk"
+}
+
+func (p *context) emitNilDerefBaseCheck(b llssa.Builder, addr ssa.Value) {
+	switch addr := addr.(type) {
+	case *ssa.UnOp:
+		if addr.Op != token.MUL || isKnownNonNilAddr(addr.X) || isWrapNilCheckCall(addr.X) {
+			return
+		}
+		p.emitCheckedDerefCheck(b, addr)
+	case *ssa.FieldAddr:
+		if isKnownNonNilAddr(addr.X) || isWrapNilCheckCall(addr.X) {
+			return
+		}
+		p.emitNilDerefBaseCheck(b, addr.X)
+		if isPointerGoType(addr.X.Type()) {
+			base := p.compileValue(b, addr.X)
+			b.AssertNilDeref(base)
+		}
+	}
+}
+
+func (p *context) emitCheckedDerefCheck(b llssa.Builder, arg *ssa.UnOp) {
+	p.emitNilDerefBaseCheck(b, arg.X)
+	ptr := p.compileValue(b, arg.X)
+	b.AssertNilDeref(ptr)
+}
+
+func (p *context) compileCheckedDeref(b llssa.Builder, arg *ssa.UnOp) llssa.Expr {
+	p.emitNilDerefBaseCheck(b, arg.X)
+	ptr := p.compileValue(b, arg.X)
+	checked := b.NilDerefCheck(ptr)
+	ret := b.UnOp(token.MUL, checked)
+	p.bvals[arg] = ret
+	return ret
+}
+
+func valueReceiverNilDerefArg(fn *ssa.Function, args []ssa.Value) (*ssa.UnOp, bool) {
+	if fn == nil || len(args) == 0 {
+		return nil, false
+	}
+	recv := fn.Signature.Recv()
+	if recv == nil || isPointerGoType(recv.Type()) {
+		return nil, false
+	}
+	arg, ok := args[0].(*ssa.UnOp)
+	if !ok || arg.Op != token.MUL || isKnownNonNilAddr(arg.X) || isWrapNilCheckCall(arg.X) {
+		return nil, false
+	}
+	return arg, true
+}
+
+func boundValueReceiverNilDerefArg(fn *ssa.Function, bindings []ssa.Value) (*ssa.UnOp, bool) {
+	if fn == nil || len(fn.FreeVars) == 0 || len(bindings) == 0 {
+		return nil, false
+	}
+	if !strings.HasPrefix(fn.Synthetic, "bound method wrapper for ") {
+		return nil, false
+	}
+	if isPointerGoType(fn.FreeVars[0].Type()) {
+		return nil, false
+	}
+	arg, ok := bindings[0].(*ssa.UnOp)
+	if !ok || arg.Op != token.MUL || isKnownNonNilAddr(arg.X) || isWrapNilCheckCall(arg.X) {
+		return nil, false
+	}
+	return arg, true
+}
+
+func collectMethodNilDerefChecks(fn *ssa.Function) map[*ssa.UnOp]none {
+	var checks map[*ssa.UnOp]none
+	mark := func(arg *ssa.UnOp, ok bool) {
+		if !ok {
+			return
+		}
+		if checks == nil {
+			checks = make(map[*ssa.UnOp]none)
+		}
+		checks[arg] = none{}
+	}
+	markCall := func(call *ssa.CallCommon) {
+		if fn, ok := call.Value.(*ssa.Function); ok {
+			mark(valueReceiverNilDerefArg(fn, call.Args))
+		}
+	}
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			switch instr := instr.(type) {
+			case *ssa.Call:
+				markCall(&instr.Call)
+			case *ssa.Defer:
+				markCall(&instr.Call)
+			case *ssa.Go:
+				markCall(&instr.Call)
+			case *ssa.MakeClosure:
+				if bound, ok := instr.Fn.(*ssa.Function); ok {
+					mark(boundValueReceiverNilDerefArg(bound, instr.Bindings))
+				}
+			}
+		}
+	}
+	return checks
+}
+
 func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallCommon, ds *explicitDeferStack) (ret llssa.Expr) {
 	cv := call.Value
 	if mthd := call.Method; mthd != nil {
