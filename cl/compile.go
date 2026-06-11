@@ -992,10 +992,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	case *ssa.UnOp:
 		if v.Op == token.MUL {
 			if skipUnusedArrayDeref(v) {
-				x := p.compileValue(b, v.X)
-				if _, ok := v.X.(*ssa.Call); ok {
-					b.AssertNilDeref(x)
-				}
+				p.compileValue(b, v.X)
 				return
 			}
 			if refs := v.Referrers(); refs != nil && len(*refs) == 0 {

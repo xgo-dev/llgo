@@ -85,6 +85,32 @@ func convert(p *[]byte) {
 	}
 }
 
+func TestRangeArrayPointerCallEvaluatesWithoutNilCheck(t *testing.T) {
+	_, m := mustCompileLLPkgFromSrc(t, `
+package foo
+
+var sink int
+
+func nextArray() *[3]int {
+	return nil
+}
+
+func rangeArrayCall() {
+	for i := range *nextArray() {
+		sink += i
+	}
+}
+`)
+
+	ir := mustNamedFunction(t, m, "foo.rangeArrayCall").String()
+	if !strings.Contains(ir, "foo.nextArray") {
+		t.Fatalf("range over call operand should still evaluate the call:\n%s", ir)
+	}
+	if strings.Contains(ir, "AssertNilDeref") {
+		t.Fatalf("range over nil *array call should not nil-check the array pointer:\n%s", ir)
+	}
+}
+
 func findUnOp(t *testing.T, fn *ssa.Function, op token.Token, wantArray bool) *ssa.UnOp {
 	t.Helper()
 	for _, block := range fn.Blocks {
