@@ -1765,10 +1765,6 @@ xfails:
     reason: current main goroot runoutput failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: switch.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: zerodivide.go
     reason: current main goroot run failure on darwin/arm64
   - platform: darwin/arm64
@@ -3064,10 +3060,6 @@ xfails:
     directive: run
     case: fixedbugs/issue47928.go
     reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue53635.go
-    reason: current main goroot run failure on darwin/arm64
   - version: go1.26
     platform: darwin/arm64
     directive: run
@@ -3141,10 +3133,6 @@ xfails:
   - platform: linux/amd64
     directive: run
     case: fixedbugs/issue47928.go
-    reason: current main goroot run failure on linux/amd64
-  - platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue53635.go
     reason: current main goroot run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64

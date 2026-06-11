@@ -968,8 +968,21 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			b.DeferStackDrain()
 		}
 	case *ssa.BinOp:
-		x := p.compileValue(b, v.X)
-		y := p.compileValue(b, v.Y)
+		if isUntypedNilConst(v.X) && isUntypedNilConst(v.Y) {
+			switch v.Op {
+			case token.EQL:
+				ret = p.prog.BoolVal(true)
+				break
+			case token.NEQ:
+				ret = p.prog.BoolVal(false)
+				break
+			}
+			if !ret.IsNil() {
+				break
+			}
+		}
+		x := p.compileValueAs(b, v.X, v.Y.Type())
+		y := p.compileValueAs(b, v.Y, v.X.Type())
 		ret = b.BinOp(v.Op, x, y)
 	case *ssa.UnOp:
 		if v.Op == token.MUL {
@@ -1031,10 +1044,18 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		}
 	case *ssa.ChangeType:
 		t := v.Type()
+		if isUntypedNilConst(v.X) {
+			ret = p.nilOf(t)
+			break
+		}
 		x := p.compileValue(b, v.X)
 		ret = b.ChangeType(p.type_(t, llssa.InGo), x)
 	case *ssa.Convert:
 		t := v.Type()
+		if isUntypedNilConst(v.X) {
+			ret = p.nilOf(t)
+			break
+		}
 		x := p.compileValue(b, v.X)
 		ret = b.Convert(p.type_(t, llssa.InGo), x)
 	case *ssa.FieldAddr:
@@ -1114,6 +1135,10 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			}
 		}
 		t := p.type_(v.Type(), llssa.InGo)
+		if isUntypedNilConst(v.X) {
+			ret = p.prog.Nil(t)
+			break
+		}
 		if unop, ok := v.X.(*ssa.UnOp); ok && unop.Op == token.MUL {
 			if vt := p.type_(unop.Type(), llssa.InGo); vt.RawType() != nil {
 				if p.isLargeNonPointerValue(vt) || p.isZeroSizedValue(vt) {
@@ -1192,6 +1217,26 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	}
 	p.bvals[iv] = ret
 	return ret
+}
+
+func isUntypedNilConst(v ssa.Value) bool {
+	c, ok := v.(*ssa.Const)
+	if !ok || c.Value != nil {
+		return false
+	}
+	basic, ok := c.Type().Underlying().(*types.Basic)
+	return ok && basic.Kind() == types.UntypedNil
+}
+
+func (p *context) nilOf(typ types.Type) llssa.Expr {
+	return p.prog.Nil(p.type_(typ, llssa.InGo))
+}
+
+func (p *context) compileValueAs(b llssa.Builder, v ssa.Value, typ types.Type) llssa.Expr {
+	if isUntypedNilConst(v) {
+		return p.nilOf(typ)
+	}
+	return p.compileValue(b, v)
 }
 
 func (p *context) assertNilDerefBase(b llssa.Builder, addr ssa.Value) {
