@@ -9,7 +9,6 @@ import "github.com/goplus/lib/c"
 // CHECK: @1 = private unnamed_addr constant [3 x i8] c"Inc", align 1
 
 //go:linkname cSqrt C.sqrt
-
 func cSqrt(x c.Double) c.Double
 
 // llgo:link cAbs C.abs
