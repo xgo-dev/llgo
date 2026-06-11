@@ -148,10 +148,9 @@ type T struct {
 // CHECK-NEXT:   %29 = icmp uge i64 0, %28
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %29, i64 0, i1 true, i64 %28)
 // CHECK-NEXT:   %30 = getelementptr inbounds %reflect.Value, ptr %27, i64 0
-// CHECK-NEXT:   %31 = load %reflect.Value, ptr %30, align 8
-// CHECK-NEXT:   %32 = icmp eq ptr %30, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %32)
-// CHECK-NEXT:   %33 = call i64 @reflect.Value.Int(%reflect.Value %31)
+// CHECK-NEXT:   %31 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %30)
+// CHECK-NEXT:   %32 = load %reflect.Value, ptr %31, align 8
+// CHECK-NEXT:   %33 = call i64 @reflect.Value.Int(%reflect.Value %32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %33)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %34 = call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %6)
@@ -240,10 +239,9 @@ type T struct {
 // CHECK-NEXT:   %25 = icmp uge i64 0, %24
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %25, i64 0, i1 true, i64 %24)
 // CHECK-NEXT:   %26 = getelementptr inbounds %reflect.Value, ptr %23, i64 0
-// CHECK-NEXT:   %27 = load %reflect.Value, ptr %26, align 8
-// CHECK-NEXT:   %28 = icmp eq ptr %26, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %28)
-// CHECK-NEXT:   %29 = call i64 @reflect.Value.Int(%reflect.Value %27)
+// CHECK-NEXT:   %27 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %26)
+// CHECK-NEXT:   %28 = load %reflect.Value, ptr %27, align 8
+// CHECK-NEXT:   %29 = call i64 @reflect.Value.Int(%reflect.Value %28)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %29)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %30 = call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %2)
@@ -368,10 +366,9 @@ func callMethod() {
 // CHECK-NEXT:   %33 = icmp uge i64 0, %32
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %33, i64 0, i1 true, i64 %32)
 // CHECK-NEXT:   %34 = getelementptr inbounds %reflect.Value, ptr %31, i64 0
-// CHECK-NEXT:   %35 = load %reflect.Value, ptr %34, align 8
-// CHECK-NEXT:   %36 = icmp eq ptr %34, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %36)
-// CHECK-NEXT:   %37 = call i64 @reflect.Value.Int(%reflect.Value %35)
+// CHECK-NEXT:   %35 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %34)
+// CHECK-NEXT:   %36 = load %reflect.Value, ptr %35, align 8
+// CHECK-NEXT:   %37 = call i64 @reflect.Value.Int(%reflect.Value %36)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %37)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %38 = call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %10)
@@ -408,10 +405,9 @@ func callMethod() {
 // CHECK-NEXT:   %59 = icmp uge i64 0, %58
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %59, i64 0, i1 true, i64 %58)
 // CHECK-NEXT:   %60 = getelementptr inbounds %reflect.Value, ptr %57, i64 0
-// CHECK-NEXT:   %61 = load %reflect.Value, ptr %60, align 8
-// CHECK-NEXT:   %62 = icmp eq ptr %60, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %62)
-// CHECK-NEXT:   %63 = call i64 @reflect.Value.Int(%reflect.Value %61)
+// CHECK-NEXT:   %61 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %60)
+// CHECK-NEXT:   %62 = load %reflect.Value, ptr %61, align 8
+// CHECK-NEXT:   %63 = call i64 @reflect.Value.Int(%reflect.Value %62)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %63)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
@@ -474,10 +470,9 @@ func callMethod() {
 // CHECK-NEXT:   %27 = icmp uge i64 0, %26
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %27, i64 0, i1 true, i64 %26)
 // CHECK-NEXT:   %28 = getelementptr inbounds %reflect.Value, ptr %25, i64 0
-// CHECK-NEXT:   %29 = load %reflect.Value, ptr %28, align 8
-// CHECK-NEXT:   %30 = icmp eq ptr %28, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %30)
-// CHECK-NEXT:   %31 = call i64 @reflect.Value.Int(%reflect.Value %29)
+// CHECK-NEXT:   %29 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %28)
+// CHECK-NEXT:   %30 = load %reflect.Value, ptr %29, align 8
+// CHECK-NEXT:   %31 = call i64 @reflect.Value.Int(%reflect.Value %30)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %31)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %32 = call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %4)
@@ -514,10 +509,9 @@ func callMethod() {
 // CHECK-NEXT:   %53 = icmp uge i64 0, %52
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %53, i64 0, i1 true, i64 %52)
 // CHECK-NEXT:   %54 = getelementptr inbounds %reflect.Value, ptr %51, i64 0
-// CHECK-NEXT:   %55 = load %reflect.Value, ptr %54, align 8
-// CHECK-NEXT:   %56 = icmp eq ptr %54, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %56)
-// CHECK-NEXT:   %57 = call i64 @reflect.Value.Int(%reflect.Value %55)
+// CHECK-NEXT:   %55 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %54)
+// CHECK-NEXT:   %56 = load %reflect.Value, ptr %55, align 8
+// CHECK-NEXT:   %57 = call i64 @reflect.Value.Int(%reflect.Value %56)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %57)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
@@ -595,19 +589,17 @@ func callMethod() {
 // CHECK-NEXT:   %34 = icmp uge i64 0, %33
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %34, i64 0, i1 true, i64 %33)
 // CHECK-NEXT:   %35 = getelementptr inbounds %reflect.Value, ptr %32, i64 0
-// CHECK-NEXT:   %36 = load %reflect.Value, ptr %35, align 8
-// CHECK-NEXT:   %37 = icmp eq ptr %35, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %37)
-// CHECK-NEXT:   %38 = call i64 @reflect.Value.Int(%reflect.Value %36)
+// CHECK-NEXT:   %36 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %35)
+// CHECK-NEXT:   %37 = load %reflect.Value, ptr %36, align 8
+// CHECK-NEXT:   %38 = call i64 @reflect.Value.Int(%reflect.Value %37)
 // CHECK-NEXT:   %39 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %31, 0
 // CHECK-NEXT:   %40 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %31, 1
 // CHECK-NEXT:   %41 = icmp uge i64 1, %40
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %41, i64 1, i1 true, i64 %40)
 // CHECK-NEXT:   %42 = getelementptr inbounds %reflect.Value, ptr %39, i64 1
-// CHECK-NEXT:   %43 = load %reflect.Value, ptr %42, align 8
-// CHECK-NEXT:   %44 = icmp eq ptr %42, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %44)
-// CHECK-NEXT:   %45 = call i64 @reflect.Value.Int(%reflect.Value %43)
+// CHECK-NEXT:   %43 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %42)
+// CHECK-NEXT:   %44 = load %reflect.Value, ptr %43, align 8
+// CHECK-NEXT:   %45 = call i64 @reflect.Value.Int(%reflect.Value %44)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @22, i64 10 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %38)
@@ -667,19 +659,17 @@ func callMethod() {
 // CHECK-NEXT:   %79 = icmp uge i64 0, %78
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %79, i64 0, i1 true, i64 %78)
 // CHECK-NEXT:   %80 = getelementptr inbounds %reflect.Value, ptr %77, i64 0
-// CHECK-NEXT:   %81 = load %reflect.Value, ptr %80, align 8
-// CHECK-NEXT:   %82 = icmp eq ptr %80, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %82)
-// CHECK-NEXT:   %83 = call i64 @reflect.Value.Int(%reflect.Value %81)
+// CHECK-NEXT:   %81 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %80)
+// CHECK-NEXT:   %82 = load %reflect.Value, ptr %81, align 8
+// CHECK-NEXT:   %83 = call i64 @reflect.Value.Int(%reflect.Value %82)
 // CHECK-NEXT:   %84 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %76, 0
 // CHECK-NEXT:   %85 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %76, 1
 // CHECK-NEXT:   %86 = icmp uge i64 1, %85
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %86, i64 1, i1 true, i64 %85)
 // CHECK-NEXT:   %87 = getelementptr inbounds %reflect.Value, ptr %84, i64 1
-// CHECK-NEXT:   %88 = load %reflect.Value, ptr %87, align 8
-// CHECK-NEXT:   %89 = icmp eq ptr %87, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %89)
-// CHECK-NEXT:   %90 = call i64 @reflect.Value.Int(%reflect.Value %88)
+// CHECK-NEXT:   %88 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %87)
+// CHECK-NEXT:   %89 = load %reflect.Value, ptr %88, align 8
+// CHECK-NEXT:   %90 = call i64 @reflect.Value.Int(%reflect.Value %89)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @22, i64 10 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %83)
