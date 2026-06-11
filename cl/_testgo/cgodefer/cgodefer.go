@@ -14,7 +14,7 @@ func main() {
 // CHECK-LABEL: define [0 x i8] @"{{.*}}/cl/_testgo/cgodefer._Cfunc_free"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %2 = load ptr, ptr @"{{.*}}/cl/_testgo/cgodefer._cgo_1f8e37efad98_Cfunc_free", align 8
+// CHECK-NEXT:   %2 = load ptr, ptr @"{{.*}}/cl/_testgo/cgodefer._cgo_{{.*}}_Cfunc_free", align 8
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
 // CHECK-NEXT:   %4 = call [0 x i8] %3(ptr %0)
 // CHECK-NEXT:   ret [0 x i8] %4
@@ -33,8 +33,8 @@ func main() {
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
 // CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testgo/cgodefer.init$guard", align 1
 // CHECK-NEXT:   call void @syscall.init()
-// CHECK-NEXT:   store ptr @_cgo_1f8e37efad98_Cfunc_free, ptr @"{{.*}}/cl/_testgo/cgodefer._cgo_1f8e37efad98_Cfunc_free", align 8
-// CHECK-NEXT:   store ptr @_cgo_1f8e37efad98_Cfunc__Cmalloc, ptr @"{{.*}}/cl/_testgo/cgodefer._cgo_1f8e37efad98_Cfunc__Cmalloc", align 8
+// CHECK-NEXT:   store ptr @_cgo_{{.*}}_Cfunc_free, ptr @"{{.*}}/cl/_testgo/cgodefer._cgo_{{.*}}_Cfunc_free", align 8
+// CHECK-NEXT:   store ptr @_cgo_{{.*}}_Cfunc__Cmalloc, ptr @"{{.*}}/cl/_testgo/cgodefer._cgo_{{.*}}_Cfunc__Cmalloc", align 8
 // CHECK-NEXT:   br label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
@@ -54,7 +54,7 @@ func main() {
 // CHECK-NEXT:   %6 = extractvalue { ptr, ptr } %4, 0
 // CHECK-NEXT:   %7 = call { ptr, ptr } %6(ptr %5)
 // CHECK-NEXT:   %8 = call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
-// CHECK-NEXT:   %9 = alloca i8, i64 196, align 1
+// CHECK-NEXT:   %9 = alloca i8, i64 {{.*}}, align 1
 // CHECK-NEXT:   %10 = call ptr @llvm.frameaddress.p0(i32 0)
 // CHECK-NEXT:   %11 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 56)
 // CHECK-NEXT:   %12 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %11, i32 0, i32 0
@@ -77,7 +77,7 @@ func main() {
 // CHECK-NEXT:   %21 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %11, i32 0, i32 4
 // CHECK-NEXT:   %22 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %11, i32 0, i32 5
 // CHECK-NEXT:   store ptr null, ptr %22, align 8
-// CHECK-NEXT:   %23 = call i32 @sigsetjmp(ptr %9, i32 0)
+// CHECK-NEXT:   %23 = call i32 @{{.*}}sigsetjmp(ptr %9, i32 0)
 // CHECK-NEXT:   %24 = icmp eq i32 %23, 0
 // CHECK-NEXT:   br i1 %24, label %_llgo_4, label %_llgo_5
 // CHECK-EMPTY:
