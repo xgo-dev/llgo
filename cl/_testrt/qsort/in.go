@@ -8,9 +8,9 @@ import (
 )
 
 //
-//go:linkname qsort C.qsort
 // CHECK-LINE: @0 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
 
+//go:linkname qsort C.qsort
 func qsort(base c.Pointer, count, elem uintptr, compar func(a, b c.Pointer) c.Int)
 
 func main() {

@@ -165,6 +165,26 @@ func TestGoProgramSizesUnaliasFunctionFieldStruct(t *testing.T) {
 	}
 }
 
+func TestGoProgramSizesNamedFunctionUsesPointerSize(t *testing.T) {
+	prog := NewProgram(nil)
+	sizes := prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	fn := types.NewNamed(types.NewTypeName(token.NoPos, nil, "Fn", nil), sig, nil)
+	fields := []*types.Var{
+		types.NewField(token.NoPos, nil, "Fn", fn, false),
+		types.NewField(token.NoPos, nil, "V", types.Typ[types.Int], false),
+	}
+
+	want := int64(prog.PointerSize())
+	if got := sizes.Sizeof(fn); got != want {
+		t.Fatalf("Sizeof(named func) = %d, want %d", got, want)
+	}
+	if got := sizes.Offsetsof(fields)[1]; got != want {
+		t.Fatalf("Offsetsof(field after named func) = %d, want %d", got, want)
+	}
+}
+
 func TestNamedStructLayoutEquivalent(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))

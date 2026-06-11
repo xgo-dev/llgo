@@ -3,7 +3,6 @@ package main
 
 import _ "unsafe"
 
-//go:linkname barX _bar_x
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/cvar.init"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = load i1, ptr @"{{.*}}/cl/_testrt/cvar.init$guard", align 1
@@ -17,6 +16,7 @@ import _ "unsafe"
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
+//go:linkname barX _bar_x
 var barX struct {
 	Arr       [16]int8
 	Callbacks [2]func()

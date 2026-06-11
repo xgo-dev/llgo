@@ -20,7 +20,7 @@ func main() {
 // CHECK-LABEL: define i32 @"{{.*}}/cl/_testgo/cgocfiles._Cfunc_test_structs"(ptr %0, ptr %1, ptr %2, ptr %3, ptr %4){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %5 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %6 = load ptr, ptr @"{{.*}}/cl/_testgo/cgocfiles._cgo_1ff9f0e4ef40_Cfunc_test_structs", align 8
+// CHECK-NEXT:   %6 = load ptr, ptr @"{{.*}}/cl/_testgo/cgocfiles._cgo_{{.*}}_Cfunc_test_structs", align 8
 // CHECK-NEXT:   %7 = load ptr, ptr %6, align 8
 // CHECK-NEXT:   %8 = call i32 %7(ptr %0, ptr %1, ptr %2, ptr %3, ptr %4)
 // CHECK-NEXT:   ret i32 %8
@@ -40,7 +40,7 @@ func main() {
 // CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testgo/cgocfiles.init$guard", align 1
 // CHECK-NEXT:   call void @syscall.init()
 // CHECK-NEXT:   call void @fmt.init()
-// CHECK-NEXT:   store ptr @_cgo_1ff9f0e4ef40_Cfunc_test_structs, ptr @"{{.*}}/cl/_testgo/cgocfiles._cgo_1ff9f0e4ef40_Cfunc_test_structs", align 8
+// CHECK-NEXT:   store ptr @_cgo_{{.*}}_Cfunc_test_structs, ptr @"{{.*}}/cl/_testgo/cgocfiles._cgo_{{.*}}_Cfunc_test_structs", align 8
 // CHECK-NEXT:   br label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0

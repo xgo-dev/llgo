@@ -9,7 +9,6 @@ import (
 )
 
 //
-//go:linkname print github.com/goplus/llgo/cl/_testrt/linkname/linktarget.F
 // CHECK-LINE: @0 = private unnamed_addr constant [2 x i8] c"a\00", align 1
 // CHECK-LINE: @1 = private unnamed_addr constant [2 x i8] c"b\00", align 1
 // CHECK-LINE: @2 = private unnamed_addr constant [2 x i8] c"c\00", align 1
@@ -20,6 +19,7 @@ import (
 // CHECK-LINE: @7 = private unnamed_addr constant [2 x i8] c"4\00", align 1
 // CHECK-LINE: @8 = private unnamed_addr constant [5 x i8] c"hello", align 1
 
+//go:linkname print github.com/goplus/llgo/cl/_testrt/linkname/linktarget.F
 func print(a, b, c, d *c.Char)
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/linkname.init"(){{.*}} {
