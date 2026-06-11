@@ -72,6 +72,15 @@ func TestConservativeGCPointerTypeAnalysis(t *testing.T) {
 	}, nil), map[types.Type]bool{}) {
 		t.Fatal("struct without pointer fields should not report conservative pointers")
 	}
+	if hasConservativeGCPointers(types.NewArray(types.Typ[types.Int], 2), map[types.Type]bool{}) {
+		t.Fatal("array without pointer elements should not report conservative pointers")
+	}
+	if !hasConservativeGCPointers(types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, nil, "i", types.Typ[types.Int], false),
+		types.NewField(token.NoPos, nil, "p", types.NewPointer(types.Typ[types.Int]), false),
+	}, nil), map[types.Type]bool{}) {
+		t.Fatal("struct with later pointer field should report conservative pointers")
+	}
 }
 
 func TestShouldClearAlloc(t *testing.T) {
@@ -329,7 +338,11 @@ func callWithInt(i int) {
 func TestConservativeLivenessGraphHelpers(t *testing.T) {
 	ssapkg := buildSSAPackageWithPath(t, "example.com/live", "live", `package live
 
+import "unsafe"
+
 var Sink any
+
+type Box struct{ p *int }
 
 func flow(p *int, cond bool) {
 	if cond {
@@ -344,7 +357,23 @@ func target(*int) {}
 func withCall(p *int) {
 	target(p)
 }
-`)
+
+func refs(p *int, arr *[2]*int, box *Box, cond bool) *int {
+	var q *int
+	if cond {
+		q = p
+	} else {
+		q = box.p
+	}
+	Sink = arr[0]
+	Sink = q
+	return q
+}
+
+func converted(p *int) unsafe.Pointer {
+	return unsafe.Pointer(p)
+}
+	`)
 	fn := ssapkg.Func("flow")
 	if blockCanReach(nil, fn.Blocks[0], map[*ssa.BasicBlock]bool{}) {
 		t.Fatal("nil block should not reach anything")
@@ -403,6 +432,45 @@ func withCall(p *int) {
 	if callLike == 0 {
 		t.Fatal("flow should include at least one call-like instruction")
 	}
+
+	refs := ssapkg.Func("refs")
+	var lastUseCount int
+	for _, param := range refs.Params {
+		blocks := make(map[*ssa.BasicBlock]bool)
+		if !ctx.collectValueUseBlocks(param, blocks, map[ssa.Value]bool{}, true) {
+			t.Fatalf("collectValueUseBlocks failed for %s", param.Name())
+		}
+		if len(blocks) == 0 {
+			t.Fatalf("expected use blocks for %s", param.Name())
+		}
+		blk, ok := ctx.valueLastUseBlock(param)
+		if !ok || blk == nil {
+			t.Fatalf("valueLastUseBlock(%s) = %v, %v", param.Name(), blk, ok)
+		}
+		order := make(map[ssa.Instruction]int, len(blk.Instrs))
+		for i, instr := range blk.Instrs {
+			order[instr] = i
+		}
+		if last, ok := ctx.lastUseInBlock(param, blk, order, map[ssa.Value]bool{}); !ok {
+			t.Fatalf("lastUseInBlock(%s) = %v, %v", param.Name(), last, ok)
+		} else if last != nil {
+			lastUseCount++
+		}
+	}
+	if lastUseCount == 0 {
+		t.Fatal("expected at least one parameter with a concrete last use")
+	}
+	phiBlocks := make(map[*ssa.BasicBlock]bool)
+	if !ctx.collectValueUseBlocks(refs.Params[0], phiBlocks, map[ssa.Value]bool{}, false) {
+		t.Fatal("non-following phi use collection failed")
+	}
+	if len(phiBlocks) == 0 {
+		t.Fatal("non-following phi use collection should record predecessor blocks")
+	}
+	converted := ssapkg.Func("converted")
+	if !ctx.collectValueUseBlocks(converted.Params[0], make(map[*ssa.BasicBlock]bool), map[ssa.Value]bool{}, true) {
+		t.Fatal("conversion use collection failed")
+	}
 }
 
 func TestCompileWithoutConservativeLivenessClears(t *testing.T) {
@@ -457,5 +525,71 @@ func main() {
 	}
 	if !pkg.NeedRuntime {
 		t.Fatal("liveness clear helpers should mark runtime as needed")
+	}
+}
+
+func TestCompileConservativeLivenessStructParamScans(t *testing.T) {
+	ssapkg, files := buildSSAPackageWithPathAndFiles(t, "github.com/goplus/llgo/runtime/livetest", "main", `package main
+
+import rt "github.com/goplus/llgo/runtime/internal/lib/runtime"
+import "unsafe"
+
+type Cell struct{ p *int }
+type Ptr *int
+
+var Sink any
+
+func consume(cell Cell) {
+	Sink = cell.p
+	Sink = 1
+}
+
+func consumePtr(p *int) {
+	Sink = p
+	Sink = 1
+}
+
+func branch(cell Cell, cond bool) {
+	if cond {
+		Sink = cell.p
+	} else {
+		Sink = 0
+	}
+	Sink = 1
+}
+
+func main() {
+	x := 1
+	y := 2
+	arr := [2]*int{&x, &y}
+	cell := Cell{p: &x}
+	p := &x
+	pp := &p
+	ptr := Ptr(&x)
+	rt.SetFinalizer(&cell, func(*Cell) {})
+	rt.SetFinalizer(&p, func(**int) {})
+	rt.SetFinalizer(*pp, nil)
+	rt.SetFinalizer(&cell.p, func(**int) {})
+	rt.SetFinalizer(&arr[0], func(**int) {})
+	rt.SetFinalizer(unsafe.Pointer(&x), nil)
+	rt.SetFinalizer(ptr, nil)
+	consume(cell)
+	consumePtr(p)
+	branch(cell, x == y)
+}
+	`)
+	ssapkg.Pkg = types.NewPackage("command-line-arguments", "main")
+
+	prog := newLLSSAProg(t)
+	pkg, err := NewPackage(prog, ssapkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.String()
+	if strings.Count(ir, "llgo_clear_stack_ptr") < 2 {
+		t.Fatalf("expected stack pointer scans for struct param and local:\n%s", ir)
+	}
+	if !strings.Contains(ir, "llgo_clobber_pointer_regs") {
+		t.Fatalf("compiled liveness module missing clobber helper:\n%s", ir)
 	}
 }
