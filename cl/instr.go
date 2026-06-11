@@ -849,6 +849,12 @@ func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, ds *explicitDeferS
 func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallCommon, ds *explicitDeferStack) (ret llssa.Expr) {
 	cv := call.Value
 	if mthd := call.Method; mthd != nil {
+		if pkg := mthd.Pkg(); pkg != nil && pkg.Path() == "reflect" {
+			switch mthd.Name() {
+			case "Method", "MethodByName":
+				p.pkg.NeedAbiInit |= llssa.ReflectMethodDynamic
+			}
+		}
 		o := p.compileValue(b, cv)
 		fn := b.Imethod(o, mthd)
 		hasVArg := fnNormal
