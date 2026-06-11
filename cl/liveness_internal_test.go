@@ -79,13 +79,16 @@ func TestShouldClearAlloc(t *testing.T) {
 
 type Box struct{ p *int }
 
+var Sink any
+
 func allocs(p *int) {
 	var box Box
 	var i int
-	_ = &box
-	_ = &i
+	box.p = p
+	Sink = &box
+	Sink = &i
 }
-`)
+	`)
 	fn := ssapkg.Func("allocs")
 	ctx := &context{}
 	if ctx.shouldClearAlloc(nil) {
@@ -93,7 +96,7 @@ func allocs(p *int) {
 	}
 
 	var boxAlloc, intAlloc *ssa.Alloc
-	for _, local := range fn.Locals {
+	for _, local := range functionAllocs(fn) {
 		ptr := local.Type().Underlying().(*types.Pointer)
 		if _, ok := ptr.Elem().Underlying().(*types.Struct); ok {
 			boxAlloc = local
@@ -103,7 +106,9 @@ func allocs(p *int) {
 		}
 	}
 	if boxAlloc == nil || intAlloc == nil {
-		t.Fatalf("missing expected locals: %v", fn.Locals)
+		var dump strings.Builder
+		fn.WriteTo(&dump)
+		t.Fatalf("missing expected allocs: %v\n%s", functionAllocs(fn), dump.String())
 	}
 	if !ctx.shouldClearAlloc(boxAlloc) {
 		t.Fatal("struct containing a pointer should be cleared")
@@ -120,6 +125,28 @@ func allocs(p *int) {
 	if ctx.shouldClearAlloc(boxAlloc) {
 		t.Fatal("synthetic makeslice alloc should not be cleared")
 	}
+}
+
+func functionAllocs(fn *ssa.Function) []*ssa.Alloc {
+	seen := make(map[*ssa.Alloc]bool)
+	var allocs []*ssa.Alloc
+	add := func(alloc *ssa.Alloc) {
+		if alloc != nil && !seen[alloc] {
+			seen[alloc] = true
+			allocs = append(allocs, alloc)
+		}
+	}
+	for _, local := range fn.Locals {
+		add(local)
+	}
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			if alloc, ok := instr.(*ssa.Alloc); ok {
+				add(alloc)
+			}
+		}
+	}
+	return allocs
 }
 
 func TestRuntimeSetFinalizerDetection(t *testing.T) {
