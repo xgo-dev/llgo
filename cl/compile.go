@@ -768,12 +768,6 @@ func (p *context) mayMoreStackHookName() string {
 		p.maymorestack = pkgPath + "." + name
 		return p.maymorestack
 	}
-	if pkgName == "main" {
-		if name, ok := strings.CutPrefix(hook, "main."); ok {
-			p.maymorestack = pkgPath + "." + name
-			return p.maymorestack
-		}
-	}
 	if strings.HasPrefix(hook, pkgPath+".") {
 		p.maymorestack = hook
 		return p.maymorestack

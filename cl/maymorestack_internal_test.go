@@ -100,6 +100,32 @@ func main() {
 	}
 }
 
+func TestMayMoreStackHookDeclarationIsCreated(t *testing.T) {
+	withMayMoreStackHook(t, "main.missingHook")
+
+	ssaPkg, _, files := buildGoSSAPkg(t, `package main
+
+func helper() {}
+
+func main() {
+	helper()
+}
+`)
+	prog := newLLSSAProg(t)
+	pkg, err := NewPackage(prog, ssaPkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.String()
+	call := "call void @main.missingHook()"
+	if got := strings.Count(ir, call); got != 2 {
+		t.Fatalf("missingHook call count = %d, want 2 for main and helper:\n%s", got, ir)
+	}
+	if fn := pkg.FuncOf("main.missingHook"); fn == nil {
+		t.Fatal("missing synthesized maymorestack hook declaration")
+	}
+}
+
 func functionIR(t *testing.T, ir, name string) string {
 	t.Helper()
 	start := strings.Index(ir, "define void @"+name+"(")
