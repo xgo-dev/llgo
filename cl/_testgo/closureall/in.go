@@ -5,12 +5,12 @@ import _ "unsafe" // for go:linkname
 
 import "github.com/goplus/lib/c"
 
-//go:linkname cSqrt C.sqrt
 // CHECK-LINE: @0 = private unnamed_addr constant [46 x i8] c"{{.*}}/cl/_testgo/closureall.S", align 1
 // CHECK-LINE: @1 = private unnamed_addr constant [3 x i8] c"Inc", align 1
 // CHECK-LINE: @7 = private unnamed_addr constant [3 x i8] c"Add", align 1
 // CHECK-LINE: @9 = private unnamed_addr constant [23 x i8] c"interface{Add(int) int}", align 1
 
+//go:linkname cSqrt C.sqrt
 func cSqrt(x c.Double) c.Double
 
 // llgo:link cAbs C.abs
