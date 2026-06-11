@@ -67,12 +67,25 @@ func (p *pkgSymInfo) addSym(fset *token.FileSet, pos token.Pos, fullName, inPkgN
 }
 
 func (p *pkgSymInfo) initLinknames(ctx *context) {
+	p.initLinknamesEx(ctx, false)
+}
+
+func (p *pkgSymInfo) initLinknamesEx(ctx *context, warnMissing bool) {
 	sep := []byte{'\n'}
 	commentPrefix := []byte{'/', '/'}
 	for file, b := range p.files {
 		lines := bytes.Split(b, sep)
 		for _, line := range lines {
 			if bytes.HasPrefix(line, commentPrefix) {
+				if !warnMissing {
+					name, ok := linkDirectiveName(string(line))
+					if !ok {
+						continue
+					}
+					if sym, ok := p.syms[name]; !ok || file != sym.file {
+						continue
+					}
+				}
 				ctx.initLinkname(string(line), true, func(inPkgName string, isExport bool) (fullName string, isVar, ok bool) {
 					if sym, ok := p.syms[inPkgName]; ok && file == sym.file {
 						return sym.fullName, sym.isVar, true
@@ -82,6 +95,36 @@ func (p *pkgSymInfo) initLinknames(ctx *context) {
 			}
 		}
 	}
+}
+
+func linkDirectiveName(line string) (string, bool) {
+	const (
+		linkname  = "//go:linkname "
+		llgolink  = "//llgo:link "
+		llgolink2 = "// llgo:link "
+		export    = "//export "
+	)
+	var prefix string
+	switch {
+	case strings.HasPrefix(line, linkname):
+		prefix = linkname
+	case strings.HasPrefix(line, llgolink):
+		prefix = llgolink
+	case strings.HasPrefix(line, llgolink2):
+		prefix = llgolink2
+	case strings.HasPrefix(line, export):
+		prefix = export
+	default:
+		return "", false
+	}
+	text := strings.TrimSpace(line[len(prefix):])
+	if idx := strings.IndexByte(text, ' '); idx > 0 {
+		return text[:idx], true
+	}
+	if prefix == export && text != "" {
+		return text, true
+	}
+	return "", false
 }
 
 // PkgKindOf returns the kind of a package.
@@ -171,15 +214,17 @@ start:
 			}
 		}
 	}
-	syms.initLinknames(p)
+	syms.initLinknamesEx(p, false)
 }
 
 func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
+	syms := newPkgSymInfo()
 	for _, file := range files {
 		for _, decl := range file.Decls {
 			switch decl := decl.(type) {
 			case *ast.FuncDecl:
 				fullName, inPkgName := astFuncName(pkgPath, decl)
+				syms.addSym(p.fset, decl.Name.Pos(), fullName, inPkgName, false)
 				if !p.processLinknameByDoc(decl.Doc, fullName, inPkgName, false, true) && cPkg {
 					// package C (https://github.com/goplus/llgo/issues/1165)
 					if decl.Recv == nil && token.IsExported(inPkgName) {
@@ -194,6 +239,7 @@ func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
 					if len(decl.Specs) == 1 {
 						if names := decl.Specs[0].(*ast.ValueSpec).Names; len(names) == 1 {
 							inPkgName := names[0].Name
+							syms.addSym(p.fset, names[0].Pos(), pkgPath+"."+inPkgName, inPkgName, true)
 							p.processLinknameByDoc(decl.Doc, pkgPath+"."+inPkgName, inPkgName, true, true)
 						}
 					}
@@ -215,6 +261,7 @@ func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
 			}
 		}
 	}
+	syms.initLinknames(p)
 }
 
 // PreCollectLinknames scans syntax files before SSA compilation and populates
