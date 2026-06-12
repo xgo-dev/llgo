@@ -36,11 +36,15 @@ func ReadMemStats(m *runtime.MemStats) {
 }
 
 func GC() {
+	bdwgc.ClearStack(nil)
 	bdwgc.Gcollect()
+	runFinalizers()
 	// BDW finalizers are observed on a subsequent collection cycle.
 	// Run one extra cycle so weak-pointer cleanup hooks (unique/weak) see
 	// finalized state before we trigger map cleanup callbacks.
+	bdwgc.ClearStack(nil)
 	bdwgc.Gcollect()
+	runFinalizers()
 	unique_runtime_notifyMapCleanup()
 	if poolCleanup != nil {
 		poolCleanup()
