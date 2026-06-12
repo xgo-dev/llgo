@@ -22,15 +22,14 @@ package reflect
 
 import (
 	"strconv"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 	"unsafe"
 
-	"sync"
-
 	"github.com/goplus/llgo/runtime/abi"
 	clite "github.com/goplus/llgo/runtime/internal/clite"
-	_ "github.com/goplus/llgo/runtime/internal/runtime"
+	"github.com/goplus/llgo/runtime/internal/runtime"
 	"github.com/goplus/llgo/runtime/internal/runtime/goarch"
 )
 
@@ -404,6 +403,10 @@ func toRType(t *abi.Type) *rtype {
 func elem(t *abi.Type) *abi.Type {
 	et := t.Elem()
 	if et != nil {
+		if et.IsClosure() {
+			ft := toFuncType(et.StructType())
+			return &ft.Type
+		}
 		return et
 	}
 	panic("reflect: Elem of invalid type " + stringFor(t))
@@ -841,12 +844,124 @@ func TypeOf(i any) Type {
 	}
 	// check closure type
 	if eface.typ.IsClosure() {
-		ft := eface.typ.StructType().Fields[0].Typ.FuncType()
+		ft := toFuncType(eface.typ.StructType())
 		return toType(&ft.Type)
 	}
 	// Noescape so this doesn't make i to escape. See the comment
 	// at Value.typ for why this is safe.
 	return toType((*abi.Type)(unsafe.Pointer(eface.typ)))
+}
+
+var namedFuncMap sync.Map // map[*abi.StructType]*abi.FuncType
+
+func toFuncType(typ *abi.StructType) *abi.FuncType {
+	if !typ.HasName() {
+		return typ.Fields[0].Typ.FuncType()
+	}
+	if i, ok := namedFuncMap.Load(typ); ok {
+		return i.(*abi.FuncType)
+	}
+	size := unsafe.Sizeof(abi.FuncType{})
+	u := typ.Uncommon()
+	if u != nil {
+		size += unsafe.Sizeof(abi.UncommonType{}) + uintptr(u.Mcount)*unsafe.Sizeof(abi.Method{})
+	}
+	ftyp := typ.Fields[0].Typ.FuncType()
+	ptr := runtime.AllocU(size)
+	t := (*abi.FuncType)(ptr)
+	t.Size_ = ftyp.Size_
+	t.PtrBytes = ftyp.PtrBytes
+	t.Hash = fnv1(typ.Hash, []byte("-funcType")...)
+	t.TFlag = ftyp.TFlag | abi.TFlagNamed
+	t.Align_ = ftyp.Align_
+	t.FieldAlign_ = ftyp.FieldAlign_
+	t.Kind_ = ftyp.Kind_
+	t.Equal = ftyp.Equal
+	t.GCData = ftyp.GCData
+	t.Str_ = typ.Str_
+	t.In = ftyp.In
+	t.Out = ftyp.Out
+	if typ.TFlag&abi.TFlagExtraStar != 0 {
+		t.TFlag |= abi.TFlagExtraStar
+	}
+	if u != nil {
+		t.TFlag |= abi.TFlagUncommon
+		tu := t.Uncommon()
+		tu.PkgPath_ = u.PkgPath_
+		tu.Mcount = u.Mcount
+		tu.Xcount = u.Xcount
+		tu.Moff = u.Moff
+		uptr := add(unsafe.Pointer(u), uintptr(u.Moff), "t.mcount > 0")
+		tptr := add(unsafe.Pointer(tu), uintptr(tu.Moff), "t.mcount > 0")
+
+		for i := 0; i < int(u.Mcount); i++ {
+			uelemPtr := add(uptr, uintptr(i)*unsafe.Sizeof(Method{}), "accessing method element")
+			telemPtr := add(tptr, uintptr(i)*unsafe.Sizeof(Method{}), "accessing method element")
+			*(*Method)(telemPtr) = *(*Method)(uelemPtr)
+		}
+	}
+	tt, _ := namedFuncMap.LoadOrStore(typ, t)
+	return tt.(*abi.FuncType)
+}
+
+func toClosureType(typ *abi.FuncType) *abi.StructType {
+	size := unsafe.Sizeof(abi.StructType{})
+	u := typ.Uncommon()
+	if u != nil {
+		size += unsafe.Sizeof(abi.UncommonType{}) + uintptr(u.Mcount)*unsafe.Sizeof(abi.Method{})
+	}
+	ftyp := typ
+	fnstr := funcStr(ftyp)
+	for _, t := range typelist {
+		if t.Kind() == abi.Func && t.String() == fnstr {
+			ftyp = t.FuncType()
+			break
+		}
+	}
+	ptr := runtime.AllocU(size)
+	t := (*abi.StructType)(ptr)
+	t.Size_ = ftyp.Size_
+	t.PtrBytes = ftyp.PtrBytes
+	t.Hash = fnv1(typ.Hash, []byte("-structType")...)
+	t.TFlag = ftyp.TFlag | abi.TFlagNamed | abi.TFlagClosure
+	t.Align_ = ftyp.Align_
+	t.FieldAlign_ = ftyp.FieldAlign_
+	t.Kind_ = uint8(abi.Struct)
+	t.Equal = ftyp.Equal
+	t.GCData = ftyp.GCData
+	t.Str_ = typ.Str_
+	t.Fields = []abi.StructField{
+		abi.StructField{
+			Name_: "$f",
+			Typ:   &ftyp.Type,
+		}, abi.StructField{
+			Name_:  "$data",
+			Typ:    unsafePointerType,
+			Offset: pointerSize,
+		},
+	}
+	t.PkgPath_ = ""
+	if typ.TFlag&abi.TFlagExtraStar != 0 {
+		t.TFlag |= abi.TFlagExtraStar
+	}
+	if u != nil {
+		t.TFlag |= abi.TFlagUncommon
+		tu := t.Uncommon()
+		tu.PkgPath_ = u.PkgPath_
+		tu.Mcount = u.Mcount
+		tu.Xcount = u.Xcount
+		tu.Moff = u.Moff
+		uptr := add(unsafe.Pointer(u), uintptr(u.Moff), "t.mcount > 0")
+		tptr := add(unsafe.Pointer(tu), uintptr(tu.Moff), "t.mcount > 0")
+
+		for i := 0; i < int(u.Mcount); i++ {
+			uelemPtr := add(uptr, uintptr(i)*unsafe.Sizeof(Method{}), "accessing method element")
+			telemPtr := add(tptr, uintptr(i)*unsafe.Sizeof(Method{}), "accessing method element")
+			*(*Method)(telemPtr) = *(*Method)(uelemPtr)
+		}
+	}
+	namedFuncMap.Store(t, typ)
+	return t
 }
 
 // rtypeOf directly extracts the *rtype of the provided value.
@@ -2149,6 +2264,21 @@ var closureLookupCache struct {
 
 // Struct returns a struct type.
 func closureOf(ftyp *abi.FuncType) *abi.Type {
+	if ftyp.HasName() {
+		var t *abi.StructType
+		namedFuncMap.Range(func(key interface{}, value interface{}) bool {
+			if value == ftyp {
+				t = key.(*abi.StructType)
+				return false
+			}
+			return true
+		})
+		if t != nil {
+			return &t.Type
+		}
+		return &toClosureType(ftyp).Type
+	}
+
 	fields := []abi.StructField{
 		abi.StructField{
 			Name_: "$f",

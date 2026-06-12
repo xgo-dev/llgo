@@ -1627,11 +1627,11 @@ func (v Value) typeSlow() Type {
 	}
 
 	typ := v.typ()
-	// closure func
-	if v.typ_.IsClosure() {
-		return toRType(&v.closureFunc().Type)
-	}
 	if v.flag&flagMethod == 0 {
+		// closure func
+		if v.typ_.IsClosure() {
+			return toRType(&v.closureFunc().Type)
+		}
 		return toRType(v.typ())
 	}
 
@@ -2430,7 +2430,7 @@ func toFFIRetType(tout []*abi.Type) *ffi.Type {
 }
 
 func (v Value) closureFunc() *abi.FuncType {
-	return v.typ_.StructType().Fields[0].Typ.FuncType()
+	return toFuncType(v.typ_.StructType())
 }
 
 func (v Value) call(op string, in []Value) (out []Value) {
@@ -2443,7 +2443,7 @@ func (v Value) call(op string, in []Value) (out []Value) {
 		ret  unsafe.Pointer
 		ioff int
 	)
-	if v.typ_.IsClosure() {
+	if v.typ_.IsClosure() && v.flag&flagMethod == 0 {
 		ft = v.typ_.StructType().Fields[0].Typ.FuncType()
 		tin = append([]*abi.Type{rtypeOf(unsafe.Pointer(nil))}, ft.In...)
 		tout = ft.Out
