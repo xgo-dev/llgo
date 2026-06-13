@@ -34,16 +34,29 @@ type funcData struct {
 	ftyp *funcType
 	fn   func(args []Value) (results []Value)
 	nin  int
+	off  int
 }
 
 func MakeFunc(typ Type, fn func(args []Value) (results []Value)) Value {
+	return makeFunc(typ, false, fn)
+}
+
+func makeFunc(typ Type, method bool, fn func(args []Value) (results []Value)) Value {
 	if typ.Kind() != Func {
 		panic("reflect: call of MakeFunc with non-Func type")
 	}
 
 	t := typ.common()
 	ftyp := (*funcType)(unsafe.Pointer(t))
-	sig, err := toFFISig(append([]*abi.Type{unsafePointerType}, ftyp.In...), ftyp.Out)
+	var ins []*abi.Type
+	var off int
+	if method {
+		ins = ftyp.In
+	} else {
+		ins = append([]*abi.Type{unsafePointerType}, ftyp.In...)
+		off = 1
+	}
+	sig, err := toFFISig(ins, ftyp.Out)
 	if err != nil {
 		panic(err)
 	}
@@ -55,26 +68,26 @@ func MakeFunc(typ Type, fn func(args []Value) (results []Value)) Value {
 			fd := (*funcData)(userdata)
 			ins := make([]Value, fd.nin)
 			for i := 0; i < fd.nin; i++ {
-				ins[i] = ffiToValue(ffi.Index(args, uintptr(i+1)), fd.ftyp.In[i])
+				ins[i] = ffiToValue(ffi.Index(args, uintptr(i+fd.off)), fd.ftyp.In[i])
 			}
 			validateMakeFuncResults(fd.fn(ins), fd.ftyp)
-		}, unsafe.Pointer(&funcData{ftyp: ftyp, fn: fn, nin: len(ftyp.In)}))
+		}, unsafe.Pointer(&funcData{ftyp: ftyp, fn: fn, nin: len(ftyp.In), off: off}))
 	case 1:
 		err = closure.Bind(sig, func(cif *ffi.Signature, ret unsafe.Pointer, args *unsafe.Pointer, userdata unsafe.Pointer) {
 			fd := (*funcData)(userdata)
 			ins := make([]Value, fd.nin)
 			for i := 0; i < fd.nin; i++ {
-				ins[i] = ffiToValue(ffi.Index(args, uintptr(i+1)), fd.ftyp.In[i])
+				ins[i] = ffiToValue(ffi.Index(args, uintptr(i+fd.off)), fd.ftyp.In[i])
 			}
 			out := validateMakeFuncResults(fd.fn(ins), fd.ftyp)
 			storeMakeFuncResult(ret, out[0], fd.ftyp.Out[0])
-		}, unsafe.Pointer(&funcData{ftyp: ftyp, fn: fn, nin: len(ftyp.In)}))
+		}, unsafe.Pointer(&funcData{ftyp: ftyp, fn: fn, nin: len(ftyp.In), off: off}))
 	default:
 		err = closure.Bind(sig, func(cif *ffi.Signature, ret unsafe.Pointer, args *unsafe.Pointer, userdata unsafe.Pointer) {
 			fd := (*funcData)(userdata)
 			ins := make([]Value, fd.nin)
 			for i := 0; i < fd.nin; i++ {
-				ins[i] = ffiToValue(ffi.Index(args, uintptr(i+1)), fd.ftyp.In[i])
+				ins[i] = ffiToValue(ffi.Index(args, uintptr(i+fd.off)), fd.ftyp.In[i])
 			}
 			outs := validateMakeFuncResults(fd.fn(ins), fd.ftyp)
 			var offset uintptr = 0
@@ -84,7 +97,7 @@ func MakeFunc(typ Type, fn func(args []Value) (results []Value)) Value {
 				storeMakeFuncResult(add(ret, offset, ""), out, typ)
 				offset += (typ.Size_ + alignment - 1) &^ (alignment - 1)
 			}
-		}, unsafe.Pointer(&funcData{ftyp: ftyp, fn: fn, nin: len(ftyp.In)}))
+		}, unsafe.Pointer(&funcData{ftyp: ftyp, fn: fn, nin: len(ftyp.In), off: off}))
 	}
 	if err != nil {
 		panic("libffi error: " + err.Error())
