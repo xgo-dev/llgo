@@ -27,7 +27,9 @@ func Rethrow(link *Defer) {
 			c.Exit(2)
 		} else {
 			node := (*panicNode)(ptr)
-			node.defer_ = link
+			if link == (*Defer)(c.GoDeferData()) {
+				node.defer_ = link
+			}
 			c.Siglongjmp(link.Addr, 1)
 		}
 	} else if ptr := goexitKey.Get(); ptr != nil {
