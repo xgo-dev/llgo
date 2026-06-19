@@ -37,8 +37,9 @@ type Defer struct {
 }
 
 type panicNode struct {
-	prev unsafe.Pointer
-	arg  any
+	prev   unsafe.Pointer
+	arg    any
+	defer_ *Defer
 }
 
 // Recover recovers a panic.
@@ -49,6 +50,9 @@ func Recover(token unsafe.Pointer) (ret any) {
 	ptr := panicKey.Get()
 	if ptr != nil {
 		node := (*panicNode)(ptr)
+		if node.defer_ != (*Defer)(c.GoDeferData()) {
+			return nil
+		}
 		panicKey.Set(node.prev)
 		recoverFrameKey.Set(nil)
 		ret = node.arg
@@ -70,11 +74,22 @@ func EndRecoverFrame(frame unsafe.Pointer) {
 	recoverFrameKey.Set(frame)
 }
 
+// StartRecoverFrameAlias maps a direct deferred closure wrapper to the wrapped
+// function while the wrapper calls into it.
+func StartRecoverFrameAlias(from, to unsafe.Pointer) unsafe.Pointer {
+	old := recoverFrameKey.Get()
+	if old == from {
+		recoverFrameKey.Set(to)
+	}
+	return old
+}
+
 // Panic panics with a value.
 func Panic(v any) {
 	ptr := (*panicNode)(c.Malloc(unsafe.Sizeof(panicNode{})))
 	ptr.prev = panicKey.Get()
 	ptr.arg = v
+	ptr.defer_ = (*Defer)(c.GoDeferData())
 	panicKey.Set(unsafe.Pointer(ptr))
 
 	Rethrow((*Defer)(c.GoDeferData()))

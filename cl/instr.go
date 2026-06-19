@@ -918,9 +918,7 @@ func (p *context) callMayRecover(v ssa.Value) bool {
 		}
 		return true
 	case *ssa.Call:
-		if fn := v.Call.StaticCallee(); fn != nil {
-			return functionUsesRecover(fn)
-		}
+		// The deferred callee is the call result, not the factory function.
 		return true
 	}
 	return true

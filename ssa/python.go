@@ -593,7 +593,7 @@ func (p Package) PyNewFunc(name string, sig *types.Signature, doInit bool) PyObj
 		obj.InitNil()
 		obj.impl.SetLinkage(llvm.LinkOnceAnyLinkage)
 	}
-	ty := &aType{ll: obj.ll, raw: rawType{types.NewPointer(sig)}, kind: vkPyFuncRef}
+	ty := &aType{obj.ll, rawType{types.NewPointer(sig)}, vkPyFuncRef}
 	expr := Expr{obj.impl, ty}
 	ret := &aPyObjRef{expr, obj}
 	p.pyobjs[name] = ret

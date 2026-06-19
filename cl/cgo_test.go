@@ -240,6 +240,9 @@ func plain() {}
 	if !ctx.callMayRecover(&gossa.MakeClosure{}) {
 		t.Fatal("unknown closure target should conservatively be recover-capable")
 	}
+	if !ctx.callMayRecover(&gossa.Call{}) {
+		t.Fatal("function value returned by a call should conservatively be recover-capable")
+	}
 	if !ctx.callMayRecover(nil) {
 		t.Fatal("unknown call value should conservatively be recover-capable")
 	}

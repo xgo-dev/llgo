@@ -21,6 +21,10 @@ func Rethrow(link *Defer) {
 		c.Printf(c.Str("fatal error\n"))
 		c.Exit(2)
 	} else {
+		if ptr := panicKey.Get(); ptr != nil {
+			node := (*panicNode)(ptr)
+			node.defer_ = link
+		}
 		setjmp.Longjmp((*setjmp.JmpBuf)(link.Addr), 1)
 	}
 }

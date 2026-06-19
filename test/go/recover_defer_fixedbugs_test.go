@@ -47,6 +47,45 @@ func TestRecoverFixedbugDirectDeferredFuncValue(t *testing.T) {
 	}
 }
 
+func TestRecoverFixedbugNestedDeferInDeferredFuncDoesNotRecover(t *testing.T) {
+	nested := any("unset")
+	func() {
+		defer func() {
+			if r := recover(); r != "outer" {
+				t.Fatalf("outer recover = %v, want outer", r)
+			}
+		}()
+		defer func() {
+			defer func() {
+				nested = recover()
+			}()
+		}()
+		panic("outer")
+	}()
+	if nested != nil {
+		t.Fatalf("nested recover = %v, want nil", nested)
+	}
+}
+
+var fixedbugReturnedRecover any
+
+func fixedbugReturnedRecoverFunc() func() {
+	return func() {
+		fixedbugReturnedRecover = recover()
+	}
+}
+
+func TestRecoverFixedbugReturnedDeferredFuncValue(t *testing.T) {
+	fixedbugReturnedRecover = nil
+	func() {
+		defer fixedbugReturnedRecoverFunc()()
+		panic("returned deferred func value")
+	}()
+	if fixedbugReturnedRecover != "returned deferred func value" {
+		t.Fatalf("returned deferred recover = %v, want panic value", fixedbugReturnedRecover)
+	}
+}
+
 var fixedbug73916Recovered bool
 
 func fixedbug73916CallRecover() {

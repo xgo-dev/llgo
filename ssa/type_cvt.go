@@ -64,7 +64,7 @@ func (p Program) FuncDecl(sig *types.Signature, bg Background) Type {
 	} else if recv != nil { // even in C, we need to add ctx for method
 		sig = FuncAddCtx(recv, sig)
 	}
-	return &aType{ll: p.toLLVMFunc(sig), raw: rawType{sig}, kind: vkFuncDecl}
+	return &aType{p.toLLVMFunc(sig), rawType{sig}, vkFuncDecl}
 }
 
 // Closure creates a closture type for a function.

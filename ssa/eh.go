@@ -597,7 +597,7 @@ func deferMayRecover(fn Expr) bool {
 	}
 	switch fn.kind {
 	case vkClosure, vkFuncDecl:
-		return fn.Type.mayRecover
+		return fn.mayRecover()
 	case vkFuncPtr:
 		return true
 	}

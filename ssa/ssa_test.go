@@ -958,15 +958,23 @@ _llgo_0:
 define linkonce i64 @%s(ptr %%0, i64 %%1) {
 _llgo_0:
   %%2 = load ptr, ptr %%0, align 8
-  %%3 = tail call i64 %%2(i64 %%1)
-  ret i64 %%3
+  %%3 = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.StartRecoverFrameAlias"(ptr @%s, ptr %%2)
+  %%4 = call i64 %%2(i64 %%1)
+  call void @"github.com/goplus/llgo/runtime/internal/runtime.EndRecoverFrame"(ptr %%3)
+  ret i64 %%4
 }
+
+; Function Attrs: null_pointer_is_valid
+declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.StartRecoverFrameAlias"(ptr, ptr) #0
+
+; Function Attrs: null_pointer_is_valid
+declare void @"github.com/goplus/llgo/runtime/internal/runtime.EndRecoverFrame"(ptr) #0
 
 ; Function Attrs: null_pointer_is_valid
 declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64) #0
 
 attributes #0 = { null_pointer_is_valid }
-`, wrapRef, wrapRef)
+`, wrapRef, wrapRef, wrapRef)
 	assertPkg(t, pkg, expected)
 }
 
@@ -1328,7 +1336,7 @@ func TestClosureWrapHelpers(t *testing.T) {
 	if args := closureWrapArgs(wrap); len(args) != 0 {
 		t.Fatalf("closureWrapArgs should return 0 args, got %d", len(args))
 	}
-	closureWrapReturn(b, sig, Expr{})
+	closureWrapReturn(b, sig, Expr{}, true)
 }
 
 func TestClosureWrapCache(t *testing.T) {
