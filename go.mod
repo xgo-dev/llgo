@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/goplus/cobra v1.9.12 //xgo:class
-	github.com/goplus/gogen v1.22.0
+	github.com/goplus/gogen v1.23.0
 	github.com/goplus/lib v0.3.1
 	github.com/goplus/llgo/runtime v0.0.0-00010101000000-000000000000
 	github.com/goplus/mod v0.20.2
@@ -20,11 +20,12 @@ require (
 	golang.org/x/tools v0.38.0
 )
 
+require golang.org/x/sys v0.37.0
+
 require (
 	github.com/creack/goselect v0.1.2 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	golang.org/x/sync v0.17.0 // indirect
-	golang.org/x/sys v0.37.0 // indirect
 )
 
 replace github.com/goplus/llgo/runtime => ./runtime
