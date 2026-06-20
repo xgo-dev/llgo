@@ -1096,11 +1096,15 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil && p.prog.SizeOf(t) == 0 {
 				p.assertNilDerefBase(b, v.X)
 			}
+			interfaceCompareDeref := isInterfaceCompareDeref(v)
+			if interfaceCompareDeref {
+				p.assertNilDerefBase(b, v.X)
+			}
 			// A recovered panic resumes through the recover block, which reads
 			// result slots. Keep nil derefs in recover-capable functions ordered
 			// so the panic cannot be removed or moved past partial result writes.
 			recoverVolatile := p.isRecoverVolatileAddr(v.X)
-			if p.recoverVolatileAllocs != nil && !recoverVolatile {
+			if interfaceCompareDeref || (p.recoverVolatileAllocs != nil && !recoverVolatile) {
 				b.AssertNilDeref(x)
 			}
 			ret = b.Load(x)
