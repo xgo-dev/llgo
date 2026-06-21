@@ -1,0 +1,30 @@
+[TypeChildren]
+*_llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA:
+    _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA
+*_llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
+    _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
+*_llgo_github.com/goplus/llgo/cl/_testmeta/methods.MyType:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/methods.MyType
+*_llgo_int:
+    _llgo_int
+*_llgo_string:
+    _llgo_string
+_llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA:
+    _llgo_int
+_llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
+    _llgo_string
+_llgo_github.com/goplus/llgo/cl/_testmeta/methods.MyType:
+    _llgo_int
+
+[UseIface]
+github.com/goplus/llgo/cl/_testmeta/methods.main:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/methods.MyType
+
+[MethodInfo]
+*_llgo_github.com/goplus/llgo/cl/_testmeta/methods.MyType:
+    ExportedMethod _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to github.com/goplus/llgo/cl/_testmeta/methods.(*MyType).ExportedMethod github.com/goplus/llgo/cl/_testmeta/methods.(*MyType).ExportedMethod
+    github.com/goplus/llgo/cl/_testmeta/methods.unexportedMethod _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA github.com/goplus/llgo/cl/_testmeta/methods.(*MyType).unexportedMethod github.com/goplus/llgo/cl/_testmeta/methods.(*MyType).unexportedMethod
+_llgo_github.com/goplus/llgo/cl/_testmeta/methods.MyType:
+    ExportedMethod _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to github.com/goplus/llgo/cl/_testmeta/methods.(*MyType).ExportedMethod github.com/goplus/llgo/cl/_testmeta/methods.MyType.ExportedMethod
+    github.com/goplus/llgo/cl/_testmeta/methods.unexportedMethod _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA github.com/goplus/llgo/cl/_testmeta/methods.(*MyType).unexportedMethod github.com/goplus/llgo/cl/_testmeta/methods.MyType.unexportedMethod
+
