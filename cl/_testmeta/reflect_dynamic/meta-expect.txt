@@ -1,0 +1,54 @@
+[TypeChildren]
+*_llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac:
+    _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+*_llgo_github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.T:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.T
+
+[OrdinaryEdges]
+*_llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+*_llgo_github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.T:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    _llgo_github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.T
+__llgo_stub.github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.(*T).M:
+    github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.(*T).M
+__llgo_stub.github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.T.M:
+    github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.T.M
+__llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequal0:
+    github.com/goplus/llgo/runtime/internal/runtime.memequal0
+__llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr:
+    github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+_llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac:
+    *_llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+_llgo_github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.T:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequal0
+    *_llgo_github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.T
+github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.(*T).M:
+    github.com/goplus/llgo/runtime/internal/runtime.PanicWrapNilPointer
+    github.com/goplus/llgo/runtime/internal/runtime.AssertNilDeref
+    github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.T.M
+github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.init:
+    github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.init$guard
+    reflect.init
+github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.main:
+    github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.use
+github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.use:
+    github.com/goplus/llgo/runtime/internal/runtime.AllocU
+    _llgo_github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.T
+    reflect.ValueOf
+    reflect.Value.MethodByName
+
+[UseIface]
+github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.use:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.T
+
+[MethodInfo]
+*_llgo_github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.T:
+    0 M _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.(*T).M __llgo_stub.github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.(*T).M
+_llgo_github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.T:
+    0 M _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.(*T).M __llgo_stub.github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.T.M
+
+[ReflectMethod]
+github.com/goplus/llgo/cl/_testmeta/reflect_dynamic.use
+

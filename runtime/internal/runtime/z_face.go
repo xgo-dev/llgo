@@ -142,7 +142,7 @@ func NewItab(inter *InterfaceType, typ *Type) *Itab {
 				// matched but no function pointer (e.g. stripped/unreachable after DCE);
 				// keep itab entry with a placeholder so the itab stays intact
 				// and only panics on call, not at assertion time.
-				fn = abi.Text(uintptr(0))
+				fn = abi.Text(c.Func(unreachableMethod))
 			}
 			*c.Advance(data, i) = uintptr(fn)
 		}
@@ -169,6 +169,12 @@ func findMethod(mthds []abi.Method, im abi.Imethod) (abi.Text, bool) {
 		}
 	}
 	return nil, false
+}
+
+// unreachableMethod matches Go's runtime.unreachableMethod: method entries
+// proven unreachable by link-time DCE are redirected here and should never run.
+func unreachableMethod() {
+	throw("unreachable method called. linker bug?")
 }
 
 func IfaceType(i iface) *abi.Type {
