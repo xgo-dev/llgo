@@ -137,12 +137,7 @@ func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
 	}
 	prog := b.Prog
 	typ := x.Type
-	if mb := b.Pkg.MetaBuilder; mb != nil {
-		if _, ok := types.Unalias(typ.raw.Type).Underlying().(*types.Interface); !ok {
-			typeName, _ := prog.abi.TypeName(typ.raw.Type)
-			mb.AddUseIface(mb.Symbol(b.Func.Name()), []metadata.Symbol{mb.Symbol(typeName)})
-		}
-	}
+	b.recordUseIface(typ)
 	tabi := b.abiType(typ.raw.Type)
 	if !directIfaceType(typ.raw.Type) {
 		vptr := b.AllocU(typ)
@@ -192,11 +187,21 @@ func (b Builder) MakeInterfaceFromPtr(tinter Type, ptr Expr) (ret Expr) {
 		return b.MakeInterface(tinter, b.Load(ptr))
 	}
 
+	b.recordUseIface(typ)
 	vptr := b.AllocU(typ)
 	dst := b.Convert(prog.VoidPtr(), vptr)
 	src := b.Convert(prog.VoidPtr(), ptr)
 	b.Call(b.Pkg.rtFunc("Typedmemmove"), tabi, dst, src)
 	return Expr{b.unsafeInterface(rawIntf, tabi, vptr.impl), tinter}
+}
+
+func (b Builder) recordUseIface(typ Type) {
+	if mb := b.Pkg.MetaBuilder; mb != nil {
+		if _, ok := types.Unalias(typ.raw.Type).Underlying().(*types.Interface); !ok {
+			typeName, _ := b.Prog.abi.TypeName(typ.raw.Type)
+			mb.AddUseIface(mb.Symbol(b.Func.Name()), []metadata.Symbol{mb.Symbol(typeName)})
+		}
+	}
 }
 
 func (b Builder) valFromData(typ Type, data llvm.Value) Expr {
