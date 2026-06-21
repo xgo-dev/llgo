@@ -22,6 +22,10 @@ _llgo_github.com/goplus/llgo/cl/_testmeta/interface_unexported.I:
 *github.com/goplus/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo:
     __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
     github.com/goplus/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo
+__llgo_stub.github.com/goplus/llgo/cl/_testmeta/interface_unexported.(*T).m:
+    github.com/goplus/llgo/cl/_testmeta/interface_unexported.(*T).m
+__llgo_stub.github.com/goplus/llgo/cl/_testmeta/interface_unexported.T.m:
+    github.com/goplus/llgo/cl/_testmeta/interface_unexported.T.m
 __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.interequal:
     github.com/goplus/llgo/runtime/internal/runtime.interequal
 __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequal0:
@@ -34,6 +38,8 @@ _llgo_github.com/goplus/llgo/cl/_testmeta/interface_unexported.T:
     __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequal0
     *_llgo_github.com/goplus/llgo/cl/_testmeta/interface_unexported.T
 github.com/goplus/llgo/cl/_testmeta/interface_unexported.(*T).m:
+    github.com/goplus/llgo/runtime/internal/runtime.PanicWrapNilPointer
+    github.com/goplus/llgo/runtime/internal/runtime.AssertNilDeref
     github.com/goplus/llgo/cl/_testmeta/interface_unexported.T.m
 github.com/goplus/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo:
     __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.interequal
@@ -62,7 +68,7 @@ github.com/goplus/llgo/cl/_testmeta/interface_unexported.use:
 
 [MethodInfo]
 *_llgo_github.com/goplus/llgo/cl/_testmeta/interface_unexported.T:
-    0 github.com/goplus/llgo/cl/_testmeta/interface_unexported.m _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac github.com/goplus/llgo/cl/_testmeta/interface_unexported.(*T).m github.com/goplus/llgo/cl/_testmeta/interface_unexported.(*T).m
+    0 github.com/goplus/llgo/cl/_testmeta/interface_unexported.m _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac github.com/goplus/llgo/cl/_testmeta/interface_unexported.(*T).m __llgo_stub.github.com/goplus/llgo/cl/_testmeta/interface_unexported.(*T).m
 _llgo_github.com/goplus/llgo/cl/_testmeta/interface_unexported.T:
-    0 github.com/goplus/llgo/cl/_testmeta/interface_unexported.m _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac github.com/goplus/llgo/cl/_testmeta/interface_unexported.(*T).m github.com/goplus/llgo/cl/_testmeta/interface_unexported.T.m
+    0 github.com/goplus/llgo/cl/_testmeta/interface_unexported.m _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac github.com/goplus/llgo/cl/_testmeta/interface_unexported.(*T).m __llgo_stub.github.com/goplus/llgo/cl/_testmeta/interface_unexported.T.m
 
