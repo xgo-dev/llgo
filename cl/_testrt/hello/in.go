@@ -3,7 +3,7 @@ package main
 
 import "github.com/goplus/llgo/cl/_testrt/hello/libc"
 
-// CHECK-LINE: @"{{.*}}/cl/_testrt/hello.format" = global [10 x i8] zeroinitializer, align 1
+// CHECK: {{^}}@"{{.*}}/cl/_testrt/hello.format" = global [10 x i8] zeroinitializer, align 1{{$}}
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/hello.init"(){{.*}} {
 // CHECK-NEXT: _llgo_0:

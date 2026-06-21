@@ -110,6 +110,15 @@ func (e *Env) InstallNameTool() *install_name_tool.Cmd {
 	return install_name_tool.New(bin)
 }
 
+// FileCheck returns a command to execute LLVM FileCheck with given arguments.
+func (e *Env) FileCheck(args ...string) (*exec.Cmd, error) {
+	path, err := e.toolPath("FileCheck")
+	if err != nil {
+		return nil, err
+	}
+	return exec.Command(path, args...), nil
+}
+
 // Readelf returns a command to execute llvm-readelf with given arguments.
 func (e *Env) Readelf(args ...string) (*exec.Cmd, error) {
 	path, err := e.toolPath("llvm-readelf")

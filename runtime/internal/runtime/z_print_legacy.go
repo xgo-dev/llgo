@@ -24,9 +24,32 @@ func formatFloat(v float64) string {
 	if s, ok := formatSpecialFloat(v); ok {
 		return s
 	}
-	return formatFloatWithC(v, c.Str("%+.6e"))
+	return padLegacyPrintExponent(formatFloatWithC(v, c.Str("%+.6e")))
 }
 
 func formatComplex(v complex128) string {
 	return "(" + formatFloat(real(v)) + formatFloat(imag(v)) + "i)"
+}
+
+// Go's legacy printfloat path pads exponents to three digits; C's %e commonly
+// pads to two, so normalize after using C for the mantissa formatting.
+func padLegacyPrintExponent(s string) string {
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] != 'e' && s[i] != 'E' {
+			continue
+		}
+		exp := i + 2
+		if i+1 >= len(s) || exp >= len(s) || (s[i+1] != '+' && s[i+1] != '-') {
+			return s
+		}
+		switch digits := len(s) - exp; digits {
+		case 1:
+			return s[:exp] + "00" + s[exp:]
+		case 2:
+			return s[:exp] + "0" + s[exp:]
+		default:
+			return s
+		}
+	}
+	return s
 }

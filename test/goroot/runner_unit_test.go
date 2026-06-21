@@ -1,6 +1,7 @@
 package goroot
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -230,12 +231,30 @@ func TestRunProgramTimeout(t *testing.T) {
 func TestRunGeneratedProgramUsesProvidedTimeout(t *testing.T) {
 	dir := t.TempDir()
 	tool := filepath.Join(dir, "fake-tool.sh")
-	script := "#!/bin/sh\nsleep 0.2\n"
+	script := `#!/bin/sh
+set -eu
+out=""
+prev=""
+for arg in "$@"; do
+	if [ "$prev" = "-o" ]; then
+		out="$arg"
+	fi
+	prev="$arg"
+done
+cat > "$out" <<'EOF'
+#!/bin/sh
+sleep 0.2
+EOF
+chmod +x "$out"
+`
 	if err := os.WriteFile(tool, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	ws := caseWorkspace{workDir: dir}
-	_, _, exitCode, elapsed, err := runGeneratedProgram(ws, tool, os.Environ(), "generated.go", "fake", 50*time.Millisecond)
+	if err := os.WriteFile(filepath.Join(dir, "generated.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws := caseWorkspace{rootDir: dir, workDir: dir}
+	_, _, exitCode, _, elapsed, err := runGeneratedProgram(ws, tool, os.Environ(), "generated.go", "fake", time.Second, 50*time.Millisecond)
 	if err == nil {
 		t.Fatal("expected timeout")
 	}
@@ -416,6 +435,122 @@ func TestEnsureModuleWorkspace(t *testing.T) {
 	want := "module llgo-goroot-runoutput\ngo 1.14\n"
 	if string(data) != want {
 		t.Fatalf("go.mod=%q, want %q", data, want)
+	}
+}
+
+func TestRunOutputCaseGeneratesWithBaselineGoOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake tool scripts use /bin/sh")
+	}
+	dir := t.TempDir()
+	repoRoot := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	goroot := filepath.Join(dir, "goroot")
+	if err := os.MkdirAll(goroot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(goroot, "VERSION"), []byte("go1.24.11\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srcDir := filepath.Join(dir, "test", "fixedbugs")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "case.go"), []byte("// runoutput\n\npackage main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := filepath.Join(dir, "tools.log")
+	goTool := filepath.Join(dir, "fake-go")
+	llgoTool := filepath.Join(dir, "fake-llgo")
+	writeRunOutputFakeTool(t, goTool, logPath, true)
+	writeRunOutputFakeTool(t, llgoTool, logPath, false)
+
+	tc := testCase{
+		RelPath:   "fixedbugs/case.go",
+		Dir:       srcDir,
+		FileName:  "case.go",
+		Directive: "runoutput",
+	}
+	opts := directiveOptions{Timeout: 5 * time.Second}
+	if err := runOutputCase(t, repoRoot, goroot, goTool, llgoTool, tc, opts, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := string(logData)
+	if !strings.Contains(log, goTool+" run case.go") {
+		t.Fatalf("fake go generator was not run; log:\n%s", log)
+	}
+	if strings.Contains(log, llgoTool+" run") {
+		t.Fatalf("fake llgo should not run the runoutput generator; log:\n%s", log)
+	}
+	if !strings.Contains(log, goTool+" build -o") || !strings.Contains(log, llgoTool+" build -o") {
+		t.Fatalf("generated source was not built by both tools; log:\n%s", log)
+	}
+}
+
+func writeRunOutputFakeTool(t *testing.T, path, logPath string, allowRun bool) {
+	t.Helper()
+	allowRunValue := "false"
+	if allowRun {
+		allowRunValue = "true"
+	}
+	script := fmt.Sprintf(`#!/bin/sh
+set -eu
+printf '%%s\n' "$0 $*" >> %[1]q
+case "$1" in
+run)
+	if [ %[2]q != "true" ]; then
+		echo "unexpected runoutput generator invocation" >&2
+		exit 23
+	fi
+	cat <<'EOF'
+package main
+
+func main() {
+	print("ok\n")
+}
+EOF
+	;;
+build)
+	out=""
+	last=""
+	prev=""
+	for arg in "$@"; do
+		if [ "$prev" = "-o" ]; then
+			out="$arg"
+		fi
+		last="$arg"
+		prev="$arg"
+	done
+	if [ -z "$out" ]; then
+		echo "missing -o" >&2
+		exit 24
+	fi
+	if [ ! -s "$last" ]; then
+		echo "empty generated source: $last" >&2
+		exit 25
+	fi
+	cat > "$out" <<'EOF'
+#!/bin/sh
+printf 'ok\n'
+EOF
+	chmod +x "$out"
+	;;
+*)
+	echo "unexpected command: $*" >&2
+	exit 26
+	;;
+esac
+`, logPath, allowRunValue)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
 	}
 }
 

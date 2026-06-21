@@ -7,9 +7,12 @@ import (
 	"os"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/goplus/llgo/internal/lto"
 	"github.com/goplus/llgo/internal/optlevel"
+	"github.com/goplus/llgo/internal/xtool/llvm"
 )
 
 const (
@@ -78,7 +81,7 @@ func TestUseCrossCompileSDK(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			export, err := use(tc.goos, tc.goarch, false, false, optlevel.O2)
+			export, err := use(tc.goos, tc.goarch, false, false, optlevel.O2, lto.Off)
 
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
@@ -233,7 +236,7 @@ func TestUseTarget(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			export, err := UseTarget(tc.targetName, optlevel.Oz)
+			export, err := UseTarget(tc.targetName, optlevel.Oz, lto.Thin)
 
 			if tc.expectError {
 				if err == nil {
@@ -313,7 +316,7 @@ func TestUseTarget(t *testing.T) {
 
 func TestUseWithTarget(t *testing.T) {
 	// Test target-based configuration takes precedence
-	export, err := Use("linux", "amd64", "esp32", false, true, optlevel.Oz)
+	export, err := Use("linux", "amd64", "esp32", false, true, optlevel.Oz, lto.Thin)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -325,7 +328,7 @@ func TestUseWithTarget(t *testing.T) {
 	}
 
 	// Test fallback to goos/goarch when no target specified
-	export, err = Use(runtime.GOOS, runtime.GOARCH, "", false, false, optlevel.O2)
+	export, err = Use(runtime.GOOS, runtime.GOARCH, "", false, false, optlevel.O2, lto.Thin)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -337,7 +340,7 @@ func TestUseWithTarget(t *testing.T) {
 }
 
 func TestOptimizationFlagPlacement(t *testing.T) {
-	export, err := UseTarget("rp2040", optlevel.Oz)
+	export, err := UseTarget("rp2040", optlevel.Oz, lto.Off)
 	if err != nil {
 		t.Fatalf("UseTargetWithOptLevel(rp2040) failed: %v", err)
 	}
@@ -345,11 +348,120 @@ func TestOptimizationFlagPlacement(t *testing.T) {
 		t.Fatalf("target CCFLAGS = %v, want first flag -Oz", export.CCFLAGS)
 	}
 
-	export, err = Use(runtime.GOOS, runtime.GOARCH, "", false, false, optlevel.O3)
+	export, err = Use(runtime.GOOS, runtime.GOARCH, "", false, false, optlevel.O3, lto.Off)
 	if err != nil {
 		t.Fatalf("UseWithOptLevel(host, O3) failed: %v", err)
 	}
 	if !slices.Contains(export.CCFLAGS, "-O3") {
 		t.Fatalf("host CCFLAGS = %v, want -O3", export.CCFLAGS)
+	}
+	if !hasFlagValue(export.CCFLAGS, "-target", llvm.GetTargetTriple(runtime.GOOS, runtime.GOARCH)) {
+		t.Fatalf("host CCFLAGS = %v, want native -target", export.CCFLAGS)
+	}
+	if !hasFlagValue(export.LDFLAGS, "-target", llvm.GetTargetTriple(runtime.GOOS, runtime.GOARCH)) {
+		t.Fatalf("host LDFLAGS = %v, want native -target", export.LDFLAGS)
+	}
+}
+
+func TestUseLTOFlagsControlledByOption(t *testing.T) {
+	export, err := use(runtime.GOOS, runtime.GOARCH, false, false, optlevel.O2, lto.Off)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	for _, flag := range export.CCFLAGS {
+		if strings.HasPrefix(flag, "-flto") {
+			t.Fatalf("unexpected LTO ccflag when disabled: %q", flag)
+		}
+	}
+	for _, flag := range export.LDFLAGS {
+		if strings.Contains(flag, "lto-") {
+			t.Fatalf("unexpected LTO ldflag when disabled: %q", flag)
+		}
+	}
+
+	thin, err := use(runtime.GOOS, runtime.GOARCH, false, false, optlevel.O2, lto.Thin)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !slices.Contains(thin.CCFLAGS, "-flto=thin") {
+		t.Fatalf("missing thin LTO ccflag: %v", thin.CCFLAGS)
+	}
+	if !slices.Contains(thin.LDFLAGS, "-flto=thin") {
+		t.Fatalf("missing thin LTO link driver flag: %v", thin.LDFLAGS)
+	}
+	if !slices.Contains(thin.LDFLAGS, "-Wl,--lto-O2") {
+		t.Fatalf("missing thin LTO linker opt flag: %v", thin.LDFLAGS)
+	}
+
+	full, err := use(runtime.GOOS, runtime.GOARCH, false, false, optlevel.O2, lto.Full)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !slices.Contains(full.CCFLAGS, "-flto=full") {
+		t.Fatalf("missing full LTO ccflag: %v", full.CCFLAGS)
+	}
+	if !slices.Contains(full.LDFLAGS, "-flto=full") {
+		t.Fatalf("missing full LTO link driver flag: %v", full.LDFLAGS)
+	}
+}
+
+func hasMllvmOption(flags []string, opt string) bool {
+	for i := 0; i+1 < len(flags); i++ {
+		if flags[i] == "-mllvm" && flags[i+1] == opt {
+			return true
+		}
+	}
+	return false
+}
+
+func hasFlagValue(flags []string, flag, value string) bool {
+	for i := 0; i+1 < len(flags); i++ {
+		if flags[i] == flag && flags[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
+func TestUseTargetCodegenFlagsOnlyAddedToLDFlagsWithLTO(t *testing.T) {
+	const target = "k210"
+
+	noLTO, err := UseTarget(target, optlevel.Oz, lto.Off)
+	if err != nil {
+		t.Fatalf("UseTarget(%q, off) error: %v", target, err)
+	}
+	if hasMllvmOption(noLTO.LDFLAGS, "-code-model=medium") {
+		t.Fatalf("unexpected -mllvm -code-model=medium in LDFLAGS when LTO disabled: %v", noLTO.LDFLAGS)
+	}
+	if hasMllvmOption(noLTO.LDFLAGS, "-target-abi=lp64") {
+		t.Fatalf("unexpected -mllvm -target-abi=lp64 in LDFLAGS when LTO disabled: %v", noLTO.LDFLAGS)
+	}
+	if !slices.Contains(noLTO.CCFLAGS, "-mcmodel=medium") {
+		t.Fatalf("missing -mcmodel=medium in CCFLAGS: %v", noLTO.CCFLAGS)
+	}
+	if !slices.Contains(noLTO.CCFLAGS, "-mabi=lp64") {
+		t.Fatalf("missing -mabi=lp64 in CCFLAGS: %v", noLTO.CCFLAGS)
+	}
+
+	withLTO, err := UseTarget(target, optlevel.Oz, lto.Thin)
+	if err != nil {
+		t.Fatalf("UseTarget(%q, thin) error: %v", target, err)
+	}
+	if !slices.Contains(withLTO.CCFLAGS, "-flto=thin") {
+		t.Fatalf("missing thin LTO ccflag: %v", withLTO.CCFLAGS)
+	}
+	if !hasMllvmOption(withLTO.LDFLAGS, "-code-model=medium") {
+		t.Fatalf("missing -mllvm -code-model=medium in LDFLAGS when LTO enabled: %v", withLTO.LDFLAGS)
+	}
+	if !hasMllvmOption(withLTO.LDFLAGS, "-target-abi=lp64") {
+		t.Fatalf("missing -mllvm -target-abi=lp64 in LDFLAGS when LTO enabled: %v", withLTO.LDFLAGS)
+	}
+
+	fullLTO, err := UseTarget(target, optlevel.Oz, lto.Full)
+	if err != nil {
+		t.Fatalf("UseTarget(%q, full) error: %v", target, err)
+	}
+	if !slices.Contains(fullLTO.CCFLAGS, "-flto=full") {
+		t.Fatalf("missing full LTO ccflag: %v", fullLTO.CCFLAGS)
 	}
 }

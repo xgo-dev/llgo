@@ -240,7 +240,7 @@ func efaceeq(t *_type, x, y unsafe.Pointer) bool {
 	}
 	eq := t.Equal
 	if eq == nil {
-		panic(errorString("comparing uncomparable type " + t.Str_).Error())
+		panic(errorString("comparing uncomparable type " + t.Str_))
 	}
 	if isDirectIface(t) {
 		// Direct interface types are ptr, chan, map, func, and single-element structs/arrays thereof.
@@ -257,7 +257,7 @@ func ifaceeq(tab *itab, x, y unsafe.Pointer) bool {
 	t := tab._type
 	eq := t.Equal
 	if eq == nil {
-		panic(errorString("comparing uncomparable type " + t.Str_).Error())
+		panic(errorString("comparing uncomparable type " + t.Str_))
 	}
 	if isDirectIface(t) {
 		// See comment in efaceeq.
@@ -266,9 +266,93 @@ func ifaceeq(tab *itab, x, y unsafe.Pointer) bool {
 	return eq(x, y)
 }
 
+func structFieldsHaveCheapMismatch(fields []structfield, p, q unsafe.Pointer) bool {
+	for _, ft := range fields {
+		if ft.Name_ == "_" {
+			continue
+		}
+		pi := add(p, ft.Offset)
+		qi := add(q, ft.Offset)
+		if typeHasCheapMismatch(ft.Typ, pi, qi) {
+			return true
+		}
+	}
+	return false
+}
+
+func typeHasCheapMismatch(t *_type, p, q unsafe.Pointer) bool {
+	switch t.Kind() {
+	case abi.Bool,
+		abi.Int, abi.Int8, abi.Int16, abi.Int32, abi.Int64,
+		abi.Uint, abi.Uint8, abi.Uint16, abi.Uint32, abi.Uint64, abi.Uintptr,
+		abi.Float32, abi.Float64, abi.Complex64, abi.Complex128,
+		abi.Pointer, abi.Chan, abi.UnsafePointer:
+		return !t.Equal(p, q)
+	case abi.String:
+		return len(*(*string)(p)) != len(*(*string)(q))
+	case abi.Struct:
+		return structFieldsHaveCheapMismatch((*structtype)(unsafe.Pointer(t)).Fields, p, q)
+	case abi.Array:
+		x := (*arraytype)(unsafe.Pointer(t))
+		elem := x.Elem
+		for i := uintptr(0); i < x.Len; i++ {
+			pi := add(p, i*elem.Size_)
+			qi := add(q, i*elem.Size_)
+			if typeHasCheapMismatch(elem, pi, qi) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func typeEqualMayPanic(t *_type) bool {
+	switch t.Kind() {
+	case abi.Interface:
+		return true
+	case abi.Struct:
+		x := (*structtype)(unsafe.Pointer(t))
+		for _, ft := range x.Fields {
+			if ft.Name_ != "_" && typeEqualMayPanic(ft.Typ) {
+				return true
+			}
+		}
+	case abi.Array:
+		return typeEqualMayPanic((*arraytype)(unsafe.Pointer(t)).Elem)
+	}
+	return false
+}
+
 func structequal(t, p, q unsafe.Pointer) bool {
 	x := (*structtype)(t)
-	for _, ft := range x.Fields {
+	fields := x.Fields
+	segmentStart := 0
+	for i, ft := range fields {
+		if ft.Name_ == "_" {
+			continue
+		}
+		if !typeEqualMayPanic(ft.Typ) {
+			continue
+		}
+		if structFieldsHaveCheapMismatch(fields[segmentStart:i], p, q) {
+			return false
+		}
+		for _, ft := range fields[segmentStart : i+1] {
+			if ft.Name_ == "_" {
+				continue
+			}
+			pi := add(p, ft.Offset)
+			qi := add(q, ft.Offset)
+			if !ft.Typ.Equal(pi, qi) {
+				return false
+			}
+		}
+		segmentStart = i + 1
+	}
+	if structFieldsHaveCheapMismatch(fields[segmentStart:], p, q) {
+		return false
+	}
+	for _, ft := range fields[segmentStart:] {
 		if ft.Name_ == "_" {
 			continue
 		}

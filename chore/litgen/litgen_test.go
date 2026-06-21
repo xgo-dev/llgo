@@ -46,7 +46,7 @@ func TestProcessPath_SingleFileUsesContainingDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `// CHECK-LABEL: define void @"{{.*}}/` + filepath.ToSlash(relPath) + `.main"() {`
+	want := `// CHECK-LABEL: define void @"{{.*}}/` + filepath.ToSlash(relPath) + `.main"(){{.*}} {`
 	if !strings.Contains(text, want) {
 		t.Fatalf("missing package-qualified main check:\n%s", text)
 	}

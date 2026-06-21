@@ -85,3 +85,68 @@ func TestNestedShiftEdgeCases(t *testing.T) {
 		t.Errorf("nestedShift (shift by 8): got %d, want 256", r)
 	}
 }
+
+// issue12133F1 covers a non-constant shift whose left operand is an
+// untyped constant. go/types can leave parent expressions untyped, which
+// must be defaulted before building SSA.
+func issue12133F1(v1 uint) uint {
+	return v1 >> ((1 >> v1) + (1 >> v1))
+}
+
+func TestGorootIssue12133UnsignedShiftCount(t *testing.T) {
+	if got := issue12133F1(48); got != 48 {
+		t.Fatalf("issue12133F1(48) = %d, want 48", got)
+	}
+}
+
+func issue15175Bool(v bool) bool {
+	return v
+}
+
+func issue15175F1(a1 uint, a2 int8, a3 int8, a4 int8, a5 uint8, a6 int, a7 bool) uint8 {
+	a5--
+	a4 += (a2 << a1 << 2) | (a4 ^ a4<<(a1&a1)) - a3
+	a6 -= a6 >> (2 + uint32(a2)>>3)
+	a1 += a1
+	a3 *= a4 << (a1 | a1) << (uint16(3) >> 2 & (1 - 0) & (uint16(1) << a5 << 3))
+	_ = issue15175Bool(a7) || (a2 == a4) || (a5 == 0)
+	return a5 >> a1
+}
+
+func issue15175F2(a1 uint8) uint8 {
+	a1--
+	a1--
+	a1 -= a1 + (a1 << 1) - (a1*a1*a1)<<(2-0+(3|3)-1)
+	v1 := 0 * ((2 * 1) ^ 1) & ((uint(0) >> a1) + (2+0)*(uint(2)+0))
+	_ = v1
+	return a1 >> (((2 ^ 2) >> (v1 | 2)) + 0)
+}
+
+func issue15175F3(a1 bool, a2 uint, a3 int64) uint8 {
+	a3--
+	v1 := 1 & (2 & 1 * (1 ^ 2) & (uint8(3*1) >> 0))
+	_ = v1
+	v1 += v1 - (v1 >> a2) + (v1 << (a2 ^ a2) & v1)
+	v1 *= v1
+	a3--
+	v1 += v1 & v1
+	v1--
+	v1 = ((v1 << 0) | v1>>0) + v1
+	return v1 >> 0
+}
+
+func TestGorootIssue15175UnsignedNarrowShiftResults(t *testing.T) {
+	a6 := uint8(253)
+	if got := a6 >> 0; got != 253 {
+		t.Fatalf("uint8(253) >> 0 = %d, want 253", got)
+	}
+	if got := issue15175F1(0, 2, 1, 0, 0, 1, true); got != 255 {
+		t.Fatalf("issue15175F1(...) = %d, want 255", got)
+	}
+	if got := issue15175F2(1); got != 242 {
+		t.Fatalf("issue15175F2(1) = %d, want 242", got)
+	}
+	if got := issue15175F3(false, 0, 0); got != 254 {
+		t.Fatalf("issue15175F3(false, 0, 0) = %d, want 254", got)
+	}
+}

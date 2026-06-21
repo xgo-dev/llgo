@@ -60,15 +60,14 @@ type irFunction struct {
 }
 
 var (
-	defineQuotedRE  = regexp.MustCompile(`^define\b.* @"([^"]+)"\(`)
-	definePlainRE   = regexp.MustCompile(`^define\b.* @([^\s(]+)\(`)
-	globalQuotedRE  = regexp.MustCompile(`^@"([^"]+)"\s*=`)
-	globalPlainRE   = regexp.MustCompile(`^@([A-Za-z0-9$._-]+)\s*=`)
-	globalRefRE     = regexp.MustCompile(`@"([^"]+)"|@([A-Za-z0-9$._-]+)`)
-	checkLineRE     = regexp.MustCompile(`^\s*//\s*CHECK(?:-[A-Z]+)?:`)
-	debugMetaRE     = regexp.MustCompile(`, ![A-Za-z0-9_.-]+ ![0-9]+`)
-	attrGroupTailRE = regexp.MustCompile(`\s+#\d+$`)
-	numericNameRE   = regexp.MustCompile(`^\d+$`)
+	defineQuotedRE = regexp.MustCompile(`^define\b.* @"([^"]+)"\(`)
+	definePlainRE  = regexp.MustCompile(`^define\b.* @([^\s(]+)\(`)
+	globalQuotedRE = regexp.MustCompile(`^@"([^"]+)"\s*=`)
+	globalPlainRE  = regexp.MustCompile(`^@([A-Za-z0-9$._-]+)\s*=`)
+	globalRefRE    = regexp.MustCompile(`@"([^"]+)"|@([A-Za-z0-9$._-]+)`)
+	checkLineRE    = regexp.MustCompile(`^\s*//\s*CHECK(?:-[A-Z]+)?:`)
+	debugMetaRE    = regexp.MustCompile(`, ![A-Za-z0-9_.-]+ ![0-9]+`)
+	numericNameRE  = regexp.MustCompile(`^\d+$`)
 )
 
 func generateFile(target resolvedTarget) error {
@@ -402,7 +401,7 @@ func buildGlobalChecks(prog irProgram, modulePath string) []string {
 		if !needed[symbol] {
 			continue
 		}
-		lines = append(lines, "// CHECK-LINE: "+generalizeIRLine(defs[symbol], modulePath))
+		lines = append(lines, "// CHECK: {{^}}"+generalizeIRLine(defs[symbol], modulePath)+"{{$}}")
 	}
 	return lines
 }
@@ -426,8 +425,10 @@ func buildFunctionChecks(fn irFunction, modulePath string) []string {
 func generalizeDefineLine(line, modulePath string) string {
 	line = scrubIRLine(line)
 	if idx := strings.LastIndex(line, " {"); idx >= 0 {
-		head := attrGroupTailRE.ReplaceAllString(line[:idx], "")
-		line = head + line[idx:]
+		head := line[:idx]
+		if sigEnd := strings.LastIndex(head, ")"); sigEnd >= 0 {
+			line = head[:sigEnd+1] + "{{.*}}" + line[idx:]
+		}
 	}
 	return generalizeModulePath(line, modulePath)
 }

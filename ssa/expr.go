@@ -353,6 +353,59 @@ func (b Builder) unsafeSlice(data Expr, size, cap llvm.Value) Expr {
 	return Expr{aggregateValue(b.impl, prog.rtSlice(), data.impl, size, cap), tslice}
 }
 
+func (b Builder) checkedUnsafeString(data, size Expr) Expr {
+	size = b.FitIntSize(size)
+	b.checkUnsafeBuiltinBounds("unsafe.String", data, size, 1)
+	return b.unsafeString(data.impl, size.impl)
+}
+
+func (b Builder) checkedUnsafeSlice(data, size Expr) Expr {
+	prog := b.Prog
+	size = b.FitIntSize(size)
+	elemSize := prog.SizeOf(prog.Elem(data.Type))
+	b.checkUnsafeBuiltinBounds("unsafe.Slice", data, size, elemSize)
+	return b.unsafeSlice(data, size.impl, size.impl)
+}
+
+func (b Builder) checkUnsafeBuiltinBounds(name string, data, size Expr, elemSize uint64) {
+	prog := b.Prog
+	zero := llvm.ConstInt(size.ll, 0, false)
+	isNegative := llvm.CreateICmp(b.impl, llvm.IntSLT, size.impl, zero)
+	b.assertRuntimeError(isNegative, name+": len out of range")
+
+	isNonZero := llvm.CreateICmp(b.impl, llvm.IntNE, size.impl, zero)
+	isNil := llvm.CreateICmp(b.impl, llvm.IntEQ, data.impl, llvm.ConstPointerNull(data.impl.Type()))
+	b.assertRuntimeError(llvm.CreateAnd(b.impl, isNil, isNonZero), name+": nil pointer with non-zero length")
+
+	if elemSize == 0 {
+		return
+	}
+
+	uptr := prog.Uintptr()
+	length := castUintptr(b, size.impl, size.Type, uptr)
+	maxAddr := ^uint64(0)
+	if bits := uint(prog.PointerSize() * 8); bits < 64 {
+		maxAddr = (uint64(1) << bits) - 1
+	}
+	maxLen := llvm.ConstInt(uptr.ll, maxAddr/elemSize, false)
+	lenTooLarge := llvm.CreateICmp(b.impl, llvm.IntUGT, length, maxLen)
+	b.assertRuntimeError(lenTooLarge, name+": len out of range")
+
+	byteSize := length
+	if elemSize != 1 {
+		byteSize = b.impl.CreateMul(length, llvm.ConstInt(uptr.ll, elemSize, false), "")
+	}
+	lastOffset := b.impl.CreateSub(byteSize, llvm.ConstInt(uptr.ll, 1, false), "")
+	addr := llvm.CreatePtrToInt(b.impl, data.impl, uptr.ll)
+	end := b.impl.CreateAdd(addr, lastOffset, "")
+	wrapped := llvm.CreateICmp(b.impl, llvm.IntULT, end, addr)
+	b.assertRuntimeError(llvm.CreateAnd(b.impl, isNonZero, wrapped), name+": len out of range")
+}
+
+func (b Builder) assertRuntimeError(check llvm.Value, msg string) {
+	b.InlineCall(b.Pkg.rtFunc("AssertRuntimeError"), Expr{check, b.Prog.Bool()}, b.Str(msg))
+}
+
 // -----------------------------------------------------------------------------
 
 const (
@@ -811,10 +864,23 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 				b.Store(r, x)
 				return b.Load(r)
 			}
+			convNamedType := func() Expr {
+				agg := llvm.Undef(t.ll)
+				for i := range t.ll.StructElementTypes() {
+					field := b.impl.CreateExtractValue(x.impl, i, "")
+					agg = b.impl.CreateInsertValue(agg, field, i, "")
+				}
+				return Expr{agg, t}
+			}
 			switch t.RawType().(type) {
 			case *types.Named:
-				if _, ok := x.RawType().(*types.Struct); ok {
+				switch x.RawType().(type) {
+				case *types.Struct:
 					return convType()
+				case *types.Named:
+					if !types.Identical(x.RawType(), t.RawType()) {
+						return convNamedType()
+					}
 				}
 			case *types.Struct:
 				if _, ok := x.RawType().(*types.Named); ok {
@@ -1017,30 +1083,80 @@ func castInt(b Builder, x llvm.Value, xtyp Type, typ Type) llvm.Value {
 
 func castFloatToInt(b Builder, x llvm.Value, typ Type) llvm.Value {
 	dstSize := b.Prog.td.TypeAllocSize(typ.ll)
-	if dstSize < 8 {
-		i64 := b.Prog.Int64()
-		if typ.kind == vkUnsigned {
-			// note(zzy): for unsigned targets, split negative vs non-negative.
-			// Negative values need signed expansion (FPToSI) before truncation;
-			// non-negative values can use unsigned expansion (FPToUI). This avoids
-			// direct float->narrow-unsigned conversions and preserves wrap/trunc behavior.
-			zero := llvm.ConstNull(x.Type())
-			isNeg := b.impl.CreateFCmp(llvm.FloatOLT, x, zero, "")
-			neg := llvm.CreateFPToSI(b.impl, x, i64.ll)
-			pos := llvm.CreateFPToUI(b.impl, x, i64.ll)
-			tmp := b.impl.CreateSelect(isNeg, neg, pos, "")
+	if typ.kind == vkUnsigned {
+		if dstSize < 4 {
+			tmp := castFloatToSignedInt(b, x, b.Prog.Int32(), 32)
 			return llvm.CreateTrunc(b.impl, tmp, typ.ll)
 		}
-		tmp := llvm.CreateFPToSI(b.impl, x, i64.ll)
-		return llvm.CreateTrunc(b.impl, tmp, typ.ll)
+		if dstSize == 4 {
+			tmp := castFloatToSignedInt(b, x, b.Prog.Int64(), 64)
+			return llvm.CreateTrunc(b.impl, tmp, typ.ll)
+		}
+		return castFloatToUnsignedInt(b, x, typ, dstSize*8)
 	}
-	// note(zzy): dst is already 64-bit wide, so no extra widen+trunc roundtrip is needed here;
-	// see LLVM fptoui/fptosi semantics: https://llvm.org/docs/LangRef.html#fptoui-to-instruction
-	// and https://llvm.org/docs/LangRef.html#fptosi-to-instruction
-	if typ.kind == vkUnsigned {
-		return llvm.CreateFPToUI(b.impl, x, typ.ll)
+	if dstSize < 8 {
+		tmp := castFloatToSignedInt(b, x, b.Prog.Int32(), 32)
+		if dstSize < 4 {
+			return llvm.CreateTrunc(b.impl, tmp, typ.ll)
+		}
+		return tmp
 	}
-	return llvm.CreateFPToSI(b.impl, x, typ.ll)
+	return castFloatToSignedInt(b, x, typ, 64)
+}
+
+func castFloatToSignedInt(b Builder, x llvm.Value, typ Type, bits uint64) llvm.Value {
+	bound := floatPow2(bits - 1)
+	lower := llvm.ConstFloat(x.Type(), -bound)
+	upper := llvm.ConstFloat(x.Type(), bound)
+	zeroFloat := llvm.ConstNull(x.Type())
+	zeroInt := llvm.ConstInt(typ.ll, 0, false)
+	minInt := llvm.ConstInt(typ.ll, uint64(1)<<(bits-1), false)
+	maxInt := llvm.ConstInt(typ.ll, (uint64(1)<<(bits-1))-1, false)
+
+	tooLow := llvm.CreateFCmp(b.impl, llvm.FloatOLE, x, lower)
+	tooHigh := llvm.CreateFCmp(b.impl, llvm.FloatOGE, x, upper)
+	isNaN := llvm.CreateFCmp(b.impl, llvm.FloatUNO, x, x)
+	safe := llvm.CreateSelect(b.impl, tooLow, zeroFloat, x)
+	safe = llvm.CreateSelect(b.impl, tooHigh, zeroFloat, safe)
+	safe = llvm.CreateSelect(b.impl, isNaN, zeroFloat, safe)
+
+	ret := llvm.CreateFPToSI(b.impl, safe, typ.ll)
+	ret = llvm.CreateSelect(b.impl, tooLow, minInt, ret)
+	ret = llvm.CreateSelect(b.impl, tooHigh, maxInt, ret)
+	return llvm.CreateSelect(b.impl, isNaN, zeroInt, ret)
+}
+
+func castFloatToUnsignedInt(b Builder, x llvm.Value, typ Type, bits uint64) llvm.Value {
+	upper := llvm.ConstFloat(x.Type(), floatPow2(bits))
+	zeroFloat := llvm.ConstNull(x.Type())
+	zeroInt := llvm.ConstInt(typ.ll, 0, false)
+	maxInt := llvm.ConstInt(typ.ll, intMask(bits), false)
+
+	isNeg := llvm.CreateFCmp(b.impl, llvm.FloatOLT, x, zeroFloat)
+	tooHigh := llvm.CreateFCmp(b.impl, llvm.FloatOGE, x, upper)
+	isNaN := llvm.CreateFCmp(b.impl, llvm.FloatUNO, x, x)
+	safe := llvm.CreateSelect(b.impl, isNeg, zeroFloat, x)
+	safe = llvm.CreateSelect(b.impl, tooHigh, zeroFloat, safe)
+	safe = llvm.CreateSelect(b.impl, isNaN, zeroFloat, safe)
+
+	ret := llvm.CreateFPToUI(b.impl, safe, typ.ll)
+	ret = llvm.CreateSelect(b.impl, tooHigh, maxInt, ret)
+	ret = llvm.CreateSelect(b.impl, isNeg, zeroInt, ret)
+	return llvm.CreateSelect(b.impl, isNaN, zeroInt, ret)
+}
+
+func floatPow2(bits uint64) float64 {
+	if bits == 64 {
+		return 18446744073709551616
+	}
+	return float64(uint64(1) << bits)
+}
+
+func intMask(bits uint64) uint64 {
+	if bits == 64 {
+		return ^uint64(0)
+	}
+	return (uint64(1) << bits) - 1
 }
 
 func castFloat(b Builder, x llvm.Value, typ Type) llvm.Value {
@@ -1125,6 +1241,9 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 		ctx := types.NewParam(token.NoPos, nil, closureCtx, types.Typ[types.UnsafePointer])
 		sigCtx := FuncAddCtx(ctx, sig)
 		ret.Type = b.Prog.retType(sig)
+		if sig.Results().Len() == 1 && b.Prog.SizeOf(ret.Type) == 0 {
+			b.AssertNilDeref(fn)
+		}
 		ll = b.Prog.FuncDecl(sigCtx, InC).ll
 		ret.impl = llvm.CreateCall(b.impl, ll, fn.impl, llvmParamsEx(data, args, sigCtx.Params(), b))
 		return ret
@@ -1175,7 +1294,7 @@ func (b Builder) checkReflect(fn Expr, args []Expr) {
 		pkg.NeedAbiInit |= ReflectMapOf
 	case "reflect.PointerTo", "reflect.PtrTo":
 		pkg.NeedAbiInit |= ReflectPointerTo
-	case "reflect.SliceOf":
+	case "reflect.SliceOf", "reflect.Value.Slice":
 		pkg.NeedAbiInit |= ReflectSliceOf
 	case "reflect.StructOf":
 		pkg.NeedAbiInit |= ReflectStructOf
@@ -1325,7 +1444,7 @@ func (b Builder) SliceToArrayPointer(x Expr, typ Type) (ret Expr) {
 	max := b.Prog.IntVal(uint64(typ.RawType().Underlying().(*types.Pointer).Elem().Underlying().(*types.Array).Len()), b.Prog.Int())
 	failed := Expr{llvm.CreateICmp(b.impl, llvm.IntSLT, b.SliceLen(x).impl, max.impl), b.Prog.Bool()}
 	b.IfThen(failed, func() {
-		b.InlineCall(b.Pkg.rtFunc("PanicSliceConvert"), b.SliceLen(x), max)
+		b.InlineCall(b.Pkg.rtFunc("PanicSliceConvert"), max, b.SliceLen(x))
 	})
 	ret.impl = b.SliceData(x).impl
 	return
@@ -1426,10 +1545,9 @@ func (b Builder) BuiltinCall(fn string, args ...Expr) (ret Expr) {
 	case "imag":
 		return b.getField(args[0], 1)
 	case "String": // unsafe.String
-		return b.unsafeString(args[0].impl, args[1].impl)
+		return b.checkedUnsafeString(args[0], args[1])
 	case "Slice": // unsafe.Slice
-		size := b.FitIntSize(args[1])
-		return b.unsafeSlice(args[0], size.impl, size.impl)
+		return b.checkedUnsafeSlice(args[0], args[1])
 	case "StringData":
 		return b.StringData(args[0]) // TODO(xsw): check return type
 	case "SliceData":
@@ -1470,7 +1588,7 @@ func (b Builder) BuiltinCall(fn string, args ...Expr) (ret Expr) {
 		return b.Advance(args[0], args[1])
 	case "Sizeof":
 		// instance of generic function
-		return b.Prog.Val(int(b.Prog.SizeOf(args[0].Type)))
+		return b.Prog.IntVal(b.Prog.SizeOf(args[0].Type), b.Prog.Uintptr())
 	case "Alignof":
 		// instance of generic function
 		return b.Prog.Val(int(b.Prog.td.ABITypeAlignment(args[0].ll)))

@@ -59,6 +59,16 @@ func (p Program) tyStacksave() *types.Signature {
 	return p.stackSaveTy
 }
 
+// func(unsafe.Pointer)
+func (p Program) tyStackrestore() *types.Signature {
+	if p.stackRestoreTy == nil {
+		paramPtr := types.NewParam(token.NoPos, nil, "", p.VoidPtr().raw.Type)
+		params := types.NewTuple(paramPtr)
+		p.stackRestoreTy = types.NewSignatureType(nil, nil, nil, params, nil, false)
+	}
+	return p.stackRestoreTy
+}
+
 func (b Builder) AllocaSigjmpBuf() Expr {
 	prog := b.Prog
 	sigjmpBufTy := prog.rtType("SigjmpBuf") // Get type from runtime (target architecture)
@@ -71,6 +81,12 @@ func (b Builder) AllocaSigjmpBuf() Expr {
 func (b Builder) StackSave() Expr {
 	fn := b.Pkg.cFunc("llvm.stacksave", b.Prog.tyStacksave())
 	return b.InlineCall(fn)
+}
+
+// declare void @llvm.stackrestore.p0(ptr)
+func (b Builder) StackRestore(sp Expr) {
+	fn := b.Pkg.cFunc("llvm.stackrestore", b.Prog.tyStackrestore())
+	b.InlineCall(fn, sp)
 }
 
 // addReturnsTwiceAttr adds the returns_twice attribute to a function.
@@ -519,8 +535,8 @@ func (b Builder) callDefer(self *aDefer, typ Type, buildCall func(Builder, Expr,
 		for i := 0; i < len(args); i++ {
 			args[i] = b.getField(data, i+offset)
 		}
-		buildCall(b, fn, args...)
 		b.Call(b.Pkg.rtFunc("FreeDeferNode"), ptr)
+		buildCall(b, fn, args...)
 	})
 }
 

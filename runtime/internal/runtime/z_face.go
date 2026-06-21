@@ -186,7 +186,7 @@ func IfaceType(i iface) *abi.Type {
 
 func IfacePtrData(i iface) unsafe.Pointer {
 	if i.tab == nil {
-		panic(errorString("invalid memory address or nil pointer dereference").Error())
+		panic(errorString("invalid memory address or nil pointer dereference"))
 	}
 	if DirectIfaceData(i.tab._type) {
 		// For direct-iface values, i.data holds the value bits (not a stable
@@ -224,7 +224,32 @@ func MatchesClosure(T, V *abi.Type) bool {
 	} else if V == nil || !V.IsClosure() {
 		return false
 	}
-	return T.StructType().Fields[0].Typ == V.StructType().Fields[0].Typ
+	return identicalFuncType(T.StructType().Fields[0].Typ, V.StructType().Fields[0].Typ)
+}
+
+func identicalFuncType(T, V *abi.Type) bool {
+	if T == V {
+		return true
+	}
+	if T == nil || V == nil || T.Kind() != abi.Func || V.Kind() != abi.Func {
+		return false
+	}
+	t := T.FuncType()
+	v := V.FuncType()
+	if t.Variadic() != v.Variadic() || len(t.In) != len(v.In) || len(t.Out) != len(v.Out) {
+		return false
+	}
+	for i := range t.In {
+		if t.In[i] != v.In[i] {
+			return false
+		}
+	}
+	for i := range t.Out {
+		if t.Out[i] != v.Out[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // Implements reports whether the type V implements the interface type T.

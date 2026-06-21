@@ -38,6 +38,7 @@ func TestGenMainModuleExecutable(t *testing.T) {
 	checks := []string{
 		"define i32 @main(",
 		"call void @Py_Initialize()",
+		"call void @Py_Finalize()",
 		"call void @\"example.com/foo.init\"()",
 		"define weak void @_start()",
 	}
@@ -46,6 +47,12 @@ func TestGenMainModuleExecutable(t *testing.T) {
 			t.Fatalf("main module IR missing %q:\n%s", want, ir)
 		}
 	}
+	assertInOrder(t, ir,
+		"call void @Py_Initialize()",
+		"call void @\"example.com/foo.init\"()",
+		"call void @\"example.com/foo.main\"()",
+		"call void @Py_Finalize()",
+	)
 }
 
 func TestGenMainModuleLibrary(t *testing.T) {
@@ -67,5 +74,17 @@ func TestGenMainModuleLibrary(t *testing.T) {
 	}
 	if !strings.Contains(ir, "@__llgo_argc = global i32 0") {
 		t.Fatalf("library mode missing argc global:\n%s", ir)
+	}
+}
+
+func assertInOrder(t *testing.T, s string, wants ...string) {
+	t.Helper()
+	offset := 0
+	for _, want := range wants {
+		i := strings.Index(s[offset:], want)
+		if i < 0 {
+			t.Fatalf("main module IR missing ordered entry %q after byte %d:\n%s", want, offset, s)
+		}
+		offset += i + len(want)
 	}
 }

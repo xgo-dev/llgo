@@ -13,6 +13,7 @@ import (
 	"github.com/goplus/llgo/internal/crosscompile/compile"
 	"github.com/goplus/llgo/internal/env"
 	"github.com/goplus/llgo/internal/flash"
+	"github.com/goplus/llgo/internal/lto"
 	"github.com/goplus/llgo/internal/optlevel"
 	"github.com/goplus/llgo/internal/targets"
 	"github.com/goplus/llgo/internal/xtool/llvm"
@@ -198,7 +199,7 @@ func compileWithConfig(
 	return
 }
 
-func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Level) (export Export, err error) {
+func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode) (export Export, err error) {
 	targetTriple := llvm.GetTargetTriple(goos, goarch)
 	llgoRoot := env.LLGoROOT()
 
@@ -226,8 +227,10 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 			"-Wl,--error-limit=0",
 			"-fuse-ld=lld",
 			// Enable ICF (Identical Code Folding) to reduce binary size
-			"-Xlinker",
-			"--icf=safe",
+			"-Wl,--icf=safe",
+		}
+		if ltoMode.Enabled() {
+			export.LDFLAGS = append(export.LDFLAGS, ltoMode.ClangFlag(), "-Wl,--lto"+level.Flag())
 		}
 		if clangRoot != "" {
 			clangLib := filepath.Join(clangRoot, "lib")
@@ -249,8 +252,12 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 		}
 		export.CCFLAGS = []string{
 			level.Flag(),
+			"-target", targetTriple,
 			"-Qunused-arguments",
 			"-Wno-unused-command-line-argument",
+		}
+		if ltoMode.Enabled() {
+			export.CCFLAGS = append(export.CCFLAGS, ltoMode.ClangFlag())
 		}
 
 		// Add sysroot for macOS only
@@ -428,7 +435,7 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 }
 
 // UseTarget loads configuration from a target name (e.g., "rp2040", "wasi")
-func UseTarget(targetName string, level optlevel.Level) (export Export, err error) {
+func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (export Export, err error) {
 	resolver := targets.NewDefaultResolver()
 
 	config, err := resolver.Resolve(targetName)
@@ -503,6 +510,12 @@ func UseTarget(targetName string, level optlevel.Level) (export Export, err erro
 	expandedCFlags := env.ExpandEnvSlice(config.CFlags, envs)
 	cflags = append(cflags, expandedCFlags...)
 
+	if config.Linker == "ld.lld" && ltoMode.Enabled() {
+		ldflags = append(ldflags, "--lto"+level.Flag())
+		cflags = append(cflags, ltoMode.ClangFlag())
+		ccflags = append(ccflags, ltoMode.ClangFlag())
+	}
+
 	// The following parameters are inspired by tinygo/builder/library.go
 	// Handle CPU configuration
 	if cpu != "" {
@@ -549,6 +562,8 @@ func UseTarget(targetName string, level optlevel.Level) (export Export, err erro
 		ccflags = append(ccflags, "-fforce-enable-int128")
 	case "riscv64":
 		ccflags = append(ccflags, "-march=rv64gc")
+		// codegen option should be added to ldflags for lto
+		ldflags = append(ldflags, "-mllvm", "-march=rv64gc")
 	case "mips":
 		ccflags = append(ccflags, "-fno-pic")
 	}
@@ -578,9 +593,17 @@ func UseTarget(targetName string, level optlevel.Level) (export Export, err erro
 	// Handle code generation configuration
 	if config.CodeModel != "" {
 		ccflags = append(ccflags, "-mcmodel="+config.CodeModel)
+		if ltoMode.Enabled() {
+			// codegen option should be added to ldflags for lto
+			ldflags = append(ldflags, "-mllvm", "-code-model="+config.CodeModel)
+		}
 	}
 	if config.TargetABI != "" {
 		ccflags = append(ccflags, "-mabi="+config.TargetABI)
+		if ltoMode.Enabled() {
+			// codegen option should be added to ldflags for lto
+			ldflags = append(ldflags, "-mllvm", "-target-abi="+config.TargetABI)
+		}
 	}
 	if config.RelocationModel != "" {
 		switch config.RelocationModel {
@@ -662,9 +685,9 @@ func UseTarget(targetName string, level optlevel.Level) (export Export, err erro
 
 // Use extends the original Use function to support target-based configuration
 // If targetName is provided, it takes precedence over goos/goarch
-func Use(goos, goarch, targetName string, wasiThreads, forceEspClang bool, level optlevel.Level) (export Export, err error) {
+func Use(goos, goarch, targetName string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode) (export Export, err error) {
 	if targetName != "" && !strings.HasPrefix(targetName, "wasm") && !strings.HasPrefix(targetName, "wasi") {
-		return UseTarget(targetName, level)
+		return UseTarget(targetName, level, ltoMode)
 	}
-	return use(goos, goarch, wasiThreads, forceEspClang, level)
+	return use(goos, goarch, wasiThreads, forceEspClang, level, ltoMode)
 }

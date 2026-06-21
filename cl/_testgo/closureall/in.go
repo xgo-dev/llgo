@@ -5,6 +5,11 @@ import _ "unsafe" // for go:linkname
 
 import "github.com/goplus/lib/c"
 
+// CHECK: @0 = private unnamed_addr constant [46 x i8] c"{{.*}}/cl/_testgo/closureall.S", align 1
+// CHECK: @1 = private unnamed_addr constant [3 x i8] c"Inc", align 1
+// CHECK: @7 = private unnamed_addr constant [3 x i8] c"Add", align 1
+// CHECK: @9 = private unnamed_addr constant [23 x i8] c"interface{Add(int) int}", align 1
+
 //go:linkname cSqrt C.sqrt
 func cSqrt(x c.Double) c.Double
 
@@ -30,6 +35,7 @@ type S struct {
 // CHECK-NEXT:   %5 = add i64 %4, %1
 // CHECK-NEXT:   ret i64 %5
 // CHECK-NEXT: }
+
 func (s S) Inc(x int) int {
 	return s.v + x
 }
@@ -41,15 +47,62 @@ func (s S) Inc(x int) int {
 // CHECK-NEXT:   %4 = add i64 %3, %1
 // CHECK-NEXT:   ret i64 %4
 // CHECK-NEXT: }
+
 func (s *S) Add(x int) int {
 	return s.v + x
 }
 
+func callCallback(cb CCallback, v c.Int) c.Int {
+	return cb(v)
+}
+
+func globalAdd(x, y int) int {
+	return x + y
+}
+
+func main() {
+	nf := makeNoFree()
+	wf := makeWithFree(3)
+	_ = nf(1)
+	_ = wf(2)
+
+	g := globalAdd
+	_ = g(1, 2)
+
+	s := &S{v: 5}
+	mv := s.Add
+	_ = mv(7)
+	me := (*S).Add
+	_ = me(s, 8)
+
+	var i interface{ Add(int) int } = s
+	im := i.Add
+	_ = im(9)
+
+	cs := cSqrt
+	_ = cs(4)
+	ca := cAbs
+	_ = ca(-3)
+
+	cb := CCallback(func(x c.Int) c.Int { return x + 1 })
+	_ = callCallback(cb, 7)
+}
+
+func makeNoFree() Fn {
+	return func(x int) int { return x + 1 }
+}
+
+func makeWithFree(base int) Fn {
+	return func(x int) int { return x + base }
+}
+
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/closureall.(*S).Inc"(ptr %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = load %"{{.*}}/cl/_testgo/closureall.S", ptr %0, align 8
-// CHECK-NEXT:   %3 = call i64 @"{{.*}}/cl/_testgo/closureall.S.Inc"(%"{{.*}}/cl/_testgo/closureall.S" %2, i64 %1)
-// CHECK-NEXT:   ret i64 %3
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %2, %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 46 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @1, i64 3 })
+// CHECK-NEXT:   %3 = load %"{{.*}}/cl/_testgo/closureall.S", ptr %0, align 8
+// CHECK-NEXT:   %4 = call i64 @"{{.*}}/cl/_testgo/closureall.S.Inc"(%"{{.*}}/cl/_testgo/closureall.S" %3, i64 %1)
+// CHECK-NEXT:   ret i64 %4
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i32 @"{{.*}}/cl/_testgo/closureall.callCallback"(ptr %0, i32 %1){{.*}} {
@@ -57,18 +110,25 @@ func (s *S) Add(x int) int {
 // CHECK-NEXT:   %2 = call i32 %0(i32 %1)
 // CHECK-NEXT:   ret i32 %2
 // CHECK-NEXT: }
-func callCallback(cb CCallback, v c.Int) c.Int {
-	return cb(v)
-}
 
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/closureall.globalAdd"(i64 %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = add i64 %0, %1
 // CHECK-NEXT:   ret i64 %2
 // CHECK-NEXT: }
-func globalAdd(x, y int) int {
-	return x + y
-}
+
+// CHECK-LABEL: define void @"{{.*}}/cl/_testgo/closureall.init"(){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %0 = load i1, ptr @"{{.*}}/cl/_testgo/closureall.init$guard", align 1
+// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
+// CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testgo/closureall.init$guard", align 1
+// CHECK-NEXT:   br label %_llgo_2
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/closureall.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -107,45 +167,21 @@ func globalAdd(x, y int) int {
 // CHECK-NEXT:   %26 = extractvalue { ptr, ptr } %25, 1
 // CHECK-NEXT:   %27 = extractvalue { ptr, ptr } %25, 0
 // CHECK-NEXT:   %28 = call i64 %27(ptr %26, i64 9)
-// CHECK-NEXT:   %29 = call double @sqrt(double 4.000000e+00)
+// CHECK-NEXT:   %29 = call double {{.*}}sqrt{{.*}}(double 4.000000e+00)
 // CHECK-NEXT:   %30 = call i32 @abs(i32 -3)
 // CHECK-NEXT:   %31 = call i32 @"{{.*}}/cl/_testgo/closureall.callCallback"(ptr @"{{.*}}/cl/_testgo/closureall.main$1", i32 7)
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %32 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @8, i64 72 }, ptr %32, align 8
-// CHECK-NEXT:   %33 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %32, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %33)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %21, %"{{.*}}/runtime/internal/runtime.String" { ptr @9, i64 23 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @7, i64 3 })
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
-func main() {
-	nf := makeNoFree()
-	wf := makeWithFree(3)
-	_ = nf(1)
-	_ = wf(2)
 
-	g := globalAdd
-	_ = g(1, 2)
-
-	s := &S{v: 5}
-	mv := s.Add
-	_ = mv(7)
-	me := (*S).Add
-	_ = me(s, 8)
-
-	var i interface{ Add(int) int } = s
-	im := i.Add
-	_ = im(9)
-
-	cs := cSqrt
-	_ = cs(4)
-	ca := cAbs
-	_ = ca(-3)
-
-	cb := CCallback(func(x c.Int) c.Int { return x + 1 })
-	_ = callCallback(cb, 7)
-}
+// CHECK-LABEL: define i32 @"{{.*}}/cl/_testgo/closureall.main$1"(i32 %0){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %1 = add i32 %0, 1
+// CHECK-NEXT:   ret i32 %1
+// CHECK-NEXT: }
 
 // CHECK-LABEL: define %"{{.*}}/cl/_testgo/closureall.Fn" @"{{.*}}/cl/_testgo/closureall.makeNoFree"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -157,9 +193,6 @@ func main() {
 // CHECK-NEXT:   %1 = add i64 %0, 1
 // CHECK-NEXT:   ret i64 %1
 // CHECK-NEXT: }
-func makeNoFree() Fn {
-	return func(x int) int { return x + 1 }
-}
 
 // CHECK-LABEL: define %"{{.*}}/cl/_testgo/closureall.Fn" @"{{.*}}/cl/_testgo/closureall.makeWithFree"(i64 %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -183,9 +216,6 @@ func makeNoFree() Fn {
 // CHECK-NEXT:   %5 = add i64 %1, %4
 // CHECK-NEXT:   ret i64 %5
 // CHECK-NEXT: }
-func makeWithFree(base int) Fn {
-	return func(x int) int { return x + base }
-}
 
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/closureall.(*S).Add$bound"(ptr %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -199,6 +229,36 @@ func makeWithFree(base int) Fn {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = call i64 @"{{.*}}/cl/_testgo/closureall.(*S).Add"(ptr %0, i64 %1)
 // CHECK-NEXT:   ret i64 %2
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal64"(ptr %0, ptr %1, ptr %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal64"(ptr %1, ptr %2)
+// CHECK-NEXT:   ret i1 %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce i64 @"__llgo_stub.{{.*}}/cl/_testgo/closureall.S.Inc"(ptr %0, %"{{.*}}/cl/_testgo/closureall.S" %1, i64 %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call i64 @"{{.*}}/cl/_testgo/closureall.S.Inc"(%"{{.*}}/cl/_testgo/closureall.S" %1, i64 %2)
+// CHECK-NEXT:   ret i64 %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce i64 @"__llgo_stub.{{.*}}/cl/_testgo/closureall.(*S).Add"(ptr %0, ptr %1, i64 %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call i64 @"{{.*}}/cl/_testgo/closureall.(*S).Add"(ptr %1, i64 %2)
+// CHECK-NEXT:   ret i64 %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce i64 @"__llgo_stub.{{.*}}/cl/_testgo/closureall.(*S).Inc"(ptr %0, ptr %1, i64 %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call i64 @"{{.*}}/cl/_testgo/closureall.(*S).Inc"(ptr %1, i64 %2)
+// CHECK-NEXT:   ret i64 %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.interequal"(ptr %0, ptr %1, ptr %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.interequal"(ptr %1, ptr %2)
+// CHECK-NEXT:   ret i1 %3
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/closureall.interface{Add(int) int}.Add$bound"(ptr %0, i64 %1){{.*}} {

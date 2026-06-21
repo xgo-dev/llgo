@@ -3,6 +3,23 @@ package main
 
 // Tests of interface conversions and type assertions.
 
+// CHECK: {{^}}@0 = private unnamed_addr constant [46 x i8] c"{{.*}}/cl/_testgo/ifaceconv.C1", align 1{{$}}
+// CHECK: {{^}}@1 = private unnamed_addr constant [1 x i8] c"f", align 1{{$}}
+// CHECK: {{^}}@2 = private unnamed_addr constant [46 x i8] c"{{.*}}/cl/_testgo/ifaceconv.C2", align 1{{$}}
+// CHECK: {{^}}@3 = private unnamed_addr constant [1 x i8] c"g", align 1{{$}}
+// CHECK: {{^}}@6 = private unnamed_addr constant [21 x i8] c"nil i0.(I0) succeeded", align 1{{$}}
+// CHECK: {{^}}@11 = private unnamed_addr constant [21 x i8] c"nil i1.(I1) succeeded", align 1{{$}}
+// CHECK: {{^}}@14 = private unnamed_addr constant [21 x i8] c"nil i2.(I2) succeeded", align 1{{$}}
+// CHECK: {{^}}@17 = private unnamed_addr constant [17 x i8] c"C1 i1.(I0) failed", align 1{{$}}
+// CHECK: {{^}}@19 = private unnamed_addr constant [17 x i8] c"C1 i1.(I1) failed", align 1{{$}}
+// CHECK: {{^}}@20 = private unnamed_addr constant [20 x i8] c"C1 i1.(I2) succeeded", align 1{{$}}
+// CHECK: {{^}}@22 = private unnamed_addr constant [17 x i8] c"C2 i1.(I0) failed", align 1{{$}}
+// CHECK: {{^}}@23 = private unnamed_addr constant [17 x i8] c"C2 i1.(I1) failed", align 1{{$}}
+// CHECK: {{^}}@24 = private unnamed_addr constant [17 x i8] c"C2 i1.(I2) failed", align 1{{$}}
+// CHECK: {{^}}@25 = private unnamed_addr constant [17 x i8] c"C1 I0(i1) was nil", align 1{{$}}
+// CHECK: {{^}}@26 = private unnamed_addr constant [17 x i8] c"C1 I1(i1) was nil", align 1{{$}}
+// CHECK: {{^}}@27 = private unnamed_addr constant [4 x i8] c"pass", align 1{{$}}
+
 type I0 interface {
 }
 type I1 interface {
@@ -21,15 +38,84 @@ type C1 struct{}
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define void @"{{.*}}/cl/_testgo/ifaceconv.(*C1).f"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = load %"{{.*}}/cl/_testgo/ifaceconv.C1", ptr %0, align 1
-// CHECK-NEXT:   call void @"{{.*}}/cl/_testgo/ifaceconv.C1.f"(%"{{.*}}/cl/_testgo/ifaceconv.C1" %1)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
 func (C1) f() {}
 
 type C2 struct{}
+
+func (C2) f() {}
+func (C2) g() {}
+
+func main() {
+	var i0 I0
+	var i1 I1
+	var i2 I2
+
+	// Nil always causes a type assertion to fail, even to the
+	// same type.
+	if _, ok := i0.(I0); ok {
+		panic("nil i0.(I0) succeeded")
+	}
+	if _, ok := i1.(I1); ok {
+		panic("nil i1.(I1) succeeded")
+	}
+	if _, ok := i2.(I2); ok {
+		panic("nil i2.(I2) succeeded")
+	}
+
+	// Conversions can't fail, even with nil.
+	_ = I0(i0)
+
+	_ = I0(i1)
+	_ = I1(i1)
+
+	_ = I0(i2)
+	_ = I1(i2)
+	_ = I2(i2)
+
+	// Non-nil type assertions pass or fail based on the concrete type.
+	i1 = C1{}
+	if _, ok := i1.(I0); !ok {
+		panic("C1 i1.(I0) failed")
+	}
+	if _, ok := i1.(I1); !ok {
+		panic("C1 i1.(I1) failed")
+	}
+	if _, ok := i1.(I2); ok {
+		panic("C1 i1.(I2) succeeded")
+	}
+
+	i1 = C2{}
+	if _, ok := i1.(I0); !ok {
+		panic("C2 i1.(I0) failed")
+	}
+	if _, ok := i1.(I1); !ok {
+		panic("C2 i1.(I1) failed")
+	}
+	if _, ok := i1.(I2); !ok {
+		panic("C2 i1.(I2) failed")
+	}
+
+	// Conversions can't fail.
+	i1 = C1{}
+	if I0(i1) == nil {
+		panic("C1 I0(i1) was nil")
+	}
+	if I1(i1) == nil {
+		panic("C1 I1(i1) was nil")
+	}
+
+	println("pass")
+}
+
+// CHECK-LABEL: define void @"{{.*}}/cl/_testgo/ifaceconv.(*C1).f"(ptr %0){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 46 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @1, i64 1 })
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   call void @"{{.*}}/cl/_testgo/ifaceconv.C1.f"(%"{{.*}}/cl/_testgo/ifaceconv.C1" zeroinitializer)
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/ifaceconv.C2.f"(%"{{.*}}/cl/_testgo/ifaceconv.C2" %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -43,19 +129,36 @@ type C2 struct{}
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/ifaceconv.(*C2).f"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = load %"{{.*}}/cl/_testgo/ifaceconv.C2", ptr %0, align 1
-// CHECK-NEXT:   call void @"{{.*}}/cl/_testgo/ifaceconv.C2.f"(%"{{.*}}/cl/_testgo/ifaceconv.C2" %1)
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 46 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @1, i64 1 })
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   call void @"{{.*}}/cl/_testgo/ifaceconv.C2.f"(%"{{.*}}/cl/_testgo/ifaceconv.C2" zeroinitializer)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/ifaceconv.(*C2).g"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = load %"{{.*}}/cl/_testgo/ifaceconv.C2", ptr %0, align 1
-// CHECK-NEXT:   call void @"{{.*}}/cl/_testgo/ifaceconv.C2.g"(%"{{.*}}/cl/_testgo/ifaceconv.C2" %1)
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 46 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @3, i64 1 })
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   call void @"{{.*}}/cl/_testgo/ifaceconv.C2.g"(%"{{.*}}/cl/_testgo/ifaceconv.C2" zeroinitializer)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
-func (C2) f() {}
-func (C2) g() {}
+
+// CHECK-LABEL: define void @"{{.*}}/cl/_testgo/ifaceconv.init"(){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %0 = load i1, ptr @"{{.*}}/cl/_testgo/ifaceconv.init$guard", align 1
+// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
+// CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testgo/ifaceconv.init$guard", align 1
+// CHECK-NEXT:   br label %_llgo_2
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/ifaceconv.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -63,7 +166,7 @@ func (C2) g() {}
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_25
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 21 }, ptr %0, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @6, i64 21 }, ptr %0, align 8
 // CHECK-NEXT:   %1 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %0, 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %1)
 // CHECK-NEXT:   unreachable
@@ -75,7 +178,7 @@ func (C2) g() {}
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_28
 // CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @7, i64 21 }, ptr %4, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @11, i64 21 }, ptr %4, align 8
 // CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %4, 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %5)
 // CHECK-NEXT:   unreachable
@@ -87,7 +190,7 @@ func (C2) g() {}
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_31
 // CHECK-NEXT:   %8 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @10, i64 21 }, ptr %8, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @14, i64 21 }, ptr %8, align 8
 // CHECK-NEXT:   %9 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %8, 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %9)
 // CHECK-NEXT:   unreachable
@@ -114,7 +217,7 @@ func (C2) g() {}
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_7:                                          ; preds = %_llgo_34
 // CHECK-NEXT:   %26 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @14, i64 17 }, ptr %26, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @17, i64 17 }, ptr %26, align 8
 // CHECK-NEXT:   %27 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %26, 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %27)
 // CHECK-NEXT:   unreachable
@@ -126,7 +229,7 @@ func (C2) g() {}
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_9:                                          ; preds = %_llgo_37
 // CHECK-NEXT:   %30 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @16, i64 17 }, ptr %30, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @19, i64 17 }, ptr %30, align 8
 // CHECK-NEXT:   %31 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %30, 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %31)
 // CHECK-NEXT:   unreachable
@@ -138,7 +241,7 @@ func (C2) g() {}
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_11:                                         ; preds = %_llgo_40
 // CHECK-NEXT:   %34 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @17, i64 20 }, ptr %34, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @20, i64 20 }, ptr %34, align 8
 // CHECK-NEXT:   %35 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %34, 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %35)
 // CHECK-NEXT:   unreachable
@@ -155,7 +258,7 @@ func (C2) g() {}
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_13:                                         ; preds = %_llgo_43
 // CHECK-NEXT:   %42 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @20, i64 17 }, ptr %42, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @22, i64 17 }, ptr %42, align 8
 // CHECK-NEXT:   %43 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %42, 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %43)
 // CHECK-NEXT:   unreachable
@@ -167,7 +270,7 @@ func (C2) g() {}
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_15:                                         ; preds = %_llgo_46
 // CHECK-NEXT:   %46 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @21, i64 17 }, ptr %46, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @23, i64 17 }, ptr %46, align 8
 // CHECK-NEXT:   %47 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %46, 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %47)
 // CHECK-NEXT:   unreachable
@@ -179,7 +282,7 @@ func (C2) g() {}
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_17:                                         ; preds = %_llgo_49
 // CHECK-NEXT:   %50 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @22, i64 17 }, ptr %50, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @24, i64 17 }, ptr %50, align 8
 // CHECK-NEXT:   %51 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %50, 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %51)
 // CHECK-NEXT:   unreachable
@@ -199,7 +302,7 @@ func (C2) g() {}
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_19:                                         ; preds = %_llgo_18
 // CHECK-NEXT:   %61 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @23, i64 17 }, ptr %61, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @25, i64 17 }, ptr %61, align 8
 // CHECK-NEXT:   %62 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %61, 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %62)
 // CHECK-NEXT:   unreachable
@@ -217,13 +320,13 @@ func (C2) g() {}
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_21:                                         ; preds = %_llgo_20
 // CHECK-NEXT:   %71 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @24, i64 17 }, ptr %71, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @26, i64 17 }, ptr %71, align 8
 // CHECK-NEXT:   %72 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %71, 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %72)
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_22:                                         ; preds = %_llgo_20
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @25, i64 4 })
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @27, i64 4 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
@@ -361,64 +464,57 @@ func (C2) g() {}
 // CHECK-NEXT:   %125 = extractvalue { %"{{.*}}/runtime/internal/runtime.iface", i1 } %123, 1
 // CHECK-NEXT:   br i1 %125, label %_llgo_18, label %_llgo_17
 // CHECK-NEXT: }
-func main() {
-	var i0 I0
-	var i1 I1
-	var i2 I2
 
-	// Nil always causes a type assertion to fail, even to the
-	// same type.
-	if _, ok := i0.(I0); ok {
-		panic("nil i0.(I0) succeeded")
-	}
-	if _, ok := i1.(I1); ok {
-		panic("nil i1.(I1) succeeded")
-	}
-	if _, ok := i2.(I2); ok {
-		panic("nil i2.(I2) succeeded")
-	}
+// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.nilinterequal"(ptr %0, ptr %1, ptr %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.nilinterequal"(ptr %1, ptr %2)
+// CHECK-NEXT:   ret i1 %3
+// CHECK-NEXT: }
 
-	// Conversions can't fail, even with nil.
-	_ = I0(i0)
+// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.interequal"(ptr %0, ptr %1, ptr %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.interequal"(ptr %1, ptr %2)
+// CHECK-NEXT:   ret i1 %3
+// CHECK-NEXT: }
 
-	_ = I0(i1)
-	_ = I1(i1)
+// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal0"(ptr %0, ptr %1, ptr %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal0"(ptr %1, ptr %2)
+// CHECK-NEXT:   ret i1 %3
+// CHECK-NEXT: }
 
-	_ = I0(i2)
-	_ = I1(i2)
-	_ = I2(i2)
+// CHECK-LABEL: define linkonce void @"__llgo_stub.{{.*}}/cl/_testgo/ifaceconv.(*C1).f"(ptr %0, ptr %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   tail call void @"{{.*}}/cl/_testgo/ifaceconv.(*C1).f"(ptr %1)
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
 
-	// Non-nil type assertions pass or fail based on the concrete type.
-	i1 = C1{}
-	if _, ok := i1.(I0); !ok {
-		panic("C1 i1.(I0) failed")
-	}
-	if _, ok := i1.(I1); !ok {
-		panic("C1 i1.(I1) failed")
-	}
-	if _, ok := i1.(I2); ok {
-		panic("C1 i1.(I2) succeeded")
-	}
+// CHECK-LABEL: define linkonce void @"__llgo_stub.{{.*}}/cl/_testgo/ifaceconv.C1.f"(ptr %0, %"{{.*}}/cl/_testgo/ifaceconv.C1" %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   tail call void @"{{.*}}/cl/_testgo/ifaceconv.C1.f"(%"{{.*}}/cl/_testgo/ifaceconv.C1" %1)
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
 
-	i1 = C2{}
-	if _, ok := i1.(I0); !ok {
-		panic("C2 i1.(I0) failed")
-	}
-	if _, ok := i1.(I1); !ok {
-		panic("C2 i1.(I1) failed")
-	}
-	if _, ok := i1.(I2); !ok {
-		panic("C2 i1.(I2) failed")
-	}
+// CHECK-LABEL: define linkonce void @"__llgo_stub.{{.*}}/cl/_testgo/ifaceconv.(*C2).f"(ptr %0, ptr %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   tail call void @"{{.*}}/cl/_testgo/ifaceconv.(*C2).f"(ptr %1)
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
 
-	// Conversions can't fail.
-	i1 = C1{}
-	if I0(i1) == nil {
-		panic("C1 I0(i1) was nil")
-	}
-	if I1(i1) == nil {
-		panic("C1 I1(i1) was nil")
-	}
+// CHECK-LABEL: define linkonce void @"__llgo_stub.{{.*}}/cl/_testgo/ifaceconv.(*C2).g"(ptr %0, ptr %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   tail call void @"{{.*}}/cl/_testgo/ifaceconv.(*C2).g"(ptr %1)
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
 
-	println("pass")
-}
+// CHECK-LABEL: define linkonce void @"__llgo_stub.{{.*}}/cl/_testgo/ifaceconv.C2.f"(ptr %0, %"{{.*}}/cl/_testgo/ifaceconv.C2" %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   tail call void @"{{.*}}/cl/_testgo/ifaceconv.C2.f"(%"{{.*}}/cl/_testgo/ifaceconv.C2" %1)
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce void @"__llgo_stub.{{.*}}/cl/_testgo/ifaceconv.C2.g"(ptr %0, %"{{.*}}/cl/_testgo/ifaceconv.C2" %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   tail call void @"{{.*}}/cl/_testgo/ifaceconv.C2.g"(%"{{.*}}/cl/_testgo/ifaceconv.C2" %1)
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }

@@ -195,6 +195,27 @@ func extraAsmSigsAndDeclMap(pkgPath string, goarch string) map[string]extplan9as
 	manual := map[string]extplan9asm.FuncSig{}
 	if pkgPath == "internal/bytealg" {
 		switch goarch {
+		case "arm":
+			manual["internal/bytealg.cmpbody"] = extplan9asm.FuncSig{
+				Args:    []extplan9asm.LLVMType{extplan9asm.Ptr, "i32", extplan9asm.Ptr, "i32", extplan9asm.Ptr},
+				Ret:     extplan9asm.Void,
+				ArgRegs: []extplan9asm.Reg{"R2", "R0", "R3", "R1", "R7"},
+			}
+			manual["internal/bytealg.memeqbody"] = extplan9asm.FuncSig{
+				Args:    []extplan9asm.LLVMType{extplan9asm.Ptr, extplan9asm.Ptr, "i32", extplan9asm.Ptr},
+				Ret:     extplan9asm.Void,
+				ArgRegs: []extplan9asm.Reg{"R0", "R2", "R1", "R7"},
+			}
+			manual["internal/bytealg.countbytebody"] = extplan9asm.FuncSig{
+				Args:    []extplan9asm.LLVMType{extplan9asm.Ptr, "i32", "i8", extplan9asm.Ptr},
+				Ret:     extplan9asm.Void,
+				ArgRegs: []extplan9asm.Reg{"R0", "R1", "R2", "R7"},
+			}
+			manual["internal/bytealg.indexbytebody"] = extplan9asm.FuncSig{
+				Args:    []extplan9asm.LLVMType{extplan9asm.Ptr, "i32", "i8", extplan9asm.Ptr},
+				Ret:     extplan9asm.Void,
+				ArgRegs: []extplan9asm.Reg{"R0", "R1", "R2", "R5"},
+			}
 		case "arm64":
 			manual["internal/bytealg.cmpbody"] = extplan9asm.FuncSig{Args: []extplan9asm.LLVMType{extplan9asm.Ptr, extplan9asm.I64, extplan9asm.Ptr, extplan9asm.I64}, Ret: extplan9asm.I64}
 			manual["internal/bytealg.memeqbody"] = extplan9asm.FuncSig{Args: []extplan9asm.LLVMType{extplan9asm.Ptr, extplan9asm.Ptr, extplan9asm.I64}, Ret: extplan9asm.I1}

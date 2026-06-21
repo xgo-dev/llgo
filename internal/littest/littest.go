@@ -67,7 +67,7 @@ func Check(spec Spec, actual string) error {
 	case ModeSkip:
 		return nil
 	case ModeFileCheck:
-		return filecheck.Match(spec.Path, spec.Text, actual)
+		return filecheck.Match(spec.Path, actual)
 	case ModeLiteral:
 		if actual != spec.Text {
 			return fmt.Errorf("%s: literal LLVM IR mismatch", spec.Path)
@@ -103,7 +103,6 @@ func loadSourceSpec(pkgDir string) (Spec, bool, error) {
 	}
 	return Spec{
 		Path: marked,
-		Text: text,
 		Mode: ModeFileCheck,
 	}, true, nil
 }

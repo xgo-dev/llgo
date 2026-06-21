@@ -99,16 +99,23 @@ ignore_esp32=(
   "./_demo/go/randdemo" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/readdir" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/reflectcopy" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectempty" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/reflectfunc" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectfnconv" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/reflectindirect" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/reflectmake" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/reflectmethod" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/reflectname-1412" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectnamedfn" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectnew" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/reflectpointerto" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectpkgpath" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectslice" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/return-1605" # runtime output: fatal error
   "./_demo/go/runtime" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/sync" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/syscall" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/syscallraw" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/sysexec" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/sysopen-1654" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/texttemplate" # panic: internal/bytealg selected .s files require plan9asm translation
@@ -168,16 +175,23 @@ ignore_esp32c3_basic=(
   "./_demo/go/randdemo" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/readdir" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/reflectfunc" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectfnconv" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/reflectindirect" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/reflectcopy" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectempty" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/reflectmethod" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/reflectmake" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/reflectname-1412" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectnamedfn" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectnew" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/reflectpointerto" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectpkgpath" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectslice" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/runtime" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/sync" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/sysopen-1654" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/syscall" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/syscallraw" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/sysexec" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/texttemplate" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/timedur" # panic: internal/bytealg selected .s files require plan9asm translation
@@ -206,6 +220,15 @@ should_ignore() {
   return 1
 }
 
+is_model_demo() {
+  case "$1" in
+    ./_demo/c/llama2-c)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 run_dirs=()
 run_targets=()
 run_labels=()
@@ -224,6 +247,10 @@ if [ "$mode" = "embedded" ]; then
   done
 else
   for d in "${cases[@]}"; do
+    if is_model_demo "$d" && [ "${LLGO_RUN_MODEL_DEMOS:-0}" != "1" ]; then
+      echo "SKIP $d (model demo runs in scheduled Model Demo workflow)"
+      continue
+    fi
     run_dirs+=("$d")
     run_targets+=("")
     run_labels+=("$d")

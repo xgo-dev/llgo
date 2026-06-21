@@ -48,6 +48,7 @@ import (
 	"github.com/goplus/llgo/internal/flash"
 	"github.com/goplus/llgo/internal/goembed"
 	"github.com/goplus/llgo/internal/header"
+	"github.com/goplus/llgo/internal/lto"
 	"github.com/goplus/llgo/internal/metadata"
 	"github.com/goplus/llgo/internal/mockable"
 	"github.com/goplus/llgo/internal/monitor"
@@ -129,6 +130,7 @@ type Config struct {
 	Goarch        string
 	Target        string // target name (e.g., "rp2040", "wasi") - takes precedence over Goos/Goarch
 	OptLevel      optlevel.Level
+	LTO           lto.Mode
 	BinPath       string
 	AppExt        string  // ".exe" on Windows, empty on Unix
 	OutFile       string  // only valid for ModeBuild when len(pkgs) == 1
@@ -208,6 +210,17 @@ func envGOPATH() (string, error) {
 	return filepath.Join(home, "go"), nil
 }
 
+func (c *Config) ltoMode() lto.Mode {
+	if c == nil {
+		return lto.Off
+	}
+	return c.LTO
+}
+
+func (c *Config) ltoEnabled() bool {
+	return c.ltoMode().Enabled()
+}
+
 // -----------------------------------------------------------------------------
 
 const (
@@ -245,7 +258,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	conf.OptLevel = effectiveOptLevel(conf)
 	// Handle crosscompile configuration first to set correct GOOS/GOARCH
 	forceEspClang := conf.ForceEspClang || conf.Target != ""
-	export, err := crosscompile.Use(conf.Goos, conf.Goarch, conf.Target, IsWasiThreadsEnabled(), forceEspClang, conf.OptLevel)
+	export, err := crosscompile.Use(conf.Goos, conf.Goarch, conf.Target, IsWasiThreadsEnabled(), forceEspClang, conf.OptLevel, conf.ltoMode())
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup crosscompile: %w", err)
 	}
@@ -1229,8 +1242,8 @@ func needsLinuxNoPIE(ctx *context, linkArgs []string) bool {
 }
 
 // archiver returns the archiving tool to use for the current context.
-// For wasm targets, it prefers llvm-ar because wasm-ld requires archives
-// created with llvm-ar (system ar cannot create valid wasm archive indexes).
+// For wasm targets and LTO builds, it prefers llvm-ar because linkers need
+// LLVM-aware archive indexes for wasm objects and bitcode members.
 func (c *context) archiver() string {
 	// First check toolchain directory (for cross-compilation)
 	if c.crossCompile.CC != "" {
@@ -1246,7 +1259,6 @@ func (c *context) archiver() string {
 	if ar := os.Getenv("LLGO_AR"); ar != "" {
 		return ar
 	}
-	// For wasm targets, prefer llvm-ar from PATH (system ar cannot create valid wasm archives)
 	if c.buildConf.Goarch == "wasm" || strings.Contains(c.crossCompile.LLVMTarget, "wasm") {
 		if llvmAr, err := exec.LookPath("llvm-ar"); err == nil {
 			return llvmAr
@@ -1376,7 +1388,7 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 		mod.SetTarget(ctx.prog.Target().Spec().Triple)
 		pbo := gllvm.NewPassBuilderOptions()
 		defer pbo.Dispose()
-		if err := mod.RunPasses(llvmPassPipeline(ctx.buildConf.OptLevel), ctx.prog.TargetMachine(), pbo); err != nil {
+		if err := mod.RunPasses(llvmPassPipeline(ctx.buildConf.OptLevel, ctx.buildConf.ltoMode()), ctx.prog.TargetMachine(), pbo); err != nil {
 			return fmt.Errorf("run LLVM passes failed for %v: %v", pkgPath, err)
 		}
 	}
@@ -1388,10 +1400,12 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 	}
 	aPkg.ObjFiles = append(aPkg.ObjFiles, cgoLLFiles...)
 	aPkg.ObjFiles = append(aPkg.ObjFiles, concatPkgLinkFiles(ctx, pkg, printCmds)...)
-	if asmObjFiles, err := compilePkgSFiles(ctx, aPkg, pkg, printCmds); err != nil {
-		return err
-	} else {
-		aPkg.ObjFiles = append(aPkg.ObjFiles, asmObjFiles...)
+	if aPkg.AltPkg == nil || llruntime.HasAdditiveAltPkg(pkgPath) {
+		if asmObjFiles, err := compilePkgSFiles(ctx, aPkg, pkg, printCmds); err != nil {
+			return err
+		} else {
+			aPkg.ObjFiles = append(aPkg.ObjFiles, asmObjFiles...)
+		}
 	}
 	if aliasObjs, err := buildGoCgoAliasObjects(ctx, pkgPath, aPkg.Package.Syntax, printCmds); err != nil {
 		return err
@@ -1496,9 +1510,24 @@ func exportObjectInMemory(ctx *context, pkgPath string, exportFile string, pkg l
 			return "", err
 		}
 	}
-	buf, err := ctx.prog.TargetMachine().EmitToMemoryBuffer(pkg.Module(), gllvm.ObjectFile)
-	if err != nil {
-		return "", err
+	ltoMode := ctx.buildConf.ltoMode()
+	var (
+		buf  gllvm.MemoryBuffer
+		err  error
+		kind = "in-memory LLVM object emission"
+	)
+	switch ltoMode {
+	case lto.Full:
+		buf = gllvm.WriteBitcodeToMemoryBuffer(pkg.Module())
+		kind = "in-memory LLVM full LTO bitcode emission"
+	case lto.Thin:
+		buf = gllvm.WriteThinLTOBitcodeToMemoryBuffer(pkg.Module())
+		kind = "in-memory LLVM ThinLTO bitcode emission"
+	default:
+		buf, err = ctx.prog.TargetMachine().EmitToMemoryBuffer(pkg.Module(), gllvm.ObjectFile)
+		if err != nil {
+			return "", err
+		}
 	}
 	defer buf.Dispose()
 
@@ -1510,7 +1539,7 @@ func exportObjectInMemory(ctx *context, pkgPath string, exportFile string, pkg l
 	objFileName := objFile.Name()
 	if ctx.shouldPrintCommands(false) {
 		fmt.Fprintf(os.Stderr, "# compiling %s for pkg: %s\n", objFileName, pkgPath)
-		fmt.Fprintln(os.Stderr, "# using in-memory LLVM object emission")
+		fmt.Fprintf(os.Stderr, "# using %s\n", kind)
 	}
 	if _, err := objFile.Write(buf.Bytes()); err != nil {
 		objFile.Close()
@@ -1743,27 +1772,22 @@ func toTypeList(args *types.TypeList) []types.Type {
 // is an untyped constant, it is first implicitly converted to the type it would assume
 // if the shift expression were replaced by its left operand alone."
 //
-// This causes go/ssa sanity check to fail when the type remains untyped.
+// Parent expressions can inherit that untyped result. This causes go/ssa sanity
+// check to fail when a non-constant instruction result remains untyped.
 // See: https://github.com/golang/go/issues/77067
 func fixUntypedShiftTypes(p *packages.Package) {
-	// First pass: identify expressions needing fixes
-	// (avoid modifying map during iteration)
 	var toFix []ast.Expr
 	for expr, tv := range p.TypesInfo.Types {
-		switch e := expr.(type) {
-		case *ast.BinaryExpr:
-			if e.Op != token.SHL && e.Op != token.SHR {
-				break
-			}
-			basic, ok := tv.Type.(*types.Basic)
-			if !ok || basic.Info()&types.IsUntyped == 0 {
-				break
-			}
-			toFix = append(toFix, expr)
+		if tv.Value != nil {
+			continue
 		}
+		basic, ok := tv.Type.(*types.Basic)
+		if !ok || basic.Info()&types.IsUntyped == 0 {
+			continue
+		}
+		toFix = append(toFix, expr)
 	}
 
-	// Second pass: apply fixes
 	for _, expr := range toFix {
 		tv := p.TypesInfo.Types[expr]
 		p.TypesInfo.Types[expr] = types.TypeAndValue{
@@ -1904,8 +1928,15 @@ func effectiveOptLevel(conf *Config) optlevel.Level {
 	return optlevel.O2
 }
 
-func llvmPassPipeline(level optlevel.Level) string {
-	return "default<" + level.Name() + ">"
+func llvmPassPipeline(level optlevel.Level, ltoMode lto.Mode) string {
+	switch ltoMode {
+	case lto.Full:
+		return "lto-pre-link<" + level.Name() + ">"
+	case lto.Thin:
+		return "thinlto-pre-link<" + level.Name() + ">"
+	default:
+		return "default<" + level.Name() + ">"
+	}
 }
 
 func IsWasiThreadsEnabled() bool {

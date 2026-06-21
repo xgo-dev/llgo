@@ -4,10 +4,47 @@ package main
 import (
 	"unsafe"
 
+	"github.com/goplus/lib/c"
 	"github.com/goplus/lib/py"
 	"github.com/goplus/lib/py/math"
 	"github.com/goplus/lib/py/std"
 )
+
+// CHECK: @0 = private unnamed_addr constant [5 x i8] c"world", align 1
+// CHECK: @1 = private unnamed_addr constant [5 x i8] c"hello", align 1
+// CHECK: @2 = private unnamed_addr constant [3 x i8] c"pi\00", align 1
+// CHECK: @3 = private unnamed_addr constant [14 x i8] c"lens = %d %d\0A\00", align 1
+// CHECK: @4 = private unnamed_addr constant [14 x i8] c"ptrs = %d %d\0A\00", align 1
+// CHECK: @5 = private unnamed_addr constant [12 x i8] c"pi = %.15g\0A\00", align 1
+// CHECK: @6 = private unnamed_addr constant [4 x i8] c"abs\00", align 1
+// CHECK: @7 = private unnamed_addr constant [6 x i8] c"print\00", align 1
+
+func main() {
+	v := 100
+	x := py.List(true, false, 1, float32(2.1), 3.1, uint(4), 1+2i, complex64(3+4i),
+		"hello", []byte("world"), [...]byte{1, 2, 3}, [...]byte{}, &v, unsafe.Pointer(&v))
+	y := py.List(std.Abs, std.Print, math.Pi)
+	c.Printf(c.Str("lens = %d %d\n"), x.ListLen(), y.ListLen())
+	c.Printf(c.Str("ptrs = %d %d\n"), x.ListItem(12).IsTrue(), x.ListItem(13).IsTrue())
+	c.Printf(c.Str("pi = %.15g\n"), y.ListItem(2).Float64())
+}
+
+// CHECK-LABEL: define void @"{{.*}}/cl/_testpy/list.init"(){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %0 = load i1, ptr @"{{.*}}/cl/_testpy/list.init$guard", align 1
+// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
+// CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testpy/list.init$guard", align 1
+// CHECK-NEXT:   call void @"github.com/goplus/lib/py/math.init"()
+// CHECK-NEXT:   call void @"github.com/goplus/lib/py/std.init"()
+// CHECK-NEXT:   %1 = load ptr, ptr @__llgo_py.builtins, align 8
+// CHECK-NEXT:   call void (ptr, ...) @llgoLoadPyModSyms(ptr %1, ptr @6, ptr @__llgo_py.builtins.abs, ptr @7, ptr @__llgo_py.builtins.print, ptr null)
+// CHECK-NEXT:   br label %_llgo_2
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testpy/list.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -68,14 +105,16 @@ import (
 // CHECK-NEXT:   %47 = load ptr, ptr @__llgo_py.builtins.print, align 8
 // CHECK-NEXT:   %48 = call i32 @PyList_SetItem(ptr %44, i64 1, ptr %47)
 // CHECK-NEXT:   %49 = call i32 @PyList_SetItem(ptr %44, i64 2, ptr %43)
-// CHECK-NEXT:   %50 = load ptr, ptr @__llgo_py.builtins.print, align 8
-// CHECK-NEXT:   %51 = call ptr (ptr, ...) @PyObject_CallFunctionObjArgs(ptr %50, ptr %7, ptr %44, ptr null)
+// CHECK-NEXT:   %50 = call i64 @PyList_Size(ptr %7)
+// CHECK-NEXT:   %51 = call i64 @PyList_Size(ptr %44)
+// CHECK-NEXT:   %52 = call i32 (ptr, ...) @printf(ptr @3, i64 %50, i64 %51)
+// CHECK-NEXT:   %53 = call ptr @PyList_GetItem(ptr %7, i64 12)
+// CHECK-NEXT:   %54 = call i32 @PyObject_IsTrue(ptr %53)
+// CHECK-NEXT:   %55 = call ptr @PyList_GetItem(ptr %7, i64 13)
+// CHECK-NEXT:   %56 = call i32 @PyObject_IsTrue(ptr %55)
+// CHECK-NEXT:   %57 = call i32 (ptr, ...) @printf(ptr @4, i32 %54, i32 %56)
+// CHECK-NEXT:   %58 = call ptr @PyList_GetItem(ptr %44, i64 2)
+// CHECK-NEXT:   %59 = call double @PyFloat_AsDouble(ptr %58)
+// CHECK-NEXT:   %60 = call i32 (ptr, ...) @printf(ptr @5, double %59)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
-func main() {
-	v := 100
-	x := py.List(true, false, 1, float32(2.1), 3.1, uint(4), 1+2i, complex64(3+4i),
-		"hello", []byte("world"), [...]byte{1, 2, 3}, [...]byte{}, &v, unsafe.Pointer(&v))
-	y := py.List(std.Abs, std.Print, math.Pi)
-	std.Print(x, y)
-}

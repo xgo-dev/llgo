@@ -38,7 +38,7 @@ func qsort(base c.Pointer, count, elem uintptr, compar func(a, b c.Pointer) c.In
 // CHECK-NEXT:   %11 = icmp slt i64 %9, 0
 // CHECK-NEXT:   %12 = icmp uge i64 %9, 5
 // CHECK-NEXT:   %13 = or i1 %12, %11
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %13)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %13, {{.*}})
 // CHECK-NEXT:   %14 = getelementptr inbounds i64, ptr %0, i64 %9
 // CHECK-NEXT:   %15 = load i64, ptr %14, align 8
 // CHECK-NEXT:   %16 = call i32 (ptr, ...) @printf(ptr @0, i64 %15)

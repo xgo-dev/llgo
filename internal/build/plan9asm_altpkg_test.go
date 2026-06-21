@@ -18,3 +18,15 @@ func TestHasAltPkgForTarget_AllowsAdditivePatchWithPlan9Asm(t *testing.T) {
 		t.Fatal("internal/runtime/sys should keep its additive alt package even when plan9asm is enabled")
 	}
 }
+
+func TestHasAltPkgForTarget_UsesAtomicFallbackOnArm(t *testing.T) {
+	conf := &Config{Goarch: "arm", AbiMode: cabi.ModeAllFunc}
+	if !hasAltPkgForTarget(conf, "internal/runtime/atomic") {
+		t.Fatal("internal/runtime/atomic should use alt package on arm")
+	}
+
+	conf = &Config{Goarch: "arm64", AbiMode: cabi.ModeAllFunc}
+	if hasAltPkgForTarget(conf, "internal/runtime/atomic") {
+		t.Fatal("internal/runtime/atomic should keep plan9asm/std paths on arm64")
+	}
+}

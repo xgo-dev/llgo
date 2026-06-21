@@ -3,7 +3,7 @@ package main
 
 import _ "unsafe"
 
-// CHECK-LINE: @0 = private unnamed_addr constant [14 x i8] c"Hello, world\0A\00", align 1
+// CHECK: {{^}}@0 = private unnamed_addr constant [14 x i8] c"Hello, world\0A\00", align 1{{$}}
 
 //go:linkname cstr llgo.cstr
 func cstr(string) *int8

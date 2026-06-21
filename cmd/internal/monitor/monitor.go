@@ -23,6 +23,7 @@ import (
 	"github.com/goplus/llgo/cmd/internal/base"
 	"github.com/goplus/llgo/cmd/internal/flags"
 	"github.com/goplus/llgo/internal/crosscompile"
+	"github.com/goplus/llgo/internal/lto"
 	"github.com/goplus/llgo/internal/monitor"
 	"github.com/goplus/llgo/internal/optlevel"
 )
@@ -36,6 +37,7 @@ var Cmd = &base.Command{
 func init() {
 	flags.AddCommonFlags(&Cmd.Flag)
 	flags.AddOptLevelFlags(&Cmd.Flag)
+	flags.AddLTOFlag(&Cmd.Flag)
 	flags.AddEmbeddedFlags(&Cmd.Flag)
 	Cmd.Run = runMonitor
 }
@@ -60,7 +62,7 @@ func runMonitor(cmd *base.Command, args []string) {
 		if !level.IsValid() {
 			level = optlevel.Oz
 		}
-		conf, err := crosscompile.UseTarget(flags.Target, level)
+		conf, err := crosscompile.UseTarget(flags.Target, level, flags.ResolveLTOMode(lto.Off))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "llgo monitor: %v\n", err)
 			os.Exit(1)

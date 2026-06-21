@@ -18,14 +18,9 @@ func GetTargetTriple(goos, goarch string) string {
 	case "arm64":
 		llvmarch = "aarch64"
 	case "arm":
-		switch goarch {
-		case "5":
-			llvmarch = "armv5"
-		case "6":
-			llvmarch = "armv6"
-		default:
-			llvmarch = "armv7"
-		}
+		// Keep the default in sync with ssa.Target.Spec when GOARM is not
+		// explicitly modeled by this helper.
+		llvmarch = "armv7"
 	case "wasm":
 		llvmarch = "wasm32"
 	default:
@@ -51,5 +46,11 @@ func GetTargetTriple(goos, goarch string) string {
 	// Target triples (which actually have four components, but are called
 	// triples for historical reasons) have the form:
 	//   arch-vendor-os-environment
-	return llvmarch + "-" + llvmvendor + "-" + llvmos
+	triple := llvmarch + "-" + llvmvendor + "-" + llvmos
+	if llvmos == "windows" {
+		triple += "-gnu"
+	} else if goarch == "arm" {
+		triple += "-gnueabihf"
+	}
+	return triple
 }

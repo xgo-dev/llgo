@@ -337,13 +337,30 @@ func (b Builder) AssertNilDeref(ptr Expr) {
 	b.InlineCall(b.Pkg.rtFunc("AssertNilDeref"), isNil)
 }
 
+func (b Builder) assertStaticNilDeref(ptr Expr) {
+	if ptr.impl.IsNull() {
+		b.AssertNilDeref(ptr)
+	}
+}
+
+func (b Builder) WrapNilCheck(ptr, recvType, methodName Expr) Expr {
+	isNil := b.BinOp(token.EQL, ptr, b.Prog.Nil(ptr.Type))
+	b.Call(b.Pkg.rtFunc("PanicWrapNilPointer"), isNil, recvType, methodName)
+	return ptr
+}
+
 // Load returns the value at the pointer ptr.
 func (b Builder) Load(ptr Expr) Expr {
 	dbgInstrf("Load %v\n", ptr.impl)
 	if ptr.kind == vkPyVarRef {
 		return b.pyLoad(ptr)
 	}
+	b.assertStaticNilDeref(ptr)
 	telem := b.Prog.Elem(ptr.Type)
+	if b.Prog.SizeOf(telem) == 0 {
+		b.AssertNilDeref(ptr)
+		return b.Prog.Zero(telem)
+	}
 	return Expr{llvm.CreateLoad(b.impl, telem.ll, ptr.impl), telem}
 }
 
@@ -352,6 +369,7 @@ func (b Builder) Store(ptr, val Expr) Expr {
 	raw := ptr.raw.Type
 	dbgInstrf("Store %v, %v, %v\n", raw, ptr.impl, val.impl)
 	val = checkExpr(val, raw.(*types.Pointer).Elem(), b)
+	b.assertStaticNilDeref(ptr)
 	return Expr{b.impl.CreateStore(val.impl, ptr.impl), b.Prog.Void()}
 }
 

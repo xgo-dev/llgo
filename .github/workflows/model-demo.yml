@@ -1,0 +1,44 @@
+name: Model Demo
+
+on:
+  schedule:
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  llama2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        uses: ./.github/actions/setup-deps
+        with:
+          llvm-version: 19
+
+      - name: Set up Go
+        uses: ./.github/actions/setup-go
+        with:
+          go-version: "1.24.2"
+
+      - name: Install llgo
+        run: |
+          go install ./...
+          echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+
+      - name: Download llama2 model
+        run: |
+          mkdir -p ./_demo/c/llama2-c
+          curl --fail --location --retry 5 --retry-delay 60 --retry-all-errors \
+            --output ./_demo/c/llama2-c/stories15M.bin \
+            https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
+
+      - name: Test llama2 demo
+        run: |
+          cd ./_demo/c/llama2-c
+          llgo run .

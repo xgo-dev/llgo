@@ -27,12 +27,15 @@ import (
 
 // AllocU allocates uninitialized memory.
 func AllocU(size uintptr) unsafe.Pointer {
-	return c.Malloc(size)
+	ret := c.Malloc(size)
+	recordMemProfileAlloc(size)
+	return ret
 }
 
 // AllocZ allocates zero-initialized memory.
 func AllocZ(size uintptr) unsafe.Pointer {
 	ret := c.Malloc(size)
+	recordMemProfileAlloc(size)
 	return c.Memset(ret, 0, size)
 }
 

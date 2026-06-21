@@ -164,13 +164,18 @@ func demo5(n int) Func {
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %25)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %26 = call %"{{.*}}/cl/_testrt/closureconv.Func" @"{{.*}}/cl/_testrt/closureconv.demo5"(i64 1)
-// CHECK-NEXT:   %27 = extractvalue %"{{.*}}/cl/_testrt/closureconv.Func" %26, 1
-// CHECK-NEXT:   %28 = extractvalue %"{{.*}}/cl/_testrt/closureconv.Func" %26, 0
-// CHECK-NEXT:   %29 = call i64 %28(ptr %27, i64 99, i64 200)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %29)
+// CHECK-NEXT:   %27 = extractvalue %"{{.*}}/cl/_testrt/closureconv.Func" %26, 0
+// CHECK-NEXT:   %28 = insertvalue %"{{.*}}/cl/_testrt/closureconv.Func2" undef, ptr %27, 0
+// CHECK-NEXT:   %29 = extractvalue %"{{.*}}/cl/_testrt/closureconv.Func" %26, 1
+// CHECK-NEXT:   %30 = insertvalue %"{{.*}}/cl/_testrt/closureconv.Func2" %28, ptr %29, 1
+// CHECK-NEXT:   %31 = extractvalue %"{{.*}}/cl/_testrt/closureconv.Func2" %30, 1
+// CHECK-NEXT:   %32 = extractvalue %"{{.*}}/cl/_testrt/closureconv.Func2" %30, 0
+// CHECK-NEXT:   %33 = call i64 %32(ptr %31, i64 99, i64 200)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %33)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
+
 func main() {
 	n1 := demo1(1)(99, 200)
 	println(n1)

@@ -35,7 +35,7 @@ _llgo_0:
 	if err != nil {
 		t.Fatal(err)
 	}
-	mainCheck := `// CHECK-LABEL: define void @"{{.*}}/p.main"() {`
+	mainCheck := `// CHECK-LABEL: define void @"{{.*}}/p.main"(){{.*}} {`
 	mainDecl := "func main() {"
 	if !strings.Contains(got, mainCheck) {
 		t.Fatalf("main checks not inserted before func main:\n%s", got)
@@ -43,7 +43,7 @@ _llgo_0:
 	if strings.Index(got, mainCheck) > strings.Index(got, mainDecl) {
 		t.Fatalf("main checks should appear before func main:\n%s", got)
 	}
-	closureCheck := "\t// CHECK-LABEL: define void @\"{{.*}}/p.main$1\"() {"
+	closureCheck := "\t// CHECK-LABEL: define void @\"{{.*}}/p.main$1\"(){{.*}} {"
 	closureStmt := "\tfn := func() {}"
 	if !strings.Contains(got, closureCheck) {
 		t.Fatalf("closure checks not inserted before func literal:\n%s", got)
@@ -51,10 +51,10 @@ _llgo_0:
 	if strings.Index(got, closureCheck) > strings.Index(got, closureStmt) {
 		t.Fatalf("closure checks should appear before func literal:\n%s", got)
 	}
-	if !strings.Contains(got, `// CHECK-LABEL: define linkonce void @"__llgo_stub.{{.*}}/p.main$1"(ptr %0) {`) {
+	if !strings.Contains(got, `// CHECK-LABEL: define linkonce void @"__llgo_stub.{{.*}}/p.main$1"(ptr %0){{.*}} {`) {
 		t.Fatalf("stub checks missing:\n%s", got)
 	}
-	if strings.Index(got, `// CHECK-LABEL: define linkonce void @"__llgo_stub.{{.*}}/p.main$1"(ptr %0) {`) < strings.Index(got, "func main()") {
+	if strings.Index(got, `// CHECK-LABEL: define linkonce void @"__llgo_stub.{{.*}}/p.main$1"(ptr %0){{.*}} {`) < strings.Index(got, "func main()") {
 		t.Fatalf("stub checks should be appended after source:\n%s", got)
 	}
 }
@@ -92,7 +92,7 @@ _llgo_0:
 	if err != nil {
 		t.Fatal(err)
 	}
-	initCheck := `// CHECK-LABEL: define void @"{{.*}}/p.init"() {`
+	initCheck := `// CHECK-LABEL: define void @"{{.*}}/p.init"(){{.*}} {`
 	if !strings.Contains(got, initCheck) {
 		t.Fatalf("init checks not inserted before var decl:\n%s", got)
 	}
@@ -139,8 +139,8 @@ _llgo_0:
 	if err != nil {
 		t.Fatal(err)
 	}
-	addCheck := `// CHECK-LABEL: define i64 @"{{.*}}/p.add"(i64 %0, i64 %1) {`
-	initCheck := `// CHECK-LABEL: define void @"{{.*}}/p.init"() {`
+	addCheck := `// CHECK-LABEL: define i64 @"{{.*}}/p.add"(i64 %0, i64 %1){{.*}} {`
+	initCheck := `// CHECK-LABEL: define void @"{{.*}}/p.init"(){{.*}} {`
 	if strings.Index(got, addCheck) < 0 || strings.Index(got, initCheck) < 0 {
 		t.Fatalf("missing checks:\n%s", got)
 	}
@@ -170,16 +170,16 @@ _llgo_0:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, `// CHECK-LINE: @0 = private unnamed_addr constant [4 x i8] c"Hi\0A\00", align 1`) {
+	if !strings.Contains(got, `// CHECK: {{^}}@0 = private unnamed_addr constant [4 x i8] c"Hi\0A\00", align 1{{$}}`) {
 		t.Fatalf("missing numeric global @0:\n%s", got)
 	}
-	if !strings.Contains(got, `// CHECK-LINE: @1 = private unnamed_addr constant [3 x i8] c"%s\00", align 1`) {
+	if !strings.Contains(got, `// CHECK: {{^}}@1 = private unnamed_addr constant [3 x i8] c"%s\00", align 1{{$}}`) {
 		t.Fatalf("missing numeric global @1:\n%s", got)
 	}
-	if strings.Contains(got, `// CHECK-LINE: @"{{.*}}/p.named" = global i64 1`) {
+	if strings.Contains(got, `// CHECK: {{^}}@"{{.*}}/p.named" = global i64 1{{$}}`) {
 		t.Fatalf("named globals should not be emitted by default:\n%s", got)
 	}
-	if strings.Index(got, `// CHECK-LINE: @0 = private unnamed_addr constant [4 x i8] c"Hi\0A\00", align 1`) > strings.Index(got, "func main()") {
+	if strings.Index(got, `// CHECK: {{^}}@0 = private unnamed_addr constant [4 x i8] c"Hi\0A\00", align 1{{$}}`) > strings.Index(got, "func main()") {
 		t.Fatalf("global checks should be placed before first declaration:\n%s", got)
 	}
 }
@@ -212,8 +212,8 @@ _llgo_0:
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstCheck := `// CHECK-LABEL: define i64 @"{{.*}}/p.init$1"() {`
-	secondCheck := `// CHECK-LABEL: define i64 @"{{.*}}/p.init$2"() {`
+	firstCheck := `// CHECK-LABEL: define i64 @"{{.*}}/p.init$1"(){{.*}} {`
+	secondCheck := `// CHECK-LABEL: define i64 @"{{.*}}/p.init$2"(){{.*}} {`
 	firstVar := "var a = func() int { return 1 }()"
 	secondVar := "var b = func() int { return 2 }()"
 	if strings.Index(got, firstCheck) > strings.Index(got, firstVar) {
@@ -221,6 +221,15 @@ _llgo_0:
 	}
 	if strings.Index(got, secondCheck) > strings.Index(got, secondVar) {
 		t.Fatalf("second init closure should be anchored before second var decl:\n%s", got)
+	}
+}
+
+func TestGeneralizeDefineLine_WildcardsAttrsBeforeBrace(t *testing.T) {
+	line := `define void @"example.com/p.main"() local_unnamed_addr #0 {`
+	got := generalizeDefineLine(line, "example.com")
+	want := `define void @"{{.*}}/p.main"(){{.*}} {`
+	if got != want {
+		t.Fatalf("generalizeDefineLine = %q, want %q", got, want)
 	}
 }
 

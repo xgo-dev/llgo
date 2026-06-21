@@ -73,6 +73,8 @@ var (
 	TypeString     = StructOf(TypePointer, TypeInt)
 	TypeInterface  = StructOf(TypePointer, TypePointer)
 	TypeSlice      = StructOf(TypePointer, TypeInt, TypeInt)
+	empty          = [2]*Type{TypeInt8, nil}
+	typeEmpty      = &Type{0, 0, ffi.Struct, &empty[0]}
 )
 
 var Typ = []*Type{
@@ -100,6 +102,9 @@ var Typ = []*Type{
 }
 
 func ArrayOf(elem *Type, N int) *Type {
+	if N == 0 {
+		return typeEmpty
+	}
 	fs := make([]*Type, N+1)
 	for i := 0; i < N; i++ {
 		fs[i] = elem
@@ -113,6 +118,9 @@ func ArrayOf(elem *Type, N int) *Type {
 }
 
 func StructOf(fields ...*Type) *Type {
+	if len(fields) == 0 {
+		return typeEmpty
+	}
 	fs := make([]*Type, len(fields)+1)
 	copy(fs, fields)
 	return &Type{

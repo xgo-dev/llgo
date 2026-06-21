@@ -3,7 +3,7 @@ package main
 
 import _ "unsafe"
 
-// CHECK-LINE: @_bar_x = external global { [16 x i8], [2 x ptr] }, align 8
+// CHECK: {{^}}@_bar_x = external global { [16 x i8], [2 x ptr] }, align 8{{$}}
 //
 //go:linkname barX _bar_x
 var barX struct {
@@ -11,7 +11,7 @@ var barX struct {
 	Callbacks [2]func()
 }
 
-// CHECK-LINE: @_bar_y = external global { [16 x i8] }, align 1
+// CHECK: {{^}}@_bar_y = external global { [16 x i8] }, align 1{{$}}
 //
 //go:linkname barY _bar_y
 var barY struct {

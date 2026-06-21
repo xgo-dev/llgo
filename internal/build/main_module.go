@@ -82,8 +82,10 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	defineWeakNoArgStub(mainPkg, "syscall.init")
 
 	var pyInit llssa.Function
+	var pyFinalize llssa.Function
 	if cfg.pyInit {
 		pyInit = declareNoArgFunc(mainPkg, "Py_Initialize")
+		pyFinalize = declareNoArgFunc(mainPkg, "Py_Finalize")
 	}
 
 	var rtInit llssa.Function
@@ -104,7 +106,15 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	mainInit := declareNoArgFunc(mainPkg, pkg.PkgPath+".init")
 	mainMain := declareNoArgFunc(mainPkg, pkg.PkgPath+".main")
 
-	entryFn := defineEntryFunction(ctx, mainPkg, argcVar, argvVar, argvValueType, runtimeStub, mainInit, mainMain, pyInit, rtInit, abiInit)
+	entryFn := defineEntryFunction(ctx, mainPkg, argcVar, argvVar, argvValueType, entryFunctions{
+		runtimeStub: runtimeStub,
+		mainInit:    mainInit,
+		mainMain:    mainMain,
+		pyInit:      pyInit,
+		pyFinalize:  pyFinalize,
+		rtInit:      rtInit,
+		abiInit:     abiInit,
+	})
 
 	if needStart(ctx) {
 		defineStart(mainPkg, entryFn, argvValueType)
@@ -150,14 +160,24 @@ func filterAbiSymbol(abiInit int, sym *llssa.AbiSymbol) bool {
 	return false
 }
 
+type entryFunctions struct {
+	runtimeStub llssa.Function
+	mainInit    llssa.Function
+	mainMain    llssa.Function
+	pyInit      llssa.Function
+	pyFinalize  llssa.Function
+	rtInit      llssa.Function
+	abiInit     llssa.Function
+}
+
 // defineEntryFunction creates the program's entry function. The name is
 // "main" for standard targets, or "__main_argc_argv" with hidden visibility
 // for WASM targets that don't require _start.
 //
 // The entry stores argc/argv, optionally disables stdio buffering, runs
-// initialization hooks (Python, runtime, package init), and finally calls
-// main.main before returning 0.
-func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa.Global, argvType llssa.Type, runtimeStub, mainInit, mainMain llssa.Function, pyInit, rtInit, abiInit llssa.Function) llssa.Function {
+// initialization hooks (Python, runtime, package init), calls main.main,
+// finalizes Python if it was initialized, and returns 0.
+func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa.Global, argvType llssa.Type, fns entryFunctions) llssa.Function {
 	prog := pkg.Prog
 	entryName := "main"
 	if !needStart(ctx) && isWasmTarget(ctx.buildConf.Goos) {
@@ -176,18 +196,21 @@ func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa
 	if IsStdioNobuf() {
 		emitStdioNobuf(b, pkg, ctx.buildConf.Goos)
 	}
-	if pyInit != nil {
-		b.Call(pyInit.Expr)
+	if fns.pyInit != nil {
+		b.Call(fns.pyInit.Expr)
 	}
-	if rtInit != nil {
-		b.Call(rtInit.Expr)
+	if fns.rtInit != nil {
+		b.Call(fns.rtInit.Expr)
 	}
-	if abiInit != nil {
-		b.Call(abiInit.Expr)
+	if fns.abiInit != nil {
+		b.Call(fns.abiInit.Expr)
 	}
-	b.Call(runtimeStub.Expr)
-	b.Call(mainInit.Expr)
-	b.Call(mainMain.Expr)
+	b.Call(fns.runtimeStub.Expr)
+	b.Call(fns.mainInit.Expr)
+	b.Call(fns.mainMain.Expr)
+	if fns.pyFinalize != nil {
+		b.Call(fns.pyFinalize.Expr)
+	}
 	b.Return(prog.IntVal(0, prog.Int32()))
 	return fn
 }

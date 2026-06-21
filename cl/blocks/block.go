@@ -59,8 +59,9 @@ func newSuccs(succs []*ssa.BasicBlock) []int {
 	return ret
 }
 
-func findLoop(states []*blockState, path []int, from, iblk int) []int {
+func findLoop(states []*blockState, path []int, seen []bool, iblk int) []int {
 	path = append(path, iblk)
+	seen[iblk] = true
 	self := states[iblk]
 	for _, succ := range self.succs {
 		if s := states[succ]; s.fdel || s.loop {
@@ -85,7 +86,10 @@ func findLoop(states []*blockState, path []int, from, iblk int) []int {
 			}
 			return path
 		}
-		if ret := findLoop(states, path, from, succ); len(ret) > 0 {
+		if seen[succ] {
+			continue
+		}
+		if ret := findLoop(states, path, seen, succ); len(ret) > 0 {
 			return ret
 		}
 	}
@@ -119,7 +123,7 @@ func Infos(blks []*ssa.BasicBlock) []Info {
 
 	path := make([]int, 0, n)
 	if states[0].preds != 0 {
-		if loop := findLoop(states, path, 0, 0); len(loop) > 0 {
+		if loop := findLoop(states, path, make([]bool, n), 0); len(loop) > 0 {
 			order = append(order, loop[1:]...)
 		}
 	} else {
@@ -153,7 +157,7 @@ retry:
 			if state.fdel || !state.reach {
 				continue
 			}
-			if loop := findLoop(states, path, iblk, iblk); len(loop) > 0 {
+			if loop := findLoop(states, path, make([]bool, n), iblk); len(loop) > 0 {
 				order = append(order, loop...)
 				goto retry
 			}

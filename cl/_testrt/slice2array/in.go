@@ -21,7 +21,7 @@ package main
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
 // CHECK-NEXT:   %10 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicSliceConvert"(i64 %10, i64 4)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicSliceConvert"(i64 4, i64 %10)
 // CHECK-NEXT:   br label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
@@ -55,7 +55,7 @@ package main
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_2
 // CHECK-NEXT:   %35 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %32, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicSliceConvert"(i64 %35, i64 2)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicSliceConvert"(i64 2, i64 %35)
 // CHECK-NEXT:   br label %_llgo_4
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_3, %_llgo_2

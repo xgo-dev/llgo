@@ -134,6 +134,9 @@ retry:
 		}
 		typ = t.Underlying()
 		goto retry
+	case *types.Alias:
+		typ = types.Unalias(t)
+		goto retry
 	case *types.Signature:
 		return ptrSize
 	case *types.Struct:
@@ -388,8 +391,10 @@ func (p Program) toType(raw types.Type) Type {
 			return &aType{p.tyVoidPtr(), typ, vkPtr}
 		}
 	case *types.Pointer:
-		elem := p.rawType(t.Elem())
-		return &aType{llvm.PointerType(elem.ll, 0), typ, vkPtr}
+		// LLVM pointers are opaque, so the element LLVM type is not needed here.
+		// Avoid expanding it eagerly: legal Go recursive types often close their
+		// cycle through a pointer.
+		return &aType{p.tyVoidPtr(), typ, vkPtr}
 	case *types.Interface:
 		if t.Empty() {
 			return &aType{p.rtEface(), typ, vkEface}

@@ -573,7 +573,7 @@ func runCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc testCase,
 	case "run", "buildrun":
 		return runSingleFileCase(t, repoRoot, goroot, goCmd, llgoBin, tc, opts, buildTimeout)
 	case "runoutput":
-		return runOutputCase(t, repoRoot, goroot, goCmd, llgoBin, tc, opts)
+		return runOutputCase(t, repoRoot, goroot, goCmd, llgoBin, tc, opts, buildTimeout)
 	case "rundir":
 		return runDirCase(t, repoRoot, goroot, goCmd, llgoBin, tc, opts, false, buildTimeout)
 	case "runindir":
@@ -1120,7 +1120,7 @@ func runSingleFileCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc
 	return compareOutputs(goStdout, goStderr, goExit, llgoStdout, llgoStderr, llgoExit)
 }
 
-func runOutputCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc testCase, opts directiveOptions) error {
+func runOutputCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc testCase, opts directiveOptions, buildTimeout time.Duration) error {
 	t.Helper()
 	ws, err := prepareCaseWorkspace(repoRoot)
 	if err != nil {
@@ -1133,11 +1133,7 @@ func runOutputCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc tes
 	env := runnerEnv(repoRoot, goroot, ws.gopath, opts.ExtraEnv)
 	metrics := caseMetrics{}
 
-	goWS, err := stageRunOutputWorkspace(ws, "go", tc.Dir, sourceFiles)
-	if err != nil {
-		return err
-	}
-	llgoWS, err := stageRunOutputWorkspace(ws, "llgo", tc.Dir, sourceFiles)
+	genWS, err := stageRunOutputWorkspace(ws, "go", tc.Dir, sourceFiles)
 	if err != nil {
 		return err
 	}
@@ -1147,23 +1143,29 @@ func runOutputCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc tes
 		return err
 	}
 
-	goGen, goGenRun, err := generateRunOutput(goWS, goCmd, env, sourceFiles, programArgs, opts.Timeout, false, "go", goModVersion)
+	goGen, goGenRun, err := generateRunOutput(genWS, goCmd, env, sourceFiles, programArgs, opts.Timeout, false, "go", goModVersion)
 	metrics.goRun += goGenRun
 	if err != nil {
 		return err
 	}
-	llgoGen, llgoGenRun, err := generateRunOutput(llgoWS, llgoBin, env, sourceFiles, programArgs, opts.Timeout, true, "llgo", goModVersion)
-	metrics.llgoRun += llgoGenRun
+
+	goWS, err := stageRunOutputWorkspace(ws, "go-generated", genWS.workDir, []string{goGen})
+	if err != nil {
+		return err
+	}
+	llgoWS, err := stageRunOutputWorkspace(ws, "llgo-generated", genWS.workDir, []string{goGen})
 	if err != nil {
 		return err
 	}
 
-	goStdout, goStderr, goExit, goRunDur, err := runGeneratedProgram(goWS, goCmd, env, goGen, "go", opts.Timeout)
+	goStdout, goStderr, goExit, goBuildDur, goRunDur, err := runGeneratedProgram(goWS, goCmd, env, goGen, "go", buildTimeout, opts.Timeout)
+	metrics.goBuild += goBuildDur
 	metrics.goRun += goRunDur
 	if err != nil {
 		return err
 	}
-	llgoStdout, llgoStderr, llgoExit, llgoRunDur, err := runGeneratedProgram(llgoWS, llgoBin, env, llgoGen, "llgo", opts.Timeout)
+	llgoStdout, llgoStderr, llgoExit, llgoBuildDur, llgoRunDur, err := runGeneratedProgram(llgoWS, llgoBin, env, goGen, "llgo", buildTimeout, opts.Timeout)
+	metrics.llgoBuild += llgoBuildDur
 	metrics.llgoRun += llgoRunDur
 	if err != nil {
 		return err
@@ -1367,12 +1369,23 @@ func toolchainGoModVersion(goroot string) (string, error) {
 	return parts[0] + "." + parts[1], nil
 }
 
-func runGeneratedProgram(ws caseWorkspace, tool string, env []string, fileName, label string, timeout time.Duration) ([]byte, []byte, int, time.Duration, error) {
-	stdout, stderr, exitCode, runDur, err := runProgram(ws.workDir, tool, env, timeout, "run", fileName)
-	if err != nil {
-		return nil, nil, 0, runDur, commandFailure(label+" generated run", runDur, err, stdout, stderr, exitCode)
+func runGeneratedProgram(ws caseWorkspace, tool string, env []string, fileName, label string, buildTimeout, runTimeout time.Duration) ([]byte, []byte, int, time.Duration, time.Duration, error) {
+	out := filepath.Join(ws.rootDir, label+"-generated.out")
+	if runtime.GOOS == "windows" {
+		out += ".exe"
 	}
-	return stdout, stderr, exitCode, runDur, nil
+	buildStdout, buildStderr, buildExit, buildDur, err := runProgram(ws.workDir, tool, env, buildTimeout, "build", "-o", out, fileName)
+	if err != nil {
+		return nil, nil, 0, buildDur, 0, commandFailure(label+" generated build", buildDur, err, buildStdout, buildStderr, buildExit)
+	}
+	if err := ensureBuiltBinary(out, label+" generated build"); err != nil {
+		return nil, nil, 0, buildDur, 0, err
+	}
+	stdout, stderr, exitCode, runDur, err := runProgram(ws.workDir, out, env, runTimeout)
+	if err != nil {
+		return nil, nil, 0, buildDur, runDur, commandFailure(label+" generated run", runDur, err, stdout, stderr, exitCode)
+	}
+	return stdout, stderr, exitCode, buildDur, runDur, nil
 }
 
 func overlayDir(dstRoot, srcRoot string) error {

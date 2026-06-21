@@ -9,7 +9,7 @@ import (
 // CHECK-LABEL: define ptr @"{{.*}}/cl/_testrt/gblarray.Basic"(i64 %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = icmp uge i64 %0, 25
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %1)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %1, {{.*}})
 // CHECK-NEXT:   %2 = getelementptr inbounds ptr, ptr @"{{.*}}/cl/_testrt/gblarray.basicTypes", i64 %0
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
 // CHECK-NEXT:   ret ptr %3
@@ -23,7 +23,7 @@ func Basic(kind abi.Kind) *abi.Type {
 // CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 72)
 // CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %1, i32 0, i32 0
 // CHECK-NEXT:   %3 = icmp uge i64 %0, 25
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %3)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %3, {{.*}})
 // CHECK-NEXT:   %4 = getelementptr inbounds i64, ptr @"{{.*}}/cl/_testrt/gblarray.sizeBasicTypes", i64 %0
 // CHECK-NEXT:   %5 = load i64, ptr %4, align 8
 // CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %1, i32 0, i32 2

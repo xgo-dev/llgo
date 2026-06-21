@@ -4,6 +4,8 @@ import "testing"
 
 type nilPointerInterfaceLarge [1 << 21]byte
 
+type nilPointerInterfaceZero struct{}
+
 type nilPointerInterfaceLargeStruct struct {
 	data [1 << 21]byte
 }
@@ -28,6 +30,13 @@ func expectNilPointerInterfacePanic(t *testing.T, f func()) {
 func TestNilPointerLargeArrayToInterfacePanics(t *testing.T) {
 	expectNilPointerInterfacePanic(t, func() {
 		var p *nilPointerInterfaceLarge
+		nilPointerInterfaceSink = *p
+	})
+}
+
+func TestNilPointerZeroSizedValueToInterfacePanics(t *testing.T) {
+	expectNilPointerInterfacePanic(t, func() {
+		var p *nilPointerInterfaceZero
 		nilPointerInterfaceSink = *p
 	})
 }

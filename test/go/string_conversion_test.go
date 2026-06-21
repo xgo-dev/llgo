@@ -55,10 +55,59 @@ func main() {
 }
 `
 
+const emptyStringConversionProbe = `package main
+
+type mystring string
+type mybytes []byte
+type myrunes []rune
+
+func checkBytes(s []byte, name string) {
+	if len(s) != 0 {
+		panic("len(" + name + ") != 0")
+	}
+	if s == nil {
+		panic(name + " == nil")
+	}
+}
+
+func checkRunes(s []rune, name string) {
+	if len(s) != 0 {
+		panic("len(" + name + ") != 0")
+	}
+	if s == nil {
+		panic(name + " == nil")
+	}
+}
+
+func main() {
+	checkBytes([]byte(""), "[]byte(\"\")")
+	checkBytes([]byte(mystring("")), "[]byte(mystring(\"\"))")
+	checkBytes(mybytes(""), "mybytes(\"\")")
+	checkBytes(mybytes(mystring("")), "mybytes(mystring(\"\"))")
+
+	checkRunes([]rune(""), "[]rune(\"\")")
+	checkRunes([]rune(mystring("")), "[]rune(mystring(\"\"))")
+	checkRunes(myrunes(""), "myrunes(\"\")")
+	checkRunes(myrunes(mystring("")), "myrunes(mystring(\"\"))")
+}
+`
+
 func TestStringConversionFromWideIntegers(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "main.go")
 	if err := os.WriteFile(file, []byte(stringConversionProbe), 0644); err != nil {
+		t.Fatal(err)
+	}
+	repoRoot := findStringConversionRepoRoot(t)
+	runStringConversionProbe(t, repoRoot, "go", "run", file)
+	t.Setenv("LLGO_ROOT", repoRoot)
+	runStringConversionProbe(t, repoRoot, "go", "run", "./cmd/llgo", "run", file)
+}
+
+func TestEmptyStringToByteRuneSlicesNonNil(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(file, []byte(emptyStringConversionProbe), 0644); err != nil {
 		t.Fatal(err)
 	}
 	repoRoot := findStringConversionRepoRoot(t)

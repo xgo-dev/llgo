@@ -558,6 +558,13 @@ const (
 )
 
 func recvNamed(typ types.Type) *types.Named {
+	if named := recvNamedOk(typ); named != nil {
+		return named
+	}
+	panic(fmt.Errorf("invalid recv type: %v", typ))
+}
+
+func recvNamedOk(typ types.Type) *types.Named {
 retry:
 	switch t := types.Unalias(typ).(type) {
 	case *types.Named:
@@ -566,7 +573,12 @@ retry:
 		typ = t.Elem()
 		goto retry
 	}
-	panic(fmt.Errorf("invalid recv type: %v", typ))
+	return nil
+}
+
+func hasTypeArgs(named *types.Named) bool {
+	targs := named.TypeArgs()
+	return targs != nil && targs.Len() > 0
 }
 
 // extractTrampolineCName extracts the C function name from a trampoline function name.
@@ -615,9 +627,12 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 		}
 		if fnPkg := fn.Pkg; fnPkg != nil {
 			pkg = fnPkg.Pkg
-		} else if recv := fn.Type().(*types.Signature).Recv(); recv != nil && recv.Origin() != recv {
-			/* check if this is an instantiated generic method (receiver's origin differs from receiver itself)*/
-			pkg = recvNamed(recv.Type()).Obj().Pkg()
+		} else if recv := fn.Type().(*types.Signature).Recv(); recv != nil {
+			if named := recvNamedOk(recv.Type()); named != nil && named.Obj().Pkg() != nil && (hasTypeArgs(named) || p.needsLinkOnce(fn)) {
+				pkg = named.Obj().Pkg()
+			} else {
+				pkg = p.goTyps
+			}
 		} else {
 			pkg = p.goTyps
 		}

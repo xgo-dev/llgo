@@ -230,6 +230,10 @@ func plan9asmSigsForPkg(ctx *context, pkgPath string) (map[string]struct{}, erro
 		plan9AsmSigCache.Store(key, sigs)
 		return sigs, nil
 	}
+	if hasAltPkgForTarget(ctx.buildConf, pkgPath) && !llruntime.HasAdditiveAltPkgForGOARCH(pkgPath, ctx.buildConf.Goarch) {
+		plan9AsmSigCache.Store(key, sigs)
+		return sigs, nil
+	}
 
 	var pkg *packages.Package
 	for p := range ctx.pkgs {
@@ -326,10 +330,10 @@ func (ctx *context) plan9asmEnabled(pkgPath string) bool {
 }
 
 func hasAltPkgForTarget(conf *Config, pkgPath string) bool {
-	if !llruntime.HasAltPkg(pkgPath) {
+	if conf == nil || !llruntime.HasAltPkgForGOARCH(pkgPath, conf.Goarch) {
 		return false
 	}
-	if llruntime.HasAdditiveAltPkg(pkgPath) {
+	if llruntime.HasAdditiveAltPkgForGOARCH(pkgPath, conf.Goarch) {
 		return true
 	}
 	// When Plan9 asm translation is enabled, avoid also pulling in alt packages
@@ -363,7 +367,7 @@ func plan9asmEnabledByDefault(conf *Config, pkgPath string) bool {
 	if !archSupportsPlan9AsmDefaults(conf.Goarch) {
 		return false
 	}
-	return !llruntime.HasAltPkg(pkgPath) || llruntime.HasAdditiveAltPkg(pkgPath)
+	return !llruntime.HasAltPkgForGOARCH(pkgPath, conf.Goarch) || llruntime.HasAdditiveAltPkgForGOARCH(pkgPath, conf.Goarch)
 }
 
 func pkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
@@ -432,14 +436,33 @@ func pkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 			return paths, nil
 		}
 	}
-
-	paths := make([]string, 0, len(lp.SFiles))
-	for _, f := range lp.SFiles {
-		if lp.Dir == "" {
-			continue
-		}
-		paths = append(paths, filepath.Join(lp.Dir, f))
+	// Embedded ARM targets currently reuse GOOS=linux metadata, but they do not
+	// have a Linux syscall surface. Skip syscall asm in that mode so embedded
+	// builds do not inherit Linux/ARM-specific frame layouts.
+	if shouldSkipPlan9AsmSFilesForTarget(ctx.buildConf, pkg.PkgPath) {
+		ctx.sfilesCache[pkg.ID] = nil
+		return nil, nil
 	}
+
+	paths := selectedSFiles(lp.Dir, lp.SFiles)
 	ctx.sfilesCache[pkg.ID] = paths
 	return paths, nil
+}
+
+func selectedSFiles(dir string, files []string) []string {
+	if dir == "" || len(files) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(files))
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.s") || strings.HasSuffix(f, "_test.S") {
+			continue
+		}
+		paths = append(paths, filepath.Join(dir, f))
+	}
+	return paths
+}
+
+func shouldSkipPlan9AsmSFilesForTarget(conf *Config, pkgPath string) bool {
+	return conf != nil && conf.Target != "" && conf.Goarch == "arm" && pkgPath == "syscall"
 }

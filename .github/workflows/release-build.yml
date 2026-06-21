@@ -21,7 +21,7 @@ jobs:
       linux-cache-key: ${{ steps.cache-keys.outputs.linux-key }}
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Calculate cache keys
         id: cache-keys
         run: |
@@ -33,7 +33,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Check Linux sysroot cache
         id: cache-linux-sysroot
         uses: actions/cache/restore@v5
@@ -63,7 +63,7 @@ jobs:
     needs: [setup, populate-linux-sysroot]
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Set up Release
         uses: ./.github/actions/setup-goreleaser
         with:
@@ -148,7 +148,7 @@ jobs:
             go-mod-version: "1.24"
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install dependencies
         uses: ./.github/actions/setup-deps
         with:
@@ -184,7 +184,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Set up Release

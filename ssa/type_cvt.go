@@ -311,6 +311,7 @@ func (p goTypes) cvtStruct(typ *types.Struct) (raw *types.Struct, cvt bool) {
 	}()
 	n := typ.NumFields()
 	flds := make([]*types.Var, n)
+	tags := make([]string, n)
 	needcvt := false
 	for i := 0; i < n; i++ {
 		f := typ.Field(i)
@@ -319,9 +320,10 @@ func (p goTypes) cvtStruct(typ *types.Struct) (raw *types.Struct, cvt bool) {
 			needcvt = true
 		}
 		flds[i] = f
+		tags[i] = typ.Tag(i)
 	}
 	if needcvt {
-		return types.NewStruct(flds, nil), true
+		return types.NewStruct(flds, tags), true
 	}
 	return typ, false
 }

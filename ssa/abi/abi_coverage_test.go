@@ -245,6 +245,14 @@ func TestStructInterfaceClosureAndPathCoverage(t *testing.T) {
 	if got, pub := b.StructName(pubStruct); !strings.HasPrefix(got, "_llgo_struct$") || pub {
 		t.Fatalf("StructName(public struct)=(%q,%v), want _llgo_struct$*,false", got, pub)
 	}
+	taggedStruct := types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, pkg, "X", types.Typ[types.Int], false),
+	}, []string{`json:"x"`})
+	plainName, _ := b.StructName(pubStruct)
+	taggedName, _ := b.StructName(taggedStruct)
+	if plainName == taggedName {
+		t.Fatalf("StructName should distinguish struct tags")
+	}
 
 	privStruct := types.NewStruct([]*types.Var{
 		types.NewField(token.NoPos, pkg, "x", types.Typ[types.Int], false),

@@ -64,7 +64,7 @@ func main() {
 // CHECK-NEXT:   %12 = icmp slt i64 %10, 0
 // CHECK-NEXT:   %13 = icmp uge i64 %10, 5
 // CHECK-NEXT:   %14 = or i1 %13, %12
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %14)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %14, {{.*}})
 // CHECK-NEXT:   %15 = getelementptr inbounds i64, ptr %1, i64 %10
 // CHECK-NEXT:   %16 = load i64, ptr %15, align 8
 // CHECK-NEXT:   %17 = call i32 (ptr, ...) @printf(ptr @1, i64 %16)
@@ -122,7 +122,7 @@ func sort1a() {
 // CHECK-NEXT:   %12 = icmp slt i64 %10, 0
 // CHECK-NEXT:   %13 = icmp uge i64 %10, 5
 // CHECK-NEXT:   %14 = or i1 %13, %12
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %14)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %14, {{.*}})
 // CHECK-NEXT:   %15 = getelementptr inbounds i64, ptr %1, i64 %10
 // CHECK-NEXT:   %16 = load i64, ptr %15, align 8
 // CHECK-NEXT:   %17 = call i32 (ptr, ...) @printf(ptr @3, i64 %16)
@@ -180,7 +180,7 @@ func sort1b() {
 // CHECK-NEXT:   %12 = icmp slt i64 %10, 0
 // CHECK-NEXT:   %13 = icmp uge i64 %10, 5
 // CHECK-NEXT:   %14 = or i1 %13, %12
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %14)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %14, {{.*}})
 // CHECK-NEXT:   %15 = getelementptr inbounds i64, ptr %1, i64 %10
 // CHECK-NEXT:   %16 = load i64, ptr %15, align 8
 // CHECK-NEXT:   %17 = call i32 (ptr, ...) @printf(ptr @5, i64 %16)
@@ -238,7 +238,7 @@ func sort2a() {
 // CHECK-NEXT:   %12 = icmp slt i64 %10, 0
 // CHECK-NEXT:   %13 = icmp uge i64 %10, 5
 // CHECK-NEXT:   %14 = or i1 %13, %12
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %14)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %14, {{.*}})
 // CHECK-NEXT:   %15 = getelementptr inbounds i64, ptr %1, i64 %10
 // CHECK-NEXT:   %16 = load i64, ptr %15, align 8
 // CHECK-NEXT:   %17 = call i32 (ptr, ...) @printf(ptr @7, i64 %16)
@@ -296,7 +296,7 @@ func sort2b() {
 // CHECK-NEXT:   %12 = icmp slt i64 %10, 0
 // CHECK-NEXT:   %13 = icmp uge i64 %10, 5
 // CHECK-NEXT:   %14 = or i1 %13, %12
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %14)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %14, {{.*}})
 // CHECK-NEXT:   %15 = getelementptr inbounds i64, ptr %1, i64 %10
 // CHECK-NEXT:   %16 = load i64, ptr %15, align 8
 // CHECK-NEXT:   %17 = call i32 (ptr, ...) @printf(ptr @9, i64 %16)
@@ -354,7 +354,7 @@ func sort3a() {
 // CHECK-NEXT:   %12 = icmp slt i64 %10, 0
 // CHECK-NEXT:   %13 = icmp uge i64 %10, 5
 // CHECK-NEXT:   %14 = or i1 %13, %12
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %14)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %14, {{.*}})
 // CHECK-NEXT:   %15 = getelementptr inbounds i64, ptr %1, i64 %10
 // CHECK-NEXT:   %16 = load i64, ptr %15, align 8
 // CHECK-NEXT:   %17 = call i32 (ptr, ...) @printf(ptr @11, i64 %16)
@@ -412,7 +412,7 @@ func sort3b() {
 // CHECK-NEXT:   %12 = icmp slt i64 %10, 0
 // CHECK-NEXT:   %13 = icmp uge i64 %10, 5
 // CHECK-NEXT:   %14 = or i1 %13, %12
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %14)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %14, {{.*}})
 // CHECK-NEXT:   %15 = getelementptr inbounds i64, ptr %1, i64 %10
 // CHECK-NEXT:   %16 = load i64, ptr %15, align 8
 // CHECK-NEXT:   %17 = call i32 (ptr, ...) @printf(ptr @13, i64 %16)
@@ -470,7 +470,7 @@ func sort4a() {
 // CHECK-NEXT:   %12 = icmp slt i64 %10, 0
 // CHECK-NEXT:   %13 = icmp uge i64 %10, 5
 // CHECK-NEXT:   %14 = or i1 %13, %12
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %14)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %14, {{.*}})
 // CHECK-NEXT:   %15 = getelementptr inbounds i64, ptr %1, i64 %10
 // CHECK-NEXT:   %16 = load i64, ptr %15, align 8
 // CHECK-NEXT:   %17 = call i32 (ptr, ...) @printf(ptr @15, i64 %16)
@@ -528,7 +528,7 @@ func sort4b() {
 // CHECK-NEXT:   %12 = icmp slt i64 %10, 0
 // CHECK-NEXT:   %13 = icmp uge i64 %10, 5
 // CHECK-NEXT:   %14 = or i1 %13, %12
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %14)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %14, {{.*}})
 // CHECK-NEXT:   %15 = getelementptr inbounds i64, ptr %1, i64 %10
 // CHECK-NEXT:   %16 = load i64, ptr %15, align 8
 // CHECK-NEXT:   %17 = call i32 (ptr, ...) @printf(ptr @17, i64 %16)
@@ -586,7 +586,7 @@ func sort5a() {
 // CHECK-NEXT:   %12 = icmp slt i64 %10, 0
 // CHECK-NEXT:   %13 = icmp uge i64 %10, 5
 // CHECK-NEXT:   %14 = or i1 %13, %12
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %14)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %14, {{.*}})
 // CHECK-NEXT:   %15 = getelementptr inbounds i64, ptr %1, i64 %10
 // CHECK-NEXT:   %16 = load i64, ptr %15, align 8
 // CHECK-NEXT:   %17 = call i32 (ptr, ...) @printf(ptr @19, i64 %16)

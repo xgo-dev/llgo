@@ -19,7 +19,7 @@ package main
 // CHECK-NEXT:   %8 = icmp slt i64 %4, 0
 // CHECK-NEXT:   %9 = icmp uge i64 %4, %7
 // CHECK-NEXT:   %10 = or i1 %9, %8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %10)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %10, {{.*}})
 // CHECK-NEXT:   %11 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.String", ptr %6, i64 %4
 // CHECK-NEXT:   %12 = load %"{{.*}}/runtime/internal/runtime.String", ptr %11, align 8
 // CHECK-NEXT:   %13 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" %2, %"{{.*}}/runtime/internal/runtime.String" %12)

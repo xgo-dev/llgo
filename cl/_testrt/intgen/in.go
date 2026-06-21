@@ -26,7 +26,7 @@ import (
 // CHECK-NEXT:   %12 = icmp slt i64 %5, 0
 // CHECK-NEXT:   %13 = icmp uge i64 %5, %11
 // CHECK-NEXT:   %14 = or i1 %13, %12
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %14)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %14, {{.*}})
 // CHECK-NEXT:   %15 = getelementptr inbounds i32, ptr %10, i64 %5
 // CHECK-NEXT:   store i32 %9, ptr %15, align 4
 // CHECK-NEXT:   br label %_llgo_1
@@ -80,7 +80,7 @@ type generator struct {
 // CHECK-NEXT:   %7 = icmp slt i64 %3, 0
 // CHECK-NEXT:   %8 = icmp uge i64 %3, %6
 // CHECK-NEXT:   %9 = or i1 %8, %7
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %9)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %9, {{.*}})
 // CHECK-NEXT:   %10 = getelementptr inbounds i32, ptr %5, i64 %3
 // CHECK-NEXT:   %11 = load i32, ptr %10, align 4
 // CHECK-NEXT:   %12 = call i32 (ptr, ...) @printf(ptr @0, i32 %11)
@@ -109,7 +109,7 @@ type generator struct {
 // CHECK-NEXT:   %24 = icmp slt i64 %20, 0
 // CHECK-NEXT:   %25 = icmp uge i64 %20, %23
 // CHECK-NEXT:   %26 = or i1 %25, %24
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %26)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %26, {{.*}})
 // CHECK-NEXT:   %27 = getelementptr inbounds i32, ptr %22, i64 %20
 // CHECK-NEXT:   %28 = load i32, ptr %27, align 4
 // CHECK-NEXT:   %29 = call i32 (ptr, ...) @printf(ptr @1, i32 %28)
@@ -139,7 +139,7 @@ type generator struct {
 // CHECK-NEXT:   %42 = icmp slt i64 %38, 0
 // CHECK-NEXT:   %43 = icmp uge i64 %38, %41
 // CHECK-NEXT:   %44 = or i1 %43, %42
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %44)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %44, {{.*}})
 // CHECK-NEXT:   %45 = getelementptr inbounds i32, ptr %40, i64 %38
 // CHECK-NEXT:   %46 = load i32, ptr %45, align 4
 // CHECK-NEXT:   %47 = call i32 (ptr, ...) @printf(ptr @2, i32 %46)

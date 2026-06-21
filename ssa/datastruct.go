@@ -41,6 +41,7 @@ import (
 func (b Builder) FieldAddr(x Expr, idx int) Expr {
 	dbgInstrf("FieldAddr %v, %d\n", x.impl, idx)
 	prog := b.Prog
+	b.assertStaticNilDeref(x)
 	tstruc := prog.Elem(x.Type)
 	telem := prog.Field(tstruc, idx)
 	pt := prog.Pointer(telem)
@@ -93,7 +94,7 @@ func (b Builder) MakeString(cstr Expr, n ...Expr) (ret Expr) {
 func (b Builder) StringData(x Expr) Expr {
 	dbgInstrf("StringData %v\n", x.impl)
 	ptr := llvm.CreateExtractValue(b.impl, x.impl, 0)
-	return Expr{ptr, b.Prog.CStr()}
+	return Expr{ptr, b.Prog.Pointer(b.Prog.Byte())}
 }
 
 // StringLen returns the length of a string.
@@ -158,9 +159,28 @@ func (b Builder) IndexAddr(x, idx Expr) Expr {
 		ar := t.Elem().Underlying().(*types.Array)
 		max := prog.IntVal(uint64(ar.Len()), prog.Int())
 		idx = b.checkIndex(idx, max)
+		if !isKnownNonNilArrayBase(x.impl) {
+			b.AssertNilDeref(x)
+		}
 	}
 	indices := []llvm.Value{idx.impl}
 	return Expr{llvm.CreateInBoundsGEP(b.impl, telem.ll, x.impl, indices), pt}
+}
+
+func isKnownNonNilArrayBase(v llvm.Value) bool {
+	if !v.IsAGlobalValue().IsNil() || !v.IsAAllocaInst().IsNil() {
+		return true
+	}
+	if call := v.IsACallInst(); !call.IsNil() {
+		if fn := call.CalledValue().IsAFunction(); !fn.IsNil() {
+			switch fn.Name() {
+			case "github.com/goplus/llgo/runtime/internal/runtime.AllocU",
+				"github.com/goplus/llgo/runtime/internal/runtime.AllocZ":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func isConstantInt(x Expr) (v int64, ok bool) {
@@ -212,14 +232,25 @@ func checkRange(idx Expr, max Expr) (checkMin, checkMax bool) {
 	return
 }
 
+func (b Builder) boundsArg(idx Expr) (Expr, bool) {
+	signed := idx.kind == vkSigned
+	typ := b.Prog.Int64()
+	if idx.impl.Type() != typ.ll {
+		idx.impl = castInt(b, idx.impl, idx.Type, typ)
+	}
+	idx.Type = typ
+	return idx, signed
+}
+
 // check index >= 0 && index < max and size to uint
 func (b Builder) checkIndex(idx Expr, max Expr) Expr {
 	prog := b.Prog
 	// check range
 	checkMin, checkMax := checkRange(idx, max)
 	// fit size
+	signed := idx.kind == vkSigned
 	var typ Type
-	if idx.kind == vkSigned {
+	if signed {
 		typ = prog.Int()
 	} else {
 		typ = prog.Uint()
@@ -247,7 +278,8 @@ func (b Builder) checkIndex(idx Expr, max Expr) Expr {
 		}
 	}
 	if !check.IsNil() {
-		b.InlineCall(b.Pkg.rtFunc("AssertIndexRange"), check)
+		boundsIdx, _ := b.boundsArg(idx)
+		b.InlineCall(b.Pkg.rtFunc("CheckIndexRange"), check, boundsIdx, prog.BoolVal(signed), max)
 	}
 	return idx
 }
@@ -314,15 +346,26 @@ func (b Builder) Slice(x, low, high, max Expr) (ret Expr) {
 	var nEltSize Expr
 	var base Expr
 	var lowIsNil = low.IsNil()
+	var lowArg Expr
+	var highArg Expr
+	var maxArg Expr
+	var lowSigned = true
+	var highSigned = true
+	var maxSigned = true
+	var upperIsLen bool
 	if lowIsNil {
 		low = prog.IntVal(0, prog.Int())
+		lowArg = prog.IntVal(0, prog.Int64())
 	} else {
+		lowArg, lowSigned = b.boundsArg(low)
 		low = b.FitIntSize(low)
 	}
 	if !high.IsNil() {
+		highArg, highSigned = b.boundsArg(high)
 		high = b.FitIntSize(high)
 	}
 	if !max.IsNil() {
+		maxArg, maxSigned = b.boundsArg(max)
 		max = b.FitIntSize(max)
 	}
 	switch t := x.raw.Type.Underlying().(type) {
@@ -332,15 +375,17 @@ func (b Builder) Slice(x, low, high, max Expr) (ret Expr) {
 		}
 		if high.IsNil() {
 			high = b.StringLen(x)
+			highArg, highSigned = b.boundsArg(high)
 		}
 		ret.Type = x.Type
-		ret.impl = b.InlineCall(b.Pkg.rtFunc("StringSlice"), x, low, high).impl
+		ret.impl = b.InlineCall(b.Pkg.rtFunc("StringSlice2"), x, lowArg, highArg, prog.BoolVal(lowSigned), prog.BoolVal(highSigned)).impl
 		return
 	case *types.Slice:
 		nEltSize = SizeOf(prog, prog.Index(x.Type))
 		nCap = b.SliceCap(x)
 		if high.IsNil() {
 			high = b.SliceLen(x)
+			highArg, highSigned = b.boundsArg(high)
 		}
 		ret.Type = x.Type
 		base = b.SliceData(x)
@@ -352,20 +397,45 @@ func (b Builder) Slice(x, low, high, max Expr) (ret Expr) {
 			ret.Type = prog.Slice(elem)
 			nEltSize = SizeOf(prog, elem)
 			nCap = prog.IntVal(uint64(te.Len()), prog.Int())
+			upperIsLen = true
 			if high.IsNil() {
 				if lowIsNil && max.IsNil() {
 					ret.impl = b.unsafeSlice(x, nCap.impl, nCap.impl).impl
 					return
 				}
 				high = nCap
+				highArg, highSigned = b.boundsArg(high)
 			}
 			base = x
 		}
 	}
 	if max.IsNil() {
-		max = nCap
+		ret.impl = b.InlineCall(
+			b.Pkg.rtFunc("NewSlice2"),
+			base,
+			nEltSize,
+			nCap,
+			lowArg,
+			highArg,
+			prog.BoolVal(lowSigned),
+			prog.BoolVal(highSigned),
+			prog.BoolVal(upperIsLen),
+		).impl
+		return
 	}
-	ret.impl = b.InlineCall(b.Pkg.rtFunc("NewSlice3"), base, nEltSize, nCap, low, high, max).impl
+	ret.impl = b.InlineCall(
+		b.Pkg.rtFunc("NewSlice3Bounds"),
+		base,
+		nEltSize,
+		nCap,
+		lowArg,
+		highArg,
+		maxArg,
+		prog.BoolVal(lowSigned),
+		prog.BoolVal(highSigned),
+		prog.BoolVal(maxSigned),
+		prog.BoolVal(upperIsLen),
+	).impl
 	return
 }
 
@@ -412,9 +482,9 @@ func (b Builder) FitIntSize(n Expr) Expr {
 	typ := prog.Int()
 	if prog.SizeOf(n.Type) != prog.SizeOf(typ) {
 		srcType := n.Type
-		n.Type = typ
 		n.impl = castInt(b, n.impl, srcType, typ)
 	}
+	n.Type = typ
 	return n
 }
 
@@ -621,7 +691,9 @@ func (b Builder) Send(ch Expr, x Expr) (ret Expr) {
 	dbgInstrf("Send %v, %v\n", ch.impl, x.impl)
 	prog := b.Prog
 	eltSize := prog.IntVal(prog.SizeOf(prog.Elem(ch.Type)), prog.Int())
+	sp := b.StackSave()
 	ret = b.InlineCall(b.Pkg.rtFunc("ChanSend"), ch, b.toPtr(x), eltSize)
+	b.StackRestore(sp)
 	return
 }
 
@@ -638,14 +710,16 @@ func (b Builder) Recv(ch Expr, commaOk bool) (ret Expr) {
 	prog := b.Prog
 	eltSize := prog.IntVal(prog.SizeOf(prog.Elem(ch.Type)), prog.Int())
 	etyp := prog.Elem(ch.Type)
+	sp := b.StackSave()
 	ptr := b.Alloc(etyp, false)
 	ok := b.InlineCall(b.Pkg.rtFunc("ChanRecv"), ch, ptr, eltSize)
+	val := b.Load(ptr)
+	b.StackRestore(sp)
 	if commaOk {
-		val := b.Load(ptr)
 		t := prog.Struct(etyp, prog.Bool())
 		return b.aggregateValue(t, val.impl, ok.impl)
 	} else {
-		return b.Load(ptr)
+		return val
 	}
 }
 
@@ -693,6 +767,7 @@ type SelectState struct {
 //	t3 = select nonblocking [<-t0, t1<-t2]
 //	t4 = select blocking []
 func (b Builder) Select(states []*SelectState, blocking bool) (ret Expr) {
+	sp := b.StackSave()
 	ops := make([]Expr, len(states))
 	for i, s := range states {
 		ops[i] = b.chanOp(s)
@@ -705,7 +780,7 @@ func (b Builder) Select(states []*SelectState, blocking bool) (ret Expr) {
 	}
 	prog := b.Prog
 	tSlice := lastParamType(prog, fn)
-	slice := b.SliceLit(tSlice, ops...)
+	slice := b.selectOpsSlice(tSlice, ops)
 	ret = b.Call(fn, slice)
 	chosen := b.impl.CreateExtractValue(ret.impl, 0, "")
 	recvOK := b.impl.CreateExtractValue(ret.impl, 1, "")
@@ -725,7 +800,20 @@ func (b Builder) Select(states []*SelectState, blocking bool) (ret Expr) {
 			results = append(results, r.impl)
 		}
 	}
+	b.StackRestore(sp)
 	return b.aggregateValue(b.Prog.Struct(typs...), results...)
+}
+
+func (b Builder) selectOpsSlice(t Type, ops []Expr) Expr {
+	prog := b.Prog
+	telem := prog.Index(t)
+	size := SizeOf(prog, telem, int64(len(ops)))
+	opPtr := Expr{b.Alloca(size).impl, prog.Pointer(telem)}
+	for i, op := range ops {
+		b.Store(b.Advance(opPtr, prog.Val(i)), op)
+	}
+	n := llvm.ConstInt(prog.tyInt(), uint64(len(ops)), false)
+	return b.unsafeSlice(opPtr, n, n)
 }
 
 func lastParamType(prog Program, fn Expr) Type {

@@ -197,6 +197,18 @@ func TestExtraAsmSigsAndDeclMap(t *testing.T) {
 		t.Fatalf("unexpected manual sigs for scan/arm64: %#v", got)
 	}
 
+	arm := extraAsmSigsAndDeclMap("internal/bytealg", "arm")
+	for _, name := range []string{
+		"internal/bytealg.cmpbody",
+		"internal/bytealg.memeqbody",
+		"internal/bytealg.countbytebody",
+		"internal/bytealg.indexbytebody",
+	} {
+		if _, ok := arm[name]; !ok {
+			t.Fatalf("missing arm manual sig %s", name)
+		}
+	}
+
 	arm64 := extraAsmSigsAndDeclMap("internal/bytealg", "arm64")
 	for _, name := range []string{
 		"internal/bytealg.cmpbody",

@@ -348,6 +348,58 @@ attributes #0 = { null_pointer_is_valid }
 	assertPkg(t, pkg, expected)
 }
 
+func TestChangeTypeNamedClosureUsesGoTypeIdentity(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	tpkg := types.NewPackage("foo/bar", "bar")
+
+	params := types.NewTuple(types.NewVar(0, tpkg, "x", types.Typ[types.Int]))
+	rets := types.NewTuple(types.NewVar(0, tpkg, "", types.Typ[types.Int]))
+	baseSig := types.NewSignatureType(nil, nil, nil, params, rets, false)
+	srcNamed := types.NewNamed(types.NewTypeName(0, tpkg, "SrcFn", nil), baseSig, nil)
+	dstNamed := types.NewNamed(types.NewTypeName(0, tpkg, "DstFn", nil), baseSig, nil)
+
+	convertSig := types.NewSignatureType(
+		nil,
+		nil,
+		nil,
+		types.NewTuple(types.NewParam(0, tpkg, "v", srcNamed)),
+		types.NewTuple(types.NewParam(0, tpkg, "", dstNamed)),
+		false,
+	)
+	convertFn := pkg.NewFunc("convertNamedClosure", convertSig, InGo)
+	b := convertFn.MakeBody(1)
+	b.Return(b.ChangeType(prog.Type(dstNamed, InGo), convertFn.Param(0)))
+
+	ir := convertFn.impl.String()
+	if !strings.Contains(ir, `insertvalue %"foo/bar.DstFn"`) {
+		t.Fatalf("named closure conversion did not rebuild destination type:\n%s", ir)
+	}
+	if strings.Contains(ir, `ret %"foo/bar.SrcFn"`) {
+		t.Fatalf("named closure conversion returned source type:\n%s", ir)
+	}
+	if !strings.Contains(ir, `ret %"foo/bar.DstFn"`) {
+		t.Fatalf("named closure conversion did not return destination type:\n%s", ir)
+	}
+
+	sameSig := types.NewSignatureType(
+		nil,
+		nil,
+		nil,
+		types.NewTuple(types.NewParam(0, tpkg, "v", srcNamed)),
+		types.NewTuple(types.NewParam(0, tpkg, "", srcNamed)),
+		false,
+	)
+	sameFn := pkg.NewFunc("sameNamedClosure", sameSig, InGo)
+	sb := sameFn.MakeBody(1)
+	sb.Return(sb.ChangeType(prog.Type(srcNamed, InGo), sameFn.Param(0)))
+
+	sameIR := sameFn.impl.String()
+	if strings.Contains(sameIR, "insertvalue") {
+		t.Fatalf("identical named closure type should not be rebuilt:\n%s", sameIR)
+	}
+}
+
 func TestConvertNamedStructValue(t *testing.T) {
 	prog := NewProgram(nil)
 	pkg := prog.NewPackage("bar", "foo/bar")
@@ -807,6 +859,33 @@ func TestMakeInterfaceFromPtrKinds(t *testing.T) {
 	}
 	if !strings.Contains(ir, "Typedmemmove") {
 		t.Fatalf("large MakeInterfaceFromPtr should copy via Typedmemmove, got:\n%s", ir)
+	}
+}
+
+func TestZeroSizedLoadEmitsNilDerefGuard(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	emptyStruct := types.NewStruct(nil, nil)
+	params := types.NewTuple(types.NewVar(0, nil, "p", types.NewPointer(emptyStruct)))
+	results := types.NewTuple(types.NewVar(0, nil, "", emptyStruct))
+	sig := types.NewSignatureType(nil, nil, nil, params, results, false)
+	fn := pkg.NewFunc("loadZero", sig, InGo)
+	b := fn.MakeBody(1)
+	b.Return(b.Load(fn.Param(0)))
+	b.EndBuild()
+
+	ir := pkg.Module().String()
+	if !strings.Contains(ir, "AssertNilDeref") {
+		t.Fatalf("zero-sized Load should emit nil-deref guard, got:\n%s", ir)
 	}
 }
 

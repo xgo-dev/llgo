@@ -7,6 +7,7 @@ import (
 	"github.com/goplus/llgo/cmd/internal/compilerhash"
 	"github.com/goplus/llgo/internal/build"
 	"github.com/goplus/llgo/internal/buildenv"
+	"github.com/goplus/llgo/internal/lto"
 	"github.com/goplus/llgo/internal/optlevel"
 )
 
@@ -45,6 +46,39 @@ var SizeLevel string
 var ForceRebuild bool
 var PrintCommands bool
 var OptLevel optlevel.Level
+
+type ltoFlag struct {
+	Specified bool
+	Mode      lto.Mode
+}
+
+func (o *ltoFlag) String() string {
+	return o.Mode.String()
+}
+
+func (o *ltoFlag) Set(v string) error {
+	mode, err := lto.Parse(v)
+	if err != nil {
+		return err
+	}
+	o.Specified = true
+	o.Mode = mode
+	return nil
+}
+
+var LTO ltoFlag
+
+func AddLTOFlag(fs *flag.FlagSet) {
+	LTO = ltoFlag{Mode: lto.Off}
+	fs.Var(&LTO, "lto", "Enable LTO optimization: thin or full (default: off)")
+}
+
+func ResolveLTOMode(defaultValue lto.Mode) lto.Mode {
+	if LTO.Specified {
+		return LTO.Mode
+	}
+	return defaultValue
+}
 
 const DefaultTestTimeout = "10m" // Matches Go's default test timeout
 
@@ -88,6 +122,7 @@ func AddBuildFlags(fs *flag.FlagSet) {
 	fs.BoolVar(&ForceRebuild, "a", false, "Force rebuilding of packages that are already up-to-date")
 	fs.BoolVar(&PrintCommands, "x", false, "Print the commands")
 	AddOptLevelFlags(fs)
+	AddLTOFlag(fs)
 	fs.StringVar(&Tags, "tags", "", "Build tags")
 	fs.StringVar(&BuildEnv, "buildenv", "", "Build environment")
 	if buildenv.Dev {
@@ -218,6 +253,9 @@ func UpdateConfig(conf *build.Config) error {
 	conf.Port = Port
 	conf.BaudRate = BaudRate
 	conf.ForceRebuild = ForceRebuild
+	if LTO.Specified {
+		conf.LTO = LTO.Mode
+	}
 	if SizeReport || SizeFormat != "" || SizeLevel != "" {
 		conf.SizeReport = true
 		if SizeFormat != "" {

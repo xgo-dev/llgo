@@ -1,6 +1,70 @@
 // LITTEST
 package main
 
+// CHECK: @16 = private unnamed_addr constant [5 x i8] c"hello", align 1
+// CHECK: @17 = private unnamed_addr constant [5 x i8] c"world", align 1
+// CHECK: @18 = private unnamed_addr constant [4 x i8] c"llgo", align 1
+// CHECK: @19 = private unnamed_addr constant [1 x i8] c":", align 1
+// CHECK: @22 = private unnamed_addr constant [2 x i8] c"go", align 1
+// CHECK: @23 = private unnamed_addr constant [7 x i8] c"bad key", align 1
+// CHECK: @24 = private unnamed_addr constant [7 x i8] c"bad len", align 1
+// CHECK: @32 = private unnamed_addr constant [44 x i8] c"{{.*}}/cl/_testrt/makemap.N1", align 1
+// CHECK: @39 = private unnamed_addr constant [43 x i8] c"{{.*}}/cl/_testrt/makemap.K", align 1
+// CHECK: @42 = private unnamed_addr constant [44 x i8] c"{{.*}}/cl/_testrt/makemap.K2", align 1
+
+func main() {
+	make1()
+	make2()
+	make3()
+	make4()
+	make5()
+	make6()
+	make7()
+}
+
+func make1() {
+	m := make(map[int]string)
+	m[1] = "hello"
+	m[2] = "world"
+	m[3] = "llgo"
+	println(m, m[1], m[2], len(m))
+	for k, v := range m {
+		println(k, ":", v)
+	}
+
+	s := make(map[string]int, len(m))
+	for k, v := range m {
+		s[v] = k
+	}
+
+	id, ok := s["llgo"]
+	println("llgo", id, ok)
+
+	none, ok := s["go"]
+	println("go", none, ok)
+
+	delete(s, "llgo")
+	if _, ok := s["llgo"]; ok {
+		panic("bad key")
+	}
+	if len(s) != 2 {
+		panic("bad len")
+	}
+}
+
+// CHECK-LABEL: define void @"{{.*}}/cl/_testrt/makemap.init"(){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %0 = load i1, ptr @"{{.*}}/cl/_testrt/makemap.init$guard", align 1
+// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
+// CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testrt/makemap.init$guard", align 1
+// CHECK-NEXT:   br label %_llgo_2
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
+
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/makemap.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   call void @"{{.*}}/cl/_testrt/makemap.make1"()
@@ -12,15 +76,6 @@ package main
 // CHECK-NEXT:   call void @"{{.*}}/cl/_testrt/makemap.make7"()
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
-func main() {
-	make1()
-	make2()
-	make3()
-	make4()
-	make5()
-	make6()
-	make7()
-}
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/makemap.make1"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -197,35 +252,6 @@ func main() {
 // CHECK-NEXT:   %77 = extractvalue { i1, i64, %"{{.*}}/runtime/internal/runtime.String" } %76, 0
 // CHECK-NEXT:   br i1 %77, label %_llgo_5, label %_llgo_6
 // CHECK-NEXT: }
-func make1() {
-	m := make(map[int]string)
-	m[1] = "hello"
-	m[2] = "world"
-	m[3] = "llgo"
-	println(m, m[1], m[2], len(m))
-	for k, v := range m {
-		println(k, ":", v)
-	}
-
-	s := make(map[string]int, len(m))
-	for k, v := range m {
-		s[v] = k
-	}
-
-	id, ok := s["llgo"]
-	println("llgo", id, ok)
-
-	none, ok := s["go"]
-	println("go", none, ok)
-
-	delete(s, "llgo")
-	if _, ok := s["llgo"]; ok {
-		panic("bad key")
-	}
-	if len(s) != 2 {
-		panic("bad len")
-	}
-}
 
 type N1 [1]int
 
@@ -260,7 +286,7 @@ type N1 [1]int
 // CHECK-NEXT:   %8 = load [1 x i64], ptr %6, align 8
 // CHECK-NEXT:   %9 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK-NEXT:   store [1 x i64] %8, ptr %9, align 8
-// CHECK-NEXT:   %10 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_github.com/goplus/llgo/cl/_testrt/makemap.N1", ptr undef }, ptr %9, 1
+// CHECK-NEXT:   %10 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_{{.*}}/cl/_testrt/makemap.N1", ptr undef }, ptr %9, 1
 // CHECK-NEXT:   %11 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %10, ptr %11, align 8
 // CHECK-NEXT:   %12 = call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_any]_llgo_int", ptr %5, ptr %11)
@@ -272,7 +298,7 @@ type N1 [1]int
 // CHECK-NEXT:   %15 = load [1 x i64], ptr %13, align 8
 // CHECK-NEXT:   %16 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK-NEXT:   store [1 x i64] %15, ptr %16, align 8
-// CHECK-NEXT:   %17 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_github.com/goplus/llgo/cl/_testrt/makemap.N1", ptr undef }, ptr %16, 1
+// CHECK-NEXT:   %17 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_{{.*}}/cl/_testrt/makemap.N1", ptr undef }, ptr %16, 1
 // CHECK-NEXT:   %18 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %17, ptr %18, align 8
 // CHECK-NEXT:   %19 = call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_any]_llgo_int", ptr %5, ptr %18)
@@ -284,7 +310,7 @@ type N1 [1]int
 // CHECK-NEXT:   %22 = load [1 x i64], ptr %20, align 8
 // CHECK-NEXT:   %23 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK-NEXT:   store [1 x i64] %22, ptr %23, align 8
-// CHECK-NEXT:   %24 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_github.com/goplus/llgo/cl/_testrt/makemap.N1", ptr undef }, ptr %23, 1
+// CHECK-NEXT:   %24 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_{{.*}}/cl/_testrt/makemap.N1", ptr undef }, ptr %23, 1
 // CHECK-NEXT:   %25 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %24, ptr %25, align 8
 // CHECK-NEXT:   %26 = call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_any]_llgo_int", ptr %5, ptr %25)
@@ -296,7 +322,7 @@ type N1 [1]int
 // CHECK-NEXT:   %29 = load [1 x i64], ptr %27, align 8
 // CHECK-NEXT:   %30 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK-NEXT:   store [1 x i64] %29, ptr %30, align 8
-// CHECK-NEXT:   %31 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_github.com/goplus/llgo/cl/_testrt/makemap.N1", ptr undef }, ptr %30, 1
+// CHECK-NEXT:   %31 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_{{.*}}/cl/_testrt/makemap.N1", ptr undef }, ptr %30, 1
 // CHECK-NEXT:   %32 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %31, ptr %32, align 8
 // CHECK-NEXT:   %33 = call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_any]_llgo_int", ptr %5, ptr %32)
@@ -313,7 +339,7 @@ type N1 [1]int
 // CHECK-NEXT:   %37 = extractvalue { i1, %"{{.*}}/runtime/internal/runtime.eface", i64 } %47, 1
 // CHECK-NEXT:   %38 = extractvalue { i1, %"{{.*}}/runtime/internal/runtime.eface", i64 } %47, 2
 // CHECK-NEXT:   %39 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %37, 0
-// CHECK-NEXT:   %40 = icmp eq ptr %39, @"_llgo_github.com/goplus/llgo/cl/_testrt/makemap.N1"
+// CHECK-NEXT:   %40 = icmp eq ptr %39, @"_llgo_{{.*}}/cl/_testrt/makemap.N1"
 // CHECK-NEXT:   br i1 %40, label %_llgo_7, label %_llgo_8
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_6
@@ -351,10 +377,7 @@ type N1 [1]int
 // CHECK-NEXT:   br label %_llgo_1
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   %54 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @32, i64 81 }, ptr %54, align 8
-// CHECK-NEXT:   %55 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %54, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %55)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %39, %"{{.*}}/runtime/internal/runtime.String" { ptr @32, i64 44 }, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 
@@ -491,10 +514,7 @@ type K2 [1]*N
 // CHECK-NEXT:   br label %_llgo_1
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   %56 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @39, i64 80 }, ptr %56, align 8
-// CHECK-NEXT:   %57 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %56, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %57)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %39, %"{{.*}}/runtime/internal/runtime.String" { ptr @39, i64 43 }, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 
@@ -626,10 +646,7 @@ func make3() {
 // CHECK-NEXT:   br label %_llgo_1
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   %61 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @42, i64 81 }, ptr %61, align 8
-// CHECK-NEXT:   %62 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %61, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %62)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %43, %"{{.*}}/runtime/internal/runtime.String" { ptr @42, i64 44 }, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 
@@ -836,3 +853,21 @@ func make7() {
 	}
 	println(m[1])
 }
+
+// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal64"(ptr %0, ptr %1, ptr %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal64"(ptr %1, ptr %2)
+// CHECK-NEXT:   ret i1 %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal8"(ptr %0, ptr %1, ptr %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal8"(ptr %1, ptr %2)
+// CHECK-NEXT:   ret i1 %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.nilinterequal"(ptr %0, ptr %1, ptr %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.nilinterequal"(ptr %1, ptr %2)
+// CHECK-NEXT:   ret i1 %3
+// CHECK-NEXT: }

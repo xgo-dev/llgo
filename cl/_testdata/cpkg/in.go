@@ -1,7 +1,7 @@
 // LITTEST
 package C
 
-// CHECK-LINE: @llvm.compiler.used = appending global [2 x ptr] [ptr @Double, ptr @add], section "llvm.metadata"
+// CHECK: {{^}}@llvm.compiler.used = appending global [2 x ptr] [ptr @Double, ptr @add], section "llvm.metadata"{{$}}
 
 // CHECK-LABEL: define double @Double(double %0){{.*}} {
 // CHECK-NEXT: _llgo_0:

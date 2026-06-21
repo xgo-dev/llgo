@@ -33,6 +33,37 @@ type Slice struct {
 	cap  int
 }
 
+func NewSlice2(base unsafe.Pointer, eltSize, cap int, i, j int64, iSigned, jSigned, upperIsLen bool) (s Slice) {
+	upperCode := boundsSliceAcap
+	if upperIsLen {
+		upperCode = boundsSliceAlen
+	}
+	if boundsOutOfRange(j, jSigned, cap, true) {
+		panicBounds(j, jSigned, cap, upperCode)
+	}
+	if boundsAbove(i, iSigned, j) {
+		panicBounds(i, iSigned, int(j), boundsSliceB)
+	}
+	return newSliceUnchecked(base, eltSize, int(i), int(j), cap)
+}
+
+func NewSlice3Bounds(base unsafe.Pointer, eltSize, cap int, i, j, k int64, iSigned, jSigned, kSigned, upperIsLen bool) (s Slice) {
+	upperCode := boundsSlice3Acap
+	if upperIsLen {
+		upperCode = boundsSlice3Alen
+	}
+	if boundsOutOfRange(k, kSigned, cap, true) {
+		panicBounds(k, kSigned, cap, upperCode)
+	}
+	if boundsAbove(j, jSigned, k) {
+		panicBounds(j, jSigned, int(k), boundsSlice3B)
+	}
+	if boundsAbove(i, iSigned, j) {
+		panicBounds(i, iSigned, int(j), boundsSlice3C)
+	}
+	return newSliceUnchecked(base, eltSize, int(i), int(j), int(k))
+}
+
 func NewSlice3(base unsafe.Pointer, eltSize, cap, i, j, k int) (s Slice) {
 	if k < 0 || k > cap {
 		panic(boundsError{x: int64(k), signed: true, y: cap, code: boundsSlice3Acap})
@@ -43,6 +74,10 @@ func NewSlice3(base unsafe.Pointer, eltSize, cap, i, j, k int) (s Slice) {
 	if i < 0 || i > j {
 		panic(boundsError{x: int64(i), signed: true, y: j, code: boundsSlice3C})
 	}
+	return newSliceUnchecked(base, eltSize, i, j, k)
+}
+
+func newSliceUnchecked(base unsafe.Pointer, eltSize, i, j, k int) (s Slice) {
 	s.len = j - i
 	s.cap = k - i
 	if k-i > 0 {
@@ -55,11 +90,11 @@ func NewSlice3(base unsafe.Pointer, eltSize, cap, i, j, k int) (s Slice) {
 
 // SliceAppend append elem data and returns a slice.
 func SliceAppend(src Slice, data unsafe.Pointer, num, etSize int) Slice {
+	oldLen := src.len
+	src = GrowSlice(src, num, etSize)
 	if etSize == 0 {
 		return src
 	}
-	oldLen := src.len
-	src = GrowSlice(src, num, etSize)
 	c.Memcpy(c.Advance(src.data, oldLen*etSize), data, uintptr(num*etSize))
 	return src
 }
@@ -68,9 +103,16 @@ func SliceAppend(src Slice, data unsafe.Pointer, num, etSize int) Slice {
 func GrowSlice(src Slice, num, etSize int) Slice {
 	oldLen := src.len
 	newLen := oldLen + num
+	if newLen < 0 {
+		panicgrowslicelen()
+	}
 	if newLen > src.cap {
 		newCap := nextslicecap(newLen, src.cap)
-		p := AllocZ(uintptr(newCap * etSize))
+		mem, overflow := math.MulUintptr(uintptr(etSize), uintptr(newCap))
+		if overflow || mem > maxAlloc {
+			panicgrowslicelen()
+		}
+		p := AllocZ(mem)
 		if oldLen != 0 {
 			c.Memcpy(p, src.data, uintptr(oldLen*etSize))
 		}
@@ -146,6 +188,10 @@ func panicmakeslicelen() {
 
 func panicmakeslicecap() {
 	panic(errorString("makeslice: cap out of range"))
+}
+
+func panicgrowslicelen() {
+	panic(errorString("growslice: len out of range"))
 }
 
 func SliceClear(t *abi.SliceType, s Slice) {

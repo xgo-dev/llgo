@@ -24,7 +24,7 @@ jobs:
         shard-index: ["0", "1", "2", "3"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install dependencies
         uses: ./.github/actions/setup-deps

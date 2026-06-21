@@ -25,7 +25,7 @@ jobs:
         llvm: [19]
     runs-on: ${{matrix.os}}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install dependencies
         uses: ./.github/actions/setup-deps
         with:

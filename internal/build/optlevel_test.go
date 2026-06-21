@@ -3,6 +3,7 @@ package build
 import (
 	"testing"
 
+	"github.com/goplus/llgo/internal/lto"
 	"github.com/goplus/llgo/internal/optlevel"
 )
 
@@ -51,8 +52,9 @@ func TestIsOptimizeEnabledLegacyEnv(t *testing.T) {
 
 func TestLLVMPassPipeline(t *testing.T) {
 	tests := []struct {
-		level optlevel.Level
-		want  string
+		level   optlevel.Level
+		ltoMode lto.Mode
+		want    string
 	}{
 		{level: optlevel.O0, want: "default<O0>"},
 		{level: optlevel.O1, want: "default<O1>"},
@@ -60,10 +62,12 @@ func TestLLVMPassPipeline(t *testing.T) {
 		{level: optlevel.O3, want: "default<O3>"},
 		{level: optlevel.Os, want: "default<Os>"},
 		{level: optlevel.Oz, want: "default<Oz>"},
+		{level: optlevel.O2, ltoMode: lto.Full, want: "lto-pre-link<O2>"},
+		{level: optlevel.Oz, ltoMode: lto.Thin, want: "thinlto-pre-link<Oz>"},
 	}
 	for _, tt := range tests {
-		if got := llvmPassPipeline(tt.level); got != tt.want {
-			t.Fatalf("llvmPassPipeline(%v) = %q, want %q", tt.level, got, tt.want)
+		if got := llvmPassPipeline(tt.level, tt.ltoMode); got != tt.want {
+			t.Fatalf("llvmPassPipeline(%v, %v) = %q, want %q", tt.level, tt.ltoMode, got, tt.want)
 		}
 	}
 }

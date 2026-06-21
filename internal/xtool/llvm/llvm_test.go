@@ -141,10 +141,10 @@ func TestGetTargetTriple(t *testing.T) {
 	checkTriple(t, "linux/amd64", "linux", "amd64", "x86_64-unknown-linux")
 	checkTriple(t, "linux/386", "linux", "386", "i386-unknown-linux")
 	checkTriple(t, "linux/arm64", "linux", "arm64", "aarch64-unknown-linux")
-	checkTriple(t, "linux/arm", "linux", "arm", "armv7-unknown-linux")
+	checkTriple(t, "linux/arm", "linux", "arm", "armv7-unknown-linux-gnueabihf")
 	checkTriple(t, "darwin/amd64", "darwin", "amd64", "x86_64-apple-macosx")
 	checkTriple(t, "darwin/arm64", "darwin", "arm64", "arm64-apple-macosx")
-	checkTriple(t, "windows/amd64", "windows", "amd64", "x86_64-unknown-windows")
-	checkTriple(t, "windows/386", "windows", "386", "i386-unknown-windows")
+	checkTriple(t, "windows/amd64", "windows", "amd64", "x86_64-unknown-windows-gnu")
+	checkTriple(t, "windows/386", "windows", "386", "i386-unknown-windows-gnu")
 	checkTriple(t, "js/wasm", "js", "wasm", "wasm32-unknown-js")
 }

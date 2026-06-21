@@ -47,7 +47,7 @@ var (
 // CHECK-NEXT:   %7 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %6, 0
 // CHECK-NEXT:   %8 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %6, 1
 // CHECK-NEXT:   %9 = icmp uge i64 0, %8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %9)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %9, {{.*}})
 // CHECK-NEXT:   %10 = getelementptr inbounds { ptr, ptr }, ptr %7, i64 0
 // CHECK-NEXT:   %11 = load { ptr, ptr }, ptr %10, align 8
 // CHECK-NEXT:   %12 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$O6rEVxIuA5O1E0KWpQBCgGx26X5gYhJ_nnJnHVL8_7U", ptr @"*_llgo_github.com/goplus/llgo/cl/_testrt/mapclosure.typ")

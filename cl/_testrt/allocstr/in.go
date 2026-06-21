@@ -5,8 +5,8 @@ import (
 	"github.com/goplus/lib/c"
 )
 
-// CHECK-LINE: %"{{.*}}/runtime/internal/runtime.String" = type { ptr, i64 }
-// CHECK-LINE: @0 = private unnamed_addr constant [12 x i8] c"Hello world\0A", align 1
+// CHECK: {{^}}%"{{.*}}/runtime/internal/runtime.String" = type { ptr, i64 }{{$}}
+// CHECK: {{^}}@0 = private unnamed_addr constant [12 x i8] c"Hello world\0A", align 1{{$}}
 
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/cl/_testrt/allocstr.hello"(){{.*}} {
 // CHECK-NEXT: _llgo_0:

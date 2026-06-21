@@ -1,7 +1,7 @@
 // LITTEST
 package main
 
-// CHECK-LINE: @0 = private unnamed_addr constant [5 x i8] c"error", align 1
+// CHECK: {{^}}@0 = private unnamed_addr constant [5 x i8] c"error", align 1{{$}}
 
 func main() {
 	recursive()
@@ -112,7 +112,7 @@ func recur2[T Integer](n T) T {
 // CHECK-NEXT:   %9 = icmp slt i64 %4, 0
 // CHECK-NEXT:   %10 = icmp uge i64 %4, %8
 // CHECK-NEXT:   %11 = or i1 %10, %9
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %11)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %11, {{.*}})
 // CHECK-NEXT:   %12 = getelementptr inbounds i64, ptr %7, i64 %4
 // CHECK-NEXT:   store i64 %6, ptr %12, align 8
 // CHECK-NEXT:   br label %_llgo_1
@@ -134,7 +134,7 @@ func recur2[T Integer](n T) T {
 // CHECK-NEXT:   %20 = icmp slt i64 %16, 0
 // CHECK-NEXT:   %21 = icmp uge i64 %16, %19
 // CHECK-NEXT:   %22 = or i1 %21, %20
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %22)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %22, {{.*}})
 // CHECK-NEXT:   %23 = getelementptr inbounds i64, ptr %18, i64 %16
 // CHECK-NEXT:   %24 = load i64, ptr %23, align 8
 // CHECK-NEXT:   %25 = add i64 %14, %24

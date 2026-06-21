@@ -93,3 +93,41 @@ func TestDeferAtomicInLoopIR(t *testing.T) {
 		t.Fatalf("expected loop defer node free in IR, got:\n%s", ir)
 	}
 }
+
+func TestDeferInLoopMaterializesArgsBeforeFree(t *testing.T) {
+	prog := ssatest.NewProgram(t, nil)
+	pkg := prog.NewPackage("foo", "foo")
+
+	params := types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.Int64]))
+	int64ArgSig := types.NewSignatureType(nil, nil, nil, params, nil, false)
+	callee := pkg.NewFunc("callee", int64ArgSig, ssa.InGo)
+	cb := callee.MakeBody(1)
+	cb.Return()
+	cb.EndBuild()
+
+	fn := pkg.NewFunc("main", ssa.NoArgsNoRet, ssa.InGo)
+	b := fn.MakeBody(1)
+	fn.SetRecover(fn.MakeBlock())
+
+	// Ensure entry block has a terminator like real codegen.
+	b.Return()
+	b.SetBlockEx(fn.Block(0), ssa.BeforeLast, true)
+
+	arg := b.Const(constant.MakeInt64(7), prog.Int64())
+	b.Defer(ssa.DeferInLoop, callee.Expr, ssa.Builder.Call, arg)
+	b.EndBuild()
+
+	ir := pkg.Module().String()
+	argExtractIdx := strings.Index(ir, "extractvalue { ptr, i64, i64 }")
+	freeIdx := strings.Index(ir, "FreeDeferNode")
+	callIdx := strings.Index(ir, "call void @callee(i64")
+	if argExtractIdx == -1 || freeIdx == -1 || callIdx == -1 {
+		t.Fatalf("missing deferred arg extraction/free/call in IR, got:\n%s", ir)
+	}
+	if argExtractIdx > freeIdx {
+		t.Fatalf("deferred arg must be materialized before FreeDeferNode, got:\n%s", ir)
+	}
+	if freeIdx > callIdx {
+		t.Fatalf("FreeDeferNode must run before buildCall uses materialized args, got:\n%s", ir)
+	}
+}

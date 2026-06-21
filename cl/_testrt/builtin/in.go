@@ -5,13 +5,13 @@ import (
 	"unsafe"
 )
 
-// CHECK-LINE: @0 = private unnamed_addr constant [5 x i8] c"hello", align 1
-// CHECK-LINE: @1 = private unnamed_addr constant [3 x i8] c"def", align 1
-// CHECK-LINE: @3 = private unnamed_addr constant [4 x i8] c"ABCD", align 1
-// CHECK-LINE: @4 = private unnamed_addr constant [7 x i8] c"\E4\B8\ADabcd", align 1
-// CHECK-LINE: @5 = private unnamed_addr constant [3 x i8] c"abc", align 1
-// CHECK-LINE: @6 = private unnamed_addr constant [3 x i8] c"abd", align 1
-// CHECK-LINE: @7 = private unnamed_addr constant [2 x i8] c"fn", align 1
+// CHECK: {{^}}@0 = private unnamed_addr constant [5 x i8] c"hello", align 1{{$}}
+// CHECK: {{^}}@1 = private unnamed_addr constant [3 x i8] c"def", align 1{{$}}
+// CHECK: {{^}}@3 = private unnamed_addr constant [4 x i8] c"ABCD", align 1{{$}}
+// CHECK: {{^}}@4 = private unnamed_addr constant [7 x i8] c"\E4\B8\ADabcd", align 1{{$}}
+// CHECK: {{^}}@5 = private unnamed_addr constant [3 x i8] c"abc", align 1{{$}}
+// CHECK: {{^}}@6 = private unnamed_addr constant [3 x i8] c"abd", align 1{{$}}
+// CHECK: {{^}}@7 = private unnamed_addr constant [2 x i8] c"fn", align 1{{$}}
 
 var a int64 = 1<<63 - 1
 var b int64 = -1 << 63
@@ -118,7 +118,7 @@ func demo() {
 // CHECK-NEXT:   store i64 3, ptr %11, align 8
 // CHECK-NEXT:   store i64 4, ptr %12, align 8
 // CHECK-NEXT:   %13 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 10)
-// CHECK-NEXT:   %14 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice3"(ptr %13, i64 1, i64 10, i64 0, i64 4, i64 10)
+// CHECK-NEXT:   %14 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice{{.*}}"({{.*}})
 // CHECK-NEXT:   %15 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 1
 // CHECK-NEXT:   %16 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 2
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %7)
@@ -163,28 +163,28 @@ func demo() {
 // CHECK-NEXT:   %28 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 2
 // CHECK-NEXT:   %29 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 1
 // CHECK-NEXT:   %30 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 0
-// CHECK-NEXT:   %31 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice3"(ptr %30, i64 8, i64 %28, i64 1, i64 %29, i64 %28)
+// CHECK-NEXT:   %31 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice{{.*}}"({{.*}})
 // CHECK-NEXT:   %32 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %31, 1
 // CHECK-NEXT:   %33 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 2
 // CHECK-NEXT:   %34 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 1
 // CHECK-NEXT:   %35 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 0
-// CHECK-NEXT:   %36 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice3"(ptr %35, i64 8, i64 %33, i64 1, i64 %34, i64 %33)
+// CHECK-NEXT:   %36 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice{{.*}}"({{.*}})
 // CHECK-NEXT:   %37 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %36, 2
 // CHECK-NEXT:   %38 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 2
 // CHECK-NEXT:   %39 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 0
-// CHECK-NEXT:   %40 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice3"(ptr %39, i64 8, i64 %38, i64 1, i64 2, i64 %38)
+// CHECK-NEXT:   %40 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice{{.*}}"({{.*}})
 // CHECK-NEXT:   %41 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %40, 1
 // CHECK-NEXT:   %42 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 2
 // CHECK-NEXT:   %43 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 0
-// CHECK-NEXT:   %44 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice3"(ptr %43, i64 8, i64 %42, i64 1, i64 2, i64 %42)
+// CHECK-NEXT:   %44 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice{{.*}}"({{.*}})
 // CHECK-NEXT:   %45 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %44, 2
 // CHECK-NEXT:   %46 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 2
 // CHECK-NEXT:   %47 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 0
-// CHECK-NEXT:   %48 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice3"(ptr %47, i64 8, i64 %46, i64 1, i64 2, i64 2)
+// CHECK-NEXT:   %48 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice{{.*}}"({{.*}})
 // CHECK-NEXT:   %49 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %48, 1
 // CHECK-NEXT:   %50 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 2
 // CHECK-NEXT:   %51 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %7, 0
-// CHECK-NEXT:   %52 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice3"(ptr %51, i64 8, i64 %50, i64 1, i64 2, i64 2)
+// CHECK-NEXT:   %52 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice{{.*}}"({{.*}})
 // CHECK-NEXT:   %53 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %52, 2
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
@@ -198,17 +198,17 @@ func demo() {
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %53)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %54 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice3"(ptr %8, i64 8, i64 4, i64 1, i64 4, i64 4)
+// CHECK-NEXT:   %54 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice{{.*}}"({{.*}})
 // CHECK-NEXT:   %55 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %54, 1
-// CHECK-NEXT:   %56 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice3"(ptr %8, i64 8, i64 4, i64 1, i64 4, i64 4)
+// CHECK-NEXT:   %56 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice{{.*}}"({{.*}})
 // CHECK-NEXT:   %57 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %56, 2
-// CHECK-NEXT:   %58 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice3"(ptr %8, i64 8, i64 4, i64 1, i64 2, i64 4)
+// CHECK-NEXT:   %58 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice{{.*}}"({{.*}})
 // CHECK-NEXT:   %59 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %58, 1
-// CHECK-NEXT:   %60 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice3"(ptr %8, i64 8, i64 4, i64 1, i64 2, i64 4)
+// CHECK-NEXT:   %60 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice{{.*}}"({{.*}})
 // CHECK-NEXT:   %61 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %60, 2
-// CHECK-NEXT:   %62 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice3"(ptr %8, i64 8, i64 4, i64 1, i64 2, i64 2)
+// CHECK-NEXT:   %62 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice{{.*}}"({{.*}})
 // CHECK-NEXT:   %63 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %62, 1
-// CHECK-NEXT:   %64 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice3"(ptr %8, i64 8, i64 4, i64 1, i64 2, i64 2)
+// CHECK-NEXT:   %64 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice{{.*}}"({{.*}})
 // CHECK-NEXT:   %65 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %64, 2
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %55)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
@@ -222,9 +222,9 @@ func demo() {
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %65)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %66 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringSlice"(%"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, i64 1, i64 5)
-// CHECK-NEXT:   %67 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringSlice"(%"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, i64 1, i64 2)
-// CHECK-NEXT:   %68 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringSlice"(%"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, i64 5, i64 5)
+// CHECK-NEXT:   %66 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringSlice2"({{.*}})
+// CHECK-NEXT:   %67 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringSlice2"({{.*}})
+// CHECK-NEXT:   %68 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringSlice2"({{.*}})
 // CHECK-NEXT:   %69 = extractvalue %"{{.*}}/runtime/internal/runtime.String" %68, 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
@@ -331,7 +331,7 @@ func demo() {
 // CHECK-NEXT:   %119 = zext i8 %116 to i64
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %119)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %120 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice3"(ptr %102, i64 1, i64 3, i64 1, i64 3, i64 3)
+// CHECK-NEXT:   %120 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice{{.*}}"({{.*}})
 // CHECK-NEXT:   %121 = call i64 @"{{.*}}/runtime/internal/runtime.SliceCopy"(%"{{.*}}/runtime/internal/runtime.Slice" %120, ptr @3, i64 4, i64 1)
 // CHECK-NEXT:   store i64 %121, ptr %103, align 8
 // CHECK-NEXT:   %122 = load i64, ptr %103, align 8
@@ -411,7 +411,7 @@ func demo() {
 // CHECK-NEXT:   %152 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %148, 0
 // CHECK-NEXT:   %153 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %148, 1
 // CHECK-NEXT:   %154 = icmp uge i64 3, %153
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %154)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %154, {{.*}})
 // CHECK-NEXT:   %155 = getelementptr inbounds i8, ptr %152, i64 3
 // CHECK-NEXT:   %156 = load i8, ptr %155, align 1
 // CHECK-NEXT:   %157 = zext i8 %156 to i64
@@ -419,7 +419,7 @@ func demo() {
 // CHECK-NEXT:   %159 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %149, 0
 // CHECK-NEXT:   %160 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %149, 1
 // CHECK-NEXT:   %161 = icmp uge i64 0, %160
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %161)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %161, {{.*}})
 // CHECK-NEXT:   %162 = getelementptr inbounds i32, ptr %159, i64 0
 // CHECK-NEXT:   %163 = load i32, ptr %162, align 4
 // CHECK-NEXT:   %164 = sext i32 %163 to i64

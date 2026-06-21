@@ -62,6 +62,24 @@ func TestFirstLoop(t *testing.T) {
 	}
 }
 
+func TestFindLoopSkipsSearchedSharedSubgraphs(t *testing.T) {
+	const n = 64
+	states := make([]*blockState, n)
+	for i := range states {
+		succs := make([]int, 0, 2)
+		if i+1 < n {
+			succs = append(succs, i+1)
+		}
+		if i+2 < n {
+			succs = append(succs, i+2)
+		}
+		states[i] = &blockState{succs: succs}
+	}
+	if loop := findLoop(states, make([]int, 0, n), make([]bool, n), 0); len(loop) != 0 {
+		t.Fatalf("findLoop returned non-loop path: %v", loop)
+	}
+}
+
 func fromDir(t *testing.T, sel, relDir string, fn func(string) string) {
 	dir, err := os.Getwd()
 	if err != nil {

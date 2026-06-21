@@ -407,6 +407,9 @@ func (b *Builder) structHash(t *types.Struct) (ret []byte, pkg string) {
 		}
 		ft, _ := b.TypeName(f.Type())
 		fmt.Fprintln(h, name, ft)
+		if tag := t.Tag(i); tag != "" {
+			fmt.Fprintln(h, "tag", tag)
+		}
 	}
 	ret = h.Sum(b.buf[:0])
 	return

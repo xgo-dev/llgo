@@ -164,7 +164,7 @@ func (b Builder) abiStructFields(t *types.Struct, name string) llvm.Value {
 	g := b.Pkg.VarOf(name)
 	if g == nil {
 		ft := prog.rtType("structfield")
-		typ := prog.rawType(t)
+		typ := prog.Type(t, InGo)
 		fields := make([]llvm.Value, n)
 		for i := 0; i < n; i++ {
 			f := t.Field(i)
@@ -324,7 +324,7 @@ func (b Builder) abiExtendedFields(t types.Type, name string) (fields []llvm.Val
 		for i := 0; i < n; i++ {
 			if f := t.Field(i); !f.Exported() {
 				if pkg := f.Pkg(); pkg != nil {
-					pkgPath = pkg.Path()
+					pkgPath = reflectPkgPath(pkg)
 					break
 				}
 			}
@@ -418,9 +418,19 @@ retry:
 		goto retry
 	case *types.Named:
 		pkg := typ.Obj().Pkg()
-		return pkg, abi.PathOf(pkg)
+		return pkg, reflectPkgPath(pkg)
 	}
 	return nil, b.Pkg.Path()
+}
+
+func reflectPkgPath(pkg *types.Package) string {
+	if pkg == nil {
+		return ""
+	}
+	if pkg.Path() == "command-line-arguments" && pkg.Name() != "" {
+		return pkg.Name()
+	}
+	return abi.PathOf(pkg)
 }
 
 func (b Builder) abiUncommonMethodSet(t types.Type) (mset *types.MethodSet, ok bool) {
@@ -512,12 +522,14 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 		}
 		mSig := m.Type().(*types.Signature)
 		var tfn, ifn llvm.Value
-		tfn = b.abiMethodFunc(anonymous, pkg, mName, mSig)
-		ifn = tfn
+		tfnFn := b.abiMethodFunc(anonymous, pkg, mName, mSig)
+		tfnSig := funcType(prog, methodExprSignature(mSig)).(*types.Signature)
+		tfn = b.Pkg.closureWrapDecl(tfnFn.Expr, tfnSig).impl
+		ifn = tfnFn.impl
 		if _, ok := m.Recv().Underlying().(*types.Pointer); !ok {
 			pRecv := types.NewVar(token.NoPos, pkg, "", types.NewPointer(mSig.Recv().Type()))
 			pSig := types.NewSignature(pRecv, mSig.Params(), mSig.Results(), mSig.Variadic())
-			ifn = b.abiMethodFunc(anonymous, pkg, mName, pSig)
+			ifn = b.abiMethodFunc(anonymous, pkg, mName, pSig).impl
 		}
 		var values []llvm.Value
 		values = append(values, name)
@@ -558,7 +570,22 @@ func mthName(method *types.Func) string {
 	return abi.FullName(method.Pkg(), name)
 }
 
-func (b Builder) abiMethodFunc(anonymous bool, mPkg *types.Package, mName string, mSig *types.Signature) (tfn llvm.Value) {
+func methodExprSignature(sig *types.Signature) *types.Signature {
+	recv := sig.Recv()
+	if recv == nil {
+		return sig
+	}
+	params := sig.Params()
+	n := params.Len()
+	vars := make([]*types.Var, n+1)
+	vars[0] = types.NewVar(recv.Pos(), recv.Pkg(), recv.Name(), recv.Type())
+	for i := 0; i < n; i++ {
+		vars[i+1] = params.At(i)
+	}
+	return types.NewSignatureType(nil, nil, nil, types.NewTuple(vars...), sig.Results(), sig.Variadic())
+}
+
+func (b Builder) abiMethodFunc(anonymous bool, mPkg *types.Package, mName string, mSig *types.Signature) Function {
 	var fullName string
 	if anonymous {
 		fullName = b.Pkg.Path() + "." + mSig.Recv().Type().String() + "." + mName
@@ -568,7 +595,7 @@ func (b Builder) abiMethodFunc(anonymous bool, mPkg *types.Package, mName string
 	if b.Pkg.fnlink != nil {
 		fullName = b.Pkg.fnlink(fullName)
 	}
-	return b.Pkg.NewFunc(fullName, mSig, InGo).impl // TODO(xsw): use rawType to speed up
+	return b.Pkg.NewFunc(fullName, mSig, InGo) // TODO(xsw): use rawType to speed up
 }
 
 /*

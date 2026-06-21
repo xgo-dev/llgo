@@ -5,17 +5,21 @@ import (
 	"unicode/utf8"
 )
 
-// CHECK-LINE: @28 = private unnamed_addr constant [3 x i8] c"EOF", align 1
-// CHECK-LINE: @29 = private unnamed_addr constant [11 x i8] c"short write", align 1
-// CHECK-LINE: @30 = private unnamed_addr constant [11 x i8] c"hello world", align 1
-// CHECK-LINE: @53 = private unnamed_addr constant [122 x i8] c"type assertion {{.*}}/cl/_testgo/reader.Reader -> {{.*}}/cl/_testgo/reader.WriterTo failed", align 1
-// CHECK-LINE: @54 = private unnamed_addr constant [37 x i8] c"stringsReader.ReadAt: negative offset", align 1
-// CHECK-LINE: @55 = private unnamed_addr constant [34 x i8] c"stringsReader.Seek: invalid whence", align 1
-// CHECK-LINE: @56 = private unnamed_addr constant [37 x i8] c"stringsReader.Seek: negative position", align 1
-// CHECK-LINE: @57 = private unnamed_addr constant [48 x i8] c"stringsReader.UnreadByte: at beginning of string", align 1
-// CHECK-LINE: @58 = private unnamed_addr constant [49 x i8] c"strings.Reader.UnreadRune: at beginning of string", align 1
-// CHECK-LINE: @59 = private unnamed_addr constant [62 x i8] c"strings.Reader.UnreadRune: previous operation was not ReadRune", align 1
-// CHECK-LINE: @60 = private unnamed_addr constant [48 x i8] c"stringsReader.WriteTo: invalid WriteString count", align 1
+// CHECK: @2 = private unnamed_addr constant [7 x i8] c"WriteTo", align 1
+// CHECK: @17 = private unnamed_addr constant [5 x i8] c"Close", align 1
+// CHECK: @28 = private unnamed_addr constant [3 x i8] c"EOF", align 1
+// CHECK: @29 = private unnamed_addr constant [11 x i8] c"short write", align 1
+// CHECK: @30 = private unnamed_addr constant [11 x i8] c"hello world", align 1
+// CHECK: @53 = private unnamed_addr constant [50 x i8] c"{{.*}}/cl/_testgo/reader.nopCloser", align 1
+// CHECK: @54 = private unnamed_addr constant [49 x i8] c"{{.*}}/cl/_testgo/reader.WriterTo", align 1
+// CHECK: @55 = private unnamed_addr constant [58 x i8] c"{{.*}}/cl/_testgo/reader.nopCloserWriterTo", align 1
+// CHECK: @56 = private unnamed_addr constant [37 x i8] c"stringsReader.ReadAt: negative offset", align 1
+// CHECK: @57 = private unnamed_addr constant [34 x i8] c"stringsReader.Seek: invalid whence", align 1
+// CHECK: @58 = private unnamed_addr constant [37 x i8] c"stringsReader.Seek: negative position", align 1
+// CHECK: @59 = private unnamed_addr constant [48 x i8] c"stringsReader.UnreadByte: at beginning of string", align 1
+// CHECK: @60 = private unnamed_addr constant [49 x i8] c"strings.Reader.UnreadRune: at beginning of string", align 1
+// CHECK: @61 = private unnamed_addr constant [62 x i8] c"strings.Reader.UnreadRune: previous operation was not ReadRune", align 1
+// CHECK: @62 = private unnamed_addr constant [48 x i8] c"stringsReader.WriteTo: invalid WriteString count", align 1
 
 type Reader interface {
 	Read(p []byte) (n int, err error)
@@ -202,7 +206,7 @@ func (c nopCloserWriterTo) WriteTo(w Writer) (n int64, err error) {
 // CHECK-LABEL: define { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.ReadAll"(%"{{.*}}/runtime/internal/runtime.iface" %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 512)
-// CHECK-NEXT:   %2 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice3"(ptr %1, i64 1, i64 512, i64 0, i64 0, i64 512)
+// CHECK-NEXT:   %2 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice2"(ptr %1, i64 1, i64 512, i64 0, i64 0, i1 true, i1 true, i1 true)
 // CHECK-NEXT:   br label %_llgo_1
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_6, %_llgo_3, %_llgo_0
@@ -211,7 +215,7 @@ func (c nopCloserWriterTo) WriteTo(w Writer) (n int64, err error) {
 // CHECK-NEXT:   %5 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %3, 2
 // CHECK-NEXT:   %6 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %3, 2
 // CHECK-NEXT:   %7 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %3, 0
-// CHECK-NEXT:   %8 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice3"(ptr %7, i64 1, i64 %6, i64 %4, i64 %5, i64 %6)
+// CHECK-NEXT:   %8 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice2"(ptr %7, i64 1, i64 %6, i64 %4, i64 %5, i1 true, i1 true, i1 false)
 // CHECK-NEXT:   %9 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %0)
 // CHECK-NEXT:   %10 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %0, 0
 // CHECK-NEXT:   %11 = getelementptr ptr, ptr %10, i64 3
@@ -227,7 +231,7 @@ func (c nopCloserWriterTo) WriteTo(w Writer) (n int64, err error) {
 // CHECK-NEXT:   %21 = add i64 %20, %18
 // CHECK-NEXT:   %22 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %3, 2
 // CHECK-NEXT:   %23 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %3, 0
-// CHECK-NEXT:   %24 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice3"(ptr %23, i64 1, i64 %22, i64 0, i64 %21, i64 %22)
+// CHECK-NEXT:   %24 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice2"(ptr %23, i64 1, i64 %22, i64 0, i64 %21, i1 true, i1 true, i1 false)
 // CHECK-NEXT:   %25 = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}/runtime/internal/runtime.iface" %19)
 // CHECK-NEXT:   %26 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %19, 1
 // CHECK-NEXT:   %27 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" undef, ptr %25, 0
@@ -280,7 +284,7 @@ func (c nopCloserWriterTo) WriteTo(w Writer) (n int64, err error) {
 // CHECK-NEXT:   %58 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %24, 1
 // CHECK-NEXT:   %59 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %57, 2
 // CHECK-NEXT:   %60 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %57, 0
-// CHECK-NEXT:   %61 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice3"(ptr %60, i64 1, i64 %59, i64 0, i64 %58, i64 %59)
+// CHECK-NEXT:   %61 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice2"(ptr %60, i64 1, i64 %59, i64 0, i64 %58, i1 true, i1 true, i1 false)
 // CHECK-NEXT:   br label %_llgo_1
 // CHECK-NEXT: }
 
@@ -598,9 +602,11 @@ func main() {
 
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.(*nopCloser).Close"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = load %"{{.*}}/cl/_testgo/reader.nopCloser", ptr %0, align 8
-// CHECK-NEXT:   %2 = call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.nopCloser.Close"(%"{{.*}}/cl/_testgo/reader.nopCloser" %1)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %2
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @53, i64 50 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @17, i64 5 })
+// CHECK-NEXT:   %2 = load %"{{.*}}/cl/_testgo/reader.nopCloser", ptr %0, align 8
+// CHECK-NEXT:   %3 = call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.nopCloser.Close"(%"{{.*}}/cl/_testgo/reader.nopCloser" %2)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %3
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.(*nopCloser).Read"(ptr %0, %"{{.*}}/runtime/internal/runtime.Slice" %1){{.*}} {
@@ -683,18 +689,17 @@ func main() {
 // CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %23
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %24 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @53, i64 122 }, ptr %24, align 8
-// CHECK-NEXT:   %25 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %24, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %25)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %5, %"{{.*}}/runtime/internal/runtime.String" { ptr @54, i64 49 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 7 })
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.(*nopCloserWriterTo).Close"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = load %"{{.*}}/cl/_testgo/reader.nopCloserWriterTo", ptr %0, align 8
-// CHECK-NEXT:   %2 = call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.nopCloserWriterTo.Close"(%"{{.*}}/cl/_testgo/reader.nopCloserWriterTo" %1)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %2
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @55, i64 58 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @17, i64 5 })
+// CHECK-NEXT:   %2 = load %"{{.*}}/cl/_testgo/reader.nopCloserWriterTo", ptr %0, align 8
+// CHECK-NEXT:   %3 = call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.nopCloserWriterTo.Close"(%"{{.*}}/cl/_testgo/reader.nopCloserWriterTo" %2)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %3
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.(*nopCloserWriterTo).Read"(ptr %0, %"{{.*}}/runtime/internal/runtime.Slice" %1){{.*}} {
@@ -719,13 +724,15 @@ func main() {
 
 // CHECK-LABEL: define { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.(*nopCloserWriterTo).WriteTo"(ptr %0, %"{{.*}}/runtime/internal/runtime.iface" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = load %"{{.*}}/cl/_testgo/reader.nopCloserWriterTo", ptr %0, align 8
-// CHECK-NEXT:   %3 = call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.nopCloserWriterTo.WriteTo"(%"{{.*}}/cl/_testgo/reader.nopCloserWriterTo" %2, %"{{.*}}/runtime/internal/runtime.iface" %1)
-// CHECK-NEXT:   %4 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %3, 0
-// CHECK-NEXT:   %5 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %3, 1
-// CHECK-NEXT:   %6 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } undef, i64 %4, 0
-// CHECK-NEXT:   %7 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %6, %"{{.*}}/runtime/internal/runtime.iface" %5, 1
-// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %2, %"{{.*}}/runtime/internal/runtime.String" { ptr @55, i64 58 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 7 })
+// CHECK-NEXT:   %3 = load %"{{.*}}/cl/_testgo/reader.nopCloserWriterTo", ptr %0, align 8
+// CHECK-NEXT:   %4 = call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.nopCloserWriterTo.WriteTo"(%"{{.*}}/cl/_testgo/reader.nopCloserWriterTo" %3, %"{{.*}}/runtime/internal/runtime.iface" %1)
+// CHECK-NEXT:   %5 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %4, 0
+// CHECK-NEXT:   %6 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %4, 1
+// CHECK-NEXT:   %7 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } undef, i64 %5, 0
+// CHECK-NEXT:   %8 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, %"{{.*}}/runtime/internal/runtime.iface" %6, 1
+// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %8
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/reader.(*stringReader).Len"(ptr %0){{.*}} {
@@ -774,7 +781,7 @@ func main() {
 // CHECK-NEXT:   %13 = getelementptr inbounds %"{{.*}}/cl/_testgo/reader.stringReader", ptr %0, i32 0, i32 1
 // CHECK-NEXT:   %14 = load i64, ptr %13, align 8
 // CHECK-NEXT:   %15 = extractvalue %"{{.*}}/runtime/internal/runtime.String" %12, 1
-// CHECK-NEXT:   %16 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringSlice"(%"{{.*}}/runtime/internal/runtime.String" %12, i64 %14, i64 %15)
+// CHECK-NEXT:   %16 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringSlice2"(%"{{.*}}/runtime/internal/runtime.String" %12, i64 %14, i64 %15, i1 true, i1 true)
 // CHECK-NEXT:   %17 = extractvalue %"{{.*}}/runtime/internal/runtime.String" %16, 0
 // CHECK-NEXT:   %18 = extractvalue %"{{.*}}/runtime/internal/runtime.String" %16, 1
 // CHECK-NEXT:   %19 = call i64 @"{{.*}}/runtime/internal/runtime.SliceCopy"(%"{{.*}}/runtime/internal/runtime.Slice" %1, ptr %17, i64 %18, i64 1)
@@ -794,7 +801,7 @@ func main() {
 // CHECK-NEXT:   br i1 %3, label %_llgo_1, label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %4 = call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.newError"(%"{{.*}}/runtime/internal/runtime.String" { ptr @54, i64 37 })
+// CHECK-NEXT:   %4 = call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.newError"(%"{{.*}}/runtime/internal/runtime.String" { ptr @56, i64 37 })
 // CHECK-NEXT:   %5 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } { i64 0, %"{{.*}}/runtime/internal/runtime.iface" undef }, %"{{.*}}/runtime/internal/runtime.iface" %4, 1
 // CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %5
 // CHECK-EMPTY:
@@ -814,7 +821,7 @@ func main() {
 // CHECK-NEXT:   %12 = getelementptr inbounds %"{{.*}}/cl/_testgo/reader.stringReader", ptr %0, i32 0, i32 0
 // CHECK-NEXT:   %13 = load %"{{.*}}/runtime/internal/runtime.String", ptr %12, align 8
 // CHECK-NEXT:   %14 = extractvalue %"{{.*}}/runtime/internal/runtime.String" %13, 1
-// CHECK-NEXT:   %15 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringSlice"(%"{{.*}}/runtime/internal/runtime.String" %13, i64 %2, i64 %14)
+// CHECK-NEXT:   %15 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringSlice2"(%"{{.*}}/runtime/internal/runtime.String" %13, i64 %2, i64 %14, i1 true, i1 true)
 // CHECK-NEXT:   %16 = extractvalue %"{{.*}}/runtime/internal/runtime.String" %15, 0
 // CHECK-NEXT:   %17 = extractvalue %"{{.*}}/runtime/internal/runtime.String" %15, 1
 // CHECK-NEXT:   %18 = call i64 @"{{.*}}/runtime/internal/runtime.SliceCopy"(%"{{.*}}/runtime/internal/runtime.Slice" %1, ptr %16, i64 %17, i64 1)
@@ -860,7 +867,7 @@ func main() {
 // CHECK-NEXT:   %16 = icmp slt i64 %11, 0
 // CHECK-NEXT:   %17 = icmp uge i64 %11, %15
 // CHECK-NEXT:   %18 = or i1 %17, %16
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %18)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %18, i64 %11, i1 true, i64 %15)
 // CHECK-NEXT:   %19 = getelementptr inbounds i8, ptr %14, i64 %11
 // CHECK-NEXT:   %20 = load i8, ptr %19, align 1
 // CHECK-NEXT:   %21 = getelementptr inbounds %"{{.*}}/cl/_testgo/reader.stringReader", ptr %0, i32 0, i32 1
@@ -904,7 +911,7 @@ func main() {
 // CHECK-NEXT:   %19 = icmp slt i64 %14, 0
 // CHECK-NEXT:   %20 = icmp uge i64 %14, %18
 // CHECK-NEXT:   %21 = or i1 %20, %19
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertIndexRange"(i1 %21)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %21, i64 %14, i1 true, i64 %18)
 // CHECK-NEXT:   %22 = getelementptr inbounds i8, ptr %17, i64 %14
 // CHECK-NEXT:   %23 = load i8, ptr %22, align 1
 // CHECK-NEXT:   %24 = icmp ult i8 %23, -128
@@ -928,7 +935,7 @@ func main() {
 // CHECK-NEXT:   %35 = getelementptr inbounds %"{{.*}}/cl/_testgo/reader.stringReader", ptr %0, i32 0, i32 1
 // CHECK-NEXT:   %36 = load i64, ptr %35, align 8
 // CHECK-NEXT:   %37 = extractvalue %"{{.*}}/runtime/internal/runtime.String" %34, 1
-// CHECK-NEXT:   %38 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringSlice"(%"{{.*}}/runtime/internal/runtime.String" %34, i64 %36, i64 %37)
+// CHECK-NEXT:   %38 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringSlice2"(%"{{.*}}/runtime/internal/runtime.String" %34, i64 %36, i64 %37, i1 true, i1 true)
 // CHECK-NEXT:   %39 = call { i32, i64 } @"unicode/utf8.DecodeRuneInString"(%"{{.*}}/runtime/internal/runtime.String" %38)
 // CHECK-NEXT:   %40 = extractvalue { i32, i64 } %39, 0
 // CHECK-NEXT:   %41 = extractvalue { i32, i64 } %39, 1
@@ -980,12 +987,12 @@ func main() {
 // CHECK-NEXT:   br i1 %15, label %_llgo_5, label %_llgo_7
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_7:                                          ; preds = %_llgo_6
-// CHECK-NEXT:   %16 = call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.newError"(%"{{.*}}/runtime/internal/runtime.String" { ptr @55, i64 34 })
+// CHECK-NEXT:   %16 = call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.newError"(%"{{.*}}/runtime/internal/runtime.String" { ptr @57, i64 34 })
 // CHECK-NEXT:   %17 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } { i64 0, %"{{.*}}/runtime/internal/runtime.iface" undef }, %"{{.*}}/runtime/internal/runtime.iface" %16, 1
 // CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %17
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_1
-// CHECK-NEXT:   %18 = call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.newError"(%"{{.*}}/runtime/internal/runtime.String" { ptr @56, i64 37 })
+// CHECK-NEXT:   %18 = call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.newError"(%"{{.*}}/runtime/internal/runtime.String" { ptr @58, i64 37 })
 // CHECK-NEXT:   %19 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } { i64 0, %"{{.*}}/runtime/internal/runtime.iface" undef }, %"{{.*}}/runtime/internal/runtime.iface" %18, 1
 // CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %19
 // CHECK-EMPTY:
@@ -1013,7 +1020,7 @@ func main() {
 // CHECK-NEXT:   br i1 %3, label %_llgo_1, label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %4 = call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.newError"(%"{{.*}}/runtime/internal/runtime.String" { ptr @57, i64 48 })
+// CHECK-NEXT:   %4 = call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.newError"(%"{{.*}}/runtime/internal/runtime.String" { ptr @59, i64 48 })
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %4
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
@@ -1035,7 +1042,7 @@ func main() {
 // CHECK-NEXT:   br i1 %3, label %_llgo_1, label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %4 = call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.newError"(%"{{.*}}/runtime/internal/runtime.String" { ptr @58, i64 49 })
+// CHECK-NEXT:   %4 = call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.newError"(%"{{.*}}/runtime/internal/runtime.String" { ptr @60, i64 49 })
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %4
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
@@ -1045,7 +1052,7 @@ func main() {
 // CHECK-NEXT:   br i1 %7, label %_llgo_3, label %_llgo_4
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   %8 = call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.newError"(%"{{.*}}/runtime/internal/runtime.String" { ptr @59, i64 62 })
+// CHECK-NEXT:   %8 = call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.newError"(%"{{.*}}/runtime/internal/runtime.String" { ptr @61, i64 62 })
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %8
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_2
@@ -1079,7 +1086,7 @@ func main() {
 // CHECK-NEXT:   %11 = getelementptr inbounds %"{{.*}}/cl/_testgo/reader.stringReader", ptr %0, i32 0, i32 1
 // CHECK-NEXT:   %12 = load i64, ptr %11, align 8
 // CHECK-NEXT:   %13 = extractvalue %"{{.*}}/runtime/internal/runtime.String" %10, 1
-// CHECK-NEXT:   %14 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringSlice"(%"{{.*}}/runtime/internal/runtime.String" %10, i64 %12, i64 %13)
+// CHECK-NEXT:   %14 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringSlice2"(%"{{.*}}/runtime/internal/runtime.String" %10, i64 %12, i64 %13, i1 true, i1 true)
 // CHECK-NEXT:   %15 = call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.WriteString"(%"{{.*}}/runtime/internal/runtime.iface" %1, %"{{.*}}/runtime/internal/runtime.String" %14)
 // CHECK-NEXT:   %16 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %15, 0
 // CHECK-NEXT:   %17 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %15, 1
@@ -1089,7 +1096,7 @@ func main() {
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_2
 // CHECK-NEXT:   %20 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @60, i64 48 }, ptr %20, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @62, i64 48 }, ptr %20, align 8
 // CHECK-NEXT:   %21 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %20, 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %21)
 // CHECK-NEXT:   unreachable
@@ -1142,4 +1149,130 @@ func main() {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal64"(ptr %1, ptr %2)
 // CHECK-NEXT:   ret i1 %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.iface" @"__llgo_stub.{{.*}}/cl/_testgo/reader.(*nopCloserWriterTo).Close"(ptr %0, ptr %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %2 = tail call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.(*nopCloserWriterTo).Close"(ptr %1)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %2
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"__llgo_stub.{{.*}}/cl/_testgo/reader.(*nopCloserWriterTo).Read"(ptr %0, ptr %1, %"{{.*}}/runtime/internal/runtime.Slice" %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.(*nopCloserWriterTo).Read"(ptr %1, %"{{.*}}/runtime/internal/runtime.Slice" %2)
+// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"__llgo_stub.{{.*}}/cl/_testgo/reader.(*nopCloserWriterTo).WriteTo"(ptr %0, ptr %1, %"{{.*}}/runtime/internal/runtime.iface" %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.(*nopCloserWriterTo).WriteTo"(ptr %1, %"{{.*}}/runtime/internal/runtime.iface" %2)
+// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.iface" @"__llgo_stub.{{.*}}/cl/_testgo/reader.nopCloserWriterTo.Close"(ptr %0, %"{{.*}}/cl/_testgo/reader.nopCloserWriterTo" %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %2 = tail call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.nopCloserWriterTo.Close"(%"{{.*}}/cl/_testgo/reader.nopCloserWriterTo" %1)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %2
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"__llgo_stub.{{.*}}/cl/_testgo/reader.nopCloserWriterTo.Read"(ptr %0, %"{{.*}}/cl/_testgo/reader.nopCloserWriterTo" %1, %"{{.*}}/runtime/internal/runtime.Slice" %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.nopCloserWriterTo.Read"(%"{{.*}}/cl/_testgo/reader.nopCloserWriterTo" %1, %"{{.*}}/runtime/internal/runtime.Slice" %2)
+// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"__llgo_stub.{{.*}}/cl/_testgo/reader.nopCloserWriterTo.WriteTo"(ptr %0, %"{{.*}}/cl/_testgo/reader.nopCloserWriterTo" %1, %"{{.*}}/runtime/internal/runtime.iface" %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.nopCloserWriterTo.WriteTo"(%"{{.*}}/cl/_testgo/reader.nopCloserWriterTo" %1, %"{{.*}}/runtime/internal/runtime.iface" %2)
+// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.iface" @"__llgo_stub.{{.*}}/cl/_testgo/reader.(*nopCloser).Close"(ptr %0, ptr %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %2 = tail call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.(*nopCloser).Close"(ptr %1)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %2
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"__llgo_stub.{{.*}}/cl/_testgo/reader.(*nopCloser).Read"(ptr %0, ptr %1, %"{{.*}}/runtime/internal/runtime.Slice" %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.(*nopCloser).Read"(ptr %1, %"{{.*}}/runtime/internal/runtime.Slice" %2)
+// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.iface" @"__llgo_stub.{{.*}}/cl/_testgo/reader.nopCloser.Close"(ptr %0, %"{{.*}}/cl/_testgo/reader.nopCloser" %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %2 = tail call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.nopCloser.Close"(%"{{.*}}/cl/_testgo/reader.nopCloser" %1)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %2
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"__llgo_stub.{{.*}}/cl/_testgo/reader.nopCloser.Read"(ptr %0, %"{{.*}}/cl/_testgo/reader.nopCloser" %1, %"{{.*}}/runtime/internal/runtime.Slice" %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.nopCloser.Read"(%"{{.*}}/cl/_testgo/reader.nopCloser" %1, %"{{.*}}/runtime/internal/runtime.Slice" %2)
+// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce i64 @"__llgo_stub.{{.*}}/cl/_testgo/reader.(*stringReader).Len"(ptr %0, ptr %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %2 = tail call i64 @"{{.*}}/cl/_testgo/reader.(*stringReader).Len"(ptr %1)
+// CHECK-NEXT:   ret i64 %2
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"__llgo_stub.{{.*}}/cl/_testgo/reader.(*stringReader).Read"(ptr %0, ptr %1, %"{{.*}}/runtime/internal/runtime.Slice" %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.(*stringReader).Read"(ptr %1, %"{{.*}}/runtime/internal/runtime.Slice" %2)
+// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"__llgo_stub.{{.*}}/cl/_testgo/reader.(*stringReader).ReadAt"(ptr %0, ptr %1, %"{{.*}}/runtime/internal/runtime.Slice" %2, i64 %3){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %4 = tail call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.(*stringReader).ReadAt"(ptr %1, %"{{.*}}/runtime/internal/runtime.Slice" %2, i64 %3)
+// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %4
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce { i8, %"{{.*}}/runtime/internal/runtime.iface" } @"__llgo_stub.{{.*}}/cl/_testgo/reader.(*stringReader).ReadByte"(ptr %0, ptr %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %2 = tail call { i8, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.(*stringReader).ReadByte"(ptr %1)
+// CHECK-NEXT:   ret { i8, %"{{.*}}/runtime/internal/runtime.iface" } %2
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } @"__llgo_stub.{{.*}}/cl/_testgo/reader.(*stringReader).ReadRune"(ptr %0, ptr %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %2 = tail call { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.(*stringReader).ReadRune"(ptr %1)
+// CHECK-NEXT:   ret { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } %2
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"__llgo_stub.{{.*}}/cl/_testgo/reader.(*stringReader).Seek"(ptr %0, ptr %1, i64 %2, i64 %3){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %4 = tail call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.(*stringReader).Seek"(ptr %1, i64 %2, i64 %3)
+// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %4
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce i64 @"__llgo_stub.{{.*}}/cl/_testgo/reader.(*stringReader).Size"(ptr %0, ptr %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %2 = tail call i64 @"{{.*}}/cl/_testgo/reader.(*stringReader).Size"(ptr %1)
+// CHECK-NEXT:   ret i64 %2
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.iface" @"__llgo_stub.{{.*}}/cl/_testgo/reader.(*stringReader).UnreadByte"(ptr %0, ptr %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %2 = tail call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.(*stringReader).UnreadByte"(ptr %1)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %2
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.iface" @"__llgo_stub.{{.*}}/cl/_testgo/reader.(*stringReader).UnreadRune"(ptr %0, ptr %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %2 = tail call %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/reader.(*stringReader).UnreadRune"(ptr %1)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %2
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"__llgo_stub.{{.*}}/cl/_testgo/reader.(*stringReader).WriteTo"(ptr %0, ptr %1, %"{{.*}}/runtime/internal/runtime.iface" %2){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %3 = tail call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.(*stringReader).WriteTo"(ptr %1, %"{{.*}}/runtime/internal/runtime.iface" %2)
+// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %3
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.String" @"__llgo_stub.{{.*}}/cl/_testgo/reader.(*errorString).Error"(ptr %0, ptr %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %2 = tail call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/cl/_testgo/reader.(*errorString).Error"(ptr %1)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %2
 // CHECK-NEXT: }

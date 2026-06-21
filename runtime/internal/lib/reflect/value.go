@@ -586,7 +586,13 @@ func (v Value) Elem() Value {
 		tt := (*ptrType)(unsafe.Pointer(v.typ()))
 		typ := tt.Elem
 		fl := v.flag&flagRO | flagIndir | flagAddr
-		fl |= flag(typ.Kind())
+		kind := typ.Kind()
+		if typ.IsClosure() {
+			kind = abi.Func
+		} else if kind == abi.Func {
+			typ = closureOf(typ.FuncType())
+		}
+		fl |= flag(kind)
 		return Value{typ, ptr, fl}
 	}
 	panic(&ValueError{"reflect.Value.Elem", v.kind()})
@@ -1623,11 +1629,11 @@ func (v Value) typeSlow() Type {
 	}
 
 	typ := v.typ()
-	// closure func
-	if v.typ_.IsClosure() {
-		return toRType(&v.closureFunc().Type)
-	}
 	if v.flag&flagMethod == 0 {
+		// closure func
+		if v.typ_.IsClosure() {
+			return toRType(&v.closureFunc().Type)
+		}
 		return toRType(v.typ())
 	}
 
@@ -1987,6 +1993,9 @@ func New(typ Type) Value {
 		panic("reflect: New(nil)")
 	}
 	t := &typ.(*rtype).t
+	if t.Kind() == abi.Func {
+		t = closureOf(t.FuncType())
+	}
 	pt := ptrTo(t)
 	if ifaceIndir(pt) {
 		// This is a pointer to a not-in-heap type.
@@ -2002,6 +2011,9 @@ func New(typ Type) Value {
 func NewAt(typ Type, p unsafe.Pointer) Value {
 	fl := flag(Pointer)
 	t := typ.(*rtype)
+	if t.Kind() == Func {
+		t = toRType(closureOf(t.t.FuncType()))
+	}
 	return Value{t.ptrTo(), p, fl}
 }
 
@@ -2263,6 +2275,13 @@ type closure struct {
 	env unsafe.Pointer
 }
 
+func toFFIWordArg(v Value) unsafe.Pointer {
+	if v.flag&flagIndir != 0 {
+		return v.ptr
+	}
+	return unsafe.Pointer(&v.ptr)
+}
+
 func toFFIArg(v Value, typ *abi.Type) unsafe.Pointer {
 	kind := typ.Kind()
 	switch kind {
@@ -2282,16 +2301,19 @@ func toFFIArg(v Value, typ *abi.Type) unsafe.Pointer {
 		}
 		return unsafe.Pointer(&v.ptr)
 	case abi.Chan:
-		return unsafe.Pointer(&v.ptr)
+		return toFFIWordArg(v)
 	case abi.Func:
+		if v.flag&flagIndir != 0 {
+			return v.ptr
+		}
 		return unsafe.Pointer(&v.ptr)
 	case abi.Interface:
 		i := v.Interface()
 		return unsafe.Pointer(&i)
 	case abi.Map:
-		return unsafe.Pointer(&v.ptr)
+		return toFFIWordArg(v)
 	case abi.Pointer:
-		return unsafe.Pointer(&v.ptr)
+		return toFFIWordArg(v)
 	case abi.Slice:
 		return v.ptr
 	case abi.String:
@@ -2302,7 +2324,7 @@ func toFFIArg(v Value, typ *abi.Type) unsafe.Pointer {
 		}
 		return unsafe.Pointer(&v.ptr)
 	case abi.UnsafePointer:
-		return unsafe.Pointer(&v.ptr)
+		return toFFIWordArg(v)
 	}
 	panic("reflect.toFFIArg unsupport type " + v.typ().String())
 }
@@ -2336,16 +2358,54 @@ func toFFIType(typ *abi.Type) *ffi.Type {
 	case abi.String:
 		return ffi.TypeString
 	case abi.Struct:
-		st := typ.StructType()
-		fields := make([]*ffi.Type, len(st.Fields))
-		for i, fs := range st.Fields {
-			fields[i] = toFFIType(fs.Typ)
-		}
-		return ffi.StructOf(fields...)
+		return toFFIStructType(typ)
 	case abi.UnsafePointer:
 		return ffi.TypePointer
 	}
 	panic("reflect.toFFIType unsupport type " + typ.String())
+}
+
+func toFFIStructType(typ *abi.Type) *ffi.Type {
+	st := typ.StructType()
+	fields := make([]*ffi.Type, 0, len(st.Fields))
+	var off uintptr
+	for _, fs := range st.Fields {
+		if fs.Offset > off {
+			fields, off = appendFFIPadding(fields, off, fs.Offset-off)
+		}
+		if fs.Typ.Size_ == 0 {
+			continue
+		}
+		fields = append(fields, toFFIType(fs.Typ))
+		off = fs.Offset + fs.Typ.Size_
+	}
+	// Do not pad to typ.Size_: trailing zero-sized fields can enlarge the
+	// Go-visible size without consuming registers in llgo's callable ABI.
+	return ffi.StructOf(fields...)
+}
+
+func appendFFIPadding(fields []*ffi.Type, off, size uintptr) ([]*ffi.Type, uintptr) {
+	for size > 0 {
+		switch {
+		case off%8 == 0 && size >= 8:
+			fields = append(fields, ffi.TypeUint64)
+			off += 8
+			size -= 8
+		case off%4 == 0 && size >= 4:
+			fields = append(fields, ffi.TypeUint32)
+			off += 4
+			size -= 4
+		case off%2 == 0 && size >= 2:
+			fields = append(fields, ffi.TypeUint16)
+			off += 2
+			size -= 2
+		default:
+			fields = append(fields, ffi.TypeUint8)
+			off++
+			size--
+		}
+	}
+	return fields, off
 }
 
 func toFFISig(tin, tout []*abi.Type) (*ffi.Signature, error) {
@@ -2372,7 +2432,7 @@ func toFFIRetType(tout []*abi.Type) *ffi.Type {
 }
 
 func (v Value) closureFunc() *abi.FuncType {
-	return v.typ_.StructType().Fields[0].Typ.FuncType()
+	return toFuncType(v.typ_.StructType())
 }
 
 func (v Value) call(op string, in []Value) (out []Value) {
@@ -2385,7 +2445,7 @@ func (v Value) call(op string, in []Value) (out []Value) {
 		ret  unsafe.Pointer
 		ioff int
 	)
-	if v.typ_.IsClosure() {
+	if v.typ_.IsClosure() && v.flag&flagMethod == 0 {
 		ft = v.typ_.StructType().Fields[0].Typ.FuncType()
 		tin = append([]*abi.Type{rtypeOf(unsafe.Pointer(nil))}, ft.In...)
 		tout = ft.Out

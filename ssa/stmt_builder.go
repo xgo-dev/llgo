@@ -228,7 +228,10 @@ func (b Builder) IfThen(cond Expr, then func()) {
 	b.If(cond, blks[0], blks[1])
 	b.SetBlockEx(blks[0], AtEnd, false)
 	then()
-	b.Jump(blks[1])
+	lastInst := b.impl.GetInsertBlock().LastInstruction()
+	if lastInst.IsNil() || lastInst.IsAUnreachableInst().IsNil() {
+		b.Jump(blks[1])
+	}
 	b.SetBlockEx(blks[1], AtEnd, false)
 	b.blk.last = blks[1].last
 }

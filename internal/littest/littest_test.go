@@ -101,20 +101,25 @@ package main
 	}
 }
 
-func TestLoadSpecReportsMalformedDirective(t *testing.T) {
+func TestCheckReportsMalformedDirective(t *testing.T) {
 	dir := t.TempDir()
-	err := os.WriteFile(filepath.Join(dir, "in.go"), []byte(`// LITTEST
+	path := filepath.Join(dir, "in.go")
+	err := os.WriteFile(path, []byte(`// LITTEST
 // CHECK: {{[invalid
 package main
 `), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = LoadSpec(dir)
-	if err == nil {
-		t.Fatal("LoadSpec succeeded unexpectedly")
+	spec, err := LoadSpec(dir)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "unterminated '{{' in pattern") {
+	err = Check(spec, "")
+	if err == nil {
+		t.Fatal("Check succeeded unexpectedly")
+	}
+	if !strings.Contains(err.Error(), "found start of regex string with no end") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -204,6 +209,11 @@ func TestHasMarker(t *testing.T) {
 }
 
 func TestCheck(t *testing.T) {
+	checkPath := filepath.Join(t.TempDir(), "check.go")
+	if err := os.WriteFile(checkPath, []byte("// CHECK: ok\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
 	cases := []struct {
 		name string
 		spec Spec
@@ -227,7 +237,7 @@ func TestCheck(t *testing.T) {
 		},
 		{
 			name: "filecheck match",
-			spec: Spec{Path: "check.go", Text: "// CHECK: ok\n", Mode: ModeFileCheck},
+			spec: Spec{Path: checkPath, Mode: ModeFileCheck},
 			text: "ok\n",
 		},
 		{

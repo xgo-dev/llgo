@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goplus/llgo/internal/lto"
 	"github.com/goplus/llgo/internal/mockable"
 	"github.com/goplus/llgo/internal/packages"
 	llssa "github.com/goplus/llgo/ssa"
@@ -361,5 +362,34 @@ func Sigsetjmp()
 	}})
 	if got, ok := prog.Linkname(llssa.PkgRuntime + ".Sigsetjmp"); !ok || got != "C.sigsetjmp" {
 		t.Fatalf("pre-collected runtime linkname = (%q,%v), want (%q,%v)", got, ok, "C.sigsetjmp", true)
+	}
+}
+
+func TestLTOEnabledDefault(t *testing.T) {
+	host := &Config{Target: ""}
+	if host.ltoEnabled() {
+		t.Fatal("expected LTO disabled by default for non-target builds")
+	}
+
+	target := &Config{Target: "rp2040"}
+	if target.ltoEnabled() {
+		t.Fatal("expected LTO disabled by default for target builds")
+	}
+}
+
+func TestLTOEnabledExplicitOverride(t *testing.T) {
+	hostOn := &Config{Target: "", LTO: lto.Thin}
+	if !hostOn.ltoEnabled() {
+		t.Fatal("expected explicit LTO=thin to enable LTO for non-target build")
+	}
+
+	hostFull := &Config{Target: "", LTO: lto.Full}
+	if !hostFull.ltoEnabled() {
+		t.Fatal("expected explicit LTO=full to enable LTO for non-target build")
+	}
+
+	targetOff := &Config{Target: "rp2040", LTO: lto.Off}
+	if targetOff.ltoEnabled() {
+		t.Fatal("expected LTO=off to disable LTO for target build")
 	}
 }

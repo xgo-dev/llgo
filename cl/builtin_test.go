@@ -93,6 +93,19 @@ func fieldIface(p *holder) {
 	}
 }
 
+func TestCompileInterfaceCompareDerefNilGuard(t *testing.T) {
+	_, m := mustCompileLLPkgFromSrc(t, `
+package foo
+
+func compareInterfacePtr(p *interface{}, q interface{}) bool {
+	return *p == q
+}
+`)
+	if ir := m.String(); !strings.Contains(ir, "AssertNilDeref") {
+		t.Fatalf("compiled IR missing AssertNilDeref for interface compare deref:\n%s", ir)
+	}
+}
+
 func TestToBackground(t *testing.T) {
 	if v := toBackground(""); v != llssa.InGo {
 		t.Fatal("toBackground:", v)

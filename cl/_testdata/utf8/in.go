@@ -11,7 +11,7 @@ import (
 // CHECK-NEXT:   %2 = icmp slt i64 %1, 0
 // CHECK-NEXT:   %3 = icmp uge i64 %1, 8
 // CHECK-NEXT:   %4 = or i1 %3, %2
-// CHECK-NEXT:   call void @"{{.*}}.AssertIndexRange"(i1 %4)
+// CHECK-NEXT:   call void @"{{.*}}.CheckIndexRange"(i1 %4, {{.*}})
 // CHECK-NEXT:   %5 = getelementptr inbounds i8, ptr @"{{.*}}.array", i64 %1
 // CHECK-NEXT:   %6 = load i8, ptr %5, align 1
 // CHECK-NEXT:   ret i8 %6
@@ -37,7 +37,7 @@ var array = [...]uint8{
 // CHECK-NEXT:   br i1 %1, label %_llgo_2, label %_llgo_3
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1
-// CHECK-NEXT:   %2 = call %"{{.*}}runtime/internal/runtime.String" @"{{.*}}runtime/internal/runtime.StringSlice"(%"{{.*}}runtime/internal/runtime.String" { ptr @0, i64 7 }, i64 %0, i64 7)
+// CHECK-NEXT:   %2 = call %"{{.*}}runtime/internal/runtime.String" @"{{.*}}runtime/internal/runtime.StringSlice2"({{.*}})
 // CHECK-NEXT:   %3 = call { i32, i64 } @"unicode/utf8.DecodeRuneInString"(%"{{.*}}runtime/internal/runtime.String" %2)
 // CHECK-NEXT:   %4 = extractvalue { i32, i64 } %3, 0
 // CHECK-NEXT:   %5 = extractvalue { i32, i64 } %3, 1

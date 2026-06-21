@@ -89,10 +89,10 @@ import "C"
 // CHECK-NEXT:   %32 = extractvalue { ptr, i64, { ptr, ptr } } %31, 0
 // CHECK-NEXT:   store ptr %32, ptr %18, align 8
 // CHECK-NEXT:   %33 = extractvalue { ptr, i64, { ptr, ptr } } %31, 2
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.FreeDeferNode"(ptr %30)
 // CHECK-NEXT:   %34 = extractvalue { ptr, ptr } %33, 1
 // CHECK-NEXT:   %35 = extractvalue { ptr, ptr } %33, 0
 // CHECK-NEXT:   call void %35(ptr %34)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.FreeDeferNode"(ptr %30)
 // CHECK-NEXT:   br label %_llgo_8
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_7, %_llgo_2

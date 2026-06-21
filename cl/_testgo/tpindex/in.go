@@ -38,7 +38,7 @@ func main() {
 // CHECK-NEXT:   %8 = icmp slt i64 %4, 0
 // CHECK-NEXT:   %9 = icmp uge i64 %4, %7
 // CHECK-NEXT:   %10 = or i1 %9, %8
-// CHECK-NEXT:   call void @"{{.*}}AssertIndexRange"(i1 %10)
+// CHECK-NEXT:   call void @"{{.*}}CheckIndexRange"(i1 %10, {{.*}})
 // CHECK-NEXT:   %11 = getelementptr inbounds i64, ptr %6, i64 %4
 // CHECK-NEXT:   %12 = load i64, ptr %11, align 8
 // CHECK-NEXT:   %13 = icmp eq i64 %1, %12
