@@ -1,6 +1,6 @@
 module github.com/goplus/llgo
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/goplus/cobra v1.9.12 //xgo:class
@@ -20,7 +20,7 @@ require (
 	golang.org/x/tools v0.38.0
 )
 
-require golang.org/x/sys v0.37.0
+require golang.org/x/sys v0.46.0
 
 require (
 	github.com/creack/goselect v0.1.2 // indirect
