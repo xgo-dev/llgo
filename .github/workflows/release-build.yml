@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v7
       - name: Check Linux sysroot cache
         id: cache-linux-sysroot
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: .sysroot/linux.tar.gz
           key: ${{ needs.setup.outputs.linux-cache-key }}
@@ -54,7 +54,7 @@ jobs:
         run: tar -czvf .sysroot/linux.tar.gz -C .sysroot linux
       - name: Save Linux sysroot cache
         if: steps.cache-linux-sysroot.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: .sysroot/linux.tar.gz
           key: ${{ needs.setup.outputs.linux-cache-key }}
