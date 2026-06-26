@@ -1,6 +1,6 @@
 module github.com/goplus/llgo
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/goplus/cobra v1.9.12 //xgo:class
@@ -16,16 +16,16 @@ require (
 	github.com/xgo-dev/plan9asm v0.3.0
 	go.bug.st/serial v1.6.4
 	go.yaml.in/yaml/v3 v3.0.4
-	golang.org/x/mod v0.29.0
-	golang.org/x/tools v0.38.0
+	golang.org/x/mod v0.37.0
+	golang.org/x/tools v0.47.0
 )
 
-require golang.org/x/sys v0.37.0
+require golang.org/x/sys v0.46.0
 
 require (
 	github.com/creack/goselect v0.1.2 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	golang.org/x/sync v0.17.0 // indirect
+	golang.org/x/sync v0.21.0 // indirect
 )
 
 replace github.com/goplus/llgo/runtime => ./runtime
