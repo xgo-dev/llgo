@@ -282,7 +282,7 @@ echo "Snapshots directory: $SNAPSHOTS_DIR"
 echo "Build temp directory: $BUILD_TEMP_DIR"
 
 # Run native tests
-run_test_suite "native" "llgo build -o $BUILD_TEMP_DIR/buildcache.out -v ." ""
+run_test_suite "native" "llgo build -o $BUILD_TEMP_DIR/buildcache.out -debug ." ""
 
 # Run WASM tests - always use iwasm from llgo cache directory
 # Determine cache directory based on platform
@@ -311,7 +311,7 @@ if [ -n "$LLGO_IWASM" ] && [ -f "$LLGO_IWASM" ]; then
     echo ""
     echo -e "${BLUE}Using iwasm: $LLGO_IWASM${NC}"
     run_test_suite "wasm" \
-        "GOOS=wasip1 GOARCH=wasm llgo build -o $BUILD_TEMP_DIR/buildcache.wasm -tags=nogc -v ." \
+        "GOOS=wasip1 GOARCH=wasm llgo build -o $BUILD_TEMP_DIR/buildcache.wasm -tags=nogc -debug ." \
         "$BUILD_TEMP_DIR/buildcache.wasm" \
         "$LLGO_IWASM --stack-size=819200000 --heap-size=800000000 $BUILD_TEMP_DIR/buildcache.wasm"
 else
@@ -327,7 +327,7 @@ fi
 echo ""
 echo -e "${BLUE}Running ESP32-C3 tests...${NC}"
 run_test_suite "esp32c3" \
-    "llgo build -target=esp32c3 -o $BUILD_TEMP_DIR/buildcache.elf -v ." \
+    "llgo build -target=esp32c3 -o $BUILD_TEMP_DIR/buildcache.elf -debug ." \
     "$BUILD_TEMP_DIR/buildcache.elf"
 
 # ===========================================================
