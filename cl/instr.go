@@ -26,7 +26,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/goplus/llgo/internal/metadata"
 	"golang.org/x/tools/go/ssa"
 
 	llssa "github.com/goplus/llgo/ssa"
@@ -101,16 +100,16 @@ func (p *context) markReflectMethodCall(call *ssa.CallCommon) {
 		return
 	}
 	mb := p.pkg.MetaBuilder
-	owner := mb.Symbol(p.fn.Name())
+	owner := mb.Sym(p.fn.Name())
 	if nameArg == nil {
-		mb.AddReflectMethod(owner)
+		mb.MarkReflect(owner)
 		return
 	}
 	if name, ok := constStr(nameArg); ok {
-		mb.AddUseNamedMethod(owner, []metadata.Name{mb.Name(name)})
+		mb.AddNamedMethodEdge(owner, name)
 		return
 	}
-	mb.AddReflectMethod(owner)
+	mb.MarkReflect(owner)
 }
 
 // func pystr(string) *py.Object

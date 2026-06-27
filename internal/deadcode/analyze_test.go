@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/goplus/llgo/internal/metadata"
+	"github.com/goplus/llgo/internal/meta"
 )
 
 func TestAnalyze(t *testing.T) {
@@ -18,26 +18,23 @@ func TestAnalyze(t *testing.T) {
 		{
 			name:  "keeps interface method implementation",
 			roots: []string{"pkg.main"},
-			summary: buildPackage(func(b *metadata.Builder) {
-				main := b.Symbol("pkg.main")
-				use := b.Symbol("pkg.use")
-				typ := b.Symbol("_llgo_pkg.T")
-				iface := b.Symbol("_llgo_iface$I")
+			summary: buildPackage(func(b *pkgBuilder) {
+				main := b.sym("pkg.main")
+				use := b.sym("pkg.use")
+				typ := b.sym("_llgo_pkg.T")
+				iface := b.sym("_llgo_iface$I")
 				mSig := methodSig(b, "M")
 				nSig := methodSig(b, "N")
 
-				b.AddIfaceEntry(iface, []metadata.MethodSig{mSig})
-				b.AddMethodInfo(typ, []metadata.MethodSlot{
+				b.addIfaceEntry(iface, []pkgSig{mSig})
+				b.addMethodInfo(typ, []pkgSlot{
 					methodSlot(b, mSig, "pkg.(*T).M", "pkg.T.M"),
 					methodSlot(b, nSig, "pkg.(*T).N", "pkg.T.N"),
 				})
-				b.AddEdge(main, use)
-				b.AddEdge(main, typ)
-				b.AddUseIface(main, []metadata.Symbol{typ})
-				b.AddUseIfaceMethod(use, []metadata.IfaceMethodDemand{{
-					Target: iface,
-					Sig:    mSig,
-				}})
+				b.addEdge(main, use)
+				b.addEdge(main, typ)
+				b.addUseIface(main, typ)
+				b.addUseIfaceMethod(use, iface, mSig)
 			}),
 			want: map[string][]int{"_llgo_pkg.T": {0}},
 		},
@@ -51,29 +48,26 @@ func TestAnalyze(t *testing.T) {
 		{
 			name:  "requires concrete type to implement whole interface",
 			roots: []string{"pkg.main"},
-			summary: buildPackage(func(b *metadata.Builder) {
-				main := b.Symbol("pkg.main")
-				useJ := b.Symbol("pkg.useJ")
-				useI := b.Symbol("pkg.useI")
-				typ := b.Symbol("_llgo_pkg.T")
-				iface := b.Symbol("_llgo_iface$I")
-				compatibleIface := b.Symbol("_llgo_iface$J")
+			summary: buildPackage(func(b *pkgBuilder) {
+				main := b.sym("pkg.main")
+				useJ := b.sym("pkg.useJ")
+				useI := b.sym("pkg.useI")
+				typ := b.sym("_llgo_pkg.T")
+				iface := b.sym("_llgo_iface$I")
+				compatibleIface := b.sym("_llgo_iface$J")
 				mSig := methodSig(b, "M")
 				nSig := methodSig(b, "N")
 
-				b.AddIfaceEntry(iface, []metadata.MethodSig{mSig, nSig})
-				b.AddIfaceEntry(compatibleIface, []metadata.MethodSig{mSig})
-				b.AddMethodInfo(typ, []metadata.MethodSlot{
+				b.addIfaceEntry(iface, []pkgSig{mSig, nSig})
+				b.addIfaceEntry(compatibleIface, []pkgSig{mSig})
+				b.addMethodInfo(typ, []pkgSlot{
 					methodSlot(b, mSig, "pkg.(*T).M", "pkg.T.M"),
 				})
-				b.AddEdge(main, useJ)
-				b.AddEdge(main, useI)
-				b.AddEdge(main, typ)
-				b.AddUseIface(main, []metadata.Symbol{typ})
-				b.AddUseIfaceMethod(useI, []metadata.IfaceMethodDemand{{
-					Target: iface,
-					Sig:    mSig,
-				}})
+				b.addEdge(main, useJ)
+				b.addEdge(main, useI)
+				b.addEdge(main, typ)
+				b.addUseIface(main, typ)
+				b.addUseIfaceMethod(useI, iface, mSig)
 			}),
 			want: map[string][]int{},
 		},
@@ -85,25 +79,22 @@ func TestAnalyze(t *testing.T) {
 		{
 			name:  "requires method type to match",
 			roots: []string{"pkg.main"},
-			summary: buildPackage(func(b *metadata.Builder) {
-				main := b.Symbol("pkg.main")
-				use := b.Symbol("pkg.use")
-				typ := b.Symbol("_llgo_pkg.T")
-				iface := b.Symbol("_llgo_iface$I")
+			summary: buildPackage(func(b *pkgBuilder) {
+				main := b.sym("pkg.main")
+				use := b.sym("pkg.use")
+				typ := b.sym("_llgo_pkg.T")
+				iface := b.sym("_llgo_iface$I")
 				ifaceMSig := methodSigWithType(b, "M", "_llgo_func$int")
-				typeMSig := methodSigWithType(b, "M", "_llgo_func$string")
+				typMSig := methodSigWithType(b, "M", "_llgo_func$string")
 
-				b.AddIfaceEntry(iface, []metadata.MethodSig{ifaceMSig})
-				b.AddMethodInfo(typ, []metadata.MethodSlot{
-					methodSlot(b, typeMSig, "pkg.(*T).M", "pkg.T.M"),
+				b.addIfaceEntry(iface, []pkgSig{ifaceMSig})
+				b.addMethodInfo(typ, []pkgSlot{
+					methodSlot(b, typMSig, "pkg.(*T).M", "pkg.T.M"),
 				})
-				b.AddEdge(main, use)
-				b.AddEdge(main, typ)
-				b.AddUseIface(main, []metadata.Symbol{typ})
-				b.AddUseIfaceMethod(use, []metadata.IfaceMethodDemand{{
-					Target: iface,
-					Sig:    ifaceMSig,
-				}})
+				b.addEdge(main, use)
+				b.addEdge(main, typ)
+				b.addUseIface(main, typ)
+				b.addUseIfaceMethod(use, iface, ifaceMSig)
 			}),
 			want: map[string][]int{},
 		},
@@ -116,26 +107,23 @@ func TestAnalyze(t *testing.T) {
 		{
 			name:  "matches demand recorded before type enters interface semantics",
 			roots: []string{"pkg.main"},
-			summary: buildPackage(func(b *metadata.Builder) {
-				main := b.Symbol("pkg.main")
-				useI := b.Symbol("pkg.useI")
-				makeIface := b.Symbol("pkg.makeIface")
-				typ := b.Symbol("_llgo_pkg.T")
-				iface := b.Symbol("_llgo_iface$I")
+			summary: buildPackage(func(b *pkgBuilder) {
+				main := b.sym("pkg.main")
+				useI := b.sym("pkg.useI")
+				makeIface := b.sym("pkg.makeIface")
+				typ := b.sym("_llgo_pkg.T")
+				iface := b.sym("_llgo_iface$I")
 				mSig := methodSig(b, "M")
 
-				b.AddIfaceEntry(iface, []metadata.MethodSig{mSig})
-				b.AddMethodInfo(typ, []metadata.MethodSlot{
+				b.addIfaceEntry(iface, []pkgSig{mSig})
+				b.addMethodInfo(typ, []pkgSlot{
 					methodSlot(b, mSig, "pkg.(*T).M", "pkg.T.M"),
 				})
-				b.AddEdge(main, useI)
-				b.AddEdge(main, makeIface)
-				b.AddEdge(makeIface, typ)
-				b.AddUseIfaceMethod(useI, []metadata.IfaceMethodDemand{{
-					Target: iface,
-					Sig:    mSig,
-				}})
-				b.AddUseIface(makeIface, []metadata.Symbol{typ})
+				b.addEdge(main, useI)
+				b.addEdge(main, makeIface)
+				b.addEdge(makeIface, typ)
+				b.addUseIfaceMethod(useI, iface, mSig)
+				b.addUseIface(makeIface, typ)
 			}),
 			want: map[string][]int{"_llgo_pkg.T": {0}},
 		},
@@ -149,30 +137,27 @@ func TestAnalyze(t *testing.T) {
 		{
 			name:  "propagates interface use through type children",
 			roots: []string{"pkg.main"},
-			summary: buildPackage(func(b *metadata.Builder) {
-				main := b.Symbol("pkg.main")
-				use := b.Symbol("pkg.use")
-				typ := b.Symbol("_llgo_pkg.T")
-				child := b.Symbol("_llgo_pkg.Child")
-				iface := b.Symbol("_llgo_iface$I")
+			summary: buildPackage(func(b *pkgBuilder) {
+				main := b.sym("pkg.main")
+				use := b.sym("pkg.use")
+				typ := b.sym("_llgo_pkg.T")
+				child := b.sym("_llgo_pkg.Child")
+				iface := b.sym("_llgo_iface$I")
 				mSig := methodSig(b, "M")
 
-				b.AddIfaceEntry(iface, []metadata.MethodSig{mSig})
-				b.AddMethodInfo(typ, []metadata.MethodSlot{
+				b.addIfaceEntry(iface, []pkgSig{mSig})
+				b.addMethodInfo(typ, []pkgSlot{
 					methodSlot(b, mSig, "pkg.(*T).M", "pkg.T.M"),
 				})
-				b.AddMethodInfo(child, []metadata.MethodSlot{
+				b.addMethodInfo(child, []pkgSlot{
 					methodSlot(b, mSig, "pkg.(*Child).M", "pkg.Child.M"),
 				})
-				b.AddTypeChild(typ, child)
-				b.AddEdge(main, use)
-				b.AddEdge(main, typ)
-				b.AddEdge(typ, child)
-				b.AddUseIface(main, []metadata.Symbol{typ})
-				b.AddUseIfaceMethod(use, []metadata.IfaceMethodDemand{{
-					Target: iface,
-					Sig:    mSig,
-				}})
+				b.b.AddTypeChild(typ, child)
+				b.addEdge(main, use)
+				b.addEdge(main, typ)
+				b.addEdge(typ, child)
+				b.addUseIface(main, typ)
+				b.addUseIfaceMethod(use, iface, mSig)
 			}),
 			want: map[string][]int{
 				"_llgo_pkg.Child": {0},
@@ -188,32 +173,29 @@ func TestAnalyze(t *testing.T) {
 		{
 			name:  "value type entering interface semantics keeps pointer method implementation",
 			roots: []string{"pkg.main"},
-			summary: buildPackage(func(b *metadata.Builder) {
-				main := b.Symbol("pkg.main")
-				unmarshal := b.Symbol("pkg.unmarshal")
-				containerPtr := b.Symbol("*_llgo_pkg.Container")
-				container := b.Symbol("_llgo_pkg.Container")
-				raw := b.Symbol("_llgo_pkg.RawMessage")
-				rawPtr := b.Symbol("*_llgo_pkg.RawMessage")
-				iface := b.Symbol("_llgo_pkg.Unmarshaler")
+			summary: buildPackage(func(b *pkgBuilder) {
+				main := b.sym("pkg.main")
+				unmarshal := b.sym("pkg.unmarshal")
+				containerPtr := b.sym("*_llgo_pkg.Container")
+				container := b.sym("_llgo_pkg.Container")
+				raw := b.sym("_llgo_pkg.RawMessage")
+				rawPtr := b.sym("*_llgo_pkg.RawMessage")
+				iface := b.sym("_llgo_pkg.Unmarshaler")
 				unmarshalSig := methodSigWithType(b, "UnmarshalJSON", "_llgo_func$bytes_error")
 
-				b.AddIfaceEntry(iface, []metadata.MethodSig{unmarshalSig})
-				b.AddMethodInfo(rawPtr, []metadata.MethodSlot{
+				b.addIfaceEntry(iface, []pkgSig{unmarshalSig})
+				b.addMethodInfo(rawPtr, []pkgSlot{
 					methodSlot(b, unmarshalSig, "pkg.(*RawMessage).UnmarshalJSON", "pkg.(*RawMessage).UnmarshalJSON"),
 				})
-				b.AddTypeChild(containerPtr, container)
-				b.AddTypeChild(container, raw)
-				b.AddEdge(main, unmarshal)
-				b.AddEdge(main, containerPtr)
-				b.AddEdge(containerPtr, container)
-				b.AddEdge(container, raw)
-				b.AddEdge(raw, rawPtr)
-				b.AddUseIface(main, []metadata.Symbol{containerPtr})
-				b.AddUseIfaceMethod(unmarshal, []metadata.IfaceMethodDemand{{
-					Target: iface,
-					Sig:    unmarshalSig,
-				}})
+				b.b.AddTypeChild(containerPtr, container)
+				b.b.AddTypeChild(container, raw)
+				b.addEdge(main, unmarshal)
+				b.addEdge(main, containerPtr)
+				b.addEdge(containerPtr, container)
+				b.addEdge(container, raw)
+				b.addEdge(raw, rawPtr)
+				b.addUseIface(main, containerPtr)
+				b.addUseIfaceMethod(unmarshal, iface, unmarshalSig)
 			}),
 			want: map[string][]int{"*_llgo_pkg.RawMessage": {0}},
 		},
@@ -225,21 +207,21 @@ func TestAnalyze(t *testing.T) {
 		{
 			name:  "constant MethodByName keeps same-name method",
 			roots: []string{"pkg.main"},
-			summary: buildPackage(func(b *metadata.Builder) {
-				main := b.Symbol("pkg.main")
-				use := b.Symbol("pkg.use")
-				typ := b.Symbol("_llgo_pkg.T")
+			summary: buildPackage(func(b *pkgBuilder) {
+				main := b.sym("pkg.main")
+				use := b.sym("pkg.use")
+				typ := b.sym("_llgo_pkg.T")
 				mSig := methodSig(b, "M")
 				nSig := methodSig(b, "N")
 
-				b.AddMethodInfo(typ, []metadata.MethodSlot{
+				b.addMethodInfo(typ, []pkgSlot{
 					methodSlot(b, mSig, "pkg.(*T).M", "pkg.T.M"),
 					methodSlot(b, nSig, "pkg.(*T).N", "pkg.T.N"),
 				})
-				b.AddEdge(main, use)
-				b.AddEdge(main, typ)
-				b.AddUseIface(main, []metadata.Symbol{typ})
-				b.AddUseNamedMethod(use, []metadata.Name{mSig.Name})
+				b.addEdge(main, use)
+				b.addEdge(main, typ)
+				b.addUseIface(main, typ)
+				b.b.AddNamedMethodEdge(use, mSig.name)
 			}),
 			want: map[string][]int{"_llgo_pkg.T": {0}},
 		},
@@ -252,23 +234,23 @@ func TestAnalyze(t *testing.T) {
 		{
 			name:  "reflection keeps exported methods only",
 			roots: []string{"pkg.main"},
-			summary: buildPackage(func(b *metadata.Builder) {
-				main := b.Symbol("pkg.main")
-				use := b.Symbol("pkg.use")
-				typ := b.Symbol("_llgo_pkg.T")
+			summary: buildPackage(func(b *pkgBuilder) {
+				main := b.sym("pkg.main")
+				use := b.sym("pkg.use")
+				typ := b.sym("_llgo_pkg.T")
 				mSig := methodSig(b, "M")
 				nSig := methodSig(b, "N")
 				unexportedSig := methodSig(b, "m")
 
-				b.AddMethodInfo(typ, []metadata.MethodSlot{
+				b.addMethodInfo(typ, []pkgSlot{
 					methodSlot(b, mSig, "pkg.(*T).M", "pkg.T.M"),
 					methodSlot(b, nSig, "pkg.(*T).N", "pkg.T.N"),
 					methodSlot(b, unexportedSig, "pkg.(*T).m", "pkg.T.m"),
 				})
-				b.AddEdge(main, use)
-				b.AddEdge(main, typ)
-				b.AddUseIface(main, []metadata.Symbol{typ})
-				b.AddReflectMethod(use)
+				b.addEdge(main, use)
+				b.addEdge(main, typ)
+				b.addUseIface(main, typ)
+				b.b.MarkReflect(use)
 			}),
 			want: map[string][]int{"_llgo_pkg.T": {0, 1}},
 		},
@@ -285,41 +267,35 @@ func TestAnalyze(t *testing.T) {
 		{
 			name:  "live method body can introduce new interface demands",
 			roots: []string{"pkg.main"},
-			summary: buildPackage(func(b *metadata.Builder) {
-				main := b.Symbol("pkg.main")
-				useT := b.Symbol("pkg.useT")
-				callU := b.Symbol("pkg.callU")
-				useU := b.Symbol("pkg.useU")
-				typT := b.Symbol("_llgo_pkg.T")
-				typU := b.Symbol("_llgo_pkg.U")
-				ifaceI := b.Symbol("_llgo_iface$I")
-				ifaceJ := b.Symbol("_llgo_iface$J")
+			summary: buildPackage(func(b *pkgBuilder) {
+				main := b.sym("pkg.main")
+				useT := b.sym("pkg.useT")
+				callU := b.sym("pkg.callU")
+				useU := b.sym("pkg.useU")
+				typT := b.sym("_llgo_pkg.T")
+				typU := b.sym("_llgo_pkg.U")
+				ifaceI := b.sym("_llgo_iface$I")
+				ifaceJ := b.sym("_llgo_iface$J")
 				mSig := methodSig(b, "M")
 				nSig := methodSig(b, "N")
 
-				b.AddIfaceEntry(ifaceI, []metadata.MethodSig{mSig})
-				b.AddIfaceEntry(ifaceJ, []metadata.MethodSig{nSig})
-				b.AddMethodInfo(typT, []metadata.MethodSlot{
+				b.addIfaceEntry(ifaceI, []pkgSig{mSig})
+				b.addIfaceEntry(ifaceJ, []pkgSig{nSig})
+				b.addMethodInfo(typT, []pkgSlot{
 					methodSlot(b, mSig, "pkg.(*T).M", "pkg.T.M"),
 				})
-				b.AddMethodInfo(typU, []metadata.MethodSlot{
+				b.addMethodInfo(typU, []pkgSlot{
 					methodSlot(b, nSig, "pkg.(*U).N", "pkg.U.N"),
 				})
-				b.AddEdge(main, useT)
-				b.AddEdge(main, typT)
-				b.AddUseIface(main, []metadata.Symbol{typT})
-				b.AddUseIfaceMethod(useT, []metadata.IfaceMethodDemand{{
-					Target: ifaceI,
-					Sig:    mSig,
-				}})
-				b.AddEdge(b.Symbol("pkg.T.M"), callU)
-				b.AddEdge(callU, useU)
-				b.AddEdge(callU, typU)
-				b.AddUseIface(callU, []metadata.Symbol{typU})
-				b.AddUseIfaceMethod(useU, []metadata.IfaceMethodDemand{{
-					Target: ifaceJ,
-					Sig:    nSig,
-				}})
+				b.addEdge(main, useT)
+				b.addEdge(main, typT)
+				b.addUseIface(main, typT)
+				b.addUseIfaceMethod(useT, ifaceI, mSig)
+				b.addEdge(b.sym("pkg.T.M"), callU)
+				b.addEdge(callU, useU)
+				b.addEdge(callU, typU)
+				b.addUseIface(callU, typU)
+				b.addUseIfaceMethod(useU, ifaceJ, nSig)
 			}),
 			want: map[string][]int{
 				"_llgo_pkg.T": {0},
@@ -335,26 +311,23 @@ func TestAnalyze(t *testing.T) {
 		{
 			name:  "interface demand and conversion from different reachable functions meet",
 			roots: []string{"pkg.main"},
-			summary: buildPackage(func(b *metadata.Builder) {
-				main := b.Symbol("pkg.main")
-				init := b.Symbol("pkg.init")
-				toType := b.Symbol("pkg.toType")
-				typ := b.Symbol("_llgo_pkg.rtype")
-				iface := b.Symbol("_llgo_pkg.Type")
+			summary: buildPackage(func(b *pkgBuilder) {
+				main := b.sym("pkg.main")
+				init := b.sym("pkg.init")
+				toType := b.sym("pkg.toType")
+				typ := b.sym("_llgo_pkg.rtype")
+				iface := b.sym("_llgo_pkg.Type")
 				elemSig := methodSig(b, "Elem")
 
-				b.AddIfaceEntry(iface, []metadata.MethodSig{elemSig})
-				b.AddMethodInfo(typ, []metadata.MethodSlot{
+				b.addIfaceEntry(iface, []pkgSig{elemSig})
+				b.addMethodInfo(typ, []pkgSlot{
 					methodSlot(b, elemSig, "pkg.(*rtype).Elem", "pkg.rtype.Elem"),
 				})
-				b.AddEdge(main, init)
-				b.AddEdge(main, toType)
-				b.AddEdge(toType, typ)
-				b.AddUseIface(toType, []metadata.Symbol{typ})
-				b.AddUseIfaceMethod(init, []metadata.IfaceMethodDemand{{
-					Target: iface,
-					Sig:    elemSig,
-				}})
+				b.addEdge(main, init)
+				b.addEdge(main, toType)
+				b.addEdge(toType, typ)
+				b.addUseIface(toType, typ)
+				b.addUseIfaceMethod(init, iface, elemSig)
 			}),
 			want: map[string][]int{"_llgo_pkg.rtype": {0}},
 		},
@@ -365,37 +338,29 @@ func TestAnalyze(t *testing.T) {
 		// func main() { init(); toType() }
 		// func init() { reflectType.Elem() }
 		// func toType() Type { return rtype{} }
-		//
-		// Some patched packages may report the same interface symbol with an
-		// alternate signature for one method name. That must not make the
-		// interface look larger than it is when checking whether rtype implements
-		// Type.
 		{
 			name:  "duplicate interface method names do not inflate interface size",
 			roots: []string{"pkg.main"},
-			summary: buildPackage(func(b *metadata.Builder) {
-				main := b.Symbol("pkg.main")
-				init := b.Symbol("pkg.init")
-				toType := b.Symbol("pkg.toType")
-				typ := b.Symbol("_llgo_pkg.rtype")
-				iface := b.Symbol("_llgo_pkg.Type")
+			summary: buildPackage(func(b *pkgBuilder) {
+				main := b.sym("pkg.main")
+				init := b.sym("pkg.init")
+				toType := b.sym("pkg.toType")
+				typ := b.sym("_llgo_pkg.rtype")
+				iface := b.sym("_llgo_pkg.Type")
 				elemSig := methodSig(b, "Elem")
 				kindSig := methodSigWithType(b, "Kind", "_llgo_func$kind")
 				altKindSig := methodSigWithType(b, "Kind", "_llgo_func$altKind")
 
-				b.AddIfaceEntry(iface, []metadata.MethodSig{elemSig, kindSig, altKindSig})
-				b.AddMethodInfo(typ, []metadata.MethodSlot{
+				b.addIfaceEntry(iface, []pkgSig{elemSig, kindSig, altKindSig})
+				b.addMethodInfo(typ, []pkgSlot{
 					methodSlot(b, elemSig, "pkg.(*rtype).Elem", "pkg.rtype.Elem"),
 					methodSlot(b, kindSig, "pkg.(*rtype).Kind", "pkg.rtype.Kind"),
 				})
-				b.AddEdge(main, init)
-				b.AddEdge(main, toType)
-				b.AddEdge(toType, typ)
-				b.AddUseIface(toType, []metadata.Symbol{typ})
-				b.AddUseIfaceMethod(init, []metadata.IfaceMethodDemand{{
-					Target: iface,
-					Sig:    elemSig,
-				}})
+				b.addEdge(main, init)
+				b.addEdge(main, toType)
+				b.addEdge(toType, typ)
+				b.addUseIface(toType, typ)
+				b.addUseIfaceMethod(init, iface, elemSig)
 			}),
 			want: map[string][]int{"_llgo_pkg.rtype": {0}},
 		},
@@ -407,25 +372,22 @@ func TestAnalyze(t *testing.T) {
 		{
 			name:  "ignores unreachable semantic facts",
 			roots: []string{"pkg.main"},
-			summary: buildPackage(func(b *metadata.Builder) {
-				main := b.Symbol("pkg.main")
-				unreachable := b.Symbol("pkg.unreachable")
-				typ := b.Symbol("_llgo_pkg.T")
-				iface := b.Symbol("_llgo_iface$I")
+			summary: buildPackage(func(b *pkgBuilder) {
+				main := b.sym("pkg.main")
+				unreachable := b.sym("pkg.unreachable")
+				typ := b.sym("_llgo_pkg.T")
+				iface := b.sym("_llgo_iface$I")
 				mSig := methodSig(b, "M")
 
-				b.AddIfaceEntry(iface, []metadata.MethodSig{mSig})
-				b.AddMethodInfo(typ, []metadata.MethodSlot{
+				b.addIfaceEntry(iface, []pkgSig{mSig})
+				b.addMethodInfo(typ, []pkgSlot{
 					methodSlot(b, mSig, "pkg.(*T).M", "pkg.T.M"),
 				})
-				b.AddEdge(main, typ)
-				b.AddUseIface(unreachable, []metadata.Symbol{typ})
-				b.AddUseIfaceMethod(unreachable, []metadata.IfaceMethodDemand{{
-					Target: iface,
-					Sig:    mSig,
-				}})
-				b.AddUseNamedMethod(unreachable, []metadata.Name{mSig.Name})
-				b.AddReflectMethod(unreachable)
+				b.addEdge(main, typ)
+				b.addUseIface(unreachable, typ)
+				b.addUseIfaceMethod(unreachable, iface, mSig)
+				b.b.AddNamedMethodEdge(unreachable, mSig.name)
+				b.b.MarkReflect(unreachable)
 			}),
 			want: map[string][]int{},
 		},
@@ -441,41 +403,101 @@ func TestAnalyze(t *testing.T) {
 	}
 }
 
+// ── test builder helpers ──────────────────────────────────────────────────────
+
+type pkgSig struct {
+	name  string
+	mtype meta.LocalSymbol
+}
+
+type pkgSlot struct {
+	sig pkgSig
+	ifn meta.LocalSymbol
+	tfn meta.LocalSymbol
+}
+
+// pkgBuilder wraps meta.Builder and tracks iface method order so that
+// addUseIfaceMethod can look up the sig index required by EdgeUseIfaceMethod.
+type pkgBuilder struct {
+	b          *meta.Builder
+	ifaceOrder map[meta.LocalSymbol][]pkgSig
+}
+
+func newPkgBuilder() *pkgBuilder {
+	return &pkgBuilder{
+		b:          meta.NewBuilder(),
+		ifaceOrder: make(map[meta.LocalSymbol][]pkgSig),
+	}
+}
+
+func (p *pkgBuilder) sym(name string) meta.LocalSymbol { return p.b.Sym(name) }
+
+func (p *pkgBuilder) addEdge(src, dst meta.LocalSymbol) {
+	p.b.AddEdge(src, dst, meta.EdgeOrdinary, 0)
+}
+
+func (p *pkgBuilder) addUseIface(fn, typ meta.LocalSymbol) {
+	p.b.AddEdge(fn, typ, meta.EdgeUseIface, 0)
+}
+
+// addUseIfaceMethod records a demand for iface.sig from fn. The sig index is
+// determined by the order in which sigs were registered via addIfaceEntry.
+func (p *pkgBuilder) addUseIfaceMethod(fn, iface meta.LocalSymbol, sig pkgSig) {
+	sigs := p.ifaceOrder[iface]
+	for i, s := range sigs {
+		if s.name == sig.name && s.mtype == sig.mtype {
+			p.b.AddEdge(fn, iface, meta.EdgeUseIfaceMethod, uint32(i))
+			return
+		}
+	}
+	panic("addUseIfaceMethod: sig not found in iface — call addIfaceEntry first")
+}
+
+func (p *pkgBuilder) addIfaceEntry(iface meta.LocalSymbol, sigs []pkgSig) {
+	p.ifaceOrder[iface] = sigs
+	for _, sig := range sigs {
+		p.b.AddIfaceMethod(iface, sig.name, sig.mtype)
+	}
+}
+
+func (p *pkgBuilder) addMethodInfo(typ meta.LocalSymbol, slots []pkgSlot) {
+	for _, slot := range slots {
+		p.b.AddMethodSlot(typ, slot.sig.name, slot.sig.mtype, slot.ifn, slot.tfn)
+	}
+}
+
+func methodSig(b *pkgBuilder, name string) pkgSig {
+	return methodSigWithType(b, name, "_llgo_func$X")
+}
+
+func methodSigWithType(b *pkgBuilder, name, mtype string) pkgSig {
+	return pkgSig{name: name, mtype: b.sym(mtype)}
+}
+
+func methodSlot(b *pkgBuilder, sig pkgSig, ifn, tfn string) pkgSlot {
+	return pkgSlot{sig: sig, ifn: b.sym(ifn), tfn: b.sym(tfn)}
+}
+
 type deadcodeCase struct {
 	name    string
-	summary *metadata.PackageMeta
+	summary *meta.PackageMeta
 	roots   []string
 	want    map[string][]int
 }
 
-func buildPackage(fn func(*metadata.Builder)) *metadata.PackageMeta {
-	b := metadata.NewBuilder()
+func buildPackage(fn func(*pkgBuilder)) *meta.PackageMeta {
+	b := newPkgBuilder()
 	fn(b)
-	return b.Build()
-}
-
-func methodSig(b *metadata.Builder, name string) metadata.MethodSig {
-	return methodSigWithType(b, name, "_llgo_func$X")
-}
-
-func methodSigWithType(b *metadata.Builder, name, mtype string) metadata.MethodSig {
-	return metadata.MethodSig{
-		Name:  b.Name(name),
-		MType: b.Symbol(mtype),
+	pm, err := b.b.Build()
+	if err != nil {
+		panic("buildPackage: " + err.Error())
 	}
+	return pm
 }
 
-func methodSlot(b *metadata.Builder, sig metadata.MethodSig, ifn, tfn string) metadata.MethodSlot {
-	return metadata.MethodSlot{
-		Sig: sig,
-		IFn: b.Symbol(ifn),
-		TFn: b.Symbol(tfn),
-	}
-}
-
-func newSummary(t *testing.T, pkgs ...*metadata.PackageMeta) *metadata.GlobalSummary {
+func newSummary(t *testing.T, pkgs ...*meta.PackageMeta) *meta.GlobalSummary {
 	t.Helper()
-	summary, err := metadata.NewGlobalSummary(pkgs)
+	summary, err := meta.NewGlobalSummary(pkgs)
 	if err != nil {
 		t.Fatalf("NewGlobalSummary: %v", err)
 	}

@@ -27,7 +27,7 @@ import (
 	"testing"
 
 	"github.com/goplus/llgo/internal/crosscompile"
-	"github.com/goplus/llgo/internal/metadata"
+	"github.com/goplus/llgo/internal/meta"
 	"github.com/goplus/llgo/internal/packages"
 	gopackages "golang.org/x/tools/go/packages"
 )
@@ -410,7 +410,7 @@ func TestTryLoadFromCache_ForceRebuild(t *testing.T) {
 			m.pkg.PkgPath = "example.com/cached"
 			return m.Build()
 		}(),
-		Meta: metadata.NewBuilder().Build(),
+		Meta: func() *meta.PackageMeta { pm, _ := meta.NewBuilder().Build(); return pm }(),
 	}
 
 	// Create a temporary .o file
@@ -535,7 +535,7 @@ func TestSaveToCache_Success(t *testing.T) {
 			return m.Build()
 		}(),
 		ObjFiles: []string{objFile.Name()},
-		Meta:     metadata.NewBuilder().Build(),
+		Meta: func() *meta.PackageMeta { pm, _ := meta.NewBuilder().Build(); return pm }(),
 	}
 
 	if err := ctx.saveToCache(pkg); err != nil {
@@ -572,7 +572,7 @@ func TestSaveToCache_Success(t *testing.T) {
 		t.Errorf("meta should exist: %v", err)
 	} else {
 		defer metaFile.Close()
-		if _, err := metadata.ReadMeta(metaFile); err != nil {
+		if _, err := meta.ReadMeta(metaFile.Name()); err != nil {
 			t.Errorf("meta should be readable: %v", err)
 		}
 	}
@@ -602,10 +602,10 @@ func TestTryLoadFromCache_LoadsPackageMeta(t *testing.T) {
 	objFile.WriteString("fake object file")
 	objFile.Close()
 
-	builder := metadata.NewBuilder()
-	main := builder.Symbol("pkg.main")
-	helper := builder.Symbol("pkg.helper")
-	builder.AddEdge(main, helper)
+	builder := meta.NewBuilder()
+	main := builder.Sym("pkg.main")
+	helper := builder.Sym("pkg.helper")
+	builder.AddEdge(main, helper, meta.EdgeOrdinary, 0)
 
 	pkg := &aPackage{
 		Package: &packages.Package{
@@ -620,8 +620,8 @@ func TestTryLoadFromCache_LoadsPackageMeta(t *testing.T) {
 			return m.Build()
 		}(),
 		ObjFiles: []string{objFile.Name()},
-		Meta:     builder.Build(),
 	}
+	pkg.Meta, _ = builder.Build()
 
 	if err := ctx.saveToCache(pkg); err != nil {
 		t.Fatalf("saveToCache: %v", err)
@@ -638,12 +638,19 @@ func TestTryLoadFromCache_LoadsPackageMeta(t *testing.T) {
 	if pkg.Meta == nil {
 		t.Fatal("Meta was not loaded from cache")
 	}
-	var edges []metadata.Symbol
-	pkg.Meta.ForEachOrdinaryEdge(func(src metadata.Symbol, dsts []metadata.Symbol) {
-		if pkg.Meta.SymbolName(src) == "pkg.main" {
-			edges = append(edges, dsts...)
+	var mainSym meta.LocalSymbol
+	for i := meta.LocalSymbol(0); i < meta.LocalSymbol(pkg.Meta.NSyms()); i++ {
+		if pkg.Meta.SymbolName(i) == "pkg.main" {
+			mainSym = i
+			break
 		}
-	})
+	}
+	var edges []meta.LocalSymbol
+	for _, e := range pkg.Meta.Edges(mainSym) {
+		if e.Kind == meta.EdgeOrdinary {
+			edges = append(edges, meta.LocalSymbol(e.Target))
+		}
+	}
 	if len(edges) != 1 || pkg.Meta.SymbolName(edges[0]) != "pkg.helper" {
 		t.Fatalf("cached metadata edge mismatch: %#v", edges)
 	}

@@ -25,7 +25,7 @@ import (
 	"strings"
 
 	"github.com/goplus/llgo/internal/env"
-	"github.com/goplus/llgo/internal/metadata"
+	"github.com/goplus/llgo/internal/meta"
 )
 
 const (
@@ -179,7 +179,7 @@ func readManifest(path string) (string, error) {
 }
 
 // writeMeta writes package summary metadata to a file atomically.
-func writeMeta(path string, meta *metadata.PackageMeta) error {
+func writeMeta(path string, pm *meta.PackageMeta) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create meta dir: %w", err)
 	}
@@ -196,7 +196,7 @@ func writeMeta(path string, meta *metadata.PackageMeta) error {
 		}
 	}()
 
-	if err := meta.WriteMeta(tmp); err != nil {
+	if _, err := tmp.Write(pm.Bytes()); err != nil {
 		return fmt.Errorf("write meta: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
@@ -211,13 +211,8 @@ func writeMeta(path string, meta *metadata.PackageMeta) error {
 }
 
 // readMeta reads package summary metadata from a file.
-func readMeta(path string) (*metadata.PackageMeta, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	return metadata.ReadMeta(file)
+func readMeta(path string) (*meta.PackageMeta, error) {
+	return meta.ReadMeta(path)
 }
 
 // cacheExists checks if a valid cache entry exists

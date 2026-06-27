@@ -4,53 +4,53 @@ import (
 	"go/token"
 	"sort"
 
-	"github.com/goplus/llgo/internal/metadata"
+	"github.com/goplus/llgo/internal/meta"
 )
 
 type ifaceMethodKey struct {
-	iface metadata.Symbol
-	sig   metadata.MethodSig
+	iface meta.Symbol
+	sig   meta.GMethodSig
 }
 
 type ifaceMethodName struct {
-	iface metadata.Symbol
-	name  metadata.Name
+	iface meta.Symbol
+	name  meta.Name
 }
 
 type methodID struct {
-	owner metadata.Symbol
+	owner meta.Symbol
 	slot  int
 }
 
 type methodRef struct {
-	owner    metadata.Symbol
+	owner    meta.Symbol
 	slot     int
-	slotInfo metadata.MethodSlot
+	slotInfo meta.GMethodSlot
 }
 
 type pass struct {
-	info *metadata.GlobalSummary
+	info *meta.GlobalSummary
 
 	methodImplKeys map[methodID][]ifaceMethodKey
-	typeSymbols    map[metadata.Symbol]struct{}
+	typeSymbols    map[meta.Symbol]struct{}
 
-	reachable        map[metadata.Symbol]struct{}
-	usedInIface      map[metadata.Symbol]struct{}
-	processedIfaceTy map[metadata.Symbol]struct{}
-	workQueue        []metadata.Symbol
+	reachable        map[meta.Symbol]struct{}
+	usedInIface      map[meta.Symbol]struct{}
+	processedIfaceTy map[meta.Symbol]struct{}
+	workQueue        []meta.Symbol
 
 	ifaceMethod        map[ifaceMethodKey]struct{}
-	genericIfaceMethod map[metadata.Name]struct{}
+	genericIfaceMethod map[meta.Name]struct{}
 	reflectSeen        bool
 
 	markableMethods []methodRef
 	markedMethods   map[methodID]struct{}
-	liveSlots       map[metadata.Symbol][]int
+	liveSlots       map[meta.Symbol][]int
 }
 
 // Analyze returns live ABI method slot indexes by concrete type symbol name.
-func Analyze(info *metadata.GlobalSummary, rootNames []string) map[string][]int {
-	roots := make([]metadata.Symbol, 0, len(rootNames))
+func Analyze(info *meta.GlobalSummary, rootNames []string) map[string][]int {
+	roots := make([]meta.Symbol, 0, len(rootNames))
 	for _, name := range rootNames {
 		if sym, ok := info.LookupSymbol(name); ok {
 			roots = append(roots, sym)
@@ -68,18 +68,18 @@ func Analyze(info *metadata.GlobalSummary, rootNames []string) map[string][]int 
 	return out
 }
 
-func deadcode(info *metadata.GlobalSummary, roots []metadata.Symbol) map[metadata.Symbol][]int {
+func deadcode(info *meta.GlobalSummary, roots []meta.Symbol) map[meta.Symbol][]int {
 	d := &pass{
 		info:               info,
 		methodImplKeys:     make(map[methodID][]ifaceMethodKey),
-		typeSymbols:        make(map[metadata.Symbol]struct{}),
-		reachable:          make(map[metadata.Symbol]struct{}),
-		usedInIface:        make(map[metadata.Symbol]struct{}),
-		processedIfaceTy:   make(map[metadata.Symbol]struct{}),
+		typeSymbols:        make(map[meta.Symbol]struct{}),
+		reachable:          make(map[meta.Symbol]struct{}),
+		usedInIface:        make(map[meta.Symbol]struct{}),
+		processedIfaceTy:   make(map[meta.Symbol]struct{}),
 		ifaceMethod:        make(map[ifaceMethodKey]struct{}),
-		genericIfaceMethod: make(map[metadata.Name]struct{}),
+		genericIfaceMethod: make(map[meta.Name]struct{}),
 		markedMethods:      make(map[methodID]struct{}),
-		liveSlots:          make(map[metadata.Symbol][]int),
+		liveSlots:          make(map[meta.Symbol][]int),
 	}
 	d.buildMethodImplKeys()
 
@@ -97,11 +97,11 @@ func deadcode(info *metadata.GlobalSummary, roots []metadata.Symbol) map[metadat
 }
 
 func (d *pass) buildMethodImplKeys() {
-	methodRefs := make(map[metadata.MethodSig][]metadata.Symbol)
-	ifaceMethodCounts := make(map[metadata.Symbol]int)
+	methodRefs := make(map[meta.GMethodSig][]meta.Symbol)
+	ifaceMethodCounts := make(map[meta.Symbol]int)
 	for _, iface := range d.info.Interfaces() {
 		d.typeSymbols[iface] = struct{}{}
-		seenNames := make(map[metadata.Name]struct{})
+		seenNames := make(map[meta.Name]struct{})
 		for _, sig := range d.info.InterfaceMethods(iface) {
 			methodRefs[sig] = appendSymbolUnique(methodRefs[sig], iface)
 			if _, ok := seenNames[sig.Name]; ok {
@@ -115,12 +115,13 @@ func (d *pass) buildMethodImplKeys() {
 	for _, typ := range d.info.ConcreteTypes() {
 		d.typeSymbols[typ] = struct{}{}
 		slots := d.info.MethodSlots(typ)
-		impls := make(map[metadata.Symbol]int)
+		impls := make(map[meta.Symbol]int)
 		seen := make(map[ifaceMethodName]struct{})
 
 		for _, slot := range slots {
-			for _, iface := range methodRefs[slot.Sig] {
-				key := ifaceMethodName{iface: iface, name: slot.Sig.Name}
+			sig := meta.GMethodSig{Name: slot.Name, MType: slot.MType}
+			for _, iface := range methodRefs[sig] {
+				key := ifaceMethodName{iface: iface, name: slot.Name}
 				if _, ok := seen[key]; ok {
 					continue
 				}
@@ -131,9 +132,10 @@ func (d *pass) buildMethodImplKeys() {
 
 		for slotIndex, slot := range slots {
 			id := methodID{owner: typ, slot: slotIndex}
-			for _, iface := range methodRefs[slot.Sig] {
+			sig := meta.GMethodSig{Name: slot.Name, MType: slot.MType}
+			for _, iface := range methodRefs[sig] {
 				if impls[iface] == ifaceMethodCounts[iface] {
-					key := ifaceMethodKey{iface: iface, sig: slot.Sig}
+					key := ifaceMethodKey{iface: iface, sig: sig}
 					d.methodImplKeys[id] = append(d.methodImplKeys[id], key)
 				}
 			}
@@ -204,11 +206,11 @@ func (d *pass) methodMarkingLoop() bool {
 }
 
 func (d *pass) shouldKeep(method methodRef) bool {
-	if d.reflectSeen && token.IsExported(d.info.Name(method.slotInfo.Sig.Name)) {
+	if d.reflectSeen && token.IsExported(d.info.Name(method.slotInfo.Name)) {
 		return true
 	}
 
-	if _, ok := d.genericIfaceMethod[method.slotInfo.Sig.Name]; ok {
+	if _, ok := d.genericIfaceMethod[method.slotInfo.Name]; ok {
 		return true
 	}
 
@@ -229,13 +231,13 @@ func (d *pass) markMethod(method methodRef) bool {
 	d.markedMethods[id] = struct{}{}
 	d.liveSlots[method.owner] = append(d.liveSlots[method.owner], method.slot)
 
-	d.markReachable(method.slotInfo.Sig.MType)
+	d.markReachable(method.slotInfo.MType)
 	d.markReachable(method.slotInfo.IFn)
 	d.markReachable(method.slotInfo.TFn)
 	return true
 }
 
-func (d *pass) markReachable(sym metadata.Symbol) {
+func (d *pass) markReachable(sym meta.Symbol) {
 	if _, ok := d.reachable[sym]; ok {
 		return
 	}
@@ -243,7 +245,7 @@ func (d *pass) markReachable(sym metadata.Symbol) {
 	d.workQueue = append(d.workQueue, sym)
 }
 
-func (d *pass) markUsedInIface(typ metadata.Symbol) {
+func (d *pass) markUsedInIface(typ meta.Symbol) {
 	if _, ok := d.usedInIface[typ]; ok {
 		return
 	}
@@ -256,21 +258,21 @@ func (d *pass) markUsedInIface(typ metadata.Symbol) {
 	}
 }
 
-func (d *pass) markTypeUsedInIface(sym metadata.Symbol) {
+func (d *pass) markTypeUsedInIface(sym meta.Symbol) {
 	if _, ok := d.typeSymbols[sym]; !ok {
 		return
 	}
 	d.markUsedInIface(sym)
 }
 
-func (d *pass) popWork() metadata.Symbol {
+func (d *pass) popWork() meta.Symbol {
 	sym := d.workQueue[0]
 	copy(d.workQueue, d.workQueue[1:])
 	d.workQueue = d.workQueue[:len(d.workQueue)-1]
 	return sym
 }
 
-func appendSymbolUnique(items []metadata.Symbol, item metadata.Symbol) []metadata.Symbol {
+func appendSymbolUnique(items []meta.Symbol, item meta.Symbol) []meta.Symbol {
 	for _, existing := range items {
 		if existing == item {
 			return items
@@ -278,3 +280,4 @@ func appendSymbolUnique(items []metadata.Symbol, item metadata.Symbol) []metadat
 	}
 	return append(items, item)
 }
+

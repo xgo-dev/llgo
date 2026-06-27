@@ -34,6 +34,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/tools/go/ssa"
 
@@ -49,7 +50,7 @@ import (
 	"github.com/goplus/llgo/internal/goembed"
 	"github.com/goplus/llgo/internal/header"
 	"github.com/goplus/llgo/internal/lto"
-	"github.com/goplus/llgo/internal/metadata"
+	"github.com/goplus/llgo/internal/meta"
 	"github.com/goplus/llgo/internal/mockable"
 	"github.com/goplus/llgo/internal/monitor"
 	"github.com/goplus/llgo/internal/optlevel"
@@ -1110,12 +1111,18 @@ func applyDCEOverrides(ctx *context, mainPkg *packages.Package, pkgs []Package, 
 	if len(metas) == 0 {
 		return nil
 	}
-	summary, err := metadata.NewGlobalSummary(metas)
+	mergeStart := time.Now()
+	summary, err := meta.NewGlobalSummary(metas)
 	if err != nil {
 		return err
 	}
+	mergeDur := time.Since(mergeStart)
+
 	roots := dceEntryRootCandidates(mainPkg, needRuntime)
+	analyzeStart := time.Now()
 	liveSlots := deadcode.Analyze(summary, roots)
+	analyzeDur := time.Since(analyzeStart)
+
 	if len(liveSlots) == 0 {
 		return nil
 	}
@@ -1124,14 +1131,15 @@ func applyDCEOverrides(ctx *context, mainPkg *packages.Package, pkgs []Package, 
 		for _, slots := range liveSlots {
 			liveCount += len(slots)
 		}
-		fmt.Fprintf(os.Stderr, "[dce] roots=%s live method slots=%d types=%d\n", strings.Join(roots, ","), liveCount, len(liveSlots))
+		fmt.Fprintf(os.Stderr, "[dce] packages=%d roots=%s merge=%v analyze=%v live method slots=%d types=%d\n",
+			len(metas), strings.Join(roots, ","), mergeDur, analyzeDur, liveCount, len(liveSlots))
 		return dcepass.EmitStrongTypeOverridesDebug(entryPkg.LPkg.Module(), dceSourceModules(pkgs), liveSlots, os.Stderr)
 	}
 	return dcepass.EmitStrongTypeOverrides(entryPkg.LPkg.Module(), dceSourceModules(pkgs), liveSlots)
 }
 
-func linkedPackageMetas(pkgs []Package) []*metadata.PackageMeta {
-	metas := make([]*metadata.PackageMeta, 0, len(pkgs))
+func linkedPackageMetas(pkgs []Package) []*meta.PackageMeta {
+	metas := make([]*meta.PackageMeta, 0, len(pkgs))
 	for _, pkg := range pkgs {
 		if pkg == nil || pkg.Meta == nil {
 			continue
@@ -1356,9 +1364,9 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 		return fmt.Errorf("load go:embed directives for %s failed: %w", pkgPath, err)
 	}
 
-	var metaBuilder *metadata.Builder
+	var metaBuilder *meta.Builder
 	if !aPkg.CacheHit {
-		metaBuilder = metadata.NewBuilder()
+		metaBuilder = meta.NewBuilder()
 	}
 	ret, externs, err := cl.NewPackageExWithEmbed(ctx.prog, ctx.patches, aPkg.rewriteVars, aPkg.SSA, syntax, embedMap, metaBuilder)
 	check(err)
@@ -1366,7 +1374,11 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 	aPkg.LPkg = ret
 	if metaBuilder != nil {
 		extractOrdinaryEdges(metaBuilder, ret.Module())
-		aPkg.Meta = metaBuilder.Build()
+		pm, err := metaBuilder.Build()
+		if err != nil {
+			return fmt.Errorf("build meta for %s: %w", pkgPath, err)
+		}
+		aPkg.Meta = pm
 	}
 	if hook := ctx.buildConf.ModuleHook; hook != nil {
 		hook(aPkg)
@@ -1668,7 +1680,7 @@ type aPackage struct {
 	LinkArgs    []string
 	ObjFiles    []string // object files: .o or .ll (output of compiler, input to archiver)
 	ArchiveFile string   // archive file: .a (output of archiver, used for linking)
-	Meta        *metadata.PackageMeta
+	Meta        *meta.PackageMeta
 	rewriteVars map[string]string
 
 	// Cache related fields

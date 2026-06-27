@@ -124,7 +124,9 @@ func (pm *PackageMeta) Close() error {
 // NSyms returns the number of symbols in this package.
 func (pm *PackageMeta) NSyms() uint32 { return pm.nsyms }
 
-// SymbolName returns the name of sym by reading directly from the string table.
+// SymbolName returns the name of sym as a zero-copy view into the string table.
+// The returned string points directly into the mmap region and is only valid for
+// the lifetime of pm — do not retain it after Close.
 func (pm *PackageMeta) SymbolName(sym LocalSymbol) string {
 	if uint32(sym) >= pm.nsyms {
 		return ""
@@ -133,12 +135,14 @@ func (pm *PackageMeta) SymbolName(sym LocalSymbol) string {
 	base := pm.symOff + 4 + uint32(sym)*recSize
 	nameOff := binary.LittleEndian.Uint32(pm.raw[base+0:])
 	nameLen := binary.LittleEndian.Uint32(pm.raw[base+4:])
-	return string(pm.raw[pm.strOff+nameOff : pm.strOff+nameOff+nameLen])
+	return unsafe.String(&pm.raw[pm.strOff+nameOff], int(nameLen))
 }
 
-// NameString returns the string referenced by a NameRef.
+// NameString returns the string referenced by a NameRef as a zero-copy view
+// into the string table. The returned string points directly into the mmap
+// region and is only valid for the lifetime of pm — do not retain it after Close.
 func (pm *PackageMeta) NameString(ref NameRef) string {
-	return string(pm.raw[pm.strOff+ref.Off : pm.strOff+ref.Off+ref.Len])
+	return unsafe.String(&pm.raw[pm.strOff+ref.Off], int(ref.Len))
 }
 
 // Edges returns all edges from sym as a zero-copy view into the mmap region:

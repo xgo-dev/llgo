@@ -31,7 +31,7 @@ import (
 
 	"github.com/goplus/llgo/cl/blocks"
 	"github.com/goplus/llgo/internal/goembed"
-	"github.com/goplus/llgo/internal/metadata"
+	"github.com/goplus/llgo/internal/meta"
 	"github.com/goplus/llgo/internal/typepatch"
 	"golang.org/x/tools/go/ssa"
 
@@ -1639,11 +1639,11 @@ func NewPackageEx(prog llssa.Program, patches Patches, rewrites map[string]strin
 // NewPackageExWithEmbed compiles a package using pre-loaded go:embed metadata.
 //
 // This avoids re-scanning directives when the caller already loaded them.
-func NewPackageExWithEmbed(prog llssa.Program, patches Patches, rewrites map[string]string, pkg *ssa.Package, files []*ast.File, embedMap goembed.VarMap, metaBuilder *metadata.Builder) (ret llssa.Package, externs []string, err error) {
+func NewPackageExWithEmbed(prog llssa.Program, patches Patches, rewrites map[string]string, pkg *ssa.Package, files []*ast.File, embedMap goembed.VarMap, metaBuilder *meta.Builder) (ret llssa.Package, externs []string, err error) {
 	return newPackageEx(prog, patches, rewrites, pkg, files, &embedMap, metaBuilder)
 }
 
-func newPackageEx(prog llssa.Program, patches Patches, rewrites map[string]string, pkg *ssa.Package, files []*ast.File, embedMap *goembed.VarMap, metaBuilder *metadata.Builder) (ret llssa.Package, externs []string, err error) {
+func newPackageEx(prog llssa.Program, patches Patches, rewrites map[string]string, pkg *ssa.Package, files []*ast.File, embedMap *goembed.VarMap, metaBuilder *meta.Builder) (ret llssa.Package, externs []string, err error) {
 	pkgProg := pkg.Prog
 	pkgTypes := pkg.Pkg
 	oldTypes := pkgTypes

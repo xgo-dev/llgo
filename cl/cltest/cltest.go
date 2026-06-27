@@ -39,7 +39,7 @@ import (
 	"github.com/goplus/llgo/internal/build"
 	"github.com/goplus/llgo/internal/littest"
 	"github.com/goplus/llgo/internal/llgen"
-	"github.com/goplus/llgo/internal/metadata"
+	pkgmeta "github.com/goplus/llgo/internal/meta"
 	"github.com/goplus/llgo/internal/mockable"
 	"github.com/goplus/llgo/ssa/ssatest"
 	"github.com/qiniu/x/test"
@@ -357,7 +357,7 @@ func withModuleCapture(conf *build.Config, pkgDir string) (*build.Config, *strin
 			return filepath.Dir(file) == pkgDir
 		}) {
 			module = pkg.LPkg.String()
-			meta = metadata.MetaString(pkg.Meta)
+			meta = pkgmeta.MetaString(pkg.Meta)
 		}
 	}
 	return &localConf, &module, &meta

@@ -3,7 +3,7 @@ package build
 import (
 	"testing"
 
-	"github.com/goplus/llgo/internal/metadata"
+	"github.com/goplus/llgo/internal/meta"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -28,13 +28,13 @@ func TestExtractOrdinaryEdgesFromFunctionAndGlobal(t *testing.T) {
 	global := llvm.AddGlobal(mod, llvm.PointerType(fnTy, 0), "pkg.global")
 	global.SetInitializer(helperFn)
 
-	mb := metadata.NewBuilder()
+	mb := meta.NewBuilder()
 	extractOrdinaryEdges(mb, mod)
-	pm := mb.Build()
+	pm, _ := mb.Build()
 
-	mainSym := mb.Symbol("pkg.main")
-	helperSym := mb.Symbol("pkg.helper")
-	globalSym := mb.Symbol("pkg.global")
+	mainSym := mb.Sym("pkg.main")
+	helperSym := mb.Sym("pkg.helper")
+	globalSym := mb.Sym("pkg.global")
 
 	if !hasOrdinaryEdge(pm, mainSym, helperSym) {
 		t.Fatalf("missing ordinary edge pkg.main -> pkg.helper")
@@ -76,31 +76,24 @@ func TestExtractOrdinaryEdgesSkipsUncommonMethodTable(t *testing.T) {
 		methods,
 	}))
 
-	mb := metadata.NewBuilder()
+	mb := meta.NewBuilder()
 	extractOrdinaryEdges(mb, mod)
-	pm := mb.Build()
+	pm, _ := mb.Build()
 
-	typeSym := mb.Symbol("_llgo_pkg.T")
-	if hasOrdinaryEdge(pm, typeSym, mb.Symbol("pkg.(*T).M")) {
+	typeSym := mb.Sym("_llgo_pkg.T")
+	if hasOrdinaryEdge(pm, typeSym, mb.Sym("pkg.(*T).M")) {
 		t.Fatalf("method table IFn was recorded as an ordinary edge")
 	}
-	if hasOrdinaryEdge(pm, typeSym, mb.Symbol("pkg.T.M")) {
+	if hasOrdinaryEdge(pm, typeSym, mb.Sym("pkg.T.M")) {
 		t.Fatalf("method table TFn was recorded as an ordinary edge")
 	}
 }
 
-func hasOrdinaryEdge(pm *metadata.PackageMeta, src, dst metadata.Symbol) bool {
-	found := false
-	pm.ForEachOrdinaryEdge(func(edgeSrc metadata.Symbol, dsts []metadata.Symbol) {
-		if edgeSrc != src {
-			return
+func hasOrdinaryEdge(pm *meta.PackageMeta, src, dst meta.LocalSymbol) bool {
+	for _, e := range pm.Edges(src) {
+		if e.Kind == meta.EdgeOrdinary && meta.LocalSymbol(e.Target) == dst {
+			return true
 		}
-		for _, edgeDst := range dsts {
-			if edgeDst == dst {
-				found = true
-				return
-			}
-		}
-	})
-	return found
+	}
+	return false
 }

@@ -19,13 +19,12 @@
 package build
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/internal/metadata"
+	"github.com/goplus/llgo/internal/meta"
 )
 
 func TestSanitizePkgPath(t *testing.T) {
@@ -207,12 +206,11 @@ func TestCacheManager_CacheExists(t *testing.T) {
 
 func writeTestMetaFile(t *testing.T, path string) {
 	t.Helper()
-	var buf bytes.Buffer
-	pm := metadata.NewBuilder().Build()
-	if err := pm.WriteMeta(&buf); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
+	pm, err := meta.NewBuilder().Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
 	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(path, pm.Bytes(), 0o644); err != nil {
 		t.Fatalf("WriteFile %s: %v", path, err)
 	}
 }

@@ -48,7 +48,8 @@ type Builder struct {
 	edges [][]bEdge
 
 	// per-symbol TypeChildren lists
-	typeChildren [][]LocalSymbol
+	typeChildren    [][]LocalSymbol
+	typeChildrenSet map[[2]LocalSymbol]struct{} // dedup (parent, child) pairs
 
 	// per-symbol MethodInfo (only concrete types)
 	methodInfo [][]bMethodSlot
@@ -86,8 +87,9 @@ type bMethodSig struct {
 // NewBuilder creates an empty Builder.
 func NewBuilder() *Builder {
 	return &Builder{
-		strMap: make(map[string]uint32),
-		symMap: make(map[string]LocalSymbol),
+		strMap:          make(map[string]uint32),
+		symMap:          make(map[string]LocalSymbol),
+		typeChildrenSet: make(map[[2]LocalSymbol]struct{}),
 	}
 }
 
@@ -159,7 +161,13 @@ func (b *Builder) AddNamedMethodEdge(src LocalSymbol, methodName string) {
 }
 
 // AddTypeChild records that parent type structurally contains child type.
+// Idempotent: duplicate (parent, child) pairs are silently ignored.
 func (b *Builder) AddTypeChild(parent, child LocalSymbol) {
+	key := [2]LocalSymbol{parent, child}
+	if _, ok := b.typeChildrenSet[key]; ok {
+		return
+	}
+	b.typeChildrenSet[key] = struct{}{}
 	b.typeChildren[parent] = append(b.typeChildren[parent], child)
 }
 
@@ -175,11 +183,19 @@ func (b *Builder) AddMethodSlot(typ LocalSymbol, methodName string, mtype, ifn, 
 }
 
 // AddIfaceMethod records one method in an interface's method set.
-// Methods must be appended in declaration order.
+// Idempotent: if the same (name, mtype) pair is already registered for iface,
+// this call is a no-op — the Builder deduplicates internally.
 func (b *Builder) AddIfaceMethod(iface LocalSymbol, methodName string, mtype LocalSymbol) {
+	ref := b.internName(methodName)
+	mt := uint32(mtype)
+	for _, s := range b.ifaceInfo[iface] {
+		if s.name == ref && s.mtype == mt {
+			return
+		}
+	}
 	b.ifaceInfo[iface] = append(b.ifaceInfo[iface], bMethodSig{
-		name:  b.internName(methodName),
-		mtype: uint32(mtype),
+		name:  ref,
+		mtype: mt,
 	})
 }
 

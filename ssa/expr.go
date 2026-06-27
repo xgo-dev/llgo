@@ -24,7 +24,6 @@ import (
 	"go/types"
 	"log"
 
-	"github.com/goplus/llgo/internal/metadata"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -1307,13 +1306,13 @@ func (b Builder) checkReflect(fn Expr, args []Expr) {
 				pkg.MethodByIndex[v] = none{}
 				pkg.NeedAbiInit |= ReflectMethodByIndex
 				if mb := pkg.MetaBuilder; mb != nil {
-					mb.AddReflectMethod(mb.Symbol(b.Func.Name()))
+					mb.MarkReflect(mb.Sym(b.Func.Name()))
 				}
 				return
 			}
 			pkg.NeedAbiInit |= ReflectMethodDynamic
 			if mb := pkg.MetaBuilder; mb != nil {
-				mb.AddReflectMethod(mb.Symbol(b.Func.Name()))
+				mb.MarkReflect(mb.Sym(b.Func.Name()))
 			}
 		}
 	case "reflect.Value.MethodByName":
@@ -1325,13 +1324,13 @@ func (b Builder) checkReflect(fn Expr, args []Expr) {
 				pkg.MethodByName[v] = none{}
 				pkg.NeedAbiInit |= ReflectMethodByName
 				if mb := pkg.MetaBuilder; mb != nil {
-					mb.AddUseNamedMethod(mb.Symbol(b.Func.Name()), []metadata.Name{mb.Name(v)})
+					mb.AddNamedMethodEdge(mb.Sym(b.Func.Name()), v)
 				}
 				return
 			}
 			pkg.NeedAbiInit |= ReflectMethodDynamic
 			if mb := pkg.MetaBuilder; mb != nil {
-				mb.AddReflectMethod(mb.Symbol(b.Func.Name()))
+				mb.MarkReflect(mb.Sym(b.Func.Name()))
 			}
 		}
 	}

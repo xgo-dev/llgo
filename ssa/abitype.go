@@ -26,8 +26,6 @@ import (
 
 	"github.com/goplus/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
-
-	"github.com/goplus/llgo/internal/metadata"
 )
 
 // -----------------------------------------------------------------------------
@@ -350,10 +348,10 @@ func (b Builder) recordTypeChildren(parentName string, t types.Type) {
 	if mb == nil {
 		return
 	}
-	parent := mb.Symbol(parentName)
+	parent := mb.Sym(parentName)
 	for _, child := range b.directTypeChildren(t) {
 		childName, _ := b.Prog.abi.TypeName(child)
-		mb.AddTypeChild(parent, mb.Symbol(childName))
+		mb.AddTypeChild(parent, mb.Sym(childName))
 	}
 }
 
@@ -501,11 +499,7 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 	ft := prog.rtType("Method")
 	n := mset.Len()
 	fields := make([]llvm.Value, n)
-	var slots []metadata.MethodSlot
 	typeName, _ := prog.abi.TypeName(t)
-	if b.Pkg.MetaBuilder != nil {
-		slots = make([]metadata.MethodSlot, 0, n)
-	}
 	pkg, _ := b.abiUncommonPkg(t)
 	anonymous := pkg == nil
 	if anonymous {
@@ -540,18 +534,8 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 		fields[i] = llvm.ConstNamedStruct(ft.ll, values)
 		if mb := b.Pkg.MetaBuilder; mb != nil {
 			mtypeName, _ := prog.abi.TypeName(ftyp)
-			slots = append(slots, metadata.MethodSlot{
-				Sig: metadata.MethodSig{
-					Name:  mb.Name(fullName),
-					MType: mb.Symbol(mtypeName),
-				},
-				IFn: mb.Symbol(ifn.Name()),
-				TFn: mb.Symbol(tfn.Name()),
-			})
+			mb.AddMethodSlot(mb.Sym(typeName), fullName, mb.Sym(mtypeName), mb.Sym(ifn.Name()), mb.Sym(tfn.Name()))
 		}
-	}
-	if mb := b.Pkg.MetaBuilder; mb != nil {
-		mb.AddMethodInfo(mb.Symbol(typeName), slots)
 	}
 	return llvm.ConstArray(ft.ll, fields)
 }

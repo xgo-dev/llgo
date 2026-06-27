@@ -27,7 +27,7 @@ import (
 	"strings"
 
 	"github.com/goplus/llgo/internal/env"
-	"github.com/goplus/llgo/internal/metadata"
+	"github.com/goplus/llgo/internal/meta"
 	"github.com/goplus/llgo/internal/packages"
 	gopackages "golang.org/x/tools/go/packages"
 )
@@ -465,7 +465,7 @@ func (c *context) saveToCache(pkg *aPackage) error {
 	}
 
 	if pkg.Meta == nil {
-		pkg.Meta = metadata.NewBuilder().Build()
+		pkg.Meta, _ = meta.NewBuilder().Build()
 	}
 	if err := writeMeta(paths.Meta, pkg.Meta); err != nil {
 		return err

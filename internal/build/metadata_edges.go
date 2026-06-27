@@ -3,11 +3,11 @@ package build
 import (
 	"strings"
 
-	"github.com/goplus/llgo/internal/metadata"
+	"github.com/goplus/llgo/internal/meta"
 	"github.com/xgo-dev/llvm"
 )
 
-func extractOrdinaryEdges(builder *metadata.Builder, mod llvm.Module) {
+func extractOrdinaryEdges(builder *meta.Builder, mod llvm.Module) {
 	if builder == nil {
 		return
 	}
@@ -38,9 +38,10 @@ func extractOrdinaryEdges(builder *metadata.Builder, mod llvm.Module) {
 }
 
 type ordinaryEdgeCollector struct {
-	builder *metadata.Builder
-	src     string
-	seen    map[llvm.Value]struct{}
+	builder  *meta.Builder
+	src      string
+	seen     map[llvm.Value]struct{}
+	addedDst map[string]struct{} // dedup (src, dst) pairs
 }
 
 func (c *ordinaryEdgeCollector) scanGlobalInitializer(v llvm.Value) {
@@ -92,7 +93,14 @@ func (c *ordinaryEdgeCollector) add(dst string) {
 	if dst == "" || dst == c.src {
 		return
 	}
-	c.builder.AddEdge(c.builder.Symbol(c.src), c.builder.Symbol(dst))
+	if c.addedDst == nil {
+		c.addedDst = make(map[string]struct{})
+	}
+	if _, ok := c.addedDst[dst]; ok {
+		return
+	}
+	c.addedDst[dst] = struct{}{}
+	c.builder.AddEdge(c.builder.Sym(c.src), c.builder.Sym(dst), meta.EdgeOrdinary, 0)
 }
 
 func namedModuleSymbol(v llvm.Value) string {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/internal/metadata"
+	"github.com/goplus/llgo/internal/meta"
 	"github.com/goplus/llgo/internal/packages"
 	llssa "github.com/goplus/llgo/ssa"
 	"github.com/xgo-dev/llvm"
@@ -72,25 +72,23 @@ func TestDCEEntryRootCandidatesSkipsRuntimeWhenNotNeeded(t *testing.T) {
 	}
 }
 
-func buildDCEMeta() *metadata.PackageMeta {
-	b := metadata.NewBuilder()
-	main := b.Symbol("pkg.main")
-	use := b.Symbol("pkg.use")
-	typ := b.Symbol("_llgo_pkg.T")
-	iface := b.Symbol("_llgo_iface$I")
-	mSig := metadata.MethodSig{Name: b.Name("M"), MType: b.Symbol("_llgo_func$X")}
-	nSig := metadata.MethodSig{Name: b.Name("N"), MType: b.Symbol("_llgo_func$X")}
+func buildDCEMeta() *meta.PackageMeta {
+	b := meta.NewBuilder()
+	main := b.Sym("pkg.main")
+	use := b.Sym("pkg.use")
+	typ := b.Sym("_llgo_pkg.T")
+	iface := b.Sym("_llgo_iface$I")
+	mtype := b.Sym("_llgo_func$X")
 
-	b.AddIfaceEntry(iface, []metadata.MethodSig{mSig})
-	b.AddMethodInfo(typ, []metadata.MethodSlot{
-		{Sig: mSig, IFn: b.Symbol("pkg.(*T).M"), TFn: b.Symbol("pkg.T.M")},
-		{Sig: nSig, IFn: b.Symbol("pkg.(*T).N"), TFn: b.Symbol("pkg.T.N")},
-	})
-	b.AddEdge(main, use)
-	b.AddEdge(main, typ)
-	b.AddUseIface(main, []metadata.Symbol{typ})
-	b.AddUseIfaceMethod(use, []metadata.IfaceMethodDemand{{Target: iface, Sig: mSig}})
-	return b.Build()
+	b.AddIfaceMethod(iface, "M", mtype)
+	b.AddMethodSlot(typ, "M", mtype, b.Sym("pkg.(*T).M"), b.Sym("pkg.T.M"))
+	b.AddMethodSlot(typ, "N", mtype, b.Sym("pkg.(*T).N"), b.Sym("pkg.T.N"))
+	b.AddEdge(main, use, meta.EdgeOrdinary, 0)
+	b.AddEdge(main, typ, meta.EdgeOrdinary, 0)
+	b.AddEdge(main, typ, meta.EdgeUseIface, 0)
+	b.AddEdge(use, iface, meta.EdgeUseIfaceMethod, 0) // M is index 0 in iface
+	pm, _ := b.Build()
+	return pm
 }
 
 func addMethodTypeGlobal(t *testing.T, mod llvm.Module, name string) {
