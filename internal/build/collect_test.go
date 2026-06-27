@@ -535,7 +535,7 @@ func TestSaveToCache_Success(t *testing.T) {
 			return m.Build()
 		}(),
 		ObjFiles: []string{objFile.Name()},
-		Meta: func() *meta.PackageMeta { pm, _ := meta.NewBuilder().Build(); return pm }(),
+		Meta:     func() *meta.PackageMeta { pm, _ := meta.NewBuilder().Build(); return pm }(),
 	}
 
 	if err := ctx.saveToCache(pkg); err != nil {
