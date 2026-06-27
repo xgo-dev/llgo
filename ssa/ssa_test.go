@@ -1484,6 +1484,9 @@ func TestLoadAndClearSinglePointer(t *testing.T) {
 	if !ok {
 		t.Fatal("single-pointer struct slot should be load-and-clearable")
 	}
+	if got, want := sv.impl.Type().String(), sv.Type.ll.String(); got != want {
+		t.Fatalf("single-pointer struct load-and-clear type = %s, want %s", got, want)
+	}
 	b.Return(pv, sv)
 	b.EndBuild()
 

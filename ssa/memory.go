@@ -82,7 +82,7 @@ func (b Builder) LoadAndClearSinglePointer(ptr Expr) (Expr, bool) {
 	}
 	fieldPtr := llvm.CreateStructGEP(b.impl, elem.ll, ptr.impl, 0)
 	old := b.loadAndClearPointerWord(fieldPtr, field.ll)
-	return Expr{old, elem}, true
+	return b.aggregateValue(elem, old), true
 }
 
 func (b Builder) loadAndClearPointerWord(ptr llvm.Value, typ llvm.Type) llvm.Value {
