@@ -198,7 +198,6 @@ func (pm *PackageMeta) hasEdges(sym LocalSymbol) bool {
 	return pm.nedge(sym) > 0
 }
 
-
 // ── internal helpers ──────────────────────────────────────────────────────────
 
 // newPackageMeta parses the header of raw and returns a PackageMeta.

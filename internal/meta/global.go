@@ -16,7 +16,7 @@ type GlobalSummary struct {
 
 	// symbol space
 	symIntern  map[string]Symbol
-	symStrings []string  // Symbol → text
+	symStrings []string   // Symbol → text
 	locToGlb   [][]Symbol // [pkgIdx][localSym] → global Symbol
 	owner      []symLoc   // global Symbol → owning (pkg, local); pkg<0 if none
 

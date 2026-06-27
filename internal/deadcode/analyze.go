@@ -315,4 +315,3 @@ func appendSymbolUnique(items []meta.Symbol, item meta.Symbol) []meta.Symbol {
 	}
 	return append(items, item)
 }
-
