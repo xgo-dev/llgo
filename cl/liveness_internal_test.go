@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/goplus/gogen/packages"
+	llssa "github.com/goplus/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
@@ -470,6 +471,150 @@ func converted(p *int) unsafe.Pointer {
 	converted := ssapkg.Func("converted")
 	if !ctx.collectValueUseBlocks(converted.Params[0], make(map[*ssa.BasicBlock]bool), map[ssa.Value]bool{}, true) {
 		t.Fatal("conversion use collection failed")
+	}
+}
+
+func TestConservativeLivenessHelperFallbacks(t *testing.T) {
+	ssapkg := buildSSAPackageWithPath(t, "example.com/live", "live", `package live
+
+var Sink any
+
+func branch(cond bool) {
+	if cond {
+		Sink = 1
+	} else {
+		Sink = 2
+	}
+}
+
+func useOne(p, q *int) {
+	Sink = p
+}
+
+func neg(i int) int {
+	return -i
+}
+
+func callDeref(f *func()) {
+	(*f)()
+}
+	`)
+	ctx := &context{}
+
+	branch := ssapkg.Func("branch")
+	if len(branch.Blocks) < 2 {
+		t.Fatalf("branch should have successors:\n%s", branch.String())
+	}
+	if blockCanReach(branch.Blocks[0], branch.Blocks[1], map[*ssa.BasicBlock]bool{branch.Blocks[0]: true}) {
+		t.Fatal("seen entry block should stop reachability recursion")
+	}
+
+	useOne := ssapkg.Func("useOne")
+	var useP ssa.Instruction
+	for _, block := range useOne.Blocks {
+		for _, instr := range block.Instrs {
+			if instructionUsesValue(instr, useOne.Params[0]) {
+				useP = instr
+				break
+			}
+		}
+		if useP != nil {
+			break
+		}
+	}
+	if useP == nil {
+		t.Fatalf("missing instruction that uses p:\n%s", useOne.String())
+	}
+	if instructionUsesValue(useP, useOne.Params[1]) {
+		t.Fatal("instruction using p should not report use of q")
+	}
+	if ctx.isOnlyRuntimeSetFinalizerArg(useOne.Params[1]) {
+		t.Fatal("unused parameter should not be treated as a SetFinalizer-only argument")
+	}
+	if ctx.shouldSkipLateSetFinalizerValue(&ssa.UnOp{Op: token.MUL}) {
+		t.Fatal("deref without a single MakeInterface referrer should not be skipped")
+	}
+
+	global := ssapkg.Members["Sink"].(*ssa.Global)
+	if !ctx.collectValueUseBlocks(global, make(map[*ssa.BasicBlock]bool), map[ssa.Value]bool{}, false) {
+		t.Fatal("global without referrers should be a valid value-use query")
+	}
+	if last, ok := ctx.lastUseInBlock(global, useOne.Blocks[0], map[ssa.Instruction]int{}, map[ssa.Value]bool{}); !ok || last != nil {
+		t.Fatalf("lastUseInBlock(global) = %v, %v", last, ok)
+	}
+
+	neg := ssapkg.Func("neg")
+	var negInstr *ssa.UnOp
+	for _, block := range neg.Blocks {
+		for _, instr := range block.Instrs {
+			if unop, ok := instr.(*ssa.UnOp); ok && unop.Op == token.SUB {
+				negInstr = unop
+				break
+			}
+		}
+		if negInstr != nil {
+			break
+		}
+	}
+	if negInstr == nil {
+		t.Fatalf("missing unary negation:\n%s", neg.String())
+	}
+	blocks := make(map[*ssa.BasicBlock]bool)
+	if !ctx.collectValueUseBlocks(neg.Params[0], blocks, map[ssa.Value]bool{}, false) {
+		t.Fatal("non-deref unary use collection failed")
+	}
+	if !blocks[negInstr.Block()] {
+		t.Fatal("non-deref unary use should record its block")
+	}
+	order := make(map[ssa.Instruction]int, len(negInstr.Block().Instrs))
+	for i, instr := range negInstr.Block().Instrs {
+		order[instr] = i
+	}
+	if last, ok := ctx.lastUseInBlock(neg.Params[0], negInstr.Block(), order, map[ssa.Value]bool{}); !ok || last != negInstr {
+		t.Fatalf("lastUseInBlock(neg param) = %v, %v; want unary op", last, ok)
+	}
+
+	callDeref := ssapkg.Func("callDeref")
+	var deref *ssa.UnOp
+	for _, block := range callDeref.Blocks {
+		for _, instr := range block.Instrs {
+			if unop, ok := instr.(*ssa.UnOp); ok && unop.Op == token.MUL {
+				deref = unop
+				break
+			}
+		}
+		if deref != nil {
+			break
+		}
+	}
+	if deref == nil {
+		t.Fatalf("missing call dereference:\n%s", callDeref.String())
+	}
+	order = make(map[ssa.Instruction]int, len(deref.Block().Instrs))
+	for i, instr := range deref.Block().Instrs {
+		order[instr] = i
+	}
+	if last, ok := ctx.lastUseInBlock(callDeref.Params[0], deref.Block(), order, map[ssa.Value]bool{}); !ok || last != deref {
+		t.Fatalf("lastUseInBlock(call deref param) = %v, %v; want deref", last, ok)
+	}
+}
+
+func TestConservativeLivenessScanAllocPointerSlot(t *testing.T) {
+	prog := newLLSSAProg(t)
+	pkg := prog.NewPackage("live", "live")
+	ptrToInt := types.NewPointer(types.Typ[types.Int])
+	slotType := types.NewPointer(ptrToInt)
+	sig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewParam(token.NoPos, nil, "slot", slotType)), nil, false)
+	fn := pkg.NewFunc("scanPointerSlot", sig, llssa.InGo)
+	b := fn.MakeBody(1)
+	(&context{prog: prog}).scanAllocPointer(b, fn.Param(0))
+	b.Return()
+	b.EndBuild()
+
+	ir := pkg.String()
+	if !strings.Contains(ir, "llgo_clear_stack_ptr") {
+		t.Fatalf("pointer slot scan should emit stack clear helper:\n%s", ir)
 	}
 }
 
