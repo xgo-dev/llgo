@@ -5,11 +5,9 @@ package meta
 //
 // Merge strategy:
 //   - Symbols are interned into a global Symbol space; each package's local
-//     symbols are mapped via locToGlb. Edges and TypeChildren are NOT rewritten
-//     at merge time — they are translated lazily on query (the bulk of the data,
-//     and the main cost we avoid up front).
-//   - MethodInfo / InterfaceInfo / reflect are small, so they are translated
-//     eagerly at merge time, interning method names into the global Name space.
+//     symbols are mapped via locToGlb. Edges, TypeChildren, MethodSlots and
+//     InterfaceMethods are NOT rewritten at merge time — they are translated
+//     lazily on query. Only the strings are interned up front.
 //   - Duplicate symbols (e.g. linkonce type descriptors emitted by several
 //     packages) are first-wins: the first package that owns facts for a symbol
 //     becomes its owner; later duplicates are ignored.
@@ -26,10 +24,14 @@ type GlobalSummary struct {
 	nameIntern  map[string]Name
 	nameStrings []string // Name → text
 
-	// eagerly translated small sections
+	// per-type flags set at merge time (no translation, just CSR range checks)
+	isConcrete  []bool // global Symbol → true if has method slots
+	isInterface []bool // global Symbol → true if has iface methods
+	reflect     map[Symbol]struct{}
+
+	// lazily translated, cached on first access
 	methodInfo    map[Symbol][]GMethodSlot
 	interfaceInfo map[Symbol][]GMethodSig
-	reflect       map[Symbol]struct{}
 
 	interfaces    []Symbol
 	concreteTypes []Symbol
@@ -69,6 +71,14 @@ type symLoc struct {
 }
 
 // NewGlobalSummary merges package-local metadata into a whole-program view.
+//
+// Phase 1 interns all symbol names and builds the locToGlb mapping, owner
+// indices, and type-kind flags. No per-symbol data is translated — only
+// string interning and CSR range checks happen here.
+//
+// MethodSlots / InterfaceMethods / reflect are translated lazily on first
+// access and cached. This avoids translating thousands of unused slots in
+// the common case where DCE only reaches a fraction of all types.
 func NewGlobalSummary(pkgs []*PackageMeta) (*GlobalSummary, error) {
 	g := &GlobalSummary{
 		pkgs:          pkgs,
@@ -80,8 +90,8 @@ func NewGlobalSummary(pkgs []*PackageMeta) (*GlobalSummary, error) {
 		reflect:       make(map[Symbol]struct{}),
 	}
 
-	// Phase 1: intern symbols, build locToGlb and owner (used for lazy
-	// edges/children translation). Touches no edges.
+	// Phase 1: intern symbols, build locToGlb and owner, mark type kinds.
+	// Touches no edges, translates no slot/sig data.
 	for pi, pm := range pkgs {
 		if pm == nil {
 			continue
@@ -94,36 +104,21 @@ func NewGlobalSummary(pkgs []*PackageMeta) (*GlobalSummary, error) {
 			if g.owner[gs].pkg < 0 && hasFacts(pm, li) {
 				g.owner[gs] = symLoc{pkg: int32(pi), local: li}
 			}
-		}
-		g.locToGlb[pi] = tab
-	}
 
-	// Phase 2: eagerly translate small sections (method/iface/reflect),
-	// interning method names into the global Name space. First-wins on dups.
-	for pi, pm := range pkgs {
-		if pm == nil {
-			continue
-		}
-		tab := g.locToGlb[pi]
-		n := pm.NSyms()
-		for li := LocalSymbol(0); li < LocalSymbol(n); li++ {
-			gs := tab[li]
-			if pm.IsConcreteType(li) {
-				if _, done := g.methodInfo[gs]; !done {
-					g.methodInfo[gs] = g.translateSlots(tab, pm, li)
-					g.concreteTypes = append(g.concreteTypes, gs)
-				}
+			// mark type kinds (no translation, just CSR range checks)
+			if pm.IsConcreteType(li) && !g.isConcrete[gs] {
+				g.isConcrete[gs] = true
+				g.concreteTypes = append(g.concreteTypes, gs)
 			}
-			if pm.IsInterface(li) {
-				if _, done := g.interfaceInfo[gs]; !done {
-					g.interfaceInfo[gs] = g.translateSigs(tab, pm, li)
-					g.interfaces = append(g.interfaces, gs)
-				}
+			if pm.IsInterface(li) && !g.isInterface[gs] {
+				g.isInterface[gs] = true
+				g.interfaces = append(g.interfaces, gs)
 			}
 			if pm.HasReflect(li) {
 				g.reflect[gs] = struct{}{}
 			}
 		}
+		g.locToGlb[pi] = tab
 	}
 	return g, nil
 }
@@ -146,6 +141,8 @@ func (g *GlobalSummary) internSymbol(s string) Symbol {
 	g.symIntern[s] = id
 	g.symStrings = append(g.symStrings, s)
 	g.owner = append(g.owner, symLoc{pkg: -1})
+	g.isConcrete = append(g.isConcrete, false)
+	g.isInterface = append(g.isInterface, false)
 	return id
 }
 
@@ -157,6 +154,18 @@ func (g *GlobalSummary) internName(s string) Name {
 	g.nameIntern[s] = id
 	g.nameStrings = append(g.nameStrings, s)
 	return id
+}
+
+// ownerData returns the owning package and locToGlb table for sym.
+func (g *GlobalSummary) ownerData(sym Symbol) (*PackageMeta, []Symbol, LocalSymbol) {
+	if int(sym) >= len(g.owner) {
+		return nil, nil, 0
+	}
+	loc := g.owner[sym]
+	if loc.pkg < 0 {
+		return nil, nil, 0
+	}
+	return g.pkgs[loc.pkg], g.locToGlb[loc.pkg], loc.local
 }
 
 func (g *GlobalSummary) translateSlots(tab []Symbol, pm *PackageMeta, li LocalSymbol) []GMethodSlot {
@@ -217,13 +226,37 @@ func (g *GlobalSummary) Interfaces() []Symbol { return g.interfaces }
 // ConcreteTypes returns all concrete type symbols with method slots.
 func (g *GlobalSummary) ConcreteTypes() []Symbol { return g.concreteTypes }
 
-// ── eager small sections ──────────────────────────────────────────────────────
+// ── lazy per-type queries ─────────────────────────────────────────────────────
 
-// MethodSlots returns the ABI method slots for concrete type typ. Read-only.
-func (g *GlobalSummary) MethodSlots(typ Symbol) []GMethodSlot { return g.methodInfo[typ] }
+// MethodSlots returns the ABI method slots for concrete type typ.
+// Translated lazily on first access, cached thereafter.
+func (g *GlobalSummary) MethodSlots(typ Symbol) []GMethodSlot {
+	if slots, ok := g.methodInfo[typ]; ok {
+		return slots
+	}
+	pm, tab, li := g.ownerData(typ)
+	if pm == nil {
+		return nil
+	}
+	slots := g.translateSlots(tab, pm, li)
+	g.methodInfo[typ] = slots
+	return slots
+}
 
-// InterfaceMethods returns the method set for interface iface. Read-only.
-func (g *GlobalSummary) InterfaceMethods(iface Symbol) []GMethodSig { return g.interfaceInfo[iface] }
+// InterfaceMethods returns the method set for interface iface.
+// Translated lazily on first access, cached thereafter.
+func (g *GlobalSummary) InterfaceMethods(iface Symbol) []GMethodSig {
+	if sigs, ok := g.interfaceInfo[iface]; ok {
+		return sigs
+	}
+	pm, tab, li := g.ownerData(iface)
+	if pm == nil {
+		return nil
+	}
+	sigs := g.translateSigs(tab, pm, li)
+	g.interfaceInfo[iface] = sigs
+	return sigs
+}
 
 // HasReflectMethod reports whether sym triggers conservative reflection handling.
 func (g *GlobalSummary) HasReflectMethod(sym Symbol) bool {
@@ -280,7 +313,7 @@ func (g *GlobalSummary) UseIfaceMethod(sym Symbol) []IfaceMethodDemand {
 			continue
 		}
 		iface := tab[e.Target]
-		sigs := g.interfaceInfo[iface]
+		sigs := g.InterfaceMethods(iface)
 		if int(e.Extra) < len(sigs) {
 			out = append(out, IfaceMethodDemand{Target: iface, Sig: sigs[e.Extra]})
 		}
