@@ -25,7 +25,6 @@ type GlobalSummary struct {
 	nameStrings []string // Name → text
 
 	// per-type flags set at merge time (no translation, just CSR range checks)
-	isConcrete  []bool // global Symbol → true if has method slots
 	isInterface []bool // global Symbol → true if has iface methods
 	reflect     map[Symbol]struct{}
 
@@ -33,8 +32,7 @@ type GlobalSummary struct {
 	methodInfo    map[Symbol][]GMethodSlot
 	interfaceInfo map[Symbol][]GMethodSig
 
-	interfaces    []Symbol
-	concreteTypes []Symbol
+	interfaces []Symbol
 }
 
 // Symbol is a whole-program symbol ID in GlobalSummary's unified namespace.
@@ -96,25 +94,21 @@ func NewGlobalSummary(pkgs []*PackageMeta) (*GlobalSummary, error) {
 		if pm == nil {
 			continue
 		}
-		n := pm.NSyms()
+		n := pm.nsyms
 		tab := make([]Symbol, n)
 		for li := LocalSymbol(0); li < LocalSymbol(n); li++ {
-			gs := g.internSymbol(pm.SymbolName(li))
+			gs := g.internSymbol(pm.symbolName(li))
 			tab[li] = gs
 			if g.owner[gs].pkg < 0 && hasFacts(pm, li) {
 				g.owner[gs] = symLoc{pkg: int32(pi), local: li}
 			}
 
 			// mark type kinds (no translation, just CSR range checks)
-			if pm.IsConcreteType(li) && !g.isConcrete[gs] {
-				g.isConcrete[gs] = true
-				g.concreteTypes = append(g.concreteTypes, gs)
-			}
-			if pm.IsInterface(li) && !g.isInterface[gs] {
+			if pm.nifaceMethod(li) > 0 && !g.isInterface[gs] {
 				g.isInterface[gs] = true
 				g.interfaces = append(g.interfaces, gs)
 			}
-			if pm.HasReflect(li) {
+			if pm.hasReflect(li) {
 				g.reflect[gs] = struct{}{}
 			}
 		}
@@ -126,11 +120,11 @@ func NewGlobalSummary(pkgs []*PackageMeta) (*GlobalSummary, error) {
 // hasFacts reports whether li carries any facts in pm (i.e. is defined here,
 // not merely referenced). Used to pick the owning package for lazy queries.
 func hasFacts(pm *PackageMeta, li LocalSymbol) bool {
-	return pm.HasEdges(li) ||
-		pm.IsCompositeType(li) ||
-		pm.IsConcreteType(li) ||
-		pm.IsInterface(li) ||
-		pm.HasReflect(li)
+	return pm.hasEdges(li) ||
+		pm.ntypeChild(li) > 0 ||
+		pm.hasReflect(li) ||
+		pm.nmethodSlot(li) > 0 ||
+		pm.nifaceMethod(li) > 0
 }
 
 func (g *GlobalSummary) internSymbol(s string) Symbol {
@@ -141,7 +135,6 @@ func (g *GlobalSummary) internSymbol(s string) Symbol {
 	g.symIntern[s] = id
 	g.symStrings = append(g.symStrings, s)
 	g.owner = append(g.owner, symLoc{pkg: -1})
-	g.isConcrete = append(g.isConcrete, false)
 	g.isInterface = append(g.isInterface, false)
 	return id
 }
@@ -169,11 +162,11 @@ func (g *GlobalSummary) ownerData(sym Symbol) (*PackageMeta, []Symbol, LocalSymb
 }
 
 func (g *GlobalSummary) translateSlots(tab []Symbol, pm *PackageMeta, li LocalSymbol) []GMethodSlot {
-	local := pm.MethodSlots(li)
+	local := pm.methodSlots(li)
 	out := make([]GMethodSlot, len(local))
 	for i, s := range local {
 		out[i] = GMethodSlot{
-			Name:  g.internName(pm.NameString(s.Name)),
+			Name:  g.internName(pm.nameString(s.Name)),
 			MType: tab[s.MType],
 			IFn:   tab[s.IFn],
 			TFn:   tab[s.TFn],
@@ -183,11 +176,11 @@ func (g *GlobalSummary) translateSlots(tab []Symbol, pm *PackageMeta, li LocalSy
 }
 
 func (g *GlobalSummary) translateSigs(tab []Symbol, pm *PackageMeta, li LocalSymbol) []GMethodSig {
-	local := pm.IfaceMethods(li)
+	local := pm.ifaceMethods(li)
 	out := make([]GMethodSig, len(local))
 	for i, s := range local {
 		out[i] = GMethodSig{
-			Name:  g.internName(pm.NameString(s.Name)),
+			Name:  g.internName(pm.nameString(s.Name)),
 			MType: tab[s.MType],
 		}
 	}
@@ -222,9 +215,6 @@ func (g *GlobalSummary) Name(n Name) string {
 
 // Interfaces returns all interface type symbols.
 func (g *GlobalSummary) Interfaces() []Symbol { return g.interfaces }
-
-// ConcreteTypes returns all concrete type symbols with method slots.
-func (g *GlobalSummary) ConcreteTypes() []Symbol { return g.concreteTypes }
 
 // ── lazy per-type queries ─────────────────────────────────────────────────────
 
@@ -277,7 +267,7 @@ func (g *GlobalSummary) ownerEdges(sym Symbol) (*PackageMeta, []Symbol, []Edge) 
 		return nil, nil, nil
 	}
 	pm := g.pkgs[loc.pkg]
-	return pm, g.locToGlb[loc.pkg], pm.Edges(loc.local)
+	return pm, g.locToGlb[loc.pkg], pm.edges(loc.local)
 }
 
 // OrdinaryEdges returns plain reachability targets from sym (global Symbols).
@@ -330,7 +320,7 @@ func (g *GlobalSummary) UseNamedMethod(sym Symbol) []Name {
 	var out []Name
 	for _, e := range edges {
 		if e.Kind == EdgeUseNamedMethod {
-			name := pm.NameString(NameRef{Off: e.Target, Len: e.Extra})
+			name := pm.nameString(NameRef{Off: e.Target, Len: e.Extra})
 			out = append(out, g.internName(name))
 		}
 	}
@@ -348,7 +338,7 @@ func (g *GlobalSummary) TypeChildren(typ Symbol) []Symbol {
 	}
 	pm := g.pkgs[loc.pkg]
 	tab := g.locToGlb[loc.pkg]
-	local := pm.TypeChildren(loc.local)
+	local := pm.typeChildren(loc.local)
 	if len(local) == 0 {
 		return nil
 	}

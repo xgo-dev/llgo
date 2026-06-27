@@ -6,22 +6,22 @@ import (
 	"strings"
 )
 
-// MetaString formats pm as a human-readable string for testing and debugging.
-func MetaString(pm *PackageMeta) string {
+// String returns a human-readable representation for testing and debugging.
+func (pm *PackageMeta) String() string {
 	if pm == nil {
 		return "<nil>"
 	}
 	var sb strings.Builder
-	FormatMeta(&sb, pm)
+	formatMeta(&sb, pm)
 	return sb.String()
 }
 
-// FormatMeta writes a human-readable representation of pm to w,
+// formatMeta writes a human-readable representation of pm to w,
 // grouped by section (TypeChildren, OrdinaryEdges, UseIface, etc.)
 // to match the original metadata format used by golden file tests.
-func FormatMeta(w *strings.Builder, pm *PackageMeta) {
-	n := pm.NSyms()
-	symName := func(sym LocalSymbol) string { return pm.SymbolName(sym) }
+func formatMeta(w *strings.Builder, pm *PackageMeta) {
+	n := pm.nsyms
+	symName := func(sym LocalSymbol) string { return pm.symbolName(sym) }
 
 	// collect per-sym edge lists by kind
 	type kindMap = map[string][]string // src → []dst (sorted)
@@ -32,7 +32,7 @@ func FormatMeta(w *strings.Builder, pm *PackageMeta) {
 
 	for i := LocalSymbol(0); i < LocalSymbol(n); i++ {
 		src := symName(i)
-		for _, e := range pm.Edges(i) {
+		for _, e := range pm.edges(i) {
 			switch e.Kind {
 			case EdgeOrdinary:
 				ordinary[src] = append(ordinary[src], symName(LocalSymbol(e.Target)))
@@ -41,17 +41,17 @@ func FormatMeta(w *strings.Builder, pm *PackageMeta) {
 			case EdgeUseIfaceMethod:
 				ifaceSym := LocalSymbol(e.Target)
 				iface := symName(ifaceSym)
-				sigs := pm.IfaceMethods(ifaceSym)
+				sigs := pm.ifaceMethods(ifaceSym)
 				if int(e.Extra) < len(sigs) {
 					s := sigs[e.Extra]
 					useIfaceMethod[src] = append(useIfaceMethod[src],
-						fmt.Sprintf("%s %s %s", iface, pm.NameString(s.Name), symName(s.MType)))
+						fmt.Sprintf("%s %s %s", iface, pm.nameString(s.Name), symName(s.MType)))
 				} else {
 					useIfaceMethod[src] = append(useIfaceMethod[src],
 						fmt.Sprintf("%s[%d]", iface, e.Extra))
 				}
 			case EdgeUseNamedMethod:
-				name := pm.NameString(NameRef{Off: e.Target, Len: e.Extra})
+				name := pm.nameString(NameRef{Off: e.Target, Len: e.Extra})
 				useNamed[src] = append(useNamed[src], name)
 			}
 		}
@@ -61,7 +61,7 @@ func FormatMeta(w *strings.Builder, pm *PackageMeta) {
 	typeChildren := make(map[string][]string)
 	for i := LocalSymbol(0); i < LocalSymbol(n); i++ {
 		parent := symName(i)
-		for _, c := range pm.TypeChildren(i) {
+		for _, c := range pm.typeChildren(i) {
 			typeChildren[parent] = append(typeChildren[parent], symName(c))
 		}
 	}
@@ -71,9 +71,9 @@ func FormatMeta(w *strings.Builder, pm *PackageMeta) {
 	methodInfo := make(map[string][]slotInfo)
 	for i := LocalSymbol(0); i < LocalSymbol(n); i++ {
 		typ := symName(i)
-		for _, s := range pm.MethodSlots(i) {
+		for _, s := range pm.methodSlots(i) {
 			methodInfo[typ] = append(methodInfo[typ], slotInfo{
-				name:  pm.NameString(s.Name),
+				name:  pm.nameString(s.Name),
 				mtype: symName(s.MType),
 				ifn:   symName(s.IFn),
 				tfn:   symName(s.TFn),
@@ -86,9 +86,9 @@ func FormatMeta(w *strings.Builder, pm *PackageMeta) {
 	ifaceInfo := make(map[string][]sigInfo)
 	for i := LocalSymbol(0); i < LocalSymbol(n); i++ {
 		iface := symName(i)
-		for _, s := range pm.IfaceMethods(i) {
+		for _, s := range pm.ifaceMethods(i) {
 			ifaceInfo[iface] = append(ifaceInfo[iface], sigInfo{
-				name:  pm.NameString(s.Name),
+				name:  pm.nameString(s.Name),
 				mtype: symName(s.MType),
 			})
 		}
@@ -97,7 +97,7 @@ func FormatMeta(w *strings.Builder, pm *PackageMeta) {
 	// collect Reflect
 	var reflectSyms []string
 	for i := LocalSymbol(0); i < LocalSymbol(n); i++ {
-		if pm.HasReflect(i) {
+		if pm.hasReflect(i) {
 			reflectSyms = append(reflectSyms, symName(i))
 		}
 	}

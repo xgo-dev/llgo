@@ -127,8 +127,8 @@ func TestGlobalSummaryMerge(t *testing.T) {
 	if len(g.Interfaces()) != 1 || g.Interfaces()[0] != reader {
 		t.Errorf("Interfaces() = %v, want [reader=%d]", g.Interfaces(), reader)
 	}
-	if len(g.ConcreteTypes()) != 1 || g.ConcreteTypes()[0] != myType {
-		t.Errorf("ConcreteTypes() = %v, want [myType=%d]", g.ConcreteTypes(), myType)
+	if len(g.MethodSlots(myType)) == 0 {
+		t.Errorf("MethodSlots(myType) = empty, want non-empty")
 	}
 }
 
@@ -160,8 +160,8 @@ func TestGlobalSummaryLinkonce(t *testing.T) {
 	foo, _ := g.LookupSymbol("*shared.Foo")
 
 	// only one MethodInfo entry survives (first-wins), no duplicate concrete type
-	if got := len(g.ConcreteTypes()); got != 1 {
-		t.Errorf("ConcreteTypes() len = %d, want 1 (first-wins)", got)
+	if got := len(g.MethodSlots(foo)); got != 1 {
+		t.Errorf("MethodSlots(foo) len = %d, want 1 (first-wins)", got)
 	}
 	if got := len(g.MethodSlots(foo)); got != 1 {
 		t.Errorf("MethodSlots(foo) len = %d, want 1", got)
