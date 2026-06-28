@@ -476,6 +476,14 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	p.funcs[f] = fn
 	isCgo := isCgoExternSymbol(f)
 	if nblk := len(f.Blocks); nblk > 0 {
+		if p.prog.FuncInfoMetadataEnabled() {
+			goName := fn.Name()
+			if pkgTypes != nil {
+				goName = funcName(pkgTypes, f, false)
+			}
+			pos := p.goProg.Fset.Position(f.Pos())
+			pkg.EmitFuncInfo(fn.Name(), goName, pos.Filename, pos.Line, pos.Column)
+		}
 		var childInits []func()
 		if len(f.AnonFuncs) > 0 {
 			parentInits := p.inits
