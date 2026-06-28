@@ -807,17 +807,18 @@ func (p Package) cFunc(fullName string, sig *types.Signature) Expr {
 }
 
 const (
-	closureCtx  = "__llgo_ctx"
-	closureStub = "__llgo_stub."
+	closureCtx        = "__llgo_ctx"
+	closureStub       = "__llgo_stub."
+	closureFuncPCStub = "__llgo_funcpc_stub."
 )
 
 // closureStub creates or reuses a wrapper for function values that lack closure ctx.
 // It stays on Package to match the original placement of closure stubs.
-func (p Package) closureStub(b Builder, fn Expr, sig *types.Signature, origKind valueKind) (Expr, Expr) {
+func (p Package) closureStub(b Builder, fn Expr, sig *types.Signature, origKind valueKind, keepFuncPC bool) (Expr, Expr) {
 	prog := b.Prog
 	switch origKind {
 	case vkFuncDecl:
-		wrap := p.closureWrapDecl(fn, sig)
+		wrap := p.closureWrapDecl(fn, sig, keepFuncPC)
 		return wrap.Expr, prog.Nil(prog.VoidPtr())
 	case vkFuncPtr:
 		wrap := p.closureWrapPtr(sig)

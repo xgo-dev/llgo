@@ -114,12 +114,20 @@ func (b Builder) Imethod(intf Expr, method *types.Func) Expr {
 //
 //	t1 = make interface{} <- int (42:int)
 //	t2 = make Stringer <- t0
-func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
+func (b Builder) MakeInterface(tinter Type, x Expr) Expr {
+	return b.makeInterface(tinter, x, false)
+}
+
+func (b Builder) MakeInterfaceFuncPC(tinter Type, x Expr) Expr {
+	return b.makeInterface(tinter, x, true)
+}
+
+func (b Builder) makeInterface(tinter Type, x Expr, keepFuncPC bool) (ret Expr) {
 	rawIntf := tinter.raw.Type.Underlying().(*types.Interface)
 	dbgInstrf("MakeInterface %v, %v\n", rawIntf, x.impl)
 	if x.kind == vkFuncDecl {
 		typ := b.Prog.Type(x.raw.Type, InGo)
-		x = checkExpr(x, typ.raw.Type, b)
+		x = checkExprEx(x, typ.raw.Type, b, keepFuncPC)
 	}
 	prog := b.Prog
 	typ := x.Type

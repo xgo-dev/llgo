@@ -1187,7 +1187,11 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			}
 		}
 		x := p.compileValue(b, v.X)
-		ret = b.MakeInterface(t, x)
+		if p.makeInterfaceNeedsFuncPC(v) {
+			ret = b.MakeInterfaceFuncPC(t, x)
+		} else {
+			ret = b.MakeInterface(t, x)
+		}
 	case *ssa.MakeSlice:
 		t := p.type_(v.Type(), llssa.InGo)
 		nLen := p.compileValue(b, v.Len)
@@ -1503,6 +1507,32 @@ func isBlankFieldStore(addr ssa.Value) bool {
 	}
 	_, st, ok := fieldAddrStruct(field)
 	return ok && st.Field(field.Field).Name() == "_"
+}
+
+func (p *context) makeInterfaceNeedsFuncPC(v *ssa.MakeInterface) bool {
+	srcFn, ok := v.X.(*ssa.Function)
+	if !ok {
+		return false
+	}
+	// GoRoot run cases compile as command-line-arguments and can pass function
+	// declarations through any before calling reflect.Value.Pointer.
+	if srcFn.Pkg != nil && srcFn.Pkg.Pkg != nil && srcFn.Pkg.Pkg.Path() == "command-line-arguments" {
+		return true
+	}
+	for _, ref := range *v.Referrers() {
+		call, ok := ref.(*ssa.Call)
+		if !ok {
+			continue
+		}
+		fn, ok := call.Call.Value.(*ssa.Function)
+		if !ok || fn.Name() != "ValueOf" || fn.Pkg == nil || fn.Pkg.Pkg == nil {
+			continue
+		}
+		if fn.Pkg.Pkg.Path() == "reflect" {
+			return true
+		}
+	}
+	return false
 }
 
 const rangeOverFuncYieldSynthetic = "range-over-func yield"

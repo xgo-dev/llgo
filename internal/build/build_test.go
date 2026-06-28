@@ -55,6 +55,32 @@ func TestNeedsLinuxNoPIE(t *testing.T) {
 	}
 }
 
+func TestNeedsLinuxFuncPCDynamicSymbolExport(t *testing.T) {
+	ctx := &context{buildConf: &Config{Goos: "linux"}}
+	if !needsLinuxFuncPCDynamicSymbolExport(ctx, nil) {
+		t.Fatal("linux executable link should export FuncForPC wrapper symbols")
+	}
+	for _, flag := range []string{
+		"-rdynamic",
+		"-Wl,-E",
+		"-Wl,--export-dynamic",
+		"-Wl,--export-dynamic-symbol=__llgo_funcpc_stub.*",
+	} {
+		if needsLinuxFuncPCDynamicSymbolExport(ctx, []string{flag}) {
+			t.Fatalf("explicit %s should not be duplicated", flag)
+		}
+	}
+	ctx.buildConf.Goos = "darwin"
+	if needsLinuxFuncPCDynamicSymbolExport(ctx, nil) {
+		t.Fatal("non-linux executable link should not export ELF symbols")
+	}
+	ctx.buildConf.Goos = "linux"
+	ctx.buildConf.Target = "wasi"
+	if needsLinuxFuncPCDynamicSymbolExport(ctx, nil) {
+		t.Fatal("named targets should not force host linux symbol export")
+	}
+}
+
 func mockRun(args []string, cfg *Config) {
 	defer mockable.DisableMock()
 	mockable.EnableMock()

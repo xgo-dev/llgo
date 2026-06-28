@@ -449,7 +449,7 @@ func (b Builder) abiUncommonMethods(t types.Type, mset *types.MethodSet) llvm.Va
 		var tfn, ifn llvm.Value
 		tfnFn := b.abiMethodFunc(anonymous, pkg, mName, mSig)
 		tfnSig := funcType(prog, methodExprSignature(mSig)).(*types.Signature)
-		tfn = b.Pkg.closureWrapDecl(tfnFn.Expr, tfnSig).impl
+		tfn = b.Pkg.closureWrapDecl(tfnFn.Expr, tfnSig, false).impl
 		ifn = tfnFn.impl
 		if _, ok := m.Recv().Underlying().(*types.Pointer); !ok {
 			pRecv := types.NewVar(token.NoPos, pkg, "", types.NewPointer(mSig.Recv().Type()))
