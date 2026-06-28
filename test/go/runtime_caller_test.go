@@ -224,6 +224,85 @@ func TestRuntimeCallersInlineMetadata(t *testing.T) {
 	}
 }
 
+func TestRuntimeCallerConcurrentGoroutines(t *testing.T) {
+	ready := make(chan string, 2)
+	releaseA := make(chan struct{})
+	releaseB := make(chan struct{})
+	doneA := make(chan runtimeCallerSnapshot, 1)
+	doneB := make(chan runtimeCallerSnapshot, 1)
+
+	go func() {
+		doneA <- runtimeCallerConcurrentLeafA(ready, releaseA)
+	}()
+	go func() {
+		doneB <- runtimeCallerConcurrentLeafB(ready, releaseB)
+	}()
+
+	first := <-ready
+	second := <-ready
+	if first == second {
+		t.Fatalf("both goroutines reported the same label %q", first)
+	}
+
+	release := func(label string) {
+		switch label {
+		case "A":
+			close(releaseA)
+		case "B":
+			close(releaseB)
+		default:
+			t.Fatalf("unknown goroutine label %q", label)
+		}
+	}
+	recv := func(label string) runtimeCallerSnapshot {
+		switch label {
+		case "A":
+			return <-doneA
+		case "B":
+			return <-doneB
+		default:
+			t.Fatalf("unknown goroutine label %q", label)
+			return runtimeCallerSnapshot{}
+		}
+	}
+
+	release(first)
+	firstFrame := recv(first)
+	release(second)
+	secondFrame := recv(second)
+
+	runtimeCallerConcurrentCheck(t, first, firstFrame)
+	runtimeCallerConcurrentCheck(t, second, secondFrame)
+}
+
+func runtimeCallerConcurrentCheck(t *testing.T, label string, got runtimeCallerSnapshot) {
+	t.Helper()
+	wantSuffix := ".runtimeCallerConcurrentLeafA"
+	wantFile := "runtime_caller_concurrent_a.go"
+	wantLine := 603
+	if label == "B" {
+		wantSuffix = ".runtimeCallerConcurrentLeafB"
+		wantFile = "runtime_caller_concurrent_b.go"
+		wantLine = 703
+	}
+	if !got.ok {
+		t.Fatalf("runtime.Caller(0) failed in goroutine %s", label)
+	}
+	if !strings.HasSuffix(got.file, wantFile) {
+		t.Fatalf("goroutine %s runtime.Caller(0) file = %q, want suffix %q", label, got.file, wantFile)
+	}
+	if got.line != wantLine {
+		t.Fatalf("goroutine %s runtime.Caller(0) line = %d, want %d", label, got.line, wantLine)
+	}
+	fn := runtime.FuncForPC(got.pc)
+	if fn == nil {
+		t.Fatalf("goroutine %s FuncForPC(runtime.Caller(0) pc) = nil", label)
+	}
+	if name := fn.Name(); !strings.HasSuffix(name, wantSuffix) {
+		t.Fatalf("goroutine %s FuncForPC(runtime.Caller(0) pc).Name = %q, want suffix %q", label, name, wantSuffix)
+	}
+}
+
 func runtimeFrameNameSuffixes(got, want []string) bool {
 	if len(got) != len(want) {
 		return false
@@ -394,4 +473,20 @@ func runtimeCallersMid(skip int) []runtime.Frame {
 //line runtime_callers_metadata.go:220
 func runtimeCallersTop(skip int) []runtime.Frame {
 	return runtimeCallersMid(skip)
+}
+
+//line runtime_caller_concurrent_a.go:600
+func runtimeCallerConcurrentLeafA(ready chan<- string, release <-chan struct{}) runtimeCallerSnapshot {
+	ready <- "A"
+	<-release
+	pc, file, line, ok := runtime.Caller(0)
+	return runtimeCallerSnapshot{pc: pc, file: file, line: line, ok: ok}
+}
+
+//line runtime_caller_concurrent_b.go:700
+func runtimeCallerConcurrentLeafB(ready chan<- string, release <-chan struct{}) runtimeCallerSnapshot {
+	ready <- "B"
+	<-release
+	pc, file, line, ok := runtime.Caller(0)
+	return runtimeCallerSnapshot{pc: pc, file: file, line: line, ok: ok}
 }

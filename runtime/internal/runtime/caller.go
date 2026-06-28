@@ -16,7 +16,12 @@
 
 package runtime
 
-import "unsafe"
+import (
+	"unsafe"
+
+	"github.com/goplus/llgo/runtime/internal/clite/pthread/sync"
+	"github.com/goplus/llgo/runtime/internal/clite/tls"
+)
 
 type CallerFrame struct {
 	PC        uintptr
@@ -28,8 +33,10 @@ type CallerFrame struct {
 }
 
 var (
-	callerFrames []CallerFrame
-	pcFrames     []*CallerFrame
+	callerFrameTLS = tls.Alloc[[]CallerFrame](nil)
+
+	pcFramesMu sync.Mutex
+	pcFrames   []*CallerFrame
 )
 
 var (
@@ -38,9 +45,14 @@ var (
 	runtimeGoexitFrame  = CallerFrame{Function: "runtime.goexit"}
 )
 
+func init() {
+	pcFramesMu.Init(nil)
+}
+
 func PushCallerFrame(entry uintptr, name, file string, startLine int) int {
-	mark := len(callerFrames)
-	callerFrames = append(callerFrames, CallerFrame{
+	frames := callerFrameTLS.Get()
+	mark := len(frames)
+	frames = append(frames, CallerFrame{
 		PC:        entry,
 		Entry:     entry,
 		Function:  name,
@@ -48,31 +60,40 @@ func PushCallerFrame(entry uintptr, name, file string, startLine int) int {
 		Line:      startLine,
 		StartLine: startLine,
 	})
+	callerFrameTLS.Set(frames)
 	return mark
 }
 
 func SetCallerLine(line int) {
-	if line <= 0 || len(callerFrames) == 0 {
+	frames := callerFrameTLS.Get()
+	if line <= 0 || len(frames) == 0 {
 		return
 	}
-	callerFrames[len(callerFrames)-1].Line = line
+	frames[len(frames)-1].Line = line
+	callerFrameTLS.Set(frames)
 }
 
 func PopCallerFrame(mark int) {
-	if mark < 0 || mark > len(callerFrames) {
+	frames := callerFrameTLS.Get()
+	if mark < 0 || mark > len(frames) {
 		return
 	}
-	callerFrames = callerFrames[:mark]
+	var zero CallerFrame
+	for i := mark; i < len(frames); i++ {
+		frames[i] = zero
+	}
+	callerFrameTLS.Set(frames[:mark])
 }
 
 func Caller(skip int) (CallerFrame, bool) {
 	if skip < 0 {
 		return CallerFrame{}, false
 	}
-	if skip < len(callerFrames) {
-		return captureFrame(callerFrames[len(callerFrames)-1-skip], false), true
+	frames := callerFrameTLS.Get()
+	if skip < len(frames) {
+		return captureFrame(frames[len(frames)-1-skip], false), true
 	}
-	switch skip - len(callerFrames) {
+	switch skip - len(frames) {
 	case 0:
 		return captureFrame(runtimeMainFrame, false), true
 	case 1:
@@ -86,6 +107,7 @@ func Callers(skip int, pcs []uintptr) int {
 	if skip < 0 {
 		skip = 0
 	}
+	frames := callerFrameTLS.Get()
 	n := 0
 	add := func(frame CallerFrame) bool {
 		if skip > 0 {
@@ -102,8 +124,8 @@ func Callers(skip int, pcs []uintptr) int {
 	if !add(runtimeCallersFrame) {
 		return n
 	}
-	for i := len(callerFrames) - 1; i >= 0; i-- {
-		if !add(callerFrames[i]) {
+	for i := len(frames) - 1; i >= 0; i-- {
+		if !add(frames[i]) {
 			return n
 		}
 	}
@@ -116,11 +138,15 @@ func FrameForPC(pc uintptr) (CallerFrame, bool) {
 	if pc == 0 {
 		return CallerFrame{}, false
 	}
+	pcFramesMu.Lock()
 	for _, frame := range pcFrames {
 		if uintptr(unsafe.Pointer(frame)) == pc || uintptr(unsafe.Pointer(frame))+1 == pc {
-			return *frame, true
+			ret := *frame
+			pcFramesMu.Unlock()
+			return ret, true
 		}
 	}
+	pcFramesMu.Unlock()
 	return CallerFrame{}, false
 }
 
@@ -135,6 +161,8 @@ func captureFrame(frame CallerFrame, callersPC bool) CallerFrame {
 	if rec.Entry == 0 {
 		rec.Entry = pc
 	}
+	pcFramesMu.Lock()
 	pcFrames = append(pcFrames, rec)
+	pcFramesMu.Unlock()
 	return *rec
 }
