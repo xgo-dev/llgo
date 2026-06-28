@@ -458,7 +458,7 @@ func filterRunOutput(in []byte) []byte {
 	return out.Bytes()
 }
 
-func TestCompileEx(t *testing.T, src any, fname, expected string, dbg bool) {
+func CompileIREx(t *testing.T, src any, fname string, dbg bool, configure func(llssa.Program)) string {
 	t.Helper()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, fname, src, parser.ParseComments)
@@ -481,13 +481,21 @@ func TestCompileEx(t *testing.T, src any, fname, expected string, dbg bool) {
 	foo.WriteTo(os.Stderr)
 	prog := ssatest.NewProgramEx(t, nil, imp)
 	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	if configure != nil {
+		configure(prog)
+	}
 
 	ret, err := cl.NewPackage(prog, foo, files)
 	if err != nil {
 		t.Fatal("cl.NewPackage failed:", err)
 	}
+	return ret.String()
+}
 
-	if v := ret.String(); llssa.StripModuleTarget(v) != expected && expected != ";" { // expected == ";" means skipping out.ll
+func TestCompileEx(t *testing.T, src any, fname, expected string, dbg bool) {
+	t.Helper()
+	v := CompileIREx(t, src, fname, dbg, nil)
+	if llssa.StripModuleTarget(v) != expected && expected != ";" { // expected == ";" means skipping out.ll
 		t.Fatalf("\n==> got:\n%s\n==> expected:\n%s\n", v, expected)
 	}
 }

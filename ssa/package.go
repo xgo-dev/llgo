@@ -233,6 +233,8 @@ type aProgram struct {
 	is32Bits bool
 
 	enableGoGlobalDCE bool
+
+	enableFuncInfoMetadata bool
 }
 
 type AbiSymbol struct {
