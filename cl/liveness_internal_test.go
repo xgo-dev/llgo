@@ -25,6 +25,11 @@ func buildSSAPackageWithPath(t *testing.T, pkgPath, pkgName, src string) *ssa.Pa
 
 func buildSSAPackageWithPathAndFiles(t *testing.T, pkgPath, pkgName, src string) (*ssa.Package, []*ast.File) {
 	t.Helper()
+	return buildSSAPackageWithPathAndFilesMode(t, pkgPath, pkgName, src, ssa.SanityCheckFunctions|ssa.InstantiateGenerics)
+}
+
+func buildSSAPackageWithPathAndFilesMode(t *testing.T, pkgPath, pkgName, src string, mode ssa.BuilderMode) (*ssa.Package, []*ast.File) {
+	t.Helper()
 
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "p.go", src, 0)
@@ -34,7 +39,6 @@ func buildSSAPackageWithPathAndFiles(t *testing.T, pkgPath, pkgName, src string)
 	files := []*ast.File{f}
 	pkg := types.NewPackage(pkgPath, pkgName)
 	imp := packages.NewImporter(fset)
-	mode := ssa.SanityCheckFunctions | ssa.InstantiateGenerics
 	ssapkg, _, err := ssautil.BuildPackage(&types.Config{Importer: imp}, fset, pkg, files, mode)
 	if err != nil {
 		t.Fatal(err)
@@ -288,8 +292,28 @@ func branch(p *int, cond bool) {
 	Sink = 1
 }
 
+func branchBoth(p *int, cond bool) {
+	var box Box
+	box.p = p
+	if cond {
+		Sink = box.p
+	} else {
+		Sink = box.p
+	}
+	Sink = 1
+}
+
 func paramUse(p *int) {
 	Sink = p
+	Sink = 1
+}
+
+func splitParam(p *int, cond bool) {
+	if cond {
+		Sink = p
+	} else {
+		Sink = p
+	}
 	Sink = 1
 }
 
@@ -320,6 +344,9 @@ func callWithInt(i int) {
 	if len(entryPlans) == 0 {
 		t.Fatal("branch should produce entry clear plans for dead successor")
 	}
+	if got := ctx.collectEntryClearPlans(ssapkg.Func("branchBoth")); len(got) != 0 {
+		t.Fatalf("branchBoth should not clear values live in both successors: %v", got)
+	}
 
 	paramFn := ssapkg.Func("paramUse")
 	if len(ctx.collectParamClobberPlans(paramFn)) == 0 {
@@ -327,6 +354,13 @@ func callWithInt(i int) {
 	}
 	if len(ctx.collectParamScanPlans(paramFn)) == 0 {
 		t.Fatal("paramUse should produce param scan plans")
+	}
+	splitParam := ssapkg.Func("splitParam")
+	if got := ctx.collectParamClobberPlans(splitParam); len(got) != 0 {
+		t.Fatalf("splitParam has no single last-use block, got clobbers: %v", got)
+	}
+	if got := ctx.collectParamScanPlans(splitParam); len(got) != 0 {
+		t.Fatalf("splitParam has no single last-use block, got scans: %v", got)
 	}
 	if len(ctx.collectCallClobberPlans(ssapkg.Func("callWithPointer"))) == 0 {
 		t.Fatal("pointer call should clobber pointer regs")
@@ -350,6 +384,14 @@ func flow(p *int, cond bool) {
 		Sink = p
 	} else {
 		Sink = 0
+	}
+}
+
+func split(p *int, cond bool) {
+	if cond {
+		Sink = p
+	} else {
+		Sink = p
 	}
 }
 
@@ -420,6 +462,17 @@ func converted(p *int) unsafe.Pointer {
 	}
 	if last, ok := ctx.lastUseInBlock(nil, fn.Blocks[0], map[ssa.Instruction]int{}, map[ssa.Value]bool{}); !ok || last != nil {
 		t.Fatalf("lastUseInBlock(nil) = %v, %v", last, ok)
+	}
+	split := ssapkg.Func("split")
+	if blk, ok := ctx.valueLastUseBlock(split.Params[0]); ok || blk != nil {
+		t.Fatalf("valueLastUseBlock(split param) = %v, %v; want no single block", blk, ok)
+	}
+	entryOrder := make(map[ssa.Instruction]int, len(split.Blocks[0].Instrs))
+	for i, instr := range split.Blocks[0].Instrs {
+		entryOrder[instr] = i
+	}
+	if last, ok := ctx.lastUseInBlock(split.Params[0], split.Blocks[0], entryOrder, map[ssa.Value]bool{}); ok || last != nil {
+		t.Fatalf("lastUseInBlock(split param in entry) = %v, %v; want failure outside block", last, ok)
 	}
 
 	var callLike int
@@ -497,6 +550,10 @@ func neg(i int) int {
 
 func callDeref(f *func()) {
 	(*f)()
+}
+
+func derefOnly(p **int) {
+	_ = *p
 }
 	`)
 	ctx := &context{}
@@ -596,6 +653,69 @@ func callDeref(f *func()) {
 	}
 	if last, ok := ctx.lastUseInBlock(callDeref.Params[0], deref.Block(), order, map[ssa.Value]bool{}); !ok || last != deref {
 		t.Fatalf("lastUseInBlock(call deref param) = %v, %v; want deref", last, ok)
+	}
+
+	derefOnly := ssapkg.Func("derefOnly")
+	var loneDeref *ssa.UnOp
+	for _, block := range derefOnly.Blocks {
+		for _, instr := range block.Instrs {
+			if unop, ok := instr.(*ssa.UnOp); ok && unop.Op == token.MUL {
+				loneDeref = unop
+				break
+			}
+		}
+		if loneDeref != nil {
+			break
+		}
+	}
+	if loneDeref == nil {
+		t.Fatalf("missing lone dereference:\n%s", derefOnly.String())
+	}
+	if !ctx.collectValueUseBlocks(derefOnly.Params[0], make(map[*ssa.BasicBlock]bool), map[ssa.Value]bool{}, false) {
+		t.Fatal("lone deref use collection failed")
+	}
+	order = make(map[ssa.Instruction]int, len(loneDeref.Block().Instrs))
+	for i, instr := range loneDeref.Block().Instrs {
+		order[instr] = i
+	}
+	if last, ok := ctx.lastUseInBlock(derefOnly.Params[0], loneDeref.Block(), order, map[ssa.Value]bool{}); !ok || last != loneDeref {
+		t.Fatalf("lastUseInBlock(lone deref param) = %v, %v; want deref", last, ok)
+	}
+}
+
+func TestConservativeLivenessDebugRefs(t *testing.T) {
+	ssapkg, _ := buildSSAPackageWithPathAndFilesMode(t, "example.com/live", "live", `package live
+
+var Sink any
+
+func use(p *int) {
+	Sink = p
+}
+	`, ssa.SanityCheckFunctions|ssa.InstantiateGenerics|ssa.GlobalDebug)
+
+	fn := ssapkg.Func("use")
+	var debugRefs int
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			if _, ok := instr.(*ssa.DebugRef); ok {
+				debugRefs++
+			}
+		}
+	}
+	if debugRefs == 0 {
+		t.Fatalf("debug SSA package did not contain DebugRef instructions:\n%s", fn.String())
+	}
+
+	ctx := &context{}
+	if !ctx.collectValueUseBlocks(fn.Params[0], make(map[*ssa.BasicBlock]bool), map[ssa.Value]bool{}, false) {
+		t.Fatal("DebugRef should be ignored while collecting use blocks")
+	}
+	order := make(map[ssa.Instruction]int, len(fn.Blocks[0].Instrs))
+	for i, instr := range fn.Blocks[0].Instrs {
+		order[instr] = i
+	}
+	if last, ok := ctx.lastUseInBlock(fn.Params[0], fn.Blocks[0], order, map[ssa.Value]bool{}); !ok || last == nil {
+		t.Fatalf("lastUseInBlock with DebugRef = %v, %v", last, ok)
 	}
 }
 
