@@ -2014,43 +2014,13 @@ xfails:
   - version: go1.24
     platform: linux/amd64
     directive: run
-    case: inline_caller.go
-    reason: go1.24 goroot ci-mode run failure on linux/amd64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
-    case: inline_callers.go
-    reason: go1.24 goroot ci-mode run failure on linux/amd64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
     case: maymorestack.go
     reason: go1.24 goroot ci-mode run failure on linux/amd64
   - version: go1.25
     platform: linux/amd64
     directive: run
-    case: inline_caller.go
-    reason: go1.25 goroot ci-mode run failure on linux/amd64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
-    case: inline_callers.go
-    reason: go1.25 goroot ci-mode run failure on linux/amd64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
     case: maymorestack.go
     reason: go1.25 goroot ci-mode run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: inline_caller.go
-    reason: go1.26 goroot ci-mode run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: inline_callers.go
-    reason: go1.26 goroot ci-mode run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64
     directive: run
@@ -2109,15 +2079,7 @@ xfails:
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: fixedbugs/bug347.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/bug348.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue14646.go
+    case: tinyfin.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
@@ -2157,10 +2119,6 @@ xfails:
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: fixedbugs/issue29504.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: fixedbugs/issue29735.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
@@ -2174,10 +2132,6 @@ xfails:
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue45045.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue4562.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
@@ -2202,10 +2156,6 @@ xfails:
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue58300b.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue5856.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
@@ -2634,28 +2584,8 @@ xfails:
   - version: go1.24
     platform: darwin/arm64
     directive: run
-    case: inline_caller.go
-    reason: go1.24 goroot ci-mode run failure on darwin/arm64
-  - version: go1.24
-    platform: darwin/arm64
-    directive: run
-    case: inline_callers.go
-    reason: go1.24 goroot ci-mode run failure on darwin/arm64
-  - version: go1.24
-    platform: darwin/arm64
-    directive: run
     case: maymorestack.go
     reason: go1.24 goroot ci-mode run failure on darwin/arm64
-  - version: go1.25
-    platform: darwin/arm64
-    directive: run
-    case: inline_caller.go
-    reason: go1.25 goroot ci-mode run failure on darwin/arm64
-  - version: go1.25
-    platform: darwin/arm64
-    directive: run
-    case: inline_callers.go
-    reason: go1.25 goroot ci-mode run failure on darwin/arm64
   - version: go1.25
     platform: darwin/arm64
     directive: run
@@ -2664,23 +2594,8 @@ xfails:
   - version: go1.26
     platform: darwin/arm64
     directive: run
-    case: inline_caller.go
-    reason: go1.26 goroot ci-mode run failure on darwin/arm64
-  - version: go1.26
-    platform: darwin/arm64
-    directive: run
-    case: inline_callers.go
-    reason: go1.26 goroot ci-mode run failure on darwin/arm64
-  - version: go1.26
-    platform: darwin/arm64
-    directive: run
     case: maymorestack.go
     reason: go1.26 goroot ci-mode run failure on darwin/arm64
-  - version: go1.26
-    platform: darwin/arm64
-    directive: run
-    case: devirtualization_nil_panics.go
-    reason: go1.26 goroot run failure on darwin/arm64
   - version: go1.26
     platform: linux/amd64
     directive: run
@@ -2805,11 +2720,6 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue7690.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: devirtualization_nil_panics.go
     reason: go1.26 goroot run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64

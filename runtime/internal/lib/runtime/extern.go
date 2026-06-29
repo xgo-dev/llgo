@@ -6,21 +6,23 @@ package runtime
 
 import (
 	clitedebug "github.com/goplus/llgo/runtime/internal/clite/debug"
+	rtdebug "github.com/goplus/llgo/runtime/internal/runtime"
 )
 
 func Caller(skip int) (pc uintptr, file string, line int, ok bool) {
-	// llgo currently doesn't have reliable source file/line mapping from PC.
-	// Return a stable placeholder location so stdlib log/testing can proceed.
-	var pcs [1]uintptr
-	if Callers(skip+1, pcs[:]) < 1 {
+	frame, ok := rtdebug.Caller(skip)
+	if !ok {
 		return 0, "", 0, false
 	}
-	return pcs[0], "???", 1, true
+	return frame.PC, frame.File, frame.Line, true
 }
 
 func Callers(skip int, pc []uintptr) int {
 	if len(pc) == 0 {
 		return 0
+	}
+	if n := rtdebug.Callers(skip, pc); n > 0 {
+		return n
 	}
 	n := 0
 	clitedebug.StackTrace(skip, func(fr *clitedebug.Frame) bool {
