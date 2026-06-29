@@ -172,6 +172,9 @@ func TestRecoverDeferTokenHelpers(t *testing.T) {
 	callee := pkg.NewFunc("callee", NoArgsNoRet, InGo)
 	b := callee.MakeBody(1)
 
+	if Nil.mayRecover() {
+		t.Fatal("nil expression should not be marked recover-capable")
+	}
 	if deferMayRecover(callee.Expr) {
 		t.Fatal("unmarked function declaration should not be recover-capable")
 	}
