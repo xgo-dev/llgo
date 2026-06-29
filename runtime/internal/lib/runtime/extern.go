@@ -6,9 +6,21 @@ package runtime
 
 import (
 	clitedebug "github.com/goplus/llgo/runtime/internal/clite/debug"
+	rtdebug "github.com/goplus/llgo/runtime/internal/runtime"
 )
 
 func Caller(skip int) (pc uintptr, file string, line int, ok bool) {
+	if frame, ok := rtdebug.Caller(skip); ok {
+		file = frame.File
+		line = frame.Line
+		if file == "" {
+			file = "???"
+		}
+		if line == 0 {
+			line = 1
+		}
+		return frame.PC, file, line, true
+	}
 	var pcs [1]uintptr
 	if Callers(skip+2, pcs[:]) < 1 {
 		return 0, "", 0, false
@@ -25,6 +37,9 @@ func Caller(skip int) (pc uintptr, file string, line int, ok bool) {
 }
 
 func Callers(skip int, pc []uintptr) int {
+	if n := rtdebug.Callers(skip, pc); n > 0 {
+		return n
+	}
 	return callers(skip+1, pc)
 }
 

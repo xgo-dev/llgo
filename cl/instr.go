@@ -853,6 +853,232 @@ func (p *context) sourceLine(filename string, line int) (string, bool) {
 	return lines[line-1], true
 }
 
+func (p *context) shouldTrackCallerFrames() bool {
+	if p == nil || p.pkg == nil || p.fn == nil || !p.trackCallerFrames {
+		return false
+	}
+	if target := p.prog.Target(); target != nil && (target.Target != "" || target.GOARCH == "wasm") {
+		return false
+	}
+	return canTrackCallerFramesForPackage(p.pkg.Path())
+}
+
+func canTrackCallerFramesForPackage(pkgPath string) bool {
+	return pkgPath != llssa.PkgRuntime &&
+		pkgPath != "runtime" &&
+		!isStandardLibraryPackage(pkgPath) &&
+		!strings.HasPrefix(pkgPath, "github.com/goplus/llgo/runtime/internal/")
+}
+
+func isStandardLibraryPackage(pkgPath string) bool {
+	return pkgPath != "command-line-arguments" && !strings.Contains(pkgPath, ".")
+}
+
+func packageUsesRuntimeCaller(pkg *ssa.Package) bool {
+	if pkg == nil {
+		return false
+	}
+	for _, member := range pkg.Members {
+		fn, ok := member.(*ssa.Function)
+		if ok && fnUsesRuntimeCaller(fn) {
+			return true
+		}
+	}
+	return false
+}
+
+func fnUsesRuntimeCaller(fn *ssa.Function) bool {
+	if fn == nil {
+		return false
+	}
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			call, ok := instr.(ssa.CallInstruction)
+			if !ok {
+				continue
+			}
+			if isRuntimeCallerFunc(call.Common().StaticCallee()) {
+				return true
+			}
+		}
+	}
+	for _, anon := range fn.AnonFuncs {
+		if fnUsesRuntimeCaller(anon) {
+			return true
+		}
+	}
+	return false
+}
+
+func isRuntimeCallerFunc(fn *ssa.Function) bool {
+	if fn == nil || fn.Pkg == nil || fn.Pkg.Pkg == nil {
+		return false
+	}
+	switch fn.Pkg.Pkg.Path() {
+	case "runtime", "github.com/goplus/llgo/runtime/internal/lib/runtime":
+		return isRuntimeCallerName(fn.Name())
+	case "runtime/debug":
+		return fn.Name() == "Stack"
+	default:
+		return false
+	}
+}
+
+func isRuntimeCallerLookupFunc(fn *ssa.Function) bool {
+	if fn == nil || fn.Pkg == nil || fn.Pkg.Pkg == nil {
+		return false
+	}
+	switch fn.Pkg.Pkg.Path() {
+	case "runtime", "github.com/goplus/llgo/runtime/internal/lib/runtime":
+		switch fn.Name() {
+		case "Caller", "Callers", "Stack":
+			return true
+		}
+	case "runtime/debug":
+		return fn.Name() == "Stack"
+	}
+	return false
+}
+
+func isRuntimeCallerName(name string) bool {
+	switch name {
+	case "Caller", "Callers", "CallersFrames", "FuncForPC", "Stack":
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *context) pushCallerFrame(b llssa.Builder, fn *ssa.Function) {
+	if fn == nil {
+		return
+	}
+	pos := p.fset.Position(fn.Pos())
+	entry := b.Convert(p.prog.Uintptr(), p.fn.Expr)
+	p.callerFrameMark = b.Call(
+		p.runtimeFunc("PushCallerFrame", pushCallerFrameSig()),
+		entry,
+		b.Str(p.runtimeCallerFrameName()),
+		b.Str(pos.Filename),
+		p.prog.IntVal(uint64(pos.Line), p.prog.Int()),
+	)
+}
+
+func (p *context) runtimeCallerFrameName() string {
+	if p == nil {
+		return ""
+	}
+	if p.goFn != nil && p.goFn.Pkg != nil && p.goFn.Pkg.Pkg != nil {
+		return runtimeFrameName(funcName(p.goFn.Pkg.Pkg, p.goFn, false))
+	}
+	if p.fn != nil {
+		return runtimeFrameName(p.fn.Name())
+	}
+	return ""
+}
+
+func (p *context) setCallerLine(b llssa.Builder, pos token.Pos) {
+	if !p.shouldTrackCallerFrames() {
+		return
+	}
+	line := p.fset.Position(pos).Line
+	p.setCallerLineNumber(b, line)
+}
+
+func (p *context) setCallerLineForCall(b llssa.Builder, call *ssa.CallCommon) {
+	if !p.shouldTrackCallerFrames() {
+		return
+	}
+	line := p.fset.Position(call.Pos()).Line
+	if line <= 0 {
+		return
+	}
+	fn := "SetCallerLine"
+	sig := setCallerLineSig()
+	if isRuntimeCallerLookupFunc(call.StaticCallee()) {
+		fn = "SetCallerLookupLine"
+		sig = setCallerLookupLineSig()
+	}
+	b.Call(p.runtimeFunc(fn, sig), p.prog.IntVal(uint64(line), p.prog.Int()))
+}
+
+func (p *context) setCallerLineNumber(b llssa.Builder, line int) {
+	if line <= 0 {
+		return
+	}
+	b.Call(p.runtimeFunc("SetCallerLine", setCallerLineSig()), p.prog.IntVal(uint64(line), p.prog.Int()))
+}
+
+func (p *context) popCallerFrame(b llssa.Builder) {
+	if p.callerFrameMark.IsNil() {
+		return
+	}
+	b.Call(p.runtimeFunc("PopCallerFrame", popCallerFrameSig()), p.callerFrameMark)
+}
+
+func (p *context) runtimeFunc(name string, sig *types.Signature) llssa.Expr {
+	p.pkg.NeedRuntime = true
+	fullName := llssa.PkgRuntime + "." + name
+	if fn := p.pkg.FuncOf(fullName); fn != nil {
+		return fn.Expr
+	}
+	return p.pkg.NewFuncEx(fullName, sig, llssa.InGo, false, false).Expr
+}
+
+func pushCallerFrameSig() *types.Signature {
+	return types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(
+			types.NewVar(token.NoPos, nil, "entry", types.Typ[types.Uintptr]),
+			types.NewVar(token.NoPos, nil, "name", types.Typ[types.String]),
+			types.NewVar(token.NoPos, nil, "file", types.Typ[types.String]),
+			types.NewVar(token.NoPos, nil, "startLine", types.Typ[types.Int]),
+		),
+		types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Int])),
+		false,
+	)
+}
+
+func setCallerLineSig() *types.Signature {
+	return types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, nil, "line", types.Typ[types.Int])),
+		nil,
+		false,
+	)
+}
+
+func setCallerLookupLineSig() *types.Signature {
+	return setCallerLineSig()
+}
+
+func popCallerFrameSig() *types.Signature {
+	return types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, nil, "mark", types.Typ[types.Int])),
+		nil,
+		false,
+	)
+}
+
+func runtimeFrameName(name string) string {
+	const commandLineArguments = "command-line-arguments."
+	if strings.HasPrefix(name, commandLineArguments) {
+		name = "main." + name[len(commandLineArguments):]
+	}
+	return normalizeRuntimeAnonFuncName(name)
+}
+
+func normalizeRuntimeAnonFuncName(name string) string {
+	dollar := strings.LastIndexByte(name, '$')
+	if dollar < 0 || dollar == len(name)-1 {
+		return name
+	}
+	for i := dollar + 1; i < len(name); i++ {
+		if name[i] < '0' || name[i] > '9' {
+			return name
+		}
+	}
+	return name[:dollar] + ".func" + name[dollar+1:]
+}
+
 // -----------------------------------------------------------------------------
 
 type explicitDeferStack struct {
@@ -1049,6 +1275,7 @@ func collectMethodNilDerefChecks(fn *ssa.Function) map[*ssa.UnOp]none {
 }
 
 func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallCommon, ds *explicitDeferStack) (ret llssa.Expr) {
+	p.setCallerLineForCall(b, call)
 	cv := call.Value
 	if mthd := call.Method; mthd != nil {
 		reflectCheck := p.reflectTypeMethodCheck(call, mthd)
