@@ -1455,6 +1455,71 @@ func TestZeroSizedLoadEmitsNilDerefGuard(t *testing.T) {
 	}
 }
 
+func TestLoadAndClearSinglePointer(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	ptrToInt := types.NewPointer(types.Typ[types.Int])
+	wrapStruct := types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, nil, "p", ptrToInt, false),
+	}, nil)
+
+	params := types.NewTuple(
+		types.NewVar(0, nil, "p", types.NewPointer(ptrToInt)),
+		types.NewVar(0, nil, "s", types.NewPointer(wrapStruct)),
+	)
+	results := types.NewTuple(
+		types.NewVar(0, nil, "", ptrToInt),
+		types.NewVar(0, nil, "", wrapStruct),
+	)
+	sig := types.NewSignatureType(nil, nil, nil, params, results, false)
+	fn := pkg.NewFunc("loadAndClear", sig, InGo)
+	b := fn.MakeBody(1)
+	pv, ok := b.LoadAndClearSinglePointer(fn.Param(0))
+	if !ok {
+		t.Fatal("pointer slot should be load-and-clearable")
+	}
+	sv, ok := b.LoadAndClearSinglePointer(fn.Param(1))
+	if !ok {
+		t.Fatal("single-pointer struct slot should be load-and-clearable")
+	}
+	if got, want := sv.impl.Type().String(), sv.Type.ll.String(); got != want {
+		t.Fatalf("single-pointer struct load-and-clear type = %s, want %s", got, want)
+	}
+	b.Return(pv, sv)
+	b.EndBuild()
+
+	ir := fn.impl.String()
+	if got := strings.Count(ir, "store ptr null"); got != 2 {
+		t.Fatalf("LoadAndClearSinglePointer should clear both pointer slots, got %d stores:\n%s", got, ir)
+	}
+	if got := strings.Count(ir, "load ptr"); got < 2 {
+		t.Fatalf("LoadAndClearSinglePointer should load both pointer slots, got %d loads:\n%s", got, ir)
+	}
+
+	noPtrStruct := types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, nil, "i", types.Typ[types.Int], false),
+	}, nil)
+	multiStruct := types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, nil, "p", ptrToInt, false),
+		types.NewField(token.NoPos, nil, "q", ptrToInt, false),
+	}, nil)
+	falseCases := []types.Type{
+		types.NewPointer(types.Typ[types.Int]),
+		types.NewPointer(noPtrStruct),
+		types.NewPointer(multiStruct),
+	}
+	for i, typ := range falseCases {
+		fn := pkg.NewFunc(fmt.Sprintf("rejectLoadAndClear%d", i), types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(types.NewVar(0, nil, "p", typ)), nil, false), InGo)
+		b := fn.MakeBody(1)
+		if _, ok := b.LoadAndClearSinglePointer(fn.Param(0)); ok {
+			t.Fatalf("LoadAndClearSinglePointer accepted %v", typ)
+		}
+	}
+}
+
 func TestTypeAssertSingleElemArrayUsesInsertValue(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.sizes = types.SizesFor("gc", runtime.GOARCH)

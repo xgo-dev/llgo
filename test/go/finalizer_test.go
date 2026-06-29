@@ -17,6 +17,8 @@
 package gotest
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -87,6 +89,116 @@ func TestRuntimeSetFinalizerCancel(t *testing.T) {
 		t.Fatal("canceled finalizer ran")
 	case <-time.After(50 * time.Millisecond):
 	}
+}
+
+const finalizerStackLivenessProbe = `package main
+
+import (
+	"fmt"
+	"runtime"
+)
+
+type HeapObj [8]int64
+
+type StkObj struct {
+	h *HeapObj
+}
+
+var n int
+var c int = -1
+var null StkObj
+var sink *HeapObj
+
+func gc() {
+	runtime.GC()
+	runtime.GC()
+	runtime.GC()
+	n++
+}
+
+func keepAliveCase() {
+	c = -1
+	n = 0
+	f()
+	gc()
+	if c != 1 {
+		panic(fmt.Sprintf("keepalive collection phase = %d, want 1", c))
+	}
+}
+
+func f() {
+	var s StkObj
+	s.h = new(HeapObj)
+	runtime.SetFinalizer(s.h, func(h *HeapObj) {
+		c = n
+	})
+	g(&s)
+	gc()
+}
+
+func g(s *StkObj) {
+	gc()
+	runtime.KeepAlive(s)
+	gc()
+}
+
+//go:noinline
+func use(p *StkObj) {
+}
+
+//go:noinline
+func ambiguousArgCase(s StkObj, b bool) {
+	var p *StkObj
+	if b {
+		p = &s
+	} else {
+		p = &null
+	}
+	use(p)
+	gc()
+	sink = p.h
+	gc()
+	sink = nil
+	gc()
+}
+
+func runAmbiguousArgCase(b bool, want int) {
+	var s StkObj
+	s.h = new(HeapObj)
+	c = -1
+	n = 0
+	runtime.SetFinalizer(s.h, func(h *HeapObj) {
+		c = n
+	})
+	ambiguousArgCase(s, b)
+	if c != want {
+		panic(fmt.Sprintf("ambiguous arg b=%v collection phase = %d, want %d", b, c, want))
+	}
+}
+
+func main() {
+	keepAliveCase()
+	runAmbiguousArgCase(true, 2)
+	runAmbiguousArgCase(false, 0)
+}
+`
+
+func TestRuntimeSetFinalizerStackObjectLiveness(t *testing.T) {
+	dir, err := os.MkdirTemp("", "llgo-finalizer-stack-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	mainFile := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(mainFile, []byte(finalizerStackLivenessProbe), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runGoCmd(t, dir, "run", mainFile)
+
+	root := findLLGoRoot(t)
+	t.Setenv("LLGO_ROOT", root)
+	runGoCmd(t, root, "run", "./cmd/llgo", "run", mainFile)
 }
 
 func runGCWithTimeout(t *testing.T) {

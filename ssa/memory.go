@@ -63,6 +63,34 @@ func (b Builder) aggregateValue(t Type, flds ...llvm.Value) Expr {
 	return Expr{aggregateValue(b.impl, t.ll, flds...), t}
 }
 
+// LoadAndClearSinglePointer atomically copies a pointer-sized value out of ptr
+// and clears the source slot. It handles either *P or *struct{P}.
+func (b Builder) LoadAndClearSinglePointer(ptr Expr) (Expr, bool) {
+	elem := b.Prog.Elem(ptr.Type)
+	if elem.ll.TypeKind() == llvm.PointerTypeKind {
+		old := b.loadAndClearPointerWord(ptr.impl, elem.ll)
+		return Expr{old, elem}, true
+	}
+
+	st, ok := types.Unalias(elem.RawType()).Underlying().(*types.Struct)
+	if !ok || st.NumFields() != 1 {
+		return Nil, false
+	}
+	field := b.Prog.rawType(st.Field(0).Type())
+	if field.ll.TypeKind() != llvm.PointerTypeKind {
+		return Nil, false
+	}
+	fieldPtr := llvm.CreateStructGEP(b.impl, elem.ll, ptr.impl, 0)
+	old := b.loadAndClearPointerWord(fieldPtr, field.ll)
+	return b.aggregateValue(elem, old), true
+}
+
+func (b Builder) loadAndClearPointerWord(ptr llvm.Value, typ llvm.Type) llvm.Value {
+	old := llvm.CreateLoad(b.impl, typ, ptr)
+	b.impl.CreateStore(llvm.ConstNull(typ), ptr)
+	return old
+}
+
 func aggregateValue(b llvm.Builder, tll llvm.Type, flds ...llvm.Value) llvm.Value {
 	agg := llvm.Undef(tll)
 	for i, fld := range flds {
