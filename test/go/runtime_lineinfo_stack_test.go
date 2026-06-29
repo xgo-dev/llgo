@@ -55,7 +55,7 @@ func checkCaller() {
 
 //go:noinline
 func checkCallerSkip() {
-	helperCallerSkip()
+	helperCallerSkip() // CALLER_SKIP_MARK
 }
 
 //go:noinline
@@ -142,7 +142,7 @@ func checkPanicStack() {
 		if recover() == nil {
 			panic("missing panic")
 		}
-		stack := string(debug.Stack())
+		stack := string(debug.Stack()) // DEBUG_STACK_CALL_MARK
 		if !strings.Contains(stack, "main.checkPanicStack") || !strings.Contains(stack, "main.go:DEBUG_STACK_LINE") {
 			panic("bad stack: " + stack)
 		}
@@ -154,11 +154,11 @@ func checkPanicStack() {
 
 func TestRuntimeLineInfoAndStack(t *testing.T) {
 	source := runtimeLineInfoProbe
-	source = strings.ReplaceAll(source, "CALLER_LINE", strconv.Itoa(markerLine(source, "func checkCaller()")))
-	source = strings.ReplaceAll(source, "CALLER_SKIP_LINE", strconv.Itoa(markerLine(source, "func checkCallerSkip()")))
-	source = strings.ReplaceAll(source, "FUNC_FILELINE_LINE", strconv.Itoa(markerLine(source, "func checkFuncForPC()")))
-	source = strings.ReplaceAll(source, "RUNTIME_STACK_LINE", strconv.Itoa(markerLine(source, "func checkRuntimeStack()")))
-	source = strings.ReplaceAll(source, "DEBUG_STACK_LINE", strconv.Itoa(markerLine(source, "DEBUG_STACK_MARK")))
+	source = strings.ReplaceAll(source, "CALLER_LINE", strconv.Itoa(markerLine(source, "CALLER_MARK")))
+	source = strings.ReplaceAll(source, "CALLER_SKIP_LINE", strconv.Itoa(markerLine(source, "CALLER_SKIP_MARK")))
+	source = strings.ReplaceAll(source, "FUNC_FILELINE_LINE", strconv.Itoa(markerLine(source, "FUNC_FILELINE_MARK")))
+	source = strings.ReplaceAll(source, "RUNTIME_STACK_LINE", strconv.Itoa(markerLine(source, "RUNTIME_STACK_MARK")))
+	source = strings.ReplaceAll(source, "DEBUG_STACK_LINE", strconv.Itoa(markerLine(source, "DEBUG_STACK_CALL_MARK")))
 
 	dir := t.TempDir()
 	file := filepath.Join(dir, "main.go")

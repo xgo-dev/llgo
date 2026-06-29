@@ -199,6 +199,9 @@ type context struct {
 	rewrites   map[string]string
 	embedMap   goembed.VarMap
 	embedInits []embedInit
+
+	trackCallerFrames bool
+	callerFrameMark   llssa.Expr
 }
 
 func (p *context) rewriteValue(name string) (string, bool) {
@@ -212,6 +215,79 @@ func (p *context) rewriteValue(name string) (string, bool) {
 	varName := name[dot+1:]
 	val, ok := p.rewrites[varName]
 	return val, ok
+}
+
+func filesUseRuntimeCaller(files []*ast.File) bool {
+	for _, file := range files {
+		imports := make(map[string]string)
+		dotImports := make(map[string]bool)
+		for _, imp := range file.Imports {
+			path, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				continue
+			}
+			switch path {
+			case "runtime", "runtime/debug":
+			default:
+				continue
+			}
+			name := path[strings.LastIndex(path, "/")+1:]
+			if imp.Name != nil {
+				switch imp.Name.Name {
+				case ".":
+					dotImports[path] = true
+					continue
+				case "_":
+					continue
+				default:
+					name = imp.Name.Name
+				}
+			}
+			imports[name] = path
+		}
+		if len(imports) == 0 && len(dotImports) == 0 {
+			continue
+		}
+		found := false
+		ast.Inspect(file, func(n ast.Node) bool {
+			if found {
+				return false
+			}
+			switch n := n.(type) {
+			case *ast.SelectorExpr:
+				ident, ok := n.X.(*ast.Ident)
+				if !ok {
+					return true
+				}
+				if runtimeCallerSelector(imports[ident.Name], n.Sel.Name) {
+					found = true
+					return false
+				}
+			case *ast.Ident:
+				if (dotImports["runtime"] && isRuntimeCallerName(n.Name)) ||
+					(dotImports["runtime/debug"] && n.Name == "Stack") {
+					found = true
+					return false
+				}
+			}
+			return true
+		})
+		if found {
+			return true
+		}
+	}
+	return false
+}
+
+func runtimeCallerSelector(path, name string) bool {
+	switch path {
+	case "runtime":
+		return isRuntimeCallerName(name)
+	case "runtime/debug":
+		return name == "Stack"
+	default:
+		return false
+	}
 }
 
 // isStringPtrType checks if typ is a pointer to the basic string type (*string).
@@ -513,12 +589,13 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		dbgEnabled := enableDbg && (f == nil || f.Origin() == nil)
 		dbgSymsEnabled := enableDbgSyms && (f == nil || f.Origin() == nil)
 		p.inits = append(p.inits, func() {
-			oldFn, oldGoFn, oldMethodNilDerefChecks := p.fn, p.goFn, p.methodNilDerefChecks
+			oldFn, oldGoFn, oldMethodNilDerefChecks, oldCallerFrameMark := p.fn, p.goFn, p.methodNilDerefChecks, p.callerFrameMark
 			p.fn = fn
 			p.goFn = f
+			p.callerFrameMark = llssa.Nil
 			p.state = state // restore pkgState when compiling funcBody
 			defer func() {
-				p.fn, p.goFn, p.methodNilDerefChecks = oldFn, oldGoFn, oldMethodNilDerefChecks
+				p.fn, p.goFn, p.methodNilDerefChecks, p.callerFrameMark = oldFn, oldGoFn, oldMethodNilDerefChecks, oldCallerFrameMark
 			}()
 			p.phis = nil
 			if dbgSymsEnabled {
@@ -669,6 +746,9 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 	var instrs = block.Instrs[n:]
 	var ret = fn.Block(block.Index)
 	b.SetBlock(ret)
+	if block.Index == 0 && p.shouldTrackCallerFrames() {
+		p.pushCallerFrame(b, block.Parent())
+	}
 	if block.Index == 0 && enableCallTracing && !strings.HasPrefix(fn.Name(), "github.com/goplus/llgo/runtime/internal/runtime.Print") {
 		b.Printf("call " + fn.Name() + "\n\x00")
 	}
@@ -1057,6 +1137,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 				if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil {
 					if p.isLargeNonPointerValue(t) {
 						x := p.compileValue(b, v.X)
+						p.setCallerLine(b, v.Pos())
 						p.assertNilDerefBase(b, v.X)
 						b.AssertNilDeref(x)
 						return
@@ -1070,6 +1151,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 					// Zero-length slice-to-array conversions can leave only
 					// an unused slice deref; preserve its required nil check.
 					x := p.compileValue(b, v.X)
+					p.setCallerLine(b, v.Pos())
 					p.assertNilDerefBase(b, v.X)
 					b.AssertNilDeref(x)
 					return
@@ -1100,6 +1182,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			}
 		}
 		x := p.compileValue(b, v.X)
+		if v.Op != token.ARROW {
+			p.setCallerLine(b, v.Pos())
+		}
 		if shouldAssertDirectNilDeref(v) {
 			b.AssertNilDeref(x)
 		}
@@ -1135,6 +1220,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		ret = b.Convert(p.type_(t, llssa.InGo), x)
 	case *ssa.FieldAddr:
 		x := p.compileValue(b, v.X)
+		p.setCallerLine(b, v.Pos())
 		if p.isAddressOfFieldAddr(v) {
 			b.AssertNilDeref(x)
 		}
@@ -1156,10 +1242,12 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		}
 		x := p.compileValue(b, vx)
 		idx := p.compileValue(b, v.Index)
+		p.setCallerLine(b, v.Pos())
 		ret = b.IndexAddr(x, idx)
 	case *ssa.Index:
 		x := p.compileValue(b, v.X)
 		idx := p.compileValue(b, v.Index)
+		p.setCallerLine(b, v.Pos())
 		ret = b.Index(x, idx, func() (addr llssa.Expr, zero bool) {
 			switch n := v.X.(type) {
 			case *ssa.Const:
@@ -1193,6 +1281,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		if v.Max != nil {
 			max = p.compileValue(b, v.Max)
 		}
+		p.setCallerLine(b, v.Pos())
 		ret = b.Slice(x, low, high, max)
 		ret.Type = p.type_(v.Type(), llssa.InGo)
 	case *ssa.MakeInterface:
@@ -1249,6 +1338,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	case *ssa.TypeAssert:
 		x := p.compileValue(b, v.X)
 		t := p.type_(v.AssertedType, llssa.InGo)
+		p.setCallerLine(b, v.Pos())
 		ret = b.TypeAssert(x, t, v.CommaOk)
 	case *ssa.Extract:
 		x := p.compileValue(b, v.Tuple)
@@ -1289,6 +1379,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	case *ssa.SliceToArrayPointer:
 		t := p.type_(v.Type(), llssa.InGo)
 		x := p.compileValue(b, v.X)
+		p.setCallerLine(b, v.Pos())
 		ret = b.SliceToArrayPointer(x, t)
 	default:
 		panic(fmt.Sprintf("compileInstrAndValue: unknown instr - %T\n", iv))
@@ -1423,7 +1514,11 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 			}
 		}
 		if p.returnNeedsImplicitRunDefers(v) {
+			p.setCallerLine(b, v.Pos())
 			b.RunDefers()
+		}
+		if p.shouldTrackCallerFrames() {
+			p.popCallerFrame(b)
 		}
 		b.Return(results...)
 	case *ssa.If:
@@ -1437,6 +1532,7 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		m := p.compileValue(b, v.Map)
 		key := p.compileValue(b, v.Key)
 		val := p.compileValue(b, v.Value)
+		p.setCallerLine(b, v.Pos())
 		b.MapUpdate(m, key, val)
 	case *ssa.Defer:
 		if v.DeferStack != nil {
@@ -1447,13 +1543,16 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 	case *ssa.Go:
 		p.call(b, llssa.Go, &v.Call)
 	case *ssa.RunDefers:
+		p.setCallerLine(b, v.Pos())
 		b.RunDefers()
 	case *ssa.Panic:
 		arg := p.compileValue(b, v.X)
+		p.setCallerLine(b, v.Pos())
 		b.Panic(arg)
 	case *ssa.Send:
 		ch := p.compileValue(b, v.Chan)
 		x := p.compileValue(b, v.X)
+		p.setCallerLine(b, v.Pos())
 		b.Send(ch, x)
 	case *ssa.DebugRef:
 		if enableDbgSyms && v.Parent().Origin() == nil {
@@ -1769,6 +1868,8 @@ func newPackageEx(prog llssa.Program, patches Patches, rewrites map[string]strin
 		},
 		cgoSymbols: make([]string, 0, 128),
 		rewrites:   rewrites,
+
+		trackCallerFrames: filesUseRuntimeCaller(files) || packageUsesRuntimeCaller(pkg),
 	}
 	if embedMap != nil {
 		ctx.embedMap = *embedMap

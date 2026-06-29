@@ -9,6 +9,7 @@ import (
 
 	c "github.com/goplus/llgo/runtime/internal/clite"
 	clitedebug "github.com/goplus/llgo/runtime/internal/clite/debug"
+	rtdebug "github.com/goplus/llgo/runtime/internal/runtime"
 )
 
 // Frames may be used to get function/file/line information for a
@@ -335,6 +336,17 @@ func addrInfoSymbol(pc uintptr) pcSymbol {
 }
 
 func frameSymbol(pc uintptr) pcSymbol {
+	if frame, ok := rtdebug.FrameForPC(pc); ok {
+		return pcSymbol{
+			pc:        pc,
+			entry:     frame.Entry,
+			function:  frame.Function,
+			file:      frame.File,
+			line:      frame.Line,
+			startLine: frame.StartLine,
+			ok:        true,
+		}
+	}
 	sym := addrInfoSymbol(pc)
 	if pc == 0 {
 		return sym
