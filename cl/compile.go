@@ -199,6 +199,8 @@ type context struct {
 	rewrites   map[string]string
 	embedMap   goembed.VarMap
 	embedInits []embedInit
+
+	trackCallerFrames bool
 }
 
 func (p *context) rewriteValue(name string) (string, bool) {
@@ -212,6 +214,63 @@ func (p *context) rewriteValue(name string) (string, bool) {
 	varName := name[dot+1:]
 	val, ok := p.rewrites[varName]
 	return val, ok
+}
+
+func filesUseRuntimeCaller(files []*ast.File) bool {
+	for _, file := range files {
+		runtimeNames := make(map[string]struct{})
+		var dotRuntime bool
+		for _, imp := range file.Imports {
+			path, err := strconv.Unquote(imp.Path.Value)
+			if err != nil || path != "runtime" {
+				continue
+			}
+			name := "runtime"
+			if imp.Name != nil {
+				switch imp.Name.Name {
+				case ".":
+					dotRuntime = true
+					continue
+				case "_":
+					continue
+				default:
+					name = imp.Name.Name
+				}
+			}
+			runtimeNames[name] = struct{}{}
+		}
+		if len(runtimeNames) == 0 && !dotRuntime {
+			continue
+		}
+		found := false
+		ast.Inspect(file, func(n ast.Node) bool {
+			if found {
+				return false
+			}
+			switch n := n.(type) {
+			case *ast.SelectorExpr:
+				if !isRuntimeCallerName(n.Sel.Name) {
+					return true
+				}
+				if ident, ok := n.X.(*ast.Ident); ok {
+					if _, ok := runtimeNames[ident.Name]; ok {
+						found = true
+						return false
+					}
+				}
+			case *ast.Ident:
+				if dotRuntime && isRuntimeCallerName(n.Name) {
+					found = true
+					return false
+				}
+			}
+			return true
+		})
+		if found {
+			return true
+		}
+	}
+	return false
 }
 
 // isStringPtrType checks if typ is a pointer to the basic string type (*string).
@@ -627,6 +686,9 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 	var instrs = block.Instrs[n:]
 	var ret = fn.Block(block.Index)
 	b.SetBlock(ret)
+	if block.Index == 0 && p.shouldTrackCallerFrames() {
+		p.pushCallerFrame(b, block.Parent())
+	}
 	if block.Index == 0 && enableCallTracing && !strings.HasPrefix(fn.Name(), "github.com/goplus/llgo/runtime/internal/runtime.Print") {
 		b.Printf("call " + fn.Name() + "\n\x00")
 	}
@@ -1383,6 +1445,9 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		if p.returnNeedsImplicitRunDefers(v) {
 			b.RunDefers()
 		}
+		if p.shouldTrackCallerFrames() {
+			p.popCallerFrame(b)
+		}
 		b.Return(results...)
 	case *ssa.If:
 		fn := p.fn
@@ -1727,6 +1792,8 @@ func newPackageEx(prog llssa.Program, patches Patches, rewrites map[string]strin
 		},
 		cgoSymbols: make([]string, 0, 128),
 		rewrites:   rewrites,
+
+		trackCallerFrames: filesUseRuntimeCaller(files) || packageUsesRuntimeCaller(pkg),
 	}
 	if embedMap != nil {
 		ctx.embedMap = *embedMap

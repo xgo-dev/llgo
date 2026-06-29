@@ -2129,19 +2129,11 @@ xfails:
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: fixedbugs/issue18149.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: fixedbugs/issue21879.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue22083.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue22662.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
@@ -2631,16 +2623,6 @@ xfails:
     directive: run
     case: fixedbugs/issue7690.go
     reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.24
-    platform: darwin/arm64
-    directive: run
-    case: inline_caller.go
-    reason: go1.24 goroot ci-mode run failure on darwin/arm64
-  - version: go1.24
-    platform: darwin/arm64
-    directive: run
-    case: inline_callers.go
-    reason: go1.24 goroot ci-mode run failure on darwin/arm64
   - version: go1.24
     platform: darwin/arm64
     directive: run

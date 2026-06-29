@@ -802,6 +802,10 @@ func (p Package) rtFunc(fnName string) Expr {
 	return p.NewFunc(name, sig, InGo).Expr
 }
 
+func (p Package) RuntimeFunc(fnName string) Expr {
+	return p.rtFunc(fnName)
+}
+
 func (p Package) cFunc(fullName string, sig *types.Signature) Expr {
 	return p.NewFunc(fullName, sig, InC).Expr
 }
