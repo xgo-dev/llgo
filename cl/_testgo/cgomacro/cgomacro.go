@@ -122,56 +122,66 @@ import (
 // CHECK-NEXT:   %2 = call [0 x i8] @"{{.*}}/cl/_testgo/cgomacro._Cfunc_Py_Initialize"()
 // CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
 // CHECK-NEXT:   %4 = alloca i8, i64 {{.*}}, align 1
-// CHECK-NEXT:   %5 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 48)
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %5, i32 0, i32 0
-// CHECK-NEXT:   store ptr %4, ptr %6, align 8
-// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %5, i32 0, i32 1
-// CHECK-NEXT:   store i64 0, ptr %7, align 8
-// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %5, i32 0, i32 2
-// CHECK-NEXT:   store ptr %3, ptr %8, align 8
-// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %5, i32 0, i32 3
-// CHECK-NEXT:   store ptr blockaddress(@"{{.*}}/cl/_testgo/cgomacro.main", %_llgo_2), ptr %9, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %5)
-// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %5, i32 0, i32 1
-// CHECK-NEXT:   %11 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %5, i32 0, i32 3
-// CHECK-NEXT:   %12 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %5, i32 0, i32 4
-// CHECK-NEXT:   %13 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %5, i32 0, i32 5
-// CHECK-NEXT:   store ptr null, ptr %13, align 8
-// CHECK-NEXT:   %14 = call i32 @{{.*}}sigsetjmp(ptr %4, i32 0)
-// CHECK-NEXT:   %15 = icmp eq i32 %14, 0
-// CHECK-NEXT:   br i1 %15, label %_llgo_4, label %_llgo_5
+// CHECK-NEXT:   %5 = call ptr @llvm.frameaddress.p0(i32 0)
+// CHECK-NEXT:   %6 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 56)
+// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 0
+// CHECK-NEXT:   store ptr %4, ptr %7, align 8
+// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 1
+// CHECK-NEXT:   store i64 0, ptr %8, align 8
+// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 2
+// CHECK-NEXT:   store ptr %3, ptr %9, align 8
+// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 3
+// CHECK-NEXT:   store ptr blockaddress(@"{{.*}}/cl/_testgo/cgomacro.main", %_llgo_2), ptr %10, align 8
+// CHECK-NEXT:   %11 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 4
+// CHECK-NEXT:   store ptr null, ptr %11, align 8
+// CHECK-NEXT:   %12 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 5
+// CHECK-NEXT:   store ptr null, ptr %12, align 8
+// CHECK-NEXT:   %13 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 6
+// CHECK-NEXT:   store ptr %5, ptr %13, align 8
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %6)
+// CHECK-NEXT:   %14 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 1
+// CHECK-NEXT:   %15 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 3
+// CHECK-NEXT:   %16 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 4
+// CHECK-NEXT:   %17 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 5
+// CHECK-NEXT:   store ptr null, ptr %17, align 8
+// CHECK-NEXT:   %18 = call i32 @{{.*}}sigsetjmp(ptr %4, i32 0)
+// CHECK-NEXT:   %19 = icmp eq i32 %18, 0
+// CHECK-NEXT:   br i1 %19, label %_llgo_4, label %_llgo_5
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_3
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_5, %_llgo_4
-// CHECK-NEXT:   store ptr blockaddress(@"{{.*}}/cl/_testgo/cgomacro.main", %_llgo_3), ptr %11, align 8
-// CHECK-NEXT:   %16 = load i64, ptr %10, align 8
-// CHECK-NEXT:   %17 = call [0 x i8] @"{{.*}}/cl/_testgo/cgomacro._Cfunc_Py_Finalize"()
-// CHECK-NEXT:   %18 = load %"{{.*}}/runtime/internal/runtime.Defer", ptr %5, align 8
-// CHECK-NEXT:   %19 = extractvalue %"{{.*}}/runtime/internal/runtime.Defer" %18, 2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %19)
-// CHECK-NEXT:   %20 = load ptr, ptr %12, align 8
-// CHECK-NEXT:   indirectbr ptr %20, [label %_llgo_3, label %_llgo_6]
+// CHECK-NEXT:   store ptr blockaddress(@"{{.*}}/cl/_testgo/cgomacro.main", %_llgo_3), ptr %15, align 8
+// CHECK-NEXT:   %20 = load i64, ptr %14, align 8
+// CHECK-NEXT:   %21 = call ptr @llvm.frameaddress.p0(i32 0)
+// CHECK-NEXT:   %22 = call ptr @"{{.*}}/runtime/internal/runtime.StartRecoverFrame"(ptr %21)
+// CHECK-NEXT:   %23 = call [0 x i8] @"{{.*}}/cl/_testgo/cgomacro._Cfunc_Py_Finalize"()
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrame"(ptr %22)
+// CHECK-NEXT:   %24 = load %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, align 8
+// CHECK-NEXT:   %25 = extractvalue %"{{.*}}/runtime/internal/runtime.Defer" %24, 2
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %25)
+// CHECK-NEXT:   %26 = load ptr, ptr %16, align 8
+// CHECK-NEXT:   indirectbr ptr %26, [label %_llgo_3, label %_llgo_6]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_5, %_llgo_2
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Rethrow"(ptr %3)
 // CHECK-NEXT:   br label %_llgo_1
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %21 = call i32 @"{{.*}}/cl/_testgo/cgomacro.main$2"()
-// CHECK-NEXT:   %22 = call i32 @"{{.*}}/cl/_testgo/cgomacro.main$3"()
-// CHECK-NEXT:   %23 = call i32 @"{{.*}}/cl/_testgo/cgomacro.main$4"()
-// CHECK-NEXT:   %24 = call i32 @"{{.*}}/cl/_testgo/cgomacro.main$5"()
-// CHECK-NEXT:   %25 = call i32 @"{{.*}}/cl/_testgo/cgomacro.main$6"()
-// CHECK-NEXT:   %26 = call i32 @"{{.*}}/cl/_testgo/cgomacro.main$7"()
-// CHECK-NEXT:   store ptr blockaddress(@"{{.*}}/cl/_testgo/cgomacro.main", %_llgo_6), ptr %12, align 8
+// CHECK-NEXT:   %27 = call i32 @"{{.*}}/cl/_testgo/cgomacro.main$2"()
+// CHECK-NEXT:   %28 = call i32 @"{{.*}}/cl/_testgo/cgomacro.main$3"()
+// CHECK-NEXT:   %29 = call i32 @"{{.*}}/cl/_testgo/cgomacro.main$4"()
+// CHECK-NEXT:   %30 = call i32 @"{{.*}}/cl/_testgo/cgomacro.main$5"()
+// CHECK-NEXT:   %31 = call i32 @"{{.*}}/cl/_testgo/cgomacro.main$6"()
+// CHECK-NEXT:   %32 = call i32 @"{{.*}}/cl/_testgo/cgomacro.main$7"()
+// CHECK-NEXT:   store ptr blockaddress(@"{{.*}}/cl/_testgo/cgomacro.main", %_llgo_6), ptr %16, align 8
 // CHECK-NEXT:   br label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store ptr blockaddress(@"{{.*}}/cl/_testgo/cgomacro.main", %_llgo_3), ptr %12, align 8
-// CHECK-NEXT:   %27 = load ptr, ptr %11, align 8
-// CHECK-NEXT:   indirectbr ptr %27, [label %_llgo_3, label %_llgo_2]
+// CHECK-NEXT:   store ptr blockaddress(@"{{.*}}/cl/_testgo/cgomacro.main", %_llgo_3), ptr %16, align 8
+// CHECK-NEXT:   %33 = load ptr, ptr %15, align 8
+// CHECK-NEXT:   indirectbr ptr %33, [label %_llgo_3, label %_llgo_2]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_6:                                          ; preds = %_llgo_2
 // CHECK-NEXT:   ret void

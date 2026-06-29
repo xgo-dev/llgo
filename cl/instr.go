@@ -893,9 +893,19 @@ func (p *context) deferStackOwner(fn *ssa.Function) llssa.Function {
 }
 
 func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, ds *explicitDeferStack, fn llssa.Expr, buildCall func(llssa.Builder, llssa.Expr, ...llssa.Expr) llssa.Expr, args ...llssa.Expr) llssa.Expr {
+	return p.emitDoEx(b, act, ds, false, false, fn, buildCall, args...)
+}
+
+func (p *context) emitDoEx(b llssa.Builder, act llssa.DoAction, ds *explicitDeferStack, maskRecover, forwardRecover bool, fn llssa.Expr, buildCall func(llssa.Builder, llssa.Expr, ...llssa.Expr) llssa.Expr, args ...llssa.Expr) llssa.Expr {
 	if ds != nil {
 		b.DeferTo(ds.owner, ds.stack, fn, buildCall, args...)
 		return llssa.Nil
+	}
+	if maskRecover && act == llssa.Call {
+		return b.MaskRecoverCall(fn, buildCall, args...)
+	}
+	if forwardRecover && act == llssa.Call {
+		return b.ForwardRecoverFrameCall(fn, buildCall, args...)
 	}
 	return b.Do(act, fn, buildCall, args...)
 }
@@ -1048,8 +1058,23 @@ func collectMethodNilDerefChecks(fn *ssa.Function) map[*ssa.UnOp]none {
 	return checks
 }
 
+func (p *context) recoverTransparentWrapperCall(call *ssa.CallCommon) bool {
+	if p.goFn == nil || call.StaticCallee() == nil {
+		return false
+	}
+	name := p.goFn.Name()
+	if strings.HasSuffix(name, "$thunk") || strings.HasSuffix(name, "$bound") {
+		return true
+	}
+	synthetic := p.goFn.Synthetic
+	return strings.Contains(synthetic, "thunk") || strings.Contains(synthetic, "bound") || strings.Contains(synthetic, "wrapper")
+}
+
 func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallCommon, ds *explicitDeferStack) (ret llssa.Expr) {
 	cv := call.Value
+	calleeUsesRecover := functionUsesRecover(call.StaticCallee())
+	forwardRecover := act == llssa.Call && calleeUsesRecover && p.recoverTransparentWrapperCall(call)
+	maskRecover := act == llssa.Call && calleeUsesRecover && !forwardRecover
 	if mthd := call.Method; mthd != nil {
 		reflectCheck := p.reflectTypeMethodCheck(call, mthd)
 		o := p.compileValue(b, cv)
@@ -1059,7 +1084,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			hasVArg = fnHasVArg
 		}
 		args := p.compileValues(b, call.Args, hasVArg)
-		ret = p.emitDo(b, act, ds, fn, llssa.Builder.Call, args...)
+		ret = p.emitDoEx(b, act, ds, maskRecover, forwardRecover, fn, llssa.Builder.Call, args...)
 		b.EmitReflectTypeMethodCheckedLoad(ret, reflectCheck)
 		return
 	}
@@ -1090,7 +1115,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			}
 		}
 		args := p.compileValues(b, args, kind)
-		ret = p.emitDo(b, act, ds, llssa.Builtin(fn), llssa.Builder.Call, args...)
+		ret = p.emitDoEx(b, act, ds, maskRecover, forwardRecover, llssa.Builtin(fn), llssa.Builder.Call, args...)
 	case *ssa.Function:
 		aFn, pyFn, ftype := p.compileFunction(cv)
 		// TODO(xsw): check ca != llssa.Call
@@ -1099,13 +1124,13 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			p.inCFunc = true
 			args := p.compileValues(b, args, kind)
 			p.inCFunc = false
-			ret = p.emitDo(b, act, ds, aFn.Expr, llssa.Builder.Call, args...)
+			ret = p.emitDoEx(b, act, ds, maskRecover, forwardRecover, aFn.Expr, llssa.Builder.Call, args...)
 		case goFunc:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, aFn.Expr, llssa.Builder.Call, args...)
+			ret = p.emitDoEx(b, act, ds, maskRecover, forwardRecover, aFn.Expr, llssa.Builder.Call, args...)
 		case pyFunc:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, pyFn.Expr, llssa.Builder.Call, args...)
+			ret = p.emitDoEx(b, act, ds, maskRecover, forwardRecover, pyFn.Expr, llssa.Builder.Call, args...)
 		case llgoPyList:
 			args := p.compileValues(b, args, fnHasVArg)
 			ret = b.PyList(args...)
@@ -1215,7 +1240,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 	default:
 		fn := p.compileValue(b, cv)
 		args := p.compileValues(b, args, kind)
-		ret = p.emitDo(b, act, ds, fn, llssa.Builder.Call, args...)
+		ret = p.emitDoEx(b, act, ds, maskRecover, forwardRecover, fn, llssa.Builder.Call, args...)
 	}
 	return
 }

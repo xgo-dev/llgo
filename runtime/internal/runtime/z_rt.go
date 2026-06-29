@@ -28,38 +28,82 @@ import (
 
 // Defer presents defer statements in a function.
 type Defer struct {
-	Addr unsafe.Pointer // sigjmpbuf
-	Bits uintptr
-	Link *Defer
-	Reth unsafe.Pointer // block address after Rethrow
-	Rund unsafe.Pointer // block address after RunDefers
-	Args unsafe.Pointer // defer func and args links
+	Addr  unsafe.Pointer // sigjmpbuf
+	Bits  uintptr
+	Link  *Defer
+	Reth  unsafe.Pointer // block address after Rethrow
+	Rund  unsafe.Pointer // block address after RunDefers
+	Args  unsafe.Pointer // defer func and args links
+	Frame unsafe.Pointer
+}
+
+type panicNode struct {
+	prev  unsafe.Pointer
+	frame unsafe.Pointer
+	arg   any
 }
 
 // Recover recovers a panic.
-func Recover() (ret any) {
-	ptr := excepKey.Get()
+func Recover(frame unsafe.Pointer) (ret any) {
+	if frame == nil || frame != recoverFrameKey.Get() {
+		return nil
+	}
+	ptr := panicKey.Get()
 	if ptr != nil {
-		excepKey.Set(nil)
-		ret = *(*any)(ptr)
-		c.Free(ptr)
+		node := (*panicNode)(ptr)
+		if frame != node.frame {
+			return nil
+		}
+		panicKey.Set(node.prev)
+		recoverFrameKey.Set(nil)
+		ret = node.arg
+		c.Free(unsafe.Pointer(node))
 	}
 	return
 }
 
+// StartRecoverFrame enables a direct recover call made by the deferred function
+// about to be called from the current frame.
+func StartRecoverFrame(frame unsafe.Pointer) unsafe.Pointer {
+	old := recoverFrameKey.Get()
+	recoverFrameKey.Set(frame)
+	return old
+}
+
+// StartRecoverWrapperFrame forwards a direct recover permission through a
+// compiler-generated wrapper only when the wrapper is itself the deferred call.
+func StartRecoverWrapperFrame(caller, frame unsafe.Pointer) unsafe.Pointer {
+	old := recoverFrameKey.Get()
+	if old == caller {
+		recoverFrameKey.Set(frame)
+	}
+	return old
+}
+
+// EndRecoverFrame restores the direct recover frame after a deferred call
+// returns normally.
+func EndRecoverFrame(frame unsafe.Pointer) {
+	recoverFrameKey.Set(frame)
+}
+
 // Panic panics with a value.
 func Panic(v any) {
-	ptr := c.Malloc(unsafe.Sizeof(v))
-	*(*any)(ptr) = v
-	excepKey.Set(ptr)
+	ptr := (*panicNode)(c.Malloc(unsafe.Sizeof(panicNode{})))
+	ptr.prev = panicKey.Get()
+	if d := (*Defer)(c.GoDeferData()); d != nil {
+		ptr.frame = d.Frame
+	}
+	ptr.arg = v
+	panicKey.Set(unsafe.Pointer(ptr))
 
 	Rethrow((*Defer)(c.GoDeferData()))
 }
 
 var (
-	excepKey   pthread.Key
-	goexitKey  pthread.Key
-	mainThread pthread.Thread
+	panicKey        pthread.Key
+	recoverFrameKey pthread.Key
+	goexitKey       pthread.Key
+	mainThread      pthread.Thread
 )
 
 func Goexit() {
@@ -68,7 +112,8 @@ func Goexit() {
 }
 
 func init() {
-	excepKey.Create(nil)
+	panicKey.Create(nil)
+	recoverFrameKey.Create(nil)
 	goexitKey.Create(nil)
 	mainThread = pthread.Self()
 }
