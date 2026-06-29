@@ -105,6 +105,249 @@ func unknownFunctionName(pc uintptr) string {
 	return "pc=" + uintptrHex(pc)
 }
 
+type pcSymbol struct {
+	pc        uintptr
+	entry     uintptr
+	function  string
+	file      string
+	line      int
+	startLine int
+	ok        bool
+}
+
+type frameSymbolCacheEntry struct {
+	pc     uintptr
+	offset uintptr
+	name   string
+}
+
+const frameSymbolCacheSize = 128
+
+var frameSymbolCache [frameSymbolCacheSize]frameSymbolCacheEntry
+
+func recordFrameSymbol(pc, offset uintptr, name string) {
+	if pc == 0 || name == "" {
+		return
+	}
+	i := (pc >> 4) & (frameSymbolCacheSize - 1)
+	frameSymbolCache[i] = frameSymbolCacheEntry{pc: pc, offset: offset, name: name}
+}
+
+type runtimeFuncInfoRecord struct {
+	symbol uint32
+	name   uint32
+	file   uint32
+	line   uint32
+	column uint32
+}
+
+//go:linkname runtimeFuncInfoTable __llgo_funcinfo_table
+var runtimeFuncInfoTable *runtimeFuncInfoRecord
+
+//go:linkname runtimeFuncInfoStrings __llgo_funcinfo_strings
+var runtimeFuncInfoStrings *c.Char
+
+//go:linkname runtimeFuncInfoHash __llgo_funcinfo_hash
+var runtimeFuncInfoHash *uint32
+
+//go:linkname runtimeFuncInfoCount __llgo_funcinfo_count
+var runtimeFuncInfoCount uintptr
+
+//go:linkname runtimeFuncInfoHashMask __llgo_funcinfo_hash_mask
+var runtimeFuncInfoHashMask uintptr
+
+func hasStringPrefix(s, prefix string) bool {
+	if len(s) < len(prefix) {
+		return false
+	}
+	for i := 0; i < len(prefix); i++ {
+		if s[i] != prefix[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func publicFunctionName(name string) string {
+	const commandLineArguments = "command-line-arguments."
+	if hasStringPrefix(name, commandLineArguments) {
+		return "main." + name[len(commandLineArguments):]
+	}
+	if len(name) > 0 && name[0] == '_' {
+		name = name[1:]
+	}
+	return name
+}
+
+func cStringEqual(cstr *c.Char, s string) bool {
+	return cStringCompare(cstr, s) == 0
+}
+
+func cStringCompare(cstr *c.Char, s string) int {
+	if cstr == nil {
+		if s == "" {
+			return 0
+		}
+		return -1
+	}
+	ptr := unsafe.Pointer(cstr)
+	for i := 0; ; i++ {
+		c := *(*byte)(unsafe.Add(ptr, i))
+		if i == len(s) {
+			if c == 0 {
+				return 0
+			}
+			return 1
+		}
+		if c == 0 {
+			return -1
+		}
+		if c < s[i] {
+			return -1
+		}
+		if c > s[i] {
+			return 1
+		}
+	}
+}
+
+func funcInfoCString(off uint32) *c.Char {
+	if runtimeFuncInfoStrings == nil {
+		return nil
+	}
+	return (*c.Char)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoStrings), uintptr(off)))
+}
+
+func funcInfoAt(i uintptr) *runtimeFuncInfoRecord {
+	size := unsafe.Sizeof(*runtimeFuncInfoTable)
+	return (*runtimeFuncInfoRecord)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoTable), i*size))
+}
+
+func funcInfoHashString(s string) uintptr {
+	const (
+		offset = uint32(2166136261)
+		prime  = uint32(16777619)
+	)
+	h := offset
+	for i := 0; i < len(s); i++ {
+		h ^= uint32(s[i])
+		h *= prime
+	}
+	return uintptr(h)
+}
+
+func funcInfoForSymbol(symbol string) *runtimeFuncInfoRecord {
+	if symbol == "" || runtimeFuncInfoTable == nil || runtimeFuncInfoCount == 0 {
+		return nil
+	}
+	if runtimeFuncInfoHash != nil && runtimeFuncInfoHashMask != 0 {
+		slot := funcInfoHashString(symbol) & runtimeFuncInfoHashMask
+		for probes := uintptr(0); probes <= runtimeFuncInfoHashMask; probes++ {
+			idx := *(*uint32)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoHash), slot*unsafe.Sizeof(*runtimeFuncInfoHash)))
+			if idx == 0 {
+				return nil
+			}
+			if uintptr(idx) <= runtimeFuncInfoCount {
+				rec := funcInfoAt(uintptr(idx) - 1)
+				if cStringEqual(funcInfoCString(rec.symbol), symbol) {
+					return rec
+				}
+			}
+			slot = (slot + 1) & runtimeFuncInfoHashMask
+		}
+		return nil
+	}
+	for i := uintptr(0); i < runtimeFuncInfoCount; i++ {
+		rec := funcInfoAt(i)
+		if cStringEqual(funcInfoCString(rec.symbol), symbol) {
+			return rec
+		}
+	}
+	return nil
+}
+
+func applyFuncInfo(sym *pcSymbol, rawFunction string) {
+	rec := funcInfoForSymbol(rawFunction)
+	if rec == nil {
+		public := publicFunctionName(rawFunction)
+		if public != rawFunction {
+			rec = funcInfoForSymbol(public)
+		}
+	}
+	if rec == nil {
+		return
+	}
+	if name := safeGoString(funcInfoCString(rec.name), ""); name != "" {
+		sym.function = publicFunctionName(name)
+	}
+	if file := safeGoString(funcInfoCString(rec.file), ""); file != "" {
+		if sym.file == "" {
+			sym.file = file
+		}
+	}
+	if rec.line != 0 {
+		sym.startLine = int(rec.line)
+		if sym.line == 0 {
+			sym.line = int(rec.line)
+		}
+	}
+	sym.ok = sym.ok || sym.function != "" || sym.file != ""
+}
+
+func cachedFrameSymbol(pc uintptr) pcSymbol {
+	i := (pc >> 4) & (frameSymbolCacheSize - 1)
+	entry := frameSymbolCache[i]
+	if entry.pc != pc || entry.name == "" {
+		return pcSymbol{pc: pc}
+	}
+	rawFn := entry.name
+	fn := publicFunctionName(rawFn)
+	sym := pcSymbol{
+		pc:       pc,
+		entry:    pc - entry.offset,
+		function: fn,
+		ok:       fn != "" || entry.offset != 0,
+	}
+	applyFuncInfo(&sym, rawFn)
+	return sym
+}
+
+func addrInfoSymbol(pc uintptr) pcSymbol {
+	var info clitedebug.Info
+	if clitedebug.Addrinfo(unsafe.Pointer(pc), &info) == 0 {
+		return cachedFrameSymbol(pc)
+	}
+	rawFn := safeGoString(info.Sname, "")
+	if rawFn == "" {
+		if sym := cachedFrameSymbol(pc); sym.ok {
+			return sym
+		}
+	}
+	fn := publicFunctionName(rawFn)
+	sym := pcSymbol{
+		pc:       pc,
+		entry:    uintptr(info.Saddr),
+		function: fn,
+		ok:       fn != "" || info.Saddr != nil,
+	}
+	applyFuncInfo(&sym, rawFn)
+	return sym
+}
+
+func frameSymbol(pc uintptr) pcSymbol {
+	sym := addrInfoSymbol(pc)
+	if pc == 0 {
+		return sym
+	}
+	if sym.entry == 0 || pc > sym.entry {
+		if callSym := addrInfoSymbol(pc - 1); callSym.ok {
+			callSym.pc = pc
+			return callSym
+		}
+	}
+	return sym
+}
+
 func (ci *Frames) Next() (frame Frame, more bool) {
 	for len(ci.frames) < 2 {
 		// Find the next frame.
@@ -119,8 +362,8 @@ func (ci *Frames) Next() (frame Frame, more bool) {
 		} else {
 			pc, ci.callers = ci.callers[0], ci.callers[1:]
 		}
-		info := &clitedebug.Info{}
-		if clitedebug.Addrinfo(unsafe.Pointer(pc), info) == 0 {
+		sym := frameSymbol(pc)
+		if !sym.ok {
 			ci.frames = append(ci.frames, Frame{
 				PC:        pc,
 				Function:  unknownFunctionName(pc),
@@ -131,17 +374,22 @@ func (ci *Frames) Next() (frame Frame, more bool) {
 			})
 			continue
 		}
-		fn := safeGoString(info.Sname, "")
+		fn := sym.function
 		if fn == "" {
 			fn = unknownFunctionName(pc)
 		}
+		var f *Func
+		if sym.entry != 0 || fn != "" {
+			f = &Func{entry: sym.entry, name: fn}
+		}
 		ci.frames = append(ci.frames, Frame{
 			PC:        pc,
+			Func:      f,
 			Function:  fn,
-			File:      "",
-			Line:      0,
-			startLine: 0,
-			Entry:     uintptr(info.Saddr),
+			File:      sym.file,
+			Line:      sym.line,
+			startLine: sym.startLine,
+			Entry:     sym.entry,
 		})
 	}
 
@@ -176,19 +424,27 @@ func CallersFrames(callers []uintptr) *Frames {
 
 // A Func represents a Go function in the running binary.
 type Func struct {
-	opaque struct{} // unexported field to disallow conversions
+	entry uintptr
+	name  string
 }
 
 func (f *Func) Name() string {
-	panic("todo")
+	if f == nil {
+		return ""
+	}
+	return f.name
+}
+
+func (f *Func) Entry() uintptr {
+	if f == nil {
+		return 0
+	}
+	return f.entry
 }
 
 func (f *Func) FileLine(pc uintptr) (file string, line int) {
-	var info clitedebug.Info
-	if pc == 0 || clitedebug.Addrinfo(unsafe.Pointer(pc), &info) == 0 {
-		return "", 0
-	}
-	return safeGoString(info.Fname, ""), 0
+	sym := frameSymbol(pc)
+	return sym.file, sym.line
 }
 
 // moduledata records information about the layout of the executable

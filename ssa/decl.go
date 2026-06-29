@@ -423,4 +423,9 @@ func (p Function) Inline(inline inlineAttr) {
 	p.impl.AddFunctionAttr(inlineAttr)
 }
 
+func (p Function) DisableTailCalls() {
+	attr := p.Pkg.mod.Context().CreateStringAttribute("disable-tail-calls", "true")
+	p.impl.AddFunctionAttr(attr)
+}
+
 // -----------------------------------------------------------------------------

@@ -94,6 +94,23 @@ func (T) method() {}
 	}
 }
 
+func TestNoInlineDirectiveDisablesTailCalls(t *testing.T) {
+	const src = `package foo
+
+func caller() { callee() }
+
+//go:noinline
+func callee() {}
+`
+	ir := cltest.CompileIREx(t, src, "foo.go", false, nil)
+	if !strings.Contains(ir, `define void @foo.callee()`) {
+		t.Fatalf("missing callee function:\n%s", ir)
+	}
+	if !strings.Contains(ir, `noinline`) || !strings.Contains(ir, `"disable-tail-calls"="true"`) {
+		t.Fatalf("callee should disable inlining and tail calls:\n%s", ir)
+	}
+}
+
 func parseFuncInfoRecords(t *testing.T, ir string) map[string]funcInfoRecord {
 	t.Helper()
 

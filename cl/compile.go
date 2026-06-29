@@ -469,9 +469,14 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	}
 	if fn == nil {
 		fn = pkg.NewFuncEx(name, sig, llssa.Background(ftype), hasCtx, p.needsLinkOnce(f))
-		if disableInline {
-			fn.Inline(llssa.NoInline)
-		}
+	}
+	noInlineDirective := hasNoInlineDirective(f)
+	runtimeStackNoInline := needsRuntimeStackNoInline(pkgTypes, f)
+	if disableInline || noInlineDirective || runtimeStackNoInline {
+		fn.Inline(llssa.NoInline)
+	}
+	if noInlineDirective || runtimeStackNoInline {
+		fn.DisableTailCalls()
 	}
 	p.funcs[f] = fn
 	isCgo := isCgoExternSymbol(f)
@@ -566,6 +571,35 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		})
 	}
 	return fn, nil, goFunc
+}
+
+func hasNoInlineDirective(f *ssa.Function) bool {
+	decl, _ := f.Syntax().(*ast.FuncDecl)
+	if decl == nil || decl.Doc == nil {
+		return false
+	}
+	for _, c := range decl.Doc.List {
+		if c.Text == "//go:noinline" {
+			return true
+		}
+	}
+	return false
+}
+
+func needsRuntimeStackNoInline(pkg *types.Package, f *ssa.Function) bool {
+	if pkg == nil || f == nil || f.Signature.Recv() != nil {
+		return false
+	}
+	switch pkg.Path() {
+	case "runtime", "github.com/goplus/llgo/runtime/internal/lib/runtime":
+		switch f.Name() {
+		case "Caller", "Callers", "callers":
+			return true
+		}
+	case "github.com/goplus/llgo/runtime/internal/clite/debug":
+		return f.Name() == "StackTrace"
+	}
+	return false
 }
 
 func (p *context) getFuncBodyPos(f *ssa.Function) token.Position {
