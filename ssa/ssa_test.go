@@ -165,6 +165,65 @@ func TestTooManyConditionalDefers(t *testing.T) {
 	}
 }
 
+func TestRecoverDeferTokenHelpers(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("foo", "foo")
+
+	callee := pkg.NewFunc("callee", NoArgsNoRet, InGo)
+	b := callee.MakeBody(1)
+
+	if Nil.mayRecover() {
+		t.Fatal("nil expression should not be marked recover-capable")
+	}
+	if deferMayRecover(callee.Expr) {
+		t.Fatal("unmarked function declaration should not be recover-capable")
+	}
+	if token := b.recoverDeferToken(callee.Expr, false); !token.IsNil() {
+		t.Fatalf("recover token without mayRecover = %v, want nil", token)
+	}
+
+	callee.Expr.MarkMayRecover()
+	if !deferMayRecover(callee.Expr) {
+		t.Fatal("marked function declaration should be recover-capable")
+	}
+	if token := b.recoverDeferToken(callee.Expr, true); token.IsNil() {
+		t.Fatal("marked function declaration should produce a recover token")
+	}
+
+	fnPtr := b.ChangeType(prog.rawType(NoArgsNoRet), callee.Expr)
+	if !deferMayRecover(fnPtr) {
+		t.Fatal("function pointer should be treated as recover-capable")
+	}
+	if token := b.recoverDeferToken(fnPtr, false); token.IsNil() {
+		t.Fatal("function pointer should produce a recover token")
+	}
+	if token := b.recoverDeferToken(prog.Val(1), true); !token.IsNil() {
+		t.Fatalf("non-function recover token = %v, want nil", token)
+	}
+
+	if deferMayRecover(Nil) {
+		t.Fatal("nil expression should not be recover-capable")
+	}
+	if deferMayRecover(prog.Val(1)) {
+		t.Fatal("non-function expression should not be recover-capable")
+	}
+	if !isRecoverBuiltin(Builtin("recover")) {
+		t.Fatal("recover builtin should be recognized")
+	}
+	if isRecoverBuiltin(Builtin("panic")) {
+		t.Fatal("non-recover builtin should not be recognized")
+	}
+	if isRecoverBuiltin(Nil) {
+		t.Fatal("nil expression should not be a recover builtin")
+	}
+	if isRecoverBuiltin(callee.Expr) {
+		t.Fatal("function declaration should not be a recover builtin")
+	}
+
+	b.Return()
+	b.EndBuild()
+}
+
 func TestPointerSize(t *testing.T) {
 	expected := unsafe.Sizeof(uintptr(0))
 	if size := NewProgram(nil).PointerSize(); size != int(expected) {
@@ -902,15 +961,23 @@ _llgo_0:
 define linkonce i64 @%s(ptr %%0, i64 %%1) {
 _llgo_0:
   %%2 = load ptr, ptr %%0, align 8
-  %%3 = tail call i64 %%2(i64 %%1)
-  ret i64 %%3
+  %%3 = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.StartRecoverFrameAlias"(ptr @%s, ptr %%2)
+  %%4 = call i64 %%2(i64 %%1)
+  call void @"github.com/goplus/llgo/runtime/internal/runtime.EndRecoverFrame"(ptr %%3)
+  ret i64 %%4
 }
+
+; Function Attrs: null_pointer_is_valid
+declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.StartRecoverFrameAlias"(ptr, ptr) #0
+
+; Function Attrs: null_pointer_is_valid
+declare void @"github.com/goplus/llgo/runtime/internal/runtime.EndRecoverFrame"(ptr) #0
 
 ; Function Attrs: null_pointer_is_valid
 declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64) #0
 
 attributes #0 = { null_pointer_is_valid }
-`, wrapRef, wrapRef)
+`, wrapRef, wrapRef, wrapRef)
 	assertPkg(t, pkg, expected)
 }
 
@@ -1272,7 +1339,7 @@ func TestClosureWrapHelpers(t *testing.T) {
 	if args := closureWrapArgs(wrap); len(args) != 0 {
 		t.Fatalf("closureWrapArgs should return 0 args, got %d", len(args))
 	}
-	closureWrapReturn(b, sig, Expr{})
+	closureWrapReturn(b, sig, Expr{}, true)
 }
 
 func TestClosureWrapCache(t *testing.T) {

@@ -23,6 +23,7 @@ import (
 	"go/token"
 	"go/types"
 	"log"
+	"sync"
 
 	"github.com/xgo-dev/llvm"
 )
@@ -48,6 +49,8 @@ type Expr struct {
 
 var Nil Expr // Zero value is a nil Expr
 
+var mayRecoverFuncs sync.Map // map[llvm.Value]none
+
 // IsNil checks if the expression is nil or not.
 func (v Expr) IsNil() bool {
 	return v.Type == nil
@@ -57,6 +60,28 @@ func (v Expr) IsNil() bool {
 func (v Expr) SetOrdering(ordering AtomicOrdering) Expr {
 	v.impl.SetOrdering(ordering)
 	return v
+}
+
+// SetVolatile marks a load or store as volatile.
+func (v Expr) SetVolatile(volatile bool) Expr {
+	v.impl.SetVolatile(volatile)
+	return v
+}
+
+// MarkMayRecover marks a function or closure that may call recover directly.
+func (v Expr) MarkMayRecover() Expr {
+	if v.Type != nil && !v.impl.IsNil() {
+		mayRecoverFuncs.Store(v.impl, none{})
+	}
+	return v
+}
+
+func (v Expr) mayRecover() bool {
+	if v.Type == nil || v.impl.IsNil() {
+		return false
+	}
+	_, ok := mayRecoverFuncs.Load(v.impl)
+	return ok
 }
 
 func (v Expr) SetName(alias string) Expr {

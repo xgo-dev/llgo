@@ -3,6 +3,8 @@
 package runtime
 
 import (
+	"unsafe"
+
 	c "github.com/goplus/llgo/runtime/internal/clite"
 	"github.com/goplus/llgo/runtime/internal/clite/debug"
 	"github.com/goplus/llgo/runtime/internal/clite/pthread"
@@ -16,13 +18,18 @@ var (
 
 // Rethrow rethrows a panic.
 func Rethrow(link *Defer) {
-	if ptr := excepKey.Get(); ptr != nil {
+	if ptr := panicKey.Get(); ptr != nil {
 		if link == nil {
-			TracePanic(*(*any)(ptr))
+			node := (*panicNode)(ptr)
+			TracePanic(node.arg)
 			debug.PrintStack(2)
-			c.Free(ptr)
+			c.Free(unsafe.Pointer(node))
 			c.Exit(2)
 		} else {
+			node := (*panicNode)(ptr)
+			if link == (*Defer)(c.GoDeferData()) {
+				node.defer_ = link
+			}
 			c.Siglongjmp(link.Addr, 1)
 		}
 	} else if ptr := goexitKey.Get(); ptr != nil {
