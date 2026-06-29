@@ -359,6 +359,9 @@ func (p *Transformer) transformFuncType(ctx llvm.Context, info *FuncInfo) (llvm.
 
 func (p *Transformer) transformFunc(m llvm.Module, fn llvm.Value) bool {
 	ctx := m.Context()
+	if fn.IntrinsicID() != 0 {
+		return false
+	}
 	info := p.GetFuncInfo(ctx, fn.GlobalValueType())
 	if !info.HasWrap() {
 		return false
@@ -526,6 +529,9 @@ func (p *Transformer) transformFuncBody(m llvm.Module, ctx llvm.Context, info *F
 
 func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call llvm.Value, fn llvm.Value) bool {
 	nfn := call.CalledValue()
+	if nfn.IntrinsicID() != 0 {
+		return false
+	}
 	info := p.GetFuncInfo(ctx, call.CalledFunctionType())
 	if !info.HasWrap() {
 		return false
@@ -726,29 +732,11 @@ func (p *Transformer) transformCallbackFunc(m llvm.Module, fn llvm.Value) (wrap 
 	return wrapFunc, true
 }
 
-func (p *Transformer) callMemcpy(m llvm.Module, ctx llvm.Context, b llvm.Builder, dst llvm.Value, src llvm.Value, size int) llvm.Value {
-	memcpy := p.getMemcpy(m, ctx)
+func (p *Transformer) callMemcpy(_ llvm.Module, ctx llvm.Context, b llvm.Builder, dst llvm.Value, src llvm.Value, size int) llvm.Value {
 	sz := llvm.ConstInt(ctx.IntType(p.prog.PointerSize()*8), uint64(size), false)
-	return b.CreateCall(memcpy.GlobalValueType(), memcpy, []llvm.Value{
+	return b.CreateIntrinsic(ctx.VoidType(), llvm.LookupIntrinsicID("llvm.memcpy"), []llvm.Value{
 		dst, src, sz, llvm.ConstInt(ctx.Int1Type(), 0, false),
 	}, "")
-}
-
-func (p *Transformer) getMemcpy(m llvm.Module, ctx llvm.Context) llvm.Value {
-	memcpy := m.NamedFunction("llvm.memcpy")
-	if !memcpy.IsNil() {
-		return memcpy
-	}
-	ftyp := llvm.FunctionType(ctx.VoidType(), []llvm.Type{
-		llvm.PointerType(ctx.Int8Type(), 0),
-		llvm.PointerType(ctx.Int8Type(), 0),
-		ctx.IntType(p.prog.PointerSize() * 8),
-		ctx.Int1Type(),
-	}, false)
-	memcpy = llvm.AddFunction(m, "llvm.memcpy", ftyp)
-	memcpy.SetFunctionCallConv(llvm.CCallConv)
-	memcpy.AddFunctionAttr(funcNoUnwind(ctx))
-	return memcpy
 }
 
 func replaceAllocaInstrs(param llvm.Value, nv llvm.Value) {

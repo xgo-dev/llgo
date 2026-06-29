@@ -69,7 +69,7 @@ func main() {
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/ifaceprom.S.one"(%"{{.*}}/cl/_testgo/ifaceprom.S" %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca %"{{.*}}/cl/_testgo/ifaceprom.S", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testgo/ifaceprom.S" %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/ifaceprom.S", ptr %1, i32 0, i32 0
 // CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %2, align 8
@@ -88,7 +88,7 @@ func main() {
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/cl/_testgo/ifaceprom.S.two"(%"{{.*}}/cl/_testgo/ifaceprom.S" %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca %"{{.*}}/cl/_testgo/ifaceprom.S", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testgo/ifaceprom.S" %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/ifaceprom.S", ptr %1, i32 0, i32 0
 // CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %2, align 8
@@ -182,7 +182,7 @@ func main() {
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/ifaceprom.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = alloca %"{{.*}}/cl/_testgo/ifaceprom.S", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %0, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %0, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}/cl/_testgo/ifaceprom.S", ptr %0, i32 0, i32 0
 // CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 0)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testgo/ifaceprom.impl" zeroinitializer, ptr %2, align 1

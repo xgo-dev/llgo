@@ -26,7 +26,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goplus/llgo/internal/buildenv"
 	"github.com/goplus/llgo/internal/crosscompile"
+	"github.com/goplus/llgo/internal/lto"
 	"github.com/goplus/llgo/internal/meta"
 	"github.com/goplus/llgo/internal/packages"
 	gopackages "golang.org/x/tools/go/packages"
@@ -129,6 +131,62 @@ func TestCollectFingerprintDeterminism(t *testing.T) {
 
 	if pkg1.Fingerprint != pkg2.Fingerprint {
 		t.Error("same inputs should produce same fingerprint")
+	}
+}
+
+func TestDevLTOGlobalDCECollectFingerprint(t *testing.T) {
+	td := t.TempDir()
+
+	goFile := filepath.Join(td, "main.go")
+	if err := os.WriteFile(goFile, []byte("package main"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pkg := func() *aPackage {
+		return &aPackage{Package: &packages.Package{
+			PkgPath: "test/pkg",
+			GoFiles: []string{goFile},
+		}}
+	}
+	ctx := func(conf *Config) *context {
+		return &context{
+			conf:      &packages.Config{},
+			buildConf: conf,
+			crossCompile: crosscompile.Export{
+				LLVMTarget: "x86_64-unknown-linux",
+			},
+		}
+	}
+
+	withDCE := pkg()
+	if err := ctx(&Config{Goos: "linux", Goarch: "amd64", LTO: lto.Full}).collectFingerprint(withDCE); err != nil {
+		t.Fatal(err)
+	}
+	data, err := decodeManifest(withDCE.Manifest)
+	if err != nil {
+		t.Fatalf("decodeManifest: %v", err)
+	}
+	if buildenv.Dev && (data.Common == nil || !data.Common.GoGlobalDCE) {
+		t.Fatalf("manifest should contain GO_GLOBAL_DCE=true:\n%s", withDCE.Manifest)
+	}
+	if !buildenv.Dev && data.Common != nil && data.Common.GoGlobalDCE {
+		t.Fatalf("non-dev builds should not contain GO_GLOBAL_DCE=true:\n%s", withDCE.Manifest)
+	}
+
+	withoutDCE := pkg()
+	if err := ctx(&Config{
+		Goos:               "linux",
+		Goarch:             "amd64",
+		LTO:                lto.Full,
+		DisableGoGlobalDCE: true,
+	}).collectFingerprint(withoutDCE); err != nil {
+		t.Fatal(err)
+	}
+	if buildenv.Dev && withDCE.Fingerprint == withoutDCE.Fingerprint {
+		t.Fatal("globaldce enabled and disabled builds should not share a cache fingerprint")
+	}
+	if !buildenv.Dev && withDCE.Fingerprint != withoutDCE.Fingerprint {
+		t.Fatal("non-dev globaldce settings should not affect cache fingerprint")
 	}
 }
 
@@ -496,6 +554,54 @@ func TestSaveToCache_MainPackage(t *testing.T) {
 	}
 }
 
+func TestTryLoadFromCache_MainPackage(t *testing.T) {
+	td := t.TempDir()
+	oldFunc := cacheRootFunc
+	cacheRootFunc = func() string { return td }
+	defer func() { cacheRootFunc = oldFunc }()
+
+	ctx := &context{
+		conf: &packages.Config{},
+		buildConf: &Config{
+			Goos:   "darwin",
+			Goarch: "arm64",
+		},
+		crossCompile: crosscompile.Export{
+			LLVMTarget: "arm64-apple-darwin",
+		},
+	}
+
+	pkg := &aPackage{
+		Package: &packages.Package{
+			PkgPath: "main",
+			Name:    "main",
+		},
+		Fingerprint: "abc123",
+	}
+
+	cm := ctx.ensureCacheManager()
+	paths := cm.PackagePaths("arm64-apple-darwin", "main", "abc123")
+	if err := cm.EnsureDir(paths); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.Archive, []byte("stale main archive"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.Manifest, []byte("metadata: {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if ctx.tryLoadFromCache(pkg) {
+		t.Fatal("main package should not be loaded from cache")
+	}
+	if pkg.CacheHit {
+		t.Fatal("main package cache hit should remain false")
+	}
+	if pkg.ArchiveFile != "" {
+		t.Fatalf("main package ArchiveFile = %q, want empty", pkg.ArchiveFile)
+	}
+}
+
 func TestSaveToCache_Success(t *testing.T) {
 	td := t.TempDir()
 	oldFunc := cacheRootFunc
@@ -638,20 +744,16 @@ func TestTryLoadFromCache_LoadsPackageMeta(t *testing.T) {
 	if pkg.Meta == nil {
 		t.Fatal("Meta was not loaded from cache")
 	}
-	var mainSym meta.LocalSymbol
-	for i := meta.LocalSymbol(0); i < meta.LocalSymbol(pkg.Meta.NSyms()); i++ {
-		if pkg.Meta.SymbolName(i) == "pkg.main" {
-			mainSym = i
-			break
-		}
+	summary, err := meta.NewGlobalSummary([]*meta.PackageMeta{pkg.Meta})
+	if err != nil {
+		t.Fatalf("NewGlobalSummary: %v", err)
 	}
-	var edges []meta.LocalSymbol
-	for _, e := range pkg.Meta.Edges(mainSym) {
-		if e.Kind == meta.EdgeOrdinary {
-			edges = append(edges, meta.LocalSymbol(e.Target))
-		}
+	mainSym, ok := summary.LookupSymbol("pkg.main")
+	if !ok {
+		t.Fatal("pkg.main not found in cached metadata")
 	}
-	if len(edges) != 1 || pkg.Meta.SymbolName(edges[0]) != "pkg.helper" {
+	edges := summary.OrdinaryEdges(mainSym)
+	if len(edges) != 1 || summary.SymbolName(edges[0]) != "pkg.helper" {
 		t.Fatalf("cached metadata edge mismatch: %#v", edges)
 	}
 }

@@ -3,6 +3,8 @@ package build
 import (
 	"runtime"
 	"testing"
+
+	"github.com/goplus/llgo/internal/lto"
 )
 
 func TestUseInMemoryNativeCodegenConf(t *testing.T) {
@@ -17,6 +19,13 @@ func TestUseInMemoryNativeCodegenConf(t *testing.T) {
 		conf := &Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH, Target: "rp2040"}
 		if useInMemoryNativeCodegenConf(conf) {
 			t.Fatal("expected embedded target build to keep using clang")
+		}
+	})
+
+	t.Run("full LTO", func(t *testing.T) {
+		conf := &Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH, LTO: lto.Full}
+		if !useInMemoryNativeCodegenConf(conf) {
+			t.Fatal("expected native full LTO build to use in-memory bitcode emission")
 		}
 	})
 

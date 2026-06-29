@@ -675,6 +675,7 @@ func (b Builder) MakeChan(t Type, size Expr) (ret Expr) {
 	dbgInstrf("MakeChan %v, %v\n", t.RawType(), size.impl)
 	prog := b.Prog
 	eltSize := prog.IntVal(prog.SizeOf(prog.Elem(t)), prog.Int())
+	size = b.FitIntSize(size)
 	ret.Type = t
 	ret.impl = b.InlineCall(b.Pkg.rtFunc("NewChan"), eltSize, size).impl
 	return

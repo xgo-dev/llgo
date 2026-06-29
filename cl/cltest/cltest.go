@@ -27,6 +27,7 @@ import (
 	"go/types"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -37,6 +38,7 @@ import (
 	"github.com/goplus/gogen/packages"
 	"github.com/goplus/llgo/cl"
 	"github.com/goplus/llgo/internal/build"
+	"github.com/goplus/llgo/internal/filecheck"
 	"github.com/goplus/llgo/internal/littest"
 	"github.com/goplus/llgo/internal/llgen"
 	"github.com/goplus/llgo/internal/mockable"
@@ -164,6 +166,38 @@ func RunAndTestFromDir(t *testing.T, sel, relDir string, ignore []string, opts .
 		}
 		t.Run(name, func(t *testing.T) {
 			testRunAndTestFrom(t, pkgDir, relPkg, sel, options)
+		})
+	}
+}
+
+// BuildAndCheckSymbolsFromDir builds the named tests under relDir and validates
+// SYMBOL FileCheck directives against the linked binary symbol table.
+func BuildAndCheckSymbolsFromDir(t *testing.T, sel, relDir string, names []string, opts ...RunOption) {
+	rootDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal("Getwd failed:", err)
+	}
+	dir := filepath.Join(rootDir, relDir)
+	options := runOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	for _, name := range names {
+		pkgDir := filepath.Join(dir, name)
+		relPkg, err := filepath.Rel(rootDir, pkgDir)
+		if err != nil {
+			t.Fatal("Rel failed:", err)
+		}
+		relPkg = "./" + filepath.ToSlash(relPkg)
+		symbolSpec, ok, err := littest.FindMarkedSourceFile(pkgDir)
+		t.Run(name, func(t *testing.T) {
+			if err != nil {
+				t.Fatal("Load symbol spec failed:", err)
+			}
+			if !ok || symbolSpec == "" {
+				t.Fatalf("symbol spec missing in %s", pkgDir)
+			}
+			testBuildAndCheckSymbolsFrom(t, pkgDir, relPkg, sel, symbolSpec, options)
 		})
 	}
 }
@@ -362,10 +396,39 @@ func withModuleCapture(conf *build.Config, pkgDir string) (*build.Config, *strin
 	return &localConf, &module, &meta
 }
 
+func testBuildAndCheckSymbolsFrom(t *testing.T, pkgDir, relPkg, sel, symbolSpec string, opts runOptions) {
+	t.Helper()
+	if sel != "" && !strings.Contains(pkgDir, sel) {
+		return
+	}
+	outFile := filepath.Join(t.TempDir(), filepath.Base(pkgDir))
+	output, err := buildWithConf(relPkg, pkgDir, opts.conf, outFile)
+	if err != nil {
+		t.Logf("raw output:\n%s", string(output))
+		t.Fatalf("build failed: %v\noutput: %s", err, string(output))
+	}
+	assertExpectedSymbols(t, outFile, symbolSpec)
+}
+
+func buildWithConf(relPkg, pkgDir string, conf *build.Config, outFile string) ([]byte, error) {
+	if conf == nil {
+		conf = build.NewDefaultConf(build.ModeBuild)
+	}
+	localConf := *conf
+	localConf.Mode = build.ModeBuild
+	localConf.OutFile = outFile
+	return doWithConf(relPkg, pkgDir, &localConf, "build")
+}
+
 func runWithConf(relPkg, pkgDir string, conf *build.Config) ([]byte, error) {
 	if conf == nil {
 		conf = build.NewDefaultConf(build.ModeRun)
 	}
+	localConf := *conf
+	return doWithConf(relPkg, pkgDir, &localConf, "run")
+}
+
+func doWithConf(relPkg, pkgDir string, conf *build.Config, action string) ([]byte, error) {
 	cacheDir, err := os.MkdirTemp("", "llgo-gocache-*")
 	if err != nil {
 		return nil, err
@@ -382,8 +445,6 @@ func runWithConf(relPkg, pkgDir string, conf *build.Config) ([]byte, error) {
 			_ = os.Setenv("GOCACHE", oldCache)
 		}
 	}()
-
-	localConf := *conf
 
 	originalStdout := os.Stdout
 	originalStderr := os.Stderr
@@ -433,13 +494,13 @@ func runWithConf(relPkg, pkgDir string, conf *build.Config) ([]byte, error) {
 				panic(r)
 			}
 		}()
-		_, runErr = build.Do([]string{relPkg}, &localConf)
+		_, runErr = build.Do([]string{relPkg}, conf)
 	}()
 	_ = w.Close()
 	output := <-outputCh
 	output = filterRunOutput(output)
 	if runErr != nil {
-		return output, fmt.Errorf("run failed: %w", runErr)
+		return output, fmt.Errorf("%s failed: %w", action, runErr)
 	}
 	return output, nil
 }
@@ -466,6 +527,27 @@ func readGolden(file string) ([]byte, bool, error) {
 		return data, false, nil
 	}
 	return data, true, nil
+}
+
+func assertExpectedSymbols(t *testing.T, bin, spec string) {
+	t.Helper()
+	table, err := symbolTable(bin)
+	if err != nil {
+		t.Fatalf("read symbol table from %s failed: %v", bin, err)
+	}
+	if err := filecheck.MatchWithPrefixes(spec, table, "SYMBOL"); err != nil {
+		_ = os.WriteFile(filepath.Join(filepath.Dir(spec), "symbols.result.txt"), []byte(table), 0644)
+		t.Fatal(err)
+	}
+}
+
+func symbolTable(bin string) (string, error) {
+	cmd := exec.Command("nm", "-a", bin)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%w\n%s", err, strings.TrimSpace(string(output)))
+	}
+	return strings.ReplaceAll(string(output), "\r\n", "\n"), nil
 }
 
 func readIRSpec(pkgDir string) (littest.Spec, bool, error) {

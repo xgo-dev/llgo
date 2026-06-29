@@ -6,7 +6,7 @@ import "github.com/goplus/llgo/cl/_testdata/foo"
 // CHECK-LABEL: define %"{{.*}}eface" @"{{.*}}strucintf.Foo"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = alloca { i64 }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %0, i8 0, i64 8, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %0, i8 0, i64 8, i1 false)
 // CHECK-NEXT:   %1 = getelementptr inbounds { i64 }, ptr %0, i32 0, i32 0
 // CHECK-NEXT:   store i64 1, ptr %1, align 8
 // CHECK-NEXT:   %2 = load { i64 }, ptr %0, align 8

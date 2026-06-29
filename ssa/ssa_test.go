@@ -26,6 +26,7 @@ import (
 	"go/token"
 	"go/types"
 	"os"
+	"reflect"
 	"runtime"
 	"sort"
 	"strings"
@@ -33,6 +34,7 @@ import (
 	"unsafe"
 
 	"github.com/goplus/gogen/packages"
+	rtabi "github.com/goplus/llgo/runtime/abi"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -195,6 +197,570 @@ func TestNewFuncExLLVMUsed(t *testing.T) {
 	}
 	if got := pkg.String(); !strings.Contains(got, `@llvm.compiler.used = appending global [2 x ptr] [ptr @Foo, ptr @Bar], section "llvm.metadata"`) {
 		t.Fatalf("module missing llvm.compiler.used entry:\n%s", got)
+	}
+}
+
+func requireGoGlobalDCE(t *testing.T) {
+	t.Helper()
+}
+
+func TestDevLTOGlobalDCEAddTypeMetadata(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.EnableGoGlobalDCE(true)
+	pkg := prog.NewPackage("main", "main")
+	g := pkg.NewVarEx("g", prog.Pointer(prog.Int()))
+	prog.addTypeMetadata(g.impl, 8, "go.method.F:func()")
+	prog.addTypeMetadata(g.impl, 16, "go.method.G:func()")
+	prog.setVCallVisibilityMetadata(g.impl, vcallVisibilityLinkageUnit)
+	ir := pkg.String()
+	if !strings.Contains(ir, `!type !`) {
+		t.Fatalf("missing !type metadata:\n%s", ir)
+	}
+	if !strings.Contains(ir, `!"go.method.F:func()"`) {
+		t.Fatalf("missing F type metadata:\n%s", ir)
+	}
+	if !strings.Contains(ir, `!"go.method.G:func()"`) {
+		t.Fatalf("missing G type metadata:\n%s", ir)
+	}
+	if !strings.Contains(ir, `!vcall_visibility !`) {
+		t.Fatalf("missing !vcall_visibility metadata:\n%s", ir)
+	}
+	if !strings.Contains(ir, `!"Virtual Function Elim"`) {
+		t.Fatalf("missing Virtual Function Elim module flag:\n%s", ir)
+	}
+	if !strings.Contains(ir, `i32 1, !"Virtual Function Elim", i32 1`) {
+		t.Fatalf("missing error-behavior Virtual Function Elim module flag:\n%s", ir)
+	}
+}
+
+func TestDevLTOGlobalDCEMethodCapabilitySigIgnoresParameterNames(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	errType := types.Universe.Lookup("error").Type()
+	named := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, nil, "path", types.Typ[types.String])),
+		types.NewTuple(
+			types.NewVar(token.NoPos, nil, "fd", types.Typ[types.Int]),
+			types.NewVar(token.NoPos, nil, "err", errType),
+		),
+		false)
+	unnamed := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.String])),
+		types.NewTuple(
+			types.NewVar(token.NoPos, nil, "", types.Typ[types.Int]),
+			types.NewVar(token.NoPos, nil, "", errType),
+		),
+		false)
+
+	got := methodCapabilitySig(named)
+	want := methodCapabilitySig(unnamed)
+	if got != want {
+		t.Fatalf("methodCapabilitySig should ignore parameter names: got %q, want %q", got, want)
+	}
+	if got != "func(string) (int, error)" {
+		t.Fatalf("methodCapabilitySig kept parameter names: %q", got)
+	}
+}
+
+func TestDevLTOGlobalDCEMethodCapabilityKeyMatchesInterfaceAndConcreteNames(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	pkg := types.NewPackage("p", "p")
+	tname := types.NewTypeName(token.NoPos, pkg, "T", nil)
+	recvType := types.NewNamed(tname, types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, pkg, "", recvType)
+	concrete := types.NewFunc(token.NoPos, pkg, "F", types.NewSignatureType(recv, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, pkg, "path", types.Typ[types.String])),
+		types.NewTuple(types.NewVar(token.NoPos, pkg, "ret", types.Typ[types.Int])),
+		false))
+	iface := types.NewFunc(token.NoPos, pkg, "F", types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, pkg, "", types.Typ[types.String])),
+		types.NewTuple(types.NewVar(token.NoPos, pkg, "", types.Typ[types.Int])),
+		false))
+
+	got := methodCapabilityKey(concrete)
+	want := methodCapabilityKey(iface)
+	if got != want {
+		t.Fatalf("concrete and interface method capability keys differ: got %q, want %q", got, want)
+	}
+	if want := "go.method.F:func(string) int"; got != want {
+		t.Fatalf("methodCapabilityKey = %q, want %q", got, want)
+	}
+}
+
+func TestDevLTOGlobalDCEMethodCapabilityKeyQualifiesUnexportedNames(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	pkgA := types.NewPackage("example.com/a", "a")
+	pkgB := types.NewPackage("example.com/b", "b")
+	makeMethod := func(pkg *types.Package) *types.Func {
+		recvType := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "T", nil), types.NewStruct(nil, nil), nil)
+		recv := types.NewVar(token.NoPos, pkg, "", recvType)
+		return types.NewFunc(token.NoPos, pkg, "hidden", types.NewSignatureType(recv, nil, nil, nil,
+			types.NewTuple(types.NewVar(token.NoPos, pkg, "", types.Typ[types.Int])),
+			false))
+	}
+
+	gotA := methodCapabilityKey(makeMethod(pkgA))
+	gotB := methodCapabilityKey(makeMethod(pkgB))
+	if gotA == gotB {
+		t.Fatalf("unexported methods from different packages share a key: %q", gotA)
+	}
+	if want := "go.method.example.com/a.hidden:func() int"; gotA != want {
+		t.Fatalf("methodCapabilityKey = %q, want %q", gotA, want)
+	}
+}
+
+func TestDevLTOGlobalDCEMethodCapabilityKeyUsesPromotedMethodPackage(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	pkgA := types.NewPackage("example.com/a", "a")
+	pkgB := types.NewPackage("example.com/b", "b")
+	exported := types.NewNamed(types.NewTypeName(token.NoPos, pkgA, "Exported", nil), types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, pkgA, "", exported)
+	exported.AddMethod(types.NewFunc(token.NoPos, pkgA, "hidden", types.NewSignatureType(recv, nil, nil, nil, nil, false)))
+
+	field := types.NewField(token.NoPos, pkgB, "Exported", exported, true)
+	wrapper := types.NewNamed(types.NewTypeName(token.NoPos, pkgB, "Wrapper", nil), types.NewStruct([]*types.Var{field}, nil), nil)
+	mset := types.NewMethodSet(wrapper)
+	if mset.Len() != 1 {
+		t.Fatalf("promoted method set length = %d, want 1", mset.Len())
+	}
+	promoted := mset.At(0).Obj().(*types.Func)
+	if got := promoted.Pkg().Path(); got != pkgA.Path() {
+		t.Fatalf("promoted method package = %q, want %q", got, pkgA.Path())
+	}
+
+	ifaceMethod := types.NewFunc(token.NoPos, pkgA, "hidden", types.NewSignatureType(nil, nil, nil, nil, nil, false))
+	got := methodCapabilityKey(promoted)
+	want := methodCapabilityKey(ifaceMethod)
+	if got != want {
+		t.Fatalf("promoted method key = %q, want interface key %q", got, want)
+	}
+	if wantLiteral := "go.method.example.com/a.hidden:func()"; got != wantLiteral {
+		t.Fatalf("promoted method key = %q, want %q", got, wantLiteral)
+	}
+}
+
+func TestDevLTOGlobalDCEMethodCapabilityKeyUnaliasesNestedTypes(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	pkg := types.NewPackage("example.com/p", "p")
+	pointStruct := func() *types.Struct {
+		return types.NewStruct([]*types.Var{
+			types.NewField(token.NoPos, pkg, "x", types.Typ[types.Float64], false),
+			types.NewField(token.NoPos, pkg, "y", types.Typ[types.Float64], false),
+		}, nil)
+	}
+	myPoint := types.NewAlias(types.NewTypeName(token.NoPos, pkg, "MyPoint", nil), pointStruct())
+	iPoint := types.NewAlias(types.NewTypeName(token.NoPos, pkg, "IPoint", nil), pointStruct())
+	recvType := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "S", nil), types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, pkg, "", recvType)
+	params := types.NewTuple(
+		types.NewVar(token.NoPos, pkg, "dx", types.Typ[types.Float64]),
+		types.NewVar(token.NoPos, pkg, "dy", types.Typ[types.Float64]),
+	)
+	concrete := types.NewFunc(token.NoPos, pkg, "NewPoint", types.NewSignatureType(recv, nil, nil,
+		params,
+		types.NewTuple(types.NewVar(token.NoPos, pkg, "", types.NewPointer(myPoint))),
+		false))
+	iface := types.NewFunc(token.NoPos, pkg, "NewPoint", types.NewSignatureType(nil, nil, nil,
+		params,
+		types.NewTuple(types.NewVar(token.NoPos, pkg, "", types.NewPointer(iPoint))),
+		false))
+
+	got := methodCapabilityKey(concrete)
+	want := methodCapabilityKey(iface)
+	if got != want {
+		t.Fatalf("methodCapabilityKey should ignore aliases: got %q, want %q", got, want)
+	}
+	if strings.Contains(got, "MyPoint") || strings.Contains(got, "IPoint") {
+		t.Fatalf("methodCapabilityKey kept alias names: %q", got)
+	}
+}
+
+func TestDevLTOGlobalDCEMethodCapabilityTypeCoversCompositeForms(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	if got := methodCapabilityTuple(nil); got != nil {
+		t.Fatalf("methodCapabilityTuple(nil) = %v, want nil", got)
+	}
+	if got := methodCapabilityTuple(types.NewTuple()); got != nil {
+		t.Fatalf("methodCapabilityTuple(empty) = %v, want nil", got)
+	}
+
+	pkg := types.NewPackage("example.com/p", "p")
+	alias := types.NewAlias(types.NewTypeName(token.NoPos, pkg, "AliasPtr", nil), types.NewPointer(types.Typ[types.String]))
+
+	tp := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "T", nil), types.Universe.Lookup("any").Type().Underlying().(*types.Interface))
+	box := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "Box", nil), types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, pkg, "V", tp, false),
+	}, nil), nil)
+	box.SetTypeParams([]*types.TypeParam{tp})
+	boxAlias, err := types.Instantiate(types.NewContext(), box, []types.Type{alias}, false)
+	if err != nil {
+		t.Fatalf("Instantiate(Box[AliasPtr]) failed: %v", err)
+	}
+
+	nestedSig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, pkg, "x", alias)),
+		types.NewTuple(types.NewVar(token.NoPos, pkg, "ok", types.Typ[types.Bool])),
+		false)
+	method := types.NewFunc(token.NoPos, pkg, "M", nestedSig)
+	embedded := types.NewInterfaceType(nil, nil).Complete()
+	iface := types.NewInterfaceType([]*types.Func{method}, []types.Type{embedded}).Complete()
+	union := types.NewUnion([]*types.Term{
+		types.NewTerm(false, alias),
+		types.NewTerm(true, types.NewSlice(alias)),
+	})
+
+	composite := []types.Type{
+		types.NewArray(alias, 2),
+		types.NewSlice(alias),
+		types.NewStruct([]*types.Var{types.NewField(token.NoPos, pkg, "F", alias, false)}, []string{`json:"f"`}),
+		types.NewPointer(alias),
+		nestedSig,
+		iface,
+		types.NewMap(alias, types.NewChan(types.SendRecv, alias)),
+		boxAlias,
+		union,
+	}
+	for _, typ := range composite {
+		got := methodCapabilityType(typ)
+		gotString := types.TypeString(got, func(pkg *types.Package) string {
+			if pkg == nil {
+				return ""
+			}
+			return pkg.Path()
+		})
+		if strings.Contains(gotString, "AliasPtr") {
+			t.Fatalf("methodCapabilityType(%T) kept alias in %q", typ, gotString)
+		}
+	}
+
+	gotUnion := methodCapabilityType(union).(*types.Union)
+	if ptr, ok := gotUnion.Term(0).Type().(*types.Pointer); !ok || ptr.Elem() != types.Typ[types.String] {
+		t.Fatalf("union term was not canonicalized through alias: %s", gotUnion.Term(0).Type())
+	}
+}
+
+func TestDevLTOGlobalDCEReflectPackageEnablesVirtualFunctionElim(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.EnableGoGlobalDCE(true)
+	pkg := prog.NewPackage("reflect", "reflect")
+
+	ir := pkg.String()
+	if !strings.Contains(ir, `i32 1, !"Virtual Function Elim", i32 1`) {
+		t.Fatalf("missing enabled Virtual Function Elim module flag for reflect:\n%s", ir)
+	}
+}
+
+func TestDevLTOGlobalDCEFakeUseValueInlineAsm(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("main", "main")
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	target := pkg.NewFunc("Target", sig, InGo)
+	fn := pkg.NewFunc("Use", sig, InGo)
+	b := fn.MakeBody(1)
+	prog.fakeUseValueInlineAsm(b.impl, target.impl)
+	b.Return()
+
+	ir := pkg.String()
+	if !strings.Contains(ir, "asm sideeffect") {
+		t.Fatalf("missing inline asm fake-use:\n%s", ir)
+	}
+	if !strings.Contains(ir, "ptr @Target") {
+		t.Fatalf("missing inline asm operand:\n%s", ir)
+	}
+}
+
+func TestDevLTOGlobalDCEMethodCheckedLoadEmitsIntrinsicAndAssume(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("main", "main")
+	g := pkg.NewVarEx("itab", prog.Pointer(prog.VoidPtr()))
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	fn := pkg.NewFunc("Use", sig, InGo)
+	b := fn.MakeBody(1)
+	loaded := prog.methodCheckedLoad(b.impl, g.impl, "go.method.M:func()")
+	prog.methodCheckedLoad(b.impl, g.impl, "go.method.N:func()")
+	prog.fakeUseValueInlineAsm(b.impl, loaded)
+	b.Return()
+
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+
+	ir := pkg.String()
+	for _, want := range []string{
+		"@llvm.type.checked.load",
+		"@llvm.assume",
+		`!"go.method.M:func()"`,
+		`!"go.method.N:func()"`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("missing %s in method checked load IR:\n%s", want, ir)
+		}
+	}
+}
+
+func TestDevLTOGlobalDCEEmitFakeUsesInlineAsmAtEntry(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.EnableGoGlobalDCE(true)
+	pkg := prog.NewPackage("main", "main")
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	targetA := pkg.NewFunc("TargetA", sig, InGo)
+	targetB := pkg.NewFunc("TargetB", sig, InGo)
+	fn := pkg.NewFunc("UseIntrinsic", sig, InGo)
+	b := fn.MakeBody(1)
+
+	pkg.NewFunc("NoFakeUses", sig, InGo).emitFakeUsesInlineAsm(b)
+	fn.recordFakeUse(targetA.impl)
+	fn.recordFakeUse(targetB.impl)
+	b.Return()
+	fn.emitFakeUsesInlineAsm(b)
+
+	ir := pkg.String()
+	if !strings.Contains(ir, `call void asm sideeffect "", "X"(ptr @TargetA)`) {
+		t.Fatalf("missing inline asm fake-use for TargetA:\n%s", ir)
+	}
+	if !strings.Contains(ir, `call void asm sideeffect "", "X"(ptr @TargetB)`) {
+		t.Fatalf("missing inline asm fake-use for TargetB:\n%s", ir)
+	}
+	if strings.Index(ir, `call void asm sideeffect "", "X"(ptr @TargetA)`) > strings.Index(ir, "ret void") {
+		t.Fatalf("inline asm fake-use should be emitted before the return:\n%s", ir)
+	}
+}
+
+func TestDevLTOGlobalDCEAddMethodTypeMetadataEarlyReturns(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.EnableGoGlobalDCE(true)
+	pkg := prog.NewPackage("main", "main")
+	g := pkg.NewVarEx("g", prog.Pointer(prog.Int()))
+	mset := types.NewMethodSet(types.Typ[types.Int])
+
+	prog.addMethodTypeMetadata(g.impl, prog.Pointer(prog.Int()), mset, 0)
+
+	ir := pkg.String()
+	if strings.Contains(ir, "!vcall_visibility") || strings.Contains(ir, "!type !") {
+		t.Fatalf("early-return paths should not attach method metadata:\n%s", ir)
+	}
+}
+
+func TestDevLTOGlobalDCEAddMethodTypeMetadataMarksIFnAndTFnForReflectContexts(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.SetRuntime(func() *types.Package {
+		fset := token.NewFileSet()
+		imp := packages.NewImporter(fset)
+		pkg, _ := imp.Import(PkgRuntime)
+		return pkg
+	})
+	prog.EnableGoGlobalDCE(true)
+	pkg := prog.NewPackage("main", "main")
+	g := pkg.NewVarEx("g", prog.Pointer(prog.Int()))
+
+	goPkg := types.NewPackage("example.com/p", "p")
+	named := types.NewNamed(types.NewTypeName(token.NoPos, goPkg, "S", nil), types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, goPkg, "", named)
+	method := types.NewFunc(token.NoPos, goPkg, "Keep", types.NewSignatureType(recv, nil, nil, nil, nil, false))
+	named.AddMethod(method)
+	mset := types.NewMethodSet(named)
+
+	methodArray := prog.Type(types.NewArray(prog.rtNamed("Method"), 1), InGo)
+	fullType := prog.Struct(prog.Int(), prog.Int(), methodArray)
+	prog.addMethodTypeMetadata(g.impl, fullType, mset, mset.Len())
+
+	methodType := prog.Type(prog.rtNamed("Method"), InGo)
+	methodArrayOffset := prog.OffsetOf(fullType, 2)
+	ifnOffset := methodArrayOffset + prog.OffsetOf(methodType, abiMethodIFnFieldIndex)
+	tfnOffset := methodArrayOffset + prog.OffsetOf(methodType, abiMethodTFnFieldIndex)
+
+	ir := pkg.String()
+	for _, want := range []string{
+		fmt.Sprintf(`!{i64 %d, !"%s"}`, ifnOffset, reflectValueMethodTypeID),
+		fmt.Sprintf(`!{i64 %d, !"%s"}`, ifnOffset, reflectValueMethodNameTypeID("Keep")),
+		fmt.Sprintf(`!{i64 %d, !"%s"}`, tfnOffset, reflectTypeMethodTypeID),
+		fmt.Sprintf(`!{i64 %d, !"%s"}`, tfnOffset, reflectTypeMethodNameTypeID("Keep")),
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("missing reflect method metadata %s:\n%s", want, ir)
+		}
+	}
+	for _, typeID := range []string{
+		reflectValueMethodTypeID,
+		reflectValueMethodNameTypeID("Keep"),
+		reflectTypeMethodTypeID,
+		reflectTypeMethodNameTypeID("Keep"),
+	} {
+		if count := strings.Count(ir, `!"`+typeID+`"`); count != 1 {
+			t.Fatalf("reflect method metadata count for %s = %d, want 1:\n%s", typeID, count, ir)
+		}
+	}
+}
+
+func TestDevLTOGlobalDCERecordAbiTypeFakeUsesEarlyReturns(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("main", "main")
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	target := pkg.NewFunc("CachedTarget", sig, InGo)
+	fn := pkg.NewFunc("UseAbiType", sig, InGo)
+	b := fn.MakeBody(1)
+	g := pkg.NewVarEx("typeinfo", prog.Pointer(prog.Int()))
+	pkg.abiTypeFakeUseCache[g.impl] = []llvm.Value{target.impl}
+
+	b.recordAbiTypeFakeUses(g.impl)
+	if len(fn.fakeUses) != 0 {
+		t.Fatalf("recordAbiTypeFakeUses recorded fake uses while global DCE is disabled")
+	}
+	prog.EnableGoGlobalDCE(true)
+	(&aBuilder{Prog: prog, Pkg: pkg}).recordAbiTypeFakeUses(g.impl)
+	if len(fn.fakeUses) != 0 {
+		t.Fatalf("recordAbiTypeFakeUses recorded fake uses without a current function")
+	}
+}
+
+func TestDevLTOGlobalDCEAbiTypeFakeUseFieldIndexes(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	checkFieldIndex := func(typ reflect.Type, idx int, want string) {
+		t.Helper()
+		if idx < 0 || idx >= typ.NumField() {
+			t.Fatalf("%s field index %d is out of range", typ, idx)
+		}
+		if got := typ.Field(idx).Name; got != want {
+			t.Fatalf("%s field %d = %q, want %q", typ, idx, got, want)
+		}
+	}
+
+	checkFieldIndex(reflect.TypeOf(rtabi.Method{}), abiMethodIFnFieldIndex, "Ifn_")
+	checkFieldIndex(reflect.TypeOf(rtabi.Method{}), abiMethodTFnFieldIndex, "Tfn_")
+	checkFieldIndex(reflect.TypeOf(reflect.Value{}), reflectValuePtrFieldIndex, "ptr")
+	checkFieldIndex(reflect.TypeOf(reflect.Method{}), reflectMethodFuncFieldIndex, "Func")
+}
+
+func TestDevLTOGlobalDCERecordAbiTypeFakeUsesUsesCache(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.EnableGoGlobalDCE(true)
+	pkg := prog.NewPackage("main", "main")
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	target := pkg.NewFunc("CachedTarget", sig, InGo)
+	fn := pkg.NewFunc("UseCachedAbiType", sig, InGo)
+	b := fn.MakeBody(1)
+	g := pkg.NewVarEx("typeinfo", prog.Pointer(prog.Int()))
+	pkg.abiTypeFakeUseCache[g.impl] = []llvm.Value{target.impl}
+
+	b.recordAbiTypeFakeUses(g.impl)
+	if len(fn.fakeUses) != 1 || fn.fakeUses[0] != target.impl {
+		t.Fatalf("recordAbiTypeFakeUses did not use cached fake uses: %v", fn.fakeUses)
+	}
+}
+
+func TestDevLTOGlobalDCERecordAbiTypeFakeUsesCacheIsPerGlobal(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.EnableGoGlobalDCE(true)
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+
+	pkgA := prog.NewPackage("a", "a")
+	targetA := pkgA.NewFunc("CachedTargetA", sig, InGo)
+	gA := pkgA.NewVarEx("typeinfo", prog.Pointer(prog.Int()))
+	pkgA.abiTypeFakeUseCache[gA.impl] = []llvm.Value{targetA.impl}
+
+	pkgB := prog.NewPackage("b", "b")
+	fnB := pkgB.NewFunc("UseCachedAbiTypeB", sig, InGo)
+	b := fnB.MakeBody(1)
+	gB := pkgB.NewVarEx("typeinfo", prog.Pointer(prog.Int()))
+	b.recordAbiTypeFakeUses(gB.impl)
+	if len(fnB.fakeUses) != 0 {
+		t.Fatalf("recordAbiTypeFakeUses reused fake uses from another global: %v", fnB.fakeUses)
+	}
+}
+
+func TestDevLTOGlobalDCEAbiTypeFakeUsesRecordedDuringAbiTypeBuild(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	prog.EnableGoGlobalDCE(true)
+	pkg := prog.NewPackage("main", "main")
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	fn := pkg.NewFunc("UseAbiType", sig, InGo)
+	b := fn.MakeBody(1)
+
+	stringType := types.Typ[types.String]
+	b.abiType(stringType)
+	stringName, _ := prog.abi.TypeName(stringType)
+	stringFakeUses := pkg.abiTypeFakeUseCache[pkg.VarOf(stringName).impl]
+	if !containsLLVMValueNameSuffix(stringFakeUses, ".strequal") {
+		t.Fatalf("string abi type fake uses = %v, want strequal", stringFakeUses)
+	}
+
+	mapType := types.NewMap(types.Typ[types.String], types.Typ[types.Int])
+	b.abiType(mapType)
+	mapName, _ := prog.abi.TypeName(mapType)
+	mapFakeUses := pkg.abiTypeFakeUseCache[pkg.VarOf(mapName).impl]
+	if !containsLLVMValueNameSuffix(mapFakeUses, ".typehash") {
+		t.Fatalf("map abi type fake uses = %v, want typehash", mapFakeUses)
+	}
+}
+
+func containsLLVMValueNameSuffix(values []llvm.Value, suffix string) bool {
+	for _, value := range values {
+		if strings.HasSuffix(value.Name(), suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestDevLTOGlobalDCEEmitFakeUsesAtEntry(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.EnableGoGlobalDCE(true)
+	pkg := prog.NewPackage("main", "main")
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	targetA := pkg.NewFunc("TargetA", sig, InGo)
+	targetB := pkg.NewFunc("TargetB", sig, InGo)
+	fn := pkg.NewFunc("Use", sig, InGo)
+	b := fn.MakeBody(1)
+	fn.recordFakeUse(targetA.impl)
+	fn.recordFakeUse(targetB.impl)
+	fn.recordFakeUse(targetA.impl)
+	b.Return()
+	b.EndBuild()
+
+	ir := pkg.String()
+	if strings.Count(ir, `call void asm sideeffect "", "X"(ptr @TargetA)`) != 1 {
+		t.Fatalf("missing deduplicated inline asm fake-use for TargetA:\n%s", ir)
+	}
+	if strings.Count(ir, `call void asm sideeffect "", "X"(ptr @TargetB)`) != 1 {
+		t.Fatalf("missing inline asm fake-use for TargetB:\n%s", ir)
 	}
 }
 

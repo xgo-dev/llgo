@@ -62,7 +62,7 @@ package main
 // CHECK-NEXT:   %36 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %32, 0
 // CHECK-NEXT:   %37 = load [2 x i8], ptr %36, align 1
 // CHECK-NEXT:   %38 = alloca [2 x i8], align 1
-// CHECK-NEXT:   call void @llvm.memset(ptr %38, i8 0, i64 2, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %38, i8 0, i64 2, i1 false)
 // CHECK-NEXT:   %39 = getelementptr inbounds i8, ptr %38, i64 0
 // CHECK-NEXT:   %40 = getelementptr inbounds i8, ptr %38, i64 1
 // CHECK-NEXT:   store i8 1, ptr %39, align 1

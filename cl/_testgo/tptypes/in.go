@@ -56,7 +56,7 @@ type (
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/tptypes.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = alloca %"{{.*}}/cl/_testgo/tptypes.Data[int]", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %0, i8 0, i64 8, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %0, i8 0, i64 8, i1 false)
 // CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Data[int]", ptr %0, i32 0, i32 0
 // CHECK-NEXT:   store i64 1, ptr %1, align 8
 // CHECK-NEXT:   %2 = load %"{{.*}}/cl/_testgo/tptypes.Data[int]", ptr %0, align 8
@@ -64,7 +64,7 @@ type (
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %3)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %4 = alloca %"{{.*}}/cl/_testgo/tptypes.Data[string]", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %4, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %4, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   %5 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Data[string]", ptr %4, i32 0, i32 0
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, ptr %5, align 8
 // CHECK-NEXT:   %6 = load %"{{.*}}/cl/_testgo/tptypes.Data[string]", ptr %4, align 8
@@ -72,7 +72,7 @@ type (
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %7)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %8 = alloca %"{{.*}}/cl/_testgo/tptypes.Data[int]", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %8, i8 0, i64 8, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %8, i8 0, i64 8, i1 false)
 // CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Data[int]", ptr %8, i32 0, i32 0
 // CHECK-NEXT:   store i64 100, ptr %9, align 8
 // CHECK-NEXT:   %10 = load %"{{.*}}/cl/_testgo/tptypes.Data[int]", ptr %8, align 8
@@ -80,7 +80,7 @@ type (
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %11)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %12 = alloca %"{{.*}}/cl/_testgo/tptypes.Data[string]", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %12, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %12, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   %13 = getelementptr inbounds %"{{.*}}/cl/_testgo/tptypes.Data[string]", ptr %12, i32 0, i32 0
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, ptr %13, align 8
 // CHECK-NEXT:   %14 = load %"{{.*}}/cl/_testgo/tptypes.Data[string]", ptr %12, align 8

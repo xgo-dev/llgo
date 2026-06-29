@@ -1,25 +1,25 @@
 // LITTEST
 package main
 
-// CHECK: @0 = private unnamed_addr constant [6 x i8] c"invoke", align 1
-// CHECK: @1 = private unnamed_addr constant [42 x i8] c"{{.*}}/cl/_testgo/invoke.T", align 1
-// CHECK: @2 = private unnamed_addr constant [6 x i8] c"Invoke", align 1
-// CHECK: @3 = private unnamed_addr constant [7 x i8] c"invoke1", align 1
-// CHECK: @4 = private unnamed_addr constant [43 x i8] c"{{.*}}/cl/_testgo/invoke.T1", align 1
-// CHECK: @5 = private unnamed_addr constant [7 x i8] c"invoke2", align 1
-// CHECK: @6 = private unnamed_addr constant [43 x i8] c"{{.*}}/cl/_testgo/invoke.T2", align 1
-// CHECK: @7 = private unnamed_addr constant [7 x i8] c"invoke3", align 1
-// CHECK: @8 = private unnamed_addr constant [7 x i8] c"invoke4", align 1
-// CHECK: @9 = private unnamed_addr constant [43 x i8] c"{{.*}}/cl/_testgo/invoke.T4", align 1
-// CHECK: @10 = private unnamed_addr constant [7 x i8] c"invoke5", align 1
-// CHECK: @11 = private unnamed_addr constant [43 x i8] c"{{.*}}/cl/_testgo/invoke.T5", align 1
-// CHECK: @12 = private unnamed_addr constant [7 x i8] c"invoke6", align 1
-// CHECK: @13 = private unnamed_addr constant [43 x i8] c"{{.*}}/cl/_testgo/invoke.T6", align 1
-// CHECK: @14 = private unnamed_addr constant [5 x i8] c"hello", align 1
-// CHECK: @36 = private unnamed_addr constant [5 x i8] c"world", align 1
-// CHECK: @38 = private unnamed_addr constant [42 x i8] c"{{.*}}/cl/_testgo/invoke.I", align 1
-// CHECK: @40 = private unnamed_addr constant [3 x i8] c"any", align 1
-// CHECK: @41 = private unnamed_addr constant [23 x i8] c"interface{Invoke() int}", align 1
+// CHECK: {{^}}@0 = private unnamed_addr constant [6 x i8] c"invoke", align 1{{$}}
+// CHECK: {{^}}@1 = private unnamed_addr constant [42 x i8] c"{{.*}}/cl/_testgo/invoke.T", align 1{{$}}
+// CHECK: {{^}}@2 = private unnamed_addr constant [6 x i8] c"Invoke", align 1{{$}}
+// CHECK: {{^}}@3 = private unnamed_addr constant [7 x i8] c"invoke1", align 1{{$}}
+// CHECK: {{^}}@4 = private unnamed_addr constant [43 x i8] c"{{.*}}/cl/_testgo/invoke.T1", align 1{{$}}
+// CHECK: {{^}}@5 = private unnamed_addr constant [7 x i8] c"invoke2", align 1{{$}}
+// CHECK: {{^}}@6 = private unnamed_addr constant [43 x i8] c"{{.*}}/cl/_testgo/invoke.T2", align 1{{$}}
+// CHECK: {{^}}@7 = private unnamed_addr constant [7 x i8] c"invoke3", align 1{{$}}
+// CHECK: {{^}}@8 = private unnamed_addr constant [7 x i8] c"invoke4", align 1{{$}}
+// CHECK: {{^}}@9 = private unnamed_addr constant [43 x i8] c"{{.*}}/cl/_testgo/invoke.T4", align 1{{$}}
+// CHECK: {{^}}@10 = private unnamed_addr constant [7 x i8] c"invoke5", align 1{{$}}
+// CHECK: {{^}}@11 = private unnamed_addr constant [43 x i8] c"{{.*}}/cl/_testgo/invoke.T5", align 1{{$}}
+// CHECK: {{^}}@12 = private unnamed_addr constant [7 x i8] c"invoke6", align 1{{$}}
+// CHECK: {{^}}@13 = private unnamed_addr constant [43 x i8] c"{{.*}}/cl/_testgo/invoke.T6", align 1{{$}}
+// CHECK: {{^}}@14 = private unnamed_addr constant [5 x i8] c"hello", align 1{{$}}
+// CHECK: {{^}}@36 = private unnamed_addr constant [5 x i8] c"world", align 1{{$}}
+// CHECK: {{^}}@38 = private unnamed_addr constant [42 x i8] c"{{.*}}/cl/_testgo/invoke.I", align 1{{$}}
+// CHECK: {{^}}@40 = private unnamed_addr constant [3 x i8] c"any", align 1{{$}}
+// CHECK: {{^}}@41 = private unnamed_addr constant [23 x i8] c"interface{Invoke() int}", align 1{{$}}
 
 type T struct {
 	s string
@@ -28,7 +28,7 @@ type T struct {
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/invoke.T.Invoke"(%"{{.*}}/cl/_testgo/invoke.T" %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca %"{{.*}}/cl/_testgo/invoke.T", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testgo/invoke.T" %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/invoke.T", ptr %1, i32 0, i32 0
 // CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.String", ptr %2, align 8
@@ -209,11 +209,13 @@ type M interface {
 
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/invoke.(*T3).Invoke"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = load i8, ptr %0, align 1
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
+// CHECK-NEXT:   %2 = load i8, ptr %0, align 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @7, i64 7 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %2 = sext i8 %1 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %2)
+// CHECK-NEXT:   %3 = sext i8 %2 to i64
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %3)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret i64 3
 // CHECK-NEXT: }
@@ -221,7 +223,7 @@ type M interface {
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/invoke.T4.Invoke"([1 x i64] %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca [1 x i64], align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 8, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 8, i1 false)
 // CHECK-NEXT:   store [1 x i64] %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds i64, ptr %1, i64 0
 // CHECK-NEXT:   %3 = load i64, ptr %2, align 8
@@ -244,7 +246,7 @@ type M interface {
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/invoke.T5.Invoke"(%"{{.*}}/cl/_testgo/invoke.T5" %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca %"{{.*}}/cl/_testgo/invoke.T5", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 8, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 8, i1 false)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testgo/invoke.T5" %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/invoke.T5", ptr %1, i32 0, i32 0
 // CHECK-NEXT:   %3 = load i64, ptr %2, align 8
@@ -421,7 +423,7 @@ type M interface {
 // CHECK-NEXT:   %72 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %71, ptr %69, 1
 // CHECK-NEXT:   call void @"{{.*}}/cl/_testgo/invoke.invoke"(%"{{.*}}/runtime/internal/runtime.iface" %72)
 // CHECK-NEXT:   %73 = alloca %"{{.*}}/cl/_testgo/invoke.T", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %73, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %73, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   %74 = getelementptr inbounds %"{{.*}}/cl/_testgo/invoke.T", ptr %73, i32 0, i32 0
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @36, i64 5 }, ptr %74, align 8
 // CHECK-NEXT:   %75 = load %"{{.*}}/cl/_testgo/invoke.T", ptr %73, align 8

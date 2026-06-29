@@ -32,14 +32,10 @@ func TestExtractOrdinaryEdgesFromFunctionAndGlobal(t *testing.T) {
 	extractOrdinaryEdges(mb, mod)
 	pm, _ := mb.Build()
 
-	mainSym := mb.Sym("pkg.main")
-	helperSym := mb.Sym("pkg.helper")
-	globalSym := mb.Sym("pkg.global")
-
-	if !hasOrdinaryEdge(pm, mainSym, helperSym) {
+	if !hasOrdinaryEdge(pm, "pkg.main", "pkg.helper") {
 		t.Fatalf("missing ordinary edge pkg.main -> pkg.helper")
 	}
-	if !hasOrdinaryEdge(pm, globalSym, helperSym) {
+	if !hasOrdinaryEdge(pm, "pkg.global", "pkg.helper") {
 		t.Fatalf("missing ordinary edge pkg.global -> pkg.helper")
 	}
 }
@@ -80,18 +76,25 @@ func TestExtractOrdinaryEdgesSkipsUncommonMethodTable(t *testing.T) {
 	extractOrdinaryEdges(mb, mod)
 	pm, _ := mb.Build()
 
-	typeSym := mb.Sym("_llgo_pkg.T")
-	if hasOrdinaryEdge(pm, typeSym, mb.Sym("pkg.(*T).M")) {
+	if hasOrdinaryEdge(pm, "_llgo_pkg.T", "pkg.(*T).M") {
 		t.Fatalf("method table IFn was recorded as an ordinary edge")
 	}
-	if hasOrdinaryEdge(pm, typeSym, mb.Sym("pkg.T.M")) {
+	if hasOrdinaryEdge(pm, "_llgo_pkg.T", "pkg.T.M") {
 		t.Fatalf("method table TFn was recorded as an ordinary edge")
 	}
 }
 
-func hasOrdinaryEdge(pm *meta.PackageMeta, src, dst meta.LocalSymbol) bool {
-	for _, e := range pm.Edges(src) {
-		if e.Kind == meta.EdgeOrdinary && meta.LocalSymbol(e.Target) == dst {
+func hasOrdinaryEdge(pm *meta.PackageMeta, srcName, dstName string) bool {
+	summary, err := meta.NewGlobalSummary([]*meta.PackageMeta{pm})
+	if err != nil {
+		return false
+	}
+	src, ok := summary.LookupSymbol(srcName)
+	if !ok {
+		return false
+	}
+	for _, dst := range summary.OrdinaryEdges(src) {
+		if summary.SymbolName(dst) == dstName {
 			return true
 		}
 	}

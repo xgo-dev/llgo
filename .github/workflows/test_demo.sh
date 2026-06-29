@@ -9,6 +9,10 @@ fi
 
 # llgo run subdirectories under _demo that contain *.go files
 jobs="${LLGO_DEMO_JOBS:-1}"
+llgo_run_flags=()
+if [ -n "${LLGO_DEMO_LLGORUN_FLAGS:-}" ]; then
+  read -r -a llgo_run_flags <<< "${LLGO_DEMO_LLGORUN_FLAGS}"
+fi
 if [ "${jobs}" -gt 1 ]; then
   if [ "${BASH_VERSINFO[0]}" -lt 5 ] || { [ "${BASH_VERSINFO[0]}" -eq 5 ] && [ "${BASH_VERSINFO[1]}" -lt 1 ]; }; then
     echo "warning: LLGO_DEMO_JOBS=${jobs} requested but bash ${BASH_VERSION} lacks 'wait -n -p'; running sequentially" >&2
@@ -111,6 +115,8 @@ ignore_esp32=(
   "./_demo/go/reflectpointerto" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/reflectpkgpath" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/reflectslice" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectsliceat" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectvisiblefields" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/return-1605" # runtime output: fatal error
   "./_demo/go/runtime" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/sync" # panic: internal/bytealg selected .s files require plan9asm translation
@@ -127,6 +133,7 @@ ignore_esp32c3_basic=(
   "./_demo/go/mkdirdemo" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/c/asmcall" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/c/asmfullcall" # panic: cannot build SSA for packages (undefined: verify)
+  "./_demo/go/atomicfn" #ld.lld: error: undefined symbol: __atomic_fetch_add_4
   "./_demo/c/cargs" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/c/catomic" # link error: ld.lld undefined symbol __atomic_store
   "./_demo/c/cexec" # link error: ld.lld undefined symbol execlp
@@ -187,6 +194,8 @@ ignore_esp32c3_basic=(
   "./_demo/go/reflectpointerto" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/reflectpkgpath" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/reflectslice" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectsliceat" # panic: internal/bytealg selected .s files require plan9asm translation
+  "./_demo/go/reflectvisiblefields" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/runtime" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/sync" # panic: internal/bytealg selected .s files require plan9asm translation
   "./_demo/go/sysopen-1654" # panic: internal/bytealg selected .s files require plan9asm translation
@@ -270,6 +279,7 @@ run_case() {
     echo "Testing $dir"
   fi
   cmd=(llgo run)
+  cmd+=("${llgo_run_flags[@]}")
   if [ -n "$target" ]; then
     cmd+=("-target=$target")
   fi

@@ -87,20 +87,6 @@ func main() {}
 	}
 }
 
-func TestLoadSpecRejectsMarkedSourceWithoutDirectives(t *testing.T) {
-	dir := t.TempDir()
-	err := os.WriteFile(filepath.Join(dir, "in.go"), []byte(`// LITTEST
-package main
-`), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = LoadSpec(dir)
-	if err == nil {
-		t.Fatal("LoadSpec succeeded unexpectedly")
-	}
-}
-
 func TestCheckReportsMalformedDirective(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "in.go")

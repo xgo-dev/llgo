@@ -199,7 +199,7 @@ func compileWithConfig(
 	return
 }
 
-func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode) (export Export, err error) {
+func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool) (export Export, err error) {
 	targetTriple := llvm.GetTargetTriple(goos, goarch)
 	llgoRoot := env.LLGoROOT()
 
@@ -258,6 +258,9 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 		}
 		if ltoMode.Enabled() {
 			export.CCFLAGS = append(export.CCFLAGS, ltoMode.ClangFlag())
+		}
+		if ltoMode == lto.Full && goGlobalDCE {
+			export.CCFLAGS = append(export.CCFLAGS, "-fvirtual-function-elimination", "-fwhole-program-vtables")
 		}
 
 		// Add sysroot for macOS only
@@ -685,9 +688,9 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 
 // Use extends the original Use function to support target-based configuration
 // If targetName is provided, it takes precedence over goos/goarch
-func Use(goos, goarch, targetName string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode) (export Export, err error) {
+func Use(goos, goarch, targetName string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool) (export Export, err error) {
 	if targetName != "" && !strings.HasPrefix(targetName, "wasm") && !strings.HasPrefix(targetName, "wasi") {
 		return UseTarget(targetName, level, ltoMode)
 	}
-	return use(goos, goarch, wasiThreads, forceEspClang, level, ltoMode)
+	return use(goos, goarch, wasiThreads, forceEspClang, level, ltoMode, goGlobalDCE)
 }

@@ -39,6 +39,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 
 	"github.com/goplus/llgo/cl"
+	"github.com/goplus/llgo/internal/buildenv"
 	"github.com/goplus/llgo/internal/cabi"
 	"github.com/goplus/llgo/internal/clang"
 	"github.com/goplus/llgo/internal/crosscompile"
@@ -158,6 +159,11 @@ type Config struct {
 	SizeFormat    string // size report format: text,json (default text)
 	SizeLevel     string // size aggregation level: full,module,package (default module)
 	CompilerHash  string // metadata hash for the running compiler (development builds only)
+
+	// DisableGoGlobalDCE disables Go-specific global DCE metadata emission
+	// when it would otherwise be enabled by full LTO.
+	DisableGoGlobalDCE bool
+
 	// GlobalRewrites specifies compile-time overrides for global string variables.
 	// Keys are fully qualified package paths (e.g. "main" or "github.com/user/pkg").
 	// Each Rewrites entry maps variable names to replacement string values. Only
@@ -222,6 +228,13 @@ func (c *Config) ltoEnabled() bool {
 	return c.ltoMode().Enabled()
 }
 
+func (c *Config) goGlobalDCEEnabled() bool {
+	if c == nil {
+		return false
+	}
+	return buildenv.Dev && c.ltoMode() == lto.Full && !c.DisableGoGlobalDCE
+}
+
 // -----------------------------------------------------------------------------
 
 const (
@@ -259,7 +272,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	conf.OptLevel = effectiveOptLevel(conf)
 	// Handle crosscompile configuration first to set correct GOOS/GOARCH
 	forceEspClang := conf.ForceEspClang || conf.Target != ""
-	export, err := crosscompile.Use(conf.Goos, conf.Goarch, conf.Target, IsWasiThreadsEnabled(), forceEspClang, conf.OptLevel, conf.ltoMode())
+	export, err := crosscompile.Use(conf.Goos, conf.Goarch, conf.Target, IsWasiThreadsEnabled(), forceEspClang, conf.OptLevel, conf.ltoMode(), conf.goGlobalDCEEnabled())
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup crosscompile: %w", err)
 	}
@@ -313,6 +326,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	}
 
 	prog := llssa.NewProgram(target)
+	prog.EnableGoGlobalDCE(conf.goGlobalDCEEnabled())
 	sizes := func(sizes types.Sizes, compiler, arch string) types.Sizes {
 		if arch == "wasm" {
 			sizes = &types.StdSizes{WordSize: 4, MaxAlign: 4}
@@ -1267,7 +1281,7 @@ func (c *context) archiver() string {
 	if ar := os.Getenv("LLGO_AR"); ar != "" {
 		return ar
 	}
-	if c.buildConf.Goarch == "wasm" || strings.Contains(c.crossCompile.LLVMTarget, "wasm") {
+	if c.buildConf.ltoEnabled() || c.buildConf.Goarch == "wasm" || strings.Contains(c.crossCompile.LLVMTarget, "wasm") {
 		if llvmAr, err := exec.LookPath("llvm-ar"); err == nil {
 			return llvmAr
 		}
@@ -1400,6 +1414,9 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 		mod.SetTarget(ctx.prog.Target().Spec().Triple)
 		pbo := gllvm.NewPassBuilderOptions()
 		defer pbo.Dispose()
+		if err = gllvm.VerifyModule(mod, gllvm.ReturnStatusAction); err != nil {
+			return err
+		}
 		if err := mod.RunPasses(llvmPassPipeline(ctx.buildConf.OptLevel, ctx.buildConf.ltoMode()), ctx.prog.TargetMachine(), pbo); err != nil {
 			return fmt.Errorf("run LLVM passes failed for %v: %v", pkgPath, err)
 		}
@@ -1530,7 +1547,9 @@ func exportObjectInMemory(ctx *context, pkgPath string, exportFile string, pkg l
 	)
 	switch ltoMode {
 	case lto.Full:
-		buf = gllvm.WriteBitcodeToMemoryBuffer(pkg.Module())
+		// reference to https: //github.com/espressif/llvm-project/blob/04a1a3482ce3ee00b5bbec1ce852e58410e4b6ad/clang/lib/CodeGen/BackendUtil.cpp#L197
+		// Clang emit SplitLTOUnit for full lto bitcode except on darwin.
+		buf = gllvm.WriteFullLTOBitcodeToMemoryBuffer(pkg.Module(), ctx.buildConf.Goos != "darwin")
 		kind = "in-memory LLVM full LTO bitcode emission"
 	case lto.Thin:
 		buf = gllvm.WriteThinLTOBitcodeToMemoryBuffer(pkg.Module())

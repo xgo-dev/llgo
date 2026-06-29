@@ -105,6 +105,7 @@ func (c *context) collectCommonInputs(m *manifestBuilder) {
 	}
 	m.common.Target = c.buildConf.Target
 	m.common.TargetABI = c.crossCompile.TargetABI
+	m.common.GoGlobalDCE = c.buildConf.goGlobalDCEEnabled()
 
 	// Compiler configuration
 	if c.crossCompile.CC != "" {
@@ -315,6 +316,13 @@ func (c *context) ensureCacheManager() *cacheManager {
 // Returns true if cache hit, false otherwise.
 func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 	if !cacheEnabled() {
+		return false
+	}
+
+	// Main packages are intentionally not written to the build cache because
+	// each executable's entry module is linked against the current main archive.
+	// Do not load stale main archives that may exist from older cache layouts.
+	if pkg.Name == "main" {
 		return false
 	}
 

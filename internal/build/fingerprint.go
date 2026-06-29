@@ -112,21 +112,23 @@ func (s *envSection) empty() bool {
 }
 
 type commonSection struct {
-	AbiMode    string       `yaml:"ABI_MODE,omitempty"`
-	BuildTags  []string     `yaml:"BUILD_TAGS,omitempty"`
-	Target     string       `yaml:"TARGET,omitempty"`
-	TargetABI  string       `yaml:"TARGET_ABI,omitempty"`
-	CC         string       `yaml:"CC,omitempty"`
-	CCFlags    []string     `yaml:"CCFLAGS,omitempty"`
-	CFlags     []string     `yaml:"CFLAGS,omitempty"`
-	LDFlags    []string     `yaml:"LDFLAGS,omitempty"`
-	Linker     string       `yaml:"LINKER,omitempty"`
-	ExtraFiles []fileDigest `yaml:"EXTRA_FILES,omitempty"`
+	AbiMode     string       `yaml:"ABI_MODE,omitempty"`
+	BuildTags   []string     `yaml:"BUILD_TAGS,omitempty"`
+	Target      string       `yaml:"TARGET,omitempty"`
+	TargetABI   string       `yaml:"TARGET_ABI,omitempty"`
+	GoGlobalDCE bool         `yaml:"GO_GLOBAL_DCE,omitempty"`
+	CC          string       `yaml:"CC,omitempty"`
+	CCFlags     []string     `yaml:"CCFLAGS,omitempty"`
+	CFlags      []string     `yaml:"CFLAGS,omitempty"`
+	LDFlags     []string     `yaml:"LDFLAGS,omitempty"`
+	Linker      string       `yaml:"LINKER,omitempty"`
+	ExtraFiles  []fileDigest `yaml:"EXTRA_FILES,omitempty"`
 }
 
 func (s *commonSection) empty() bool {
 	return s.AbiMode == "" && len(s.BuildTags) == 0 && s.Target == "" && s.TargetABI == "" &&
-		s.CC == "" && len(s.CCFlags) == 0 && len(s.CFlags) == 0 && len(s.LDFlags) == 0 && s.Linker == "" && len(s.ExtraFiles) == 0
+		!s.GoGlobalDCE && s.CC == "" && len(s.CCFlags) == 0 && len(s.CFlags) == 0 && len(s.LDFlags) == 0 &&
+		s.Linker == "" && len(s.ExtraFiles) == 0
 }
 
 type packageSection struct {

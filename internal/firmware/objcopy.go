@@ -9,7 +9,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/marcinbor85/gohex"
+	"github.com/goplus/llgo/internal/gohex"
 )
 
 // maxPadBytes is the maximum allowed bytes to be padded in a rom extraction

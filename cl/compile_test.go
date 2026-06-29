@@ -27,7 +27,9 @@ import (
 
 	"github.com/goplus/llgo/cl/cltest"
 	"github.com/goplus/llgo/internal/build"
+	"github.com/goplus/llgo/internal/buildenv"
 	"github.com/goplus/llgo/internal/llgen"
+	"github.com/goplus/llgo/internal/lto"
 )
 
 func testCompile(t *testing.T, src, expected string) {
@@ -179,6 +181,46 @@ func TestRunAndTestFromTestmeta(t *testing.T) {
 		cltest.WithIRCheck(false),
 		cltest.WithMetaCheck(true),
 	)
+}
+
+func TestRunAndTestFromTestlto(t *testing.T) {
+	conf := build.NewDefaultConf(build.ModeRun)
+	conf.LTO = lto.Full
+	var ignore []string
+	if !buildenv.Dev {
+		ignore = []string{
+			"./_testlto/globaldce_abitype_fakeuse",
+			"./_testlto/globaldce_interface_matrix",
+			"./_testlto/globaldce_interface_slots",
+			"./_testlto/globaldce_reflect_method",
+			"./_testlto/globaldce_reflect_type_method",
+			"./_testlto/globaldce_reflect_type_method_by_name",
+			"./_testlto/globaldce_reflect_value_method",
+			"./_testlto/globaldce_typeid_dce",
+			"./_testlto/globaldce_unexported_method_identity",
+			"./_testlto/anonymous_alias",
+		}
+	}
+	cltest.RunAndTestFromDir(t, "", "./_testlto", ignore, cltest.WithRunConfig(conf))
+}
+
+var testltoSymbolChecks = []string{
+	"globaldce_interface_matrix",
+	"globaldce_interface_slots",
+	"globaldce_reflect_method",
+	"globaldce_reflect_type_method_by_name",
+	"globaldce_reflect_value_method",
+	"globaldce_typeid_dce",
+	"globaldce_unexported_method_identity",
+}
+
+func TestBuildAndCheckSymbolsFromTestlto(t *testing.T) {
+	if !buildenv.Dev {
+		t.Skip("globaldce symbol checks require dev build")
+	}
+	conf := build.NewDefaultConf(build.ModeBuild)
+	conf.LTO = lto.Full
+	cltest.BuildAndCheckSymbolsFromDir(t, "", "./_testlto", testltoSymbolChecks, cltest.WithRunConfig(conf))
 }
 
 func TestFilterEmulatorOutput(t *testing.T) {

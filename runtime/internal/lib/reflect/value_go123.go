@@ -1,6 +1,11 @@
 package reflect
 
-import "math"
+import (
+	"math"
+	"unsafe"
+
+	"github.com/goplus/llgo/runtime/abi"
+)
 
 // OverflowComplex reports whether the complex128 x cannot be represented by v's type.
 // It panics if v's Kind is not [Complex64] or [Complex128].
@@ -60,3 +65,16 @@ func (v Value) OverflowUint(x uint64) bool {
 	}
 	panic(&ValueError{"reflect.Value.OverflowUint", v.kind()})
 }
+
+// SliceAt returns a [Value] representing a slice whose underlying
+// data starts at p, with length and capacity equal to n.
+//
+// This is like [unsafe.Slice].
+func SliceAt(typ Type, p unsafe.Pointer, n int) Value {
+	unsafeslice(typ.common(), p, n)
+	s := unsafeheaderSlice{Data: p, Len: n, Cap: n}
+	return Value{SliceOf(typ).common(), unsafe.Pointer(&s), flagIndir | flag(Slice)}
+}
+
+//go:linkname unsafeslice github.com/goplus/llgo/runtime/internal/runtime.unsafeslice
+func unsafeslice(et *abi.Type, ptr unsafe.Pointer, len int)

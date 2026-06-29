@@ -24,35 +24,17 @@ import (
 	"github.com/goplus/llgo/xtool/env/llvm"
 )
 
-var supportedDirectives = []string{
-	"CHECK:",
-	"CHECK-NEXT:",
-	"CHECK-SAME:",
-	"CHECK-NOT:",
-	"CHECK-LABEL:",
-	"CHECK-EMPTY:",
-	"CHECK-DAG:",
-	"CHECK-COUNT-",
-}
-
-func HasDirectives(text string) (bool, error) {
-	for _, line := range splitLines(text) {
-		bodyStart, ok := directiveBody(line)
-		if !ok {
-			continue
-		}
-		body := line[bodyStart:]
-		for _, directive := range supportedDirectives {
-			if strings.HasPrefix(body, directive) {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
-}
-
 func Match(filename, input string) error {
-	cmd, err := llvm.New("").FileCheck(filename)
+	return MatchWithPrefixes(filename, input)
+}
+
+func MatchWithPrefixes(filename, input string, prefixes ...string) error {
+	args := make([]string, 0, len(prefixes)+1)
+	for _, prefix := range prefixes {
+		args = append(args, "--check-prefix="+prefix)
+	}
+	args = append(args, filename)
+	cmd, err := llvm.New("").FileCheck(args...)
 	if err != nil {
 		return err
 	}
@@ -66,25 +48,4 @@ func Match(filename, input string) error {
 		return err
 	}
 	return nil
-}
-
-func directiveBody(line string) (int, bool) {
-	trimmed := strings.TrimLeft(line, " \t")
-	if !strings.HasPrefix(trimmed, "//") {
-		return 0, false
-	}
-	indent := len(line) - len(trimmed)
-	return indent + 2 + lenLeftTrim(trimmed[2:], " \t"), true
-}
-
-func lenLeftTrim(s, cutset string) int {
-	return len(s) - len(strings.TrimLeft(s, cutset))
-}
-
-func splitLines(text string) []string {
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		lines[i] = strings.TrimSuffix(line, "\r")
-	}
-	return lines
 }

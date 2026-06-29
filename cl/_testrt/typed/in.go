@@ -61,7 +61,7 @@ type A [2]int
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %14)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %15 = alloca [2 x i64], align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %15, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %15, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   %16 = getelementptr inbounds i64, ptr %15, i64 0
 // CHECK-NEXT:   %17 = getelementptr inbounds i64, ptr %15, i64 1
 // CHECK-NEXT:   store i64 1, ptr %16, align 8
@@ -71,7 +71,7 @@ type A [2]int
 // CHECK-NEXT:   store [2 x i64] %18, ptr %19, align 8
 // CHECK-NEXT:   %20 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_{{.*}}/cl/_testrt/typed.A", ptr undef }, ptr %19, 1
 // CHECK-NEXT:   %21 = alloca [2 x i64], align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %21, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %21, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   %22 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %20, 0
 // CHECK-NEXT:   %23 = icmp eq ptr %22, @"_llgo_{{.*}}/cl/_testrt/typed.A"
 // CHECK-NEXT:   br i1 %23, label %_llgo_6, label %_llgo_7

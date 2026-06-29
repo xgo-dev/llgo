@@ -63,6 +63,14 @@ func AssertIndexRange(b bool) {
 	}
 }
 
+func PanicIndex(x int, y int) {
+	panic(boundsError{x: int64(x), signed: true, y: y, code: boundsIndex})
+}
+
+func PanicIndexU(x uint, y int) {
+	panic(boundsError{x: int64(x), signed: false, y: y, code: boundsIndex})
+}
+
 func AssertDivideByZero(b bool) {
 	if b {
 		panic(errorString("integer divide by zero"))
@@ -73,6 +81,11 @@ func AssertNilDeref(b bool) {
 	if b {
 		panic(errorString("invalid memory address or nil pointer dereference"))
 	}
+}
+
+func AssertNilDerefPtr(ptr unsafe.Pointer) unsafe.Pointer {
+	AssertNilDeref(ptr == nil)
+	return ptr
 }
 
 func PanicWrapNilPointer(b bool, recvType, methodName string) {

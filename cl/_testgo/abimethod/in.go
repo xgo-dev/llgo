@@ -8,23 +8,23 @@ import (
 	"unsafe"
 )
 
-// CHECK: @0 = private unnamed_addr constant [45 x i8] c"{{.*}}/cl/_testgo/abimethod.T", align 1
-// CHECK: @1 = private unnamed_addr constant [5 x i8] c"Demo1", align 1
-// CHECK: @5 = private unnamed_addr constant [3 x i8] c"int", align 1
-// CHECK: @14 = private unnamed_addr constant [20 x i8] c"testAnonymous1 error", align 1
-// CHECK: @16 = private unnamed_addr constant [20 x i8] c"testAnonymous2 error", align 1
-// CHECK: @18 = private unnamed_addr constant [20 x i8] c"testAnonymous3 error", align 1
-// CHECK: @19 = private unnamed_addr constant [20 x i8] c"testAnonymous4 error", align 1
-// CHECK: @21 = private unnamed_addr constant [20 x i8] c"testAnonymous5 error", align 1
-// CHECK: @22 = private unnamed_addr constant [20 x i8] c"testAnonymous6 error", align 1
-// CHECK: @24 = private unnamed_addr constant [20 x i8] c"testAnonymous7 error", align 1
-// CHECK: @26 = private unnamed_addr constant [20 x i8] c"testAnonymous8 error", align 1
-// CHECK: @27 = private unnamed_addr constant [5 x i8] c"hello", align 1
-// CHECK: @96 = private unnamed_addr constant [25 x i8] c"testAnonymousBuffer error", align 1
-// CHECK: @109 = private unnamed_addr constant [17 x i8] c"testGeneric error", align 1
-// CHECK: @110 = private unnamed_addr constant [16 x i8] c"testNamed1 error", align 1
-// CHECK: @111 = private unnamed_addr constant [16 x i8] c"testNamed2 error", align 1
-// CHECK: @112 = private unnamed_addr constant [16 x i8] c"testNamed4 error", align 1
+// CHECK: {{^}}@0 = private unnamed_addr constant [45 x i8] c"{{.*}}/cl/_testgo/abimethod.T", align 1{{$}}
+// CHECK: {{^}}@1 = private unnamed_addr constant [5 x i8] c"Demo1", align 1{{$}}
+// CHECK: {{^}}@5 = private unnamed_addr constant [3 x i8] c"int", align 1{{$}}
+// CHECK: {{^}}@14 = private unnamed_addr constant [20 x i8] c"testAnonymous1 error", align 1{{$}}
+// CHECK: {{^}}@16 = private unnamed_addr constant [20 x i8] c"testAnonymous2 error", align 1{{$}}
+// CHECK: {{^}}@18 = private unnamed_addr constant [20 x i8] c"testAnonymous3 error", align 1{{$}}
+// CHECK: {{^}}@19 = private unnamed_addr constant [20 x i8] c"testAnonymous4 error", align 1{{$}}
+// CHECK: {{^}}@21 = private unnamed_addr constant [20 x i8] c"testAnonymous5 error", align 1{{$}}
+// CHECK: {{^}}@22 = private unnamed_addr constant [20 x i8] c"testAnonymous6 error", align 1{{$}}
+// CHECK: {{^}}@24 = private unnamed_addr constant [20 x i8] c"testAnonymous7 error", align 1{{$}}
+// CHECK: {{^}}@26 = private unnamed_addr constant [20 x i8] c"testAnonymous8 error", align 1{{$}}
+// CHECK: {{^}}@27 = private unnamed_addr constant [5 x i8] c"hello", align 1{{$}}
+// CHECK: {{^}}@[[ANONBUF_ERR:[0-9]+]] = private unnamed_addr constant [25 x i8] c"testAnonymousBuffer error", align 1{{$}}
+// CHECK: {{^}}@[[GENERIC_ERR:[0-9]+]] = private unnamed_addr constant [17 x i8] c"testGeneric error", align 1{{$}}
+// CHECK: {{^}}@[[NAMED1_ERR:[0-9]+]] = private unnamed_addr constant [16 x i8] c"testNamed1 error", align 1{{$}}
+// CHECK: {{^}}@[[NAMED2_ERR:[0-9]+]] = private unnamed_addr constant [16 x i8] c"testNamed2 error", align 1{{$}}
+// CHECK: {{^}}@[[NAMED4_ERR:[0-9]+]] = private unnamed_addr constant [16 x i8] c"testNamed4 error", align 1{{$}}
 
 type T struct {
 	n int
@@ -33,7 +33,7 @@ type T struct {
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/abimethod.T.Demo1"(%"{{.*}}/cl/_testgo/abimethod.T" %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca %"{{.*}}/cl/_testgo/abimethod.T", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 8, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 8, i1 false)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testgo/abimethod.T" %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.T", ptr %1, i32 0, i32 0
 // CHECK-NEXT:   %3 = load i64, ptr %2, align 8
@@ -329,7 +329,7 @@ type I2 interface {
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/abimethod.testAnonymous2"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %0, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %0, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 0
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
 // CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
@@ -369,7 +369,7 @@ type I2 interface {
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/abimethod.testAnonymous3"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = alloca { i64, %"{{.*}}/cl/_testgo/abimethod.T" }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %0, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %0, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   %1 = getelementptr inbounds { i64, %"{{.*}}/cl/_testgo/abimethod.T" }, ptr %0, i32 0, i32 0
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, %"{{.*}}/cl/_testgo/abimethod.T" }, ptr %0, i32 0, i32 1
 // CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.T", ptr %2, i32 0, i32 0
@@ -475,7 +475,7 @@ type I2 interface {
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/abimethod.testAnonymous6"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %0, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %0, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 0
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
 // CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
@@ -515,7 +515,7 @@ type I2 interface {
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/abimethod.testAnonymous7"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %0, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %0, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 0
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
 // CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
@@ -575,7 +575,7 @@ type I2 interface {
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/abimethod.testAnonymous8"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %0, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %0, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 0
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
 // CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
@@ -678,7 +678,7 @@ type I2 interface {
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
 // CHECK-NEXT:   %18 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @96, i64 25 }, ptr %18, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[ANONBUF_ERR]], i64 25 }, ptr %18, align 8
 // CHECK-NEXT:   %19 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %18, 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %19)
 // CHECK-NEXT:   unreachable
@@ -719,7 +719,7 @@ type I2 interface {
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_3
 // CHECK-NEXT:   %25 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @109, i64 17 }, ptr %25, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GENERIC_ERR]], i64 17 }, ptr %25, align 8
 // CHECK-NEXT:   %26 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %25, 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %26)
 // CHECK-NEXT:   unreachable
@@ -770,7 +770,7 @@ type I2 interface {
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
 // CHECK-NEXT:   %15 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @110, i64 16 }, ptr %15, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[NAMED1_ERR]], i64 16 }, ptr %15, align 8
 // CHECK-NEXT:   %16 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %15, 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %16)
 // CHECK-NEXT:   unreachable
@@ -782,7 +782,7 @@ type I2 interface {
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/abimethod.testNamed2"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = alloca %"{{.*}}/cl/_testgo/abimethod.T", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %0, i8 0, i64 8, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %0, i8 0, i64 8, i1 false)
 // CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.T", ptr %0, i32 0, i32 0
 // CHECK-NEXT:   store i64 100, ptr %1, align 8
 // CHECK-NEXT:   %2 = load %"{{.*}}/cl/_testgo/abimethod.T", ptr %0, align 8
@@ -805,7 +805,7 @@ type I2 interface {
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
 // CHECK-NEXT:   %17 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @111, i64 16 }, ptr %17, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[NAMED2_ERR]], i64 16 }, ptr %17, align 8
 // CHECK-NEXT:   %18 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %17, 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %18)
 // CHECK-NEXT:   unreachable
@@ -836,7 +836,7 @@ type I2 interface {
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
 // CHECK-NEXT:   %15 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @112, i64 16 }, ptr %15, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[NAMED4_ERR]], i64 16 }, ptr %15, align 8
 // CHECK-NEXT:   %16 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %15, 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %16)
 // CHECK-NEXT:   unreachable
@@ -849,9 +849,14 @@ type I2 interface {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
 // CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = load %"{{.*}}/cl/_testgo/abimethod.T", ptr %2, align 8
-// CHECK-NEXT:   %4 = call i64 @"{{.*}}/cl/_testgo/abimethod.T.Demo1"(%"{{.*}}/cl/_testgo/abimethod.T" %3)
-// CHECK-NEXT:   ret i64 %4
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %4)
+// CHECK-NEXT:   %5 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %2)
+// CHECK-NEXT:   %6 = load %"{{.*}}/cl/_testgo/abimethod.T", ptr %5, align 8
+// CHECK-NEXT:   %7 = call i64 @"{{.*}}/cl/_testgo/abimethod.T.Demo1"(%"{{.*}}/cl/_testgo/abimethod.T" %6)
+// CHECK-NEXT:   ret i64 %7
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/abimethod.*struct{m int; *{{.*}}/cl/_testgo/abimethod.T}.Demo2"(ptr %0){{.*}} {
@@ -873,19 +878,20 @@ type I2 interface {
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/abimethod.struct{m int; *{{.*}}/cl/_testgo/abimethod.T}.Demo1"({ i64, ptr } %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = load %"{{.*}}/cl/_testgo/abimethod.T", ptr %3, align 8
-// CHECK-NEXT:   %5 = call i64 @"{{.*}}/cl/_testgo/abimethod.T.Demo1"(%"{{.*}}/cl/_testgo/abimethod.T" %4)
-// CHECK-NEXT:   ret i64 %5
+// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %3)
+// CHECK-NEXT:   %5 = load %"{{.*}}/cl/_testgo/abimethod.T", ptr %4, align 8
+// CHECK-NEXT:   %6 = call i64 @"{{.*}}/cl/_testgo/abimethod.T.Demo1"(%"{{.*}}/cl/_testgo/abimethod.T" %5)
+// CHECK-NEXT:   ret i64 %6
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/abimethod.struct{m int; *{{.*}}/cl/_testgo/abimethod.T}.Demo2"({ i64, ptr } %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
@@ -896,7 +902,7 @@ type I2 interface {
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/abimethod.struct{m int; *{{.*}}/cl/_testgo/abimethod.T}.demo3"({ i64, ptr } %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
@@ -979,7 +985,7 @@ type I2 interface {
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/abimethod.struct{m int; {{.*}}/cl/_testgo/abimethod.T}.Demo1"({ i64, %"{{.*}}/cl/_testgo/abimethod.T" } %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca { i64, %"{{.*}}/cl/_testgo/abimethod.T" }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, %"{{.*}}/cl/_testgo/abimethod.T" } %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, %"{{.*}}/cl/_testgo/abimethod.T" }, ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %3 = load %"{{.*}}/cl/_testgo/abimethod.T", ptr %2, align 8
@@ -990,9 +996,12 @@ type I2 interface {
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/abimethod.*struct{m int; {{.*}}/cl/_testgo/abimethod.T}.Demo1"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds { i64, %"{{.*}}/cl/_testgo/abimethod.T" }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = load %"{{.*}}/cl/_testgo/abimethod.T", ptr %1, align 8
-// CHECK-NEXT:   %3 = call i64 @"{{.*}}/cl/_testgo/abimethod.T.Demo1"(%"{{.*}}/cl/_testgo/abimethod.T" %2)
-// CHECK-NEXT:   ret i64 %3
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %1)
+// CHECK-NEXT:   %4 = load %"{{.*}}/cl/_testgo/abimethod.T", ptr %3, align 8
+// CHECK-NEXT:   %5 = call i64 @"{{.*}}/cl/_testgo/abimethod.T.Demo1"(%"{{.*}}/cl/_testgo/abimethod.T" %4)
+// CHECK-NEXT:   ret i64 %5
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/abimethod.*struct{m int; {{.*}}/cl/_testgo/abimethod.T}.Demo2"(ptr %0){{.*}} {
@@ -1302,7 +1311,7 @@ type I2 interface {
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.Available"({ i64, ptr } %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
@@ -1313,7 +1322,7 @@ type I2 interface {
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.AvailableBuffer"({ i64, ptr } %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
@@ -1324,7 +1333,7 @@ type I2 interface {
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.Bytes"({ i64, ptr } %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
@@ -1335,7 +1344,7 @@ type I2 interface {
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.Cap"({ i64, ptr } %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
@@ -1346,7 +1355,7 @@ type I2 interface {
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.Grow"({ i64, ptr } %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds { i64, ptr }, ptr %2, i32 0, i32 1
 // CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
@@ -1357,7 +1366,7 @@ type I2 interface {
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.Len"({ i64, ptr } %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
@@ -1368,7 +1377,7 @@ type I2 interface {
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.Next"({ i64, ptr } %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds { i64, ptr }, ptr %2, i32 0, i32 1
 // CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
@@ -1379,7 +1388,7 @@ type I2 interface {
 // CHECK-LABEL: define { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.Read"({ i64, ptr } %0, %"{{.*}}/runtime/internal/runtime.Slice" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds { i64, ptr }, ptr %2, i32 0, i32 1
 // CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
@@ -1394,7 +1403,7 @@ type I2 interface {
 // CHECK-LABEL: define { i8, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.ReadByte"({ i64, ptr } %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
@@ -1409,7 +1418,7 @@ type I2 interface {
 // CHECK-LABEL: define { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.ReadBytes"({ i64, ptr } %0, i8 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds { i64, ptr }, ptr %2, i32 0, i32 1
 // CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
@@ -1424,7 +1433,7 @@ type I2 interface {
 // CHECK-LABEL: define { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.ReadFrom"({ i64, ptr } %0, %"{{.*}}/runtime/internal/runtime.iface" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds { i64, ptr }, ptr %2, i32 0, i32 1
 // CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
@@ -1439,7 +1448,7 @@ type I2 interface {
 // CHECK-LABEL: define { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.ReadRune"({ i64, ptr } %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
@@ -1456,7 +1465,7 @@ type I2 interface {
 // CHECK-LABEL: define { %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.ReadString"({ i64, ptr } %0, i8 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds { i64, ptr }, ptr %2, i32 0, i32 1
 // CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
@@ -1471,7 +1480,7 @@ type I2 interface {
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.Reset"({ i64, ptr } %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
@@ -1482,7 +1491,7 @@ type I2 interface {
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.String"({ i64, ptr } %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
@@ -1493,7 +1502,7 @@ type I2 interface {
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.Truncate"({ i64, ptr } %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds { i64, ptr }, ptr %2, i32 0, i32 1
 // CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
@@ -1504,7 +1513,7 @@ type I2 interface {
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.UnreadByte"({ i64, ptr } %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
@@ -1515,7 +1524,7 @@ type I2 interface {
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.UnreadRune"({ i64, ptr } %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
@@ -1526,7 +1535,7 @@ type I2 interface {
 // CHECK-LABEL: define { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.Write"({ i64, ptr } %0, %"{{.*}}/runtime/internal/runtime.Slice" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds { i64, ptr }, ptr %2, i32 0, i32 1
 // CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
@@ -1541,7 +1550,7 @@ type I2 interface {
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.WriteByte"({ i64, ptr } %0, i8 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds { i64, ptr }, ptr %2, i32 0, i32 1
 // CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
@@ -1552,7 +1561,7 @@ type I2 interface {
 // CHECK-LABEL: define { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.WriteRune"({ i64, ptr } %0, i32 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds { i64, ptr }, ptr %2, i32 0, i32 1
 // CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
@@ -1567,7 +1576,7 @@ type I2 interface {
 // CHECK-LABEL: define { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.WriteString"({ i64, ptr } %0, %"{{.*}}/runtime/internal/runtime.String" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds { i64, ptr }, ptr %2, i32 0, i32 1
 // CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
@@ -1582,7 +1591,7 @@ type I2 interface {
 // CHECK-LABEL: define { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.WriteTo"({ i64, ptr } %0, %"{{.*}}/runtime/internal/runtime.iface" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds { i64, ptr }, ptr %2, i32 0, i32 1
 // CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
@@ -1597,7 +1606,7 @@ type I2 interface {
 // CHECK-LABEL: define i1 @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.empty"({ i64, ptr } %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
@@ -1608,7 +1617,7 @@ type I2 interface {
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.grow"({ i64, ptr } %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds { i64, ptr }, ptr %2, i32 0, i32 1
 // CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
@@ -1619,7 +1628,7 @@ type I2 interface {
 // CHECK-LABEL: define { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.readSlice"({ i64, ptr } %0, i8 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds { i64, ptr }, ptr %2, i32 0, i32 1
 // CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
@@ -1634,7 +1643,7 @@ type I2 interface {
 // CHECK-LABEL: define { i64, i1 } @"{{.*}}/cl/_testgo/abimethod.struct{m int; *bytes.Buffer}.tryGrowByReslice"({ i64, ptr } %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca { i64, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { i64, ptr } %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds { i64, ptr }, ptr %2, i32 0, i32 1
 // CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
@@ -2140,15 +2149,19 @@ type I2 interface {
 
 // CHECK-LABEL: define linkonce ptr @"{{.*}}/cl/_testgo/abimethod.(*Pointer[any]).Load"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.Pointer[any]", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = load atomic ptr, ptr %1 seq_cst, align 8
-// CHECK-NEXT:   ret ptr %2
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
+// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.Pointer[any]", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %3 = load atomic ptr, ptr %2 seq_cst, align 8
+// CHECK-NEXT:   ret ptr %3
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce void @"{{.*}}/cl/_testgo/abimethod.(*Pointer[any]).Store"(ptr %0, ptr %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.Pointer[any]", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   store atomic ptr %1, ptr %2 seq_cst, align 8
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/abimethod.Pointer[any]", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   store atomic ptr %1, ptr %3 seq_cst, align 8
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 

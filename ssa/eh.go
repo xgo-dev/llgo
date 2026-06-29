@@ -79,14 +79,15 @@ func (b Builder) AllocaSigjmpBuf() Expr {
 
 // declare ptr @llvm.stacksave.p0()
 func (b Builder) StackSave() Expr {
-	fn := b.Pkg.cFunc("llvm.stacksave", b.Prog.tyStacksave())
-	return b.InlineCall(fn)
+	return Expr{
+		b.impl.CreateIntrinsic(b.Prog.VoidPtr().ll, llvm.LookupIntrinsicID("llvm.stacksave"), nil, ""),
+		b.Prog.VoidPtr(),
+	}
 }
 
 // declare void @llvm.stackrestore.p0(ptr)
 func (b Builder) StackRestore(sp Expr) {
-	fn := b.Pkg.cFunc("llvm.stackrestore", b.Prog.tyStackrestore())
-	b.InlineCall(fn, sp)
+	b.impl.CreateIntrinsic(b.Prog.Void().ll, llvm.LookupIntrinsicID("llvm.stackrestore"), []llvm.Value{sp.impl}, "")
 }
 
 // addReturnsTwiceAttr adds the returns_twice attribute to a function.

@@ -28,9 +28,9 @@ type S []int
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/index.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = alloca %"{{.*}}/cl/_testrt/index.point", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %0, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %0, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   %1 = alloca [3 x %"{{.*}}/cl/_testrt/index.point"], align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 48, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 48, i1 false)
 // CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/index.point", ptr %1, i64 0
 // CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testrt/index.point", ptr %2, i32 0, i32 0
 // CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testrt/index.point", ptr %2, i32 0, i32 1
@@ -59,9 +59,9 @@ type S []int
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %17)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %18 = alloca [2 x i64], align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %18, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %18, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   %19 = alloca [2 x [2 x i64]], align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %19, i8 0, i64 32, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %19, i8 0, i64 32, i1 false)
 // CHECK-NEXT:   %20 = getelementptr inbounds [2 x i64], ptr %19, i64 0
 // CHECK-NEXT:   %21 = icmp eq ptr %20, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %21)
@@ -93,7 +93,7 @@ type S []int
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %36)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %37 = alloca [5 x i64], align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %37, i8 0, i64 40, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %37, i8 0, i64 40, i1 false)
 // CHECK-NEXT:   %38 = getelementptr inbounds i64, ptr %37, i64 0
 // CHECK-NEXT:   %39 = getelementptr inbounds i64, ptr %37, i64 1
 // CHECK-NEXT:   %40 = getelementptr inbounds i64, ptr %37, i64 2

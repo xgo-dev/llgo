@@ -23,8 +23,10 @@ import (
 	"strings"
 
 	"github.com/goplus/llgo/cl/cltest"
+	"github.com/goplus/llgo/internal/build"
 	"github.com/goplus/llgo/internal/littest"
 	"github.com/goplus/llgo/internal/llgen"
+	"github.com/goplus/llgo/internal/lto"
 	"github.com/goplus/mod"
 )
 
@@ -69,6 +71,9 @@ func genExpects(root string) {
 	runExpectDir(root, "cl/_testlibgo")
 	runExpectDir(root, "cl/_testrt")
 	runExpectDir(root, "cl/_testgo")
+	runExpectDir(root, "cl/_testlto", func(conf *build.Config) {
+		conf.LTO = lto.Full
+	})
 	runExpectDir(root, "cl/_testpy")
 	runExpectDir(root, "cl/_testdata")
 }
@@ -101,7 +106,7 @@ func genMetaDir(dir string) {
 	}
 }
 
-func runExpectDir(root, relDir string) {
+func runExpectDir(root, relDir string, configure ...func(*build.Config)) {
 	dir := filepath.Join(root, relDir)
 	fis, err := os.ReadDir(dir)
 	check(err)
@@ -114,7 +119,16 @@ func runExpectDir(root, relDir string) {
 		testDir := filepath.Join(dir, name)
 		fmt.Fprintln(os.Stderr, "expect", relPath)
 		pkgPath := "./" + relPath
-		output, err := cltest.RunAndCapture(pkgPath, testDir)
+		var output []byte
+		if len(configure) == 0 {
+			output, err = cltest.RunAndCapture(pkgPath, testDir)
+		} else {
+			conf := build.NewDefaultConf(build.ModeRun)
+			for _, configure := range configure {
+				configure(conf)
+			}
+			output, err = cltest.RunAndCaptureWithConf(pkgPath, testDir, conf)
+		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", relPath, err)
 			output = []byte{';'}

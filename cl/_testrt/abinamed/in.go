@@ -38,7 +38,7 @@ import (
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %17)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %18 = alloca %"{{.*}}/runtime/abi.StructField", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %18, i8 0, i64 56, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %18, i8 0, i64 56, i1 false)
 // CHECK-NEXT:   %19 = getelementptr inbounds %"{{.*}}/cl/_testrt/abinamed.eface", ptr %2, i32 0, i32 0
 // CHECK-NEXT:   %20 = load ptr, ptr %19, align 8
 // CHECK-NEXT:   %21 = call ptr @"{{.*}}/runtime/abi.(*Type).StructType"(ptr %20)
@@ -85,7 +85,7 @@ import (
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_2
 // CHECK-NEXT:   %46 = alloca %"{{.*}}/runtime/abi.StructField", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %46, i8 0, i64 56, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %46, i8 0, i64 56, i1 false)
 // CHECK-NEXT:   %47 = getelementptr inbounds %"{{.*}}/cl/_testrt/abinamed.eface", ptr %2, i32 0, i32 0
 // CHECK-NEXT:   %48 = load ptr, ptr %47, align 8
 // CHECK-NEXT:   %49 = call ptr @"{{.*}}/runtime/abi.(*Type).StructType"(ptr %48)
@@ -132,7 +132,7 @@ import (
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_6
 // CHECK-NEXT:   %74 = alloca %"{{.*}}/runtime/abi.StructField", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %74, i8 0, i64 56, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %74, i8 0, i64 56, i1 false)
 // CHECK-NEXT:   %75 = getelementptr inbounds %"{{.*}}/cl/_testrt/abinamed.eface", ptr %2, i32 0, i32 0
 // CHECK-NEXT:   %76 = load ptr, ptr %75, align 8
 // CHECK-NEXT:   %77 = call ptr @"{{.*}}/runtime/abi.(*Type).StructType"(ptr %76)
@@ -171,7 +171,7 @@ import (
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_10:                                         ; preds = %_llgo_8
 // CHECK-NEXT:   %101 = alloca %"{{.*}}/runtime/abi.StructField", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %101, i8 0, i64 56, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %101, i8 0, i64 56, i1 false)
 // CHECK-NEXT:   %102 = getelementptr inbounds %"{{.*}}/cl/_testrt/abinamed.eface", ptr %2, i32 0, i32 0
 // CHECK-NEXT:   %103 = load ptr, ptr %102, align 8
 // CHECK-NEXT:   %104 = call ptr @"{{.*}}/runtime/abi.(*Type).StructType"(ptr %103)

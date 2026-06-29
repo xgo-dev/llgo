@@ -39,7 +39,7 @@ func ReadFile(fileName string) Future[Tuple[error]] {
 	// CHECK-LABEL: define void @"{{.*}}/cl/_testrt/tpmethod.ReadFile$1"({ ptr, ptr } %0){{.*}} {
 	// CHECK-NEXT: _llgo_0:
 	// CHECK-NEXT:   %1 = alloca %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]", align 8
-	// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+	// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 	// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]", ptr %1, i32 0, i32 0
 	// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer, ptr %2, align 8
 	// CHECK-NEXT:   %3 = load %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]", ptr %1, align 8
@@ -122,7 +122,7 @@ func main() {
 // CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.iface" @"{{.*}}/cl/_testrt/tpmethod.Tuple[error].Get"(%"{{.*}}/cl/_testrt/tpmethod.Tuple[error]" %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]" %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmethod.Tuple[error]", ptr %1, i32 0, i32 0
 // CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %2, align 8

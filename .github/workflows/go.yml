@@ -89,3 +89,84 @@ jobs:
         uses: codecov/codecov-action@v7
         with:
           token: ${{secrets.CODECOV_TOKEN}}
+
+  dev-lto-globaldce:
+    name: Dev LTO GlobalDCE
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        uses: ./.github/actions/setup-deps
+        with:
+          llvm-version: 19
+
+      - name: Set up Go
+        uses: ./.github/actions/setup-go
+        with:
+          go-version: "1.26.0"
+
+      - name: Prepare demo dependencies
+        run: |
+          set -euo pipefail
+
+          mkdir -p ./_demo/c/cargs/libs
+          cd ./_demo/c/cargs/libs
+          wget https://github.com/goplus/llpkg/releases/download/cargs/v1.0.0/cargs_linux_amd64.zip
+          unzip cargs_linux_amd64.zip
+
+          actual_prefix="$(pwd)"
+          for tmpl in lib/pkgconfig/*.pc.tmpl; do
+            pc_file="${tmpl%.tmpl}"
+            sed "s|{{.Prefix}}|${actual_prefix}|g" "$tmpl" > "$pc_file"
+          done
+
+          echo "PKG_CONFIG_PATH=${actual_prefix}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+
+          py_deps=(
+            numpy
+            torch
+          )
+          pip3.12 install --break-system-packages "${py_deps[@]}"
+
+          pcdir="$HOME/pc"
+          mkdir -p "$pcdir"
+          libdir="$(pkg-config --variable=libdir python-3.12-embed)"
+          ln -sf "$libdir/pkgconfig/python-3.12-embed.pc" "$pcdir/python3-embed.pc"
+          echo "PKG_CONFIG_PATH=$pcdir:${actual_prefix}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+          echo "LLGO_FULL_RPATH=true" >> "$GITHUB_ENV"
+
+      - name: Set LLGO_ROOT
+        run: echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+
+      - name: Build llgo with dev tag
+        run: go install -tags=dev ./cmd/llgo
+
+      - name: Run dev LTO GlobalDCE tests and demos with coverage
+        run: |
+          set -euo pipefail
+
+          go test -tags=dev -timeout 30m -covermode=atomic \
+            -coverprofile=coverage-dev-globaldce-unit.txt \
+            -run '^TestDevLTOGlobalDCE' \
+            ./ssa ./internal/build ./internal/crosscompile ./cmd/internal/flags ./internal/cabi
+          go tool cover -func=coverage-dev-globaldce-unit.txt
+
+          go test -tags=dev -timeout 30m -covermode=atomic \
+            -coverpkg=github.com/goplus/llgo/ssa,github.com/goplus/llgo/internal/build,github.com/goplus/llgo/internal/crosscompile \
+            -coverprofile=coverage-dev-lto-globaldce-cl.txt \
+            -run '^TestRunAndTestFromTestlto/globaldce_' \
+            ./cl
+          go tool cover -func=coverage-dev-lto-globaldce-cl.txt
+
+          LLGO_DEMO_LLGORUN_FLAGS="-lto=full -globaldce" \
+            bash .github/workflows/test_demo.sh
+
+      - name: Upload dev LTO GlobalDCE coverage reports to Codecov
+        continue-on-error: true
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{secrets.CODECOV_TOKEN}}
+          files: coverage-dev-globaldce-unit.txt,coverage-dev-lto-globaldce-cl.txt
+          flags: dev-lto-globaldce

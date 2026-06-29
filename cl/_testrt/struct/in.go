@@ -10,7 +10,7 @@ import _ "unsafe"
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/struct.Foo.Print"(%"{{.*}}/cl/_testrt/struct.Foo" %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca %"{{.*}}/cl/_testrt/struct.Foo", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 8, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 8, i1 false)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testrt/struct.Foo" %0, ptr %1, align 4
 // CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/struct.Foo", ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %3 = load i1, ptr %2, align 1
@@ -88,7 +88,7 @@ func main() {
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/struct.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = alloca %"{{.*}}/cl/_testrt/struct.Foo", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %0, i8 0, i64 8, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %0, i8 0, i64 8, i1 false)
 // CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}/cl/_testrt/struct.Foo", ptr %0, i32 0, i32 0
 // CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/struct.Foo", ptr %0, i32 0, i32 1
 // CHECK-NEXT:   store i32 100, ptr %1, align 4

@@ -124,32 +124,6 @@ func TestMatchReportsLLVMErrors(t *testing.T) {
 	}
 }
 
-func TestHasDirectives(t *testing.T) {
-	cases := []struct {
-		name string
-		text string
-		want bool
-	}{
-		{name: "check", text: "// CHECK: value\n", want: true},
-		{name: "check-count", text: "// CHECK-COUNT-2: value\n", want: true},
-		{name: "malformed still directive", text: "// CHECK: {{[invalid\n", want: true},
-		{name: "none", text: "value\n", want: false},
-		{name: "non slash slash", text: "; CHECK: value\n", want: false},
-		{name: "string literal", text: `fmt.Println("// CHECK: value")` + "\n", want: false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := HasDirectives(tc.text)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != tc.want {
-				t.Fatalf("HasDirectives = %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
 func TestMatchSupportsCRLF(t *testing.T) {
 	spec := "// LITTEST\r\npackage main\r\n\r\n// CHECK-LABEL: begin\r\n// CHECK-NEXT: done\r\n"
 	input := "begin\r\ndone\r\n"

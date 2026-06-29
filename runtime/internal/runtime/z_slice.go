@@ -198,4 +198,24 @@ func SliceClear(t *abi.SliceType, s Slice) {
 	c.Memset(s.data, 0, uintptr(s.len)*t.Elem.Size())
 }
 
+func unsafeslice(et *abi.Type, ptr unsafe.Pointer, len int) {
+	if len < 0 {
+		panic(errorString("unsafe.Slice: len out of range"))
+	}
+
+	if et.Size_ == 0 {
+		if ptr == nil && len > 0 {
+			panic(errorString("unsafe.Slice: ptr is nil and len is not zero"))
+		}
+	}
+
+	mem, overflow := math.MulUintptr(et.Size_, uintptr(len))
+	if overflow || mem > -uintptr(ptr) {
+		if ptr == nil {
+			panic(errorString("unsafe.Slice: ptr is nil and len is not zero"))
+		}
+		panic(errorString("unsafe.Slice: len out of range"))
+	}
+}
+
 // -----------------------------------------------------------------------------

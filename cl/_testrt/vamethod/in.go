@@ -10,7 +10,7 @@ import (
 // CHECK-LABEL: define i32 @"{{.*}}/cl/_testrt/vamethod.CFmt.Printf"(%"{{.*}}/cl/_testrt/vamethod.CFmt" %0, ...){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca %"{{.*}}/cl/_testrt/vamethod.CFmt", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 8, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 8, i1 false)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testrt/vamethod.CFmt" %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/vamethod.CFmt", ptr %1, i32 0, i32 0
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8

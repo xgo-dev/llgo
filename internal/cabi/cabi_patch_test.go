@@ -10,6 +10,68 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
+func TestDevLTOGlobalDCETargetArchAndNewTransformerArchSelection(t *testing.T) {
+	if got := targetArch("riscv64-unknown-linux-gnu"); got != "riscv64" {
+		t.Fatalf("targetArch(triple) = %q, want riscv64", got)
+	}
+	if got := targetArch("wasm"); got != "wasm" {
+		t.Fatalf("targetArch(single arch) = %q, want wasm", got)
+	}
+
+	llvm.InitializeAllTargets()
+	llvm.InitializeAllTargetMCs()
+	llvm.InitializeAllTargetInfos()
+
+	prog := llssa.NewProgram(nil)
+	tests := []struct {
+		target string
+		abi    string
+		arch   string
+		check  func(TypeInfoSys) bool
+	}{
+		{"xtensa-esp32-none-elf", "", "xtensa", func(sys TypeInfoSys) bool { _, ok := sys.(*TypeInfoEsp32); return ok }},
+		{"riscv32-unknown-elf", "ilp32f", "riscv32", func(sys TypeInfoSys) bool {
+			rv, ok := sys.(*TypeInfoRiscv32)
+			return ok && rv.mabi == "ilp32f"
+		}},
+		{"amd64-unknown-linux-gnu", "", "amd64", func(sys TypeInfoSys) bool { _, ok := sys.(*TypeInfoAmd64); return ok }},
+		{"arm64-apple-darwin", "", "arm64", func(sys TypeInfoSys) bool { _, ok := sys.(*TypeInfoArm64); return ok }},
+		{"arm-unknown-linux-gnueabihf", "", "arm", func(sys TypeInfoSys) bool { _, ok := sys.(*TypeInfoArm); return ok }},
+		{"wasm-unknown-wasip1", "", "wasm", func(sys TypeInfoSys) bool { _, ok := sys.(*TypeInfoWasm); return ok }},
+		{"riscv64-unknown-linux-gnu", "lp64d", "riscv64", func(sys TypeInfoSys) bool {
+			rv, ok := sys.(*TypeInfoRiscv64)
+			return ok && rv.mabi == "lp64d"
+		}},
+		{"386-unknown-linux-gnu", "", "386", func(sys TypeInfoSys) bool { _, ok := sys.(*TypeInfo386); return ok }},
+	}
+	for _, tc := range tests {
+		tr := NewTransformer(prog, tc.target, tc.abi, ModeCFunc, true)
+		if tr.arch != tc.arch {
+			t.Fatalf("NewTransformer(%q).arch = %q, want %q", tc.target, tr.arch, tc.arch)
+		}
+		if tr.mode != ModeCFunc || !tr.optimize {
+			t.Fatalf("NewTransformer did not preserve mode/optimize: mode=%v optimize=%v", tr.mode, tr.optimize)
+		}
+		if !tc.check(tr.sys) {
+			t.Fatalf("NewTransformer(%q) selected unexpected sys implementation %T", tc.target, tr.sys)
+		}
+	}
+}
+
+func TestDevLTOGlobalDCEFuncNoUnwindCreatesNounwindAttribute(t *testing.T) {
+	ctx := llvm.NewContext()
+	attr := funcNoUnwind(ctx)
+	if attr.IsNil() {
+		t.Fatal("funcNoUnwind returned nil attribute")
+	}
+	if got, want := attr.GetEnumKind(), int(llvm.AttributeKindID("nounwind")); got != want {
+		t.Fatalf("funcNoUnwind kind = %d, want %d", got, want)
+	}
+	if got := attr.GetEnumValue(); got != 0 {
+		t.Fatalf("funcNoUnwind value = %d, want 0", got)
+	}
+}
+
 func TestSetSkipFuncsAndShouldSkipCall(t *testing.T) {
 	tr := &Transformer{}
 	tr.SetSkipFuncs([]string{" foo ", "", "bar"})

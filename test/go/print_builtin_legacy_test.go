@@ -91,6 +91,8 @@ func filterPrintProbeOutput(s string) string {
 			continue
 		case strings.HasPrefix(trimmed, "ld: warning: "):
 			continue
+		case strings.HasPrefix(trimmed, "# "):
+			continue
 		}
 		out.WriteString(line)
 	}

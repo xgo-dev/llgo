@@ -232,6 +232,8 @@ type aProgram struct {
 	abi abi.Builder
 
 	is32Bits bool
+
+	enableGoGlobalDCE bool
 }
 
 type AbiSymbol struct {
@@ -321,6 +323,10 @@ func (p Program) patch(typ types.Type) types.Type {
 
 func (p Program) SetCompileMethods(check func(Package, types.Type)) {
 	p.compileMethods = check
+}
+
+func (p Program) EnableGoGlobalDCE(enable bool) {
+	p.enableGoGlobalDCE = enable
 }
 
 // SetRuntime sets the runtime.
@@ -468,6 +474,11 @@ func (p Program) NewPackage(name, pkgPath string) Package {
 		export:         make(map[string]string),
 		preserveSyms:   make(map[string]struct{}),
 		llvmUsedValues: make([]llvm.Value, 0, 4),
+
+		abiTypeFakeUseCache: make(map[llvm.Value][]llvm.Value),
+	}
+	if p.enableGoGlobalDCE {
+		p.addVirtualFunctionElimModuleFlag(mod)
 	}
 	return ret
 }
@@ -739,6 +750,8 @@ type aPackage struct {
 	export         map[string]string   // pkgPath.nameInPkg => exportname
 	preserveSyms   map[string]struct{} // set of exported symbol names
 	llvmUsedValues []llvm.Value
+
+	abiTypeFakeUseCache map[llvm.Value][]llvm.Value
 }
 
 type none struct{}

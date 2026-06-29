@@ -94,7 +94,7 @@ func main() {
 
 	obj := py.Ref("Object").(*types.TypeName).Type().(*types.Named)
 	objPtr := types.NewPointer(obj)
-	ret := types.NewTuple(pkg.NewParam(0, "", objPtr))
+	ret := types.NewTuple(pkg.NewParam(0, "", objPtr, false))
 
 	ctx := &context{pkg, obj, objPtr, ret, nil, py}
 	ctx.genMod(pkg, &mod)
@@ -201,7 +201,7 @@ func (ctx *context) genParams(pkg *gogen.Package, sig string) (*types.Tuple, boo
 			}
 			return types.NewTuple(list...), false
 		}
-		list = append(list, pkg.NewParam(0, genName(name, 0), objPtr))
+		list = append(list, pkg.NewParam(0, genName(name, 0), objPtr, false))
 	}
 	return types.NewTuple(list...), false
 }

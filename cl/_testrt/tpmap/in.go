@@ -23,7 +23,7 @@ type cacheKey struct {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.MakeMap"(ptr @"map[_llgo_github.com/goplus/llgo/cl/_testrt/tpmap.cacheKey]_llgo_string", i64 0)
 // CHECK-NEXT:   %1 = alloca %"{{.*}}/cl/_testrt/tpmap.cacheKey", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 48, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 48, i1 false)
 // CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmap.cacheKey", ptr %1, i32 0, i32 0
 // CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmap.cacheKey", ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmap.T2", ptr %3, i32 0, i32 0
@@ -45,7 +45,7 @@ type cacheKey struct {
 // CHECK-NEXT:   %13 = call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_github.com/goplus/llgo/cl/_testrt/tpmap.cacheKey]_llgo_string", ptr %0, ptr %12)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @29, i64 5 }, ptr %13, align 8
 // CHECK-NEXT:   %14 = alloca %"{{.*}}/cl/_testrt/tpmap.cacheKey", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %14, i8 0, i64 48, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %14, i8 0, i64 48, i1 false)
 // CHECK-NEXT:   %15 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmap.cacheKey", ptr %14, i32 0, i32 0
 // CHECK-NEXT:   %16 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmap.cacheKey", ptr %14, i32 0, i32 1
 // CHECK-NEXT:   %17 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpmap.T2", ptr %16, i32 0, i32 0

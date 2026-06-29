@@ -52,7 +52,7 @@ func main() {
 // CHECK-NEXT:   store i64 100, ptr %0, align 8
 // CHECK-NEXT:   %1 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.StringToBytes"(%"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 })
 // CHECK-NEXT:   %2 = alloca [3 x i8], align 1
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 3, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 3, i1 false)
 // CHECK-NEXT:   %3 = getelementptr inbounds i8, ptr %2, i64 0
 // CHECK-NEXT:   %4 = getelementptr inbounds i8, ptr %2, i64 1
 // CHECK-NEXT:   %5 = getelementptr inbounds i8, ptr %2, i64 2
@@ -84,7 +84,7 @@ func main() {
 // CHECK-NEXT:   %28 = call ptr @PyByteArray_FromStringAndSize(ptr %26, i64 %27)
 // CHECK-NEXT:   %29 = call i32 @PyList_SetItem(ptr %7, i64 9, ptr %28)
 // CHECK-NEXT:   %30 = alloca [3 x i8], align 1
-// CHECK-NEXT:   call void @llvm.memset(ptr %30, i8 0, i64 3, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %30, i8 0, i64 3, i1 false)
 // CHECK-NEXT:   store [3 x i8] %6, ptr %30, align 1
 // CHECK-NEXT:   %31 = getelementptr inbounds ptr, ptr %30, i64 0
 // CHECK-NEXT:   %32 = call ptr @PyBytes_FromStringAndSize(ptr %31, i64 3)

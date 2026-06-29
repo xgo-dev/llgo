@@ -137,7 +137,7 @@ func WriteString(w Writer, s string) (n int, err error) {
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_5
 // CHECK-NEXT:   %3 = alloca %"{{.*}}/cl/_testgo/reader.nopCloserWriterTo", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %3, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %3, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/cl/_testgo/reader.nopCloserWriterTo", ptr %3, i32 0, i32 0
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %0, ptr %4, align 8
 // CHECK-NEXT:   %5 = load %"{{.*}}/cl/_testgo/reader.nopCloserWriterTo", ptr %3, align 8
@@ -150,7 +150,7 @@ func WriteString(w Writer, s string) (n int, err error) {
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_5
 // CHECK-NEXT:   %10 = alloca %"{{.*}}/cl/_testgo/reader.nopCloser", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %10, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %10, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   %11 = getelementptr inbounds %"{{.*}}/cl/_testgo/reader.nopCloser", ptr %10, i32 0, i32 0
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %0, ptr %11, align 8
 // CHECK-NEXT:   %12 = load %"{{.*}}/cl/_testgo/reader.nopCloser", ptr %10, align 8
@@ -580,7 +580,7 @@ func main() {
 // CHECK-LABEL: define { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.nopCloser.Read"(%"{{.*}}/cl/_testgo/reader.nopCloser" %0, %"{{.*}}/runtime/internal/runtime.Slice" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca %"{{.*}}/cl/_testgo/reader.nopCloser", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testgo/reader.nopCloser" %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/reader.nopCloser", ptr %2, i32 0, i32 0
 // CHECK-NEXT:   %4 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %3, align 8
@@ -637,7 +637,7 @@ func main() {
 // CHECK-LABEL: define { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.nopCloserWriterTo.Read"(%"{{.*}}/cl/_testgo/reader.nopCloserWriterTo" %0, %"{{.*}}/runtime/internal/runtime.Slice" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca %"{{.*}}/cl/_testgo/reader.nopCloserWriterTo", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testgo/reader.nopCloserWriterTo" %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/reader.nopCloserWriterTo", ptr %2, i32 0, i32 0
 // CHECK-NEXT:   %4 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %3, align 8
@@ -660,7 +660,7 @@ func main() {
 // CHECK-LABEL: define { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"{{.*}}/cl/_testgo/reader.nopCloserWriterTo.WriteTo"(%"{{.*}}/cl/_testgo/reader.nopCloserWriterTo" %0, %"{{.*}}/runtime/internal/runtime.iface" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca %"{{.*}}/cl/_testgo/reader.nopCloserWriterTo", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testgo/reader.nopCloserWriterTo" %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/reader.nopCloserWriterTo", ptr %2, i32 0, i32 0
 // CHECK-NEXT:   %4 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %3, align 8

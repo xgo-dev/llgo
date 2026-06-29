@@ -28,7 +28,7 @@ type S struct {
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testgo/closureall.S.Inc"(%"{{.*}}/cl/_testgo/closureall.S" %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca %"{{.*}}/cl/_testgo/closureall.S", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 8, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 8, i1 false)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testgo/closureall.S" %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/cl/_testgo/closureall.S", ptr %2, i32 0, i32 0
 // CHECK-NEXT:   %4 = load i64, ptr %3, align 8

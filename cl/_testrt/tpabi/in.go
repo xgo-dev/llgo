@@ -48,7 +48,7 @@ func (t *K[N]) Advance(n int) *K[N] {
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/tpabi.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = alloca %"{{.*}}/cl/_testrt/tpabi.T[string,int]", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %0, i8 0, i64 24, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %0, i8 0, i64 24, i1 false)
 // CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %0, i32 0, i32 0
 // CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %0, i32 0, i32 1
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 1 }, ptr %1, align 8
@@ -120,7 +120,7 @@ func main() {
 // CHECK-LABEL: define linkonce void @"{{.*}}/cl/_testrt/tpabi.T[string,int].Info"(%"{{.*}}/cl/_testrt/tpabi.T[string,int]" %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca %"{{.*}}/cl/_testrt/tpabi.T[string,int]", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 24, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 24, i1 false)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testrt/tpabi.T[string,int]" %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/cl/_testrt/tpabi.T[string,int]", ptr %1, i32 0, i32 0
 // CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.String", ptr %2, align 8

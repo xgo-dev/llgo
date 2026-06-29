@@ -81,7 +81,7 @@ func TestUseCrossCompileSDK(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			export, err := use(tc.goos, tc.goarch, false, false, optlevel.O2, lto.Off)
+			export, err := use(tc.goos, tc.goarch, false, false, optlevel.O2, lto.Off, false)
 
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
@@ -316,7 +316,7 @@ func TestUseTarget(t *testing.T) {
 
 func TestUseWithTarget(t *testing.T) {
 	// Test target-based configuration takes precedence
-	export, err := Use("linux", "amd64", "esp32", false, true, optlevel.Oz, lto.Thin)
+	export, err := Use("linux", "amd64", "esp32", false, true, optlevel.Oz, lto.Thin, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestUseWithTarget(t *testing.T) {
 	}
 
 	// Test fallback to goos/goarch when no target specified
-	export, err = Use(runtime.GOOS, runtime.GOARCH, "", false, false, optlevel.O2, lto.Thin)
+	export, err = Use(runtime.GOOS, runtime.GOARCH, "", false, false, optlevel.O2, lto.Thin, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -348,7 +348,7 @@ func TestOptimizationFlagPlacement(t *testing.T) {
 		t.Fatalf("target CCFLAGS = %v, want first flag -Oz", export.CCFLAGS)
 	}
 
-	export, err = Use(runtime.GOOS, runtime.GOARCH, "", false, false, optlevel.O3, lto.Off)
+	export, err = Use(runtime.GOOS, runtime.GOARCH, "", false, false, optlevel.O3, lto.Off, false)
 	if err != nil {
 		t.Fatalf("UseWithOptLevel(host, O3) failed: %v", err)
 	}
@@ -363,8 +363,8 @@ func TestOptimizationFlagPlacement(t *testing.T) {
 	}
 }
 
-func TestUseLTOFlagsControlledByOption(t *testing.T) {
-	export, err := use(runtime.GOOS, runtime.GOARCH, false, false, optlevel.O2, lto.Off)
+func TestDevLTOGlobalDCEUseLTOFlagsControlledByOption(t *testing.T) {
+	export, err := use(runtime.GOOS, runtime.GOARCH, false, false, optlevel.O2, lto.Off, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -379,12 +379,18 @@ func TestUseLTOFlagsControlledByOption(t *testing.T) {
 		}
 	}
 
-	thin, err := use(runtime.GOOS, runtime.GOARCH, false, false, optlevel.O2, lto.Thin)
+	thin, err := use(runtime.GOOS, runtime.GOARCH, false, false, optlevel.O2, lto.Thin, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	if !slices.Contains(thin.CCFLAGS, "-flto=thin") {
 		t.Fatalf("missing thin LTO ccflag: %v", thin.CCFLAGS)
+	}
+	if slices.Contains(thin.CCFLAGS, "-fvirtual-function-elimination") {
+		t.Fatalf("unexpected virtual function elimination ccflag for thin LTO: %v", thin.CCFLAGS)
+	}
+	if slices.Contains(thin.CCFLAGS, "-fwhole-program-vtables") {
+		t.Fatalf("unexpected whole-program vtables ccflag for thin LTO: %v", thin.CCFLAGS)
 	}
 	if !slices.Contains(thin.LDFLAGS, "-flto=thin") {
 		t.Fatalf("missing thin LTO link driver flag: %v", thin.LDFLAGS)
@@ -393,15 +399,32 @@ func TestUseLTOFlagsControlledByOption(t *testing.T) {
 		t.Fatalf("missing thin LTO linker opt flag: %v", thin.LDFLAGS)
 	}
 
-	full, err := use(runtime.GOOS, runtime.GOARCH, false, false, optlevel.O2, lto.Full)
+	full, err := use(runtime.GOOS, runtime.GOARCH, false, false, optlevel.O2, lto.Full, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	if !slices.Contains(full.CCFLAGS, "-flto=full") {
 		t.Fatalf("missing full LTO ccflag: %v", full.CCFLAGS)
 	}
+	if slices.Contains(full.CCFLAGS, "-fvirtual-function-elimination") {
+		t.Fatalf("unexpected virtual function elimination ccflag when global DCE is disabled: %v", full.CCFLAGS)
+	}
+	if slices.Contains(full.CCFLAGS, "-fwhole-program-vtables") {
+		t.Fatalf("unexpected whole-program vtables ccflag when global DCE is disabled: %v", full.CCFLAGS)
+	}
 	if !slices.Contains(full.LDFLAGS, "-flto=full") {
 		t.Fatalf("missing full LTO link driver flag: %v", full.LDFLAGS)
+	}
+
+	fullGlobalDCE, err := use(runtime.GOOS, runtime.GOARCH, false, false, optlevel.O2, lto.Full, true)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !slices.Contains(fullGlobalDCE.CCFLAGS, "-fvirtual-function-elimination") {
+		t.Fatalf("missing virtual function elimination ccflag for full LTO with global DCE: %v", fullGlobalDCE.CCFLAGS)
+	}
+	if !slices.Contains(fullGlobalDCE.CCFLAGS, "-fwhole-program-vtables") {
+		t.Fatalf("missing whole-program vtables ccflag for full LTO with global DCE: %v", fullGlobalDCE.CCFLAGS)
 	}
 }
 

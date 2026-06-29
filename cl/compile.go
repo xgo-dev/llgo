@@ -30,6 +30,7 @@ import (
 	"strings"
 
 	"github.com/goplus/llgo/cl/blocks"
+	"github.com/goplus/llgo/cl/ssawrap"
 	"github.com/goplus/llgo/internal/goembed"
 	"github.com/goplus/llgo/internal/meta"
 	"github.com/goplus/llgo/internal/typepatch"
@@ -157,28 +158,30 @@ type pkgInfo struct {
 type none = struct{}
 
 type context struct {
-	prog        llssa.Program
-	pkg         llssa.Package
-	fn          llssa.Function
-	goFn        *ssa.Function
-	fset        *token.FileSet
-	goProg      *ssa.Program
-	goTyps      *types.Package
-	goPkg       *ssa.Package
-	pyMod       string
-	skips       map[string]none
-	loaded      map[*types.Package]*pkgInfo // loaded packages
-	bvals       map[ssa.Value]llssa.Expr    // block values
-	vargs       map[*ssa.Alloc][]llssa.Expr // varargs
-	funcs       map[*ssa.Function]llssa.Function
-	linkOnceFns map[*ssa.Function]none
-	stackDefers map[*ssa.Function]bool
-	anonDefers  map[*ssa.Function]bool
-	paramDIVars map[*types.Var]llssa.DIVar
+	prog                 llssa.Program
+	pkg                  llssa.Package
+	fn                   llssa.Function
+	goFn                 *ssa.Function
+	fset                 *token.FileSet
+	goProg               *ssa.Program
+	goTyps               *types.Package
+	goPkg                *ssa.Package
+	pyMod                string
+	skips                map[string]none
+	loaded               map[*types.Package]*pkgInfo // loaded packages
+	bvals                map[ssa.Value]llssa.Expr    // block values
+	methodNilDerefChecks map[*ssa.UnOp]none
+	vargs                map[*ssa.Alloc][]llssa.Expr // varargs
+	funcs                map[*ssa.Function]llssa.Function
+	linkOnceFns          map[*ssa.Function]none
+	stackDefers          map[*ssa.Function]bool
+	anonDefers           map[*ssa.Function]bool
+	paramDIVars          map[*types.Var]llssa.DIVar
 
-	patches  Patches
-	blkInfos []blocks.Info
-	srcLines map[string][]string
+	patches          Patches
+	blkInfos         []blocks.Info
+	srcLines         map[string][]string
+	addrOfFieldAddrs map[token.Pos]none
 
 	inits     []func()
 	phis      []func()
@@ -498,12 +501,12 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		dbgEnabled := enableDbg && (f == nil || f.Origin() == nil)
 		dbgSymsEnabled := enableDbgSyms && (f == nil || f.Origin() == nil)
 		p.inits = append(p.inits, func() {
-			oldFn, oldGoFn := p.fn, p.goFn
+			oldFn, oldGoFn, oldMethodNilDerefChecks := p.fn, p.goFn, p.methodNilDerefChecks
 			p.fn = fn
 			p.goFn = f
 			p.state = state // restore pkgState when compiling funcBody
 			defer func() {
-				p.fn, p.goFn = oldFn, oldGoFn
+				p.fn, p.goFn, p.methodNilDerefChecks = oldFn, oldGoFn, oldMethodNilDerefChecks
 			}()
 			p.phis = nil
 			if dbgSymsEnabled {
@@ -520,6 +523,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 				b.DebugFunction(fn, pos, bodyPos)
 			}
 			p.bvals = make(map[ssa.Value]llssa.Expr)
+			p.methodNilDerefChecks = collectMethodNilDerefChecks(f)
 			off := make([]int, len(f.Blocks))
 			if isCgo {
 				p.cgoArgs = make([]llssa.Expr, len(f.Params))
@@ -753,6 +757,10 @@ func skipUnusedArrayDeref(v *ssa.UnOp) bool {
 	if v.Op != token.MUL {
 		return false
 	}
+	block := v.Block()
+	if block == nil || len(block.Succs) != 1 || !strings.HasPrefix(block.Succs[0].Comment, "rangeindex.") {
+		return false
+	}
 	refs := v.Referrers()
 	if refs == nil || len(*refs) != 0 {
 		return false
@@ -761,6 +769,20 @@ func skipUnusedArrayDeref(v *ssa.UnOp) bool {
 		return false
 	}
 	return true
+}
+
+func shouldAssertDirectNilDeref(v *ssa.UnOp) bool {
+	if v.Op != token.MUL {
+		return false
+	}
+	if _, ok := v.X.(*ssa.Parameter); !ok {
+		return false
+	}
+	switch types.Unalias(v.Type()).Underlying().(type) {
+	case *types.Basic, *types.Pointer, *types.Chan, *types.Map, *types.Slice, *types.Interface:
+		return true
+	}
+	return false
 }
 
 func (p *context) cgoErrnoType() types.Type {
@@ -987,6 +1009,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		ret = b.BinOp(v.Op, x, y)
 	case *ssa.UnOp:
 		if v.Op == token.MUL {
+			if _, ok := p.methodNilDerefChecks[v]; ok {
+				return p.compileCheckedDeref(b, v)
+			}
 			if refs := v.Referrers(); refs != nil && len(*refs) == 0 {
 				if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil {
 					if p.isLargeNonPointerValue(t) {
@@ -997,6 +1022,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 					}
 				}
 				if skipUnusedArrayDeref(v) {
+					p.compileValue(b, v.X)
 					return
 				}
 				if _, ok := types.Unalias(v.Type()).Underlying().(*types.Slice); ok {
@@ -1033,6 +1059,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			}
 		}
 		x := p.compileValue(b, v.X)
+		if shouldAssertDirectNilDeref(v) {
+			b.AssertNilDeref(x)
+		}
 		if v.Op == token.ARROW {
 			ret = b.Recv(x, v.CommaOk)
 		} else {
@@ -1065,6 +1094,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		ret = b.Convert(p.type_(t, llssa.InGo), x)
 	case *ssa.FieldAddr:
 		x := p.compileValue(b, v.X)
+		if p.isAddressOfFieldAddr(v) {
+			b.AssertNilDeref(x)
+		}
 		ret = b.FieldAddr(x, v.Field)
 	case *ssa.Alloc:
 		t := v.Type().(*types.Pointer)
@@ -1261,9 +1293,22 @@ func (p *context) compileValueAs(b llssa.Builder, v ssa.Value, typ types.Type) l
 }
 
 func (p *context) assertNilDerefBase(b llssa.Builder, addr ssa.Value) {
-	if field, ok := addr.(*ssa.FieldAddr); ok {
-		base := p.compileValue(b, field.X)
-		b.AssertNilDeref(base)
+	switch addr := addr.(type) {
+	case *ssa.UnOp:
+		if addr.Op != token.MUL || isKnownNonNilAddr(addr.X) || isWrapNilCheckCall(addr.X) {
+			return
+		}
+		p.compileCheckedDeref(b, addr)
+	case *ssa.FieldAddr:
+		if isKnownNonNilAddr(addr.X) || isWrapNilCheckCall(addr.X) {
+			return
+		}
+		p.assertNilDerefBase(b, addr.X)
+		base := p.compileValue(b, addr.X)
+		if isPointerGoType(addr.X.Type()) {
+			base = b.NilDerefCheck(base)
+		}
+		p.bvals[addr] = b.FieldAddr(base, addr.Field)
 	}
 }
 
@@ -1415,6 +1460,9 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 			}
 		}
 	case *ssa.Function:
+		if _, _, ftype := p.funcName(v); ftype == llgoInstr {
+			v = ssawrap.MakeCallWrapper(p.goProg, v)
+		}
 		aFn, pyFn, _ := p.compileFunction(v)
 		if aFn != nil {
 			return aFn.Expr
@@ -1664,17 +1712,18 @@ func newPackageEx(prog llssa.Program, patches Patches, rewrites map[string]strin
 	}
 
 	ctx := &context{
-		prog:        prog,
-		pkg:         ret,
-		fset:        pkgProg.Fset,
-		goProg:      pkgProg,
-		goTyps:      pkgTypes,
-		goPkg:       pkg,
-		patches:     patches,
-		skips:       make(map[string]none),
-		vargs:       make(map[*ssa.Alloc][]llssa.Expr),
-		funcs:       make(map[*ssa.Function]llssa.Function),
-		linkOnceFns: make(map[*ssa.Function]none),
+		prog:             prog,
+		pkg:              ret,
+		fset:             pkgProg.Fset,
+		goProg:           pkgProg,
+		goTyps:           pkgTypes,
+		goPkg:            pkg,
+		patches:          patches,
+		skips:            make(map[string]none),
+		vargs:            make(map[*ssa.Alloc][]llssa.Expr),
+		funcs:            make(map[*ssa.Function]llssa.Function),
+		linkOnceFns:      make(map[*ssa.Function]none),
+		addrOfFieldAddrs: collectAddrOfFieldSelectors(files),
 		loaded: map[*types.Package]*pkgInfo{
 			types.Unsafe: {kind: PkgDeclOnly}, // TODO(xsw): PkgNoInit or PkgDeclOnly?
 		},

@@ -18,6 +18,7 @@ package cl
 
 import (
 	"fmt"
+	"go/ast"
 	"go/constant"
 	"go/token"
 	"go/types"
@@ -39,6 +40,15 @@ func constStr(v ssa.Value) (ret string, ok bool) {
 	if c, ok := v.(*ssa.Const); ok {
 		if v := c.Value; v.Kind() == constant.String {
 			return constant.StringVal(v), true
+		}
+	}
+	return
+}
+
+func constInt(v ssa.Value) (ret int, ok bool) {
+	if c, ok := v.(*ssa.Const); ok {
+		if iv, exact := constant.Int64Val(c.Value); exact {
+			return int(iv), true
 		}
 	}
 	return
@@ -474,12 +484,12 @@ func (p *context) syscallFnSig(argc int) *types.Signature {
 	return types.NewSignatureType(nil, nil, nil, types.NewTuple(params...), types.NewTuple(ret), true)
 }
 
-// syscallFnSigFixed returns a non-variadic C signature with argc uintptr
-// parameters and returning a uintptr.
-func (p *context) syscallFnSigFixed(argc int) *types.Signature {
-	params := make([]*types.Var, 0, argc)
-	for i := 0; i < argc; i++ {
-		params = append(params, types.NewParam(token.NoPos, nil, "", types.Typ[types.Uintptr]))
+// syscallFnSigFixed returns a non-variadic C signature with the given parameter
+// types and returning a uintptr.
+func (p *context) syscallFnSigFixed(paramTypes []types.Type) *types.Signature {
+	params := make([]*types.Var, 0, len(paramTypes))
+	for _, typ := range paramTypes {
+		params = append(params, types.NewParam(token.NoPos, nil, "", typ))
 	}
 	ret := types.NewVar(token.NoPos, nil, "", types.Typ[types.Uintptr])
 	return types.NewSignatureType(nil, nil, nil, types.NewTuple(params...), types.NewTuple(ret), false)
@@ -504,8 +514,8 @@ func (p *context) syscallErrno(b llssa.Builder, r1 llssa.Expr) llssa.Expr {
 
 // syscallIntrinsic implements the llgo.syscall intrinsic for libc-based syscalls.
 // The first argument is treated as a function pointer, called with the remaining
-// arguments (as uintptr), and it returns a (r1, r2, errno) tuple. r2 is always 0
-// and errno is set iff r1 == -1.
+// arguments, and it returns a (r1, r2, errno) tuple. r2 is always 0 and errno is
+// set iff r1 == -1.
 func (p *context) syscallIntrinsic(b llssa.Builder, args []ssa.Value, results *types.Tuple) llssa.Expr {
 	if len(args) < 1 {
 		panic("syscall: missing arguments")
@@ -514,7 +524,11 @@ func (p *context) syscallIntrinsic(b llssa.Builder, args []ssa.Value, results *t
 	for _, arg := range args[1:] {
 		callArgs = append(callArgs, p.compileValue(b, arg))
 	}
-	fnSig := p.syscallFnSigFixed(len(callArgs))
+	callArgTypes := make([]types.Type, 0, len(callArgs))
+	for _, arg := range callArgs {
+		callArgTypes = append(callArgTypes, arg.RawType())
+	}
+	fnSig := p.syscallFnSigFixed(callArgTypes)
 	fnArg := p.compileValue(b, args[0])
 	fnType := p.type_(fnSig, llssa.InC)
 	fnPtr := b.PtrCast(fnType, b.Convert(p.type_(types.Typ[types.UnsafePointer], llssa.InGo), fnArg))
@@ -816,6 +830,46 @@ func (p *context) isExplicitFieldAddr(field *ssa.FieldAddr) bool {
 	return strings.HasPrefix(line[col:], name)
 }
 
+func (p *context) isAddressOfFieldAddr(field *ssa.FieldAddr) bool {
+	if field == nil || p.addrOfFieldAddrs == nil {
+		return false
+	}
+	_, ok := p.addrOfFieldAddrs[field.Pos()]
+	return ok
+}
+
+func collectAddrOfFieldSelectors(files []*ast.File) map[token.Pos]none {
+	ret := make(map[token.Pos]none)
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			unary, ok := n.(*ast.UnaryExpr)
+			if !ok || unary.Op != token.AND {
+				return true
+			}
+			collectFieldSelectorChain(ret, unary.X)
+			return true
+		})
+	}
+	if len(ret) == 0 {
+		return nil
+	}
+	return ret
+}
+
+func collectFieldSelectorChain(ret map[token.Pos]none, expr ast.Expr) {
+	for {
+		switch e := expr.(type) {
+		case *ast.ParenExpr:
+			expr = e.X
+		case *ast.SelectorExpr:
+			ret[e.Sel.Pos()] = none{}
+			expr = e.X
+		default:
+			return
+		}
+	}
+}
+
 func fieldAddrStruct(field *ssa.FieldAddr) (*types.Pointer, *types.Struct, bool) {
 	if field.X == nil {
 		return nil, nil, false
@@ -905,10 +959,159 @@ func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, ds *explicitDeferS
 	return b.Do(act, fn, buildCall, args...)
 }
 
+func (p *context) staticArrayLenBuiltinArg(b llssa.Builder, arg ssa.Value) (llssa.Expr, bool) {
+	var arr *types.Array
+	var sideEffect ssa.Value
+	if load, ok := arg.(*ssa.UnOp); ok && load.Op == token.MUL {
+		if t, ok := types.Unalias(load.Type()).Underlying().(*types.Array); ok {
+			arr = t
+			sideEffect = load.X
+		}
+	} else if ptr, ok := types.Unalias(arg.Type()).Underlying().(*types.Pointer); ok {
+		if t, ok := types.Unalias(ptr.Elem()).Underlying().(*types.Array); ok {
+			arr = t
+			sideEffect = arg
+		}
+	}
+	if arr == nil {
+		return llssa.Expr{}, false
+	}
+	p.compileValue(b, sideEffect)
+	return b.Const(constant.MakeInt64(arr.Len()), p.type_(types.Typ[types.Int], llssa.InGo)), true
+}
+
+func isPointerGoType(t types.Type) bool {
+	_, ok := types.Unalias(t).Underlying().(*types.Pointer)
+	return ok
+}
+
+func isKnownNonNilAddr(v ssa.Value) bool {
+	switch v := v.(type) {
+	case *ssa.Alloc, *ssa.Global:
+		return true
+	case *ssa.FieldAddr:
+		return isKnownNonNilAddr(v.X)
+	case *ssa.IndexAddr:
+		return isKnownNonNilAddr(v.X)
+	}
+	return false
+}
+
+func isWrapNilCheckCall(v ssa.Value) bool {
+	call, ok := v.(*ssa.Call)
+	if !ok {
+		return false
+	}
+	builtin, ok := call.Call.Value.(*ssa.Builtin)
+	return ok && builtin.Name() == "ssa:wrapnilchk"
+}
+
+func (p *context) emitNilDerefBaseCheck(b llssa.Builder, addr ssa.Value) {
+	switch addr := addr.(type) {
+	case *ssa.UnOp:
+		if addr.Op != token.MUL || isKnownNonNilAddr(addr.X) || isWrapNilCheckCall(addr.X) {
+			return
+		}
+		p.emitCheckedDerefCheck(b, addr)
+	case *ssa.FieldAddr:
+		if isKnownNonNilAddr(addr.X) || isWrapNilCheckCall(addr.X) {
+			return
+		}
+		p.emitNilDerefBaseCheck(b, addr.X)
+		if isPointerGoType(addr.X.Type()) {
+			base := p.compileValue(b, addr.X)
+			b.AssertNilDeref(base)
+		}
+	}
+}
+
+func (p *context) emitCheckedDerefCheck(b llssa.Builder, arg *ssa.UnOp) {
+	p.emitNilDerefBaseCheck(b, arg.X)
+	ptr := p.compileValue(b, arg.X)
+	b.AssertNilDeref(ptr)
+}
+
+func (p *context) compileCheckedDeref(b llssa.Builder, arg *ssa.UnOp) llssa.Expr {
+	p.emitNilDerefBaseCheck(b, arg.X)
+	ptr := p.compileValue(b, arg.X)
+	checked := b.NilDerefCheck(ptr)
+	ret := b.UnOp(token.MUL, checked)
+	p.bvals[arg] = ret
+	return ret
+}
+
+func valueReceiverNilDerefArg(fn *ssa.Function, args []ssa.Value) (*ssa.UnOp, bool) {
+	if fn == nil || len(args) == 0 {
+		return nil, false
+	}
+	recv := fn.Signature.Recv()
+	if recv == nil || isPointerGoType(recv.Type()) {
+		return nil, false
+	}
+	arg, ok := args[0].(*ssa.UnOp)
+	if !ok || arg.Op != token.MUL || isKnownNonNilAddr(arg.X) || isWrapNilCheckCall(arg.X) {
+		return nil, false
+	}
+	return arg, true
+}
+
+func boundValueReceiverNilDerefArg(fn *ssa.Function, bindings []ssa.Value) (*ssa.UnOp, bool) {
+	if fn == nil || len(fn.FreeVars) == 0 || len(bindings) == 0 {
+		return nil, false
+	}
+	if !strings.HasPrefix(fn.Synthetic, "bound method wrapper for ") {
+		return nil, false
+	}
+	if isPointerGoType(fn.FreeVars[0].Type()) {
+		return nil, false
+	}
+	arg, ok := bindings[0].(*ssa.UnOp)
+	if !ok || arg.Op != token.MUL || isKnownNonNilAddr(arg.X) || isWrapNilCheckCall(arg.X) {
+		return nil, false
+	}
+	return arg, true
+}
+
+func collectMethodNilDerefChecks(fn *ssa.Function) map[*ssa.UnOp]none {
+	var checks map[*ssa.UnOp]none
+	mark := func(arg *ssa.UnOp, ok bool) {
+		if !ok {
+			return
+		}
+		if checks == nil {
+			checks = make(map[*ssa.UnOp]none)
+		}
+		checks[arg] = none{}
+	}
+	markCall := func(call *ssa.CallCommon) {
+		if fn, ok := call.Value.(*ssa.Function); ok {
+			mark(valueReceiverNilDerefArg(fn, call.Args))
+		}
+	}
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			switch instr := instr.(type) {
+			case *ssa.Call:
+				markCall(&instr.Call)
+			case *ssa.Defer:
+				markCall(&instr.Call)
+			case *ssa.Go:
+				markCall(&instr.Call)
+			case *ssa.MakeClosure:
+				if bound, ok := instr.Fn.(*ssa.Function); ok {
+					mark(boundValueReceiverNilDerefArg(bound, instr.Bindings))
+				}
+			}
+		}
+	}
+	return checks
+}
+
 func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallCommon, ds *explicitDeferStack) (ret llssa.Expr) {
 	p.markReflectMethodCall(call)
 	cv := call.Value
 	if mthd := call.Method; mthd != nil {
+		reflectCheck := p.reflectTypeMethodCheck(call, mthd)
 		o := p.compileValue(b, cv)
 		fn := b.Imethod(o, mthd)
 		hasVArg := fnNormal
@@ -917,6 +1120,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		}
 		args := p.compileValues(b, call.Args, hasVArg)
 		ret = p.emitDo(b, act, ds, fn, llssa.Builder.Call, args...)
+		b.EmitReflectTypeMethodCheckedLoad(ret, reflectCheck)
 		return
 	}
 	kind := p.funcKind(cv)
@@ -934,6 +1138,11 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			methodName := p.compileValue(b, args[2])
 			ret = b.WrapNilCheck(ptr, recvType, methodName)
 			return
+		} else if (fn == "len" || fn == "cap") && len(args) == 1 && act == llssa.Call {
+			if n, ok := p.staticArrayLenBuiltinArg(b, args[0]); ok {
+				ret = n
+				return
+			}
 		} else if fn == "Offsetof" && act == llssa.Call {
 			if offset, ok := p.offsetOfBuiltinArg(args[0]); ok {
 				ret = offset
@@ -1069,6 +1278,49 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		ret = p.emitDo(b, act, ds, fn, llssa.Builder.Call, args...)
 	}
 	return
+}
+
+func (p *context) reflectTypeMethodCheck(call *ssa.CallCommon, method *types.Func) (check llssa.ReflectMethodCheck) {
+	if !isReflectType(call.Value.Type()) {
+		return
+	}
+	if pkg := method.Pkg(); pkg == nil || pkg.Path() != "reflect" {
+		return
+	}
+	switch method.Name() {
+	case "Method":
+		if len(call.Args) != 1 {
+			return
+		}
+		if index, ok := constInt(call.Args[0]); ok {
+			p.pkg.RecordReflectMethodByIndex(index)
+			check.Kind = llssa.ReflectTypeMethodByIndex
+			break
+		}
+		check.Kind = llssa.ReflectTypeMethodDynamic
+	case "MethodByName":
+		if len(call.Args) != 1 {
+			return
+		}
+		if name, ok := constStr(call.Args[0]); ok {
+			p.pkg.RecordReflectMethodByName(name)
+			check.Kind = llssa.ReflectTypeMethodByName
+			check.Name = name
+			break
+		}
+		check.Kind = llssa.ReflectTypeMethodDynamic | llssa.ReflectTypeMethodByName
+	}
+	p.pkg.NeedAbiInit |= check.Kind
+	return
+}
+
+func isReflectType(t types.Type) bool {
+	named, ok := types.Unalias(t).(*types.Named)
+	if !ok {
+		return false
+	}
+	obj := named.Obj()
+	return obj.Name() == "Type" && obj.Pkg() != nil && obj.Pkg().Path() == "reflect"
 }
 
 // -----------------------------------------------------------------------------

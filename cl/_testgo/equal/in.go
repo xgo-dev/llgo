@@ -103,7 +103,7 @@ func init() {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   call void @"{{.*}}/cl/_testgo/equal.assert"(i1 true)
 // CHECK-NEXT:   %0 = alloca [3 x i64], align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %0, i8 0, i64 24, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %0, i8 0, i64 24, i1 false)
 // CHECK-NEXT:   %1 = getelementptr inbounds i64, ptr %0, i64 0
 // CHECK-NEXT:   %2 = getelementptr inbounds i64, ptr %0, i64 1
 // CHECK-NEXT:   %3 = getelementptr inbounds i64, ptr %0, i64 2
@@ -111,7 +111,7 @@ func init() {
 // CHECK-NEXT:   store i64 2, ptr %2, align 8
 // CHECK-NEXT:   store i64 3, ptr %3, align 8
 // CHECK-NEXT:   %4 = alloca [3 x i64], align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %4, i8 0, i64 24, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %4, i8 0, i64 24, i1 false)
 // CHECK-NEXT:   %5 = getelementptr inbounds i64, ptr %4, i64 0
 // CHECK-NEXT:   %6 = getelementptr inbounds i64, ptr %4, i64 1
 // CHECK-NEXT:   %7 = getelementptr inbounds i64, ptr %4, i64 2

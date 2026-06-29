@@ -6,6 +6,11 @@ type rangeArrayPointerHolder struct {
 	data *[3]int
 }
 
+//go:noinline
+func nilRangeArrayPointer() *[3]int {
+	return nil
+}
+
 func TestRangeOverNilArrayPointerUsesLength(t *testing.T) {
 	var p *[3]int
 
@@ -46,5 +51,21 @@ func TestRangeOverNilArrayPointerCallIsEvaluated(t *testing.T) {
 	}
 	if sum != 3 {
 		t.Fatalf("range over nil *array call sum = %d, want 3", sum)
+	}
+}
+
+func TestLenOfNilArrayPointerValueUsesStaticLength(t *testing.T) {
+	var p *[3]int
+	if got := len(*p); got != 3 {
+		t.Fatalf("len(*nil array pointer) = %d, want 3", got)
+	}
+	if got := len(p); got != 3 {
+		t.Fatalf("len(nil array pointer) = %d, want 3", got)
+	}
+	if got := len(nilRangeArrayPointer()); got != 3 {
+		t.Fatalf("len(nil array pointer call) = %d, want 3", got)
+	}
+	if got := len(*nilRangeArrayPointer()); got != 3 {
+		t.Fatalf("len(*nil array pointer call) = %d, want 3", got)
 	}
 }

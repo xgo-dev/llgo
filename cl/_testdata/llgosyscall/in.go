@@ -12,6 +12,9 @@ func syscall6(fn, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2, err uintptr)
 //go:linkname syscall6X llgo.syscall
 func syscall6X(fn, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2, err uintptr)
 
+//go:linkname syscall5f64 llgo.syscall
+func syscall5f64(fn, a1, a2, a3, a4, a5 uintptr, f1 float64) (r1, r2, err uintptr)
+
 //go:linkname syscallPtr llgo.syscall
 func syscallPtr(fn, a1, a2, a3 uintptr) (r1, r2, err uintptr)
 
@@ -30,6 +33,14 @@ func rawSyscall6(fn, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2, err uintptr)
 // CHECK:   ret i64 %8
 func Use() uintptr {
 	r1, _, _ := syscall(0, 1, 2, 3)
+	return r1
+}
+
+// CHECK-LABEL: define i64 @"{{.*}}/llgosyscall.Use5F64"(i64 %0, double %1){{.*}} {
+// CHECK:   %{{[0-9]+}} = inttoptr i64 %0 to ptr
+// CHECK:   %{{[0-9]+}} = call i64 %{{[0-9]+}}(i64 1, i64 2, i64 3, i64 4, i64 5, double %1)
+func Use5F64(fn uintptr, f float64) uintptr {
+	r1, _, _ := syscall5f64(fn, 1, 2, 3, 4, 5, f)
 	return r1
 }
 

@@ -259,8 +259,9 @@ func (b Builder) free(ptr Expr) Expr {
 // declare void @llvm.memset.inline.p0.p0i8.i32(ptr <dest>, i8 <val>, i32 <len>, i1 <isvolatile>)
 // declare void @llvm.memset.inline.p0.p0.i64(ptr <dest>, i8 <val>, i64 <len>, i1 <isvolatile>)
 func (b Builder) memset(ptr, val, len, isvolatile Expr) Expr {
-	fn := b.Pkg.cFunc("llvm.memset", b.Prog.tyMemsetInline())
-	b.Call(fn, ptr, val, len, isvolatile)
+	b.impl.CreateIntrinsic(b.Prog.Void().ll, llvm.LookupIntrinsicID("llvm.memset"), []llvm.Value{
+		ptr.impl, val.impl, len.impl, isvolatile.impl,
+	}, "")
 	return ptr
 }
 
@@ -332,9 +333,20 @@ func (b Builder) AtomicCmpXchg(ptr, old, new Expr) Expr {
 }
 
 func (b Builder) AssertNilDeref(ptr Expr) {
+	if ptr.impl.C == nil {
+		return
+	}
+	if ptr.impl.IsConstant() && !ptr.impl.IsNull() {
+		return
+	}
 	nilPtr := llvm.ConstNull(ptr.impl.Type())
 	isNil := Expr{llvm.CreateICmp(b.impl, llvm.IntEQ, ptr.impl, nilPtr), b.Prog.Bool()}
 	b.InlineCall(b.Pkg.rtFunc("AssertNilDeref"), isNil)
+}
+
+func (b Builder) NilDerefCheck(ptr Expr) Expr {
+	checked := b.Call(b.Pkg.rtFunc("AssertNilDerefPtr"), b.Convert(b.Prog.VoidPtr(), ptr))
+	return b.Convert(ptr.Type, checked)
 }
 
 func (b Builder) assertStaticNilDeref(ptr Expr) {

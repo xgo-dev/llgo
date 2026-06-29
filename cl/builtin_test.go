@@ -29,6 +29,7 @@ import (
 	"unsafe"
 
 	llssa "github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -103,6 +104,208 @@ func compareInterfacePtr(p *interface{}, q interface{}) bool {
 `)
 	if ir := m.String(); !strings.Contains(ir, "AssertNilDeref") {
 		t.Fatalf("compiled IR missing AssertNilDeref for interface compare deref:\n%s", ir)
+	}
+}
+
+func TestCompileNestedLargeNilDerefBaseGuard(t *testing.T) {
+	_, m := mustCompileLLPkgFromSrc(t, `
+package foo
+
+type large [1 << 21]byte
+
+func nested(pp **large) {
+	_ = **pp
+}
+`)
+	ir := m.String()
+	if strings.Count(ir, "AssertNilDerefPtr") == 0 {
+		t.Fatalf("compiled IR missing nested AssertNilDerefPtr guard:\n%s", ir)
+	}
+	if !strings.Contains(ir, "AssertNilDeref") {
+		t.Fatalf("compiled IR missing outer AssertNilDeref guard:\n%s", ir)
+	}
+}
+
+func TestCompileWrapNilCheckGuard(t *testing.T) {
+	_, m := mustCompileLLPkgFromSrc(t, `
+	package foo
+
+type value struct {
+	n int
+}
+
+func (v value) method() int {
+	return v.n
+}
+
+func methodExpr(p *value) int {
+	return (*value).method(p)
+}
+
+func methodValue(p *value) func() int {
+	return p.method
+}
+`)
+	if !strings.Contains(m.String(), "AssertNilDeref") {
+		t.Fatalf("compiled IR missing AssertNilDeref for ssa:wrapnilchk:\n%s", m.String())
+	}
+}
+
+func TestCompilePromotedValueMethodNilDerefGuard(t *testing.T) {
+	_, m := mustCompileLLPkgFromSrc(t, `
+	package foo
+
+	type embedded struct {
+		n int
+	}
+
+	func (v embedded) value() int {
+		return v.n
+	}
+
+	type outer struct {
+		*embedded
+	}
+
+	func call(o outer) int {
+		return o.value()
+	}
+	`)
+	if !strings.Contains(m.String(), "AssertNilDeref") {
+		t.Fatalf("compiled IR missing AssertNilDeref for promoted value method receiver:\n%s", m.String())
+	}
+}
+
+func TestCompileValueReceiverNilDerefKeepsDominance(t *testing.T) {
+	_, m := mustCompileLLPkgFromSrc(t, `
+	package foo
+
+	type stamp struct {
+		n int
+	}
+
+	func (s stamp) value() int {
+		return 1
+	}
+
+	type conn struct {
+		idle stamp
+	}
+
+	func pick(conns []*conn, cond bool) int {
+		if len(conns) == 0 {
+			return 0
+		}
+		pc := conns[0]
+		if cond {
+			_ = pc.idle.value()
+		}
+		return pc.idle.n
+	}
+	`)
+	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("compiled IR failed verifier: %v\n%s", err, m.String())
+	}
+}
+
+func TestMethodNilDerefHelperBranches(t *testing.T) {
+	ctx := &context{}
+	alloc := &ssa.Alloc{}
+	field := &ssa.FieldAddr{X: alloc}
+
+	ctx.emitNilDerefBaseCheck(nil, field)
+	ctx.assertNilDerefBase(nil, field)
+	ctx.assertNilDerefBase(nil, &ssa.UnOp{Op: token.ADD})
+
+	if arg, ok := valueReceiverNilDerefArg(nil, nil); ok || arg != nil {
+		t.Fatal("nil function should not request value receiver nil check")
+	}
+
+	recv := types.NewVar(token.NoPos, nil, "recv", types.Typ[types.Int])
+	valueMethod := &ssa.Function{
+		Signature: types.NewSignatureType(recv, nil, nil, nil, nil, false),
+	}
+	unop := &ssa.UnOp{Op: token.MUL, X: alloc}
+	if arg, ok := valueReceiverNilDerefArg(valueMethod, []ssa.Value{unop}); ok || arg != nil {
+		t.Fatal("known non-nil receiver address should not request nil check")
+	}
+
+	bound := &ssa.Function{
+		Synthetic: "bound method wrapper for value",
+		FreeVars:  []*ssa.FreeVar{nil},
+	}
+	if arg, ok := boundValueReceiverNilDerefArg(bound, nil); ok || arg != nil {
+		t.Fatal("missing bound method binding should not request nil check")
+	}
+
+	if arg, ok := boundValueReceiverNilDerefArg(
+		&ssa.Function{Synthetic: "plain closure", FreeVars: []*ssa.FreeVar{nil}},
+		[]ssa.Value{unop},
+	); ok || arg != nil {
+		t.Fatal("non-bound wrapper should not request nil check")
+	}
+
+	ssapkg := buildSSAPackage(t, `
+package foo
+
+type pointer struct{}
+
+func (*pointer) pointerMethod() int { return 1 }
+
+type value struct{}
+
+func (value) valueMethod() int { return 2 }
+
+func bindPointer(p *pointer) func() int {
+	return p.pointerMethod
+}
+
+func bindLocalValue() func() int {
+	var v value
+	return v.valueMethod
+}
+`)
+	if arg, ok := boundValueReceiverNilDerefArgFromFunc(t, ssapkg.Func("bindPointer")); ok || arg != nil {
+		t.Fatal("pointer receiver bound method should not request nil check")
+	}
+	if arg, ok := boundValueReceiverNilDerefArgFromFunc(t, ssapkg.Func("bindLocalValue")); ok || arg != nil {
+		t.Fatal("known non-nil local value binding should not request nil check")
+	}
+}
+
+func boundValueReceiverNilDerefArgFromFunc(t *testing.T, fn *ssa.Function) (*ssa.UnOp, bool) {
+	t.Helper()
+	if fn == nil {
+		t.Fatal("missing function")
+	}
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			closure, ok := instr.(*ssa.MakeClosure)
+			if !ok {
+				continue
+			}
+			bound, ok := closure.Fn.(*ssa.Function)
+			if !ok {
+				t.Fatalf("closure function has type %T, want *ssa.Function", closure.Fn)
+			}
+			return boundValueReceiverNilDerefArg(bound, closure.Bindings)
+		}
+	}
+	t.Fatalf("bound method closure not found in %s", fn.Name())
+	return nil, false
+}
+
+func TestCollectMethodNilDerefChecksSkipsDynamicDeferGo(t *testing.T) {
+	fn := &ssa.Function{
+		Blocks: []*ssa.BasicBlock{{
+			Instrs: []ssa.Instruction{
+				&ssa.Defer{},
+				&ssa.Go{},
+			},
+		}},
+	}
+	if got := collectMethodNilDerefChecks(fn); len(got) != 0 {
+		t.Fatalf("collectMethodNilDerefChecks() = %v, want no static checks", got)
 	}
 }
 

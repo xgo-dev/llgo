@@ -11,7 +11,7 @@ type Wrapped struct {
 // CHECK-LABEL: define %"{{.*}}String" @"{{.*}}embedunexport-1598.Wrapped.Name"(%"{{.*}}embedunexport-1598.Wrapped" %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca %"{{.*}}embedunexport-1598.Wrapped", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %1, i8 0, i64 8, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 8, i1 false)
 // CHECK-NEXT:   store %"{{.*}}embedunexport-1598.Wrapped" %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}embedunexport-1598.Wrapped", ptr %1, i32 0, i32 0
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
@@ -21,7 +21,7 @@ type Wrapped struct {
 // CHECK-LABEL: define void @"{{.*}}embedunexport-1598.Wrapped.setName"(%"{{.*}}embedunexport-1598.Wrapped" %0, %"{{.*}}String" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca %"{{.*}}embedunexport-1598.Wrapped", align 8
-// CHECK-NEXT:   call void @llvm.memset(ptr %2, i8 0, i64 8, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 8, i1 false)
 // CHECK-NEXT:   store %"{{.*}}embedunexport-1598.Wrapped" %0, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}embedunexport-1598.Wrapped", ptr %2, i32 0, i32 0
 // CHECK-NEXT:   %4 = load ptr, ptr %3, align 8

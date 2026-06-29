@@ -11,7 +11,7 @@ func getsp() unsafe.Pointer
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testrt/stacksave.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @llvm.stacksave()
+// CHECK-NEXT:   %0 = call ptr @llvm.stacksave.p0()
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %0)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goplus/llgo/internal/buildenv"
 	"github.com/goplus/llgo/internal/lto"
 	"github.com/goplus/llgo/internal/mockable"
 	"github.com/goplus/llgo/internal/packages"
@@ -391,5 +392,52 @@ func TestLTOEnabledExplicitOverride(t *testing.T) {
 	targetOff := &Config{Target: "rp2040", LTO: lto.Off}
 	if targetOff.ltoEnabled() {
 		t.Fatal("expected LTO=off to disable LTO for target build")
+	}
+}
+
+func TestArchiverPrefersLLVMArForLTO(t *testing.T) {
+	td := t.TempDir()
+	llvmAr := filepath.Join(td, "llvm-ar")
+	if err := os.WriteFile(llvmAr, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", td)
+	t.Setenv("LLGO_AR", "")
+
+	if got := (&context{buildConf: &Config{LTO: lto.Off}}).archiver(); got != "ar" {
+		t.Fatalf("archiver without lto = %q, want ar", got)
+	}
+	if got := (&context{buildConf: &Config{LTO: lto.Full}}).archiver(); got != llvmAr {
+		t.Fatalf("archiver with full lto = %q, want %q", got, llvmAr)
+	}
+}
+
+func TestArchiverAllowsLLGOAROverrideForLTO(t *testing.T) {
+	t.Setenv("LLGO_AR", "custom-ar")
+
+	if got := (&context{buildConf: &Config{LTO: lto.Full}}).archiver(); got != "custom-ar" {
+		t.Fatalf("archiver with LLGO_AR = %q, want custom-ar", got)
+	}
+}
+
+func TestDevLTOGlobalDCEDefaultsToFullLTO(t *testing.T) {
+	tests := []struct {
+		name string
+		conf *Config
+		want bool
+	}{
+		{name: "lto off", conf: &Config{LTO: lto.Off}, want: false},
+		{name: "thin lto", conf: &Config{LTO: lto.Thin}, want: false},
+		{name: "full lto", conf: &Config{LTO: lto.Full}, want: buildenv.Dev},
+		{name: "full lto disabled", conf: &Config{LTO: lto.Full, DisableGoGlobalDCE: true}, want: false},
+		{name: "disabled without full lto", conf: &Config{LTO: lto.Off, DisableGoGlobalDCE: true}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.conf.goGlobalDCEEnabled(); got != tt.want {
+				t.Fatalf("goGlobalDCEEnabled() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
