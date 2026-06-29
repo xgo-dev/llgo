@@ -1,5 +1,7 @@
 package runtime
 
+import llrt "github.com/goplus/llgo/runtime/internal/runtime"
+
 func NumCPU() int {
 	return int(c_maxprocs())
 }
@@ -9,4 +11,5 @@ func Breakpoint() {
 }
 
 func Gosched() {
+	llrt.SetMemProfileRate(MemProfileRate)
 }
