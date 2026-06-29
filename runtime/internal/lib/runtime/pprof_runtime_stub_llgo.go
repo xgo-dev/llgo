@@ -85,5 +85,17 @@ func NumGoroutine() int {
 func SetCPUProfileRate(hz int) {}
 
 func FuncForPC(pc uintptr) *Func {
-	return nil
+	sym := frameSymbol(pc)
+	if !sym.ok && sym.function == "" {
+		return &Func{entry: pc, name: unknownFunctionName(pc)}
+	}
+	name := sym.function
+	if name == "" {
+		name = unknownFunctionName(pc)
+	}
+	entry := sym.entry
+	if entry == 0 {
+		entry = pc
+	}
+	return &Func{entry: entry, name: name}
 }

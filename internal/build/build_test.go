@@ -55,6 +55,49 @@ func TestNeedsLinuxNoPIE(t *testing.T) {
 	}
 }
 
+func TestNeedsLinuxExportDynamic(t *testing.T) {
+	t.Setenv(llgoFuncInfo, "")
+	ctx := &context{buildConf: &Config{Goos: "linux"}}
+	if !needsLinuxExportDynamic(ctx) {
+		t.Fatal("linux funcinfo executable should export dynamic symbols")
+	}
+	if got := linuxExportDynamicArgs(ctx); strings.Join(got, " ") != "-Wl,--export-dynamic-symbol=main.* -Wl,--export-dynamic-symbol=command-line-arguments.*" {
+		t.Fatalf("linuxExportDynamicArgs = %v", got)
+	}
+	t.Setenv(llgoFuncInfo, "0")
+	if needsLinuxExportDynamic(ctx) {
+		t.Fatal("LLGO_FUNCINFO=0 should disable dynamic symbol export")
+	}
+	if got := linuxExportDynamicArgs(ctx); got != nil {
+		t.Fatalf("disabled linuxExportDynamicArgs = %v, want nil", got)
+	}
+	t.Setenv(llgoFuncInfo, "1")
+	ctx.buildConf.Goos = "darwin"
+	if needsLinuxExportDynamic(ctx) {
+		t.Fatal("non-linux executable should not export dynamic symbols for funcinfo")
+	}
+	ctx.buildConf.Goos = "linux"
+	ctx.buildConf.Target = "wasi"
+	if needsLinuxExportDynamic(ctx) {
+		t.Fatal("named targets should not force host linux dynamic symbol export")
+	}
+}
+
+func TestIsFuncInfoEnabled(t *testing.T) {
+	t.Setenv(llgoFuncInfo, "")
+	if !IsFuncInfoEnabled() {
+		t.Fatal("funcinfo should be enabled by default")
+	}
+	t.Setenv(llgoFuncInfo, "0")
+	if IsFuncInfoEnabled() {
+		t.Fatal("LLGO_FUNCINFO=0 should disable funcinfo")
+	}
+	t.Setenv(llgoFuncInfo, "1")
+	if !IsFuncInfoEnabled() {
+		t.Fatal("LLGO_FUNCINFO=1 should enable funcinfo")
+	}
+}
+
 func mockRun(args []string, cfg *Config) {
 	defer mockable.DisableMock()
 	mockable.EnableMock()

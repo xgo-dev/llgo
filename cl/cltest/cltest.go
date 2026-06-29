@@ -242,7 +242,10 @@ func testFrom(t *testing.T, pkgDir, sel string) {
 	if spec.Mode == littest.ModeSkip {
 		return
 	}
-	v := llgen.GenFrom(pkgDir)
+	var v string
+	withFuncInfoDisabled(func() {
+		v = llgen.GenFrom(pkgDir)
+	})
 	if spec.Mode == littest.ModeFileCheck {
 		if err := littest.Check(spec, v); err != nil {
 			_ = os.WriteFile(pkgDir+"/result.txt", []byte(v), 0644)
@@ -294,7 +297,14 @@ func testRunAndTestFrom(t *testing.T, pkgDir, relPkg, sel string, opts runOption
 		}
 	}
 
-	output, err := runWithConf(relPkg, pkgDir, conf)
+	var output []byte
+	if checkIR {
+		withFuncInfoDisabled(func() {
+			output, err = runWithConf(relPkg, pkgDir, conf)
+		})
+	} else {
+		output, err = runWithConf(relPkg, pkgDir, conf)
+	}
 	if err != nil {
 		t.Logf("raw output:\n%s", string(output))
 		t.Fatalf("run failed: %v\noutput: %s", err, string(output))
@@ -509,6 +519,20 @@ func readIRSpec(pkgDir string) (littest.Spec, bool, error) {
 	return spec, true, nil
 }
 
+func withFuncInfoDisabled(fn func()) {
+	const key = "LLGO_FUNCINFO"
+	old, ok := os.LookupEnv(key)
+	_ = os.Setenv(key, "0")
+	defer func() {
+		if ok {
+			_ = os.Setenv(key, old)
+		} else {
+			_ = os.Unsetenv(key)
+		}
+	}()
+	fn()
+}
+
 func filterRunOutput(in []byte) []byte {
 	// Tests compare output with expect.txt. Some toolchain/environment warnings are
 	// inherently machine-specific and should not be part of the golden output.
@@ -542,6 +566,13 @@ func filterRunOutput(in []byte) []byte {
 
 func CompileIREx(t *testing.T, src any, fname string, dbg bool, configure func(llssa.Program)) string {
 	t.Helper()
+	// Build.Do configures cl debug globals for full-package builds. Keep the
+	// single-file compiler assertions independent from any prior build test.
+	cl.EnableDebug(dbg)
+	cl.EnableDbgSyms(dbg)
+	defer cl.EnableDebug(false)
+	defer cl.EnableDbgSyms(false)
+
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, fname, src, parser.ParseComments)
 	if err != nil {
