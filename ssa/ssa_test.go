@@ -1206,8 +1206,12 @@ func TestIfaceMethodClosureCallIR(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pm.Close()
-	if got := pm.String(); !strings.Contains(got, "_llgo_foo/bar.IFmt[0]") {
-		t.Fatalf("UseIfaceMethod should target named interface symbol, got:\n%s", got)
+	gotMeta := pm.String()
+	if !strings.Contains(gotMeta, "_llgo_foo/bar.IFmt Printf ") {
+		t.Fatalf("UseIfaceMethod should target named interface symbol, got:\n%s", gotMeta)
+	}
+	if !strings.Contains(gotMeta, "_llgo_foo/bar.IFmt:\n    Printf ") {
+		t.Fatalf("InterfaceInfo should be recorded for named interface demand, got:\n%s", gotMeta)
 	}
 
 	assertPkg(t, pkg, `; ModuleID = 'foo/bar'

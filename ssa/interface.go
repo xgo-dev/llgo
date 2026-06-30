@@ -90,9 +90,12 @@ func (b Builder) Imethod(intf Expr, method *types.Func) Expr {
 		if _, ok := intfSymType.(*types.TypeParam); ok {
 			intfSymType = rawIntf
 		}
-		intfSym := mb.Sym(func() string { n, _ := prog.abi.TypeName(intfSymType); return n }())
+		intfSymName := func() string { n, _ := prog.abi.TypeName(intfSymType); return n }()
+		b.recordInterfaceInfo(rawIntf, intfSymName)
+		intfSym := mb.Sym(intfSymName)
 		// Record which interface method is demanded. i is the method's index in rawIntf.
-		// Interface method sets are emitted when the interface type descriptor is built.
+		// Ensure the matching InterfaceInfo exists even if this interface type descriptor
+		// is not otherwise materialized.
 		mb.AddEdge(mb.Sym(b.Func.Name()), intfSym, meta.EdgeUseIfaceMethod, uint32(i))
 	}
 	data := b.InlineCall(b.Pkg.rtFunc("IfacePtrData"), intf)

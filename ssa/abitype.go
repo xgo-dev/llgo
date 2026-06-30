@@ -205,14 +205,7 @@ func (b Builder) abiInterfaceImethods(t *types.Interface, typeName string) llvm.
 	if n == 0 {
 		return prog.Nil(prog.rtType("Slice")).impl
 	}
-	if mb := b.Pkg.MetaBuilder; mb != nil {
-		intfSym := mb.Sym(typeName)
-		for i := 0; i < n; i++ {
-			f := t.Method(i)
-			ftypName, _ := prog.abi.TypeName(funcType(prog, f.Type()))
-			mb.AddIfaceMethod(intfSym, mthName(f), mb.Sym(ftypName))
-		}
-	}
+	b.recordInterfaceInfo(t, typeName)
 
 	imethodsName := typeName + "$imethods"
 	g := b.Pkg.VarOf(imethodsName)
@@ -244,6 +237,20 @@ func (b Builder) abiInterfaceImethods(t *types.Interface, typeName string) llvm.
 		prog.IntVal(size, prog.Int()).impl,
 		prog.IntVal(size, prog.Int()).impl,
 	})
+}
+
+func (b Builder) recordInterfaceInfo(t *types.Interface, typeName string) {
+	mb := b.Pkg.MetaBuilder
+	if mb == nil {
+		return
+	}
+	prog := b.Prog
+	intfSym := mb.Sym(typeName)
+	for i := 0; i < t.NumMethods(); i++ {
+		f := t.Method(i)
+		ftypName, _ := prog.abi.TypeName(funcType(prog, f.Type()))
+		mb.AddIfaceMethod(intfSym, mthName(f), mb.Sym(ftypName))
+	}
 }
 
 func (b Builder) abiTuples(t *types.Tuple, name string) llvm.Value {
