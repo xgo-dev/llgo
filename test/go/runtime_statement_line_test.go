@@ -45,6 +45,8 @@ func (w Wrapper) Get(i int) int {
 func main() {
 	checkCallerStatement()
 	checkCallersFramesStatement()
+	checkInterfaceIndirectCaller()
+	checkClosureIndirectCaller()
 	checkAdjacentRuntimeStack()
 	checkRecoveredDebugStackBounds()
 }
@@ -87,6 +89,51 @@ func checkCallersFramesStatement() {
 		}
 	}
 	panic("missing callers frame")
+}
+
+type indirectCaller interface {
+	call()
+}
+
+type indirectCallerImpl struct{}
+
+//go:noinline
+func checkInterfaceIndirectCaller() {
+	var c indirectCaller = indirectCallerImpl{}
+	c.call() // INTERFACE_CALL_MARK
+}
+
+//go:noinline
+func (indirectCallerImpl) call() {
+	interfaceMiddle()
+}
+
+//go:noinline
+func interfaceMiddle() {
+	checkCallerLine("interface", 2, INTERFACE_CALL_LINE)
+}
+
+//go:noinline
+func checkClosureIndirectCaller() {
+	f := closureLayer(closureLayer(func() {
+		checkCallerLine("closure", 3, CLOSURE_CALL_LINE)
+	}))
+	f() // CLOSURE_CALL_MARK
+}
+
+//go:noinline
+func closureLayer(next func()) func() {
+	return func() {
+		next()
+	}
+}
+
+//go:noinline
+func checkCallerLine(kind string, skip, want int) {
+	_, file, line, ok := runtime.Caller(skip)
+	if !ok || !strings.HasSuffix(file, "main.go") || line != want {
+		panic("bad " + kind + " indirect caller line: " + file + ":" + strconv.Itoa(line))
+	}
 }
 
 //go:noinline
@@ -142,6 +189,8 @@ func TestRuntimeStatementLineInfo(t *testing.T) {
 	source := runtimeStatementLineProbe
 	source = strings.ReplaceAll(source, "CALLER_STMT_LINE", strconv.Itoa(markerLine(source, "CALLER_STMT_MARK")))
 	source = strings.ReplaceAll(source, "CALLERS_STMT_LINE", strconv.Itoa(markerLine(source, "CALLERS_STMT_MARK")))
+	source = strings.ReplaceAll(source, "INTERFACE_CALL_LINE", strconv.Itoa(markerLine(source, "INTERFACE_CALL_MARK")))
+	source = strings.ReplaceAll(source, "CLOSURE_CALL_LINE", strconv.Itoa(markerLine(source, "CLOSURE_CALL_MARK")))
 	source = strings.ReplaceAll(source, "STACK_ONE_LINE", strconv.Itoa(markerLine(source, "STACK_ONE_MARK")))
 	source = strings.ReplaceAll(source, "STACK_TWO_LINE", strconv.Itoa(markerLine(source, "STACK_TWO_MARK")))
 	source = strings.ReplaceAll(source, "BOUNDS_LINE", strconv.Itoa(markerLine(source, "BOUNDS_MARK")))
