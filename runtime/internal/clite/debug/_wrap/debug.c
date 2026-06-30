@@ -21,6 +21,13 @@ int llgo_addrinfo(void *addr, Dl_info *info) {
     return ret;
 }
 
+void *llgo_symbol(char *name) {
+    int saved_errno = errno;
+    void *ret = dlsym(RTLD_DEFAULT, name);
+    errno = saved_errno;
+    return ret;
+}
+
 void llgo_stacktrace(int skip, void *ctx, int (*fn)(void *ctx, void *pc, void *offset, void *sp, char *name)) {
     int saved_errno = errno;
     unw_cursor_t cursor;

@@ -127,7 +127,7 @@ const frameSymbolCacheSize = 128
 var frameSymbolCache [frameSymbolCacheSize]frameSymbolCacheEntry
 
 func recordFrameSymbol(pc, offset uintptr, name string) {
-	if pc == 0 || name == "" {
+	if pc == 0 || name == "" || isPCSiteSymbol(name) {
 		return
 	}
 	i := (pc >> 4) & (frameSymbolCacheSize - 1)
@@ -162,6 +162,42 @@ var runtimeFuncInfoCount uintptr
 //go:linkname runtimeFuncInfoHashMask __llgo_funcinfo_hash_mask
 var runtimeFuncInfoHashMask uintptr
 
+type runtimePCLineRecord struct {
+	id        uint64
+	funcIndex uint32
+	file      uint32
+	line      uint32
+}
+
+//go:linkname runtimePCLineTable __llgo_pcline_table
+var runtimePCLineTable *runtimePCLineRecord
+
+//go:linkname runtimePCLineCount __llgo_pcline_count
+var runtimePCLineCount uintptr
+
+type runtimePCSiteRecord struct {
+	pc uintptr
+	id uint64
+}
+
+//go:linkname runtimePCSiteStart __llgo_pcsite_start
+var runtimePCSiteStart *runtimePCSiteRecord
+
+//go:linkname runtimePCSiteEnd __llgo_pcsite_end
+var runtimePCSiteEnd *runtimePCSiteRecord
+
+type runtimePCLineFrame struct {
+	pc        uintptr
+	entry     uintptr
+	function  string
+	file      string
+	line      int
+	startLine int
+}
+
+var runtimePCLineInit bool
+var runtimePCLineFrames []runtimePCLineFrame
+
 func hasStringPrefix(s, prefix string) bool {
 	if len(s) < len(prefix) {
 		return false
@@ -172,6 +208,15 @@ func hasStringPrefix(s, prefix string) bool {
 		}
 	}
 	return true
+}
+
+func isPCSiteSymbol(name string) bool {
+	for i := 0; i < len(name) && name[i] == '_'; i++ {
+		if hasStringPrefix(name[i:], "__llgo_pcsite_") {
+			return true
+		}
+	}
+	return false
 }
 
 func publicFunctionName(name string) string {
@@ -252,6 +297,11 @@ func funcInfoAt(i uintptr) *runtimeFuncInfoRecord {
 	return (*runtimeFuncInfoRecord)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoTable), i*size))
 }
 
+func pcLineAt(i uintptr) *runtimePCLineRecord {
+	size := unsafe.Sizeof(*runtimePCLineTable)
+	return (*runtimePCLineRecord)(unsafe.Add(unsafe.Pointer(runtimePCLineTable), i*size))
+}
+
 func funcInfoHashString(s string) uintptr {
 	const (
 		offset = uint32(2166136261)
@@ -317,8 +367,15 @@ func funcInfoJoinFile(rootID, nameID uint16) string {
 	return string(buf)
 }
 
+func funcInfoPackedFile(file uint32) string {
+	return funcInfoJoinFile(uint16(file>>16), uint16(file))
+}
+
 func funcInfoForSymbol(symbol string) *runtimeFuncInfoRecord {
 	if symbol == "" || runtimeFuncInfoTable == nil || runtimeFuncInfoCount == 0 {
+		return nil
+	}
+	if runtimeFuncInfoStrings == nil || runtimeFuncInfoStringOffsets == nil || runtimeFuncInfoCount > 1<<20 || runtimeFuncInfoHashMask > 1<<22 {
 		return nil
 	}
 	if runtimeFuncInfoHash != nil && runtimeFuncInfoHashMask != 0 {
@@ -382,6 +439,9 @@ func cachedFrameSymbol(pc uintptr) pcSymbol {
 		return pcSymbol{pc: pc}
 	}
 	rawFn := entry.name
+	if isPCSiteSymbol(rawFn) {
+		return pcSymbol{pc: pc}
+	}
 	fn := publicFunctionName(rawFn)
 	sym := pcSymbol{
 		pc:       pc,
@@ -399,6 +459,9 @@ func addrInfoSymbol(pc uintptr) pcSymbol {
 		return cachedFrameSymbol(pc)
 	}
 	rawFn := safeGoString(info.Sname, "")
+	if isPCSiteSymbol(rawFn) {
+		return pcSymbol{pc: pc}
+	}
 	if rawFn == "" {
 		if sym := cachedFrameSymbol(pc); sym.ok {
 			return sym
@@ -415,7 +478,273 @@ func addrInfoSymbol(pc uintptr) pcSymbol {
 	return sym
 }
 
+func initRuntimePCLineFrames() {
+	if runtimePCLineInit {
+		return
+	}
+	runtimePCLineInit = true
+	if runtimePCLineTable == nil ||
+		runtimePCLineCount == 0 ||
+		runtimePCSiteStart == nil ||
+		runtimePCSiteEnd == nil ||
+		runtimeFuncInfoTable == nil ||
+		runtimeFuncInfoCount == 0 ||
+		runtimeFuncInfoStrings == nil ||
+		runtimeFuncInfoStringOffsets == nil {
+		return
+	}
+	if runtimePCLineCount > 1<<20 || runtimePCLineCount > runtimeFuncInfoCount*1024 {
+		return
+	}
+	start := uintptr(unsafe.Pointer(runtimePCSiteStart))
+	end := uintptr(unsafe.Pointer(runtimePCSiteEnd))
+	size := unsafe.Sizeof(*runtimePCSiteStart)
+	if end <= start || size == 0 || (end-start)%size != 0 {
+		return
+	}
+	nsite := (end - start) / size
+	if nsite > runtimePCLineCount*1024 || nsite > 1<<22 {
+		return
+	}
+	frames := make([]runtimePCLineFrame, 0, nsite)
+	for i := uintptr(0); i < nsite; i++ {
+		site := (*runtimePCSiteRecord)(unsafe.Pointer(start + i*size))
+		if site == nil || site.id == 0 || site.pc == 0 {
+			continue
+		}
+		rec := pcLineInfoForID(site.id)
+		if rec == nil || rec.funcIndex == 0 || uintptr(rec.funcIndex) > runtimeFuncInfoCount {
+			continue
+		}
+		pc := site.pc
+		fn := funcInfoAt(uintptr(rec.funcIndex) - 1)
+		entry := symbolPC(funcInfoJoinName(fn.symbolPkg, fn.symbolName))
+		if entry == 0 {
+			sym := addrInfoSymbol(pc)
+			entry = sym.entry
+		}
+		file := funcInfoPackedFile(rec.file)
+		if file == "" {
+			file = funcInfoJoinFile(fn.fileRoot, fn.fileName)
+		}
+		line := int(rec.line)
+		if line == 0 {
+			line = int(fn.line)
+		}
+		function := publicFunctionName(funcInfoJoinName(fn.namePkg, fn.nameName))
+		if function == "" {
+			function = publicFunctionName(funcInfoJoinName(fn.symbolPkg, fn.symbolName))
+		}
+		frames = append(frames, runtimePCLineFrame{
+			pc:        pc,
+			entry:     entry,
+			function:  function,
+			file:      file,
+			line:      line,
+			startLine: int(fn.line),
+		})
+	}
+	sortRuntimePCLineFrames(frames)
+	runtimePCLineFrames = uniqueRuntimePCLineFrames(frames)
+}
+
+func pcLineInfoForID(id uint64) *runtimePCLineRecord {
+	lo, hi := uintptr(0), runtimePCLineCount
+	for lo < hi {
+		mid := (lo + hi) >> 1
+		rec := pcLineAt(mid)
+		if rec.id >= id {
+			hi = mid
+		} else {
+			lo = mid + 1
+		}
+	}
+	if lo >= runtimePCLineCount {
+		return nil
+	}
+	rec := pcLineAt(lo)
+	if rec.id != id {
+		return nil
+	}
+	return rec
+}
+
+func symbolPC(symbol string) uintptr {
+	if symbol == "" {
+		return 0
+	}
+	buf := make([]byte, len(symbol)+1)
+	copy(buf, symbol)
+	return uintptr(clitedebug.Symbol((*c.Char)(unsafe.Pointer(&buf[0]))))
+}
+
+func sortRuntimePCLineFrames(frames []runtimePCLineFrame) {
+	if len(frames) < 2 {
+		return
+	}
+	quickSortRuntimePCLineFrames(frames, 0, len(frames)-1)
+}
+
+func quickSortRuntimePCLineFrames(frames []runtimePCLineFrame, lo, hi int) {
+	for hi-lo > 16 {
+		mid := int(uint(lo+hi) >> 1)
+		if frames[mid].pc < frames[lo].pc {
+			frames[mid], frames[lo] = frames[lo], frames[mid]
+		}
+		if frames[hi].pc < frames[mid].pc {
+			frames[hi], frames[mid] = frames[mid], frames[hi]
+		}
+		if frames[mid].pc < frames[lo].pc {
+			frames[mid], frames[lo] = frames[lo], frames[mid]
+		}
+		pivot := frames[mid].pc
+		i, j := lo, hi
+		for {
+			for frames[i].pc < pivot {
+				i++
+			}
+			for frames[j].pc > pivot {
+				j--
+			}
+			if i >= j {
+				break
+			}
+			frames[i], frames[j] = frames[j], frames[i]
+			i++
+			j--
+		}
+		if j-lo < hi-i {
+			quickSortRuntimePCLineFrames(frames, lo, j)
+			lo = i
+		} else {
+			quickSortRuntimePCLineFrames(frames, i, hi)
+			hi = j
+		}
+	}
+	for i := lo + 1; i <= hi; i++ {
+		x := frames[i]
+		j := i - 1
+		for j >= lo && frames[j].pc > x.pc {
+			frames[j+1] = frames[j]
+			j--
+		}
+		frames[j+1] = x
+	}
+}
+
+func uniqueRuntimePCLineFrames(frames []runtimePCLineFrame) []runtimePCLineFrame {
+	if len(frames) < 2 {
+		return frames
+	}
+	out := frames[:1]
+	for i := 1; i < len(frames); i++ {
+		if frames[i].pc == out[len(out)-1].pc {
+			out[len(out)-1] = frames[i]
+			continue
+		}
+		out = append(out, frames[i])
+	}
+	return out
+}
+
+func pcLineFrameForPC(pc, entry uintptr) (pcSymbol, bool) {
+	if pc == 0 {
+		return pcSymbol{}, false
+	}
+	initRuntimePCLineFrames()
+	frames := runtimePCLineFrames
+	if len(frames) == 0 {
+		return pcSymbol{}, false
+	}
+	lo, hi := 0, len(frames)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if frames[mid].pc > pc {
+			hi = mid
+		} else {
+			lo = mid + 1
+		}
+	}
+	if lo == 0 {
+		return pcSymbol{}, false
+	}
+	frame := frames[lo-1]
+	if entry != 0 && frame.entry != 0 && frame.entry != entry {
+		return pcSymbol{}, false
+	}
+	return pcSymbol{
+		pc:        pc,
+		entry:     frame.entry,
+		function:  frame.function,
+		file:      frame.file,
+		line:      frame.line,
+		startLine: frame.startLine,
+		ok:        true,
+	}, true
+}
+
+func mergePCLineSymbol(base, line pcSymbol) pcSymbol {
+	if line.entry == 0 {
+		line.entry = base.entry
+	}
+	if line.function == "" {
+		line.function = base.function
+	}
+	if line.file == "" {
+		line.file = base.file
+	}
+	if line.line == 0 {
+		line.line = base.line
+	}
+	if line.startLine == 0 {
+		line.startLine = base.startLine
+	}
+	line.ok = true
+	return line
+}
+
 func frameSymbol(pc uintptr) pcSymbol {
+	if pc&3 != 0 {
+		if frame, ok := rtdebug.FrameForPC(pc); ok {
+			return pcSymbol{
+				pc:        pc,
+				entry:     frame.Entry,
+				function:  frame.Function,
+				file:      frame.File,
+				line:      frame.Line,
+				startLine: frame.StartLine,
+				ok:        true,
+			}
+		}
+	}
+	sym := addrInfoSymbol(pc)
+	if pc == 0 {
+		if frame, ok := rtdebug.FrameForPC(pc); ok {
+			return pcSymbol{
+				pc:        pc,
+				entry:     frame.Entry,
+				function:  frame.Function,
+				file:      frame.File,
+				line:      frame.Line,
+				startLine: frame.StartLine,
+				ok:        true,
+			}
+		}
+		return sym
+	}
+	if lineSym, ok := pcLineFrameForPC(pc, sym.entry); ok {
+		return mergePCLineSymbol(sym, lineSym)
+	}
+	if sym.entry == 0 || pc > sym.entry {
+		if callSym := addrInfoSymbol(pc - 1); callSym.ok {
+			if lineSym, ok := pcLineFrameForPC(pc-1, callSym.entry); ok {
+				lineSym.pc = pc
+				return mergePCLineSymbol(callSym, lineSym)
+			}
+			callSym.pc = pc
+			return callSym
+		}
+	}
 	if frame, ok := rtdebug.FrameForPC(pc); ok {
 		return pcSymbol{
 			pc:        pc,
@@ -425,16 +754,6 @@ func frameSymbol(pc uintptr) pcSymbol {
 			line:      frame.Line,
 			startLine: frame.StartLine,
 			ok:        true,
-		}
-	}
-	sym := addrInfoSymbol(pc)
-	if pc == 0 {
-		return sym
-	}
-	if sym.entry == 0 || pc > sym.entry {
-		if callSym := addrInfoSymbol(pc - 1); callSym.ok {
-			callSym.pc = pc
-			return callSym
 		}
 	}
 	return sym

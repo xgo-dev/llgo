@@ -49,6 +49,36 @@ func TestEncodePoolsStringsAndBuildsHash(t *testing.T) {
 	}
 }
 
+func TestEncodeWithPCLines(t *testing.T) {
+	table, err := EncodeWithPCLines(
+		[]Record{
+			{Symbol: "example.com/p.f", Name: "example.com/p.F", File: "/src/p/f.go", Line: 10, Column: 1},
+			{Symbol: "example.com/p.g", Name: "example.com/p.G", File: "/src/p/g.go", Line: 20, Column: 1},
+		},
+		[]PCLineRecord{
+			{ID: 3, Symbol: "missing", File: "missing.go", Line: 30},
+			{ID: 2, Symbol: "example.com/p.g", File: "/src/p/call_g.go", Line: 22},
+			{ID: 1, Symbol: "example.com/p.f", File: "/src/p/call_f.go", Line: 12},
+			{ID: 0, Symbol: "example.com/p.f", File: "zero.go", Line: 1},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(table.PCLines) != 2 {
+		t.Fatalf("encoded pclines = %d, want 2", len(table.PCLines))
+	}
+	if got := table.PCLines[0]; got.ID != 1 || got.Func != 1 || got.Line != 12 {
+		t.Fatalf("first pcline = %+v, want id 1 func 1 line 12", got)
+	}
+	if got := table.PCLines[1]; got.ID != 2 || got.Func != 2 || got.Line != 22 {
+		t.Fatalf("second pcline = %+v, want id 2 func 2 line 22", got)
+	}
+	if got := table.PCLineFile(table.PCLines[0]); got != "/src/p/call_f.go" {
+		t.Fatalf("pcline file = %q, want /src/p/call_f.go", got)
+	}
+}
+
 func TestEncodeRoundTripsSingleRecord(t *testing.T) {
 	table, err := Encode([]Record{{Symbol: "s", Name: "n", File: "f", Line: 1, Column: 2}})
 	if err != nil {

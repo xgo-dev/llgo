@@ -55,10 +55,14 @@ func TestFuncInfoTableMaterializesMetadataWithoutFunctionPointers(t *testing.T) 
 	ir := entry.LPkg.String()
 	for _, want := range []string{
 		"@__llgo_funcinfo_table = global ptr",
+		"@__llgo_pcline_table = global ptr null",
+		"@__llgo_pcsite_start = global ptr null",
+		"@__llgo_pcsite_end = global ptr null",
 		"@__llgo_funcinfo_strings = global ptr",
 		"@__llgo_funcinfo_string_offsets = global ptr",
 		"@__llgo_funcinfo_hash = global ptr",
 		"@__llgo_funcinfo_count = global i64 1",
+		"@__llgo_pcline_count = global i64 0",
 		"@__llgo_funcinfo_hash_mask = global i64 1",
 		`@"__llgo_funcinfo_table$data" = private unnamed_addr constant [1 x { i16, i16, i16, i16, i16, i16, i32 }]`,
 		`@"__llgo_funcinfo_string_offsets$data" = private unnamed_addr constant`,
@@ -75,6 +79,58 @@ func TestFuncInfoTableMaterializesMetadataWithoutFunctionPointers(t *testing.T) 
 	}
 	if strings.Contains(ir, `ptr @"example.com/p.live"`) {
 		t.Fatalf("funcinfo table must not reference function pointers:\n%s", ir)
+	}
+}
+
+func TestFuncInfoTableMaterializesPCLineMetadata(t *testing.T) {
+	prog := llssa.NewProgram(nil)
+	src := prog.NewPackage("example.com/p", "example.com/p")
+	src.EmitFuncInfo("example.com/p.live", "example.com/p.Live", "live.go", 17, 3)
+	src.EmitPCLineInfo(0x1234, "example.com/p.live", "call.go", 23, 5)
+	src.EmitPCLineInfo(0x5678, "example.com/p.missing", "missing.go", 99, 1)
+
+	records := collectFuncInfo([]Package{{LPkg: src}})
+	pcLines := collectPCLineInfo([]Package{{LPkg: src}})
+	if len(records) != 1 {
+		t.Fatalf("collectFuncInfo returned %d records, want 1", len(records))
+	}
+	if len(pcLines) != 2 {
+		t.Fatalf("collectPCLineInfo returned %d records, want 2", len(pcLines))
+	}
+
+	ctx := &context{
+		prog: prog,
+		buildConf: &Config{
+			BuildMode: BuildModeExe,
+			Goos:      "linux",
+			Goarch:    "amd64",
+		},
+	}
+	entry := genMainModule(ctx, llssa.PkgRuntime, &packages.Package{
+		PkgPath:    "example.com/main",
+		ExportFile: "main.a",
+	}, &genConfig{funcInfo: records, pcLineInfo: pcLines})
+	ir := entry.LPkg.String()
+	for _, want := range []string{
+		"@__llgo_pcline_table = global ptr",
+		"@__llgo_pcsite_start = global ptr @__start_llgo_pcline",
+		"@__llgo_pcsite_end = global ptr @__stop_llgo_pcline",
+		"@__llgo_pcline_count = global i64 1",
+		"module asm \".section llgo_pcline",
+		`@"__llgo_pcline_table$data" = private unnamed_addr constant [1 x { i64, i32, i32, i32 }]`,
+		"i64 4660",
+		"i32 23",
+		`call.go\00`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("pcline table IR missing %q:\n%s", want, ir)
+		}
+	}
+	if strings.Contains(ir, "missing.go") || strings.Contains(ir, "i64 22136") {
+		t.Fatalf("pcline table should drop records without matching function metadata:\n%s", ir)
+	}
+	if strings.Contains(ir, `ptr @"example.com/p.live"`) {
+		t.Fatalf("pcline table must not reference function pointers:\n%s", ir)
 	}
 }
 
@@ -138,10 +194,14 @@ func TestFuncInfoTableEmptyDefinitions(t *testing.T) {
 	ir := entry.LPkg.String()
 	for _, want := range []string{
 		"@__llgo_funcinfo_table = global ptr null",
+		"@__llgo_pcline_table = global ptr null",
+		"@__llgo_pcsite_start = global ptr null",
+		"@__llgo_pcsite_end = global ptr null",
 		"@__llgo_funcinfo_strings = global ptr null",
 		"@__llgo_funcinfo_string_offsets = global ptr null",
 		"@__llgo_funcinfo_hash = global ptr null",
 		"@__llgo_funcinfo_count = global i64 0",
+		"@__llgo_pcline_count = global i64 0",
 		"@__llgo_funcinfo_hash_mask = global i64 0",
 	} {
 		if !strings.Contains(ir, want) {
