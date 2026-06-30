@@ -56,17 +56,18 @@ func TestFuncInfoTableMaterializesMetadataWithoutFunctionPointers(t *testing.T) 
 	for _, want := range []string{
 		"@__llgo_funcinfo_table = global ptr",
 		"@__llgo_funcinfo_strings = global ptr",
+		"@__llgo_funcinfo_string_offsets = global ptr",
 		"@__llgo_funcinfo_hash = global ptr",
 		"@__llgo_funcinfo_count = global i64 1",
 		"@__llgo_funcinfo_hash_mask = global i64 1",
-		`@"__llgo_funcinfo_table$data" = private unnamed_addr constant [1 x { i32, i32, i32, i32, i32 }]`,
-		`@"__llgo_funcinfo_strings$data" = private unnamed_addr constant [47 x i8]`,
-		`@"__llgo_funcinfo_hash$data" = private unnamed_addr constant [2 x i32]`,
-		`example.com/p.live\00`,
-		`example.com/p.Live\00`,
+		`@"__llgo_funcinfo_table$data" = private unnamed_addr constant [1 x { i16, i16, i16, i16, i16, i16, i32 }]`,
+		`@"__llgo_funcinfo_string_offsets$data" = private unnamed_addr constant`,
+		`@"__llgo_funcinfo_hash$data" = private unnamed_addr constant [2 x i16]`,
+		`example.com/p\00`,
+		`live\00`,
+		`Live\00`,
 		`live.go\00`,
 		"i32 17",
-		"i32 3",
 	} {
 		if !strings.Contains(ir, want) {
 			t.Fatalf("funcinfo table IR missing %q:\n%s", want, ir)
@@ -138,6 +139,7 @@ func TestFuncInfoTableEmptyDefinitions(t *testing.T) {
 	for _, want := range []string{
 		"@__llgo_funcinfo_table = global ptr null",
 		"@__llgo_funcinfo_strings = global ptr null",
+		"@__llgo_funcinfo_string_offsets = global ptr null",
 		"@__llgo_funcinfo_hash = global ptr null",
 		"@__llgo_funcinfo_count = global i64 0",
 		"@__llgo_funcinfo_hash_mask = global i64 0",

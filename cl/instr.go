@@ -854,7 +854,10 @@ func (p *context) sourceLine(filename string, line int) (string, bool) {
 }
 
 func (p *context) shouldTrackCallerFrames() bool {
-	if p == nil || p.pkg == nil || p.fn == nil || !p.trackCallerFrames {
+	if p == nil || p.pkg == nil || p.fn == nil || p.goFn == nil || !p.trackCallerFrames {
+		return false
+	}
+	if !p.runtimeCallerFuncs[p.goFn] {
 		return false
 	}
 	if target := p.prog.Target(); target != nil && (target.Target != "" || target.GOARCH == "wasm") {
@@ -875,19 +878,50 @@ func isStandardLibraryPackage(pkgPath string) bool {
 }
 
 func packageUsesRuntimeCaller(pkg *ssa.Package) bool {
+	return len(runtimeCallerFuncSet(pkg)) != 0
+}
+
+func fnUsesRuntimeCaller(fn *ssa.Function) bool {
+	return runtimeCallerFuncSetFor(fn, make(map[*ssa.Function]bool), make(map[*ssa.Function]bool), false)
+}
+
+func runtimeCallerFuncSet(pkg *ssa.Package) map[*ssa.Function]bool {
 	if pkg == nil {
-		return false
+		return nil
 	}
+	dynamicCallsMayReachRuntimeCaller := packageHasDirectRuntimeCaller(pkg)
+	if !dynamicCallsMayReachRuntimeCaller {
+		return nil
+	}
+	memo := make(map[*ssa.Function]bool)
+	visiting := make(map[*ssa.Function]bool)
 	for _, member := range pkg.Members {
-		fn, ok := member.(*ssa.Function)
-		if ok && fnUsesRuntimeCaller(fn) {
+		if fn, ok := member.(*ssa.Function); ok {
+			runtimeCallerFuncSetFor(fn, memo, visiting, dynamicCallsMayReachRuntimeCaller)
+		}
+	}
+	out := make(map[*ssa.Function]bool)
+	for fn, ok := range memo {
+		if ok {
+			out[fn] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func packageHasDirectRuntimeCaller(pkg *ssa.Package) bool {
+	for _, member := range pkg.Members {
+		if fn, ok := member.(*ssa.Function); ok && fnHasDirectRuntimeCaller(fn) {
 			return true
 		}
 	}
 	return false
 }
 
-func fnUsesRuntimeCaller(fn *ssa.Function) bool {
+func fnHasDirectRuntimeCaller(fn *ssa.Function) bool {
 	if fn == nil {
 		return false
 	}
@@ -903,10 +937,50 @@ func fnUsesRuntimeCaller(fn *ssa.Function) bool {
 		}
 	}
 	for _, anon := range fn.AnonFuncs {
-		if fnUsesRuntimeCaller(anon) {
+		if fnHasDirectRuntimeCaller(anon) {
 			return true
 		}
 	}
+	return false
+}
+
+func runtimeCallerFuncSetFor(fn *ssa.Function, memo, visiting map[*ssa.Function]bool, dynamicCallsMayReachRuntimeCaller bool) bool {
+	if fn == nil {
+		return false
+	}
+	if ok, done := memo[fn]; done {
+		return ok
+	}
+	if visiting[fn] {
+		return false
+	}
+	visiting[fn] = true
+	defer delete(visiting, fn)
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			call, ok := instr.(ssa.CallInstruction)
+			if !ok {
+				continue
+			}
+			callee := call.Common().StaticCallee()
+			if callee == nil && dynamicCallsMayReachRuntimeCaller {
+				memo[fn] = true
+				return true
+			}
+			if isRuntimeCallerFunc(callee) ||
+				(callee != nil && callee.Pkg == fn.Pkg && runtimeCallerFuncSetFor(callee, memo, visiting, dynamicCallsMayReachRuntimeCaller)) {
+				memo[fn] = true
+				return true
+			}
+		}
+	}
+	for _, anon := range fn.AnonFuncs {
+		if runtimeCallerFuncSetFor(anon, memo, visiting, dynamicCallsMayReachRuntimeCaller) {
+			memo[fn] = true
+			return true
+		}
+	}
+	memo[fn] = false
 	return false
 }
 
@@ -949,21 +1023,6 @@ func isRuntimeCallerName(name string) bool {
 	}
 }
 
-func (p *context) pushCallerFrame(b llssa.Builder, fn *ssa.Function) {
-	if fn == nil {
-		return
-	}
-	pos := p.fset.Position(fn.Pos())
-	entry := b.Convert(p.prog.Uintptr(), p.fn.Expr)
-	p.callerFrameMark = b.Call(
-		p.runtimeFunc("PushCallerFrame", pushCallerFrameSig()),
-		entry,
-		b.Str(p.runtimeCallerFrameName()),
-		b.Str(pos.Filename),
-		p.prog.IntVal(uint64(pos.Line), p.prog.Int()),
-	)
-}
-
 func (p *context) runtimeCallerFrameName() string {
 	if p == nil {
 		return ""
@@ -977,43 +1036,63 @@ func (p *context) runtimeCallerFrameName() string {
 	return ""
 }
 
-func (p *context) setCallerLine(b llssa.Builder, pos token.Pos) {
+func (p *context) pushCallerLocationFrame(b llssa.Builder, fn *ssa.Function) {
+	if fn == nil {
+		return
+	}
+	pos := p.fset.Position(fn.Pos())
+	entry := b.Convert(p.prog.Uintptr(), p.fn.Expr)
+	p.callerFrameMark = b.Call(
+		p.runtimeFunc("PushCallerLocationFrame", pushCallerLocationFrameSig()),
+		entry,
+		b.Str(p.runtimeCallerFrameName()),
+		b.Str(pos.Filename),
+		p.prog.IntVal(uint64(pos.Line), p.prog.Int()),
+	)
+}
+
+func (p *context) recordCallerLocation(b llssa.Builder, pos token.Pos) {
+	p.recordRuntimeLocation(b, pos, "RecordCallerLocation")
+}
+
+func (p *context) recordPanicLocation(b llssa.Builder, pos token.Pos) {
+	p.recordRuntimeLocation(b, pos, "RecordPanicLocation")
+}
+
+func (p *context) recordRuntimeLocation(b llssa.Builder, pos token.Pos, fn string) {
 	if !p.shouldTrackCallerFrames() {
 		return
 	}
-	line := p.fset.Position(pos).Line
-	p.setCallerLineNumber(b, line)
+	position := p.fset.Position(pos)
+	if position.Line <= 0 || position.Filename == "" {
+		return
+	}
+	b.Call(
+		p.runtimeFunc(fn, recordRuntimeLocationSig()),
+		b.Convert(p.prog.Uintptr(), p.fn.Expr),
+		b.Str(p.runtimeCallerFrameName()),
+		b.Str(position.Filename),
+		p.prog.IntVal(uint64(position.Line), p.prog.Int()),
+	)
 }
 
-func (p *context) setCallerLineForCall(b llssa.Builder, call *ssa.CallCommon) {
+func (p *context) recordCallerLocationForCall(b llssa.Builder, call *ssa.CallCommon) {
 	if !p.shouldTrackCallerFrames() {
 		return
 	}
-	line := p.fset.Position(call.Pos()).Line
-	if line <= 0 {
+	callee := call.StaticCallee()
+	if isRuntimeCallerLookupFunc(callee) {
+		p.recordCallerLocation(b, call.Pos())
 		return
 	}
-	fn := "SetCallerLine"
-	sig := setCallerLineSig()
-	if isRuntimeCallerLookupFunc(call.StaticCallee()) {
-		fn = "SetCallerLookupLine"
-		sig = setCallerLookupLineSig()
-	}
-	b.Call(p.runtimeFunc(fn, sig), p.prog.IntVal(uint64(line), p.prog.Int()))
+	p.recordPanicLocation(b, call.Pos())
 }
 
-func (p *context) setCallerLineNumber(b llssa.Builder, line int) {
-	if line <= 0 {
-		return
-	}
-	b.Call(p.runtimeFunc("SetCallerLine", setCallerLineSig()), p.prog.IntVal(uint64(line), p.prog.Int()))
-}
-
-func (p *context) popCallerFrame(b llssa.Builder) {
+func (p *context) popCallerLocationFrame(b llssa.Builder) {
 	if p.callerFrameMark.IsNil() {
 		return
 	}
-	b.Call(p.runtimeFunc("PopCallerFrame", popCallerFrameSig()), p.callerFrameMark)
+	b.Call(p.runtimeFunc("PopCallerLocationFrame", popCallerLocationFrameSig()), p.callerFrameMark)
 }
 
 func (p *context) runtimeFunc(name string, sig *types.Signature) llssa.Expr {
@@ -1025,7 +1104,7 @@ func (p *context) runtimeFunc(name string, sig *types.Signature) llssa.Expr {
 	return p.pkg.NewFuncEx(fullName, sig, llssa.InGo, false, false).Expr
 }
 
-func pushCallerFrameSig() *types.Signature {
+func pushCallerLocationFrameSig() *types.Signature {
 	return types.NewSignatureType(nil, nil, nil,
 		types.NewTuple(
 			types.NewVar(token.NoPos, nil, "entry", types.Typ[types.Uintptr]),
@@ -1038,19 +1117,20 @@ func pushCallerFrameSig() *types.Signature {
 	)
 }
 
-func setCallerLineSig() *types.Signature {
+func recordRuntimeLocationSig() *types.Signature {
 	return types.NewSignatureType(nil, nil, nil,
-		types.NewTuple(types.NewVar(token.NoPos, nil, "line", types.Typ[types.Int])),
+		types.NewTuple(
+			types.NewVar(token.NoPos, nil, "entry", types.Typ[types.Uintptr]),
+			types.NewVar(token.NoPos, nil, "name", types.Typ[types.String]),
+			types.NewVar(token.NoPos, nil, "file", types.Typ[types.String]),
+			types.NewVar(token.NoPos, nil, "line", types.Typ[types.Int]),
+		),
 		nil,
 		false,
 	)
 }
 
-func setCallerLookupLineSig() *types.Signature {
-	return setCallerLineSig()
-}
-
-func popCallerFrameSig() *types.Signature {
+func popCallerLocationFrameSig() *types.Signature {
 	return types.NewSignatureType(nil, nil, nil,
 		types.NewTuple(types.NewVar(token.NoPos, nil, "mark", types.Typ[types.Int])),
 		nil,
@@ -1275,7 +1355,7 @@ func collectMethodNilDerefChecks(fn *ssa.Function) map[*ssa.UnOp]none {
 }
 
 func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallCommon, ds *explicitDeferStack) (ret llssa.Expr) {
-	p.setCallerLineForCall(b, call)
+	p.recordCallerLocationForCall(b, call)
 	cv := call.Value
 	if mthd := call.Method; mthd != nil {
 		reflectCheck := p.reflectTypeMethodCheck(call, mthd)

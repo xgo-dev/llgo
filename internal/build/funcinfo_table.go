@@ -26,14 +26,16 @@ import (
 )
 
 const (
-	funcInfoTableSymbol       = "__llgo_funcinfo_table"
-	funcInfoCountSymbol       = "__llgo_funcinfo_count"
-	funcInfoStringsSymbol     = "__llgo_funcinfo_strings"
-	funcInfoHashSymbol        = "__llgo_funcinfo_hash"
-	funcInfoHashMaskSymbol    = "__llgo_funcinfo_hash_mask"
-	funcInfoDataSymbol        = "__llgo_funcinfo_table$data"
-	funcInfoStringsDataSymbol = "__llgo_funcinfo_strings$data"
-	funcInfoHashDataSymbol    = "__llgo_funcinfo_hash$data"
+	funcInfoTableSymbol             = "__llgo_funcinfo_table"
+	funcInfoCountSymbol             = "__llgo_funcinfo_count"
+	funcInfoStringsSymbol           = "__llgo_funcinfo_strings"
+	funcInfoStringOffsetsSymbol     = "__llgo_funcinfo_string_offsets"
+	funcInfoHashSymbol              = "__llgo_funcinfo_hash"
+	funcInfoHashMaskSymbol          = "__llgo_funcinfo_hash_mask"
+	funcInfoDataSymbol              = "__llgo_funcinfo_table$data"
+	funcInfoStringsDataSymbol       = "__llgo_funcinfo_strings$data"
+	funcInfoStringOffsetsDataSymbol = "__llgo_funcinfo_string_offsets$data"
+	funcInfoHashDataSymbol          = "__llgo_funcinfo_hash$data"
 )
 
 type funcInfoRecord struct {
@@ -125,24 +127,29 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	mod := pkg.Module()
 	llvmCtx := mod.Context()
 	i8Type := llvmCtx.Int8Type()
+	i16Type := llvmCtx.Int16Type()
 	i32Type := llvmCtx.Int32Type()
 	countType := llvmCtx.IntType(ctx.prog.PointerSize() * 8)
 	recordType := llvmCtx.StructType([]llvm.Type{
-		i32Type,
-		i32Type,
-		i32Type,
-		i32Type,
+		i16Type,
+		i16Type,
+		i16Type,
+		i16Type,
+		i16Type,
+		i16Type,
 		i32Type,
 	}, false)
 
 	tablePtr := llvm.AddGlobal(mod, llvm.PointerType(recordType, 0), funcInfoTableSymbol)
 	stringsPtr := llvm.AddGlobal(mod, llvm.PointerType(i8Type, 0), funcInfoStringsSymbol)
-	hashPtr := llvm.AddGlobal(mod, llvm.PointerType(i32Type, 0), funcInfoHashSymbol)
+	stringOffsetsPtr := llvm.AddGlobal(mod, llvm.PointerType(i32Type, 0), funcInfoStringOffsetsSymbol)
+	hashPtr := llvm.AddGlobal(mod, llvm.PointerType(i16Type, 0), funcInfoHashSymbol)
 	count := llvm.AddGlobal(mod, countType, funcInfoCountSymbol)
 	hashMask := llvm.AddGlobal(mod, countType, funcInfoHashMaskSymbol)
 	if len(records) == 0 {
 		tablePtr.SetInitializer(llvm.ConstPointerNull(tablePtr.GlobalValueType()))
 		stringsPtr.SetInitializer(llvm.ConstPointerNull(stringsPtr.GlobalValueType()))
+		stringOffsetsPtr.SetInitializer(llvm.ConstPointerNull(stringOffsetsPtr.GlobalValueType()))
 		hashPtr.SetInitializer(llvm.ConstPointerNull(hashPtr.GlobalValueType()))
 		count.SetInitializer(llvm.ConstInt(countType, 0, false))
 		hashMask.SetInitializer(llvm.ConstInt(countType, 0, false))
@@ -157,11 +164,13 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	values := make([]llvm.Value, 0, len(encoded.Records))
 	for _, rec := range encoded.Records {
 		values = append(values, llvm.ConstNamedStruct(recordType, []llvm.Value{
-			llvm.ConstInt(i32Type, uint64(rec.Symbol), false),
-			llvm.ConstInt(i32Type, uint64(rec.Name), false),
-			llvm.ConstInt(i32Type, uint64(rec.File), false),
+			llvm.ConstInt(i16Type, uint64(rec.SymbolPkg), false),
+			llvm.ConstInt(i16Type, uint64(rec.SymbolName), false),
+			llvm.ConstInt(i16Type, uint64(rec.NamePkg), false),
+			llvm.ConstInt(i16Type, uint64(rec.NameName), false),
+			llvm.ConstInt(i16Type, uint64(rec.FileRoot), false),
+			llvm.ConstInt(i16Type, uint64(rec.FileName), false),
 			llvm.ConstInt(i32Type, uint64(rec.Line), false),
-			llvm.ConstInt(i32Type, uint64(rec.Column), false),
 		}))
 	}
 	arrayType := llvm.ArrayType(recordType, len(values))
@@ -180,17 +189,17 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	stringData.SetUnnamedAddr(true)
 	stringData.SetAlignment(1)
 
-	hashValues := make([]llvm.Value, 0, len(encoded.Hash))
-	for _, idx := range encoded.Hash {
-		hashValues = append(hashValues, llvm.ConstInt(i32Type, uint64(idx), false))
+	stringOffsetValues := make([]llvm.Value, 0, len(encoded.StringOffsets))
+	for _, off := range encoded.StringOffsets {
+		stringOffsetValues = append(stringOffsetValues, llvm.ConstInt(i32Type, uint64(off), false))
 	}
-	hashArrayType := llvm.ArrayType(i32Type, len(hashValues))
-	hashData := llvm.AddGlobal(mod, hashArrayType, funcInfoHashDataSymbol)
-	hashData.SetInitializer(llvm.ConstArray(i32Type, hashValues))
-	hashData.SetLinkage(llvm.PrivateLinkage)
-	hashData.SetGlobalConstant(true)
-	hashData.SetUnnamedAddr(true)
-	hashData.SetAlignment(4)
+	stringOffsetsArrayType := llvm.ArrayType(i32Type, len(stringOffsetValues))
+	stringOffsetsData := llvm.AddGlobal(mod, stringOffsetsArrayType, funcInfoStringOffsetsDataSymbol)
+	stringOffsetsData.SetInitializer(llvm.ConstArray(i32Type, stringOffsetValues))
+	stringOffsetsData.SetLinkage(llvm.PrivateLinkage)
+	stringOffsetsData.SetGlobalConstant(true)
+	stringOffsetsData.SetUnnamedAddr(true)
+	stringOffsetsData.SetAlignment(4)
 
 	tablePtr.SetInitializer(llvm.ConstInBoundsGEP(arrayType, data, []llvm.Value{
 		llvm.ConstInt(countType, 0, false),
@@ -200,12 +209,32 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		llvm.ConstInt(countType, 0, false),
 		llvm.ConstInt(countType, 0, false),
 	}))
-	hashPtr.SetInitializer(llvm.ConstInBoundsGEP(hashArrayType, hashData, []llvm.Value{
+	stringOffsetsPtr.SetInitializer(llvm.ConstInBoundsGEP(stringOffsetsArrayType, stringOffsetsData, []llvm.Value{
 		llvm.ConstInt(countType, 0, false),
 		llvm.ConstInt(countType, 0, false),
 	}))
+	if len(encoded.Hash) == 0 {
+		hashPtr.SetInitializer(llvm.ConstPointerNull(hashPtr.GlobalValueType()))
+		hashMask.SetInitializer(llvm.ConstInt(countType, 0, false))
+	} else {
+		hashValues := make([]llvm.Value, 0, len(encoded.Hash))
+		for _, idx := range encoded.Hash {
+			hashValues = append(hashValues, llvm.ConstInt(i16Type, uint64(idx), false))
+		}
+		hashArrayType := llvm.ArrayType(i16Type, len(hashValues))
+		hashData := llvm.AddGlobal(mod, hashArrayType, funcInfoHashDataSymbol)
+		hashData.SetInitializer(llvm.ConstArray(i16Type, hashValues))
+		hashData.SetLinkage(llvm.PrivateLinkage)
+		hashData.SetGlobalConstant(true)
+		hashData.SetUnnamedAddr(true)
+		hashData.SetAlignment(2)
+		hashPtr.SetInitializer(llvm.ConstInBoundsGEP(hashArrayType, hashData, []llvm.Value{
+			llvm.ConstInt(countType, 0, false),
+			llvm.ConstInt(countType, 0, false),
+		}))
+		hashMask.SetInitializer(llvm.ConstInt(countType, uint64(len(encoded.Hash)-1), false))
+	}
 	count.SetInitializer(llvm.ConstInt(countType, uint64(len(encoded.Records)), false))
-	hashMask.SetInitializer(llvm.ConstInt(countType, uint64(len(encoded.Hash)-1), false))
 }
 
 func toFuncInfoRecords(records []funcInfoRecord) []buildfuncinfo.Record {

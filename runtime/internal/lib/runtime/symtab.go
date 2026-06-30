@@ -135,11 +135,13 @@ func recordFrameSymbol(pc, offset uintptr, name string) {
 }
 
 type runtimeFuncInfoRecord struct {
-	symbol uint32
-	name   uint32
-	file   uint32
-	line   uint32
-	column uint32
+	symbolPkg  uint16
+	symbolName uint16
+	namePkg    uint16
+	nameName   uint16
+	fileRoot   uint16
+	fileName   uint16
+	line       uint32
 }
 
 //go:linkname runtimeFuncInfoTable __llgo_funcinfo_table
@@ -148,8 +150,11 @@ var runtimeFuncInfoTable *runtimeFuncInfoRecord
 //go:linkname runtimeFuncInfoStrings __llgo_funcinfo_strings
 var runtimeFuncInfoStrings *c.Char
 
+//go:linkname runtimeFuncInfoStringOffsets __llgo_funcinfo_string_offsets
+var runtimeFuncInfoStringOffsets *uint32
+
 //go:linkname runtimeFuncInfoHash __llgo_funcinfo_hash
-var runtimeFuncInfoHash *uint32
+var runtimeFuncInfoHash *uint16
 
 //go:linkname runtimeFuncInfoCount __llgo_funcinfo_count
 var runtimeFuncInfoCount uintptr
@@ -180,10 +185,6 @@ func publicFunctionName(name string) string {
 	return name
 }
 
-func cStringEqual(cstr *c.Char, s string) bool {
-	return cStringCompare(cstr, s) == 0
-}
-
 func cStringCompare(cstr *c.Char, s string) int {
 	if cstr == nil {
 		if s == "" {
@@ -212,10 +213,37 @@ func cStringCompare(cstr *c.Char, s string) int {
 	}
 }
 
-func funcInfoCString(off uint32) *c.Char {
-	if runtimeFuncInfoStrings == nil {
+func cStringLen(cstr *c.Char) int {
+	if cstr == nil {
+		return 0
+	}
+	ptr := unsafe.Pointer(cstr)
+	for i := 0; ; i++ {
+		if *(*byte)(unsafe.Add(ptr, i)) == 0 {
+			return i
+		}
+	}
+}
+
+func cStringAppend(dst []byte, cstr *c.Char) []byte {
+	if cstr == nil {
+		return dst
+	}
+	ptr := unsafe.Pointer(cstr)
+	for i := 0; ; i++ {
+		c := *(*byte)(unsafe.Add(ptr, i))
+		if c == 0 {
+			return dst
+		}
+		dst = append(dst, c)
+	}
+}
+
+func funcInfoCString(id uint16) *c.Char {
+	if runtimeFuncInfoStrings == nil || runtimeFuncInfoStringOffsets == nil {
 		return nil
 	}
+	off := *(*uint32)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoStringOffsets), uintptr(id)*unsafe.Sizeof(*runtimeFuncInfoStringOffsets)))
 	return (*c.Char)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoStrings), uintptr(off)))
 }
 
@@ -237,6 +265,58 @@ func funcInfoHashString(s string) uintptr {
 	return uintptr(h)
 }
 
+func funcInfoSymbolEqual(rec *runtimeFuncInfoRecord, symbol string) bool {
+	pkg := funcInfoCString(rec.symbolPkg)
+	name := funcInfoCString(rec.symbolName)
+	pkgLen := cStringLen(pkg)
+	nameLen := cStringLen(name)
+	if pkgLen == 0 {
+		return cStringCompare(name, symbol) == 0
+	}
+	if len(symbol) != pkgLen+1+nameLen {
+		return false
+	}
+	if cStringCompare(pkg, symbol[:pkgLen]) != 0 || symbol[pkgLen] != '.' {
+		return false
+	}
+	return cStringCompare(name, symbol[pkgLen+1:]) == 0
+}
+
+func funcInfoJoinName(pkgID, nameID uint16) string {
+	pkg := funcInfoCString(pkgID)
+	name := funcInfoCString(nameID)
+	pkgLen := cStringLen(pkg)
+	nameLen := cStringLen(name)
+	if pkgLen == 0 {
+		return safeGoString(name, "")
+	}
+	if nameLen == 0 {
+		return safeGoString(pkg, "")
+	}
+	buf := make([]byte, 0, pkgLen+1+nameLen)
+	buf = cStringAppend(buf, pkg)
+	buf = append(buf, '.')
+	buf = cStringAppend(buf, name)
+	return string(buf)
+}
+
+func funcInfoJoinFile(rootID, nameID uint16) string {
+	root := funcInfoCString(rootID)
+	name := funcInfoCString(nameID)
+	rootLen := cStringLen(root)
+	nameLen := cStringLen(name)
+	if rootLen == 0 {
+		return safeGoString(name, "")
+	}
+	if nameLen == 0 {
+		return safeGoString(root, "")
+	}
+	buf := make([]byte, 0, rootLen+nameLen)
+	buf = cStringAppend(buf, root)
+	buf = cStringAppend(buf, name)
+	return string(buf)
+}
+
 func funcInfoForSymbol(symbol string) *runtimeFuncInfoRecord {
 	if symbol == "" || runtimeFuncInfoTable == nil || runtimeFuncInfoCount == 0 {
 		return nil
@@ -244,13 +324,13 @@ func funcInfoForSymbol(symbol string) *runtimeFuncInfoRecord {
 	if runtimeFuncInfoHash != nil && runtimeFuncInfoHashMask != 0 {
 		slot := funcInfoHashString(symbol) & runtimeFuncInfoHashMask
 		for probes := uintptr(0); probes <= runtimeFuncInfoHashMask; probes++ {
-			idx := *(*uint32)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoHash), slot*unsafe.Sizeof(*runtimeFuncInfoHash)))
+			idx := *(*uint16)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoHash), slot*unsafe.Sizeof(*runtimeFuncInfoHash)))
 			if idx == 0 {
 				return nil
 			}
 			if uintptr(idx) <= runtimeFuncInfoCount {
 				rec := funcInfoAt(uintptr(idx) - 1)
-				if cStringEqual(funcInfoCString(rec.symbol), symbol) {
+				if funcInfoSymbolEqual(rec, symbol) {
 					return rec
 				}
 			}
@@ -260,7 +340,7 @@ func funcInfoForSymbol(symbol string) *runtimeFuncInfoRecord {
 	}
 	for i := uintptr(0); i < runtimeFuncInfoCount; i++ {
 		rec := funcInfoAt(i)
-		if cStringEqual(funcInfoCString(rec.symbol), symbol) {
+		if funcInfoSymbolEqual(rec, symbol) {
 			return rec
 		}
 	}
@@ -278,10 +358,10 @@ func applyFuncInfo(sym *pcSymbol, rawFunction string) {
 	if rec == nil {
 		return
 	}
-	if name := safeGoString(funcInfoCString(rec.name), ""); name != "" {
+	if name := funcInfoJoinName(rec.namePkg, rec.nameName); name != "" {
 		sym.function = publicFunctionName(name)
 	}
-	if file := safeGoString(funcInfoCString(rec.file), ""); file != "" {
+	if file := funcInfoJoinFile(rec.fileRoot, rec.fileName); file != "" {
 		if sym.file == "" {
 			sym.file = file
 		}
@@ -392,7 +472,13 @@ func (ci *Frames) Next() (frame Frame, more bool) {
 		}
 		var f *Func
 		if sym.entry != 0 || fn != "" {
-			f = &Func{entry: sym.entry, name: fn}
+			f = &Func{
+				entry: sym.entry,
+				name:  fn,
+				pc:    pc,
+				file:  sym.file,
+				line:  sym.line,
+			}
 		}
 		ci.frames = append(ci.frames, Frame{
 			PC:        pc,
@@ -438,6 +524,9 @@ func CallersFrames(callers []uintptr) *Frames {
 type Func struct {
 	entry uintptr
 	name  string
+	pc    uintptr
+	file  string
+	line  int
 }
 
 func (f *Func) Name() string {
@@ -455,6 +544,9 @@ func (f *Func) Entry() uintptr {
 }
 
 func (f *Func) FileLine(pc uintptr) (file string, line int) {
+	if f != nil && f.pc == pc && (f.file != "" || f.line != 0) {
+		return f.file, f.line
+	}
 	sym := frameSymbol(pc)
 	return sym.file, sym.line
 }

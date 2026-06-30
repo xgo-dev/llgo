@@ -29,27 +29,27 @@ func TestEncodePoolsStringsAndBuildsHash(t *testing.T) {
 	if len(table.Records) != 2 {
 		t.Fatalf("encoded records = %d, want 2", len(table.Records))
 	}
-	if table.Records[0].File == table.Records[1].File {
-		t.Fatalf("suffix sharing should not collapse distinct file strings to the same offset")
+	if table.Records[0].FileRoot == table.Records[1].FileRoot {
+		t.Fatalf("distinct file roots should use distinct ids")
 	}
-	if got := cstring(table.Strings, table.Records[1].File); got != "shared.go" {
+	if got := table.File(table.Records[1]); got != "shared.go" {
 		t.Fatalf("suffix file string = %q, want shared.go", got)
 	}
 	if len(table.Hash) == 0 || len(table.Hash)&(len(table.Hash)-1) != 0 {
 		t.Fatalf("hash bucket count = %d, want power-of-two non-zero", len(table.Hash))
 	}
-	if idx, ok := lookup(table, "example.com/p.a"); !ok || idx != 0 {
+	if idx, ok := table.LookupSymbol("example.com/p.a"); !ok || idx != 0 {
 		t.Fatalf("lookup a = %d, %v; want 0, true", idx, ok)
 	}
-	if idx, ok := lookup(table, "example.com/p.b"); !ok || idx != 1 {
+	if idx, ok := table.LookupSymbol("example.com/p.b"); !ok || idx != 1 {
 		t.Fatalf("lookup b = %d, %v; want 1, true", idx, ok)
 	}
-	if _, ok := lookup(table, "missing"); ok {
+	if _, ok := table.LookupSymbol("missing"); ok {
 		t.Fatalf("lookup missing succeeded")
 	}
 }
 
-func TestEncodeUsesUint32Records(t *testing.T) {
+func TestEncodeRoundTripsSingleRecord(t *testing.T) {
 	table, err := Encode([]Record{{Symbol: "s", Name: "n", File: "f", Line: 1, Column: 2}})
 	if err != nil {
 		t.Fatal(err)
@@ -58,17 +58,17 @@ func TestEncodeUsesUint32Records(t *testing.T) {
 		t.Fatalf("records = %d, want %d", got, want)
 	}
 	rec := table.Records[0]
-	if got, want := cstring(table.Strings, rec.Symbol), "s"; got != want {
+	if got, want := table.Symbol(rec), "s"; got != want {
 		t.Fatalf("symbol = %q, want %q", got, want)
 	}
-	if got, want := cstring(table.Strings, rec.Name), "n"; got != want {
+	if got, want := table.Name(rec), "n"; got != want {
 		t.Fatalf("name = %q, want %q", got, want)
 	}
-	if got, want := cstring(table.Strings, rec.File), "f"; got != want {
+	if got, want := table.File(rec), "f"; got != want {
 		t.Fatalf("file = %q, want %q", got, want)
 	}
-	if rec.Line != 1 || rec.Column != 2 {
-		t.Fatalf("source position = %d:%d, want 1:2", rec.Line, rec.Column)
+	if rec.Line != 1 {
+		t.Fatalf("source line = %d, want 1", rec.Line)
 	}
 }
 
@@ -81,11 +81,98 @@ func TestEncodeHashHandlesCollisions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if idx, ok := lookup(table, a); !ok || idx != 0 {
+	if idx, ok := table.LookupSymbol(a); !ok || idx != 0 {
 		t.Fatalf("lookup collision a = %d, %v; want 0, true", idx, ok)
 	}
-	if idx, ok := lookup(table, b); !ok || idx != 1 {
+	if idx, ok := table.LookupSymbol(b); !ok || idx != 1 {
 		t.Fatalf("lookup collision b = %d, %v; want 1, true", idx, ok)
+	}
+}
+
+func TestEncodeOmitsHashWhenRecordIndexesDoNotFitUint16(t *testing.T) {
+	records := make([]Record, 1<<16)
+	for i := range records {
+		records[i] = Record{Symbol: "example.com/p.f", Name: "example.com/p.F"}
+	}
+	table, err := Encode(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if table.Hash != nil {
+		t.Fatalf("hash buckets = %d, want nil fallback for oversized table", len(table.Hash))
+	}
+	if len(table.Records) != len(records) {
+		t.Fatalf("records = %d, want %d", len(table.Records), len(records))
+	}
+}
+
+func TestEncodeSplitsPackageAndFilePrefixes(t *testing.T) {
+	records := []Record{
+		{Symbol: "example.com/p.alpha", Name: "example.com/p.Alpha", File: "/home/me/mod/p/alpha.go", Line: 10},
+		{Symbol: "example.com/p.beta", Name: "example.com/p.Beta", File: "/home/me/mod/p/beta.go", Line: 20},
+		{Symbol: "example.com/q.gamma", Name: "example.com/q.Gamma", File: "/home/me/mod/q/gamma.go", Line: 30},
+	}
+	table, err := Encode(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, rec := range table.Records {
+		if got := table.Symbol(rec); got != records[i].Symbol {
+			t.Fatalf("record %d symbol = %q, want %q", i, got, records[i].Symbol)
+		}
+		if got := table.Name(rec); got != records[i].Name {
+			t.Fatalf("record %d name = %q, want %q", i, got, records[i].Name)
+		}
+		if got := table.File(rec); got != records[i].File {
+			t.Fatalf("record %d file = %q, want %q", i, got, records[i].File)
+		}
+	}
+	if table.Records[0].SymbolPkg != table.Records[1].SymbolPkg {
+		t.Fatalf("same package prefix got different ids: %d vs %d", table.Records[0].SymbolPkg, table.Records[1].SymbolPkg)
+	}
+	if table.Records[0].FileRoot != table.Records[1].FileRoot {
+		t.Fatalf("same file root got different ids: %d vs %d", table.Records[0].FileRoot, table.Records[1].FileRoot)
+	}
+	if got := table.SizeBytes(); got >= legacySizeBytes(records) {
+		t.Fatalf("compressed table size = %d, want below legacy %d", got, legacySizeBytes(records))
+	}
+}
+
+func TestLookupPCUsesPageIndex(t *testing.T) {
+	entries := []uint64{0x1000, 0x1010, 0x2800, 0x4000, 0x4010}
+	index := BuildPCIndex(entries)
+	tests := []struct {
+		pc   uint64
+		want int
+	}{
+		{0xfff, -1},
+		{0x1000, 0},
+		{0x100f, 0},
+		{0x1010, 1},
+		{0x27ff, 1},
+		{0x2800, 2},
+		{0x4018, 4},
+	}
+	for _, tt := range tests {
+		if got := LookupPC(entries, index, tt.pc); got != tt.want {
+			t.Fatalf("LookupPC(%#x) = %d, want %d", tt.pc, got, tt.want)
+		}
+	}
+}
+
+func BenchmarkLookupPCRandom(b *testing.B) {
+	entries := make([]uint64, 8192)
+	for i := range entries {
+		entries[i] = 0x100000 + uint64(i)*37
+	}
+	index := BuildPCIndex(entries)
+	var sum int
+	for i := 0; i < b.N; i++ {
+		pc := entries[(i*1103515245+12345)&(len(entries)-1)] + uint64(i&31)
+		sum += LookupPC(entries, index, pc)
+	}
+	if sum == 0 {
+		b.Fatal(sum)
 	}
 }
 
@@ -105,30 +192,21 @@ func collisionPair(t *testing.T) (string, string) {
 	return "", ""
 }
 
-func cstring(data []byte, off uint32) string {
-	end := int(off)
-	for end < len(data) && data[end] != 0 {
-		end++
-	}
-	return string(data[off:end])
-}
-
-func lookup(table Table, symbol string) (int, bool) {
-	if len(table.Hash) == 0 {
-		return 0, false
-	}
-	mask := uint32(len(table.Hash) - 1)
-	slot := HashString(symbol) & mask
-	for probes := 0; probes < len(table.Hash); probes++ {
-		idx := table.Hash[slot]
-		if idx == 0 {
-			return 0, false
+func legacySizeBytes(records []Record) int {
+	seen := make(map[string]bool)
+	stringsBytes := 1
+	for _, rec := range records {
+		for _, s := range []string{rec.Symbol, rec.Name, rec.File} {
+			if s == "" || seen[s] {
+				continue
+			}
+			seen[s] = true
+			stringsBytes += len(s) + 1
 		}
-		rec := table.Records[idx-1]
-		if cstring(table.Strings, rec.Symbol) == symbol {
-			return int(idx - 1), true
-		}
-		slot = (slot + 1) & mask
 	}
-	return 0, false
+	buckets := 1
+	for buckets*3 < len(records)*4 {
+		buckets <<= 1
+	}
+	return len(records)*20 + stringsBytes + buckets*4
 }

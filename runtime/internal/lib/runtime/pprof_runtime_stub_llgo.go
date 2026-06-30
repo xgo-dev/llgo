@@ -2,7 +2,10 @@
 
 package runtime
 
-import llrt "github.com/goplus/llgo/runtime/internal/runtime"
+import (
+	"github.com/goplus/llgo/runtime/internal/clite/tls"
+	llrt "github.com/goplus/llgo/runtime/internal/runtime"
+)
 
 type StackRecord struct {
 	Stack []uintptr
@@ -84,10 +87,32 @@ func NumGoroutine() int {
 
 func SetCPUProfileRate(hz int) {}
 
+const funcForPCCacheSize = 256
+
+type funcForPCCacheEntry struct {
+	pc uintptr
+	fn *Func
+}
+
+type funcForPCCache struct {
+	entries [funcForPCCacheSize]funcForPCCacheEntry
+}
+
+var funcForPCCacheTLS = tls.Alloc[*funcForPCCache](nil)
+
 func FuncForPC(pc uintptr) *Func {
+	if fn := cachedFuncForPC(pc); fn != nil {
+		return fn
+	}
 	sym := frameSymbol(pc)
+	fn := newFuncForPC(pc, sym)
+	cacheFuncForPC(pc, fn)
+	return fn
+}
+
+func newFuncForPC(pc uintptr, sym pcSymbol) *Func {
 	if !sym.ok && sym.function == "" {
-		return &Func{entry: pc, name: unknownFunctionName(pc)}
+		return &Func{entry: pc, name: unknownFunctionName(pc), pc: pc}
 	}
 	name := sym.function
 	if name == "" {
@@ -97,5 +122,39 @@ func FuncForPC(pc uintptr) *Func {
 	if entry == 0 {
 		entry = pc
 	}
-	return &Func{entry: entry, name: name}
+	return &Func{
+		entry: entry,
+		name:  name,
+		pc:    pc,
+		file:  sym.file,
+		line:  sym.line,
+	}
+}
+
+func cachedFuncForPC(pc uintptr) *Func {
+	cache := funcForPCCacheTLS.Get()
+	if cache == nil {
+		return nil
+	}
+	entry := &cache.entries[funcForPCCacheIndex(pc)]
+	if entry.pc == pc && entry.fn != nil {
+		return entry.fn
+	}
+	return nil
+}
+
+func cacheFuncForPC(pc uintptr, fn *Func) {
+	cache := funcForPCCacheTLS.Get()
+	if cache == nil {
+		cache = new(funcForPCCache)
+		funcForPCCacheTLS.Set(cache)
+	}
+	cache.entries[funcForPCCacheIndex(pc)] = funcForPCCacheEntry{
+		pc: pc,
+		fn: fn,
+	}
+}
+
+func funcForPCCacheIndex(pc uintptr) uintptr {
+	return (pc >> 4) & (funcForPCCacheSize - 1)
 }

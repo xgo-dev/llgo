@@ -54,6 +54,7 @@ func callers(skip int, pc []uintptr) int {
 		}
 		pc[n] = fr.PC
 		recordFrameSymbol(fr.PC, fr.Offset, fr.Name)
+		rtdebug.BindCallerLocation(fr.PC, fr.Name)
 		n++
 		return true
 	})
