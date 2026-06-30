@@ -134,10 +134,18 @@ func TestRuntimeCallerPackageDetection(t *testing.T) {
 import "runtime"
 import "runtime/debug"
 
+type callerIface interface { Call() }
+type callerImpl struct{}
+
 func direct() { runtime.Caller(0) }
 func indirect() { direct() }
 func dynamic(f func()) { f() }
 func dynamicCaller() { dynamic(direct) }
+func (callerImpl) Call() { direct() }
+func interfaceDispatch(c callerIface) { c.Call() }
+func interfaceCaller(c callerIface) { interfaceDispatch(c) }
+func closureLayer(next func()) func() { return func() { next() } }
+func closureCaller() { closureLayer(closureLayer(direct))() }
 func stack() { _ = debug.Stack() }
 func anonOnly() { func() { runtime.FuncForPC(0) }() }
 func plain() {}
@@ -161,7 +169,7 @@ func plain() {}
 		t.Fatal("plain function should not report runtime caller usage")
 	}
 	runtimeCallerFuncs := runtimeCallerFuncSet(ssapkg)
-	for _, name := range []string{"dynamic", "dynamicCaller"} {
+	for _, name := range []string{"dynamic", "dynamicCaller", "interfaceDispatch", "interfaceCaller", "closureLayer", "closureCaller"} {
 		if !runtimeCallerFuncs[ssapkg.Func(name)] {
 			t.Fatalf("%s should be tracked because dynamic calls may reach runtime stack APIs", name)
 		}
