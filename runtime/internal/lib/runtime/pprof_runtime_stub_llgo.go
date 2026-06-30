@@ -3,6 +3,8 @@
 package runtime
 
 import (
+	"unsafe"
+
 	llrt "github.com/goplus/llgo/runtime/internal/runtime"
 )
 
@@ -94,11 +96,24 @@ type funcForPCCacheEntry struct {
 }
 
 var funcForPCCache [funcForPCCacheSize]funcForPCCacheEntry
+var funcForPCLast funcForPCCacheEntry
 
 func FuncForPC(pc uintptr) *Func {
-	if fn := cachedFuncForPC(pc); fn != nil {
+	if fn := funcForPCLast.fn; fn != nil && funcForPCLast.pc == pc {
 		return fn
 	}
+	entry := (*funcForPCCacheEntry)(unsafe.Add(
+		unsafe.Pointer(&funcForPCCache[0]),
+		funcForPCCacheIndex(pc)*unsafe.Sizeof(funcForPCCacheEntry{}),
+	))
+	if fn := entry.fn; fn != nil && entry.pc == pc {
+		funcForPCLast = funcForPCCacheEntry{pc: pc, fn: fn}
+		return fn
+	}
+	return funcForPCSlow(pc)
+}
+
+func funcForPCSlow(pc uintptr) *Func {
 	if sym, ok := funcPCFrameForPC(pc); ok {
 		fn := newFuncForPC(pc, sym)
 		cacheFuncForPC(pc, fn)
@@ -131,19 +146,14 @@ func newFuncForPC(pc uintptr, sym pcSymbol) *Func {
 	}
 }
 
-func cachedFuncForPC(pc uintptr) *Func {
-	entry := &funcForPCCache[funcForPCCacheIndex(pc)]
-	fn := entry.fn
-	if fn != nil && entry.pc == pc && fn.pc == pc {
-		return fn
-	}
-	return nil
-}
-
 func cacheFuncForPC(pc uintptr, fn *Func) {
-	entry := &funcForPCCache[funcForPCCacheIndex(pc)]
+	entry := (*funcForPCCacheEntry)(unsafe.Add(
+		unsafe.Pointer(&funcForPCCache[0]),
+		funcForPCCacheIndex(pc)*unsafe.Sizeof(funcForPCCacheEntry{}),
+	))
 	entry.fn = fn
 	entry.pc = pc
+	funcForPCLast = funcForPCCacheEntry{pc: pc, fn: fn}
 }
 
 func funcForPCCacheIndex(pc uintptr) uintptr {
