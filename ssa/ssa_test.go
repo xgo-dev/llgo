@@ -204,6 +204,40 @@ func TestFuncInfoMetadataDoesNotPreserveFunctions(t *testing.T) {
 	testFuncInfoMetadataDoesNotPreserveFunctions(t)
 }
 
+func TestPCLineMetadataEmission(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("main", "main")
+
+	pkg.EmitPCLineInfo(0, "ignored", "ignored.go", -1, -1)
+	pkg.EmitPCLineInfo(0x1234, "", "ignored.go", -1, -1)
+	if ir := pkg.String(); strings.Contains(ir, PCLineMetadataName) {
+		t.Fatalf("invalid pcline rows should not emit metadata:\n%s", ir)
+	}
+
+	pkg.EmitPCLineInfo(0x1234, "main.live", "call.go", 23, 5)
+	pkg.EmitPCLineInfo(0x5678, "main.negative", "negative.go", -7, -1)
+	ir := pkg.String()
+	for _, want := range []string{
+		`!llgo.pcline = !{!`,
+		`i64 4660`,
+		`!"main.live"`,
+		`!"call.go"`,
+		`i32 23`,
+		`i32 5`,
+		`i64 22136`,
+		`!"main.negative"`,
+		`!"negative.go"`,
+		`i32 0`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("missing pcline field %s:\n%s", want, ir)
+		}
+	}
+	if strings.Contains(ir, `ptr @main.live`) || strings.Contains(ir, `ptr @"main.live"`) {
+		t.Fatalf("pcline metadata must not contain function pointer operands:\n%s", ir)
+	}
+}
+
 func testFuncInfoMetadataDoesNotPreserveFunctions(t *testing.T) {
 	t.Helper()
 

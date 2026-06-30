@@ -1381,6 +1381,7 @@ func (p *context) emitPCLineLabel(b llssa.Builder, pos token.Pos) {
 	p.pcLineSeq++
 	id := pcLineID(p.fn.Name(), p.pcLineSeq)
 	label := pcLineLabelName(id)
+	asmLabel := label + "_${:uid}"
 	ptrDirective := ".quad"
 	align := "3"
 	if p.prog.PointerSize() == 4 {
@@ -1388,10 +1389,10 @@ func (p *context) emitPCLineLabel(b llssa.Builder, pos token.Pos) {
 		align = "2"
 	}
 	b.InlineAsm(
-		label + ":\n" +
+		asmLabel + ":\n" +
 			".pushsection llgo_pcline,\"ao\",@progbits," + asmQuoteSymbol(p.fn.Name()) + "\n" +
 			".p2align " + align + "\n" +
-			ptrDirective + " " + label + "\n" +
+			ptrDirective + " " + asmLabel + "\n" +
 			".quad " + uint64Hex(id) + "\n" +
 			".popsection",
 	)
