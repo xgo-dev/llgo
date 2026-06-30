@@ -319,7 +319,9 @@ _llgo_bytes.readOp:
 _llgo_error:
     *_llgo_error
     __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.interequal
-    _llgo_iface$Fh8eUJ-Gw4e6TYuajcFIOSCuqSPKAt5nS4ow7xeGXEU$imethods
+    _llgo_error$imethods
+_llgo_error$imethods:
+    _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
 _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac:
     *_llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
 _llgo_func$8rsrSd_r3UHd_2DiYTyaOKR7BYkei4zw5ysG35KF38w:
@@ -461,10 +463,6 @@ _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
     _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to$out
 _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to$out:
     _llgo_string
-_llgo_iface$Fh8eUJ-Gw4e6TYuajcFIOSCuqSPKAt5nS4ow7xeGXEU$imethods:
-    _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
-_llgo_iface$kr1iSWwMezh0B9LdQN0MhEZUNZvBlHPhlst95jAyxE0$imethods:
-    _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk
 _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw:
     *_llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw
     __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.interequal
@@ -483,11 +481,15 @@ _llgo_int64:
 _llgo_io.Reader:
     *_llgo_io.Reader
     __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.interequal
-    _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw$imethods
+    _llgo_io.Reader$imethods
+_llgo_io.Reader$imethods:
+    _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk
 _llgo_io.Writer:
     *_llgo_io.Writer
     __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.interequal
-    _llgo_iface$kr1iSWwMezh0B9LdQN0MhEZUNZvBlHPhlst95jAyxE0$imethods
+    _llgo_io.Writer$imethods
+_llgo_io.Writer$imethods:
+    _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk
 _llgo_string:
     *_llgo_string
     __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.strequal
@@ -548,6 +550,12 @@ github.com/goplus/llgo/cl/_testmeta/methodinfo_imported.main:
     26 bytes.tryGrowByReslice _llgo_func$qVJ5SH6qhXP_h0AM41vpBGzQEMp-fQIfvwQEJy5NI8M bytes.(*Buffer).tryGrowByReslice __llgo_stub.bytes.(*Buffer).tryGrowByReslice
 
 [InterfaceInfo]
+_llgo_error:
+    Error _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
+_llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw:
+    Read _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk
 _llgo_io.Reader:
     Read _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk
+_llgo_io.Writer:
+    Write _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk
 

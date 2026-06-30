@@ -199,13 +199,23 @@ type Imethod struct {
 }
 */
 
-func (b Builder) abiInterfaceImethods(t *types.Interface, name string) llvm.Value {
+func (b Builder) abiInterfaceImethods(t *types.Interface, typeName string) llvm.Value {
 	prog := b.Prog
 	n := t.NumMethods()
 	if n == 0 {
 		return prog.Nil(prog.rtType("Slice")).impl
 	}
-	g := b.Pkg.VarOf(name)
+	if mb := b.Pkg.MetaBuilder; mb != nil {
+		intfSym := mb.Sym(typeName)
+		for i := 0; i < n; i++ {
+			f := t.Method(i)
+			ftypName, _ := prog.abi.TypeName(funcType(prog, f.Type()))
+			mb.AddIfaceMethod(intfSym, mthName(f), mb.Sym(ftypName))
+		}
+	}
+
+	imethodsName := typeName + "$imethods"
+	g := b.Pkg.VarOf(imethodsName)
 	if g == nil {
 		ft := prog.rtType("Imethod")
 		fields := make([]llvm.Value, n)
@@ -223,7 +233,7 @@ func (b Builder) abiInterfaceImethods(t *types.Interface, name string) llvm.Valu
 		}
 		atyp := prog.rawType(types.NewArray(ft.RawType(), int64(n)))
 		data := Expr{llvm.ConstArray(ft.ll, fields), atyp}
-		g = b.Pkg.doNewVar(name, prog.Pointer(atyp))
+		g = b.Pkg.doNewVar(imethodsName, prog.Pointer(atyp))
 		g.Init(data)
 		g.impl.SetGlobalConstant(true)
 		g.impl.SetLinkage(llvm.WeakODRLinkage)
@@ -330,10 +340,9 @@ func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value)
 			b.abiStructFields(t, name+"$fields"),
 		}
 	case *types.Interface:
-		name, _ = prog.abi.TypeName(t)
 		fields = []llvm.Value{
 			b.Str(pkg.Path()).impl,
-			b.abiInterfaceImethods(t, name+"$imethods"),
+			b.abiInterfaceImethods(t, name),
 		}
 	case *types.Named:
 		return b.abiExtendedFields(t.Underlying(), name, global)

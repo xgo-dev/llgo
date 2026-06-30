@@ -83,15 +83,9 @@ func (b Builder) Imethod(intf Expr, method *types.Func) Expr {
 	i := iMethodOf(rawIntf, method.Name())
 	if mb := b.Pkg.MetaBuilder; mb != nil {
 		intfSym := mb.Sym(func() string { n, _ := prog.abi.TypeName(intf.raw.Type); return n }())
-		// Record which interface method is demanded. i is the method's index in
-		// rawIntf (same order we register methods below), so it becomes extra.
+		// Record which interface method is demanded. i is the method's index in rawIntf.
+		// Interface method sets are emitted when the interface type descriptor is built.
 		mb.AddEdge(mb.Sym(b.Func.Name()), intfSym, meta.EdgeUseIfaceMethod, uint32(i))
-		// Register all interface methods — AddIfaceMethod is idempotent per (name, mtype).
-		for j := 0; j < rawIntf.NumMethods(); j++ {
-			im := rawIntf.Method(j)
-			imtypeName, _ := prog.abi.TypeName(funcType(prog, im.Type()))
-			mb.AddIfaceMethod(intfSym, mthName(im), mb.Sym(imtypeName))
-		}
 	}
 	data := b.InlineCall(b.Pkg.rtFunc("IfacePtrData"), intf)
 	var fn Expr
