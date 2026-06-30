@@ -18,6 +18,7 @@ package build
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/xgo-dev/llvm"
 
@@ -310,8 +311,7 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 			llvm.ConstInt(countType, 0, false),
 		}))
 		pcLineCount.SetInitializer(llvm.ConstInt(countType, uint64(len(encoded.PCLines)), false))
-		if ctx.buildConf.Goos == "linux" && ctx.buildConf.Target == "" {
-			emitPCSiteSentinel(mod, ctx.prog.PointerSize())
+		if shouldEmitRuntimeELFSites(ctx) {
 			pcSiteStart := llvm.AddGlobal(mod, pcSiteRecordType, pcSiteStartSymbol)
 			pcSiteEnd := llvm.AddGlobal(mod, pcSiteRecordType, pcSiteEndSymbol)
 			pcSiteStartPtr.SetInitializer(pcSiteStart)
@@ -321,6 +321,7 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 			pcSiteEndPtr.SetInitializer(llvm.ConstPointerNull(pcSiteEndPtr.GlobalValueType()))
 		}
 	}
+	emitRuntimeFuncInfoSentinels(mod, ctx.prog.PointerSize(), shouldEmitRuntimeELFSites(ctx) && len(pcLineValues) != 0)
 
 	stringArrayType := llvm.ArrayType(i8Type, len(encoded.Strings))
 	stringData := llvm.AddGlobal(mod, stringArrayType, funcInfoStringsDataSymbol)
@@ -378,19 +379,31 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	count.SetInitializer(llvm.ConstInt(countType, uint64(len(encoded.Records)), false))
 }
 
-func emitPCSiteSentinel(mod llvm.Module, pointerSize int) {
+func shouldEmitRuntimeELFSites(ctx *context) bool {
+	return ctx != nil &&
+		ctx.buildConf != nil &&
+		ctx.buildConf.Goos == "linux" &&
+		ctx.buildConf.Target == ""
+}
+
+func emitRuntimeFuncInfoSentinels(mod llvm.Module, pointerSize int, pcSite bool) {
+	if !pcSite {
+		return
+	}
 	ptrDirective := ".quad"
 	align := "3"
 	if pointerSize == 4 {
 		ptrDirective = ".long"
 		align = "2"
 	}
-	mod.SetInlineAsm(
-		".section llgo_pcline,\"aR\",@progbits\n" +
-			".p2align " + align + "\n" +
-			ptrDirective + " 0\n" +
-			".quad 0\n",
-	)
+	var asm strings.Builder
+	if pcSite {
+		asm.WriteString(".section llgo_pcline,\"aR\",@progbits\n")
+		asm.WriteString(".p2align " + align + "\n")
+		asm.WriteString(ptrDirective + " 0\n")
+		asm.WriteString(".quad 0\n")
+	}
+	mod.SetInlineAsm(asm.String())
 }
 
 func toFuncInfoRecords(records []funcInfoRecord) []buildfuncinfo.Record {

@@ -3,7 +3,6 @@
 package runtime
 
 import (
-	"github.com/goplus/llgo/runtime/internal/clite/tls"
 	llrt "github.com/goplus/llgo/runtime/internal/runtime"
 )
 
@@ -87,21 +86,22 @@ func NumGoroutine() int {
 
 func SetCPUProfileRate(hz int) {}
 
-const funcForPCCacheSize = 256
+const funcForPCCacheSize = 1024
 
 type funcForPCCacheEntry struct {
 	pc uintptr
 	fn *Func
 }
 
-type funcForPCCache struct {
-	entries [funcForPCCacheSize]funcForPCCacheEntry
-}
-
-var funcForPCCacheTLS = tls.Alloc[*funcForPCCache](nil)
+var funcForPCCache [funcForPCCacheSize]funcForPCCacheEntry
 
 func FuncForPC(pc uintptr) *Func {
 	if fn := cachedFuncForPC(pc); fn != nil {
+		return fn
+	}
+	if sym, ok := funcPCFrameForPC(pc); ok {
+		fn := newFuncForPC(pc, sym)
+		cacheFuncForPC(pc, fn)
 		return fn
 	}
 	sym := frameSymbol(pc)
@@ -132,27 +132,18 @@ func newFuncForPC(pc uintptr, sym pcSymbol) *Func {
 }
 
 func cachedFuncForPC(pc uintptr) *Func {
-	cache := funcForPCCacheTLS.Get()
-	if cache == nil {
-		return nil
-	}
-	entry := &cache.entries[funcForPCCacheIndex(pc)]
-	if entry.pc == pc && entry.fn != nil {
-		return entry.fn
+	entry := &funcForPCCache[funcForPCCacheIndex(pc)]
+	fn := entry.fn
+	if fn != nil && entry.pc == pc && fn.pc == pc {
+		return fn
 	}
 	return nil
 }
 
 func cacheFuncForPC(pc uintptr, fn *Func) {
-	cache := funcForPCCacheTLS.Get()
-	if cache == nil {
-		cache = new(funcForPCCache)
-		funcForPCCacheTLS.Set(cache)
-	}
-	cache.entries[funcForPCCacheIndex(pc)] = funcForPCCacheEntry{
-		pc: pc,
-		fn: fn,
-	}
+	entry := &funcForPCCache[funcForPCCacheIndex(pc)]
+	entry.fn = fn
+	entry.pc = pc
 }
 
 func funcForPCCacheIndex(pc uintptr) uintptr {

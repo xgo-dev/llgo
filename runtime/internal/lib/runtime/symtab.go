@@ -198,6 +198,26 @@ type runtimePCLineFrame struct {
 var runtimePCLineInit bool
 var runtimePCLineFrames []runtimePCLineFrame
 
+type runtimeFuncPCFrame struct {
+	entry     uintptr
+	funcIndex uint32
+	function  string
+	file      string
+	startLine int
+}
+
+type runtimePCPageIndex struct {
+	base  uintptr
+	pages []uint32
+}
+
+const runtimeFuncPCPageShift = 12
+
+var runtimeFuncPCInit bool
+var runtimeFuncPCFrames []runtimeFuncPCFrame
+var runtimeFuncPCEntries []uintptr
+var runtimeFuncPCIndex runtimePCPageIndex
+
 func hasStringPrefix(s, prefix string) bool {
 	if len(s) < len(prefix) {
 		return false
@@ -478,6 +498,217 @@ func addrInfoSymbol(pc uintptr) pcSymbol {
 	return sym
 }
 
+func initRuntimeFuncPCFrames() {
+	if runtimeFuncPCInit {
+		return
+	}
+	runtimeFuncPCInit = true
+	if runtimeFuncInfoTable == nil ||
+		runtimeFuncInfoCount == 0 ||
+		runtimeFuncInfoStrings == nil ||
+		runtimeFuncInfoStringOffsets == nil {
+		return
+	}
+	if runtimeFuncInfoCount > 1<<20 {
+		return
+	}
+	frames := make([]runtimeFuncPCFrame, 0, runtimeFuncInfoCount)
+	entries := make([]uintptr, runtimeFuncInfoCount+1)
+	for i := uintptr(0); i < runtimeFuncInfoCount; i++ {
+		fn := funcInfoAt(i)
+		pc := symbolPC(funcInfoJoinName(fn.symbolPkg, fn.symbolName))
+		if pc == 0 {
+			continue
+		}
+		index := uint32(i + 1)
+		function := publicFunctionName(funcInfoJoinName(fn.namePkg, fn.nameName))
+		if function == "" {
+			function = publicFunctionName(funcInfoJoinName(fn.symbolPkg, fn.symbolName))
+		}
+		file := funcInfoJoinFile(fn.fileRoot, fn.fileName)
+		frames = append(frames, runtimeFuncPCFrame{
+			entry:     pc,
+			funcIndex: index,
+			function:  function,
+			file:      file,
+			startLine: int(fn.line),
+		})
+		if entries[index] == 0 || pc < entries[index] {
+			entries[index] = pc
+		}
+	}
+	sortRuntimeFuncPCFrames(frames)
+	frames = uniqueRuntimeFuncPCFrames(frames)
+	runtimeFuncPCFrames = frames
+	runtimeFuncPCEntries = entries
+	runtimeFuncPCIndex = buildRuntimeFuncPCIndex(frames)
+}
+
+func sortRuntimeFuncPCFrames(frames []runtimeFuncPCFrame) {
+	if len(frames) < 2 {
+		return
+	}
+	quickSortRuntimeFuncPCFrames(frames, 0, len(frames)-1)
+}
+
+func quickSortRuntimeFuncPCFrames(frames []runtimeFuncPCFrame, lo, hi int) {
+	for hi-lo > 16 {
+		mid := int(uint(lo+hi) >> 1)
+		if frames[mid].entry < frames[lo].entry {
+			frames[mid], frames[lo] = frames[lo], frames[mid]
+		}
+		if frames[hi].entry < frames[mid].entry {
+			frames[hi], frames[mid] = frames[mid], frames[hi]
+		}
+		if frames[mid].entry < frames[lo].entry {
+			frames[mid], frames[lo] = frames[lo], frames[mid]
+		}
+		pivot := frames[mid].entry
+		i, j := lo, hi
+		for {
+			for frames[i].entry < pivot {
+				i++
+			}
+			for frames[j].entry > pivot {
+				j--
+			}
+			if i >= j {
+				break
+			}
+			frames[i], frames[j] = frames[j], frames[i]
+			i++
+			j--
+		}
+		if j-lo < hi-i {
+			quickSortRuntimeFuncPCFrames(frames, lo, j)
+			lo = i
+		} else {
+			quickSortRuntimeFuncPCFrames(frames, i, hi)
+			hi = j
+		}
+	}
+	for i := lo + 1; i <= hi; i++ {
+		x := frames[i]
+		j := i - 1
+		for j >= lo && frames[j].entry > x.entry {
+			frames[j+1] = frames[j]
+			j--
+		}
+		frames[j+1] = x
+	}
+}
+
+func uniqueRuntimeFuncPCFrames(frames []runtimeFuncPCFrame) []runtimeFuncPCFrame {
+	if len(frames) < 2 {
+		return frames
+	}
+	out := frames[:1]
+	for i := 1; i < len(frames); i++ {
+		if frames[i].entry == out[len(out)-1].entry {
+			out[len(out)-1] = frames[i]
+			continue
+		}
+		out = append(out, frames[i])
+	}
+	return out
+}
+
+func buildRuntimeFuncPCIndex(frames []runtimeFuncPCFrame) runtimePCPageIndex {
+	if len(frames) == 0 {
+		return runtimePCPageIndex{}
+	}
+	base := frames[0].entry >> runtimeFuncPCPageShift
+	last := frames[len(frames)-1].entry >> runtimeFuncPCPageShift
+	if last < base {
+		return runtimePCPageIndex{}
+	}
+	npages := last - base + 2
+	if npages > 1<<20 && npages > uintptr(len(frames))*64 {
+		return runtimePCPageIndex{}
+	}
+	pages := make([]uint32, npages)
+	next := 0
+	for page := range pages {
+		limit := (base + uintptr(page)) << runtimeFuncPCPageShift
+		for next < len(frames) && frames[next].entry < limit {
+			next++
+		}
+		pages[page] = uint32(next)
+	}
+	return runtimePCPageIndex{base: base, pages: pages}
+}
+
+func runtimeFuncPCFrameIndex(pc uintptr) int {
+	frames := runtimeFuncPCFrames
+	if len(frames) == 0 {
+		return -1
+	}
+	lo, hi := 0, len(frames)
+	if pages := runtimeFuncPCIndex.pages; len(pages) != 0 {
+		page := pc >> runtimeFuncPCPageShift
+		if page >= runtimeFuncPCIndex.base {
+			off := page - runtimeFuncPCIndex.base
+			if off < uintptr(len(pages)) {
+				lo = int(pages[off])
+				if off+1 < uintptr(len(pages)) {
+					hi = int(pages[off+1])
+				}
+				if lo > 0 {
+					lo--
+				}
+				if hi < len(frames) {
+					hi++
+				}
+			}
+		}
+	}
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if frames[mid].entry > pc {
+			hi = mid
+		} else {
+			lo = mid + 1
+		}
+	}
+	idx := lo - 1
+	if idx < 0 {
+		return -1
+	}
+	return idx
+}
+
+func funcEntryForIndex(index uint32) uintptr {
+	if index == 0 {
+		return 0
+	}
+	initRuntimeFuncPCFrames()
+	if uintptr(index) >= uintptr(len(runtimeFuncPCEntries)) {
+		return 0
+	}
+	return runtimeFuncPCEntries[index]
+}
+
+func funcPCFrameForPC(pc uintptr) (pcSymbol, bool) {
+	if pc == 0 {
+		return pcSymbol{}, false
+	}
+	initRuntimeFuncPCFrames()
+	idx := runtimeFuncPCFrameIndex(pc)
+	if idx < 0 {
+		return pcSymbol{}, false
+	}
+	frame := runtimeFuncPCFrames[idx]
+	return pcSymbol{
+		pc:        pc,
+		entry:     frame.entry,
+		function:  frame.function,
+		file:      frame.file,
+		line:      frame.startLine,
+		startLine: frame.startLine,
+		ok:        true,
+	}, true
+}
+
 func initRuntimePCLineFrames() {
 	if runtimePCLineInit {
 		return
@@ -518,7 +749,10 @@ func initRuntimePCLineFrames() {
 		}
 		pc := site.pc
 		fn := funcInfoAt(uintptr(rec.funcIndex) - 1)
-		entry := symbolPC(funcInfoJoinName(fn.symbolPkg, fn.symbolName))
+		entry := funcEntryForIndex(rec.funcIndex)
+		if entry == 0 {
+			entry = symbolPC(funcInfoJoinName(fn.symbolPkg, fn.symbolName))
+		}
 		if entry == 0 {
 			sym := addrInfoSymbol(pc)
 			entry = sym.entry
@@ -683,6 +917,39 @@ func pcLineFrameForPC(pc, entry uintptr) (pcSymbol, bool) {
 	}, true
 }
 
+func pcLineFrameForExactPC(pc uintptr) (pcSymbol, bool) {
+	if pc == 0 {
+		return pcSymbol{}, false
+	}
+	initRuntimePCLineFrames()
+	frames := runtimePCLineFrames
+	if len(frames) == 0 {
+		return pcSymbol{}, false
+	}
+	lo, hi := 0, len(frames)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if frames[mid].pc >= pc {
+			hi = mid
+		} else {
+			lo = mid + 1
+		}
+	}
+	if lo >= len(frames) || frames[lo].pc != pc {
+		return pcSymbol{}, false
+	}
+	frame := frames[lo]
+	return pcSymbol{
+		pc:        pc,
+		entry:     frame.entry,
+		function:  frame.function,
+		file:      frame.file,
+		line:      frame.line,
+		startLine: frame.startLine,
+		ok:        true,
+	}, true
+}
+
 func mergePCLineSymbol(base, line pcSymbol) pcSymbol {
 	if line.entry == 0 {
 		line.entry = base.entry
@@ -717,8 +984,8 @@ func frameSymbol(pc uintptr) pcSymbol {
 			}
 		}
 	}
-	sym := addrInfoSymbol(pc)
 	if pc == 0 {
+		sym := addrInfoSymbol(pc)
 		if frame, ok := rtdebug.FrameForPC(pc); ok {
 			return pcSymbol{
 				pc:        pc,
@@ -732,6 +999,14 @@ func frameSymbol(pc uintptr) pcSymbol {
 		}
 		return sym
 	}
+	if lineSym, ok := pcLineFrameForExactPC(pc); ok {
+		return lineSym
+	}
+	if lineSym, ok := pcLineFrameForExactPC(pc - 1); ok {
+		lineSym.pc = pc
+		return lineSym
+	}
+	sym := addrInfoSymbol(pc)
 	if lineSym, ok := pcLineFrameForPC(pc, sym.entry); ok {
 		return mergePCLineSymbol(sym, lineSym)
 	}
@@ -743,6 +1018,11 @@ func frameSymbol(pc uintptr) pcSymbol {
 			}
 			callSym.pc = pc
 			return callSym
+		}
+	}
+	if !sym.ok {
+		if funcSym, ok := funcPCFrameForPC(pc); ok {
+			return funcSym
 		}
 	}
 	if frame, ok := rtdebug.FrameForPC(pc); ok {
