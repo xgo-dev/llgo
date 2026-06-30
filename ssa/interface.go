@@ -42,11 +42,12 @@ func (b Builder) newItab(tintf, typ Expr) Expr {
 	return b.Call(b.Pkg.rtFunc("NewItab"), tintf, typ)
 }
 
-func (b Builder) unsafeInterface(rawIntf *types.Interface, t Expr, data llvm.Value) llvm.Value {
+func (b Builder) unsafeInterface(intfType types.Type, t Expr, data llvm.Value) llvm.Value {
+	rawIntf := intfType.Underlying().(*types.Interface)
 	if rawIntf.Empty() {
 		return b.unsafeEface(t.impl, data)
 	}
-	tintf := b.abiType(rawIntf)
+	tintf := b.abiType(intfType)
 	itab := b.newItab(tintf, t)
 	return b.unsafeIface(itab.impl, data)
 }
@@ -135,14 +136,14 @@ func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
 	if !directIfaceType(typ.raw.Type) {
 		vptr := b.AllocU(typ)
 		b.Store(vptr, x)
-		return Expr{b.unsafeInterface(rawIntf, tabi, vptr.impl), tinter}
+		return Expr{b.unsafeInterface(tinter.raw.Type, tabi, vptr.impl), tinter}
 	}
 	kind, _, lvl := abi.DataKindOf(typ.raw.Type, 0, prog.is32Bits)
 	switch kind {
 	case abi.Indirect:
 		vptr := b.AllocU(typ)
 		b.Store(vptr, x)
-		return Expr{b.unsafeInterface(rawIntf, tabi, vptr.impl), tinter}
+		return Expr{b.unsafeInterface(tinter.raw.Type, tabi, vptr.impl), tinter}
 	}
 	ximpl := x.impl
 	if lvl > 0 {
@@ -151,7 +152,7 @@ func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
 	var u llvm.Value
 	switch kind {
 	case abi.Pointer:
-		return Expr{b.unsafeInterface(rawIntf, tabi, ximpl), tinter}
+		return Expr{b.unsafeInterface(tinter.raw.Type, tabi, ximpl), tinter}
 	case abi.Integer:
 		tu := prog.Uintptr()
 		u = llvm.CreateIntCast(b.impl, ximpl, tu.ll)
@@ -166,11 +167,10 @@ func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
 		panic("todo")
 	}
 	data := llvm.CreateIntToPtr(b.impl, u, prog.tyVoidPtr())
-	return Expr{b.unsafeInterface(rawIntf, tabi, data), tinter}
+	return Expr{b.unsafeInterface(tinter.raw.Type, tabi, data), tinter}
 }
 
 func (b Builder) MakeInterfaceFromPtr(tinter Type, ptr Expr) (ret Expr) {
-	rawIntf := tinter.raw.Type.Underlying().(*types.Interface)
 	prog := b.Prog
 	b.AssertNilDeref(ptr)
 
@@ -185,7 +185,7 @@ func (b Builder) MakeInterfaceFromPtr(tinter Type, ptr Expr) (ret Expr) {
 	dst := b.Convert(prog.VoidPtr(), vptr)
 	src := b.Convert(prog.VoidPtr(), ptr)
 	b.Call(b.Pkg.rtFunc("Typedmemmove"), tabi, dst, src)
-	return Expr{b.unsafeInterface(rawIntf, tabi, vptr.impl), tinter}
+	return Expr{b.unsafeInterface(tinter.raw.Type, tabi, vptr.impl), tinter}
 }
 
 func (b Builder) recordUseIface(typ Type) {
@@ -310,9 +310,9 @@ func (b Builder) TypeAssert(x Expr, assertedTyp Type, commaOk bool) Expr {
 		eq = b.BinOp(token.NEQ, tx, b.Prog.Zero(b.Prog.AbiTypePtr()))
 		val = func() Expr { return x }
 	} else {
-		if rawIntf, ok := assertedTyp.raw.Type.Underlying().(*types.Interface); ok {
+		if _, ok := assertedTyp.raw.Type.Underlying().(*types.Interface); ok {
 			eq = b.InlineCall(b.Pkg.rtFunc("Implements"), tabi, tx)
-			val = func() Expr { return Expr{b.unsafeInterface(rawIntf, tx, b.faceData(x.impl)), assertedTyp} }
+			val = func() Expr { return Expr{b.unsafeInterface(assertedTyp.raw.Type, tx, b.faceData(x.impl)), assertedTyp} }
 		} else if assertedTyp.kind == vkClosure {
 			eq = b.InlineCall(b.Pkg.rtFunc("MatchesClosure"), tabi, tx)
 			val = func() Expr { return b.valFromData(assertedTyp, b.faceData(x.impl)) }
@@ -376,10 +376,9 @@ func typeAssertMissingMethod(assertedTyp Type) string {
 //
 //	t1 = change interface interface{} <- I (t0)
 func (b Builder) ChangeInterface(typ Type, x Expr) (ret Expr) {
-	rawIntf := typ.raw.Type.Underlying().(*types.Interface)
 	tabi := b.faceAbiType(x)
 	data := b.faceData(x.impl)
-	return Expr{b.unsafeInterface(rawIntf, tabi, data), typ}
+	return Expr{b.unsafeInterface(typ.raw.Type, tabi, data), typ}
 }
 
 // -----------------------------------------------------------------------------

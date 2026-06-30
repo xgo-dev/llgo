@@ -1,11 +1,8 @@
 package deadcode
 
 import (
-	"fmt"
 	"go/token"
-	"os"
 	"sort"
-	"time"
 
 	"github.com/goplus/llgo/internal/meta"
 )
@@ -110,7 +107,6 @@ func deadcode(info *meta.GlobalSummary, roots []meta.Symbol) map[meta.Symbol][]i
 // Concrete type methodImplKeys are NOT computed here. They are built lazily in
 // computeMethodImplKeys when a type first enters usedInIface.
 func (d *pass) buildMethodRefs() {
-	t0 := time.Now()
 	for _, iface := range d.info.Interfaces() {
 		d.typeSymbols[iface] = struct{}{}
 		seenNames := make(map[meta.Name]struct{})
@@ -123,9 +119,6 @@ func (d *pass) buildMethodRefs() {
 			d.ifaceMethodCounts[iface]++
 		}
 	}
-	t1 := time.Now()
-	fmt.Fprintf(os.Stderr, "[dce] methodRefs index: interfaces=%d total_sigs=%d %v\n",
-		len(d.info.Interfaces()), len(d.methodRefs), t1.Sub(t0))
 }
 
 // computeMethodImplKeys lazily builds methodImplKeys for a single concrete type
