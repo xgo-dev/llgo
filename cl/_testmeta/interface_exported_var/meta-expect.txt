@@ -1,8 +1,6 @@
 [TypeChildren]
 *[]_llgo_uint8:
     []_llgo_uint8
-*_llgo_encoding/binary.ByteOrder:
-    _llgo_encoding/binary.ByteOrder
 *_llgo_encoding/binary.littleEndian:
     _llgo_encoding/binary.littleEndian
 *_llgo_func$HQem8FNvPqrEVQ_c0XssBDFXIDOnET_Ex7o3PlV9bSs:
@@ -25,6 +23,8 @@
     _llgo_func$mjkdaEUHPtpOYlUrWGfnskhhvdyc7k9Fk-vwWj3VftE
 *_llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
     _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
+*_llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw:
+    _llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw
 *_llgo_string:
     _llgo_string
 *_llgo_uint16:
@@ -37,14 +37,6 @@
     _llgo_uint8
 []_llgo_uint8:
     _llgo_uint8
-_llgo_encoding/binary.ByteOrder:
-    _llgo_func$ICfGJV9Kp4o-2SMi1iuyC9xBBX1c5utHD63uVbyrfEc
-    _llgo_func$YjgNCugJxKXYLk39KOJyRyLtvcHU1d7KRz4inhHdVgg
-    _llgo_func$hV5ojfmZDe6MffI0ylemgDF5GZlZiYaJbQvka2A0Gus
-    _llgo_func$ibbVVENlZHDgol7ROnCbrRmXPuO818NXcpl5dfFoKhU
-    _llgo_func$mBhSCdZCFK2IHVQVA73dFmon0gMcig2Q387khsbzmm8
-    _llgo_func$mjkdaEUHPtpOYlUrWGfnskhhvdyc7k9Fk-vwWj3VftE
-    _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
 _llgo_func$HQem8FNvPqrEVQ_c0XssBDFXIDOnET_Ex7o3PlV9bSs:
     []_llgo_uint8
     _llgo_uint64
@@ -74,14 +66,19 @@ _llgo_func$mjkdaEUHPtpOYlUrWGfnskhhvdyc7k9Fk-vwWj3VftE:
     _llgo_uint64
 _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
     _llgo_string
+_llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw:
+    _llgo_func$ICfGJV9Kp4o-2SMi1iuyC9xBBX1c5utHD63uVbyrfEc
+    _llgo_func$YjgNCugJxKXYLk39KOJyRyLtvcHU1d7KRz4inhHdVgg
+    _llgo_func$hV5ojfmZDe6MffI0ylemgDF5GZlZiYaJbQvka2A0Gus
+    _llgo_func$ibbVVENlZHDgol7ROnCbrRmXPuO818NXcpl5dfFoKhU
+    _llgo_func$mBhSCdZCFK2IHVQVA73dFmon0gMcig2Q387khsbzmm8
+    _llgo_func$mjkdaEUHPtpOYlUrWGfnskhhvdyc7k9Fk-vwWj3VftE
+    _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
 
 [OrdinaryEdges]
 *[]_llgo_uint8:
     []_llgo_uint8
     __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
-*_llgo_encoding/binary.ByteOrder:
-    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
-    _llgo_encoding/binary.ByteOrder
 *_llgo_encoding/binary.littleEndian:
     __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
     _llgo_encoding/binary.littleEndian
@@ -115,6 +112,9 @@ _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
 *_llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
     __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
     _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
+*_llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    _llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw
 *_llgo_string:
     __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
     _llgo_string
@@ -193,18 +193,6 @@ __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr:
     github.com/goplus/llgo/runtime/internal/runtime.memequalptr
 __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.strequal:
     github.com/goplus/llgo/runtime/internal/runtime.strequal
-_llgo_encoding/binary.ByteOrder:
-    *_llgo_encoding/binary.ByteOrder
-    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.interequal
-    _llgo_encoding/binary.ByteOrder$imethods
-_llgo_encoding/binary.ByteOrder$imethods:
-    _llgo_func$ICfGJV9Kp4o-2SMi1iuyC9xBBX1c5utHD63uVbyrfEc
-    _llgo_func$YjgNCugJxKXYLk39KOJyRyLtvcHU1d7KRz4inhHdVgg
-    _llgo_func$hV5ojfmZDe6MffI0ylemgDF5GZlZiYaJbQvka2A0Gus
-    _llgo_func$ibbVVENlZHDgol7ROnCbrRmXPuO818NXcpl5dfFoKhU
-    _llgo_func$mBhSCdZCFK2IHVQVA73dFmon0gMcig2Q387khsbzmm8
-    _llgo_func$mjkdaEUHPtpOYlUrWGfnskhhvdyc7k9Fk-vwWj3VftE
-    _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
 _llgo_encoding/binary.littleEndian:
     *_llgo_encoding/binary.littleEndian
     __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequal0
@@ -282,6 +270,18 @@ _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
     _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to$out
 _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to$out:
     _llgo_string
+_llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw:
+    *_llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.interequal
+    _llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw$imethods
+_llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw$imethods:
+    _llgo_func$ICfGJV9Kp4o-2SMi1iuyC9xBBX1c5utHD63uVbyrfEc
+    _llgo_func$YjgNCugJxKXYLk39KOJyRyLtvcHU1d7KRz4inhHdVgg
+    _llgo_func$hV5ojfmZDe6MffI0ylemgDF5GZlZiYaJbQvka2A0Gus
+    _llgo_func$ibbVVENlZHDgol7ROnCbrRmXPuO818NXcpl5dfFoKhU
+    _llgo_func$mBhSCdZCFK2IHVQVA73dFmon0gMcig2Q387khsbzmm8
+    _llgo_func$mjkdaEUHPtpOYlUrWGfnskhhvdyc7k9Fk-vwWj3VftE
+    _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
 _llgo_string:
     *_llgo_string
     __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.strequal
@@ -301,8 +301,8 @@ github.com/goplus/llgo/cl/_testmeta/interface_exported_var.init:
     encoding/binary.init
     github.com/goplus/llgo/cl/_testmeta/interface_exported_var.init$guard
 github.com/goplus/llgo/cl/_testmeta/interface_exported_var.main:
-    _llgo_encoding/binary.ByteOrder
     _llgo_encoding/binary.littleEndian
+    _llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw
     encoding/binary.LittleEndian
     github.com/goplus/llgo/runtime/internal/runtime.AllocU
     github.com/goplus/llgo/runtime/internal/runtime.AllocZ
@@ -316,7 +316,7 @@ github.com/goplus/llgo/cl/_testmeta/interface_exported_var.main:
 
 [UseIfaceMethod]
 github.com/goplus/llgo/cl/_testmeta/interface_exported_var.main:
-    _llgo_encoding/binary.ByteOrder Uint16 _llgo_func$hV5ojfmZDe6MffI0ylemgDF5GZlZiYaJbQvka2A0Gus
+    _llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw Uint16 _llgo_func$hV5ojfmZDe6MffI0ylemgDF5GZlZiYaJbQvka2A0Gus
 
 [MethodInfo]
 *_llgo_encoding/binary.littleEndian:
@@ -345,7 +345,7 @@ _llgo_encoding/binary.littleEndian:
     10 Uint64 _llgo_func$mjkdaEUHPtpOYlUrWGfnskhhvdyc7k9Fk-vwWj3VftE encoding/binary.(*littleEndian).Uint64 __llgo_stub.encoding/binary.littleEndian.Uint64
 
 [InterfaceInfo]
-_llgo_encoding/binary.ByteOrder:
+_llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw:
     PutUint16 _llgo_func$ibbVVENlZHDgol7ROnCbrRmXPuO818NXcpl5dfFoKhU
     PutUint32 _llgo_func$YjgNCugJxKXYLk39KOJyRyLtvcHU1d7KRz4inhHdVgg
     PutUint64 _llgo_func$mBhSCdZCFK2IHVQVA73dFmon0gMcig2Q387khsbzmm8

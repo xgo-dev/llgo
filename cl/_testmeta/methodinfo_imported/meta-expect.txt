@@ -49,6 +49,8 @@
     _llgo_func$w4tN9iibS_UimF5vLUWoKP0uAk2tJZF26VqETo_8LVg
 *_llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
     _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
+*_llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw:
+    _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw
 *_llgo_int:
     _llgo_int
 *_llgo_int32:
@@ -129,6 +131,8 @@ _llgo_func$w4tN9iibS_UimF5vLUWoKP0uAk2tJZF26VqETo_8LVg:
     _llgo_uint8
 _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
     _llgo_string
+_llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw:
+    _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk
 _llgo_io.Reader:
     _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk
 _llgo_io.Writer:
@@ -210,6 +214,9 @@ _llgo_io.Writer:
 *_llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
     __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
     _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
+*_llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw
 *_llgo_int:
     __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
     _llgo_int
@@ -456,6 +463,12 @@ _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
     _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to$out
 _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to$out:
     _llgo_string
+_llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw:
+    *_llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.interequal
+    _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw$imethods
+_llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw$imethods:
+    _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk
 _llgo_int:
     *_llgo_int
     __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequal64
@@ -493,7 +506,7 @@ github.com/goplus/llgo/cl/_testmeta/methodinfo_imported.init:
     io.init
 github.com/goplus/llgo/cl/_testmeta/methodinfo_imported.main:
     *_llgo_bytes.Buffer
-    _llgo_io.Reader
+    _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw
     bytes.NewBuffer
     github.com/goplus/llgo/runtime/internal/runtime.IfacePtrData
     github.com/goplus/llgo/runtime/internal/runtime.NewItab
@@ -504,7 +517,7 @@ github.com/goplus/llgo/cl/_testmeta/methodinfo_imported.main:
 
 [UseIfaceMethod]
 github.com/goplus/llgo/cl/_testmeta/methodinfo_imported.main:
-    _llgo_io.Reader Read _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk
+    _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw Read _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk
 
 [MethodInfo]
 *_llgo_bytes.Buffer:
@@ -539,6 +552,8 @@ github.com/goplus/llgo/cl/_testmeta/methodinfo_imported.main:
 [InterfaceInfo]
 _llgo_error:
     Error _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
+_llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw:
+    Read _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk
 _llgo_io.Reader:
     Read _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk
 _llgo_io.Writer:
