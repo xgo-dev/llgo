@@ -349,7 +349,7 @@ func (b *Builder) interfaceHash(t *types.Interface) (ret []byte, pkg string) {
 	for i := 0; i < n; i++ {
 		m := t.Method(i)
 		if !m.Exported() && pkg == "" {
-			pkg = m.Pkg().Path()
+			pkg = PathOf(m.Pkg())
 		}
 		ft := b.FuncName(m.Type().(*types.Signature))
 		fmt.Fprintln(h, m.Name(), ft)

@@ -286,6 +286,22 @@ func TestStructInterfaceClosureAndPathCoverage(t *testing.T) {
 		t.Fatalf("InterfaceName(private iface)=(%q,%v), want %q*,false", got, pub, pkg.Path()+".iface$")
 	}
 
+	realReflectlite := types.NewPackage("internal/reflectlite", "reflectlite")
+	patchReflectlite := types.NewPackage(PatchPathPrefix+"internal/reflectlite", "reflectlite")
+	realIface := types.NewInterfaceType([]*types.Func{
+		types.NewFunc(token.NoPos, realReflectlite, "common", sig),
+	}, nil)
+	realIface.Complete()
+	patchIface := types.NewInterfaceType([]*types.Func{
+		types.NewFunc(token.NoPos, patchReflectlite, "common", sig),
+	}, nil)
+	patchIface.Complete()
+	realName, _ := b.InterfaceName(realIface)
+	patchName, _ := b.InterfaceName(patchIface)
+	if realName != patchName {
+		t.Fatalf("InterfaceName should canonicalize patch package path: real=%q patch=%q", realName, patchName)
+	}
+
 	if got := PathOf(nil); got != "" {
 		t.Fatalf("PathOf(nil)=%q, want empty", got)
 	}

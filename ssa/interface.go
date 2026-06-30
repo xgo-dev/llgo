@@ -66,7 +66,8 @@ func iMethodOf(rawIntf *types.Interface, name string) int {
 // Imethod returns closure of an interface method.
 func (b Builder) Imethod(intf Expr, method *types.Func) Expr {
 	prog := b.Prog
-	rawIntf := intf.raw.Type.Underlying().(*types.Interface)
+	intfType := types.Unalias(intf.raw.Type)
+	rawIntf := intfType.Underlying().(*types.Interface)
 	sig := method.Type().(*types.Signature)
 	if sig.Recv() == nil && sig.Params().Len() > 0 {
 		pt := types.Unalias(sig.Params().At(0).Type())
@@ -82,7 +83,14 @@ func (b Builder) Imethod(intf Expr, method *types.Func) Expr {
 	tclosure := prog.Type(sig, InGo)
 	i := iMethodOf(rawIntf, method.Name())
 	if mb := b.Pkg.MetaBuilder; mb != nil {
-		intfSym := mb.Sym(func() string { n, _ := prog.abi.TypeName(rawIntf); return n }())
+		// Keep the demand owner aligned with the interface type descriptor that
+		// emits InterfaceInfo. Named interfaces must not be collapsed to their
+		// structural underlying interface here.
+		intfSymType := intfType
+		if _, ok := intfSymType.(*types.TypeParam); ok {
+			intfSymType = rawIntf
+		}
+		intfSym := mb.Sym(func() string { n, _ := prog.abi.TypeName(intfSymType); return n }())
 		// Record which interface method is demanded. i is the method's index in rawIntf.
 		// Interface method sets are emitted when the interface type descriptor is built.
 		mb.AddEdge(mb.Sym(b.Func.Name()), intfSym, meta.EdgeUseIfaceMethod, uint32(i))
