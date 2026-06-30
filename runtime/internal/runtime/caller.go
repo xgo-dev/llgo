@@ -19,6 +19,7 @@ package runtime
 import (
 	"unsafe"
 
+	clitedebug "github.com/goplus/llgo/runtime/internal/clite/debug"
 	"github.com/goplus/llgo/runtime/internal/clite/tls"
 )
 
@@ -31,35 +32,28 @@ type CallerFrame struct {
 	StartLine int
 }
 
+const callerLocationLimit = 4096
+
 const (
 	callerPCMask     = uintptr(3)
 	callerPCValue    = uintptr(1)
 	callersPCValue   = uintptr(3)
-	callerPCRingSize = 1024
+	callerPCHashInit = 64
 )
 
-type callerPCStore struct {
-	next   uintptr
-	frames [callerPCRingSize]CallerFrame
+type callerLocationStore struct {
+	frames        []CallerFrame
+	stack         []CallerFrame
+	synthetic     []CallerFrame
+	syntheticHash []uintptr
 }
 
-var (
-	callerFrameTLS      = tls.Alloc[[]CallerFrame](nil)
-	callerPCStoreTLS    = tls.Alloc[*callerPCStore](nil)
-	callerLookupTLS     = tls.Alloc[bool](nil)
-	panicCallerFrameTLS = tls.Alloc[[]CallerFrame](nil)
-)
+var callerLocationTLS = tls.Alloc[*callerLocationStore](nil)
 
-var (
-	runtimeCallersFrame = CallerFrame{Function: "runtime.Callers"}
-	runtimeMainFrame    = CallerFrame{Function: "runtime.main"}
-	runtimeGoexitFrame  = CallerFrame{Function: "runtime.goexit"}
-)
-
-func PushCallerFrame(entry uintptr, name, file string, startLine int) int {
-	frames := callerFrameTLS.Get()
-	mark := len(frames)
-	frames = append(frames, CallerFrame{
+func PushCallerLocationFrame(entry uintptr, name, file string, startLine int) int {
+	store := callerLocationStoreForThread()
+	mark := len(store.stack)
+	store.stack = append(store.stack, CallerFrame{
 		PC:        entry,
 		Entry:     entry,
 		Function:  name,
@@ -67,107 +61,114 @@ func PushCallerFrame(entry uintptr, name, file string, startLine int) int {
 		Line:      startLine,
 		StartLine: startLine,
 	})
-	callerFrameTLS.Set(frames)
 	return mark
 }
 
-func SetCallerLine(line int) {
-	frames := callerFrameTLS.Get()
-	if line <= 0 || len(frames) == 0 {
+func PopCallerLocationFrame(mark int) {
+	store := callerLocationTLS.Get()
+	if store == nil {
 		return
 	}
-	frames[len(frames)-1].Line = line
-	callerFrameTLS.Set(frames)
-}
-
-func SetCallerLookupLine(line int) {
-	SetCallerLine(line)
-	callerLookupTLS.Set(true)
-}
-
-func PopCallerFrame(mark int) {
-	frames := callerFrameTLS.Get()
-	oldLen := len(frames)
+	oldLen := len(store.stack)
 	if mark < 0 || mark > oldLen {
 		return
 	}
 	var zero CallerFrame
 	for i := mark; i < oldLen; i++ {
-		frames[i] = zero
+		store.stack[i] = zero
 	}
-	callerFrameTLS.Set(frames[:mark])
+	store.stack = store.stack[:mark]
+}
 
-	panicFrames := panicCallerFrameTLS.Get()
-	if len(panicFrames) > 0 && oldLen >= len(panicFrames) && mark <= len(panicFrames) {
-		for i := range panicFrames {
-			panicFrames[i] = zero
+func RecordCallerLocation(entry uintptr, name, file string, line int) {
+	if entry == 0 || line <= 0 {
+		return
+	}
+	updateCurrentFrame(entry, name, file, line)
+	recordPCLocation(0, entry, name, file, line)
+}
+
+func RecordPanicLocation(entry uintptr, name, file string, line int) {
+	if entry == 0 || line <= 0 {
+		return
+	}
+	updateCurrentFrame(entry, name, file, line)
+	recordPCLocation(0, entry, name, file, line)
+}
+
+func updateCurrentFrame(entry uintptr, name, file string, line int) {
+	store := callerLocationTLS.Get()
+	if store == nil {
+		return
+	}
+	for i := len(store.stack) - 1; i >= 0; i-- {
+		frame := &store.stack[i]
+		if frame.Entry == entry {
+			frame.Function = name
+			frame.File = file
+			frame.Line = line
+			return
 		}
-		panicCallerFrameTLS.Clear()
 	}
 }
 
-func SavePanicCallerFrames() {
-	frames := callerFrameTLS.Get()
-	if len(frames) == 0 {
-		panicCallerFrameTLS.Clear()
-		return
+func recordPCLocation(pc, entry uintptr, name, file string, line int) {
+	store := callerLocationStoreForThread()
+	for i := range store.frames {
+		frame := &store.frames[i]
+		if (pc != 0 && frame.PC == pc) || (pc == 0 && frame.PC == 0 && frame.Entry == entry) {
+			frame.PC = pc
+			frame.Entry = entry
+			frame.Function = name
+			frame.File = file
+			frame.Line = line
+			return
+		}
 	}
-	panicFrames := panicCallerFrameTLS.Get()
-	if cap(panicFrames) < len(frames) {
-		panicFrames = make([]CallerFrame, len(frames))
-	} else {
-		panicFrames = panicFrames[:len(frames)]
+	if len(store.frames) >= callerLocationLimit {
+		copy(store.frames, store.frames[1:])
+		store.frames[len(store.frames)-1] = CallerFrame{}
+		store.frames = store.frames[:len(store.frames)-1]
 	}
-	copy(panicFrames, frames)
-	panicCallerFrameTLS.Set(panicFrames)
+	store.frames = append(store.frames, CallerFrame{
+		PC:       pc,
+		Entry:    entry,
+		Function: name,
+		File:     file,
+		Line:     line,
+	})
 }
 
 func Caller(skip int) (CallerFrame, bool) {
-	if !takeCallerLookup() {
-		return CallerFrame{}, false
-	}
 	if skip < 0 {
 		return CallerFrame{}, false
 	}
-	frames := callerFrameTLS.Get()
-	panicFrames := panicCallerFrameTLS.Get()
-	if len(frames) == 0 {
-		if skip < len(panicFrames) {
-			return captureFrame(panicFrames[len(panicFrames)-1-skip], callerPCValue), true
-		}
+	store := callerLocationTLS.Get()
+	if store == nil || len(store.stack) == 0 {
 		return CallerFrame{}, false
 	}
-	if skip < len(frames) {
-		return captureFrame(frames[len(frames)-1-skip], callerPCValue), true
+	if skip < len(store.stack) {
+		return store.captureFrame(store.stack[len(store.stack)-1-skip], callerPCValue), true
 	}
-	if len(panicFrames) > len(frames) {
-		idx := len(panicFrames) - 1 - skip
-		if idx >= 0 {
-			return captureFrame(panicFrames[idx], callerPCValue), true
-		}
-	}
-	switch skip - len(frames) {
+	switch skip - len(store.stack) {
 	case 0:
-		return captureFrame(runtimeMainFrame, callerPCValue), true
+		return store.captureFrame(runtimeMainFrame, callerPCValue), true
 	case 1:
-		return captureFrame(runtimeGoexitFrame, callerPCValue), true
+		return store.captureFrame(runtimeGoexitFrame, callerPCValue), true
 	default:
 		return CallerFrame{}, false
 	}
 }
 
 func Callers(skip int, pcs []uintptr) int {
-	if !takeCallerLookup() {
+	if len(pcs) == 0 {
 		return 0
 	}
 	if skip < 0 {
 		skip = 0
 	}
-	frames := callerFrameTLS.Get()
-	if len(frames) == 0 {
-		frames = panicCallerFrameTLS.Get()
-	}
-	if len(frames) == 0 {
+	store := callerLocationTLS.Get()
+	if store == nil || len(store.stack) == 0 {
 		return 0
 	}
 	n := 0
@@ -179,15 +180,15 @@ func Callers(skip int, pcs []uintptr) int {
 		if n >= len(pcs) {
 			return false
 		}
-		pcs[n] = captureFrame(frame, callersPCValue).PC
+		pcs[n] = store.captureFrame(frame, callersPCValue).PC
 		n++
 		return true
 	}
 	if !add(runtimeCallersFrame) {
 		return n
 	}
-	for i := len(frames) - 1; i >= 0; i-- {
-		if !add(frames[i]) {
+	for i := len(store.stack) - 1; i >= 0; i-- {
+		if !add(store.stack[i]) {
 			return n
 		}
 	}
@@ -196,59 +197,234 @@ func Callers(skip int, pcs []uintptr) int {
 	return n
 }
 
-func takeCallerLookup() bool {
-	if !callerLookupTLS.Get() {
-		return false
+func SavePanicCallerFrames() {
+}
+
+func BindCallerLocation(pc uintptr, rawName string) {
+	store := callerLocationTLS.Get()
+	if store == nil || pc == 0 {
+		return
 	}
-	callerLookupTLS.Set(false)
-	return true
+	if frame, ok := callerLocationByName(store, rawName); ok {
+		bindCallerLocationPC(pc, frame)
+		return
+	}
+}
+
+var (
+	runtimeCallersFrame = CallerFrame{Function: "runtime.Callers"}
+	runtimeMainFrame    = CallerFrame{Function: "runtime.main"}
+	runtimeGoexitFrame  = CallerFrame{Function: "runtime.goexit"}
+)
+
+func callerLocationByName(store *callerLocationStore, rawName string) (CallerFrame, bool) {
+	if rawName == "" {
+		return CallerFrame{}, false
+	}
+	name := normalizeRuntimeFuncName(rawName)
+	for i := len(store.frames) - 1; i >= 0; i-- {
+		frame := store.frames[i]
+		if frame.PC == 0 && frame.Function == name && frame.Line != 0 {
+			return frame, true
+		}
+	}
+	return CallerFrame{}, false
+}
+
+func bindCallerLocationPC(pc uintptr, frame CallerFrame) {
+	recordPCLocation(pc, frame.Entry, frame.Function, frame.File, frame.Line)
+	if pc > 0 {
+		recordPCLocation(pc-1, frame.Entry, frame.Function, frame.File, frame.Line)
+	}
 }
 
 func FrameForPC(pc uintptr) (CallerFrame, bool) {
-	if pc&callerPCMask == 0 {
+	if pc&callerPCMask != 0 {
+		if frame, ok := syntheticFrameForPC(pc); ok {
+			return frame, true
+		}
+	}
+	store := callerLocationTLS.Get()
+	if store == nil || pc == 0 {
 		return CallerFrame{}, false
 	}
-	store := callerPCStoreTLS.Get()
+	for i := len(store.frames) - 1; i >= 0; i-- {
+		frame := store.frames[i]
+		if frame.PC == pc {
+			return frame, true
+		}
+	}
+	entry := entryForPC(pc)
+	if entry == 0 {
+		return CallerFrame{}, false
+	}
+	var best CallerFrame
+	for _, frame := range store.frames {
+		if frame.PC == 0 || frame.PC > pc || frame.Entry != entry {
+			continue
+		}
+		if best.PC == 0 || frame.PC > best.PC {
+			best = frame
+		}
+	}
+	if best.PC != 0 {
+		best.PC = pc
+		return best, true
+	}
+	for i := len(store.frames) - 1; i >= 0; i-- {
+		frame := store.frames[i]
+		if frame.PC == 0 && frame.Entry == entry {
+			frame.PC = pc
+			return frame, true
+		}
+	}
+	return CallerFrame{}, false
+}
+
+func syntheticFrameForPC(pc uintptr) (CallerFrame, bool) {
+	store := callerLocationTLS.Get()
 	if store == nil {
 		return CallerFrame{}, false
 	}
-	addr := pc &^ callerPCMask
-	if !store.contains(addr) {
+	seq := pc >> 2
+	if seq == 0 || seq > uintptr(len(store.synthetic)) {
 		return CallerFrame{}, false
 	}
-	frame := *(*CallerFrame)(unsafe.Pointer(addr))
+	frame := store.synthetic[seq-1]
+	if frame.PC>>2 != seq {
+		return CallerFrame{}, false
+	}
+	frame.PC = pc
+	if frame.Entry == 0 {
+		frame.Entry = pc
+	}
 	return frame, true
 }
 
-func callerPCStoreForThread() *callerPCStore {
-	store := callerPCStoreTLS.Get()
+func callerLocationStoreForThread() *callerLocationStore {
+	store := callerLocationTLS.Get()
 	if store == nil {
-		store = new(callerPCStore)
-		callerPCStoreTLS.Set(store)
+		store = new(callerLocationStore)
+		callerLocationTLS.Set(store)
 	}
 	return store
 }
 
-func captureFrame(frame CallerFrame, pcValue uintptr) CallerFrame {
-	store := callerPCStoreForThread()
-	idx := store.next & (callerPCRingSize - 1)
-	store.next++
-	store.frames[idx] = frame
-	rec := &store.frames[idx]
-	pc := uintptr(unsafe.Pointer(rec)) | pcValue
-	rec.PC = pc
+func (s *callerLocationStore) captureFrame(frame CallerFrame, pcValue uintptr) CallerFrame {
+	idx := s.internSyntheticFrame(frame)
+	rec := s.synthetic[idx]
+	seq := uintptr(idx + 1)
+	rec.PC = (seq << 2) | pcValue
 	if rec.Entry == 0 {
-		rec.Entry = pc
+		rec.Entry = rec.PC
 	}
-	return *rec
+	return rec
 }
 
-func (s *callerPCStore) contains(addr uintptr) bool {
-	start := uintptr(unsafe.Pointer(&s.frames[0]))
-	size := unsafe.Sizeof(s.frames)
-	end := start + size
-	if addr < start || addr >= end {
+func (s *callerLocationStore) internSyntheticFrame(frame CallerFrame) int {
+	if len(s.syntheticHash) == 0 {
+		s.syntheticHash = make([]uintptr, callerPCHashInit)
+	}
+	if len(s.synthetic)*2 >= len(s.syntheticHash) {
+		s.rehashSyntheticFrames(len(s.syntheticHash) * 2)
+	}
+	slot := s.syntheticSlot(frame)
+	for {
+		idx := s.syntheticHash[slot]
+		if idx == 0 {
+			frame.PC = (uintptr(len(s.synthetic)+1) << 2) | callerPCValue
+			s.synthetic = append(s.synthetic, frame)
+			s.syntheticHash[slot] = uintptr(len(s.synthetic))
+			return len(s.synthetic) - 1
+		}
+		existing := s.synthetic[idx-1]
+		if sameSyntheticFrame(existing, frame) {
+			return int(idx - 1)
+		}
+		slot = (slot + 1) & (uintptr(len(s.syntheticHash)) - 1)
+	}
+}
+
+func (s *callerLocationStore) rehashSyntheticFrames(size int) {
+	old := s.syntheticHash
+	s.syntheticHash = make([]uintptr, size)
+	for _, idx := range old {
+		if idx == 0 {
+			continue
+		}
+		frame := s.synthetic[idx-1]
+		slot := s.syntheticSlot(frame)
+		for s.syntheticHash[slot] != 0 {
+			slot = (slot + 1) & (uintptr(len(s.syntheticHash)) - 1)
+		}
+		s.syntheticHash[slot] = idx
+	}
+}
+
+func (s *callerLocationStore) syntheticSlot(frame CallerFrame) uintptr {
+	h := frame.Entry ^ (uintptr(frame.Line) << 12) ^ (uintptr(frame.StartLine) << 24)
+	h ^= uintptr(len(frame.Function)) << 4
+	h ^= uintptr(len(frame.File)) << 8
+	return h & (uintptr(len(s.syntheticHash)) - 1)
+}
+
+func sameSyntheticFrame(a, b CallerFrame) bool {
+	return a.Entry == b.Entry &&
+		a.Function == b.Function &&
+		a.File == b.File &&
+		a.Line == b.Line &&
+		a.StartLine == b.StartLine
+}
+
+func entryForPC(pc uintptr) uintptr {
+	var info clitedebug.Info
+	if clitedebug.Addrinfo(unsafe.Pointer(pc), &info) == 0 {
+		return 0
+	}
+	return uintptr(info.Saddr)
+}
+
+func normalizeRuntimeFuncName(name string) string {
+	const commandLineArguments = "command-line-arguments."
+	if hasPrefix(name, commandLineArguments) {
+		name = "main." + name[len(commandLineArguments):]
+	}
+	if len(name) > 0 && name[0] == '_' {
+		name = name[1:]
+	}
+	return normalizeRuntimeAnonFuncName(name)
+}
+
+func normalizeRuntimeAnonFuncName(name string) string {
+	dollar := lastIndexByte(name, '$')
+	if dollar < 0 || dollar == len(name)-1 {
+		return name
+	}
+	for i := dollar + 1; i < len(name); i++ {
+		if name[i] < '0' || name[i] > '9' {
+			return name
+		}
+	}
+	return name[:dollar] + ".func" + name[dollar+1:]
+}
+
+func hasPrefix(s, prefix string) bool {
+	if len(s) < len(prefix) {
 		return false
 	}
-	return (addr-start)%unsafe.Sizeof(s.frames[0]) == 0
+	for i := 0; i < len(prefix); i++ {
+		if s[i] != prefix[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func lastIndexByte(s string, c byte) int {
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
 }

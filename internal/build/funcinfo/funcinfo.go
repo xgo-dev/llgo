@@ -32,56 +32,62 @@ type Record struct {
 }
 
 type EncodedRecord struct {
-	Symbol uint32
-	Name   uint32
-	File   uint32
-	Line   uint32
-	Column uint32
+	SymbolPkg  uint16
+	SymbolName uint16
+	NamePkg    uint16
+	NameName   uint16
+	FileRoot   uint16
+	FileName   uint16
+	Line       uint32
 }
 
 type Table struct {
-	Records []EncodedRecord
-	Strings []byte
-	Hash    []uint32
+	Records       []EncodedRecord
+	StringOffsets []uint32
+	Strings       []byte
+	Hash          []uint16
 }
 
 func Encode(records []Record) (Table, error) {
 	if len(records) == 0 {
 		return Table{}, nil
 	}
-	pool := stringPool{
-		offsets: map[string]uint32{"": 0},
-		data:    []byte{0},
-		text:    "\x00",
-	}
-	for _, s := range collectStrings(records) {
-		if _, err := pool.offset(s); err != nil {
-			return Table{}, err
-		}
+	ids, offsets, strings, err := buildStringTable(collectStrings(records))
+	if err != nil {
+		return Table{}, err
 	}
 	out := Table{
-		Records: make([]EncodedRecord, 0, len(records)),
+		Records:       make([]EncodedRecord, 0, len(records)),
+		StringOffsets: offsets,
+		Strings:       strings,
 	}
 	for _, rec := range records {
+		symPkg, symName := splitQualifiedName(rec.Symbol)
+		namePkg, nameName := splitQualifiedName(rec.Name)
+		fileRoot, fileName := splitFileName(rec.File)
 		out.Records = append(out.Records, EncodedRecord{
-			Symbol: pool.offsets[rec.Symbol],
-			Name:   pool.offsets[rec.Name],
-			File:   pool.offsets[rec.File],
-			Line:   rec.Line,
-			Column: rec.Column,
+			SymbolPkg:  ids[symPkg],
+			SymbolName: ids[symName],
+			NamePkg:    ids[namePkg],
+			NameName:   ids[nameName],
+			FileRoot:   ids[fileRoot],
+			FileName:   ids[fileName],
+			Line:       rec.Line,
 		})
 	}
-	out.Strings = pool.data
-	out.Hash = buildHash(records)
+	out.Hash, err = buildHash(records)
+	if err != nil {
+		return Table{}, err
+	}
 	return out, nil
 }
 
 func collectStrings(records []Record) []string {
 	seen := make(map[string]bool)
 	for _, rec := range records {
-		seen[rec.Symbol] = true
-		seen[rec.Name] = true
-		seen[rec.File] = true
+		for _, s := range splitRecordStrings(rec) {
+			seen[s] = true
+		}
 	}
 	delete(seen, "")
 	out := make([]string, 0, len(seen))
@@ -95,6 +101,69 @@ func collectStrings(records []Record) []string {
 		return out[i] < out[j]
 	})
 	return out
+}
+
+func splitRecordStrings(rec Record) []string {
+	symPkg, symName := splitQualifiedName(rec.Symbol)
+	namePkg, nameName := splitQualifiedName(rec.Name)
+	fileRoot, fileName := splitFileName(rec.File)
+	return []string{symPkg, symName, namePkg, nameName, fileRoot, fileName}
+}
+
+func buildStringTable(strings []string) (map[string]uint16, []uint32, []byte, error) {
+	ids := map[string]uint16{"": 0}
+	values := []string{""}
+	for _, s := range strings {
+		if _, ok := ids[s]; ok {
+			continue
+		}
+		if len(values) > math.MaxUint16 {
+			return nil, nil, nil, fmt.Errorf("funcinfo string id table exceeds 65535 entries")
+		}
+		ids[s] = uint16(len(values))
+		values = append(values, s)
+	}
+	pool := stringPool{
+		offsets: map[string]uint32{"": 0},
+		data:    []byte{0},
+		text:    "\x00",
+	}
+	offsets := make([]uint32, len(values))
+	for id, s := range values {
+		off, err := pool.offset(s)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		offsets[id] = off
+	}
+	return ids, offsets, pool.data, nil
+}
+
+func splitQualifiedName(name string) (pkg, local string) {
+	if name == "" {
+		return "", ""
+	}
+	start := strings.LastIndexByte(name, '/')
+	if start < 0 {
+		start = 0
+	} else {
+		start++
+	}
+	if dot := strings.IndexByte(name[start:], '.'); dot >= 0 {
+		idx := start + dot
+		return name[:idx], name[idx+1:]
+	}
+	return "", name
+}
+
+func splitFileName(file string) (root, name string) {
+	if file == "" {
+		return "", ""
+	}
+	if slash := strings.LastIndexByte(file, '/'); slash >= 0 {
+		return file[:slash+1], file[slash+1:]
+	}
+	return "", file
 }
 
 type stringPool struct {
@@ -123,23 +192,26 @@ func (p *stringPool) offset(s string) (uint32, error) {
 	return off, nil
 }
 
-func buildHash(records []Record) []uint32 {
+func buildHash(records []Record) ([]uint16, error) {
 	if len(records) == 0 {
-		return nil
+		return nil, nil
+	}
+	if len(records) > math.MaxUint16 {
+		return nil, nil
 	}
 	buckets := 1
 	for buckets*3 < len(records)*4 {
 		buckets <<= 1
 	}
-	hash := make([]uint32, buckets)
+	hash := make([]uint16, buckets)
 	for i, rec := range records {
 		slot := int(HashString(rec.Symbol) & uint32(buckets-1))
 		for hash[slot] != 0 {
 			slot = (slot + 1) & (buckets - 1)
 		}
-		hash[slot] = uint32(i + 1)
+		hash[slot] = uint16(i + 1)
 	}
-	return hash
+	return hash, nil
 }
 
 func HashString(s string) uint32 {
@@ -153,4 +225,130 @@ func HashString(s string) uint32 {
 		h *= prime
 	}
 	return h
+}
+
+func (t Table) String(id uint16) string {
+	if int(id) >= len(t.StringOffsets) {
+		return ""
+	}
+	return cstring(t.Strings, t.StringOffsets[id])
+}
+
+func (t Table) Symbol(rec EncodedRecord) string {
+	return joinQualified(t.String(rec.SymbolPkg), t.String(rec.SymbolName))
+}
+
+func (t Table) Name(rec EncodedRecord) string {
+	return joinQualified(t.String(rec.NamePkg), t.String(rec.NameName))
+}
+
+func (t Table) File(rec EncodedRecord) string {
+	return t.String(rec.FileRoot) + t.String(rec.FileName)
+}
+
+func (t Table) LookupSymbol(symbol string) (int, bool) {
+	if len(t.Hash) == 0 {
+		return 0, false
+	}
+	mask := uint32(len(t.Hash) - 1)
+	slot := HashString(symbol) & mask
+	for probes := 0; probes < len(t.Hash); probes++ {
+		idx := t.Hash[slot]
+		if idx == 0 {
+			return 0, false
+		}
+		rec := t.Records[idx-1]
+		if t.Symbol(rec) == symbol {
+			return int(idx - 1), true
+		}
+		slot = (slot + 1) & mask
+	}
+	return 0, false
+}
+
+func (t Table) SizeBytes() int {
+	return len(t.Records)*16 + len(t.StringOffsets)*4 + len(t.Strings) + len(t.Hash)*2
+}
+
+func joinQualified(pkg, local string) string {
+	if pkg == "" {
+		return local
+	}
+	if local == "" {
+		return pkg
+	}
+	return pkg + "." + local
+}
+
+func cstring(data []byte, off uint32) string {
+	end := int(off)
+	for end < len(data) && data[end] != 0 {
+		end++
+	}
+	return string(data[off:end])
+}
+
+type PCIndex struct {
+	PageShift uint
+	Base      uint64
+	Pages     []uint32
+}
+
+const DefaultPCPageShift = 12
+
+func BuildPCIndex(entries []uint64) PCIndex {
+	return BuildPCIndexWithShift(entries, DefaultPCPageShift)
+}
+
+func BuildPCIndexWithShift(entries []uint64, shift uint) PCIndex {
+	if len(entries) == 0 {
+		return PCIndex{PageShift: shift}
+	}
+	base := entries[0] >> shift
+	last := entries[len(entries)-1] >> shift
+	pages := make([]uint32, last-base+2)
+	next := 0
+	for page := range pages {
+		limit := (base + uint64(page)) << shift
+		for next < len(entries) && entries[next] < limit {
+			next++
+		}
+		pages[page] = uint32(next)
+	}
+	return PCIndex{
+		PageShift: shift,
+		Base:      base,
+		Pages:     pages,
+	}
+}
+
+func LookupPC(entries []uint64, index PCIndex, pc uint64) int {
+	if len(entries) == 0 {
+		return -1
+	}
+	lo, hi := 0, len(entries)
+	page := pc >> index.PageShift
+	if len(index.Pages) != 0 && page >= index.Base {
+		off := page - index.Base
+		if off < uint64(len(index.Pages)) {
+			lo = int(index.Pages[off])
+			if off+1 < uint64(len(index.Pages)) {
+				hi = int(index.Pages[off+1])
+			}
+			if lo > 0 {
+				lo--
+			}
+			if hi < len(entries) {
+				hi++
+			}
+		}
+	}
+	i := sort.Search(hi-lo, func(i int) bool {
+		return entries[lo+i] > pc
+	})
+	idx := lo + i - 1
+	if idx < 0 {
+		return -1
+	}
+	return idx
 }

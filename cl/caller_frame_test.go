@@ -135,6 +135,9 @@ import "runtime"
 import "runtime/debug"
 
 func direct() { runtime.Caller(0) }
+func indirect() { direct() }
+func dynamic(f func()) { f() }
+func dynamicCaller() { dynamic(direct) }
 func stack() { _ = debug.Stack() }
 func anonOnly() { func() { runtime.FuncForPC(0) }() }
 func plain() {}
@@ -145,6 +148,9 @@ func plain() {}
 	if !fnUsesRuntimeCaller(ssapkg.Func("direct")) {
 		t.Fatal("direct runtime.Caller use should be detected")
 	}
+	if !fnUsesRuntimeCaller(ssapkg.Func("indirect")) {
+		t.Fatal("transitive runtime.Caller use should be detected")
+	}
 	if !fnUsesRuntimeCaller(ssapkg.Func("stack")) {
 		t.Fatal("runtime/debug.Stack use should be detected")
 	}
@@ -153,6 +159,15 @@ func plain() {}
 	}
 	if fnUsesRuntimeCaller(ssapkg.Func("plain")) {
 		t.Fatal("plain function should not report runtime caller usage")
+	}
+	runtimeCallerFuncs := runtimeCallerFuncSet(ssapkg)
+	for _, name := range []string{"dynamic", "dynamicCaller"} {
+		if !runtimeCallerFuncs[ssapkg.Func(name)] {
+			t.Fatalf("%s should be tracked because dynamic calls may reach runtime stack APIs", name)
+		}
+	}
+	if runtimeCallerFuncs[ssapkg.Func("plain")] {
+		t.Fatal("plain function should not be tracked")
 	}
 
 	for _, name := range []string{"Caller", "Callers", "CallersFrames", "FuncForPC", "Stack"} {
@@ -208,6 +223,10 @@ func TestCallerFrameTrackingEligibility(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ssapkg, _ := buildCallerFrameSSAPackage(t, tt.pkgPath, `package foo
+import "runtime"
+func f() { runtime.Caller(0) }
+`)
 			prog := llssa.NewProgram(nil)
 			if tt.targetName != "" {
 				prog.Target().Target = tt.targetName
@@ -217,7 +236,15 @@ func TestCallerFrameTrackingEligibility(t *testing.T) {
 			}
 			pkg := prog.NewPackage("foo", tt.pkgPath)
 			fn := pkg.NewFunc("f", llssa.NoArgsNoRet, llssa.InGo)
-			ctx := &context{prog: prog, pkg: pkg, fn: fn, trackCallerFrames: tt.track}
+			goFn := ssapkg.Func("f")
+			ctx := &context{
+				prog:               prog,
+				pkg:                pkg,
+				fn:                 fn,
+				goFn:               goFn,
+				trackCallerFrames:  tt.track,
+				runtimeCallerFuncs: runtimeCallerFuncSet(ssapkg),
+			}
 			if got := ctx.shouldTrackCallerFrames(); got != tt.want {
 				t.Fatalf("shouldTrackCallerFrames() = %v, want %v", got, tt.want)
 			}
@@ -276,13 +303,16 @@ func f() {
 	}
 	ir := pkg.Module().String()
 	for _, want := range []string{
-		"PushCallerFrame",
-		"SetCallerLookupLine",
-		"PopCallerFrame",
+		"RecordCallerLocation",
 		`c"example.com/foo.f`,
 	} {
 		if !strings.Contains(ir, want) {
 			t.Fatalf("compiled caller-frame IR missing %q:\n%s", want, ir)
+		}
+	}
+	for _, old := range []string{"PushCallerFrame", "SetCallerLine", "PopCallerFrame"} {
+		if strings.Contains(ir, old) {
+			t.Fatalf("compiled caller-frame IR still contains old %q instrumentation:\n%s", old, ir)
 		}
 	}
 }
@@ -325,8 +355,8 @@ func f() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ir := pkg.Module().String(); strings.Contains(ir, "PushCallerFrame") {
-		t.Fatalf("target builds should not emit caller-frame tracking:\n%s", ir)
+	if ir := pkg.Module().String(); strings.Contains(ir, "RecordCallerLocation") || strings.Contains(ir, "RecordPanicLocation") {
+		t.Fatalf("target builds should not emit caller location tracking:\n%s", ir)
 	}
 
 	ssapkg, files = buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
@@ -337,12 +367,12 @@ func f() {}
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ir := pkg.Module().String(); strings.Contains(ir, "PushCallerFrame") || strings.Contains(ir, "SetCallerLine") {
-		t.Fatalf("packages without runtime stack APIs should not emit caller-frame tracking:\n%s", ir)
+	if ir := pkg.Module().String(); strings.Contains(ir, "RecordCallerLocation") || strings.Contains(ir, "RecordPanicLocation") {
+		t.Fatalf("packages without runtime stack APIs should not emit caller location tracking:\n%s", ir)
 	}
 }
 
-func TestCompileRuntimeCallerLookupTokenOnlyForRuntimeAPIs(t *testing.T) {
+func TestCompileRuntimeCallerLocationOnlyForRuntimePaths(t *testing.T) {
 	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
 import "runtime"
 
@@ -359,10 +389,10 @@ func f() {
 		t.Fatal(err)
 	}
 	ir := pkg.Module().String()
-	if !strings.Contains(ir, "SetCallerLookupLine") {
-		t.Fatalf("runtime.Caller should enable caller lookup:\n%s", ir)
+	if !strings.Contains(ir, "RecordCallerLocation") {
+		t.Fatalf("runtime.Caller should record caller location:\n%s", ir)
 	}
-	if !strings.Contains(ir, "SetCallerLine") {
-		t.Fatalf("ordinary calls in an instrumented package should only update the current line:\n%s", ir)
+	if strings.Contains(ir, "SetCallerLine") || strings.Contains(ir, "PushCallerFrame") {
+		t.Fatalf("caller location tracking should not emit old TLS instrumentation:\n%s", ir)
 	}
 }
