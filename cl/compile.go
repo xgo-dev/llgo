@@ -177,6 +177,7 @@ type context struct {
 	anonDefers           map[*ssa.Function]bool
 	paramDIVars          map[*types.Var]llssa.DIVar
 	runtimeCallerFuncs   map[*ssa.Function]bool
+	pcLineSeq            uint64
 
 	patches          Patches
 	blkInfos         []blocks.Info
@@ -549,10 +550,11 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	}
 	noInlineDirective := hasNoInlineDirective(f)
 	runtimeStackNoInline := needsRuntimeStackNoInline(pkgTypes, f)
-	if disableInline || noInlineDirective || runtimeStackNoInline {
+	pcLineNoInline := p.needsPCLineNoInline(f)
+	if disableInline || noInlineDirective || runtimeStackNoInline || pcLineNoInline {
 		fn.Inline(llssa.NoInline)
 	}
-	if noInlineDirective || runtimeStackNoInline {
+	if noInlineDirective || runtimeStackNoInline || pcLineNoInline {
 		fn.DisableTailCalls()
 	}
 	p.funcs[f] = fn
@@ -678,6 +680,16 @@ func needsRuntimeStackNoInline(pkg *types.Package, f *ssa.Function) bool {
 		return f.Name() == "StackTrace"
 	}
 	return false
+}
+
+func (p *context) needsPCLineNoInline(f *ssa.Function) bool {
+	if p == nil || f == nil || !p.prog.FuncInfoMetadataEnabled() || !p.trackCallerFrames || !p.runtimeCallerFuncs[f] {
+		return false
+	}
+	if !canEmitPCLineLabelsForTarget(p.prog.Target()) {
+		return false
+	}
+	return p.pkg != nil && canTrackCallerFramesForPackage(p.pkg.Path())
 }
 
 func (p *context) getFuncBodyPos(f *ssa.Function) token.Position {

@@ -20,7 +20,9 @@ import "github.com/xgo-dev/llvm"
 
 const (
 	FuncInfoMetadataName = "llgo.funcinfo"
+	PCLineMetadataName   = "llgo.pcline"
 	funcInfoVersion      = 1
+	pcLineVersion        = 1
 )
 
 // EnableFuncInfoMetadata controls emission of DCE-safe function source
@@ -55,6 +57,34 @@ func (p Package) EmitFuncInfo(symbol, name, file string, line, column int) {
 			llvm.ConstInt(i32, funcInfoVersion, false).ConstantAsMetadata(),
 			p.Prog.ctx.MDString(symbol),
 			p.Prog.ctx.MDString(name),
+			p.Prog.ctx.MDString(file),
+			llvm.ConstInt(i32, uint64(line), false).ConstantAsMetadata(),
+			llvm.ConstInt(i32, uint64(column), false).ConstantAsMetadata(),
+		}),
+	)
+}
+
+// EmitPCLineInfo records a PC label id and its source position. The id names a
+// zero-byte label emitted in the function body; keeping the metadata string-only
+// lets dead functions be removed without the line table holding address
+// references to them.
+func (p Package) EmitPCLineInfo(id uint64, symbol, file string, line, column int) {
+	if id == 0 || symbol == "" {
+		return
+	}
+	if line < 0 {
+		line = 0
+	}
+	if column < 0 {
+		column = 0
+	}
+	i32 := p.Prog.Int32().ll
+	i64 := p.Prog.Int64().ll
+	p.mod.AddNamedMetadataOperand(PCLineMetadataName,
+		p.Prog.ctx.MDNode([]llvm.Metadata{
+			llvm.ConstInt(i32, pcLineVersion, false).ConstantAsMetadata(),
+			llvm.ConstInt(i64, id, false).ConstantAsMetadata(),
+			p.Prog.ctx.MDString(symbol),
 			p.Prog.ctx.MDString(file),
 			llvm.ConstInt(i32, uint64(line), false).ConstantAsMetadata(),
 			llvm.ConstInt(i32, uint64(column), false).ConstantAsMetadata(),

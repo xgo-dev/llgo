@@ -32,7 +32,14 @@ const (
 	funcInfoStringOffsetsSymbol     = "__llgo_funcinfo_string_offsets"
 	funcInfoHashSymbol              = "__llgo_funcinfo_hash"
 	funcInfoHashMaskSymbol          = "__llgo_funcinfo_hash_mask"
+	pcLineTableSymbol               = "__llgo_pcline_table"
+	pcLineCountSymbol               = "__llgo_pcline_count"
+	pcSiteStartPtrSymbol            = "__llgo_pcsite_start"
+	pcSiteEndPtrSymbol              = "__llgo_pcsite_end"
+	pcSiteStartSymbol               = "__start_llgo_pcline"
+	pcSiteEndSymbol                 = "__stop_llgo_pcline"
 	funcInfoDataSymbol              = "__llgo_funcinfo_table$data"
+	pcLineDataSymbol                = "__llgo_pcline_table$data"
 	funcInfoStringsDataSymbol       = "__llgo_funcinfo_strings$data"
 	funcInfoStringOffsetsDataSymbol = "__llgo_funcinfo_string_offsets$data"
 	funcInfoHashDataSymbol          = "__llgo_funcinfo_hash$data"
@@ -41,6 +48,14 @@ const (
 type funcInfoRecord struct {
 	symbol string
 	name   string
+	file   string
+	line   uint32
+	column uint32
+}
+
+type pcLineRecord struct {
+	id     uint64
+	symbol string
 	file   string
 	line   uint32
 	column uint32
@@ -70,6 +85,36 @@ func collectFuncInfo(pkgs []Package) []funcInfoRecord {
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].symbol < out[j].symbol
+	})
+	return out
+}
+
+func collectPCLineInfo(pkgs []Package) []pcLineRecord {
+	var out []pcLineRecord
+	seen := make(map[uint64]none)
+	for _, pkg := range pkgs {
+		if pkg == nil || pkg.LPkg == nil {
+			continue
+		}
+		for _, rec := range readPCLineInfo(pkg.LPkg.Module()) {
+			if rec.id == 0 || rec.symbol == "" {
+				continue
+			}
+			if _, ok := seen[rec.id]; ok {
+				continue
+			}
+			seen[rec.id] = none{}
+			out = append(out, rec)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].symbol != out[j].symbol {
+			return out[i].symbol < out[j].symbol
+		}
+		if out[i].line != out[j].line {
+			return out[i].line < out[j].line
+		}
+		return out[i].id < out[j].id
 	})
 	return out
 }
@@ -123,12 +168,38 @@ func readFuncInfo(mod llvm.Module) []funcInfoRecord {
 	return out
 }
 
-func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord) {
+func readPCLineInfo(mod llvm.Module) []pcLineRecord {
+	rows := mod.NamedMetadataOperands(llssa.PCLineMetadataName)
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]pcLineRecord, 0, len(rows))
+	for _, row := range rows {
+		fields := row.MDNodeOperands()
+		if len(fields) != 6 || fields[0].ZExtValue() != 1 {
+			continue
+		}
+		if !fields[2].IsAMDString() || !fields[3].IsAMDString() {
+			continue
+		}
+		out = append(out, pcLineRecord{
+			id:     fields[1].ZExtValue(),
+			symbol: fields[2].MDString(),
+			file:   fields[3].MDString(),
+			line:   uint32(fields[4].ZExtValue()),
+			column: uint32(fields[5].ZExtValue()),
+		})
+	}
+	return out
+}
+
+func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord, pcLines []pcLineRecord) {
 	mod := pkg.Module()
 	llvmCtx := mod.Context()
 	i8Type := llvmCtx.Int8Type()
 	i16Type := llvmCtx.Int16Type()
 	i32Type := llvmCtx.Int32Type()
+	i64Type := llvmCtx.Int64Type()
 	countType := llvmCtx.IntType(ctx.prog.PointerSize() * 8)
 	recordType := llvmCtx.StructType([]llvm.Type{
 		i16Type,
@@ -139,26 +210,57 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		i16Type,
 		i32Type,
 	}, false)
+	pcLineRecordType := llvmCtx.StructType([]llvm.Type{
+		i64Type,
+		i32Type,
+		i32Type,
+		i32Type,
+	}, false)
+	pcSiteRecordType := llvmCtx.StructType([]llvm.Type{
+		llvm.PointerType(i8Type, 0),
+		i64Type,
+	}, false)
 
 	tablePtr := llvm.AddGlobal(mod, llvm.PointerType(recordType, 0), funcInfoTableSymbol)
+	pcLinePtr := llvm.AddGlobal(mod, llvm.PointerType(pcLineRecordType, 0), pcLineTableSymbol)
+	pcSiteStartPtr := llvm.AddGlobal(mod, llvm.PointerType(pcSiteRecordType, 0), pcSiteStartPtrSymbol)
+	pcSiteEndPtr := llvm.AddGlobal(mod, llvm.PointerType(pcSiteRecordType, 0), pcSiteEndPtrSymbol)
 	stringsPtr := llvm.AddGlobal(mod, llvm.PointerType(i8Type, 0), funcInfoStringsSymbol)
 	stringOffsetsPtr := llvm.AddGlobal(mod, llvm.PointerType(i32Type, 0), funcInfoStringOffsetsSymbol)
 	hashPtr := llvm.AddGlobal(mod, llvm.PointerType(i16Type, 0), funcInfoHashSymbol)
 	count := llvm.AddGlobal(mod, countType, funcInfoCountSymbol)
+	pcLineCount := llvm.AddGlobal(mod, countType, pcLineCountSymbol)
 	hashMask := llvm.AddGlobal(mod, countType, funcInfoHashMaskSymbol)
-	if len(records) == 0 {
+	if len(records) == 0 && len(pcLines) == 0 {
 		tablePtr.SetInitializer(llvm.ConstPointerNull(tablePtr.GlobalValueType()))
+		pcLinePtr.SetInitializer(llvm.ConstPointerNull(pcLinePtr.GlobalValueType()))
+		pcSiteStartPtr.SetInitializer(llvm.ConstPointerNull(pcSiteStartPtr.GlobalValueType()))
+		pcSiteEndPtr.SetInitializer(llvm.ConstPointerNull(pcSiteEndPtr.GlobalValueType()))
 		stringsPtr.SetInitializer(llvm.ConstPointerNull(stringsPtr.GlobalValueType()))
 		stringOffsetsPtr.SetInitializer(llvm.ConstPointerNull(stringOffsetsPtr.GlobalValueType()))
 		hashPtr.SetInitializer(llvm.ConstPointerNull(hashPtr.GlobalValueType()))
 		count.SetInitializer(llvm.ConstInt(countType, 0, false))
+		pcLineCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		hashMask.SetInitializer(llvm.ConstInt(countType, 0, false))
 		return
 	}
 
-	encoded, err := buildfuncinfo.Encode(toFuncInfoRecords(records))
+	encoded, err := buildfuncinfo.EncodeWithPCLines(toFuncInfoRecords(records), toPCLineRecords(pcLines))
 	if err != nil {
 		panic(err)
+	}
+	if len(encoded.Records) == 0 && len(encoded.PCLines) == 0 {
+		tablePtr.SetInitializer(llvm.ConstPointerNull(tablePtr.GlobalValueType()))
+		pcLinePtr.SetInitializer(llvm.ConstPointerNull(pcLinePtr.GlobalValueType()))
+		pcSiteStartPtr.SetInitializer(llvm.ConstPointerNull(pcSiteStartPtr.GlobalValueType()))
+		pcSiteEndPtr.SetInitializer(llvm.ConstPointerNull(pcSiteEndPtr.GlobalValueType()))
+		stringsPtr.SetInitializer(llvm.ConstPointerNull(stringsPtr.GlobalValueType()))
+		stringOffsetsPtr.SetInitializer(llvm.ConstPointerNull(stringOffsetsPtr.GlobalValueType()))
+		hashPtr.SetInitializer(llvm.ConstPointerNull(hashPtr.GlobalValueType()))
+		count.SetInitializer(llvm.ConstInt(countType, 0, false))
+		pcLineCount.SetInitializer(llvm.ConstInt(countType, 0, false))
+		hashMask.SetInitializer(llvm.ConstInt(countType, 0, false))
+		return
 	}
 
 	values := make([]llvm.Value, 0, len(encoded.Records))
@@ -180,6 +282,45 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	data.SetGlobalConstant(true)
 	data.SetUnnamedAddr(true)
 	data.SetAlignment(4)
+
+	pcLineValues := make([]llvm.Value, 0, len(encoded.PCLines))
+	for _, rec := range encoded.PCLines {
+		pcLineValues = append(pcLineValues, llvm.ConstNamedStruct(pcLineRecordType, []llvm.Value{
+			llvm.ConstInt(i64Type, rec.ID, false),
+			llvm.ConstInt(i32Type, uint64(rec.Func), false),
+			llvm.ConstInt(i32Type, uint64(rec.File), false),
+			llvm.ConstInt(i32Type, uint64(rec.Line), false),
+		}))
+	}
+	if len(pcLineValues) == 0 {
+		pcLinePtr.SetInitializer(llvm.ConstPointerNull(pcLinePtr.GlobalValueType()))
+		pcLineCount.SetInitializer(llvm.ConstInt(countType, 0, false))
+		pcSiteStartPtr.SetInitializer(llvm.ConstPointerNull(pcSiteStartPtr.GlobalValueType()))
+		pcSiteEndPtr.SetInitializer(llvm.ConstPointerNull(pcSiteEndPtr.GlobalValueType()))
+	} else {
+		pcLineArrayType := llvm.ArrayType(pcLineRecordType, len(pcLineValues))
+		pcLineData := llvm.AddGlobal(mod, pcLineArrayType, pcLineDataSymbol)
+		pcLineData.SetInitializer(llvm.ConstArray(pcLineRecordType, pcLineValues))
+		pcLineData.SetLinkage(llvm.PrivateLinkage)
+		pcLineData.SetGlobalConstant(true)
+		pcLineData.SetUnnamedAddr(true)
+		pcLineData.SetAlignment(8)
+		pcLinePtr.SetInitializer(llvm.ConstInBoundsGEP(pcLineArrayType, pcLineData, []llvm.Value{
+			llvm.ConstInt(countType, 0, false),
+			llvm.ConstInt(countType, 0, false),
+		}))
+		pcLineCount.SetInitializer(llvm.ConstInt(countType, uint64(len(encoded.PCLines)), false))
+		if ctx.buildConf.Goos == "linux" && ctx.buildConf.Target == "" {
+			emitPCSiteSentinel(mod, ctx.prog.PointerSize())
+			pcSiteStart := llvm.AddGlobal(mod, pcSiteRecordType, pcSiteStartSymbol)
+			pcSiteEnd := llvm.AddGlobal(mod, pcSiteRecordType, pcSiteEndSymbol)
+			pcSiteStartPtr.SetInitializer(pcSiteStart)
+			pcSiteEndPtr.SetInitializer(pcSiteEnd)
+		} else {
+			pcSiteStartPtr.SetInitializer(llvm.ConstPointerNull(pcSiteStartPtr.GlobalValueType()))
+			pcSiteEndPtr.SetInitializer(llvm.ConstPointerNull(pcSiteEndPtr.GlobalValueType()))
+		}
+	}
 
 	stringArrayType := llvm.ArrayType(i8Type, len(encoded.Strings))
 	stringData := llvm.AddGlobal(mod, stringArrayType, funcInfoStringsDataSymbol)
@@ -237,12 +378,41 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	count.SetInitializer(llvm.ConstInt(countType, uint64(len(encoded.Records)), false))
 }
 
+func emitPCSiteSentinel(mod llvm.Module, pointerSize int) {
+	ptrDirective := ".quad"
+	align := "3"
+	if pointerSize == 4 {
+		ptrDirective = ".long"
+		align = "2"
+	}
+	mod.SetInlineAsm(
+		".section llgo_pcline,\"aR\",@progbits\n" +
+			".p2align " + align + "\n" +
+			ptrDirective + " 0\n" +
+			".quad 0\n",
+	)
+}
+
 func toFuncInfoRecords(records []funcInfoRecord) []buildfuncinfo.Record {
 	out := make([]buildfuncinfo.Record, len(records))
 	for i, rec := range records {
 		out[i] = buildfuncinfo.Record{
 			Symbol: rec.symbol,
 			Name:   rec.name,
+			File:   rec.file,
+			Line:   rec.line,
+			Column: rec.column,
+		}
+	}
+	return out
+}
+
+func toPCLineRecords(records []pcLineRecord) []buildfuncinfo.PCLineRecord {
+	out := make([]buildfuncinfo.PCLineRecord, len(records))
+	for i, rec := range records {
+		out[i] = buildfuncinfo.PCLineRecord{
+			ID:     rec.id,
+			Symbol: rec.symbol,
 			File:   rec.file,
 			Line:   rec.line,
 			Column: rec.column,

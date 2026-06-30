@@ -1366,6 +1366,113 @@ func (p *context) recordCallerLocationForCall(b llssa.Builder, call *ssa.CallCom
 	p.recordPanicLocation(b, call.Pos())
 }
 
+func (p *context) emitPCLineLabel(b llssa.Builder, pos token.Pos) {
+	if p == nil || p.pkg == nil || p.fn == nil || !p.prog.FuncInfoMetadataEnabled() || !p.shouldTrackCallerFrames() {
+		return
+	}
+	target := p.prog.Target()
+	if !canEmitPCLineLabelsForTarget(target) {
+		return
+	}
+	position := p.fset.Position(pos)
+	if position.Line <= 0 || position.Filename == "" {
+		return
+	}
+	p.pcLineSeq++
+	id := pcLineID(p.fn.Name(), p.pcLineSeq)
+	label := pcLineLabelName(id)
+	ptrDirective := ".quad"
+	align := "3"
+	if p.prog.PointerSize() == 4 {
+		ptrDirective = ".long"
+		align = "2"
+	}
+	b.InlineAsm(
+		label + ":\n" +
+			".pushsection llgo_pcline,\"ao\",@progbits," + asmQuoteSymbol(p.fn.Name()) + "\n" +
+			".p2align " + align + "\n" +
+			ptrDirective + " " + label + "\n" +
+			".quad " + uint64Hex(id) + "\n" +
+			".popsection",
+	)
+	p.pkg.EmitPCLineInfo(id, p.fn.Name(), position.Filename, position.Line, position.Column)
+}
+
+func canEmitPCLineLabelsForTarget(target *llssa.Target) bool {
+	if target == nil {
+		return false
+	}
+	if target.Target != "" || target.GOARCH == "wasm" {
+		return false
+	}
+	// This path uses ELF SHF_LINK_ORDER section syntax. Darwin needs a Mach-O
+	// live_support section path, and other object formats need separate support.
+	return target.GOOS == "linux"
+}
+
+func pcLineID(symbol string, seq uint64) uint64 {
+	const (
+		offset = uint64(14695981039346656037)
+		prime  = uint64(1099511628211)
+	)
+	h := offset
+	for i := 0; i < len(symbol); i++ {
+		h ^= uint64(symbol[i])
+		h *= prime
+	}
+	for i := 0; i < 8; i++ {
+		h ^= byteOfUint64(seq, uint(i*8))
+		h *= prime
+	}
+	if h == 0 {
+		return 1
+	}
+	return h
+}
+
+func byteOfUint64(v uint64, shift uint) uint64 {
+	return (v >> shift) & 0xff
+}
+
+func pcLineLabelName(id uint64) string {
+	const hexdigits = "0123456789abcdef"
+	var buf [16]byte
+	for i := len(buf) - 1; i >= 0; i-- {
+		buf[i] = hexdigits[id&0xf]
+		id >>= 4
+	}
+	return "__llgo_pcsite_" + string(buf[:])
+}
+
+func uint64Hex(v uint64) string {
+	const hexdigits = "0123456789abcdef"
+	var buf [18]byte
+	buf[0] = '0'
+	buf[1] = 'x'
+	for i := len(buf) - 1; i >= 2; i-- {
+		buf[i] = hexdigits[v&0xf]
+		v >>= 4
+	}
+	return string(buf[:])
+}
+
+func asmQuoteSymbol(symbol string) string {
+	var b strings.Builder
+	b.Grow(len(symbol) + 2)
+	b.WriteByte('"')
+	for i := 0; i < len(symbol); i++ {
+		switch symbol[i] {
+		case '\\', '"':
+			b.WriteByte('\\')
+		case '$':
+			b.WriteByte('$')
+		}
+		b.WriteByte(symbol[i])
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
 func (p *context) popCallerLocationFrame(b llssa.Builder) {
 	if p.callerFrameMark.IsNil() {
 		return
@@ -1634,6 +1741,7 @@ func collectMethodNilDerefChecks(fn *ssa.Function) map[*ssa.UnOp]none {
 
 func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallCommon, ds *explicitDeferStack) (ret llssa.Expr) {
 	p.recordCallerLocationForCall(b, call)
+	p.emitPCLineLabel(b, call.Pos())
 	cv := call.Value
 	if mthd := call.Method; mthd != nil {
 		reflectCheck := p.reflectTypeMethodCheck(call, mthd)

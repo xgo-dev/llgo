@@ -31,6 +31,14 @@ type Record struct {
 	Column uint32
 }
 
+type PCLineRecord struct {
+	ID     uint64
+	Symbol string
+	File   string
+	Line   uint32
+	Column uint32
+}
+
 type EncodedRecord struct {
 	SymbolPkg  uint16
 	SymbolName uint16
@@ -41,18 +49,43 @@ type EncodedRecord struct {
 	Line       uint32
 }
 
+type EncodedPCLineRecord struct {
+	ID   uint64
+	Func uint32
+	File uint32
+	Line uint32
+}
+
 type Table struct {
 	Records       []EncodedRecord
+	PCLines       []EncodedPCLineRecord
 	StringOffsets []uint32
 	Strings       []byte
 	Hash          []uint16
 }
 
 func Encode(records []Record) (Table, error) {
-	if len(records) == 0 {
+	return EncodeWithPCLines(records, nil)
+}
+
+func EncodeWithPCLines(records []Record, pcLines []PCLineRecord) (Table, error) {
+	funcIndex := make(map[string]uint32, len(records))
+	for i, rec := range records {
+		if rec.Symbol != "" {
+			funcIndex[rec.Symbol] = uint32(i + 1)
+		}
+	}
+	filteredPCLines := make([]PCLineRecord, 0, len(pcLines))
+	for _, rec := range pcLines {
+		if rec.ID == 0 || funcIndex[rec.Symbol] == 0 {
+			continue
+		}
+		filteredPCLines = append(filteredPCLines, rec)
+	}
+	if len(records) == 0 && len(filteredPCLines) == 0 {
 		return Table{}, nil
 	}
-	ids, offsets, strings, err := buildStringTable(collectStrings(records))
+	ids, offsets, strings, err := buildStringTable(collectStrings(records, filteredPCLines))
 	if err != nil {
 		return Table{}, err
 	}
@@ -75,6 +108,20 @@ func Encode(records []Record) (Table, error) {
 			Line:       rec.Line,
 		})
 	}
+	out.PCLines = make([]EncodedPCLineRecord, 0, len(filteredPCLines))
+	for _, rec := range filteredPCLines {
+		idx := funcIndex[rec.Symbol]
+		fileRoot, fileName := splitFileName(rec.File)
+		out.PCLines = append(out.PCLines, EncodedPCLineRecord{
+			ID:   rec.ID,
+			Func: idx,
+			File: packStringIDs(ids[fileRoot], ids[fileName]),
+			Line: rec.Line,
+		})
+	}
+	sort.Slice(out.PCLines, func(i, j int) bool {
+		return out.PCLines[i].ID < out.PCLines[j].ID
+	})
 	out.Hash, err = buildHash(records)
 	if err != nil {
 		return Table{}, err
@@ -82,12 +129,17 @@ func Encode(records []Record) (Table, error) {
 	return out, nil
 }
 
-func collectStrings(records []Record) []string {
+func collectStrings(records []Record, pcLines []PCLineRecord) []string {
 	seen := make(map[string]bool)
 	for _, rec := range records {
 		for _, s := range splitRecordStrings(rec) {
 			seen[s] = true
 		}
+	}
+	for _, rec := range pcLines {
+		fileRoot, fileName := splitFileName(rec.File)
+		seen[fileRoot] = true
+		seen[fileName] = true
 	}
 	delete(seen, "")
 	out := make([]string, 0, len(seen))
@@ -101,6 +153,10 @@ func collectStrings(records []Record) []string {
 		return out[i] < out[j]
 	})
 	return out
+}
+
+func packStringIDs(hi, lo uint16) uint32 {
+	return uint32(hi)<<16 | uint32(lo)
 }
 
 func splitRecordStrings(rec Record) []string {
@@ -246,6 +302,10 @@ func (t Table) File(rec EncodedRecord) string {
 	return t.String(rec.FileRoot) + t.String(rec.FileName)
 }
 
+func (t Table) PCLineFile(rec EncodedPCLineRecord) string {
+	return t.String(uint16(rec.File>>16)) + t.String(uint16(rec.File))
+}
+
 func (t Table) LookupSymbol(symbol string) (int, bool) {
 	if len(t.Hash) == 0 {
 		return 0, false
@@ -267,7 +327,7 @@ func (t Table) LookupSymbol(symbol string) (int, bool) {
 }
 
 func (t Table) SizeBytes() int {
-	return len(t.Records)*16 + len(t.StringOffsets)*4 + len(t.Strings) + len(t.Hash)*2
+	return len(t.Records)*16 + len(t.PCLines)*24 + len(t.StringOffsets)*4 + len(t.Strings) + len(t.Hash)*2
 }
 
 func joinQualified(pkg, local string) string {

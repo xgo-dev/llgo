@@ -338,6 +338,101 @@ func f() {
 	}
 }
 
+func TestCompileRuntimeCallerPCLineMetadata(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+
+func top() {
+	runtime.Caller(0)
+	leaf()
+}
+
+func leaf() {}
+`)
+	prog := newLLSSAProg(t)
+	prog.Target().GOOS = "linux"
+	prog.Target().GOARCH = "amd64"
+	prog.EnableFuncInfoMetadata(true)
+	pkg, err := NewPackage(prog, ssapkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.Module().String()
+	for _, want := range []string{
+		`!llgo.pcline = !{!`,
+		`!"example.com/foo.top"`,
+		`!"caller_frame_compile.go"`,
+		"__llgo_pcsite_",
+		`.pushsection llgo_pcline`,
+		`.quad __llgo_pcsite_`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("missing pcline metadata %s:\n%s", want, ir)
+		}
+	}
+	for _, line := range strings.Split(ir, "\n") {
+		if strings.Contains(line, "!llgo.pcline") || strings.Contains(line, `!"example.com/foo.top"`) {
+			if strings.Contains(line, `ptr @`) {
+				t.Fatalf("pcline metadata should use symbol strings, not function pointers:\n%s", line)
+			}
+		}
+	}
+}
+
+func TestCompileRuntimeCallerPCLineEscapesDollarInInlineAsm(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+
+func top() {
+	func() {
+		runtime.Caller(0)
+	}()
+}
+`)
+	prog := newLLSSAProg(t)
+	prog.Target().GOOS = "linux"
+	prog.Target().GOARCH = "amd64"
+	prog.EnableFuncInfoMetadata(true)
+	pkg, err := NewPackage(prog, ssapkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.Module().String()
+	if !strings.Contains(ir, `!"example.com/foo.top$1"`) {
+		t.Fatalf("metadata should keep the original Go symbol name:\n%s", ir)
+	}
+	if !strings.Contains(ir, `example.com/foo.top$$1`) {
+		t.Fatalf("inline asm should escape $ in the associated symbol:\n%s", ir)
+	}
+	for _, line := range strings.Split(ir, "\n") {
+		if strings.Contains(line, `.pushsection llgo_pcline`) && strings.Contains(line, `example.com/foo.top$1`) && !strings.Contains(line, `example.com/foo.top$$1`) {
+			t.Fatalf("inline asm has an unescaped $ operand:\n%s", line)
+		}
+	}
+}
+
+func TestCompileRuntimeCallerPCLineMetadataSkippedOnDarwin(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+
+func top() {
+	runtime.Caller(0)
+}
+`)
+	prog := newLLSSAProg(t)
+	prog.Target().GOOS = "darwin"
+	prog.Target().GOARCH = "arm64"
+	prog.EnableFuncInfoMetadata(true)
+	pkg, err := NewPackage(prog, ssapkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.Module().String()
+	if strings.Contains(ir, `!llgo.pcline`) || strings.Contains(ir, "__llgo_pcsite_") {
+		t.Fatalf("darwin should not emit inline asm pc-site labels:\n%s", ir)
+	}
+}
+
 func TestCompileRuntimeCallerFrameUsesGoNameForLinkname(t *testing.T) {
 	ssapkg, files := buildCallerFrameSSAPackage(t, "command-line-arguments", `package main
 import "runtime"
