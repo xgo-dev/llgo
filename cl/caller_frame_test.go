@@ -363,6 +363,7 @@ func leaf() {}
 		`!"example.com/foo.top"`,
 		`!"caller_frame_compile.go"`,
 		"__llgo_pcsite_",
+		"${:uid}",
 		`.pushsection llgo_pcline`,
 		`.quad __llgo_pcsite_`,
 	} {
