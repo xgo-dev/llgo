@@ -20,6 +20,7 @@ func TestReflectMakeFuncGoroutineStartup(t *testing.T) {
 				return
 			default:
 				runtime.GC()
+				runtime.Gosched()
 			}
 		}
 	}()
