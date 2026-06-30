@@ -882,28 +882,41 @@ func packageUsesRuntimeCaller(pkg *ssa.Package) bool {
 }
 
 func fnUsesRuntimeCaller(fn *ssa.Function) bool {
-	return runtimeCallerFuncSetFor(fn, make(map[*ssa.Function]bool), make(map[*ssa.Function]bool), false)
+	if fn == nil {
+		return false
+	}
+	if fn.Pkg == nil {
+		return fnHasDirectRuntimeCaller(fn)
+	}
+	return runtimeCallerFuncSet(fn.Pkg)[fn]
 }
 
 func runtimeCallerFuncSet(pkg *ssa.Package) map[*ssa.Function]bool {
 	if pkg == nil {
 		return nil
 	}
-	dynamicCallsMayReachRuntimeCaller := packageHasDirectRuntimeCaller(pkg)
-	if !dynamicCallsMayReachRuntimeCaller {
+	funcs, trackable := collectRuntimeCallerFunctions(pkg)
+	analysis := &runtimeCallerAnalysis{
+		pkg:       pkg,
+		funcs:     funcs,
+		trackable: trackable,
+		callsites: collectRuntimeCallerCallsites(funcs),
+		memo:      make(map[*ssa.Function]bool),
+		visiting:  make(map[*ssa.Function]bool),
+	}
+	if !analysis.packageHasRuntimeCaller() {
 		return nil
 	}
-	memo := make(map[*ssa.Function]bool)
-	visiting := make(map[*ssa.Function]bool)
-	for _, member := range pkg.Members {
-		if fn, ok := member.(*ssa.Function); ok {
-			runtimeCallerFuncSetFor(fn, memo, visiting, dynamicCallsMayReachRuntimeCaller)
-		}
-	}
 	out := make(map[*ssa.Function]bool)
-	for fn, ok := range memo {
-		if ok {
-			out[fn] = true
+	for {
+		ntrack := len(trackable)
+		for fn := range trackable {
+			if analysis.fnMayReachRuntimeCaller(fn) {
+				out[fn] = true
+			}
+		}
+		if len(trackable) == ntrack {
+			break
 		}
 	}
 	if len(out) == 0 {
@@ -912,9 +925,105 @@ func runtimeCallerFuncSet(pkg *ssa.Package) map[*ssa.Function]bool {
 	return out
 }
 
-func packageHasDirectRuntimeCaller(pkg *ssa.Package) bool {
+type runtimeCallerAnalysis struct {
+	pkg       *ssa.Package
+	funcs     map[*ssa.Function]bool
+	trackable map[*ssa.Function]bool
+	callsites map[*ssa.Function][]*ssa.CallCommon
+	memo      map[*ssa.Function]bool
+	visiting  map[*ssa.Function]bool
+}
+
+func collectRuntimeCallerFunctions(pkg *ssa.Package) (funcs, trackable map[*ssa.Function]bool) {
+	funcs = make(map[*ssa.Function]bool)
+	trackable = make(map[*ssa.Function]bool)
+	var add func(*ssa.Function, bool) bool
+	add = func(fn *ssa.Function, track bool) bool {
+		if fn == nil || !functionBelongsToPackage(pkg, fn) {
+			return false
+		}
+		if track {
+			trackable[fn] = true
+		}
+		if funcs[fn] {
+			return false
+		}
+		funcs[fn] = true
+		for _, anon := range fn.AnonFuncs {
+			add(anon, false)
+		}
+		return true
+	}
 	for _, member := range pkg.Members {
-		if fn, ok := member.(*ssa.Function); ok && fnHasDirectRuntimeCaller(fn) {
+		if fn, ok := member.(*ssa.Function); ok {
+			add(fn, true)
+		}
+	}
+	if pkg.Prog != nil && pkg.Pkg != nil {
+		for _, typ := range pkg.Prog.RuntimeTypes() {
+			if !typeBelongsToPackage(typ, pkg.Pkg) {
+				continue
+			}
+			methods := pkg.Prog.MethodSets.MethodSet(typ)
+			for i := 0; i < methods.Len(); i++ {
+				add(pkg.Prog.MethodValue(methods.At(i)), false)
+			}
+		}
+	}
+	for changed := true; changed; {
+		changed = false
+		for fn := range funcs {
+			forEachCall(fn, func(call *ssa.CallCommon) {
+				if add(call.StaticCallee(), trackable[fn]) {
+					changed = true
+				}
+			})
+		}
+	}
+	return funcs, trackable
+}
+
+func collectRuntimeCallerCallsites(funcs map[*ssa.Function]bool) map[*ssa.Function][]*ssa.CallCommon {
+	callsites := make(map[*ssa.Function][]*ssa.CallCommon)
+	for fn := range funcs {
+		forEachCall(fn, func(call *ssa.CallCommon) {
+			callee := call.StaticCallee()
+			if funcs[callee] {
+				callsites[callee] = append(callsites[callee], call)
+			}
+		})
+	}
+	return callsites
+}
+
+func functionBelongsToPackage(pkg *ssa.Package, fn *ssa.Function) bool {
+	if pkg == nil || fn == nil {
+		return false
+	}
+	if fn.Pkg == pkg {
+		return true
+	}
+	return fn.Pkg == nil && fn.Parent() != nil && functionBelongsToPackage(pkg, fn.Parent())
+}
+
+func typeBelongsToPackage(typ types.Type, pkg *types.Package) bool {
+	if pkg == nil {
+		return false
+	}
+	for {
+		if ptr, ok := types.Unalias(typ).(*types.Pointer); ok {
+			typ = ptr.Elem()
+			continue
+		}
+		break
+	}
+	named, ok := types.Unalias(typ).(*types.Named)
+	return ok && named.Obj() != nil && named.Obj().Pkg() == pkg
+}
+
+func (a *runtimeCallerAnalysis) packageHasRuntimeCaller() bool {
+	for fn := range a.funcs {
+		if fnHasDirectRuntimeCaller(fn) {
 			return true
 		}
 	}
@@ -944,44 +1053,213 @@ func fnHasDirectRuntimeCaller(fn *ssa.Function) bool {
 	return false
 }
 
-func runtimeCallerFuncSetFor(fn *ssa.Function, memo, visiting map[*ssa.Function]bool, dynamicCallsMayReachRuntimeCaller bool) bool {
+func (a *runtimeCallerAnalysis) fnMayReachRuntimeCaller(fn *ssa.Function) bool {
 	if fn == nil {
 		return false
 	}
-	if ok, done := memo[fn]; done {
-		return ok
+	if isRuntimeCallerFunc(fn) {
+		return true
 	}
-	if visiting[fn] {
+	if !a.funcs[fn] {
 		return false
 	}
-	visiting[fn] = true
-	defer delete(visiting, fn)
-	for _, block := range fn.Blocks {
-		for _, instr := range block.Instrs {
-			call, ok := instr.(ssa.CallInstruction)
-			if !ok {
-				continue
-			}
-			callee := call.Common().StaticCallee()
-			if callee == nil && dynamicCallsMayReachRuntimeCaller {
-				memo[fn] = true
-				return true
-			}
-			if isRuntimeCallerFunc(callee) ||
-				(callee != nil && callee.Pkg == fn.Pkg && runtimeCallerFuncSetFor(callee, memo, visiting, dynamicCallsMayReachRuntimeCaller)) {
-				memo[fn] = true
-				return true
+	if ok, done := a.memo[fn]; done {
+		return ok
+	}
+	if a.visiting[fn] {
+		return false
+	}
+	a.visiting[fn] = true
+	defer delete(a.visiting, fn)
+	reaches := false
+	forEachCall(fn, func(call *ssa.CallCommon) {
+		if reaches {
+			return
+		}
+		callee := call.StaticCallee()
+		switch {
+		case isRuntimeCallerFunc(callee):
+			reaches = true
+		case callee != nil:
+			reaches = a.fnMayReachRuntimeCaller(callee)
+		case call.Method != nil:
+			reaches = a.interfaceInvokeMayReachRuntimeCaller(fn, call)
+		default:
+			reaches = a.functionValueCallMayReachRuntimeCaller(fn, call.Value)
+		}
+	})
+	if !reaches {
+		for _, anon := range fn.AnonFuncs {
+			if a.fnMayReachRuntimeCaller(anon) {
+				if a.trackable[fn] {
+					a.trackable[anon] = true
+				}
+				reaches = true
+				break
 			}
 		}
 	}
-	for _, anon := range fn.AnonFuncs {
-		if runtimeCallerFuncSetFor(anon, memo, visiting, dynamicCallsMayReachRuntimeCaller) {
-			memo[fn] = true
+	a.memo[fn] = reaches
+	return reaches
+}
+
+func (a *runtimeCallerAnalysis) functionValueCallMayReachRuntimeCaller(fn *ssa.Function, value ssa.Value) bool {
+	targets, ok := a.functionValueTargets(fn, value)
+	if !ok {
+		return true
+	}
+	for target := range targets {
+		if a.fnMayReachRuntimeCaller(target) {
 			return true
 		}
 	}
-	memo[fn] = false
 	return false
+}
+
+func (a *runtimeCallerAnalysis) functionValueTargets(fn *ssa.Function, value ssa.Value) (map[*ssa.Function]bool, bool) {
+	if targets, ok := staticFunctionTargets(value); ok {
+		return targets, true
+	}
+	param, ok := value.(*ssa.Parameter)
+	if !ok || param.Parent() != fn {
+		return nil, false
+	}
+	idx, ok := parameterIndex(fn, param)
+	if !ok {
+		return nil, false
+	}
+	return a.functionParamTargets(fn, idx)
+}
+
+func (a *runtimeCallerAnalysis) functionParamTargets(fn *ssa.Function, idx int) (map[*ssa.Function]bool, bool) {
+	callsites := a.callsites[fn]
+	if len(callsites) == 0 {
+		return nil, false
+	}
+	targets := make(map[*ssa.Function]bool)
+	for _, call := range callsites {
+		args := call.Args
+		if idx >= len(args) {
+			return nil, false
+		}
+		argTargets, ok := staticFunctionTargets(args[idx])
+		if !ok {
+			return nil, false
+		}
+		for target := range argTargets {
+			targets[target] = true
+		}
+	}
+	return targets, true
+}
+
+func staticFunctionTargets(value ssa.Value) (map[*ssa.Function]bool, bool) {
+	switch v := value.(type) {
+	case *ssa.Function:
+		return map[*ssa.Function]bool{v: true}, true
+	case *ssa.MakeClosure:
+		if fn, ok := v.Fn.(*ssa.Function); ok {
+			return map[*ssa.Function]bool{fn: true}, true
+		}
+	}
+	return nil, false
+}
+
+func (a *runtimeCallerAnalysis) interfaceInvokeMayReachRuntimeCaller(fn *ssa.Function, call *ssa.CallCommon) bool {
+	targets, ok := a.interfaceMethodTargets(fn, call.Value, call.Method)
+	if !ok {
+		return true
+	}
+	for target := range targets {
+		if a.fnMayReachRuntimeCaller(target) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *runtimeCallerAnalysis) interfaceMethodTargets(fn *ssa.Function, value ssa.Value, method *types.Func) (map[*ssa.Function]bool, bool) {
+	if targets, ok := a.staticInterfaceMethodTargets(value, method); ok {
+		return targets, true
+	}
+	param, ok := value.(*ssa.Parameter)
+	if !ok || param.Parent() != fn {
+		return nil, false
+	}
+	idx, ok := parameterIndex(fn, param)
+	if !ok {
+		return nil, false
+	}
+	callsites := a.callsites[fn]
+	if len(callsites) == 0 {
+		return nil, false
+	}
+	targets := make(map[*ssa.Function]bool)
+	for _, call := range callsites {
+		args := call.Args
+		if idx >= len(args) {
+			return nil, false
+		}
+		argTargets, ok := a.staticInterfaceMethodTargets(args[idx], method)
+		if !ok {
+			return nil, false
+		}
+		for target := range argTargets {
+			targets[target] = true
+		}
+	}
+	return targets, true
+}
+
+func (a *runtimeCallerAnalysis) staticInterfaceMethodTargets(value ssa.Value, method *types.Func) (map[*ssa.Function]bool, bool) {
+	switch v := value.(type) {
+	case *ssa.MakeInterface:
+		return a.methodTargetsForType(v.X.Type(), method)
+	case *ssa.ChangeInterface:
+		return a.staticInterfaceMethodTargets(v.X, method)
+	}
+	return nil, false
+}
+
+func (a *runtimeCallerAnalysis) methodTargetsForType(typ types.Type, method *types.Func) (map[*ssa.Function]bool, bool) {
+	if a.pkg == nil || a.pkg.Prog == nil || method == nil {
+		return nil, false
+	}
+	methods := a.pkg.Prog.MethodSets.MethodSet(typ)
+	for i := 0; i < methods.Len(); i++ {
+		sel := methods.At(i)
+		if sel.Obj().Name() != method.Name() {
+			continue
+		}
+		fn := a.pkg.Prog.MethodValue(sel)
+		if fn == nil {
+			return nil, false
+		}
+		return map[*ssa.Function]bool{fn: true}, true
+	}
+	return nil, false
+}
+
+func parameterIndex(fn *ssa.Function, param *ssa.Parameter) (int, bool) {
+	for i, candidate := range fn.Params {
+		if candidate == param {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func forEachCall(fn *ssa.Function, do func(*ssa.CallCommon)) {
+	if fn == nil {
+		return
+	}
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			if call, ok := instr.(ssa.CallInstruction); ok {
+				do(call.Common())
+			}
+		}
+	}
 }
 
 func isRuntimeCallerFunc(fn *ssa.Function) bool {

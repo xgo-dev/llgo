@@ -136,6 +136,8 @@ import "runtime/debug"
 
 type callerIface interface { Call() }
 type callerImpl struct{}
+type workerIface interface { Work() }
+type workerImpl struct{}
 
 func direct() { runtime.Caller(0) }
 func indirect() { direct() }
@@ -148,6 +150,12 @@ func closureLayer(next func()) func() { return func() { next() } }
 func closureCaller() { closureLayer(closureLayer(direct))() }
 func stack() { _ = debug.Stack() }
 func anonOnly() { func() { runtime.FuncForPC(0) }() }
+func leaf() {}
+func callFunc(f func()) { f() }
+func callFuncHot() { callFunc(leaf) }
+func (workerImpl) Work() {}
+func callWorker(w workerIface) { w.Work() }
+func workerHot() { var w workerIface = workerImpl{}; callWorker(w) }
 func plain() {}
 `)
 	if !packageUsesRuntimeCaller(ssapkg) {
@@ -172,6 +180,11 @@ func plain() {}
 	for _, name := range []string{"dynamic", "dynamicCaller", "interfaceDispatch", "interfaceCaller", "closureLayer", "closureCaller"} {
 		if !runtimeCallerFuncs[ssapkg.Func(name)] {
 			t.Fatalf("%s should be tracked because dynamic calls may reach runtime stack APIs", name)
+		}
+	}
+	for _, name := range []string{"leaf", "callFunc", "callFuncHot", "callWorker", "workerHot"} {
+		if runtimeCallerFuncs[ssapkg.Func(name)] {
+			t.Fatalf("%s should not be tracked when resolved dynamic targets do not reach runtime stack APIs", name)
 		}
 	}
 	if runtimeCallerFuncs[ssapkg.Func("plain")] {
