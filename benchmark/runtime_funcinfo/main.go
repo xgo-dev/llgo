@@ -35,8 +35,18 @@ type variant struct {
 }
 
 type scenario struct {
-	Name string
-	Dir  string
+	Name         string       `json:"name"`
+	Kind         string       `json:"kind"`
+	Dir          string       `json:"-"`
+	PackageCount int          `json:"package_count,omitempty"`
+	MethodCount  int          `json:"method_count,omitempty"`
+	TargetCount  int          `json:"target_count,omitempty"`
+	Scale        scenarioSize `json:"scale,omitempty"`
+}
+
+type scenarioSize struct {
+	Packages int `json:"packages"`
+	Methods  int `json:"methods"`
 }
 
 type buildResult struct {
@@ -63,6 +73,7 @@ type resultFile struct {
 	MethodCount  int           `json:"method_count"`
 	Variants     []variant     `json:"variants"`
 	Scenarios    []string      `json:"scenarios"`
+	ScenarioMeta []scenario    `json:"scenario_meta,omitempty"`
 	Builds       []buildResult `json:"builds"`
 	Runs         []runResult   `json:"runs"`
 }
@@ -73,10 +84,11 @@ func main() {
 	runs := flag.Int("runs", 11, "process runs per executable")
 	iters := flag.Int("iters", 200000, "inner benchmark iterations")
 	llgoOpt := flag.String("llgo-opt", "2", "LLGo optimization level passed as -O<value>; empty disables the flag")
-	scenarioList := flag.String("scenarios", "hot,deep,multipkg,stdlib", "comma-separated scenarios")
+	scenarioList := flag.String("scenarios", "hot,deep,multipkg,cold,stdlib", "comma-separated scenarios")
 	includeLTO := flag.Bool("include-lto", false, "also build full-LTO variants for LLGo compilers")
 	pkgCount := flag.Int("packages", 12, "generated package count for multipkg")
 	methodCount := flag.Int("methods", 12, "generated functions and methods per generated package")
+	scaleList := flag.String("scales", "", "optional comma-separated package x method scales for multipkg/cold, for example 6x6,12x12,24x24")
 	flag.Var(&variants, "variant", "variant definition: name=go or name=llgo,/path/to/llgo,/path/to/root")
 	flag.Parse()
 
@@ -96,6 +108,10 @@ func main() {
 	if *pkgCount <= 0 || *methodCount <= 0 {
 		fatal(errors.New("-packages and -methods must be positive"))
 	}
+	scales, err := parseScales(*scaleList)
+	if err != nil {
+		fatal(err)
+	}
 
 	absOut, err := filepath.Abs(*outDir)
 	if err != nil {
@@ -110,7 +126,7 @@ func main() {
 		}
 	}
 
-	scenarios, err := generateScenarios(filepath.Join(absOut, "work"), splitList(*scenarioList), *pkgCount, *methodCount)
+	scenarios, err := generateScenarios(filepath.Join(absOut, "work"), splitList(*scenarioList), *pkgCount, *methodCount, scales)
 	if err != nil {
 		fatal(err)
 	}
@@ -139,6 +155,7 @@ func main() {
 		MethodCount:  *methodCount,
 		Variants:     parsed,
 		Scenarios:    scenarioNames(scenarios),
+		ScenarioMeta: scenarios,
 		Builds:       builds,
 		Runs:         runsOut,
 	}
@@ -199,30 +216,49 @@ func parseVariants(values []string, includeLTO bool) ([]variant, error) {
 	return out, nil
 }
 
-func generateScenarios(workDir string, names []string, pkgCount, methodCount int) ([]scenario, error) {
+func generateScenarios(workDir string, names []string, pkgCount, methodCount int, scales []scenarioSize) ([]scenario, error) {
 	var out []scenario
 	for _, name := range names {
-		dir := filepath.Join(workDir, name)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return nil, err
+		sizes := []scenarioSize{{Packages: pkgCount, Methods: methodCount}}
+		if len(scales) != 0 && (name == "multipkg" || name == "cold") {
+			sizes = scales
 		}
-		var err error
-		switch name {
-		case "hot":
-			err = generateHot(dir)
-		case "deep":
-			err = generateDeep(dir)
-		case "multipkg":
-			err = generateMultipkg(dir, pkgCount, methodCount)
-		case "stdlib":
-			err = generateStdlib(dir)
-		default:
-			return nil, fmt.Errorf("unknown scenario %q", name)
+		for _, size := range sizes {
+			scenarioName := name
+			if len(sizes) > 1 {
+				scenarioName = fmt.Sprintf("%s_%dx%d", name, size.Packages, size.Methods)
+			}
+			dir := filepath.Join(workDir, scenarioName)
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return nil, err
+			}
+			var err error
+			switch name {
+			case "hot":
+				err = generateHot(dir)
+			case "deep":
+				err = generateDeep(dir)
+			case "multipkg":
+				err = generateMultipkg(dir, size.Packages, size.Methods)
+			case "cold":
+				err = generateCold(dir, size.Packages, size.Methods)
+			case "stdlib":
+				err = generateStdlib(dir)
+			default:
+				return nil, fmt.Errorf("unknown scenario %q", name)
+			}
+			if err != nil {
+				return nil, err
+			}
+			sc := scenario{Name: scenarioName, Kind: name, Dir: dir}
+			if name == "multipkg" || name == "cold" {
+				sc.PackageCount = size.Packages
+				sc.MethodCount = size.Methods
+				sc.TargetCount = size.Packages * size.Methods
+				sc.Scale = size
+			}
+			out = append(out, sc)
 		}
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, scenario{Name: name, Dir: dir})
 	}
 	return out, nil
 }
@@ -370,6 +406,116 @@ func funcInfoReady(targets []uintptr) bool {
 	return os.WriteFile(filepath.Join(dir, "main.go"), []byte(main.String()), 0644)
 }
 
+func generateCold(dir string, pkgCount, methodCount int) error {
+	if err := writeModule(dir, "example.com/llgo-bench/cold"); err != nil {
+		return err
+	}
+	for i := 0; i < pkgCount; i++ {
+		pkgName := fmt.Sprintf("p%02d", i)
+		pkgDir := filepath.Join(dir, pkgName)
+		if err := os.MkdirAll(pkgDir, 0755); err != nil {
+			return err
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "package %s\n\n", pkgName)
+		b.WriteString("import \"reflect\"\n\n")
+		for j := 0; j < methodCount; j++ {
+			fmt.Fprintf(&b, "//go:noinline\nfunc F%02d_%02d(x int) int { return x + %d }\n\n", i, j, i*100+j)
+		}
+		b.WriteString("//go:noinline\nfunc Targets() []uintptr {\n\treturn []uintptr{\n")
+		for j := 0; j < methodCount; j++ {
+			fmt.Fprintf(&b, "\t\treflect.ValueOf(F%02d_%02d).Pointer(),\n", i, j)
+		}
+		b.WriteString("\t}\n}\n")
+		if err := os.WriteFile(filepath.Join(pkgDir, pkgName+".go"), []byte(b.String()), 0644); err != nil {
+			return err
+		}
+	}
+
+	var main strings.Builder
+	main.WriteString("package main\n\nimport (\n\t\"fmt\"\n\t\"os\"\n\t\"runtime\"\n\t\"time\"\n")
+	for i := 0; i < pkgCount; i++ {
+		fmt.Fprintf(&main, "\tp%02d \"example.com/llgo-bench/cold/p%02d\"\n", i, i)
+	}
+	main.WriteString(")\n\nvar sinkInt int\nvar sinkString string\n\n")
+	main.WriteString(commonBenchHelpers)
+	main.WriteString("func main() {\n\titers := benchIters(10000)\n\tvar targets []uintptr\n")
+	for i := 0; i < pkgCount; i++ {
+		fmt.Fprintf(&main, "\ttargets = append(targets, p%02d.Targets()...)\n", i)
+	}
+	main.WriteString(`
+	if len(targets) == 0 {
+		panic("missing targets")
+	}
+	first := targets[len(targets)/2]
+	start := time.Now()
+	fn := runtime.FuncForPC(first)
+	if fn == nil || fn.Name() == "" {
+		panic("missing first func")
+	}
+	fmt.Printf("cold.FirstFuncForPC=%d\n", time.Since(start).Nanoseconds())
+	sinkString = fn.Name()
+
+	start = time.Now()
+	file, line := fn.FileLine(first)
+	if file == "" || line == 0 {
+		panic("missing first fileline")
+	}
+	fmt.Printf("cold.FirstFileLine=%d\n", time.Since(start).Nanoseconds())
+	sinkString = file
+	sinkInt += line
+
+	start = time.Now()
+	pc, file, line, ok := runtime.Caller(0)
+	if !ok || pc == 0 || file == "" || line == 0 {
+		panic("bad first caller")
+	}
+	fmt.Printf("cold.FirstCaller0=%d\n", time.Since(start).Nanoseconds())
+	sinkString = file
+	sinkInt += line
+
+	start = time.Now()
+	var pcs [16]uintptr
+	n := runtime.Callers(0, pcs[:])
+	frames := runtime.CallersFrames(pcs[:n])
+	if frame, _ := frames.Next(); frame.Function != "" && frame.File != "" && frame.Line != 0 {
+		fmt.Printf("cold.FirstCallersFrames=%d\n", time.Since(start).Nanoseconds())
+		sinkString = frame.Function
+		sinkInt += frame.Line
+	}
+
+	measure("cold.WarmFuncForPCMany", iters, func() {
+		total := 0
+		for _, pc := range targets {
+			fn := runtime.FuncForPC(pc)
+			if fn == nil {
+				panic("missing func")
+			}
+			total += len(fn.Name())
+		}
+		sinkInt += total
+	})
+	measure("cold.WarmFileLineMany", iters, func() {
+		total := 0
+		for _, pc := range targets {
+			fn := runtime.FuncForPC(pc)
+			if fn == nil {
+				panic("missing func")
+			}
+			file, line := fn.FileLine(pc)
+			if file == "" || line == 0 {
+				panic("missing fileline")
+			}
+			total += len(file) + line
+		}
+		sinkInt += total
+	})
+	fmt.Println("sink=", sinkInt, sinkString)
+}
+`)
+	return os.WriteFile(filepath.Join(dir, "main.go"), []byte(main.String()), 0644)
+}
+
 func generateStdlib(dir string) error {
 	if err := writeModule(dir, "example.com/llgo-bench/stdlib"); err != nil {
 		return err
@@ -427,7 +573,7 @@ func buildScenario(outDir string, sc scenario, v variant, llgoOpt string) buildR
 }
 
 func runScenario(sc scenario, v variant, bin string, runs, iters int) runResult {
-	scenarioIters := iterationsForScenario(sc.Name, iters)
+	scenarioIters := iterationsForScenario(sc.Kind, iters)
 	rr := runResult{
 		Variant:  v.Name,
 		Scenario: sc.Name,
@@ -464,7 +610,7 @@ func iterationsForScenario(name string, base int) int {
 	switch name {
 	case "deep":
 		div = 4
-	case "multipkg", "stdlib":
+	case "multipkg", "cold", "stdlib":
 		div = 20
 	}
 	n := base / div
@@ -498,9 +644,18 @@ func renderSummary(result resultFile) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Runtime Funcinfo Benchmark\n\nGenerated: `%s`\n\n", result.GeneratedAt.Format(time.RFC3339))
 	b.WriteString("Cells are `best/trimmed avg`. Runtime metrics use `ns/op`; sizes use MiB.\n\n")
-	if result.PackageCount > 0 && result.MethodCount > 0 {
-		fmt.Fprintf(&b, "`multipkg.FuncForPCMany` and `multipkg.FileLineMany` are batch metrics over %d target functions (%d packages x %d functions).\n\n",
-			result.PackageCount*result.MethodCount, result.PackageCount, result.MethodCount)
+	for _, sc := range result.ScenarioMeta {
+		if sc.TargetCount == 0 {
+			continue
+		}
+		switch sc.Kind {
+		case "multipkg":
+			fmt.Fprintf(&b, "`%s` uses `multipkg.FuncForPCMany` and `multipkg.FileLineMany` batch metrics over %d target functions (%d packages x %d functions).\n\n",
+				sc.Name, sc.TargetCount, sc.PackageCount, sc.MethodCount)
+		case "cold":
+			fmt.Fprintf(&b, "`%s` uses `cold.WarmFuncForPCMany` and `cold.WarmFileLineMany` batch metrics over %d target functions (%d packages x %d functions). `cold.First*` metrics are one per process and include lazy runtime initialization that has not already happened in that process.\n\n",
+				sc.Name, sc.TargetCount, sc.PackageCount, sc.MethodCount)
+		}
 	}
 	for _, sc := range result.Scenarios {
 		metrics := metricsForScenario(result.Runs, sc)
@@ -679,6 +834,29 @@ func splitList(s string) []string {
 		}
 	}
 	return out
+}
+
+func parseScales(s string) ([]scenarioSize, error) {
+	var out []scenarioSize
+	for _, part := range splitList(s) {
+		left, right, ok := strings.Cut(part, "x")
+		if !ok {
+			left, right, ok = strings.Cut(part, "X")
+		}
+		if !ok {
+			return nil, fmt.Errorf("bad scale %q: want packages x methods, for example 12x12", part)
+		}
+		packages, err := strconv.Atoi(strings.TrimSpace(left))
+		if err != nil || packages <= 0 {
+			return nil, fmt.Errorf("bad package count in scale %q", part)
+		}
+		methods, err := strconv.Atoi(strings.TrimSpace(right))
+		if err != nil || methods <= 0 {
+			return nil, fmt.Errorf("bad method count in scale %q", part)
+		}
+		out = append(out, scenarioSize{Packages: packages, Methods: methods})
+	}
+	return out, nil
 }
 
 func scenarioNames(scenarios []scenario) []string {

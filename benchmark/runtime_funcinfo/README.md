@@ -10,6 +10,7 @@ It covers:
   `FuncForPC`, and `Func.FileLine`.
 - deep stacks through direct calls, interface calls, and closures.
 - many packages and methods, generated from configurable package/method counts.
+- cold first-use runtime metadata paths, including lazy table initialization.
 - a stdlib-heavy program with `encoding/json`, `text/template`, `regexp`,
   `go/parser`, `go/token`, and `net/netip` imports.
 
@@ -33,8 +34,9 @@ go run ./benchmark/runtime_funcinfo \
 
 Add `-include-lto` to build an additional `+lto` variant for every LLGo
 compiler. LLGo builds use `-O2` by default; pass `-llgo-opt=` to omit the
-optimization flag. Output is written to `benchmark/runtime_funcinfo/out` by
-default:
+optimization flag. Add `-scales=6x6,12x12,24x24` to generate separate
+`multipkg_*` and `cold_*` scenarios for several package/function counts in one
+run. Output is written to `benchmark/runtime_funcinfo/out` by default:
 
 - `summary.md`: markdown performance and size tables.
 - `results.json`: raw build and run data.
@@ -50,3 +52,8 @@ substantially more work.
 `multipkg.FuncForPCMany` and `multipkg.FileLineMany` are batch metrics over all
 generated target functions (`-packages * -methods`, 144 targets with the default
 settings), not single-lookup timings.
+
+`cold.First*` metrics are single measurements from a fresh process and include
+lazy runtime initialization that has not already happened in that process.
+`cold.WarmFuncForPCMany` and `cold.WarmFileLineMany` use the same batch target
+count as `multipkg`.
