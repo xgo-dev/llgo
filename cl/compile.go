@@ -266,7 +266,7 @@ func filesUseRuntimeCaller(files []*ast.File) bool {
 					return false
 				}
 			case *ast.Ident:
-				if (dotImports["runtime"] && isRuntimeCallerName(n.Name)) ||
+				if (dotImports["runtime"] && isRuntimeCallerFrameName(n.Name)) ||
 					(dotImports["runtime/debug"] && n.Name == "Stack") {
 					found = true
 					return false
@@ -284,7 +284,7 @@ func filesUseRuntimeCaller(files []*ast.File) bool {
 func runtimeCallerSelector(path, name string) bool {
 	switch path {
 	case "runtime":
-		return isRuntimeCallerName(name)
+		return isRuntimeCallerFrameName(name)
 	case "runtime/debug":
 		return name == "Stack"
 	default:

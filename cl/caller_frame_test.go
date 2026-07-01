@@ -61,9 +61,17 @@ func f() { _ = dbg.Stack() }
 			name: "dot import",
 			src: `package foo
 import . "runtime"
-func f() { _ = FuncForPC(0) }
+func f() { Caller(0) }
 `,
 			want: true,
+		},
+		{
+			name: "runtime FuncForPC only",
+			src: `package foo
+import "runtime"
+func f() { _ = runtime.FuncForPC(0) }
+`,
+			want: false,
 		},
 		{
 			name: "blank import",
@@ -178,7 +186,8 @@ func interfaceCaller(c callerIface) { interfaceDispatch(c) }
 func closureLayer(next func()) func() { return func() { next() } }
 func closureCaller() { closureLayer(closureLayer(direct))() }
 func stack() { _ = debug.Stack() }
-func anonOnly() { func() { runtime.FuncForPC(0) }() }
+func anonOnly() { func() { runtime.Caller(0) }() }
+func funcForPCOnly() { _ = runtime.FuncForPC(0) }
 func leaf() {}
 func callFunc(f func()) { f() }
 func callFuncHot() { callFunc(leaf) }
@@ -216,6 +225,9 @@ func plain() {}
 			t.Fatalf("%s should not be tracked when resolved dynamic targets do not reach runtime stack APIs", name)
 		}
 	}
+	if runtimeCallerFuncs[ssapkg.Func("funcForPCOnly")] {
+		t.Fatal("FuncForPC-only function should not need caller frame tracking")
+	}
 	if runtimeCallerFuncs[ssapkg.Func("plain")] {
 		t.Fatal("plain function should not be tracked")
 	}
@@ -224,6 +236,12 @@ func plain() {}
 		if !isRuntimeCallerName(name) {
 			t.Fatalf("%s should be a runtime caller metadata function", name)
 		}
+	}
+	if isRuntimeCallerFrameName("FuncForPC") {
+		t.Fatal("FuncForPC should not require caller frame tracking")
+	}
+	if !isRuntimeCallerFrameName("Caller") {
+		t.Fatal("Caller should require caller frame tracking")
 	}
 	if isRuntimeCallerName("Version") {
 		t.Fatal("Version should not be a runtime caller metadata function")
@@ -238,6 +256,9 @@ func FuncForPC(pc uintptr) uintptr { return 0 }
 	}
 	if !isRuntimeCallerFunc(rtpkg.Func("FuncForPC")) {
 		t.Fatal("LLGo runtime lib FuncForPC should be treated as runtime metadata use")
+	}
+	if isRuntimeCallerFrameFunc(rtpkg.Func("FuncForPC")) {
+		t.Fatal("FuncForPC should not require caller frame tracking")
 	}
 	if isRuntimeCallerLookupFunc(rtpkg.Func("FuncForPC")) {
 		t.Fatal("FuncForPC should not consume caller lookup tokens")
@@ -705,6 +726,28 @@ func f() {}
 	}
 	if ir := pkg.Module().String(); strings.Contains(ir, "RecordCallerLocation") || strings.Contains(ir, "RecordPanicLocation") {
 		t.Fatalf("packages without runtime stack APIs should not emit caller location tracking:\n%s", ir)
+	}
+
+	ssapkg, files = buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+func f() { _ = runtime.FuncForPC(0) }
+`)
+	prog = newLLSSAProg(t)
+	prog.Target().GOOS = "linux"
+	prog.Target().GOARCH = "amd64"
+	prog.EnableFuncInfoMetadata(true)
+	pkg, err = NewPackage(prog, ssapkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.Module().String()
+	for _, bad := range []string{"RecordCallerLocation", "RecordPanicLocation", "PushCallerLocationFrame", `!llgo.pcline`} {
+		if strings.Contains(ir, bad) {
+			t.Fatalf("FuncForPC-only packages should not emit caller frame tracking %q:\n%s", bad, ir)
+		}
+	}
+	if !strings.Contains(ir, `!llgo.funcinfo = !{!`) {
+		t.Fatalf("FuncForPC-only packages should still emit funcinfo metadata:\n%s", ir)
 	}
 }
 

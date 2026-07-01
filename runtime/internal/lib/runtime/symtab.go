@@ -229,6 +229,7 @@ type runtimePCLineFrame struct {
 
 var runtimePCLineInitState uint32
 var runtimePCLineFrames []runtimePCLineFrame
+var runtimePCLineIndex runtimePCPageIndex
 
 type runtimeFuncPCFrame struct {
 	entry     uintptr
@@ -1132,7 +1133,9 @@ func initRuntimePCLineFramesOnce() {
 		})
 	}
 	sortRuntimePCLineFrames(frames)
-	runtimePCLineFrames = uniqueRuntimePCLineFrames(frames)
+	frames = uniqueRuntimePCLineFrames(frames)
+	runtimePCLineFrames = frames
+	runtimePCLineIndex = buildRuntimePCLineIndex(frames)
 }
 
 func pcLineInfoForID(id uint64) *runtimePCLineRecord {
@@ -1234,28 +1237,93 @@ func uniqueRuntimePCLineFrames(frames []runtimePCLineFrame) []runtimePCLineFrame
 	return out
 }
 
+func buildRuntimePCLineIndex(frames []runtimePCLineFrame) runtimePCPageIndex {
+	if len(frames) == 0 {
+		return runtimePCPageIndex{}
+	}
+	base := frames[0].pc >> runtimeFuncPCPageShift
+	last := frames[len(frames)-1].pc >> runtimeFuncPCPageShift
+	if last < base {
+		return runtimePCPageIndex{}
+	}
+	npages := last - base + 2
+	if npages > 1<<20 && npages > uintptr(len(frames))*64 {
+		return runtimePCPageIndex{}
+	}
+	pages := make([]uint32, npages)
+	next := 0
+	for page := range pages {
+		limit := (base + uintptr(page)) << runtimeFuncPCPageShift
+		for next < len(frames) && frames[next].pc < limit {
+			next++
+		}
+		pages[page] = uint32(next)
+	}
+	return runtimePCPageIndex{base: base, pages: pages}
+}
+
+func runtimePCLineFrameRange(pc uintptr) (int, int) {
+	frames := runtimePCLineFrames
+	lo, hi := 0, len(frames)
+	if pages := runtimePCLineIndex.pages; len(pages) != 0 {
+		page := pc >> runtimeFuncPCPageShift
+		if page >= runtimePCLineIndex.base {
+			off := page - runtimePCLineIndex.base
+			if off < uintptr(len(pages)) {
+				lo = int(pages[off])
+				if off+1 < uintptr(len(pages)) {
+					hi = int(pages[off+1])
+				}
+				if lo > 0 {
+					lo--
+				}
+				if hi < len(frames) {
+					hi++
+				}
+			}
+		}
+	}
+	return lo, hi
+}
+
+func runtimePCLineFrameIndex(pc uintptr, exact bool) int {
+	frames := runtimePCLineFrames
+	if len(frames) == 0 {
+		return -1
+	}
+	lo, hi := runtimePCLineFrameRange(pc)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if frames[mid].pc > pc || (exact && frames[mid].pc == pc) {
+			hi = mid
+		} else {
+			lo = mid + 1
+		}
+	}
+	if exact {
+		if lo >= len(frames) || frames[lo].pc != pc {
+			return -1
+		}
+		return lo
+	}
+	idx := lo - 1
+	if idx < 0 {
+		return -1
+	}
+	return idx
+}
+
 func pcLineFrameForPC(pc, entry uintptr) (pcSymbol, bool) {
 	if pc == 0 {
 		return pcSymbol{}, false
 	}
 	initRuntimePCLineFrames()
 	frames := runtimePCLineFrames
-	if len(frames) == 0 {
+	idx := runtimePCLineFrameIndex(pc, false)
+	if idx < 0 {
 		return pcSymbol{}, false
 	}
-	lo, hi := 0, len(frames)
-	for lo < hi {
-		mid := int(uint(lo+hi) >> 1)
-		if frames[mid].pc > pc {
-			hi = mid
-		} else {
-			lo = mid + 1
-		}
-	}
-	if lo == 0 {
-		return pcSymbol{}, false
-	}
-	frame := frames[lo-1]
+	frame := frames[idx]
 	if entry != 0 && frame.entry != 0 && frame.entry != entry {
 		return pcSymbol{}, false
 	}
@@ -1276,22 +1344,11 @@ func pcLineFrameForExactPC(pc uintptr) (pcSymbol, bool) {
 	}
 	initRuntimePCLineFrames()
 	frames := runtimePCLineFrames
-	if len(frames) == 0 {
+	idx := runtimePCLineFrameIndex(pc, true)
+	if idx < 0 {
 		return pcSymbol{}, false
 	}
-	lo, hi := 0, len(frames)
-	for lo < hi {
-		mid := int(uint(lo+hi) >> 1)
-		if frames[mid].pc >= pc {
-			hi = mid
-		} else {
-			lo = mid + 1
-		}
-	}
-	if lo >= len(frames) || frames[lo].pc != pc {
-		return pcSymbol{}, false
-	}
-	frame := frames[lo]
+	frame := frames[idx]
 	return pcSymbol{
 		pc:        pc,
 		entry:     frame.entry,
