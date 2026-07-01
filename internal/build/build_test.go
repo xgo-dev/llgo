@@ -22,6 +22,7 @@ import (
 	"github.com/goplus/llgo/internal/mockable"
 	"github.com/goplus/llgo/internal/packages"
 	llssa "github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llvm"
 )
 
 func TestMain(m *testing.M) {
@@ -52,6 +53,68 @@ func TestNeedsLinuxNoPIE(t *testing.T) {
 	ctx.buildConf.Target = "wasi"
 	if needsLinuxNoPIE(ctx, nil) {
 		t.Fatal("named targets should not force host linux -no-pie")
+	}
+}
+
+func TestNeedsLinuxExportDynamic(t *testing.T) {
+	t.Setenv(llgoFuncInfo, "")
+	ctx := &context{buildConf: &Config{Goos: "linux"}}
+	if !needsLinuxExportDynamic(ctx) {
+		t.Fatal("linux funcinfo executable should export dynamic symbols")
+	}
+	if got := linuxExportDynamicArgs(ctx); strings.Join(got, " ") != "-Wl,--export-dynamic-symbol=main.* -Wl,--export-dynamic-symbol=command-line-arguments.*" {
+		t.Fatalf("linuxExportDynamicArgs = %v", got)
+	}
+	t.Setenv(llgoFuncInfo, "0")
+	if needsLinuxExportDynamic(ctx) {
+		t.Fatal("LLGO_FUNCINFO=0 should disable dynamic symbol export")
+	}
+	if got := linuxExportDynamicArgs(ctx); got != nil {
+		t.Fatalf("disabled linuxExportDynamicArgs = %v, want nil", got)
+	}
+	t.Setenv(llgoFuncInfo, "1")
+	ctx.buildConf.Goos = "darwin"
+	if needsLinuxExportDynamic(ctx) {
+		t.Fatal("non-linux executable should not export dynamic symbols for funcinfo")
+	}
+	ctx.buildConf.Goos = "linux"
+	ctx.buildConf.Target = "wasi"
+	if needsLinuxExportDynamic(ctx) {
+		t.Fatal("named targets should not force host linux dynamic symbol export")
+	}
+}
+
+func TestIsFuncInfoEnabled(t *testing.T) {
+	t.Setenv(llgoFuncInfo, "")
+	if !IsFuncInfoEnabled() {
+		t.Fatal("funcinfo should be enabled by default")
+	}
+	t.Setenv(llgoFuncInfo, "0")
+	if IsFuncInfoEnabled() {
+		t.Fatal("LLGO_FUNCINFO=0 should disable funcinfo")
+	}
+	t.Setenv(llgoFuncInfo, "1")
+	if !IsFuncInfoEnabled() {
+		t.Fatal("LLGO_FUNCINFO=1 should enable funcinfo")
+	}
+}
+
+func TestLinkedModuleGlobalsSkipsDeclarations(t *testing.T) {
+	prog := llssa.NewProgram(nil)
+	lpkg := prog.NewPackage("example.com/p", "example.com/p")
+	mod := lpkg.Module()
+	i32 := mod.Context().Int32Type()
+
+	defined := llvm.AddGlobal(mod, i32, "example.com/p.defined")
+	defined.SetInitializer(llvm.ConstInt(i32, 1, false))
+	llvm.AddGlobal(mod, i32, "example.com/p.declared")
+
+	got := linkedModuleGlobals([]Package{{LPkg: lpkg}})
+	if _, ok := got["example.com/p.defined"]; !ok {
+		t.Fatalf("linkedModuleGlobals missing defined global: %#v", got)
+	}
+	if _, ok := got["example.com/p.declared"]; ok {
+		t.Fatalf("linkedModuleGlobals should skip external declarations: %#v", got)
 	}
 }
 
