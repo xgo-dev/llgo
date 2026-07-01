@@ -1040,7 +1040,7 @@ func fnHasDirectRuntimeCaller(fn *ssa.Function) bool {
 			if !ok {
 				continue
 			}
-			if isRuntimeCallerFunc(call.Common().StaticCallee()) {
+			if isRuntimeCallerFrameFunc(call.Common().StaticCallee()) {
 				return true
 			}
 		}
@@ -1057,7 +1057,7 @@ func (a *runtimeCallerAnalysis) fnMayReachRuntimeCaller(fn *ssa.Function) bool {
 	if fn == nil {
 		return false
 	}
-	if isRuntimeCallerFunc(fn) {
+	if isRuntimeCallerFrameFunc(fn) {
 		return true
 	}
 	if !a.funcs[fn] {
@@ -1078,7 +1078,7 @@ func (a *runtimeCallerAnalysis) fnMayReachRuntimeCaller(fn *ssa.Function) bool {
 		}
 		callee := call.StaticCallee()
 		switch {
-		case isRuntimeCallerFunc(callee):
+		case isRuntimeCallerFrameFunc(callee):
 			reaches = true
 		case callee != nil:
 			reaches = a.fnMayReachRuntimeCaller(callee)
@@ -1276,6 +1276,20 @@ func isRuntimeCallerFunc(fn *ssa.Function) bool {
 	}
 }
 
+func isRuntimeCallerFrameFunc(fn *ssa.Function) bool {
+	if fn == nil || fn.Pkg == nil || fn.Pkg.Pkg == nil {
+		return false
+	}
+	switch fn.Pkg.Pkg.Path() {
+	case "runtime", "github.com/goplus/llgo/runtime/internal/lib/runtime":
+		return isRuntimeCallerFrameName(fn.Name())
+	case "runtime/debug":
+		return fn.Name() == "Stack"
+	default:
+		return false
+	}
+}
+
 func isRuntimeCallerLookupFunc(fn *ssa.Function) bool {
 	if fn == nil || fn.Pkg == nil || fn.Pkg.Pkg == nil {
 		return false
@@ -1295,6 +1309,15 @@ func isRuntimeCallerLookupFunc(fn *ssa.Function) bool {
 func isRuntimeCallerName(name string) bool {
 	switch name {
 	case "Caller", "Callers", "CallersFrames", "FuncForPC", "Stack":
+		return true
+	default:
+		return false
+	}
+}
+
+func isRuntimeCallerFrameName(name string) bool {
+	switch name {
+	case "Caller", "Callers", "CallersFrames", "Stack":
 		return true
 	default:
 		return false
