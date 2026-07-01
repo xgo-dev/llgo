@@ -5,6 +5,7 @@ package cl
 
 import (
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -129,6 +130,34 @@ func buildCallerFrameSSAPackage(t *testing.T, pkgPath, src string) (*gossa.Packa
 	return ssapkg, files
 }
 
+func newLLSSAProgForTarget(t *testing.T, target *llssa.Target) llssa.Program {
+	t.Helper()
+	prog := llssa.NewProgram(target)
+	prog.SetRuntime(func() *types.Package {
+		rt, err := importer.For("source", nil).Import(llssa.PkgRuntime)
+		if err != nil {
+			t.Fatal("load runtime failed:", err)
+		}
+		return rt
+	})
+	if target != nil && target.GOARCH != "" {
+		prog.TypeSizes(types.SizesFor("gc", target.GOARCH))
+	}
+	return prog
+}
+
+func newRuntimeCallerAnalysis(pkg *gossa.Package) *runtimeCallerAnalysis {
+	funcs, trackable := collectRuntimeCallerFunctions(pkg)
+	return &runtimeCallerAnalysis{
+		pkg:       pkg,
+		funcs:     funcs,
+		trackable: trackable,
+		callsites: collectRuntimeCallerCallsites(funcs),
+		memo:      make(map[*gossa.Function]bool),
+		visiting:  make(map[*gossa.Function]bool),
+	}
+}
+
 func TestRuntimeCallerPackageDetection(t *testing.T) {
 	ssapkg, _ := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
 import "runtime"
@@ -212,6 +241,127 @@ func FuncForPC(pc uintptr) uintptr { return 0 }
 	}
 	if isRuntimeCallerLookupFunc(rtpkg.Func("FuncForPC")) {
 		t.Fatal("FuncForPC should not consume caller lookup tokens")
+	}
+}
+
+func TestRuntimeCallerAnalysisEdgeCases(t *testing.T) {
+	if fnUsesRuntimeCaller(nil) {
+		t.Fatal("nil function should not use runtime caller metadata")
+	}
+	if fnUsesRuntimeCaller(&gossa.Function{}) {
+		t.Fatal("function without a package should not use runtime caller metadata")
+	}
+	if runtimeCallerFuncSet(nil) != nil {
+		t.Fatal("nil package should have no runtime caller set")
+	}
+	if fnHasDirectRuntimeCaller(nil) {
+		t.Fatal("nil function should not have direct runtime caller use")
+	}
+	if functionBelongsToPackage(nil, nil) {
+		t.Fatal("nil function/package should not belong to a package")
+	}
+	if typeBelongsToPackage(types.Typ[types.Int], nil) {
+		t.Fatal("types should not belong to a nil package")
+	}
+	if isRuntimeCallerLookupFunc(nil) {
+		t.Fatal("nil function should not be a runtime caller lookup")
+	}
+	called := false
+	forEachCall(nil, func(*gossa.CallCommon) {
+		called = true
+	})
+	if called {
+		t.Fatal("forEachCall should ignore nil functions")
+	}
+
+	ssapkg, _ := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+
+type I interface { Call() }
+type J interface { Call() }
+type T struct{}
+
+func target() { runtime.Caller(0) }
+func plain() {}
+func call(fn func()) { fn() }
+func callRuntime() { call(target) }
+func (T) Call() { runtime.Caller(0) }
+func viaStatic() { var i I = T{}; i.Call() }
+func viaChange(j J) { var i I = j; i.Call() }
+func viaParam(i I) { i.Call() }
+func passInterface() { var i I = T{}; viaParam(i) }
+`)
+	analysis := newRuntimeCallerAnalysis(ssapkg)
+	if analysis.fnMayReachRuntimeCaller(nil) {
+		t.Fatal("nil function should not reach runtime caller metadata")
+	}
+	if targets, ok := analysis.functionValueTargets(ssapkg.Func("callRuntime"), ssapkg.Func("target")); !ok || !targets[ssapkg.Func("target")] {
+		t.Fatal("static function value should resolve to its target")
+	}
+	if _, ok := analysis.functionValueTargets(ssapkg.Func("target"), nil); ok {
+		t.Fatal("nil function value should be unresolved")
+	}
+	if _, ok := analysis.functionParamTargets(ssapkg.Func("call"), 99); ok {
+		t.Fatal("out-of-range function argument should be unresolved")
+	}
+	callFn := ssapkg.Func("call")
+	callParam := callFn.Params[0]
+	callParams := callFn.Params
+	callFn.Params = nil
+	if _, ok := analysis.functionValueTargets(callFn, callParam); ok {
+		t.Fatal("function parameter missing from Params should be unresolved")
+	}
+	callFn.Params = callParams
+
+	iface := ssapkg.Pkg.Scope().Lookup("I").Type().Underlying().(*types.Interface)
+	method := iface.Method(0)
+	if !analysis.fnMayReachRuntimeCaller(ssapkg.Func("viaStatic")) {
+		t.Fatal("static interface dispatch should reach runtime caller metadata")
+	}
+	if !analysis.fnMayReachRuntimeCaller(ssapkg.Func("viaChange")) {
+		t.Fatal("changed interface dispatch should conservatively reach runtime caller metadata")
+	}
+	if targets, ok := analysis.interfaceMethodTargets(ssapkg.Func("viaParam"), ssapkg.Func("viaParam").Params[0], method); !ok || len(targets) == 0 {
+		t.Fatal("interface parameter callsites should resolve concrete method targets")
+	}
+	analysis.callsites[ssapkg.Func("viaParam")] = []*gossa.CallCommon{{}}
+	if _, ok := analysis.interfaceMethodTargets(ssapkg.Func("viaParam"), ssapkg.Func("viaParam").Params[0], method); ok {
+		t.Fatal("out-of-range interface argument should be unresolved")
+	}
+	if _, ok := analysis.interfaceMethodTargets(ssapkg.Func("viaStatic"), nil, method); ok {
+		t.Fatal("nil interface receiver should be unresolved")
+	}
+	if _, ok := analysis.staticInterfaceMethodTargets(&gossa.ChangeInterface{}, method); ok {
+		t.Fatal("empty interface conversion should be unresolved")
+	}
+	viaParam := ssapkg.Func("viaParam")
+	interfaceParam := viaParam.Params[0]
+	interfaceParams := viaParam.Params
+	viaParam.Params = nil
+	if _, ok := analysis.interfaceMethodTargets(viaParam, interfaceParam, method); ok {
+		t.Fatal("interface parameter missing from Params should be unresolved")
+	}
+	viaParam.Params = interfaceParams
+	if _, ok := analysis.methodTargetsForType(nil, nil); ok {
+		t.Fatal("nil method lookup should be unresolved")
+	}
+	other := types.NewFunc(token.NoPos, ssapkg.Pkg, "Other", nil)
+	if _, ok := analysis.methodTargetsForType(ssapkg.Type("T").Type(), other); ok {
+		t.Fatal("missing interface method should be unresolved")
+	}
+	if idx, ok := parameterIndex(ssapkg.Func("target"), nil); ok || idx != 0 {
+		t.Fatal("nil parameter should not be found")
+	}
+
+	methodOnlyPkg, _ := buildCallerFrameSSAPackage(t, "example.com/methodonly", `package methodonly
+import "runtime"
+
+type T struct{}
+func (T) Call() { runtime.Caller(0) }
+var _ = T{}
+`)
+	if runtimeCallerFuncSet(methodOnlyPkg) != nil {
+		t.Fatal("method-only runtime caller use should not mark top-level functions")
 	}
 }
 
@@ -380,6 +530,31 @@ func leaf() {}
 	}
 }
 
+func TestCompileRuntimeCallerPCLineMetadata32Bit(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+
+func top() {
+	runtime.Caller(0)
+}
+`)
+	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "386"})
+	prog.EnableFuncInfoMetadata(true)
+	pkg, err := NewPackage(prog, ssapkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.Module().String()
+	for _, want := range []string{
+		`.p2align 2`,
+		`.long __llgo_pcsite_`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("missing 32-bit pcline asm %q:\n%s", want, ir)
+		}
+	}
+}
+
 func TestCompileRuntimeCallerPCLineEscapesDollarInInlineAsm(t *testing.T) {
 	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
 import "runtime"
@@ -409,6 +584,50 @@ func top() {
 		if strings.Contains(line, `.pushsection llgo_pcline`) && strings.Contains(line, `example.com/foo.top$1`) && !strings.Contains(line, `example.com/foo.top$$1`) {
 			t.Fatalf("inline asm has an unescaped $ operand:\n%s", line)
 		}
+	}
+}
+
+func TestRuntimeCallerInstrumentationEdgeCases(t *testing.T) {
+	ssapkg, _ := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+
+func top() {
+	runtime.Caller(0)
+}
+`)
+	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog.EnableFuncInfoMetadata(true)
+	pkg := prog.NewPackage("foo", "example.com/foo")
+	fn := pkg.NewFunc("example.com/foo.top", llssa.NoArgsNoRet, llssa.InGo)
+	ctx := &context{
+		prog:               prog,
+		pkg:                pkg,
+		fn:                 fn,
+		goFn:               ssapkg.Func("top"),
+		fset:               token.NewFileSet(),
+		trackCallerFrames:  true,
+		runtimeCallerFuncs: runtimeCallerFuncSet(ssapkg),
+	}
+	var b llssa.Builder
+	ctx.pushCallerLocationFrame(b, nil)
+	ctx.recordRuntimeLocation(b, token.NoPos, "RecordCallerLocation")
+	ctx.emitPCLineLabel(b, token.NoPos)
+	ctx.popCallerLocationFrame(b)
+
+	if pos := (&context{}).funcInfoPosition(nil); pos.IsValid() {
+		t.Fatal("nil function should have no funcinfo position")
+	}
+	if canEmitPCLineLabelsForTarget(nil) {
+		t.Fatal("nil target should not emit pc-line labels")
+	}
+	if canEmitPCLineLabelsForTarget(&llssa.Target{GOOS: "linux", GOARCH: "wasm"}) {
+		t.Fatal("wasm target should not emit pc-line labels")
+	}
+	if canEmitPCLineLabelsForTarget(&llssa.Target{GOOS: "linux", GOARCH: "amd64", Target: "esp32"}) {
+		t.Fatal("named target should not emit pc-line labels")
+	}
+	if got, want := asmQuoteSymbol(`a\b"c$d`), `"a\\b\"c$$d"`; got != want {
+		t.Fatalf("asmQuoteSymbol() = %q, want %q", got, want)
 	}
 }
 
