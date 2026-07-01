@@ -90,14 +90,8 @@ func TestFuncInfoTableMaterializesClosureStubIndexes(t *testing.T) {
 	src := prog.NewPackage("example.com/p", "example.com/p")
 	src.EmitFuncInfo("example.com/p.live", "example.com/p.Live", "live.go", 17, 3)
 	src.EmitFuncInfo("example.com/p.other", "example.com/p.Other", "other.go", 23, 1)
-	src.NewFunc(closureStubPrefix+"example.com/p.live", llssa.NoArgsNoRet, llssa.InC)
-
-	records := collectFuncInfo([]Package{{LPkg: src}})
-	stubs := collectFuncInfoStubIndexes([]Package{{LPkg: src}}, records)
-	if len(stubs) != 1 || records[stubs[0]-1].symbol != "example.com/p.live" {
-		t.Fatalf("stub indexes = %+v for records %+v, want live", stubs, records)
-	}
-
+	stubFn := src.NewFunc(closureStubPrefix+"example.com/p.live", llssa.NoArgsNoRet, llssa.InC)
+	stubFn.MakeBody(1).Return()
 	ctx := &context{
 		prog: prog,
 		buildConf: &Config{
@@ -106,6 +100,27 @@ func TestFuncInfoTableMaterializesClosureStubIndexes(t *testing.T) {
 			Goarch:    "amd64",
 		},
 	}
+	prog.EnableFuncInfoMetadata(true)
+	emitFuncInfoStubSites(ctx, src)
+	srcIR := src.String()
+	for _, want := range []string{
+		"call void asm sideeffect",
+		".pushsection llgo_funcinfo_stubsite",
+		`.quad \22__llgo_stub.example.com/p.live\22`,
+		".quad 0x",
+	} {
+		if !strings.Contains(srcIR, want) {
+			t.Fatalf("package stub site IR missing %q:\n%s", want, srcIR)
+		}
+	}
+
+	records := collectFuncInfo([]Package{{LPkg: src}})
+	stubs := collectFuncInfoStubRecords([]Package{{LPkg: src}}, records)
+	if len(stubs) != 1 || records[stubs[0].funcIndex-1].symbol != "example.com/p.live" ||
+		stubs[0].symbol != closureStubPrefix+"example.com/p.live" {
+		t.Fatalf("stub indexes = %+v for records %+v, want live", stubs, records)
+	}
+
 	entry := genMainModule(ctx, llssa.PkgRuntime, &packages.Package{
 		PkgPath:    "example.com/main",
 		ExportFile: "main.a",
@@ -114,14 +129,18 @@ func TestFuncInfoTableMaterializesClosureStubIndexes(t *testing.T) {
 	for _, want := range []string{
 		"@__llgo_funcinfo_stub_indexes = global ptr",
 		"@__llgo_funcinfo_stub_count = global i64 1",
+		"@__llgo_funcinfo_stubsite_start = global ptr @__start_llgo_funcinfo_stubsite",
+		"@__llgo_funcinfo_stubsite_end = global ptr @__stop_llgo_funcinfo_stubsite",
 		`@"__llgo_funcinfo_stub_indexes$data" = private unnamed_addr constant [1 x i32]`,
 		"@__llgo_funcinfo_count = global i64 2",
+		"module asm \".section llgo_funcinfo_stubsite",
+		".quad 0",
 	} {
 		if !strings.Contains(ir, want) {
 			t.Fatalf("funcinfo stub index table IR missing %q:\n%s", want, ir)
 		}
 	}
-	if strings.Contains(ir, closureStubPrefix) {
+	if strings.Contains(ir, closureStubPrefix+"example.com/p.live\\00") {
 		t.Fatalf("stub index table should not add stub symbol strings:\n%s", ir)
 	}
 }

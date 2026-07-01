@@ -45,7 +45,7 @@ type genConfig struct {
 	abiSymbols    map[string]none
 	funcInfo      []funcInfoRecord
 	pcLineInfo    []pcLineRecord
-	funcInfoStubs []uint32
+	funcInfoStubs []funcInfoStubRecord
 }
 
 // genMainModule generates the main entry module for an llgo program.
