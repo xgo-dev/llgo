@@ -22,6 +22,7 @@ import (
 	"github.com/goplus/llgo/internal/mockable"
 	"github.com/goplus/llgo/internal/packages"
 	llssa "github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llvm"
 )
 
 func TestMain(m *testing.M) {
@@ -95,6 +96,25 @@ func TestIsFuncInfoEnabled(t *testing.T) {
 	t.Setenv(llgoFuncInfo, "1")
 	if !IsFuncInfoEnabled() {
 		t.Fatal("LLGO_FUNCINFO=1 should enable funcinfo")
+	}
+}
+
+func TestLinkedModuleGlobalsSkipsDeclarations(t *testing.T) {
+	prog := llssa.NewProgram(nil)
+	lpkg := prog.NewPackage("example.com/p", "example.com/p")
+	mod := lpkg.Module()
+	i32 := mod.Context().Int32Type()
+
+	defined := llvm.AddGlobal(mod, i32, "example.com/p.defined")
+	defined.SetInitializer(llvm.ConstInt(i32, 1, false))
+	llvm.AddGlobal(mod, i32, "example.com/p.declared")
+
+	got := linkedModuleGlobals([]Package{{LPkg: lpkg}})
+	if _, ok := got["example.com/p.defined"]; !ok {
+		t.Fatalf("linkedModuleGlobals missing defined global: %#v", got)
+	}
+	if _, ok := got["example.com/p.declared"]; ok {
+		t.Fatalf("linkedModuleGlobals should skip external declarations: %#v", got)
 	}
 }
 
