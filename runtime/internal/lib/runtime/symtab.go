@@ -222,9 +222,6 @@ var runtimePCLineFrames []runtimePCLineFrame
 type runtimeFuncPCFrame struct {
 	entry     uintptr
 	funcIndex uint32
-	function  string
-	file      string
-	startLine int
 }
 
 type runtimePCPageIndex struct {
@@ -405,6 +402,34 @@ func funcInfoJoinName(pkgID, nameID uint16) string {
 	return string(buf)
 }
 
+func funcInfoNameLen(pkgID, nameID uint16) int {
+	pkgLen := cStringLen(funcInfoCString(pkgID))
+	nameLen := cStringLen(funcInfoCString(nameID))
+	if pkgLen == 0 {
+		return nameLen
+	}
+	if nameLen == 0 {
+		return pkgLen
+	}
+	return pkgLen + 1 + nameLen
+}
+
+func appendFuncInfoName(dst []byte, pkgID, nameID uint16) []byte {
+	pkg := funcInfoCString(pkgID)
+	name := funcInfoCString(nameID)
+	pkgLen := cStringLen(pkg)
+	nameLen := cStringLen(name)
+	if pkgLen == 0 {
+		return cStringAppend(dst, name)
+	}
+	if nameLen == 0 {
+		return cStringAppend(dst, pkg)
+	}
+	dst = cStringAppend(dst, pkg)
+	dst = append(dst, '.')
+	return cStringAppend(dst, name)
+}
+
 func funcInfoJoinFile(rootID, nameID uint16) string {
 	root := funcInfoCString(rootID)
 	name := funcInfoCString(nameID)
@@ -424,6 +449,53 @@ func funcInfoJoinFile(rootID, nameID uint16) string {
 
 func funcInfoPackedFile(file uint32) string {
 	return funcInfoJoinFile(uint16(file>>16), uint16(file))
+}
+
+func maxFuncInfoSymbolLen() int {
+	maxLen := 0
+	for i := uintptr(0); i < runtimeFuncInfoCount; i++ {
+		fn := funcInfoAt(i)
+		if n := funcInfoNameLen(fn.symbolPkg, fn.symbolName); n > maxLen {
+			maxLen = n
+		}
+	}
+	return maxLen
+}
+
+func symbolPCBytes(name []byte) uintptr {
+	if len(name) == 0 {
+		return 0
+	}
+	name = append(name, 0)
+	return uintptr(clitedebug.Symbol((*c.Char)(unsafe.Pointer(&name[0]))))
+}
+
+func symbolPCFuncInfoName(buf []byte, pkgID, nameID uint16) uintptr {
+	name := appendFuncInfoName(buf[:0], pkgID, nameID)
+	return symbolPCBytes(name)
+}
+
+func symbolPCPrefixedFuncInfoName(buf []byte, prefix string, pkgID, nameID uint16) uintptr {
+	name := append(buf[:0], prefix...)
+	name = appendFuncInfoName(name, pkgID, nameID)
+	return symbolPCBytes(name)
+}
+
+func funcInfoFunctionName(fn *runtimeFuncInfoRecord) string {
+	if fn == nil {
+		return ""
+	}
+	if function := publicFunctionName(funcInfoJoinName(fn.namePkg, fn.nameName)); function != "" {
+		return function
+	}
+	return publicFunctionName(funcInfoJoinName(fn.symbolPkg, fn.symbolName))
+}
+
+func funcInfoFileName(fn *runtimeFuncInfoRecord) string {
+	if fn == nil {
+		return ""
+	}
+	return funcInfoJoinFile(fn.fileRoot, fn.fileName)
 }
 
 func funcInfoForSymbol(symbol string) *runtimeFuncInfoRecord {
@@ -582,24 +654,17 @@ func initRuntimeFuncPCFramesOnce() {
 	}
 	frames := make([]runtimeFuncPCFrame, 0, runtimeFuncInfoCount)
 	entries := make([]uintptr, runtimeFuncInfoCount+1)
+	symbolBuf := make([]byte, 0, maxFuncInfoSymbolLen()+len(runtimeClosureStubPrefix)+1)
 	for i := uintptr(0); i < runtimeFuncInfoCount; i++ {
 		fn := funcInfoAt(i)
-		pc := symbolPC(funcInfoJoinName(fn.symbolPkg, fn.symbolName))
+		pc := symbolPCFuncInfoName(symbolBuf, fn.symbolPkg, fn.symbolName)
 		if pc == 0 {
 			continue
 		}
 		index := uint32(i + 1)
-		function := publicFunctionName(funcInfoJoinName(fn.namePkg, fn.nameName))
-		if function == "" {
-			function = publicFunctionName(funcInfoJoinName(fn.symbolPkg, fn.symbolName))
-		}
-		file := funcInfoJoinFile(fn.fileRoot, fn.fileName)
 		frames = append(frames, runtimeFuncPCFrame{
 			entry:     pc,
 			funcIndex: index,
-			function:  function,
-			file:      file,
-			startLine: int(fn.line),
 		})
 		if entries[index] == 0 || pc < entries[index] {
 			entries[index] = pc
@@ -617,24 +682,13 @@ func initRuntimeFuncPCFramesOnce() {
 				continue
 			}
 			fn := funcInfoAt(uintptr(index) - 1)
-			symbol := funcInfoJoinName(fn.symbolPkg, fn.symbolName)
-			if symbol == "" {
-				continue
-			}
-			pc := symbolPC(runtimeClosureStubPrefix + symbol)
+			pc := symbolPCPrefixedFuncInfoName(symbolBuf, runtimeClosureStubPrefix, fn.symbolPkg, fn.symbolName)
 			if pc == 0 {
 				continue
-			}
-			function := publicFunctionName(funcInfoJoinName(fn.namePkg, fn.nameName))
-			if function == "" {
-				function = publicFunctionName(symbol)
 			}
 			frames = append(frames, runtimeFuncPCFrame{
 				entry:     pc,
 				funcIndex: index,
-				function:  function,
-				file:      funcInfoJoinFile(fn.fileRoot, fn.fileName),
-				startLine: int(fn.line),
 			})
 		}
 	}
@@ -668,18 +722,9 @@ func appendRuntimeFuncInfoStubSiteFrames(frames []runtimeFuncPCFrame) []runtimeF
 		if funcIndex == 0 || uintptr(funcIndex) > runtimeFuncInfoCount {
 			continue
 		}
-		fn := funcInfoAt(uintptr(funcIndex) - 1)
-		symbol := funcInfoJoinName(fn.symbolPkg, fn.symbolName)
-		function := publicFunctionName(funcInfoJoinName(fn.namePkg, fn.nameName))
-		if function == "" {
-			function = publicFunctionName(symbol)
-		}
 		frames = append(frames, runtimeFuncPCFrame{
 			entry:     site.pc,
 			funcIndex: funcIndex,
-			function:  function,
-			file:      funcInfoJoinFile(fn.fileRoot, fn.fileName),
-			startLine: int(fn.line),
 		})
 	}
 	return frames
@@ -885,13 +930,18 @@ func funcPCFrameForPC(pc uintptr) (pcSymbol, bool) {
 		return pcSymbol{}, false
 	}
 	frame := runtimeFuncPCFrames[idx]
+	if frame.funcIndex == 0 || uintptr(frame.funcIndex) > runtimeFuncInfoCount {
+		return pcSymbol{}, false
+	}
+	fn := funcInfoAt(uintptr(frame.funcIndex) - 1)
+	line := int(fn.line)
 	return pcSymbol{
 		pc:        pc,
 		entry:     frame.entry,
-		function:  frame.function,
-		file:      frame.file,
-		line:      frame.startLine,
-		startLine: frame.startLine,
+		function:  funcInfoFunctionName(fn),
+		file:      funcInfoFileName(fn),
+		line:      line,
+		startLine: line,
 		ok:        true,
 	}, true
 }
@@ -945,6 +995,7 @@ func initRuntimePCLineFramesOnce() {
 		return
 	}
 	frames := make([]runtimePCLineFrame, 0, nsite)
+	symbolBuf := make([]byte, 0, maxFuncInfoSymbolLen()+1)
 	for i := uintptr(0); i < nsite; i++ {
 		site := (*runtimePCSiteRecord)(unsafe.Pointer(start + i*size))
 		if site == nil || site.id == 0 || site.pc == 0 {
@@ -958,7 +1009,7 @@ func initRuntimePCLineFramesOnce() {
 		fn := funcInfoAt(uintptr(rec.funcIndex) - 1)
 		entry := funcEntryForIndex(rec.funcIndex)
 		if entry == 0 {
-			entry = symbolPC(funcInfoJoinName(fn.symbolPkg, fn.symbolName))
+			entry = symbolPCFuncInfoName(symbolBuf, fn.symbolPkg, fn.symbolName)
 		}
 		if entry == 0 {
 			sym := addrInfoSymbol(pc)

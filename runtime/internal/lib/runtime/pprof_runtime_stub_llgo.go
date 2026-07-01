@@ -114,6 +114,13 @@ func FuncForPC(pc uintptr) *Func {
 }
 
 func funcForPCSlow(pc uintptr) *Func {
+	if pc&3 != 0 {
+		if sym := frameSymbol(pc); sym.ok {
+			fn := newFuncForPC(pc, sym)
+			cacheFuncForPC(pc, fn)
+			return fn
+		}
+	}
 	if sym, ok := funcPCFrameForPC(pc); ok {
 		fn := newFuncForPC(pc, sym)
 		cacheFuncForPC(pc, fn)
