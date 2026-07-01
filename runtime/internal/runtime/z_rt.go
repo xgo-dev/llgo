@@ -49,6 +49,7 @@ func Recover() (ret any) {
 
 // Panic panics with a value.
 func Panic(v any) {
+	SavePanicCallerFrames()
 	ptr := c.Malloc(unsafe.Sizeof(v))
 	*(*any)(ptr) = v
 	excepKey.Set(ptr)

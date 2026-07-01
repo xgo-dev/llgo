@@ -2161,10 +2161,6 @@ xfails:
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: fixedbugs/issue29735.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: fixedbugs/issue32477.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64

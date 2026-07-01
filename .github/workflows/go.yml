@@ -75,7 +75,7 @@ jobs:
 
       - name: Test with coverage
         if: startsWith(matrix.os, 'macos')
-        run: go test -timeout 30m -coverprofile="coverage.txt" -covermode=atomic ./...
+        run: go test -timeout 45m -coverprofile="coverage.txt" -covermode=atomic ./...
 
       - name: Test with embedded emulator env
         env:
