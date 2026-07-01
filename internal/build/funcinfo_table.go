@@ -36,12 +36,16 @@ const (
 	funcInfoHashMaskSymbol          = "__llgo_funcinfo_hash_mask"
 	funcInfoStubIndexesSymbol       = "__llgo_funcinfo_stub_indexes"
 	funcInfoStubCountSymbol         = "__llgo_funcinfo_stub_count"
+	funcInfoEntryStartPtrSymbol     = "__llgo_funcinfo_entry_start"
+	funcInfoEntryEndPtrSymbol       = "__llgo_funcinfo_entry_end"
 	funcInfoStubSiteStartPtrSymbol  = "__llgo_funcinfo_stubsite_start"
 	funcInfoStubSiteEndPtrSymbol    = "__llgo_funcinfo_stubsite_end"
 	pcLineTableSymbol               = "__llgo_pcline_table"
 	pcLineCountSymbol               = "__llgo_pcline_count"
 	pcSiteStartPtrSymbol            = "__llgo_pcsite_start"
 	pcSiteEndPtrSymbol              = "__llgo_pcsite_end"
+	funcInfoEntryStartSymbol        = "__start_llgo_funcinfo_entry"
+	funcInfoEntryEndSymbol          = "__stop_llgo_funcinfo_entry"
 	funcInfoStubSiteStartSymbol     = "__start_llgo_funcinfo_stubsite"
 	funcInfoStubSiteEndSymbol       = "__stop_llgo_funcinfo_stubsite"
 	pcSiteStartSymbol               = "__start_llgo_pcline"
@@ -274,6 +278,10 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		i32Type,
 		i32Type,
 	}, false)
+	funcEntryRecordType := llvmCtx.StructType([]llvm.Type{
+		llvm.PointerType(i8Type, 0),
+		i64Type,
+	}, false)
 	stubSiteRecordType := llvmCtx.StructType([]llvm.Type{
 		llvm.PointerType(i8Type, 0),
 		i64Type,
@@ -287,6 +295,8 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	pcLinePtr := llvm.AddGlobal(mod, llvm.PointerType(pcLineRecordType, 0), pcLineTableSymbol)
 	pcSiteStartPtr := llvm.AddGlobal(mod, llvm.PointerType(pcSiteRecordType, 0), pcSiteStartPtrSymbol)
 	pcSiteEndPtr := llvm.AddGlobal(mod, llvm.PointerType(pcSiteRecordType, 0), pcSiteEndPtrSymbol)
+	entryStartPtr := llvm.AddGlobal(mod, llvm.PointerType(funcEntryRecordType, 0), funcInfoEntryStartPtrSymbol)
+	entryEndPtr := llvm.AddGlobal(mod, llvm.PointerType(funcEntryRecordType, 0), funcInfoEntryEndPtrSymbol)
 	stubSiteStartPtr := llvm.AddGlobal(mod, llvm.PointerType(stubSiteRecordType, 0), funcInfoStubSiteStartPtrSymbol)
 	stubSiteEndPtr := llvm.AddGlobal(mod, llvm.PointerType(stubSiteRecordType, 0), funcInfoStubSiteEndPtrSymbol)
 	stringsPtr := llvm.AddGlobal(mod, llvm.PointerType(i8Type, 0), funcInfoStringsSymbol)
@@ -303,6 +313,8 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		pcLinePtr.SetInitializer(llvm.ConstPointerNull(pcLinePtr.GlobalValueType()))
 		pcSiteStartPtr.SetInitializer(llvm.ConstPointerNull(pcSiteStartPtr.GlobalValueType()))
 		pcSiteEndPtr.SetInitializer(llvm.ConstPointerNull(pcSiteEndPtr.GlobalValueType()))
+		entryStartPtr.SetInitializer(llvm.ConstPointerNull(entryStartPtr.GlobalValueType()))
+		entryEndPtr.SetInitializer(llvm.ConstPointerNull(entryEndPtr.GlobalValueType()))
 		stubSiteStartPtr.SetInitializer(llvm.ConstPointerNull(stubSiteStartPtr.GlobalValueType()))
 		stubSiteEndPtr.SetInitializer(llvm.ConstPointerNull(stubSiteEndPtr.GlobalValueType()))
 		stringsPtr.SetInitializer(llvm.ConstPointerNull(stringsPtr.GlobalValueType()))
@@ -326,6 +338,8 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		pcLinePtr.SetInitializer(llvm.ConstPointerNull(pcLinePtr.GlobalValueType()))
 		pcSiteStartPtr.SetInitializer(llvm.ConstPointerNull(pcSiteStartPtr.GlobalValueType()))
 		pcSiteEndPtr.SetInitializer(llvm.ConstPointerNull(pcSiteEndPtr.GlobalValueType()))
+		entryStartPtr.SetInitializer(llvm.ConstPointerNull(entryStartPtr.GlobalValueType()))
+		entryEndPtr.SetInitializer(llvm.ConstPointerNull(entryEndPtr.GlobalValueType()))
 		stubSiteStartPtr.SetInitializer(llvm.ConstPointerNull(stubSiteStartPtr.GlobalValueType()))
 		stubSiteEndPtr.SetInitializer(llvm.ConstPointerNull(stubSiteEndPtr.GlobalValueType()))
 		stringsPtr.SetInitializer(llvm.ConstPointerNull(stringsPtr.GlobalValueType()))
@@ -398,8 +412,18 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		}
 	}
 	emitELFSites := shouldEmitRuntimeELFSites(ctx)
+	emitEntrySites := shouldEmitRuntimeEntryELFSites(ctx) && len(encoded.Records) != 0
 	emitStubSites := shouldEmitRuntimeStubELFSites(ctx)
-	emitRuntimeFuncInfoELFSites(mod, ctx.prog.PointerSize(), emitELFSites && len(pcLineValues) != 0, emitStubSites && len(stubRecords) != 0)
+	emitRuntimeFuncInfoELFSites(mod, ctx.prog.PointerSize(), emitELFSites && len(pcLineValues) != 0, emitEntrySites, emitStubSites && len(stubRecords) != 0)
+	if emitEntrySites {
+		entryStart := llvm.AddGlobal(mod, funcEntryRecordType, funcInfoEntryStartSymbol)
+		entryEnd := llvm.AddGlobal(mod, funcEntryRecordType, funcInfoEntryEndSymbol)
+		entryStartPtr.SetInitializer(entryStart)
+		entryEndPtr.SetInitializer(entryEnd)
+	} else {
+		entryStartPtr.SetInitializer(llvm.ConstPointerNull(entryStartPtr.GlobalValueType()))
+		entryEndPtr.SetInitializer(llvm.ConstPointerNull(entryEndPtr.GlobalValueType()))
+	}
 	if emitStubSites && len(stubRecords) != 0 {
 		stubSiteStart := llvm.AddGlobal(mod, stubSiteRecordType, funcInfoStubSiteStartSymbol)
 		stubSiteEnd := llvm.AddGlobal(mod, stubSiteRecordType, funcInfoStubSiteEndSymbol)
@@ -505,7 +529,70 @@ func shouldEmitRuntimeELFSites(ctx *context) bool {
 }
 
 func shouldEmitRuntimeStubELFSites(ctx *context) bool {
-	return shouldEmitRuntimeELFSites(ctx) && !ctx.buildConf.ltoEnabled()
+	return shouldEmitRuntimeELFSites(ctx)
+}
+
+func shouldEmitRuntimeEntryELFSites(ctx *context) bool {
+	return shouldEmitRuntimeELFSites(ctx)
+}
+
+func emitFuncInfoEntrySites(ctx *context, pkg llssa.Package) {
+	if !shouldEmitRuntimeEntryELFSites(ctx) || pkg == nil || !ctx.prog.FuncInfoMetadataEnabled() {
+		return
+	}
+	mod := pkg.Module()
+	records := readFuncInfo(mod)
+	if len(records) == 0 {
+		return
+	}
+	symbolIDs := make(map[string]uint64, len(records))
+	for _, rec := range records {
+		if rec.symbol != "" {
+			symbolIDs[rec.symbol] = funcInfoSymbolID(rec.symbol)
+		}
+	}
+	if len(symbolIDs) == 0 {
+		return
+	}
+	llvmCtx := mod.Context()
+	builder := llvmCtx.NewBuilder()
+	defer builder.Dispose()
+	asmType := llvm.FunctionType(llvmCtx.VoidType(), nil, false)
+	ptrDirective := ".quad"
+	align := "3"
+	if ctx.prog.PointerSize() == 4 {
+		ptrDirective = ".long"
+		align = "2"
+	}
+	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+		if fn.IsDeclaration() || fn.BasicBlocksCount() == 0 {
+			continue
+		}
+		symbol := fn.Name()
+		symbolID := symbolIDs[symbol]
+		if symbolID == 0 {
+			continue
+		}
+		entry := fn.EntryBasicBlock()
+		if entry.IsNil() {
+			continue
+		}
+		first := entry.FirstInstruction()
+		if first.IsNil() {
+			builder.SetInsertPointAtEnd(entry)
+		} else {
+			builder.SetInsertPointBefore(first)
+		}
+		anchor := ".Lllgo_funcinfo_entry_anchor_${:uid}"
+		instruction := anchor + ":\n" +
+			".pushsection llgo_funcinfo_entry,\"ao\",@progbits," + anchor + "\n" +
+			".p2align " + align + "\n" +
+			ptrDirective + " " + anchor + "\n" +
+			".quad " + uint64Hex(symbolID) + "\n" +
+			".popsection"
+		asm := llvm.InlineAsm(asmType, instruction, "", true, false, llvm.InlineAsmDialectATT, false)
+		builder.CreateCall(asmType, asm, nil, "")
+	}
 }
 
 func emitFuncInfoStubSites(ctx *context, pkg llssa.Package) {
@@ -542,9 +629,11 @@ func emitFuncInfoStubSites(ctx *context, pkg llssa.Package) {
 		} else {
 			builder.SetInsertPointBefore(first)
 		}
-		instruction := ".pushsection llgo_funcinfo_stubsite,\"ao\",@progbits," + asmQuoteELFSymbol(symbol) + "\n" +
+		anchor := ".Lllgo_funcinfo_stubsite_anchor_${:uid}"
+		instruction := anchor + ":\n" +
+			".pushsection llgo_funcinfo_stubsite,\"ao\",@progbits," + anchor + "\n" +
 			".p2align " + align + "\n" +
-			ptrDirective + " " + asmQuoteELFSymbol(symbol) + "\n" +
+			ptrDirective + " " + anchor + "\n" +
 			".quad " + uint64Hex(funcInfoSymbolID(target)) + "\n" +
 			".popsection"
 		asm := llvm.InlineAsm(asmType, instruction, "", true, false, llvm.InlineAsmDialectATT, false)
@@ -580,8 +669,8 @@ func uint64Hex(v uint64) string {
 	return string(buf[:])
 }
 
-func emitRuntimeFuncInfoELFSites(mod llvm.Module, pointerSize int, pcSite bool, stubSite bool) {
-	if !pcSite && !stubSite {
+func emitRuntimeFuncInfoELFSites(mod llvm.Module, pointerSize int, pcSite bool, entrySite bool, stubSite bool) {
+	if !pcSite && !entrySite && !stubSite {
 		return
 	}
 	ptrDirective := ".quad"
@@ -593,6 +682,12 @@ func emitRuntimeFuncInfoELFSites(mod llvm.Module, pointerSize int, pcSite bool, 
 	var asm strings.Builder
 	if pcSite {
 		asm.WriteString(".section llgo_pcline,\"aR\",@progbits\n")
+		asm.WriteString(".p2align " + align + "\n")
+		asm.WriteString(ptrDirective + " 0\n")
+		asm.WriteString(".quad 0\n")
+	}
+	if entrySite {
+		asm.WriteString(".section llgo_funcinfo_entry,\"aR\",@progbits\n")
 		asm.WriteString(".p2align " + align + "\n")
 		asm.WriteString(ptrDirective + " 0\n")
 		asm.WriteString(".quad 0\n")
