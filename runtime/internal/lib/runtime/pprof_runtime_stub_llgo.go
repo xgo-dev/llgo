@@ -2,11 +2,7 @@
 
 package runtime
 
-import (
-	"unsafe"
-
-	llrt "github.com/goplus/llgo/runtime/internal/runtime"
-)
+import llrt "github.com/goplus/llgo/runtime/internal/runtime"
 
 type StackRecord struct {
 	Stack []uintptr
@@ -88,27 +84,28 @@ func NumGoroutine() int {
 
 func SetCPUProfileRate(hz int) {}
 
-const funcForPCCacheSize = 1024
+const funcForPCCacheSets = 1024
+const funcForPCCacheWays = 4
 
 type funcForPCCacheEntry struct {
 	pc uintptr
 	fn *Func
 }
 
-var funcForPCCache [funcForPCCacheSize]funcForPCCacheEntry
+var funcForPCCache [funcForPCCacheSets][funcForPCCacheWays]funcForPCCacheEntry
+var funcForPCCacheNext [funcForPCCacheSets]uint8
 var funcForPCLast funcForPCCacheEntry
 
 func FuncForPC(pc uintptr) *Func {
 	if fn := funcForPCLast.fn; fn != nil && funcForPCLast.pc == pc {
 		return fn
 	}
-	entry := (*funcForPCCacheEntry)(unsafe.Add(
-		unsafe.Pointer(&funcForPCCache[0]),
-		funcForPCCacheIndex(pc)*unsafe.Sizeof(funcForPCCacheEntry{}),
-	))
-	if fn := entry.fn; fn != nil && entry.pc == pc {
-		funcForPCLast = funcForPCCacheEntry{pc: pc, fn: fn}
-		return fn
+	set := &funcForPCCache[funcForPCCacheIndex(pc)]
+	for i := 0; i < funcForPCCacheWays; i++ {
+		if fn := set[i].fn; fn != nil && set[i].pc == pc {
+			funcForPCLast = funcForPCCacheEntry{pc: pc, fn: fn}
+			return fn
+		}
 	}
 	return funcForPCSlow(pc)
 }
@@ -124,14 +121,14 @@ func funcForPCSlow(pc uintptr) *Func {
 		// Function-value PCs point at the real function entry. ELF funcinfo
 		// entry-site anchors are emitted from LLVM IR and can land after the
 		// backend prologue, so an exact entry PC may sort before its anchor.
-		// Prefer native symbol info only when it is an exact entry match; the
-		// section table below remains the normal fast fallback.
-		if sym := addrInfoSymbol(pc); sym.ok && sym.entry == pc && sym.function != "" {
+		// Prefer the section table when it can match within the entry slack;
+		// native symbol lookup is kept only as a fallback.
+		if sym, ok := funcPCFrameForEntryPC(pc); ok {
 			fn := newFuncForPC(pc, sym)
 			cacheFuncForPC(pc, fn)
 			return fn
 		}
-		if sym, ok := funcPCFrameForEntryPC(pc); ok {
+		if sym := addrInfoSymbol(pc); sym.ok && sym.entry == pc && sym.function != "" {
 			fn := newFuncForPC(pc, sym)
 			cacheFuncForPC(pc, fn)
 			return fn
@@ -170,15 +167,21 @@ func newFuncForPC(pc uintptr, sym pcSymbol) *Func {
 }
 
 func cacheFuncForPC(pc uintptr, fn *Func) {
-	entry := (*funcForPCCacheEntry)(unsafe.Add(
-		unsafe.Pointer(&funcForPCCache[0]),
-		funcForPCCacheIndex(pc)*unsafe.Sizeof(funcForPCCacheEntry{}),
-	))
-	entry.fn = fn
-	entry.pc = pc
-	funcForPCLast = funcForPCCacheEntry{pc: pc, fn: fn}
+	setIndex := funcForPCCacheIndex(pc)
+	set := &funcForPCCache[setIndex]
+	for i := 0; i < funcForPCCacheWays; i++ {
+		if set[i].fn == nil || set[i].pc == pc {
+			set[i] = funcForPCCacheEntry{pc: pc, fn: fn}
+			funcForPCLast = set[i]
+			return
+		}
+	}
+	way := funcForPCCacheNext[setIndex] & (funcForPCCacheWays - 1)
+	funcForPCCacheNext[setIndex] = way + 1
+	set[way] = funcForPCCacheEntry{pc: pc, fn: fn}
+	funcForPCLast = set[way]
 }
 
 func funcForPCCacheIndex(pc uintptr) uintptr {
-	return (pc >> 4) & (funcForPCCacheSize - 1)
+	return (pc >> 4) & (funcForPCCacheSets - 1)
 }
