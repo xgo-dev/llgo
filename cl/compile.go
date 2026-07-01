@@ -1759,6 +1759,7 @@ func newPackageEx(prog llssa.Program, patches Patches, rewrites map[string]strin
 	if !ctx.skipall {
 		processPkg(ctx, ret, pkg)
 	}
+	ret.RecordDefinedInterfaceInfo(pkgTypes)
 	for len(ctx.inits) > 0 {
 		inits := ctx.inits
 		ctx.inits = nil

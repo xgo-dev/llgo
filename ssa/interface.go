@@ -83,19 +83,18 @@ func (b Builder) Imethod(intf Expr, method *types.Func) Expr {
 	tclosure := prog.Type(sig, InGo)
 	i := iMethodOf(rawIntf, method.Name())
 	if mb := b.Pkg.MetaBuilder; mb != nil {
-		// Keep the demand owner aligned with the interface type descriptor that
-		// emits InterfaceInfo. Named interfaces must not be collapsed to their
-		// structural underlying interface here.
 		intfSymType := intfType
 		if _, ok := intfSymType.(*types.TypeParam); ok {
 			intfSymType = rawIntf
 		}
+		if named, ok := types.Unalias(intfSymType).(*types.Named); ok {
+			if targs := named.TypeArgs(); targs != nil && targs.Len() > 0 {
+				intfSymType = rawIntf
+			}
+		}
 		intfSymName := func() string { n, _ := prog.abi.TypeName(intfSymType); return n }()
-		b.recordInterfaceInfo(rawIntf, intfSymName)
 		intfSym := mb.Sym(intfSymName)
 		// Record which interface method is demanded. i is the method's index in rawIntf.
-		// Ensure the matching InterfaceInfo exists even if this interface type descriptor
-		// is not otherwise materialized.
 		mb.AddEdge(mb.Sym(b.Func.Name()), intfSym, meta.EdgeUseIfaceMethod, uint32(i))
 	}
 	data := b.InlineCall(b.Pkg.rtFunc("IfacePtrData"), intf)

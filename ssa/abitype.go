@@ -205,7 +205,7 @@ func (b Builder) abiInterfaceImethods(t *types.Interface, typeName string) llvm.
 	if n == 0 {
 		return prog.Nil(prog.rtType("Slice")).impl
 	}
-	b.recordInterfaceInfo(t, typeName)
+	b.Pkg.recordInterfaceInfo(t, typeName)
 
 	imethodsName := typeName + "$imethods"
 	g := b.Pkg.VarOf(imethodsName)
@@ -239,12 +239,42 @@ func (b Builder) abiInterfaceImethods(t *types.Interface, typeName string) llvm.
 	})
 }
 
-func (b Builder) recordInterfaceInfo(t *types.Interface, typeName string) {
-	mb := b.Pkg.MetaBuilder
+func (p Package) RecordDefinedInterfaceInfo(pkgTypes *types.Package) {
+	mb := p.MetaBuilder
+	if mb == nil || pkgTypes == nil {
+		return
+	}
+	scope := pkgTypes.Scope()
+	for _, name := range scope.Names() {
+		obj, ok := scope.Lookup(name).(*types.TypeName)
+		if !ok {
+			continue
+		}
+		if _, ok := obj.Type().(*types.Alias); ok {
+			continue
+		}
+		named, ok := types.Unalias(obj.Type()).(*types.Named)
+		if !ok {
+			continue
+		}
+		if tparams := named.TypeParams(); tparams != nil && tparams.Len() > 0 {
+			continue
+		}
+		iface, ok := named.Underlying().(*types.Interface)
+		if !ok || iface.NumMethods() == 0 {
+			continue
+		}
+		typeName, _ := p.Prog.abi.TypeName(named)
+		p.recordInterfaceInfo(iface, typeName)
+	}
+}
+
+func (p Package) recordInterfaceInfo(t *types.Interface, typeName string) {
+	mb := p.MetaBuilder
 	if mb == nil {
 		return
 	}
-	prog := b.Prog
+	prog := p.Prog
 	intfSym := mb.Sym(typeName)
 	for i := 0; i < t.NumMethods(); i++ {
 		f := t.Method(i)
