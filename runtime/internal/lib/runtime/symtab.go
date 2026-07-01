@@ -172,6 +172,17 @@ var runtimeFuncInfoStubIndexes *uint32
 //go:linkname runtimeFuncInfoStubCount __llgo_funcinfo_stub_count
 var runtimeFuncInfoStubCount uintptr
 
+type runtimeFuncInfoStubSiteRecord struct {
+	pc       uintptr
+	symbolID uint64
+}
+
+//go:linkname runtimeFuncInfoStubSiteStart __llgo_funcinfo_stubsite_start
+var runtimeFuncInfoStubSiteStart *runtimeFuncInfoStubSiteRecord
+
+//go:linkname runtimeFuncInfoStubSiteEnd __llgo_funcinfo_stubsite_end
+var runtimeFuncInfoStubSiteEnd *runtimeFuncInfoStubSiteRecord
+
 type runtimePCLineRecord struct {
 	id        uint64
 	funcIndex uint32
@@ -594,9 +605,11 @@ func initRuntimeFuncPCFramesOnce() {
 			entries[index] = pc
 		}
 	}
+	frames = appendRuntimeFuncInfoStubSiteFrames(frames)
 	// Closure stubs are an ABI adapter and may go away in a future closure
-	// lowering. Keep the compatibility table light: it stores only target
-	// funcinfo record indexes, and live stub PCs are resolved lazily here.
+	// lowering. Keep the fallback compatibility table light: it stores only
+	// target funcinfo record indexes. On ELF we prefer the associated stub-site
+	// section above because linkers do not expose local stubs through dlsym.
 	if runtimeFuncInfoStubIndexes != nil && runtimeFuncInfoStubCount != 0 && runtimeFuncInfoStubCount <= runtimeFuncInfoCount {
 		for i := uintptr(0); i < runtimeFuncInfoStubCount; i++ {
 			index := funcInfoStubIndexAt(i)
@@ -630,6 +643,92 @@ func initRuntimeFuncPCFramesOnce() {
 	runtimeFuncPCFrames = frames
 	runtimeFuncPCEntries = entries
 	runtimeFuncPCIndex = buildRuntimeFuncPCIndex(frames)
+}
+
+func appendRuntimeFuncInfoStubSiteFrames(frames []runtimeFuncPCFrame) []runtimeFuncPCFrame {
+	if runtimeFuncInfoStubSiteStart == nil || runtimeFuncInfoStubSiteEnd == nil {
+		return frames
+	}
+	start := uintptr(unsafe.Pointer(runtimeFuncInfoStubSiteStart))
+	end := uintptr(unsafe.Pointer(runtimeFuncInfoStubSiteEnd))
+	size := unsafe.Sizeof(*runtimeFuncInfoStubSiteStart)
+	if end <= start || size == 0 || (end-start)%size != 0 {
+		return frames
+	}
+	nsite := (end - start) / size
+	if nsite > runtimeFuncInfoCount*16 || nsite > 1<<20 {
+		return frames
+	}
+	for i := uintptr(0); i < nsite; i++ {
+		site := (*runtimeFuncInfoStubSiteRecord)(unsafe.Pointer(start + i*size))
+		if site == nil || site.pc == 0 || site.symbolID == 0 {
+			continue
+		}
+		funcIndex := funcInfoIndexForSymbolID(site.symbolID)
+		if funcIndex == 0 || uintptr(funcIndex) > runtimeFuncInfoCount {
+			continue
+		}
+		fn := funcInfoAt(uintptr(funcIndex) - 1)
+		symbol := funcInfoJoinName(fn.symbolPkg, fn.symbolName)
+		function := publicFunctionName(funcInfoJoinName(fn.namePkg, fn.nameName))
+		if function == "" {
+			function = publicFunctionName(symbol)
+		}
+		frames = append(frames, runtimeFuncPCFrame{
+			entry:     site.pc,
+			funcIndex: funcIndex,
+			function:  function,
+			file:      funcInfoJoinFile(fn.fileRoot, fn.fileName),
+			startLine: int(fn.line),
+		})
+	}
+	return frames
+}
+
+func funcInfoIndexForSymbolID(id uint64) uint32 {
+	if id == 0 || runtimeFuncInfoTable == nil || runtimeFuncInfoCount == 0 {
+		return 0
+	}
+	for i := uintptr(0); i < runtimeFuncInfoCount; i++ {
+		rec := funcInfoAt(i)
+		if funcInfoSymbolIDFromRecord(rec) == id {
+			return uint32(i + 1)
+		}
+	}
+	return 0
+}
+
+func funcInfoSymbolIDFromRecord(rec *runtimeFuncInfoRecord) uint64 {
+	const (
+		offset = uint64(14695981039346656037)
+		prime  = uint64(1099511628211)
+	)
+	if rec == nil {
+		return 0
+	}
+	h := offset
+	h = funcInfoHashCString(h, funcInfoCString(rec.symbolPkg))
+	pkgLen := cStringLen(funcInfoCString(rec.symbolPkg))
+	name := funcInfoCString(rec.symbolName)
+	if pkgLen != 0 && cStringLen(name) != 0 {
+		h ^= uint64('.')
+		h *= prime
+	}
+	h = funcInfoHashCString(h, name)
+	if h == 0 {
+		return 1
+	}
+	return h
+}
+
+func funcInfoHashCString(h uint64, s *c.Char) uint64 {
+	const prime = uint64(1099511628211)
+	for s != nil && *s != 0 {
+		h ^= uint64(byte(*s))
+		h *= prime
+		s = (*c.Char)(unsafe.Add(unsafe.Pointer(s), 1))
+	}
+	return h
 }
 
 func sortRuntimeFuncPCFrames(frames []runtimeFuncPCFrame) {
