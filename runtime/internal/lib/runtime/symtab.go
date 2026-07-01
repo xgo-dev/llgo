@@ -166,6 +166,12 @@ var runtimeFuncInfoCount uintptr
 //go:linkname runtimeFuncInfoHashMask __llgo_funcinfo_hash_mask
 var runtimeFuncInfoHashMask uintptr
 
+//go:linkname runtimeFuncInfoStubIndexes __llgo_funcinfo_stub_indexes
+var runtimeFuncInfoStubIndexes *uint32
+
+//go:linkname runtimeFuncInfoStubCount __llgo_funcinfo_stub_count
+var runtimeFuncInfoStubCount uintptr
+
 type runtimePCLineRecord struct {
 	id        uint64
 	funcIndex uint32
@@ -226,6 +232,8 @@ const (
 	runtimeFuncInfoInitUninit uint32 = iota
 	runtimeFuncInfoInitDone
 	runtimeFuncInfoInitBusy
+	runtimeClosureStubPrefix       = "__llgo_stub."
+	runtimePublicClosureStubPrefix = "_llgo_stub."
 )
 
 func hasStringPrefix(s, prefix string) bool {
@@ -333,6 +341,11 @@ func pcLineAt(i uintptr) *runtimePCLineRecord {
 	return (*runtimePCLineRecord)(unsafe.Add(unsafe.Pointer(runtimePCLineTable), i*size))
 }
 
+func funcInfoStubIndexAt(i uintptr) uint32 {
+	size := unsafe.Sizeof(*runtimeFuncInfoStubIndexes)
+	return *(*uint32)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoStubIndexes), i*size))
+}
+
 func funcInfoHashString(s string) uintptr {
 	const (
 		offset = uint32(2166136261)
@@ -435,12 +448,25 @@ func funcInfoForSymbol(symbol string) *runtimeFuncInfoRecord {
 	return nil
 }
 
+func funcInfoForRuntimeSymbol(symbol string) *runtimeFuncInfoRecord {
+	if rec := funcInfoForSymbol(symbol); rec != nil {
+		return rec
+	}
+	if hasStringPrefix(symbol, runtimeClosureStubPrefix) {
+		return funcInfoForSymbol(symbol[len(runtimeClosureStubPrefix):])
+	}
+	if hasStringPrefix(symbol, runtimePublicClosureStubPrefix) {
+		return funcInfoForSymbol(symbol[len(runtimePublicClosureStubPrefix):])
+	}
+	return nil
+}
+
 func applyFuncInfo(sym *pcSymbol, rawFunction string) {
-	rec := funcInfoForSymbol(rawFunction)
+	rec := funcInfoForRuntimeSymbol(rawFunction)
 	if rec == nil {
 		public := publicFunctionName(rawFunction)
 		if public != rawFunction {
-			rec = funcInfoForSymbol(public)
+			rec = funcInfoForRuntimeSymbol(public)
 		}
 	}
 	if rec == nil {
@@ -566,6 +592,37 @@ func initRuntimeFuncPCFramesOnce() {
 		})
 		if entries[index] == 0 || pc < entries[index] {
 			entries[index] = pc
+		}
+	}
+	// Closure stubs are an ABI adapter and may go away in a future closure
+	// lowering. Keep the compatibility table light: it stores only target
+	// funcinfo record indexes, and live stub PCs are resolved lazily here.
+	if runtimeFuncInfoStubIndexes != nil && runtimeFuncInfoStubCount != 0 && runtimeFuncInfoStubCount <= runtimeFuncInfoCount {
+		for i := uintptr(0); i < runtimeFuncInfoStubCount; i++ {
+			index := funcInfoStubIndexAt(i)
+			if index == 0 || uintptr(index) > runtimeFuncInfoCount {
+				continue
+			}
+			fn := funcInfoAt(uintptr(index) - 1)
+			symbol := funcInfoJoinName(fn.symbolPkg, fn.symbolName)
+			if symbol == "" {
+				continue
+			}
+			pc := symbolPC(runtimeClosureStubPrefix + symbol)
+			if pc == 0 {
+				continue
+			}
+			function := publicFunctionName(funcInfoJoinName(fn.namePkg, fn.nameName))
+			if function == "" {
+				function = publicFunctionName(symbol)
+			}
+			frames = append(frames, runtimeFuncPCFrame{
+				entry:     pc,
+				funcIndex: index,
+				function:  function,
+				file:      funcInfoJoinFile(fn.fileRoot, fn.fileName),
+				startLine: int(fn.line),
+			})
 		}
 	}
 	sortRuntimeFuncPCFrames(frames)

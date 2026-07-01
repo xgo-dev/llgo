@@ -34,6 +34,8 @@ const (
 	funcInfoStringCountSymbol       = "__llgo_funcinfo_string_count"
 	funcInfoHashSymbol              = "__llgo_funcinfo_hash"
 	funcInfoHashMaskSymbol          = "__llgo_funcinfo_hash_mask"
+	funcInfoStubIndexesSymbol       = "__llgo_funcinfo_stub_indexes"
+	funcInfoStubCountSymbol         = "__llgo_funcinfo_stub_count"
 	pcLineTableSymbol               = "__llgo_pcline_table"
 	pcLineCountSymbol               = "__llgo_pcline_count"
 	pcSiteStartPtrSymbol            = "__llgo_pcsite_start"
@@ -45,6 +47,8 @@ const (
 	funcInfoStringsDataSymbol       = "__llgo_funcinfo_strings$data"
 	funcInfoStringOffsetsDataSymbol = "__llgo_funcinfo_string_offsets$data"
 	funcInfoHashDataSymbol          = "__llgo_funcinfo_hash$data"
+	funcInfoStubIndexesDataSymbol   = "__llgo_funcinfo_stub_indexes$data"
+	closureStubPrefix               = "__llgo_stub."
 )
 
 type funcInfoRecord struct {
@@ -117,6 +121,45 @@ func collectPCLineInfo(pkgs []Package) []pcLineRecord {
 			return out[i].line < out[j].line
 		}
 		return out[i].id < out[j].id
+	})
+	return out
+}
+
+func collectFuncInfoStubIndexes(pkgs []Package, records []funcInfoRecord) []uint32 {
+	if len(records) == 0 {
+		return nil
+	}
+	recordBySymbol := make(map[string]uint32, len(records))
+	for i, rec := range records {
+		if rec.symbol != "" {
+			recordBySymbol[rec.symbol] = uint32(i + 1)
+		}
+	}
+	seen := make(map[uint32]none)
+	for _, pkg := range pkgs {
+		if pkg == nil || pkg.LPkg == nil {
+			continue
+		}
+		fn := pkg.LPkg.Module().FirstFunction()
+		for !fn.IsNil() {
+			name := fn.Name()
+			if target, ok := strings.CutPrefix(name, closureStubPrefix); ok {
+				if idx := recordBySymbol[target]; idx != 0 {
+					seen[idx] = none{}
+				}
+			}
+			fn = llvm.NextFunction(fn)
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]uint32, 0, len(seen))
+	for idx := range seen {
+		out = append(out, idx)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i] < out[j]
 	})
 	return out
 }
@@ -195,7 +238,7 @@ func readPCLineInfo(mod llvm.Module) []pcLineRecord {
 	return out
 }
 
-func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord, pcLines []pcLineRecord) {
+func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord, pcLines []pcLineRecord, stubIndexes []uint32) {
 	mod := pkg.Module()
 	llvmCtx := mod.Context()
 	i8Type := llvmCtx.Int8Type()
@@ -232,6 +275,8 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	stringCount := llvm.AddGlobal(mod, countType, funcInfoStringCountSymbol)
 	hashPtr := llvm.AddGlobal(mod, llvm.PointerType(i16Type, 0), funcInfoHashSymbol)
 	count := llvm.AddGlobal(mod, countType, funcInfoCountSymbol)
+	stubIndexesPtr := llvm.AddGlobal(mod, llvm.PointerType(i32Type, 0), funcInfoStubIndexesSymbol)
+	stubCount := llvm.AddGlobal(mod, countType, funcInfoStubCountSymbol)
 	pcLineCount := llvm.AddGlobal(mod, countType, pcLineCountSymbol)
 	hashMask := llvm.AddGlobal(mod, countType, funcInfoHashMaskSymbol)
 	if len(records) == 0 && len(pcLines) == 0 {
@@ -244,6 +289,8 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		stringCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		hashPtr.SetInitializer(llvm.ConstPointerNull(hashPtr.GlobalValueType()))
 		count.SetInitializer(llvm.ConstInt(countType, 0, false))
+		stubIndexesPtr.SetInitializer(llvm.ConstPointerNull(stubIndexesPtr.GlobalValueType()))
+		stubCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		pcLineCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		hashMask.SetInitializer(llvm.ConstInt(countType, 0, false))
 		return
@@ -263,6 +310,8 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		stringCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		hashPtr.SetInitializer(llvm.ConstPointerNull(hashPtr.GlobalValueType()))
 		count.SetInitializer(llvm.ConstInt(countType, 0, false))
+		stubIndexesPtr.SetInitializer(llvm.ConstPointerNull(stubIndexesPtr.GlobalValueType()))
+		stubCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		pcLineCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		hashMask.SetInitializer(llvm.ConstInt(countType, 0, false))
 		return
@@ -382,6 +431,30 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		hashMask.SetInitializer(llvm.ConstInt(countType, uint64(len(encoded.Hash)-1), false))
 	}
 	count.SetInitializer(llvm.ConstInt(countType, uint64(len(encoded.Records)), false))
+	stubIndexValues := make([]llvm.Value, 0, len(stubIndexes))
+	for _, idx := range stubIndexes {
+		if idx == 0 || int(idx) > len(encoded.Records) {
+			continue
+		}
+		stubIndexValues = append(stubIndexValues, llvm.ConstInt(i32Type, uint64(idx), false))
+	}
+	if len(stubIndexValues) == 0 {
+		stubIndexesPtr.SetInitializer(llvm.ConstPointerNull(stubIndexesPtr.GlobalValueType()))
+		stubCount.SetInitializer(llvm.ConstInt(countType, 0, false))
+	} else {
+		stubIndexArrayType := llvm.ArrayType(i32Type, len(stubIndexValues))
+		stubIndexData := llvm.AddGlobal(mod, stubIndexArrayType, funcInfoStubIndexesDataSymbol)
+		stubIndexData.SetInitializer(llvm.ConstArray(i32Type, stubIndexValues))
+		stubIndexData.SetLinkage(llvm.PrivateLinkage)
+		stubIndexData.SetGlobalConstant(true)
+		stubIndexData.SetUnnamedAddr(true)
+		stubIndexData.SetAlignment(4)
+		stubIndexesPtr.SetInitializer(llvm.ConstInBoundsGEP(stubIndexArrayType, stubIndexData, []llvm.Value{
+			llvm.ConstInt(countType, 0, false),
+			llvm.ConstInt(countType, 0, false),
+		}))
+		stubCount.SetInitializer(llvm.ConstInt(countType, uint64(len(stubIndexValues)), false))
+	}
 }
 
 func shouldEmitRuntimeELFSites(ctx *context) bool {

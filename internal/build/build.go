@@ -1046,6 +1046,7 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 	// Use a stable synthetic name to avoid confusing it with the real main package in traces/logs.
 	funcInfo := prepareFuncInfoTableRecords(collectFuncInfo(linkedOrder), nil)
 	pcLineInfo := collectPCLineInfo(linkedOrder)
+	funcInfoStubs := collectFuncInfoStubIndexes(linkedOrder, funcInfo)
 	entryPkg := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{
 		rtInit:        needRuntime,
 		pyInit:        needPyInit,
@@ -1055,6 +1056,7 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 		abiSymbols:    linkedModuleGlobals(linkedOrder),
 		funcInfo:      funcInfo,
 		pcLineInfo:    pcLineInfo,
+		funcInfoStubs: funcInfoStubs,
 	})
 	entryObjFile, err := exportObject(ctx, "entry_main", entryPkg.ExportFile, entryPkg.LPkg)
 	if err != nil {

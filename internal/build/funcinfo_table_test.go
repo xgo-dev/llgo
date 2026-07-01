@@ -63,6 +63,8 @@ func TestFuncInfoTableMaterializesMetadataWithoutFunctionPointers(t *testing.T) 
 		"@__llgo_funcinfo_string_count = global i64 5",
 		"@__llgo_funcinfo_hash = global ptr",
 		"@__llgo_funcinfo_count = global i64 1",
+		"@__llgo_funcinfo_stub_indexes = global ptr null",
+		"@__llgo_funcinfo_stub_count = global i64 0",
 		"@__llgo_pcline_count = global i64 0",
 		"@__llgo_funcinfo_hash_mask = global i64 1",
 		`@"__llgo_funcinfo_table$data" = private unnamed_addr constant [1 x { i16, i16, i16, i16, i16, i16, i32 }]`,
@@ -80,6 +82,47 @@ func TestFuncInfoTableMaterializesMetadataWithoutFunctionPointers(t *testing.T) 
 	}
 	if strings.Contains(ir, `ptr @"example.com/p.live"`) {
 		t.Fatalf("funcinfo table must not reference function pointers:\n%s", ir)
+	}
+}
+
+func TestFuncInfoTableMaterializesClosureStubIndexes(t *testing.T) {
+	prog := llssa.NewProgram(nil)
+	src := prog.NewPackage("example.com/p", "example.com/p")
+	src.EmitFuncInfo("example.com/p.live", "example.com/p.Live", "live.go", 17, 3)
+	src.EmitFuncInfo("example.com/p.other", "example.com/p.Other", "other.go", 23, 1)
+	src.NewFunc(closureStubPrefix+"example.com/p.live", llssa.NoArgsNoRet, llssa.InC)
+
+	records := collectFuncInfo([]Package{{LPkg: src}})
+	stubs := collectFuncInfoStubIndexes([]Package{{LPkg: src}}, records)
+	if len(stubs) != 1 || records[stubs[0]-1].symbol != "example.com/p.live" {
+		t.Fatalf("stub indexes = %+v for records %+v, want live", stubs, records)
+	}
+
+	ctx := &context{
+		prog: prog,
+		buildConf: &Config{
+			BuildMode: BuildModeExe,
+			Goos:      "linux",
+			Goarch:    "amd64",
+		},
+	}
+	entry := genMainModule(ctx, llssa.PkgRuntime, &packages.Package{
+		PkgPath:    "example.com/main",
+		ExportFile: "main.a",
+	}, &genConfig{funcInfo: records, funcInfoStubs: stubs})
+	ir := entry.LPkg.String()
+	for _, want := range []string{
+		"@__llgo_funcinfo_stub_indexes = global ptr",
+		"@__llgo_funcinfo_stub_count = global i64 1",
+		`@"__llgo_funcinfo_stub_indexes$data" = private unnamed_addr constant [1 x i32]`,
+		"@__llgo_funcinfo_count = global i64 2",
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("funcinfo stub index table IR missing %q:\n%s", want, ir)
+		}
+	}
+	if strings.Contains(ir, closureStubPrefix) {
+		t.Fatalf("stub index table should not add stub symbol strings:\n%s", ir)
 	}
 }
 
@@ -204,6 +247,8 @@ func TestFuncInfoTableEmptyDefinitions(t *testing.T) {
 		"@__llgo_funcinfo_string_count = global i64 0",
 		"@__llgo_funcinfo_hash = global ptr null",
 		"@__llgo_funcinfo_count = global i64 0",
+		"@__llgo_funcinfo_stub_indexes = global ptr null",
+		"@__llgo_funcinfo_stub_count = global i64 0",
 		"@__llgo_pcline_count = global i64 0",
 		"@__llgo_funcinfo_hash_mask = global i64 0",
 	} {
