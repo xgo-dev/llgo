@@ -205,6 +205,12 @@ func TestFuncInfoMetadataDoesNotPreserveFunctions(t *testing.T) {
 }
 
 func TestPCLineMetadataEmission(t *testing.T) {
+	testPCLineMetadataEmission(t)
+}
+
+func testPCLineMetadataEmission(t *testing.T) {
+	t.Helper()
+
 	prog := NewProgram(nil)
 	pkg := prog.NewPackage("main", "main")
 
@@ -330,6 +336,11 @@ func TestDevLTOGlobalDCEFuncInfoMetadata(t *testing.T) {
 	requireGoGlobalDCE(t)
 	testFuncInfoMetadataDoesNotPreserveFunctions(t)
 	testFuncInfoMetadataDoesNotBlockGlobalDCE(t)
+}
+
+func TestDevLTOGlobalDCEPCLineMetadata(t *testing.T) {
+	requireGoGlobalDCE(t)
+	testPCLineMetadataEmission(t)
 }
 
 func requireGoGlobalDCE(t *testing.T) {
