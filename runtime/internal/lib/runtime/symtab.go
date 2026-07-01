@@ -229,25 +229,39 @@ type runtimePCLineFrame struct {
 
 var runtimePCLineInitState uint32
 var runtimePCLineFrames []runtimePCLineFrame
-var runtimePCLineIndex runtimePCPageIndex
+var runtimePCLineIndex runtimePCFindIndex
 
 type runtimeFuncPCFrame struct {
 	entry     uintptr
 	funcIndex uint32
 }
 
-type runtimePCPageIndex struct {
-	base  uintptr
-	pages []uint32
+type runtimePCFindBucket struct {
+	idx        uint32
+	subbuckets [runtimePCFindSubbucket]uint8
 }
 
-const runtimeFuncPCPageShift = 12
-const runtimeFuncPCEntrySlack = 64
+type runtimePCFindIndex struct {
+	base    uintptr
+	buckets []runtimePCFindBucket
+}
+
+const (
+	// Keep the lookup geometry aligned with Go's pclntab findfunc table:
+	// 4096-byte buckets, 16 subbuckets, and one-byte function-index deltas.
+	// LLGo currently builds this compact index at first use after reading
+	// DCE-safe entry PC sections, because the LLVM IR stage does not yet own
+	// final text addresses the way cmd/link does for Go.
+	runtimePCMinFuncSize    = uintptr(16)
+	runtimePCFindBucketSize = uintptr(256) * runtimePCMinFuncSize
+	runtimePCFindSubbucket  = 16
+	runtimeFuncPCEntrySlack = 64
+)
 
 var runtimeFuncPCInitState uint32
 var runtimeFuncPCFrames []runtimeFuncPCFrame
 var runtimeFuncPCEntries []uintptr
-var runtimeFuncPCIndex runtimePCPageIndex
+var runtimeFuncPCIndex runtimePCFindIndex
 
 const (
 	runtimeFuncInfoInitUninit uint32 = iota
@@ -909,55 +923,120 @@ func uniqueRuntimeFuncPCFrames(frames []runtimeFuncPCFrame) []runtimeFuncPCFrame
 	return out
 }
 
-func buildRuntimeFuncPCIndex(frames []runtimeFuncPCFrame) runtimePCPageIndex {
+// buildRuntimeFuncPCIndex is the runtime counterpart of Go's linker-built
+// findfunctab. The table shape and lookup behavior are Go-style; the build time
+// differs because LLGo's final function PCs are discovered from associated
+// sections after link/load instead of being sorted directly by cmd/link.
+func buildRuntimeFuncPCIndex(frames []runtimeFuncPCFrame) runtimePCFindIndex {
 	if len(frames) == 0 {
-		return runtimePCPageIndex{}
+		return runtimePCFindIndex{}
 	}
-	base := frames[0].entry >> runtimeFuncPCPageShift
-	last := frames[len(frames)-1].entry >> runtimeFuncPCPageShift
+	if uintptr(len(frames)) > ^uintptr(0)>>1 {
+		return runtimePCFindIndex{}
+	}
+	base := frames[0].entry &^ (runtimePCFindBucketSize - 1)
+	last := frames[len(frames)-1].entry
 	if last < base {
-		return runtimePCPageIndex{}
+		return runtimePCFindIndex{}
 	}
-	npages := last - base + 2
-	if npages > 1<<20 && npages > uintptr(len(frames))*64 {
-		return runtimePCPageIndex{}
+	nbuckets := (last-base)/runtimePCFindBucketSize + 1
+	if nbuckets > 1<<20 && nbuckets > uintptr(len(frames))*64 {
+		return runtimePCFindIndex{}
 	}
-	pages := make([]uint32, npages)
-	next := 0
-	for page := range pages {
-		limit := (base + uintptr(page)) << runtimeFuncPCPageShift
-		for next < len(frames) && frames[next].entry < limit {
-			next++
+	buckets := make([]runtimePCFindBucket, nbuckets)
+	subSize := runtimePCFindBucketSize / runtimePCFindSubbucket
+	for b := range buckets {
+		bucketStart := base + uintptr(b)*runtimePCFindBucketSize
+		baseIdx := runtimeFuncPCFrameIndexBinary(frames, bucketStart)
+		if baseIdx < 0 {
+			baseIdx = 0
 		}
-		pages[page] = uint32(next)
+		if baseIdx > len(frames)-1 {
+			baseIdx = len(frames) - 1
+		}
+		buckets[b].idx = uint32(baseIdx)
+		for s := 0; s < runtimePCFindSubbucket; s++ {
+			pc := bucketStart + uintptr(s)*subSize
+			subIdx := runtimeFuncPCFrameIndexBinary(frames, pc)
+			if subIdx < 0 {
+				subIdx = 0
+			}
+			if subIdx > len(frames)-1 {
+				subIdx = len(frames) - 1
+			}
+			delta := subIdx - baseIdx
+			if delta < 0 || delta > 255 {
+				return runtimePCFindIndex{}
+			}
+			buckets[b].subbuckets[s] = uint8(delta)
+		}
 	}
-	return runtimePCPageIndex{base: base, pages: pages}
+	return runtimePCFindIndex{base: base, buckets: buckets}
 }
 
+func runtimePCFindRange(index runtimePCFindIndex, n int, pc uintptr) (int, int, bool) {
+	if n == 0 || len(index.buckets) == 0 || pc < index.base {
+		return 0, 0, false
+	}
+	off := pc - index.base
+	bucket := off / runtimePCFindBucketSize
+	if bucket >= uintptr(len(index.buckets)) {
+		return 0, 0, false
+	}
+	subSize := runtimePCFindBucketSize / runtimePCFindSubbucket
+	sub := (off % runtimePCFindBucketSize) / subSize
+	b := index.buckets[bucket]
+	lo := int(b.idx) + int(b.subbuckets[sub])
+	hi := n
+	if sub+1 < runtimePCFindSubbucket {
+		hi = int(b.idx) + int(b.subbuckets[sub+1])
+	} else if bucket+1 < uintptr(len(index.buckets)) {
+		hi = int(index.buckets[bucket+1].idx)
+	}
+	if lo > 0 {
+		lo--
+	}
+	if hi < lo {
+		hi = lo
+	}
+	hi += 2
+	if hi > n {
+		hi = n
+	}
+	if lo > n {
+		lo = n
+	}
+	return lo, hi, true
+}
+
+// runtimeFuncPCFrameIndex mirrors runtime.findfunc: use the compact bucket
+// table to jump near the containing function, then scan the sorted frame table
+// inside that narrow range.
 func runtimeFuncPCFrameIndex(pc uintptr) int {
 	frames := runtimeFuncPCFrames
 	if len(frames) == 0 {
 		return -1
 	}
-	lo, hi := 0, len(frames)
-	if pages := runtimeFuncPCIndex.pages; len(pages) != 0 {
-		page := pc >> runtimeFuncPCPageShift
-		if page >= runtimeFuncPCIndex.base {
-			off := page - runtimeFuncPCIndex.base
-			if off < uintptr(len(pages)) {
-				lo = int(pages[off])
-				if off+1 < uintptr(len(pages)) {
-					hi = int(pages[off+1])
-				}
-				if lo > 0 {
-					lo--
-				}
-				if hi < len(frames) {
-					hi++
-				}
+	if lo, hi, ok := runtimePCFindRange(runtimeFuncPCIndex, len(frames), pc); ok {
+		for lo < hi {
+			mid := int(uint(lo+hi) >> 1)
+			if frames[mid].entry > pc {
+				hi = mid
+			} else {
+				lo = mid + 1
 			}
 		}
+		idx := lo - 1
+		if idx < 0 || frames[idx].entry > pc {
+			return -1
+		}
+		return idx
 	}
+	return runtimeFuncPCFrameIndexBinary(frames, pc)
+}
+
+func runtimeFuncPCFrameIndexBinary(frames []runtimeFuncPCFrame, pc uintptr) int {
+	lo, hi := 0, len(frames)
 	for lo < hi {
 		mid := int(uint(lo+hi) >> 1)
 		if frames[mid].entry > pc {
@@ -1237,53 +1316,60 @@ func uniqueRuntimePCLineFrames(frames []runtimePCLineFrame) []runtimePCLineFrame
 	return out
 }
 
-func buildRuntimePCLineIndex(frames []runtimePCLineFrame) runtimePCPageIndex {
+// buildRuntimePCLineIndex reuses the same Go-style bucket geometry for
+// statement PC-line sites. Go stores dense per-function pcdata; LLGo keeps
+// statement sites as a separate sorted table for now, but the hot PC lookup
+// follows the same bucket/subbucket narrowing.
+func buildRuntimePCLineIndex(frames []runtimePCLineFrame) runtimePCFindIndex {
 	if len(frames) == 0 {
-		return runtimePCPageIndex{}
+		return runtimePCFindIndex{}
 	}
-	base := frames[0].pc >> runtimeFuncPCPageShift
-	last := frames[len(frames)-1].pc >> runtimeFuncPCPageShift
+	base := frames[0].pc &^ (runtimePCFindBucketSize - 1)
+	last := frames[len(frames)-1].pc
 	if last < base {
-		return runtimePCPageIndex{}
+		return runtimePCFindIndex{}
 	}
-	npages := last - base + 2
-	if npages > 1<<20 && npages > uintptr(len(frames))*64 {
-		return runtimePCPageIndex{}
+	nbuckets := (last-base)/runtimePCFindBucketSize + 1
+	if nbuckets > 1<<20 && nbuckets > uintptr(len(frames))*64 {
+		return runtimePCFindIndex{}
 	}
-	pages := make([]uint32, npages)
-	next := 0
-	for page := range pages {
-		limit := (base + uintptr(page)) << runtimeFuncPCPageShift
-		for next < len(frames) && frames[next].pc < limit {
-			next++
+	buckets := make([]runtimePCFindBucket, nbuckets)
+	subSize := runtimePCFindBucketSize / runtimePCFindSubbucket
+	for b := range buckets {
+		bucketStart := base + uintptr(b)*runtimePCFindBucketSize
+		baseIdx := runtimePCLineFrameIndexBinary(frames, bucketStart, false)
+		if baseIdx < 0 {
+			baseIdx = 0
 		}
-		pages[page] = uint32(next)
+		if baseIdx > len(frames)-1 {
+			baseIdx = len(frames) - 1
+		}
+		buckets[b].idx = uint32(baseIdx)
+		for s := 0; s < runtimePCFindSubbucket; s++ {
+			pc := bucketStart + uintptr(s)*subSize
+			subIdx := runtimePCLineFrameIndexBinary(frames, pc, false)
+			if subIdx < 0 {
+				subIdx = 0
+			}
+			if subIdx > len(frames)-1 {
+				subIdx = len(frames) - 1
+			}
+			delta := subIdx - baseIdx
+			if delta < 0 || delta > 255 {
+				return runtimePCFindIndex{}
+			}
+			buckets[b].subbuckets[s] = uint8(delta)
+		}
 	}
-	return runtimePCPageIndex{base: base, pages: pages}
+	return runtimePCFindIndex{base: base, buckets: buckets}
 }
 
 func runtimePCLineFrameRange(pc uintptr) (int, int) {
 	frames := runtimePCLineFrames
-	lo, hi := 0, len(frames)
-	if pages := runtimePCLineIndex.pages; len(pages) != 0 {
-		page := pc >> runtimeFuncPCPageShift
-		if page >= runtimePCLineIndex.base {
-			off := page - runtimePCLineIndex.base
-			if off < uintptr(len(pages)) {
-				lo = int(pages[off])
-				if off+1 < uintptr(len(pages)) {
-					hi = int(pages[off+1])
-				}
-				if lo > 0 {
-					lo--
-				}
-				if hi < len(frames) {
-					hi++
-				}
-			}
-		}
+	if lo, hi, ok := runtimePCFindRange(runtimePCLineIndex, len(frames), pc); ok {
+		return lo, hi
 	}
-	return lo, hi
+	return 0, len(frames)
 }
 
 func runtimePCLineFrameIndex(pc uintptr, exact bool) int {
@@ -1292,6 +1378,14 @@ func runtimePCLineFrameIndex(pc uintptr, exact bool) int {
 		return -1
 	}
 	lo, hi := runtimePCLineFrameRange(pc)
+	return runtimePCLineFrameIndexInRange(frames, pc, exact, lo, hi)
+}
+
+func runtimePCLineFrameIndexBinary(frames []runtimePCLineFrame, pc uintptr, exact bool) int {
+	return runtimePCLineFrameIndexInRange(frames, pc, exact, 0, len(frames))
+}
+
+func runtimePCLineFrameIndexInRange(frames []runtimePCLineFrame, pc uintptr, exact bool, lo, hi int) int {
 	for lo < hi {
 		mid := int(uint(lo+hi) >> 1)
 		if frames[mid].pc > pc || (exact && frames[mid].pc == pc) {

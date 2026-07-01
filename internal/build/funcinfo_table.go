@@ -554,6 +554,13 @@ func emitFuncInfoEntrySites(ctx *context, pkg llssa.Package) {
 	if len(symbolIDs) == 0 {
 		return
 	}
+	// This is LLGo's DCE-safe substitute for the function PC list that Go's
+	// linker has while building pclntab. The inline-asm fragment lives in an
+	// associated ELF section tied to the function body, so global DCE removes
+	// the entry record with the function instead of keeping dead code alive.
+	// Runtime still sorts these final PCs before building the Go-style
+	// findfunc bucket index, because LLVM IR generation does not know final
+	// linked text order.
 	llvmCtx := mod.Context()
 	builder := llvmCtx.NewBuilder()
 	defer builder.Dispose()
