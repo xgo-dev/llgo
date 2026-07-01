@@ -398,8 +398,9 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		}
 	}
 	emitELFSites := shouldEmitRuntimeELFSites(ctx)
-	emitRuntimeFuncInfoELFSites(mod, ctx.prog.PointerSize(), emitELFSites && len(pcLineValues) != 0, emitELFSites && len(stubRecords) != 0)
-	if emitELFSites && len(stubRecords) != 0 {
+	emitStubSites := shouldEmitRuntimeStubELFSites(ctx)
+	emitRuntimeFuncInfoELFSites(mod, ctx.prog.PointerSize(), emitELFSites && len(pcLineValues) != 0, emitStubSites && len(stubRecords) != 0)
+	if emitStubSites && len(stubRecords) != 0 {
 		stubSiteStart := llvm.AddGlobal(mod, stubSiteRecordType, funcInfoStubSiteStartSymbol)
 		stubSiteEnd := llvm.AddGlobal(mod, stubSiteRecordType, funcInfoStubSiteEndSymbol)
 		stubSiteStartPtr.SetInitializer(stubSiteStart)
@@ -503,8 +504,12 @@ func shouldEmitRuntimeELFSites(ctx *context) bool {
 		ctx.buildConf.Target == ""
 }
 
+func shouldEmitRuntimeStubELFSites(ctx *context) bool {
+	return shouldEmitRuntimeELFSites(ctx) && !ctx.buildConf.ltoEnabled()
+}
+
 func emitFuncInfoStubSites(ctx *context, pkg llssa.Package) {
-	if !shouldEmitRuntimeELFSites(ctx) || pkg == nil || !ctx.prog.FuncInfoMetadataEnabled() {
+	if !shouldEmitRuntimeStubELFSites(ctx) || pkg == nil || !ctx.prog.FuncInfoMetadataEnabled() {
 		return
 	}
 	mod := pkg.Module()

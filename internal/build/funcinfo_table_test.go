@@ -22,6 +22,7 @@ import (
 
 	"github.com/xgo-dev/llvm"
 
+	"github.com/goplus/llgo/internal/lto"
 	"github.com/goplus/llgo/internal/packages"
 	llssa "github.com/goplus/llgo/ssa"
 )
@@ -142,6 +143,30 @@ func TestFuncInfoTableMaterializesClosureStubIndexes(t *testing.T) {
 	}
 	if strings.Contains(ir, closureStubPrefix+"example.com/p.live\\00") {
 		t.Fatalf("stub index table should not add stub symbol strings:\n%s", ir)
+	}
+
+	ltoCtx := &context{
+		prog: prog,
+		buildConf: &Config{
+			BuildMode: BuildModeExe,
+			Goos:      "linux",
+			Goarch:    "amd64",
+			LTO:       lto.Full,
+		},
+	}
+	ltoEntry := genMainModule(ltoCtx, llssa.PkgRuntime, &packages.Package{
+		PkgPath:    "example.com/main",
+		ExportFile: "main.a",
+	}, &genConfig{funcInfo: records, funcInfoStubs: stubs})
+	ltoIR := ltoEntry.LPkg.String()
+	for _, bad := range []string{
+		"@__llgo_funcinfo_stubsite_start = global ptr @__start_llgo_funcinfo_stubsite",
+		"@__llgo_funcinfo_stubsite_end = global ptr @__stop_llgo_funcinfo_stubsite",
+		"module asm \".section llgo_funcinfo_stubsite",
+	} {
+		if strings.Contains(ltoIR, bad) {
+			t.Fatalf("full LTO funcinfo table should not emit stub site %q:\n%s", bad, ltoIR)
+		}
 	}
 }
 
