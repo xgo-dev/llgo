@@ -92,6 +92,15 @@ func (T) method() {}
 	if got := records["foo.top"].name; got != "foo.top" {
 		t.Fatalf("caller stack frame name = %q, want foo.top", got)
 	}
+	if got := records["foo.top"].line; got != 6 {
+		t.Fatalf("top funcinfo line = %d, want first body statement line 6", got)
+	}
+	if got := records["foo.leaf"].line; got != 9 {
+		t.Fatalf("leaf funcinfo line = %d, want line 9", got)
+	}
+	if got := records["foo.T.method"].line; got != 11 {
+		t.Fatalf("empty method funcinfo line = %d, want declaration line 11", got)
+	}
 }
 
 func TestNoInlineDirectiveDisablesTailCalls(t *testing.T) {

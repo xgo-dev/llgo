@@ -565,7 +565,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			if pkgTypes != nil {
 				goName = funcName(pkgTypes, f, false)
 			}
-			pos := p.goProg.Fset.Position(f.Pos())
+			pos := p.funcInfoPosition(f)
 			pkg.EmitFuncInfo(fn.Name(), goName, pos.Filename, pos.Line, pos.Column)
 		}
 		var childInits []func()
@@ -699,6 +699,23 @@ func (p *context) getFuncBodyPos(f *ssa.Function) token.Position {
 		}
 	}
 	return p.goProg.Fset.Position(f.Pos())
+}
+
+func (p *context) funcInfoPosition(f *ssa.Function) token.Position {
+	if f != nil {
+		switch syntax := f.Syntax().(type) {
+		case *ast.FuncDecl:
+			if syntax.Body != nil && len(syntax.Body.List) != 0 {
+				return p.goProg.Fset.Position(syntax.Body.List[0].Pos())
+			}
+		case *ast.FuncLit:
+			if syntax.Body != nil && len(syntax.Body.List) != 0 {
+				return p.goProg.Fset.Position(syntax.Body.List[0].Pos())
+			}
+		}
+		return p.goProg.Fset.Position(f.Pos())
+	}
+	return token.Position{}
 }
 
 func isGlobal(v *types.Var) bool {

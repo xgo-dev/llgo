@@ -28,6 +28,7 @@ import (
 const runtimeLineInfoProbe = `package main
 
 import (
+	"reflect"
 	"strconv"
 	"runtime"
 	"runtime/debug"
@@ -38,8 +39,9 @@ import (
 func main() {
 	checkCaller()
 	checkCallerSkip()
-	checkFrames()
+	checkFrames() // FRAMES_MAIN_MARK
 	checkFuncForPC()
+	checkFuncForPCFunctionValue()
 	checkFuncInfoRename()
 	checkRuntimeStack()
 	checkPanicStack()
@@ -69,14 +71,25 @@ func helperCallerSkip() {
 //go:noinline
 func checkFrames() {
 	var pcs [8]uintptr
-	n := runtime.Callers(0, pcs[:])
+	n := runtime.Callers(0, pcs[:]) // FRAMES_CHECK_MARK
 	frames := runtime.CallersFrames(pcs[:n])
+	seenCheckFrames := false
+	seenMain := false
 	for {
 		frame, more := frames.Next()
 		if frame.Function == "main.checkFrames" {
-			if !strings.HasSuffix(frame.File, "main.go") || frame.Line == 0 {
-				panic("bad frame")
+			if !strings.HasSuffix(frame.File, "main.go") || frame.Line != FRAMES_CHECK_LINE {
+				panic("bad checkFrames frame: " + frame.File + ":" + strconv.Itoa(frame.Line))
 			}
+			seenCheckFrames = true
+		}
+		if frame.Function == "main.main" {
+			if !strings.HasSuffix(frame.File, "main.go") || frame.Line != FRAMES_MAIN_LINE {
+				panic("bad main frame: " + frame.File + ":" + strconv.Itoa(frame.Line))
+			}
+			seenMain = true
+		}
+		if seenCheckFrames && seenMain {
 			return
 		}
 		if !more {
@@ -105,6 +118,36 @@ func checkFuncForPC() {
 	file, line := fn.FileLine(pc)
 	if !strings.HasSuffix(file, "main.go") || line != FUNC_FILELINE_LINE {
 		panic("bad func fileline: " + file + ":" + strconv.Itoa(line))
+	}
+}
+
+//go:noinline
+func entryPCTarget() int {
+	return 7 // FUNC_ENTRY_TARGET_MARK
+}
+
+//go:noinline
+func checkFuncForPCFunctionValue() {
+	if entryPCTarget() != 7 {
+		panic("bad target")
+	}
+	pc := reflect.ValueOf(entryPCTarget).Pointer()
+	if pc == 0 {
+		panic("missing function value pc")
+	}
+	fn := runtime.FuncForPC(pc)
+	if fn == nil {
+		panic("missing function value func")
+	}
+	if name := fn.Name(); name != "main.entryPCTarget" {
+		panic("bad function value func: " + name)
+	}
+	if entry := fn.Entry(); entry == 0 {
+		panic("missing function value entry")
+	}
+	file, line := fn.FileLine(pc)
+	if !strings.HasSuffix(file, "main.go") || line != FUNC_ENTRY_TARGET_LINE {
+		panic("bad function value fileline: " + file + ":" + strconv.Itoa(line))
 	}
 }
 
@@ -156,7 +199,10 @@ func TestRuntimeLineInfoAndStack(t *testing.T) {
 	source := runtimeLineInfoProbe
 	source = strings.ReplaceAll(source, "CALLER_LINE", strconv.Itoa(markerLine(source, "CALLER_MARK")))
 	source = strings.ReplaceAll(source, "CALLER_SKIP_LINE", strconv.Itoa(markerLine(source, "CALLER_SKIP_MARK")))
+	source = strings.ReplaceAll(source, "FRAMES_MAIN_LINE", strconv.Itoa(markerLine(source, "FRAMES_MAIN_MARK")))
+	source = strings.ReplaceAll(source, "FRAMES_CHECK_LINE", strconv.Itoa(markerLine(source, "FRAMES_CHECK_MARK")))
 	source = strings.ReplaceAll(source, "FUNC_FILELINE_LINE", strconv.Itoa(markerLine(source, "FUNC_FILELINE_MARK")))
+	source = strings.ReplaceAll(source, "FUNC_ENTRY_TARGET_LINE", strconv.Itoa(markerLine(source, "FUNC_ENTRY_TARGET_MARK")))
 	source = strings.ReplaceAll(source, "RUNTIME_STACK_LINE", strconv.Itoa(markerLine(source, "RUNTIME_STACK_MARK")))
 	source = strings.ReplaceAll(source, "DEBUG_STACK_LINE", strconv.Itoa(markerLine(source, "DEBUG_STACK_CALL_MARK")))
 
