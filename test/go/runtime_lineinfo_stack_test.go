@@ -175,6 +175,93 @@ func TestRuntimeLineInfoAndStack(t *testing.T) {
 	}
 }
 
+const runtimeFuncInfoConcurrentFirstUseProbe = `package main
+
+import (
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+)
+
+func main() {
+	const n = 32
+	start := make(chan struct{})
+	errc := make(chan string, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errc <- checkRuntimeInfo()
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errc)
+	for err := range errc {
+		if err != "" {
+			panic(err)
+		}
+	}
+}
+
+//go:noinline
+func checkRuntimeInfo() string {
+	pc, file, line, ok := runtime.Caller(0) // CONCURRENT_CALLER_MARK
+	if !ok || !strings.HasSuffix(file, "main.go") || line != CONCURRENT_CALLER_LINE {
+		return "bad caller: " + file + ":" + strconv.Itoa(line)
+	}
+	fn := runtime.FuncForPC(pc)
+	if fn == nil || fn.Name() != "main.checkRuntimeInfo" {
+		name := "<nil>"
+		if fn != nil {
+			name = fn.Name()
+		}
+		return "bad func: " + name
+	}
+	file, line = fn.FileLine(pc)
+	if !strings.HasSuffix(file, "main.go") || line != CONCURRENT_CALLER_LINE {
+		return "bad fileline: " + file + ":" + strconv.Itoa(line)
+	}
+	var pcs [8]uintptr
+	n := runtime.Callers(0, pcs[:])
+	frames := runtime.CallersFrames(pcs[:n])
+	for {
+		frame, more := frames.Next()
+		if frame.Function == "main.checkRuntimeInfo" {
+			if !strings.HasSuffix(frame.File, "main.go") || frame.Line == 0 {
+				return "bad frame: " + frame.File + ":" + strconv.Itoa(frame.Line)
+			}
+			return ""
+		}
+		if !more {
+			return "missing frame"
+		}
+	}
+}
+`
+
+func TestRuntimeFuncInfoConcurrentFirstUse(t *testing.T) {
+	source := runtimeFuncInfoConcurrentFirstUseProbe
+	source = strings.ReplaceAll(source, "CONCURRENT_CALLER_LINE", strconv.Itoa(markerLine(source, "CONCURRENT_CALLER_MARK")))
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(file, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	repoRoot := findStringConversionRepoRoot(t)
+	t.Setenv("LLGO_ROOT", repoRoot)
+	cmd := exec.Command("go", "run", "./cmd/llgo", "run", "-a", file)
+	cmd.Dir = repoRoot
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("llgo concurrent funcinfo probe failed: %v\n%s", err, out)
+	}
+}
+
 func markerLine(source, marker string) int {
 	line := 1
 	for _, part := range strings.SplitAfter(source, "\n") {
