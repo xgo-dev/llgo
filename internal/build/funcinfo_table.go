@@ -31,6 +31,7 @@ const (
 	funcInfoCountSymbol             = "__llgo_funcinfo_count"
 	funcInfoStringsSymbol           = "__llgo_funcinfo_strings"
 	funcInfoStringOffsetsSymbol     = "__llgo_funcinfo_string_offsets"
+	funcInfoStringCountSymbol       = "__llgo_funcinfo_string_count"
 	funcInfoHashSymbol              = "__llgo_funcinfo_hash"
 	funcInfoHashMaskSymbol          = "__llgo_funcinfo_hash_mask"
 	pcLineTableSymbol               = "__llgo_pcline_table"
@@ -228,6 +229,7 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	pcSiteEndPtr := llvm.AddGlobal(mod, llvm.PointerType(pcSiteRecordType, 0), pcSiteEndPtrSymbol)
 	stringsPtr := llvm.AddGlobal(mod, llvm.PointerType(i8Type, 0), funcInfoStringsSymbol)
 	stringOffsetsPtr := llvm.AddGlobal(mod, llvm.PointerType(i32Type, 0), funcInfoStringOffsetsSymbol)
+	stringCount := llvm.AddGlobal(mod, countType, funcInfoStringCountSymbol)
 	hashPtr := llvm.AddGlobal(mod, llvm.PointerType(i16Type, 0), funcInfoHashSymbol)
 	count := llvm.AddGlobal(mod, countType, funcInfoCountSymbol)
 	pcLineCount := llvm.AddGlobal(mod, countType, pcLineCountSymbol)
@@ -239,6 +241,7 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		pcSiteEndPtr.SetInitializer(llvm.ConstPointerNull(pcSiteEndPtr.GlobalValueType()))
 		stringsPtr.SetInitializer(llvm.ConstPointerNull(stringsPtr.GlobalValueType()))
 		stringOffsetsPtr.SetInitializer(llvm.ConstPointerNull(stringOffsetsPtr.GlobalValueType()))
+		stringCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		hashPtr.SetInitializer(llvm.ConstPointerNull(hashPtr.GlobalValueType()))
 		count.SetInitializer(llvm.ConstInt(countType, 0, false))
 		pcLineCount.SetInitializer(llvm.ConstInt(countType, 0, false))
@@ -257,6 +260,7 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		pcSiteEndPtr.SetInitializer(llvm.ConstPointerNull(pcSiteEndPtr.GlobalValueType()))
 		stringsPtr.SetInitializer(llvm.ConstPointerNull(stringsPtr.GlobalValueType()))
 		stringOffsetsPtr.SetInitializer(llvm.ConstPointerNull(stringOffsetsPtr.GlobalValueType()))
+		stringCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		hashPtr.SetInitializer(llvm.ConstPointerNull(hashPtr.GlobalValueType()))
 		count.SetInitializer(llvm.ConstInt(countType, 0, false))
 		pcLineCount.SetInitializer(llvm.ConstInt(countType, 0, false))
@@ -355,6 +359,7 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		llvm.ConstInt(countType, 0, false),
 		llvm.ConstInt(countType, 0, false),
 	}))
+	stringCount.SetInitializer(llvm.ConstInt(countType, uint64(len(encoded.StringOffsets)), false))
 	if len(encoded.Hash) == 0 {
 		hashPtr.SetInitializer(llvm.ConstPointerNull(hashPtr.GlobalValueType()))
 		hashMask.SetInitializer(llvm.ConstInt(countType, 0, false))

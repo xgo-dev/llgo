@@ -253,6 +253,8 @@ func buildHash(records []Record) ([]uint16, error) {
 		return nil, nil
 	}
 	if len(records) > math.MaxUint16 {
+		// Runtime hash slots store 1-based uint16 record indexes. Larger
+		// tables remain correct by omitting the hash and using linear lookup.
 		return nil, nil
 	}
 	buckets := 1

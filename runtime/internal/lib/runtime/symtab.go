@@ -9,6 +9,7 @@ import (
 
 	c "github.com/goplus/llgo/runtime/internal/clite"
 	clitedebug "github.com/goplus/llgo/runtime/internal/clite/debug"
+	latomic "github.com/goplus/llgo/runtime/internal/lib/sync/atomic"
 	rtdebug "github.com/goplus/llgo/runtime/internal/runtime"
 )
 
@@ -153,6 +154,9 @@ var runtimeFuncInfoStrings *c.Char
 //go:linkname runtimeFuncInfoStringOffsets __llgo_funcinfo_string_offsets
 var runtimeFuncInfoStringOffsets *uint32
 
+//go:linkname runtimeFuncInfoStringCount __llgo_funcinfo_string_count
+var runtimeFuncInfoStringCount uintptr
+
 //go:linkname runtimeFuncInfoHash __llgo_funcinfo_hash
 var runtimeFuncInfoHash *uint16
 
@@ -195,7 +199,7 @@ type runtimePCLineFrame struct {
 	startLine int
 }
 
-var runtimePCLineInit bool
+var runtimePCLineInitState uint32
 var runtimePCLineFrames []runtimePCLineFrame
 
 type runtimeFuncPCFrame struct {
@@ -213,10 +217,16 @@ type runtimePCPageIndex struct {
 
 const runtimeFuncPCPageShift = 12
 
-var runtimeFuncPCInit bool
+var runtimeFuncPCInitState uint32
 var runtimeFuncPCFrames []runtimeFuncPCFrame
 var runtimeFuncPCEntries []uintptr
 var runtimeFuncPCIndex runtimePCPageIndex
+
+const (
+	runtimeFuncInfoInitUninit uint32 = iota
+	runtimeFuncInfoInitDone
+	runtimeFuncInfoInitBusy
+)
 
 func hasStringPrefix(s, prefix string) bool {
 	if len(s) < len(prefix) {
@@ -305,7 +315,8 @@ func cStringAppend(dst []byte, cstr *c.Char) []byte {
 }
 
 func funcInfoCString(id uint16) *c.Char {
-	if runtimeFuncInfoStrings == nil || runtimeFuncInfoStringOffsets == nil {
+	if runtimeFuncInfoStrings == nil || runtimeFuncInfoStringOffsets == nil ||
+		uintptr(id) >= runtimeFuncInfoStringCount {
 		return nil
 	}
 	off := *(*uint32)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoStringOffsets), uintptr(id)*unsafe.Sizeof(*runtimeFuncInfoStringOffsets)))
@@ -499,10 +510,30 @@ func addrInfoSymbol(pc uintptr) pcSymbol {
 }
 
 func initRuntimeFuncPCFrames() {
-	if runtimeFuncPCInit {
+	if latomic.LoadUint32(&runtimeFuncPCInitState) == runtimeFuncInfoInitDone {
 		return
 	}
-	runtimeFuncPCInit = true
+	initRuntimeFuncPCFramesSlow()
+}
+
+func initRuntimeFuncPCFramesSlow() {
+	for {
+		state := latomic.LoadUint32(&runtimeFuncPCInitState)
+		switch state {
+		case runtimeFuncInfoInitDone:
+			return
+		case runtimeFuncInfoInitUninit:
+			if latomic.CompareAndSwapUint32(&runtimeFuncPCInitState, runtimeFuncInfoInitUninit, runtimeFuncInfoInitBusy) {
+				initRuntimeFuncPCFramesOnce()
+				latomic.StoreUint32(&runtimeFuncPCInitState, runtimeFuncInfoInitDone)
+				return
+			}
+		}
+		c.Usleep(1)
+	}
+}
+
+func initRuntimeFuncPCFramesOnce() {
 	if runtimeFuncInfoTable == nil ||
 		runtimeFuncInfoCount == 0 ||
 		runtimeFuncInfoStrings == nil ||
@@ -710,10 +741,30 @@ func funcPCFrameForPC(pc uintptr) (pcSymbol, bool) {
 }
 
 func initRuntimePCLineFrames() {
-	if runtimePCLineInit {
+	if latomic.LoadUint32(&runtimePCLineInitState) == runtimeFuncInfoInitDone {
 		return
 	}
-	runtimePCLineInit = true
+	initRuntimePCLineFramesSlow()
+}
+
+func initRuntimePCLineFramesSlow() {
+	for {
+		state := latomic.LoadUint32(&runtimePCLineInitState)
+		switch state {
+		case runtimeFuncInfoInitDone:
+			return
+		case runtimeFuncInfoInitUninit:
+			if latomic.CompareAndSwapUint32(&runtimePCLineInitState, runtimeFuncInfoInitUninit, runtimeFuncInfoInitBusy) {
+				initRuntimePCLineFramesOnce()
+				latomic.StoreUint32(&runtimePCLineInitState, runtimeFuncInfoInitDone)
+				return
+			}
+		}
+		c.Usleep(1)
+	}
+}
+
+func initRuntimePCLineFramesOnce() {
 	if runtimePCLineTable == nil ||
 		runtimePCLineCount == 0 ||
 		runtimePCSiteStart == nil ||
