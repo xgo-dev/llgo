@@ -83,3 +83,42 @@ func TestSelectMixedUnbufferedPeersMakeProgress(t *testing.T) {
 		}
 	}
 }
+
+func TestSelectRecvCompletionNotOverwrittenByNextRecv(t *testing.T) {
+	for i := 0; i < 1000; i++ {
+		ch := make(chan struct{})
+		done := make(chan struct{})
+		recvDone := make(chan struct{})
+
+		go func() {
+			defer close(done)
+			defer close(ch)
+			for {
+				select {
+				case <-ch:
+					return
+				default:
+				}
+			}
+		}()
+
+		ch <- struct{}{}
+
+		go func() {
+			<-ch
+			close(recvDone)
+		}()
+
+		select {
+		case <-recvDone:
+		case <-time.After(time.Second):
+			t.Fatalf("iteration %d: receive completion was overwritten by a later receive", i)
+		}
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatalf("iteration %d: select receiver did not exit", i)
+		}
+	}
+}
