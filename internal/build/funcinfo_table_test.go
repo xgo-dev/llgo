@@ -64,10 +64,13 @@ func TestFuncInfoTableMaterializesMetadataWithoutFunctionPointers(t *testing.T) 
 		"@__llgo_funcinfo_string_count = global i64 5",
 		"@__llgo_funcinfo_hash = global ptr",
 		"@__llgo_funcinfo_count = global i64 1",
+		"@__llgo_funcinfo_entry_start = global ptr @__start_llgo_funcinfo_entry",
+		"@__llgo_funcinfo_entry_end = global ptr @__stop_llgo_funcinfo_entry",
 		"@__llgo_funcinfo_stub_indexes = global ptr null",
 		"@__llgo_funcinfo_stub_count = global i64 0",
 		"@__llgo_pcline_count = global i64 0",
 		"@__llgo_funcinfo_hash_mask = global i64 1",
+		"module asm \".section llgo_funcinfo_entry",
 		`@"__llgo_funcinfo_table$data" = private unnamed_addr constant [1 x { i16, i16, i16, i16, i16, i16, i32 }]`,
 		`@"__llgo_funcinfo_string_offsets$data" = private unnamed_addr constant`,
 		`@"__llgo_funcinfo_hash$data" = private unnamed_addr constant [2 x i16]`,
@@ -83,6 +86,88 @@ func TestFuncInfoTableMaterializesMetadataWithoutFunctionPointers(t *testing.T) 
 	}
 	if strings.Contains(ir, `ptr @"example.com/p.live"`) {
 		t.Fatalf("funcinfo table must not reference function pointers:\n%s", ir)
+	}
+}
+
+func TestFuncInfoTableMaterializesEntrySites(t *testing.T) {
+	prog := llssa.NewProgram(nil)
+	src := prog.NewPackage("example.com/p", "example.com/p")
+	src.EmitFuncInfo("example.com/p.live", "example.com/p.Live", "live.go", 17, 3)
+	src.EmitFuncInfo("example.com/p.missing", "example.com/p.Missing", "missing.go", 19, 1)
+	liveFn := src.NewFunc("example.com/p.live", llssa.NoArgsNoRet, llssa.InC)
+	liveFn.MakeBody(1).Return()
+	otherFn := src.NewFunc("example.com/p.other", llssa.NoArgsNoRet, llssa.InC)
+	otherFn.MakeBody(1).Return()
+	ctx := &context{
+		prog: prog,
+		buildConf: &Config{
+			BuildMode: BuildModeExe,
+			Goos:      "linux",
+			Goarch:    "amd64",
+		},
+	}
+	prog.EnableFuncInfoMetadata(true)
+	emitFuncInfoEntrySites(ctx, src)
+	srcIR := src.String()
+	for _, want := range []string{
+		"call void asm sideeffect",
+		".pushsection llgo_funcinfo_entry",
+		".Lllgo_funcinfo_entry_anchor_",
+		".quad .Lllgo_funcinfo_entry_anchor_",
+		".quad 0x",
+	} {
+		if !strings.Contains(srcIR, want) {
+			t.Fatalf("package entry site IR missing %q:\n%s", want, srcIR)
+		}
+	}
+	for _, bad := range []string{
+		`.quad \22example.com/p.live\22`,
+		`.quad \22example.com/p.other\22`,
+		`.quad \22example.com/p.missing\22`,
+	} {
+		if strings.Contains(srcIR, bad) {
+			t.Fatalf("package entry site IR should not contain %q:\n%s", bad, srcIR)
+		}
+	}
+
+	records := collectFuncInfo([]Package{{LPkg: src}})
+	entry := genMainModule(ctx, llssa.PkgRuntime, &packages.Package{
+		PkgPath:    "example.com/main",
+		ExportFile: "main.a",
+	}, &genConfig{funcInfo: records})
+	ir := entry.LPkg.String()
+	for _, want := range []string{
+		"@__llgo_funcinfo_entry_start = global ptr @__start_llgo_funcinfo_entry",
+		"@__llgo_funcinfo_entry_end = global ptr @__stop_llgo_funcinfo_entry",
+		"module asm \".section llgo_funcinfo_entry",
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("funcinfo entry table IR missing %q:\n%s", want, ir)
+		}
+	}
+
+	ltoCtx := &context{
+		prog: prog,
+		buildConf: &Config{
+			BuildMode: BuildModeExe,
+			Goos:      "linux",
+			Goarch:    "amd64",
+			LTO:       lto.Full,
+		},
+	}
+	ltoEntry := genMainModule(ltoCtx, llssa.PkgRuntime, &packages.Package{
+		PkgPath:    "example.com/main",
+		ExportFile: "main.a",
+	}, &genConfig{funcInfo: records})
+	ltoIR := ltoEntry.LPkg.String()
+	for _, want := range []string{
+		"@__llgo_funcinfo_entry_start = global ptr @__start_llgo_funcinfo_entry",
+		"@__llgo_funcinfo_entry_end = global ptr @__stop_llgo_funcinfo_entry",
+		"module asm \".section llgo_funcinfo_entry",
+	} {
+		if !strings.Contains(ltoIR, want) {
+			t.Fatalf("full LTO funcinfo table IR missing %q:\n%s", want, ltoIR)
+		}
 	}
 }
 
@@ -107,12 +192,16 @@ func TestFuncInfoTableMaterializesClosureStubIndexes(t *testing.T) {
 	for _, want := range []string{
 		"call void asm sideeffect",
 		".pushsection llgo_funcinfo_stubsite",
-		`.quad \22__llgo_stub.example.com/p.live\22`,
+		".Lllgo_funcinfo_stubsite_anchor_",
+		".quad .Lllgo_funcinfo_stubsite_anchor_",
 		".quad 0x",
 	} {
 		if !strings.Contains(srcIR, want) {
 			t.Fatalf("package stub site IR missing %q:\n%s", want, srcIR)
 		}
+	}
+	if strings.Contains(srcIR, `.quad \22__llgo_stub.example.com/p.live\22`) {
+		t.Fatalf("package stub site must not reference stub function symbols:\n%s", srcIR)
 	}
 
 	records := collectFuncInfo([]Package{{LPkg: src}})
@@ -159,13 +248,13 @@ func TestFuncInfoTableMaterializesClosureStubIndexes(t *testing.T) {
 		ExportFile: "main.a",
 	}, &genConfig{funcInfo: records, funcInfoStubs: stubs})
 	ltoIR := ltoEntry.LPkg.String()
-	for _, bad := range []string{
+	for _, want := range []string{
 		"@__llgo_funcinfo_stubsite_start = global ptr @__start_llgo_funcinfo_stubsite",
 		"@__llgo_funcinfo_stubsite_end = global ptr @__stop_llgo_funcinfo_stubsite",
 		"module asm \".section llgo_funcinfo_stubsite",
 	} {
-		if strings.Contains(ltoIR, bad) {
-			t.Fatalf("full LTO funcinfo table should not emit stub site %q:\n%s", bad, ltoIR)
+		if !strings.Contains(ltoIR, want) {
+			t.Fatalf("full LTO funcinfo stub site table IR missing %q:\n%s", want, ltoIR)
 		}
 	}
 }
@@ -291,6 +380,8 @@ func TestFuncInfoTableEmptyDefinitions(t *testing.T) {
 		"@__llgo_funcinfo_string_count = global i64 0",
 		"@__llgo_funcinfo_hash = global ptr null",
 		"@__llgo_funcinfo_count = global i64 0",
+		"@__llgo_funcinfo_entry_start = global ptr null",
+		"@__llgo_funcinfo_entry_end = global ptr null",
 		"@__llgo_funcinfo_stub_indexes = global ptr null",
 		"@__llgo_funcinfo_stub_count = global i64 0",
 		"@__llgo_pcline_count = global i64 0",

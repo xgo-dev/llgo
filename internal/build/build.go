@@ -1348,6 +1348,7 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 			return fmt.Errorf("run LLVM passes failed for %v: %v", pkgPath, err)
 		}
 	}
+	emitFuncInfoEntrySites(ctx, ret)
 	emitFuncInfoStubSites(ctx, ret)
 
 	printCmds := ctx.shouldPrintCommands(verbose)

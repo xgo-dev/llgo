@@ -120,6 +120,22 @@ func funcForPCSlow(pc uintptr) *Func {
 			cacheFuncForPC(pc, fn)
 			return fn
 		}
+	} else if pc != 0 {
+		// Function-value PCs point at the real function entry. ELF funcinfo
+		// entry-site anchors are emitted from LLVM IR and can land after the
+		// backend prologue, so an exact entry PC may sort before its anchor.
+		// Prefer native symbol info only when it is an exact entry match; the
+		// section table below remains the normal fast fallback.
+		if sym := addrInfoSymbol(pc); sym.ok && sym.entry == pc && sym.function != "" {
+			fn := newFuncForPC(pc, sym)
+			cacheFuncForPC(pc, fn)
+			return fn
+		}
+		if sym, ok := funcPCFrameForEntryPC(pc); ok {
+			fn := newFuncForPC(pc, sym)
+			cacheFuncForPC(pc, fn)
+			return fn
+		}
 	}
 	if sym, ok := funcPCFrameForPC(pc); ok {
 		fn := newFuncForPC(pc, sym)

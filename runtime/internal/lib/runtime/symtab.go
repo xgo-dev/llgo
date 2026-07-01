@@ -172,6 +172,17 @@ var runtimeFuncInfoStubIndexes *uint32
 //go:linkname runtimeFuncInfoStubCount __llgo_funcinfo_stub_count
 var runtimeFuncInfoStubCount uintptr
 
+type runtimeFuncInfoEntryRecord struct {
+	pc       uintptr
+	symbolID uint64
+}
+
+//go:linkname runtimeFuncInfoEntryStart __llgo_funcinfo_entry_start
+var runtimeFuncInfoEntryStart *runtimeFuncInfoEntryRecord
+
+//go:linkname runtimeFuncInfoEntryEnd __llgo_funcinfo_entry_end
+var runtimeFuncInfoEntryEnd *runtimeFuncInfoEntryRecord
+
 type runtimeFuncInfoStubSiteRecord struct {
 	pc       uintptr
 	symbolID uint64
@@ -230,6 +241,7 @@ type runtimePCPageIndex struct {
 }
 
 const runtimeFuncPCPageShift = 12
+const runtimeFuncPCEntrySlack = 64
 
 var runtimeFuncPCInitState uint32
 var runtimeFuncPCFrames []runtimeFuncPCFrame
@@ -654,28 +666,39 @@ func initRuntimeFuncPCFramesOnce() {
 	}
 	frames := make([]runtimeFuncPCFrame, 0, runtimeFuncInfoCount)
 	entries := make([]uintptr, runtimeFuncInfoCount+1)
-	symbolBuf := make([]byte, 0, maxFuncInfoSymbolLen()+len(runtimeClosureStubPrefix)+1)
-	for i := uintptr(0); i < runtimeFuncInfoCount; i++ {
-		fn := funcInfoAt(i)
-		pc := symbolPCFuncInfoName(symbolBuf, fn.symbolPkg, fn.symbolName)
-		if pc == 0 {
-			continue
-		}
-		index := uint32(i + 1)
-		frames = append(frames, runtimeFuncPCFrame{
-			entry:     pc,
-			funcIndex: index,
-		})
-		if entries[index] == 0 || pc < entries[index] {
-			entries[index] = pc
+	var indexBySymbolID map[uint64]uint32
+	if runtimeFuncInfoEntryStart != nil || runtimeFuncInfoStubSiteStart != nil {
+		indexBySymbolID = funcInfoIndexBySymbolID()
+	}
+	frames, usedEntrySites := appendRuntimeFuncInfoEntryFrames(frames, entries, indexBySymbolID)
+	symbolBuf := []byte(nil)
+	if !usedEntrySites {
+		symbolBuf = make([]byte, 0, maxFuncInfoSymbolLen()+len(runtimeClosureStubPrefix)+1)
+		for i := uintptr(0); i < runtimeFuncInfoCount; i++ {
+			fn := funcInfoAt(i)
+			pc := symbolPCFuncInfoName(symbolBuf, fn.symbolPkg, fn.symbolName)
+			if pc == 0 {
+				continue
+			}
+			index := uint32(i + 1)
+			frames = append(frames, runtimeFuncPCFrame{
+				entry:     pc,
+				funcIndex: index,
+			})
+			if entries[index] == 0 || pc < entries[index] {
+				entries[index] = pc
+			}
 		}
 	}
-	frames = appendRuntimeFuncInfoStubSiteFrames(frames)
+	frames = appendRuntimeFuncInfoStubSiteFrames(frames, indexBySymbolID)
 	// Closure stubs are an ABI adapter and may go away in a future closure
 	// lowering. Keep the fallback compatibility table light: it stores only
 	// target funcinfo record indexes. On ELF we prefer the associated stub-site
 	// section above because linkers do not expose local stubs through dlsym.
 	if runtimeFuncInfoStubIndexes != nil && runtimeFuncInfoStubCount != 0 && runtimeFuncInfoStubCount <= runtimeFuncInfoCount {
+		if symbolBuf == nil {
+			symbolBuf = make([]byte, 0, maxFuncInfoSymbolLen()+len(runtimeClosureStubPrefix)+1)
+		}
 		for i := uintptr(0); i < runtimeFuncInfoStubCount; i++ {
 			index := funcInfoStubIndexAt(i)
 			if index == 0 || uintptr(index) > runtimeFuncInfoCount {
@@ -699,7 +722,43 @@ func initRuntimeFuncPCFramesOnce() {
 	runtimeFuncPCIndex = buildRuntimeFuncPCIndex(frames)
 }
 
-func appendRuntimeFuncInfoStubSiteFrames(frames []runtimeFuncPCFrame) []runtimeFuncPCFrame {
+func appendRuntimeFuncInfoEntryFrames(frames []runtimeFuncPCFrame, entries []uintptr, indexBySymbolID map[uint64]uint32) ([]runtimeFuncPCFrame, bool) {
+	if runtimeFuncInfoEntryStart == nil || runtimeFuncInfoEntryEnd == nil {
+		return frames, false
+	}
+	start := uintptr(unsafe.Pointer(runtimeFuncInfoEntryStart))
+	end := uintptr(unsafe.Pointer(runtimeFuncInfoEntryEnd))
+	size := unsafe.Sizeof(*runtimeFuncInfoEntryStart)
+	if end <= start || size == 0 || (end-start)%size != 0 {
+		return frames, false
+	}
+	nsite := (end - start) / size
+	if nsite > runtimeFuncInfoCount*16 || nsite > 1<<20 {
+		return frames, false
+	}
+	used := false
+	for i := uintptr(0); i < nsite; i++ {
+		site := (*runtimeFuncInfoEntryRecord)(unsafe.Pointer(start + i*size))
+		if site == nil || site.pc == 0 || site.symbolID == 0 {
+			continue
+		}
+		funcIndex := indexBySymbolID[site.symbolID]
+		if funcIndex == 0 || uintptr(funcIndex) > runtimeFuncInfoCount {
+			continue
+		}
+		frames = append(frames, runtimeFuncPCFrame{
+			entry:     site.pc,
+			funcIndex: funcIndex,
+		})
+		if entries[funcIndex] == 0 || site.pc < entries[funcIndex] {
+			entries[funcIndex] = site.pc
+		}
+		used = true
+	}
+	return frames, used
+}
+
+func appendRuntimeFuncInfoStubSiteFrames(frames []runtimeFuncPCFrame, indexBySymbolID map[uint64]uint32) []runtimeFuncPCFrame {
 	if runtimeFuncInfoStubSiteStart == nil || runtimeFuncInfoStubSiteEnd == nil {
 		return frames
 	}
@@ -718,7 +777,7 @@ func appendRuntimeFuncInfoStubSiteFrames(frames []runtimeFuncPCFrame) []runtimeF
 		if site == nil || site.pc == 0 || site.symbolID == 0 {
 			continue
 		}
-		funcIndex := funcInfoIndexForSymbolID(site.symbolID)
+		funcIndex := indexBySymbolID[site.symbolID]
 		if funcIndex == 0 || uintptr(funcIndex) > runtimeFuncInfoCount {
 			continue
 		}
@@ -730,17 +789,21 @@ func appendRuntimeFuncInfoStubSiteFrames(frames []runtimeFuncPCFrame) []runtimeF
 	return frames
 }
 
-func funcInfoIndexForSymbolID(id uint64) uint32 {
-	if id == 0 || runtimeFuncInfoTable == nil || runtimeFuncInfoCount == 0 {
-		return 0
-	}
+func funcInfoIndexBySymbolID() map[uint64]uint32 {
+	indexBySymbolID := make(map[uint64]uint32, runtimeFuncInfoCount)
 	for i := uintptr(0); i < runtimeFuncInfoCount; i++ {
-		rec := funcInfoAt(i)
-		if funcInfoSymbolIDFromRecord(rec) == id {
-			return uint32(i + 1)
+		id := funcInfoSymbolIDFromRecord(funcInfoAt(i))
+		if id == 0 {
+			continue
 		}
+		index := uint32(i + 1)
+		if prev, ok := indexBySymbolID[id]; ok && prev != index {
+			indexBySymbolID[id] = 0
+			continue
+		}
+		indexBySymbolID[id] = index
 	}
-	return 0
+	return indexBySymbolID
 }
 
 func funcInfoSymbolIDFromRecord(rec *runtimeFuncInfoRecord) uint64 {
@@ -930,14 +993,46 @@ func funcPCFrameForPC(pc uintptr) (pcSymbol, bool) {
 		return pcSymbol{}, false
 	}
 	frame := runtimeFuncPCFrames[idx]
-	if frame.funcIndex == 0 || uintptr(frame.funcIndex) > runtimeFuncInfoCount {
+	return pcSymbolForFuncInfoIndex(pc, frame.entry, frame.funcIndex)
+}
+
+func funcPCFrameForEntryPC(pc uintptr) (pcSymbol, bool) {
+	if pc == 0 {
 		return pcSymbol{}, false
 	}
-	fn := funcInfoAt(uintptr(frame.funcIndex) - 1)
+	initRuntimeFuncPCFrames()
+	frames := runtimeFuncPCFrames
+	if len(frames) == 0 {
+		return pcSymbol{}, false
+	}
+	lo, hi := 0, len(frames)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if frames[mid].entry >= pc {
+			hi = mid
+		} else {
+			lo = mid + 1
+		}
+	}
+	if lo >= len(frames) {
+		return pcSymbol{}, false
+	}
+	frame := frames[lo]
+	if frame.entry != pc && frame.entry-pc > runtimeFuncPCEntrySlack {
+		return pcSymbol{}, false
+	}
+	return pcSymbolForFuncInfoIndex(pc, pc, frame.funcIndex)
+}
+
+func pcSymbolForFuncInfoIndex(pc, entry uintptr, funcIndex uint32) (pcSymbol, bool) {
+	if funcIndex == 0 || uintptr(funcIndex) > runtimeFuncInfoCount {
+		return pcSymbol{}, false
+	}
+	fn := funcInfoAt(uintptr(funcIndex) - 1)
 	line := int(fn.line)
 	return pcSymbol{
 		pc:        pc,
-		entry:     frame.entry,
+		entry:     entry,
 		function:  funcInfoFunctionName(fn),
 		file:      funcInfoFileName(fn),
 		line:      line,
