@@ -14,6 +14,7 @@
 	"default-stack-size": 2048,
 	"rtlib": "compiler-rt",
 	"libc": "newlib-esp32",
+	"jslib": "mquickjs",
 	"linkerscript": "targets/esp32.memory.elf.ld",
 	"binary-format": "esp32",
 	"flash-command": "esptool.py --chip=esp32 --port {port} write_flash 0x1000 {bin} -ff 80m -fm dout",
