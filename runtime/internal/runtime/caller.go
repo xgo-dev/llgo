@@ -30,6 +30,12 @@ type CallerFrame struct {
 	File      string
 	Line      int
 	StartLine int
+	// captured memoizes the interned synthetic PC base (seq << 2) for this
+	// exact frame content. It is cleared whenever the frame's line info
+	// changes, so repeated Caller/Callers walks over an unchanged stack skip
+	// the intern hash probe entirely. Only meaningful inside shadow-stack
+	// slots; ignored by frame comparison and hashing.
+	captured uintptr
 }
 
 const callerLocationLimit = 4096
@@ -46,6 +52,11 @@ type callerLocationStore struct {
 	stack         []CallerFrame
 	synthetic     []CallerFrame
 	syntheticHash []uintptr
+	// Memoized synthetic PC bases for the static frames emitted around every
+	// Callers walk. Per-store because synthetic sequences are per-store.
+	callersPCBase uintptr
+	mainPCBase    uintptr
+	goexitPCBase  uintptr
 }
 
 var callerLocationTLS = tls.Alloc[*callerLocationStore](nil)
@@ -106,7 +117,15 @@ func updateCurrentFrame(entry uintptr, name, file string, line int) {
 		if frame.Entry == entry {
 			frame.Function = name
 			frame.File = file
-			frame.Line = line
+			// For one entry the instrumented name/file operands are
+			// constants; only the line changes between call sites. Comparing
+			// just the line keeps this per-call path free of string
+			// comparisons while still invalidating the capture memo whenever
+			// the frame content can differ.
+			if frame.Line != line {
+				frame.Line = line
+				frame.captured = 0
+			}
 			return
 		}
 	}
@@ -148,7 +167,7 @@ func Caller(skip int) (CallerFrame, bool) {
 		return CallerFrame{}, false
 	}
 	if skip < len(store.stack) {
-		return store.captureFrame(store.stack[len(store.stack)-1-skip], callerPCValue), true
+		return store.captureFrameAt(&store.stack[len(store.stack)-1-skip], callerPCValue), true
 	}
 	switch skip - len(store.stack) {
 	case 0:
@@ -171,29 +190,39 @@ func Callers(skip int, pcs []uintptr) int {
 	if store == nil || len(store.stack) == 0 {
 		return 0
 	}
+	// Unrolled emit sequence: no closure so nothing escapes, and frames the
+	// skip count drops are never captured at all.
 	n := 0
-	add := func(frame CallerFrame) bool {
-		if skip > 0 {
-			skip--
-			return true
-		}
-		if n >= len(pcs) {
-			return false
-		}
-		pcs[n] = store.captureFrame(frame, callersPCValue).PC
+	if skip > 0 {
+		skip--
+	} else {
+		pcs[n] = store.staticPC(runtimeCallersFrame, &store.callersPCBase, callersPCValue)
 		n++
-		return true
-	}
-	if !add(runtimeCallersFrame) {
-		return n
 	}
 	for i := len(store.stack) - 1; i >= 0; i-- {
-		if !add(store.stack[i]) {
+		if skip > 0 {
+			skip--
+			continue
+		}
+		if n >= len(pcs) {
 			return n
 		}
+		pcs[n] = store.capturePC(&store.stack[i], callersPCValue)
+		n++
 	}
-	_ = add(runtimeMainFrame)
-	_ = add(runtimeGoexitFrame)
+	if skip > 0 {
+		skip--
+	} else {
+		if n >= len(pcs) {
+			return n
+		}
+		pcs[n] = store.staticPC(runtimeMainFrame, &store.mainPCBase, callersPCValue)
+		n++
+	}
+	if skip <= 0 && n < len(pcs) {
+		pcs[n] = store.staticPC(runtimeGoexitFrame, &store.goexitPCBase, callersPCValue)
+		n++
+	}
 	return n
 }
 
@@ -321,7 +350,41 @@ func (s *callerLocationStore) captureFrame(frame CallerFrame, pcValue uintptr) C
 	return rec
 }
 
+// capturePC returns the synthetic PC for a shadow-stack slot, memoizing the
+// interned base in the slot so an unchanged frame costs two loads instead of
+// a hash probe plus frame comparison.
+func (s *callerLocationStore) capturePC(frame *CallerFrame, pcValue uintptr) uintptr {
+	if frame.captured != 0 {
+		return frame.captured | pcValue
+	}
+	idx := s.internSyntheticFrame(*frame)
+	base := uintptr(idx+1) << 2
+	frame.captured = base
+	return base | pcValue
+}
+
+// captureFrameAt is capturePC plus the full frame copy Caller needs.
+func (s *callerLocationStore) captureFrameAt(frame *CallerFrame, pcValue uintptr) CallerFrame {
+	pc := s.capturePC(frame, pcValue)
+	rec := s.synthetic[(pc>>2)-1]
+	rec.PC = pc
+	if rec.Entry == 0 {
+		rec.Entry = rec.PC
+	}
+	return rec
+}
+
+// staticPC memoizes the synthetic PC base of a process-static frame (e.g.
+// runtime.main) in the per-store cache slot.
+func (s *callerLocationStore) staticPC(frame CallerFrame, cache *uintptr, pcValue uintptr) uintptr {
+	if *cache == 0 {
+		*cache = uintptr(s.internSyntheticFrame(frame)+1) << 2
+	}
+	return *cache | pcValue
+}
+
 func (s *callerLocationStore) internSyntheticFrame(frame CallerFrame) int {
+	frame.captured = 0
 	if len(s.syntheticHash) == 0 {
 		s.syntheticHash = make([]uintptr, callerPCHashInit)
 	}
