@@ -1744,13 +1744,7 @@ func (ci *Frames) Next() (frame Frame, more bool) {
 		}
 		var f *Func
 		if sym.entry != 0 || fn != "" {
-			f = &Func{
-				entry: sym.entry,
-				name:  fn,
-				pc:    pc,
-				file:  sym.file,
-				line:  sym.line,
-			}
+			f = frameFuncForPC(pc, sym, fn)
 		}
 		ci.frames = append(ci.frames, Frame{
 			PC:        pc,

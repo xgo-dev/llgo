@@ -721,11 +721,20 @@ func emitFuncInfoEntrySites(ctx *context, pkg llssa.Package) {
 	}
 	// This is LLGo's DCE-safe substitute for the function PC list that Go's
 	// linker has while building pclntab. The inline-asm fragment lives in a
-	// section tied to the function body (SHF_LINK_ORDER on ELF; on Mach-O the
-	// record is removed with the function by IR-level global DCE), so dead
-	// functions do not leave stale entry records behind. Runtime still sorts
-	// these final PCs before building the Go-style findfunc bucket index,
-	// because LLVM IR generation does not know final linked text order.
+	// section tied to the function body (SHF_LINK_ORDER on ELF; live_support
+	// on Mach-O), so dead functions do not leave stale entry records behind.
+	// Runtime still sorts these final PCs before building the Go-style
+	// findfunc bucket index, because LLVM IR generation does not know final
+	// linked text order.
+	//
+	// Known limitation: because the record is emitted inside the function
+	// body, LTO inlining duplicates it into every inline site, bloating the
+	// section (~4x on multipkg) and registering host-function PCs under the
+	// inlinee's symbol ID; the runtime only consults this table when native
+	// symbolization fails, which bounds the impact. The fix is to emit the
+	// records as data globals carrying the function address with !associated
+	// metadata instead of body-embedded asm — that needs LLVMGlobalSetMetadata
+	// in the llvm binding and lands with the link-phase ftab work.
 	machO := shouldEmitRuntimeMachOSites(ctx)
 	llvmCtx := mod.Context()
 	builder := llvmCtx.NewBuilder()

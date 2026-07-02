@@ -188,6 +188,30 @@ func newFuncForPC(pc uintptr, sym pcSymbol) *Func {
 	}
 }
 
+// frameFuncForPC returns the *Func for a frame PC that Frames.Next already
+// symbolized, going through the FuncForPC cache so repeated CallersFrames
+// walks over the same PCs stop allocating a Func per frame.
+func frameFuncForPC(pc uintptr, sym pcSymbol, name string) *Func {
+	if fn := funcForPCLast.fn; fn != nil && funcForPCLast.pc == pc {
+		return fn
+	}
+	set := &funcForPCCache[funcForPCCacheIndex(pc)]
+	for i := 0; i < funcForPCCacheWays; i++ {
+		if fn := set[i].fn; fn != nil && set[i].pc == pc {
+			return fn
+		}
+	}
+	fn := &Func{
+		entry: sym.entry,
+		name:  name,
+		pc:    pc,
+		file:  sym.file,
+		line:  sym.line,
+	}
+	cacheFuncForPC(pc, fn)
+	return fn
+}
+
 func cacheFuncForPC(pc uintptr, fn *Func) {
 	setIndex := funcForPCCacheIndex(pc)
 	set := &funcForPCCache[setIndex]
