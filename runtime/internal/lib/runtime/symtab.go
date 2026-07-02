@@ -9,6 +9,7 @@ import (
 
 	c "github.com/goplus/llgo/runtime/internal/clite"
 	clitedebug "github.com/goplus/llgo/runtime/internal/clite/debug"
+	cliteos "github.com/goplus/llgo/runtime/internal/clite/os"
 	latomic "github.com/goplus/llgo/runtime/internal/lib/sync/atomic"
 	rtdebug "github.com/goplus/llgo/runtime/internal/runtime"
 )
@@ -249,7 +250,7 @@ type runtimeFuncPCFrame struct {
 
 type runtimePCFindBucket struct {
 	idx        uint32
-	subbuckets [runtimePCFindSubbucket]uint8
+	subbuckets [runtimePCFindSubbucket]uint16
 }
 
 type runtimePCFindIndex struct {
@@ -259,8 +260,13 @@ type runtimePCFindIndex struct {
 
 const (
 	// Keep the lookup geometry aligned with Go's pclntab findfunc table:
-	// 4096-byte buckets, 16 subbuckets, and one-byte function-index deltas.
-	// LLGo currently builds this compact index at first use after reading
+	// 4096-byte buckets and 16 subbuckets. Go stores one-byte subbucket
+	// deltas because its linker guarantees a 16-byte minimum function size;
+	// LLGo has no minimum size for function entries and indexes call-site
+	// records that can sit a few bytes apart, so it stores two-byte deltas.
+	// A delta counts distinct PCs inside one 4096-byte bucket and therefore
+	// can never exceed 4096, which makes uint16 overflow impossible and the
+	// index unconditional. LLGo builds the index at first use after reading
 	// DCE-safe entry PC sections, because the LLVM IR stage does not yet own
 	// final text addresses the way cmd/link does for Go.
 	runtimePCMinFuncSize    = uintptr(16)
@@ -663,6 +669,68 @@ func initRuntimeFuncPCFrames() {
 	initRuntimeFuncPCFramesSlow()
 }
 
+// runtimeFuncPCFramesBuilt reports whether the entry frame table has already
+// been constructed, without triggering its construction.
+func runtimeFuncPCFramesBuilt() bool {
+	return latomic.LoadUint32(&runtimeFuncPCInitState) == runtimeFuncInfoInitDone
+}
+
+// Set LLGO_FUNCINFO_DEBUG=1 to print one line per lazily built runtime
+// metadata table. This is how benchmarks and bug reports can tell whether a
+// lookup used the compact find index or a degraded full-table fallback.
+var runtimeFuncInfoDebugState uint32
+
+var runtimeFuncPCFramesFromSites bool
+var runtimeFuncPCStubsFromSites bool
+
+func runtimeFuncInfoDebugEnabled() bool {
+	state := latomic.LoadUint32(&runtimeFuncInfoDebugState)
+	if state == 0 {
+		state = 1
+		if p := cliteos.Getenv(c.AllocaCStr("LLGO_FUNCINFO_DEBUG")); p != nil {
+			if v := c.GoString(p); v != "" && v != "0" {
+				state = 2
+			}
+		}
+		latomic.StoreUint32(&runtimeFuncInfoDebugState, state)
+	}
+	return state == 2
+}
+
+func runtimeFuncInfoDebugSource(fromSites bool) string {
+	if fromSites {
+		return "sites"
+	}
+	return "dlsym"
+}
+
+func runtimeFuncInfoDebugIndex(index runtimePCFindIndex) string {
+	if len(index.buckets) != 0 {
+		return "built"
+	}
+	return "fallback"
+}
+
+func reportRuntimeFuncPCDebug() {
+	if !runtimeFuncInfoDebugEnabled() {
+		return
+	}
+	println("llgo funcinfo: func table frames=", len(runtimeFuncPCFrames),
+		" buckets=", len(runtimeFuncPCIndex.buckets),
+		" index=", runtimeFuncInfoDebugIndex(runtimeFuncPCIndex),
+		" entries=", runtimeFuncInfoDebugSource(runtimeFuncPCFramesFromSites),
+		" stubs=", runtimeFuncInfoDebugSource(runtimeFuncPCStubsFromSites))
+}
+
+func reportRuntimePCLineDebug() {
+	if !runtimeFuncInfoDebugEnabled() {
+		return
+	}
+	println("llgo funcinfo: pcline table frames=", len(runtimePCLineFrames),
+		" buckets=", len(runtimePCLineIndex.buckets),
+		" index=", runtimeFuncInfoDebugIndex(runtimePCLineIndex))
+}
+
 func initRuntimeFuncPCFramesSlow() {
 	for {
 		state := latomic.LoadUint32(&runtimeFuncPCInitState)
@@ -673,6 +741,7 @@ func initRuntimeFuncPCFramesSlow() {
 			if latomic.CompareAndSwapUint32(&runtimeFuncPCInitState, runtimeFuncInfoInitUninit, runtimeFuncInfoInitBusy) {
 				initRuntimeFuncPCFramesOnce()
 				latomic.StoreUint32(&runtimeFuncPCInitState, runtimeFuncInfoInitDone)
+				reportRuntimeFuncPCDebug()
 				return
 			}
 		}
@@ -712,12 +781,14 @@ func initRuntimeFuncPCFramesOnce() {
 			}
 		}
 	}
-	frames = appendRuntimeFuncInfoStubSiteFrames(frames)
+	frames, usedStubSites := appendRuntimeFuncInfoStubSiteFrames(frames)
 	// Closure stubs are an ABI adapter and may go away in a future closure
 	// lowering. Keep the fallback compatibility table light: it stores only
-	// target funcinfo record indexes. On ELF we prefer the associated stub-site
-	// section above because linkers do not expose local stubs through dlsym.
-	if runtimeFuncInfoStubIndexes != nil && runtimeFuncInfoStubCount != 0 && runtimeFuncInfoStubCount <= runtimeFuncInfoCount {
+	// target funcinfo record indexes. When the stub-site section is present it
+	// is authoritative (linkers do not expose local stubs through dlsym), and
+	// skipping the dlsym loop below matters: each dlsym is a dynamic-loader
+	// query, and one query per stub used to dominate first-use latency.
+	if !usedStubSites && runtimeFuncInfoStubIndexes != nil && runtimeFuncInfoStubCount != 0 && runtimeFuncInfoStubCount <= runtimeFuncInfoCount {
 		if symbolBuf == nil {
 			symbolBuf = make([]byte, 0, maxFuncInfoSymbolLen()+len(runtimeClosureStubPrefix)+1)
 		}
@@ -742,6 +813,8 @@ func initRuntimeFuncPCFramesOnce() {
 	runtimeFuncPCFrames = frames
 	runtimeFuncPCEntries = entries
 	runtimeFuncPCIndex = buildRuntimeFuncPCIndex(frames)
+	runtimeFuncPCFramesFromSites = usedEntrySites
+	runtimeFuncPCStubsFromSites = usedStubSites
 }
 
 func appendRuntimeFuncInfoEntryFrames(frames []runtimeFuncPCFrame, entries []uintptr) ([]runtimeFuncPCFrame, bool) {
@@ -780,20 +853,21 @@ func appendRuntimeFuncInfoEntryFrames(frames []runtimeFuncPCFrame, entries []uin
 	return frames, used
 }
 
-func appendRuntimeFuncInfoStubSiteFrames(frames []runtimeFuncPCFrame) []runtimeFuncPCFrame {
+func appendRuntimeFuncInfoStubSiteFrames(frames []runtimeFuncPCFrame) ([]runtimeFuncPCFrame, bool) {
 	if runtimeFuncInfoStubSiteStart == nil || runtimeFuncInfoStubSiteEnd == nil {
-		return frames
+		return frames, false
 	}
 	start := uintptr(unsafe.Pointer(runtimeFuncInfoStubSiteStart))
 	end := uintptr(unsafe.Pointer(runtimeFuncInfoStubSiteEnd))
 	size := unsafe.Sizeof(*runtimeFuncInfoStubSiteStart)
 	if end <= start || size == 0 || (end-start)%size != 0 {
-		return frames
+		return frames, false
 	}
 	nsite := (end - start) / size
 	if nsite > runtimeFuncInfoCount*16 || nsite > 1<<20 {
-		return frames
+		return frames, false
 	}
+	used := false
 	for i := uintptr(0); i < nsite; i++ {
 		site := (*runtimeFuncInfoStubSiteRecord)(unsafe.Pointer(start + i*size))
 		if site == nil || site.pc == 0 || site.symbolID == 0 {
@@ -807,8 +881,9 @@ func appendRuntimeFuncInfoStubSiteFrames(frames []runtimeFuncPCFrame) []runtimeF
 			entry:     site.pc,
 			funcIndex: funcIndex,
 		})
+		used = true
 	}
-	return frames
+	return frames, used
 }
 
 func funcInfoIndexForSymbolID(symbolID uint64) uint32 {
@@ -949,11 +1024,13 @@ func buildRuntimeFuncPCIndex(frames []runtimeFuncPCFrame) runtimePCFindIndex {
 			if subIdx > len(frames)-1 {
 				subIdx = len(frames) - 1
 			}
+			// delta counts deduplicated PCs inside one bucket, so it is
+			// bounded by the bucket size and always fits in uint16.
 			delta := subIdx - baseIdx
-			if delta < 0 || delta > 255 {
+			if delta < 0 || delta > 0xffff {
 				return runtimePCFindIndex{}
 			}
-			buckets[b].subbuckets[s] = uint8(delta)
+			buckets[b].subbuckets[s] = uint16(delta)
 		}
 	}
 	return runtimePCFindIndex{base: base, buckets: buckets}
@@ -1048,6 +1125,84 @@ func funcEntryForIndex(index uint32) uintptr {
 	return runtimeFuncPCEntries[index]
 }
 
+// coldFuncInfoEntryLookup resolves an exact function-entry PC by scanning the
+// raw entry-site and stub-site sections, without building the sorted frame
+// table and without any dynamic-loader query. Function values can point at
+// either a real function entry or its closure stub, so both sections are
+// scanned. The scan is linear, so it is capped: for larger binaries the
+// dladdr cold path is cheaper than streaming the whole section.
+const coldFuncInfoEntryScanLimit = 4096
+
+// coldFuncInfoScanRange scans one {pc, symbolID} record section for the
+// anchor nearest at-or-after pc within the warm path's entry slack (anchors
+// are emitted from LLVM IR and land after the backend prologue). It returns
+// the matched funcinfo index and delta, or (0, maxDelta) on miss.
+func coldFuncInfoScanRange(start, end, size, pc uintptr, bestDelta uintptr) (uint32, uintptr) {
+	if start == 0 || end <= start || size == 0 || (end-start)%size != 0 {
+		return 0, bestDelta
+	}
+	nsite := (end - start) / size
+	if nsite > coldFuncInfoEntryScanLimit || nsite > runtimeFuncInfoCount*16 {
+		return 0, bestDelta
+	}
+	bestIndex := uint32(0)
+	for i := uintptr(0); i < nsite; i++ {
+		site := (*runtimeFuncInfoEntryRecord)(unsafe.Pointer(start + i*size))
+		if site.symbolID == 0 || site.pc < pc {
+			continue
+		}
+		delta := site.pc - pc
+		if delta >= bestDelta {
+			continue
+		}
+		funcIndex := funcInfoIndexForSymbolID(site.symbolID)
+		if funcIndex == 0 || uintptr(funcIndex) > runtimeFuncInfoCount {
+			continue
+		}
+		bestDelta = delta
+		bestIndex = funcIndex
+		if delta == 0 {
+			break
+		}
+	}
+	return bestIndex, bestDelta
+}
+
+// coldFuncPCLookupBudget grants a small number of table-free cold lookups per
+// process; past that, building the sorted table amortizes better than more
+// linear scans or dladdr calls.
+var coldFuncPCLookupCount uint32
+
+func coldFuncPCLookupBudget() bool {
+	return latomic.AddUint32(&coldFuncPCLookupCount, 1) <= 8
+}
+
+func coldFuncInfoEntryLookup(pc uintptr) (pcSymbol, bool) {
+	if pc == 0 {
+		return pcSymbol{}, false
+	}
+	bestDelta := uintptr(runtimeFuncPCEntrySlack) + 1
+	bestIndex := uint32(0)
+	if runtimeFuncInfoEntryStart != nil && runtimeFuncInfoEntryEnd != nil {
+		bestIndex, bestDelta = coldFuncInfoScanRange(
+			uintptr(unsafe.Pointer(runtimeFuncInfoEntryStart)),
+			uintptr(unsafe.Pointer(runtimeFuncInfoEntryEnd)),
+			unsafe.Sizeof(*runtimeFuncInfoEntryStart), pc, bestDelta)
+	}
+	if bestDelta != 0 && runtimeFuncInfoStubSiteStart != nil && runtimeFuncInfoStubSiteEnd != nil {
+		if idx, _ := coldFuncInfoScanRange(
+			uintptr(unsafe.Pointer(runtimeFuncInfoStubSiteStart)),
+			uintptr(unsafe.Pointer(runtimeFuncInfoStubSiteEnd)),
+			unsafe.Sizeof(*runtimeFuncInfoStubSiteStart), pc, bestDelta); idx != 0 {
+			bestIndex = idx
+		}
+	}
+	if bestIndex == 0 {
+		return pcSymbol{}, false
+	}
+	return pcSymbolForFuncInfoIndex(pc, pc, bestIndex)
+}
+
 func funcPCFrameForPC(pc uintptr) (pcSymbol, bool) {
 	if pc == 0 {
 		return pcSymbol{}, false
@@ -1123,6 +1278,7 @@ func initRuntimePCLineFramesSlow() {
 			if latomic.CompareAndSwapUint32(&runtimePCLineInitState, runtimeFuncInfoInitUninit, runtimeFuncInfoInitBusy) {
 				initRuntimePCLineFramesOnce()
 				latomic.StoreUint32(&runtimePCLineInitState, runtimeFuncInfoInitDone)
+				reportRuntimePCLineDebug()
 				return
 			}
 		}
@@ -1156,6 +1312,18 @@ func initRuntimePCLineFramesOnce() {
 	}
 	frames := make([]runtimePCLineFrame, 0, nsite)
 	symbolBuf := make([]byte, 0, maxFuncInfoSymbolLen()+1)
+	// Sites vastly outnumber distinct functions and files, so materialize the
+	// per-function strings and entry PCs once and the packed file strings once
+	// per file ID. Building them per site used to dominate first-use latency.
+	type pcLineFuncInfo struct {
+		entry    uintptr
+		function string
+		file     string
+		line     int
+		resolved bool
+	}
+	funcCache := make([]pcLineFuncInfo, runtimeFuncInfoCount+1)
+	fileCache := make(map[uint32]string)
 	for i := uintptr(0); i < nsite; i++ {
 		site := (*runtimePCSiteRecord)(unsafe.Pointer(start + i*size))
 		if site == nil || site.id == 0 || site.pc == 0 {
@@ -1167,33 +1335,47 @@ func initRuntimePCLineFramesOnce() {
 		}
 		pc := site.pc
 		fn := funcInfoAt(uintptr(rec.funcIndex) - 1)
-		entry := funcEntryForIndex(rec.funcIndex)
-		if entry == 0 {
-			entry = symbolPCFuncInfoName(symbolBuf, fn.symbolPkg, fn.symbolName)
+		fc := &funcCache[rec.funcIndex]
+		if !fc.resolved {
+			fc.entry = funcEntryForIndex(rec.funcIndex)
+			if fc.entry == 0 {
+				fc.entry = symbolPCFuncInfoName(symbolBuf, fn.symbolPkg, fn.symbolName)
+			}
+			fc.function = publicFunctionName(funcInfoJoinName(fn.namePkg, fn.nameName))
+			if fc.function == "" {
+				fc.function = publicFunctionName(funcInfoJoinName(fn.symbolPkg, fn.symbolName))
+			}
+			fc.file = funcInfoJoinFile(fn.fileRoot, fn.fileName)
+			fc.line = int(fn.line)
+			fc.resolved = true
 		}
+		entry := fc.entry
 		if entry == 0 {
 			sym := addrInfoSymbol(pc)
 			entry = sym.entry
 		}
-		file := funcInfoPackedFile(rec.file)
+		file := ""
+		if rec.file != 0 {
+			var ok bool
+			if file, ok = fileCache[rec.file]; !ok {
+				file = funcInfoPackedFile(rec.file)
+				fileCache[rec.file] = file
+			}
+		}
 		if file == "" {
-			file = funcInfoJoinFile(fn.fileRoot, fn.fileName)
+			file = fc.file
 		}
 		line := int(rec.line)
 		if line == 0 {
-			line = int(fn.line)
-		}
-		function := publicFunctionName(funcInfoJoinName(fn.namePkg, fn.nameName))
-		if function == "" {
-			function = publicFunctionName(funcInfoJoinName(fn.symbolPkg, fn.symbolName))
+			line = fc.line
 		}
 		frames = append(frames, runtimePCLineFrame{
 			pc:        pc,
 			entry:     entry,
-			function:  function,
+			function:  fc.function,
 			file:      file,
 			line:      line,
-			startLine: int(fn.line),
+			startLine: fc.line,
 		})
 	}
 	sortRuntimePCLineFrames(frames)
@@ -1339,11 +1521,13 @@ func buildRuntimePCLineIndex(frames []runtimePCLineFrame) runtimePCFindIndex {
 			if subIdx > len(frames)-1 {
 				subIdx = len(frames) - 1
 			}
+			// delta counts deduplicated PCs inside one bucket, so it is
+			// bounded by the bucket size and always fits in uint16.
 			delta := subIdx - baseIdx
-			if delta < 0 || delta > 255 {
+			if delta < 0 || delta > 0xffff {
 				return runtimePCFindIndex{}
 			}
-			buckets[b].subbuckets[s] = uint8(delta)
+			buckets[b].subbuckets[s] = uint16(delta)
 		}
 	}
 	return runtimePCFindIndex{base: base, buckets: buckets}

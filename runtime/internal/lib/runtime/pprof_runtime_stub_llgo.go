@@ -118,6 +118,28 @@ func funcForPCSlow(pc uintptr) *Func {
 			return fn
 		}
 	} else if pc != 0 {
+		// Cold fast path: before the entry frame table has been built, resolve
+		// an exact function-entry PC without paying first-use table
+		// construction. First a bounded linear scan of the raw entry-site
+		// section (compile-time data, no dynamic-loader query), then one
+		// dladdr as fallback. Requiring an exact entry match means a
+		// stripped-local misattribution (dladdr returning the nearest
+		// exported symbol) can never be accepted, so this path only ever
+		// answers true function-value PCs. The path is intentionally capped:
+		// each cold lookup costs microseconds, so after a handful of them the
+		// sorted table is the cheaper answer and we fall through to build it.
+		if !runtimeFuncPCFramesBuilt() && coldFuncPCLookupBudget() {
+			if sym, ok := coldFuncInfoEntryLookup(pc); ok {
+				fn := newFuncForPC(pc, sym)
+				cacheFuncForPC(pc, fn)
+				return fn
+			}
+			if sym := addrInfoSymbol(pc); sym.ok && sym.entry == pc && sym.function != "" {
+				fn := newFuncForPC(pc, sym)
+				cacheFuncForPC(pc, fn)
+				return fn
+			}
+		}
 		// Function-value PCs point at the real function entry. ELF funcinfo
 		// entry-site anchors are emitted from LLVM IR and can land after the
 		// backend prologue, so an exact entry PC may sort before its anchor.
