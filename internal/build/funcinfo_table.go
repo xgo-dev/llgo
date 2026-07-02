@@ -34,6 +34,8 @@ const (
 	funcInfoStringCountSymbol       = "__llgo_funcinfo_string_count"
 	funcInfoHashSymbol              = "__llgo_funcinfo_hash"
 	funcInfoHashMaskSymbol          = "__llgo_funcinfo_hash_mask"
+	funcInfoSymbolIndexSymbol       = "__llgo_funcinfo_symbol_index"
+	funcInfoSymbolIndexCountSymbol  = "__llgo_funcinfo_symbol_index_count"
 	funcInfoStubIndexesSymbol       = "__llgo_funcinfo_stub_indexes"
 	funcInfoStubCountSymbol         = "__llgo_funcinfo_stub_count"
 	funcInfoEntryStartPtrSymbol     = "__llgo_funcinfo_entry_start"
@@ -55,6 +57,7 @@ const (
 	funcInfoStringsDataSymbol       = "__llgo_funcinfo_strings$data"
 	funcInfoStringOffsetsDataSymbol = "__llgo_funcinfo_string_offsets$data"
 	funcInfoHashDataSymbol          = "__llgo_funcinfo_hash$data"
+	funcInfoSymbolIndexDataSymbol   = "__llgo_funcinfo_symbol_index$data"
 	funcInfoStubIndexesDataSymbol   = "__llgo_funcinfo_stub_indexes$data"
 	closureStubPrefix               = "__llgo_stub."
 )
@@ -77,6 +80,11 @@ type pcLineRecord struct {
 
 type funcInfoStubRecord struct {
 	symbol    string
+	funcIndex uint32
+}
+
+type funcInfoSymbolIndexRecord struct {
+	symbolID  uint64
 	funcIndex uint32
 }
 
@@ -181,6 +189,39 @@ func collectFuncInfoStubRecords(pkgs []Package, records []funcInfoRecord) []func
 	return out
 }
 
+func collectFuncInfoSymbolIndexRecords(records []funcInfoRecord) []funcInfoSymbolIndexRecord {
+	if len(records) == 0 {
+		return nil
+	}
+	seen := make(map[uint64]uint32, len(records))
+	for i, rec := range records {
+		if rec.symbol == "" {
+			continue
+		}
+		id := funcInfoSymbolID(rec.symbol)
+		idx := uint32(i + 1)
+		if prev, ok := seen[id]; ok && prev != idx {
+			seen[id] = 0
+			continue
+		}
+		seen[id] = idx
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]funcInfoSymbolIndexRecord, 0, len(seen))
+	for id, idx := range seen {
+		if id == 0 || idx == 0 {
+			continue
+		}
+		out = append(out, funcInfoSymbolIndexRecord{symbolID: id, funcIndex: idx})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].symbolID < out[j].symbolID
+	})
+	return out
+}
+
 func prepareFuncInfoTableRecords(records []funcInfoRecord, liveSymbols map[string]none) []funcInfoRecord {
 	if len(records) == 0 {
 		return nil
@@ -278,6 +319,10 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		i32Type,
 		i32Type,
 	}, false)
+	symbolIndexRecordType := llvmCtx.StructType([]llvm.Type{
+		i64Type,
+		i32Type,
+	}, false)
 	funcEntryRecordType := llvmCtx.StructType([]llvm.Type{
 		llvm.PointerType(i8Type, 0),
 		i64Type,
@@ -303,7 +348,9 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	stringOffsetsPtr := llvm.AddGlobal(mod, llvm.PointerType(i32Type, 0), funcInfoStringOffsetsSymbol)
 	stringCount := llvm.AddGlobal(mod, countType, funcInfoStringCountSymbol)
 	hashPtr := llvm.AddGlobal(mod, llvm.PointerType(i16Type, 0), funcInfoHashSymbol)
+	symbolIndexPtr := llvm.AddGlobal(mod, llvm.PointerType(symbolIndexRecordType, 0), funcInfoSymbolIndexSymbol)
 	count := llvm.AddGlobal(mod, countType, funcInfoCountSymbol)
+	symbolIndexCount := llvm.AddGlobal(mod, countType, funcInfoSymbolIndexCountSymbol)
 	stubIndexesPtr := llvm.AddGlobal(mod, llvm.PointerType(i32Type, 0), funcInfoStubIndexesSymbol)
 	stubCount := llvm.AddGlobal(mod, countType, funcInfoStubCountSymbol)
 	pcLineCount := llvm.AddGlobal(mod, countType, pcLineCountSymbol)
@@ -321,7 +368,9 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		stringOffsetsPtr.SetInitializer(llvm.ConstPointerNull(stringOffsetsPtr.GlobalValueType()))
 		stringCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		hashPtr.SetInitializer(llvm.ConstPointerNull(hashPtr.GlobalValueType()))
+		symbolIndexPtr.SetInitializer(llvm.ConstPointerNull(symbolIndexPtr.GlobalValueType()))
 		count.SetInitializer(llvm.ConstInt(countType, 0, false))
+		symbolIndexCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		stubIndexesPtr.SetInitializer(llvm.ConstPointerNull(stubIndexesPtr.GlobalValueType()))
 		stubCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		pcLineCount.SetInitializer(llvm.ConstInt(countType, 0, false))
@@ -346,7 +395,9 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		stringOffsetsPtr.SetInitializer(llvm.ConstPointerNull(stringOffsetsPtr.GlobalValueType()))
 		stringCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		hashPtr.SetInitializer(llvm.ConstPointerNull(hashPtr.GlobalValueType()))
+		symbolIndexPtr.SetInitializer(llvm.ConstPointerNull(symbolIndexPtr.GlobalValueType()))
 		count.SetInitializer(llvm.ConstInt(countType, 0, false))
+		symbolIndexCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		stubIndexesPtr.SetInitializer(llvm.ConstPointerNull(stubIndexesPtr.GlobalValueType()))
 		stubCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		pcLineCount.SetInitializer(llvm.ConstInt(countType, 0, false))
@@ -489,6 +540,34 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		hashMask.SetInitializer(llvm.ConstInt(countType, uint64(len(encoded.Hash)-1), false))
 	}
 	count.SetInitializer(llvm.ConstInt(countType, uint64(len(encoded.Records)), false))
+	symbolIndexRecords := collectFuncInfoSymbolIndexRecords(records)
+	symbolIndexValues := make([]llvm.Value, 0, len(symbolIndexRecords))
+	for _, rec := range symbolIndexRecords {
+		if rec.funcIndex == 0 || int(rec.funcIndex) > len(encoded.Records) {
+			continue
+		}
+		symbolIndexValues = append(symbolIndexValues, llvm.ConstNamedStruct(symbolIndexRecordType, []llvm.Value{
+			llvm.ConstInt(i64Type, rec.symbolID, false),
+			llvm.ConstInt(i32Type, uint64(rec.funcIndex), false),
+		}))
+	}
+	if len(symbolIndexValues) == 0 {
+		symbolIndexPtr.SetInitializer(llvm.ConstPointerNull(symbolIndexPtr.GlobalValueType()))
+		symbolIndexCount.SetInitializer(llvm.ConstInt(countType, 0, false))
+	} else {
+		symbolIndexArrayType := llvm.ArrayType(symbolIndexRecordType, len(symbolIndexValues))
+		symbolIndexData := llvm.AddGlobal(mod, symbolIndexArrayType, funcInfoSymbolIndexDataSymbol)
+		symbolIndexData.SetInitializer(llvm.ConstArray(symbolIndexRecordType, symbolIndexValues))
+		symbolIndexData.SetLinkage(llvm.PrivateLinkage)
+		symbolIndexData.SetGlobalConstant(true)
+		symbolIndexData.SetUnnamedAddr(true)
+		symbolIndexData.SetAlignment(8)
+		symbolIndexPtr.SetInitializer(llvm.ConstInBoundsGEP(symbolIndexArrayType, symbolIndexData, []llvm.Value{
+			llvm.ConstInt(countType, 0, false),
+			llvm.ConstInt(countType, 0, false),
+		}))
+		symbolIndexCount.SetInitializer(llvm.ConstInt(countType, uint64(len(symbolIndexValues)), false))
+	}
 	stubIndexSeen := make(map[uint32]none, len(stubRecords))
 	stubIndexValues := make([]llvm.Value, 0, len(stubRecords))
 	for _, stub := range stubRecords {

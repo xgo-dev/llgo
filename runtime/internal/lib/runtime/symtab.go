@@ -166,6 +166,17 @@ var runtimeFuncInfoCount uintptr
 //go:linkname runtimeFuncInfoHashMask __llgo_funcinfo_hash_mask
 var runtimeFuncInfoHashMask uintptr
 
+type runtimeFuncInfoSymbolIndexRecord struct {
+	symbolID  uint64
+	funcIndex uint32
+}
+
+//go:linkname runtimeFuncInfoSymbolIndex __llgo_funcinfo_symbol_index
+var runtimeFuncInfoSymbolIndex *runtimeFuncInfoSymbolIndexRecord
+
+//go:linkname runtimeFuncInfoSymbolIndexCount __llgo_funcinfo_symbol_index_count
+var runtimeFuncInfoSymbolIndexCount uintptr
+
 //go:linkname runtimeFuncInfoStubIndexes __llgo_funcinfo_stub_indexes
 var runtimeFuncInfoStubIndexes *uint32
 
@@ -681,11 +692,7 @@ func initRuntimeFuncPCFramesOnce() {
 	}
 	frames := make([]runtimeFuncPCFrame, 0, runtimeFuncInfoCount)
 	entries := make([]uintptr, runtimeFuncInfoCount+1)
-	var indexBySymbolID map[uint64]uint32
-	if runtimeFuncInfoEntryStart != nil || runtimeFuncInfoStubSiteStart != nil {
-		indexBySymbolID = funcInfoIndexBySymbolID()
-	}
-	frames, usedEntrySites := appendRuntimeFuncInfoEntryFrames(frames, entries, indexBySymbolID)
+	frames, usedEntrySites := appendRuntimeFuncInfoEntryFrames(frames, entries)
 	symbolBuf := []byte(nil)
 	if !usedEntrySites {
 		symbolBuf = make([]byte, 0, maxFuncInfoSymbolLen()+len(runtimeClosureStubPrefix)+1)
@@ -705,7 +712,7 @@ func initRuntimeFuncPCFramesOnce() {
 			}
 		}
 	}
-	frames = appendRuntimeFuncInfoStubSiteFrames(frames, indexBySymbolID)
+	frames = appendRuntimeFuncInfoStubSiteFrames(frames)
 	// Closure stubs are an ABI adapter and may go away in a future closure
 	// lowering. Keep the fallback compatibility table light: it stores only
 	// target funcinfo record indexes. On ELF we prefer the associated stub-site
@@ -737,7 +744,7 @@ func initRuntimeFuncPCFramesOnce() {
 	runtimeFuncPCIndex = buildRuntimeFuncPCIndex(frames)
 }
 
-func appendRuntimeFuncInfoEntryFrames(frames []runtimeFuncPCFrame, entries []uintptr, indexBySymbolID map[uint64]uint32) ([]runtimeFuncPCFrame, bool) {
+func appendRuntimeFuncInfoEntryFrames(frames []runtimeFuncPCFrame, entries []uintptr) ([]runtimeFuncPCFrame, bool) {
 	if runtimeFuncInfoEntryStart == nil || runtimeFuncInfoEntryEnd == nil {
 		return frames, false
 	}
@@ -757,7 +764,7 @@ func appendRuntimeFuncInfoEntryFrames(frames []runtimeFuncPCFrame, entries []uin
 		if site == nil || site.pc == 0 || site.symbolID == 0 {
 			continue
 		}
-		funcIndex := indexBySymbolID[site.symbolID]
+		funcIndex := funcInfoIndexForSymbolID(site.symbolID)
 		if funcIndex == 0 || uintptr(funcIndex) > runtimeFuncInfoCount {
 			continue
 		}
@@ -773,7 +780,7 @@ func appendRuntimeFuncInfoEntryFrames(frames []runtimeFuncPCFrame, entries []uin
 	return frames, used
 }
 
-func appendRuntimeFuncInfoStubSiteFrames(frames []runtimeFuncPCFrame, indexBySymbolID map[uint64]uint32) []runtimeFuncPCFrame {
+func appendRuntimeFuncInfoStubSiteFrames(frames []runtimeFuncPCFrame) []runtimeFuncPCFrame {
 	if runtimeFuncInfoStubSiteStart == nil || runtimeFuncInfoStubSiteEnd == nil {
 		return frames
 	}
@@ -792,7 +799,7 @@ func appendRuntimeFuncInfoStubSiteFrames(frames []runtimeFuncPCFrame, indexBySym
 		if site == nil || site.pc == 0 || site.symbolID == 0 {
 			continue
 		}
-		funcIndex := indexBySymbolID[site.symbolID]
+		funcIndex := funcInfoIndexForSymbolID(site.symbolID)
 		if funcIndex == 0 || uintptr(funcIndex) > runtimeFuncInfoCount {
 			continue
 		}
@@ -804,54 +811,32 @@ func appendRuntimeFuncInfoStubSiteFrames(frames []runtimeFuncPCFrame, indexBySym
 	return frames
 }
 
-func funcInfoIndexBySymbolID() map[uint64]uint32 {
-	indexBySymbolID := make(map[uint64]uint32, runtimeFuncInfoCount)
-	for i := uintptr(0); i < runtimeFuncInfoCount; i++ {
-		id := funcInfoSymbolIDFromRecord(funcInfoAt(i))
-		if id == 0 {
-			continue
-		}
-		index := uint32(i + 1)
-		if prev, ok := indexBySymbolID[id]; ok && prev != index {
-			indexBySymbolID[id] = 0
-			continue
-		}
-		indexBySymbolID[id] = index
-	}
-	return indexBySymbolID
-}
-
-func funcInfoSymbolIDFromRecord(rec *runtimeFuncInfoRecord) uint64 {
-	const (
-		offset = uint64(14695981039346656037)
-		prime  = uint64(1099511628211)
-	)
-	if rec == nil {
+func funcInfoIndexForSymbolID(symbolID uint64) uint32 {
+	if symbolID == 0 || runtimeFuncInfoSymbolIndex == nil || runtimeFuncInfoSymbolIndexCount == 0 {
 		return 0
 	}
-	h := offset
-	h = funcInfoHashCString(h, funcInfoCString(rec.symbolPkg))
-	pkgLen := cStringLen(funcInfoCString(rec.symbolPkg))
-	name := funcInfoCString(rec.symbolName)
-	if pkgLen != 0 && cStringLen(name) != 0 {
-		h ^= uint64('.')
-		h *= prime
+	if runtimeFuncInfoSymbolIndexCount > runtimeFuncInfoCount || runtimeFuncInfoSymbolIndexCount > 1<<20 {
+		return 0
 	}
-	h = funcInfoHashCString(h, name)
-	if h == 0 {
-		return 1
+	lo, hi := uintptr(0), runtimeFuncInfoSymbolIndexCount
+	size := unsafe.Sizeof(*runtimeFuncInfoSymbolIndex)
+	for lo < hi {
+		mid := (lo + hi) >> 1
+		rec := (*runtimeFuncInfoSymbolIndexRecord)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoSymbolIndex), mid*size))
+		if rec.symbolID >= symbolID {
+			hi = mid
+		} else {
+			lo = mid + 1
+		}
 	}
-	return h
-}
-
-func funcInfoHashCString(h uint64, s *c.Char) uint64 {
-	const prime = uint64(1099511628211)
-	for s != nil && *s != 0 {
-		h ^= uint64(byte(*s))
-		h *= prime
-		s = (*c.Char)(unsafe.Add(unsafe.Pointer(s), 1))
+	if lo >= runtimeFuncInfoSymbolIndexCount {
+		return 0
 	}
-	return h
+	rec := (*runtimeFuncInfoSymbolIndexRecord)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoSymbolIndex), lo*size))
+	if rec.symbolID != symbolID || rec.funcIndex == 0 || uintptr(rec.funcIndex) > runtimeFuncInfoCount {
+		return 0
+	}
+	return rec.funcIndex
 }
 
 func sortRuntimeFuncPCFrames(frames []runtimeFuncPCFrame) {
