@@ -581,7 +581,5 @@ func resetTimer(t *timeTimer, when, period int64) bool {
 }
 
 func runtimeNano() int64 {
-	tv := (*ct.Timespec)(c.Alloca(unsafe.Sizeof(ct.Timespec{})))
-	ct.ClockGettime(ct.CLOCK_MONOTONIC, tv)
-	return int64(tv.Sec)*1e9 + int64(tv.Nsec)
+	return nanotime1()
 }

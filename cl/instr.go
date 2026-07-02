@@ -853,6 +853,745 @@ func (p *context) sourceLine(filename string, line int) (string, bool) {
 	return lines[line-1], true
 }
 
+func (p *context) shouldTrackCallerFrames() bool {
+	if p == nil || p.pkg == nil || p.fn == nil || p.goFn == nil || !p.trackCallerFrames {
+		return false
+	}
+	if !p.runtimeCallerFuncs[p.goFn] {
+		return false
+	}
+	if target := p.prog.Target(); target != nil && (target.Target != "" || target.GOARCH == "wasm") {
+		return false
+	}
+	return canTrackCallerFramesForPackage(p.pkg.Path())
+}
+
+func canTrackCallerFramesForPackage(pkgPath string) bool {
+	return pkgPath != llssa.PkgRuntime &&
+		pkgPath != "runtime" &&
+		!isStandardLibraryPackage(pkgPath) &&
+		!strings.HasPrefix(pkgPath, "github.com/goplus/llgo/runtime/internal/")
+}
+
+func isStandardLibraryPackage(pkgPath string) bool {
+	return pkgPath != "command-line-arguments" && !strings.Contains(pkgPath, ".")
+}
+
+func packageUsesRuntimeCaller(pkg *ssa.Package) bool {
+	return len(runtimeCallerFuncSet(pkg)) != 0
+}
+
+func fnUsesRuntimeCaller(fn *ssa.Function) bool {
+	if fn == nil {
+		return false
+	}
+	if fn.Pkg == nil {
+		return fnHasDirectRuntimeCaller(fn)
+	}
+	return runtimeCallerFuncSet(fn.Pkg)[fn]
+}
+
+func runtimeCallerFuncSet(pkg *ssa.Package) map[*ssa.Function]bool {
+	if pkg == nil {
+		return nil
+	}
+	funcs, trackable := collectRuntimeCallerFunctions(pkg)
+	analysis := &runtimeCallerAnalysis{
+		pkg:       pkg,
+		funcs:     funcs,
+		trackable: trackable,
+		callsites: collectRuntimeCallerCallsites(funcs),
+		memo:      make(map[*ssa.Function]bool),
+		visiting:  make(map[*ssa.Function]bool),
+	}
+	if !analysis.packageHasRuntimeCaller() {
+		return nil
+	}
+	out := make(map[*ssa.Function]bool)
+	for {
+		ntrack := len(trackable)
+		for fn := range trackable {
+			if analysis.fnMayReachRuntimeCaller(fn) {
+				out[fn] = true
+			}
+		}
+		if len(trackable) == ntrack {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+type runtimeCallerAnalysis struct {
+	pkg       *ssa.Package
+	funcs     map[*ssa.Function]bool
+	trackable map[*ssa.Function]bool
+	callsites map[*ssa.Function][]*ssa.CallCommon
+	memo      map[*ssa.Function]bool
+	visiting  map[*ssa.Function]bool
+}
+
+func collectRuntimeCallerFunctions(pkg *ssa.Package) (funcs, trackable map[*ssa.Function]bool) {
+	funcs = make(map[*ssa.Function]bool)
+	trackable = make(map[*ssa.Function]bool)
+	var add func(*ssa.Function, bool) bool
+	add = func(fn *ssa.Function, track bool) bool {
+		if fn == nil || !functionBelongsToPackage(pkg, fn) {
+			return false
+		}
+		if track {
+			trackable[fn] = true
+		}
+		if funcs[fn] {
+			return false
+		}
+		funcs[fn] = true
+		for _, anon := range fn.AnonFuncs {
+			add(anon, false)
+		}
+		return true
+	}
+	for _, member := range pkg.Members {
+		if fn, ok := member.(*ssa.Function); ok {
+			add(fn, true)
+		}
+	}
+	if pkg.Prog != nil && pkg.Pkg != nil {
+		for _, typ := range pkg.Prog.RuntimeTypes() {
+			if !typeBelongsToPackage(typ, pkg.Pkg) {
+				continue
+			}
+			methods := pkg.Prog.MethodSets.MethodSet(typ)
+			for i := 0; i < methods.Len(); i++ {
+				add(pkg.Prog.MethodValue(methods.At(i)), false)
+			}
+		}
+	}
+	for changed := true; changed; {
+		changed = false
+		for fn := range funcs {
+			forEachCall(fn, func(call *ssa.CallCommon) {
+				if add(call.StaticCallee(), trackable[fn]) {
+					changed = true
+				}
+			})
+		}
+	}
+	return funcs, trackable
+}
+
+func collectRuntimeCallerCallsites(funcs map[*ssa.Function]bool) map[*ssa.Function][]*ssa.CallCommon {
+	callsites := make(map[*ssa.Function][]*ssa.CallCommon)
+	for fn := range funcs {
+		forEachCall(fn, func(call *ssa.CallCommon) {
+			callee := call.StaticCallee()
+			if funcs[callee] {
+				callsites[callee] = append(callsites[callee], call)
+			}
+		})
+	}
+	return callsites
+}
+
+func functionBelongsToPackage(pkg *ssa.Package, fn *ssa.Function) bool {
+	if pkg == nil || fn == nil {
+		return false
+	}
+	if fn.Pkg == pkg {
+		return true
+	}
+	return fn.Pkg == nil && fn.Parent() != nil && functionBelongsToPackage(pkg, fn.Parent())
+}
+
+func typeBelongsToPackage(typ types.Type, pkg *types.Package) bool {
+	if pkg == nil {
+		return false
+	}
+	for {
+		if ptr, ok := types.Unalias(typ).(*types.Pointer); ok {
+			typ = ptr.Elem()
+			continue
+		}
+		break
+	}
+	named, ok := types.Unalias(typ).(*types.Named)
+	return ok && named.Obj() != nil && named.Obj().Pkg() == pkg
+}
+
+func (a *runtimeCallerAnalysis) packageHasRuntimeCaller() bool {
+	for fn := range a.funcs {
+		if fnHasDirectRuntimeCaller(fn) {
+			return true
+		}
+	}
+	return false
+}
+
+func fnHasDirectRuntimeCaller(fn *ssa.Function) bool {
+	if fn == nil {
+		return false
+	}
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			call, ok := instr.(ssa.CallInstruction)
+			if !ok {
+				continue
+			}
+			if isRuntimeCallerFrameFunc(call.Common().StaticCallee()) {
+				return true
+			}
+		}
+	}
+	for _, anon := range fn.AnonFuncs {
+		if fnHasDirectRuntimeCaller(anon) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *runtimeCallerAnalysis) fnMayReachRuntimeCaller(fn *ssa.Function) bool {
+	if fn == nil {
+		return false
+	}
+	if isRuntimeCallerFrameFunc(fn) {
+		return true
+	}
+	if !a.funcs[fn] {
+		return false
+	}
+	if ok, done := a.memo[fn]; done {
+		return ok
+	}
+	if a.visiting[fn] {
+		return false
+	}
+	a.visiting[fn] = true
+	defer delete(a.visiting, fn)
+	reaches := false
+	forEachCall(fn, func(call *ssa.CallCommon) {
+		if reaches {
+			return
+		}
+		callee := call.StaticCallee()
+		switch {
+		case isRuntimeCallerFrameFunc(callee):
+			reaches = true
+		case callee != nil:
+			reaches = a.fnMayReachRuntimeCaller(callee)
+		case call.Method != nil:
+			reaches = a.interfaceInvokeMayReachRuntimeCaller(fn, call)
+		default:
+			reaches = a.functionValueCallMayReachRuntimeCaller(fn, call.Value)
+		}
+	})
+	if !reaches {
+		for _, anon := range fn.AnonFuncs {
+			if a.fnMayReachRuntimeCaller(anon) {
+				if a.trackable[fn] {
+					a.trackable[anon] = true
+				}
+				reaches = true
+				break
+			}
+		}
+	}
+	a.memo[fn] = reaches
+	return reaches
+}
+
+func (a *runtimeCallerAnalysis) functionValueCallMayReachRuntimeCaller(fn *ssa.Function, value ssa.Value) bool {
+	targets, ok := a.functionValueTargets(fn, value)
+	if !ok {
+		return true
+	}
+	for target := range targets {
+		if a.fnMayReachRuntimeCaller(target) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *runtimeCallerAnalysis) functionValueTargets(fn *ssa.Function, value ssa.Value) (map[*ssa.Function]bool, bool) {
+	if targets, ok := staticFunctionTargets(value); ok {
+		return targets, true
+	}
+	param, ok := value.(*ssa.Parameter)
+	if !ok || param.Parent() != fn {
+		return nil, false
+	}
+	idx, ok := parameterIndex(fn, param)
+	if !ok {
+		return nil, false
+	}
+	return a.functionParamTargets(fn, idx)
+}
+
+func (a *runtimeCallerAnalysis) functionParamTargets(fn *ssa.Function, idx int) (map[*ssa.Function]bool, bool) {
+	callsites := a.callsites[fn]
+	if len(callsites) == 0 {
+		return nil, false
+	}
+	targets := make(map[*ssa.Function]bool)
+	for _, call := range callsites {
+		args := call.Args
+		if idx >= len(args) {
+			return nil, false
+		}
+		argTargets, ok := staticFunctionTargets(args[idx])
+		if !ok {
+			return nil, false
+		}
+		for target := range argTargets {
+			targets[target] = true
+		}
+	}
+	return targets, true
+}
+
+func staticFunctionTargets(value ssa.Value) (map[*ssa.Function]bool, bool) {
+	switch v := value.(type) {
+	case *ssa.Function:
+		return map[*ssa.Function]bool{v: true}, true
+	case *ssa.MakeClosure:
+		if fn, ok := v.Fn.(*ssa.Function); ok {
+			return map[*ssa.Function]bool{fn: true}, true
+		}
+	}
+	return nil, false
+}
+
+func (a *runtimeCallerAnalysis) interfaceInvokeMayReachRuntimeCaller(fn *ssa.Function, call *ssa.CallCommon) bool {
+	targets, ok := a.interfaceMethodTargets(fn, call.Value, call.Method)
+	if !ok {
+		return true
+	}
+	for target := range targets {
+		if a.fnMayReachRuntimeCaller(target) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *runtimeCallerAnalysis) interfaceMethodTargets(fn *ssa.Function, value ssa.Value, method *types.Func) (map[*ssa.Function]bool, bool) {
+	if targets, ok := a.staticInterfaceMethodTargets(value, method); ok {
+		return targets, true
+	}
+	param, ok := value.(*ssa.Parameter)
+	if !ok || param.Parent() != fn {
+		return nil, false
+	}
+	idx, ok := parameterIndex(fn, param)
+	if !ok {
+		return nil, false
+	}
+	callsites := a.callsites[fn]
+	if len(callsites) == 0 {
+		return nil, false
+	}
+	targets := make(map[*ssa.Function]bool)
+	for _, call := range callsites {
+		args := call.Args
+		if idx >= len(args) {
+			return nil, false
+		}
+		argTargets, ok := a.staticInterfaceMethodTargets(args[idx], method)
+		if !ok {
+			return nil, false
+		}
+		for target := range argTargets {
+			targets[target] = true
+		}
+	}
+	return targets, true
+}
+
+func (a *runtimeCallerAnalysis) staticInterfaceMethodTargets(value ssa.Value, method *types.Func) (map[*ssa.Function]bool, bool) {
+	switch v := value.(type) {
+	case *ssa.MakeInterface:
+		return a.methodTargetsForType(v.X.Type(), method)
+	case *ssa.ChangeInterface:
+		return a.staticInterfaceMethodTargets(v.X, method)
+	}
+	return nil, false
+}
+
+func (a *runtimeCallerAnalysis) methodTargetsForType(typ types.Type, method *types.Func) (map[*ssa.Function]bool, bool) {
+	if a.pkg == nil || a.pkg.Prog == nil || method == nil {
+		return nil, false
+	}
+	methods := a.pkg.Prog.MethodSets.MethodSet(typ)
+	for i := 0; i < methods.Len(); i++ {
+		sel := methods.At(i)
+		if sel.Obj().Name() != method.Name() {
+			continue
+		}
+		fn := a.pkg.Prog.MethodValue(sel)
+		if fn == nil {
+			return nil, false
+		}
+		return map[*ssa.Function]bool{fn: true}, true
+	}
+	return nil, false
+}
+
+func parameterIndex(fn *ssa.Function, param *ssa.Parameter) (int, bool) {
+	for i, candidate := range fn.Params {
+		if candidate == param {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func forEachCall(fn *ssa.Function, do func(*ssa.CallCommon)) {
+	if fn == nil {
+		return
+	}
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			if call, ok := instr.(ssa.CallInstruction); ok {
+				do(call.Common())
+			}
+		}
+	}
+}
+
+func isRuntimeCallerFunc(fn *ssa.Function) bool {
+	if fn == nil || fn.Pkg == nil || fn.Pkg.Pkg == nil {
+		return false
+	}
+	switch fn.Pkg.Pkg.Path() {
+	case "runtime", "github.com/goplus/llgo/runtime/internal/lib/runtime":
+		return isRuntimeCallerName(fn.Name())
+	case "runtime/debug":
+		return fn.Name() == "Stack"
+	default:
+		return false
+	}
+}
+
+func isRuntimeCallerFrameFunc(fn *ssa.Function) bool {
+	if fn == nil || fn.Pkg == nil || fn.Pkg.Pkg == nil {
+		return false
+	}
+	switch fn.Pkg.Pkg.Path() {
+	case "runtime", "github.com/goplus/llgo/runtime/internal/lib/runtime":
+		return isRuntimeCallerFrameName(fn.Name())
+	case "runtime/debug":
+		return fn.Name() == "Stack"
+	default:
+		return false
+	}
+}
+
+func isRuntimeCallerLookupFunc(fn *ssa.Function) bool {
+	if fn == nil || fn.Pkg == nil || fn.Pkg.Pkg == nil {
+		return false
+	}
+	switch fn.Pkg.Pkg.Path() {
+	case "runtime", "github.com/goplus/llgo/runtime/internal/lib/runtime":
+		switch fn.Name() {
+		case "Caller", "Callers", "Stack":
+			return true
+		}
+	case "runtime/debug":
+		return fn.Name() == "Stack"
+	}
+	return false
+}
+
+func isRuntimeCallerName(name string) bool {
+	switch name {
+	case "Caller", "Callers", "CallersFrames", "FuncForPC", "Stack":
+		return true
+	default:
+		return false
+	}
+}
+
+func isRuntimeCallerFrameName(name string) bool {
+	switch name {
+	case "Caller", "Callers", "CallersFrames", "Stack":
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *context) runtimeCallerFrameName() string {
+	if p == nil {
+		return ""
+	}
+	if p.goFn != nil && p.goFn.Pkg != nil && p.goFn.Pkg.Pkg != nil {
+		return runtimeFrameName(funcName(p.goFn.Pkg.Pkg, p.goFn, false))
+	}
+	if p.fn != nil {
+		return runtimeFrameName(p.fn.Name())
+	}
+	return ""
+}
+
+func (p *context) pushCallerLocationFrame(b llssa.Builder, fn *ssa.Function) {
+	if fn == nil {
+		return
+	}
+	pos := p.fset.Position(fn.Pos())
+	entry := b.Convert(p.prog.Uintptr(), p.fn.Expr)
+	p.callerFrameMark = b.Call(
+		p.runtimeFunc("PushCallerLocationFrame", pushCallerLocationFrameSig()),
+		entry,
+		b.Str(p.runtimeCallerFrameName()),
+		b.Str(pos.Filename),
+		p.prog.IntVal(uint64(pos.Line), p.prog.Int()),
+	)
+}
+
+func (p *context) recordCallerLocation(b llssa.Builder, pos token.Pos) {
+	p.recordRuntimeLocation(b, pos, "RecordCallerLocation")
+}
+
+func (p *context) recordPanicLocation(b llssa.Builder, pos token.Pos) {
+	p.recordRuntimeLocation(b, pos, "RecordPanicLocation")
+}
+
+func (p *context) recordRuntimeLocation(b llssa.Builder, pos token.Pos, fn string) {
+	if !p.shouldTrackCallerFrames() {
+		return
+	}
+	position := p.fset.Position(pos)
+	if position.Line <= 0 || position.Filename == "" {
+		return
+	}
+	b.Call(
+		p.runtimeFunc(fn, recordRuntimeLocationSig()),
+		b.Convert(p.prog.Uintptr(), p.fn.Expr),
+		b.Str(p.runtimeCallerFrameName()),
+		b.Str(position.Filename),
+		p.prog.IntVal(uint64(position.Line), p.prog.Int()),
+	)
+}
+
+func (p *context) recordCallerLocationForCall(b llssa.Builder, call *ssa.CallCommon) {
+	if !p.shouldTrackCallerFrames() {
+		return
+	}
+	callee := call.StaticCallee()
+	if isRuntimeCallerLookupFunc(callee) {
+		p.recordCallerLocation(b, call.Pos())
+		return
+	}
+	p.recordPanicLocation(b, call.Pos())
+}
+
+func (p *context) emitPCLineLabel(b llssa.Builder, pos token.Pos) {
+	if p == nil || p.pkg == nil || p.fn == nil || !p.prog.FuncInfoMetadataEnabled() || !p.shouldTrackCallerFrames() {
+		return
+	}
+	target := p.prog.Target()
+	if !canEmitPCLineLabelsForTarget(target) {
+		return
+	}
+	position := p.fset.Position(pos)
+	if position.Line <= 0 || position.Filename == "" {
+		return
+	}
+	p.pcLineSeq++
+	id := pcLineID(p.fn.Name(), p.pcLineSeq)
+	label := pcLineLabelName(id)
+	if target.GOOS == "darwin" {
+		// Mach-O subsections-via-symbols treats every non-local symbol as an
+		// atom boundary; a visible label in the middle of a function body
+		// lets the linker split and reorder the function. The "L" prefix
+		// keeps the label assembler-local so the function stays one atom.
+		label = "L" + label
+	}
+	asmLabel := label + "_${:uid}"
+	ptrDirective := ".quad"
+	align := "3"
+	if p.prog.PointerSize() == 4 {
+		ptrDirective = ".long"
+		align = "2"
+	}
+	// Keep section names in sync with internal/build/funcinfo_table.go
+	// (pcLineSiteSectionInfo). ELF ties the record to the function via
+	// SHF_LINK_ORDER (honored by --gc-sections); Mach-O uses a live_support
+	// section plus one linker-private atom symbol per record so -dead_strip
+	// keeps a record exactly when the function containing its label is live.
+	pushSection := ".pushsection llgo_pcline,\"ao\",@progbits," + asmQuoteSymbol(p.fn.Name())
+	recordSymbol := ""
+	if target.GOOS == "darwin" {
+		pushSection = ".pushsection __DATA,__llgo_pcl,regular,live_support"
+		recordSymbol = "l_llgo_pcline_rec_${:uid}:\n"
+	}
+	b.InlineAsm(
+		asmLabel + ":\n" +
+			pushSection + "\n" +
+			".p2align " + align + "\n" +
+			recordSymbol +
+			ptrDirective + " " + asmLabel + "\n" +
+			".quad " + uint64Hex(id) + "\n" +
+			".popsection",
+	)
+	p.pkg.EmitPCLineInfo(id, p.fn.Name(), position.Filename, position.Line, position.Column)
+}
+
+func canEmitPCLineLabelsForTarget(target *llssa.Target) bool {
+	if target == nil {
+		return false
+	}
+	if target.Target != "" || target.GOARCH == "wasm" {
+		return false
+	}
+	// ELF uses SHF_LINK_ORDER associated sections; Mach-O uses plain
+	// __DATA,__llgo_pcl sections (safe because LLGo's global DCE runs at the
+	// IR level). Other object formats need separate support.
+	switch target.GOOS {
+	case "linux", "darwin":
+		return true
+	}
+	return false
+}
+
+func pcLineID(symbol string, seq uint64) uint64 {
+	const (
+		offset = uint64(14695981039346656037)
+		prime  = uint64(1099511628211)
+	)
+	h := offset
+	for i := 0; i < len(symbol); i++ {
+		h ^= uint64(symbol[i])
+		h *= prime
+	}
+	for i := 0; i < 8; i++ {
+		h ^= byteOfUint64(seq, uint(i*8))
+		h *= prime
+	}
+	if h == 0 {
+		return 1
+	}
+	return h
+}
+
+func byteOfUint64(v uint64, shift uint) uint64 {
+	return (v >> shift) & 0xff
+}
+
+func pcLineLabelName(id uint64) string {
+	const hexdigits = "0123456789abcdef"
+	var buf [16]byte
+	for i := len(buf) - 1; i >= 0; i-- {
+		buf[i] = hexdigits[id&0xf]
+		id >>= 4
+	}
+	return "__llgo_pcsite_" + string(buf[:])
+}
+
+func uint64Hex(v uint64) string {
+	const hexdigits = "0123456789abcdef"
+	var buf [18]byte
+	buf[0] = '0'
+	buf[1] = 'x'
+	for i := len(buf) - 1; i >= 2; i-- {
+		buf[i] = hexdigits[v&0xf]
+		v >>= 4
+	}
+	return string(buf[:])
+}
+
+func asmQuoteSymbol(symbol string) string {
+	var b strings.Builder
+	b.Grow(len(symbol) + 2)
+	b.WriteByte('"')
+	for i := 0; i < len(symbol); i++ {
+		switch symbol[i] {
+		case '\\', '"':
+			b.WriteByte('\\')
+		case '$':
+			b.WriteByte('$')
+		}
+		b.WriteByte(symbol[i])
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+func (p *context) popCallerLocationFrame(b llssa.Builder) {
+	if p.callerFrameMark.IsNil() {
+		return
+	}
+	b.Call(p.runtimeFunc("PopCallerLocationFrame", popCallerLocationFrameSig()), p.callerFrameMark)
+}
+
+func (p *context) runtimeFunc(name string, sig *types.Signature) llssa.Expr {
+	p.pkg.NeedRuntime = true
+	fullName := llssa.PkgRuntime + "." + name
+	if fn := p.pkg.FuncOf(fullName); fn != nil {
+		return fn.Expr
+	}
+	return p.pkg.NewFuncEx(fullName, sig, llssa.InGo, false, false).Expr
+}
+
+func pushCallerLocationFrameSig() *types.Signature {
+	return types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(
+			types.NewVar(token.NoPos, nil, "entry", types.Typ[types.Uintptr]),
+			types.NewVar(token.NoPos, nil, "name", types.Typ[types.String]),
+			types.NewVar(token.NoPos, nil, "file", types.Typ[types.String]),
+			types.NewVar(token.NoPos, nil, "startLine", types.Typ[types.Int]),
+		),
+		types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Int])),
+		false,
+	)
+}
+
+func recordRuntimeLocationSig() *types.Signature {
+	return types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(
+			types.NewVar(token.NoPos, nil, "entry", types.Typ[types.Uintptr]),
+			types.NewVar(token.NoPos, nil, "name", types.Typ[types.String]),
+			types.NewVar(token.NoPos, nil, "file", types.Typ[types.String]),
+			types.NewVar(token.NoPos, nil, "line", types.Typ[types.Int]),
+		),
+		nil,
+		false,
+	)
+}
+
+func popCallerLocationFrameSig() *types.Signature {
+	return types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, nil, "mark", types.Typ[types.Int])),
+		nil,
+		false,
+	)
+}
+
+func runtimeFrameName(name string) string {
+	const commandLineArguments = "command-line-arguments."
+	if strings.HasPrefix(name, commandLineArguments) {
+		name = "main." + name[len(commandLineArguments):]
+	}
+	return normalizeRuntimeAnonFuncName(name)
+}
+
+func normalizeRuntimeAnonFuncName(name string) string {
+	dollar := strings.LastIndexByte(name, '$')
+	if dollar < 0 || dollar == len(name)-1 {
+		return name
+	}
+	for i := dollar + 1; i < len(name); i++ {
+		if name[i] < '0' || name[i] > '9' {
+			return name
+		}
+	}
+	return name[:dollar] + ".func" + name[dollar+1:]
+}
+
 // -----------------------------------------------------------------------------
 
 type explicitDeferStack struct {
@@ -1049,6 +1788,8 @@ func collectMethodNilDerefChecks(fn *ssa.Function) map[*ssa.UnOp]none {
 }
 
 func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallCommon, ds *explicitDeferStack) (ret llssa.Expr) {
+	p.recordCallerLocationForCall(b, call)
+	p.emitPCLineLabel(b, call.Pos())
 	cv := call.Value
 	if mthd := call.Method; mthd != nil {
 		reflectCheck := p.reflectTypeMethodCheck(call, mthd)
