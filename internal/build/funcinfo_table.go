@@ -731,10 +731,13 @@ func emitFuncInfoEntrySites(ctx *context, pkg llssa.Package) {
 	// body, LTO inlining duplicates it into every inline site, bloating the
 	// section (~4x on multipkg) and registering host-function PCs under the
 	// inlinee's symbol ID; the runtime only consults this table when native
-	// symbolization fails, which bounds the impact. The fix is to emit the
-	// records as data globals carrying the function address with !associated
-	// metadata instead of body-embedded asm — that needs LLVMGlobalSetMetadata
-	// in the llvm binding and lands with the link-phase ftab work.
+	// symbolization fails, which bounds the impact. Data-global alternatives
+	// were tried and do not work with the current LLVM semantics: !associated
+	// affects only linker GC, so IR-level GlobalDCE deletes every record;
+	// keeping records via llvm.compiler.used makes their function-address
+	// initializers pin dead functions alive; and noduplicate on the asm call
+	// blocks inlining outright. Deduplicating the section is therefore
+	// link-phase work and lands together with the final ftab generation.
 	machO := shouldEmitRuntimeMachOSites(ctx)
 	llvmCtx := mod.Context()
 	builder := llvmCtx.NewBuilder()
