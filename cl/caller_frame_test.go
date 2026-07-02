@@ -652,7 +652,7 @@ func top() {
 	}
 }
 
-func TestCompileRuntimeCallerPCLineMetadataSkippedOnDarwin(t *testing.T) {
+func TestCompileRuntimeCallerPCLineMetadataOnDarwin(t *testing.T) {
 	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
 import "runtime"
 
@@ -669,8 +669,17 @@ func top() {
 		t.Fatal(err)
 	}
 	ir := pkg.Module().String()
-	if strings.Contains(ir, `!llgo.pcline`) || strings.Contains(ir, "__llgo_pcsite_") {
-		t.Fatalf("darwin should not emit inline asm pc-site labels:\n%s", ir)
+	for _, want := range []string{
+		`!llgo.pcline`,
+		"__llgo_pcsite_",
+		`.pushsection __DATA,__llgo_pcl`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("darwin should emit Mach-O pc-site labels, missing %q:\n%s", want, ir)
+		}
+	}
+	if strings.Contains(ir, `.pushsection llgo_pcline`) {
+		t.Fatalf("darwin must not use the ELF pcline section syntax:\n%s", ir)
 	}
 }
 

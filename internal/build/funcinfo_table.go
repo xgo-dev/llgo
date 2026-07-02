@@ -46,12 +46,6 @@ const (
 	pcLineCountSymbol               = "__llgo_pcline_count"
 	pcSiteStartPtrSymbol            = "__llgo_pcsite_start"
 	pcSiteEndPtrSymbol              = "__llgo_pcsite_end"
-	funcInfoEntryStartSymbol        = "__start_llgo_funcinfo_entry"
-	funcInfoEntryEndSymbol          = "__stop_llgo_funcinfo_entry"
-	funcInfoStubSiteStartSymbol     = "__start_llgo_funcinfo_stubsite"
-	funcInfoStubSiteEndSymbol       = "__stop_llgo_funcinfo_stubsite"
-	pcSiteStartSymbol               = "__start_llgo_pcline"
-	pcSiteEndSymbol                 = "__stop_llgo_pcline"
 	funcInfoDataSymbol              = "__llgo_funcinfo_table$data"
 	pcLineDataSymbol                = "__llgo_pcline_table$data"
 	funcInfoStringsDataSymbol       = "__llgo_funcinfo_strings$data"
@@ -452,9 +446,10 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 			llvm.ConstInt(countType, 0, false),
 		}))
 		pcLineCount.SetInitializer(llvm.ConstInt(countType, uint64(len(encoded.PCLines)), false))
-		if shouldEmitRuntimeELFSites(ctx) {
-			pcSiteStart := llvm.AddGlobal(mod, pcSiteRecordType, pcSiteStartSymbol)
-			pcSiteEnd := llvm.AddGlobal(mod, pcSiteRecordType, pcSiteEndSymbol)
+		if shouldEmitRuntimeSites(ctx) {
+			startName, endName := pcLineSiteSectionInfo.boundary(shouldEmitRuntimeMachOSites(ctx))
+			pcSiteStart := llvm.AddGlobal(mod, pcSiteRecordType, startName)
+			pcSiteEnd := llvm.AddGlobal(mod, pcSiteRecordType, endName)
 			pcSiteStartPtr.SetInitializer(pcSiteStart)
 			pcSiteEndPtr.SetInitializer(pcSiteEnd)
 		} else {
@@ -462,13 +457,15 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 			pcSiteEndPtr.SetInitializer(llvm.ConstPointerNull(pcSiteEndPtr.GlobalValueType()))
 		}
 	}
-	emitELFSites := shouldEmitRuntimeELFSites(ctx)
+	machOSites := shouldEmitRuntimeMachOSites(ctx)
+	emitSites := shouldEmitRuntimeSites(ctx)
 	emitEntrySites := shouldEmitRuntimeEntryELFSites(ctx) && len(encoded.Records) != 0
 	emitStubSites := shouldEmitRuntimeStubELFSites(ctx)
-	emitRuntimeFuncInfoELFSites(mod, ctx.prog.PointerSize(), emitELFSites && len(pcLineValues) != 0, emitEntrySites, emitStubSites && len(stubRecords) != 0)
+	emitRuntimeFuncInfoSites(mod, ctx.prog.PointerSize(), machOSites, emitSites && len(pcLineValues) != 0, emitEntrySites, emitStubSites && len(stubRecords) != 0)
 	if emitEntrySites {
-		entryStart := llvm.AddGlobal(mod, funcEntryRecordType, funcInfoEntryStartSymbol)
-		entryEnd := llvm.AddGlobal(mod, funcEntryRecordType, funcInfoEntryEndSymbol)
+		startName, endName := entrySiteSectionInfo.boundary(machOSites)
+		entryStart := llvm.AddGlobal(mod, funcEntryRecordType, startName)
+		entryEnd := llvm.AddGlobal(mod, funcEntryRecordType, endName)
 		entryStartPtr.SetInitializer(entryStart)
 		entryEndPtr.SetInitializer(entryEnd)
 	} else {
@@ -476,8 +473,9 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		entryEndPtr.SetInitializer(llvm.ConstPointerNull(entryEndPtr.GlobalValueType()))
 	}
 	if emitStubSites && len(stubRecords) != 0 {
-		stubSiteStart := llvm.AddGlobal(mod, stubSiteRecordType, funcInfoStubSiteStartSymbol)
-		stubSiteEnd := llvm.AddGlobal(mod, stubSiteRecordType, funcInfoStubSiteEndSymbol)
+		startName, endName := stubSiteSectionInfo.boundary(machOSites)
+		stubSiteStart := llvm.AddGlobal(mod, stubSiteRecordType, startName)
+		stubSiteEnd := llvm.AddGlobal(mod, stubSiteRecordType, endName)
 		stubSiteStartPtr.SetInitializer(stubSiteStart)
 		stubSiteEndPtr.SetInitializer(stubSiteEnd)
 	} else {
@@ -607,12 +605,100 @@ func shouldEmitRuntimeELFSites(ctx *context) bool {
 		ctx.buildConf.Target == ""
 }
 
+func shouldEmitRuntimeMachOSites(ctx *context) bool {
+	return ctx != nil &&
+		ctx.buildConf != nil &&
+		ctx.buildConf.Goos == "darwin" &&
+		ctx.buildConf.Target == ""
+}
+
+// shouldEmitRuntimeSites reports whether the target object format has a
+// DCE-safe section story for metadata site records. ELF uses SHF_LINK_ORDER
+// associated sections (honored by --gc-sections). Mach-O uses live_support
+// sections: under ld64/lld -dead_strip a live_support atom survives only if
+// the atom it references (the anchor inside the function body) is live, which
+// is the same records-follow-function semantics.
+func shouldEmitRuntimeSites(ctx *context) bool {
+	return shouldEmitRuntimeELFSites(ctx) || shouldEmitRuntimeMachOSites(ctx)
+}
+
 func shouldEmitRuntimeStubELFSites(ctx *context) bool {
-	return shouldEmitRuntimeELFSites(ctx)
+	return shouldEmitRuntimeSites(ctx)
 }
 
 func shouldEmitRuntimeEntryELFSites(ctx *context) bool {
-	return shouldEmitRuntimeELFSites(ctx)
+	return shouldEmitRuntimeSites(ctx)
+}
+
+// siteSectionInfo names one metadata site section in both object formats.
+// Mach-O section names are capped at 16 characters, hence the short forms.
+type siteSectionInfo struct {
+	elf   string
+	machO string
+}
+
+var (
+	entrySiteSectionInfo  = siteSectionInfo{elf: "llgo_funcinfo_entry", machO: "__DATA,__llgo_fie"}
+	stubSiteSectionInfo   = siteSectionInfo{elf: "llgo_funcinfo_stubsite", machO: "__DATA,__llgo_stub"}
+	pcLineSiteSectionInfo = siteSectionInfo{elf: "llgo_pcline", machO: "__DATA,__llgo_pcl"}
+)
+
+func (s siteSectionInfo) push(machO bool, anchor string) string {
+	if machO {
+		return ".pushsection " + s.machO + ",regular,live_support"
+	}
+	return ".pushsection " + s.elf + ",\"ao\",@progbits," + anchor
+}
+
+// recordSymbol returns the extra label line each Mach-O record needs: the
+// lowercase-l linker-private symbol splits the section into one atom per
+// record, so -dead_strip can drop records individually, and the symbol itself
+// is discarded at link time. ELF needs nothing here.
+func (s siteSectionInfo) recordSymbol(machO bool, kind string) string {
+	if !machO {
+		return ""
+	}
+	return "l_llgo_" + kind + "_rec_${:uid}:\n"
+}
+
+func (s siteSectionInfo) retain(machO bool) string {
+	if machO {
+		return ".section " + s.machO + ",regular,live_support"
+	}
+	return ".section " + s.elf + ",\"aR\",@progbits"
+}
+
+// retainSymbol returns the label lines that pin the zero record under
+// -dead_strip on Mach-O; nothing references the zero record, so it must be a
+// no_dead_strip atom for the section (and its boundary symbols) to survive.
+func (s siteSectionInfo) retainSymbol(machO bool, kind string) string {
+	if !machO {
+		return ""
+	}
+	sym := "l_llgo_" + kind + "_zero"
+	return sym + ":\n.no_dead_strip " + sym + "\n"
+}
+
+// boundary returns the linker-synthesized section boundary symbols: ELF
+// __start_/__stop_ for C-identifier section names, ld64 section$start$/
+// section$end$ for Mach-O.
+func (s siteSectionInfo) boundary(machO bool) (start, end string) {
+	if machO {
+		base := strings.Replace(s.machO, ",", "$", 1)
+		// The \x01 prefix makes LLVM emit the name verbatim. Without it the
+		// Mach-O mangler prepends an underscore and the linker no longer
+		// recognizes the exact section$start$SEG$SECT boundary spelling.
+		return "\x01section$start$" + base, "\x01section$end$" + base
+	}
+	return "__start_" + s.elf, "__stop_" + s.elf
+}
+
+func siteAnchorLabel(machO bool, kind string) string {
+	if machO {
+		// Mach-O assembler-local labels use the plain "L" prefix.
+		return "Lllgo_" + kind + "_anchor_${:uid}"
+	}
+	return ".Lllgo_" + kind + "_anchor_${:uid}"
 }
 
 func emitFuncInfoEntrySites(ctx *context, pkg llssa.Package) {
@@ -634,12 +720,13 @@ func emitFuncInfoEntrySites(ctx *context, pkg llssa.Package) {
 		return
 	}
 	// This is LLGo's DCE-safe substitute for the function PC list that Go's
-	// linker has while building pclntab. The inline-asm fragment lives in an
-	// associated ELF section tied to the function body, so global DCE removes
-	// the entry record with the function instead of keeping dead code alive.
-	// Runtime still sorts these final PCs before building the Go-style
-	// findfunc bucket index, because LLVM IR generation does not know final
-	// linked text order.
+	// linker has while building pclntab. The inline-asm fragment lives in a
+	// section tied to the function body (SHF_LINK_ORDER on ELF; on Mach-O the
+	// record is removed with the function by IR-level global DCE), so dead
+	// functions do not leave stale entry records behind. Runtime still sorts
+	// these final PCs before building the Go-style findfunc bucket index,
+	// because LLVM IR generation does not know final linked text order.
+	machO := shouldEmitRuntimeMachOSites(ctx)
 	llvmCtx := mod.Context()
 	builder := llvmCtx.NewBuilder()
 	defer builder.Dispose()
@@ -669,10 +756,11 @@ func emitFuncInfoEntrySites(ctx *context, pkg llssa.Package) {
 		} else {
 			builder.SetInsertPointBefore(first)
 		}
-		anchor := ".Lllgo_funcinfo_entry_anchor_${:uid}"
+		anchor := siteAnchorLabel(machO, "funcinfo_entry")
 		instruction := anchor + ":\n" +
-			".pushsection llgo_funcinfo_entry,\"ao\",@progbits," + anchor + "\n" +
+			entrySiteSectionInfo.push(machO, anchor) + "\n" +
 			".p2align " + align + "\n" +
+			entrySiteSectionInfo.recordSymbol(machO, "funcinfo_entry") +
 			ptrDirective + " " + anchor + "\n" +
 			".quad " + uint64Hex(symbolID) + "\n" +
 			".popsection"
@@ -685,6 +773,7 @@ func emitFuncInfoStubSites(ctx *context, pkg llssa.Package) {
 	if !shouldEmitRuntimeStubELFSites(ctx) || pkg == nil || !ctx.prog.FuncInfoMetadataEnabled() {
 		return
 	}
+	machO := shouldEmitRuntimeMachOSites(ctx)
 	mod := pkg.Module()
 	llvmCtx := mod.Context()
 	builder := llvmCtx.NewBuilder()
@@ -715,10 +804,11 @@ func emitFuncInfoStubSites(ctx *context, pkg llssa.Package) {
 		} else {
 			builder.SetInsertPointBefore(first)
 		}
-		anchor := ".Lllgo_funcinfo_stubsite_anchor_${:uid}"
+		anchor := siteAnchorLabel(machO, "funcinfo_stubsite")
 		instruction := anchor + ":\n" +
-			".pushsection llgo_funcinfo_stubsite,\"ao\",@progbits," + anchor + "\n" +
+			stubSiteSectionInfo.push(machO, anchor) + "\n" +
 			".p2align " + align + "\n" +
+			stubSiteSectionInfo.recordSymbol(machO, "funcinfo_stubsite") +
 			ptrDirective + " " + anchor + "\n" +
 			".quad " + uint64Hex(funcInfoSymbolID(target)) + "\n" +
 			".popsection"
@@ -755,7 +845,10 @@ func uint64Hex(v uint64) string {
 	return string(buf[:])
 }
 
-func emitRuntimeFuncInfoELFSites(mod llvm.Module, pointerSize int, pcSite bool, entrySite bool, stubSite bool) {
+// emitRuntimeFuncInfoSites emits one zero record per used site section so the
+// section always exists and the linker-synthesized boundary symbols resolve
+// even when no package contributed records. Runtime skips zero records.
+func emitRuntimeFuncInfoSites(mod llvm.Module, pointerSize int, machO bool, pcSite bool, entrySite bool, stubSite bool) {
 	if !pcSite && !entrySite && !stubSite {
 		return
 	}
@@ -766,23 +859,21 @@ func emitRuntimeFuncInfoELFSites(mod llvm.Module, pointerSize int, pcSite bool, 
 		align = "2"
 	}
 	var asm strings.Builder
-	if pcSite {
-		asm.WriteString(".section llgo_pcline,\"aR\",@progbits\n")
+	writeZeroRecord := func(info siteSectionInfo, kind string) {
+		asm.WriteString(info.retain(machO) + "\n")
 		asm.WriteString(".p2align " + align + "\n")
+		asm.WriteString(info.retainSymbol(machO, kind))
 		asm.WriteString(ptrDirective + " 0\n")
 		asm.WriteString(".quad 0\n")
+	}
+	if pcSite {
+		writeZeroRecord(pcLineSiteSectionInfo, "pcline")
 	}
 	if entrySite {
-		asm.WriteString(".section llgo_funcinfo_entry,\"aR\",@progbits\n")
-		asm.WriteString(".p2align " + align + "\n")
-		asm.WriteString(ptrDirective + " 0\n")
-		asm.WriteString(".quad 0\n")
+		writeZeroRecord(entrySiteSectionInfo, "funcinfo_entry")
 	}
 	if stubSite {
-		asm.WriteString(".section llgo_funcinfo_stubsite,\"aR\",@progbits\n")
-		asm.WriteString(".p2align " + align + "\n")
-		asm.WriteString(ptrDirective + " 0\n")
-		asm.WriteString(".quad 0\n")
+		writeZeroRecord(stubSiteSectionInfo, "funcinfo_stubsite")
 	}
 	mod.SetInlineAsm(asm.String())
 }

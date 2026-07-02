@@ -1404,6 +1404,13 @@ func (p *context) emitPCLineLabel(b llssa.Builder, pos token.Pos) {
 	p.pcLineSeq++
 	id := pcLineID(p.fn.Name(), p.pcLineSeq)
 	label := pcLineLabelName(id)
+	if target.GOOS == "darwin" {
+		// Mach-O subsections-via-symbols treats every non-local symbol as an
+		// atom boundary; a visible label in the middle of a function body
+		// lets the linker split and reorder the function. The "L" prefix
+		// keeps the label assembler-local so the function stays one atom.
+		label = "L" + label
+	}
 	asmLabel := label + "_${:uid}"
 	ptrDirective := ".quad"
 	align := "3"
@@ -1411,10 +1418,22 @@ func (p *context) emitPCLineLabel(b llssa.Builder, pos token.Pos) {
 		ptrDirective = ".long"
 		align = "2"
 	}
+	// Keep section names in sync with internal/build/funcinfo_table.go
+	// (pcLineSiteSectionInfo). ELF ties the record to the function via
+	// SHF_LINK_ORDER (honored by --gc-sections); Mach-O uses a live_support
+	// section plus one linker-private atom symbol per record so -dead_strip
+	// keeps a record exactly when the function containing its label is live.
+	pushSection := ".pushsection llgo_pcline,\"ao\",@progbits," + asmQuoteSymbol(p.fn.Name())
+	recordSymbol := ""
+	if target.GOOS == "darwin" {
+		pushSection = ".pushsection __DATA,__llgo_pcl,regular,live_support"
+		recordSymbol = "l_llgo_pcline_rec_${:uid}:\n"
+	}
 	b.InlineAsm(
 		asmLabel + ":\n" +
-			".pushsection llgo_pcline,\"ao\",@progbits," + asmQuoteSymbol(p.fn.Name()) + "\n" +
+			pushSection + "\n" +
 			".p2align " + align + "\n" +
+			recordSymbol +
 			ptrDirective + " " + asmLabel + "\n" +
 			".quad " + uint64Hex(id) + "\n" +
 			".popsection",
@@ -1429,9 +1448,14 @@ func canEmitPCLineLabelsForTarget(target *llssa.Target) bool {
 	if target.Target != "" || target.GOARCH == "wasm" {
 		return false
 	}
-	// This path uses ELF SHF_LINK_ORDER section syntax. Darwin needs a Mach-O
-	// live_support section path, and other object formats need separate support.
-	return target.GOOS == "linux"
+	// ELF uses SHF_LINK_ORDER associated sections; Mach-O uses plain
+	// __DATA,__llgo_pcl sections (safe because LLGo's global DCE runs at the
+	// IR level). Other object formats need separate support.
+	switch target.GOOS {
+	case "linux", "darwin":
+		return true
+	}
+	return false
 }
 
 func pcLineID(symbol string, seq uint64) uint64 {
