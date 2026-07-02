@@ -17,7 +17,55 @@ type _func struct {
 }
 
 func Stack(buf []byte, all bool) int {
-	return 0
+	var pcs [64]uintptr
+	n := Callers(0, pcs[:])
+	out := make([]byte, 0, 1024)
+	out = append(out, "goroutine 1 [running]:\n"...)
+	frames := CallersFrames(pcs[:n])
+	for {
+		frame, more := frames.Next()
+		if frame.Function == "" {
+			frame.Function = unknownFunctionName(frame.PC)
+		}
+		out = append(out, frame.Function...)
+		out = append(out, "()\n\t"...)
+		if frame.File == "" {
+			out = append(out, "???"...)
+		} else {
+			out = append(out, frame.File...)
+		}
+		out = append(out, ':')
+		out = appendInt(out, frame.Line)
+		out = append(out, ' ')
+		out = append(out, "+0x0\n"...)
+		if !more {
+			break
+		}
+	}
+	if len(out) > len(buf) {
+		copy(buf, out[:len(buf)])
+		return len(buf)
+	}
+	copy(buf, out)
+	return len(out)
+}
+
+func appendInt(out []byte, v int) []byte {
+	if v == 0 {
+		return append(out, '0')
+	}
+	if v < 0 {
+		out = append(out, '-')
+		v = -v
+	}
+	var digits [20]byte
+	i := len(digits)
+	for v > 0 {
+		i--
+		digits[i] = byte('0' + v%10)
+		v /= 10
+	}
+	return append(out, digits[i:]...)
 }
 
 type traceError string

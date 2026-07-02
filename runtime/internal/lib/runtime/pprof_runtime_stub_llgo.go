@@ -2,7 +2,11 @@
 
 package runtime
 
-import llrt "github.com/goplus/llgo/runtime/internal/runtime"
+import (
+	"unsafe"
+
+	llrt "github.com/goplus/llgo/runtime/internal/runtime"
+)
 
 type StackRecord struct {
 	Stack []uintptr
@@ -84,6 +88,81 @@ func NumGoroutine() int {
 
 func SetCPUProfileRate(hz int) {}
 
+const funcForPCCacheSize = 1024
+
+type funcForPCCacheEntry struct {
+	pc uintptr
+	fn *Func
+}
+
+var funcForPCCache [funcForPCCacheSize]funcForPCCacheEntry
+var funcForPCLast funcForPCCacheEntry
+
 func FuncForPC(pc uintptr) *Func {
-	return nil
+	if fn := funcForPCLast.fn; fn != nil && funcForPCLast.pc == pc {
+		return fn
+	}
+	entry := (*funcForPCCacheEntry)(unsafe.Add(
+		unsafe.Pointer(&funcForPCCache[0]),
+		funcForPCCacheIndex(pc)*unsafe.Sizeof(funcForPCCacheEntry{}),
+	))
+	if fn := entry.fn; fn != nil && entry.pc == pc {
+		funcForPCLast = funcForPCCacheEntry{pc: pc, fn: fn}
+		return fn
+	}
+	return funcForPCSlow(pc)
+}
+
+func funcForPCSlow(pc uintptr) *Func {
+	if pc&3 != 0 {
+		if sym := frameSymbol(pc); sym.ok {
+			fn := newFuncForPC(pc, sym)
+			cacheFuncForPC(pc, fn)
+			return fn
+		}
+	}
+	if sym, ok := funcPCFrameForPC(pc); ok {
+		fn := newFuncForPC(pc, sym)
+		cacheFuncForPC(pc, fn)
+		return fn
+	}
+	sym := frameSymbol(pc)
+	fn := newFuncForPC(pc, sym)
+	cacheFuncForPC(pc, fn)
+	return fn
+}
+
+func newFuncForPC(pc uintptr, sym pcSymbol) *Func {
+	if !sym.ok && sym.function == "" {
+		return &Func{entry: pc, name: unknownFunctionName(pc), pc: pc}
+	}
+	name := sym.function
+	if name == "" {
+		name = unknownFunctionName(pc)
+	}
+	entry := sym.entry
+	if entry == 0 {
+		entry = pc
+	}
+	return &Func{
+		entry: entry,
+		name:  name,
+		pc:    pc,
+		file:  sym.file,
+		line:  sym.line,
+	}
+}
+
+func cacheFuncForPC(pc uintptr, fn *Func) {
+	entry := (*funcForPCCacheEntry)(unsafe.Add(
+		unsafe.Pointer(&funcForPCCache[0]),
+		funcForPCCacheIndex(pc)*unsafe.Sizeof(funcForPCCacheEntry{}),
+	))
+	entry.fn = fn
+	entry.pc = pc
+	funcForPCLast = funcForPCCacheEntry{pc: pc, fn: fn}
+}
+
+func funcForPCCacheIndex(pc uintptr) uintptr {
+	return (pc >> 4) & (funcForPCCacheSize - 1)
 }
