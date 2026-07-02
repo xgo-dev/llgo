@@ -1312,6 +1312,7 @@ func ChanOf(dir ChanDir, t Type) Type {
 	ch.Str_ = s
 	ch.Hash = fnv1(typ.Hash, 'c', byte(dir))
 	ch.Elem = typ
+	ch.PtrToThis_ = nil
 
 	ti, _ := lookupCache.LoadOrStore(ckey, toRType(&ch.Type))
 	return ti.(Type)
