@@ -46,6 +46,7 @@ var SizeFormat string
 var SizeLevel string
 var ForceRebuild bool
 var PrintCommands bool
+var PrintDebug bool
 var OptLevel optlevel.Level
 
 type ltoFlag struct {
@@ -139,6 +140,7 @@ func AddOptLevelFlags(fs *flag.FlagSet) {
 func AddBuildFlags(fs *flag.FlagSet) {
 	fs.BoolVar(&ForceRebuild, "a", false, "Force rebuilding of packages that are already up-to-date")
 	fs.BoolVar(&PrintCommands, "x", false, "Print the commands")
+	fs.BoolVar(&PrintDebug, "debug", false, "Print debug information")
 	AddOptLevelFlags(fs)
 	AddLTOFlag(fs)
 	AddGlobalDCEFlag(fs)
@@ -266,6 +268,7 @@ func UpdateConfig(conf *build.Config) error {
 	conf.CompilerHash = compilerhash.Value()
 	conf.Tags = Tags
 	conf.Verbose = Verbose
+	conf.PrintDebug = PrintDebug
 	conf.PrintCommands = PrintCommands
 	conf.OptLevel = OptLevel
 	conf.Target = Target

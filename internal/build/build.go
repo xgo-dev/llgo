@@ -143,6 +143,7 @@ type Config struct {
 	AbiMode       AbiMode
 	GenExpect     bool // only valid for ModeCmpTest
 	Verbose       bool
+	PrintDebug    bool
 	PrintCommands bool
 	GenLL         bool // generate pkg .ll files
 	CheckLLFiles  bool // check .ll files valid
@@ -281,7 +282,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 		cl.EnableExportRename(true)
 	}
 
-	verbose := conf.Verbose
+	verbose := conf.PrintDebug
 	patterns := args
 	tags := "llgo,math_big_pure_go,purego"
 	if conf.AbiMode == cabi.ModeAllFunc {
@@ -647,7 +648,7 @@ func (c *context) linker() *clang.Cmd {
 
 // shouldPrintCommands reports whether command tracing should be enabled.
 func (c *context) shouldPrintCommands(verbose bool) bool {
-	return c.buildConf.PrintCommands || c.buildConf.Verbose || verbose
+	return c.buildConf.PrintCommands || c.buildConf.PrintDebug || verbose
 }
 
 func (c *context) hasAltPkg(pkgPath string) bool {
