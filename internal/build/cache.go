@@ -25,12 +25,14 @@ import (
 	"strings"
 
 	"github.com/goplus/llgo/internal/env"
+	"github.com/goplus/llgo/internal/meta"
 )
 
 const (
 	cacheBuildDirName = "build"
 	cacheArchiveExt   = ".a"
 	cacheManifestExt  = ".manifest"
+	cacheMetaExt      = ".meta"
 )
 
 // cacheRootFunc can be overridden for testing
@@ -56,6 +58,7 @@ type cachePaths struct {
 	Dir      string // Directory containing cache files
 	Archive  string // Path to .a file
 	Manifest string // Path to .manifest file
+	Meta     string // Path to .meta file
 }
 
 // PackagePaths returns the cache paths for a package
@@ -66,6 +69,7 @@ func (cm *cacheManager) PackagePaths(targetTriple, pkgPath, fingerprint string) 
 		Dir:      dir,
 		Archive:  filepath.Join(dir, fingerprint+cacheArchiveExt),
 		Manifest: filepath.Join(dir, fingerprint+cacheManifestExt),
+		Meta:     filepath.Join(dir, fingerprint+cacheMetaExt),
 	}
 }
 
@@ -174,13 +178,53 @@ func readManifest(path string) (string, error) {
 	return string(content), nil
 }
 
+// writeMeta writes package summary metadata to a file atomically.
+func writeMeta(path string, pm *meta.PackageMeta) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create meta dir: %w", err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp meta: %w", err)
+	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			tmp.Close()
+			os.Remove(tmpName)
+		}
+	}()
+
+	if _, err := tmp.Write(pm.Bytes()); err != nil {
+		return fmt.Errorf("write meta: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close meta: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("publish meta: %w", err)
+	}
+
+	cleanup = false
+	return nil
+}
+
+// readMeta reads package summary metadata from a file.
+func readMeta(path string) (*meta.PackageMeta, error) {
+	return meta.ReadMeta(path)
+}
+
 // cacheExists checks if a valid cache entry exists
 func (cm *cacheManager) cacheExists(paths cachePaths) bool {
-	// Both archive and manifest must exist
+	// Archive, manifest, and valid package metadata must exist.
 	if _, err := os.Stat(paths.Archive); err != nil {
 		return false
 	}
 	if _, err := os.Stat(paths.Manifest); err != nil {
+		return false
+	}
+	if _, err := readMeta(paths.Meta); err != nil {
 		return false
 	}
 	return true

@@ -68,6 +68,7 @@ type runOptions struct {
 	filter      func(string) string
 	checkIR     bool
 	checkOutput bool
+	checkMeta   bool
 }
 
 // RunOption customizes directory-based test behavior.
@@ -98,6 +99,13 @@ func WithOutputCheck(enabled bool) RunOption {
 func WithIRCheck(enabled bool) RunOption {
 	return func(opts *runOptions) {
 		opts.checkIR = enabled
+	}
+}
+
+// WithMetaCheck enables or disables package metadata golden checks.
+func WithMetaCheck(enabled bool) RunOption {
+	return func(opts *runOptions) {
+		opts.checkMeta = enabled
 	}
 }
 
@@ -277,12 +285,26 @@ func testRunAndTestFrom(t *testing.T, pkgDir, relPkg, sel string, opts runOption
 		if opts.checkIR {
 			testFrom(t, pkgDir, sel)
 		}
+		if opts.checkMeta {
+			metaDirs, err := findMetaCheckDirs(pkgDir)
+			if err != nil {
+				t.Fatal("Find meta check dirs failed:", err)
+			}
+			conf, capturedMetas := withMetaCaptures(opts.conf, metaDirs)
+			output, err := runWithConf(relPkg, pkgDir, conf)
+			if err != nil {
+				t.Logf("raw output:\n%s", string(output))
+				t.Fatalf("run failed: %v\noutput: %s", err, string(output))
+			}
+			assertExpectedMetas(t, pkgDir, relPkg, capturedMetas)
+		}
 		return
 	}
 
 	var irSpec littest.Spec
 	conf := opts.conf
 	var capturedIR *string
+	var capturedMeta *string
 	var checkIR bool
 	if opts.checkIR {
 		irSpec, checkIR, err = readIRSpec(pkgDir)
@@ -290,8 +312,11 @@ func testRunAndTestFrom(t *testing.T, pkgDir, relPkg, sel string, opts runOption
 			t.Fatal("LoadSpec failed:", err)
 		}
 		if checkIR {
-			conf, capturedIR = withModuleCapture(opts.conf, pkgDir)
+			conf, capturedIR, capturedMeta = withModuleCapture(opts.conf, pkgDir)
 		}
+	}
+	if opts.checkMeta && capturedMeta == nil {
+		conf, capturedIR, capturedMeta = withModuleCapture(conf, pkgDir)
 	}
 
 	output, err := runWithConf(relPkg, pkgDir, conf)
@@ -301,6 +326,9 @@ func testRunAndTestFrom(t *testing.T, pkgDir, relPkg, sel string, opts runOption
 	}
 
 	assertExpectedOutput(t, pkgDir, expectedOutput, output, opts)
+	if opts.checkMeta {
+		assertExpectedMeta(t, pkgDir, relPkg, capturedMeta)
+	}
 	if !checkIR {
 		return
 	}
@@ -313,9 +341,59 @@ func testRunAndTestFrom(t *testing.T, pkgDir, relPkg, sel string, opts runOption
 	}
 }
 
+func assertExpectedMeta(t *testing.T, pkgDir, relPkg string, capturedMeta *string) {
+	t.Helper()
+	expectedMeta, hasMeta, err := readGolden(filepath.Join(pkgDir, "meta-expect.txt"))
+	if err != nil {
+		t.Fatal("ReadFile failed:", err)
+	}
+	if !hasMeta {
+		t.Fatal("missing meta-expect.txt")
+	}
+	if capturedMeta == nil {
+		t.Fatalf("metadata snapshot missing for %s", relPkg)
+	}
+	if test.Diff(t, filepath.Join(pkgDir, "meta-expect.txt.new"), []byte(*capturedMeta), expectedMeta) {
+		t.Fatal("metadata: unexpected result")
+	}
+}
+
+func assertExpectedMetas(t *testing.T, rootDir, relRoot string, capturedMetas map[string]*string) {
+	t.Helper()
+	if len(capturedMetas) == 0 {
+		t.Fatal("missing meta-expect.txt")
+	}
+	dirs := make([]string, 0, len(capturedMetas))
+	for dir := range capturedMetas {
+		dirs = append(dirs, dir)
+	}
+	slices.Sort(dirs)
+	for _, dir := range dirs {
+		relPkg := relRoot
+		if dir != rootDir {
+			rel, err := filepath.Rel(rootDir, dir)
+			if err != nil {
+				t.Fatal("Rel failed:", err)
+			}
+			relPkg = strings.TrimSuffix(relRoot, "/") + "/" + filepath.ToSlash(rel)
+		}
+		assertExpectedMeta(t, dir, relPkg, capturedMetas[dir])
+	}
+}
+
 func RunAndCapture(relPkg, pkgDir string) ([]byte, error) {
 	conf := build.NewDefaultConf(build.ModeRun)
 	return RunAndCaptureWithConf(relPkg, pkgDir, conf)
+}
+
+// CaptureMeta builds relPkg and returns the package metadata captured for pkgDir.
+func CaptureMeta(relPkg, pkgDir string) (string, error) {
+	conf, _, capturedMeta := withModuleCapture(build.NewDefaultConf(build.ModeRun), pkgDir)
+	output, err := runWithConf(relPkg, pkgDir, conf)
+	if err != nil {
+		return "", fmt.Errorf("%w\noutput: %s", err, string(output))
+	}
+	return *capturedMeta, nil
 }
 
 // RunAndCaptureWithConf runs llgo with a custom build config and captures output.
@@ -323,12 +401,13 @@ func RunAndCaptureWithConf(relPkg, pkgDir string, conf *build.Config) ([]byte, e
 	return runWithConf(relPkg, pkgDir, conf)
 }
 
-func withModuleCapture(conf *build.Config, pkgDir string) (*build.Config, *string) {
+func withModuleCapture(conf *build.Config, pkgDir string) (*build.Config, *string, *string) {
 	if conf == nil {
 		conf = build.NewDefaultConf(build.ModeRun)
 	}
 	localConf := *conf
 	var module string
+	var meta string
 	prevHook := localConf.ModuleHook
 	localConf.ModuleHook = func(pkg build.Package) {
 		if prevHook != nil {
@@ -338,9 +417,60 @@ func withModuleCapture(conf *build.Config, pkgDir string) (*build.Config, *strin
 			return filepath.Dir(file) == pkgDir
 		}) {
 			module = pkg.LPkg.String()
+			meta = pkg.Meta.String()
 		}
 	}
-	return &localConf, &module
+	return &localConf, &module, &meta
+}
+
+func findMetaCheckDirs(pkgDir string) ([]string, error) {
+	var dirs []string
+	err := filepath.WalkDir(pkgDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if _, err := os.Stat(filepath.Join(path, "meta-expect.txt")); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		dirs = append(dirs, filepath.Clean(path))
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	slices.Sort(dirs)
+	return dirs, nil
+}
+
+func withMetaCaptures(conf *build.Config, pkgDirs []string) (*build.Config, map[string]*string) {
+	if conf == nil {
+		conf = build.NewDefaultConf(build.ModeRun)
+	}
+	localConf := *conf
+	localConf.ForceRebuild = true
+	metas := make(map[string]*string, len(pkgDirs))
+	for _, pkgDir := range pkgDirs {
+		metas[filepath.Clean(pkgDir)] = new(string)
+	}
+	prevHook := localConf.ModuleHook
+	localConf.ModuleHook = func(pkg build.Package) {
+		if prevHook != nil {
+			prevHook(pkg)
+		}
+		for _, file := range pkg.Package.GoFiles {
+			if meta := metas[filepath.Clean(filepath.Dir(file))]; meta != nil {
+				*meta = pkg.Meta.String()
+				return
+			}
+		}
+	}
+	return &localConf, metas
 }
 
 func testBuildAndCheckSymbolsFrom(t *testing.T, pkgDir, relPkg, sel, symbolSpec string, opts runOptions) {

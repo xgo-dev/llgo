@@ -1310,9 +1310,15 @@ func (b Builder) checkReflect(fn Expr, args []Expr) (check ReflectMethodCheck) {
 			if v, ok := extractConstInt(args[1].impl); ok {
 				pkg.RecordReflectMethodByIndex(v)
 				reflectKind = ReflectMethodByIndex
+				if mb := pkg.MetaBuilder; mb != nil {
+					mb.MarkReflect(mb.Sym(b.Func.Name()))
+				}
 				break
 			}
 			reflectKind = ReflectMethodDynamic
+			if mb := pkg.MetaBuilder; mb != nil {
+				mb.MarkReflect(mb.Sym(b.Func.Name()))
+			}
 		}
 	case "reflect.Value.MethodByName":
 		if len(args) == 2 {
@@ -1320,9 +1326,15 @@ func (b Builder) checkReflect(fn Expr, args []Expr) (check ReflectMethodCheck) {
 				pkg.RecordReflectMethodByName(v)
 				reflectKind = ReflectMethodByName
 				check.Name = v
+				if mb := pkg.MetaBuilder; mb != nil {
+					mb.AddNamedMethodEdge(mb.Sym(b.Func.Name()), v)
+				}
 				break
 			}
 			reflectKind = ReflectMethodDynamic
+			if mb := pkg.MetaBuilder; mb != nil {
+				mb.MarkReflect(mb.Sym(b.Func.Name()))
+			}
 		}
 	}
 	pkg.NeedAbiInit |= reflectKind

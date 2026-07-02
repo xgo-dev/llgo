@@ -1,0 +1,26 @@
+[TypeChildren]
+*_llgo_github.com/goplus/llgo/cl/_testmeta/ifaceuse_basic.T:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/ifaceuse_basic.T
+
+[OrdinaryEdges]
+*_llgo_github.com/goplus/llgo/cl/_testmeta/ifaceuse_basic.T:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    _llgo_github.com/goplus/llgo/cl/_testmeta/ifaceuse_basic.T
+__llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequal0:
+    github.com/goplus/llgo/runtime/internal/runtime.memequal0
+__llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr:
+    github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+_llgo_github.com/goplus/llgo/cl/_testmeta/ifaceuse_basic.T:
+    *_llgo_github.com/goplus/llgo/cl/_testmeta/ifaceuse_basic.T
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequal0
+github.com/goplus/llgo/cl/_testmeta/ifaceuse_basic.init:
+    github.com/goplus/llgo/cl/_testmeta/ifaceuse_basic.init$guard
+github.com/goplus/llgo/cl/_testmeta/ifaceuse_basic.main:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/ifaceuse_basic.T
+    github.com/goplus/llgo/cl/_testmeta/ifaceuse_basic.sink
+    github.com/goplus/llgo/runtime/internal/runtime.AllocU
+
+[UseIface]
+github.com/goplus/llgo/cl/_testmeta/ifaceuse_basic.main:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/ifaceuse_basic.T
+

@@ -34,6 +34,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/tools/go/ssa"
 
@@ -42,12 +43,15 @@ import (
 	"github.com/goplus/llgo/internal/cabi"
 	"github.com/goplus/llgo/internal/clang"
 	"github.com/goplus/llgo/internal/crosscompile"
+	"github.com/goplus/llgo/internal/dcepass"
+	"github.com/goplus/llgo/internal/deadcode"
 	"github.com/goplus/llgo/internal/env"
 	"github.com/goplus/llgo/internal/firmware"
 	"github.com/goplus/llgo/internal/flash"
 	"github.com/goplus/llgo/internal/goembed"
 	"github.com/goplus/llgo/internal/header"
 	"github.com/goplus/llgo/internal/lto"
+	"github.com/goplus/llgo/internal/meta"
 	"github.com/goplus/llgo/internal/mockable"
 	"github.com/goplus/llgo/internal/monitor"
 	"github.com/goplus/llgo/internal/optlevel"
@@ -145,6 +149,7 @@ type Config struct {
 	Verbose       bool
 	PrintCommands bool
 	GenLL         bool // generate pkg .ll files
+	DCE           bool // enable experimental Go-like link-time DCE
 	CheckLLFiles  bool // check .ll files valid
 	CheckLinkArgs bool // check linkargs valid
 	ForceEspClang bool // force to use esp-clang
@@ -196,6 +201,7 @@ func NewDefaultConf(mode Mode) *Config {
 		Mode:      mode,
 		BuildMode: BuildModeExe,
 		AbiMode:   cabi.ModeAllFunc,
+		DCE:       true,
 	}
 	return conf
 }
@@ -250,6 +256,9 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	}
 	if conf.BuildMode == "" {
 		conf.BuildMode = BuildModeExe
+	}
+	if conf.BuildMode != BuildModeExe {
+		conf.DCE = false
 	}
 	if conf.SizeReport && conf.SizeFormat == "" {
 		conf.SizeFormat = "text"
@@ -1051,6 +1060,11 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 		methodByName:  methodByName,
 		abiSymbols:    linkedModuleGlobals(linkedOrder),
 	})
+	if ctx.buildConf.DCE {
+		if err := applyDCEOverrides(ctx, pkg, linkedOrder, entryPkg, needRuntime, verbose); err != nil {
+			return err
+		}
+	}
 	entryObjFile, err := exportObject(ctx, "entry_main", entryPkg.ExportFile, entryPkg.LPkg)
 	if err != nil {
 		return err
@@ -1104,6 +1118,77 @@ func linkedModuleGlobals(pkgs []Package) map[string]none {
 		}
 	}
 	return seen
+}
+
+func applyDCEOverrides(ctx *context, mainPkg *packages.Package, pkgs []Package, entryPkg Package, needRuntime bool, verbose bool) error {
+	metas := linkedPackageMetas(pkgs)
+	if len(metas) == 0 {
+		return nil
+	}
+	mergeStart := time.Now()
+	summary, err := meta.NewGlobalSummary(metas)
+	if err != nil {
+		return err
+	}
+	mergeDur := time.Since(mergeStart)
+
+	roots := dceEntryRootCandidates(mainPkg, needRuntime)
+	analyzeStart := time.Now()
+	liveSlots := deadcode.Analyze(summary, roots)
+	analyzeDur := time.Since(analyzeStart)
+
+	if len(liveSlots) == 0 {
+		return nil
+	}
+	if verbose {
+		liveCount := 0
+		for _, slots := range liveSlots {
+			liveCount += len(slots)
+		}
+		fmt.Fprintf(os.Stderr, "[dce] packages=%d roots=%s merge=%v analyze=%v live method slots=%d types=%d\n",
+			len(metas), strings.Join(roots, ","), mergeDur, analyzeDur, liveCount, len(liveSlots))
+		return dcepass.EmitStrongTypeOverridesDebug(entryPkg.LPkg.Module(), dceSourceModules(pkgs), liveSlots, os.Stderr)
+	}
+	return dcepass.EmitStrongTypeOverrides(entryPkg.LPkg.Module(), dceSourceModules(pkgs), liveSlots)
+}
+
+func linkedPackageMetas(pkgs []Package) []*meta.PackageMeta {
+	metas := make([]*meta.PackageMeta, 0, len(pkgs))
+	for _, pkg := range pkgs {
+		if pkg == nil || pkg.Meta == nil {
+			continue
+		}
+		metas = append(metas, pkg.Meta)
+	}
+	return metas
+}
+
+func dceSourceModules(pkgs []Package) []gllvm.Module {
+	mods := make([]gllvm.Module, 0, len(pkgs))
+	seen := make(map[gllvm.Module]bool)
+	for _, pkg := range pkgs {
+		if pkg == nil || pkg.LPkg == nil {
+			continue
+		}
+		mod := pkg.LPkg.Module()
+		if mod.IsNil() || seen[mod] {
+			continue
+		}
+		seen[mod] = true
+		mods = append(mods, mod)
+	}
+	return mods
+}
+
+func dceEntryRootCandidates(pkg *packages.Package, needRuntime bool) []string {
+	if pkg == nil || pkg.PkgPath == "" {
+		return nil
+	}
+	roots := []string{pkg.PkgPath + ".init", pkg.PkgPath + ".main"}
+	if needRuntime {
+		roots = append(roots, llssa.PkgRuntime+".init")
+	}
+	return roots
 }
 
 // isRuntimePkg reports whether the package path belongs to the llgo runtime tree.
@@ -1293,10 +1378,22 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 		return fmt.Errorf("load go:embed directives for %s failed: %w", pkgPath, err)
 	}
 
-	ret, externs, err := cl.NewPackageExWithEmbed(ctx.prog, ctx.patches, aPkg.rewriteVars, aPkg.SSA, syntax, embedMap)
+	var metaBuilder *meta.Builder
+	if !aPkg.CacheHit {
+		metaBuilder = meta.NewBuilder()
+	}
+	ret, externs, err := cl.NewPackageExWithEmbed(ctx.prog, ctx.patches, aPkg.rewriteVars, aPkg.SSA, syntax, embedMap, metaBuilder)
 	check(err)
 
 	aPkg.LPkg = ret
+	if metaBuilder != nil {
+		extractOrdinaryEdges(metaBuilder, ret.Module())
+		pm, err := metaBuilder.Build()
+		if err != nil {
+			return fmt.Errorf("build meta for %s: %w", pkgPath, err)
+		}
+		aPkg.Meta = pm
+	}
 	if hook := ctx.buildConf.ModuleHook; hook != nil {
 		hook(aPkg)
 	}
@@ -1602,6 +1699,7 @@ type aPackage struct {
 	LinkArgs    []string
 	ObjFiles    []string // object files: .o or .ll (output of compiler, input to archiver)
 	ArchiveFile string   // archive file: .a (output of archiver, used for linking)
+	Meta        *meta.PackageMeta
 	rewriteVars map[string]string
 
 	// Cache related fields

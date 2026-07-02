@@ -34,6 +34,7 @@ import (
 	"unsafe"
 
 	"github.com/goplus/gogen/packages"
+	"github.com/goplus/llgo/internal/meta"
 	rtabi "github.com/goplus/llgo/runtime/abi"
 	"github.com/xgo-dev/llvm"
 )
@@ -1190,6 +1191,7 @@ func TestIfaceMethodClosureCallIR(t *testing.T) {
 	recvMeth := types.NewFunc(0, pkgTypes, "Printf", recvSig)
 
 	pkg := prog.NewPackage("bar", "foo/bar")
+	pkg.MetaBuilder = meta.NewBuilder()
 	callerSig := types.NewSignatureType(nil, nil, nil,
 		types.NewTuple(types.NewVar(0, pkgTypes, "i", namedIface)),
 		types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int])), false)
@@ -1198,6 +1200,19 @@ func TestIfaceMethodClosureCallIR(t *testing.T) {
 	closure := b.Imethod(caller.Param(0), recvMeth)
 	ret := b.Call(closure, prog.Val(100), prog.Val(200))
 	b.Return(ret)
+
+	pm, err := pkg.MetaBuilder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+	gotMeta := pm.String()
+	if !strings.Contains(gotMeta, "_llgo_foo/bar.IFmt[0]") {
+		t.Fatalf("UseIfaceMethod should target named interface symbol, got:\n%s", gotMeta)
+	}
+	if strings.Contains(gotMeta, "_llgo_foo/bar.IFmt:\n    Printf ") {
+		t.Fatalf("UseIfaceMethod callsite should not record InterfaceInfo, got:\n%s", gotMeta)
+	}
 
 	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
 source_filename = "foo/bar"

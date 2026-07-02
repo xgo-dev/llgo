@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/goplus/llgo/internal/meta"
 )
 
 func TestSanitizePkgPath(t *testing.T) {
@@ -68,6 +70,11 @@ func TestCacheManager_PackagePaths(t *testing.T) {
 	expectedManifest := filepath.Join(expectedDir, "abc123.manifest")
 	if paths.Manifest != expectedManifest {
 		t.Errorf("Manifest = %q, want %q", paths.Manifest, expectedManifest)
+	}
+
+	expectedMeta := filepath.Join(expectedDir, "abc123.meta")
+	if paths.Meta != expectedMeta {
+		t.Errorf("Meta = %q, want %q", paths.Meta, expectedMeta)
 	}
 }
 
@@ -177,9 +184,34 @@ func TestCacheManager_CacheExists(t *testing.T) {
 	// Create manifest
 	os.WriteFile(paths.Manifest, []byte("manifest"), 0644)
 
+	// Still should not exist (meta missing)
+	if cm.cacheExists(paths) {
+		t.Error("cache should not exist without meta")
+	}
+
+	// Create invalid meta
+	os.WriteFile(paths.Meta, []byte("bad meta"), 0644)
+	if cm.cacheExists(paths) {
+		t.Error("cache should not exist with invalid meta")
+	}
+
+	// Create valid meta
+	writeTestMetaFile(t, paths.Meta)
+
 	// Now should exist
 	if !cm.cacheExists(paths) {
-		t.Error("cache should exist with both files")
+		t.Error("cache should exist with archive, manifest, and valid meta")
+	}
+}
+
+func writeTestMetaFile(t *testing.T, path string) {
+	t.Helper()
+	pm, err := meta.NewBuilder().Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if err := os.WriteFile(path, pm.Bytes(), 0o644); err != nil {
+		t.Fatalf("WriteFile %s: %v", path, err)
 	}
 }
 

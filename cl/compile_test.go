@@ -175,6 +175,14 @@ func TestRunAndTestFromTestgo(t *testing.T) {
 	cltest.RunAndTestFromDir(t, "", "./_testgo", nil)
 }
 
+func TestRunAndTestFromTestmeta(t *testing.T) {
+	cltest.RunAndTestFromDir(t, "", "./_testmeta", nil,
+		cltest.WithOutputCheck(false),
+		cltest.WithIRCheck(false),
+		cltest.WithMetaCheck(true),
+	)
+}
+
 func TestRunAndTestFromTestlto(t *testing.T) {
 	conf := build.NewDefaultConf(build.ModeRun)
 	conf.LTO = lto.Full

@@ -1,0 +1,86 @@
+[TypeChildren]
+*_llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac:
+    _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+*_llgo_github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.T:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.T
+*_llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo:
+    _llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo
+_llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo:
+    _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+
+[OrdinaryEdges]
+*_llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+*_llgo_github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.T:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    _llgo_github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.T
+*_llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo:
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    _llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo
+__llgo_stub.github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.(*T).M:
+    github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.(*T).M
+__llgo_stub.github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.(*T).N:
+    github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.(*T).N
+__llgo_stub.github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.T.M:
+    github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.T.M
+__llgo_stub.github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.T.N:
+    github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.T.N
+__llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.interequal:
+    github.com/goplus/llgo/runtime/internal/runtime.interequal
+__llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequal0:
+    github.com/goplus/llgo/runtime/internal/runtime.memequal0
+__llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequalptr:
+    github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+_llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac:
+    *_llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+_llgo_github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.T:
+    *_llgo_github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.T
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequal0
+_llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo:
+    *_llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo
+    __llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.interequal
+    _llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo$imethods
+_llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo$imethods:
+    _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.(*T).M:
+    github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.T.M
+    github.com/goplus/llgo/runtime/internal/runtime.AssertNilDeref
+    github.com/goplus/llgo/runtime/internal/runtime.PanicWrapNilPointer
+github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.(*T).N:
+    github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.T.N
+    github.com/goplus/llgo/runtime/internal/runtime.AssertNilDeref
+    github.com/goplus/llgo/runtime/internal/runtime.PanicWrapNilPointer
+github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.init:
+    github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.init$guard
+github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.main:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.T
+    _llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo
+    github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.use
+    github.com/goplus/llgo/runtime/internal/runtime.AllocU
+    github.com/goplus/llgo/runtime/internal/runtime.NewItab
+github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.use:
+    github.com/goplus/llgo/runtime/internal/runtime.IfacePtrData
+
+[UseIface]
+github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.main:
+    _llgo_github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.T
+
+[UseIfaceMethod]
+github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.use:
+    _llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo M _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+    _llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo N _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+
+[MethodInfo]
+*_llgo_github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.T:
+    0 M _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.(*T).M __llgo_stub.github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.(*T).M
+    1 N _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.(*T).N __llgo_stub.github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.(*T).N
+_llgo_github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.T:
+    0 M _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.(*T).M __llgo_stub.github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.T.M
+    1 N _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.(*T).N __llgo_stub.github.com/goplus/llgo/cl/_testmeta/interface_anyonmous.T.N
+
+[InterfaceInfo]
+_llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo:
+    M _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+    N _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+

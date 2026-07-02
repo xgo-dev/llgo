@@ -20,6 +20,7 @@ import (
 	"go/token"
 	"go/types"
 
+	"github.com/goplus/llgo/internal/meta"
 	"github.com/goplus/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
 )
@@ -65,7 +66,8 @@ func iMethodOf(rawIntf *types.Interface, name string) int {
 // Imethod returns closure of an interface method.
 func (b Builder) Imethod(intf Expr, method *types.Func) Expr {
 	prog := b.Prog
-	rawIntf := intf.raw.Type.Underlying().(*types.Interface)
+	intfType := types.Unalias(intf.raw.Type)
+	rawIntf := intfType.Underlying().(*types.Interface)
 	sig := method.Type().(*types.Signature)
 	if sig.Recv() == nil && sig.Params().Len() > 0 {
 		pt := types.Unalias(sig.Params().At(0).Type())
@@ -79,9 +81,24 @@ func (b Builder) Imethod(intf Expr, method *types.Func) Expr {
 		}
 	}
 	tclosure := prog.Type(sig, InGo)
+	i := iMethodOf(rawIntf, method.Name())
+	if mb := b.Pkg.MetaBuilder; mb != nil {
+		intfSymType := intfType
+		if _, ok := intfSymType.(*types.TypeParam); ok {
+			intfSymType = rawIntf
+		}
+		if named, ok := types.Unalias(intfSymType).(*types.Named); ok {
+			if targs := named.TypeArgs(); targs != nil && targs.Len() > 0 {
+				intfSymType = rawIntf
+			}
+		}
+		intfSymName := func() string { n, _ := prog.abi.TypeName(intfSymType); return n }()
+		intfSym := mb.Sym(intfSymName)
+		// Record which interface method is demanded. i is the method's index in rawIntf.
+		mb.AddEdge(mb.Sym(b.Func.Name()), intfSym, meta.EdgeUseIfaceMethod, uint32(i))
+	}
 	data := b.InlineCall(b.Pkg.rtFunc("IfacePtrData"), intf)
 	var fn Expr
-	i := iMethodOf(rawIntf, method.Name())
 	impl := intf.impl
 	itab := Expr{b.faceItab(impl), prog.VoidPtrPtr()}
 	pfn := b.Advance(itab, prog.IntVal(uint64(i+3), prog.Int()))
@@ -123,6 +140,7 @@ func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
 	}
 	prog := b.Prog
 	typ := x.Type
+	b.recordUseIface(typ)
 	tabi := b.abiType(typ.raw.Type)
 	if !directIfaceType(typ.raw.Type) {
 		vptr := b.AllocU(typ)
@@ -172,11 +190,21 @@ func (b Builder) MakeInterfaceFromPtr(tinter Type, ptr Expr) (ret Expr) {
 		return b.MakeInterface(tinter, b.Load(ptr))
 	}
 
+	b.recordUseIface(typ)
 	vptr := b.AllocU(typ)
 	dst := b.Convert(prog.VoidPtr(), vptr)
 	src := b.Convert(prog.VoidPtr(), ptr)
 	b.Call(b.Pkg.rtFunc("Typedmemmove"), tabi, dst, src)
 	return Expr{b.unsafeInterface(rawIntf, tabi, vptr.impl), tinter}
+}
+
+func (b Builder) recordUseIface(typ Type) {
+	if mb := b.Pkg.MetaBuilder; mb != nil {
+		if _, ok := types.Unalias(typ.raw.Type).Underlying().(*types.Interface); !ok {
+			typeName, _ := b.Prog.abi.TypeName(typ.raw.Type)
+			mb.AddEdge(mb.Sym(b.Func.Name()), mb.Sym(typeName), meta.EdgeUseIface, 0)
+		}
+	}
 }
 
 func (b Builder) valFromData(typ Type, data llvm.Value) Expr {
