@@ -114,3 +114,36 @@ func TestFnv64NonZero(t *testing.T) {
 		t.Fatal("fnv sanity")
 	}
 }
+
+func TestSymbolAddrBothFormats(t *testing.T) {
+	elfPath := buildELF(t, fixtureFns(), fixtureEntry, fixtureStub, 4096, 256)
+	if addr, err := symbolAddr(elfPath, "example.com/p.A"); err != nil || addr != 0x10000 {
+		t.Fatalf("elf symbolAddr = %#x, %v", addr, err)
+	}
+	if _, err := symbolAddr(elfPath, "no.such.symbol"); err == nil {
+		t.Fatal("expected missing-symbol error on elf")
+	}
+	machoPath := buildMachO(t, rec(0, 0), rec(0, 0),
+		[]elfFn{{name: "example.com/p.M", size: 0x10}})
+	if addr, err := symbolAddr(machoPath, "example.com/p.M"); err != nil || addr == 0 {
+		t.Fatalf("macho symbolAddr = %#x, %v", addr, err)
+	}
+	if _, err := symbolAddr(machoPath, "no.such.symbol"); err == nil {
+		t.Fatal("expected missing-symbol error on macho")
+	}
+}
+
+func TestDecodePtrVal(t *testing.T) {
+	elf := &binaryInfo{format: "elf"}
+	if got := decodePtrVal(elf, 0x1234); got != 0x1234 {
+		t.Fatalf("elf passthrough %#x", got)
+	}
+	macho := &binaryInfo{format: "macho", imageBase: 0x100000000}
+	chained := (uint64(5) << 51) | 0x100000abc
+	if got := decodePtrVal(macho, chained); got != 0x100000abc {
+		t.Fatalf("chained decode %#x", got)
+	}
+	if got := decodePtrVal(macho, 0x100000abc); got != 0x100000abc {
+		t.Fatalf("plain macho %#x", got)
+	}
+}

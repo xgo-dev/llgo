@@ -987,7 +987,7 @@ _llgo_0:
   ret i64 %2
 }
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
 }
 
@@ -1053,7 +1053,7 @@ _llgo_0:
 ; Function Attrs: null_pointer_is_valid
 declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64) #0
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `, wrapRef, wrapRef)
 	assertPkg(t, pkg, expected)
 }
@@ -1222,7 +1222,7 @@ _llgo_0:
   ret i64 %4
 }
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
 }
 
@@ -1279,7 +1279,7 @@ _llgo_0:
 ; Function Attrs: null_pointer_is_valid
 declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64) #0
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
 }
 
@@ -1366,7 +1366,7 @@ _llgo_0:
 ; Function Attrs: null_pointer_is_valid
 declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.IfacePtrData"(%"github.com/goplus/llgo/runtime/internal/runtime.iface") #0
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
 }
 
@@ -1871,7 +1871,7 @@ _llgo_0:
   ret i1 true
 }
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
 }
 
@@ -1928,7 +1928,7 @@ source_filename = "foo/bar"
 ; Function Attrs: null_pointer_is_valid
 declare void @fn(i64) #0
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
 }
 
@@ -1951,7 +1951,7 @@ _llgo_0:
   ret i64 1
 }
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
 }
 
@@ -1974,7 +1974,7 @@ _llgo_0:
   ret i64 %0
 }
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
 }
 
@@ -2011,7 +2011,7 @@ _llgo_0:
   ret void
 }
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
 }
 
@@ -2041,7 +2041,7 @@ _llgo_0:
   ret { i64, double } %1
 }
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
 }
 
@@ -2060,7 +2060,7 @@ _llgo_0:
   br label %_llgo_0
 }
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
 }
 
@@ -2097,7 +2097,7 @@ _llgo_2:                                          ; preds = %_llgo_0
   ret i64 0
 }
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
 }
 
@@ -2138,7 +2138,7 @@ _llgo_0:
   ret i64 %2
 }
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
 }
 
@@ -2169,7 +2169,7 @@ _llgo_0:
   ret i64 %2
 }
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
 }
 
@@ -2228,7 +2228,7 @@ _llgo_0:
   ret i64 %6
 }
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
 }
 
@@ -2386,7 +2386,7 @@ _llgo_0:
 ; Function Attrs: returns_twice
 declare i32 @setjmp(ptr) #1
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 attributes #1 = { returns_twice }
 `)
 }

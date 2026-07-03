@@ -27,4 +27,4 @@ func main() {
 	println("main")
 }
 
-// CHECK: attributes #0 = { null_pointer_is_valid }
+// CHECK: attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }

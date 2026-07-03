@@ -385,7 +385,7 @@ _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
   ret void
 }
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
 }
 
@@ -420,7 +420,7 @@ _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
   ret void
 }
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
 }
 
@@ -461,6 +461,6 @@ _llgo_0:
   ret i8 %1
 }
 
-attributes #0 = { null_pointer_is_valid }
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
 }

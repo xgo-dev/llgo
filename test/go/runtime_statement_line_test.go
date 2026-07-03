@@ -110,13 +110,17 @@ func (indirectCallerImpl) call() {
 
 //go:noinline
 func interfaceMiddle() {
-	checkCallerLine("interface", 2, INTERFACE_CALL_LINE)
+	// Go ground truth: 0=checkCallerLine, 1=interfaceMiddle, 2=the method
+	// frame, 3=the interface call site (verified against gc).
+	checkCallerLine("interface", 3, INTERFACE_CALL_LINE)
 }
 
 //go:noinline
 func checkClosureIndirectCaller() {
 	f := closureLayer(closureLayer(func() {
-		checkCallerLine("closure", 3, CLOSURE_CALL_LINE)
+		// Go ground truth: 0=checkCallerLine, 1=the anonymous function,
+		// 2..3=the two closureLayer trampolines, 4=the call site.
+		checkCallerLine("closure", 4, CLOSURE_CALL_LINE)
 	}))
 	f() // CLOSURE_CALL_MARK
 }

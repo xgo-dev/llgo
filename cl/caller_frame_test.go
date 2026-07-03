@@ -481,6 +481,9 @@ func TestRuntimeFrameNameNormalization(t *testing.T) {
 }
 
 func TestCompileRuntimeCallerFrameInstrumentation(t *testing.T) {
+	old := emitShadowStackInstrumentation
+	emitShadowStackInstrumentation = true
+	defer func() { emitShadowStackInstrumentation = old }()
 	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
 import "runtime/debug"
 
@@ -719,6 +722,9 @@ func top() {
 }
 
 func TestCompileRuntimeCallerFrameUsesGoNameForLinkname(t *testing.T) {
+	old := emitShadowStackInstrumentation
+	emitShadowStackInstrumentation = true
+	defer func() { emitShadowStackInstrumentation = old }()
 	ssapkg, files := buildCallerFrameSSAPackage(t, "command-line-arguments", `package main
 import "runtime"
 
@@ -797,6 +803,9 @@ func f() { _ = runtime.FuncForPC(0) }
 }
 
 func TestCompileRuntimeCallerLocationOnlyForRuntimePaths(t *testing.T) {
+	old := emitShadowStackInstrumentation
+	emitShadowStackInstrumentation = true
+	defer func() { emitShadowStackInstrumentation = old }()
 	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
 import "runtime"
 
