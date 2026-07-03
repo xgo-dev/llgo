@@ -950,7 +950,10 @@ func collectRuntimeCallerFunctions(pkg *ssa.Package) (funcs, trackable map[*ssa.
 		}
 		funcs[fn] = true
 		for _, anon := range fn.AnonFuncs {
-			add(anon, false)
+			// Anonymous functions inherit trackability: one that reaches
+			// runtime.Caller needs its own frame (noinline + no tail calls)
+			// or physical unwinding loses it.
+			add(anon, track)
 		}
 		return true
 	}
@@ -966,7 +969,10 @@ func collectRuntimeCallerFunctions(pkg *ssa.Package) (funcs, trackable map[*ssa.
 			}
 			methods := pkg.Prog.MethodSets.MethodSet(typ)
 			for i := 0; i < methods.Len(); i++ {
-				add(pkg.Prog.MethodValue(methods.At(i)), false)
+				// Methods are as trackable as package-level functions: one
+				// that (transitively) calls runtime.Caller needs frames and
+				// pcline labels of its own.
+				add(pkg.Prog.MethodValue(methods.At(i)), true)
 			}
 		}
 	}
@@ -1337,7 +1343,18 @@ func (p *context) runtimeCallerFrameName() string {
 	return ""
 }
 
+// emitShadowStackInstrumentation gates the legacy shadow-stack calls
+// (PushCallerLocationFrame / RecordCallerLocation / RecordPanicLocation).
+// The FP-chain unwinder supersedes them: physical pcs resolve through the
+// prebuilt ftab and pcline labels, so tracked functions keep only noinline,
+// no-tail-call and the label records. The emitters stay for one release as
+// an escape hatch (LLGO_SHADOW_STACK=1).
+var emitShadowStackInstrumentation = os.Getenv("LLGO_SHADOW_STACK") == "1"
+
 func (p *context) pushCallerLocationFrame(b llssa.Builder, fn *ssa.Function) {
+	if !emitShadowStackInstrumentation {
+		return
+	}
 	if fn == nil {
 		return
 	}
@@ -1361,7 +1378,7 @@ func (p *context) recordPanicLocation(b llssa.Builder, pos token.Pos) {
 }
 
 func (p *context) recordRuntimeLocation(b llssa.Builder, pos token.Pos, fn string) {
-	if !p.shouldTrackCallerFrames() {
+	if !emitShadowStackInstrumentation || !p.shouldTrackCallerFrames() {
 		return
 	}
 	position := p.fset.Position(pos)
@@ -1402,6 +1419,9 @@ func (p *context) emitPCLineLabel(b llssa.Builder, pos token.Pos) {
 		return
 	}
 	p.pcLineSeq++
+	if os.Getenv("LLGO_DBG_PCLINE") != "" {
+		fmt.Fprintf(os.Stderr, "PCLINE %s %s:%d\n", p.fn.Name(), position.Filename, position.Line)
+	}
 	id := pcLineID(p.fn.Name(), p.pcLineSeq)
 	label := pcLineLabelName(id)
 	if target.GOOS == "darwin" {

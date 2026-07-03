@@ -1,5 +1,4 @@
 #if defined(__linux__)
-#define UNW_LOCAL_ONLY
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -8,7 +7,7 @@
 
 #include <dlfcn.h>
 #include <errno.h>
-#include <libunwind.h>
+#include <stdint.h>
 
 void *llgo_address() {
     return __builtin_return_address(0);
@@ -29,31 +28,36 @@ void *llgo_symbol(char *name) {
 }
 
 void llgo_stacktrace(int skip, void *ctx, int (*fn)(void *ctx, void *pc, void *offset, void *sp, char *name)) {
+    /* Frame-pointer chain walk. LLGo compiles every Go function with
+     * "frame-pointer"="non-leaf", so [fp] is the previous frame pointer and
+     * [fp+1] the return address on both arm64 and x86-64. This replaces the
+     * libunwind cursor: no unwind tables, no -lunwind, and it keeps working
+     * through any frame that maintains the chain (C code compiled with
+     * frame pointers included). The walk stops at the first frame that
+     * breaks chain discipline. */
     int saved_errno = errno;
-    unw_cursor_t cursor;
-    unw_context_t context;
-    unw_word_t offset, pc, sp;
-    char fname[256];
-    unw_getcontext(&context);
-    unw_init_local(&cursor, &context);
+    uintptr_t fp = (uintptr_t)__builtin_frame_address(0);
     int depth = 0;
-    while (unw_step(&cursor) > 0) {
-        if (depth < skip) {
-            depth++;
-            continue;
-        }
-        if (unw_get_reg(&cursor, UNW_REG_IP, &pc) == 0) {
-            fname[0] = 0;
-            offset = 0;
-            if (unw_get_proc_name(&cursor, fname, sizeof(fname), &offset) == 0) {
-                fname[sizeof(fname) - 1] = 0;
+    while (fp) {
+        uintptr_t prev = *(uintptr_t *)fp;
+        uintptr_t pc = *((uintptr_t *)fp + 1);
+        if (pc < 4096)
+            break;
+        if (depth >= skip) {
+            Dl_info info;
+            const char *name = "";
+            uintptr_t offset = 0;
+            if (dladdr((void *)pc, &info) && info.dli_sname) {
+                name = info.dli_sname;
+                offset = pc - (uintptr_t)info.dli_saddr;
             }
-            unw_get_reg(&cursor, UNW_REG_SP, &sp);
-            if (fn(ctx, (void*)pc, (void*)offset, (void*)sp, fname) == 0) {
-                errno = saved_errno;
-                return;
-            }
+            if (fn(ctx, (void *)pc, (void *)offset, (void *)fp, (char *)name) == 0)
+                break;
         }
+        depth++;
+        if (prev <= fp || prev - fp > (uintptr_t)1 << 20 || (prev & (sizeof(uintptr_t) - 1)))
+            break;
+        fp = prev;
     }
     errno = saved_errno;
 }

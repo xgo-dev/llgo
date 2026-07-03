@@ -258,6 +258,14 @@ func (p Package) NewFuncEx(name string, sig *types.Signature, bg Background, has
 	fn := llvm.AddFunction(p.mod, name, t.ll)
 	if bg == InGo {
 		fn.AddFunctionAttr(p.nullPointerIsValidAttr)
+		// Keep frame pointers so the runtime can walk real stacks (FP chain)
+		// for Callers/panic tracebacks instead of shadow-stack bookkeeping.
+		// Only where that unwinder exists: on embedded targets the attribute
+		// is pure cost, and the changed stack layout can retain stale slots
+		// under the conservative GC (observed on ESP32-C3).
+		if p.Prog.NeedsFramePointer() {
+			fn.AddFunctionAttr(p.framePointerAttr)
+		}
 	}
 	if instantiated {
 		fn.SetLinkage(llvm.LinkOnceAnyLinkage)

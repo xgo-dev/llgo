@@ -124,7 +124,11 @@ type frameSymbolCacheEntry struct {
 	name   string
 }
 
-const frameSymbolCacheSize = 128
+// Sized for whole-stack re-walks: CallersFrames over a deep stack touches
+// one entry per distinct return pc, and a 128-entry table thrashed on
+// 32-frame stacks (adjacent return pcs share high bits, and repeated walks
+// paid a pcline search per frame per walk).
+const frameSymbolCacheSize = 4096
 
 var frameSymbolCache [frameSymbolCacheSize]frameSymbolCacheEntry
 
@@ -1464,6 +1468,10 @@ func init() {
 		lastStr := funcInfoCString(uint16(runtimeFuncInfoStringCount - 1))
 		touch(unsafe.Pointer(runtimeFuncInfoStrings), last+uintptr(cStringLen(lastStr))+1)
 	}
+	// The pcline table is on the Caller/CallersFrames path; building it
+	// here keeps the first user lookup at steady-state cost (the build cost
+	// scales with call-site count and showed up as a 200µs first Caller).
+	initRuntimePCLineFrames()
 	// One synthetic lookup warms the code paths themselves (allocator size
 	// classes, lookup caches), not just the data pages.
 	if prebuiltFrameCount() > 0 {
@@ -1580,6 +1588,24 @@ func pcSymbolForFuncInfoIndex(pc, entry uintptr, funcIndex uint32) (pcSymbol, bo
 		startLine: line,
 		ok:        true,
 	}, true
+}
+
+// refinePCSymbolLine upgrades a function-record symbol to statement
+// granularity when a same-function pcline record covers pc, or the call
+// instruction at pc-1 for return addresses (statement labels can sit
+// exactly on a return address). Cross-function records are rejected by
+// pcLineFrameForPC's entry check, so exact-entry queries keep their
+// declaration line. This is the single place the pc/pc-1 statement rule
+// lives; FuncForPC and CallersFrames must agree on it.
+func refinePCSymbolLine(sym pcSymbol, pc uintptr) pcSymbol {
+	if lineSym, ok := pcLineFrameForPC(pc, sym.entry); ok {
+		return mergePCLineSymbol(sym, lineSym)
+	}
+	if lineSym, ok := pcLineFrameForPC(pc-1, sym.entry); ok {
+		lineSym.pc = pc
+		return mergePCLineSymbol(sym, lineSym)
+	}
+	return sym
 }
 
 func initRuntimePCLineFrames() {
@@ -1968,8 +1994,55 @@ func mergePCLineSymbol(base, line pcSymbol) pcSymbol {
 	return line
 }
 
+// prebuiltTextContains reports whether pc falls inside the text range the
+// prebuilt table covers (first entry .. end-of-text sentinel). When the
+// link-phase rewrite was skipped (e.g. blob overflow) the first-use frame
+// table provides the bounds instead — the pc-1 return-address convention
+// and the walk bound must not silently turn off with the fast table, or
+// frames get attributed to the next statement (a return address equals the
+// following anchor exactly).
+func prebuiltTextContains(pc uintptr) bool {
+	if n := len(runtimePrebuiltFtab); n > 0 {
+		return pc >= runtimePrebuiltBase && pc-runtimePrebuiltBase < uintptr(runtimePrebuiltFtab[n-1].entryOff)
+	}
+	if frames := runtimeFuncPCFrames; len(frames) > 0 {
+		const lastFuncSlack = 1 << 20
+		return pc >= frames[0].entry && pc < frames[len(frames)-1].entry+lastFuncSlack
+	}
+	return false
+}
+
+// frameSymbolResultCache memoizes full symbolization results per pc. Deep
+// CallersFrames walks re-symbolize the same return addresses on every walk,
+// and a miss below costs a dladdr; entries are immutable heap nodes so the
+// benign-racy word-sized store never tears.
+type frameSymbolResult struct {
+	pc  uintptr
+	sym pcSymbol
+}
+
+var frameSymbolResultCache [4096]*frameSymbolResult
+
 func frameSymbol(pc uintptr) pcSymbol {
-	if pc&3 != 0 {
+	if pc > 4096 {
+		i := (pc >> 2) & uintptr(len(frameSymbolResultCache)-1)
+		if e := frameSymbolResultCache[i]; e != nil && e.pc == pc {
+			return e.sym
+		}
+		sym := frameSymbolUncached(pc)
+		frameSymbolResultCache[i] = &frameSymbolResult{pc: pc, sym: sym}
+		return sym
+	}
+	return frameSymbolUncached(pc)
+}
+
+func frameSymbolUncached(pc uintptr) pcSymbol {
+	if pc&3 != 0 && !prebuiltTextContains(pc+1) {
+		// Unaligned pcs outside the text range are shadow-stack synthetic
+		// markers. Text-range pcs — return addresses minus one, and on
+		// amd64 any instruction pc — flow through the normal lookups:
+		// pcline nearest-below is byte-exact, no alignment games (rounding
+		// by instruction size was an arm64-only assumption).
 		if frame, ok := rtdebug.FrameForPC(pc); ok {
 			return pcSymbol{
 				pc:        pc,
@@ -2003,6 +2076,15 @@ func frameSymbol(pc uintptr) pcSymbol {
 	if lineSym, ok := pcLineFrameForExactPC(pc - 1); ok {
 		lineSym.pc = pc
 		return lineSym
+	}
+	// Resolve through the prebuilt table before touching the dynamic
+	// loader: frames in packages without pcline records (the runtime
+	// itself) otherwise cost a dladdr each on the first full-stack walk.
+	if runtimeFuncPCFramesBuilt() {
+		if funcSym, ok := funcPCFrameForPC(pc); ok {
+			funcSym.pc = pc
+			return refinePCSymbolLine(funcSym, pc)
+		}
 	}
 	sym := addrInfoSymbol(pc)
 	if lineSym, ok := pcLineFrameForPC(pc, sym.entry); ok {
@@ -2051,7 +2133,18 @@ func (ci *Frames) Next() (frame Frame, more bool) {
 		} else {
 			pc, ci.callers = ci.callers[0], ci.callers[1:]
 		}
-		sym := frameSymbol(pc)
+		// Physical pcs are return addresses; attribute them to the call
+		// instruction (Go's pc-1 convention). Statement labels can land
+		// exactly on a return address — the next statement's marker sits
+		// right after the call — so a raw-pc nearest-below lookup would
+		// report the following line. Synthetic shadow-stack pcs live
+		// outside the text range and keep raw-pc semantics.
+		lookupPC := pc
+		if prebuiltTextContains(pc) {
+			lookupPC = pc - 1
+		}
+		sym := frameSymbol(lookupPC)
+		sym.pc = pc
 		if !sym.ok {
 			ci.frames = append(ci.frames, Frame{
 				PC:        pc,

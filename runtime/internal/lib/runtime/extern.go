@@ -9,7 +9,23 @@ import (
 	rtdebug "github.com/goplus/llgo/runtime/internal/runtime"
 )
 
+//go:noinline
 func Caller(skip int) (pc uintptr, file string, line int, ok bool) {
+	if fpUnwindAvailable() {
+		var pcs [1]uintptr
+		if fpCallers(skip+1, pcs[:]) >= 1 {
+			// pcs hold return addresses; attribute to the call instruction.
+			sym := frameSymbol(pcs[0] - 1)
+			file, line = sym.file, sym.line
+			if file == "" {
+				file = "???"
+			}
+			if line == 0 {
+				line = 1
+			}
+			return pcs[0], file, line, true
+		}
+	}
 	if frame, ok := rtdebug.Caller(skip); ok {
 		file = frame.File
 		line = frame.Line
@@ -36,7 +52,13 @@ func Caller(skip int) (pc uintptr, file string, line int, ok bool) {
 	return pcs[0], file, line, true
 }
 
+//go:noinline
 func Callers(skip int, pc []uintptr) int {
+	if fpUnwindAvailable() {
+		if n := fpCallers(skip, pc); n > 0 {
+			return n
+		}
+	}
 	if n := rtdebug.Callers(skip, pc); n > 0 {
 		return n
 	}

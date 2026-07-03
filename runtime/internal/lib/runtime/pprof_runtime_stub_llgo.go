@@ -127,6 +127,11 @@ func funcForPCSlow(pc uintptr) *Func {
 				return fn
 			}
 			if sym, ok := pcSymbolForFuncInfoIndex(pc, pc, prebuiltFrame(idx).funcIndex); ok {
+				// amd64 entries are byte-dense: a ret-1 style query can
+				// coincide with another symbol's entry; statement records
+				// win via the shared refinement rule (entry queries are
+				// unaffected — sites never precede their function's entry).
+				sym = refinePCSymbolLine(sym, pc)
 				fn := newFuncForPC(pc, sym)
 				prebuiltFuncCacheStore(idx, unsafe.Pointer(fn))
 				cacheFuncForPC(pc, fn)
@@ -180,6 +185,9 @@ func funcForPCSlow(pc uintptr) *Func {
 		}
 	}
 	if sym, ok := funcPCFrameForPC(pc); ok {
+		// Mid-function pcs deserve statement lines, not the declaration
+		// line (amd64 return addresses can be 4-aligned and land here).
+		sym = refinePCSymbolLine(sym, pc)
 		fn := newFuncForPC(pc, sym)
 		cacheFuncForPC(pc, fn)
 		return fn

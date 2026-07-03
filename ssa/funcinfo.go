@@ -105,3 +105,20 @@ func (p Package) EmitPCLineInfo(id uint64, symbol, file string, line, column int
 		}),
 	)
 }
+
+// NeedsFramePointer reports whether functions should keep the frame-pointer
+// chain: only on OS targets where the runtime's FP unwinder runs.
+func (p Program) NeedsFramePointer() bool {
+	target := p.Target()
+	if target == nil {
+		return true
+	}
+	if target.Target != "" || target.GOARCH == "wasm" {
+		return false
+	}
+	switch target.GOOS {
+	case "linux", "darwin", "":
+		return true
+	}
+	return false
+}
