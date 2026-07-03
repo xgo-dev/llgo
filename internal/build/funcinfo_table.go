@@ -46,6 +46,7 @@ const (
 	pcLineCountSymbol               = "__llgo_pcline_count"
 	pcSiteStartPtrSymbol            = "__llgo_pcsite_start"
 	pcSiteEndPtrSymbol              = "__llgo_pcsite_end"
+	fpChainSymbol                   = "__llgo_fp_chain"
 	funcInfoDataSymbol              = "__llgo_funcinfo_table$data"
 	pcLineDataSymbol                = "__llgo_pcline_table$data"
 	funcInfoStringsDataSymbol       = "__llgo_funcinfo_strings$data"
@@ -349,6 +350,15 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	stubCount := llvm.AddGlobal(mod, countType, funcInfoStubCountSymbol)
 	pcLineCount := llvm.AddGlobal(mod, countType, pcLineCountSymbol)
 	hashMask := llvm.AddGlobal(mod, countType, funcInfoHashMaskSymbol)
+	// One byte per binary telling the runtime whether Go functions were
+	// compiled with the frame-pointer attribute — the pairing signal for
+	// the physical unwinder (runtime fpUnwindAvailable).
+	fpChain := llvm.AddGlobal(mod, i8Type, fpChainSymbol)
+	fpChainVal := uint64(0)
+	if ctx.prog.NeedsFramePointer() {
+		fpChainVal = 1
+	}
+	fpChain.SetInitializer(llvm.ConstInt(i8Type, fpChainVal, false))
 	if len(records) == 0 && len(pcLines) == 0 {
 		tablePtr.SetInitializer(llvm.ConstPointerNull(tablePtr.GlobalValueType()))
 		pcLinePtr.SetInitializer(llvm.ConstPointerNull(pcLinePtr.GlobalValueType()))

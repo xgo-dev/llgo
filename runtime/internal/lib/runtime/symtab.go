@@ -2021,10 +2021,16 @@ type frameSymbolResult struct {
 	sym pcSymbol
 }
 
-var frameSymbolResultCache [4096]*frameSymbolResult
+const frameSymbolResultCacheSize = 4096
+
+var frameSymbolResultCache [frameSymbolResultCacheSize]*frameSymbolResult
+
+// minLegalPC: nothing below the zero page can be code. Values under it are
+// null-ish slots or shadow-stack synthetic markers, never return addresses.
+const minLegalPC = 4096
 
 func frameSymbol(pc uintptr) pcSymbol {
-	if pc > 4096 {
+	if pc > minLegalPC {
 		i := (pc >> 2) & uintptr(len(frameSymbolResultCache)-1)
 		if e := frameSymbolResultCache[i]; e != nil && e.pc == pc {
 			return e.sym

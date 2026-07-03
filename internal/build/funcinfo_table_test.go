@@ -596,9 +596,30 @@ func TestFuncInfoTableEmptyEncodedInitializers(t *testing.T) {
 		"@__llgo_funcinfo_table = global ptr null",
 		"@__llgo_pcline_table = global ptr null",
 		"@__llgo_funcinfo_count = global i64 0",
+		"@__llgo_fp_chain = global i8 1",
 	} {
 		if !strings.Contains(ir, want) {
 			t.Fatalf("missing %q in:\n%s", want, ir)
 		}
+	}
+}
+
+// Targets without the frame-pointer attribute must declare the chain
+// broken so the runtime never attempts a physical walk there.
+func TestFuncInfoTableFPChainOff(t *testing.T) {
+	prog := llssa.NewProgram(&llssa.Target{GOOS: "windows", GOARCH: "amd64"})
+	prog.EnableFuncInfoMetadata(true)
+	src := prog.NewPackage("example.com/p", "example.com/p")
+	ctx := &context{
+		prog: prog,
+		buildConf: &Config{
+			BuildMode: BuildModeExe,
+			Goos:      "windows",
+			Goarch:    "amd64",
+		},
+	}
+	emitFuncInfoTable(ctx, src, nil, nil, nil)
+	if ir := src.String(); !strings.Contains(ir, "@__llgo_fp_chain = global i8 0") {
+		t.Fatalf("missing fp_chain=0 in:\n%s", ir)
 	}
 }

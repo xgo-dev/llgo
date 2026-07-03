@@ -34,7 +34,11 @@ void llgo_stacktrace(int skip, void *ctx, int (*fn)(void *ctx, void *pc, void *o
      * libunwind cursor: no unwind tables, no -lunwind, and it keeps working
      * through any frame that maintains the chain (C code compiled with
      * frame pointers included). The walk stops at the first frame that
-     * breaks chain discipline. */
+     * breaks chain discipline.
+     *
+     * The Go-side walker (runtime/internal/lib/runtime/unwind_llgo.go
+     * fpCallers) implements the same discipline plus a text-range bound the
+     * frame tables provide; keep the chain guards below in sync with it. */
     int saved_errno = errno;
     uintptr_t fp = (uintptr_t)__builtin_frame_address(0);
     int depth = 0;

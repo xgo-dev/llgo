@@ -1419,9 +1419,6 @@ func (p *context) emitPCLineLabel(b llssa.Builder, pos token.Pos) {
 		return
 	}
 	p.pcLineSeq++
-	if os.Getenv("LLGO_DBG_PCLINE") != "" {
-		fmt.Fprintf(os.Stderr, "PCLINE %s %s:%d\n", p.fn.Name(), position.Filename, position.Line)
-	}
 	id := pcLineID(p.fn.Name(), p.pcLineSeq)
 	label := pcLineLabelName(id)
 	if target.GOOS == "darwin" {
