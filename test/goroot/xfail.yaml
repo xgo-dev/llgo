@@ -2076,15 +2076,11 @@ xfails:
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/bug347.go
-    reason: latest main goroot run failure on darwin/arm64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/bug348.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue14646.go
-    reason: latest main goroot run failure on darwin/arm64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue15281.go
@@ -2096,7 +2092,7 @@ xfails:
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue27201.go
-    reason: latest main goroot run failure on darwin/arm64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue27518b.go
@@ -2104,14 +2100,10 @@ xfails:
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue29504.go
-    reason: latest main goroot run failure on darwin/arm64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue32477.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue33724.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
@@ -2120,7 +2112,7 @@ xfails:
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue4562.go
-    reason: latest main goroot run failure on darwin/arm64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue46725.go
@@ -2154,17 +2146,12 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/bug347.go
-    reason: go1.25 goroot run failure on linux/amd64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - version: go1.25
     platform: linux/amd64
     directive: run
     case: fixedbugs/bug348.go
-    reason: go1.25 goroot run failure on linux/amd64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue14646.go
-    reason: go1.25 goroot run failure on linux/amd64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - version: go1.25
     platform: linux/amd64
     directive: run
@@ -2189,7 +2176,7 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue27201.go
-    reason: go1.25 goroot run failure on linux/amd64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - version: go1.25
     platform: linux/amd64
     directive: run
@@ -2199,16 +2186,11 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue29504.go
-    reason: go1.25 goroot run failure on linux/amd64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - version: go1.25
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue32477.go
-    reason: go1.25 goroot run failure on linux/amd64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue33724.go
     reason: go1.25 goroot run failure on linux/amd64
   - version: go1.25
     platform: linux/amd64
@@ -2229,7 +2211,7 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue4562.go
-    reason: go1.25 goroot run failure on linux/amd64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - version: go1.25
     platform: linux/amd64
     directive: run
@@ -2325,12 +2307,7 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/bug347.go
-    reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue14646.go
-    reason: go1.24 goroot run failure on linux/amd64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - version: go1.24
     platform: linux/amd64
     directive: run
@@ -2345,7 +2322,7 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue29504.go
-    reason: go1.24 goroot run failure on linux/amd64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - version: go1.24
     platform: linux/amd64
     directive: run
@@ -2405,7 +2382,7 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/bug348.go
-    reason: go1.24 goroot run failure on linux/amd64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - version: go1.24
     platform: linux/amd64
     directive: run
@@ -2420,7 +2397,7 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue27201.go
-    reason: go1.24 goroot run failure on linux/amd64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - version: go1.24
     platform: linux/amd64
     directive: run
@@ -2450,7 +2427,7 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue4562.go
-    reason: go1.24 goroot run failure on linux/amd64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - version: go1.24
     platform: linux/amd64
     directive: run
@@ -2520,7 +2497,7 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/bug348.go
-    reason: go1.26 goroot run failure on linux/amd64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - version: go1.26
     platform: linux/amd64
     directive: run
@@ -2535,7 +2512,7 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue27201.go
-    reason: go1.26 goroot run failure on linux/amd64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - version: go1.26
     platform: linux/amd64
     directive: run
@@ -2565,7 +2542,7 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue4562.go
-    reason: go1.26 goroot run failure on linux/amd64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - version: go1.26
     platform: linux/amd64
     directive: run
@@ -2595,12 +2572,7 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/bug347.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue14646.go
-    reason: go1.26 goroot run failure on linux/amd64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - version: go1.26
     platform: linux/amd64
     directive: run
@@ -2615,7 +2587,7 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue29504.go
-    reason: go1.26 goroot run failure on linux/amd64
+    reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - version: go1.26
     platform: linux/amd64
     directive: run
