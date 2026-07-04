@@ -13,6 +13,19 @@ func c_framepointer() unsafe.Pointer
 
 func init() {
 	rtdebug.PanicTraceback = panicTraceback
+	rtdebug.MemProfileStackCapture = captureMemProfileStack
+	rtdebug.MemProfileRatePtr = &MemProfileRate
+}
+
+// captureMemProfileStack walks the physical stack at a sampled allocation.
+// The leading allocator plumbing (AllocZ/AllocU, this capture path) is
+// trimmed at read time by the MemProfile wrapper, where symbolization is
+// safe and cached.
+func captureMemProfileStack(pcs []uintptr) int {
+	if !fpUnwindAvailable() {
+		return 0
+	}
+	return fpCallers(0, pcs)
 }
 
 func hasPrefix(s, prefix string) bool {

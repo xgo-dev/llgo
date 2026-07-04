@@ -922,8 +922,20 @@ func runtimeCallerFuncSet(c *CallerTracking, pkg *ssa.Package) map[*ssa.Function
 		out[fn] = true
 	}
 	_, trackable := collectRuntimeCallerFunctions(pkg)
+	// Criterion 5: a package that reads the memory profile gets every
+	// trackable function pinned. Heap records attribute sampled
+	// allocations to physical frames at exact statement lines; inlining
+	// any function in such a package would merge its allocation sites
+	// into the caller and lose per-site attribution (goroot
+	// heapsampling.go). Profiling packages are rare and accuracy beats
+	// inlining there — gc keeps per-site attribution via its inline tree.
+	pinAll := packageReadsMemProfile(trackable)
 	for fn := range trackable {
 		if out[fn] {
+			continue
+		}
+		if pinAll {
+			out[fn] = true
 			continue
 		}
 		// Criterion 3: pin program-unique frames. main.main and package
@@ -984,6 +996,60 @@ func NewCallerTracking() *CallerTracking {
 		base:     make(map[*ssa.Package]map[*ssa.Function]bool),
 		extended: make(map[*ssa.Package]map[*ssa.Function]bool),
 	}
+}
+
+// isPublicRuntimePath matches the public runtime package under both
+// spellings: go/ssa unit builds see "runtime"; the real pipeline patches
+// it to LLGo's implementation package.
+func isPublicRuntimePath(path string) bool {
+	return path == "runtime" ||
+		path == "github.com/goplus/llgo/runtime/internal/lib/runtime"
+}
+
+func packageReadsMemProfile(funcs map[*ssa.Function]bool) bool {
+	// Cheap import pre-filter: scanning every instruction of every
+	// function costs real compile time across thousands of small
+	// packages (goroot shards); a package that never imports the public
+	// runtime cannot reference MemProfile.
+	imported := false
+	for fn := range funcs {
+		if fn.Pkg == nil || fn.Pkg.Pkg == nil {
+			continue
+		}
+		for _, imp := range fn.Pkg.Pkg.Imports() {
+			if isPublicRuntimePath(imp.Path()) {
+				imported = true
+			}
+		}
+		break
+	}
+	if !imported {
+		return false
+	}
+	for fn := range funcs {
+		for _, block := range fn.Blocks {
+			for _, instr := range block.Instrs {
+				if call, ok := instr.(ssa.CallInstruction); ok {
+					if callee := call.Common().StaticCallee(); callee != nil &&
+						callee.Pkg != nil && isPublicRuntimePath(callee.Pkg.Pkg.Path()) &&
+						callee.Name() == "MemProfile" {
+						return true
+					}
+				}
+				rands := instr.Operands(nil)
+				for _, rand := range rands {
+					if rand == nil {
+						continue
+					}
+					if g, ok := (*rand).(*ssa.Global); ok && g.Pkg != nil &&
+						isPublicRuntimePath(g.Pkg.Pkg.Path()) && g.Name() == "MemProfileRate" {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }
 
 func isProgramUniqueFrame(pkg *ssa.Package, fn *ssa.Function) bool {
