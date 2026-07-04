@@ -101,6 +101,7 @@ func onFault(pc, fp uintptr, sig int32) {
 			n += m
 		}
 		faultN = int32(n)
+		rtdebug.StoreFaultPCs(faultPCs[:n])
 	}
 	// Capture done: re-arm the recursion guard before this fault turns
 	// into an ordinary (recoverable) panic.

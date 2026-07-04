@@ -25,7 +25,7 @@ func callerLocation(file string, line int) (string, int) {
 func Caller(skip int) (pc uintptr, file string, line int, ok bool) {
 	if fpUnwindAvailable() {
 		var pcs [1]uintptr
-		if fpCallers(skip+1, pcs[:]) >= 1 {
+		if callersWithPanicSplice(skip+1, pcs[:]) >= 1 {
 			// pcs hold return addresses; attribute to the call instruction.
 			sym := frameSymbol(pcs[0] - 1)
 			file, line = callerLocation(sym.file, sym.line)
@@ -48,7 +48,7 @@ func Caller(skip int) (pc uintptr, file string, line int, ok bool) {
 //go:noinline
 func Callers(skip int, pc []uintptr) int {
 	if fpUnwindAvailable() {
-		if n := fpCallers(skip, pc); n > 0 {
+		if n := callersWithPanicSplice(skip, pc); n > 0 {
 			return n
 		}
 	}

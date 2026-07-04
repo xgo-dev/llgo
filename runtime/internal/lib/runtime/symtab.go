@@ -1605,6 +1605,17 @@ func refinePCSymbolLine(sym pcSymbol, pc uintptr) pcSymbol {
 		lineSym.pc = pc
 		return mergePCLineSymbol(sym, lineSym)
 	}
+	// No same-function statement anchor covers pc. Mid-function pcs of a
+	// record with no evidence can actually belong to a foreign (C)
+	// function linked between Go functions — nearest-below cannot see the
+	// hole and would misattribute the frame to the preceding Go function.
+	// One dladdr cross-check on this cold, cache-backed path: a closer
+	// symbol wins. Exact entries and anchored functions never get here.
+	if pc != sym.entry {
+		if ai := addrInfoSymbol(pc); ai.ok && ai.entry > sym.entry {
+			return ai
+		}
+	}
 	return sym
 }
 

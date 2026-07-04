@@ -226,7 +226,124 @@ func Callers(skip int, pcs []uintptr) int {
 	return n
 }
 
+// PreallocPanicStore forces the per-thread snapshot buffer to exist now,
+// on the current (main) thread, so the fault handler never mallocs in
+// signal context — bdwgc's allocator is not async-signal-safe.
+func PreallocPanicStore() {
+	panicPCStoreFor(true)
+}
+
+// PanicPCSnapshot, set by the public runtime package at init, captures the
+// physical pc chain at panic time into the per-thread snapshot below. gc
+// runs deferred functions on top of the panicked stack, so runtime.Caller,
+// CallersFrames and debug.Stack invoked from a deferred function (before or
+// after recover) see the panic-site frames; LLGo's longjmp unwinding
+// removes them physically, and this snapshot is what caller-info APIs
+// splice back in.
+var PanicPCSnapshot func()
+
 func SavePanicCallerFrames() {
+	// A fault handler stores the fault-site snapshot right before it
+	// panics; the regular capture here must not overwrite it.
+	if p := panicPCStoreFor(false); p != nil && p.armed != 0 {
+		p.armed = 0
+		return
+	}
+	if PanicPCSnapshot != nil {
+		PanicPCSnapshot()
+	}
+}
+
+type panicPCStore struct {
+	n      int32
+	armed  int32
+	fault  int32
+	recFP1 uintptr
+	recFP2 uintptr
+	pcs    [64]uintptr
+}
+
+func panicPCStoreFor(create bool) *panicPCStore {
+	p := (*panicPCStore)(panicPCsKey.Get())
+	if p == nil && create {
+		// AllocRoot (uncollectable): the only reference lives in a pthread
+		// key bdwgc does not scan, so an AllocU store would be collected
+		// and its memory reused, making p.n read garbage (observed as a
+		// wild slice bound in panicSplicePCs). Never freed — one small
+		// fixed struct per thread.
+		p = (*panicPCStore)(AllocRoot(unsafe.Sizeof(panicPCStore{})))
+		p.n = 0
+		p.recFP1 = 0
+		p.recFP2 = 0
+		panicPCsKey.Set(unsafe.Pointer(p))
+	}
+	return p
+}
+
+// StorePanicPCs replaces the thread's panic snapshot (a new panic
+// supersedes the previous one) and resets the recover marks.
+func StorePanicPCs(pcs []uintptr) {
+	storePanicPCs(pcs, 0)
+}
+
+// StoreFaultPCs is StorePanicPCs for fault handlers: the imminent
+// panic's own capture is suppressed so the fault-site chain survives.
+func StoreFaultPCs(pcs []uintptr) {
+	storePanicPCs(pcs, 1)
+}
+
+func storePanicPCs(pcs []uintptr, armed int32) {
+	p := panicPCStoreFor(true)
+	n := len(pcs)
+	if n > len(p.pcs) {
+		n = len(p.pcs)
+	}
+	copy(p.pcs[:n], pcs)
+	p.n = int32(n)
+	p.armed = armed
+	p.fault = armed
+	p.recFP1 = 0
+	p.recFP2 = 0
+}
+
+// PanicPCsAreFault reports whether the stored snapshot came from a
+// hardware-fault context (captured without the program-text bound).
+func PanicPCsAreFault() bool {
+	p := panicPCStoreFor(false)
+	return p != nil && p.fault != 0
+}
+
+// PanicPCs returns the thread's captured panic pcs (nil when none).
+func PanicPCs() []uintptr {
+	p := panicPCStoreFor(false)
+	if p == nil || p.n == 0 {
+		return nil
+	}
+	return p.pcs[:p.n]
+}
+
+// MarkPanicRecoverFPs records the frames observing the panic at recover
+// time; the snapshot stays spliceable exactly while one of them is live on
+// the physical chain (the deferred function has not returned yet).
+func MarkPanicRecoverFPs(fp1, fp2 uintptr) {
+	if p := panicPCStoreFor(false); p != nil {
+		p.recFP1 = fp1
+		p.recFP2 = fp2
+	}
+}
+
+// PanicRecoverFPs returns the recover-time frame marks.
+func PanicRecoverFPs() (uintptr, uintptr) {
+	p := panicPCStoreFor(false)
+	if p == nil {
+		return 0, 0
+	}
+	return p.recFP1, p.recFP2
+}
+
+// PanicActive reports whether a panic is in flight (not yet recovered).
+func PanicActive() bool {
+	return excepKey.Get() != nil
 }
 
 func BindCallerLocation(pc uintptr, rawName string) {
