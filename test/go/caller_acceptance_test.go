@@ -541,3 +541,80 @@ func runLLGoInModule(t *testing.T, dir string, args ...string) (string, error) {
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
+
+// Scenario: runtime.MemProfile attributes sampled allocations to exact
+// call stacks and statement lines (gc semantics: raw sampled counts,
+// physical frames). rate=1 samples everything, so counts are exact.
+func TestCallerAcceptanceMemProfileAttribution(t *testing.T) {
+	dir := t.TempDir()
+	const src = `package main
+
+import (
+	"os"
+	"runtime"
+	"strconv"
+)
+
+var s1, s2 *[2048]byte
+
+func allocOne() { s1 = new([2048]byte) } // MEMA_MARK
+
+func allocTwo() { s2 = new([2048]byte) } // MEMB_MARK
+
+func main() {
+	runtime.MemProfileRate = 1
+	for i := 0; i < 50; i++ {
+		allocOne()
+		allocTwo()
+	}
+	var recs [128]runtime.MemProfileRecord
+	n, ok := runtime.MemProfile(recs[:], true)
+	if !ok {
+		panic("MemProfile failed: n=" + strconv.Itoa(n))
+	}
+	var oneObjs, twoObjs int64
+	for _, r := range recs[:n] {
+		frames := runtime.CallersFrames(r.Stack())
+		first := true
+		for {
+			f, more := frames.Next()
+			if first {
+				first = false
+				switch {
+				case f.Function == "main.allocOne" && f.Line == MEMA_LINE:
+					oneObjs += r.AllocObjects
+				case f.Function == "main.allocTwo" && f.Line == MEMB_LINE:
+					twoObjs += r.AllocObjects
+				}
+			}
+			if !more {
+				break
+			}
+		}
+	}
+	if oneObjs != 50 || twoObjs != 50 {
+		panic("bad attribution: one=" + strconv.Itoa(int(oneObjs)) + " two=" + strconv.Itoa(int(twoObjs)))
+	}
+	os.Stdout.WriteString("MEMPROF_OK\n")
+}
+`
+	source := src
+	for _, name := range []string{"MEMA", "MEMB"} {
+		line := markerLine(source, name+"_MARK")
+		if line == 0 {
+			t.Fatalf("marker %s_MARK not found", name)
+		}
+		source = strings.ReplaceAll(source, name+"_LINE", strconv.Itoa(line))
+	}
+	writeCallerAcceptanceModule(t, dir, map[string]string{
+		"main.go": source,
+		"go.mod":  "module memprof\n\ngo 1.21\n",
+	})
+	out, err := runLLGoInModule(t, dir, "run", ".")
+	if err != nil {
+		t.Fatalf("memprofile probe failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "MEMPROF_OK") {
+		t.Fatalf("memprofile probe missing marker:\n%s", out)
+	}
+}
