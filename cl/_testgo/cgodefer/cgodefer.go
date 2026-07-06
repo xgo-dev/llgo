@@ -90,17 +90,20 @@ import "C"
 // CHECK-NEXT:   store ptr %32, ptr %18, align 8
 // CHECK-NEXT:   %33 = extractvalue { ptr, i64, { ptr, ptr } } %31, 2
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.FreeDeferNode"(ptr %30)
-// CHECK-NEXT:   %34 = extractvalue { ptr, ptr } %33, 1
-// CHECK-NEXT:   %35 = extractvalue { ptr, ptr } %33, 0
-// CHECK-NEXT:   call void %35(ptr %34)
+// CHECK-NEXT:   %34 = extractvalue { ptr, ptr } %33, 0
+// CHECK-NEXT:   %35 = call ptr @"{{.*}}/runtime/internal/runtime.StartRecoverFrame"(ptr %34)
+// CHECK-NEXT:   %36 = extractvalue { ptr, ptr } %33, 1
+// CHECK-NEXT:   %37 = extractvalue { ptr, ptr } %33, 0
+// CHECK-NEXT:   call void %37(ptr %36)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrame"(ptr %35)
 // CHECK-NEXT:   br label %_llgo_8
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_7, %_llgo_2
-// CHECK-NEXT:   %36 = load %"{{.*}}/runtime/internal/runtime.Defer", ptr %10, align 8
-// CHECK-NEXT:   %37 = extractvalue %"{{.*}}/runtime/internal/runtime.Defer" %36, 2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %37)
-// CHECK-NEXT:   %38 = load ptr, ptr %17, align 8
-// CHECK-NEXT:   indirectbr ptr %38, [label %_llgo_3, label %_llgo_6]
+// CHECK-NEXT:   %38 = load %"{{.*}}/runtime/internal/runtime.Defer", ptr %10, align 8
+// CHECK-NEXT:   %39 = extractvalue %"{{.*}}/runtime/internal/runtime.Defer" %38, 2
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %39)
+// CHECK-NEXT:   %40 = load ptr, ptr %17, align 8
+// CHECK-NEXT:   indirectbr ptr %40, [label %_llgo_3, label %_llgo_6]
 // CHECK-NEXT: }
 func main() {
 	// CHECK-LABEL: define { ptr, ptr } @"{{.*}}/cl/_testgo/cgodefer.main$1"(ptr %0){{.*}} {
