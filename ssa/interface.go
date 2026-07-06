@@ -331,8 +331,15 @@ func (b Builder) TypeAssert(x Expr, assertedTyp Type, commaOk bool) Expr {
 	blks := b.Func.MakeBlocks(2)
 	b.If(eq, blks[0], blks[1])
 	b.SetBlockEx(blks[1], AtEnd, false)
-	b.Call(b.Pkg.rtFunc("PanicTypeAssert"), tx, b.Str(assertedTyp.RawType().String()), b.Str(typeAssertMissingMethod(assertedTyp)))
-	b.Unreachable()
+	// Panic with a real *runtime.TypeAssertionError (gc semantics: the
+	// recovered value implements runtime.Error; the missing method is
+	// computed at runtime from the abi tables). The source-interface
+	// abi type is deliberately not passed: materializing abiType for
+	// arbitrary static interface types here can reference another
+	// package's private local-generic symbols (undefined at link);
+	// the message's interface name is the documented mdempsky/16
+	// residual, pending that abi emission fix.
+	b.Panic(b.InlineCall(b.Pkg.rtFunc("TypeAssertError"), tx, tabi, b.Prog.Nil(b.Prog.AbiTypePtr())))
 	b.SetBlockEx(blks[0], AtEnd, false)
 	b.blk.last = blks[0].last
 	return val()

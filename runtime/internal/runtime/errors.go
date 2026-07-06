@@ -200,6 +200,52 @@ func (e *TypeAssertionError) Error() string {
 		": missing method " + e.missingMethod
 }
 
+func TypeAssertError(have, want, iface *Type) any {
+	if have == nil {
+		return &TypeAssertionError{iface, nil, want, ""}
+	}
+	missingMethod := ""
+	if want.Kind() == abi.Interface {
+		missingMethod = typeAssertMissingMethod((*interfacetype)(unsafe.Pointer(want)), have)
+	}
+	return &TypeAssertionError{iface, have, want, missingMethod}
+}
+
+func typeAssertMissingMethod(inter *interfacetype, typ *_type) string {
+	if len(inter.Methods) == 0 {
+		return ""
+	}
+	if typ.Kind() == abi.Interface {
+		v := (*interfacetype)(unsafe.Pointer(typ))
+		for _, tm := range inter.Methods {
+			if !ifaceHasMethod(v.Methods, tm) {
+				return tm.Name()
+			}
+		}
+		return ""
+	}
+	u := typ.Uncommon()
+	if u == nil {
+		return inter.Methods[0].Name()
+	}
+	methods := u.Methods()
+	for _, tm := range inter.Methods {
+		if _, ok := findMethod(methods, tm); !ok {
+			return tm.Name()
+		}
+	}
+	return ""
+}
+
+func ifaceHasMethod(methods []abi.Imethod, target abi.Imethod) bool {
+	for _, method := range methods {
+		if method.Name_ == target.Name_ && method.Typ_ == target.Typ_ {
+			return true
+		}
+	}
+	return false
+}
+
 func pkgpath(t *_type) string {
 	if u := t.Uncommon(); u != nil {
 		return u.PkgPath_
