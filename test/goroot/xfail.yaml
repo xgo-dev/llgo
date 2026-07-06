@@ -579,11 +579,6 @@ timeouts:
     case: fixedbugs/issue40367.go
     timeout: 2m
     reason: issue40367 run exceeds the default timeout on darwin/arm64
-  - version: go1.24
-    platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue4066.go
-    timeout: 2m
     reason: issue4066 run exceeds the default timeout on darwin/arm64
   - version: go1.24
     platform: darwin/arm64
@@ -951,11 +946,6 @@ timeouts:
     case: fixedbugs/issue40367.go
     timeout: 2m
     reason: issue40367 run exceeds the default timeout on darwin/arm64
-  - version: go1.25
-    platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue4066.go
-    timeout: 2m
     reason: issue4066 run exceeds the default timeout on darwin/arm64
   - version: go1.25
     platform: darwin/arm64
@@ -1323,11 +1313,6 @@ timeouts:
     case: fixedbugs/issue40367.go
     timeout: 2m
     reason: issue40367 run exceeds the default timeout on darwin/arm64
-  - version: go1.26
-    platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue4066.go
-    timeout: 2m
     reason: issue4066 run exceeds the default timeout on darwin/arm64
   - version: go1.26
     platform: darwin/arm64
@@ -2549,16 +2534,6 @@ xfails:
     directive: run
     case: fixedbugs/issue37975.go
     reason: current main goroot run failure on darwin/arm64
-  - version: go1.26
-    platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue73916.go
-    reason: go1.26 goroot run failure on darwin/arm64
-  - version: go1.26
-    platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue73916b.go
-    reason: go1.26 goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
     case: typeparam/mdempsky/16.go
@@ -2742,16 +2717,6 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue65417.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue73916.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue73916b.go
     reason: go1.26 goroot run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64
@@ -2942,16 +2907,6 @@ xfails:
   - version: go1.25
     platform: linux/amd64
     directive: run
-    case: fixedbugs/issue4066.go
-    reason: go1.25 goroot run failure on linux/amd64
-  - version: go1.25
-    platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue4066.go
-    reason: go1.25 goroot run failure on darwin/arm64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
     case: fixedbugs/issue4562.go
     reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - version: go1.25
@@ -3128,16 +3083,6 @@ xfails:
   - version: go1.24
     platform: linux/amd64
     directive: run
-    case: fixedbugs/issue4066.go
-    reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.24
-    platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue4066.go
-    reason: go1.24 goroot run failure on darwin/arm64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
     case: fixedbugs/issue4562.go
     reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
   - version: go1.24
@@ -3225,16 +3170,6 @@ xfails:
     directive: run
     case: fixedbugs/issue27518b.go
     reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue4066.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue4066.go
-    reason: go1.26 goroot run failure on darwin/arm64
   - version: go1.26
     platform: linux/amd64
     directive: run

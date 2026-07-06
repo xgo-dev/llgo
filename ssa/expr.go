@@ -48,6 +48,8 @@ type Expr struct {
 
 var Nil Expr // Zero value is a nil Expr
 
+const mayRecoverAttr = "llgo.may-recover"
+
 // IsNil checks if the expression is nil or not.
 func (v Expr) IsNil() bool {
 	return v.Type == nil
@@ -57,6 +59,33 @@ func (v Expr) IsNil() bool {
 func (v Expr) SetOrdering(ordering AtomicOrdering) Expr {
 	v.impl.SetOrdering(ordering)
 	return v
+}
+
+// SetVolatile marks a load or store as volatile.
+func (v Expr) SetVolatile(volatile bool) Expr {
+	v.impl.SetVolatile(volatile)
+	return v
+}
+
+// MarkMayRecover marks a function or closure that may call recover directly.
+func (v Expr) MarkMayRecover() Expr {
+	if v.Type == nil || v.impl.IsNil() {
+		return v
+	}
+	fn := v.impl.IsAFunction()
+	if !fn.IsNil() && fn.GetStringAttributeAtIndex(-1, mayRecoverAttr).IsNil() {
+		ctx := fn.GlobalParent().Context()
+		fn.AddFunctionAttr(ctx.CreateStringAttribute(mayRecoverAttr, "true"))
+	}
+	return v
+}
+
+func (v Expr) mayRecover() bool {
+	if v.Type == nil || v.impl.IsNil() {
+		return false
+	}
+	fn := v.impl.IsAFunction()
+	return !fn.IsNil() && !fn.GetStringAttributeAtIndex(-1, mayRecoverAttr).IsNil()
 }
 
 func (v Expr) SetName(alias string) Expr {
