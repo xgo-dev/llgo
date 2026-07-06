@@ -75,7 +75,7 @@ jobs:
       - name: Test with coverage
         # 45m: the caller-info acceptance suite (test/go) legitimately grew
         # the covered run past the old 30m budget on macOS runners.
-        run: go test -timeout 45m -coverprofile="coverage.txt" -covermode=atomic ./...
+        run: go test -timeout 45m -p 2 -coverprofile="coverage.txt" -covermode=atomic ./...
 
       - name: Test with embedded emulator env
         env:
