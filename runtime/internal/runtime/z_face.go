@@ -221,10 +221,16 @@ func DirectIfaceData(typ *abi.Type) bool {
 func MatchesClosure(T, V *abi.Type) bool {
 	if T == V {
 		return true
-	} else if V == nil || !V.IsClosure() {
+	} else if T == nil || V == nil {
 		return false
 	}
-	return identicalFuncType(T.StructType().Fields[0].Typ, V.StructType().Fields[0].Typ)
+	if T.IsClosure() {
+		T = T.StructType().Fields[0].Typ
+	}
+	if V.IsClosure() {
+		V = V.StructType().Fields[0].Typ
+	}
+	return identicalFuncType(T, V)
 }
 
 func identicalFuncType(T, V *abi.Type) bool {

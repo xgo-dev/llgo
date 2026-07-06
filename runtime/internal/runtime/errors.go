@@ -171,7 +171,29 @@ func PanicTypeAssert(concrete *_type, asserted string, missingMethod string) {
 	if missingMethod != "" {
 		panic(errorString("interface conversion: " + concrete.String() + " is not " + asserted + ": missing method " + missingMethod))
 	}
-	panic(errorString("interface conversion: interface is " + concrete.String() + ", not " + asserted))
+	cs := concrete.String()
+	msg := "interface conversion: interface is " + cs + ", not " + asserted
+	if sameTypeAssertName(concrete, cs, asserted) {
+		msg += " (types from different scopes)"
+	}
+	panic(errorString(msg))
+}
+
+func sameTypeAssertName(concrete *_type, concreteString, asserted string) bool {
+	if concreteString == asserted {
+		return true
+	}
+	pkg := pkgpath(concrete)
+	return pkg != "" && hasPrefix(asserted, pkg+".") && typeNameSuffix(concreteString) == typeNameSuffix(asserted)
+}
+
+func typeNameSuffix(name string) string {
+	for i := len(name) - 1; i >= 0; i-- {
+		if name[i] == '.' {
+			return name[i+1:]
+		}
+	}
+	return name
 }
 
 func (e *TypeAssertionError) Error() string {

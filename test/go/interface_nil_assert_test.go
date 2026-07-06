@@ -38,10 +38,7 @@ func TestNilInterfaceSameTypeAssert(t *testing.T) {
 
 func TestNilInterfaceSameTypeAssertPanics(t *testing.T) {
 	x := nilAssertValue(false)
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic for nil interface same-type assert")
-		}
-	}()
-	_ = x.(nilAssertInterface)
+	expectPanicContaining(t, "interface conversion", func() {
+		_ = x.(nilAssertInterface)
+	})
 }

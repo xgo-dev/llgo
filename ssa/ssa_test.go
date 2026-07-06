@@ -734,9 +734,8 @@ func TestDevLTOGlobalDCEAddMethodTypeMetadataEarlyReturns(t *testing.T) {
 	prog.EnableGoGlobalDCE(true)
 	pkg := prog.NewPackage("main", "main")
 	g := pkg.NewVarEx("g", prog.Pointer(prog.Int()))
-	mset := types.NewMethodSet(types.Typ[types.Int])
 
-	prog.addMethodTypeMetadata(g.impl, prog.Pointer(prog.Int()), mset, 0)
+	prog.addMethodTypeMetadata(g.impl, prog.Pointer(prog.Int()), nil)
 
 	ir := pkg.String()
 	if strings.Contains(ir, "!vcall_visibility") || strings.Contains(ir, "!type !") {
@@ -767,7 +766,7 @@ func TestDevLTOGlobalDCEAddMethodTypeMetadataMarksIFnAndTFnForReflectContexts(t 
 
 	methodArray := prog.Type(types.NewArray(prog.rtNamed("Method"), 1), InGo)
 	fullType := prog.Struct(prog.Int(), prog.Int(), methodArray)
-	prog.addMethodTypeMetadata(g.impl, fullType, mset, mset.Len())
+	prog.addMethodTypeMetadata(g.impl, fullType, []*types.Selection{mset.At(0)})
 
 	methodType := prog.Type(prog.rtNamed("Method"), InGo)
 	methodArrayOffset := prog.OffsetOf(fullType, 2)
@@ -2603,6 +2602,48 @@ func TestInitAbiTypesForEmptySelection(t *testing.T) {
 	}
 	if fn := pkg.InitAbiTypesFor("subset", nil); fn != nil {
 		t.Fatalf("InitAbiTypesFor with empty selection = %v, want nil", fn)
+	}
+}
+
+func TestNoInterfaceMethodRegistryAndFiltering(t *testing.T) {
+	prog := NewProgram(nil)
+	if prog.isNoInterfaceMethod(nil) {
+		t.Fatal("nil function should not be nointerface")
+	}
+
+	pkgTypes := types.NewPackage("example.com/p", "p")
+	named := types.NewNamed(types.NewTypeName(token.NoPos, pkgTypes, "T", nil), types.NewStruct(nil, nil), nil)
+	sig := types.NewSignatureType(types.NewVar(token.NoPos, pkgTypes, "", named), nil, nil, nil, nil, false)
+	hidden := types.NewFunc(token.NoPos, pkgTypes, "Hidden", sig)
+	visible := types.NewFunc(token.NoPos, pkgTypes, "Visible", sig)
+	named.AddMethod(hidden)
+	named.AddMethod(visible)
+
+	top := types.NewFunc(token.NoPos, pkgTypes, "Top", types.NewSignatureType(nil, nil, nil, nil, nil, false))
+	if prog.isNoInterfaceMethod(top) {
+		t.Fatal("function without receiver should not be nointerface")
+	}
+	if prog.isNoInterfaceMethod(hidden) {
+		t.Fatal("unregistered method should not be nointerface")
+	}
+	prog.SetNoInterfaceMethod("example.com/p.T.Hidden")
+	if !prog.isNoInterfaceMethod(hidden) {
+		t.Fatal("registered value receiver method should be nointerface")
+	}
+	if prog.isNoInterfaceMethod(visible) {
+		t.Fatal("unregistered sibling method should not be nointerface")
+	}
+
+	methods := (&aBuilder{Prog: prog}).abiInterfaceMethods(types.NewMethodSet(named))
+	if len(methods) != 1 || methods[0].Obj().Name() != "Visible" {
+		t.Fatalf("filtered methods = %v, want only Visible", methods)
+	}
+
+	ptrSig := types.NewSignatureType(types.NewVar(token.NoPos, pkgTypes, "", types.NewPointer(named)), nil, nil, nil, nil, false)
+	ptrHidden := types.NewFunc(token.NoPos, pkgTypes, "PtrHidden", ptrSig)
+	prog.SetNoInterfaceMethod("example.com/p.(*T).PtrHidden")
+	if !prog.isNoInterfaceMethod(ptrHidden) {
+		t.Fatal("registered pointer receiver method should be nointerface")
 	}
 }
 
