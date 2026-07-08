@@ -33,7 +33,6 @@ import (
 	"runtime"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/goplus/gogen/packages"
@@ -324,21 +323,6 @@ func testRunAndTestFrom(t *testing.T, pkgDir, relPkg, sel string, opts runOption
 	}
 }
 
-// sharedGoCacheDir returns a per-process go-build cache reused by every
-// captured run. Isolation from the developer cache is preserved (fresh
-// temp dir per test process); sharing across tests avoids re-typechecking
-// the whole dependency graph for each of the ~170 golden dirs.
-var goCacheOnce sync.Once
-var goCacheDir string
-var goCacheErr error
-
-func sharedGoCacheDir() (string, error) {
-	goCacheOnce.Do(func() {
-		goCacheDir, goCacheErr = os.MkdirTemp("", "llgo-gocache-*")
-	})
-	return goCacheDir, goCacheErr
-}
-
 func RunAndCapture(relPkg, pkgDir string) ([]byte, error) {
 	conf := build.NewDefaultConf(build.ModeRun)
 	return RunAndCaptureWithConf(relPkg, pkgDir, conf)
@@ -402,10 +386,11 @@ func runWithConf(relPkg, pkgDir string, conf *build.Config) ([]byte, error) {
 }
 
 func doWithConf(relPkg, pkgDir string, conf *build.Config, action string) ([]byte, error) {
-	cacheDir, err := sharedGoCacheDir()
+	cacheDir, err := os.MkdirTemp("", "llgo-gocache-*")
 	if err != nil {
 		return nil, err
 	}
+	defer os.RemoveAll(cacheDir)
 	oldCache := os.Getenv("GOCACHE")
 	if err := os.Setenv("GOCACHE", cacheDir); err != nil {
 		return nil, err
