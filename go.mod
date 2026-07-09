@@ -1,6 +1,6 @@
 module github.com/goplus/llgo
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/goplus/cobra v1.9.12 //xgo:class
@@ -15,7 +15,7 @@ require (
 	go.bug.st/serial v1.6.4
 	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/mod v0.29.0
-	golang.org/x/sys v0.37.0
+	golang.org/x/sys v0.47.0
 	golang.org/x/tools v0.38.0
 )
 
