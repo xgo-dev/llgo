@@ -241,6 +241,7 @@ type aProgram struct {
 
 	enableFuncInfoMetadata bool
 	enableFuncInfoSites    bool
+	mayRecoverFuncs        map[string]none
 }
 
 type AbiSymbol struct {
@@ -282,6 +283,7 @@ func (p Program) Dispose() {
 		return
 	}
 	p.disposed = true
+	unregisterMayRecoverProgram(p)
 	p.tm.Dispose()
 	p.td.Dispose()
 	p.ctx.Dispose()
@@ -313,7 +315,9 @@ func NewProgram(target *Target) Program {
 		target: target, td: td, tm: tm, is32Bits: is32Bits,
 		ptrSize: td.PointerSize(), named: make(map[string]Type), fnnamed: make(map[string]int),
 		linkname: make(map[string]string), noInterface: make(map[string]none), abiSymbol: make(map[string]*AbiSymbol),
+		mayRecoverFuncs: make(map[string]none),
 	}
+	registerMayRecoverProgram(prog)
 	prog.abi.Init(uintptr(prog.ptrSize), (*goProgram)(unsafe.Pointer(prog)))
 	return prog
 }

@@ -343,7 +343,7 @@ func PanicRecoverFPs() (uintptr, uintptr) {
 
 // PanicActive reports whether a panic is in flight (not yet recovered).
 func PanicActive() bool {
-	return excepKey.Get() != nil
+	return panicKey.Get() != nil
 }
 
 func BindCallerLocation(pc uintptr, rawName string) {

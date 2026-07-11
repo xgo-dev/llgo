@@ -49,7 +49,28 @@ type Expr struct {
 
 var Nil Expr // Zero value is a nil Expr
 
-var mayRecoverFuncs sync.Map // map[llvm.Value]none
+var mayRecoverPrograms sync.Map // llvm.Context -> Program
+
+func registerMayRecoverProgram(p Program) {
+	mayRecoverPrograms.Store(p.ctx, p)
+}
+
+func unregisterMayRecoverProgram(p Program) {
+	mayRecoverPrograms.Delete(p.ctx)
+}
+
+func (v Expr) mayRecoverProgram() Program {
+	if v.Type == nil || (v.kind != vkFuncDecl && v.kind != vkFuncPtr) || v.impl.IsNil() {
+		return nil
+	}
+	module := v.impl.GlobalParent()
+	if module.IsNil() {
+		return nil
+	}
+	p, _ := mayRecoverPrograms.Load(module.Context())
+	prog, _ := p.(Program)
+	return prog
+}
 
 // IsNil checks if the expression is nil or not.
 func (v Expr) IsNil() bool {
@@ -70,17 +91,18 @@ func (v Expr) SetVolatile(volatile bool) Expr {
 
 // MarkMayRecover marks a function or closure that may call recover directly.
 func (v Expr) MarkMayRecover() Expr {
-	if v.Type != nil && !v.impl.IsNil() {
-		mayRecoverFuncs.Store(v.impl, none{})
+	if p := v.mayRecoverProgram(); p != nil {
+		p.mayRecoverFuncs[v.impl.Name()] = none{}
 	}
 	return v
 }
 
 func (v Expr) mayRecover() bool {
-	if v.Type == nil || v.impl.IsNil() {
+	p := v.mayRecoverProgram()
+	if p == nil {
 		return false
 	}
-	_, ok := mayRecoverFuncs.Load(v.impl)
+	_, ok := p.mayRecoverFuncs[v.impl.Name()]
 	return ok
 }
 

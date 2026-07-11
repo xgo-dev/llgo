@@ -30,3 +30,26 @@ func TestProgramDispose(t *testing.T) {
 	}
 	prog.Dispose() // idempotent
 }
+
+func TestProgramDisposeDropsMayRecoverMarks(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("foo", "foo")
+	fn := pkg.NewFunc("recovering", NoArgsNoRet, InGo)
+	fn.Expr.MarkMayRecover()
+	if !fn.Expr.mayRecover() {
+		t.Fatal("marked function should be recover-capable")
+	}
+
+	ctx := prog.ctx
+	prog.Dispose()
+	if _, ok := mayRecoverPrograms.Load(ctx); ok {
+		t.Fatal("disposed program remains in may-recover registry")
+	}
+
+	next := NewProgram(nil)
+	defer next.Dispose()
+	nextFn := next.NewPackage("bar", "bar").NewFunc("plain", NoArgsNoRet, InGo)
+	if nextFn.Expr.mayRecover() {
+		t.Fatal("may-recover mark leaked into a later program")
+	}
+}

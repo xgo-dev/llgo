@@ -113,8 +113,6 @@ func (attr *Attr) SetStackAddr(stackAddr c.Pointer) c.Int { return 0 }
 // -----------------------------------------------------------------------------
 // Thread Local Storage
 
-type Key c.Uint
-
 //llgo:type C
 type KeyDestructor func(c.Pointer)
 
