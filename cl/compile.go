@@ -1587,6 +1587,7 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		}
 		if p.returnNeedsImplicitRunDefers(v) {
 			p.recordPanicLocation(b, v.Pos())
+			p.emitPCLineLabel(b, p.deferRunPos(v.Pos()))
 			b.RunDefers()
 		}
 		if p.shouldTrackCallerFrames() {
@@ -1616,10 +1617,16 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		p.call(b, llssa.Go, &v.Call)
 	case *ssa.RunDefers:
 		p.recordPanicLocation(b, v.Pos())
+		p.emitPCLineLabel(b, p.deferRunPos(v.Pos()))
 		b.RunDefers()
 	case *ssa.Panic:
 		arg := p.compileValue(b, v.X)
 		p.recordPanicLocation(b, v.Pos())
+		// panic is not a Call instruction, so callEx's statement anchor
+		// does not cover it; the panic snapshot attributes the panicking
+		// frame to this pc (issue5856 wants the panic line, not the
+		// nearest call's).
+		p.emitPCLineLabel(b, v.Pos())
 		b.Panic(arg)
 	case *ssa.Send:
 		ch := p.compileValue(b, v.Chan)
@@ -1773,6 +1780,25 @@ func (p *context) functionHasExplicitStackDeferSeen(fn *ssa.Function, seen map[*
 	}
 	p.stackDefers[fn] = false
 	return false
+}
+
+// deferRunPos is where gc attributes a deferred function's caller frame:
+// the function's closing brace — defers run at function exit, not at the
+// defer statement (goroot issue14646, issue5856).
+func (p *context) deferRunPos(fallback token.Pos) token.Pos {
+	if p.goFn != nil {
+		switch syntax := p.goFn.Syntax().(type) {
+		case *ast.FuncDecl:
+			if syntax.Body != nil && syntax.Body.Rbrace.IsValid() {
+				return syntax.Body.Rbrace
+			}
+		case *ast.FuncLit:
+			if syntax.Body != nil && syntax.Body.Rbrace.IsValid() {
+				return syntax.Body.Rbrace
+			}
+		}
+	}
+	return fallback
 }
 
 func (p *context) returnNeedsImplicitRunDefers(ret *ssa.Return) bool {

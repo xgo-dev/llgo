@@ -44,18 +44,20 @@ runtime-internal, patched-stdlib and startup frames may differ.
                                      # SIGFPE
 
 Verified (darwin/arm64 + linux/arm64 + linux/amd64):
-- SIGSEGV in a C frame converts to a Go panic; recover observes gc's exact
-  error text.
-- Known gaps (recorded for the follow-up PRs):
-  1. The fault-site stack (cexc_leaf_segv -> cexc_mid_segv x3 -> cexc_segv
-     -> Go frames) is not visible yet — recover/tracebacks show the
-     post-longjmp stack. The panic-snapshot follow-up extends to signal
-     handlers: walk the FP chain from the ucontext pc/fp; C frames get
-     dladdr names, Go frames funcinfo names — same machinery as the
-     unwinder.
-  2. Only SIGSEGV is installed; SIGFPE (amd64 division) core-dumps, SIGBUS
-     is not handled.
-  3. No sigaltstack: on stack overflow the handler cannot run and the
+- SIGSEGV/SIGBUS/SIGFPE in a C frame convert to Go panics (gc's exact
+  error texts); recover works, and the fault-site stack — C frames down
+  through the Go callers — appears in recovered `debug.Stack()` and in
+  unrecovered tracebacks (panic pc snapshot captured from the signal
+  ucontext, FP chain walked from the interrupted frame; C is compiled
+  with -fno-omit-frame-pointer so x86-64 chains hold).
+- Known limitations:
+  1. On linux, C frames may display under a neighboring Go function's
+     name: dladdr only sees dynamic symbols there, so the nearest-below
+     table attribution cannot be cross-checked (darwin names C frames
+     correctly via dladdr). Pre-existing for any C pc between Go
+     functions; the link-phase hole-sentinel follow-up fixes naming and
+     misattribution together.
+  2. No sigaltstack: on stack overflow the handler cannot run and the
      process dies (gc prints "stack overflow"). Note that C-side UB gets
      propagated by clang (this test was once optimized into infinite
      recursion); wrap/fault.c uses a volatile pointer to prevent that.

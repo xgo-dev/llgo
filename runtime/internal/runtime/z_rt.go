@@ -43,9 +43,33 @@ func Recover() (ret any) {
 		excepKey.Set(nil)
 		ret = *(*any)(ptr)
 		c.Free(ptr)
+		// The deferred function that recovers keeps observing the panic
+		// stack until it returns (gc runs defers on top of it). The public
+		// runtime marks its frame so the pc snapshot stays spliceable that
+		// long; the mark reads the frame-pointer chain, which after
+		// siglongjmp can reach a stale/unmapped slot, so the guarded read
+		// lives in the package that has a page probe (RecoverMark). Nil
+		// when lib/runtime is not linked — no snapshot machinery, nothing
+		// to mark.
+		if RecoverMark != nil {
+			RecoverMark()
+		}
 	}
 	return
 }
+
+// RecoverMark, set by the public runtime package, records the recovering
+// frame for panic-snapshot splicing.
+var RecoverMark func()
+
+const (
+	// LLGoFiles: the frame-pointer helper must live in the runtime core —
+	// programs that never import "runtime" still link Recover.
+	LLGoFiles = "_wrap/fp.c"
+)
+
+//go:linkname c_framepointer C.llgo_framepointer
+func c_framepointer() unsafe.Pointer
 
 // Panic panics with a value.
 func Panic(v any) {
@@ -61,9 +85,10 @@ func Panic(v any) {
 }
 
 var (
-	excepKey   pthread.Key
-	goexitKey  pthread.Key
-	mainThread pthread.Thread
+	excepKey    pthread.Key
+	goexitKey   pthread.Key
+	panicPCsKey pthread.Key
+	mainThread  pthread.Thread
 )
 
 func Goexit() {
@@ -74,6 +99,7 @@ func Goexit() {
 func init() {
 	excepKey.Create(nil)
 	goexitKey.Create(nil)
+	panicPCsKey.Create(nil)
 	mainThread = pthread.Self()
 }
 
