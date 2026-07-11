@@ -42,21 +42,58 @@ type BlockProfileRecord struct {
 	Stack  []uintptr
 }
 
+// trimMemProfileStack drops the allocator/runtime plumbing the physical
+// capture recorded above the allocation site (AllocZ, the capture path
+// itself) so record stacks start at user code like gc's.
+func trimMemProfileStack(stk [32]uintptr) [32]uintptr {
+	i := 0
+	for i < len(stk) && stk[i] != 0 {
+		if !isRuntimePlumbingFrame(stk[i]) {
+			break
+		}
+		i++
+	}
+	if i == 0 {
+		return stk
+	}
+	var out [32]uintptr
+	copy(out[:], stk[i:])
+	return out
+}
+
+// isRuntimePlumbingFrame reports whether pc belongs to LLGo runtime
+// plumbing (allocator, capture hooks — including their __llgo_stub.
+// wrappers, which is how a hook held in a function variable is entered).
+func isRuntimePlumbingFrame(pc uintptr) bool {
+	name := frameSymbol(pc - 1).function
+	if name == "" {
+		return false
+	}
+	const stub = "__llgo_stub."
+	if hasPrefix(name, stub) {
+		name = name[len(stub):]
+	}
+	return hasPrefix(name, "github.com/goplus/llgo/runtime/internal/") ||
+		name == "runtime.captureMemProfileStack"
+}
+
 func MemProfile(p []MemProfileRecord, inuseZero bool) (n int, ok bool) {
-	n, _ = llrt.MemProfile(nil, inuseZero)
-	if len(p) < n {
+	// Size dynamically with slack and retry: sampling between a sizing
+	// call and its fill call can grow the bucket set, and a fixed cap
+	// would make callers that retry-until-ok (pprof) loop forever.
+	records := make([]llrt.MemProfileRecord, 64)
+	for attempt := 0; ; attempt++ {
+		n, ok = llrt.MemProfile(records, inuseZero)
+		if ok || attempt >= 3 {
+			break
+		}
+		records = make([]llrt.MemProfileRecord, n+n/4+16)
+	}
+	if !ok || len(p) < n {
 		return n, false
 	}
 	if n == 0 {
 		return 0, true
-	}
-	var records [64]llrt.MemProfileRecord
-	if n > len(records) {
-		return n, false
-	}
-	n, ok = llrt.MemProfile(records[:n], inuseZero)
-	if !ok {
-		return n, false
 	}
 	for i := 0; i < n; i++ {
 		p[i] = MemProfileRecord{
@@ -64,7 +101,7 @@ func MemProfile(p []MemProfileRecord, inuseZero bool) (n int, ok bool) {
 			FreeBytes:    records[i].FreeBytes,
 			AllocObjects: records[i].AllocObjects,
 			FreeObjects:  records[i].FreeObjects,
-			Stack0:       records[i].Stack0,
+			Stack0:       trimMemProfileStack(records[i].Stack0),
 		}
 	}
 	return n, true

@@ -1039,3 +1039,37 @@ func TestDirectiveFilename(t *testing.T) {
 		t.Fatal("nil fset must pass through")
 	}
 }
+
+// Packages that read the memory profile pin every trackable function:
+// per-site heap attribution needs frames and allocation-site anchors.
+func TestPackageReadsMemProfilePin(t *testing.T) {
+	ssapkg, _ := buildCallerFrameSSAPackage(t, "example.com/hp", `package main
+
+import "runtime"
+
+func allocLeaf() *[64]byte { return new([64]byte) }
+
+func plainHelper() int { return 1 }
+
+func main() {
+	runtime.MemProfileRate = 1
+	_ = allocLeaf()
+	_ = plainHelper()
+	var r [4]runtime.MemProfileRecord
+	runtime.MemProfile(r[:], true)
+}
+`)
+	set := runtimeCallerFuncSet(NewCallerTracking(), ssapkg)
+	for _, name := range []string{"allocLeaf", "plainHelper", "main"} {
+		if !set[ssapkg.Func(name)] {
+			t.Fatalf("%s must be pinned in a memprofile-reading package", name)
+		}
+	}
+	quiet, _ := buildCallerFrameSSAPackage(t, "example.com/quiet", `package q
+
+func Helper() int { return 2 }
+`)
+	if set := runtimeCallerFuncSet(NewCallerTracking(), quiet); set[quiet.Func("Helper")] {
+		t.Fatal("quiet package must not be pinned")
+	}
+}
