@@ -5,7 +5,7 @@ const c = 100
 
 var a float64 = 1
 
-// CHECK: @"{{.*}}/untyped.a" = global double 0.000000e+00, align 8
+// CHECK: @"{{.*}}/untyped.a" = global double 1.000000e+00, align 8
 
 // CHECK-LABEL: define void @"{{.*}}.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:

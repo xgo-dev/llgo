@@ -18,6 +18,7 @@ package ssa
 
 import (
 	"fmt"
+	"go/types"
 
 	"github.com/xgo-dev/llvm"
 )
@@ -56,6 +57,28 @@ func (pkg Package) ConstBytes(value []byte) Expr {
 	n := prog.IntVal(uint64(len(value)), prog.Int())
 	cv := llvm.ConstNamedStruct(styp.ll, []llvm.Value{data, n.impl, n.impl})
 	return Expr{cv, styp}
+}
+
+// ConstArray creates an LLVM constant array expression.
+func (prog Program) ConstArray(t Type, values []Expr) Expr {
+	elem := prog.Index(t)
+	fields := make([]llvm.Value, len(values))
+	for i, value := range values {
+		fields[i] = value.impl
+	}
+	return Expr{llvm.ConstArray(elem.ll, fields), t}
+}
+
+// ConstStruct creates an LLVM constant struct expression.
+func (prog Program) ConstStruct(t Type, values []Expr) Expr {
+	fields := make([]llvm.Value, len(values))
+	for i, value := range values {
+		fields[i] = value.impl
+	}
+	if _, ok := t.raw.Type.(*types.Named); ok {
+		return Expr{llvm.ConstNamedStruct(t.ll, fields), t}
+	}
+	return Expr{prog.ctx.ConstStruct(fields, false), t}
 }
 
 // Undefined global string var by names

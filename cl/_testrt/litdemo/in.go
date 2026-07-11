@@ -3,6 +3,8 @@ package main
 
 var seed = 40
 
+// CHECK: @"{{.*}}/cl/_testrt/litdemo.seed" = global i64 40, align 8
+
 // CHECK-LABEL: define i64 @"{{.*}}/cl/_testrt/litdemo.add"(i64 %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = add i64 %0, %1
@@ -16,7 +18,6 @@ var seed = 40
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
 // CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testrt/litdemo.init$guard", align 1
-// CHECK-NEXT:   store i64 40, ptr @"{{.*}}/cl/_testrt/litdemo.seed", align 8
 // CHECK-NEXT:   br label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0

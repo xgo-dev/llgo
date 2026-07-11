@@ -5,6 +5,8 @@ import (
 	"unicode/utf8"
 )
 
+// CHECK: @"{{.*}}.array" = global [8 x i8] c"\01\02\03\04\05\06\07\08", align 1
+
 // CHECK-LABEL: define i8 @"{{.*}}.index"(i8 %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = sext i8 %0 to i64
@@ -22,7 +24,6 @@ func index(n int8) uint8 {
 
 // CHECK-LABEL: define void @"{{.*}}.init"(){{.*}} {
 // CHECK:   call void @"unicode/utf8.init"()
-// CHECK:   store i8 1, ptr @"{{.*}}.array", align 1
 var array = [...]uint8{
 	1, 2, 3, 4, 5, 6, 7, 8,
 }

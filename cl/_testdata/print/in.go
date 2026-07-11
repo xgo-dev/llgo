@@ -109,7 +109,6 @@ func bytes(s string) (ret []byte) {
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
 // CHECK-NEXT:   store i1 true, ptr @"{{.*}}/cl/_testdata/print.init$guard", align 1
-// CHECK-NEXT:   store i64 0, ptr @"{{.*}}/cl/_testdata/print.minhexdigits", align 8
 // CHECK-NEXT:   br label %_llgo_2
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
