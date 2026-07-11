@@ -179,6 +179,7 @@ type context struct {
 	paramDIVars          map[*types.Var]llssa.DIVar
 	runtimeCallerFuncs   map[*ssa.Function]bool
 	pcLineSeq            uint64
+	recoverSlots         map[*ssa.Alloc]none
 
 	patches          Patches
 	blkInfos         []blocks.Info
@@ -552,11 +553,14 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	noInlineDirective := hasNoInlineDirective(f)
 	runtimeStackNoInline := needsRuntimeStackNoInline(pkgTypes, f)
 	pcLineNoInline := p.needsPCLineNoInline(f)
-	if disableInline || noInlineDirective || runtimeStackNoInline || pcLineNoInline {
+	if disableInline || noInlineDirective || runtimeStackNoInline || pcLineNoInline || functionUsesRecover(f) {
 		fn.Inline(llssa.NoInline)
 	}
 	if noInlineDirective || runtimeStackNoInline || pcLineNoInline {
 		fn.DisableTailCalls()
+	}
+	if functionUsesRecover(f) {
+		fn.Expr = fn.Expr.MarkMayRecover()
 	}
 	p.funcs[f] = fn
 	isCgo := isCgoExternSymbol(f)
@@ -594,12 +598,19 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		dbgSymsEnabled := enableDbgSyms && (f == nil || f.Origin() == nil)
 		p.inits = append(p.inits, func() {
 			oldFn, oldGoFn, oldMethodNilDerefChecks, oldCallerFrameMark := p.fn, p.goFn, p.methodNilDerefChecks, p.callerFrameMark
+			oldRecoverSlots := p.recoverSlots
 			p.fn = fn
 			p.goFn = f
 			p.callerFrameMark = llssa.Nil
 			p.state = state // restore pkgState when compiling funcBody
+			if f.Recover != nil {
+				p.recoverSlots = make(map[*ssa.Alloc]none)
+			} else {
+				p.recoverSlots = nil
+			}
 			defer func() {
 				p.fn, p.goFn, p.methodNilDerefChecks, p.callerFrameMark = oldFn, oldGoFn, oldMethodNilDerefChecks, oldCallerFrameMark
+				p.recoverSlots = oldRecoverSlots
 			}()
 			p.phis = nil
 			if dbgSymsEnabled {
@@ -1096,6 +1107,29 @@ func (p *context) syntheticMakeSliceCap(v *ssa.Slice) (llssa.Expr, bool) {
 	return p.prog.IntVal(uint64(arr.Len()), p.prog.Int()), true
 }
 
+func (p *context) markRecoverSlot(v *ssa.Alloc) {
+	if p.recoverSlots == nil || v.Heap {
+		return
+	}
+	p.recoverSlots[v] = none{}
+}
+
+func (p *context) isRecoverSlotAddr(v ssa.Value) bool {
+	if p.recoverSlots == nil {
+		return false
+	}
+	switch v := v.(type) {
+	case *ssa.Alloc:
+		_, ok := p.recoverSlots[v]
+		return ok
+	case *ssa.FieldAddr:
+		return p.isRecoverSlotAddr(v.X)
+	case *ssa.IndexAddr:
+		return p.isRecoverSlotAddr(v.X)
+	}
+	return false
+}
+
 func isAllocVargs(ctx *context, v *ssa.Alloc) bool {
 	refs := *v.Referrers()
 	n := len(refs)
@@ -1273,6 +1307,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 				}
 			}
 			ret = b.UnOp(v.Op, x)
+			if v.Op == token.MUL && p.isRecoverSlotAddr(v.X) {
+				ret = ret.SetVolatile(true)
+			}
 		}
 	case *ssa.ChangeType:
 		t := v.Type()
@@ -1314,6 +1351,10 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			p.emitPCLineLabel(b, v.Pos())
 		}
 		ret = b.Alloc(elem, v.Heap)
+		p.markRecoverSlot(v)
+		if p.isRecoverSlotAddr(v) {
+			b.Store(ret, p.prog.Zero(elem)).SetVolatile(true)
+		}
 	case *ssa.IndexAddr:
 		vx := v.X
 		if _, ok := p.isVArgs(vx); ok { // varargs: this is a varargs index
@@ -1580,7 +1621,10 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		}
 		ptr := p.compileValue(b, va)
 		val := p.compileValue(b, v.Val)
-		b.Store(ptr, val)
+		store := b.Store(ptr, val)
+		if p.isRecoverSlotAddr(va) {
+			store.SetVolatile(true)
+		}
 	case *ssa.Jump:
 		jmpb := p.jumpTo(v)
 		b.Jump(jmpb)
@@ -1659,6 +1703,25 @@ func (p *context) getLocalVariable(b llssa.Builder, fn *ssa.Function, v *types.V
 	t := p.type_(v.Type(), llssa.InGo)
 	scope := b.DIScope(p.fn, v.Parent())
 	return b.DIVarAuto(scope, pos, v.Name(), t)
+}
+
+func functionUsesRecover(fn *ssa.Function) bool {
+	if fn == nil {
+		return false
+	}
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			call, ok := instr.(ssa.CallInstruction)
+			if !ok {
+				continue
+			}
+			builtin, ok := call.Common().Value.(*ssa.Builtin)
+			if ok && builtin.Name() == "recover" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (p *context) compileFunction(v *ssa.Function) (goFn llssa.Function, pyFn llssa.PyObjRef, kind int) {

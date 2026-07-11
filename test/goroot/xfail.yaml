@@ -554,12 +554,6 @@ timeouts:
   - version: go1.24
     platform: darwin/arm64
     directive: run
-    case: fixedbugs/issue4066.go
-    timeout: 2m
-    reason: issue4066 run exceeds the default timeout on darwin/arm64
-  - version: go1.24
-    platform: darwin/arm64
-    directive: run
     case: fixedbugs/issue40917.go
     timeout: 2m
     reason: issue40917 run exceeds the default timeout on darwin/arm64
@@ -926,12 +920,6 @@ timeouts:
   - version: go1.25
     platform: darwin/arm64
     directive: run
-    case: fixedbugs/issue4066.go
-    timeout: 2m
-    reason: issue4066 run exceeds the default timeout on darwin/arm64
-  - version: go1.25
-    platform: darwin/arm64
-    directive: run
     case: fixedbugs/issue40917.go
     timeout: 2m
     reason: issue40917 run exceeds the default timeout on darwin/arm64
@@ -1295,12 +1283,6 @@ timeouts:
     case: fixedbugs/issue40367.go
     timeout: 2m
     reason: issue40367 run exceeds the default timeout on darwin/arm64
-  - version: go1.26
-    platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue4066.go
-    timeout: 2m
-    reason: issue4066 run exceeds the default timeout on darwin/arm64
   - version: go1.26
     platform: darwin/arm64
     directive: run
@@ -1767,16 +1749,6 @@ xfails:
     directive: run
     case: fixedbugs/issue37975.go
     reason: current main goroot run failure on darwin/arm64
-  - version: go1.26
-    platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue73916.go
-    reason: go1.26 goroot run failure on darwin/arm64
-  - version: go1.26
-    platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue73916b.go
-    reason: go1.26 goroot run failure on darwin/arm64
   - version: go1.24
     platform: linux/amd64
     directive: run
@@ -1966,16 +1938,6 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue72844.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue73916.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue73916b.go
     reason: go1.26 goroot run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64
@@ -2159,16 +2121,6 @@ xfails:
     directive: run
     case: fixedbugs/issue32477.go
     reason: go1.25 goroot run failure on linux/amd64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue4066.go
-    reason: go1.25 goroot run failure on linux/amd64
-  - version: go1.25
-    platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue4066.go
-    reason: go1.25 goroot run failure on darwin/arm64
   - version: go1.25
     platform: linux/amd64
     directive: run
@@ -2368,16 +2320,6 @@ xfails:
   - version: go1.24
     platform: linux/amd64
     directive: run
-    case: fixedbugs/issue4066.go
-    reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.24
-    platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue4066.go
-    reason: go1.24 goroot run failure on darwin/arm64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
     case: fixedbugs/issue45045.go
     reason: go1.24 goroot run failure on linux/amd64
   - version: go1.24
@@ -2480,16 +2422,6 @@ xfails:
     directive: run
     case: fixedbugs/issue33724.go
     reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue4066.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue4066.go
-    reason: go1.26 goroot run failure on darwin/arm64
   - version: go1.26
     platform: linux/amd64
     directive: run
