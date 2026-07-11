@@ -305,14 +305,17 @@ func (t *rtype) Method(i int) (m Method) {
 	}
 	mt := FuncOf(in, out, ft.Variadic())
 	m.Type = mt
-	mtfn := (*funcType)(unsafe.Pointer(&mt.(*rtype).t))
-	fv := &struct {
-		fn  unsafe.Pointer
-		env unsafe.Pointer
-	}{p.Tfn_, nil}
-	m.Func = Value{closureOf(mtfn), unsafe.Pointer(fv), fl | flagIndir}
+	m.Func = methodFuncValue(&mt.(*rtype).t, p.Tfn_, fl)
 	m.Index = i
 	return m
+}
+
+func methodFuncValue(ft *abi.Type, fn unsafe.Pointer, fl flag) Value {
+	ct := closureOf((*funcType)(unsafe.Pointer(ft)))
+	c := unsafe_New(ct)
+	*(*unsafe.Pointer)(c) = fn
+	*(*unsafe.Pointer)(add(c, goarch.PtrSize, "closure data field")) = nil
+	return Value{ct, c, fl | flagIndir}
 }
 
 func (t *rtype) MethodByName(name string) (m Method, ok bool) {

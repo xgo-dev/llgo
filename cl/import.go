@@ -180,6 +180,7 @@ func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
 			switch decl := decl.(type) {
 			case *ast.FuncDecl:
 				fullName, inPkgName := astFuncName(pkgPath, decl)
+				p.processNoInterfaceByDoc(decl.Doc, fullName)
 				if !p.processLinknameByDoc(decl.Doc, fullName, inPkgName, false, true) && cPkg {
 					// package C (https://github.com/goplus/llgo/issues/1165)
 					if decl.Recv == nil && token.IsExported(inPkgName) {
@@ -310,6 +311,22 @@ func (p *context) processLinknameByDoc(doc *ast.CommentGroup, fullName, inPkgNam
 		}
 	}
 	return false
+}
+
+func (p *context) processNoInterfaceByDoc(doc *ast.CommentGroup, fullName string) {
+	if doc == nil {
+		return
+	}
+	for n := len(doc.List) - 1; n >= 0; n-- {
+		line := doc.List[n].Text
+		if line == "//go:nointerface" {
+			p.prog.SetNoInterfaceMethod(fullName)
+			return
+		}
+		if !strings.HasPrefix(line, "//go:") {
+			return
+		}
+	}
 }
 
 const (
@@ -737,11 +754,16 @@ func (p *context) initPyModule() {
 	}
 }
 
-// ParsePkgSyntax parses AST of a package to check llgo:type in type declaration.
+// ParsePkgSyntax parses AST of a package to check package-level compiler directives.
 func ParsePkgSyntax(prog llssa.Program, pkg *types.Package, files []*ast.File) {
+	ctx := &context{prog: prog}
+	pkgPath := llssa.PathOf(pkg)
 	for _, file := range files {
 		for _, decl := range file.Decls {
 			switch decl := decl.(type) {
+			case *ast.FuncDecl:
+				fullName, _ := astFuncName(pkgPath, decl)
+				ctx.processNoInterfaceByDoc(decl.Doc, fullName)
 			case *ast.GenDecl:
 				switch decl.Tok {
 				case token.TYPE:

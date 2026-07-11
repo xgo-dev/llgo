@@ -47,6 +47,13 @@ type (
 	B int
 	C int
 )
+
+//go:nointerface
+func (A) Hidden() {}
+
+//go:other
+//go:nointerface
+func (A) StackedHidden() {}
 `
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "p.go", src, parser.ParseComments)
@@ -56,6 +63,13 @@ type (
 	prog := llssa.NewProgram(nil)
 	pkg := types.NewPackage("example.com/p", "p")
 	ParsePkgSyntax(prog, pkg, []*ast.File{file})
+
+	ctx := &context{prog: prog}
+	ctx.processNoInterfaceByDoc(nil, "example.com/p.NilDoc")
+	ctx.processNoInterfaceByDoc(&ast.CommentGroup{List: []*ast.Comment{
+		{Text: "// not a directive"},
+		{Text: "//go:nointerface"},
+	}}, "example.com/p.NonDirectiveStops")
 }
 
 func TestPkgSymInfoAddSymAndInitLinknamesCoverage(t *testing.T) {
