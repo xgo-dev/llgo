@@ -95,6 +95,12 @@ host_skips:
     case: chanlinear.go
     reason: go1.26 goroot run is host-sensitive on darwin/arm64
 timeouts:
+  - version: go1.26
+    platform: darwin/arm64
+    directive: runoutput
+    case: fixedbugs/bug449.go
+    timeout: 6m
+    reason: bug449 generated build exceeds the 3m build timeout on darwin/arm64
   - version: go1.24
     platform: darwin/arm64
     directive: run
@@ -1717,6 +1723,55 @@ flakes:
     case: goprint.go
     reason: darwin/arm64 goroot run can either pass or fail
 xfails:
+  - platform: darwin/arm64
+    directive: run
+    case: finprofiled.go
+    reason: LLGo finalizer profiling run hangs beyond the 1m timeout on darwin/arm64
+  - platform: darwin/arm64
+    directive: run
+    case: gcstring.go
+    reason: GC frees a string-backed pointer before its finalizer check on darwin/arm64
+  - platform: darwin/arm64
+    directive: run
+    case: inline_caller.go
+    reason: runtime caller frame reports main instead of runtime.main on darwin/arm64
+  - platform: darwin/arm64
+    directive: run
+    case: nilptr2.go
+    reason: address-of a dereferenced nil pointer does not panic and the run hangs on darwin/arm64
+  - platform: darwin/arm64
+    directive: run
+    case: range4.go
+    reason: range-over-function build exits successfully without producing a binary on darwin/arm64
+  - platform: darwin/arm64
+    directive: run
+    case: fixedbugs/issue31546.go
+    reason: reflection exposes the initializer value of a blank struct field instead of zero on darwin/arm64
+  - platform: darwin/arm64
+    directive: run
+    case: fixedbugs/issue72063.go
+    reason: generic Y-combinator build exits successfully without producing a binary on darwin/arm64
+  - platform: darwin/arm64
+    directive: run
+    case: fixedbugs/issue72844.go
+    reason: dereferencing a nil array pointer for len or range does not panic when required on darwin/arm64
+  - platform: darwin/arm64
+    directive: run
+    case: fixedbugs/issue8047b.go
+    reason: recover interaction panics with value 1 on darwin/arm64
+  - platform: darwin/arm64
+    directive: run
+    case: typeparam/orderedmap.go
+    reason: generic ordered-map iterator dereferences a nil entry on darwin/arm64
+  - platform: darwin/arm64
+    directive: run
+    case: uintptrescapes3.go
+    reason: uintptr escape round trip dereferences a nil pointer on darwin/arm64
+  - version: go1.26
+    platform: darwin/arm64
+    directive: run
+    case: convert5.go
+    reason: out-of-range float-to-uint32 conversions wrap instead of producing zero on darwin/arm64
   - platform: darwin/arm64
     directive: run
     case: noinit.go
