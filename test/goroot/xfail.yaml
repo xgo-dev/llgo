@@ -1719,10 +1719,6 @@ flakes:
 xfails:
   - platform: darwin/arm64
     directive: run
-    case: init1.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: noinit.go
     reason: current main goroot run failure on darwin/arm64
   - platform: darwin/arm64
@@ -1737,23 +1733,10 @@ xfails:
     directive: run
     case: recover1.go
     reason: recover during recursive panics - a plain sub-call inside the deferred function still sees the panic (sub-call recover masking, follow-up on the Defer-node model) on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue19040.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue37975.go
-    reason: current main goroot run failure on darwin/arm64
   - version: go1.24
     platform: linux/amd64
     directive: run
     case: append.go
-    reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
-    case: init1.go
     reason: go1.24 goroot run failure on linux/amd64
   - version: go1.24
     platform: linux/amd64
@@ -1804,11 +1787,6 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue19040.go
-    reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue37975.go
     reason: go1.24 goroot run failure on linux/amd64
   - version: go1.24
     platform: linux/amd64
@@ -1878,11 +1856,6 @@ xfails:
   - version: go1.26
     platform: linux/amd64
     directive: run
-    case: init1.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
     case: noinit.go
     reason: go1.26 goroot run failure on linux/amd64
   - version: go1.26
@@ -1899,11 +1872,6 @@ xfails:
     platform: linux/amd64
     directive: run
     case: fixedbugs/issue19040.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue37975.go
     reason: go1.26 goroot run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64
@@ -2009,19 +1977,11 @@ xfails:
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: fixedbugs/issue54343.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: fixedbugs/issue5493.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue57823.go
-    reason: latest main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue5856.go
     reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
@@ -2264,11 +2224,6 @@ xfails:
     case: maymorestack.go
     reason: go1.26 goroot ci-mode run failure on darwin/arm64
   - version: go1.26
-    platform: darwin/arm64
-    directive: run
-    case: devirtualization_nil_panics.go
-    reason: go1.26 goroot run failure on darwin/arm64
-  - version: go1.26
     platform: linux/amd64
     directive: run
     case: inline_literal.go
@@ -2395,84 +2350,12 @@ xfails:
     reason: go1.26 goroot run failure on linux/amd64
   - platform: darwin/arm64
     directive: run
-    case: fixedbugs/bug273.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue12133.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue13169.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue19246.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue26094.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue43835.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue47928.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: fixedbugs/issue38496.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue8048.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue8132.go
-    reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: nil.go
     reason: current main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
     case: typeparam/chans.go
     reason: select over unbuffered channel misses final receive on darwin/arm64
-  - platform: darwin/arm64
-    directive: runoutput
-    case: index0.go
-    reason: current main goroot runoutput failure on darwin/arm64
-  - platform: linux/amd64
-    directive: run
-    case: fixedbugs/bug273.go
-    reason: current main goroot run failure on linux/amd64
-  - platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue19246.go
-    reason: current main goroot run failure on linux/amd64
-  - platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue26094.go
-    reason: current main goroot run failure on linux/amd64
-  - platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue43835.go
-    reason: current main goroot run failure on linux/amd64
-  - platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue47928.go
-    reason: current main goroot run failure on linux/amd64
-  - platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue8048.go
-    reason: current main goroot run failure on linux/amd64
-  - platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue8132.go
-    reason: current main goroot run failure on linux/amd64
   - platform: linux/amd64
     directive: run
     case: fixedbugs/issue38496.go
