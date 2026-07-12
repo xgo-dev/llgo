@@ -180,6 +180,8 @@ func TestRunAndTestFromTestlto(t *testing.T) {
 	conf.LTO = lto.Full
 	ignore := []string{
 		"./_testlto/globaldce_reflect_method_by_name_ltoplugin",
+		"./_testlto/globaldce_reflect_method_by_name_ltoplugin_concat",
+		"./_testlto/globaldce_reflect_method_by_name_ltoplugin_global",
 		"./_testlto/globaldce_reflect_method_by_name_ltoplugin_switch",
 	}
 	if !buildenv.Dev {
@@ -211,6 +213,8 @@ var testltoSymbolChecks = []string{
 
 var testltoLTOPluginTests = []string{
 	"globaldce_reflect_method_by_name_ltoplugin",
+	"globaldce_reflect_method_by_name_ltoplugin_concat",
+	"globaldce_reflect_method_by_name_ltoplugin_global",
 	"globaldce_reflect_method_by_name_ltoplugin_switch",
 }
 
