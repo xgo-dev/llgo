@@ -260,6 +260,7 @@ type level2 struct {
 	C byte
 	level1
 }
+
 type outer[T any] struct {
 	A T
 	level2
@@ -274,6 +275,24 @@ func Offset(v *outer[int]) uintptr {
 }
 `)
 	if fn := m.NamedFunction("foo.Offset"); fn.IsNil() {
+		t.Fatal("missing compiled Offset function")
+	}
+}
+
+func TestCompileOffsetOfGenericCompositeField(t *testing.T) {
+	_, module := mustCompileLLPkgFromSrc(t, `package foo
+
+import "unsafe"
+
+func F[T int](v T) uintptr {
+	return unsafe.Offsetof(struct{ f T }{
+		func(T) T { return v }(v),
+	}.f)
+}
+
+func Offset() uintptr { return F(1) }
+`)
+	if fn := module.NamedFunction("foo.Offset"); fn.IsNil() {
 		t.Fatal("missing compiled Offset function")
 	}
 }

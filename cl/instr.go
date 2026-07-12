@@ -711,6 +711,14 @@ func (p *context) pkgNoInit(pkg *types.Package) bool {
 }
 
 func (p *context) offsetOfBuiltinArg(arg ssa.Value) (llssa.Expr, bool) {
+	if field, ok := arg.(*ssa.Field); ok {
+		st, ok := field.X.Type().Underlying().(*types.Struct)
+		if !ok || field.Field < 0 || field.Field >= st.NumFields() {
+			return llssa.Expr{}, false
+		}
+		typ := p.type_(field.X.Type(), llssa.InGo)
+		return p.prog.Val(int(p.prog.OffsetOf(typ, field.Field))), true
+	}
 	load, ok := arg.(*ssa.UnOp)
 	if !ok || load.Op != token.MUL {
 		return llssa.Expr{}, false
