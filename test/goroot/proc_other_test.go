@@ -12,3 +12,7 @@ func killProcessTree(cmd *exec.Cmd) {
 	}
 	_ = cmd.Process.Kill()
 }
+
+func resourceMonitoringSupported() bool { return false }
+
+func processGroupRSS(int) (uint64, error) { return 0, nil }

@@ -228,6 +228,68 @@ func TestRunProgramTimeout(t *testing.T) {
 	}
 }
 
+func TestRunProgramRSSLimit(t *testing.T) {
+	if !resourceMonitoringSupported() {
+		t.Skip("process-group RSS monitoring is unavailable")
+	}
+	if os.Getenv("LLGO_GOROOT_HELPER") == "allocate" {
+		memory := make([]byte, 64<<20)
+		for i := 0; i < len(memory); i += 4096 {
+			memory[i] = 1
+		}
+		time.Sleep(5 * time.Second)
+		runtime.KeepAlive(memory)
+		return
+	}
+
+	oldLimit := *flagMaxRSSMiB
+	oldPoll := *flagRSSPoll
+	*flagMaxRSSMiB = 24
+	*flagRSSPoll = 10 * time.Millisecond
+	defer func() {
+		*flagMaxRSSMiB = oldLimit
+		*flagRSSPoll = oldPoll
+	}()
+
+	_, _, _, elapsed, err := runProgram(
+		t.TempDir(),
+		os.Args[0],
+		append(os.Environ(), "LLGO_GOROOT_HELPER=allocate"),
+		5*time.Second,
+		"-test.run=^TestRunProgramRSSLimit$",
+	)
+	if err == nil || !strings.Contains(err.Error(), "RSS") {
+		t.Fatalf("err=%v, want RSS limit error", err)
+	}
+	if elapsed >= 5*time.Second {
+		t.Fatalf("elapsed=%s, memory limit did not terminate before timeout", elapsed)
+	}
+}
+
+func TestValidateSystemMemoryState(t *testing.T) {
+	oldMemory := *flagMinMemPct
+	oldSwap := *flagMinSwapMiB
+	*flagMinMemPct = 15
+	*flagMinSwapMiB = 512
+	defer func() {
+		*flagMinMemPct = oldMemory
+		*flagMinSwapMiB = oldSwap
+	}()
+
+	if err := validateSystemMemoryState(systemMemoryState{freePercent: 20, swapFree: 1 << 30, swapPresent: true}); err != nil {
+		t.Fatalf("healthy state rejected: %v", err)
+	}
+	if err := validateSystemMemoryState(systemMemoryState{freePercent: 10, swapFree: 1 << 30, swapPresent: true}); err == nil || !strings.Contains(err.Error(), "free memory") {
+		t.Fatalf("low-memory err=%v", err)
+	}
+	if err := validateSystemMemoryState(systemMemoryState{freePercent: 20, swapFree: 128 << 20, swapPresent: true}); err == nil || !strings.Contains(err.Error(), "free swap") {
+		t.Fatalf("low-swap err=%v", err)
+	}
+	if err := validateSystemMemoryState(systemMemoryState{freePercent: 20, swapPresent: false}); err != nil {
+		t.Fatalf("swapless state rejected: %v", err)
+	}
+}
+
 func TestRunGeneratedProgramUsesProvidedTimeout(t *testing.T) {
 	dir := t.TempDir()
 	tool := filepath.Join(dir, "fake-tool.sh")
@@ -413,6 +475,97 @@ func TestParseDirectiveOptions(t *testing.T) {
 	}
 }
 
+func TestParseCompilerDirectiveOptions(t *testing.T) {
+	opts, err := parseDirectiveOptions("errorcheck", []string{
+		"-0", "-lang=go1.17", "-N", "-goexperiment", "fieldtrack",
+	}, 20*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.WantError {
+		t.Fatal("WantError=true, want false after -0")
+	}
+	if !reflect.DeepEqual(opts.CompilerFlags, []string{"-lang=go1.17", "-N"}) {
+		t.Fatalf("CompilerFlags=%v", opts.CompilerFlags)
+	}
+	if len(opts.BuildFlags) != 0 {
+		t.Fatalf("BuildFlags=%v, want none", opts.BuildFlags)
+	}
+	if !reflect.DeepEqual(opts.ExtraEnv, []string{"GOEXPERIMENT=fieldtrack"}) {
+		t.Fatalf("ExtraEnv=%v", opts.ExtraEnv)
+	}
+}
+
+func TestParseRundirCompilerAndLinkerFlags(t *testing.T) {
+	opts, err := parseDirectiveOptions("rundir", []string{"-N", "-ldflags", "-w", "-strictdups=2"}, 20*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(opts.CompilerFlags, []string{"-N"}) {
+		t.Fatalf("CompilerFlags=%v", opts.CompilerFlags)
+	}
+	if !reflect.DeepEqual(opts.LinkerFlags, []string{"-w", "-strictdups=2"}) {
+		t.Fatalf("LinkerFlags=%v", opts.LinkerFlags)
+	}
+}
+
+func TestDirectoryBuildFlagsMatchGoFlagShape(t *testing.T) {
+	goFlags, llgoFlags := directoryBuildFlags(directiveOptions{
+		CompilerFlags: []string{"-N", "-l=4"},
+		LinkerFlags:   []string{"-strictdups=2", "-w=0"},
+	})
+	want := []string{"-gcflags=-N -l=4", "-ldflags=-strictdups=2 -w=0"}
+	if !reflect.DeepEqual(goFlags, want) {
+		t.Fatalf("goFlags=%v, want %v", goFlags, want)
+	}
+	if !reflect.DeepEqual(llgoFlags, want) {
+		t.Fatalf("llgoFlags=%v, want %v", llgoFlags, want)
+	}
+}
+
+func TestCheckExpectedErrors(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "case.go")
+	src := `package p
+var _ = missing // ERROR "undefined: missing"
+`
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output := file + ":2:9: undefined: missing\n"
+	if err := checkExpectedErrors(output, file, "case.go"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCheckExpectedErrorsReportsMissingDiagnostic(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "case.go")
+	src := `package p
+var _ = missing // ERROR "undefined: missing"
+`
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := checkExpectedErrors("", file, "case.go")
+	if err == nil || !strings.Contains(err.Error(), "missing error") {
+		t.Fatalf("err=%v, want missing error", err)
+	}
+}
+
+func TestPreferSpecificDiagnostics(t *testing.T) {
+	got := preferSpecificDiagnostics([]string{
+		"case.go:18:16: requires go1.22 or later (file declares go1.21)",
+		"/tmp/case.go:18: requires go1.22 or later",
+		"case.go:19: a different error",
+	})
+	want := []string{
+		"case.go:18:16: requires go1.22 or later (file declares go1.21)",
+		"case.go:19: a different error",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("preferSpecificDiagnostics()=%v, want %v", got, want)
+	}
+}
+
 func TestSplitSourceFiles(t *testing.T) {
 	files, args := splitSourceFiles("index0.go", []string{"./index.go", "arg1", "arg2"})
 	if !reflect.DeepEqual(files, []string{"index0.go", "index.go"}) {
@@ -579,6 +732,12 @@ func TestStageRundirLayoutRewritesRelativeImports(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(srcDir, "main.go"), []byte("package main\nimport \"./b\"\nfunc main(){_ = b.Y}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(srcDir, "helper_test.go"), []byte("package main\nfunc helper() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "external.go"), []byte("package external\nfunc Missing()\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	dstDir := t.TempDir()
 	if err := stageRundirLayout(dstDir, srcDir, false); err != nil {
 		t.Fatal(err)
@@ -587,7 +746,20 @@ func TestStageRundirLayoutRewritesRelativeImports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(got), "\"../a\"") {
-		t.Fatalf("rewritten file=%q, want import ../a", got)
+	if !strings.Contains(string(got), "\"test/a\"") {
+		t.Fatalf("rewritten file=%q, want import test/a", got)
+	}
+	got, err = os.ReadFile(filepath.Join(dstDir, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "\"test/b\"") {
+		t.Fatalf("rewritten file=%q, want import test/b", got)
+	}
+	if _, err := os.Stat(filepath.Join(dstDir, "helper_testdir.go")); err != nil {
+		t.Fatalf("stage _test.go as ordinary source: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dstDir, "testdir_empty.s")); err != nil {
+		t.Fatalf("stage empty assembly source for missing function body: %v", err)
 	}
 }

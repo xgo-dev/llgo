@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"go/ast"
 	"go/build"
 	"go/format"
 	"go/parser"
@@ -31,22 +32,31 @@ import (
 )
 
 var (
-	flagGOROOT   = flag.String("goroot", os.Getenv("LLGO_GOROOT"), "Go toolchain root whose GOROOT/test sources should be used")
-	flagGoCmd    = flag.String("go", os.Getenv("LLGO_GO"), "go binary used as baseline (default: <goroot>/bin/go)")
-	flagLLGO     = flag.String("llgo", os.Getenv("LLGO_TEST_LLGO"), "llgo binary used for comparisons (default: build from current checkout)")
-	flagDirs     = flag.String("dirs", strings.Join(defaultGoRootTestDirs, ","), "comma-separated GOROOT/test subdirectories to scan")
-	flagCase     = flag.String("case", os.Getenv("LLGO_GOROOT_CASE"), "regexp selecting cases by relative path")
-	flagLimit    = flag.Int("limit", 0, "maximum number of matching cases to run")
-	flagShardI   = flag.Int("shard-index", 0, "0-based shard index used to partition matching cases")
-	flagShardN   = flag.Int("shard-total", 1, "number of shards used to partition matching cases")
-	flagKeep     = flag.Bool("keepwork", false, "keep temporary work directories for debugging")
-	flagDirMode  = flag.String("directive-mode", "legacy", "case discovery mode: legacy, ci, or runlike")
-	flagXFail    = flag.String("xfail", filepath.Join("test", "goroot", "xfail.yaml"), "xfail configuration path relative to repo root")
-	flagBuildTO  = flag.Duration("build-timeout", 3*time.Minute, "timeout for each go/llgo build step; 0 disables the timeout")
-	flagRunTO    = flag.Duration("run-timeout", time.Minute, "timeout for the compiled program run step; 0 disables the timeout")
-	flagSlowBld  = flag.Duration("slow-build", 10*time.Second, "log build steps that exceed this duration; 0 disables slow-build logging")
-	flagSlowRun  = flag.Duration("slow-run", 5*time.Second, "log run steps that exceed this duration; 0 disables slow-run logging")
-	flagProgress = flag.Duration("progress", 0, "log current GOROOT case progress at this interval; 0 disables progress logging")
+	flagGOROOT     = flag.String("goroot", os.Getenv("LLGO_GOROOT"), "Go toolchain root whose GOROOT/test sources should be used")
+	flagGoCmd      = flag.String("go", os.Getenv("LLGO_GO"), "go binary used as baseline (default: <goroot>/bin/go)")
+	flagLLGO       = flag.String("llgo", os.Getenv("LLGO_TEST_LLGO"), "llgo binary used for comparisons (default: build from current checkout)")
+	flagDirs       = flag.String("dirs", strings.Join(defaultGoRootTestDirs, ","), "comma-separated GOROOT/test subdirectories to scan")
+	flagCase       = flag.String("case", os.Getenv("LLGO_GOROOT_CASE"), "regexp selecting cases by relative path")
+	flagLimit      = flag.Int("limit", 0, "maximum number of matching cases to run")
+	flagShardI     = flag.Int("shard-index", 0, "0-based shard index used to partition matching cases")
+	flagShardN     = flag.Int("shard-total", 1, "number of shards used to partition matching cases")
+	flagKeep       = flag.Bool("keepwork", false, "keep temporary work directories for debugging")
+	flagDirMode    = flag.String("directive-mode", "legacy", "case discovery mode: legacy, ci, runlike, or coverage")
+	flagDirective  = flag.String("directives", "", "comma-separated directive filter within the selected mode")
+	flagXFail      = flag.String("xfail", filepath.Join("test", "goroot", "xfail.yaml"), "xfail configuration path relative to repo root")
+	flagBuildTO    = flag.Duration("build-timeout", 3*time.Minute, "timeout for each go/llgo build step; 0 disables the timeout")
+	flagRunTO      = flag.Duration("run-timeout", time.Minute, "timeout for the compiled program run step; 0 disables the timeout")
+	flagSlowBld    = flag.Duration("slow-build", 10*time.Second, "log build steps that exceed this duration; 0 disables slow-build logging")
+	flagSlowRun    = flag.Duration("slow-run", 5*time.Second, "log run steps that exceed this duration; 0 disables slow-run logging")
+	flagProgress   = flag.Duration("progress", 0, "log current GOROOT case progress at this interval; 0 disables progress logging")
+	flagListCases  = flag.Bool("list-cases", false, "list selected case counts without building or running llgo")
+	flagListPaths  = flag.Bool("list-case-paths", false, "list selected directive and case paths without building or running llgo")
+	flagMaxRSSMiB  = flag.Int64("max-rss-mib", 4096, "maximum RSS in MiB for each spawned process group; 0 disables the limit")
+	flagRSSWarnMiB = flag.Int64("rss-warn-mib", 1024, "log commands whose observed peak process-group RSS reaches this value; 0 disables warnings")
+	flagRSSPoll    = flag.Duration("rss-poll", 100*time.Millisecond, "process-group RSS sampling interval")
+	flagMinMemPct  = flag.Int("min-memory-free-percent", 15, "minimum system-wide free memory percentage required to start and continue a command; 0 disables the check")
+	flagMinSwapMiB = flag.Int64("min-swap-free-mib", 512, "minimum free swap in MiB required to start and continue a command; 0 disables the check")
+	flagMemPoll    = flag.Duration("memory-pressure-poll", time.Second, "system memory pressure sampling interval")
 )
 
 var defaultGoRootTestDirs = []string{
@@ -109,6 +119,7 @@ type directiveMode struct {
 	Name         string
 	Directives   map[string]bool
 	AllowRunArgs bool
+	Recursive    bool
 }
 
 func (m directiveMode) allows(directive string, args []string) bool {
@@ -130,10 +141,13 @@ func (m directiveMode) allows(directive string, args []string) bool {
 
 type directiveOptions struct {
 	BuildFlags     []string
+	CompilerFlags  []string
+	LinkerFlags    []string
 	ProgramArgs    []string
 	ExtraEnv       []string
 	GoModVersion   string
 	SingleFilePkgs bool
+	WantError      bool
 	Timeout        time.Duration
 }
 
@@ -266,13 +280,10 @@ func TestGoRootRunCases(t *testing.T) {
 		t.Fatalf("GOROOT/test root %q is not a directory", testRoot)
 	}
 
-	llgoBin := *flagLLGO
-	if llgoBin == "" {
-		llgoBin = buildLLGOBinary(t, repoRoot, goCmd)
-	}
 	xfails := loadXFailConfig(t, repoRoot, *flagXFail)
 	caseFilter := compileCaseFilter(t, *flagCase)
 	mode := loadDirectiveMode(t, *flagDirMode)
+	mode = filterDirectiveMode(t, mode, *flagDirective)
 	cases := discoverCases(t, testRoot, envInfo, parseDirs(*flagDirs), caseFilter, *flagLimit, mode)
 	if len(cases) == 0 {
 		t.Fatalf("no matching cases found under %s for directive mode %q", testRoot, mode.Name)
@@ -280,6 +291,33 @@ func TestGoRootRunCases(t *testing.T) {
 	cases = shardCases(t, cases, *flagShardI, *flagShardN)
 	if len(cases) == 0 {
 		t.Skipf("no matching cases selected for shard %d/%d", *flagShardI, *flagShardN)
+	}
+	if *flagListCases || *flagListPaths {
+		counts := make(map[string]int)
+		for _, tc := range cases {
+			counts[tc.Directive]++
+		}
+		directives := make([]string, 0, len(counts))
+		for directive := range counts {
+			directives = append(directives, directive)
+		}
+		sort.Strings(directives)
+		fmt.Printf("total=%d\n", len(cases))
+		for _, directive := range directives {
+			fmt.Printf("%s=%d\n", directive, counts[directive])
+		}
+		if *flagListPaths {
+			for _, tc := range cases {
+				fmt.Printf("%s\t%s\n", tc.Directive, tc.RelPath)
+			}
+		}
+		return
+	}
+	t.Setenv("STDLIB_IMPORTCFG", writeStdlibImportCfg(t, goCmd))
+
+	llgoBin := *flagLLGO
+	if llgoBin == "" {
+		llgoBin = buildLLGOBinary(t, repoRoot, goCmd)
 	}
 
 	fmt.Fprintf(os.Stderr, "goroot=%s goversion=%s goos=%s goarch=%s shard=%d/%d cases=%d directive_mode=%s\n", goroot, envInfo.GOVERSION, envInfo.GOOS, envInfo.GOARCH, *flagShardI, *flagShardN, len(cases), mode.Name)
@@ -300,6 +338,10 @@ func TestGoRootRunCases(t *testing.T) {
 			}
 			buildTimeout := effectiveBuildTimeout(*flagBuildTO, runTimeout)
 			err := runCase(t, repoRoot, goroot, goCmd, llgoBin, tc, buildTimeout, runTimeout)
+			var resourceErr *resourceLimitError
+			if errors.As(err, &resourceErr) {
+				t.Fatalf("resource guard stopped case: %v", err)
+			}
 			match, reason := xfails.Match(envInfo.GOVERSION, envInfo.GOOS+"/"+envInfo.GOARCH, tc)
 			flaky, flakyReason := xfails.MatchFlaky(envInfo.GOVERSION, envInfo.GOOS+"/"+envInfo.GOARCH, tc)
 			switch {
@@ -316,6 +358,21 @@ func TestGoRootRunCases(t *testing.T) {
 			}
 		})
 	}
+}
+
+func writeStdlibImportCfg(t *testing.T, goCmd string) string {
+	t.Helper()
+	cmd := exec.Command(goCmd, "list", "-export", "-f", "{{if .Export}}packagefile {{.ImportPath}}={{.Export}}{{end}}", "std")
+	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("list stdlib exports with %s: %v\n%s", goCmd, err, output)
+	}
+	filePath := filepath.Join(t.TempDir(), "stdlib-importcfg")
+	if err := os.WriteFile(filePath, output, 0o644); err != nil {
+		t.Fatalf("write stdlib importcfg: %v", err)
+	}
+	return filePath
 }
 
 func repoRoot(t *testing.T) string {
@@ -450,10 +507,43 @@ func loadDirectiveMode(t *testing.T, name string) directiveMode {
 			},
 			AllowRunArgs: true,
 		}
+	case "coverage":
+		return directiveMode{
+			Name: "coverage",
+			Directives: map[string]bool{
+				"compile":             true,
+				"errorcheck":          true,
+				"errorcheckandrundir": true,
+				"run":                 true,
+				"runoutput":           true,
+				"rundir":              true,
+				"runindir":            true,
+				"buildrun":            true,
+				"buildrundir":         true,
+			},
+			AllowRunArgs: true,
+			Recursive:    true,
+		}
 	default:
 		t.Fatalf("unknown -directive-mode=%q", name)
 		return directiveMode{}
 	}
+}
+
+func filterDirectiveMode(t *testing.T, mode directiveMode, csv string) directiveMode {
+	t.Helper()
+	if strings.TrimSpace(csv) == "" {
+		return mode
+	}
+	selected := make(map[string]bool)
+	for _, directive := range parseDirs(csv) {
+		if !mode.Directives[directive] {
+			t.Fatalf("directive %q is not enabled by -directive-mode=%s", directive, mode.Name)
+		}
+		selected[directive] = true
+	}
+	mode.Directives = selected
+	return mode
 }
 
 func discoverCases(t *testing.T, testRoot string, envInfo toolchainEnv, dirs []string, filter *regexp.Regexp, limit int, mode directiveMode) []testCase {
@@ -465,6 +555,9 @@ func discoverCases(t *testing.T, testRoot string, envInfo toolchainEnv, dirs []s
 	ctx.GOROOT = filepath.Dir(testRoot)
 	ctx.ReleaseTags = envInfo.ReleaseTags
 
+	if mode.Recursive {
+		dirs = recursiveTestDirs(t, testRoot)
+	}
 	var cases []testCase
 	for _, relDir := range dirs {
 		absDir := filepath.Join(testRoot, filepath.FromSlash(relDir))
@@ -509,6 +602,34 @@ func discoverCases(t *testing.T, testRoot string, envInfo toolchainEnv, dirs []s
 		}
 	}
 	return cases
+}
+
+func recursiveTestDirs(t *testing.T, testRoot string) []string {
+	t.Helper()
+	dirs := []string{"."}
+	err := filepath.WalkDir(testRoot, func(current string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if current == testRoot || !entry.IsDir() {
+			return nil
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") || name == "testdata" {
+			return filepath.SkipDir
+		}
+		rel, err := filepath.Rel(testRoot, current)
+		if err != nil {
+			return err
+		}
+		dirs = append(dirs, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk GOROOT/test directories: %v", err)
+	}
+	sort.Strings(dirs)
+	return dirs
 }
 
 func shardCases(t *testing.T, cases []testCase, shardIndex, shardTotal int) []testCase {
@@ -570,6 +691,12 @@ func runCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc testCase,
 		return err
 	}
 	switch tc.Directive {
+	case "compile":
+		return runCompileCase(t, repoRoot, goroot, llgoBin, tc, opts, buildTimeout)
+	case "errorcheck":
+		return runErrorCheckCase(t, repoRoot, goroot, llgoBin, tc, opts, buildTimeout)
+	case "errorcheckandrundir":
+		return runErrorCheckAndRunCase(t, repoRoot, goroot, goCmd, llgoBin, tc, opts, buildTimeout)
 	case "run", "buildrun":
 		return runSingleFileCase(t, repoRoot, goroot, goCmd, llgoBin, tc, opts, buildTimeout)
 	case "runoutput":
@@ -679,12 +806,29 @@ func upsertEnv(env []string, kv string) []string {
 	return append(env, kv)
 }
 
+func restoreProcessEnv(env []string, key string) []string {
+	prefix := key + "="
+	out := env[:0]
+	for _, item := range env {
+		if !strings.HasPrefix(item, prefix) {
+			out = append(out, item)
+		}
+	}
+	if value, ok := os.LookupEnv(key); ok {
+		out = append(out, prefix+value)
+	}
+	return out
+}
+
 func runProgram(dir, app string, env []string, timeout time.Duration, args ...string) ([]byte, []byte, int, time.Duration, error) {
 	start := time.Now()
+	if err := checkSystemMemoryPressure(); err != nil {
+		return nil, nil, 0, time.Since(start), err
+	}
 	cmd := exec.Command(app, args...)
 	configureProcessGroup(cmd)
 	cmd.Dir = dir
-	cmd.Env = env
+	cmd.Env = upsertEnv(append([]string{}, env...), "PWD="+dir)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -699,17 +843,74 @@ func runProgram(dir, app string, env []string, timeout time.Duration, args ...st
 	}()
 
 	var err error
-	timedOut := false
+	var terminationErr error
+	var timeoutTimer *time.Timer
+	var timeoutCh <-chan time.Time
 	if timeout > 0 {
+		timeoutTimer = time.NewTimer(timeout)
+		timeoutCh = timeoutTimer.C
+		defer timeoutTimer.Stop()
+	}
+	var rssTicker *time.Ticker
+	var rssCh <-chan time.Time
+	if (*flagMaxRSSMiB > 0 || *flagRSSWarnMiB > 0) && resourceMonitoringSupported() {
+		poll := *flagRSSPoll
+		if poll <= 0 {
+			poll = 100 * time.Millisecond
+		}
+		rssTicker = time.NewTicker(poll)
+		rssCh = rssTicker.C
+		defer rssTicker.Stop()
+	}
+	var memoryTicker *time.Ticker
+	var memoryCh <-chan time.Time
+	if systemMemoryMonitoringSupported() && (*flagMinMemPct > 0 || *flagMinSwapMiB > 0) {
+		poll := *flagMemPoll
+		if poll <= 0 {
+			poll = time.Second
+		}
+		memoryTicker = time.NewTicker(poll)
+		memoryCh = memoryTicker.C
+		defer memoryTicker.Stop()
+	}
+	var peakRSS uint64
+	for {
 		select {
 		case err = <-waitCh:
-		case <-time.After(timeout):
-			timedOut = true
+			goto finished
+		case <-timeoutCh:
+			terminationErr = fmt.Errorf("timed out after %s", timeout)
 			killProcessTree(cmd)
 			err = <-waitCh
+			goto finished
+		case <-rssCh:
+			rssBytes, rssErr := processGroupRSS(cmd.Process.Pid)
+			if rssErr != nil {
+				continue
+			}
+			if rssBytes > peakRSS {
+				peakRSS = rssBytes
+			}
+			limitBytes := uint64(*flagMaxRSSMiB) << 20
+			if *flagMaxRSSMiB > 0 && rssBytes > limitBytes {
+				terminationErr = &resourceLimitError{message: fmt.Sprintf("process-group RSS %s exceeded limit %s", formatBytes(rssBytes), formatBytes(limitBytes))}
+				killProcessTree(cmd)
+				err = <-waitCh
+				goto finished
+			}
+		case <-memoryCh:
+			if memoryErr := checkSystemMemoryPressure(); memoryErr != nil {
+				terminationErr = memoryErr
+				killProcessTree(cmd)
+				err = <-waitCh
+				goto finished
+			}
 		}
-	} else {
-		err = <-waitCh
+	}
+
+finished:
+	if *flagRSSWarnMiB > 0 && peakRSS >= uint64(*flagRSSWarnMiB)<<20 {
+		fmt.Fprintf(os.Stderr, "goroot resource warning: %s peak process-group RSS %s\n", filepath.Base(app), formatBytes(peakRSS))
 	}
 	exitCode := 0
 	if err != nil {
@@ -722,10 +923,61 @@ func runProgram(dir, app string, env []string, timeout time.Duration, args ...st
 		}
 	}
 	elapsed := time.Since(start)
-	if timedOut {
-		return stdout.Bytes(), stderr.Bytes(), exitCode, elapsed, fmt.Errorf("timed out after %s", timeout)
+	if terminationErr != nil {
+		return stdout.Bytes(), stderr.Bytes(), exitCode, elapsed, terminationErr
 	}
 	return stdout.Bytes(), stderr.Bytes(), exitCode, elapsed, nil
+}
+
+func formatBytes(bytes uint64) string {
+	const mib = uint64(1 << 20)
+	return fmt.Sprintf("%.1f MiB", float64(bytes)/float64(mib))
+}
+
+type resourceLimitError struct {
+	message string
+}
+
+func (err *resourceLimitError) Error() string { return err.message }
+
+type systemMemoryState struct {
+	freePercent int
+	swapFree    uint64
+	swapPresent bool
+}
+
+func checkSystemMemoryPressure() error {
+	if !systemMemoryMonitoringSupported() || (*flagMinMemPct <= 0 && *flagMinSwapMiB <= 0) {
+		return nil
+	}
+	state, err := readSystemMemoryState()
+	if err != nil {
+		return &resourceLimitError{message: fmt.Sprintf("read system memory pressure: %v", err)}
+	}
+	return validateSystemMemoryState(state)
+}
+
+func validateSystemMemoryState(state systemMemoryState) error {
+	if *flagMinMemPct > 0 && state.freePercent < *flagMinMemPct {
+		return &resourceLimitError{message: fmt.Sprintf("system free memory %d%% is below minimum %d%%", state.freePercent, *flagMinMemPct)}
+	}
+	if *flagMinSwapMiB > 0 && state.swapPresent {
+		minimum := uint64(*flagMinSwapMiB) << 20
+		if state.swapFree < minimum {
+			return &resourceLimitError{message: fmt.Sprintf("free swap %s is below minimum %s", formatBytes(state.swapFree), formatBytes(minimum))}
+		}
+	}
+	return nil
+}
+
+func requireSuccessfulExit(err error, exitCode int) error {
+	if err != nil {
+		return err
+	}
+	if exitCode != 0 {
+		return fmt.Errorf("process exited with code %d", exitCode)
+	}
+	return nil
 }
 
 func commandFailure(prefix string, elapsed time.Duration, err error, stdout, stderr []byte, exitCode int) error {
@@ -741,8 +993,16 @@ func commandFailure(prefix string, elapsed time.Duration, err error, stdout, std
 	if len(stderr) != 0 {
 		fmt.Fprintf(&msg, "\nstderr:\n%s", normalizeOutput(stderr))
 	}
-	return errors.New(msg.String())
+	return &commandFailureError{message: msg.String(), cause: err}
 }
+
+type commandFailureError struct {
+	message string
+	cause   error
+}
+
+func (err *commandFailureError) Error() string { return err.message }
+func (err *commandFailureError) Unwrap() error { return err.cause }
 
 func logSlowCase(t *testing.T, casePath string, goBuildDur, llgoBuildDur, goRunDur, llgoRunDur time.Duration) {
 	t.Helper()
@@ -795,10 +1055,257 @@ func filterNoise(in []byte) []byte {
 			continue
 		case strings.HasPrefix(trimmed, "ld: warning:"):
 			continue
+		case strings.Contains(trimmed, "could not import ") && strings.Contains(trimmed, "(no metadata for "):
+			continue
 		}
 		out.Write(line)
 	}
 	return out.Bytes()
+}
+
+type wantedError struct {
+	regexp  *regexp.Regexp
+	pattern string
+	prefix  string
+	file    string
+	line    int
+	auto    bool
+}
+
+type diagnosticSource struct {
+	full  string
+	short string
+}
+
+var (
+	errorCommentRx = regexp.MustCompile(`// (?:GC_)?ERROR (.*)`)
+	errorAutoRx    = regexp.MustCompile(`// (?:GC_)?ERRORAUTO (.*)`)
+	errorQuotesRx  = regexp.MustCompile(`"([^"]*)"`)
+	errorLineRx    = regexp.MustCompile(`LINE(([+-])(\d+))?`)
+	diagnosticRx   = regexp.MustCompile(`^(.*?):([0-9]+)(?::[0-9]+)?: (.*)$`)
+)
+
+func checkExpectedErrors(output, fullPath, shortPath string) error {
+	return checkExpectedErrorsForFiles(output, []diagnosticSource{{full: fullPath, short: shortPath}})
+}
+
+func checkExpectedErrorsForFiles(output string, sources []diagnosticSource) error {
+	lines := splitCompilerOutput(output, false)
+	for _, source := range sources {
+		for i := range lines {
+			lines[i] = replaceDiagnosticPrefix(lines[i], source.full, source.short)
+		}
+	}
+	lines = preferSpecificDiagnostics(lines)
+	var wanted []wantedError
+	for _, source := range sources {
+		expected, err := wantedErrors(source.full, source.short)
+		if err != nil {
+			return err
+		}
+		wanted = append(wanted, expected...)
+	}
+	var errs []error
+	for _, expected := range wanted {
+		var candidates []string
+		if expected.auto {
+			candidates, lines = partitionCompilerOutput("<autogenerated>", lines)
+		} else {
+			candidates, lines = partitionCompilerOutput(expected.prefix, lines)
+		}
+		if len(candidates) == 0 {
+			errs = append(errs, fmt.Errorf("%s:%d: missing error %q", expected.file, expected.line, expected.pattern))
+			continue
+		}
+		matched := false
+		for _, candidate := range candidates {
+			message := candidate
+			if _, suffix, ok := strings.Cut(message, " "); ok {
+				message = suffix
+			}
+			if expected.regexp.MatchString(message) {
+				matched = true
+			} else {
+				lines = append(lines, candidate)
+			}
+		}
+		if !matched {
+			errs = append(errs, fmt.Errorf("%s:%d: no match for %q", expected.file, expected.line, expected.pattern))
+		}
+	}
+
+	local := lines[:0]
+	for _, line := range lines {
+		if strings.Contains(line, ": \t") {
+			continue
+		}
+		for _, source := range sources {
+			if hasDiagnosticPrefix(line, source.full) || hasDiagnosticPrefix(line, source.short) {
+				local = append(local, line)
+				break
+			}
+		}
+	}
+	if len(local) != 0 {
+		errs = append(errs, fmt.Errorf("unmatched errors:\n%s", strings.Join(local, "\n")))
+	}
+	return errors.Join(errs...)
+}
+
+func preferSpecificDiagnostics(lines []string) []string {
+	discard := make([]bool, len(lines))
+	type parsedDiagnostic struct {
+		location string
+		message  string
+	}
+	parsed := make([]parsedDiagnostic, len(lines))
+	for i, line := range lines {
+		match := diagnosticRx.FindStringSubmatch(line)
+		if match == nil {
+			continue
+		}
+		parsed[i] = parsedDiagnostic{
+			location: filepath.Base(match[1]) + ":" + match[2],
+			message:  match[3],
+		}
+	}
+	for i := range lines {
+		if parsed[i].location == "" || discard[i] {
+			continue
+		}
+		for j := i + 1; j < len(lines); j++ {
+			if parsed[i].location != parsed[j].location || discard[j] {
+				continue
+			}
+			switch {
+			case parsed[i].message == parsed[j].message:
+				discard[j] = true
+			case strings.HasPrefix(parsed[j].message, parsed[i].message):
+				discard[i] = true
+			case strings.HasPrefix(parsed[i].message, parsed[j].message):
+				discard[j] = true
+			}
+		}
+	}
+	out := lines[:0]
+	for i, line := range lines {
+		if !discard[i] {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func splitCompilerOutput(output string, wantAuto bool) []string {
+	var out []string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		switch {
+		case strings.HasPrefix(line, "\t") && len(out) != 0:
+			out[len(out)-1] += "\n" + line
+		case strings.HasPrefix(line, "go tool"), strings.HasPrefix(line, "#"):
+		case !wantAuto && strings.HasPrefix(line, "<autogenerated>"):
+		case strings.TrimSpace(line) != "":
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func wantedErrors(fullPath, shortPath string) ([]wantedError, error) {
+	src, err := os.ReadFile(fullPath)
+	if err != nil {
+		return nil, err
+	}
+	cache := make(map[string]*regexp.Regexp)
+	var out []wantedError
+	for index, sourceLine := range strings.Split(string(src), "\n") {
+		lineNumber := index + 1
+		if strings.Contains(sourceLine, "////") {
+			continue
+		}
+		auto := false
+		match := errorAutoRx.FindStringSubmatch(sourceLine)
+		if match != nil {
+			auto = true
+		} else {
+			match = errorCommentRx.FindStringSubmatch(sourceLine)
+		}
+		if match == nil {
+			continue
+		}
+		quoted := errorQuotesRx.FindAllStringSubmatch(match[1], -1)
+		if len(quoted) == 0 {
+			return nil, fmt.Errorf("%s:%d: invalid ERROR comment", shortPath, lineNumber)
+		}
+		for _, item := range quoted {
+			pattern := errorLineRx.ReplaceAllStringFunc(item[1], func(marker string) string {
+				line := lineNumber
+				if strings.HasPrefix(marker, "LINE+") {
+					delta, _ := strconv.Atoi(marker[5:])
+					line += delta
+				} else if strings.HasPrefix(marker, "LINE-") {
+					delta, _ := strconv.Atoi(marker[5:])
+					line -= delta
+				}
+				return fmt.Sprintf("%s:%d", shortPath, line)
+			})
+			re := cache[pattern]
+			if re == nil {
+				re, err = regexp.Compile(pattern)
+				if err != nil {
+					return nil, fmt.Errorf("%s:%d: invalid ERROR regexp %q: %w", shortPath, lineNumber, pattern, err)
+				}
+				cache[pattern] = re
+			}
+			out = append(out, wantedError{
+				regexp:  re,
+				pattern: pattern,
+				prefix:  fmt.Sprintf("%s:%d", shortPath, lineNumber),
+				file:    shortPath,
+				line:    lineNumber,
+				auto:    auto,
+			})
+		}
+	}
+	return out, nil
+}
+
+func hasDiagnosticPrefix(line, prefix string) bool {
+	colon := strings.IndexByte(line, ':')
+	if colon < 0 {
+		return false
+	}
+	slash := strings.LastIndex(line[:colon], "/")
+	base := line[slash+1:]
+	if len(base) <= len(prefix) || !strings.HasPrefix(base, prefix) {
+		return false
+	}
+	return base[len(prefix)] == ':' || base[len(prefix)] == '['
+}
+
+func partitionCompilerOutput(prefix string, lines []string) (matched, unmatched []string) {
+	for _, line := range lines {
+		if hasDiagnosticPrefix(line, prefix) {
+			matched = append(matched, line)
+		} else {
+			unmatched = append(unmatched, line)
+		}
+	}
+	return matched, unmatched
+}
+
+func replaceDiagnosticPrefix(value, old, new string) string {
+	if !strings.Contains(value, old) {
+		return value
+	}
+	value = strings.ReplaceAll(value, " "+old, " "+new)
+	value = strings.ReplaceAll(value, "\n"+old, "\n"+new)
+	value = strings.ReplaceAll(value, "\n\t"+old, "\n\t"+new)
+	if strings.HasPrefix(value, old) {
+		value = new + value[len(old):]
+	}
+	return value
 }
 
 func trimLogTimestampPrefix(line string) string {
@@ -983,11 +1490,18 @@ func splitQuoted(s string) ([]string, error) {
 }
 
 func parseDirectiveOptions(directive string, args []string, defaultRunTimeout time.Duration) (directiveOptions, error) {
-	opts := directiveOptions{Timeout: defaultRunTimeout}
+	opts := directiveOptions{
+		Timeout:   defaultRunTimeout,
+		WantError: directive == "errorcheck",
+	}
 	args = append([]string(nil), args...)
 	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
 		switch args[0] {
-		case "-1", "-0":
+		case "-1":
+			opts.WantError = true
+			args = args[1:]
+		case "-0":
+			opts.WantError = false
 			args = args[1:]
 		case "-s":
 			opts.SingleFilePkgs = true
@@ -1027,6 +1541,11 @@ func parseDirectiveOptions(directive string, args []string, defaultRunTimeout ti
 			opts.BuildFlags = append(opts.BuildFlags, args[0], args[1])
 			args = args[2:]
 		case "-ldflags":
+			if usesCompilerFlags(directive) {
+				opts.LinkerFlags = append(opts.LinkerFlags, args[1:]...)
+				args = nil
+				continue
+			}
 			if len(args) < 2 {
 				return directiveOptions{}, fmt.Errorf("%s: missing value for -ldflags", directive)
 			}
@@ -1043,12 +1562,25 @@ func parseDirectiveOptions(directive string, args []string, defaultRunTimeout ti
 		doneLDFlags:
 			opts.BuildFlags = append(opts.BuildFlags, "-ldflags", strings.Join(payload, " "))
 		default:
-			opts.BuildFlags = append(opts.BuildFlags, args[0])
+			if usesCompilerFlags(directive) {
+				opts.CompilerFlags = append(opts.CompilerFlags, args[0])
+			} else {
+				opts.BuildFlags = append(opts.BuildFlags, args[0])
+			}
 			args = args[1:]
 		}
 	}
 	opts.ProgramArgs = append(opts.ProgramArgs, args...)
 	return opts, nil
+}
+
+func usesCompilerFlags(directive string) bool {
+	switch directive {
+	case "compile", "errorcheck", "errorcheckandrundir", "rundir":
+		return true
+	default:
+		return false
+	}
 }
 
 func appendDirectiveEnv(env []string, key, value string) []string {
@@ -1062,6 +1594,196 @@ func appendDirectiveEnv(env []string, key, value string) []string {
 	return append(env, kv)
 }
 
+func runCompileCase(t *testing.T, repoRoot, goroot, llgoBin string, tc testCase, opts directiveOptions, buildTimeout time.Duration) error {
+	t.Helper()
+	stdout, stderr, exitCode, elapsed, err := runLLGOCompiler(repoRoot, goroot, llgoBin, tc, opts, false, buildTimeout)
+	if err != nil {
+		return commandFailure("llgo tool compile", elapsed, err, stdout, stderr, exitCode)
+	}
+	if exitCode != 0 {
+		return commandFailure("llgo tool compile", elapsed, fmt.Errorf("compiler exited unsuccessfully"), stdout, stderr, exitCode)
+	}
+	return nil
+}
+
+func runErrorCheckCase(t *testing.T, repoRoot, goroot, llgoBin string, tc testCase, opts directiveOptions, buildTimeout time.Duration) error {
+	t.Helper()
+	stdout, stderr, exitCode, elapsed, err := runLLGOCompiler(repoRoot, goroot, llgoBin, tc, opts, true, buildTimeout)
+	if err != nil {
+		return commandFailure("llgo tool compile", elapsed, err, stdout, stderr, exitCode)
+	}
+	if opts.WantError && exitCode == 0 {
+		return fmt.Errorf("llgo tool compile succeeded unexpectedly")
+	}
+	if !opts.WantError && exitCode != 0 {
+		return commandFailure("llgo tool compile", elapsed, fmt.Errorf("compiler exited unsuccessfully"), stdout, stderr, exitCode)
+	}
+	output := append(append([]byte(nil), stdout...), stderr...)
+	output = filterNoise(normalizeOutput(output))
+	return checkExpectedErrors(string(output), tc.SourcePath(), tc.FileName)
+}
+
+func (tc testCase) SourcePath() string {
+	return filepath.Join(tc.Dir, tc.FileName)
+}
+
+func runLLGOCompiler(repoRoot, goroot, llgoBin string, tc testCase, opts directiveOptions, errorCheck bool, timeout time.Duration) ([]byte, []byte, int, time.Duration, error) {
+	ws, err := prepareCaseWorkspace(repoRoot)
+	if err != nil {
+		return nil, nil, 0, 0, err
+	}
+	if !*flagKeep {
+		defer ws.cleanup()
+	}
+	importCfg := filepath.Join(ws.rootDir, "importcfg")
+	if err := os.WriteFile(importCfg, nil, 0o644); err != nil {
+		return nil, nil, 0, 0, err
+	}
+	sourcePath := tc.SourcePath()
+	if strings.HasSuffix(filepath.Base(tc.Dir), ".dir") {
+		sourcePath, err = stageNestedCompilerCase(ws.workDir, tc)
+		if err != nil {
+			return nil, nil, 0, 0, err
+		}
+	}
+	args := []string{"tool", "compile", "-e", "-p=p", "-importcfg=" + importCfg}
+	if errorCheck {
+		args = append(args, "-C", "-d=panic", "-o", filepath.Join(ws.rootDir, "a.o"))
+	}
+	args = append(args, opts.CompilerFlags...)
+	if errorCheck && !hasSSACheckFlag(opts.CompilerFlags) {
+		args = append(args, "-d=ssa/check/on")
+	}
+	args = append(args, sourcePath)
+	env := runnerEnv(repoRoot, goroot, ws.gopath, opts.ExtraEnv)
+	return runProgram(ws.workDir, llgoBin, env, timeout, args...)
+}
+
+func stageNestedCompilerCase(workDir string, tc testCase) (string, error) {
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		return "", err
+	}
+	entries, err := os.ReadDir(tc.Dir)
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || filepath.Ext(name) != ".go" {
+			continue
+		}
+		src := filepath.Join(tc.Dir, name)
+		targetDir := workDir
+		if name != tc.FileName {
+			targetDir = filepath.Join(workDir, strings.TrimSuffix(name, ".go"))
+		}
+		if err := os.MkdirAll(targetDir, 0o755); err != nil {
+			return "", err
+		}
+		data, err := os.ReadFile(src)
+		if err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(filepath.Join(targetDir, name), data, 0o644); err != nil {
+			return "", err
+		}
+	}
+	return filepath.Join(workDir, tc.FileName), nil
+}
+
+func hasSSACheckFlag(flags []string) bool {
+	for _, compilerFlag := range flags {
+		if strings.HasPrefix(compilerFlag, "-d=") && strings.Contains(compilerFlag, "ssa/check/") {
+			return true
+		}
+	}
+	return false
+}
+
+func runErrorCheckAndRunCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc testCase, opts directiveOptions, buildTimeout time.Duration) error {
+	t.Helper()
+	srcDir := caseSourceDir(tc)
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		return err
+	}
+	var goFiles []string
+	for _, entry := range entries {
+		if !entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") && filepath.Ext(entry.Name()) == ".go" {
+			goFiles = append(goFiles, entry.Name())
+		}
+	}
+	sort.Strings(goFiles)
+	pkgs, err := groupDirPackages(srcDir, goFiles, opts.SingleFilePkgs)
+	if err != nil {
+		return err
+	}
+	if len(pkgs) == 0 {
+		return fmt.Errorf("%s: no Go packages in %s", tc.RelPath, srcDir)
+	}
+
+	ws, err := prepareCaseWorkspace(repoRoot)
+	if err != nil {
+		return err
+	}
+	if !*flagKeep {
+		defer ws.cleanup()
+	}
+	if err := stageRundirLayout(ws.workDir, srcDir, opts.SingleFilePkgs); err != nil {
+		return err
+	}
+	modVersion, err := toolchainGoModVersion(goroot)
+	if err != nil {
+		return err
+	}
+	if err := ensureModuleWorkspace(ws.workDir, "test", modVersion); err != nil {
+		return err
+	}
+	importCfg := filepath.Join(ws.rootDir, "importcfg")
+	if err := os.WriteFile(importCfg, nil, 0o644); err != nil {
+		return err
+	}
+	env := runnerEnv(repoRoot, goroot, ws.gopath, append(opts.ExtraEnv, "GO111MODULE=on"))
+	var diagnosticErrs []error
+	for index, pkg := range pkgs {
+		pkgDir := ws.workDir
+		if pkg.name != "main" {
+			pkgDir = filepath.Join(ws.workDir, pkg.dir)
+		}
+		args := []string{"tool", "compile", "-e", "-C", "-d=panic", "-importcfg=" + importCfg}
+		args = append(args, opts.CompilerFlags...)
+		var sources []diagnosticSource
+		for _, fileName := range pkg.files {
+			fullPath := filepath.Join(pkgDir, fileName)
+			args = append(args, fullPath)
+			sources = append(sources, diagnosticSource{full: fullPath, short: fileName})
+		}
+		stdout, stderr, exitCode, elapsed, runErr := runProgram(pkgDir, llgoBin, env, buildTimeout, args...)
+		expectFailure := opts.WantError && index == len(pkgs)-2
+		if runErr != nil {
+			diagnosticErrs = append(diagnosticErrs, commandFailure("llgo tool compile", elapsed, runErr, stdout, stderr, exitCode))
+			continue
+		}
+		if expectFailure && exitCode == 0 {
+			diagnosticErrs = append(diagnosticErrs, fmt.Errorf("%s: package %s compiled successfully, want failure", tc.RelPath, pkg.name))
+		}
+		if !expectFailure && exitCode != 0 {
+			diagnosticErrs = append(diagnosticErrs, commandFailure("llgo tool compile", elapsed, fmt.Errorf("compiler exited unsuccessfully"), stdout, stderr, exitCode))
+		}
+		output := append(append([]byte(nil), stdout...), stderr...)
+		output = filterNoise(normalizeOutput(output))
+		if checkErr := checkExpectedErrorsForFiles(string(output), sources); checkErr != nil {
+			diagnosticErrs = append(diagnosticErrs, fmt.Errorf("%s: package %s diagnostics: %w", tc.RelPath, pkg.name, checkErr))
+		}
+	}
+
+	runErr := runBuildAndCompare(t, tc.RelPath, ws.workDir, ws.rootDir, env, goCmd, llgoBin, nil, nil, opts.ProgramArgs, buildTimeout, opts.Timeout)
+	if runErr != nil {
+		diagnosticErrs = append(diagnosticErrs, runErr)
+	}
+	return errors.Join(diagnosticErrs...)
+}
+
 func runSingleFileCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc testCase, opts directiveOptions, buildTimeout time.Duration) error {
 	t.Helper()
 	ws, err := prepareCaseWorkspace(repoRoot)
@@ -1071,13 +1793,37 @@ func runSingleFileCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc
 	if !*flagKeep {
 		defer ws.cleanup()
 	}
-	env := runnerEnv(repoRoot, goroot, ws.gopath, opts.ExtraEnv)
 	goBin := filepath.Join(ws.rootDir, "go.out")
 	llgoOut := filepath.Join(ws.rootDir, "llgo.out")
 	metrics := caseMetrics{}
 	sourceFiles, programArgs := splitSourceFiles(tc.FileName, opts.ProgramArgs)
 	buildTarget := tc.FileName
-	if len(sourceFiles) > 1 {
+	nestedDirCase := strings.HasSuffix(filepath.Base(tc.Dir), ".dir")
+	extraEnv := append([]string{}, opts.ExtraEnv...)
+	if nestedDirCase {
+		preserveLayout, err := directoryHasSubdirectories(tc.Dir)
+		if err != nil {
+			return err
+		}
+		modulePath := "test"
+		if preserveLayout {
+			if err := overlayDir(ws.workDir, tc.Dir); err != nil {
+				return err
+			}
+			modulePath = filepath.Base(tc.Dir)
+		} else if err := stageRundirLayout(ws.workDir, tc.Dir, false); err != nil {
+			return err
+		}
+		modVersion, err := toolchainGoModVersion(goroot)
+		if err != nil {
+			return err
+		}
+		if err := ensureModuleWorkspace(ws.workDir, modulePath, modVersion); err != nil {
+			return err
+		}
+		extraEnv = append(extraEnv, "GO111MODULE=on")
+		buildTarget = "."
+	} else if len(sourceFiles) > 1 {
 		if err := stageSelectedFiles(ws.workDir, tc.Dir, sourceFiles); err != nil {
 			return err
 		}
@@ -1087,33 +1833,40 @@ func runSingleFileCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc
 			return err
 		}
 	}
+	env := runnerEnv(repoRoot, goroot, ws.gopath, extraEnv)
 
 	goBuildStdout, goBuildStderr, goBuildExit, goBuildDur, err := runProgram(ws.workDir, goCmd, env, buildTimeout, append([]string{"build"}, append(opts.BuildFlags, "-o", goBin, buildTarget)...)...)
 	metrics.goBuild += goBuildDur
-	if err != nil {
-		return commandFailure("baseline go build", goBuildDur, err, goBuildStdout, goBuildStderr, goBuildExit)
+	if cmdErr := requireSuccessfulExit(err, goBuildExit); cmdErr != nil {
+		return commandFailure("baseline go build", goBuildDur, cmdErr, goBuildStdout, goBuildStderr, goBuildExit)
 	}
 	if err := ensureBuiltBinary(goBin, "baseline go build"); err != nil {
 		return err
 	}
 	llgoBuildStdout, llgoBuildStderr, llgoBuildExit, llgoBuildDur, err := runProgram(ws.workDir, llgoBin, env, buildTimeout, append([]string{"build"}, append(opts.BuildFlags, "-o", llgoOut, buildTarget)...)...)
 	metrics.llgoBuild += llgoBuildDur
-	if err != nil {
-		return commandFailure("llgo build", llgoBuildDur, err, llgoBuildStdout, llgoBuildStderr, llgoBuildExit)
+	if cmdErr := requireSuccessfulExit(err, llgoBuildExit); cmdErr != nil {
+		return commandFailure("llgo build", llgoBuildDur, cmdErr, llgoBuildStdout, llgoBuildStderr, llgoBuildExit)
 	}
 	if err := ensureBuiltBinary(llgoOut, "llgo build"); err != nil {
 		return err
 	}
 
-	goStdout, goStderr, goExit, goRunDur, err := runProgram(ws.workDir, goBin, env, opts.Timeout, programArgs...)
-	metrics.goRun += goRunDur
-	if err != nil {
-		return commandFailure("baseline go run", goRunDur, err, goStdout, goStderr, goExit)
+	runDir := ws.workDir
+	if tc.Directive == "run" {
+		runDir = filepath.Join(goroot, "test")
 	}
-	llgoStdout, llgoStderr, llgoExit, llgoRunDur, err := runProgram(ws.workDir, llgoOut, env, opts.Timeout, programArgs...)
+	runEnv := restoreProcessEnv(append([]string{}, env...), "GO111MODULE")
+	runEnv = restoreProcessEnv(runEnv, "GOPATH")
+	goStdout, goStderr, goExit, goRunDur, err := runProgram(runDir, goBin, runEnv, opts.Timeout, programArgs...)
+	metrics.goRun += goRunDur
+	if cmdErr := requireSuccessfulExit(err, goExit); cmdErr != nil {
+		return commandFailure("baseline go run", goRunDur, cmdErr, goStdout, goStderr, goExit)
+	}
+	llgoStdout, llgoStderr, llgoExit, llgoRunDur, err := runProgram(runDir, llgoOut, runEnv, opts.Timeout, programArgs...)
 	metrics.llgoRun += llgoRunDur
-	if err != nil {
-		return commandFailure("llgo run", llgoRunDur, err, llgoStdout, llgoStderr, llgoExit)
+	if cmdErr := requireSuccessfulExit(err, llgoExit); cmdErr != nil {
+		return commandFailure("llgo run", llgoRunDur, cmdErr, llgoStdout, llgoStderr, llgoExit)
 	}
 
 	logSlowCase(t, tc.RelPath, metrics.goBuild, metrics.llgoBuild, metrics.goRun, metrics.llgoRun)
@@ -1222,7 +1975,8 @@ func runInDirCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc test
 		return err
 	}
 	env := runnerEnv(repoRoot, goroot, ws.gopath, append(opts.ExtraEnv, "GO111MODULE=on"))
-	return runBuildAndCompare(t, tc.RelPath, ws.workDir, ws.rootDir, env, goCmd, llgoBin, append([]string{}, opts.BuildFlags...), opts.ProgramArgs, buildTimeout, opts.Timeout)
+	buildFlags := append([]string{}, opts.BuildFlags...)
+	return runBuildAndCompare(t, tc.RelPath, ws.workDir, ws.rootDir, env, goCmd, llgoBin, buildFlags, buildFlags, opts.ProgramArgs, buildTimeout, opts.Timeout)
 }
 
 func runDirCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc testCase, opts directiveOptions, preserveLayout bool, buildTimeout time.Duration) error {
@@ -1244,28 +1998,54 @@ func runDirCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc testCa
 			return err
 		}
 	}
-	env := runnerEnv(repoRoot, goroot, ws.gopath, opts.ExtraEnv)
-	return runBuildAndCompare(t, tc.RelPath, ws.workDir, ws.rootDir, env, goCmd, llgoBin, append([]string{}, opts.BuildFlags...), opts.ProgramArgs, buildTimeout, opts.Timeout)
+	modVersion, err := toolchainGoModVersion(goroot)
+	if err != nil {
+		return err
+	}
+	if err := ensureModuleWorkspace(ws.workDir, "test", modVersion); err != nil {
+		return err
+	}
+	extraEnv := append([]string{}, opts.ExtraEnv...)
+	extraEnv = append(extraEnv, "GO111MODULE=on")
+	env := runnerEnv(repoRoot, goroot, ws.gopath, extraEnv)
+	goBuildFlags, llgoBuildFlags := directoryBuildFlags(opts)
+	return runBuildAndCompare(t, tc.RelPath, ws.workDir, ws.rootDir, env, goCmd, llgoBin, goBuildFlags, llgoBuildFlags, opts.ProgramArgs, buildTimeout, opts.Timeout)
 }
 
-func runBuildAndCompare(t *testing.T, casePath, workDir, rootDir string, env []string, goCmd, llgoBin string, buildFlags, programArgs []string, buildTimeout, runTimeout time.Duration) error {
+func directoryBuildFlags(opts directiveOptions) (goFlags, llgoFlags []string) {
+	goFlags = append(goFlags, opts.BuildFlags...)
+	llgoFlags = append(llgoFlags, opts.BuildFlags...)
+	if len(opts.CompilerFlags) != 0 {
+		value := strings.Join(opts.CompilerFlags, " ")
+		goFlags = append(goFlags, "-gcflags="+value)
+		llgoFlags = append(llgoFlags, "-gcflags="+value)
+	}
+	if len(opts.LinkerFlags) != 0 {
+		value := strings.Join(opts.LinkerFlags, " ")
+		goFlags = append(goFlags, "-ldflags="+value)
+		llgoFlags = append(llgoFlags, "-ldflags="+value)
+	}
+	return goFlags, llgoFlags
+}
+
+func runBuildAndCompare(t *testing.T, casePath, workDir, rootDir string, env []string, goCmd, llgoBin string, goBuildFlags, llgoBuildFlags, programArgs []string, buildTimeout, runTimeout time.Duration) error {
 	t.Helper()
 	goBin := filepath.Join(rootDir, "go.out")
 	llgoOut := filepath.Join(rootDir, "llgo.out")
 	metrics := caseMetrics{}
 
-	goBuildStdout, goBuildStderr, goBuildExit, goBuildDur, err := runProgram(workDir, goCmd, env, buildTimeout, append([]string{"build"}, append(buildFlags, "-o", goBin, ".")...)...)
+	goBuildStdout, goBuildStderr, goBuildExit, goBuildDur, err := runProgram(workDir, goCmd, env, buildTimeout, append([]string{"build"}, append(goBuildFlags, "-o", goBin, ".")...)...)
 	metrics.goBuild += goBuildDur
-	if err != nil {
-		return commandFailure("baseline go build", goBuildDur, err, goBuildStdout, goBuildStderr, goBuildExit)
+	if cmdErr := requireSuccessfulExit(err, goBuildExit); cmdErr != nil {
+		return commandFailure("baseline go build", goBuildDur, cmdErr, goBuildStdout, goBuildStderr, goBuildExit)
 	}
 	if err := ensureBuiltBinary(goBin, "baseline go build"); err != nil {
 		return err
 	}
-	llgoBuildStdout, llgoBuildStderr, llgoBuildExit, llgoBuildDur, err := runProgram(workDir, llgoBin, env, buildTimeout, append([]string{"build"}, append(buildFlags, "-o", llgoOut, ".")...)...)
+	llgoBuildStdout, llgoBuildStderr, llgoBuildExit, llgoBuildDur, err := runProgram(workDir, llgoBin, env, buildTimeout, append([]string{"build"}, append(llgoBuildFlags, "-o", llgoOut, ".")...)...)
 	metrics.llgoBuild += llgoBuildDur
-	if err != nil {
-		return commandFailure("llgo build", llgoBuildDur, err, llgoBuildStdout, llgoBuildStderr, llgoBuildExit)
+	if cmdErr := requireSuccessfulExit(err, llgoBuildExit); cmdErr != nil {
+		return commandFailure("llgo build", llgoBuildDur, cmdErr, llgoBuildStdout, llgoBuildStderr, llgoBuildExit)
 	}
 	if err := ensureBuiltBinary(llgoOut, "llgo build"); err != nil {
 		return err
@@ -1273,13 +2053,13 @@ func runBuildAndCompare(t *testing.T, casePath, workDir, rootDir string, env []s
 
 	goStdout, goStderr, goExit, goRunDur, err := runProgram(workDir, goBin, env, runTimeout, programArgs...)
 	metrics.goRun += goRunDur
-	if err != nil {
-		return commandFailure("baseline go run", goRunDur, err, goStdout, goStderr, goExit)
+	if cmdErr := requireSuccessfulExit(err, goExit); cmdErr != nil {
+		return commandFailure("baseline go run", goRunDur, cmdErr, goStdout, goStderr, goExit)
 	}
 	llgoStdout, llgoStderr, llgoExit, llgoRunDur, err := runProgram(workDir, llgoOut, env, runTimeout, programArgs...)
 	metrics.llgoRun += llgoRunDur
-	if err != nil {
-		return commandFailure("llgo run", llgoRunDur, err, llgoStdout, llgoStderr, llgoExit)
+	if cmdErr := requireSuccessfulExit(err, llgoExit); cmdErr != nil {
+		return commandFailure("llgo run", llgoRunDur, cmdErr, llgoStdout, llgoStderr, llgoExit)
 	}
 
 	logSlowCase(t, casePath, metrics.goBuild, metrics.llgoBuild, metrics.goRun, metrics.llgoRun)
@@ -1301,6 +2081,19 @@ func compareOutputs(goStdout, goStderr []byte, goExit int, llgoStdout, llgoStder
 		return fmt.Errorf("exit code mismatch: llgo=%d go=%d", llgoExit, goExit)
 	}
 	return nil
+}
+
+func directoryHasSubdirectories(dir string) (bool, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func caseSourceDir(tc testCase) string {
@@ -1329,8 +2122,8 @@ func generateRunOutput(ws caseWorkspace, tool string, env []string, sourceFiles,
 		timeout,
 		args...,
 	)
-	if err != nil {
-		return "", runDur, commandFailure(label+" generate run", runDur, err, stdout, stderr, exitCode)
+	if cmdErr := requireSuccessfulExit(err, exitCode); cmdErr != nil {
+		return "", runDur, commandFailure(label+" generate run", runDur, cmdErr, stdout, stderr, exitCode)
 	}
 	genBase := label + "_tmp__.go"
 	genFile := filepath.Join(ws.workDir, genBase)
@@ -1375,15 +2168,15 @@ func runGeneratedProgram(ws caseWorkspace, tool string, env []string, fileName, 
 		out += ".exe"
 	}
 	buildStdout, buildStderr, buildExit, buildDur, err := runProgram(ws.workDir, tool, env, buildTimeout, "build", "-o", out, fileName)
-	if err != nil {
-		return nil, nil, 0, buildDur, 0, commandFailure(label+" generated build", buildDur, err, buildStdout, buildStderr, buildExit)
+	if cmdErr := requireSuccessfulExit(err, buildExit); cmdErr != nil {
+		return nil, nil, 0, buildDur, 0, commandFailure(label+" generated build", buildDur, cmdErr, buildStdout, buildStderr, buildExit)
 	}
 	if err := ensureBuiltBinary(out, label+" generated build"); err != nil {
 		return nil, nil, 0, buildDur, 0, err
 	}
 	stdout, stderr, exitCode, runDur, err := runProgram(ws.workDir, out, env, runTimeout)
-	if err != nil {
-		return nil, nil, 0, buildDur, runDur, commandFailure(label+" generated run", runDur, err, stdout, stderr, exitCode)
+	if cmdErr := requireSuccessfulExit(err, exitCode); cmdErr != nil {
+		return nil, nil, 0, buildDur, runDur, commandFailure(label+" generated run", runDur, cmdErr, stdout, stderr, exitCode)
 	}
 	return stdout, stderr, exitCode, buildDur, runDur, nil
 }
@@ -1495,6 +2288,7 @@ func stageRundirLayout(dstRoot, srcRoot string, singleFilePkgs bool) error {
 	if err != nil {
 		return err
 	}
+	hasMissingBody := false
 	for _, pkg := range pkgs {
 		targetDir := dstRoot
 		if pkg.name != "main" {
@@ -1508,13 +2302,16 @@ func stageRundirLayout(dstRoot, srcRoot string, singleFilePkgs bool) error {
 			if err != nil {
 				return err
 			}
-			if pkg.name != "main" {
-				data, err = rewriteRelativeImports(data)
-				if err != nil {
-					return err
-				}
+			data, err = rewriteRelativeImports(data, "test")
+			if err != nil {
+				return err
 			}
-			if err := os.WriteFile(filepath.Join(targetDir, fileName), data, 0o644); err != nil {
+			missingBody, err := sourceHasMissingFunctionBody(data)
+			if err != nil {
+				return err
+			}
+			hasMissingBody = hasMissingBody || missingBody
+			if err := os.WriteFile(filepath.Join(targetDir, stagedRundirFileName(fileName)), data, 0o644); err != nil {
 				return err
 			}
 		}
@@ -1528,7 +2325,36 @@ func stageRundirLayout(dstRoot, srcRoot string, singleFilePkgs bool) error {
 			return err
 		}
 	}
+	if hasMissingBody && len(auxFiles) == 0 {
+		if err := os.WriteFile(filepath.Join(dstRoot, "testdir_empty.s"), nil, 0o644); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func stagedRundirFileName(name string) string {
+	if strings.HasSuffix(name, "_test.go") {
+		return strings.TrimSuffix(name, "_test.go") + "_testdir.go"
+	}
+	return name
+}
+
+func sourceHasMissingFunctionBody(src []byte) (bool, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "", src, 0)
+	if err != nil {
+		return false, err
+	}
+	missing := false
+	ast.Inspect(file, func(node ast.Node) bool {
+		if decl, ok := node.(*ast.FuncDecl); ok && decl.Body == nil {
+			missing = true
+			return false
+		}
+		return !missing
+	})
+	return missing, nil
 }
 
 func groupDirPackages(srcRoot string, goFiles []string, singleFilePkgs bool) ([]dirPackage, error) {
@@ -1562,7 +2388,7 @@ func getPackageNameFromSource(filePath string) (string, error) {
 	return file.Name.Name, nil
 }
 
-func rewriteRelativeImports(src []byte) ([]byte, error) {
+func rewriteRelativeImports(src []byte, modulePath string) ([]byte, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "", src, parser.ParseComments)
 	if err != nil {
@@ -1575,7 +2401,7 @@ func rewriteRelativeImports(src []byte) ([]byte, error) {
 			return nil, err
 		}
 		if strings.HasPrefix(p, "./") {
-			imp.Path.Value = strconv.Quote("../" + strings.TrimPrefix(p, "./"))
+			imp.Path.Value = strconv.Quote(path.Join(modulePath, strings.TrimPrefix(p, "./")))
 			changed = true
 		}
 	}

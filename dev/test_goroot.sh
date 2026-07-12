@@ -72,6 +72,7 @@ for goroot in "${goroots[@]}"; do
 		if [[ "${LLGO_GOROOT_VERBOSE:-0}" != "0" ]]; then
 			go_test_args+=("-v")
 		fi
-		run_with_heartbeat go test ./test/goroot "${go_test_args[@]}" -count=1 -timeout 180m -args -goroot "$goroot" "${runner_args[@]}"
+		goroot_gomaxprocs="${LLGO_GOROOT_GOMAXPROCS:-${GOMAXPROCS:-2}}"
+		run_with_heartbeat env GOMAXPROCS="$goroot_gomaxprocs" go test -p=1 ./test/goroot "${go_test_args[@]}" -count=1 -timeout 180m -args -goroot "$goroot" "${runner_args[@]}"
 	)
 done

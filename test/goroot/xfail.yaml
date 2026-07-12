@@ -97,6 +97,18 @@ host_skips:
 timeouts:
   - version: go1.26
     platform: darwin/arm64
+    directive: run
+    case: fixedbugs/issue79186.go
+    timeout: 90s
+    reason: the 51.2 million-operation RWMutex stress loop needs load-dependent runtime slack
+  - version: go1.26
+    platform: darwin/arm64
+    directive: run
+    case: fixedbugs/issue19658.go
+    timeout: 2m
+    reason: the test launches 19 nested go run commands and needs load-dependent runtime slack
+  - version: go1.26
+    platform: darwin/arm64
     directive: runoutput
     case: fixedbugs/bug449.go
     timeout: 6m
@@ -1590,6 +1602,11 @@ timeouts:
     timeout: 2m
     reason: nosplit run runs past the default timeout on linux/amd64
 flakes:
+  - version: go1.26
+    platform: darwin/arm64
+    directive: run
+    case: fixedbugs/issue79186.go
+    reason: the RWMutex stress test passes when the host is idle but can exceed its timeout under sustained CPU contention
   - version: go1.25
     platform: linux/amd64
     directive: run
@@ -1723,10 +1740,779 @@ flakes:
     case: goprint.go
     reason: darwin/arm64 goroot run can either pass or fail
 xfails:
+  - version: go1.26
+    directive: errorcheck
+    case: escape_array.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: escape_struct_param2.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: nilptr3.go
+    reason: gc-specific nil-check elimination diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: initloop.go
+    reason: llgo reports an additional initialization-cycle summary diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue11362.go
+    reason: llgo uses different non-canonical import-path diagnostic punctuation
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue15611.go
+    reason: llgo scanner recovery emits additional malformed-rune diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue23664.go
+    reason: llgo parser recovery emits additional malformed-declaration diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: syntax/typesw.go
+    reason: llgo reports an additional invalid type-switch syntax-tree diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: escape6.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: escape_struct_param1.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: nilcheck.go
+    reason: gc-specific nil-check elimination diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue18331.go
+    reason: gc standard-library pragma validation is not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue41635.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue52193.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue33386.go
+    reason: llgo parser recovery emits additional malformed-go/defer diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: escape5.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: escape_slice.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: interface/assertinline.go
+    reason: gc-specific type-assertion optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/bug014.go
+    reason: llgo scanner emits additional malformed-character-constant diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/bug349.go
+    reason: llgo parser recovery emits additional return-value diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue11359.go
+    reason: llgo scanner emits additional illegal-character diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue23587.go
+    reason: llgo parser recovery emits additional invalid-tilde diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: syntax/semi7.go
+    reason: llgo parser recovery emits additional semicolon and else diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue31053.dir/main.go
+    reason: llgo resolves the companion package but uses different unexported-field diagnostic wording
+  - version: go1.26
+    directive: errorcheck
+    case: escape4.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: escape_selfassign.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue14999.go
+    reason: gc runtime heap-allocation diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue27732a.go
+    reason: gc-specific small-frame and optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/bug169.go
+    reason: llgo scanner emits an additional malformed-character-constant diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/bug274.go
+    reason: llgo parser recovery emits additional case and label diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue18092.go
+    reason: llgo parser recovery emits additional malformed-channel diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue23586.go
+    reason: llgo reports additional unused variable and import diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue4776.go
+    reason: llgo parser uses a different missing-package-clause diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: syntax/semi6.go
+    reason: llgo parser emits additional missing-type diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: escape2n.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: escape_runtime_atomic.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: abi/result_live.go
+    reason: gc-specific liveness diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue21709.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue23521.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue18419.dir/test.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/bug388.go
+    reason: gc runtime pseudo-type diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: switch2.go
+    reason: llgo parser recovery emits additional malformed-switch diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue13319.go
+    reason: llgo parser recovery emits additional malformed-call diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue32133.go
+    reason: llgo scanner uses different unterminated-literal diagnostics and emits recovery noise
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue5089.go
+    reason: llgo does not emit the expected non-local method redefinition diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: syntax/semi5.go
+    reason: llgo parser recovery emits additional semicolon and end-of-file diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: escape2.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: escape_reflect.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: sliceopt.go
+    reason: gc-specific append and slice optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: writebarrier.go
+    reason: gc-specific write-barrier diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue19743.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue27557.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue10700.dir/test.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: import6.go
+    reason: llgo loader does not emit the expected absolute-import-path diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/bug163.go
+    reason: llgo scanner emits additional illegal-character diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue13274.go
+    reason: llgo parser emits an additional end-of-file diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue4405.go
+    reason: llgo parser recovery emits additional malformed-statement diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue50372.go
+    reason: llgo reports additional expression-count diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: syntax/semi4.go
+    reason: llgo parser recovery emits additional semicolon and brace diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: escape_param.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue31573.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue4099.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue7921.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/notinheap3.go
+    reason: gc runtime write-barrier and notinheap diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: embedvers.go
+    reason: llgo loader reports an embed-pattern error before the expected language-version diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue13273.go
+    reason: llgo parser and type checker emit additional channel-direction diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: syntax/semi3.go
+    reason: llgo parser recovery emits additional semicolon and end-of-file diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: escape_mutations.go
+    reason: gc-specific escape-mutation and zerocopy diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/notinheap2.go
+    reason: gc-specific notinheap allocation diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: embedfunc.go
+    reason: llgo loader reports an embed-pattern error instead of the expected local-variable directive error
+  - version: go1.26
+    directive: errorcheck
+    case: shift1.go
+    reason: llgo reports additional shifted-operand diagnostics at different source positions
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/bug136.go
+    reason: llgo reports additional unused-label diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue13266.go
+    reason: llgo parser uses a different malformed-package-clause diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue19667.go
+    reason: llgo parser recovery emits additional malformed-call diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: syntax/semi2.go
+    reason: llgo parser recovery emits additional semicolon and brace diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: escape_map.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: runtime.go
+    reason: gc runtime private-symbol compiler diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/notinheap.go
+    reason: gc-specific notinheap allocation diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: goto.go
+    reason: llgo reports goto diagnostics at different source positions
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/bug068.go
+    reason: llgo scanner emits an additional malformed-character-constant diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/bug195.go
+    reason: llgo reports an additional recursive-interface diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue13248.go
+    reason: llgo parser recovery emits additional malformed-expression diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue14520.go
+    reason: llgo parser emits an additional missing-comma diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue17328.go
+    reason: llgo parser recovery emits additional end-of-file diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: syntax/semi1.go
+    reason: llgo parser recovery emits additional semicolon and end-of-file diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: escape_make_non_const.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fuse.go
+    reason: gc-specific SSA late-fuse diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue17318.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue30898.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue39292.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue67329.go
+    reason: gc-specific bounds-check elimination diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: char_lit1.go
+    reason: llgo scanner emits additional malformed-character-constant diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue20789.go
+    reason: llgo parser does not emit the expected malformed-name diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: syntax/initvar.go
+    reason: llgo parser recovery emits additional invalid-initializer diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: devirtualization_with_type_assertions_interleaved.go
+    reason: gc-specific -m devirtualization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: escape_level.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue12588.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: uintptrkeepalive.go
+    reason: gc-specific go:uintptrkeepalive pragma validation is not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue20780.go
+    reason: gc-specific stack-frame size diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue30722.go
+    reason: llgo scanner emits additional malformed-constant diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue7538a.go
+    reason: llgo reports an additional blank-label resolution diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: syntax/import.go
+    reason: llgo parser and loader emit different recovery diagnostics for malformed imports
+  - version: go1.26
+    directive: errorcheck
+    case: bounds.go
+    reason: gc-specific -m bounds-check diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: devirtualization.go
+    reason: gc-specific -m devirtualization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: escape_indir.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: live_uintptrkeepalive.go
+    reason: gc-specific liveness and standard-package diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: uintptrescapes2.go
+    reason: gc-specific escape and liveness diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue19168.go
+    reason: gc-specific write-barrier diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue75278.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: typeparam/pragma.go
+    reason: gc-specific pragma optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/bug050.go
+    reason: llgo parser emits an additional malformed-declaration diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: devirt.go
+    reason: gc-specific SSA devirtualization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: escape_iface_data.go
+    reason: gc-specific escape-debug diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: live2.go
+    reason: gc-specific liveness and write-barrier diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue12006.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue42944.go
+    reason: gc-specific liveness diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: bombad.go
+    reason: llgo parser recovery emits additional byte-order-mark diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/bug435.go
+    reason: llgo parser recovery emits additional end-of-file diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue14006.go
+    reason: llgo parser recovery emits additional malformed-label diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue22581.go
+    reason: llgo parser recovery emits additional malformed-control-clause diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: syntax/else.go
+    reason: llgo parser emits an additional malformed-else diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: bloop.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: defererrcheck.go
+    reason: gc-specific defer optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: escape_iface.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: prove_popcount.go
+    reason: gc-specific SSA prove diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: typeparam/issue54497.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: syntax/ddd.go
+    reason: llgo parser recovery emits additional malformed-selector diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: escape_hash_maphash.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: prove_invert_loop_with_unused_iterators.go
+    reason: gc-specific SSA prove diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue13799.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue24651b.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: label1.go
+    reason: llgo reports additional invalid-label control-flow diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/bug300.go
+    reason: llgo reports an additional invalid inferred-array diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue18915.go
+    reason: llgo parser reports additional malformed control-expression diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue20298.go
+    reason: llgo reports unused imports after the expected import-path validation errors
+  - version: go1.26
+    directive: errorcheck
+    case: syntax/composite.go
+    reason: llgo parser reports an additional missing-comma diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: escape_goto.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: prove_constant_folding.go
+    reason: gc-specific SSA prove diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue16241_64.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue20250.go
+    reason: gc-specific liveness diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue35518.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: label.go
+    reason: llgo reports additional label declaration and resolution diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/bug121.go
+    reason: llgo parser recovery emits additional malformed-declaration diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/bug228.go
+    reason: llgo parser emits an additional malformed-parameter diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/bug299.go
+    reason: llgo parser does not emit the expected parenthesized top-level expression diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: syntax/chan1.go
+    reason: llgo parser recovery emits additional malformed-channel diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: escape_field.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: escape_unsafe.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: intrinsic_atomic.go
+    reason: gc-specific intrinsic substitution diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: prove.go
+    reason: gc-specific SSA prove diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue13587.go
+    reason: gc-specific write-barrier diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue16241.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue18747.go
+    reason: llgo parser recovery emits additional undefined-name diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue20245.go
+    reason: llgo reports an additional interface-type expression diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: syntax/chan.go
+    reason: llgo parser recovery emits additional malformed-channel diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: escape_closure.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: escape_unique.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: inline_variadic.go
+    reason: gc-specific -m inlining diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: phiopt.go
+    reason: gc-specific SSA phi optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: tighten.go
+    reason: gc-specific SSA tighten diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue35073b.go
+    reason: gc-specific escape and checkptr diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue54159.go
+    reason: gc-specific -m optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: internal/runtime/sys/inlinegcpc.go
+    reason: gc runtime inlining diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/bug179.go
+    reason: llgo reports an additional unused-label diagnostic after invalid branch labels
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue11610.go
+    reason: llgo parser reports additional illegal-character diagnostics
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue20233.go
+    reason: llgo reports an additional invalid function-type expression diagnostic
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue22164.go
+    reason: llgo parser recovery emits additional diagnostics for a malformed argument list
+  - version: go1.26
+    directive: errorcheck
+    case: escape_calls.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: escape_sync_atomic.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: inline_sync.go
+    reason: gc-specific -m inlining diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: nowritebarrier.go
+    reason: gc runtime write-barrier prohibition diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: tailcall.go
+    reason: gc-specific tail-call optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue15747.go
+    reason: gc-specific liveness diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue34723.go
+    reason: gc-specific write-barrier diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: syntax/vareq1.go
+    reason: llgo parser recovery emits an additional diagnostic after the expected syntax error
+  - version: go1.26
+    directive: errorcheck
+    case: escape_bloop.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: escape_struct_return.go
+    reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: inline_big.go
+    reason: gc-specific -m inlining diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: nilptr5.go
+    reason: gc-specific -d=nil optimization diagnostics are not implemented by llgo
+  - version: go1.26
+    directive: errorcheck
+    case: syntax/vareq.go
+    reason: llgo parser recovery emits additional diagnostics after the expected syntax error
+  - version: go1.26
+    directive: compile
+    case: fixedbugs/issue15141.go
+    reason: llgo codegen exceeds the bounded resource budget for 256MiB array return values
+  - version: go1.26
+    directive: compile
+    case: fixedbugs/issue48092.go
+    reason: gc-specific -B bounds-checking backend option is not implemented by llgo
+  - version: go1.26
+    directive: compile
+    case: typeparam/issue50993.go
+    reason: gc-specific -d=checkptr backend option is not implemented by llgo
+  - version: go1.26
+    directive: compile
+    case: fixedbugs/issue26163.go
+    reason: gc-specific -d=softfloat backend option is not implemented by llgo
+  - version: go1.26
+    directive: compile
+    case: fixedbugs/issue56141.go
+    reason: gc-specific -d=libfuzzer backend option is not implemented by llgo
+  - version: go1.26
+    directive: compile
+    case: fixedbugs/issue56105.go
+    reason: gc-specific -d=libfuzzer backend option is not implemented by llgo
+  - version: go1.26
+    directive: compile
+    case: fixedbugs/issue34966.go
+    reason: gc-specific -d=checkptr backend option is not implemented by llgo
+  - version: go1.26
+    directive: compile
+    case: fixedbugs/issue44465.go
+    reason: gc-specific -d=ssa/check/seed option is not implemented by llgo
+  - version: go1.26
+    directive: compile
+    case: fixedbugs/issue58161.go
+    reason: gc-specific -d=ssa/check/seed option is not implemented by llgo
+  - version: go1.26
+    directive: compile
+    case: fixedbugs/issue58826.go
+    reason: gc-specific -dynlink backend mode is not implemented by llgo
+  - version: go1.26
+    directive: compile
+    case: fixedbugs/issue69825.go
+    reason: gc-specific -d=libfuzzer backend option is not implemented by llgo
   - platform: darwin/arm64
     directive: run
     case: finprofiled.go
     reason: LLGo finalizer profiling run hangs beyond the 1m timeout on darwin/arm64
+  - version: go1.26
+    platform: darwin/arm64
+    directive: run
+    case: fixedbugs/issue25897a.go
+    reason: LLGo makes no progress starting reflect-generated goroutines while a single-P runtime continuously collects
   - platform: darwin/arm64
     directive: run
     case: gcstring.go
@@ -2441,3 +3227,50 @@ xfails:
     directive: runoutput
     case: index0.go
     reason: current main goroot runoutput failure on linux/amd64
+  - version: go1.26
+    directive: errorcheckandrundir
+    case: intrinsic.go
+    reason: gc-specific SSA intrinsic diagnostics are not implemented by llgo; the run stage still executes
+  - version: go1.26
+    directive: errorcheckandrundir
+    case: closure3.go
+    reason: gc-specific escape and inlining diagnostics are not implemented by llgo; the run stage still executes
+  - version: go1.26
+    directive: errorcheckandrundir
+    case: linkname.go
+    reason: gc-specific escape and inlining diagnostics are not implemented by llgo; the run stage still executes
+  - version: go1.26
+    directive: errorcheckandrundir
+    case: fixedbugs/issue37837.go
+    reason: gc-specific escape-analysis diagnostics are not implemented by llgo; the run stage still executes
+  - version: go1.26
+    platform: darwin/arm64
+    directive: rundir
+    case: fixedbugs/issue29919.go
+    reason: runtime CallersFrames reports llgo package names and initialization line metadata differently
+  - version: go1.26
+    platform: darwin/arm64
+    directive: buildrundir
+    case: asmhdr.go
+    reason: llgo build does not implement the Go assembler asmhdr and symabis pipeline
+  - version: go1.26
+    directive: rundir
+    case: fixedbugs/issue31636.go
+    reason: llgo initializes independent imported packages in reverse source order
+  - version: go1.26
+    directive: rundir
+    case: fixedbugs/issue9608.go
+    reason: llgo does not eliminate unreachable references to a bodyless function before linking
+  - version: go1.26
+    directive: runindir
+    case: fixedbugs/issue20014.go
+    reason: gc-specific fieldtrack linker metadata is not implemented by llgo
+  - version: go1.26
+    platform: darwin/arm64
+    directive: buildrundir
+    case: retjmp.go
+    reason: llgo does not preserve Go assembler return-jump ABI behavior
+  - version: go1.26
+    directive: rundir
+    case: fixedbugs/issue24693.go
+    reason: llgo constructs cross-package itabs incorrectly for unexported interface methods
