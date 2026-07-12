@@ -71,6 +71,7 @@ const (
 // The zero value is a valid configuration.
 // Calls to Load do not modify this struct.
 type Config = packages.Config
+type Error = packages.Error
 
 // A Package describes a loaded Go package.
 type Package = packages.Package
@@ -104,6 +105,8 @@ type loader struct {
 	// we need certain modes right.
 	requestedMode LoadMode
 }
+
+var loadGoVersions sync.Map // map[*loader]string
 
 type Cached struct {
 	*packages.Package
@@ -347,13 +350,14 @@ func loadPackageEx(dedup Deduper, ld *loader, lpkg *loaderPackage) {
 	}
 
 	lpkg.TypesInfo = &types.Info{
-		Types:      make(map[ast.Expr]types.TypeAndValue),
-		Defs:       make(map[*ast.Ident]types.Object),
-		Uses:       make(map[*ast.Ident]types.Object),
-		Implicits:  make(map[ast.Node]types.Object),
-		Instances:  make(map[*ast.Ident]types.Instance),
-		Scopes:     make(map[ast.Node]*types.Scope),
-		Selections: make(map[*ast.SelectorExpr]*types.Selection),
+		Types:        make(map[ast.Expr]types.TypeAndValue),
+		Defs:         make(map[*ast.Ident]types.Object),
+		Uses:         make(map[*ast.Ident]types.Object),
+		Implicits:    make(map[ast.Node]types.Object),
+		Instances:    make(map[*ast.Ident]types.Instance),
+		Scopes:       make(map[ast.Node]*types.Scope),
+		Selections:   make(map[*ast.SelectorExpr]*types.Selection),
+		FileVersions: make(map[*ast.File]string),
 	}
 	lpkg.TypesSizes = ld.sizes
 
@@ -398,7 +402,9 @@ func loadPackageEx(dedup Deduper, ld *loader, lpkg *loaderPackage) {
 		Error: appendError,
 		Sizes: ld.sizes, // may be nil
 	}
-	if lpkg.Module != nil && lpkg.Module.GoVersion != "" {
+	if goVersion, ok := loadGoVersions.Load(ld); ok && lpkg.initial {
+		tc.GoVersion = goVersion.(string)
+	} else if lpkg.Module != nil && lpkg.Module.GoVersion != "" {
 		tc.GoVersion = "go" + lpkg.Module.GoVersion
 	}
 	if (ld.Mode & typecheckCgo) != 0 {
@@ -706,7 +712,17 @@ func refineEx(dedup Deduper, ld *loader, response *packages.DriverResponse) ([]*
 // proceeding with further analysis. The PrintErrors function is
 // provided for convenient display of all errors.
 func LoadEx(dedup Deduper, sizes func(sizes types.Sizes, compiler, arch string) types.Sizes, cfg *Config, patterns ...string) ([]*Package, error) {
+	return LoadExWithGoVersion(dedup, sizes, cfg, "", patterns...)
+}
+
+// LoadExWithGoVersion is LoadEx with an optional go/types language version
+// override. The version uses go/types syntax, such as "go1.22".
+func LoadExWithGoVersion(dedup Deduper, sizes func(sizes types.Sizes, compiler, arch string) types.Sizes, cfg *Config, goVersion string, patterns ...string) ([]*Package, error) {
 	ld := newLoader(cfg)
+	if goVersion != "" {
+		loadGoVersions.Store(ld, goVersion)
+		defer loadGoVersions.Delete(ld)
+	}
 	response, external, err := defaultDriver(&ld.Config, patterns...)
 	if err != nil {
 		return nil, err

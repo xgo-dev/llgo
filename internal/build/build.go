@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -156,6 +157,10 @@ type Config struct {
 	SizeFormat    string // size report format: text,json (default text)
 	SizeLevel     string // size aggregation level: full,module,package (default module)
 	CompilerHash  string // metadata hash for the running compiler (development builds only)
+	GoVersion     string // Go language version accepted by the frontend (for example, "go1.22")
+	NoErrorColumn bool   // omit source columns from frontend diagnostics
+	GoBuildFlags  []string
+	AllowNoBody   bool // allow declarations without bodies, as go tool compile does
 
 	// PthreadStackSize sets a custom stack size, in bytes, for pthread-backed
 	// goroutines. A zero value keeps the platform pthread default.
@@ -266,6 +271,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	if err := ensureSizeReporting(conf); err != nil {
 		return nil, err
 	}
+	applyFrontendGCFlags(conf)
 	conf.OptLevel = effectiveOptLevel(conf)
 	// Handle crosscompile configuration first to set correct GOOS/GOARCH
 	forceEspClang := conf.ForceEspClang || conf.Target != ""
@@ -298,9 +304,11 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	if len(export.BuildTags) > 0 {
 		tags += "," + strings.Join(export.BuildTags, ",")
 	}
+	goBuildFlags := []string{"-tags=" + tags}
+	goBuildFlags = append(goBuildFlags, conf.GoBuildFlags...)
 	cfg := &packages.Config{
 		Mode:       loadSyntax | packages.NeedDeps | packages.NeedModule | packages.NeedExportFile,
-		BuildFlags: []string{"-tags=" + tags},
+		BuildFlags: goBuildFlags,
 		Fset:       token.NewFileSet(),
 		Tests:      conf.Mode == ModeTest,
 		Env:        append(slices.Clone(os.Environ()), "GOOS="+conf.Goos, "GOARCH="+conf.Goarch),
@@ -376,9 +384,12 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	initial, err := packages.LoadEx(dedup, sizes, cfg, patterns...)
+	initial, err := packages.LoadExWithGoVersion(dedup, sizes, cfg, conf.GoVersion, patterns...)
 	if err != nil {
 		return nil, err
+	}
+	if conf.AllowNoBody {
+		allowMissingFunctionBodies(initial)
 	}
 	mode := conf.Mode
 	if mode == ModeTest {
@@ -575,6 +586,51 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	}
 
 	return allPkgs, nil
+}
+
+func applyFrontendGCFlags(conf *Config) {
+	for _, buildFlag := range conf.GoBuildFlags {
+		value, ok := strings.CutPrefix(buildFlag, "-gcflags=")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(value)
+		if len(fields) != 0 {
+			if _, compilerFlags, hasPattern := strings.Cut(fields[0], "="); hasPattern {
+				fields[0] = compilerFlags
+			}
+		}
+		for _, compilerFlag := range fields {
+			switch {
+			case strings.HasPrefix(compilerFlag, "-lang="):
+				conf.GoVersion = strings.TrimPrefix(compilerFlag, "-lang=")
+			case compilerFlag == "-N", compilerFlag == "-l", strings.HasPrefix(compilerFlag, "-l="):
+				conf.OptLevel = optlevel.O0
+			}
+		}
+	}
+}
+
+func allowMissingFunctionBodies(initial []*packages.Package) {
+	for _, pkg := range initial {
+		hasMissingBody := false
+		hasOtherError := false
+		for _, pkgErr := range pkg.Errors {
+			switch {
+			case strings.Contains(pkgErr.Msg, "missing function body"):
+				hasMissingBody = true
+			case strings.HasPrefix(pkgErr.Msg, "# "):
+				// go list prefixes compiler diagnostics with the package name.
+			default:
+				hasOtherError = true
+			}
+		}
+		if hasMissingBody && !hasOtherError {
+			pkg.Errors = nil
+			pkg.TypeErrors = nil
+			pkg.IllTyped = false
+		}
+	}
 }
 
 func needLink(pkg *packages.Package, mode Mode) bool {
@@ -1742,13 +1798,36 @@ func buildSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([]*a
 	if len(errs) > 0 {
 		for _, errPkg := range errs {
 			for _, err := range errPkg.Errors {
-				fmt.Fprintln(os.Stderr, err)
+				fmt.Fprintln(os.Stderr, formatPackageError(err, ctx.buildConf.NoErrorColumn))
 			}
 			fmt.Fprintln(os.Stderr, "cannot build SSA for package", errPkg)
 		}
 		return nil, fmt.Errorf("cannot build SSA for packages")
 	}
 	return all, nil
+}
+
+func formatPackageError(err packages.Error, noColumn bool) string {
+	if !noColumn || err.Pos == "" || err.Pos == "-" {
+		return err.Error()
+	}
+	pos := err.Pos
+	lastColon := strings.LastIndexByte(pos, ':')
+	if lastColon < 0 {
+		return err.Error()
+	}
+	if _, parseErr := strconv.Atoi(pos[lastColon+1:]); parseErr != nil {
+		return err.Error()
+	}
+	linePos := pos[:lastColon]
+	lineColon := strings.LastIndexByte(linePos, ':')
+	if lineColon < 0 {
+		return err.Error()
+	}
+	if _, parseErr := strconv.Atoi(linePos[lineColon+1:]); parseErr != nil {
+		return err.Error()
+	}
+	return linePos + ": " + err.Msg
 }
 
 func collectRewriteVars(ctx *context, pkgPath string) map[string]string {

@@ -20,6 +20,7 @@ import (
 	"github.com/goplus/llgo/internal/buildenv"
 	"github.com/goplus/llgo/internal/lto"
 	"github.com/goplus/llgo/internal/mockable"
+	"github.com/goplus/llgo/internal/optlevel"
 	"github.com/goplus/llgo/internal/packages"
 	llssa "github.com/goplus/llgo/ssa"
 	"github.com/xgo-dev/llvm"
@@ -502,5 +503,42 @@ func TestDevLTOGlobalDCEDefaultsToFullLTO(t *testing.T) {
 				t.Fatalf("goGlobalDCEEnabled() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestApplyFrontendGCFlags(t *testing.T) {
+	conf := &Config{GoBuildFlags: []string{"-gcflags=all=-lang=go1.17 -N -l=4"}}
+	applyFrontendGCFlags(conf)
+	if conf.GoVersion != "go1.17" {
+		t.Fatalf("GoVersion=%q, want go1.17", conf.GoVersion)
+	}
+	if conf.OptLevel != optlevel.O0 {
+		t.Fatalf("OptLevel=%v, want O0", conf.OptLevel)
+	}
+}
+
+func TestAllowMissingFunctionBodies(t *testing.T) {
+	pkg := &packages.Package{
+		Errors: []packages.Error{
+			{Msg: "# command-line-arguments"},
+			{Msg: "missing function body"},
+		},
+		IllTyped: true,
+	}
+	allowMissingFunctionBodies([]*packages.Package{pkg})
+	if pkg.IllTyped || len(pkg.Errors) != 0 {
+		t.Fatalf("package remains ill-typed: %+v", pkg.Errors)
+	}
+
+	pkg = &packages.Package{
+		Errors: []packages.Error{
+			{Msg: "missing function body"},
+			{Msg: "undefined: missing"},
+		},
+		IllTyped: true,
+	}
+	allowMissingFunctionBodies([]*packages.Package{pkg})
+	if !pkg.IllTyped || len(pkg.Errors) != 2 {
+		t.Fatalf("mixed errors were incorrectly suppressed: %+v", pkg.Errors)
 	}
 }

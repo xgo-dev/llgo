@@ -7,6 +7,7 @@ import (
 	"github.com/goplus/cobra/xcmd"
 	"github.com/goplus/llgo/cmd/internal/build"
 	"github.com/goplus/llgo/cmd/internal/clean"
+	"github.com/goplus/llgo/cmd/internal/compile"
 	"github.com/goplus/llgo/cmd/internal/install"
 	"github.com/goplus/llgo/cmd/internal/monitor"
 	"github.com/goplus/llgo/cmd/internal/run"
@@ -53,6 +54,14 @@ type Cmd_test struct {
 	xcmd.Command
 	*App
 }
+type Cmd_tool struct {
+	xcmd.Command
+	*App
+}
+type Cmd_tool_compile struct {
+	xcmd.Command
+	*App
+}
 type Cmd_version struct {
 	xcmd.Command
 	*App
@@ -72,8 +81,10 @@ func (this *App) Main() {
 	_xgo_obj5 := &Cmd_monitor{App: this}
 	_xgo_obj6 := &Cmd_run{App: this}
 	_xgo_obj7 := &Cmd_test{App: this}
-	_xgo_obj8 := &Cmd_version{App: this}
-	xcmd.Gopt_App_Main(this, _xgo_obj0, _xgo_obj1, _xgo_obj2, _xgo_obj3, _xgo_obj4, _xgo_obj5, _xgo_obj6, _xgo_obj7, _xgo_obj8)
+	_xgo_obj8 := &Cmd_tool{App: this}
+	_xgo_obj9 := &Cmd_tool_compile{App: this}
+	_xgo_obj10 := &Cmd_version{App: this}
+	xcmd.Gopt_App_Main(this, _xgo_obj0, _xgo_obj1, _xgo_obj2, _xgo_obj3, _xgo_obj4, _xgo_obj5, _xgo_obj6, _xgo_obj7, _xgo_obj8, _xgo_obj9, _xgo_obj10)
 }
 
 //line cmd/llgo/build_cmd.gox:20
@@ -224,6 +235,42 @@ func (this *Cmd_test) Main(_xgo_arg0 string) {
 }
 func (this *Cmd_test) Classfname() string {
 	return "test"
+}
+
+//line cmd/llgo/tool_cmd.gox:16
+func (this *Cmd_tool) Main(_xgo_arg0 string) {
+	this.Command.Main(_xgo_arg0)
+//line cmd/llgo/tool_cmd.gox:16:1
+	this.Use("tool [command]")
+//line cmd/llgo/tool_cmd.gox:18:1
+	this.Short("Run a specified llgo tool")
+//line cmd/llgo/tool_cmd.gox:20:1
+	this.Run__0(func() {
+//line cmd/llgo/tool_cmd.gox:21:1
+		this.Help()
+	})
+}
+func (this *Cmd_tool) Classfname() string {
+	return "tool"
+}
+
+//line cmd/llgo/tool_compile_cmd.gox:20
+func (this *Cmd_tool_compile) Main(_xgo_arg0 string) {
+	this.Command.Main(_xgo_arg0)
+//line cmd/llgo/tool_compile_cmd.gox:20:1
+	this.Use("compile [options] file.go...")
+//line cmd/llgo/tool_compile_cmd.gox:22:1
+	this.Short("Compile Go source files without linking")
+//line cmd/llgo/tool_compile_cmd.gox:24:1
+	this.FlagOff()
+//line cmd/llgo/tool_compile_cmd.gox:26:1
+	this.Run__1(func(args []string) {
+//line cmd/llgo/tool_compile_cmd.gox:27:1
+		compile.Cmd.Run(compile.Cmd, args)
+	})
+}
+func (this *Cmd_tool_compile) Classfname() string {
+	return "tool_compile"
 }
 
 //line cmd/llgo/version_cmd.gox:22
