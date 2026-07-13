@@ -27,6 +27,9 @@ func Alloc[T any](func(*T)) Handle[T] { return Handle[T]{} }
 // Get always returns the zero value.
 func (Handle[T]) Get() (zero T) { return zero }
 
+// Local returns an isolated zero value in non-LLGo builds.
+func (Handle[T]) Local() *T { return new(T) }
+
 // Set is a no-op.
 func (Handle[T]) Set(T) {}
 

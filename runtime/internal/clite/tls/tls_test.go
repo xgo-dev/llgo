@@ -41,6 +41,35 @@ func TestAllocReadWrite(t *testing.T) {
 	}
 }
 
+func TestLocalReturnsThreadSlot(t *testing.T) {
+	h := tls.Alloc[int](nil)
+	local := h.Local()
+	*local = 42
+	if got := h.Get(); got != 42 {
+		t.Fatalf("Get after Local write = %d, want 42", got)
+	}
+	if again := h.Local(); again != local {
+		t.Fatal("Local returned a different address for the same thread")
+	}
+
+	result := make(chan int, 1)
+	go func() {
+		other := h.Local()
+		if other == local {
+			result <- -1
+			return
+		}
+		*other = 99
+		result <- h.Get()
+	}()
+	if got := <-result; got != 99 {
+		t.Fatalf("other goroutine Local value = %d, want 99", got)
+	}
+	if got := *local; got != 42 {
+		t.Fatalf("main goroutine Local value = %d, want 42", got)
+	}
+}
+
 func TestAllocThreadLocalIsolation(t *testing.T) {
 	h := tls.Alloc[int](nil)
 	h.Set(7)

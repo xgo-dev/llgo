@@ -73,6 +73,12 @@ func (h Handle[T]) Get() T {
 	return zero
 }
 
+// Local returns the address of the current thread's value, creating its slot
+// if necessary. The pointer remains valid until the thread exits.
+func (h Handle[T]) Local() *T {
+	return &h.ensureSlot().value
+}
+
 // Set stores v in the current thread's slot, creating it if necessary.
 func (h Handle[T]) Set(v T) {
 	s := h.ensureSlot()

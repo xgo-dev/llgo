@@ -1,7 +1,5 @@
-//go:build !baremetal
-
 /*
- * Copyright (c) 2025 The XGo Authors (xgo.dev). All rights reserved.
+ * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,25 +16,28 @@
 
 package runtime
 
-import "github.com/goplus/llgo/runtime/internal/clite/tls"
+import "unsafe"
 
-var deferTLS = tls.Alloc[*Defer](func(head **Defer) {
-	if head != nil {
-		*head = nil
-	}
-})
+// g holds the runtime state owned by one LLGo goroutine. LLGo goroutines do
+// not migrate between OS threads, so getg can use thread-local storage.
+type g struct {
+	defer_ *Defer
+	panic_ unsafe.Pointer
+	goexit bool
+	isMain bool
+}
 
-// SetThreadDefer associates the current thread with the given defer chain.
+// SetThreadDefer associates the current goroutine with the given defer chain.
 func SetThreadDefer(head *Defer) {
-	deferTLS.Set(head)
+	getg().defer_ = head
 }
 
-// GetThreadDefer returns the current thread's defer chain head.
+// GetThreadDefer returns the current goroutine's defer chain head.
 func GetThreadDefer() *Defer {
-	return deferTLS.Get()
+	return getg().defer_
 }
 
-// ClearThreadDefer resets the current thread's defer chain to nil.
+// ClearThreadDefer resets the current goroutine's defer chain to nil.
 func ClearThreadDefer() {
-	deferTLS.Clear()
+	getg().defer_ = nil
 }

@@ -1,7 +1,7 @@
 //go:build baremetal
 
 /*
- * Copyright (c) 2025 The XGo Authors (xgo.dev). All rights reserved.
+ * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,22 +18,19 @@
 
 package runtime
 
-// globalDeferHead stores the current defer chain head.
-// In baremetal single-threaded environment, a global variable
-// replaces pthread TLS.
-var globalDeferHead *Defer
+import "unsafe"
 
-// SetThreadDefer associates the current thread with the given defer chain.
-func SetThreadDefer(head *Defer) {
-	globalDeferHead = head
+var baremetalG g
+
+func getg() *g {
+	return &baremetalG
 }
 
-// GetThreadDefer returns the current thread's defer chain head.
-func GetThreadDefer() *Defer {
-	return globalDeferHead
+// Bare-metal panic recovery is not implemented yet. Keep the existing
+// pthread-key behavior, where storing and loading the panic value are no-ops.
+func getPanic(*g) unsafe.Pointer {
+	return nil
 }
 
-// ClearThreadDefer resets the current thread's defer chain to nil.
-func ClearThreadDefer() {
-	globalDeferHead = nil
+func setPanic(*g, unsafe.Pointer) {
 }

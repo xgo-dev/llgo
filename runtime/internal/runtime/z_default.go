@@ -16,7 +16,8 @@ var (
 
 // Rethrow rethrows a panic.
 func Rethrow(link *Defer) {
-	if ptr := excepKey.Get(); ptr != nil {
+	gp := getg()
+	if ptr := gp.panic_; ptr != nil {
 		if link == nil {
 			TracePanic(*(*any)(ptr))
 			if PanicTraceback == nil || !PanicTraceback(2) {
@@ -27,7 +28,7 @@ func Rethrow(link *Defer) {
 		} else {
 			c.Siglongjmp(link.Addr, 1)
 		}
-	} else if ptr := goexitKey.Get(); ptr != nil {
+	} else if gp.goexit {
 		// Goexit must run deferred functions before terminating the current
 		// goroutine. Reuse the longjmp-based defer unwinding:
 		// 1) If we have a defer frame, longjmp to it so it can execute defers.
@@ -36,7 +37,7 @@ func Rethrow(link *Defer) {
 		if link != nil {
 			c.Siglongjmp(link.Addr, 1)
 		}
-		if pthread.Equal(mainThread, pthread.Self()) != 0 {
+		if gp.isMain {
 			fatal("no goroutines (main called runtime.Goexit) - deadlock!")
 			c.Exit(2)
 		}
