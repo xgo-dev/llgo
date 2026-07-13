@@ -208,6 +208,8 @@ type context struct {
 
 	staticGlobalInits map[*ssa.Global]llssa.Expr
 	staticInitStores  map[*ssa.Store]none
+	localInitGroups   map[string]*localInitGroup
+	localGlobals      map[*ssa.Global]llssa.Global
 }
 
 func (p *context) rewriteValue(name string) (string, bool) {
@@ -389,7 +391,14 @@ func (p *context) compileGlobal(pkg llssa.Package, gbl *ssa.Global) {
 		return
 	}
 	dbgInstrln("==> NewVar", name, typ)
-	g := pkg.NewVar(name, typ, llssa.Background(vtype))
+	local, hasDecl := p.prog.DeclInfo(llssa.FullName(gbl.Pkg.Pkg, gbl.Name()))
+	isLocal := hasDecl && local.Locality != llssa.LocalityNone
+	var g llssa.Global
+	if isLocal {
+		g = p.localGlobal(pkg, local, gbl, name, typ, vtype)
+	} else {
+		g = pkg.NewVar(name, typ, llssa.Background(vtype))
+	}
 	if p.tryEmbedGlobalInit(pkg, gbl, g, name) {
 		return
 	}
@@ -407,6 +416,21 @@ func (p *context) compileGlobal(pkg llssa.Package, gbl *ssa.Global) {
 	} else if define {
 		g.InitNil()
 	}
+}
+
+func (p *context) localGlobal(pkg llssa.Package, local llssa.DeclInfo, gbl *ssa.Global, name string, typ types.Type, vtype int) llssa.Global {
+	if global, ok := p.localGlobals[gbl]; ok {
+		return global
+	}
+	global := pkg.NewThreadLocalVar(name, typ, llssa.Background(vtype))
+	if p.localGlobals == nil {
+		p.localGlobals = make(map[*ssa.Global]llssa.Global)
+	}
+	p.localGlobals[gbl] = global
+	if local.EnsureFunc != "" {
+		p.registerLocalInitializer(pkg, local, global, gbl)
+	}
+	return global
 }
 
 func makeClosureCtx(pkg *types.Package, vars []*ssa.FreeVar) *types.Var {
@@ -835,6 +859,7 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 	}
 
 	if doModInit {
+		p.initializeLocalGuards(b)
 		if p.state != pkgInPatch {
 			p.applyEmbedInits(b)
 		}
@@ -1930,6 +1955,12 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		pkg.Pkg = pkgTypes
 		patch.Alt.Pkg = pkgTypes
 	}
+	if err = ParsePkgSyntax(prog, pkgProg.Fset, pkgTypes, files); err != nil {
+		return nil, nil, err
+	}
+	if err = validateLocalInitializers(prog, pkgTypes); err != nil {
+		return nil, nil, err
+	}
 	if pkgPath == llssa.PkgRuntime {
 		prog.SetRuntime(pkgTypes)
 	}
@@ -1992,6 +2023,7 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 	if !ctx.skipall {
 		processPkg(ctx, ret, pkg)
 	}
+	ctx.buildLocalInitializers(ret)
 	for len(ctx.inits) > 0 {
 		inits := ctx.inits
 		ctx.inits = nil
@@ -2030,6 +2062,24 @@ func processPkg(ctx *context, ret llssa.Package, pkg *ssa.Package) {
 	sort.Slice(members, func(i, j int) bool {
 		return members[i].name < members[j].name
 	})
+	// Package init can reference any package global, including globals whose
+	// names sort after "init". Register every local group before compiling
+	// function bodies so the initial thread can premark all local guards.
+	for _, m := range members {
+		global, ok := m.val.(*ssa.Global)
+		if !ok || isCgoFuncPtrVar(global.Name()) {
+			continue
+		}
+		local, ok := ctx.prog.DeclInfo(llssa.FullName(global.Pkg.Pkg, global.Name()))
+		if !ok || local.Locality == llssa.LocalityNone {
+			continue
+		}
+		typ := ctx.patchType(global.Type())
+		name, vtype, _ := ctx.varName(global.Pkg.Pkg, global)
+		if vtype != pyVar {
+			ctx.localGlobal(ret, local, global, name, typ, vtype)
+		}
+	}
 
 	for _, m := range members {
 		member := m.val

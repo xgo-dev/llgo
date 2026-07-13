@@ -117,9 +117,25 @@ func (p Package) NewVarEx(name string, t Type) Global {
 	return p.doNewVar(name, t)
 }
 
+// NewThreadLocalVar creates a native TLS variable. Unlike NewVar, it keeps
+// independent storage for zero-sized values instead of using the module-wide
+// zero-sized allocation sentinel.
+func (p Package) NewThreadLocalVar(name string, typ types.Type, bg Background) Global {
+	if v, ok := p.vars[name]; ok {
+		v.impl.SetThreadLocal(true)
+		return v
+	}
+	t := p.Prog.Type(typ, bg)
+	return p.doNewVarEx(name, t, true)
+}
+
 func (p Package) doNewVar(name string, t Type) Global {
+	return p.doNewVarEx(name, t, false)
+}
+
+func (p Package) doNewVarEx(name string, t Type, threadLocal bool) Global {
 	typ := p.Prog.Elem(t).ll
-	if p.Prog.td.TypeAllocSize(typ) == 0 {
+	if !threadLocal && p.Prog.td.TypeAllocSize(typ) == 0 {
 		var rt *types.Package
 		if p.Prog.rt != nil || p.Prog.rtget != nil {
 			rt = p.Prog.runtime()
@@ -141,6 +157,7 @@ func (p Package) doNewVar(name string, t Type) Global {
 		}
 	}
 	gbl := llvm.AddGlobal(p.mod, typ, name)
+	gbl.SetThreadLocal(threadLocal)
 	alignment := p.Prog.td.ABITypeAlignment(typ)
 	gbl.SetAlignment(alignment)
 	ret := &aGlobal{Expr{gbl, t}}

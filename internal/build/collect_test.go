@@ -30,6 +30,7 @@ import (
 	"github.com/goplus/llgo/internal/crosscompile"
 	"github.com/goplus/llgo/internal/lto"
 	"github.com/goplus/llgo/internal/packages"
+	llssa "github.com/goplus/llgo/ssa"
 	gopackages "golang.org/x/tools/go/packages"
 )
 
@@ -436,6 +437,96 @@ func TestTryLoadFromCache_NoFingerprint(t *testing.T) {
 	}
 }
 
+func TestDeclarationMetadataRoundTrip(t *testing.T) {
+	prog := llssa.NewProgram(nil)
+	prog.SetLinkname("example.com/p.F", "C.f")
+	prog.SetTypeBackground("example.com/p.T", llssa.InC)
+	prog.SetVarLocality("example.com/p.value", llssa.GoroutineLocal, true)
+	prog.SetLocalInitFunc("example.com/p.value", "example.com/p.__llgo_local_init_0")
+	prog.SetLocalEnsureFunc("example.com/p.value", "example.com/p.__llgo_local_init_0$ensure")
+
+	encoded := declarationMetadataFor(prog.PackageDecls("example.com/p"))
+	if len(encoded) != 3 {
+		t.Fatalf("encoded declarations = %d, want 3", len(encoded))
+	}
+	for i := 1; i < len(encoded); i++ {
+		if encoded[i-1].Name >= encoded[i].Name {
+			t.Fatalf("declarations are not sorted: %+v", encoded)
+		}
+	}
+	if got := declarationMetadataFor(nil); got != nil {
+		t.Fatalf("declarationMetadataFor(nil) = %+v", got)
+	}
+	for _, declaration := range encoded {
+		if declaration.Name == "example.com/p.value" && declaration.Locality != "gls" {
+			t.Fatalf("encoded locality = %q, want gls", declaration.Locality)
+		}
+		if declaration.Name == "example.com/p.T" && declaration.Background != "c" {
+			t.Fatalf("encoded background = %q, want c", declaration.Background)
+		}
+	}
+	restored := llssa.NewProgram(nil)
+	if !mergeCachedDeclarations(restored, "example.com/p", encoded) {
+		t.Fatal("mergeCachedDeclarations rejected matching metadata")
+	}
+	if got, ok := restored.DeclInfo("example.com/p.value"); !ok || got.Locality != llssa.GoroutineLocal || got.InitFunc == "" || got.EnsureFunc == "" {
+		t.Fatalf("restored locality = %+v, %v", got, ok)
+	}
+	restored.SetVarLocality("example.com/p.value", llssa.ThreadLocal, true)
+	if mergeCachedDeclarations(restored, "example.com/p", encoded) {
+		t.Fatal("mergeCachedDeclarations accepted conflicting source metadata")
+	}
+}
+
+func TestDeclarationMetadataValidation(t *testing.T) {
+	valid := declarationMetadata{Name: "example.com/p.value", Background: "go", Locality: "tls"}
+	tests := []struct {
+		name  string
+		decls []declarationMetadata
+	}{
+		{name: "wrong package", decls: []declarationMetadata{{Name: "example.com/q.value"}}},
+		{name: "duplicate", decls: []declarationMetadata{valid, valid}},
+		{name: "background", decls: []declarationMetadata{{Name: valid.Name, Background: "invalid"}}},
+		{name: "locality", decls: []declarationMetadata{{Name: valid.Name, Locality: "invalid"}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			prog := llssa.NewProgram(nil)
+			if mergeCachedDeclarations(prog, "example.com/p", test.decls) {
+				t.Fatalf("mergeCachedDeclarations accepted %+v", test.decls)
+			}
+		})
+	}
+
+	backgrounds := []llssa.Background{0, llssa.InGo, llssa.InC, llssa.InPython}
+	for _, background := range backgrounds {
+		name := declarationBackgroundName(background)
+		if got, ok := parseDeclarationBackground(name); !ok || got != background {
+			t.Fatalf("background %v round trip = %v, %v", background, got, ok)
+		}
+	}
+	if name := declarationBackgroundName(llssa.Background(99)); name != "invalid:99" {
+		t.Fatalf("invalid background name = %q", name)
+	}
+	if _, ok := parseDeclarationBackground("invalid:99"); ok {
+		t.Fatal("invalid background parsed successfully")
+	}
+
+	localities := []llssa.Locality{llssa.LocalityNone, llssa.ThreadLocal, llssa.GoroutineLocal}
+	for _, locality := range localities {
+		name := declarationLocalityName(locality)
+		if got, ok := parseDeclarationLocality(name); !ok || got != locality {
+			t.Fatalf("locality %v round trip = %v, %v", locality, got, ok)
+		}
+	}
+	if name := declarationLocalityName(llssa.Locality(99)); name != "invalid:99" {
+		t.Fatalf("invalid locality name = %q", name)
+	}
+	if _, ok := parseDeclarationLocality("invalid:99"); ok {
+		t.Fatal("invalid locality parsed successfully")
+	}
+}
+
 func TestTryLoadFromCache_ForceRebuild(t *testing.T) {
 	td := t.TempDir()
 	oldFunc := cacheRootFunc
@@ -606,8 +697,13 @@ func TestSaveToCache_Success(t *testing.T) {
 	cacheRootFunc = func() string { return td }
 	defer func() { cacheRootFunc = oldFunc }()
 
+	prog := llssa.NewProgram(nil)
+	prog.SetVarLocality("example.com/lib.value", llssa.ThreadLocal, true)
+	prog.SetLocalInitFunc("example.com/lib.value", "example.com/lib.__llgo_local_init_0")
+	prog.SetLocalEnsureFunc("example.com/lib.value", "example.com/lib.__llgo_local_init_0$ensure")
 	ctx := &context{
 		conf: &packages.Config{},
+		prog: prog,
 		buildConf: &Config{
 			Goos:   "darwin",
 			Goarch: "arm64",
@@ -661,13 +757,45 @@ func TestSaveToCache_Success(t *testing.T) {
 	if data.Env.Goos != "darwin" {
 		t.Errorf("manifest should contain original env content")
 	}
-	if data.Metadata != nil {
-		t.Errorf("metadata should be empty when no link args/runtime flags")
+	if data.Metadata == nil || len(data.Metadata.Declarations) != 1 {
+		t.Fatalf("cached declaration metadata = %+v", data.Metadata)
 	}
 
 	// Check archive exists
 	if _, err := os.Stat(paths.Archive); err != nil {
 		t.Errorf("archive should exist: %v", err)
+	}
+
+	newCachedPackage := func() *aPackage {
+		return &aPackage{
+			Package:     &packages.Package{PkgPath: "example.com/lib", Name: "lib"},
+			Fingerprint: "def456",
+		}
+	}
+	nilProgCtx := &context{
+		conf:         &packages.Config{},
+		buildConf:    ctx.buildConf,
+		crossCompile: ctx.crossCompile,
+		cacheManager: cm,
+	}
+	if nilProgCtx.tryLoadFromCache(newCachedPackage()) {
+		t.Fatal("cache metadata loaded without a compiler program")
+	}
+
+	restored := llssa.NewProgram(nil)
+	loadCtx := &context{
+		conf:         &packages.Config{},
+		prog:         restored,
+		buildConf:    ctx.buildConf,
+		crossCompile: ctx.crossCompile,
+		cacheManager: cm,
+	}
+	loaded := newCachedPackage()
+	if !loadCtx.tryLoadFromCache(loaded) || !loaded.CacheHit {
+		t.Fatal("cache entry with declaration metadata was not loaded")
+	}
+	if got, ok := restored.DeclInfo("example.com/lib.value"); !ok || got.Locality != llssa.ThreadLocal || got.InitFunc == "" || got.EnsureFunc == "" {
+		t.Fatalf("restored declaration metadata = %+v, %v", got, ok)
 	}
 }
 

@@ -1,4 +1,4 @@
-//go:build !baremetal
+//go:build !llgo && !baremetal
 
 /*
  * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
@@ -18,26 +18,6 @@
 
 package runtime
 
-import (
-	"unsafe"
-)
+import "unsafe"
 
-// currentG locates the goroutine state for the current OS thread. It is
-// thread-local rather than goroutine-local because getg bootstraps access to
-// the goroutine object itself.
-//
-//llgo:tls
-var currentG g
-
-// getg returns the state for the goroutine pinned to the current OS thread.
-func getg() *g {
-	return &currentG
-}
-
-func getPanic(gp *g) unsafe.Pointer {
-	return gp.panic_
-}
-
-func setPanic(gp *g, ptr unsafe.Pointer) {
-	gp.panic_ = ptr
-}
+func RegisterLocalRoot(start unsafe.Pointer, size uintptr) {}

@@ -23,6 +23,8 @@ import (
 	"log"
 	"runtime"
 	"strconv"
+	"strings"
+	"sync"
 	"unsafe"
 
 	"github.com/goplus/llgo/internal/env"
@@ -223,7 +225,7 @@ type aProgram struct {
 	printfTy *types.Signature
 
 	paramObjPtr_ *types.Var
-	linkname     map[string]string     // pkgPath.nameInPkg => linkname
+	decls        *declarationInfos
 	abiSymbol    map[string]*AbiSymbol // abi symbol name => AbiSymbol
 
 	ptrSize int
@@ -306,11 +308,12 @@ func NewProgram(target *Target) Program {
 		ctx.Finalize()
 	*/
 	is32Bits := (td.PointerSize() == 4 || is32Bits(target.GOARCH))
+	decls := newDeclarationInfos()
 	prog := &aProgram{
-		ctx: ctx, gocvt: newGoTypes(),
+		ctx: ctx, gocvt: newGoTypes(decls), decls: decls,
 		target: target, td: td, tm: tm, is32Bits: is32Bits,
 		ptrSize: td.PointerSize(), named: make(map[string]Type), fnnamed: make(map[string]int),
-		linkname: make(map[string]string), abiSymbol: make(map[string]*AbiSymbol),
+		abiSymbol: make(map[string]*AbiSymbol),
 	}
 	prog.abi.Init(uintptr(prog.ptrSize), (*goProgram)(unsafe.Pointer(prog)))
 	return prog
@@ -371,16 +374,139 @@ func (p Program) SetRuntime(runtime any) {
 }
 
 func (p Program) SetTypeBackground(fullName string, bg Background) {
-	p.gocvt.typbg.Store(fullName, bg)
+	p.decls.update(fullName, func(info *DeclInfo) {
+		info.Background = bg
+	})
 }
 
 func (p Program) SetLinkname(name, link string) {
-	p.linkname[name] = link
+	p.decls.update(name, func(info *DeclInfo) {
+		info.Linkname = link
+	})
 }
 
 func (p Program) Linkname(name string) (link string, ok bool) {
-	link, ok = p.linkname[name]
-	return
+	info, ok := p.DeclInfo(name)
+	return info.Linkname, ok && info.Linkname != ""
+}
+
+// Locality describes which execution context owns a package variable.
+type Locality uint8
+
+const (
+	LocalityNone Locality = iota
+	ThreadLocal
+	GoroutineLocal
+)
+
+// DeclInfo contains the compiler directives attached to one Go declaration.
+// ThreadLocal and GoroutineLocal remain distinct even while both lower to
+// native TLS in the current one-thread-per-goroutine runtime.
+type DeclInfo struct {
+	Linkname       string
+	Background     Background
+	Locality       Locality
+	HasInitializer bool
+	InitFunc       string
+	EnsureFunc     string
+}
+
+type declarationInfos struct {
+	mu             sync.RWMutex
+	entries        map[string]DeclInfo
+	parsedPackages map[*types.Package]struct{}
+}
+
+func newDeclarationInfos() *declarationInfos {
+	return &declarationInfos{
+		entries:        make(map[string]DeclInfo),
+		parsedPackages: make(map[*types.Package]struct{}),
+	}
+}
+
+func (p *declarationInfos) update(name string, update func(*DeclInfo)) {
+	p.mu.Lock()
+	info := p.entries[name]
+	update(&info)
+	p.entries[name] = info
+	p.mu.Unlock()
+}
+
+func (p *declarationInfos) get(name string) (DeclInfo, bool) {
+	p.mu.RLock()
+	info, ok := p.entries[name]
+	p.mu.RUnlock()
+	return info, ok
+}
+
+func (p Program) SetVarLocality(name string, locality Locality, hasInitializer bool) {
+	p.decls.update(name, func(info *DeclInfo) {
+		info.Locality = locality
+		info.HasInitializer = hasInitializer
+	})
+}
+
+func (p Program) SetLocalInitFunc(name, initFunc string) {
+	p.decls.update(name, func(info *DeclInfo) {
+		info.InitFunc = initFunc
+	})
+}
+
+func (p Program) SetLocalEnsureFunc(name, ensureFunc string) {
+	p.decls.update(name, func(info *DeclInfo) {
+		info.EnsureFunc = ensureFunc
+	})
+}
+
+func (p Program) DeclInfo(name string) (DeclInfo, bool) {
+	return p.decls.get(name)
+}
+
+// PackageSyntaxParsed reports whether declaration directives have already
+// been collected for this package object.
+func (p Program) PackageSyntaxParsed(pkg *types.Package) bool {
+	p.decls.mu.RLock()
+	_, ok := p.decls.parsedPackages[pkg]
+	p.decls.mu.RUnlock()
+	return ok
+}
+
+// MarkPackageSyntaxParsed records that declaration directives were collected
+// successfully for this package object.
+func (p Program) MarkPackageSyntaxParsed(pkg *types.Package) {
+	p.decls.mu.Lock()
+	p.decls.parsedPackages[pkg] = struct{}{}
+	p.decls.mu.Unlock()
+}
+
+// PackageDecls returns a copy of the declaration metadata for pkgPath.
+func (p Program) PackageDecls(pkgPath string) map[string]DeclInfo {
+	prefix := pkgPath + "."
+	ret := make(map[string]DeclInfo)
+	p.decls.mu.RLock()
+	for name, info := range p.decls.entries {
+		if strings.HasPrefix(name, prefix) {
+			ret[name] = info
+		}
+	}
+	p.decls.mu.RUnlock()
+	return ret
+}
+
+// MergeDeclInfos atomically restores declaration metadata from a package cache
+// manifest. Existing source metadata must agree with every cached entry.
+func (p Program) MergeDeclInfos(cached map[string]DeclInfo) bool {
+	p.decls.mu.Lock()
+	defer p.decls.mu.Unlock()
+	for name, info := range cached {
+		if current, ok := p.decls.entries[name]; ok && current != info {
+			return false
+		}
+	}
+	for name, info := range cached {
+		p.decls.entries[name] = info
+	}
+	return true
 }
 
 func (p Program) runtime() *types.Package {
@@ -834,6 +960,11 @@ func (p Package) rtFunc(fnName string) Expr {
 	}
 	sig := fn.Type().(*types.Signature)
 	return p.NewFunc(name, sig, InGo).Expr
+}
+
+// RuntimeFunc returns a declaration for a function in LLGo's internal runtime.
+func (p Package) RuntimeFunc(fnName string) Expr {
+	return p.rtFunc(fnName)
 }
 
 func (p Package) cFunc(fullName string, sig *types.Signature) Expr {

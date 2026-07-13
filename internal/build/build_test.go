@@ -9,6 +9,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"io"
 	"os"
 	"os/exec"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goplus/llgo/cl"
 	"github.com/goplus/llgo/internal/buildenv"
 	"github.com/goplus/llgo/internal/lto"
 	"github.com/goplus/llgo/internal/mockable"
@@ -409,7 +411,7 @@ func TestCmpTestNonexistentPatternReturnsError(t *testing.T) {
 	}
 }
 
-func TestPreCollectRuntimeLinknames(t *testing.T) {
+func TestParsePkgSyntaxCollectsRuntimeLinknames(t *testing.T) {
 	prog := llssa.NewProgram(nil)
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "runtime.go", `package runtime
@@ -420,10 +422,10 @@ func Sigsetjmp()
 	if err != nil {
 		t.Fatalf("ParseFile failed: %v", err)
 	}
-	preCollectRuntimeLinknames(prog, []*packages.Package{{
-		PkgPath: llssa.PkgRuntime,
-		Syntax:  []*ast.File{file},
-	}})
+	pkg := types.NewPackage(llssa.PkgRuntime, "runtime")
+	if err := cl.ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
+		t.Fatal(err)
+	}
 	if got, ok := prog.Linkname(llssa.PkgRuntime + ".Sigsetjmp"); !ok || got != "C.sigsetjmp" {
 		t.Fatalf("pre-collected runtime linkname = (%q,%v), want (%q,%v)", got, ok, "C.sigsetjmp", true)
 	}

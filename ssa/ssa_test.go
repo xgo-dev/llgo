@@ -1897,6 +1897,82 @@ source_filename = "foo/bar"
 `)
 }
 
+func TestThreadLocalVar(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	a := pkg.NewThreadLocalVar("a", types.NewPointer(types.Typ[types.Int]), InGo)
+	if got := pkg.NewThreadLocalVar("a", types.NewPointer(types.Typ[types.Int]), InGo); got != a {
+		t.Fatal("NewThreadLocalVar(a) did not reuse the existing global")
+	}
+	a.InitNil()
+	empty := types.NewStruct(nil, nil)
+	z := pkg.NewThreadLocalVar("z", types.NewPointer(empty), InGo)
+	z.InitNil()
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+@a = thread_local global i64 0, align 8
+@z = thread_local global {} zeroinitializer, align 1
+`)
+}
+
+func TestDeclarationInfos(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := types.NewPackage("example.com/p", "p")
+	if prog.PackageSyntaxParsed(pkg) {
+		t.Fatal("new package was already marked as parsed")
+	}
+	prog.MarkPackageSyntaxParsed(pkg)
+	if !prog.PackageSyntaxParsed(pkg) {
+		t.Fatal("package syntax parsed marker was not retained")
+	}
+	if prog.PackageSyntaxParsed(types.NewPackage("example.com/p", "p")) {
+		t.Fatal("syntax marker was shared by distinct package objects")
+	}
+
+	name := "example.com/p.value"
+	prog.SetLinkname(name, "C.value")
+	prog.SetTypeBackground(name, InC)
+	prog.SetVarLocality(name, GoroutineLocal, true)
+	prog.SetLocalInitFunc(name, "example.com/p.initLocal")
+	prog.SetLocalEnsureFunc(name, "example.com/p.initLocal$ensure")
+
+	if link, ok := prog.Linkname(name); !ok || link != "C.value" {
+		t.Fatalf("Linkname(%q) = %q, %v", name, link, ok)
+	}
+	if link, ok := prog.Linkname("example.com/p.missing"); ok || link != "" {
+		t.Fatalf("missing Linkname = %q, %v", link, ok)
+	}
+	want, ok := prog.DeclInfo(name)
+	if !ok || want.Background != InC || want.Locality != GoroutineLocal || !want.HasInitializer || want.InitFunc == "" || want.EnsureFunc == "" {
+		t.Fatalf("DeclInfo(%q) = %+v, %v", name, want, ok)
+	}
+
+	prog.SetLinkname("example.com/peer.value", "C.peer")
+	decls := prog.PackageDecls("example.com/p")
+	if len(decls) != 1 || decls[name] != want {
+		t.Fatalf("PackageDecls = %+v", decls)
+	}
+	delete(decls, name)
+	if _, ok := prog.DeclInfo(name); !ok {
+		t.Fatal("mutating PackageDecls changed program metadata")
+	}
+
+	if !prog.MergeDeclInfos(map[string]DeclInfo{name: want}) {
+		t.Fatal("MergeDeclInfos rejected matching metadata")
+	}
+	newName := "example.com/p.zero"
+	if !prog.MergeDeclInfos(map[string]DeclInfo{newName: {Locality: ThreadLocal}}) {
+		t.Fatal("MergeDeclInfos rejected new metadata")
+	}
+	if prog.MergeDeclInfos(map[string]DeclInfo{name: {Locality: ThreadLocal}}) {
+		t.Fatal("MergeDeclInfos accepted conflicting metadata")
+	}
+	if got, _ := prog.DeclInfo(name); got != want {
+		t.Fatalf("conflicting merge changed metadata: %+v", got)
+	}
+}
+
 func TestConst(t *testing.T) {
 	prog := NewProgram(nil)
 	pkg := prog.NewPackage("bar", "foo/bar")
@@ -2634,7 +2710,7 @@ func TestRtFuncResolvesLinkname(t *testing.T) {
 		return name
 	})
 
-	if got := pkg.rtFunc("Sigsetjmp").impl.Name(); got != "sigsetjmp" {
+	if got := pkg.RuntimeFunc("Sigsetjmp").impl.Name(); got != "sigsetjmp" {
 		t.Fatalf("rtFunc linkname = %q, want %q", got, "sigsetjmp")
 	}
 }

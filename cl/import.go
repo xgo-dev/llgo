@@ -180,7 +180,7 @@ func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
 			switch decl := decl.(type) {
 			case *ast.FuncDecl:
 				fullName, inPkgName := astFuncName(pkgPath, decl)
-				if !p.processLinknameByDoc(decl.Doc, fullName, inPkgName, false, true) && cPkg {
+				if !p.processExportByDoc(decl.Doc, fullName, inPkgName) && cPkg {
 					// package C (https://github.com/goplus/llgo/issues/1165)
 					if decl.Recv == nil && token.IsExported(inPkgName) {
 						exportName := strings.TrimPrefix(inPkgName, "X")
@@ -190,13 +190,6 @@ func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
 				}
 			case *ast.GenDecl:
 				switch decl.Tok {
-				case token.VAR:
-					if len(decl.Specs) == 1 {
-						if names := decl.Specs[0].(*ast.ValueSpec).Names; len(names) == 1 {
-							inPkgName := names[0].Name
-							p.processLinknameByDoc(decl.Doc, pkgPath+"."+inPkgName, inPkgName, true, true)
-						}
-					}
 				case token.CONST:
 					fallthrough
 				case token.TYPE:
@@ -210,30 +203,6 @@ func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
 								fmt.Fprintf(os.Stderr, "DEPRECATED: llgo:skip on import is deprecated %v\n", line)
 							}
 						}
-					}
-				}
-			}
-		}
-	}
-}
-
-// PreCollectLinknames scans syntax files before SSA compilation and populates
-// prog.Linkname for package-level //go:linkname / //llgo:link declarations.
-// It intentionally ignores //export because there is no package export context
-// during the pre-collection phase.
-func PreCollectLinknames(prog llssa.Program, pkgPath string, files []*ast.File) {
-	ctx := &context{prog: prog}
-	for _, file := range files {
-		for _, decl := range file.Decls {
-			switch decl := decl.(type) {
-			case *ast.FuncDecl:
-				fullName, inPkgName := astFuncName(pkgPath, decl)
-				ctx.processLinknameByDoc(decl.Doc, fullName, inPkgName, false, false)
-			case *ast.GenDecl:
-				if decl.Tok == token.VAR && len(decl.Specs) == 1 {
-					if names := decl.Specs[0].(*ast.ValueSpec).Names; len(names) == 1 {
-						inPkgName := names[0].Name
-						ctx.processLinknameByDoc(decl.Doc, pkgPath+"."+inPkgName, inPkgName, true, false)
 					}
 				}
 			}
@@ -298,16 +267,53 @@ func (p *context) collectSkip(line string, prefix int) {
 }
 
 func (p *context) processLinknameByDoc(doc *ast.CommentGroup, fullName, inPkgName string, isVar, allowExport bool) bool {
-	if doc != nil {
-		for n := len(doc.List) - 1; n >= 0; n-- {
-			line := doc.List[n].Text
-			ret := p.initLinkname(line, allowExport, func(name string, isExport bool) (_ string, _, ok bool) {
-				return fullName, isVar, name == inPkgName || (isExport && enableExportRename)
-			})
-			if ret != unknownDirective {
-				return ret == hasLinkname
-			}
+	directives := sourceDirectives(doc)
+	for n := len(directives) - 1; n >= 0; n-- {
+		directive := directives[n]
+		if directive.Name != "go:linkname" && directive.Name != "llgo:link" && !(allowExport && directive.Name == "export") {
+			continue
 		}
+		ret := p.initLinkname(directive.Raw, allowExport, func(name string, isExport bool) (_ string, _, ok bool) {
+			return fullName, isVar, name == inPkgName || (isExport && enableExportRename)
+		})
+		if ret == hasLinkname {
+			return true
+		}
+	}
+	return false
+}
+
+func collectLinknameByDoc(prog llssa.Program, doc *ast.CommentGroup, fullName, inPkgName string) {
+	directives := sourceDirectives(doc)
+	for n := len(directives) - 1; n >= 0; n-- {
+		directive := directives[n]
+		if directive.Name != "go:linkname" && directive.Name != "llgo:link" {
+			continue
+		}
+		fields := strings.Fields(directive.Args)
+		if len(fields) >= 2 && fields[0] == inPkgName {
+			prog.SetLinkname(fullName, strings.Join(fields[1:], " "))
+			return
+		}
+	}
+}
+
+func (p *context) processExportByDoc(doc *ast.CommentGroup, fullName, inPkgName string) bool {
+	const export = "//export "
+	directives := sourceDirectives(doc)
+	for n := len(directives) - 1; n >= 0; n-- {
+		directive := directives[n]
+		if directive.Name != "export" {
+			continue
+		}
+		line := directive.Raw
+		if !strings.ContainsAny(directive.Args, " \t") {
+			line += " " + directive.Args
+		}
+		p.initLink(line, len(export), true, func(name string, isExport bool) (_ string, _ bool, ok bool) {
+			return fullName, false, name == inPkgName || (isExport && enableExportRename)
+		})
+		return true
 	}
 	return false
 }
@@ -705,9 +711,19 @@ func (p *context) varOf(b llssa.Builder, v *ssa.Global) llssa.Expr {
 		}
 		panic("unreachable")
 	}
+	local, hasDecl := p.prog.DeclInfo(llssa.FullName(v.Pkg.Pkg, v.Name()))
+	isLocal := hasDecl && local.Locality != llssa.LocalityNone
 	ret := pkg.VarOf(name)
 	if ret == nil {
-		ret = pkg.NewVar(name, p.patchType(v.Type()), llssa.Background(vtype))
+		if isLocal {
+			ret = pkg.NewThreadLocalVar(name, p.patchType(v.Type()), llssa.Background(vtype))
+		} else {
+			ret = pkg.NewVar(name, p.patchType(v.Type()), llssa.Background(vtype))
+		}
+	}
+	if local.EnsureFunc != "" {
+		ensure := pkg.NewFunc(local.EnsureFunc, llssa.NoArgsNoRet, llssa.InGo)
+		b.Call(ensure.Expr)
 	}
 	return ret.Expr
 }
@@ -737,19 +753,62 @@ func (p *context) initPyModule() {
 	}
 }
 
-// ParsePkgSyntax parses AST of a package to check llgo:type in type declaration.
-func ParsePkgSyntax(prog llssa.Program, pkg *types.Package, files []*ast.File) {
+// ParsePkgSyntax collects declaration directives in one syntax pass before SSA
+// creation. Directives that need an LLVM package (such as //export) are applied
+// later by initFiles.
+func ParsePkgSyntax(prog llssa.Program, fset *token.FileSet, pkg *types.Package, files []*ast.File) error {
+	if prog.PackageSyntaxParsed(pkg) {
+		return nil
+	}
+	pkgPath := llssa.PathOf(pkg)
 	for _, file := range files {
 		for _, decl := range file.Decls {
 			switch decl := decl.(type) {
+			case *ast.FuncDecl:
+				if err := rejectNonVarLocality(fset, decl.Doc); err != nil {
+					return err
+				}
+				fullName, inPkgName := astFuncName(pkgPath, decl)
+				collectLinknameByDoc(prog, decl.Doc, fullName, inPkgName)
 			case *ast.GenDecl:
 				switch decl.Tok {
 				case token.TYPE:
+					if err := rejectNonVarLocality(fset, decl.Doc); err != nil {
+						return err
+					}
+					for _, spec := range decl.Specs {
+						if err := rejectNonVarLocality(fset, spec.(*ast.TypeSpec).Doc); err != nil {
+							return err
+						}
+					}
 					handleTypeDecl(prog, pkg, decl)
+				case token.VAR:
+					if len(decl.Specs) == 1 {
+						if names := decl.Specs[0].(*ast.ValueSpec).Names; len(names) == 1 {
+							inPkgName := names[0].Name
+							collectLinknameByDoc(prog, decl.Doc, pkgPath+"."+inPkgName, inPkgName)
+						}
+					}
+					if err := registerVarLocalities(prog, fset, pkg, decl); err != nil {
+						return err
+					}
+				default:
+					if err := rejectNonVarLocality(fset, decl.Doc); err != nil {
+						return err
+					}
+					for _, node := range decl.Specs {
+						if spec, ok := node.(*ast.ValueSpec); ok {
+							if err := rejectNonVarLocality(fset, spec.Doc); err != nil {
+								return err
+							}
+						}
+					}
 				}
 			}
 		}
 	}
+	prog.MarkPackageSyntaxParsed(pkg)
+	return nil
 }
 
 func handleTypeDecl(prog llssa.Program, pkg *types.Package, decl *ast.GenDecl) {
@@ -761,21 +820,11 @@ func handleTypeDecl(prog llssa.Program, pkg *types.Package, decl *ast.GenDecl) {
 	}
 }
 
-const (
-	llgotype  = "//llgo:type "
-	llgotype2 = "// llgo:type "
-)
-
 func typeBackground(doc *ast.CommentGroup) (bg string) {
-	if doc != nil {
-		if n := len(doc.List); n > 0 {
-			line := doc.List[n-1].Text
-			if strings.HasPrefix(line, llgotype) {
-				return strings.TrimSpace(line[len(llgotype):])
-			}
-			if strings.HasPrefix(line, llgotype2) {
-				return strings.TrimSpace(line[len(llgotype2):])
-			}
+	directives := sourceDirectives(doc)
+	for n := len(directives) - 1; n >= 0; n-- {
+		if directives[n].Name == "llgo:type" {
+			return directives[n].Args
 		}
 	}
 	return

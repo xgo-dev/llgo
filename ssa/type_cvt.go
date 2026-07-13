@@ -21,7 +21,6 @@ import (
 	"go/token"
 	"go/types"
 	"reflect"
-	"sync"
 	"unsafe"
 )
 
@@ -29,12 +28,16 @@ import (
 
 type goTypes struct {
 	typs  map[unsafe.Pointer]unsafe.Pointer
-	typbg sync.Map
+	decls *declarationInfos
 }
 
-func newGoTypes() goTypes {
+func newGoTypes(withDecls ...*declarationInfos) goTypes {
 	typs := make(map[unsafe.Pointer]unsafe.Pointer)
-	return goTypes{typs: typs}
+	decls := newDeclarationInfos()
+	if len(withDecls) != 0 {
+		decls = withDecls[0]
+	}
+	return goTypes{typs: typs, decls: decls}
 }
 
 type Background int
@@ -101,7 +104,7 @@ func (p goTypes) cvtType(typ types.Type) (raw types.Type, cvt bool) {
 		}
 		return p.cvtStruct(t)
 	case *types.Named:
-		if v, ok := p.typbg.Load(namedLinkname(t)); ok && v.(Background) == InC {
+		if v, ok := p.decls.get(namedLinkname(t)); ok && v.Background == InC {
 			break
 		}
 		return p.cvtNamed(t)

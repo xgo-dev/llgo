@@ -28,6 +28,7 @@ import (
 
 	"github.com/goplus/llgo/internal/env"
 	"github.com/goplus/llgo/internal/packages"
+	llssa "github.com/goplus/llgo/ssa"
 	gopackages "golang.org/x/tools/go/packages"
 )
 
@@ -354,6 +355,11 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 	if err != nil {
 		return false
 	}
+	if len(meta.Declarations) != 0 {
+		if c.prog == nil || !mergeCachedDeclarations(c.prog, pkg.PkgPath, meta.Declarations) {
+			return false
+		}
+	}
 
 	// Use the .a archive directly for linking (no extraction needed)
 	pkg.ArchiveFile = paths.Archive
@@ -375,6 +381,7 @@ func parseManifestMetadata(content string) (*cacheArchiveMetadata, error) {
 			meta.LinkArgs = append([]string(nil), data.Metadata.LinkArgs...)
 			meta.NeedRt = data.Metadata.NeedRt
 			meta.NeedPyInit = data.Metadata.NeedPyInit
+			meta.Declarations = append([]declarationMetadata(nil), data.Metadata.Declarations...)
 		}
 		return meta, nil
 	}
@@ -425,9 +432,121 @@ func parseManifestMetadataLegacy(content string, meta *cacheArchiveMetadata) (*c
 
 // cacheArchiveMetadata holds metadata about a cached archive.
 type cacheArchiveMetadata struct {
-	LinkArgs   []string
-	NeedRt     bool
-	NeedPyInit bool
+	LinkArgs     []string
+	NeedRt       bool
+	NeedPyInit   bool
+	Declarations []declarationMetadata
+}
+
+func declarationMetadataFor(decls map[string]llssa.DeclInfo) []declarationMetadata {
+	if len(decls) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(decls))
+	for name := range decls {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	ret := make([]declarationMetadata, 0, len(names))
+	for _, name := range names {
+		info := decls[name]
+		ret = append(ret, declarationMetadata{
+			Name:           name,
+			Linkname:       info.Linkname,
+			Background:     declarationBackgroundName(info.Background),
+			Locality:       declarationLocalityName(info.Locality),
+			HasInitializer: info.HasInitializer,
+			InitFunc:       info.InitFunc,
+			EnsureFunc:     info.EnsureFunc,
+		})
+	}
+	return ret
+}
+
+func mergeCachedDeclarations(prog llssa.Program, pkgPath string, decls []declarationMetadata) bool {
+	prefix := pkgPath + "."
+	entries := make(map[string]llssa.DeclInfo, len(decls))
+	for _, decl := range decls {
+		if !strings.HasPrefix(decl.Name, prefix) {
+			return false
+		}
+		if _, exists := entries[decl.Name]; exists {
+			return false
+		}
+		background, ok := parseDeclarationBackground(decl.Background)
+		if !ok {
+			return false
+		}
+		locality, ok := parseDeclarationLocality(decl.Locality)
+		if !ok {
+			return false
+		}
+		entries[decl.Name] = llssa.DeclInfo{
+			Linkname:       decl.Linkname,
+			Background:     background,
+			Locality:       locality,
+			HasInitializer: decl.HasInitializer,
+			InitFunc:       decl.InitFunc,
+			EnsureFunc:     decl.EnsureFunc,
+		}
+	}
+	return prog.MergeDeclInfos(entries)
+}
+
+func declarationBackgroundName(background llssa.Background) string {
+	switch background {
+	case 0:
+		return ""
+	case llssa.InGo:
+		return "go"
+	case llssa.InC:
+		return "c"
+	case llssa.InPython:
+		return "python"
+	default:
+		return fmt.Sprintf("invalid:%d", background)
+	}
+}
+
+func parseDeclarationBackground(name string) (llssa.Background, bool) {
+	switch name {
+	case "":
+		return 0, true
+	case "go":
+		return llssa.InGo, true
+	case "c":
+		return llssa.InC, true
+	case "python":
+		return llssa.InPython, true
+	default:
+		return 0, false
+	}
+}
+
+func declarationLocalityName(locality llssa.Locality) string {
+	switch locality {
+	case llssa.LocalityNone:
+		return ""
+	case llssa.ThreadLocal:
+		return "tls"
+	case llssa.GoroutineLocal:
+		return "gls"
+	default:
+		return fmt.Sprintf("invalid:%d", locality)
+	}
+}
+
+func parseDeclarationLocality(name string) (llssa.Locality, bool) {
+	switch name {
+	case "":
+		return llssa.LocalityNone, true
+	case "tls":
+		return llssa.ThreadLocal, true
+	case "gls":
+		return llssa.GoroutineLocal, true
+	default:
+		return llssa.LocalityNone, false
+	}
 }
 
 // saveToCache saves a built package to cache.
@@ -483,7 +602,10 @@ func (c *context) saveToCache(pkg *aPackage) error {
 		NeedRt:     pkg.NeedRt,
 		NeedPyInit: pkg.NeedPyInit,
 	}
-	if len(meta.LinkArgs) == 0 && !meta.NeedRt && !meta.NeedPyInit {
+	if c.prog != nil {
+		meta.Declarations = declarationMetadataFor(c.prog.PackageDecls(pkg.PkgPath))
+	}
+	if len(meta.LinkArgs) == 0 && !meta.NeedRt && !meta.NeedPyInit && len(meta.Declarations) == 0 {
 		data.Metadata = nil
 	} else {
 		data.Metadata = meta
