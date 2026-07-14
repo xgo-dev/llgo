@@ -504,6 +504,7 @@ func (b Builder) MakeMap(t Type, nReserve Expr) (ret Expr) {
 	if nReserve.IsNil() {
 		nReserve = b.Prog.Val(0)
 	}
+	nReserve = b.FitIntSize(nReserve)
 	typ := b.abiType(t.raw.Type)
 	ret = b.InlineCall(b.Pkg.rtFunc("MakeMap"), typ, nReserve)
 	ret.Type = t
