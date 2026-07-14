@@ -403,8 +403,16 @@ func pkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 	args = append(args, pkg.PkgPath)
 
 	cmd := exec.Command("go", args...)
-	cmd.Dir = pkg.Dir
-	cmd.Env = append(os.Environ(),
+	// Resolve dependencies from the module or workspace used by packages.Load.
+	// A dependency directory in the module cache may not contain a go.mod.
+	if ctx.conf != nil {
+		cmd.Dir = ctx.conf.Dir
+	}
+	cmdEnv := os.Environ()
+	if ctx.conf != nil && len(ctx.conf.Env) > 0 {
+		cmdEnv = append([]string(nil), ctx.conf.Env...)
+	}
+	cmd.Env = append(cmdEnv,
 		"GOOS="+ctx.buildConf.Goos,
 		"GOARCH="+ctx.buildConf.Goarch,
 	)

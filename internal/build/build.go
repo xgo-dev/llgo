@@ -416,8 +416,9 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	}
 
 	altPkgPaths := altPkgs(initial, conf, llssa.PkgRuntime)
-	cfg.Dir = env.LLGoRuntimeDir()
-	altPkgs, err := packages.LoadEx(dedup, sizes, cfg, altPkgPaths...)
+	altCfg := *cfg
+	altCfg.Dir = env.LLGoRuntimeDir()
+	altPkgs, err := packages.LoadEx(dedup, sizes, &altCfg, altPkgPaths...)
 	if err != nil {
 		return nil, err
 	}

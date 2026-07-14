@@ -4,9 +4,13 @@
 package build
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
+
+	"github.com/goplus/llgo/internal/packages"
 )
 
 func TestSelectedSFilesSkipsTestAsm(t *testing.T) {
@@ -47,5 +51,57 @@ func TestShouldSkipPlan9AsmSFilesForTarget(t *testing.T) {
 	}
 	if shouldSkipPlan9AsmSFilesForTarget(&Config{Target: "cortex-m-qemu", Goarch: "arm"}, "internal/bytealg") {
 		t.Fatal("only syscall asm should be skipped by embedded arm rule")
+	}
+}
+
+func TestPkgSFilesUsesPackageLoadDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a shell script as a fake go command")
+	}
+
+	loadDir := t.TempDir()
+	pkgDir := t.TempDir()
+	sfile := filepath.Join(pkgDir, "asm_amd64.s")
+	if err := os.WriteFile(sfile, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	binDir := t.TempDir()
+	goCmd := filepath.Join(binDir, "go")
+	script := `#!/bin/sh
+if [ "$PWD" != "$EXPECTED_GO_LIST_DIR" ]; then
+	echo "go list ran in $PWD; want $EXPECTED_GO_LIST_DIR" >&2
+	exit 1
+fi
+if [ "$PACKAGE_LOAD_ENV" != "used" ]; then
+	echo "go list did not inherit the package load environment" >&2
+	exit 1
+fi
+printf '{"Dir":"%s","SFiles":["asm_amd64.s"]}\n' "$PACKAGE_DIR"
+`
+	if err := os.WriteFile(goCmd, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("EXPECTED_GO_LIST_DIR", loadDir)
+	t.Setenv("PACKAGE_DIR", pkgDir)
+
+	ctx := &context{
+		conf: &packages.Config{
+			Dir: loadDir,
+			Env: append(os.Environ(), "PACKAGE_LOAD_ENV=used"),
+		},
+		buildConf: &Config{Goos: "linux", Goarch: "amd64"},
+	}
+	got, err := pkgSFiles(ctx, &packages.Package{
+		ID:      "example.com/asm",
+		PkgPath: "example.com/asm",
+		Dir:     pkgDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != sfile {
+		t.Fatalf("pkgSFiles = %v, want [%s]", got, sfile)
 	}
 }
