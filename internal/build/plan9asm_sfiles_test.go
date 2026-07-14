@@ -60,6 +60,10 @@ func TestPkgSFilesUsesPackageLoadDir(t *testing.T) {
 	}
 
 	loadDir := t.TempDir()
+	expectedLoadDir, err := filepath.EvalSymlinks(loadDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	pkgDir := t.TempDir()
 	sfile := filepath.Join(pkgDir, "asm_amd64.s")
 	if err := os.WriteFile(sfile, nil, 0o644); err != nil {
@@ -83,7 +87,7 @@ printf '{"Dir":"%s","SFiles":["asm_amd64.s"]}\n' "$PACKAGE_DIR"
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("EXPECTED_GO_LIST_DIR", loadDir)
+	t.Setenv("EXPECTED_GO_LIST_DIR", expectedLoadDir)
 	t.Setenv("PACKAGE_DIR", pkgDir)
 
 	ctx := &context{
