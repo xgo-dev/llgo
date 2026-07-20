@@ -20,6 +20,9 @@ func init() {
 	rtdebug.PanicRecovered = clearFaultTraceback
 	rtdebug.PanicPCSnapshot = capturePanicPCs
 	rtdebug.RecoverMark = recoverMark
+	// Table initialization may allocate. Complete it before installing the
+	// allocator hook so the first sample never initializes it from AllocZ/U.
+	initRuntimeFuncPCFrames()
 	rtdebug.MemProfileStackCapture = captureMemProfileStack
 	rtdebug.MemProfileRatePtr = &MemProfileRate
 }
@@ -61,13 +64,8 @@ func captureMemProfileStack(pcs []uintptr) int {
 	if !fpUnwindAvailable() {
 		return 0
 	}
-	// The frame-table init itself allocates; when such an allocation is
-	// sampled, walking from here would wait on the init latch this very
-	// thread holds (fpCallers -> init busy -> usleep forever — observed
-	// hanging whole net/rpc and net/http test binaries at the first
-	// testing.callerName). Drop the sample instead of waiting. Uninit is
-	// fine to enter: memProfileInSample is set for the whole sample, so
-	// the init's own allocations cannot re-sample.
+	// Defensively avoid waiting on the frame-table init latch if future init
+	// ordering changes. The table is normally ready before this hook is set.
 	if latomic.LoadUint32(&runtimeFuncPCInitState) == runtimeFuncInfoInitBusy {
 		return 0
 	}
