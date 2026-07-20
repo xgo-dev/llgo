@@ -1110,6 +1110,13 @@ func goos() string { return runtime.GOOS }`,
 	}
 }
 
+func TestPackageReadsMemProfileSkipsFunctionWithoutPackage(t *testing.T) {
+	funcs := map[*gossa.Function]bool{new(gossa.Function): true}
+	if packageReadsMemProfile(funcs) {
+		t.Fatal("function without package metadata must not read the memory profile")
+	}
+}
+
 func TestPublicRuntimePath(t *testing.T) {
 	for path, want := range map[string]bool{
 		"runtime": true,
