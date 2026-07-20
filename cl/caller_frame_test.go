@@ -1068,3 +1068,56 @@ func Helper() int { return 2 }
 		t.Fatal("quiet package must not be pinned")
 	}
 }
+
+func TestPackageReadsMemProfileDetection(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{
+			name: "MemProfile call",
+			src: `package p
+import "runtime"
+func report() {
+	var records []runtime.MemProfileRecord
+	runtime.MemProfile(records, true)
+}`,
+			want: true,
+		},
+		{
+			name: "MemProfileRate write",
+			src: `package p
+import "runtime"
+func enable() { runtime.MemProfileRate = 1 }`,
+			want: true,
+		},
+		{
+			name: "unrelated runtime use",
+			src: `package p
+import "runtime"
+func goos() string { return runtime.GOOS }`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pkg, _ := buildCallerFrameSSAPackage(t, "example.com/"+tt.name, tt.src)
+			_, trackable := collectRuntimeCallerFunctions(pkg)
+			if got := packageReadsMemProfile(trackable); got != tt.want {
+				t.Fatalf("packageReadsMemProfile() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPublicRuntimePath(t *testing.T) {
+	for path, want := range map[string]bool{
+		"runtime": true,
+		"github.com/goplus/llgo/runtime/internal/lib/runtime": true,
+		"runtime/debug": false,
+	} {
+		if got := isPublicRuntimePath(path); got != want {
+			t.Errorf("isPublicRuntimePath(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
