@@ -184,7 +184,7 @@ type Config struct {
 	// bounds checks while retaining required integer conversions and nil checks.
 	DisableBoundsChecks bool
 	// Parallel is the maximum number of LLGo's internally parallel build tasks.
-	// Zero uses GOMAXPROCS, matching the Go command's default -p behavior.
+	// Zero uses GOMAXPROCS; command-line -p, like go build -p, must be >= 1.
 	Parallel int
 
 	// PthreadStackSize sets a custom stack size, in bytes, for pthread-backed
@@ -287,7 +287,7 @@ const (
 var llssaInitOnce sync.Once
 
 func (c *Config) parallelism() int {
-	if c != nil && c.Parallel > 0 {
+	if c.Parallel > 0 {
 		return c.Parallel
 	}
 	return runtime.GOMAXPROCS(0)
@@ -2087,16 +2087,20 @@ func buildSSAPkgs(ctx *context, entries []ssaBuildEntry) {
 		return
 	}
 	unique := make([]ssaBuildEntry, 0, len(entries))
-	seen := make(map[*ssa.Package]bool, len(entries))
+	entryIndex := make(map[*ssa.Package]int, len(entries))
 	for _, entry := range entries {
-		if entry.pkg == nil || seen[entry.pkg] {
+		if entry.pkg == nil {
 			continue
 		}
-		seen[entry.pkg] = true
+		if index, exists := entryIndex[entry.pkg]; exists {
+			unique[index].fixOrder = unique[index].fixOrder || entry.fixOrder
+			continue
+		}
+		entryIndex[entry.pkg] = len(unique)
 		unique = append(unique, entry)
 	}
 	workers := min(ctx.buildConf.parallelism(), len(unique))
-	jobs := make(chan ssaBuildEntry)
+	jobs := make(chan ssaBuildEntry, len(unique))
 	var wg sync.WaitGroup
 	for range workers {
 		wg.Add(1)

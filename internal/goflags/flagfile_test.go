@@ -107,3 +107,14 @@ func TestParseFlagFileErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestParseFlagFileKeepsScalarParallelFlagSeparate(t *testing.T) {
+	got, err := ParseFlagFile("-p=4 -trimpath -tags=fast\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"-p=4", "-trimpath", "-tags=fast"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ParseFlagFile() = %#v, want %#v", got, want)
+	}
+}

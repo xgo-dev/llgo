@@ -31,6 +31,17 @@ var argumentListFlagNames = [...]string{
 	"toolexec",
 }
 
+// wholeLineValueFlagNames is the subset whose unquoted values can themselves
+// contain arbitrary flag-like words. Scalar flags such as -p still belong to
+// argumentListFlagNames for normalization, but must not consume a whole line.
+var wholeLineValueFlagNames = [...]string{
+	"asmflags",
+	"gcflags",
+	"gccgoflags",
+	"ldflags",
+	"toolexec",
+}
+
 // ParseFlagFile parses a flags.txt-style file. Blank lines and full-line
 // comments are ignored. A line beginning with a Go flag whose value is itself
 // an argument list is kept intact, so unquoted values such as
@@ -63,7 +74,7 @@ func ParseFlagFile(data string) ([]string, error) {
 }
 
 func wholeLineValueFlag(line string) (flag string, ok bool) {
-	for _, name := range argumentListFlagNames {
+	for _, name := range wholeLineValueFlagNames {
 		for _, prefix := range []string{"-" + name + "=", "--" + name + "="} {
 			value, found := strings.CutPrefix(line, prefix)
 			if !found {
