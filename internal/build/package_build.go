@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/goplus/llgo/cl"
 )
@@ -32,6 +33,53 @@ type packageBuildSpec struct {
 	kind      int
 	kindParam string
 	runtime   bool
+}
+
+type packagePreflight struct {
+	spec packageBuildSpec
+	skip bool
+}
+
+// preflightPackageBuilds runs only cache/input work for one dependency level at
+// a time. Every dependency's fingerprint is therefore complete before a worker
+// reads it, while unrelated packages share the configured -p bound.
+func preflightPackageBuilds(ctx *context, plan *packageBuildPlan, verbose bool) (map[string]packagePreflight, error) {
+	preflights := make(map[string]packagePreflight, len(plan.specs))
+	for _, level := range plan.levels {
+		workers := min(ctx.buildConf.parallelism(), len(level))
+		jobs := make(chan int)
+		type result struct {
+			index int
+			skip  bool
+			err   error
+		}
+		results := make(chan result, len(level))
+		var wg sync.WaitGroup
+		for range workers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for index := range jobs {
+					skip, err := preflightPackageBuild(ctx, level[index], verbose)
+					results <- result{index: index, skip: skip, err: err}
+				}
+			}()
+		}
+		for index := range level {
+			jobs <- index
+		}
+		close(jobs)
+		wg.Wait()
+		close(results)
+		for result := range results {
+			if result.err != nil {
+				return nil, result.err
+			}
+			spec := level[result.index]
+			preflights[spec.pkg.ID] = packagePreflight{spec: spec, skip: result.skip}
+		}
+	}
+	return preflights, nil
 }
 
 func newPackageBuildSpec(pkg *aPackage) packageBuildSpec {

@@ -394,6 +394,8 @@ func pkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 		}
 	}
 
+	ctx.sfilesMu.Lock()
+	defer ctx.sfilesMu.Unlock()
 	if ctx.sfilesCache == nil {
 		ctx.sfilesCache = make(map[string][]string)
 	}

@@ -34,22 +34,23 @@ import (
 
 // collectFingerprint collects all inputs and generates fingerprint for a package.
 func (c *context) collectFingerprint(pkg *aPackage) error {
+	return c.collectFingerprintWithStack(pkg, make(map[string]bool))
+}
+
+func (c *context) collectFingerprintWithStack(pkg *aPackage, fingerprinting map[string]bool) error {
 	if pkg.Manifest != "" && pkg.Fingerprint != "" {
 		return nil
 	}
-	if c.fingerprinting == nil {
-		c.fingerprinting = make(map[string]bool)
-	}
-	if c.fingerprinting[pkg.ID] {
+	if fingerprinting[pkg.ID] {
 		// Alternate packages can intentionally close a cycle in the runtime
 		// replacement graph after all packages have been built into SSA. A
 		// cycle cannot have a stable per-package cache key, so compile every
 		// member rather than returning an incorrect cache hit.
-		c.disablePackageCache(c.fingerprinting)
+		c.disablePackageCache(fingerprinting)
 		return nil
 	}
-	c.fingerprinting[pkg.ID] = true
-	defer delete(c.fingerprinting, pkg.ID)
+	fingerprinting[pkg.ID] = true
+	defer delete(fingerprinting, pkg.ID)
 
 	m := newManifestBuilder()
 
@@ -65,7 +66,7 @@ func (c *context) collectFingerprint(pkg *aPackage) error {
 	}
 
 	// Dependency section
-	if err := c.collectDependencyInputs(m, pkg); err != nil {
+	if err := c.collectDependencyInputs(m, pkg, fingerprinting); err != nil {
 		return err
 	}
 
@@ -75,6 +76,8 @@ func (c *context) collectFingerprint(pkg *aPackage) error {
 }
 
 func (c *context) disablePackageCache(pkgs map[string]bool) {
+	c.cacheDisabledMu.Lock()
+	defer c.cacheDisabledMu.Unlock()
 	if c.cacheDisabled == nil {
 		c.cacheDisabled = make(map[string]none, len(pkgs))
 	}
@@ -84,6 +87,8 @@ func (c *context) disablePackageCache(pkgs map[string]bool) {
 }
 
 func (c *context) packageCacheDisabled(id string) bool {
+	c.cacheDisabledMu.Lock()
+	defer c.cacheDisabledMu.Unlock()
 	_, disabled := c.cacheDisabled[id]
 	return disabled
 }
@@ -213,9 +218,9 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 }
 
 // collectDependencyInputs adds dependency fingerprints/versions into manifest.
-func (c *context) collectDependencyInputs(m *manifestBuilder, pkg *aPackage) error {
+func (c *context) collectDependencyInputs(m *manifestBuilder, pkg *aPackage, fingerprinting map[string]bool) error {
 	for _, dep := range effectiveDependencies(pkg) {
-		depEntry, err := c.dependencyFingerprint(dep)
+		depEntry, err := c.dependencyFingerprint(dep, fingerprinting)
 		if err != nil {
 			return err
 		}
@@ -232,15 +237,14 @@ func (c *context) initializePackageBuildState() {
 	if c.sfilesCache == nil {
 		c.sfilesCache = make(map[string][]string)
 	}
-	if !cacheEnabled() {
-		return
-	}
-	c.cacheManager = newCacheManager()
 	c.llvmVersion = detectLLVMVersion(c)
 	c.llvmVersionReady = true
+	if cacheEnabled() {
+		c.cacheManager = newCacheManager()
+	}
 }
 
-func (c *context) dependencyFingerprint(dep *packages.Package) (depEntry, error) {
+func (c *context) dependencyFingerprint(dep *packages.Package, fingerprinting map[string]bool) (depEntry, error) {
 	entry := depEntry{ID: dep.ID}
 	if v := moduleVersion(dep.Module); v != "" {
 		entry.Version = v
@@ -250,7 +254,7 @@ func (c *context) dependencyFingerprint(dep *packages.Package) (depEntry, error)
 	if c.pkgByID != nil {
 		if aDep, ok := c.pkgByID[dep.ID]; ok {
 			if aDep.Fingerprint == "" {
-				if err := c.collectFingerprint(aDep); err != nil {
+				if err := c.collectFingerprintWithStack(aDep, fingerprinting); err != nil {
 					return entry, fmt.Errorf("collect fingerprint for %s: %w", dep.ID, err)
 				}
 			}
@@ -260,7 +264,7 @@ func (c *context) dependencyFingerprint(dep *packages.Package) (depEntry, error)
 	}
 
 	temp := &aPackage{Package: dep}
-	if err := c.collectFingerprint(temp); err != nil {
+	if err := c.collectFingerprintWithStack(temp, fingerprinting); err != nil {
 		return entry, fmt.Errorf("collect fingerprint for %s: %w", dep.ID, err)
 	}
 	entry.Fingerprint = temp.Fingerprint
@@ -283,6 +287,8 @@ func moduleVersion(mod *gopackages.Module) string {
 
 // getLLVMVersion returns the cached LLVM version or detects it.
 func (c *context) getLLVMVersion() string {
+	c.llvmVersionMu.Lock()
+	defer c.llvmVersionMu.Unlock()
 	if c.llvmVersionReady {
 		return c.llvmVersion
 	}
@@ -334,6 +340,8 @@ func targetTriple(goos, goarch, llvmTarget, targetABI string) string {
 
 // ensureCacheManager creates cacheManager if not exists.
 func (c *context) ensureCacheManager() *cacheManager {
+	c.cacheManagerMu.Lock()
+	defer c.cacheManagerMu.Unlock()
 	if c.cacheManager == nil {
 		c.cacheManager = newCacheManager()
 	}

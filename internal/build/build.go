@@ -523,15 +523,14 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	ctx := &context{env: env, conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
 		patches: patches, callerTracking: cl.NewCallerTracking(),
 		built: make(map[string]none), initial: initial, mode: mode,
-		fingerprinting: make(map[string]bool),
-		pkgs:           map[*packages.Package]Package{},
-		pkgByID:        map[string]Package{},
-		output:         output,
-		passOpt:        passOpt,
-		buildConf:      conf,
-		crossCompile:   export,
-		cTransformer:   cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, conf.AbiMode, cabiOptimize),
-		sfilesCache:    make(map[string][]string),
+		pkgs:         map[*packages.Package]Package{},
+		pkgByID:      map[string]Package{},
+		output:       output,
+		passOpt:      passOpt,
+		buildConf:    conf,
+		crossCompile: export,
+		cTransformer: cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, conf.AbiMode, cabiOptimize),
+		sfilesCache:  make(map[string][]string),
 	}
 	defer ctx.closePackageMetas()
 	ctx.initializePackageBuildState()
@@ -772,7 +771,7 @@ type context struct {
 	patches        cl.Patches
 	callerTracking *cl.CallerTracking
 	built          map[string]none
-	fingerprinting map[string]bool
+	builtMu        sync.Mutex
 	initial        []*packages.Package
 	pkgs           map[*packages.Package]Package // cache for lookup
 	pkgByID        map[string]Package            // cache for lookup by pkg.ID
@@ -791,11 +790,15 @@ type context struct {
 	// Cache related fields
 	cacheManager     *cacheManager
 	cacheDisabled    map[string]none
+	cacheManagerMu   sync.Mutex
+	cacheDisabledMu  sync.Mutex
 	llvmVersion      string
 	llvmVersionReady bool
+	llvmVersionMu    sync.Mutex
 
 	// go list derived file lists (SFiles, etc.)
 	sfilesCache map[string][]string // pkg.ID -> absolute .s/.S file paths
+	sfilesMu    sync.Mutex
 
 	// plan9asm package policy parsed from env.
 	plan9asmOnce sync.Once
@@ -883,6 +886,10 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 	if err != nil {
 		return nil, err
 	}
+	preflights, err := preflightPackageBuilds(ctx, plan, verbose)
+	if err != nil {
+		return nil, err
+	}
 	// Split packages into runtime tree vs others so we can defer runtime build.
 	var runtimePkgs []packageBuildSpec
 	var normalPkgs []packageBuildSpec
@@ -898,7 +905,7 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 
 	// Build non-runtime packages first, so we know whether runtime is actually needed.
 	for _, spec := range normalPkgs {
-		result, err := buildOnePackage(ctx, spec, verbose)
+		result, err := buildPreflightedPackage(ctx, preflights[spec.pkg.ID], verbose)
 		if err != nil {
 			return nil, err
 		}
@@ -909,7 +916,7 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 	// Only build runtime packages when required (or host build with empty Target).
 	if needRuntime || needPyInit || ctx.buildConf.Target == "" {
 		for _, spec := range runtimePkgs {
-			if _, err := buildOnePackage(ctx, spec, verbose); err != nil {
+			if _, err := buildPreflightedPackage(ctx, preflights[spec.pkg.ID], verbose); err != nil {
 				return nil, err
 			}
 		}
@@ -918,17 +925,16 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 	return pkgs, nil
 }
 
-// buildOnePackage is the serial package pipeline. The stages are separated so
-// a future scheduler can parallelize only stages with isolated package state.
-func buildOnePackage(ctx *context, spec packageBuildSpec, verbose bool) (packageBuildResult, error) {
-	skip, err := preflightPackageBuild(ctx, spec, verbose)
-	if err != nil || skip {
-		return packageBuildResultFor(spec), err
+// buildPreflightedPackage runs the serial module/backend/finalization stages
+// after parallel preflight has completed for the package's dependency level.
+func buildPreflightedPackage(ctx *context, preflight packagePreflight, verbose bool) (packageBuildResult, error) {
+	if preflight.skip {
+		return packageBuildResultFor(preflight.spec), nil
 	}
-	if err := executePackageBuild(ctx, spec, verbose); err != nil {
-		return packageBuildResultFor(spec), err
+	if err := executePackageBuild(ctx, preflight.spec, verbose); err != nil {
+		return packageBuildResultFor(preflight.spec), err
 	}
-	return finalizePackageBuild(ctx, spec, verbose)
+	return finalizePackageBuild(ctx, preflight.spec, verbose)
 }
 
 // preflightPackageBuild performs package classification, cache lookup, and
@@ -937,10 +943,13 @@ func buildOnePackage(ctx *context, spec packageBuildSpec, verbose bool) (package
 func preflightPackageBuild(ctx *context, spec packageBuildSpec, verbose bool) (skip bool, err error) {
 	aPkg := spec.pkg
 	pkg := aPkg.Package
+	ctx.builtMu.Lock()
 	if _, ok := ctx.built[pkg.ID]; ok {
+		ctx.builtMu.Unlock()
 		return true, nil
 	}
 	ctx.built[pkg.ID] = none{}
+	ctx.builtMu.Unlock()
 	if spec.isDeclOnly() {
 		pkg.ExportFile = ""
 		return true, nil
