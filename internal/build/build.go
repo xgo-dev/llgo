@@ -880,21 +880,22 @@ func normalizeToArchive(ctx *context, aPkg *aPackage, verbose bool) error {
 
 func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, error) {
 	// Split packages into runtime tree vs others so we can defer runtime build.
-	var runtimePkgs []*aPackage
-	var normalPkgs []*aPackage
+	var runtimePkgs []packageBuildSpec
+	var normalPkgs []packageBuildSpec
 	for _, p := range pkgs {
-		if isRuntimePkg(p.PkgPath) {
-			runtimePkgs = append(runtimePkgs, p)
+		spec := newPackageBuildSpec(p)
+		if spec.runtime {
+			runtimePkgs = append(runtimePkgs, spec)
 		} else {
-			normalPkgs = append(normalPkgs, p)
+			normalPkgs = append(normalPkgs, spec)
 		}
 	}
 
 	var needRuntime, needPyInit bool
 
 	// Build non-runtime packages first, so we know whether runtime is actually needed.
-	for _, p := range normalPkgs {
-		result, err := buildOnePackage(ctx, p, verbose)
+	for _, spec := range normalPkgs {
+		result, err := buildOnePackage(ctx, spec, verbose)
 		if err != nil {
 			return nil, err
 		}
@@ -904,8 +905,8 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 
 	// Only build runtime packages when required (or host build with empty Target).
 	if needRuntime || needPyInit || ctx.buildConf.Target == "" {
-		for _, p := range runtimePkgs {
-			if _, err := buildOnePackage(ctx, p, verbose); err != nil {
+		for _, spec := range runtimePkgs {
+			if _, err := buildOnePackage(ctx, spec, verbose); err != nil {
 				return nil, err
 			}
 		}
@@ -914,35 +915,30 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 	return pkgs, nil
 }
 
-type packageBuildResult struct {
-	needRuntime bool
-	needPyInit  bool
-}
-
 // buildOnePackage is the serial package pipeline. The stages are separated so
 // a future scheduler can parallelize only stages with isolated package state.
-func buildOnePackage(ctx *context, aPkg *aPackage, verbose bool) (packageBuildResult, error) {
+func buildOnePackage(ctx *context, spec packageBuildSpec, verbose bool) (packageBuildResult, error) {
+	aPkg := spec.pkg
 	pkg := aPkg.Package
 	if _, ok := ctx.built[pkg.ID]; ok {
-		return packageBuildResult{}, nil
+		return packageBuildResultFor(spec), nil
 	}
 	ctx.built[pkg.ID] = none{}
 
-	kind, param := cl.PkgKindOf(pkg.Types)
-	if kind == cl.PkgDeclOnly {
+	if spec.isDeclOnly() {
 		pkg.ExportFile = ""
-		return packageBuildResult{}, nil
+		return packageBuildResultFor(spec), nil
 	}
-	if (kind == cl.PkgLinkIR || kind == cl.PkgLinkExtern || kind == cl.PkgPyModule) && len(pkg.GoFiles) == 0 {
+	if spec.isLinkOnly() && !spec.hasSource() {
 		pkg.ExportFile = ""
-		if kind == cl.PkgLinkExtern {
-			appendExternalLinkArgs(ctx, aPkg, param)
+		if spec.kind == cl.PkgLinkExtern {
+			appendExternalLinkArgs(ctx, aPkg, spec.kindParam)
 		}
-		return packageBuildResult{}, nil
+		return packageBuildResultFor(spec), nil
 	}
 
 	if err := ctx.collectFingerprint(aPkg); err != nil {
-		return packageBuildResult{}, err
+		return packageBuildResultFor(spec), err
 	}
 	ctx.tryLoadFromCache(aPkg)
 	if verbose {
@@ -953,28 +949,26 @@ func buildOnePackage(ctx *context, aPkg *aPackage, verbose bool) (packageBuildRe
 		fmt.Fprintf(os.Stderr, "CACHE %s: %s\n", status, pkg.PkgPath)
 	}
 	if err := buildPkg(ctx, aPkg, verbose); err != nil {
-		return packageBuildResult{}, err
+		return packageBuildResultFor(spec), err
 	}
 
-	result := packageBuildResult{}
-	if kind != cl.PkgLinkIR && kind != cl.PkgLinkExtern && kind != cl.PkgPyModule {
+	if spec.needsRuntimeSignals() {
 		aPkg.setNeedRuntimeOrPyInit(aPkg.LPkg.NeedRuntime, aPkg.LPkg.NeedPyInit)
-		result.needRuntime = aPkg.NeedRt
-		result.needPyInit = aPkg.NeedPyInit
 	}
+	result := packageBuildResultFor(spec)
 	if aPkg.CacheHit {
 		return result, nil
 	}
 	if err := normalizeToArchive(ctx, aPkg, verbose); err != nil {
-		return packageBuildResult{}, err
+		return result, err
 	}
-	if kind == cl.PkgLinkExtern {
-		appendExternalLinkArgs(ctx, aPkg, param)
+	if spec.kind == cl.PkgLinkExtern {
+		appendExternalLinkArgs(ctx, aPkg, spec.kindParam)
 	}
 	if err := ctx.saveToCache(aPkg); err != nil && verbose {
 		fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", pkg.PkgPath, err)
 	}
-	return result, nil
+	return packageBuildResultFor(spec), nil
 }
 
 func appendExternalLinkArgs(ctx *context, aPkg *aPackage, spec string) {
