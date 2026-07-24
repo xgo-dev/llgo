@@ -879,11 +879,14 @@ func normalizeToArchive(ctx *context, aPkg *aPackage, verbose bool) error {
 }
 
 func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, error) {
+	plan, err := newPackageBuildPlan(pkgs)
+	if err != nil {
+		return nil, err
+	}
 	// Split packages into runtime tree vs others so we can defer runtime build.
 	var runtimePkgs []packageBuildSpec
 	var normalPkgs []packageBuildSpec
-	for _, p := range pkgs {
-		spec := newPackageBuildSpec(p)
+	for _, spec := range plan.specs {
 		if spec.runtime {
 			runtimePkgs = append(runtimePkgs, spec)
 		} else {

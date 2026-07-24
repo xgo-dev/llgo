@@ -18,6 +18,7 @@ package build
 
 import (
 	"go/types"
+	"reflect"
 	"testing"
 
 	"github.com/goplus/llgo/internal/env"
@@ -38,6 +39,65 @@ func TestPackageBuildSpecAndResult(t *testing.T) {
 	if !result.cacheHit || result.archiveFile != "p.a" || !result.needRuntime || !result.needPyInit {
 		t.Fatalf("unexpected package result: %+v", result)
 	}
+}
+
+func TestPackageBuildPlanReadyLevels(t *testing.T) {
+	leaf := planPackage("leaf")
+	left := planPackage("left", leaf.Package)
+	right := planPackage("right", leaf.Package)
+	root := planPackage("root", left.Package, right.Package)
+	plan, err := newPackageBuildPlan([]*aPackage{root, right, left, leaf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var levels [][]string
+	for _, level := range plan.levels {
+		ids := make([]string, len(level))
+		for i, spec := range level {
+			ids[i] = spec.pkg.ID
+		}
+		levels = append(levels, ids)
+	}
+	if want := [][]string{{"leaf"}, {"left", "right"}, {"root"}}; !reflect.DeepEqual(levels, want) {
+		t.Fatalf("ready levels = %v, want %v", levels, want)
+	}
+}
+
+func TestPackageBuildPlanIncludesAlternateDependencies(t *testing.T) {
+	baseDep := planPackage("base")
+	altDep := planPackage("alt")
+	pkg := planPackage("pkg", baseDep.Package)
+	pkg.AltPkg = &packages.Cached{Package: &packages.Package{ID: "patch/pkg", Imports: map[string]*packages.Package{"alt": altDep.Package}}}
+	plan, err := newPackageBuildPlan([]*aPackage{pkg, baseDep, altDep})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := plan.deps["pkg"], []string{"alt", "base"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("plan dependencies = %v, want %v", got, want)
+	}
+}
+
+func TestPackageBuildPlanRejectsCycles(t *testing.T) {
+	a := planPackage("a")
+	b := planPackage("b")
+	a.Imports = map[string]*packages.Package{"b": b.Package}
+	b.Imports = map[string]*packages.Package{"a": a.Package}
+	if _, err := newPackageBuildPlan([]*aPackage{a, b}); err == nil {
+		t.Fatal("newPackageBuildPlan succeeded, want cycle error")
+	}
+}
+
+func planPackage(id string, imports ...*packages.Package) *aPackage {
+	depMap := make(map[string]*packages.Package, len(imports))
+	for _, dep := range imports {
+		depMap[dep.ID] = dep
+	}
+	return &aPackage{Package: &packages.Package{
+		ID:      id,
+		PkgPath: "example.com/" + id,
+		Imports: depMap,
+		Types:   types.NewPackage("example.com/"+id, id),
+	}}
 }
 
 func TestPackageBuildSpecSpecialKinds(t *testing.T) {
