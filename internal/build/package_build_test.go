@@ -20,6 +20,7 @@ import (
 	"go/types"
 	"testing"
 
+	"github.com/goplus/llgo/internal/env"
 	"github.com/goplus/llgo/internal/packages"
 )
 
@@ -48,8 +49,8 @@ func TestPackageBuildSpecSpecialKinds(t *testing.T) {
 		t.Fatalf("unexpected declaration-only spec: %+v", decl)
 	}
 	runtime := newPackageBuildSpec(&aPackage{Package: &packages.Package{
-		PkgPath: "runtime",
-		Types:   types.NewPackage("runtime", "runtime"),
+		PkgPath: env.LLGoRuntimePkg,
+		Types:   types.NewPackage(env.LLGoRuntimePkg, "runtime"),
 	}})
 	if !runtime.runtime {
 		t.Fatalf("runtime package was not marked runtime: %+v", runtime)
