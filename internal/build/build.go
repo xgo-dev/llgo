@@ -918,27 +918,39 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 // buildOnePackage is the serial package pipeline. The stages are separated so
 // a future scheduler can parallelize only stages with isolated package state.
 func buildOnePackage(ctx *context, spec packageBuildSpec, verbose bool) (packageBuildResult, error) {
+	skip, err := preflightPackageBuild(ctx, spec, verbose)
+	if err != nil || skip {
+		return packageBuildResultFor(spec), err
+	}
+	if err := executePackageBuild(ctx, spec, verbose); err != nil {
+		return packageBuildResultFor(spec), err
+	}
+	return finalizePackageBuild(ctx, spec, verbose)
+}
+
+// preflightPackageBuild performs package classification, cache lookup, and
+// other work that does not create or transform an LLVM module. It returns
+// skip for packages with no executable build stage.
+func preflightPackageBuild(ctx *context, spec packageBuildSpec, verbose bool) (skip bool, err error) {
 	aPkg := spec.pkg
 	pkg := aPkg.Package
 	if _, ok := ctx.built[pkg.ID]; ok {
-		return packageBuildResultFor(spec), nil
+		return true, nil
 	}
 	ctx.built[pkg.ID] = none{}
-
 	if spec.isDeclOnly() {
 		pkg.ExportFile = ""
-		return packageBuildResultFor(spec), nil
+		return true, nil
 	}
 	if spec.isLinkOnly() && !spec.hasSource() {
 		pkg.ExportFile = ""
 		if spec.kind == cl.PkgLinkExtern {
 			appendExternalLinkArgs(ctx, aPkg, spec.kindParam)
 		}
-		return packageBuildResultFor(spec), nil
+		return true, nil
 	}
-
 	if err := ctx.collectFingerprint(aPkg); err != nil {
-		return packageBuildResultFor(spec), err
+		return false, err
 	}
 	ctx.tryLoadFromCache(aPkg)
 	if verbose {
@@ -948,25 +960,38 @@ func buildOnePackage(ctx *context, spec packageBuildSpec, verbose bool) (package
 		}
 		fmt.Fprintf(os.Stderr, "CACHE %s: %s\n", status, pkg.PkgPath)
 	}
-	if err := buildPkg(ctx, aPkg, verbose); err != nil {
-		return packageBuildResultFor(spec), err
-	}
+	return false, nil
+}
 
+// executePackageBuild creates the frontend module and, on a cache miss, runs
+// the serial LLVM backend. The backend remains deliberately serial until it
+// owns an isolated LLVM context.
+func executePackageBuild(ctx *context, spec packageBuildSpec, verbose bool) error {
+	aPkg := spec.pkg
+	if err := buildPkg(ctx, aPkg, verbose); err != nil {
+		return err
+	}
 	if spec.needsRuntimeSignals() {
 		aPkg.setNeedRuntimeOrPyInit(aPkg.LPkg.NeedRuntime, aPkg.LPkg.NeedPyInit)
 	}
-	result := packageBuildResultFor(spec)
+	return nil
+}
+
+// finalizePackageBuild publishes an archive and cache metadata after backend
+// execution. Cache hits already carry their archive and metadata.
+func finalizePackageBuild(ctx *context, spec packageBuildSpec, verbose bool) (packageBuildResult, error) {
+	aPkg := spec.pkg
 	if aPkg.CacheHit {
-		return result, nil
+		return packageBuildResultFor(spec), nil
 	}
 	if err := normalizeToArchive(ctx, aPkg, verbose); err != nil {
-		return result, err
+		return packageBuildResultFor(spec), err
 	}
 	if spec.kind == cl.PkgLinkExtern {
 		appendExternalLinkArgs(ctx, aPkg, spec.kindParam)
 	}
 	if err := ctx.saveToCache(aPkg); err != nil && verbose {
-		fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", pkg.PkgPath, err)
+		fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", aPkg.PkgPath, err)
 	}
 	return packageBuildResultFor(spec), nil
 }
