@@ -130,9 +130,9 @@ func packageBuildResultFor(spec packageBuildSpec) packageBuildResult {
 	}
 }
 
-// packageBuildPlan is the immutable dependency graph consumed by a future
-// scheduler. specs retains the existing deterministic execution order until
-// the LLVM backend is made worker-local; levels records the safe ready sets.
+// packageBuildPlan is the immutable dependency graph. levels drives bounded
+// parallel preflight today; specs retains the deterministic serial order for
+// the LLVM backend until it owns worker-local program state.
 type packageBuildPlan struct {
 	specs  []packageBuildSpec
 	byID   map[string]packageBuildSpec

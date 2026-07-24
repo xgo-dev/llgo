@@ -119,3 +119,24 @@ func TestPackageBuildSpecSpecialKinds(t *testing.T) {
 		t.Fatalf("runtime package was not marked runtime: %+v", runtime)
 	}
 }
+
+func TestPreflightFingerprintsSkippedPackage(t *testing.T) {
+	pkg := &aPackage{Package: &packages.Package{
+		ID:      "unsafe",
+		PkgPath: "unsafe",
+		Types:   types.Unsafe,
+	}}
+	ctx := &context{
+		conf:             &packages.Config{},
+		buildConf:        &Config{Goos: "linux", Goarch: "amd64", ForceRebuild: true},
+		built:            make(map[string]none),
+		llvmVersionReady: true,
+	}
+	skip, err := preflightPackageBuild(ctx, newPackageBuildSpec(pkg), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !skip || pkg.Fingerprint == "" || pkg.Manifest == "" {
+		t.Fatalf("skipped package was not fingerprinted: skip=%v fingerprint=%q manifest=%q", skip, pkg.Fingerprint, pkg.Manifest)
+	}
+}

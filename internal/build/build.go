@@ -952,14 +952,14 @@ func preflightPackageBuild(ctx *context, spec packageBuildSpec, verbose bool) (s
 	ctx.builtMu.Unlock()
 	if spec.isDeclOnly() {
 		pkg.ExportFile = ""
-		return true, nil
+		return true, ctx.collectFingerprint(aPkg)
 	}
 	if spec.isLinkOnly() && !spec.hasSource() {
 		pkg.ExportFile = ""
 		if spec.kind == cl.PkgLinkExtern {
 			appendExternalLinkArgs(ctx, aPkg, spec.kindParam)
 		}
-		return true, nil
+		return true, ctx.collectFingerprint(aPkg)
 	}
 	if err := ctx.collectFingerprint(aPkg); err != nil {
 		return false, err

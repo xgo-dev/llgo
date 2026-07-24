@@ -394,12 +394,7 @@ func pkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 		}
 	}
 
-	ctx.sfilesMu.Lock()
-	defer ctx.sfilesMu.Unlock()
-	if ctx.sfilesCache == nil {
-		ctx.sfilesCache = make(map[string][]string)
-	}
-	if v, ok := ctx.sfilesCache[pkg.ID]; ok {
+	if v, ok := getCachedSFiles(ctx, pkg.ID); ok {
 		return v, nil
 	}
 
@@ -447,21 +442,41 @@ func pkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 		stub := filepath.Join(lp.Dir, "chacha8_stub.s")
 		if _, err := os.Stat(stub); err == nil {
 			paths := []string{stub}
-			ctx.sfilesCache[pkg.ID] = paths
-			return paths, nil
+			return cacheSFiles(ctx, pkg.ID, paths), nil
 		}
 	}
 	// Embedded ARM targets currently reuse GOOS=linux metadata, but they do not
 	// have a Linux syscall surface. Skip syscall asm in that mode so embedded
 	// builds do not inherit Linux/ARM-specific frame layouts.
 	if shouldSkipPlan9AsmSFilesForTarget(ctx.buildConf, pkg.PkgPath) {
-		ctx.sfilesCache[pkg.ID] = nil
-		return nil, nil
+		return cacheSFiles(ctx, pkg.ID, nil), nil
 	}
 
 	paths := selectedSFiles(lp.Dir, lp.SFiles)
-	ctx.sfilesCache[pkg.ID] = paths
-	return paths, nil
+	return cacheSFiles(ctx, pkg.ID, paths), nil
+}
+
+func getCachedSFiles(ctx *context, pkgID string) ([]string, bool) {
+	ctx.sfilesMu.Lock()
+	defer ctx.sfilesMu.Unlock()
+	if ctx.sfilesCache == nil {
+		ctx.sfilesCache = make(map[string][]string)
+	}
+	paths, ok := ctx.sfilesCache[pkgID]
+	return paths, ok
+}
+
+func cacheSFiles(ctx *context, pkgID string, paths []string) []string {
+	ctx.sfilesMu.Lock()
+	defer ctx.sfilesMu.Unlock()
+	if ctx.sfilesCache == nil {
+		ctx.sfilesCache = make(map[string][]string)
+	}
+	if cached, ok := ctx.sfilesCache[pkgID]; ok {
+		return cached
+	}
+	ctx.sfilesCache[pkgID] = paths
+	return paths
 }
 
 func selectedSFiles(dir string, files []string) []string {

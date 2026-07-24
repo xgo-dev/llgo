@@ -230,15 +230,13 @@ func (c *context) collectDependencyInputs(m *manifestBuilder, pkg *aPackage, fin
 	return nil
 }
 
-// initializePackageBuildState initializes the mutable state used by the
-// package pipeline before any scheduler is introduced. This makes ownership
-// explicit and avoids lazy first-use writes becoming data races later.
+// initializePackageBuildState initializes mutable package pipeline state that
+// has to exist before parallel preflight begins. LLVM version discovery stays
+// lazy and is synchronized by getLLVMVersion.
 func (c *context) initializePackageBuildState() {
 	if c.sfilesCache == nil {
 		c.sfilesCache = make(map[string][]string)
 	}
-	c.llvmVersion = detectLLVMVersion(c)
-	c.llvmVersionReady = true
 	if cacheEnabled() {
 		c.cacheManager = newCacheManager()
 	}
