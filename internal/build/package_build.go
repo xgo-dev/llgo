@@ -19,6 +19,7 @@ package build
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/goplus/llgo/cl"
 )
@@ -169,7 +170,14 @@ func (p *packageBuildPlan) readyLevels() ([][]packageBuildSpec, error) {
 		count += len(level)
 	}
 	if count != len(p.specs) {
-		return nil, fmt.Errorf("package build dependency cycle")
+		cycle := make([]string, 0, len(p.specs)-count)
+		for id, unresolved := range remaining {
+			if unresolved > 0 {
+				cycle = append(cycle, id)
+			}
+		}
+		sort.Strings(cycle)
+		return nil, fmt.Errorf("package build dependency cycle involving %s", strings.Join(cycle, ", "))
 	}
 	return levels, nil
 }

@@ -19,6 +19,7 @@ package build
 import (
 	"go/types"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/goplus/llgo/internal/env"
@@ -84,6 +85,8 @@ func TestPackageBuildPlanRejectsCycles(t *testing.T) {
 	b.Imports = map[string]*packages.Package{"a": a.Package}
 	if _, err := newPackageBuildPlan([]*aPackage{a, b}); err == nil {
 		t.Fatal("newPackageBuildPlan succeeded, want cycle error")
+	} else if !strings.Contains(err.Error(), "a, b") {
+		t.Fatalf("cycle error = %q, want package IDs", err)
 	}
 }
 
