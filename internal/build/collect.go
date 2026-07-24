@@ -23,7 +23,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -196,21 +195,7 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 
 // collectDependencyInputs adds dependency fingerprints/versions into manifest.
 func (c *context) collectDependencyInputs(m *manifestBuilder, pkg *aPackage) error {
-	if len(pkg.Imports) == 0 {
-		return nil
-	}
-
-	deps := make([]*packages.Package, 0, len(pkg.Imports))
-	for _, dep := range pkg.Imports {
-		if dep == nil || dep.ID == pkg.ID {
-			continue
-		}
-		deps = append(deps, dep)
-	}
-
-	sort.Slice(deps, func(i, j int) bool { return deps[i].ID < deps[j].ID })
-
-	for _, dep := range deps {
+	for _, dep := range effectiveDependencies(pkg) {
 		depEntry, err := c.dependencyFingerprint(dep)
 		if err != nil {
 			return err
@@ -219,6 +204,21 @@ func (c *context) collectDependencyInputs(m *manifestBuilder, pkg *aPackage) err
 	}
 
 	return nil
+}
+
+// initializePackageBuildState initializes the mutable state used by the
+// package pipeline before any scheduler is introduced. This makes ownership
+// explicit and avoids lazy first-use writes becoming data races later.
+func (c *context) initializePackageBuildState() {
+	if c.sfilesCache == nil {
+		c.sfilesCache = make(map[string][]string)
+	}
+	if !cacheEnabled() {
+		return
+	}
+	c.cacheManager = newCacheManager()
+	c.llvmVersion = detectLLVMVersion(c)
+	c.llvmVersionReady = true
 }
 
 func (c *context) dependencyFingerprint(dep *packages.Package) (depEntry, error) {
@@ -264,10 +264,11 @@ func moduleVersion(mod *gopackages.Module) string {
 
 // getLLVMVersion returns the cached LLVM version or detects it.
 func (c *context) getLLVMVersion() string {
-	if c.llvmVersion != "" {
+	if c.llvmVersionReady {
 		return c.llvmVersion
 	}
 	c.llvmVersion = detectLLVMVersion(c)
+	c.llvmVersionReady = true
 	return c.llvmVersion
 }
 

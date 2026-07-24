@@ -105,3 +105,28 @@ func TestApplyBuildFlagsFrontendGCFlagSemantics(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyBuildFlagsParallelism(t *testing.T) {
+	conf := &build.Config{}
+	if err := ApplyBuildFlags(conf, []string{"--p", "3"}); err != nil {
+		t.Fatal(err)
+	}
+	if conf.Parallel != 3 {
+		t.Fatalf("Parallel = %d, want 3", conf.Parallel)
+	}
+	if !reflect.DeepEqual(conf.GoBuildFlags, []string{"-p=3"}) {
+		t.Fatalf("GoBuildFlags = %#v, want [-p=3]", conf.GoBuildFlags)
+	}
+}
+
+func TestApplyBuildFlagsRejectsInvalidParallelismAtomically(t *testing.T) {
+	conf := &build.Config{Parallel: 2, GoBuildFlags: []string{"-tags=existing"}}
+	want := *conf
+	want.GoBuildFlags = append([]string(nil), conf.GoBuildFlags...)
+	if err := ApplyBuildFlags(conf, []string{"-p=0"}); err == nil {
+		t.Fatal("ApplyBuildFlags succeeded, want error")
+	}
+	if !reflect.DeepEqual(*conf, want) {
+		t.Fatalf("configuration changed on error:\n got %+v\nwant %+v", *conf, want)
+	}
+}

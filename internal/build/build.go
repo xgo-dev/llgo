@@ -183,6 +183,9 @@ type Config struct {
 	// DisableBoundsChecks disables index, slice, and slice-to-array conversion
 	// bounds checks while retaining required integer conversions and nil checks.
 	DisableBoundsChecks bool
+	// Parallel is the maximum number of LLGo's internally parallel build tasks.
+	// Zero uses GOMAXPROCS, matching the Go command's default -p behavior.
+	Parallel int
 
 	// PthreadStackSize sets a custom stack size, in bytes, for pthread-backed
 	// goroutines. A zero value keeps the platform pthread default.
@@ -281,7 +284,19 @@ const (
 	loadSyntax  = loadTypes | packages.NeedSyntax | packages.NeedTypesInfo
 )
 
+var llssaInitOnce sync.Once
+
+func (c *Config) parallelism() int {
+	if c != nil && c.Parallel > 0 {
+		return c.Parallel
+	}
+	return runtime.GOMAXPROCS(0)
+}
+
 func Do(args []string, conf *Config) ([]Package, error) {
+	if conf.Parallel < 0 {
+		return nil, fmt.Errorf("parallelism must not be negative: %d", conf.Parallel)
+	}
 	if conf.Goos == "" {
 		conf.Goos = runtime.GOOS
 	}
@@ -372,7 +387,9 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	cl.EnableDebug(emitDebugInfo)
 	cl.EnableDbgSyms(emitDebugInfo)
 	cl.EnableTrace(IsTraceEnabled())
-	llssa.Initialize(llssa.InitAll)
+	llssaInitOnce.Do(func() {
+		llssa.Initialize(llssa.InitAll)
+	})
 
 	target := &llssa.Target{
 		GOOS:     conf.Goos,
@@ -498,7 +515,6 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	}
 	progSSA := ssa.NewProgram(initial[0].Fset, buildMode)
 	patches := make(cl.Patches, len(altPkgPaths))
-	altSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
 
 	env := llvm.New("")
 	os.Setenv("PATH", env.BinDir()+":"+os.Getenv("PATH")) // TODO(xsw): check windows
@@ -515,20 +531,24 @@ func Do(args []string, conf *Config) ([]Package, error) {
 		buildConf:      conf,
 		crossCompile:   export,
 		cTransformer:   cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, conf.AbiMode, cabiOptimize),
+		sfilesCache:    make(map[string][]string),
 	}
 	defer ctx.closePackageMetas()
+	ctx.initializePackageBuildState()
 
 	// default runtime globals must be registered before packages are built
 	addGlobalString(conf, "runtime.defaultGOROOT="+runtime.GOROOT(), nil)
 	addGlobalString(conf, "runtime.buildVersion="+runtime.Version(), nil)
-	pkgs, err := buildSSAPkgs(ctx, initial, verbose)
+	altEntries := registerAltSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
+	pkgs, pkgEntries, err := registerSSAPkgs(ctx, initial, verbose)
 	if err != nil {
 		return nil, err
 	}
-	depPkgs, err := buildSSAPkgs(ctx, altPkgs, verbose)
+	depPkgs, depEntries, err := registerSSAPkgs(ctx, altPkgs, verbose)
 	if err != nil {
 		return nil, err
 	}
+	buildSSAPkgs(ctx, append(append(altEntries, pkgEntries...), depEntries...))
 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	allPkgs = append(allPkgs, depPkgs...)
@@ -769,8 +789,9 @@ type context struct {
 	testFail bool
 
 	// Cache related fields
-	cacheManager *cacheManager
-	llvmVersion  string
+	cacheManager     *cacheManager
+	llvmVersion      string
+	llvmVersionReady bool
 
 	// go list derived file lists (SFiles, etc.)
 	sfilesCache map[string][]string // pkg.ID -> absolute .s/.S file paths
@@ -857,8 +878,6 @@ func normalizeToArchive(ctx *context, aPkg *aPackage, verbose bool) error {
 }
 
 func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, error) {
-	built := ctx.built
-
 	// Split packages into runtime tree vs others so we can defer runtime build.
 	var runtimePkgs []*aPackage
 	var normalPkgs []*aPackage
@@ -872,97 +891,89 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 
 	var needRuntime, needPyInit bool
 
-	buildOne := func(aPkg *aPackage) error {
-		pkg := aPkg.Package
-		if _, ok := built[pkg.ID]; ok {
-			// Already built, skip but keep ExportFile for linking
-			return nil
-		}
-		built[pkg.ID] = none{}
-
-		switch kind, param := cl.PkgKindOf(pkg.Types); kind {
-		case cl.PkgDeclOnly:
-			pkg.ExportFile = ""
-		case cl.PkgLinkIR, cl.PkgLinkExtern, cl.PkgPyModule:
-			if len(pkg.GoFiles) > 0 {
-				if err := ctx.collectFingerprint(aPkg); err != nil {
-					return err
-				}
-				ctx.tryLoadFromCache(aPkg)
-				if verbose {
-					if aPkg.CacheHit {
-						fmt.Fprintf(os.Stderr, "CACHE HIT: %s\n", pkg.PkgPath)
-					} else {
-						fmt.Fprintf(os.Stderr, "CACHE MISS: %s\n", pkg.PkgPath)
-					}
-				}
-				if err := buildPkg(ctx, aPkg, verbose); err != nil {
-					return err
-				}
-				if !aPkg.CacheHit {
-					if err := normalizeToArchive(ctx, aPkg, verbose); err != nil {
-						return err
-					}
-					if kind == cl.PkgLinkExtern {
-						appendExternalLinkArgs(ctx, aPkg, param)
-					}
-					if err := ctx.saveToCache(aPkg); err != nil && verbose {
-						fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", pkg.PkgPath, err)
-					}
-				}
-			} else {
-				pkg.ExportFile = ""
-				if kind == cl.PkgLinkExtern {
-					appendExternalLinkArgs(ctx, aPkg, param)
-				}
-			}
-		default:
-			if err := ctx.collectFingerprint(aPkg); err != nil {
-				return err
-			}
-			ctx.tryLoadFromCache(aPkg)
-			if verbose {
-				if aPkg.CacheHit {
-					fmt.Fprintf(os.Stderr, "CACHE HIT: %s\n", pkg.PkgPath)
-				} else {
-					fmt.Fprintf(os.Stderr, "CACHE MISS: %s\n", pkg.PkgPath)
-				}
-			}
-			if err := buildPkg(ctx, aPkg, verbose); err != nil {
-				return err
-			}
-			aPkg.setNeedRuntimeOrPyInit(aPkg.LPkg.NeedRuntime, aPkg.LPkg.NeedPyInit)
-			needRuntime = needRuntime || aPkg.NeedRt
-			needPyInit = needPyInit || aPkg.NeedPyInit
-			if !aPkg.CacheHit {
-				if err := normalizeToArchive(ctx, aPkg, verbose); err != nil {
-					return err
-				}
-				if err := ctx.saveToCache(aPkg); err != nil && verbose {
-					fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", pkg.PkgPath, err)
-				}
-			}
-		}
-		return nil
-	}
-
 	// Build non-runtime packages first, so we know whether runtime is actually needed.
 	for _, p := range normalPkgs {
-		if err := buildOne(p); err != nil {
+		result, err := buildOnePackage(ctx, p, verbose)
+		if err != nil {
 			return nil, err
 		}
+		needRuntime = needRuntime || result.needRuntime
+		needPyInit = needPyInit || result.needPyInit
 	}
 
 	// Only build runtime packages when required (or host build with empty Target).
 	if needRuntime || needPyInit || ctx.buildConf.Target == "" {
 		for _, p := range runtimePkgs {
-			if err := buildOne(p); err != nil {
+			if _, err := buildOnePackage(ctx, p, verbose); err != nil {
 				return nil, err
 			}
 		}
 	}
 
 	return pkgs, nil
+}
+
+type packageBuildResult struct {
+	needRuntime bool
+	needPyInit  bool
+}
+
+// buildOnePackage is the serial package pipeline. The stages are separated so
+// a future scheduler can parallelize only stages with isolated package state.
+func buildOnePackage(ctx *context, aPkg *aPackage, verbose bool) (packageBuildResult, error) {
+	pkg := aPkg.Package
+	if _, ok := ctx.built[pkg.ID]; ok {
+		return packageBuildResult{}, nil
+	}
+	ctx.built[pkg.ID] = none{}
+
+	kind, param := cl.PkgKindOf(pkg.Types)
+	if kind == cl.PkgDeclOnly {
+		pkg.ExportFile = ""
+		return packageBuildResult{}, nil
+	}
+	if (kind == cl.PkgLinkIR || kind == cl.PkgLinkExtern || kind == cl.PkgPyModule) && len(pkg.GoFiles) == 0 {
+		pkg.ExportFile = ""
+		if kind == cl.PkgLinkExtern {
+			appendExternalLinkArgs(ctx, aPkg, param)
+		}
+		return packageBuildResult{}, nil
+	}
+
+	if err := ctx.collectFingerprint(aPkg); err != nil {
+		return packageBuildResult{}, err
+	}
+	ctx.tryLoadFromCache(aPkg)
+	if verbose {
+		status := "MISS"
+		if aPkg.CacheHit {
+			status = "HIT"
+		}
+		fmt.Fprintf(os.Stderr, "CACHE %s: %s\n", status, pkg.PkgPath)
+	}
+	if err := buildPkg(ctx, aPkg, verbose); err != nil {
+		return packageBuildResult{}, err
+	}
+
+	result := packageBuildResult{}
+	if kind != cl.PkgLinkIR && kind != cl.PkgLinkExtern && kind != cl.PkgPyModule {
+		aPkg.setNeedRuntimeOrPyInit(aPkg.LPkg.NeedRuntime, aPkg.LPkg.NeedPyInit)
+		result.needRuntime = aPkg.NeedRt
+		result.needPyInit = aPkg.NeedPyInit
+	}
+	if aPkg.CacheHit {
+		return result, nil
+	}
+	if err := normalizeToArchive(ctx, aPkg, verbose); err != nil {
+		return packageBuildResult{}, err
+	}
+	if kind == cl.PkgLinkExtern {
+		appendExternalLinkArgs(ctx, aPkg, param)
+	}
+	if err := ctx.saveToCache(aPkg); err != nil && verbose {
+		fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", pkg.PkgPath, err)
+	}
+	return result, nil
 }
 
 func appendExternalLinkArgs(ctx *context, aPkg *aPackage, spec string) {
@@ -1618,6 +1629,16 @@ func is32Bits(goarch string) bool {
 }
 
 func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
+	externs, err := preparePackageModule(ctx, aPkg, verbose)
+	if err != nil || aPkg.CacheHit || aPkg.LPkg == nil {
+		return err
+	}
+	return compilePackageModule(ctx, aPkg, externs, verbose)
+}
+
+// preparePackageModule runs the frontend and creates the package LLVM module.
+// This stage remains serial because it updates Program-wide registration state.
+func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string, error) {
 	pkg := aPkg.Package
 	pkgPath := pkg.PkgPath
 	if debugBuild || verbose {
@@ -1627,7 +1648,7 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 	}
 	if llruntime.SkipToBuild(pkgPath) {
 		pkg.ExportFile = ""
-		return nil
+		return nil, nil
 	}
 	var syntax = pkg.Syntax
 	if altPkg := aPkg.AltPkg; altPkg != nil {
@@ -1645,7 +1666,7 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 
 	embedMap, err := goembed.LoadDirectives(ctx.conf.Fset, syntax)
 	if err != nil {
-		return fmt.Errorf("load go:embed directives for %s failed: %w", pkgPath, err)
+		return nil, fmt.Errorf("load go:embed directives for %s failed: %w", pkgPath, err)
 	}
 
 	needMeta := !aPkg.CacheHit && ctx.buildConf.packageMetaEnabled()
@@ -1662,8 +1683,18 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 
 	// If cache hit, we only needed to register types - skip compilation
 	if aPkg.CacheHit {
-		return nil
+		return nil, nil
 	}
+	return externs, nil
+}
+
+// compilePackageModule applies LLVM transforms and emits package objects.
+// It receives a module owned by aPkg and is intentionally kept separate from
+// frontend setup so later PRs can give it a worker-local backend context.
+func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbose bool) error {
+	pkg := aPkg.Package
+	pkgPath := pkg.PkgPath
+	ret := aPkg.LPkg
 
 	ctx.cTransformer.SetSkipFuncs(cabiSkipFuncsForPlan9Asm(ctx, pkgPath, ret.Module()))
 	llabi.LowerLargeAggregates(ctx.prog.TargetData(), ret.Module())
@@ -1933,13 +1964,24 @@ func preCollectRuntimeLinknames(prog llssa.Program, pkgs []*packages.Package) {
 	}
 }
 
-func altSSAPkgs(prog *ssa.Program, patches cl.Patches, alts []*packages.Package, conf *Config, verbose bool) {
+type ssaBuildEntry struct {
+	pkg      *ssa.Package
+	syntax   []*ast.File
+	fixOrder bool
+}
+
+// registerAltSSAPkgs creates the alternate packages and patch table before any
+// SSA package is built. Building is deliberately deferred so every package can
+// be built under the same bounded worker pool.
+func registerAltSSAPkgs(prog *ssa.Program, patches cl.Patches, alts []*packages.Package, conf *Config, verbose bool) []ssaBuildEntry {
+	var entries []ssaBuildEntry
 	packages.Visit(alts, nil, func(p *packages.Package) {
 		if typs := p.Types; typs != nil && !p.IllTyped {
 			if debugBuild || verbose {
 				log.Println("==> BuildSSA", p.ID)
 			}
 			pkgSSA := prog.CreatePackage(typs, p.Syntax, p.TypesInfo, true)
+			entries = append(entries, ssaBuildEntry{pkg: pkgSSA, syntax: p.Syntax})
 			if strings.HasPrefix(p.ID, altPkgPathPrefix) {
 				path := p.ID[len(altPkgPathPrefix):]
 				// Even if an alt package exists and is pulled in as a dependency of other
@@ -1955,7 +1997,7 @@ func altSSAPkgs(prog *ssa.Program, patches cl.Patches, alts []*packages.Package,
 			}
 		}
 	})
-	prog.Build()
+	return entries
 }
 
 type aPackage struct {
@@ -1981,9 +2023,13 @@ type aPackage struct {
 
 type Package = *aPackage
 
-func buildSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([]*aPackage, error) {
+// registerSSAPkgs creates all ordinary SSA packages and returns their build
+// entries. It intentionally performs no Package.Build calls: applying patches
+// and registering the full package graph must remain serial.
+func registerSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([]*aPackage, []ssaBuildEntry, error) {
 	prog := ctx.progSSA
 	var all []*aPackage
+	var entries []ssaBuildEntry
 	var errs []*packages.Package
 	packages.Visit(initial, nil, func(p *packages.Package) {
 		if p.Types != nil && !p.IllTyped {
@@ -1993,7 +2039,10 @@ func buildSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([]*a
 				return
 			}
 			var altPkg *packages.Cached
-			var ssaPkg = createSSAPkg(ctx, prog, p, verbose)
+			ssaPkg, created := createSSAPkg(ctx, prog, p, verbose)
+			if created {
+				entries = append(entries, ssaBuildEntry{pkg: ssaPkg, syntax: p.Syntax, fixOrder: true})
+			}
 			if ctx.hasAltPkg(pkgPath) {
 				if altPkg = ctx.dedup.Check(altPkgPathPrefix + pkgPath); altPkg == nil {
 					return
@@ -2025,9 +2074,49 @@ func buildSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([]*a
 			}
 			fmt.Fprintln(os.Stderr, "cannot build SSA for package", errPkg)
 		}
-		return nil, fmt.Errorf("cannot build SSA for packages")
+		return nil, nil, fmt.Errorf("cannot build SSA for packages")
 	}
-	return all, nil
+	return all, entries, nil
+}
+
+// buildSSAPkgs builds registered packages with the configured bound, then
+// performs ordering repair serially because it mutates package instruction
+// slices. go/ssa.Package.Build is documented as safe for concurrent calls.
+func buildSSAPkgs(ctx *context, entries []ssaBuildEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	unique := make([]ssaBuildEntry, 0, len(entries))
+	seen := make(map[*ssa.Package]bool, len(entries))
+	for _, entry := range entries {
+		if entry.pkg == nil || seen[entry.pkg] {
+			continue
+		}
+		seen[entry.pkg] = true
+		unique = append(unique, entry)
+	}
+	workers := min(ctx.buildConf.parallelism(), len(unique))
+	jobs := make(chan ssaBuildEntry)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for entry := range jobs {
+				entry.pkg.Build()
+			}
+		}()
+	}
+	for _, entry := range unique {
+		jobs <- entry
+	}
+	close(jobs)
+	wg.Wait()
+	for _, entry := range unique {
+		if entry.fixOrder {
+			fixSSAOrder(entry.pkg, entry.syntax)
+		}
+	}
 }
 
 func formatPackageError(err packages.Error, noColumn bool) string {
@@ -2175,7 +2264,7 @@ func applyPatches(ctx *context, p *packages.Package, verbose bool) {
 	}
 }
 
-func createSSAPkg(ctx *context, prog *ssa.Program, p *packages.Package, verbose bool) *ssa.Package {
+func createSSAPkg(ctx *context, prog *ssa.Program, p *packages.Package, verbose bool) (*ssa.Package, bool) {
 	pkgSSA := prog.ImportedPackage(p.ID)
 	if pkgSSA == nil {
 		if debugBuild || verbose {
@@ -2183,11 +2272,9 @@ func createSSAPkg(ctx *context, prog *ssa.Program, p *packages.Package, verbose 
 		}
 		applyPatches(ctx, p, verbose)
 		pkgSSA = prog.CreatePackage(p.Types, p.Syntax, p.TypesInfo, true)
-		pkgSSA.Build() // TODO(xsw): build concurrently
-		// Apply local SSA fixups once when package SSA is first built.
-		fixSSAOrder(pkgSSA, p.Syntax)
+		return pkgSSA, true
 	}
-	return pkgSSA
+	return pkgSSA, false
 }
 
 /*

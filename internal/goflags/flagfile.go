@@ -27,6 +27,7 @@ var argumentListFlagNames = [...]string{
 	"gcflags",
 	"gccgoflags",
 	"ldflags",
+	"p",
 	"toolexec",
 }
 

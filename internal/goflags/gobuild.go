@@ -16,7 +16,13 @@
 
 package goflags
 
-import "github.com/goplus/llgo/internal/build"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/goplus/llgo/internal/build"
+)
 
 // ApplyBuildFlags validates and appends normalized Go build flags, and maps
 // the supported compiler and linker semantics into typed build configuration.
@@ -34,12 +40,37 @@ func ApplyBuildFlags(conf *build.Config, args []string) error {
 	if err != nil {
 		return err
 	}
+	parallel, parallelSet, err := parseBuildParallel(all)
+	if err != nil {
+		return err
+	}
 	next := *conf
 	next.GoBuildFlags = all
 	applyFrontendGCFlags(&next)
+	if parallelSet {
+		next.Parallel = parallel
+	}
 	if linkFlags.Present {
 		next.LinkOptions = linkFlags.Options
 	}
 	*conf = next
 	return nil
+}
+
+// parseBuildParallel extracts Go's -p build concurrency flag after it has
+// been normalized. Keeping it in GoBuildFlags still lets go/packages apply the
+// same setting while Config.Parallel controls LLGo's own build stages.
+func parseBuildParallel(flags []string) (parallel int, present bool, err error) {
+	for _, flag := range flags {
+		value, ok := strings.CutPrefix(flag, "-p=")
+		if !ok {
+			continue
+		}
+		parallel, err = strconv.Atoi(value)
+		if err != nil || parallel <= 0 {
+			return 0, false, fmt.Errorf("-p must be a positive integer, got %q", value)
+		}
+		present = true
+	}
+	return parallel, present, nil
 }
