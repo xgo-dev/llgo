@@ -716,22 +716,18 @@ func TestCSharedExportArgs(t *testing.T) {
 	if got := cSharedExportArgs(nil, nil); got != nil {
 		t.Fatalf("nil cSharedExportArgs = %v, want nil", got)
 	}
-	prog := llssa.NewProgram(nil)
-	lpkg := prog.NewPackage("example.com/p", "example.com/p")
-	lpkg.SetExport("example.com/p.Z", "Zed")
-	lpkg.SetExport("example.com/p.A", "Add")
-	pkgs := []*aPackage{{LPkg: lpkg}}
+	summaries := []*PackageSummary{{CSharedExports: []string{"Add", "Zed"}}}
 
 	ctx := &context{buildConf: &Config{BuildMode: BuildModeCShared, Goos: "linux"}}
-	if got, want := strings.Join(cSharedExportArgs(ctx, pkgs), " "), "-Wl,--undefined=Add -Wl,--undefined=Zed"; got != want {
+	if got, want := strings.Join(cSharedExportArgs(ctx, summaries), " "), "-Wl,--undefined=Add -Wl,--undefined=Zed"; got != want {
 		t.Fatalf("linux cSharedExportArgs = %q, want %q", got, want)
 	}
 	ctx.buildConf.Goos = "darwin"
-	if got, want := strings.Join(cSharedExportArgs(ctx, pkgs), " "), "-Wl,-u,_Add -Wl,-u,_Zed"; got != want {
+	if got, want := strings.Join(cSharedExportArgs(ctx, summaries), " "), "-Wl,-u,_Add -Wl,-u,_Zed"; got != want {
 		t.Fatalf("darwin cSharedExportArgs = %q, want %q", got, want)
 	}
 	ctx.buildConf.BuildMode = BuildModeExe
-	if got := cSharedExportArgs(ctx, pkgs); got != nil {
+	if got := cSharedExportArgs(ctx, summaries); got != nil {
 		t.Fatalf("executable cSharedExportArgs = %v, want nil", got)
 	}
 }
