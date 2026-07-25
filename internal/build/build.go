@@ -398,8 +398,14 @@ func Do(args []string, conf *Config) ([]Package, error) {
 		OptLevel: conf.OptLevel,
 	}
 
-	prog := llssa.NewProgram(target)
-	prog.DisableBoundsChecks(conf.DisableBoundsChecks)
+	funcInfo := conf.Mode != ModeGen && conf.PCLNMode != PCLNNone
+	// Site records are inline-asm fragments inside function bodies. Darwin
+	// DWARF builds avoid them because they disturb LLDB lexical scopes; Linux
+	// still needs them because its restricted dynamic symbol table cannot
+	// reconstruct every Go entry PC through dlsym. External mode always needs
+	// final-PC sites for sidecar construction.
+	backendTemplate := newBackendProgramTemplate(target, conf, funcInfo, shouldEnablePCLNSites(conf, funcInfo, emitDebugInfo))
+	prog := backendTemplate.newProgram()
 	if conf.Mode != ModeGen {
 		// ModeGen callers (llgen and the golden suites) read LPkg.String()
 		// after Do returns and dispose the program themselves; every other
@@ -409,20 +415,6 @@ func Do(args []string, conf *Config) ([]Package, error) {
 		// harness) otherwise accumulate every compile's C++-side memory.
 		defer prog.Dispose()
 	}
-	prog.EnableGoGlobalDCE(conf.goGlobalDCEEnabled())
-	prog.EnableDeadcodeDrop(conf.deadcodeDropEnabled())
-	if conf.PthreadStackSize > 0 {
-		prog.SetPthreadStackSize(uint64(conf.PthreadStackSize))
-	}
-	prog.EnableLTOPluginMarkers(conf.LTOPlugin.Enabled())
-	funcInfo := conf.Mode != ModeGen && conf.PCLNMode != PCLNNone
-	prog.EnableFuncInfoMetadata(funcInfo)
-	// Site records are inline-asm fragments inside function bodies. Darwin
-	// DWARF builds avoid them because they disturb LLDB lexical scopes; Linux
-	// still needs them because its restricted dynamic symbol table cannot
-	// reconstruct every Go entry PC through dlsym. External mode always needs
-	// final-PC sites for sidecar construction.
-	prog.EnableFuncInfoSites(shouldEnablePCLNSites(conf, funcInfo, emitDebugInfo))
 	sizes := func(sizes types.Sizes, compiler, arch string) types.Sizes {
 		if arch == "wasm" {
 			sizes = &types.StdSizes{WordSize: 4, MaxAlign: 4}
@@ -513,6 +505,12 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	if !IsOptimizeEnabled() {
 		buildMode |= ssa.NaiveForm
 	}
+	backendTemplate.runtimePackage = func() *types.Package { return altPkgs[0].Types }
+	backendTemplate.pythonPackage = func() *types.Package { return dedup.Check(llssa.PkgPython).Types }
+	backendTemplate.runtimeLinknames = altPkgs
+	backendTemplate.llvmTarget = export.LLVMTarget
+	backendTemplate.targetABI = export.TargetABI
+	backendTemplate.cabiOptimize = cabiOptimize
 	progSSA := ssa.NewProgram(initial[0].Fset, buildMode)
 	patches := make(cl.Patches, len(altPkgPaths))
 
@@ -530,6 +528,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 		buildConf:    conf,
 		crossCompile: export,
 		cTransformer: cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, conf.AbiMode, cabiOptimize),
+		backend:      backendTemplate,
 		sfilesCache:  make(map[string][]string),
 	}
 	defer ctx.closePackageMetas()
@@ -784,6 +783,7 @@ type context struct {
 	crossCompile crosscompile.Export
 
 	cTransformer *cabi.Transformer
+	backend      backendProgramTemplate
 
 	testFail bool
 
@@ -819,6 +819,88 @@ func (c *context) closePackageMetas() {
 		}
 		_ = pkg.Meta.Close()
 		pkg.Meta = nil
+	}
+}
+
+// backendProgramTemplate contains all state a backend Program needs without
+// sharing an LLVM context. The current serial path keeps one Program in
+// context.prog; the next stage will create one backendSession per worker from
+// this template.
+type backendProgramTemplate struct {
+	target              *llssa.Target
+	disableBoundsChecks bool
+	goGlobalDCE         bool
+	deadcodeDrop        bool
+	pthreadStackSize    int64
+	ltoPluginMarkers    bool
+	funcInfoMetadata    bool
+	funcInfoSites       bool
+	runtimePackage      func() *types.Package
+	pythonPackage       func() *types.Package
+	runtimeLinknames    []*packages.Package
+	llvmTarget          string
+	targetABI           string
+	abiMode             cabi.Mode
+	cabiOptimize        bool
+}
+
+type backendSession struct {
+	prog        llssa.Program
+	transformer *cabi.Transformer
+}
+
+func newBackendProgramTemplate(target *llssa.Target, conf *Config, funcInfoMetadata, funcInfoSites bool) backendProgramTemplate {
+	var targetCopy *llssa.Target
+	if target != nil {
+		copy := *target
+		targetCopy = &copy
+	}
+	return backendProgramTemplate{
+		target:              targetCopy,
+		disableBoundsChecks: conf.DisableBoundsChecks,
+		goGlobalDCE:         conf.goGlobalDCEEnabled(),
+		deadcodeDrop:        conf.deadcodeDropEnabled(),
+		pthreadStackSize:    conf.PthreadStackSize,
+		ltoPluginMarkers:    conf.LTOPlugin.Enabled(),
+		funcInfoMetadata:    funcInfoMetadata,
+		funcInfoSites:       funcInfoSites,
+		abiMode:             conf.AbiMode,
+	}
+}
+
+func (t backendProgramTemplate) newProgram() llssa.Program {
+	var target *llssa.Target
+	if t.target != nil {
+		copy := *t.target
+		target = &copy
+	}
+	prog := llssa.NewProgram(target)
+	prog.DisableBoundsChecks(t.disableBoundsChecks)
+	prog.EnableGoGlobalDCE(t.goGlobalDCE)
+	prog.EnableDeadcodeDrop(t.deadcodeDrop)
+	if t.pthreadStackSize > 0 {
+		prog.SetPthreadStackSize(uint64(t.pthreadStackSize))
+	}
+	prog.EnableLTOPluginMarkers(t.ltoPluginMarkers)
+	prog.EnableFuncInfoMetadata(t.funcInfoMetadata)
+	prog.EnableFuncInfoSites(t.funcInfoSites)
+	if t.runtimePackage != nil {
+		prog.SetRuntime(t.runtimePackage)
+	}
+	if t.pythonPackage != nil {
+		prog.SetPython(t.pythonPackage)
+	}
+	if len(t.runtimeLinknames) != 0 {
+		preCollectRuntimeLinknames(prog, t.runtimeLinknames)
+	}
+	return prog
+}
+
+func (t backendProgramTemplate) newSession() backendSession {
+	prog := t.newProgram()
+	return backendSession{
+		prog:        prog,
+		transformer: cabi.NewTransformer(prog, t.llvmTarget, t.targetABI, t.abiMode, t.cabiOptimize),
 	}
 }
 

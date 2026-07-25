@@ -165,6 +165,26 @@ func TestWasmRuntimeAvoidsNativeHostDependencies(t *testing.T) {
 	}
 }
 
+func TestBackendProgramTemplateCreatesIsolatedSessions(t *testing.T) {
+	conf := &Config{Goos: "linux", Goarch: "amd64"}
+	template := newBackendProgramTemplate(&llssa.Target{GOOS: conf.Goos, GOARCH: conf.Goarch}, conf, true, true)
+	first := template.newSession()
+	defer first.prog.Dispose()
+	second := template.newSession()
+	defer second.prog.Dispose()
+	if first.transformer == nil || second.transformer == nil {
+		t.Fatal("backend session missing C ABI transformer")
+	}
+	if !first.prog.FuncInfoMetadataEnabled() || !first.prog.FuncInfoSitesEnabled() {
+		t.Fatal("backend template did not preserve funcinfo configuration")
+	}
+	firstModule := first.prog.NewPackage("example.com/first", "first").Module()
+	secondModule := second.prog.NewPackage("example.com/second", "second").Module()
+	if firstModule.Context().C == secondModule.Context().C {
+		t.Fatal("backend sessions share an LLVM context")
+	}
+}
+
 func TestNeedsLinuxExportDynamic(t *testing.T) {
 	t.Setenv(llgoFuncInfo, "")
 	ctx := &context{buildConf: &Config{Goos: "linux"}}
