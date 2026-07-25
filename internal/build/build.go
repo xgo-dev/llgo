@@ -1259,6 +1259,13 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 			aPkg = ctx.pkgByID[p.ID]
 		}
 		if p.ExportFile != "" && aPkg != nil { // skip packages that only contain declarations
+			// Runtime packages are built on demand. For a target that does not
+			// require the runtime, preserve the historical behavior of omitting
+			// those unbuilt packages from the link rather than requiring a
+			// linker summary that no backend ever produced.
+			if aPkg.Summary == nil && isRuntimePkg(aPkg.PkgPath) {
+				return
+			}
 			linkedPkgs[p.ID] = true
 			linkedOrder = append(linkedOrder, aPkg)
 		}
