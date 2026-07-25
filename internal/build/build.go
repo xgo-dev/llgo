@@ -547,6 +547,9 @@ func Do(args []string, conf *Config) ([]Package, error) {
 		return nil, err
 	}
 	buildSSAPkgs(ctx, append(append(altEntries, pkgEntries...), depEntries...))
+	// CallerTracking owns plain maps. Resolve every possible query while the
+	// SSA graph is still serial, so worker-local backend sessions only read it.
+	ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	allPkgs = append(allPkgs, depPkgs...)
