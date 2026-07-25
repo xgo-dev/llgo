@@ -63,4 +63,18 @@ func Logs() { dep.Where() }
 	if len(errs) != 0 {
 		t.Fatal("concurrent read lost precomputed caller tracking data")
 	}
+
+	// A worker can encounter a package outside the precomputed program. Once
+	// frozen, that must be a read-only miss rather than lazy map mutation.
+	delete(tracking.base, dep)
+	if got := runtimeCallerBaseSet(tracking, dep); got != nil {
+		t.Fatalf("frozen base lookup for unknown package = %v, want nil", got)
+	}
+	delete(tracking.extended, root)
+	if got := runtimeCallerFuncSet(tracking, root); got != nil {
+		t.Fatalf("frozen extended lookup for unknown package = %v, want nil", got)
+	}
+
+	// Repeated setup is intentionally a no-op after the tracker is frozen.
+	tracking.Precompute(nil)
 }
