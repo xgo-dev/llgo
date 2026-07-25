@@ -1057,8 +1057,8 @@ func TestSaveToCache_Success(t *testing.T) {
 	if data.Env.Goos != "darwin" {
 		t.Errorf("manifest should contain original env content")
 	}
-	if data.Metadata != nil {
-		t.Errorf("metadata should be empty when no link args/runtime flags")
+	if data.Metadata == nil || data.Metadata.Summary == nil {
+		t.Errorf("metadata should preserve an empty linker summary")
 	}
 
 	// Check archive exists

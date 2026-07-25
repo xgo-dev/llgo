@@ -547,6 +547,9 @@ func (c *context) saveToCache(pkg *aPackage) error {
 	if err != nil {
 		return fmt.Errorf("decode manifest: %w", err)
 	}
+	if pkg.Summary == nil {
+		pkg.Summary = summarizePackage(pkg)
+	}
 
 	meta := &manifestMetadata{
 		LinkArgs:   append([]string(nil), pkg.LinkArgs...),
