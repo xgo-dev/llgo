@@ -952,6 +952,10 @@ func preflightPackageBuild(ctx *context, spec packageBuildSpec, verbose bool) (s
 	ctx.builtMu.Unlock()
 	if spec.isDeclOnly() {
 		pkg.ExportFile = ""
+		// Declaration-only packages still occur in the link graph through a
+		// different packages.Package instance. Publish an empty summary so the
+		// linker can treat that occurrence like every other skipped package.
+		aPkg.Summary = summarizePackage(aPkg)
 		return true, ctx.collectFingerprint(aPkg)
 	}
 	if spec.isLinkOnly() && !spec.hasSource() {
@@ -959,6 +963,9 @@ func preflightPackageBuild(ctx *context, spec packageBuildSpec, verbose bool) (s
 		if spec.kind == cl.PkgLinkExtern {
 			appendExternalLinkArgs(ctx, aPkg, spec.kindParam)
 		}
+		// Link-only packages do not create an LLVM module, but their linker
+		// arguments are still consumed by linkMainPkg through PackageSummary.
+		aPkg.Summary = summarizePackage(aPkg)
 		return true, ctx.collectFingerprint(aPkg)
 	}
 	if err := ctx.collectFingerprint(aPkg); err != nil {

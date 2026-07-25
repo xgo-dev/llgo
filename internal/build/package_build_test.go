@@ -136,7 +136,7 @@ func TestPreflightFingerprintsSkippedPackage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !skip || pkg.Fingerprint == "" || pkg.Manifest == "" {
-		t.Fatalf("skipped package was not fingerprinted: skip=%v fingerprint=%q manifest=%q", skip, pkg.Fingerprint, pkg.Manifest)
+	if !skip || pkg.Fingerprint == "" || pkg.Manifest == "" || pkg.Summary == nil {
+		t.Fatalf("skipped package was not fully prepared: skip=%v fingerprint=%q manifest=%q summary=%#v", skip, pkg.Fingerprint, pkg.Manifest, pkg.Summary)
 	}
 }
