@@ -5,6 +5,7 @@ package runtime
 import (
 	"unsafe"
 
+	psync "github.com/goplus/llgo/runtime/internal/clite/pthread/sync"
 	llrt "github.com/goplus/llgo/runtime/internal/runtime"
 )
 
@@ -108,11 +109,19 @@ type funcForPCCacheEntry struct {
 var funcForPCCache [funcForPCCacheSets][funcForPCCacheWays]funcForPCCacheEntry
 var funcForPCCacheNext [funcForPCCacheSets]uint8
 var funcForPCLast funcForPCCacheEntry
+var funcForPCCacheOnce psync.Once
+var funcForPCCacheMu psync.Mutex
 
-func FuncForPC(pc uintptr) *Func {
-	// External metadata must be installed before consulting either cache:
-	// caching a pre-load miss would otherwise survive a successful load.
-	ensureRuntimePCLN()
+func lockFuncForPCCache() {
+	funcForPCCacheOnce.Do(func() {
+		funcForPCCacheMu.Init(nil)
+	})
+	funcForPCCacheMu.Lock()
+}
+
+func cachedFuncForPC(pc uintptr) *Func {
+	lockFuncForPCCache()
+	defer funcForPCCacheMu.Unlock()
 	if fn := funcForPCLast.fn; fn != nil && funcForPCLast.pc == pc {
 		return fn
 	}
@@ -122,6 +131,16 @@ func FuncForPC(pc uintptr) *Func {
 			funcForPCLast = funcForPCCacheEntry{pc: pc, fn: fn}
 			return fn
 		}
+	}
+	return nil
+}
+
+func FuncForPC(pc uintptr) *Func {
+	// External metadata must be installed before consulting either cache:
+	// caching a pre-load miss would otherwise survive a successful load.
+	ensureRuntimePCLN()
+	if fn := cachedFuncForPC(pc); fn != nil {
+		return fn
 	}
 	return funcForPCSlow(pc)
 }
@@ -235,14 +254,8 @@ func newFuncForPC(pc uintptr, sym pcSymbol) *Func {
 // symbolized, going through the FuncForPC cache so repeated CallersFrames
 // walks over the same PCs stop allocating a Func per frame.
 func frameFuncForPC(pc uintptr, sym pcSymbol, name string) *Func {
-	if fn := funcForPCLast.fn; fn != nil && funcForPCLast.pc == pc {
+	if fn := cachedFuncForPC(pc); fn != nil {
 		return fn
-	}
-	set := &funcForPCCache[funcForPCCacheIndex(pc)]
-	for i := 0; i < funcForPCCacheWays; i++ {
-		if fn := set[i].fn; fn != nil && set[i].pc == pc {
-			return fn
-		}
 	}
 	fn := &Func{
 		entry: sym.entry,
@@ -261,6 +274,8 @@ func frameFuncForPC(pc uintptr, sym pcSymbol, name string) *Func {
 }
 
 func cacheFuncForPC(pc uintptr, fn *Func) {
+	lockFuncForPCCache()
+	defer funcForPCCacheMu.Unlock()
 	setIndex := funcForPCCacheIndex(pc)
 	set := &funcForPCCache[setIndex]
 	for i := 0; i < funcForPCCacheWays; i++ {
