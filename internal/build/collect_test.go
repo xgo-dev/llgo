@@ -1232,6 +1232,10 @@ func TestTryLoadFromCacheIgnoresMetaWhenPackageMetaDisabled(t *testing.T) {
 	m := newManifestBuilder()
 	m.env.Goos = "darwin"
 	m.pkg.PkgPath = "example.com/nometa"
+	// Cache entries always carry a linker summary, even when package metadata
+	// is disabled. The malformed sidecar below must therefore be ignored rather
+	// than making this otherwise valid cache entry miss.
+	m.meta = &manifestMetadata{Summary: &packageSummaryMetadata{}}
 	if err := writeManifest(paths.Manifest, m.Build()); err != nil {
 		t.Fatal(err)
 	}
