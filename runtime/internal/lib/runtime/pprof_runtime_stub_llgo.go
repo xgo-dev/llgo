@@ -122,17 +122,19 @@ func unlockFuncForPCCache() {
 
 func cachedFuncForPC(pc uintptr) *Func {
 	lockFuncForPCCache()
-	defer unlockFuncForPCCache()
 	if fn := funcForPCLast.fn; fn != nil && funcForPCLast.pc == pc {
+		unlockFuncForPCCache()
 		return fn
 	}
 	set := &funcForPCCache[funcForPCCacheIndex(pc)]
 	for i := 0; i < funcForPCCacheWays; i++ {
 		if fn := set[i].fn; fn != nil && set[i].pc == pc {
 			funcForPCLast = funcForPCCacheEntry{pc: pc, fn: fn}
+			unlockFuncForPCCache()
 			return fn
 		}
 	}
+	unlockFuncForPCCache()
 	return nil
 }
 
@@ -276,13 +278,13 @@ func frameFuncForPC(pc uintptr, sym pcSymbol, name string) *Func {
 
 func cacheFuncForPC(pc uintptr, fn *Func) {
 	lockFuncForPCCache()
-	defer unlockFuncForPCCache()
 	setIndex := funcForPCCacheIndex(pc)
 	set := &funcForPCCache[setIndex]
 	for i := 0; i < funcForPCCacheWays; i++ {
 		if set[i].fn == nil || set[i].pc == pc {
 			set[i] = funcForPCCacheEntry{pc: pc, fn: fn}
 			funcForPCLast = set[i]
+			unlockFuncForPCCache()
 			return
 		}
 	}
@@ -290,6 +292,7 @@ func cacheFuncForPC(pc uintptr, fn *Func) {
 	funcForPCCacheNext[setIndex] = way + 1
 	set[way] = funcForPCCacheEntry{pc: pc, fn: fn}
 	funcForPCLast = set[way]
+	unlockFuncForPCCache()
 }
 
 func funcForPCCacheIndex(pc uintptr) uintptr {
