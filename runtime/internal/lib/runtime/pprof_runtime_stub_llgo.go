@@ -5,7 +5,7 @@ package runtime
 import (
 	"unsafe"
 
-	psync "github.com/goplus/llgo/runtime/internal/clite/pthread/sync"
+	latomic "github.com/goplus/llgo/runtime/internal/lib/sync/atomic"
 	llrt "github.com/goplus/llgo/runtime/internal/runtime"
 )
 
@@ -109,19 +109,20 @@ type funcForPCCacheEntry struct {
 var funcForPCCache [funcForPCCacheSets][funcForPCCacheWays]funcForPCCacheEntry
 var funcForPCCacheNext [funcForPCCacheSets]uint8
 var funcForPCLast funcForPCCacheEntry
-var funcForPCCacheOnce psync.Once
-var funcForPCCacheMu psync.Mutex
+var funcForPCCacheLock uint32
 
 func lockFuncForPCCache() {
-	funcForPCCacheOnce.Do(func() {
-		funcForPCCacheMu.Init(nil)
-	})
-	funcForPCCacheMu.Lock()
+	for !latomic.CompareAndSwapUint32(&funcForPCCacheLock, 0, 1) {
+	}
+}
+
+func unlockFuncForPCCache() {
+	latomic.StoreUint32(&funcForPCCacheLock, 0)
 }
 
 func cachedFuncForPC(pc uintptr) *Func {
 	lockFuncForPCCache()
-	defer funcForPCCacheMu.Unlock()
+	defer unlockFuncForPCCache()
 	if fn := funcForPCLast.fn; fn != nil && funcForPCLast.pc == pc {
 		return fn
 	}
@@ -275,7 +276,7 @@ func frameFuncForPC(pc uintptr, sym pcSymbol, name string) *Func {
 
 func cacheFuncForPC(pc uintptr, fn *Func) {
 	lockFuncForPCCache()
-	defer funcForPCCacheMu.Unlock()
+	defer unlockFuncForPCCache()
 	setIndex := funcForPCCacheIndex(pc)
 	set := &funcForPCCache[setIndex]
 	for i := 0; i < funcForPCCacheWays; i++ {
