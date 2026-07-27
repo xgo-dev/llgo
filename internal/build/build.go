@@ -2412,11 +2412,8 @@ func parseEnvBool(value string, defVal bool) bool {
 
 // cacheEnabled checks if build cache is enabled.
 // Cache can be disabled by setting LLGO_BUILD_CACHE=off|0
-func cacheEnabled(conf ...*Config) bool {
-	if len(conf) != 0 {
-		return isEnvOnConfig(conf[0], llgoBuildCache, true)
-	}
-	return isEnvOn(llgoBuildCache, true)
+func cacheEnabled(conf *Config) bool {
+	return isEnvOnConfig(conf, llgoBuildCache, true)
 }
 
 func isEnvOnConfig(conf *Config, key string, defVal bool) bool {

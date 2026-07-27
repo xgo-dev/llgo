@@ -353,19 +353,11 @@ func hasAltPkgForTarget(conf *Config, pkgPath string) bool {
 	return true
 }
 
-func plan9asmDisabledByEnv(confs ...*Config) bool {
-	var conf *Config
-	if len(confs) != 0 {
-		conf = confs[0]
-	}
+func plan9asmDisabledByEnv(conf *Config) bool {
 	return parsePlan9AsmPkgsEnv(envConfigValue(conf, llgoPlan9ASMPkgs)).mode == plan9asmEnvNone
 }
 
-func plan9asmEnabledByEnv(pkgPath string, confs ...*Config) bool {
-	var conf *Config
-	if len(confs) != 0 {
-		conf = confs[0]
-	}
+func plan9asmEnabledByEnv(pkgPath string, conf *Config) bool {
 	cfg := parsePlan9AsmPkgsEnv(envConfigValue(conf, llgoPlan9ASMPkgs))
 	if cfg.mode == plan9asmEnvAll {
 		return true
