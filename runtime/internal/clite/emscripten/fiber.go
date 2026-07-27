@@ -29,14 +29,14 @@ type Fiber struct {
 //llgo:type C
 type FiberEntry func(c.Pointer)
 
-// llgo:link (*Fiber).Init C.emscripten_fiber_init
-func (fiber *Fiber) Init(entry FiberEntry, arg, stack c.Pointer, stackSize uintptr, asyncifyStack c.Pointer, asyncifyStackSize uintptr) {
+// llgo:link FiberInit C.emscripten_fiber_init
+func FiberInit(fiber *Fiber, entry FiberEntry, arg, stack c.Pointer, stackSize uintptr, asyncifyStack c.Pointer, asyncifyStackSize uintptr) {
 }
 
-// llgo:link (*Fiber).InitCurrent C.emscripten_fiber_init_from_current_context
-func (fiber *Fiber) InitCurrent(asyncifyStack c.Pointer, asyncifyStackSize uintptr) {
+// llgo:link FiberInitCurrent C.emscripten_fiber_init_from_current_context
+func FiberInitCurrent(fiber *Fiber, asyncifyStack c.Pointer, asyncifyStackSize uintptr) {
 }
 
-// llgo:link (*Fiber).Swap C.emscripten_fiber_swap
-func (fiber *Fiber) Swap(next *Fiber) {
+// llgo:link FiberSwap C.emscripten_fiber_swap
+func FiberSwap(fiber, next *Fiber) {
 }

@@ -32,7 +32,8 @@ type Context struct {
 }
 
 func (ctx *Context) Init(entry Entry, arg, stack unsafe.Pointer, stackSize uintptr, asyncifyStack unsafe.Pointer, asyncifyStackSize uintptr) {
-	ctx.fiber.Init(
+	emscripten.FiberInit(
+		&ctx.fiber,
 		entry,
 		arg,
 		stack,
@@ -43,9 +44,9 @@ func (ctx *Context) Init(entry Entry, arg, stack unsafe.Pointer, stackSize uintp
 }
 
 func (ctx *Context) InitCurrent(asyncifyStack unsafe.Pointer, asyncifyStackSize uintptr) {
-	ctx.fiber.InitCurrent(asyncifyStack, asyncifyStackSize)
+	emscripten.FiberInitCurrent(&ctx.fiber, asyncifyStack, asyncifyStackSize)
 }
 
 func (ctx *Context) Swap(next *Context) {
-	ctx.fiber.Swap(&next.fiber)
+	emscripten.FiberSwap(&ctx.fiber, &next.fiber)
 }
