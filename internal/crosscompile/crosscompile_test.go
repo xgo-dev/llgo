@@ -172,6 +172,16 @@ func TestUseCrossCompileSDK(t *testing.T) {
 	}
 }
 
+func TestUseJSSupportsNode(t *testing.T) {
+	export, err := use("js", "wasm", false, false, optlevel.Oz, lto.Off, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(export.LDFLAGS, "-sENVIRONMENT=web,worker,node") {
+		t.Fatalf("LDFLAGS do not enable Node: %v", export.LDFLAGS)
+	}
+}
+
 func TestUseTarget(t *testing.T) {
 	// Test cases for target-based configuration
 	testCases := []struct {

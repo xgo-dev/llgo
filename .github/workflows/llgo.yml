@@ -392,4 +392,6 @@ jobs:
         run: |
           GOOS=js GOARCH=wasm llgo build -o "$RUNNER_TEMP/runtime-js.wasm" ./internal/build/testdata/wasm-runtime
           GOOS=wasip1 GOARCH=wasm llgo build -o "$RUNNER_TEMP/runtime-wasip1.wasm" ./internal/build/testdata/wasm-runtime
+          GOOS=js GOARCH=wasm llgo build -target wasm -o "$RUNNER_TEMP/wasm-scheduler.mjs" ./internal/build/testdata/wasm-scheduler
+          node --input-type=module -e "import Module from '$RUNNER_TEMP/wasm-scheduler.mjs'; await Module();"
           file "$RUNNER_TEMP/runtime-js.wasm" "$RUNNER_TEMP/runtime-wasip1.wasm"

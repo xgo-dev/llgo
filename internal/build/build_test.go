@@ -332,7 +332,7 @@ func TestDefaultBuildTags(t *testing.T) {
 	}{
 		{name: "native", goarch: "arm64", want: base},
 		{name: "raw wasm", goarch: "wasm", want: base + ",nogc"},
-		{name: "configured wasm target", goarch: "wasm", target: "wasip1", want: base},
+		{name: "configured wasm target", goarch: "wasm", target: "wasip1", want: base + ",nogc"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := defaultBuildTags(test.goarch, test.target); got != test.want {
