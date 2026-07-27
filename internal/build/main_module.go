@@ -87,7 +87,7 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	}
 
 	var rtInit llssa.Function
-	if cfg.rtInit {
+	if cfg.rtInit || ctx.crossCompile.WasmPostLink.Asyncify {
 		rtInit = declareNoArgFunc(mainPkg, rtPkgPath+".init")
 	}
 

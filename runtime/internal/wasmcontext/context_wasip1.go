@@ -69,4 +69,4 @@ func contextRewind(*Context)
 //go:linkname contextUnwind C.__llgo_wasm_context_unwind
 func contextUnwind(*Context)
 
-const LLGoFiles = "context_wasm.S"
+const LLGoFiles = "_asm/context_wasm.S"
