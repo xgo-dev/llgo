@@ -23,6 +23,7 @@ import "unsafe"
 const (
 	_Grunnable = 1
 	_Grunning  = 2
+	_Gwaiting  = 4
 	_Gdead     = 6
 )
 
@@ -55,11 +56,32 @@ type g struct {
 	goexit       bool
 	isMain       bool
 	paniconfault bool
+
+	runqQueued uint32
+	runqNext   *g
 }
 
-// m represents the host execution resource running Go code. The platform
-// thread handle is deliberately confined to mOS so other backends do not leak
-// pthread types into the scheduler core.
+func (gp *g) RunqueueNext() *g {
+	return gp.runqNext
+}
+
+func (gp *g) SetRunqueueNext(next *g) {
+	gp.runqNext = next
+}
+
+func (gp *g) RunqueueQueued() bool {
+	return gp.runqQueued != 0
+}
+
+func (gp *g) SetRunqueueQueued(queued bool) {
+	if queued {
+		gp.runqQueued = 1
+	} else {
+		gp.runqQueued = 0
+	}
+}
+
+// m represents the host execution resource running Go code.
 type m struct {
 	curg *g
 	p    *p
@@ -67,9 +89,7 @@ type m struct {
 	os   mOS
 }
 
-// p represents the scheduling resources attached to an M. The pthread backend
-// currently binds one P to one M; a later M:N scheduler can retain this object
-// while replacing that fixed binding with a P pool and run queues.
+// p represents the scheduling resources attached to an M.
 type p struct {
 	id     int32
 	status uint32

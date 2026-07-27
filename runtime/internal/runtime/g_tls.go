@@ -1,4 +1,4 @@
-//go:build llgo && !baremetal
+//go:build llgo && !baremetal && (!js || !wasm)
 
 /*
  * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.

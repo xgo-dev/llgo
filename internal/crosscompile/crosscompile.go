@@ -445,7 +445,7 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 			// "-Wl,--export=malloc", "-Wl,--export=free",
 		}
 		export.LDFLAGS = append(export.LDFLAGS, []string{
-			"-sENVIRONMENT=web,worker",
+			"-sENVIRONMENT=web,worker,node",
 			"-DPLATFORM_WEB",
 			"-sEXPORT_KEEPALIVE=1",
 			"-sEXPORT_ES6=1",

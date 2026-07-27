@@ -789,11 +789,8 @@ func DefaultBuildTags(goarch, target string) string {
 
 func defaultBuildTags(goarch, target string) string {
 	tags := "llgo,math_big_pure_go,purego"
-	// Raw GOOS/GOARCH wasm builds do not have a target configuration that
-	// selects a collector. BDWGC is not available in either wasm host, so use
-	// the supported collector-free runtime unless a named target supplies its
-	// own runtime configuration.
-	if goarch == "wasm" && target == "" {
+	// BDWGC is unavailable in both wasm hosts.
+	if goarch == "wasm" {
 		tags += ",nogc"
 	}
 	return tags
