@@ -733,21 +733,12 @@ func TestCSharedExportArgs(t *testing.T) {
 }
 
 func TestCSharedExportArgsKeepsTestMain(t *testing.T) {
-	prog := llssa.NewProgram(nil)
-	defer prog.Dispose()
-	lpkg := prog.NewPackage("example.com/p.test", "example.com/p.test")
-	pkgs := []*aPackage{{
-		Package: &packages.Package{
-			Name:    "main",
-			PkgPath: "example.com/p.test",
-		},
-		LPkg: lpkg,
-	}}
+	summaries := []*PackageSummary{{Name: "main", PkgPath: "example.com/p.test"}}
 	ctx := &context{
 		mode:      ModeTest,
 		buildConf: &Config{BuildMode: BuildModeCShared, Goos: "linux"},
 	}
-	if got, want := strings.Join(cSharedExportArgs(ctx, pkgs), " "), "-Wl,--undefined=example.com/p.test.init -Wl,--undefined=example.com/p.test.main"; got != want {
+	if got, want := strings.Join(cSharedExportArgs(ctx, summaries), " "), "-Wl,--undefined=example.com/p.test.init -Wl,--undefined=example.com/p.test.main"; got != want {
 		t.Fatalf("test main cSharedExportArgs = %q, want %q", got, want)
 	}
 }
