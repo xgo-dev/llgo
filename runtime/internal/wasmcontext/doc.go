@@ -1,5 +1,3 @@
-//go:build llgo && wasm && !(wasip1 && llgo.wasi_threads)
-
 /*
  * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
  *
@@ -16,17 +14,6 @@
  * limitations under the License.
  */
 
-package runtime
-
-var currentG *g
-
-func getg() *g {
-	if currentG == nil {
-		currentG = initRuntimeContext(allocRuntimeContext(), nil, _Grunning)
-	}
-	return currentG
-}
-
-func setg(gp *g) {
-	currentG = gp
-}
+// Package wasmcontext provides suspended execution contexts for WebAssembly
+// runtime schedulers.
+package wasmcontext

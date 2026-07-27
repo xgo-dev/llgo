@@ -42,9 +42,16 @@ type Export struct {
 	FormatDetail string // For uf2, it's uf2FamilyID
 	Emulator     string // Emulator command template (e.g., "qemu-system-arm -M {} -kernel {}")
 	DebugInfo    DebugInfoPolicy
+	WasmPostLink WasmPostLink
 
 	// Flashing/Debugging configuration
 	Device flash.Device // Device configuration for flashing/debugging
+}
+
+// WasmPostLink describes transformations required after the core module is
+// linked. Build orchestration owns tool discovery and atomic output handling.
+type WasmPostLink struct {
+	Asyncify bool
 }
 
 // DebugInfoPolicy describes how a selected linker handles debug information.
@@ -374,6 +381,9 @@ func useWithJSWasm32(goos, goarch string, wasiThreads, forceEspClang bool, level
 			"-matomics",
 			"-mbulk-memory",
 		}
+		if wasiThreads {
+			export.CCFLAGS = append(export.CCFLAGS, "-pthread")
+		}
 		export.CFLAGS = []string{
 			"-I" + includeDir,
 			"-Qunused-arguments",
@@ -381,12 +391,20 @@ func useWithJSWasm32(goos, goarch string, wasiThreads, forceEspClang bool, level
 		}
 		// Add WebAssembly linker flags
 		export.LDFLAGS = append(export.LDFLAGS, export.CCFLAGS...)
+		export.LDFLAGS = append(export.LDFLAGS, "-fwasm-exceptions")
+		if ltoMode.Enabled() {
+			export.LDFLAGS = append(export.LDFLAGS, "-Wl,--mllvm=-wasm-enable-sjlj")
+		}
+		export.CCFLAGS = append(
+			export.CCFLAGS,
+			"-fwasm-exceptions",
+			"-mllvm", "-wasm-enable-sjlj",
+		)
 		export.LDFLAGS = append(export.LDFLAGS, []string{
 			"-Wno-override-module",
 			"-Wl,--error-limit=0",
 			"-L" + libDir,
 			"-Wl,--allow-undefined",
-			"-Wl,--import-memory,", // unknown import: `env::memory` has not been defined
 			"-Wl,--export-memory",
 			"-Wl,--initial-memory=67108864", // 64MB
 			"-mbulk-memory",
@@ -403,22 +421,19 @@ func useWithJSWasm32(goos, goarch string, wasiThreads, forceEspClang bool, level
 			"-lwasi-emulated-getpid",
 			"-lwasi-emulated-process-clocks",
 			"-lwasi-emulated-signal",
-			"-fwasm-exceptions",
-			"-mllvm", "-wasm-enable-sjlj",
 		}...)
 		export.LLVMTarget = "wasm32-unknown-wasip1"
 		// Add thread support if enabled
 		if wasiThreads {
-			export.CCFLAGS = append(
-				export.CCFLAGS,
-				"-pthread",
-			)
-			export.LDFLAGS = append(export.LDFLAGS, export.CCFLAGS...)
+			export.BuildTags = append(export.BuildTags, "llgo.wasi_threads")
 			export.LDFLAGS = append(
 				export.LDFLAGS,
+				"-Wl,--import-memory",
 				"-lwasi-emulated-pthread",
 				"-lpthread",
 			)
+		} else {
+			export.WasmPostLink.Asyncify = true
 		}
 
 	case "js":

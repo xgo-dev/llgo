@@ -1,4 +1,4 @@
-//go:build llgo && js && wasm
+//go:build llgo && wasip1 && wasm && !llgo.wasi_threads
 
 /*
  * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
@@ -34,32 +34,14 @@ type runtimeContextPlatform struct {
 	context       wasmcontext.Context
 	stack         unsafe.Pointer
 	asyncifyStack unsafe.Pointer
-	runqNext      *g
-	runqQueued    bool
 }
 
 var wasmSched struct {
-	m       m
-	p       p
-	runq    runqueue.Queue[*g]
-	retired *runtimeContext
-	started bool
-}
-
-func (gp *g) RunqueueNext() *g {
-	return gp.context.platform.runqNext
-}
-
-func (gp *g) SetRunqueueNext(next *g) {
-	gp.context.platform.runqNext = next
-}
-
-func (gp *g) RunqueueQueued() bool {
-	return gp.context.platform.runqQueued
-}
-
-func (gp *g) SetRunqueueQueued(queued bool) {
-	gp.context.platform.runqQueued = queued
+	m          m
+	p          p
+	runq       runqueue.Queue[*g]
+	started    bool
+	mainExited bool
 }
 
 func initRuntimeContext(ctx *runtimeContext, callergp *g, status uint32) *g {
@@ -87,19 +69,73 @@ func initWasmScheduler(gp *g) {
 	gp.m = mp
 }
 
+//go:linkname wasmMainTask __llgo_wasm_main
+func wasmMainTask(unsafe.Pointer) unsafe.Pointer
+
+// RunWasmMain runs package initialization and main.main as the first
+// Asyncify task. It remains on the system stack and dispatches one G at a time.
+func RunWasmMain() {
+	gp := getg()
+	if gp == nil || !gp.isMain {
+		fatal("runtime: invalid WebAssembly main goroutine")
+		return
+	}
+	initWasmContext(gp, wasmcontext.Entry(wasmMainTask), nil, 0)
+
+	for {
+		runWasmContext(gp)
+		status := readgstatus(gp)
+		if gp.isMain && status == _Grunning {
+			casgstatus(gp, _Grunning, _Gdead)
+			releaseWasmContext(gp)
+			return
+		}
+		releaseWasmOwnership(gp)
+		if status == _Gdead {
+			releaseWasmContext(gp)
+		}
+
+		gp = wasmSched.runq.Pop()
+		if gp == nil {
+			if wasmSched.mainExited {
+				fatal("no goroutines (main called runtime.Goexit) - deadlock!")
+			} else {
+				fatal("all goroutines are asleep - deadlock!")
+			}
+			return
+		}
+	}
+}
+
+func runWasmContext(gp *g) {
+	if readgstatus(gp) == _Grunnable {
+		casgstatus(gp, _Grunnable, _Grunning)
+	}
+	mp := &wasmSched.m
+	pp := &wasmSched.p
+	mp.curg = gp
+	pp.m = mp
+	gp.m = mp
+	setg(gp)
+	gp.context.platform.context.Resume()
+}
+
+func releaseWasmOwnership(gp *g) {
+	if gp != nil {
+		gp.m = nil
+	}
+	wasmSched.m.curg = nil
+}
+
 func newprocBackend(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, callergp *g) {
 	gp := newproc1(fn, arg, callergp)
-	if !initWasmFiber(gp, stackSize) {
-		FreeRoot(arg)
-		freeRuntimeContext(gp.context)
-		panic("runtime: failed to allocate WebAssembly goroutine stack")
-	}
+	initWasmContext(gp, wasmcontext.Entry(wasmGStart), unsafe.Pointer(gp), stackSize)
 	if !wasmSched.runq.Push(gp) {
 		fatal("runtime: invalid run queue insertion")
 	}
 }
 
-func initWasmFiber(gp *g, stackSize uintptr) bool {
+func initWasmContext(gp *g, entry wasmcontext.Entry, arg unsafe.Pointer, stackSize uintptr) {
 	if stackSize == 0 {
 		stackSize = defaultWasmGStackSize
 	}
@@ -110,25 +146,16 @@ func initWasmFiber(gp *g, stackSize uintptr) bool {
 	}
 
 	platform := &gp.context.platform
-	platform.stack = AllocRoot(stackSize)
-	if platform.stack == nil {
-		return false
-	}
-	platform.asyncifyStack = AllocRoot(asyncifySize)
-	if platform.asyncifyStack == nil {
-		FreeRoot(platform.stack)
-		platform.stack = nil
-		return false
-	}
+	platform.stack = allocWasmStack(stackSize)
+	platform.asyncifyStack = allocWasmStack(asyncifySize)
 	platform.context.Init(
-		wasmcontext.Entry(wasmGStart),
-		unsafe.Pointer(gp),
+		entry,
+		arg,
 		platform.stack,
 		stackSize,
 		platform.asyncifyStack,
 		asyncifySize,
 	)
-	return true
 }
 
 func alignWasmStackSize(size uintptr) uintptr {
@@ -144,27 +171,35 @@ func allocWasmStack(size uintptr) unsafe.Pointer {
 	return stack
 }
 
-func ensureCurrentWasmFiber(gp *g) {
-	platform := &gp.context.platform
-	if platform.asyncifyStack != nil {
+func releaseWasmContext(gp *g) {
+	if gp == nil || gp.context == nil {
 		return
 	}
-	platform.asyncifyStack = allocWasmStack(defaultWasmAsyncifyStackSize)
-	platform.context.InitCurrent(platform.asyncifyStack, defaultWasmAsyncifyStackSize)
+	ctx := gp.context
+	platform := &ctx.platform
+	if platform.stack != nil {
+		FreeRoot(platform.stack)
+		platform.stack = nil
+	}
+	if platform.asyncifyStack != nil {
+		FreeRoot(platform.asyncifyStack)
+		platform.asyncifyStack = nil
+	}
+	freeRuntimeContext(ctx)
 }
 
-func wasmGStart(arg unsafe.Pointer) {
+func wasmGStart(arg unsafe.Pointer) unsafe.Pointer {
 	gp := (*g)(arg)
 	if gp == nil || getg() != gp {
 		fatal("runtime: invalid WebAssembly goroutine entry")
-		return
+		return nil
 	}
-	reapRetiredWasmG()
 	fn, fnarg := gp.startfn, gp.startarg
 	gp.startfn = nil
 	gp.startarg = nil
-	fn(fnarg)
+	ret := fn(fnarg)
 	goexitBackend(gp)
+	return ret
 }
 
 func goschedBackend() {
@@ -174,23 +209,13 @@ func goschedBackend() {
 		fatal("runtime: invalid run queue insertion")
 		return
 	}
-	next := popWasmRunq()
-	if next == gp {
-		casgstatus(gp, _Grunnable, _Grunning)
-		return
-	}
-	resumeWasmG(gp, next)
+	gp.context.platform.context.Suspend()
 }
 
 func gopark() {
 	gp := getg()
 	casgstatus(gp, _Grunning, _Gwaiting)
-	next := popWasmRunq()
-	if next == nil {
-		fatal("all goroutines are asleep - deadlock!")
-		return
-	}
-	resumeWasmG(gp, next)
+	gp.context.platform.context.Suspend()
 }
 
 func goready(gp *g) {
@@ -204,80 +229,13 @@ func goready(gp *g) {
 	}
 }
 
-func resumeWasmG(old, next *g) {
-	if old == nil || next == nil || next.context == nil {
-		fatal("runtime: invalid WebAssembly context switch")
-		return
-	}
-	ensureCurrentWasmFiber(old)
-	if next.context.platform.asyncifyStack == nil {
-		fatal("runtime: uninitialized WebAssembly goroutine context")
-		return
-	}
-
-	casgstatus(next, _Grunnable, _Grunning)
-	mp := &wasmSched.m
-	old.m = nil
-	next.m = mp
-	mp.curg = next
-	setg(next)
-	old.context.platform.context.Swap(&next.context.platform.context)
-	reapRetiredWasmG()
-}
-
 func goexitBackend(gp *g) {
 	casgstatus(gp, _Grunning, _Gdead)
-	if wasmSched.retired != nil {
-		fatal("runtime: unreaped WebAssembly goroutine")
-		return
+	if gp.isMain {
+		wasmSched.mainExited = true
 	}
-
-	next := popWasmRunq()
-	if next == nil {
-		if gp.isMain {
-			fatal("no goroutines (main called runtime.Goexit) - deadlock!")
-		} else {
-			fatal("all goroutines are asleep - deadlock!")
-		}
-		return
-	}
-
-	wasmSched.retired = gp.context
-	resumeDeadWasmG(gp, next)
-}
-
-func resumeDeadWasmG(old, next *g) {
-	ensureCurrentWasmFiber(old)
-	casgstatus(next, _Grunnable, _Grunning)
-	mp := &wasmSched.m
-	old.m = nil
-	next.m = mp
-	mp.curg = next
-	setg(next)
-	old.context.platform.context.Swap(&next.context.platform.context)
+	gp.context.platform.context.Suspend()
 	fatal("runtime: resumed dead WebAssembly goroutine")
-}
-
-func reapRetiredWasmG() {
-	ctx := wasmSched.retired
-	if ctx == nil {
-		return
-	}
-	wasmSched.retired = nil
-	platform := &ctx.platform
-	if platform.stack != nil {
-		FreeRoot(platform.stack)
-		platform.stack = nil
-	}
-	if platform.asyncifyStack != nil {
-		FreeRoot(platform.asyncifyStack)
-		platform.asyncifyStack = nil
-	}
-	freeRuntimeContext(ctx)
-}
-
-func popWasmRunq() *g {
-	return wasmSched.runq.Pop()
 }
 
 // CurrentGForTesting returns an opaque handle suitable for ReadyForTesting.

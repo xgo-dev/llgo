@@ -1,4 +1,4 @@
-//go:build llgo && !baremetal && (!js || !wasm)
+//go:build llgo && !baremetal && (!wasm || (wasip1 && llgo.wasi_threads))
 
 /*
  * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
