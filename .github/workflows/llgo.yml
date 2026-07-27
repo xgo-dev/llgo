@@ -395,10 +395,21 @@ jobs:
       - name: Build standard runtime for wasm
         shell: bash
         run: |
+          run_wasm_scheduler() {
+            local module="$1"
+            local output
+            node --input-type=module -e "import Module from '$module'; await Module();"
+            if output=$(node --input-type=module -e "import Module from '$module'; await Module({preRun: [module => { module.ENV.LLGO_WASM_SCHEDULER_DEADLOCK = '1'; }]});" 2>&1); then
+              echo "deadlock scheduler fixture unexpectedly succeeded"
+              return 1
+            fi
+            grep -Fq "fatal error: all goroutines are asleep - deadlock!" <<<"$output"
+          }
+
           GOOS=js GOARCH=wasm llgo build -o "$RUNNER_TEMP/runtime-js.wasm" ./internal/build/testdata/wasm-runtime
           GOOS=wasip1 GOARCH=wasm llgo build -o "$RUNNER_TEMP/runtime-wasip1.wasm" ./internal/build/testdata/wasm-runtime
           GOOS=js GOARCH=wasm llgo build -o "$RUNNER_TEMP/wasm-scheduler-go.mjs" ./internal/build/testdata/wasm-scheduler
-          node --input-type=module -e "import Module from '$RUNNER_TEMP/wasm-scheduler-go.mjs'; await Module();"
+          run_wasm_scheduler "$RUNNER_TEMP/wasm-scheduler-go.mjs"
           llgo build -target wasm -o "$RUNNER_TEMP/wasm-scheduler.mjs" ./internal/build/testdata/wasm-scheduler
-          node --input-type=module -e "import Module from '$RUNNER_TEMP/wasm-scheduler.mjs'; await Module();"
+          run_wasm_scheduler "$RUNNER_TEMP/wasm-scheduler.mjs"
           file "$RUNNER_TEMP/runtime-js.wasm" "$RUNNER_TEMP/runtime-wasip1.wasm"

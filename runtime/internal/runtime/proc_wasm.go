@@ -195,17 +195,22 @@ func resumeWasmG(old, next *g) {
 }
 
 func goexitBackend(gp *g) {
-	next := popWasmRunq()
-	if next == nil {
-		fatal("no goroutines (main called runtime.Goexit) - deadlock!")
-		return
-	}
-
 	casgstatus(gp, _Grunning, _Gdead)
 	if wasmSched.retired != nil {
 		fatal("runtime: unreaped WebAssembly goroutine")
 		return
 	}
+
+	next := popWasmRunq()
+	if next == nil {
+		if gp.isMain {
+			fatal("no goroutines (main called runtime.Goexit) - deadlock!")
+		} else {
+			fatal("all goroutines are asleep - deadlock!")
+		}
+		return
+	}
+
 	wasmSched.retired = gp.context
 	resumeDeadWasmG(gp, next)
 }

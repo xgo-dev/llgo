@@ -25,6 +25,8 @@ const (
 	gCountMask    = mainExitedBit - 1
 )
 
+// LLGo's atomic.Add returns the value before the addition. G and M reserve ID
+// zero, while P IDs are zero-based like the Go runtime.
 func nextGoid(gp *g) uint64 {
 	return atomic.Add(&sched.goidgen, uint64(1)) + 1
 }

@@ -59,13 +59,17 @@ func checkCurrentG() {
 
 func main() {
 	checkWasmModel()
+	if schedulerDeadlockMode() != 0 {
+		testParkedMainDeadlock()
+		return
+	}
 	var (
 		gstatus uint32
 		pstatus uint32
 		linked  bool
 	)
 	mainGID, _, mainMID, mainPID, gstatus, pstatus, linked = gmpForTesting()
-	if mainGID == 0 || mainMID == 0 || mainPID < 0 || gstatus != 2 || pstatus != 1 || !linked {
+	if mainGID != 1 || mainMID != 1 || mainPID != 0 || gstatus != 2 || pstatus != 1 || !linked {
 		panic("invalid main G/M/P state")
 	}
 
@@ -131,4 +135,10 @@ func main() {
 		panic("not all goroutines ran")
 	}
 	println("wasm scheduler ok")
+}
+
+func testParkedMainDeadlock() {
+	go func() {}()
+	parkForTesting()
+	panic("park returned after scheduler deadlock")
 }
