@@ -21,7 +21,7 @@ package emscripten
 import c "github.com/goplus/llgo/runtime/internal/clite"
 
 // Fiber is the opaque emscripten_fiber_t storage. The C layout consists of
-// eight pointer-sized fields on wasm32.
+// eight pointer-sized fields.
 type Fiber struct {
 	_ [8]uintptr
 }

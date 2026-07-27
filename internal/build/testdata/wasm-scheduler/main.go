@@ -58,6 +58,7 @@ func checkCurrentG() {
 }
 
 func main() {
+	checkWasmModel()
 	var (
 		gstatus uint32
 		pstatus uint32

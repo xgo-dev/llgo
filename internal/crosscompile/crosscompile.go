@@ -218,6 +218,10 @@ func compileWithConfig(
 }
 
 func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool) (export Export, err error) {
+	return useWithJSWasm32(goos, goarch, wasiThreads, forceEspClang, level, ltoMode, goGlobalDCE, false)
+}
+
+func useWithJSWasm32(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE, jsWasm32 bool) (export Export, err error) {
 	targetTriple := llvm.GetTargetTriple(goos, goarch)
 	llgoRoot := env.LLGoROOT()
 
@@ -402,6 +406,7 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 			"-fwasm-exceptions",
 			"-mllvm", "-wasm-enable-sjlj",
 		}...)
+		export.LLVMTarget = "wasm32-unknown-wasip1"
 		// Add thread support if enabled
 		if wasiThreads {
 			export.CCFLAGS = append(
@@ -417,7 +422,13 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 		}
 
 	case "js":
-		targetTriple := "wasm32-unknown-emscripten"
+		// The Go wasm type model uses 64-bit words. Use Memory64 so LLVM
+		// pointers have the same width; named wasm targets retain wasm32.
+		targetTriple := "wasm64-unknown-emscripten"
+		if jsWasm32 {
+			targetTriple = "wasm32-unknown-emscripten"
+		}
+		export.LLVMTarget = targetTriple
 		// Emscripten configuration using system installation
 		// Specify emcc as the compiler
 		export.CC = "emcc"
@@ -457,6 +468,9 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 			"-sASYNCIFY=1",
 			"-sSTACK_SIZE=5242880", // 50MB
 		}...)
+		if !jsWasm32 {
+			export.LDFLAGS = append(export.LDFLAGS, "-sMEMORY64=1")
+		}
 
 	default:
 		err = errors.New("unsupported GOOS for WebAssembly: " + goos)
@@ -720,6 +734,20 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 func Use(goos, goarch, targetName string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool) (export Export, err error) {
 	if targetName != "" && !strings.HasPrefix(targetName, "wasm") && !strings.HasPrefix(targetName, "wasi") {
 		return UseTarget(targetName, level, ltoMode)
+	}
+	if targetName == "wasm" {
+		config, err := targets.NewDefaultResolver().Resolve(targetName)
+		if err != nil {
+			return export, err
+		}
+		export, err = useWithJSWasm32(config.GOOS, config.GOARCH, wasiThreads, forceEspClang, level, ltoMode, goGlobalDCE, true)
+		if err != nil {
+			return export, err
+		}
+		export.BuildTags = config.BuildTags
+		export.GOOS = config.GOOS
+		export.GOARCH = config.GOARCH
+		return export, nil
 	}
 	return use(goos, goarch, wasiThreads, forceEspClang, level, ltoMode, goGlobalDCE)
 }

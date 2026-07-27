@@ -251,9 +251,6 @@ func resolveBuildConfig(input *Config) (*Config, error) {
 	if conf.Goarch == "" {
 		conf.Goarch = runtime.GOARCH
 	}
-	if conf.AppExt == "" {
-		conf.AppExt = defaultAppExt(conf)
-	}
 	if conf.BuildMode == "" {
 		conf.BuildMode = BuildModeExe
 	}
@@ -399,6 +396,9 @@ func Build(inv Invocation) ([]Package, error) {
 	if conf.Target != "" && export.GOARCH != "" {
 		conf.Goarch = export.GOARCH
 	}
+	if conf.AppExt == "" {
+		conf.AppExt = defaultAppExt(conf)
+	}
 	if err := validateLinkOptions(conf, &export); err != nil {
 		return nil, err
 	}
@@ -478,10 +478,7 @@ func Build(inv Invocation) ([]Package, error) {
 	// final-PC sites for sidecar construction.
 	prog.EnableFuncInfoSites(shouldEnablePCLNSites(conf, funcInfo, emitDebugInfo))
 	sizes := func(sizes types.Sizes, compiler, arch string) types.Sizes {
-		if arch == "wasm" {
-			sizes = &types.StdSizes{WordSize: 4, MaxAlign: 4}
-		}
-		return prog.TypeSizes(sizes)
+		return prog.TypeSizes(effectiveTypeSizes(sizes, conf.Goos, arch, conf.Target))
 	}
 	dedup := packages.NewDeduper()
 	var syntaxErr error
@@ -794,6 +791,15 @@ func defaultBuildTags(goarch, target string) string {
 		tags += ",nogc"
 	}
 	return tags
+}
+
+func effectiveTypeSizes(sizes types.Sizes, goos, goarch, target string) types.Sizes {
+	// Named wasm targets use the native wasm32 data model. The raw js/wasm
+	// entry point keeps Go's 64-bit word model and is emitted as Memory64.
+	if goarch == "wasm" && (target != "" || goos != "js") {
+		return &types.StdSizes{WordSize: 4, MaxAlign: 4}
+	}
+	return sizes
 }
 
 func allowMissingFunctionBodies(initial []*packages.Package) {

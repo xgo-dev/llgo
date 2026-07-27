@@ -177,8 +177,36 @@ func TestUseJSSupportsNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if export.LLVMTarget != "wasm64-unknown-emscripten" {
+		t.Fatalf("LLVMTarget = %q, want wasm64-unknown-emscripten", export.LLVMTarget)
+	}
 	if !slices.Contains(export.LDFLAGS, "-sENVIRONMENT=web,worker,node") {
 		t.Fatalf("LDFLAGS do not enable Node: %v", export.LDFLAGS)
+	}
+	if !slices.Contains(export.LDFLAGS, "-sMEMORY64=1") {
+		t.Fatalf("LDFLAGS do not enable Memory64: %v", export.LDFLAGS)
+	}
+}
+
+func TestUseWasmTargetSelectsGoPlatform(t *testing.T) {
+	export, err := Use(runtime.GOOS, runtime.GOARCH, "wasm", false, false, optlevel.Oz, lto.Off, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if export.GOOS != "js" || export.GOARCH != "wasm" {
+		t.Fatalf("GOOS/GOARCH = %s/%s, want js/wasm", export.GOOS, export.GOARCH)
+	}
+	if export.CC != "emcc" {
+		t.Fatalf("CC = %q, want emcc", export.CC)
+	}
+	if export.LLVMTarget != "wasm32-unknown-emscripten" {
+		t.Fatalf("LLVMTarget = %q, want wasm32-unknown-emscripten", export.LLVMTarget)
+	}
+	if !slices.Contains(export.BuildTags, "tinygo.wasm") {
+		t.Fatalf("BuildTags do not identify the wasm32 target: %v", export.BuildTags)
+	}
+	if slices.Contains(export.LDFLAGS, "-sMEMORY64=1") {
+		t.Fatalf("wasm32 LDFLAGS enable Memory64: %v", export.LDFLAGS)
 	}
 }
 
