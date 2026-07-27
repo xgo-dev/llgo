@@ -243,6 +243,12 @@ func TestExtractTarGzPathTraversal(t *testing.T) {
 	}
 }
 
+func TestExtractTarXzMissingArchive(t *testing.T) {
+	if err := extractTarXz(filepath.Join(t.TempDir(), "missing.tar.xz"), t.TempDir()); err == nil {
+		t.Fatal("extractTarXz succeeded for a missing archive")
+	}
+}
+
 func TestDownloadAndExtractArchive(t *testing.T) {
 	// Create test archive
 	files := map[string]string{
