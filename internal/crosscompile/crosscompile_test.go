@@ -125,6 +125,16 @@ func TestUseCrossCompileSDK(t *testing.T) {
 						if !hasResourceDir {
 							t.Error("Missing -resource-dir flag in CCFLAGS")
 						}
+						if !slices.Contains(export.CCFLAGS, "-fwasm-exceptions") ||
+							!hasMllvmOption(export.CCFLAGS, "-wasm-enable-sjlj") {
+							t.Errorf("CCFLAGS do not enable WebAssembly SjLj lowering: %v", export.CCFLAGS)
+						}
+						if !export.WasmPostLink.Asyncify {
+							t.Error("WASI target does not request Asyncify post-link processing")
+						}
+						if slices.Contains(export.LDFLAGS, "-Wl,--import-memory") {
+							t.Errorf("single-worker WASI imports host memory: %v", export.LDFLAGS)
+						}
 					} else if tc.name == "Same Platform" {
 						// For same platform, we expect sysroot only on macOS
 						if runtime.GOOS == "darwin" && !hasSysroot {
@@ -170,6 +180,28 @@ func TestUseCrossCompileSDK(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestUseWASIThreadsImportsMemory(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires WASI SDK")
+	}
+	export, err := use("wasip1", "wasm", true, false, optlevel.O2, lto.Off, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(export.CCFLAGS, "-pthread") {
+		t.Fatalf("CCFLAGS do not enable WASI threads: %v", export.CCFLAGS)
+	}
+	if !slices.Contains(export.BuildTags, "llgo.wasi_threads") {
+		t.Fatalf("BuildTags do not select the WASI pthread backend: %v", export.BuildTags)
+	}
+	if !slices.Contains(export.LDFLAGS, "-Wl,--import-memory") {
+		t.Fatalf("LDFLAGS do not import shared host memory: %v", export.LDFLAGS)
+	}
+	if export.WasmPostLink.Asyncify {
+		t.Fatal("WASI pthread mode requests single-worker Asyncify processing")
 	}
 }
 

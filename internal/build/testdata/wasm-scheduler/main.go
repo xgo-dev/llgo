@@ -30,6 +30,7 @@ var (
 	eventLog   [8]int
 	eventCount int
 	done       int
+	lifecycle  int
 )
 
 func event(value int) {
@@ -134,7 +135,21 @@ func main() {
 	if seenGCount != len(seenG) {
 		panic("not all goroutines ran")
 	}
+	testGoroutineLifecycle()
 	println("wasm scheduler ok")
+}
+
+func testGoroutineLifecycle() {
+	const count = 5000
+	for i := 1; i <= count; i++ {
+		want := i
+		go func() {
+			lifecycle = want
+		}()
+		for lifecycle != want {
+			runtime.Gosched()
+		}
+	}
 }
 
 func testParkedMainDeadlock() {

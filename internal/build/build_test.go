@@ -1206,6 +1206,17 @@ func TestApplyBuildModeCompileFlags(t *testing.T) {
 	applyBuildModeCompileFlags(BuildModeCShared, nil)
 }
 
+func TestWASIThreadsAreOptIn(t *testing.T) {
+	t.Setenv(llgoWasiThreads, "")
+	if IsWasiThreadsEnabled() {
+		t.Fatal("WASI threads are enabled by default")
+	}
+	t.Setenv(llgoWasiThreads, "1")
+	if !IsWasiThreadsEnabled() {
+		t.Fatal("WASI threads opt-in was ignored")
+	}
+}
+
 func TestCHeaderPackagesExcludesStandardRuntime(t *testing.T) {
 	prog := llssa.NewProgram(nil)
 	defer prog.Dispose()

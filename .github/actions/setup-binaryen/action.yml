@@ -1,0 +1,25 @@
+name: "Setup Binaryen"
+description: "Install a pinned Binaryen release"
+inputs:
+  version:
+    description: "Binaryen release version"
+    required: false
+    default: "131"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Binaryen
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        version="${{ inputs.version }}"
+        archive="binaryen-version_${version}-x86_64-linux.tar.gz"
+        base_url="https://github.com/WebAssembly/binaryen/releases/download/version_${version}"
+        cd "$RUNNER_TEMP"
+        curl --retry 3 --retry-all-errors -fsSLO "${base_url}/${archive}"
+        curl --retry 3 --retry-all-errors -fsSLO "${base_url}/${archive}.sha256"
+        sha256sum --check "${archive}.sha256"
+        tar -xzf "$archive" -C "$RUNNER_TEMP"
+        echo "$RUNNER_TEMP/binaryen-version_${version}/bin" >> "$GITHUB_PATH"
