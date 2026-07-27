@@ -42,6 +42,28 @@ func TestCommandUsesSnapshotPathEnvironmentAndDir(t *testing.T) {
 	}
 }
 
+func TestNilEnvironmentUsesProcessEnvironment(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := Command(nil, "", executable)
+	if cmd.Env != nil {
+		t.Fatalf("Command environment = %v, want inherited environment", cmd.Env)
+	}
+	if cmd.Path != executable {
+		t.Fatalf("Command path = %q, want %q", cmd.Path, executable)
+	}
+
+	path, err := LookPath(nil, "", executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != executable {
+		t.Fatalf("LookPath path = %q, want %q", path, executable)
+	}
+}
+
 func TestLookPathRejectsRelativePathEntries(t *testing.T) {
 	workDir := t.TempDir()
 	binDir := filepath.Join(workDir, "bin")
