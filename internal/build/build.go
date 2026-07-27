@@ -790,6 +790,7 @@ type context struct {
 
 	// Cache related fields
 	cacheManager     *cacheManager
+	cacheDisabled    map[string]none
 	llvmVersion      string
 	llvmVersionReady bool
 

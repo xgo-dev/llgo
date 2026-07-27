@@ -41,7 +41,12 @@ func (c *context) collectFingerprint(pkg *aPackage) error {
 		c.fingerprinting = make(map[string]bool)
 	}
 	if c.fingerprinting[pkg.ID] {
-		return fmt.Errorf("fingerprint cycle detected for %s", pkg.ID)
+		// Alternate packages can intentionally close a cycle in the runtime
+		// replacement graph after all packages have been built into SSA. A
+		// cycle cannot have a stable per-package cache key, so compile every
+		// member rather than returning an incorrect cache hit.
+		c.disablePackageCache(c.fingerprinting)
+		return nil
 	}
 	c.fingerprinting[pkg.ID] = true
 	defer delete(c.fingerprinting, pkg.ID)
@@ -67,6 +72,20 @@ func (c *context) collectFingerprint(pkg *aPackage) error {
 	pkg.Manifest = m.Build()
 	pkg.Fingerprint = m.Fingerprint()
 	return nil
+}
+
+func (c *context) disablePackageCache(pkgs map[string]bool) {
+	if c.cacheDisabled == nil {
+		c.cacheDisabled = make(map[string]none, len(pkgs))
+	}
+	for id := range pkgs {
+		c.cacheDisabled[id] = none{}
+	}
+}
+
+func (c *context) packageCacheDisabled(id string) bool {
+	_, disabled := c.cacheDisabled[id]
+	return disabled
 }
 
 // collectEnvInputs collects environment-related inputs.
@@ -327,6 +346,9 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 	if !cacheEnabled() {
 		return false
 	}
+	if c.packageCacheDisabled(pkg.ID) {
+		return false
+	}
 
 	// Main packages are intentionally not written to the build cache because
 	// each executable's entry module is linked against the current main archive.
@@ -450,6 +472,9 @@ type cacheArchiveMetadata struct {
 // saveToCache saves a built package to cache.
 func (c *context) saveToCache(pkg *aPackage) error {
 	if !cacheEnabled() {
+		return nil
+	}
+	if c.packageCacheDisabled(pkg.ID) {
 		return nil
 	}
 
