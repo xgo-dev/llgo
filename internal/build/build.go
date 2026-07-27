@@ -1708,7 +1708,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 		mod.SetTarget(ctx.prog.Target().Spec().Triple)
 		pbo := gllvm.NewPassBuilderOptions()
 		defer pbo.Dispose()
-		if err = gllvm.VerifyModule(mod, gllvm.ReturnStatusAction); err != nil {
+		if err := gllvm.VerifyModule(mod, gllvm.ReturnStatusAction); err != nil {
 			return fmt.Errorf("verify LLVM module for %v failed: %w", pkgPath, err)
 		}
 		if err := mod.RunPasses(llvmPassPipeline(ctx.buildConf.OptLevel, ctx.buildConf.ltoMode()), ctx.prog.TargetMachine(), pbo); err != nil {
