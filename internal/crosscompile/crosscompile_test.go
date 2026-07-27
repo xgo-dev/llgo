@@ -5,6 +5,7 @@ package crosscompile
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -208,6 +209,50 @@ func TestUseWasmTargetSelectsGoPlatform(t *testing.T) {
 	if slices.Contains(export.LDFLAGS, "-sMEMORY64=1") {
 		t.Fatalf("wasm32 LDFLAGS enable Memory64: %v", export.LDFLAGS)
 	}
+}
+
+func TestUseWasmTargetErrors(t *testing.T) {
+	newLLGoRoot := func(t *testing.T, wasmConfig string) {
+		t.Helper()
+		root := t.TempDir()
+		runtimeDir := filepath.Join(root, "runtime")
+		if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(runtimeDir, "go.mod"), []byte("module github.com/goplus/llgo/runtime\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if wasmConfig != "" {
+			targetsDir := filepath.Join(root, "targets")
+			if err := os.MkdirAll(targetsDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(targetsDir, "wasm.json"), []byte(wasmConfig), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		t.Setenv("LLGO_ROOT", root)
+	}
+
+	t.Run("resolve", func(t *testing.T) {
+		newLLGoRoot(t, "")
+		_, err := Use(runtime.GOOS, runtime.GOARCH, "wasm", false, false, optlevel.Oz, lto.Off, false)
+		if err == nil || !strings.Contains(err.Error(), "failed to resolve target wasm") {
+			t.Fatalf("Use error = %v, want target resolution error", err)
+		}
+	})
+
+	t.Run("toolchain setup", func(t *testing.T) {
+		newLLGoRoot(t, `{"goos":"js","goarch":"wasm"}`)
+		oldCacheRoot := cacheRoot
+		cacheRoot = func() string { return "\x00" }
+		defer func() { cacheRoot = oldCacheRoot }()
+
+		_, err := Use(runtime.GOOS, runtime.GOARCH, "wasm", false, true, optlevel.Oz, lto.Off, false)
+		if err == nil {
+			t.Fatal("Use succeeded with an invalid toolchain cache path")
+		}
+	})
 }
 
 func TestUseTarget(t *testing.T) {
