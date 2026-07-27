@@ -90,6 +90,46 @@ func TestCollectFingerprint(t *testing.T) {
 	}
 }
 
+func TestCollectFingerprintAltDependencyCycleDisablesCache(t *testing.T) {
+	runtimePkg := &packages.Package{ID: "runtime", PkgPath: "runtime"}
+	osPkg := &packages.Package{ID: "runtime/internal/clite/os", PkgPath: "runtime/internal/clite/os"}
+	syscallPkg := &packages.Package{ID: "runtime/internal/clite/syscall", PkgPath: "runtime/internal/clite/syscall"}
+	runtime := &aPackage{
+		Package: runtimePkg,
+		AltPkg: &packages.Cached{Package: &packages.Package{
+			ID:      "runtime/alt",
+			Imports: map[string]*packages.Package{"os": osPkg},
+		}},
+	}
+	os := &aPackage{Package: osPkg}
+	syscall := &aPackage{Package: syscallPkg}
+	os.Imports = map[string]*packages.Package{"syscall": syscallPkg}
+	syscall.Imports = map[string]*packages.Package{"runtime": runtimePkg}
+	ctx := &context{
+		conf:      &packages.Config{},
+		buildConf: &Config{Goos: "js", Goarch: "wasm"},
+		crossCompile: crosscompile.Export{
+			LLVMTarget: "wasm32-unknown-unknown",
+		},
+		pkgByID: map[string]Package{
+			runtimePkg.ID: runtime,
+			osPkg.ID:      os,
+			syscallPkg.ID: syscall,
+		},
+	}
+	if err := ctx.collectFingerprint(runtime); err != nil {
+		t.Fatalf("collectFingerprint: %v", err)
+	}
+	for _, pkg := range []*aPackage{runtime, os, syscall} {
+		if !ctx.packageCacheDisabled(pkg.ID) {
+			t.Fatalf("cache for %s was not disabled after fingerprint cycle", pkg.ID)
+		}
+		if pkg.Fingerprint == "" || pkg.Manifest == "" {
+			t.Fatalf("fingerprint state for %s was not completed", pkg.ID)
+		}
+	}
+}
+
 func TestCollectFingerprintDeterminism(t *testing.T) {
 	td := t.TempDir()
 

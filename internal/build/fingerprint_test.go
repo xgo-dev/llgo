@@ -158,10 +158,9 @@ func TestManifestBuilder_EmptySections(t *testing.T) {
 	m := newManifestBuilder()
 	content := m.Build()
 
-	// Empty sections should not be written
-	expected := ``
-	if content != expected {
-		t.Errorf("unexpected empty manifest:\ngot:\n%s\nwant:\n%s", content, expected)
+	// Empty sections should not be written.
+	if content != "" {
+		t.Errorf("unexpected empty manifest:\ngot:\n%s", content)
 	}
 
 	// Should still produce a valid fingerprint

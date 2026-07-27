@@ -9,6 +9,7 @@ import (
 
 func TestModuleHookReceivesMainPackageModule(t *testing.T) {
 	conf := NewDefaultConf(ModeGen)
+	conf.Parallel = 2
 
 	counts := make(map[string]int)
 	snapshots := make(map[string]string)

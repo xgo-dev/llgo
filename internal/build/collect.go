@@ -23,7 +23,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -42,7 +41,12 @@ func (c *context) collectFingerprint(pkg *aPackage) error {
 		c.fingerprinting = make(map[string]bool)
 	}
 	if c.fingerprinting[pkg.ID] {
-		return fmt.Errorf("fingerprint cycle detected for %s", pkg.ID)
+		// Alternate packages can intentionally close a cycle in the runtime
+		// replacement graph after all packages have been built into SSA. A
+		// cycle cannot have a stable per-package cache key, so compile every
+		// member rather than returning an incorrect cache hit.
+		c.disablePackageCache(c.fingerprinting)
+		return nil
 	}
 	c.fingerprinting[pkg.ID] = true
 	defer delete(c.fingerprinting, pkg.ID)
@@ -68,6 +72,20 @@ func (c *context) collectFingerprint(pkg *aPackage) error {
 	pkg.Manifest = m.Build()
 	pkg.Fingerprint = m.Fingerprint()
 	return nil
+}
+
+func (c *context) disablePackageCache(pkgs map[string]bool) {
+	if c.cacheDisabled == nil {
+		c.cacheDisabled = make(map[string]none, len(pkgs))
+	}
+	for id := range pkgs {
+		c.cacheDisabled[id] = none{}
+	}
+}
+
+func (c *context) packageCacheDisabled(id string) bool {
+	_, disabled := c.cacheDisabled[id]
+	return disabled
 }
 
 // collectEnvInputs collects environment-related inputs.
@@ -196,21 +214,7 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 
 // collectDependencyInputs adds dependency fingerprints/versions into manifest.
 func (c *context) collectDependencyInputs(m *manifestBuilder, pkg *aPackage) error {
-	if len(pkg.Imports) == 0 {
-		return nil
-	}
-
-	deps := make([]*packages.Package, 0, len(pkg.Imports))
-	for _, dep := range pkg.Imports {
-		if dep == nil || dep.ID == pkg.ID {
-			continue
-		}
-		deps = append(deps, dep)
-	}
-
-	sort.Slice(deps, func(i, j int) bool { return deps[i].ID < deps[j].ID })
-
-	for _, dep := range deps {
+	for _, dep := range effectiveDependencies(pkg) {
 		depEntry, err := c.dependencyFingerprint(dep)
 		if err != nil {
 			return err
@@ -219,6 +223,21 @@ func (c *context) collectDependencyInputs(m *manifestBuilder, pkg *aPackage) err
 	}
 
 	return nil
+}
+
+// initializePackageBuildState initializes the mutable state used by the
+// package pipeline before any scheduler is introduced. This makes ownership
+// explicit and avoids lazy first-use writes becoming data races later.
+func (c *context) initializePackageBuildState() {
+	if c.sfilesCache == nil {
+		c.sfilesCache = make(map[string][]string)
+	}
+	if !cacheEnabled() {
+		return
+	}
+	c.cacheManager = newCacheManager()
+	c.llvmVersion = detectLLVMVersion(c)
+	c.llvmVersionReady = true
 }
 
 func (c *context) dependencyFingerprint(dep *packages.Package) (depEntry, error) {
@@ -264,10 +283,11 @@ func moduleVersion(mod *gopackages.Module) string {
 
 // getLLVMVersion returns the cached LLVM version or detects it.
 func (c *context) getLLVMVersion() string {
-	if c.llvmVersion != "" {
+	if c.llvmVersionReady {
 		return c.llvmVersion
 	}
 	c.llvmVersion = detectLLVMVersion(c)
+	c.llvmVersionReady = true
 	return c.llvmVersion
 }
 
@@ -324,6 +344,9 @@ func (c *context) ensureCacheManager() *cacheManager {
 // Returns true if cache hit, false otherwise.
 func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 	if !cacheEnabled() {
+		return false
+	}
+	if c.packageCacheDisabled(pkg.ID) {
 		return false
 	}
 
@@ -449,6 +472,9 @@ type cacheArchiveMetadata struct {
 // saveToCache saves a built package to cache.
 func (c *context) saveToCache(pkg *aPackage) error {
 	if !cacheEnabled() {
+		return nil
+	}
+	if c.packageCacheDisabled(pkg.ID) {
 		return nil
 	}
 
