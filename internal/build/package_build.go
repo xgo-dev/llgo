@@ -109,7 +109,7 @@ func newPackageBuildPlan(pkgs []*aPackage) (*packageBuildPlan, error) {
 	}
 	for _, spec := range plan.specs {
 		id := spec.pkg.ID
-		for _, dep := range effectiveDependencies(spec.pkg) {
+		for _, dep := range packageBuildDependencies(spec.pkg) {
 			if _, inPlan := plan.byID[dep.ID]; inPlan {
 				plan.deps[id] = append(plan.deps[id], dep.ID)
 			}

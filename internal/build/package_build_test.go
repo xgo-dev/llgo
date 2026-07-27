@@ -64,7 +64,7 @@ func TestPackageBuildPlanReadyLevels(t *testing.T) {
 	}
 }
 
-func TestPackageBuildPlanIncludesAlternateDependencies(t *testing.T) {
+func TestPackageBuildPlanExcludesAlternateDependencies(t *testing.T) {
 	baseDep := planPackage("base")
 	altDep := planPackage("alt")
 	pkg := planPackage("pkg", baseDep.Package)
@@ -73,7 +73,7 @@ func TestPackageBuildPlanIncludesAlternateDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := plan.deps["pkg"], []string{"alt", "base"}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.deps["pkg"], []string{"base"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("plan dependencies = %v, want %v", got, want)
 	}
 }

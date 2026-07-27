@@ -44,3 +44,21 @@ func TestEffectiveDependenciesIncludesAlternateImports(t *testing.T) {
 		t.Fatalf("effectiveDependencies = %v, want %v", got, want)
 	}
 }
+
+func TestPackageBuildDependenciesExcludeAlternateImports(t *testing.T) {
+	base := &packages.Package{ID: "base"}
+	altOnly := &packages.Package{ID: "alt-only"}
+	alt := &packages.Package{ID: "patch/pkg", Imports: map[string]*packages.Package{"alt-only": altOnly}}
+	pkg := &aPackage{
+		Package: &packages.Package{ID: "pkg", Imports: map[string]*packages.Package{"base": base}},
+		AltPkg:  &packages.Cached{Package: alt},
+	}
+	deps := packageBuildDependencies(pkg)
+	got := make([]string, len(deps))
+	for i, dep := range deps {
+		got[i] = dep.ID
+	}
+	if want := []string{"base"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("packageBuildDependencies = %v, want %v", got, want)
+	}
+}

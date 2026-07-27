@@ -50,3 +50,25 @@ func effectiveDependencies(pkg *aPackage) []*packages.Package {
 	sort.Slice(ret, func(i, j int) bool { return ret[i].ID < ret[j].ID })
 	return ret
 }
+
+// packageBuildDependencies returns the true Go import edges for scheduler
+// ordering. Alternate-package imports still participate in cache fingerprints,
+// but may intentionally form cycles with the runtime replacement graph after
+// all packages have already been built into SSA.
+func packageBuildDependencies(pkg *aPackage) []*packages.Package {
+	if pkg == nil || pkg.Package == nil {
+		return nil
+	}
+	deps := make(map[string]*packages.Package, len(pkg.Imports))
+	for _, dep := range pkg.Imports {
+		if dep != nil && dep.ID != pkg.ID {
+			deps[dep.ID] = dep
+		}
+	}
+	ret := make([]*packages.Package, 0, len(deps))
+	for _, dep := range deps {
+		ret = append(ret, dep)
+	}
+	sort.Slice(ret, func(i, j int) bool { return ret[i].ID < ret[j].ID })
+	return ret
+}
