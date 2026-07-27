@@ -259,7 +259,7 @@ func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa
 	}
 	b.Store(argcVar.Expr, fn.Param(0))
 	b.Store(argvVar.Expr, fn.Param(1))
-	if IsStdioNobuf() {
+	if isEnvOnConfig(ctx.buildConf, llgoStdioNobuf, false) {
 		emitStdioNobuf(b, pkg, ctx.buildConf.Goos)
 	}
 	if fns.pyInit != nil {

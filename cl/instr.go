@@ -1481,16 +1481,8 @@ func (p *context) runtimeCallerFrameName() string {
 	return ""
 }
 
-// emitShadowStackInstrumentation gates the legacy shadow-stack calls
-// (PushCallerLocationFrame / RecordCallerLocation / RecordPanicLocation).
-// The FP-chain unwinder supersedes them: physical pcs resolve through the
-// prebuilt ftab and pcline labels, so tracked functions keep only noinline,
-// no-tail-call and the label records. The emitters stay for one release as
-// an escape hatch (LLGO_SHADOW_STACK=1).
-var emitShadowStackInstrumentation = os.Getenv("LLGO_SHADOW_STACK") == "1"
-
 func (p *context) pushCallerLocationFrame(b llssa.Builder, fn *ssa.Function) {
-	if !emitShadowStackInstrumentation {
+	if !p.frontendOptions().ShadowStack {
 		return
 	}
 	if fn == nil {
@@ -1516,7 +1508,7 @@ func (p *context) recordPanicLocation(b llssa.Builder, pos token.Pos) {
 }
 
 func (p *context) recordRuntimeLocation(b llssa.Builder, pos token.Pos, fn string) {
-	if !emitShadowStackInstrumentation || !p.shouldTrackCallerFrames() {
+	if !p.frontendOptions().ShadowStack || !p.shouldTrackCallerFrames() {
 		return
 	}
 	position := p.fset.Position(pos)

@@ -27,9 +27,9 @@ import (
 	"path/filepath"
 )
 
-func cmpTest(dir, pkgPath, llApp string, genExpect bool, runArgs []string) {
+func cmpTest(process processSnapshot, dir, pkgPath, llApp string, genExpect bool, runArgs []string) {
 	var llgoOut, llgoErr bytes.Buffer
-	var llgoRunErr = runApp(runArgs, dir, &llgoOut, &llgoErr, llApp)
+	var llgoRunErr = runApp(process, runArgs, dir, &llgoOut, &llgoErr, llApp)
 
 	llgoExpect := formatExpect(llgoOut.Bytes(), llgoErr.Bytes(), llgoRunErr)
 	llgoExpectFile := filepath.Join(dir, "llgo.expect")
@@ -50,7 +50,7 @@ func cmpTest(dir, pkgPath, llApp string, genExpect bool, runArgs []string) {
 	}
 
 	var goOut, goErr bytes.Buffer
-	var goRunErr = runApp(runArgs, dir, &goOut, &goErr, "go", "run", pkgPath)
+	var goRunErr = runApp(process, runArgs, dir, &goOut, &goErr, "go", "run", pkgPath)
 
 	checkEqual("output", llgoOut.Bytes(), goOut.Bytes())
 	checkEqual("stderr", llgoErr.Bytes(), goErr.Bytes())
@@ -91,7 +91,7 @@ func checkEqual(prompt string, a, expected []byte) {
 	fatal(errors.New("checkEqual: unexpected " + prompt))
 }
 
-func runApp(runArgs []string, dir string, stdout, stderr io.Writer, app string, args ...string) error {
+func runApp(process processSnapshot, runArgs []string, dir string, stdout, stderr io.Writer, app string, args ...string) error {
 	if len(runArgs) > 0 {
 		if len(args) > 0 {
 			args = append(args, runArgs...)
@@ -99,7 +99,7 @@ func runApp(runArgs []string, dir string, stdout, stderr io.Writer, app string, 
 			args = runArgs
 		}
 	}
-	cmd := exec.Command(app, args...)
+	cmd := process.command(app, args...)
 	cmd.Dir = dir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

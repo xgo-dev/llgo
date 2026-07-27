@@ -296,7 +296,7 @@ func (p *context) processLinknameByDoc(doc *ast.CommentGroup, fullName, inPkgNam
 		for n := len(doc.List) - 1; n >= 0; n-- {
 			line := doc.List[n].Text
 			ret := p.initLinkname(line, allowExport, func(name string, isExport bool) (_ string, _, ok bool) {
-				return fullName, isVar, name == inPkgName || (isExport && enableExportRename)
+				return fullName, isVar, name == inPkgName || (isExport && p.frontendOptions().ExportRename)
 			})
 			if ret != unknownDirective {
 				return ret == hasLinkname
@@ -370,7 +370,7 @@ func (p *context) initLink(line string, prefix int, export bool, f func(inPkgNam
 			}
 		} else {
 			// Export with different names already processed by initLinknameByDoc
-			if export && enableExportRename {
+			if export && p.frontendOptions().ExportRename {
 				return
 			}
 			if export {

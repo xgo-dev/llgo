@@ -15,6 +15,10 @@ var needSkipDownload = false
 // getLibcCompileConfigByName retrieves libc compilation configuration by name
 // Returns the actual libc output dir, compilation config and err
 func getLibcCompileConfigByName(baseDir, libcName, target, mcpu string) (outputDir string, cfg compile.CompileConfig, err error) {
+	return getLibcCompileConfigByNameWithProcess(baseDir, libcName, target, mcpu, currentProcessInputs())
+}
+
+func getLibcCompileConfigByNameWithProcess(baseDir, libcName, target, mcpu string, process processInputs) (outputDir string, cfg compile.CompileConfig, err error) {
 	if libcName == "" {
 		err = fmt.Errorf("libc name cannot be empty")
 		return
@@ -40,7 +44,7 @@ func getLibcCompileConfigByName(baseDir, libcName, target, mcpu string) (outputD
 		return libcDir, compileConfig, err
 	}
 
-	if err = checkDownloadAndExtractLib(config.Url, libcDir, config.ResourceSubDir); err != nil {
+	if err = checkDownloadAndExtractLibWithProcess(config.Url, libcDir, config.ResourceSubDir, process); err != nil {
 		return
 	}
 
@@ -50,6 +54,10 @@ func getLibcCompileConfigByName(baseDir, libcName, target, mcpu string) (outputD
 // getRTCompileConfigByName retrieves runtime library compilation configuration by name
 // Returns the actual libc output dir, compilation config and err
 func getRTCompileConfigByName(baseDir, rtName, target string) (outputDir string, cfg compile.CompileConfig, err error) {
+	return getRTCompileConfigByNameWithProcess(baseDir, rtName, target, currentProcessInputs())
+}
+
+func getRTCompileConfigByNameWithProcess(baseDir, rtName, target string, process processInputs) (outputDir string, cfg compile.CompileConfig, err error) {
 	if rtName == "" {
 		err = fmt.Errorf("rt name cannot be empty")
 		return
@@ -70,7 +78,7 @@ func getRTCompileConfigByName(baseDir, rtName, target string) (outputDir string,
 		return rtDir, compileConfig, err
 	}
 
-	if err = checkDownloadAndExtractLib(config.Url, rtDir, config.ResourceSubDir); err != nil {
+	if err = checkDownloadAndExtractLibWithProcess(config.Url, rtDir, config.ResourceSubDir, process); err != nil {
 		return
 	}
 

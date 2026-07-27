@@ -36,7 +36,9 @@ func runNative(ctx *context, app, pkgDir, pkgName string, conf *Config, mode Mod
 	case ModeRun:
 		args := make([]string, 0, len(conf.RunArgs)+1)
 		if isWasmTarget(conf.Goos) {
-			wasmer := os.ExpandEnv(WasmRuntime())
+			wasmer := os.Expand(WasmRuntimeForConfig(conf), func(key string) string {
+				return envConfigValue(conf, key)
+			})
 			wasmerArgs := strings.Split(wasmer, " ")
 			wasmerCmd := wasmerArgs[0]
 			wasmerArgs = wasmerArgs[1:]
@@ -59,7 +61,7 @@ func runNative(ctx *context, app, pkgDir, pkgName string, conf *Config, mode Mod
 		if conf.PrintCommands {
 			fmt.Fprintf(os.Stderr, "%s %s\n", app, strings.Join(args, " "))
 		}
-		cmd := exec.Command(app, args...)
+		cmd := ctx.process.command(app, args...)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -74,7 +76,7 @@ func runNative(ctx *context, app, pkgDir, pkgName string, conf *Config, mode Mod
 		if conf.PrintCommands {
 			fmt.Fprintf(os.Stderr, "%s %s\n", app, strings.Join(conf.RunArgs, " "))
 		}
-		cmd := exec.Command(app, conf.RunArgs...)
+		cmd := ctx.process.command(app, conf.RunArgs...)
 		cmd.Dir = pkgDir
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -92,12 +94,12 @@ func runNative(ctx *context, app, pkgDir, pkgName string, conf *Config, mode Mod
 			}
 		}
 	case ModeCmpTest:
-		cmpTest(pkgDir, pkgName, app, conf.GenExpect, conf.RunArgs)
+		cmpTest(ctx.process, pkgDir, pkgName, app, conf.GenExpect, conf.RunArgs)
 	}
 	return nil
 }
 
-func runInEmulator(emulator string, envMap map[string]string, pkgDir, pkgName string, conf *Config, mode Mode, verbose bool) error {
+func runInEmulator(ctx *context, emulator string, envMap map[string]string, pkgDir, pkgName string, conf *Config, mode Mode, verbose bool) error {
 	// Skip execution if CompileOnly is true
 	if conf.CompileOnly {
 		return nil
@@ -112,18 +114,18 @@ func runInEmulator(emulator string, envMap map[string]string, pkgDir, pkgName st
 
 	switch mode {
 	case ModeRun:
-		return runEmuCmd(envMap, emulator, conf.RunArgs, verbose, conf.PrintCommands)
+		return runEmuCmd(ctx.process, envMap, emulator, conf.RunArgs, verbose, conf.PrintCommands)
 	case ModeTest:
-		return runEmuCmd(envMap, emulator, conf.RunArgs, verbose, conf.PrintCommands)
+		return runEmuCmd(ctx.process, envMap, emulator, conf.RunArgs, verbose, conf.PrintCommands)
 	case ModeCmpTest:
-		cmpTest(pkgDir, pkgName, envMap["out"], conf.GenExpect, conf.RunArgs)
+		cmpTest(ctx.process, pkgDir, pkgName, envMap["out"], conf.GenExpect, conf.RunArgs)
 		return nil
 	}
 	return nil
 }
 
 // runEmuCmd runs the application in emulator by formatting the emulator command template
-func runEmuCmd(envMap map[string]string, emulatorTemplate string, runArgs []string, verbose bool, printCmds bool) error {
+func runEmuCmd(process processSnapshot, envMap map[string]string, emulatorTemplate string, runArgs []string, verbose bool, printCmds bool) error {
 	// Expand the emulator command template
 	emulatorCmd := emulatorTemplate
 	for placeholder, path := range envMap {
@@ -156,7 +158,7 @@ func runEmuCmd(envMap map[string]string, emulatorTemplate string, runArgs []stri
 	}
 
 	// Execute the emulator command
-	cmd := exec.Command(cmdParts[0], cmdParts[1:]...)
+	cmd := process.command(cmdParts[0], cmdParts[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

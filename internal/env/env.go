@@ -81,7 +81,11 @@ func LLGoCacheDir() string {
 }
 
 func LLGoRuntimeDir() string {
-	root := LLGoROOT()
+	return LLGoRuntimeDirWithEnv(nil)
+}
+
+func LLGoRuntimeDirWithEnv(environ []string) string {
+	root := LLGoROOTWithEnv(environ)
 	if root != "" {
 		return filepath.Join(root, LLGoRuntimePkgName)
 	}
@@ -89,7 +93,11 @@ func LLGoRuntimeDir() string {
 }
 
 func LLGoROOT() string {
-	llgoRootEnv := os.Getenv("LLGO_ROOT")
+	return LLGoROOTWithEnv(nil)
+}
+
+func LLGoROOTWithEnv(environ []string) string {
+	llgoRootEnv := lookupEnv(environ, "LLGO_ROOT")
 	if llgoRootEnv != "" {
 		if root, ok := isLLGoRoot(llgoRootEnv); ok {
 			return root
@@ -123,6 +131,19 @@ func LLGoROOT() string {
 		if root, ok := isLLGoRoot(root); ok {
 			fmt.Fprintln(os.Stderr, "WARNING: Using LLGO root for devel: "+root)
 			return root
+		}
+	}
+	return ""
+}
+
+func lookupEnv(environ []string, key string) string {
+	if environ == nil {
+		return os.Getenv(key)
+	}
+	prefix := key + "="
+	for i := len(environ) - 1; i >= 0; i-- {
+		if strings.HasPrefix(environ[i], prefix) {
+			return strings.TrimPrefix(environ[i], prefix)
 		}
 	}
 	return ""
