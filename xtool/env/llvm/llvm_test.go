@@ -3,7 +3,9 @@
 package llvm
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -33,7 +35,7 @@ func TestNewWithEnvUsesExplicitToolchainEnvironment(t *testing.T) {
 	}
 }
 
-func TestNewWithEnvResolvesRelativePathFromWorkingDirectory(t *testing.T) {
+func TestNewWithEnvRejectsRelativePathFromWorkingDirectory(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
 	if err := os.Mkdir(binDir, 0o755); err != nil {
@@ -44,13 +46,13 @@ func TestNewWithEnvResolvesRelativePathFromWorkingDirectory(t *testing.T) {
 	writeExecutable(t, llvmConfig, "#!/bin/sh\nprintf 'bin\\n'\n")
 	writeExecutable(t, readelf, "#!/bin/sh\nexit 0\n")
 
-	env := NewWithEnv("", []string{"PATH=bin"}, dir)
+	env := NewWithEnv("", []string{"PATH=bin", "LLVM_CONFIG=/bin/false"}, dir)
 	cmd, err := env.Readelf("--version")
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, exec.ErrDot) {
+		t.Fatalf("Readelf error = %v, want exec.ErrDot", err)
 	}
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("Readelf did not resolve relative PATH from request directory: %v", err)
+	if cmd != nil {
+		t.Fatalf("Readelf command = %v, want nil", cmd)
 	}
 }
 

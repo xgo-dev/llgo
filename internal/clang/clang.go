@@ -173,13 +173,7 @@ func (c *Cmd) getenv(key string) string {
 	if c.Env == nil {
 		return os.Getenv(key)
 	}
-	prefix := key + "="
-	for i := len(c.Env) - 1; i >= 0; i-- {
-		if strings.HasPrefix(c.Env[i], prefix) {
-			return strings.TrimPrefix(c.Env[i], prefix)
-		}
-	}
-	return ""
+	return processenv.Get(c.Env, key)
 }
 
 // CheckLinkArgs validates linking arguments by attempting a test compile.

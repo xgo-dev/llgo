@@ -17,6 +17,7 @@
 package llvm
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -50,8 +51,8 @@ func defaultLLVMConfigBin(environ []string, dir string) string {
 	if bin != "" {
 		return bin
 	}
-	bin, _ = processenv.LookPath(environ, dir, "llvm-config")
-	if bin != "" {
+	bin, err := processenv.LookPath(environ, dir, "llvm-config")
+	if err == nil {
 		return bin
 	}
 
@@ -151,9 +152,11 @@ func (e *Env) toolPath(base string) (string, error) {
 	}
 	if tool, err := processenv.LookPath(e.environ, e.dir, base); err == nil {
 		return tool, nil
+	} else if errors.Is(err, exec.ErrDot) {
+		return "", err
 	}
-	if tool := searchToolInPath(e.environ, e.dir, base); tool != "" {
-		return tool, nil
+	if tool, err := searchToolInPath(e.environ, e.dir, base); tool != "" || err != nil {
+		return tool, err
 	}
 	return "", fmt.Errorf("%s not found", base)
 }
@@ -177,13 +180,20 @@ func searchTool(dir, base string) string {
 	return ""
 }
 
-func searchToolInPath(environ []string, workingDir, base string) string {
+func searchToolInPath(environ []string, workingDir, base string) (string, error) {
 	for _, dir := range filepath.SplitList(getenv(environ, "PATH")) {
+		if dir == "" {
+			dir = "."
+		}
+		relative := !filepath.IsAbs(dir)
 		if tool := searchTool(resolveDir(dir, workingDir), base); tool != "" {
-			return tool
+			if relative {
+				return tool, exec.ErrDot
+			}
+			return tool, nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 func (e *Env) command(path string, args ...string) *exec.Cmd {
@@ -201,13 +211,7 @@ func getenv(environ []string, key string) string {
 	if environ == nil {
 		return os.Getenv(key)
 	}
-	prefix := key + "="
-	for i := len(environ) - 1; i >= 0; i-- {
-		if strings.HasPrefix(environ[i], prefix) {
-			return strings.TrimPrefix(environ[i], prefix)
-		}
-	}
-	return ""
+	return processenv.Get(environ, key)
 }
 
 func isExecutable(path string) bool {

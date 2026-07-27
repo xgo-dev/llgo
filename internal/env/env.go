@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/goplus/llgo/internal/processenv"
 )
 
 const (
@@ -140,13 +142,7 @@ func lookupEnv(environ []string, key string) string {
 	if environ == nil {
 		return os.Getenv(key)
 	}
-	prefix := key + "="
-	for i := len(environ) - 1; i >= 0; i-- {
-		if strings.HasPrefix(environ[i], prefix) {
-			return strings.TrimPrefix(environ[i], prefix)
-		}
-	}
-	return ""
+	return processenv.Get(environ, key)
 }
 
 func isLLGoRoot(root string) (string, bool) {

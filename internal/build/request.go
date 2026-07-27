@@ -64,13 +64,7 @@ func snapshotProcess(req BuildRequest) (processSnapshot, error) {
 }
 
 func envValue(environ []string, key string) (string, bool) {
-	prefix := key + "="
-	for i := len(environ) - 1; i >= 0; i-- {
-		if strings.HasPrefix(environ[i], prefix) {
-			return strings.TrimPrefix(environ[i], prefix), true
-		}
-	}
-	return "", false
+	return processenv.Lookup(environ, key)
 }
 
 func withEnv(environ []string, values ...string) []string {
@@ -83,6 +77,7 @@ func withEnv(environ []string, values ...string) []string {
 	ret := make([]string, 0, len(environ)+len(values))
 	for _, value := range environ {
 		key, _, ok := strings.Cut(value, "=")
+		// Ignore malformed entries: exec.Cmd requires KEY=VALUE strings.
 		if _, replace := keys[key]; ok && replace {
 			continue
 		}

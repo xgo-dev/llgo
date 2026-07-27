@@ -78,13 +78,7 @@ func expandEnvWithCmd(s string, environ []string, dir string) (string, bool) {
 	getenv := os.Getenv
 	if environ != nil {
 		getenv = func(key string) string {
-			prefix := key + "="
-			for i := len(environ) - 1; i >= 0; i-- {
-				if strings.HasPrefix(environ[i], prefix) {
-					return strings.TrimPrefix(environ[i], prefix)
-				}
-			}
-			return ""
+			return processenv.Get(environ, key)
 		}
 	}
 	return strings.TrimSpace(os.Expand(expanded, getenv)), config

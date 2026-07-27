@@ -155,7 +155,6 @@ func EnableTrace(b bool) {
 }
 
 // EnableExportRename enables or disables //export with different C symbol names.
-// This is enabled when using -target flag for TinyGo compatibility.
 // Deprecated: pass Options to NewPackageExWithEmbedMetaOptions.
 func EnableExportRename(b bool) {
 	enableExportRename = b

@@ -12,18 +12,24 @@ import (
 // Get returns the last value for key, matching the convention used when an
 // exec.Cmd environment contains duplicate entries.
 func Get(environ []string, key string) string {
+	value, _ := Lookup(environ, key)
+	return value
+}
+
+// Lookup returns the last value for key and whether it was present.
+func Lookup(environ []string, key string) (string, bool) {
 	prefix := key + "="
 	for i := len(environ) - 1; i >= 0; i-- {
 		if strings.HasPrefix(environ[i], prefix) {
-			return strings.TrimPrefix(environ[i], prefix)
+			return strings.TrimPrefix(environ[i], prefix), true
 		}
 	}
-	return ""
+	return "", false
 }
 
 // Command constructs a command whose path lookup, environment and working
-// directory all come from the same snapshot. A nil environ preserves the
-// standard os/exec process-inheritance behavior.
+// directory all come from the same snapshot. A nil environ inherits the
+// process environment while still applying dir.
 func Command(environ []string, dir, name string, args ...string) *exec.Cmd {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
@@ -37,8 +43,9 @@ func Command(environ []string, dir, name string, args ...string) *exec.Cmd {
 	return cmd
 }
 
-// LookPath searches file using PATH from environ. Relative PATH entries are
-// interpreted from dir, which is where the resulting command will run.
+// LookPath searches file using PATH from environ. A match through a relative
+// PATH entry is resolved against dir but returned with exec.ErrDot, matching
+// the standard library safeguard against executing from a working directory.
 func LookPath(environ []string, dir, file string) (string, error) {
 	if environ == nil {
 		return exec.LookPath(file)
@@ -63,12 +70,16 @@ func LookPath(environ []string, dir, file string) (string, error) {
 		if pathDir == "" {
 			pathDir = "."
 		}
-		if !filepath.IsAbs(pathDir) && dir != "" {
+		relative := !filepath.IsAbs(pathDir)
+		if relative && dir != "" {
 			pathDir = filepath.Join(dir, pathDir)
 		}
 		for _, extension := range extensions {
 			candidate := filepath.Join(pathDir, file+extension)
 			if executable(candidate) {
+				if relative {
+					return candidate, exec.ErrDot
+				}
 				return candidate, nil
 			}
 		}

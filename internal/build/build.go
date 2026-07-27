@@ -2395,11 +2395,19 @@ func defaultEnv(env string, defVal string) string {
 }
 
 func isEnvOn(env string, defVal bool) bool {
-	envVal := strings.ToLower(os.Getenv(env))
-	if envVal == "" {
+	return parseEnvBool(os.Getenv(env), defVal)
+}
+
+func parseEnvBool(value string, defVal bool) bool {
+	if value == "" {
 		return defVal
 	}
-	return envVal == "1" || envVal == "true" || envVal == "on"
+	switch strings.ToLower(value) {
+	case "1", "true", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // cacheEnabled checks if build cache is enabled.
@@ -2419,12 +2427,7 @@ func isEnvOnConfig(conf *Config, key string, defVal bool) bool {
 	if !ok || value == "" {
 		return defVal
 	}
-	switch strings.ToLower(value) {
-	case "1", "true", "on":
-		return true
-	default:
-		return false
-	}
+	return parseEnvBool(value, defVal)
 }
 
 func envConfigValue(conf *Config, key string) string {
