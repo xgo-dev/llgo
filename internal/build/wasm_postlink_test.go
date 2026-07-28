@@ -29,6 +29,27 @@ import (
 	"github.com/goplus/llgo/internal/crosscompile"
 )
 
+func wasmPostLinkTestContext() *context {
+	return &context{
+		buildConf: &Config{LinkOptions: LinkOptions{DWARF: DWARFOmit}},
+		crossCompile: crosscompile.Export{
+			WasmPostLink: crosscompile.WasmPostLink{Asyncify: true},
+		},
+	}
+}
+
+func writeWasmOptTestTool(t *testing.T, dir, script string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("test helper uses a POSIX shell")
+	}
+	tool := filepath.Join(dir, "wasm-opt")
+	if err := os.WriteFile(tool, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return tool
+}
+
 func TestWasmPostLinkArgs(t *testing.T) {
 	target := &crosscompile.Export{WasmPostLink: crosscompile.WasmPostLink{Asyncify: true}}
 	if got, want := wasmPostLinkArgs(target, "in.wasm", "out.wasm", false),
@@ -68,10 +89,48 @@ func TestNeedsWasmPostLink(t *testing.T) {
 	}
 }
 
-func TestPostLinkWasmPublishesOutput(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("test helper uses a POSIX shell")
+func TestPrepareWasmLinkOutput(t *testing.T) {
+	dir := t.TempDir()
+	output := filepath.Join(dir, "app.wasm")
+	target := &crosscompile.Export{WasmPostLink: crosscompile.WasmPostLink{Asyncify: true}}
+
+	input, err := prepareWasmLinkOutput(&Config{BuildMode: BuildModeExe}, target, output)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if input == output || filepath.Dir(input) != dir {
+		t.Fatalf("temporary link output = %q, want a distinct file in %q", input, dir)
+	}
+	if _, err := os.Stat(input); err != nil {
+		t.Fatalf("temporary link output was not created: %v", err)
+	}
+	cleanupWasmLinkOutput(input, output)
+	if _, err := os.Stat(input); !os.IsNotExist(err) {
+		t.Fatalf("temporary link output remains after cleanup: %v", err)
+	}
+
+	if err := os.WriteFile(output, []byte("final"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	input, err = prepareWasmLinkOutput(&Config{BuildMode: BuildModeCArchive}, target, output)
+	if err != nil || input != output {
+		t.Fatalf("disabled post-link output = %q, %v; want %q, nil", input, err, output)
+	}
+	cleanupWasmLinkOutput(input, output)
+	if data, err := os.ReadFile(output); err != nil || string(data) != "final" {
+		t.Fatalf("cleanup removed final output: %q, %v", data, err)
+	}
+	if err := publishWasmLinkOutput(nil, output, output, false); err != nil {
+		t.Fatalf("disabled publish failed: %v", err)
+	}
+
+	missingOutput := filepath.Join(dir, "missing", "app.wasm")
+	if _, err := prepareWasmLinkOutput(&Config{BuildMode: BuildModeExe}, target, missingOutput); err == nil {
+		t.Fatal("prepareWasmLinkOutput succeeded with a missing output directory")
+	}
+}
+
+func TestPostLinkWasmPublishesOutput(t *testing.T) {
 	dir := t.TempDir()
 	input := filepath.Join(dir, "linked.wasm")
 	output := filepath.Join(dir, "app.wasm")
@@ -80,42 +139,34 @@ func TestPostLinkWasmPublishesOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := filepath.Join(dir, "wasm-opt")
 	script := `#!/bin/sh
 printf '%s\n' "$@" > "$ARGS_FILE"
-input=
-output=
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o)
-      output="$2"
-      shift 2
-      ;;
-    -*)
-      shift
-      ;;
-    *)
-      input="$1"
-      shift
-      ;;
-  esac
-done
-cp "$input" "$output"
+cp "$3" "$5"
 `
-	if err := os.WriteFile(tool, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("WASMOPT", tool)
+	tool := writeWasmOptTestTool(t, dir, script)
+	t.Setenv("WASMOPT", "")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("ARGS_FILE", argsFile)
 
-	ctx := &context{
-		buildConf: &Config{Mode: ModeBuild, LinkOptions: LinkOptions{DWARF: DWARFOmit}},
-		crossCompile: crosscompile.Export{
-			WasmPostLink: crosscompile.WasmPostLink{Asyncify: true},
-		},
-	}
-	if err := postLinkWasm(ctx, input, output, false); err != nil {
+	ctx := wasmPostLinkTestContext()
+	stderr, err := os.CreateTemp(dir, "stderr")
+	if err != nil {
 		t.Fatal(err)
+	}
+	oldStderr := os.Stderr
+	os.Stderr = stderr
+	t.Cleanup(func() { os.Stderr = oldStderr })
+
+	if err := publishWasmLinkOutput(ctx, input, output, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := stderr.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(stderr.Name()); err != nil ||
+		!strings.Contains(string(got), tool) ||
+		!strings.Contains(string(got), "--asyncify") {
+		t.Fatalf("verbose command = %q, %v", got, err)
 	}
 	if data, err := os.ReadFile(output); err != nil || string(data) != "core module" {
 		t.Fatalf("published output = %q, %v", data, err)
@@ -130,16 +181,69 @@ cp "$input" "$output"
 	}
 }
 
+func TestPostLinkWasmReportsToolFailure(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "linked.wasm")
+	output := filepath.Join(dir, "app.wasm")
+	if err := os.WriteFile(input, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(output, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tool := writeWasmOptTestTool(t, dir, "#!/bin/sh\nexit 7\n")
+	t.Setenv("WASMOPT", tool)
+
+	ctx := wasmPostLinkTestContext()
+	err := postLinkWasm(ctx, input, output, false)
+	if err == nil || !strings.Contains(err.Error(), "wasm-opt Asyncify failed") {
+		t.Fatalf("postLinkWasm() error = %v", err)
+	}
+	if data, err := os.ReadFile(output); err != nil || string(data) != "old" {
+		t.Fatalf("failed post-link changed final output: %q, %v", data, err)
+	}
+}
+
+func TestPostLinkWasmReportsPublishFailure(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "linked.wasm")
+	output := filepath.Join(dir, "existing-directory")
+	if err := os.WriteFile(input, []byte("core module"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(output, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\ncp \"$3\" \"$5\"\n"
+	tool := writeWasmOptTestTool(t, dir, script)
+	t.Setenv("WASMOPT", tool)
+
+	ctx := wasmPostLinkTestContext()
+	err := postLinkWasm(ctx, input, output, false)
+	if err == nil {
+		t.Fatal("postLinkWasm succeeded when the final output was a directory")
+	}
+	if strings.Contains(err.Error(), "wasm-opt Asyncify failed") {
+		t.Fatalf("postLinkWasm failed before publishing output: %v", err)
+	}
+}
+
 func TestPostLinkWasmReportsMissingTool(t *testing.T) {
 	t.Setenv("WASMOPT", filepath.Join(t.TempDir(), "missing-wasm-opt"))
-	ctx := &context{
-		buildConf: &Config{},
-		crossCompile: crosscompile.Export{
-			WasmPostLink: crosscompile.WasmPostLink{Asyncify: true},
-		},
-	}
+	ctx := wasmPostLinkTestContext()
 	err := postLinkWasm(ctx, "input", filepath.Join(t.TempDir(), "output"), false)
 	if err == nil || !strings.Contains(err.Error(), "install Binaryen or set WASMOPT") {
 		t.Fatalf("postLinkWasm() error = %v", err)
+	}
+}
+
+func TestPostLinkWasmReportsInvalidOutputDirectory(t *testing.T) {
+	dir := t.TempDir()
+	tool := writeWasmOptTestTool(t, dir, "")
+	t.Setenv("WASMOPT", tool)
+	ctx := wasmPostLinkTestContext()
+	err := postLinkWasm(ctx, "input", filepath.Join(dir, "missing", "output"), false)
+	if err == nil {
+		t.Fatal("postLinkWasm succeeded with a missing output directory")
 	}
 }

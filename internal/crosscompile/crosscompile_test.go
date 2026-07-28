@@ -205,6 +205,19 @@ func TestUseWASIThreadsImportsMemory(t *testing.T) {
 	}
 }
 
+func TestUseWASILTOEnablesSjLjAtLink(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires WASI SDK")
+	}
+	export, err := use("wasip1", "wasm", false, false, optlevel.O2, lto.Thin, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(export.LDFLAGS, "-Wl,--mllvm=-wasm-enable-sjlj") {
+		t.Fatalf("LDFLAGS do not enable Wasm SjLj for LTO: %v", export.LDFLAGS)
+	}
+}
+
 func TestUseJSSupportsNode(t *testing.T) {
 	export, err := use("js", "wasm", false, false, optlevel.Oz, lto.Off, false)
 	if err != nil {

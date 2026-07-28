@@ -1442,26 +1442,15 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 	}
 	linkArgs = append(linkArgs, cSharedExportArgs(ctx, linkedOrder)...)
 
-	linkOutput := outputPath
-	if needsWasmPostLink(ctx.buildConf, &ctx.crossCompile) {
-		tmp, err := os.CreateTemp(filepath.Dir(outputPath), "."+filepath.Base(outputPath)+".linked-*")
-		if err != nil {
-			return err
-		}
-		linkOutput = tmp.Name()
-		if err := tmp.Close(); err != nil {
-			os.Remove(linkOutput)
-			return err
-		}
-		defer os.Remove(linkOutput)
+	linkOutput, err := prepareWasmLinkOutput(ctx.buildConf, &ctx.crossCompile, outputPath)
+	if err != nil {
+		return err
 	}
+	defer cleanupWasmLinkOutput(linkOutput, outputPath)
 	if err := linkObjFiles(ctx, linkOutput, linkInputs, linkArgs, verbose); err != nil {
 		return err
 	}
-	if linkOutput != outputPath {
-		return postLinkWasm(ctx, linkOutput, outputPath, verbose)
-	}
-	return nil
+	return publishWasmLinkOutput(ctx, linkOutput, outputPath, verbose)
 }
 
 func linkedPackageMetas(pkgs []Package) []*meta.PackageMeta {

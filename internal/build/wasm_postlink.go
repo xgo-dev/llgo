@@ -46,6 +46,42 @@ func wasmPostLinkArgs(target *crosscompile.Export, input, output string, debug b
 	return append(args, input, "-o", output)
 }
 
+func prepareWasmLinkOutput(conf *Config, target *crosscompile.Export, output string) (string, error) {
+	if !needsWasmPostLink(conf, target) {
+		return output, nil
+	}
+	return createClosedTemp(
+		filepath.Dir(output),
+		"."+filepath.Base(output)+".linked-*",
+	)
+}
+
+func cleanupWasmLinkOutput(input, output string) {
+	if input != output {
+		os.Remove(input)
+	}
+}
+
+func publishWasmLinkOutput(ctx *context, input, output string, verbose bool) error {
+	if input == output {
+		return nil
+	}
+	return postLinkWasm(ctx, input, output, verbose)
+}
+
+func createClosedTemp(dir, pattern string) (string, error) {
+	tmp, err := os.CreateTemp(dir, pattern)
+	if err != nil {
+		return "", err
+	}
+	name := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		os.Remove(name)
+		return "", err
+	}
+	return name, nil
+}
+
 func postLinkWasm(ctx *context, input, output string, verbose bool) error {
 	wasmOpt := os.Getenv("WASMOPT")
 	if wasmOpt == "" {
@@ -56,14 +92,11 @@ func postLinkWasm(ctx *context, input, output string, verbose bool) error {
 		return fmt.Errorf("WebAssembly Asyncify requires wasm-opt; install Binaryen or set WASMOPT: %w", err)
 	}
 
-	outDir := filepath.Dir(output)
-	tmp, err := os.CreateTemp(outDir, "."+filepath.Base(output)+".wasm-opt-*")
+	tmpName, err := createClosedTemp(
+		filepath.Dir(output),
+		"."+filepath.Base(output)+".wasm-opt-*",
+	)
 	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
 		return err
 	}
 	defer os.Remove(tmpName)
