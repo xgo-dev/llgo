@@ -1001,6 +1001,9 @@ func TestSaveToCache_Success(t *testing.T) {
 	// Check cache was created
 	cm := ctx.ensureCacheManager()
 	paths := cm.PackagePaths("arm64-apple-darwin", "example.com/lib", "def456")
+	if pkg.ArchiveFile != paths.Archive {
+		t.Fatalf("ArchiveFile = %q, want stable cache path %q", pkg.ArchiveFile, paths.Archive)
+	}
 
 	// Check manifest contains original content and metadata in Package section
 	content, err := readManifest(paths.Manifest)
