@@ -81,6 +81,68 @@ func TestResolveBuildConfigDoesNotAliasInput(t *testing.T) {
 	}
 }
 
+func TestResolveBuildConfigDefaultsAndValidation(t *testing.T) {
+	if got := (*Config)(nil).clone(); got != nil {
+		t.Fatalf("nil Config clone = %#v", got)
+	}
+	if _, err := resolveBuildConfig(nil); err == nil {
+		t.Fatal("nil build config succeeded")
+	}
+
+	resolved, err := resolveBuildConfig(&Config{
+		BuildMode:    BuildModeCArchive,
+		DeadcodeDrop: true,
+		SizeReport:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.DeadcodeDrop {
+		t.Fatal("non-executable build retained dead-code dropping")
+	}
+	if resolved.SizeFormat != "text" || resolved.SizeLevel != "module" {
+		t.Fatalf("size report defaults = %q, %q", resolved.SizeFormat, resolved.SizeLevel)
+	}
+	if _, err := resolveBuildConfig(&Config{SizeReport: true, SizeLevel: "invalid"}); err == nil {
+		t.Fatal("invalid size-reporting level succeeded")
+	}
+
+	if got := (*Config)(nil).llgoRuntimeDir(); got != "" {
+		t.Fatalf("nil runtime dir = %q", got)
+	}
+	if got := (&Config{}).llgoRuntimeDir(); got != "" {
+		t.Fatalf("empty-root runtime dir = %q", got)
+	}
+}
+
+func TestBuildHelpersUseResolvedRequestConfiguration(t *testing.T) {
+	conf := &Config{environment: []string{llgoWasmRuntime + "=request-wasm"}}
+	if got := WasmRuntimeForConfig(conf); got != "request-wasm" {
+		t.Fatalf("WasmRuntimeForConfig = %q", got)
+	}
+	if got := WasmRuntimeForConfig(&Config{environment: []string{}}); got != defaultWasmRuntime {
+		t.Fatalf("default WasmRuntimeForConfig = %q", got)
+	}
+
+	root := t.TempDir()
+	ctx := &context{
+		buildConf:    &Config{llgoRoot: root},
+		crossCompile: crosscompile.Export{ExtraFiles: []string{"missing.c"}},
+	}
+	if _, err := compileExtraFiles(ctx, false); err == nil {
+		t.Fatal("missing extra file succeeded")
+	}
+
+	parent := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(parent, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx.buildConf.BuildMode = BuildModeExe
+	if err := linkObjFiles(ctx, filepath.Join(parent, "app"), nil, nil, false); err == nil {
+		t.Fatal("output below regular file succeeded")
+	}
+}
+
 func TestResolveBuildConfigUsesExplicitEnvironment(t *testing.T) {
 	t.Setenv(llgoFuncInfo, "0")
 	t.Setenv(llgoTrace, "0")

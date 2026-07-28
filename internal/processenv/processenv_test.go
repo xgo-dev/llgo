@@ -25,6 +25,15 @@ func TestCaptureClonesExplicitInputs(t *testing.T) {
 	if got := process.Abs("out.o"); got != filepath.Join(workDir, "out.o") {
 		t.Fatalf("Abs(out.o) = %q", got)
 	}
+	if got := process.Abs(""); got != "" {
+		t.Fatalf("Abs(empty) = %q", got)
+	}
+	if got := process.Abs(workDir); got != workDir {
+		t.Fatalf("Abs(absolute) = %q", got)
+	}
+	if got, ok := process.Lookup("KEY"); !ok || got != "value" {
+		t.Fatalf("Lookup(KEY) = %q, %v, want value, true", got, ok)
+	}
 
 	clone := process.Clone()
 	clone.Env[0] = "KEY=clone"

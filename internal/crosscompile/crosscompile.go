@@ -725,15 +725,6 @@ func Use(goos, goarch, targetName string, wasiThreads, forceEspClang bool, level
 	return UseWithContext(goos, goarch, targetName, wasiThreads, forceEspClang, level, ltoMode, goGlobalDCE, processenv.Context{}, env.LLGoROOT())
 }
 
-// UseWithEnv selects a toolchain using explicit process inputs. Download and
-// cache operations remain protected by their existing cross-process locks.
-func UseWithEnv(goos, goarch, targetName string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool, environ []string, dir, llgoRoot string) (export Export, err error) {
-	return UseWithContext(goos, goarch, targetName, wasiThreads, forceEspClang, level, ltoMode, goGlobalDCE, processenv.Context{
-		Env: environ,
-		Dir: dir,
-	}, llgoRoot)
-}
-
 // UseWithContext selects a toolchain using explicit process context. Download
 // and cache operations remain protected by their existing cross-process locks.
 func UseWithContext(goos, goarch, targetName string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool, process processenv.Context, llgoRoot string) (export Export, err error) {
