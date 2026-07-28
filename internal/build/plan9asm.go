@@ -407,7 +407,7 @@ func pkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 	}
 	args = append(args, pkg.PkgPath)
 
-	cmd := ctx.process.command("go", args...)
+	cmd := ctx.process.Command("go", args...)
 	// Resolve dependencies from the module or workspace used by packages.Load.
 	// A dependency directory in the module cache may not contain a go.mod.
 	if ctx.conf != nil {

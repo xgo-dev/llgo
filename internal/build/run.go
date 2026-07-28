@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/goplus/llgo/internal/mockable"
+	"github.com/goplus/llgo/internal/processenv"
 	"github.com/goplus/llgo/internal/shellparse"
 )
 
@@ -61,7 +62,7 @@ func runNative(ctx *context, app, pkgDir, pkgName string, conf *Config, mode Mod
 		if conf.PrintCommands {
 			fmt.Fprintf(os.Stderr, "%s %s\n", app, strings.Join(args, " "))
 		}
-		cmd := ctx.process.command(app, args...)
+		cmd := ctx.process.Command(app, args...)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -76,7 +77,7 @@ func runNative(ctx *context, app, pkgDir, pkgName string, conf *Config, mode Mod
 		if conf.PrintCommands {
 			fmt.Fprintf(os.Stderr, "%s %s\n", app, strings.Join(conf.RunArgs, " "))
 		}
-		cmd := ctx.process.command(app, conf.RunArgs...)
+		cmd := ctx.process.Command(app, conf.RunArgs...)
 		cmd.Dir = pkgDir
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -125,7 +126,7 @@ func runInEmulator(ctx *context, emulator string, envMap map[string]string, pkgD
 }
 
 // runEmuCmd runs the application in emulator by formatting the emulator command template
-func runEmuCmd(process processSnapshot, envMap map[string]string, emulatorTemplate string, runArgs []string, verbose bool, printCmds bool) error {
+func runEmuCmd(process processenv.Context, envMap map[string]string, emulatorTemplate string, runArgs []string, verbose bool, printCmds bool) error {
 	// Expand the emulator command template
 	emulatorCmd := emulatorTemplate
 	for placeholder, path := range envMap {
@@ -158,7 +159,7 @@ func runEmuCmd(process processSnapshot, envMap map[string]string, emulatorTempla
 	}
 
 	// Execute the emulator command
-	cmd := process.command(cmdParts[0], cmdParts[1:]...)
+	cmd := process.Command(cmdParts[0], cmdParts[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

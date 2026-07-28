@@ -18,10 +18,10 @@ import (
 
 // checkDownloadAndExtractWasiSDK downloads and extracts WASI SDK
 func checkDownloadAndExtractWasiSDK(dir string) (wasiSdkRoot string, err error) {
-	return checkDownloadAndExtractWasiSDKWithProcess(dir, currentProcessInputs())
+	return checkDownloadAndExtractWasiSDKWithContext(dir, processenv.Context{})
 }
 
-func checkDownloadAndExtractWasiSDKWithProcess(dir string, process processInputs) (wasiSdkRoot string, err error) {
+func checkDownloadAndExtractWasiSDKWithContext(dir string, process processenv.Context) (wasiSdkRoot string, err error) {
 	wasiSdkRoot = filepath.Join(dir, wasiMacosSubdir)
 
 	// Check if already exists
@@ -42,16 +42,16 @@ func checkDownloadAndExtractWasiSDKWithProcess(dir string, process processInputs
 		return wasiSdkRoot, nil
 	}
 
-	err = downloadAndExtractArchiveWithProcess(wasiSdkUrl, dir, "WASI SDK", process)
+	err = downloadAndExtractArchiveWithContext(wasiSdkUrl, dir, "WASI SDK", process)
 	return wasiSdkRoot, err
 }
 
 // checkDownloadAndExtractESPClang downloads and extracts ESP Clang binaries and libraries
 func checkDownloadAndExtractESPClang(platformSuffix, dir string) error {
-	return checkDownloadAndExtractESPClangWithProcess(platformSuffix, dir, currentProcessInputs())
+	return checkDownloadAndExtractESPClangWithContext(platformSuffix, dir, processenv.Context{})
 }
 
-func checkDownloadAndExtractESPClangWithProcess(platformSuffix, dir string, process processInputs) error {
+func checkDownloadAndExtractESPClangWithContext(platformSuffix, dir string, process processenv.Context) error {
 	// Check if already exists
 	if _, err := os.Stat(dir); err == nil {
 		return nil
@@ -75,7 +75,7 @@ func checkDownloadAndExtractESPClangWithProcess(platformSuffix, dir string, proc
 
 	// Use temporary extraction directory for ESP Clang special handling
 	tempExtractDir := dir + ".extract"
-	if err := downloadAndExtractArchiveWithProcess(clangUrl, tempExtractDir, description, process); err != nil {
+	if err := downloadAndExtractArchiveWithContext(clangUrl, tempExtractDir, description, process); err != nil {
 		return err
 	}
 	defer os.RemoveAll(tempExtractDir)
@@ -90,10 +90,10 @@ func checkDownloadAndExtractESPClangWithProcess(platformSuffix, dir string, proc
 }
 
 func checkDownloadAndExtractLib(url, dstDir, internalArchiveSrcDir string) error {
-	return checkDownloadAndExtractLibWithProcess(url, dstDir, internalArchiveSrcDir, currentProcessInputs())
+	return checkDownloadAndExtractLibWithContext(url, dstDir, internalArchiveSrcDir, processenv.Context{})
 }
 
-func checkDownloadAndExtractLibWithProcess(url, dstDir, internalArchiveSrcDir string, process processInputs) error {
+func checkDownloadAndExtractLibWithContext(url, dstDir, internalArchiveSrcDir string, process processenv.Context) error {
 	// Check if already exists
 	if _, err := os.Stat(dstDir); err == nil {
 		return nil
@@ -117,7 +117,7 @@ func checkDownloadAndExtractLibWithProcess(url, dstDir, internalArchiveSrcDir st
 
 	// Use temporary extraction directory
 	tempExtractDir := dstDir + ".extract"
-	if err := downloadAndExtractArchiveWithProcess(url, tempExtractDir, description, process); err != nil {
+	if err := downloadAndExtractArchiveWithContext(url, tempExtractDir, description, process); err != nil {
 		return err
 	}
 	defer os.RemoveAll(tempExtractDir)
@@ -167,10 +167,10 @@ func releaseLock(lockFile *os.File) error {
 
 // downloadAndExtractArchive downloads and extracts an archive to the destination directory (without locking)
 func downloadAndExtractArchive(url, destDir, description string) error {
-	return downloadAndExtractArchiveWithProcess(url, destDir, description, currentProcessInputs())
+	return downloadAndExtractArchiveWithContext(url, destDir, description, processenv.Context{})
 }
 
-func downloadAndExtractArchiveWithProcess(url, destDir, description string, process processInputs) error {
+func downloadAndExtractArchiveWithContext(url, destDir, description string, process processenv.Context) error {
 	fmt.Fprintf(os.Stderr, "Downloading %s...\n", description)
 
 	// Use temporary extraction directory
@@ -197,7 +197,7 @@ func downloadAndExtractArchiveWithProcess(url, destDir, description string, proc
 			return fmt.Errorf("failed to extract %s archive: %w", description, err)
 		}
 	} else if strings.HasSuffix(filename, ".tar.xz") {
-		err := extractTarXzWithProcess(localFile, tempDir, process)
+		err := extractTarXzWithContext(localFile, tempDir, process)
 		if err != nil {
 			return fmt.Errorf("failed to extract %s archive: %w", description, err)
 		}
@@ -284,12 +284,12 @@ func extractTarGz(tarGzFile, dest string) error {
 }
 
 func extractTarXz(tarXzFile, dest string) error {
-	return extractTarXzWithProcess(tarXzFile, dest, currentProcessInputs())
+	return extractTarXzWithContext(tarXzFile, dest, processenv.Context{})
 }
 
-func extractTarXzWithProcess(tarXzFile, dest string, process processInputs) error {
+func extractTarXzWithContext(tarXzFile, dest string, process processenv.Context) error {
 	// Use external tar command to extract .tar.xz files
-	cmd := processenv.Command(process.environ, process.dir, "tar", "-xf", tarXzFile, "-C", dest)
+	cmd := process.Command("tar", "-xf", tarXzFile, "-C", dest)
 	return cmd.Run()
 }
 

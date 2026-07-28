@@ -1,11 +1,6 @@
 package build
 
 import (
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/goplus/llgo/internal/processenv"
@@ -21,46 +16,14 @@ type BuildRequest struct {
 	Env    []string
 }
 
-type processSnapshot struct {
-	Dir string
-	Env []string
-}
-
-func (p processSnapshot) command(name string, args ...string) *exec.Cmd {
-	return processenv.Command(p.Env, p.Dir, name, args...)
-}
-
-func (p processSnapshot) path(path string) string {
-	if path == "" || filepath.IsAbs(path) {
-		return path
-	}
-	return filepath.Join(p.Dir, path)
-}
-
-func (p processSnapshot) resolveOutputs(out *OutFmtDetails) {
-	out.Out = p.path(out.Out)
-	out.PCLN = p.path(out.PCLN)
-	out.Bin = p.path(out.Bin)
-	out.Hex = p.path(out.Hex)
-	out.Img = p.path(out.Img)
-	out.Uf2 = p.path(out.Uf2)
-	out.Zip = p.path(out.Zip)
-}
-
-func snapshotProcess(req BuildRequest) (processSnapshot, error) {
-	dir := req.Dir
-	if dir == "" {
-		var err error
-		dir, err = os.Getwd()
-		if err != nil {
-			return processSnapshot{}, fmt.Errorf("get working directory: %w", err)
-		}
-	}
-	env := slices.Clone(req.Env)
-	if req.Env == nil {
-		env = os.Environ()
-	}
-	return processSnapshot{Dir: dir, Env: env}, nil
+func resolveOutputs(process processenv.Context, out *OutFmtDetails) {
+	out.Out = process.Abs(out.Out)
+	out.PCLN = process.Abs(out.PCLN)
+	out.Bin = process.Abs(out.Bin)
+	out.Hex = process.Abs(out.Hex)
+	out.Img = process.Abs(out.Img)
+	out.Uf2 = process.Abs(out.Uf2)
+	out.Zip = process.Abs(out.Zip)
 }
 
 func envValue(environ []string, key string) (string, bool) {

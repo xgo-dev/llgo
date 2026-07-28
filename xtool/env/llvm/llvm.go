@@ -22,7 +22,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 
@@ -47,16 +46,20 @@ const (
 // checks the LLVM_CONFIG environment variable first, then searches in PATH. If
 // not found, it returns [ldLLVMConfigBin] as a last resort.
 func defaultLLVMConfigBin(environ []string, dir string) string {
-	bin := getenv(environ, "LLVM_CONFIG")
+	return defaultLLVMConfigBinWithContext(processenv.Context{Env: environ, Dir: dir})
+}
+
+func defaultLLVMConfigBinWithContext(process processenv.Context) string {
+	bin := process.Get("LLVM_CONFIG")
 	if bin != "" {
 		return bin
 	}
-	bin, err := processenv.LookPath(environ, dir, "llvm-config")
+	bin, err := process.LookPath("llvm-config")
 	if err == nil {
 		return bin
 	}
 
-	llgoRoot := env.LLGoROOTWithEnv(environ)
+	llgoRoot := env.LLGoROOTWithEnv(process.Env)
 	// Check LLGO_ROOT/crosscompile/clang for llvm-config
 	crossLLVMConfigBin := filepath.Join(llgoRoot, CrosscompileClangPath, "bin", "llvm-config")
 	if _, err := os.Stat(crossLLVMConfigBin); err == nil {
@@ -70,8 +73,7 @@ func defaultLLVMConfigBin(environ []string, dir string) string {
 // Env represents an LLVM installation.
 type Env struct {
 	binDir  string
-	environ []string
-	dir     string
+	process processenv.Context
 }
 
 // New creates a new [Env] instance.
@@ -88,16 +90,21 @@ func NewWithEnv(llvmConfigBin string, environ []string, dirs ...string) *Env {
 	if len(dirs) != 0 {
 		dir = dirs[0]
 	}
+	return NewWithContext(llvmConfigBin, processenv.Context{Env: environ, Dir: dir})
+}
+
+// NewWithContext creates an Env using one request execution context.
+func NewWithContext(llvmConfigBin string, process processenv.Context) *Env {
 	if llvmConfigBin == "" {
-		llvmConfigBin = defaultLLVMConfigBin(environ, dir)
+		llvmConfigBin = defaultLLVMConfigBinWithContext(process)
 	}
 
 	// Note that an empty binDir is acceptable. In this case, LLVM
 	// executables are assumed to be in PATH.
-	cmd := processenv.Command(environ, dir, llvmConfigBin, "--bindir")
+	cmd := process.Command(llvmConfigBin, "--bindir")
 	binDir, _ := cmd.Output()
 
-	e := &Env{binDir: strings.TrimSpace(string(binDir)), environ: slices.Clone(environ), dir: dir}
+	e := &Env{binDir: strings.TrimSpace(string(binDir)), process: process.Clone()}
 	return e
 }
 
@@ -147,15 +154,15 @@ func (e *Env) Readelf(args ...string) (*exec.Cmd, error) {
 }
 
 func (e *Env) toolPath(base string) (string, error) {
-	if tool := searchTool(resolveDir(e.binDir, e.dir), base); tool != "" {
+	if tool := searchTool(resolveDir(e.binDir, e.process.Dir), base); tool != "" {
 		return tool, nil
 	}
-	if tool, err := processenv.LookPath(e.environ, e.dir, base); err == nil {
+	if tool, err := e.process.LookPath(base); err == nil {
 		return tool, nil
 	} else if errors.Is(err, exec.ErrDot) {
 		return "", err
 	}
-	if tool, err := searchToolInPath(e.environ, e.dir, base); tool != "" || err != nil {
+	if tool, err := searchToolInPath(e.process, base); tool != "" || err != nil {
 		return tool, err
 	}
 	return "", fmt.Errorf("%s not found", base)
@@ -180,13 +187,13 @@ func searchTool(dir, base string) string {
 	return ""
 }
 
-func searchToolInPath(environ []string, workingDir, base string) (string, error) {
-	for _, dir := range filepath.SplitList(getenv(environ, "PATH")) {
+func searchToolInPath(process processenv.Context, base string) (string, error) {
+	for _, dir := range filepath.SplitList(process.Get("PATH")) {
 		if dir == "" {
 			dir = "."
 		}
 		relative := !filepath.IsAbs(dir)
-		if tool := searchTool(resolveDir(dir, workingDir), base); tool != "" {
+		if tool := searchTool(resolveDir(dir, process.Dir), base); tool != "" {
 			if relative {
 				return tool, exec.ErrDot
 			}
@@ -197,7 +204,7 @@ func searchToolInPath(environ []string, workingDir, base string) (string, error)
 }
 
 func (e *Env) command(path string, args ...string) *exec.Cmd {
-	return processenv.Command(e.environ, e.dir, path, args...)
+	return e.process.Command(path, args...)
 }
 
 func resolveDir(dir, workingDir string) string {
@@ -205,13 +212,6 @@ func resolveDir(dir, workingDir string) string {
 		return dir
 	}
 	return filepath.Join(workingDir, dir)
-}
-
-func getenv(environ []string, key string) string {
-	if environ == nil {
-		return os.Getenv(key)
-	}
-	return processenv.Get(environ, key)
 }
 
 func isExecutable(path string) bool {

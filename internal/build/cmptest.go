@@ -25,9 +25,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/goplus/llgo/internal/processenv"
 )
 
-func cmpTest(process processSnapshot, dir, pkgPath, llApp string, genExpect bool, runArgs []string) {
+func cmpTest(process processenv.Context, dir, pkgPath, llApp string, genExpect bool, runArgs []string) {
 	var llgoOut, llgoErr bytes.Buffer
 	var llgoRunErr = runApp(process, runArgs, dir, &llgoOut, &llgoErr, llApp)
 
@@ -91,7 +93,7 @@ func checkEqual(prompt string, a, expected []byte) {
 	fatal(errors.New("checkEqual: unexpected " + prompt))
 }
 
-func runApp(process processSnapshot, runArgs []string, dir string, stdout, stderr io.Writer, app string, args ...string) error {
+func runApp(process processenv.Context, runArgs []string, dir string, stdout, stderr io.Writer, app string, args ...string) error {
 	if len(runArgs) > 0 {
 		if len(args) > 0 {
 			args = append(args, runArgs...)
@@ -99,7 +101,7 @@ func runApp(process processSnapshot, runArgs []string, dir string, stdout, stder
 			args = runArgs
 		}
 	}
-	cmd := process.command(app, args...)
+	cmd := process.Command(app, args...)
 	cmd.Dir = dir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

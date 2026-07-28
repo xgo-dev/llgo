@@ -58,6 +58,7 @@ import (
 	"github.com/goplus/llgo/internal/packages"
 	"github.com/goplus/llgo/internal/pclnmap"
 	"github.com/goplus/llgo/internal/pclnpost"
+	"github.com/goplus/llgo/internal/processenv"
 	"github.com/goplus/llgo/internal/typepatch"
 	"github.com/goplus/llgo/ssa/abi"
 	xenv "github.com/goplus/llgo/xtool/env"
@@ -385,17 +386,17 @@ func Do(args []string, conf *Config) ([]Package, error) {
 // command-line callers are snapshotted once before any package or toolchain
 // work begins.
 func Build(req BuildRequest) ([]Package, error) {
-	snapshot, err := snapshotProcess(req)
+	process, err := processenv.Capture(req.Dir, req.Env)
 	if err != nil {
 		return nil, err
 	}
-	conf, err := resolveBuildConfig(req.Config, snapshot.Env)
+	conf, err := resolveBuildConfig(req.Config, process.Env)
 	if err != nil {
 		return nil, err
 	}
 	// Handle crosscompile configuration first to set correct GOOS/GOARCH
 	forceEspClang := conf.ForceEspClang || conf.Target != ""
-	export, err := crosscompile.UseWithEnv(conf.Goos, conf.Goarch, conf.Target, isEnvOnConfig(conf, llgoWasiThreads, false), forceEspClang, conf.OptLevel, conf.ltoMode(), conf.goGlobalDCEEnabled(), snapshot.Env, snapshot.Dir, conf.llgoRoot)
+	export, err := crosscompile.UseWithContext(conf.Goos, conf.Goarch, conf.Target, isEnvOnConfig(conf, llgoWasiThreads, false), forceEspClang, conf.OptLevel, conf.ltoMode(), conf.goGlobalDCEEnabled(), process, conf.llgoRoot)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup crosscompile: %w", err)
 	}
@@ -433,10 +434,10 @@ func Build(req BuildRequest) ([]Package, error) {
 	cfg := &packages.Config{
 		Mode:       loadSyntax | packages.NeedDeps | packages.NeedModule | packages.NeedExportFile,
 		BuildFlags: goBuildFlags,
-		Dir:        snapshot.Dir,
+		Dir:        process.Dir,
 		Fset:       token.NewFileSet(),
 		Tests:      conf.Mode == ModeTest,
-		Env:        withEnv(snapshot.Env, "GOOS="+conf.Goos, "GOARCH="+conf.Goarch),
+		Env:        withEnv(process.Env, "GOOS="+conf.Goos, "GOARCH="+conf.Goarch),
 	}
 	if conf.Mode == ModeTest {
 		cfg.Mode |= packages.NeedForTest
@@ -616,7 +617,7 @@ func Build(req BuildRequest) ([]Package, error) {
 	patches := make(cl.Patches, len(altPkgPaths))
 	altSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
 
-	env := llvm.NewWithEnv("", snapshot.Env, snapshot.Dir)
+	env := llvm.NewWithContext("", process)
 
 	output := conf.OutFile != ""
 	ctx := &context{env: env, conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
@@ -629,7 +630,7 @@ func Build(req BuildRequest) ([]Package, error) {
 		passOpt:         passOpt,
 		buildConf:       conf,
 		crossCompile:    export,
-		process:         snapshot,
+		process:         process,
 		frontendOptions: frontendOptions,
 		cTransformer:    cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, conf.AbiMode, cabiOptimize),
 	}
@@ -672,7 +673,7 @@ func Build(req BuildRequest) ([]Package, error) {
 			if err != nil {
 				return nil, err
 			}
-			ctx.process.resolveOutputs(outFmts)
+			resolveOutputs(ctx.process, outFmts)
 
 			// Link main package using the output path from buildOutFmts
 			err = linkMainPkg(ctx, pkg, allPkgs, outFmts.Out, verbose)
@@ -889,7 +890,7 @@ type context struct {
 
 	buildConf       *Config
 	crossCompile    crosscompile.Export
-	process         processSnapshot
+	process         processenv.Context
 	frontendOptions cl.Options
 
 	cTransformer *cabi.Transformer
@@ -1685,7 +1686,7 @@ func (c *context) createMergedArchiveFile(archivePath string, inputs []string, v
 	if err != nil {
 		return err
 	}
-	cmd := c.process.command(arCmd, "-M")
+	cmd := c.process.Command(arCmd, "-M")
 	cmd.Stdin = strings.NewReader(script.String())
 	printCmds := c.shouldPrintCommands(len(verbose) > 0 && verbose[0])
 	if printCmds {
@@ -1724,7 +1725,7 @@ func (c *context) createArchiveFile(archivePath string, objFiles []string, verbo
 
 	args := append([]string{"rcs", tmpName}, objFiles...)
 	arCmd := c.archiver()
-	cmd := c.process.command(arCmd, args...)
+	cmd := c.process.Command(arCmd, args...)
 	printCmds := c.shouldPrintCommands(len(verbose) > 0 && verbose[0])
 	if printCmds {
 		fmt.Fprintf(os.Stderr, "%s %s\n", filepath.Base(arCmd), strings.Join(args, " "))
@@ -2050,7 +2051,7 @@ func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data
 
 func llcCheck(ctx *context, exportFile string) (msg string, err error) {
 	bin := filepath.Join(ctx.env.BinDir(), "llc")
-	cmd := ctx.process.command(bin, "-filetype=null", exportFile)
+	cmd := ctx.process.Command(bin, "-filetype=null", exportFile)
 	var buf bytes.Buffer
 	cmd.Stderr = &buf
 	if err = cmd.Run(); err != nil {
