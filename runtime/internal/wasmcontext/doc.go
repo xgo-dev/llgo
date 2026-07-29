@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
-// Package wasmcontext provides suspended execution contexts for WebAssembly
-// runtime schedulers.
+// Package wasmcontext owns suspended WebAssembly execution contexts and their
+// backend-specific storage. Runtime schedulers provide root-aware allocation
+// callbacks during context creation and do not inspect the resulting buffers.
 package wasmcontext

@@ -28,10 +28,18 @@ type Entry = emscripten.FiberEntry
 
 // Context wraps the Emscripten Fiber ABI used by JavaScript hosts.
 type Context struct {
-	fiber emscripten.Fiber
+	fiber         emscripten.Fiber
+	stack         unsafe.Pointer
+	asyncifyStack unsafe.Pointer
 }
 
-func (ctx *Context) Init(entry Entry, arg, stack unsafe.Pointer, stackSize uintptr, asyncifyStack unsafe.Pointer, asyncifyStackSize uintptr) {
+func (ctx *Context) Init(entry Entry, arg unsafe.Pointer, stackSize uintptr, alloc func(uintptr) unsafe.Pointer, free func(unsafe.Pointer)) bool {
+	stack, stackSize, asyncifyStack, asyncifySize, ok := allocStorage(stackSize, alloc, free)
+	if !ok {
+		return false
+	}
+	ctx.stack = stack
+	ctx.asyncifyStack = asyncifyStack
 	emscripten.FiberInit(
 		&ctx.fiber,
 		entry,
@@ -39,12 +47,28 @@ func (ctx *Context) Init(entry Entry, arg, stack unsafe.Pointer, stackSize uintp
 		stack,
 		stackSize,
 		asyncifyStack,
-		asyncifyStackSize,
+		asyncifySize,
 	)
+	return true
 }
 
-func (ctx *Context) InitCurrent(asyncifyStack unsafe.Pointer, asyncifyStackSize uintptr) {
-	emscripten.FiberInitCurrent(&ctx.fiber, asyncifyStack, asyncifyStackSize)
+func (ctx *Context) InitCurrent(alloc func(uintptr) unsafe.Pointer) bool {
+	asyncifyStack := alloc(defaultAsyncifyStackSize)
+	if asyncifyStack == nil {
+		return false
+	}
+	ctx.asyncifyStack = asyncifyStack
+	emscripten.FiberInitCurrent(&ctx.fiber, asyncifyStack, defaultAsyncifyStackSize)
+	return true
+}
+
+func (ctx *Context) Ready() bool {
+	return ctx.asyncifyStack != nil
+}
+
+func (ctx *Context) Close(free func(unsafe.Pointer)) {
+	freeStorage(ctx.stack, ctx.asyncifyStack, free)
+	*ctx = Context{}
 }
 
 func (ctx *Context) Swap(next *Context) {

@@ -1,4 +1,4 @@
-//go:build llgo && js && wasm
+//go:build llgo && wasm && (js || wasip1)
 
 package runtime
 

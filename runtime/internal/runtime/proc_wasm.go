@@ -25,17 +25,10 @@ import (
 	"github.com/goplus/llgo/runtime/internal/wasmcontext"
 )
 
-const (
-	defaultWasmGStackSize        = 64 << 10
-	defaultWasmAsyncifyStackSize = 64 << 10
-)
-
 type runtimeContextPlatform struct {
-	context       wasmcontext.Context
-	stack         unsafe.Pointer
-	asyncifyStack unsafe.Pointer
-	runqNext      *g
-	runqQueued    bool
+	context    wasmcontext.Context
+	runqNext   *g
+	runqQueued bool
 }
 
 var wasmSched struct {
@@ -44,22 +37,6 @@ var wasmSched struct {
 	runq    runqueue.Queue[*g]
 	retired *runtimeContext
 	started bool
-}
-
-func (gp *g) RunqueueNext() *g {
-	return gp.context.platform.runqNext
-}
-
-func (gp *g) SetRunqueueNext(next *g) {
-	gp.context.platform.runqNext = next
-}
-
-func (gp *g) RunqueueQueued() bool {
-	return gp.context.platform.runqQueued
-}
-
-func (gp *g) SetRunqueueQueued(queued bool) {
-	gp.context.platform.runqQueued = queued
 }
 
 func initRuntimeContext(ctx *runtimeContext, callergp *g, status uint32) *g {
@@ -100,57 +77,24 @@ func newprocBackend(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, cal
 }
 
 func initWasmFiber(gp *g, stackSize uintptr) bool {
-	if stackSize == 0 {
-		stackSize = defaultWasmGStackSize
-	}
-	stackSize = alignWasmStackSize(stackSize)
-	asyncifySize := uintptr(defaultWasmAsyncifyStackSize)
-	if stackSize > asyncifySize {
-		asyncifySize = stackSize
-	}
-
 	platform := &gp.context.platform
-	platform.stack = AllocRoot(stackSize)
-	if platform.stack == nil {
-		return false
-	}
-	platform.asyncifyStack = AllocRoot(asyncifySize)
-	if platform.asyncifyStack == nil {
-		FreeRoot(platform.stack)
-		platform.stack = nil
-		return false
-	}
-	platform.context.Init(
+	return platform.context.Init(
 		wasmcontext.Entry(wasmGStart),
 		unsafe.Pointer(gp),
-		platform.stack,
 		stackSize,
-		platform.asyncifyStack,
-		asyncifySize,
+		AllocRoot,
+		FreeRoot,
 	)
-	return true
-}
-
-func alignWasmStackSize(size uintptr) uintptr {
-	const alignment = uintptr(16)
-	return (size + alignment - 1) &^ (alignment - 1)
-}
-
-func allocWasmStack(size uintptr) unsafe.Pointer {
-	stack := AllocRoot(size)
-	if stack == nil {
-		panic("runtime: failed to allocate WebAssembly goroutine stack")
-	}
-	return stack
 }
 
 func ensureCurrentWasmFiber(gp *g) {
-	platform := &gp.context.platform
-	if platform.asyncifyStack != nil {
+	context := &gp.context.platform.context
+	if context.Ready() {
 		return
 	}
-	platform.asyncifyStack = allocWasmStack(defaultWasmAsyncifyStackSize)
-	platform.context.InitCurrent(platform.asyncifyStack, defaultWasmAsyncifyStackSize)
+	if !context.InitCurrent(AllocRoot) {
+		panic("runtime: failed to allocate WebAssembly goroutine stack")
+	}
 }
 
 func wasmGStart(arg unsafe.Pointer) {
@@ -210,7 +154,7 @@ func resumeWasmG(old, next *g) {
 		return
 	}
 	ensureCurrentWasmFiber(old)
-	if next.context.platform.asyncifyStack == nil {
+	if !next.context.platform.context.Ready() {
 		fatal("runtime: uninitialized WebAssembly goroutine context")
 		return
 	}
@@ -264,15 +208,7 @@ func reapRetiredWasmG() {
 		return
 	}
 	wasmSched.retired = nil
-	platform := &ctx.platform
-	if platform.stack != nil {
-		FreeRoot(platform.stack)
-		platform.stack = nil
-	}
-	if platform.asyncifyStack != nil {
-		FreeRoot(platform.asyncifyStack)
-		platform.asyncifyStack = nil
-	}
+	ctx.platform.context.Close(FreeRoot)
 	freeRuntimeContext(ctx)
 }
 
