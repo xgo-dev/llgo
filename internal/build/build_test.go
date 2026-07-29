@@ -32,6 +32,7 @@ import (
 	"github.com/goplus/llgo/internal/mockable"
 	"github.com/goplus/llgo/internal/packages"
 	llssa "github.com/goplus/llgo/ssa"
+	"github.com/goplus/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -43,6 +44,24 @@ func TestMain(m *testing.M) {
 	cacheRootFunc = old
 	_ = os.RemoveAll(td)
 	os.Exit(code)
+}
+
+func TestLockRewriteMainPrefixRestoresDefault(t *testing.T) {
+	pkg := types.NewPackage("example.com/main", "main")
+	func() {
+		unlock := lockRewriteMainPrefix(true)
+		defer unlock()
+		if got := abi.PathOf(pkg); got != "main" {
+			t.Fatalf("PathOf() with rewrite enabled = %q, want main", got)
+		}
+	}()
+	func() {
+		unlock := lockRewriteMainPrefix(false)
+		defer unlock()
+		if got := abi.PathOf(pkg); got != "example.com/main" {
+			t.Fatalf("PathOf() after rewrite release = %q, want example.com/main", got)
+		}
+	}()
 }
 
 func TestResolveBuildConfigDoesNotAliasInput(t *testing.T) {
