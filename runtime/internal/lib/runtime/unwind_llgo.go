@@ -244,10 +244,6 @@ func callersWithPanicSplice(skip int, pc []uintptr) int {
 	return copy(pc, view[skip:])
 }
 
-func hasPrefix(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
-}
-
 // panicTraceback prints a Go-style stack trace for an unrecovered panic:
 // one "function(...)" line plus an indented file:line per physical frame,
 // matching the shape of runtime.Stack and gc's panic output. Reports false
