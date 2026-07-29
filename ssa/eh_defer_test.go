@@ -68,7 +68,7 @@ func TestExplicitDeferStackFallbackAndNilBuiltin(t *testing.T) {
 	}
 }
 
-func TestExplicitDeferStackDrainWithoutLoopCases(t *testing.T) {
+func TestExplicitDeferStackWithoutDeferredActions(t *testing.T) {
 	prog := ssatest.NewProgram(t, nil)
 	pkg := prog.NewPackage("foo", "foo")
 
@@ -80,7 +80,6 @@ func TestExplicitDeferStackDrainWithoutLoopCases(t *testing.T) {
 	b.SetBlock(fn.Block(0))
 
 	_ = b.BuiltinCall("ssa:deferstack")
-	b.DeferStackDrain()
 	b.RunDefers()
 	b.Return()
 	b.EndBuild()

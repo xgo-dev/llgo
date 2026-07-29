@@ -591,6 +591,7 @@ func (p Function) endDefer(b Builder) {
 			b.Jump(rethNext)
 		}
 	}
+	// With no defer statements, the loop does not position the builder.
 	if n == 0 {
 		b.SetBlockEx(procBlk, AtEnd, true)
 	}
