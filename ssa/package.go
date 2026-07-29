@@ -320,6 +320,7 @@ func NewProgram(target *Target) Program {
 		debugInfoOptimized: target.effectiveOptLevel() != optlevel.O0,
 	}
 	prog.abi.Init(uintptr(prog.ptrSize), (*goProgram)(unsafe.Pointer(prog)))
+	prog.abi.Namer.RewriteMainPrefix = target.RewriteMainPrefix
 	return prog
 }
 
@@ -393,7 +394,7 @@ func (p Program) isNoInterfaceMethod(fn *types.Func) bool {
 	if !ok || sig.Recv() == nil {
 		return false
 	}
-	_, ok = p.noInterface[FuncName(fn.Pkg(), fn.Name(), sig.Recv(), true)]
+	_, ok = p.noInterface[p.FuncName(fn.Pkg(), fn.Name(), sig.Recv(), true)]
 	return ok
 }
 
@@ -892,7 +893,7 @@ func (p Package) MaterializePreserveSyms() {
 func (p Package) rtFunc(fnName string) Expr {
 	p.NeedRuntime = true
 	fn := p.Prog.runtime().Scope().Lookup(fnName).(*types.Func)
-	name := FullName(fn.Pkg(), fnName)
+	name := p.Prog.FullName(fn.Pkg(), fnName)
 	if p.fnlink != nil {
 		name = p.fnlink(name)
 	}

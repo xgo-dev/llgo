@@ -214,7 +214,7 @@ func (b Builder) abiInterfaceImethods(t *types.Interface, name string) llvm.Valu
 			var values []llvm.Value
 			name := f.Name()
 			if !token.IsExported(name) {
-				name = abi.FullName(f.Pkg(), name)
+				name = prog.FullName(f.Pkg(), name)
 			}
 			values = append(values, b.Str(name).impl)
 			ftyp := funcType(prog, f.Type())
@@ -320,7 +320,7 @@ func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value)
 		for i := 0; i < n; i++ {
 			if f := t.Field(i); !f.Exported() {
 				if pkg := f.Pkg(); pkg != nil {
-					pkgPath = reflectPkgPath(pkg)
+					pkgPath = prog.reflectPkgPath(pkg)
 					break
 				}
 			}
@@ -405,19 +405,19 @@ retry:
 		goto retry
 	case *types.Named:
 		pkg := typ.Obj().Pkg()
-		return pkg, reflectPkgPath(pkg)
+		return pkg, b.Prog.reflectPkgPath(pkg)
 	}
 	return nil, b.Pkg.Path()
 }
 
-func reflectPkgPath(pkg *types.Package) string {
+func (p Program) reflectPkgPath(pkg *types.Package) string {
 	if pkg == nil {
 		return ""
 	}
 	if pkg.Path() == "command-line-arguments" && pkg.Name() != "" {
 		return pkg.Name()
 	}
-	return abi.PathOf(pkg)
+	return p.PathOf(pkg)
 }
 
 func (b Builder) abiUncommonMethodSet(t types.Type) (mset *types.MethodSet, ok bool) {
@@ -498,7 +498,7 @@ func (b Builder) abiUncommonMethods(t types.Type, methods []*types.Selection) ll
 		m := methods[i]
 		obj := m.Obj()
 		mName := obj.Name()
-		fullName := abiMethodName(obj)
+		fullName := prog.abiMethodName(obj)
 		name := b.Str(fullName).impl
 		mSig := m.Type().(*types.Signature)
 		var tfn, ifn llvm.Value
@@ -546,12 +546,12 @@ func funcType(prog Program, typ types.Type) types.Type {
 	return ftyp.raw.Type.(*types.Struct).Field(0).Type()
 }
 
-func abiMethodName(obj types.Object) string {
+func (p Program) abiMethodName(obj types.Object) string {
 	name := obj.Name()
 	if token.IsExported(name) {
 		return name
 	}
-	return abi.FullName(obj.Pkg(), name)
+	return p.FullName(obj.Pkg(), name)
 }
 
 func methodExprSignature(sig *types.Signature) *types.Signature {
@@ -572,9 +572,9 @@ func methodExprSignature(sig *types.Signature) *types.Signature {
 func (b Builder) abiMethodFunc(anonymous bool, mPkg *types.Package, mName string, mSig *types.Signature) Function {
 	var fullName string
 	if anonymous {
-		fullName = b.Pkg.Path() + "." + types.TypeString(mSig.Recv().Type(), abi.PathOf) + "." + mName
+		fullName = b.Pkg.Path() + "." + types.TypeString(mSig.Recv().Type(), b.Prog.PathOf) + "." + mName
 	} else {
-		fullName = FuncName(mPkg, mName, mSig.Recv(), false)
+		fullName = b.Prog.FuncName(mPkg, mName, mSig.Recv(), false)
 	}
 	if b.Pkg.fnlink != nil {
 		fullName = b.Pkg.fnlink(fullName)

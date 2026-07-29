@@ -88,7 +88,7 @@ func (p *context) prepareExportedLocalContext(f *ssa.Function) {
 	if !p.prog.NeedsLocalContext() || f == nil || f.Pkg == nil {
 		return
 	}
-	fullName := funcName(f.Pkg.Pkg, f, false)
+	fullName := funcNameWithProgram(p.prog, f.Pkg.Pkg, f, false)
 	if _, exported := p.pkg.ExportFuncs()[fullName]; !exported {
 		return
 	}
@@ -185,7 +185,7 @@ func (p *context) localTypesPackage(fullName string) *types.Package {
 		if pkg == nil {
 			return false
 		}
-		prefix := llssa.PathOf(pkg) + "."
+		prefix := p.prog.PathOf(pkg) + "."
 		if !strings.HasPrefix(fullName, prefix) {
 			return false
 		}

@@ -429,8 +429,6 @@ func Build(inv Invocation) ([]Package, error) {
 	if conf.Mode == ModeTest {
 		cfg.Mode |= packages.NeedForTest
 	}
-	abi.SetRewriteMainPrefix(conf.RewriteMainPrefix)
-
 	emitDebugInfo := shouldEmitDebugInfo(conf, &export)
 	frontendOptions := cl.Options{
 		Debug:        emitDebugInfo,
@@ -444,10 +442,11 @@ func Build(inv Invocation) ([]Package, error) {
 	})
 
 	target := &llssa.Target{
-		GOOS:     conf.Goos,
-		GOARCH:   conf.Goarch,
-		Target:   conf.Target,
-		OptLevel: conf.OptLevel,
+		GOOS:              conf.Goos,
+		GOARCH:            conf.Goarch,
+		Target:            conf.Target,
+		OptLevel:          conf.OptLevel,
+		RewriteMainPrefix: conf.RewriteMainPrefix,
 	}
 
 	prog := llssa.NewProgram(target)

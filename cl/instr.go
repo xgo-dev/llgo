@@ -1473,7 +1473,7 @@ func (p *context) runtimeCallerFrameName() string {
 		return ""
 	}
 	if p.goFn != nil && p.goFn.Pkg != nil && p.goFn.Pkg.Pkg != nil {
-		return runtimeFrameName(funcName(p.goFn.Pkg.Pkg, p.goFn, false))
+		return runtimeFrameName(funcNameWithProgram(p.prog, p.goFn.Pkg.Pkg, p.goFn, false))
 	}
 	if p.fn != nil {
 		return runtimeFrameName(p.fn.Name())

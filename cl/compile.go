@@ -391,7 +391,7 @@ func (p *context) compileType(pkg llssa.Package, t *ssa.Type) {
 	}
 	tnName := tn.Name()
 	typ := tn.Type()
-	name := llssa.FullName(tn.Pkg(), tnName)
+	name := p.prog.FullName(tn.Pkg(), tnName)
 	dbgInstrln("==> NewType", name, typ)
 	p.compileMethods(pkg, typ)
 	p.compileMethods(pkg, types.NewPointer(typ))
@@ -612,7 +612,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		if p.prog.FuncInfoMetadataEnabled() {
 			goName := fn.Name()
 			if pkgTypes != nil {
-				goName = funcName(pkgTypes, f, false)
+				goName = funcNameWithProgram(p.prog, pkgTypes, f, false)
 			}
 			pos := p.funcInfoPosition(f)
 			pkg.EmitFuncInfo(fn.Name(), funcInfoDisplayName(pkgTypes, goName), pos.Filename, pos.Line, pos.Column)
@@ -2146,7 +2146,7 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 	pkgProg := pkg.Prog
 	pkgTypes := pkg.Pkg
 	oldTypes := pkgTypes
-	pkgName, pkgPath := pkgTypes.Name(), llssa.PathOf(pkgTypes)
+	pkgName, pkgPath := pkgTypes.Name(), prog.PathOf(pkgTypes)
 	patch, hasPatch := patches[pkgPath]
 	if hasPatch {
 		pkgTypes = patch.Types
@@ -2479,7 +2479,7 @@ func (p *context) typeArgName(t types.Type) string {
 	case *types.Named:
 		name := p.localNamedName(t, p.isLocalType(t.Obj()))
 		if pkg := t.Obj().Pkg(); pkg != nil {
-			return reflectTypeArgPkgPath(pkg) + "." + name
+			return p.reflectTypeArgPkgPath(pkg) + "." + name
 		}
 		return name
 	case *types.Pointer:
@@ -2500,7 +2500,7 @@ func (p *context) typeArgName(t types.Type) string {
 		}
 		return fmt.Sprintf("%s %s", s, elem)
 	default:
-		return types.TypeString(t, reflectTypeArgPkgPath)
+		return types.TypeString(t, p.reflectTypeArgPkgPath)
 	}
 }
 
@@ -2517,14 +2517,14 @@ func chanDirName(dir types.ChanDir) string {
 	}
 }
 
-func reflectTypeArgPkgPath(pkg *types.Package) string {
+func (p *context) reflectTypeArgPkgPath(pkg *types.Package) string {
 	if pkg == nil {
 		return ""
 	}
 	if pkg.Path() == "command-line-arguments" && pkg.Name() != "" {
 		return pkg.Name()
 	}
-	return llssa.PathOf(pkg)
+	return p.prog.PathOf(pkg)
 }
 
 func (p *context) isGenericLocalType(obj types.Object) bool {

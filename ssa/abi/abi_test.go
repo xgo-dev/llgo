@@ -413,15 +413,11 @@ func TestRewriteMainPrefix(t *testing.T) {
 	if path := abi.PathOf(pkg); path != "example.com/foo/pkg" {
 		t.Fatalf("error %v", path)
 	}
-	abi.SetRewriteMainPrefix(true)
-	if path := abi.PathOf(pkg); path != "main" {
+	namer := abi.Namer{RewriteMainPrefix: true}
+	if path := namer.PathOf(pkg); path != "main" {
 		t.Fatalf("error %v", path)
 	}
-	if path := (abi.Namer{}).PathOf(pkg); path != "example.com/foo/pkg" {
-		t.Fatalf("request namer inherited process setting: %v", path)
+	if path := abi.PathOf(pkg); path != "example.com/foo/pkg" {
+		t.Fatalf("default namer changed to %v", path)
 	}
-	if path := (abi.Namer{RewriteMainPrefix: true}).PathOf(pkg); path != "main" {
-		t.Fatalf("request namer did not rewrite main path: %v", path)
-	}
-	abi.SetRewriteMainPrefix(false)
 }

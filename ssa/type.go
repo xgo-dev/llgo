@@ -521,7 +521,7 @@ func (p Program) retType(raw *types.Signature) Type {
 }
 
 func (p Program) llvmNameOf(named *types.Named) (name string) {
-	name = NameOf(named)
+	name = p.NameOf(named)
 	if obj := named.Obj(); obj != nil {
 		parent := obj.Parent()
 		pkg := obj.Pkg()
@@ -634,9 +634,18 @@ func NameOf(typ *types.Named) string {
 	return abi.FullName(typ.Obj().Pkg(), abi.NamedName(typ))
 }
 
+func (p Program) NameOf(typ *types.Named) string {
+	namer := p.namer()
+	return namer.FullName(typ.Obj().Pkg(), namer.NamedName(typ))
+}
+
 // FullName returns the full name of a package member.
 func FullName(pkg *types.Package, name string) string {
 	return abi.FullName(pkg, name)
+}
+
+func (p Program) FullName(pkg *types.Package, name string) string {
+	return p.namer().FullName(pkg, name)
 }
 
 // PathOf returns the package path of the specified package.
@@ -644,10 +653,22 @@ func PathOf(pkg *types.Package) string {
 	return abi.PathOf(pkg)
 }
 
+func (p Program) PathOf(pkg *types.Package) string {
+	return p.namer().PathOf(pkg)
+}
+
 // FuncName:
 // - func: pkg.name
 // - method: pkg.T.name, pkg.(*T).name
 func FuncName(pkg *types.Package, name string, recv *types.Var, org bool) string {
+	return funcName(abi.Namer{}, pkg, name, recv, org)
+}
+
+func (p Program) FuncName(pkg *types.Package, name string, recv *types.Var, org bool) string {
+	return funcName(p.namer(), pkg, name, recv, org)
+}
+
+func funcName(namer abi.Namer, pkg *types.Package, name string, recv *types.Var, org bool) string {
 	if recv != nil {
 		named, ptr := recvNamed(recv.Type())
 		var tName string
@@ -655,18 +676,17 @@ func FuncName(pkg *types.Package, name string, recv *types.Var, org bool) string
 			if org {
 				tName = named.Obj().Name()
 			} else {
-				tName = abi.NamedName(named)
+				tName = namer.NamedName(named)
 			}
 			if ptr {
 				tName = "(*" + tName + ")"
 			}
 		} else {
-			tName = types.TypeString(recv.Type(), PathOf)
+			tName = types.TypeString(recv.Type(), namer.PathOf)
 		}
-		return PathOf(pkg) + "." + tName + "." + name
+		return namer.PathOf(pkg) + "." + tName + "." + name
 	}
-	ret := FullName(pkg, name)
-	return ret
+	return namer.FullName(pkg, name)
 }
 
 func recvNamed(t types.Type) (typ *types.Named, ptr bool) {
@@ -687,6 +707,17 @@ retry:
 
 func TypeArgs(typeArgs []types.Type) string {
 	return abi.TypeArgs(typeArgs)
+}
+
+func (p Program) TypeArgs(typeArgs []types.Type) string {
+	return p.namer().TypeArgs(typeArgs)
+}
+
+func (p Program) namer() abi.Namer {
+	if p == nil {
+		return abi.Namer{}
+	}
+	return p.abi.Namer
 }
 
 // -----------------------------------------------------------------------------

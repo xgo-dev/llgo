@@ -168,6 +168,58 @@ func TestInvocationUsesExplicitWorkingDirectory(t *testing.T) {
 	pkgs[0].LPkg.Prog.Dispose()
 }
 
+func TestConcurrentInvocationsIsolateRewriteMainPrefix(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/rewrite\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc F() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(llgoBuildCache, "0")
+
+	type result struct {
+		rewrite bool
+		pkgs    []Package
+		err     error
+	}
+	results := make(chan result, 2)
+	for _, rewrite := range []bool{false, true} {
+		conf := NewDefaultConf(ModeGen)
+		conf.RewriteMainPrefix = rewrite
+		go func() {
+			pkgs, err := Build(Invocation{
+				Args:   []string{"."},
+				Config: conf,
+				Dir:    dir,
+			})
+			results <- result{rewrite: rewrite, pkgs: pkgs, err: err}
+		}()
+	}
+	var built []result
+	for range 2 {
+		got := <-results
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		if len(got.pkgs) != 1 || got.pkgs[0].LPkg == nil {
+			t.Fatalf("Build returned packages = %+v, want one compiled package", got.pkgs)
+		}
+		t.Cleanup(got.pkgs[0].LPkg.Prog.Dispose)
+		built = append(built, got)
+	}
+	for _, got := range built {
+		ir := got.pkgs[0].LPkg.String()
+		want, notWant := "example.com/rewrite.F", "main.F"
+		if got.rewrite {
+			want, notWant = notWant, want
+		}
+		if !strings.Contains(ir, want) || strings.Contains(ir, notWant) {
+			t.Fatalf("RewriteMainPrefix=%v produced unexpected symbols; want %q and not %q:\n%s", got.rewrite, want, notWant, ir)
+		}
+	}
+}
+
 func TestResolveOutputsUsesInvocationDirectory(t *testing.T) {
 	dir := t.TempDir()
 	out := &OutFmtDetails{

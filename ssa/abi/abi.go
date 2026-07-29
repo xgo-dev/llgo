@@ -135,6 +135,7 @@ type Builder struct {
 	buf     []byte
 	PtrSize uintptr
 	Sizes   types.Sizes
+	Namer   Namer
 }
 
 // New creates a new ABI type Builder.
@@ -172,7 +173,7 @@ func (b *Builder) TypeName(t types.Type) (ret string, pub bool) {
 		o := t.Obj()
 		pkg := o.Pkg()
 		ids := scopeIndices(o)
-		return "_llgo_" + FullName(pkg, NamedName(t)+ids), (pkg == nil || o.Exported() && ids == "")
+		return "_llgo_" + b.Namer.FullName(pkg, b.Namer.NamedName(t)+ids), (pkg == nil || o.Exported() && ids == "")
 	case *types.Interface:
 		if t.Empty() {
 			return "_llgo_any", true
@@ -220,7 +221,7 @@ func (n Namer) NamedName(t *types.Named) string {
 }
 
 func NamedName(t *types.Named) string {
-	return processNamer().NamedName(t)
+	return (Namer{}).NamedName(t)
 }
 
 func (n Namer) TypeArgs(typeArgs []types.Type) string {
@@ -232,7 +233,7 @@ func (n Namer) TypeArgs(typeArgs []types.Type) string {
 }
 
 func TypeArgs(typeArgs []types.Type) string {
-	return processNamer().TypeArgs(typeArgs)
+	return (Namer{}).TypeArgs(typeArgs)
 }
 
 func (n Namer) namedLikeTypeArgString(obj types.Object, targs *types.TypeList) string {
@@ -255,7 +256,7 @@ func (n Namer) namedLikeTypeArgString(obj types.Object, targs *types.TypeList) s
 }
 
 func namedLikeTypeArgString(obj types.Object, targs *types.TypeList) string {
-	return processNamer().namedLikeTypeArgString(obj, targs)
+	return (Namer{}).namedLikeTypeArgString(obj, targs)
 }
 
 func (n Namer) typeArgString(t types.Type) string {
@@ -294,25 +295,12 @@ func (n Namer) typeArgString(t types.Type) string {
 }
 
 func typeArgString(t types.Type) string {
-	return processNamer().typeArgString(t)
+	return (Namer{}).typeArgString(t)
 }
 
 const (
 	PatchPathPrefix = env.LLGoRuntimePkg + "/internal/lib/"
 )
-
-// SetRewriteMainPrefix controls whether symbols in the main package
-// use "main." as their package path prefix instead of the actual
-// import path. When true, pkgpath.sym is rewritten to main.sym.
-func SetRewriteMainPrefix(b bool) {
-	rewriteMainPrefix = b
-}
-
-var rewriteMainPrefix bool
-
-func processNamer() Namer {
-	return Namer{RewriteMainPrefix: rewriteMainPrefix}
-}
 
 // PathOf returns the package path of the specified package.
 func (n Namer) PathOf(pkg *types.Package) string {
@@ -326,7 +314,7 @@ func (n Namer) PathOf(pkg *types.Package) string {
 }
 
 func PathOf(pkg *types.Package) string {
-	return processNamer().PathOf(pkg)
+	return (Namer{}).PathOf(pkg)
 }
 
 // FullName returns the full name of a package member.
@@ -338,7 +326,7 @@ func (n Namer) FullName(pkg *types.Package, name string) string {
 }
 
 func FullName(pkg *types.Package, name string) string {
-	return processNamer().FullName(pkg, name)
+	return (Namer{}).FullName(pkg, name)
 }
 
 // BasicName returns the ABI type name for the specified basic type.
