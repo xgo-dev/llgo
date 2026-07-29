@@ -726,6 +726,51 @@ func TestCheckExpectedErrorsDiscardsExactParserPair(t *testing.T) {
 	}
 }
 
+func TestCheckExpectedErrorsDiscardsPairedDeclarationRecoveryDiagnostics(t *testing.T) {
+	tests := []struct {
+		name      string
+		source    string
+		line      int
+		primary   string
+		secondary string
+	}{
+		{
+			name:      "missing package clause",
+			source:    "func main() { // ERROR \"package\"\n}\n",
+			line:      1,
+			primary:   "expected 'package', found 'func'",
+			secondary: "expected ';', found '('",
+		},
+		{
+			name: "top-level composite literal",
+			source: `package p
+var x map[string]string{"a":"b"} // ERROR "unexpected { at end of statement|unexpected { after top level declaration|expected ';' or newline after top level declaration"
+`,
+			line:      2,
+			primary:   "syntax error: unexpected { after top level declaration",
+			secondary: "expected ';', found '{'",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "case.go")
+			if err := os.WriteFile(file, []byte(tt.source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			output := fmt.Sprintf("%s:%d: %s\n%s:%d: %s\n", file, tt.line, tt.primary, file, tt.line, tt.secondary)
+			if err := checkExpectedErrors(output, file, "case.go"); err != nil {
+				t.Fatal(err)
+			}
+			if err := checkExpectedErrors(fmt.Sprintf("%s:%d: %s\n", file, tt.line, tt.secondary), file, "case.go"); err == nil {
+				t.Fatal("secondary diagnostic passed without its primary")
+			}
+			if got := parserRecoverySecondaries(tt.primary + "."); got != nil {
+				t.Fatalf("near-match primary activated parser recovery: %v", got)
+			}
+		})
+	}
+}
+
 func TestCheckExpectedErrorsScopesImportAlias(t *testing.T) {
 	tests := []struct {
 		name, src string

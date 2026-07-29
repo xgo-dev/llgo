@@ -1662,6 +1662,10 @@ func parserRecoverySecondaries(primary string) []string {
 		return []string{"expected type, found '}'", "expected type, found ')'", "expected type, found ','"}
 	case "syntax error: else must be followed by if or statement block":
 		return []string{"expected if statement or block, found ';'"}
+	case "expected 'package', found 'func'":
+		return []string{"expected ';', found '('"}
+	case "syntax error: unexpected { after top level declaration":
+		return []string{"expected ';', found '{'"}
 	case "syntax error: unexpected newline in type declaration", "syntax error: unexpected EOF in type declaration":
 		return []string{"expected type, found newline"}
 	case "syntax error: unexpected newline in composite literal; possibly missing comma or }":

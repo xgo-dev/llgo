@@ -2103,10 +2103,6 @@ xfails:
     reason: gc-specific pragma optimization diagnostics are not implemented by llgo
   - version: go1.26
     directive: errorcheck
-    case: fixedbugs/bug050.go
-    reason: llgo parser emits an additional malformed-declaration diagnostic
-  - version: go1.26
-    directive: errorcheck
     case: devirt.go
     reason: gc-specific SSA devirtualization diagnostics are not implemented by llgo
   - version: go1.26
@@ -2309,10 +2305,6 @@ xfails:
     directive: errorcheck
     case: fixedbugs/issue34723.go
     reason: "not applicable: llgo's BDWGC and tinygogc runtimes do not use Go GC write barriers"
-  - version: go1.26
-    directive: errorcheck
-    case: syntax/vareq1.go
-    reason: llgo parser recovery emits an additional diagnostic after the expected syntax error
   - version: go1.26
     directive: errorcheck
     case: escape_bloop.go
