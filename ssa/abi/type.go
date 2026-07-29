@@ -120,7 +120,7 @@ func (b *Builder) reflectTypeArgBaseString(t types.Type) string {
 	case *types.Named:
 		name := b.namedStr(t)
 		if pkg := t.Obj().Pkg(); pkg != nil {
-			return reflectTypeArgPkgPath(pkg) + "." + name
+			return b.reflectTypeArgPkgPath(pkg) + "." + name
 		}
 		return name
 	case *types.Interface:
@@ -141,17 +141,21 @@ func (b *Builder) reflectTypeArgBaseString(t types.Type) string {
 		_, s := ChanDir(t.Dir())
 		return s + " " + b.reflectTypeArgString(t.Elem())
 	}
-	return types.TypeString(t, reflectTypeArgPkgPath)
+	return types.TypeString(t, b.reflectTypeArgPkgPath)
 }
 
-func reflectTypeArgPkgPath(pkg *types.Package) string {
+func (b *Builder) reflectTypeArgPkgPath(pkg *types.Package) string {
 	if pkg == nil {
 		return ""
 	}
 	if pkg.Path() == "command-line-arguments" && pkg.Name() != "" {
 		return pkg.Name()
 	}
-	return PathOf(pkg)
+	return b.Namer.PathOf(pkg)
+}
+
+func reflectTypeArgPkgPath(pkg *types.Package) string {
+	return (&Builder{}).reflectTypeArgPkgPath(pkg)
 }
 
 func (b *Builder) structStr(t *types.Struct) string {

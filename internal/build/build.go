@@ -376,26 +376,7 @@ const (
 	loadSyntax  = loadTypes | packages.NeedSyntax | packages.NeedTypesInfo
 )
 
-var (
-	llssaInitOnce       sync.Once
-	rewriteMainPrefixMu sync.RWMutex
-)
-
-// lockRewriteMainPrefix contains the legacy process-global ABI switch until it
-// can become a Program option. Ordinary builds share the default false state;
-// a rewrite-enabled build has exclusive ownership and restores the default.
-func lockRewriteMainPrefix(enabled bool) func() {
-	if !enabled {
-		rewriteMainPrefixMu.RLock()
-		return rewriteMainPrefixMu.RUnlock
-	}
-	rewriteMainPrefixMu.Lock()
-	abi.SetRewriteMainPrefix(true)
-	return func() {
-		abi.SetRewriteMainPrefix(false)
-		rewriteMainPrefixMu.Unlock()
-	}
-}
+var llssaInitOnce sync.Once
 
 func Do(args []string, conf *Config) ([]Package, error) {
 	return Build(BuildRequest{Args: args, Config: conf})
@@ -413,8 +394,6 @@ func Build(req BuildRequest) ([]Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	unlockRewriteMainPrefix := lockRewriteMainPrefix(conf.RewriteMainPrefix)
-	defer unlockRewriteMainPrefix()
 	// Handle crosscompile configuration first to set correct GOOS/GOARCH
 	forceEspClang := conf.ForceEspClang || conf.Target != ""
 	export, err := crosscompile.UseWithContext(conf.Goos, conf.Goarch, conf.Target, isEnvOnConfig(conf, llgoWasiThreads, false), forceEspClang, conf.OptLevel, conf.ltoMode(), conf.goGlobalDCEEnabled(), process, conf.llgoRoot)
@@ -476,10 +455,11 @@ func Build(req BuildRequest) ([]Package, error) {
 	})
 
 	target := &llssa.Target{
-		GOOS:     conf.Goos,
-		GOARCH:   conf.Goarch,
-		Target:   conf.Target,
-		OptLevel: conf.OptLevel,
+		GOOS:              conf.Goos,
+		GOARCH:            conf.Goarch,
+		Target:            conf.Target,
+		OptLevel:          conf.OptLevel,
+		RewriteMainPrefix: conf.RewriteMainPrefix,
 	}
 
 	prog := llssa.NewProgram(target)

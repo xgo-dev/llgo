@@ -131,7 +131,7 @@ func pkgKindByScope(scope *types.Scope) (int, string) {
 }
 
 func (p *context) importPkg(pkg *types.Package, i *pkgInfo) {
-	pkgPath := llssa.PathOf(pkg)
+	pkgPath := p.prog.PathOf(pkg)
 	scope := pkg.Scope()
 	kind, _ := pkgKindByScope(scope)
 	if kind == PkgNormal {
@@ -446,6 +446,10 @@ func typesFuncName(pkgPath string, fn *types.Func) (fullName, inPkgName string) 
 // - func: pkg.name
 // - method: pkg.(T).name, pkg.(*T).name
 func funcName(pkg *types.Package, fn *ssa.Function, org bool) string {
+	return funcNameWithProgram(nil, pkg, fn, org)
+}
+
+func funcNameWithProgram(prog llssa.Program, pkg *types.Package, fn *ssa.Function, org bool) string {
 	// Closures in methods can be nested (closure inside closure inside method).
 	// Walking only one Parent() loses the receiver for deeper nests, producing
 	// names like "pkg.marshal$1$1" that can collide across receiver types.
@@ -472,10 +476,17 @@ func funcName(pkg *types.Package, fn *ssa.Function, org bool) string {
 	if org := fn.Origin(); org != nil {
 		fnName = org.Name()
 		if fn.Signature.Recv() == nil {
-			fnName += llssa.TypeArgs(fn.TypeArgs())
+			if prog != nil {
+				fnName += prog.TypeArgs(fn.TypeArgs())
+			} else {
+				fnName += llssa.TypeArgs(fn.TypeArgs())
+			}
 		}
 	} else {
 		fnName = fn.Name()
+	}
+	if prog != nil {
+		return prog.FuncName(pkg, fnName, recv, org)
 	}
 	return llssa.FuncName(pkg, fnName, recv, org)
 }
@@ -621,7 +632,7 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 	if origin := fn.Origin(); origin != nil {
 		pkg = origin.Pkg.Pkg
 		p.ensureLoaded(pkg)
-		orgName = funcName(pkg, origin, true)
+		orgName = funcNameWithProgram(p.prog, pkg, origin, true)
 	} else {
 		fname := fn.Name()
 		if checkCgo(fname) && !cgoIgnored(fname) {
@@ -647,7 +658,7 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 			pkg = p.goTyps
 		}
 		p.ensureLoaded(pkg)
-		orgName = funcName(pkg, fn, false)
+		orgName = funcNameWithProgram(p.prog, pkg, fn, false)
 	}
 	if v, ok := p.prog.Linkname(orgName); ok {
 		if strings.HasPrefix(v, "C.") {
@@ -672,7 +683,7 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 	if instr, ok := syncAtomicIntrinsicMap[orgName]; ok {
 		return nil, instr, llgoInstr
 	}
-	return pkg, funcName(pkg, fn, false), goFunc
+	return pkg, funcNameWithProgram(p.prog, pkg, fn, false), goFunc
 }
 
 const (
@@ -683,12 +694,12 @@ const (
 )
 
 func (p *context) varName(pkg *types.Package, v *ssa.Global) (vName string, vtype int, define bool) {
-	name := llssa.FullName(pkg, v.Name())
+	name := p.prog.FullName(pkg, v.Name())
 	// TODO(lijie): need a bettery way to process linkname (maybe alias)
 	if !isCgoCfpvar(v.Name()) && !isCgoVar(v.Name()) {
 		if v, ok := p.prog.Linkname(name); ok {
 			if strings.HasPrefix(v, "go:") {
-				if llssa.PathOf(pkg) == "runtime" {
+				if p.prog.PathOf(pkg) == "runtime" {
 					return v, goVar, true
 				}
 				return v, goVar, false
@@ -761,7 +772,7 @@ func ParsePkgSyntax(prog llssa.Program, fset *token.FileSet, pkg *types.Package,
 		return nil
 	}
 	ctx := &context{prog: prog}
-	pkgPath := llssa.PathOf(pkg)
+	pkgPath := prog.PathOf(pkg)
 	for _, file := range files {
 		for _, decl := range file.Decls {
 			switch decl := decl.(type) {
@@ -788,7 +799,7 @@ func ParsePkgSyntax(prog llssa.Program, fset *token.FileSet, pkg *types.Package,
 						return err
 					}
 					for _, variable := range vars {
-						prog.SetLocalityInfo(llssa.FullName(pkg, variable.Name), variable.Info)
+						prog.SetLocalityInfo(prog.FullName(pkg, variable.Name), variable.Info)
 					}
 					continue
 				}

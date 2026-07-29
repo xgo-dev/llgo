@@ -91,7 +91,7 @@ func (b Builder) Imethod(intf Expr, method *types.Func) Expr {
 	if prog.enableGoGlobalDCE {
 		fnType := prog.Elem(pfn.Type)
 		fn = Expr{
-			prog.methodCheckedLoad(b.impl, pfn.impl, methodCapabilityKey(method)),
+			prog.methodCheckedLoad(b.impl, pfn.impl, methodCapabilityKeyWithPath(method, prog.PathOf)),
 			fnType,
 		}
 	} else {
@@ -212,7 +212,7 @@ func (b Builder) recordInterfaceInfo(t *types.Interface, typeName string) {
 	for i := 0; i < t.NumMethods(); i++ {
 		f := t.Method(i)
 		ftypName, _ := prog.abi.TypeName(funcType(prog, f.Type()))
-		mb.AddIfaceMethod(intfSym, abiMethodName(f), mb.Sym(ftypName))
+		mb.AddIfaceMethod(intfSym, prog.abiMethodName(f), mb.Sym(ftypName))
 	}
 }
 
