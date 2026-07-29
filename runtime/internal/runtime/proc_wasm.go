@@ -34,6 +34,8 @@ type runtimeContextPlatform struct {
 	fiber         emscripten.Fiber
 	stack         unsafe.Pointer
 	asyncifyStack unsafe.Pointer
+	runqNext      *g
+	runqQueued    bool
 }
 
 var wasmSched struct {
@@ -42,6 +44,22 @@ var wasmSched struct {
 	runq    runqueue.Queue[*g]
 	retired *runtimeContext
 	started bool
+}
+
+func (gp *g) RunqueueNext() *g {
+	return gp.context.platform.runqNext
+}
+
+func (gp *g) SetRunqueueNext(next *g) {
+	gp.context.platform.runqNext = next
+}
+
+func (gp *g) RunqueueQueued() bool {
+	return gp.context.platform.runqQueued
+}
+
+func (gp *g) SetRunqueueQueued(queued bool) {
+	gp.context.platform.runqQueued = queued
 }
 
 func initRuntimeContext(ctx *runtimeContext, callergp *g, status uint32) *g {

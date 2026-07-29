@@ -7,7 +7,6 @@ package runtime
 import (
 	"unsafe"
 
-	c "github.com/goplus/llgo/runtime/internal/clite"
 	"github.com/goplus/llgo/runtime/internal/clite/sync/atomic"
 	"github.com/goplus/llgo/runtime/internal/clite/time"
 	"github.com/goplus/llgo/runtime/internal/runtime/math"
@@ -115,11 +114,6 @@ func memclrHasPointers(ptr unsafe.Pointer, n uintptr) {
 }
 
 func memclrNoHeapPointers(ptr unsafe.Pointer, n uintptr) {
-}
-
-func fatal(s string) {
-	print("fatal error: ", s, "\n")
-	c.Exit(2)
 }
 
 func throw(s string) {

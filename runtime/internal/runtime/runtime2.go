@@ -56,29 +56,6 @@ type g struct {
 	goexit       bool
 	isMain       bool
 	paniconfault bool
-
-	runqQueued uint32
-	runqNext   *g
-}
-
-func (gp *g) RunqueueNext() *g {
-	return gp.runqNext
-}
-
-func (gp *g) SetRunqueueNext(next *g) {
-	gp.runqNext = next
-}
-
-func (gp *g) RunqueueQueued() bool {
-	return gp.runqQueued != 0
-}
-
-func (gp *g) SetRunqueueQueued(queued bool) {
-	if queued {
-		gp.runqQueued = 1
-	} else {
-		gp.runqQueued = 0
-	}
 }
 
 // m represents the host execution resource running Go code.
