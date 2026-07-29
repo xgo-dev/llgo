@@ -1662,6 +1662,7 @@ func parserRecoverySecondaries(primary string) []string {
 		return []string{"expected type, found '}'", "expected type, found ')'", "expected type, found ','"}
 	case "syntax error: else must be followed by if or statement block":
 		return []string{"expected if statement or block, found ';'"}
+	// go/parser omits the "syntax error:" prefix when the package clause is missing.
 	case "expected 'package', found 'func'":
 		return []string{"expected ';', found '('"}
 	case "syntax error: unexpected { after top level declaration":
