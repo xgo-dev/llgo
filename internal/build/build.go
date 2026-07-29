@@ -36,6 +36,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unicode"
 
 	"golang.org/x/tools/go/ssa"
 
@@ -59,6 +60,7 @@ import (
 	"github.com/goplus/llgo/internal/pclnmap"
 	"github.com/goplus/llgo/internal/pclnpost"
 	"github.com/goplus/llgo/internal/typepatch"
+	"github.com/goplus/llgo/internal/wasmworkers"
 	"github.com/goplus/llgo/ssa/abi"
 	xenv "github.com/goplus/llgo/xtool/env"
 	"github.com/goplus/llgo/xtool/env/llvm"
@@ -298,9 +300,6 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	if conf.Goarch == "" {
 		conf.Goarch = runtime.GOARCH
 	}
-	if conf.AppExt == "" {
-		conf.AppExt = defaultAppExt(conf)
-	}
 	if conf.BuildMode == "" {
 		conf.BuildMode = BuildModeExe
 	}
@@ -338,6 +337,17 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	}
 	if conf.Target != "" && export.GOARCH != "" {
 		conf.Goarch = export.GOARCH
+	}
+	wasmWorkers, err := configureWasmWorkers(conf, &export)
+	if err != nil {
+		return nil, err
+	}
+	wasmGC, err := configureWasmGC(conf, &export)
+	if err != nil {
+		return nil, err
+	}
+	if conf.AppExt == "" {
+		conf.AppExt = defaultAppExt(conf)
 	}
 	if err := validateLinkOptions(conf, &export); err != nil {
 		return nil, err
@@ -405,6 +415,9 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	}
 	prog.EnableGoGlobalDCE(conf.goGlobalDCEEnabled())
 	prog.EnableDeadcodeDrop(conf.deadcodeDropEnabled())
+	prog.EnableGCRoots(wasmGC)
+	prog.EnableThreadLocalGCRoots(wasmGC && wasmWorkers.Enabled())
+	prog.EnableCooperativeSafepoints(wasmGC || wasmWorkers.Enabled())
 	if conf.PthreadStackSize > 0 {
 		prog.SetPthreadStackSize(uint64(conf.PthreadStackSize))
 	}
@@ -418,10 +431,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	// final-PC sites for sidecar construction.
 	prog.EnableFuncInfoSites(shouldEnablePCLNSites(conf, funcInfo, emitDebugInfo))
 	sizes := func(sizes types.Sizes, compiler, arch string) types.Sizes {
-		if arch == "wasm" {
-			sizes = &types.StdSizes{WordSize: 4, MaxAlign: 4}
-		}
-		return prog.TypeSizes(sizes)
+		return prog.TypeSizes(effectiveTypeSizes(sizes, conf.Goos, arch, conf.Target))
 	}
 	dedup := packages.NewDeduper()
 	var syntaxErr error
@@ -727,14 +737,96 @@ func DefaultBuildTags(goarch, target string) string {
 
 func defaultBuildTags(goarch, target string) string {
 	tags := "llgo,math_big_pure_go,purego"
-	// Raw GOOS/GOARCH wasm builds do not have a target configuration that
-	// selects a collector. BDWGC is not available in either wasm host, so use
-	// the supported collector-free runtime unless a named target supplies its
-	// own runtime configuration.
-	if goarch == "wasm" && target == "" {
+	// BDWGC is unavailable in both wasm hosts.
+	if goarch == "wasm" {
 		tags += ",nogc"
 	}
 	return tags
+}
+
+func configureWasmWorkers(conf *Config, export *crosscompile.Export) (wasmworkers.Config, error) {
+	config, err := wasmworkers.Parse(os.Getenv(llgoWasmWorkers))
+	if err != nil {
+		return config, err
+	}
+	if err := config.ValidateTarget(conf.Goos, conf.Goarch); err != nil {
+		return config, err
+	}
+	if !config.Enabled() {
+		return config, nil
+	}
+	workers := strconv.Itoa(config.Count)
+	poolSize := strconv.Itoa(config.Count)
+	preJS := wasmworkers.PreJSPath(env.LLGoROOT())
+	if _, err := os.Stat(preJS); err != nil {
+		return config, fmt.Errorf("locate WebAssembly worker host shim: %w", err)
+	}
+	export.BuildTags = append(export.BuildTags, "llgo.wasm_workers")
+	export.CCFLAGS = append(export.CCFLAGS, "-pthread", "-DLLGO_WASM_WORKERS="+workers)
+	export.LDFLAGS = append(export.LDFLAGS,
+		"--pre-js", preJS,
+		"-pthread",
+		"-sPTHREAD_POOL_SIZE="+poolSize,
+		"-sPROXY_TO_PTHREAD=1",
+		"-sEXIT_RUNTIME=1",
+	)
+	export.WasmRuntime.RunMainTask = true
+	return config, nil
+}
+
+func configureWasmGC(conf *Config, export *crosscompile.Export) (bool, error) {
+	explicit := hasBuildTag(conf.Tags, "llgo_wasm_gc")
+	if conf.Goarch != "wasm" {
+		if explicit {
+			return false, fmt.Errorf("llgo_wasm_gc does not support GOARCH=%s", conf.Goarch)
+		}
+		return false, nil
+	}
+	switch conf.Goos {
+	case "js":
+		if !slices.Contains(export.LDFLAGS, "-sMALLOC=none") {
+			export.LDFLAGS = append(export.LDFLAGS, "-sMALLOC=none")
+		}
+	case "wasip1":
+		if IsWasiThreadsEnabled() {
+			if explicit {
+				return false, errors.New("llgo_wasm_gc requires single-worker WASI (set LLGO_WASI_THREADS=0)")
+			}
+			return false, nil
+		}
+	default:
+		if explicit {
+			return false, fmt.Errorf("llgo_wasm_gc does not support GOOS=%s", conf.Goos)
+		}
+		return false, nil
+	}
+	if !explicit {
+		if conf.Tags != "" {
+			conf.Tags += ","
+		}
+		conf.Tags += "llgo_wasm_gc"
+	}
+	return true, nil
+}
+
+func hasBuildTag(tags, want string) bool {
+	for _, tag := range strings.FieldsFunc(tags, func(r rune) bool {
+		return r == ',' || unicode.IsSpace(r)
+	}) {
+		if tag == want {
+			return true
+		}
+	}
+	return false
+}
+
+func effectiveTypeSizes(sizes types.Sizes, goos, goarch, target string) types.Sizes {
+	// Named wasm targets use the native wasm32 data model. The raw js/wasm
+	// entry point keeps Go's 64-bit word model and is emitted as Memory64.
+	if goarch == "wasm" && (target != "" || goos != "js") {
+		return &types.StdSizes{WordSize: 4, MaxAlign: 4}
+	}
+	return sizes
 }
 
 func allowMissingFunctionBodies(initial []*packages.Package) {
@@ -1359,12 +1451,15 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 	}
 	linkArgs = append(linkArgs, cSharedExportArgs(ctx, linkedOrder)...)
 
-	err = linkObjFiles(ctx, outputPath, linkInputs, linkArgs, verbose)
+	linkOutput, err := prepareWasmLinkOutput(ctx.buildConf, &ctx.crossCompile, outputPath)
 	if err != nil {
 		return err
 	}
-
-	return nil
+	defer cleanupWasmLinkOutput(linkOutput, outputPath)
+	if err := linkObjFiles(ctx, linkOutput, linkInputs, linkArgs, verbose); err != nil {
+		return err
+	}
+	return publishWasmLinkOutput(ctx, linkOutput, outputPath, verbose)
 }
 
 func linkedModuleGlobals(pkgs []Package) map[string]none {
@@ -2283,6 +2378,7 @@ const llgoTrace = "LLGO_TRACE"
 const llgoOptimize = "LLGO_OPTIMIZE"
 const llgoWasmRuntime = "LLGO_WASM_RUNTIME"
 const llgoWasiThreads = "LLGO_WASI_THREADS"
+const llgoWasmWorkers = "LLGO_WASM_WORKERS"
 const llgoStdioNobuf = "LLGO_STDIO_NOBUF"
 const llgoFullRpath = "LLGO_FULL_RPATH"
 const llgoBuildCache = "LLGO_BUILD_CACHE"
@@ -2360,7 +2456,7 @@ func llvmPassPipeline(level optlevel.Level, ltoMode lto.Mode) string {
 }
 
 func IsWasiThreadsEnabled() bool {
-	return isEnvOn(llgoWasiThreads, true)
+	return isEnvOn(llgoWasiThreads, false)
 }
 
 func IsFullRpathEnabled() bool {

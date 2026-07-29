@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build go1.26
+//go:build go1.24
 
 //llgo:skipall
 package sync
@@ -108,15 +108,17 @@ func (ht *HashTrieMap[K, V]) Swap(key K, new V) (previous V, loaded bool) {
 }
 
 func (ht *HashTrieMap[K, V]) CompareAndSwap(key K, old, new V) bool {
+	var swapped bool
+	ht.compareAndSwap(&swapped, key, old, new)
+	return swapped
+}
+
+func (ht *HashTrieMap[K, V]) compareAndSwap(swapped *bool, key K, old, new V) {
 	ht.mu.Lock()
 	defer ht.mu.Unlock()
-	if i := ht.findIndex(key); i < 0 {
-		return false
-	} else if !hashTrieValueEqual(ht.m[i].value, old) {
-		return false
-	} else {
+	if i := ht.findIndex(key); i >= 0 && hashTrieValueEqual(ht.m[i].value, old) {
 		ht.m[i].value = new
-		return true
+		*swapped = true
 	}
 }
 
@@ -135,15 +137,17 @@ func (ht *HashTrieMap[K, V]) Delete(key K) {
 }
 
 func (ht *HashTrieMap[K, V]) CompareAndDelete(key K, old V) bool {
+	var deleted bool
+	ht.compareAndDelete(&deleted, key, old)
+	return deleted
+}
+
+func (ht *HashTrieMap[K, V]) compareAndDelete(deleted *bool, key K, old V) {
 	ht.mu.Lock()
 	defer ht.mu.Unlock()
-	if i := ht.findIndex(key); i < 0 {
-		return false
-	} else if !hashTrieValueEqual(ht.m[i].value, old) {
-		return false
-	} else {
+	if i := ht.findIndex(key); i >= 0 && hashTrieValueEqual(ht.m[i].value, old) {
 		ht.deleteIndex(i)
-		return true
+		*deleted = true
 	}
 }
 
@@ -169,14 +173,18 @@ func (ht *HashTrieMap[K, V]) Clear() {
 }
 
 func (ht *HashTrieMap[K, V]) snapshot() []hashTrieEntry[K, V] {
+	var entries []hashTrieEntry[K, V]
+	ht.snapshotInto(&entries)
+	return entries
+}
+
+func (ht *HashTrieMap[K, V]) snapshotInto(entries *[]hashTrieEntry[K, V]) {
 	ht.mu.Lock()
 	defer ht.mu.Unlock()
-	if len(ht.m) == 0 {
-		return nil
+	if len(ht.m) != 0 {
+		*entries = make([]hashTrieEntry[K, V], len(ht.m))
+		copy(*entries, ht.m)
 	}
-	entries := make([]hashTrieEntry[K, V], len(ht.m))
-	copy(entries, ht.m)
-	return entries
 }
 
 func hashTrieValueEqual[V any](a, b V) bool {

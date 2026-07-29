@@ -20,16 +20,18 @@ package runtime
 
 import "github.com/goplus/llgo/runtime/internal/clite/sync/atomic"
 
+// LLGo's atomic.Add returns the value before the addition. G and M reserve ID
+// zero, while P IDs are zero-based like the Go runtime.
 func nextGoid(gp *g) uint64 {
-	return atomic.Add(&sched.goidgen, uint64(1))
+	return atomic.Add(&sched.goidgen, uint64(1)) + 1
 }
 
 func nextMid(mp *m) int64 {
-	return atomic.Add(&sched.midgen, int64(1))
+	return atomic.Add(&sched.midgen, int64(1)) + 1
 }
 
 func nextPid(pp *p) int32 {
-	return atomic.Add(&sched.pidgen, int32(1)) - 1
+	return atomic.Add(&sched.pidgen, int32(1))
 }
 
 func readgstatus(gp *g) uint32 {

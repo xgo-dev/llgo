@@ -1,4 +1,4 @@
-//go:build darwin || linux
+//go:build darwin || linux || (llgo && wasip1 && wasm && llgo.wasi_threads)
 
 package runtime
 
@@ -99,8 +99,7 @@ func sync_runtime_SemacquireRWMutex(addr *uint32, _ bool, _ int) {
 	semaAcquire(addr)
 }
 
-//go:linkname sync_runtime_SemacquireWaitGroup sync.runtime_SemacquireWaitGroup
-func sync_runtime_SemacquireWaitGroup(addr *uint32, _ bool) {
+func syncWaitGroupAcquire(addr *uint32) {
 	semaAcquire(addr)
 }
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goplus/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llvm"
 
 	"github.com/goplus/llgo/internal/packages"
@@ -55,6 +56,77 @@ func TestGenMainModuleExecutable(t *testing.T) {
 		"call void @\"example.com/foo.main\"()",
 		"call void @Py_Finalize()",
 	)
+}
+
+func TestGenMainModuleWASIAsyncifyEntry(t *testing.T) {
+	llvm.InitializeAllTargets()
+	t.Setenv(llgoStdioNobuf, "")
+	ctx := &context{
+		prog: llssa.NewProgram(nil),
+		buildConf: &Config{
+			BuildMode: BuildModeExe,
+			Goos:      "wasip1",
+			Goarch:    "wasm",
+		},
+		crossCompile: crosscompile.Export{
+			WasmPostLink: crosscompile.WasmPostLink{Asyncify: true},
+		},
+	}
+	pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
+	mod := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{})
+	ir := mod.LPkg.String()
+	checks := []string{
+		`define hidden ptr @__llgo_wasm_main(ptr %0)`,
+		`call void @"github.com/goplus/llgo/runtime/internal/runtime.init"()`,
+		`call void @"example.com/foo.init"()`,
+		`call void @"example.com/foo.main"()`,
+		`call void @"github.com/goplus/llgo/runtime/internal/runtime.RunWasmMain"()`,
+	}
+	for _, want := range checks {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("WASI main module IR missing %q:\n%s", want, ir)
+		}
+	}
+	entryStart := strings.Index(ir, "define hidden i32 @__main_argc_argv(")
+	if entryStart < 0 {
+		t.Fatalf("WASI main module missing host entry:\n%s", ir)
+	}
+	entry := ir[entryStart:]
+	entry = entry[:strings.Index(entry, "}\n")+2]
+	if strings.Contains(entry, `call void @"example.com/foo.init"()`) ||
+		strings.Contains(entry, `call void @"example.com/foo.main"()`) {
+		t.Fatalf("WASI system-stack entry calls package main directly:\n%s", entry)
+	}
+}
+
+func TestGenMainModuleWasmWorkerEntry(t *testing.T) {
+	llvm.InitializeAllTargets()
+	t.Setenv(llgoStdioNobuf, "")
+	ctx := &context{
+		prog: llssa.NewProgram(nil),
+		buildConf: &Config{
+			BuildMode: BuildModeExe,
+			Goos:      "js",
+			Goarch:    "wasm",
+		},
+		crossCompile: crosscompile.Export{
+			WasmRuntime: crosscompile.WasmRuntime{RunMainTask: true},
+		},
+	}
+	pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
+	ir := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{}).LPkg.String()
+	if !strings.Contains(ir, "define hidden i32 @__main_argc_argv(") {
+		t.Fatalf("worker module missing Emscripten host entry:\n%s", ir)
+	}
+	if !strings.Contains(ir, `call void @"github.com/goplus/llgo/runtime/internal/runtime.RunWasmMain"()`) {
+		t.Fatalf("worker host entry does not start the runtime main task:\n%s", ir)
+	}
+	if strings.Contains(ir, "define i32 @main(") {
+		t.Fatalf("worker module should let Emscripten provide main:\n%s", ir)
+	}
+	if strings.Contains(ir, "define weak void @_start()") {
+		t.Fatalf("worker module should let Emscripten provide _start:\n%s", ir)
+	}
 }
 
 func TestGenMainModuleLibrary(t *testing.T) {

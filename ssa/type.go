@@ -261,7 +261,7 @@ func (p Program) Field(typ Type, i int) Type {
 		}
 		fld = st.Field(i)
 	}
-	return p.rawType(fld.Type())
+	return p.rawType(p.patch(fld.Type()))
 }
 
 func typeStringWithPkg(t types.Type) string {
