@@ -88,7 +88,7 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	}
 
 	var rtInit llssa.Function
-	if cfg.rtInit {
+	if cfg.rtInit || ctx.crossCompile.WasmPostLink.Asyncify {
 		rtInit = declareNoArgFunc(mainPkg, rtPkgPath+".init")
 	}
 
@@ -127,17 +127,23 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 		return mainAPkg
 	}
 
+	var wasmRunMain llssa.Function
+	if ctx.crossCompile.WasmPostLink.Asyncify || ctx.crossCompile.WasmRuntime.RunMainTask {
+		defineWasmMainTask(mainPkg, mainInit, mainMain)
+		wasmRunMain = declareNoArgFunc(mainPkg, rtPkgPath+".RunWasmMain")
+	}
 	entryFn := defineEntryFunction(ctx, mainPkg, argcVar, argvVar, argvValueType, entryFunctions{
 		runtimeStub: runtimeStub,
 		mainInit:    mainInit,
 		mainMain:    mainMain,
+		wasmRunMain: wasmRunMain,
 		pyInit:      pyInit,
 		pyFinalize:  pyFinalize,
 		rtInit:      rtInit,
 		abiInit:     abiInit,
 	})
 
-	if needStart(ctx) {
+	if needStart(ctx) && !ctx.crossCompile.WasmRuntime.RunMainTask {
 		defineStart(mainPkg, entryFn, argvValueType)
 	}
 
@@ -225,6 +231,7 @@ type entryFunctions struct {
 	runtimeStub llssa.Function
 	mainInit    llssa.Function
 	mainMain    llssa.Function
+	wasmRunMain llssa.Function
 	pyInit      llssa.Function
 	pyFinalize  llssa.Function
 	rtInit      llssa.Function
@@ -241,7 +248,8 @@ type entryFunctions struct {
 func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa.Global, argvType llssa.Type, fns entryFunctions) llssa.Function {
 	prog := pkg.Prog
 	entryName := "main"
-	if !needStart(ctx) && isWasmTarget(ctx.buildConf.Goos) {
+	if isWasmTarget(ctx.buildConf.Goos) &&
+		(!needStart(ctx) || ctx.crossCompile.WasmRuntime.RunMainTask) {
 		entryName = "__main_argc_argv"
 	}
 	sig := newEntrySignature(argvType.RawType())
@@ -272,8 +280,12 @@ func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa
 		b.Call(fns.abiInit.Expr)
 	}
 	b.Call(fns.runtimeStub.Expr)
-	b.Call(fns.mainInit.Expr)
-	b.Call(fns.mainMain.Expr)
+	if fns.wasmRunMain != nil {
+		b.Call(fns.wasmRunMain.Expr)
+	} else {
+		b.Call(fns.mainInit.Expr)
+		b.Call(fns.mainMain.Expr)
+	}
 	if fns.pyFinalize != nil {
 		b.Call(fns.pyFinalize.Expr)
 	}
@@ -282,6 +294,21 @@ func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa
 	}
 	b.Return(prog.IntVal(0, prog.Int32()))
 	return fn
+}
+
+func defineWasmMainTask(pkg llssa.Package, mainInit, mainMain llssa.Function) {
+	prog := pkg.Prog
+	sig := newSignature(
+		[]types.Type{types.Typ[types.UnsafePointer]},
+		[]types.Type{types.Typ[types.UnsafePointer]},
+	)
+	fn := pkg.NewFunc("__llgo_wasm_main", sig, llssa.InC)
+	fnVal := pkg.Module().NamedFunction("__llgo_wasm_main")
+	fnVal.SetVisibility(llvm.HiddenVisibility)
+	b := fn.MakeBody(1)
+	b.Call(mainInit.Expr)
+	b.Call(mainMain.Expr)
+	b.Return(prog.Nil(prog.VoidPtr()))
 }
 
 func defineStart(pkg llssa.Package, entry llssa.Function, argvType llssa.Type) {

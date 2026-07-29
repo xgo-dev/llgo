@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>LLGo wasm runtime test</title>
+<body data-result="running">running
+<script type="module">
+const body = document.body;
+try {
+  if (!crossOriginIsolated || typeof SharedArrayBuffer === "undefined") {
+    throw new Error("cross-origin isolation is unavailable");
+  }
+  const name = new URLSearchParams(location.search).get("module");
+  if (!name || !/^[a-z0-9_.-]+\.mjs$/i.test(name)) {
+    throw new Error("invalid module name");
+  }
+  const module = await import(`./${name}`);
+  await module.default();
+  body.dataset.result = "pass";
+  body.textContent = "pass";
+} catch (error) {
+  body.dataset.result = "fail";
+  body.textContent = error?.stack || String(error);
+}
+</script>
+</html>

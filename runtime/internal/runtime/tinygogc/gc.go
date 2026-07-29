@@ -1,8 +1,6 @@
-//go:build baremetal
+//go:build (baremetal && !nogc) || (wasm && llgo_wasm_gc)
 
 package tinygogc
-
-import "unsafe"
 
 type GCStats struct {
 	// General statistics.
@@ -150,6 +148,7 @@ func ReadGCStats() GCStats {
 	var heapInuse, heapIdle uint64
 
 	lock(&gcMutex)
+	lazyInit()
 
 	for block := uintptr(0); block < endBlock; block++ {
 		bstate := gcStateOf(block)
@@ -160,8 +159,7 @@ func ReadGCStats() GCStats {
 		}
 	}
 
-	stackEnd := uintptr(unsafe.Pointer(&_stackEnd))
-	stackSys := stackTop - stackEnd
+	stackInuse, stackSys := gcStackStats()
 
 	stats := GCStats{
 		Alloc:      (gcTotalBlocks - gcFreedBlocks) * uint64(bytesPerBlock),
@@ -173,7 +171,7 @@ func ReadGCStats() GCStats {
 		HeapSys:    heapInuse + heapIdle,
 		HeapIdle:   heapIdle,
 		HeapInuse:  heapInuse,
-		StackInuse: uint64(stackTop - uintptr(getsp())),
+		StackInuse: uint64(stackInuse),
 		StackSys:   uint64(stackSys),
 		GCSys:      uint64(heapEnd - uintptr(metadataStart)),
 	}

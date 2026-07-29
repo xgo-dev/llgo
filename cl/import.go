@@ -322,6 +322,27 @@ func (p *context) processNoInterfaceByDoc(doc *ast.CommentGroup, fullName string
 	}
 }
 
+func wasmImportByDoc(doc *ast.CommentGroup) (module, name string, ok bool) {
+	if doc == nil {
+		return
+	}
+	const prefix = "//go:wasmimport "
+	for n := len(doc.List) - 1; n >= 0; n-- {
+		line := doc.List[n].Text
+		if strings.HasPrefix(line, prefix) {
+			fields := strings.Fields(line[len(prefix):])
+			if len(fields) == 2 {
+				return fields[0], fields[1], true
+			}
+			return
+		}
+		if !strings.HasPrefix(line, "//go:") {
+			return
+		}
+	}
+	return
+}
+
 const (
 	noDirective = iota
 	hasLinkname

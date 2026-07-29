@@ -127,6 +127,27 @@ func TestParsePkgSyntaxReportsLocalityErrors(t *testing.T) {
 	}
 }
 
+func TestWasmImportByDoc(t *testing.T) {
+	module, name, ok := wasmImportByDoc(&ast.CommentGroup{List: []*ast.Comment{
+		{Text: "//go:noescape"},
+		{Text: "//go:wasmimport wasi_snapshot_preview1 fd_read"},
+	}})
+	if !ok || module != "wasi_snapshot_preview1" || name != "fd_read" {
+		t.Fatalf("wasm import = (%q, %q, %v)", module, name, ok)
+	}
+
+	for _, doc := range []*ast.CommentGroup{
+		nil,
+		{List: []*ast.Comment{{Text: "// ordinary comment"}}},
+		{List: []*ast.Comment{{Text: "//go:noescape"}}},
+		{List: []*ast.Comment{{Text: "//go:wasmimport missing-name"}}},
+	} {
+		if _, _, ok := wasmImportByDoc(doc); ok {
+			t.Fatalf("unexpected wasm import from %#v", doc)
+		}
+	}
+}
+
 func TestPkgSymInfoAddSymAndInitLinknamesCoverage(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "p.go")

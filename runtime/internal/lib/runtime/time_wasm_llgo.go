@@ -9,10 +9,6 @@ import (
 	ct "github.com/goplus/llgo/runtime/internal/clite/time"
 )
 
-// Minimal timer hooks for wasm builds. Host-backed asynchronous timers need
-// scheduler integration; until that is available, keep runtime and time
-// linkable without pulling the native libuv event loop into wasm binaries.
-
 type runtimeTimer struct {
 	pp       uintptr
 	when     int64
@@ -22,38 +18,13 @@ type runtimeTimer struct {
 	seq      uintptr
 	nextwhen int64
 	status   uint32
+	platform runtimeTimerPlatform
 }
 
 type timeTimer struct {
 	c    unsafe.Pointer
 	init bool
 	r    runtimeTimer
-}
-
-func startRuntimeTimer(r *runtimeTimer) {
-	if r == nil || r.f == nil {
-		return
-	}
-	if r.period == 0 && r.when <= runtimeNano() {
-		r.f(r.arg, r.seq, runtimeNano())
-	}
-}
-
-func stopRuntimeTimer(r *runtimeTimer) bool {
-	return r != nil
-}
-
-func resetRuntimeTimer(r *runtimeTimer, when, period int64, f func(any, uintptr, int64), arg any, seq uintptr) bool {
-	if r == nil {
-		return false
-	}
-	r.when = when
-	r.period = period
-	r.f = f
-	r.arg = arg
-	r.seq = seq
-	startRuntimeTimer(r)
-	return true
 }
 
 //go:linkname time_now time.now
@@ -80,12 +51,7 @@ func time_runtimeIsBubbled() bool {
 
 //go:linkname timeSleep time.Sleep
 func timeSleep(ns int64) {
-	if ns <= 0 {
-		return
-	}
-	deadline := runtimeNano() + ns
-	for runtimeNano() < deadline {
-	}
+	sleepRuntime(ns)
 }
 
 //go:linkname newTimer time.newTimer
