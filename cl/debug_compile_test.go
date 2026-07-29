@@ -55,21 +55,16 @@ var anonymous = func(seed int) int {
 		t.Fatal(err)
 	}
 
-	oldDebug, oldDebugSyms := enableDbg, enableDbgSyms
-	EnableDebug(true)
-	EnableDbgSyms(true)
-	defer func() {
-		EnableDebug(oldDebug)
-		EnableDbgSyms(oldDebugSyms)
-	}()
-
 	prog := newLLSSAProgForTarget(t, &llssa.Target{
 		GOOS:     runtime.GOOS,
 		GOARCH:   runtime.GOARCH,
 		OptLevel: optlevel.O0,
 	})
 	defer prog.Dispose()
-	pkg, err := NewPackage(prog, ssaPkg, []*ast.File{file})
+	pkg, _, err := newPackageEx(prog, nil, nil, nil, ssaPkg, []*ast.File{file}, nil, false, Options{
+		Debug:        true,
+		DebugSymbols: true,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
