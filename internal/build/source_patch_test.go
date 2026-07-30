@@ -19,29 +19,40 @@ import (
 )
 
 func TestWasmRuntimeSourcePatchTypeChecks(t *testing.T) {
-	for _, goos := range []string{"js", "wasip1"} {
-		t.Run(goos, func(t *testing.T) {
-			cfgEnv := append(os.Environ(), "GOOS="+goos, "GOARCH=wasm")
+	for _, test := range []struct {
+		name       string
+		goos       string
+		target     string
+		buildFlags []string
+	}{
+		{name: "js Memory64", goos: "js"},
+		{name: "js wasm32 target", goos: "js", target: "wasm", buildFlags: []string{"-tags=tinygo.wasm"}},
+		{name: "WASI wasm32", goos: "wasip1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfgEnv := append(os.Environ(), "GOOS="+test.goos, "GOARCH=wasm")
 			goroot, goversion, err := env.GOROOTAndGOVERSIONWithEnv(cfgEnv)
 			if err != nil {
 				t.Fatal(err)
 			}
 			overlay, _, err := buildSourcePatchOverlayForGOROOT(nil, env.LLGoRuntimeDir(), goroot, sourcePatchBuildContext{
-				goos:      goos,
-				goarch:    "wasm",
-				goversion: goversion,
+				goos:       test.goos,
+				goarch:     "wasm",
+				goversion:  goversion,
+				buildFlags: test.buildFlags,
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			pkgs, err := packages.LoadEx(nil, func(types.Sizes, string, string) types.Sizes {
-				return &types.StdSizes{WordSize: 4, MaxAlign: 4}
+			pkgs, err := packages.LoadEx(nil, func(sizes types.Sizes, _ string, arch string) types.Sizes {
+				return effectiveTypeSizes(sizes, test.goos, arch, test.target)
 			}, &packages.Config{
-				Mode:    loadSyntax | packages.NeedDeps | packages.NeedModule | packages.NeedExportFile,
-				Env:     cfgEnv,
-				Fset:    token.NewFileSet(),
-				Overlay: overlay,
+				Mode:       loadSyntax | packages.NeedDeps | packages.NeedModule | packages.NeedExportFile,
+				Env:        cfgEnv,
+				Fset:       token.NewFileSet(),
+				Overlay:    overlay,
+				BuildFlags: test.buildFlags,
 			}, "runtime")
 			if err != nil {
 				t.Fatal(err)
@@ -51,7 +62,7 @@ func TestWasmRuntimeSourcePatchTypeChecks(t *testing.T) {
 			}
 			if pkgs[0].IllTyped {
 				logPackageErrors(t, pkgs[0], make(map[string]bool))
-				t.Fatal("runtime did not type-check with wasm32 sizes")
+				t.Fatal("runtime did not type-check")
 			}
 		})
 	}
@@ -231,6 +242,39 @@ func boolToUint8(bool) uint8
 		t.Fatalf("missing source patch file %s", constanttimePatch)
 	} else if !strings.Contains(string(src), "//go:linkname boolToUint8 llgo.boolToUint8") {
 		t.Fatalf("source patch file %s does not contain boolToUint8 linkname", constanttimePatch)
+	}
+}
+
+func TestBuildSourcePatchOverlayForGo124HashTrieMap(t *testing.T) {
+	goroot := t.TempDir()
+	syncDir := filepath.Join(goroot, "src", "internal", "sync")
+	hashTrieMap := filepath.Join(syncDir, "hashtriemap.go")
+	mustWriteFile(t, hashTrieMap, `package sync
+
+type HashTrieMap[K comparable, V any] struct{}
+
+func (ht *HashTrieMap[K, V]) CompareAndSwap(key K, old, new V) bool {
+	return false
+}
+`)
+
+	overlay, _, err := buildSourcePatchOverlayForGOROOT(nil, env.LLGoRuntimeDir(), goroot, sourcePatchBuildContext{
+		goos:      runtime.GOOS,
+		goarch:    runtime.GOARCH,
+		goversion: "go1.24.2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	patch := filepath.Join(syncDir, "z_llgo_patch_hashtriemap.go")
+	if src, ok := overlay[patch]; !ok {
+		t.Fatalf("missing source patch file %s", patch)
+	} else if !strings.Contains(string(src), "type HashTrieMap") {
+		t.Fatalf("source patch file %s does not contain HashTrieMap replacement", patch)
+	}
+	if stdSrc := string(overlay[hashTrieMap]); strings.Contains(stdSrc, "type HashTrieMap") {
+		t.Fatalf("stub overlay for internal/sync still contains HashTrieMap: %s", stdSrc)
 	}
 }
 

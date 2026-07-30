@@ -80,10 +80,10 @@ type MutexAttr struct {
 }
 
 // llgo:link (*MutexAttr).Init C.pthread_mutexattr_init
-func (a *MutexAttr) Init(attr *MutexAttr) c.Int { return 0 }
+func (a *MutexAttr) Init() c.Int { return 0 }
 
 // llgo:link (*MutexAttr).Destroy C.pthread_mutexattr_destroy
-func (a *MutexAttr) Destroy() {}
+func (a *MutexAttr) Destroy() c.Int { return 0 }
 
 // llgo:link (*MutexAttr).SetType C.pthread_mutexattr_settype
 func (a *MutexAttr) SetType(typ MutexType) c.Int { return 0 }
@@ -142,10 +142,10 @@ type RWLockAttr struct {
 }
 
 // llgo:link (*RWLockAttr).Init C.pthread_rwlockattr_init
-func (a *RWLockAttr) Init(attr *RWLockAttr) c.Int { return 0 }
+func (a *RWLockAttr) Init() c.Int { return 0 }
 
 // llgo:link (*RWLockAttr).Destroy C.pthread_rwlockattr_destroy
-func (a *RWLockAttr) Destroy() {}
+func (a *RWLockAttr) Destroy() c.Int { return 0 }
 
 // llgo:link (*RWLockAttr).SetPShared C.pthread_rwlockattr_setpshared
 func (a *RWLockAttr) SetPShared(pshared c.Int) c.Int { return 0 }
@@ -222,10 +222,10 @@ type CondAttr struct {
 }
 
 // llgo:link (*CondAttr).Init C.pthread_condattr_init
-func (a *CondAttr) Init(attr *CondAttr) c.Int { return 0 }
+func (a *CondAttr) Init() c.Int { return 0 }
 
 // llgo:link (*CondAttr).Destroy C.pthread_condattr_destroy
-func (a *CondAttr) Destroy() {}
+func (a *CondAttr) Destroy() c.Int { return 0 }
 
 // // llgo:link (*CondAttr).SetClock C.pthread_condattr_setclock
 // func (a *CondAttr) SetClock(clock time.ClockidT) c.Int { return 0 }

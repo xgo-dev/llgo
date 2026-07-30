@@ -156,3 +156,31 @@ func TestConditionalDeferIR(t *testing.T) {
 		t.Fatalf("expected conditional defer bitmask operations in IR, got:\n%s", ir)
 	}
 }
+
+func TestWasmRunDefersUsesStaticDispatch(t *testing.T) {
+	prog := ssatest.NewProgram(t, nil)
+	prog.Target().GOOS = "js"
+	prog.Target().GOARCH = "wasm"
+	pkg := prog.NewPackage("foo", "foo")
+
+	callee := pkg.NewFunc("callee", ssa.NoArgsNoRet, ssa.InGo)
+	cb := callee.MakeBody(1)
+	cb.Return()
+	cb.EndBuild()
+
+	fn := pkg.NewFunc("main", ssa.NoArgsNoRet, ssa.InGo)
+	b := fn.MakeBody(1)
+	fn.SetRecover(fn.MakeBlock())
+	b.Defer(ssa.DeferAlways, callee.Expr, ssa.Builder.Call)
+	b.RunDefers()
+	b.Return()
+	b.EndBuild()
+
+	ir := pkg.Module().String()
+	if !strings.Contains(ir, "switch i64") {
+		t.Fatalf("expected wasm RunDefers selector dispatch in IR, got:\n%s", ir)
+	}
+	if got := strings.Count(ir, "indirectbr"); got != 1 {
+		t.Fatalf("got %d indirect branches, want only the rethrow dispatch:\n%s", got, ir)
+	}
+}

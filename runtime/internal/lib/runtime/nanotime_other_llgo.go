@@ -1,4 +1,4 @@
-//go:build !darwin && !linux && !baremetal
+//go:build !darwin && !linux && !baremetal && (!wasm || (wasip1 && llgo.wasi_threads))
 
 /*
  * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.

@@ -560,6 +560,13 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	if fn == nil {
 		fn = pkg.NewFuncEx(name, sig, llssa.Background(ftype), hasCtx, p.needsLinkOnce(f))
 	}
+	if target := p.prog.Target(); target.GOARCH == "wasm" {
+		if decl, ok := f.Syntax().(*ast.FuncDecl); ok {
+			if module, importName, ok := wasmImportByDoc(decl.Doc); ok {
+				fn.SetWasmImport(module, importName)
+			}
+		}
+	}
 	noInlineDirective := hasNoInlineDirective(f)
 	runtimeStackNoInline := needsRuntimeStackNoInline(pkgTypes, f)
 	pcLineNoInline := p.needsPCLineNoInline(f)
