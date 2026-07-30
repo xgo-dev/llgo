@@ -36,6 +36,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unicode"
 
 	"golang.org/x/tools/go/ssa"
 
@@ -298,9 +299,6 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	if conf.Goarch == "" {
 		conf.Goarch = runtime.GOARCH
 	}
-	if conf.AppExt == "" {
-		conf.AppExt = defaultAppExt(conf)
-	}
 	if conf.BuildMode == "" {
 		conf.BuildMode = BuildModeExe
 	}
@@ -338,6 +336,12 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	}
 	if conf.Target != "" && export.GOARCH != "" {
 		conf.Goarch = export.GOARCH
+	}
+	if err := configureWasmGC(conf, &export); err != nil {
+		return nil, err
+	}
+	if conf.AppExt == "" {
+		conf.AppExt = defaultAppExt(conf)
 	}
 	if err := validateLinkOptions(conf, &export); err != nil {
 		return nil, err
@@ -405,6 +409,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	}
 	prog.EnableGoGlobalDCE(conf.goGlobalDCEEnabled())
 	prog.EnableDeadcodeDrop(conf.deadcodeDropEnabled())
+	prog.EnableGCRoots(conf.Goarch == "wasm" && hasBuildTag(conf.Tags, "llgo_wasm_gc"))
 	if conf.PthreadStackSize > 0 {
 		prog.SetPthreadStackSize(uint64(conf.PthreadStackSize))
 	}
@@ -418,10 +423,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	// final-PC sites for sidecar construction.
 	prog.EnableFuncInfoSites(shouldEnablePCLNSites(conf, funcInfo, emitDebugInfo))
 	sizes := func(sizes types.Sizes, compiler, arch string) types.Sizes {
-		if arch == "wasm" {
-			sizes = &types.StdSizes{WordSize: 4, MaxAlign: 4}
-		}
-		return prog.TypeSizes(sizes)
+		return prog.TypeSizes(effectiveTypeSizes(sizes, conf.Goos, arch, conf.Target))
 	}
 	dedup := packages.NewDeduper()
 	var syntaxErr error
@@ -727,14 +729,50 @@ func DefaultBuildTags(goarch, target string) string {
 
 func defaultBuildTags(goarch, target string) string {
 	tags := "llgo,math_big_pure_go,purego"
-	// Raw GOOS/GOARCH wasm builds do not have a target configuration that
-	// selects a collector. BDWGC is not available in either wasm host, so use
-	// the supported collector-free runtime unless a named target supplies its
-	// own runtime configuration.
-	if goarch == "wasm" && target == "" {
+	// BDWGC is unavailable in both wasm hosts.
+	if goarch == "wasm" {
 		tags += ",nogc"
 	}
 	return tags
+}
+
+func configureWasmGC(conf *Config, export *crosscompile.Export) error {
+	if conf.Goarch != "wasm" || !hasBuildTag(conf.Tags, "llgo_wasm_gc") {
+		return nil
+	}
+	switch conf.Goos {
+	case "js":
+		if !slices.Contains(export.LDFLAGS, "-sMALLOC=none") {
+			export.LDFLAGS = append(export.LDFLAGS, "-sMALLOC=none")
+		}
+	case "wasip1":
+		if IsWasiThreadsEnabled() {
+			return errors.New("llgo_wasm_gc requires single-worker WASI (set LLGO_WASI_THREADS=0)")
+		}
+	default:
+		return fmt.Errorf("llgo_wasm_gc does not support GOOS=%s", conf.Goos)
+	}
+	return nil
+}
+
+func hasBuildTag(tags, want string) bool {
+	for _, tag := range strings.FieldsFunc(tags, func(r rune) bool {
+		return r == ',' || unicode.IsSpace(r)
+	}) {
+		if tag == want {
+			return true
+		}
+	}
+	return false
+}
+
+func effectiveTypeSizes(sizes types.Sizes, goos, goarch, target string) types.Sizes {
+	// Named wasm targets use the native wasm32 data model. The raw js/wasm
+	// entry point keeps Go's 64-bit word model and is emitted as Memory64.
+	if goarch == "wasm" && (target != "" || goos != "js") {
+		return &types.StdSizes{WordSize: 4, MaxAlign: 4}
+	}
+	return sizes
 }
 
 func allowMissingFunctionBodies(initial []*packages.Package) {
@@ -1359,12 +1397,15 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 	}
 	linkArgs = append(linkArgs, cSharedExportArgs(ctx, linkedOrder)...)
 
-	err = linkObjFiles(ctx, outputPath, linkInputs, linkArgs, verbose)
+	linkOutput, err := prepareWasmLinkOutput(ctx.buildConf, &ctx.crossCompile, outputPath)
 	if err != nil {
 		return err
 	}
-
-	return nil
+	defer cleanupWasmLinkOutput(linkOutput, outputPath)
+	if err := linkObjFiles(ctx, linkOutput, linkInputs, linkArgs, verbose); err != nil {
+		return err
+	}
+	return publishWasmLinkOutput(ctx, linkOutput, outputPath, verbose)
 }
 
 func linkedModuleGlobals(pkgs []Package) map[string]none {
@@ -2360,7 +2401,7 @@ func llvmPassPipeline(level optlevel.Level, ltoMode lto.Mode) string {
 }
 
 func IsWasiThreadsEnabled() bool {
-	return isEnvOn(llgoWasiThreads, true)
+	return isEnvOn(llgoWasiThreads, false)
 }
 
 func IsFullRpathEnabled() bool {

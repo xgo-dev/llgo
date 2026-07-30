@@ -20,14 +20,13 @@ import (
 	"unsafe"
 
 	c "github.com/goplus/llgo/runtime/internal/clite"
-	"github.com/goplus/llgo/runtime/internal/clite/pthread/sync"
 	"github.com/goplus/llgo/runtime/internal/runtime/math"
 )
 
 // -----------------------------------------------------------------------------
 
 type Chan struct {
-	mutex sync.Mutex
+	mutex chanMutex
 
 	qcount   int
 	dataqsiz int
@@ -59,16 +58,14 @@ type chanWaiter struct {
 	queued bool
 	status waitStatus
 
-	mutex sync.Mutex
-	cond  sync.Cond
+	signal chanSignal
 
 	sel       *selectState
 	caseIndex int
 }
 
 type selectState struct {
-	mutex sync.Mutex
-	cond  sync.Cond
+	signal chanSignal
 
 	status waitStatus
 	chosen int
@@ -150,7 +147,7 @@ func NewChan(eltSize, cap int) *Chan {
 	if cap > 0 {
 		ret.buf = AllocU(mem)
 	}
-	ret.mutex.Init(nil)
+	ret.mutex.init()
 	return ret
 }
 
@@ -201,9 +198,8 @@ func newChanWaiter(ch *Chan, elem unsafe.Pointer, eltSize int, send bool) *chanW
 	w.elem = elem
 	w.size = eltSize
 	w.send = send
-	w.mutex.Init(nil)
-	w.cond.Init(nil)
-	w.mutex.Lock()
+	w.signal.init()
+	w.signal.lock()
 	return w
 }
 
@@ -214,12 +210,12 @@ func newSelectState() *selectState {
 	}
 	c.Memset(unsafe.Pointer(state), 0, unsafe.Sizeof(selectState{}))
 	state.chosen = -1
-	state.mutex.Init(nil)
-	state.cond.Init(nil)
+	state.signal.init()
 	return state
 }
 
 func freeSelectState(state *selectState) {
+	state.signal.destroy()
 	c.Free(unsafe.Pointer(state))
 }
 
@@ -248,37 +244,36 @@ func freeSelectWaiters(w *chanWaiter) {
 
 func (w *chanWaiter) wait() {
 	for !w.status.done() {
-		w.cond.Wait(&w.mutex)
+		w.signal.park()
 	}
-	w.mutex.Unlock()
-	w.cond.Destroy()
-	w.mutex.Destroy()
+	w.signal.unlock()
+	w.signal.destroy()
 }
 
 func (w *chanWaiter) finish(status waitStatus) {
 	if w.sel != nil {
-		w.sel.mutex.Lock()
+		w.sel.signal.lock()
 		w.sel.status = status
-		w.sel.mutex.Unlock()
-		w.sel.cond.Signal()
+		w.sel.signal.unlock()
+		w.sel.signal.ready()
 		return
 	}
-	w.mutex.Lock()
+	w.signal.lock()
 	w.status = status
-	w.mutex.Unlock()
-	w.cond.Signal()
+	w.signal.unlock()
+	w.signal.ready()
 }
 
 func claimWaiter(w *chanWaiter) bool {
 	if w.sel != nil {
-		w.sel.mutex.Lock()
+		w.sel.signal.lock()
 		if w.sel.status != waitPending {
-			w.sel.mutex.Unlock()
+			w.sel.signal.unlock()
 			return false
 		}
 		w.sel.status = waitClaimed
 		w.sel.chosen = w.caseIndex
-		w.sel.mutex.Unlock()
+		w.sel.signal.unlock()
 		return true
 	}
 	return true
@@ -497,14 +492,7 @@ func ChanClose(p *Chan) {
 }
 
 func blockForever() {
-	var mutex sync.Mutex
-	var cond sync.Cond
-	mutex.Init(nil)
-	cond.Init(nil)
-	mutex.Lock()
-	for {
-		cond.Wait(&mutex)
-	}
+	chanBlockForever()
 }
 
 // -----------------------------------------------------------------------------
@@ -688,20 +676,18 @@ func Select(ops ...ChanOp) (isel int, recvOK bool) {
 	}
 	unlockSelectChannels(&chans)
 
-	state.mutex.Lock()
+	state.signal.lock()
 	for !state.status.done() {
-		state.cond.Wait(&state.mutex)
+		state.signal.park()
 	}
 	isel = state.chosen
 	status := state.status
 	recvOK = status.recvOK()
-	state.mutex.Unlock()
+	state.signal.unlock()
 
 	for w := waiters; w != nil; w = w.all {
 		cleanupSelectWaiter(w)
 	}
-	state.cond.Destroy()
-	state.mutex.Destroy()
 	freeSelectState(state)
 	freeSelectWaiters(waiters)
 	if status.panicOnWake() {

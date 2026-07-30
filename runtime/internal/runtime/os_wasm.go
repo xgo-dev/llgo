@@ -1,7 +1,7 @@
-//go:build baremetal && !nogc
+//go:build llgo && wasm && !(wasip1 && llgo.wasi_threads)
 
 /*
- * Copyright (c) 2025 The XGo Authors (xgo.dev). All rights reserved.
+ * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,6 @@
 
 package runtime
 
-import "unsafe"
-
-// FreeDeferNode is a no-op in baremetal environment.
-// Defer nodes become unreachable after being unlinked from the chain,
-// and tinygogc will reclaim them in the next GC cycle.
-func FreeDeferNode(ptr unsafe.Pointer) {
-	// no-op: let tinygogc collect
-}
+// mOS is empty for the single-worker WebAssembly backend. The host Worker is
+// owned by Emscripten rather than created for an individual M.
+type mOS struct{}

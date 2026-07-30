@@ -185,6 +185,29 @@ func TestBuildOutFmtsWithTarget(t *testing.T) {
 	}
 }
 
+func TestDefaultAppExtJSExplicitGlueOutput(t *testing.T) {
+	tests := []struct {
+		out  string
+		want string
+	}{
+		{out: "app.mjs", want: ".mjs"},
+		{out: "app.js", want: ".js"},
+		{out: "app.wasm", want: ".wasm"},
+		{want: ".wasm"},
+	}
+	for _, tt := range tests {
+		conf := &Config{
+			Goos:      "js",
+			Goarch:    "wasm",
+			BuildMode: BuildModeExe,
+			OutFile:   tt.out,
+		}
+		if got := defaultAppExt(conf); got != tt.want {
+			t.Errorf("defaultAppExt(%q) = %q, want %q", tt.out, got, tt.want)
+		}
+	}
+}
+
 func TestBuildOutFmtsNativeTarget(t *testing.T) {
 	tests := []struct {
 		name     string

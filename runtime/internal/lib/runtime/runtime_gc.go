@@ -1,4 +1,4 @@
-//go:build !nogc && !baremetal
+//go:build !nogc && !baremetal && !wasm
 
 package runtime
 

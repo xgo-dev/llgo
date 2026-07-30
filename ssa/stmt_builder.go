@@ -77,6 +77,7 @@ func (b Builder) EndBuild() {
 		b.Func.emitFakeUsesInlineAsm(b)
 	}
 	b.Func.endDefer(b)
+	b.Func.endGCRoots(b)
 }
 
 // Dispose disposes of the builder.
