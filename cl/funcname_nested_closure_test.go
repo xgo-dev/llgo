@@ -136,6 +136,44 @@ func localType[T any]() any {
 	}
 }
 
+func TestGenericLocalRecursiveFunctionTypePatch(t *testing.T) {
+	ssapkg := buildSSAPackage(t, `package foo
+
+func Y[Endo ~func(RecFct) RecFct, RecFct ~func(T) R, T, R any](f Endo) RecFct {
+	type internal[RecFct ~func(T) R, T, R any] func(internal[RecFct, T, R]) RecFct
+	g := func(h internal[RecFct, T, R]) RecFct {
+		return func(t T) R { return f(h(h))(t) }
+	}
+	return g(g)
+}
+
+func use() {
+	f := Y(func(recur func(int) int) func(int) int { return recur })
+	_ = f(1)
+}
+`)
+
+	var checked bool
+	for fn := range ssautil.AllFunctions(ssapkg.Prog) {
+		if fn == nil || !strings.HasSuffix(fn.Name(), "]$1") || len(fn.TypeArgs()) == 0 {
+			continue
+		}
+		ctx := &context{goFn: fn}
+		patched := ctx.patchType(fn.Signature).(*types.Signature)
+		param, ok := patched.Params().At(0).Type().(*types.Named)
+		if !ok {
+			t.Fatalf("patched Y$1 parameter = %T, want named local function type", patched.Params().At(0).Type())
+		}
+		if name := param.Obj().Name(); !strings.Contains(name, ";") {
+			t.Fatalf("patched Y$1 parameter name = %q, want outer and own type arguments", name)
+		}
+		checked = true
+	}
+	if !checked {
+		t.Fatal("instantiated Y$1 closure not found")
+	}
+}
+
 func TestGenericLocalTypePatchHelperBranches(t *testing.T) {
 	ssapkg := buildSSAPackage(t, `package foo
 

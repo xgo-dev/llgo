@@ -1,0 +1,24 @@
+package main
+
+func Y[Endo ~func(RecFct) RecFct, RecFct ~func(T) R, T, R any](f Endo) RecFct {
+	type internal[RecFct ~func(T) R, T, R any] func(internal[RecFct, T, R]) RecFct
+
+	g := func(h internal[RecFct, T, R]) RecFct {
+		return func(t T) R {
+			return f(h(h))(t)
+		}
+	}
+	return g(g)
+}
+
+func main() {
+	factorial := Y(func(recur func(int) int) func(int) int {
+		return func(n int) int {
+			if n == 0 {
+				return 1
+			}
+			return n * recur(n-1)
+		}
+	})
+	println(factorial(10))
+}
