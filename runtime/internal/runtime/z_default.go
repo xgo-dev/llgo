@@ -3,6 +3,8 @@
 package runtime
 
 import (
+	"unsafe"
+
 	c "github.com/goplus/llgo/runtime/internal/clite"
 	"github.com/goplus/llgo/runtime/internal/clite/debug"
 )
@@ -18,13 +20,18 @@ func Rethrow(link *Defer) {
 	gp := getg()
 	if ptr := gp.panic_; ptr != nil {
 		if link == nil {
-			TracePanic(*(*any)(ptr))
+			node := (*panicNode)(ptr)
+			TracePanic(node.arg)
 			if PanicTraceback == nil || !PanicTraceback(2) {
 				debug.PrintStack(2)
 			}
-			c.Free(ptr)
+			c.Free(unsafe.Pointer(node))
 			c.Exit(2)
 		} else {
+			node := (*panicNode)(ptr)
+			if link == gp.defer_ {
+				node.defer_ = link
+			}
 			c.Siglongjmp(link.Addr, 1)
 		}
 	} else if gp.goexit {
