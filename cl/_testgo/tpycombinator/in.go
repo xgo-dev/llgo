@@ -20,5 +20,14 @@ func main() {
 			return n * recur(n-1)
 		}
 	})
+	repeat := Y(func(recur func(string) string) func(string) string {
+		return func(s string) string {
+			if len(s) == 3 {
+				return s
+			}
+			return recur(s + "x")
+		}
+	})
 	println(factorial(10))
+	println(repeat(""))
 }
