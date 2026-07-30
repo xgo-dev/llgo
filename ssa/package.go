@@ -251,6 +251,13 @@ type AbiSymbol struct {
 	MSet    *types.MethodSet
 }
 
+// AbiTypeInfo is the LLVM-free identity needed to declare one runtime type
+// descriptor in another Program.
+type AbiTypeInfo struct {
+	Name string
+	Raw  types.Type
+}
+
 // A Program presents a program.
 type Program = *aProgram
 

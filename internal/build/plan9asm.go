@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	llabi "github.com/goplus/llgo/internal/abi"
 	"github.com/goplus/llgo/internal/cabi"
@@ -166,13 +165,6 @@ func shouldSkipDarwinDynimportTrampolineAsm(enabled bool, sfile string, src []by
 		bytes.Contains(src, []byte("_trampoline_addr(SB)"))
 }
 
-type plan9AsmSigCacheKey struct {
-	ctx     *context
-	pkgPath string
-}
-
-var plan9AsmSigCache sync.Map // key: plan9AsmSigCacheKey, value: map[string]struct{}
-
 func archSupportsPlan9AsmDefaults(goarch string) bool {
 	return goarch == "arm64" || goarch == "amd64"
 }
@@ -225,18 +217,20 @@ func plan9asmSigsForPkg(ctx *context, pkgPath string) (map[string]struct{}, erro
 	if ctx == nil || pkgPath == "" {
 		return nil, nil
 	}
-	key := plan9AsmSigCacheKey{ctx: ctx, pkgPath: pkgPath}
-	if v, ok := plan9AsmSigCache.Load(key); ok {
-		return v.(map[string]struct{}), nil
+	if ctx.plan9asmSigs == nil {
+		ctx.plan9asmSigs = make(map[string]map[string]struct{})
+	}
+	if sigs, ok := ctx.plan9asmSigs[pkgPath]; ok {
+		return sigs, nil
 	}
 
 	sigs := make(map[string]struct{})
 	if !ctx.plan9asmEnabled(pkgPath) {
-		plan9AsmSigCache.Store(key, sigs)
+		ctx.plan9asmSigs[pkgPath] = sigs
 		return sigs, nil
 	}
-	if hasAltPkgForTarget(ctx.buildConf, pkgPath) && !llruntime.HasAdditiveAltPkgForGOARCH(pkgPath, ctx.buildConf.Goarch) {
-		plan9AsmSigCache.Store(key, sigs)
+	if ctx.hasAltPkgWithResolvedPlan9(pkgPath) && !llruntime.HasAdditiveAltPkgForGOARCH(pkgPath, ctx.buildConf.Goarch) {
+		ctx.plan9asmSigs[pkgPath] = sigs
 		return sigs, nil
 	}
 
@@ -248,7 +242,7 @@ func plan9asmSigsForPkg(ctx *context, pkgPath string) (map[string]struct{}, erro
 		}
 	}
 	if pkg == nil {
-		plan9AsmSigCache.Store(key, sigs)
+		ctx.plan9asmSigs[pkgPath] = sigs
 		return sigs, nil
 	}
 
@@ -272,7 +266,7 @@ func plan9asmSigsForPkg(ctx *context, pkgPath string) (map[string]struct{}, erro
 			sigs[name] = struct{}{}
 		}
 	}
-	plan9AsmSigCache.Store(key, sigs)
+	ctx.plan9asmSigs[pkgPath] = sigs
 	return sigs, nil
 }
 
@@ -306,19 +300,22 @@ func cabiSkipFuncsForPlan9Asm(ctx *context, pkgPath string, mod gllvm.Module) []
 }
 
 func (ctx *context) plan9asmEnabled(pkgPath string) bool {
-	ctx.plan9asmOnce.Do(func() {
-		cfg := parsePlan9AsmPkgsEnv(Plan9ASMPkgs())
-		ctx.plan9asmMode = cfg.mode
-		switch cfg.mode {
-		case plan9asmEnvSelected:
-			ctx.plan9asmPkgs = make(map[string]bool, len(cfg.pkgs))
-			for p := range cfg.pkgs {
-				ctx.plan9asmPkgs[p] = true
+	if !ctx.plan9asmReady {
+		ctx.plan9asmOnce.Do(func() {
+			cfg := parsePlan9AsmPkgsEnv(Plan9ASMPkgs())
+			ctx.plan9asmMode = cfg.mode
+			switch cfg.mode {
+			case plan9asmEnvSelected:
+				ctx.plan9asmPkgs = make(map[string]bool, len(cfg.pkgs))
+				for p := range cfg.pkgs {
+					ctx.plan9asmPkgs[p] = true
+				}
+			default:
+				ctx.plan9asmPkgs = make(map[string]bool)
 			}
-		default:
-			ctx.plan9asmPkgs = make(map[string]bool)
-		}
-	})
+			ctx.plan9asmReady = true
+		})
+	}
 
 	switch ctx.plan9asmMode {
 	case plan9asmEnvAll:
@@ -332,6 +329,30 @@ func (ctx *context) plan9asmEnabled(pkgPath string) bool {
 	default:
 		return false
 	}
+}
+
+func (ctx *context) hasAltPkgWithResolvedPlan9(pkgPath string) bool {
+	conf := ctx.buildConf
+	if conf == nil || !llruntime.HasAltPkgForGOARCH(pkgPath, conf.Goarch) {
+		return false
+	}
+	if llruntime.HasAdditiveAltPkgForGOARCH(pkgPath, conf.Goarch) {
+		return true
+	}
+	if plan9asmEnabledByDefault(conf, pkgPath) && ctx.plan9asmMode != plan9asmEnvNone {
+		return false
+	}
+	if conf.AbiMode != cabi.ModeAllFunc {
+		switch ctx.plan9asmMode {
+		case plan9asmEnvAll:
+			return false
+		case plan9asmEnvSelected:
+			if ctx.plan9asmPkgs[pkgPath] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func hasAltPkgForTarget(conf *Config, pkgPath string) bool {
@@ -379,26 +400,32 @@ func pkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 	if pkg == nil || pkg.PkgPath == "" {
 		return nil, nil
 	}
-	// Some unit tests construct synthetic packages that are not loadable via
-	// `go list` (PkgPath not in any module, and Dir/Standard/Goroot unset).
-	// In that case, treat the package as having no selected .s files.
-	if pkg.Dir == "" {
-		return nil, nil
-	}
-	// Fast path: if directory has no .s/.S at all, skip `go list`.
-	if pkg.Dir != "" {
-		if ss, _ := filepath.Glob(filepath.Join(pkg.Dir, "*.s")); len(ss) == 0 {
-			if ss, _ := filepath.Glob(filepath.Join(pkg.Dir, "*.S")); len(ss) == 0 {
-				return nil, nil
-			}
-		}
-	}
-
 	if ctx.sfilesCache == nil {
+		if ctx.sfilesFrozen {
+			return nil, fmt.Errorf("package %s assembly files were not prepared before backend execution", pkg.PkgPath)
+		}
 		ctx.sfilesCache = make(map[string][]string)
 	}
 	if v, ok := ctx.sfilesCache[pkg.ID]; ok {
 		return v, nil
+	}
+	// Some unit tests construct synthetic packages that are not loadable via
+	// `go list` (PkgPath not in any module, and Dir/Standard/Goroot unset).
+	// In that case, treat the package as having no selected .s files.
+	if pkg.Dir == "" {
+		ctx.sfilesCache[pkg.ID] = nil
+		return nil, nil
+	}
+	// Fast path: if directory has no .s/.S at all, skip `go list`.
+	if ss, _ := filepath.Glob(filepath.Join(pkg.Dir, "*.s")); len(ss) == 0 {
+		if ss, _ := filepath.Glob(filepath.Join(pkg.Dir, "*.S")); len(ss) == 0 {
+			ctx.sfilesCache[pkg.ID] = nil
+			return nil, nil
+		}
+	}
+
+	if ctx.sfilesFrozen {
+		return nil, fmt.Errorf("package %s assembly files were not prepared before backend execution", pkg.PkgPath)
 	}
 
 	args := []string{"list", "-json"}
