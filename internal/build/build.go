@@ -1042,7 +1042,8 @@ func prePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
 	if task.isDeclOnly() {
 		pkg.ExportFile = ""
 		task.skip = true
-		return nil
+		aPkg.Summary = summarizePackage(aPkg)
+		return ctx.collectFingerprint(aPkg)
 	}
 	if task.isLinkOnly() && !task.hasSource() {
 		pkg.ExportFile = ""
@@ -1050,7 +1051,8 @@ func prePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
 			appendExternalLinkArgs(ctx, aPkg, task.kindParam)
 		}
 		task.skip = true
-		return nil
+		aPkg.Summary = summarizePackage(aPkg)
+		return ctx.collectFingerprint(aPkg)
 	}
 	if err := ctx.collectFingerprint(aPkg); err != nil {
 		return err
@@ -1091,6 +1093,7 @@ func finalizePackageBuild(ctx *context, task *packageBuildTask, verbose bool) (p
 	if task.kind == cl.PkgLinkExtern {
 		appendExternalLinkArgs(ctx, aPkg, task.kindParam)
 	}
+	aPkg.Summary = summarizePackage(aPkg)
 	if err := ctx.saveToCache(aPkg); err != nil && verbose {
 		fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", aPkg.PkgPath, err)
 	}
@@ -1341,39 +1344,47 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 			aPkg = ctx.pkgByID[p.ID]
 		}
 		if p.ExportFile != "" && aPkg != nil { // skip packages that only contain declarations
+			if aPkg.Summary == nil && isRuntimePkg(aPkg.PkgPath) {
+				return
+			}
 			linkedPkgs[p.ID] = true
 			linkedOrder = append(linkedOrder, aPkg)
 		}
 	})
+	linkedSummaries := make([]*PackageSummary, len(linkedOrder))
+	for i, aPkg := range linkedOrder {
+		if aPkg.Summary == nil {
+			return fmt.Errorf("package %s has no linker summary", aPkg.PkgPath)
+		}
+		linkedSummaries[i] = aPkg.Summary
+	}
 
 	// packages.Visit with a post callback yields dependencies before importers.
 	// Reverse that order so static archives are linked after the objects that use them.
 	for i := len(linkedOrder) - 1; i >= 0; i-- {
-		aPkg := linkedOrder[i]
-		p := aPkg.Package
+		summary := linkedSummaries[i]
 		// Defer linking runtime packages unless we actually need the runtime.
-		if isRuntimePkg(p.PkgPath) {
-			rtLinkArgs = append(rtLinkArgs, aPkg.LinkArgs...)
-			if aPkg.ArchiveFile != "" {
-				rtLinkInputs = append(rtLinkInputs, aPkg.ArchiveFile)
+		if isRuntimePkg(summary.PkgPath) {
+			rtLinkArgs = append(rtLinkArgs, summary.LinkArgs...)
+			if summary.ArchiveFile != "" {
+				rtLinkInputs = append(rtLinkInputs, summary.ArchiveFile)
 			}
 			continue
 		}
 		// Only let non-runtime packages influence whether runtime is needed.
-		need1, need2 := aPkg.isNeedRuntimeOrPyInit()
-		needRuntime = needRuntime || need1
-		needPyInit = needPyInit || need2
-		needAbiInit |= aPkg.LPkg.NeedAbiInit
-		for k, _ := range aPkg.LPkg.MethodByIndex {
-			methodByIndex[k] = none{}
+		needRuntime = needRuntime || summary.NeedRuntime
+		needPyInit = needPyInit || summary.NeedPyInit
+		needAbiInit |= summary.NeedAbiInit
+		for _, method := range summary.MethodByIndex {
+			methodByIndex[method] = none{}
 		}
-		for k, _ := range aPkg.LPkg.MethodByName {
-			methodByName[k] = none{}
+		for _, method := range summary.MethodByName {
+			methodByName[method] = none{}
 		}
 
-		linkArgs = append(linkArgs, aPkg.LinkArgs...)
-		if aPkg.ArchiveFile != "" {
-			archiveInputs = append(archiveInputs, aPkg.ArchiveFile)
+		linkArgs = append(linkArgs, summary.LinkArgs...)
+		if summary.ArchiveFile != "" {
+			archiveInputs = append(archiveInputs, summary.ArchiveFile)
 		}
 	}
 
@@ -1390,9 +1401,9 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 	var pcLineInfo []pcLineRecord
 	var funcInfoStubs []funcInfoStubRecord
 	if ctx.buildConf.PCLNMode != PCLNNone {
-		funcInfo = prepareFuncInfoTableRecords(collectFuncInfo(linkedOrder), nil)
-		pcLineInfo = collectPCLineInfo(linkedOrder)
-		funcInfoStubs = collectFuncInfoStubRecords(linkedOrder, funcInfo)
+		funcInfo = prepareFuncInfoTableRecords(collectFuncInfoSummaries(linkedSummaries), nil)
+		pcLineInfo = collectPCLineInfoSummaries(linkedSummaries)
+		funcInfoStubs = collectFuncInfoStubRecordsSummaries(linkedSummaries, funcInfo)
 	}
 	entryPkg := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{
 		rtInit:        needRuntime,
@@ -1400,7 +1411,7 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 		abiInit:       needAbiInit,
 		methodByIndex: methodByIndex,
 		methodByName:  methodByName,
-		abiSymbols:    linkedModuleGlobals(linkedOrder),
+		abiSymbols:    linkedPackageGlobals(linkedSummaries),
 		funcInfo:      funcInfo,
 		pcLineInfo:    pcLineInfo,
 		funcInfoStubs: funcInfoStubs,
@@ -1440,7 +1451,7 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 			}
 		}
 	}
-	linkArgs = append(linkArgs, cSharedExportArgs(ctx, linkedOrder)...)
+	linkArgs = append(linkArgs, cSharedExportArgsSummaries(ctx, linkedSummaries)...)
 
 	err = linkObjFiles(ctx, outputPath, linkInputs, linkArgs, verbose)
 	if err != nil {
@@ -1498,19 +1509,22 @@ func dceEntryRootCandidates(pkgs []Package, needRuntime bool) []string {
 }
 
 func linkedModuleGlobals(pkgs []Package) map[string]none {
-	if len(pkgs) == 0 {
+	return linkedPackageGlobals(summariesForPackages(pkgs))
+}
+
+func linkedPackageGlobals(summaries []*PackageSummary) map[string]none {
+	if len(summaries) == 0 {
 		return nil
 	}
 	seen := make(map[string]none)
-	for _, pkg := range pkgs {
-		if pkg == nil || pkg.LPkg == nil {
+	for _, summary := range summaries {
+		if summary == nil {
 			continue
 		}
-		for g := pkg.LPkg.Module().FirstGlobal(); !g.IsNil(); g = gllvm.NextGlobal(g) {
-			if g.IsDeclaration() {
-				continue
+		for _, name := range summary.GlobalSymbols {
+			if name != "" {
+				seen[name] = none{}
 			}
-			seen[g.Name()] = none{}
 		}
 	}
 	return seen
@@ -1589,22 +1603,26 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 // shared-library link roots. They live in package archives and otherwise remain
 // unreferenced, so the linker can omit both their object files and symbols.
 func cSharedExportArgs(ctx *context, pkgs []*aPackage) []string {
+	return cSharedExportArgsSummaries(ctx, summariesForPackages(pkgs))
+}
+
+func cSharedExportArgsSummaries(ctx *context, summaries []*PackageSummary) []string {
 	if ctx == nil || ctx.buildConf == nil || ctx.buildConf.BuildMode != BuildModeCShared {
 		return nil
 	}
 	exports := make(map[string]none)
-	for _, pkg := range pkgs {
-		if pkg == nil || pkg.LPkg == nil {
+	for _, summary := range summaries {
+		if summary == nil {
 			continue
 		}
-		for _, name := range pkg.LPkg.ExportFuncs() {
+		for _, name := range summary.CSharedExports {
 			if name != "" {
 				exports[name] = none{}
 			}
 		}
-		if ctx.mode == ModeTest && pkg.Package != nil && pkg.Name == "main" && strings.HasSuffix(pkg.PkgPath, ".test") {
-			exports[pkg.PkgPath+".init"] = none{}
-			exports[pkg.PkgPath+".main"] = none{}
+		if ctx.mode == ModeTest && summary.Name == "main" && strings.HasSuffix(summary.PkgPath, ".test") {
+			exports[summary.PkgPath+".init"] = none{}
+			exports[summary.PkgPath+".main"] = none{}
 		}
 	}
 	names := make([]string, 0, len(exports))
@@ -2238,9 +2256,10 @@ func registerAltSSAPkgs(prog *ssa.Program, patches cl.Patches, alts []*packages.
 
 type aPackage struct {
 	*packages.Package
-	SSA    *ssa.Package
-	AltPkg *packages.Cached
-	LPkg   llssa.Package
+	SSA     *ssa.Package
+	AltPkg  *packages.Cached
+	LPkg    llssa.Package
+	Summary *PackageSummary
 
 	NeedRt     bool
 	NeedPyInit bool

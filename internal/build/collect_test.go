@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -1060,8 +1061,8 @@ func TestSaveToCache_Success(t *testing.T) {
 	if data.Env.Goos != "darwin" {
 		t.Errorf("manifest should contain original env content")
 	}
-	if data.Metadata != nil {
-		t.Errorf("metadata should be empty when no link args/runtime flags")
+	if data.Metadata == nil || data.Metadata.Summary == nil {
+		t.Errorf("metadata should preserve an empty linker summary")
 	}
 
 	// Check archive exists
@@ -1235,6 +1236,7 @@ func TestTryLoadFromCacheIgnoresMetaWhenPackageMetaDisabled(t *testing.T) {
 	m := newManifestBuilder()
 	m.env.Goos = "darwin"
 	m.pkg.PkgPath = "example.com/nometa"
+	m.meta = &manifestMetadata{Summary: &packageSummaryMetadata{}}
 	if err := writeManifest(paths.Manifest, m.Build()); err != nil {
 		t.Fatal(err)
 	}
@@ -1247,6 +1249,86 @@ func TestTryLoadFromCacheIgnoresMetaWhenPackageMetaDisabled(t *testing.T) {
 	}
 	if pkg.Meta != nil {
 		t.Fatal("Meta should not be loaded while deadcode drop is disabled")
+	}
+}
+
+func TestTryLoadFromCacheRestoresPackageSummary(t *testing.T) {
+	td := t.TempDir()
+	oldFunc := cacheRootFunc
+	cacheRootFunc = func() string { return td }
+	defer func() { cacheRootFunc = oldFunc }()
+
+	ctx := &context{
+		conf:      &packages.Config{},
+		buildConf: &Config{Goos: "darwin", Goarch: "arm64"},
+		crossCompile: crosscompile.Export{
+			LLVMTarget: "arm64-apple-darwin",
+		},
+	}
+	pkg := &aPackage{
+		Package: &packages.Package{
+			ID:      "example.com/cached",
+			PkgPath: "example.com/cached",
+			Name:    "cached",
+		},
+		Fingerprint: "summary-test",
+		Manifest: func() string {
+			m := newManifestBuilder()
+			m.env.Goos = "darwin"
+			m.pkg.PkgPath = "example.com/cached"
+			return m.Build()
+		}(),
+		NeedRt:     true,
+		NeedPyInit: true,
+		LinkArgs:   []string{"-lcached"},
+		Summary: &PackageSummary{
+			ID:             "example.com/cached",
+			PkgPath:        "example.com/cached",
+			Name:           "cached",
+			LinkArgs:       []string{"-lcached"},
+			NeedRuntime:    true,
+			NeedPyInit:     true,
+			NeedAbiInit:    3,
+			MethodByIndex:  []int{1},
+			MethodByName:   []string{"Method"},
+			GlobalSymbols:  []string{"example.com/cached.global"},
+			FuncInfo:       []funcInfoRecord{{symbol: "example.com/cached.fn", name: "Fn", file: "p.go", line: 7}},
+			PCLineInfo:     []pcLineRecord{{id: 9, symbol: "example.com/cached.fn", file: "p.go", line: 8}},
+			FuncInfoStubs:  []string{closureStubPrefix + "example.com/cached.fn"},
+			CSharedExports: []string{"Cached"},
+		},
+	}
+	want := *pkg.Summary
+	obj, err := os.CreateTemp(td, "cached-*.o")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := obj.WriteString("object"); err != nil {
+		t.Fatal(err)
+	}
+	if err := obj.Close(); err != nil {
+		t.Fatal(err)
+	}
+	pkg.ObjFiles = []string{obj.Name()}
+	if err := ctx.saveToCache(pkg); err != nil {
+		t.Fatalf("saveToCache: %v", err)
+	}
+
+	pkg.ObjFiles = nil
+	pkg.ArchiveFile = ""
+	pkg.LinkArgs = nil
+	pkg.NeedRt = false
+	pkg.NeedPyInit = false
+	pkg.Summary = nil
+	if !ctx.tryLoadFromCache(pkg) {
+		t.Fatal("tryLoadFromCache = false, want summary cache hit")
+	}
+	if pkg.Summary == nil {
+		t.Fatal("cache hit did not restore package summary")
+	}
+	want.ArchiveFile = pkg.ArchiveFile
+	if !reflect.DeepEqual(pkg.Summary, &want) {
+		t.Fatalf("restored summary = %#v, want %#v", pkg.Summary, &want)
 	}
 }
 

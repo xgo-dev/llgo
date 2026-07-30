@@ -210,7 +210,11 @@ func TestPrePackageBuildSkipsDeclarationOnlyPackage(t *testing.T) {
 		Types:      types.Unsafe,
 		ExportFile: "stale.a",
 	}}
-	ctx := &context{built: make(map[string]none)}
+	ctx := &context{
+		conf:      &packages.Config{},
+		buildConf: &Config{Goos: "linux", Goarch: "amd64", ForceRebuild: true},
+		built:     make(map[string]none),
+	}
 
 	task := newPackageBuildTask(pkg)
 	err := prePackageBuild(ctx, task, false)
@@ -274,4 +278,24 @@ func TestBuildSSAPkgsEmptyAndNilEntries(t *testing.T) {
 	prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
 	pkg := prog.CreatePackage(types.NewPackage("example.com/ssa", "ssa"), nil, nil, true)
 	buildSSAPkgs(ctx, []ssaBuildEntry{{pkg: pkg}, {pkg: pkg}})
+}
+
+func TestPreflightFingerprintsSkippedPackage(t *testing.T) {
+	pkg := &aPackage{Package: &packages.Package{
+		ID:      "unsafe",
+		PkgPath: "unsafe",
+		Types:   types.Unsafe,
+	}}
+	ctx := &context{
+		conf:      &packages.Config{},
+		buildConf: &Config{Goos: "linux", Goarch: "amd64", ForceRebuild: true},
+		built:     make(map[string]none),
+	}
+	skip, err := preflightPackageBuild(ctx, newPackageBuildSpec(pkg), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !skip || pkg.Fingerprint == "" || pkg.Manifest == "" || pkg.Summary == nil {
+		t.Fatalf("skipped package was not fully prepared: skip=%v fingerprint=%q manifest=%q summary=%#v", skip, pkg.Fingerprint, pkg.Manifest, pkg.Summary)
+	}
 }
