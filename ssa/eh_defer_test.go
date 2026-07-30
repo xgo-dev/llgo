@@ -9,6 +9,7 @@ import (
 
 	"github.com/goplus/llgo/ssa"
 	"github.com/goplus/llgo/ssa/ssatest"
+	"github.com/xgo-dev/llvm"
 )
 
 func TestExplicitDeferStackIR(t *testing.T) {
@@ -73,7 +74,10 @@ func TestExplicitDeferStackDrainWithoutLoopCases(t *testing.T) {
 
 	fn := pkg.NewFunc("main", ssa.NoArgsNoRet, ssa.InGo)
 	b := fn.MakeBody(1)
-	fn.SetRecover(fn.MakeBlock())
+	recoverBlock := fn.MakeBlock()
+	fn.SetRecover(recoverBlock)
+	b.SetBlock(recoverBlock).Return()
+	b.SetBlock(fn.Block(0))
 
 	_ = b.BuiltinCall("ssa:deferstack")
 	b.DeferStackDrain()
@@ -87,6 +91,9 @@ func TestExplicitDeferStackDrainWithoutLoopCases(t *testing.T) {
 	}
 	if !strings.Contains(ir, "sigsetjmp") && !strings.Contains(ir, "setjmp") {
 		t.Fatalf("expected defer stack setup with recover, got:\n%s", ir)
+	}
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("explicit defer stack without loop cases produced invalid IR: %v\n%s", err, ir)
 	}
 }
 

@@ -63,7 +63,7 @@ func (m PCLNMode) validate() error {
 // effectivePCLNMode translates the legacy environment escape hatch once at
 // the configuration boundary. An explicit -pclntab value always wins.
 func effectivePCLNMode(conf *Config) PCLNMode {
-	if !conf.PCLNModeSet && conf.PCLNMode == PCLNEmbedded && !IsFuncInfoEnabled() {
+	if !conf.PCLNModeSet && conf.PCLNMode == PCLNEmbedded && !isEnvOnConfig(conf, llgoFuncInfo, true) {
 		return PCLNNone
 	}
 	return conf.PCLNMode
@@ -75,7 +75,7 @@ func effectivePCLNMode(conf *Config) PCLNMode {
 // reconstruct all Go entry PCs with dlsym: most Go symbols are intentionally
 // absent from .dynsym, so Linux keeps sites even when it emits DWARF.
 func shouldEnablePCLNSites(conf *Config, funcInfo, emitDebugInfo bool) bool {
-	if conf == nil || !funcInfo || !IsFuncInfoSitesEnabled() {
+	if conf == nil || !funcInfo || !isEnvOnConfig(conf, llgoFuncInfoSites, true) {
 		return false
 	}
 	return !emitDebugInfo || conf.Goos == "linux" || conf.PCLNMode == PCLNExternal
@@ -110,7 +110,7 @@ func validatePCLNMode(conf *Config) error {
 	default:
 		return fmt.Errorf("external PCLN metadata is not supported for GOARCH=%s", conf.Goarch)
 	}
-	if !IsFuncInfoSitesEnabled() {
+	if !isEnvOnConfig(conf, llgoFuncInfoSites, true) {
 		return fmt.Errorf("external PCLN metadata requires LLGO_FUNCINFO_SITES to be enabled")
 	}
 	return nil

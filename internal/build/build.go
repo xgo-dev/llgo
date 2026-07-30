@@ -58,6 +58,7 @@ import (
 	"github.com/goplus/llgo/internal/packages"
 	"github.com/goplus/llgo/internal/pclnmap"
 	"github.com/goplus/llgo/internal/pclnpost"
+	"github.com/goplus/llgo/internal/processenv"
 	"github.com/goplus/llgo/internal/typepatch"
 	"github.com/goplus/llgo/ssa/abi"
 	xenv "github.com/goplus/llgo/xtool/env"
@@ -180,8 +181,8 @@ type Config struct {
 	OmitDWARFByDefault bool
 	PCLNMode           PCLNMode
 	// PCLNModeSet marks PCLNMode as authoritative. Command flags set it for
-	// explicit requests; Do sets it after resolving the legacy environment
-	// default.
+	// explicit requests; the build-local resolved configuration sets it after
+	// resolving the legacy environment default.
 	PCLNModeSet bool
 	AllowNoBody bool // allow declarations without bodies, as go tool compile does
 	// DisableBoundsChecks disables index, slice, and slice-to-array conversion
@@ -209,9 +210,89 @@ type Config struct {
 	GlobalRewrites map[string]Rewrites
 	ModuleHook     ModuleHook
 	Overlay        map[string][]byte
+
+	environment []string
+	llgoRoot    string
 }
 
 type Rewrites map[string]string
+
+// clone returns an independent copy of c for use by a single build. Do resolves
+// defaults and target-specific values on this copy so callers can safely reuse
+// their input configuration after Do returns.
+func (c *Config) clone() *Config {
+	if c == nil {
+		return nil
+	}
+	cloned := *c
+	cloned.RunArgs = slices.Clone(c.RunArgs)
+	cloned.GoBuildFlags = slices.Clone(c.GoBuildFlags)
+	cloned.environment = slices.Clone(c.environment)
+	cloned.Overlay = cloneOverlay(c.Overlay)
+	if c.GlobalRewrites != nil {
+		cloned.GlobalRewrites = make(map[string]Rewrites, len(c.GlobalRewrites))
+		for pkgPath, rewrites := range c.GlobalRewrites {
+			if rewrites == nil {
+				cloned.GlobalRewrites[pkgPath] = nil
+				continue
+			}
+			copied := make(Rewrites, len(rewrites))
+			for name, value := range rewrites {
+				copied[name] = value
+			}
+			cloned.GlobalRewrites[pkgPath] = copied
+		}
+	}
+	return &cloned
+}
+
+// resolveBuildConfig validates and fills build-local defaults without modifying
+// the caller's Config. Target-derived GOOS/GOARCH values are resolved later,
+// after crosscompile.Use has selected the toolchain.
+func resolveBuildConfig(input *Config, environ ...[]string) (*Config, error) {
+	if input == nil {
+		return nil, errors.New("build config must not be nil")
+	}
+	conf := input.clone()
+	if len(environ) != 0 {
+		conf.environment = slices.Clone(environ[0])
+	}
+	conf.llgoRoot = env.LLGoROOTWithEnv(conf.environment)
+	if conf.Goos == "" {
+		conf.Goos = runtime.GOOS
+	}
+	if conf.Goarch == "" {
+		conf.Goarch = runtime.GOARCH
+	}
+	if conf.AppExt == "" {
+		conf.AppExt = defaultAppExt(conf)
+	}
+	if conf.BuildMode == "" {
+		conf.BuildMode = BuildModeExe
+	}
+	if conf.BuildMode != BuildModeExe {
+		conf.DeadcodeDrop = false
+	}
+	conf.PCLNMode = effectivePCLNMode(conf)
+	conf.PCLNModeSet = true
+	if conf.SizeReport && conf.SizeFormat == "" {
+		conf.SizeFormat = "text"
+	}
+	if conf.SizeReport && conf.SizeLevel == "" {
+		conf.SizeLevel = "module"
+	}
+	if err := validatePCLNMode(conf); err != nil {
+		return nil, err
+	}
+	if err := ensureSizeReporting(conf); err != nil {
+		return nil, err
+	}
+	if err := conf.LinkOptions.validate(); err != nil {
+		return nil, err
+	}
+	conf.OptLevel = effectiveOptLevel(conf)
+	return conf, nil
+}
 
 func NewDefaultConf(mode Mode) *Config {
 	bin := os.Getenv("GOBIN")
@@ -221,9 +302,6 @@ func NewDefaultConf(mode Mode) *Config {
 			panic(fmt.Errorf("cannot get GOPATH: %v", err))
 		}
 		bin = filepath.Join(gopath, "bin")
-	}
-	if err := os.MkdirAll(bin, 0755); err != nil {
-		panic(fmt.Errorf("cannot create bin directory: %v", err))
 	}
 	goos, goarch := os.Getenv("GOOS"), os.Getenv("GOARCH")
 	if goos == "" {
@@ -282,6 +360,13 @@ func (c *Config) packageMetaEnabled() bool {
 	return c.CollectPackageMeta || c.deadcodeDropEnabled()
 }
 
+func (c *Config) llgoRuntimeDir() string {
+	if c == nil || c.llgoRoot == "" {
+		return ""
+	}
+	return filepath.Join(c.llgoRoot, env.LLGoRuntimePkgName)
+}
+
 // -----------------------------------------------------------------------------
 
 const (
@@ -291,43 +376,27 @@ const (
 	loadSyntax  = loadTypes | packages.NeedSyntax | packages.NeedTypesInfo
 )
 
+var llssaInitOnce sync.Once
+
 func Do(args []string, conf *Config) ([]Package, error) {
-	if conf.Goos == "" {
-		conf.Goos = runtime.GOOS
-	}
-	if conf.Goarch == "" {
-		conf.Goarch = runtime.GOARCH
-	}
-	if conf.AppExt == "" {
-		conf.AppExt = defaultAppExt(conf)
-	}
-	if conf.BuildMode == "" {
-		conf.BuildMode = BuildModeExe
-	}
-	if conf.BuildMode != BuildModeExe {
-		conf.DeadcodeDrop = false
-	}
-	conf.PCLNMode = effectivePCLNMode(conf)
-	conf.PCLNModeSet = true
-	if conf.SizeReport && conf.SizeFormat == "" {
-		conf.SizeFormat = "text"
-	}
-	if conf.SizeReport && conf.SizeLevel == "" {
-		conf.SizeLevel = "module"
-	}
-	if err := validatePCLNMode(conf); err != nil {
+	return Build(BuildRequest{Args: args, Config: conf})
+}
+
+// Build executes one build from an explicit request. Process inputs omitted by
+// command-line callers are snapshotted once before any package or toolchain
+// work begins.
+func Build(req BuildRequest) ([]Package, error) {
+	process, err := processenv.Capture(req.Dir, req.Env)
+	if err != nil {
 		return nil, err
 	}
-	if err := ensureSizeReporting(conf); err != nil {
+	conf, err := resolveBuildConfig(req.Config, process.Env)
+	if err != nil {
 		return nil, err
 	}
-	if err := conf.LinkOptions.validate(); err != nil {
-		return nil, err
-	}
-	conf.OptLevel = effectiveOptLevel(conf)
 	// Handle crosscompile configuration first to set correct GOOS/GOARCH
 	forceEspClang := conf.ForceEspClang || conf.Target != ""
-	export, err := crosscompile.Use(conf.Goos, conf.Goarch, conf.Target, IsWasiThreadsEnabled(), forceEspClang, conf.OptLevel, conf.ltoMode(), conf.goGlobalDCEEnabled())
+	export, err := crosscompile.UseWithContext(conf.Goos, conf.Goarch, conf.Target, isEnvOnConfig(conf, llgoWasiThreads, false), forceEspClang, conf.OptLevel, conf.ltoMode(), conf.goGlobalDCEEnabled(), process, conf.llgoRoot)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup crosscompile: %w", err)
 	}
@@ -342,13 +411,8 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	if err := validateLinkOptions(conf, &export); err != nil {
 		return nil, err
 	}
-	// Enable different export names for TinyGo compatibility when using -target
-	if conf.Target != "" {
-		cl.EnableExportRename(true)
-	}
-
 	verbose := conf.Verbose
-	patterns := args
+	patterns := slices.Clone(req.Args)
 	tags := defaultBuildTags(conf.Goarch, conf.Target)
 	if conf.PCLNMode == PCLNExternal {
 		// Select the optional runtime loader as part of the normal package
@@ -370,26 +434,32 @@ func Do(args []string, conf *Config) ([]Package, error) {
 	cfg := &packages.Config{
 		Mode:       loadSyntax | packages.NeedDeps | packages.NeedModule | packages.NeedExportFile,
 		BuildFlags: goBuildFlags,
+		Dir:        process.Dir,
 		Fset:       token.NewFileSet(),
 		Tests:      conf.Mode == ModeTest,
-		Env:        append(slices.Clone(os.Environ()), "GOOS="+conf.Goos, "GOARCH="+conf.Goarch),
+		Env:        withEnv(process.Env, "GOOS="+conf.Goos, "GOARCH="+conf.Goarch),
 	}
 	if conf.Mode == ModeTest {
 		cfg.Mode |= packages.NeedForTest
 	}
-	abi.SetRewriteMainPrefix(conf.RewriteMainPrefix)
-
 	emitDebugInfo := shouldEmitDebugInfo(conf, &export)
-	cl.EnableDebug(emitDebugInfo)
-	cl.EnableDbgSyms(emitDebugInfo)
-	cl.EnableTrace(IsTraceEnabled())
-	llssa.Initialize(llssa.InitAll)
+	frontendOptions := cl.Options{
+		Debug:        emitDebugInfo,
+		DebugSymbols: emitDebugInfo,
+		Trace:        isEnvOnConfig(conf, llgoTrace, false),
+		ExportRename: conf.Target != "",
+		ShadowStack:  isEnvOnConfig(conf, llgoShadowStack, false),
+	}
+	llssaInitOnce.Do(func() {
+		llssa.Initialize(llssa.InitAll)
+	})
 
 	target := &llssa.Target{
-		GOOS:     conf.Goos,
-		GOARCH:   conf.Goarch,
-		Target:   conf.Target,
-		OptLevel: conf.OptLevel,
+		GOOS:              conf.Goos,
+		GOARCH:            conf.Goarch,
+		Target:            conf.Target,
+		OptLevel:          conf.OptLevel,
+		RewriteMainPrefix: conf.RewriteMainPrefix,
 	}
 
 	prog := llssa.NewProgram(target)
@@ -455,7 +525,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 		return nil, err
 	}
 	var llgoFiles map[string][]string
-	conf.Overlay, llgoFiles, err = buildSourcePatchOverlayForGOROOT(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourcePatchBuildContext{
+	conf.Overlay, llgoFiles, err = buildSourcePatchOverlayForGOROOT(conf.Overlay, conf.llgoRuntimeDir(), sourcePatchGOROOT, sourcePatchBuildContext{
 		goos:       conf.Goos,
 		goarch:     conf.Goarch,
 		goversion:  sourcePatchGoVersion,
@@ -510,7 +580,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 
 	altPkgPaths := altPkgs(initial, conf, llssa.PkgRuntime)
 	altCfg := *cfg
-	altCfg.Dir = env.LLGoRuntimeDir()
+	altCfg.Dir = conf.llgoRuntimeDir()
 	altPkgs, err := packages.LoadEx(dedup, sizes, &altCfg, altPkgPaths...)
 	if err != nil {
 		return nil, err
@@ -539,28 +609,29 @@ func Do(args []string, conf *Config) ([]Package, error) {
 		buildMode |= ssa.GlobalDebug
 		cabiOptimize = false
 	}
-	if !IsOptimizeEnabled() {
+	if !isEnvOnConfig(conf, llgoOptimize, true) {
 		buildMode |= ssa.NaiveForm
 	}
 	progSSA := ssa.NewProgram(initial[0].Fset, buildMode)
 	patches := make(cl.Patches, len(altPkgPaths))
 	altSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
 
-	env := llvm.New("")
-	os.Setenv("PATH", env.BinDir()+":"+os.Getenv("PATH")) // TODO(xsw): check windows
+	env := llvm.NewWithContext("", process)
 
 	output := conf.OutFile != ""
 	ctx := &context{env: env, conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
 		patches: patches, callerTracking: cl.NewCallerTracking(),
 		built: make(map[string]none), initial: initial, mode: mode,
-		fingerprinting: make(map[string]bool),
-		pkgs:           map[*packages.Package]Package{},
-		pkgByID:        map[string]Package{},
-		output:         output,
-		passOpt:        passOpt,
-		buildConf:      conf,
-		crossCompile:   export,
-		cTransformer:   cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, conf.AbiMode, cabiOptimize),
+		fingerprinting:  make(map[string]bool),
+		pkgs:            map[*packages.Package]Package{},
+		pkgByID:         map[string]Package{},
+		output:          output,
+		passOpt:         passOpt,
+		buildConf:       conf,
+		crossCompile:    export,
+		process:         process,
+		frontendOptions: frontendOptions,
+		cTransformer:    cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, conf.AbiMode, cabiOptimize),
 	}
 	defer ctx.closePackageMetas()
 
@@ -601,6 +672,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 			if err != nil {
 				return nil, err
 			}
+			resolveOutputs(ctx.process, outFmts)
 
 			// Link main package using the output path from buildOutFmts
 			err = linkMainPkg(ctx, pkg, allPkgs, outFmts.Out, verbose)
@@ -656,7 +728,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 				if conf.Target == "" {
 					err = runNative(ctx, outFmts.Out, pkg.Dir, pkg.PkgPath, conf, mode)
 				} else if conf.Emulator {
-					err = runInEmulator(ctx.crossCompile.Emulator, envMap, pkg.Dir, pkg.PkgPath, conf, mode, verbose)
+					err = runInEmulator(ctx, ctx.crossCompile.Emulator, envMap, pkg.Dir, pkg.PkgPath, conf, mode, verbose)
 				} else {
 					err = flash.FlashDevice(ctx.crossCompile.Device, envMap, ctx.buildConf.Port, verbose)
 					if err != nil {
@@ -815,8 +887,10 @@ type context struct {
 	output         bool
 	passOpt        bool
 
-	buildConf    *Config
-	crossCompile crosscompile.Export
+	buildConf       *Config
+	crossCompile    crosscompile.Export
+	process         processenv.Context
+	frontendOptions cl.Options
 
 	cTransformer *cabi.Transformer
 
@@ -839,6 +913,11 @@ type context struct {
 	pclnExternal *pclnmap.Data
 }
 
+// frontendDebugMu protects the legacy cl/ssa instruction-debug switches.
+// Code-generation options are request-local; this process-wide lock remains
+// only for verbose diagnostic logging until those helpers accept a logger.
+var frontendDebugMu sync.RWMutex
+
 // closePackageMetas releases metadata mappings owned by this build. Metadata
 // remains available to hooks and whole-program consumers until Do returns.
 func (c *context) closePackageMetas() {
@@ -860,6 +939,8 @@ func (c *context) compiler() *clang.Cmd {
 		c.crossCompile.Linker,
 	)
 	cmd := clang.NewCompiler(config)
+	cmd.Dir = c.process.Dir
+	cmd.Env = slices.Clone(c.process.Env)
 	cmd.Verbose = c.shouldPrintCommands(false)
 	return cmd
 }
@@ -873,6 +954,8 @@ func (c *context) linker() *clang.Cmd {
 		c.crossCompile.Linker,
 	)
 	cmd := clang.NewLinker(config)
+	cmd.Dir = c.process.Dir
+	cmd.Env = slices.Clone(c.process.Env)
 	cmd.Verbose = c.shouldPrintCommands(false)
 	return cmd
 }
@@ -1028,7 +1111,7 @@ func appendExternalLinkArgs(ctx *context, aPkg *aPackage, spec string) {
 	for _, alt := range altParts {
 		alt = strings.TrimSpace(alt)
 		if strings.ContainsRune(alt, '$') {
-			expdArgs = append(expdArgs, xenv.ExpandEnvToArgs(alt)...)
+			expdArgs = append(expdArgs, xenv.ExpandEnvToArgsWithEnv(alt, ctx.process.Env, ctx.process.Dir)...)
 			atomic.AddInt32(&ctx.nLibdir, 1)
 		} else {
 			fields := strings.Fields(alt)
@@ -1129,7 +1212,7 @@ func compileExtraFiles(ctx *context, verbose bool) ([]string, error) {
 
 	printCmds := ctx.shouldPrintCommands(verbose)
 	var objFiles []string
-	llgoRoot := env.LLGoROOT()
+	llgoRoot := ctx.buildConf.llgoRoot
 
 	for _, extraFile := range ctx.crossCompile.ExtraFiles {
 		// Resolve the file path relative to llgo root
@@ -1205,7 +1288,7 @@ func rewritePrebuiltFuncTab(ctx *context, out string, verbose bool) {
 	if ctx.buildConf.BuildMode != BuildModeExe {
 		return
 	}
-	if os.Getenv("LLGO_PCLNPOST") == "0" { // escape hatch: keep first-use construction
+	if envConfigValue(ctx.buildConf, "LLGO_PCLNPOST") == "0" { // escape hatch: keep first-use construction
 		return
 	}
 	st, err := pclnpost.Rewrite(out)
@@ -1341,7 +1424,7 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 	linkInputs = append(linkInputs, extraObjFiles...)
 	linkInputs = append(linkInputs, archiveInputs...)
 
-	if IsFullRpathEnabled() {
+	if isEnvOnConfig(ctx.buildConf, llgoFullRpath, false) {
 		// Treat every link-time library search path, specified by the -L parameter, as a runtime search path as well.
 		// This is to ensure the final executable can locate libraries with a relocatable install_name
 		// (e.g., "@rpath/libfoo.dylib") at runtime.
@@ -1394,6 +1477,11 @@ func isRuntimePkg(pkgPath string) bool {
 
 func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose bool) error {
 	printCmds := ctx.shouldPrintCommands(verbose)
+	if dir := filepath.Dir(app); dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create output directory %s: %w", dir, err)
+		}
+	}
 	// Handle c-archive mode differently - use ar tool instead of linker
 	if ctx.buildConf.BuildMode == BuildModeCArchive {
 		return ctx.createMergedArchiveFile(app, objFiles, printCmds)
@@ -1531,7 +1619,7 @@ func (c *context) archiver() string {
 		}
 	}
 	// Allow user override
-	if ar := os.Getenv("LLGO_AR"); ar != "" {
+	if ar := envConfigValue(c.buildConf, "LLGO_AR"); ar != "" {
 		return ar
 	}
 	if c.buildConf.ltoEnabled() || c.buildConf.Goarch == "wasm" || strings.Contains(c.crossCompile.LLVMTarget, "wasm") {
@@ -1546,7 +1634,7 @@ func (c *context) archiver() string {
 // flatten package archives into the final c-archive instead of nesting .a
 // files as members. LLVM is already a required LLGo toolchain dependency.
 func (c *context) archiveMerger() (string, error) {
-	if ar := os.Getenv("LLGO_AR"); ar != "" {
+	if ar := envConfigValue(c.buildConf, "LLGO_AR"); ar != "" {
 		return ar, nil
 	}
 	if c.crossCompile.CC != "" {
@@ -1597,7 +1685,7 @@ func (c *context) createMergedArchiveFile(archivePath string, inputs []string, v
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(arCmd, "-M")
+	cmd := c.process.Command(arCmd, "-M")
 	cmd.Stdin = strings.NewReader(script.String())
 	printCmds := c.shouldPrintCommands(len(verbose) > 0 && verbose[0])
 	if printCmds {
@@ -1636,7 +1724,7 @@ func (c *context) createArchiveFile(archivePath string, objFiles []string, verbo
 
 	args := append([]string{"rcs", tmpName}, objFiles...)
 	arCmd := c.archiver()
-	cmd := exec.Command(arCmd, args...)
+	cmd := c.process.Command(arCmd, args...)
 	printCmds := c.shouldPrintCommands(len(verbose) > 0 && verbose[0])
 	if printCmds {
 		fmt.Fprintf(os.Stderr, "%s %s\n", filepath.Base(arCmd), strings.Join(args, " "))
@@ -1691,22 +1779,27 @@ func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
 		syntax = append(syntax, altPkg.Syntax...)
 	}
 	showDetail := verbose && pkgExists(ctx.initial, pkg)
-	if showDetail {
-		llssa.SetDebug(llssa.DbgFlagAll)
-		cl.SetDebug(cl.DbgFlagAll)
-		defer func() {
-			llssa.SetDebug(0)
-			cl.SetDebug(0)
-		}()
-	}
-
-	embedMap, err := goembed.LoadDirectives(ctx.conf.Fset, syntax)
-	if err != nil {
-		return fmt.Errorf("load go:embed directives for %s failed: %w", pkgPath, err)
-	}
-
 	needMeta := !aPkg.CacheHit && ctx.buildConf.packageMetaEnabled()
-	ret, externs, err := cl.NewPackageExWithEmbedMeta(ctx.prog, ctx.callerTracking, ctx.patches, aPkg.rewriteVars, aPkg.SSA, syntax, embedMap, needMeta)
+	ret, externs, err := func() (llssa.Package, []string, error) {
+		if showDetail {
+			frontendDebugMu.Lock()
+			defer frontendDebugMu.Unlock()
+			llssa.SetDebug(llssa.DbgFlagAll)
+			cl.SetDebug(cl.DbgFlagAll)
+			defer func() {
+				llssa.SetDebug(0)
+				cl.SetDebug(0)
+			}()
+		} else {
+			frontendDebugMu.RLock()
+			defer frontendDebugMu.RUnlock()
+		}
+		embedMap, err := goembed.LoadDirectives(ctx.conf.Fset, syntax)
+		if err != nil {
+			return nil, nil, fmt.Errorf("load go:embed directives for %s failed: %w", pkgPath, err)
+		}
+		return cl.NewPackageExWithEmbedMetaOptions(ctx.prog, ctx.callerTracking, ctx.patches, aPkg.rewriteVars, aPkg.SSA, syntax, embedMap, needMeta, ctx.frontendOptions)
+	}()
 	check(err)
 
 	aPkg.LPkg = ret
@@ -1843,7 +1936,7 @@ func dumpLLVMIRIfNeeded(ctx *context, pkgPath string, exportFile string, data st
 		return err
 	}
 	if ctx.buildConf.CheckLLFiles {
-		if msg, err := llcCheck(ctx.env, f.Name()); err != nil {
+		if msg, err := llcCheck(ctx, f.Name()); err != nil {
 			fmt.Fprintf(os.Stderr, "==> llc %v: %v\n%v\n", pkgPath, f.Name(), msg)
 		}
 	}
@@ -1927,7 +2020,7 @@ func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data
 		return exportFile, err
 	}
 	if ctx.buildConf.CheckLLFiles {
-		if msg, err := llcCheck(ctx.env, f.Name()); err != nil {
+		if msg, err := llcCheck(ctx, f.Name()); err != nil {
 			fmt.Fprintf(os.Stderr, "==> llc %v: %v\n%v\n", pkgPath, f.Name(), msg)
 		}
 	}
@@ -1955,9 +2048,9 @@ func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data
 	return objFile.Name(), cmd.Compile(args...)
 }
 
-func llcCheck(env *llvm.Env, exportFile string) (msg string, err error) {
-	bin := filepath.Join(env.BinDir(), "llc")
-	cmd := exec.Command(bin, "-filetype=null", exportFile)
+func llcCheck(ctx *context, exportFile string) (msg string, err error) {
+	bin := filepath.Join(ctx.env.BinDir(), "llc")
+	cmd := ctx.process.Command(bin, "-filetype=null", exportFile)
 	var buf bytes.Buffer
 	cmd.Stderr = &buf
 	if err = cmd.Run(); err != nil {
@@ -2286,6 +2379,7 @@ const llgoWasiThreads = "LLGO_WASI_THREADS"
 const llgoStdioNobuf = "LLGO_STDIO_NOBUF"
 const llgoFullRpath = "LLGO_FULL_RPATH"
 const llgoBuildCache = "LLGO_BUILD_CACHE"
+const llgoShadowStack = "LLGO_SHADOW_STACK"
 
 // for Plan9 asm translation debug
 const llgoPlan9ASMPkgs = "LLGO_PLAN9ASM_PKGS"
@@ -2301,17 +2395,44 @@ func defaultEnv(env string, defVal string) string {
 }
 
 func isEnvOn(env string, defVal bool) bool {
-	envVal := strings.ToLower(os.Getenv(env))
-	if envVal == "" {
+	return parseEnvBool(os.Getenv(env), defVal)
+}
+
+func parseEnvBool(value string, defVal bool) bool {
+	if value == "" {
 		return defVal
 	}
-	return envVal == "1" || envVal == "true" || envVal == "on"
+	switch strings.ToLower(value) {
+	case "1", "true", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // cacheEnabled checks if build cache is enabled.
 // Cache can be disabled by setting LLGO_BUILD_CACHE=off|0
-func cacheEnabled() bool {
-	return isEnvOn(llgoBuildCache, true)
+func cacheEnabled(conf *Config) bool {
+	return isEnvOnConfig(conf, llgoBuildCache, true)
+}
+
+func isEnvOnConfig(conf *Config, key string, defVal bool) bool {
+	if conf == nil || conf.environment == nil {
+		return isEnvOn(key, defVal)
+	}
+	value, ok := envValue(conf.environment, key)
+	if !ok || value == "" {
+		return defVal
+	}
+	return parseEnvBool(value, defVal)
+}
+
+func envConfigValue(conf *Config, key string) string {
+	if conf == nil || conf.environment == nil {
+		return os.Getenv(key)
+	}
+	value, _ := envValue(conf.environment, key)
+	return value
 }
 
 func IsTraceEnabled() bool {
@@ -2375,6 +2496,13 @@ func WasmRuntime() string {
 	return defaultEnv(llgoWasmRuntime, defaultWasmRuntime)
 }
 
+func WasmRuntimeForConfig(conf *Config) string {
+	if value := envConfigValue(conf, llgoWasmRuntime); value != "" {
+		return value
+	}
+	return defaultWasmRuntime
+}
+
 func concatPkgLinkFiles(ctx *context, pkg *packages.Package, verbose bool) (parts []string) {
 	llgoPkgLinkFiles(ctx, pkg, func(linkFile string) {
 		parts = append(parts, linkFile)
@@ -2400,7 +2528,7 @@ func clFiles(ctx *context, files string, pkg *packages.Package, procFile func(li
 	args := make([]string, 0, 16)
 	if strings.HasPrefix(files, "$") { // has cflags
 		if pos := strings.IndexByte(files, ':'); pos > 0 {
-			cflags := xenv.ExpandEnvToArgs(files[:pos])
+			cflags := xenv.ExpandEnvToArgsWithEnv(files[:pos], ctx.process.Env, ctx.process.Dir)
 			files = files[pos+1:]
 			args = append(args, cflags...)
 		}

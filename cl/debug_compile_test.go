@@ -69,7 +69,7 @@ var anonymous = func(seed int) int {
 		OptLevel: optlevel.O0,
 	})
 	defer prog.Dispose()
-	pkg, err := NewPackage(prog, ssaPkg, []*ast.File{file})
+	pkg, _, err := NewPackageExWithEmbedMeta(prog, nil, nil, nil, ssaPkg, []*ast.File{file}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}

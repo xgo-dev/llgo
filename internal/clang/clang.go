@@ -20,10 +20,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 
+	"github.com/goplus/llgo/internal/processenv"
 	"github.com/goplus/llgo/xtool/safesplit"
 )
 
@@ -51,6 +51,7 @@ func NewConfig(cc string, ccflags, cflags, ldflags []string, linker string) Conf
 type Cmd struct {
 	app     string
 	config  Config
+	Dir     string
 	Env     []string
 	Verbose bool
 	Stdin   io.Reader
@@ -66,6 +67,7 @@ func New(app string, config Config) *Cmd {
 	return &Cmd{
 		app:     app,
 		config:  config,
+		Dir:     "",
 		Env:     nil,
 		Verbose: false,
 		Stdin:   nil,
@@ -117,12 +119,12 @@ func (c *Cmd) mergeCompilerFlags() []string {
 	var flags []string
 
 	// Add environment CCFLAGS
-	if envCCFlags := os.Getenv("CCFLAGS"); envCCFlags != "" {
+	if envCCFlags := c.getenv("CCFLAGS"); envCCFlags != "" {
 		flags = append(flags, safesplit.SplitPkgConfigFlags(envCCFlags)...)
 	}
 
 	// Add environment CFLAGS
-	if envCFlags := os.Getenv("CFLAGS"); envCFlags != "" {
+	if envCFlags := c.getenv("CFLAGS"); envCFlags != "" {
 		flags = append(flags, safesplit.SplitPkgConfigFlags(envCFlags)...)
 	}
 
@@ -140,12 +142,12 @@ func (c *Cmd) mergeLinkerFlags() []string {
 	var flags []string
 
 	// Add environment CCFLAGS (for linker)
-	if envCCFlags := os.Getenv("CCFLAGS"); envCCFlags != "" {
+	if envCCFlags := c.getenv("CCFLAGS"); envCCFlags != "" {
 		flags = append(flags, safesplit.SplitPkgConfigFlags(envCCFlags)...)
 	}
 
 	// Add environment LDFLAGS
-	if envLDFlags := os.Getenv("LDFLAGS"); envLDFlags != "" {
+	if envLDFlags := c.getenv("LDFLAGS"); envLDFlags != "" {
 		flags = append(flags, safesplit.SplitPkgConfigFlags(envLDFlags)...)
 	}
 
@@ -157,17 +159,21 @@ func (c *Cmd) mergeLinkerFlags() []string {
 
 // exec executes the clang command with given arguments.
 func (c *Cmd) exec(args ...string) error {
-	cmd := exec.Command(c.app, args...)
+	cmd := processenv.Command(c.Env, c.Dir, c.app, args...)
 	if c.Verbose {
 		fmt.Fprintf(os.Stderr, "%v\n", cmd)
 	}
 	cmd.Stdin = c.Stdin
 	cmd.Stdout = c.Stdout
 	cmd.Stderr = c.Stderr
-	if c.Env != nil {
-		cmd.Env = c.Env
-	}
 	return cmd.Run()
+}
+
+func (c *Cmd) getenv(key string) string {
+	if c.Env == nil {
+		return os.Getenv(key)
+	}
+	return processenv.Get(c.Env, key)
 }
 
 // CheckLinkArgs validates linking arguments by attempting a test compile.

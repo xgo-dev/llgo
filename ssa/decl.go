@@ -142,7 +142,7 @@ func (p Package) doNewVarEx(name string, t Type, threadLocal bool) Global {
 		}
 		if rt != nil {
 			// Do not redirect the runtime's own zero-sized allocation sentinel.
-			zeroName := FullName(rt, runtimeZeroSizedAllocSymbol)
+			zeroName := p.Prog.FullName(rt, runtimeZeroSizedAllocSymbol)
 			if name != zeroName && p.ownsGlobal(name) {
 				zero := p.moduleZeroSizedAlloc(p.Prog.Elem(t))
 				alias := llvm.AddAlias(p.mod, typ, 0, zero.impl, name)

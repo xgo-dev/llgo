@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/goplus/llgo/internal/processenv"
 )
 
 const (
@@ -81,7 +83,11 @@ func LLGoCacheDir() string {
 }
 
 func LLGoRuntimeDir() string {
-	root := LLGoROOT()
+	return LLGoRuntimeDirWithEnv(nil)
+}
+
+func LLGoRuntimeDirWithEnv(environ []string) string {
+	root := LLGoROOTWithEnv(environ)
 	if root != "" {
 		return filepath.Join(root, LLGoRuntimePkgName)
 	}
@@ -89,7 +95,11 @@ func LLGoRuntimeDir() string {
 }
 
 func LLGoROOT() string {
-	llgoRootEnv := os.Getenv("LLGO_ROOT")
+	return LLGoROOTWithEnv(nil)
+}
+
+func LLGoROOTWithEnv(environ []string) string {
+	llgoRootEnv := lookupEnv(environ, "LLGO_ROOT")
 	if llgoRootEnv != "" {
 		if root, ok := isLLGoRoot(llgoRootEnv); ok {
 			return root
@@ -126,6 +136,13 @@ func LLGoROOT() string {
 		}
 	}
 	return ""
+}
+
+func lookupEnv(environ []string, key string) string {
+	if environ == nil {
+		return os.Getenv(key)
+	}
+	return processenv.Get(environ, key)
 }
 
 func isLLGoRoot(root string) (string, bool) {

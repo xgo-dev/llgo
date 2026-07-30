@@ -135,6 +135,7 @@ type Builder struct {
 	buf     []byte
 	PtrSize uintptr
 	Sizes   types.Sizes
+	Namer   Namer
 }
 
 // New creates a new ABI type Builder.
@@ -172,7 +173,7 @@ func (b *Builder) TypeName(t types.Type) (ret string, pub bool) {
 		o := t.Obj()
 		pkg := o.Pkg()
 		ids := scopeIndices(o)
-		return "_llgo_" + FullName(pkg, NamedName(t)+ids), (pkg == nil || o.Exported() && ids == "")
+		return "_llgo_" + b.Namer.FullName(pkg, b.Namer.NamedName(t)+ids), (pkg == nil || o.Exported() && ids == "")
 	case *types.Interface:
 		if t.Empty() {
 			return "_llgo_any", true
@@ -201,33 +202,47 @@ func (b *Builder) TypeName(t types.Type) (ret string, pub bool) {
 	return
 }
 
-func NamedName(t *types.Named) string {
+// Namer owns the package-path policy used to construct symbols for one
+// compilation.
+type Namer struct {
+	RewriteMainPrefix bool
+}
+
+func (n Namer) NamedName(t *types.Named) string {
 	if targs := t.TypeArgs(); targs != nil {
-		n := targs.Len()
-		infos := make([]string, n)
-		for i := 0; i < n; i++ {
-			infos[i] = typeArgString(targs.At(i))
+		count := targs.Len()
+		infos := make([]string, count)
+		for i := 0; i < count; i++ {
+			infos[i] = n.typeArgString(targs.At(i))
 		}
 		return t.Obj().Name() + "[" + strings.Join(infos, ",") + "]"
 	}
 	return t.Obj().Name()
 }
 
-func TypeArgs(typeArgs []types.Type) string {
+func NamedName(t *types.Named) string {
+	return (Namer{}).NamedName(t)
+}
+
+func (n Namer) TypeArgs(typeArgs []types.Type) string {
 	targs := make([]string, len(typeArgs))
 	for i, t := range typeArgs {
-		targs[i] = typeArgString(t)
+		targs[i] = n.typeArgString(t)
 	}
 	return "[" + strings.Join(targs, ",") + "]"
 }
 
-func namedLikeTypeArgString(obj types.Object, targs *types.TypeList) string {
+func TypeArgs(typeArgs []types.Type) string {
+	return (Namer{}).TypeArgs(typeArgs)
+}
+
+func (n Namer) namedLikeTypeArgString(obj types.Object, targs *types.TypeList) string {
 	name := obj.Name()
 	if targs != nil {
-		n := targs.Len()
-		infos := make([]string, n)
-		for i := 0; i < n; i++ {
-			infos[i] = typeArgString(targs.At(i))
+		count := targs.Len()
+		infos := make([]string, count)
+		for i := 0; i < count; i++ {
+			infos[i] = n.typeArgString(targs.At(i))
 		}
 		name += "[" + strings.Join(infos, ",") + "]"
 	}
@@ -235,31 +250,35 @@ func namedLikeTypeArgString(obj types.Object, targs *types.TypeList) string {
 	// tests). Disambiguate them in symbol names using stable scope indices.
 	name += scopeIndices(obj)
 	if pkg := obj.Pkg(); pkg != nil {
-		return PathOf(pkg) + "." + name
+		return n.PathOf(pkg) + "." + name
 	}
 	return name
 }
 
-func typeArgString(t types.Type) string {
+func namedLikeTypeArgString(obj types.Object, targs *types.TypeList) string {
+	return (Namer{}).namedLikeTypeArgString(obj, targs)
+}
+
+func (n Namer) typeArgString(t types.Type) string {
 	switch t := t.(type) {
 	case *types.Alias:
-		return typeArgString(types.Unalias(t))
+		return n.typeArgString(types.Unalias(t))
 	case *types.Basic:
 		return t.String()
 	case *types.Named:
-		return namedLikeTypeArgString(t.Obj(), t.TypeArgs())
+		return n.namedLikeTypeArgString(t.Obj(), t.TypeArgs())
 	case *types.Pointer:
-		return "*" + typeArgString(t.Elem())
+		return "*" + n.typeArgString(t.Elem())
 	case *types.Slice:
-		return "[]" + typeArgString(t.Elem())
+		return "[]" + n.typeArgString(t.Elem())
 	case *types.Array:
-		return fmt.Sprintf("[%v]%s", t.Len(), typeArgString(t.Elem()))
+		return fmt.Sprintf("[%v]%s", t.Len(), n.typeArgString(t.Elem()))
 	case *types.Map:
-		return fmt.Sprintf("map[%s]%s", typeArgString(t.Key()), typeArgString(t.Elem()))
+		return fmt.Sprintf("map[%s]%s", n.typeArgString(t.Key()), n.typeArgString(t.Elem()))
 	case *types.Chan:
 		_, s := ChanDir(t.Dir())
 		elem := t.Elem()
-		elemStr := typeArgString(elem)
+		elemStr := n.typeArgString(elem)
 		// Keep canonical channel formatting for nested directional channels.
 		// Example: chan (<-chan int), not "chan <-chan int" (ambiguous).
 		if t.Dir() == types.SendRecv {
@@ -271,7 +290,7 @@ func typeArgString(t types.Type) string {
 	default:
 		// Fallback for rare type arguments (e.g. signature/interface/struct).
 		// Collisions are mainly caused by local named types, handled above.
-		return types.TypeString(t, PathOf)
+		return types.TypeString(t, n.PathOf)
 	}
 }
 
@@ -279,32 +298,31 @@ const (
 	PatchPathPrefix = env.LLGoRuntimePkg + "/internal/lib/"
 )
 
-// SetRewriteMainPrefix controls whether symbols in the main package
-// use "main." as their package path prefix instead of the actual
-// import path. When true, pkgpath.sym is rewritten to main.sym.
-func SetRewriteMainPrefix(b bool) {
-	rewriteMainPrefix = b
-}
-
-var rewriteMainPrefix bool
-
 // PathOf returns the package path of the specified package.
-func PathOf(pkg *types.Package) string {
+func (n Namer) PathOf(pkg *types.Package) string {
 	if pkg == nil {
 		return ""
 	}
-	if rewriteMainPrefix && pkg.Name() == "main" {
+	if n.RewriteMainPrefix && pkg.Name() == "main" {
 		return "main"
 	}
 	return strings.TrimPrefix(pkg.Path(), PatchPathPrefix)
 }
 
+func PathOf(pkg *types.Package) string {
+	return (Namer{}).PathOf(pkg)
+}
+
 // FullName returns the full name of a package member.
-func FullName(pkg *types.Package, name string) string {
+func (n Namer) FullName(pkg *types.Package, name string) string {
 	if pkg == nil {
 		return name
 	}
-	return PathOf(pkg) + "." + name
+	return n.PathOf(pkg) + "." + name
+}
+
+func FullName(pkg *types.Package, name string) string {
+	return (Namer{}).FullName(pkg, name)
 }
 
 // BasicName returns the ABI type name for the specified basic type.

@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -90,14 +89,14 @@ func (c *context) collectEnvInputs(m *manifestBuilder) {
 		llgoFullRpath,
 	}
 	for _, envVar := range envVars {
-		if v := os.Getenv(envVar); v != "" {
+		if v := envConfigValue(c.buildConf, envVar); v != "" {
 			m.env.Vars = m.env.Vars.Add(envVar, v)
 		}
 	}
 	if effectivePCLNMode(c.buildConf) != PCLNNone {
 		// Record the effective value so equivalent spellings (unset, 1,
 		// true, on) share a cache entry.
-		m.env.Vars = m.env.Vars.Add(llgoFuncInfoSites, strconv.FormatBool(IsFuncInfoSitesEnabled()))
+		m.env.Vars = m.env.Vars.Add(llgoFuncInfoSites, strconv.FormatBool(isEnvOnConfig(c.buildConf, llgoFuncInfoSites, true)))
 	}
 }
 
@@ -279,7 +278,7 @@ func detectLLVMVersion(ctx *context) string {
 	if cc == "" {
 		cc = "clang"
 	}
-	versionCmd := exec.Command(cc, "--version")
+	versionCmd := ctx.process.Command(cc, "--version")
 	output, err := versionCmd.Output()
 	if err != nil {
 		return ""
@@ -324,7 +323,7 @@ func (c *context) ensureCacheManager() *cacheManager {
 // tryLoadFromCache attempts to load a package from cache.
 // Returns true if cache hit, false otherwise.
 func (c *context) tryLoadFromCache(pkg *aPackage) bool {
-	if !cacheEnabled() {
+	if !cacheEnabled(c.buildConf) {
 		return false
 	}
 
@@ -449,7 +448,7 @@ type cacheArchiveMetadata struct {
 
 // saveToCache saves a built package to cache.
 func (c *context) saveToCache(pkg *aPackage) error {
-	if !cacheEnabled() {
+	if !cacheEnabled(c.buildConf) {
 		return nil
 	}
 

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/goplus/llgo/internal/flash"
 	"github.com/goplus/llgo/internal/lto"
 	"github.com/goplus/llgo/internal/optlevel"
+	"github.com/goplus/llgo/internal/processenv"
 	"github.com/goplus/llgo/internal/targets"
 	"github.com/goplus/llgo/internal/xtool/llvm"
 	envllvm "github.com/goplus/llgo/xtool/env/llvm"
@@ -116,8 +116,8 @@ func getCanonicalArchName(triple string) string {
 }
 
 // getMacOSSysroot returns the macOS SDK path using xcrun
-func getMacOSSysroot() (string, error) {
-	cmd := exec.Command("xcrun", "--sdk", "macosx", "--show-sdk-path")
+func getMacOSSysroot(process processenv.Context) (string, error) {
+	cmd := process.Command("xcrun", "--sdk", "macosx", "--show-sdk-path")
 	output, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -127,9 +127,7 @@ func getMacOSSysroot() (string, error) {
 
 // getESPClangRoot returns the ESP Clang root directory, checking LLGoROOT first,
 // then downloading if needed and platform is supported
-func getESPClangRoot(forceEspClang bool) (clangRoot string, err error) {
-	llgoRoot := env.LLGoROOT()
-
+func getESPClangRoot(forceEspClang bool, process processenv.Context, llgoRoot string) (clangRoot string, err error) {
 	// First check if clang exists in LLGoROOT
 	espClangRoot := filepath.Join(llgoRoot, envllvm.CrosscompileClangPath)
 	if _, err = os.Stat(espClangRoot); err == nil {
@@ -150,7 +148,7 @@ func getESPClangRoot(forceEspClang bool) (clangRoot string, err error) {
 				return
 			}
 			fmt.Fprintln(os.Stderr, "ESP Clang not found in LLGO_ROOT or cache, will download.")
-			if err = checkDownloadAndExtractESPClang(platformSuffix, cacheClangDir); err != nil {
+			if err = checkDownloadAndExtractESPClangWithContext(platformSuffix, cacheClangDir, process); err != nil {
 				return
 			}
 		}
@@ -218,11 +216,14 @@ func compileWithConfig(
 }
 
 func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool) (export Export, err error) {
+	return useWithContext(goos, goarch, wasiThreads, forceEspClang, level, ltoMode, goGlobalDCE, processenv.Context{}, env.LLGoROOT())
+}
+
+func useWithContext(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool, process processenv.Context, llgoRoot string) (export Export, err error) {
 	targetTriple := llvm.GetTargetTriple(goos, goarch)
-	llgoRoot := env.LLGoROOT()
 
 	// Check for ESP Clang support for target-based builds
-	clangRoot, err := getESPClangRoot(forceEspClang)
+	clangRoot, err := getESPClangRoot(forceEspClang, process, llgoRoot)
 	if err != nil {
 		return
 	}
@@ -287,7 +288,7 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 
 		// Add sysroot for macOS only
 		if goos == "darwin" {
-			sysrootPath, sysrootErr := getMacOSSysroot()
+			sysrootPath, sysrootErr := getMacOSSysroot(process)
 			if sysrootErr != nil {
 				err = fmt.Errorf("failed to get macOS SDK path: %w", sysrootErr)
 				return
@@ -339,7 +340,7 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 		// If not exists in LLGoROOT, download and use cached wasiSdkRoot
 		if _, err = os.Stat(wasiSdkRoot); err != nil {
 			sdkDir := filepath.Join(cacheDir(), llvm.GetTargetTriple(goos, goarch))
-			if wasiSdkRoot, err = checkDownloadAndExtractWasiSDK(sdkDir); err != nil {
+			if wasiSdkRoot, err = checkDownloadAndExtractWasiSDKWithContext(sdkDir, process); err != nil {
 				return
 			}
 		}
@@ -462,6 +463,10 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 
 // UseTarget loads configuration from a target name (e.g., "rp2040", "wasi")
 func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (export Export, err error) {
+	return useTargetWithContext(targetName, level, ltoMode, processenv.Context{}, env.LLGoROOT())
+}
+
+func useTargetWithContext(targetName string, level optlevel.Level, ltoMode lto.Mode, process processenv.Context, llgoRoot string) (export Export, err error) {
 	resolver := targets.NewDefaultResolver()
 
 	config, err := resolver.Resolve(targetName)
@@ -480,7 +485,7 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 	}
 
 	// Check for ESP Clang support for target-based builds
-	clangRoot, err := getESPClangRoot(true)
+	clangRoot, err := getESPClangRoot(true, process, llgoRoot)
 	if err != nil {
 		return
 	}
@@ -522,7 +527,7 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 	}
 
 	// Build environment map for template variable expansion
-	envs := buildEnvMap(env.LLGoROOT())
+	envs := buildEnvMap(llgoRoot)
 
 	// Convert LLVMTarget, CPU, Features to CCFLAGS/LDFLAGS
 	// ICF off for Go pc-identity semantics (see the non-cross flags above).
@@ -648,7 +653,7 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 	if config.LinkerScript != "" {
 		ldflags = append(ldflags, "-T", config.LinkerScript)
 	}
-	ldflags = append(ldflags, "-L", env.LLGoROOT()) // search targets/*.ld
+	ldflags = append(ldflags, "-L", llgoRoot) // search targets/*.ld
 
 	var libcIncludeDir []string
 
@@ -658,13 +663,15 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 		var compileConfig compile.CompileConfig
 		baseDir := filepath.Join(cacheRoot(), "crosscompile")
 
-		outputDir, compileConfig, err = getLibcCompileConfigByName(baseDir, config.Libc, config.LLVMTarget, config.CPU)
+		outputDir, compileConfig, err = getLibcCompileConfigByNameWithContext(baseDir, config.Libc, config.LLVMTarget, config.CPU, process)
 		if err != nil {
 			return
 		}
 		libcLDFlags, err = compileWithConfig(compileConfig, outputDir, compile.CompileOptions{
 			CC:      export.CC,
 			Linker:  export.Linker,
+			Env:     process.Env,
+			Dir:     process.Dir,
 			CCFLAGS: ccflags,
 			LDFLAGS: ldflags,
 		})
@@ -684,13 +691,15 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 		var compileConfig compile.CompileConfig
 		baseDir := filepath.Join(cacheRoot(), "crosscompile")
 
-		outputDir, compileConfig, err = getRTCompileConfigByName(baseDir, config.RTLib, config.LLVMTarget)
+		outputDir, compileConfig, err = getRTCompileConfigByNameWithContext(baseDir, config.RTLib, config.LLVMTarget, process)
 		if err != nil {
 			return
 		}
 		rtLibLDFlags, err = compileWithConfig(compileConfig, outputDir, compile.CompileOptions{
 			CC:      export.CC,
 			Linker:  export.Linker,
+			Env:     process.Env,
+			Dir:     process.Dir,
 			CCFLAGS: ccflags,
 			LDFLAGS: ldflags,
 			CFLAGS:  libcIncludeDir,
@@ -713,8 +722,14 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 // Use extends the original Use function to support target-based configuration
 // If targetName is provided, it takes precedence over goos/goarch
 func Use(goos, goarch, targetName string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool) (export Export, err error) {
+	return UseWithContext(goos, goarch, targetName, wasiThreads, forceEspClang, level, ltoMode, goGlobalDCE, processenv.Context{}, env.LLGoROOT())
+}
+
+// UseWithContext selects a toolchain using explicit process context. Download
+// and cache operations remain protected by their existing cross-process locks.
+func UseWithContext(goos, goarch, targetName string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool, process processenv.Context, llgoRoot string) (export Export, err error) {
 	if targetName != "" && !strings.HasPrefix(targetName, "wasm") && !strings.HasPrefix(targetName, "wasi") {
-		return UseTarget(targetName, level, ltoMode)
+		return useTargetWithContext(targetName, level, ltoMode, process, llgoRoot)
 	}
-	return use(goos, goarch, wasiThreads, forceEspClang, level, ltoMode, goGlobalDCE)
+	return useWithContext(goos, goarch, wasiThreads, forceEspClang, level, ltoMode, goGlobalDCE, process, llgoRoot)
 }

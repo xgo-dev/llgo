@@ -38,6 +38,39 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
+func TestProgramRewriteMainPrefixIsRequestScoped(t *testing.T) {
+	pkg := types.NewPackage("example.com/rewrite", "main")
+	typeName := types.NewTypeName(token.NoPos, pkg, "T", nil)
+	named := types.NewNamed(typeName, types.Typ[types.Int], nil)
+
+	plain := NewProgram(nil)
+	defer plain.Dispose()
+	rewritten := NewProgram(&Target{RewriteMainPrefix: true})
+	defer rewritten.Dispose()
+
+	if got := plain.FullName(pkg, "F"); got != "example.com/rewrite.F" {
+		t.Fatalf("plain FullName = %q, want example.com/rewrite.F", got)
+	}
+	if got := rewritten.FullName(pkg, "F"); got != "main.F" {
+		t.Fatalf("rewritten FullName = %q, want main.F", got)
+	}
+	if got := plain.NameOf(named); got != "example.com/rewrite.T" {
+		t.Fatalf("plain NameOf = %q, want example.com/rewrite.T", got)
+	}
+	if got := rewritten.NameOf(named); got != "main.T" {
+		t.Fatalf("rewritten NameOf = %q, want main.T", got)
+	}
+	if got, _ := plain.abi.TypeName(named); got != "_llgo_example.com/rewrite.T" {
+		t.Fatalf("plain ABI TypeName = %q, want _llgo_example.com/rewrite.T", got)
+	}
+	if got, _ := rewritten.abi.TypeName(named); got != "_llgo_main.T" {
+		t.Fatalf("rewritten ABI TypeName = %q, want _llgo_main.T", got)
+	}
+	if got := FullName(pkg, "F"); got != "example.com/rewrite.F" {
+		t.Fatalf("default FullName changed to %q", got)
+	}
+}
+
 func TestEndDefer(t *testing.T) {
 	prog := NewProgram(nil)
 	pkg := prog.NewPackage("foo", "foo")

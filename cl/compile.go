@@ -65,6 +65,27 @@ var (
 	enableExportRename bool
 )
 
+// Options contains frontend behavior for one package compilation. Drivers that
+// may host multiple builds in one process should pass Options explicitly
+// instead of changing the legacy package-level Enable* settings.
+type Options struct {
+	Debug        bool
+	DebugSymbols bool
+	Trace        bool
+	ExportRename bool
+	ShadowStack  bool
+}
+
+func legacyOptions() Options {
+	return Options{
+		Debug:        enableDbg,
+		DebugSymbols: enableDbgSyms,
+		Trace:        enableCallTracing,
+		ExportRename: enableExportRename,
+		ShadowStack:  os.Getenv("LLGO_SHADOW_STACK") == "1",
+	}
+}
+
 // SetDebug sets debug flags.
 func SetDebug(dbgFlags dbgFlags) {
 	debugInstr = (dbgFlags & DbgFlagInstruction) != 0
@@ -115,20 +136,26 @@ func dbgGoSSAln(args ...any) {
 	}
 }
 
+// EnableDebug changes the legacy process-wide default.
+// Deprecated: pass Options to NewPackageExWithEmbedMetaOptions.
 func EnableDebug(b bool) {
 	enableDbg = b
 }
 
+// EnableDbgSyms changes the legacy process-wide default.
+// Deprecated: pass Options to NewPackageExWithEmbedMetaOptions.
 func EnableDbgSyms(b bool) {
 	enableDbgSyms = b
 }
 
+// EnableTrace changes the legacy process-wide default.
+// Deprecated: pass Options to NewPackageExWithEmbedMetaOptions.
 func EnableTrace(b bool) {
 	enableCallTracing = b
 }
 
 // EnableExportRename enables or disables //export with different C symbol names.
-// This is enabled when using -target flag for TinyGo compatibility.
+// Deprecated: pass Options to NewPackageExWithEmbedMetaOptions.
 func EnableExportRename(b bool) {
 	enableExportRename = b
 }
@@ -180,6 +207,8 @@ type context struct {
 	debugAllocVars       map[*ssa.Alloc]*types.Var
 	runtimeCallerFuncs   map[*ssa.Function]bool
 	pcLineSeq            uint64
+	options              Options
+	optionsSet           bool
 
 	patches          Patches
 	blkInfos         []blocks.Info
@@ -211,6 +240,13 @@ type context struct {
 	staticInitStores  map[*ssa.Store]none
 	staticInitInstrs  map[ssa.Instruction]none
 	locality          localityLowering
+}
+
+func (p *context) frontendOptions() Options {
+	if p != nil && p.optionsSet {
+		return p.options
+	}
+	return legacyOptions()
 }
 
 func (p *context) rewriteValue(name string) (string, bool) {
@@ -354,7 +390,7 @@ func (p *context) compileType(pkg llssa.Package, t *ssa.Type) {
 	}
 	tnName := tn.Name()
 	typ := tn.Type()
-	name := llssa.FullName(tn.Pkg(), tnName)
+	name := p.prog.FullName(tn.Pkg(), tnName)
 	dbgInstrln("==> NewType", name, typ)
 	p.compileMethods(pkg, typ)
 	p.compileMethods(pkg, types.NewPointer(typ))
@@ -575,7 +611,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		if p.prog.FuncInfoMetadataEnabled() {
 			goName := fn.Name()
 			if pkgTypes != nil {
-				goName = funcName(pkgTypes, f, false)
+				goName = funcNameWithProgram(p.prog, pkgTypes, f, false)
 			}
 			pos := p.funcInfoPosition(f)
 			pkg.EmitFuncInfo(fn.Name(), funcInfoDisplayName(pkgTypes, goName), pos.Filename, pos.Line, pos.Column)
@@ -601,8 +637,8 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		if f.Recover != nil { // set recover block
 			fn.SetRecover(fn.Block(f.Recover.Index))
 		}
-		dbgEnabled := enableDbg
-		dbgSymsEnabled := enableDbgSyms && (f == nil || f.Origin() == nil)
+		dbgEnabled := p.frontendOptions().Debug
+		dbgSymsEnabled := p.frontendOptions().DebugSymbols && (f == nil || f.Origin() == nil)
 		p.inits = append(p.inits, func() {
 			oldFn, oldGoFn, oldMethodNilDerefChecks, oldCallerFrameMark := p.fn, p.goFn, p.methodNilDerefChecks, p.callerFrameMark
 			oldLocalityFunction := p.locality.function
@@ -857,11 +893,11 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 	if block.Index == 0 && p.shouldTrackCallerFrames() {
 		p.pushCallerLocationFrame(b, block.Parent())
 	}
-	if block.Index == 0 && enableCallTracing && !strings.HasPrefix(fn.Name(), "github.com/goplus/llgo/runtime/internal/runtime.Print") {
+	if block.Index == 0 && p.frontendOptions().Trace && !strings.HasPrefix(fn.Name(), "github.com/goplus/llgo/runtime/internal/runtime.Print") {
 		b.Printf("call " + fn.Name() + "\n\x00")
 	}
 	// place here to avoid wrong current-block
-	if enableDbgSyms && block.Parent().Origin() == nil && block.Index == 0 {
+	if p.frontendOptions().DebugSymbols && block.Parent().Origin() == nil && block.Index == 0 {
 		p.debugParams(b, block.Parent())
 	}
 
@@ -1647,7 +1683,7 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 	if _, ok := p.staticInitInstrs[instr]; ok {
 		return
 	}
-	if enableDbg && instr.Parent().Origin() == nil {
+	if p.frontendOptions().Debug && instr.Parent().Origin() == nil {
 		if _, isDebugRef := instr.(*ssa.DebugRef); !isDebugRef {
 			scope := p.getDebugLocScope(instr.Parent(), instr.Pos())
 			if scope != nil {
@@ -1757,7 +1793,7 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		p.recordPanicLocation(b, v.Pos())
 		b.Send(ch, x)
 	case *ssa.DebugRef:
-		if enableDbgSyms && v.Parent().Origin() == nil {
+		if p.frontendOptions().DebugSymbols && v.Parent().Origin() == nil {
 			p.debugRef(b, v)
 		}
 	default:
@@ -1820,7 +1856,7 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 		if isCgoVar(varName) {
 			p.cgoSymbols = append(p.cgoSymbols, val.Name())
 		}
-		if enableDbgSyms && p.localityAllowsGlobalDebug(v) {
+		if p.frontendOptions().DebugSymbols && p.localityAllowsGlobalDebug(v) {
 			pos := p.fset.Position(v.Pos())
 			b.DIGlobal(val, v.Name(), pos)
 		}
@@ -2055,7 +2091,7 @@ func NewPackage(prog llssa.Program, pkg *ssa.Package, files []*ast.File) (ret ll
 // The rewrites map uses short variable names (without package qualifier) and
 // only affects string-typed globals defined in the current package.
 func NewPackageEx(prog llssa.Program, patches Patches, rewrites map[string]string, pkg *ssa.Package, files []*ast.File) (ret llssa.Package, externs []string, err error) {
-	return newPackageEx(prog, nil, patches, rewrites, pkg, files, nil, false)
+	return newPackageEx(prog, nil, patches, rewrites, pkg, files, nil, false, legacyOptions())
 }
 
 // NewPackageExWithEmbed compiles a package using pre-loaded go:embed metadata.
@@ -2066,18 +2102,24 @@ func NewPackageEx(prog llssa.Program, patches Patches, rewrites map[string]strin
 // of one compilation (like patches). nil means one-shot: a fresh
 // instance is created for this call.
 func NewPackageExWithEmbed(prog llssa.Program, ct *CallerTracking, patches Patches, rewrites map[string]string, pkg *ssa.Package, files []*ast.File, embedMap goembed.VarMap) (ret llssa.Package, externs []string, err error) {
-	return newPackageEx(prog, ct, patches, rewrites, pkg, files, &embedMap, false)
+	return newPackageEx(prog, ct, patches, rewrites, pkg, files, &embedMap, false, legacyOptions())
 }
 
 func NewPackageExWithEmbedMeta(prog llssa.Program, ct *CallerTracking, patches Patches, rewrites map[string]string, pkg *ssa.Package, files []*ast.File, embedMap goembed.VarMap, metaCollect bool) (ret llssa.Package, externs []string, err error) {
-	return newPackageEx(prog, ct, patches, rewrites, pkg, files, &embedMap, metaCollect)
+	return newPackageEx(prog, ct, patches, rewrites, pkg, files, &embedMap, metaCollect, legacyOptions())
 }
 
-func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewrites map[string]string, pkg *ssa.Package, files []*ast.File, embedMap *goembed.VarMap, metaCollect bool) (ret llssa.Package, externs []string, err error) {
+// NewPackageExWithEmbedMetaOptions is NewPackageExWithEmbedMeta with explicit
+// per-package frontend options.
+func NewPackageExWithEmbedMetaOptions(prog llssa.Program, ct *CallerTracking, patches Patches, rewrites map[string]string, pkg *ssa.Package, files []*ast.File, embedMap goembed.VarMap, metaCollect bool, options Options) (ret llssa.Package, externs []string, err error) {
+	return newPackageEx(prog, ct, patches, rewrites, pkg, files, &embedMap, metaCollect, options)
+}
+
+func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewrites map[string]string, pkg *ssa.Package, files []*ast.File, embedMap *goembed.VarMap, metaCollect bool, options Options) (ret llssa.Package, externs []string, err error) {
 	pkgProg := pkg.Prog
 	pkgTypes := pkg.Pkg
 	oldTypes := pkgTypes
-	pkgName, pkgPath := pkgTypes.Name(), llssa.PathOf(pkgTypes)
+	pkgName, pkgPath := pkgTypes.Name(), prog.PathOf(pkgTypes)
 	patch, hasPatch := patches[pkgPath]
 	if hasPatch {
 		pkgTypes = patch.Types
@@ -2087,7 +2129,7 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 	if err = ParsePkgSyntax(prog, pkgProg.Fset, pkgTypes, files); err != nil {
 		return nil, nil, err
 	}
-	if err = prog.ValidateLocalities(llssa.PathOf(pkgTypes)); err != nil {
+	if err = prog.ValidateLocalities(prog.PathOf(pkgTypes)); err != nil {
 		return nil, nil, err
 	}
 	if err = validateLocalInitializers(prog, pkgTypes); err != nil {
@@ -2097,7 +2139,7 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		prog.SetRuntime(pkgTypes)
 	}
 	ret = prog.NewPackageEx(pkgName, pkgPath, metaCollect)
-	if enableDbg {
+	if options.Debug {
 		ret.InitDebug(pkgName, pkgPath, pkgProg.Fset)
 		defer ret.FinalizeDebug()
 	}
@@ -2113,6 +2155,8 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		goTyps:           pkgTypes,
 		goPkg:            pkg,
 		patches:          patches,
+		options:          options,
+		optionsSet:       true,
 		skips:            make(map[string]none),
 		vargs:            make(map[*ssa.Alloc][]llssa.Expr),
 		funcs:            make(map[*ssa.Function]llssa.Function),
@@ -2408,7 +2452,7 @@ func (p *context) typeArgName(t types.Type) string {
 	case *types.Named:
 		name := p.localNamedName(t, p.isLocalType(t.Obj()))
 		if pkg := t.Obj().Pkg(); pkg != nil {
-			return reflectTypeArgPkgPath(pkg) + "." + name
+			return p.reflectTypeArgPkgPath(pkg) + "." + name
 		}
 		return name
 	case *types.Pointer:
@@ -2429,7 +2473,7 @@ func (p *context) typeArgName(t types.Type) string {
 		}
 		return fmt.Sprintf("%s %s", s, elem)
 	default:
-		return types.TypeString(t, reflectTypeArgPkgPath)
+		return types.TypeString(t, p.reflectTypeArgPkgPath)
 	}
 }
 
@@ -2446,14 +2490,14 @@ func chanDirName(dir types.ChanDir) string {
 	}
 }
 
-func reflectTypeArgPkgPath(pkg *types.Package) string {
+func (p *context) reflectTypeArgPkgPath(pkg *types.Package) string {
 	if pkg == nil {
 		return ""
 	}
 	if pkg.Path() == "command-line-arguments" && pkg.Name() != "" {
 		return pkg.Name()
 	}
-	return llssa.PathOf(pkg)
+	return p.prog.PathOf(pkg)
 }
 
 func (p *context) isGenericLocalType(obj types.Object) bool {

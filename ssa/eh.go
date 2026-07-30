@@ -591,6 +591,9 @@ func (p Function) endDefer(b Builder) {
 			b.Jump(rethNext)
 		}
 	}
+	if n == 0 {
+		b.SetBlockEx(procBlk, AtEnd, true)
+	}
 	link := b.getField(b.Load(self.data), deferLink)
 	b.Call(b.Pkg.rtFunc("SetThreadDefer"), link)
 	b.IndirectJump(b.Load(rundPtr), nexts)

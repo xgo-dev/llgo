@@ -11,10 +11,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/goplus/llgo/internal/packages"
+	"github.com/goplus/llgo/internal/processenv"
 )
 
 func TestParseCgoDeclFlags(t *testing.T) {
@@ -73,6 +75,75 @@ func TestParseCgoDeclFlags(t *testing.T) {
 				t.Fatalf("parseCgoDecl = %#v, want %#v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCgoToolsUseRequestContext(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test tools use POSIX shell scripts")
+	}
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	clang := filepath.Join(binDir, "clang")
+	clangScript := `#!/bin/sh
+case " $* " in
+  *" -dM "*) printf '#define REQUEST_MACRO 1\n' ;;
+  *) printf '{"inner":[{"kind":"FunctionDecl","name":"request_func"}]}' ;;
+esac
+`
+	if err := os.WriteFile(clang, []byte(clangScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pkgConfig := filepath.Join(binDir, "pkg-config")
+	pkgConfigScript := `#!/bin/sh
+case "$1" in
+  --libs) printf '%s' '-lrequest' ;;
+  --cflags) printf '%s' '-I/request/include' ;;
+  *) exit 2 ;;
+esac
+`
+	if err := os.WriteFile(pkgConfig, []byte(pkgConfigScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	process := processenv.Context{Dir: dir, Env: []string{"PATH=" + binDir}}
+
+	macros := map[string]bool{}
+	if err := getMacroNames(process, "request.c", nil, macros, false); err != nil {
+		t.Fatal(err)
+	}
+	if !macros["REQUEST_MACRO"] {
+		t.Fatalf("macro names = %#v", macros)
+	}
+	funcs := map[string]bool{}
+	if err := getFuncNames(process, "request.c", nil, funcs, false); err != nil {
+		t.Fatal(err)
+	}
+	if !funcs["request_func"] {
+		t.Fatalf("function names = %#v", funcs)
+	}
+	externs, err := genExternDeclsByClang(process, nil, "int request_value;", nil, map[string]string{}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if externs != "" {
+		t.Fatalf("unexpected extern declarations: %q", externs)
+	}
+
+	decls, err := parseCgoDeclWithContext(process, "#cgo pkg-config: request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decls) != 1 ||
+		!reflect.DeepEqual(decls[0].cflags, []string{"-I/request/include"}) ||
+		!reflect.DeepEqual(decls[0].ldflags, []string{"-lrequest"}) {
+		t.Fatalf("pkg-config declarations = %#v", decls)
+	}
+
+	if _, _, err := parseCgoPreamble(token.Position{Filename: "request.go", Line: 1}, "int value;"); err != nil {
+		t.Fatal(err)
 	}
 }
 

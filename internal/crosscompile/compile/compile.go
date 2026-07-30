@@ -3,17 +3,19 @@ package compile
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/goplus/llgo/internal/clang"
+	"github.com/goplus/llgo/internal/processenv"
 )
 
 type CompileOptions struct {
 	CC      string // Compiler to use
 	Linker  string
+	Env     []string
+	Dir     string
 	CCFLAGS []string
 	CFLAGS  []string
 	LDFLAGS []string
@@ -60,6 +62,8 @@ func (g CompileGroup) Compile(
 	compiler := clang.NewCompiler(cfg)
 
 	compiler.Verbose = true
+	compiler.Env = slices.Clone(options.Env)
+	compiler.Dir = options.Dir
 
 	archive := filepath.Join(outputDir, filepath.Base(g.OutputFileName))
 	fmt.Fprintf(os.Stderr, "Start to compile group %s to %s...\n", g.OutputFileName, archive)
@@ -89,7 +93,7 @@ func (g CompileGroup) Compile(
 	ccDir := filepath.Dir(options.CC)
 	llvmAr := filepath.Join(ccDir, "llvm-ar")
 
-	cmd := exec.Command(llvmAr, args...)
+	cmd := processenv.Command(options.Env, options.Dir, llvmAr, args...)
 	// TODO(MeteorsLiu): support verbose
 	// cmd.Stdout = os.Stdout
 	// cmd.Stderr = os.Stderr

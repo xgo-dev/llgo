@@ -35,13 +35,13 @@ func PrepareLocalVariables(prog llssa.Program, fset *token.FileSet, pkg *types.P
 	if pkg == nil || info == nil {
 		return nil
 	}
-	path := llssa.PathOf(pkg)
+	path := prog.PathOf(pkg)
 	prepared, err := locality.Prepare(fset, path, pkg, info, files, packageLocalities(prog, path))
 	if err != nil {
 		return err
 	}
 	for name, local := range prepared {
-		prog.SetLocalityInfo(llssa.FullName(pkg, name), local)
+		prog.SetLocalityInfo(prog.FullName(pkg, name), local)
 	}
 	for fullName := range prog.PackageLocalities(path) {
 		name := strings.TrimPrefix(fullName, path+".")
@@ -60,7 +60,7 @@ func PrepareLocalVariables(prog llssa.Program, fset *token.FileSet, pkg *types.P
 }
 
 func validateLocalInitializers(prog llssa.Program, pkg *types.Package) error {
-	return locality.ValidatePrepared(llssa.PathOf(pkg), packageLocalities(prog, llssa.PathOf(pkg)))
+	return locality.ValidatePrepared(prog.PathOf(pkg), packageLocalities(prog, prog.PathOf(pkg)))
 }
 
 func packageLocalities(prog llssa.Program, pkgPath string) map[string]locality.Info {
@@ -76,7 +76,7 @@ func planLocalPackage(prog llssa.Program, pkg *types.Package) (localitylayout.Pa
 	if pkg == nil {
 		return localitylayout.Package{}, nil
 	}
-	path := llssa.PathOf(pkg)
+	path := prog.PathOf(pkg)
 	prefix := path + "."
 	decls := prog.PackageLocalities(path)
 	input := make([]localitylayout.Declaration, 0, len(decls))

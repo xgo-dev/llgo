@@ -31,6 +31,7 @@ import (
 	"strings"
 
 	"github.com/goplus/llgo/internal/buildtags"
+	"github.com/goplus/llgo/internal/processenv"
 	llssa "github.com/goplus/llgo/ssa"
 	"github.com/goplus/llgo/xtool/safesplit"
 )
@@ -73,7 +74,7 @@ func buildCgo(ctx *context, pkg *aPackage, files []*ast.File, externs []string, 
 	}
 	buildCtx.BuildTags = parseSourcePatchBuildTags(ctx.conf.BuildFlags)
 
-	srcFiles, preambles, cdecls, err := parseCgo_(&buildCtx, pkg, files)
+	srcFiles, preambles, cdecls, err := parseCgoWithContext(ctx.process, &buildCtx, pkg, files)
 	if err != nil {
 		return
 	}
@@ -126,7 +127,7 @@ func buildCgo(ctx *context, pkg *aPackage, files []*ast.File, externs []string, 
 		tmpName := tmpFile.Name()
 		defer os.Remove(tmpName)
 		code := cgoHeader + "\n\n" + preamble.src
-		externDecls, err := genExternDeclsByClang(pkg, code, cflags, cgoSymbols, verbose)
+		externDecls, err := genExternDeclsByClang(ctx.process, pkg, code, cflags, cgoSymbols, verbose)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to generate extern decls: %v", err)
 		}
@@ -178,7 +179,7 @@ type clangASTNode struct {
 	Inner []clangASTNode `json:"inner,omitempty"`
 }
 
-func genExternDeclsByClang(pkg *aPackage, src string, cflags []string, cgoSymbols map[string]string, verbose bool) (string, error) {
+func genExternDeclsByClang(process processenv.Context, pkg *aPackage, src string, cflags []string, cgoSymbols map[string]string, verbose bool) (string, error) {
 	tmpSrc, err := os.CreateTemp("", "cgo-src-*.c")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp file: %v", err)
@@ -188,11 +189,11 @@ func genExternDeclsByClang(pkg *aPackage, src string, cflags []string, cgoSymbol
 		return "", fmt.Errorf("failed to write temp file: %v", err)
 	}
 	symbolNames := make(map[string]bool)
-	if err := getFuncNames(tmpSrc.Name(), cflags, symbolNames, verbose); err != nil {
+	if err := getFuncNames(process, tmpSrc.Name(), cflags, symbolNames, verbose); err != nil {
 		return "", fmt.Errorf("failed to get func names: %v", err)
 	}
 	macroNames := make(map[string]bool)
-	if err := getMacroNames(tmpSrc.Name(), cflags, macroNames, verbose); err != nil {
+	if err := getMacroNames(process, tmpSrc.Name(), cflags, macroNames, verbose); err != nil {
 		return "", fmt.Errorf("failed to get macro names: %v", err)
 	}
 
@@ -245,10 +246,10 @@ static void _init_%s() {
 	return b.String(), nil
 }
 
-func getMacroNames(file string, cflags []string, macroNames map[string]bool, verbose bool) error {
+func getMacroNames(process processenv.Context, file string, cflags []string, macroNames map[string]bool, verbose bool) error {
 	args := append([]string{"-dM", "-E"}, cflags...)
 	args = append(args, file)
-	cmd := execCommandVerbose(verbose, "clang", args...)
+	cmd := execCommandVerbose(process, verbose, "clang", args...)
 	output, err := cmd.Output()
 	if err != nil {
 		return err
@@ -265,10 +266,10 @@ func getMacroNames(file string, cflags []string, macroNames map[string]bool, ver
 	return nil
 }
 
-func getFuncNames(file string, cflags []string, symbolNames map[string]bool, verbose bool) error {
+func getFuncNames(process processenv.Context, file string, cflags []string, symbolNames map[string]bool, verbose bool) error {
 	args := append([]string{"-Xclang", "-ast-dump=json", "-fsyntax-only"}, cflags...)
 	args = append(args, file)
-	cmd := execCommandVerbose(verbose, "clang", args...)
+	cmd := execCommandVerbose(process, verbose, "clang", args...)
 	cmd.Stderr = os.Stderr
 	output, err := cmd.Output()
 	if err != nil {
@@ -295,11 +296,11 @@ func getFuncNames(file string, cflags []string, symbolNames map[string]bool, ver
 	return nil
 }
 
-func execCommandVerbose(verbose bool, name string, arg ...string) *exec.Cmd {
+func execCommandVerbose(process processenv.Context, verbose bool, name string, arg ...string) *exec.Cmd {
 	if verbose {
 		fmt.Fprintf(os.Stderr, "%s %s\n", name, strings.Join(arg, " "))
 	}
-	return exec.Command(name, arg...)
+	return process.Command(name, arg...)
 }
 
 func extractFuncNames(node *clangASTNode, funcNames map[string]bool) {
@@ -311,6 +312,10 @@ func extractFuncNames(node *clangASTNode, funcNames map[string]bool) {
 }
 
 func parseCgo_(buildCtx *build.Context, pkg *aPackage, files []*ast.File) (srcFiles []cgoSrcFile, preambles []cgoPreamble, cdecls []cgoDecl, err error) {
+	return parseCgoWithContext(processenv.Context{}, buildCtx, pkg, files)
+}
+
+func parseCgoWithContext(process processenv.Context, buildCtx *build.Context, pkg *aPackage, files []*ast.File) (srcFiles []cgoSrcFile, preambles []cgoPreamble, cdecls []cgoDecl, err error) {
 	dirs := make(map[string]none)
 	for _, file := range files {
 		pos := pkg.Fset.Position(file.Name.NamePos)
@@ -379,7 +384,7 @@ func parseCgo_(buildCtx *build.Context, pkg *aPackage, files []*ast.File) (srcFi
 						spec := decl.Specs[0].(*ast.ImportSpec)
 						if spec.Path.Value == "\"unsafe\"" {
 							pos := pkg.Fset.Position(doc.Pos())
-							preamble, flags, err := parseCgoPreamble(pos, doc.Text())
+							preamble, flags, err := parseCgoPreambleWithContext(process, pos, doc.Text())
 							if err != nil {
 								panic(err)
 							}
@@ -395,6 +400,10 @@ func parseCgo_(buildCtx *build.Context, pkg *aPackage, files []*ast.File) (srcFi
 }
 
 func parseCgoPreamble(pos token.Position, text string) (preamble cgoPreamble, decls []cgoDecl, err error) {
+	return parseCgoPreambleWithContext(processenv.Context{}, pos, text)
+}
+
+func parseCgoPreambleWithContext(process processenv.Context, pos token.Position, text string) (preamble cgoPreamble, decls []cgoDecl, err error) {
 	b := strings.Builder{}
 	fline := pos.Line
 	fname := pos.Filename
@@ -405,7 +414,7 @@ func parseCgoPreamble(pos token.Position, text string) (preamble cgoPreamble, de
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "#cgo ") {
 			var cgoDecls []cgoDecl
-			cgoDecls, err = parseCgoDecl(line)
+			cgoDecls, err = parseCgoDeclWithContext(process, line)
 			if err != nil {
 				return
 			}
@@ -432,6 +441,10 @@ func parseCgoPreamble(pos token.Position, text string) (preamble cgoPreamble, de
 // #cgo CXXFLAGS: -I/usr/include/c++/v1
 // #cgo LDFLAGS: -L/usr/lib/python3.12/config-3.12-x86_64-linux-gnu -lpython3.12
 func parseCgoDecl(line string) (cgoDecls []cgoDecl, err error) {
+	return parseCgoDeclWithContext(processenv.Context{}, line)
+}
+
+func parseCgoDeclWithContext(process processenv.Context, line string) (cgoDecls []cgoDecl, err error) {
 	idx := strings.Index(line, ":")
 	if idx == -1 {
 		err = fmt.Errorf("invalid cgo format: %v", line)
@@ -462,12 +475,12 @@ func parseCgoDecl(line string) (cgoDecls []cgoDecl, err error) {
 
 	switch flag {
 	case "pkg-config":
-		ldflags, e := exec.Command("pkg-config", "--libs", arg).Output()
+		ldflags, e := process.Command("pkg-config", "--libs", arg).Output()
 		if e != nil {
 			err = fmt.Errorf("pkg-config: %v", e)
 			return
 		}
-		cflags, e := exec.Command("pkg-config", "--cflags", arg).Output()
+		cflags, e := process.Command("pkg-config", "--cflags", arg).Output()
 		if e != nil {
 			err = fmt.Errorf("pkg-config: %v", e)
 			return

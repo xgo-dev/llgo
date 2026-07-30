@@ -129,6 +129,9 @@ func TestLLGoRuntimeDir(t *testing.T) {
 		if got := LLGoRuntimeDir(); got != expected {
 			t.Errorf("LLGoRuntimeDir() = %v, want %v", got, expected)
 		}
+		if got := LLGoRuntimeDirWithEnv([]string{"LLGO_ROOT=" + tmpDir}); got != expected {
+			t.Errorf("LLGoRuntimeDirWithEnv() = %v, want %v", got, expected)
+		}
 	})
 
 	// Test with invalid LLGO_ROOT

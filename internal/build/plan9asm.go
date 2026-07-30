@@ -307,7 +307,7 @@ func cabiSkipFuncsForPlan9Asm(ctx *context, pkgPath string, mod gllvm.Module) []
 
 func (ctx *context) plan9asmEnabled(pkgPath string) bool {
 	ctx.plan9asmOnce.Do(func() {
-		cfg := parsePlan9AsmPkgsEnv(Plan9ASMPkgs())
+		cfg := parsePlan9AsmPkgsEnv(envConfigValue(ctx.buildConf, llgoPlan9ASMPkgs))
 		ctx.plan9asmMode = cfg.mode
 		switch cfg.mode {
 		case plan9asmEnvSelected:
@@ -343,22 +343,22 @@ func hasAltPkgForTarget(conf *Config, pkgPath string) bool {
 	}
 	// When Plan9 asm translation is enabled, avoid also pulling in alt packages
 	// that provide the same symbols as pure-Go fallbacks.
-	if plan9asmEnabledByDefault(conf, pkgPath) && !plan9asmDisabledByEnv() {
+	if plan9asmEnabledByDefault(conf, pkgPath) && !plan9asmDisabledByEnv(conf) {
 		return false
 	}
 	// In ABI0/1, allow explicit env opt-in to prefer plan9asm over alt.
-	if conf != nil && conf.AbiMode != cabi.ModeAllFunc && plan9asmEnabledByEnv(pkgPath) {
+	if conf != nil && conf.AbiMode != cabi.ModeAllFunc && plan9asmEnabledByEnv(pkgPath, conf) {
 		return false
 	}
 	return true
 }
 
-func plan9asmDisabledByEnv() bool {
-	return parsePlan9AsmPkgsEnv(Plan9ASMPkgs()).mode == plan9asmEnvNone
+func plan9asmDisabledByEnv(conf *Config) bool {
+	return parsePlan9AsmPkgsEnv(envConfigValue(conf, llgoPlan9ASMPkgs)).mode == plan9asmEnvNone
 }
 
-func plan9asmEnabledByEnv(pkgPath string) bool {
-	cfg := parsePlan9AsmPkgsEnv(Plan9ASMPkgs())
+func plan9asmEnabledByEnv(pkgPath string, conf *Config) bool {
+	cfg := parsePlan9AsmPkgsEnv(envConfigValue(conf, llgoPlan9ASMPkgs))
 	if cfg.mode == plan9asmEnvAll {
 		return true
 	}
@@ -407,17 +407,17 @@ func pkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 	}
 	args = append(args, pkg.PkgPath)
 
-	cmd := exec.Command("go", args...)
+	cmd := ctx.process.Command("go", args...)
 	// Resolve dependencies from the module or workspace used by packages.Load.
 	// A dependency directory in the module cache may not contain a go.mod.
 	if ctx.conf != nil {
 		cmd.Dir = ctx.conf.Dir
 	}
-	cmdEnv := os.Environ()
-	if ctx.conf != nil && len(ctx.conf.Env) > 0 {
-		cmdEnv = append([]string(nil), ctx.conf.Env...)
+	cmdEnv := ctx.process.Env
+	if ctx.conf != nil && ctx.conf.Env != nil {
+		cmdEnv = ctx.conf.Env
 	}
-	cmd.Env = append(cmdEnv,
+	cmd.Env = withEnv(cmdEnv,
 		"GOOS="+ctx.buildConf.Goos,
 		"GOARCH="+ctx.buildConf.Goarch,
 	)

@@ -19,10 +19,10 @@ package env
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 
+	"github.com/goplus/llgo/internal/processenv"
 	"github.com/goplus/llgo/xtool/safesplit"
 )
 
@@ -32,7 +32,11 @@ var (
 )
 
 func ExpandEnvToArgs(s string) []string {
-	r, config := expandEnvWithCmd(s)
+	return ExpandEnvToArgsWithEnv(s, nil, "")
+}
+
+func ExpandEnvToArgsWithEnv(s string, environ []string, dir string) []string {
+	r, config := expandEnvWithCmd(s, environ, dir)
 	if r == "" {
 		return nil
 	}
@@ -43,11 +47,11 @@ func ExpandEnvToArgs(s string) []string {
 }
 
 func ExpandEnv(s string) string {
-	r, _ := expandEnvWithCmd(s)
+	r, _ := expandEnvWithCmd(s, nil, "")
 	return r
 }
 
-func expandEnvWithCmd(s string) (string, bool) {
+func expandEnvWithCmd(s string, environ []string, dir string) (string, bool) {
 	var config bool
 	expanded := reSubcmd.ReplaceAllStringFunc(s, func(m string) string {
 		subcmd := strings.TrimSpace(m[2 : len(m)-1])
@@ -61,7 +65,8 @@ func expandEnvWithCmd(s string) (string, bool) {
 
 		var out []byte
 		var err error
-		out, err = exec.Command(cmd, args[1:]...).Output()
+		command := processenv.Command(environ, dir, cmd, args[1:]...)
+		out, err = command.Output()
 
 		if err != nil {
 			// TODO(kindy): log in verbose mode
@@ -70,7 +75,13 @@ func expandEnvWithCmd(s string) (string, bool) {
 
 		return strings.Replace(strings.TrimSpace(string(out)), "\n", " ", -1)
 	})
-	return strings.TrimSpace(os.Expand(expanded, os.Getenv)), config
+	getenv := os.Getenv
+	if environ != nil {
+		getenv = func(key string) string {
+			return processenv.Get(environ, key)
+		}
+	}
+	return strings.TrimSpace(os.Expand(expanded, getenv)), config
 }
 
 func parseSubcmd(s string) []string {

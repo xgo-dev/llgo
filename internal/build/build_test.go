@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"strconv"
@@ -42,6 +43,152 @@ func TestMain(m *testing.M) {
 	cacheRootFunc = old
 	_ = os.RemoveAll(td)
 	os.Exit(code)
+}
+
+func TestResolveBuildConfigDoesNotAliasInput(t *testing.T) {
+	input := &Config{
+		RunArgs:      []string{"run"},
+		GoBuildFlags: []string{"-tags=custom"},
+		GlobalRewrites: map[string]Rewrites{
+			"example.com/p": {"value": "input"},
+			"nil":           nil,
+		},
+	}
+	resolved, err := resolveBuildConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved.RunArgs[0] = "changed"
+	resolved.GoBuildFlags[0] = "-tags=changed"
+	resolved.GlobalRewrites["example.com/p"]["value"] = "changed"
+	resolved.GlobalRewrites["new"] = Rewrites{"value": "new"}
+
+	if got := input.RunArgs[0]; got != "run" {
+		t.Fatalf("input RunArgs changed to %q", got)
+	}
+	if got := input.GoBuildFlags[0]; got != "-tags=custom" {
+		t.Fatalf("input GoBuildFlags changed to %q", got)
+	}
+	if got := input.GlobalRewrites["example.com/p"]["value"]; got != "input" {
+		t.Fatalf("input rewrite changed to %q", got)
+	}
+	if _, ok := input.GlobalRewrites["new"]; ok {
+		t.Fatal("resolved rewrite map aliases input map")
+	}
+	if rewrites, ok := resolved.GlobalRewrites["nil"]; !ok || rewrites != nil {
+		t.Fatalf("nil rewrite entry was not preserved: %#v", rewrites)
+	}
+}
+
+func TestResolveBuildConfigDefaultsAndValidation(t *testing.T) {
+	if got := (*Config)(nil).clone(); got != nil {
+		t.Fatalf("nil Config clone = %#v", got)
+	}
+	if _, err := resolveBuildConfig(nil); err == nil {
+		t.Fatal("nil build config succeeded")
+	}
+
+	resolved, err := resolveBuildConfig(&Config{
+		BuildMode:    BuildModeCArchive,
+		DeadcodeDrop: true,
+		SizeReport:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.DeadcodeDrop {
+		t.Fatal("non-executable build retained dead-code dropping")
+	}
+	if resolved.SizeFormat != "text" || resolved.SizeLevel != "module" {
+		t.Fatalf("size report defaults = %q, %q", resolved.SizeFormat, resolved.SizeLevel)
+	}
+	if _, err := resolveBuildConfig(&Config{SizeReport: true, SizeLevel: "invalid"}); err == nil {
+		t.Fatal("invalid size-reporting level succeeded")
+	}
+
+	if got := (*Config)(nil).llgoRuntimeDir(); got != "" {
+		t.Fatalf("nil runtime dir = %q", got)
+	}
+	if got := (&Config{}).llgoRuntimeDir(); got != "" {
+		t.Fatalf("empty-root runtime dir = %q", got)
+	}
+}
+
+func TestBuildHelpersUseResolvedRequestConfiguration(t *testing.T) {
+	conf := &Config{environment: []string{llgoWasmRuntime + "=request-wasm"}}
+	if got := WasmRuntimeForConfig(conf); got != "request-wasm" {
+		t.Fatalf("WasmRuntimeForConfig = %q", got)
+	}
+	if got := WasmRuntimeForConfig(&Config{environment: []string{}}); got != defaultWasmRuntime {
+		t.Fatalf("default WasmRuntimeForConfig = %q", got)
+	}
+
+	root := t.TempDir()
+	ctx := &context{
+		buildConf:    &Config{llgoRoot: root},
+		crossCompile: crosscompile.Export{ExtraFiles: []string{"missing.c"}},
+	}
+	if _, err := compileExtraFiles(ctx, false); err == nil {
+		t.Fatal("missing extra file succeeded")
+	}
+
+	parent := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(parent, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx.buildConf.BuildMode = BuildModeExe
+	if err := linkObjFiles(ctx, filepath.Join(parent, "app"), nil, nil, false); err == nil {
+		t.Fatal("output below regular file succeeded")
+	}
+}
+
+func TestResolveBuildConfigUsesExplicitEnvironment(t *testing.T) {
+	t.Setenv(llgoFuncInfo, "0")
+	t.Setenv(llgoTrace, "0")
+
+	resolved, err := resolveBuildConfig(&Config{}, []string{
+		llgoFuncInfo + "=1",
+		llgoTrace + "=1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.PCLNMode != PCLNEmbedded {
+		t.Fatalf("PCLNMode = %v, want explicit request environment to enable metadata", resolved.PCLNMode)
+	}
+	if !isEnvOnConfig(resolved, llgoTrace, false) {
+		t.Fatal("trace did not use explicit request environment")
+	}
+}
+
+func TestNewDefaultConfDoesNotCreateBinDir(t *testing.T) {
+	binDir := filepath.Join(t.TempDir(), "not-created", "bin")
+	t.Setenv("GOBIN", binDir)
+	conf := NewDefaultConf(ModeBuild)
+	if conf.BinPath != binDir {
+		t.Fatalf("BinPath = %q, want %q", conf.BinPath, binDir)
+	}
+	if _, err := os.Stat(binDir); !os.IsNotExist(err) {
+		t.Fatalf("NewDefaultConf created bin directory: %v", err)
+	}
+}
+
+func TestDoDoesNotModifyConfigOnValidationError(t *testing.T) {
+	input := &Config{
+		RunArgs: []string{"arg"},
+		GlobalRewrites: map[string]Rewrites{
+			"example.com/p": {"value": "input"},
+		},
+		LinkOptions: LinkOptions{DWARF: DWARFMode(255)},
+	}
+	before := input.clone()
+	if _, err := Do(nil, input); err == nil {
+		t.Fatal("Do() succeeded with invalid DWARF mode")
+	}
+	if !reflect.DeepEqual(input, before) {
+		t.Fatalf("Do() modified input config:\n got: %#v\nwant: %#v", input, before)
+	}
 }
 
 func TestClosePackageMetas(t *testing.T) {
@@ -1092,9 +1239,17 @@ func F() {}
 	}
 	conf := NewDefaultConf(ModeGen)
 	conf.AllowNoBody = true
+	before := conf.clone()
+	pathBefore := os.Getenv("PATH")
 	pkgs, err := Do([]string{file}, conf)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(conf, before) {
+		t.Fatalf("successful Do() modified input config:\n got: %#v\nwant: %#v", conf, before)
+	}
+	if pathAfter := os.Getenv("PATH"); pathAfter != pathBefore {
+		t.Fatalf("successful Do() modified PATH:\n got: %q\nwant: %q", pathAfter, pathBefore)
 	}
 	if len(pkgs) != 1 || pkgs[0].LPkg == nil {
 		t.Fatalf("Do returned packages = %+v, want one compiled package", pkgs)
@@ -1164,6 +1319,127 @@ func Invalid() {}
 	if _, err := Do([]string{file}, conf); err == nil || !strings.Contains(err.Error(), "applies only to package-level var declarations") {
 		t.Fatalf("Do error = %v, want alternate-package locality directive diagnostic", err)
 	}
+}
+
+func TestConcurrentBuildRequestsKeepInputsIsolated(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "concurrent.go")
+	if err := os.WriteFile(file, []byte("package concurrent\n\nfunc F() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	conf := NewDefaultConf(ModeGen)
+	before := conf.clone()
+	pathBefore := os.Getenv("PATH")
+	baseEnv := withEnv(os.Environ(), llgoBuildCache+"=0")
+
+	type result struct {
+		pkgs []Package
+		err  error
+	}
+	results := make(chan result, 2)
+	for _, optimize := range []string{"0", "1"} {
+		environ := withEnv(baseEnv, llgoOptimize+"="+optimize)
+		go func() {
+			pkgs, err := Build(BuildRequest{
+				Args:   []string{file},
+				Config: conf,
+				Env:    environ,
+			})
+			results <- result{pkgs: pkgs, err: err}
+		}()
+	}
+	for range 2 {
+		got := <-results
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		if len(got.pkgs) != 1 || got.pkgs[0].LPkg == nil {
+			t.Fatalf("Build returned packages = %+v, want one compiled package", got.pkgs)
+		}
+		got.pkgs[0].LPkg.Prog.Dispose()
+	}
+	if !reflect.DeepEqual(conf, before) {
+		t.Fatalf("concurrent builds modified shared input:\n got: %#v\nwant: %#v", conf, before)
+	}
+	if pathAfter := os.Getenv("PATH"); pathAfter != pathBefore {
+		t.Fatalf("concurrent builds modified PATH:\n got: %q\nwant: %q", pathAfter, pathBefore)
+	}
+}
+
+func TestConcurrentBuildRequestsIsolateRewriteMainPrefix(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/rewrite\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc F() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	baseEnv := withEnv(os.Environ(), llgoBuildCache+"=0")
+
+	type result struct {
+		rewrite bool
+		pkgs    []Package
+		err     error
+	}
+	results := make(chan result, 2)
+	for _, rewrite := range []bool{false, true} {
+		conf := NewDefaultConf(ModeGen)
+		conf.RewriteMainPrefix = rewrite
+		go func() {
+			pkgs, err := Build(BuildRequest{
+				Args:   []string{"."},
+				Config: conf,
+				Dir:    dir,
+				Env:    baseEnv,
+			})
+			results <- result{rewrite: rewrite, pkgs: pkgs, err: err}
+		}()
+	}
+	var built []result
+	for range 2 {
+		got := <-results
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		if len(got.pkgs) != 1 || got.pkgs[0].LPkg == nil {
+			t.Fatalf("Build returned packages = %+v, want one compiled package", got.pkgs)
+		}
+		t.Cleanup(got.pkgs[0].LPkg.Prog.Dispose)
+		built = append(built, got)
+	}
+	for _, got := range built {
+		ir := got.pkgs[0].LPkg.String()
+		want, notWant := "example.com/rewrite.F", "main.F"
+		if got.rewrite {
+			want, notWant = notWant, want
+		}
+		if !strings.Contains(ir, want) || strings.Contains(ir, notWant) {
+			t.Fatalf("RewriteMainPrefix=%v produced unexpected symbols; want %q and not %q:\n%s", got.rewrite, want, notWant, ir)
+		}
+	}
+}
+
+func TestBuildRequestUsesExplicitWorkingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/requestdir\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "requestdir.go"), []byte("package requestdir\n\nfunc F() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	conf := NewDefaultConf(ModeGen)
+	pkgs, err := Build(BuildRequest{
+		Args:   []string{"."},
+		Config: conf,
+		Dir:    dir,
+		Env:    withEnv(os.Environ(), llgoBuildCache+"=0"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 1 || pkgs[0].PkgPath != "example.com/requestdir" {
+		t.Fatalf("Build returned packages = %+v, want example.com/requestdir", pkgs)
+	}
+	pkgs[0].LPkg.Prog.Dispose()
 }
 
 func TestFormatPackageError(t *testing.T) {

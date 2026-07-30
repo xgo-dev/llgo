@@ -7,6 +7,7 @@ import (
 	"github.com/goplus/llgo/internal/crosscompile/compile"
 	"github.com/goplus/llgo/internal/crosscompile/compile/libc"
 	"github.com/goplus/llgo/internal/crosscompile/compile/rtlib"
+	"github.com/goplus/llgo/internal/processenv"
 )
 
 // for testing, in testing env, we use fake path, it will cause downloading failure
@@ -15,6 +16,10 @@ var needSkipDownload = false
 // getLibcCompileConfigByName retrieves libc compilation configuration by name
 // Returns the actual libc output dir, compilation config and err
 func getLibcCompileConfigByName(baseDir, libcName, target, mcpu string) (outputDir string, cfg compile.CompileConfig, err error) {
+	return getLibcCompileConfigByNameWithContext(baseDir, libcName, target, mcpu, processenv.Context{})
+}
+
+func getLibcCompileConfigByNameWithContext(baseDir, libcName, target, mcpu string, process processenv.Context) (outputDir string, cfg compile.CompileConfig, err error) {
 	if libcName == "" {
 		err = fmt.Errorf("libc name cannot be empty")
 		return
@@ -40,7 +45,7 @@ func getLibcCompileConfigByName(baseDir, libcName, target, mcpu string) (outputD
 		return libcDir, compileConfig, err
 	}
 
-	if err = checkDownloadAndExtractLib(config.Url, libcDir, config.ResourceSubDir); err != nil {
+	if err = checkDownloadAndExtractLibWithContext(config.Url, libcDir, config.ResourceSubDir, process); err != nil {
 		return
 	}
 
@@ -50,6 +55,10 @@ func getLibcCompileConfigByName(baseDir, libcName, target, mcpu string) (outputD
 // getRTCompileConfigByName retrieves runtime library compilation configuration by name
 // Returns the actual libc output dir, compilation config and err
 func getRTCompileConfigByName(baseDir, rtName, target string) (outputDir string, cfg compile.CompileConfig, err error) {
+	return getRTCompileConfigByNameWithContext(baseDir, rtName, target, processenv.Context{})
+}
+
+func getRTCompileConfigByNameWithContext(baseDir, rtName, target string, process processenv.Context) (outputDir string, cfg compile.CompileConfig, err error) {
 	if rtName == "" {
 		err = fmt.Errorf("rt name cannot be empty")
 		return
@@ -70,7 +79,7 @@ func getRTCompileConfigByName(baseDir, rtName, target string) (outputDir string,
 		return rtDir, compileConfig, err
 	}
 
-	if err = checkDownloadAndExtractLib(config.Url, rtDir, config.ResourceSubDir); err != nil {
+	if err = checkDownloadAndExtractLibWithContext(config.Url, rtDir, config.ResourceSubDir, process); err != nil {
 		return
 	}
 

@@ -30,12 +30,16 @@ type ReflectMethodCheck struct {
 }
 
 func methodCapabilitySig(sig *types.Signature) string {
+	return methodCapabilitySigWithPath(sig, PathOf)
+}
+
+func methodCapabilitySigWithPath(sig *types.Signature, pathOf func(*types.Package) string) string {
 	canon := types.NewSignatureType(nil, nil, nil, methodCapabilityTuple(sig.Params()), methodCapabilityTuple(sig.Results()), sig.Variadic())
 	return types.TypeString(canon, func(pkg *types.Package) string {
 		if pkg == nil {
 			return ""
 		}
-		return PathOf(pkg)
+		return pathOf(pkg)
 	})
 }
 
@@ -113,7 +117,11 @@ func methodCapabilityType(t types.Type) types.Type {
 }
 
 func methodCapabilityKey(method *types.Func) string {
-	return "go.method." + methodCapabilityName(method) + ":" + methodCapabilitySig(method.Type().(*types.Signature))
+	return methodCapabilityKeyWithPath(method, PathOf)
+}
+
+func methodCapabilityKeyWithPath(method *types.Func, pathOf func(*types.Package) string) string {
+	return "go.method." + methodCapabilityName(method) + ":" + methodCapabilitySigWithPath(method.Type().(*types.Signature), pathOf)
 }
 
 func methodCapabilityName(method *types.Func) string {
@@ -289,7 +297,7 @@ func (p Program) addMethodTypeMetadata(global llvm.Value, fullType Type, methods
 	methodStride := p.SizeOf(methodType)
 	for i, sel := range methods {
 		baseOffset := methodArrayOffset + uint64(i)*methodStride
-		p.addTypeMetadata(global, baseOffset+ifnOffset, methodCapabilityKey(sel.Obj().(*types.Func)))
+		p.addTypeMetadata(global, baseOffset+ifnOffset, methodCapabilityKeyWithPath(sel.Obj().(*types.Func), p.PathOf))
 		if sel.Obj().Exported() {
 			name := sel.Obj().Name()
 			p.addTypeMetadata(global, baseOffset+ifnOffset, reflectValueMethodTypeID)

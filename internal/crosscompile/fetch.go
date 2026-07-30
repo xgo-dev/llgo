@@ -8,15 +8,20 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/goplus/llgo/internal/processenv"
 )
 
 // checkDownloadAndExtractWasiSDK downloads and extracts WASI SDK
 func checkDownloadAndExtractWasiSDK(dir string) (wasiSdkRoot string, err error) {
+	return checkDownloadAndExtractWasiSDKWithContext(dir, processenv.Context{})
+}
+
+func checkDownloadAndExtractWasiSDKWithContext(dir string, process processenv.Context) (wasiSdkRoot string, err error) {
 	wasiSdkRoot = filepath.Join(dir, wasiMacosSubdir)
 
 	// Check if already exists
@@ -37,12 +42,16 @@ func checkDownloadAndExtractWasiSDK(dir string) (wasiSdkRoot string, err error) 
 		return wasiSdkRoot, nil
 	}
 
-	err = downloadAndExtractArchive(wasiSdkUrl, dir, "WASI SDK")
+	err = downloadAndExtractArchiveWithContext(wasiSdkUrl, dir, "WASI SDK", process)
 	return wasiSdkRoot, err
 }
 
 // checkDownloadAndExtractESPClang downloads and extracts ESP Clang binaries and libraries
 func checkDownloadAndExtractESPClang(platformSuffix, dir string) error {
+	return checkDownloadAndExtractESPClangWithContext(platformSuffix, dir, processenv.Context{})
+}
+
+func checkDownloadAndExtractESPClangWithContext(platformSuffix, dir string, process processenv.Context) error {
 	// Check if already exists
 	if _, err := os.Stat(dir); err == nil {
 		return nil
@@ -66,7 +75,7 @@ func checkDownloadAndExtractESPClang(platformSuffix, dir string) error {
 
 	// Use temporary extraction directory for ESP Clang special handling
 	tempExtractDir := dir + ".extract"
-	if err := downloadAndExtractArchive(clangUrl, tempExtractDir, description); err != nil {
+	if err := downloadAndExtractArchiveWithContext(clangUrl, tempExtractDir, description, process); err != nil {
 		return err
 	}
 	defer os.RemoveAll(tempExtractDir)
@@ -81,6 +90,10 @@ func checkDownloadAndExtractESPClang(platformSuffix, dir string) error {
 }
 
 func checkDownloadAndExtractLib(url, dstDir, internalArchiveSrcDir string) error {
+	return checkDownloadAndExtractLibWithContext(url, dstDir, internalArchiveSrcDir, processenv.Context{})
+}
+
+func checkDownloadAndExtractLibWithContext(url, dstDir, internalArchiveSrcDir string, process processenv.Context) error {
 	// Check if already exists
 	if _, err := os.Stat(dstDir); err == nil {
 		return nil
@@ -104,7 +117,7 @@ func checkDownloadAndExtractLib(url, dstDir, internalArchiveSrcDir string) error
 
 	// Use temporary extraction directory
 	tempExtractDir := dstDir + ".extract"
-	if err := downloadAndExtractArchive(url, tempExtractDir, description); err != nil {
+	if err := downloadAndExtractArchiveWithContext(url, tempExtractDir, description, process); err != nil {
 		return err
 	}
 	defer os.RemoveAll(tempExtractDir)
@@ -154,6 +167,10 @@ func releaseLock(lockFile *os.File) error {
 
 // downloadAndExtractArchive downloads and extracts an archive to the destination directory (without locking)
 func downloadAndExtractArchive(url, destDir, description string) error {
+	return downloadAndExtractArchiveWithContext(url, destDir, description, processenv.Context{})
+}
+
+func downloadAndExtractArchiveWithContext(url, destDir, description string, process processenv.Context) error {
 	fmt.Fprintf(os.Stderr, "Downloading %s...\n", description)
 
 	// Use temporary extraction directory
@@ -180,7 +197,7 @@ func downloadAndExtractArchive(url, destDir, description string) error {
 			return fmt.Errorf("failed to extract %s archive: %w", description, err)
 		}
 	} else if strings.HasSuffix(filename, ".tar.xz") {
-		err := extractTarXz(localFile, tempDir)
+		err := extractTarXzWithContext(localFile, tempDir, process)
 		if err != nil {
 			return fmt.Errorf("failed to extract %s archive: %w", description, err)
 		}
@@ -267,8 +284,12 @@ func extractTarGz(tarGzFile, dest string) error {
 }
 
 func extractTarXz(tarXzFile, dest string) error {
+	return extractTarXzWithContext(tarXzFile, dest, processenv.Context{})
+}
+
+func extractTarXzWithContext(tarXzFile, dest string, process processenv.Context) error {
 	// Use external tar command to extract .tar.xz files
-	cmd := exec.Command("tar", "-xf", tarXzFile, "-C", dest)
+	cmd := process.Command("tar", "-xf", tarXzFile, "-C", dest)
 	return cmd.Run()
 }
 
