@@ -42,6 +42,7 @@ type genConfig struct {
 	methodByIndex map[int]none
 	methodByName  map[string]none
 	abiSymbols    map[string]none
+	abiTypes      []llssa.AbiTypeInfo
 	funcInfo      []funcInfoRecord
 	pcLineInfo    []pcLineRecord
 	funcInfoStubs []funcInfoStubRecord
@@ -94,6 +95,7 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 
 	var abiInit llssa.Function
 	if cfg.abiInit != 0 {
+		mainPkg.RegisterAbiTypes(cfg.abiTypes)
 		abiInit = mainPkg.InitAbiTypesFor("init$abitypes", func(sym *llssa.AbiSymbol) bool {
 			if _, ok := cfg.abiSymbols[sym.Name]; !ok {
 				return false

@@ -257,6 +257,45 @@ func TestParsePkgSyntaxCollectsLinknames(t *testing.T) {
 	}
 }
 
+func TestParsePkgSyntaxCollectsCPackageExports(t *testing.T) {
+	const src = `package C
+
+func Xadd(a, b int) int { return a + b }
+func Double(x float64) float64 { return 2 * x }
+func hidden() {}
+
+//go:linkname Xnamed explicit_name
+func Xnamed()
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "c.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prog := llssa.NewProgram(nil)
+	pkg := types.NewPackage("example.com/c", "C")
+	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		want string
+		ok   bool
+	}{
+		{name: "Xadd", want: "add", ok: true},
+		{name: "Double", want: "Double", ok: true},
+		{name: "hidden"},
+		{name: "Xnamed", want: "explicit_name", ok: true},
+	}
+	for _, tt := range tests {
+		fullName := pkg.Path() + "." + tt.name
+		got, ok := prog.Linkname(fullName)
+		if got != tt.want || ok != tt.ok {
+			t.Errorf("Linkname(%q) = (%q, %v), want (%q, %v)", fullName, got, ok, tt.want, tt.ok)
+		}
+	}
+}
+
 func TestCollectLinknameByDocIgnoresOtherDirectives(t *testing.T) {
 	prog := llssa.NewProgram(nil)
 	doc := &ast.CommentGroup{List: []*ast.Comment{

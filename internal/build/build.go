@@ -910,22 +910,20 @@ type context struct {
 	llvmVersion  string
 
 	// go list derived file lists (SFiles, etc.)
-	sfilesCache map[string][]string // pkg.ID -> absolute .s/.S file paths
+	sfilesCache  map[string][]string // pkg.ID -> absolute .s/.S file paths
+	sfilesFrozen bool
 
 	// plan9asm package policy parsed from env.
-	plan9asmOnce sync.Once
-	plan9asmMode plan9asmPkgsEnvMode
-	plan9asmPkgs map[string]bool
+	plan9asmOnce  sync.Once
+	plan9asmReady bool
+	plan9asmMode  plan9asmPkgsEnvMode
+	plan9asmPkgs  map[string]bool
+	plan9asmSigs  map[string]map[string]struct{}
 
 	// pclnExternal is populated while generating the synthetic main module
 	// and completed with final linked PCs by the post-link externalizer.
 	pclnExternal *pclnmap.Data
 }
-
-// frontendDebugMu protects the legacy cl/ssa instruction-debug switches.
-// Code-generation options are invocation-local; this process-wide lock remains
-// only for verbose diagnostic logging until those helpers accept a logger.
-var frontendDebugMu sync.RWMutex
 
 // closePackageMetas releases metadata mappings owned by this build. Metadata
 // remains available to hooks and whole-program consumers until Do returns.
@@ -1159,36 +1157,34 @@ func normalizeToArchive(ctx *context, aPkg *aPackage, verbose bool) error {
 }
 
 func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, error) {
-	// Split packages into runtime tree vs others so we can defer runtime build.
-	var runtimePkgs []packageBuildSpec
-	var normalPkgs []packageBuildSpec
+	specs := make([]packageBuildSpec, 0, len(pkgs))
 	for _, p := range pkgs {
-		spec := newPackageBuildSpec(p)
-		if spec.runtime {
-			runtimePkgs = append(runtimePkgs, spec)
-		} else {
-			normalPkgs = append(normalPkgs, spec)
-		}
+		specs = append(specs, newPackageBuildSpec(p))
 	}
+	preflights, err := preflightPackageBuilds(ctx, specs, verbose)
+	if err != nil {
+		return nil, err
+	}
+	ctx.sfilesFrozen = true
 
 	var needRuntime, needPyInit bool
 
 	// Build non-runtime packages first, so we know whether runtime is actually needed.
-	for _, spec := range normalPkgs {
-		result, err := buildOnePackage(ctx, spec, verbose)
-		if err != nil {
-			return nil, err
-		}
+	normalResults, err := buildPreflightedPackageGroup(
+		ctx, packageBuildSpecsForRuntime(specs, false), preflights, verbose)
+	if err != nil {
+		return nil, err
+	}
+	for _, result := range normalResults {
 		needRuntime = needRuntime || result.needRuntime
 		needPyInit = needPyInit || result.needPyInit
 	}
 
 	// Only build runtime packages when required (or host build with empty Target).
 	if needRuntime || needPyInit || ctx.buildConf.Target == "" {
-		for _, spec := range runtimePkgs {
-			if _, err := buildOnePackage(ctx, spec, verbose); err != nil {
-				return nil, err
-			}
+		if _, err := buildPreflightedPackageGroup(
+			ctx, packageBuildSpecsForRuntime(specs, true), preflights, verbose); err != nil {
+			return nil, err
 		}
 	}
 
@@ -1235,6 +1231,9 @@ func preflightPackageBuild(ctx *context, spec packageBuildSpec, verbose bool) (s
 		return false, err
 	}
 	ctx.tryLoadFromCache(aPkg)
+	if err := preparePackageSFiles(ctx, aPkg); err != nil {
+		return false, err
+	}
 	if verbose {
 		status := "MISS"
 		if aPkg.CacheHit {
@@ -1251,7 +1250,7 @@ func executePackageBuild(ctx *context, spec packageBuildSpec, verbose bool) erro
 	if err := buildPkg(ctx, aPkg, verbose); err != nil {
 		return err
 	}
-	if spec.needsRuntimeSignals() {
+	if spec.needsRuntimeSignals() && aPkg.LPkg != nil {
 		aPkg.setNeedRuntimeOrPyInit(aPkg.LPkg.NeedRuntime, aPkg.LPkg.NeedPyInit)
 	}
 	return nil
@@ -1270,7 +1269,14 @@ func finalizePackageBuild(ctx *context, spec packageBuildSpec, verbose bool) (pa
 	if spec.kind == cl.PkgLinkExtern {
 		appendExternalLinkArgs(ctx, aPkg, spec.kindParam)
 	}
-	aPkg.Summary = summarizePackage(aPkg)
+	if aPkg.Summary == nil {
+		aPkg.Summary = summarizePackage(aPkg)
+	} else {
+		aPkg.Summary.LinkArgs = append(aPkg.Summary.LinkArgs[:0], aPkg.LinkArgs...)
+		aPkg.Summary.ArchiveFile = aPkg.ArchiveFile
+		aPkg.Summary.NeedRuntime = aPkg.NeedRt
+		aPkg.Summary.NeedPyInit = aPkg.NeedPyInit
+	}
 	if err := ctx.saveToCache(aPkg); err != nil && verbose {
 		fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", aPkg.PkgPath, err)
 	}
@@ -1286,7 +1292,7 @@ func appendExternalLinkArgs(ctx *context, aPkg *aPackage, spec string) {
 	for _, alt := range altParts {
 		alt = strings.TrimSpace(alt)
 		if strings.ContainsRune(alt, '$') {
-			expdArgs = append(expdArgs, xenv.ExpandEnvToArgs(alt)...)
+			expdArgs = append(expdArgs, xenv.ExpandEnvToArgsWith(alt, ctx.commands.dir, ctx.commands.environ)...)
 			atomic.AddInt32(&ctx.nLibdir, 1)
 		} else {
 			fields := strings.Fields(alt)
@@ -1589,6 +1595,7 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 		methodByIndex: methodByIndex,
 		methodByName:  methodByName,
 		abiSymbols:    linkedPackageGlobals(linkedSummaries),
+		abiTypes:      abiTypesForSummaries(linkedSummaries),
 		funcInfo:      funcInfo,
 		pcLineInfo:    pcLineInfo,
 		funcInfoStubs: funcInfoStubs,
@@ -1979,26 +1986,16 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 	}
 	showDetail := verbose && pkgExists(ctx.initial, pkg)
 	needMeta := !aPkg.CacheHit && ctx.buildConf.packageMetaEnabled()
-	ret, externs, err := func() (llssa.Package, []string, error) {
-		if showDetail {
-			frontendDebugMu.Lock()
-			defer frontendDebugMu.Unlock()
-			llssa.SetDebug(llssa.DbgFlagAll)
-			cl.SetDebug(cl.DbgFlagAll)
-			defer func() {
-				llssa.SetDebug(0)
-				cl.SetDebug(0)
-			}()
-		} else {
-			frontendDebugMu.RLock()
-			defer frontendDebugMu.RUnlock()
-		}
-		embedMap, err := goembed.LoadDirectives(ctx.conf.Fset, syntax)
-		if err != nil {
-			return nil, nil, fmt.Errorf("load go:embed directives for %s failed: %w", pkgPath, err)
-		}
-		return cl.NewPackageExWithEmbedMetaOptions(ctx.prog, ctx.callerTracking, ctx.patches, aPkg.rewriteVars, aPkg.SSA, syntax, embedMap, needMeta, ctx.frontendOptions)
-	}()
+	if showDetail {
+		fmt.Fprintf(os.Stderr, "==> Compile %s\n", pkgPath)
+	}
+	embedMap, err := goembed.LoadDirectives(ctx.conf.Fset, syntax)
+	if err != nil {
+		return nil, fmt.Errorf("load go:embed directives for %s failed: %w", pkgPath, err)
+	}
+	ret, externs, err := cl.NewPackageExWithEmbedMetaOptions(
+		ctx.prog, ctx.callerTracking, ctx.patches, aPkg.rewriteVars,
+		aPkg.SSA, syntax, embedMap, needMeta, ctx.frontendOptions)
 	check(err)
 
 	aPkg.LPkg = ret
@@ -2812,7 +2809,7 @@ func clFiles(ctx *context, files string, pkg *packages.Package, procFile func(li
 	args := make([]string, 0, 16)
 	if strings.HasPrefix(files, "$") { // has cflags
 		if pos := strings.IndexByte(files, ':'); pos > 0 {
-			cflags := xenv.ExpandEnvToArgs(files[:pos])
+			cflags := xenv.ExpandEnvToArgsWith(files[:pos], ctx.commands.dir, ctx.commands.environ)
 			files = files[pos+1:]
 			args = append(args, cflags...)
 		}

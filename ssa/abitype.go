@@ -445,6 +445,21 @@ func (b Builder) abiUncommonMethodSet(t types.Type) (mset *types.MethodSet, ok b
 	return
 }
 
+func abiUncommonMethodSetForDeclaration(t types.Type) (mset *types.MethodSet, ok bool) {
+	switch t := types.Unalias(t).(type) {
+	case *types.Named:
+		if _, isInterface := t.Underlying().(*types.Interface); isInterface {
+			return &types.MethodSet{}, true
+		}
+		return types.NewMethodSet(t), true
+	case *types.Struct, *types.Pointer:
+		if mset := types.NewMethodSet(t); mset.Len() != 0 {
+			return mset, true
+		}
+	}
+	return
+}
+
 /*
 type UncommonType struct {
 	PkgPath_ string // import path; empty for built-in types like int, string
@@ -657,6 +672,65 @@ func (b Builder) abiType(t types.Type) Expr {
 		b.recordAbiTypeFakeUses(g.impl)
 	}
 	return ret
+}
+
+// AbiTypes snapshots the runtime type descriptors materialized by this
+// Program without retaining any LLVM-owned values.
+func (p Program) AbiTypes() []AbiTypeInfo {
+	if len(p.abiSymbol) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(p.abiSymbol))
+	for name := range p.abiSymbol {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	ret := make([]AbiTypeInfo, 0, len(names))
+	for _, name := range names {
+		sym := p.abiSymbol[name]
+		ret = append(ret, AbiTypeInfo{Name: name, Raw: sym.Raw})
+	}
+	return ret
+}
+
+// RegisterAbiTypes declares runtime type descriptors owned by other Programs.
+// It records only Go type identity and target-local LLVM types; descriptor
+// definitions remain in the package modules that materialized them.
+func (p Package) RegisterAbiTypes(infos []AbiTypeInfo) {
+	builder := &aBuilder{Prog: p.Prog, Pkg: p}
+	for _, info := range infos {
+		if info.Raw == nil {
+			continue
+		}
+		if _, ok := p.Prog.abiSymbol[info.Name]; ok {
+			continue
+		}
+
+		t := info.Raw
+		mset, hasUncommon := abiUncommonMethodSetForDeclaration(t)
+		var methods []*types.Selection
+		if hasUncommon {
+			methods = builder.abiInterfaceMethods(mset)
+		}
+		rt := p.Prog.rtNamed(p.Prog.abi.RuntimeName(t))
+		var typ types.Type = rt
+		if hasUncommon {
+			ut := p.Prog.rtNamed("uncommonType")
+			mt := p.Prog.rtNamed("Method")
+			typ = types.NewStruct([]*types.Var{
+				types.NewVar(token.NoPos, nil, "T", rt),
+				types.NewVar(token.NoPos, nil, "U", ut),
+				types.NewVar(token.NoPos, nil, "M", types.NewArray(mt, int64(len(methods)))),
+			}, nil)
+		}
+		p.Prog.abiSymbol[info.Name] = &AbiSymbol{
+			Name:    info.Name,
+			PkgPath: p.Path(),
+			Raw:     t,
+			Typ:     p.Prog.Type(types.NewPointer(typ), InGo),
+			MSet:    mset,
+		}
+	}
 }
 
 func (p Package) getAbiTypesFor(name string, filter func(sym *AbiSymbol) bool) Expr {
