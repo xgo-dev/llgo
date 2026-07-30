@@ -77,6 +77,52 @@ func TestParseCgoDeclFlags(t *testing.T) {
 	}
 }
 
+func TestParseCgoDeclWithCommandEnvBranches(t *testing.T) {
+	commands := commandEnv{dir: t.TempDir(), environ: []string{"CGO_TEST_MARKER=1"}}
+	tests := []struct {
+		name    string
+		line    string
+		want    []cgoDecl
+		wantErr string
+	}{
+		{
+			name: "LDFLAGS with tag",
+			line: "#cgo darwin LDFLAGS: -framework CoreFoundation -lz",
+			want: []cgoDecl{{tag: "darwin", ldflags: []string{"-framework CoreFoundation", "-lz"}}},
+		},
+		{name: "missing colon", line: "#cgo CFLAGS -I/missing", wantErr: "invalid cgo format"},
+		{name: "missing directive", line: "CFLAGS: -I/missing", wantErr: "invalid cgo directive"},
+		{name: "unsupported flag", line: "#cgo FOOFLAGS: -unsupported", wantErr: "unsupported cgo flag type"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseCgoDeclWithCommandEnv(commands, tt.line)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("parseCgoDeclWithCommandEnv(%q) error = %v, want %q", tt.line, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("parseCgoDeclWithCommandEnv(%q) = %#v, want %#v", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseCgoPreambleDelegatesToCommandEnvParser(t *testing.T) {
+	preamble, decls, err := parseCgoPreamble(token.Position{Filename: "request.go", Line: 7}, "#cgo CFLAGS: -I/request/include")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preamble.goFile != "request.go" || preamble.src == "" || !reflect.DeepEqual(decls, []cgoDecl{{cflags: []string{"-I/request/include"}}}) {
+		t.Fatalf("parseCgoPreamble() = %#v, %#v", preamble, decls)
+	}
+}
+
 func TestCollectCgoSymbolsStripsPackagePrefix(t *testing.T) {
 	externs := []string{
 		"command-line-arguments._cgo_96608f8de8c8_Cfunc_fputs",
