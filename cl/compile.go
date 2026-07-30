@@ -1843,13 +1843,38 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 	panic(fmt.Sprintf("compileValue: unknown value - %T\n", v))
 }
 
+// isBlankFieldStore also recognizes stores into descendants of an aggregate
+// blank field. IndexAddr is followed only through an array's in-place storage,
+// never through a slice header into its separately allocated backing array.
+// The caller still evaluates the stored value for side effects.
 func isBlankFieldStore(addr ssa.Value) bool {
-	field, ok := addr.(*ssa.FieldAddr)
-	if !ok {
-		return false
+	for {
+		switch current := addr.(type) {
+		case *ssa.FieldAddr:
+			_, st, ok := fieldAddrStruct(current)
+			if !ok {
+				return false
+			}
+			if st.Field(current.Field).Name() == "_" {
+				return true
+			}
+			addr = current.X
+		case *ssa.IndexAddr:
+			if current.X == nil || current.X.Type() == nil {
+				return false
+			}
+			ptr, ok := current.X.Type().Underlying().(*types.Pointer)
+			if !ok {
+				return false
+			}
+			if _, ok := ptr.Elem().Underlying().(*types.Array); !ok {
+				return false
+			}
+			addr = current.X
+		default:
+			return false
+		}
 	}
-	_, st, ok := fieldAddrStruct(field)
-	return ok && st.Field(field.Field).Name() == "_"
 }
 
 const rangeOverFuncYieldSynthetic = "range-over-func yield"
