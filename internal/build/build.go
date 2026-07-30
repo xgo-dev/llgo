@@ -175,8 +175,8 @@ type Config struct {
 	// binaries to run concurrently. It is populated from Go's -p build flag;
 	// zero uses the Go default, GOMAXPROCS.
 	BuildParallelism int
-	// TestRunSequential disables concurrent test binary execution for test
-	// flags that write to a shared process-wide output file.
+	// TestRunSequential disables concurrent test binary execution when test
+	// flags share output paths or otherwise require one active binary.
 	TestRunSequential bool
 	TestFailFast      bool
 	TestJSON          bool

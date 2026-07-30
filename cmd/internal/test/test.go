@@ -78,8 +78,8 @@ func runCmd(cmd *base.Command, args []string) {
 }
 
 func testRunsMustBeSequential() bool {
-	// These flags name process-wide output files. Until LLGo merges or
-	// disambiguates them like cmd/go, keep the existing sequential behavior.
+	// These flags either name output paths shared by every test binary or, for
+	// fuzzing, require one active test binary. Keep their execution sequential.
 	return flags.TestCoverProfile != "" ||
 		flags.TestCPUProfile != "" ||
 		flags.TestMemProfile != "" ||
