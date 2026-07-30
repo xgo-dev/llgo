@@ -17,13 +17,17 @@
 package build
 
 import (
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"go/types"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/goplus/llgo/cl"
 	"github.com/goplus/llgo/internal/env"
@@ -302,5 +306,157 @@ func TestPreFingerprintsSkippedPackage(t *testing.T) {
 	}
 	if !task.skip || pkg.Fingerprint == "" || pkg.Manifest == "" || pkg.Summary == nil {
 		t.Fatalf("skipped package was not fully prepared: skip=%v fingerprint=%q manifest=%q summary=%#v", task.skip, pkg.Fingerprint, pkg.Manifest, pkg.Summary)
+	}
+}
+func TestCanUseIsolatedBackend(t *testing.T) {
+	ctx := &context{
+		mode:      ModeBuild,
+		buildConf: &Config{BuildMode: BuildModeExe},
+	}
+	if !ctx.canUseIsolatedBackend() {
+		t.Fatal("normal executable build should use isolated backends")
+	}
+	ctx.mode = ModeGen
+	if ctx.canUseIsolatedBackend() {
+		t.Fatal("generation mode should remain on the coordinator")
+	}
+	ctx.mode = ModeTest
+	if !ctx.canUseIsolatedBackend() {
+		t.Fatal("test mode should use isolated executable backends")
+	}
+	ctx.buildConf.BuildMode = BuildModeCShared
+	if ctx.canUseIsolatedBackend() {
+		t.Fatal("c-shared mode should remain on the coordinator")
+	}
+	ctx.buildConf.BuildMode = BuildModeExe
+	ctx.buildConf.ModuleHook = func(*aPackage) {}
+	if ctx.canUseIsolatedBackend() {
+		t.Fatal("module hooks should remain on the coordinator")
+	}
+}
+
+func TestPartitionPackageExecutions(t *testing.T) {
+	patchedPkg := &aPackage{Package: &packages.Package{
+		ID:      "example.com/patched",
+		PkgPath: "example.com/patched",
+	}}
+	normalPkg := &aPackage{Package: &packages.Package{
+		ID:      "example.com/normal",
+		PkgPath: "example.com/normal",
+	}}
+	ctx := &context{
+		mode:        ModeBuild,
+		buildConf:   &Config{BuildMode: BuildModeExe},
+		patches:     cl.Patches{"example.com/patched": {}},
+		sfilesCache: make(map[string][]string),
+	}
+	patched, coordinator, isolated, err := partitionPackageExecutions(ctx, []*packageBuildTask{
+		{pkg: patchedPkg},
+		{pkg: normalPkg},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(patched) != 1 || patched[0] != 0 {
+		t.Fatalf("patched = %v, want [0]", patched)
+	}
+	if len(coordinator) != 0 {
+		t.Fatalf("coordinator = %v, want empty", coordinator)
+	}
+	if len(isolated) != 1 || isolated[0] != 1 {
+		t.Fatalf("isolated = %v, want [1]", isolated)
+	}
+}
+
+func TestPkgSFilesRejectsUnpreparedBackendRead(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "asm.s"), []byte("TEXT ·f(SB),$0-0\n\tRET\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := &context{
+		sfilesCache:  make(map[string][]string),
+		sfilesFrozen: true,
+	}
+	_, err := pkgSFiles(ctx, &packages.Package{
+		ID:      "example.com/asm",
+		PkgPath: "example.com/asm",
+		Dir:     dir,
+	})
+	if err == nil {
+		t.Fatal("expected frozen SFiles cache to reject an unprepared package")
+	}
+}
+
+func TestRunBoundedPackageJobs(t *testing.T) {
+	started := make(chan int, 4)
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	var active atomic.Int32
+	var maximum atomic.Int32
+	go func() {
+		done <- runBoundedPackageJobs(2, []int{0, 1, 2, 3}, func(index int) error {
+			current := active.Add(1)
+			for {
+				old := maximum.Load()
+				if current <= old || maximum.CompareAndSwap(old, current) {
+					break
+				}
+			}
+			started <- index
+			<-release
+			active.Add(-1)
+			return nil
+		})
+	}()
+
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			close(release)
+			t.Fatal("two package workers did not start concurrently")
+		}
+	}
+	if got := maximum.Load(); got != 2 {
+		close(release)
+		t.Fatalf("maximum concurrent jobs = %d, want 2", got)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if got := maximum.Load(); got != 2 {
+		t.Fatalf("maximum concurrent jobs = %d after completion, want 2", got)
+	}
+}
+
+func TestRunBoundedPackageJobsReturnsFirstOrderedError(t *testing.T) {
+	first := errors.New("first")
+	second := errors.New("second")
+	err := runBoundedPackageJobs(3, []int{3, 1, 2}, func(index int) error {
+		switch index {
+		case 3:
+			return first
+		case 1:
+			return second
+		default:
+			return nil
+		}
+	})
+	if !errors.Is(err, first) {
+		t.Fatalf("error = %v, want first submitted error", err)
+	}
+}
+
+func TestRunBoundedPackageJobsConvertsPanicToError(t *testing.T) {
+	boom := errors.New("boom")
+	err := runBoundedPackageJobs(2, []int{0, 1}, func(index int) error {
+		if index == 0 {
+			panic(boom)
+		}
+		return nil
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("error = %v, want recovered panic %v", err, boom)
 	}
 }

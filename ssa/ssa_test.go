@@ -2845,6 +2845,57 @@ func TestInitAbiTypesForSubset(t *testing.T) {
 	}
 }
 
+func TestRegisterAbiTypesAcrossPrograms(t *testing.T) {
+	runtimePkg, err := importer.For("source", nil).Import(PkgRuntime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newProgram := func() Program {
+		prog := NewProgram(nil)
+		prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+		prog.SetRuntime(runtimePkg)
+		return prog
+	}
+
+	source := newProgram()
+	defer source.Dispose()
+	sourcePkg := source.NewPackage("source", "example.com/source")
+	sourceFn := sourcePkg.NewFunc("source", NoArgsNoRet, InC)
+	sourceBuilder := sourceFn.MakeBody(1)
+	sourceBuilder.abiType(types.NewSlice(types.Typ[types.Int]))
+	named := types.NewNamed(
+		types.NewTypeName(token.NoPos, types.NewPackage("example.com/source", "source"), "Named", nil),
+		types.NewStruct(nil, nil),
+		nil,
+	)
+	sourceBuilder.abiType(named)
+	sourceBuilder.Return()
+	infos := source.AbiTypes()
+	if len(infos) == 0 {
+		t.Fatal("source Program produced no ABI type snapshot")
+	}
+
+	target := newProgram()
+	defer target.Dispose()
+	targetPkg := target.NewPackage("target", "example.com/target")
+	targetPkg.RegisterAbiTypes(infos)
+	targetPkg.RegisterAbiTypes(append(infos, AbiTypeInfo{}))
+	for _, info := range infos {
+		if _, ok := target.abiSymbol[info.Name]; !ok {
+			t.Fatalf("target Program did not recreate ABI type %q", info.Name)
+		}
+	}
+	if targetPkg.InitAbiTypes("init$abitypes") == nil {
+		t.Fatal("recreated ABI types did not produce typelist initializer")
+	}
+	for _, info := range infos {
+		global := targetPkg.Module().NamedGlobal(info.Name)
+		if global.IsNil() || !global.IsDeclaration() {
+			t.Fatalf("target descriptor %q is not an external declaration", info.Name)
+		}
+	}
+}
+
 func TestInitAbiTypesForEmptySelection(t *testing.T) {
 	prog := NewProgram(nil)
 	pkg := prog.NewPackage("bar", "foo/bar")

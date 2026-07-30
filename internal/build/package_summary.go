@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 
+	llssa "github.com/goplus/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -48,6 +49,7 @@ type PackageSummary struct {
 	PCLineInfo     []pcLineRecord
 	FuncInfoStubs  []string
 	CSharedExports []string
+	AbiTypes       []llssa.AbiTypeInfo
 }
 
 type packageSummaryMetadata struct {
@@ -120,6 +122,7 @@ func summarizePackage(pkg *aPackage) *PackageSummary {
 	sort.Strings(summary.GlobalSymbols)
 	summary.FuncInfo = readFuncInfo(mod)
 	summary.PCLineInfo = readPCLineInfo(mod)
+	summary.AbiTypes = lpkg.Prog.AbiTypes()
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
 		if fn.IsDeclaration() || fn.BasicBlocksCount() == 0 {
 			continue
@@ -226,4 +229,31 @@ func summariesForPackages(pkgs []Package) []*PackageSummary {
 		}
 	}
 	return summaries
+}
+
+func abiTypesForSummaries(summaries []*PackageSummary) []llssa.AbiTypeInfo {
+	byName := make(map[string]llssa.AbiTypeInfo)
+	for _, summary := range summaries {
+		if summary == nil {
+			continue
+		}
+		for _, info := range summary.AbiTypes {
+			if info.Name == "" || info.Raw == nil {
+				continue
+			}
+			if _, ok := byName[info.Name]; !ok {
+				byName[info.Name] = info
+			}
+		}
+	}
+	names := make([]string, 0, len(byName))
+	for name := range byName {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	ret := make([]llssa.AbiTypeInfo, 0, len(names))
+	for _, name := range names {
+		ret = append(ret, byName[name])
+	}
+	return ret
 }

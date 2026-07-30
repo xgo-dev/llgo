@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -32,7 +33,19 @@ var (
 )
 
 func ExpandEnvToArgs(s string) []string {
-	r, config := expandEnvWithCmd(s)
+	r, config := expandEnvWithCmd(s, "", nil)
+	return expandedArgs(r, config)
+}
+
+// ExpandEnvToArgsWith expands variables and supported helper commands using
+// the supplied request directory and environment. A non-nil environ prevents
+// subprocesses and variable expansion from consulting process-global state.
+func ExpandEnvToArgsWith(s, dir string, environ []string) []string {
+	r, config := expandEnvWithCmd(s, dir, environ)
+	return expandedArgs(r, config)
+}
+
+func expandedArgs(r string, config bool) []string {
 	if r == "" {
 		return nil
 	}
@@ -43,11 +56,11 @@ func ExpandEnvToArgs(s string) []string {
 }
 
 func ExpandEnv(s string) string {
-	r, _ := expandEnvWithCmd(s)
+	r, _ := expandEnvWithCmd(s, "", nil)
 	return r
 }
 
-func expandEnvWithCmd(s string) (string, bool) {
+func expandEnvWithCmd(s, dir string, environ []string) (string, bool) {
 	var config bool
 	expanded := reSubcmd.ReplaceAllStringFunc(s, func(m string) string {
 		subcmd := strings.TrimSpace(m[2 : len(m)-1])
@@ -61,7 +74,16 @@ func expandEnvWithCmd(s string) (string, bool) {
 
 		var out []byte
 		var err error
-		out, err = exec.Command(cmd, args[1:]...).Output()
+		executable := cmd
+		if environ != nil {
+			executable = lookPathInEnvironment(cmd, dir, environ)
+		}
+		command := exec.Command(executable, args[1:]...)
+		command.Dir = dir
+		if environ != nil {
+			command.Env = append([]string(nil), environ...)
+		}
+		out, err = command.Output()
 
 		if err != nil {
 			// TODO(kindy): log in verbose mode
@@ -70,7 +92,46 @@ func expandEnvWithCmd(s string) (string, bool) {
 
 		return strings.Replace(strings.TrimSpace(string(out)), "\n", " ", -1)
 	})
-	return strings.TrimSpace(os.Expand(expanded, os.Getenv)), config
+	lookup := os.Getenv
+	if environ != nil {
+		lookup = func(key string) string {
+			prefix := key + "="
+			for i := len(environ) - 1; i >= 0; i-- {
+				if strings.HasPrefix(environ[i], prefix) {
+					return strings.TrimPrefix(environ[i], prefix)
+				}
+			}
+			return ""
+		}
+	}
+	return strings.TrimSpace(os.Expand(expanded, lookup)), config
+}
+
+func lookPathInEnvironment(name, dir string, environ []string) string {
+	if strings.ContainsRune(name, filepath.Separator) {
+		return name
+	}
+	path := ""
+	prefix := "PATH="
+	for i := len(environ) - 1; i >= 0; i-- {
+		if strings.HasPrefix(environ[i], prefix) {
+			path = strings.TrimPrefix(environ[i], prefix)
+			break
+		}
+	}
+	for _, entry := range filepath.SplitList(path) {
+		if entry == "" {
+			entry = "."
+		}
+		if !filepath.IsAbs(entry) && dir != "" {
+			entry = filepath.Join(dir, entry)
+		}
+		candidate := filepath.Join(entry, name)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return candidate
+		}
+	}
+	return name
 }
 
 func parseSubcmd(s string) []string {

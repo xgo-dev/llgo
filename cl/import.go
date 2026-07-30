@@ -276,7 +276,7 @@ func (p *context) collectSkip(line string, prefix int) {
 	}
 }
 
-func collectLinknameByDoc(prog llssa.Program, doc *ast.CommentGroup, fullName, inPkgName string) {
+func collectLinknameByDoc(prog llssa.Program, doc *ast.CommentGroup, fullName, inPkgName string) bool {
 	directives := directive.ParseGroup(doc)
 	for n := len(directives) - 1; n >= 0; n-- {
 		directive := directives[n]
@@ -286,9 +286,10 @@ func collectLinknameByDoc(prog llssa.Program, doc *ast.CommentGroup, fullName, i
 		fields := strings.Fields(directive.Args)
 		if len(fields) >= 2 && fields[0] == inPkgName {
 			prog.SetLinkname(fullName, strings.Join(fields[1:], " "))
-			return
+			return true
 		}
 	}
+	return false
 }
 
 func (p *context) processLinknameByDoc(doc *ast.CommentGroup, fullName, inPkgName string, isVar, allowExport bool) bool {
@@ -773,7 +774,10 @@ func ParsePkgSyntax(prog llssa.Program, fset *token.FileSet, pkg *types.Package,
 					return err
 				}
 				fullName, inPkgName := astFuncName(pkgPath, decl)
-				collectLinknameByDoc(prog, decl.Doc, fullName, inPkgName)
+				hasLinkname := collectLinknameByDoc(prog, decl.Doc, fullName, inPkgName)
+				if !hasLinkname && pkg.Name() == "C" && decl.Recv == nil && token.IsExported(inPkgName) {
+					prog.SetLinkname(fullName, strings.TrimPrefix(inPkgName, "X"))
+				}
 				ctx.processNoInterfaceByDoc(decl.Doc, fullName)
 			case *ast.GenDecl:
 				if decl.Tok == token.VAR {

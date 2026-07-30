@@ -126,3 +126,17 @@ func TestPackageSummaryEmptyInputs(t *testing.T) {
 		t.Fatalf("cSharedExportArgsSummaries([nil]) = %#v", got)
 	}
 }
+
+func TestAbiTypesForSummariesDeduplicatesBySymbol(t *testing.T) {
+	first := llssa.AbiTypeInfo{Name: "_llgo_int", Raw: types.Typ[types.Int]}
+	second := llssa.AbiTypeInfo{Name: "_llgo_string", Raw: types.Typ[types.String]}
+	got := abiTypesForSummaries([]*PackageSummary{
+		nil,
+		{AbiTypes: []llssa.AbiTypeInfo{second, first}},
+		{AbiTypes: []llssa.AbiTypeInfo{first, {}}},
+	})
+	want := []llssa.AbiTypeInfo{first, second}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ABI types = %#v, want %#v", got, want)
+	}
+}
