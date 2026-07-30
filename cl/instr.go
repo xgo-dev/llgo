@@ -25,6 +25,7 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/ssa"
@@ -924,6 +925,9 @@ func runtimeCallerFuncSet(c *CallerTracking, pkg *ssa.Package) map[*ssa.Function
 	if set, ok := c.extended[pkg]; ok {
 		return set
 	}
+	if c.frozen {
+		return nil
+	}
 	base := runtimeCallerBaseSet(c, pkg)
 	out := make(map[*ssa.Function]bool, len(base))
 	for fn := range base {
@@ -977,12 +981,55 @@ func runtimeCallerFuncSet(c *CallerTracking, pkg *ssa.Package) map[*ssa.Function
 // queries (criterion 2 below) hit the memoization. It must not outlive
 // the compilation — the maps are keyed by *ssa.Package with
 // *ssa.Function values, so anything longer-lived would pin every
-// compiled package's go/types and go/ssa graphs. Plain maps are enough:
-// packages of one compilation are compiled sequentially (the LLVM
-// context is not thread-safe).
+// compiled package's go/types and go/ssa graphs. Concurrent drivers call
+// Precompute and share only the resulting frozen, read-only maps.
 type CallerTracking struct {
 	base     map[*ssa.Package]map[*ssa.Function]bool
 	extended map[*ssa.Package]map[*ssa.Function]bool
+	frozen   bool
+}
+
+// Precompute resolves every caller-tracking query before backend workers
+// start, then freezes the maps for concurrent read-only access.
+func (c *CallerTracking) Precompute(pkgs []*ssa.Package) {
+	if c == nil || c.frozen {
+		return
+	}
+	all := make(map[*ssa.Package]bool)
+	for _, pkg := range pkgs {
+		if pkg == nil {
+			continue
+		}
+		all[pkg] = true
+		if pkg.Prog != nil {
+			for _, programPkg := range pkg.Prog.AllPackages() {
+				if programPkg != nil {
+					all[programPkg] = true
+				}
+			}
+		}
+	}
+	ordered := make([]*ssa.Package, 0, len(all))
+	for pkg := range all {
+		ordered = append(ordered, pkg)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		left, right := "", ""
+		if ordered[i].Pkg != nil {
+			left = ordered[i].Pkg.Path()
+		}
+		if ordered[j].Pkg != nil {
+			right = ordered[j].Pkg.Path()
+		}
+		return left < right
+	})
+	for _, pkg := range ordered {
+		runtimeCallerBaseSet(c, pkg)
+	}
+	for _, pkg := range ordered {
+		runtimeCallerFuncSet(c, pkg)
+	}
+	c.frozen = true
 }
 
 // NewCallerTracking creates the caller-tracking memoization for one
@@ -1011,6 +1058,9 @@ func runtimeCallerBaseSet(c *CallerTracking, pkg *ssa.Package) map[*ssa.Function
 	}
 	if set, ok := c.base[pkg]; ok {
 		return set
+	}
+	if c.frozen {
+		return nil
 	}
 	set := computeRuntimeCallerBaseSet(pkg)
 	c.base[pkg] = set

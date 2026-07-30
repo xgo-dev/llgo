@@ -456,8 +456,14 @@ func Build(inv Invocation) ([]Package, error) {
 		RewriteMainPrefix: conf.RewriteMainPrefix,
 	}
 
-	prog := llssa.NewProgram(target)
-	prog.DisableBoundsChecks(conf.DisableBoundsChecks)
+	funcInfo := conf.Mode != ModeGen && conf.PCLNMode != PCLNNone
+	backendTemplate := newBackendProgramTemplate(
+		target,
+		conf,
+		funcInfo,
+		shouldEnablePCLNSites(conf, funcInfo, emitDebugInfo),
+	)
+	prog := backendTemplate.newProgram()
 	if conf.Mode != ModeGen {
 		// ModeGen callers (llgen and the golden suites) read LPkg.String()
 		// after Do returns and dispose the program themselves; every other
@@ -467,24 +473,17 @@ func Build(inv Invocation) ([]Package, error) {
 		// harness) otherwise accumulate every compile's C++-side memory.
 		defer prog.Dispose()
 	}
-	prog.EnableGoGlobalDCE(conf.goGlobalDCEEnabled())
-	prog.EnableDeadcodeDrop(conf.deadcodeDropEnabled())
-	if conf.PthreadStackSize > 0 {
-		prog.SetPthreadStackSize(uint64(conf.PthreadStackSize))
-	}
-	prog.EnableLTOPluginMarkers(conf.LTOPlugin.Enabled())
-	funcInfo := conf.Mode != ModeGen && conf.PCLNMode != PCLNNone
-	prog.EnableFuncInfoMetadata(funcInfo)
-	// Site records are inline-asm fragments inside function bodies. Darwin
-	// DWARF builds avoid them because they disturb LLDB lexical scopes; Linux
-	// still needs them because its restricted dynamic symbol table cannot
-	// reconstruct every Go entry PC through dlsym. External mode always needs
-	// final-PC sites for sidecar construction.
-	prog.EnableFuncInfoSites(shouldEnablePCLNSites(conf, funcInfo, emitDebugInfo))
+	var backendTypeSizes types.Sizes
+	var backendTypeSizesMu sync.Mutex
 	sizes := func(sizes types.Sizes, compiler, arch string) types.Sizes {
 		if arch == "wasm" {
 			sizes = &types.StdSizes{WordSize: 4, MaxAlign: 4}
 		}
+		backendTypeSizesMu.Lock()
+		if backendTypeSizes == nil {
+			backendTypeSizes = sizes
+		}
+		backendTypeSizesMu.Unlock()
 		return prog.TypeSizes(sizes)
 	}
 	dedup := packages.NewDeduper()
@@ -587,11 +586,22 @@ func Build(inv Invocation) ([]Package, error) {
 		return altPkgs[0].Types
 	})
 	prog.SetPython(func() *types.Package {
-		return dedup.Check(llssa.PkgPython).Types
+		if pkg := dedup.Check(llssa.PkgPython); pkg != nil {
+			return pkg.Types
+		}
+		return nil
 	})
 	if err := prepareLocalVariables(prog, initial, altPkgs); err != nil {
 		return nil, err
 	}
+	backendTemplate.typeSizes = backendTypeSizes
+	backendTemplate.runtimePackage = altPkgs[0].Types
+	if pkg := dedup.Check(llssa.PkgPython); pkg != nil {
+		backendTemplate.pythonPackage = pkg.Types
+	}
+	backendTemplate.inputs = collectBackendProgramInputs(initial, altPkgs)
+	backendTemplate.llvmTarget = export.LLVMTarget
+	backendTemplate.targetABI = export.TargetABI
 
 	buildMode := ssaBuildMode
 	cabiOptimize := true
@@ -606,9 +616,11 @@ func Build(inv Invocation) ([]Package, error) {
 	if !IsOptimizeEnabled() {
 		buildMode |= ssa.NaiveForm
 	}
+	backendTemplate.cabiOptimize = cabiOptimize
 	progSSA := ssa.NewProgram(initial[0].Fset, buildMode)
 	patches := make(cl.Patches, len(altPkgPaths))
 	altEntries := registerAltSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
+	appendPatchedBackendInputs(&backendTemplate, patches, dedup)
 
 	output := conf.OutFile != ""
 	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
@@ -624,6 +636,7 @@ func Build(inv Invocation) ([]Package, error) {
 		commands:        commands,
 		frontendOptions: frontendOptions,
 		cTransformer:    cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, conf.AbiMode, cabiOptimize),
+		backend:         backendTemplate,
 	}
 	defer ctx.closePackageMetas()
 	defer ctx.closePackageArchiveBuffers()
@@ -640,6 +653,7 @@ func Build(inv Invocation) ([]Package, error) {
 		return nil, err
 	}
 	buildSSAPkgs(ctx, append(append(altEntries, pkgEntries...), depEntries...))
+	ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	allPkgs = append(allPkgs, depPkgs...)
@@ -887,6 +901,7 @@ type context struct {
 	frontendOptions cl.Options
 
 	cTransformer *cabi.Transformer
+	backend      backendProgramTemplate
 
 	testFail bool
 
@@ -921,6 +936,161 @@ func (c *context) closePackageMetas() {
 		}
 		_ = pkg.Meta.Close()
 		pkg.Meta = nil
+	}
+}
+
+type backendProgramInput struct {
+	fset         *token.FileSet
+	pkg          *types.Package
+	info         *types.Info
+	files        []*ast.File
+	parseSyntax  bool
+	prepareLocal bool
+}
+
+// backendProgramTemplate contains only immutable build-local inputs. Creating
+// a session allocates a new llssa.Program, LLVM context, TargetMachine, and C
+// ABI transformer; no LLVM-owned state is shared between sessions.
+type backendProgramTemplate struct {
+	target              *llssa.Target
+	disableBoundsChecks bool
+	typeSizes           types.Sizes
+	goGlobalDCE         bool
+	deadcodeDrop        bool
+	pthreadStackSize    int64
+	ltoPluginMarkers    bool
+	funcInfoMetadata    bool
+	funcInfoSites       bool
+	runtimePackage      *types.Package
+	pythonPackage       *types.Package
+	inputs              []backendProgramInput
+	llvmTarget          string
+	targetABI           string
+	abiMode             cabi.Mode
+	cabiOptimize        bool
+}
+
+type backendSession struct {
+	prog        llssa.Program
+	transformer *cabi.Transformer
+}
+
+func newBackendProgramTemplate(target *llssa.Target, conf *Config, funcInfoMetadata, funcInfoSites bool) backendProgramTemplate {
+	var targetCopy *llssa.Target
+	if target != nil {
+		copy := *target
+		targetCopy = &copy
+	}
+	return backendProgramTemplate{
+		target:              targetCopy,
+		disableBoundsChecks: conf.DisableBoundsChecks,
+		goGlobalDCE:         conf.goGlobalDCEEnabled(),
+		deadcodeDrop:        conf.deadcodeDropEnabled(),
+		pthreadStackSize:    conf.PthreadStackSize,
+		ltoPluginMarkers:    conf.LTOPlugin.Enabled(),
+		funcInfoMetadata:    funcInfoMetadata,
+		funcInfoSites:       funcInfoSites,
+		abiMode:             conf.AbiMode,
+	}
+}
+
+func (t backendProgramTemplate) newProgram() llssa.Program {
+	var target *llssa.Target
+	if t.target != nil {
+		copy := *t.target
+		target = &copy
+	}
+	prog := llssa.NewProgram(target)
+	prog.DisableBoundsChecks(t.disableBoundsChecks)
+	if t.typeSizes != nil {
+		prog.TypeSizes(t.typeSizes)
+	}
+	prog.EnableGoGlobalDCE(t.goGlobalDCE)
+	prog.EnableDeadcodeDrop(t.deadcodeDrop)
+	if t.pthreadStackSize > 0 {
+		prog.SetPthreadStackSize(uint64(t.pthreadStackSize))
+	}
+	prog.EnableLTOPluginMarkers(t.ltoPluginMarkers)
+	prog.EnableFuncInfoMetadata(t.funcInfoMetadata)
+	prog.EnableFuncInfoSites(t.funcInfoSites)
+	if t.runtimePackage != nil {
+		prog.SetRuntime(t.runtimePackage)
+	}
+	if t.pythonPackage != nil {
+		prog.SetPython(t.pythonPackage)
+	}
+	return prog
+}
+
+func (t backendProgramTemplate) newSession() (backendSession, error) {
+	prog := t.newProgram()
+	if err := t.replayProgramState(prog); err != nil {
+		prog.Dispose()
+		return backendSession{}, err
+	}
+	return backendSession{
+		prog:        prog,
+		transformer: cabi.NewTransformer(prog, t.llvmTarget, t.targetABI, t.abiMode, t.cabiOptimize),
+	}, nil
+}
+
+func (t backendProgramTemplate) replayProgramState(prog llssa.Program) error {
+	for _, input := range t.inputs {
+		if input.parseSyntax {
+			if err := cl.ParsePkgSyntax(prog, input.fset, input.pkg, input.files); err != nil {
+				return err
+			}
+		}
+	}
+	for _, input := range t.inputs {
+		if input.prepareLocal {
+			if err := cl.PrepareLocalVariables(prog, input.fset, input.pkg, input.info, input.files); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func collectBackendProgramInputs(groups ...[]*packages.Package) []backendProgramInput {
+	seen := make(map[*types.Package]bool)
+	var inputs []backendProgramInput
+	for _, roots := range groups {
+		packages.Visit(roots, nil, func(pkg *packages.Package) {
+			if pkg == nil || pkg.Types == nil || pkg.IllTyped || seen[pkg.Types] {
+				return
+			}
+			seen[pkg.Types] = true
+			inputs = append(inputs, backendProgramInput{
+				fset:         pkg.Fset,
+				pkg:          pkg.Types,
+				info:         pkg.TypesInfo,
+				files:        slices.Clone(pkg.Syntax),
+				parseSyntax:  !llruntime.SkipToBuild(pkg.PkgPath),
+				prepareLocal: true,
+			})
+		})
+	}
+	return inputs
+}
+
+func appendPatchedBackendInputs(template *backendProgramTemplate, patches cl.Patches, dedup packages.Deduper) {
+	paths := make([]string, 0, len(patches))
+	for pkgPath := range patches {
+		paths = append(paths, pkgPath)
+	}
+	slices.Sort(paths)
+	for _, pkgPath := range paths {
+		alt := dedup.Check(altPkgPathPrefix + pkgPath)
+		if alt == nil || len(alt.Syntax) == 0 {
+			continue
+		}
+		template.inputs = append(template.inputs, backendProgramInput{
+			fset:        alt.Fset,
+			pkg:         types.NewPackage(pkgPath, ""),
+			files:       slices.Clone(alt.Syntax),
+			parseSyntax: true,
+		})
 	}
 }
 
