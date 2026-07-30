@@ -730,6 +730,7 @@ func TestCheckExpectedErrorsDiscardsPairedDeclarationRecoveryDiagnostics(t *test
 	tests := []struct {
 		name      string
 		source    string
+		wrong     string
 		line      int
 		primary   string
 		secondary string
@@ -737,6 +738,7 @@ func TestCheckExpectedErrorsDiscardsPairedDeclarationRecoveryDiagnostics(t *test
 		{
 			name:      "missing package clause",
 			source:    "func main() { // ERROR \"package\"\n}\n",
+			wrong:     "func other() { // ERROR \"package\"\n}\n",
 			line:      1,
 			primary:   "expected 'package', found 'func'",
 			secondary: "expected ';', found '('",
@@ -745,6 +747,9 @@ func TestCheckExpectedErrorsDiscardsPairedDeclarationRecoveryDiagnostics(t *test
 			name: "top-level composite literal",
 			source: `package p
 var x map[string]string{"a":"b"} // ERROR "unexpected { at end of statement|unexpected { after top level declaration|expected ';' or newline after top level declaration"
+`,
+			wrong: `package p
+var y map[string]string{"a":"b"} // ERROR "unexpected { at end of statement|unexpected { after top level declaration|expected ';' or newline after top level declaration"
 `,
 			line:      2,
 			primary:   "syntax error: unexpected { after top level declaration",
@@ -764,8 +769,21 @@ var x map[string]string{"a":"b"} // ERROR "unexpected { at end of statement|unex
 			if err := checkExpectedErrors(fmt.Sprintf("%s:%d: %s\n", file, tt.line, tt.secondary), file, "case.go"); err == nil {
 				t.Fatal("secondary diagnostic passed without its primary")
 			}
+			if got := parserRecoverySecondaries(tt.primary); got != nil {
+				t.Fatalf("source-dependent primary activated source-independent recovery: %v", got)
+			}
 			if got := parserRecoverySecondaries(tt.primary + "."); got != nil {
 				t.Fatalf("near-match primary activated parser recovery: %v", got)
+			}
+
+			wrongFile := filepath.Join(t.TempDir(), "case.go")
+			if err := os.WriteFile(wrongFile, []byte(tt.wrong), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			wrongOutput := fmt.Sprintf("%s:%d: %s\n%s:%d: %s\n", wrongFile, tt.line, tt.primary, wrongFile, tt.line, tt.secondary)
+			err := checkExpectedErrors(wrongOutput, wrongFile, "case.go")
+			if err == nil || !strings.Contains(err.Error(), tt.secondary) {
+				t.Fatalf("wrong source shape discarded secondary: %v", err)
 			}
 		})
 	}
