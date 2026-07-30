@@ -460,3 +460,74 @@ func TestRunBoundedPackageJobsConvertsPanicToError(t *testing.T) {
 		t.Fatalf("error = %v, want recovered panic %v", err, boom)
 	}
 }
+func TestPackageBuildStageEmptyAndSkippedInputs(t *testing.T) {
+	runtimePkg := &aPackage{Package: &packages.Package{PkgPath: env.LLGoRuntimePkg}}
+	normalPkg := &aPackage{Package: &packages.Package{PkgPath: "example.com/normal"}}
+	specs := []packageBuildSpec{
+		{pkg: runtimePkg, runtime: true},
+		{pkg: normalPkg},
+	}
+	if got := packageBuildSpecsForRuntime(specs, true); len(got) != 1 || got[0].pkg != runtimePkg {
+		t.Fatalf("runtime specs = %+v, want runtime package", got)
+	}
+	if got := packageBuildSpecsForRuntime(specs, false); len(got) != 1 || got[0].pkg != normalPkg {
+		t.Fatalf("non-runtime specs = %+v, want normal package", got)
+	}
+
+	ctx := &context{buildConf: &Config{}}
+	preflights, err := preflightPackageBuilds(ctx, nil, false)
+	if err != nil || len(preflights) != 0 {
+		t.Fatalf("empty preflights = %#v, %v", preflights, err)
+	}
+	results, err := buildPreflightedPackageGroup(ctx, nil, preflights, false)
+	if err != nil || results != nil {
+		t.Fatalf("empty package group = %#v, %v", results, err)
+	}
+	if err := executePreflightedPackage(ctx, packagePreflight{skip: true}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := executeIsolatedPackages(ctx, nil, nil, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := runBoundedPackageJobs(0, nil, func(int) error {
+		t.Fatal("empty package jobs invoked callback")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runPackageJob(7, func(int) error { panic("boom") }); err == nil || !strings.Contains(err.Error(), "package job 7 panicked: boom") {
+		t.Fatalf("non-error panic = %v", err)
+	}
+}
+
+func TestNewBackendTaskUsesPackageLocalState(t *testing.T) {
+	coordinator := &context{
+		conf:            &packages.Config{},
+		mode:            ModeBuild,
+		buildConf:       &Config{BuildMode: BuildModeExe},
+		commands:        commandEnv{dir: t.TempDir()},
+		frontendOptions: cl.Options{Debug: true},
+		sfilesCache:     map[string][]string{"example.com/p": {"asm.s"}},
+		plan9asmReady:   true,
+		plan9asmMode:    plan9asmEnvSelected,
+		plan9asmPkgs:    map[string]bool{"example.com/p": true},
+	}
+
+	task := coordinator.newBackendTask(backendSession{})
+	if task == coordinator {
+		t.Fatal("backend task aliases coordinator")
+	}
+	if task.buildConf != coordinator.buildConf || task.conf != coordinator.conf {
+		t.Fatal("backend task did not retain immutable build inputs")
+	}
+	if !task.sfilesFrozen || !task.plan9asmReady || task.plan9asmMode != plan9asmEnvSelected {
+		t.Fatalf("backend task state = %+v", task)
+	}
+	if !task.frontendOptions.Debug || task.commands.dir != coordinator.commands.dir {
+		t.Fatal("backend task lost invocation settings")
+	}
+	task.plan9asmSigs["example.com/p"] = map[string]struct{}{"f": {}}
+	if coordinator.plan9asmSigs != nil {
+		t.Fatal("backend task signature cache aliases coordinator")
+	}
+}
