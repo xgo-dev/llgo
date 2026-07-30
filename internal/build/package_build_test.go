@@ -378,3 +378,37 @@ func TestNewBackendTaskUsesPackageLocalState(t *testing.T) {
 		t.Fatal("backend task signature cache aliases coordinator")
 	}
 }
+
+func TestPreflightPackageBuildsRecordsSkippedPackages(t *testing.T) {
+	pkg := &aPackage{Package: &packages.Package{
+		ID:      "example.com/already-built",
+		PkgPath: "example.com/already-built",
+	}}
+	ctx := &context{built: map[string]none{pkg.ID: {}}}
+	preflights, err := preflightPackageBuilds(ctx, []packageBuildSpec{{pkg: pkg}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preflight, ok := preflights[pkg]
+	if !ok || !preflight.skip || preflight.spec.pkg != pkg {
+		t.Fatalf("preflights = %#v, want skipped package", preflights)
+	}
+}
+
+func TestPackageSchedulingHandlesNonBackendPackages(t *testing.T) {
+	spec := packageBuildSpec{pkg: &aPackage{}}
+	ctx := &context{mode: ModeGen, buildConf: &Config{BuildMode: BuildModeExe}}
+	serial, err := ctx.packageRequiresCoordinator(spec)
+	if err != nil || !serial {
+		t.Fatalf("generation package coordinator = %v, %v; want true, nil", serial, err)
+	}
+
+	usesPlan9, err := (&context{}).packageUsesPlan9Asm(spec.pkg)
+	if err != nil || usesPlan9 {
+		t.Fatalf("nil package Plan9 asm = %v, %v; want false, nil", usesPlan9, err)
+	}
+	patched, coordinator, isolated, err := partitionPackageExecutions(ctx, nil)
+	if err != nil || patched != nil || coordinator != nil || isolated != nil {
+		t.Fatalf("empty partition = %v, %v, %v, %v", patched, coordinator, isolated, err)
+	}
+}
