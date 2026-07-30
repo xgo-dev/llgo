@@ -103,6 +103,93 @@ func inspect() {
 	}
 }
 
+func TestDebugParameterHomes(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		opt       optlevel.Level
+		wantHomes bool
+	}{
+		{"O0", optlevel.O0, true},
+		{"O2", optlevel.O2, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "params.go", `package p
+func inspect(first, second int) {}
+`, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			typesPkg, err := (&types.Config{}).Check("example.com/p", fset, []*ast.File{file}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			object := typesPkg.Scope().Lookup("inspect").(*types.Func)
+			signature := object.Type().(*types.Signature)
+
+			prog := NewProgram(&Target{OptLevel: tc.opt})
+			defer prog.Dispose()
+			prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+			pkg := prog.NewPackage("p", "example.com/p")
+			pkg.InitDebug("p", "example.com/p", fset)
+			function := pkg.NewFunc("example.com/p.inspect", signature, InGo)
+			builder := function.MakeBody(1)
+			defer builder.Dispose()
+			decl := file.Decls[0].(*ast.FuncDecl)
+			builder.DebugFunction(
+				function,
+				object.Scope(),
+				fset.Position(object.Pos()),
+				fset.Position(decl.Body.Lbrace),
+			)
+
+			first := signature.Params().At(0)
+			firstPos := fset.Position(first.Pos())
+			firstVar := builder.DIVarParam(function, firstPos, first.Name(), prog.Int(), 1)
+			home := builder.DIParamWithHome(first, function.Param(0), firstVar, function, firstPos, function.Block(0))
+			if got := !home.IsNil(); got != tc.wantHomes {
+				t.Fatalf("stable parameter home: %v, want %v", got, tc.wantHomes)
+			}
+			if !home.IsNil() {
+				builder.DIStore(home, function.Param(0))
+			}
+
+			second := signature.Params().At(1)
+			secondPos := fset.Position(second.Pos())
+			secondVar := builder.DIVarParam(function, secondPos, second.Name(), prog.Int(), 2)
+			builder.DIParam(second, function.Param(1), secondVar, function, secondPos, function.Block(0))
+			builder.Return()
+			builder.EndBuild()
+			pkg.FinalizeDebug()
+
+			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("parameter debug metadata is invalid: %v\n%s", err, pkg.Module().String())
+			}
+			ir := pkg.Module().String()
+			hasDeclare := strings.Contains(ir, "#dbg_declare")
+			hasValue := strings.Contains(ir, "#dbg_value")
+			if hasDeclare != tc.wantHomes || hasValue == tc.wantHomes {
+				t.Fatalf("debug records: declare=%v value=%v, want homes=%v\n%s",
+					hasDeclare, hasValue, tc.wantHomes, ir)
+			}
+			if tc.wantHomes {
+				stores := 0
+				for _, line := range strings.Split(ir, "\n") {
+					if strings.Contains(line, "store ") {
+						stores++
+						if strings.Contains(line, "!dbg") {
+							t.Fatalf("debug home store has a source location: %s", line)
+						}
+					}
+				}
+				if stores < 3 {
+					t.Fatalf("found %d debug home stores, want at least 3\n%s", stores, ir)
+				}
+			}
+		})
+	}
+}
+
 func TestDebugGoTypeEncodings(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "types.go", `package p

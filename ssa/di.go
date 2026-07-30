@@ -679,7 +679,39 @@ func (b Builder) di() diBuilder {
 }
 
 func (b Builder) DIParam(variable *types.Var, v Expr, dv DIVar, scope DIScope, pos token.Position, blk BasicBlock) {
-	b.DIValue(variable, v, dv, scope, pos, blk)
+	b.diParam(variable, v, dv, scope, pos, blk)
+}
+
+// DIParamWithHome returns the stable O0 storage backing the parameter.
+func (b Builder) DIParamWithHome(variable *types.Var, v Expr, dv DIVar, scope DIScope, pos token.Position, blk BasicBlock) Expr {
+	return b.diParam(variable, v, dv, scope, pos, blk)
+}
+
+func (b Builder) diParam(variable *types.Var, v Expr, dv DIVar, scope DIScope, pos token.Position, blk BasicBlock) Expr {
+	if b.Prog.debugInfoOptimized {
+		b.DIValue(variable, v, dv, scope, pos, blk)
+		return Nil
+	}
+	var dbgPtr Expr
+	b.withoutDebugLocation(func() {
+		dbgPtr, _, _ = b.constructDebugAddr(v)
+	})
+	b.DIDeclare(variable, dbgPtr, dv, scope, pos, blk)
+	return dbgPtr
+}
+
+// DIStore updates debug-only storage without creating a source line site.
+func (b Builder) DIStore(ptr, value Expr) {
+	b.withoutDebugLocation(func() {
+		b.Store(ptr, value)
+	})
+}
+
+func (b Builder) withoutDebugLocation(fn func()) {
+	loc := b.impl.GetCurrentDebugLocation()
+	b.impl.SetCurrentDebugLocation(0, 0, llvm.Metadata{}, llvm.Metadata{})
+	defer b.impl.SetCurrentDebugLocation(loc.Line, loc.Col, loc.Scope, loc.InlinedAt)
+	fn()
 }
 
 func (b Builder) DIDeclare(variable *types.Var, v Expr, dv DIVar, scope DIScope, pos token.Position, blk BasicBlock) {
