@@ -46,9 +46,22 @@ func TestTypeArgs_FormatsCommonKinds(t *testing.T) {
 		local,
 		aliasInt,
 	})
-	const want = "[byte,*int,[]string,[2]int,map[string]int,chan int,chan<- int,<-chan int,chan (<-chan int),Local,int]"
+	const want = "[uint8,*int,[]string,[2]int,map[string]int,chan int,chan<- int,<-chan int,chan (<-chan int),Local,int]"
 	if got != want {
 		t.Fatalf("TypeArgs = %q, want %q", got, want)
+	}
+}
+
+func TestTypeArgs_CanonicalizesBasicAliases(t *testing.T) {
+	for _, pair := range [][2]*types.Basic{
+		{types.Typ[types.Byte], types.Typ[types.Uint8]},
+		{types.Typ[types.Rune], types.Typ[types.Int32]},
+	} {
+		alias := TypeArgs([]types.Type{pair[0]})
+		underlying := TypeArgs([]types.Type{pair[1]})
+		if alias != underlying {
+			t.Fatalf("TypeArgs(%v) = %q, TypeArgs(%v) = %q", pair[0], alias, pair[1], underlying)
+		}
 	}
 }
 

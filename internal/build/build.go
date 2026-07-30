@@ -171,10 +171,16 @@ type Config struct {
 	// go/packages. Callers use internal/goflags to parse supported compiler and
 	// linker semantics into typed Config fields before calling Do.
 	GoBuildFlags []string
-	// BuildParallelism is the package-level concurrency requested by Go's -p
-	// build flag for llgo test. Zero uses the Go default, GOMAXPROCS.
+	// BuildParallelism is the maximum number of already-built native test
+	// binaries to run concurrently. It is populated from Go's -p build flag;
+	// zero uses the Go default, GOMAXPROCS.
 	BuildParallelism int
-	LinkOptions      LinkOptions
+	// TestRunSequential disables concurrent test binary execution when test
+	// flags share output paths or otherwise require one active binary.
+	TestRunSequential bool
+	TestFailFast      bool
+	TestJSON          bool
+	LinkOptions       LinkOptions
 	// OmitDWARFByDefault controls linked builds only when -w was not
 	// explicitly specified. Explicit -w and -w=false always win.
 	OmitDWARFByDefault bool
@@ -592,6 +598,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 		return nil, fmt.Errorf("initial package not found")
 	}
 
+	var testPrograms []testProgram
 	for _, pkg := range initial {
 		if needLink(pkg, mode) {
 			name := path.Base(pkg.PkgPath)
@@ -653,6 +660,16 @@ func Do(args []string, conf *Config) ([]Package, error) {
 				}
 
 			case ModeRun, ModeTest, ModeCmpTest:
+				if mode == ModeTest && conf.Target == "" {
+					if !conf.CompileOnly {
+						testPrograms = append(testPrograms, testProgram{
+							app:     outFmts.Out,
+							pkgDir:  pkg.Dir,
+							pkgName: strings.TrimSuffix(pkg.PkgPath, ".test"),
+						})
+					}
+					break
+				}
 				if conf.Target == "" {
 					err = runNative(ctx, outFmts.Out, pkg.Dir, pkg.PkgPath, conf, mode)
 				} else if conf.Emulator {
@@ -675,6 +692,14 @@ func Do(args []string, conf *Config) ([]Package, error) {
 					return nil, err
 				}
 			}
+		}
+	}
+
+	if len(testPrograms) != 0 {
+		result := runNativeTestPrograms(testPrograms, conf, os.Stdout, os.Stderr)
+		ctx.testFail = result.failed
+		if result.skipped != 0 {
+			fmt.Fprintf(os.Stderr, "FAIL\t%d package(s) skipped by -failfast\n", result.skipped)
 		}
 	}
 
@@ -718,11 +743,6 @@ func applyBuildModeCompileFlags(mode BuildMode, export *crosscompile.Export) {
 	if mode == BuildModeCShared && export != nil && !slices.Contains(export.CCFLAGS, "-fPIC") {
 		export.CCFLAGS = append(export.CCFLAGS, "-fPIC")
 	}
-}
-
-// DefaultBuildTags returns the build tags LLGo always enables for a target.
-func DefaultBuildTags(goarch, target string) string {
-	return defaultBuildTags(goarch, target)
 }
 
 func defaultBuildTags(goarch, target string) string {
