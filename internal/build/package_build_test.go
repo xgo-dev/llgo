@@ -65,3 +65,61 @@ func TestConfigParallelism(t *testing.T) {
 		t.Fatalf("default parallelism = %d, want positive value", got)
 	}
 }
+
+func TestBuildOnePackageSkipsAlreadyBuiltPackage(t *testing.T) {
+	pkg := &aPackage{Package: &packages.Package{
+		ID:      "example.com/already-built",
+		PkgPath: "example.com/already-built",
+		GoFiles: []string{"already.go"},
+		Types:   types.NewPackage("example.com/already-built", "already"),
+	}, NeedRt: true}
+	ctx := &context{built: map[string]none{pkg.ID: {}}}
+
+	result, err := buildOnePackage(ctx, newPackageBuildSpec(pkg), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.needRuntime {
+		t.Fatalf("build result = %+v, want runtime requirement preserved", result)
+	}
+}
+
+func TestPreflightPackageBuildSkipsDeclarationOnlyPackage(t *testing.T) {
+	pkg := &aPackage{Package: &packages.Package{
+		ID:         "unsafe",
+		PkgPath:    "unsafe",
+		Types:      types.Unsafe,
+		ExportFile: "stale.a",
+	}}
+	ctx := &context{built: make(map[string]none)}
+
+	skip, err := preflightPackageBuild(ctx, newPackageBuildSpec(pkg), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !skip {
+		t.Fatal("declaration-only package was not skipped")
+	}
+	if pkg.ExportFile != "" {
+		t.Fatalf("ExportFile = %q, want empty", pkg.ExportFile)
+	}
+	if _, ok := ctx.built[pkg.ID]; !ok {
+		t.Fatal("declaration-only package was not recorded as built")
+	}
+}
+
+func TestFinalizePackageBuildReturnsCachedResult(t *testing.T) {
+	pkg := &aPackage{Package: &packages.Package{
+		ID:      "example.com/cached",
+		PkgPath: "example.com/cached",
+		Types:   types.NewPackage("example.com/cached", "cached"),
+	}, CacheHit: true, NeedPyInit: true}
+
+	result, err := finalizePackageBuild(&context{}, newPackageBuildSpec(pkg), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.needPyInit {
+		t.Fatalf("build result = %+v, want Python initialization requirement preserved", result)
+	}
+}

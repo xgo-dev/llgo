@@ -135,6 +135,23 @@ func TestCollectFingerprintDeterminism(t *testing.T) {
 	}
 }
 
+func TestDisablePackageCache(t *testing.T) {
+	ctx := &context{}
+	ctx.disablePackageCache(map[string]bool{
+		"example.com/a": true,
+		"example.com/b": false,
+	})
+
+	for _, id := range []string{"example.com/a", "example.com/b"} {
+		if !ctx.packageCacheDisabled(id) {
+			t.Fatalf("package cache for %q remains enabled", id)
+		}
+	}
+	if ctx.packageCacheDisabled("example.com/c") {
+		t.Fatal("unlisted package cache was disabled")
+	}
+}
+
 func TestCollectFingerprintIncludesEmitDWARF(t *testing.T) {
 	td := t.TempDir()
 	goFile := filepath.Join(td, "main.go")
