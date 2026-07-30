@@ -2414,10 +2414,6 @@ xfails:
     reason: reflection exposes the initializer value of a blank struct field instead of zero on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: fixedbugs/issue72063.go
-    reason: generic Y-combinator build exits successfully without producing a binary on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: fixedbugs/issue72844.go
     reason: dereferencing a nil array pointer for len or range does not panic when required on darwin/arm64
   - version: go1.24
