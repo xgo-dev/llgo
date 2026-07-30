@@ -101,6 +101,35 @@ func TestRunNativeTestHelper(t *testing.T) {
 	}
 }
 
+func TestRunNativeTestProgramsSequential(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	programs := []testProgram{
+		{app: executable, pkgDir: t.TempDir(), pkgName: "a"},
+		{app: executable, pkgDir: t.TempDir(), pkgName: "b"},
+	}
+	conf := &Config{
+		BuildParallelism:  2,
+		TestRunSequential: true,
+		RunArgs:           []string{"-test.run=^TestRunNativeTestHelper$", "--", "success"},
+	}
+	var stdout, stderr bytes.Buffer
+	result := runNativeTestPrograms(programs, conf, &stdout, &stderr)
+	if result.failed || result.skipped != 0 {
+		t.Fatalf("runNativeTestPrograms result = %+v", result)
+	}
+	for _, name := range []string{"a", "b"} {
+		if !strings.Contains(stdout.String(), "ok  \t"+name+"\n") {
+			t.Errorf("stdout does not contain result for %s: %q", name, stdout.String())
+		}
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
 func TestRunTestProgramsLimitAndFailure(t *testing.T) {
 	started := make(chan struct{}, 4)
 	release := make(chan struct{})
@@ -156,6 +185,36 @@ func TestRunTestProgramsLimitAndFailure(t *testing.T) {
 	}
 	if got, want := stderr.String(), "FAIL\td\n"; got != want {
 		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
+func TestRunTestProgramsParallelismBoundsAndOutput(t *testing.T) {
+	if got := runTestPrograms(nil, 1, false, false, io.Discard, io.Discard, nil); got != (testRunResult{}) {
+		t.Fatalf("empty run result = %+v", got)
+	}
+
+	for name, parallelism := range map[string]int{
+		"default":  0,
+		"negative": -1,
+		"clamped":  2,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			result := runTestPrograms(testPrograms("pkg"), parallelism, false, false, &stdout, &stderr,
+				func(_ testProgram, output io.Writer) error {
+					fmt.Fprint(output, "output")
+					return nil
+				})
+			if result.failed || result.skipped != 0 {
+				t.Fatalf("runTestPrograms result = %+v", result)
+			}
+			if got, want := stdout.String(), "output\nok  \tpkg\n"; got != want {
+				t.Fatalf("stdout = %q, want %q", got, want)
+			}
+			if stderr.Len() != 0 {
+				t.Fatalf("stderr = %q, want empty", stderr.String())
+			}
+		})
 	}
 }
 
