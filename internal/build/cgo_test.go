@@ -113,6 +113,40 @@ func TestParseCgoDeclWithCommandEnvBranches(t *testing.T) {
 	}
 }
 
+func TestParseCgoDeclWithCommandEnvPkgConfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test helper uses a shell script")
+	}
+
+	dir := t.TempDir()
+	tool := filepath.Join(dir, "pkg-config")
+	script := `#!/bin/sh
+if [ "$1" = "--libs" ]; then
+	printf '%s\n' '-L/request/lib -lrequest'
+	exit 0
+fi
+printf '%s\n' '-I/request/include -DREQUEST="request value"'
+`
+	if err := os.WriteFile(tool, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	commands := commandEnv{dir: dir, environ: []string{"PATH=" + dir}}
+	got, err := parseCgoDeclWithCommandEnv(commands, "#cgo linux pkg-config: request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []cgoDecl{{
+		tag:     "linux",
+		cflags:  []string{"-I/request/include", `-DREQUEST="request value"`},
+		ldflags: []string{"-L/request/lib", "-lrequest"},
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseCgoDeclWithCommandEnv(pkg-config) = %#v, want %#v", got, want)
+	}
+}
+
 func TestParseCgoPreambleDelegatesToCommandEnvParser(t *testing.T) {
 	preamble, decls, err := parseCgoPreamble(token.Position{Filename: "request.go", Line: 7}, "#cgo CFLAGS: -I/request/include")
 	if err != nil {
