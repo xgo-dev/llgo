@@ -548,13 +548,39 @@ func (b Builder) RunDefers() {
 		return
 	}
 	blk := b.Func.MakeBlock()
+	next := len(self.rundsNext)
 	self.rundsNext = append(self.rundsNext, blk)
 
-	b.Store(self.rundPtr, blk.Addr())
+	b.storeRunDefersTarget(self.rundPtr, next, blk)
 	b.Jump(self.procBlk)
 
 	b.SetBlockEx(blk, AtEnd, false)
 	b.blk.last = blk.last
+}
+
+func (b Builder) storeRunDefersTarget(ptr Expr, index int, target BasicBlock) {
+	value := target.Addr()
+	if b.Prog.target.GOARCH == "wasm" {
+		value = b.PtrCast(b.Prog.VoidPtr(), b.Prog.Val(uintptr(index)))
+	}
+	b.Store(ptr, value)
+}
+
+func (b Builder) jumpRunDefersTarget(ptr Expr, targets []BasicBlock) {
+	target := b.Load(ptr)
+	if b.Prog.target.GOARCH != "wasm" {
+		b.IndirectJump(target, targets)
+		return
+	}
+
+	index := b.Convert(b.Prog.Uintptr(), target)
+	invalid := b.Func.MakeBlock()
+	sw := b.impl.CreateSwitch(index.impl, invalid.first, len(targets))
+	for i, target := range targets {
+		sw.AddCase(b.Prog.Val(uintptr(i)).impl, target.first)
+	}
+	b.SetBlockEx(invalid, AtEnd, false)
+	b.Unreachable()
 }
 
 func (p Function) endDefer(b Builder) {
@@ -593,10 +619,10 @@ func (p Function) endDefer(b Builder) {
 	}
 	link := b.getField(b.Load(self.data), deferLink)
 	b.Call(b.Pkg.rtFunc("SetThreadDefer"), link)
-	b.IndirectJump(b.Load(rundPtr), nexts)
+	b.jumpRunDefersTarget(rundPtr, nexts)
 
 	b.SetBlockEx(panicBlk, AtEnd, false) // panicBlk: exec runDefers and rethrow
-	b.Store(rundPtr, rethrowBlk.Addr())
+	b.storeRunDefersTarget(rundPtr, 0, rethrowBlk)
 	b.IndirectJump(b.Load(rethPtr), rethsNext)
 }
 

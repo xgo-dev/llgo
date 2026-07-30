@@ -1,4 +1,4 @@
-//go:build baremetal
+//go:build baremetal && !nogc
 
 package tinygogc
 
@@ -32,9 +32,6 @@ func __wrap_realloc(ptr unsafe.Pointer, size uintptr) unsafe.Pointer {
 	return Realloc(ptr, size)
 }
 
-//go:linkname getsp llgo.stackSave
-func getsp() unsafe.Pointer
-
 //go:linkname _heapStart _heapStart
 var _heapStart [0]byte
 
@@ -52,3 +49,38 @@ var _globals_start [0]byte
 
 //go:linkname _globals_end _globals_end
 var _globals_end [0]byte
+
+func gcMemoryLayout() (heapStart, heapEnd, globalsStart, globalsEnd, stackTop uintptr) {
+	// Reserve 2 KiB for libc internal allocation that cannot be wrapped.
+	return uintptr(unsafe.Pointer(&_heapStart)) + 2048,
+		uintptr(unsafe.Pointer(&_heapEnd)),
+		uintptr(unsafe.Pointer(&_globals_start)),
+		uintptr(unsafe.Pointer(&_globals_end)),
+		uintptr(unsafe.Pointer(&_stackStart))
+}
+
+func gcGrowMemory(oldHeapEnd uintptr) uintptr {
+	return oldHeapEnd
+}
+
+func gcMarkReachable() {
+	sp := uintptr(getsp())
+	if sp < stackTop {
+		markRoots(sp, stackTop)
+	}
+	if globalsStart < globalsEnd {
+		markRoots(globalsStart, globalsEnd)
+	}
+}
+
+func gcStackStats() (inuse, sys uintptr) {
+	sp := uintptr(getsp())
+	if sp < stackTop {
+		inuse = stackTop - sp
+	}
+	stackEnd := uintptr(unsafe.Pointer(&_stackEnd))
+	if stackEnd < stackTop {
+		sys = stackTop - stackEnd
+	}
+	return
+}

@@ -1,5 +1,4 @@
-//go:build wasip1 || js
-// +build wasip1 js
+//go:build wasip1 || (js && tinygo.wasm)
 
 /*
  * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.
@@ -19,7 +18,7 @@
 
 package c
 
-// For WebAssembly targets, Long is 32-bit per the spec
+// WASI and configured js/wasm targets use the wasm32 C data model.
 type (
 	Long  = int32
 	Ulong = uint32

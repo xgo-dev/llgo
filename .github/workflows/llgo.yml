@@ -180,7 +180,9 @@ jobs:
   test:
     name: test (${{ matrix.lane }}, ${{ matrix.os }}, LLVM ${{ matrix.llvm }}, Go ${{ matrix.go }}, shard ${{ matrix.shard }})
     continue-on-error: ${{ matrix.lane == 'compatibility' }}
-    timeout-minutes: 30
+    # macOS runs the full package set in one shard and is normally just over
+    # 30 minutes once the wasm runtime sources are present.
+    timeout-minutes: 40
     strategy:
       matrix:
         # Keep compatibility and primary toolchains pinned to exact patches.
@@ -366,6 +368,9 @@ jobs:
       - name: Set up Go for building llgo
         uses: ./.github/actions/setup-go
 
+      - name: Set up Binaryen
+        uses: ./.github/actions/setup-binaryen
+
       - name: Install wamr
         run: |
           git clone --branch WAMR-2.4.4 --depth 1 https://github.com/bytecodealliance/wasm-micro-runtime.git
@@ -414,6 +419,24 @@ jobs:
         with:
           version: "4.0.21"
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "25"
+
+      - name: Set up Binaryen
+        uses: ./.github/actions/setup-binaryen
+
+      - name: Set up Wasmtime
+        uses: bytecodealliance/actions/wasmtime/setup@v1
+        with:
+          version: "39.0.1"
+
+      - name: Set up wasm-tools
+        uses: bytecodealliance/actions/wasm-tools/setup@v1
+        with:
+          version: "1.243.0"
+
       - name: Set up Go for building llgo
         uses: ./.github/actions/setup-go
 
@@ -430,6 +453,50 @@ jobs:
       - name: Build standard runtime for wasm
         shell: bash
         run: |
+          run_wasm_scheduler() {
+            local module="$1"
+            local output
+            node --input-type=module -e "import Module from '$module'; await Module();"
+            if output=$(node --input-type=module -e "import Module from '$module'; await Module({preRun: [module => { module.ENV.LLGO_WASM_SCHEDULER_DEADLOCK = '1'; }]});" 2>&1); then
+              echo "deadlock scheduler fixture unexpectedly succeeded"
+              return 1
+            fi
+            grep -Fq "fatal error: all goroutines are asleep - deadlock!" <<<"$output"
+          }
+
+          run_wasi_scheduler() {
+            local module="$1"
+            local output
+            wasm-tools validate --features all "$module"
+            output=$(wasmtime run -W exceptions=y "$module" 2>&1)
+            grep -Fq "wasm scheduler ok" <<<"$output"
+            if output=$(wasmtime run -W exceptions=y \
+              --env LLGO_WASM_SCHEDULER_DEADLOCK=1 "$module" 2>&1); then
+              echo "deadlock scheduler fixture unexpectedly succeeded"
+              return 1
+            fi
+            grep -Fq "fatal error: all goroutines are asleep - deadlock!" <<<"$output"
+          }
+
           GOOS=js GOARCH=wasm llgo build -o "$RUNNER_TEMP/runtime-js.wasm" ./internal/build/testdata/wasm-runtime
           GOOS=wasip1 GOARCH=wasm llgo build -o "$RUNNER_TEMP/runtime-wasip1.wasm" ./internal/build/testdata/wasm-runtime
-          file "$RUNNER_TEMP/runtime-js.wasm" "$RUNNER_TEMP/runtime-wasip1.wasm"
+          LLGO_WASI_THREADS=1 GOOS=wasip1 GOARCH=wasm llgo build \
+            -o "$RUNNER_TEMP/runtime-wasip1-threads.wasm" ./internal/build/testdata/wasm-runtime
+          test "$(wasmtime run -W exceptions=y "$RUNNER_TEMP/runtime-wasip1.wasm" 2>&1)" = "wasip1"
+          GOOS=js GOARCH=wasm llgo build -o "$RUNNER_TEMP/wasm-scheduler-go.mjs" ./internal/build/testdata/wasm-scheduler
+          run_wasm_scheduler "$RUNNER_TEMP/wasm-scheduler-go.mjs"
+          llgo build -target wasm -o "$RUNNER_TEMP/wasm-scheduler.mjs" ./internal/build/testdata/wasm-scheduler
+          run_wasm_scheduler "$RUNNER_TEMP/wasm-scheduler.mjs"
+          GOOS=wasip1 GOARCH=wasm llgo build -o "$RUNNER_TEMP/wasm-scheduler-wasip1.wasm" ./internal/build/testdata/wasm-scheduler
+          run_wasi_scheduler "$RUNNER_TEMP/wasm-scheduler-wasip1.wasm"
+          GOOS=js GOARCH=wasm llgo build -tags=llgo_wasm_gc -o "$RUNNER_TEMP/wasm-gc-go.mjs" ./internal/build/testdata/wasm-gc
+          node --input-type=module -e "import Module from '$RUNNER_TEMP/wasm-gc-go.mjs'; await Module();"
+          llgo build -target wasm -tags=llgo_wasm_gc -o "$RUNNER_TEMP/wasm-gc.mjs" ./internal/build/testdata/wasm-gc
+          node --input-type=module -e "import Module from '$RUNNER_TEMP/wasm-gc.mjs'; await Module();"
+          GOOS=wasip1 GOARCH=wasm LLGO_WASI_THREADS=0 llgo build -tags=llgo_wasm_gc -o "$RUNNER_TEMP/wasm-gc-wasip1.wasm" ./internal/build/testdata/wasm-gc
+          wasm-tools validate --features all "$RUNNER_TEMP/wasm-gc-wasip1.wasm"
+          test "$(wasmtime run -W exceptions=y "$RUNNER_TEMP/wasm-gc-wasip1.wasm" 2>&1)" = "wasm gc ok"
+          file "$RUNNER_TEMP/runtime-js.wasm" \
+            "$RUNNER_TEMP/runtime-wasip1.wasm" \
+            "$RUNNER_TEMP/runtime-wasip1-threads.wasm" \
+            "$RUNNER_TEMP/wasm-gc-wasip1.wasm"
