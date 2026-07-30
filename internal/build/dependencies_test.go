@@ -44,3 +44,9 @@ func TestEffectiveDependenciesIncludesAlternateImports(t *testing.T) {
 		t.Fatalf("effectiveDependencies = %v, want %v", got, want)
 	}
 }
+
+func TestEffectiveDependenciesHandlesNilPackage(t *testing.T) {
+	if deps := effectiveDependencies(nil); deps != nil {
+		t.Fatalf("effectiveDependencies(nil) = %v, want nil", deps)
+	}
+}
