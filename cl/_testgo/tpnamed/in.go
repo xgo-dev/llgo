@@ -46,15 +46,15 @@ func WriteFile(fileName string) IO[error] {
 
 // CHECK-LABEL: define void @"{{.*}}/cl/_testgo/tpnamed.main"(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:  %0 = call [0 x i8] @"{{.*}}/cl/_testgo/tpnamed.RunIO{{\[\[0\]byte\]}}"(%"{{.*}}/cl/_testgo/tpnamed.IO{{\[\[0\]byte\]}}" { ptr @"__llgo_stub.{{.*}}/cl/_testgo/tpnamed.main$1", ptr null })
+// CHECK-NEXT:  %0 = call [0 x i8] @"{{.*}}/cl/_testgo/tpnamed.RunIO{{\[\[0\]uint8\]}}"(%"{{.*}}/cl/_testgo/tpnamed.IO{{\[\[0\]uint8\]}}" { ptr @"__llgo_stub.{{.*}}/cl/_testgo/tpnamed.main$1", ptr null })
 // CHECK-NEXT:  ret void
 // CHECK-NEXT: }
 
 func main() {
 
-	// CHECK-LABEL: define %"{{.*}}/cl/_testgo/tpnamed.Future{{\[\[0\]byte\]}}" @"{{.*}}/cl/_testgo/tpnamed.main$1"()
+	// CHECK-LABEL: define %"{{.*}}/cl/_testgo/tpnamed.Future{{\[\[0\]uint8\]}}" @"{{.*}}/cl/_testgo/tpnamed.main$1"()
 	// CHECK-NEXT: _llgo_0:
-	// CHECK-NEXT:   ret %"{{.*}}/cl/_testgo/tpnamed.Future{{\[\[0\]byte\]}}" { ptr @"__llgo_stub.{{.*}}/cl/_testgo/tpnamed.main$1$1", ptr null }
+	// CHECK-NEXT:   ret %"{{.*}}/cl/_testgo/tpnamed.Future{{\[\[0\]uint8\]}}" { ptr @"__llgo_stub.{{.*}}/cl/_testgo/tpnamed.main$1$1", ptr null }
 	// CHECK-NEXT: }
 
 	RunIO[Void](func() Future[Void] {
@@ -86,19 +86,19 @@ func RunIO[T any](call IO[T]) T {
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %1
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define linkonce %"{{.*}}/cl/_testgo/tpnamed.Future{{\[\[0\]byte\]}}" @"__llgo_stub.{{.*}}/cl/_testgo/tpnamed.main$1"(ptr %0){{.*}} {
+// CHECK-LABEL: define linkonce %"{{.*}}/cl/_testgo/tpnamed.Future{{\[\[0\]uint8\]}}" @"__llgo_stub.{{.*}}/cl/_testgo/tpnamed.main$1"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = tail call %"{{.*}}/cl/_testgo/tpnamed.Future{{\[\[0\]byte\]}}" @"{{.*}}/cl/_testgo/tpnamed.main$1"()
-// CHECK-NEXT:   ret %"{{.*}}/cl/_testgo/tpnamed.Future{{\[\[0\]byte\]}}" %1
+// CHECK-NEXT:   %1 = tail call %"{{.*}}/cl/_testgo/tpnamed.Future{{\[\[0\]uint8\]}}" @"{{.*}}/cl/_testgo/tpnamed.main$1"()
+// CHECK-NEXT:   ret %"{{.*}}/cl/_testgo/tpnamed.Future{{\[\[0\]uint8\]}}" %1
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define linkonce [0 x i8] @"{{.*}}/cl/_testgo/tpnamed.RunIO{{\[\[0\]byte\]}}"(%"{{.*}}/cl/_testgo/tpnamed.IO{{\[\[0\]byte\]}}" %0){{.*}} {
+// CHECK-LABEL: define linkonce [0 x i8] @"{{.*}}/cl/_testgo/tpnamed.RunIO{{\[\[0\]uint8\]}}"(%"{{.*}}/cl/_testgo/tpnamed.IO{{\[\[0\]uint8\]}}" %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = extractvalue %"{{.*}}/cl/_testgo/tpnamed.IO{{\[\[0\]byte\]}}" %0, 1
-// CHECK-NEXT:   %2 = extractvalue %"{{.*}}/cl/_testgo/tpnamed.IO{{\[\[0\]byte\]}}" %0, 0
-// CHECK-NEXT:   %3 = call %"{{.*}}/cl/_testgo/tpnamed.Future{{\[\[0\]byte\]}}" %2(ptr %1)
-// CHECK-NEXT:   %4 = extractvalue %"{{.*}}/cl/_testgo/tpnamed.Future{{\[\[0\]byte\]}}" %3, 1
-// CHECK-NEXT:   %5 = extractvalue %"{{.*}}/cl/_testgo/tpnamed.Future{{\[\[0\]byte\]}}" %3, 0
+// CHECK-NEXT:   %1 = extractvalue %"{{.*}}/cl/_testgo/tpnamed.IO{{\[\[0\]uint8\]}}" %0, 1
+// CHECK-NEXT:   %2 = extractvalue %"{{.*}}/cl/_testgo/tpnamed.IO{{\[\[0\]uint8\]}}" %0, 0
+// CHECK-NEXT:   %3 = call %"{{.*}}/cl/_testgo/tpnamed.Future{{\[\[0\]uint8\]}}" %2(ptr %1)
+// CHECK-NEXT:   %4 = extractvalue %"{{.*}}/cl/_testgo/tpnamed.Future{{\[\[0\]uint8\]}}" %3, 1
+// CHECK-NEXT:   %5 = extractvalue %"{{.*}}/cl/_testgo/tpnamed.Future{{\[\[0\]uint8\]}}" %3, 0
 // CHECK-NEXT:   %6 = icmp eq ptr %5, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
 // CHECK-NEXT:   %7 = call [0 x i8] %5(ptr %4)
