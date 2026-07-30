@@ -2545,6 +2545,8 @@ func (p *context) enclosingFunctionSyntax(pos token.Pos) ast.Node {
 	if !pos.IsValid() {
 		return nil
 	}
+	// Instantiated local types may lose their scope parent while a nested
+	// closure still refers to a declaration in its enclosing generic function.
 	for fn := p.goFn; fn != nil; fn = fn.Parent() {
 		syntaxFn := fn
 		if origin := fn.Origin(); origin != nil {
@@ -2555,17 +2557,6 @@ func (p *context) enclosingFunctionSyntax(pos token.Pos) ast.Node {
 		}
 	}
 	return nil
-}
-
-func (p *context) currentFunctionSyntax() ast.Node {
-	if p.goFn == nil {
-		return nil
-	}
-	fn := p.goFn
-	if origin := fn.Origin(); origin != nil {
-		fn = origin
-	}
-	return fn.Syntax()
 }
 
 func isTypeParamObject(obj types.Object) bool {

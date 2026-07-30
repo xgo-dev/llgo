@@ -402,9 +402,6 @@ func use() {
 	if ctx.inCurrentFunction(token.NoPos) {
 		t.Fatal("invalid position should not be inside current function")
 	}
-	if (&context{}).currentFunctionSyntax() != nil {
-		t.Fatal("currentFunctionSyntax without goFn should be nil")
-	}
 	if (&context{}).localTypeOrdinalBySyntax(token.Pos(1)) != 0 {
 		t.Fatal("localTypeOrdinalBySyntax without current function should be zero")
 	}
