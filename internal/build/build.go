@@ -895,12 +895,15 @@ type context struct {
 	llvmVersion  string
 
 	// go list derived file lists (SFiles, etc.)
-	sfilesCache map[string][]string // pkg.ID -> absolute .s/.S file paths
+	sfilesCache  map[string][]string // pkg.ID -> absolute .s/.S file paths
+	sfilesFrozen bool
 
 	// plan9asm package policy parsed from env.
-	plan9asmOnce sync.Once
-	plan9asmMode plan9asmPkgsEnvMode
-	plan9asmPkgs map[string]bool
+	plan9asmOnce  sync.Once
+	plan9asmReady bool
+	plan9asmMode  plan9asmPkgsEnvMode
+	plan9asmPkgs  map[string]bool
+	plan9asmSigs  map[string]map[string]struct{}
 
 	// pclnExternal is populated while generating the synthetic main module
 	// and completed with final linked PCs by the post-link externalizer.
@@ -1033,36 +1036,33 @@ func normalizeToArchive(ctx *context, aPkg *aPackage, verbose bool) error {
 }
 
 func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, error) {
-	// Split packages into runtime tree vs others so we can defer runtime build.
-	var runtimePkgs []*packageBuildTask
-	var normalPkgs []*packageBuildTask
+	tasks := make([]*packageBuildTask, 0, len(pkgs))
 	for _, p := range pkgs {
-		task := newPackageBuildTask(p)
-		if task.isRuntime() {
-			runtimePkgs = append(runtimePkgs, task)
-		} else {
-			normalPkgs = append(normalPkgs, task)
-		}
+		tasks = append(tasks, newPackageBuildTask(p))
 	}
+	if err := prePackageBuilds(ctx, tasks, verbose); err != nil {
+		return nil, err
+	}
+	ctx.sfilesFrozen = true
 
 	var needRuntime, needPyInit bool
 
 	// Build non-runtime packages first, so we know whether runtime is actually needed.
-	for _, task := range normalPkgs {
-		result, err := buildOnePackage(ctx, task, verbose)
-		if err != nil {
-			return nil, err
-		}
+	normalResults, err := buildPrePackageGroup(
+		ctx, packageBuildTasksForRuntime(tasks, false), verbose)
+	if err != nil {
+		return nil, err
+	}
+	for _, result := range normalResults {
 		needRuntime = needRuntime || result.needRuntime
 		needPyInit = needPyInit || result.needPyInit
 	}
 
 	// Only build runtime packages when required (or host build with empty Target).
 	if needRuntime || needPyInit || ctx.buildConf.Target == "" {
-		for _, task := range runtimePkgs {
-			if _, err := buildOnePackage(ctx, task, verbose); err != nil {
-				return nil, err
-			}
+		if _, err := buildPrePackageGroup(
+			ctx, packageBuildTasksForRuntime(tasks, true), verbose); err != nil {
+			return nil, err
 		}
 	}
 
@@ -1109,6 +1109,9 @@ func prePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
 		return err
 	}
 	ctx.tryLoadFromCache(aPkg)
+	if err := preparePackageSFiles(ctx, aPkg); err != nil {
+		return err
+	}
 	if verbose {
 		status := "MISS"
 		if aPkg.CacheHit {
@@ -1125,7 +1128,7 @@ func executePackageBuild(ctx *context, task *packageBuildTask, verbose bool) err
 	if err := buildPkg(ctx, aPkg, verbose); err != nil {
 		return err
 	}
-	if task.needsRuntimeSignals() {
+	if task.needsRuntimeSignals() && aPkg.LPkg != nil {
 		aPkg.setNeedRuntimeOrPyInit(aPkg.LPkg.NeedRuntime, aPkg.LPkg.NeedPyInit)
 	}
 	return nil
@@ -1159,7 +1162,7 @@ func appendExternalLinkArgs(ctx *context, aPkg *aPackage, spec string) {
 	for _, alt := range altParts {
 		alt = strings.TrimSpace(alt)
 		if strings.ContainsRune(alt, '$') {
-			expdArgs = append(expdArgs, xenv.ExpandEnvToArgs(alt)...)
+			expdArgs = append(expdArgs, xenv.ExpandEnvToArgsWith(alt, ctx.commands.dir, ctx.commands.environ)...)
 			atomic.AddInt32(&ctx.nLibdir, 1)
 		} else {
 			fields := strings.Fields(alt)
@@ -2716,7 +2719,7 @@ func clFiles(ctx *context, files string, pkg *packages.Package, procFile func(li
 	args := make([]string, 0, 16)
 	if strings.HasPrefix(files, "$") { // has cflags
 		if pos := strings.IndexByte(files, ':'); pos > 0 {
-			cflags := xenv.ExpandEnvToArgs(files[:pos])
+			cflags := xenv.ExpandEnvToArgsWith(files[:pos], ctx.commands.dir, ctx.commands.environ)
 			files = files[pos+1:]
 			args = append(args, cflags...)
 		}
