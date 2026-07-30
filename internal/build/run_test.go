@@ -23,6 +23,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -34,6 +36,69 @@ func testPrograms(names ...string) []testProgram {
 		programs[i] = testProgram{app: name + ".test", pkgName: name}
 	}
 	return programs
+}
+
+func TestRunNativeTest(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"-test.run=^TestRunNativeTestHelper$", "--"}
+
+	t.Run("success", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		conf := &Config{PrintCommands: true, RunArgs: append(args, "success")}
+		program := testProgram{app: executable, pkgDir: t.TempDir(), pkgName: "success"}
+		if err := runNativeTest(program, conf, &stdout, &stderr); err != nil {
+			t.Fatalf("runNativeTest: %v", err)
+		}
+		if got := stdout.String(); !strings.Contains(got, "stdout") {
+			t.Fatalf("stdout = %q, want helper output", got)
+		}
+		if got := stderr.String(); !strings.Contains(got, executable+" ") || !strings.HasSuffix(got, "stderr") {
+			t.Fatalf("stderr = %q, want command followed by helper stderr", got)
+		}
+	})
+
+	t.Run("exit error", func(t *testing.T) {
+		var stderr bytes.Buffer
+		conf := &Config{RunArgs: append(args, "exit")}
+		program := testProgram{app: executable, pkgDir: t.TempDir(), pkgName: "exit"}
+		if err := runNativeTest(program, conf, io.Discard, &stderr); err == nil {
+			t.Fatal("runNativeTest unexpectedly succeeded")
+		}
+		if got := stderr.String(); !strings.Contains(got, "exit code 3") {
+			t.Fatalf("stderr = %q, want exit code", got)
+		}
+	})
+
+	t.Run("start error", func(t *testing.T) {
+		var stderr bytes.Buffer
+		program := testProgram{app: filepath.Join(t.TempDir(), "missing"), pkgName: "missing"}
+		if err := runNativeTest(program, &Config{}, io.Discard, &stderr); err == nil {
+			t.Fatal("runNativeTest unexpectedly succeeded")
+		}
+		if got := stderr.String(); !strings.Contains(got, "failed to run test") {
+			t.Fatalf("stderr = %q, want start error", got)
+		}
+	})
+}
+
+func TestRunNativeTestHelper(t *testing.T) {
+	args := os.Args
+	for i, arg := range args {
+		if arg != "--" || i+1 == len(args) {
+			continue
+		}
+		switch args[i+1] {
+		case "success":
+			fmt.Fprint(os.Stdout, "stdout")
+			fmt.Fprint(os.Stderr, "stderr")
+		case "exit":
+			os.Exit(3)
+		}
+		return
+	}
 }
 
 func TestRunTestProgramsLimitAndFailure(t *testing.T) {
