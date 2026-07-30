@@ -5,6 +5,7 @@ package crosscompile
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -124,6 +125,16 @@ func TestUseCrossCompileSDK(t *testing.T) {
 						if !hasResourceDir {
 							t.Error("Missing -resource-dir flag in CCFLAGS")
 						}
+						if !slices.Contains(export.CCFLAGS, "-fwasm-exceptions") ||
+							!hasMllvmOption(export.CCFLAGS, "-wasm-enable-sjlj") {
+							t.Errorf("CCFLAGS do not enable WebAssembly SjLj lowering: %v", export.CCFLAGS)
+						}
+						if !export.WasmPostLink.Asyncify {
+							t.Error("WASI target does not request Asyncify post-link processing")
+						}
+						if slices.Contains(export.LDFLAGS, "-Wl,--import-memory") {
+							t.Errorf("single-worker WASI imports host memory: %v", export.LDFLAGS)
+						}
 					} else if tc.name == "Same Platform" {
 						// For same platform, we expect sysroot only on macOS
 						if runtime.GOOS == "darwin" && !hasSysroot {
@@ -170,6 +181,123 @@ func TestUseCrossCompileSDK(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUseWASIThreadsImportsMemory(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires WASI SDK")
+	}
+	export, err := use("wasip1", "wasm", true, false, optlevel.O2, lto.Off, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(export.CCFLAGS, "-pthread") {
+		t.Fatalf("CCFLAGS do not enable WASI threads: %v", export.CCFLAGS)
+	}
+	if !slices.Contains(export.BuildTags, "llgo.wasi_threads") {
+		t.Fatalf("BuildTags do not select the WASI pthread backend: %v", export.BuildTags)
+	}
+	if !slices.Contains(export.LDFLAGS, "-Wl,--import-memory") {
+		t.Fatalf("LDFLAGS do not import shared host memory: %v", export.LDFLAGS)
+	}
+	if export.WasmPostLink.Asyncify {
+		t.Fatal("WASI pthread mode requests single-worker Asyncify processing")
+	}
+}
+
+func TestUseWASILTOEnablesSjLjAtLink(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires WASI SDK")
+	}
+	export, err := use("wasip1", "wasm", false, false, optlevel.O2, lto.Thin, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(export.LDFLAGS, "-Wl,--mllvm=-wasm-enable-sjlj") {
+		t.Fatalf("LDFLAGS do not enable Wasm SjLj for LTO: %v", export.LDFLAGS)
+	}
+}
+
+func TestUseJSSupportsNode(t *testing.T) {
+	export, err := use("js", "wasm", false, false, optlevel.Oz, lto.Off, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if export.LLVMTarget != "wasm64-unknown-emscripten" {
+		t.Fatalf("LLVMTarget = %q, want wasm64-unknown-emscripten", export.LLVMTarget)
+	}
+	if !slices.Contains(export.LDFLAGS, "-sENVIRONMENT=web,worker,node") {
+		t.Fatalf("LDFLAGS do not enable Node: %v", export.LDFLAGS)
+	}
+	if !slices.Contains(export.LDFLAGS, "-sMEMORY64=1") {
+		t.Fatalf("LDFLAGS do not enable Memory64: %v", export.LDFLAGS)
+	}
+}
+
+func TestUseWasmTargetSelectsGoPlatform(t *testing.T) {
+	export, err := Use(runtime.GOOS, runtime.GOARCH, "wasm", false, false, optlevel.Oz, lto.Off, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if export.GOOS != "js" || export.GOARCH != "wasm" {
+		t.Fatalf("GOOS/GOARCH = %s/%s, want js/wasm", export.GOOS, export.GOARCH)
+	}
+	if export.CC != "emcc" {
+		t.Fatalf("CC = %q, want emcc", export.CC)
+	}
+	if export.LLVMTarget != "wasm32-unknown-emscripten" {
+		t.Fatalf("LLVMTarget = %q, want wasm32-unknown-emscripten", export.LLVMTarget)
+	}
+	if !slices.Contains(export.BuildTags, "tinygo.wasm") {
+		t.Fatalf("BuildTags do not identify the wasm32 target: %v", export.BuildTags)
+	}
+	if slices.Contains(export.LDFLAGS, "-sMEMORY64=1") {
+		t.Fatalf("wasm32 LDFLAGS enable Memory64: %v", export.LDFLAGS)
+	}
+}
+
+func TestUseWasmTargetErrors(t *testing.T) {
+	newLLGoRoot := func(t *testing.T, wasmConfig string) {
+		t.Helper()
+		root := t.TempDir()
+		runtimeDir := filepath.Join(root, "runtime")
+		if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(runtimeDir, "go.mod"), []byte("module github.com/goplus/llgo/runtime\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if wasmConfig != "" {
+			targetsDir := filepath.Join(root, "targets")
+			if err := os.MkdirAll(targetsDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(targetsDir, "wasm.json"), []byte(wasmConfig), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		t.Setenv("LLGO_ROOT", root)
+	}
+
+	t.Run("resolve", func(t *testing.T) {
+		newLLGoRoot(t, "")
+		_, err := Use(runtime.GOOS, runtime.GOARCH, "wasm", false, false, optlevel.Oz, lto.Off, false)
+		if err == nil || !strings.Contains(err.Error(), "failed to resolve target wasm") {
+			t.Fatalf("Use error = %v, want target resolution error", err)
+		}
+	})
+
+	t.Run("toolchain setup", func(t *testing.T) {
+		newLLGoRoot(t, `{"goos":"js","goarch":"wasm"}`)
+		oldCacheRoot := cacheRoot
+		cacheRoot = func() string { return "\x00" }
+		defer func() { cacheRoot = oldCacheRoot }()
+
+		_, err := Use(runtime.GOOS, runtime.GOARCH, "wasm", false, true, optlevel.Oz, lto.Off, false)
+		if err == nil {
+			t.Fatal("Use succeeded with an invalid toolchain cache path")
+		}
+	})
 }
 
 func TestUseTarget(t *testing.T) {
