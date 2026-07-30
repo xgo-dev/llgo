@@ -54,6 +54,8 @@ func TestTypeStringWithPkgAndIsPkgScope(t *testing.T) {
 }
 
 func TestNamedTypeEquivalent(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
 	pkg1 := types.NewPackage("example.com/p", "p")
 	pkg2 := types.NewPackage("example.com/p", "p")
 	obj1 := types.NewTypeName(token.NoPos, pkg1, "T", nil)
@@ -64,19 +66,21 @@ func TestNamedTypeEquivalent(t *testing.T) {
 	b := types.NewNamed(obj2, types.NewStruct([]*types.Var{
 		types.NewField(token.NoPos, nil, "A", types.Typ[types.Int], false),
 	}, nil), nil)
-	if !namedTypeEquivalent(a, b) {
+	if !prog.namedTypeEquivalent(a, b) {
 		t.Fatalf("namedTypeEquivalent should be true for equivalent named structs")
 	}
 
 	c := types.NewNamed(types.NewTypeName(token.NoPos, pkg2, "T", nil), types.NewStruct([]*types.Var{
 		types.NewField(token.NoPos, nil, "A", types.Typ[types.String], false),
 	}, nil), nil)
-	if namedTypeEquivalent(a, c) {
+	if prog.namedTypeEquivalent(a, c) {
 		t.Fatalf("namedTypeEquivalent should be false for different underlying types")
 	}
 }
 
 func TestNamedTypeEquivalentRecursiveSignature(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
 	pkg1 := types.NewPackage("example.com/p", "p")
 	pkg2 := types.NewPackage("example.com/p", "p")
 	a := types.NewNamed(types.NewTypeName(token.NoPos, pkg1, "F", nil), nil, nil)
@@ -89,12 +93,14 @@ func TestNamedTypeEquivalentRecursiveSignature(t *testing.T) {
 		types.NewTuple(types.NewParam(token.NoPos, nil, "", b)),
 		types.NewTuple(types.NewParam(token.NoPos, nil, "", b)),
 		false))
-	if namedTypeEquivalent(a, b) {
+	if prog.namedTypeEquivalent(a, b) {
 		t.Fatalf("namedTypeEquivalent should be false for recursive function signatures")
 	}
 }
 
 func TestNamedTypeEquivalentRejectsAnySignature(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
 	pkg1 := types.NewPackage("example.com/p", "p")
 	pkg2 := types.NewPackage("example.com/p", "p")
 	sigNamed := types.NewNamed(types.NewTypeName(token.NoPos, pkg1, "F", nil),
@@ -103,11 +109,23 @@ func TestNamedTypeEquivalentRejectsAnySignature(t *testing.T) {
 		types.NewStruct([]*types.Var{
 			types.NewField(token.NoPos, nil, "A", types.Typ[types.Int], false),
 		}, nil), nil)
-	if namedTypeEquivalent(sigNamed, structNamed) {
+	if prog.namedTypeEquivalent(sigNamed, structNamed) {
 		t.Fatalf("namedTypeEquivalent should be false when only one side is a signature")
 	}
-	if namedTypeEquivalent(structNamed, sigNamed) {
+	if prog.namedTypeEquivalent(structNamed, sigNamed) {
 		t.Fatalf("namedTypeEquivalent should be false when only one side is a signature")
+	}
+}
+
+func TestNamedTypeEquivalentUsesProgramNamingPolicy(t *testing.T) {
+	prog := NewProgram(&Target{RewriteMainPrefix: true})
+	defer prog.Dispose()
+	pkg1 := types.NewPackage("example.com/first", "main")
+	pkg2 := types.NewPackage("example.com/second", "main")
+	a := types.NewNamed(types.NewTypeName(token.NoPos, pkg1, "T", nil), types.NewStruct(nil, nil), nil)
+	b := types.NewNamed(types.NewTypeName(token.NoPos, pkg2, "T", nil), types.NewStruct(nil, nil), nil)
+	if !prog.namedTypeEquivalent(a, b) {
+		t.Fatal("equivalent main-package types should use the Program naming policy")
 	}
 }
 

@@ -208,6 +208,7 @@ type Namer struct {
 	RewriteMainPrefix bool
 }
 
+// NamedName returns the symbol component for a named type.
 func (n Namer) NamedName(t *types.Named) string {
 	if targs := t.TypeArgs(); targs != nil {
 		count := targs.Len()
@@ -224,6 +225,7 @@ func NamedName(t *types.Named) string {
 	return (Namer{}).NamedName(t)
 }
 
+// TypeArgs formats type arguments using this Namer's package-path policy.
 func (n Namer) TypeArgs(typeArgs []types.Type) string {
 	targs := make([]string, len(typeArgs))
 	for i, t := range typeArgs {

@@ -2096,7 +2096,9 @@ type Patch struct {
 // Patches is patches of some packages.
 type Patches = map[string]Patch
 
-// NewPackage compiles a Go package to LLVM IR package.
+// NewPackage compiles a Go package to LLVM IR package. Concurrent build
+// drivers should use NewPackageExWithEmbedMetaOptions to pass frontend options
+// explicitly.
 func NewPackage(prog llssa.Program, pkg *ssa.Package, files []*ast.File) (ret llssa.Package, err error) {
 	ret, _, err = NewPackageEx(prog, nil, nil, pkg, files)
 	return
@@ -2106,7 +2108,9 @@ func NewPackage(prog llssa.Program, pkg *ssa.Package, files []*ast.File) (ret ll
 // call gets fresh caller-tracking memoization. Multi-package drivers
 // use NewPackageExWithEmbed with a shared CallerTracking instead.
 
-// NewPackageEx compiles a Go package to LLVM IR package.
+// NewPackageEx compiles a Go package to LLVM IR package. Concurrent build
+// drivers should use NewPackageExWithEmbedMetaOptions to pass frontend options
+// explicitly.
 //
 // Parameters:
 //   - prog: target LLVM SSA program context
@@ -2122,6 +2126,8 @@ func NewPackageEx(prog llssa.Program, patches Patches, rewrites map[string]strin
 }
 
 // NewPackageExWithEmbed compiles a package using pre-loaded go:embed metadata.
+// Concurrent build drivers should use NewPackageExWithEmbedMetaOptions to pass
+// frontend options explicitly.
 //
 // This avoids re-scanning directives when the caller already loaded them.
 // ct carries the compilation-scoped caller-tracking memoization; drivers
@@ -2132,6 +2138,9 @@ func NewPackageExWithEmbed(prog llssa.Program, ct *CallerTracking, patches Patch
 	return newPackageEx(prog, ct, patches, rewrites, pkg, files, &embedMap, false, legacyOptions())
 }
 
+// NewPackageExWithEmbedMeta compiles a package with optional metadata
+// collection. Concurrent build drivers should use
+// NewPackageExWithEmbedMetaOptions to pass frontend options explicitly.
 func NewPackageExWithEmbedMeta(prog llssa.Program, ct *CallerTracking, patches Patches, rewrites map[string]string, pkg *ssa.Package, files []*ast.File, embedMap goembed.VarMap, metaCollect bool) (ret llssa.Package, externs []string, err error) {
 	return newPackageEx(prog, ct, patches, rewrites, pkg, files, &embedMap, metaCollect, legacyOptions())
 }

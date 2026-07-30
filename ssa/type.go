@@ -550,7 +550,7 @@ func isPkgScope(parent, pkgScope *types.Scope) bool {
 func (p Program) toNamed(raw *types.Named) Type {
 	name := p.llvmNameOf(raw)
 	if typ, ok := p.named[name]; ok {
-		if namedTypeEquivalent(typ.raw.Type, raw) || p.namedStructLayoutEquivalent(typ, raw) {
+		if p.namedTypeEquivalent(typ.raw.Type, raw) || p.namedStructLayoutEquivalent(typ, raw) {
 			return typ
 		}
 		// Some toolchains produce distinct instantiated named types that share
@@ -560,7 +560,7 @@ func (p Program) toNamed(raw *types.Named) Type {
 		for i := 0; ; i++ {
 			name = fmt.Sprintf("%s#%d", base, i)
 			if typ2, ok2 := p.named[name]; ok2 {
-				if namedTypeEquivalent(typ2.raw.Type, raw) || p.namedStructLayoutEquivalent(typ2, raw) {
+				if p.namedTypeEquivalent(typ2.raw.Type, raw) || p.namedStructLayoutEquivalent(typ2, raw) {
 					return typ2
 				}
 				continue
@@ -581,7 +581,7 @@ func (p Program) toNamed(raw *types.Named) Type {
 	}
 }
 
-func namedTypeEquivalent(a, b types.Type) bool {
+func (p Program) namedTypeEquivalent(a, b types.Type) bool {
 	na, okA := types.Unalias(a).(*types.Named)
 	nb, okB := types.Unalias(b).(*types.Named)
 	if !okA || !okB {
@@ -590,7 +590,7 @@ func namedTypeEquivalent(a, b types.Type) bool {
 	if types.Identical(na, nb) {
 		return true
 	}
-	if NameOf(na) != NameOf(nb) {
+	if p.NameOf(na) != p.NameOf(nb) {
 		return false
 	}
 	_, sigA := na.Underlying().(*types.Signature)
@@ -609,7 +609,7 @@ func (p Program) namedStructLayoutEquivalent(existing Type, raw *types.Named) bo
 		return false
 	}
 	en, ok := types.Unalias(existing.raw.Type).(*types.Named)
-	if !ok || NameOf(en) != NameOf(raw) {
+	if !ok || p.NameOf(en) != p.NameOf(raw) {
 		return false
 	}
 	rs, ok := raw.Underlying().(*types.Struct)
@@ -634,6 +634,7 @@ func NameOf(typ *types.Named) string {
 	return abi.FullName(typ.Obj().Pkg(), abi.NamedName(typ))
 }
 
+// NameOf returns the full name of typ using this Program's symbol-naming policy.
 func (p Program) NameOf(typ *types.Named) string {
 	namer := p.namer()
 	return namer.FullName(typ.Obj().Pkg(), namer.NamedName(typ))
@@ -644,6 +645,8 @@ func FullName(pkg *types.Package, name string) string {
 	return abi.FullName(pkg, name)
 }
 
+// FullName returns the full name of a package member using this Program's
+// symbol-naming policy.
 func (p Program) FullName(pkg *types.Package, name string) string {
 	return p.namer().FullName(pkg, name)
 }
@@ -653,6 +656,7 @@ func PathOf(pkg *types.Package) string {
 	return abi.PathOf(pkg)
 }
 
+// PathOf returns the package path using this Program's symbol-naming policy.
 func (p Program) PathOf(pkg *types.Package) string {
 	return p.namer().PathOf(pkg)
 }
@@ -664,6 +668,8 @@ func FuncName(pkg *types.Package, name string, recv *types.Var, org bool) string
 	return funcName(abi.Namer{}, pkg, name, recv, org)
 }
 
+// FuncName returns a function or method name using this Program's
+// symbol-naming policy.
 func (p Program) FuncName(pkg *types.Package, name string, recv *types.Var, org bool) string {
 	return funcName(p.namer(), pkg, name, recv, org)
 }
@@ -709,6 +715,7 @@ func TypeArgs(typeArgs []types.Type) string {
 	return abi.TypeArgs(typeArgs)
 }
 
+// TypeArgs formats type arguments using this Program's symbol-naming policy.
 func (p Program) TypeArgs(typeArgs []types.Type) string {
 	return p.namer().TypeArgs(typeArgs)
 }
