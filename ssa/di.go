@@ -633,13 +633,12 @@ func (b diBuilder) createExpression(ops []uint64) DIExpression {
 // -----------------------------------------------------------------------------
 
 // Copy to alloca'd memory to get declareable address.
-func (b Builder) constructDebugAddr(v Expr) (dbgPtr Expr, dbgVal Expr, exists bool) {
+func (b Builder) constructDebugAddr(v Expr) Expr {
 	t := v.Type.RawType().Underlying()
-	dbgPtr, dbgVal = b.doConstructDebugAddr(v, t)
-	return dbgPtr, dbgVal, false
+	return b.doConstructDebugAddr(v, t)
 }
 
-func (b Builder) doConstructDebugAddr(v Expr, t types.Type) (dbgPtr Expr, dbgVal Expr) {
+func (b Builder) doConstructDebugAddr(v Expr, t types.Type) (dbgPtr Expr) {
 	var ty Type
 	switch t := t.(type) {
 	case *types.Basic:
@@ -670,8 +669,7 @@ func (b Builder) doConstructDebugAddr(v Expr, t types.Type) (dbgPtr Expr, dbgVal
 	dbgPtr = b.AllocaT(ty)
 	dbgPtr.Type = b.Prog.Pointer(v.Type)
 	b.Store(dbgPtr, v)
-	dbgVal = b.Load(dbgPtr)
-	return dbgPtr, dbgVal
+	return dbgPtr
 }
 
 func (b Builder) di() diBuilder {
@@ -694,7 +692,7 @@ func (b Builder) diParam(variable *types.Var, v Expr, dv DIVar, scope DIScope, p
 	}
 	var dbgPtr Expr
 	b.withoutDebugLocation(func() {
-		dbgPtr, _, _ = b.constructDebugAddr(v)
+		dbgPtr = b.constructDebugAddr(v)
 	})
 	b.DIDeclare(variable, dbgPtr, dv, scope, pos, blk)
 	return dbgPtr
@@ -725,7 +723,7 @@ func (b Builder) DIValue(variable *types.Var, v Expr, dv DIVar, scope DIScope, p
 		expr := b.di().createExpression(nil)
 		b.di().dbgValue(v, dv, scope, pos, expr, blk)
 	} else {
-		dbgPtr, _, _ := b.constructDebugAddr(v)
+		dbgPtr := b.constructDebugAddr(v)
 		expr := b.di().createExpression([]uint64{opDeref})
 		b.di().dbgValue(dbgPtr, dv, scope, pos, expr, blk)
 	}

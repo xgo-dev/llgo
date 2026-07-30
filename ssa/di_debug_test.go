@@ -175,6 +175,9 @@ func inspect(first, second int) {}
 			if tc.wantHomes {
 				stores := 0
 				for _, line := range strings.Split(ir, "\n") {
+					if strings.Contains(line, " load ") {
+						t.Fatalf("debug home emits an unused load: %s", line)
+					}
 					if strings.Contains(line, "store ") {
 						stores++
 						if strings.Contains(line, "!dbg") {
