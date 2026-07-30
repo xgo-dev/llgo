@@ -1,3 +1,5 @@
+//go:build !llgo || !wasm || (wasip1 && llgo.wasi_threads)
+
 /*
  * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
  *
@@ -63,8 +65,11 @@ func initThreadAttr(attr *pthread.Attr, stackSize uintptr) c.Int {
 	return 0
 }
 
-func exitCurrentM() {
-	mp := getg().m
-	mexit(mp)
+func goexitBackend(gp *g) {
+	if gp.isMain {
+		fatal("no goroutines (main called runtime.Goexit) - deadlock!")
+		c.Exit(2)
+	}
+	mexit(gp.m)
 	pthread.Exit(nil)
 }

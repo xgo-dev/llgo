@@ -1,0 +1,40 @@
+name: "Setup Binaryen"
+description: "Install a pinned Binaryen release"
+inputs:
+  version:
+    description: "Binaryen release version"
+    required: false
+    default: "131"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Binaryen
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        version="${{ inputs.version }}"
+        case "$(uname -s):$(uname -m)" in
+          Linux:x86_64) platform="x86_64-linux" ;;
+          Linux:aarch64|Linux:arm64) platform="aarch64-linux" ;;
+          Darwin:x86_64) platform="x86_64-macos" ;;
+          Darwin:arm64) platform="arm64-macos" ;;
+          *)
+            echo "Unsupported Binaryen host: $(uname -s) $(uname -m)" >&2
+            exit 1
+            ;;
+        esac
+
+        archive="binaryen-version_${version}-${platform}.tar.gz"
+        base_url="https://github.com/WebAssembly/binaryen/releases/download/version_${version}"
+        cd "$RUNNER_TEMP"
+        curl --retry 3 --retry-all-errors -fsSLO "${base_url}/${archive}"
+        curl --retry 3 --retry-all-errors -fsSLO "${base_url}/${archive}.sha256"
+        if command -v sha256sum >/dev/null; then
+          sha256sum --check "${archive}.sha256"
+        else
+          shasum -a 256 --check "${archive}.sha256"
+        fi
+        tar -xzf "$archive" -C "$RUNNER_TEMP"
+        echo "$RUNNER_TEMP/binaryen-version_${version}/bin" >> "$GITHUB_PATH"

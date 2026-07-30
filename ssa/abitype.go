@@ -511,6 +511,8 @@ func (b Builder) abiUncommonMethods(t types.Type, methods []*types.Selection) ll
 			pSig := types.NewSignature(pRecv, mSig.Params(), mSig.Results(), mSig.Variadic())
 			ifn = b.abiMethodFunc(anonymous, pkg, mName, pSig).impl
 		}
+		ifn = b.Pkg.wasmResumeStart(ifn)
+		tfn = b.Pkg.wasmResumeStart(tfn)
 		var values []llvm.Value
 		values = append(values, name)
 		ftyp := funcType(prog, m.Type())

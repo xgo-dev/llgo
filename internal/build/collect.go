@@ -85,6 +85,7 @@ func (c *context) collectEnvInputs(m *manifestBuilder) {
 		llgoTrace,
 		llgoOptimize,
 		llgoWasmRuntime,
+		llgoWasmResume,
 		llgoWasiThreads,
 		llgoStdioNobuf,
 		llgoFullRpath,

@@ -42,9 +42,17 @@ type Export struct {
 	FormatDetail string // For uf2, it's uf2FamilyID
 	Emulator     string // Emulator command template (e.g., "qemu-system-arm -M {} -kernel {}")
 	DebugInfo    DebugInfoPolicy
+	WasmPostLink WasmPostLink
 
 	// Flashing/Debugging configuration
 	Device flash.Device // Device configuration for flashing/debugging
+}
+
+// WasmPostLink describes transformations required after the core module is
+// linked. Build orchestration owns tool discovery and atomic output handling.
+type WasmPostLink struct {
+	Asyncify          bool
+	TranslateToExnref bool
 }
 
 // DebugInfoPolicy describes how a selected linker handles debug information.
@@ -218,6 +226,10 @@ func compileWithConfig(
 }
 
 func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool) (export Export, err error) {
+	return useWithJSWasm32(goos, goarch, wasiThreads, forceEspClang, level, ltoMode, goGlobalDCE, false)
+}
+
+func useWithJSWasm32(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE, jsWasm32 bool) (export Export, err error) {
 	targetTriple := llvm.GetTargetTriple(goos, goarch)
 	llgoRoot := env.LLGoROOT()
 
@@ -365,6 +377,9 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 			"-matomics",
 			"-mbulk-memory",
 		}
+		if wasiThreads {
+			export.CCFLAGS = append(export.CCFLAGS, "-pthread")
+		}
 		export.CFLAGS = []string{
 			"-I" + includeDir,
 			"-Qunused-arguments",
@@ -372,12 +387,20 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 		}
 		// Add WebAssembly linker flags
 		export.LDFLAGS = append(export.LDFLAGS, export.CCFLAGS...)
+		export.LDFLAGS = append(export.LDFLAGS, "-fwasm-exceptions")
+		if ltoMode.Enabled() {
+			export.LDFLAGS = append(export.LDFLAGS, "-Wl,--mllvm=-wasm-enable-sjlj")
+		}
+		export.CCFLAGS = append(
+			export.CCFLAGS,
+			"-fwasm-exceptions",
+			"-mllvm", "-wasm-enable-sjlj",
+		)
 		export.LDFLAGS = append(export.LDFLAGS, []string{
 			"-Wno-override-module",
 			"-Wl,--error-limit=0",
 			"-L" + libDir,
 			"-Wl,--allow-undefined",
-			"-Wl,--import-memory,", // unknown import: `env::memory` has not been defined
 			"-Wl,--export-memory",
 			"-Wl,--initial-memory=67108864", // 64MB
 			"-mbulk-memory",
@@ -394,25 +417,30 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 			"-lwasi-emulated-getpid",
 			"-lwasi-emulated-process-clocks",
 			"-lwasi-emulated-signal",
-			"-fwasm-exceptions",
-			"-mllvm", "-wasm-enable-sjlj",
 		}...)
+		export.LLVMTarget = "wasm32-unknown-wasip1"
 		// Add thread support if enabled
 		if wasiThreads {
-			export.CCFLAGS = append(
-				export.CCFLAGS,
-				"-pthread",
-			)
-			export.LDFLAGS = append(export.LDFLAGS, export.CCFLAGS...)
+			export.BuildTags = append(export.BuildTags, "llgo.wasi_threads")
 			export.LDFLAGS = append(
 				export.LDFLAGS,
+				"-Wl,--import-memory",
 				"-lwasi-emulated-pthread",
 				"-lpthread",
 			)
+		} else {
+			export.WasmPostLink.Asyncify = true
+			export.WasmPostLink.TranslateToExnref = true
 		}
 
 	case "js":
-		targetTriple := "wasm32-unknown-emscripten"
+		// The Go wasm type model uses 64-bit words. Use Memory64 so LLVM
+		// pointers have the same width; named wasm targets retain wasm32.
+		targetTriple := "wasm64-unknown-emscripten"
+		if jsWasm32 {
+			targetTriple = "wasm32-unknown-emscripten"
+		}
+		export.LLVMTarget = targetTriple
 		// Emscripten configuration using system installation
 		// Specify emcc as the compiler
 		export.CC = "emcc"
@@ -440,7 +468,7 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 			// "-Wl,--export=malloc", "-Wl,--export=free",
 		}
 		export.LDFLAGS = append(export.LDFLAGS, []string{
-			"-sENVIRONMENT=web,worker",
+			"-sENVIRONMENT=web,worker,node",
 			"-DPLATFORM_WEB",
 			"-sEXPORT_KEEPALIVE=1",
 			"-sEXPORT_ES6=1",
@@ -452,6 +480,9 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 			"-sASYNCIFY=1",
 			"-sSTACK_SIZE=5242880", // 50MB
 		}...)
+		if !jsWasm32 {
+			export.LDFLAGS = append(export.LDFLAGS, "-sMEMORY64=1")
+		}
 
 	default:
 		err = errors.New("unsupported GOOS for WebAssembly: " + goos)
@@ -715,6 +746,20 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 func Use(goos, goarch, targetName string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool) (export Export, err error) {
 	if targetName != "" && !strings.HasPrefix(targetName, "wasm") && !strings.HasPrefix(targetName, "wasi") {
 		return UseTarget(targetName, level, ltoMode)
+	}
+	if targetName == "wasm" {
+		config, err := targets.NewDefaultResolver().Resolve(targetName)
+		if err != nil {
+			return export, err
+		}
+		export, err = useWithJSWasm32(config.GOOS, config.GOARCH, wasiThreads, forceEspClang, level, ltoMode, goGlobalDCE, true)
+		if err != nil {
+			return export, err
+		}
+		export.BuildTags = config.BuildTags
+		export.GOOS = config.GOOS
+		export.GOARCH = config.GOARCH
+		return export, nil
 	}
 	return use(goos, goarch, wasiThreads, forceEspClang, level, ltoMode, goGlobalDCE)
 }

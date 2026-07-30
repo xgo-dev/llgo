@@ -33,6 +33,9 @@ jobs:
       - name: Set up Go
         uses: ./.github/actions/setup-go
 
+      - name: Set up Binaryen
+        uses: ./.github/actions/setup-binaryen
+
       - name: Install wamr (for wasm tests)
         if: startsWith(matrix.os, 'macos')
         run: |

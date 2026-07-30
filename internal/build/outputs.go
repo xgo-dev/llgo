@@ -279,6 +279,12 @@ func defaultAppExt(conf *Config) string {
 			return ".so"
 		}
 	case BuildModeExe:
+		if conf.Goos == "js" && conf.OutFile != "" {
+			switch ext := filepath.Ext(conf.OutFile); ext {
+			case ".js", ".mjs":
+				return ext
+			}
+		}
 		// For executable mode, handle target-specific logic
 		if conf.Target != "" {
 			if strings.HasPrefix(conf.Target, "wasi") || strings.HasPrefix(conf.Target, "wasm") {

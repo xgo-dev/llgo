@@ -247,6 +247,7 @@ type aProgram struct {
 
 	enableFuncInfoMetadata bool
 	enableFuncInfoSites    bool
+	enableWasmResumeABI    bool
 	debugInfoOptimized     bool
 }
 
@@ -924,7 +925,7 @@ func (p Package) closureStub(b Builder, fn Expr, sig *types.Signature, origKind 
 	prog := b.Prog
 	switch origKind {
 	case vkFuncDecl:
-		wrap := p.closureWrapDecl(fn, sig)
+		wrap := p.closureWrapDeclFor(fn, sig, b.wasmResumeFunctionEnabled())
 		return wrap.Expr, prog.Nil(prog.VoidPtr())
 	case vkFuncPtr:
 		wrap := p.closureWrapPtr(sig)

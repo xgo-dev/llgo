@@ -1202,7 +1202,15 @@ func (b Builder) MakeClosure(fn Expr, bindings []Expr) Expr {
 		ptr := b.aggregateAllocU(prog.rawType(tctx), llvmFields(bindings, tctx, b)...)
 		data = ptr
 	}
-	return b.aggregateValue(prog.Closure(removeCtx(sig)), fn.impl, data)
+	code := fn.impl
+	resumable := b.wasmResumeFunctionEnabled()
+	if prog.WasmResumeABIEnabled() && closureCtxParam(sig) == nil {
+		code = b.Pkg.closureWrapDeclFor(fn, sig, resumable).impl
+	}
+	if resumable {
+		code = b.Pkg.wasmResumeStart(code)
+	}
+	return b.aggregateValue(prog.Closure(removeCtx(sig)), code, data)
 }
 
 // -----------------------------------------------------------------------------
@@ -1245,6 +1253,7 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 		}
 		ll = b.Prog.FuncDecl(sigCtx, InC).ll
 		ret.impl = llvm.CreateCall(b.impl, ll, fn.impl, llvmParamsEx(data, args, sigCtx.Params(), b))
+		b.markWasmResumeCall(ret.impl, InGo)
 		return ret
 	case vkFuncPtr:
 		sig = raw.Underlying().(*types.Signature)
@@ -1264,6 +1273,7 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 	}
 	ret.Type = b.Prog.retType(sig)
 	ret.impl = llvm.CreateCall(b.impl, ll, fn.impl, llvmParamsEx(data, args, sig.Params(), b))
+	b.markWasmResumeCall(ret.impl, b.directCallBackground(fn))
 	if reflectCheck.Kind&ReflectMethodByName != 0 && reflectCheck.Name == "" {
 		nameArgIndex := len(args) - 1
 		if !data.IsNil() {
@@ -1743,6 +1753,9 @@ func checkExpr(v Expr, t types.Type, b Builder) Expr {
 			if sig, ok := fnType.raw.Type.(*types.Signature); ok && closureCtxParam(sig) == nil {
 				v, data = b.Pkg.closureStub(b, v, sig, origKind)
 			}
+		}
+		if origKind == vkFuncDecl && b.wasmResumeFunctionEnabled() {
+			v.impl = b.Pkg.wasmResumeStart(v.impl)
 		}
 		return b.aggregateValue(tclosure, v.impl, data.impl)
 	}

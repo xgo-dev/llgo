@@ -54,11 +54,17 @@ func (b Builder) Go(fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args .
 	if fn != Nil && fn.kind != vkBuiltin {
 		offset = 1
 	}
+	resumableDirectCall := offset == 1 &&
+		b.wasmResumeFunctionEnabled() &&
+		b.directCallBackground(fn) == InGo
 	typs := make([]Type, len(args)+offset)
 	flds := make([]llvm.Value, len(args)+offset)
 	if offset == 1 {
 		typs[0] = fn.Type
 		flds[0] = fn.impl
+		if resumableDirectCall {
+			flds[0] = pkg.wasmResumeStart(flds[0])
+		}
 	}
 	for i, arg := range args {
 		typs[i+offset] = arg.Type
@@ -73,7 +79,12 @@ func (b Builder) Go(fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args .
 	aggregateInit(b.impl, dataPtr, t.ll, flds...)
 	data := Expr{dataPtr, voidPtr}
 	stackSize := prog.IntVal(prog.pthreadStackSize, prog.Uintptr())
-	b.Call(pkg.rtFunc("NewProc"), pkg.routine(t, fn, buildCall, len(args)), data, stackSize)
+	b.Call(
+		pkg.rtFunc("NewProc"),
+		pkg.routine(t, fn, buildCall, len(args), resumableDirectCall),
+		data,
+		stackSize,
+	)
 }
 
 func (p Package) routineName() string {
@@ -81,9 +92,19 @@ func (p Package) routineName() string {
 	return p.Path() + "._llgo_routine$" + strconv.Itoa(p.iRoutine)
 }
 
-func (p Package) routine(t Type, fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, n int) Expr {
+func (p Package) routine(
+	t Type,
+	fn Expr,
+	buildCall func(Builder, Expr, ...Expr) Expr,
+	n int,
+	resumableDirectCall bool,
+) Expr {
 	prog := p.Prog
-	routine := p.NewFunc(p.routineName(), prog.tyRoutine(), InC)
+	background := InC
+	if prog.WasmResumeABIEnabled() {
+		background = InGo
+	}
+	routine := p.NewFunc(p.routineName(), prog.tyRoutine(), background)
 	b := routine.MakeBody(1)
 	var localCtx, previousLocalCtx Expr
 	hasLocalContext := prog.NeedsLocalContext()
@@ -102,7 +123,10 @@ func (p Package) routine(t Type, fn Expr, buildCall func(Builder, Expr, ...Expr)
 		args[i] = b.getField(data, i+offset)
 	}
 	b.Call(p.rtFunc("FreeRoot"), param)
-	buildCall(b, fn, args...)
+	call := buildCall(b, fn, args...)
+	if resumableDirectCall && !call.impl.IsNil() {
+		b.markWasmResumeCall(call.impl, InGo)
+	}
 	lastInst := b.impl.GetInsertBlock().LastInstruction()
 	if lastInst.IsNil() || lastInst.IsAUnreachableInst().IsNil() {
 		if hasLocalContext {
@@ -110,7 +134,11 @@ func (p Package) routine(t Type, fn Expr, buildCall func(Builder, Expr, ...Expr)
 		}
 		b.Return(prog.Nil(prog.VoidPtr()))
 	}
-	return routine.Expr
+	ret := routine.Expr
+	if prog.WasmResumeABIEnabled() {
+		ret.impl = p.wasmResumeStart(ret.impl)
+	}
+	return ret
 }
 
 // -----------------------------------------------------------------------------
