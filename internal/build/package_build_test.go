@@ -91,7 +91,11 @@ func TestPreflightPackageBuildSkipsDeclarationOnlyPackage(t *testing.T) {
 		Types:      types.Unsafe,
 		ExportFile: "stale.a",
 	}}
-	ctx := &context{built: make(map[string]none)}
+	ctx := &context{
+		conf:      &packages.Config{},
+		buildConf: &Config{Goos: "linux", Goarch: "amd64", ForceRebuild: true},
+		built:     make(map[string]none),
+	}
 
 	skip, err := preflightPackageBuild(ctx, newPackageBuildSpec(pkg), false)
 	if err != nil {
@@ -121,5 +125,25 @@ func TestFinalizePackageBuildReturnsCachedResult(t *testing.T) {
 	}
 	if !result.needPyInit {
 		t.Fatalf("build result = %+v, want Python initialization requirement preserved", result)
+	}
+}
+
+func TestPreflightFingerprintsSkippedPackage(t *testing.T) {
+	pkg := &aPackage{Package: &packages.Package{
+		ID:      "unsafe",
+		PkgPath: "unsafe",
+		Types:   types.Unsafe,
+	}}
+	ctx := &context{
+		conf:      &packages.Config{},
+		buildConf: &Config{Goos: "linux", Goarch: "amd64", ForceRebuild: true},
+		built:     make(map[string]none),
+	}
+	skip, err := preflightPackageBuild(ctx, newPackageBuildSpec(pkg), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !skip || pkg.Fingerprint == "" || pkg.Manifest == "" || pkg.Summary == nil {
+		t.Fatalf("skipped package was not fully prepared: skip=%v fingerprint=%q manifest=%q summary=%#v", skip, pkg.Fingerprint, pkg.Manifest, pkg.Summary)
 	}
 }
