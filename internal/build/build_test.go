@@ -109,13 +109,96 @@ func TestDefaultBuildTags(t *testing.T) {
 	}{
 		{name: "native", goarch: "arm64", want: base},
 		{name: "raw wasm", goarch: "wasm", want: base + ",nogc"},
-		{name: "configured wasm target", goarch: "wasm", target: "wasip1", want: base},
+		{name: "configured wasm target", goarch: "wasm", target: "wasip1", want: base + ",nogc"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := defaultBuildTags(test.goarch, test.target); got != test.want {
 				t.Fatalf("defaultBuildTags(%q, %q) = %q, want %q", test.goarch, test.target, got, test.want)
 			}
 		})
+	}
+}
+
+func TestEffectiveWasmTypeSizes(t *testing.T) {
+	goSizes := types.SizesFor("gc", "wasm")
+	for _, test := range []struct {
+		name   string
+		goos   string
+		target string
+		want   int64
+	}{
+		{name: "Go js wasm", goos: "js", want: 8},
+		{name: "configured wasm", goos: "js", target: "wasm", want: 4},
+		{name: "WASI compatibility", goos: "wasip1", want: 4},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := effectiveTypeSizes(goSizes, test.goos, "wasm", test.target)
+			if size := got.Sizeof(types.Typ[types.Uintptr]); size != test.want {
+				t.Fatalf("uintptr size = %d, want %d", size, test.want)
+			}
+		})
+	}
+	if got := effectiveTypeSizes(goSizes, "linux", "amd64", ""); got != goSizes {
+		t.Fatal("native type sizes changed")
+	}
+}
+
+func TestConfigureWasmGC(t *testing.T) {
+	t.Setenv("LLGO_WASI_THREADS", "0")
+	tests := []struct {
+		name   string
+		conf   Config
+		wantGC bool
+		err    bool
+	}{
+		{name: "wasm32", conf: Config{Goos: "js", Goarch: "wasm", Tags: "llgo_wasm_gc"}, wantGC: true},
+		{name: "comma separated tags", conf: Config{Goos: "js", Goarch: "wasm", Tags: "other,llgo_wasm_gc"}, wantGC: true},
+		{name: "default wasm", conf: Config{Goos: "js", Goarch: "wasm"}, wantGC: true},
+		{name: "WASI", conf: Config{Goos: "wasip1", Goarch: "wasm", Tags: "llgo_wasm_gc"}, wantGC: true},
+		{name: "default WASI", conf: Config{Goos: "wasip1", Goarch: "wasm"}, wantGC: true},
+		{name: "default with custom tag", conf: Config{Goos: "js", Goarch: "wasm", Tags: "custom"}, wantGC: true},
+		{name: "native", conf: Config{Goos: "linux", Goarch: "amd64"}},
+		{name: "native explicit", conf: Config{Goos: "linux", Goarch: "amd64", Tags: "llgo_wasm_gc"}, err: true},
+		{name: "unsupported host default", conf: Config{Goos: "linux", Goarch: "wasm"}},
+		{name: "unsupported host", conf: Config{Goos: "linux", Goarch: "wasm", Tags: "llgo_wasm_gc"}, err: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			export := crosscompile.Export{}
+			enabled, err := configureWasmGC(&test.conf, &export)
+			if (err != nil) != test.err {
+				t.Fatalf("configureWasmGC error = %v, want error %v", err, test.err)
+			}
+			if enabled != test.wantGC {
+				t.Fatalf("configureWasmGC enabled = %v, want %v", enabled, test.wantGC)
+			}
+			if got := slices.Contains(export.LDFLAGS, "-sMALLOC=none"); got != (test.wantGC && test.conf.Goos == "js") {
+				t.Fatalf("MALLOC=none present = %v", got)
+			}
+			if test.wantGC && !hasBuildTag(test.conf.Tags, "llgo_wasm_gc") {
+				t.Fatalf("internal GC tag missing from %q", test.conf.Tags)
+			}
+		})
+	}
+}
+
+func TestConfigureWasmGCRejectsWASIThreads(t *testing.T) {
+	t.Setenv("LLGO_WASI_THREADS", "1")
+	conf := Config{Goos: "wasip1", Goarch: "wasm", Tags: "llgo_wasm_gc"}
+	if _, err := configureWasmGC(&conf, &crosscompile.Export{}); err == nil {
+		t.Fatal("expected llgo_wasm_gc with WASI threads to fail")
+	}
+}
+
+func TestConfigureWasmGCLeavesWASIThreadsDisabled(t *testing.T) {
+	t.Setenv("LLGO_WASI_THREADS", "1")
+	conf := Config{Goos: "wasip1", Goarch: "wasm"}
+	enabled, err := configureWasmGC(&conf, &crosscompile.Export{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enabled || hasBuildTag(conf.Tags, "llgo_wasm_gc") {
+		t.Fatalf("threaded WASI selected wasm GC: enabled=%v tags=%q", enabled, conf.Tags)
 	}
 }
 
@@ -126,7 +209,7 @@ func TestWasmRuntimeAvoidsNativeHostDependencies(t *testing.T) {
 			ctx := gobuild.Default
 			ctx.GOOS = goos
 			ctx.GOARCH = "wasm"
-			ctx.BuildTags = []string{"llgo", "nogc"}
+			ctx.BuildTags = []string{"llgo", "nogc", "llgo_wasm_gc"}
 			pkg, err := ctx.ImportDir(runtimeDir, 0)
 			if err != nil {
 				t.Fatal(err)
@@ -153,8 +236,9 @@ func TestWasmRuntimeAvoidsNativeHostDependencies(t *testing.T) {
 			}
 
 			for _, name := range []string{
-				"mfinal_nogc.go",
+				"mfinal_wasm.go",
 				"runtime_baremetal.go",
+				"runtime_gc_nonmoving.go",
 				"signal_baremetal_llgo.go",
 				"time_wasm_llgo.go",
 				"unwind_wasm_llgo.go",
@@ -834,6 +918,17 @@ func TestApplyBuildModeCompileFlags(t *testing.T) {
 	}
 
 	applyBuildModeCompileFlags(BuildModeCShared, nil)
+}
+
+func TestWASIThreadsAreOptIn(t *testing.T) {
+	t.Setenv(llgoWasiThreads, "")
+	if IsWasiThreadsEnabled() {
+		t.Fatal("WASI threads are enabled by default")
+	}
+	t.Setenv(llgoWasiThreads, "1")
+	if !IsWasiThreadsEnabled() {
+		t.Fatal("WASI threads opt-in was ignored")
+	}
 }
 
 func TestCHeaderPackagesExcludesStandardRuntime(t *testing.T) {

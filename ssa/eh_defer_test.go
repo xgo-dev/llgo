@@ -40,6 +40,31 @@ func TestExplicitDeferStackIR(t *testing.T) {
 	if !strings.Contains(ir, "sigsetjmp") && !strings.Contains(ir, "setjmp") {
 		t.Fatalf("expected explicit defer stack setup in IR, got:\n%s", ir)
 	}
+	if strings.Contains(ir, "SetDeferGCRoot") {
+		t.Fatalf("disabled root publication changed defer setup:\n%s", ir)
+	}
+}
+
+func TestDeferCapturesGCRootChain(t *testing.T) {
+	prog := ssatest.NewProgram(t, nil)
+	prog.EnableGCRoots(true)
+	pkg := prog.NewPackage("foo", "foo")
+
+	callee := pkg.NewFunc("callee", ssa.NoArgsNoRet, ssa.InGo)
+	cb := callee.MakeBody(1)
+	cb.Return()
+	cb.EndBuild()
+
+	fn := pkg.NewFunc("main", ssa.NoArgsNoRet, ssa.InGo)
+	b := fn.MakeBody(1)
+	fn.SetRecover(fn.MakeBlock())
+	b.Defer(ssa.DeferAlways, callee.Expr, ssa.Builder.Call)
+	b.Return()
+	b.EndBuild()
+
+	if ir := pkg.Module().String(); !strings.Contains(ir, "SetDeferGCRoot") {
+		t.Fatalf("root-enabled defer did not capture its root chain:\n%s", ir)
+	}
 }
 
 func TestExplicitDeferStackFallbackAndNilBuiltin(t *testing.T) {
@@ -154,5 +179,33 @@ func TestConditionalDeferIR(t *testing.T) {
 	ir := pkg.Module().String()
 	if !strings.Contains(ir, "or i64") || !strings.Contains(ir, "and i64") {
 		t.Fatalf("expected conditional defer bitmask operations in IR, got:\n%s", ir)
+	}
+}
+
+func TestWasmRunDefersUsesStaticDispatch(t *testing.T) {
+	prog := ssatest.NewProgram(t, nil)
+	prog.Target().GOOS = "js"
+	prog.Target().GOARCH = "wasm"
+	pkg := prog.NewPackage("foo", "foo")
+
+	callee := pkg.NewFunc("callee", ssa.NoArgsNoRet, ssa.InGo)
+	cb := callee.MakeBody(1)
+	cb.Return()
+	cb.EndBuild()
+
+	fn := pkg.NewFunc("main", ssa.NoArgsNoRet, ssa.InGo)
+	b := fn.MakeBody(1)
+	fn.SetRecover(fn.MakeBlock())
+	b.Defer(ssa.DeferAlways, callee.Expr, ssa.Builder.Call)
+	b.RunDefers()
+	b.Return()
+	b.EndBuild()
+
+	ir := pkg.Module().String()
+	if !strings.Contains(ir, "switch i64") {
+		t.Fatalf("expected wasm RunDefers selector dispatch in IR, got:\n%s", ir)
+	}
+	if got := strings.Count(ir, "indirectbr"); got != 1 {
+		t.Fatalf("got %d indirect branches, want only the rethrow dispatch:\n%s", got, ir)
 	}
 }

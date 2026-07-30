@@ -254,6 +254,8 @@ type aFunction struct {
 	fakeUses   []llvm.Value
 	fakeUseSet map[llvm.Value]struct{}
 
+	gcRootPrev Expr
+
 	diFunc DIFunction
 }
 
@@ -456,6 +458,14 @@ func (p Function) Inline(inline inlineAttr) {
 func (p Function) DisableTailCalls() {
 	attr := p.Pkg.mod.Context().CreateStringAttribute("disable-tail-calls", "true")
 	p.impl.AddFunctionAttr(attr)
+}
+
+// SetWasmImport maps an external function declaration to a WebAssembly host
+// import.
+func (p Function) SetWasmImport(module, name string) {
+	ctx := p.Pkg.mod.Context()
+	p.impl.AddFunctionAttr(ctx.CreateStringAttribute("wasm-import-module", module))
+	p.impl.AddFunctionAttr(ctx.CreateStringAttribute("wasm-import-name", name))
 }
 
 // -----------------------------------------------------------------------------

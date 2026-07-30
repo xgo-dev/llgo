@@ -241,6 +241,8 @@ type aProgram struct {
 
 	enableGoGlobalDCE     bool
 	enableDeadcodeDrop    bool
+	enableGCRoots         bool
+	enableSafepoints      bool
 	disableBoundsChecks   bool
 	pthreadStackSize      uint64
 	enableLTOPluginMarker bool
