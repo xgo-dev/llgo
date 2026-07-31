@@ -76,7 +76,7 @@ func TestBackendProgramTemplateOptionalState(t *testing.T) {
 	duplicate := &packages.Package{PkgPath: "example.com/duplicate", Types: validTypes}
 	missingTypes := &packages.Package{PkgPath: "example.com/missing"}
 	illTyped := &packages.Package{PkgPath: "example.com/ill", Types: types.NewPackage("example.com/ill", "ill"), IllTyped: true}
-	inputs := collectBackendProgramInputs([]*packages.Package{missingTypes, illTyped, valid, duplicate})
+	inputs := collectBackendProgramInputs(prog, []*packages.Package{missingTypes, illTyped, valid, duplicate})
 	if len(inputs) != 1 || inputs[0].pkg != validTypes {
 		t.Fatalf("backend inputs = %#v, want one deduplicated package", inputs)
 	}
