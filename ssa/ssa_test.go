@@ -69,6 +69,13 @@ func TestProgramRewriteMainPrefixIsInvocationScoped(t *testing.T) {
 	if got := FullName(pkg, "F"); got != "example.com/rewrite.F" {
 		t.Fatalf("default FullName changed to %q", got)
 	}
+	if got := FuncName(pkg, "F", nil, false); got != "example.com/rewrite.F" {
+		t.Fatalf("default FuncName changed to %q", got)
+	}
+	var nilProgram Program
+	if got := nilProgram.TypeArgs([]types.Type{types.Typ[types.Int]}); got != "[int]" {
+		t.Fatalf("nil Program TypeArgs = %q, want [int]", got)
+	}
 }
 
 func TestEndDefer(t *testing.T) {

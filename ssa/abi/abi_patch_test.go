@@ -28,6 +28,10 @@ func testGenericNamed(pkg *types.Package, name string) *types.Named {
 }
 
 func TestTypeArgs_FormatsCommonKinds(t *testing.T) {
+	if got := typeArgString(types.Typ[types.Int]); got != "int" {
+		t.Fatalf("typeArgString(int) = %q, want int", got)
+	}
+
 	local := testLocalNamed()
 	pkg := types.NewPackage("example.com/p", "p")
 	aliasObj := types.NewTypeName(token.NoPos, pkg, "AliasInt", nil)
