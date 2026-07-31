@@ -121,6 +121,9 @@ func TestParseCgoDeclWithCommandEnvPkgConfig(t *testing.T) {
 	dir := t.TempDir()
 	tool := filepath.Join(dir, "pkg-config")
 	script := `#!/bin/sh
+if [ "$PKG_CONFIG_TEST_FAIL" = "$1" ]; then
+	exit 1
+fi
 if [ "$1" = "--libs" ]; then
 	printf '%s\n' '-L/request/lib -lrequest'
 	exit 0
@@ -144,6 +147,15 @@ printf '%s\n' '-I/request/include -DREQUEST="request value"'
 	}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("parseCgoDeclWithCommandEnv(pkg-config) = %#v, want %#v", got, want)
+	}
+
+	for _, arg := range []string{"--libs", "--cflags"} {
+		t.Run("failed "+arg, func(t *testing.T) {
+			commands := commandEnv{dir: dir, environ: []string{"PATH=" + dir, "PKG_CONFIG_TEST_FAIL=" + arg}}
+			if _, err := parseCgoDeclWithCommandEnv(commands, "#cgo pkg-config: request"); err == nil || !strings.Contains(err.Error(), "pkg-config") {
+				t.Fatalf("parseCgoDeclWithCommandEnv(pkg-config) error = %v, want pkg-config failure", err)
+			}
+		})
 	}
 }
 
