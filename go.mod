@@ -26,3 +26,5 @@ require (
 )
 
 replace github.com/goplus/llgo/runtime => ./runtime
+
+replace github.com/xgo-dev/llvm => github.com/zhouguangyuan0718/go-llvm v0.0.0-20260731084524-d8f8a2aa851e

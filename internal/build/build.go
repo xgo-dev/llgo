@@ -626,6 +626,7 @@ func Build(inv Invocation) ([]Package, error) {
 		cTransformer:    cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, conf.AbiMode, cabiOptimize),
 	}
 	defer ctx.closePackageMetas()
+	defer ctx.closePackageArchiveBuffers()
 
 	// default runtime globals must be registered before packages are built
 	addGlobalString(conf, "runtime.defaultGOROOT="+runtime.GOROOT(), nil)
@@ -962,12 +963,13 @@ func (c *context) hasAltPkg(pkgPath string) bool {
 	return hasAltPkgForTarget(c.buildConf, pkgPath)
 }
 
-// normalizeToArchive creates an archive from object files and sets ArchiveFile.
+// normalizeToArchive creates an archive from file and memory members and sets ArchiveFile.
 // This ensures the link step always consumes .a archives regardless of cache state.
 func normalizeToArchive(ctx *context, aPkg *aPackage, verbose bool) error {
-	if len(aPkg.ObjFiles) == 0 {
+	if len(aPkg.ObjFiles) == 0 && len(aPkg.ObjBuffers) == 0 {
 		return nil
 	}
+	defer aPkg.disposeArchiveBuffers()
 
 	archiveFile, err := os.CreateTemp("", "pkg-*.a")
 	if err != nil {
@@ -976,7 +978,7 @@ func normalizeToArchive(ctx *context, aPkg *aPackage, verbose bool) error {
 	archiveFile.Close()
 	archivePath := archiveFile.Name()
 
-	if err := ctx.createArchiveFile(archivePath, aPkg.ObjFiles, verbose); err != nil {
+	if err := ctx.createPackageArchiveFile(archivePath, aPkg, verbose); err != nil {
 		os.Remove(archivePath)
 		return fmt.Errorf("create archive for %s: %w", aPkg.PkgPath, err)
 	}
@@ -1896,11 +1898,15 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 		aPkg.LinkArgs = append(aPkg.LinkArgs, goCgoLinkArgs(ctx.buildConf.Goos, aPkg.AltPkg.Syntax)...)
 	}
 	if pkg.ExportFile != "" {
-		exportFile, err := exportObject(ctx, pkg.PkgPath, pkg.ExportFile, ret)
+		exportFile, exportBuffer, err := exportPackageObject(ctx, pkg.PkgPath, pkg.ExportFile, ret)
 		if err != nil {
 			return fmt.Errorf("export object of %v failed: %v", pkgPath, err)
 		}
-		aPkg.ObjFiles = append(aPkg.ObjFiles, exportFile)
+		if exportFile != "" {
+			aPkg.ObjFiles = append(aPkg.ObjFiles, exportFile)
+		} else {
+			aPkg.ObjBuffers = append(aPkg.ObjBuffers, exportBuffer)
+		}
 		if debugBuild || verbose {
 			fmt.Fprintf(os.Stderr, "==> Export %s: %s\n", aPkg.PkgPath, pkg.ExportFile)
 		}
@@ -1919,6 +1925,28 @@ func exportObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Pac
 		return exportObjectInMemory(ctx, pkgPath, exportFile, pkg)
 	}
 	return exportObjectWithClang(ctx, pkgPath, exportFile, []byte(pkg.String()))
+}
+
+func exportPackageObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Package) (string, packageArchiveBuffer, error) {
+	if !useInMemoryNativeCodegen(ctx) {
+		path, err := exportObjectWithClang(ctx, pkgPath, exportFile, []byte(pkg.String()))
+		return path, packageArchiveBuffer{}, err
+	}
+	if ctx.buildConf.CheckLLFiles || ctx.buildConf.GenLL {
+		if err := dumpLLVMIRIfNeeded(ctx, pkgPath, exportFile, pkg.String()); err != nil {
+			return "", packageArchiveBuffer{}, err
+		}
+	}
+	buf, kind, err := emitObjectToMemoryBuffer(ctx, pkg)
+	if err != nil {
+		return "", packageArchiveBuffer{}, err
+	}
+	name := filepath.Base(exportFile) + ".o"
+	if ctx.shouldPrintCommands(false) {
+		fmt.Fprintf(os.Stderr, "# compiling archive member %s for pkg: %s\n", name, pkgPath)
+		fmt.Fprintf(os.Stderr, "# using %s\n", kind)
+	}
+	return "", packageArchiveBuffer{name: name, buffer: buf}, nil
 }
 
 func useInMemoryNativeCodegen(ctx *context) bool {
@@ -1977,6 +2005,15 @@ func exportObjectInMemory(ctx *context, pkgPath string, exportFile string, pkg l
 			return "", err
 		}
 	}
+	buf, kind, err := emitObjectToMemoryBuffer(ctx, pkg)
+	if err != nil {
+		return "", err
+	}
+	defer buf.Dispose()
+	return writeObjectBufferToFile(ctx, pkgPath, exportFile, buf, kind)
+}
+
+func emitObjectToMemoryBuffer(ctx *context, pkg llssa.Package) (gllvm.MemoryBuffer, string, error) {
 	ltoMode := ctx.buildConf.ltoMode()
 	var (
 		buf  gllvm.MemoryBuffer
@@ -1995,11 +2032,13 @@ func exportObjectInMemory(ctx *context, pkgPath string, exportFile string, pkg l
 	default:
 		buf, err = ctx.prog.TargetMachine().EmitToMemoryBuffer(pkg.Module(), gllvm.ObjectFile)
 		if err != nil {
-			return "", err
+			return gllvm.MemoryBuffer{}, "", err
 		}
 	}
-	defer buf.Dispose()
+	return buf, kind, nil
+}
 
+func writeObjectBufferToFile(ctx *context, pkgPath, exportFile string, buf gllvm.MemoryBuffer, kind string) (string, error) {
 	base := filepath.Base(exportFile)
 	objFile, err := os.CreateTemp("", base+"-*.o")
 	if err != nil {
@@ -2172,8 +2211,9 @@ type aPackage struct {
 	NeedPyInit bool
 
 	LinkArgs    []string
-	ObjFiles    []string // object files: .o or .ll (output of compiler, input to archiver)
-	ArchiveFile string   // archive file: .a (output of archiver, used for linking)
+	ObjFiles    []string               // file-backed archive members: .o or .ll
+	ObjBuffers  []packageArchiveBuffer // LLVM-produced in-memory archive members
+	ArchiveFile string                 // archive file: .a (output of archiver, used for linking)
 	Meta        *meta.PackageMeta
 	rewriteVars map[string]string
 
