@@ -266,12 +266,16 @@ func (ctx *context) packageUsesPlan9Asm(pkg *aPackage) (bool, error) {
 }
 
 func (ctx *context) executeIsolatedPackage(spec packageBuildSpec, verbose bool) error {
+	return ctx.executeIsolatedPackageWithCallerTracking(spec, ctx.callerTracking, verbose)
+}
+
+func (ctx *context) executeIsolatedPackageWithCallerTracking(spec packageBuildSpec, tracking *cl.CallerTracking, verbose bool) error {
 	session, err := ctx.backend.newSession()
 	if err != nil {
 		return fmt.Errorf("create backend session for %s: %w", spec.pkg.PkgPath, err)
 	}
 	defer session.prog.Dispose()
-	task := ctx.newBackendTask(session)
+	task := ctx.newBackendTaskWithCallerTracking(session, tracking)
 	defer func() { spec.pkg.LPkg = nil }()
 
 	if err := buildPkg(task, spec.pkg, verbose); err != nil {
@@ -310,13 +314,17 @@ func preparePackageSFiles(ctx *context, pkg *aPackage) error {
 }
 
 func (ctx *context) newBackendTask(session backendSession) *context {
+	return ctx.newBackendTaskWithCallerTracking(session, ctx.callerTracking)
+}
+
+func (ctx *context) newBackendTaskWithCallerTracking(session backendSession, tracking *cl.CallerTracking) *context {
 	return &context{
 		conf:            ctx.conf,
 		progSSA:         ctx.progSSA,
 		prog:            session.prog,
 		dedup:           ctx.dedup,
 		patches:         ctx.patches,
-		callerTracking:  ctx.callerTracking,
+		callerTracking:  tracking,
 		initial:         ctx.initial,
 		pkgs:            ctx.pkgs,
 		pkgByID:         ctx.pkgByID,
@@ -336,6 +344,12 @@ func (ctx *context) newBackendTask(session backendSession) *context {
 		plan9asmPkgs:    ctx.plan9asmPkgs,
 		plan9asmSigs:    make(map[string]map[string]struct{}),
 	}
+}
+
+func (ctx *context) executeCoordinatorPackageWithCallerTracking(spec packageBuildSpec, tracking *cl.CallerTracking, verbose bool) error {
+	task := *ctx
+	task.callerTracking = tracking
+	return executePackageBuild(&task, spec, verbose)
 }
 
 func packageBuildResultFor(spec packageBuildSpec) packageBuildResult {

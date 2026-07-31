@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/goplus/llgo/cl"
@@ -520,7 +521,62 @@ func TestRun(t *testing.T) {
 
 func TestTest(t *testing.T) {
 	// FIXME(zzy): with builtin package test in a llgo test ./... will cause duplicate symbol error
-	mockRun([]string{"../../cl/_testgo/runtest"}, &Config{Mode: ModeTest})
+	var mu sync.Mutex
+	var events []struct {
+		stage packagePipelineStage
+		start bool
+	}
+	active, maximum := 0, 0
+	exclusive, exclusiveViolation := false, false
+	conf := &Config{Mode: ModeTest, BuildParallelism: 2}
+	conf.packagePipelineObserver = func(stage packagePipelineStage, _ string, start bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, struct {
+			stage packagePipelineStage
+			start bool
+		}{stage: stage, start: start})
+		if start {
+			if exclusive || (stage == pipelineStagePatchedBackend && active != 0) {
+				exclusiveViolation = true
+			}
+			active++
+			maximum = max(maximum, active)
+			if stage == pipelineStagePatchedBackend {
+				exclusive = true
+			}
+		} else {
+			active--
+			if stage == pipelineStagePatchedBackend {
+				exclusive = false
+			}
+		}
+	}
+	mockRun([]string{"../../cl/_testgo/runtest"}, conf)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if active != 0 {
+		t.Fatalf("pipeline left %d active tasks", active)
+	}
+	if maximum > conf.BuildParallelism {
+		t.Fatalf("pipeline active tasks = %d, want at most %d", maximum, conf.BuildParallelism)
+	}
+	if exclusiveViolation {
+		t.Fatal("patched backend overlapped another pipeline task")
+	}
+	firstBackend, lastSSA := -1, -1
+	for i, event := range events {
+		if event.stage != pipelineStageSSA && event.start && firstBackend < 0 {
+			firstBackend = i
+		}
+		if event.stage == pipelineStageSSA && !event.start {
+			lastSSA = i
+		}
+	}
+	if firstBackend < 0 || lastSSA < 0 || firstBackend >= lastSSA {
+		t.Fatalf("pipeline did not overlap SSA and backend work: first backend event %d, last SSA event %d", firstBackend, lastSSA)
+	}
 }
 
 func TestExtest(t *testing.T) {

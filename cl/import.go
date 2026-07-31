@@ -136,7 +136,12 @@ func (p *context) importPkg(pkg *types.Package, i *pkgInfo) {
 	kind, _ := pkgKindByScope(scope)
 	if kind == PkgNormal {
 		if patch, ok := p.patches[pkgPath]; ok {
-			pkg = patch.Alt.Pkg
+			switch {
+			case patch.Types != nil:
+				pkg = patch.Types
+			case patch.Alt != nil:
+				pkg = patch.Alt.Pkg
+			}
 			scope = pkg.Scope()
 			if kind, _ = pkgKindByScope(scope); kind != PkgNormal {
 				goto start
@@ -218,6 +223,27 @@ func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
 			}
 		}
 	}
+}
+
+func collectPatchSkips(files []*ast.File) (map[string]none, bool) {
+	ctx := &context{skips: make(map[string]none)}
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok {
+				continue
+			}
+			switch gen.Tok {
+			case token.CONST, token.TYPE:
+				ctx.collectSkipNamesByDoc(gen.Doc)
+			case token.IMPORT:
+				if gen.Doc != nil && len(gen.Doc.List) != 0 {
+					ctx.collectSkipNames(gen.Doc.List[len(gen.Doc.List)-1].Text)
+				}
+			}
+		}
+	}
+	return ctx.skips, ctx.skipall
 }
 
 // Collect skip names and skip other annotations, such as go: and llgo:

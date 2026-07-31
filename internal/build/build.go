@@ -208,6 +208,10 @@ type Config struct {
 	GlobalRewrites map[string]Rewrites
 	ModuleHook     ModuleHook
 	Overlay        map[string][]byte
+
+	// packagePipelineObserver is used by focused scheduler tests. It must be
+	// safe for concurrent calls.
+	packagePipelineObserver func(packagePipelineStage, string, bool)
 }
 
 type Rewrites map[string]string
@@ -653,12 +657,17 @@ func Build(inv Invocation) ([]Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	buildSSAPkgs(ctx, append(append(altEntries, pkgEntries...), depEntries...))
-	ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
-
 	allPkgs := append([]*aPackage{}, pkgs...)
 	allPkgs = append(allPkgs, depPkgs...)
-	allPkgs, err = buildAllPkgs(ctx, allPkgs, verbose)
+	ssaEntries := append(append(altEntries, pkgEntries...), depEntries...)
+	if ctx.canUseIsolatedBackend() {
+		preparePackagePatches(ctx, allPkgs)
+		allPkgs, err = buildPackagePipeline(ctx, ssaEntries, allPkgs, verbose)
+	} else {
+		buildSSAPkgs(ctx, ssaEntries)
+		ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
+		allPkgs, err = buildAllPkgs(ctx, allPkgs, verbose)
+	}
 	if err != nil {
 		return nil, err
 	}
