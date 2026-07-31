@@ -19,6 +19,7 @@ package build
 import (
 	"fmt"
 	"go/ast"
+	"os"
 
 	"github.com/goplus/llgo/cl"
 	"golang.org/x/tools/go/ssa"
@@ -52,6 +53,8 @@ const (
 	pipelineStageBackend
 	pipelineStagePatchedBackend
 )
+
+const maxConcurrentPackagePublishes = 2
 
 type packagePipelineSSA struct {
 	entry         ssaBuildEntry
@@ -360,15 +363,56 @@ func buildPackagePipeline(ctx *context, entries []ssaBuildEntry, pkgs []*aPackag
 			return nil, err
 		}
 	}
-	for _, task := range tasks {
-		if !task.executed {
-			continue
-		}
-		if _, err := finalizePackageBuild(ctx, task.spec, verbose); err != nil {
-			return nil, err
-		}
+	if err := publishPackagePipelineTasks(ctx, tasks, verbose); err != nil {
+		return nil, err
 	}
 	return pkgs, nil
+}
+
+type packagePublishFunc func(*context, packageBuildSpec, bool) (packageBuildResult, error, error)
+
+func publishPackagePipelineTasks(ctx *context, tasks []*packagePipelineTask, verbose bool) error {
+	return publishPackagePipelineTasksWith(ctx, tasks, verbose, publishPackageBuild)
+}
+
+func publishPackagePipelineTasksWith(
+	ctx *context,
+	tasks []*packagePipelineTask,
+	verbose bool,
+	publish packagePublishFunc,
+) error {
+	indexes := make([]int, 0, len(tasks))
+	for i, task := range tasks {
+		if task.executed {
+			indexes = append(indexes, i)
+		}
+	}
+	if len(indexes) == 0 {
+		return nil
+	}
+
+	// cacheManager is lazily initialized. Resolve it on the coordinator before
+	// cacheable packages enter concurrent publication.
+	if cacheEnabled() {
+		ctx.ensureCacheManager()
+	}
+
+	warnings := make([]error, len(tasks))
+	// Archive creation is I/O-heavy. More than two concurrent archivers caused
+	// severe filesystem contention in large builds, so keep publication within
+	// both the build-wide -p setting and this tighter I/O bound.
+	parallelism := min(ctx.buildConf.parallelism(), maxConcurrentPackagePublishes)
+	err := runBoundedPackageJobs(parallelism, indexes, func(index int) error {
+		_, warning, err := publish(ctx, tasks[index].spec, verbose)
+		warnings[index] = warning
+		return err
+	})
+	for _, index := range indexes {
+		if warning := warnings[index]; warning != nil && verbose {
+			fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", tasks[index].spec.pkg.PkgPath, warning)
+		}
+	}
+	return err
 }
 
 func observePackagePipeline(ctx *context, stage packagePipelineStage, pkgPath string, start bool) {

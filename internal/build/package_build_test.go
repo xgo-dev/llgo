@@ -18,6 +18,7 @@ package build
 
 import (
 	"errors"
+	"fmt"
 	"go/types"
 	"os"
 	"path/filepath"
@@ -307,6 +308,99 @@ func TestRunBoundedPackageJobsConvertsPanicToError(t *testing.T) {
 		t.Fatalf("error = %v, want recovered panic %v", err, boom)
 	}
 }
+
+func TestPublishPackagePipelineTasksUsesBoundedWorkers(t *testing.T) {
+	t.Setenv(llgoBuildCache, "off")
+	tasks := make([]*packagePipelineTask, 5)
+	for i := range tasks {
+		pkgPath := fmt.Sprintf("example.com/p%d", i)
+		tasks[i] = &packagePipelineTask{
+			executed: i != 4,
+			spec: packageBuildSpec{pkg: &aPackage{Package: &packages.Package{
+				ID:      pkgPath,
+				PkgPath: pkgPath,
+				Name:    fmt.Sprintf("p%d", i),
+			}}},
+		}
+	}
+
+	started := make(chan struct{}, len(tasks))
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	var active atomic.Int32
+	var maximum atomic.Int32
+	go func() {
+		ctx := &context{buildConf: &Config{BuildParallelism: 8}}
+		done <- publishPackagePipelineTasksWith(ctx, tasks, false, func(_ *context, _ packageBuildSpec, _ bool) (packageBuildResult, error, error) {
+			current := active.Add(1)
+			for {
+				old := maximum.Load()
+				if current <= old || maximum.CompareAndSwap(old, current) {
+					break
+				}
+			}
+			started <- struct{}{}
+			<-release
+			active.Add(-1)
+			return packageBuildResult{}, nil, nil
+		})
+	}()
+
+	for range maxConcurrentPackagePublishes {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			close(release)
+			t.Fatal("publication workers did not start concurrently")
+		}
+	}
+	if got := maximum.Load(); got != maxConcurrentPackagePublishes {
+		close(release)
+		t.Fatalf("maximum concurrent publications = %d, want %d", got, maxConcurrentPackagePublishes)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if got := len(started); got != 2 {
+		t.Fatalf("remaining executed publications = %d, want 2", got)
+	}
+}
+
+func TestPublishPackagePipelineTasksReturnsFirstOrderedError(t *testing.T) {
+	t.Setenv(llgoBuildCache, "off")
+	first := errors.New("first")
+	second := errors.New("second")
+	tasks := make([]*packagePipelineTask, 3)
+	for i := range tasks {
+		tasks[i] = &packagePipelineTask{
+			executed: true,
+			spec: packageBuildSpec{pkg: &aPackage{Package: &packages.Package{
+				PkgPath: fmt.Sprintf("example.com/p%d", i),
+			}}},
+		}
+	}
+	err := publishPackagePipelineTasksWith(
+		&context{buildConf: &Config{BuildParallelism: 3}},
+		tasks,
+		false,
+		func(_ *context, spec packageBuildSpec, _ bool) (packageBuildResult, error, error) {
+			switch spec.pkg.PkgPath {
+			case "example.com/p0":
+				time.Sleep(10 * time.Millisecond)
+				return packageBuildResult{}, nil, first
+			case "example.com/p1":
+				return packageBuildResult{}, nil, second
+			default:
+				return packageBuildResult{}, nil, nil
+			}
+		},
+	)
+	if !errors.Is(err, first) {
+		t.Fatalf("error = %v, want first submitted error", err)
+	}
+}
+
 func TestPackageBuildStageEmptyAndSkippedInputs(t *testing.T) {
 	runtimePkg := &aPackage{Package: &packages.Package{PkgPath: env.LLGoRuntimePkg}}
 	normalPkg := &aPackage{Package: &packages.Package{PkgPath: "example.com/normal"}}

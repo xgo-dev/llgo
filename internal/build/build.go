@@ -671,6 +671,7 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 	}
 	defer ctx.closePackageMetas()
 	defer ctx.closePackageArchiveBuffers()
+	defer ctx.cleanupTemporaryArchives()
 
 	// default runtime globals must be registered before packages are built
 	addGlobalString(conf, "runtime.defaultGOROOT="+runtime.GOROOT(), nil)
@@ -980,6 +981,26 @@ func (c *context) closePackageMetas() {
 	}
 }
 
+// cleanupTemporaryArchives removes package archives that were created outside
+// the persistent cache. Darwin debug maps refer back to linked input archives,
+// so preserve those inputs when DWARF remains enabled for later dsymutil use.
+// Cached archives remain available for future builds in either case.
+func (c *context) cleanupTemporaryArchives() {
+	if c.buildConf != nil &&
+		c.buildConf.Goos == "darwin" &&
+		shouldEmitDebugInfo(c.buildConf, &c.crossCompile) {
+		return
+	}
+	for _, pkg := range c.pkgs {
+		if pkg == nil || !pkg.ArchiveTemp || pkg.ArchiveFile == "" {
+			continue
+		}
+		_ = os.Remove(pkg.ArchiveFile)
+		pkg.ArchiveFile = ""
+		pkg.ArchiveTemp = false
+	}
+}
+
 type backendProgramInput struct {
 	fset        *token.FileSet
 	pkg         *types.Package
@@ -1176,11 +1197,26 @@ func normalizeToArchive(ctx *context, aPkg *aPackage, verbose bool) error {
 	}
 	defer aPkg.disposeArchiveBuffers()
 
+	if paths, ok := ctx.packageCachePathsForWrite(aPkg); ok {
+		if err := ctx.createPackageArchiveFile(paths.Archive, aPkg, verbose); err == nil {
+			aPkg.ObjFiles = nil
+			aPkg.ArchiveFile = paths.Archive
+			aPkg.ArchiveTemp = false
+			return nil
+		}
+	}
+
+	// Cache writes are best effort. If the direct cache destination is not
+	// writable, keep the build usable through a temporary archive and let
+	// saveToCache report the cache failure as a non-fatal warning.
 	archiveFile, err := os.CreateTemp("", "pkg-*.a")
 	if err != nil {
 		return fmt.Errorf("create temp archive: %w", err)
 	}
-	archiveFile.Close()
+	if err := archiveFile.Close(); err != nil {
+		os.Remove(archiveFile.Name())
+		return fmt.Errorf("close temp archive: %w", err)
+	}
 	archivePath := archiveFile.Name()
 
 	if err := ctx.createPackageArchiveFile(archivePath, aPkg, verbose); err != nil {
@@ -1190,6 +1226,7 @@ func normalizeToArchive(ctx *context, aPkg *aPackage, verbose bool) error {
 
 	aPkg.ObjFiles = nil
 	aPkg.ArchiveFile = archivePath
+	aPkg.ArchiveTemp = true
 	return nil
 }
 
@@ -1306,15 +1343,29 @@ func executePackageBuild(ctx *context, spec packageBuildSpec, verbose bool) erro
 // finalizePackageBuild publishes the archive and cache metadata. Cache hits
 // already carry both and therefore require no publication.
 func finalizePackageBuild(ctx *context, spec packageBuildSpec, verbose bool) (packageBuildResult, error) {
+	result, warning, err := publishPackageBuild(ctx, spec, verbose)
+	if warning != nil && verbose {
+		fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", spec.pkg.PkgPath, warning)
+	}
+	return result, err
+}
+
+// publishPackageBuild creates the package archive and commits its cache
+// metadata. Cache failures remain non-fatal and are returned separately so a
+// parallel caller can report warnings in deterministic package order.
+func publishPackageBuild(ctx *context, spec packageBuildSpec, verbose bool) (result packageBuildResult, warning, err error) {
 	aPkg := spec.pkg
-	traceSpan := ctx.buildTrace.startPackageCoordinator("publish", aPkg.PkgPath)
+	traceSpan := ctx.buildTrace.startWorker("publish", aPkg.PkgPath)
 	traceSpan.setArg("cache_hit", aPkg.CacheHit)
-	defer traceSpan.done()
+	defer func() {
+		traceSpan.setArg("cache_warning", warning != nil)
+		traceSpan.done()
+	}()
 	if aPkg.CacheHit {
-		return packageBuildResultFor(spec), nil
+		return packageBuildResultFor(spec), nil, nil
 	}
 	if err := normalizeToArchive(ctx, aPkg, verbose); err != nil {
-		return packageBuildResultFor(spec), err
+		return packageBuildResultFor(spec), nil, err
 	}
 	if spec.kind == cl.PkgLinkExtern {
 		appendExternalLinkArgs(ctx, aPkg, spec.kindParam)
@@ -1327,10 +1378,10 @@ func finalizePackageBuild(ctx *context, spec packageBuildSpec, verbose bool) (pa
 		aPkg.Summary.NeedRuntime = aPkg.NeedRt
 		aPkg.Summary.NeedPyInit = aPkg.NeedPyInit
 	}
-	if err := ctx.saveToCache(aPkg); err != nil && verbose {
-		fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", aPkg.PkgPath, err)
+	if err := ctx.saveToCache(aPkg); err != nil {
+		return packageBuildResultFor(spec), err, nil
 	}
-	return packageBuildResultFor(spec), nil
+	return packageBuildResultFor(spec), nil, nil
 }
 
 func appendExternalLinkArgs(ctx *context, aPkg *aPackage, spec string) {
@@ -2450,6 +2501,7 @@ type aPackage struct {
 	ObjFiles    []string               // file-backed archive members: .o or .ll
 	ObjBuffers  []packageArchiveBuffer // LLVM-produced in-memory archive members
 	ArchiveFile string                 // archive file: .a (output of archiver, used for linking)
+	ArchiveTemp bool                   // ArchiveFile is a build-owned temporary file
 	Meta        *meta.PackageMeta
 	rewriteVars map[string]string
 

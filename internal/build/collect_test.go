@@ -33,6 +33,7 @@ import (
 	"github.com/goplus/llgo/internal/meta"
 	"github.com/goplus/llgo/internal/packages"
 	llssa "github.com/goplus/llgo/ssa"
+	gllvm "github.com/xgo-dev/llvm"
 	gopackages "golang.org/x/tools/go/packages"
 )
 
@@ -917,6 +918,198 @@ func TestSaveToCache_MainPackage(t *testing.T) {
 	paths := cm.PackagePaths("arm64-apple-darwin", "main", "abc123")
 	if _, err := os.Stat(paths.Manifest); !os.IsNotExist(err) {
 		t.Error("main package should not be cached")
+	}
+}
+
+func TestNormalizeToArchivePublishesDirectlyToCache(t *testing.T) {
+	t.Setenv(llgoBuildCache, "1")
+	td := t.TempDir()
+	oldFunc := cacheRootFunc
+	cacheRootFunc = func() string { return td }
+	defer func() { cacheRootFunc = oldFunc }()
+
+	llvmCtx := gllvm.NewContext()
+	defer llvmCtx.Dispose()
+	mod := llvmCtx.NewModule("direct-cache")
+	defer mod.Dispose()
+	mod.SetTarget("x86_64-unknown-linux-gnu")
+	gllvm.AddFunction(mod, "direct_cache_symbol", gllvm.FunctionType(llvmCtx.Int32Type(), nil, false))
+	objBuffer := gllvm.WriteBitcodeToMemoryBuffer(mod)
+
+	pkg := &aPackage{
+		Package: &packages.Package{
+			ID:      "example.com/direct",
+			PkgPath: "example.com/direct",
+			Name:    "direct",
+		},
+		Fingerprint: "direct123",
+		Manifest: func() string {
+			m := newManifestBuilder()
+			m.env.Goos = "linux"
+			m.pkg.PkgPath = "example.com/direct"
+			return m.Build()
+		}(),
+		ObjBuffers: []packageArchiveBuffer{{
+			name:   "member.bc",
+			buffer: objBuffer,
+		}},
+	}
+	defer pkg.disposeArchiveBuffers()
+	ctx := &context{
+		buildConf: &Config{Goos: "linux", Goarch: "amd64"},
+		crossCompile: crosscompile.Export{
+			LLVMTarget: "x86_64-unknown-linux-gnu",
+		},
+		pkgs: map[*packages.Package]Package{pkg.Package: pkg},
+	}
+	paths := ctx.ensureCacheManager().PackagePaths(ctx.targetTriple(), pkg.PkgPath, pkg.Fingerprint)
+
+	if err := normalizeToArchive(ctx, pkg, false); err != nil {
+		t.Fatal(err)
+	}
+	if pkg.ArchiveFile != paths.Archive {
+		t.Fatalf("ArchiveFile = %q, want cache path %q", pkg.ArchiveFile, paths.Archive)
+	}
+	if pkg.ArchiveTemp {
+		t.Fatal("cache archive was marked temporary")
+	}
+	if _, err := os.Stat(paths.Archive); err != nil {
+		t.Fatalf("cache archive does not exist: %v", err)
+	}
+	if err := ctx.saveToCache(pkg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(paths.Manifest); err != nil {
+		t.Fatalf("cache manifest does not exist: %v", err)
+	}
+
+	ctx.cleanupTemporaryArchives()
+	if _, err := os.Stat(paths.Archive); err != nil {
+		t.Fatalf("cleanup removed persistent cache archive: %v", err)
+	}
+}
+
+func TestNormalizeToArchiveFallsBackWhenCacheArchiveIsUnwritable(t *testing.T) {
+	t.Setenv(llgoBuildCache, "1")
+	td := t.TempDir()
+	oldFunc := cacheRootFunc
+	cacheRootFunc = func() string { return td }
+	defer func() { cacheRootFunc = oldFunc }()
+
+	objFile := filepath.Join(td, "member.o")
+	if err := os.WriteFile(objFile, []byte("object payload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pkg := &aPackage{
+		Package: &packages.Package{
+			ID:      "example.com/fallback",
+			PkgPath: "example.com/fallback",
+			Name:    "fallback",
+		},
+		Fingerprint: "fallback123",
+		Manifest: func() string {
+			m := newManifestBuilder()
+			m.env.Goos = "linux"
+			m.pkg.PkgPath = "example.com/fallback"
+			return m.Build()
+		}(),
+		ObjFiles: []string{objFile},
+	}
+	ctx := &context{
+		buildConf: &Config{Goos: "linux", Goarch: "amd64"},
+		pkgs:      map[*packages.Package]Package{pkg.Package: pkg},
+	}
+	paths := ctx.ensureCacheManager().PackagePaths(ctx.targetTriple(), pkg.PkgPath, pkg.Fingerprint)
+	if err := os.MkdirAll(paths.Archive, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := normalizeToArchive(ctx, pkg, false); err != nil {
+		t.Fatalf("cache destination failure became fatal: %v", err)
+	}
+	if pkg.ArchiveFile == paths.Archive || !pkg.ArchiveTemp {
+		t.Fatalf("fallback archive state = %q, %v", pkg.ArchiveFile, pkg.ArchiveTemp)
+	}
+	if _, err := os.Stat(pkg.ArchiveFile); err != nil {
+		t.Fatalf("fallback archive does not exist: %v", err)
+	}
+	if err := ctx.saveToCache(pkg); err == nil {
+		t.Fatal("saveToCache unexpectedly succeeded with an invalid cache destination")
+	}
+
+	archivePath := pkg.ArchiveFile
+	ctx.cleanupTemporaryArchives()
+	if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
+		t.Fatalf("fallback archive was not removed: %v", err)
+	}
+}
+
+func TestNormalizeToArchiveCleansTemporaryArchive(t *testing.T) {
+	t.Setenv(llgoBuildCache, "off")
+	td := t.TempDir()
+	objFile := filepath.Join(td, "member.o")
+	if err := os.WriteFile(objFile, []byte("object payload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pkg := &aPackage{
+		Package: &packages.Package{
+			ID:      "example.com/temporary",
+			PkgPath: "example.com/temporary",
+			Name:    "temporary",
+		},
+		ObjFiles: []string{objFile},
+	}
+	ctx := &context{
+		buildConf: &Config{Goos: "linux", Goarch: "amd64"},
+		pkgs:      map[*packages.Package]Package{pkg.Package: pkg},
+	}
+
+	if err := normalizeToArchive(ctx, pkg, false); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := pkg.ArchiveFile
+	if archivePath == "" || !pkg.ArchiveTemp {
+		t.Fatalf("temporary archive state = %q, %v", archivePath, pkg.ArchiveTemp)
+	}
+	if _, err := os.Stat(archivePath); err != nil {
+		t.Fatalf("temporary archive does not exist: %v", err)
+	}
+
+	ctx.cleanupTemporaryArchives()
+	if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
+		t.Fatalf("temporary archive was not removed: %v", err)
+	}
+	if pkg.ArchiveFile != "" || pkg.ArchiveTemp {
+		t.Fatalf("temporary archive state was not cleared: %q, %v", pkg.ArchiveFile, pkg.ArchiveTemp)
+	}
+}
+
+func TestCleanupTemporaryArchivesPreservesDarwinDWARFInputs(t *testing.T) {
+	archivePath := filepath.Join(t.TempDir(), "main.a")
+	if err := os.WriteFile(archivePath, []byte("archive"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pkg := &aPackage{
+		Package:     &packages.Package{PkgPath: "main", Name: "main"},
+		ArchiveFile: archivePath,
+		ArchiveTemp: true,
+	}
+	ctx := &context{
+		buildConf: &Config{
+			Mode:        ModeBuild,
+			Goos:        "darwin",
+			Goarch:      "arm64",
+			LinkOptions: LinkOptions{DWARF: DWARFPreserve},
+		},
+		pkgs: map[*packages.Package]Package{pkg.Package: pkg},
+	}
+
+	ctx.cleanupTemporaryArchives()
+	if _, err := os.Stat(archivePath); err != nil {
+		t.Fatalf("Darwin DWARF input archive was removed: %v", err)
+	}
+	if pkg.ArchiveFile != archivePath || !pkg.ArchiveTemp {
+		t.Fatalf("Darwin DWARF input state changed: %q, %v", pkg.ArchiveFile, pkg.ArchiveTemp)
 	}
 }
 

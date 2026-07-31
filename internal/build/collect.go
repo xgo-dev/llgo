@@ -465,24 +465,12 @@ type cacheArchiveMetadata struct {
 
 // saveToCache saves a built package to cache.
 func (c *context) saveToCache(pkg *aPackage) error {
-	if !cacheEnabled() {
-		return nil
-	}
-	if c.packageCacheDisabled(pkg.ID) {
-		return nil
-	}
-
-	if pkg.Fingerprint == "" || pkg.Manifest == "" {
-		return nil
-	}
-
-	// Don't cache main packages
-	if pkg.Name == "main" {
+	paths, ok := c.packageCachePathsForWrite(pkg)
+	if !ok {
 		return nil
 	}
 
 	cm := c.ensureCacheManager()
-	paths := cm.PackagePaths(c.targetTriple(), pkg.PkgPath, pkg.Fingerprint)
 
 	// Ensure directory exists
 	if err := cm.EnsureDir(paths); err != nil {
@@ -491,7 +479,11 @@ func (c *context) saveToCache(pkg *aPackage) error {
 
 	// If ArchiveFile is already set (from normalizeToArchive), copy it to cache
 	if pkg.ArchiveFile != "" {
-		if err := copyFileAtomic(pkg.ArchiveFile, paths.Archive); err != nil {
+		if filepath.Clean(pkg.ArchiveFile) != filepath.Clean(paths.Archive) {
+			if err := copyFileAtomic(pkg.ArchiveFile, paths.Archive); err != nil {
+				return err
+			}
+		} else if _, err := os.Stat(paths.Archive); err != nil {
 			return err
 		}
 	} else if len(pkg.ObjFiles) > 0 {
@@ -542,6 +534,20 @@ func (c *context) saveToCache(pkg *aPackage) error {
 	}
 
 	return nil
+}
+
+// packageCachePathsForWrite resolves the stable cache destination for pkg.
+// Concurrent publishers must initialize cacheManager on the coordinator
+// before entering this helper.
+func (c *context) packageCachePathsForWrite(pkg *aPackage) (cachePaths, bool) {
+	if !cacheEnabled() || c.packageCacheDisabled(pkg.ID) {
+		return cachePaths{}, false
+	}
+	if pkg.Fingerprint == "" || pkg.Manifest == "" || pkg.Name == "main" {
+		return cachePaths{}, false
+	}
+	cm := c.ensureCacheManager()
+	return cm.PackagePaths(c.targetTriple(), pkg.PkgPath, pkg.Fingerprint), true
 }
 
 // copyFileAtomic copies src to dst using a temp file for atomicity.

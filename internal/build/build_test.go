@@ -564,13 +564,14 @@ func TestTest(t *testing.T) {
 	if err := json.Unmarshal(traceData, &traceEvents); err != nil {
 		t.Fatalf("invalid build trace: %v", err)
 	}
-	var tracedSSA, tracedBackend bool
+	var tracedSSA, tracedBackend, tracedPublish bool
 	for _, event := range traceEvents {
 		tracedSSA = tracedSSA || event.Phase == "X" && event.Category == "llgo.ssa"
 		tracedBackend = tracedBackend || event.Phase == "X" && strings.HasPrefix(event.Category, "llgo.backend")
+		tracedPublish = tracedPublish || event.Phase == "X" && event.Category == "llgo.publish"
 	}
-	if !tracedSSA || !tracedBackend {
-		t.Fatalf("build trace stages: ssa=%v backend=%v", tracedSSA, tracedBackend)
+	if !tracedSSA || !tracedBackend || !tracedPublish {
+		t.Fatalf("build trace stages: ssa=%v backend=%v publish=%v", tracedSSA, tracedBackend, tracedPublish)
 	}
 
 	mu.Lock()
