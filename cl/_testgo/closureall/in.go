@@ -21,6 +21,11 @@ type CCallback func(c.Int) c.Int
 
 type Fn func(int) int
 
+//go:noinline
+func callCInt(fn func(c.Int) c.Int, x c.Int) c.Int {
+	return fn(x)
+}
+
 type S struct {
 	v int
 }
@@ -81,8 +86,7 @@ func main() {
 
 	cs := cSqrt
 	_ = cs(4)
-	ca := cAbs
-	_ = ca(-3)
+	_ = callCInt(cAbs, -3)
 
 	cb := CCallback(func(x c.Int) c.Int { return x + 1 })
 	_ = callCallback(cb, 7)
@@ -103,6 +107,15 @@ func makeWithFree(base int) Fn {
 // CHECK-NEXT:   %3 = load %main.S, ptr %0, align 8
 // CHECK-NEXT:   %4 = call i64 @main.S.Inc(%main.S %3, i64 %1)
 // CHECK-NEXT:   ret i64 %4
+// CHECK-NEXT: }
+
+// CHECK-LABEL: define i32 @main.callCInt({ ptr, ptr } %0, i32 %1){{.*}} {
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %2 = extractvalue { ptr, ptr } %0, 1
+// CHECK-NEXT:   %3 = extractvalue { ptr, ptr } %0, 0
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %3)
+// CHECK-NEXT:   %4 = call i32 %__llgo_funcval_code(ptr {{(nest|swiftself)}} %2, i32 %1)
+// CHECK-NEXT:   ret i32 %4
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i32 @main.callCallback(ptr %0, i32 %1){{.*}} {
@@ -136,10 +149,12 @@ func makeWithFree(base int) Fn {
 // CHECK-NEXT:   %1 = call %main.Fn @main.makeWithFree(i64 3)
 // CHECK-NEXT:   %2 = extractvalue %main.Fn %0, 1
 // CHECK-NEXT:   %3 = extractvalue %main.Fn %0, 0
-// CHECK-NEXT:   %4 = call i64 %3(ptr %2, i64 1)
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %3)
+// CHECK-NEXT:   %4 = call i64 %__llgo_funcval_code(ptr {{(nest|swiftself)}} %2, i64 1)
 // CHECK-NEXT:   %5 = extractvalue %main.Fn %1, 1
 // CHECK-NEXT:   %6 = extractvalue %main.Fn %1, 0
-// CHECK-NEXT:   %7 = call i64 %6(ptr %5, i64 2)
+// CHECK-NEXT:   %__llgo_funcval_code1 = call ptr asm "", "=r,0"(ptr %6)
+// CHECK-NEXT:   %7 = call i64 %__llgo_funcval_code1(ptr {{(nest|swiftself)}} %5, i64 2)
 // CHECK-NEXT:   %8 = call i64 @main.globalAdd(i64 1, i64 2)
 // CHECK-NEXT:   %9 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
 // CHECK-NEXT:   %10 = getelementptr inbounds %main.S, ptr %9, i32 0, i32 0
@@ -150,7 +165,8 @@ func makeWithFree(base int) Fn {
 // CHECK-NEXT:   %13 = insertvalue { ptr, ptr } { ptr @"main.(*S).Add$bound", ptr undef }, ptr %11, 1
 // CHECK-NEXT:   %14 = extractvalue { ptr, ptr } %13, 1
 // CHECK-NEXT:   %15 = extractvalue { ptr, ptr } %13, 0
-// CHECK-NEXT:   %16 = call i64 %15(ptr %14, i64 7)
+// CHECK-NEXT:   %__llgo_funcval_code2 = call ptr asm "", "=r,0"(ptr %15)
+// CHECK-NEXT:   %16 = call i64 %__llgo_funcval_code2(ptr {{(nest|swiftself)}} %14, i64 7)
 // CHECK-NEXT:   %17 = call i64 @"main.(*S).Add$thunk"(ptr %9, i64 8)
 // CHECK-NEXT:   %18 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.S")
 // CHECK-NEXT:   %19 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %18, 0
@@ -166,9 +182,10 @@ func makeWithFree(base int) Fn {
 // CHECK-NEXT:   %25 = insertvalue { ptr, ptr } { ptr @"main.interface{Add(int) int}.Add$bound", ptr undef }, ptr %23, 1
 // CHECK-NEXT:   %26 = extractvalue { ptr, ptr } %25, 1
 // CHECK-NEXT:   %27 = extractvalue { ptr, ptr } %25, 0
-// CHECK-NEXT:   %28 = call i64 %27(ptr %26, i64 9)
-// CHECK-NEXT:   %29 = call double {{.*}}sqrt{{.*}}(double 4.000000e+00)
-// CHECK-NEXT:   %30 = call i32 @abs(i32 -3)
+// CHECK-NEXT:   %__llgo_funcval_code3 = call ptr asm "", "=r,0"(ptr %27)
+// CHECK-NEXT:   %28 = call i64 %__llgo_funcval_code3(ptr {{(nest|swiftself)}} %26, i64 9)
+// CHECK-NEXT:   %29 = call double @sqrt(double 4.000000e+00)
+// CHECK-NEXT:   %30 = call i32 @main.callCInt({ ptr, ptr } { ptr @abs, ptr null }, i32 -3)
 // CHECK-NEXT:   %31 = call i32 @main.callCallback(ptr @"main.main$1", i32 7)
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
@@ -185,7 +202,7 @@ func makeWithFree(base int) Fn {
 
 // CHECK-LABEL: define %main.Fn @main.makeNoFree(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   ret %main.Fn { ptr @"__llgo_stub.main.makeNoFree$1", ptr null }
+// CHECK-NEXT:   ret %main.Fn { ptr @"main.makeNoFree$1", ptr null }
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"main.makeNoFree$1"(i64 %0){{.*}} {
@@ -208,7 +225,7 @@ func makeWithFree(base int) Fn {
 // CHECK-NEXT:   ret %main.Fn %6
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define i64 @"main.makeWithFree$1"(ptr %0, i64 %1){{.*}} {
+// CHECK-LABEL: define i64 @"main.makeWithFree$1"(ptr {{(nest|swiftself)}} %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
 // CHECK-NEXT:   %3 = extractvalue { ptr } %2, 0
@@ -217,7 +234,7 @@ func makeWithFree(base int) Fn {
 // CHECK-NEXT:   ret i64 %5
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define i64 @"main.(*S).Add$bound"(ptr %0, i64 %1){{.*}} {
+// CHECK-LABEL: define i64 @"main.(*S).Add$bound"(ptr {{(nest|swiftself)}} %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
 // CHECK-NEXT:   %3 = extractvalue { ptr } %2, 0
@@ -231,37 +248,7 @@ func makeWithFree(base int) Fn {
 // CHECK-NEXT:   ret i64 %2
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal64"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal64"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i64 @__llgo_stub.main.S.Inc(ptr %0, %main.S %1, i64 %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i64 @main.S.Inc(%main.S %1, i64 %2)
-// CHECK-NEXT:   ret i64 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i64 @"__llgo_stub.main.(*S).Add"(ptr %0, ptr %1, i64 %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i64 @"main.(*S).Add"(ptr %1, i64 %2)
-// CHECK-NEXT:   ret i64 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i64 @"__llgo_stub.main.(*S).Inc"(ptr %0, ptr %1, i64 %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i64 @"main.(*S).Inc"(ptr %1, i64 %2)
-// CHECK-NEXT:   ret i64 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.interequal"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.interequal"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define i64 @"main.interface{Add(int) int}.Add$bound"(ptr %0, i64 %1){{.*}} {
+// CHECK-LABEL: define i64 @"main.interface{Add(int) int}.Add$bound"(ptr {{(nest|swiftself)}} %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = load { %"{{.*}}/runtime/internal/runtime.iface" }, ptr %0, align 8
 // CHECK-NEXT:   %3 = extractvalue { %"{{.*}}/runtime/internal/runtime.iface" } %2, 0
@@ -275,10 +262,4 @@ func makeWithFree(base int) Fn {
 // CHECK-NEXT:   %11 = extractvalue { ptr, ptr } %9, 0
 // CHECK-NEXT:   %12 = call i64 %11(ptr %10, i64 %1)
 // CHECK-NEXT:   ret i64 %12
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i64 @"__llgo_stub.main.makeNoFree$1"(ptr %0, i64 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = tail call i64 @"main.makeNoFree$1"(i64 %1)
-// CHECK-NEXT:   ret i64 %2
 // CHECK-NEXT: }

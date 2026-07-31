@@ -8,14 +8,14 @@ type IO[T any] func() Future[T]
 
 // CHECK-LABEL: define %"main.IO[error]" @main.WriteFile(%"{{.*}}/runtime/internal/runtime.String" %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   ret %"main.IO[error]" { ptr @"__llgo_stub.main.WriteFile$1", ptr null }
+// CHECK-NEXT:   ret %"main.IO[error]" { ptr @"main.WriteFile$1", ptr null }
 // CHECK-NEXT: }
 
 func WriteFile(fileName string) IO[error] {
 
 	// CHECK-LABEL: define %"main.Future[error]" @"main.WriteFile$1"(){{.*}} {
 	// CHECK-NEXT: _llgo_0:
-	// CHECK-NEXT:   ret %"main.Future[error]" { ptr @"__llgo_stub.main.WriteFile$1$1", ptr null }
+	// CHECK-NEXT:   ret %"main.Future[error]" { ptr @"main.WriteFile$1$1", ptr null }
 	// CHECK-NEXT: }
 
 	return func() Future[error] {
@@ -46,7 +46,7 @@ func WriteFile(fileName string) IO[error] {
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:  %0 = call [0 x i8] @"main.RunIO{{\[\[0\]byte\]}}"(%"main.IO{{\[\[0\]byte\]}}" { ptr @"__llgo_stub.main.main$1", ptr null })
+// CHECK-NEXT:  %0 = call [0 x i8] @"main.RunIO{{\[\[0\]byte\]}}"(%"main.IO{{\[\[0\]byte\]}}" { ptr @"main.main$1", ptr null })
 // CHECK-NEXT:  ret void
 // CHECK-NEXT: }
 
@@ -54,7 +54,7 @@ func main() {
 
 	// CHECK-LABEL: define %"main.Future{{\[\[0\]byte\]}}" @"main.main$1"()
 	// CHECK-NEXT: _llgo_0:
-	// CHECK-NEXT:   ret %"main.Future{{\[\[0\]byte\]}}" { ptr @"__llgo_stub.main.main$1$1", ptr null }
+	// CHECK-NEXT:   ret %"main.Future{{\[\[0\]byte\]}}" { ptr @"main.main$1$1", ptr null }
 	// CHECK-NEXT: }
 
 	RunIO[Void](func() Future[Void] {
@@ -74,39 +74,17 @@ func RunIO[T any](call IO[T]) T {
 	return call()()
 }
 
-// CHECK-LABEL: define linkonce %"main.Future[error]" @"__llgo_stub.main.WriteFile$1"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = tail call %"main.Future[error]" @"main.WriteFile$1"()
-// CHECK-NEXT:   ret %"main.Future[error]" %1
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.iface" @"__llgo_stub.main.WriteFile$1$1"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = tail call %"{{.*}}/runtime/internal/runtime.iface" @"main.WriteFile$1$1"()
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %1
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce %"main.Future{{\[\[0\]byte\]}}" @"__llgo_stub.main.main$1"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = tail call %"main.Future{{\[\[0\]byte\]}}" @"main.main$1"()
-// CHECK-NEXT:   ret %"main.Future{{\[\[0\]byte\]}}" %1
-// CHECK-NEXT: }
-
 // CHECK-LABEL: define linkonce [0 x i8] @"main.RunIO{{\[\[0\]byte\]}}"(%"main.IO{{\[\[0\]byte\]}}" %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = extractvalue %"main.IO{{\[\[0\]byte\]}}" %0, 1
 // CHECK-NEXT:   %2 = extractvalue %"main.IO{{\[\[0\]byte\]}}" %0, 0
-// CHECK-NEXT:   %3 = call %"main.Future{{\[\[0\]byte\]}}" %2(ptr %1)
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %2)
+// CHECK-NEXT:   %3 = call %"main.Future{{\[\[0\]byte\]}}" %__llgo_funcval_code(ptr {{(nest|swiftself)}} %1)
 // CHECK-NEXT:   %4 = extractvalue %"main.Future{{\[\[0\]byte\]}}" %3, 1
 // CHECK-NEXT:   %5 = extractvalue %"main.Future{{\[\[0\]byte\]}}" %3, 0
 // CHECK-NEXT:   %6 = icmp eq ptr %5, null
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %6)
-// CHECK-NEXT:   %7 = call [0 x i8] %5(ptr %4)
+// CHECK-NEXT:   %__llgo_funcval_code1 = call ptr asm "", "=r,0"(ptr %5)
+// CHECK-NEXT:   %7 = call [0 x i8] %__llgo_funcval_code1(ptr {{(nest|swiftself)}} %4)
 // CHECK-NEXT:   ret [0 x i8] %7
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce [0 x i8] @"__llgo_stub.main.main$1$1"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = tail call [0 x i8] @"main.main$1$1"()
-// CHECK-NEXT:   ret [0 x i8] %1
 // CHECK-NEXT: }

@@ -484,12 +484,13 @@ func (b Builder) saveDeferArgs(self *aDefer, kind DoAction, id Expr, fn Expr, ar
 }
 
 func (b Builder) saveDeferArgsTo(argsPtr Expr, kind DoAction, id Expr, fn Expr, args []Expr) Type {
-	if kind != DeferInLoop && fn != Nil && fn.kind != vkClosure && len(args) == 0 {
+	saveFn := fn != Nil && (fn.kind == vkClosure || fn.kind == vkIfaceMethod)
+	if kind != DeferInLoop && fn != Nil && !saveFn && len(args) == 0 {
 		return nil
 	}
 	prog := b.Prog
 	offset := 2 // prev + id
-	if fn != Nil && fn.kind == vkClosure {
+	if saveFn {
 		offset++
 	}
 	typs := make([]Type, len(args)+offset)
@@ -498,7 +499,7 @@ func (b Builder) saveDeferArgsTo(argsPtr Expr, kind DoAction, id Expr, fn Expr, 
 	flds[0] = b.Load(argsPtr).impl
 	typs[1] = prog.Uintptr()
 	flds[1] = id.impl
-	if fn != Nil && fn.kind == vkClosure {
+	if saveFn {
 		typs[2] = fn.Type
 		flds[2] = fn.impl
 	}
@@ -529,8 +530,16 @@ func (b Builder) callDefer(self *aDefer, typ Type, buildCall func(Builder, Expr,
 		data := b.Load(Expr{ptr.impl, prog.Pointer(typ)})
 		offset := 2 // prev + id
 		b.Store(self.argsPtr, Expr{b.getField(data, 0).impl, prog.VoidPtr()})
-		if fn != Nil && fn.kind == vkClosure {
+		if fn != Nil && (fn.kind == vkClosure || fn.kind == vkIfaceMethod) {
+			savedType := fn.Type
 			fn = b.getField(data, 2)
+			// A transient interface invocation has the same physical pair as a
+			// funcval, so aggregate field reconstruction sees vkClosure. Keep
+			// its call semantics: the saved data word is an ordinary receiver,
+			// not a hidden closure environment.
+			if savedType.kind == vkIfaceMethod {
+				fn.Type = savedType
+			}
 			offset++
 		}
 		for i := 0; i < len(args); i++ {

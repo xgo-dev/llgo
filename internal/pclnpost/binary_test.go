@@ -34,17 +34,13 @@ func TestCanonicalOwner(t *testing.T) {
 	}{
 		// ELF: symbol names are source-level.
 		{elf, "example.com/p.F", true},
-		{elf, "__llgo_stub.example.com/p.F", true},
 		{elf, "example.com/p.G", false},
 		// Mach-O: one C-mangling underscore, and debug/macho's suffix-shared
 		// string table can surface one underscore more or less.
 		{macho, "_example.com/p.F", true},
 		{macho, "example.com/p.F", true},
-		{macho, "___llgo_stub.example.com/p.F", true},
-		{macho, "__llgo_stub.example.com/p.F", true},
 		// An LTO inline copy: record id names F but the owner is the host.
 		{macho, "_example.com/p.Host", false},
-		{macho, "___llgo_stub.example.com/p.G", false},
 	}
 	for _, c := range cases {
 		if got := canonicalOwner(c.info, c.name, id); got != c.want {

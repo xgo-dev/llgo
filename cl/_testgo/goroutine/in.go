@@ -16,7 +16,7 @@ func main() {
 		// CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$2", ptr {{%[0-9]+}}, i64 0)
 		// CHECK: call void @"{{.*}}PrintString"(%"{{.*}}String" { ptr @2, i64 1 })
 		// CHECK: ret void
-		// CHECK-LABEL: define void @"main.main$1"(ptr %0, %"{{.*}}String" %1){{.*}} {
+		// CHECK-LABEL: define void @"main.main$1"(ptr {{(nest|swiftself)}} %0, %"{{.*}}String" %1){{.*}} {
 		// CHECK-NEXT: _llgo_0:
 		// CHECK-NEXT:   call void @"{{.*}}PrintString"(%"{{.*}}String" %1)
 		// CHECK-NEXT:   call void @"{{.*}}PrintByte"(i8 10)
@@ -49,5 +49,6 @@ func main() {
 // CHECK-NEXT:   call void @"{{.*}}FreeRoot"(ptr %0)
 // CHECK-NEXT:   %4 = extractvalue { ptr, ptr } %2, 1
 // CHECK-NEXT:   %5 = extractvalue { ptr, ptr } %2, 0
-// CHECK-NEXT:   call void %5(ptr %4, %"{{.*}}String" %3)
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %5)
+// CHECK-NEXT:   call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %4, %"{{.*}}String" %3)
 // CHECK-NEXT:   ret ptr null

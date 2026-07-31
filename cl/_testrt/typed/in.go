@@ -114,9 +114,3 @@ func main() {
 	ar, ok := a.(A)
 	println(ar[0], ar[1], ok)
 }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal64"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal64"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }

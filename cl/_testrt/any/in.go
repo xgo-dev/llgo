@@ -77,15 +77,3 @@ func main() {
 // CHECK-NEXT:   %4 = call i32 (ptr, ...) @printf(ptr @3, ptr %0, i64 %3)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal8"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal8"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal64"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal64"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }

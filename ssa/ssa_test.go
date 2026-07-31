@@ -965,9 +965,9 @@ func TestRecordMethodSlots(t *testing.T) {
 
 [MethodInfo]
 *_llgo_example.com/pkg.T:
-    0 M _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac example.com/pkg.(*T).M __llgo_stub.example.com/pkg.(*T).M
+    0 M _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac example.com/pkg.(*T).M example.com/pkg.(*T).M
 _llgo_example.com/pkg.T:
-    0 M _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac example.com/pkg.(*T).M __llgo_stub.example.com/pkg.T.M
+    0 M _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac example.com/pkg.(*T).M example.com/pkg.T.M
 
 `
 	if got := pm.String(); got != want {
@@ -998,6 +998,21 @@ pkg.named:
 `
 	if got := pm.String(); got != want {
 		t.Fatalf("metadata mismatch\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestReflectSliceAtDemandsSliceTypeInit(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	pkg := prog.NewPackage("pkg", "pkg")
+	sliceAt := pkg.NewFunc("reflect.SliceAt", NoArgsNoRet, InGo)
+	caller := pkg.NewFunc("pkg.callSliceAt", NoArgsNoRet, InGo)
+	b := caller.MakeBody(1)
+	b.Call(sliceAt.Expr)
+	b.Return()
+
+	if got := pkg.NeedAbiInit & ReflectSliceOf; got == 0 {
+		t.Fatal("reflect.SliceAt did not retain slice type-construction metadata")
 	}
 }
 
@@ -1214,14 +1229,8 @@ _llgo_0:
 define void @holder() #0 {
 _llgo_0:
   %0 = alloca { ptr, ptr }, align 8
-  store { ptr, ptr } { ptr @__llgo_stub.fn, ptr null }, ptr %0, align 8
+  store { ptr, ptr } { ptr @fn, ptr null }, ptr %0, align 8
   ret void
-}
-
-define linkonce i64 @__llgo_stub.fn(ptr %0, i64 %1) {
-_llgo_0:
-  %2 = tail call i64 @fn(i64 %1)
-  ret i64 %2
 }
 
 attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
@@ -1255,43 +1264,25 @@ func TestClosureFuncPtrValue(t *testing.T) {
 	hb.Store(ptr, fnPtr)
 	hb.Return()
 
-	wrapName := "__llgo_stub." + prog.abi.FuncName(sig)
-	wrapRef := wrapName
-	if strings.Contains(wrapName, "$") {
-		wrapRef = fmt.Sprintf("\"%s\"", wrapName)
-	}
-	expected := fmt.Sprintf(`; ModuleID = 'foo/bar'
+	expected := `; ModuleID = 'foo/bar'
 source_filename = "foo/bar"
 
 ; Function Attrs: null_pointer_is_valid
-define i64 @fn(i64 %%0) #0 {
+define i64 @fn(i64 %0) #0 {
 _llgo_0:
-  ret i64 %%0
+  ret i64 %0
 }
 
 ; Function Attrs: null_pointer_is_valid
 define void @holder() #0 {
 _llgo_0:
-  %%0 = alloca { ptr, ptr }, align 8
-  %%1 = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
-  store ptr @fn, ptr %%1, align 8
-  %%2 = insertvalue { ptr, ptr } { ptr @%s, ptr undef }, ptr %%1, 1
-  store { ptr, ptr } %%2, ptr %%0, align 8
+  %0 = alloca { ptr, ptr }, align 8
+  store { ptr, ptr } { ptr @fn, ptr null }, ptr %0, align 8
   ret void
 }
 
-define linkonce i64 @%s(ptr %%0, i64 %%1) {
-_llgo_0:
-  %%2 = load ptr, ptr %%0, align 8
-  %%3 = tail call i64 %%2(i64 %%1)
-  ret i64 %%3
-}
-
-; Function Attrs: null_pointer_is_valid
-declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64) #0
-
 attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
-`, wrapRef, wrapRef)
+`
 	assertPkg(t, pkg, expected)
 }
 
@@ -1432,7 +1423,8 @@ func TestConvertStringFromWideIntegers(t *testing.T) {
 }
 
 func TestCallClosureDynamic(t *testing.T) {
-	prog := NewProgram(nil)
+	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm"})
+	defer prog.Dispose()
 	pkg := prog.NewPackage("bar", "foo/bar")
 
 	params := types.NewTuple(types.NewVar(0, nil, "x", types.Typ[types.Int]))
@@ -1447,20 +1439,17 @@ func TestCallClosureDynamic(t *testing.T) {
 	b := caller.MakeBody(1)
 	b.Return(b.Call(caller.Param(0), caller.Param(1)))
 
-	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
-source_filename = "foo/bar"
-
-; Function Attrs: null_pointer_is_valid
-define i64 @caller({ ptr, ptr } %0, i64 %1) #0 {
-_llgo_0:
-  %2 = extractvalue { ptr, ptr } %0, 1
-  %3 = extractvalue { ptr, ptr } %0, 0
-  %4 = call i64 %3(ptr %2, i64 %1)
-  ret i64 %4
-}
-
-attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
-`)
+	ir := pkg.String()
+	for _, want := range []string{
+		"icmp ne ptr %2, null",
+		"call i32 %3(ptr ",
+		"call i32 %3(i32 %1)",
+		"phi i32",
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("dynamic closure call missing %q:\n%s", want, ir)
+		}
+	}
 }
 
 func TestMakeClosureWithCtx(t *testing.T) {
@@ -1475,13 +1464,13 @@ func TestMakeClosureWithCtx(t *testing.T) {
 	ctxFields := []*types.Var{types.NewField(0, nil, "x", types.Typ[types.Int], false)}
 	ctxStruct := types.NewStruct(ctxFields, nil)
 	ctxPtr := types.NewPointer(ctxStruct)
-	ctxParam := types.NewParam(0, nil, "__llgo_ctx", ctxPtr)
-	innerParams := types.NewTuple(ctxParam, types.NewVar(0, nil, "y", types.Typ[types.Int]))
+	ctxParam := types.NewParam(0, nil, "$env", ctxPtr)
+	innerParams := types.NewTuple(types.NewVar(0, nil, "y", types.Typ[types.Int]))
 	innerRets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int]))
 	innerSig := types.NewSignatureType(nil, nil, nil, innerParams, innerRets, false)
-	inner := pkg.NewFunc("inner", innerSig, InGo)
+	inner := pkg.NewEnvFunc("inner", innerSig, InGo, ctxParam, false)
 	ib := inner.MakeBody(1)
-	ib.Return(inner.Param(1))
+	ib.Return(inner.Param(0))
 
 	outerParams := types.NewTuple(types.NewVar(0, nil, "x", types.Typ[types.Int]))
 	outerRetSig := types.NewSignatureType(nil, nil, nil,
@@ -1494,30 +1483,20 @@ func TestMakeClosureWithCtx(t *testing.T) {
 	closure := ob.MakeClosure(inner.Expr, []Expr{outer.Param(0)})
 	ob.Return(closure)
 
-	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
-source_filename = "foo/bar"
-
-; Function Attrs: null_pointer_is_valid
-define i64 @inner(ptr %0, i64 %1) #0 {
-_llgo_0:
-  ret i64 %1
-}
-
-; Function Attrs: null_pointer_is_valid
-define { ptr, ptr } @outer(i64 %0) #0 {
-_llgo_0:
-  %1 = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
-  %2 = getelementptr inbounds { i64 }, ptr %1, i32 0, i32 0
-  store i64 %0, ptr %2, align 8
-  %3 = insertvalue { ptr, ptr } { ptr @inner, ptr undef }, ptr %1, 1
-  ret { ptr, ptr } %3
-}
-
-; Function Attrs: null_pointer_is_valid
-declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64) #0
-
-attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
-`)
+	if got := inner.Expr.raw.Type.(*types.Signature).Params().Len(); got != 1 {
+		t.Fatalf("semantic closure entry signature has %d params, want 1", got)
+	}
+	ir := pkg.String()
+	for _, want := range []string{
+		"define i64 @inner(ptr ",
+		"i64 %1)",
+		`call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)`,
+		"insertvalue { ptr, ptr } { ptr @inner, ptr undef }",
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("closure environment IR missing %q:\n%s", want, ir)
+		}
+	}
 }
 
 func TestCvtClosureDropsRecv(t *testing.T) {
@@ -1627,79 +1606,6 @@ declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.IfacePtrData"(%"gi
 
 attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
-}
-
-func TestClosureCtxHelpers(t *testing.T) {
-	if closureCtxParam(nil) != nil {
-		t.Fatal("closureCtxParam should be nil for nil signature")
-	}
-	params := types.NewTuple()
-	rets := types.NewTuple()
-	sig := types.NewSignatureType(nil, nil, nil, params, rets, false)
-	if closureCtxParam(sig) != nil {
-		t.Fatal("closureCtxParam should be nil for empty params")
-	}
-	if removeCtx(sig) != sig {
-		t.Fatal("removeCtx should return original signature when no ctx param")
-	}
-
-	badCtx := types.NewParam(0, nil, closureCtx, types.Typ[types.Int])
-	badSig := types.NewSignatureType(nil, nil, nil, types.NewTuple(badCtx), rets, false)
-	if closureCtxParam(badSig) != nil {
-		t.Fatal("closureCtxParam should ignore non-pointer ctx param")
-	}
-
-	ctxStruct := types.NewStruct([]*types.Var{
-		types.NewVar(0, nil, "v", types.Typ[types.Int]),
-	}, nil)
-	goodCtx := types.NewParam(0, nil, closureCtx, types.NewPointer(ctxStruct))
-	arg := types.NewParam(0, nil, "x", types.Typ[types.Int])
-	goodSig := types.NewSignatureType(nil, nil, nil, types.NewTuple(goodCtx, arg), rets, false)
-	if closureCtxParam(goodSig) == nil {
-		t.Fatal("closureCtxParam should detect ctx param")
-	}
-	noCtx := removeCtx(goodSig)
-	if noCtx.Params().Len() != 1 || noCtx.Params().At(0).Name() != "x" {
-		t.Fatalf("removeCtx result mismatch: params=%v", noCtx.Params().Len())
-	}
-}
-
-func TestClosureWrapHelpers(t *testing.T) {
-	prog := NewProgram(nil)
-	pkg := prog.NewPackage("bar", "foo/bar")
-	ctx := types.NewParam(0, nil, closureCtx, types.Typ[types.UnsafePointer])
-	sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(), types.NewTuple(), false)
-	sigCtx := FuncAddCtx(ctx, sig)
-	wrap := pkg.NewFunc("wrap", sigCtx, InGo)
-	b := wrap.MakeBody(1)
-	if args := closureWrapArgs(wrap); len(args) != 0 {
-		t.Fatalf("closureWrapArgs should return 0 args, got %d", len(args))
-	}
-	closureWrapReturn(b, sig, Expr{})
-}
-
-func TestClosureWrapCache(t *testing.T) {
-	prog := NewProgram(nil)
-	pkg := prog.NewPackage("bar", "foo/bar")
-
-	params := types.NewTuple(types.NewVar(0, nil, "x", types.Typ[types.Int]))
-	rets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int]))
-	sig := types.NewSignatureType(nil, nil, nil, params, rets, false)
-	fn := pkg.NewFunc("fn", sig, InGo)
-	b := fn.MakeBody(1)
-	b.Return(fn.Param(0))
-
-	w1 := pkg.closureWrapDecl(fn.Expr, sig)
-	w2 := pkg.closureWrapDecl(fn.Expr, sig)
-	if w1 != w2 {
-		t.Fatal("closureWrapDecl should reuse existing wrapper")
-	}
-
-	p1 := pkg.closureWrapPtr(sig)
-	p2 := pkg.closureWrapPtr(sig)
-	if p1 != p2 {
-		t.Fatal("closureWrapPtr should reuse existing wrapper")
-	}
 }
 
 func TestMakeInterfaceKinds(t *testing.T) {
@@ -1974,14 +1880,8 @@ func TestPackageCoverageHelpers(t *testing.T) {
 		t.Fatal("ExportFuncs should be empty for new package")
 	}
 
-	// cover closureStub default branch
 	fn := pkg.NewFunc("noop", NoArgsNoRet, InGo)
 	b := fn.MakeBody(1)
-	expr := prog.Val(1)
-	got, data := pkg.closureStub(b, expr, nil, vkString)
-	if got.impl.IsNil() || !data.impl.IsNull() {
-		t.Fatal("closureStub default branch should return expr and nil data")
-	}
 	b.Return()
 }
 

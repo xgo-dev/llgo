@@ -34,15 +34,7 @@ func externalELFFixture(t *testing.T, identitySize int) string {
 		// LTO-style copy of A's body record in B: AnalyzeExternal must drop it.
 		out = append(out, rec(addrOf("example.com/p.B")+8, idA)...)
 		out = append(out, rec(addrOf("example.com/p.B")+4, fnv64("example.com/p.B"))...)
-		// LTO may also copy a target's entry-section anchor into its closure
-		// stub. Final-owner classification must keep this only as a stub site.
-		return append(out, rec(addrOf("__llgo_stub.example.com/p.A")+8, idA)...)
-	}
-	stub := func(addrOf func(string) uint64) []byte {
-		out := fixtureStub(addrOf)
-		// Conversely, a stub-section anchor retained in its real target must
-		// remain an ordinary entry and must not create a duplicate stub site.
-		return append(out, rec(addrOf("example.com/p.B")+12, fnv64("example.com/p.B"))...)
+		return out
 	}
 	const imageBase = uint64(0x10000)
 	pcLine := rec(imageBase+8, 101)
@@ -50,7 +42,7 @@ func externalELFFixture(t *testing.T, identitySize int) string {
 	pcLine = append(pcLine, rec(imageBase+72, 202)...)
 	pcLine = append(pcLine, rec(imageBase+76, 101)...) // A's pcline copied into B
 	pcLine = append(pcLine, rec(0xdead0000, 303)...)   // outside text
-	path := buildELFExternal(t, fixtureFns(), entry, stub, 256, 64,
+	path := buildELFExternal(t, fixtureFns(), entry, 256,
 		pcLine, make([]byte, identitySize))
 	addELFLoadSegments(t, path, imageBase)
 	return path
@@ -99,13 +91,13 @@ func TestAnalyzeExternalELF(t *testing.T) {
 	if analysis.Format != ExternalFormatELF || analysis.PointerSize != 8 {
 		t.Fatalf("target = %s/%d", analysis.Format, analysis.PointerSize)
 	}
-	if analysis.ImageBase != 0x10000 || analysis.TextStart != 0x10000 || analysis.TextEnd != 0x10090 {
+	if analysis.ImageBase != 0x10000 || analysis.TextStart != 0x10000 || analysis.TextEnd != 0x10080 {
 		t.Fatalf("layout base=%#x text=[%#x,%#x)", analysis.ImageBase, analysis.TextStart, analysis.TextEnd)
 	}
 	if analysis.Identity != sha256.Sum256(before) {
 		t.Fatal("identity is not the pre-mutation binary SHA-256")
 	}
-	if analysis.EntryRecords != 4 || analysis.StubRecords != 2 || analysis.InlineCopies != 1 || analysis.NoSymbol != 0 {
+	if analysis.EntryRecords != 3 || analysis.InlineCopies != 1 || analysis.NoSymbol != 0 {
 		t.Fatalf("analysis stats: %+v", analysis)
 	}
 	wantEntries := []ExternalSite{
@@ -114,10 +106,6 @@ func TestAnalyzeExternalELF(t *testing.T) {
 	}
 	if !reflect.DeepEqual(analysis.EntrySites, wantEntries) {
 		t.Fatalf("entry sites = %#v, want %#v", analysis.EntrySites, wantEntries)
-	}
-	wantStubs := []ExternalSite{{PCOffset: 128, ID: fnv64("example.com/p.A")}}
-	if !reflect.DeepEqual(analysis.StubSites, wantStubs) {
-		t.Fatalf("stub sites = %#v, want %#v", analysis.StubSites, wantStubs)
 	}
 	wantPCLines := []ExternalSite{
 		{PCOffset: 8, ID: 101, OwnerSymbol: "example.com/p.A"},
@@ -140,21 +128,6 @@ func TestAnalyzeExternalELF(t *testing.T) {
 	}
 }
 
-func TestExternalOwnerSymbolNameNormalizesStubs(t *testing.T) {
-	for _, name := range []string{
-		"__llgo_stub.example.com/p.F",
-		"___llgo_stub.example.com/p.F",
-		"____llgo_stub.example.com/p.F",
-	} {
-		if got := externalOwnerSymbolName(name); got != "example.com/p.F" {
-			t.Fatalf("externalOwnerSymbolName(%q) = %q", name, got)
-		}
-	}
-	if got := externalOwnerSymbolName("__example.com/p.F"); got != "__example.com/p.F" {
-		t.Fatalf("ordinary owner was changed to %q", got)
-	}
-}
-
 func TestDetachExternalELF(t *testing.T) {
 	path := externalELFFixture(t, sha256.Size)
 	analysis, err := AnalyzeExternal(path)
@@ -170,7 +143,6 @@ func TestDetachExternalELF(t *testing.T) {
 	}
 	for name, section := range map[string][]byte{
 		"entry":  info.entrySec,
-		"stub":   info.stubSec,
 		"pcline": info.pcLineSec,
 	} {
 		if !bytes.Equal(section, make([]byte, len(section))) {
@@ -232,20 +204,16 @@ func TestAnalyzeAndDetachExternalMachO(t *testing.T) {
 	fns := []elfFn{
 		{name: "example.com/p.A", size: 0x10},
 		{name: "example.com/p.B", size: 0x40},
-		{name: "__llgo_stub.example.com/p.A", size: 0x80},
 	}
 	addr := func(off uint64) uint64 { return imageBase + 0x1000 + off }
 	idA, idB := fnv64("example.com/p.A"), fnv64("example.com/p.B")
 	entry := rec(addr(0x10)+4, idA)
 	entry = append(entry, rec(addr(0x40)+8, idA)...) // inline A copy in B
 	entry = append(entry, rec(addr(0x40)+4, idB)...)
-	entry = append(entry, rec(addr(0x80)+8, idA)...) // entry anchor copied into stub
-	stub := rec(addr(0x80)+4, idA)
-	stub = append(stub, rec(addr(0x40)+12, idB)...) // stub anchor retained in target
 	pcLine := rec(addr(0x10)+8, 11)
 	pcLine = append(pcLine, rec(addr(0x40)+8, 22)...)
 	pcLine = append(pcLine, rec(addr(0x40)+12, 11)...) // A's pcline copied into B
-	path := buildMachOExternal(t, entry, stub, pcLine, make([]byte, sha256.Size), fns)
+	path := buildMachOExternal(t, entry, pcLine, make([]byte, sha256.Size), fns)
 	pageStartOff := chainMachOSitePointers(t, path)
 
 	analysis, err := AnalyzeExternal(path)
@@ -261,10 +229,6 @@ func TestAnalyzeAndDetachExternalMachO(t *testing.T) {
 	}
 	if !reflect.DeepEqual(analysis.EntrySites, wantEntries) || analysis.InlineCopies != 1 {
 		t.Fatalf("entry analysis = %#v inline=%d", analysis.EntrySites, analysis.InlineCopies)
-	}
-	wantStubs := []ExternalSite{{PCOffset: 0x1080, ID: idA}}
-	if !reflect.DeepEqual(analysis.StubSites, wantStubs) {
-		t.Fatalf("stub analysis = %#v, want %#v", analysis.StubSites, wantStubs)
 	}
 	wantPCLines := []ExternalSite{
 		{PCOffset: 0x1018, ID: 11, OwnerSymbol: "example.com/p.A"},
@@ -283,7 +247,6 @@ func TestAnalyzeAndDetachExternalMachO(t *testing.T) {
 	}
 	for name, section := range map[string][]byte{
 		"entry":  info.entrySec,
-		"stub":   info.stubSec,
 		"pcline": info.pcLineSec,
 	} {
 		if !bytes.Equal(section, make([]byte, len(section))) {
@@ -341,7 +304,7 @@ func TestExternalSitesFilterSortAndDedupe(t *testing.T) {
 		textEnd:   0x1200,
 		syms: []textSym{
 			{addr: 0x1100, size: 0x40, name: "example.com/p.A"},
-			{addr: 0x1140, size: 0x40, name: "__llgo_stub.example.com/p.B"},
+			{addr: 0x1140, size: 0x40, name: "example.com/p.B"},
 		},
 	}
 	records := []siteRecord{
@@ -378,14 +341,6 @@ func TestExternalSitesFilterSortAndDedupe(t *testing.T) {
 		t.Fatalf("singleton pcline sites = %#v", got)
 	}
 
-	entries, stubs := partitionExternalEntries(info, []siteRecord{
-		{pc: 0x1100, symbolID: 1},
-		{pc: 0x1140, symbolID: 2},
-		{pc: 0x1190, symbolID: 3},
-	})
-	if len(entries) != 1 || len(stubs) != 1 {
-		t.Fatalf("partition = (%#v, %#v)", entries, stubs)
-	}
 }
 
 func TestAnalyzeExternalRejectsInvalidRecordStates(t *testing.T) {
@@ -394,13 +349,10 @@ func TestAnalyzeExternalRejectsInvalidRecordStates(t *testing.T) {
 	inlineOnly := func(addrOf func(string) uint64) []byte {
 		return rec(addrOf("example.com/p.A")+4, fnv64("example.com/p.B"))
 	}
-	validStub := func(addrOf func(string) uint64) []byte {
-		return rec(addrOf("__llgo_stub.example.com/p.A")+4, fnv64("example.com/p.A"))
-	}
 	tests := map[string]string{
-		"no records":   buildELFExternal(t, fixtureFns(), noRecords, noRecords, 0, 0, nil, make([]byte, sha256.Size)),
-		"no survivors": buildELFExternal(t, fixtureFns(), unknownRecord, noRecords, 0, 0, nil, make([]byte, sha256.Size)),
-		"stub only":    buildELFExternal(t, fixtureFns(), inlineOnly, validStub, 0, 0, nil, make([]byte, sha256.Size)),
+		"no records":   buildELFExternal(t, fixtureFns(), noRecords, 0, nil, make([]byte, sha256.Size)),
+		"no survivors": buildELFExternal(t, fixtureFns(), unknownRecord, 0, nil, make([]byte, sha256.Size)),
+		"inline only":  buildELFExternal(t, fixtureFns(), inlineOnly, 0, nil, make([]byte, sha256.Size)),
 	}
 	for name, path := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -457,7 +409,6 @@ func chainMachOSitePointers(t *testing.T, path string) uint64 {
 		data []byte
 	}{
 		{info.entryFileOff, info.entrySec},
-		{info.stubFileOff, info.stubSec},
 		{info.pcLineFileOff, info.pcLineSec},
 	} {
 		for off := 0; off+16 <= len(section.data); off += 16 {

@@ -86,6 +86,7 @@ func (l largeAggregateLowerer) transformCall(m llvm.Module, call llvm.Value) {
 	}
 	newCall := llvm.CreateCall(b, newType, call.CalledValue(), params)
 	newCall.AddCallSiteAttribute(1, sretAttribute(ctx, retType))
+	copyClosureEnvCallAttrs(call, newCall, 1)
 	if !reflectMethodByName.IsNil() {
 		newCall.AddCallSiteAttribute(-1, reflectMethodByName)
 	}
@@ -237,6 +238,17 @@ func (l largeAggregateLowerer) callMemcpy(ctx llvm.Context, b llvm.Builder, dst,
 
 func sretAttribute(ctx llvm.Context, typ llvm.Type) llvm.Attribute {
 	return ctx.CreateTypeAttribute(llvm.AttributeKindID("sret"), typ)
+}
+
+func copyClosureEnvCallAttrs(from, to llvm.Value, paramOffset int) {
+	for i := 0; i < from.CalledFunctionType().ParamTypesCount(); i++ {
+		for _, name := range []string{"nest", "swiftself"} {
+			kind := llvm.AttributeKindID(name)
+			if attr := from.GetCallSiteEnumAttribute(i+1, kind); !attr.IsNil() {
+				to.AddCallSiteAttribute(i+1+paramOffset, attr)
+			}
+		}
+	}
 }
 
 func hasSingleUse(value, user llvm.Value) bool {

@@ -705,14 +705,14 @@ func (b Builder) BinOp(op token.Token, x, y Expr) Expr {
 				ret.impl = llvm.CreateNot(b.impl, ret.impl)
 				return ret
 			}
-		case vkClosure:
+		case vkClosure, vkIfaceMethod:
 			x = b.Field(x, 0)
-			if y.kind == vkClosure {
+			if y.kind == vkClosure || y.kind == vkIfaceMethod {
 				y = b.Field(y, 0)
 			}
 			fallthrough
 		case vkFuncPtr, vkFuncDecl, vkChan, vkMap:
-			if y.kind == vkClosure {
+			if y.kind == vkClosure || y.kind == vkIfaceMethod {
 				y = b.Field(y, 0)
 			}
 			switch op {
@@ -1194,15 +1194,26 @@ func (b Builder) PtrCast(t Type, x Expr) Expr {
 func (b Builder) MakeClosure(fn Expr, bindings []Expr) Expr {
 	dbgInstrf("MakeClosure %v, %v\n", fn, bindings)
 	prog := b.Prog
-	tfn := fn.Type
-	sig := tfn.raw.Type.(*types.Signature)
+	sig := fn.raw.Type.(*types.Signature)
 	data := prog.Nil(prog.VoidPtr()).impl
-	if ctxParam := closureCtxParam(sig); ctxParam != nil {
-		tctx := ctxParam.Type().Underlying().(*types.Pointer).Elem().(*types.Struct)
-		ptr := b.aggregateAllocU(prog.rawType(tctx), llvmFields(bindings, tctx, b)...)
-		data = ptr
+	if entry := b.Pkg.FuncOf(fn.impl.Name()); entry != nil && entry.NeedsEnv() {
+		tctx := prog.Elem(entry.EnvType())
+		rawCtx := tctx.raw.Type.Underlying().(*types.Struct)
+		if len(bindings) != rawCtx.NumFields() {
+			panic("ssa: closure environment binding count mismatch")
+		}
+		if prog.SizeOf(tctx) == 0 {
+			// A required environment must remain distinguishable from a no-env
+			// entry. Heap zero-sized allocations use the module-wide non-nil
+			// sentinel.
+			data = b.Alloc(tctx, true).impl
+		} else {
+			data = b.aggregateAllocU(tctx, llvmFields(bindings, rawCtx, b)...)
+		}
+	} else if len(bindings) != 0 {
+		panic("ssa: closure bindings supplied to a no-env function")
 	}
-	return b.aggregateValue(prog.Closure(removeCtx(sig)), fn.impl, data)
+	return b.aggregateValue(prog.Closure(sig), fn.impl, data)
 }
 
 // -----------------------------------------------------------------------------
@@ -1237,14 +1248,20 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 		data = b.Field(fn, 1)
 		fn = b.Field(fn, 0)
 		sig = fn.raw.Type.(*types.Signature)
-		ctx := types.NewParam(token.NoPos, nil, closureCtx, types.Typ[types.UnsafePointer])
-		sigCtx := FuncAddCtx(ctx, sig)
+		return b.callClosure(fn, data, sig, args)
+	case vkIfaceMethod:
+		data = b.Field(fn, 1)
+		fn = b.Field(fn, 0)
+		sig = fn.raw.Type.(*types.Signature)
+		recv := types.NewParam(token.NoPos, nil, "$recv", types.Typ[types.UnsafePointer])
+		entrySig := FuncAddCtx(recv, sig)
 		ret.Type = b.Prog.retType(sig)
-		if sig.Results().Len() == 1 && b.Prog.SizeOf(ret.Type) == 0 {
-			b.AssertNilDeref(fn)
-		}
-		ll = b.Prog.FuncDecl(sigCtx, InC).ll
-		ret.impl = llvm.CreateCall(b.impl, ll, fn.impl, llvmParamsEx(data, args, sigCtx.Params(), b))
+		ret.impl = llvm.CreateCall(
+			b.impl,
+			b.Prog.FuncDecl(entrySig, InC).ll,
+			fn.impl,
+			llvmParamsEx(data, args, entrySig.Params(), b),
+		)
 		return ret
 	case vkFuncPtr:
 		sig = raw.Underlying().(*types.Signature)
@@ -1272,6 +1289,96 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 		b.MarkReflectValueMethodByNameCall(ret.impl, nameArgIndex)
 	}
 	b.EmitReflectValueMethodCheckedLoad(ret, reflectCheck)
+	return
+}
+
+func (b Builder) callClosure(fn, data Expr, sig *types.Signature, args []Expr) (ret Expr) {
+	prog := b.Prog
+	ret.Type = prog.retType(sig)
+	if sig.Results().Len() == 1 && prog.SizeOf(ret.Type) == 0 {
+		b.AssertNilDeref(fn)
+	}
+
+	// Convert arguments once before splitting the dynamic call edge. Conversion
+	// may itself emit code and must not be duplicated into both successors.
+	params := llvmParams(0, args, sig.Params(), b)
+	envParams := make([]llvm.Value, len(params)+1)
+	envParams[0] = data.impl
+	copy(envParams[1:], params)
+
+	noEnvType := prog.FuncDecl(sig, InC).ll
+	envParam := types.NewParam(token.NoPos, nil, "$env", types.Typ[types.UnsafePointer])
+	envSig := FuncAddCtx(envParam, sig)
+	envType := prog.FuncDecl(envSig, InC).ll
+
+	// A known code pointer uses the entry metadata directly. This preserves the
+	// exact prototype and avoids the identity barrier needed by dynamic native
+	// funcval calls.
+	if direct := fn.impl.IsAFunction(); !direct.IsNil() {
+		entry := b.Pkg.FuncOf(direct.Name())
+		if entry == nil || !entry.NeedsEnv() {
+			ret.impl = llvm.CreateCall(b.impl, noEnvType, fn.impl, params)
+			return
+		}
+		ret.impl = llvm.CreateCall(b.impl, envType, fn.impl, envParams)
+		prog.markClosureEnvCall(ret.impl, 0)
+		return
+	}
+
+	// On native hidden-context ABIs, the environment occupies a dedicated
+	// register even when it is nil. Ordinary Go and C entries simply ignore
+	// that register, so every dynamic funcval call can use the same hot path.
+	// Explicit-context targets cannot do this: their environment is an
+	// ordinary leading ABI argument and pure C entries do not accept it.
+	if prog.closureEnvABI() != closureEnvExplicit {
+		// The env and no-env LLVM prototypes intentionally differ even though the
+		// native machine ABI reserves a register for the hidden environment. Hide
+		// the dynamic code pointer's identity before the call so optimization cannot
+		// devirtualize a no-env target under the env-bearing IR prototype.
+		fn = b.hideClosureCodeIdentity(fn)
+		ret.impl = llvm.CreateCall(b.impl, envType, fn.impl, envParams)
+		prog.markClosureEnvCall(ret.impl, 0)
+		return
+	}
+
+	logicalBlock := b.blk
+	entryBlock := b.impl.GetInsertBlock()
+	blks := b.Func.MakeBlocks(3)
+	hasEnv := Expr{
+		llvm.CreateICmp(b.impl, llvm.IntNE, data.impl, prog.Nil(prog.VoidPtr()).impl),
+		prog.Bool(),
+	}
+	b.If(hasEnv, blks[0], blks[1])
+
+	b.SetBlockEx(blks[0], AtEnd, false)
+	envCall := llvm.CreateCall(b.impl, envType, fn.impl, envParams)
+	prog.markClosureEnvCall(envCall, 0)
+	b.Jump(blks[2])
+
+	b.SetBlockEx(blks[1], AtEnd, false)
+	noEnvCall := llvm.CreateCall(b.impl, noEnvType, fn.impl, params)
+	b.Jump(blks[2])
+
+	b.SetBlockEx(blks[2], AtEnd, false)
+	if sig.Results().Len() != 0 {
+		phi := b.Phi(ret.Type)
+		phi.impl.AddIncoming(
+			[]llvm.Value{envCall, noEnvCall},
+			[]llvm.BasicBlock{blks[0].last, blks[1].last},
+		)
+		ret.impl = phi.impl
+	}
+
+	// The extra LLVM blocks are an implementation detail inside the current Go
+	// SSA block. Only explicit-context targets retain this split; native hidden
+	// context has the uniform dynamic call edge above.
+	// A closure call may itself be emitted while another lowering helper has
+	// temporarily selected a synthetic LLVM predecessor with SetBlockEx(...,
+	// false). Only replace the logical Go block's tail when this split started
+	// at that tail; otherwise the enclosing helper owns the eventual merge.
+	if logicalBlock.last == entryBlock {
+		logicalBlock.last = blks[2].last
+	}
 	return
 }
 
@@ -1308,7 +1415,7 @@ func (b Builder) checkReflect(fn Expr, args []Expr) (check ReflectMethodCheck) {
 		reflectKind = ReflectMapOf
 	case "reflect.PointerTo", "reflect.PtrTo":
 		reflectKind = ReflectPointerTo
-	case "reflect.SliceOf", "reflect.Value.Slice":
+	case "reflect.SliceOf", "reflect.SliceAt", "reflect.Value.Slice":
 		reflectKind = ReflectSliceOf
 	case "reflect.StructOf":
 		reflectKind = ReflectStructOf
@@ -1727,7 +1834,6 @@ func checkExpr(v Expr, t types.Type, b Builder) Expr {
 			return v
 		}
 		prog := b.Prog
-		origKind := v.kind
 		tclosure := prog.rawType(t)
 		fnType := prog.Field(tclosure, 0)
 		if v.Type != fnType {
@@ -1739,11 +1845,6 @@ func checkExpr(v Expr, t types.Type, b Builder) Expr {
 			}
 		}
 		data := prog.Nil(prog.VoidPtr())
-		if origKind == vkFuncDecl || origKind == vkFuncPtr {
-			if sig, ok := fnType.raw.Type.(*types.Signature); ok && closureCtxParam(sig) == nil {
-				v, data = b.Pkg.closureStub(b, v, sig, origKind)
-			}
-		}
 		return b.aggregateValue(tclosure, v.impl, data.impl)
 	}
 	if types.Identical(v.raw.Type, t) || !types.AssignableTo(v.raw.Type, t) {

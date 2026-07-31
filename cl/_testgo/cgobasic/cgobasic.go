@@ -139,7 +139,7 @@ func main() {
 	C.free(cbytes)
 }
 
-// CHECK-LABEL: define ptr @"main.main$1"(ptr %0){{.*}} {
+// CHECK-LABEL: define ptr @"main.main$1"(ptr {{(nest|swiftself)}} %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = load { ptr }, ptr %0, align 8
 // CHECK-NEXT:   %2 = extractvalue { ptr } %1, 0
@@ -151,7 +151,7 @@ func main() {
 // CHECK-NEXT:   ret ptr %6
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.Slice" @"main.main$2"(ptr %0){{.*}} {
+// CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.Slice" @"main.main$2"(ptr {{(nest|swiftself)}} %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = load { ptr }, ptr %0, align 8
 // CHECK-NEXT:   %2 = extractvalue { ptr } %1, 0
@@ -161,7 +161,7 @@ func main() {
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %5
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define void @"main.main$3"(ptr %0){{.*}} {
+// CHECK-LABEL: define void @"main.main$3"(ptr {{(nest|swiftself)}} %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = load { ptr }, ptr %0, align 8
 // CHECK-NEXT:   %2 = extractvalue { ptr } %1, 0
@@ -171,7 +171,7 @@ func main() {
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define void @"main.main$4"(ptr %0){{.*}} {
+// CHECK-LABEL: define void @"main.main$4"(ptr {{(nest|swiftself)}} %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = load { ptr }, ptr %0, align 8
 // CHECK-NEXT:   %2 = extractvalue { ptr } %1, 0

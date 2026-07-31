@@ -7,12 +7,14 @@ func main() {
 	// CHECK: store i64 1, ptr %0, align 8
 	// CHECK: call ptr @"{{.*}}AllocU"(i64 8)
 	// CHECK: { ptr @"main.main$1", ptr undef }
-	// CHECK: call { ptr, ptr } %5(ptr %4, i64 1)
-	// CHECK: call void %8(ptr %7, i64 2)
+	// CHECK: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %5)
+	// CHECK: call { ptr, ptr } %__llgo_funcval_code(ptr {{(nest|swiftself)}} %4, i64 1)
+	// CHECK: %__llgo_funcval_code1 = call ptr asm "", "=r,0"(ptr %8)
+	// CHECK: call void %__llgo_funcval_code1(ptr {{(nest|swiftself)}} %7, i64 2)
 	// CHECK: ret void
 	x := 1
 	f := func(i int) func(int) {
-		// CHECK-LABEL: define { ptr, ptr } @"main.main$1"(ptr %0, i64 %1){{.*}} {
+		// CHECK-LABEL: define { ptr, ptr } @"main.main$1"(ptr {{(nest|swiftself)}} %0, i64 %1){{.*}} {
 		// CHECK-NEXT: _llgo_0:
 		// CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
 		// CHECK-NEXT:   %3 = extractvalue { ptr } %2, 0
@@ -22,7 +24,7 @@ func main() {
 		// CHECK-NEXT:   %6 = insertvalue { ptr, ptr } { ptr @"main.main$1$1", ptr undef }, ptr %4, 1
 		// CHECK-NEXT:   ret { ptr, ptr } %6
 		return func(i int) {
-			// CHECK-LABEL: define void @"main.main$1$1"(ptr %0, i64 %1){{.*}} {
+			// CHECK-LABEL: define void @"main.main$1$1"(ptr {{(nest|swiftself)}} %0, i64 %1){{.*}} {
 			// CHECK-NEXT: _llgo_0:
 			// CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
 			// CHECK-NEXT:   %3 = extractvalue { ptr } %2, 0

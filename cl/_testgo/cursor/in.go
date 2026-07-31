@@ -66,7 +66,8 @@ func (c Cursor) Node() ast.Node {
 // CHECK-NEXT:   %20 = insertvalue { ptr, ptr } { ptr @"main.Cursor.FindNode$1", ptr undef }, ptr %15, 1
 // CHECK-NEXT:   %21 = extractvalue %"iter.Seq[main.Cursor]" %13, 1
 // CHECK-NEXT:   %22 = extractvalue %"iter.Seq[main.Cursor]" %13, 0
-// CHECK-NEXT:   call void %22(ptr %21, { ptr, ptr } %20)
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %22)
+// CHECK-NEXT:   call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %21, { ptr, ptr } %20)
 // CHECK-NEXT:   %23 = load i64, ptr %14, align 8
 // CHECK-NEXT:   %24 = icmp eq i64 %23, -1
 // CHECK-NEXT:   br i1 %24, label %_llgo_4, label %_llgo_5
@@ -497,7 +498,7 @@ const (
 	nValueSpec
 )
 
-// CHECK-LABEL: define i1 @"main.Cursor.FindNode$1"(ptr %0, %main.Cursor %1){{.*}} {
+// CHECK-LABEL: define i1 @"main.Cursor.FindNode$1"(ptr {{(nest|swiftself)}} %0, %main.Cursor %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = load { ptr, ptr, ptr, ptr }, ptr %0, align 8
 // CHECK-NEXT:   %3 = extractvalue { ptr, ptr, ptr, ptr } %2, 0
@@ -596,7 +597,7 @@ const (
 // CHECK-NEXT:   ret %"iter.Seq[main.Cursor]" %10
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define void @"main.Cursor.Preorder$1"(ptr %0, { ptr, ptr } %1){{.*}} {
+// CHECK-LABEL: define void @"main.Cursor.Preorder$1"(ptr {{(nest|swiftself)}} %0, { ptr, ptr } %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = load { ptr, ptr }, ptr %0, align 8
 // CHECK-NEXT:   %3 = extractvalue { ptr, ptr } %2, 0
@@ -683,7 +684,8 @@ const (
 // CHECK-NEXT:   %56 = load %main.Cursor, ptr %50, align 8
 // CHECK-NEXT:   %57 = extractvalue { ptr, ptr } %1, 1
 // CHECK-NEXT:   %58 = extractvalue { ptr, ptr } %1, 0
-// CHECK-NEXT:   %59 = call i1 %58(ptr %57, %main.Cursor %56)
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %58)
+// CHECK-NEXT:   %59 = call i1 %__llgo_funcval_code(ptr {{(nest|swiftself)}} %57, %main.Cursor %56)
 // CHECK-NEXT:   br i1 %59, label %_llgo_6, label %_llgo_3
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_6
@@ -2156,28 +2158,4 @@ const (
 // CHECK-NEXT:   %455 = extractvalue { ptr, i1 } %454, 0
 // CHECK-NEXT:   %456 = extractvalue { ptr, i1 } %454, 1
 // CHECK-NEXT:   br i1 %456, label %_llgo_113, label %_llgo_114
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal64"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal64"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal8"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal8"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.nilinterequal"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.nilinterequal"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.interequal"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.interequal"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
 // CHECK-NEXT: }

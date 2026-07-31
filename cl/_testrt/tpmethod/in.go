@@ -31,7 +31,7 @@ func Async[T any](fn func(func(T))) Future[T] {
 
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.iface" @main.ReadFile(%"{{.*}}/runtime/internal/runtime.String" %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = call %"{{.*}}/runtime/internal/runtime.iface" @"main.Async[main.Tuple[error]]"({ ptr, ptr } { ptr @"__llgo_stub.main.ReadFile$1", ptr null })
+// CHECK-NEXT:   %1 = call %"{{.*}}/runtime/internal/runtime.iface" @"main.Async[main.Tuple[error]]"({ ptr, ptr } { ptr @"main.ReadFile$1", ptr null })
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %1
 // CHECK-NEXT: }
 
@@ -45,7 +45,8 @@ func ReadFile(fileName string) Future[Tuple[error]] {
 	// CHECK-NEXT:   %3 = load %"main.Tuple[error]", ptr %1, align 8
 	// CHECK-NEXT:   %4 = extractvalue { ptr, ptr } %0, 1
 	// CHECK-NEXT:   %5 = extractvalue { ptr, ptr } %0, 0
-	// CHECK-NEXT:   call void %5(ptr %4, %"main.Tuple[error]" %3)
+	// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %5)
+	// CHECK-NEXT:   call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %4, %"main.Tuple[error]" %3)
 	// CHECK-NEXT:   ret void
 	// CHECK-NEXT: }
 
@@ -78,7 +79,7 @@ func ReadFile(fileName string) Future[Tuple[error]] {
 // CHECK-NEXT:   %6 = insertvalue { ptr, ptr } %5, ptr %1, 1
 // CHECK-NEXT:   %7 = extractvalue { ptr, ptr } %6, 1
 // CHECK-NEXT:   %8 = extractvalue { ptr, ptr } %6, 0
-// CHECK-NEXT:   call void %8(ptr %7, { ptr, ptr } { ptr @"__llgo_stub.main.main$1", ptr null })
+// CHECK-NEXT:   call void %8(ptr %7, { ptr, ptr } { ptr @"main.main$1", ptr null })
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
@@ -107,18 +108,6 @@ func main() {
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %5
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define linkonce void @"__llgo_stub.main.ReadFile$1"(ptr %0, { ptr, ptr } %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   tail call void @"main.ReadFile$1"({ ptr, ptr } %1)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce void @"__llgo_stub.main.main$1"(ptr %0, %"main.Tuple[error]" %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   tail call void @"main.main$1"(%"main.Tuple[error]" %1)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
 // CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.iface" @"main.Tuple[error].Get"(%"main.Tuple[error]" %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = alloca %"main.Tuple[error]", align 8
@@ -135,7 +124,8 @@ func main() {
 // CHECK-NEXT:   %3 = load { ptr, ptr }, ptr %2, align 8
 // CHECK-NEXT:   %4 = extractvalue { ptr, ptr } %3, 1
 // CHECK-NEXT:   %5 = extractvalue { ptr, ptr } %3, 0
-// CHECK-NEXT:   call void %5(ptr %4, { ptr, ptr } %1)
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %5)
+// CHECK-NEXT:   call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %4, { ptr, ptr } %1)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
@@ -146,10 +136,4 @@ func main() {
 // CHECK-NEXT:   %2 = load %"main.Tuple[error]", ptr %0, align 8
 // CHECK-NEXT:   %3 = call %"{{.*}}/runtime/internal/runtime.iface" @"main.Tuple[error].Get"(%"main.Tuple[error]" %2)
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.interequal"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.interequal"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
 // CHECK-NEXT: }

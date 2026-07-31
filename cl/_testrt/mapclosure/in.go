@@ -55,13 +55,15 @@ var (
 // CHECK-NEXT:   %14 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %13, ptr %0, 1
 // CHECK-NEXT:   %15 = extractvalue { ptr, ptr } %5, 1
 // CHECK-NEXT:   %16 = extractvalue { ptr, ptr } %5, 0
-// CHECK-NEXT:   %17 = call %"{{.*}}/runtime/internal/runtime.String" %16(ptr %15, %"{{.*}}/runtime/internal/runtime.iface" %14)
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %16)
+// CHECK-NEXT:   %17 = call %"{{.*}}/runtime/internal/runtime.String" %__llgo_funcval_code(ptr {{(nest|swiftself)}} %15, %"{{.*}}/runtime/internal/runtime.iface" %14)
 // CHECK-NEXT:   %18 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$O6rEVxIuA5O1E0KWpQBCgGx26X5gYhJ_nnJnHVL8_7U", ptr @"*_llgo_main.typ")
 // CHECK-NEXT:   %19 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %18, 0
 // CHECK-NEXT:   %20 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %19, ptr %0, 1
 // CHECK-NEXT:   %21 = extractvalue { ptr, ptr } %11, 1
 // CHECK-NEXT:   %22 = extractvalue { ptr, ptr } %11, 0
-// CHECK-NEXT:   %23 = call %"{{.*}}/runtime/internal/runtime.String" %22(ptr %21, %"{{.*}}/runtime/internal/runtime.iface" %20)
+// CHECK-NEXT:   %__llgo_funcval_code1 = call ptr asm "", "=r,0"(ptr %22)
+// CHECK-NEXT:   %23 = call %"{{.*}}/runtime/internal/runtime.String" %__llgo_funcval_code1(ptr {{(nest|swiftself)}} %21, %"{{.*}}/runtime/internal/runtime.iface" %20)
 // CHECK-NEXT:   %24 = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" %17, %"{{.*}}/runtime/internal/runtime.String" %23)
 // CHECK-NEXT:   %25 = xor i1 %24, true
 // CHECK-NEXT:   br i1 %25, label %_llgo_1, label %_llgo_2
@@ -95,9 +97,3 @@ func main() {
 func (t *typ) String() string {
 	return t.s
 }
-
-// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.String" @__llgo_stub.main.demo(ptr %0, %"{{.*}}/runtime/internal/runtime.iface" %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = tail call %"{{.*}}/runtime/internal/runtime.String" @main.demo(%"{{.*}}/runtime/internal/runtime.iface" %1)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %2
-// CHECK-NEXT: }

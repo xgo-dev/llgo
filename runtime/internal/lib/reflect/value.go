@@ -2458,19 +2458,24 @@ func (v Value) call(op string, in []Value) (out []Value) {
 		tin  []*abi.Type
 		args []unsafe.Pointer
 		fn   unsafe.Pointer
+		env  unsafe.Pointer
 		ret  unsafe.Pointer
 		ioff int
 	)
 	if v.typ_.IsClosure() && v.flag&flagMethod == 0 {
 		ft = v.typ_.StructType().Fields[0].Typ.FuncType()
-		tin = append([]*abi.Type{rtypeOf(unsafe.Pointer(nil))}, ft.In...)
 		c := (*struct {
 			fn  unsafe.Pointer
 			env unsafe.Pointer
 		})(v.ptr)
 		fn = c.fn
-		ioff = 1
-		args = append(args, unsafe.Pointer(&c.env))
+		env = c.env
+		tin = ft.In
+		if env != nil && ffi.ClosureEnvExplicit {
+			tin = append([]*abi.Type{rtypeOf(unsafe.Pointer(nil))}, tin...)
+			ioff = 1
+			args = append(args, unsafe.Pointer(&env))
+		}
 	} else {
 		if v.flag&flagMethod != 0 {
 			var (
@@ -2579,7 +2584,7 @@ func (v Value) call(op string, in []Value) (out []Value) {
 		ret = unsafe.Pointer(&v)
 	}
 
-	ffi.Call(sig, fn, ret, args...)
+	ffi.CallWithEnv(sig, fn, env, ret, args...)
 	tout := toRuntimeTypes(ft.Out)
 	switch n := len(tout); n {
 	case 0:
@@ -3414,7 +3419,7 @@ func mapiternext(it *hiter)
 //go:linkname mapclear github.com/goplus/llgo/runtime/internal/runtime.mapclear
 func mapclear(t *abi.Type, m unsafe.Pointer)
 
-//go:linkname typehash github.com/goplus/llgo/runtime/internal/runtime.typehash
+//go:linkname typehash github.com/goplus/llgo/runtime/internal/runtime.typehashImpl
 func typehash(t *abi.Type, p unsafe.Pointer, h uintptr) uintptr
 
 //go:linkname makechan github.com/goplus/llgo/runtime/internal/runtime.NewChan

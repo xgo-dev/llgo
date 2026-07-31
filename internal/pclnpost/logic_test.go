@@ -65,22 +65,20 @@ func TestDedupeCanonicalAndInline(t *testing.T) {
 	info := &binaryInfo{format: "elf", textStart: 0x1000, textEnd: 0x4000, syms: []textSym{
 		{addr: 0x1000, size: 0x100, name: fn},
 		{addr: 0x1100, size: 0x100, name: host},
-		{addr: 0x1200, size: 0x10, name: "__llgo_stub." + fn},
 	}}
 	id := fnv64(fn)
 	recs := []siteRecord{
 		{pc: 0x1004, symbolID: id}, // canonical, inside F
 		{pc: 0x1104, symbolID: id}, // inline copy inside Host
-		{pc: 0x1204, symbolID: id}, // stub wrapper, canonical
 		{pc: 0x1008, symbolID: id}, // duplicate owner, collapsed
 		{pc: 0x9999, symbolID: id}, // no owner
 	}
 	kept, inline, nosym := dedupe(info, recs, false)
-	if len(kept) != 2 || inline != 1 || nosym != 1 {
+	if len(kept) != 1 || inline != 1 || nosym != 1 {
 		t.Fatalf("kept=%d inline=%d nosym=%d", len(kept), inline, nosym)
 	}
-	if kept[0].pc != 0x1000 || kept[1].pc != 0x1200 {
-		t.Fatalf("normalized pcs %#x %#x", kept[0].pc, kept[1].pc)
+	if kept[0].pc != 0x1000 {
+		t.Fatalf("normalized pc %#x", kept[0].pc)
 	}
 }
 
@@ -116,14 +114,14 @@ func TestFnv64NonZero(t *testing.T) {
 }
 
 func TestSymbolAddrBothFormats(t *testing.T) {
-	elfPath := buildELF(t, fixtureFns(), fixtureEntry, fixtureStub, 4096, 256)
+	elfPath := buildELF(t, fixtureFns(), fixtureEntry, 4096)
 	if addr, err := symbolAddr(elfPath, "example.com/p.A"); err != nil || addr != 0x10000 {
 		t.Fatalf("elf symbolAddr = %#x, %v", addr, err)
 	}
 	if _, err := symbolAddr(elfPath, "no.such.symbol"); err == nil {
 		t.Fatal("expected missing-symbol error on elf")
 	}
-	machoPath := buildMachO(t, rec(0, 0), rec(0, 0),
+	machoPath := buildMachO(t, rec(0, 0),
 		[]elfFn{{name: "example.com/p.M", size: 0x10}})
 	if addr, err := symbolAddr(machoPath, "example.com/p.M"); err != nil || addr == 0 {
 		t.Fatalf("macho symbolAddr = %#x, %v", addr, err)

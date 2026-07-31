@@ -99,7 +99,8 @@ type mspan struct {
 // CHECK-NEXT:   %61 = load { ptr, ptr }, ptr %60, align 8
 // CHECK-NEXT:   %62 = extractvalue { ptr, ptr } %61, 1
 // CHECK-NEXT:   %63 = extractvalue { ptr, ptr } %61, 0
-// CHECK-NEXT:   %64 = call i64 %63(ptr %62, i64 -2)
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %63)
+// CHECK-NEXT:   %64 = call i64 %__llgo_funcval_code(ptr {{(nest|swiftself)}} %62, i64 -2)
 // CHECK-NEXT:   %65 = load ptr, ptr %0, align 8
 // CHECK-NEXT:   %66 = getelementptr inbounds %main.mspan, ptr %65, i32 0, i32 3
 // CHECK-NEXT:   %67 = getelementptr inbounds %main.minfo, ptr %66, i32 0, i32 0
@@ -108,7 +109,8 @@ type mspan struct {
 // CHECK-NEXT:   %70 = load { ptr, ptr }, ptr %69, align 8
 // CHECK-NEXT:   %71 = extractvalue { ptr, ptr } %70, 1
 // CHECK-NEXT:   %72 = extractvalue { ptr, ptr } %70, 0
-// CHECK-NEXT:   %73 = call i64 %72(ptr %71, i64 -3)
+// CHECK-NEXT:   %__llgo_funcval_code1 = call ptr asm "", "=r,0"(ptr %72)
+// CHECK-NEXT:   %73 = call i64 %__llgo_funcval_code1(ptr {{(nest|swiftself)}} %71, i64 -3)
 // CHECK-NEXT:   %74 = call i32 (ptr, ...) @printf(ptr @0, i64 %41, i64 %48, i64 %52, i64 %58, i64 %64, i64 %73)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
@@ -125,7 +127,7 @@ func main() {
 	m.check = func(n int) int {
 		return m.value * n
 	}
-	// CHECK-LABEL: define i64 @"main.main$1"(ptr %0, i64 %1){{.*}} {
+	// CHECK-LABEL: define i64 @"main.main$1"(ptr {{(nest|swiftself)}} %0, i64 %1){{.*}} {
 	// CHECK-NEXT: _llgo_0:
 	// CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
 	// CHECK-NEXT:   %3 = extractvalue { ptr } %2, 0

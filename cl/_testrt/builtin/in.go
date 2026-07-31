@@ -266,7 +266,7 @@ func demo() {
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %89 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK-NEXT:   %90 = getelementptr inbounds { ptr, ptr }, ptr %89, i64 0
-// CHECK-NEXT:   store { ptr, ptr } { ptr @"__llgo_stub.main.main$1", ptr null }, ptr %90, align 8
+// CHECK-NEXT:   store { ptr, ptr } { ptr @"main.main$1", ptr null }, ptr %90, align 8
 // CHECK-NEXT:   %91 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %89, 0
 // CHECK-NEXT:   %92 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %91, i64 1, 1
 // CHECK-NEXT:   %93 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %92, i64 1, 2
@@ -505,7 +505,7 @@ func main() {
 		println("fn")
 	}
 
-	// CHECK-LABEL: define void @"main.main$3"(ptr %0){{.*}} {
+	// CHECK-LABEL: define void @"main.main$3"(ptr {{(nest|swiftself)}} %0){{.*}} {
 	// CHECK-NEXT: _llgo_0:
 	// CHECK-NEXT:   %1 = load { ptr }, ptr %0, align 8
 	// CHECK-NEXT:   %2 = extractvalue { ptr } %1, 0
@@ -534,15 +534,3 @@ func main() {
 	s2 := "abd"
 	println(s1 == "abc", s1 == s2, s1 != s2, s1 < s2, s1 <= s2, s1 > s2, s1 >= s2)
 }
-
-// CHECK-LABEL: define linkonce void @"__llgo_stub.main.main$1"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   tail call void @"main.main$1"()
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal64"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal64"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }

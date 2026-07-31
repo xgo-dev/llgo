@@ -67,6 +67,7 @@ var (
 	globalRefRE    = regexp.MustCompile(`@"([^"]+)"|@([A-Za-z0-9$._-]+)`)
 	checkLineRE    = regexp.MustCompile(`^\s*//\s*CHECK(?:-[A-Z]+)?:`)
 	debugMetaRE    = regexp.MustCompile(`, ![A-Za-z0-9_.-]+ ![0-9]+`)
+	closureEnvRE   = regexp.MustCompile(`(\s)(?:nest|swiftself)(\s)`)
 	numericNameRE  = regexp.MustCompile(`^\d+$`)
 )
 
@@ -439,7 +440,35 @@ func generalizeIRLine(line, modulePath string) string {
 
 func scrubIRLine(line string) string {
 	line = debugMetaRE.ReplaceAllString(line, "")
+	line = generalizeClosureEnvAttrs(line)
 	return strings.TrimRight(line, " \t")
+}
+
+func generalizeClosureEnvAttrs(line string) string {
+	var b strings.Builder
+	start := 0
+	inQuote := false
+	for i := 0; i < len(line); i++ {
+		if line[i] != '"' || isEscapedQuote(line, i) {
+			continue
+		}
+		if !inQuote {
+			b.WriteString(closureEnvRE.ReplaceAllString(line[start:i], `${1}{{(nest|swiftself)}}${2}`))
+			b.WriteByte('"')
+			start = i + 1
+			inQuote = true
+			continue
+		}
+		b.WriteString(line[start : i+1])
+		start = i + 1
+		inQuote = false
+	}
+	if inQuote {
+		b.WriteString(line[start:])
+	} else {
+		b.WriteString(closureEnvRE.ReplaceAllString(line[start:], `${1}{{(nest|swiftself)}}${2}`))
+	}
+	return b.String()
 }
 
 func generalizeModulePath(line, modulePath string) string {
@@ -499,10 +528,9 @@ func collectRefs(line string) []string {
 }
 
 func shouldSkipFunctionCheck(symbol string) bool {
-	base := strings.TrimPrefix(symbol, "__llgo_stub.")
-	return strings.HasSuffix(base, "/runtime/internal/runtime.memequal32") ||
-		strings.HasSuffix(base, "/runtime/internal/runtime.memequalptr") ||
-		strings.HasSuffix(base, "/runtime/internal/runtime.strequal")
+	return strings.HasSuffix(symbol, "/runtime/internal/runtime.memequal32") ||
+		strings.HasSuffix(symbol, "/runtime/internal/runtime.memequalptr") ||
+		strings.HasSuffix(symbol, "/runtime/internal/runtime.strequal")
 }
 
 func trimPkgPrefix(symbol, pkgPath string) (string, bool) {

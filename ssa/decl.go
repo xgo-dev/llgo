@@ -248,7 +248,7 @@ type aFunction struct {
 
 	params   []Type
 	freeVars Expr
-	base     int // base = 1 if hasFreeVars; base = 0 otherwise
+	env      Type
 	hasVArg  bool
 
 	fakeUses   []llvm.Value
@@ -267,12 +267,45 @@ func (p Package) NewFunc(name string, sig *types.Signature, bg Background) Funct
 
 // NewFuncEx creates a new function.
 func (p Package) NewFuncEx(name string, sig *types.Signature, bg Background, hasFreeVars bool, instantiated bool) Function {
+	if hasFreeVars {
+		panic("ssa: NewFuncEx cannot represent an environment; use NewEnvFunc")
+	}
+	return p.newFunc(name, sig, bg, nil, instantiated)
+}
+
+// NewEnvFunc creates a function whose Go signature is sig and whose physical
+// LLVM entry has an additional compiler-owned environment parameter.
+func (p Package) NewEnvFunc(
+	name string, sig *types.Signature, bg Background, env *types.Var, instantiated bool,
+) Function {
+	if env == nil {
+		panic("ssa: nil closure environment")
+	}
+	return p.newFunc(name, sig, bg, env, instantiated)
+}
+
+func (p Package) newFunc(
+	name string, sig *types.Signature, bg Background, env *types.Var, instantiated bool,
+) Function {
 	if v, ok := p.fns[name]; ok {
+		if v.NeedsEnv() != (env != nil) {
+			panic("ssa: conflicting closure environment ABI for " + name)
+		}
 		return v
 	}
 	t := p.Prog.FuncDecl(sig, bg)
-	dbgInstrln("NewFunc", name, t.raw.Type, "hasFreeVars:", hasFreeVars)
+	var envType Type
+	if env != nil {
+		envType = p.Prog.Type(env.Type(), InGo)
+		rawEnv := types.NewParam(env.Pos(), env.Pkg(), env.Name(), envType.raw.Type)
+		entrySig := FuncAddCtx(rawEnv, t.raw.Type.(*types.Signature))
+		t = &aType{p.Prog.toLLVMFunc(entrySig), t.raw, vkFuncDecl}
+	}
+	dbgInstrln("NewFunc", name, t.raw.Type, "needsEnv:", envType != nil)
 	fn := llvm.AddFunction(p.mod, name, t.ll)
+	if envType != nil {
+		p.Prog.markClosureEnvFunction(fn, 0)
+	}
 	if bg == InGo {
 		fn.AddFunctionAttr(p.nullPointerIsValidAttr)
 		// Keep frame pointers so the runtime can walk real stacks (FP chain)
@@ -290,7 +323,7 @@ func (p Package) NewFuncEx(name string, sig *types.Signature, bg Background, has
 	if p.isPreservedName(name) {
 		p.markLLVMUsed(fn)
 	}
-	ret := newFunction(fn, t, p, p.Prog, hasFreeVars)
+	ret := newFunction(fn, t, p, p.Prog, envType)
 	p.fns[name] = ret
 	return ret
 }
@@ -300,18 +333,14 @@ func (p Package) FuncOf(name string) Function {
 	return p.fns[name]
 }
 
-func newFunction(fn llvm.Value, t Type, pkg Package, prog Program, hasFreeVars bool) Function {
+func newFunction(fn llvm.Value, t Type, pkg Package, prog Program, env Type) Function {
 	params, hasVArg := newParams(t, prog)
-	base := 0
-	if hasFreeVars {
-		base = 1
-	}
 	return &aFunction{
 		Expr:       Expr{fn, t},
 		Pkg:        pkg,
 		Prog:       prog,
 		params:     params,
-		base:       base,
+		env:        env,
 		hasVArg:    hasVArg,
 		fakeUses:   make([]llvm.Value, 0, 4),
 		fakeUseSet: make(map[llvm.Value]struct{}),
@@ -340,16 +369,38 @@ func (p Function) Name() string {
 
 // Params returns the function's ith parameter.
 func (p Function) Param(i int) Expr {
-	i += p.base // skip if hasFreeVars
-	return Expr{p.impl.Param(i), p.params[i]}
+	physical := i
+	if p.env != nil {
+		physical++
+	}
+	return Expr{p.impl.Param(physical), p.params[i]}
+}
+
+// NeedsEnv reports whether the physical function entry takes a compiler-owned
+// closure environment parameter.
+func (p Function) NeedsEnv() bool {
+	return p.env != nil
+}
+
+// EnvType returns the physical closure environment pointer type, or nil.
+func (p Function) EnvType() Type {
+	return p.env
+}
+
+// Env returns the physical closure environment parameter.
+func (p Function) Env() Expr {
+	if p.env == nil {
+		panic("ssa: function has no closure environment")
+	}
+	return Expr{p.impl.Param(0), p.env}
 }
 
 func (p Function) closureCtx(b Builder) Expr {
 	if p.freeVars.IsNil() {
-		if p.base == 0 {
+		if p.env == nil {
 			panic("ssa: function has no free variables")
 		}
-		ptr := Expr{p.impl.Param(0), p.params[0]}
+		ptr := p.Env()
 		if b.blk.Index() != 0 {
 			blk := b.impl.GetInsertBlock()
 			b.SetBlockEx(p.blks[0], AtStart, false)

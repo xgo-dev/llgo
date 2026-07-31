@@ -74,7 +74,7 @@ func demo2() Func {
 
 // CHECK-LABEL: define %main.Func @main.demo3(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   ret %main.Func { ptr @__llgo_stub.main.add, ptr null }
+// CHECK-NEXT:   ret %main.Func { ptr @main.add, ptr null }
 // CHECK-NEXT: }
 
 func demo3() Func {
@@ -83,7 +83,7 @@ func demo3() Func {
 
 // CHECK-LABEL: define %main.Func @main.demo4(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   ret %main.Func { ptr @"__llgo_stub.main.demo4$1", ptr null }
+// CHECK-NEXT:   ret %main.Func { ptr @"main.demo4$1", ptr null }
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"main.demo4$1"(i64 %0, i64 %1){{.*}} {
@@ -109,7 +109,7 @@ func demo4() Func {
 // CHECK-NEXT:   ret %main.Func %6
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define i64 @"main.demo5$1"(ptr %0, i64 %1, i64 %2){{.*}} {
+// CHECK-LABEL: define i64 @"main.demo5$1"(ptr {{(nest|swiftself)}} %0, i64 %1, i64 %2){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %3 = add i64 %1, %2
 // CHECK-NEXT:   %4 = load { ptr }, ptr %0, align 8
@@ -127,31 +127,36 @@ func demo5(n int) Func {
 // CHECK-NEXT:   %0 = call %main.Func @main.demo1(i64 1)
 // CHECK-NEXT:   %1 = extractvalue %main.Func %0, 1
 // CHECK-NEXT:   %2 = extractvalue %main.Func %0, 0
-// CHECK-NEXT:   %3 = call i64 %2(ptr %1, i64 99, i64 200)
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %2)
+// CHECK-NEXT:   %3 = call i64 %__llgo_funcval_code(ptr {{(nest|swiftself)}} %1, i64 99, i64 200)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %3)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %4 = call %main.Func @main.demo2()
 // CHECK-NEXT:   %5 = extractvalue %main.Func %4, 1
 // CHECK-NEXT:   %6 = extractvalue %main.Func %4, 0
-// CHECK-NEXT:   %7 = call i64 %6(ptr %5, i64 100, i64 200)
+// CHECK-NEXT:   %__llgo_funcval_code1 = call ptr asm "", "=r,0"(ptr %6)
+// CHECK-NEXT:   %7 = call i64 %__llgo_funcval_code1(ptr {{(nest|swiftself)}} %5, i64 100, i64 200)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %7)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %8 = call %main.Func @main.demo3()
 // CHECK-NEXT:   %9 = extractvalue %main.Func %8, 1
 // CHECK-NEXT:   %10 = extractvalue %main.Func %8, 0
-// CHECK-NEXT:   %11 = call i64 %10(ptr %9, i64 100, i64 200)
+// CHECK-NEXT:   %__llgo_funcval_code2 = call ptr asm "", "=r,0"(ptr %10)
+// CHECK-NEXT:   %11 = call i64 %__llgo_funcval_code2(ptr {{(nest|swiftself)}} %9, i64 100, i64 200)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %11)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %12 = call %main.Func @main.demo4()
 // CHECK-NEXT:   %13 = extractvalue %main.Func %12, 1
 // CHECK-NEXT:   %14 = extractvalue %main.Func %12, 0
-// CHECK-NEXT:   %15 = call i64 %14(ptr %13, i64 100, i64 200)
+// CHECK-NEXT:   %__llgo_funcval_code3 = call ptr asm "", "=r,0"(ptr %14)
+// CHECK-NEXT:   %15 = call i64 %__llgo_funcval_code3(ptr {{(nest|swiftself)}} %13, i64 100, i64 200)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %15)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %16 = call %main.Func @main.demo5(i64 1)
 // CHECK-NEXT:   %17 = extractvalue %main.Func %16, 1
 // CHECK-NEXT:   %18 = extractvalue %main.Func %16, 0
-// CHECK-NEXT:   %19 = call i64 %18(ptr %17, i64 99, i64 200)
+// CHECK-NEXT:   %__llgo_funcval_code4 = call ptr asm "", "=r,0"(ptr %18)
+// CHECK-NEXT:   %19 = call i64 %__llgo_funcval_code4(ptr {{(nest|swiftself)}} %17, i64 99, i64 200)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %19)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %20 = call %main.Func @main.demo5(i64 1)
@@ -160,7 +165,8 @@ func demo5(n int) Func {
 // CHECK-NEXT:   %22 = load { ptr, ptr }, ptr %21, align 8
 // CHECK-NEXT:   %23 = extractvalue { ptr, ptr } %22, 1
 // CHECK-NEXT:   %24 = extractvalue { ptr, ptr } %22, 0
-// CHECK-NEXT:   %25 = call i64 %24(ptr %23, i64 99, i64 200)
+// CHECK-NEXT:   %__llgo_funcval_code5 = call ptr asm "", "=r,0"(ptr %24)
+// CHECK-NEXT:   %25 = call i64 %__llgo_funcval_code5(ptr {{(nest|swiftself)}} %23, i64 99, i64 200)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %25)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %26 = call %main.Func @main.demo5(i64 1)
@@ -170,7 +176,8 @@ func demo5(n int) Func {
 // CHECK-NEXT:   %30 = insertvalue %main.Func2 %28, ptr %29, 1
 // CHECK-NEXT:   %31 = extractvalue %main.Func2 %30, 1
 // CHECK-NEXT:   %32 = extractvalue %main.Func2 %30, 0
-// CHECK-NEXT:   %33 = call i64 %32(ptr %31, i64 99, i64 200)
+// CHECK-NEXT:   %__llgo_funcval_code6 = call ptr asm "", "=r,0"(ptr %32)
+// CHECK-NEXT:   %33 = call i64 %__llgo_funcval_code6(ptr {{(nest|swiftself)}} %31, i64 99, i64 200)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %33)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
@@ -199,22 +206,10 @@ func main() {
 	println(fn2(99, 200))
 }
 
-// CHECK-LABEL: define i64 @"main.(*Call).add$bound"(ptr %0, i64 %1, i64 %2){{.*}} {
+// CHECK-LABEL: define i64 @"main.(*Call).add$bound"(ptr {{(nest|swiftself)}} %0, i64 %1, i64 %2){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %3 = load { ptr }, ptr %0, align 8
 // CHECK-NEXT:   %4 = extractvalue { ptr } %3, 0
 // CHECK-NEXT:   %5 = call i64 @"main.(*Call).add"(ptr %4, i64 %1, i64 %2)
 // CHECK-NEXT:   ret i64 %5
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i64 @__llgo_stub.main.add(ptr %0, i64 %1, i64 %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i64 @main.add(i64 %1, i64 %2)
-// CHECK-NEXT:   ret i64 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i64 @"__llgo_stub.main.demo4$1"(ptr %0, i64 %1, i64 %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i64 @"main.demo4$1"(i64 %1, i64 %2)
-// CHECK-NEXT:   ret i64 %3
 // CHECK-NEXT: }

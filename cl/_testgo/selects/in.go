@@ -149,7 +149,7 @@ func main() {
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define void @"main.main$1"(ptr %0){{.*}} {
+// CHECK-LABEL: define void @"main.main$1"(ptr {{(nest|swiftself)}} %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = load { ptr, ptr, ptr }, ptr %0, align 8
 // CHECK-NEXT:   %2 = extractvalue { ptr, ptr, ptr } %1, 0
@@ -235,6 +235,7 @@ func main() {
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.FreeRoot"(ptr %0)
 // CHECK-NEXT:   %3 = extractvalue { ptr, ptr } %2, 1
 // CHECK-NEXT:   %4 = extractvalue { ptr, ptr } %2, 0
-// CHECK-NEXT:   call void %4(ptr %3)
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %4)
+// CHECK-NEXT:   call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %3)
 // CHECK-NEXT:   ret ptr null
 // CHECK-NEXT: }

@@ -168,7 +168,8 @@ type T struct {
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_5
 // CHECK-NEXT:   %39 = extractvalue { ptr, ptr } %47, 1
 // CHECK-NEXT:   %40 = extractvalue { ptr, ptr } %47, 0
-// CHECK-NEXT:   %41 = call i64 %40(ptr %39, i64 100)
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %40)
+// CHECK-NEXT:   %41 = call i64 %__llgo_funcval_code(ptr {{(nest|swiftself)}} %39, i64 100)
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_0
@@ -188,7 +189,7 @@ type T struct {
 // CHECK-NEXT:   br i1 %48, label %_llgo_2, label %_llgo_1
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define i64 @"main.callClosure$1"(ptr %0, i64 %1){{.*}} {
+// CHECK-LABEL: define i64 @"main.callClosure$1"(ptr {{(nest|swiftself)}} %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @9, i64 12 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
@@ -203,7 +204,7 @@ type T struct {
 // CHECK-LABEL: define void @main.callFunc(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store { ptr, ptr } { ptr @"__llgo_stub.main.callFunc$1", ptr null }, ptr %0, align 8
+// CHECK-NEXT:   store { ptr, ptr } { ptr @"main.callFunc$1", ptr null }, ptr %0, align 8
 // CHECK-NEXT:   %1 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr undef }, ptr %0, 1
 // CHECK-NEXT:   %2 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %1)
 // CHECK-NEXT:   %3 = call i64 @reflect.Value.Kind(%reflect.Value %2)
@@ -259,7 +260,8 @@ type T struct {
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_5
 // CHECK-NEXT:   %35 = extractvalue { ptr, ptr } %43, 1
 // CHECK-NEXT:   %36 = extractvalue { ptr, ptr } %43, 0
-// CHECK-NEXT:   %37 = call i64 %36(ptr %35, i64 100)
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %36)
+// CHECK-NEXT:   %37 = call i64 %__llgo_funcval_code(ptr {{(nest|swiftself)}} %35, i64 100)
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_0
@@ -386,7 +388,8 @@ func callMethod() {
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_5
 // CHECK-NEXT:   %43 = extractvalue { ptr, ptr } %69, 1
 // CHECK-NEXT:   %44 = extractvalue { ptr, ptr } %69, 0
-// CHECK-NEXT:   %45 = call i64 %44(ptr %43, i64 1)
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %44)
+// CHECK-NEXT:   %45 = call i64 %__llgo_funcval_code(ptr {{(nest|swiftself)}} %43, i64 1)
 // CHECK-NEXT:   %46 = call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %10)
 // CHECK-NEXT:   %47 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %46)
 // CHECK-NEXT:   %48 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
@@ -490,7 +493,8 @@ func callMethod() {
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_5
 // CHECK-NEXT:   %37 = extractvalue { ptr, ptr } %63, 1
 // CHECK-NEXT:   %38 = extractvalue { ptr, ptr } %63, 0
-// CHECK-NEXT:   %39 = call i64 %38(ptr %37, i64 1)
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %38)
+// CHECK-NEXT:   %39 = call i64 %__llgo_funcval_code(ptr {{(nest|swiftself)}} %37, i64 1)
 // CHECK-NEXT:   %40 = call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %4)
 // CHECK-NEXT:   %41 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %40)
 // CHECK-NEXT:   %42 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
@@ -536,7 +540,7 @@ func callMethod() {
 // CHECK-LABEL: define void @main.callSlice(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store { ptr, ptr } { ptr @__llgo_stub.main.demo, ptr null }, ptr %0, align 8
+// CHECK-NEXT:   store { ptr, ptr } { ptr @main.demo, ptr null }, ptr %0, align 8
 // CHECK-NEXT:   %1 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr undef }, ptr %0, 1
 // CHECK-NEXT:   %2 = call %reflect.Value @reflect.ValueOf(%"{{.*}}/runtime/internal/runtime.eface" %1)
 // CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
@@ -1145,45 +1149,3 @@ func mapDemo2() {
 		}
 	}
 }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal64"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal64"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i64 @"__llgo_stub.main.callFunc$1"(ptr %0, i64 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = tail call i64 @"main.callFunc$1"(i64 %1)
-// CHECK-NEXT:   ret i64 %2
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i64 @"__llgo_stub.main.(*T).Add"(ptr %0, ptr %1, i64 %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i64 @"main.(*T).Add"(ptr %1, i64 %2)
-// CHECK-NEXT:   ret i64 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.interequal"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.interequal"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce { i64, i64 } @__llgo_stub.main.demo(ptr %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9, %"{{.*}}/runtime/internal/runtime.Slice" %10){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %11 = tail call { i64, i64 } @main.demo(i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9, %"{{.*}}/runtime/internal/runtime.Slice" %10)
-// CHECK-NEXT:   ret { i64, i64 } %11
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.nilinterequal"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.nilinterequal"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal8"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal8"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }

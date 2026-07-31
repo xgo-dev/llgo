@@ -154,3 +154,86 @@ attributes #1 = { noinline }
 		t.Fatalf("transformed module is invalid: %v\n%s", err, mod.String())
 	}
 }
+
+func TestLowerLargeAggregatePreservesClosureEnvAttribute(t *testing.T) {
+	const testIR = `
+%Large = type [65537 x i8]
+
+define %Large @callee(ptr nest %env) {
+entry:
+  ret %Large zeroinitializer
+}
+
+define %Large @calleeSwift(ptr swiftself %env) {
+entry:
+  ret %Large zeroinitializer
+}
+
+define void @caller(ptr %env) {
+entry:
+  %unused = call %Large @callee(ptr nest %env)
+  %unusedSwift = call %Large @calleeSwift(ptr swiftself %env)
+  ret void
+}
+`
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	path := filepath.Join(t.TempDir(), "large_closure_env.ll")
+	if err := os.WriteFile(path, []byte(testIR), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	buf, err := llvm.NewMemoryBufferFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod, err := ctx.ParseIR(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mod.Dispose()
+	td := llvm.NewTargetData("e-m:o-i64:64-i128:128-n32:64-S128")
+	defer td.Dispose()
+
+	LowerLargeAggregates(td, mod)
+
+	nest := llvm.AttributeKindID("nest")
+	callee := mod.NamedFunction("callee")
+	if attr := callee.GetEnumAttributeAtIndex(2, nest); attr.IsNil() {
+		t.Fatalf("large return lowering lost nest after inserting sret:\n%s", callee.String())
+	}
+	if attr := callee.GetEnumAttributeAtIndex(1, nest); !attr.IsNil() {
+		t.Fatalf("large return lowering left nest on the new sret parameter:\n%s", callee.String())
+	}
+	swiftself := llvm.AttributeKindID("swiftself")
+	calleeSwift := mod.NamedFunction("calleeSwift")
+	if attr := calleeSwift.GetEnumAttributeAtIndex(2, swiftself); attr.IsNil() {
+		t.Fatalf("large return lowering lost swiftself after inserting sret:\n%s", calleeSwift.String())
+	}
+
+	caller := mod.NamedFunction("caller")
+	var nestedCall, swiftselfCall llvm.Value
+	for block := caller.FirstBasicBlock(); !block.IsNil(); block = llvm.NextBasicBlock(block) {
+		for instruction := block.FirstInstruction(); !instruction.IsNil(); instruction = llvm.NextInstruction(instruction) {
+			if call := instruction.IsACallInst(); !call.IsNil() {
+				switch call.CalledValue().Name() {
+				case "callee":
+					nestedCall = call
+				case "calleeSwift":
+					swiftselfCall = call
+				}
+			}
+		}
+	}
+	if nestedCall.IsNil() {
+		t.Fatalf("large return lowering removed the callee call:\n%s", caller.String())
+	}
+	if attr := nestedCall.GetCallSiteEnumAttribute(2, nest); attr.IsNil() {
+		t.Fatalf("large return call lowering lost nest after inserting sret:\n%s", caller.String())
+	}
+	if swiftselfCall.IsNil() || swiftselfCall.GetCallSiteEnumAttribute(2, swiftself).IsNil() {
+		t.Fatalf("large return call lowering lost swiftself after inserting sret:\n%s", caller.String())
+	}
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("large-return closure-env module is invalid: %v\n%s", err, mod.String())
+	}
+}

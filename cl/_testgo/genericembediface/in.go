@@ -133,12 +133,6 @@ func main() {
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %3
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.interequal"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.interequal"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }
-
 // CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/cl/_testgo/genericembediface/streamlib.(*GenericServerStream[main.Request,main.Response]).Context"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[main.Request,main.Response]", ptr %0, i32 0, i32 0
@@ -172,46 +166,4 @@ func main() {
 // CHECK-NEXT:   %11 = extractvalue { ptr, ptr } %9, 0
 // CHECK-NEXT:   %12 = call %"{{.*}}/runtime/internal/runtime.String" %11(ptr %10)
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %12
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.String" @"__llgo_stub.{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[main.Request,main.Response].Context"(ptr %0, %"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[main.Request,main.Response]" %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = tail call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[main.Request,main.Response].Context"(%"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[main.Request,main.Response]" %1)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %2
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.String" @"__llgo_stub.{{.*}}/cl/_testgo/genericembediface/streamlib.(*GenericServerStream[main.Request,main.Response]).Context"(ptr %0, ptr %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = tail call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/cl/_testgo/genericembediface/streamlib.(*GenericServerStream[main.Request,main.Response]).Context"(ptr %1)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %2
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal0"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal0"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.iface" @"__llgo_stub.main.(*server).ServerReflectionInfo"(ptr %0, ptr %1, %"{{.*}}/runtime/internal/runtime.iface" %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call %"{{.*}}/runtime/internal/runtime.iface" @"main.(*server).ServerReflectionInfo"(ptr %1, %"{{.*}}/runtime/internal/runtime.iface" %2)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.iface" @__llgo_stub.main.server.ServerReflectionInfo(ptr %0, %main.server %1, %"{{.*}}/runtime/internal/runtime.iface" %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call %"{{.*}}/runtime/internal/runtime.iface" @main.server.ServerReflectionInfo(%main.server %1, %"{{.*}}/runtime/internal/runtime.iface" %2)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.String" @"__llgo_stub.main.(*stream).Context"(ptr %0, ptr %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = tail call %"{{.*}}/runtime/internal/runtime.String" @"main.(*stream).Context"(ptr %1)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %2
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.String" @__llgo_stub.main.stream.Context(ptr %0, %main.stream %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = tail call %"{{.*}}/runtime/internal/runtime.String" @main.stream.Context(%main.stream %1)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %2
 // CHECK-NEXT: }

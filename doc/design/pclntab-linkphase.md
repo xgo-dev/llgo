@@ -41,7 +41,6 @@ linker-agnostic.
 1. **Parse** the linked binary's metadata sections (`debug/elf`,
    `debug/macho` from the Go stdlib — the tool runs on the host):
    - `llgo_funcinfo_entry` / `__DATA,__llgo_fie`: `{pc, symbolID}` records.
-   - `llgo_funcinfo_stubsite` / `__DATA,__llgo_stub`: same layout.
    - Zero records are skipped, as in the runtime today.
 2. **Dedup by symbolID**: LTO inline copies register the same symbolID at
    several PCs. The true entry is the record whose PC lies inside the text
@@ -93,9 +92,8 @@ change is strictly additive and safe to land incrementally.
   platforms; assert `llgo funcinfo: ... entries= prebuilt` via
   LLGO_FUNCINFO_DEBUG.
 - **P3** (done) Mach-O bind-record resolution: pointer slots naming exported
-  functions — every `__llgo_stub.*` and any exported Go function — are
-  chained-fixup BIND nodes, not rebases; without decoding them through the
-  imports table, all stub records miss the prebuilt ftab and function-value
+  Go functions are chained-fixup BIND nodes, not rebases; without decoding
+  them through the imports table, exported records miss the prebuilt ftab and
   `FuncForPC` silently pays a dladdr per fresh pc (~6µs). Also: the prebuilt
   header's base slot is spliced back into the fixup chain as a live rebase
   node, so the runtime reads a dyld-slid runtime PC directly (no slide

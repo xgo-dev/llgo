@@ -77,7 +77,7 @@ func init() {
 	// CHECK-NEXT: }
 	var n int
 	fn3 := func() { println(n) }
-	// CHECK-LABEL: define void @"main.init#1$2"(ptr %0){{.*}} {
+	// CHECK-LABEL: define void @"main.init#1$2"(ptr {{(nest|swiftself)}} %0){{.*}} {
 	// CHECK-NEXT: _llgo_0:
 	// CHECK-NEXT:   %1 = load { ptr }, ptr %0, align 8
 	// CHECK-NEXT:   %2 = extractvalue { ptr } %1, 0

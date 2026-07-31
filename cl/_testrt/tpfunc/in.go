@@ -81,9 +81,3 @@ func main() {
 	}
 	println(unsafe.Sizeof(fn1), unsafe.Sizeof(fn2), unsafe.Sizeof(fn3))
 }
-
-// CHECK-LABEL: define linkonce void @"__llgo_stub.main.main$1"(ptr %0, ptr %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   tail call void @"main.main$1"(ptr %1)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }

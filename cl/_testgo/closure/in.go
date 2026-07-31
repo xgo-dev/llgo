@@ -9,8 +9,9 @@ func main() {
 	// CHECK: store %"{{.*}}String" { ptr @0, i64 3 }, ptr %0, align 8
 	// CHECK: call ptr @"{{.*}}AllocU"(i64 8)
 	// CHECK: { ptr @"main.main$2", ptr undef }
-	// CHECK: call void @"__llgo_stub.main.main$1"(ptr null, i64 100)
-	// CHECK: call void %7(ptr %6, i64 200)
+	// CHECK: call void @"main.main$1"(i64 100)
+	// CHECK: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %7)
+	// CHECK: call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %6, i64 200)
 	// CHECK: ret void
 	var env string = "env"
 	var v1 T = func(i int) {
@@ -24,7 +25,7 @@ func main() {
 		println("func", i)
 	}
 	var v2 T = func(i int) {
-		// CHECK-LABEL: define void @"main.main$2"(ptr %0, i64 %1){{.*}} {
+		// CHECK-LABEL: define void @"main.main$2"(ptr {{(nest|swiftself)}} %0, i64 %1){{.*}} {
 		// CHECK-NEXT: _llgo_0:
 		// CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
 		// CHECK-NEXT:   %3 = extractvalue { ptr } %2, 0

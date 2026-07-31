@@ -58,7 +58,7 @@ func UseCTrampoline() uintptr {
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}.AllocZ"(i64 8)
 // CHECK-NEXT:   %1 = call ptr @"{{.*}}.AllocU"(i64 8)
 // CHECK:   ret i64 ptrtoint (ptr @"{{.*}}.UseClosure$1" to i64)
-// CHECK-LABEL: define void @"{{.*}}.UseClosure$1"(ptr %0){{.*}} {
+// CHECK-LABEL: define void @"{{.*}}.UseClosure$1"(ptr {{(nest|swiftself)}} %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK:   %4 = add i64 %3, 1
 // CHECK:   ret void

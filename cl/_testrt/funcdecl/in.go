@@ -12,7 +12,7 @@ import (
 // CHECK-LABEL: define void @main.check({ ptr, ptr } %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store { ptr, ptr } { ptr @__llgo_stub.main.demo, ptr null }, ptr %1, align 8
+// CHECK-NEXT:   store { ptr, ptr } { ptr @main.demo, ptr null }, ptr %1, align 8
 // CHECK-NEXT:   %2 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8", ptr undef }, ptr %1, 1
 // CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK-NEXT:   store { ptr, ptr } %0, ptr %3, align 8
@@ -122,7 +122,7 @@ func demo() {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @6, i64 5 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   call void @main.check({ ptr, ptr } { ptr @__llgo_stub.main.demo, ptr null })
+// CHECK-NEXT:   call void @main.check({ ptr, ptr } { ptr @main.demo, ptr null })
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
@@ -130,9 +130,3 @@ func main() {
 	println("hello")
 	check(demo)
 }
-
-// CHECK-LABEL: define linkonce void @__llgo_stub.main.demo(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   tail call void @main.demo()
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }

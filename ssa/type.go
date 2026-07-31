@@ -47,6 +47,7 @@ const (
 	vkFuncDecl
 	vkFuncPtr
 	vkClosure
+	vkIfaceMethod
 	vkBuiltin
 	vkPyFuncRef
 	vkPyVarRef

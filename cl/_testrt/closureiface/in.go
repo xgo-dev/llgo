@@ -26,7 +26,8 @@ package main
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_5
 // CHECK-NEXT:   %10 = extractvalue { ptr, ptr } %18, 1
 // CHECK-NEXT:   %11 = extractvalue { ptr, ptr } %18, 0
-// CHECK-NEXT:   %12 = call i64 %11(ptr %10, i64 100)
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %11)
+// CHECK-NEXT:   %12 = call i64 %__llgo_funcval_code(ptr {{(nest|swiftself)}} %10, i64 100)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %12)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
@@ -49,7 +50,7 @@ package main
 // CHECK-NEXT: }
 func main() {
 	var m int = 200
-	// CHECK-LABEL: define i64 @"main.main$1"(ptr %0, i64 %1){{.*}} {
+	// CHECK-LABEL: define i64 @"main.main$1"(ptr {{(nest|swiftself)}} %0, i64 %1){{.*}} {
 	// CHECK-NEXT: _llgo_0:
 	// CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
 	// CHECK-NEXT:   %3 = extractvalue { ptr } %2, 0

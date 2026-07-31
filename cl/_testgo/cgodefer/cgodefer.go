@@ -26,7 +26,8 @@ import "C"
 // CHECK-NEXT:   %4 = insertvalue { ptr, ptr } { ptr @"main.main$1", ptr undef }, ptr %2, 1
 // CHECK-NEXT:   %5 = extractvalue { ptr, ptr } %4, 1
 // CHECK-NEXT:   %6 = extractvalue { ptr, ptr } %4, 0
-// CHECK-NEXT:   %7 = call { ptr, ptr } %6(ptr %5)
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %6)
+// CHECK-NEXT:   %7 = call { ptr, ptr } %__llgo_funcval_code(ptr {{(nest|swiftself)}} %5)
 // CHECK-NEXT:   %8 = call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
 // CHECK-NEXT:   %9 = alloca i8, i64 {{.*}}, align 1
 // CHECK-NEXT:   %10 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 48)
@@ -92,7 +93,8 @@ import "C"
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.FreeDeferNode"(ptr %30)
 // CHECK-NEXT:   %34 = extractvalue { ptr, ptr } %33, 1
 // CHECK-NEXT:   %35 = extractvalue { ptr, ptr } %33, 0
-// CHECK-NEXT:   call void %35(ptr %34)
+// CHECK-NEXT:   %__llgo_funcval_code1 = call ptr asm "", "=r,0"(ptr %35)
+// CHECK-NEXT:   call void %__llgo_funcval_code1(ptr {{(nest|swiftself)}} %34)
 // CHECK-NEXT:   br label %_llgo_8
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_7, %_llgo_2
@@ -103,7 +105,7 @@ import "C"
 // CHECK-NEXT:   indirectbr ptr %38, [label %_llgo_3, label %_llgo_6]
 // CHECK-NEXT: }
 func main() {
-	// CHECK-LABEL: define { ptr, ptr } @"main.main$1"(ptr %0){{.*}} {
+	// CHECK-LABEL: define { ptr, ptr } @"main.main$1"(ptr {{(nest|swiftself)}} %0){{.*}} {
 	// CHECK-NEXT: _llgo_0:
 	// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
 	// CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
@@ -117,7 +119,7 @@ func main() {
 	// CHECK-NEXT:   ret { ptr, ptr } %7
 	// CHECK-NEXT: }
 	p := C.malloc(1024)
-	// CHECK-LABEL: define void @"main.main$1$1"(ptr %0){{.*}} {
+	// CHECK-LABEL: define void @"main.main$1$1"(ptr {{(nest|swiftself)}} %0){{.*}} {
 	// CHECK-NEXT: _llgo_0:
 	// CHECK-NEXT:   %1 = load { ptr }, ptr %0, align 8
 	// CHECK-NEXT:   %2 = extractvalue { ptr } %1, 0

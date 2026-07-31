@@ -95,7 +95,14 @@ func (p Package) routine(t Type, fn Expr, buildCall func(Builder, Expr, ...Expr)
 	args := make([]Expr, n)
 	var offset int
 	if fn != Nil && fn.kind != vkBuiltin {
+		savedType := fn.Type
 		fn = b.getField(data, 0)
+		// Interface invocation pairs are structurally funcvals, but their data
+		// word remains an ordinary receiver argument after crossing the
+		// goroutine startup record.
+		if savedType.kind == vkIfaceMethod {
+			fn.Type = savedType
+		}
 		offset = 1
 	}
 	for i := 0; i < n; i++ {

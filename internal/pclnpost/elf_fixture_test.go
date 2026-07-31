@@ -24,19 +24,19 @@ import (
 	"testing"
 )
 
-// buildELF fabricates the minimal ELF load() understands: .text, the two
-// funcinfo site sections, a data section holding the symbol index, .symtab
+// buildELF fabricates the minimal ELF load() understands: .text, the funcinfo
+// entry-site section, a data section holding the symbol index, .symtab
 // and .strtab. Layout is one flat file segment; vmaddr == file offset + 0x10000.
 type elfFn struct {
 	name string
 	size uint64
 }
 
-func buildELF(t *testing.T, fns []elfFn, entryRecs, stubRecs func(addrOf func(string) uint64) []byte, entryPad, stubPad int) string {
-	return buildELFExternal(t, fns, entryRecs, stubRecs, entryPad, stubPad, nil, nil)
+func buildELF(t *testing.T, fns []elfFn, entryRecs func(addrOf func(string) uint64) []byte, entryPad int) string {
+	return buildELFExternal(t, fns, entryRecs, entryPad, nil, nil)
 }
 
-func buildELFExternal(t *testing.T, fns []elfFn, entryRecs, stubRecs func(addrOf func(string) uint64) []byte, entryPad, stubPad int, pcLine, identity []byte) string {
+func buildELFExternal(t *testing.T, fns []elfFn, entryRecs func(addrOf func(string) uint64) []byte, entryPad int, pcLine, identity []byte) string {
 	t.Helper()
 	const base = uint64(0x10000)
 	var text bytes.Buffer
@@ -48,8 +48,6 @@ func buildELFExternal(t *testing.T, fns []elfFn, entryRecs, stubRecs func(addrOf
 	addrOf := func(n string) uint64 { return addr[n] }
 	entry := entryRecs(addrOf)
 	entry = append(entry, make([]byte, entryPad)...)
-	stub := stubRecs(addrOf)
-	stub = append(stub, make([]byte, stubPad)...)
 
 	// Symbol index: sorted {u64 fnv(name), u32 funcIndex, u32 pad}.
 	type sie struct {
@@ -102,7 +100,7 @@ func buildELFExternal(t *testing.T, fns []elfFn, entryRecs, stubRecs func(addrOf
 		binary.Write(&symtab, binary.LittleEndian, fn.size)
 	}
 
-	sectionNames := []string{".text", "llgo_funcinfo_entry", "llgo_funcinfo_stubsite"}
+	sectionNames := []string{".text", "llgo_funcinfo_entry"}
 	if pcLine != nil {
 		sectionNames = append(sectionNames, "llgo_pcline")
 	}
@@ -129,7 +127,6 @@ func buildELFExternal(t *testing.T, fns []elfFn, entryRecs, stubRecs func(addrOf
 	secs := []sec{
 		{".text", 1, base, text.Bytes(), 0, 0},
 		{"llgo_funcinfo_entry", 1, base + 0x4000, entry, 0, 0},
-		{"llgo_funcinfo_stubsite", 1, base + 0x6000, stub, 0, 0},
 	}
 	if pcLine != nil {
 		secs = append(secs, sec{"llgo_pcline", 1, base + 0x7000, pcLine, 0, 0})
@@ -195,7 +192,6 @@ func fixtureFns() []elfFn {
 	return []elfFn{
 		{"example.com/p.A", 64},
 		{"example.com/p.B", 64},
-		{"__llgo_stub.example.com/p.A", 16},
 	}
 }
 
@@ -204,17 +200,13 @@ func fixtureEntry(addrOf func(string) uint64) []byte {
 	return append(out, rec(addrOf("example.com/p.B")+4, fnv64("example.com/p.B"))...)
 }
 
-func fixtureStub(addrOf func(string) uint64) []byte {
-	return rec(addrOf("__llgo_stub.example.com/p.A")+4, fnv64("example.com/p.A"))
-}
-
 func TestRewriteELFInPlace(t *testing.T) {
-	path := buildELF(t, fixtureFns(), fixtureEntry, fixtureStub, 4096, 256)
+	path := buildELF(t, fixtureFns(), fixtureEntry, 4096)
 	st, err := Rewrite(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.FtabEntries != 4 { // A, B, stub, sentinel
+	if st.FtabEntries != 3 { // A, B, sentinel
 		t.Fatalf("stats %+v", st)
 	}
 	// Idempotence guard.
@@ -233,42 +225,10 @@ func TestRewriteELFInPlace(t *testing.T) {
 	if base != 0x10000 { // first function entry
 		t.Fatalf("base %#x", base)
 	}
-	// Stub section voided.
-	for _, b := range info.stubSec {
-		if b != 0 {
-			t.Fatal("stub section not zeroed")
-		}
-	}
-}
-
-func TestRewriteELFSpillsToStubSection(t *testing.T) {
-	// Entry section too small for the blob, stub section large enough.
-	path := buildELF(t, fixtureFns(), fixtureEntry, fixtureStub, 0, 8192)
-	st, err := Rewrite(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.FtabEntries != 4 {
-		t.Fatalf("stats %+v", st)
-	}
-	info, err := load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := binary.LittleEndian.Uint64(info.entrySec[0:]); got != redirectMagic {
-		t.Fatalf("entry magic %#x", got)
-	}
-	if got := binary.LittleEndian.Uint64(info.stubSec[0:]); got != prebuiltMagic {
-		t.Fatalf("stub magic %#x", got)
-	}
-	if ptr := binary.LittleEndian.Uint64(info.entrySec[16:]); ptr != info.stubVMAddr {
-		t.Fatalf("redirect ptr %#x want %#x", ptr, info.stubVMAddr)
-	}
 }
 
 func TestRewriteELFOverflowFallsBack(t *testing.T) {
-	// Neither section fits: Rewrite must fail (no gap-y table).
-	path := buildELF(t, fixtureFns(), fixtureEntry, fixtureStub, 0, 0)
+	path := buildELF(t, fixtureFns(), fixtureEntry, 0)
 	before, _ := os.ReadFile(path)
 	if _, err := Rewrite(path); err == nil {
 		t.Fatal("expected overflow error")
@@ -282,7 +242,7 @@ func TestRewriteELFOverflowFallsBack(t *testing.T) {
 func TestRewriteErrorPaths(t *testing.T) {
 	// No entry records at all.
 	empty := func(addrOf func(string) uint64) []byte { return nil }
-	path := buildELF(t, fixtureFns(), empty, empty, 4096, 256)
+	path := buildELF(t, fixtureFns(), empty, 4096)
 	if _, err := Rewrite(path); err == nil {
 		t.Fatal("expected no-entry-records error")
 	}
@@ -290,7 +250,7 @@ func TestRewriteErrorPaths(t *testing.T) {
 	orphan := func(addrOf func(string) uint64) []byte {
 		return rec(0xdead0000, 42)
 	}
-	path = buildELF(t, fixtureFns(), orphan, empty, 4096, 256)
+	path = buildELF(t, fixtureFns(), orphan, 4096)
 	if _, err := Rewrite(path); err == nil {
 		t.Fatal("expected no-survivors error")
 	}

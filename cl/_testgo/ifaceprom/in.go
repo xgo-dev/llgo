@@ -347,7 +347,8 @@ func main() {
 // CHECK-NEXT:   %90 = insertvalue { ptr, ptr } { ptr @"main.I.one$bound", ptr undef }, ptr %88, 1
 // CHECK-NEXT:   %91 = extractvalue { ptr, ptr } %90, 1
 // CHECK-NEXT:   %92 = extractvalue { ptr, ptr } %90, 0
-// CHECK-NEXT:   %93 = call i64 %92(ptr %91)
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %92)
+// CHECK-NEXT:   %93 = call i64 %__llgo_funcval_code(ptr {{(nest|swiftself)}} %91)
 // CHECK-NEXT:   %94 = icmp ne i64 %93, 1
 // CHECK-NEXT:   br i1 %94, label %_llgo_5, label %_llgo_6
 // CHECK-EMPTY:
@@ -362,7 +363,8 @@ func main() {
 // CHECK-NEXT:   %97 = insertvalue { ptr, ptr } { ptr @"main.I.one$bound", ptr undef }, ptr %95, 1
 // CHECK-NEXT:   %98 = extractvalue { ptr, ptr } %97, 1
 // CHECK-NEXT:   %99 = extractvalue { ptr, ptr } %97, 0
-// CHECK-NEXT:   %100 = call i64 %99(ptr %98)
+// CHECK-NEXT:   %__llgo_funcval_code1 = call ptr asm "", "=r,0"(ptr %99)
+// CHECK-NEXT:   %100 = call i64 %__llgo_funcval_code1(ptr {{(nest|swiftself)}} %98)
 // CHECK-NEXT:   %101 = icmp ne i64 %100, 1
 // CHECK-NEXT:   br i1 %101, label %_llgo_7, label %_llgo_8
 // CHECK-EMPTY:
@@ -377,7 +379,8 @@ func main() {
 // CHECK-NEXT:   %104 = insertvalue { ptr, ptr } { ptr @"main.I.two$bound", ptr undef }, ptr %102, 1
 // CHECK-NEXT:   %105 = extractvalue { ptr, ptr } %104, 1
 // CHECK-NEXT:   %106 = extractvalue { ptr, ptr } %104, 0
-// CHECK-NEXT:   %107 = call %"{{.*}}/runtime/internal/runtime.String" %106(ptr %105)
+// CHECK-NEXT:   %__llgo_funcval_code2 = call ptr asm "", "=r,0"(ptr %106)
+// CHECK-NEXT:   %107 = call %"{{.*}}/runtime/internal/runtime.String" %__llgo_funcval_code2(ptr {{(nest|swiftself)}} %105)
 // CHECK-NEXT:   %108 = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" %107, %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 3 })
 // CHECK-NEXT:   %109 = xor i1 %108, true
 // CHECK-NEXT:   br i1 %109, label %_llgo_13, label %_llgo_14
@@ -393,7 +396,8 @@ func main() {
 // CHECK-NEXT:   %112 = insertvalue { ptr, ptr } { ptr @"main.I.two$bound", ptr undef }, ptr %110, 1
 // CHECK-NEXT:   %113 = extractvalue { ptr, ptr } %112, 1
 // CHECK-NEXT:   %114 = extractvalue { ptr, ptr } %112, 0
-// CHECK-NEXT:   %115 = call %"{{.*}}/runtime/internal/runtime.String" %114(ptr %113)
+// CHECK-NEXT:   %__llgo_funcval_code3 = call ptr asm "", "=r,0"(ptr %114)
+// CHECK-NEXT:   %115 = call %"{{.*}}/runtime/internal/runtime.String" %__llgo_funcval_code3(ptr {{(nest|swiftself)}} %113)
 // CHECK-NEXT:   %116 = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" %115, %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 3 })
 // CHECK-NEXT:   %117 = xor i1 %116, true
 // CHECK-NEXT:   br i1 %117, label %_llgo_15, label %_llgo_16
@@ -403,49 +407,7 @@ func main() {
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal0"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal0"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i64 @"__llgo_stub.main.(*impl).one"(ptr %0, ptr %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = tail call i64 @"main.(*impl).one"(ptr %1)
-// CHECK-NEXT:   ret i64 %2
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal64"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal64"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.String" @"__llgo_stub.main.(*impl).two"(ptr %0, ptr %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = tail call %"{{.*}}/runtime/internal/runtime.String" @"main.(*impl).two"(ptr %1)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %2
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i64 @__llgo_stub.main.impl.one(ptr %0, %main.impl %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = tail call i64 @main.impl.one(%main.impl %1)
-// CHECK-NEXT:   ret i64 %2
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.String" @__llgo_stub.main.impl.two(ptr %0, %main.impl %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = tail call %"{{.*}}/runtime/internal/runtime.String" @main.impl.two(%main.impl %1)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %2
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.interequal"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.interequal"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define i64 @"main.I.one$bound"(ptr %0){{.*}} {
+// CHECK-LABEL: define i64 @"main.I.one$bound"(ptr {{(nest|swiftself)}} %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = load { %"{{.*}}/runtime/internal/runtime.iface" }, ptr %0, align 8
 // CHECK-NEXT:   %2 = extractvalue { %"{{.*}}/runtime/internal/runtime.iface" } %1, 0
@@ -461,7 +423,7 @@ func main() {
 // CHECK-NEXT:   ret i64 %11
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @"main.I.two$bound"(ptr %0){{.*}} {
+// CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @"main.I.two$bound"(ptr {{(nest|swiftself)}} %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = load { %"{{.*}}/runtime/internal/runtime.iface" }, ptr %0, align 8
 // CHECK-NEXT:   %2 = extractvalue { %"{{.*}}/runtime/internal/runtime.iface" } %1, 0

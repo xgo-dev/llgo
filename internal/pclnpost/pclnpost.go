@@ -25,7 +25,6 @@ import (
 type Stats struct {
 	Format       string
 	EntryRecords int
-	StubRecords  int
 	Kept         int
 	InlineCopies int
 	NoSymbol     int
@@ -35,7 +34,7 @@ type Stats struct {
 
 // Rewrite parses the linked binary's funcinfo site sections, deduplicates
 // LTO inline copies against the symbol table, builds the Go-layout prebuilt
-// table and rewrites the entry section in place (voiding the stub section).
+// table and rewrites the entry section in place.
 // The runtime adopts the table when it sees the magic header and falls back
 // to first-use construction otherwise, so failures here leave a fully
 // functional binary.
@@ -47,29 +46,22 @@ func Rewrite(path string) (Stats, error) {
 	}
 	st.Format = info.format
 	if len(info.entrySec) >= 8 {
-		if m := binary.LittleEndian.Uint64(info.entrySec); m == prebuiltMagic || m == redirectMagic {
+		if m := binary.LittleEndian.Uint64(info.entrySec); m == prebuiltMagic {
 			return st, fmt.Errorf("already rewritten")
 		}
 	}
 	entries := parseRecords(info, info.entrySec)
-	stubs := parseRecords(info, info.stubSec)
-	st.EntryRecords, st.StubRecords = len(entries), len(stubs)
+	st.EntryRecords = len(entries)
 	if len(entries) == 0 {
 		return st, fmt.Errorf("no entry records")
 	}
-	kept, inline, nosym := dedupe(info, append(entries, stubs...), false)
+	kept, inline, nosym := dedupe(info, entries, false)
 	st.Kept, st.InlineCopies, st.NoSymbol = len(kept), inline, nosym
 	if len(kept) == 0 {
 		return st, fmt.Errorf("no records survived dedup")
 	}
 	ftab, buckets, err := writeBack(path, info, kept)
 	if err != nil {
-		// Includes errBlobOverflow when the blob fits neither the entry nor
-		// the stub section. Never drop stub rows to squeeze in: a table with
-		// gaps attributes pcs inside a gap to the previous function
-		// (nearest-below), which silently returns wrong names on platforms
-		// where dladdr cannot rescue (non-PIE ELF). First-use construction
-		// is slower but correct.
 		return st, err
 	}
 	st.FtabEntries, st.Buckets = ftab, buckets

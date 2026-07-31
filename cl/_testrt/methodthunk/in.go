@@ -40,10 +40,10 @@ func (i *InnerInt) M() int {
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store { ptr, ptr } { ptr @"__llgo_stub.main.(*outer).M$thunk", ptr null }, ptr %0, align 8
+// CHECK-NEXT:   store { ptr, ptr } { ptr @"main.(*outer).M$thunk", ptr null }, ptr %0, align 8
 // CHECK-NEXT:   %1 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr undef }, ptr %0, 1
 // CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store { ptr, ptr } { ptr @"__llgo_stub.main.(*InnerInt).M$thunk", ptr null }, ptr %2, align 8
+// CHECK-NEXT:   store { ptr, ptr } { ptr @"main.(*InnerInt).M$thunk", ptr null }, ptr %2, align 8
 // CHECK-NEXT:   %3 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr undef }, ptr %2, 1
 // CHECK-NEXT:   %4 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %1, 0
 // CHECK-NEXT:   %5 = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr %4)
@@ -127,26 +127,8 @@ func (m *outer) M() {}
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define linkonce void @"__llgo_stub.main.(*outer).M$thunk"(ptr %0, ptr %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   tail call void @"main.(*outer).M$thunk"(ptr %1)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i1 @"__llgo_stub.github.com/goplus/llgo/runtime/internal/runtime.memequal64"(ptr %0, ptr %1, ptr %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = tail call i1 @"{{.*}}/runtime/internal/runtime.memequal64"(ptr %1, ptr %2)
-// CHECK-NEXT:   ret i1 %3
-// CHECK-NEXT: }
-
 // CHECK-LABEL: define i64 @"main.(*InnerInt).M$thunk"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = call i64 @"main.(*InnerInt).M"(ptr %0)
 // CHECK-NEXT:   ret i64 %1
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce i64 @"__llgo_stub.main.(*InnerInt).M$thunk"(ptr %0, ptr %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = tail call i64 @"main.(*InnerInt).M$thunk"(ptr %1)
-// CHECK-NEXT:   ret i64 %2
 // CHECK-NEXT: }

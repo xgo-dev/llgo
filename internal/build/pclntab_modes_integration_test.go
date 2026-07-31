@@ -37,9 +37,9 @@ import (
 	"github.com/goplus/llgo/internal/pclnmap"
 )
 
-// The fixture obtains both a closure ABI stub entry PC and a real target
-// mid-function PC. Together those lookups and the stack APIs exercise the
-// full metadata contract, including its deliberate absence in pclntab=none.
+// The fixture obtains both a function-value entry PC and a target mid-function
+// PC. Together those lookups and the stack APIs exercise the full metadata
+// contract, including its deliberate absence in pclntab=none.
 const pclntabModesFixture = `package main
 
 import (
@@ -60,8 +60,7 @@ func pclnTarget() uintptr {
 	}
 	// Keep the target body comfortably larger than the entry-anchor slack.
 	// This makes the returned mid-function PC unambiguously belong to the
-	// target on both fixed-width arm64 and byte-aligned amd64, while the
-	// function value below still exposes the separate closure ABI stub.
+	// target on both fixed-width arm64 and byte-aligned amd64.
 	value := pc
 	for i := uintptr(0); i < 64; i++ {
 		value = value*33 + i
@@ -101,16 +100,16 @@ func pclnClosurePCState(fn *runtime.Func, pc uintptr) string {
 }
 
 func pclnClosureState() string {
-	stubPC := reflect.ValueOf(pclnTarget).Pointer()
+	funcvalPC := reflect.ValueOf(pclnTarget).Pointer()
 	targetPC := pclnTarget()
-	stubFn := runtime.FuncForPC(stubPC)
+	funcvalFn := runtime.FuncForPC(funcvalPC)
 	targetFn := runtime.FuncForPC(targetPC)
-	separate := stubFn != nil && targetFn != nil &&
-		stubFn.Name() == targetFn.Name() &&
-		stubFn.Entry() == stubPC && targetFn.Entry() != 0 &&
-		targetFn.Entry() != stubFn.Entry() && targetFn.Entry() <= targetPC
-	return fmt.Sprintf("target=%s stub=%s separate=%t",
-		pclnClosurePCState(targetFn, targetPC), pclnClosurePCState(stubFn, stubPC), separate)
+	sameEntry := funcvalFn != nil && targetFn != nil &&
+		funcvalFn.Name() == targetFn.Name() &&
+		funcvalFn.Entry() == funcvalPC && targetFn.Entry() == funcvalFn.Entry() &&
+		targetFn.Entry() <= targetPC
+	return fmt.Sprintf("target=%s funcval=%s same-entry=%t",
+		pclnClosurePCState(targetFn, targetPC), pclnClosurePCState(funcvalFn, funcvalPC), sameEntry)
 }
 
 //go:noinline
@@ -317,8 +316,8 @@ func TestPCLNModeNativeIntegration(t *testing.T) {
 		if got := runPCLNIntegrationBinary(t, bin, "once"); got != "FULL\n" {
 			t.Fatalf("runtime metadata state = %q, want FULL", got)
 		}
-		if got := runPCLNIntegrationBinary(t, bin, "closure"); got != "target=FULL stub=FULL separate=true\n" {
-			t.Fatalf("closure target/stub metadata = %q", got)
+		if got := runPCLNIntegrationBinary(t, bin, "closure"); got != "target=FULL funcval=FULL same-entry=true\n" {
+			t.Fatalf("closure target/funcval metadata = %q", got)
 		}
 	})
 

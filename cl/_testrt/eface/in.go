@@ -199,9 +199,3 @@ func main() {
 	var t T
 	dump(t)
 }
-
-// CHECK-LABEL: define linkonce void @"__llgo_stub.main.main$1"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   tail call void @"main.main$1"()
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }

@@ -21,9 +21,8 @@ func TestGoClosureStartupUsesGCManagedMemory(t *testing.T) {
 		types.NewField(0, nil, "x", types.Typ[types.Int], false),
 	}
 	ctxStruct := types.NewStruct(ctxFields, nil)
-	ctxParam := types.NewParam(0, nil, "__llgo_ctx", types.NewPointer(ctxStruct))
-	innerSig := types.NewSignatureType(nil, nil, nil, types.NewTuple(ctxParam), nil, false)
-	inner := pkg.NewFunc("inner", innerSig, ssa.InGo)
+	ctxParam := types.NewParam(0, nil, "$env", types.NewPointer(ctxStruct))
+	inner := pkg.NewEnvFunc("inner", ssa.NoArgsNoRet, ssa.InGo, ctxParam, false)
 	ib := inner.MakeBody(1)
 	ib.Return()
 

@@ -20,7 +20,8 @@ import (
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1
 // CHECK-NEXT:   %7 = extractvalue { ptr, ptr } %1, 1
 // CHECK-NEXT:   %8 = extractvalue { ptr, ptr } %1, 0
-// CHECK-NEXT:   %9 = call i32 %8(ptr %7)
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %8)
+// CHECK-NEXT:   %9 = call i32 %__llgo_funcval_code(ptr {{(nest|swiftself)}} %7)
 // CHECK-NEXT:   %10 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %2, 0
 // CHECK-NEXT:   %11 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %2, 1
 // CHECK-NEXT:   %12 = icmp slt i64 %5, 0
@@ -64,7 +65,7 @@ type generator struct {
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call %"{{.*}}/runtime/internal/runtime.Slice" @main.genInts(i64 5, { ptr, ptr } { ptr @__llgo_stub.rand, ptr null })
+// CHECK-NEXT:   %0 = call %"{{.*}}/runtime/internal/runtime.Slice" @main.genInts(i64 5, { ptr, ptr } { ptr @rand, ptr null })
 // CHECK-NEXT:   %1 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %0, 1
 // CHECK-NEXT:   br label %_llgo_1
 // CHECK-EMPTY:
@@ -156,7 +157,7 @@ func main() {
 
 	initVal := c.Int(1)
 	ints := genInts(5, func() c.Int {
-		// CHECK-LABEL: define i32 @"main.main$1"(ptr %0){{.*}} {
+		// CHECK-LABEL: define i32 @"main.main$1"(ptr {{(nest|swiftself)}} %0){{.*}} {
 		// CHECK-NEXT: _llgo_0:
 		// CHECK-NEXT:   %1 = load { ptr }, ptr %0, align 8
 		// CHECK-NEXT:   %2 = extractvalue { ptr } %1, 0
@@ -179,14 +180,9 @@ func main() {
 	for _, v := range genInts(5, g.next) {
 		c.Printf(c.Str("%d\n"), v)
 	}
-	// CHECK-LABEL: define linkonce i32 @__llgo_stub.rand(ptr %0){{.*}} {
-	// CHECK-NEXT: _llgo_0:
-	// CHECK-NEXT:   %1 = tail call i32 @rand()
-	// CHECK-NEXT:   ret i32 %1
-	// CHECK-NEXT: }
 }
 
-// CHECK-LABEL: define i32 @"main.(*generator).next$bound"(ptr %0){{.*}} {
+// CHECK-LABEL: define i32 @"main.(*generator).next$bound"(ptr {{(nest|swiftself)}} %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = load { ptr }, ptr %0, align 8
 // CHECK-NEXT:   %2 = extractvalue { ptr } %1, 0

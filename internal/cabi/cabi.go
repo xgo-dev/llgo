@@ -319,10 +319,15 @@ func (p *Transformer) GetFuncInfo(ctx llvm.Context, typ llvm.Type) (info FuncInf
 	return
 }
 
-func (p *Transformer) transformFuncType(ctx llvm.Context, info *FuncInfo) (llvm.Type, map[int]llvm.Attribute) {
+func (p *Transformer) transformFuncType(
+	ctx llvm.Context, info *FuncInfo,
+) (llvm.Type, map[int]llvm.Attribute, []int) {
 	var paramTypes []llvm.Type
 	var returnType llvm.Type
 	attrs := make(map[int]llvm.Attribute)
+	// paramMap maps each zero-based source parameter to its one-based
+	// transformed LLVM attribute index. Zero means the parameter was elided.
+	paramMap := make([]int, len(info.Params))
 	switch info.Return.Kind {
 	case AttrPointer:
 		returnType = ctx.VoidType()
@@ -336,7 +341,10 @@ func (p *Transformer) transformFuncType(ctx llvm.Context, info *FuncInfo) (llvm.
 		returnType = info.Return.Type1
 	}
 
-	for _, ti := range info.Params {
+	for i, ti := range info.Params {
+		if ti.Kind != AttrVoid {
+			paramMap[i] = len(paramTypes) + 1
+		}
 		switch ti.Kind {
 		case AttrVoid:
 			// skip
@@ -354,7 +362,7 @@ func (p *Transformer) transformFuncType(ctx llvm.Context, info *FuncInfo) (llvm.
 			paramTypes = append(paramTypes, subs...)
 		}
 	}
-	return llvm.FunctionType(returnType, paramTypes, info.Type.IsFunctionVarArg()), attrs
+	return llvm.FunctionType(returnType, paramTypes, info.Type.IsFunctionVarArg()), attrs, paramMap
 }
 
 func (p *Transformer) transformFunc(m llvm.Module, fn llvm.Value) bool {
@@ -366,7 +374,7 @@ func (p *Transformer) transformFunc(m llvm.Module, fn llvm.Value) bool {
 	if !info.HasWrap() {
 		return false
 	}
-	nft, attrs := p.transformFuncType(ctx, &info)
+	nft, attrs, paramMap := p.transformFuncType(ctx, &info)
 	preloweredSRet := fn.GetEnumAttributeAtIndex(1, llvm.AttributeKindID("sret"))
 	fname := fn.Name()
 	fn.SetName("")
@@ -374,6 +382,7 @@ func (p *Transformer) transformFunc(m llvm.Module, fn llvm.Value) bool {
 	for i, attr := range attrs {
 		nfn.AddAttributeAtIndex(i, attr)
 	}
+	copyClosureEnvFunctionAttrs(fn, nfn, paramMap)
 	if !preloweredSRet.IsNil() {
 		nfn.AddAttributeAtIndex(1, preloweredSRet)
 	}
@@ -540,7 +549,7 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 	if !info.HasWrap() {
 		return false
 	}
-	nft, attrs := p.transformFuncType(ctx, &info)
+	nft, attrs, paramMap := p.transformFuncType(ctx, &info)
 	preloweredSRet := call.GetCallSiteEnumAttribute(1, llvm.AttributeKindID("sret"))
 	reflectMethodByNameAttr := call.GetCallSiteStringAttribute(-1, "llgo.reflect.methodbyname")
 	b := ctx.NewBuilder()
@@ -599,21 +608,22 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 		}
 	}
 
-	updateCallAttr := func(call llvm.Value) {
+	updateCallAttr := func(replacement llvm.Value) {
 		for i, attr := range attrs {
-			call.AddCallSiteAttribute(i, attr)
+			replacement.AddCallSiteAttribute(i, attr)
 		}
 		if !preloweredSRet.IsNil() {
-			call.AddCallSiteAttribute(1, preloweredSRet)
+			replacement.AddCallSiteAttribute(1, preloweredSRet)
 		}
 		if !reflectMethodByNameAttr.IsNil() {
-			call.AddCallSiteAttribute(-1, reflectMethodByNameAttr)
+			replacement.AddCallSiteAttribute(-1, reflectMethodByNameAttr)
 		}
 		if remappedReflectMethodByNameArgAttrIndex >= 0 {
-			call.AddCallSiteAttribute(remappedReflectMethodByNameArgAttrIndex, ctx.CreateStringAttribute(
+			replacement.AddCallSiteAttribute(remappedReflectMethodByNameArgAttrIndex, ctx.CreateStringAttribute(
 				"llgo.reflect.methodbyname.name", "1",
 			))
 		}
+		copyClosureEnvCallAttrs(call, replacement, paramMap)
 	}
 
 	var instr llvm.Value
@@ -678,7 +688,7 @@ func (p *Transformer) transformCallbackFunc(m llvm.Module, fn llvm.Value) (wrap 
 		return fn, false
 	}
 
-	nft, attrs := p.transformFuncType(ctx, &info)
+	nft, attrs, paramMap := p.transformFuncType(ctx, &info)
 
 	fname := fn.Name()
 	wrapName := "__llgo_cdecl$" + fname
@@ -692,6 +702,7 @@ func (p *Transformer) transformCallbackFunc(m llvm.Module, fn llvm.Value) (wrap 
 	for i, attr := range attrs {
 		wrapFunc.AddAttributeAtIndex(i, attr)
 	}
+	copyClosureEnvFunctionAttrs(fn, wrapFunc, paramMap)
 
 	b := ctx.NewBuilder()
 	block := ctx.AddBasicBlock(wrapFunc, "entry")
@@ -706,6 +717,7 @@ func (p *Transformer) transformCallbackFunc(m llvm.Module, fn llvm.Value) (wrap 
 	for _, ti := range info.Params {
 		switch ti.Kind {
 		default:
+			nparams = append(nparams, params[index])
 		case AttrVoid:
 			// none
 		case AttrPointer:
@@ -738,14 +750,17 @@ func (p *Transformer) transformCallbackFunc(m llvm.Module, fn llvm.Value) (wrap 
 
 	switch info.Return.Kind {
 	case AttrVoid:
-		llvm.CreateCall(b, info.Type, fn, nparams)
+		call := llvm.CreateCall(b, info.Type, fn, nparams)
+		copyClosureEnvFunctionAttrsToCall(fn, call)
 		b.CreateRetVoid()
 	case AttrPointer:
 		ret := llvm.CreateCall(b, info.Type, fn, nparams)
+		copyClosureEnvFunctionAttrsToCall(fn, ret)
 		b.CreateStore(ret, params[0])
 		b.CreateRetVoid()
 	case AttrWidthType, AttrWidthType2:
 		ret := llvm.CreateCall(b, info.Type, fn, nparams)
+		copyClosureEnvFunctionAttrsToCall(fn, ret)
 		ptr := llvm.CreateAlloca(b, info.Return.Type)
 		b.CreateStore(ret, ptr)
 		returnType := nft.ReturnType()
@@ -753,9 +768,51 @@ func (p *Transformer) transformCallbackFunc(m llvm.Module, fn llvm.Value) (wrap 
 		b.CreateRet(b.CreateLoad(returnType, iptr, ""))
 	default:
 		ret := llvm.CreateCall(b, info.Type, fn, nparams)
+		copyClosureEnvFunctionAttrsToCall(fn, ret)
 		b.CreateRet(ret)
 	}
 	return wrapFunc, true
+}
+
+var closureEnvAttributeKinds = []uint{
+	llvm.AttributeKindID("nest"),
+	llvm.AttributeKindID("swiftself"),
+}
+
+func copyClosureEnvFunctionAttrs(from, to llvm.Value, paramMap []int) {
+	for oldIndex, newIndex := range paramMap {
+		if newIndex == 0 {
+			continue
+		}
+		for _, kind := range closureEnvAttributeKinds {
+			if attr := from.GetEnumAttributeAtIndex(oldIndex+1, kind); !attr.IsNil() {
+				to.AddAttributeAtIndex(newIndex, attr)
+			}
+		}
+	}
+}
+
+func copyClosureEnvCallAttrs(from, to llvm.Value, paramMap []int) {
+	for oldIndex, newIndex := range paramMap {
+		if newIndex == 0 {
+			continue
+		}
+		for _, kind := range closureEnvAttributeKinds {
+			if attr := from.GetCallSiteEnumAttribute(oldIndex+1, kind); !attr.IsNil() {
+				to.AddCallSiteAttribute(newIndex, attr)
+			}
+		}
+	}
+}
+
+func copyClosureEnvFunctionAttrsToCall(from, to llvm.Value) {
+	for i := 0; i < from.GlobalValueType().ParamTypesCount(); i++ {
+		for _, kind := range closureEnvAttributeKinds {
+			if attr := from.GetEnumAttributeAtIndex(i+1, kind); !attr.IsNil() {
+				to.AddCallSiteAttribute(i+1, attr)
+			}
+		}
+	}
 }
 
 func (p *Transformer) callMemcpy(_ llvm.Module, ctx llvm.Context, b llvm.Builder, dst llvm.Value, src llvm.Value, size int) llvm.Value {

@@ -37,12 +37,8 @@ const (
 	funcInfoHashMaskSymbol          = "__llgo_funcinfo_hash_mask"
 	funcInfoSymbolIndexSymbol       = "__llgo_funcinfo_symbol_index"
 	funcInfoSymbolIndexCountSymbol  = "__llgo_funcinfo_symbol_index_count"
-	funcInfoStubIndexesSymbol       = "__llgo_funcinfo_stub_indexes"
-	funcInfoStubCountSymbol         = "__llgo_funcinfo_stub_count"
 	funcInfoEntryStartPtrSymbol     = "__llgo_funcinfo_entry_start"
 	funcInfoEntryEndPtrSymbol       = "__llgo_funcinfo_entry_end"
-	funcInfoStubSiteStartPtrSymbol  = "__llgo_funcinfo_stubsite_start"
-	funcInfoStubSiteEndPtrSymbol    = "__llgo_funcinfo_stubsite_end"
 	pcLineTableSymbol               = "__llgo_pcline_table"
 	pcLineCountSymbol               = "__llgo_pcline_count"
 	pcSiteStartPtrSymbol            = "__llgo_pcsite_start"
@@ -55,8 +51,6 @@ const (
 	funcInfoStringOffsetsDataSymbol = "__llgo_funcinfo_string_offsets$data"
 	funcInfoHashDataSymbol          = "__llgo_funcinfo_hash$data"
 	funcInfoSymbolIndexDataSymbol   = "__llgo_funcinfo_symbol_index$data"
-	funcInfoStubIndexesDataSymbol   = "__llgo_funcinfo_stub_indexes$data"
-	closureStubPrefix               = "__llgo_stub."
 )
 
 type funcInfoRecord struct {
@@ -73,11 +67,6 @@ type pcLineRecord struct {
 	file   string
 	line   uint32
 	column uint32
-}
-
-type funcInfoStubRecord struct {
-	symbol    string
-	funcIndex uint32
 }
 
 type funcInfoSymbolIndexRecord struct {
@@ -139,49 +128,6 @@ func collectPCLineInfo(pkgs []Package) []pcLineRecord {
 			return out[i].line < out[j].line
 		}
 		return out[i].id < out[j].id
-	})
-	return out
-}
-
-func collectFuncInfoStubRecords(pkgs []Package, records []funcInfoRecord) []funcInfoStubRecord {
-	if len(records) == 0 {
-		return nil
-	}
-	recordBySymbol := make(map[string]uint32, len(records))
-	for i, rec := range records {
-		if rec.symbol != "" {
-			recordBySymbol[rec.symbol] = uint32(i + 1)
-		}
-	}
-	seen := make(map[string]funcInfoStubRecord)
-	for _, pkg := range pkgs {
-		if pkg == nil || pkg.LPkg == nil {
-			continue
-		}
-		fn := pkg.LPkg.Module().FirstFunction()
-		for !fn.IsNil() {
-			if fn.IsDeclaration() || fn.BasicBlocksCount() == 0 {
-				fn = llvm.NextFunction(fn)
-				continue
-			}
-			name := fn.Name()
-			if target, ok := strings.CutPrefix(name, closureStubPrefix); ok {
-				if idx := recordBySymbol[target]; idx != 0 {
-					seen[name] = funcInfoStubRecord{symbol: name, funcIndex: idx}
-				}
-			}
-			fn = llvm.NextFunction(fn)
-		}
-	}
-	if len(seen) == 0 {
-		return nil
-	}
-	out := make([]funcInfoStubRecord, 0, len(seen))
-	for _, rec := range seen {
-		out = append(out, rec)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].symbol < out[j].symbol
 	})
 	return out
 }
@@ -293,7 +239,7 @@ func readPCLineInfo(mod llvm.Module) []pcLineRecord {
 	return out
 }
 
-func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord, pcLines []pcLineRecord, stubRecords []funcInfoStubRecord) {
+func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord, pcLines []pcLineRecord) {
 	mod := pkg.Module()
 	llvmCtx := mod.Context()
 	i8Type := llvmCtx.Int8Type()
@@ -325,10 +271,6 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		llvm.PointerType(i8Type, 0),
 		i64Type,
 	}, false)
-	stubSiteRecordType := llvmCtx.StructType([]llvm.Type{
-		llvm.PointerType(i8Type, 0),
-		i64Type,
-	}, false)
 	pcSiteRecordType := llvmCtx.StructType([]llvm.Type{
 		llvm.PointerType(i8Type, 0),
 		i64Type,
@@ -340,8 +282,6 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	pcSiteEndPtr := llvm.AddGlobal(mod, llvm.PointerType(pcSiteRecordType, 0), pcSiteEndPtrSymbol)
 	entryStartPtr := llvm.AddGlobal(mod, llvm.PointerType(funcEntryRecordType, 0), funcInfoEntryStartPtrSymbol)
 	entryEndPtr := llvm.AddGlobal(mod, llvm.PointerType(funcEntryRecordType, 0), funcInfoEntryEndPtrSymbol)
-	stubSiteStartPtr := llvm.AddGlobal(mod, llvm.PointerType(stubSiteRecordType, 0), funcInfoStubSiteStartPtrSymbol)
-	stubSiteEndPtr := llvm.AddGlobal(mod, llvm.PointerType(stubSiteRecordType, 0), funcInfoStubSiteEndPtrSymbol)
 	stringsPtr := llvm.AddGlobal(mod, llvm.PointerType(i8Type, 0), funcInfoStringsSymbol)
 	stringOffsetsPtr := llvm.AddGlobal(mod, llvm.PointerType(i32Type, 0), funcInfoStringOffsetsSymbol)
 	stringCount := llvm.AddGlobal(mod, countType, funcInfoStringCountSymbol)
@@ -354,8 +294,6 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	// to relative dynamic relocations in the writable metadata section.
 	symbolIndexPtr.SetVisibility(llvm.HiddenVisibility)
 	symbolIndexCount.SetVisibility(llvm.HiddenVisibility)
-	stubIndexesPtr := llvm.AddGlobal(mod, llvm.PointerType(i32Type, 0), funcInfoStubIndexesSymbol)
-	stubCount := llvm.AddGlobal(mod, countType, funcInfoStubCountSymbol)
 	pcLineCount := llvm.AddGlobal(mod, countType, pcLineCountSymbol)
 	hashMask := llvm.AddGlobal(mod, countType, funcInfoHashMaskSymbol)
 	// One byte per binary telling the runtime whether Go functions were
@@ -368,19 +306,18 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	}
 	fpChain.SetInitializer(llvm.ConstInt(i8Type, fpChainVal, false))
 	if ctx.buildConf.PCLNMode == PCLNExternal {
-		emitExternalFuncInfoTable(ctx, mod, records, pcLines, stubRecords, externalFuncInfoGlobals{
+		emitExternalFuncInfoTable(ctx, mod, records, pcLines, externalFuncInfoGlobals{
 			tablePtr: tablePtr, pcLinePtr: pcLinePtr,
 			pcSiteStartPtr: pcSiteStartPtr, pcSiteEndPtr: pcSiteEndPtr,
 			entryStartPtr: entryStartPtr, entryEndPtr: entryEndPtr,
-			stubSiteStartPtr: stubSiteStartPtr, stubSiteEndPtr: stubSiteEndPtr,
 			stringsPtr: stringsPtr, stringOffsetsPtr: stringOffsetsPtr,
 			stringCount: stringCount, hashPtr: hashPtr, hashMask: hashMask,
 			symbolIndexPtr: symbolIndexPtr, symbolIndexCount: symbolIndexCount,
-			count: count, stubIndexesPtr: stubIndexesPtr, stubCount: stubCount,
+			count:       count,
 			pcLineCount: pcLineCount,
 		}, externalFuncInfoTypes{
 			i8: i8Type, count: countType,
-			entryRecord: funcEntryRecordType, stubRecord: stubSiteRecordType,
+			entryRecord:  funcEntryRecordType,
 			pcSiteRecord: pcSiteRecordType,
 		})
 		return
@@ -392,8 +329,6 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		pcSiteEndPtr.SetInitializer(llvm.ConstPointerNull(pcSiteEndPtr.GlobalValueType()))
 		entryStartPtr.SetInitializer(llvm.ConstPointerNull(entryStartPtr.GlobalValueType()))
 		entryEndPtr.SetInitializer(llvm.ConstPointerNull(entryEndPtr.GlobalValueType()))
-		stubSiteStartPtr.SetInitializer(llvm.ConstPointerNull(stubSiteStartPtr.GlobalValueType()))
-		stubSiteEndPtr.SetInitializer(llvm.ConstPointerNull(stubSiteEndPtr.GlobalValueType()))
 		stringsPtr.SetInitializer(llvm.ConstPointerNull(stringsPtr.GlobalValueType()))
 		stringOffsetsPtr.SetInitializer(llvm.ConstPointerNull(stringOffsetsPtr.GlobalValueType()))
 		stringCount.SetInitializer(llvm.ConstInt(countType, 0, false))
@@ -401,8 +336,6 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		symbolIndexPtr.SetInitializer(llvm.ConstPointerNull(symbolIndexPtr.GlobalValueType()))
 		count.SetInitializer(llvm.ConstInt(countType, 0, false))
 		symbolIndexCount.SetInitializer(llvm.ConstInt(countType, 0, false))
-		stubIndexesPtr.SetInitializer(llvm.ConstPointerNull(stubIndexesPtr.GlobalValueType()))
-		stubCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		pcLineCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		hashMask.SetInitializer(llvm.ConstInt(countType, 0, false))
 		return
@@ -419,8 +352,6 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		pcSiteEndPtr.SetInitializer(llvm.ConstPointerNull(pcSiteEndPtr.GlobalValueType()))
 		entryStartPtr.SetInitializer(llvm.ConstPointerNull(entryStartPtr.GlobalValueType()))
 		entryEndPtr.SetInitializer(llvm.ConstPointerNull(entryEndPtr.GlobalValueType()))
-		stubSiteStartPtr.SetInitializer(llvm.ConstPointerNull(stubSiteStartPtr.GlobalValueType()))
-		stubSiteEndPtr.SetInitializer(llvm.ConstPointerNull(stubSiteEndPtr.GlobalValueType()))
 		stringsPtr.SetInitializer(llvm.ConstPointerNull(stringsPtr.GlobalValueType()))
 		stringOffsetsPtr.SetInitializer(llvm.ConstPointerNull(stringOffsetsPtr.GlobalValueType()))
 		stringCount.SetInitializer(llvm.ConstInt(countType, 0, false))
@@ -428,8 +359,6 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		symbolIndexPtr.SetInitializer(llvm.ConstPointerNull(symbolIndexPtr.GlobalValueType()))
 		count.SetInitializer(llvm.ConstInt(countType, 0, false))
 		symbolIndexCount.SetInitializer(llvm.ConstInt(countType, 0, false))
-		stubIndexesPtr.SetInitializer(llvm.ConstPointerNull(stubIndexesPtr.GlobalValueType()))
-		stubCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		pcLineCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		hashMask.SetInitializer(llvm.ConstInt(countType, 0, false))
 		return
@@ -497,8 +426,7 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	machOSites := shouldEmitRuntimeMachOSites(ctx)
 	emitSites := shouldEmitRuntimeSites(ctx)
 	emitEntrySites := shouldEmitRuntimeEntryELFSites(ctx) && len(encoded.Records) != 0
-	emitStubSites := shouldEmitRuntimeStubELFSites(ctx)
-	emitRuntimeFuncInfoSites(mod, ctx.prog.PointerSize(), machOSites, emitSites && len(pcLineValues) != 0, emitEntrySites, emitStubSites && len(stubRecords) != 0)
+	emitRuntimeFuncInfoSites(mod, ctx.prog.PointerSize(), machOSites, emitSites && len(pcLineValues) != 0, emitEntrySites)
 	if emitEntrySites {
 		startName, endName := entrySiteSectionInfo.boundary(machOSites)
 		entryStart := llvm.AddGlobal(mod, funcEntryRecordType, startName)
@@ -508,16 +436,6 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	} else {
 		entryStartPtr.SetInitializer(llvm.ConstPointerNull(entryStartPtr.GlobalValueType()))
 		entryEndPtr.SetInitializer(llvm.ConstPointerNull(entryEndPtr.GlobalValueType()))
-	}
-	if emitStubSites && len(stubRecords) != 0 {
-		startName, endName := stubSiteSectionInfo.boundary(machOSites)
-		stubSiteStart := llvm.AddGlobal(mod, stubSiteRecordType, startName)
-		stubSiteEnd := llvm.AddGlobal(mod, stubSiteRecordType, endName)
-		stubSiteStartPtr.SetInitializer(stubSiteStart)
-		stubSiteEndPtr.SetInitializer(stubSiteEnd)
-	} else {
-		stubSiteStartPtr.SetInitializer(llvm.ConstPointerNull(stubSiteStartPtr.GlobalValueType()))
-		stubSiteEndPtr.SetInitializer(llvm.ConstPointerNull(stubSiteEndPtr.GlobalValueType()))
 	}
 
 	stringArrayType := llvm.ArrayType(i8Type, len(encoded.Strings))
@@ -603,65 +521,34 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		}))
 		symbolIndexCount.SetInitializer(llvm.ConstInt(countType, uint64(len(symbolIndexValues)), false))
 	}
-	stubIndexSeen := make(map[uint32]none, len(stubRecords))
-	stubIndexValues := make([]llvm.Value, 0, len(stubRecords))
-	for _, stub := range stubRecords {
-		idx := stub.funcIndex
-		if idx == 0 || int(idx) > len(encoded.Records) {
-			continue
-		}
-		if _, ok := stubIndexSeen[idx]; ok {
-			continue
-		}
-		stubIndexSeen[idx] = none{}
-		stubIndexValues = append(stubIndexValues, llvm.ConstInt(i32Type, uint64(idx), false))
-	}
-	if len(stubIndexValues) == 0 {
-		stubIndexesPtr.SetInitializer(llvm.ConstPointerNull(stubIndexesPtr.GlobalValueType()))
-		stubCount.SetInitializer(llvm.ConstInt(countType, 0, false))
-	} else {
-		stubIndexArrayType := llvm.ArrayType(i32Type, len(stubIndexValues))
-		stubIndexData := llvm.AddGlobal(mod, stubIndexArrayType, funcInfoStubIndexesDataSymbol)
-		stubIndexData.SetInitializer(llvm.ConstArray(i32Type, stubIndexValues))
-		stubIndexData.SetLinkage(llvm.PrivateLinkage)
-		stubIndexData.SetGlobalConstant(true)
-		stubIndexData.SetUnnamedAddr(true)
-		stubIndexData.SetAlignment(4)
-		stubIndexesPtr.SetInitializer(llvm.ConstInBoundsGEP(stubIndexArrayType, stubIndexData, []llvm.Value{
-			llvm.ConstInt(countType, 0, false),
-			llvm.ConstInt(countType, 0, false),
-		}))
-		stubCount.SetInitializer(llvm.ConstInt(countType, uint64(len(stubIndexValues)), false))
-	}
 }
 
 type externalFuncInfoGlobals struct {
 	tablePtr, pcLinePtr                       llvm.Value
 	pcSiteStartPtr, pcSiteEndPtr              llvm.Value
 	entryStartPtr, entryEndPtr                llvm.Value
-	stubSiteStartPtr, stubSiteEndPtr          llvm.Value
 	stringsPtr, stringOffsetsPtr, stringCount llvm.Value
 	hashPtr, hashMask                         llvm.Value
 	symbolIndexPtr, symbolIndexCount          llvm.Value
-	count, stubIndexesPtr, stubCount          llvm.Value
+	count                                     llvm.Value
 	pcLineCount                               llvm.Value
 }
 
 type externalFuncInfoTypes struct {
-	i8, count                             llvm.Type
-	entryRecord, stubRecord, pcSiteRecord llvm.Type
+	i8, count                 llvm.Type
+	entryRecord, pcSiteRecord llvm.Type
 }
 
 func initExternalFuncInfoGlobals(g externalFuncInfoGlobals, countType llvm.Type) {
 	for _, ptr := range []llvm.Value{
 		g.tablePtr, g.pcLinePtr, g.pcSiteStartPtr, g.pcSiteEndPtr,
-		g.entryStartPtr, g.entryEndPtr, g.stubSiteStartPtr, g.stubSiteEndPtr,
-		g.stringsPtr, g.stringOffsetsPtr, g.hashPtr, g.symbolIndexPtr, g.stubIndexesPtr,
+		g.entryStartPtr, g.entryEndPtr,
+		g.stringsPtr, g.stringOffsetsPtr, g.hashPtr, g.symbolIndexPtr,
 	} {
 		ptr.SetInitializer(llvm.ConstPointerNull(ptr.GlobalValueType()))
 	}
 	for _, count := range []llvm.Value{
-		g.stringCount, g.hashMask, g.symbolIndexCount, g.count, g.stubCount, g.pcLineCount,
+		g.stringCount, g.hashMask, g.symbolIndexCount, g.count, g.pcLineCount,
 	} {
 		count.SetInitializer(llvm.ConstInt(countType, 0, false))
 	}
@@ -671,7 +558,7 @@ func initExternalFuncInfoGlobals(g externalFuncInfoGlobals, countType llvm.Type)
 // site boundaries and a post-link identity slot. The table payload is kept in
 // the build context and serialized beside the linked executable; it is never
 // materialized as LLVM constants in the executable.
-func emitExternalFuncInfoTable(ctx *context, mod llvm.Module, records []funcInfoRecord, pcLines []pcLineRecord, stubRecords []funcInfoStubRecord, g externalFuncInfoGlobals, typ externalFuncInfoTypes) {
+func emitExternalFuncInfoTable(ctx *context, mod llvm.Module, records []funcInfoRecord, pcLines []pcLineRecord, g externalFuncInfoGlobals, typ externalFuncInfoTypes) {
 	initExternalFuncInfoGlobals(g, typ.count)
 	encoded, err := buildfuncinfo.EncodeWithPCLines(toFuncInfoRecords(records), toPCLineRecords(pcLines))
 	if err != nil {
@@ -717,8 +604,7 @@ func emitExternalFuncInfoTable(ctx *context, mod llvm.Module, records []funcInfo
 	emitSites := shouldEmitRuntimeSites(ctx)
 	emitPCSites := emitSites && len(encoded.PCLines) != 0
 	emitEntrySites := shouldEmitRuntimeEntryELFSites(ctx) && len(encoded.Records) != 0
-	emitStubSites := shouldEmitRuntimeStubELFSites(ctx) && len(stubRecords) != 0
-	emitRuntimeFuncInfoSites(mod, ctx.prog.PointerSize(), machO, emitPCSites, emitEntrySites, emitStubSites)
+	emitRuntimeFuncInfoSites(mod, ctx.prog.PointerSize(), machO, emitPCSites, emitEntrySites)
 	if emitPCSites {
 		start, end := pcLineSiteSectionInfo.boundary(machO)
 		startGlobal := llvm.AddGlobal(mod, typ.pcSiteRecord, start)
@@ -732,13 +618,6 @@ func emitExternalFuncInfoTable(ctx *context, mod llvm.Module, records []funcInfo
 		endGlobal := llvm.AddGlobal(mod, typ.entryRecord, end)
 		g.entryStartPtr.SetInitializer(startGlobal)
 		g.entryEndPtr.SetInitializer(endGlobal)
-	}
-	if emitStubSites {
-		start, end := stubSiteSectionInfo.boundary(machO)
-		startGlobal := llvm.AddGlobal(mod, typ.stubRecord, start)
-		endGlobal := llvm.AddGlobal(mod, typ.stubRecord, end)
-		g.stubSiteStartPtr.SetInitializer(startGlobal)
-		g.stubSiteEndPtr.SetInitializer(endGlobal)
 	}
 }
 
@@ -773,10 +652,6 @@ func shouldEmitRuntimeSites(ctx *context) bool {
 	return shouldEmitRuntimeELFSites(ctx) || shouldEmitRuntimeMachOSites(ctx)
 }
 
-func shouldEmitRuntimeStubELFSites(ctx *context) bool {
-	return shouldEmitRuntimeSites(ctx)
-}
-
 func shouldEmitRuntimeEntryELFSites(ctx *context) bool {
 	return shouldEmitRuntimeSites(ctx)
 }
@@ -790,7 +665,6 @@ type siteSectionInfo struct {
 
 var (
 	entrySiteSectionInfo  = siteSectionInfo{elf: "llgo_funcinfo_entry", machO: "__DATA,__llgo_fie"}
-	stubSiteSectionInfo   = siteSectionInfo{elf: "llgo_funcinfo_stubsite", machO: "__DATA,__llgo_stub"}
 	pcLineSiteSectionInfo = siteSectionInfo{elf: "llgo_pcline", machO: "__DATA,__llgo_pcl"}
 )
 
@@ -932,54 +806,6 @@ func emitFuncInfoEntrySites(ctx *context, pkg llssa.Package) {
 	}
 }
 
-func emitFuncInfoStubSites(ctx *context, pkg llssa.Package) {
-	if !shouldEmitRuntimeStubELFSites(ctx) || pkg == nil || !ctx.prog.FuncInfoMetadataEnabled() {
-		return
-	}
-	machO := shouldEmitRuntimeMachOSites(ctx)
-	mod := pkg.Module()
-	llvmCtx := mod.Context()
-	builder := llvmCtx.NewBuilder()
-	defer builder.Dispose()
-	asmType := llvm.FunctionType(llvmCtx.VoidType(), nil, false)
-	ptrDirective := ".quad"
-	align := "3"
-	if ctx.prog.PointerSize() == 4 {
-		ptrDirective = ".long"
-		align = "2"
-	}
-	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
-		if fn.IsDeclaration() || fn.BasicBlocksCount() == 0 {
-			continue
-		}
-		symbol := fn.Name()
-		target, ok := strings.CutPrefix(symbol, closureStubPrefix)
-		if !ok || target == "" {
-			continue
-		}
-		entry := fn.EntryBasicBlock()
-		if entry.IsNil() {
-			continue
-		}
-		first := entry.FirstInstruction()
-		if first.IsNil() {
-			builder.SetInsertPointAtEnd(entry)
-		} else {
-			builder.SetInsertPointBefore(first)
-		}
-		anchor := siteAnchorLabel(machO, "funcinfo_stubsite")
-		instruction := anchor + ":\n" +
-			stubSiteSectionInfo.push(machO, anchor) + "\n" +
-			".p2align " + align + "\n" +
-			stubSiteSectionInfo.recordSymbol(machO, "funcinfo_stubsite") +
-			ptrDirective + " " + anchor + "\n" +
-			".quad " + uint64Hex(funcInfoSymbolID(target)) + "\n" +
-			".popsection"
-		asm := llvm.InlineAsm(asmType, instruction, "", true, false, llvm.InlineAsmDialectATT, false)
-		builder.CreateCall(asmType, asm, nil, "")
-	}
-}
-
 func funcInfoSymbolID(symbol string) uint64 {
 	const (
 		offset = uint64(14695981039346656037)
@@ -1015,8 +841,8 @@ func uint64Hex(v uint64) string {
 // internal/pclnpost ("LLGOMET1" little-endian).
 const funcInfoMetaRecordMagic = uint64(0x3154454D4F474C4C)
 
-func emitRuntimeFuncInfoSites(mod llvm.Module, pointerSize int, machO bool, pcSite bool, entrySite bool, stubSite bool) {
-	if !pcSite && !entrySite && !stubSite {
+func emitRuntimeFuncInfoSites(mod llvm.Module, pointerSize int, machO bool, pcSite bool, entrySite bool) {
+	if !pcSite && !entrySite {
 		return
 	}
 	ptrDirective := ".quad"
@@ -1054,9 +880,6 @@ func emitRuntimeFuncInfoSites(mod llvm.Module, pointerSize int, machO bool, pcSi
 		asm.WriteString(".quad 0\n")
 		asm.WriteString(ptrDirective + " " + cntSym + "\n")
 		asm.WriteString(".quad 0\n")
-	}
-	if stubSite {
-		writeZeroRecord(stubSiteSectionInfo, "funcinfo_stubsite")
 	}
 	mod.SetInlineAsm(asm.String())
 }

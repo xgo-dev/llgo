@@ -62,7 +62,7 @@ func (t *Tree) Ascend(iterator Iterator) {
 func main() {
 	var got int
 	tree := (*Tree)(new(TreeG[int]))
-	// CHECK-LABEL: define i1 @"main.main$1"(ptr %0, i64 %1){{.*}} {
+	// CHECK-LABEL: define i1 @"main.main$1"(ptr {{(nest|swiftself)}} %0, i64 %1){{.*}} {
 	// CHECK-NEXT: _llgo_0:
 	// CHECK-NEXT:   %2 = add i64 %1, 1
 	// CHECK-NEXT:   %3 = load { ptr }, ptr %0, align 8
@@ -85,6 +85,7 @@ func main() {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = extractvalue %"main.IteratorG[int]" %1, 1
 // CHECK-NEXT:   %3 = extractvalue %"main.IteratorG[int]" %1, 0
-// CHECK-NEXT:   %4 = call i1 %3(ptr %2, i64 0)
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %3)
+// CHECK-NEXT:   %4 = call i1 %__llgo_funcval_code(ptr {{(nest|swiftself)}} %2, i64 0)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }

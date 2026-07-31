@@ -70,10 +70,6 @@ func writeExternalPCLN(ctx *context, out *OutFmtDetails, verbose bool) (err erro
 	for i, site := range analysis.EntrySites {
 		data.EntrySites[i] = pclnmap.Site{PCOffset: site.PCOffset, ID: site.ID}
 	}
-	data.StubSites = make([]pclnmap.Site, len(analysis.StubSites))
-	for i, site := range analysis.StubSites {
-		data.StubSites[i] = pclnmap.Site{PCOffset: site.PCOffset, ID: site.ID}
-	}
 	data.PCSites = make([]pclnmap.Site, len(analysis.PCLineSites))
 	pcSiteOwners := make([]string, len(analysis.PCLineSites))
 	for i, site := range analysis.PCLineSites {
@@ -122,8 +118,8 @@ func writeExternalPCLN(ctx *context, out *OutFmtDetails, verbose bool) (err erro
 		return err
 	}
 	if verbose {
-		fmt.Fprintf(os.Stderr, "llgo: external pclntab: %d entries, %d stubs, %d pcline sites (%d bytes) -> %s\n",
-			len(data.EntrySites), len(data.StubSites), len(data.PCSites), len(raw), out.PCLN)
+		fmt.Fprintf(os.Stderr, "llgo: external pclntab: %d entries, %d pcline sites (%d bytes) -> %s\n",
+			len(data.EntrySites), len(data.PCSites), len(raw), out.PCLN)
 	}
 	return nil
 }
@@ -145,7 +141,6 @@ func filterExternalPCLNJoins(data *pclnmap.Data, pcSiteOwners []string) error {
 		return filtered
 	}
 	data.EntrySites = filterSymbolSites(data.EntrySites)
-	data.StubSites = filterSymbolSites(data.StubSites)
 	if len(data.EntrySites) == 0 {
 		return fmt.Errorf("external pclntab has no entry sites joined to funcinfo")
 	}

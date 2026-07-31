@@ -16,7 +16,7 @@
 
 // Package pclnpost implements the P1/P2 prototype of link-phase ftab/findfunctab
 // generation (doc/design/pclntab-linkphase.md). It parses a linked LLGo
-// binary's funcinfo site sections, deduplicates LTO inline copies against the
+// binary's funcinfo site section, deduplicates LTO inline copies against the
 // symbol table, sorts the entries, builds the Go-layout findfunctab via
 // internal/pclntab, and prints what the P2 build integration would write
 // back. It performs no writes; its purpose is to prove the risky steps on
@@ -55,7 +55,6 @@ type binaryInfo struct {
 	format       string
 	raw          []byte
 	entrySec     []byte
-	stubSec      []byte
 	pcLineSec    []byte
 	textStart    uint64
 	textEnd      uint64
@@ -71,7 +70,6 @@ type binaryInfo struct {
 	bindTargets []uint64
 
 	entryVMAddr, entryVMSize, entryFileOff uint64
-	stubVMAddr, stubVMSize, stubFileOff    uint64
 	pcLineVMSize, pcLineFileOff            uint64
 	identityVMSize, identityFileOff        uint64
 	hasCodeSignature                       bool
@@ -121,13 +119,6 @@ func load(path string) (*binaryInfo, error) {
 				return nil, fmt.Errorf("Mach-O __llgo_fie: %w", err)
 			}
 			info.entryVMAddr, info.entryVMSize, info.entryFileOff = s.Addr, s.Size, uint64(s.Offset)
-		}
-		if s := mf.Section("__llgo_stub"); s != nil {
-			info.stubSec, err = sectionBytes(info.raw, uint64(s.Offset), s.Size)
-			if err != nil {
-				return nil, fmt.Errorf("Mach-O __llgo_stub: %w", err)
-			}
-			info.stubVMAddr, info.stubVMSize, info.stubFileOff = s.Addr, s.Size, uint64(s.Offset)
 		}
 		if s := mf.Section("__llgo_pcl"); s != nil {
 			info.pcLineSec, err = sectionBytes(info.raw, uint64(s.Offset), s.Size)
@@ -212,13 +203,6 @@ func load(path string) (*binaryInfo, error) {
 		}
 		info.entryVMAddr, info.entryVMSize, info.entryFileOff = s.Addr, s.Size, s.Offset
 	}
-	if s := ef.Section("llgo_funcinfo_stubsite"); s != nil {
-		info.stubSec, err = sectionBytes(info.raw, s.Offset, s.Size)
-		if err != nil {
-			return nil, fmt.Errorf("ELF llgo_funcinfo_stubsite: %w", err)
-		}
-		info.stubVMAddr, info.stubVMSize, info.stubFileOff = s.Addr, s.Size, s.Offset
-	}
 	if s := ef.Section("llgo_pcline"); s != nil {
 		info.pcLineSec, err = sectionBytes(info.raw, s.Offset, s.Size)
 		if err != nil {
@@ -291,8 +275,7 @@ func parseRecords(info *binaryInfo, sec []byte) []siteRecord {
 		// Mach-O pointer slots in the on-disk file hold dyld chained-fixup
 		// encodings; dyld rewrites them at load. Rebase nodes
 		// (DYLD_CHAINED_PTR_64) carry the target in the low 36 bits. Anchors
-		// naming *exported* functions — every `__llgo_stub.*` and any
-		// exported Go function — are emitted as BIND nodes instead (bit 63
+		// naming exported functions are emitted as BIND nodes instead (bit 63
 		// set, import ordinal in the low 24 bits, addend above), even though
 		// they bind back into this same image, so those resolve through the
 		// imports table. The P2 write-back avoids the problem entirely by
@@ -342,23 +325,15 @@ func fnv64(name string) uint64 {
 	return h
 }
 
-const stubPrefix = "__llgo_stub."
-
 // canonicalOwner reports whether owner symbol `name` is the function the
-// record's symbolID names, or that function's `__llgo_stub.` wrapper.
+// record's symbolID names.
 // Mach-O symbol names carry a C-mangling underscore, and debug/macho's
 // suffix-shared string table can surface one underscore more or less than
 // the source-level name, so try each plausible normalization — matching a
 // specific 64-bit FNV makes a false positive practically impossible.
 func canonicalOwner(info *binaryInfo, name string, symbolID uint64) bool {
 	for {
-		cand := name
-		if len(cand) > len(stubPrefix) {
-			if i := stringIndex(cand, stubPrefix); i >= 0 {
-				cand = cand[i+len(stubPrefix):]
-			}
-		}
-		if fnv64(cand) == symbolID {
+		if fnv64(name) == symbolID {
 			return true
 		}
 		if info.format == "macho" && len(name) > 1 && name[0] == '_' {
@@ -369,25 +344,11 @@ func canonicalOwner(info *binaryInfo, name string, symbolID uint64) bool {
 	}
 }
 
-func stringIndex(s, prefix string) int {
-	// prefix at the start, allowing for leading mangling underscores only
-	for i := 0; i+len(prefix) <= len(s) && i <= 2; i++ {
-		if s[i:i+len(prefix)] == prefix {
-			return i
-		}
-		if s[i] != '_' {
-			break
-		}
-	}
-	return -1
-}
-
 // dedupe keeps exactly the canonical record per emitting function: a record
 // is canonical when the symbol that owns its anchor PC is the function the
-// symbolID names (id == fnv64(owner)) or that function's closure stub
-// (owner "__llgo_stub.X" with id == fnv64(X) — stubs share the target's
-// symbolID by design). Everything else with a known owner is an LTO inline
-// copy: inlining duplicated the body-embedded record into a host function.
+// symbolID names (id == fnv64(owner)). Everything else with a known owner is
+// an LTO inline copy: inlining duplicated the body-embedded record into a host
+// function.
 // Kept records are normalized to their owner's true entry address. Records
 // whose owner cannot be determined are dropped conservatively.
 func dedupe(info *binaryInfo, recs []siteRecord, verbose bool) (kept []siteRecord, droppedInline, droppedUnknown int) {

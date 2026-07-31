@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestRewriteSource_InsertsMainClosureAndStub(t *testing.T) {
+func TestRewriteSource_InsertsMainAndClosure(t *testing.T) {
 	const src = `// LITTEST
 package main
 
@@ -25,11 +25,6 @@ _llgo_0:
   ret void
 }
 
-define linkonce void @"__llgo_stub.example.com/p.main$1"(ptr %0) {
-_llgo_0:
-  tail call void @"example.com/p.main$1"()
-  ret void
-}
 `
 	got, err := rewriteSource(src, "in.go", "example.com/p", "example.com", ir)
 	if err != nil {
@@ -50,12 +45,6 @@ _llgo_0:
 	}
 	if strings.Index(got, closureCheck) > strings.Index(got, closureStmt) {
 		t.Fatalf("closure checks should appear before func literal:\n%s", got)
-	}
-	if !strings.Contains(got, `// CHECK-LABEL: define linkonce void @"__llgo_stub.{{.*}}/p.main$1"(ptr %0){{.*}} {`) {
-		t.Fatalf("stub checks missing:\n%s", got)
-	}
-	if strings.Index(got, `// CHECK-LABEL: define linkonce void @"__llgo_stub.{{.*}}/p.main$1"(ptr %0){{.*}} {`) < strings.Index(got, "func main()") {
-		t.Fatalf("stub checks should be appended after source:\n%s", got)
 	}
 }
 
@@ -230,6 +219,35 @@ func TestGeneralizeDefineLine_WildcardsAttrsBeforeBrace(t *testing.T) {
 	want := `define void @"{{.*}}/p.main"(){{.*}} {`
 	if got != want {
 		t.Fatalf("generalizeDefineLine = %q, want %q", got, want)
+	}
+}
+
+func TestGeneralizeClosureEnvAttrs(t *testing.T) {
+	tests := []struct {
+		line string
+		want string
+	}{
+		{
+			`define void @"example.com/nest.swiftself"(ptr swiftself %env) {`,
+			`define void @"example.com/nest.swiftself"(ptr {{(nest|swiftself)}} %env) {`,
+		},
+		{
+			`  call void %fn(ptr nest %env, ptr %arg)`,
+			`  call void %fn(ptr {{(nest|swiftself)}} %env, ptr %arg)`,
+		},
+		{
+			`@0 = private constant [14 x i8] c"nest swiftself"`,
+			`@0 = private constant [14 x i8] c"nest swiftself"`,
+		},
+		{
+			`@nest = global ptr @swiftself`,
+			`@nest = global ptr @swiftself`,
+		},
+	}
+	for _, test := range tests {
+		if got := generalizeClosureEnvAttrs(test.line); got != test.want {
+			t.Errorf("generalizeClosureEnvAttrs(%q) = %q, want %q", test.line, got, test.want)
+		}
 	}
 }
 

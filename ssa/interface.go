@@ -97,7 +97,10 @@ func (b Builder) Imethod(intf Expr, method *types.Func) Expr {
 	} else {
 		fn = b.Load(pfn)
 	}
-	ret := b.aggregateValue(tclosure, fn.impl, data.impl)
+	// This is a transient interface invocation pair, not a first-class
+	// funcval. The method receiver remains an ordinary ABI parameter.
+	tmethod := &aType{tclosure.ll, tclosure.raw, vkIfaceMethod}
+	ret := b.aggregateValue(tmethod, fn.impl, data.impl)
 	return ret
 }
 

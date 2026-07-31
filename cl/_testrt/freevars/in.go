@@ -3,7 +3,7 @@ package main
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @"main.main$1"({ ptr, ptr } { ptr @"__llgo_stub.main.main$2", ptr null })
+// CHECK-NEXT:   call void @"main.main$1"({ ptr, ptr } { ptr @"main.main$2", ptr null })
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 func main() {
@@ -17,12 +17,13 @@ func main() {
 	// CHECK-NEXT:   %4 = insertvalue { ptr, ptr } { ptr @"main.main$1$1", ptr undef }, ptr %2, 1
 	// CHECK-NEXT:   %5 = extractvalue { ptr, ptr } %4, 1
 	// CHECK-NEXT:   %6 = extractvalue { ptr, ptr } %4, 0
-	// CHECK-NEXT:   call void %6(ptr %5, %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
+	// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %6)
+	// CHECK-NEXT:   call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %5, %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
 	// CHECK-NEXT:   ret void
 	// CHECK-NEXT: }
 	func(resolve func(error)) {
 
-		// CHECK-LABEL: define void @"main.main$1$1"(ptr %0, %"{{.*}}/runtime/internal/runtime.iface" %1){{.*}} {
+		// CHECK-LABEL: define void @"main.main$1$1"(ptr {{(nest|swiftself)}} %0, %"{{.*}}/runtime/internal/runtime.iface" %1){{.*}} {
 		// CHECK-NEXT: _llgo_0:
 		// CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
 		// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}/runtime/internal/runtime.iface" %1)
@@ -41,7 +42,8 @@ func main() {
 		// CHECK-NEXT:   %13 = load { ptr, ptr }, ptr %12, align 8
 		// CHECK-NEXT:   %14 = extractvalue { ptr, ptr } %13, 1
 		// CHECK-NEXT:   %15 = extractvalue { ptr, ptr } %13, 0
-		// CHECK-NEXT:   call void %15(ptr %14, %"{{.*}}/runtime/internal/runtime.iface" %1)
+		// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %15)
+		// CHECK-NEXT:   call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %14, %"{{.*}}/runtime/internal/runtime.iface" %1)
 		// CHECK-NEXT:   ret void
 		// CHECK-EMPTY:
 		// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
@@ -49,7 +51,8 @@ func main() {
 		// CHECK-NEXT:   %17 = load { ptr, ptr }, ptr %16, align 8
 		// CHECK-NEXT:   %18 = extractvalue { ptr, ptr } %17, 1
 		// CHECK-NEXT:   %19 = extractvalue { ptr, ptr } %17, 0
-		// CHECK-NEXT:   call void %19(ptr %18, %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
+		// CHECK-NEXT:   %__llgo_funcval_code1 = call ptr asm "", "=r,0"(ptr %19)
+		// CHECK-NEXT:   call void %__llgo_funcval_code1(ptr {{(nest|swiftself)}} %18, %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
 		// CHECK-NEXT:   ret void
 		// CHECK-NEXT: }
 
@@ -67,9 +70,3 @@ func main() {
 	}(func(err error) {
 	})
 }
-
-// CHECK-LABEL: define linkonce void @"__llgo_stub.main.main$2"(ptr %0, %"{{.*}}/runtime/internal/runtime.iface" %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   tail call void @"main.main$2"(%"{{.*}}/runtime/internal/runtime.iface" %1)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }

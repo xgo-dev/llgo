@@ -11,7 +11,8 @@ import (
 // CHECK: call %reflect.Value @reflect.MakeFunc(
 // CHECK: call %"g{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(
 // CHECK: call i1 @"g{{.*}}/runtime/internal/runtime.MatchesClosure"(
-// CHECK: call %"g{{.*}}/runtime/internal/runtime.String" %{{.*}}(ptr %{{.*}}, %"g{{.*}}/runtime/internal/runtime.String" { ptr @{{.*}}, i64 3 }, i64 2)
+// CHECK: call ptr asm "", "=r,0"(ptr %{{.*}})
+// CHECK-NEXT: call %"g{{.*}}/runtime/internal/runtime.String" %{{.*}}(ptr {{(nest|swiftself)}} %{{.*}}, %"g{{.*}}/runtime/internal/runtime.String" { ptr @{{.*}}, i64 3 }, i64 2)
 // CHECK: call i1 @"g{{.*}}/runtime/internal/runtime.StringEqual"(
 func main() {
 	typ := reflect.FuncOf([]reflect.Type{reflect.TypeOf(""), reflect.TypeOf(0)}, []reflect.Type{reflect.TypeOf("")}, false)

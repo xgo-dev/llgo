@@ -235,7 +235,7 @@ func TestFinalizeRuntimePCLNRemovesStaleSidecar(t *testing.T) {
 	}
 }
 
-func TestFilterExternalPCLNJoinsKeepsEntryAndStubKindsSeparate(t *testing.T) {
+func TestFilterExternalPCLNJoins(t *testing.T) {
 	idA := funcInfoSymbolID("example.com/p.A")
 	idB := funcInfoSymbolID("example.com/p.B")
 	data := pclnmap.Data{
@@ -253,10 +253,6 @@ func TestFilterExternalPCLNJoinsKeepsEntryAndStubKindsSeparate(t *testing.T) {
 			{PCOffset: 0x100, ID: idB}, // same-PC alias is deterministically dropped
 			{PCOffset: 0x200, ID: 99},  // missing funcinfo join
 		},
-		StubSites: []pclnmap.Site{
-			{PCOffset: 0x80, ID: idA},
-			{PCOffset: 0x90, ID: 99}, // missing funcinfo join
-		},
 		PCSites: []pclnmap.Site{
 			{PCOffset: 0x110, ID: 101},
 			{PCOffset: 0x120, ID: 101}, // A's pcline copied into B
@@ -268,9 +264,6 @@ func TestFilterExternalPCLNJoinsKeepsEntryAndStubKindsSeparate(t *testing.T) {
 	}
 	if len(data.EntrySites) != 1 || data.EntrySites[0] != (pclnmap.Site{PCOffset: 0x100, ID: idA}) {
 		t.Fatalf("entry sites = %#v", data.EntrySites)
-	}
-	if len(data.StubSites) != 1 || data.StubSites[0] != (pclnmap.Site{PCOffset: 0x80, ID: idA}) {
-		t.Fatalf("stub sites = %#v", data.StubSites)
 	}
 	wantPCSites := []pclnmap.Site{{PCOffset: 0x110, ID: 101}, {PCOffset: 0x130, ID: 202}}
 	if !reflect.DeepEqual(data.PCSites, wantPCSites) {

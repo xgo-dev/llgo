@@ -13,7 +13,7 @@ import (
 
 const (
 	externalPCLNMagic      = "LLGOPCL1"
-	externalPCLNVersion    = uint32(3)
+	externalPCLNVersion    = uint32(4)
 	externalPCLNABIVersion = uint32(1)
 	externalPCLNHeaderSize = uintptr(256)
 	externalPCLNMaxSize    = int64(512 << 20)
@@ -43,7 +43,6 @@ const (
 	externalDescHash
 	externalDescSymbolIndex
 	externalDescEntrySites
-	externalDescStubSites
 	externalDescPCSites
 	externalDescCount
 )
@@ -193,7 +192,7 @@ func externalSectionSize(index int) uintptr {
 		return externalHashSize
 	case externalDescSymbolIndex:
 		return externalSymbolIndexSize
-	case externalDescEntrySites, externalDescStubSites, externalDescPCSites:
+	case externalDescEntrySites, externalDescPCSites:
 		return externalSiteSize
 	}
 	return 0
@@ -266,7 +265,7 @@ func externalSectionAlignment(index int) uintptr {
 	switch index {
 	case externalDescRecords, externalDescStringOffsets:
 		return 4
-	case externalDescPCLines, externalDescSymbolIndex, externalDescEntrySites, externalDescStubSites, externalDescPCSites:
+	case externalDescPCLines, externalDescSymbolIndex, externalDescEntrySites, externalDescPCSites:
 		return 8
 	case externalDescHash:
 		return 2
@@ -310,13 +309,12 @@ func installExternalPCLN(raw []byte, view externalPCLNView, loadBase uintptr) bo
 	hash := view.sections[externalDescHash]
 	symbols := view.sections[externalDescSymbolIndex]
 	entries := view.sections[externalDescEntrySites]
-	stubs := view.sections[externalDescStubSites]
 	pcsites := view.sections[externalDescPCSites]
 	// String IDs are uint32. The offset section and sidecar size bound their
 	// count now, rather than the old uint16 ID limit.
 	if records.count == 0 || records.count > 1<<20 || offsets.count == 0 ||
 		stringsSec.count == 0 || stringsSec.count > 1<<30 || pclines.count > 1<<22 ||
-		symbols.count > records.count || entries.count > records.count*16 || stubs.count > records.count*16 || pcsites.count > 1<<24 {
+		symbols.count > records.count || entries.count > records.count*16 || pcsites.count > 1<<24 {
 		return false
 	}
 	// Validate every string ID before any runtime pointer is published.
@@ -384,7 +382,7 @@ func installExternalPCLN(raw []byte, view externalPCLNView, loadBase uintptr) bo
 		}
 		return true
 	}
-	if !relocateSites(entries) || !relocateSites(stubs) || !relocateSites(pcsites) {
+	if !relocateSites(entries) || !relocateSites(pcsites) {
 		return false
 	}
 
@@ -401,8 +399,6 @@ func installExternalPCLN(raw []byte, view externalPCLNView, loadBase uintptr) bo
 	}
 	runtimeFuncInfoSymbolIndex = (*runtimeFuncInfoSymbolIndexRecord)(symbolBase)
 	runtimeFuncInfoSymbolIndexCount = symbols.count
-	runtimeFuncInfoStubIndexes = nil
-	runtimeFuncInfoStubCount = 0
 	runtimePCLineTable = (*runtimePCLineRecord)(pclineBase)
 	runtimePCLineCount = pclines.count
 	runtimeFuncInfoEntryStart = (*runtimeFuncInfoEntryRecord)(externalSectionPtr(raw, entries))
@@ -410,12 +406,6 @@ func installExternalPCLN(raw []byte, view externalPCLNView, loadBase uintptr) bo
 		runtimeFuncInfoEntryEnd = (*runtimeFuncInfoEntryRecord)(unsafe.Add(externalSectionPtr(raw, entries), entries.count*externalSiteSize))
 	} else {
 		runtimeFuncInfoEntryEnd = nil
-	}
-	runtimeFuncInfoStubSiteStart = (*runtimeFuncInfoStubSiteRecord)(externalSectionPtr(raw, stubs))
-	if stubs.count != 0 {
-		runtimeFuncInfoStubSiteEnd = (*runtimeFuncInfoStubSiteRecord)(unsafe.Add(externalSectionPtr(raw, stubs), stubs.count*externalSiteSize))
-	} else {
-		runtimeFuncInfoStubSiteEnd = nil
 	}
 	runtimePCSiteStart = (*runtimePCSiteRecord)(externalSectionPtr(raw, pcsites))
 	if pcsites.count != 0 {

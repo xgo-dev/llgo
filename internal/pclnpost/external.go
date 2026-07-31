@@ -47,8 +47,7 @@ type ExternalSite struct {
 
 // ExternalAnalysis is the immutable input for an external pclntab sidecar.
 // TextStart and TextEnd are link-time virtual addresses; sites are expressed
-// relative to ImageBase. EntrySites and StubSites retain their distinct
-// runtime meanings after LTO-copy deduplication against the final symbol
+// relative to ImageBase after LTO-copy deduplication against the final symbol
 // table. Identity is SHA-256 of the complete, unmodified linked binary.
 type ExternalAnalysis struct {
 	Format      string
@@ -59,18 +58,16 @@ type ExternalAnalysis struct {
 	Identity    [sha256.Size]byte
 
 	EntrySites  []ExternalSite
-	StubSites   []ExternalSite
 	PCLineSites []ExternalSite
 
 	EntryRecords  int
-	StubRecords   int
 	PCLineRecords int
 	InlineCopies  int
 	NoSymbol      int
 }
 
 // AnalyzeExternal reads a linked ELF or Mach-O executable without modifying
-// it. It resolves Mach-O chained pointer slots, deduplicates function/stub
+// it. It resolves Mach-O chained pointer slots, deduplicates function
 // records against final text symbols, and returns deterministic image-base-
 // relative site lists suitable for an external sidecar.
 func AnalyzeExternal(path string) (ExternalAnalysis, error) {
@@ -83,29 +80,22 @@ func AnalyzeExternal(path string) (ExternalAnalysis, error) {
 		return out, err
 	}
 	if len(info.entrySec) >= 8 {
-		if magic := binary.LittleEndian.Uint64(info.entrySec); magic == prebuiltMagic || magic == redirectMagic {
+		if magic := binary.LittleEndian.Uint64(info.entrySec); magic == prebuiltMagic {
 			return out, fmt.Errorf("entry sites have already been rewritten")
 		}
 	}
 
 	entries := parseRecords(info, info.entrySec)
-	stubs := parseRecords(info, info.stubSec)
 	pcLines := parseRecords(info, info.pcLineSec)
 	out.EntryRecords = len(entries)
-	out.StubRecords = len(stubs)
 	out.PCLineRecords = len(pcLines)
 	if len(entries) == 0 {
 		return out, fmt.Errorf("no entry records")
 	}
-	kept, inline, noSymbol := dedupe(info, append(entries, stubs...), false)
+	kept, inline, noSymbol := dedupe(info, entries, false)
 	if len(kept) == 0 {
 		return out, fmt.Errorf("no records survived dedup")
 	}
-	keptEntries, keptStubs := partitionExternalEntries(info, kept)
-	if len(keptEntries) == 0 {
-		return out, fmt.Errorf("no entry records survived dedup")
-	}
-
 	out.Format = info.format
 	out.PointerSize = info.pointerSize
 	out.ImageBase = info.imageBase
@@ -114,32 +104,9 @@ func AnalyzeExternal(path string) (ExternalAnalysis, error) {
 	out.Identity = sha256.Sum256(info.raw)
 	out.InlineCopies = inline
 	out.NoSymbol = noSymbol
-	out.EntrySites = externalSites(info, keptEntries)
-	out.StubSites = externalSites(info, keptStubs)
+	out.EntrySites = externalSites(info, kept)
 	out.PCLineSites = externalPCLineSites(info, pcLines)
 	return out, nil
-}
-
-// partitionExternalEntries classifies normalized records by their final
-// linked owner, not by the input section that carried the anchor. LTO can
-// inline a target body (and its entry anchor) into the target's closure stub,
-// or retain a stub anchor in the target. In either case the final owner kind
-// is authoritative for the runtime's canonical-entry semantics.
-func partitionExternalEntries(info *binaryInfo, kept []siteRecord) (entries, stubs []siteRecord) {
-	entries = make([]siteRecord, 0, len(kept))
-	stubs = make([]siteRecord, 0, len(kept))
-	for _, record := range kept {
-		owner, ok := owner(info, record.pc)
-		if !ok {
-			continue
-		}
-		if stringIndex(owner.name, stubPrefix) >= 0 {
-			stubs = append(stubs, record)
-		} else {
-			entries = append(entries, record)
-		}
-	}
-	return entries, stubs
 }
 
 func validateExternalLayout(info *binaryInfo) error {
@@ -209,7 +176,7 @@ func externalPCLineSites(info *binaryInfo, records []siteRecord) []ExternalSite 
 		sites = append(sites, ExternalSite{
 			PCOffset:    record.pc - info.imageBase,
 			ID:          record.symbolID,
-			OwnerSymbol: externalOwnerSymbolName(sym.name),
+			OwnerSymbol: sym.name,
 		})
 	}
 	sort.Slice(sites, func(i, j int) bool {
@@ -235,16 +202,9 @@ func externalPCLineSites(info *binaryInfo, records []siteRecord) []ExternalSite 
 	return out
 }
 
-func externalOwnerSymbolName(name string) string {
-	if i := stringIndex(name, stubPrefix); i >= 0 {
-		return name[i+len(stubPrefix):]
-	}
-	return name
-}
-
 // DetachExternal verifies that identity still names the unmodified binary,
 // writes it into the dedicated 32-byte identity section, and clears all
-// link-only entry, stub, and PC-line site sections. Mach-O chained fixups in
+// link-only entry and PC-line site sections. Mach-O chained fixups in
 // those ranges are removed before the bytes are cleared. A signed Mach-O is
 // ad-hoc re-signed once, after all mutations, before the replacement is
 // published atomically.
@@ -285,9 +245,6 @@ func DetachExternal(path string, identity [sha256.Size]byte) error {
 		return nil
 	}
 	if err := addRange("entry-site", info.entryFileOff, info.entryVMSize); err != nil {
-		return err
-	}
-	if err := addRange("stub-site", info.stubFileOff, info.stubVMSize); err != nil {
 		return err
 	}
 	if err := addRange("pcline-site", info.pcLineFileOff, info.pcLineVMSize); err != nil {

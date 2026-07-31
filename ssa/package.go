@@ -900,6 +900,21 @@ func (p Package) rtFunc(fnName string) Expr {
 	return p.NewFunc(name, sig, InGo).Expr
 }
 
+// rtEnvFunc returns a runtime entry whose source-level signature excludes its
+// compiler-owned environment. Runtime type algorithms use this form when a
+// type descriptor supplies the hidden type context.
+func (p Package) rtEnvFunc(fnName string) Expr {
+	p.NeedRuntime = true
+	fn := p.Prog.runtime().Scope().Lookup(fnName).(*types.Func)
+	name := FullName(fn.Pkg(), fnName)
+	if p.fnlink != nil {
+		name = p.fnlink(name)
+	}
+	sig := fn.Type().(*types.Signature)
+	env := types.NewVar(token.NoPos, nil, "$env", types.Typ[types.UnsafePointer])
+	return p.NewEnvFunc(name, sig, InGo, env, false).Expr
+}
+
 // RuntimeFunc returns a declaration for a function in LLGo's internal runtime.
 func (p Package) RuntimeFunc(fnName string) Expr {
 	return p.rtFunc(fnName)
@@ -907,30 +922,6 @@ func (p Package) RuntimeFunc(fnName string) Expr {
 
 func (p Package) cFunc(fullName string, sig *types.Signature) Expr {
 	return p.NewFunc(fullName, sig, InC).Expr
-}
-
-const (
-	closureCtx  = "__llgo_ctx"
-	closureStub = "__llgo_stub."
-)
-
-// closureStub creates or reuses a wrapper for function values that lack closure ctx.
-// It stays on Package to match the original placement of closure stubs.
-func (p Package) closureStub(b Builder, fn Expr, sig *types.Signature, origKind valueKind) (Expr, Expr) {
-	prog := b.Prog
-	switch origKind {
-	case vkFuncDecl:
-		wrap := p.closureWrapDecl(fn, sig)
-		return wrap.Expr, prog.Nil(prog.VoidPtr())
-	case vkFuncPtr:
-		wrap := p.closureWrapPtr(sig)
-		ptr := b.AllocU(prog.rawType(sig))
-		b.Store(ptr, fn)
-		data := b.Convert(prog.VoidPtr(), ptr)
-		return wrap.Expr, data
-	default:
-		return fn, prog.Nil(prog.VoidPtr())
-	}
 }
 
 // -----------------------------------------------------------------------------

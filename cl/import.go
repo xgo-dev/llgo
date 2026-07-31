@@ -563,6 +563,7 @@ const (
 	llgoAtomicCmpXchgOK    = llgoInstrBase + 0x45
 	llgoAtomicAddReturnNew = llgoInstrBase + 0x46
 	llgoBoolToUint8        = llgoInstrBase + 0x47
+	llgoClosureEnv         = llgoInstrBase + 0x49
 
 	llgoAtomicOpLast = llgoAtomicOpBase + int(llssa.OpUMin)
 )

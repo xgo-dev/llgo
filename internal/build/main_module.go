@@ -44,7 +44,6 @@ type genConfig struct {
 	abiSymbols    map[string]none
 	funcInfo      []funcInfoRecord
 	pcLineInfo    []pcLineRecord
-	funcInfoStubs []funcInfoStubRecord
 }
 
 // genMainModule generates the main entry module for an llgo program.
@@ -62,7 +61,7 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	argvValueType := prog.Pointer(prog.CStr())
 	argvVar := mainPkg.NewVarEx("__llgo_argv", prog.Pointer(argvValueType))
 	argvVar.InitNil()
-	emitFuncInfoTable(ctx, mainPkg, cfg.funcInfo, cfg.pcLineInfo, cfg.funcInfoStubs)
+	emitFuncInfoTable(ctx, mainPkg, cfg.funcInfo, cfg.pcLineInfo)
 
 	exportFile := pkg.ExportFile
 	if exportFile == "" {

@@ -36,35 +36,27 @@ type funcData struct {
 	tout []*abi.Type
 	fn   func(args []Value) (results []Value)
 	nin  int
-	off  int
 }
 
 func MakeFunc(typ Type, fn func(args []Value) (results []Value)) Value {
-	return makeFunc(typ, false, fn)
+	return makeFunc(typ, fn)
 }
 
-func makeFunc(typ Type, method bool, fn func(args []Value) (results []Value)) Value {
+func makeFunc(typ Type, fn func(args []Value) (results []Value)) Value {
 	if typ.Kind() != Func {
 		panic("reflect: call of MakeFunc with non-Func type")
 	}
 
 	t := typ.common()
 	ftyp := (*funcType)(unsafe.Pointer(t))
-	var ins []*abi.Type
-	var off int
-	if method {
-		ins = ftyp.In
-	} else {
-		ins = append([]*abi.Type{unsafePointerType}, ftyp.In...)
-		off = 1
-	}
+	ins := ftyp.In
 	sig, err := toFFISig(ins, ftyp.Out)
 	if err != nil {
 		panic(err)
 	}
 	outs := toRuntimeTypes(ftyp.Out)
 	closure := ffi.NewClosure()
-	userdata := &funcData{ftyp: ftyp, fn: fn, nin: len(ftyp.In), off: off, tout: outs}
+	userdata := &funcData{ftyp: ftyp, fn: fn, nin: len(ftyp.In), tout: outs}
 
 	switch len(ftyp.Out) {
 	case 0:
@@ -86,7 +78,7 @@ func makeFunc(typ Type, method bool, fn func(args []Value) (results []Value)) Va
 	fv := &struct {
 		fn  unsafe.Pointer
 		env unsafe.Pointer
-	}{closure.Fn, unsafe.Pointer(&fn)}
+	}{closure.Fn, nil}
 	return Value{styp, unsafe.Pointer(fv), flagIndir | flag(Func)}
 }
 
@@ -99,7 +91,7 @@ func bind0(cif *ffi.Signature, ret unsafe.Pointer, args *unsafe.Pointer, userdat
 	fd := (*funcData)(userdata)
 	ins := make([]Value, fd.nin)
 	for i := 0; i < fd.nin; i++ {
-		ins[i] = ffiToValue(ffi.Index(args, uintptr(i+fd.off)), fd.ftyp.In[i])
+		ins[i] = ffiToValue(ffi.Index(args, uintptr(i)), fd.ftyp.In[i])
 	}
 	fd.fn(ins)
 }
@@ -108,7 +100,7 @@ func bind1(cif *ffi.Signature, ret unsafe.Pointer, args *unsafe.Pointer, userdat
 	fd := (*funcData)(userdata)
 	ins := make([]Value, fd.nin)
 	for i := 0; i < fd.nin; i++ {
-		ins[i] = ffiToValue(ffi.Index(args, uintptr(i+fd.off)), fd.ftyp.In[i])
+		ins[i] = ffiToValue(ffi.Index(args, uintptr(i)), fd.ftyp.In[i])
 	}
 	out := validateMakeFuncResults(fd.fn(ins), fd.ftyp, fd.tout)
 	storeMakeFuncResult(ret, out[0], fd.tout[0])
@@ -118,7 +110,7 @@ func bindn(cif *ffi.Signature, ret unsafe.Pointer, args *unsafe.Pointer, userdat
 	fd := (*funcData)(userdata)
 	ins := make([]Value, fd.nin)
 	for i := 0; i < fd.nin; i++ {
-		ins[i] = ffiToValue(ffi.Index(args, uintptr(i+fd.off)), fd.ftyp.In[i])
+		ins[i] = ffiToValue(ffi.Index(args, uintptr(i)), fd.ftyp.In[i])
 	}
 	outs := validateMakeFuncResults(fd.fn(ins), fd.ftyp, fd.tout)
 	var offset uintptr = 0
@@ -276,20 +268,25 @@ func makeMethodValue(op string, v Value) Value {
 	fl |= flag(v.typ().Kind())
 	rcvr := Value{v.typ(), v.ptr, fl}
 
-	// v.Type returns the actual type of the method value.
-	_, _, fn := methodReceiver(op, rcvr, int(v.flag)>>flagMethodShift)
-	var ptr unsafe.Pointer
-	storeRcvr(v, unsafe.Pointer(&ptr))
-	fv := &struct {
-		fn  unsafe.Pointer
-		env unsafe.Pointer
-	}{fn, ptr}
-	ftyp := (*funcType)(unsafe.Pointer(v.Type().(*rtype)))
-	typ := closureOf(ftyp)
+	// Validate the method now so Interface and Convert keep their eager panic
+	// behavior. The resulting libffi closure is a true no-env C entry; its
+	// userdata owns the receiver state. Pointing a hidden-env funcval directly
+	// at Ifn would be invalid because Ifn expects the receiver as an ordinary
+	// first ABI argument.
+	methodReceiver(op, rcvr, int(v.flag)>>flagMethodShift)
+	method := v
+	callOp := "Call"
+	if method.Type().(*rtype).t.FuncType().Variadic() {
+		callOp = "CallSlice"
+	}
+	ret := makeFunc(v.Type(), func(args []Value) []Value {
+		return method.call(callOp, args)
+	})
 	// Cause panic if method is not appropriate.
 	// The panic would still happen during the call if we omit this,
 	// but we want Interface() and other operations to fail early.
-	return Value{typ, unsafe.Pointer(fv), v.flag&flagRO | flagIndir | flag(Func)}
+	ret.flag |= v.flag & flagRO
+	return ret
 }
 
 var unsafePointerType = rtypeOf(unsafe.Pointer(nil))

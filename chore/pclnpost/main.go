@@ -38,6 +38,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, "pclnpost:", err)
 		os.Exit(1)
 	}
-	fmt.Printf("%s: entry=%d stub=%d kept=%d inlineCopies=%d noSymbol=%d -> ftab=%d buckets=%d\n",
-		st.Format, st.EntryRecords, st.StubRecords, st.Kept, st.InlineCopies, st.NoSymbol, st.FtabEntries, st.Buckets)
+	fmt.Printf("%s: entry=%d kept=%d inlineCopies=%d noSymbol=%d -> ftab=%d buckets=%d\n",
+		st.Format, st.EntryRecords, st.Kept, st.InlineCopies, st.NoSymbol, st.FtabEntries, st.Buckets)
 }

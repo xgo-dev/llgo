@@ -20,7 +20,7 @@ type counter struct {
 // CHECK: call void @"{{.*}}PrintInt"(i64 %6)
 // CHECK: icmp sge i64 %8, %10
 // CHECK: ret %main.stateFn zeroinitializer
-// CHECK: ret %main.stateFn { ptr @__llgo_stub.main.countState, ptr null }
+// CHECK: ret %main.stateFn { ptr @main.countState, ptr null }
 func countState(c *counter) stateFn {
 	c.value++
 	println("count:", c.value)
@@ -35,8 +35,9 @@ func countState(c *counter) stateFn {
 func main() {
 	// CHECK: call ptr @"{{.*}}AllocZ"(i64 32)
 	// CHECK: store i64 5, ptr %1, align 8
-	// CHECK: store %main.stateFn { ptr @__llgo_stub.main.countState, ptr null }, ptr %2, align 8
-	// CHECK: call %main.stateFn %6(ptr %5, ptr %0)
+	// CHECK: store %main.stateFn { ptr @main.countState, ptr null }, ptr %2, align 8
+	// CHECK: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %6)
+	// CHECK: call %main.stateFn %__llgo_funcval_code(ptr {{(nest|swiftself)}} %5, ptr %0)
 	// CHECK: store %main.stateFn %7, ptr %8, align 8
 	// CHECK: icmp ne ptr %11, null
 	// CHECK: br i1 %12, label %_llgo_1, label %_llgo_2

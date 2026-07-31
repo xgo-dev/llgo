@@ -26,13 +26,13 @@ import (
 
 // buildMachO fabricates a minimal 64-bit Mach-O that debug/macho can Open:
 // one __TEXT segment (__text) and one __DATA segment carrying __llgo_fie /
-// __llgo_stub, plus LC_SYMTAB and an LC_DYLD_CHAINED_FIXUPS whose imports
+// optional pcline data, plus LC_SYMTAB and an LC_DYLD_CHAINED_FIXUPS whose imports
 // table binds ordinal 1 to a local symbol.
-func buildMachO(t *testing.T, entry, stub []byte, syms []elfFn) string {
-	return buildMachOExternal(t, entry, stub, nil, nil, syms)
+func buildMachO(t *testing.T, entry []byte, syms []elfFn) string {
+	return buildMachOExternal(t, entry, nil, nil, syms)
 }
 
-func buildMachOExternal(t *testing.T, entry, stub, pcLine, identity []byte, syms []elfFn) string {
+func buildMachOExternal(t *testing.T, entry, pcLine, identity []byte, syms []elfFn) string {
 	t.Helper()
 	const base = uint64(0x100000000)
 	text := make([]byte, 0x40000) // big enough that findfunctab buckets outgrow a tiny entry section
@@ -68,8 +68,7 @@ func buildMachOExternal(t *testing.T, entry, stub, pcLine, identity []byte, syms
 	// File layout (fixed offsets, one page apart).
 	const textOff = uint64(0x1000)
 	const entryOff = uint64(0x2000)
-	stubOff := entryOff + uint64(len(entry))
-	dataEnd := stubOff + uint64(len(stub))
+	dataEnd := entryOff + uint64(len(entry))
 	pcLineOff := dataEnd
 	if pcLine != nil {
 		dataEnd += uint64(len(pcLine))
@@ -89,7 +88,6 @@ func buildMachOExternal(t *testing.T, entry, stub, pcLine, identity []byte, syms
 	})})
 	dataSections := [][]byte{
 		sect("__llgo_fie", "__DATA", base+entryOff, entryOff, uint64(len(entry))),
-		sect("__llgo_stub", "__DATA", base+stubOff, stubOff, uint64(len(stub))),
 	}
 	if pcLine != nil {
 		dataSections = append(dataSections, sect("__llgo_pcl", "__DATA", base+pcLineOff, pcLineOff, uint64(len(pcLine))))
@@ -192,7 +190,6 @@ func buildMachOExternal(t *testing.T, entry, stub, pcLine, identity []byte, syms
 	copy(raw[32:], cmdBytes)
 	copy(raw[textOff:], text)
 	copy(raw[entryOff:], entry)
-	copy(raw[stubOff:], stub)
 	if pcLine != nil {
 		copy(raw[pcLineOff:], pcLine)
 	}
@@ -221,9 +218,7 @@ func TestLoadMachOFixture(t *testing.T) {
 	badBind := uint64(1) << 63
 	entry := append(rec(rebase, fnv64("example.com/p.B")), rec(bind, fnv64("example.com/p.A"))...)
 	entry = append(entry, rec(badBind, 99)...)
-	stub := rec(0, 0)
-
-	path := buildMachO(t, entry, stub, fns)
+	path := buildMachO(t, entry, fns)
 	info, err := load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -252,7 +247,7 @@ func TestLoadMachOFixture(t *testing.T) {
 // machoRewriteFixture: records anchored inside real text symbols so dedupe
 // keeps them, plus a meta record advertising the symbol index inside the
 // entry section (readVM resolves it through the __DATA section).
-func machoRewriteFixture(t *testing.T, entryPad, stubPad int) string {
+func machoRewriteFixture(t *testing.T, entryPad int) string {
 	t.Helper()
 	const base = uint64(0x100000000)
 	fns := []elfFn{{name: "example.com/p.A", size: 0x10}, {name: "example.com/p.B", size: 0x3F000}} // far apart: findfunctab spans many buckets
@@ -298,12 +293,11 @@ func machoRewriteFixture(t *testing.T, entryPad, stubPad int) string {
 	binary.LittleEndian.PutUint64(entry[16:], ptrAddr)
 	binary.LittleEndian.PutUint64(entry[32:], cntAddr)
 	entry = append(entry, make([]byte, entryPad)...)
-	stub := append(rec(0, 0), make([]byte, stubPad)...)
-	return buildMachO(t, entry, stub, fns)
+	return buildMachO(t, entry, fns)
 }
 
 func TestRewriteMachOInPlace(t *testing.T) {
-	path := machoRewriteFixture(t, 4096, 512)
+	path := machoRewriteFixture(t, 4096)
 	st, err := Rewrite(path)
 	if err != nil {
 		t.Fatal(err)
@@ -317,26 +311,5 @@ func TestRewriteMachOInPlace(t *testing.T) {
 	}
 	if got := binary.LittleEndian.Uint64(info.entrySec[0:]); got != prebuiltMagic {
 		t.Fatalf("magic %#x", got)
-	}
-}
-
-func TestRewriteMachOSpill(t *testing.T) {
-	path := machoRewriteFixture(t, 0, 8192)
-	st, err := Rewrite(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.FtabEntries != 3 {
-		t.Fatalf("stats %+v", st)
-	}
-	info, err := load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := binary.LittleEndian.Uint64(info.entrySec[0:]); got != redirectMagic {
-		t.Fatalf("entry magic %#x", got)
-	}
-	if got := binary.LittleEndian.Uint64(info.stubSec[0:]); got != prebuiltMagic {
-		t.Fatalf("stub magic %#x", got)
 	}
 }
