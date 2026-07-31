@@ -104,9 +104,14 @@ func buildPrePackageGroup(ctx *context, tasks []*packageBuildTask, verbose bool)
 	results := make([]packageBuildResult, len(tasks))
 	for _, index := range patched {
 		task := tasks[index]
+		traceSpan := ctx.buildTrace.startPackageCoordinator("backend+publish", task.pkg.PkgPath)
+		traceSpan.setArg("class", "patched")
+		traceSpan.setArg("archive_publication", true)
+		ctx.buildTrace.flowFromSSA(task.pkg.PkgPath, traceSpan)
 		result, err := executeAndFinalizePackage(ctx, task, verbose, func() error {
 			return executePrePackage(ctx, task, verbose)
 		})
+		traceSpan.done()
 		if err != nil {
 			return nil, err
 		}
@@ -114,9 +119,20 @@ func buildPrePackageGroup(ctx *context, tasks []*packageBuildTask, verbose bool)
 	}
 	for _, index := range coordinator {
 		task := tasks[index]
+		stage, class := "backend+publish", "coordinator"
+		if task.skip {
+			stage, class = "reuse", "cache-or-no-backend"
+		}
+		traceSpan := ctx.buildTrace.startPackageCoordinator(stage, task.pkg.PkgPath)
+		traceSpan.setArg("class", class)
+		traceSpan.setArg("archive_publication", !task.skip)
+		if !task.skip {
+			ctx.buildTrace.flowFromSSA(task.pkg.PkgPath, traceSpan)
+		}
 		result, err := executeAndFinalizePackage(ctx, task, verbose, func() error {
 			return executePackageBuild(ctx, task, verbose)
 		})
+		traceSpan.done()
 		if err != nil {
 			return nil, err
 		}
@@ -174,9 +190,14 @@ func executeIsolatedPackages(ctx *context, tasks []*packageBuildTask, indexes []
 	}
 	return runBoundedPackageJobs(ctx.buildConf.parallelism(), indexes, func(index int) error {
 		task := tasks[index]
+		traceSpan := ctx.buildTrace.startWorker("backend+publish", task.pkg.PkgPath)
+		traceSpan.setArg("class", "isolated")
+		traceSpan.setArg("archive_publication", true)
+		ctx.buildTrace.flowFromSSA(task.pkg.PkgPath, traceSpan)
 		result, err := executeAndFinalizePackage(ctx, task, verbose, func() error {
 			return ctx.executeIsolatedPackage(task, verbose)
 		})
+		traceSpan.done()
 		results[index] = result
 		return err
 	})
@@ -352,6 +373,7 @@ func (ctx *context) newBackendTask(session backendSession) *context {
 		commands:        ctx.commands,
 		frontendOptions: ctx.frontendOptions,
 		cTransformer:    session.transformer,
+		buildTrace:      ctx.buildTrace,
 		sfilesCache:     ctx.sfilesCache,
 		sfilesFrozen:    true,
 		plan9asmReady:   true,

@@ -175,7 +175,10 @@ type Config struct {
 	// BuildParallelism is the package-level concurrency requested by Go's -p
 	// build flag for llgo test. Zero uses the Go default, GOMAXPROCS.
 	BuildParallelism int
-	LinkOptions      LinkOptions
+	// BuildTrace is an optional Chrome Trace Event JSON output path. Relative
+	// paths are resolved from the build invocation directory.
+	BuildTrace  string
+	LinkOptions LinkOptions
 	// OmitDWARFByDefault controls linked builds only when -w was not
 	// explicitly specified. Explicit -w and -w=false always win.
 	OmitDWARFByDefault bool
@@ -385,6 +388,19 @@ func Build(inv Invocation) ([]Package, error) {
 	if err != nil {
 		return nil, err
 	}
+	buildTrace, err := startBuildTrace(conf.BuildTrace, dir, conf.parallelism())
+	if err != nil {
+		return nil, fmt.Errorf("start build trace: %w", err)
+	}
+	buildSpan := buildTrace.startCoordinator("build", map[string]any{
+		"packages": slices.Clone(inv.Args),
+	})
+	defer func() {
+		buildSpan.done()
+		if closeErr := buildTrace.close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: write build trace: %v\n", closeErr)
+		}
+	}()
 	// Handle crosscompile configuration first to set correct GOOS/GOARCH
 	forceEspClang := conf.ForceEspClang || conf.Target != ""
 	export, err := crosscompile.Use(conf.Goos, conf.Goarch, conf.Target, IsWasiThreadsEnabled(), forceEspClang, conf.OptLevel, conf.ltoMode(), conf.goGlobalDCEEnabled())
@@ -535,7 +551,11 @@ func Build(inv Invocation) ([]Package, error) {
 		return parser.ParseFile(fset, filename, src, mode)
 	}
 
+	loadSpan := buildTrace.startCoordinator("load packages", map[string]any{
+		"patterns": slices.Clone(patterns),
+	})
 	initial, err := packages.LoadExWithGoVersion(dedup, sizes, cfg, conf.GoVersion, patterns...)
+	loadSpan.done()
 	if err != nil {
 		return nil, err
 	}
@@ -572,7 +592,11 @@ func Build(inv Invocation) ([]Package, error) {
 	altPkgPaths := altPkgs(initial, conf, llssa.PkgRuntime)
 	altCfg := *cfg
 	altCfg.Dir = env.LLGoRuntimeDir()
+	loadAltSpan := buildTrace.startCoordinator("load runtime packages", map[string]any{
+		"packages": slices.Clone(altPkgPaths),
+	})
 	altPkgs, err := packages.LoadEx(dedup, sizes, &altCfg, altPkgPaths...)
+	loadAltSpan.done()
 	if err != nil {
 		return nil, err
 	}
@@ -601,12 +625,16 @@ func Build(inv Invocation) ([]Package, error) {
 	progSSA := ssa.NewProgram(initial[0].Fset, buildMode)
 	patches := make(cl.Patches, len(altPkgPaths))
 	altEntries := registerAltSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
+	prepareSpan := buildTrace.startCoordinator("prepare shared backend state", nil)
 	if err := preloadPatchedPackageSyntax(prog, patches, dedup, preloadOptions); err != nil {
+		prepareSpan.done()
 		return nil, err
 	}
 	if err := prepareLocalVariables(prog, initial, altPkgs); err != nil {
+		prepareSpan.done()
 		return nil, err
 	}
+	prepareSpan.done()
 	frontendOptions.PreloadedSyntax = true
 
 	output := conf.OutFile != ""
@@ -623,6 +651,7 @@ func Build(inv Invocation) ([]Package, error) {
 		commands:        commands,
 		frontendOptions: frontendOptions,
 		cTransformer:    cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, conf.AbiMode, cabiOptimize),
+		buildTrace:      buildTrace,
 	}
 	defer ctx.closePackageMetas()
 	defer ctx.closePackageArchiveBuffers()
@@ -643,7 +672,9 @@ func Build(inv Invocation) ([]Package, error) {
 		return nil, err
 	}
 	buildSSAPkgs(ctx, append(append(altEntries, pkgEntries...), depEntries...))
+	callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
 	ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
+	callerSpan.done()
 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	allPkgs = append(allPkgs, depPkgs...)
@@ -673,7 +704,12 @@ func Build(inv Invocation) ([]Package, error) {
 			resolveOutputs(ctx.commands.dir, outFmts)
 
 			// Link main package using the output path from buildOutFmts
+			linkSpan := buildTrace.startCoordinator("link "+pkg.PkgPath, map[string]any{
+				"package": pkg.PkgPath,
+				"output":  outFmts.Out,
+			})
 			err = linkMainPkg(ctx, pkg, allPkgs, outFmts.Out, verbose)
+			linkSpan.done()
 			if err != nil {
 				return nil, err
 			}
@@ -914,6 +950,8 @@ type context struct {
 	// pclnExternal is populated while generating the synthetic main module
 	// and completed with final linked PCs by the post-link externalizer.
 	pclnExternal *pclnmap.Data
+
+	buildTrace *buildTracer
 }
 
 type retainedBackendProgram struct {
@@ -1100,9 +1138,14 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 	for _, p := range pkgs {
 		tasks = append(tasks, newPackageBuildTask(p))
 	}
+	preSpan := ctx.buildTrace.startCoordinator("preflight packages", map[string]any{
+		"count": len(tasks),
+	})
 	if err := prePackageBuilds(ctx, tasks, verbose); err != nil {
+		preSpan.done()
 		return nil, err
 	}
+	preSpan.done()
 	ctx.sfilesFrozen = true
 
 	var needRuntime, needPyInit bool
@@ -1136,10 +1179,14 @@ func buildOnePackage(ctx *context, task *packageBuildTask, verbose bool) (packag
 	if err := prePackageBuild(ctx, task, verbose); err != nil || task.skip {
 		return packageBuildResultFor(task), err
 	}
-	if err := executePackageBuild(ctx, task, verbose); err != nil {
-		return packageBuildResultFor(task), err
-	}
-	return finalizePackageBuild(ctx, task, verbose)
+	backendSpan := ctx.buildTrace.startPackageCoordinator("backend+publish", task.pkg.PkgPath)
+	backendSpan.setArg("class", "coordinator")
+	ctx.buildTrace.flowFromSSA(task.pkg.PkgPath, backendSpan)
+	result, err := executeAndFinalizePackage(ctx, task, verbose, func() error {
+		return executePackageBuild(ctx, task, verbose)
+	})
+	backendSpan.done()
+	return result, err
 }
 
 // prePackageBuild performs classification, fingerprinting, and cache
@@ -1147,6 +1194,12 @@ func buildOnePackage(ctx *context, task *packageBuildTask, verbose bool) (packag
 func prePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
 	aPkg := task.pkg
 	pkg := aPkg.Package
+	traceSpan := ctx.buildTrace.startPackageCoordinator("pre", pkg.PkgPath)
+	defer func() {
+		traceSpan.setArg("cache_hit", aPkg.CacheHit)
+		traceSpan.setArg("skip", task.skip)
+		traceSpan.done()
+	}()
 	if _, ok := ctx.built[pkg.ID]; ok {
 		task.skip = true
 		return nil
@@ -2457,7 +2510,11 @@ func buildSSAPkgs(ctx *context, entries []ssaBuildEntry) {
 		go func() {
 			defer wg.Done()
 			for entry := range jobs {
+				pkgPath := entry.pkg.Pkg.Path()
+				traceSpan := ctx.buildTrace.startWorker("ssa", pkgPath)
 				entry.pkg.Build()
+				traceSpan.done()
+				ctx.buildTrace.rememberSSA(pkgPath, traceSpan)
 			}
 		}()
 	}
@@ -2466,11 +2523,13 @@ func buildSSAPkgs(ctx *context, entries []ssaBuildEntry) {
 	}
 	close(jobs)
 	wg.Wait()
+	repairSpan := ctx.buildTrace.startCoordinator("repair SSA order", nil)
 	for _, entry := range unique {
 		if entry.fixOrder {
 			fixSSAOrder(entry.pkg, entry.syntax)
 		}
 	}
+	repairSpan.done()
 }
 
 func formatPackageError(err packages.Error, noColumn bool) string {

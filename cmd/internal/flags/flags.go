@@ -48,6 +48,7 @@ var SizeFormat string
 var SizeLevel string
 var ForceRebuild bool
 var PrintCommands bool
+var BuildTrace string
 var DeadcodeDrop bool
 var PthreadStackSize byteSizeFlag
 var OptLevel optlevel.Level
@@ -234,6 +235,14 @@ func AddBuildFlags(fs *flag.FlagSet) {
 	fs.BoolVar(&SizeReport, "size", false, "Print size report after build (default format=text, level=module)")
 	fs.StringVar(&SizeFormat, "size-format", "", "Size report format (text,json). Default text.")
 	fs.StringVar(&SizeLevel, "size-level", "", "Size report aggregation level (full,module,package). Default module.")
+}
+
+// AddBuildTraceFlag adds the build-scheduler trace flag. It is intentionally
+// separate from AddBuildFlags because only "llgo build" owns a single trace
+// output file; test and run may coordinate multiple child invocations.
+func AddBuildTraceFlag(fs *flag.FlagSet) {
+	BuildTrace = ""
+	fs.StringVar(&BuildTrace, "debug-trace", "", "Write a Chrome/Perfetto build-scheduler trace to file")
 }
 
 func AddBuildModeFlags(fs *flag.FlagSet) {
