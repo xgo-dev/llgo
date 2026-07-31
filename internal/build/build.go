@@ -595,7 +595,8 @@ func Build(inv Invocation) ([]Package, error) {
 	if pkg := dedup.Check(llssa.PkgPython); pkg != nil {
 		backendTemplate.pythonPackage = pkg.Types
 	}
-	backendTemplate.inputs = collectBackendProgramInputs(initial, altPkgs)
+	backendTemplate.inputs = collectBackendProgramInputs(prog, initial, altPkgs)
+	backendTemplate.localities = prog.SnapshotLocalityState()
 	backendTemplate.llvmTarget = export.LLVMTarget
 	backendTemplate.targetABI = export.TargetABI
 
@@ -931,12 +932,11 @@ func (c *context) closePackageMetas() {
 }
 
 type backendProgramInput struct {
-	fset         *token.FileSet
-	pkg          *types.Package
-	info         *types.Info
-	files        []*ast.File
-	parseSyntax  bool
-	prepareLocal bool
+	fset        *token.FileSet
+	pkg         *types.Package
+	info        *types.Info
+	files       []*ast.File
+	parseSyntax bool
 }
 
 // backendProgramTemplate contains only immutable build-local inputs. Creating
@@ -955,6 +955,7 @@ type backendProgramTemplate struct {
 	runtimePackage      *types.Package
 	pythonPackage       *types.Package
 	inputs              []backendProgramInput
+	localities          llssa.LocalityState
 	llvmTarget          string
 	targetABI           string
 	abiMode             cabi.Mode
@@ -1033,17 +1034,11 @@ func (t backendProgramTemplate) replayProgramState(prog llssa.Program) error {
 			}
 		}
 	}
-	for _, input := range t.inputs {
-		if input.prepareLocal {
-			if err := cl.PrepareLocalVariables(prog, input.fset, input.pkg, input.info, input.files); err != nil {
-				return err
-			}
-		}
-	}
+	prog.RestoreLocalityState(t.localities)
 	return nil
 }
 
-func collectBackendProgramInputs(groups ...[]*packages.Package) []backendProgramInput {
+func collectBackendProgramInputs(prog llssa.Program, groups ...[]*packages.Package) []backendProgramInput {
 	seen := make(map[*types.Package]bool)
 	var inputs []backendProgramInput
 	for _, roots := range groups {
@@ -1052,13 +1047,13 @@ func collectBackendProgramInputs(groups ...[]*packages.Package) []backendProgram
 				return
 			}
 			seen[pkg.Types] = true
+			parsed := prog.PackageSyntaxParsed(pkg.Types)
 			inputs = append(inputs, backendProgramInput{
-				fset:         pkg.Fset,
-				pkg:          pkg.Types,
-				info:         pkg.TypesInfo,
-				files:        slices.Clone(pkg.Syntax),
-				parseSyntax:  !llruntime.SkipToBuild(pkg.PkgPath),
-				prepareLocal: true,
+				fset:        pkg.Fset,
+				pkg:         pkg.Types,
+				info:        pkg.TypesInfo,
+				files:       slices.Clone(pkg.Syntax),
+				parseSyntax: parsed && !llruntime.SkipToBuild(pkg.PkgPath),
 			})
 		})
 	}

@@ -61,6 +61,17 @@ type localityInfos struct {
 	parsedPackages     map[*types.Package]struct{}
 }
 
+// LocalityState is a copyable snapshot of the Go-side locality metadata owned
+// by one Program. It contains no LLVM objects and can therefore be replayed
+// safely into an independent backend Program.
+type LocalityState struct {
+	entries            map[string]VariableLocality
+	ownerlessEntries   map[string]VariableLocality
+	declarationEntries map[string]map[string]VariableLocality
+	activePackages     map[string]struct{}
+	parsedPackages     map[*types.Package]struct{}
+}
+
 func newLocalityInfos() *localityInfos {
 	return &localityInfos{
 		entries:            make(map[string]VariableLocality),
@@ -69,6 +80,64 @@ func newLocalityInfos() *localityInfos {
 		activePackages:     make(map[string]struct{}),
 		parsedPackages:     make(map[*types.Package]struct{}),
 	}
+}
+
+// SnapshotLocalityState returns an independent snapshot of p's locality
+// metadata. Callers may use it after preflight has completed to seed isolated
+// backend sessions without sharing mutable Program state.
+func (p Program) SnapshotLocalityState() LocalityState {
+	p.localities.mu.RLock()
+	defer p.localities.mu.RUnlock()
+	state := LocalityState{
+		entries:          cloneLocalityEntries(p.localities.entries),
+		ownerlessEntries: cloneLocalityEntries(p.localities.ownerlessEntries),
+		activePackages:   cloneLocalitySet(p.localities.activePackages),
+		parsedPackages:   cloneParsedPackages(p.localities.parsedPackages),
+	}
+	state.declarationEntries = make(map[string]map[string]VariableLocality, len(p.localities.declarationEntries))
+	for name, entries := range p.localities.declarationEntries {
+		state.declarationEntries[name] = cloneLocalityEntries(entries)
+	}
+	return state
+}
+
+// RestoreLocalityState replaces p's locality metadata with an independent
+// copy of state. The copied maps keep backend sessions independent.
+func (p Program) RestoreLocalityState(state LocalityState) {
+	p.localities.mu.Lock()
+	p.localities.entries = cloneLocalityEntries(state.entries)
+	p.localities.ownerlessEntries = cloneLocalityEntries(state.ownerlessEntries)
+	p.localities.activePackages = cloneLocalitySet(state.activePackages)
+	p.localities.parsedPackages = cloneParsedPackages(state.parsedPackages)
+	p.localities.declarationEntries = make(map[string]map[string]VariableLocality, len(state.declarationEntries))
+	for name, entries := range state.declarationEntries {
+		p.localities.declarationEntries[name] = cloneLocalityEntries(entries)
+	}
+	p.localities.mu.Unlock()
+}
+
+func cloneLocalityEntries(entries map[string]VariableLocality) map[string]VariableLocality {
+	ret := make(map[string]VariableLocality, len(entries))
+	for name, entry := range entries {
+		ret[name] = entry
+	}
+	return ret
+}
+
+func cloneLocalitySet(entries map[string]struct{}) map[string]struct{} {
+	ret := make(map[string]struct{}, len(entries))
+	for name := range entries {
+		ret[name] = struct{}{}
+	}
+	return ret
+}
+
+func cloneParsedPackages(entries map[*types.Package]struct{}) map[*types.Package]struct{} {
+	ret := make(map[*types.Package]struct{}, len(entries))
+	for pkg := range entries {
+		ret[pkg] = struct{}{}
+	}
+	return ret
 }
 
 func (p *localityInfos) update(name string, update func(*VariableLocality)) {
