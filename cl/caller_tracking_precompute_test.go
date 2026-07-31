@@ -77,3 +77,38 @@ func Logs() { dep.Where() }
 		t.Fatalf("frozen extended lookup for unknown package = %v, want nil", got)
 	}
 }
+
+func TestNewPackageCallerTrackingMatchesWholeProgramPrecompute(t *testing.T) {
+	dep, root := buildCallerFrameSSAProgram(t,
+		"example.com/dep", `package dep
+import "runtime"
+func Where() { runtime.Caller(0) }
+`,
+		"example.com/root", `package root
+import "example.com/dep"
+func Logs() { dep.Where() }
+`)
+
+	whole := NewCallerTracking()
+	whole.Precompute([]*gossa.Package{root})
+	local := NewPackageCallerTracking(
+		root,
+		SummarizeCallerTracking(dep),
+		SummarizeCallerTracking(root),
+	)
+	if !local.frozen {
+		t.Fatal("package caller tracking was not frozen")
+	}
+	if got, want := local.base[dep][dep.Func("Where")], whole.base[dep][dep.Func("Where")]; got != want {
+		t.Fatalf("dependency base tracking = %v, want %v", got, want)
+	}
+	if got, want := local.extended[root][root.Func("Logs")], whole.extended[root][root.Func("Logs")]; got != want {
+		t.Fatalf("root extended tracking = %v, want %v", got, want)
+	}
+	if len(local.extended) != 1 {
+		t.Fatalf("package snapshot computed %d extended package sets, want 1", len(local.extended))
+	}
+	if len(local.base) != 2 {
+		t.Fatalf("package snapshot retained %d base package sets, want 2", len(local.base))
+	}
+}

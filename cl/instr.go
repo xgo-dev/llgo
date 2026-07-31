@@ -974,15 +974,13 @@ func runtimeCallerFuncSet(c *CallerTracking, pkg *ssa.Package) map[*ssa.Function
 	return out
 }
 
-// CallerTracking memoizes the per-package caller-tracking sets for one
-// compilation. Like Patches, it is compilation-scoped state owned by the
-// driver: create one per compilation and pass it to every
-// NewPackageExWithEmbed call of that compilation, so cross-package
-// queries (criterion 2 below) hit the memoization. It must not outlive
-// the compilation — the maps are keyed by *ssa.Package with
-// *ssa.Function values, so anything longer-lived would pin every
-// compiled package's go/types and go/ssa graphs. Concurrent drivers call
-// Precompute and share only the resulting frozen, read-only maps.
+// CallerTracking memoizes per-package caller-tracking sets. A two-phase driver
+// may create one compilation-scoped instance, call Precompute, and share the
+// frozen result. A pipelined driver instead creates one instance per backend
+// with NewPackageCallerTrackingForPackages, seeded by immutable summaries
+// produced as SSA packages finish. Neither form may outlive the compilation:
+// the maps are keyed by *ssa.Package with *ssa.Function values, so longer-lived
+// state would pin every compiled package's go/types and go/ssa graphs.
 type CallerTracking struct {
 	base     map[*ssa.Package]map[*ssa.Function]bool
 	extended map[*ssa.Package]map[*ssa.Function]bool
@@ -1030,6 +1028,43 @@ func (c *CallerTracking) Precompute(pkgs []*ssa.Package) {
 		runtimeCallerFuncSet(c, pkg)
 	}
 	c.frozen = true
+}
+
+// CallerTrackingSummary is the immutable caller-tracking state computed when
+// one package finishes SSA construction.
+type CallerTrackingSummary struct {
+	pkg  *ssa.Package
+	base map[*ssa.Function]bool
+}
+
+// SummarizeCallerTracking computes the package-local caller base set once.
+func SummarizeCallerTracking(pkg *ssa.Package) CallerTrackingSummary {
+	return CallerTrackingSummary{pkg: pkg, base: computeRuntimeCallerBaseSet(pkg)}
+}
+
+// NewPackageCallerTracking computes and freezes the extended caller-tracking
+// state needed to compile pkg. summaries should contain pkg and its effective
+// dependencies, allowing package backends to reuse the package-local analysis
+// performed as each package completed SSA construction.
+func NewPackageCallerTracking(pkg *ssa.Package, summaries ...CallerTrackingSummary) *CallerTracking {
+	return NewPackageCallerTrackingForPackages([]*ssa.Package{pkg}, summaries...)
+}
+
+// NewPackageCallerTrackingForPackages is NewPackageCallerTracking for a
+// backend that compiles more than one SSA package, such as an alternate-package
+// patch.
+func NewPackageCallerTrackingForPackages(pkgs []*ssa.Package, summaries ...CallerTrackingSummary) *CallerTracking {
+	c := NewCallerTracking()
+	for _, summary := range summaries {
+		if summary.pkg != nil {
+			c.base[summary.pkg] = summary.base
+		}
+	}
+	for _, pkg := range pkgs {
+		runtimeCallerFuncSet(c, pkg)
+	}
+	c.frozen = true
+	return c
 }
 
 // NewCallerTracking creates the caller-tracking memoization for one

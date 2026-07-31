@@ -282,6 +282,10 @@ func (ctx *context) packageUsesPlan9Asm(pkg *aPackage) (bool, error) {
 }
 
 func (ctx *context) executeIsolatedPackage(task *packageBuildTask, verbose bool) error {
+	return ctx.executeIsolatedPackageWithCallerTracking(task, ctx.callerTracking, verbose)
+}
+
+func (ctx *context) executeIsolatedPackageWithCallerTracking(task *packageBuildTask, tracking *cl.CallerTracking, verbose bool) error {
 	session, err := ctx.backend.newSession()
 	if err != nil {
 		return fmt.Errorf("create backend session for %s: %w", task.pkg.PkgPath, err)
@@ -293,7 +297,7 @@ func (ctx *context) executeIsolatedPackage(task *packageBuildTask, verbose bool)
 			session.prog.Dispose()
 		}
 	}()
-	backendCtx := ctx.newBackendTask(session)
+	backendCtx := ctx.newBackendTaskWithCallerTracking(session, tracking)
 
 	if err := buildPkg(backendCtx, task.pkg, verbose); err != nil {
 		return err
@@ -341,13 +345,17 @@ func preparePackageSFiles(ctx *context, pkg *aPackage) error {
 }
 
 func (ctx *context) newBackendTask(session backendSession) *context {
+	return ctx.newBackendTaskWithCallerTracking(session, ctx.callerTracking)
+}
+
+func (ctx *context) newBackendTaskWithCallerTracking(session backendSession, tracking *cl.CallerTracking) *context {
 	return &context{
 		conf:            ctx.conf,
 		progSSA:         ctx.progSSA,
 		prog:            session.prog,
 		dedup:           ctx.dedup,
 		patches:         ctx.patches,
-		callerTracking:  ctx.callerTracking,
+		callerTracking:  tracking,
 		initial:         ctx.initial,
 		pkgs:            ctx.pkgs,
 		pkgByID:         ctx.pkgByID,
@@ -367,6 +375,12 @@ func (ctx *context) newBackendTask(session backendSession) *context {
 		plan9asmPkgs:    ctx.plan9asmPkgs,
 		plan9asmSigs:    make(map[string]map[string]struct{}),
 	}
+}
+
+func (ctx *context) executeCoordinatorPackageWithCallerTracking(task *packageBuildTask, tracking *cl.CallerTracking, verbose bool) error {
+	backendCtx := *ctx
+	backendCtx.callerTracking = tracking
+	return executePackageBuild(&backendCtx, task, verbose)
 }
 
 func packageBuildResultFor(task *packageBuildTask) packageBuildResult {
