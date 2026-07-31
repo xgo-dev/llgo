@@ -173,7 +173,10 @@ type Config struct {
 	// BuildParallelism is the package-level concurrency requested by Go's -p
 	// build flag for llgo test. Zero uses the Go default, GOMAXPROCS.
 	BuildParallelism int
-	LinkOptions      LinkOptions
+	// BuildTrace is an optional Chrome Trace Event JSON output path. Relative
+	// paths are resolved from the build invocation directory.
+	BuildTrace  string
+	LinkOptions LinkOptions
 	// OmitDWARFByDefault controls linked builds only when -w was not
 	// explicitly specified. Explicit -w and -w=false always win.
 	OmitDWARFByDefault bool
@@ -377,7 +380,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 }
 
 // Build executes one build invocation.
-func Build(inv Invocation) ([]Package, error) {
+func Build(inv Invocation) (result []Package, resultErr error) {
 	dir := inv.Dir
 	if dir == "" {
 		var err error
@@ -392,6 +395,20 @@ func Build(inv Invocation) ([]Package, error) {
 	if err != nil {
 		return nil, err
 	}
+	buildTrace, err := startBuildTrace(conf.BuildTrace, dir, conf.parallelism())
+	if err != nil {
+		return nil, fmt.Errorf("start build trace: %w", err)
+	}
+	buildSpan := buildTrace.startCoordinator("build", map[string]any{
+		"packages": slices.Clone(inv.Args),
+	})
+	defer func() {
+		buildSpan.done()
+		if closeErr := buildTrace.close(); closeErr != nil && resultErr == nil {
+			result = nil
+			resultErr = fmt.Errorf("write build trace: %w", closeErr)
+		}
+	}()
 	// Handle crosscompile configuration first to set correct GOOS/GOARCH
 	forceEspClang := conf.ForceEspClang || conf.Target != ""
 	export, err := crosscompile.Use(conf.Goos, conf.Goarch, conf.Target, IsWasiThreadsEnabled(), forceEspClang, conf.OptLevel, conf.ltoMode(), conf.goGlobalDCEEnabled())
@@ -541,7 +558,11 @@ func Build(inv Invocation) ([]Package, error) {
 		return parser.ParseFile(fset, filename, src, mode)
 	}
 
+	loadSpan := buildTrace.startCoordinator("load packages", map[string]any{
+		"patterns": slices.Clone(patterns),
+	})
 	initial, err := packages.LoadExWithGoVersion(dedup, sizes, cfg, conf.GoVersion, patterns...)
+	loadSpan.done()
 	if err != nil {
 		return nil, err
 	}
@@ -578,7 +599,11 @@ func Build(inv Invocation) ([]Package, error) {
 	altPkgPaths := altPkgs(initial, conf, llssa.PkgRuntime)
 	altCfg := *cfg
 	altCfg.Dir = env.LLGoRuntimeDir()
+	loadAltSpan := buildTrace.startCoordinator("load runtime packages", map[string]any{
+		"packages": slices.Clone(altPkgPaths),
+	})
 	altPkgs, err := packages.LoadEx(dedup, sizes, &altCfg, altPkgPaths...)
+	loadAltSpan.done()
 	if err != nil {
 		return nil, err
 	}
@@ -642,6 +667,7 @@ func Build(inv Invocation) ([]Package, error) {
 		frontendOptions: frontendOptions,
 		cTransformer:    cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, conf.AbiMode, cabiOptimize),
 		backend:         backendTemplate,
+		buildTrace:      buildTrace,
 	}
 	defer ctx.closePackageMetas()
 	defer ctx.closePackageArchiveBuffers()
@@ -693,7 +719,12 @@ func Build(inv Invocation) ([]Package, error) {
 			resolveOutputs(ctx.commands.dir, outFmts)
 
 			// Link main package using the output path from buildOutFmts
+			linkSpan := buildTrace.startCoordinator("link "+pkg.PkgPath, map[string]any{
+				"package": pkg.PkgPath,
+				"output":  outFmts.Out,
+			})
 			err = linkMainPkg(ctx, pkg, allPkgs, outFmts.Out, verbose)
+			linkSpan.done()
 			if err != nil {
 				return nil, err
 			}
@@ -933,6 +964,8 @@ type context struct {
 	// pclnExternal is populated while generating the synthetic main module
 	// and completed with final linked PCs by the post-link externalizer.
 	pclnExternal *pclnmap.Data
+
+	buildTrace *buildTracer
 }
 
 // closePackageMetas releases metadata mappings owned by this build. Metadata
@@ -1203,7 +1236,11 @@ func buildOnePackage(ctx *context, spec packageBuildSpec, verbose bool) (package
 	if err != nil || skip {
 		return packageBuildResultFor(spec), err
 	}
-	if err := executePackageBuild(ctx, spec, verbose); err != nil {
+	backendSpan := ctx.buildTrace.startWorker("backend", spec.pkg.PkgPath)
+	backendSpan.setArg("class", "coordinator")
+	err = executePackageBuild(ctx, spec, verbose)
+	backendSpan.done()
+	if err != nil {
 		return packageBuildResultFor(spec), err
 	}
 	return finalizePackageBuild(ctx, spec, verbose)
@@ -1214,6 +1251,12 @@ func buildOnePackage(ctx *context, spec packageBuildSpec, verbose bool) (package
 func preflightPackageBuild(ctx *context, spec packageBuildSpec, verbose bool) (skip bool, err error) {
 	aPkg := spec.pkg
 	pkg := aPkg.Package
+	traceSpan := ctx.buildTrace.startPackageCoordinator("preflight", pkg.PkgPath)
+	defer func() {
+		traceSpan.setArg("cache_hit", aPkg.CacheHit)
+		traceSpan.setArg("skip", skip)
+		traceSpan.done()
+	}()
 	if _, ok := ctx.built[pkg.ID]; ok {
 		return true, nil
 	}
@@ -1264,6 +1307,9 @@ func executePackageBuild(ctx *context, spec packageBuildSpec, verbose bool) erro
 // already carry both and therefore require no publication.
 func finalizePackageBuild(ctx *context, spec packageBuildSpec, verbose bool) (packageBuildResult, error) {
 	aPkg := spec.pkg
+	traceSpan := ctx.buildTrace.startPackageCoordinator("publish", aPkg.PkgPath)
+	traceSpan.setArg("cache_hit", aPkg.CacheHit)
+	defer traceSpan.done()
 	if aPkg.CacheHit {
 		return packageBuildResultFor(spec), nil
 	}
@@ -2494,7 +2540,9 @@ func buildSSAPkgs(ctx *context, entries []ssaBuildEntry) {
 		go func() {
 			defer wg.Done()
 			for entry := range jobs {
+				traceSpan := ctx.buildTrace.startWorker("ssa", packagePipelineSSAPath(entry.pkg))
 				entry.pkg.Build()
+				traceSpan.done()
 			}
 		}()
 	}

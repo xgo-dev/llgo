@@ -101,7 +101,12 @@ func buildPreflightedPackageGroup(ctx *context, specs []packageBuildSpec, prefli
 		return nil, err
 	}
 	for _, index := range patched {
-		if err := executePreflightedPackage(ctx, preflights[specs[index].pkg], verbose); err != nil {
+		spec := specs[index]
+		traceSpan := ctx.buildTrace.startWorker("backend-patched", spec.pkg.PkgPath)
+		traceSpan.setArg("class", "patched")
+		err := executePreflightedPackage(ctx, preflights[spec.pkg], verbose)
+		traceSpan.done()
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -110,7 +115,11 @@ func buildPreflightedPackageGroup(ctx *context, specs []packageBuildSpec, prefli
 		if preflight.skip {
 			continue
 		}
-		if err := executePackageBuild(ctx, preflight.spec, verbose); err != nil {
+		traceSpan := ctx.buildTrace.startWorker("backend-coordinator", preflight.spec.pkg.PkgPath)
+		traceSpan.setArg("class", "coordinator")
+		err := executePackageBuild(ctx, preflight.spec, verbose)
+		traceSpan.done()
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -176,7 +185,11 @@ func executeIsolatedPackages(ctx *context, specs []packageBuildSpec, indexes []i
 		if preflight.skip {
 			return nil
 		}
-		return ctx.executeIsolatedPackage(preflight.spec, verbose)
+		traceSpan := ctx.buildTrace.startWorker("backend", preflight.spec.pkg.PkgPath)
+		traceSpan.setArg("class", "isolated")
+		err := ctx.executeIsolatedPackage(preflight.spec, verbose)
+		traceSpan.done()
+		return err
 	})
 }
 
@@ -337,6 +350,7 @@ func (ctx *context) newBackendTaskWithCallerTracking(session backendSession, tra
 		frontendOptions: ctx.frontendOptions,
 		cTransformer:    session.transformer,
 		backend:         ctx.backend,
+		buildTrace:      ctx.buildTrace,
 		sfilesCache:     ctx.sfilesCache,
 		sfilesFrozen:    true,
 		plan9asmReady:   true,

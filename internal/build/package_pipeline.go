@@ -58,6 +58,7 @@ type packagePipelineSSA struct {
 	order         int
 	done          bool
 	callerSummary cl.CallerTrackingSummary
+	traceSpan     *buildTraceSpan
 }
 
 type packagePipelineTask struct {
@@ -221,9 +222,11 @@ func buildPackagePipeline(ctx *context, entries []ssaBuildEntry, pkgs []*aPackag
 		ssaActive++
 		go func() {
 			pkgPath := packagePipelineSSAPath(node.entry.pkg)
+			node.traceSpan = ctx.buildTrace.startWorker("ssa", pkgPath)
 			observePackagePipeline(ctx, pipelineStageSSA, pkgPath, true)
 			runErr := buildPackagePipelineSSA(node.entry)
 			observePackagePipeline(ctx, pipelineStageSSA, pkgPath, false)
+			node.traceSpan.done()
 			events <- packagePipelineEvent{ssa: node, err: runErr}
 		}()
 		return true
@@ -251,8 +254,24 @@ func buildPackagePipeline(ctx *context, entries []ssaBuildEntry, pkgs []*aPackag
 				active++
 				go func() {
 					stage := pipelineStageBackend
+					traceStage := "backend"
 					if task.patched {
 						stage = pipelineStagePatchedBackend
+						traceStage = "backend-patched"
+					}
+					traceSpan := ctx.buildTrace.startWorker(traceStage, task.spec.pkg.PkgPath)
+					if task.class == pipelineCoordinator {
+						traceSpan.setArg("class", "coordinator")
+					} else {
+						traceSpan.setArg("class", "isolated")
+					}
+					if ctx.buildTrace != nil {
+						// Draw direct SSA dependencies only. Transitive scheduler
+						// dependencies are implied by these edges and would make
+						// traces for large repositories unnecessarily quadratic.
+						for _, dependency := range task.callerNodes {
+							ctx.buildTrace.flow(dependency.traceSpan, traceSpan)
+						}
 					}
 					observePackagePipeline(ctx, stage, task.spec.pkg.PkgPath, true)
 					runErr := runPackageJob(task.index, func(int) error {
@@ -267,6 +286,7 @@ func buildPackagePipeline(ctx *context, entries []ssaBuildEntry, pkgs []*aPackag
 						return ctx.executeIsolatedPackageWithCallerTracking(task.spec, tracking, verbose)
 					})
 					observePackagePipeline(ctx, stage, task.spec.pkg.PkgPath, false)
+					traceSpan.done()
 					events <- packagePipelineEvent{task: task, err: runErr}
 				}()
 				continue

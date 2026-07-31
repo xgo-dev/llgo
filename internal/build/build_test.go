@@ -6,6 +6,7 @@ package build
 import (
 	"bytes"
 	"debug/macho"
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	gobuild "go/build"
@@ -528,7 +529,8 @@ func TestTest(t *testing.T) {
 	}
 	active, maximum := 0, 0
 	exclusive, exclusiveViolation := false, false
-	conf := &Config{Mode: ModeTest, BuildParallelism: 2}
+	tracePath := filepath.Join(t.TempDir(), "build-trace.json")
+	conf := &Config{Mode: ModeTest, BuildParallelism: 2, BuildTrace: tracePath}
 	conf.packagePipelineObserver = func(stage packagePipelineStage, _ string, start bool) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -553,6 +555,23 @@ func TestTest(t *testing.T) {
 		}
 	}
 	mockRun([]string{"../../cl/_testgo/runtest"}, conf)
+
+	traceData, err := os.ReadFile(tracePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var traceEvents []buildTraceEvent
+	if err := json.Unmarshal(traceData, &traceEvents); err != nil {
+		t.Fatalf("invalid build trace: %v", err)
+	}
+	var tracedSSA, tracedBackend bool
+	for _, event := range traceEvents {
+		tracedSSA = tracedSSA || event.Phase == "X" && event.Category == "llgo.ssa"
+		tracedBackend = tracedBackend || event.Phase == "X" && strings.HasPrefix(event.Category, "llgo.backend")
+	}
+	if !tracedSSA || !tracedBackend {
+		t.Fatalf("build trace stages: ssa=%v backend=%v", tracedSSA, tracedBackend)
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
