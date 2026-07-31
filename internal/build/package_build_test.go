@@ -24,6 +24,7 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -434,27 +435,26 @@ func TestRunBoundedPackageJobsConvertsPanicToError(t *testing.T) {
 func TestPackageBuildStageEmptyAndSkippedInputs(t *testing.T) {
 	runtimePkg := &aPackage{Package: &packages.Package{PkgPath: env.LLGoRuntimePkg}}
 	normalPkg := &aPackage{Package: &packages.Package{PkgPath: "example.com/normal"}}
-	specs := []packageBuildSpec{
-		{pkg: runtimePkg, runtime: true},
+	tasks := []*packageBuildTask{
+		{pkg: runtimePkg},
 		{pkg: normalPkg},
 	}
-	if got := packageBuildSpecsForRuntime(specs, true); len(got) != 1 || got[0].pkg != runtimePkg {
-		t.Fatalf("runtime specs = %+v, want runtime package", got)
+	if got := packageBuildTasksForRuntime(tasks, true); len(got) != 1 || got[0].pkg != runtimePkg {
+		t.Fatalf("runtime tasks = %+v, want runtime package", got)
 	}
-	if got := packageBuildSpecsForRuntime(specs, false); len(got) != 1 || got[0].pkg != normalPkg {
-		t.Fatalf("non-runtime specs = %+v, want normal package", got)
+	if got := packageBuildTasksForRuntime(tasks, false); len(got) != 1 || got[0].pkg != normalPkg {
+		t.Fatalf("non-runtime tasks = %+v, want normal package", got)
 	}
 
 	ctx := &context{buildConf: &Config{}}
-	preflights, err := preflightPackageBuilds(ctx, nil, false)
-	if err != nil || len(preflights) != 0 {
-		t.Fatalf("empty preflights = %#v, %v", preflights, err)
+	if err := prePackageBuilds(ctx, nil, false); err != nil {
+		t.Fatalf("empty pre = %v", err)
 	}
-	results, err := buildPreflightedPackageGroup(ctx, nil, preflights, false)
+	results, err := buildPrePackageGroup(ctx, nil, false)
 	if err != nil || results != nil {
 		t.Fatalf("empty package group = %#v, %v", results, err)
 	}
-	if err := executePreflightedPackage(ctx, packagePreflight{skip: true}, false); err != nil {
+	if err := executePrePackage(ctx, &packageBuildTask{skip: true}, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := executeIsolatedPackages(ctx, nil, nil, nil, false); err != nil {
@@ -468,6 +468,52 @@ func TestPackageBuildStageEmptyAndSkippedInputs(t *testing.T) {
 	}
 	if err := runPackageJob(7, func(int) error { panic("boom") }); err == nil || !strings.Contains(err.Error(), "package job 7 panicked: boom") {
 		t.Fatalf("non-error panic = %v", err)
+	}
+}
+
+func TestRunPackageBuildTaskPublishesImmediately(t *testing.T) {
+	task := &packageBuildTask{pkg: &aPackage{Package: &packages.Package{PkgPath: "example.com/p"}}}
+	var steps []string
+	wantResult := packageBuildResult{needRuntime: true}
+	result, err := runPackageBuildTask(
+		task,
+		func() error {
+			steps = append(steps, "backend")
+			return nil
+		},
+		func() (packageBuildResult, error) {
+			steps = append(steps, "publish")
+			return wantResult, nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(steps, []string{"backend", "publish"}) {
+		t.Fatalf("package task steps = %v, want backend then publish", steps)
+	}
+	if result != wantResult {
+		t.Fatalf("package task result = %+v, want %+v", result, wantResult)
+	}
+}
+
+func TestRunPackageBuildTaskStopsBeforePublish(t *testing.T) {
+	task := &packageBuildTask{pkg: &aPackage{Package: &packages.Package{PkgPath: "example.com/p"}}}
+	backendErr := errors.New("backend failed")
+	published := false
+	_, err := runPackageBuildTask(
+		task,
+		func() error { return backendErr },
+		func() (packageBuildResult, error) {
+			published = true
+			return packageBuildResult{}, nil
+		},
+	)
+	if !errors.Is(err, backendErr) {
+		t.Fatalf("package task error = %v, want %v", err, backendErr)
+	}
+	if published {
+		t.Fatal("package task published after backend failure")
 	}
 }
 
@@ -503,31 +549,30 @@ func TestNewBackendTaskUsesPackageLocalState(t *testing.T) {
 	}
 }
 
-func TestPreflightPackageBuildsRecordsSkippedPackages(t *testing.T) {
+func TestPrePackageBuildsRecordsSkippedPackages(t *testing.T) {
 	pkg := &aPackage{Package: &packages.Package{
 		ID:      "example.com/already-built",
 		PkgPath: "example.com/already-built",
 	}}
 	ctx := &context{built: map[string]none{pkg.ID: {}}}
-	preflights, err := preflightPackageBuilds(ctx, []packageBuildSpec{{pkg: pkg}}, false)
-	if err != nil {
+	task := &packageBuildTask{pkg: pkg}
+	if err := prePackageBuilds(ctx, []*packageBuildTask{task}, false); err != nil {
 		t.Fatal(err)
 	}
-	preflight, ok := preflights[pkg]
-	if !ok || !preflight.skip || preflight.spec.pkg != pkg {
-		t.Fatalf("preflights = %#v, want skipped package", preflights)
+	if !task.skip || task.pkg != pkg {
+		t.Fatalf("pre task = %#v, want skipped package", task)
 	}
 }
 
 func TestPackageSchedulingHandlesNonBackendPackages(t *testing.T) {
-	spec := packageBuildSpec{pkg: &aPackage{}}
+	task := &packageBuildTask{pkg: &aPackage{}}
 	ctx := &context{mode: ModeGen, buildConf: &Config{BuildMode: BuildModeExe}}
-	serial, err := ctx.packageRequiresCoordinator(spec)
+	serial, err := ctx.packageRequiresCoordinator(task)
 	if err != nil || !serial {
 		t.Fatalf("generation package coordinator = %v, %v; want true, nil", serial, err)
 	}
 
-	usesPlan9, err := (&context{}).packageUsesPlan9Asm(spec.pkg)
+	usesPlan9, err := (&context{}).packageUsesPlan9Asm(task.pkg)
 	if err != nil || usesPlan9 {
 		t.Fatalf("nil package Plan9 asm = %v, %v; want false, nil", usesPlan9, err)
 	}

@@ -84,46 +84,46 @@ func packageBuildTasksForRuntime(tasks []*packageBuildTask, runtime bool) []*pac
 	return filtered
 }
 
-// buildPrePackageGroup executes package backends first and then
-// publishes archives/cache entries serially in deterministic package order.
+// buildPrePackageGroup keeps backend execution and archive publication
+// in one package task. A completed backend therefore writes its archive and
+// cache metadata immediately instead of contributing to a later I/O burst.
 func buildPrePackageGroup(ctx *context, tasks []*packageBuildTask, verbose bool) ([]packageBuildResult, error) {
 	if len(tasks) == 0 {
 		return nil, nil
+	}
+	// cacheManager is lazily initialized. Resolve it on the coordinator before
+	// package workers can enter saveToCache concurrently.
+	if cacheEnabled() {
+		ctx.ensureCacheManager()
 	}
 
 	patched, coordinator, isolated, err := partitionPackageExecutions(ctx, tasks)
 	if err != nil {
 		return nil, err
 	}
-	for _, index := range patched {
-		if err := executePrePackage(ctx, tasks[index], verbose); err != nil {
-			return nil, err
-		}
-	}
-	for _, index := range coordinator {
-		task := tasks[index]
-		if task.skip {
-			continue
-		}
-		if err := executePackageBuild(ctx, task, verbose); err != nil {
-			return nil, err
-		}
-	}
-	if err := executeIsolatedPackages(ctx, tasks, isolated, verbose); err != nil {
-		return nil, err
-	}
-
 	results := make([]packageBuildResult, len(tasks))
-	for i, task := range tasks {
-		if task.skip {
-			results[i] = packageBuildResultFor(task)
-			continue
-		}
-		result, err := finalizePackageBuild(ctx, task, verbose)
+	for _, index := range patched {
+		task := tasks[index]
+		result, err := executeAndFinalizePackage(ctx, task, verbose, func() error {
+			return executePrePackage(ctx, task, verbose)
+		})
 		if err != nil {
 			return nil, err
 		}
-		results[i] = result
+		results[index] = result
+	}
+	for _, index := range coordinator {
+		task := tasks[index]
+		result, err := executeAndFinalizePackage(ctx, task, verbose, func() error {
+			return executePackageBuild(ctx, task, verbose)
+		})
+		if err != nil {
+			return nil, err
+		}
+		results[index] = result
+	}
+	if err := executeIsolatedPackages(ctx, tasks, isolated, results, verbose); err != nil {
+		return nil, err
 	}
 	return results, nil
 }
@@ -161,17 +161,39 @@ func executePrePackage(ctx *context, task *packageBuildTask, verbose bool) error
 	return ctx.executeIsolatedPackage(task, verbose)
 }
 
-func executeIsolatedPackages(ctx *context, tasks []*packageBuildTask, indexes []int, verbose bool) error {
+func executeIsolatedPackages(ctx *context, tasks []*packageBuildTask, indexes []int, results []packageBuildResult, verbose bool) error {
 	if len(indexes) == 0 {
 		return nil
 	}
 	return runBoundedPackageJobs(ctx.buildConf.parallelism(), indexes, func(index int) error {
 		task := tasks[index]
-		if task.skip {
-			return nil
-		}
-		return ctx.executeIsolatedPackage(task, verbose)
+		result, err := executeAndFinalizePackage(ctx, task, verbose, func() error {
+			return ctx.executeIsolatedPackage(task, verbose)
+		})
+		results[index] = result
+		return err
 	})
+}
+
+type packageBuildStep func() error
+type packageFinalizeStep func() (packageBuildResult, error)
+
+func executeAndFinalizePackage(ctx *context, task *packageBuildTask, verbose bool, execute packageBuildStep) (packageBuildResult, error) {
+	return runPackageBuildTask(task, execute, func() (packageBuildResult, error) {
+		return finalizePackageBuild(ctx, task, verbose)
+	})
+}
+
+// runPackageBuildTask defines the worker lifetime: publication is part of the
+// package task and runs immediately after a successful backend.
+func runPackageBuildTask(task *packageBuildTask, execute packageBuildStep, finalize packageFinalizeStep) (packageBuildResult, error) {
+	if task.skip {
+		return packageBuildResultFor(task), nil
+	}
+	if err := execute(); err != nil {
+		return packageBuildResultFor(task), err
+	}
+	return finalize()
 }
 
 func runBoundedPackageJobs(parallelism int, indexes []int, run func(index int) error) error {
