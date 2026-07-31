@@ -5,12 +5,15 @@ package packages
 import (
 	"go/ast"
 	"go/parser"
+	"go/scanner"
 	"go/token"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	xpackages "golang.org/x/tools/go/packages"
 )
 
 func TestLoadExWithGoVersion(t *testing.T) {
@@ -132,6 +135,176 @@ const x = ""`,
 	}
 }
 
+func TestFilterParserErrorsCoveredByGoCompiler(t *testing.T) {
+	root := t.TempDir()
+	sourceA := filepath.Join(root, "a.go")
+	sourceB := filepath.Join(root, "b.go")
+	scanError := func(file string, line, column int, message string) *scanner.Error {
+		return &scanner.Error{
+			Pos: token.Position{Filename: file, Line: line, Column: column},
+			Msg: message,
+		}
+	}
+	scannerMessages := func(errs []error) []string {
+		var messages []string
+		for _, err := range errs {
+			if list, ok := err.(scanner.ErrorList); ok {
+				for _, item := range list {
+					if item != nil {
+						messages = append(messages, item.Msg)
+					}
+				}
+			}
+		}
+		return messages
+	}
+
+	t.Run("structured duplicate anchors recovery", func(t *testing.T) {
+		const primary = "expected operand, found '}'"
+		list := scanner.ErrorList{
+			scanError(sourceA, 1, 1, primary),
+			scanError(sourceA, 1, 13, "expected ';', found 'EOF'"),
+			scanError(sourceA, 2, 1, "parser-only error"),
+		}
+		pathError := &os.PathError{Op: "open", Path: sourceB, Err: os.ErrNotExist}
+		parseErrors := []error{list, pathError}
+		got := filterParserErrorsCoveredByGoCompiler([]Error{{
+			Pos: sourceA + ":1:1", Msg: primary, Kind: xpackages.ListError,
+		}}, parseErrors)
+
+		if len(list) != 3 {
+			t.Fatalf("input scanner list was mutated: %v", list)
+		}
+		messages := scannerMessages(got)
+		if len(messages) != 1 || messages[0] != "parser-only error" {
+			t.Fatalf("remaining scanner diagnostics = %q, want parser-only error", messages)
+		}
+		if len(got) != 2 || got[1] != pathError {
+			t.Fatalf("path error was not preserved: %#v", got)
+		}
+	})
+
+	t.Run("structured compiler syntax anchors recovery", func(t *testing.T) {
+		const virtualSource = "generated.go"
+		list := scanner.ErrorList{
+			scanError(virtualSource, 7, 9, "expected ';', found '{'"),
+		}
+		got := filterParserErrorsCoveredByGoCompiler([]Error{{
+			Pos: virtualSource + ":7:20", Msg: "syntax error: unexpected {", Kind: xpackages.ListError,
+		}}, []error{list})
+		if messages := scannerMessages(got); len(messages) != 0 {
+			t.Fatalf("remaining scanner diagnostics = %q, want none", messages)
+		}
+	})
+
+	t.Run("multiline compiler syntax covers each source line", func(t *testing.T) {
+		list := scanner.ErrorList{
+			scanError(sourceA, 2, 9, "expected ';', found '{'"),
+			scanError(sourceB, 4, 3, "expected operand, found '}'"),
+			scanError(sourceA, 3, 1, "independent parser error"),
+		}
+		driver := []Error{{
+			Kind: xpackages.ListError,
+			Msg: "# example.com/p\n" +
+				"a.go:2:20: syntax error: unexpected { after top level declaration\n" +
+				sourceB + ":4: syntax error: unexpected }",
+		}}
+		got := filterParserErrorsCoveredByGoCompiler(driver, []error{list})
+		messages := scannerMessages(got)
+		if len(messages) != 1 || messages[0] != "independent parser error" {
+			t.Fatalf("remaining scanner diagnostics = %q, want independent parser error", messages)
+		}
+	})
+
+	t.Run("non-syntax and unanchored diagnostics remain", func(t *testing.T) {
+		list := scanner.ErrorList{
+			scanError(sourceA, 2, 1, "expected declaration"),
+			scanError(sourceB, 2, 1, "same line, different file"),
+		}
+		tests := []struct {
+			name   string
+			driver []Error
+		}{
+			{
+				name: "compiler type error",
+				driver: []Error{{
+					Kind: xpackages.ListError,
+					Msg:  "# example.com/p\n" + sourceA + ":2: undefined: missing",
+				}},
+			},
+			{
+				name: "structured near match",
+				driver: []Error{{
+					Pos: sourceA + ":2:1", Msg: "different driver diagnostic", Kind: xpackages.ListError,
+				}},
+			},
+			{
+				name: "wrong error kind",
+				driver: []Error{{
+					Pos: sourceA + ":2:1", Msg: "expected declaration", Kind: xpackages.TypeError,
+				}},
+			},
+			{name: "parser only"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got := filterParserErrorsCoveredByGoCompiler(tt.driver, []error{list})
+				if messages := scannerMessages(got); len(messages) != len(list) {
+					t.Fatalf("scanner diagnostics were filtered: %q", messages)
+				}
+			})
+		}
+	})
+}
+
+func TestFrontendDiagnosticPositionHelpers(t *testing.T) {
+	if _, _, ok := parseCompilerDiagnosticLine("not a diagnostic"); ok {
+		t.Fatal("accepted a line without a diagnostic position")
+	}
+	if sourceLineCovered(token.Position{}, []token.Position{{Filename: "a.go", Line: 1}}) {
+		t.Fatal("accepted an empty source position")
+	}
+	for _, test := range []struct {
+		left, right string
+		want        bool
+	}{
+		{"", "a.go", false},
+		{"a.go", "a.go", true},
+		{"a.go", filepath.Join("dir", "a.go"), true},
+		{filepath.Join("dir", "a.go"), "a.go", true},
+		{"a.go", "b.go", false},
+	} {
+		if got := sameSourceFile(test.left, test.right); got != test.want {
+			t.Errorf("sameSourceFile(%q, %q) = %v, want %v", test.left, test.right, got, test.want)
+		}
+	}
+}
+
+func TestNormalizeGoCompilerDriverDiagnostics(t *testing.T) {
+	errs := []Error{
+		{Pos: "a.go:1:1", Msg: "expected 'package', found 'func'", Kind: xpackages.ListError},
+		{Pos: "b.go:1:1", Msg: "expected 'package', found 'EOF'", Kind: xpackages.ListError},
+		{Pos: "c.go:1:1", Msg: "expected 'IDENT', found '%'", Kind: xpackages.ListError},
+		{Pos: "d.go:1:1", Msg: "expected 'package', found 'func'", Kind: xpackages.TypeError},
+		{Msg: "expected 'package', found 'func'", Kind: xpackages.ListError},
+	}
+	normalizeGoCompilerDriverDiagnostics(errs)
+	for _, index := range []int{0, 1} {
+		if errs[index].Msg != goCompilerMissingPackageMsg {
+			t.Fatalf("error %d = %q, want %q", index, errs[index].Msg, goCompilerMissingPackageMsg)
+		}
+	}
+	if errs[2].Msg != "expected 'IDENT', found '%'" {
+		t.Fatalf("unrelated list error changed to %q", errs[2].Msg)
+	}
+	if errs[3].Msg != "expected 'package', found 'func'" {
+		t.Fatalf("non-list error changed to %q", errs[3].Msg)
+	}
+	if errs[4].Msg != "expected 'package', found 'func'" {
+		t.Fatalf("positionless list error changed to %q", errs[4].Msg)
+	}
+}
+
 func TestEmbedDiagnosticHelperBoundaries(t *testing.T) {
 	t.Run("directive comments", func(t *testing.T) {
 		tests := []struct {
@@ -229,6 +402,48 @@ func TestEmbedDiagnosticHelperBoundaries(t *testing.T) {
 }
 
 func TestLoadExNormalizesFrontendDiagnostics(t *testing.T) {
+	t.Run("missing package clause", func(t *testing.T) {
+		dir := t.TempDir()
+		writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/missingpackage\ngo 1.24\n")
+		writeLoadTestFile(t, filepath.Join(dir, "load.go"), "func renamed ( ) {\n}\n")
+		pkg := loadCompilerErrorPackage(t, dir)
+		assertPackageError(t, pkg, goCompilerMissingPackageMsg)
+		assertPackageErrorAbsent(t, pkg, "expected 'package', found")
+		assertPackageErrorAbsent(t, pkg, "expected ';', found '('")
+	})
+
+	t.Run("top-level composite literal recovery", func(t *testing.T) {
+		dir := t.TempDir()
+		writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/declarationrecovery\ngo 1.24\n")
+		writeLoadTestFile(t, filepath.Join(dir, "load.go"), `package declarationrecovery
+var values map [string] string { "a": "b" }
+`)
+		pkg := loadCompilerErrorPackage(t, dir)
+		assertPackageError(t, pkg, "syntax error: unexpected { after top level declaration")
+		assertPackageErrorAbsent(t, pkg, "expected ';', found '{'")
+	})
+
+	t.Run("parser-only diagnostic remains", func(t *testing.T) {
+		dir := t.TempDir()
+		writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/parseronly\ngo 1.24\n")
+		writeLoadTestFile(t, filepath.Join(dir, "load.go"), "package parseronly\nvar values = 1\n")
+		cfg := loadTestConfig(dir)
+		cfg.ParseFile = func(fset *token.FileSet, filename string, _ []byte) (*ast.File, error) {
+			return parser.ParseFile(fset, filename, `package parseronly
+var values map [string] string { "a": "b" }
+`, parser.AllErrors|parser.ParseComments)
+		}
+		pkgs, err := LoadExWithGoVersion(nil, nil, cfg, "go1.24", ".")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(pkgs) != 1 {
+			t.Fatalf("load returned %d packages, want 1", len(pkgs))
+		}
+		pkg := pkgs[0]
+		assertPackageError(t, pkg, "expected ';', found '{'")
+	})
+
 	t.Run("embed local var", func(t *testing.T) {
 		dir := t.TempDir()
 		writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/embedlocal\ngo 1.24\n")
@@ -267,6 +482,21 @@ var x string`)
 		assertPackageErrorAbsent(t, pkg, "no metadata for /foo")
 	})
 
+}
+
+func loadCompilerErrorPackage(t *testing.T, dir string) *Package {
+	t.Helper()
+	cfg := loadTestConfig(dir)
+	cfg.Mode |= NeedExportFile
+	cfg.BuildFlags = append(cfg.BuildFlags, "-gcflags=all=-e")
+	pkgs, err := LoadExWithGoVersion(nil, nil, cfg, "go1.24", ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 1 {
+		t.Fatalf("load returned %d packages, want 1", len(pkgs))
+	}
+	return pkgs[0]
 }
 
 func loadOnePackage(t *testing.T, dir, goVersion string) *Package {

@@ -107,6 +107,32 @@ var _ = missing
 }
 
 func TestToolCompileFrontendDiagnosticNormalization(t *testing.T) {
+	t.Run("missing package clause", func(t *testing.T) {
+		dir := t.TempDir()
+		writeToolCompileSource(t, dir, "invalid.go", "func renamed ( ) {\n}\n")
+		goOutput, llgoOutput := compareToolCompileResult(t, dir, []string{
+			"-C", "-e", "-o=invalid.o", "invalid.go",
+		}, false, "syntax error: package statement must be first")
+		assertToolCompileDiagnosticSet(t, goOutput, llgoOutput,
+			"syntax error: package statement must be first",
+			"expected 'package', found", "expected ';', found '('",
+		)
+	})
+
+	t.Run("top-level composite literal recovery", func(t *testing.T) {
+		dir := t.TempDir()
+		writeToolCompileSource(t, dir, "invalid.go", `package compat
+var values map [string] string { "a": "b" }
+`)
+		goOutput, llgoOutput := compareToolCompileResult(t, dir, []string{
+			"-C", "-e", "-o=invalid.o", "invalid.go",
+		}, false, "syntax error: unexpected { after top level declaration")
+		assertToolCompileDiagnosticSet(t, goOutput, llgoOutput,
+			"syntax error: unexpected { after top level declaration",
+			"expected ';', found '{'",
+		)
+	})
+
 	t.Run("absolute import", func(t *testing.T) {
 		dir := t.TempDir()
 		writeToolCompileSource(t, dir, "invalid.go", "package compat\nimport _ \"/foo\"\n")
@@ -145,6 +171,18 @@ var x string`)
 		}, false, "go:embed requires go1.16 or later")
 	})
 
+}
+
+func assertToolCompileDiagnosticSet(t *testing.T, goOutput, llgoOutput, primary string, forbidden ...string) {
+	t.Helper()
+	if goCount, llgoCount := strings.Count(goOutput, primary), strings.Count(llgoOutput, primary); goCount != llgoCount {
+		t.Fatalf("primary diagnostic count differs: go=%d llgo=%d\ngo:\n%s\nllgo:\n%s", goCount, llgoCount, goOutput, llgoOutput)
+	}
+	for _, diagnostic := range forbidden {
+		if strings.Contains(llgoOutput, diagnostic) {
+			t.Fatalf("llgo emitted additional parser diagnostic %q:\n%s", diagnostic, llgoOutput)
+		}
+	}
 }
 
 func compareToolCompileResult(t *testing.T, dir string, args []string, wantSuccess bool, wantText string) (goOutput, llgoOutput string) {

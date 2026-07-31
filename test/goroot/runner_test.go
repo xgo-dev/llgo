@@ -1166,11 +1166,7 @@ func checkExpectedErrorsForFiles(output string, sources []diagnosticSource) erro
 					lexicalLocations[diagnostic.locationKey()] = true
 				}
 				if sourceOK {
-					secondaries := parserRecoverySecondaries(message)
-					if len(secondaries) == 0 {
-						secondaries = parserRecoverySourceSecondaries(message, expected.source)
-					}
-					if len(secondaries) != 0 {
+					if secondaries := parserRecoverySecondaries(message); len(secondaries) != 0 {
 						parserRecoveryPairs = append(parserRecoveryPairs, parserRecoveryPair{
 							file: sourceDiagnostic.file, line: sourceDiagnostic.line, secondaries: secondaries,
 						})
@@ -1653,8 +1649,7 @@ func parseSourceDiagnostic(line string, resolver diagnosticPathResolver) (source
 }
 
 // parserRecoverySecondaries is deliberately limited to exact diagnostic pairs
-// whose secondary does not depend on the source shape. Source-dependent pairs
-// belong in parserRecoverySourceSecondaries.
+// emitted by GOROOT cases enabled with this compatibility shim.
 func parserRecoverySecondaries(primary string) []string {
 	switch primary {
 	case "syntax error: cannot use a := 10 as value":
@@ -1675,42 +1670,6 @@ func parserRecoverySecondaries(primary string) []string {
 		return []string{"missing ',' before newline in parameter list"}
 	}
 	return nil
-}
-
-// parserRecoverySourceSecondaries handles diagnostic spellings shared by
-// unrelated malformed programs. Exact source matching keeps those allowances
-// scoped to the GOROOT cases that require them.
-func parserRecoverySourceSecondaries(primary, source string) []string {
-	source = parserRecoverySourceCode(source)
-	switch primary {
-	// GOROOT/test/fixedbugs/bug050.go. go/parser omits the "syntax error:"
-	// prefix when the package clause is missing.
-	case "expected 'package', found 'func'":
-		if source == "func main() {" {
-			return []string{"expected ';', found '('"}
-		}
-	// GOROOT/test/syntax/vareq1.go
-	case "syntax error: unexpected { after top level declaration":
-		if source == `var x map[string]string{"a":"b"}` {
-			return []string{"expected ';', found '{'"}
-		}
-	}
-	return nil
-}
-
-func parserRecoverySourceCode(source string) string {
-	// Prefer the last recognized marker so marker-like text in the source
-	// expression cannot truncate the shape before the actual ERROR comment.
-	comment := -1
-	for _, marker := range []string{"// ERROR", "// GC_ERROR"} {
-		if index := strings.LastIndex(source, marker); index > comment {
-			comment = index
-		}
-	}
-	if comment >= 0 {
-		source = source[:comment]
-	}
-	return strings.TrimSpace(source)
 }
 
 func discardPairedParserDiagnostics(lines []string, resolver diagnosticPathResolver, pairs []parserRecoveryPair) []string {
