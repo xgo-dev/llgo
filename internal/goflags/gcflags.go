@@ -28,9 +28,10 @@ import (
 // frontend configuration. Raw flags remain in GoBuildFlags for go/packages.
 func applyFrontendGCFlags(conf *build.Config) {
 	type frontendFlags struct {
-		goVersion string
-		nNoOpt    bool
-		lNoOpt    bool
+		goVersion               string
+		nNoOpt                  bool
+		lNoOpt                  bool
+		saturatingFloatToUint32 bool
 	}
 	var applicable *frontendFlags
 	for _, buildFlag := range conf.GoBuildFlags {
@@ -57,6 +58,8 @@ func applyFrontendGCFlags(conf *build.Config) {
 				current.lNoOpt = true
 			case strings.HasPrefix(compilerFlag, "-l="):
 				current.lNoOpt = countFlagIsOne(strings.TrimPrefix(compilerFlag, "-l="))
+			case strings.HasPrefix(compilerFlag, "-d="):
+				current.saturatingFloatToUint32 = converthashAlwaysEnabled(strings.TrimPrefix(compilerFlag, "-d="))
 			}
 		}
 		applicable = current
@@ -70,6 +73,24 @@ func applyFrontendGCFlags(conf *build.Config) {
 	if applicable.nNoOpt || applicable.lNoOpt {
 		conf.OptLevel = optlevel.O0
 	}
+	conf.SaturatingFloatToUint32 = applicable.saturatingFloatToUint32
+}
+
+func converthashAlwaysEnabled(debugFlags string) bool {
+	enabled := false
+	for _, flag := range strings.Split(debugFlags, ",") {
+		value, ok := strings.CutPrefix(flag, "converthash=")
+		if !ok {
+			continue
+		}
+		switch strings.ToLower(value) {
+		case "y", "qy":
+			enabled = true
+		default:
+			enabled = false
+		}
+	}
+	return enabled
 }
 
 func countFlagEnabled(value string) bool {

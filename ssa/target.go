@@ -27,12 +27,13 @@ import (
 // -----------------------------------------------------------------------------
 
 type Target struct {
-	GOOS       string
-	GOARCH     string
-	GOARM      string // "5", "6", "7" (default)
-	Target     string // target name from -target flag (e.g., "esp32", "arm7tdmi", "wasi")
-	LLVMTarget string // physical LLVM target selected by a target configuration
-	OptLevel   optlevel.Level
+	GOOS                    string
+	GOARCH                  string
+	GOARM                   string // "5", "6", "7" (default)
+	Target                  string // target name from -target flag (e.g., "esp32", "arm7tdmi", "wasi")
+	LLVMTarget              string // physical LLVM target selected by a target configuration
+	OptLevel                optlevel.Level
+	SaturatingFloatToUint32 bool
 }
 
 func (p *Target) targetInfo() (llvm.TargetData, llvm.TargetMachine) {

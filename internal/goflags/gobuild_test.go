@@ -112,15 +112,22 @@ func TestApplyBuildFlagsInvalidParallelismIsAtomic(t *testing.T) {
 
 func TestApplyBuildFlagsFrontendGCFlagSemantics(t *testing.T) {
 	tests := []struct {
-		name      string
-		flags     []string
-		wantLevel optlevel.Level
-		wantGo    string
+		name           string
+		flags          []string
+		wantLevel      optlevel.Level
+		wantGo         string
+		wantSaturating bool
 	}{
 		{name: "unpatterned", flags: []string{"-gcflags=-lang=go1.25 -N"}, wantLevel: optlevel.O0, wantGo: "go1.25"},
 		{name: "all pattern", flags: []string{"-gcflags=all='-lang=go1.24' '-l'"}, wantLevel: optlevel.O0, wantGo: "go1.24"},
 		{name: "unrelated pattern", flags: []string{"-gcflags=example.com/other=-N"}},
 		{name: "last applicable list wins", flags: []string{"-gcflags=-N -lang=go1.23", "-gcflags="}},
+		{name: "converthash enabled", flags: []string{"-gcflags=-d=converthash=qy"}, wantSaturating: true},
+		{name: "converthash enabled in debug list", flags: []string{"-gcflags=-d=other=1,converthash=y"}, wantSaturating: true},
+		{name: "converthash disabled", flags: []string{"-gcflags=-d=converthash=qn"}},
+		{name: "last converthash debug value wins", flags: []string{"-gcflags=-d=converthash=qy,converthash=qn"}},
+		{name: "last converthash list wins", flags: []string{"-gcflags=-d=converthash=qy", "-gcflags=-d=converthash=qn"}},
+		{name: "package converthash ignored", flags: []string{"-gcflags=example.com/other=-d=converthash=qy"}},
 		{name: "N false", flags: []string{"-gcflags=-N=false"}},
 		{name: "N zero", flags: []string{"-gcflags=-N=0"}},
 		{name: "l false", flags: []string{"-gcflags=-l=false"}},
@@ -135,8 +142,8 @@ func TestApplyBuildFlagsFrontendGCFlagSemantics(t *testing.T) {
 			if err := ApplyBuildFlags(conf, tt.flags); err != nil {
 				t.Fatal(err)
 			}
-			if conf.OptLevel != tt.wantLevel || conf.GoVersion != tt.wantGo {
-				t.Fatalf("frontend config = (%v, %q), want (%v, %q)", conf.OptLevel, conf.GoVersion, tt.wantLevel, tt.wantGo)
+			if conf.OptLevel != tt.wantLevel || conf.GoVersion != tt.wantGo || conf.SaturatingFloatToUint32 != tt.wantSaturating {
+				t.Fatalf("frontend config = (%v, %q, saturating=%v), want (%v, %q, saturating=%v)", conf.OptLevel, conf.GoVersion, conf.SaturatingFloatToUint32, tt.wantLevel, tt.wantGo, tt.wantSaturating)
 			}
 		})
 	}

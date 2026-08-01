@@ -154,6 +154,26 @@ func TestManifestBuilder_DisableBoundsChecks(t *testing.T) {
 	}
 }
 
+func TestManifestBuilder_SaturatingFloatToUint32(t *testing.T) {
+	legacy := newManifestBuilder()
+	saturating := newManifestBuilder()
+	saturating.common.SaturatingFloatToUint32 = true
+
+	if saturating.common.empty() {
+		t.Fatal("saturating float-to-uint32 conversions did not make the common section non-empty")
+	}
+	if legacy.Fingerprint() == saturating.Fingerprint() {
+		t.Fatal("saturating float-to-uint32 conversions did not change the build fingerprint")
+	}
+	data, err := decodeManifest(saturating.Build())
+	if err != nil {
+		t.Fatalf("decodeManifest: %v", err)
+	}
+	if data.Common == nil || !data.Common.SaturatingFloatToUint32 {
+		t.Fatalf("decoded common section = %#v, want saturating float-to-uint32 conversions", data.Common)
+	}
+}
+
 func TestManifestBuilder_EmptySections(t *testing.T) {
 	m := newManifestBuilder()
 	content := m.Build()
