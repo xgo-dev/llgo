@@ -20,8 +20,6 @@ var barY struct {
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load { [16 x i8], [2 x ptr] }, ptr @_bar_x, align 8
-// CHECK-NEXT:   %1 = load { [16 x i8] }, ptr @_bar_y, align 1
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 func main() {

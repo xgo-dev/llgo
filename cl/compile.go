@@ -1281,28 +1281,17 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 				b.AssertNilDeref(x)
 			}
 			if refs, ok := nonDebugReferrers(v); ok && len(refs) == 0 {
-				if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil {
-					if p.isLargeNonPointerValue(t) {
-						x := p.compileValue(b, v.X)
-						p.recordPanicLocation(b, v.Pos())
-						p.assertNilDerefBase(b, v.X)
-						b.AssertNilDeref(x)
-						return
-					}
-				}
 				if skipUnusedArrayDeref(v) {
 					p.compileValue(b, v.X)
 					return
 				}
-				if _, ok := types.Unalias(v.Type()).Underlying().(*types.Slice); ok {
-					// Zero-length slice-to-array conversions can leave only
-					// an unused slice deref; preserve its required nil check.
-					x := p.compileValue(b, v.X)
-					p.recordPanicLocation(b, v.Pos())
-					p.assertNilDerefBase(b, v.X)
-					b.AssertNilDeref(x)
-					return
-				}
+				// LLVM may eliminate an unused load, but evaluating a Go
+				// dereference must still panic when its pointer is nil.
+				x := p.compileValue(b, v.X)
+				p.recordPanicLocation(b, v.Pos())
+				p.assertNilDerefBase(b, v.X)
+				b.AssertNilDeref(x)
+				return
 			}
 			if refs, ok := nonDebugReferrers(v); ok && len(refs) == 1 {
 				if _, ok := refs[0].(*ssa.MakeInterface); ok {
