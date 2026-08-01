@@ -255,6 +255,73 @@ func read(p *value) int { return p.n }
 	}
 }
 
+func TestCompileLocalPointerStoresAvoidRedundantGuards(t *testing.T) {
+	_, m := mustCompileLLPkgFromSrc(t, `
+package foo
+
+type node struct {
+	next *node
+	value int
+}
+
+var root *node
+
+func straightLine() int {
+	root = &node{}
+	root.next = &node{value: 1}
+	return root.next.value
+}
+
+func resetRoot() { root = nil }
+
+func afterCall() int {
+	root = &node{}
+	resetRoot()
+	return root.value
+}
+
+func afterPossibleAlias(slot **node) int {
+	root = &node{}
+	*slot = nil
+	return root.value
+}
+
+func afterNilStore() int {
+	root = &node{}
+	root = nil
+	return root.value
+}
+
+func afterGlobalCheck() int {
+	if root == nil {
+		return 0
+	}
+	return root.value
+}
+
+func afterCheckedAlias(slot **node) int {
+	if root == nil {
+		return 0
+	}
+	*slot = nil
+	return root.value
+}
+`)
+
+	for _, name := range []string{"straightLine", "afterGlobalCheck"} {
+		fn := llvmFunction(t, m.String(), "foo."+name)
+		if got := strings.Count(fn, "AssertNilDeref"); got != 0 {
+			t.Fatalf("%s emitted %d redundant nil guards, want 0:\n%s", name, got, fn)
+		}
+	}
+	for _, name := range []string{"afterCall", "afterPossibleAlias", "afterNilStore", "afterCheckedAlias"} {
+		fn := llvmFunction(t, m.String(), "foo."+name)
+		if got := strings.Count(fn, "AssertNilDeref"); got != 1 {
+			t.Fatalf("%s emitted %d nil guards after a memory barrier, want 1:\n%s", name, got, fn)
+		}
+	}
+}
+
 func TestCompileValueReceiverNilDerefKeepsDominance(t *testing.T) {
 	_, m := mustCompileLLPkgFromSrc(t, `
 	package foo
