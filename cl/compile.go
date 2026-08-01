@@ -1275,13 +1275,21 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			if _, ok := p.methodNilDerefChecks[v]; ok {
 				return p.compileCheckedDeref(b, v)
 			}
-			if isEffectfulArrayPointerDeref(v) {
+			effectfulArrayDeref := isEffectfulArrayPointerDeref(v)
+			if effectfulArrayDeref {
 				x := p.compileValue(b, v.X)
 				p.recordPanicLocation(b, v.Pos())
 				b.AssertNilDeref(x)
 			}
 			if refs, ok := nonDebugReferrers(v); ok && len(refs) == 0 {
 				if skipUnusedArrayDeref(v) {
+					p.compileValue(b, v.X)
+					return
+				}
+				if effectfulArrayDeref {
+					return
+				}
+				if isKnownNonNilAddr(v.X) || isWrapNilCheckCall(v.X) {
 					p.compileValue(b, v.X)
 					return
 				}
