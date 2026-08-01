@@ -18,11 +18,17 @@ func main() {
 	// CHECK-NEXT:  %5 = load ptr, ptr %4, align 8
 	// CHECK-NEXT:  %6 = getelementptr inbounds %"main.My[int]", ptr %5, i32 0, i32 0
 	// CHECK-NEXT:  %7 = icmp eq ptr %5, null
-	// CHECK-NEXT:  call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
-	// CHECK-NEXT:  %8 = load { ptr, ptr }, ptr %6, align 8
-	// CHECK-NEXT:  %9 = extractvalue { ptr, ptr } %8, 1
-	// CHECK-NEXT:  %10 = extractvalue { ptr, ptr } %8, 0
-	// CHECK-NEXT:  call void %10(ptr %9, i64 100)
+	// CHECK-NEXT:  br i1 %7, label %8, label %9
+	// CHECK-EMPTY:
+	// CHECK-NEXT: 8:{{.*}}; preds = %_llgo_0
+	// CHECK-NEXT:  call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+	// CHECK-NEXT:  unreachable
+	// CHECK-EMPTY:
+	// CHECK-NEXT: 9:{{.*}}; preds = %_llgo_0
+	// CHECK-NEXT:  %10 = load { ptr, ptr }, ptr %6, align 8
+	// CHECK-NEXT:  %11 = extractvalue { ptr, ptr } %10, 1
+	// CHECK-NEXT:  %12 = extractvalue { ptr, ptr } %10, 0
+	// CHECK-NEXT:  call void %12(ptr %11, i64 100)
 	// CHECK-NEXT:  ret void
 	// CHECK-NEXT:}
 	m := &My[int]{next: &My[int]{fn: func(n int) { println(n) }}}

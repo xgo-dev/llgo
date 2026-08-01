@@ -13,9 +13,17 @@ type Call struct {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %3 = add i64 %1, %2
 // CHECK-NEXT:   %4 = getelementptr inbounds %main.Call, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %5 = load i64, ptr %4, align 8
-// CHECK-NEXT:   %6 = add i64 %3, %5
-// CHECK-NEXT:   ret i64 %6
+// CHECK-NEXT:   %5 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %5, label %6, label %7
+// CHECK-EMPTY:
+// CHECK-NEXT: 6:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 7:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %8 = load i64, ptr %4, align 8
+// CHECK-NEXT:   %9 = add i64 %3, %8
+// CHECK-NEXT:   ret i64 %9
 // CHECK-NEXT: }
 func (c *Call) add(a int, b int) int {
 	return a + b + c.n

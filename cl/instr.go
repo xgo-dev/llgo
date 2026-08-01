@@ -1835,6 +1835,48 @@ func isKnownNonNilAddr(v ssa.Value) bool {
 	return false
 }
 
+func isKnownNonNilAt(v ssa.Value, instr ssa.Instruction) bool {
+	target := instr.Block()
+	if target == nil {
+		return false
+	}
+	for block := target.Idom(); block != nil; block = block.Idom() {
+		if len(block.Instrs) == 0 || len(block.Succs) != 2 {
+			continue
+		}
+		branch, ok := block.Instrs[len(block.Instrs)-1].(*ssa.If)
+		if !ok {
+			continue
+		}
+		cmp, ok := branch.Cond.(*ssa.BinOp)
+		if !ok || (cmp.Op != token.EQL && cmp.Op != token.NEQ) {
+			continue
+		}
+		compared := cmp.X
+		if isNilConst(cmp.X) {
+			compared = cmp.Y
+		} else if !isNilConst(cmp.Y) {
+			continue
+		}
+		if compared != v {
+			continue
+		}
+		nonNilSucc := block.Succs[0]
+		if cmp.Op == token.EQL {
+			nonNilSucc = block.Succs[1]
+		}
+		if nonNilSucc.Dominates(target) {
+			return true
+		}
+	}
+	return false
+}
+
+func isNilConst(v ssa.Value) bool {
+	c, ok := v.(*ssa.Const)
+	return ok && c.Value == nil
+}
+
 func isWrapNilCheckCall(v ssa.Value) bool {
 	call, ok := v.(*ssa.Call)
 	if !ok {
@@ -1855,25 +1897,25 @@ func (p *context) emitNilDerefBaseCheck(b llssa.Builder, addr ssa.Value) {
 		if _, ok := p.methodReceiverBases[addr]; ok {
 			return
 		}
-		if isKnownNonNilAddr(addr.X) || isWrapNilCheckCall(addr.X) {
+		if isKnownNonNilAddr(addr.X) || isWrapNilCheckCall(addr.X) || isKnownNonNilAt(addr.X, addr) {
 			return
 		}
 		p.emitNilDerefBaseCheck(b, addr.X)
 		if isPointerGoType(addr.X.Type()) {
 			base := p.compileValue(b, addr.X)
-			b.AssertNilDeref(base)
+			b.AssertNilDerefBranch(base)
 		}
 	case *ssa.IndexAddr:
 		if _, ok := p.methodReceiverBases[addr]; ok {
 			return
 		}
-		if isKnownNonNilAddr(addr.X) || isWrapNilCheckCall(addr.X) {
+		if isKnownNonNilAddr(addr.X) || isWrapNilCheckCall(addr.X) || isKnownNonNilAt(addr.X, addr) {
 			return
 		}
 		p.emitNilDerefBaseCheck(b, addr.X)
 		if isPointerGoType(addr.X.Type()) {
 			base := p.compileValue(b, addr.X)
-			b.AssertNilDeref(base)
+			b.AssertNilDerefBranch(base)
 		}
 	}
 }

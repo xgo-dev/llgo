@@ -30,19 +30,33 @@ type Wrapped struct {
 
 // CHECK-LABEL: define %"{{.*}}String" @"main.(*Wrapped).Name"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %0)
-// CHECK-NEXT:   %2 = getelementptr inbounds %main.Wrapped, ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/cl/_testdata/embedunexport.(*Base).Name"(ptr %3)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %4
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %1, label %2, label %3
+// CHECK-EMPTY:
+// CHECK-NEXT: 2:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %4 = getelementptr inbounds %main.Wrapped, ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
+// CHECK-NEXT:   %6 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/cl/_testdata/embedunexport.(*Base).Name"(ptr %5)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %6
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"main.(*Wrapped).setName"(ptr %0, %"{{.*}}String" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %0)
-// CHECK-NEXT:   %3 = getelementptr inbounds %main.Wrapped, ptr %2, i32 0, i32 0
-// CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
-// CHECK-NEXT:   call void @"{{.*}}/cl/_testdata/embedunexport.(*Base).setName"(ptr %4, %"{{.*}}/runtime/internal/runtime.String" %1)
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = getelementptr inbounds %main.Wrapped, ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
+// CHECK-NEXT:   call void @"{{.*}}/cl/_testdata/embedunexport.(*Base).setName"(ptr %6, %"{{.*}}/runtime/internal/runtime.String" %1)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 

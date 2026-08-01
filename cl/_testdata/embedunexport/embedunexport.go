@@ -17,8 +17,16 @@ type Base struct {
 // CHECK: define %"{{.*}}.String" @"{{.*}}.(*Base).Name"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}.Base", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load %"{{.*}}.String", ptr %1, align 8
-// CHECK-NEXT:   ret %"{{.*}}.String" %2
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:{{.*}}; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:{{.*}}; preds = %_llgo_0
+// CHECK-NEXT:   %5 = load %"{{.*}}.String", ptr %1, align 8
+// CHECK-NEXT:   ret %"{{.*}}.String" %5
 // CHECK-NEXT: }
 func (b *Base) Name() string {
 	return b.name

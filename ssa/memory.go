@@ -348,6 +348,28 @@ func (b Builder) AssertNilDeref(ptr Expr) {
 	b.InlineCall(b.Pkg.rtFunc("AssertNilDeref"), isNil)
 }
 
+// AssertNilDerefBranch checks ptr without keeping it live across the panic
+// call on the non-nil path. This matters for conservative collectors, where a
+// spill created solely by the check could retain an otherwise dead object.
+func (b Builder) AssertNilDerefBranch(ptr Expr) {
+	if ptr.impl.C == nil {
+		return
+	}
+	if ptr.impl.IsConstant() && !ptr.impl.IsNull() {
+		return
+	}
+	nilPtr := llvm.ConstNull(ptr.impl.Type())
+	isNil := Expr{llvm.CreateICmp(b.impl, llvm.IntEQ, ptr.impl, nilPtr), b.Prog.Bool()}
+	panicBlock := b.Prog.ctx.AddBasicBlock(b.Func.impl, "")
+	continueBlock := b.Prog.ctx.AddBasicBlock(b.Func.impl, "")
+	b.impl.CreateCondBr(isNil.impl, panicBlock, continueBlock)
+	b.impl.SetInsertPointAtEnd(panicBlock)
+	b.Call(b.Pkg.rtFunc("AssertNilDeref"), b.Prog.BoolVal(true))
+	b.impl.CreateUnreachable()
+	b.impl.SetInsertPointAtEnd(continueBlock)
+	b.blk.last = continueBlock
+}
+
 func (b Builder) NilDerefCheck(ptr Expr) Expr {
 	checked := b.Call(b.Pkg.rtFunc("AssertNilDerefPtr"), b.Convert(b.Prog.VoidPtr(), ptr))
 	return b.Convert(ptr.Type, checked)

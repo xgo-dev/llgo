@@ -22,8 +22,16 @@ func (t *T) Invoke() {
 // CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds %main.eface, ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   call void @main.dumpTyp(ptr %3, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
+// CHECK-NEXT:   %3 = icmp eq ptr %1, null
+// CHECK-NEXT:   br i1 %3, label %4, label %5
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 5:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %6 = load ptr, ptr %2, align 8
+// CHECK-NEXT:   call void @main.dumpTyp(ptr %6, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 func dump(v any) {
@@ -37,72 +45,136 @@ func dump(v any) {
 // CHECK-NEXT:   %2 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/abi.(*Type).String"(ptr %0)
 // CHECK-NEXT:   %3 = call i64 @"{{.*}}/runtime/abi.(*Type).Kind"(ptr %0)
 // CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %5 = load i64, ptr %4, align 8
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %7 = load i64, ptr %6, align 8
-// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 2
-// CHECK-NEXT:   %9 = load i32, ptr %8, align 4
-// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 3
-// CHECK-NEXT:   %11 = load i8, ptr %10, align 1
-// CHECK-NEXT:   %12 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 4
-// CHECK-NEXT:   %13 = load i8, ptr %12, align 1
-// CHECK-NEXT:   %14 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 10
-// CHECK-NEXT:   %15 = load ptr, ptr %14, align 8
-// CHECK-NEXT:   %16 = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
+// CHECK-NEXT:   %5 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %5, label %15, label %16
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_1:                                          ; preds = %41
+// CHECK-NEXT:   %6 = call ptr @"{{.*}}/runtime/abi.(*Type).Elem"(ptr %0)
+// CHECK-NEXT:   %7 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @1, i64 7 })
+// CHECK-NEXT:   call void @main.dumpTyp(ptr %6, %"{{.*}}/runtime/internal/runtime.String" %7)
+// CHECK-NEXT:   br label %_llgo_2
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %41
+// CHECK-NEXT:   %8 = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
+// CHECK-NEXT:   %9 = icmp ne ptr %8, null
+// CHECK-NEXT:   br i1 %9, label %_llgo_3, label %_llgo_4
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_2
+// CHECK-NEXT:   %10 = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
+// CHECK-NEXT:   %11 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 9 })
+// CHECK-NEXT:   call void @main.dumpUncommon(ptr %10, %"{{.*}}/runtime/internal/runtime.String" %11)
+// CHECK-NEXT:   %12 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 10
+// CHECK-NEXT:   %13 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %13, label %49, label %50
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_4:                                          ; preds = %54, %50, %_llgo_2
+// CHECK-NEXT:   ret void
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_5:                                          ; preds = %50
+// CHECK-NEXT:   %14 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %14, label %53, label %54
+// CHECK-EMPTY:
+// CHECK-NEXT: 15:                                               ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 16:                                               ; preds = %_llgo_0
+// CHECK-NEXT:   %17 = load i64, ptr %4, align 8
+// CHECK-NEXT:   %18 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %19 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %19, label %20, label %21
+// CHECK-EMPTY:
+// CHECK-NEXT: 20:                                               ; preds = %16
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 21:                                               ; preds = %16
+// CHECK-NEXT:   %22 = load i64, ptr %18, align 8
+// CHECK-NEXT:   %23 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 2
+// CHECK-NEXT:   %24 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %24, label %25, label %26
+// CHECK-EMPTY:
+// CHECK-NEXT: 25:                                               ; preds = %21
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 26:                                               ; preds = %21
+// CHECK-NEXT:   %27 = load i32, ptr %23, align 4
+// CHECK-NEXT:   %28 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 3
+// CHECK-NEXT:   %29 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %29, label %30, label %31
+// CHECK-EMPTY:
+// CHECK-NEXT: 30:                                               ; preds = %26
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 31:                                               ; preds = %26
+// CHECK-NEXT:   %32 = load i8, ptr %28, align 1
+// CHECK-NEXT:   %33 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 4
+// CHECK-NEXT:   %34 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %34, label %35, label %36
+// CHECK-EMPTY:
+// CHECK-NEXT: 35:                                               ; preds = %31
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 36:                                               ; preds = %31
+// CHECK-NEXT:   %37 = load i8, ptr %33, align 1
+// CHECK-NEXT:   %38 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 10
+// CHECK-NEXT:   %39 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %39, label %40, label %41
+// CHECK-EMPTY:
+// CHECK-NEXT: 40:                                               ; preds = %36
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 41:                                               ; preds = %36
+// CHECK-NEXT:   %42 = load ptr, ptr %38, align 8
+// CHECK-NEXT:   %43 = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %2)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %3)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %5)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %7)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %17 = zext i32 %9 to i64
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %17)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %18 = zext i8 %11 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %18)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %22)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %19 = zext i8 %13 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %19)
+// CHECK-NEXT:   %44 = zext i32 %27 to i64
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %44)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %15)
+// CHECK-NEXT:   %45 = zext i8 %32 to i64
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %45)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %16)
+// CHECK-NEXT:   %46 = zext i8 %37 to i64
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %46)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %42)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %43)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %20 = call ptr @"{{.*}}/runtime/abi.(*Type).Elem"(ptr %0)
-// CHECK-NEXT:   %21 = icmp ne ptr %20, null
-// CHECK-NEXT:   br i1 %21, label %_llgo_1, label %_llgo_2
+// CHECK-NEXT:   %47 = call ptr @"{{.*}}/runtime/abi.(*Type).Elem"(ptr %0)
+// CHECK-NEXT:   %48 = icmp ne ptr %47, null
+// CHECK-NEXT:   br i1 %48, label %_llgo_1, label %_llgo_2
 // CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %22 = call ptr @"{{.*}}/runtime/abi.(*Type).Elem"(ptr %0)
-// CHECK-NEXT:   %23 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @{{.*}}, i64 7 })
-// CHECK-NEXT:   call void @main.dumpTyp(ptr %22, %"{{.*}}/runtime/internal/runtime.String" %23)
-// CHECK-NEXT:   br label %_llgo_2
+// CHECK-NEXT: 49:                                               ; preds = %_llgo_3
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   %24 = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
-// CHECK-NEXT:   %25 = icmp ne ptr %24, null
-// CHECK-NEXT:   br i1 %25, label %_llgo_3, label %_llgo_4
+// CHECK-NEXT: 50:                                               ; preds = %_llgo_3
+// CHECK-NEXT:   %51 = load ptr, ptr %12, align 8
+// CHECK-NEXT:   %52 = icmp ne ptr %51, null
+// CHECK-NEXT:   br i1 %52, label %_llgo_5, label %_llgo_4
 // CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   %26 = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
-// CHECK-NEXT:   %27 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @{{.*}}, i64 9 })
-// CHECK-NEXT:   call void @main.dumpUncommon(ptr %26, %"{{.*}}/runtime/internal/runtime.String" %27)
-// CHECK-NEXT:   %28 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 10
-// CHECK-NEXT:   %29 = load ptr, ptr %28, align 8
-// CHECK-NEXT:   %30 = icmp ne ptr %29, null
-// CHECK-NEXT:   br i1 %30, label %_llgo_5, label %_llgo_4
+// CHECK-NEXT: 53:                                               ; preds = %_llgo_5
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
-// CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_5, %_llgo_3, %_llgo_2
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_3
-// CHECK-NEXT:   %31 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 10
-// CHECK-NEXT:   %32 = load ptr, ptr %31, align 8
-// CHECK-NEXT:   %33 = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %32)
-// CHECK-NEXT:   %34 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @{{.*}}, i64 9 })
-// CHECK-NEXT:   call void @main.dumpUncommon(ptr %33, %"{{.*}}/runtime/internal/runtime.String" %34)
+// CHECK-NEXT: 54:                                               ; preds = %_llgo_5
+// CHECK-NEXT:   %55 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 10
+// CHECK-NEXT:   %56 = load ptr, ptr %55, align 8
+// CHECK-NEXT:   %57 = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %56)
+// CHECK-NEXT:   %58 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 9 })
+// CHECK-NEXT:   call void @main.dumpUncommon(ptr %57, %"{{.*}}/runtime/internal/runtime.String" %58)
 // CHECK-NEXT:   br label %_llgo_4
 // CHECK-NEXT: }
 func dumpTyp(t *abi.Type, sep string) {
@@ -123,18 +195,42 @@ func dumpTyp(t *abi.Type, sep string) {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %1)
 // CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/runtime/abi.UncommonType", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.String", ptr %2, align 8
-// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/runtime/abi.UncommonType", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %5 = load i16, ptr %4, align 2
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/runtime/abi.UncommonType", ptr %0, i32 0, i32 2
-// CHECK-NEXT:   %7 = load i16, ptr %6, align 2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %3)
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %3, label %4, label %5
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 5:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %6 = load %"{{.*}}/runtime/internal/runtime.String", ptr %2, align 8
+// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/runtime/abi.UncommonType", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %8 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %8, label %9, label %10
+// CHECK-EMPTY:
+// CHECK-NEXT: 9:                                                ; preds = %5
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 10:                                               ; preds = %5
+// CHECK-NEXT:   %11 = load i16, ptr %7, align 2
+// CHECK-NEXT:   %12 = getelementptr inbounds %"{{.*}}/runtime/abi.UncommonType", ptr %0, i32 0, i32 2
+// CHECK-NEXT:   %13 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %13, label %14, label %15
+// CHECK-EMPTY:
+// CHECK-NEXT: 14:                                               ; preds = %10
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 15:                                               ; preds = %10
+// CHECK-NEXT:   %16 = load i16, ptr %12, align 2
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %6)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %8 = zext i16 %5 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %8)
+// CHECK-NEXT:   %17 = zext i16 %11 to i64
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %17)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %9 = zext i16 %7 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %9)
+// CHECK-NEXT:   %18 = zext i16 %16 to i64
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %18)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }

@@ -132,10 +132,18 @@ func main() {
 // CHECK-LABEL: define linkonce void @"main.(*future[main.Tuple[error]]).Then"(ptr %0, { ptr, ptr } %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = getelementptr inbounds %"main.future[main.Tuple[error]]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load { ptr, ptr }, ptr %2, align 8
-// CHECK-NEXT:   %4 = extractvalue { ptr, ptr } %3, 1
-// CHECK-NEXT:   %5 = extractvalue { ptr, ptr } %3, 0
-// CHECK-NEXT:   call void %5(ptr %4, { ptr, ptr } %1)
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %3, label %4, label %5
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 5:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %6 = load { ptr, ptr }, ptr %2, align 8
+// CHECK-NEXT:   %7 = extractvalue { ptr, ptr } %6, 1
+// CHECK-NEXT:   %8 = extractvalue { ptr, ptr } %6, 0
+// CHECK-NEXT:   call void %8(ptr %7, { ptr, ptr } %1)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 

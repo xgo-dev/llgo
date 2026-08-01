@@ -20,10 +20,18 @@ import (
 
 // CHECK-LABEL: define i32 @"main.(*CFmt).Printf"(ptr %0, ...){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds %main.CFmt, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = call i32 (ptr, ...) @printf(ptr %2)
-// CHECK-NEXT:   ret i32 %3
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %1, label %2, label %3
+// CHECK-EMPTY:
+// CHECK-NEXT: 2:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %4 = getelementptr inbounds %main.CFmt, ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
+// CHECK-NEXT:   %6 = call i32 (ptr, ...) @printf(ptr %5)
+// CHECK-NEXT:   ret i32 %6
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"main.(*CFmt).SetFormat"(ptr %0, ptr %1){{.*}} {

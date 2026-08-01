@@ -25,20 +25,26 @@ func main() {
 	}
 	var v2 T = func(i int) {
 		// CHECK-LABEL: define void @"main.main$2"(ptr %0, i64 %1){{.*}} {
-		// CHECK-NEXT: _llgo_0:
-		// CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
-		// CHECK-NEXT:   %3 = extractvalue { ptr } %2, 0
-		// CHECK-NEXT:   %4 = icmp eq ptr %3, null
-		// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %4)
-		// CHECK-NEXT:   %5 = load %"{{.*}}/runtime/internal/runtime.String", ptr %3, align 8
-		// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 7 })
-		// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-		// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %1)
-		// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-		// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %5)
-		// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-		// CHECK-NEXT:   ret void
-		// CHECK-NEXT: }
+// CHECK-NEXT: _llgo_0:
+// CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
+// CHECK-NEXT:   %3 = extractvalue { ptr } %2, 0
+// CHECK-NEXT:   %4 = icmp eq ptr %3, null
+// CHECK-NEXT:   br i1 %4, label %5, label %6
+// CHECK-EMPTY:
+// CHECK-NEXT: 5:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 6:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %7 = load %"{{.*}}/runtime/internal/runtime.String", ptr %3, align 8
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 7 })
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %1)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %7)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// CHECK-NEXT:   ret void
+// CHECK-NEXT: }
 		println("closure", i, env)
 	}
 	v1(100)

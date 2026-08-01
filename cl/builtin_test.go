@@ -205,6 +205,56 @@ func direct(e *embedded) int { return e.pointer() }
 	}
 }
 
+func TestCompileDominatingNilCheckAvoidsRedundantGuard(t *testing.T) {
+	const sourcePrefix = `
+package foo
+
+type value struct { n int }
+`
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"equal", `
+	if p == nil {
+		return 0
+	}
+	return p.n
+`},
+		{"equal reversed", `
+	if nil == p {
+		return 0
+	}
+	return p.n
+`},
+		{"not equal", `
+	if p != nil {
+		return p.n
+	}
+	return 0
+`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, checked := mustCompileLLPkgFromSrc(t, sourcePrefix+`
+func read(p *value) int {`+tt.body+`}
+`)
+			checkedRead := llvmFunction(t, checked.String(), "foo.read")
+			if got := strings.Count(checkedRead, "AssertNilDeref"); got != 0 {
+				t.Fatalf("nil-checked field load guards = %d, want 0:\n%s", got, checkedRead)
+			}
+		})
+	}
+
+	_, unchecked := mustCompileLLPkgFromSrc(t, sourcePrefix+`
+func read(p *value) int { return p.n }
+`)
+	uncheckedRead := llvmFunction(t, unchecked.String(), "foo.read")
+	if got := strings.Count(uncheckedRead, "AssertNilDeref"); got != 1 {
+		t.Fatalf("unchecked field load guards = %d, want 1:\n%s", got, uncheckedRead)
+	}
+}
+
 func TestCompileValueReceiverNilDerefKeepsDominance(t *testing.T) {
 	_, m := mustCompileLLPkgFromSrc(t, `
 	package foo

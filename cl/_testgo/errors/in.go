@@ -25,9 +25,15 @@ type errorString struct {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds %main.errorString, ptr %0, i32 0, i32 0
 // CHECK-NEXT:   %2 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.String", ptr %1, align 8
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %3
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = load %"{{.*}}/runtime/internal/runtime.String", ptr %1, align 8
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %5
 // CHECK-NEXT: }
 func (e *errorString) Error() string {
 	return e.s

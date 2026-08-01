@@ -143,18 +143,24 @@ func main() {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[main.Request,main.Response]", ptr %0, i32 0, i32 0
 // CHECK-NEXT:   %2 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %1, align 8
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %3)
-// CHECK-NEXT:   %5 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %3, 0
-// CHECK-NEXT:   %6 = getelementptr ptr, ptr %5, i64 3
-// CHECK-NEXT:   %7 = load ptr, ptr %6, align 8
-// CHECK-NEXT:   %8 = insertvalue { ptr, ptr } undef, ptr %7, 0
-// CHECK-NEXT:   %9 = insertvalue { ptr, ptr } %8, ptr %4, 1
-// CHECK-NEXT:   %10 = extractvalue { ptr, ptr } %9, 1
-// CHECK-NEXT:   %11 = extractvalue { ptr, ptr } %9, 0
-// CHECK-NEXT:   %12 = call %"{{.*}}/runtime/internal/runtime.String" %11(ptr %10)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %12
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %1, align 8
+// CHECK-NEXT:   %6 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %5)
+// CHECK-NEXT:   %7 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %5, 0
+// CHECK-NEXT:   %8 = getelementptr ptr, ptr %7, i64 3
+// CHECK-NEXT:   %9 = load ptr, ptr %8, align 8
+// CHECK-NEXT:   %10 = insertvalue { ptr, ptr } undef, ptr %9, 0
+// CHECK-NEXT:   %11 = insertvalue { ptr, ptr } %10, ptr %6, 1
+// CHECK-NEXT:   %12 = extractvalue { ptr, ptr } %11, 1
+// CHECK-NEXT:   %13 = extractvalue { ptr, ptr } %11, 0
+// CHECK-NEXT:   %14 = call %"{{.*}}/runtime/internal/runtime.String" %13(ptr %12)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %14
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[main.Request,main.Response].Context"(%"{{.*}}/cl/_testgo/genericembediface/streamlib.GenericServerStream[main.Request,main.Response]" %0){{.*}} {

@@ -596,7 +596,7 @@ func make3() {
 // CHECK-NEXT:   %38 = call ptr @"{{.*}}/runtime/internal/runtime.NewMapIter"(ptr @"map[_llgo_any]_llgo_int", ptr %17)
 // CHECK-NEXT:   br label %_llgo_1
 // CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_7, %_llgo_0
+// CHECK-NEXT: _llgo_1:                                          ; preds = %61, %_llgo_0
 // CHECK-NEXT:   %39 = call { i1, ptr, ptr } @"{{.*}}/runtime/internal/runtime.MapIterNext"(ptr %38)
 // CHECK-NEXT:   %40 = extractvalue { i1, ptr, ptr } %39, 0
 // CHECK-NEXT:   br i1 %40, label %_llgo_4, label %_llgo_5
@@ -637,17 +637,25 @@ func make3() {
 // CHECK-NEXT:   %56 = getelementptr inbounds ptr, ptr %55, i64 0
 // CHECK-NEXT:   %57 = load ptr, ptr %56, align 8
 // CHECK-NEXT:   %58 = getelementptr inbounds %main.N, ptr %57, i32 0, i32 0
-// CHECK-NEXT:   %59 = load i8, ptr %58, align 1
-// CHECK-NEXT:   %60 = sext i8 %59 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %60)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %42)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   br label %_llgo_1
+// CHECK-NEXT:   %59 = icmp eq ptr %57, null
+// CHECK-NEXT:   br i1 %59, label %60, label %61
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_2
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %43, %"{{.*}}/runtime/internal/runtime.String" { ptr @42, i64 44 }, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
 // CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 60:                                               ; preds = %_llgo_7
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 61:                                               ; preds = %_llgo_7
+// CHECK-NEXT:   %62 = load i8, ptr %58, align 1
+// CHECK-NEXT:   %63 = sext i8 %62 to i64
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %63)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %42)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// CHECK-NEXT:   br label %_llgo_1
 // CHECK-NEXT: }
 
 func make4() {

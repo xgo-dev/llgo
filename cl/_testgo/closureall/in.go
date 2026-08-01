@@ -44,10 +44,16 @@ func (s S) Inc(x int) int {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = getelementptr inbounds %main.S, ptr %0, i32 0, i32 0
 // CHECK-NEXT:   %3 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
-// CHECK-NEXT:   %4 = load i64, ptr %2, align 8
-// CHECK-NEXT:   %5 = add i64 %4, %1
-// CHECK-NEXT:   ret i64 %5
+// CHECK-NEXT:   br i1 %3, label %4, label %5
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 5:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %6 = load i64, ptr %2, align 8
+// CHECK-NEXT:   %7 = add i64 %6, %1
+// CHECK-NEXT:   ret i64 %7
 // CHECK-NEXT: }
 
 func (s *S) Add(x int) int {

@@ -136,12 +136,28 @@ func main() {
 // CHECK-LABEL: define linkonce void @"main.(*T[string,int]).Demo"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds %"main.T[string,int]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load %"{{.*}}/runtime/internal/runtime.String", ptr %1, align 8
-// CHECK-NEXT:   %3 = getelementptr inbounds %"main.T[string,int]", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %2)
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = load %"{{.*}}/runtime/internal/runtime.String", ptr %1, align 8
+// CHECK-NEXT:   %6 = getelementptr inbounds %"main.T[string,int]", ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %7 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %7, label %8, label %9
+// CHECK-EMPTY:
+// CHECK-NEXT: 8:                                                ; preds = %4
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 9:                                                ; preds = %4
+// CHECK-NEXT:   %10 = load i64, ptr %6, align 8
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %5)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %4)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %10)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
