@@ -94,13 +94,17 @@ type T struct {
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 11 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   %2 = getelementptr inbounds %main.T, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load i64, ptr %2, align 8
-// CHECK-NEXT:   %4 = add i64 %3, %1
-// CHECK-NEXT:   %5 = getelementptr inbounds %main.T, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store i64 %4, ptr %5, align 8
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = load i64, ptr %2, align 8
+// CHECK-NEXT:   %5 = add i64 %4, %1
 // CHECK-NEXT:   %6 = getelementptr inbounds %main.T, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %7 = load i64, ptr %6, align 8
-// CHECK-NEXT:   ret i64 %7
+// CHECK-NEXT:   store i64 %5, ptr %6, align 8
+// CHECK-NEXT:   %7 = getelementptr inbounds %main.T, ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %8 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %8)
+// CHECK-NEXT:   %9 = load i64, ptr %7, align 8
+// CHECK-NEXT:   ret i64 %9
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @main.callClosure(){{.*}} {

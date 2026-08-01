@@ -143,12 +143,14 @@ func main() {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = load { ptr }, ptr %0, align 8
 // CHECK-NEXT:   %2 = extractvalue { ptr } %1, 0
-// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %2, align 8
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 24)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %3, ptr %4, align 8
-// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"[]_llgo_uint8", ptr undef }, ptr %4, 1
-// CHECK-NEXT:   %6 = call ptr @"{{.*}}/runtime/internal/runtime.CBytes"(%"{{.*}}/runtime/internal/runtime.Slice" %3)
-// CHECK-NEXT:   ret ptr %6
+// CHECK-NEXT:   %3 = icmp eq ptr %2, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %2, align 8
+// CHECK-NEXT:   %5 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 24)
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %4, ptr %5, align 8
+// CHECK-NEXT:   %6 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"[]_llgo_uint8", ptr undef }, ptr %5, 1
+// CHECK-NEXT:   %7 = call ptr @"{{.*}}/runtime/internal/runtime.CBytes"(%"{{.*}}/runtime/internal/runtime.Slice" %4)
+// CHECK-NEXT:   ret ptr %7
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.Slice" @"main.main$2"(ptr %0){{.*}} {

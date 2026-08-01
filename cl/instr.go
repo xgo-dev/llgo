@@ -813,6 +813,11 @@ func collectFieldSelectorChain(ret map[token.Pos]none, expr ast.Expr) {
 		case *ast.SelectorExpr:
 			ret[e.Sel.Pos()] = none{}
 			expr = e.X
+		case *ast.IndexExpr:
+			// Keep walking the addressable base. In &p.array[i], SSA checks
+			// the derived array pointer, which may already be non-nil because
+			// of the field offset even when p itself is nil.
+			expr = e.X
 		default:
 			return
 		}
@@ -1847,6 +1852,21 @@ func (p *context) emitNilDerefBaseCheck(b llssa.Builder, addr ssa.Value) {
 		}
 		p.emitCheckedDerefCheck(b, addr)
 	case *ssa.FieldAddr:
+		if _, ok := p.methodReceiverBases[addr]; ok {
+			return
+		}
+		if isKnownNonNilAddr(addr.X) || isWrapNilCheckCall(addr.X) {
+			return
+		}
+		p.emitNilDerefBaseCheck(b, addr.X)
+		if isPointerGoType(addr.X.Type()) {
+			base := p.compileValue(b, addr.X)
+			b.AssertNilDeref(base)
+		}
+	case *ssa.IndexAddr:
+		if _, ok := p.methodReceiverBases[addr]; ok {
+			return
+		}
 		if isKnownNonNilAddr(addr.X) || isWrapNilCheckCall(addr.X) {
 			return
 		}
@@ -1933,6 +1953,95 @@ func collectMethodNilDerefChecks(fn *ssa.Function) map[*ssa.UnOp]none {
 			case *ssa.MakeClosure:
 				if bound, ok := instr.Fn.(*ssa.Function); ok {
 					mark(boundValueReceiverNilDerefArg(bound, instr.Bindings))
+				}
+			}
+		}
+	}
+	return checks
+}
+
+func promotedPointerReceiverBase(fn *ssa.Function, args []ssa.Value) (ssa.Value, bool) {
+	if fn == nil || len(args) == 0 {
+		return nil, false
+	}
+	recv := fn.Signature.Recv()
+	if recv == nil || !isPointerGoType(recv.Type()) {
+		return nil, false
+	}
+	return derivedReceiverBase(args[0])
+}
+
+func boundPromotedPointerReceiverBase(fn *ssa.Function, bindings []ssa.Value) (ssa.Value, bool) {
+	if fn == nil || len(fn.FreeVars) == 0 || len(bindings) == 0 ||
+		!strings.HasPrefix(fn.Synthetic, "bound method wrapper for ") ||
+		!isPointerGoType(fn.FreeVars[0].Type()) {
+		return nil, false
+	}
+	return derivedReceiverBase(bindings[0])
+}
+
+func derivedReceiverBase(arg ssa.Value) (ssa.Value, bool) {
+	addr := arg
+	if deref, ok := arg.(*ssa.UnOp); ok {
+		if deref.Op != token.MUL {
+			return nil, false
+		}
+		addr = deref.X
+	}
+	var root ssa.Value
+	for {
+		switch current := addr.(type) {
+		case *ssa.FieldAddr:
+			root = current
+			addr = current.X
+		case *ssa.IndexAddr:
+			if !isPointerGoType(current.X.Type()) {
+				addr = nil
+				break
+			}
+			root = current
+			addr = current.X
+		default:
+			addr = nil
+		}
+		if addr == nil {
+			break
+		}
+	}
+	if root == nil || isKnownNonNilAddr(root) || isWrapNilCheckCall(root) {
+		return nil, false
+	}
+	return root, true
+}
+
+func collectMethodReceiverBases(fn *ssa.Function) map[ssa.Value]none {
+	var checks map[ssa.Value]none
+	mark := func(addr ssa.Value, ok bool) {
+		if !ok {
+			return
+		}
+		if checks == nil {
+			checks = make(map[ssa.Value]none)
+		}
+		checks[addr] = none{}
+	}
+	markCall := func(call *ssa.CallCommon) {
+		if fn, ok := call.Value.(*ssa.Function); ok {
+			mark(promotedPointerReceiverBase(fn, call.Args))
+		}
+	}
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			switch instr := instr.(type) {
+			case *ssa.Call:
+				markCall(&instr.Call)
+			case *ssa.Defer:
+				markCall(&instr.Call)
+			case *ssa.Go:
+				markCall(&instr.Call)
+			case *ssa.MakeClosure:
+				if bound, ok := instr.Fn.(*ssa.Function); ok {
+					mark(boundPromotedPointerReceiverBase(bound, instr.Bindings))
 				}
 			}
 		}

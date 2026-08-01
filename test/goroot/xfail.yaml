@@ -2442,10 +2442,6 @@ xfails:
     reason: runtime caller frame reports main instead of runtime.main on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: nilptr2.go
-    reason: address-of a dereferenced nil pointer does not panic and the run hangs on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: range4.go
     reason: range-over-function build exits successfully without producing a binary on darwin/arm64
   - platform: darwin/arm64

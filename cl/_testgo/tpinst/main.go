@@ -157,15 +157,19 @@ func (pt *M[T]) value() T {
 // CHECK-LABEL: define linkonce i64 @"main.(*M[int]).Value"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds %"main.M[int]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load i64, ptr %1, align 8
-// CHECK-NEXT:   ret i64 %2
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = load i64, ptr %1, align 8
+// CHECK-NEXT:   ret i64 %3
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce i64 @"main.(*M[int]).value"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds %"main.M[int]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load i64, ptr %1, align 8
-// CHECK-NEXT:   ret i64 %2
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = load i64, ptr %1, align 8
+// CHECK-NEXT:   ret i64 %3
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.memequal64"(ptr %0, ptr %1, ptr %2){{.*}} {
@@ -195,15 +199,19 @@ func (pt *M[T]) value() T {
 // CHECK-LABEL: define linkonce double @"main.(*M[float64]).Value"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds %"main.M[float64]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load double, ptr %1, align 8
-// CHECK-NEXT:   ret double %2
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = load double, ptr %1, align 8
+// CHECK-NEXT:   ret double %3
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce double @"main.(*M[float64]).value"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds %"main.M[float64]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load double, ptr %1, align 8
-// CHECK-NEXT:   ret double %2
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = load double, ptr %1, align 8
+// CHECK-NEXT:   ret double %3
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce i1 @"__llgo_stub.{{.*}}/runtime/internal/runtime.f64equal"(ptr %0, ptr %1, ptr %2){{.*}} {

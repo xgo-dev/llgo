@@ -9,9 +9,25 @@ import (
 type nilDerefAddressStruct struct {
 	i int
 	x [2]int
+	s string
+}
+
+type nilDerefEmbeddedReceiver struct{}
+
+func (*nilDerefEmbeddedReceiver) value() int { return 0 }
+
+type nilDerefEmbeddedOuter struct {
+	padding int
+	nilDerefEmbeddedReceiver
 }
 
 var nilDerefAddressSink any
+var nilDerefAddressStructPtr *nilDerefAddressStruct
+var nilDerefAddressSlicePtr *[]byte
+var nilDerefAddressStringPtr *string
+var nilDerefAddressArrayPtr *[4]int
+var nilDerefEmbeddedOuterPtr *nilDerefEmbeddedOuter
+var nilDerefEmbeddedReceiverPtr *nilDerefEmbeddedReceiver
 
 func TestNilDerefAddressOperationsPanic(t *testing.T) {
 	tests := []struct {
@@ -37,6 +53,19 @@ func TestNilDerefAddressOperationsPanic(t *testing.T) {
 			f: func() {
 				var p *[2]int
 				nilDerefAddressSink = &p[0]
+			},
+		},
+		{
+			name: "array field element address",
+			f: func() {
+				nilDerefAddressSink = &nilDerefAddressStructPtr.x[0]
+			},
+		},
+		{
+			name: "array field variable element address",
+			f: func() {
+				i := 1
+				nilDerefAddressSink = &nilDerefAddressStructPtr.x[i]
 			},
 		},
 	}
@@ -82,15 +111,13 @@ func TestNilDerefPrintedCompositeLoadsPanic(t *testing.T) {
 		{
 			name: "slice pointer load",
 			f: func() {
-				var p *[]byte
-				println(*p)
+				println(*nilDerefAddressSlicePtr)
 			},
 		},
 		{
 			name: "string pointer load",
 			f: func() {
-				var p *string
-				println(*p)
+				println(*nilDerefAddressStringPtr)
 			},
 		},
 	}
@@ -102,10 +129,35 @@ func TestNilDerefPrintedCompositeLoadsPanic(t *testing.T) {
 }
 
 func TestNilDerefPrintedFieldLoadPanic(t *testing.T) {
-	expectNilDerefAddressPanic(t, func() {
-		var p *nilDerefAddressStruct
-		println(p.i)
-	})
+	tests := []struct {
+		name string
+		f    func()
+	}{
+		{
+			name: "basic field",
+			f: func() {
+				println(nilDerefAddressStructPtr.i)
+			},
+		},
+		{
+			name: "multiword field",
+			f: func() {
+				println(nilDerefAddressStructPtr.s)
+			},
+		},
+		{
+			name: "array field element",
+			f: func() {
+				i := 1
+				println(nilDerefAddressStructPtr.x[i])
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expectNilDerefAddressPanic(t, tt.f)
+		})
+	}
 }
 
 func TestNilDerefInterfaceCopiesPanic(t *testing.T) {
@@ -116,15 +168,13 @@ func TestNilDerefInterfaceCopiesPanic(t *testing.T) {
 		{
 			name: "array pointer to interface",
 			f: func() {
-				var p *[4]int
-				nilDerefAddressSink = *p
+				nilDerefAddressSink = *nilDerefAddressArrayPtr
 			},
 		},
 		{
 			name: "struct pointer to interface",
 			f: func() {
-				var p *nilDerefAddressStruct
-				nilDerefAddressSink = *p
+				nilDerefAddressSink = *nilDerefAddressStructPtr
 			},
 		},
 	}
@@ -132,6 +182,44 @@ func TestNilDerefInterfaceCopiesPanic(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			expectNilDerefAddressPanic(t, tt.f)
 		})
+	}
+}
+
+func TestNilDerefPromotedPointerReceiverPanic(t *testing.T) {
+	tests := []struct {
+		name string
+		f    func()
+	}{
+		{
+			name: "promoted method",
+			f: func() {
+				nilDerefAddressSink = nilDerefEmbeddedOuterPtr.value()
+			},
+		},
+		{
+			name: "explicit embedded field",
+			f: func() {
+				nilDerefAddressSink = nilDerefEmbeddedOuterPtr.nilDerefEmbeddedReceiver.value()
+			},
+		},
+		{
+			name: "promoted method value",
+			f: func() {
+				method := nilDerefEmbeddedOuterPtr.value
+				nilDerefAddressSink = method()
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expectNilDerefAddressPanic(t, tt.f)
+		})
+	}
+}
+
+func TestNilPointerReceiverRemainsAllowed(t *testing.T) {
+	if got := nilDerefEmbeddedReceiverPtr.value(); got != 0 {
+		t.Fatalf("nil pointer receiver method = %d, want 0", got)
 	}
 }
 

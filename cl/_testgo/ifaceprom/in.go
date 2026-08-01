@@ -107,33 +107,37 @@ func main() {
 // CHECK-LABEL: define i64 @"main.(*S).one"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds %main.S, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %1, align 8
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %2)
-// CHECK-NEXT:   %4 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %2, 0
-// CHECK-NEXT:   %5 = getelementptr ptr, ptr %4, i64 3
-// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
-// CHECK-NEXT:   %7 = insertvalue { ptr, ptr } undef, ptr %6, 0
-// CHECK-NEXT:   %8 = insertvalue { ptr, ptr } %7, ptr %3, 1
-// CHECK-NEXT:   %9 = extractvalue { ptr, ptr } %8, 1
-// CHECK-NEXT:   %10 = extractvalue { ptr, ptr } %8, 0
-// CHECK-NEXT:   %11 = call i64 %10(ptr %9)
-// CHECK-NEXT:   ret i64 %11
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %1, align 8
+// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %3)
+// CHECK-NEXT:   %5 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %3, 0
+// CHECK-NEXT:   %6 = getelementptr ptr, ptr %5, i64 3
+// CHECK-NEXT:   %7 = load ptr, ptr %6, align 8
+// CHECK-NEXT:   %8 = insertvalue { ptr, ptr } undef, ptr %7, 0
+// CHECK-NEXT:   %9 = insertvalue { ptr, ptr } %8, ptr %4, 1
+// CHECK-NEXT:   %10 = extractvalue { ptr, ptr } %9, 1
+// CHECK-NEXT:   %11 = extractvalue { ptr, ptr } %9, 0
+// CHECK-NEXT:   %12 = call i64 %11(ptr %10)
+// CHECK-NEXT:   ret i64 %12
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @"main.(*S).two"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds %main.S, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %1, align 8
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %2)
-// CHECK-NEXT:   %4 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %2, 0
-// CHECK-NEXT:   %5 = getelementptr ptr, ptr %4, i64 4
-// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
-// CHECK-NEXT:   %7 = insertvalue { ptr, ptr } undef, ptr %6, 0
-// CHECK-NEXT:   %8 = insertvalue { ptr, ptr } %7, ptr %3, 1
-// CHECK-NEXT:   %9 = extractvalue { ptr, ptr } %8, 1
-// CHECK-NEXT:   %10 = extractvalue { ptr, ptr } %8, 0
-// CHECK-NEXT:   %11 = call %"{{.*}}/runtime/internal/runtime.String" %10(ptr %9)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %11
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %1, align 8
+// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %3)
+// CHECK-NEXT:   %5 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %3, 0
+// CHECK-NEXT:   %6 = getelementptr ptr, ptr %5, i64 4
+// CHECK-NEXT:   %7 = load ptr, ptr %6, align 8
+// CHECK-NEXT:   %8 = insertvalue { ptr, ptr } undef, ptr %7, 0
+// CHECK-NEXT:   %9 = insertvalue { ptr, ptr } %8, ptr %4, 1
+// CHECK-NEXT:   %10 = extractvalue { ptr, ptr } %9, 1
+// CHECK-NEXT:   %11 = extractvalue { ptr, ptr } %9, 0
+// CHECK-NEXT:   %12 = call %"{{.*}}/runtime/internal/runtime.String" %11(ptr %10)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %12
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @main.impl.one(%main.impl %0){{.*}} {

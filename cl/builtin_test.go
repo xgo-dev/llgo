@@ -176,6 +176,35 @@ func TestCompilePromotedValueMethodNilDerefGuard(t *testing.T) {
 	}
 }
 
+func TestCollectPromotedPointerReceiverBaseChecks(t *testing.T) {
+	ssapkg := buildSSAPackage(t, `
+package foo
+
+type embedded struct{}
+
+func (*embedded) pointer() int { return 1 }
+
+type outer struct {
+	padding int
+	embedded
+}
+
+func promoted(o *outer) int { return o.pointer() }
+func explicit(o *outer) int { return o.embedded.pointer() }
+func bound(o *outer) func() int { return o.pointer }
+func direct(e *embedded) int { return e.pointer() }
+`)
+	for _, name := range []string{"promoted", "explicit", "bound"} {
+		checks := collectMethodReceiverBases(ssapkg.Func(name))
+		if len(checks) != 1 {
+			t.Fatalf("%s promoted receiver base checks = %v, want one", name, checks)
+		}
+	}
+	if checks := collectMethodReceiverBases(ssapkg.Func("direct")); len(checks) != 0 {
+		t.Fatalf("direct nil-capable pointer receiver checks = %v, want none", checks)
+	}
+}
+
 func TestCompileValueReceiverNilDerefKeepsDominance(t *testing.T) {
 	_, m := mustCompileLLPkgFromSrc(t, `
 	package foo
@@ -306,6 +335,9 @@ func TestCollectMethodNilDerefChecksSkipsDynamicDeferGo(t *testing.T) {
 	}
 	if got := collectMethodNilDerefChecks(fn); len(got) != 0 {
 		t.Fatalf("collectMethodNilDerefChecks() = %v, want no static checks", got)
+	}
+	if got := collectMethodReceiverBases(fn); len(got) != 0 {
+		t.Fatalf("collectMethodReceiverBases() = %v, want no static checks", got)
 	}
 }
 

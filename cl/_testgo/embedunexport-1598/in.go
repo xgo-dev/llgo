@@ -30,17 +30,21 @@ type Wrapped struct {
 
 // CHECK-LABEL: define %"{{.*}}String" @"main.(*Wrapped).Name"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds %main.Wrapped, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = call %"{{.*}}String" @"{{.*}}embedunexport.(*Base).Name"(ptr %2)
-// CHECK-NEXT:   ret %"{{.*}}String" %3
+// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %0)
+// CHECK-NEXT:   %2 = getelementptr inbounds %main.Wrapped, ptr %1, i32 0, i32 0
+// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
+// CHECK-NEXT:   %4 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/cl/_testdata/embedunexport.(*Base).Name"(ptr %3)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %4
+// CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"main.(*Wrapped).setName"(ptr %0, %"{{.*}}String" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds %main.Wrapped, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   call void @"{{.*}}embedunexport.(*Base).setName"(ptr %3, %"{{.*}}String" %1)
+// CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %0)
+// CHECK-NEXT:   %3 = getelementptr inbounds %main.Wrapped, ptr %2, i32 0, i32 0
+// CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
+// CHECK-NEXT:   call void @"{{.*}}/cl/_testdata/embedunexport.(*Base).setName"(ptr %4, %"{{.*}}/runtime/internal/runtime.String" %1)
 // CHECK-NEXT:   ret void
+// CHECK-NEXT: }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 func main() {

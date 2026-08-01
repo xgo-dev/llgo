@@ -17,10 +17,12 @@ func main() {
 	// CHECK-NEXT:  %4 = getelementptr inbounds %"main.My[int]", ptr %0, i32 0, i32 1
 	// CHECK-NEXT:  %5 = load ptr, ptr %4, align 8
 	// CHECK-NEXT:  %6 = getelementptr inbounds %"main.My[int]", ptr %5, i32 0, i32 0
-	// CHECK-NEXT:  %7 = load { ptr, ptr }, ptr %6, align 8
-	// CHECK-NEXT:  %8 = extractvalue { ptr, ptr } %7, 1
-	// CHECK-NEXT:  %9 = extractvalue { ptr, ptr } %7, 0
-	// CHECK-NEXT:  call void %9(ptr %8, i64 100)
+	// CHECK-NEXT:  %7 = icmp eq ptr %5, null
+	// CHECK-NEXT:  call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
+	// CHECK-NEXT:  %8 = load { ptr, ptr }, ptr %6, align 8
+	// CHECK-NEXT:  %9 = extractvalue { ptr, ptr } %8, 1
+	// CHECK-NEXT:  %10 = extractvalue { ptr, ptr } %8, 0
+	// CHECK-NEXT:  call void %10(ptr %9, i64 100)
 	// CHECK-NEXT:  ret void
 	// CHECK-NEXT:}
 	m := &My[int]{next: &My[int]{fn: func(n int) { println(n) }}}

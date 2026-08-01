@@ -11,16 +11,21 @@ type MyPoint = Point
 // CHECK-LABEL: define void @"main.(*Point).Move"(ptr %0, double %1, double %2){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %3 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %4 = load double, ptr %3, align 8
-// CHECK-NEXT:   %5 = fadd double %4, %1
-// CHECK-NEXT:   %6 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store double %5, ptr %6, align 8
-// CHECK-NEXT:   %7 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %8 = load double, ptr %7, align 8
-// CHECK-NEXT:   %9 = fadd double %8, %2
-// CHECK-NEXT:   %10 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   store double %9, ptr %10, align 8
+// CHECK-NEXT:   %4 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %4)
+// CHECK-NEXT:   %5 = load double, ptr %3, align 8
+// CHECK-NEXT:   %6 = fadd double %5, %1
+// CHECK-NEXT:   %7 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 0
+// CHECK-NEXT:   store double %6, ptr %7, align 8
+// CHECK-NEXT:   %8 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %9 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %9)
+// CHECK-NEXT:   %10 = load double, ptr %8, align 8
+// CHECK-NEXT:   %11 = fadd double %10, %2
+// CHECK-NEXT:   %12 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   store double %11, ptr %12, align 8
 // CHECK-NEXT:   ret void
+// CHECK-NEXT: }
 func (p *MyPoint) Move(dx, dy float64) {
 	p.x += dx
 	p.y += dy
@@ -29,16 +34,21 @@ func (p *MyPoint) Move(dx, dy float64) {
 // CHECK-LABEL: define void @"main.(*Point).Scale"(ptr %0, double %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load double, ptr %2, align 8
-// CHECK-NEXT:   %4 = fmul double %3, %1
-// CHECK-NEXT:   %5 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store double %4, ptr %5, align 8
-// CHECK-NEXT:   %6 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %7 = load double, ptr %6, align 8
-// CHECK-NEXT:   %8 = fmul double %7, %1
-// CHECK-NEXT:   %9 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   store double %8, ptr %9, align 8
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
+// CHECK-NEXT:   %4 = load double, ptr %2, align 8
+// CHECK-NEXT:   %5 = fmul double %4, %1
+// CHECK-NEXT:   %6 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 0
+// CHECK-NEXT:   store double %5, ptr %6, align 8
+// CHECK-NEXT:   %7 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %8 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %8)
+// CHECK-NEXT:   %9 = load double, ptr %7, align 8
+// CHECK-NEXT:   %10 = fmul double %9, %1
+// CHECK-NEXT:   %11 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   store double %10, ptr %11, align 8
 // CHECK-NEXT:   ret void
+// CHECK-NEXT: }
 func (p *Point) Scale(factor float64) {
 	p.x *= factor
 	p.y *= factor

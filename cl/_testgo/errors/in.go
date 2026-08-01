@@ -24,8 +24,11 @@ type errorString struct {
 // CHECK-LABEL: define %"{{.*}}String" @"main.(*errorString).Error"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds %main.errorString, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load %"{{.*}}String", ptr %1, align 8
-// CHECK-NEXT:   ret %"{{.*}}String" %2
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
+// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.String", ptr %1, align 8
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %3
+// CHECK-NEXT: }
 func (e *errorString) Error() string {
 	return e.s
 }
