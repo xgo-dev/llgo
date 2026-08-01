@@ -355,27 +355,27 @@ func main() {
 	m.check = func(n int) int {
 		return m.value * n
 	}
-// CHECK-LABEL: define i64 @"main.main$1"(ptr %0, i64 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
-// CHECK-NEXT:   %3 = extractvalue { ptr } %2, 0
-// CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
-// CHECK-NEXT:   %5 = getelementptr inbounds %main.mspan, ptr %4, i32 0, i32 4
-// CHECK-NEXT:   %6 = extractvalue { ptr } %2, 0
-// CHECK-NEXT:   %7 = icmp eq ptr %6, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
-// CHECK-NEXT:   %8 = icmp eq ptr %4, null
-// CHECK-NEXT:   br i1 %8, label %9, label %10
-// CHECK-EMPTY:
-// CHECK-NEXT: 9:                                                ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: 10:                                               ; preds = %_llgo_0
-// CHECK-NEXT:   %11 = load i64, ptr %5, align 8
-// CHECK-NEXT:   %12 = mul i64 %11, %1
-// CHECK-NEXT:   ret i64 %12
-// CHECK-NEXT: }
+	// CHECK-LABEL: define i64 @"main.main$1"(ptr %0, i64 %1){{.*}} {
+	// CHECK-NEXT: _llgo_0:
+	// CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
+	// CHECK-NEXT:   %3 = extractvalue { ptr } %2, 0
+	// CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
+	// CHECK-NEXT:   %5 = getelementptr inbounds %main.mspan, ptr %4, i32 0, i32 4
+	// CHECK-NEXT:   %6 = extractvalue { ptr } %2, 0
+	// CHECK-NEXT:   %7 = icmp eq ptr %6, null
+	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %7)
+	// CHECK-NEXT:   %8 = icmp eq ptr %4, null
+	// CHECK-NEXT:   br i1 %8, label %9, label %10
+	// CHECK-EMPTY:
+	// CHECK-NEXT: 9:                                                ; preds = %_llgo_0
+	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+	// CHECK-NEXT:   unreachable
+	// CHECK-EMPTY:
+	// CHECK-NEXT: 10:                                               ; preds = %_llgo_0
+	// CHECK-NEXT:   %11 = load i64, ptr %5, align 8
+	// CHECK-NEXT:   %12 = mul i64 %11, %1
+	// CHECK-NEXT:   ret i64 %12
+	// CHECK-NEXT: }
 	c.Printf(c.Str("%d %d %d %d %d %d\n"), m.next.value, m.list.last.value, m.info.info,
 		m.info.span.value, m.check(-2), m.info.span.check(-3))
 }

@@ -38,24 +38,24 @@ func main() {
 		c.Printf(c.Str("%d %d\n"), n1, n2)
 	}
 
-// CHECK-LABEL: define void @"main.main$3"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = load { ptr }, ptr %0, align 8
-// CHECK-NEXT:   %2 = extractvalue { ptr } %1, 0
-// CHECK-NEXT:   %3 = icmp eq ptr %2, null
-// CHECK-NEXT:   br i1 %3, label %4, label %5
-// CHECK-EMPTY:
-// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: 5:                                                ; preds = %_llgo_0
-// CHECK-NEXT:   %6 = load { ptr, ptr }, ptr %2, align 8
-// CHECK-NEXT:   %7 = extractvalue { ptr, ptr } %6, 1
-// CHECK-NEXT:   %8 = extractvalue { ptr, ptr } %6, 0
-// CHECK-NEXT:   call void %8(ptr %7, i64 100, i64 200)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+	// CHECK-LABEL: define void @"main.main$3"(ptr %0){{.*}} {
+	// CHECK-NEXT: _llgo_0:
+	// CHECK-NEXT:   %1 = load { ptr }, ptr %0, align 8
+	// CHECK-NEXT:   %2 = extractvalue { ptr } %1, 0
+	// CHECK-NEXT:   %3 = icmp eq ptr %2, null
+	// CHECK-NEXT:   br i1 %3, label %4, label %5
+	// CHECK-EMPTY:
+	// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+	// CHECK-NEXT:   unreachable
+	// CHECK-EMPTY:
+	// CHECK-NEXT: 5:                                                ; preds = %_llgo_0
+	// CHECK-NEXT:   %6 = load { ptr, ptr }, ptr %2, align 8
+	// CHECK-NEXT:   %7 = extractvalue { ptr, ptr } %6, 1
+	// CHECK-NEXT:   %8 = extractvalue { ptr, ptr } %6, 0
+	// CHECK-NEXT:   call void %8(ptr %7, i64 100, i64 200)
+	// CHECK-NEXT:   ret void
+	// CHECK-NEXT: }
 	fn2 := func() {
 		fn1(100, 200)
 	}
