@@ -322,6 +322,117 @@ func afterCheckedAlias(slot **node) int {
 	}
 }
 
+func TestLocalNonNilAnalysisHelpersFailClosed(t *testing.T) {
+	ssapkg := buildSSAPackage(t, `
+package foo
+
+type node struct{}
+
+var first, second *node
+
+func allocations() (*node, *node) {
+	return new(node), new(node)
+}
+`)
+	fn := ssapkg.Func("allocations")
+	var allocs []*ssa.Alloc
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			if alloc, ok := instr.(*ssa.Alloc); ok {
+				allocs = append(allocs, alloc)
+			}
+		}
+	}
+	if len(allocs) != 2 {
+		t.Fatalf("allocations contains %d allocs, want 2", len(allocs))
+	}
+	first := ssapkg.Members["first"].(*ssa.Global)
+	second := ssapkg.Members["second"].(*ssa.Global)
+	field0 := &ssa.FieldAddr{X: allocs[0], Field: 0}
+	field1 := &ssa.FieldAddr{X: allocs[0], Field: 1}
+	index0 := &ssa.IndexAddr{X: allocs[0], Index: ssa.NewConst(constant.MakeInt64(0), types.Typ[types.Int])}
+
+	if !isLocallyKnownNonNil(allocs[0], make(map[ssa.Value]bool)) {
+		t.Fatal("allocation should be known non-nil")
+	}
+	if isLocallyKnownNonNil(nil, make(map[ssa.Value]bool)) ||
+		isLocallyKnownNonNil(allocs[0], map[ssa.Value]bool{allocs[0]: true}) {
+		t.Fatal("nil or already visited value should fail closed")
+	}
+	if !isLocallyDerivedNonNil(field0) || !isLocallyDerivedNonNil(index0) || isLocallyDerivedNonNil(allocs[0]) {
+		t.Fatal("derived-address non-nil classification is incorrect")
+	}
+
+	change0 := &ssa.ChangeType{X: allocs[0]}
+	change1 := &ssa.ChangeType{X: allocs[0]}
+	convert0 := &ssa.Convert{X: allocs[0]}
+	convert1 := &ssa.Convert{X: allocs[0]}
+	if !equivalentPointerValues(change0, change1, make(map[ssaValuePair]bool)) ||
+		!equivalentPointerValues(convert0, convert1, make(map[ssaValuePair]bool)) {
+		t.Fatal("equivalent conversions should preserve pointer identity")
+	}
+	if equivalentPointerValues(allocs[0], nil, make(map[ssaValuePair]bool)) ||
+		!equivalentPointerValues(allocs[0], allocs[1], map[ssaValuePair]bool{{allocs[0], allocs[1]}: true}) {
+		t.Fatal("pointer equivalence did not handle nil or a visited pair")
+	}
+	if !equivalentMemoryAddresses(&ssa.ChangeType{X: field0}, &ssa.ChangeType{X: field0}, make(map[ssaValuePair]bool)) ||
+		!equivalentMemoryAddresses(&ssa.Convert{X: field0}, &ssa.Convert{X: field0}, make(map[ssaValuePair]bool)) ||
+		equivalentMemoryAddresses(field0, field1, make(map[ssaValuePair]bool)) {
+		t.Fatal("memory-address equivalence is incorrect")
+	}
+	zero := ssa.NewConst(constant.MakeInt64(0), types.Typ[types.Int])
+	otherZero := ssa.NewConst(constant.MakeInt64(0), types.Typ[types.Int])
+	one := ssa.NewConst(constant.MakeInt64(1), types.Typ[types.Int])
+	if !equivalentSSAIndices(zero, otherZero) || equivalentSSAIndices(zero, one) {
+		t.Fatal("constant index equivalence is incorrect")
+	}
+
+	if !mayAliasMemoryAddresses(first, first) || mayAliasMemoryAddresses(first, second) ||
+		mayAliasMemoryAddresses(first, field0) || !mayAliasMemoryAddresses(first, allocs[0]) {
+		t.Fatal("global/local alias classification is incorrect")
+	}
+	if root, ok := localPointerRoot(field0, make(map[ssa.Value]bool)); !ok || root != allocs[0] {
+		t.Fatalf("field root = (%v, %v), want first allocation", root, ok)
+	}
+	if root, ok := localPointerRoot(index0, make(map[ssa.Value]bool)); !ok || root != allocs[0] {
+		t.Fatalf("index root = (%v, %v), want first allocation", root, ok)
+	}
+	if _, ok := localPointerRoot(nil, make(map[ssa.Value]bool)); ok {
+		t.Fatal("nil pointer root should fail closed")
+	}
+	if !definitelyDistinctPointerRoots(allocs[0], allocs[1]) ||
+		definitelyDistinctPointerRoots(allocs[0], allocs[0]) ||
+		definitelyDistinctPointerRoots(&ssa.Parameter{}, allocs[0]) {
+		t.Fatal("distinct pointer-root classification is incorrect")
+	}
+	if !isSafeDerivedAddress(field0) || !isSafeDerivedAddress(index0) || isSafeDerivedAddress(allocs[0]) {
+		t.Fatal("safe derived-address classification is incorrect")
+	}
+
+	for _, instr := range []ssa.Instruction{
+		&ssa.Call{}, &ssa.Go{}, &ssa.Defer{}, &ssa.Send{}, &ssa.MapUpdate{}, &ssa.RunDefers{},
+		&ssa.UnOp{Op: token.ARROW},
+	} {
+		if !mayChangePointerMemory(instr) {
+			t.Fatalf("%T should stop a local memory proof", instr)
+		}
+	}
+	if mayChangePointerMemory(&ssa.Return{}) || mayChangePointerMemory(&ssa.UnOp{Op: token.MUL}) {
+		t.Fatal("pure instructions should not stop a local memory proof")
+	}
+	ret := &ssa.Return{}
+	block := &ssa.BasicBlock{Instrs: []ssa.Instruction{ret}}
+	if instructionIndex(block, ret) != 0 || instructionIndex(block, &ssa.Return{}) != -1 {
+		t.Fatal("instructionIndex returned an incorrect position")
+	}
+	if _, ok := localStoredValue(allocs[0], ret); ok || memoryUnchangedBetween(ret, ret, allocs[0]) {
+		t.Fatal("instructions without a block should fail closed")
+	}
+	if isKnownNonNilAt(&ssa.Parameter{}, ret) {
+		t.Fatal("unknown value at an instruction without a block should fail closed")
+	}
+}
+
 func TestCompileValueReceiverNilDerefKeepsDominance(t *testing.T) {
 	_, m := mustCompileLLPkgFromSrc(t, `
 	package foo
