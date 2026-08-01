@@ -91,3 +91,38 @@ func TestPackageSummaryCapturesLinkerFacts(t *testing.T) {
 		t.Fatalf("cache summary round trip = %#v, want %#v", loaded, summary)
 	}
 }
+
+func TestPackageSummaryEmptyInputs(t *testing.T) {
+	if got := summarizePackage(nil); got != nil {
+		t.Fatalf("summarizePackage(nil) = %#v", got)
+	}
+	var summary *PackageSummary
+	if got := summary.metadata(); got != nil {
+		t.Fatalf("nil summary metadata = %#v", got)
+	}
+	if got := summaryFromMetadata(nil, nil); got != nil {
+		t.Fatalf("summaryFromMetadata(nil, nil) = %#v", got)
+	}
+	if got := linkedPackageGlobals(nil); got != nil {
+		t.Fatalf("linkedPackageGlobals(nil) = %#v", got)
+	}
+	if got := linkedPackageGlobals([]*PackageSummary{nil}); len(got) != 0 {
+		t.Fatalf("linkedPackageGlobals([nil]) = %#v", got)
+	}
+	if got := collectFuncInfoSummaries([]*PackageSummary{nil, {FuncInfo: []funcInfoRecord{{}}}}); got != nil {
+		t.Fatalf("collectFuncInfoSummaries(empty) = %#v", got)
+	}
+	if got := collectPCLineInfoSummaries([]*PackageSummary{nil, {PCLineInfo: []pcLineRecord{{}}}}); len(got) != 0 {
+		t.Fatalf("collectPCLineInfoSummaries(empty) = %#v", got)
+	}
+	if got := collectFuncInfoStubRecordsSummaries([]*PackageSummary{nil}, nil); got != nil {
+		t.Fatalf("collectFuncInfoStubRecordsSummaries(nil) = %#v", got)
+	}
+	if got := collectFuncInfoStubRecordsSummaries([]*PackageSummary{nil}, []funcInfoRecord{{symbol: "target"}}); len(got) != 0 {
+		t.Fatalf("collectFuncInfoStubRecordsSummaries([nil]) = %#v", got)
+	}
+	sharedCtx := &context{buildConf: &Config{BuildMode: BuildModeCShared}}
+	if got := cSharedExportArgsSummaries(sharedCtx, []*PackageSummary{nil}); len(got) != 0 {
+		t.Fatalf("cSharedExportArgsSummaries([nil]) = %#v", got)
+	}
+}

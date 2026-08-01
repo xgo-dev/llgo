@@ -171,6 +171,42 @@ func TestDisabledPackageCacheSkipsLoadAndSave(t *testing.T) {
 	}
 }
 
+func TestTryLoadFromCacheRejectsMissingSummary(t *testing.T) {
+	t.Setenv(llgoBuildCache, "1")
+	td := t.TempDir()
+	oldFunc := cacheRootFunc
+	cacheRootFunc = func() string { return td }
+	defer func() { cacheRootFunc = oldFunc }()
+
+	ctx := &context{
+		buildConf: &Config{Goos: "linux", Goarch: "amd64"},
+		crossCompile: crosscompile.Export{
+			LLVMTarget: "x86_64-unknown-linux-gnu",
+		},
+	}
+	pkg := &aPackage{Package: &packages.Package{
+		ID:      "example.com/no-summary",
+		PkgPath: "example.com/no-summary",
+		Name:    "no-summary",
+	}, Fingerprint: "missing-summary"}
+	paths := ctx.ensureCacheManager().PackagePaths(ctx.targetTriple(), pkg.PkgPath, pkg.Fingerprint)
+	if err := ctx.cacheManager.EnsureDir(paths); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.Archive, []byte("archive"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := newManifestBuilder()
+	manifest.env.Goos = "linux"
+	manifest.pkg.PkgPath = pkg.PkgPath
+	if err := writeManifest(paths.Manifest, manifest.Build()); err != nil {
+		t.Fatal(err)
+	}
+	if ctx.tryLoadFromCache(pkg) {
+		t.Fatal("tryLoadFromCache accepted manifest without package summary")
+	}
+}
+
 func TestCollectFingerprintDisablesCycles(t *testing.T) {
 	pkg := &aPackage{Package: &packages.Package{ID: "example.com/cycle", PkgPath: "example.com/cycle"}}
 	ctx := &context{fingerprinting: map[string]bool{pkg.ID: true}}
