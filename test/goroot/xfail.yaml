@@ -3527,10 +3527,6 @@ xfails:
     reason: llgo does not preserve Go assembler return-jump ABI behavior
   - version: go1.26
     directive: rundir
-    case: fixedbugs/issue24693.go
-    reason: llgo constructs cross-package itabs incorrectly for unexported interface methods
-  - version: go1.26
-    directive: rundir
     case: fixedbugs/issue18911.go
     reason: llgo interface-conversion diagnostics omit the same-looking types from different packages detail
   - version: go1.26

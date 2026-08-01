@@ -1901,7 +1901,8 @@ func TestInterfaceHelpers(t *testing.T) {
 	rawIface := types.NewInterfaceType([]*types.Func{rawMeth}, nil)
 	rawIface.Complete()
 
-	if got := iMethodOf(rawIface, "missing"); got != -1 {
+	missingMethod := types.NewFunc(0, nil, "missing", rawSig)
+	if got := iMethodOf(rawIface, missingMethod); got != -1 {
 		t.Fatalf("iMethodOf missing: got %d", got)
 	}
 

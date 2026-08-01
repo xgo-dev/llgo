@@ -50,12 +50,12 @@ func (b Builder) unsafeInterface(rawIntf *types.Interface, t Expr, data llvm.Val
 	return b.unsafeIface(itab.impl, data)
 }
 
-func iMethodOf(rawIntf *types.Interface, name string) int {
+func iMethodOf(rawIntf *types.Interface, method *types.Func) int {
+	id := types.Id(method.Pkg(), method.Name())
 	n := rawIntf.NumMethods()
 	for i := 0; i < n; i++ {
 		m := rawIntf.Method(i)
-		if m.Name() == name {
-			// TODO(xsw): check signature
+		if types.Id(m.Pkg(), m.Name()) == id {
 			return i
 		}
 	}
@@ -81,7 +81,7 @@ func (b Builder) Imethod(intf Expr, method *types.Func) Expr {
 		}
 	}
 	tclosure := prog.Type(sig, InGo)
-	i := iMethodOf(rawIntf, method.Name())
+	i := iMethodOf(rawIntf, method)
 	b.recordUseIfaceMethod(rawIntf, i)
 	data := b.InlineCall(b.Pkg.rtFunc("IfacePtrData"), intf)
 	var fn Expr

@@ -477,6 +477,11 @@ func funcName(pkg *types.Package, fn *ssa.Function, org bool) string {
 	} else {
 		fnName = fn.Name()
 	}
+	if recv != nil {
+		if method, ok := fn.Object().(*types.Func); ok {
+			fnName = llssa.MethodSymbolName(pkg, method, fnName)
+		}
+	}
 	return llssa.FuncName(pkg, fnName, recv, org)
 }
 
