@@ -501,6 +501,8 @@ func (b Builder) abiUncommonMethods(t types.Type, methods []*types.Selection) ll
 		fullName := abiMethodName(obj)
 		name := b.Str(fullName).impl
 		mSig := m.Type().(*types.Signature)
+		// funcName uses this same receiver package for the emitted wrapper
+		// definition; MethodSymbolName must see identical inputs here.
 		mSymbolName := MethodSymbolName(pkg, obj, mName)
 		var tfn, ifn llvm.Value
 		tfnFn := b.abiMethodFunc(anonymous, pkg, mSymbolName, mSig)

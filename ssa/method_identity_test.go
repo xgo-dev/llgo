@@ -23,6 +23,8 @@ import (
 	"go/token"
 	"go/types"
 	"testing"
+
+	"github.com/goplus/llgo/ssa/abi"
 )
 
 func TestMethodSymbolNamePreservesUnexportedPackageIdentity(t *testing.T) {
@@ -46,6 +48,17 @@ func TestMethodSymbolNamePreservesUnexportedPackageIdentity(t *testing.T) {
 		if got := MethodSymbolName(pkgB, tt.method, tt.name); got != tt.want {
 			t.Errorf("MethodSymbolName(%v, %q) = %q, want %q", tt.method, tt.name, got, tt.want)
 		}
+	}
+}
+
+func TestMethodSymbolNameNormalizesPatchedPackageIdentity(t *testing.T) {
+	original := types.NewPackage("runtime", "runtime")
+	patched := types.NewPackage(abi.PatchPathPrefix+"runtime", "runtime")
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	hidden := types.NewFunc(token.NoPos, original, "m", sig)
+
+	if got := MethodSymbolName(patched, hidden, hidden.Name()); got != "m" {
+		t.Fatalf("MethodSymbolName(patched runtime, runtime.m) = %q, want %q", got, "m")
 	}
 }
 

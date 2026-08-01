@@ -672,6 +672,8 @@ func FuncName(pkg *types.Package, name string, recv *types.Var, org bool) string
 // MethodSymbolName qualifies an unexported method name when its declaring
 // package differs from the receiver package. Promoted methods need this extra
 // identity component to avoid colliding with same-named receiver methods.
+// Package identity intentionally uses PathOf rather than Package.Path: patched
+// runtime packages and their original counterparts must name the same symbol.
 func MethodSymbolName(receiverPkg *types.Package, method *types.Func, name string) string {
 	if receiverPkg == nil || method == nil || method.Exported() || method.Pkg() == nil ||
 		PathOf(receiverPkg) == PathOf(method.Pkg()) {
