@@ -57,8 +57,16 @@ jobs:
 
       - name: Run GOROOT runner
         run: |
+          min_swap_free_mib=512
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            # macOS manages swap dynamically; a low instantaneous free value
+            # does not mean the runner cannot make forward progress.
+            min_swap_free_mib=0
+          fi
           bash dev/test_goroot.sh -- \
             -directive-mode ci \
+            -max-rss-mib 5120 \
+            -min-swap-free-mib "$min_swap_free_mib" \
             -progress 60s \
             -shard-index "${{ matrix.shard-index }}" \
             -shard-total "4"

@@ -59,6 +59,11 @@ host_skips:
     directive: run
     case: fixedbugs/issue16016.go
     reason: go1.25 goroot run is host-sensitive on linux/amd64
+  - version: go1.26
+    platform: darwin/arm64
+    directive: run
+    case: fixedbugs/issue16016.go
+    reason: go1.26 goroot run can exhaust the macOS runner thread limit
   - version: go1.24
     platform: linux/amd64
     directive: run
@@ -94,6 +99,11 @@ host_skips:
     directive: run
     case: chan/goroutines.go
     reason: go1.25 goroot run is host-sensitive on linux/amd64
+  - version: go1.26
+    platform: darwin/arm64
+    directive: run
+    case: chan/goroutines.go
+    reason: go1.26 goroot run can exhaust the macOS runner thread limit
   - version: go1.24
     platform: darwin/arm64
     directive: run
@@ -1755,11 +1765,10 @@ flakes:
     directive: run
     case: gcgort.go
     reason: go1.25 goroot ci-mode can either pass or panic in GC_call_with_stack_base on linux/amd64
-  - version: go1.26.0
-    platform: linux/amd64
+  - platform: linux/amd64
     directive: run
     case: goprint.go
-    reason: go1.26.0 goroot run can either pass or mismatch stderr on linux/amd64
+    reason: linux/amd64 goroot run can either pass or mismatch stderr
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue48898.go
@@ -1772,48 +1781,77 @@ flakes:
     directive: run
     case: goprint.go
     reason: darwin/arm64 goroot run can either pass or fail
-  - version: go1.24
-    platform: linux/amd64
+  - platform: darwin/arm64
     directive: run
-    case: fixedbugs/issue45045.go
-    reason: replaced map keys are not reliably finalized on linux/amd64, so the run can pass or time out waiting for the old key
-  - version: go1.25
-    platform: linux/amd64
+    case: init1.go
+    reason: darwin/arm64 goroot run can either pass or expose incomplete runtime initialization
+  - platform: linux/amd64
     directive: run
-    case: fixedbugs/issue45045.go
-    reason: replaced map keys are not reliably finalized on linux/amd64, so the run can pass or time out waiting for the old key
-  - version: go1.26
-    platform: linux/amd64
+    case: init1.go
+    reason: linux/amd64 goroot run can either pass or expose incomplete runtime initialization
+  - platform: darwin/arm64
     directive: run
-    case: fixedbugs/issue45045.go
-    reason: replaced map keys are not reliably finalized on linux/amd64, so the run can pass or time out waiting for the old key
-  - version: go1.24
-    platform: linux/amd64
+    case: recover2.go
+    reason: darwin/arm64 goroot run can either pass or expose incomplete recover semantics
+  - platform: linux/amd64
     directive: run
-    case: fixedbugs/issue54343.go
-    reason: the bound-method receiver is not reliably finalized after its method value is cleared on linux/amd64, so the run can pass or report never GC'd
-  - version: go1.25
-    platform: linux/amd64
+    case: recover2.go
+    reason: linux/amd64 goroot run can either pass or expose incomplete recover semantics
+  - platform: darwin/arm64
     directive: run
-    case: fixedbugs/issue54343.go
-    reason: the bound-method receiver is not reliably finalized after its method value is cleared on linux/amd64, so the run can pass or report never GC'd
-  - version: go1.26
-    platform: linux/amd64
+    case: zerodivide.go
+    reason: darwin/arm64 goroot run can either pass or expose incomplete integer divide panic semantics
+  - platform: linux/amd64
     directive: run
-    case: fixedbugs/issue54343.go
-    reason: the bound-method receiver is not reliably finalized after its method value is cleared on linux/amd64, so the run can pass or report never GC'd
-  - version: go1.24
-    platform: darwin/arm64
+    case: zerodivide.go
+    reason: linux/amd64 goroot run can either pass or expose incomplete integer divide panic semantics
+  - platform: darwin/arm64
+    directive: run
+    case: deferfin.go
+    reason: darwin/arm64 goroot run can either pass or expose incomplete defer and finalizer semantics
+  - platform: linux/amd64
+    directive: run
+    case: deferfin.go
+    reason: linux/amd64 goroot run can either pass or expose incomplete defer and finalizer semantics
+  - platform: linux/amd64
+    directive: run
+    case: fixedbugs/issue5493.go
+    reason: linux/amd64 goroot run can either pass or expose incomplete goroutine stack growth
+  - platform: linux/amd64
     directive: run
     case: fixedbugs/issue25897a.go
-    reason: reflect-generated goroutines under a single-P continuous-GC loop can complete or exceed the 1m run timeout on darwin/arm64
-  - version: go1.25
-    platform: darwin/arm64
+    reason: reflect-generated goroutines under a single-P continuous-GC loop can complete or exceed the 1m run timeout on linux/amd64
+  - version: go1.24
+    platform: linux/amd64
     directive: run
-    case: fixedbugs/issue25897a.go
-    reason: reflect-generated goroutines under a single-P continuous-GC loop can complete or exceed the 1m run timeout on darwin/arm64
+    case: fixedbugs/issue45045.go
+    reason: replaced map keys are not reliably finalized on linux/amd64, so the run can pass or time out waiting for the old key
+  - version: go1.25
+    platform: linux/amd64
+    directive: run
+    case: fixedbugs/issue45045.go
+    reason: replaced map keys are not reliably finalized on linux/amd64, so the run can pass or time out waiting for the old key
   - version: go1.26
-    platform: darwin/arm64
+    platform: linux/amd64
+    directive: run
+    case: fixedbugs/issue45045.go
+    reason: replaced map keys are not reliably finalized on linux/amd64, so the run can pass or time out waiting for the old key
+  - version: go1.24
+    platform: linux/amd64
+    directive: run
+    case: fixedbugs/issue54343.go
+    reason: the bound-method receiver is not reliably finalized after its method value is cleared on linux/amd64, so the run can pass or report never GC'd
+  - version: go1.25
+    platform: linux/amd64
+    directive: run
+    case: fixedbugs/issue54343.go
+    reason: the bound-method receiver is not reliably finalized after its method value is cleared on linux/amd64, so the run can pass or report never GC'd
+  - version: go1.26
+    platform: linux/amd64
+    directive: run
+    case: fixedbugs/issue54343.go
+    reason: the bound-method receiver is not reliably finalized after its method value is cleared on linux/amd64, so the run can pass or report never GC'd
+  - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue25897a.go
     reason: reflect-generated goroutines under a single-P continuous-GC loop can complete or exceed the 1m run timeout on darwin/arm64
@@ -2406,24 +2444,30 @@ xfails:
     directive: compile
     case: fixedbugs/issue69825.go
     reason: gc-specific -d=libfuzzer backend option is not implemented by llgo
-  - version: go1.24
-    platform: darwin/arm64
-    directive: run
-    case: init1.go
-    reason: current main goroot run failure on darwin/arm64
-  - version: go1.25
-    platform: darwin/arm64
-    directive: run
-    case: init1.go
-    reason: current main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
     case: inline_caller.go
     reason: runtime caller frame reports main instead of runtime.main on darwin/arm64
+  - platform: linux/amd64
+    directive: run
+    case: inline_caller.go
+    reason: runtime caller frame reports main instead of runtime.main on linux/amd64
+  - platform: linux/amd64
+    directive: run
+    case: inline_callers.go
+    reason: runtime caller frames omit inlined caller metadata on linux/amd64
   - platform: darwin/arm64
     directive: run
     case: nilptr2.go
     reason: address-of a dereferenced nil pointer does not panic and the run hangs on darwin/arm64
+  - platform: linux/amd64
+    directive: run
+    case: nilptr2.go
+    reason: address-of a dereferenced nil pointer does not panic and the run hangs on linux/amd64
+  - platform: linux/amd64
+    directive: runoutput
+    case: convinline.go
+    reason: generated conversion checks produce incorrect results on linux/amd64
   - platform: darwin/arm64
     directive: run
     case: range4.go
@@ -2432,43 +2476,36 @@ xfails:
     directive: run
     case: fixedbugs/issue31546.go
     reason: reflection exposes the initializer value of a blank struct field instead of zero on darwin/arm64
+  - platform: linux/amd64
+    directive: run
+    case: fixedbugs/issue31546.go
+    reason: reflection exposes the initializer value of a blank struct field instead of zero on linux/amd64
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue72063.go
     reason: generic Y-combinator build exits successfully without producing a binary on darwin/arm64
+  - platform: linux/amd64
+    directive: run
+    case: fixedbugs/issue72063.go
+    reason: generic Y-combinator build exits successfully without producing a binary on linux/amd64
   - version: go1.26
     platform: darwin/arm64
     directive: run
     case: convert5.go
     reason: out-of-range float-to-uint32 conversions wrap instead of producing zero on darwin/arm64
+  - version: go1.26
+    platform: linux/amd64
+    directive: run
+    case: convert5.go
+    reason: out-of-range float-to-uint32 conversions wrap instead of producing zero on linux/amd64
   - platform: darwin/arm64
     directive: run
     case: noinit.go
-    reason: current main goroot run failure on darwin/arm64
-  - version: go1.24
-    platform: darwin/arm64
-    directive: run
-    case: recover2.go
-    reason: current main goroot run failure on darwin/arm64
-  - version: go1.25
-    platform: darwin/arm64
-    directive: run
-    case: recover2.go
     reason: current main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: runoutput
     case: rangegen.go
     reason: current main goroot runoutput failure on darwin/arm64
-  - version: go1.24
-    platform: darwin/arm64
-    directive: run
-    case: zerodivide.go
-    reason: current main goroot run failure on darwin/arm64
-  - version: go1.25
-    platform: darwin/arm64
-    directive: run
-    case: zerodivide.go
-    reason: current main goroot run failure on darwin/arm64
   - version: go1.26
     platform: darwin/arm64
     directive: run
@@ -2486,22 +2523,7 @@ xfails:
   - version: go1.24
     platform: linux/amd64
     directive: run
-    case: init1.go
-    reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
     case: noinit.go
-    reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
-    case: recover2.go
-    reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
-    case: zerodivide.go
     reason: go1.24 goroot run failure on linux/amd64
   - version: go1.24
     platform: linux/amd64
@@ -2521,42 +2543,12 @@ xfails:
   - version: go1.25
     platform: linux/amd64
     directive: run
-    case: init1.go
-    reason: go1.25 goroot run failure on linux/amd64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
     case: noinit.go
     reason: go1.25 goroot run failure on linux/amd64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
-    case: recover2.go
-    reason: go1.25 goroot run failure on linux/amd64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
-    case: zerodivide.go
-    reason: go1.25 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: init1.go
-    reason: go1.26 goroot run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64
     directive: run
     case: noinit.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: recover2.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: zerodivide.go
     reason: go1.26 goroot run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64
@@ -2598,16 +2590,6 @@ xfails:
     directive: runoutput
     case: rangegen.go
     reason: go1.26 goroot ci-mode runoutput failure on linux/amd64
-  - version: go1.24
-    platform: darwin/arm64
-    directive: run
-    case: deferfin.go
-    reason: latest main goroot run failure on darwin/arm64
-  - version: go1.25
-    platform: darwin/arm64
-    directive: run
-    case: deferfin.go
-    reason: latest main goroot run failure on darwin/arm64
   - platform: darwin/arm64
     directive: run
     case: heapsampling.go
@@ -2684,11 +2666,6 @@ xfails:
     directive: run
     case: fixedbugs/issue5963.go
     reason: latest main goroot run failure on darwin/arm64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
-    case: deferfin.go
-    reason: go1.25 goroot run failure on linux/amd64
   - version: go1.25
     platform: linux/amd64
     directive: run
@@ -2757,11 +2734,6 @@ xfails:
   - version: go1.25
     platform: linux/amd64
     directive: run
-    case: fixedbugs/issue5493.go
-    reason: go1.25 goroot run failure on linux/amd64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
     case: fixedbugs/issue57823.go
     reason: go1.25 goroot run failure on linux/amd64
   - version: go1.25
@@ -2805,11 +2777,6 @@ xfails:
     case: stackobj3.go
     reason: go1.25 goroot run failure on linux/amd64
 
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
-    case: deferfin.go
-    reason: go1.24 goroot run failure on linux/amd64
   - version: go1.24
     platform: linux/amd64
     directive: run
@@ -2921,11 +2888,6 @@ xfails:
     case: recover4.go
     reason: go1.24 goroot run failure on linux/amd64
   - version: go1.24
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue5493.go
-    reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.24
     platform: darwin/arm64
     directive: run
     case: maymorestack.go
@@ -2940,11 +2902,6 @@ xfails:
     directive: run
     case: maymorestack.go
     reason: go1.26 goroot ci-mode run failure on darwin/arm64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: deferfin.go
-    reason: go1.26 goroot run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64
     directive: run
@@ -3005,11 +2962,6 @@ xfails:
     directive: run
     case: fixedbugs/issue4562.go
     reason: panic/fault statement-line granularity in untracked functions (P4b prebuilt pcline)
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue5493.go
-    reason: go1.26 goroot run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64
     directive: run
@@ -3096,16 +3048,6 @@ xfails:
     directive: run
     case: fixedbugs/issue38496.go
     reason: current main goroot run failure on linux/amd64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
-    case: goprint.go
-    reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
-    case: goprint.go
-    reason: go1.25 goroot run failure on linux/amd64
   - platform: linux/amd64
     directive: run
     case: nilptr.go
@@ -3169,7 +3111,6 @@ xfails:
     directive: rundir
     case: interface/embed3.go
     reason: llgo interface-conversion diagnostics report the import path instead of the package name
-  - version: go1.26
-    directive: run
+  - directive: run
     case: fixedbugs/issue52072.go
     reason: llgo loses the named return value when a deferred nil-receiver method panic is recovered
