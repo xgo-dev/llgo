@@ -9,7 +9,7 @@ source_filename = "dst"
 %"github.com/goplus/llgo/runtime/abi.Method" = type { %runtime.String, ptr, ptr, ptr }
 %"runtime/abi.PtrType" = type { %"runtime/abi.Type", ptr }
 %"runtime/abi.FuncType" = type { %"runtime/abi.Type", %runtime.Slice, %runtime.Slice }
-%Task = type {}
+%Task = type opaque
 
 @_llgo_main.Task = constant { %"runtime/abi.StructType", %"runtime/abi.UncommonType", [2 x %"github.com/goplus/llgo/runtime/abi.Method"] } { %"runtime/abi.StructType" { %"runtime/abi.Type" { i64 0, i64 0, i32 1, i8 13, i8 1, i8 1, i8 25, { ptr, ptr } { ptr @memequal0, ptr @_llgo_main.Task }, ptr null, %runtime.String { ptr @0, i64 9 }, ptr @"*_llgo_main.Task" }, %runtime.String zeroinitializer, %runtime.Slice zeroinitializer }, %"runtime/abi.UncommonType" { %runtime.String { ptr @1, i64 4 }, i16 2, i16 2, i32 24 }, [2 x %"github.com/goplus/llgo/runtime/abi.Method"] [%"github.com/goplus/llgo/runtime/abi.Method" { %runtime.String { ptr @2, i64 4 }, ptr @"_llgo_func$run", ptr @"github.com/goplus/llgo/runtime/internal/runtime.unreachableMethod", ptr @"github.com/goplus/llgo/runtime/internal/runtime.unreachableMethod" }, %"github.com/goplus/llgo/runtime/abi.Method" { %runtime.String { ptr @3, i64 3 }, ptr @"_llgo_func$run", ptr @"main.(*Task).Run", ptr @main.Task.Run }] }, align 8
 @0 = private constant [9 x i8] c"main.Task", align 1

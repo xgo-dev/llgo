@@ -21,8 +21,13 @@ func TestApplyDeadcodeDropOverridesWritesStrongTypeOverride(t *testing.T) {
 			Goarch:    "amd64",
 		},
 	}
+	defer ctx.prog.Dispose()
 
-	srcPkg := ctx.prog.NewPackage("pkg", "pkg")
+	// Isolated package workers and the synthetic entry module deliberately use
+	// different LLVM contexts. Keep this test faithful to that production path.
+	srcProg := llssa.NewProgram(nil)
+	defer srcProg.Dispose()
+	srcPkg := srcProg.NewPackage("pkg", "pkg")
 	addMethodTypeGlobal(srcPkg.Module(), "_llgo_pkg.T")
 	pkgMeta := buildDeadcodeMeta(t)
 	defer pkgMeta.Close()
@@ -49,6 +54,9 @@ func TestApplyDeadcodeDropOverridesWritesStrongTypeOverride(t *testing.T) {
 	}
 	if strings.Contains(out, `ptr @"pkg.(*T).N"`) || strings.Contains(out, `ptr @pkg.T.N`) {
 		t.Fatalf("dead method slot still references N functions:\n%s", out)
+	}
+	if err := llvm.VerifyModule(entryPkg.LPkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("cross-context strong type override produced invalid entry module: %v\n%s", err, out)
 	}
 }
 
