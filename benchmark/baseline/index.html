@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Benchmark history</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="styles.css" />
+    <script
+      defer
+      src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"
+    ></script>
+    <script defer src="app.js"></script>
+  </head>
+  <body>
+    <header class="page-header">
+      <p>Benchmark data</p>
+      <h1 id="title">Benchmark history</h1>
+      <a id="repository" rel="noreferrer">Source repository</a>
+    </header>
+    <main>
+      <section class="controls" aria-label="Benchmark history">
+        <nav id="kind-tabs" aria-label="Series kinds"></nav>
+        <label>Series<select id="series"></select></label>
+        <label>Platform<select id="platform"></select></label>
+      </section>
+      <section class="series-header">
+        <div>
+          <p id="series-kind"></p>
+          <h2 id="series-title"></h2>
+        </div>
+        <div class="series-meta">
+          <a id="commit" rel="noreferrer"></a>
+          <time id="updated-at"></time>
+        </div>
+      </section>
+      <nav
+        id="group-tabs"
+        class="group-tabs"
+        aria-label="Benchmark groups"
+      ></nav>
+      <section
+        id="charts"
+        class="charts"
+        aria-label="Benchmark charts"
+      ></section>
+      <p id="empty" hidden>
+        No benchmark data is available for this selection.
+      </p>
+    </main>
+  </body>
+</html>
