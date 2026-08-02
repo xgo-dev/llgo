@@ -626,6 +626,10 @@ func Build(inv Invocation) ([]Package, error) {
 	}
 	defer ctx.closePackageMetas()
 	defer ctx.closePackageArchiveBuffers()
+	// Isolated backends use independent LLVM contexts. Keep Programs needed by
+	// whole-program consumers alive through deadcode analysis and strong ABI type
+	// override emission, then release them on every normal, error, or panic path.
+	defer ctx.disposeRetainedBackendPrograms()
 
 	// default runtime globals must be registered before packages are built
 	addGlobalString(conf, "runtime.defaultGOROOT="+runtime.GOROOT(), nil)
@@ -743,6 +747,7 @@ func Build(inv Invocation) ([]Package, error) {
 			}
 		}
 	}
+	ctx.disposeRetainedBackendPrograms()
 
 	if mode == ModeTest && ctx.testFail {
 		mockable.Exit(1)
@@ -887,6 +892,7 @@ type context struct {
 	frontendOptions cl.Options
 
 	cTransformer *cabi.Transformer
+	retained     retainedBackendPrograms
 
 	testFail bool
 
@@ -908,6 +914,41 @@ type context struct {
 	// pclnExternal is populated while generating the synthetic main module
 	// and completed with final linked PCs by the post-link externalizer.
 	pclnExternal *pclnmap.Data
+}
+
+type retainedBackendProgram struct {
+	pkg  *aPackage
+	prog llssa.Program
+}
+
+// retainedBackendPrograms owns Programs transferred from successful isolated
+// workers. Workers may finish concurrently; disposal happens only after the
+// coordinator has joined them and completed whole-program consumers.
+type retainedBackendPrograms struct {
+	mu       sync.Mutex
+	programs []retainedBackendProgram
+}
+
+func (c *context) retainBackendProgram(pkg *aPackage, prog llssa.Program) {
+	c.retained.mu.Lock()
+	c.retained.programs = append(c.retained.programs, retainedBackendProgram{pkg: pkg, prog: prog})
+	c.retained.mu.Unlock()
+}
+
+func (c *context) disposeRetainedBackendPrograms() {
+	c.retained.mu.Lock()
+	programs := c.retained.programs
+	c.retained.programs = nil
+	c.retained.mu.Unlock()
+
+	// Clear every package reference before destroying any LLVM context so no
+	// later observer can retain a dangling cross-context module.
+	for _, retained := range programs {
+		retained.pkg.LPkg = nil
+	}
+	for _, retained := range programs {
+		retained.prog.Dispose()
+	}
 }
 
 // closePackageMetas releases metadata mappings owned by this build. Metadata
