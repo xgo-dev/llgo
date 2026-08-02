@@ -216,6 +216,51 @@ func TestConcurrentInvocationsIsolateFrontendOptions(t *testing.T) {
 	}
 }
 
+func TestConcurrentDeadcodeBuildsUseIndependentWorkerContexts(t *testing.T) {
+	if !buildenv.Dev {
+		t.Skip("deadcode drop requires a development build")
+	}
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(repoRoot, "cl", "_testdrop", "direct_method")
+	t.Setenv("LLGO_ROOT", repoRoot)
+	t.Setenv(llgoBuildCache, "0")
+
+	type result struct {
+		output string
+		err    error
+	}
+	results := make(chan result, 2)
+	for i := range 2 {
+		output := filepath.Join(t.TempDir(), fmt.Sprintf("direct-method-%d", i))
+		conf := NewDefaultConf(ModeBuild)
+		conf.DeadcodeDrop = true
+		conf.PCLNMode = PCLNNone
+		conf.BuildParallelism = 2
+		conf.OutFile = output
+		go func() {
+			_, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: fixture})
+			results <- result{output: output, err: err}
+		}()
+	}
+
+	for range 2 {
+		got := <-results
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		data, err := exec.Command(got.output).CombinedOutput()
+		if err != nil {
+			t.Fatalf("run %s: %v\n%s", got.output, err, data)
+		}
+		if strings.TrimSpace(string(data)) != "42" {
+			t.Fatalf("run %s output = %q, want 42", got.output, data)
+		}
+	}
+}
+
 func TestResolveOutputsUsesInvocationDirectory(t *testing.T) {
 	dir := t.TempDir()
 	out := &OutFmtDetails{
