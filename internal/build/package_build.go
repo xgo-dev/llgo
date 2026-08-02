@@ -286,9 +286,14 @@ func (ctx *context) executeIsolatedPackage(task *packageBuildTask, verbose bool)
 	if err != nil {
 		return fmt.Errorf("create backend session for %s: %w", task.pkg.PkgPath, err)
 	}
-	defer session.prog.Dispose()
+	owned := true
+	defer func() {
+		if owned {
+			task.pkg.LPkg = nil
+			session.prog.Dispose()
+		}
+	}()
 	backendCtx := ctx.newBackendTask(session)
-	defer func() { task.pkg.LPkg = nil }()
 
 	if err := buildPkg(backendCtx, task.pkg, verbose); err != nil {
 		return err
@@ -309,6 +314,16 @@ func (ctx *context) executeIsolatedPackage(task *packageBuildTask, verbose bool)
 	}
 	if task.pkg.Summary == nil {
 		return fmt.Errorf("package %s produced no linker summary", task.pkg.PkgPath)
+	}
+	if ctx.buildConf != nil && ctx.buildConf.deadcodeDropEnabled() {
+		// Whole-program method analysis and strong ABI type overrides still read
+		// LPkg.Module and ExportFuncs. Transfer ownership to the coordinator until
+		// every link has completed; its deferred cleanup also covers errors/panics.
+		//
+		// TODO: move these remaining DCE facts into PackageSummary so package
+		// workers can always release their LLVM contexts immediately.
+		ctx.retainBackendProgram(task.pkg, session.prog)
+		owned = false
 	}
 	return nil
 }

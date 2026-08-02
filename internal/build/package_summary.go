@@ -26,7 +26,9 @@ import (
 
 // PackageSummary is the immutable, LLVM-free output one package contributes
 // to the final link. A backend can emit its object, capture this summary, and
-// release its Program and LLVM context before whole-program linking starts.
+// normally release its Program and LLVM context before whole-program linking.
+// Deadcode-drop builds temporarily retain isolated Programs because method DCE
+// still reads package modules and exports; they are released after all links.
 //
 // C archive/shared header declarations still consume LPkg and therefore stay
 // on the serial compatibility path.

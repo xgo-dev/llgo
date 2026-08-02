@@ -29,15 +29,25 @@ func TestEmitStrongTypeOverrides(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := llvm.NewContext()
-			defer ctx.Dispose()
+			srcCtx := llvm.NewContext()
+			defer srcCtx.Dispose()
+			dstCtx := llvm.NewContext()
+			defer dstCtx.Dispose()
 			dir := filepath.Join("testdata", tt.name)
-			src := parseModule(t, &ctx, filepath.Join(dir, "in.ll"))
+			src := parseModule(t, &srcCtx, filepath.Join(dir, "in.ll"))
 			defer src.Dispose()
-			dst := ctx.NewModule("dst")
+			dst := dstCtx.NewModule("dst")
 			defer dst.Dispose()
 
 			EmitStrongTypeOverrides(dst, []llvm.Module{src}, tt.liveSlots, true)
+			for global := dst.FirstGlobal(); !global.IsNil(); global = llvm.NextGlobal(global) {
+				if init := global.Initializer(); !init.IsNil() && global.GlobalValueType().C != init.Type().C {
+					t.Errorf("global %s type %s does not match initializer type %s", global.Name(), global.GlobalValueType(), init.Type())
+				}
+			}
+			if err := llvm.VerifyModule(dst, llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("cross-context override is invalid: %v\n%s", err, dst.String())
+			}
 			want, err := os.ReadFile(filepath.Join(dir, "expect.ll"))
 			if err != nil {
 				t.Fatal(err)
