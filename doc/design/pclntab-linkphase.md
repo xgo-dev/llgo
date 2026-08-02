@@ -40,8 +40,8 @@ linker-agnostic.
 
 1. **Parse** the linked binary's metadata sections (`debug/elf`,
    `debug/macho` from the Go stdlib — the tool runs on the host):
-   - `llgo_funcinfo_entry` / `__DATA,__llgo_fie`: `{pc, symbolID}` records.
-   - `llgo_funcinfo_stubsite` / `__DATA,__llgo_stub`: same layout.
+   - `llgo_funcinfo_entry` / `__LLGO,__llgo_fie`: `{pc, symbolID}` records.
+   - `llgo_funcinfo_stubsite` / `__LLGO,__llgo_stub`: same layout.
    - Zero records are skipped, as in the runtime today.
 2. **Dedup by symbolID**: LTO inline copies register the same symbolID at
    several PCs. The true entry is the record whose PC lies inside the text
@@ -55,13 +55,23 @@ linker-agnostic.
    faithful port of `cmd/link`'s algorithm that has been sitting unwired
    since #2012. Delta overflow is a hard error here, mirroring Go's linker;
    if it ever fires, fall back to leaving the prebuilt table absent.
-5. **Write back** into a reserved section:
-   - The main module already emits `__llgo_funcinfo_*` globals; add a
-     `__llgo_pclntab_prebuilt` global sized from the collected package data
-     (entry-record count is known at main-module emission time; LTO can only
-     shrink it after dedup) plus a header {magic, version, count, anchorOff}.
-   - The tool rewrites the section contents in place (same size or smaller;
-     unused tail is zeroed) and flips the header magic to "valid".
+5. **Write back and compact** the carrier:
+   - The compact table replaces the prefix of `llgo_funcinfo_entry` (or spills
+     into the stub carrier) and flips the header magic to "valid".
+   - Mach-O puts entry/stub in a dedicated `__LLGO` segment. ELF links them
+     immediately before `.bss`, at the file-backed tail of the final writable `PT_LOAD`.
+     PC-line sites remain outside this disposable range.
+   - ELF compaction rejects an image with a program segment after the carrier;
+     only non-loaded sections and the section-header table may be shifted.
+   - After fixing Mach-O chained pointers, section sizes, load commands,
+     segment offsets, ELF program/section headers, and link-edit offsets, the
+     tool removes the unused carrier suffix from the physical file. Virtual
+     addresses of program text/data do not move; the omitted tail is either
+     unused or zero-fill memory.
+   - Rewriting is transactional: construct and reopen the complete staged
+     image, re-sign an originally signed Mach-O, then atomically rename it.
+     An unfamiliar segment shape, overlapping relocation/fixup range, signing
+     failure, or verification failure leaves the original executable intact.
 
 ### ASLR
 

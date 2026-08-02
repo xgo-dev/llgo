@@ -1274,8 +1274,8 @@ func rewritePrebuiltFuncTab(ctx *context, out string, verbose bool) {
 		return
 	}
 	if verbose {
-		fmt.Fprintf(os.Stderr, "llgo: prebuilt functab: %d entries (%d LTO inline copies removed), %d buckets\n",
-			st.FtabEntries, st.InlineCopies, st.Buckets)
+		fmt.Fprintf(os.Stderr, "llgo: prebuilt functab: %d entries (%d LTO inline copies removed), %d buckets, %d file bytes removed\n",
+			st.FtabEntries, st.InlineCopies, st.Buckets, st.BytesRemoved)
 	}
 }
 
@@ -1516,6 +1516,12 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 
 	buildArgs := []string{"-o", app}
 	buildArgs = append(buildArgs, linkArgs...)
+	siteLayoutArgs, cleanupSiteLayout, err := funcInfoSiteLayoutArgs(ctx, app)
+	if err != nil {
+		return err
+	}
+	defer cleanupSiteLayout()
+	buildArgs = append(buildArgs, siteLayoutArgs...)
 	buildArgs = append(buildArgs, dwarfLinkerArgs(ctx.buildConf, &ctx.crossCompile)...)
 	ltoPluginFlags, err := ctx.buildConf.LTOPlugin.LinkerFlags(ctx.buildConf.Goos)
 	if err != nil {
@@ -1563,6 +1569,44 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 	cmd := ctx.linker()
 	cmd.Verbose = printCmds
 	return cmd.Link(buildArgs...)
+}
+
+// funcInfoSiteLayoutArgs places ELF entry/stub carriers immediately before
+// .bss, at the file-backed tail of the final writable PT_LOAD. pclnpost can
+// shorten p_filesz after replacing the carriers with the compact table without
+// moving any virtual address or pinning otherwise-dead functions. Mach-O gets
+// the same property from the dedicated __LLGO segment named at emission time.
+func funcInfoSiteLayoutArgs(ctx *context, outputPath string) ([]string, func(), error) {
+	cleanup := func() {}
+	if ctx == nil || ctx.buildConf == nil || ctx.buildConf.Goos != "linux" ||
+		ctx.buildConf.Target != "" || ctx.buildConf.BuildMode != BuildModeExe ||
+		!shouldEmitRuntimeSites(ctx) {
+		return nil, cleanup, nil
+	}
+	dir := filepath.Dir(outputPath)
+	f, err := os.CreateTemp(dir, ".llgo-funcinfo-layout-*.ld")
+	if err != nil {
+		return nil, cleanup, fmt.Errorf("create funcinfo linker script: %w", err)
+	}
+	name := f.Name()
+	cleanup = func() { _ = os.Remove(name) }
+	const script = `SECTIONS
+{
+  llgo_funcinfo_entry : { *(llgo_funcinfo_entry) }
+  llgo_funcinfo_stubsite : { *(llgo_funcinfo_stubsite) }
+}
+INSERT BEFORE .bss;
+`
+	if _, err := f.WriteString(script); err != nil {
+		_ = f.Close()
+		cleanup()
+		return nil, func() {}, fmt.Errorf("write funcinfo linker script: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return nil, func() {}, fmt.Errorf("close funcinfo linker script: %w", err)
+	}
+	return []string{"-Wl,-T," + name}, cleanup, nil
 }
 
 // cSharedExportArgs keeps //export functions and synthetic test entry points as

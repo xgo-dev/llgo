@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"os"
 	"reflect"
 	"sort"
@@ -435,6 +436,17 @@ func TestReplaceExternalBinaryErrorPaths(t *testing.T) {
 	dir := t.TempDir()
 	if err := replaceExternalBinary(dir, []byte("replacement"), false); err == nil {
 		t.Fatal("replaceExternalBinary replaced a directory")
+	}
+	path := dir + "/binary"
+	if err := os.WriteFile(path, []byte("original"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	wantErr := errors.New("staged verification failed")
+	if err := replaceBinary(path, []byte("replacement"), false, func(string) error { return wantErr }); !errors.Is(err, wantErr) {
+		t.Fatalf("replaceBinary verification error = %v", err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "original" {
+		t.Fatalf("failed transaction changed original: %q, %v", got, err)
 	}
 }
 

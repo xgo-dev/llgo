@@ -18,6 +18,7 @@ package pclnpost
 
 import (
 	"bytes"
+	"debug/macho"
 	"encoding/binary"
 	"os"
 	"path/filepath"
@@ -29,10 +30,14 @@ import (
 // __llgo_stub, plus LC_SYMTAB and an LC_DYLD_CHAINED_FIXUPS whose imports
 // table binds ordinal 1 to a local symbol.
 func buildMachO(t *testing.T, entry, stub []byte, syms []elfFn) string {
-	return buildMachOExternal(t, entry, stub, nil, nil, syms)
+	return buildMachOFixture(t, entry, stub, nil, nil, syms, true)
 }
 
 func buildMachOExternal(t *testing.T, entry, stub, pcLine, identity []byte, syms []elfFn) string {
+	return buildMachOFixture(t, entry, stub, pcLine, identity, syms, false)
+}
+
+func buildMachOFixture(t *testing.T, entry, stub, pcLine, identity []byte, syms []elfFn, isolateCarriers bool) string {
 	t.Helper()
 	const base = uint64(0x100000000)
 	text := make([]byte, 0x40000) // big enough that findfunctab buckets outgrow a tiny entry section
@@ -67,7 +72,7 @@ func buildMachOExternal(t *testing.T, entry, stub, pcLine, identity []byte, syms
 
 	// File layout (fixed offsets, one page apart).
 	const textOff = uint64(0x1000)
-	const entryOff = uint64(0x2000)
+	const entryOff = uint64(0x42000)
 	stubOff := entryOff + uint64(len(entry))
 	dataEnd := stubOff + uint64(len(stub))
 	pcLineOff := dataEnd
@@ -78,7 +83,8 @@ func buildMachOExternal(t *testing.T, entry, stub, pcLine, identity []byte, syms
 	if identity != nil {
 		dataEnd += uint64(len(identity))
 	}
-	symOff := (dataEnd + 0xF) &^ 0xF
+	carrierFileEnd := (dataEnd + 0x3fff) &^ 0x3fff
+	symOff := carrierFileEnd
 	fixOff := symOff + 0x800
 
 	// A fileless low segment mirrors __PAGEZERO in real executables. Image
@@ -87,9 +93,13 @@ func buildMachOExternal(t *testing.T, entry, stub, pcLine, identity []byte, syms
 	cmds = append(cmds, lc{segment("__TEXT", base, 0, textOff+uint64(len(text)), [][]byte{
 		sect("__text", "__TEXT", base+textOff, textOff, uint64(len(text))),
 	})})
+	carrierSegment := "__DATA"
+	if isolateCarriers {
+		carrierSegment = "__LLGO"
+	}
 	dataSections := [][]byte{
-		sect("__llgo_fie", "__DATA", base+entryOff, entryOff, uint64(len(entry))),
-		sect("__llgo_stub", "__DATA", base+stubOff, stubOff, uint64(len(stub))),
+		sect("__llgo_fie", carrierSegment, base+entryOff, entryOff, uint64(len(entry))),
+		sect("__llgo_stub", carrierSegment, base+stubOff, stubOff, uint64(len(stub))),
 	}
 	if pcLine != nil {
 		dataSections = append(dataSections, sect("__llgo_pcl", "__DATA", base+pcLineOff, pcLineOff, uint64(len(pcLine))))
@@ -97,7 +107,7 @@ func buildMachOExternal(t *testing.T, entry, stub, pcLine, identity []byte, syms
 	if identity != nil {
 		dataSections = append(dataSections, sect("__llgo_pid", "__DATA", base+identityOff, identityOff, uint64(len(identity))))
 	}
-	cmds = append(cmds, lc{segment("__DATA", base+entryOff, entryOff, dataEnd-entryOff, dataSections)})
+	cmds = append(cmds, lc{segment(carrierSegment, base+entryOff, entryOff, carrierFileEnd-entryOff, dataSections)})
 
 	// Symtab: nlist_64 entries + strtab.
 	strtab := []byte{0}
@@ -231,7 +241,7 @@ func TestLoadMachOFixture(t *testing.T) {
 	if info.format != "macho" {
 		t.Fatalf("format %s", info.format)
 	}
-	if info.textStart != base+0x1000 || info.entryVMAddr != base+0x2000 {
+	if info.textStart != base+0x1000 || info.entryVMAddr != base+0x42000 {
 		t.Fatalf("layout %#x %#x", info.textStart, info.entryVMAddr)
 	}
 	if len(info.bindTargets) != 2 || info.bindTargets[0] != 0 || info.bindTargets[1] != base+0x1000+fns[0].size {
@@ -262,7 +272,7 @@ func machoRewriteFixture(t *testing.T, entryPad, stubPad int) string {
 
 	// Symbol index table + pointer/count globals live in the entry section
 	// tail so readVM can reach them via the __llgo_fie section.
-	entryBase := base + 0x2000
+	entryBase := base + 0x42000
 	var idx []byte
 	type sie struct {
 		id uint64
@@ -303,13 +313,27 @@ func machoRewriteFixture(t *testing.T, entryPad, stubPad int) string {
 }
 
 func TestRewriteMachOInPlace(t *testing.T) {
-	path := machoRewriteFixture(t, 4096, 512)
+	path := machoRewriteFixture(t, 65536, 512)
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	st, err := Rewrite(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if st.Format != "macho" || st.FtabEntries != 3 {
 		t.Fatalf("stats %+v", st)
+	}
+	if st.BytesRemoved == 0 {
+		t.Fatalf("rewrite did not physically compact: %+v", st)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Size()-after.Size() != int64(st.BytesRemoved) {
+		t.Fatalf("physical shrink before=%d after=%d stats=%+v", before.Size(), after.Size(), st)
 	}
 	info, err := load(path)
 	if err != nil {
@@ -321,13 +345,27 @@ func TestRewriteMachOInPlace(t *testing.T) {
 }
 
 func TestRewriteMachOSpill(t *testing.T) {
-	path := machoRewriteFixture(t, 0, 8192)
+	path := machoRewriteFixture(t, 0, 65536)
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	st, err := Rewrite(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if st.FtabEntries != 3 {
 		t.Fatalf("stats %+v", st)
+	}
+	if st.BytesRemoved == 0 {
+		t.Fatalf("spill rewrite did not physically compact: %+v", st)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Size()-after.Size() != int64(st.BytesRemoved) {
+		t.Fatalf("physical spill shrink before=%d after=%d stats=%+v", before.Size(), after.Size(), st)
 	}
 	info, err := load(path)
 	if err != nil {
@@ -338,5 +376,58 @@ func TestRewriteMachOSpill(t *testing.T) {
 	}
 	if got := binary.LittleEndian.Uint64(info.stubSec[0:]); got != prebuiltMagic {
 		t.Fatalf("stub magic %#x", got)
+	}
+}
+
+func TestRewriteMachOUnsupportedLayoutPreservesFile(t *testing.T) {
+	path := machoRewriteFixture(t, 65536, 512)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := append([]byte("__LLGO"), make([]byte, 10)...)
+	i := bytes.Index(raw, marker)
+	if i < 0 {
+		t.Fatal("fixture has no __LLGO segment")
+	}
+	copy(raw[i:i+16], append([]byte("__DATA"), make([]byte, 10)...))
+	if err := os.WriteFile(path, raw, 0755); err != nil {
+		t.Fatal(err)
+	}
+	before := append([]byte(nil), raw...)
+	if _, err := Rewrite(path); err == nil {
+		t.Fatal("rewrite accepted a non-isolated carrier")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("failed rewrite modified the input file")
+	}
+}
+
+func TestPatchMachOFileOffsetsRejectsTruncatedCommands(t *testing.T) {
+	for _, test := range []struct {
+		cmd  uint32
+		size uint32
+	}{
+		{0x2, 8}, {0xb, 8}, {0x22, 8}, {0x1d, 8},
+		{0x16, 8}, {0x31, 8}, {0x21, 8},
+	} {
+		raw := make([]byte, 128)
+		binary.LittleEndian.PutUint32(raw, uint32(macho.Magic64))
+		binary.LittleEndian.PutUint32(raw[16:], 1)
+		binary.LittleEndian.PutUint32(raw[32:], test.cmd)
+		binary.LittleEndian.PutUint32(raw[36:], test.size)
+		if _, err := parseMachOLayout(raw); err == nil {
+			t.Fatalf("command %#x size %#x was accepted", test.cmd, test.size)
+		}
+	}
+	raw := make([]byte, 36)
+	binary.LittleEndian.PutUint32(raw, uint32(macho.Magic64))
+	binary.LittleEndian.PutUint32(raw[16:], 1)
+	if _, err := parseMachOLayout(raw); err == nil {
+		t.Fatal("truncated command header was accepted")
 	}
 }

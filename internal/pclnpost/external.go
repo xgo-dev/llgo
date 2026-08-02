@@ -318,6 +318,13 @@ func DetachExternal(path string, identity [sha256.Size]byte) error {
 }
 
 func replaceExternalBinary(path string, raw []byte, sign bool) (err error) {
+	return replaceBinary(path, raw, sign, nil)
+}
+
+func replaceBinary(path string, raw []byte, sign bool, verify func(string) error) (err error) {
+	if sign && runtime.GOOS != "darwin" {
+		return fmt.Errorf("cannot safely replace a signed Mach-O on %s", runtime.GOOS)
+	}
 	st, err := os.Stat(path)
 	if err != nil {
 		return err
@@ -347,13 +354,30 @@ func replaceExternalBinary(path string, raw []byte, sign bool) (err error) {
 		return err
 	}
 	tmp = nil
-	if sign && runtime.GOOS == "darwin" {
+	if sign {
 		if output, err := exec.Command("codesign", "-f", "-s", "-", tmpPath).CombinedOutput(); err != nil {
 			return fmt.Errorf("codesign: %v: %s", err, output)
+		}
+		if signed, err := os.OpenFile(tmpPath, os.O_RDWR, 0); err != nil {
+			return err
+		} else if err := signed.Sync(); err != nil {
+			_ = signed.Close()
+			return err
+		} else if err := signed.Close(); err != nil {
+			return err
+		}
+	}
+	if verify != nil {
+		if err := verify(tmpPath); err != nil {
+			return fmt.Errorf("verify staged binary: %w", err)
 		}
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		return err
+	}
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
 	}
 	return nil
 }
