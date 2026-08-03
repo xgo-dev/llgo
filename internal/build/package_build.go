@@ -296,32 +296,21 @@ func (ctx *context) executeIsolatedPackage(task *packageBuildTask, verbose bool)
 		return err
 	}
 	if task.pkg.LPkg == nil {
-		if task.pkg.Summary == nil {
-			task.pkg.Summary = summarizePackage(task.pkg)
-		}
 		return nil
 	}
-	if !task.pkg.CacheHit {
-		if task.needsRuntimeSignals() {
-			task.pkg.setNeedRuntimeOrPyInit(task.pkg.LPkg.NeedRuntime, task.pkg.LPkg.NeedPyInit)
-		}
-		task.pkg.Summary = summarizePackage(task.pkg)
-	} else {
-		task.pkg.Summary.AbiTypes = session.prog.AbiTypes()
+	if task.needsRuntimeSignals() {
+		task.pkg.setNeedRuntimeOrPyInit(task.pkg.LPkg.NeedRuntime, task.pkg.LPkg.NeedPyInit)
 	}
-	if task.pkg.Summary == nil {
-		return fmt.Errorf("package %s produced no linker summary", task.pkg.PkgPath)
-	}
-	if ctx.buildConf != nil && ctx.buildConf.deadcodeDropEnabled() {
-		// Whole-program method analysis and strong ABI type overrides still read
-		// LPkg.Module and ExportFuncs. Transfer ownership to the coordinator until
-		// every link has completed; its deferred cleanup also covers errors/panics.
-		//
-		// TODO: move these remaining DCE facts into PackageSummary so package
-		// workers can always release their LLVM contexts immediately.
-		ctx.retainBackendProgram(task.pkg, session.prog)
-		owned = false
-	}
+	// Linking still consumes live package state: method tables, globals,
+	// funcinfo/PCLN, C exports, and DCE source modules. Cache hits intentionally
+	// follow the serial path: rebuild the frontend module, skip backend emission,
+	// then keep that module alive until every link has completed.
+	//
+	// A future PackageSummary can carry those facts and allow immediate worker
+	// teardown. Until then ownership moves to the coordinator on every success,
+	// not only when dead-code dropping is enabled.
+	ctx.retainBackendProgram(task.pkg, session.prog)
+	owned = false
 	return nil
 }
 
