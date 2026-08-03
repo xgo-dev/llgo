@@ -102,6 +102,63 @@ func TestXFailMatch(t *testing.T) {
 	}
 }
 
+func TestNotApplicableMatch(t *testing.T) {
+	cfg := notApplicableConfig{
+		Entries: []xfailEntry{{
+			Version:   "go1.26",
+			Directive: "errorcheck",
+			Case:      "writebarrier.go",
+			Reason:    "not applicable: this case checks gc write barriers; LLGo uses a collector without those barriers, so reproducing them is not an LLGo compatibility goal",
+		}},
+	}
+	tc := testCase{RelPath: "writebarrier.go", Directive: "errorcheck"}
+	match, reason := cfg.Match("go1.26.5", "linux/amd64", tc)
+	if !match {
+		t.Fatal("expected not-applicable match")
+	}
+	if reason != "not applicable: this case checks gc write barriers; LLGo uses a collector without those barriers, so reproducing them is not an LLGo compatibility goal" {
+		t.Fatalf("reason=%q, want not-applicable reason", reason)
+	}
+}
+
+func TestRepositoryExpectationsAreSeparated(t *testing.T) {
+	repo := repoRoot(t)
+	xfails := loadXFailConfig(t, repo, filepath.Join("test", "goroot", "xfail.yaml"))
+	notApplicable := loadNotApplicableConfig(t, repo, filepath.Join("test", "goroot", "notapplicable.yaml"))
+	if len(notApplicable.Entries) == 0 {
+		t.Fatal("not-applicable expectation file is empty")
+	}
+
+	type selector struct {
+		version   string
+		platform  string
+		directive string
+		casePath  string
+	}
+	xfailSelectors := make(map[selector]struct{}, len(xfails.Entries))
+	for _, entry := range xfails.Entries {
+		if strings.HasPrefix(entry.Reason, "not applicable:") {
+			t.Fatalf("xfail entry %q has a not-applicable reason", entry.Case)
+		}
+		xfailSelectors[selector{entry.Version, entry.Platform, entry.Directive, entry.Case}] = struct{}{}
+	}
+	for _, entry := range notApplicable.Entries {
+		if !strings.HasPrefix(entry.Reason, "not applicable:") {
+			t.Fatalf("not-applicable entry %q has reason %q without the shared prefix", entry.Case, entry.Reason)
+		}
+		if !strings.Contains(entry.Reason, "LLGo") {
+			t.Fatalf("not-applicable entry %q has reason %q without the LLGo design rationale", entry.Case, entry.Reason)
+		}
+		if !strings.Contains(entry.Reason, "compatibility goal") {
+			t.Fatalf("not-applicable entry %q has reason %q without explaining why support is not planned", entry.Case, entry.Reason)
+		}
+		key := selector{entry.Version, entry.Platform, entry.Directive, entry.Case}
+		if _, ok := xfailSelectors[key]; ok {
+			t.Fatalf("expectation selector appears in both files: %+v", key)
+		}
+	}
+}
+
 func TestFlakyMatch(t *testing.T) {
 	cfg := xfailConfig{
 		Flakes: []xfailEntry{{

@@ -18,7 +18,12 @@ Directive modes:
 `coverage` follows the upstream test runner's directive and compiler flag
 conventions. Compile-only and diagnostic cases are executed, not omitted from
 the coverage total. Known failures remain executed and are classified through
-`xfail.yaml`; only explicitly host-unsafe cases are skipped.
+`xfail.yaml`. Cases that exercise gc-specific or otherwise inapplicable
+behavior are classified separately through `notapplicable.yaml`, so the xfail
+count continues to represent remaining LLGo compatibility work. Only
+explicitly host-unsafe cases are skipped. Each not-applicable entry documents
+both the toolchain-specific mechanism under test and why the corresponding
+behavior is not an LLGo compatibility goal.
 
 Basic usage:
 
@@ -76,3 +81,4 @@ Useful flags:
 - `-min-swap-free-mib`: minimum free swap in MiB
 - `-memory-pressure-poll`: system memory and swap sampling interval
 - `-xfail`: xfail YAML file, relative to repo root by default
+- `-not-applicable`: not-applicable YAML file, relative to repo root by default

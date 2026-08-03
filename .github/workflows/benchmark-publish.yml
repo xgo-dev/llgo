@@ -18,9 +18,3 @@ jobs:
     with:
       run_id: ${{ github.event.workflow_run.id }}
       config_path: .github/llgo-benchmark.yml
-      data_repository: >-
-        ${{ vars.BENCHMARKS_REPOSITORY ||
-            format('{0}/llgo-benchmark-data', github.repository_owner) }}
-      data_dispatch_event: llgo-baseline-published
-    secrets:
-      data_token: ${{ secrets.BENCHMARK_DATA_TOKEN }}

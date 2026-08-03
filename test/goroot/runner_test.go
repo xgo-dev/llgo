@@ -33,31 +33,32 @@ import (
 )
 
 var (
-	flagGOROOT     = flag.String("goroot", os.Getenv("LLGO_GOROOT"), "Go toolchain root whose GOROOT/test sources should be used")
-	flagGoCmd      = flag.String("go", os.Getenv("LLGO_GO"), "go binary used as baseline (default: <goroot>/bin/go)")
-	flagLLGO       = flag.String("llgo", os.Getenv("LLGO_TEST_LLGO"), "llgo binary used for comparisons (default: build from current checkout)")
-	flagDirs       = flag.String("dirs", strings.Join(defaultGoRootTestDirs, ","), "comma-separated GOROOT/test subdirectories to scan")
-	flagCase       = flag.String("case", os.Getenv("LLGO_GOROOT_CASE"), "regexp selecting cases by relative path")
-	flagLimit      = flag.Int("limit", 0, "maximum number of matching cases to run")
-	flagShardI     = flag.Int("shard-index", 0, "0-based shard index used to partition matching cases")
-	flagShardN     = flag.Int("shard-total", 1, "number of shards used to partition matching cases")
-	flagKeep       = flag.Bool("keepwork", false, "keep temporary work directories for debugging")
-	flagDirMode    = flag.String("directive-mode", "legacy", "case discovery mode: legacy, ci, runlike, or coverage")
-	flagDirective  = flag.String("directives", "", "comma-separated directive filter within the selected mode")
-	flagXFail      = flag.String("xfail", filepath.Join("test", "goroot", "xfail.yaml"), "xfail configuration path relative to repo root")
-	flagBuildTO    = flag.Duration("build-timeout", 3*time.Minute, "timeout for each go/llgo build step; 0 disables the timeout")
-	flagRunTO      = flag.Duration("run-timeout", time.Minute, "timeout for the compiled program run step; 0 disables the timeout")
-	flagSlowBld    = flag.Duration("slow-build", 10*time.Second, "log build steps that exceed this duration; 0 disables slow-build logging")
-	flagSlowRun    = flag.Duration("slow-run", 5*time.Second, "log run steps that exceed this duration; 0 disables slow-run logging")
-	flagProgress   = flag.Duration("progress", 0, "log current GOROOT case progress at this interval; 0 disables progress logging")
-	flagListCases  = flag.Bool("list-cases", false, "list selected case counts without building or running llgo")
-	flagListPaths  = flag.Bool("list-case-paths", false, "list selected directive and case paths without building or running llgo")
-	flagMaxRSSMiB  = flag.Int64("max-rss-mib", 4096, "maximum RSS in MiB for each spawned process group; 0 disables the limit")
-	flagRSSWarnMiB = flag.Int64("rss-warn-mib", 1024, "log commands whose observed peak process-group RSS reaches this value; 0 disables warnings")
-	flagRSSPoll    = flag.Duration("rss-poll", 100*time.Millisecond, "process-group RSS sampling interval")
-	flagMinMemPct  = flag.Int("min-memory-free-percent", 15, "minimum system-wide free memory percentage required to start and continue a command; 0 disables the check")
-	flagMinSwapMiB = flag.Int64("min-swap-free-mib", 512, "minimum free swap in MiB required to start and continue a command; 0 disables the check")
-	flagMemPoll    = flag.Duration("memory-pressure-poll", time.Second, "system memory pressure sampling interval")
+	flagGOROOT        = flag.String("goroot", os.Getenv("LLGO_GOROOT"), "Go toolchain root whose GOROOT/test sources should be used")
+	flagGoCmd         = flag.String("go", os.Getenv("LLGO_GO"), "go binary used as baseline (default: <goroot>/bin/go)")
+	flagLLGO          = flag.String("llgo", os.Getenv("LLGO_TEST_LLGO"), "llgo binary used for comparisons (default: build from current checkout)")
+	flagDirs          = flag.String("dirs", strings.Join(defaultGoRootTestDirs, ","), "comma-separated GOROOT/test subdirectories to scan")
+	flagCase          = flag.String("case", os.Getenv("LLGO_GOROOT_CASE"), "regexp selecting cases by relative path")
+	flagLimit         = flag.Int("limit", 0, "maximum number of matching cases to run")
+	flagShardI        = flag.Int("shard-index", 0, "0-based shard index used to partition matching cases")
+	flagShardN        = flag.Int("shard-total", 1, "number of shards used to partition matching cases")
+	flagKeep          = flag.Bool("keepwork", false, "keep temporary work directories for debugging")
+	flagDirMode       = flag.String("directive-mode", "legacy", "case discovery mode: legacy, ci, runlike, or coverage")
+	flagDirective     = flag.String("directives", "", "comma-separated directive filter within the selected mode")
+	flagXFail         = flag.String("xfail", filepath.Join("test", "goroot", "xfail.yaml"), "xfail configuration path relative to repo root")
+	flagNotApplicable = flag.String("not-applicable", filepath.Join("test", "goroot", "notapplicable.yaml"), "not-applicable configuration path relative to repo root")
+	flagBuildTO       = flag.Duration("build-timeout", 3*time.Minute, "timeout for each go/llgo build step; 0 disables the timeout")
+	flagRunTO         = flag.Duration("run-timeout", time.Minute, "timeout for the compiled program run step; 0 disables the timeout")
+	flagSlowBld       = flag.Duration("slow-build", 10*time.Second, "log build steps that exceed this duration; 0 disables slow-build logging")
+	flagSlowRun       = flag.Duration("slow-run", 5*time.Second, "log run steps that exceed this duration; 0 disables slow-run logging")
+	flagProgress      = flag.Duration("progress", 0, "log current GOROOT case progress at this interval; 0 disables progress logging")
+	flagListCases     = flag.Bool("list-cases", false, "list selected case counts without building or running llgo")
+	flagListPaths     = flag.Bool("list-case-paths", false, "list selected directive and case paths without building or running llgo")
+	flagMaxRSSMiB     = flag.Int64("max-rss-mib", 4096, "maximum RSS in MiB for each spawned process group; 0 disables the limit")
+	flagRSSWarnMiB    = flag.Int64("rss-warn-mib", 1024, "log commands whose observed peak process-group RSS reaches this value; 0 disables warnings")
+	flagRSSPoll       = flag.Duration("rss-poll", 100*time.Millisecond, "process-group RSS sampling interval")
+	flagMinMemPct     = flag.Int("min-memory-free-percent", 15, "minimum system-wide free memory percentage required to start and continue a command; 0 disables the check")
+	flagMinSwapMiB    = flag.Int64("min-swap-free-mib", 512, "minimum free swap in MiB required to start and continue a command; 0 disables the check")
+	flagMemPoll       = flag.Duration("memory-pressure-poll", time.Second, "system memory pressure sampling interval")
 )
 
 var defaultGoRootTestDirs = []string{
@@ -97,6 +98,10 @@ type xfailConfig struct {
 	Flakes    []xfailEntry   `yaml:"flakes"`
 	HostSkips []xfailEntry   `yaml:"host_skips"`
 	Timeouts  []timeoutEntry `yaml:"timeouts"`
+}
+
+type notApplicableConfig struct {
+	Entries []xfailEntry `yaml:"not_applicable"`
 }
 
 type xfailEntry struct {
@@ -282,6 +287,7 @@ func TestGoRootRunCases(t *testing.T) {
 	}
 
 	xfails := loadXFailConfig(t, repoRoot, *flagXFail)
+	notApplicable := loadNotApplicableConfig(t, repoRoot, *flagNotApplicable)
 	caseFilter := compileCaseFilter(t, *flagCase)
 	mode := loadDirectiveMode(t, *flagDirMode)
 	mode = filterDirectiveMode(t, mode, *flagDirective)
@@ -345,13 +351,21 @@ func TestGoRootRunCases(t *testing.T) {
 			}
 			match, reason := xfails.Match(envInfo.GOVERSION, envInfo.GOOS+"/"+envInfo.GOARCH, tc)
 			flaky, flakyReason := xfails.MatchFlaky(envInfo.GOVERSION, envInfo.GOOS+"/"+envInfo.GOARCH, tc)
+			notApply, notApplyReason := notApplicable.Match(envInfo.GOVERSION, envInfo.GOOS+"/"+envInfo.GOARCH, tc)
+			if match && notApply {
+				t.Fatalf("case matches both xfail and not-applicable expectations: xfail=%s; not applicable=%s", reason, notApplyReason)
+			}
 			switch {
+			case err == nil && notApply:
+				t.Fatalf("unexpected success for not-applicable case: %s", notApplyReason)
 			case err == nil && match:
 				t.Fatalf("unexpected success for xfail case: %s", reason)
 			case err == nil && flaky:
 				t.Logf("flaky case passed: %s", flakyReason)
 			case err != nil && match:
 				t.Logf("expected failure: %s", reason)
+			case err != nil && notApply:
+				t.Logf("expected not-applicable failure: %s", notApplyReason)
 			case err != nil && flaky:
 				t.Logf("known flaky failure: %s", flakyReason)
 			case err != nil:
@@ -431,22 +445,34 @@ func buildLLGOBinary(t *testing.T, repoRoot, goCmd string) string {
 
 func loadXFailConfig(t *testing.T, repoRoot, relPath string) xfailConfig {
 	t.Helper()
+	var cfg xfailConfig
+	loadExpectationConfig(t, repoRoot, relPath, &cfg)
+	return cfg
+}
+
+func loadNotApplicableConfig(t *testing.T, repoRoot, relPath string) notApplicableConfig {
+	t.Helper()
+	var cfg notApplicableConfig
+	loadExpectationConfig(t, repoRoot, relPath, &cfg)
+	return cfg
+}
+
+func loadExpectationConfig(t *testing.T, repoRoot, relPath string, cfg any) {
+	t.Helper()
 	path := relPath
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(repoRoot, relPath)
 	}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return xfailConfig{}
+		return
 	}
 	if err != nil {
-		t.Fatalf("read xfail file %q: %v", path, err)
+		t.Fatalf("read expectation file %q: %v", path, err)
 	}
-	var cfg xfailConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("parse xfail file %q: %v", path, err)
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		t.Fatalf("parse expectation file %q: %v", path, err)
 	}
-	return cfg
 }
 
 func compileCaseFilter(t *testing.T, expr string) *regexp.Regexp {
@@ -2036,6 +2062,10 @@ func parseGoVersion(goVersion string) (int, int, bool) {
 }
 
 func (cfg xfailConfig) Match(goVersion, platform string, tc testCase) (bool, string) {
+	return matchEntries(cfg.Entries, goVersion, platform, tc)
+}
+
+func (cfg notApplicableConfig) Match(goVersion, platform string, tc testCase) (bool, string) {
 	return matchEntries(cfg.Entries, goVersion, platform, tc)
 }
 

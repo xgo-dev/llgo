@@ -1,0 +1,501 @@
+# GOROOT cases that validate gc-specific implementation details or other behavior
+# outside LLGo compatibility goals. They still run, but their failures are not
+# counted as remaining compatibility xfails. Every entry names the mechanism
+# under test and explains the LLGo design choice that puts it out of scope.
+not_applicable:
+  - version: go1.26
+    directive: errorcheck
+    case: escape_array.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_struct_param2.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: nilptr3.go
+    reason: "not applicable: this case asserts cmd/compile-specific nil-check elimination diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape6.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_struct_param1.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: nilcheck.go
+    reason: "not applicable: this case asserts cmd/compile-specific nil-check elimination diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue18331.go
+    reason: "not applicable: this case validates a gc-only standard-library pragma; LLGo does not use that cmd/compile pragma pipeline; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue41635.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue52193.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape5.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_slice.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: interface/assertinline.go
+    reason: "not applicable: this case asserts cmd/compile-specific type-assertion optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape4.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_selfassign.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue14999.go
+    reason: "not applicable: this case asserts gc runtime heap-allocation diagnostics; LLGo uses its own runtime and does not expose gc's private compiler diagnostics; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue27732a.go
+    reason: "not applicable: this case asserts cmd/compile-specific small-frame and optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape2n.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_runtime_atomic.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: abi/result_live.go
+    reason: "not applicable: this case asserts cmd/compile-specific liveness diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue21709.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue23521.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue18419.dir/test.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/bug388.go
+    reason: "not applicable: this case asserts gc runtime pseudo-type diagnostics; LLGo uses its own runtime and does not expose gc's private compiler diagnostics; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape2.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_reflect.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: sliceopt.go
+    reason: "not applicable: this case asserts cmd/compile-specific append and slice optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: writebarrier.go
+    reason: "not applicable: this case validates gc write-barrier insertion and elimination diagnostics; LLGo's BDWGC and tinygogc runtimes do not use Go GC write barriers, so reproducing those diagnostics is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue19743.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue27557.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue10700.dir/test.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_param.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue31573.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue4099.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue7921.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/notinheap3.go
+    reason: "not applicable: this case validates gc write-barrier elimination for cgo.Incomplete-based notinheap values; LLGo's runtimes do not use Go GC write barriers, so this gc heap optimization has no LLGo counterpart and is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_mutations.go
+    reason: "not applicable: this case asserts cmd/compile-specific escape-mutation and zerocopy diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/notinheap2.go
+    reason: "not applicable: this case asserts cmd/compile-specific notinheap allocation diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_map.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: runtime.go
+    reason: "not applicable: this case asserts gc runtime private-symbol compiler diagnostics; LLGo uses its own runtime and does not expose gc's private compiler diagnostics; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/notinheap.go
+    reason: "not applicable: this case asserts cmd/compile-specific notinheap allocation diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_make_non_const.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fuse.go
+    reason: "not applicable: this case asserts gc SSA late-fuse diagnostics; LLGo uses LLVM's optimization pipeline instead of gc SSA; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue17318.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue30898.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue39292.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue67329.go
+    reason: "not applicable: this case asserts cmd/compile-specific bounds-check elimination diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: devirtualization_with_type_assertions_interleaved.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m devirtualization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_level.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue12588.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue20780.go
+    reason: "not applicable: this case asserts cmd/compile-specific stack-frame size diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: bounds.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m bounds-check diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: devirtualization.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m devirtualization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_indir.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: live_uintptrkeepalive.go
+    reason: "not applicable: this case asserts cmd/compile-specific liveness and standard-package diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: uintptrescapes2.go
+    reason: "not applicable: this case asserts cmd/compile-specific escape and liveness diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue19168.go
+    reason: "not applicable: this case validates gc write-barrier recognition for reflect header pointer stores; LLGo's BDWGC and tinygogc runtimes do not use Go GC write barriers, so reproducing those diagnostics is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue75278.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: typeparam/pragma.go
+    reason: "not applicable: this case asserts cmd/compile-specific pragma optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: devirt.go
+    reason: "not applicable: this case asserts gc SSA devirtualization diagnostics; LLGo uses LLVM's optimization pipeline instead of gc SSA; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_iface_data.go
+    reason: "not applicable: this case asserts cmd/compile-specific escape-debug diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: live2.go
+    reason: "not applicable: this case asserts cmd/compile -live reports while disabling its write-barrier pass; LLGo delegates stack liveness to its LLVM backend and does not expose gc liveness reports, so matching them is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue12006.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue42944.go
+    reason: "not applicable: this case asserts cmd/compile-specific liveness diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: bloop.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: defererrcheck.go
+    reason: "not applicable: this case asserts cmd/compile-specific defer optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_iface.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: prove_popcount.go
+    reason: "not applicable: this case asserts gc SSA prove diagnostics; LLGo uses LLVM's optimization pipeline instead of gc SSA; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: typeparam/issue54497.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_hash_maphash.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: prove_invert_loop_with_unused_iterators.go
+    reason: "not applicable: this case asserts gc SSA prove diagnostics; LLGo uses LLVM's optimization pipeline instead of gc SSA; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue13799.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue24651b.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_goto.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: prove_constant_folding.go
+    reason: "not applicable: this case asserts gc SSA prove diagnostics; LLGo uses LLVM's optimization pipeline instead of gc SSA; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue16241_64.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue20250.go
+    reason: "not applicable: this case asserts cmd/compile-specific liveness diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue35518.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_field.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_unsafe.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: intrinsic_atomic.go
+    reason: "not applicable: this case asserts cmd/compile-specific intrinsic substitution diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: prove.go
+    reason: "not applicable: this case asserts gc SSA prove diagnostics; LLGo uses LLVM's optimization pipeline instead of gc SSA; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue13587.go
+    reason: "not applicable: this case validates gc write-barrier insertion for implicit stores to escaped result parameters; LLGo's BDWGC and tinygogc runtimes do not use Go GC write barriers, so reproducing that diagnostic is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue16241.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_closure.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_unique.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: inline_variadic.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m inlining diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: phiopt.go
+    reason: "not applicable: this case asserts gc SSA phi optimization diagnostics; LLGo uses LLVM's optimization pipeline instead of gc SSA; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: tighten.go
+    reason: "not applicable: this case asserts gc SSA tighten diagnostics; LLGo uses LLVM's optimization pipeline instead of gc SSA; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue35073b.go
+    reason: "not applicable: this case asserts cmd/compile-specific escape and checkptr diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue54159.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: internal/runtime/sys/inlinegcpc.go
+    reason: "not applicable: this case asserts gc runtime inlining diagnostics; LLGo uses its own runtime and does not expose gc's private compiler diagnostics; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_calls.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_sync_atomic.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: inline_sync.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m inlining diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: nowritebarrier.go
+    reason: "not applicable: this case validates gc runtime's private go:nowritebarrier directives; LLGo's BDWGC and tinygogc runtimes do not use Go GC write barriers or those runtime-only pragmas, so supporting them is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: tailcall.go
+    reason: "not applicable: this case asserts cmd/compile-specific tail-call optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue15747.go
+    reason: "not applicable: this case asserts cmd/compile-specific liveness diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue34723.go
+    reason: "not applicable: this case validates gc write-barrier elimination for stores into newly allocated zeroed objects; LLGo's BDWGC and tinygogc runtimes do not use Go GC write barriers, so reproducing that diagnostic is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_bloop.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: escape_struct_return.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: inline_big.go
+    reason: "not applicable: this case asserts cmd/compile-specific -m inlining diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheck
+    case: nilptr5.go
+    reason: "not applicable: this case asserts cmd/compile-specific -d=nil optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: compile
+    case: typeparam/issue50993.go
+    reason: "not applicable: -d=checkptr is a cmd/compile backend debug option, not a Go language requirement; LLGo does not reproduce gc backend flags; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: compile
+    case: fixedbugs/issue26163.go
+    reason: "not applicable: -d=softfloat controls cmd/compile target lowering; LLGo delegates floating-point lowering to LLVM; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: compile
+    case: fixedbugs/issue56141.go
+    reason: "not applicable: -d=libfuzzer selects cmd/compile instrumentation; LLGo relies on LLVM tooling rather than gc's libfuzzer backend mode; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: compile
+    case: fixedbugs/issue56105.go
+    reason: "not applicable: -d=libfuzzer selects cmd/compile instrumentation; LLGo relies on LLVM tooling rather than gc's libfuzzer backend mode; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: compile
+    case: fixedbugs/issue34966.go
+    reason: "not applicable: -d=checkptr is a cmd/compile backend debug option, not a Go language requirement; LLGo does not reproduce gc backend flags; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: compile
+    case: fixedbugs/issue58826.go
+    reason: "not applicable: -dynlink is a cmd/compile backend mode; LLGo uses the LLVM and native linker pipeline instead; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: compile
+    case: fixedbugs/issue69825.go
+    reason: "not applicable: -d=libfuzzer selects cmd/compile instrumentation; LLGo relies on LLVM tooling rather than gc's libfuzzer backend mode; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.24
+    platform: linux/amd64
+    directive: run
+    case: maymorestack.go
+    reason: "not applicable: LLGo uses fixed native stacks, so gc's growable-stack maymorestack debug hook has no corresponding behavior; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.25
+    platform: linux/amd64
+    directive: run
+    case: maymorestack.go
+    reason: "not applicable: LLGo uses fixed native stacks, so gc's growable-stack maymorestack debug hook has no corresponding behavior; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    platform: linux/amd64
+    directive: run
+    case: maymorestack.go
+    reason: "not applicable: LLGo uses fixed native stacks, so gc's growable-stack maymorestack debug hook has no corresponding behavior; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.24
+    platform: darwin/arm64
+    directive: run
+    case: maymorestack.go
+    reason: "not applicable: LLGo uses fixed native stacks, so gc's growable-stack maymorestack debug hook has no corresponding behavior; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.25
+    platform: darwin/arm64
+    directive: run
+    case: maymorestack.go
+    reason: "not applicable: LLGo uses fixed native stacks, so gc's growable-stack maymorestack debug hook has no corresponding behavior; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    platform: darwin/arm64
+    directive: run
+    case: maymorestack.go
+    reason: "not applicable: LLGo uses fixed native stacks, so gc's growable-stack maymorestack debug hook has no corresponding behavior; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheckandrundir
+    case: intrinsic.go
+    reason: "not applicable: this case asserts gc SSA intrinsic diagnostics; LLGo uses LLVM's optimization pipeline instead of gc SSA; the language-level run stage remains covered separately; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheckandrundir
+    case: closure3.go
+    reason: "not applicable: this case asserts cmd/compile-specific escape and inlining diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; the language-level run stage remains covered separately; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheckandrundir
+    case: linkname.go
+    reason: "not applicable: this case asserts cmd/compile-specific escape and inlining diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; the language-level run stage remains covered separately; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: errorcheckandrundir
+    case: fixedbugs/issue37837.go
+    reason: "not applicable: this case asserts cmd/compile-specific escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; the language-level run stage remains covered separately; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    platform: darwin/arm64
+    directive: buildrundir
+    case: asmhdr.go
+    reason: "not applicable: LLGo uses LLVM and C toolchains, so the Go assembler asmhdr and symabis pipeline is outside its supported build path; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    directive: runindir
+    case: fixedbugs/issue20014.go
+    reason: "not applicable: fieldtrack is private cmd/compile and cmd/link metadata; LLGo's LLVM and native linker pipeline does not consume it; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - version: go1.26
+    platform: darwin/arm64
+    directive: buildrundir
+    case: retjmp.go
+    reason: "not applicable: LLGo does not accept Go assembler, so its return-jump ABI is outside the supported build path; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
