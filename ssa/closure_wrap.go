@@ -53,18 +53,36 @@ func closureWrapArgs(fn Function) []Expr {
 	return args
 }
 
-// closureWrapReturn returns from wrapper, preserving tail-call eligibility.
-func closureWrapReturn(b Builder, sig *types.Signature, ret Expr) {
+// closureWrapReturn returns from wrapper, preserving tail-call eligibility when
+// the wrapper does not need post-call cleanup.
+func closureWrapReturn(b Builder, sig *types.Signature, ret Expr, tail bool) {
 	n := sig.Results().Len()
 	if n == 0 {
-		if !ret.impl.IsNil() {
+		if tail && !ret.impl.IsNil() {
 			ret.impl.SetTailCall(true)
 		}
 		b.impl.CreateRetVoid()
 		return
 	}
-	ret.impl.SetTailCall(true)
+	if tail {
+		ret.impl.SetTailCall(true)
+	}
 	b.impl.CreateRet(ret.impl)
+}
+
+func closureWrapCall(b Builder, wrap Function, fn Expr, args []Expr, aliasRecover bool) (Expr, bool) {
+	if !aliasRecover || (b.Prog.rt == nil && b.Prog.rtget == nil) {
+		return b.Call(fn, args...), true
+	}
+	prog := b.Prog
+	prev := b.Call(
+		b.Pkg.rtFunc("StartRecoverFrameAlias"),
+		b.PtrCast(prog.VoidPtr(), wrap.Expr),
+		b.PtrCast(prog.VoidPtr(), fn),
+	)
+	ret := b.Call(fn, args...)
+	b.Call(b.Pkg.rtFunc("EndRecoverFrame"), prev)
+	return ret, false
 }
 
 // closureWrapDecl wraps a function declaration that lacks __llgo_ctx.
@@ -80,8 +98,8 @@ func (p Package) closureWrapDecl(fn Expr, sig *types.Signature) Function {
 	wrap.impl.SetLinkage(llvm.LinkOnceAnyLinkage)
 	b := wrap.MakeBody(1)
 	args := closureWrapArgs(wrap)
-	ret := b.Call(fn, args...)
-	closureWrapReturn(b, sig, ret)
+	ret, tail := closureWrapCall(b, wrap, fn, args, fn.mayRecover())
+	closureWrapReturn(b, sig, ret, tail)
 	return wrap
 }
 
@@ -105,7 +123,7 @@ func (p Package) closureWrapPtr(sig *types.Signature) Function {
 	fnPtr := b.Convert(fnPtrType, ctxArg)
 	fnVal := b.Load(fnPtr)
 	args := closureWrapArgs(wrap)
-	ret := b.Call(fnVal, args...)
-	closureWrapReturn(b, sig, ret)
+	ret, tail := closureWrapCall(b, wrap, fnVal, args, true)
+	closureWrapReturn(b, sig, ret, tail)
 	return wrap
 }

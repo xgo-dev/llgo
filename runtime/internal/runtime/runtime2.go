@@ -38,10 +38,11 @@ const (
 // make sense once LLGo can suspend and resume a G (saved registers, wait state,
 // and stack roots) belong here when those facilities are added.
 type g struct {
-	defer_   *Defer
-	panic_   unsafe.Pointer
-	panicPCs panicPCStore
-	m        *m
+	defer_       *Defer
+	panic_       unsafe.Pointer
+	panicPCs     panicPCStore
+	recoverFrame unsafe.Pointer
+	m            *m
 
 	atomicstatus uint32
 	goid         uint64

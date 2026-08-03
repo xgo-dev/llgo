@@ -35,14 +35,28 @@ type Defer struct {
 	Args unsafe.Pointer // defer func and args links
 }
 
+type panicNode struct {
+	prev   unsafe.Pointer
+	arg    any
+	defer_ *Defer
+}
+
 // Recover recovers a panic.
-func Recover() (ret any) {
+func Recover(token unsafe.Pointer) (ret any) {
 	gp := getg()
+	if token == nil || token != gp.recoverFrame {
+		return nil
+	}
 	ptr := gp.panic_
 	if ptr != nil {
-		gp.panic_ = nil
-		ret = *(*any)(ptr)
-		c.Free(ptr)
+		node := (*panicNode)(ptr)
+		if node.defer_ != gp.defer_ {
+			return nil
+		}
+		gp.panic_ = node.prev
+		gp.recoverFrame = nil
+		ret = node.arg
+		c.Free(unsafe.Pointer(node))
 		if PanicRecovered != nil {
 			PanicRecovered()
 		}
@@ -59,6 +73,31 @@ func Recover() (ret any) {
 		}
 	}
 	return
+}
+
+// StartRecoverFrame enables direct recover calls made by the deferred function
+// currently being invoked from frame.
+func StartRecoverFrame(frame unsafe.Pointer) unsafe.Pointer {
+	gp := getg()
+	old := gp.recoverFrame
+	gp.recoverFrame = frame
+	return old
+}
+
+// EndRecoverFrame restores direct recover permission after a deferred call.
+func EndRecoverFrame(frame unsafe.Pointer) {
+	getg().recoverFrame = frame
+}
+
+// StartRecoverFrameAlias maps a direct deferred closure wrapper to the wrapped
+// function while the wrapper calls into it.
+func StartRecoverFrameAlias(from, to unsafe.Pointer) unsafe.Pointer {
+	gp := getg()
+	old := gp.recoverFrame
+	if old == from {
+		gp.recoverFrame = to
+	}
+	return old
 }
 
 // RecoverMark, set by the public runtime package, records the recovering
@@ -80,14 +119,15 @@ func Panic(v any) {
 		v = &PanicNilError{}
 	}
 	SavePanicCallerFrames()
-	ptr := c.Malloc(unsafe.Sizeof(v))
-	*(*any)(ptr) = v
 	gp := getg()
-	gp.panic_ = ptr
+	ptr := (*panicNode)(c.Malloc(unsafe.Sizeof(panicNode{})))
+	ptr.prev = gp.panic_
+	ptr.arg = v
+	ptr.defer_ = gp.defer_
+	gp.panic_ = unsafe.Pointer(ptr)
 
 	Rethrow(gp.defer_)
 }
-
 func Goexit() {
 	gp := getg()
 	gp.goexit = true
