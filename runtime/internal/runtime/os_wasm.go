@@ -18,6 +18,6 @@
 
 package runtime
 
-// mOS is empty for the single-worker WebAssembly backend. The host Worker is
-// owned by Emscripten rather than created for an individual M.
+// mOS is empty for the single-worker WebAssembly backend. The host owns the
+// physical worker instead of creating one for each M.
 type mOS struct{}

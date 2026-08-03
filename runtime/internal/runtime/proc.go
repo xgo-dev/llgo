@@ -117,8 +117,8 @@ func releaseGAndCheckDeadlock() {
 	}
 }
 
-// Gosched asks the active backend to yield. The WebAssembly fiber backend
-// switches to another runnable G; pthread Gs rely on the host thread scheduler.
+// Gosched asks the active backend to yield. WebAssembly backends re-queue the
+// current G and yield to their scheduler; pthread Gs rely on the host scheduler.
 func Gosched() {
 	goschedBackend()
 }

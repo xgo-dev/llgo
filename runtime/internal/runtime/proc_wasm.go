@@ -89,13 +89,17 @@ func initWasmScheduler(gp *g) {
 
 func newprocBackend(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, callergp *g) {
 	gp := newproc1(fn, arg, callergp)
-	initWasmFiber(gp, stackSize)
+	if !initWasmFiber(gp, stackSize) {
+		FreeRoot(arg)
+		freeRuntimeContext(gp.context)
+		panic("runtime: failed to allocate WebAssembly goroutine stack")
+	}
 	if !wasmSched.runq.Push(gp) {
 		fatal("runtime: invalid run queue insertion")
 	}
 }
 
-func initWasmFiber(gp *g, stackSize uintptr) {
+func initWasmFiber(gp *g, stackSize uintptr) bool {
 	if stackSize == 0 {
 		stackSize = defaultWasmGStackSize
 	}
@@ -106,8 +110,16 @@ func initWasmFiber(gp *g, stackSize uintptr) {
 	}
 
 	platform := &gp.context.platform
-	platform.stack = allocWasmStack(stackSize)
-	platform.asyncifyStack = allocWasmStack(asyncifySize)
+	platform.stack = AllocRoot(stackSize)
+	if platform.stack == nil {
+		return false
+	}
+	platform.asyncifyStack = AllocRoot(asyncifySize)
+	if platform.asyncifyStack == nil {
+		FreeRoot(platform.stack)
+		platform.stack = nil
+		return false
+	}
 	platform.fiber.Init(
 		emscripten.FiberEntry(wasmGStart),
 		unsafe.Pointer(gp),
@@ -116,6 +128,7 @@ func initWasmFiber(gp *g, stackSize uintptr) {
 		platform.asyncifyStack,
 		asyncifySize,
 	)
+	return true
 }
 
 func alignWasmStackSize(size uintptr) uintptr {
