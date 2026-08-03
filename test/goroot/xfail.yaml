@@ -1912,10 +1912,6 @@ xfails:
     reason: llgo parser recovery emits additional malformed-channel diagnostics
   - version: go1.26
     directive: errorcheck
-    case: fixedbugs/issue4776.go
-    reason: llgo parser uses a different missing-package-clause diagnostic
-  - version: go1.26
-    directive: errorcheck
     case: escape2n.go
     reason: gc-specific -m escape-analysis diagnostics are not implemented by llgo
   - version: go1.26
@@ -1982,10 +1978,6 @@ xfails:
     directive: errorcheck
     case: fixedbugs/issue10700.dir/test.go
     reason: gc-specific -m optimization diagnostics are not implemented by llgo
-  - version: go1.26
-    directive: errorcheck
-    case: fixedbugs/issue13274.go
-    reason: llgo parser emits an additional end-of-file diagnostic
   - version: go1.26
     directive: errorcheck
     case: fixedbugs/issue4405.go
@@ -2148,10 +2140,6 @@ xfails:
     reason: gc-specific pragma optimization diagnostics are not implemented by llgo
   - version: go1.26
     directive: errorcheck
-    case: fixedbugs/bug050.go
-    reason: llgo parser emits an additional malformed-declaration diagnostic
-  - version: go1.26
-    directive: errorcheck
     case: devirt.go
     reason: gc-specific SSA devirtualization diagnostics are not implemented by llgo
   - version: go1.26
@@ -2174,10 +2162,6 @@ xfails:
     directive: errorcheck
     case: bombad.go
     reason: llgo parser recovery emits additional byte-order-mark diagnostics
-  - version: go1.26
-    directive: errorcheck
-    case: fixedbugs/bug435.go
-    reason: llgo parser recovery emits additional end-of-file diagnostics
   - version: go1.26
     directive: errorcheck
     case: fixedbugs/issue14006.go
@@ -2250,14 +2234,6 @@ xfails:
     directive: errorcheck
     case: fixedbugs/bug121.go
     reason: llgo parser recovery emits additional malformed-declaration diagnostics
-  - version: go1.26
-    directive: errorcheck
-    case: fixedbugs/bug228.go
-    reason: llgo parser emits an additional malformed-parameter diagnostic
-  - version: go1.26
-    directive: errorcheck
-    case: syntax/chan1.go
-    reason: llgo parser recovery emits additional malformed-channel diagnostics
   - version: go1.26
     directive: errorcheck
     case: escape_field.go
@@ -2354,10 +2330,6 @@ xfails:
     directive: errorcheck
     case: fixedbugs/issue34723.go
     reason: "not applicable: llgo's BDWGC and tinygogc runtimes do not use Go GC write barriers"
-  - version: go1.26
-    directive: errorcheck
-    case: syntax/vareq1.go
-    reason: llgo parser recovery emits an additional diagnostic after the expected syntax error
   - version: go1.26
     directive: errorcheck
     case: escape_bloop.go

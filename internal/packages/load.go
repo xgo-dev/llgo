@@ -350,6 +350,8 @@ func loadPackageEx(dedup Deduper, ld *loader, lpkg *loaderPackage) {
 	}
 
 	files, errs := parseFiles(ld, lpkg.CompiledGoFiles)
+	errs = filterParserErrorsCoveredByGoCompiler(lpkg.Errors, errs)
+	normalizeGoCompilerDriverDiagnostics(lpkg.Errors)
 	for _, err := range errs {
 		appendError(err)
 	}
@@ -504,6 +506,137 @@ func packageGoVersion(ld *loader, lpkg *loaderPackage) string {
 	return ""
 }
 
+const (
+	goListMissingPackagePrefix  = "expected 'package', found "
+	goCompilerMissingPackageMsg = "syntax error: package statement must be first"
+)
+
+// filterParserErrorsCoveredByGoCompiler removes go/parser recovery diagnostics
+// only when the Go command's compiler diagnostics already cover the same source
+// line. packages.Load obtains both sources when NeedExportFile is requested:
+// go list reports cmd/compile diagnostics as ListError values, then ParseFile
+// reports scanner.ErrorList values while building the syntax trees LLGo needs.
+//
+// A multiline compiler diagnostic is authoritative only for its explicit
+// "syntax error:" lines. A structured ListError is authoritative when it is a
+// compiler syntax diagnostic with a valid position, or when it exactly
+// duplicates a scanner diagnostic; that duplicate anchors any parser recovery
+// diagnostics on the same line. These guards keep import, module,
+// type-checking, I/O, and parser-only diagnostics visible.
+func filterParserErrorsCoveredByGoCompiler(driverErrors []packages.Error, parseErrors []error) []error {
+	scannerErrors := collectScannerErrors(parseErrors)
+	if len(scannerErrors) == 0 {
+		return parseErrors
+	}
+
+	var covered []token.Position
+	for _, driverError := range driverErrors {
+		if driverError.Kind != packages.ListError {
+			continue
+		}
+		if isGoCompilerSyntaxDiagnostic(driverError.Msg) {
+			if position, ok := diagnosticPosition(driverError.Pos); ok {
+				covered = appendUniqueSourceLine(covered, position)
+			}
+		}
+		lines := strings.Split(driverError.Msg, "\n")
+		if len(lines) > 1 && strings.HasPrefix(lines[0], "# ") {
+			for _, line := range lines[1:] {
+				position, message, ok := parseCompilerDiagnosticLine(line)
+				if ok && strings.HasPrefix(message, "syntax error:") {
+					covered = appendUniqueSourceLine(covered, position)
+				}
+			}
+		}
+
+		for _, scannerError := range scannerErrors {
+			if scannerError != nil && driverError.Msg == scannerError.Msg &&
+				sameDiagnosticLine(driverError.Pos, scannerError.Pos) {
+				covered = appendUniqueSourceLine(covered, scannerError.Pos)
+			}
+		}
+	}
+	if len(covered) == 0 {
+		return parseErrors
+	}
+
+	filtered := make([]error, 0, len(parseErrors))
+	for _, parseError := range parseErrors {
+		list, ok := parseError.(scanner.ErrorList)
+		if !ok {
+			filtered = append(filtered, parseError)
+			continue
+		}
+		remaining := make(scanner.ErrorList, 0, len(list))
+		for _, item := range list {
+			if item == nil || !sourceLineCovered(item.Pos, covered) {
+				remaining = append(remaining, item)
+			}
+		}
+		if len(remaining) != 0 {
+			filtered = append(filtered, remaining)
+		}
+	}
+	return filtered
+}
+
+func collectScannerErrors(parseErrors []error) []*scanner.Error {
+	var out []*scanner.Error
+	for _, parseError := range parseErrors {
+		if list, ok := parseError.(scanner.ErrorList); ok {
+			out = append(out, list...)
+		}
+	}
+	return out
+}
+
+func isGoCompilerSyntaxDiagnostic(message string) bool {
+	return strings.HasPrefix(message, "syntax error:") ||
+		strings.HasPrefix(message, goListMissingPackagePrefix)
+}
+
+func parseCompilerDiagnosticLine(line string) (token.Position, string, bool) {
+	position, message, ok := strings.Cut(strings.TrimSuffix(line, "\r"), ": ")
+	if !ok {
+		return token.Position{}, "", false
+	}
+	parsed, ok := diagnosticPosition(position)
+	return parsed, message, ok
+}
+
+func appendUniqueSourceLine(lines []token.Position, position token.Position) []token.Position {
+	if sourceLineCovered(position, lines) {
+		return lines
+	}
+	return append(lines, position)
+}
+
+func sourceLineCovered(position token.Position, lines []token.Position) bool {
+	if position.Filename == "" || position.Line <= 0 {
+		return false
+	}
+	for _, line := range lines {
+		if position.Line == line.Line && sameSourceFile(position.Filename, line.Filename) {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeGoCompilerDriverDiagnostics maps go list's parser wording to the
+// diagnostic emitted by go tool compile for the same missing-package class.
+func normalizeGoCompilerDriverDiagnostics(errs []packages.Error) {
+	for i := range errs {
+		if errs[i].Kind == packages.ListError &&
+			strings.HasPrefix(errs[i].Msg, goListMissingPackagePrefix) {
+			if _, ok := diagnosticPosition(errs[i].Pos); !ok {
+				continue
+			}
+			errs[i].Msg = goCompilerMissingPackageMsg
+		}
+	}
+}
+
 const embedPatternDriverDiagnostic = "pattern //: invalid pattern syntax"
 
 // normalizeEmbedDriverDiagnostics handles the two semantic checks that
@@ -587,11 +720,21 @@ func sameDiagnosticLine(errorPos string, commentPos token.Position) bool {
 	}
 	errorFile = filepath.Clean(errorFile)
 	commentFile := filepath.Clean(commentPos.Filename)
-	if errorFile == commentFile {
+	return errorFile == commentFile ||
+		(!filepath.IsAbs(errorFile) && strings.HasSuffix(commentFile, string(filepath.Separator)+errorFile))
+}
+
+func sameSourceFile(left, right string) bool {
+	if left == "" || right == "" {
+		return false
+	}
+	left = filepath.Clean(left)
+	right = filepath.Clean(right)
+	if left == right {
 		return true
 	}
-	return !filepath.IsAbs(errorFile) &&
-		(commentFile == errorFile || strings.HasSuffix(commentFile, string(filepath.Separator)+errorFile))
+	return (!filepath.IsAbs(left) && strings.HasSuffix(right, string(filepath.Separator)+left)) ||
+		(!filepath.IsAbs(right) && strings.HasSuffix(left, string(filepath.Separator)+right))
 }
 
 func diagnosticFileLine(pos string) (file string, line int, ok bool) {
@@ -610,6 +753,14 @@ func diagnosticFileLine(pos string) (file string, line int, ok bool) {
 		}
 	}
 	return prefix, last, true
+}
+
+func diagnosticPosition(pos string) (token.Position, bool) {
+	file, line, ok := diagnosticFileLine(pos)
+	if !ok || file == "" || line <= 0 {
+		return token.Position{}, false
+	}
+	return token.Position{Filename: file, Line: line}, true
 }
 
 func localVarHasDocComment(file *ast.File, comment *ast.Comment) bool {
