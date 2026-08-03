@@ -63,7 +63,14 @@ func TestLocalityInfos(t *testing.T) {
 	}
 }
 
-func TestLocalityStateSnapshotIsIndependent(t *testing.T) {
+func TestFrozenLocalityStateIsShared(t *testing.T) {
+	empty := NewProgram(nil)
+	defer empty.Dispose()
+	empty.UseLocalityState(LocalityState{})
+	if empty.NeedsLocalContext() {
+		t.Fatal("zero locality state unexpectedly requires a context")
+	}
+
 	source := NewProgram(nil)
 	defer source.Dispose()
 	pkg := types.NewPackage("example.com/p", "p")
@@ -73,22 +80,45 @@ func TestLocalityStateSnapshotIsIndependent(t *testing.T) {
 	source.ActivateLocalitiesFor(pkg)
 	source.MarkPackageSyntaxParsed(pkg)
 
+	state := source.FreezeLocalityState()
 	dest := NewProgram(nil)
 	defer dest.Dispose()
-	dest.RestoreLocalityState(source.SnapshotLocalityState())
+	dest.UseLocalityState(state)
+	peer := NewProgram(nil)
+	defer peer.Dispose()
+	peer.UseLocalityState(state)
+	if dest.localities != peer.localities {
+		t.Fatal("backend Programs did not share locality state")
+	}
 	got, ok := dest.VariableLocalityFor(pkg, name)
 	if !ok || got.Locality != GoroutineLocal || got.LocalStorage != LocalStoragePackage {
-		t.Fatalf("restored locality = %+v, %v", got, ok)
+		t.Fatalf("shared locality = %+v, %v", got, ok)
 	}
-	if !dest.NeedsLocalContext() || !dest.PackageSyntaxParsed(pkg) {
-		t.Fatal("restored locality state lost active or parsed metadata")
+	if !dest.NeedsLocalContext() {
+		t.Fatal("shared locality state lost active metadata")
+	}
+	if dest.PackageSyntaxParsed(pkg) {
+		t.Fatal("package syntax state was shared with locality metadata")
 	}
 
-	source.SetLocalStorageFor(pkg, name, LocalStorageNativeTLS)
+	// Re-parsing the same package owner is idempotent and must not overwrite
+	// prepared metadata in the frozen shared state.
+	dest.DeclareLocality(pkg, "state", LocalityInfo{Locality: ThreadLocal})
 	got, ok = dest.VariableLocalityFor(pkg, name)
-	if !ok || got.LocalStorage != LocalStoragePackage {
-		t.Fatalf("restored locality aliased source state: %+v, %v", got, ok)
+	if !ok || got.Locality != GoroutineLocal || got.LocalStorage != LocalStoragePackage {
+		t.Fatalf("idempotent declaration changed shared locality: %+v, %v", got, ok)
 	}
+	dest.MarkPackageSyntaxParsed(pkg)
+	if !dest.PackageSyntaxParsed(pkg) || peer.PackageSyntaxParsed(pkg) {
+		t.Fatal("package syntax state was not Program-local")
+	}
+
+	defer func() {
+		if recovered := recover(); recovered == nil {
+			t.Fatal("modifying shared locality state did not panic")
+		}
+	}()
+	source.SetLocalStorageFor(pkg, name, LocalStorageNativeTLS)
 }
 
 func TestPackageLocalitiesRetainDeclarationOwners(t *testing.T) {

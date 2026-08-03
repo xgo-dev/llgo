@@ -596,7 +596,7 @@ func Build(inv Invocation) ([]Package, error) {
 		backendTemplate.pythonPackage = pkg.Types
 	}
 	backendTemplate.inputs = collectBackendProgramInputs(prog, initial, altPkgs)
-	backendTemplate.localities = prog.SnapshotLocalityState()
+	backendTemplate.localities = prog.FreezeLocalityState()
 	backendTemplate.llvmTarget = export.LLVMTarget
 	backendTemplate.targetABI = export.TargetABI
 
@@ -934,14 +934,13 @@ func (c *context) closePackageMetas() {
 type backendProgramInput struct {
 	fset        *token.FileSet
 	pkg         *types.Package
-	info        *types.Info
 	files       []*ast.File
 	parseSyntax bool
 }
 
-// backendProgramTemplate contains only immutable build-local inputs. Creating
-// a session allocates a new llssa.Program, LLVM context, TargetMachine, and C
-// ABI transformer; no LLVM-owned state is shared between sessions.
+// backendProgramTemplate contains immutable build-local inputs. Creating a
+// session allocates a new llssa.Program, LLVM context, TargetMachine, and C ABI
+// transformer; no LLVM-owned state is shared between sessions.
 type backendProgramTemplate struct {
 	target              *llssa.Target
 	disableBoundsChecks bool
@@ -1034,7 +1033,7 @@ func (t backendProgramTemplate) replayProgramState(prog llssa.Program) error {
 			}
 		}
 	}
-	prog.RestoreLocalityState(t.localities)
+	prog.UseLocalityState(t.localities)
 	return nil
 }
 
@@ -1051,7 +1050,6 @@ func collectBackendProgramInputs(prog llssa.Program, groups ...[]*packages.Packa
 			inputs = append(inputs, backendProgramInput{
 				fset:        pkg.Fset,
 				pkg:         pkg.Types,
-				info:        pkg.TypesInfo,
 				files:       slices.Clone(pkg.Syntax),
 				parseSyntax: parsed && !llruntime.SkipToBuild(pkg.PkgPath),
 			})

@@ -51,25 +51,20 @@ type VariableLocality struct {
 }
 
 type localityInfos struct {
-	mu sync.RWMutex
+	mu     sync.RWMutex
+	frozen bool
 	// entries and ownerlessEntries retain the canonical-only compatibility
 	// view. Production declaration handling uses declarationEntries instead.
 	entries            map[string]VariableLocality
 	ownerlessEntries   map[string]VariableLocality
 	declarationEntries map[string]map[string]VariableLocality
 	activePackages     map[string]struct{}
-	parsedPackages     map[*types.Package]struct{}
 }
 
-// LocalityState is a copyable snapshot of the Go-side locality metadata owned
-// by one Program. It contains no LLVM objects and can therefore be replayed
-// safely into an independent backend Program.
+// LocalityState is an immutable handle to Go-side locality metadata. It
+// contains no LLVM objects and can be shared by independent backend Programs.
 type LocalityState struct {
-	entries            map[string]VariableLocality
-	ownerlessEntries   map[string]VariableLocality
-	declarationEntries map[string]map[string]VariableLocality
-	activePackages     map[string]struct{}
-	parsedPackages     map[*types.Package]struct{}
+	infos *localityInfos
 }
 
 func newLocalityInfos() *localityInfos {
@@ -78,81 +73,43 @@ func newLocalityInfos() *localityInfos {
 		ownerlessEntries:   make(map[string]VariableLocality),
 		declarationEntries: make(map[string]map[string]VariableLocality),
 		activePackages:     make(map[string]struct{}),
-		parsedPackages:     make(map[*types.Package]struct{}),
 	}
 }
 
-// SnapshotLocalityState returns an independent snapshot of p's locality
-// metadata. Callers may use it after preflight has completed to seed isolated
-// backend sessions without sharing mutable Program state.
-func (p Program) SnapshotLocalityState() LocalityState {
-	p.localities.mu.RLock()
-	defer p.localities.mu.RUnlock()
-	state := LocalityState{
-		entries:          cloneLocalityEntries(p.localities.entries),
-		ownerlessEntries: cloneLocalityEntries(p.localities.ownerlessEntries),
-		activePackages:   cloneLocalitySet(p.localities.activePackages),
-		parsedPackages:   cloneParsedPackages(p.localities.parsedPackages),
-	}
-	state.declarationEntries = make(map[string]map[string]VariableLocality, len(p.localities.declarationEntries))
-	for name, entries := range p.localities.declarationEntries {
-		state.declarationEntries[name] = cloneLocalityEntries(entries)
-	}
-	return state
-}
-
-// RestoreLocalityState replaces p's locality metadata with an independent
-// copy of state. The copied maps keep backend sessions independent.
-func (p Program) RestoreLocalityState(state LocalityState) {
+// FreezeLocalityState freezes p's locality metadata and returns it without
+// copying. Package syntax parse markers remain local to each Program.
+func (p Program) FreezeLocalityState() LocalityState {
 	p.localities.mu.Lock()
-	p.localities.entries = cloneLocalityEntries(state.entries)
-	p.localities.ownerlessEntries = cloneLocalityEntries(state.ownerlessEntries)
-	p.localities.activePackages = cloneLocalitySet(state.activePackages)
-	p.localities.parsedPackages = cloneParsedPackages(state.parsedPackages)
-	p.localities.declarationEntries = make(map[string]map[string]VariableLocality, len(state.declarationEntries))
-	for name, entries := range state.declarationEntries {
-		p.localities.declarationEntries[name] = cloneLocalityEntries(entries)
-	}
+	p.localities.frozen = true
 	p.localities.mu.Unlock()
+	return LocalityState{infos: p.localities}
 }
 
-func cloneLocalityEntries(entries map[string]VariableLocality) map[string]VariableLocality {
-	ret := make(map[string]VariableLocality, len(entries))
-	for name, entry := range entries {
-		ret[name] = entry
+// UseLocalityState replaces p's locality metadata with shared immutable state.
+func (p Program) UseLocalityState(state LocalityState) {
+	if state.infos == nil {
+		state = LocalityState{infos: newLocalityInfos()}
+		state.infos.frozen = true
 	}
-	return ret
-}
-
-func cloneLocalitySet(entries map[string]struct{}) map[string]struct{} {
-	ret := make(map[string]struct{}, len(entries))
-	for name := range entries {
-		ret[name] = struct{}{}
-	}
-	return ret
-}
-
-func cloneParsedPackages(entries map[*types.Package]struct{}) map[*types.Package]struct{} {
-	ret := make(map[*types.Package]struct{}, len(entries))
-	for pkg := range entries {
-		ret[pkg] = struct{}{}
-	}
-	return ret
+	p.localities = state.infos
 }
 
 func (p *localityInfos) update(name string, update func(*VariableLocality)) {
 	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.assertMutable()
 	info := p.entries[name]
 	update(&info)
 	p.entries[name] = info
 	ownerless := p.ownerlessEntries[name]
 	update(&ownerless)
 	p.ownerlessEntries[name] = ownerless
-	p.mu.Unlock()
 }
 
 func (p *localityInfos) updateFor(pkg *types.Package, name string, update func(*VariableLocality)) {
 	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.assertMutable()
 	entries := p.declarationEntries[name]
 	if entries == nil {
 		entries = make(map[string]VariableLocality)
@@ -163,7 +120,12 @@ func (p *localityInfos) updateFor(pkg *types.Package, name string, update func(*
 	update(&info)
 	entries[owner] = info
 	p.entries[name] = info
-	p.mu.Unlock()
+}
+
+func (p *localityInfos) assertMutable() {
+	if p.frozen {
+		panic("cannot modify frozen locality state")
+	}
 }
 
 func (p Program) SetLocalityInfo(name string, info LocalityInfo) {
@@ -185,7 +147,14 @@ func (p Program) DeclareLocality(pkg *types.Package, name string, info LocalityI
 	fullName := FullName(pkg, name)
 	owner := pkg.Path()
 	p.localities.mu.Lock()
+	defer p.localities.mu.Unlock()
 	entries := p.localities.declarationEntries[fullName]
+	if entries != nil {
+		if _, exists := entries[owner]; exists {
+			return
+		}
+	}
+	p.localities.assertMutable()
 	if entries == nil {
 		entries = make(map[string]VariableLocality)
 		p.localities.declarationEntries[fullName] = entries
@@ -195,7 +164,6 @@ func (p Program) DeclareLocality(pkg *types.Package, name string, info LocalityI
 		entries[owner] = current
 		p.localities.entries[fullName] = current
 	}
-	p.localities.mu.Unlock()
 }
 
 func (p Program) SetLocalStorage(name string, storage LocalStorage) {
@@ -217,8 +185,9 @@ func (p Program) ActivateLocalitiesFor(pkg *types.Package) {
 		return
 	}
 	p.localities.mu.Lock()
+	defer p.localities.mu.Unlock()
+	p.localities.assertMutable()
 	p.localities.activePackages[pkg.Path()] = struct{}{}
-	p.localities.mu.Unlock()
 }
 
 // VariableLocality returns the legacy canonical-only metadata view. Its result
@@ -399,16 +368,16 @@ func linknameReachesLocal(name string, links map[string]string, localNames map[s
 }
 
 func (p Program) PackageSyntaxParsed(pkg *types.Package) bool {
-	p.localities.mu.RLock()
-	_, ok := p.localities.parsedPackages[pkg]
-	p.localities.mu.RUnlock()
+	p.parsedPackagesMu.RLock()
+	_, ok := p.parsedPackages[pkg]
+	p.parsedPackagesMu.RUnlock()
 	return ok
 }
 
 func (p Program) MarkPackageSyntaxParsed(pkg *types.Package) {
-	p.localities.mu.Lock()
-	p.localities.parsedPackages[pkg] = struct{}{}
-	p.localities.mu.Unlock()
+	p.parsedPackagesMu.Lock()
+	p.parsedPackages[pkg] = struct{}{}
+	p.parsedPackagesMu.Unlock()
 }
 
 // PackageLocalities returns the legacy canonical-only metadata view. Its

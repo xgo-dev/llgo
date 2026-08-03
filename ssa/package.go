@@ -226,6 +226,8 @@ type aProgram struct {
 	linkname             map[string]string // pkgPath.nameInPkg => linkname
 	closureEnvDirectives sync.Map          // closureEnvDirectiveKey => none
 	localities           *localityInfos
+	parsedPackagesMu     sync.RWMutex
+	parsedPackages       map[*types.Package]struct{}
 	noInterface          map[string]none       // pkgPath.T.method or pkgPath.(*T).method
 	abiSymbol            map[string]*AbiSymbol // abi symbol name => AbiSymbol
 
@@ -317,7 +319,8 @@ func NewProgram(target *Target) Program {
 		target: target, td: td, tm: tm, is32Bits: is32Bits,
 		ptrSize: td.PointerSize(), named: make(map[string]Type), fnnamed: make(map[string]int),
 		linkname: make(map[string]string), localities: newLocalityInfos(),
-		noInterface: make(map[string]none), abiSymbol: make(map[string]*AbiSymbol),
+		parsedPackages: make(map[*types.Package]struct{}),
+		noInterface:    make(map[string]none), abiSymbol: make(map[string]*AbiSymbol),
 		debugInfoOptimized: target.effectiveOptLevel() != optlevel.O0,
 	}
 	prog.abi.Init(uintptr(prog.ptrSize), (*goProgram)(unsafe.Pointer(prog)))
