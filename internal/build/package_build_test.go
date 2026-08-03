@@ -210,7 +210,11 @@ func TestPrePackageBuildSkipsDeclarationOnlyPackage(t *testing.T) {
 		Types:      types.Unsafe,
 		ExportFile: "stale.a",
 	}}
-	ctx := &context{built: make(map[string]none)}
+	ctx := &context{
+		conf:      &packages.Config{},
+		buildConf: &Config{Goos: "linux", Goarch: "amd64", ForceRebuild: true},
+		built:     make(map[string]none),
+	}
 
 	task := newPackageBuildTask(pkg)
 	err := prePackageBuild(ctx, task, false)
@@ -236,14 +240,18 @@ func TestPrePackageBuildSkipsExternalLinkOnlyPackage(t *testing.T) {
 		Types:      types.NewPackage("example.com/linkonly", "linkonly"),
 		ExportFile: "stale.a",
 	}}
-	ctx := &context{buildConf: &Config{}, built: make(map[string]none)}
+	ctx := &context{
+		conf:      &packages.Config{},
+		buildConf: &Config{Goos: "linux", Goarch: "amd64", ForceRebuild: true},
+		built:     make(map[string]none),
+	}
 	task := &packageBuildTask{pkg: pkg, kind: cl.PkgLinkExtern, kindParam: "-lexample"}
 	err := prePackageBuild(ctx, task, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !task.skip || pkg.ExportFile != "" {
-		t.Fatalf("external link-only pre = skip %v, export %q", task.skip, pkg.ExportFile)
+	if !task.skip || pkg.ExportFile != "" || pkg.Summary == nil {
+		t.Fatalf("external link-only pre = skip %v, export %q, summary %#v", task.skip, pkg.ExportFile, pkg.Summary)
 	}
 	if len(pkg.LinkArgs) != 1 || pkg.LinkArgs[0] != "-lexample" {
 		t.Fatalf("external link args = %q, want [-lexample]", pkg.LinkArgs)
@@ -274,4 +282,25 @@ func TestBuildSSAPkgsEmptyAndNilEntries(t *testing.T) {
 	prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
 	pkg := prog.CreatePackage(types.NewPackage("example.com/ssa", "ssa"), nil, nil, true)
 	buildSSAPkgs(ctx, []ssaBuildEntry{{pkg: pkg}, {pkg: pkg}})
+}
+
+func TestPreFingerprintsSkippedPackage(t *testing.T) {
+	pkg := &aPackage{Package: &packages.Package{
+		ID:      "unsafe",
+		PkgPath: "unsafe",
+		Types:   types.Unsafe,
+	}}
+	ctx := &context{
+		conf:      &packages.Config{},
+		buildConf: &Config{Goos: "linux", Goarch: "amd64", ForceRebuild: true},
+		built:     make(map[string]none),
+	}
+	task := newPackageBuildTask(pkg)
+	err := prePackageBuild(ctx, task, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !task.skip || pkg.Fingerprint == "" || pkg.Manifest == "" || pkg.Summary == nil {
+		t.Fatalf("skipped package was not fully prepared: skip=%v fingerprint=%q manifest=%q summary=%#v", task.skip, pkg.Fingerprint, pkg.Manifest, pkg.Summary)
+	}
 }

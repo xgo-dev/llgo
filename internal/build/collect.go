@@ -334,6 +334,9 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 	if c.packageCacheDisabled(pkg.ID) {
 		return false
 	}
+	if c.buildConf != nil && (c.buildConf.BuildMode == BuildModeCArchive || c.buildConf.BuildMode == BuildModeCShared) {
+		return false
+	}
 
 	// Main packages are intentionally not written to the build cache because
 	// each executable's entry module is linked against the current main archive.
@@ -377,6 +380,9 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 	if err != nil {
 		return false
 	}
+	if meta.Summary == nil {
+		return false
+	}
 
 	// Use the .a archive directly for linking (no extraction needed)
 	pkg.ArchiveFile = paths.Archive
@@ -385,6 +391,7 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 	pkg.NeedPyInit = meta.NeedPyInit
 	pkg.Meta = pkgMeta
 	pkg.CacheHit = true
+	pkg.Summary = summaryFromMetadata(pkg, meta)
 
 	return true
 }
@@ -399,6 +406,7 @@ func parseManifestMetadata(content string) (*cacheArchiveMetadata, error) {
 			meta.LinkArgs = append([]string(nil), data.Metadata.LinkArgs...)
 			meta.NeedRt = data.Metadata.NeedRt
 			meta.NeedPyInit = data.Metadata.NeedPyInit
+			meta.Summary = data.Metadata.Summary
 		}
 		return meta, nil
 	}
@@ -452,6 +460,7 @@ type cacheArchiveMetadata struct {
 	LinkArgs   []string
 	NeedRt     bool
 	NeedPyInit bool
+	Summary    *packageSummaryMetadata
 }
 
 // saveToCache saves a built package to cache.
@@ -511,16 +520,16 @@ func (c *context) saveToCache(pkg *aPackage) error {
 		return fmt.Errorf("decode manifest: %w", err)
 	}
 
+	if pkg.Summary == nil {
+		pkg.Summary = summarizePackage(pkg)
+	}
 	meta := &manifestMetadata{
 		LinkArgs:   append([]string(nil), pkg.LinkArgs...),
 		NeedRt:     pkg.NeedRt,
 		NeedPyInit: pkg.NeedPyInit,
+		Summary:    pkg.Summary.metadata(),
 	}
-	if len(meta.LinkArgs) == 0 && !meta.NeedRt && !meta.NeedPyInit {
-		data.Metadata = nil
-	} else {
-		data.Metadata = meta
-	}
+	data.Metadata = meta
 
 	manifestWithMeta, err := buildManifestYAML(data)
 	if err != nil {
