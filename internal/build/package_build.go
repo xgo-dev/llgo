@@ -130,6 +130,13 @@ func buildPrePackageGroup(ctx *context, tasks []*packageBuildTask, verbose bool)
 
 func partitionPackageExecutions(ctx *context, tasks []*packageBuildTask) (patched, coordinator, isolated []int, err error) {
 	for i, task := range tasks {
+		// A skipped task has no backend work to classify. Keep it on the
+		// coordinator path so executeAndFinalizePackage can return its cached
+		// runtime signals without consulting backend-only inputs such as SFiles.
+		if task.skip {
+			coordinator = append(coordinator, i)
+			continue
+		}
 		if _, ok := ctx.patches[task.pkg.PkgPath]; ok {
 			patched = append(patched, i)
 			continue
