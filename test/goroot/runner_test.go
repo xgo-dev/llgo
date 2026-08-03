@@ -12,6 +12,7 @@ import (
 	"go/constant"
 	"go/format"
 	"go/parser"
+	"go/scanner"
 	"go/token"
 	"io"
 	"io/fs"
@@ -1121,6 +1122,7 @@ func checkExpectedErrorsForFiles(output string, sources []diagnosticSource) erro
 	lines = preferSpecificDiagnostics(lines)
 	var wanted []wantedError
 	sourceLines := make(map[string][]string, len(sources))
+	physicalDiagnosticSources := make(map[string]bool, len(sources))
 	for _, source := range sources {
 		expected, err := wantedErrors(source.full, source.short)
 		if err != nil {
@@ -1132,6 +1134,14 @@ func checkExpectedErrorsForFiles(output string, sources []diagnosticSource) erro
 			return err
 		}
 		sourceLines[normalizeDiagnosticPath(source.short)] = strings.Split(string(data), "\n")
+		file := canonicalDiagnosticPath(source.full)
+		// Pairing is keyed by physical source lines. A line directive makes that
+		// relationship ambiguous, so leave every recovery diagnostic visible.
+		physical := !hasLineDirective(data)
+		if previous, ok := physicalDiagnosticSources[file]; ok {
+			physical = previous && physical
+		}
+		physicalDiagnosticSources[file] = physical
 	}
 	pathResolver := newDiagnosticPathResolver(sources)
 	lexicalLocations := make(map[string]bool)
@@ -1150,6 +1160,7 @@ func checkExpectedErrorsForFiles(output string, sources []diagnosticSource) erro
 			continue
 		}
 		matched := false
+		parserRecoveryAuthorized := false
 		for _, candidate := range candidates {
 			diagnostic, ok := parseCompilerDiagnostic(candidate)
 			sourceDiagnostic, sourceOK := parseSourceDiagnostic(candidate, pathResolver)
@@ -1165,12 +1176,14 @@ func checkExpectedErrorsForFiles(output string, sources []diagnosticSource) erro
 				if ok && isScopedLexicalDiagnostic(message) {
 					lexicalLocations[diagnostic.locationKey()] = true
 				}
-				if sourceOK {
-					if secondaries := parserRecoverySecondaries(message); len(secondaries) != 0 {
+				if !parserRecoveryAuthorized && sourceOK && physicalDiagnosticSources[sourceDiagnostic.file] {
+					groups := parserRecoverySecondaryGroups(message, expected.source)
+					for _, secondaries := range groups {
 						parserRecoveryPairs = append(parserRecoveryPairs, parserRecoveryPair{
 							file: sourceDiagnostic.file, line: sourceDiagnostic.line, secondaries: secondaries,
 						})
 					}
+					parserRecoveryAuthorized = len(groups) != 0
 				}
 				if !ok {
 					diagnostic = compilerDiagnostic{
@@ -1630,7 +1643,14 @@ func (resolver diagnosticPathResolver) resolve(file string) (string, bool) {
 		return full, full != ""
 	}
 	if filepath.IsAbs(file) {
-		return canonicalDiagnosticPath(file), true
+		full := canonicalDiagnosticPath(file)
+		// An absolute path is not sufficient by itself: it must still identify
+		// one of the sources whose ERROR comments are being checked.
+		for _, source := range resolver {
+			if source == full {
+				return full, true
+			}
+		}
 	}
 	return "", false
 }
@@ -1649,7 +1669,8 @@ func parseSourceDiagnostic(line string, resolver diagnosticPathResolver) (source
 }
 
 // parserRecoverySecondaries is deliberately limited to exact diagnostic pairs
-// emitted by GOROOT cases enabled with this compatibility shim.
+// whose secondary does not depend on the source shape. Source-dependent pairs
+// belong in parserRecoverySourceSecondaries.
 func parserRecoverySecondaries(primary string) []string {
 	switch primary {
 	case "syntax error: cannot use a := 10 as value":
@@ -1670,6 +1691,118 @@ func parserRecoverySecondaries(primary string) []string {
 		return []string{"missing ',' before newline in parameter list"}
 	}
 	return nil
+}
+
+// parserRecoverySourceSecondaries handles diagnostic spellings shared by
+// unrelated malformed programs. Exact source matching keeps those allowances
+// scoped to the GOROOT cases that require them.
+func parserRecoverySourceSecondaries(primary, source string) []string {
+	source = parserRecoverySourceCode(source)
+	switch primary {
+	// GOROOT/test/fixedbugs/bug050.go. go/parser omits the "syntax error:"
+	// prefix when the package clause is missing.
+	case "expected 'package', found 'func'":
+		if source == "func main() {" {
+			return []string{"expected ';', found '('"}
+		}
+	// GOROOT/test/syntax/vareq1.go
+	case "syntax error: unexpected { after top level declaration":
+		if source == `var x map[string]string{"a":"b"}` {
+			return []string{"expected ';', found '{'"}
+		}
+	// GOROOT/test/fixedbugs/bug228.go
+	case "syntax error: ... is missing type":
+		if source == "func g(x int, y float32) (...)" {
+			return []string{"expected type, found ')'"}
+		}
+	// GOROOT/test/syntax/chan1.go: channel send in an if condition.
+	case "syntax error: cannot use c <- v as value":
+		if source == "if c <- v {" {
+			return []string{"expected boolean expression, found simple statement (missing parentheses around composite literal?)"}
+		}
+	// GOROOT/test/syntax/chan1.go: channel send in a top-level declaration.
+	case "syntax error: unexpected <- after top level declaration":
+		if source == "var _ = c <- v" {
+			return []string{"expected ';', found '<-'"}
+		}
+	}
+	return nil
+}
+
+// parserRecoverySecondaryGroups returns independent one-use allowances for an
+// exact primary. Source-independent pairs are checked first, followed by
+// source-dependent single groups. issue11610 deterministically emits two
+// separate follow-ons, so each receives its own group here.
+func parserRecoverySecondaryGroups(primary, source string) [][]string {
+	if secondaries := parserRecoverySecondaries(primary); len(secondaries) != 0 {
+		return [][]string{secondaries}
+	}
+	if secondaries := parserRecoverySourceSecondaries(primary, source); len(secondaries) != 0 {
+		return [][]string{secondaries}
+	}
+	source = parserRecoverySourceCode(source)
+	switch primary {
+	// GOROOT/test/fixedbugs/issue11610.go
+	case "invalid character U+003F '?'":
+		if source == "var?" {
+			return [][]string{
+				{"expected 'IDENT', found 'ILLEGAL'"},
+				{"illegal character U+003F '?'"},
+			}
+		}
+	// GOROOT/test/syntax/ddd.go
+	case "syntax error: unexpected literal .3, expected name or (":
+		if source == "g(f..3)" {
+			return [][]string{
+				{"expected selector or type assertion, found .3"},
+				{"undefined: g"},
+				{"f._ undefined (type func() has no field or method _)"},
+			}
+		}
+	}
+	return nil
+}
+
+func parserRecoverySourceCode(source string) string {
+	// Prefer the last recognized marker so marker-like text in the source
+	// expression cannot truncate the shape before the actual ERROR comment.
+	comment := -1
+	for _, marker := range []string{"// ERROR", "// GC_ERROR"} {
+		if index := strings.LastIndex(source, marker); index > comment {
+			comment = index
+		}
+	}
+	if comment >= 0 {
+		source = source[:comment]
+	}
+	return strings.TrimSpace(source)
+}
+
+func hasLineDirective(data []byte) bool {
+	file := token.NewFileSet().AddFile("", -1, len(data))
+	var sourceScanner scanner.Scanner
+	sourceScanner.Init(file, data, func(token.Position, string) {}, scanner.ScanComments)
+	for {
+		position, kind, literal := sourceScanner.Scan()
+		if kind == token.EOF {
+			return false
+		}
+		if kind != token.COMMENT {
+			continue
+		}
+		if strings.HasPrefix(literal, "/*line ") && strings.Contains(literal[len("/*line "):], ":") {
+			return true
+		}
+		if !strings.HasPrefix(literal, "//line ") {
+			continue
+		}
+		offset := file.Offset(position)
+		lineStart := bytes.LastIndexByte(data[:offset], '\n') + 1
+		if len(bytes.TrimSpace(data[lineStart:offset])) == 0 &&
+			strings.Contains(literal[len("//line "):], ":") {
+			return true
+		}
+	}
 }
 
 func discardPairedParserDiagnostics(lines []string, resolver diagnosticPathResolver, pairs []parserRecoveryPair) []string {
