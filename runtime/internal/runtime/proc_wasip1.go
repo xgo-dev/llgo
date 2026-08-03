@@ -75,7 +75,9 @@ func RunWasmMain() {
 		fatal("runtime: invalid WebAssembly main goroutine")
 		return
 	}
-	initWasmContext(gp, wasmcontext.Entry(wasmMainTask), nil, 0)
+	if !initWasmContext(gp, wasmcontext.Entry(wasmMainTask), nil, 0) {
+		panic("runtime: failed to allocate WebAssembly goroutine stack")
+	}
 
 	for {
 		runWasmContext(gp)
@@ -124,22 +126,24 @@ func releaseWasmOwnership(gp *g) {
 
 func newprocBackend(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, callergp *g) {
 	gp := newproc1(fn, arg, callergp)
-	initWasmContext(gp, wasmcontext.Entry(wasmGStart), unsafe.Pointer(gp), stackSize)
+	if !initWasmContext(gp, wasmcontext.Entry(wasmGStart), unsafe.Pointer(gp), stackSize) {
+		FreeRoot(arg)
+		freeRuntimeContext(gp.context)
+		panic("runtime: failed to allocate WebAssembly goroutine stack")
+	}
 	if !wasmSched.runq.Push(gp) {
 		fatal("runtime: invalid run queue insertion")
 	}
 }
 
-func initWasmContext(gp *g, entry wasmcontext.Entry, arg unsafe.Pointer, stackSize uintptr) {
-	if !gp.context.platform.context.Init(
+func initWasmContext(gp *g, entry wasmcontext.Entry, arg unsafe.Pointer, stackSize uintptr) bool {
+	return gp.context.platform.context.Init(
 		entry,
 		arg,
 		stackSize,
 		AllocRoot,
 		FreeRoot,
-	) {
-		panic("runtime: failed to allocate WebAssembly goroutine stack")
-	}
+	)
 }
 
 func releaseWasmContext(gp *g) {
