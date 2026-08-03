@@ -2450,10 +2450,6 @@ xfails:
     reason: range-over-function build exits successfully without producing a binary on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: fixedbugs/issue31546.go
-    reason: reflection exposes the initializer value of a blank struct field instead of zero on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: fixedbugs/issue72063.go
     reason: generic Y-combinator build exits successfully without producing a binary on darwin/arm64
   - version: go1.24
