@@ -43,19 +43,43 @@ type stringStruct struct {
 // CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
 // CHECK-NEXT:   %3 = call ptr @main.stringStructOf(ptr %1)
 // CHECK-NEXT:   %4 = getelementptr inbounds %main.stringStruct, ptr %3, i32 0, i32 0
-// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
-// CHECK-NEXT:   %6 = getelementptr inbounds %main.slice, ptr %2, i32 0, i32 0
-// CHECK-NEXT:   store ptr %5, ptr %6, align 8
-// CHECK-NEXT:   %7 = getelementptr inbounds %main.stringStruct, ptr %3, i32 0, i32 1
-// CHECK-NEXT:   %8 = load i64, ptr %7, align 8
-// CHECK-NEXT:   %9 = getelementptr inbounds %main.slice, ptr %2, i32 0, i32 1
-// CHECK-NEXT:   store i64 %8, ptr %9, align 8
+// CHECK-NEXT:   %5 = icmp eq ptr %3, null
+// CHECK-NEXT:   br i1 %5, label %6, label %7
+// CHECK-EMPTY:
+// CHECK-NEXT: 6:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 7:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %8 = load ptr, ptr %4, align 8
+// CHECK-NEXT:   %9 = getelementptr inbounds %main.slice, ptr %2, i32 0, i32 0
+// CHECK-NEXT:   store ptr %8, ptr %9, align 8
 // CHECK-NEXT:   %10 = getelementptr inbounds %main.stringStruct, ptr %3, i32 0, i32 1
-// CHECK-NEXT:   %11 = load i64, ptr %10, align 8
-// CHECK-NEXT:   %12 = getelementptr inbounds %main.slice, ptr %2, i32 0, i32 2
-// CHECK-NEXT:   store i64 %11, ptr %12, align 8
-// CHECK-NEXT:   %13 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %2, align 8
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %13
+// CHECK-NEXT:   %11 = icmp eq ptr %3, null
+// CHECK-NEXT:   br i1 %11, label %12, label %13
+// CHECK-EMPTY:
+// CHECK-NEXT: 12:                                               ; preds = %7
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 13:                                               ; preds = %7
+// CHECK-NEXT:   %14 = load i64, ptr %10, align 8
+// CHECK-NEXT:   %15 = getelementptr inbounds %main.slice, ptr %2, i32 0, i32 1
+// CHECK-NEXT:   store i64 %14, ptr %15, align 8
+// CHECK-NEXT:   %16 = getelementptr inbounds %main.stringStruct, ptr %3, i32 0, i32 1
+// CHECK-NEXT:   %17 = icmp eq ptr %3, null
+// CHECK-NEXT:   br i1 %17, label %18, label %19
+// CHECK-EMPTY:
+// CHECK-NEXT: 18:                                               ; preds = %13
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 19:                                               ; preds = %13
+// CHECK-NEXT:   %20 = load i64, ptr %16, align 8
+// CHECK-NEXT:   %21 = getelementptr inbounds %main.slice, ptr %2, i32 0, i32 2
+// CHECK-NEXT:   store i64 %20, ptr %21, align 8
+// CHECK-NEXT:   %22 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %2, align 8
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %22
 // CHECK-NEXT: }
 
 func bytes(s string) (ret []byte) {

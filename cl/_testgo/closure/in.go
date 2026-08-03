@@ -28,14 +28,23 @@ func main() {
 		// CHECK-NEXT: _llgo_0:
 		// CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
 		// CHECK-NEXT:   %3 = extractvalue { ptr } %2, 0
-		// CHECK-NEXT:   %4 = load %"{{.*}}String", ptr %3, align 8
-		// CHECK-NEXT:   call void @"{{.*}}PrintString"(%"{{.*}}String" { ptr @2, i64 7 })
-		// CHECK-NEXT:   call void @"{{.*}}PrintByte"(i8 32)
-		// CHECK-NEXT:   call void @"{{.*}}PrintInt"(i64 %1)
-		// CHECK-NEXT:   call void @"{{.*}}PrintByte"(i8 32)
-		// CHECK-NEXT:   call void @"{{.*}}PrintString"(%"{{.*}}String" %4)
-		// CHECK-NEXT:   call void @"{{.*}}PrintByte"(i8 10)
+		// CHECK-NEXT:   %4 = icmp eq ptr %3, null
+		// CHECK-NEXT:   br i1 %4, label %5, label %6
+		// CHECK-EMPTY:
+		// CHECK-NEXT: 5:                                                ; preds = %_llgo_0
+		// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+		// CHECK-NEXT:   unreachable
+		// CHECK-EMPTY:
+		// CHECK-NEXT: 6:                                                ; preds = %_llgo_0
+		// CHECK-NEXT:   %7 = load %"{{.*}}/runtime/internal/runtime.String", ptr %3, align 8
+		// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 7 })
+		// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+		// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %1)
+		// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+		// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %7)
+		// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 		// CHECK-NEXT:   ret void
+		// CHECK-NEXT: }
 		println("closure", i, env)
 	}
 	v1(100)

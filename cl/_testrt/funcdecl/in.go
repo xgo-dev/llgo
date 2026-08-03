@@ -76,10 +76,36 @@ func check(fn func()) {
 // CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %0, ptr %1, align 8
 // CHECK-NEXT:   %2 = getelementptr inbounds %main.rtype, ptr %1, i32 0, i32 1
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = getelementptr inbounds { ptr, ptr }, ptr %3, i32 0, i32 0
-// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
-// CHECK-NEXT:   ret ptr %5
+// CHECK-NEXT:   %3 = icmp eq ptr %1, null
+// CHECK-NEXT:   br i1 %3, label %4, label %5
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 5:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %6 = load ptr, ptr %2, align 8
+// CHECK-NEXT:   %7 = getelementptr inbounds { ptr, ptr }, ptr %6, i32 0, i32 0
+// CHECK-NEXT:   %8 = icmp eq ptr %1, null
+// CHECK-NEXT:   br i1 %8, label %9, label %10
+// CHECK-EMPTY:
+// CHECK-NEXT: 9:                                                ; preds = %5
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 10:                                               ; preds = %5
+// CHECK-NEXT:   %11 = icmp eq ptr %2, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %11)
+// CHECK-NEXT:   %12 = icmp eq ptr %6, null
+// CHECK-NEXT:   br i1 %12, label %13, label %14
+// CHECK-EMPTY:
+// CHECK-NEXT: 13:                                               ; preds = %10
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 14:                                               ; preds = %10
+// CHECK-NEXT:   %15 = load ptr, ptr %7, align 8
+// CHECK-NEXT:   ret ptr %15
 // CHECK-NEXT: }
 
 func closurePtr(a any) unsafe.Pointer {

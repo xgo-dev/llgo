@@ -46,8 +46,17 @@ func returnStateAndMut() (state, int) {
 // CHECK-NEXT:   %2 = getelementptr inbounds %main.state, ptr %0, i32 0, i32 0
 // CHECK-NEXT:   store i64 %1, ptr %2, align 8
 // CHECK-NEXT:   %3 = getelementptr inbounds %main.state, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
-// CHECK-NEXT:   ret i64 %4
+// CHECK-NEXT:   %4 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %4, label %5, label %6
+// CHECK-EMPTY:
+// CHECK-NEXT: 5:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 6:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %7 = load i64, ptr %3, align 8
+// CHECK-NEXT:   ret i64 %7
+// CHECK-NEXT: }
 func (s *state) mutate(next int) int {
 	s.v = next
 	return s.v

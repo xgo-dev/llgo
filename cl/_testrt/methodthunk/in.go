@@ -13,8 +13,16 @@ type outer struct {
 // CHECK-LABEL: define i64 @"main.(*InnerInt).M"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds %main.InnerInt, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load i64, ptr %1, align 8
-// CHECK-NEXT:   ret i64 %2
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = load i64, ptr %1, align 8
+// CHECK-NEXT:   ret i64 %5
 // CHECK-NEXT: }
 func (*inner) M() {}
 
@@ -24,9 +32,17 @@ type InnerInt struct {
 
 // CHECK-LABEL: define i64 @"main.(*OuterInt).M"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds %main.OuterInt, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = call i64 @"main.(*InnerInt).M"(ptr %1)
-// CHECK-NEXT:   ret i64 %2
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %1, label %2, label %3
+// CHECK-EMPTY:
+// CHECK-NEXT: 2:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %4 = getelementptr inbounds %main.OuterInt, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %5 = call i64 @"main.(*InnerInt).M"(ptr %4)
+// CHECK-NEXT:   ret i64 %5
 // CHECK-NEXT: }
 type OuterInt struct {
 	Y int

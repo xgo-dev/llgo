@@ -248,15 +248,31 @@ type I2 interface {
 // CHECK-LABEL: define i64 @"main.(*T).Demo2"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds %main.T, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load i64, ptr %1, align 8
-// CHECK-NEXT:   ret i64 %2
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = load i64, ptr %1, align 8
+// CHECK-NEXT:   ret i64 %5
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"main.(*T).demo3"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds %main.T, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load i64, ptr %1, align 8
-// CHECK-NEXT:   ret i64 %2
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = load i64, ptr %1, align 8
+// CHECK-NEXT:   ret i64 %5
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @main.init(){{.*}} {
@@ -693,7 +709,7 @@ type I2 interface {
 // CHECK-LABEL: define void @main.testGeneric(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.Pointer[any]")
+// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$uinGjIxPTfzB5e5h5gH-0VIvLl5rQdJ_yx2UsrxQqds", ptr @"*_llgo_main.Pointer[any]")
 // CHECK-NEXT:   %2 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %1, 0
 // CHECK-NEXT:   %3 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %2, ptr %0, 1
 // CHECK-NEXT:   %4 = call ptr @"main.testGeneric$1"()
@@ -715,29 +731,37 @@ type I2 interface {
 // CHECK-NEXT:   %19 = extractvalue { ptr, ptr } %18, 1
 // CHECK-NEXT:   %20 = extractvalue { ptr, ptr } %18, 0
 // CHECK-NEXT:   %21 = call ptr %20(ptr %19)
-// CHECK-NEXT:   %22 = load %"{{.*}}/runtime/internal/runtime.eface", ptr %21, align 8
-// CHECK-NEXT:   %23 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %22, 0
-// CHECK-NEXT:   %24 = icmp eq ptr %23, @_llgo_int
-// CHECK-NEXT:   br i1 %24, label %_llgo_3, label %_llgo_4
+// CHECK-NEXT:   %22 = icmp eq ptr %21, null
+// CHECK-NEXT:   br i1 %22, label %25, label %26
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_3
-// CHECK-NEXT:   %25 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GENERIC_ERR]], i64 17 }, ptr %25, align 8
-// CHECK-NEXT:   %26 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %25, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %26)
+// CHECK-NEXT:   %23 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @107, i64 17 }, ptr %23, align 8
+// CHECK-NEXT:   %24 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %23, 1
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %24)
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_3
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %27 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %22, 1
-// CHECK-NEXT:   %28 = load i64, ptr %27, align 8
-// CHECK-NEXT:   %29 = icmp ne i64 %28, 100
-// CHECK-NEXT:   br i1 %29, label %_llgo_1, label %_llgo_2
+// CHECK-NEXT: 25:                                               ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
-// CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %23, %"{{.*}}/runtime/internal/runtime.String" { ptr @5, i64 3 }, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
+// CHECK-NEXT: 26:                                               ; preds = %_llgo_0
+// CHECK-NEXT:   %27 = load %"{{.*}}/runtime/internal/runtime.eface", ptr %21, align 8
+// CHECK-NEXT:   %28 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %27, 0
+// CHECK-NEXT:   %29 = icmp eq ptr %28, @_llgo_int
+// CHECK-NEXT:   br i1 %29, label %_llgo_3, label %_llgo_4
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_3:                                          ; preds = %26
+// CHECK-NEXT:   %30 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %27, 1
+// CHECK-NEXT:   %31 = load i64, ptr %30, align 8
+// CHECK-NEXT:   %32 = icmp ne i64 %31, 100
+// CHECK-NEXT:   br i1 %32, label %_llgo_1, label %_llgo_2
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_4:                                          ; preds = %26
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %28, %"{{.*}}/runtime/internal/runtime.String" { ptr @5, i64 3 }, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 
@@ -851,31 +875,61 @@ type I2 interface {
 // CHECK-LABEL: define i64 @"main.*struct{m int; *main.T}.Demo1"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %3)
-// CHECK-NEXT:   %4 = icmp eq ptr %1, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %4)
-// CHECK-NEXT:   %5 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %2)
-// CHECK-NEXT:   %6 = load %main.T, ptr %5, align 8
-// CHECK-NEXT:   %7 = call i64 @main.T.Demo1(%main.T %6)
-// CHECK-NEXT:   ret i64 %7
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = load ptr, ptr %1, align 8
+// CHECK-NEXT:   %6 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %6, label %7, label %8
+// CHECK-EMPTY:
+// CHECK-NEXT: 7:                                                ; preds = %4
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 8:                                                ; preds = %4
+// CHECK-NEXT:   %9 = icmp eq ptr %1, null
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %9)
+// CHECK-NEXT:   %10 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %5)
+// CHECK-NEXT:   %11 = load %main.T, ptr %10, align 8
+// CHECK-NEXT:   %12 = call i64 @main.T.Demo1(%main.T %11)
+// CHECK-NEXT:   ret i64 %12
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"main.*struct{m int; *main.T}.Demo2"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = call i64 @"main.(*T).Demo2"(ptr %2)
-// CHECK-NEXT:   ret i64 %3
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %1, label %2, label %3
+// CHECK-EMPTY:
+// CHECK-NEXT: 2:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %4 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
+// CHECK-NEXT:   %6 = call i64 @"main.(*T).Demo2"(ptr %5)
+// CHECK-NEXT:   ret i64 %6
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"main.*struct{m int; *main.T}.demo3"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = call i64 @"main.(*T).demo3"(ptr %2)
-// CHECK-NEXT:   ret i64 %3
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %1, label %2, label %3
+// CHECK-EMPTY:
+// CHECK-NEXT: 2:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %4 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
+// CHECK-NEXT:   %6 = call i64 @"main.(*T).demo3"(ptr %5)
+// CHECK-NEXT:   ret i64 %6
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"main.struct{m int; *main.T}.Demo1"({ i64, ptr } %0){{.*}} {
@@ -1000,25 +1054,47 @@ type I2 interface {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds { i64, %main.T }, ptr %0, i32 0, i32 1
 // CHECK-NEXT:   %2 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %1)
-// CHECK-NEXT:   %4 = load %main.T, ptr %3, align 8
-// CHECK-NEXT:   %5 = call i64 @main.T.Demo1(%main.T %4)
-// CHECK-NEXT:   ret i64 %5
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = call ptr @"{{.*}}/runtime/internal/runtime.AssertNilDerefPtr"(ptr %1)
+// CHECK-NEXT:   %6 = load %main.T, ptr %5, align 8
+// CHECK-NEXT:   %7 = call i64 @main.T.Demo1(%main.T %6)
+// CHECK-NEXT:   ret i64 %7
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"main.*struct{m int; main.T}.Demo2"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds { i64, %main.T }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = call i64 @"main.(*T).Demo2"(ptr %1)
-// CHECK-NEXT:   ret i64 %2
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %1, label %2, label %3
+// CHECK-EMPTY:
+// CHECK-NEXT: 2:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %4 = getelementptr inbounds { i64, %main.T }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %5 = call i64 @"main.(*T).Demo2"(ptr %4)
+// CHECK-NEXT:   ret i64 %5
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"main.*struct{m int; main.T}.demo3"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds { i64, %main.T }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = call i64 @"main.(*T).demo3"(ptr %1)
-// CHECK-NEXT:   ret i64 %2
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %1, label %2, label %3
+// CHECK-EMPTY:
+// CHECK-NEXT: 2:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %4 = getelementptr inbounds { i64, %main.T }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %5 = call i64 @"main.(*T).demo3"(ptr %4)
+// CHECK-NEXT:   ret i64 %5
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce i64 @"__llgo_stub.main.*struct{m int; main.T}.Demo1"(ptr %0, ptr %1){{.*}} {
@@ -1047,268 +1123,484 @@ type I2 interface {
 
 // CHECK-LABEL: define i64 @"main.*struct{m int; *bytes.Buffer}.Available"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = call i64 @"bytes.(*Buffer).Available"(ptr %2)
-// CHECK-NEXT:   ret i64 %3
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %1, label %2, label %3
+// CHECK-EMPTY:
+// CHECK-NEXT: 2:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %4 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
+// CHECK-NEXT:   %6 = call i64 @"bytes.(*Buffer).Available"(ptr %5)
+// CHECK-NEXT:   ret i64 %6
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.Slice" @"main.*struct{m int; *bytes.Buffer}.AvailableBuffer"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = call %"{{.*}}/runtime/internal/runtime.Slice" @"bytes.(*Buffer).AvailableBuffer"(ptr %2)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %3
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %1, label %2, label %3
+// CHECK-EMPTY:
+// CHECK-NEXT: 2:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %4 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
+// CHECK-NEXT:   %6 = call %"{{.*}}/runtime/internal/runtime.Slice" @"bytes.(*Buffer).AvailableBuffer"(ptr %5)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %6
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.Slice" @"main.*struct{m int; *bytes.Buffer}.Bytes"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = call %"{{.*}}/runtime/internal/runtime.Slice" @"bytes.(*Buffer).Bytes"(ptr %2)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %3
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %1, label %2, label %3
+// CHECK-EMPTY:
+// CHECK-NEXT: 2:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %4 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
+// CHECK-NEXT:   %6 = call %"{{.*}}/runtime/internal/runtime.Slice" @"bytes.(*Buffer).Bytes"(ptr %5)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %6
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"main.*struct{m int; *bytes.Buffer}.Cap"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = call i64 @"bytes.(*Buffer).Cap"(ptr %2)
-// CHECK-NEXT:   ret i64 %3
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %1, label %2, label %3
+// CHECK-EMPTY:
+// CHECK-NEXT: 2:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %4 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
+// CHECK-NEXT:   %6 = call i64 @"bytes.(*Buffer).Cap"(ptr %5)
+// CHECK-NEXT:   ret i64 %6
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"main.*struct{m int; *bytes.Buffer}.Grow"(ptr %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   call void @"bytes.(*Buffer).Grow"(ptr %3, i64 %1)
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
+// CHECK-NEXT:   call void @"bytes.(*Buffer).Grow"(ptr %6, i64 %1)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"main.*struct{m int; *bytes.Buffer}.Len"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = call i64 @"bytes.(*Buffer).Len"(ptr %2)
-// CHECK-NEXT:   ret i64 %3
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %1, label %2, label %3
+// CHECK-EMPTY:
+// CHECK-NEXT: 2:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %4 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
+// CHECK-NEXT:   %6 = call i64 @"bytes.(*Buffer).Len"(ptr %5)
+// CHECK-NEXT:   ret i64 %6
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.Slice" @"main.*struct{m int; *bytes.Buffer}.Next"(ptr %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = call %"{{.*}}/runtime/internal/runtime.Slice" @"bytes.(*Buffer).Next"(ptr %3, i64 %1)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %4
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
+// CHECK-NEXT:   %7 = call %"{{.*}}/runtime/internal/runtime.Slice" @"bytes.(*Buffer).Next"(ptr %6, i64 %1)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %7
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"main.*struct{m int; *bytes.Buffer}.Read"(ptr %0, %"{{.*}}/runtime/internal/runtime.Slice" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).Read"(ptr %3, %"{{.*}}/runtime/internal/runtime.Slice" %1)
-// CHECK-NEXT:   %5 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %4, 0
-// CHECK-NEXT:   %6 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %4, 1
-// CHECK-NEXT:   %7 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } undef, i64 %5, 0
-// CHECK-NEXT:   %8 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, %"{{.*}}/runtime/internal/runtime.iface" %6, 1
-// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %8
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
+// CHECK-NEXT:   %7 = call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).Read"(ptr %6, %"{{.*}}/runtime/internal/runtime.Slice" %1)
+// CHECK-NEXT:   %8 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, 0
+// CHECK-NEXT:   %9 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, 1
+// CHECK-NEXT:   %10 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } undef, i64 %8, 0
+// CHECK-NEXT:   %11 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %10, %"{{.*}}/runtime/internal/runtime.iface" %9, 1
+// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %11
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define { i8, %"{{.*}}/runtime/internal/runtime.iface" } @"main.*struct{m int; *bytes.Buffer}.ReadByte"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = call { i8, %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).ReadByte"(ptr %2)
-// CHECK-NEXT:   %4 = extractvalue { i8, %"{{.*}}/runtime/internal/runtime.iface" } %3, 0
-// CHECK-NEXT:   %5 = extractvalue { i8, %"{{.*}}/runtime/internal/runtime.iface" } %3, 1
-// CHECK-NEXT:   %6 = insertvalue { i8, %"{{.*}}/runtime/internal/runtime.iface" } undef, i8 %4, 0
-// CHECK-NEXT:   %7 = insertvalue { i8, %"{{.*}}/runtime/internal/runtime.iface" } %6, %"{{.*}}/runtime/internal/runtime.iface" %5, 1
-// CHECK-NEXT:   ret { i8, %"{{.*}}/runtime/internal/runtime.iface" } %7
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %1, label %2, label %3
+// CHECK-EMPTY:
+// CHECK-NEXT: 2:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %4 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
+// CHECK-NEXT:   %6 = call { i8, %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).ReadByte"(ptr %5)
+// CHECK-NEXT:   %7 = extractvalue { i8, %"{{.*}}/runtime/internal/runtime.iface" } %6, 0
+// CHECK-NEXT:   %8 = extractvalue { i8, %"{{.*}}/runtime/internal/runtime.iface" } %6, 1
+// CHECK-NEXT:   %9 = insertvalue { i8, %"{{.*}}/runtime/internal/runtime.iface" } undef, i8 %7, 0
+// CHECK-NEXT:   %10 = insertvalue { i8, %"{{.*}}/runtime/internal/runtime.iface" } %9, %"{{.*}}/runtime/internal/runtime.iface" %8, 1
+// CHECK-NEXT:   ret { i8, %"{{.*}}/runtime/internal/runtime.iface" } %10
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } @"main.*struct{m int; *bytes.Buffer}.ReadBytes"(ptr %0, i8 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = call { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).ReadBytes"(ptr %3, i8 %1)
-// CHECK-NEXT:   %5 = extractvalue { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } %4, 0
-// CHECK-NEXT:   %6 = extractvalue { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } %4, 1
-// CHECK-NEXT:   %7 = insertvalue { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } undef, %"{{.*}}/runtime/internal/runtime.Slice" %5, 0
-// CHECK-NEXT:   %8 = insertvalue { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } %7, %"{{.*}}/runtime/internal/runtime.iface" %6, 1
-// CHECK-NEXT:   ret { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } %8
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
+// CHECK-NEXT:   %7 = call { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).ReadBytes"(ptr %6, i8 %1)
+// CHECK-NEXT:   %8 = extractvalue { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } %7, 0
+// CHECK-NEXT:   %9 = extractvalue { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } %7, 1
+// CHECK-NEXT:   %10 = insertvalue { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } undef, %"{{.*}}/runtime/internal/runtime.Slice" %8, 0
+// CHECK-NEXT:   %11 = insertvalue { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } %10, %"{{.*}}/runtime/internal/runtime.iface" %9, 1
+// CHECK-NEXT:   ret { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } %11
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"main.*struct{m int; *bytes.Buffer}.ReadFrom"(ptr %0, %"{{.*}}/runtime/internal/runtime.iface" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).ReadFrom"(ptr %3, %"{{.*}}/runtime/internal/runtime.iface" %1)
-// CHECK-NEXT:   %5 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %4, 0
-// CHECK-NEXT:   %6 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %4, 1
-// CHECK-NEXT:   %7 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } undef, i64 %5, 0
-// CHECK-NEXT:   %8 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, %"{{.*}}/runtime/internal/runtime.iface" %6, 1
-// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %8
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
+// CHECK-NEXT:   %7 = call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).ReadFrom"(ptr %6, %"{{.*}}/runtime/internal/runtime.iface" %1)
+// CHECK-NEXT:   %8 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, 0
+// CHECK-NEXT:   %9 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, 1
+// CHECK-NEXT:   %10 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } undef, i64 %8, 0
+// CHECK-NEXT:   %11 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %10, %"{{.*}}/runtime/internal/runtime.iface" %9, 1
+// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %11
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } @"main.*struct{m int; *bytes.Buffer}.ReadRune"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = call { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).ReadRune"(ptr %2)
-// CHECK-NEXT:   %4 = extractvalue { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } %3, 0
-// CHECK-NEXT:   %5 = extractvalue { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } %3, 1
-// CHECK-NEXT:   %6 = extractvalue { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } %3, 2
-// CHECK-NEXT:   %7 = insertvalue { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } undef, i32 %4, 0
-// CHECK-NEXT:   %8 = insertvalue { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, i64 %5, 1
-// CHECK-NEXT:   %9 = insertvalue { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } %8, %"{{.*}}/runtime/internal/runtime.iface" %6, 2
-// CHECK-NEXT:   ret { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } %9
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %1, label %2, label %3
+// CHECK-EMPTY:
+// CHECK-NEXT: 2:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %4 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
+// CHECK-NEXT:   %6 = call { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).ReadRune"(ptr %5)
+// CHECK-NEXT:   %7 = extractvalue { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } %6, 0
+// CHECK-NEXT:   %8 = extractvalue { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } %6, 1
+// CHECK-NEXT:   %9 = extractvalue { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } %6, 2
+// CHECK-NEXT:   %10 = insertvalue { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } undef, i32 %7, 0
+// CHECK-NEXT:   %11 = insertvalue { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } %10, i64 %8, 1
+// CHECK-NEXT:   %12 = insertvalue { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } %11, %"{{.*}}/runtime/internal/runtime.iface" %9, 2
+// CHECK-NEXT:   ret { i32, i64, %"{{.*}}/runtime/internal/runtime.iface" } %12
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define { %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.iface" } @"main.*struct{m int; *bytes.Buffer}.ReadString"(ptr %0, i8 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = call { %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).ReadString"(ptr %3, i8 %1)
-// CHECK-NEXT:   %5 = extractvalue { %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.iface" } %4, 0
-// CHECK-NEXT:   %6 = extractvalue { %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.iface" } %4, 1
-// CHECK-NEXT:   %7 = insertvalue { %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.iface" } undef, %"{{.*}}/runtime/internal/runtime.String" %5, 0
-// CHECK-NEXT:   %8 = insertvalue { %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.iface" } %7, %"{{.*}}/runtime/internal/runtime.iface" %6, 1
-// CHECK-NEXT:   ret { %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.iface" } %8
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
+// CHECK-NEXT:   %7 = call { %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).ReadString"(ptr %6, i8 %1)
+// CHECK-NEXT:   %8 = extractvalue { %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.iface" } %7, 0
+// CHECK-NEXT:   %9 = extractvalue { %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.iface" } %7, 1
+// CHECK-NEXT:   %10 = insertvalue { %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.iface" } undef, %"{{.*}}/runtime/internal/runtime.String" %8, 0
+// CHECK-NEXT:   %11 = insertvalue { %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.iface" } %10, %"{{.*}}/runtime/internal/runtime.iface" %9, 1
+// CHECK-NEXT:   ret { %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.iface" } %11
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"main.*struct{m int; *bytes.Buffer}.Reset"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   call void @"bytes.(*Buffer).Reset"(ptr %2)
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %1, label %2, label %3
+// CHECK-EMPTY:
+// CHECK-NEXT: 2:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %4 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
+// CHECK-NEXT:   call void @"bytes.(*Buffer).Reset"(ptr %5)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @"main.*struct{m int; *bytes.Buffer}.String"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = call %"{{.*}}/runtime/internal/runtime.String" @"bytes.(*Buffer).String"(ptr %2)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %3
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %1, label %2, label %3
+// CHECK-EMPTY:
+// CHECK-NEXT: 2:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %4 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
+// CHECK-NEXT:   %6 = call %"{{.*}}/runtime/internal/runtime.String" @"bytes.(*Buffer).String"(ptr %5)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %6
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"main.*struct{m int; *bytes.Buffer}.Truncate"(ptr %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   call void @"bytes.(*Buffer).Truncate"(ptr %3, i64 %1)
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
+// CHECK-NEXT:   call void @"bytes.(*Buffer).Truncate"(ptr %6, i64 %1)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.iface" @"main.*struct{m int; *bytes.Buffer}.UnreadByte"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = call %"{{.*}}/runtime/internal/runtime.iface" @"bytes.(*Buffer).UnreadByte"(ptr %2)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %3
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %1, label %2, label %3
+// CHECK-EMPTY:
+// CHECK-NEXT: 2:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %4 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
+// CHECK-NEXT:   %6 = call %"{{.*}}/runtime/internal/runtime.iface" @"bytes.(*Buffer).UnreadByte"(ptr %5)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %6
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.iface" @"main.*struct{m int; *bytes.Buffer}.UnreadRune"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = call %"{{.*}}/runtime/internal/runtime.iface" @"bytes.(*Buffer).UnreadRune"(ptr %2)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %3
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %1, label %2, label %3
+// CHECK-EMPTY:
+// CHECK-NEXT: 2:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %4 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
+// CHECK-NEXT:   %6 = call %"{{.*}}/runtime/internal/runtime.iface" @"bytes.(*Buffer).UnreadRune"(ptr %5)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %6
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"main.*struct{m int; *bytes.Buffer}.Write"(ptr %0, %"{{.*}}/runtime/internal/runtime.Slice" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).Write"(ptr %3, %"{{.*}}/runtime/internal/runtime.Slice" %1)
-// CHECK-NEXT:   %5 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %4, 0
-// CHECK-NEXT:   %6 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %4, 1
-// CHECK-NEXT:   %7 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } undef, i64 %5, 0
-// CHECK-NEXT:   %8 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, %"{{.*}}/runtime/internal/runtime.iface" %6, 1
-// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %8
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
+// CHECK-NEXT:   %7 = call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).Write"(ptr %6, %"{{.*}}/runtime/internal/runtime.Slice" %1)
+// CHECK-NEXT:   %8 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, 0
+// CHECK-NEXT:   %9 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, 1
+// CHECK-NEXT:   %10 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } undef, i64 %8, 0
+// CHECK-NEXT:   %11 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %10, %"{{.*}}/runtime/internal/runtime.iface" %9, 1
+// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %11
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.iface" @"main.*struct{m int; *bytes.Buffer}.WriteByte"(ptr %0, i8 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = call %"{{.*}}/runtime/internal/runtime.iface" @"bytes.(*Buffer).WriteByte"(ptr %3, i8 %1)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %4
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
+// CHECK-NEXT:   %7 = call %"{{.*}}/runtime/internal/runtime.iface" @"bytes.(*Buffer).WriteByte"(ptr %6, i8 %1)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %7
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"main.*struct{m int; *bytes.Buffer}.WriteRune"(ptr %0, i32 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).WriteRune"(ptr %3, i32 %1)
-// CHECK-NEXT:   %5 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %4, 0
-// CHECK-NEXT:   %6 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %4, 1
-// CHECK-NEXT:   %7 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } undef, i64 %5, 0
-// CHECK-NEXT:   %8 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, %"{{.*}}/runtime/internal/runtime.iface" %6, 1
-// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %8
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
+// CHECK-NEXT:   %7 = call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).WriteRune"(ptr %6, i32 %1)
+// CHECK-NEXT:   %8 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, 0
+// CHECK-NEXT:   %9 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, 1
+// CHECK-NEXT:   %10 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } undef, i64 %8, 0
+// CHECK-NEXT:   %11 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %10, %"{{.*}}/runtime/internal/runtime.iface" %9, 1
+// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %11
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"main.*struct{m int; *bytes.Buffer}.WriteString"(ptr %0, %"{{.*}}/runtime/internal/runtime.String" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).WriteString"(ptr %3, %"{{.*}}/runtime/internal/runtime.String" %1)
-// CHECK-NEXT:   %5 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %4, 0
-// CHECK-NEXT:   %6 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %4, 1
-// CHECK-NEXT:   %7 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } undef, i64 %5, 0
-// CHECK-NEXT:   %8 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, %"{{.*}}/runtime/internal/runtime.iface" %6, 1
-// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %8
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
+// CHECK-NEXT:   %7 = call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).WriteString"(ptr %6, %"{{.*}}/runtime/internal/runtime.String" %1)
+// CHECK-NEXT:   %8 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, 0
+// CHECK-NEXT:   %9 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, 1
+// CHECK-NEXT:   %10 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } undef, i64 %8, 0
+// CHECK-NEXT:   %11 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %10, %"{{.*}}/runtime/internal/runtime.iface" %9, 1
+// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %11
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"main.*struct{m int; *bytes.Buffer}.WriteTo"(ptr %0, %"{{.*}}/runtime/internal/runtime.iface" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).WriteTo"(ptr %3, %"{{.*}}/runtime/internal/runtime.iface" %1)
-// CHECK-NEXT:   %5 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %4, 0
-// CHECK-NEXT:   %6 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %4, 1
-// CHECK-NEXT:   %7 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } undef, i64 %5, 0
-// CHECK-NEXT:   %8 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, %"{{.*}}/runtime/internal/runtime.iface" %6, 1
-// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %8
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
+// CHECK-NEXT:   %7 = call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).WriteTo"(ptr %6, %"{{.*}}/runtime/internal/runtime.iface" %1)
+// CHECK-NEXT:   %8 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, 0
+// CHECK-NEXT:   %9 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %7, 1
+// CHECK-NEXT:   %10 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } undef, i64 %8, 0
+// CHECK-NEXT:   %11 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %10, %"{{.*}}/runtime/internal/runtime.iface" %9, 1
+// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %11
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i1 @"main.*struct{m int; *bytes.Buffer}.empty"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = call i1 @"bytes.(*Buffer).empty"(ptr %2)
-// CHECK-NEXT:   ret i1 %3
+// CHECK-NEXT:   %1 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %1, label %2, label %3
+// CHECK-EMPTY:
+// CHECK-NEXT: 2:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %4 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
+// CHECK-NEXT:   %6 = call i1 @"bytes.(*Buffer).empty"(ptr %5)
+// CHECK-NEXT:   ret i1 %6
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"main.*struct{m int; *bytes.Buffer}.grow"(ptr %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = call i64 @"bytes.(*Buffer).grow"(ptr %3, i64 %1)
-// CHECK-NEXT:   ret i64 %4
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
+// CHECK-NEXT:   %7 = call i64 @"bytes.(*Buffer).grow"(ptr %6, i64 %1)
+// CHECK-NEXT:   ret i64 %7
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } @"main.*struct{m int; *bytes.Buffer}.readSlice"(ptr %0, i8 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = call { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).readSlice"(ptr %3, i8 %1)
-// CHECK-NEXT:   %5 = extractvalue { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } %4, 0
-// CHECK-NEXT:   %6 = extractvalue { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } %4, 1
-// CHECK-NEXT:   %7 = insertvalue { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } undef, %"{{.*}}/runtime/internal/runtime.Slice" %5, 0
-// CHECK-NEXT:   %8 = insertvalue { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } %7, %"{{.*}}/runtime/internal/runtime.iface" %6, 1
-// CHECK-NEXT:   ret { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } %8
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
+// CHECK-NEXT:   %7 = call { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } @"bytes.(*Buffer).readSlice"(ptr %6, i8 %1)
+// CHECK-NEXT:   %8 = extractvalue { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } %7, 0
+// CHECK-NEXT:   %9 = extractvalue { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } %7, 1
+// CHECK-NEXT:   %10 = insertvalue { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } undef, %"{{.*}}/runtime/internal/runtime.Slice" %8, 0
+// CHECK-NEXT:   %11 = insertvalue { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } %10, %"{{.*}}/runtime/internal/runtime.iface" %9, 1
+// CHECK-NEXT:   ret { %"{{.*}}/runtime/internal/runtime.Slice", %"{{.*}}/runtime/internal/runtime.iface" } %11
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define { i64, i1 } @"main.*struct{m int; *bytes.Buffer}.tryGrowByReslice"(ptr %0, i64 %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = call { i64, i1 } @"bytes.(*Buffer).tryGrowByReslice"(ptr %3, i64 %1)
-// CHECK-NEXT:   %5 = extractvalue { i64, i1 } %4, 0
-// CHECK-NEXT:   %6 = extractvalue { i64, i1 } %4, 1
-// CHECK-NEXT:   %7 = insertvalue { i64, i1 } undef, i64 %5, 0
-// CHECK-NEXT:   %8 = insertvalue { i64, i1 } %7, i1 %6, 1
-// CHECK-NEXT:   ret { i64, i1 } %8
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = getelementptr inbounds { i64, ptr }, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
+// CHECK-NEXT:   %7 = call { i64, i1 } @"bytes.(*Buffer).tryGrowByReslice"(ptr %6, i64 %1)
+// CHECK-NEXT:   %8 = extractvalue { i64, i1 } %7, 0
+// CHECK-NEXT:   %9 = extractvalue { i64, i1 } %7, 1
+// CHECK-NEXT:   %10 = insertvalue { i64, i1 } undef, i64 %8, 0
+// CHECK-NEXT:   %11 = insertvalue { i64, i1 } %10, i1 %9, 1
+// CHECK-NEXT:   ret { i64, i1 } %11
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define i64 @"main.struct{m int; *bytes.Buffer}.Available"({ i64, ptr } %0){{.*}} {

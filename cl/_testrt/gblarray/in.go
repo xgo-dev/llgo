@@ -73,11 +73,27 @@ var (
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = call ptr @main.Basic(i64 24)
 // CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 6
-// CHECK-NEXT:   %2 = load i8, ptr %1, align 1
-// CHECK-NEXT:   %3 = zext i8 %2 to i64
-// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %5 = load i64, ptr %4, align 8
-// CHECK-NEXT:   %6 = call i32 (ptr, ...) @printf(ptr @0, i64 %3, i64 %5)
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = load i8, ptr %1, align 1
+// CHECK-NEXT:   %6 = zext i8 %5 to i64
+// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %8 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %8, label %9, label %10
+// CHECK-EMPTY:
+// CHECK-NEXT: 9:                                                ; preds = %4
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 10:                                               ; preds = %4
+// CHECK-NEXT:   %11 = load i64, ptr %7, align 8
+// CHECK-NEXT:   %12 = call i32 (ptr, ...) @printf(ptr @0, i64 %6, i64 %11)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 func main() {

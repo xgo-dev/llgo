@@ -12,15 +12,61 @@ type counter struct {
 // CHECK-LABEL: define %main.stateFn @main.countState(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds %main.counter, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load i64, ptr %1, align 8
-// CHECK-NEXT:   %3 = add i64 %2, 1
-// CHECK-NEXT:   %4 = getelementptr inbounds %main.counter, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store i64 %3, ptr %4, align 8
-// CHECK: call void @"{{.*}}PrintString"(%"{{.*}}String" { ptr @0, i64 6 })
-// CHECK: call void @"{{.*}}PrintInt"(i64 %6)
-// CHECK: icmp sge i64 %8, %10
-// CHECK: ret %main.stateFn zeroinitializer
-// CHECK: ret %main.stateFn { ptr @__llgo_stub.main.countState, ptr null }
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_1:                                          ; preds = %21
+// CHECK-NEXT:   ret %main.stateFn zeroinitializer
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_2:                                          ; preds = %21
+// CHECK-NEXT:   ret %main.stateFn { ptr @__llgo_stub.main.countState, ptr null }
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = load i64, ptr %1, align 8
+// CHECK-NEXT:   %6 = add i64 %5, 1
+// CHECK-NEXT:   %7 = getelementptr inbounds %main.counter, ptr %0, i32 0, i32 0
+// CHECK-NEXT:   store i64 %6, ptr %7, align 8
+// CHECK-NEXT:   %8 = getelementptr inbounds %main.counter, ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %9 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %9, label %10, label %11
+// CHECK-EMPTY:
+// CHECK-NEXT: 10:                                               ; preds = %4
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 11:                                               ; preds = %4
+// CHECK-NEXT:   %12 = load i64, ptr %8, align 8
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 6 })
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %12)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// CHECK-NEXT:   %13 = getelementptr inbounds %main.counter, ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %14 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %14, label %15, label %16
+// CHECK-EMPTY:
+// CHECK-NEXT: 15:                                               ; preds = %11
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 16:                                               ; preds = %11
+// CHECK-NEXT:   %17 = load i64, ptr %13, align 8
+// CHECK-NEXT:   %18 = getelementptr inbounds %main.counter, ptr %0, i32 0, i32 1
+// CHECK-NEXT:   %19 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %19, label %20, label %21
+// CHECK-EMPTY:
+// CHECK-NEXT: 20:                                               ; preds = %16
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 21:                                               ; preds = %16
+// CHECK-NEXT:   %22 = load i64, ptr %18, align 8
+// CHECK-NEXT:   %23 = icmp sge i64 %17, %22
+// CHECK-NEXT:   br i1 %23, label %_llgo_1, label %_llgo_2
+// CHECK-NEXT: }
 func countState(c *counter) stateFn {
 	c.value++
 	println("count:", c.value)

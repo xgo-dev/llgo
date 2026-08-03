@@ -139,7 +139,7 @@ type (
 // CHECK-NEXT:   %53 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %52, 0
 // CHECK-NEXT:   %54 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %52, 1
 // CHECK-NEXT:   %55 = icmp uge i64 0, %54
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %55, {{.*}})
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %55, i64 0, i1 true, i64 %54)
 // CHECK-NEXT:   %56 = getelementptr inbounds i64, ptr %53, i64 0
 // CHECK-NEXT:   %57 = load i64, ptr %56, align 8
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %50)
@@ -153,7 +153,7 @@ type (
 // CHECK-NEXT:   %62 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %61, 0
 // CHECK-NEXT:   %63 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %61, 1
 // CHECK-NEXT:   %64 = icmp uge i64 0, %63
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %64, {{.*}})
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %64, i64 0, i1 true, i64 %63)
 // CHECK-NEXT:   %65 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.String", ptr %62, i64 0
 // CHECK-NEXT:   %66 = load %"{{.*}}/runtime/internal/runtime.String", ptr %65, align 8
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %59)
@@ -167,7 +167,7 @@ type (
 // CHECK-NEXT:   %71 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %70, 0
 // CHECK-NEXT:   %72 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %70, 1
 // CHECK-NEXT:   %73 = icmp uge i64 0, %72
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %73, {{.*}})
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %73, i64 0, i1 true, i64 %72)
 // CHECK-NEXT:   %74 = getelementptr inbounds i64, ptr %71, i64 0
 // CHECK-NEXT:   %75 = load i64, ptr %74, align 8
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %68)
@@ -205,41 +205,89 @@ func main() {
 // CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.Slice" @"main.(*Slice{{\[\[\]int,int\]}}).Append"(ptr %0, %"{{.*}}/runtime/internal/runtime.Slice" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = getelementptr inbounds %"main.Slice{{\[\[\]int,int\]}}", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %2, align 8
-// CHECK-NEXT:   %4 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 0
-// CHECK-NEXT:   %5 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 1
-// CHECK-NEXT:   %6 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %3, ptr %4, i64 %5, i64 8)
-// CHECK-NEXT:   %7 = getelementptr inbounds %"main.Slice{{\[\[\]int,int\]}}", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %6, ptr %7, align 8
-// CHECK-NEXT:   %8 = getelementptr inbounds %"main.Slice{{\[\[\]int,int\]}}", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %9 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %8, align 8
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %9
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %3, label %4, label %5
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 5:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %6 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %2, align 8
+// CHECK-NEXT:   %7 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 0
+// CHECK-NEXT:   %8 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 1
+// CHECK-NEXT:   %9 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %6, ptr %7, i64 %8, i64 8)
+// CHECK-NEXT:   %10 = getelementptr inbounds %"main.Slice{{\[\[\]int,int\]}}", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %9, ptr %10, align 8
+// CHECK-NEXT:   %11 = getelementptr inbounds %"main.Slice{{\[\[\]int,int\]}}", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %12 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %12, label %13, label %14
+// CHECK-EMPTY:
+// CHECK-NEXT: 13:                                               ; preds = %5
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 14:                                               ; preds = %5
+// CHECK-NEXT:   %15 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %11, align 8
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %15
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.Slice" @"main.(*Slice{{\[\[\]string,string\]}}).Append"(ptr %0, %"{{.*}}/runtime/internal/runtime.Slice" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = getelementptr inbounds %"main.Slice{{\[\[\]string,string\]}}", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %2, align 8
-// CHECK-NEXT:   %4 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 0
-// CHECK-NEXT:   %5 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 1
-// CHECK-NEXT:   %6 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %3, ptr %4, i64 %5, i64 16)
-// CHECK-NEXT:   %7 = getelementptr inbounds %"main.Slice{{\[\[\]string,string\]}}", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %6, ptr %7, align 8
-// CHECK-NEXT:   %8 = getelementptr inbounds %"main.Slice{{\[\[\]string,string\]}}", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %9 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %8, align 8
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %9
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %3, label %4, label %5
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 5:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %6 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %2, align 8
+// CHECK-NEXT:   %7 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 0
+// CHECK-NEXT:   %8 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 1
+// CHECK-NEXT:   %9 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %6, ptr %7, i64 %8, i64 16)
+// CHECK-NEXT:   %10 = getelementptr inbounds %"main.Slice{{\[\[\]string,string\]}}", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %9, ptr %10, align 8
+// CHECK-NEXT:   %11 = getelementptr inbounds %"main.Slice{{\[\[\]string,string\]}}", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %12 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %12, label %13, label %14
+// CHECK-EMPTY:
+// CHECK-NEXT: 13:                                               ; preds = %5
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 14:                                               ; preds = %5
+// CHECK-NEXT:   %15 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %11, align 8
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %15
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.Slice" @"main.(*Slice{{\[\[\]int,int\]}}).Append2"(ptr %0, %"{{.*}}/runtime/internal/runtime.Slice" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = getelementptr inbounds %"main.Slice{{\[\[\]int,int\]}}", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %2, align 8
-// CHECK-NEXT:   %4 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 0
-// CHECK-NEXT:   %5 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 1
-// CHECK-NEXT:   %6 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %3, ptr %4, i64 %5, i64 8)
-// CHECK-NEXT:   %7 = getelementptr inbounds %"main.Slice{{\[\[\]int,int\]}}", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %6, ptr %7, align 8
-// CHECK-NEXT:   %8 = getelementptr inbounds %"main.Slice{{\[\[\]int,int\]}}", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %9 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %8, align 8
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %9
+// CHECK-NEXT:   %3 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %3, label %4, label %5
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 5:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %6 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %2, align 8
+// CHECK-NEXT:   %7 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 0
+// CHECK-NEXT:   %8 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 1
+// CHECK-NEXT:   %9 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %6, ptr %7, i64 %8, i64 8)
+// CHECK-NEXT:   %10 = getelementptr inbounds %"main.Slice{{\[\[\]int,int\]}}", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %9, ptr %10, align 8
+// CHECK-NEXT:   %11 = getelementptr inbounds %"main.Slice{{\[\[\]int,int\]}}", ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %12 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %12, label %13, label %14
+// CHECK-EMPTY:
+// CHECK-NEXT: 13:                                               ; preds = %5
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 14:                                               ; preds = %5
+// CHECK-NEXT:   %15 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %11, align 8
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %15
 // CHECK-NEXT: }

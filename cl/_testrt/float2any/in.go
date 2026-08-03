@@ -37,9 +37,9 @@ func check32(v any) {
 // CHECK-LABEL: define void @main.check64(%"{{.*}}/runtime/internal/runtime.eface" %0){{.*}} {
 // CHECK: icmp eq ptr {{.*}}, @_llgo_float64
 // CHECK: load i32, ptr
-// CHECK: icmp ne i32 {{.*}}, 1405670641
-// CHECK: load i32, ptr
 // CHECK: icmp ne i32 {{.*}}, 1074340347
+// CHECK: load i32, ptr
+// CHECK: icmp ne i32 {{.*}}, 1405670641
 func check64(v any) {
 	switch v.(type) {
 	case float64:

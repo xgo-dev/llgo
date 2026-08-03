@@ -325,10 +325,15 @@ type outer struct {
 	A int
 	C int
 	inner
+	innerArray [2]inner
 }
 
 func addr(v *outer) *int {
 	return &v.B
+}
+
+func indexedAddr(v *outer, i int) *int {
+	return &v.innerArray[i].B
 }
 
 func nestedAddr(v *outer) *int {
@@ -365,6 +370,15 @@ func offset(v *outer) uintptr {
 	for _, field := range nested {
 		if !ctx.isAddressOfFieldAddr(field) {
 			t.Fatalf("nested address-of field selector was not detected: %s", field)
+		}
+	}
+	indexed := fieldAddrInstrs(t, ssaPkg.Func("indexedAddr"))
+	if len(indexed) < 2 {
+		t.Fatalf("indexedAddr FieldAddr count = %d, want at least 2", len(indexed))
+	}
+	for _, field := range indexed {
+		if !ctx.isAddressOfFieldAddr(field) {
+			t.Fatalf("indexed address-of field selector was not detected: %s", field)
 		}
 	}
 	if ctx.isAddressOfFieldAddr(fieldAddrInstr(t, ssaPkg.Func("value"), "B")) {

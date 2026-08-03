@@ -2442,10 +2442,6 @@ xfails:
     reason: runtime caller frame reports main instead of runtime.main on darwin/arm64
   - platform: darwin/arm64
     directive: run
-    case: nilptr2.go
-    reason: address-of a dereferenced nil pointer does not panic and the run hangs on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
     case: range4.go
     reason: range-over-function build exits successfully without producing a binary on darwin/arm64
   - platform: darwin/arm64
@@ -3354,10 +3350,6 @@ xfails:
     directive: run
     case: fixedbugs/issue43835.go
     reason: current main goroot run failure on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue38496.go
-    reason: current main goroot run failure on darwin/arm64
   - version: go1.26
     platform: darwin/arm64
     directive: run
@@ -3451,10 +3443,6 @@ xfails:
   - platform: linux/amd64
     directive: run
     case: fixedbugs/issue8132.go
-    reason: current main goroot run failure on linux/amd64
-  - platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue38496.go
     reason: current main goroot run failure on linux/amd64
   - version: go1.24
     platform: linux/amd64

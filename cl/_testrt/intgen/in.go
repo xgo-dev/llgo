@@ -45,13 +45,29 @@ func genInts(n int, gen func() c.Int) []c.Int {
 // CHECK-LABEL: define i32 @"main.(*generator).next"(ptr %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = getelementptr inbounds %main.generator, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load i32, ptr %1, align 4
-// CHECK-NEXT:   %3 = add i32 %2, 1
-// CHECK-NEXT:   %4 = getelementptr inbounds %main.generator, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store i32 %3, ptr %4, align 4
-// CHECK-NEXT:   %5 = getelementptr inbounds %main.generator, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %6 = load i32, ptr %5, align 4
-// CHECK-NEXT:   ret i32 %6
+// CHECK-NEXT:   %2 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %2, label %3, label %4
+// CHECK-EMPTY:
+// CHECK-NEXT: 3:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 4:                                                ; preds = %_llgo_0
+// CHECK-NEXT:   %5 = load i32, ptr %1, align 4
+// CHECK-NEXT:   %6 = add i32 %5, 1
+// CHECK-NEXT:   %7 = getelementptr inbounds %main.generator, ptr %0, i32 0, i32 0
+// CHECK-NEXT:   store i32 %6, ptr %7, align 4
+// CHECK-NEXT:   %8 = getelementptr inbounds %main.generator, ptr %0, i32 0, i32 0
+// CHECK-NEXT:   %9 = icmp eq ptr %0, null
+// CHECK-NEXT:   br i1 %9, label %10, label %11
+// CHECK-EMPTY:
+// CHECK-NEXT: 10:                                               ; preds = %4
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   unreachable
+// CHECK-EMPTY:
+// CHECK-NEXT: 11:                                               ; preds = %4
+// CHECK-NEXT:   %12 = load i32, ptr %8, align 4
+// CHECK-NEXT:   ret i32 %12
 // CHECK-NEXT: }
 func (g *generator) next() c.Int {
 	g.val++

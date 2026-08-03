@@ -813,6 +813,11 @@ func collectFieldSelectorChain(ret map[token.Pos]none, expr ast.Expr) {
 		case *ast.SelectorExpr:
 			ret[e.Sel.Pos()] = none{}
 			expr = e.X
+		case *ast.IndexExpr:
+			// Keep walking the addressable base. In &p.array[i], SSA checks
+			// the derived array pointer, which may already be non-nil because
+			// of the field offset even when p itself is nil.
+			expr = e.X
 		default:
 			return
 		}
@@ -1830,6 +1835,372 @@ func isKnownNonNilAddr(v ssa.Value) bool {
 	return false
 }
 
+// isKnownNonNilAt proves only two deliberately small classes of facts:
+// straight-line loads whose latest local store is non-nil, and reloads of a
+// value tested against nil on a side-effect-free dominator path. Unknown
+// aliases, calls, joins, and loops all stop the proof.
+func isKnownNonNilAt(v ssa.Value, instr ssa.Instruction) bool {
+	if isKnownNonNilAddr(v) || isLocallyStoredNonNil(v) || isLocallyDerivedNonNil(v) {
+		return true
+	}
+	target := instr.Block()
+	if target == nil {
+		return false
+	}
+	for block := target.Idom(); block != nil; block = block.Idom() {
+		if len(block.Instrs) == 0 || len(block.Succs) != 2 {
+			continue
+		}
+		branch, ok := block.Instrs[len(block.Instrs)-1].(*ssa.If)
+		if !ok {
+			continue
+		}
+		cmp, ok := branch.Cond.(*ssa.BinOp)
+		if !ok || (cmp.Op != token.EQL && cmp.Op != token.NEQ) {
+			continue
+		}
+		compared := cmp.X
+		if isNilConst(cmp.X) {
+			compared = cmp.Y
+		} else if !isNilConst(cmp.Y) {
+			continue
+		}
+		if !equivalentPointerValues(compared, v, make(map[ssaValuePair]bool)) {
+			continue
+		}
+		nonNilSucc := block.Succs[0]
+		if cmp.Op == token.EQL {
+			nonNilSucc = block.Succs[1]
+		}
+		if nonNilSucc.Dominates(target) {
+			return true
+		}
+	}
+	return false
+}
+
+func isLocallyDerivedNonNil(v ssa.Value) bool {
+	switch v := v.(type) {
+	case *ssa.FieldAddr:
+		return isKnownNonNilAddr(v.X) || isLocallyStoredNonNil(v.X) || isLocallyDerivedNonNil(v.X)
+	case *ssa.IndexAddr:
+		return isKnownNonNilAddr(v.X) || isLocallyStoredNonNil(v.X) || isLocallyDerivedNonNil(v.X)
+	}
+	return false
+}
+
+type ssaValuePair struct {
+	x ssa.Value
+	y ssa.Value
+}
+
+// isLocallyStoredNonNil recognizes straight-line pointer initialization such
+// as p.next = new(node); use(p.next). It deliberately stays within one SSA
+// block and gives up at calls or stores that may alias the loaded slot.
+func isLocallyStoredNonNil(v ssa.Value) bool {
+	load, ok := v.(*ssa.UnOp)
+	if !ok || load.Op != token.MUL || !isPointerGoType(load.Type()) {
+		return false
+	}
+	stored, ok := localStoredValue(load.X, load)
+	return ok && isLocallyKnownNonNil(stored, make(map[ssa.Value]bool))
+}
+
+func isLocallyKnownNonNil(v ssa.Value, seen map[ssa.Value]bool) bool {
+	if v == nil || seen[v] {
+		return false
+	}
+	seen[v] = true
+	if isKnownNonNilAddr(v) {
+		return true
+	}
+	switch v := v.(type) {
+	case *ssa.ChangeType:
+		return isLocallyKnownNonNil(v.X, seen)
+	case *ssa.Convert:
+		return isPointerGoType(v.X.Type()) && isLocallyKnownNonNil(v.X, seen)
+	case *ssa.UnOp:
+		if v.Op == token.MUL && isPointerGoType(v.Type()) {
+			stored, ok := localStoredValue(v.X, v)
+			return ok && isLocallyKnownNonNil(stored, seen)
+		}
+	}
+	return false
+}
+
+func localStoredValue(addr ssa.Value, before ssa.Instruction) (ssa.Value, bool) {
+	block := before.Block()
+	if block == nil {
+		return nil, false
+	}
+	beforeIndex := instructionIndex(block, before)
+	if beforeIndex < 0 {
+		return nil, false
+	}
+	for i := beforeIndex - 1; i >= 0; i-- {
+		instr := block.Instrs[i]
+		switch instr := instr.(type) {
+		case *ssa.Store:
+			if equivalentMemoryAddresses(instr.Addr, addr, make(map[ssaValuePair]bool)) {
+				return instr.Val, true
+			}
+			if mayAliasMemoryAddresses(instr.Addr, addr) {
+				return nil, false
+			}
+		default:
+			if mayChangePointerMemory(instr) {
+				return nil, false
+			}
+		}
+	}
+	return nil, false
+}
+
+// equivalentPointerValues compares repeated pointer loads without treating
+// arbitrary SSA expressions as equal. Every load pair must use equivalent
+// addresses, and the path between them must preserve that memory.
+func equivalentPointerValues(x, y ssa.Value, seen map[ssaValuePair]bool) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return false
+	}
+	pair := ssaValuePair{x, y}
+	if seen[pair] {
+		return true
+	}
+	seen[pair] = true
+
+	switch x := x.(type) {
+	case *ssa.ChangeType:
+		y, ok := y.(*ssa.ChangeType)
+		return ok && equivalentPointerValues(x.X, y.X, seen)
+	case *ssa.Convert:
+		y, ok := y.(*ssa.Convert)
+		return ok && equivalentPointerValues(x.X, y.X, seen)
+	case *ssa.UnOp:
+		y, ok := y.(*ssa.UnOp)
+		if !ok || x.Op != token.MUL || y.Op != token.MUL {
+			return false
+		}
+		if !equivalentMemoryAddresses(x.X, y.X, seen) {
+			return false
+		}
+		return memoryUnchangedBetween(x, y, x.X) || memoryUnchangedBetween(y, x, y.X)
+	}
+	return false
+}
+
+func equivalentMemoryAddresses(x, y ssa.Value, seen map[ssaValuePair]bool) bool {
+	if x == y {
+		return true
+	}
+	switch x := x.(type) {
+	case *ssa.FieldAddr:
+		y, ok := y.(*ssa.FieldAddr)
+		return ok && x.Field == y.Field && equivalentPointerValues(x.X, y.X, seen)
+	case *ssa.IndexAddr:
+		y, ok := y.(*ssa.IndexAddr)
+		return ok && equivalentSSAIndices(x.Index, y.Index) && equivalentPointerValues(x.X, y.X, seen)
+	case *ssa.ChangeType:
+		y, ok := y.(*ssa.ChangeType)
+		return ok && equivalentMemoryAddresses(x.X, y.X, seen)
+	case *ssa.Convert:
+		y, ok := y.(*ssa.Convert)
+		return ok && equivalentMemoryAddresses(x.X, y.X, seen)
+	}
+	return false
+}
+
+func equivalentSSAIndices(x, y ssa.Value) bool {
+	if x == y {
+		return true
+	}
+	xv, xok := constInt(x)
+	yv, yok := constInt(y)
+	return xok && yok && xv == yv
+}
+
+func instructionIndex(block *ssa.BasicBlock, target ssa.Instruction) int {
+	for i, instr := range block.Instrs {
+		if instr == target {
+			return i
+		}
+	}
+	return -1
+}
+
+// memoryUnchangedBetween follows only a single-predecessor path. This keeps a
+// proof from silently crossing a merge where another predecessor may write.
+func memoryUnchangedBetween(from, to ssa.Instruction, addr ssa.Value) bool {
+	fromBlock, toBlock := from.Block(), to.Block()
+	if fromBlock == nil || toBlock == nil || !fromBlock.Dominates(toBlock) {
+		return false
+	}
+	fromIndex, toIndex := instructionIndex(fromBlock, from), instructionIndex(toBlock, to)
+	if fromIndex < 0 || toIndex < 0 {
+		return false
+	}
+	if fromBlock == toBlock {
+		if fromIndex >= toIndex {
+			return false
+		}
+		return memoryRangeUnchanged(fromBlock.Instrs[fromIndex+1:toIndex], addr)
+	}
+
+	var path []*ssa.BasicBlock
+	for block := toBlock; block != fromBlock; {
+		if len(block.Preds) != 1 {
+			return false
+		}
+		path = append(path, block)
+		block = block.Preds[0]
+	}
+	if !memoryRangeUnchanged(fromBlock.Instrs[fromIndex+1:], addr) {
+		return false
+	}
+	for i := len(path) - 1; i >= 0; i-- {
+		block := path[i]
+		end := len(block.Instrs)
+		if block == toBlock {
+			end = toIndex
+		}
+		if !memoryRangeUnchanged(block.Instrs[:end], addr) {
+			return false
+		}
+	}
+	return true
+}
+
+func memoryRangeUnchanged(instrs []ssa.Instruction, addr ssa.Value) bool {
+	for _, instr := range instrs {
+		if store, ok := instr.(*ssa.Store); ok {
+			if mayAliasMemoryAddresses(store.Addr, addr) {
+				return false
+			}
+			continue
+		}
+		if mayChangePointerMemory(instr) {
+			return false
+		}
+	}
+	return true
+}
+
+func mayChangePointerMemory(instr ssa.Instruction) bool {
+	switch instr := instr.(type) {
+	case *ssa.Call, *ssa.Go, *ssa.Defer, *ssa.Send, *ssa.MapUpdate, *ssa.RunDefers:
+		return true
+	case *ssa.UnOp:
+		return instr.Op == token.ARROW
+	}
+	return false
+}
+
+// mayAliasMemoryAddresses is conservative except for locations that Go SSA
+// proves disjoint: different globals, fields of a locally rooted object, or
+// fields rooted in distinct allocations. Unsafe conversions never get a
+// local root and therefore remain possible aliases.
+func mayAliasMemoryAddresses(x, y ssa.Value) bool {
+	if equivalentMemoryAddresses(x, y, make(map[ssaValuePair]bool)) {
+		return true
+	}
+	if xg, ok := x.(*ssa.Global); ok {
+		if yg, ok := y.(*ssa.Global); ok {
+			return xg == yg
+		}
+		return !isSafeDerivedAddress(y)
+	}
+	if _, ok := y.(*ssa.Global); ok {
+		return !isSafeDerivedAddress(x)
+	}
+	if xf, ok := x.(*ssa.FieldAddr); ok {
+		if yf, ok := y.(*ssa.FieldAddr); ok {
+			if equivalentPointerValues(xf.X, yf.X, make(map[ssaValuePair]bool)) {
+				return xf.Field == yf.Field
+			}
+			xroot, xok := localPointerRoot(xf.X, make(map[ssa.Value]bool))
+			yroot, yok := localPointerRoot(yf.X, make(map[ssa.Value]bool))
+			if xok && yok && definitelyDistinctPointerRoots(xroot, yroot) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func localPointerRoot(v ssa.Value, seen map[ssa.Value]bool) (ssa.Value, bool) {
+	if v == nil || seen[v] {
+		return nil, false
+	}
+	seen[v] = true
+	switch v := v.(type) {
+	case *ssa.Alloc, *ssa.Global:
+		return v, true
+	case *ssa.ChangeType:
+		return localPointerRoot(v.X, seen)
+	case *ssa.Convert:
+		if isPointerGoType(v.X.Type()) {
+			return localPointerRoot(v.X, seen)
+		}
+	case *ssa.FieldAddr:
+		return localPointerRoot(v.X, seen)
+	case *ssa.IndexAddr:
+		return localPointerRoot(v.X, seen)
+	case *ssa.UnOp:
+		if v.Op == token.MUL && isPointerGoType(v.Type()) {
+			stored, ok := localStoredValue(v.X, v)
+			if ok {
+				return localPointerRoot(stored, seen)
+			}
+		}
+	}
+	return nil, false
+}
+
+func definitelyDistinctPointerRoots(x, y ssa.Value) bool {
+	if x == y {
+		return false
+	}
+	switch x.(type) {
+	case *ssa.Alloc, *ssa.Global:
+	default:
+		return false
+	}
+	switch y.(type) {
+	case *ssa.Alloc, *ssa.Global:
+		return true
+	}
+	return false
+}
+
+func isSafeDerivedAddress(v ssa.Value) bool {
+	var base ssa.Value
+	switch v := v.(type) {
+	case *ssa.FieldAddr:
+		base = v.X
+	case *ssa.IndexAddr:
+		base = v.X
+	default:
+		return false
+	}
+	root, ok := localPointerRoot(base, make(map[ssa.Value]bool))
+	if !ok {
+		return false
+	}
+	switch root.(type) {
+	case *ssa.Alloc, *ssa.Global:
+		return true
+	}
+	return false
+}
+
+func isNilConst(v ssa.Value) bool {
+	c, ok := v.(*ssa.Const)
+	return ok && c.Value == nil
+}
+
 func isWrapNilCheckCall(v ssa.Value) bool {
 	call, ok := v.(*ssa.Call)
 	if !ok {
@@ -1847,19 +2218,37 @@ func (p *context) emitNilDerefBaseCheck(b llssa.Builder, addr ssa.Value) {
 		}
 		p.emitCheckedDerefCheck(b, addr)
 	case *ssa.FieldAddr:
-		if isKnownNonNilAddr(addr.X) || isWrapNilCheckCall(addr.X) {
+		if _, ok := p.methodReceiverBases[addr]; ok {
+			return
+		}
+		if isKnownNonNilAddr(addr.X) || isWrapNilCheckCall(addr.X) || isKnownNonNilAt(addr.X, addr) {
 			return
 		}
 		p.emitNilDerefBaseCheck(b, addr.X)
 		if isPointerGoType(addr.X.Type()) {
 			base := p.compileValue(b, addr.X)
-			b.AssertNilDeref(base)
+			b.AssertNilDerefBranch(base)
+		}
+	case *ssa.IndexAddr:
+		if _, ok := p.methodReceiverBases[addr]; ok {
+			return
+		}
+		if isKnownNonNilAddr(addr.X) || isWrapNilCheckCall(addr.X) || isKnownNonNilAt(addr.X, addr) {
+			return
+		}
+		p.emitNilDerefBaseCheck(b, addr.X)
+		if isPointerGoType(addr.X.Type()) {
+			base := p.compileValue(b, addr.X)
+			b.AssertNilDerefBranch(base)
 		}
 	}
 }
 
 func (p *context) emitCheckedDerefCheck(b llssa.Builder, arg *ssa.UnOp) {
 	p.emitNilDerefBaseCheck(b, arg.X)
+	if isKnownNonNilAt(arg.X, arg) {
+		return
+	}
 	ptr := p.compileValue(b, arg.X)
 	b.AssertNilDeref(ptr)
 }
@@ -1933,6 +2322,95 @@ func collectMethodNilDerefChecks(fn *ssa.Function) map[*ssa.UnOp]none {
 			case *ssa.MakeClosure:
 				if bound, ok := instr.Fn.(*ssa.Function); ok {
 					mark(boundValueReceiverNilDerefArg(bound, instr.Bindings))
+				}
+			}
+		}
+	}
+	return checks
+}
+
+func promotedPointerReceiverBase(fn *ssa.Function, args []ssa.Value) (ssa.Value, bool) {
+	if fn == nil || len(args) == 0 {
+		return nil, false
+	}
+	recv := fn.Signature.Recv()
+	if recv == nil || !isPointerGoType(recv.Type()) {
+		return nil, false
+	}
+	return derivedReceiverBase(args[0])
+}
+
+func boundPromotedPointerReceiverBase(fn *ssa.Function, bindings []ssa.Value) (ssa.Value, bool) {
+	if fn == nil || len(fn.FreeVars) == 0 || len(bindings) == 0 ||
+		!strings.HasPrefix(fn.Synthetic, "bound method wrapper for ") ||
+		!isPointerGoType(fn.FreeVars[0].Type()) {
+		return nil, false
+	}
+	return derivedReceiverBase(bindings[0])
+}
+
+func derivedReceiverBase(arg ssa.Value) (ssa.Value, bool) {
+	addr := arg
+	if deref, ok := arg.(*ssa.UnOp); ok {
+		if deref.Op != token.MUL {
+			return nil, false
+		}
+		addr = deref.X
+	}
+	var root ssa.Value
+	for {
+		switch current := addr.(type) {
+		case *ssa.FieldAddr:
+			root = current
+			addr = current.X
+		case *ssa.IndexAddr:
+			if !isPointerGoType(current.X.Type()) {
+				addr = nil
+				break
+			}
+			root = current
+			addr = current.X
+		default:
+			addr = nil
+		}
+		if addr == nil {
+			break
+		}
+	}
+	if root == nil || isKnownNonNilAddr(root) || isWrapNilCheckCall(root) {
+		return nil, false
+	}
+	return root, true
+}
+
+func collectMethodReceiverBases(fn *ssa.Function) map[ssa.Value]none {
+	var checks map[ssa.Value]none
+	mark := func(addr ssa.Value, ok bool) {
+		if !ok {
+			return
+		}
+		if checks == nil {
+			checks = make(map[ssa.Value]none)
+		}
+		checks[addr] = none{}
+	}
+	markCall := func(call *ssa.CallCommon) {
+		if fn, ok := call.Value.(*ssa.Function); ok {
+			mark(promotedPointerReceiverBase(fn, call.Args))
+		}
+	}
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			switch instr := instr.(type) {
+			case *ssa.Call:
+				markCall(&instr.Call)
+			case *ssa.Defer:
+				markCall(&instr.Call)
+			case *ssa.Go:
+				markCall(&instr.Call)
+			case *ssa.MakeClosure:
+				if bound, ok := instr.Fn.(*ssa.Function); ok {
+					mark(boundPromotedPointerReceiverBase(bound, instr.Bindings))
 				}
 			}
 		}
