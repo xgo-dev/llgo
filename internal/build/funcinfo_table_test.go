@@ -98,6 +98,46 @@ func TestFuncInfoTableMaterializesMetadataWithoutFunctionPointers(t *testing.T) 
 	}
 }
 
+func TestFuncInfoSiteLayoutArgs(t *testing.T) {
+	prog := llssa.NewProgram(&llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	defer prog.Dispose()
+	prog.EnableFuncInfoSites(true)
+	ctx := &context{prog: prog, buildConf: &Config{
+		BuildMode: BuildModeExe,
+		Goos:      "linux",
+		Goarch:    "amd64",
+	}}
+	dir := t.TempDir()
+	args, cleanup, err := funcInfoSiteLayoutArgs(ctx, filepath.Join(dir, "app"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(args) != 1 || !strings.HasPrefix(args[0], "-Wl,-T,") {
+		t.Fatalf("layout args = %#v", args)
+	}
+	script := strings.TrimPrefix(args[0], "-Wl,-T,")
+	raw, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"llgo_funcinfo_entry", "llgo_funcinfo_stubsite", "INSERT BEFORE .bss"} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("linker script missing %q:\n%s", want, raw)
+		}
+	}
+	cleanup()
+	if _, err := os.Stat(script); !os.IsNotExist(err) {
+		t.Fatalf("linker script was not removed: %v", err)
+	}
+
+	ctx.buildConf.Goos = "darwin"
+	args, cleanup, err = funcInfoSiteLayoutArgs(ctx, filepath.Join(dir, "app"))
+	if err != nil || len(args) != 0 {
+		t.Fatalf("Darwin layout args = %#v, %v", args, err)
+	}
+	cleanup()
+}
+
 func TestFuncInfoTableMaterializesEntrySites(t *testing.T) {
 	prog := llssa.NewProgram(nil)
 	src := prog.NewPackage("example.com/p", "example.com/p")
@@ -749,7 +789,7 @@ func TestExternalFuncInfoTableKeepsPayloadOutOfIR(t *testing.T) {
 		entryBoundary string
 	}{
 		{goos: "linux", goarch: "amd64", identitySect: "llgo_pclntab_id", entryBoundary: "__start_llgo_funcinfo_entry"},
-		{goos: "darwin", goarch: "arm64", identitySect: "__llgo_pid", entryBoundary: "section$start$__DATA$__llgo_fie"},
+		{goos: "darwin", goarch: "arm64", identitySect: "__llgo_pid", entryBoundary: "section$start$__LLGO$__llgo_fie"},
 	} {
 		t.Run(target.goos+"/"+target.goarch, func(t *testing.T) {
 			prog := llssa.NewProgram(&llssa.Target{GOOS: target.goos, GOARCH: target.goarch})
