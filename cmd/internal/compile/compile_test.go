@@ -180,6 +180,63 @@ func TestRunCmdBuildsAndReportsErrors(t *testing.T) {
 	if code != 1 || !strings.Contains(stderr, "go:uintptrkeepalive requires go:nosplit") {
 		t.Fatalf("-std compile exit code = %d, stderr=%q; want code 1 and pragma diagnostic", code, stderr)
 	}
+
+	invalidNoescape := dir + "/invalid_noescape.go"
+	if err := os.WriteFile(invalidNoescape, []byte(`package compilecase
+//go:unknown
+func External()
+
+//go:noescape
+// compiler directives remain pending across ordinary comments and blank lines.
+
+func HasBody() {}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, code = runCompileCommand(t, []string{"-C", "-e", "-std", invalidNoescape})
+	if code != 1 ||
+		!strings.Contains(stderr, "//go:unknown is not allowed in the standard library") ||
+		!strings.Contains(stderr, "can only use //go:noescape with external func implementations") {
+		t.Fatalf("-std compile exit code = %d, stderr=%q; want both standard-library pragma diagnostics", code, stderr)
+	}
+
+	for _, invalid := range []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{
+			name: "type error",
+			source: `package compilecase
+//go:unknown
+func External()
+
+//go:noescape
+func HasBody() { _ = missing }
+`,
+			want: "undefined: missing",
+		},
+		{
+			name: "parse error",
+			source: `package compilecase
+var x = )
+
+//go:noescape
+func HasBody() {}
+`,
+			want: "syntax error",
+		},
+	} {
+		invalidPath := dir + "/invalid_noescape_" + strings.ReplaceAll(invalid.name, " ", "_") + ".go"
+		if err := os.WriteFile(invalidPath, []byte(invalid.source), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, stderr, code = runCompileCommand(t, []string{"-C", "-e", "-std", invalidPath})
+		if code != 1 || !strings.Contains(stderr, invalid.want) ||
+			strings.Contains(stderr, "can only use //go:noescape with external func implementations") {
+			t.Fatalf("%s exit code = %d, stderr=%q; want code 1, %q, and no noescape-body diagnostic", invalid.name, code, stderr, invalid.want)
+		}
+	}
 }
 
 func runCompileCommand(t *testing.T, args []string) (stdout, stderr string, exitCode int) {

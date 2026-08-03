@@ -481,17 +481,40 @@ func loadPackageEx(dedup Deduper, ld *loader, lpkg *loaderPackage) {
 		appendError(typErr)
 	}
 
-	// Record accumulated errors.
-	illTyped := len(lpkg.Errors) > 0
-	if !illTyped {
-		for _, imp := range lpkg.Imports {
-			if imp.IllTyped {
-				illTyped = true
+	hasIllTypedImport := false
+	for _, imp := range lpkg.Imports {
+		if imp.IllTyped {
+			hasIllTypedImport = true
+			break
+		}
+	}
+
+	// cmd/compile reaches compiler-directive body checks only after parsing and
+	// type-checking the complete package and its imports. Do not gate on
+	// ListError: an earlier compiler-directive diagnostic may itself be why go
+	// list stopped early. When function bodies are deliberately ignored, their
+	// type-check phase is incomplete, so writer-only checks cannot be safely
+	// synthesized.
+	hasSourceErrors := tc.IgnoreFuncBodies || len(errs) != 0 || typErr != nil ||
+		len(lpkg.TypeErrors) != 0 || hasIllTypedImport
+	if !hasSourceErrors {
+		for _, err := range lpkg.Errors {
+			if err.Kind == packages.ParseError || err.Kind == packages.TypeError {
+				hasSourceErrors = true
 				break
 			}
 		}
 	}
-	lpkg.IllTyped = illTyped
+	if !hasSourceErrors {
+		for _, err := range validateCompilerDirectives(ld.Fset, lpkg.Syntax) {
+			if !packageHasCompilerDiagnostic(lpkg.Errors, err) {
+				appendError(err)
+			}
+		}
+	}
+
+	// Record accumulated errors.
+	lpkg.IllTyped = len(lpkg.Errors) > 0 || hasIllTypedImport
 }
 
 func packageGoVersion(ld *loader, lpkg *loaderPackage) string {

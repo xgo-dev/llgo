@@ -1848,10 +1848,6 @@ xfails:
     reason: gc-specific nil-check elimination diagnostics are not implemented by llgo
   - version: go1.26
     directive: errorcheck
-    case: fixedbugs/issue18331.go
-    reason: gc standard-library pragma validation is not implemented by llgo
-  - version: go1.26
-    directive: errorcheck
     case: fixedbugs/issue41635.go
     reason: gc-specific -m optimization diagnostics are not implemented by llgo
   - version: go1.26
