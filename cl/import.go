@@ -382,26 +382,39 @@ func (p *context) initLink(line string, prefix int, export bool, f func(inPkgNam
 	}
 }
 
+// recvTypeName asserts the post-typecheck receiver invariant. Syntax preload
+// uses recvTypeNameInfo so malformed declarations can be skipped safely.
 func recvTypeName(typ ast.Expr) string {
-retry:
-	switch t := typ.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.IndexExpr:
-		return trecvTypeName(t.X, t.Index)
-	case *ast.IndexListExpr:
-		return trecvTypeName(t.X, t.Indices...)
-	case *ast.ParenExpr:
-		typ = t.X
-		goto retry
+	name, _, ok := recvTypeNameInfo(typ)
+	if !ok {
+		panic("unreachable")
 	}
-	panic("unreachable")
+	return name
 }
 
-// TODO(xsw): support generic type
-func trecvTypeName(t ast.Expr, indices ...ast.Expr) string {
-	_ = indices
-	return t.(*ast.Ident).Name
+// recvTypeNameInfo normalizes the parentheses permitted in receiver
+// declarations and reports the uninstantiated base name and pointer form.
+func recvTypeNameInfo(typ ast.Expr) (name string, pointer bool, ok bool) {
+	typ = ast.Unparen(typ)
+	if star, isPointer := typ.(*ast.StarExpr); isPointer {
+		pointer = true
+		typ = ast.Unparen(star.X)
+	}
+	switch t := typ.(type) {
+	case *ast.Ident:
+		return t.Name, pointer, true
+	case *ast.IndexExpr:
+		typ = t.X
+	case *ast.IndexListExpr:
+		typ = t.X
+	default:
+		return "", false, false
+	}
+	base, valid := ast.Unparen(typ).(*ast.Ident)
+	if !valid {
+		return "", false, false
+	}
+	return base.Name, pointer, true
 }
 
 // inPkgName:
@@ -410,19 +423,36 @@ func trecvTypeName(t ast.Expr, indices ...ast.Expr) string {
 // fullName:
 // - func: pkg.name
 // - method: pkg.(T).name, pkg.(*T).name
+// astFuncName asserts the post-typecheck declaration invariant. Syntax preload
+// uses astFuncNameOK so malformed declarations can be skipped safely.
 func astFuncName(pkgPath string, fn *ast.FuncDecl) (fullName, inPkgName string) {
-	name := fn.Name.Name
-	if recv := fn.Recv; recv != nil && len(recv.List) == 1 {
-		var method string
-		t := recv.List[0].Type
-		if tp, ok := t.(*ast.StarExpr); ok {
-			method = "(*" + recvTypeName(tp.X) + ")." + name
-		} else {
-			method = recvTypeName(t) + "." + name
-		}
-		return pkgPath + "." + method, method
+	fullName, inPkgName, ok := astFuncNameOK(pkgPath, fn)
+	if !ok {
+		panic("unreachable")
 	}
-	return pkgPath + "." + name, name
+	return fullName, inPkgName
+}
+
+func astFuncNameOK(pkgPath string, fn *ast.FuncDecl) (fullName, inPkgName string, ok bool) {
+	if fn == nil || fn.Name == nil {
+		return "", "", false
+	}
+	name := fn.Name.Name
+	if fn.Recv == nil {
+		return pkgPath + "." + name, name, true
+	}
+	if len(fn.Recv.List) != 1 || fn.Recv.List[0] == nil {
+		return "", "", false
+	}
+	receiverName, pointer, ok := recvTypeNameInfo(fn.Recv.List[0].Type)
+	if !ok {
+		return "", "", false
+	}
+	method := receiverName + "." + name
+	if pointer {
+		method = "(*" + receiverName + ")." + name
+	}
+	return pkgPath + "." + method, method, true
 }
 
 func typesFuncName(pkgPath string, fn *types.Func) (fullName, inPkgName string) {
@@ -772,7 +802,13 @@ func ParsePkgSyntax(prog llssa.Program, fset *token.FileSet, pkg *types.Package,
 				if err := locality.ValidateFuncBody(fset, decl.Body); err != nil {
 					return err
 				}
-				fullName, inPkgName := astFuncName(pkgPath, decl)
+				// A syntactically valid declaration may still have an invalid
+				// receiver type. The type checker reports that error; this
+				// syntax-only pass must not assume its receiver shape.
+				fullName, inPkgName, ok := astFuncNameOK(pkgPath, decl)
+				if !ok {
+					continue
+				}
 				collectLinknameByDoc(prog, decl.Doc, fullName, inPkgName)
 				ctx.processNoInterfaceByDoc(decl.Doc, fullName)
 			case *ast.GenDecl:

@@ -726,6 +726,440 @@ func TestCheckExpectedErrorsDiscardsExactParserPair(t *testing.T) {
 	}
 }
 
+func TestCheckExpectedErrorsDiscardsPairedDeclarationRecoveryDiagnostics(t *testing.T) {
+	tests := []struct {
+		name      string
+		source    string
+		wrong     string
+		line      int
+		primary   string
+		secondary string
+	}{
+		{
+			name:      "missing package clause",
+			source:    "func main() { // ERROR \"package\"\n}\n",
+			wrong:     "func other() { // ERROR \"package\"\n}\n",
+			line:      1,
+			primary:   "expected 'package', found 'func'",
+			secondary: "expected ';', found '('",
+		},
+		{
+			name: "top-level composite literal",
+			source: `package p
+var x map[string]string{"a":"b"} // ERROR "unexpected { at end of statement|unexpected { after top level declaration|expected ';' or newline after top level declaration"
+`,
+			wrong: `package p
+var y map[string]string{"a":"b"} // ERROR "unexpected { at end of statement|unexpected { after top level declaration|expected ';' or newline after top level declaration"
+`,
+			line:      2,
+			primary:   "syntax error: unexpected { after top level declaration",
+			secondary: "expected ';', found '{'",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "case.go")
+			if err := os.WriteFile(file, []byte(tt.source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			output := fmt.Sprintf("%s:%d: %s\n%s:%d: %s\n", file, tt.line, tt.primary, file, tt.line, tt.secondary)
+			if err := checkExpectedErrors(output, file, "case.go"); err != nil {
+				t.Fatal(err)
+			}
+			if err := checkExpectedErrors(fmt.Sprintf("%s:%d: %s\n", file, tt.line, tt.secondary), file, "case.go"); err == nil {
+				t.Fatal("secondary diagnostic passed without its primary")
+			}
+			if got := parserRecoverySecondaries(tt.primary); got != nil {
+				t.Fatalf("source-dependent primary activated source-independent recovery: %v", got)
+			}
+			if got := parserRecoverySecondaries(tt.primary + "."); got != nil {
+				t.Fatalf("near-match primary activated parser recovery: %v", got)
+			}
+
+			wrongFile := filepath.Join(t.TempDir(), "case.go")
+			if err := os.WriteFile(wrongFile, []byte(tt.wrong), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			wrongOutput := fmt.Sprintf("%s:%d: %s\n%s:%d: %s\n", wrongFile, tt.line, tt.primary, wrongFile, tt.line, tt.secondary)
+			err := checkExpectedErrors(wrongOutput, wrongFile, "case.go")
+			if err == nil || !strings.Contains(err.Error(), tt.secondary) {
+				t.Fatalf("wrong source shape discarded secondary: %v", err)
+			}
+		})
+	}
+}
+
+func TestCheckExpectedErrorsDiscardsAdditionalParserRecoveryDiagnostics(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		output func(file string) string
+	}{
+		{
+			name: "variadic result Go 1.24",
+			source: `package p
+func g(x int, y float32) (...) // ERROR "[.][.][.]"
+`,
+			output: func(file string) string {
+				return file + ":2: syntax error: ... is missing type\n" +
+					file + ":2: expected type, found ')'\n"
+			},
+		},
+		{
+			name: "variadic result Go 1.25 and newer",
+			source: `package p
+func g(x int, y float32) (...) // ERROR "[.][.][.]"
+`,
+			output: func(file string) string {
+				return file + ":2: syntax error: ... is missing type\n" +
+					file + ":2: invalid use of ...\n" +
+					file + ":2: expected type, found ')'\n"
+			},
+		},
+		{
+			name: "channel send in if condition",
+			source: `package p
+var c chan int
+var v int
+func f() {
+	if c <- v { // ERROR "cannot use c <- v as value|send statement used as value"
+	}
+}
+`,
+			output: func(file string) string {
+				return file + ":5: syntax error: cannot use c <- v as value\n" +
+					file + ":5: expected boolean expression, found simple statement (missing parentheses around composite literal?)\n"
+			},
+		},
+		{
+			name: "channel send at top level",
+			source: `package p
+var c chan int
+var v int
+var _ = c <- v // ERROR "unexpected <-|send statement used as value"
+`,
+			output: func(file string) string {
+				return file + ":4: syntax error: unexpected <- after top level declaration\n" +
+					file + ":4: expected ';', found '<-'\n"
+			},
+		},
+		{
+			name: "illegal declaration character",
+			source: `package p
+var? // ERROR "invalid character U\+003F '\?'|invalid character 0x3f in input file"
+`,
+			output: func(file string) string {
+				return file + ":2: invalid character U+003F '?'\n" +
+					file + ":2: expected 'IDENT', found 'ILLEGAL'\n" +
+					file + ":2: illegal character U+003F '?'\n"
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "case.go")
+			if err := os.WriteFile(file, []byte(tt.source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := checkExpectedErrors(tt.output(file), file, "case.go"); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestAdditionalParserRecoveryDiagnosticsFailOpen(t *testing.T) {
+	t.Run("one ERROR authorizes one recovery group", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "case.go")
+		source := `package p
+func f() {
+	if a := 10 { // ERROR "cannot use [ab] := 10 as value"
+	}
+}
+`
+		if err := os.WriteFile(file, []byte(source), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		output := file + ":3: syntax error: cannot use a := 10 as value\n" +
+			file + ":3: syntax error: cannot use b := 10 as value\n" +
+			file + ":3: expected boolean expression, found assignment (missing parentheses around composite literal?)\n" +
+			file + ":3: expected boolean or range expression, found assignment (missing parentheses around composite literal?)\n"
+		err := checkExpectedErrors(output, file, "case.go")
+		if err == nil || !strings.Contains(err.Error(), "expected boolean or range expression") {
+			t.Fatalf("err=%v, want the second matching primary's recovery diagnostic to remain", err)
+		}
+	})
+
+	t.Run("missing primary", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "case.go")
+		source := `package p
+var? // ERROR "invalid character U\+003F '\?'"
+`
+		if err := os.WriteFile(file, []byte(source), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		output := file + ":2: expected 'IDENT', found 'ILLEGAL'\n" +
+			file + ":2: illegal character U+003F '?'\n"
+		err := checkExpectedErrors(output, file, "case.go")
+		if err == nil || !strings.Contains(err.Error(), `no match for "invalid character`) {
+			t.Fatalf("err=%v, want missing primary to fail", err)
+		}
+	})
+
+	t.Run("primary does not match ERROR", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "case.go")
+		source := `package p
+var? // ERROR "different diagnostic"
+`
+		if err := os.WriteFile(file, []byte(source), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		output := file + ":2: invalid character U+003F '?'\n" +
+			file + ":2: expected 'IDENT', found 'ILLEGAL'\n"
+		err := checkExpectedErrors(output, file, "case.go")
+		if err == nil || !strings.Contains(err.Error(), "expected 'IDENT', found 'ILLEGAL'") {
+			t.Fatalf("err=%v, want unmatched primary to leave recovery diagnostic visible", err)
+		}
+	})
+
+	t.Run("same line different illegal token", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "case.go")
+		source := `package p
+var _ = ?; var@ // ERROR "invalid character U\+003F '\?'"
+`
+		if err := os.WriteFile(file, []byte(source), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		output := file + ":2: invalid character U+003F '?'\n" +
+			file + ":2: expected 'IDENT', found 'ILLEGAL'\n"
+		err := checkExpectedErrors(output, file, "case.go")
+		if err == nil || !strings.Contains(err.Error(), "expected 'IDENT', found 'ILLEGAL'") {
+			t.Fatalf("err=%v, want the unrelated @ recovery diagnostic to remain", err)
+		}
+	})
+
+	t.Run("wrong line", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "case.go")
+		source := `package p
+var? // ERROR "invalid character U\+003F '\?'"
+
+`
+		if err := os.WriteFile(file, []byte(source), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		output := file + ":2: invalid character U+003F '?'\n" +
+			file + ":3: expected 'IDENT', found 'ILLEGAL'\n"
+		err := checkExpectedErrors(output, file, "case.go")
+		if err == nil || !strings.Contains(err.Error(), ":3: expected 'IDENT', found 'ILLEGAL'") {
+			t.Fatalf("err=%v, want wrong-line recovery to remain", err)
+		}
+	})
+
+	t.Run("near match primary", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "case.go")
+		source := `package p
+var? // ERROR "invalid character U\+003F '\?'"
+`
+		if err := os.WriteFile(file, []byte(source), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		output := file + ":2: invalid character U+003F '?'.\n" +
+			file + ":2: expected 'IDENT', found 'ILLEGAL'\n"
+		err := checkExpectedErrors(output, file, "case.go")
+		if err == nil || !strings.Contains(err.Error(), "expected 'IDENT', found 'ILLEGAL'") {
+			t.Fatalf("err=%v, want recovery after near-match primary to remain", err)
+		}
+	})
+
+	t.Run("wrong channel source shape", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "case.go")
+		source := `package p
+var c chan int
+var v int
+func f() {
+	if (c <- v) { // ERROR "cannot use c <- v as value"
+	}
+}
+`
+		if err := os.WriteFile(file, []byte(source), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		output := file + ":5: syntax error: cannot use c <- v as value\n" +
+			file + ":5: expected boolean expression, found simple statement (missing parentheses around composite literal?)\n"
+		err := checkExpectedErrors(output, file, "case.go")
+		if err == nil || !strings.Contains(err.Error(), "expected boolean expression") {
+			t.Fatalf("err=%v, want recovery for a different source shape to remain", err)
+		}
+	})
+
+	t.Run("wrong file", func(t *testing.T) {
+		dir := t.TempDir()
+		primaryFile := filepath.Join(dir, "primary.go")
+		otherFile := filepath.Join(dir, "other.go")
+		if err := os.WriteFile(primaryFile, []byte(`package p
+var? // ERROR "invalid character U\+003F '\?'"
+`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(otherFile, []byte("package p\nvar x int\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		output := primaryFile + ":2: invalid character U+003F '?'\n" +
+			otherFile + ":2: expected 'IDENT', found 'ILLEGAL'\n"
+		err := checkExpectedErrorsForFiles(output, []diagnosticSource{
+			{full: primaryFile, short: "primary.go"},
+			{full: otherFile, short: "other.go"},
+		})
+		if err == nil || !strings.Contains(err.Error(), "other.go:2: expected 'IDENT', found 'ILLEGAL'") {
+			t.Fatalf("err=%v, want wrong-file recovery to remain", err)
+		}
+	})
+
+	t.Run("line directive", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "case.go")
+		source := `package p
+//line remapped.go:2
+var? // ERROR "invalid character U\+003F '\?'"
+`
+		if err := os.WriteFile(file, []byte(source), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		output := file + ":3: invalid character U+003F '?'\n" +
+			file + ":3: expected 'IDENT', found 'ILLEGAL'\n"
+		err := checkExpectedErrors(output, file, "case.go")
+		if err == nil || !strings.Contains(err.Error(), "expected 'IDENT', found 'ILLEGAL'") {
+			t.Fatalf("err=%v, want line-remapped recovery to remain", err)
+		}
+	})
+}
+
+func TestCheckExpectedErrorsScopesMalformedReceiverRecovery(t *testing.T) {
+	const primary = "syntax error: unexpected name u, expected ("
+	secondaries := []string{
+		"expected channel type",
+		"expected '(', found u",
+		"expected '(', found 'EOF'",
+		"expected ')', found 'EOF'",
+		"expected ';', found 'EOF'",
+		"expected 'IDENT', found 'EOF'",
+		"expected ']', found 'EOF'",
+		"expected '}', found 'EOF'",
+		"expected operand, found 'EOF'",
+		"expected type, found 'EOF'",
+		"missing ',' in parameter list",
+		"array length (func() literal) (value of type func()) must be constant",
+		"<-chan [(func() literal)](ast: *ast.BadExpr) (type) is not an expression",
+	}
+	outputFor := func(file string) string {
+		lines := []string{file + ":2: " + primary}
+		for _, secondary := range secondaries {
+			lines = append(lines, file+":2: "+secondary)
+		}
+		return strings.Join(lines, "\n")
+	}
+	tests := []struct {
+		name    string
+		source  string
+		extra   string
+		wantOK  bool
+		wantErr string
+	}{
+		{
+			name: "exact source",
+			source: `package e
+func([<-chan<-[func u){go // ERROR "unexpected name u"
+`,
+			wantOK: true,
+		},
+		{
+			name: "different source",
+			source: `package e
+func([<-chan<-[func v){go // ERROR "unexpected name u"
+`,
+			wantErr: "expected channel type",
+		},
+		{
+			name: "unrelated diagnostic",
+			source: `package e
+func([<-chan<-[func u){go // ERROR "unexpected name u"
+`,
+			extra:   "\ncase.go:2: unrelated diagnostic",
+			wantErr: "unrelated diagnostic",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "case.go")
+			if err := os.WriteFile(file, []byte(tt.source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			extra := strings.ReplaceAll(tt.extra, "case.go", file)
+			err := checkExpectedErrors(outputFor(file)+extra, file, "case.go")
+			if tt.wantOK && err != nil {
+				t.Fatalf("err=%v, want success", err)
+			}
+			if !tt.wantOK && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Fatalf("err=%v, want failure containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestParserRecoverySourceCode(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{
+			name:   "URL before ERROR comment",
+			source: `var _ = "http://example.com" // ERROR "broken"`,
+			want:   `var _ = "http://example.com"`,
+		},
+		{
+			name:   "URL without ERROR comment",
+			source: `var _ = "http://example.com"`,
+			want:   `var _ = "http://example.com"`,
+		},
+		{
+			name:   "GC ERRORAUTO comment",
+			source: `var _ = "http://example.com" // GC_ERRORAUTO "broken"`,
+			want:   `var _ = "http://example.com"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parserRecoverySourceCode(tt.source); got != tt.want {
+				t.Fatalf("parserRecoverySourceCode(%q)=%q, want %q", tt.source, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHasLineDirective(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		want bool
+	}{
+		{name: "line comment", data: "\t//line remapped.go:1\n", want: true},
+		{name: "block comment", data: "  /*line remapped.go:1*/\n", want: true},
+		{name: "block comment after source", data: "x /*line remapped.go:1*/\n", want: true},
+		{name: "missing separator", data: "//linefoo.go:1\n", want: false},
+		{name: "line comment without line number", data: "//line remapped\n", want: false},
+		{name: "block comment without line number", data: "/*line remapped*/\n", want: false},
+		{name: "after source", data: "x //line remapped.go:1\n", want: false},
+		{name: "inside string", data: `var _ = "/*line remapped.go:1*/"` + "\n", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasLineDirective([]byte(tt.data)); got != tt.want {
+				t.Fatalf("hasLineDirective(%q)=%v, want %v", tt.data, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCheckExpectedErrorsScopesImportAlias(t *testing.T) {
 	tests := []struct {
 		name, src string
@@ -767,6 +1201,37 @@ func TestDiscardPairedParserDiagnosticsIsExactMultiset(t *testing.T) {
 	want := []string{exact, wrongLine, wrongFile, similar}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("discardPairedParserDiagnostics()=%v, want %v", got, want)
+	}
+
+	identifier := fileA + ":2: expected 'IDENT', found 'ILLEGAL'"
+	illegal := fileA + ":2: illegal character U+003F '?'"
+	pairs = []parserRecoveryPair{
+		{file: canonicalDiagnosticPath(fileA), line: 2, secondaries: []string{"expected 'IDENT', found 'ILLEGAL'"}},
+		{file: canonicalDiagnosticPath(fileA), line: 2, secondaries: []string{"illegal character U+003F '?'"}},
+	}
+	got = discardPairedParserDiagnostics([]string{identifier, identifier, illegal, illegal}, resolver, pairs)
+	want = []string{identifier, illegal}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("independent groups=%v, want %v", got, want)
+	}
+}
+
+func TestDiagnosticPathResolverRejectsUnknownAndAmbiguousSources(t *testing.T) {
+	dir := t.TempDir()
+	left := filepath.Join(dir, "left", "case.go")
+	right := filepath.Join(dir, "right", "case.go")
+	resolver := newDiagnosticPathResolver([]diagnosticSource{
+		{full: left, short: "case.go"},
+		{full: right, short: "case.go"},
+	})
+	if _, ok := resolver.resolve("case.go"); ok {
+		t.Fatal("ambiguous short path resolved")
+	}
+	if _, ok := resolver.resolve(filepath.Join(dir, "unknown", "case.go")); ok {
+		t.Fatal("unknown absolute path resolved")
+	}
+	if got, ok := resolver.resolve(left); !ok || got != canonicalDiagnosticPath(left) {
+		t.Fatalf("known absolute path resolved to %q, %v", got, ok)
 	}
 }
 
