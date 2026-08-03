@@ -917,8 +917,9 @@ type context struct {
 }
 
 type retainedBackendProgram struct {
-	pkg  *aPackage
-	prog llssa.Program
+	pkg      *aPackage
+	prog     llssa.Program
+	abiTypes []llssa.AbiTypeInfo
 }
 
 // retainedBackendPrograms owns Programs transferred from successful isolated
@@ -931,8 +932,26 @@ type retainedBackendPrograms struct {
 
 func (c *context) retainBackendProgram(pkg *aPackage, prog llssa.Program) {
 	c.retained.mu.Lock()
-	c.retained.programs = append(c.retained.programs, retainedBackendProgram{pkg: pkg, prog: prog})
+	c.retained.programs = append(c.retained.programs, retainedBackendProgram{
+		pkg:      pkg,
+		prog:     prog,
+		abiTypes: prog.AbiTypes(),
+	})
 	c.retained.mu.Unlock()
+}
+
+// retainedBackendAbiTypes returns Go-owned type identities from the isolated
+// Programs. The Programs remain alive while the entry module recreates the
+// target-local declarations, but no LLVM value crosses a Context boundary.
+func (c *context) retainedBackendAbiTypes() []llssa.AbiTypeInfo {
+	c.retained.mu.Lock()
+	defer c.retained.mu.Unlock()
+
+	var infos []llssa.AbiTypeInfo
+	for _, retained := range c.retained.programs {
+		infos = append(infos, retained.abiTypes...)
+	}
+	return infos
 }
 
 func (c *context) disposeRetainedBackendPrograms() {
@@ -1496,6 +1515,7 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 		methodByIndex: methodByIndex,
 		methodByName:  methodByName,
 		abiSymbols:    linkedModuleGlobals(linkedOrder),
+		abiTypes:      ctx.retainedBackendAbiTypes(),
 		funcInfo:      funcInfo,
 		pcLineInfo:    pcLineInfo,
 	})

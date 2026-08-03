@@ -80,6 +80,20 @@ func TestRetainedBackendProgramsKeepModulesUntilExplicitDispose(t *testing.T) {
 	ctx.disposeRetainedBackendPrograms()
 }
 
+func TestRetainedBackendAbiTypes(t *testing.T) {
+	want := []llssa.AbiTypeInfo{{Name: "type:example", Raw: types.Typ[types.Int]}}
+	ctx := &context{}
+	ctx.retained.programs = []retainedBackendProgram{{abiTypes: want}}
+	got := ctx.retainedBackendAbiTypes()
+	if len(got) != 1 || got[0].Name != want[0].Name || got[0].Raw != want[0].Raw {
+		t.Fatalf("retained ABI types = %#v, want %#v", got, want)
+	}
+	got[0] = llssa.AbiTypeInfo{}
+	if ctx.retained.programs[0].abiTypes[0].Name != want[0].Name {
+		t.Fatal("retainedBackendAbiTypes returned aliased storage")
+	}
+}
+
 func TestRetainedBackendProgramsReleaseOnErrorAndPanic(t *testing.T) {
 	retain := func(ctx *context) *aPackage {
 		prog := llssa.NewProgram(nil)
