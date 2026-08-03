@@ -18,7 +18,7 @@ type Wrapped struct {
 // CHECK-NEXT:   %4 = call %"{{.*}}String" @"{{.*}}embedunexport.(*Base).Name"(ptr %3)
 // CHECK-NEXT:   ret %"{{.*}}String" %4
 
-// CHECK-LABEL: define void @main.Wrapped.setName(%main.Wrapped %0, %"{{.*}}String" %1){{.*}} {
+// CHECK-LABEL: define void @"main.Wrapped.github.com/goplus/llgo/cl/_testdata/embedunexport.setName"(%main.Wrapped %0, %"{{.*}}String" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca %main.Wrapped, align 8
 // CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 8, i1 false)
@@ -35,7 +35,7 @@ type Wrapped struct {
 // CHECK-NEXT:   %3 = call %"{{.*}}String" @"{{.*}}embedunexport.(*Base).Name"(ptr %2)
 // CHECK-NEXT:   ret %"{{.*}}String" %3
 
-// CHECK-LABEL: define void @"main.(*Wrapped).setName"(ptr %0, %"{{.*}}String" %1){{.*}} {
+// CHECK-LABEL: define void @"main.(*Wrapped).github.com/goplus/llgo/cl/_testdata/embedunexport.setName"(ptr %0, %"{{.*}}String" %1){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = getelementptr inbounds %main.Wrapped, ptr %0, i32 0, i32 0
 // CHECK-NEXT:   %3 = load ptr, ptr %2, align 8

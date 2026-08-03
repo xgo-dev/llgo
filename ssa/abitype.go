@@ -509,20 +509,23 @@ func (b Builder) abiUncommonMethods(t types.Type, methods []*types.Selection) ll
 	}
 	for i := 0; i < n; i++ {
 		m := methods[i]
-		obj := m.Obj()
+		obj := m.Obj().(*types.Func)
 		mName := obj.Name()
 		fullName := abiMethodName(obj)
 		name := b.Str(fullName).impl
 		mSig := m.Type().(*types.Signature)
+		// funcName uses this same receiver package for the emitted wrapper
+		// definition; MethodSymbolName must see identical inputs here.
+		mSymbolName := MethodSymbolName(pkg, obj, mName)
 		var tfn, ifn llvm.Value
-		tfnFn := b.abiMethodFunc(anonymous, pkg, mName, mSig)
+		tfnFn := b.abiMethodFunc(anonymous, pkg, mSymbolName, mSig)
 		tfnSig := funcType(prog, methodExprSignature(mSig)).(*types.Signature)
 		tfn = b.Pkg.closureWrapDecl(tfnFn.Expr, tfnSig).impl
 		ifn = tfnFn.impl
 		if _, ok := m.Recv().Underlying().(*types.Pointer); !ok {
 			pRecv := types.NewVar(token.NoPos, pkg, "", types.NewPointer(mSig.Recv().Type()))
 			pSig := types.NewSignature(pRecv, mSig.Params(), mSig.Results(), mSig.Variadic())
-			ifn = b.abiMethodFunc(anonymous, pkg, mName, pSig).impl
+			ifn = b.abiMethodFunc(anonymous, pkg, mSymbolName, pSig).impl
 		}
 		var values []llvm.Value
 		values = append(values, name)
