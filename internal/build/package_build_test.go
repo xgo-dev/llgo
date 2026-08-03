@@ -340,6 +340,35 @@ func TestPartitionPackageExecutions(t *testing.T) {
 	}
 }
 
+func TestPartitionPackageExecutionsDoesNotInspectSkippedAssembly(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "asm.s"), []byte("TEXT ·f(SB),$0-0\n\tRET\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	task := &packageBuildTask{
+		pkg: &aPackage{Package: &packages.Package{
+			ID:      "runtime/cgo",
+			PkgPath: "runtime/cgo",
+			Dir:     dir,
+		}},
+		skip: true,
+	}
+	ctx := &context{
+		mode:         ModeBuild,
+		buildConf:    &Config{BuildMode: BuildModeExe},
+		sfilesCache:  make(map[string][]string),
+		sfilesFrozen: true,
+	}
+
+	patched, coordinator, isolated, err := partitionPackageExecutions(ctx, []*packageBuildTask{task})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(patched) != 0 || !slices.Equal(coordinator, []int{0}) || len(isolated) != 0 {
+		t.Fatalf("partition = patched %v, coordinator %v, isolated %v", patched, coordinator, isolated)
+	}
+}
+
 func TestPkgSFilesRejectsUnpreparedBackendRead(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "asm.s"), []byte("TEXT ·f(SB),$0-0\n\tRET\n"), 0o644); err != nil {
