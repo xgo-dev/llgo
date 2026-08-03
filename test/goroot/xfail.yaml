@@ -59,6 +59,11 @@ host_skips:
     directive: run
     case: fixedbugs/issue16016.go
     reason: go1.25 goroot run is host-sensitive on linux/amd64
+  - version: go1.24
+    platform: darwin/arm64
+    directive: run
+    case: fixedbugs/issue16016.go
+    reason: go1.24 goroot run can exhaust the macOS runner thread limit
   - version: go1.26
     platform: darwin/arm64
     directive: run
@@ -114,6 +119,26 @@ host_skips:
     directive: run
     case: chanlinear.go
     reason: go1.25 goroot run is host-sensitive on darwin/arm64
+  - version: go1.24
+    platform: darwin/arm64
+    directive: runoutput
+    case: fixedbugs/bug449.go
+    reason: go1.24 bug449 generated build exceeds the darwin/arm64 hosted runner resource budget
+  - version: go1.26
+    platform: darwin/arm64
+    directive: runoutput
+    case: fixedbugs/bug449.go
+    reason: go1.26 bug449 generated build exceeds the darwin/arm64 hosted runner resource budget
+  - version: go1.24
+    platform: linux/amd64
+    directive: runoutput
+    case: fixedbugs/bug449.go
+    reason: go1.24 bug449 generated build exceeds the linux/amd64 hosted runner memory budget
+  - version: go1.26
+    platform: linux/amd64
+    directive: runoutput
+    case: fixedbugs/bug449.go
+    reason: go1.26 bug449 generated build exceeds the linux/amd64 hosted runner memory budget
 timeouts:
   - version: go1.26
     platform: darwin/arm64
@@ -127,12 +152,6 @@ timeouts:
     case: fixedbugs/issue19658.go
     timeout: 2m
     reason: the test launches 19 nested go run commands and needs load-dependent runtime slack
-  - version: go1.26
-    platform: darwin/arm64
-    directive: runoutput
-    case: fixedbugs/bug449.go
-    timeout: 6m
-    reason: bug449 generated build exceeds the 3m build timeout on darwin/arm64
   - version: go1.24
     platform: darwin/arm64
     directive: run

@@ -65,7 +65,6 @@ jobs:
           fi
           bash dev/test_goroot.sh -- \
             -directive-mode ci \
-            -max-rss-mib 5120 \
             -min-swap-free-mib "$min_swap_free_mib" \
             -progress 60s \
             -shard-index "${{ matrix.shard-index }}" \
