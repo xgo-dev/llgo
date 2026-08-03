@@ -205,6 +205,10 @@ type Config struct {
 	GlobalRewrites map[string]Rewrites
 	ModuleHook     ModuleHook
 	Overlay        map[string][]byte
+
+	// packagePipelineObserver is used by focused scheduler tests. It must be
+	// safe for concurrent calls.
+	packagePipelineObserver func(packagePipelineStage, string, bool)
 }
 
 type Rewrites map[string]string
@@ -452,8 +456,14 @@ func Build(inv Invocation) ([]Package, error) {
 		OptLevel: conf.OptLevel,
 	}
 
-	prog := llssa.NewProgram(target)
-	prog.DisableBoundsChecks(conf.DisableBoundsChecks)
+	funcInfo := conf.Mode != ModeGen && conf.PCLNMode != PCLNNone
+	backendTemplate := newBackendProgramTemplate(
+		target,
+		conf,
+		funcInfo,
+		shouldEnablePCLNSites(conf, funcInfo, emitDebugInfo),
+	)
+	prog := backendTemplate.newProgram()
 	if conf.Mode != ModeGen {
 		// ModeGen callers (llgen and the golden suites) read LPkg.String()
 		// after Do returns and dispose the program themselves; every other
@@ -463,24 +473,17 @@ func Build(inv Invocation) ([]Package, error) {
 		// harness) otherwise accumulate every compile's C++-side memory.
 		defer prog.Dispose()
 	}
-	prog.EnableGoGlobalDCE(conf.goGlobalDCEEnabled())
-	prog.EnableDeadcodeDrop(conf.deadcodeDropEnabled())
-	if conf.PthreadStackSize > 0 {
-		prog.SetPthreadStackSize(uint64(conf.PthreadStackSize))
-	}
-	prog.EnableLTOPluginMarkers(conf.LTOPlugin.Enabled())
-	funcInfo := conf.Mode != ModeGen && conf.PCLNMode != PCLNNone
-	prog.EnableFuncInfoMetadata(funcInfo)
-	// Site records are inline-asm fragments inside function bodies. Darwin
-	// DWARF builds avoid them because they disturb LLDB lexical scopes; Linux
-	// still needs them because its restricted dynamic symbol table cannot
-	// reconstruct every Go entry PC through dlsym. External mode always needs
-	// final-PC sites for sidecar construction.
-	prog.EnableFuncInfoSites(shouldEnablePCLNSites(conf, funcInfo, emitDebugInfo))
+	var backendTypeSizes types.Sizes
+	var backendTypeSizesMu sync.Mutex
 	sizes := func(sizes types.Sizes, compiler, arch string) types.Sizes {
 		if arch == "wasm" {
 			sizes = &types.StdSizes{WordSize: 4, MaxAlign: 4}
 		}
+		backendTypeSizesMu.Lock()
+		if backendTypeSizes == nil {
+			backendTypeSizes = sizes
+		}
+		backendTypeSizesMu.Unlock()
 		return prog.TypeSizes(sizes)
 	}
 	dedup := packages.NewDeduper()
@@ -583,11 +586,23 @@ func Build(inv Invocation) ([]Package, error) {
 		return altPkgs[0].Types
 	})
 	prog.SetPython(func() *types.Package {
-		return dedup.Check(llssa.PkgPython).Types
+		if pkg := dedup.Check(llssa.PkgPython); pkg != nil {
+			return pkg.Types
+		}
+		return nil
 	})
 	if err := prepareLocalVariables(prog, initial, altPkgs); err != nil {
 		return nil, err
 	}
+	backendTemplate.typeSizes = backendTypeSizes
+	backendTemplate.runtimePackage = altPkgs[0].Types
+	if pkg := dedup.Check(llssa.PkgPython); pkg != nil {
+		backendTemplate.pythonPackage = pkg.Types
+	}
+	backendTemplate.inputs = collectBackendProgramInputs(prog, initial, altPkgs)
+	backendTemplate.localities = prog.SnapshotLocalityState()
+	backendTemplate.llvmTarget = export.LLVMTarget
+	backendTemplate.targetABI = export.TargetABI
 
 	buildMode := ssaBuildMode
 	cabiOptimize := true
@@ -602,9 +617,11 @@ func Build(inv Invocation) ([]Package, error) {
 	if !IsOptimizeEnabled() {
 		buildMode |= ssa.NaiveForm
 	}
+	backendTemplate.cabiOptimize = cabiOptimize
 	progSSA := ssa.NewProgram(initial[0].Fset, buildMode)
 	patches := make(cl.Patches, len(altPkgPaths))
 	altEntries := registerAltSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
+	appendPatchedBackendInputs(&backendTemplate, patches, dedup)
 
 	output := conf.OutFile != ""
 	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
@@ -620,9 +637,14 @@ func Build(inv Invocation) ([]Package, error) {
 		commands:        commands,
 		frontendOptions: frontendOptions,
 		cTransformer:    cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, conf.AbiMode, cabiOptimize),
+		backend:         backendTemplate,
 	}
 	defer ctx.closePackageMetas()
 	defer ctx.closePackageArchiveBuffers()
+	// Isolated backends use independent LLVM contexts. Keep Programs needed by
+	// whole-program consumers alive through deadcode analysis and strong ABI type
+	// override emission, then release them on every normal, error, or panic path.
+	defer ctx.disposeRetainedBackendPrograms()
 
 	// default runtime globals must be registered before packages are built
 	addGlobalString(conf, "runtime.defaultGOROOT="+runtime.GOROOT(), nil)
@@ -635,11 +657,17 @@ func Build(inv Invocation) ([]Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	buildSSAPkgs(ctx, append(append(altEntries, pkgEntries...), depEntries...))
-
 	allPkgs := append([]*aPackage{}, pkgs...)
 	allPkgs = append(allPkgs, depPkgs...)
-	allPkgs, err = buildAllPkgs(ctx, allPkgs, verbose)
+	ssaEntries := append(append(altEntries, pkgEntries...), depEntries...)
+	if ctx.canUseIsolatedBackend() {
+		preparePackagePatches(ctx, allPkgs)
+		allPkgs, err = buildPackagePipeline(ctx, ssaEntries, allPkgs, verbose)
+	} else {
+		buildSSAPkgs(ctx, ssaEntries)
+		ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
+		allPkgs, err = buildAllPkgs(ctx, allPkgs, verbose)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -739,6 +767,7 @@ func Build(inv Invocation) ([]Package, error) {
 			}
 		}
 	}
+	ctx.disposeRetainedBackendPrograms()
 
 	if mode == ModeTest && ctx.testFail {
 		mockable.Exit(1)
@@ -883,6 +912,8 @@ type context struct {
 	frontendOptions cl.Options
 
 	cTransformer *cabi.Transformer
+	backend      backendProgramTemplate
+	retained     retainedBackendPrograms
 
 	testFail bool
 
@@ -891,16 +922,54 @@ type context struct {
 	llvmVersion  string
 
 	// go list derived file lists (SFiles, etc.)
-	sfilesCache map[string][]string // pkg.ID -> absolute .s/.S file paths
+	sfilesCache  map[string][]string // pkg.ID -> absolute .s/.S file paths
+	sfilesFrozen bool
 
 	// plan9asm package policy parsed from env.
-	plan9asmOnce sync.Once
-	plan9asmMode plan9asmPkgsEnvMode
-	plan9asmPkgs map[string]bool
+	plan9asmOnce  sync.Once
+	plan9asmReady bool
+	plan9asmMode  plan9asmPkgsEnvMode
+	plan9asmPkgs  map[string]bool
+	plan9asmSigs  map[string]map[string]struct{}
 
 	// pclnExternal is populated while generating the synthetic main module
 	// and completed with final linked PCs by the post-link externalizer.
 	pclnExternal *pclnmap.Data
+}
+
+type retainedBackendProgram struct {
+	pkg  *aPackage
+	prog llssa.Program
+}
+
+// retainedBackendPrograms owns Programs transferred from successful isolated
+// workers. Workers may finish concurrently; disposal happens only after the
+// coordinator has joined them and completed whole-program consumers.
+type retainedBackendPrograms struct {
+	mu       sync.Mutex
+	programs []retainedBackendProgram
+}
+
+func (c *context) retainBackendProgram(pkg *aPackage, prog llssa.Program) {
+	c.retained.mu.Lock()
+	c.retained.programs = append(c.retained.programs, retainedBackendProgram{pkg: pkg, prog: prog})
+	c.retained.mu.Unlock()
+}
+
+func (c *context) disposeRetainedBackendPrograms() {
+	c.retained.mu.Lock()
+	programs := c.retained.programs
+	c.retained.programs = nil
+	c.retained.mu.Unlock()
+
+	// Clear every package reference before destroying any LLVM context so no
+	// later observer can retain a dangling cross-context module.
+	for _, retained := range programs {
+		retained.pkg.LPkg = nil
+	}
+	for _, retained := range programs {
+		retained.prog.Dispose()
+	}
 }
 
 // closePackageMetas releases metadata mappings owned by this build. Metadata
@@ -912,6 +981,155 @@ func (c *context) closePackageMetas() {
 		}
 		_ = pkg.Meta.Close()
 		pkg.Meta = nil
+	}
+}
+
+type backendProgramInput struct {
+	fset        *token.FileSet
+	pkg         *types.Package
+	info        *types.Info
+	files       []*ast.File
+	parseSyntax bool
+}
+
+// backendProgramTemplate contains only immutable build-local inputs. Creating
+// a session allocates a new llssa.Program, LLVM context, TargetMachine, and C
+// ABI transformer; no LLVM-owned state is shared between sessions.
+type backendProgramTemplate struct {
+	target              *llssa.Target
+	disableBoundsChecks bool
+	typeSizes           types.Sizes
+	goGlobalDCE         bool
+	deadcodeDrop        bool
+	pthreadStackSize    int64
+	ltoPluginMarkers    bool
+	funcInfoMetadata    bool
+	funcInfoSites       bool
+	runtimePackage      *types.Package
+	pythonPackage       *types.Package
+	inputs              []backendProgramInput
+	localities          llssa.LocalityState
+	llvmTarget          string
+	targetABI           string
+	abiMode             cabi.Mode
+	cabiOptimize        bool
+}
+
+type backendSession struct {
+	prog        llssa.Program
+	transformer *cabi.Transformer
+}
+
+func newBackendProgramTemplate(target *llssa.Target, conf *Config, funcInfoMetadata, funcInfoSites bool) backendProgramTemplate {
+	var targetCopy *llssa.Target
+	if target != nil {
+		copy := *target
+		targetCopy = &copy
+	}
+	return backendProgramTemplate{
+		target:              targetCopy,
+		disableBoundsChecks: conf.DisableBoundsChecks,
+		goGlobalDCE:         conf.goGlobalDCEEnabled(),
+		deadcodeDrop:        conf.deadcodeDropEnabled(),
+		pthreadStackSize:    conf.PthreadStackSize,
+		ltoPluginMarkers:    conf.LTOPlugin.Enabled(),
+		funcInfoMetadata:    funcInfoMetadata,
+		funcInfoSites:       funcInfoSites,
+		abiMode:             conf.AbiMode,
+	}
+}
+
+func (t backendProgramTemplate) newProgram() llssa.Program {
+	var target *llssa.Target
+	if t.target != nil {
+		copy := *t.target
+		target = &copy
+	}
+	prog := llssa.NewProgram(target)
+	prog.DisableBoundsChecks(t.disableBoundsChecks)
+	if t.typeSizes != nil {
+		prog.TypeSizes(t.typeSizes)
+	}
+	prog.EnableGoGlobalDCE(t.goGlobalDCE)
+	prog.EnableDeadcodeDrop(t.deadcodeDrop)
+	if t.pthreadStackSize > 0 {
+		prog.SetPthreadStackSize(uint64(t.pthreadStackSize))
+	}
+	prog.EnableLTOPluginMarkers(t.ltoPluginMarkers)
+	prog.EnableFuncInfoMetadata(t.funcInfoMetadata)
+	prog.EnableFuncInfoSites(t.funcInfoSites)
+	if t.runtimePackage != nil {
+		prog.SetRuntime(t.runtimePackage)
+	}
+	if t.pythonPackage != nil {
+		prog.SetPython(t.pythonPackage)
+	}
+	return prog
+}
+
+func (t backendProgramTemplate) newSession() (backendSession, error) {
+	prog := t.newProgram()
+	if err := t.replayProgramState(prog); err != nil {
+		prog.Dispose()
+		return backendSession{}, err
+	}
+	return backendSession{
+		prog:        prog,
+		transformer: cabi.NewTransformer(prog, t.llvmTarget, t.targetABI, t.abiMode, t.cabiOptimize),
+	}, nil
+}
+
+func (t backendProgramTemplate) replayProgramState(prog llssa.Program) error {
+	for _, input := range t.inputs {
+		if input.parseSyntax {
+			if err := cl.ParsePkgSyntax(prog, input.fset, input.pkg, input.files); err != nil {
+				return err
+			}
+		}
+	}
+	prog.RestoreLocalityState(t.localities)
+	return nil
+}
+
+func collectBackendProgramInputs(prog llssa.Program, groups ...[]*packages.Package) []backendProgramInput {
+	seen := make(map[*types.Package]bool)
+	var inputs []backendProgramInput
+	for _, roots := range groups {
+		packages.Visit(roots, nil, func(pkg *packages.Package) {
+			if pkg == nil || pkg.Types == nil || pkg.IllTyped || seen[pkg.Types] {
+				return
+			}
+			seen[pkg.Types] = true
+			parsed := prog.PackageSyntaxParsed(pkg.Types)
+			inputs = append(inputs, backendProgramInput{
+				fset:        pkg.Fset,
+				pkg:         pkg.Types,
+				info:        pkg.TypesInfo,
+				files:       slices.Clone(pkg.Syntax),
+				parseSyntax: parsed && !llruntime.SkipToBuild(pkg.PkgPath),
+			})
+		})
+	}
+	return inputs
+}
+
+func appendPatchedBackendInputs(template *backendProgramTemplate, patches cl.Patches, dedup packages.Deduper) {
+	paths := make([]string, 0, len(patches))
+	for pkgPath := range patches {
+		paths = append(paths, pkgPath)
+	}
+	slices.Sort(paths)
+	for _, pkgPath := range paths {
+		alt := dedup.Check(altPkgPathPrefix + pkgPath)
+		if alt == nil || len(alt.Syntax) == 0 {
+			continue
+		}
+		template.inputs = append(template.inputs, backendProgramInput{
+			fset:        alt.Fset,
+			pkg:         types.NewPackage(pkgPath, ""),
+			files:       slices.Clone(alt.Syntax),
+			parseSyntax: true,
+		})
 	}
 }
 
@@ -980,36 +1198,33 @@ func normalizeToArchive(ctx *context, aPkg *aPackage, verbose bool) error {
 }
 
 func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, error) {
-	// Split packages into runtime tree vs others so we can defer runtime build.
-	var runtimePkgs []*packageBuildTask
-	var normalPkgs []*packageBuildTask
+	tasks := make([]*packageBuildTask, 0, len(pkgs))
 	for _, p := range pkgs {
-		task := newPackageBuildTask(p)
-		if task.isRuntime() {
-			runtimePkgs = append(runtimePkgs, task)
-		} else {
-			normalPkgs = append(normalPkgs, task)
-		}
+		tasks = append(tasks, newPackageBuildTask(p))
 	}
+	if err := prePackageBuilds(ctx, tasks, verbose); err != nil {
+		return nil, err
+	}
+	ctx.sfilesFrozen = true
 
 	var needRuntime, needPyInit bool
 
 	// Build non-runtime packages first, so we know whether runtime is actually needed.
-	for _, task := range normalPkgs {
-		result, err := buildOnePackage(ctx, task, verbose)
-		if err != nil {
-			return nil, err
-		}
+	normalResults, err := buildPrePackageGroup(
+		ctx, packageBuildTasksForRuntime(tasks, false), verbose)
+	if err != nil {
+		return nil, err
+	}
+	for _, result := range normalResults {
 		needRuntime = needRuntime || result.needRuntime
 		needPyInit = needPyInit || result.needPyInit
 	}
 
 	// Only build runtime packages when required (or host build with empty Target).
 	if needRuntime || needPyInit || ctx.buildConf.Target == "" {
-		for _, task := range runtimePkgs {
-			if _, err := buildOnePackage(ctx, task, verbose); err != nil {
-				return nil, err
-			}
+		if _, err := buildPrePackageGroup(
+			ctx, packageBuildTasksForRuntime(tasks, true), verbose); err != nil {
+			return nil, err
 		}
 	}
 
@@ -1042,7 +1257,8 @@ func prePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
 	if task.isDeclOnly() {
 		pkg.ExportFile = ""
 		task.skip = true
-		return nil
+		aPkg.Summary = summarizePackage(aPkg)
+		return ctx.collectFingerprint(aPkg)
 	}
 	if task.isLinkOnly() && !task.hasSource() {
 		pkg.ExportFile = ""
@@ -1050,12 +1266,16 @@ func prePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
 			appendExternalLinkArgs(ctx, aPkg, task.kindParam)
 		}
 		task.skip = true
-		return nil
+		aPkg.Summary = summarizePackage(aPkg)
+		return ctx.collectFingerprint(aPkg)
 	}
 	if err := ctx.collectFingerprint(aPkg); err != nil {
 		return err
 	}
 	ctx.tryLoadFromCache(aPkg)
+	if err := preparePackageSFiles(ctx, aPkg); err != nil {
+		return err
+	}
 	if verbose {
 		status := "MISS"
 		if aPkg.CacheHit {
@@ -1072,7 +1292,7 @@ func executePackageBuild(ctx *context, task *packageBuildTask, verbose bool) err
 	if err := buildPkg(ctx, aPkg, verbose); err != nil {
 		return err
 	}
-	if task.needsRuntimeSignals() {
+	if task.needsRuntimeSignals() && aPkg.LPkg != nil {
 		aPkg.setNeedRuntimeOrPyInit(aPkg.LPkg.NeedRuntime, aPkg.LPkg.NeedPyInit)
 	}
 	return nil
@@ -1091,6 +1311,14 @@ func finalizePackageBuild(ctx *context, task *packageBuildTask, verbose bool) (p
 	if task.kind == cl.PkgLinkExtern {
 		appendExternalLinkArgs(ctx, aPkg, task.kindParam)
 	}
+	if aPkg.Summary == nil {
+		aPkg.Summary = summarizePackage(aPkg)
+	} else {
+		aPkg.Summary.LinkArgs = append(aPkg.Summary.LinkArgs[:0], aPkg.LinkArgs...)
+		aPkg.Summary.ArchiveFile = aPkg.ArchiveFile
+		aPkg.Summary.NeedRuntime = aPkg.NeedRt
+		aPkg.Summary.NeedPyInit = aPkg.NeedPyInit
+	}
 	if err := ctx.saveToCache(aPkg); err != nil && verbose {
 		fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", aPkg.PkgPath, err)
 	}
@@ -1106,7 +1334,7 @@ func appendExternalLinkArgs(ctx *context, aPkg *aPackage, spec string) {
 	for _, alt := range altParts {
 		alt = strings.TrimSpace(alt)
 		if strings.ContainsRune(alt, '$') {
-			expdArgs = append(expdArgs, xenv.ExpandEnvToArgs(alt)...)
+			expdArgs = append(expdArgs, xenv.ExpandEnvToArgsWith(alt, ctx.commands.dir, ctx.commands.environ)...)
 			atomic.AddInt32(&ctx.nLibdir, 1)
 		} else {
 			fields := strings.Fields(alt)
@@ -1341,39 +1569,47 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 			aPkg = ctx.pkgByID[p.ID]
 		}
 		if p.ExportFile != "" && aPkg != nil { // skip packages that only contain declarations
+			if aPkg.Summary == nil && isRuntimePkg(aPkg.PkgPath) {
+				return
+			}
 			linkedPkgs[p.ID] = true
 			linkedOrder = append(linkedOrder, aPkg)
 		}
 	})
+	linkedSummaries := make([]*PackageSummary, len(linkedOrder))
+	for i, aPkg := range linkedOrder {
+		if aPkg.Summary == nil {
+			return fmt.Errorf("package %s has no linker summary", aPkg.PkgPath)
+		}
+		linkedSummaries[i] = aPkg.Summary
+	}
 
 	// packages.Visit with a post callback yields dependencies before importers.
 	// Reverse that order so static archives are linked after the objects that use them.
 	for i := len(linkedOrder) - 1; i >= 0; i-- {
-		aPkg := linkedOrder[i]
-		p := aPkg.Package
+		summary := linkedSummaries[i]
 		// Defer linking runtime packages unless we actually need the runtime.
-		if isRuntimePkg(p.PkgPath) {
-			rtLinkArgs = append(rtLinkArgs, aPkg.LinkArgs...)
-			if aPkg.ArchiveFile != "" {
-				rtLinkInputs = append(rtLinkInputs, aPkg.ArchiveFile)
+		if isRuntimePkg(summary.PkgPath) {
+			rtLinkArgs = append(rtLinkArgs, summary.LinkArgs...)
+			if summary.ArchiveFile != "" {
+				rtLinkInputs = append(rtLinkInputs, summary.ArchiveFile)
 			}
 			continue
 		}
 		// Only let non-runtime packages influence whether runtime is needed.
-		need1, need2 := aPkg.isNeedRuntimeOrPyInit()
-		needRuntime = needRuntime || need1
-		needPyInit = needPyInit || need2
-		needAbiInit |= aPkg.LPkg.NeedAbiInit
-		for k, _ := range aPkg.LPkg.MethodByIndex {
-			methodByIndex[k] = none{}
+		needRuntime = needRuntime || summary.NeedRuntime
+		needPyInit = needPyInit || summary.NeedPyInit
+		needAbiInit |= summary.NeedAbiInit
+		for _, method := range summary.MethodByIndex {
+			methodByIndex[method] = none{}
 		}
-		for k, _ := range aPkg.LPkg.MethodByName {
-			methodByName[k] = none{}
+		for _, method := range summary.MethodByName {
+			methodByName[method] = none{}
 		}
 
-		linkArgs = append(linkArgs, aPkg.LinkArgs...)
-		if aPkg.ArchiveFile != "" {
-			archiveInputs = append(archiveInputs, aPkg.ArchiveFile)
+		linkArgs = append(linkArgs, summary.LinkArgs...)
+		if summary.ArchiveFile != "" {
+			archiveInputs = append(archiveInputs, summary.ArchiveFile)
 		}
 	}
 
@@ -1390,9 +1626,9 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 	var pcLineInfo []pcLineRecord
 	var funcInfoStubs []funcInfoStubRecord
 	if ctx.buildConf.PCLNMode != PCLNNone {
-		funcInfo = prepareFuncInfoTableRecords(collectFuncInfo(linkedOrder), nil)
-		pcLineInfo = collectPCLineInfo(linkedOrder)
-		funcInfoStubs = collectFuncInfoStubRecords(linkedOrder, funcInfo)
+		funcInfo = prepareFuncInfoTableRecords(collectFuncInfoSummaries(linkedSummaries), nil)
+		pcLineInfo = collectPCLineInfoSummaries(linkedSummaries)
+		funcInfoStubs = collectFuncInfoStubRecordsSummaries(linkedSummaries, funcInfo)
 	}
 	entryPkg := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{
 		rtInit:        needRuntime,
@@ -1400,7 +1636,8 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 		abiInit:       needAbiInit,
 		methodByIndex: methodByIndex,
 		methodByName:  methodByName,
-		abiSymbols:    linkedModuleGlobals(linkedOrder),
+		abiSymbols:    linkedPackageGlobals(linkedSummaries),
+		abiTypes:      abiTypesForSummaries(linkedSummaries),
 		funcInfo:      funcInfo,
 		pcLineInfo:    pcLineInfo,
 		funcInfoStubs: funcInfoStubs,
@@ -1440,7 +1677,7 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 			}
 		}
 	}
-	linkArgs = append(linkArgs, cSharedExportArgs(ctx, linkedOrder)...)
+	linkArgs = append(linkArgs, cSharedExportArgsSummaries(ctx, linkedSummaries)...)
 
 	err = linkObjFiles(ctx, outputPath, linkInputs, linkArgs, verbose)
 	if err != nil {
@@ -1498,19 +1735,22 @@ func dceEntryRootCandidates(pkgs []Package, needRuntime bool) []string {
 }
 
 func linkedModuleGlobals(pkgs []Package) map[string]none {
-	if len(pkgs) == 0 {
+	return linkedPackageGlobals(summariesForPackages(pkgs))
+}
+
+func linkedPackageGlobals(summaries []*PackageSummary) map[string]none {
+	if len(summaries) == 0 {
 		return nil
 	}
 	seen := make(map[string]none)
-	for _, pkg := range pkgs {
-		if pkg == nil || pkg.LPkg == nil {
+	for _, summary := range summaries {
+		if summary == nil {
 			continue
 		}
-		for g := pkg.LPkg.Module().FirstGlobal(); !g.IsNil(); g = gllvm.NextGlobal(g) {
-			if g.IsDeclaration() {
-				continue
+		for _, name := range summary.GlobalSymbols {
+			if name != "" {
+				seen[name] = none{}
 			}
-			seen[g.Name()] = none{}
 		}
 	}
 	return seen
@@ -1589,22 +1829,26 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 // shared-library link roots. They live in package archives and otherwise remain
 // unreferenced, so the linker can omit both their object files and symbols.
 func cSharedExportArgs(ctx *context, pkgs []*aPackage) []string {
+	return cSharedExportArgsSummaries(ctx, summariesForPackages(pkgs))
+}
+
+func cSharedExportArgsSummaries(ctx *context, summaries []*PackageSummary) []string {
 	if ctx == nil || ctx.buildConf == nil || ctx.buildConf.BuildMode != BuildModeCShared {
 		return nil
 	}
 	exports := make(map[string]none)
-	for _, pkg := range pkgs {
-		if pkg == nil || pkg.LPkg == nil {
+	for _, summary := range summaries {
+		if summary == nil {
 			continue
 		}
-		for _, name := range pkg.LPkg.ExportFuncs() {
+		for _, name := range summary.CSharedExports {
 			if name != "" {
 				exports[name] = none{}
 			}
 		}
-		if ctx.mode == ModeTest && pkg.Package != nil && pkg.Name == "main" && strings.HasSuffix(pkg.PkgPath, ".test") {
-			exports[pkg.PkgPath+".init"] = none{}
-			exports[pkg.PkgPath+".main"] = none{}
+		if ctx.mode == ModeTest && summary.Name == "main" && strings.HasSuffix(summary.PkgPath, ".test") {
+			exports[summary.PkgPath+".init"] = none{}
+			exports[summary.PkgPath+".main"] = none{}
 		}
 	}
 	names := make([]string, 0, len(exports))
@@ -2238,9 +2482,10 @@ func registerAltSSAPkgs(prog *ssa.Program, patches cl.Patches, alts []*packages.
 
 type aPackage struct {
 	*packages.Package
-	SSA    *ssa.Package
-	AltPkg *packages.Cached
-	LPkg   llssa.Package
+	SSA     *ssa.Package
+	AltPkg  *packages.Cached
+	LPkg    llssa.Package
+	Summary *PackageSummary
 
 	NeedRt     bool
 	NeedPyInit bool
@@ -2658,7 +2903,7 @@ func clFiles(ctx *context, files string, pkg *packages.Package, procFile func(li
 	args := make([]string, 0, 16)
 	if strings.HasPrefix(files, "$") { // has cflags
 		if pos := strings.IndexByte(files, ':'); pos > 0 {
-			cflags := xenv.ExpandEnvToArgs(files[:pos])
+			cflags := xenv.ExpandEnvToArgsWith(files[:pos], ctx.commands.dir, ctx.commands.environ)
 			files = files[pos+1:]
 			args = append(args, cflags...)
 		}

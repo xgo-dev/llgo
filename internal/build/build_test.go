@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/goplus/llgo/cl"
@@ -212,6 +213,51 @@ func TestConcurrentInvocationsIsolateFrontendOptions(t *testing.T) {
 		hasDebugInfo := strings.Contains(got.pkgs[0].LPkg.String(), "!llvm.dbg.cu")
 		if hasDebugInfo != got.debug {
 			t.Fatalf("debug=%v produced hasDebugInfo=%v", got.debug, hasDebugInfo)
+		}
+	}
+}
+
+func TestConcurrentDeadcodeBuildsUseIndependentWorkerContexts(t *testing.T) {
+	if !buildenv.Dev {
+		t.Skip("deadcode drop requires a development build")
+	}
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(repoRoot, "cl", "_testdrop", "direct_method")
+	t.Setenv("LLGO_ROOT", repoRoot)
+	t.Setenv(llgoBuildCache, "0")
+
+	type result struct {
+		output string
+		err    error
+	}
+	results := make(chan result, 2)
+	for i := range 2 {
+		output := filepath.Join(t.TempDir(), fmt.Sprintf("direct-method-%d", i))
+		conf := NewDefaultConf(ModeBuild)
+		conf.DeadcodeDrop = true
+		conf.PCLNMode = PCLNNone
+		conf.BuildParallelism = 2
+		conf.OutFile = output
+		go func() {
+			_, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: fixture})
+			results <- result{output: output, err: err}
+		}()
+	}
+
+	for range 2 {
+		got := <-results
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		data, err := exec.Command(got.output).CombinedOutput()
+		if err != nil {
+			t.Fatalf("run %s: %v\n%s", got.output, err, data)
+		}
+		if strings.TrimSpace(string(data)) != "42" {
+			t.Fatalf("run %s output = %q, want 42", got.output, data)
 		}
 	}
 }
@@ -516,7 +562,62 @@ func TestRun(t *testing.T) {
 
 func TestTest(t *testing.T) {
 	// FIXME(zzy): with builtin package test in a llgo test ./... will cause duplicate symbol error
-	mockRun([]string{"../../cl/_testgo/runtest"}, &Config{Mode: ModeTest})
+	var mu sync.Mutex
+	var events []struct {
+		stage packagePipelineStage
+		start bool
+	}
+	active, maximum := 0, 0
+	exclusive, exclusiveViolation := false, false
+	conf := &Config{Mode: ModeTest, BuildParallelism: 2}
+	conf.packagePipelineObserver = func(stage packagePipelineStage, _ string, start bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, struct {
+			stage packagePipelineStage
+			start bool
+		}{stage: stage, start: start})
+		if start {
+			if exclusive || (stage == pipelineStagePatchedBackend && active != 0) {
+				exclusiveViolation = true
+			}
+			active++
+			maximum = max(maximum, active)
+			if stage == pipelineStagePatchedBackend {
+				exclusive = true
+			}
+		} else {
+			active--
+			if stage == pipelineStagePatchedBackend {
+				exclusive = false
+			}
+		}
+	}
+	mockRun([]string{"../../cl/_testgo/runtest"}, conf)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if active != 0 {
+		t.Fatalf("pipeline left %d active tasks", active)
+	}
+	if maximum > conf.BuildParallelism {
+		t.Fatalf("pipeline active tasks = %d, want at most %d", maximum, conf.BuildParallelism)
+	}
+	if exclusiveViolation {
+		t.Fatal("patched backend overlapped another pipeline task")
+	}
+	firstBackend, lastSSA := -1, -1
+	for i, event := range events {
+		if event.stage != pipelineStageSSA && event.start && firstBackend < 0 {
+			firstBackend = i
+		}
+		if event.stage == pipelineStageSSA && !event.start {
+			lastSSA = i
+		}
+	}
+	if firstBackend < 0 || lastSSA < 0 || firstBackend >= lastSSA {
+		t.Fatalf("pipeline did not overlap SSA and backend work: first backend event %d, last SSA event %d", firstBackend, lastSSA)
+	}
 }
 
 func TestExtest(t *testing.T) {

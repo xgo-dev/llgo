@@ -63,6 +63,34 @@ func TestLocalityInfos(t *testing.T) {
 	}
 }
 
+func TestLocalityStateSnapshotIsIndependent(t *testing.T) {
+	source := NewProgram(nil)
+	defer source.Dispose()
+	pkg := types.NewPackage("example.com/p", "p")
+	name := "example.com/p.state"
+	source.DeclareLocality(pkg, "state", LocalityInfo{Locality: GoroutineLocal, HasInitializer: true})
+	source.SetLocalStorageFor(pkg, name, LocalStoragePackage)
+	source.ActivateLocalitiesFor(pkg)
+	source.MarkPackageSyntaxParsed(pkg)
+
+	dest := NewProgram(nil)
+	defer dest.Dispose()
+	dest.RestoreLocalityState(source.SnapshotLocalityState())
+	got, ok := dest.VariableLocalityFor(pkg, name)
+	if !ok || got.Locality != GoroutineLocal || got.LocalStorage != LocalStoragePackage {
+		t.Fatalf("restored locality = %+v, %v", got, ok)
+	}
+	if !dest.NeedsLocalContext() || !dest.PackageSyntaxParsed(pkg) {
+		t.Fatal("restored locality state lost active or parsed metadata")
+	}
+
+	source.SetLocalStorageFor(pkg, name, LocalStorageNativeTLS)
+	got, ok = dest.VariableLocalityFor(pkg, name)
+	if !ok || got.LocalStorage != LocalStoragePackage {
+		t.Fatalf("restored locality aliased source state: %+v, %v", got, ok)
+	}
+}
+
 func TestPackageLocalitiesRetainDeclarationOwners(t *testing.T) {
 	prog := NewProgram(nil)
 	std := types.NewPackage("runtime", "runtime")

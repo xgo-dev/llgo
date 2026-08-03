@@ -2084,10 +2084,26 @@ func (p *context) compileValues(b llssa.Builder, vals []ssa.Value, hasVArg int) 
 type Patch struct {
 	Alt   *ssa.Package
 	Types *types.Package
+
+	skips    map[string]none
+	skipall  bool
+	prepared bool
 }
 
 // Patches is patches of some packages.
 type Patches = map[string]Patch
+
+// PreparePatch creates the immutable merged type view imported by packages
+// compiled before the patched package's own LLVM backend runs.
+func PreparePatch(patch Patch, original *types.Package, files []*ast.File) Patch {
+	if patch.prepared || patch.Types == nil || original == nil {
+		return patch
+	}
+	patch.skips, patch.skipall = collectPatchSkips(files)
+	typepatch.MergePrepared(patch.Types, original, patch.skips, patch.skipall)
+	patch.prepared = true
+	return patch
+}
 
 // NewPackage compiles a Go package to LLVM IR package.
 // Deprecated: use NewPackageExWithEmbedMetaOptions with explicit Options.
@@ -2212,6 +2228,10 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 
 	if hasPatch {
 		skips := ctx.skips
+		if patch.prepared {
+			skips = patch.skips
+			ctx.skipall = patch.skipall
+		}
 		typepatch.Merge(pkgTypes, oldTypes, skips, ctx.skipall)
 		ctx.skips = nil
 		ctx.state = pkgInPatch
@@ -2367,8 +2387,8 @@ func (p *context) _patchType(typ types.Type) (types.Type, bool) {
 			return t, true
 		}
 		o := typ.Obj()
-		if pkg := o.Pkg(); typepatch.IsPatched(pkg) {
-			if patch, ok := p.patches[pkg.Path()]; ok {
+		if pkg := o.Pkg(); pkg != nil {
+			if patch, ok := p.patches[pkg.Path()]; ok && patch.Types != nil {
 				if obj := patch.Types.Scope().Lookup(o.Name()); obj != nil {
 					raw := p.prog.Type(instantiate(obj.Type(), typ), llssa.InGo).RawType()
 					return raw, typ != raw

@@ -86,12 +86,16 @@ type funcInfoSymbolIndexRecord struct {
 }
 
 func collectFuncInfo(pkgs []Package) []funcInfoRecord {
+	return collectFuncInfoSummaries(summariesForPackages(pkgs))
+}
+
+func collectFuncInfoSummaries(summaries []*PackageSummary) []funcInfoRecord {
 	seen := make(map[string]funcInfoRecord)
-	for _, pkg := range pkgs {
-		if pkg == nil || pkg.LPkg == nil {
+	for _, summary := range summaries {
+		if summary == nil {
 			continue
 		}
-		for _, rec := range readFuncInfo(pkg.LPkg.Module()) {
+		for _, rec := range summary.FuncInfo {
 			if rec.symbol == "" {
 				continue
 			}
@@ -114,13 +118,17 @@ func collectFuncInfo(pkgs []Package) []funcInfoRecord {
 }
 
 func collectPCLineInfo(pkgs []Package) []pcLineRecord {
+	return collectPCLineInfoSummaries(summariesForPackages(pkgs))
+}
+
+func collectPCLineInfoSummaries(summaries []*PackageSummary) []pcLineRecord {
 	var out []pcLineRecord
 	seen := make(map[uint64]none)
-	for _, pkg := range pkgs {
-		if pkg == nil || pkg.LPkg == nil {
+	for _, summary := range summaries {
+		if summary == nil {
 			continue
 		}
-		for _, rec := range readPCLineInfo(pkg.LPkg.Module()) {
+		for _, rec := range summary.PCLineInfo {
 			if rec.id == 0 || rec.symbol == "" {
 				continue
 			}
@@ -144,6 +152,10 @@ func collectPCLineInfo(pkgs []Package) []pcLineRecord {
 }
 
 func collectFuncInfoStubRecords(pkgs []Package, records []funcInfoRecord) []funcInfoStubRecord {
+	return collectFuncInfoStubRecordsSummaries(summariesForPackages(pkgs), records)
+}
+
+func collectFuncInfoStubRecordsSummaries(summaries []*PackageSummary, records []funcInfoRecord) []funcInfoStubRecord {
 	if len(records) == 0 {
 		return nil
 	}
@@ -154,23 +166,16 @@ func collectFuncInfoStubRecords(pkgs []Package, records []funcInfoRecord) []func
 		}
 	}
 	seen := make(map[string]funcInfoStubRecord)
-	for _, pkg := range pkgs {
-		if pkg == nil || pkg.LPkg == nil {
+	for _, summary := range summaries {
+		if summary == nil {
 			continue
 		}
-		fn := pkg.LPkg.Module().FirstFunction()
-		for !fn.IsNil() {
-			if fn.IsDeclaration() || fn.BasicBlocksCount() == 0 {
-				fn = llvm.NextFunction(fn)
-				continue
-			}
-			name := fn.Name()
+		for _, name := range summary.FuncInfoStubs {
 			if target, ok := strings.CutPrefix(name, closureStubPrefix); ok {
 				if idx := recordBySymbol[target]; idx != 0 {
 					seen[name] = funcInfoStubRecord{symbol: name, funcIndex: idx}
 				}
 			}
-			fn = llvm.NextFunction(fn)
 		}
 	}
 	if len(seen) == 0 {

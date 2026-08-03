@@ -1,0 +1,142 @@
+/*
+ * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package build
+
+import (
+	"go/types"
+	"reflect"
+	"testing"
+
+	"github.com/xgo-dev/llvm"
+
+	"github.com/goplus/llgo/internal/packages"
+	llssa "github.com/goplus/llgo/ssa"
+)
+
+func TestPackageSummaryCapturesLinkerFacts(t *testing.T) {
+	prog := llssa.NewProgram(nil)
+	defer prog.Dispose()
+	lpkg := prog.NewPackage("p", "example.com/p")
+	lpkg.NeedAbiInit = 3
+	lpkg.RecordReflectMethodByIndex("example.com/p.Method", 4)
+	lpkg.RecordReflectMethodByIndex("example.com/p.Method", 1)
+	lpkg.RecordReflectMethodByName("example.com/p.MethodByName", "B")
+	lpkg.RecordReflectMethodByName("example.com/p.MethodByName", "A")
+	lpkg.SetExport("example.com/p.Export", "Export")
+	lpkg.EmitFuncInfo("example.com/p.live", "example.com/p.Live", "p.go", 17, 2)
+	lpkg.EmitPCLineInfo(42, "example.com/p.live", "p.go", 18, 3)
+	lpkg.NewFunc(closureStubPrefix+"example.com/p.live", llssa.NoArgsNoRet, llssa.InGo).MakeBody(1).Return()
+
+	i32 := lpkg.Module().Context().Int32Type()
+	defined := llvm.AddGlobal(lpkg.Module(), i32, "example.com/p.defined")
+	defined.SetInitializer(llvm.ConstInt(i32, 1, false))
+	llvm.AddGlobal(lpkg.Module(), i32, "example.com/p.declared")
+
+	pkg := &aPackage{
+		Package: &packages.Package{
+			ID:      "example.com/p",
+			PkgPath: "example.com/p",
+			Name:    "p",
+			Types:   types.NewPackage("example.com/p", "p"),
+		},
+		LPkg:        lpkg,
+		NeedRt:      true,
+		NeedPyInit:  true,
+		LinkArgs:    []string{"-lp"},
+		ArchiveFile: "p.a",
+	}
+	summary := summarizePackage(pkg)
+	if got, want := summary.MethodByIndex, []int{1, 4}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("MethodByIndex = %v, want %v", got, want)
+	}
+	if got, want := summary.MethodByName, []string{"A", "B"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("MethodByName = %v, want %v", got, want)
+	}
+	if got, want := summary.GlobalSymbols, []string{"example.com/p.defined"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("GlobalSymbols = %v, want %v", got, want)
+	}
+	if got, want := summary.FuncInfoStubs, []string{closureStubPrefix + "example.com/p.live"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("FuncInfoStubs = %v, want %v", got, want)
+	}
+	if got := collectFuncInfoSummaries([]*PackageSummary{summary}); len(got) != 1 || got[0].symbol != "example.com/p.live" {
+		t.Fatalf("func info from summary = %+v, want live record", got)
+	}
+	if got := linkedPackageGlobals([]*PackageSummary{summary}); len(got) != 1 {
+		t.Fatalf("globals from summary = %#v, want one defined global", got)
+	}
+
+	loadedPkg := &aPackage{
+		Package:     pkg.Package,
+		LinkArgs:    []string{"-lp"},
+		ArchiveFile: "p.a",
+		NeedRt:      true,
+		NeedPyInit:  true,
+	}
+	loaded := summaryFromMetadata(loadedPkg, &cacheArchiveMetadata{Summary: summary.metadata()})
+	if !reflect.DeepEqual(loaded, summary) {
+		t.Fatalf("cache summary round trip = %#v, want %#v", loaded, summary)
+	}
+}
+
+func TestPackageSummaryEmptyInputs(t *testing.T) {
+	if got := summarizePackage(nil); got != nil {
+		t.Fatalf("summarizePackage(nil) = %#v", got)
+	}
+	var summary *PackageSummary
+	if got := summary.metadata(); got != nil {
+		t.Fatalf("nil summary metadata = %#v", got)
+	}
+	if got := summaryFromMetadata(nil, nil); got != nil {
+		t.Fatalf("summaryFromMetadata(nil, nil) = %#v", got)
+	}
+	if got := linkedPackageGlobals(nil); got != nil {
+		t.Fatalf("linkedPackageGlobals(nil) = %#v", got)
+	}
+	if got := linkedPackageGlobals([]*PackageSummary{nil}); len(got) != 0 {
+		t.Fatalf("linkedPackageGlobals([nil]) = %#v", got)
+	}
+	if got := collectFuncInfoSummaries([]*PackageSummary{nil, {FuncInfo: []funcInfoRecord{{}}}}); got != nil {
+		t.Fatalf("collectFuncInfoSummaries(empty) = %#v", got)
+	}
+	if got := collectPCLineInfoSummaries([]*PackageSummary{nil, {PCLineInfo: []pcLineRecord{{}}}}); len(got) != 0 {
+		t.Fatalf("collectPCLineInfoSummaries(empty) = %#v", got)
+	}
+	if got := collectFuncInfoStubRecordsSummaries([]*PackageSummary{nil}, nil); got != nil {
+		t.Fatalf("collectFuncInfoStubRecordsSummaries(nil) = %#v", got)
+	}
+	if got := collectFuncInfoStubRecordsSummaries([]*PackageSummary{nil}, []funcInfoRecord{{symbol: "target"}}); len(got) != 0 {
+		t.Fatalf("collectFuncInfoStubRecordsSummaries([nil]) = %#v", got)
+	}
+	sharedCtx := &context{buildConf: &Config{BuildMode: BuildModeCShared}}
+	if got := cSharedExportArgsSummaries(sharedCtx, []*PackageSummary{nil}); len(got) != 0 {
+		t.Fatalf("cSharedExportArgsSummaries([nil]) = %#v", got)
+	}
+}
+
+func TestAbiTypesForSummariesDeduplicatesBySymbol(t *testing.T) {
+	first := llssa.AbiTypeInfo{Name: "_llgo_int", Raw: types.Typ[types.Int]}
+	second := llssa.AbiTypeInfo{Name: "_llgo_string", Raw: types.Typ[types.String]}
+	got := abiTypesForSummaries([]*PackageSummary{
+		nil,
+		{AbiTypes: []llssa.AbiTypeInfo{second, first}},
+		{AbiTypes: []llssa.AbiTypeInfo{first, {}}},
+	})
+	want := []llssa.AbiTypeInfo{first, second}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ABI types = %#v, want %#v", got, want)
+	}
+}

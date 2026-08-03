@@ -82,6 +82,13 @@ func Clone(alt *types.Package) *types.Package {
 
 func Merge(alt, pkg *types.Package, skips map[string]struct{}, skipall bool) {
 	setPatched(pkg)
+	MergePrepared(alt, pkg, skips, skipall)
+}
+
+// MergePrepared merges pkg into the cloned alternate package without
+// modifying pkg. It is used by build preflight to publish an immutable patch
+// type view before any LLVM backend starts.
+func MergePrepared(alt, pkg *types.Package, skips map[string]struct{}, skipall bool) {
 	if skipall {
 		return
 	}

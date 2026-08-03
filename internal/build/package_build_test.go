@@ -17,13 +17,18 @@
 package build
 
 import (
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"go/types"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/goplus/llgo/cl"
 	"github.com/goplus/llgo/internal/env"
@@ -210,7 +215,11 @@ func TestPrePackageBuildSkipsDeclarationOnlyPackage(t *testing.T) {
 		Types:      types.Unsafe,
 		ExportFile: "stale.a",
 	}}
-	ctx := &context{built: make(map[string]none)}
+	ctx := &context{
+		conf:      &packages.Config{},
+		buildConf: &Config{Goos: "linux", Goarch: "amd64", ForceRebuild: true},
+		built:     make(map[string]none),
+	}
 
 	task := newPackageBuildTask(pkg)
 	err := prePackageBuild(ctx, task, false)
@@ -236,14 +245,18 @@ func TestPrePackageBuildSkipsExternalLinkOnlyPackage(t *testing.T) {
 		Types:      types.NewPackage("example.com/linkonly", "linkonly"),
 		ExportFile: "stale.a",
 	}}
-	ctx := &context{buildConf: &Config{}, built: make(map[string]none)}
+	ctx := &context{
+		conf:      &packages.Config{},
+		buildConf: &Config{Goos: "linux", Goarch: "amd64", ForceRebuild: true},
+		built:     make(map[string]none),
+	}
 	task := &packageBuildTask{pkg: pkg, kind: cl.PkgLinkExtern, kindParam: "-lexample"}
 	err := prePackageBuild(ctx, task, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !task.skip || pkg.ExportFile != "" {
-		t.Fatalf("external link-only pre = skip %v, export %q", task.skip, pkg.ExportFile)
+	if !task.skip || pkg.ExportFile != "" || pkg.Summary == nil {
+		t.Fatalf("external link-only pre = skip %v, export %q, summary %#v", task.skip, pkg.ExportFile, pkg.Summary)
 	}
 	if len(pkg.LinkArgs) != 1 || pkg.LinkArgs[0] != "-lexample" {
 		t.Fatalf("external link args = %q, want [-lexample]", pkg.LinkArgs)
@@ -274,4 +287,326 @@ func TestBuildSSAPkgsEmptyAndNilEntries(t *testing.T) {
 	prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
 	pkg := prog.CreatePackage(types.NewPackage("example.com/ssa", "ssa"), nil, nil, true)
 	buildSSAPkgs(ctx, []ssaBuildEntry{{pkg: pkg}, {pkg: pkg}})
+}
+
+func TestPreFingerprintsSkippedPackage(t *testing.T) {
+	pkg := &aPackage{Package: &packages.Package{
+		ID:      "unsafe",
+		PkgPath: "unsafe",
+		Types:   types.Unsafe,
+	}}
+	ctx := &context{
+		conf:      &packages.Config{},
+		buildConf: &Config{Goos: "linux", Goarch: "amd64", ForceRebuild: true},
+		built:     make(map[string]none),
+	}
+	task := newPackageBuildTask(pkg)
+	err := prePackageBuild(ctx, task, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !task.skip || pkg.Fingerprint == "" || pkg.Manifest == "" || pkg.Summary == nil {
+		t.Fatalf("skipped package was not fully prepared: skip=%v fingerprint=%q manifest=%q summary=%#v", task.skip, pkg.Fingerprint, pkg.Manifest, pkg.Summary)
+	}
+}
+func TestCanUseIsolatedBackend(t *testing.T) {
+	ctx := &context{
+		mode:      ModeBuild,
+		buildConf: &Config{BuildMode: BuildModeExe},
+	}
+	if !ctx.canUseIsolatedBackend() {
+		t.Fatal("normal executable build should use isolated backends")
+	}
+	ctx.mode = ModeGen
+	if ctx.canUseIsolatedBackend() {
+		t.Fatal("generation mode should remain on the coordinator")
+	}
+	ctx.mode = ModeTest
+	if !ctx.canUseIsolatedBackend() {
+		t.Fatal("test mode should use isolated executable backends")
+	}
+	ctx.buildConf.BuildMode = BuildModeCShared
+	if ctx.canUseIsolatedBackend() {
+		t.Fatal("c-shared mode should remain on the coordinator")
+	}
+	ctx.buildConf.BuildMode = BuildModeExe
+	ctx.buildConf.ModuleHook = func(*aPackage) {}
+	if ctx.canUseIsolatedBackend() {
+		t.Fatal("module hooks should remain on the coordinator")
+	}
+}
+
+func TestPartitionPackageExecutions(t *testing.T) {
+	patchedPkg := &aPackage{Package: &packages.Package{
+		ID:      "example.com/patched",
+		PkgPath: "example.com/patched",
+	}}
+	normalPkg := &aPackage{Package: &packages.Package{
+		ID:      "example.com/normal",
+		PkgPath: "example.com/normal",
+	}}
+	ctx := &context{
+		mode:        ModeBuild,
+		buildConf:   &Config{BuildMode: BuildModeExe},
+		patches:     cl.Patches{"example.com/patched": {}},
+		sfilesCache: make(map[string][]string),
+	}
+	patched, coordinator, isolated, err := partitionPackageExecutions(ctx, []*packageBuildTask{
+		{pkg: patchedPkg},
+		{pkg: normalPkg},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(patched) != 1 || patched[0] != 0 {
+		t.Fatalf("patched = %v, want [0]", patched)
+	}
+	if len(coordinator) != 0 {
+		t.Fatalf("coordinator = %v, want empty", coordinator)
+	}
+	if len(isolated) != 1 || isolated[0] != 1 {
+		t.Fatalf("isolated = %v, want [1]", isolated)
+	}
+}
+
+func TestPkgSFilesRejectsUnpreparedBackendRead(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "asm.s"), []byte("TEXT ·f(SB),$0-0\n\tRET\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := &context{
+		sfilesCache:  make(map[string][]string),
+		sfilesFrozen: true,
+	}
+	_, err := pkgSFiles(ctx, &packages.Package{
+		ID:      "example.com/asm",
+		PkgPath: "example.com/asm",
+		Dir:     dir,
+	})
+	if err == nil {
+		t.Fatal("expected frozen SFiles cache to reject an unprepared package")
+	}
+}
+
+func TestRunBoundedPackageJobs(t *testing.T) {
+	started := make(chan int, 4)
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	var active atomic.Int32
+	var maximum atomic.Int32
+	go func() {
+		done <- runBoundedPackageJobs(2, []int{0, 1, 2, 3}, func(index int) error {
+			current := active.Add(1)
+			for {
+				old := maximum.Load()
+				if current <= old || maximum.CompareAndSwap(old, current) {
+					break
+				}
+			}
+			started <- index
+			<-release
+			active.Add(-1)
+			return nil
+		})
+	}()
+
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			close(release)
+			t.Fatal("two package workers did not start concurrently")
+		}
+	}
+	if got := maximum.Load(); got != 2 {
+		close(release)
+		t.Fatalf("maximum concurrent jobs = %d, want 2", got)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if got := maximum.Load(); got != 2 {
+		t.Fatalf("maximum concurrent jobs = %d after completion, want 2", got)
+	}
+}
+
+func TestRunBoundedPackageJobsReturnsFirstOrderedError(t *testing.T) {
+	first := errors.New("first")
+	second := errors.New("second")
+	err := runBoundedPackageJobs(3, []int{3, 1, 2}, func(index int) error {
+		switch index {
+		case 3:
+			return first
+		case 1:
+			return second
+		default:
+			return nil
+		}
+	})
+	if !errors.Is(err, first) {
+		t.Fatalf("error = %v, want first submitted error", err)
+	}
+}
+
+func TestRunBoundedPackageJobsConvertsPanicToError(t *testing.T) {
+	boom := errors.New("boom")
+	err := runBoundedPackageJobs(2, []int{0, 1}, func(index int) error {
+		if index == 0 {
+			panic(boom)
+		}
+		return nil
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("error = %v, want recovered panic %v", err, boom)
+	}
+}
+func TestPackageBuildStageEmptyAndSkippedInputs(t *testing.T) {
+	runtimePkg := &aPackage{Package: &packages.Package{PkgPath: env.LLGoRuntimePkg}}
+	normalPkg := &aPackage{Package: &packages.Package{PkgPath: "example.com/normal"}}
+	tasks := []*packageBuildTask{
+		{pkg: runtimePkg},
+		{pkg: normalPkg},
+	}
+	if got := packageBuildTasksForRuntime(tasks, true); len(got) != 1 || got[0].pkg != runtimePkg {
+		t.Fatalf("runtime tasks = %+v, want runtime package", got)
+	}
+	if got := packageBuildTasksForRuntime(tasks, false); len(got) != 1 || got[0].pkg != normalPkg {
+		t.Fatalf("non-runtime tasks = %+v, want normal package", got)
+	}
+
+	ctx := &context{buildConf: &Config{}}
+	if err := prePackageBuilds(ctx, nil, false); err != nil {
+		t.Fatalf("empty pre = %v", err)
+	}
+	results, err := buildPrePackageGroup(ctx, nil, false)
+	if err != nil || results != nil {
+		t.Fatalf("empty package group = %#v, %v", results, err)
+	}
+	if err := executePrePackage(ctx, &packageBuildTask{skip: true}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := executeIsolatedPackages(ctx, nil, nil, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := runBoundedPackageJobs(0, nil, func(int) error {
+		t.Fatal("empty package jobs invoked callback")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runPackageJob(7, func(int) error { panic("boom") }); err == nil || !strings.Contains(err.Error(), "package job 7 panicked: boom") {
+		t.Fatalf("non-error panic = %v", err)
+	}
+}
+
+func TestRunPackageBuildTaskPublishesImmediately(t *testing.T) {
+	task := &packageBuildTask{pkg: &aPackage{Package: &packages.Package{PkgPath: "example.com/p"}}}
+	var steps []string
+	wantResult := packageBuildResult{needRuntime: true}
+	result, err := runPackageBuildTask(
+		task,
+		func() error {
+			steps = append(steps, "backend")
+			return nil
+		},
+		func() (packageBuildResult, error) {
+			steps = append(steps, "publish")
+			return wantResult, nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(steps, []string{"backend", "publish"}) {
+		t.Fatalf("package task steps = %v, want backend then publish", steps)
+	}
+	if result != wantResult {
+		t.Fatalf("package task result = %+v, want %+v", result, wantResult)
+	}
+}
+
+func TestRunPackageBuildTaskStopsBeforePublish(t *testing.T) {
+	task := &packageBuildTask{pkg: &aPackage{Package: &packages.Package{PkgPath: "example.com/p"}}}
+	backendErr := errors.New("backend failed")
+	published := false
+	_, err := runPackageBuildTask(
+		task,
+		func() error { return backendErr },
+		func() (packageBuildResult, error) {
+			published = true
+			return packageBuildResult{}, nil
+		},
+	)
+	if !errors.Is(err, backendErr) {
+		t.Fatalf("package task error = %v, want %v", err, backendErr)
+	}
+	if published {
+		t.Fatal("package task published after backend failure")
+	}
+}
+
+func TestNewBackendTaskUsesPackageLocalState(t *testing.T) {
+	coordinator := &context{
+		conf:            &packages.Config{},
+		mode:            ModeBuild,
+		buildConf:       &Config{BuildMode: BuildModeExe},
+		commands:        commandEnv{dir: t.TempDir()},
+		frontendOptions: cl.Options{Debug: true},
+		sfilesCache:     map[string][]string{"example.com/p": {"asm.s"}},
+		plan9asmReady:   true,
+		plan9asmMode:    plan9asmEnvSelected,
+		plan9asmPkgs:    map[string]bool{"example.com/p": true},
+	}
+
+	task := coordinator.newBackendTask(backendSession{})
+	if task == coordinator {
+		t.Fatal("backend task aliases coordinator")
+	}
+	if task.buildConf != coordinator.buildConf || task.conf != coordinator.conf {
+		t.Fatal("backend task did not retain immutable build inputs")
+	}
+	if !task.sfilesFrozen || !task.plan9asmReady || task.plan9asmMode != plan9asmEnvSelected {
+		t.Fatalf("backend task state = %+v", task)
+	}
+	if !task.frontendOptions.Debug || task.commands.dir != coordinator.commands.dir {
+		t.Fatal("backend task lost invocation settings")
+	}
+	task.plan9asmSigs["example.com/p"] = map[string]struct{}{"f": {}}
+	if coordinator.plan9asmSigs != nil {
+		t.Fatal("backend task signature cache aliases coordinator")
+	}
+}
+
+func TestPrePackageBuildsRecordsSkippedPackages(t *testing.T) {
+	pkg := &aPackage{Package: &packages.Package{
+		ID:      "example.com/already-built",
+		PkgPath: "example.com/already-built",
+	}}
+	ctx := &context{built: map[string]none{pkg.ID: {}}}
+	task := &packageBuildTask{pkg: pkg}
+	if err := prePackageBuilds(ctx, []*packageBuildTask{task}, false); err != nil {
+		t.Fatal(err)
+	}
+	if !task.skip || task.pkg != pkg {
+		t.Fatalf("pre task = %#v, want skipped package", task)
+	}
+}
+
+func TestPackageSchedulingHandlesNonBackendPackages(t *testing.T) {
+	task := &packageBuildTask{pkg: &aPackage{}}
+	ctx := &context{mode: ModeGen, buildConf: &Config{BuildMode: BuildModeExe}}
+	serial, err := ctx.packageRequiresCoordinator(task)
+	if err != nil || !serial {
+		t.Fatalf("generation package coordinator = %v, %v; want true, nil", serial, err)
+	}
+
+	usesPlan9, err := (&context{}).packageUsesPlan9Asm(task.pkg)
+	if err != nil || usesPlan9 {
+		t.Fatalf("nil package Plan9 asm = %v, %v; want false, nil", usesPlan9, err)
+	}
+	patched, coordinator, isolated, err := partitionPackageExecutions(ctx, nil)
+	if err != nil || patched != nil || coordinator != nil || isolated != nil {
+		t.Fatalf("empty partition = %v, %v, %v, %v", patched, coordinator, isolated, err)
+	}
 }
