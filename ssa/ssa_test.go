@@ -2366,6 +2366,24 @@ attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)
 }
 
+func TestStoreVolatile(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	params := types.NewTuple(
+		types.NewVar(0, nil, "p", types.NewPointer(types.Typ[types.Int32])),
+	)
+	sig := types.NewSignatureType(nil, nil, nil, params, nil, false)
+	fn := pkg.NewFunc("clear", sig, InGo)
+	b := fn.MakeBody(1)
+	b.StoreVolatile(fn.Param(0), prog.IntVal(0, prog.Int32()))
+	b.Return()
+
+	ir := fn.impl.String()
+	if !strings.Contains(ir, "store volatile i32 0, ptr %0") {
+		t.Fatalf("StoreVolatile did not emit a volatile store:\n%s", ir)
+	}
+}
+
 func TestBasicType(t *testing.T) {
 	type typeInfo struct {
 		typ  Type

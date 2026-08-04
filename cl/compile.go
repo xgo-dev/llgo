@@ -206,6 +206,8 @@ type context struct {
 	anonDefers           map[*ssa.Function]bool
 	debugDIVars          map[*types.Var]llssa.DIVar
 	debugAllocVars       map[*ssa.Alloc]*types.Var
+	stackClears          map[ssa.Instruction][]*ssa.Alloc
+	finalizerPkgUses     map[*ssa.Package]bool
 	runtimeCallerFuncs   map[*ssa.Function]bool
 	pcLineSeq            uint64
 	options              Options
@@ -726,6 +728,11 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			p.prepareExportedLocalContext(f)
 			p.bvals = make(map[ssa.Value]llssa.Expr)
 			p.methodNilDerefChecks = collectMethodNilDerefChecks(f)
+			if p.enableConservativeLivenessClears(f) {
+				p.stackClears = p.collectStackClearPlans(f)
+			} else {
+				p.stackClears = nil
+			}
 			off := make([]int, len(f.Blocks))
 			if isCgo {
 				p.cgoArgs = make([]llssa.Expr, len(f.Params))
@@ -1015,6 +1022,10 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 		} else {
 			p.compileInstr(b, instr)
 		}
+		if isTerminatingInstruction(instr) {
+			continue
+		}
+		p.clearDeadAllocs(b, instr)
 	}
 	// is cgo cfunc but not return yet, some funcs has multiple blocks
 	if (isCgoCfunc || isCgoC2 || isCgoCmacro) && !cgoReturned {
@@ -1245,6 +1256,468 @@ func isAllocVargs(ctx *context, v *ssa.Alloc) bool {
 		}
 	}
 	return false
+}
+
+func (p *context) enableConservativeLivenessClears(fn *ssa.Function) bool {
+	if fn == nil || isCgoExternSymbol(fn) {
+		return false
+	}
+	pkg := declaredSSAPackage(fn)
+	if pkg == nil {
+		return false
+	}
+	return p.packageUsesRuntimeSetFinalizer(pkg)
+}
+
+func (p *context) packageUsesRuntimeSetFinalizer(pkg *ssa.Package) bool {
+	if pkg == nil {
+		return false
+	}
+	if uses, ok := p.finalizerPkgUses[pkg]; ok {
+		return uses
+	}
+	if p.finalizerPkgUses == nil {
+		p.finalizerPkgUses = make(map[*ssa.Package]bool)
+	}
+	uses := false
+	seen := make(map[*ssa.Function]bool)
+	check := func(fn *ssa.Function) bool {
+		return p.functionUsesRuntimeSetFinalizer(fn, seen)
+	}
+	for _, member := range pkg.Members {
+		if fn, ok := member.(*ssa.Function); ok && check(fn) {
+			uses = true
+			break
+		}
+	}
+	if !uses && pkg.Prog != nil {
+		for _, member := range pkg.Members {
+			typ, ok := member.(*ssa.Type)
+			if !ok {
+				continue
+			}
+			for _, recv := range []types.Type{typ.Type(), types.NewPointer(typ.Type())} {
+				methods := pkg.Prog.MethodSets.MethodSet(recv)
+				for i := 0; i < methods.Len(); i++ {
+					obj, ok := methods.At(i).Obj().(*types.Func)
+					if !ok {
+						continue
+					}
+					if check(pkg.Prog.FuncValue(obj.Origin())) {
+						uses = true
+						break
+					}
+				}
+				if uses {
+					break
+				}
+			}
+			if uses {
+				break
+			}
+		}
+	}
+	p.finalizerPkgUses[pkg] = uses
+	return uses
+}
+
+func declaredSSAPackage(fn *ssa.Function) *ssa.Package {
+	for fn != nil {
+		if fn.Pkg != nil {
+			return fn.Pkg
+		}
+		if origin := fn.Origin(); origin != nil && origin != fn {
+			fn = origin
+			continue
+		}
+		fn = fn.Parent()
+	}
+	return nil
+}
+
+func (p *context) functionUsesRuntimeSetFinalizer(fn *ssa.Function, seen map[*ssa.Function]bool) bool {
+	if fn == nil || seen[fn] {
+		return false
+	}
+	seen[fn] = true
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			switch instr := instr.(type) {
+			case *ssa.Call:
+				if p.isRuntimeSetFinalizerCall(&instr.Call) {
+					return true
+				}
+			case *ssa.Defer:
+				if p.isRuntimeSetFinalizerCall(&instr.Call) {
+					return true
+				}
+			case *ssa.Go:
+				if p.isRuntimeSetFinalizerCall(&instr.Call) {
+					return true
+				}
+			}
+		}
+	}
+	for _, anon := range fn.AnonFuncs {
+		if p.functionUsesRuntimeSetFinalizer(anon, seen) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasConservativeGCPointers(t types.Type, seen map[types.Type]bool) bool {
+	if t == nil {
+		return false
+	}
+	t = types.Unalias(t)
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
+	switch t := t.Underlying().(type) {
+	case *types.Pointer, *types.Slice, *types.Map, *types.Chan, *types.Signature, *types.Interface:
+		return true
+	case *types.Basic:
+		return t.Kind() == types.String || t.Kind() == types.UnsafePointer
+	case *types.Array:
+		return hasConservativeGCPointers(t.Elem(), seen)
+	case *types.Struct:
+		for i := 0; i < t.NumFields(); i++ {
+			if hasConservativeGCPointers(t.Field(i).Type(), seen) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (p *context) shouldClearAlloc(v *ssa.Alloc) bool {
+	if v == nil || v.Heap || v.Comment == "varargs" || v.Comment == "makeslice" {
+		return false
+	}
+	ptr, ok := v.Type().Underlying().(*types.Pointer)
+	return ok && hasConservativeGCPointers(ptr.Elem(), map[types.Type]bool{})
+}
+
+func cyclicBlocks(blocks []*ssa.BasicBlock) map[*ssa.BasicBlock]bool {
+	// Compute strongly connected components once per function so liveness
+	// candidates do not repeat reachability walks over the same CFG.
+	cyclic := make(map[*ssa.BasicBlock]bool)
+	indices := make(map[*ssa.BasicBlock]int, len(blocks))
+	lowlinks := make(map[*ssa.BasicBlock]int, len(blocks))
+	onStack := make(map[*ssa.BasicBlock]bool, len(blocks))
+	stack := make([]*ssa.BasicBlock, 0, len(blocks))
+	nextIndex := 1
+
+	var visit func(*ssa.BasicBlock)
+	visit = func(block *ssa.BasicBlock) {
+		if block == nil {
+			return
+		}
+		index := nextIndex
+		nextIndex++
+		indices[block] = index
+		lowlinks[block] = index
+		stack = append(stack, block)
+		onStack[block] = true
+
+		for _, succ := range block.Succs {
+			if succ == nil {
+				continue
+			}
+			if indices[succ] == 0 {
+				visit(succ)
+				lowlinks[block] = min(lowlinks[block], lowlinks[succ])
+			} else if onStack[succ] {
+				lowlinks[block] = min(lowlinks[block], indices[succ])
+			}
+		}
+		if lowlinks[block] != index {
+			return
+		}
+
+		var component []*ssa.BasicBlock
+		for {
+			last := len(stack) - 1
+			member := stack[last]
+			stack = stack[:last]
+			onStack[member] = false
+			component = append(component, member)
+			if member == block {
+				break
+			}
+		}
+		if len(component) > 1 {
+			for _, member := range component {
+				cyclic[member] = true
+			}
+			return
+		}
+		for _, succ := range block.Succs {
+			if succ == block {
+				cyclic[block] = true
+				return
+			}
+		}
+	}
+
+	for _, block := range blocks {
+		if block != nil && indices[block] == 0 {
+			visit(block)
+		}
+	}
+	return cyclic
+}
+
+type instructionOperandScratch struct {
+	inline   [8]*ssa.Value
+	operands []*ssa.Value
+}
+
+type stackLivenessState struct {
+	value       ssa.Value
+	slotAddress bool
+}
+
+func (s *instructionOperandScratch) uses(instr ssa.Instruction, v ssa.Value) bool {
+	if instr == nil || v == nil {
+		return false
+	}
+	if s.operands == nil {
+		s.operands = s.inline[:0]
+	} else {
+		s.operands = s.operands[:0]
+	}
+	// Referrer lists are mutable in x/tools. Re-scan operands deliberately so
+	// stale entries that no longer name v make the liveness proof fail closed.
+	s.operands = instr.Operands(s.operands)
+	for _, operand := range s.operands {
+		if operand != nil && *operand == v {
+			return true
+		}
+	}
+	return false
+}
+
+func instructionUsesValue(instr ssa.Instruction, v ssa.Value) bool {
+	var scratch instructionOperandScratch
+	return scratch.uses(instr, v)
+}
+
+func instructionRetainsAddress(instr ssa.Instruction, v ssa.Value) bool {
+	// Side-effecting instructions can hide a stack address from the SSA
+	// referrer graph, so the liveness walk cannot follow later aliases.
+	//
+	// This switch deliberately defaults to retaining: every known instruction
+	// must either identify its non-retaining destination operand below or be a
+	// pure value instruction whose uses the recursive walk can follow. A new
+	// SSA instruction therefore fails closed until it is classified here.
+	switch instr := instr.(type) {
+	case *ssa.Store:
+		if instr.Val == v {
+			return true
+		}
+		return instr.Addr != v
+	case *ssa.MapUpdate:
+		if instr.Key == v || instr.Value == v {
+			return true
+		}
+		return instr.Map != v
+	case *ssa.Send:
+		if instr.X == v {
+			return true
+		}
+		return instr.Chan != v
+	case *ssa.Call:
+		// Calls may retain any operand, including invoke receivers.
+		return true
+	case *ssa.Select:
+		channelOperand := false
+		for _, state := range instr.States {
+			if state.Dir == types.SendOnly && state.Send == v {
+				return true
+			}
+			if state.Chan == v {
+				channelOperand = true
+			}
+		}
+		return !channelOperand
+	case *ssa.Alloc, *ssa.BinOp, *ssa.UnOp, *ssa.ChangeType,
+		*ssa.Convert, *ssa.MultiConvert, *ssa.ChangeInterface,
+		*ssa.SliceToArrayPointer, *ssa.MakeInterface, *ssa.MakeMap,
+		*ssa.MakeChan, *ssa.MakeSlice, *ssa.Slice, *ssa.FieldAddr,
+		*ssa.Field, *ssa.IndexAddr, *ssa.Index, *ssa.Lookup, *ssa.Range,
+		*ssa.Next, *ssa.TypeAssert, *ssa.Extract:
+		// These instructions only produce values. Recursively walking the
+		// result's referrers preserves address provenance until a load.
+		return false
+	}
+	return true
+}
+
+func isTerminatingInstruction(instr ssa.Instruction) bool {
+	switch instr.(type) {
+	case *ssa.Jump, *ssa.Return, *ssa.If, *ssa.Panic:
+		return true
+	}
+	return false
+}
+
+func (p *context) isRuntimeSetFinalizerCall(call *ssa.CallCommon) bool {
+	if call == nil {
+		return false
+	}
+	fn, ok := call.Value.(*ssa.Function)
+	if !ok || fn == nil || fn.Pkg == nil || fn.Pkg.Pkg == nil {
+		return false
+	}
+	if fn.Name() != "SetFinalizer" {
+		return false
+	}
+	switch fn.Pkg.Pkg.Path() {
+	case "runtime", "github.com/goplus/llgo/runtime/internal/lib/runtime":
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *context) lastUseInBlock(v ssa.Value, blk *ssa.BasicBlock, order map[ssa.Instruction]int) (ssa.Instruction, bool) {
+	var scratch instructionOperandScratch
+	states := make(map[stackLivenessState]bool)
+	_, slotAddress := v.(*ssa.Alloc)
+	return p.lastUseInBlockValue(v, blk, order, states, slotAddress, &scratch)
+}
+
+func (p *context) lastUseInBlockValue(
+	v ssa.Value,
+	blk *ssa.BasicBlock,
+	order map[ssa.Instruction]int,
+	seen map[stackLivenessState]bool,
+	slotAddress bool,
+	scratch *instructionOperandScratch,
+) (ssa.Instruction, bool) {
+	state := stackLivenessState{value: v, slotAddress: slotAddress}
+	if v == nil || seen[state] {
+		return nil, true
+	}
+	seen[state] = true
+	refs := v.Referrers()
+	if refs == nil {
+		return nil, true
+	}
+	// x/tools defines Referrers for function-local values as the inverse of
+	// Instruction.Operands. Rely on that builder contract for completeness,
+	// but reject stale entries that no longer name v or are no longer
+	// scheduled in this block.
+	var last ssa.Instruction
+	updateLast := func(instr ssa.Instruction) {
+		if instr == nil {
+			return
+		}
+		if last == nil || order[instr] > order[last] {
+			last = instr
+		}
+	}
+	for _, ref := range *refs {
+		switch ref := ref.(type) {
+		case *ssa.DebugRef:
+			continue
+		case *ssa.Defer, *ssa.Go, *ssa.MakeClosure, *ssa.Phi:
+			return nil, false
+		default:
+			instr, ok := ref.(ssa.Instruction)
+			if !ok || !scratch.uses(instr, v) {
+				return nil, false
+			}
+			if instr.Block() != blk {
+				return nil, false
+			}
+			if _, ok := order[instr]; !ok {
+				return nil, false
+			}
+			if slotAddress && instructionRetainsAddress(instr, v) {
+				return nil, false
+			}
+			if refVal, ok := ref.(ssa.Value); ok {
+				nextSlotAddress := slotAddress
+				if unop, ok := refVal.(*ssa.UnOp); ok && unop.Op == token.MUL {
+					// A load copies the slot contents; the result no longer
+					// aliases the stack storage that will be cleared.
+					nextSlotAddress = false
+				}
+				use, ok := p.lastUseInBlockValue(refVal, blk, order, seen, nextSlotAddress, scratch)
+				if !ok {
+					return nil, false
+				}
+				if use != nil {
+					updateLast(use)
+					continue
+				}
+			}
+			updateLast(instr)
+		}
+	}
+	return last, true
+}
+
+func (p *context) collectStackClearPlans(fn *ssa.Function) map[ssa.Instruction][]*ssa.Alloc {
+	plans := make(map[ssa.Instruction][]*ssa.Alloc)
+	blockCyclicity := cyclicBlocks(fn.Blocks)
+	for _, blk := range fn.Blocks {
+		if blockCyclicity[blk] {
+			continue
+		}
+		var order map[ssa.Instruction]int
+		for _, instr := range blk.Instrs {
+			alloc, ok := instr.(*ssa.Alloc)
+			if !ok || !p.shouldClearAlloc(alloc) {
+				continue
+			}
+			// Deliberately limit clearing to exact, non-escaping slots whose
+			// complete use graph stays in one acyclic basic block. This can
+			// retain stale roots, but it cannot guess across control-flow,
+			// closure, defer, goroutine, or heap-escape boundaries.
+			useBlk := alloc.Block()
+			if useBlk == nil || useBlk != blk {
+				continue
+			}
+			if order == nil {
+				order = make(map[ssa.Instruction]int, len(blk.Instrs))
+				for i, useInstr := range blk.Instrs {
+					order[useInstr] = i
+				}
+			}
+			last, ok := p.lastUseInBlock(alloc, useBlk, order)
+			if ok && last != nil && !isTerminatingInstruction(last) {
+				plans[last] = append(plans[last], alloc)
+			}
+		}
+	}
+	return plans
+}
+
+func (p *context) clearAlloc(b llssa.Builder, alloc *ssa.Alloc) {
+	// Eligible allocs are lowered before their later clear sites. Reuse that
+	// exact stack pointer; rematerializing the alloc here would clear unrelated
+	// storage and invalidate the liveness proof.
+	ptr, ok := p.bvals[alloc]
+	if !ok {
+		log.Panicln("stack clear for unmaterialized alloc:", alloc)
+	}
+	elem := b.Prog.Elem(ptr.Type)
+	b.StoreVolatile(ptr, p.prog.Zero(elem))
+}
+
+func (p *context) clearDeadAllocs(b llssa.Builder, instr ssa.Instruction) {
+	allocs := p.stackClears[instr]
+	if len(allocs) == 0 {
+		return
+	}
+	for _, alloc := range allocs {
+		p.clearAlloc(b, alloc)
+	}
 }
 
 func isPhi(i ssa.Instruction) bool {

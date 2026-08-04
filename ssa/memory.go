@@ -389,6 +389,15 @@ func (b Builder) Store(ptr, val Expr) Expr {
 	return Expr{b.impl.CreateStore(val.impl, ptr.impl), b.Prog.Void()}
 }
 
+// StoreVolatile stores val at ptr without allowing an optimizer to remove or
+// combine the store. Conservative GC stack-slot clearing is externally
+// observable even when ordinary program dataflow sees no subsequent load.
+func (b Builder) StoreVolatile(ptr, val Expr) Expr {
+	store := b.Store(ptr, val)
+	store.impl.SetVolatile(true)
+	return store
+}
+
 // Advance returns the pointer ptr advanced by offset.
 func (b Builder) Advance(ptr Expr, offset Expr) Expr {
 	dbgInstrf("Advance %v, %v\n", ptr.impl, offset.impl)
