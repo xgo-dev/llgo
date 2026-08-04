@@ -36,17 +36,23 @@ func ReadMemStats(m *runtime.MemStats) {
 }
 
 func GC() {
-	bdwgc.Gcollect()
-	runFinalizers()
-	// BDW finalizers are observed on a subsequent collection cycle.
+	collectAndRunFinalizers()
 	// Run one extra cycle so weak-pointer cleanup hooks (unique/weak) see
 	// finalized state before we trigger map cleanup callbacks.
-	bdwgc.Gcollect()
-	runFinalizers()
+	collectAndRunFinalizers()
 	unique_runtime_notifyMapCleanup()
 	if poolCleanup != nil {
 		poolCleanup()
 	}
+}
+
+func collectAndRunFinalizers() {
+	bdwgc.Gcollect()
+	// GC_gcollect only discovers unreachable finalizable objects. Explicitly
+	// drain BDWGC's ready queue so runtime.GC does not depend on a later
+	// allocation to invoke the callbacks that feed runFinalizers.
+	bdwgc.InvokeFinalizers()
+	runFinalizers()
 }
 
 func saturatingSub(x, y uintptr) uintptr {

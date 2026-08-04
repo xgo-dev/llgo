@@ -88,6 +88,12 @@ func RegisterFinalizerUnreachable(
 	fn FinalizerFunc, cd c.Pointer,
 	oldFn *FinalizerFunc, oldCd *c.Pointer)
 
+// InvokeFinalizers runs all finalizers that BDWGC has queued as ready.
+// It returns the number of finalizers that were run.
+//
+//go:linkname InvokeFinalizers C.GC_invoke_finalizers
+func InvokeFinalizers() c.Int
+
 // -----------------------------------------------------------------------------
 
 //go:linkname Enable C.GC_enable
