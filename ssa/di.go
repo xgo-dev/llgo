@@ -633,13 +633,12 @@ func (b diBuilder) createExpression(ops []uint64) DIExpression {
 // -----------------------------------------------------------------------------
 
 // Copy to alloca'd memory to get declareable address.
-func (b Builder) constructDebugAddr(v Expr) (dbgPtr Expr, dbgVal Expr, exists bool) {
+func (b Builder) constructDebugAddr(v Expr) Expr {
 	t := v.Type.RawType().Underlying()
-	dbgPtr, dbgVal = b.doConstructDebugAddr(v, t)
-	return dbgPtr, dbgVal, false
+	return b.doConstructDebugAddr(v, t)
 }
 
-func (b Builder) doConstructDebugAddr(v Expr, t types.Type) (dbgPtr Expr, dbgVal Expr) {
+func (b Builder) doConstructDebugAddr(v Expr, t types.Type) (dbgPtr Expr) {
 	var ty Type
 	switch t := t.(type) {
 	case *types.Basic:
@@ -670,8 +669,7 @@ func (b Builder) doConstructDebugAddr(v Expr, t types.Type) (dbgPtr Expr, dbgVal
 	dbgPtr = b.AllocaT(ty)
 	dbgPtr.Type = b.Prog.Pointer(v.Type)
 	b.Store(dbgPtr, v)
-	dbgVal = b.Load(dbgPtr)
-	return dbgPtr, dbgVal
+	return dbgPtr
 }
 
 func (b Builder) di() diBuilder {
@@ -679,7 +677,39 @@ func (b Builder) di() diBuilder {
 }
 
 func (b Builder) DIParam(variable *types.Var, v Expr, dv DIVar, scope DIScope, pos token.Position, blk BasicBlock) {
-	b.DIValue(variable, v, dv, scope, pos, blk)
+	b.diParam(variable, v, dv, scope, pos, blk)
+}
+
+// DIParamWithHome returns the stable O0 storage backing the parameter.
+func (b Builder) DIParamWithHome(variable *types.Var, v Expr, dv DIVar, scope DIScope, pos token.Position, blk BasicBlock) Expr {
+	return b.diParam(variable, v, dv, scope, pos, blk)
+}
+
+func (b Builder) diParam(variable *types.Var, v Expr, dv DIVar, scope DIScope, pos token.Position, blk BasicBlock) Expr {
+	if b.Prog.debugInfoOptimized {
+		b.DIValue(variable, v, dv, scope, pos, blk)
+		return Nil
+	}
+	var dbgPtr Expr
+	b.withoutDebugLocation(func() {
+		dbgPtr = b.constructDebugAddr(v)
+	})
+	b.DIDeclare(variable, dbgPtr, dv, scope, pos, blk)
+	return dbgPtr
+}
+
+// DIStore updates debug-only storage without creating a source line site.
+func (b Builder) DIStore(ptr, value Expr) {
+	b.withoutDebugLocation(func() {
+		b.Store(ptr, value)
+	})
+}
+
+func (b Builder) withoutDebugLocation(fn func()) {
+	loc := b.impl.GetCurrentDebugLocation()
+	b.impl.SetCurrentDebugLocation(0, 0, llvm.Metadata{}, llvm.Metadata{})
+	defer b.impl.SetCurrentDebugLocation(loc.Line, loc.Col, loc.Scope, loc.InlinedAt)
+	fn()
 }
 
 func (b Builder) DIDeclare(variable *types.Var, v Expr, dv DIVar, scope DIScope, pos token.Position, blk BasicBlock) {
@@ -693,7 +723,7 @@ func (b Builder) DIValue(variable *types.Var, v Expr, dv DIVar, scope DIScope, p
 		expr := b.di().createExpression(nil)
 		b.di().dbgValue(v, dv, scope, pos, expr, blk)
 	} else {
-		dbgPtr, _, _ := b.constructDebugAddr(v)
+		dbgPtr := b.constructDebugAddr(v)
 		expr := b.di().createExpression([]uint64{opDeref})
 		b.di().dbgValue(dbgPtr, dv, scope, pos, expr, blk)
 	}

@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -69,8 +70,12 @@ func inspect(items [2]item, seed int) int {
 	if x > 0 {
 		items[0].value = x
 		local[0].value = x
+		seed = x
+	} else {
+		seed = x
 	}
-	return items[0].value + local[0].value
+	seed = 42
+	return items[0].value + local[0].value + seed
 }
 
 var anonymous = func(seed int) int {
@@ -126,4 +131,73 @@ var anonymous = func(seed int) int {
 			t.Errorf("debug module is missing %q:\n%s", want, ir)
 		}
 	}
+	assertDebugRecords(t, ir, `name: "items", arg: 1`, true, false)
+	assertDebugRecords(t, ir, `name: "seed", arg: 2`, true, false)
+	assertDebugHomeStores(t, ir, `name: "seed", arg: 2`, 4)
+
+	optimizedProg := newLLSSAProgForTarget(t, &llssa.Target{
+		GOOS:     runtime.GOOS,
+		GOARCH:   runtime.GOARCH,
+		OptLevel: optlevel.O2,
+	})
+	defer optimizedProg.Dispose()
+	optimizedPkg, err := NewPackage(optimizedProg, ssaPkg, []*ast.File{file})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := llvm.VerifyModule(optimizedPkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("optimized debug module is invalid: %v\n%s", err, optimizedPkg.Module().String())
+	}
+	optimizedIR := optimizedPkg.Module().String()
+	assertDebugRecords(t, optimizedIR, `name: "items", arg: 1`, true, false)
+	assertDebugRecords(t, optimizedIR, `name: "seed", arg: 2`, false, true)
+}
+
+func assertDebugHomeStores(t *testing.T, ir, variable string, minimum int) {
+	t.Helper()
+	variableID := debugVariableID(t, ir, variable)
+	re := regexp.MustCompile(`#dbg_declare\(ptr ([^,]+), ` + regexp.QuoteMeta(variableID) + `,`)
+	match := re.FindStringSubmatch(ir)
+	if len(match) != 2 {
+		t.Fatalf("debug home for %q not found:\n%s", variable, ir)
+	}
+	stores := 0
+	for _, line := range strings.Split(ir, "\n") {
+		if strings.Contains(line, "store ") && strings.Contains(line, ", ptr "+match[1]+",") {
+			stores++
+			if strings.Contains(line, "!dbg") {
+				t.Fatalf("debug home store for %q has a source location: %s", variable, line)
+			}
+		}
+	}
+	if stores < minimum {
+		t.Fatalf("debug home for %q has %d stores, want at least %d\n%s", variable, stores, minimum, ir)
+	}
+}
+
+func assertDebugRecords(t *testing.T, ir, variable string, wantDeclare, wantValue bool) {
+	t.Helper()
+	variableID := debugVariableID(t, ir, variable)
+	var declare, value bool
+	for _, line := range strings.Split(ir, "\n") {
+		if !strings.Contains(line, variableID+",") {
+			continue
+		}
+		declare = declare || strings.Contains(line, "#dbg_declare")
+		value = value || strings.Contains(line, "#dbg_value")
+	}
+	if declare != wantDeclare || value != wantValue {
+		t.Fatalf("debug records for %q: declare=%v value=%v, want declare=%v value=%v\n%s",
+			variable, declare, value, wantDeclare, wantValue, ir)
+	}
+}
+
+func debugVariableID(t *testing.T, ir, variable string) string {
+	t.Helper()
+	re := regexp.MustCompile(`(?m)^(![0-9]+) = !DILocalVariable\(` + regexp.QuoteMeta(variable))
+	match := re.FindStringSubmatch(ir)
+	if len(match) != 2 {
+		t.Fatalf("debug variable %q not found:\n%s", variable, ir)
+	}
+	return match[1]
 }
