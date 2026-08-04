@@ -251,9 +251,6 @@ func resolveBuildConfig(input *Config) (*Config, error) {
 	if conf.Goarch == "" {
 		conf.Goarch = runtime.GOARCH
 	}
-	if conf.AppExt == "" {
-		conf.AppExt = defaultAppExt(conf)
-	}
 	if conf.BuildMode == "" {
 		conf.BuildMode = BuildModeExe
 	}
@@ -399,6 +396,9 @@ func Build(inv Invocation) ([]Package, error) {
 	if conf.Target != "" && export.GOARCH != "" {
 		conf.Goarch = export.GOARCH
 	}
+	if conf.AppExt == "" {
+		conf.AppExt = defaultAppExt(conf)
+	}
 	if err := validateLinkOptions(conf, &export); err != nil {
 		return nil, err
 	}
@@ -478,10 +478,7 @@ func Build(inv Invocation) ([]Package, error) {
 	// final-PC sites for sidecar construction.
 	prog.EnableFuncInfoSites(shouldEnablePCLNSites(conf, funcInfo, emitDebugInfo))
 	sizes := func(sizes types.Sizes, compiler, arch string) types.Sizes {
-		if arch == "wasm" {
-			sizes = &types.StdSizes{WordSize: 4, MaxAlign: 4}
-		}
-		return prog.TypeSizes(sizes)
+		return prog.TypeSizes(effectiveTypeSizes(sizes, conf.Goos, arch, conf.Target))
 	}
 	dedup := packages.NewDeduper()
 	var syntaxErr error
@@ -789,14 +786,20 @@ func DefaultBuildTags(goarch, target string) string {
 
 func defaultBuildTags(goarch, target string) string {
 	tags := "llgo,math_big_pure_go,purego"
-	// Raw GOOS/GOARCH wasm builds do not have a target configuration that
-	// selects a collector. BDWGC is not available in either wasm host, so use
-	// the supported collector-free runtime unless a named target supplies its
-	// own runtime configuration.
-	if goarch == "wasm" && target == "" {
+	// BDWGC is unavailable in both wasm hosts.
+	if goarch == "wasm" {
 		tags += ",nogc"
 	}
 	return tags
+}
+
+func effectiveTypeSizes(sizes types.Sizes, goos, goarch, target string) types.Sizes {
+	// Named wasm targets use the native wasm32 data model. The raw js/wasm
+	// entry point keeps Go's 64-bit word model and is emitted as Memory64.
+	if goarch == "wasm" && (target != "" || goos != "js") {
+		return &types.StdSizes{WordSize: 4, MaxAlign: 4}
+	}
+	return sizes
 }
 
 func allowMissingFunctionBodies(initial []*packages.Package) {
@@ -1439,12 +1442,15 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 	}
 	linkArgs = append(linkArgs, cSharedExportArgs(ctx, linkedOrder)...)
 
-	err = linkObjFiles(ctx, outputPath, linkInputs, linkArgs, verbose)
+	linkOutput, err := prepareWasmLinkOutput(ctx.buildConf, &ctx.crossCompile, outputPath)
 	if err != nil {
 		return err
 	}
-
-	return nil
+	defer cleanupWasmLinkOutput(linkOutput, outputPath)
+	if err := linkObjFiles(ctx, linkOutput, linkInputs, linkArgs, verbose); err != nil {
+		return err
+	}
+	return publishWasmLinkOutput(ctx, linkOutput, outputPath, verbose)
 }
 
 func linkedPackageMetas(pkgs []Package) []*meta.PackageMeta {
@@ -2619,7 +2625,7 @@ func llvmPassPipeline(level optlevel.Level, ltoMode lto.Mode) string {
 }
 
 func IsWasiThreadsEnabled() bool {
-	return isEnvOn(llgoWasiThreads, true)
+	return isEnvOn(llgoWasiThreads, false)
 }
 
 func IsFullRpathEnabled() bool {
