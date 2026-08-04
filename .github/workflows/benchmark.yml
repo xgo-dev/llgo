@@ -78,7 +78,7 @@ jobs:
             "$GITHUB_WORKSPACE/.benchmark/results"
 
       - name: Record benchmark result
-        uses: xgo-dev/setup-benchmark-go-action@v1
+        uses: xgo-dev/setup-benchmark-go-action@v1.0.3
         with:
           config: .github/llgo-benchmark.yml
           benchmark-file: .benchmark/results/benchmark.txt
