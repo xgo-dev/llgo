@@ -1585,7 +1585,7 @@ func (p *context) emitPCLineLabel(b llssa.Builder, pos token.Pos) {
 		pushSection = ".pushsection __DATA,__llgo_pcl,regular,live_support"
 		recordSymbol = "l_llgo_pcline_rec_${:uid}:\n"
 	}
-	b.InlineAsm(
+	b.InlineAsmNoDebug(
 		asmLabel + ":\n" +
 			pushSection + "\n" +
 			".p2align " + align + "\n" +

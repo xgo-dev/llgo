@@ -296,6 +296,17 @@ func (b Builder) InlineAsm(instruction string) {
 	b.impl.CreateCall(typ, asm, nil, "")
 }
 
+// InlineAsmNoDebug emits inline assembly without attaching the builder's
+// current source location. The builder location itself is left unchanged.
+func (b Builder) InlineAsmNoDebug(instruction string) {
+	dbgInstrf("InlineAsm %s\n", instruction)
+
+	typ := llvm.FunctionType(b.Prog.tyVoid(), nil, false)
+	asm := llvm.InlineAsm(typ, instruction, "", true, false, llvm.InlineAsmDialectATT, false)
+	call := b.impl.CreateCall(typ, asm, nil, "")
+	call.InstructionSetDebugLoc(llvm.Metadata{})
+}
+
 func (b Builder) InlineAsmFull(instruction, constraints string, retType Type, exprs []Expr) Expr {
 	typs := make([]llvm.Type, len(exprs))
 	vals := make([]llvm.Value, len(exprs))

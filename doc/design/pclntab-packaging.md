@@ -25,43 +25,30 @@ without `-target` on Darwin/Linux amd64/arm64. `ModeGen`, `c-archive`,
 
 The policy is deliberately separate from Go's `-ldflags=-s` and `-w`:
 
-- LLGo temporarily omits DWARF by default because the existing DI path is not
-  yet safe for broad use. `-w=false` explicitly enables it; `-w` explicitly
-  omits it.
+- Linked builds preserve DWARF by default, matching `cmd/link`. `-w` omits it
+  and `-w=false` explicitly preserves it.
 - `-s` records native symbol-table omission intent and implies `-w` unless
   `-w` is explicitly set; the explicit `-w` value wins regardless of argument
   order. Native symbol-table deletion remains a later phase.
+- Darwin `c-shared` builds retain Go's platform default of omitting DWARF;
+  explicit `-w=false` overrides it.
 - `-pclntab` controls LLGo runtime symbolization metadata.
 
-The explicit `-w` semantics above are Go-compatible, but the temporary
-DWARF-free default is not: Go behaves as if `-w=false` when the flag is absent.
-LLGo currently behaves as if `-w=true`; explicit `-w=false` overrides that
-default. Once the dedicated DI fixes make broad DWARF use safe, the default can
-be changed without changing flag parsing or backend precedence.
-
 `ModeGen` remains DWARF-free by default and emits DWARF only when `-w=false`
-is explicitly requested and supported.
-Effective DWARF omission (`-w`, or bare `-s`) is rejected for `c-archive` and
-`c-shared`. Fixed targets that always omit DWARF reject `-w=false`, while
-backends without an omit capability reject `-w`. Because native `-s`
-stripping is not implemented yet, `-s -w=false` does not strip shared or
-archive outputs.
+is explicitly requested and supported. Fixed targets that always omit DWARF
+reject `-w=false`, while backends without an omit capability reject `-w`.
+Because native `-s` stripping is not implemented yet, `-s -w=false` records
+the symbol-table intent without removing native symbols.
 
 The former `LLGO_DEBUG` and `LLGO_DEBUG_SYMBOLS` environment switches are not
 part of this policy. Use `-w=false` to retain DWARF, `-w` to omit it,
 and `-O0` when a debugger-friendly unoptimized build is required.
 
-This change deliberately reuses LLGo's existing runnable DWARF path; it does
-not repair or redesign the debug metadata implementation. That path currently
-disables LLGo's LLVM and C ABI optimization steps while emitting DWARF, so
-`-w` can still affect optimization in addition to artifact metadata. Go's
-optimization-independent DWARF behavior requires a separate implementation
-PR and is explicitly out of scope here.
-
-Broad CI uses the DWARF-free default until the corresponding DI limitations
-are fixed. Targeted native integration, the debug IR fixture, and the full
-LLDB suite explicitly select `-w=false` to protect the currently supported
-runnable path.
+DWARF generation is independent of the selected optimization level. Linked
+builds keep debug metadata through the normal LLVM and C ABI lowering paths;
+use `-O0` when a debugger-friendly unoptimized build is required. Broad CI
+therefore exercises the linked-build DWARF default, while stable IR fixtures
+remain non-debug unless they explicitly request `-w=false`.
 
 Consequently all combinations are meaningful. For example,
 `-ldflags=-s -pclntab=embedded` keeps Go-compatible runtime symbolization,
@@ -135,11 +122,12 @@ a later native-strip mutation is added.
 sites are not produced. `-pclntab=embedded` keeps the existing post-link
 prebuilt-table rewrite.
 
-Darwin embedded builds that emit DWARF keep the historical site-free path so
-inline PC anchors do not disturb LLDB lexical scopes. Linux retains sites with
-DWARF because most Go symbols are intentionally absent from ELF `.dynsym`, so
-`dlsym` alone cannot reconstruct every function entry. External mode needs
-the final-PC sites on both platforms before it can construct the sidecar.
+Darwin embedded builds that emit DWARF retain PC-line sites without debug
+locations, but suppress function-entry address sites whose entry-block inline
+assembly disturbs LLDB lexical scopes. Linux retains both categories because
+most Go symbols are intentionally absent from ELF `.dynsym`, so `dlsym` alone
+cannot reconstruct every function entry. External mode needs the final-PC
+sites on both platforms before it can construct the sidecar.
 
 ## Sidecar identity and addressing
 

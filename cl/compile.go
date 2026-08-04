@@ -1740,10 +1740,7 @@ func (p *context) jumpTo(v *ssa.Jump) llssa.BasicBlock {
 }
 
 func (p *context) getDebugLocScope(v *ssa.Function, pos token.Pos) *types.Scope {
-	if v.Object() == nil {
-		return nil
-	}
-	funcScope := v.Object().(*types.Func).Scope()
+	funcScope := debugFunctionScope(v)
 	if funcScope == nil {
 		return nil
 	}

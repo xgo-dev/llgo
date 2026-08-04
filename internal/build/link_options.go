@@ -66,10 +66,12 @@ func (o LinkOptions) EffectiveOmitDWARF() bool {
 	}
 }
 
-// omitDWARFRequested combines explicit Go linker flags with LLGo's typed
-// default. The default never overrides an explicit -w value.
+// omitDWARFRequested applies cmd/link's -w semantics. DWARF is preserved by
+// default, and -s implies -w unless -w was explicitly set. Darwin c-shared
+// builds default to -w; an explicit -w=false still overrides that default.
 func omitDWARFRequested(conf *Config) bool {
-	if conf.LinkOptions.DWARF == DWARFDefault && conf.OmitDWARFByDefault {
+	if conf.LinkOptions.DWARF == DWARFDefault &&
+		conf.Goos == "darwin" && conf.BuildMode == BuildModeCShared {
 		return true
 	}
 	return conf.LinkOptions.EffectiveOmitDWARF()
@@ -83,9 +85,8 @@ func effectiveOmitDWARF(conf *Config, target *crosscompile.Export) bool {
 }
 
 // shouldEmitDebugInfo reports whether this compilation should produce DWARF.
-// Linked modes use the typed LLGo default and target/linker constraints, with
-// an explicit -w value taking precedence. ModeGen has no linker, so it emits
-// only on an explicit preserve request.
+// Linked modes use cmd/link defaults and target constraints. ModeGen has no
+// linker, so it emits only on an explicit preserve request.
 func shouldEmitDebugInfo(conf *Config, target *crosscompile.Export) bool {
 	if effectiveOmitDWARF(conf, target) {
 		return false

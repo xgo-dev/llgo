@@ -433,6 +433,11 @@ func withModuleCapture(conf *build.Config, pkgDir string) (*build.Config, *strin
 		conf = build.NewDefaultConf(build.ModeRun)
 	}
 	localConf := *conf
+	// Existing IR fixtures describe executable instructions, not debug records.
+	// Keep their snapshots stable unless a test explicitly requests DWARF.
+	if localConf.LinkOptions.DWARF == build.DWARFDefault {
+		localConf.LinkOptions.DWARF = build.DWARFOmit
+	}
 	var module string
 	var meta string
 	prevHook := localConf.ModuleHook
@@ -480,6 +485,9 @@ func withMetaCaptures(conf *build.Config, pkgDirs []string) (*build.Config, map[
 		conf = build.NewDefaultConf(build.ModeRun)
 	}
 	localConf := *conf
+	if localConf.LinkOptions.DWARF == build.DWARFDefault {
+		localConf.LinkOptions.DWARF = build.DWARFOmit
+	}
 	localConf.ForceRebuild = true
 	metas := make(map[string]*string, len(pkgDirs))
 	for _, pkgDir := range pkgDirs {

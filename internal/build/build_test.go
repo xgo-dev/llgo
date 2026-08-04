@@ -680,8 +680,10 @@ func TestLinkOptionsControlELFDWARF(t *testing.T) {
 		options   LinkOptions
 		wantDWARF bool
 	}{
+		{name: "default", wantDWARF: true},
 		{name: "omit", options: LinkOptions{DWARF: DWARFOmit}},
-		{name: "preserve", options: LinkOptions{DWARF: DWARFPreserve}, wantDWARF: true},
+		{name: "s", options: LinkOptions{OmitSymbolTable: true}},
+		{name: "s_w_false", options: LinkOptions{OmitSymbolTable: true, DWARF: DWARFPreserve}, wantDWARF: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -707,8 +709,10 @@ func TestLinkOptionsControlDarwinDebugSymbols(t *testing.T) {
 		options   LinkOptions
 		wantSTABS bool
 	}{
+		{name: "default", wantSTABS: true},
 		{name: "omit", options: LinkOptions{DWARF: DWARFOmit}},
-		{name: "preserve", options: LinkOptions{DWARF: DWARFPreserve}, wantSTABS: true},
+		{name: "s", options: LinkOptions{OmitSymbolTable: true}},
+		{name: "s_w_false", options: LinkOptions{OmitSymbolTable: true, DWARF: DWARFPreserve}, wantSTABS: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
