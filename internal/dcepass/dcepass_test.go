@@ -1,6 +1,7 @@
 package dcepass
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -105,6 +106,141 @@ func TestMethodArray(t *testing.T) {
 				t.Fatalf("methodArray recognized invalid initializer: %s", tt.name)
 			}
 		})
+	}
+}
+
+func TestCloneTypesAcrossContexts(t *testing.T) {
+	srcCtx := llvm.NewContext()
+	defer srcCtx.Dispose()
+	dstCtx := llvm.NewContext()
+	defer dstCtx.Dispose()
+	dst := dstCtx.NewModule("dst")
+	defer dst.Dispose()
+
+	emitter := newOverrideEmitter(dst)
+	named := srcCtx.StructCreateNamed("named")
+	named.StructSetBody([]llvm.Type{srcCtx.Int32Type()}, false)
+	existing := srcCtx.StructCreateNamed("existing")
+	existing.StructSetBody([]llvm.Type{srcCtx.Int32Type()}, false)
+	dstExisting := dstCtx.StructCreateNamed("existing")
+	dstExisting.StructSetBody([]llvm.Type{dstCtx.Int64Type()}, false)
+
+	types := []llvm.Type{
+		srcCtx.VoidType(),
+		srcCtx.FloatType(),
+		srcCtx.DoubleType(),
+		srcCtx.X86FP80Type(),
+		srcCtx.FP128Type(),
+		srcCtx.PPCFP128Type(),
+		srcCtx.LabelType(),
+		srcCtx.IntType(17),
+		llvm.FunctionType(srcCtx.VoidType(), []llvm.Type{srcCtx.Int32Type()}, true),
+		named,
+		existing,
+		srcCtx.StructType([]llvm.Type{srcCtx.Int8Type(), srcCtx.Int16Type()}, true),
+		llvm.ArrayType(srcCtx.Int32Type(), 3),
+		llvm.PointerType(srcCtx.Int8Type(), 5),
+		llvm.VectorType(srcCtx.Int16Type(), 4),
+		srcCtx.MetadataType(),
+		srcCtx.TokenType(),
+	}
+	for _, src := range types {
+		got := emitter.cloneType(src)
+		if got.IsNil() {
+			t.Fatalf("cloneType(%s) returned nil", src)
+		}
+		if got.TypeKind() != src.TypeKind() {
+			t.Fatalf("cloneType(%s) kind = %v, want %v", src, got.TypeKind(), src.TypeKind())
+		}
+		if cached := emitter.cloneType(src); cached.C != got.C {
+			t.Fatalf("cloneType(%s) did not reuse the destination type", src)
+		}
+	}
+
+	clonedNamed := emitter.cloneType(named)
+	if clonedNamed.C == named.C || clonedNamed.StructElementTypesCount() != 1 {
+		t.Fatalf("identified struct was not recreated in the destination context: %s", clonedNamed)
+	}
+	if got := emitter.cloneType(existing); got.C != dstExisting.C {
+		t.Fatalf("existing destination type was not reused: got %s, want %s", got, dstExisting)
+	}
+	if got := dstExisting.StructElementTypes()[0].IntTypeWidth(); got != 64 {
+		t.Fatalf("existing destination type body was overwritten: width = %d, want 64", got)
+	}
+}
+
+func TestCloneConstantsAcrossContexts(t *testing.T) {
+	srcCtx := llvm.NewContext()
+	defer srcCtx.Dispose()
+	dstCtx := llvm.NewContext()
+	defer dstCtx.Dispose()
+	src := srcCtx.NewModule("src")
+	defer src.Dispose()
+	dst := dstCtx.NewModule("dst")
+	defer dst.Dispose()
+
+	emitter := newOverrideEmitter(dst)
+	i32 := srcCtx.Int32Type()
+	i64 := srcCtx.Int64Type()
+	zero := llvm.ConstInt(i32, 0, false)
+	one := llvm.ConstInt(i32, 1, false)
+	arrayTy := llvm.ArrayType(i32, 2)
+	array := llvm.AddGlobal(src, arrayTy, "array")
+	array.SetInitializer(llvm.ConstArray(i32, []llvm.Value{zero, one}))
+	ptrTy := llvm.PointerType(srcCtx.Int8Type(), 0)
+	local := llvm.AddGlobal(src, i32, "local")
+	local.SetLinkage(llvm.InternalLinkage)
+	local.SetGlobalConstant(true)
+	local.SetAlignment(8)
+	local.SetInitializer(one)
+	fn := llvm.AddFunction(src, "function", llvm.FunctionType(srcCtx.VoidType(), nil, false))
+
+	structTy := srcCtx.StructType([]llvm.Type{i32, srcCtx.DoubleType()}, false)
+	constants := []llvm.Value{
+		llvm.ConstNull(i32),
+		llvm.Undef(i32),
+		one,
+		llvm.ConstFloat(srcCtx.DoubleType(), 1.5),
+		srcCtx.ConstString("llgo", false),
+		llvm.ConstNamedStruct(structTy, []llvm.Value{one, llvm.ConstFloat(srcCtx.DoubleType(), 2.5)}),
+		llvm.ConstArray(ptrTy, []llvm.Value{array, array}),
+		llvm.ConstVector([]llvm.Value{array, array}, false),
+		fn,
+		array,
+		local,
+	}
+	for i, source := range constants {
+		cloned := emitter.cloneConst(source)
+		if cloned.IsNil() {
+			t.Fatalf("cloneConst(%s) returned nil", source)
+		}
+		if cached := emitter.cloneConst(source); cached.C != cloned.C && !source.IsAConstantInt().IsNil() {
+			t.Fatalf("cloneConst(%s) did not reuse the destination value", source)
+		}
+		if source.IsAGlobalValue().IsNil() {
+			global := llvm.AddGlobal(dst, cloned.Type(), fmt.Sprintf("clone.%d", i))
+			global.SetInitializer(cloned)
+		}
+	}
+
+	ptrInt := llvm.ConstPtrToInt(array, i64)
+	expressions := []llvm.Value{
+		llvm.ConstGEP(arrayTy, array, []llvm.Value{zero, one}),
+		llvm.ConstIntToPtr(llvm.ConstInt(i64, 16, false), llvm.PointerType(srcCtx.Int8Type(), 0)),
+		ptrInt,
+		llvm.ConstTrunc(ptrInt, i32),
+		llvm.ConstAdd(ptrInt, llvm.ConstInt(i64, 1, false)),
+		llvm.ConstSub(ptrInt, llvm.ConstInt(i64, 1, false)),
+		llvm.ConstXor(ptrInt, llvm.ConstInt(i64, 1, false)),
+	}
+	for i, source := range expressions {
+		cloned := emitter.cloneConst(source)
+		global := llvm.AddGlobal(dst, cloned.Type(), fmt.Sprintf("expr.%d", i))
+		global.SetInitializer(cloned)
+	}
+
+	if err := llvm.VerifyModule(dst, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("cloned constants cross LLVM Contexts: %v\n%s", err, dst.String())
 	}
 }
 
