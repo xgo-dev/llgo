@@ -590,11 +590,9 @@ func Build(inv Invocation) ([]Package, error) {
 	}
 
 	buildMode := ssaBuildMode
-	cabiOptimize := true
 	passOpt := shouldRunLLVMPasses(mode)
 	if emitDebugInfo {
 		buildMode |= ssa.GlobalDebug
-		cabiOptimize = false
 	}
 	if !IsOptimizeEnabled() {
 		buildMode |= ssa.NaiveForm
@@ -617,7 +615,7 @@ func Build(inv Invocation) ([]Package, error) {
 		crossCompile:    export,
 		commands:        commands,
 		frontendOptions: frontendOptions,
-		cTransformer:    cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, conf.AbiMode, cabiOptimize),
+		cTransformer:    cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, conf.AbiMode, true),
 	}
 	defer ctx.closePackageMetas()
 	defer ctx.closePackageArchiveBuffers()

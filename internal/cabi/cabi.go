@@ -833,27 +833,26 @@ func replaceAllocaInstrs(param llvm.Value, nv llvm.Value) {
 	}
 	for _, instr := range storeInstrs {
 		if alloc := instr.Operand(1).IsAAllocaInst(); !alloc.IsNil() {
-			skips := make(map[llvm.Value]bool)
+			type operandUse struct {
+				instr llvm.Value
+				index int
+			}
+			var preserved []operandUse
 			next := llvm.NextInstruction(alloc)
 			for !next.IsNil() && next != instr {
-				skips[next] = true
-				next = llvm.NextInstruction(next)
-			}
-			var uses []llvm.Value
-			u := alloc.FirstUse()
-			for !u.IsNil() {
-				if v := u.User(); !skips[v] {
-					uses = append(uses, v)
-				}
-				u = u.NextUse()
-			}
-			for _, use := range uses {
-				n := use.OperandsCount()
-				for i := 0; i < n; i++ {
-					if use.Operand(i) == alloc {
-						use.SetOperand(i, nv)
+				for i := 0; i < next.OperandsCount(); i++ {
+					if next.Operand(i) == alloc {
+						preserved = append(preserved, operandUse{next, i})
 					}
 				}
+				next = llvm.NextInstruction(next)
+			}
+
+			// RAUW updates instruction operands and LLVM debug records. Restore
+			// setup instructions before the parameter store to the original alloca.
+			alloc.ReplaceAllUsesWith(nv)
+			for _, use := range preserved {
+				use.instr.SetOperand(use.index, alloc)
 			}
 		}
 	}

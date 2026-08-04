@@ -83,6 +83,15 @@ func largeArrayLLGo(t *testing.T) string {
 }
 
 func TestLargeArrayReturnAllABIModes(t *testing.T) {
+	testLargeArrayReturn(t, nil, 0, 1, 2)
+}
+
+func TestLargeArrayReturnDWARF(t *testing.T) {
+	testLargeArrayReturn(t, []string{"-ldflags=-w=false"}, 2)
+}
+
+func testLargeArrayReturn(t *testing.T, buildFlags []string, modes ...int) {
+	t.Helper()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module largearray\n\ngo 1.21\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -91,9 +100,12 @@ func TestLargeArrayReturnAllABIModes(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := largeArrayLLGo(t)
-	for mode := 0; mode <= 2; mode++ {
+	for _, mode := range modes {
 		t.Run(fmt.Sprintf("abi%d", mode), func(t *testing.T) {
-			cmd := exec.Command(bin, "run", fmt.Sprintf("-abi=%d", mode), ".")
+			args := []string{"run", fmt.Sprintf("-abi=%d", mode)}
+			args = append(args, buildFlags...)
+			args = append(args, ".")
+			cmd := exec.Command(bin, args...)
 			cmd.Dir = dir
 			out, err := cmd.CombinedOutput()
 			if err != nil {
