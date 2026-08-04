@@ -131,6 +131,7 @@ func (c *context) collectCommonInputs(m *manifestBuilder) {
 	m.common.EmitDWARF = shouldEmitDebugInfo(c.buildConf, &c.crossCompile)
 	m.common.PCLNMode = effectivePCLNMode(c.buildConf).String()
 	m.common.DisableBoundsChecks = c.buildConf.DisableBoundsChecks
+	m.common.SaturatingFloatToUint32 = c.buildConf.SaturatingFloatToUint32
 	m.common.LocalContext = c.prog != nil && c.prog.NeedsLocalContext()
 
 	// Compiler configuration

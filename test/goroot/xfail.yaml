@@ -2046,11 +2046,6 @@ xfails:
     directive: run
     case: uintptrescapes3.go
     reason: uintptr escape round trip dereferences a nil pointer on darwin/arm64
-  - version: go1.26
-    platform: darwin/arm64
-    directive: run
-    case: convert5.go
-    reason: out-of-range float-to-uint32 conversions wrap instead of producing zero on darwin/arm64
   - platform: darwin/arm64
     directive: run
     case: noinit.go

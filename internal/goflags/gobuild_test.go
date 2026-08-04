@@ -112,15 +112,28 @@ func TestApplyBuildFlagsInvalidParallelismIsAtomic(t *testing.T) {
 
 func TestApplyBuildFlagsFrontendGCFlagSemantics(t *testing.T) {
 	tests := []struct {
-		name      string
-		flags     []string
-		wantLevel optlevel.Level
-		wantGo    string
+		name           string
+		flags          []string
+		wantLevel      optlevel.Level
+		wantGo         string
+		wantSaturating bool
 	}{
 		{name: "unpatterned", flags: []string{"-gcflags=-lang=go1.25 -N"}, wantLevel: optlevel.O0, wantGo: "go1.25"},
 		{name: "all pattern", flags: []string{"-gcflags=all='-lang=go1.24' '-l'"}, wantLevel: optlevel.O0, wantGo: "go1.24"},
 		{name: "unrelated pattern", flags: []string{"-gcflags=example.com/other=-N"}},
 		{name: "last applicable list wins", flags: []string{"-gcflags=-N -lang=go1.23", "-gcflags="}},
+		{name: "converthash enabled", flags: []string{"-gcflags=-d=converthash=qy"}, wantSaturating: true},
+		{name: "converthash enabled in debug list", flags: []string{"-gcflags=-d=other=1,converthash=y"}, wantSaturating: true},
+		{name: "unrelated debug flag preserves converthash", flags: []string{"-gcflags=-d=converthash=qy -d=other=1"}, wantSaturating: true},
+		{name: "converthash verbose all", flags: []string{"-gcflags=-d=converthash=vy"}, wantSaturating: true},
+		{name: "converthash quiet verbose all", flags: []string{"-gcflags=-d=converthash=qvy"}, wantSaturating: true},
+		{name: "converthash double negation", flags: []string{"-gcflags=-d=converthash=!!y"}, wantSaturating: true},
+		{name: "converthash negated no", flags: []string{"-gcflags=-d=converthash=!n"}, wantSaturating: true},
+		{name: "converthash disabled", flags: []string{"-gcflags=-d=converthash=qn"}},
+		{name: "converthash uppercase is invalid", flags: []string{"-gcflags=-d=converthash=QY"}},
+		{name: "last converthash debug value wins", flags: []string{"-gcflags=-d=converthash=qy,converthash=qn"}},
+		{name: "last converthash list wins", flags: []string{"-gcflags=-d=converthash=qy", "-gcflags=-d=converthash=qn"}},
+		{name: "package converthash ignored", flags: []string{"-gcflags=example.com/other=-d=converthash=qy"}},
 		{name: "N false", flags: []string{"-gcflags=-N=false"}},
 		{name: "N zero", flags: []string{"-gcflags=-N=0"}},
 		{name: "l false", flags: []string{"-gcflags=-l=false"}},
@@ -135,8 +148,49 @@ func TestApplyBuildFlagsFrontendGCFlagSemantics(t *testing.T) {
 			if err := ApplyBuildFlags(conf, tt.flags); err != nil {
 				t.Fatal(err)
 			}
-			if conf.OptLevel != tt.wantLevel || conf.GoVersion != tt.wantGo {
-				t.Fatalf("frontend config = (%v, %q), want (%v, %q)", conf.OptLevel, conf.GoVersion, tt.wantLevel, tt.wantGo)
+			if conf.OptLevel != tt.wantLevel || conf.GoVersion != tt.wantGo || conf.SaturatingFloatToUint32 != tt.wantSaturating {
+				t.Fatalf("frontend config = (%v, %q, saturating=%v), want (%v, %q, saturating=%v)", conf.OptLevel, conf.GoVersion, conf.SaturatingFloatToUint32, tt.wantLevel, tt.wantGo, tt.wantSaturating)
+			}
+		})
+	}
+}
+
+func TestCompilerDebugFlagsLastValueWins(t *testing.T) {
+	got := make(compilerDebugFlags)
+	got.apply("fmahash=qy,loopvarhash=n,checkptr")
+	got.apply("fmahash=qn")
+	want := compilerDebugFlags{
+		"fmahash":     "qn",
+		"loopvarhash": "n",
+		"checkptr":    "1",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("compiler debug flags = %#v, want %#v", got, want)
+	}
+}
+
+func TestBisectPatternAlwaysEnabled(t *testing.T) {
+	tests := []struct {
+		pattern string
+		want    bool
+	}{
+		{pattern: "y", want: true},
+		{pattern: "qy", want: true},
+		{pattern: "vy", want: true},
+		{pattern: "qvvy", want: true},
+		{pattern: "!!y", want: true},
+		{pattern: "!n", want: true},
+		{pattern: ""},
+		{pattern: "n"},
+		{pattern: "qn"},
+		{pattern: "!y"},
+		{pattern: "01"},
+		{pattern: "QY"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.pattern, func(t *testing.T) {
+			if got := bisectPatternAlwaysEnabled(tt.pattern); got != tt.want {
+				t.Fatalf("bisectPatternAlwaysEnabled(%q) = %v, want %v", tt.pattern, got, tt.want)
 			}
 		})
 	}
