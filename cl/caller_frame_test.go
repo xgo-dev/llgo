@@ -1034,3 +1034,97 @@ func TestDirectiveFilename(t *testing.T) {
 		t.Fatal("nil fset must pass through")
 	}
 }
+
+// Packages that read the memory profile pin every trackable function:
+// per-site heap attribution needs frames and allocation-site anchors.
+func TestPackageReadsMemProfilePin(t *testing.T) {
+	ssapkg, _ := buildCallerFrameSSAPackage(t, "example.com/hp", `package main
+
+import "runtime"
+
+func allocLeaf() *[64]byte { return new([64]byte) }
+
+func plainHelper() int { return 1 }
+
+func main() {
+	runtime.MemProfileRate = 1
+	_ = allocLeaf()
+	_ = plainHelper()
+	var r [4]runtime.MemProfileRecord
+	runtime.MemProfile(r[:], true)
+}
+`)
+	set := runtimeCallerFuncSet(NewCallerTracking(), ssapkg)
+	for _, name := range []string{"allocLeaf", "plainHelper", "main"} {
+		if !set[ssapkg.Func(name)] {
+			t.Fatalf("%s must be pinned in a memprofile-reading package", name)
+		}
+	}
+	quiet, _ := buildCallerFrameSSAPackage(t, "example.com/quiet", `package q
+
+func Helper() int { return 2 }
+`)
+	if set := runtimeCallerFuncSet(NewCallerTracking(), quiet); set[quiet.Func("Helper")] {
+		t.Fatal("quiet package must not be pinned")
+	}
+}
+
+func TestPackageReadsMemProfileDetection(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{
+			name: "MemProfile call",
+			src: `package p
+import "runtime"
+func report() {
+	var records []runtime.MemProfileRecord
+	runtime.MemProfile(records, true)
+}`,
+			want: true,
+		},
+		{
+			name: "MemProfileRate write",
+			src: `package p
+import "runtime"
+func enable() { runtime.MemProfileRate = 1 }`,
+			want: true,
+		},
+		{
+			name: "unrelated runtime use",
+			src: `package p
+import "runtime"
+func goos() string { return runtime.GOOS }`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pkg, _ := buildCallerFrameSSAPackage(t, "example.com/"+tt.name, tt.src)
+			_, trackable := collectRuntimeCallerFunctions(pkg)
+			if got := packageReadsMemProfile(trackable); got != tt.want {
+				t.Fatalf("packageReadsMemProfile() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPackageReadsMemProfileSkipsFunctionWithoutPackage(t *testing.T) {
+	funcs := map[*gossa.Function]bool{new(gossa.Function): true}
+	if packageReadsMemProfile(funcs) {
+		t.Fatal("function without package metadata must not read the memory profile")
+	}
+}
+
+func TestPublicRuntimePath(t *testing.T) {
+	for path, want := range map[string]bool{
+		"runtime": true,
+		"github.com/goplus/llgo/runtime/internal/lib/runtime": true,
+		"runtime/debug": false,
+	} {
+		if got := isPublicRuntimePath(path); got != want {
+			t.Errorf("isPublicRuntimePath(%q) = %v, want %v", path, got, want)
+		}
+	}
+}

@@ -5,6 +5,7 @@ package runtime
 import (
 	"unsafe"
 
+	latomic "github.com/goplus/llgo/runtime/internal/lib/sync/atomic"
 	rtdebug "github.com/goplus/llgo/runtime/internal/runtime"
 )
 
@@ -19,6 +20,11 @@ func init() {
 	rtdebug.PanicRecovered = clearFaultTraceback
 	rtdebug.PanicPCSnapshot = capturePanicPCs
 	rtdebug.RecoverMark = recoverMark
+	// Table initialization may allocate. Complete it before installing the
+	// allocator hook so the first sample never initializes it from AllocZ/U.
+	initRuntimeFuncPCFrames()
+	rtdebug.MemProfileStackCapture = captureMemProfileStack
+	rtdebug.MemProfileRatePtr = &MemProfileRate
 }
 
 // recoverMark records the recovering deferred frame (and one above, for
@@ -48,6 +54,22 @@ func capturePanicPCs() {
 	var pcs [64]uintptr
 	n := fpCallers(0, pcs[:])
 	rtdebug.StorePanicPCs(pcs[:n])
+}
+
+// captureMemProfileStack walks the physical stack at a sampled allocation.
+// The leading allocator plumbing (AllocZ/AllocU, this capture path) is
+// trimmed at read time by the MemProfile wrapper, where symbolization is
+// safe and cached.
+func captureMemProfileStack(pcs []uintptr) int {
+	if !fpUnwindAvailable() {
+		return 0
+	}
+	// Defensively avoid waiting on the frame-table init latch if future init
+	// ordering changes. The table is normally ready before this hook is set.
+	if latomic.LoadUint32(&runtimeFuncPCInitState) == runtimeFuncInfoInitBusy {
+		return 0
+	}
+	return fpCallers(0, pcs)
 }
 
 // panicSplicePCs returns the snapshot when it is observable: either the
@@ -220,10 +242,6 @@ func callersWithPanicSplice(skip int, pc []uintptr) int {
 		return 0
 	}
 	return copy(pc, view[skip:])
-}
-
-func hasPrefix(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }
 
 // panicTraceback prints a Go-style stack trace for an unrecovered panic:

@@ -3,12 +3,38 @@ package memprofile
 import (
 	"bytes"
 	"fmt"
+	"reflect"
 	"runtime"
 	"runtime/pprof"
 	"testing"
 )
 
 var tinySink []*int32
+
+type profiledClosure struct {
+	fn func(int) int
+}
+
+func makeProfiledClosure(base int) profiledClosure {
+	return profiledClosure{fn: func(v int) int { return base + v }}
+}
+
+func TestSamplingPreservesReflectCallFrames(t *testing.T) {
+	oldRate := runtime.MemProfileRate
+	runtime.MemProfileRate = 1
+	defer func() {
+		runtime.MemProfileRate = oldRate
+	}()
+
+	makeFn := reflect.ValueOf(makeProfiledClosure)
+	for i := 0; i < 64; i++ {
+		out := makeFn.Call([]reflect.Value{reflect.ValueOf(i)})
+		closure := out[0].Interface().(profiledClosure)
+		if got, want := closure.fn(2), i+2; got != want {
+			t.Fatalf("sampled reflect call returned %d, want %d", got, want)
+		}
+	}
+}
 
 func TestRuntimeMemProfileReportsTinyAllocations(t *testing.T) {
 	oldRate := runtime.MemProfileRate
