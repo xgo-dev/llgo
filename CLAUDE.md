@@ -1,182 +1,29 @@
-# LLGo Project AI Assistant Guide
+# LLGo Agent Guide
 
-This document provides essential information for AI assistants to help fix bugs and implement features in the LLGo project.
+Automated contributors must read and follow the shared [contribution guide](CONTRIBUTING.md). It defines the development environment, testing expectations, platform validation, code quality rules, and pull request record required for every contributor.
 
-## About LLGo
+The rules below are additional safeguards for AI agents and other repository automation.
 
-LLGo is a Go compiler based on LLVM designed to better integrate Go with the C ecosystem, including Python and JavaScript. It's a subproject of the XGo project that aims to expand the boundaries of Go/XGo for game development, AI and data science, WebAssembly, and embedded development.
+## Scope and working tree safety
 
-## Project Structure
+- Keep changes within the requested scope and preserve unrelated edits, untracked files, and active worktrees.
+- Inspect the complete diff against upstream before submission. Do not overwrite or discard existing work unless explicitly authorized.
+- Use focused edits and tests first. Do not rewrite unrelated files, regenerate unrelated fixtures, or broaden a change merely to make validation pass.
+- Diagnose baseline failures instead of hiding them with skips, exclusions, weakened checks, or undocumented environment changes.
 
-- `cmd/llgo` - Main llgo compiler command (usage similar to `go` command)
-- `cl/` - Core compiler logic that converts Go packages to LLVM IR
-- `ssa/` - LLVM IR file generation using Go SSA semantics
-- `internal/build/` - Build process orchestration
-- `runtime/` - LLGo runtime library
-- `chore/` - Development tools (llgen, llpyg, ssadump, etc.)
-- `_demo/` - Example programs demonstrating C/C++ interop (`c/hello`, `c/qsort`) and Python integration (`py/callpy`, `py/numpy`)
-- `_cmptest/` - Comparison tests to verify the same program gets the same output with Go and LLGo
+## Repository and GitHub safety
 
-## Development Environment
+- Treat `xgo-dev/*` as upstream. Do not push branches or tags directly to an `xgo-dev` repository, and do not merge its pull requests.
+- Push code to the contributor's fork, then create or update a pull request against `xgo-dev/llgo:main`. Upstream issues may be created when requested.
+- Do not publish upstream releases or change upstream repository settings. Inspect remotes and exact refs before any write operation when ownership is unclear.
+- Prefer `gh issue view`, `gh pr view`, and `gh pr checks` for GitHub state. Use `gh api` for review threads, inline comments, check-run details, or fields not exposed by higher-level commands; do not scrape the website.
+- Use explicit force-with-lease protection when a requested rebase requires rewriting a fork branch. Stop if the remote head changed unexpectedly.
 
-For detailed dependency requirements and installation instructions, see the [Dependencies](README.md#dependencies) and [How to install](README.md#how-to-install) sections in the README.
+## Validation and reporting
 
-## Testing & Validation
+- Follow [CONTRIBUTING.md](CONTRIBUTING.md#testing-and-validation) for the affected package, nested runtime module, GOROOT cases, and target-specific validation.
+- Report the exact commands and platforms exercised. Distinguish execution from build-only checks and state every omitted test with its reason; omission is not a pass.
+- Do not claim repository-wide success from a focused test. When a required check cannot run locally, leave it to CI and say so explicitly.
+- For generated IR, use the repository's `// LITTEST` and `chore/litgen` workflow described in the contribution guide; do not hand-edit or bulk-regenerate unrelated expectations.
 
-The following commands and workflows are essential when fixing bugs or implementing features in the LLGo project:
-
-### Run all tests
-```bash
-go test ./...
-```
-
-**Note:** Some tests may fail if optional dependencies (like Python) are not properly configured. The test suite includes comprehensive tests for:
-- Compiler functionality
-- SSA generation
-- C interop
-- Python integration (requires Python development headers)
-
-### Write and run tests for your changes
-
-When adding new functionality or fixing bugs, create appropriate test cases:
-
-```bash
-# Add your test to the relevant package's *_test.go file
-# Then run tests for that package
-go test ./path/to/package
-
-# Or run all tests
-go test ./...
-```
-
-**Important:** The `LLGO_ROOT` environment variable must be set to the repository root when running llgo commands during development.
-
-### Update out.ll files after modifying compiler IR generation
-
-**CRITICAL:** When you modify the compiler's IR generation logic (especially in `ssa/` or `cl/` packages), you MUST update all out.ll test files under the `cl/` directory.
-
-#### Understanding out.ll files
-
-The `out.ll` files under the `cl/` directory are comparison IR files that serve as reference outputs for the test suite:
-- They are generated by `llgen` from the corresponding `in.go` files in the same directory
-- They reflect the current compiler's LLVM IR representation of the Go source code
-- They are used by tests to verify that the compiler generates correct and consistent IR output
-
-#### Required steps after modifying IR generation logic
-
-1. **Reinstall the tools** to apply your compiler changes:
-   ```bash
-   go install -v ./chore/gentests
-   go install -v ./chore/llgen
-   ```
-
-2. **Regenerate out.ll files**:
-   
-   **For batch updates (recommended)** - Use `gentests` to regenerate all test files:
-   ```bash
-   gentests
-   ```
-   This will automatically regenerate all out.ll files in these directories:
-   - `cl/_testlibc`
-   - `cl/_testlibgo`
-   - `cl/_testrt`
-   - `cl/_testgo`
-   - `cl/_testpy`
-   - `cl/_testdata`
-   
-   **For individual test inspection** - Use `llgen` to regenerate specific test directories:
-   ```bash
-   llgen cl/_testgo/interface
-   llgen cl/_testrt/tpmethod
-   ```
-
-3. **Verify the changes** make sense by reviewing the diff in the out.ll files
-
-4. **Commit the updated out.ll files** along with your compiler changes
-
-#### Why this matters
-
-This process ensures that:
-- The test suite reflects the current compiler behavior
-- Changes to IR generation are properly documented and reviewed
-- Future regressions can be detected by comparing against the reference output
-
-## Code Quality
-
-Before submitting any code updates, you must run the following formatting and validation commands:
-
-### Format code
-```bash
-go fmt ./...
-```
-
-**Important:** Always run `go fmt ./...` before committing code changes. This ensures consistent code formatting across the project.
-
-### Run static analysis
-```bash
-go vet ./...
-```
-
-**Note:** Currently reports some issues related to lock passing by value in `ssa/type_cvt.go` and a possible unsafe.Pointer misuse in `cl/builtin_test.go`. These are known issues.
-
-
-## Common Development Tasks
-
-### Build the entire project
-```bash
-go build -v ./...
-```
-
-### Build llgo command specifically
-```bash
-go build -o llgo ./cmd/llgo
-```
-
-### Check llgo version
-```bash
-llgo version
-```
-
-### Install llgo for system-wide use
-```bash
-./install.sh
-```
-
-### Build development tools
-```bash
-go install -v ./cmd/...
-go install -v ./chore/...
-```
-
-## Key Modules for Understanding
-
-- `ssa` - Generates LLVM IR using Go SSA semantics
-- `cl` - Core compiler converting Go to LLVM IR
-- `internal/build` - Orchestrates the compilation process
-
-## Debugging
-
-### Disable Garbage Collection
-For testing purposes, you can disable GC:
-```bash
-LLGO_ROOT=/path/to/llgo llgo run -tags nogc .
-```
-
-## LLGO_ROOT Environment Variable
-
-**CRITICAL:** Always set `LLGO_ROOT` to the repository root when running llgo during development:
-
-```bash
-export LLGO_ROOT=/path/to/llgo
-# or
-LLGO_ROOT=/path/to/llgo llgo run .
-```
-
-## Important Notes
-
-1. **Testing Requirement:** All bug fixes and features MUST include tests
-2. **Demo Directory:** Examples in `_demo` are prefixed with `_` to prevent standard `go` command from trying to compile them
-3. **Defer in Loops:** LLGo now supports `defer` within loops, matching Go's semantics of executing defers in LIFO order for every iteration. Be mindful of loop-heavy defer usage as it allocates per iteration.
-4. **C Ecosystem Integration:** LLGo uses `go:linkname` directive to link external symbols through ABI
-5. **Python Integration:** Third-party Python libraries require separate installation of library files
-
+`AGENTS.md` links to this file so supported agents receive the same automation-specific rules.

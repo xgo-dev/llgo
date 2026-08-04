@@ -9,6 +9,8 @@ llgo - A Go compiler based on LLVM
 
 LLGo is a Go compiler based on LLVM in order to better integrate Go with the C ecosystem including Python and JavaScript. It's a subproject of [the XGo project](https://github.com/goplus/gop).
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development, testing, and pull request workflow.
+
 LLGo aims to expand the boundaries of Go/XGo, providing limitless possibilities such as:
 
 * Game development
@@ -422,8 +424,6 @@ cd llgo
 * [pydump](_xtool/pydump): It's the first program compiled by `llgo` (NOT `go`) in a production environment. It outputs symbol information (functions, variables, and constants) from a Python library in JSON format, preparing for the generation of corresponding packages in `llgo`.
 * [pysigfetch](https://github.com/goplus/hdq/tree/main/chore/pysigfetch): It generates symbol information by extracting information from Python's documentation site. This tool is not part of the `llgo` project, but we depend on it.
 * [llpyg](chore/llpyg): It is used to automatically convert Python libraries into Go packages that `llgo` can import. It depends on `pydump` and `pysigfetch` to accomplish the task.
-* [llgen](chore/llgen): It is used to compile Go packages into LLVM IR files (*.ll).
-* [gentests](chore/gentests): It refreshes the built-in golden test data under `cl/_test*`, including `out.ll` and `expect.txt`. Directories that use source-embedded `// LITTEST` checks are skipped for `out.ll` regeneration.
 * [litgen](chore/litgen): It generates and refreshes source-embedded `// LITTEST` FileCheck directives from the current LLVM IR for marked Go source files.
 * [ssadump](chore/ssadump): It is a Go SSA builder and interpreter.
 

@@ -72,29 +72,59 @@ You can control demo parallelism via `LLGO_DEMO_JOBS` (defaults to up to 4 jobs)
 - If `[command...]` is provided, it runs that command and exits.
 - You must run it from within the repo (within `LLGO_ROOT`), and it will start in the matching repo subdirectory inside the container.
 
-## 6) Refresh test goldens
+## Platform and target validation
 
-LLGo currently has two different golden-test refresh flows:
+Cross-compilation proves that an artifact was produced; run it on a matching host, container, or emulator when behavior changes.
 
-- `gentests` for directory-based golden files such as `out.ll` and `expect.txt`
-- `litgen` for source-embedded `// LITTEST` FileCheck directives
+| Development host | Practical local coverage |
+| --- | --- |
+| macOS arm64 | Native macOS arm64; macOS amd64 with Rosetta and an x86_64 toolchain; Linux amd64/arm64 with Docker Desktop or OrbStack |
+| macOS amd64 | Native macOS amd64; Linux amd64/arm64 with Docker Desktop or OrbStack; use a remote arm64 Mac for native macOS arm64 behavior |
+| Linux amd64/arm64 | Native matching Linux architecture; the other Linux architecture with containers plus QEMU/binfmt |
+| Windows amd64/arm64 | Linux through WSL2 or Docker; native Windows is not currently supported |
 
-### `gentests`
-
-Run:
+Use the same container commands with Docker Desktop or OrbStack on macOS. Linux hosts must enable QEMU/binfmt before running the other architecture:
 
 ```bash
-go run ./chore/gentests
+./dev/docker.sh amd64 bash -lc './dev/llgo.sh test ./test/...'
+./dev/docker.sh arm64 bash -lc './dev/llgo.sh test ./test/...'
 ```
 
-Behavior:
+The primary CI source-build/test lanes cover macOS arm64 and Linux amd64. Release artifact smoke tests additionally cover macOS amd64 and Linux arm64. Linux and Windows hosts cannot validate native macOS behavior.
 
-- Refreshes `out.ll` for the built-in test suites under `cl/_testlibc`, `cl/_testlibgo`, `cl/_testrt`, `cl/_testgo`, `cl/_testpy`, and `cl/_testdata`.
-- Refreshes `expect.txt` for the same directories using the existing runtime execution flow.
-- Preserves the existing skip convention where `out.ll` or `expect.txt` containing only `;` means "do not refresh".
-- New behavior: if a test case directory contains a non-test Go source file whose first line is exactly `// LITTEST`, `gentests` skips `llgen` for that directory and does not regenerate `out.ll` there.
+### Official Go compatibility
 
-Use `gentests` when the test still stores LLVM IR in `out.ll`.
+Run the current GOROOT with the CI directive set:
+
+```bash
+bash ./dev/test_goroot.sh -- -directive-mode ci
+```
+
+Pass GOROOT paths before `--` for multiple Go versions. See [`test/goroot/README.md`](../test/goroot/README.md) for case filters, full coverage, resource limits, and sharding.
+
+### WebAssembly
+
+Run the WASI build and WAMR execution smoke test:
+
+```bash
+./dev/test_wasm.sh
+```
+
+The script builds the pinned WAMR runner through `dev/build_iwasm.sh` when it is not cached. Changes specific to `GOOS=js` still need an explicit `GOOS=js GOARCH=wasm` build and an appropriate Node or browser test.
+
+### Embedded
+
+After installing SDL2 and, on Linux, libslirp as shown in [the CI setup action](../.github/actions/setup-embed-deps/action.yml), run:
+
+```bash
+./dev/test_embed.sh
+```
+
+The script caches the pinned ESP QEMU binaries outside the worktree, then builds and runs the ESP32/ESP32-C3 serial smoke tests. Target-table changes should also run `(cd _demo/embed/targetsbuild && bash build.sh empty)`. Startup/linker changes should additionally run `_demo/embed/test_esp32c3_startup.sh` with `esptool==5.1.0`. If a target has no emulator, report build-only validation explicitly.
+
+## 6) Refresh IR checks
+
+Use source-embedded `// LITTEST` FileCheck directives and `litgen` for IR tests. Refresh only the affected files and review every generated change.
 
 ### `litgen`
 
@@ -117,9 +147,9 @@ Behavior:
 - If the path is a `.go` file, it refreshes only that file. The file must start with `// LITTEST`.
 - If the path is a directory, it walks that directory recursively, finds marked source files, and refreshes each marked test in place.
 - Rewrites embedded `CHECK-LABEL`, `CHECK-NEXT`, `CHECK-EMPTY`, and referenced constant `CHECK-LINE` directives from the current generated IR.
-- Does not update `expect.txt` and does not write `out.ll`.
+- Does not update runtime-output expectations in `expect.txt`.
 
-Use `litgen` when the test case stores its IR expectations directly in the Go source instead of `out.ll`.
+Use `litgen` when a test case needs LLVM IR expectations.
 
 ### Marker convention
 
