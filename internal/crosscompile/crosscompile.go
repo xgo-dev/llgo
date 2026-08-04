@@ -47,21 +47,50 @@ type Export struct {
 	Device flash.Device // Device configuration for flashing/debugging
 }
 
+// DebugInfoCapability describes whether the selected linker and its linked
+// output format can retain DWARF. Deployment formats such as bin, hex, and uf2
+// are derived later and do not affect this capability.
+type DebugInfoCapability uint8
+
+const (
+	DebugInfoRetainable DebugInfoCapability = iota
+	DebugInfoUnavailable
+)
+
 // DebugInfoPolicy describes how a selected linker handles debug information.
 // Build orchestration consumes this typed capability instead of inferring it
 // from a target name or linker executable.
 type DebugInfoPolicy struct {
-	AlwaysOmit    bool
-	OmitLinkFlags []string
+	Capability        DebugInfoCapability
+	PreserveLinkFlags []string
+	OmitLinkFlags     []string
+}
+
+func (p DebugInfoPolicy) CanRetain() bool {
+	return p.Capability == DebugInfoRetainable
 }
 
 func nativeDebugInfoPolicy(goos string) DebugInfoPolicy {
+	policy := DebugInfoPolicy{PreserveLinkFlags: []string{"-gdwarf-4"}}
 	switch goos {
 	case "darwin", "linux":
-		return DebugInfoPolicy{OmitLinkFlags: []string{"-Wl,-S"}}
-	default:
-		return DebugInfoPolicy{}
+		policy.OmitLinkFlags = []string{"-Wl,-S"}
 	}
+	return policy
+}
+
+func targetDebugInfoPolicy(linker, llvmTarget string) DebugInfoPolicy {
+	switch linker {
+	case "ld.lld":
+		if !strings.HasPrefix(llvmTarget, "wasm") {
+			return DebugInfoPolicy{OmitLinkFlags: []string{"-S"}}
+		}
+	case "wasm-ld":
+		if strings.HasPrefix(llvmTarget, "wasm") {
+			return DebugInfoPolicy{OmitLinkFlags: []string{"-S"}}
+		}
+	}
+	return DebugInfoPolicy{Capability: DebugInfoUnavailable}
 }
 
 // URLs and configuration that can be overridden for testing
@@ -333,7 +362,10 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 	if goarch != "wasm" {
 		return
 	}
-	export.DebugInfo.OmitLinkFlags = []string{"-Wl,-S"}
+	export.DebugInfo = DebugInfoPolicy{
+		PreserveLinkFlags: []string{"-gdwarf-4"},
+		OmitLinkFlags:     []string{"-Wl,-S"},
+	}
 
 	// Configure based on GOOS
 	switch goos {
@@ -504,7 +536,7 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 	export.BinaryFormat = config.BinaryFormat
 	export.FormatDetail = config.FormatDetail()
 	export.Emulator = config.Emulator
-	export.DebugInfo.AlwaysOmit = true
+	export.DebugInfo = targetDebugInfoPolicy(config.Linker, config.LLVMTarget)
 
 	// Set flashing/debugging configuration
 	export.Device = flash.Device{
@@ -531,7 +563,7 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 
 	// Convert LLVMTarget, CPU, Features to CCFLAGS/LDFLAGS
 	// ICF off for Go pc-identity semantics (see the non-cross flags above).
-	ldflags := []string{"-S", "--icf=none"}
+	ldflags := []string{"--icf=none"}
 	ccflags := []string{level.Flag()}
 	cflags := []string{"-Wno-override-module", "-Qunused-arguments", "-Wno-unused-command-line-argument"}
 	if config.LLVMTarget != "" {

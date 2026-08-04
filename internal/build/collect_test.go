@@ -232,7 +232,7 @@ func TestCollectFingerprintIncludesEmitDWARF(t *testing.T) {
 	}
 
 	targetWithoutDWARF := newPkg()
-	if err := newContext(LinkOptions{}, crosscompile.DebugInfoPolicy{AlwaysOmit: true}).collectFingerprint(targetWithoutDWARF); err != nil {
+	if err := newContext(LinkOptions{}, crosscompile.DebugInfoPolicy{Capability: crosscompile.DebugInfoUnavailable}).collectFingerprint(targetWithoutDWARF); err != nil {
 		t.Fatal(err)
 	}
 	if withDWARF.Fingerprint == targetWithoutDWARF.Fingerprint {
@@ -243,7 +243,7 @@ func TestCollectFingerprintIncludesEmitDWARF(t *testing.T) {
 		t.Fatal(err)
 	}
 	if targetData.Common != nil && targetData.Common.EmitDWARF {
-		t.Fatalf("always-omit target manifest unexpectedly contains EMIT_DWARF=true:\n%s", targetWithoutDWARF.Manifest)
+		t.Fatalf("target without DWARF support unexpectedly contains EMIT_DWARF=true:\n%s", targetWithoutDWARF.Manifest)
 	}
 }
 
