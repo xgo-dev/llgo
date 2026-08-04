@@ -39,3 +39,7 @@ func GetThreadDefer() *Defer {
 func ClearThreadDefer() {
 	getg().defer_ = nil
 }
+
+func goid() uint64 {
+	return getg().goid
+}
