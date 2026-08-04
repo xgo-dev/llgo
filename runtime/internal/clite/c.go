@@ -51,7 +51,9 @@ type integer interface {
 }
 
 type SizeT = uintptr
-type SsizeT = Long
+
+// ssize_t is the pointer-sized signed integer in every supported C data model.
+type SsizeT = int
 
 type IntptrT = uintptr
 type UintptrT = uintptr

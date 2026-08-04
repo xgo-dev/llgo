@@ -27,6 +27,11 @@ jobs:
         with:
           llvm-version: ${{matrix.llvm}}
 
+      - name: Set up Emscripten
+        uses: emscripten-core/setup-emsdk@v15
+        with:
+          version: "4.0.21"
+
       - name: Set up Go for build
         uses: ./.github/actions/setup-go
 

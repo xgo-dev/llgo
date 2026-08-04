@@ -28,17 +28,14 @@ import (
 //llgo:type C
 type goroutineFunc func(unsafe.Pointer) unsafe.Pointer
 
-// runtimeContext keeps the G, M, and P for the current 1:1 backend in one
-// allocation. Keeping their ownership together makes mexit deterministic while
-// leaving the individual objects and links compatible with a later M:N backend.
+// runtimeContext owns one G and its target-specific suspended execution state.
+// M and P ownership belongs to the selected scheduler backend and can outlive,
+// or be shared by, multiple runtime contexts.
 type runtimeContext struct {
 	g g
-	m m
-	p p
 
-	// root is non-nil for contexts passed through a host-thread API. Such
-	// contexts must remain visible to the collector until mexit.
-	root unsafe.Pointer
+	root     unsafe.Pointer
+	platform runtimeContextPlatform
 }
 
 var sched struct {
@@ -58,19 +55,11 @@ var sched struct {
 // lowering, this ABI contains no pthread types: the selected runtime backend
 // decides how to provide an M and execute the G.
 func NewProc(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr) {
-	gp := newproc1(fn, arg, getg())
-	if errno := newm(gp.m, stackSize); errno != 0 {
-		ctx := gp.context
-		releaseG()
-		FreeRoot(arg)
-		FreeRoot(ctx.root)
-		panic("runtime: failed to create new OS thread")
-	}
+	newprocBackend(fn, arg, stackSize, getg())
 }
 
-// newproc1 creates a runnable G and its initial M/P ownership. The pthread
-// backend starts that G immediately; a future scheduler can enqueue the same G
-// without changing the compiler ABI.
+// newproc1 creates target-independent runnable G state. The selected backend
+// attaches execution resources and either starts or queues it.
 func newproc1(fn goroutineFunc, arg unsafe.Pointer, callergp *g) *g {
 	if fn == nil {
 		panic("go of nil func value")
@@ -84,7 +73,9 @@ func newproc1(fn goroutineFunc, arg unsafe.Pointer, callergp *g) *g {
 }
 
 func allocRuntimeContext() *runtimeContext {
-	size := unsafe.Sizeof(runtimeContext{})
+	// LLVM rounds contexts containing 64-bit IDs to this boundary on wasm.
+	const contextAlignment = uintptr(unsafe.Sizeof(uint64(0)))
+	size := (unsafe.Sizeof(runtimeContext{}) + contextAlignment - 1) &^ (contextAlignment - 1)
 	root := AllocRoot(size)
 	if root == nil {
 		panic("runtime: failed to allocate goroutine context")
@@ -95,68 +86,29 @@ func allocRuntimeContext() *runtimeContext {
 	return ctx
 }
 
-// newm starts the platform execution resource for mp.
-func newm(mp *m, stackSize uintptr) int {
-	return newosproc(mp, stackSize)
-}
-
-// mstart is the first LLGo runtime function executed on a new M.
-func mstart(arg unsafe.Pointer) unsafe.Pointer {
-	mp := (*m)(arg)
-	if mp == nil || mp.curg == nil || mp.p == nil {
-		fatal("runtime: invalid mstart context")
-		return nil
-	}
-	gp := mp.curg
-	pp := mp.p
-
-	setg(gp)
-	casgstatus(gp, _Grunnable, _Grunning)
-	setpstatus(pp, _Prunning)
-
-	fn, arg := gp.startfn, gp.startarg
-	gp.startfn = nil
-	gp.startarg = nil
-	ret := fn(arg)
-	mexit(mp)
-	return ret
-}
-
-// mexit tears down the current 1:1 G/M/P context. It does not terminate the
-// host thread so both a returning start routine and runtime.Goexit can share
-// the same ownership cleanup.
-func mexit(mp *m) {
-	if mp == nil || mp.curg == nil || mp.p == nil {
-		fatal("runtime: invalid mexit context")
+func freeRuntimeContext(ctx *runtimeContext) {
+	if ctx == nil || ctx.root == nil {
 		return
 	}
-	gp := mp.curg
-	pp := mp.p
-	ctx := gp.context
 	root := ctx.root
-	ownedByLifecycle := currentGUsesLifecycle()
-	if !ownedByLifecycle {
-		releaseGAndCheckDeadlock()
-	}
-
-	casgstatus(gp, _Grunning, _Gdead)
-	setpstatus(pp, _Pdead)
-
-	pp.m = nil
-	mp.p = nil
-	mp.curg = nil
-	gp.m = nil
-
-	setg(nil)
-	if !ownedByLifecycle && root != nil {
-		ctx.root = nil
-		FreeRoot(root)
-	}
+	ctx.root = nil
+	FreeRoot(root)
 }
 
-// releaseGAndCheckDeadlock is the sole last-goroutine decision. Main marks its
-// exit before releasing its own context, so regardless of release ordering the
-// final goroutine observes both facts in the packed atomic state.
+func initG(ctx *runtimeContext, callergp *g, status uint32) *g {
+	gp := &ctx.g
+	gp.atomicstatus = status
+	gp.goid = nextGoid(gp)
+	if callergp != nil {
+		gp.parentGoid = callergp.goid
+	}
+	gp.context = ctx
+	return gp
+}
+
+// releaseGAndCheckDeadlock is the sole last-goroutine decision for the pthread
+// backend. Main marks its exit before releasing its own context, so regardless
+// of release ordering the final goroutine observes both facts in one result.
 func releaseGAndCheckDeadlock() {
 	remaining, mainExited := releaseG()
 	if remaining == 0 && mainExited {
@@ -165,47 +117,10 @@ func releaseGAndCheckDeadlock() {
 	}
 }
 
-func initRuntimeContext(ctx *runtimeContext, callergp *g, status uint32) *g {
-	gp := &ctx.g
-	mp := &ctx.m
-	pp := &ctx.p
-
-	gp.m = mp
-	gp.atomicstatus = status
-	gp.goid = nextGoid(gp)
-	if callergp != nil {
-		gp.parentGoid = callergp.goid
-	}
-	gp.context = ctx
-
-	mp.curg = gp
-	mp.p = pp
-	mp.id = nextMid(mp)
-
-	pp.id = nextPid(pp)
-	pstatus := uint32(_Pidle)
-	if status == _Grunning {
-		pstatus = _Prunning
-	}
-	setpstatus(pp, pstatus)
-	pp.m = mp
-	retainG()
-	return gp
-}
-
-// GMPForTesting reports the current runtime ownership graph. It is kept
-// internal to the compiler runtime and linked only by LLGo execution tests.
-func GMPForTesting() (goid, parentGoid uint64, mid int64, pid int32, gstatus, pstatus uint32, linked bool) {
-	gp := getg()
-	if gp == nil || gp.m == nil || gp.m.p == nil {
-		return
-	}
-	mp := gp.m
-	pp := mp.p
-	ctx := gp.context
-	return gp.goid, gp.parentGoid, mp.id, pp.id, readgstatus(gp), readpstatus(pp),
-		mp.curg == gp && pp.m == mp && ctx != nil &&
-			&ctx.g == gp && &ctx.m == mp && &ctx.p == pp
+// Gosched asks the active backend to yield. WebAssembly backends re-queue the
+// current G and yield to their scheduler; pthread Gs rely on the host scheduler.
+func Gosched() {
+	goschedBackend()
 }
 
 // GStateForTesting reports the packed scheduler state without changing it.
