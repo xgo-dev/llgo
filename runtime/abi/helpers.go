@@ -23,11 +23,6 @@ func NoEscape(p unsafe.Pointer) unsafe.Pointer {
 	return unsafe.Pointer(x ^ 0)
 }
 
-type EmptyInterface struct {
-	Type *Type
-	Data unsafe.Pointer
-}
-
 // TypeOf returns the runtime Type of some value.
 func TypeOf(a any) *Type {
 	eface := *(*EmptyInterface)(unsafe.Pointer(&a))
@@ -52,3 +47,6 @@ func EscapeToResultNonString[T any](v T) T {
 	EscapeNonString(v)
 	return *(*T)(NoEscape(unsafe.Pointer(&v)))
 }
+
+// ZeroValSize is the size in bytes of runtime.zeroVal.
+const ZeroValSize = 1024
