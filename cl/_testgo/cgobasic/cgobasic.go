@@ -66,6 +66,66 @@ import (
 // CHECK-NEXT:   ret double %4
 // CHECK-NEXT: }
 
+// ESCAPE-LABEL: define double @main._Cfunc_cos(double %0){{.*}} {
+// ESCAPE-NEXT: _llgo_0:
+// ESCAPE-NEXT:   %.stack = alloca i8, i64 8, align 1
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack, i8 0, i64 8, i1 false)
+// ESCAPE-NEXT:   %1 = load ptr, ptr @main._cgo_{{.*}}_Cfunc_cos, align 8
+// ESCAPE-NEXT:   %2 = load ptr, ptr %1, align 8
+// ESCAPE-NEXT:   %3 = call double %2(double %0)
+// ESCAPE-NEXT:   ret double %3
+// ESCAPE-NEXT: }
+
+// ESCAPE-LABEL: define [0 x i8] @main._Cfunc_free(ptr %0){{.*}} {
+// ESCAPE-NEXT: _llgo_0:
+// ESCAPE-NEXT:   %.stack = alloca i8, i64 8, align 1
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack, i8 0, i64 8, i1 false)
+// ESCAPE-NEXT:   %1 = load ptr, ptr @main._cgo_{{.*}}_Cfunc_free, align 8
+// ESCAPE-NEXT:   %2 = load ptr, ptr %1, align 8
+// ESCAPE-NEXT:   %3 = call [0 x i8] %2(ptr %0)
+// ESCAPE-NEXT:   ret [0 x i8] %3
+// ESCAPE-NEXT: }
+
+// ESCAPE-LABEL: define double @main._Cfunc_log(double %0){{.*}} {
+// ESCAPE-NEXT: _llgo_0:
+// ESCAPE-NEXT:   %.stack = alloca i8, i64 8, align 1
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack, i8 0, i64 8, i1 false)
+// ESCAPE-NEXT:   %1 = load ptr, ptr @main._cgo_{{.*}}_Cfunc_log, align 8
+// ESCAPE-NEXT:   %2 = load ptr, ptr %1, align 8
+// ESCAPE-NEXT:   %3 = call double %2(double %0)
+// ESCAPE-NEXT:   ret double %3
+// ESCAPE-NEXT: }
+
+// ESCAPE-LABEL: define i32 @main._Cfunc_puts(ptr %0){{.*}} {
+// ESCAPE-NEXT: _llgo_0:
+// ESCAPE-NEXT:   %.stack = alloca i8, i64 8, align 1
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack, i8 0, i64 8, i1 false)
+// ESCAPE-NEXT:   %1 = load ptr, ptr @main._cgo_{{.*}}_Cfunc_puts, align 8
+// ESCAPE-NEXT:   %2 = load ptr, ptr %1, align 8
+// ESCAPE-NEXT:   %3 = call i32 %2(ptr %0)
+// ESCAPE-NEXT:   ret i32 %3
+// ESCAPE-NEXT: }
+
+// ESCAPE-LABEL: define double @main._Cfunc_sin(double %0){{.*}} {
+// ESCAPE-NEXT: _llgo_0:
+// ESCAPE-NEXT:   %.stack = alloca i8, i64 8, align 1
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack, i8 0, i64 8, i1 false)
+// ESCAPE-NEXT:   %1 = load ptr, ptr @main._cgo_{{.*}}_Cfunc_sin, align 8
+// ESCAPE-NEXT:   %2 = load ptr, ptr %1, align 8
+// ESCAPE-NEXT:   %3 = call double %2(double %0)
+// ESCAPE-NEXT:   ret double %3
+// ESCAPE-NEXT: }
+
+// ESCAPE-LABEL: define double @main._Cfunc_sqrt(double %0){{.*}} {
+// ESCAPE-NEXT: _llgo_0:
+// ESCAPE-NEXT:   %.stack = alloca i8, i64 8, align 1
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack, i8 0, i64 8, i1 false)
+// ESCAPE-NEXT:   %1 = load ptr, ptr @main._cgo_{{.*}}_Cfunc_sqrt, align 8
+// ESCAPE-NEXT:   %2 = load ptr, ptr %1, align 8
+// ESCAPE-NEXT:   %3 = call double %2(double %0)
+// ESCAPE-NEXT:   ret double %3
+// ESCAPE-NEXT: }
+
 // CHECK-LABEL: define void @main.init(){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %0 = load i1, ptr @"main.init$guard", align 1

@@ -195,16 +195,22 @@ func TestHasMarker(t *testing.T) {
 }
 
 func TestCheck(t *testing.T) {
-	checkPath := filepath.Join(t.TempDir(), "check.go")
+	dir := t.TempDir()
+	checkPath := filepath.Join(dir, "check.go")
 	if err := os.WriteFile(checkPath, []byte("// CHECK: ok\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	escapeCheckPath := filepath.Join(dir, "escape.go")
+	if err := os.WriteFile(escapeCheckPath, []byte("// ESCAPE: escaped\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	cases := []struct {
-		name string
-		spec Spec
-		text string
-		want string
+		name     string
+		spec     Spec
+		text     string
+		prefixes []string
+		want     string
 	}{
 		{
 			name: "skip",
@@ -227,6 +233,23 @@ func TestCheck(t *testing.T) {
 			text: "ok\n",
 		},
 		{
+			name:     "filecheck prefix match",
+			spec:     Spec{Path: escapeCheckPath, Mode: ModeFileCheck},
+			text:     "escaped\n",
+			prefixes: []string{"ESCAPE"},
+		},
+		{
+			name:     "filecheck unused prefix",
+			spec:     Spec{Path: checkPath, Mode: ModeFileCheck},
+			prefixes: []string{"ESCAPE"},
+		},
+		{
+			name:     "literal ignores prefix",
+			spec:     Spec{Path: "literal", Text: "ok", Mode: ModeLiteral},
+			text:     "escaped",
+			prefixes: []string{"ESCAPE"},
+		},
+		{
 			name: "invalid mode",
 			spec: Spec{Path: "bad", Mode: Mode(99)},
 			want: "unknown lit spec mode",
@@ -234,7 +257,7 @@ func TestCheck(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := Check(tc.spec, tc.text)
+			err := Check(tc.spec, tc.text, tc.prefixes...)
 			if tc.want == "" {
 				if err != nil {
 					t.Fatal(err)

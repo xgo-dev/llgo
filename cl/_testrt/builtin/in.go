@@ -35,6 +35,15 @@ const (
 // CHECK-NEXT:   ret double %2
 // CHECK-NEXT: }
 
+// ESCAPE-LABEL: define double @main.Float64frombits(i64 %0){{.*}} {
+// ESCAPE-NEXT: _llgo_0:
+// ESCAPE-NEXT:   %.stack = alloca i8, i64 8, align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack, i8 0, i64 8, i1 false)
+// ESCAPE-NEXT:   store i64 %0, ptr %.stack, align 8
+// ESCAPE-NEXT:   %1 = load double, ptr %.stack, align 8
+// ESCAPE-NEXT:   ret double %1
+// ESCAPE-NEXT: }
+
 func Float64frombits(b uint64) float64 { return *(*float64)(unsafe.Pointer(&b)) }
 
 // CHECK-LABEL: define double @main.Inf(i64 %0){{.*}} {

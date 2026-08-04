@@ -153,6 +153,135 @@ type S []int
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
+// ESCAPE-LABEL: define void @main.main(){{.*}} {
+// ESCAPE-NEXT: _llgo_0:
+// ESCAPE-NEXT:   %0 = alloca %main.point, align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %0, i8 0, i64 16, i1 false)
+// ESCAPE-NEXT:   %1 = alloca [3 x %main.point], align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 48, i1 false)
+// ESCAPE-NEXT:   %2 = getelementptr inbounds %main.point, ptr %1, i64 0
+// ESCAPE-NEXT:   %3 = getelementptr inbounds %main.point, ptr %2, i32 0, i32 0
+// ESCAPE-NEXT:   %4 = getelementptr inbounds %main.point, ptr %2, i32 0, i32 1
+// ESCAPE-NEXT:   %5 = getelementptr inbounds %main.point, ptr %1, i64 1
+// ESCAPE-NEXT:   %6 = getelementptr inbounds %main.point, ptr %5, i32 0, i32 0
+// ESCAPE-NEXT:   %7 = getelementptr inbounds %main.point, ptr %5, i32 0, i32 1
+// ESCAPE-NEXT:   %8 = getelementptr inbounds %main.point, ptr %1, i64 2
+// ESCAPE-NEXT:   %9 = getelementptr inbounds %main.point, ptr %8, i32 0, i32 0
+// ESCAPE-NEXT:   %10 = getelementptr inbounds %main.point, ptr %8, i32 0, i32 1
+// ESCAPE-NEXT:   store i64 1, ptr %3, align 8
+// ESCAPE-NEXT:   store i64 2, ptr %4, align 8
+// ESCAPE-NEXT:   store i64 3, ptr %6, align 8
+// ESCAPE-NEXT:   store i64 4, ptr %7, align 8
+// ESCAPE-NEXT:   store i64 5, ptr %9, align 8
+// ESCAPE-NEXT:   store i64 6, ptr %10, align 8
+// ESCAPE-NEXT:   %11 = load [3 x %main.point], ptr %1, align 8
+// ESCAPE-NEXT:   %12 = getelementptr inbounds %main.point, ptr %1, i64 2
+// ESCAPE-NEXT:   %13 = load %main.point, ptr %12, align 8
+// ESCAPE-NEXT:   store %main.point %13, ptr %0, align 8
+// ESCAPE-NEXT:   %14 = getelementptr inbounds %main.point, ptr %0, i32 0, i32 0
+// ESCAPE-NEXT:   %15 = load i64, ptr %14, align 8
+// ESCAPE-NEXT:   %16 = getelementptr inbounds %main.point, ptr %0, i32 0, i32 1
+// ESCAPE-NEXT:   %17 = load i64, ptr %16, align 8
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %15)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %17)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   %18 = alloca [2 x i64], align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %18, i8 0, i64 16, i1 false)
+// ESCAPE-NEXT:   %19 = alloca [2 x [2 x i64]], align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %19, i8 0, i64 32, i1 false)
+// ESCAPE-NEXT:   %20 = getelementptr inbounds [2 x i64], ptr %19, i64 0
+// ESCAPE-NEXT:   %21 = icmp eq ptr %20, null
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %21)
+// ESCAPE-NEXT:   %22 = getelementptr inbounds i64, ptr %20, i64 0
+// ESCAPE-NEXT:   %23 = icmp eq ptr %20, null
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %23)
+// ESCAPE-NEXT:   %24 = getelementptr inbounds i64, ptr %20, i64 1
+// ESCAPE-NEXT:   %25 = getelementptr inbounds [2 x i64], ptr %19, i64 1
+// ESCAPE-NEXT:   %26 = icmp eq ptr %25, null
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %26)
+// ESCAPE-NEXT:   %27 = getelementptr inbounds i64, ptr %25, i64 0
+// ESCAPE-NEXT:   %28 = icmp eq ptr %25, null
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %28)
+// ESCAPE-NEXT:   %29 = getelementptr inbounds i64, ptr %25, i64 1
+// ESCAPE-NEXT:   store i64 1, ptr %22, align 8
+// ESCAPE-NEXT:   store i64 2, ptr %24, align 8
+// ESCAPE-NEXT:   store i64 3, ptr %27, align 8
+// ESCAPE-NEXT:   store i64 4, ptr %29, align 8
+// ESCAPE-NEXT:   %30 = load [2 x [2 x i64]], ptr %19, align 8
+// ESCAPE-NEXT:   %31 = getelementptr inbounds [2 x i64], ptr %19, i64 1
+// ESCAPE-NEXT:   %32 = load [2 x i64], ptr %31, align 8
+// ESCAPE-NEXT:   store [2 x i64] %32, ptr %18, align 8
+// ESCAPE-NEXT:   %33 = getelementptr inbounds i64, ptr %18, i64 0
+// ESCAPE-NEXT:   %34 = load i64, ptr %33, align 8
+// ESCAPE-NEXT:   %35 = getelementptr inbounds i64, ptr %18, i64 1
+// ESCAPE-NEXT:   %36 = load i64, ptr %35, align 8
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %34)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %36)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   %37 = alloca [5 x i64], align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %37, i8 0, i64 40, i1 false)
+// ESCAPE-NEXT:   %38 = getelementptr inbounds i64, ptr %37, i64 0
+// ESCAPE-NEXT:   %39 = getelementptr inbounds i64, ptr %37, i64 1
+// ESCAPE-NEXT:   %40 = getelementptr inbounds i64, ptr %37, i64 2
+// ESCAPE-NEXT:   %41 = getelementptr inbounds i64, ptr %37, i64 3
+// ESCAPE-NEXT:   %42 = getelementptr inbounds i64, ptr %37, i64 4
+// ESCAPE-NEXT:   store i64 1, ptr %38, align 8
+// ESCAPE-NEXT:   store i64 2, ptr %39, align 8
+// ESCAPE-NEXT:   store i64 3, ptr %40, align 8
+// ESCAPE-NEXT:   store i64 4, ptr %41, align 8
+// ESCAPE-NEXT:   store i64 5, ptr %42, align 8
+// ESCAPE-NEXT:   %43 = load [5 x i64], ptr %37, align 8
+// ESCAPE-NEXT:   %44 = getelementptr inbounds i64, ptr %37, i64 2
+// ESCAPE-NEXT:   %45 = load i64, ptr %44, align 8
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %45)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   %46 = load i8, ptr getelementptr inbounds (i8, ptr @0, i64 2), align 1
+// ESCAPE-NEXT:   %47 = zext i8 %46 to i64
+// ESCAPE-NEXT:   %48 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringFromUint64"(i64 %47)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %48)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   %49 = load i8, ptr getelementptr inbounds (i8, ptr @0, i64 1), align 1
+// ESCAPE-NEXT:   %50 = zext i8 %49 to i64
+// ESCAPE-NEXT:   %51 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringFromUint64"(i64 %50)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %51)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   %.stack = alloca i8, i64 16, align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack, i8 0, i64 16, i1 false)
+// ESCAPE-NEXT:   %52 = getelementptr inbounds i64, ptr %.stack, i64 0
+// ESCAPE-NEXT:   %53 = getelementptr inbounds i64, ptr %.stack, i64 1
+// ESCAPE-NEXT:   store i64 1, ptr %52, align 8
+// ESCAPE-NEXT:   store i64 2, ptr %53, align 8
+// ESCAPE-NEXT:   %54 = getelementptr inbounds i64, ptr %.stack, i64 1
+// ESCAPE-NEXT:   %55 = load i64, ptr %54, align 8
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %55)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   %56 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 32)
+// ESCAPE-NEXT:   %57 = getelementptr inbounds i64, ptr %56, i64 0
+// ESCAPE-NEXT:   store i64 1, ptr %57, align 8
+// ESCAPE-NEXT:   %58 = getelementptr inbounds i64, ptr %56, i64 1
+// ESCAPE-NEXT:   store i64 2, ptr %58, align 8
+// ESCAPE-NEXT:   %59 = getelementptr inbounds i64, ptr %56, i64 2
+// ESCAPE-NEXT:   store i64 3, ptr %59, align 8
+// ESCAPE-NEXT:   %60 = getelementptr inbounds i64, ptr %56, i64 3
+// ESCAPE-NEXT:   store i64 4, ptr %60, align 8
+// ESCAPE-NEXT:   %61 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %56, 0
+// ESCAPE-NEXT:   %62 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %61, i64 4, 1
+// ESCAPE-NEXT:   %63 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %62, i64 4, 2
+// ESCAPE-NEXT:   %64 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %63, 0
+// ESCAPE-NEXT:   %65 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %63, 1
+// ESCAPE-NEXT:   %66 = icmp uge i64 1, %65
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %66, i64 1, i1 true, i64 %65)
+// ESCAPE-NEXT:   %67 = getelementptr inbounds i64, ptr %64, i64 1
+// ESCAPE-NEXT:   %68 = load i64, ptr %67, align 8
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %68)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 0)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   ret void
+// ESCAPE-NEXT: }
+
 func main() {
 	a := [...]point{{1, 2}, {3, 4}, {5, 6}}[2]
 	println(a.x, a.y)

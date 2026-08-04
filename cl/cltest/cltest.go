@@ -261,6 +261,7 @@ func testFrom(t *testing.T, pkgDir, sel string) {
 			_ = os.WriteFile(pkgDir+"/result.txt", []byte(v), 0644)
 			t.Fatal(err)
 		}
+		checkEscapeIR(t, pkgDir, spec)
 		return
 	}
 	if test.Diff(t, pkgDir+"/result.txt", []byte(v), []byte(spec.Text)) {
@@ -349,6 +350,19 @@ func testRunAndTestFrom(t *testing.T, pkgDir, relPkg, sel string, opts runOption
 	}
 	if err := littest.Check(irSpec, *capturedIR); err != nil {
 		_ = os.WriteFile(filepath.Join(pkgDir, "result.txt"), []byte(*capturedIR), 0644)
+		t.Fatal(err)
+	}
+	checkEscapeIR(t, pkgDir, irSpec)
+}
+
+func checkEscapeIR(t *testing.T, pkgDir string, spec littest.Spec) {
+	t.Helper()
+	var ir string
+	withFuncInfoDisabled(func() {
+		ir = llgen.GenFromWithEscape(pkgDir)
+	})
+	if err := littest.Check(spec, ir, "ESCAPE"); err != nil {
+		_ = os.WriteFile(filepath.Join(pkgDir, "escape-result.txt"), []byte(ir), 0644)
 		t.Fatal(err)
 	}
 }

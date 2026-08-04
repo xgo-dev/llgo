@@ -177,6 +177,133 @@ type (
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
+// ESCAPE-LABEL: define void @main.main(){{.*}} {
+// ESCAPE-NEXT: _llgo_0:
+// ESCAPE-NEXT:   %0 = alloca %"main.Data[int]", align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %0, i8 0, i64 8, i1 false)
+// ESCAPE-NEXT:   %1 = getelementptr inbounds %"main.Data[int]", ptr %0, i32 0, i32 0
+// ESCAPE-NEXT:   store i64 1, ptr %1, align 8
+// ESCAPE-NEXT:   %2 = load %"main.Data[int]", ptr %0, align 8
+// ESCAPE-NEXT:   %3 = extractvalue %"main.Data[int]" %2, 0
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %3)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   %4 = alloca %"main.Data[string]", align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %4, i8 0, i64 16, i1 false)
+// ESCAPE-NEXT:   %5 = getelementptr inbounds %"main.Data[string]", ptr %4, i32 0, i32 0
+// ESCAPE-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, ptr %5, align 8
+// ESCAPE-NEXT:   %6 = load %"main.Data[string]", ptr %4, align 8
+// ESCAPE-NEXT:   %7 = extractvalue %"main.Data[string]" %6, 0
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %7)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   %8 = alloca %"main.Data[int]", align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %8, i8 0, i64 8, i1 false)
+// ESCAPE-NEXT:   %9 = getelementptr inbounds %"main.Data[int]", ptr %8, i32 0, i32 0
+// ESCAPE-NEXT:   store i64 100, ptr %9, align 8
+// ESCAPE-NEXT:   %10 = load %"main.Data[int]", ptr %8, align 8
+// ESCAPE-NEXT:   %11 = extractvalue %"main.Data[int]" %10, 0
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %11)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   %12 = alloca %"main.Data[string]", align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %12, i8 0, i64 16, i1 false)
+// ESCAPE-NEXT:   %13 = getelementptr inbounds %"main.Data[string]", ptr %12, i32 0, i32 0
+// ESCAPE-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, ptr %13, align 8
+// ESCAPE-NEXT:   %14 = load %"main.Data[string]", ptr %12, align 8
+// ESCAPE-NEXT:   %15 = extractvalue %"main.Data[string]" %14, 0
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %15)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 0)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   %.stack = alloca i8, i64 24, align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack, i8 0, i64 24, i1 false)
+// ESCAPE-NEXT:   %16 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// ESCAPE-NEXT:   %17 = getelementptr inbounds i64, ptr %16, i64 0
+// ESCAPE-NEXT:   store i64 100, ptr %17, align 8
+// ESCAPE-NEXT:   %18 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %16, 0
+// ESCAPE-NEXT:   %19 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %18, i64 1, 1
+// ESCAPE-NEXT:   %20 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %19, i64 1, 2
+// ESCAPE-NEXT:   %21 = call %"{{.*}}/runtime/internal/runtime.Slice" @"main.(*Slice{{\[\[\]int,int\]}}).Append"(ptr %.stack, %"{{.*}}/runtime/internal/runtime.Slice" %20)
+// ESCAPE-NEXT:   %.stack1 = alloca i8, i64 24, align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack1, i8 0, i64 24, i1 false)
+// ESCAPE-NEXT:   %22 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// ESCAPE-NEXT:   %23 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.String", ptr %22, i64 0
+// ESCAPE-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, ptr %23, align 8
+// ESCAPE-NEXT:   %24 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %22, 0
+// ESCAPE-NEXT:   %25 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %24, i64 1, 1
+// ESCAPE-NEXT:   %26 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %25, i64 1, 2
+// ESCAPE-NEXT:   %27 = call %"{{.*}}/runtime/internal/runtime.Slice" @"main.(*Slice{{\[\[\]string,string\]}}).Append"(ptr %.stack1, %"{{.*}}/runtime/internal/runtime.Slice" %26)
+// ESCAPE-NEXT:   %.stack2 = alloca i8, i64 24, align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack2, i8 0, i64 24, i1 false)
+// ESCAPE-NEXT:   %28 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 32)
+// ESCAPE-NEXT:   %29 = getelementptr inbounds i64, ptr %28, i64 0
+// ESCAPE-NEXT:   store i64 1, ptr %29, align 8
+// ESCAPE-NEXT:   %30 = getelementptr inbounds i64, ptr %28, i64 1
+// ESCAPE-NEXT:   store i64 2, ptr %30, align 8
+// ESCAPE-NEXT:   %31 = getelementptr inbounds i64, ptr %28, i64 2
+// ESCAPE-NEXT:   store i64 3, ptr %31, align 8
+// ESCAPE-NEXT:   %32 = getelementptr inbounds i64, ptr %28, i64 3
+// ESCAPE-NEXT:   store i64 4, ptr %32, align 8
+// ESCAPE-NEXT:   %33 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %28, 0
+// ESCAPE-NEXT:   %34 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %33, i64 4, 1
+// ESCAPE-NEXT:   %35 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %34, i64 4, 2
+// ESCAPE-NEXT:   %36 = call %"{{.*}}/runtime/internal/runtime.Slice" @"main.(*Slice{{\[\[\]int,int\]}}).Append"(ptr %.stack2, %"{{.*}}/runtime/internal/runtime.Slice" %35)
+// ESCAPE-NEXT:   %37 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 32)
+// ESCAPE-NEXT:   %38 = getelementptr inbounds i64, ptr %37, i64 0
+// ESCAPE-NEXT:   store i64 1, ptr %38, align 8
+// ESCAPE-NEXT:   %39 = getelementptr inbounds i64, ptr %37, i64 1
+// ESCAPE-NEXT:   store i64 2, ptr %39, align 8
+// ESCAPE-NEXT:   %40 = getelementptr inbounds i64, ptr %37, i64 2
+// ESCAPE-NEXT:   store i64 3, ptr %40, align 8
+// ESCAPE-NEXT:   %41 = getelementptr inbounds i64, ptr %37, i64 3
+// ESCAPE-NEXT:   store i64 4, ptr %41, align 8
+// ESCAPE-NEXT:   %42 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %37, 0
+// ESCAPE-NEXT:   %43 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %42, i64 4, 1
+// ESCAPE-NEXT:   %44 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %43, i64 4, 2
+// ESCAPE-NEXT:   %45 = call %"{{.*}}/runtime/internal/runtime.Slice" @"main.(*Slice{{\[\[\]int,int\]}}).Append2"(ptr %.stack2, %"{{.*}}/runtime/internal/runtime.Slice" %44)
+// ESCAPE-NEXT:   %46 = getelementptr inbounds %"main.Slice{{\[\[\]int,int\]}}", ptr %.stack, i32 0, i32 0
+// ESCAPE-NEXT:   %47 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %46, align 8
+// ESCAPE-NEXT:   %48 = getelementptr inbounds %"main.Slice{{\[\[\]int,int\]}}", ptr %.stack, i32 0, i32 0
+// ESCAPE-NEXT:   %49 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %48, align 8
+// ESCAPE-NEXT:   %50 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %49, 0
+// ESCAPE-NEXT:   %51 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %49, 1
+// ESCAPE-NEXT:   %52 = icmp uge i64 0, %51
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %52, i64 0, i1 true, i64 %51)
+// ESCAPE-NEXT:   %53 = getelementptr inbounds i64, ptr %50, i64 0
+// ESCAPE-NEXT:   %54 = load i64, ptr %53, align 8
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %47)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %54)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   %55 = getelementptr inbounds %"main.Slice{{\[\[\]string,string\]}}", ptr %.stack1, i32 0, i32 0
+// ESCAPE-NEXT:   %56 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %55, align 8
+// ESCAPE-NEXT:   %57 = getelementptr inbounds %"main.Slice{{\[\[\]string,string\]}}", ptr %.stack1, i32 0, i32 0
+// ESCAPE-NEXT:   %58 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %57, align 8
+// ESCAPE-NEXT:   %59 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %58, 0
+// ESCAPE-NEXT:   %60 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %58, 1
+// ESCAPE-NEXT:   %61 = icmp uge i64 0, %60
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %61, i64 0, i1 true, i64 %60)
+// ESCAPE-NEXT:   %62 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.String", ptr %59, i64 0
+// ESCAPE-NEXT:   %63 = load %"{{.*}}/runtime/internal/runtime.String", ptr %62, align 8
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %56)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %63)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   %64 = getelementptr inbounds %"main.Slice{{\[\[\]int,int\]}}", ptr %.stack2, i32 0, i32 0
+// ESCAPE-NEXT:   %65 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %64, align 8
+// ESCAPE-NEXT:   %66 = getelementptr inbounds %"main.Slice{{\[\[\]int,int\]}}", ptr %.stack2, i32 0, i32 0
+// ESCAPE-NEXT:   %67 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %66, align 8
+// ESCAPE-NEXT:   %68 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %67, 0
+// ESCAPE-NEXT:   %69 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %67, 1
+// ESCAPE-NEXT:   %70 = icmp uge i64 0, %69
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %70, i64 0, i1 true, i64 %69)
+// ESCAPE-NEXT:   %71 = getelementptr inbounds i64, ptr %68, i64 0
+// ESCAPE-NEXT:   %72 = load i64, ptr %71, align 8
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %65)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %72)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   ret void
+// ESCAPE-NEXT: }
+
 func main() {
 	println(DataInt{1}.v)
 	println(DataString{"hello"}.v)

@@ -98,6 +98,98 @@ type data struct {
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
+// ESCAPE-LABEL: define void @main.main(){{.*}} {
+// ESCAPE-NEXT: _llgo_0:
+// ESCAPE-NEXT:   %.stack = alloca i8, i64 56, align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack, i8 0, i64 56, i1 false)
+// ESCAPE-NEXT:   %0 = getelementptr inbounds %main.data, ptr %.stack, i32 0, i32 0
+// ESCAPE-NEXT:   %1 = load %"{{.*}}/runtime/internal/runtime.String", ptr %0, align 8
+// ESCAPE-NEXT:   %2 = extractvalue %"{{.*}}/runtime/internal/runtime.String" %1, 1
+// ESCAPE-NEXT:   %3 = getelementptr inbounds %main.data, ptr %.stack, i32 0, i32 1
+// ESCAPE-NEXT:   %4 = load ptr, ptr %3, align 8
+// ESCAPE-NEXT:   %5 = call i64 @"{{.*}}/runtime/internal/runtime.ChanLen"(ptr %4)
+// ESCAPE-NEXT:   %6 = getelementptr inbounds %main.data, ptr %.stack, i32 0, i32 2
+// ESCAPE-NEXT:   %7 = load ptr, ptr %6, align 8
+// ESCAPE-NEXT:   %8 = call i64 @"{{.*}}/runtime/internal/runtime.MapLen"(ptr %7)
+// ESCAPE-NEXT:   %9 = getelementptr inbounds %main.data, ptr %.stack, i32 0, i32 3
+// ESCAPE-NEXT:   %10 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %9, align 8
+// ESCAPE-NEXT:   %11 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %10, 1
+// ESCAPE-NEXT:   %12 = getelementptr inbounds %main.data, ptr %.stack, i32 0, i32 1
+// ESCAPE-NEXT:   %13 = load ptr, ptr %12, align 8
+// ESCAPE-NEXT:   %14 = call i64 @"{{.*}}/runtime/internal/runtime.ChanCap"(ptr %13)
+// ESCAPE-NEXT:   %15 = getelementptr inbounds %main.data, ptr %.stack, i32 0, i32 3
+// ESCAPE-NEXT:   %16 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %15, align 8
+// ESCAPE-NEXT:   %17 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %16, 2
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %2)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %5)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %8)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %11)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %14)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %17)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   %.stack1 = alloca i8, i64 56, align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack1, i8 0, i64 56, i1 false)
+// ESCAPE-NEXT:   %18 = getelementptr inbounds %main.data, ptr %.stack1, i32 0, i32 0
+// ESCAPE-NEXT:   %19 = getelementptr inbounds %main.data, ptr %.stack1, i32 0, i32 1
+// ESCAPE-NEXT:   %20 = call ptr @"{{.*}}/runtime/internal/runtime.NewChan"(i64 8, i64 2)
+// ESCAPE-NEXT:   %21 = getelementptr inbounds %main.data, ptr %.stack1, i32 0, i32 2
+// ESCAPE-NEXT:   %22 = call ptr @"{{.*}}/runtime/internal/runtime.MakeMap"(ptr @"map[_llgo_int]_llgo_string", i64 1)
+// ESCAPE-NEXT:   %23 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// ESCAPE-NEXT:   store i64 1, ptr %23, align 8
+// ESCAPE-NEXT:   %24 = call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_int]_llgo_string", ptr %22, ptr %23)
+// ESCAPE-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @16, i64 5 }, ptr %24, align 8
+// ESCAPE-NEXT:   %25 = getelementptr inbounds %main.data, ptr %.stack1, i32 0, i32 3
+// ESCAPE-NEXT:   %26 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
+// ESCAPE-NEXT:   %27 = getelementptr inbounds i64, ptr %26, i64 0
+// ESCAPE-NEXT:   store i64 1, ptr %27, align 8
+// ESCAPE-NEXT:   %28 = getelementptr inbounds i64, ptr %26, i64 1
+// ESCAPE-NEXT:   store i64 2, ptr %28, align 8
+// ESCAPE-NEXT:   %29 = getelementptr inbounds i64, ptr %26, i64 2
+// ESCAPE-NEXT:   store i64 3, ptr %29, align 8
+// ESCAPE-NEXT:   %30 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %26, 0
+// ESCAPE-NEXT:   %31 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %30, i64 3, 1
+// ESCAPE-NEXT:   %32 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %31, i64 3, 2
+// ESCAPE-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @16, i64 5 }, ptr %18, align 8
+// ESCAPE-NEXT:   store ptr %20, ptr %19, align 8
+// ESCAPE-NEXT:   store ptr %22, ptr %21, align 8
+// ESCAPE-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %32, ptr %25, align 8
+// ESCAPE-NEXT:   %33 = getelementptr inbounds %main.data, ptr %.stack1, i32 0, i32 0
+// ESCAPE-NEXT:   %34 = load %"{{.*}}/runtime/internal/runtime.String", ptr %33, align 8
+// ESCAPE-NEXT:   %35 = extractvalue %"{{.*}}/runtime/internal/runtime.String" %34, 1
+// ESCAPE-NEXT:   %36 = getelementptr inbounds %main.data, ptr %.stack1, i32 0, i32 1
+// ESCAPE-NEXT:   %37 = load ptr, ptr %36, align 8
+// ESCAPE-NEXT:   %38 = call i64 @"{{.*}}/runtime/internal/runtime.ChanLen"(ptr %37)
+// ESCAPE-NEXT:   %39 = getelementptr inbounds %main.data, ptr %.stack1, i32 0, i32 2
+// ESCAPE-NEXT:   %40 = load ptr, ptr %39, align 8
+// ESCAPE-NEXT:   %41 = call i64 @"{{.*}}/runtime/internal/runtime.MapLen"(ptr %40)
+// ESCAPE-NEXT:   %42 = getelementptr inbounds %main.data, ptr %.stack1, i32 0, i32 3
+// ESCAPE-NEXT:   %43 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %42, align 8
+// ESCAPE-NEXT:   %44 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %43, 1
+// ESCAPE-NEXT:   %45 = getelementptr inbounds %main.data, ptr %.stack1, i32 0, i32 1
+// ESCAPE-NEXT:   %46 = load ptr, ptr %45, align 8
+// ESCAPE-NEXT:   %47 = call i64 @"{{.*}}/runtime/internal/runtime.ChanCap"(ptr %46)
+// ESCAPE-NEXT:   %48 = getelementptr inbounds %main.data, ptr %.stack1, i32 0, i32 3
+// ESCAPE-NEXT:   %49 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %48, align 8
+// ESCAPE-NEXT:   %50 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %49, 2
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %35)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %38)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %41)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %44)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %47)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %50)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   ret void
+// ESCAPE-NEXT: }
 func main() {
 	d := &data{}
 	println(len(d.s), len(d.c), len(d.m), len(d.a), cap(d.c), cap(d.a))

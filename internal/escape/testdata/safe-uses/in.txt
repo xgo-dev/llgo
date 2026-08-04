@@ -1,0 +1,104 @@
+target datalayout = "e-p:64:64-i64:64-n32:64-S128"
+
+declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64)
+declare void @llvm.lifetime.start.p0(i64 immarg, ptr nocapture)
+declare void @llvm.lifetime.end.p0(i64 immarg, ptr nocapture)
+declare void @llvm.memset.p0.i64(ptr writeonly, i8, i64, i1 immarg)
+declare void @llvm.memcpy.p0.p0.i64(ptr noalias writeonly, ptr noalias readonly, i64, i1 immarg)
+
+@bytes = global [8 x i8] zeroinitializer
+@escaped_pointer = global ptr null
+
+define i64 @load_store() {
+entry:
+  %p = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
+  store i64 7, ptr %p, align 8
+  %v = load i64, ptr %p, align 8
+  ret i64 %v
+}
+
+define void @gep() {
+entry:
+  %p = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
+  %q = getelementptr i8, ptr %p, i64 1
+  store i8 7, ptr %q, align 1
+  ret void
+}
+
+define void @bitcast() {
+entry:
+  %p = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
+  %q = bitcast ptr %p to ptr
+  store i8 7, ptr %q, align 1
+  ret void
+}
+
+define void @select_value(i1 %cond) {
+entry:
+  %p = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
+  %q = select i1 %cond, ptr %p, ptr %p
+  store i8 7, ptr %q, align 1
+  ret void
+}
+
+define void @phi_cycle(i1 %again) {
+entry:
+  %p = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
+  br label %loop
+loop:
+  %q = phi ptr [ %p, %entry ], [ %q, %loop ]
+  store i8 7, ptr %q, align 1
+  br i1 %again, label %loop, label %exit
+exit:
+  ret void
+}
+
+define i1 @compare() {
+entry:
+  %p = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
+  %same = icmp eq ptr %p, null
+  ret i1 %same
+}
+
+define void @atomic_addresses() {
+entry:
+  %p = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
+  store atomic i32 1, ptr %p monotonic, align 4
+  %v = load atomic i32, ptr %p monotonic, align 4
+  %cx = cmpxchg ptr %p, i32 %v, i32 2 monotonic monotonic, align 4
+  %rmw = atomicrmw add ptr %p, i32 1 monotonic, align 4
+  ret void
+}
+
+define void @freeze_value() {
+entry:
+  %p = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
+  %q = freeze ptr %p
+  store i8 7, ptr %q
+  ret void
+}
+
+define void @volatile_addresses() {
+entry:
+  %p = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
+  store volatile i8 7, ptr %p
+  %v = load volatile i8, ptr %p
+  ret void
+}
+
+define void @safe_intrinsics() {
+entry:
+  %p = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
+  call void @llvm.lifetime.start.p0(i64 8, ptr %p)
+  call void @llvm.memset.p0.i64(ptr %p, i8 0, i64 8, i1 false)
+  call void @llvm.memcpy.p0.p0.i64(ptr @bytes, ptr %p, i64 8, i1 false)
+  call void @llvm.lifetime.end.p0(i64 8, ptr %p)
+  ret void
+}
+
+define void @cmpxchg_expected() {
+entry:
+  %p = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
+  %old = cmpxchg ptr @escaped_pointer, ptr %p, ptr null monotonic monotonic, align 8
+  ret void
+}

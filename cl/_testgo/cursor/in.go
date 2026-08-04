@@ -807,6 +807,16 @@ const (
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
+// ESCAPE-LABEL: define void @main.main(){{.*}} {
+// ESCAPE-NEXT: _llgo_0:
+// ESCAPE-NEXT:   %.stack = alloca i8, i64 16, align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack, i8 0, i64 16, i1 false)
+// ESCAPE-NEXT:   %0 = getelementptr inbounds %main.Cursor, ptr %.stack, i32 0, i32 0
+// ESCAPE-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
+// ESCAPE-NEXT:   store ptr %1, ptr %0, align 8
+// ESCAPE-NEXT:   ret void
+// ESCAPE-NEXT: }
+
 // CHECK-LABEL: define i64 @main.maskOf(%"{{.*}}/runtime/internal/runtime.Slice" %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %1 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %0, 1

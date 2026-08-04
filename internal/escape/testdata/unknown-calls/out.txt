@@ -1,0 +1,49 @@
+; ModuleID = 'testdata/unknown-calls/in.txt'
+source_filename = "testdata/unknown-calls/in.txt"
+target datalayout = "e-p:64:64-i64:64-n32:64-S128"
+
+declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64)
+
+declare void @c_function(ptr)
+
+declare void @"github.com/goplus/llgo/runtime/internal/runtime.ChanSend"(ptr)
+
+; Function Attrs: nocallback nofree nosync nounwind speculatable willreturn memory(inaccessiblemem: readwrite)
+declare ptr @llvm.launder.invariant.group.p0(ptr) #0
+
+define void @bodyless_c() {
+entry:
+  %p = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
+  call void @c_function(ptr %p)
+  ret void
+}
+
+define void @runtime_call() {
+entry:
+  %p = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
+  call void @"github.com/goplus/llgo/runtime/internal/runtime.ChanSend"(ptr %p)
+  ret void
+}
+
+define void @indirect_call(ptr %fn) {
+entry:
+  %p = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
+  call void %fn(ptr %p)
+  ret void
+}
+
+define void @inline_asm() {
+entry:
+  %p = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
+  call void asm sideeffect "", "r"(ptr %p)
+  ret void
+}
+
+define void @unknown_intrinsic() {
+entry:
+  %p = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
+  %q = call ptr @llvm.launder.invariant.group.p0(ptr %p)
+  ret void
+}
+
+attributes #0 = { nocallback nofree nosync nounwind speculatable willreturn memory(inaccessiblemem: readwrite) }

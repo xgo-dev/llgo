@@ -129,6 +129,9 @@ func genIR(target string) (ret string, err error) {
 			}
 		}
 	}()
+	if escapeChecks {
+		return llgen.GenFromWithEscape(target), nil
+	}
 	return llgen.GenFrom(target), nil
 }
 
