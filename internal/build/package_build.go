@@ -302,6 +302,8 @@ func (ctx *context) executeIsolatedPackage(task *packageBuildTask, verbose bool)
 	if err := buildPkg(backendCtx, task.pkg, verbose); err != nil {
 		return err
 	}
+	ctx.retainBackendProgram(task.pkg, session.prog)
+	owned = false
 	if task.pkg.LPkg == nil {
 		return nil
 	}
@@ -316,8 +318,6 @@ func (ctx *context) executeIsolatedPackage(task *packageBuildTask, verbose bool)
 	// A future PackageSummary can carry those facts and allow immediate worker
 	// teardown. Until then ownership moves to the coordinator on every success,
 	// not only when dead-code dropping is enabled.
-	ctx.retainBackendProgram(task.pkg, session.prog)
-	owned = false
 	return nil
 }
 
