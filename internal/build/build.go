@@ -471,12 +471,10 @@ func Build(inv Invocation) ([]Package, error) {
 	prog.EnableLTOPluginMarkers(conf.LTOPlugin.Enabled())
 	funcInfo := conf.Mode != ModeGen && conf.PCLNMode != PCLNNone
 	prog.EnableFuncInfoMetadata(funcInfo)
-	// Site records are inline-asm fragments inside function bodies. Darwin
-	// DWARF builds avoid them because they disturb LLDB lexical scopes; Linux
-	// still needs them because its restricted dynamic symbol table cannot
-	// reconstruct every Go entry PC through dlsym. External mode always needs
-	// final-PC sites for sidecar construction.
-	prog.EnableFuncInfoSites(shouldEnablePCLNSites(conf, funcInfo, emitDebugInfo))
+	// PC-line sites stay enabled with DWARF so runtime source locations remain
+	// precise. The link table emitter separately suppresses Darwin address sites
+	// when their entry-block assembly would disturb LLDB lexical scopes.
+	prog.EnableFuncInfoSites(shouldEnablePCLNSites(conf, funcInfo))
 	sizes := func(sizes types.Sizes, compiler, arch string) types.Sizes {
 		if arch == "wasm" {
 			sizes = &types.StdSizes{WordSize: 4, MaxAlign: 4}
@@ -1275,7 +1273,7 @@ func compileExtraFiles(ctx *context, verbose bool) ([]string, error) {
 // internal/pclnpost and doc/design/pclntab-linkphase.md). Any failure leaves
 // the binary fully functional on the first-use construction fallback.
 func rewritePrebuiltFuncTab(ctx *context, out string, verbose bool) {
-	if ctx == nil || ctx.prog == nil || !ctx.prog.FuncInfoSitesEnabled() || !shouldEmitRuntimeSites(ctx) {
+	if !shouldEmitRuntimeAddressSites(ctx) {
 		return
 	}
 	if ctx.buildConf.BuildMode != BuildModeExe {

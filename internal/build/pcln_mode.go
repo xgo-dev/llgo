@@ -70,15 +70,13 @@ func effectivePCLNMode(conf *Config) PCLNMode {
 }
 
 // shouldEnablePCLNSites reports whether compiler-emitted PC anchor records are
-// required for this build. Darwin DWARF builds keep the historical site-free
-// path because inline anchors disturb LLDB lexical scopes there. ELF cannot
-// reconstruct all Go entry PCs with dlsym: most Go symbols are intentionally
-// absent from .dynsym, so Linux keeps sites even when it emits DWARF.
-func shouldEnablePCLNSites(conf *Config, funcInfo, emitDebugInfo bool) bool {
+// globally enabled for this build. Target-specific filtering of address-site
+// categories happens when the runtime tables are emitted.
+func shouldEnablePCLNSites(conf *Config, funcInfo bool) bool {
 	if conf == nil || !funcInfo || !IsFuncInfoSitesEnabled() {
 		return false
 	}
-	return !emitDebugInfo || conf.Goos == "linux" || conf.PCLNMode == PCLNExternal
+	return true
 }
 
 // validatePCLNMode checks whether the selected build can produce the requested
