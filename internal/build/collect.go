@@ -532,6 +532,9 @@ func (c *context) saveToCache(pkg *aPackage) error {
 		return err
 	}
 
+	// Link a cache miss from the same stable archive path used by a cache hit.
+	// Darwin records this path in its N_OSO debug map.
+	pkg.ArchiveFile = paths.Archive
 	return nil
 }
 

@@ -728,6 +728,56 @@ func TestLinkOptionsControlDarwinDebugSymbols(t *testing.T) {
 	}
 }
 
+func TestDarwinDWARFCacheUsesStableArchivePaths(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Mach-O debug-map integration test")
+	}
+
+	cacheDir := t.TempDir()
+	oldCacheRootFunc := cacheRootFunc
+	cacheRootFunc = func() string { return cacheDir }
+	t.Cleanup(func() { cacheRootFunc = oldCacheRootFunc })
+
+	binPath := filepath.Join(t.TempDir(), "ldflagsstrip")
+	buildCachedArchivePaths := func() []string {
+		cfg := &Config{
+			Mode:        ModeBuild,
+			OutFile:     binPath,
+			LinkOptions: LinkOptions{DWARF: DWARFPreserve},
+		}
+		if _, err := Do([]string{"./testdata/ldflagsstrip"}, cfg); err != nil {
+			t.Fatalf("ModeBuild with DWARF failed: %v", err)
+		}
+		f, err := macho.Open(binPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if f.Symtab == nil {
+			t.Fatal("Mach-O has no symbol table")
+		}
+
+		const nOSO = 0x66
+		cachePrefix := filepath.Join(cacheDir, cacheBuildDirName) + string(os.PathSeparator)
+		var paths []string
+		for _, sym := range f.Symtab.Syms {
+			if sym.Type == nOSO && strings.HasPrefix(sym.Name, cachePrefix) {
+				paths = append(paths, sym.Name)
+			}
+		}
+		return paths
+	}
+
+	coldPaths := buildCachedArchivePaths()
+	warmPaths := buildCachedArchivePaths()
+	if len(coldPaths) == 0 {
+		t.Fatal("cold build has no cache-backed N_OSO paths")
+	}
+	if !slices.Equal(coldPaths, warmPaths) {
+		t.Fatalf("cold and warm N_OSO paths differ:\ncold: %q\nwarm: %q", coldPaths, warmPaths)
+	}
+}
+
 func machoHasStabs(t *testing.T, path string) bool {
 	t.Helper()
 	f, err := macho.Open(path)
