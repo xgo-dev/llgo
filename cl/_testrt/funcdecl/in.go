@@ -5,9 +5,9 @@ import (
 	"unsafe"
 )
 
-// CHECK: @4 = private unnamed_addr constant [39 x i8] c"struct{$f func(); $data unsafe.Pointer}", align 1
-// CHECK: @5 = private unnamed_addr constant [4 x i8] c"demo", align 1
-// CHECK: @6 = private unnamed_addr constant [5 x i8] c"hello", align 1
+// CHECK: @0 = private unnamed_addr constant [6 x i8] c"func()", align 1
+// CHECK: @4 = private unnamed_addr constant [4 x i8] c"demo", align 1
+// CHECK: @5 = private unnamed_addr constant [5 x i8] c"hello", align 1
 
 // CHECK-LABEL: define void @main.check({ ptr, ptr } %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
@@ -29,7 +29,7 @@ import (
 // CHECK-NEXT:   br i1 %10, label %_llgo_3, label %_llgo_4
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %5, %"{{.*}}/runtime/internal/runtime.String" { ptr @4, i64 39 }, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr null, ptr %5, ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_1
@@ -58,7 +58,7 @@ import (
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %9, %"{{.*}}/runtime/internal/runtime.String" { ptr @4, i64 39 }, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr null, ptr %9, ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 
@@ -96,7 +96,7 @@ type rtype struct {
 
 // CHECK-LABEL: define void @main.demo(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @5, i64 4 })
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @4, i64 4 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
@@ -120,7 +120,7 @@ func demo() {
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @6, i64 5 })
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @5, i64 5 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   call void @main.check({ ptr, ptr } { ptr @main.demo, ptr null })
 // CHECK-NEXT:   ret void

@@ -16,10 +16,10 @@ package main
 // CHECK: {{^}}@12 = private unnamed_addr constant [7 x i8] c"invoke6", align 1{{$}}
 // CHECK: {{^}}@13 = private unnamed_addr constant [43 x i8] c"{{.*}}/cl/_testgo/invoke.T6", align 1{{$}}
 // CHECK: {{^}}@14 = private unnamed_addr constant [5 x i8] c"hello", align 1{{$}}
+// CHECK: {{^}}@23 = private unnamed_addr constant [26 x i8] c"interface { Invoke() int }", align 1{{$}}
 // CHECK: {{^}}@36 = private unnamed_addr constant [5 x i8] c"world", align 1{{$}}
-// CHECK: {{^}}@38 = private unnamed_addr constant [42 x i8] c"{{.*}}/cl/_testgo/invoke.I", align 1{{$}}
-// CHECK: {{^}}@40 = private unnamed_addr constant [3 x i8] c"any", align 1{{$}}
-// CHECK: {{^}}@41 = private unnamed_addr constant [23 x i8] c"interface{Invoke() int}", align 1{{$}}
+// CHECK: {{^}}@37 = private unnamed_addr constant [6 x i8] c"main.I", align 1{{$}}
+// CHECK: {{^}}@38 = private unnamed_addr constant [12 x i8] c"interface {}", align 1{{$}}
 
 type T struct {
 	s string
@@ -446,7 +446,7 @@ type M interface {
 // CHECK-NEXT:   br i1 %85, label %_llgo_3, label %_llgo_4
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %78, %"{{.*}}/runtime/internal/runtime.String" { ptr @38, i64 42 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 6 })
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr null, ptr %78, ptr @_llgo_main.I, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 6 })
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_1
@@ -455,7 +455,7 @@ type M interface {
 // CHECK-NEXT:   br i1 %87, label %_llgo_5, label %_llgo_6
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %84, %"{{.*}}/runtime/internal/runtime.String" { ptr @40, i64 3 }, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr null, ptr %84, ptr @_llgo_any, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_3
@@ -467,7 +467,7 @@ type M interface {
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_6:                                          ; preds = %_llgo_3
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %86, %"{{.*}}/runtime/internal/runtime.String" { ptr @41, i64 23 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 6 })
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr null, ptr %86, ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 6 })
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 

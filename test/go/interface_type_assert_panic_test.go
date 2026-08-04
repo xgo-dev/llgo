@@ -8,6 +8,8 @@ type typeAssertInterface interface {
 
 type typeAssertScopedT struct{}
 
+type typeAssertResult int
+
 var typeAssertScopedValue any
 
 func typeAssertValue(v any) any {
@@ -24,6 +26,16 @@ func TestInterfaceAssertToConcretePanicsWithRuntimeError(t *testing.T) {
 	expectPanicContaining(t, "interface conversion", func() {
 		_ = typeAssertValue(0).(string)
 	})
+}
+
+func TestGenericNilInterfaceAssertMentionsSourceType(t *testing.T) {
+	expectPanicContaining(t, "interface { TypeAssertValue() gotest.typeAssertResult }", func() {
+		typeAssertGenericNil[typeAssertResult]()
+	})
+}
+
+func typeAssertGenericNil[T any]() {
+	_ = interface{ TypeAssertValue() T }(nil).(T)
 }
 
 func TestInterfaceAssertRejectsSameNameTypesFromDifferentScopes(t *testing.T) {

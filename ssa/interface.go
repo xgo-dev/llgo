@@ -371,7 +371,13 @@ func (b Builder) TypeAssert(x Expr, assertedTyp Type, commaOk bool) Expr {
 	blks := b.Func.MakeBlocks(2)
 	b.If(eq, blks[0], blks[1])
 	b.SetBlockEx(blks[1], AtEnd, false)
-	b.Call(b.Pkg.rtFunc("PanicTypeAssert"), tx, b.Str(assertedTyp.RawType().String()), b.Str(typeAssertMissingMethod(assertedTyp)))
+	var source Expr
+	if rawIntf, ok := x.RawType().Underlying().(*types.Interface); ok && rawIntf.NumMethods() > 0 {
+		source = b.abiType(x.RawType())
+	} else {
+		source = b.Prog.Nil(b.Prog.AbiTypePtr())
+	}
+	b.Call(b.Pkg.rtFunc("PanicTypeAssert"), source, tx, tabi, b.Str(typeAssertMissingMethod(assertedTyp)))
 	b.Unreachable()
 	b.SetBlockEx(blks[0], AtEnd, false)
 	b.blk.last = blks[0].last

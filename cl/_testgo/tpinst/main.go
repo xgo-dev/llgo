@@ -4,7 +4,8 @@ package main
 // CHECK-NOT: @6 = private unnamed_addr constant [5 x i8] c"value", align 1
 // CHECK: @6 = private unnamed_addr constant [10 x i8] c"main.value", align 1
 // CHECK: {{^}}@8 = private unnamed_addr constant [5 x i8] c"error", align 1{{$}}
-// CHECK: {{^}}@15 = private unnamed_addr constant [22 x i8] c"interface{value() int}", align 1{{$}}
+// CHECK: {{^}}@14 = private unnamed_addr constant [30 x i8] c"interface { main.value() int }", align 1{{$}}
+// CHECK: {{^}}@15 = private unnamed_addr constant [11 x i8] c"main.I[int]", align 1{{$}}
 // CHECK: {{^}}@16 = private unnamed_addr constant [5 x i8] c"value", align 1{{$}}
 
 type M[T interface{}] struct {
@@ -101,7 +102,7 @@ type I[T interface{}] interface {
 // CHECK-NEXT:   br i1 %51, label %_llgo_5, label %_llgo_6
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_4
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr %34, %"{{.*}}/runtime/internal/runtime.String" { ptr @15, i64 22 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @16, i64 5 })
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr @"_llgo_main.I[int]", ptr %34, ptr @"{{.*}}/cl/_testgo/tpinst.iface${{[-A-Za-z0-9_]+}}", %"{{.*}}/runtime/internal/runtime.String" { ptr @16, i64 5 })
 // CHECK-NEXT:   unreachable
 // CHECK-NEXT: }
 
