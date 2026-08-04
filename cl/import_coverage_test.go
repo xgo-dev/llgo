@@ -251,9 +251,57 @@ func TestParsePkgSyntaxCollectsLinknames(t *testing.T) {
 		})
 	}
 	prog := llssa.NewProgram(nil)
-	collectDeclarationDirectives(prog, nil, &ast.CommentGroup{List: []*ast.Comment{{Text: "//go:linkname Other C.other"}}}, llssa.PkgRuntime+".Sigsetjmp", "Sigsetjmp", token.NoPos)
+	collectDeclarationDirectives(prog, nil, &ast.CommentGroup{List: []*ast.Comment{{Text: "//go:linkname Other C.other"}}}, llssa.PkgRuntime+".Sigsetjmp", "Sigsetjmp", token.NoPos, Options{})
 	if _, ok := prog.Linkname(llssa.PkgRuntime + ".Sigsetjmp"); ok {
 		t.Fatal("mismatched linkname was collected")
+	}
+}
+
+func TestParsePkgSyntaxCollectsExportsBeforeLowering(t *testing.T) {
+	tests := []struct {
+		name         string
+		pkgName      string
+		declaration  string
+		exportRename bool
+		want         string
+		wantErr      string
+	}{
+		{name: "same name", pkgName: "p", declaration: "//export Entry\nfunc Entry() {}", want: "Entry"},
+		{name: "target rename", pkgName: "p", declaration: "//export irq_handler\nfunc Entry() {}", exportRename: true, want: "irq_handler"},
+		{name: "invalid rename", pkgName: "p", declaration: "//export irq_handler\nfunc Entry() {}", wantErr: "wrong name"},
+		{name: "C default", pkgName: "C", declaration: "func Xmalloc() {}", want: "malloc"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "p.go", "package "+test.pkgName+"\n"+test.declaration+"\n", parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prog := llssa.NewProgram(nil)
+			defer prog.Dispose()
+			pkg := types.NewPackage("example.com/"+test.pkgName, test.pkgName)
+			err = ParsePkgSyntaxWithOptions(prog, fset, pkg, []*ast.File{file}, Options{ExportRename: test.exportRename})
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("ParsePkgSyntaxWithOptions error = %v, want %q", err, test.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			fullName := pkg.Path() + ".Entry"
+			if test.pkgName == "C" {
+				fullName = pkg.Path() + ".Xmalloc"
+			}
+			if link, ok := prog.Linkname(fullName); !ok || link != test.want {
+				t.Fatalf("Linkname(%q) = (%q, %v), want (%q, true)", fullName, link, ok, test.want)
+			}
+			if export, ok := prog.PackageExport(fullName); !ok || export != test.want {
+				t.Fatalf("PackageExport(%q) = (%q, %v), want (%q, true)", fullName, export, ok, test.want)
+			}
+		})
 	}
 }
 
@@ -303,7 +351,7 @@ func TestCollectDeclarationDirectivesIgnoresOtherDirectives(t *testing.T) {
 		{Text: "//llgo:tls"},
 	}}
 	const fullName = "example.com/p.Value"
-	collectDeclarationDirectives(prog, nil, doc, fullName, "Value", token.NoPos)
+	collectDeclarationDirectives(prog, nil, doc, fullName, "Value", token.NoPos, Options{})
 	if _, ok := prog.Linkname(fullName); ok {
 		t.Fatal("non-link directives installed a linkname")
 	}

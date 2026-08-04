@@ -23,7 +23,6 @@ import (
 	"log"
 	"runtime"
 	"strconv"
-	"sync"
 	"unsafe"
 
 	"github.com/goplus/llgo/internal/env"
@@ -221,15 +220,10 @@ type aProgram struct {
 
 	printfTy *types.Signature
 
-	paramObjPtr_         *types.Var
-	linknameMu           sync.RWMutex
-	linkname             map[string]string // pkgPath.nameInPkg => linkname
-	closureEnvDirectives sync.Map          // closureEnvDirectiveKey => none
-	localities           *localityInfos
-	parsedPackagesMu     sync.RWMutex
-	parsedPackages       map[*types.Package]struct{}
-	noInterface          map[string]none       // pkgPath.T.method or pkgPath.(*T).method
-	abiSymbol            map[string]*AbiSymbol // abi symbol name => AbiSymbol
+	paramObjPtr_  *types.Var
+	packageSyntax *packageSyntaxData
+	localities    *localityInfos
+	abiSymbol     map[string]*AbiSymbol // abi symbol name => AbiSymbol
 
 	ptrSize int
 
@@ -314,13 +308,13 @@ func NewProgram(target *Target) Program {
 		ctx.Finalize()
 	*/
 	is32Bits := (td.PointerSize() == 4 || is32Bits(target.GOARCH))
+	gocvt := newGoTypes()
 	prog := &aProgram{
-		ctx: ctx, gocvt: newGoTypes(),
+		ctx: ctx, gocvt: gocvt,
 		target: target, td: td, tm: tm, is32Bits: is32Bits,
 		ptrSize: td.PointerSize(), named: make(map[string]Type), fnnamed: make(map[string]int),
-		linkname: make(map[string]string), localities: newLocalityInfos(),
-		parsedPackages: make(map[*types.Package]struct{}),
-		noInterface:    make(map[string]none), abiSymbol: make(map[string]*AbiSymbol),
+		packageSyntax: gocvt.packageSyntax, localities: newLocalityInfos(),
+		abiSymbol:          make(map[string]*AbiSymbol),
 		debugInfoOptimized: target.effectiveOptLevel() != optlevel.O0,
 	}
 	prog.abi.Init(uintptr(prog.ptrSize), (*goProgram)(unsafe.Pointer(prog)))
@@ -386,7 +380,7 @@ func (p Program) EnableLTOPluginMarkers(enable bool) {
 }
 
 func (p Program) SetNoInterfaceMethod(fullName string) {
-	p.noInterface[fullName] = none{}
+	p.packageSyntax.setNoInterface(fullName)
 }
 
 func (p Program) isNoInterfaceMethod(fn *types.Func) bool {
@@ -397,7 +391,7 @@ func (p Program) isNoInterfaceMethod(fn *types.Func) bool {
 	if !ok || sig.Recv() == nil {
 		return false
 	}
-	_, ok = p.noInterface[FuncName(fn.Pkg(), fn.Name(), sig.Recv(), true)]
+	_, ok = p.packageSyntax.noInterfaceMethod(FuncName(fn.Pkg(), fn.Name(), sig.Recv(), true))
 	return ok
 }
 
@@ -413,20 +407,15 @@ func (p Program) SetRuntime(runtime any) {
 }
 
 func (p Program) SetTypeBackground(fullName string, bg Background) {
-	p.gocvt.typbg.Store(fullName, bg)
+	p.packageSyntax.setTypeBackground(fullName, bg)
 }
 
 func (p Program) SetLinkname(name, link string) {
-	p.linknameMu.Lock()
-	p.linkname[name] = link
-	p.linknameMu.Unlock()
+	p.packageSyntax.setLinkname(name, link)
 }
 
 func (p Program) Linkname(name string) (link string, ok bool) {
-	p.linknameMu.RLock()
-	link, ok = p.linkname[name]
-	p.linknameMu.RUnlock()
-	return
+	return p.packageSyntax.linknameOf(name)
 }
 
 type closureEnvDirectiveKey struct {
@@ -440,15 +429,14 @@ type closureEnvDirectiveKey struct {
 // than its resolved linker symbol, so aliases retain independent ABI metadata.
 func (p Program) SetClosureEnvDirective(fset *token.FileSet, name string, pos token.Pos) {
 	key := closureEnvDirectiveKey{fset: fset, name: name, pos: pos}
-	p.closureEnvDirectives.Store(key, none{})
+	p.packageSyntax.setClosureEnvDirective(key)
 }
 
 // HasClosureEnvDirective reports whether a source function declaration has the
 // cached llgo:env directive.
 func (p Program) HasClosureEnvDirective(fset *token.FileSet, name string, pos token.Pos) bool {
 	key := closureEnvDirectiveKey{fset: fset, name: name, pos: pos}
-	_, ok := p.closureEnvDirectives.Load(key)
-	return ok
+	return p.packageSyntax.hasClosureEnvDirective(key)
 }
 
 func (p Program) runtime() *types.Package {

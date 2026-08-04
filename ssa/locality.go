@@ -331,12 +331,11 @@ func (p Program) validateLocalities(pkgPath string, packageEntries map[string]Va
 	if len(localNames) == 0 {
 		return nil
 	}
-	p.linknameMu.RLock()
-	links := make(map[string]string, len(p.linkname))
-	for name, target := range p.linkname {
+	rawLinks := p.packageSyntax.linknamesSnapshot()
+	links := make(map[string]string, len(rawLinks))
+	for name, target := range rawLinks {
 		links[name] = strings.TrimPrefix(target, "go:")
 	}
-	p.linknameMu.RUnlock()
 	for name := range links {
 		if strings.HasPrefix(name, prefix) && linknameReachesLocal(name, links, localNames) {
 			nameSet[name] = true
@@ -368,16 +367,11 @@ func linknameReachesLocal(name string, links map[string]string, localNames map[s
 }
 
 func (p Program) PackageSyntaxParsed(pkg *types.Package) bool {
-	p.parsedPackagesMu.RLock()
-	_, ok := p.parsedPackages[pkg]
-	p.parsedPackagesMu.RUnlock()
-	return ok
+	return p.packageSyntax.packageParsed(pkg)
 }
 
 func (p Program) MarkPackageSyntaxParsed(pkg *types.Package) {
-	p.parsedPackagesMu.Lock()
-	p.parsedPackages[pkg] = struct{}{}
-	p.parsedPackagesMu.Unlock()
+	p.packageSyntax.markPackageParsed(pkg)
 }
 
 // PackageLocalities returns the legacy canonical-only metadata view. Its

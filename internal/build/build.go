@@ -501,7 +501,7 @@ func Build(inv Invocation) ([]Package, error) {
 		if llruntime.SkipToBuild(pkg.Path()) {
 			return
 		}
-		if err := cl.ParsePkgSyntax(prog, cfg.Fset, pkg, files); err != nil {
+		if err := cl.ParsePkgSyntaxWithOptions(prog, cfg.Fset, pkg, files, frontendOptions); err != nil {
 			recordSyntaxErr(err)
 		}
 	})
@@ -587,19 +587,6 @@ func Build(inv Invocation) ([]Package, error) {
 		}
 		return nil
 	})
-	if err := prepareLocalVariables(prog, initial, altPkgs); err != nil {
-		return nil, err
-	}
-	backendTemplate.typeSizes = backendTypeSizes
-	backendTemplate.runtimePackage = altPkgs[0].Types
-	if pkg := dedup.Check(llssa.PkgPython); pkg != nil {
-		backendTemplate.pythonPackage = pkg.Types
-	}
-	backendTemplate.inputs = collectBackendProgramInputs(prog, initial, altPkgs)
-	backendTemplate.localities = prog.FreezeLocalityState()
-	backendTemplate.llvmTarget = export.LLVMTarget
-	backendTemplate.targetABI = export.TargetABI
-
 	buildMode := ssaBuildMode
 	cabiOptimize := true
 	passOpt := true
@@ -617,7 +604,21 @@ func Build(inv Invocation) ([]Package, error) {
 	progSSA := ssa.NewProgram(initial[0].Fset, buildMode)
 	patches := make(cl.Patches, len(altPkgPaths))
 	altEntries := registerAltSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
-	appendPatchedBackendInputs(&backendTemplate, patches, dedup)
+	if err := preloadPatchedPackageSyntax(prog, patches, dedup, frontendOptions); err != nil {
+		return nil, err
+	}
+	if err := prepareLocalVariables(prog, initial, altPkgs); err != nil {
+		return nil, err
+	}
+	backendTemplate.typeSizes = backendTypeSizes
+	backendTemplate.runtimePackage = altPkgs[0].Types
+	if pkg := dedup.Check(llssa.PkgPython); pkg != nil {
+		backendTemplate.pythonPackage = pkg.Types
+	}
+	backendTemplate.packageSyntax = prog.FreezePackageSyntaxState()
+	backendTemplate.localities = prog.FreezeLocalityState()
+	backendTemplate.llvmTarget = export.LLVMTarget
+	backendTemplate.targetABI = export.TargetABI
 
 	output := conf.OutFile != ""
 	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
@@ -931,13 +932,6 @@ func (c *context) closePackageMetas() {
 	}
 }
 
-type backendProgramInput struct {
-	fset        *token.FileSet
-	pkg         *types.Package
-	files       []*ast.File
-	parseSyntax bool
-}
-
 // backendProgramTemplate contains immutable build-local inputs. Creating a
 // session allocates a new llssa.Program, LLVM context, TargetMachine, and C ABI
 // transformer; no LLVM-owned state is shared between sessions.
@@ -953,7 +947,7 @@ type backendProgramTemplate struct {
 	funcInfoSites       bool
 	runtimePackage      *types.Package
 	pythonPackage       *types.Package
-	inputs              []backendProgramInput
+	packageSyntax       llssa.PackageSyntaxState
 	localities          llssa.LocalityState
 	llvmTarget          string
 	targetABI           string
@@ -1015,67 +1009,37 @@ func (t backendProgramTemplate) newProgram() llssa.Program {
 
 func (t backendProgramTemplate) newSession() (backendSession, error) {
 	prog := t.newProgram()
-	if err := t.replayProgramState(prog); err != nil {
-		prog.Dispose()
-		return backendSession{}, err
-	}
+	prog.UsePackageSyntaxState(t.packageSyntax)
+	prog.UseLocalityState(t.localities)
 	return backendSession{
 		prog:        prog,
 		transformer: cabi.NewTransformer(prog, t.llvmTarget, t.targetABI, t.abiMode, t.cabiOptimize),
 	}, nil
 }
 
-func (t backendProgramTemplate) replayProgramState(prog llssa.Program) error {
-	for _, input := range t.inputs {
-		if input.parseSyntax {
-			if err := cl.ParsePkgSyntax(prog, input.fset, input.pkg, input.files); err != nil {
-				return err
-			}
-		}
-	}
-	prog.UseLocalityState(t.localities)
-	return nil
-}
-
-func collectBackendProgramInputs(prog llssa.Program, groups ...[]*packages.Package) []backendProgramInput {
-	seen := make(map[*types.Package]bool)
-	var inputs []backendProgramInput
-	for _, roots := range groups {
-		packages.Visit(roots, nil, func(pkg *packages.Package) {
-			if pkg == nil || pkg.Types == nil || pkg.IllTyped || seen[pkg.Types] {
-				return
-			}
-			seen[pkg.Types] = true
-			parsed := prog.PackageSyntaxParsed(pkg.Types)
-			inputs = append(inputs, backendProgramInput{
-				fset:        pkg.Fset,
-				pkg:         pkg.Types,
-				files:       slices.Clone(pkg.Syntax),
-				parseSyntax: parsed && !llruntime.SkipToBuild(pkg.PkgPath),
-			})
-		})
-	}
-	return inputs
-}
-
-func appendPatchedBackendInputs(template *backendProgramTemplate, patches cl.Patches, dedup packages.Deduper) {
+func preloadPatchedPackageSyntax(prog llssa.Program, patches cl.Patches, dedup packages.Deduper, options cl.Options) error {
 	paths := make([]string, 0, len(patches))
 	for pkgPath := range patches {
 		paths = append(paths, pkgPath)
 	}
 	slices.Sort(paths)
 	for _, pkgPath := range paths {
+		patch := patches[pkgPath]
 		alt := dedup.Check(altPkgPathPrefix + pkgPath)
-		if alt == nil || len(alt.Syntax) == 0 {
+		if alt == nil || len(alt.Syntax) == 0 || patch.Types == nil {
 			continue
 		}
-		template.inputs = append(template.inputs, backendProgramInput{
-			fset:        alt.Fset,
-			pkg:         types.NewPackage(pkgPath, ""),
-			files:       slices.Clone(alt.Syntax),
-			parseSyntax: true,
-		})
+		fset := alt.Fset
+		files := slices.Clone(alt.Syntax)
+		if original := dedup.Check(pkgPath); original != nil {
+			fset = original.Fset
+			files = append(slices.Clone(original.Syntax), files...)
+		}
+		if err := cl.ParsePkgSyntaxWithOptions(prog, fset, patch.Types, files, options); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func (c *context) compiler() *clang.Cmd {

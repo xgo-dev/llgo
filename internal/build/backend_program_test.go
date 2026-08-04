@@ -17,11 +17,10 @@
 package build
 
 import (
+	"go/token"
 	"go/types"
 	"testing"
 
-	"github.com/goplus/llgo/cl"
-	"github.com/goplus/llgo/internal/packages"
 	llssa "github.com/goplus/llgo/ssa"
 )
 
@@ -68,22 +67,31 @@ func TestBackendProgramTemplateOptionalState(t *testing.T) {
 		t.Fatal("backend program created without a default target")
 	}
 
-	validTypes := types.NewPackage("example.com/valid", "valid")
-	valid := &packages.Package{PkgPath: "example.com/valid", Types: validTypes}
-	duplicate := &packages.Package{PkgPath: "example.com/duplicate", Types: validTypes}
-	missingTypes := &packages.Package{PkgPath: "example.com/missing"}
-	illTyped := &packages.Package{PkgPath: "example.com/ill", Types: types.NewPackage("example.com/ill", "ill"), IllTyped: true}
-	inputs := collectBackendProgramInputs(prog, []*packages.Package{missingTypes, illTyped, valid, duplicate})
-	if len(inputs) != 1 || inputs[0].pkg != validTypes {
-		t.Fatalf("backend inputs = %#v, want one deduplicated package", inputs)
+	coordinator := llssa.NewProgram(nil)
+	defer coordinator.Dispose()
+	pkg := types.NewPackage("example.com/shared", "shared")
+	fset := token.NewFileSet()
+	coordinator.SetLinkname("example.com/shared.Entry", "shared_entry")
+	coordinator.SetPackageExport("example.com/shared.Entry", "shared_entry")
+	coordinator.SetClosureEnvDirective(fset, "example.com/shared.Entry", token.Pos(7))
+	coordinator.MarkPackageSyntaxParsed(pkg)
+	template.packageSyntax = coordinator.FreezePackageSyntaxState()
+	sharedSession, err := template.newSession()
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	patched := backendProgramTemplate{}
-	appendPatchedBackendInputs(&patched, cl.Patches{
-		"example.com/missing": {},
-		"example.com/other":   {},
-	}, packages.NewDeduper())
-	if len(patched.inputs) != 0 {
-		t.Fatalf("missing patched packages produced inputs: %#v", patched.inputs)
+	shared := sharedSession.prog
+	defer shared.Dispose()
+	if !shared.PackageSyntaxParsed(pkg) {
+		t.Fatal("backend Program lost shared parsed-package state")
+	}
+	if link, ok := shared.Linkname("example.com/shared.Entry"); !ok || link != "shared_entry" {
+		t.Fatalf("shared linkname = (%q, %v), want (shared_entry, true)", link, ok)
+	}
+	if export, ok := shared.PackageExport("example.com/shared.Entry"); !ok || export != "shared_entry" {
+		t.Fatalf("shared export = (%q, %v), want (shared_entry, true)", export, ok)
+	}
+	if !shared.HasClosureEnvDirective(fset, "example.com/shared.Entry", token.Pos(7)) {
+		t.Fatal("backend Program lost shared closure environment directive")
 	}
 }

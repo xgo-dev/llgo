@@ -21,20 +21,20 @@ import (
 	"go/token"
 	"go/types"
 	"reflect"
-	"sync"
 	"unsafe"
 )
 
 // -----------------------------------------------------------------------------
 
 type goTypes struct {
-	typs  map[unsafe.Pointer]unsafe.Pointer
-	typbg sync.Map
+	typs          map[unsafe.Pointer]unsafe.Pointer
+	packageSyntax *packageSyntaxData
 }
 
 func newGoTypes() goTypes {
+	packageSyntax := newPackageSyntaxData()
 	typs := make(map[unsafe.Pointer]unsafe.Pointer)
-	return goTypes{typs: typs}
+	return goTypes{typs: typs, packageSyntax: packageSyntax}
 }
 
 type Background int
@@ -101,7 +101,7 @@ func (p goTypes) cvtType(typ types.Type) (raw types.Type, cvt bool) {
 		}
 		return p.cvtStruct(t)
 	case *types.Named:
-		if v, ok := p.typbg.Load(namedLinkname(t)); ok && v.(Background) == InC {
+		if bg, ok := p.packageSyntax.typeBackground(namedLinkname(t)); ok && bg == InC {
 			break
 		}
 		return p.cvtNamed(t)
