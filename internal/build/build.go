@@ -1392,10 +1392,15 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 		funcInfo = prepareFuncInfoTableRecords(collectFuncInfo(linkedOrder), nil)
 		pcLineInfo = collectPCLineInfo(linkedOrder)
 	}
+	packageInits, err := linkedPackageInitNames(pkg, linkedOrder)
+	if err != nil {
+		return err
+	}
 	entryPkg := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{
 		rtInit:        needRuntime,
 		pyInit:        needPyInit,
 		abiInit:       needAbiInit,
+		packageInits:  packageInits,
 		methodByIndex: methodByIndex,
 		methodByName:  methodByName,
 		abiSymbols:    linkedModuleGlobals(linkedOrder),

@@ -652,6 +652,12 @@ func TestPkgKindOf(t *testing.T) {
 	if v, _ := PkgKindOf(pkg); v != PkgNoInit {
 		t.Fatal("PkgKindOf foo:", v)
 	}
+	if PkgSkipsInit(PkgNormal) {
+		t.Fatal("normal package skips initialization")
+	}
+	if !PkgSkipsInit(PkgNoInit) || !PkgSkipsInit(PkgDeclOnly) {
+		t.Fatal("noinit/decl-only package does not skip initialization")
+	}
 }
 
 func TestIsAny(t *testing.T) {

@@ -708,7 +708,7 @@ func (p *context) funcKind(vfn ssa.Value) int {
 func (p *context) pkgNoInit(pkg *types.Package) bool {
 	p.ensureLoaded(pkg)
 	if i, ok := p.loaded[pkg]; ok {
-		return i.kind >= PkgNoInit
+		return PkgSkipsInit(i.kind)
 	}
 	return false
 }

@@ -39,6 +39,7 @@ type genConfig struct {
 	rtInit        bool
 	pyInit        bool
 	abiInit       int
+	packageInits  []string
 	methodByIndex map[int]none
 	methodByName  map[string]none
 	abiSymbols    map[string]none
@@ -110,6 +111,11 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 
 	mainInit := declareNoArgFunc(mainPkg, pkgPath+".init")
 	mainMain := declareNoArgFunc(mainPkg, pkgPath+".main")
+	packageInits := make([]llssa.Function, len(cfg.packageInits))
+	for i, name := range cfg.packageInits {
+		packageInits[i] = declareNoArgFunc(mainPkg, name)
+	}
+	defineRootInitTask(mainPkg, pkgPath)
 
 	if ctx.buildConf.BuildMode != BuildModeExe {
 		initArraySection := ""
@@ -120,6 +126,7 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 		// The C test runner supplies argc/argv before calling the generated
 		// test main package's init and main functions.
 		if ctx.mode != ModeTest {
+			inits = append(inits, packageInits...)
 			inits = append(inits, mainInit)
 		}
 		defineLibraryRuntimeInit(mainPkg, initArraySection, inits...)
@@ -127,13 +134,14 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	}
 
 	entryFn := defineEntryFunction(ctx, mainPkg, argcVar, argvVar, argvValueType, entryFunctions{
-		runtimeStub: runtimeStub,
-		mainInit:    mainInit,
-		mainMain:    mainMain,
-		pyInit:      pyInit,
-		pyFinalize:  pyFinalize,
-		rtInit:      rtInit,
-		abiInit:     abiInit,
+		runtimeStub:  runtimeStub,
+		mainInit:     mainInit,
+		mainMain:     mainMain,
+		pyInit:       pyInit,
+		pyFinalize:   pyFinalize,
+		rtInit:       rtInit,
+		abiInit:      abiInit,
+		packageInits: packageInits,
 	})
 
 	if needStart(ctx) {
@@ -221,13 +229,14 @@ func filterAbiSymbol(abiInit int, sym *llssa.AbiSymbol) bool {
 }
 
 type entryFunctions struct {
-	runtimeStub llssa.Function
-	mainInit    llssa.Function
-	mainMain    llssa.Function
-	pyInit      llssa.Function
-	pyFinalize  llssa.Function
-	rtInit      llssa.Function
-	abiInit     llssa.Function
+	runtimeStub  llssa.Function
+	mainInit     llssa.Function
+	mainMain     llssa.Function
+	pyInit       llssa.Function
+	pyFinalize   llssa.Function
+	rtInit       llssa.Function
+	abiInit      llssa.Function
+	packageInits []llssa.Function
 }
 
 // defineEntryFunction creates the program's entry function. The name is
@@ -271,6 +280,9 @@ func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa
 		b.Call(fns.abiInit.Expr)
 	}
 	b.Call(fns.runtimeStub.Expr)
+	for _, init := range fns.packageInits {
+		b.Call(init.Expr)
+	}
 	b.Call(fns.mainInit.Expr)
 	b.Call(fns.mainMain.Expr)
 	if fns.pyFinalize != nil {
@@ -294,6 +306,15 @@ func defineStart(pkg llssa.Package, entry llssa.Function, argvType llssa.Type) {
 
 func declareNoArgFunc(pkg llssa.Package, name string) llssa.Function {
 	return pkg.NewFunc(name, llssa.NoArgsNoRet, llssa.InC)
+}
+
+// defineRootInitTask exposes the header of the compiler-generated Go init task.
+// LLGo runs package initialization through guarded package init functions, so
+// there are no runtime-dispatched function entries in this compatibility task.
+func defineRootInitTask(pkg llssa.Package, pkgPath string) {
+	prog := pkg.Prog
+	taskType := prog.Struct(prog.Uint32(), prog.Uint32())
+	pkg.NewVarEx(pkgPath+"..inittask", prog.Pointer(taskType)).InitNil()
 }
 
 func defineWeakNoArgStub(pkg llssa.Package, name string) llssa.Function {

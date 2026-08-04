@@ -1929,16 +1929,6 @@ xfails:
   - version: go1.24
     platform: darwin/arm64
     directive: run
-    case: init1.go
-    reason: current main goroot run failure on darwin/arm64
-  - version: go1.25
-    platform: darwin/arm64
-    directive: run
-    case: init1.go
-    reason: current main goroot run failure on darwin/arm64
-  - version: go1.24
-    platform: darwin/arm64
-    directive: run
     case: finprofiled.go
     reason: LLGo finalizer profiling run hangs beyond the 1m timeout on darwin/arm64
   - version: go1.25
@@ -2007,10 +1997,6 @@ xfails:
     directive: run
     case: convert5.go
     reason: out-of-range float-to-uint32 conversions wrap instead of producing zero on darwin/arm64
-  - platform: darwin/arm64
-    directive: run
-    case: noinit.go
-    reason: current main goroot run failure on darwin/arm64
   - version: go1.24
     platform: darwin/arm64
     directive: run
@@ -2092,11 +2078,6 @@ xfails:
   - version: go1.24
     platform: linux/amd64
     directive: run
-    case: noinit.go
-    reason: go1.24 goroot run failure on linux/amd64
-  - version: go1.24
-    platform: linux/amd64
-    directive: run
     case: recover2.go
     reason: go1.24 goroot run failure on linux/amd64
   - version: go1.24
@@ -2162,11 +2143,6 @@ xfails:
   - version: go1.25
     platform: linux/amd64
     directive: run
-    case: noinit.go
-    reason: go1.25 goroot run failure on linux/amd64
-  - version: go1.25
-    platform: linux/amd64
-    directive: run
     case: recover2.go
     reason: go1.25 goroot run failure on linux/amd64
   - version: go1.25
@@ -2213,11 +2189,6 @@ xfails:
     platform: linux/amd64
     directive: run
     case: init1.go
-    reason: go1.26 goroot run failure on linux/amd64
-  - version: go1.26
-    platform: linux/amd64
-    directive: run
-    case: noinit.go
     reason: go1.26 goroot run failure on linux/amd64
   - version: go1.26
     platform: linux/amd64
@@ -2954,10 +2925,6 @@ xfails:
     directive: rundir
     case: fixedbugs/issue29919.go
     reason: runtime CallersFrames reports llgo package names and initialization line metadata differently
-  - version: go1.26
-    directive: rundir
-    case: fixedbugs/issue31636.go
-    reason: llgo initializes independent imported packages in reverse source order
   - version: go1.26
     directive: rundir
     case: fixedbugs/issue24693.go

@@ -96,6 +96,12 @@ func PkgKindOf(pkg *types.Package) (int, string) {
 	return kind, param
 }
 
+// PkgSkipsInit reports whether packages of kind are excluded from Go package
+// initialization.
+func PkgSkipsInit(kind int) bool {
+	return kind >= PkgNoInit
+}
+
 // decl: a package that only contains declarations
 // noinit: a package that does not need to be initialized
 func pkgKind(v string) (int, string) {
