@@ -130,7 +130,8 @@ func (p *goProgram) extraSize(typ types.Type, ptrSize int64) (ret int64) {
 retry:
 	switch t := typ.(type) {
 	case *types.Named:
-		if v, ok := p.gocvt.typbg.Load(namedLinkname(t)); ok && v.(Background) == InC {
+		prog := Program(unsafe.Pointer(p))
+		if background, ok := prog.packageTypeBackground(namedLinkname(t)); ok && background == InC {
 			return 0
 		}
 		typ = t.Underlying()

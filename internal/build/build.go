@@ -448,6 +448,7 @@ func Build(inv Invocation) ([]Package, error) {
 		ExportRename: conf.Target != "",
 		ShadowStack:  isEnvOn(llgoShadowStack, false),
 	}
+	preloadOptions := frontendOptions
 	llssaInitOnce.Do(func() {
 		llssa.Initialize(llssa.InitAll)
 	})
@@ -502,7 +503,7 @@ func Build(inv Invocation) ([]Package, error) {
 		if llruntime.SkipToBuild(pkg.Path()) {
 			return
 		}
-		if err := cl.ParsePkgSyntax(prog, cfg.Fset, pkg, files); err != nil {
+		if err := cl.ParsePkgSyntaxWithOptions(prog, cfg.Fset, pkg, files, preloadOptions); err != nil {
 			recordSyntaxErr(err)
 		}
 	})
@@ -579,15 +580,12 @@ func Build(inv Invocation) ([]Package, error) {
 		return nil, err
 	}
 
-	prog.SetRuntime(func() *types.Package {
-		return altPkgs[0].Types
-	})
-	prog.SetPython(func() *types.Package {
-		return dedup.Check(llssa.PkgPython).Types
-	})
-	if err := prepareLocalVariables(prog, initial, altPkgs); err != nil {
-		return nil, err
+	prog.SetRuntime(altPkgs[0].Types)
+	var pythonPackage *types.Package
+	if python := dedup.Check(llssa.PkgPython); python != nil {
+		pythonPackage = python.Types
 	}
+	prog.SetPython(func() *types.Package { return pythonPackage })
 
 	buildMode := ssaBuildMode
 	cabiOptimize := true
@@ -603,6 +601,13 @@ func Build(inv Invocation) ([]Package, error) {
 	progSSA := ssa.NewProgram(initial[0].Fset, buildMode)
 	patches := make(cl.Patches, len(altPkgPaths))
 	altEntries := registerAltSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
+	if err := preloadPatchedPackageSyntax(prog, patches, dedup, preloadOptions); err != nil {
+		return nil, err
+	}
+	if err := prepareLocalVariables(prog, initial, altPkgs); err != nil {
+		return nil, err
+	}
+	frontendOptions.PreloadedSyntax = true
 
 	output := conf.OutFile != ""
 	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
@@ -634,6 +639,7 @@ func Build(inv Invocation) ([]Package, error) {
 		return nil, err
 	}
 	buildSSAPkgs(ctx, append(append(altEntries, pkgEntries...), depEntries...))
+	ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	allPkgs = append(allPkgs, depPkgs...)
@@ -911,6 +917,55 @@ func (c *context) closePackageMetas() {
 		_ = pkg.Meta.Close()
 		pkg.Meta = nil
 	}
+}
+
+// backendSession owns all LLVM state used to lower one package. The Program
+// shares only the coordinator's already-prepared Go metadata.
+type backendSession struct {
+	prog        llssa.Program
+	transformer *cabi.Transformer
+}
+
+func (c *context) newBackendSession() backendSession {
+	prog := c.prog.NewBackendProgram()
+	return backendSession{
+		prog: prog,
+		transformer: cabi.NewTransformer(
+			prog,
+			c.crossCompile.LLVMTarget,
+			c.crossCompile.TargetABI,
+			c.buildConf.AbiMode,
+			!shouldEmitDebugInfo(c.buildConf, &c.crossCompile),
+		),
+	}
+}
+
+// preloadPatchedPackageSyntax prepares the effective types.Package used by
+// patched lowering. Normal and alternate packages are already covered by the
+// packages loader's preload callback, but patch.Types has a distinct identity.
+func preloadPatchedPackageSyntax(prog llssa.Program, patches cl.Patches, dedup packages.Deduper, options cl.Options) error {
+	paths := make([]string, 0, len(patches))
+	for pkgPath := range patches {
+		paths = append(paths, pkgPath)
+	}
+	slices.Sort(paths)
+	for _, pkgPath := range paths {
+		patch := patches[pkgPath]
+		alt := dedup.Check(altPkgPathPrefix + pkgPath)
+		if alt == nil || len(alt.Syntax) == 0 || patch.Types == nil {
+			continue
+		}
+		fset := alt.Fset
+		files := slices.Clone(alt.Syntax)
+		if original := dedup.Check(pkgPath); original != nil {
+			fset = original.Fset
+			files = append(slices.Clone(original.Syntax), files...)
+		}
+		if err := cl.ParsePkgSyntaxWithOptions(prog, fset, patch.Types, files, options); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *context) compiler() *clang.Cmd {
