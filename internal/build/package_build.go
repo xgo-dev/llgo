@@ -16,7 +16,13 @@
 
 package build
 
-import "github.com/goplus/llgo/cl"
+import (
+	"fmt"
+	"sync"
+
+	"github.com/goplus/llgo/cl"
+	"github.com/goplus/llgo/internal/packages"
+)
 
 type packageBuildTask struct {
 	pkg       *aPackage
@@ -57,6 +63,304 @@ func (t *packageBuildTask) needsRuntimeSignals() bool {
 type packageBuildResult struct {
 	needRuntime bool
 	needPyInit  bool
+}
+
+func prePackageBuilds(ctx *context, tasks []*packageBuildTask, verbose bool) error {
+	for _, task := range tasks {
+		if err := prePackageBuild(ctx, task, verbose); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func packageBuildTasksForRuntime(tasks []*packageBuildTask, runtime bool) []*packageBuildTask {
+	filtered := make([]*packageBuildTask, 0, len(tasks))
+	for _, task := range tasks {
+		if task.isRuntime() == runtime {
+			filtered = append(filtered, task)
+		}
+	}
+	return filtered
+}
+
+// buildPrePackageGroup keeps backend execution and archive publication
+// in one package task. A completed backend therefore writes its archive and
+// cache metadata immediately instead of contributing to a later I/O burst.
+func buildPrePackageGroup(ctx *context, tasks []*packageBuildTask, verbose bool) ([]packageBuildResult, error) {
+	if len(tasks) == 0 {
+		return nil, nil
+	}
+	// cacheManager is lazily initialized. Resolve it on the coordinator before
+	// package workers can enter saveToCache concurrently.
+	if cacheEnabled() {
+		ctx.ensureCacheManager()
+	}
+
+	patched, coordinator, isolated, err := partitionPackageExecutions(ctx, tasks)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]packageBuildResult, len(tasks))
+	for _, index := range patched {
+		task := tasks[index]
+		result, err := executeAndFinalizePackage(ctx, task, verbose, func() error {
+			return executePrePackage(ctx, task, verbose)
+		})
+		if err != nil {
+			return nil, err
+		}
+		results[index] = result
+	}
+	for _, index := range coordinator {
+		task := tasks[index]
+		result, err := executeAndFinalizePackage(ctx, task, verbose, func() error {
+			return executePackageBuild(ctx, task, verbose)
+		})
+		if err != nil {
+			return nil, err
+		}
+		results[index] = result
+	}
+	if err := executeIsolatedPackages(ctx, tasks, isolated, results, verbose); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+func partitionPackageExecutions(ctx *context, tasks []*packageBuildTask) (patched, coordinator, isolated []int, err error) {
+	for i, task := range tasks {
+		// A skipped task has no backend work to classify. Keep it on the
+		// coordinator path so executeAndFinalizePackage can return its cached
+		// runtime signals without consulting backend-only inputs such as SFiles.
+		if task.skip {
+			coordinator = append(coordinator, i)
+			continue
+		}
+		if _, ok := ctx.patches[task.pkg.PkgPath]; ok {
+			patched = append(patched, i)
+			continue
+		}
+		serial, serialErr := ctx.packageRequiresCoordinator(task)
+		if serialErr != nil {
+			return nil, nil, nil, serialErr
+		}
+		if serial {
+			coordinator = append(coordinator, i)
+		} else {
+			isolated = append(isolated, i)
+		}
+	}
+	return
+}
+
+func executePrePackage(ctx *context, task *packageBuildTask, verbose bool) error {
+	if task.skip {
+		return nil
+	}
+	serial, err := ctx.packageRequiresCoordinator(task)
+	if err != nil {
+		return err
+	}
+	if serial {
+		return executePackageBuild(ctx, task, verbose)
+	}
+	return ctx.executeIsolatedPackage(task, verbose)
+}
+
+func executeIsolatedPackages(ctx *context, tasks []*packageBuildTask, indexes []int, results []packageBuildResult, verbose bool) error {
+	if len(indexes) == 0 {
+		return nil
+	}
+	return runBoundedPackageJobs(ctx.buildConf.parallelism(), indexes, func(index int) error {
+		task := tasks[index]
+		result, err := executeAndFinalizePackage(ctx, task, verbose, func() error {
+			return ctx.executeIsolatedPackage(task, verbose)
+		})
+		results[index] = result
+		return err
+	})
+}
+
+type packageBuildStep func() error
+type packageFinalizeStep func() (packageBuildResult, error)
+
+func executeAndFinalizePackage(ctx *context, task *packageBuildTask, verbose bool, execute packageBuildStep) (packageBuildResult, error) {
+	return runPackageBuildTask(task, execute, func() (packageBuildResult, error) {
+		return finalizePackageBuild(ctx, task, verbose)
+	})
+}
+
+// runPackageBuildTask defines the worker lifetime: publication is part of the
+// package task and runs immediately after a successful backend.
+func runPackageBuildTask(task *packageBuildTask, execute packageBuildStep, finalize packageFinalizeStep) (packageBuildResult, error) {
+	if task.skip {
+		return packageBuildResultFor(task), nil
+	}
+	if err := execute(); err != nil {
+		return packageBuildResultFor(task), err
+	}
+	return finalize()
+}
+
+func runBoundedPackageJobs(parallelism int, indexes []int, run func(index int) error) error {
+	if len(indexes) == 0 {
+		return nil
+	}
+	workers := min(max(1, parallelism), len(indexes))
+	jobs := make(chan int, len(indexes))
+	errs := make(map[int]error, len(indexes))
+	var errsMu sync.Mutex
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				if err := runPackageJob(index, run); err != nil {
+					errsMu.Lock()
+					errs[index] = err
+					errsMu.Unlock()
+				}
+			}
+		}()
+	}
+	for _, index := range indexes {
+		jobs <- index
+	}
+	close(jobs)
+	wg.Wait()
+	for _, index := range indexes {
+		if err := errs[index]; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runPackageJob(index int, run func(index int) error) (err error) {
+	defer func() {
+		if value := recover(); value != nil {
+			if recovered, ok := value.(error); ok {
+				err = recovered
+			} else {
+				err = fmt.Errorf("package job %d panicked: %v", index, value)
+			}
+		}
+	}()
+	return run(index)
+}
+
+func (ctx *context) canUseIsolatedBackend() bool {
+	return ctx.mode != ModeGen &&
+		ctx.buildConf.BuildMode == BuildModeExe &&
+		ctx.buildConf.ModuleHook == nil
+}
+
+func (ctx *context) packageRequiresCoordinator(task *packageBuildTask) (bool, error) {
+	if !ctx.canUseIsolatedBackend() {
+		return true, nil
+	}
+	usesPlan9, err := ctx.packageUsesPlan9Asm(task.pkg)
+	if err != nil {
+		return false, err
+	}
+	return usesPlan9, nil
+}
+
+func (ctx *context) packageUsesPlan9Asm(pkg *aPackage) (bool, error) {
+	check := func(p *packages.Package) (bool, error) {
+		if p == nil {
+			return false, nil
+		}
+		sfiles, err := pkgSFiles(ctx, p)
+		if err != nil {
+			return false, err
+		}
+		return len(sfiles) != 0 && ctx.plan9asmEnabled(p.PkgPath), nil
+	}
+	if yes, err := check(pkg.Package); err != nil || yes {
+		return yes, err
+	}
+	if pkg.AltPkg != nil {
+		return check(pkg.AltPkg.Package)
+	}
+	return false, nil
+}
+
+func (ctx *context) executeIsolatedPackage(task *packageBuildTask, verbose bool) error {
+	session := ctx.newBackendSession()
+	owned := true
+	defer func() {
+		if owned {
+			task.pkg.LPkg = nil
+			session.prog.Dispose()
+		}
+	}()
+	backendCtx := ctx.newBackendTask(session)
+
+	if err := buildPkg(backendCtx, task.pkg, verbose); err != nil {
+		return err
+	}
+	ctx.retainBackendProgram(task.pkg, session.prog)
+	owned = false
+	if task.pkg.LPkg == nil {
+		return nil
+	}
+	if task.needsRuntimeSignals() {
+		task.pkg.setNeedRuntimeOrPyInit(task.pkg.LPkg.NeedRuntime, task.pkg.LPkg.NeedPyInit)
+	}
+	// Linking still consumes live package state: method tables, globals,
+	// funcinfo/PCLN, C exports, and DCE source modules. Cache hits intentionally
+	// follow the serial path: rebuild the frontend module, skip backend emission,
+	// then keep that module alive until every link has completed.
+	//
+	// A future PackageSummary can carry those facts and allow immediate worker
+	// teardown. Until then ownership moves to the coordinator on every success,
+	// not only when dead-code dropping is enabled.
+	return nil
+}
+
+func preparePackageSFiles(ctx *context, pkg *aPackage) error {
+	if _, err := pkgSFiles(ctx, pkg.Package); err != nil {
+		return err
+	}
+	if pkg.AltPkg != nil {
+		if _, err := pkgSFiles(ctx, pkg.AltPkg.Package); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (ctx *context) newBackendTask(session backendSession) *context {
+	// prePackageBuilds populated every task's SFiles entry before workers start.
+	// Backend tasks share that map read-only; a frozen miss returns an error.
+	return &context{
+		conf:            ctx.conf,
+		progSSA:         ctx.progSSA,
+		prog:            session.prog,
+		dedup:           ctx.dedup,
+		patches:         ctx.patches,
+		callerTracking:  ctx.callerTracking,
+		initial:         ctx.initial,
+		pkgs:            ctx.pkgs,
+		pkgByID:         ctx.pkgByID,
+		mode:            ctx.mode,
+		output:          ctx.output,
+		passOpt:         ctx.passOpt,
+		buildConf:       ctx.buildConf,
+		crossCompile:    ctx.crossCompile,
+		commands:        ctx.commands,
+		frontendOptions: ctx.frontendOptions,
+		cTransformer:    session.transformer,
+		sfilesCache:     ctx.sfilesCache,
+		sfilesFrozen:    true,
+		plan9asmReady:   true,
+		plan9asmMode:    ctx.plan9asmMode,
+		plan9asmPkgs:    ctx.plan9asmPkgs,
+		plan9asmSigs:    make(map[string]map[string]struct{}),
+	}
 }
 
 func packageBuildResultFor(task *packageBuildTask) packageBuildResult {

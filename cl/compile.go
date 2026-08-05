@@ -74,6 +74,9 @@ type Options struct {
 	Trace        bool
 	ExportRename bool
 	ShadowStack  bool
+	// PreloadedSyntax means all Program-side source metadata was collected
+	// before lowering and is now shared read-only by backend Programs.
+	PreloadedSyntax bool
 }
 
 func legacyOptions() Options {
@@ -2231,8 +2234,10 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		pkg.Pkg = pkgTypes
 		patch.Alt.Pkg = pkgTypes
 	}
-	if err = ParsePkgSyntax(prog, pkgProg.Fset, pkgTypes, files); err != nil {
-		return nil, nil, err
+	if !options.PreloadedSyntax {
+		if err = ParsePkgSyntaxWithOptions(prog, pkgProg.Fset, pkgTypes, files, options); err != nil {
+			return nil, nil, err
+		}
 	}
 	if err = prog.ValidateLocalitiesFor(pkgTypes); err != nil {
 		return nil, nil, err
