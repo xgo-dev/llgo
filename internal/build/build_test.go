@@ -216,6 +216,111 @@ func TestConcurrentInvocationsIsolateFrontendOptions(t *testing.T) {
 	}
 }
 
+func TestConcurrentDeadcodeBuildsUseIndependentWorkerContexts(t *testing.T) {
+	if !buildenv.Dev {
+		t.Skip("deadcode drop requires a development build")
+	}
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(repoRoot, "cl", "_testdrop", "direct_method")
+	t.Setenv("LLGO_ROOT", repoRoot)
+	t.Setenv(llgoBuildCache, "0")
+
+	type result struct {
+		output string
+		err    error
+	}
+	results := make(chan result, 2)
+	for i := range 2 {
+		output := filepath.Join(t.TempDir(), fmt.Sprintf("direct-method-%d", i))
+		conf := NewDefaultConf(ModeBuild)
+		conf.DeadcodeDrop = true
+		conf.PCLNMode = PCLNNone
+		conf.BuildParallelism = 2
+		conf.OutFile = output
+		go func() {
+			_, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: fixture})
+			results <- result{output: output, err: err}
+		}()
+	}
+
+	for range 2 {
+		got := <-results
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		data, err := exec.Command(got.output).CombinedOutput()
+		if err != nil {
+			t.Fatalf("run %s: %v\n%s", got.output, err, data)
+		}
+		if strings.TrimSpace(string(data)) != "42" {
+			t.Fatalf("run %s output = %q, want 42", got.output, data)
+		}
+	}
+}
+
+func TestDeadcodeBuildColdAndHotPackageCache(t *testing.T) {
+	if !buildenv.Dev {
+		t.Skip("deadcode drop requires a development build")
+	}
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(repoRoot, "cl", "_testdrop", "direct_method")
+	t.Setenv("LLGO_ROOT", repoRoot)
+	t.Setenv(llgoBuildCache, "1")
+
+	for _, parallelism := range []int{1, 8} {
+		t.Run(fmt.Sprintf("p%d", parallelism), func(t *testing.T) {
+			oldCacheRoot := cacheRootFunc
+			cacheDir := t.TempDir()
+			cacheRootFunc = func() string { return cacheDir }
+			defer func() { cacheRootFunc = oldCacheRoot }()
+
+			build := func(name string) []Package {
+				output := filepath.Join(t.TempDir(), name)
+				conf := NewDefaultConf(ModeBuild)
+				conf.DeadcodeDrop = true
+				conf.PCLNMode = PCLNNone
+				conf.BuildParallelism = parallelism
+				conf.OutFile = output
+				pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: fixture})
+				if err != nil {
+					t.Fatal(err)
+				}
+				data, err := exec.Command(output).CombinedOutput()
+				if err != nil {
+					t.Fatalf("run %s: %v\n%s", output, err, data)
+				}
+				if strings.TrimSpace(string(data)) != "42" {
+					t.Fatalf("run %s output = %q, want 42", output, data)
+				}
+				return pkgs
+			}
+
+			first := build("cold")
+			for _, pkg := range first {
+				if pkg.CacheHit {
+					t.Fatalf("cold build unexpectedly hit package cache for %s", pkg.PkgPath)
+				}
+			}
+			second := build("hot")
+			cacheHits := 0
+			for _, pkg := range second {
+				if pkg.CacheHit {
+					cacheHits++
+				}
+			}
+			if cacheHits == 0 {
+				t.Fatal("hot build did not reuse any package archives")
+			}
+		})
+	}
+}
+
 func TestResolveOutputsUsesInvocationDirectory(t *testing.T) {
 	dir := t.TempDir()
 	out := &OutFmtDetails{

@@ -980,12 +980,30 @@ func runtimeCallerFuncSet(c *CallerTracking, pkg *ssa.Package) map[*ssa.Function
 // queries (criterion 2 below) hit the memoization. It must not outlive
 // the compilation — the maps are keyed by *ssa.Package with
 // *ssa.Function values, so anything longer-lived would pin every
-// compiled package's go/types and go/ssa graphs. Plain maps are enough:
-// packages of one compilation are compiled sequentially (the LLVM
-// context is not thread-safe).
+// compiled package's go/types and go/ssa graphs. Concurrent drivers call
+// Precompute before workers start and then share the plain maps read-only.
 type CallerTracking struct {
 	base     map[*ssa.Package]map[*ssa.Function]bool
 	extended map[*ssa.Package]map[*ssa.Function]bool
+}
+
+// Precompute resolves caller-tracking data before package backends start.
+// Once it returns, callers may share c for concurrent read-only lookups as long
+// as pkgs contains every package that can be passed to this compilation.
+func (c *CallerTracking) Precompute(pkgs []*ssa.Package) {
+	if c == nil {
+		return
+	}
+	for _, pkg := range pkgs {
+		if pkg != nil {
+			runtimeCallerBaseSet(c, pkg)
+		}
+	}
+	for _, pkg := range pkgs {
+		if pkg != nil {
+			runtimeCallerFuncSet(c, pkg)
+		}
+	}
 }
 
 // NewCallerTracking creates the caller-tracking memoization for one

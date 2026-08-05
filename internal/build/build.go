@@ -175,7 +175,10 @@ type Config struct {
 	// BuildParallelism is the package-level concurrency requested by Go's -p
 	// build flag for llgo test. Zero uses the Go default, GOMAXPROCS.
 	BuildParallelism int
-	LinkOptions      LinkOptions
+	// BuildTrace is an optional Chrome Trace Event JSON output path. Relative
+	// paths are resolved from the build invocation directory.
+	BuildTrace  string
+	LinkOptions LinkOptions
 	// OmitDWARFByDefault controls linked builds only when -w was not
 	// explicitly specified. Explicit -w and -w=false always win.
 	OmitDWARFByDefault bool
@@ -385,6 +388,19 @@ func Build(inv Invocation) ([]Package, error) {
 	if err != nil {
 		return nil, err
 	}
+	buildTrace, err := startBuildTrace(conf.BuildTrace, dir, conf.parallelism())
+	if err != nil {
+		return nil, fmt.Errorf("start build trace: %w", err)
+	}
+	buildSpan := buildTrace.startCoordinator("build", map[string]any{
+		"packages": slices.Clone(inv.Args),
+	})
+	defer func() {
+		buildSpan.done()
+		if closeErr := buildTrace.close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: write build trace: %v\n", closeErr)
+		}
+	}()
 	// Handle crosscompile configuration first to set correct GOOS/GOARCH
 	forceEspClang := conf.ForceEspClang || conf.Target != ""
 	export, err := crosscompile.Use(conf.Goos, conf.Goarch, conf.Target, IsWasiThreadsEnabled(), forceEspClang, conf.OptLevel, conf.ltoMode(), conf.goGlobalDCEEnabled())
@@ -448,6 +464,7 @@ func Build(inv Invocation) ([]Package, error) {
 		ExportRename: conf.Target != "",
 		ShadowStack:  isEnvOn(llgoShadowStack, false),
 	}
+	preloadOptions := frontendOptions
 	llssaInitOnce.Do(func() {
 		llssa.Initialize(llssa.InitAll)
 	})
@@ -502,7 +519,7 @@ func Build(inv Invocation) ([]Package, error) {
 		if llruntime.SkipToBuild(pkg.Path()) {
 			return
 		}
-		if err := cl.ParsePkgSyntax(prog, cfg.Fset, pkg, files); err != nil {
+		if err := cl.ParsePkgSyntaxWithOptions(prog, cfg.Fset, pkg, files, preloadOptions); err != nil {
 			recordSyntaxErr(err)
 		}
 	})
@@ -534,7 +551,11 @@ func Build(inv Invocation) ([]Package, error) {
 		return parser.ParseFile(fset, filename, src, mode)
 	}
 
+	loadSpan := buildTrace.startCoordinator("load packages", map[string]any{
+		"patterns": slices.Clone(patterns),
+	})
 	initial, err := packages.LoadExWithGoVersion(dedup, sizes, cfg, conf.GoVersion, patterns...)
+	loadSpan.done()
 	if err != nil {
 		return nil, err
 	}
@@ -571,7 +592,11 @@ func Build(inv Invocation) ([]Package, error) {
 	altPkgPaths := altPkgs(initial, conf, llssa.PkgRuntime)
 	altCfg := *cfg
 	altCfg.Dir = env.LLGoRuntimeDir()
+	loadAltSpan := buildTrace.startCoordinator("load runtime packages", map[string]any{
+		"packages": slices.Clone(altPkgPaths),
+	})
 	altPkgs, err := packages.LoadEx(dedup, sizes, &altCfg, altPkgPaths...)
+	loadAltSpan.done()
 	if err != nil {
 		return nil, err
 	}
@@ -579,15 +604,12 @@ func Build(inv Invocation) ([]Package, error) {
 		return nil, err
 	}
 
-	prog.SetRuntime(func() *types.Package {
-		return altPkgs[0].Types
-	})
-	prog.SetPython(func() *types.Package {
-		return dedup.Check(llssa.PkgPython).Types
-	})
-	if err := prepareLocalVariables(prog, initial, altPkgs); err != nil {
-		return nil, err
+	prog.SetRuntime(altPkgs[0].Types)
+	var pythonPackage *types.Package
+	if python := dedup.Check(llssa.PkgPython); python != nil {
+		pythonPackage = python.Types
 	}
+	prog.SetPython(func() *types.Package { return pythonPackage })
 
 	buildMode := ssaBuildMode
 	cabiOptimize := true
@@ -603,6 +625,17 @@ func Build(inv Invocation) ([]Package, error) {
 	progSSA := ssa.NewProgram(initial[0].Fset, buildMode)
 	patches := make(cl.Patches, len(altPkgPaths))
 	altEntries := registerAltSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
+	prepareSpan := buildTrace.startCoordinator("prepare shared backend state", nil)
+	if err := preloadPatchedPackageSyntax(prog, patches, dedup, preloadOptions); err != nil {
+		prepareSpan.done()
+		return nil, err
+	}
+	if err := prepareLocalVariables(prog, initial, altPkgs); err != nil {
+		prepareSpan.done()
+		return nil, err
+	}
+	prepareSpan.done()
+	frontendOptions.PreloadedSyntax = true
 
 	output := conf.OutFile != ""
 	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
@@ -618,9 +651,14 @@ func Build(inv Invocation) ([]Package, error) {
 		commands:        commands,
 		frontendOptions: frontendOptions,
 		cTransformer:    cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, conf.AbiMode, cabiOptimize),
+		buildTrace:      buildTrace,
 	}
 	defer ctx.closePackageMetas()
 	defer ctx.closePackageArchiveBuffers()
+	// Isolated backends use independent LLVM contexts. Keep Programs needed by
+	// whole-program consumers alive through deadcode analysis and strong ABI type
+	// override emission, then release them on every normal, error, or panic path.
+	defer ctx.disposeRetainedBackendPrograms()
 
 	// default runtime globals must be registered before packages are built
 	addGlobalString(conf, "runtime.defaultGOROOT="+runtime.GOROOT(), nil)
@@ -634,6 +672,9 @@ func Build(inv Invocation) ([]Package, error) {
 		return nil, err
 	}
 	buildSSAPkgs(ctx, append(append(altEntries, pkgEntries...), depEntries...))
+	callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
+	ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
+	callerSpan.done()
 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	allPkgs = append(allPkgs, depPkgs...)
@@ -663,7 +704,12 @@ func Build(inv Invocation) ([]Package, error) {
 			resolveOutputs(ctx.commands.dir, outFmts)
 
 			// Link main package using the output path from buildOutFmts
+			linkSpan := buildTrace.startCoordinator("link "+pkg.PkgPath, map[string]any{
+				"package": pkg.PkgPath,
+				"output":  outFmts.Out,
+			})
 			err = linkMainPkg(ctx, pkg, allPkgs, outFmts.Out, verbose)
+			linkSpan.done()
 			if err != nil {
 				return nil, err
 			}
@@ -737,6 +783,7 @@ func Build(inv Invocation) ([]Package, error) {
 			}
 		}
 	}
+	ctx.disposeRetainedBackendPrograms()
 
 	if mode == ModeTest && ctx.testFail {
 		mockable.Exit(1)
@@ -881,6 +928,7 @@ type context struct {
 	frontendOptions cl.Options
 
 	cTransformer *cabi.Transformer
+	retained     retainedBackendPrograms
 
 	testFail bool
 
@@ -889,16 +937,75 @@ type context struct {
 	llvmVersion  string
 
 	// go list derived file lists (SFiles, etc.)
-	sfilesCache map[string][]string // pkg.ID -> absolute .s/.S file paths
+	sfilesCache  map[string][]string // pkg.ID -> absolute .s/.S file paths
+	sfilesFrozen bool
 
 	// plan9asm package policy parsed from env.
-	plan9asmOnce sync.Once
-	plan9asmMode plan9asmPkgsEnvMode
-	plan9asmPkgs map[string]bool
+	plan9asmOnce  sync.Once
+	plan9asmReady bool
+	plan9asmMode  plan9asmPkgsEnvMode
+	plan9asmPkgs  map[string]bool
+	plan9asmSigs  map[string]map[string]struct{}
 
 	// pclnExternal is populated while generating the synthetic main module
 	// and completed with final linked PCs by the post-link externalizer.
 	pclnExternal *pclnmap.Data
+
+	buildTrace *buildTracer
+}
+
+type retainedBackendProgram struct {
+	pkg      *aPackage
+	prog     llssa.Program
+	abiTypes []llssa.AbiTypeInfo
+}
+
+// retainedBackendPrograms owns Programs transferred from successful isolated
+// workers. Workers may finish concurrently; disposal happens only after the
+// coordinator has joined them and completed whole-program consumers.
+type retainedBackendPrograms struct {
+	mu       sync.Mutex
+	programs []retainedBackendProgram
+}
+
+func (c *context) retainBackendProgram(pkg *aPackage, prog llssa.Program) {
+	c.retained.mu.Lock()
+	c.retained.programs = append(c.retained.programs, retainedBackendProgram{
+		pkg:      pkg,
+		prog:     prog,
+		abiTypes: prog.AbiTypes(),
+	})
+	c.retained.mu.Unlock()
+}
+
+// retainedBackendAbiTypes returns Go-owned type identities from the isolated
+// Programs. The Programs remain alive while the entry module recreates the
+// target-local declarations, but no LLVM value crosses a Context boundary.
+func (c *context) retainedBackendAbiTypes() []llssa.AbiTypeInfo {
+	c.retained.mu.Lock()
+	defer c.retained.mu.Unlock()
+
+	var infos []llssa.AbiTypeInfo
+	for _, retained := range c.retained.programs {
+		infos = append(infos, retained.abiTypes...)
+	}
+	return infos
+}
+
+func (c *context) disposeRetainedBackendPrograms() {
+	c.retained.mu.Lock()
+	programs := c.retained.programs
+	c.retained.programs = nil
+	c.retained.mu.Unlock()
+
+	// Clear every package reference before destroying any LLVM context so no
+	// later observer can retain a dangling cross-context module.
+	for _, retained := range programs {
+		retained.pkg.LPkg = nil
+	}
+	for _, retained := range programs {
+		retained.prog.Dispose()
+	}
 }
 
 // closePackageMetas releases metadata mappings owned by this build. Metadata
@@ -911,6 +1018,55 @@ func (c *context) closePackageMetas() {
 		_ = pkg.Meta.Close()
 		pkg.Meta = nil
 	}
+}
+
+// backendSession owns all LLVM state used to lower one package. The Program
+// shares only the coordinator's already-prepared Go metadata.
+type backendSession struct {
+	prog        llssa.Program
+	transformer *cabi.Transformer
+}
+
+func (c *context) newBackendSession() backendSession {
+	prog := c.prog.NewBackendProgram()
+	return backendSession{
+		prog: prog,
+		transformer: cabi.NewTransformer(
+			prog,
+			c.crossCompile.LLVMTarget,
+			c.crossCompile.TargetABI,
+			c.buildConf.AbiMode,
+			!shouldEmitDebugInfo(c.buildConf, &c.crossCompile),
+		),
+	}
+}
+
+// preloadPatchedPackageSyntax prepares the effective types.Package used by
+// patched lowering. Normal and alternate packages are already covered by the
+// packages loader's preload callback, but patch.Types has a distinct identity.
+func preloadPatchedPackageSyntax(prog llssa.Program, patches cl.Patches, dedup packages.Deduper, options cl.Options) error {
+	paths := make([]string, 0, len(patches))
+	for pkgPath := range patches {
+		paths = append(paths, pkgPath)
+	}
+	slices.Sort(paths)
+	for _, pkgPath := range paths {
+		patch := patches[pkgPath]
+		alt := dedup.Check(altPkgPathPrefix + pkgPath)
+		if alt == nil || len(alt.Syntax) == 0 || patch.Types == nil {
+			continue
+		}
+		fset := alt.Fset
+		files := slices.Clone(alt.Syntax)
+		if original := dedup.Check(pkgPath); original != nil {
+			fset = original.Fset
+			files = append(slices.Clone(original.Syntax), files...)
+		}
+		if err := cl.ParsePkgSyntaxWithOptions(prog, fset, patch.Types, files, options); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *context) compiler() *clang.Cmd {
@@ -978,36 +1134,38 @@ func normalizeToArchive(ctx *context, aPkg *aPackage, verbose bool) error {
 }
 
 func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, error) {
-	// Split packages into runtime tree vs others so we can defer runtime build.
-	var runtimePkgs []*packageBuildTask
-	var normalPkgs []*packageBuildTask
+	tasks := make([]*packageBuildTask, 0, len(pkgs))
 	for _, p := range pkgs {
-		task := newPackageBuildTask(p)
-		if task.isRuntime() {
-			runtimePkgs = append(runtimePkgs, task)
-		} else {
-			normalPkgs = append(normalPkgs, task)
-		}
+		tasks = append(tasks, newPackageBuildTask(p))
 	}
+	preSpan := ctx.buildTrace.startCoordinator("preflight packages", map[string]any{
+		"count": len(tasks),
+	})
+	if err := prePackageBuilds(ctx, tasks, verbose); err != nil {
+		preSpan.done()
+		return nil, err
+	}
+	preSpan.done()
+	ctx.sfilesFrozen = true
 
 	var needRuntime, needPyInit bool
 
 	// Build non-runtime packages first, so we know whether runtime is actually needed.
-	for _, task := range normalPkgs {
-		result, err := buildOnePackage(ctx, task, verbose)
-		if err != nil {
-			return nil, err
-		}
+	normalResults, err := buildPrePackageGroup(
+		ctx, packageBuildTasksForRuntime(tasks, false), verbose)
+	if err != nil {
+		return nil, err
+	}
+	for _, result := range normalResults {
 		needRuntime = needRuntime || result.needRuntime
 		needPyInit = needPyInit || result.needPyInit
 	}
 
 	// Only build runtime packages when required (or host build with empty Target).
 	if needRuntime || needPyInit || ctx.buildConf.Target == "" {
-		for _, task := range runtimePkgs {
-			if _, err := buildOnePackage(ctx, task, verbose); err != nil {
-				return nil, err
-			}
+		if _, err := buildPrePackageGroup(
+			ctx, packageBuildTasksForRuntime(tasks, true), verbose); err != nil {
+			return nil, err
 		}
 	}
 
@@ -1021,10 +1179,14 @@ func buildOnePackage(ctx *context, task *packageBuildTask, verbose bool) (packag
 	if err := prePackageBuild(ctx, task, verbose); err != nil || task.skip {
 		return packageBuildResultFor(task), err
 	}
-	if err := executePackageBuild(ctx, task, verbose); err != nil {
-		return packageBuildResultFor(task), err
-	}
-	return finalizePackageBuild(ctx, task, verbose)
+	backendSpan := ctx.buildTrace.startPackageCoordinator("backend+publish", task.pkg.PkgPath)
+	backendSpan.setArg("class", "coordinator")
+	ctx.buildTrace.flowFromSSA(task.pkg.PkgPath, backendSpan)
+	result, err := executeAndFinalizePackage(ctx, task, verbose, func() error {
+		return executePackageBuild(ctx, task, verbose)
+	})
+	backendSpan.done()
+	return result, err
 }
 
 // prePackageBuild performs classification, fingerprinting, and cache
@@ -1032,6 +1194,12 @@ func buildOnePackage(ctx *context, task *packageBuildTask, verbose bool) (packag
 func prePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
 	aPkg := task.pkg
 	pkg := aPkg.Package
+	traceSpan := ctx.buildTrace.startPackageCoordinator("pre", pkg.PkgPath)
+	defer func() {
+		traceSpan.setArg("cache_hit", aPkg.CacheHit)
+		traceSpan.setArg("skip", task.skip)
+		traceSpan.done()
+	}()
 	if _, ok := ctx.built[pkg.ID]; ok {
 		task.skip = true
 		return nil
@@ -1054,6 +1222,9 @@ func prePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
 		return err
 	}
 	ctx.tryLoadFromCache(aPkg)
+	if err := preparePackageSFiles(ctx, aPkg); err != nil {
+		return err
+	}
 	if verbose {
 		status := "MISS"
 		if aPkg.CacheHit {
@@ -1070,7 +1241,7 @@ func executePackageBuild(ctx *context, task *packageBuildTask, verbose bool) err
 	if err := buildPkg(ctx, aPkg, verbose); err != nil {
 		return err
 	}
-	if task.needsRuntimeSignals() {
+	if task.needsRuntimeSignals() && aPkg.LPkg != nil {
 		aPkg.setNeedRuntimeOrPyInit(aPkg.LPkg.NeedRuntime, aPkg.LPkg.NeedPyInit)
 	}
 	return nil
@@ -1104,7 +1275,7 @@ func appendExternalLinkArgs(ctx *context, aPkg *aPackage, spec string) {
 	for _, alt := range altParts {
 		alt = strings.TrimSpace(alt)
 		if strings.ContainsRune(alt, '$') {
-			expdArgs = append(expdArgs, xenv.ExpandEnvToArgs(alt)...)
+			expdArgs = append(expdArgs, xenv.ExpandEnvToArgsWith(alt, ctx.commands.dir, ctx.commands.environ)...)
 			atomic.AddInt32(&ctx.nLibdir, 1)
 		} else {
 			fields := strings.Fields(alt)
@@ -1397,6 +1568,7 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 		methodByIndex: methodByIndex,
 		methodByName:  methodByName,
 		abiSymbols:    linkedModuleGlobals(linkedOrder),
+		abiTypes:      ctx.retainedBackendAbiTypes(),
 		funcInfo:      funcInfo,
 		pcLineInfo:    pcLineInfo,
 	})
@@ -2338,7 +2510,11 @@ func buildSSAPkgs(ctx *context, entries []ssaBuildEntry) {
 		go func() {
 			defer wg.Done()
 			for entry := range jobs {
+				pkgPath := entry.pkg.Pkg.Path()
+				traceSpan := ctx.buildTrace.startWorker("ssa", pkgPath)
 				entry.pkg.Build()
+				traceSpan.done()
+				ctx.buildTrace.rememberSSA(pkgPath, traceSpan)
 			}
 		}()
 	}
@@ -2347,11 +2523,13 @@ func buildSSAPkgs(ctx *context, entries []ssaBuildEntry) {
 	}
 	close(jobs)
 	wg.Wait()
+	repairSpan := ctx.buildTrace.startCoordinator("repair SSA order", nil)
 	for _, entry := range unique {
 		if entry.fixOrder {
 			fixSSAOrder(entry.pkg, entry.syntax)
 		}
 	}
+	repairSpan.done()
 }
 
 func formatPackageError(err packages.Error, noColumn bool) string {
@@ -2661,7 +2839,7 @@ func clFiles(ctx *context, files string, pkg *packages.Package, procFile func(li
 	args := make([]string, 0, 16)
 	if strings.HasPrefix(files, "$") { // has cflags
 		if pos := strings.IndexByte(files, ':'); pos > 0 {
-			cflags := xenv.ExpandEnvToArgs(files[:pos])
+			cflags := xenv.ExpandEnvToArgsWith(files[:pos], ctx.commands.dir, ctx.commands.environ)
 			files = files[pos+1:]
 			args = append(args, cflags...)
 		}

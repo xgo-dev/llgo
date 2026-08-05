@@ -57,3 +57,13 @@ func TestRunCmdPassesGoBuildFlags(t *testing.T) {
 		t.Fatalf("stderr = %q, want missing-package diagnostic", data)
 	}
 }
+
+func TestBuildCommandHasSchedulerTraceFlag(t *testing.T) {
+	flag := Cmd.Flag.Lookup("debug-trace")
+	if flag == nil {
+		t.Fatal("llgo build has no -debug-trace flag")
+	}
+	if !strings.Contains(flag.Usage, "Chrome/Perfetto") {
+		t.Fatalf("-debug-trace usage = %q", flag.Usage)
+	}
+}
