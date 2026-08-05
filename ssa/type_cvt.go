@@ -21,7 +21,6 @@ import (
 	"go/token"
 	"go/types"
 	"reflect"
-	"sync"
 	"unsafe"
 )
 
@@ -29,16 +28,24 @@ import (
 
 type goTypes struct {
 	// typs and cvtneed are owned by the single lowering goroutine for one
-	// Program. typbg is populated during concurrent package syntax preloading,
-	// before lowering starts, so it remains a sync.Map.
-	typs    map[unsafe.Pointer]unsafe.Pointer
-	cvtneed map[*types.Named]conversionRequirement
-	typbg   sync.Map
+	// Program. packageSyntax is prepared before backend lowering and shared
+	// read-only by Programs with independent LLVM contexts.
+	typs          map[unsafe.Pointer]unsafe.Pointer
+	cvtneed       map[*types.Named]conversionRequirement
+	packageSyntax *packageSyntaxData
 }
 
-func newGoTypes() goTypes {
+func newGoTypes(syntax ...*packageSyntaxData) goTypes {
+	packageSyntax := newPackageSyntaxData()
+	if len(syntax) != 0 && syntax[0] != nil {
+		packageSyntax = syntax[0]
+	}
 	typs := make(map[unsafe.Pointer]unsafe.Pointer)
-	return goTypes{typs: typs, cvtneed: make(map[*types.Named]conversionRequirement)}
+	return goTypes{
+		typs:          typs,
+		cvtneed:       make(map[*types.Named]conversionRequirement),
+		packageSyntax: packageSyntax,
+	}
 }
 
 type conversionRequirement uint8
@@ -174,8 +181,8 @@ func namedLinkname(t *types.Named) string {
 }
 
 func (p goTypes) shouldConvertNamed(t *types.Named) bool {
-	v, ok := p.typbg.Load(namedLinkname(t))
-	return !ok || v.(Background) != InC
+	background, ok := p.packageSyntax.typeBackground(namedLinkname(t))
+	return !ok || background != InC
 }
 
 func (p goTypes) cvtNamed(t *types.Named) (raw *types.Named, cvt bool) {
