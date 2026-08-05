@@ -64,6 +64,53 @@ func TestSSACheckSeedDebugSettingsAreCompatible(t *testing.T) {
 	}
 }
 
+func TestTypeAssertDebugValue(t *testing.T) {
+	tests := []struct {
+		setting string
+		want    int
+		ok      bool
+	}{
+		{setting: "typeassert", want: 1, ok: true},
+		{setting: "typeassert=0", want: 0, ok: true},
+		{setting: "typeassert:2", want: 2, ok: true},
+		{setting: "other", want: 1},
+		{setting: "other=1"},
+		{setting: "typeassert=bad"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.setting, func(t *testing.T) {
+			got, ok := typeAssertDebugValue(tt.setting)
+			if got != tt.want || ok != tt.ok {
+				t.Fatalf("typeAssertDebugValue(%q) = (%d, %v), want (%d, %v)", tt.setting, got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
+func TestCompatibleDebugSetting(t *testing.T) {
+	tests := []struct {
+		setting string
+		want    bool
+	}{
+		{setting: "panic", want: true},
+		{setting: "ssa/check/on", want: true},
+		{setting: "ssa/check/seed", want: true},
+		{setting: "ssa/check/seed=1", want: true},
+		{setting: "typeassert", want: true},
+		{setting: "typeassert=0", want: true},
+		{setting: "ssa/check/seeded=1"},
+		{setting: "typeassert=bad"},
+		{setting: "libfuzzer"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.setting, func(t *testing.T) {
+			if got := compatibleDebugSetting(tt.setting); got != tt.want {
+				t.Fatalf("compatibleDebugSetting(%q) = %v, want %v", tt.setting, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCountAndListFlags(t *testing.T) {
 	var count countFlag
 	if !count.IsBoolFlag() {
@@ -140,15 +187,18 @@ func TestRunCmdValidationAndVersion(t *testing.T) {
 func TestRunCmdBuildsAndReportsErrors(t *testing.T) {
 	dir := t.TempDir()
 	valid := dir + "/valid.go"
-	if err := os.WriteFile(valid, []byte("package compilecase\nfunc F() {}\n"), 0o644); err != nil {
+	if err := os.WriteFile(valid, []byte("package compilecase\nfunc F(v any) int { return v.(int) }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	previousProcs := runtime.GOMAXPROCS(0)
 	stdout, stderr, code := runCompileCommand(t, []string{
-		"-B", "-c=1", "-C", "-e", "-lang=go1.22", "-N", "-l", "-complete", valid,
+		"-B", "-c=1", "-C", "-d=panic,typeassert", "-e", "-lang=go1.22", "-N", "-l", "-complete", valid,
 	})
 	if code != 0 {
 		t.Fatalf("valid compile exit code = %d; stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, valid+":2: type assertion inlined") {
+		t.Fatalf("valid compile stderr = %q; want type assertion diagnostic", stderr)
 	}
 	if got := runtime.GOMAXPROCS(0); got != previousProcs {
 		t.Fatalf("GOMAXPROCS = %d after compile, want restored value %d", got, previousProcs)

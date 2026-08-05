@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -124,6 +125,56 @@ var anonymous = func(seed int) int {
 	} {
 		if !strings.Contains(ir, want) {
 			t.Errorf("debug module is missing %q:\n%s", want, ir)
+		}
+	}
+}
+
+func TestTypeAssertDebugDiagnostics(t *testing.T) {
+	const source = `package foo
+
+type methoder interface { M() }
+
+func concrete(v any) int {
+	return v.(int)
+}
+
+func dynamic(v any) methoder {
+	return v.(methoder)
+}
+`
+	ssaPkg, _, files := buildGoSSAPkg(t, source)
+	prog := newLLSSAProg(t)
+	defer prog.Dispose()
+
+	stderr, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStderr := os.Stderr
+	os.Stderr = stderr
+	SetDebug(DbgFlagTypeAssert | DbgFlagNoErrorColumn)
+	defer func() {
+		SetDebug(0)
+		os.Stderr = oldStderr
+	}()
+
+	if _, err := NewPackage(prog, ssaPkg, files); err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = oldStderr
+	if err := stderr.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(stderr.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"foo.go:6: type assertion inlined\n",
+		"foo.go:10: type assertion not inlined\n",
+	} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("stderr does not contain %q:\n%s", want, got)
 		}
 	}
 }

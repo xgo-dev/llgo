@@ -168,6 +168,7 @@ type Config struct {
 	CompilerHash       string // metadata hash for the running compiler (development builds only)
 	GoVersion          string // Go language version accepted by the frontend (for example, "go1.22")
 	NoErrorColumn      bool   // omit source columns from frontend diagnostics
+	DebugTypeAssert    bool   // report type-assertion lowering decisions
 	// GoBuildFlags contains normalized raw Go build flags forwarded to
 	// go/packages. Callers use internal/goflags to parse supported compiler and
 	// linker semantics into typed Config fields before calling Do.
@@ -442,11 +443,13 @@ func Build(inv Invocation) ([]Package, error) {
 	}
 	emitDebugInfo := shouldEmitDebugInfo(conf, &export)
 	frontendOptions := cl.Options{
-		Debug:        emitDebugInfo,
-		DebugSymbols: emitDebugInfo,
-		Trace:        IsTraceEnabled(),
-		ExportRename: conf.Target != "",
-		ShadowStack:  isEnvOn(llgoShadowStack, false),
+		Debug:           emitDebugInfo,
+		DebugSymbols:    emitDebugInfo,
+		DebugTypeAssert: conf.DebugTypeAssert,
+		NoErrorColumn:   conf.NoErrorColumn,
+		Trace:           IsTraceEnabled(),
+		ExportRename:    conf.Target != "",
+		ShadowStack:     isEnvOn(llgoShadowStack, false),
 	}
 	llssaInitOnce.Do(func() {
 		llssa.Initialize(llssa.InitAll)
@@ -1829,7 +1832,8 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 	if altPkg := aPkg.AltPkg; altPkg != nil {
 		syntax = append(syntax, altPkg.Syntax...)
 	}
-	showDetail := verbose && pkgExists(ctx.initial, pkg)
+	initialPkg := pkgExists(ctx.initial, pkg)
+	showDetail := verbose && initialPkg
 	needMeta := !aPkg.CacheHit && ctx.buildConf.packageMetaEnabled()
 	if showDetail {
 		fmt.Fprintf(os.Stderr, "==> Compile %s\n", pkgPath)
@@ -1838,9 +1842,11 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 	if err != nil {
 		return nil, fmt.Errorf("load go:embed directives for %s failed: %w", pkgPath, err)
 	}
+	packageOptions := ctx.frontendOptions
+	packageOptions.DebugTypeAssert = initialPkg && packageOptions.DebugTypeAssert
 	ret, externs, err := cl.NewPackageExWithEmbedMetaOptions(
 		ctx.prog, ctx.callerTracking, ctx.patches, aPkg.rewriteVars,
-		aPkg.SSA, syntax, embedMap, needMeta, ctx.frontendOptions)
+		aPkg.SSA, syntax, embedMap, needMeta, packageOptions)
 	check(err)
 
 	aPkg.LPkg = ret

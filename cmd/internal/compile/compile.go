@@ -88,6 +88,18 @@ type options struct {
 	version     bool
 }
 
+func typeAssertDebugValue(setting string) (int, bool) {
+	i := strings.IndexAny(setting, "=:")
+	if i < 0 {
+		return 1, setting == "typeassert"
+	}
+	if setting[:i] != "typeassert" {
+		return 0, false
+	}
+	value, err := strconv.Atoi(setting[i+1:])
+	return value, err == nil
+}
+
 func newFlagSet(opts *options) *flag.FlagSet {
 	fs := flag.NewFlagSet("compile", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -163,6 +175,13 @@ func runCmd(_ *base.Command, args []string) {
 	conf.NoErrorColumn = opts.noColumns.value != 0
 	conf.AllowNoBody = !opts.complete
 	conf.DisableBoundsChecks = opts.noBounds.value != 0
+	for _, setting := range opts.debug {
+		for _, item := range strings.Split(setting, ",") {
+			if value, ok := typeAssertDebugValue(item); ok {
+				conf.DebugTypeAssert = value > 0
+			}
+		}
+	}
 	var loaderCompilerFlags []string
 	if opts.allErrors.value != 0 {
 		loaderCompilerFlags = append(loaderCompilerFlags, "-e")
@@ -219,6 +238,9 @@ func (opts *options) unsupported() []string {
 
 func compatibleDebugSetting(setting string) bool {
 	if setting == "panic" || setting == "ssa/check/on" || setting == "ssa/check/seed" {
+		return true
+	}
+	if _, ok := typeAssertDebugValue(setting); ok {
 		return true
 	}
 	// LLGo's x/tools SSA sanity checking is always enabled. gc uses this seed

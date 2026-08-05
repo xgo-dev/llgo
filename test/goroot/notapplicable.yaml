@@ -49,10 +49,6 @@ not_applicable:
     reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
   - version: go1.26
     directive: errorcheck
-    case: interface/assertinline.go
-    reason: "not applicable: this case asserts cmd/compile-specific type-assertion optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
-  - version: go1.26
-    directive: errorcheck
     case: escape4.go
     reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
   - version: go1.26

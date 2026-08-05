@@ -46,6 +46,8 @@ type dbgFlags = int
 const (
 	DbgFlagInstruction dbgFlags = 1 << iota
 	DbgFlagGoSSA
+	DbgFlagTypeAssert
+	DbgFlagNoErrorColumn
 
 	DbgFlagAll = DbgFlagInstruction | DbgFlagGoSSA
 )
@@ -58,6 +60,8 @@ var (
 	enableDbg         bool
 	enableDbgSyms     bool
 	disableInline     bool
+	debugTypeAssert   bool
+	noErrorColumn     bool
 
 	// enableExportRename enables //export to use different C symbol names than Go function names.
 	// This is for TinyGo compatibility when using -target flag for embedded targets.
@@ -69,20 +73,24 @@ var (
 // may host multiple builds in one process should pass Options explicitly
 // instead of changing the legacy package-level Enable* settings.
 type Options struct {
-	Debug        bool
-	DebugSymbols bool
-	Trace        bool
-	ExportRename bool
-	ShadowStack  bool
+	Debug           bool
+	DebugSymbols    bool
+	DebugTypeAssert bool
+	NoErrorColumn   bool
+	Trace           bool
+	ExportRename    bool
+	ShadowStack     bool
 }
 
 func legacyOptions() Options {
 	return Options{
-		Debug:        enableDbg,
-		DebugSymbols: enableDbgSyms,
-		Trace:        enableCallTracing,
-		ExportRename: enableExportRename,
-		ShadowStack:  os.Getenv("LLGO_SHADOW_STACK") == "1",
+		Debug:           enableDbg,
+		DebugSymbols:    enableDbgSyms,
+		DebugTypeAssert: debugTypeAssert,
+		NoErrorColumn:   noErrorColumn,
+		Trace:           enableCallTracing,
+		ExportRename:    enableExportRename,
+		ShadowStack:     os.Getenv("LLGO_SHADOW_STACK") == "1",
 	}
 }
 
@@ -90,6 +98,8 @@ func legacyOptions() Options {
 func SetDebug(dbgFlags dbgFlags) {
 	debugInstr = (dbgFlags & DbgFlagInstruction) != 0
 	debugGoSSA = (dbgFlags & DbgFlagGoSSA) != 0
+	debugTypeAssert = (dbgFlags & DbgFlagTypeAssert) != 0
+	noErrorColumn = (dbgFlags & DbgFlagNoErrorColumn) != 0
 }
 
 func dbgInstrf(format string, args ...any) {
@@ -1547,6 +1557,19 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		}
 		ret = b.MakeClosure(fn, bindings)
 	case *ssa.TypeAssert:
+		options := p.frontendOptions()
+		if options.DebugTypeAssert {
+			// TODO: Inline the closure signature check used by concrete function assertions.
+			kind := "inlined"
+			if intf, ok := v.AssertedType.Underlying().(*types.Interface); ok && intf.NumMethods() != 0 {
+				kind = "not inlined"
+			}
+			pos := p.fset.Position(v.Pos())
+			if options.NoErrorColumn {
+				pos.Column = 0
+			}
+			fmt.Fprintf(os.Stderr, "%s: type assertion %s\n", pos, kind)
+		}
 		x := p.compileValue(b, v.X)
 		t := p.type_(v.AssertedType, llssa.InGo)
 		p.recordPanicLocation(b, v.Pos())
