@@ -59,3 +59,37 @@ func Logs() { dep.Where() }
 	}
 	wg.Wait()
 }
+
+func TestCallerTrackingPrecomputeRejectsLatePackages(t *testing.T) {
+	dep, root := buildCallerFrameSSAProgram(t,
+		"example.com/dep", `package dep
+func Where() {}
+`,
+		"example.com/root", `package root
+import "example.com/dep"
+func Logs() { dep.Where() }
+`)
+	tests := []struct {
+		name   string
+		lookup func(*CallerTracking, *gossa.Package)
+	}{
+		{name: "base", lookup: func(c *CallerTracking, pkg *gossa.Package) {
+			runtimeCallerBaseSet(c, pkg)
+		}},
+		{name: "extended", lookup: func(c *CallerTracking, pkg *gossa.Package) {
+			runtimeCallerFuncSet(c, pkg)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tracking := NewCallerTracking()
+			tracking.Precompute([]*gossa.Package{dep})
+			defer func() {
+				if recover() == nil {
+					t.Fatal("late caller-tracking lookup did not panic")
+				}
+			}()
+			test.lookup(tracking, root)
+		})
+	}
+}

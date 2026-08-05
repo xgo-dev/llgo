@@ -334,6 +334,8 @@ func preparePackageSFiles(ctx *context, pkg *aPackage) error {
 }
 
 func (ctx *context) newBackendTask(session backendSession) *context {
+	// prePackageBuilds populated every task's SFiles entry before workers start.
+	// Backend tasks share that map read-only; a frozen miss returns an error.
 	return &context{
 		conf:            ctx.conf,
 		progSSA:         ctx.progSSA,
