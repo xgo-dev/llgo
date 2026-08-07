@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	xpackages "golang.org/x/tools/go/packages"
 )
 
 func TestLoadExWithGoVersion(t *testing.T) {
@@ -257,6 +259,28 @@ func f() {
 		}
 	})
 
+	t.Run("compiler type errors are authoritative", func(t *testing.T) {
+		dir := t.TempDir()
+		writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/typeerror\ngo 1.24\n")
+		writeLoadTestFile(t, filepath.Join(dir, "load.go"), `package typeerror
+var x = struct{ X int }{Y: 1}
+`)
+		cfg := loadTestConfig(dir)
+		cfg.BuildFlags = []string{"-gcflags=all=-e"}
+		pkgs, err := LoadExWithGoVersion(nil, nil, cfg, "go1.24", ".")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(pkgs) != 1 {
+			t.Fatalf("load returned %d packages, want 1", len(pkgs))
+		}
+		pkg := pkgs[0]
+		assertPackageError(t, pkg, "unknown field Y")
+		if len(pkg.Errors) != 1 {
+			t.Fatalf("load returned %d package errors, want the compiler diagnostic only: %+v", len(pkg.Errors), pkg.Errors)
+		}
+	})
+
 	t.Run("embed local var", func(t *testing.T) {
 		dir := t.TempDir()
 		writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/embedlocal\ngo 1.24\n")
@@ -295,6 +319,68 @@ var x string`)
 		assertPackageErrorAbsent(t, pkg, "no metadata for /foo")
 	})
 
+}
+
+func TestHasGoSourceListDiagnostics(t *testing.T) {
+	goFile := filepath.Join(string(filepath.Separator), "tmp", "example", "load.go")
+	cgoFile := filepath.Join(string(filepath.Separator), "tmp", "example", "cgoerr", "cgo.go")
+	tests := []struct {
+		name            string
+		err             xpackages.Error
+		compiledGoFiles []string
+		want            bool
+	}{
+		{
+			name:            "absolute Go source",
+			err:             xpackages.Error{Kind: xpackages.ListError, Msg: "# example.com/p\n" + goFile + ":2:3: undefined: missing"},
+			compiledGoFiles: []string{goFile},
+			want:            true,
+		},
+		{
+			name:            "relative Go source",
+			err:             xpackages.Error{Kind: xpackages.ListError, Msg: "# example.com/p\nload.go:2: undefined: missing"},
+			compiledGoFiles: []string{goFile},
+			want:            true,
+		},
+		{
+			name:            "different Go source",
+			err:             xpackages.Error{Kind: xpackages.ListError, Msg: "# example.com/p\nother.go:2: undefined: missing"},
+			compiledGoFiles: []string{goFile},
+		},
+		{
+			name: "cgo diagnostic in Go source",
+			err: xpackages.Error{Kind: xpackages.ListError, Msg: `# example.com/diagcompare/cgoerr
+cgoerr/cgo.go:4:2: error: "intentional cgo failure"
+#error "intentional cgo failure"
+ ^
+1 error generated.
+`},
+			compiledGoFiles: []string{cgoFile},
+			want:            true,
+		},
+		{
+			name:            "unpositioned build error",
+			err:             xpackages.Error{Kind: xpackages.ListError, Msg: "# example.com/p\ncompile: internal compiler error"},
+			compiledGoFiles: []string{goFile},
+		},
+		{
+			name:            "metadata list error",
+			err:             xpackages.Error{Kind: xpackages.ListError, Msg: "import cycle not allowed"},
+			compiledGoFiles: []string{goFile},
+		},
+		{
+			name:            "non-list error",
+			err:             xpackages.Error{Kind: xpackages.TypeError, Msg: "# example.com/p\nload.go:2: undefined: missing"},
+			compiledGoFiles: []string{goFile},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasGoSourceListDiagnostics([]xpackages.Error{tt.err}, tt.compiledGoFiles); got != tt.want {
+				t.Fatalf("hasGoSourceListDiagnostics() = %t, want %t", got, tt.want)
+			}
+		})
+	}
 }
 
 func loadOnePackage(t *testing.T, dir, goVersion string) *Package {

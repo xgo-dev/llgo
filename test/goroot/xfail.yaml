@@ -1820,112 +1820,28 @@ flakes:
 xfails:
   - version: go1.26
     directive: errorcheck
+    case: fixedbugs/bug299.go
+    reason: preload traverses a malformed parenthesized receiver AST and panics before the authoritative go list diagnostics are emitted
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue20789.go
+    reason: preload traverses a parser-recovery receiver AST and panics before the authoritative go list diagnostic is emitted
+  - version: go1.26
+    directive: errorcheck
+    case: fixedbugs/issue5089.go
+    reason: preload assumes the non-local selector receiver is a local named type and panics before the authoritative go list diagnostic is emitted
+  - version: go1.26
+    directive: errorcheck
     case: fixedbugs/issue4776.go
     reason: llgo parser uses a different missing-package-clause diagnostic
-  - version: go1.26
-    directive: errorcheck
-    case: fixedbugs/issue4405.go
-    reason: llgo parser recovery emits additional malformed-statement diagnostics
-  - version: go1.26
-    directive: errorcheck
-    case: syntax/semi4.go
-    reason: llgo parser recovery emits additional semicolon and brace diagnostics
-  - version: go1.26
-    directive: errorcheck
-    case: fixedbugs/issue13273.go
-    reason: llgo parser and type checker emit additional channel-direction diagnostics
-  - version: go1.26
-    directive: errorcheck
-    case: syntax/semi3.go
-    reason: llgo parser recovery emits additional semicolon and end-of-file diagnostics
   - version: go1.26
     directive: errorcheck
     case: fixedbugs/issue13266.go
     reason: llgo parser uses a different malformed-package-clause diagnostic
   - version: go1.26
     directive: errorcheck
-    case: fixedbugs/issue19667.go
-    reason: llgo parser recovery emits additional malformed-call diagnostics
-  - version: go1.26
-    directive: errorcheck
-    case: syntax/semi2.go
-    reason: llgo parser recovery emits additional semicolon and brace diagnostics
-  - version: go1.26
-    directive: errorcheck
-    case: fixedbugs/issue13248.go
-    reason: llgo parser recovery emits additional malformed-expression diagnostics
-  - version: go1.26
-    directive: errorcheck
-    case: fixedbugs/issue17328.go
-    reason: llgo parser recovery emits additional end-of-file diagnostics
-  - version: go1.26
-    directive: errorcheck
-    case: syntax/semi1.go
-    reason: llgo parser recovery emits additional semicolon and end-of-file diagnostics
-  - version: go1.26
-    directive: errorcheck
-    case: fixedbugs/issue20789.go
-    reason: llgo parser does not emit the expected malformed-name diagnostic
-  - version: go1.26
-    directive: errorcheck
-    case: syntax/initvar.go
-    reason: llgo parser recovery emits additional invalid-initializer diagnostics
-  - version: go1.26
-    directive: errorcheck
     case: fixedbugs/bug050.go
     reason: llgo parser emits an additional malformed-declaration diagnostic
-  - version: go1.26
-    directive: errorcheck
-    case: bombad.go
-    reason: llgo parser recovery emits additional byte-order-mark diagnostics
-  - version: go1.26
-    directive: errorcheck
-    case: fixedbugs/bug435.go
-    reason: llgo parser recovery emits additional end-of-file diagnostics
-  - version: go1.26
-    directive: errorcheck
-    case: fixedbugs/issue14006.go
-    reason: llgo parser recovery emits additional malformed-label diagnostics
-  - version: go1.26
-    directive: errorcheck
-    case: fixedbugs/issue22581.go
-    reason: llgo parser recovery emits additional malformed-control-clause diagnostics
-  - version: go1.26
-    directive: errorcheck
-    case: syntax/ddd.go
-    reason: llgo parser recovery emits additional malformed-selector diagnostics
-  - version: go1.26
-    directive: errorcheck
-    case: fixedbugs/bug121.go
-    reason: llgo parser recovery emits additional malformed-declaration diagnostics
-  - version: go1.26
-    directive: errorcheck
-    case: fixedbugs/bug228.go
-    reason: llgo parser emits an additional malformed-parameter diagnostic
-  - version: go1.26
-    directive: errorcheck
-    case: syntax/chan1.go
-    reason: llgo parser recovery emits additional malformed-channel diagnostics
-  - version: go1.26
-    directive: errorcheck
-    case: fixedbugs/issue18747.go
-    reason: llgo parser recovery emits additional undefined-name diagnostics
-  - version: go1.26
-    directive: errorcheck
-    case: fixedbugs/issue11610.go
-    reason: llgo parser reports additional illegal-character diagnostics
-  - version: go1.26
-    directive: errorcheck
-    case: fixedbugs/issue22164.go
-    reason: llgo parser recovery emits additional diagnostics for a malformed argument list
-  - version: go1.26
-    directive: errorcheck
-    case: syntax/vareq1.go
-    reason: llgo parser recovery emits an additional diagnostic after the expected syntax error
-  - version: go1.26
-    directive: errorcheck
-    case: syntax/vareq.go
-    reason: llgo parser recovery emits additional diagnostics after the expected syntax error
   - version: go1.24
     platform: darwin/arm64
     directive: run

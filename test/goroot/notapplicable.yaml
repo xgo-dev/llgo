@@ -93,10 +93,6 @@ not_applicable:
     reason: "not applicable: this case asserts cmd/compile-specific -m optimization diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
   - version: go1.26
     directive: errorcheck
-    case: fixedbugs/bug388.go
-    reason: "not applicable: this case asserts gc runtime pseudo-type diagnostics; LLGo uses its own runtime and does not expose gc's private compiler diagnostics; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
-  - version: go1.26
-    directive: errorcheck
     case: escape2.go
     reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
   - version: go1.26
@@ -155,10 +151,6 @@ not_applicable:
     directive: errorcheck
     case: escape_map.go
     reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
-  - version: go1.26
-    directive: errorcheck
-    case: runtime.go
-    reason: "not applicable: this case asserts gc runtime private-symbol compiler diagnostics; LLGo uses its own runtime and does not expose gc's private compiler diagnostics; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
   - version: go1.26
     directive: errorcheck
     case: fixedbugs/notinheap.go
