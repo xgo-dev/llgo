@@ -19,6 +19,7 @@
 package cl
 
 import (
+	"reflect"
 	"sync"
 	"testing"
 
@@ -58,6 +59,38 @@ func Logs() { dep.Where() }
 		}()
 	}
 	wg.Wait()
+}
+
+func TestCallerTrackingPrecomputeMatchesLazyAnalysis(t *testing.T) {
+	dep, root := buildCallerFrameSSAProgram(t,
+		"example.com/dep", `package dep
+import "runtime"
+func Where() { runtime.Caller(0) }
+func Quiet() {}
+`,
+		"example.com/root", `package root
+import "example.com/dep"
+func Logs() { dep.Where() }
+func Plain() { dep.Quiet() }
+`)
+	pkgs := []*gossa.Package{root, dep}
+	lazy := NewCallerTracking()
+	for _, pkg := range pkgs {
+		runtimeCallerBaseSet(lazy, pkg)
+	}
+	for _, pkg := range pkgs {
+		runtimeCallerFuncSet(lazy, pkg)
+	}
+	precomputed := NewCallerTracking()
+	precomputed.Precompute(pkgs)
+	for _, pkg := range pkgs {
+		if got, want := precomputed.base[pkg], lazy.base[pkg]; !reflect.DeepEqual(got, want) {
+			t.Fatalf("precomputed base set for %s differs from lazy set", pkg.Pkg.Path())
+		}
+		if got, want := precomputed.extended[pkg], lazy.extended[pkg]; !reflect.DeepEqual(got, want) {
+			t.Fatalf("precomputed extended set for %s differs from lazy set", pkg.Pkg.Path())
+		}
+	}
 }
 
 func TestCallerTrackingPrecomputeRejectsLatePackages(t *testing.T) {
