@@ -25,6 +25,7 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/ssa"
@@ -927,12 +928,23 @@ func runtimeCallerFuncSet(c *CallerTracking, pkg *ssa.Package) map[*ssa.Function
 	if set, ok := c.extended[pkg]; ok {
 		return set
 	}
+	if c.precomputed {
+		panic("caller-tracking function set was not precomputed")
+	}
 	base := runtimeCallerBaseSet(c, pkg)
+	_, trackable := collectRuntimeCallerFunctions(pkg)
+	out := computeRuntimeCallerFuncSet(pkg, base, trackable, func(dep *ssa.Package) map[*ssa.Function]bool {
+		return runtimeCallerBaseSet(c, dep)
+	})
+	c.extended[pkg] = out
+	return out
+}
+
+func computeRuntimeCallerFuncSet(pkg *ssa.Package, base, trackable map[*ssa.Function]bool, baseSet func(*ssa.Package) map[*ssa.Function]bool) map[*ssa.Function]bool {
 	out := make(map[*ssa.Function]bool, len(base))
 	for fn := range base {
 		out[fn] = true
 	}
-	_, trackable := collectRuntimeCallerFunctions(pkg)
 	for fn := range trackable {
 		if out[fn] {
 			continue
@@ -961,7 +973,7 @@ func runtimeCallerFuncSet(c *CallerTracking, pkg *ssa.Package) map[*ssa.Function
 			if !canTrackCallerFramesForPackage(callee.Pkg.Pkg.Path()) {
 				return
 			}
-			if runtimeCallerBaseSet(c, callee.Pkg)[callee] {
+			if baseSet(callee.Pkg)[callee] {
 				out[fn] = true
 			}
 		})
@@ -969,7 +981,6 @@ func runtimeCallerFuncSet(c *CallerTracking, pkg *ssa.Package) map[*ssa.Function
 	if len(out) == 0 {
 		out = nil
 	}
-	c.extended[pkg] = out
 	return out
 }
 
@@ -980,12 +991,148 @@ func runtimeCallerFuncSet(c *CallerTracking, pkg *ssa.Package) map[*ssa.Function
 // queries (criterion 2 below) hit the memoization. It must not outlive
 // the compilation — the maps are keyed by *ssa.Package with
 // *ssa.Function values, so anything longer-lived would pin every
-// compiled package's go/types and go/ssa graphs. Plain maps are enough:
-// packages of one compilation are compiled sequentially (the LLVM
-// context is not thread-safe).
+// compiled package's go/types and go/ssa graphs. Concurrent drivers call
+// Precompute before workers start and then share the plain maps read-only.
 type CallerTracking struct {
-	base     map[*ssa.Package]map[*ssa.Function]bool
-	extended map[*ssa.Package]map[*ssa.Function]bool
+	base        map[*ssa.Package]map[*ssa.Function]bool
+	extended    map[*ssa.Package]map[*ssa.Function]bool
+	precomputed bool
+}
+
+// Precompute resolves caller-tracking data before package backends start.
+// Once it returns, callers may share c for concurrent read-only lookups as long
+// as pkgs contains every package that can be passed to this compilation. A
+// later lookup miss panics instead of mutating the shared maps.
+func (c *CallerTracking) Precompute(pkgs []*ssa.Package) {
+	if c == nil {
+		return
+	}
+	pkgs = uniqueCallerTrackingPackages(pkgs)
+	if c.precomputed {
+		for _, pkg := range pkgs {
+			if _, ok := c.base[pkg]; !ok {
+				panic("caller-tracking base set was not precomputed")
+			}
+			if _, ok := c.extended[pkg]; !ok {
+				panic("caller-tracking function set was not precomputed")
+			}
+		}
+		return
+	}
+	if len(pkgs) == 0 {
+		c.precomputed = true
+		return
+	}
+
+	// RuntimeTypes and MethodValue are Program-wide and may lazily populate
+	// shared SSA state. Snapshot and materialize them once in stable package
+	// order before computing package sets. The remaining analysis is kept
+	// serial: interface target resolution may still consult MethodValue, and
+	// scheduling those calls concurrently makes later module layout depend on
+	// worker completion order.
+	runtimeTypes := callerTrackingRuntimeTypes(pkgs)
+	methods := callerTrackingMethods(pkgs, runtimeTypes)
+	analyses := make([]callerTrackingPackageAnalysis, len(pkgs))
+	base := make([]map[*ssa.Function]bool, len(pkgs))
+	extended := make([]map[*ssa.Function]bool, len(pkgs))
+	index := make(map[*ssa.Package]int, len(pkgs))
+	for i, pkg := range pkgs {
+		index[pkg] = i
+	}
+
+	for i := range pkgs {
+		analyses[i] = analyzeCallerTrackingPackage(pkgs[i], methods[pkgs[i]])
+		base[i] = analyses[i].base
+	}
+	for i := range pkgs {
+		extended[i] = computeRuntimeCallerFuncSet(pkgs[i], base[i], analyses[i].trackable, func(dep *ssa.Package) map[*ssa.Function]bool {
+			j, ok := index[dep]
+			if !ok {
+				panic("caller-tracking dependency was not precomputed")
+			}
+			return base[j]
+		})
+	}
+
+	for i, pkg := range pkgs {
+		c.base[pkg] = base[i]
+	}
+	for i, pkg := range pkgs {
+		c.extended[pkg] = extended[i]
+	}
+	c.precomputed = true
+}
+
+type callerTrackingPackageAnalysis struct {
+	base      map[*ssa.Function]bool
+	trackable map[*ssa.Function]bool
+}
+
+func analyzeCallerTrackingPackage(pkg *ssa.Package, methods []*ssa.Function) callerTrackingPackageAnalysis {
+	funcs, trackable := collectRuntimeCallerFunctionsWithMethods(pkg, methods)
+	analysis := &runtimeCallerAnalysis{
+		pkg:       pkg,
+		funcs:     funcs,
+		trackable: trackable,
+		callsites: collectRuntimeCallerCallsites(funcs),
+		memo:      make(map[*ssa.Function]bool),
+		visiting:  make(map[*ssa.Function]bool),
+	}
+	return callerTrackingPackageAnalysis{
+		base:      computeRuntimeCallerBaseSetFromAnalysis(analysis),
+		trackable: trackable,
+	}
+}
+
+// callerTrackingMethods materializes method wrappers in stable package order
+// before analysis workers start. Program.MethodValue is thread-safe but may
+// lazily create wrappers; doing that in workers would make Program mutation
+// order depend on scheduling and could change later module emission order.
+func callerTrackingMethods(pkgs []*ssa.Package, runtimeTypes map[*ssa.Package][]types.Type) map[*ssa.Package][]*ssa.Function {
+	result := make(map[*ssa.Package][]*ssa.Function, len(pkgs))
+	for _, pkg := range pkgs {
+		result[pkg] = collectRuntimeCallerMethods(pkg, runtimeTypes[pkg])
+	}
+	return result
+}
+
+// callerTrackingRuntimeTypes snapshots Program-wide runtime types once and
+// partitions them by declaring package before workers start. RuntimeTypes
+// computes derived types under Program and method-set locks; calling it from
+// every package worker would serialize the supposedly parallel phase and would
+// repeatedly scan the same whole-program data.
+func callerTrackingRuntimeTypes(pkgs []*ssa.Package) map[*ssa.Package][]types.Type {
+	byProgram := make(map[*ssa.Program]map[*types.Package][]types.Type)
+	result := make(map[*ssa.Package][]types.Type, len(pkgs))
+	for _, pkg := range pkgs {
+		if pkg == nil || pkg.Prog == nil || pkg.Pkg == nil {
+			continue
+		}
+		byPackage, ok := byProgram[pkg.Prog]
+		if !ok {
+			byPackage = make(map[*types.Package][]types.Type)
+			for _, typ := range pkg.Prog.RuntimeTypes() {
+				if owner := typeOwnerPackage(typ); owner != nil {
+					byPackage[owner] = append(byPackage[owner], typ)
+				}
+			}
+			byProgram[pkg.Prog] = byPackage
+		}
+		result[pkg] = byPackage[pkg.Pkg]
+	}
+	return result
+}
+
+func uniqueCallerTrackingPackages(pkgs []*ssa.Package) []*ssa.Package {
+	unique := make([]*ssa.Package, 0, len(pkgs))
+	seen := make(map[*ssa.Package]bool, len(pkgs))
+	for _, pkg := range pkgs {
+		if pkg != nil && !seen[pkg] {
+			seen[pkg] = true
+			unique = append(unique, pkg)
+		}
+	}
+	return unique
 }
 
 // NewCallerTracking creates the caller-tracking memoization for one
@@ -1015,33 +1162,39 @@ func runtimeCallerBaseSet(c *CallerTracking, pkg *ssa.Package) map[*ssa.Function
 	if set, ok := c.base[pkg]; ok {
 		return set
 	}
+	if c.precomputed {
+		panic("caller-tracking base set was not precomputed")
+	}
 	set := computeRuntimeCallerBaseSet(pkg)
 	c.base[pkg] = set
 	return set
 }
 
 func computeRuntimeCallerBaseSet(pkg *ssa.Package) map[*ssa.Function]bool {
-	funcs, trackable := collectRuntimeCallerFunctions(pkg)
-	analysis := &runtimeCallerAnalysis{
-		pkg:       pkg,
-		funcs:     funcs,
-		trackable: trackable,
-		callsites: collectRuntimeCallerCallsites(funcs),
-		memo:      make(map[*ssa.Function]bool),
-		visiting:  make(map[*ssa.Function]bool),
+	var runtimeTypes []types.Type
+	if pkg != nil && pkg.Prog != nil {
+		for _, typ := range pkg.Prog.RuntimeTypes() {
+			if typeBelongsToPackage(typ, pkg.Pkg) {
+				runtimeTypes = append(runtimeTypes, typ)
+			}
+		}
 	}
+	return analyzeCallerTrackingPackage(pkg, collectRuntimeCallerMethods(pkg, runtimeTypes)).base
+}
+
+func computeRuntimeCallerBaseSetFromAnalysis(analysis *runtimeCallerAnalysis) map[*ssa.Function]bool {
 	if !analysis.packageHasRuntimeCaller() {
 		return nil
 	}
 	out := make(map[*ssa.Function]bool)
 	for {
-		ntrack := len(trackable)
-		for fn := range trackable {
+		ntrack := len(analysis.trackable)
+		for fn := range analysis.trackable {
 			if analysis.fnMayReachRuntimeCaller(fn) {
 				out[fn] = true
 			}
 		}
-		if len(trackable) == ntrack {
+		if len(analysis.trackable) == ntrack {
 			break
 		}
 	}
@@ -1061,6 +1214,69 @@ type runtimeCallerAnalysis struct {
 }
 
 func collectRuntimeCallerFunctions(pkg *ssa.Package) (funcs, trackable map[*ssa.Function]bool) {
+	var runtimeTypes []types.Type
+	if pkg != nil && pkg.Prog != nil {
+		runtimeTypes = pkg.Prog.RuntimeTypes()
+	}
+	return collectRuntimeCallerFunctionsWithMethods(pkg, collectRuntimeCallerMethods(pkg, runtimeTypes))
+}
+
+func collectRuntimeCallerMethods(pkg *ssa.Package, runtimeTypes []types.Type) []*ssa.Function {
+	if pkg == nil || pkg.Prog == nil {
+		return nil
+	}
+	type methodType struct {
+		key string
+		typ types.Type
+	}
+	typesToVisit := make([]methodType, 0)
+	seenTypes := make(map[string]bool)
+	addType := func(typ types.Type) {
+		key := types.TypeString(typ, func(owner *types.Package) string {
+			if owner == nil {
+				return ""
+			}
+			return owner.Path()
+		})
+		if !seenTypes[key] {
+			seenTypes[key] = true
+			typesToVisit = append(typesToVisit, methodType{key: key, typ: typ})
+		}
+	}
+	for _, member := range pkg.Members {
+		if typ, ok := member.(*ssa.Type); ok {
+			addType(typ.Type())
+			addType(types.NewPointer(typ.Type()))
+		}
+	}
+	for _, typ := range runtimeTypes {
+		if typeBelongsToPackage(typ, pkg.Pkg) {
+			addType(typ)
+		}
+	}
+	sort.Slice(typesToVisit, func(i, j int) bool {
+		return typesToVisit[i].key < typesToVisit[j].key
+	})
+
+	methods := make([]*ssa.Function, 0)
+	seen := make(map[*ssa.Function]bool)
+	addMethods := func(typ types.Type) {
+		methodSet := pkg.Prog.MethodSets.MethodSet(typ)
+		for i := 0; i < methodSet.Len(); i++ {
+			fn := pkg.Prog.MethodValue(methodSet.At(i))
+			if fn != nil && !seen[fn] {
+				seen[fn] = true
+				methods = append(methods, fn)
+			}
+		}
+	}
+	for _, candidate := range typesToVisit {
+		addMethods(candidate.typ)
+	}
+	return methods
+}
+
+func collectRuntimeCallerFunctionsWithMethods(pkg *ssa.Package, methods []*ssa.Function) (funcs, trackable map[*ssa.Function]bool) {
 	funcs = make(map[*ssa.Function]bool)
 	trackable = make(map[*ssa.Function]bool)
 	var add func(*ssa.Function, bool) bool
@@ -1088,34 +1304,11 @@ func collectRuntimeCallerFunctions(pkg *ssa.Package) (funcs, trackable map[*ssa.
 			add(fn, true)
 		}
 	}
-	if pkg.Prog != nil {
-		// Methods are as trackable as package-level functions: one that
-		// (transitively) calls runtime.Caller needs frames and pcline
-		// labels of its own.
-		addMethods := func(typ types.Type) {
-			methods := pkg.Prog.MethodSets.MethodSet(typ)
-			for i := 0; i < methods.Len(); i++ {
-				add(pkg.Prog.MethodValue(methods.At(i)), true)
-			}
-		}
-		// Named-type methods are not package members and a type used only
-		// concretely never enters RuntimeTypes (slog.(*Logger).Info was
-		// missed exactly this way); collect both receiver forms from the
-		// package's own type declarations.
-		for _, member := range pkg.Members {
-			if t, ok := member.(*ssa.Type); ok {
-				addMethods(t.Type())
-				addMethods(types.NewPointer(t.Type()))
-			}
-		}
-		if pkg.Pkg != nil {
-			for _, typ := range pkg.Prog.RuntimeTypes() {
-				if !typeBelongsToPackage(typ, pkg.Pkg) {
-					continue
-				}
-				addMethods(typ)
-			}
-		}
+	// Methods are as trackable as package-level functions: one that
+	// (transitively) calls runtime.Caller needs frames and pcline labels of its
+	// own. Method wrappers were materialized serially before workers started.
+	for _, method := range methods {
+		add(method, true)
 	}
 	for changed := true; changed; {
 		changed = false
@@ -1154,9 +1347,10 @@ func functionBelongsToPackage(pkg *ssa.Package, fn *ssa.Function) bool {
 }
 
 func typeBelongsToPackage(typ types.Type, pkg *types.Package) bool {
-	if pkg == nil {
-		return false
-	}
+	return pkg != nil && typeOwnerPackage(typ) == pkg
+}
+
+func typeOwnerPackage(typ types.Type) *types.Package {
 	for {
 		if ptr, ok := types.Unalias(typ).(*types.Pointer); ok {
 			typ = ptr.Elem()
@@ -1165,7 +1359,10 @@ func typeBelongsToPackage(typ types.Type, pkg *types.Package) bool {
 		break
 	}
 	named, ok := types.Unalias(typ).(*types.Named)
-	return ok && named.Obj() != nil && named.Obj().Pkg() == pkg
+	if !ok || named.Obj() == nil {
+		return nil
+	}
+	return named.Obj().Pkg()
 }
 
 func (a *runtimeCallerAnalysis) packageHasRuntimeCaller() bool {

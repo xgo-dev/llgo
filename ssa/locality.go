@@ -58,7 +58,6 @@ type localityInfos struct {
 	ownerlessEntries   map[string]VariableLocality
 	declarationEntries map[string]map[string]VariableLocality
 	activePackages     map[string]struct{}
-	parsedPackages     map[*types.Package]struct{}
 }
 
 func newLocalityInfos() *localityInfos {
@@ -67,7 +66,6 @@ func newLocalityInfos() *localityInfos {
 		ownerlessEntries:   make(map[string]VariableLocality),
 		declarationEntries: make(map[string]map[string]VariableLocality),
 		activePackages:     make(map[string]struct{}),
-		parsedPackages:     make(map[*types.Package]struct{}),
 	}
 }
 
@@ -293,12 +291,12 @@ func (p Program) validateLocalities(pkgPath string, packageEntries map[string]Va
 	if len(localNames) == 0 {
 		return nil
 	}
-	p.linknameMu.RLock()
-	links := make(map[string]string, len(p.linkname))
-	for name, target := range p.linkname {
+	p.packageSyntax.mu.RLock()
+	links := make(map[string]string, len(p.packageSyntax.linknames))
+	for name, target := range p.packageSyntax.linknames {
 		links[name] = strings.TrimPrefix(target, "go:")
 	}
-	p.linknameMu.RUnlock()
+	p.packageSyntax.mu.RUnlock()
 	for name := range links {
 		if strings.HasPrefix(name, prefix) && linknameReachesLocal(name, links, localNames) {
 			nameSet[name] = true
@@ -330,16 +328,11 @@ func linknameReachesLocal(name string, links map[string]string, localNames map[s
 }
 
 func (p Program) PackageSyntaxParsed(pkg *types.Package) bool {
-	p.localities.mu.RLock()
-	_, ok := p.localities.parsedPackages[pkg]
-	p.localities.mu.RUnlock()
-	return ok
+	return p.packageSyntaxParsed(pkg)
 }
 
 func (p Program) MarkPackageSyntaxParsed(pkg *types.Package) {
-	p.localities.mu.Lock()
-	p.localities.parsedPackages[pkg] = struct{}{}
-	p.localities.mu.Unlock()
+	p.markPackageSyntaxParsed(pkg)
 }
 
 // PackageLocalities returns the legacy canonical-only metadata view. Its
