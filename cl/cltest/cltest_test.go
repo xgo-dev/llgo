@@ -5,7 +5,33 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/goplus/llgo/internal/build"
 )
+
+func TestWithModuleCaptureDWARFMode(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		mode build.DWARFMode
+		want build.DWARFMode
+	}{
+		{name: "default", mode: build.DWARFDefault, want: build.DWARFOmit},
+		{name: "preserve", mode: build.DWARFPreserve, want: build.DWARFPreserve},
+		{name: "omit", mode: build.DWARFOmit, want: build.DWARFOmit},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			conf := build.NewDefaultConf(build.ModeRun)
+			conf.LinkOptions.DWARF = test.mode
+			got, _, _ := withModuleCapture(conf, t.TempDir())
+			if got.LinkOptions.DWARF != test.want {
+				t.Fatalf("DWARF mode = %v, want %v", got.LinkOptions.DWARF, test.want)
+			}
+			if conf.LinkOptions.DWARF != test.mode {
+				t.Fatalf("input DWARF mode = %v, want %v", conf.LinkOptions.DWARF, test.mode)
+			}
+		})
+	}
+}
 
 func TestReadGoldenUsesToolchainVersion(t *testing.T) {
 	dir := t.TempDir()

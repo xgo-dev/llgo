@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goplus/gogen/packages"
 	"github.com/goplus/llgo/internal/optlevel"
 	"github.com/xgo-dev/llvm"
 )
@@ -175,6 +176,7 @@ func TestDeferInitBuilderInheritsDebugLocation(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "defer.go", `package p
 func f() {}
+func child() {}
 `, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -207,9 +209,161 @@ func f() {}
 	}
 	deferBuilder.Jump(next)
 
+	childDecl := file.Decls[1].(*ast.FuncDecl)
+	childObject := typesPkg.Scope().Lookup("child").(*types.Func)
+	child := pkg.NewFunc("example.com/p.child", childObject.Type().(*types.Signature), InGo)
+	childBuilder := child.MakeBody(1)
+	defer childBuilder.Dispose()
+	childPos := fset.Position(childDecl.Body.Lbrace)
+	childBuilder.DebugFunction(child, childObject.Scope(), fset.Position(childObject.Pos()), childPos)
+	childBuilder.DISetCurrentDebugLocation(child, childPos)
+	childBuilder.Return()
+
+	sameLoc := childBuilder.deferDebugLocationFor(child)
+	if sameLoc.Scope != child.diFunc.ll {
+		t.Fatal("same-function defer location changed scope")
+	}
+	ownerLoc := childBuilder.deferDebugLocationFor(fn)
+	if ownerLoc.Line != uint(childPos.Line) || ownerLoc.Col != uint(childPos.Column) || ownerLoc.Scope != fn.diFunc.ll || !ownerLoc.InlinedAt.IsNil() {
+		t.Fatalf("cross-function defer location = %+v, want owner scope at %s:%d:%d", ownerLoc, childPos.Filename, childPos.Line, childPos.Column)
+	}
+	plain := pkg.NewFunc("example.com/p.plain", NoArgsNoRet, InGo)
+	plainBuilder := plain.MakeBody(1)
+	defer plainBuilder.Dispose()
+	plainBuilder.Return()
+	if loc := childBuilder.deferDebugLocationFor(plain); !loc.Scope.IsNil() {
+		t.Fatalf("defer location for non-debug owner has scope %+v", loc.Scope)
+	}
+
 	pkg.FinalizeDebug()
 	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
 		t.Fatalf("defer debug metadata is invalid: %v\n%s", err, pkg.Module().String())
+	}
+}
+
+func TestDeferredCallsKeepDebugLocations(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "defer.go", `package p
+func cleanup(int) {}
+func f() {
+	defer cleanup(1)
+	defer cleanup(2)
+}
+`, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typesPkg, err := (&types.Config{}).Check("example.com/p", fset, []*ast.File{file}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	prog := NewProgram(&Target{OptLevel: optlevel.O0})
+	defer prog.Dispose()
+	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	imp := packages.NewImporter(fset)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := imp.Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("p", "example.com/p")
+	pkg.InitDebug("p", "example.com/p", fset)
+
+	cleanupObject := typesPkg.Scope().Lookup("cleanup").(*types.Func)
+	cleanup := pkg.NewFunc("example.com/p.cleanup", cleanupObject.Type().(*types.Signature), InGo)
+	cleanupBuilder := cleanup.MakeBody(1)
+	defer cleanupBuilder.Dispose()
+	cleanupBuilder.Return()
+	cleanupBuilder.EndBuild()
+
+	decl := file.Decls[1].(*ast.FuncDecl)
+	object := typesPkg.Scope().Lookup("f").(*types.Func)
+	fn := pkg.NewFunc("example.com/p.f", object.Type().(*types.Signature), InGo)
+	b := fn.MakeBody(1)
+	defer b.Dispose()
+	bodyPos := fset.Position(decl.Body.Lbrace)
+	b.DebugFunction(fn, object.Scope(), fset.Position(object.Pos()), bodyPos)
+	recoverBlock := fn.MakeBlock()
+	fn.SetRecover(recoverBlock)
+	b.SetBlock(recoverBlock).Return()
+	b.SetBlock(fn.Block(0))
+
+	firstDefer := decl.Body.List[0].(*ast.DeferStmt)
+	b.DISetCurrentDebugLocation(fn, fset.Position(firstDefer.Defer))
+	b.Defer(DeferAlways, cleanup.Expr, Builder.Call, prog.Val(1))
+	secondDefer := decl.Body.List[1].(*ast.DeferStmt)
+	b.DISetCurrentDebugLocation(fn, fset.Position(secondDefer.Defer))
+	b.Defer(DeferInLoop, cleanup.Expr, Builder.Call, prog.Val(2))
+	b.RunDefers()
+	b.Return()
+	b.EndBuild()
+	pkg.FinalizeDebug()
+
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("defer debug metadata is invalid: %v\n%s", err, pkg.Module().String())
+	}
+	ir := pkg.Module().String()
+	for _, target := range []string{"FreeDeferNode", "SetThreadDefer", "example.com/p.cleanup"} {
+		found := false
+		for _, line := range strings.Split(ir, "\n") {
+			if !strings.Contains(line, " call ") || !strings.Contains(line, target) {
+				continue
+			}
+			found = true
+			if !strings.Contains(line, "!dbg !") {
+				t.Errorf("call to %s is missing a debug location: %s", target, line)
+			}
+		}
+		if !found {
+			t.Errorf("no call to %s found in IR", target)
+		}
+	}
+}
+
+func TestInlineAsmNoDebugPreservesBuilderLocation(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "asm.go", `package p
+func f() {}
+`, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typesPkg, err := (&types.Config{}).Check("example.com/p", fset, []*ast.File{file}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	prog := NewProgram(&Target{OptLevel: optlevel.O0})
+	defer prog.Dispose()
+	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	pkg := prog.NewPackage("p", "example.com/p")
+	pkg.InitDebug("p", "example.com/p", fset)
+	decl := file.Decls[0].(*ast.FuncDecl)
+	object := typesPkg.Scope().Lookup("f").(*types.Func)
+	fn := pkg.NewFunc("example.com/p.f", object.Type().(*types.Signature), InGo)
+	b := fn.MakeBody(1)
+	defer b.Dispose()
+	pos := fset.Position(decl.Body.Lbrace)
+	b.DebugFunction(fn, object.Scope(), fset.Position(object.Pos()), pos)
+	b.DISetCurrentDebugLocation(fn, pos)
+	b.InlineAsmNoDebug("nop")
+	b.Return()
+	b.EndBuild()
+	pkg.FinalizeDebug()
+
+	asm := fn.impl.EntryBasicBlock().FirstInstruction()
+	if !asm.InstructionDebugLoc().IsNil() {
+		t.Fatal("inline assembly retained the current debug location")
+	}
+	ret := llvm.NextInstruction(asm)
+	if ret.IsNil() || ret.InstructionDebugLoc().IsNil() {
+		t.Fatal("inline assembly cleared the builder debug location")
+	}
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("inline assembly debug metadata is invalid: %v\n%s", err, pkg.Module().String())
 	}
 }
 

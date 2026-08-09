@@ -140,7 +140,7 @@ jobs:
   test:
     name: test (${{ matrix.lane }}, ${{ matrix.os }}, LLVM ${{ matrix.llvm }}, Go ${{ matrix.go }}, shard ${{ matrix.shard }})
     continue-on-error: ${{ matrix.lane == 'compatibility' }}
-    timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 45 || 30 }}
+    timeout-minutes: ${{ (startsWith(matrix.os, 'macos') || matrix.lane == 'primary') && 45 || 30 }}
     strategy:
       matrix:
         # Keep compatibility and primary toolchains pinned to exact patches.

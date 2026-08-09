@@ -37,12 +37,9 @@ func (p Program) FuncInfoMetadataEnabled() bool {
 	return p.enableFuncInfoMetadata
 }
 
-// EnableFuncInfoSites controls emission of the per-function site records
-// (entry and PC-line inline-asm fragments inside function bodies). They are
-// gated separately from the funcinfo metadata tables because the
-// body-embedded anchors shift instruction/scope layout enough to confuse
-// debuggers; debug builds keep the tables (FuncForPC name/FileLine fidelity
-// via the dlsym path) but drop the sites.
+// EnableFuncInfoSites controls emission of per-function site records. The build
+// layer may apply a narrower target policy to function-entry address records
+// while retaining PC-line records.
 func (p Program) EnableFuncInfoSites(enable bool) {
 	p.enableFuncInfoSites = enable
 }

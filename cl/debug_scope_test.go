@@ -73,4 +73,17 @@ var anonymous = func() int {
 	if root.Pos() < anonymous.Syntax().Pos() || root.End() > anonymous.Syntax().End() {
 		t.Fatalf("anonymous function scope %s is outside function %s", root, anonymous.Syntax())
 	}
+	lit, ok := anonymous.Syntax().(*ast.FuncLit)
+	if !ok || len(lit.Body.List) == 0 {
+		t.Fatal("anonymous function syntax not found")
+	}
+	ifStmt, ok := lit.Body.List[0].(*ast.IfStmt)
+	if !ok || len(ifStmt.Body.List) == 0 {
+		t.Fatal("anonymous function inner scope not found")
+	}
+	sourcePos := ifStmt.Body.List[0].Pos()
+	want := root.Innermost(sourcePos)
+	if got := (&context{}).getDebugLocScope(anonymous, sourcePos); got != want || got == nil {
+		t.Fatalf("anonymous instruction scope = %p, want %p", got, want)
+	}
 }
