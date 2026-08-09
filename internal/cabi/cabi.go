@@ -63,7 +63,12 @@ type Transformer struct {
 	sys      TypeInfoSys
 	mode     Mode
 	optimize bool
-	skipFns  map[string]struct{}
+	// preserveDebugPointerHomes keeps addressable homes for aggregate
+	// parameters whose debug location is represented by a dereferenced
+	// address. LLVM 19's Linux LLDB cannot reliably materialize such values
+	// from a by-reference ABI parameter after the home is RAUW'd.
+	preserveDebugPointerHomes bool
+	skipFns                   map[string]struct{}
 }
 
 func (p *Transformer) isCFunc(name string) bool {
@@ -79,6 +84,18 @@ func (p *Transformer) SetSkipFuncs(names []string) {
 		name = strings.TrimSpace(name)
 		p.skipFns[name] = struct{}{}
 	}
+}
+
+// SetPreserveDebugPointerHomes keeps aggregate parameter homes when debug
+// information is emitted. Scalar/short aggregate lowering remains optimized;
+// pointer-shaped ABI parameters retain their source home so all supported
+// LLDB targets can evaluate composite values consistently.
+func (p *Transformer) SetPreserveDebugPointerHomes(enabled bool) {
+	p.preserveDebugPointerHomes = enabled
+}
+
+func (p *Transformer) shouldReplaceParameterHome(kind AttrKind) bool {
+	return p.optimize && !(p.preserveDebugPointerHomes && kind == AttrPointer)
 }
 
 func (p *Transformer) shouldSkipFunc(name string) bool {
@@ -447,7 +464,7 @@ func (p *Transformer) transformFuncBody(m llvm.Module, ctx llvm.Context, info *F
 			// store %typ %1, ptr %2, align 4
 			nv = b.CreateLoad(ti.Type, params[index], "")
 			// replace %0 to %2
-			if p.optimize {
+			if p.shouldReplaceParameterHome(ti.Kind) {
 				replaceAllocaInstrs(fn.Param(i), params[index])
 			}
 		case AttrWidthType:
@@ -833,27 +850,26 @@ func replaceAllocaInstrs(param llvm.Value, nv llvm.Value) {
 	}
 	for _, instr := range storeInstrs {
 		if alloc := instr.Operand(1).IsAAllocaInst(); !alloc.IsNil() {
-			skips := make(map[llvm.Value]bool)
+			type operandUse struct {
+				instr llvm.Value
+				index int
+			}
+			var preserved []operandUse
 			next := llvm.NextInstruction(alloc)
 			for !next.IsNil() && next != instr {
-				skips[next] = true
-				next = llvm.NextInstruction(next)
-			}
-			var uses []llvm.Value
-			u := alloc.FirstUse()
-			for !u.IsNil() {
-				if v := u.User(); !skips[v] {
-					uses = append(uses, v)
-				}
-				u = u.NextUse()
-			}
-			for _, use := range uses {
-				n := use.OperandsCount()
-				for i := 0; i < n; i++ {
-					if use.Operand(i) == alloc {
-						use.SetOperand(i, nv)
+				for i := 0; i < next.OperandsCount(); i++ {
+					if next.Operand(i) == alloc {
+						preserved = append(preserved, operandUse{next, i})
 					}
 				}
+				next = llvm.NextInstruction(next)
+			}
+
+			// RAUW updates instruction operands and LLVM debug records. Restore
+			// setup instructions before the parameter store to the original alloca.
+			alloc.ReplaceAllUsesWith(nv)
+			for _, use := range preserved {
+				use.instr.SetOperand(use.index, alloc)
 			}
 		}
 	}
