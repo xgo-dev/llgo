@@ -36,6 +36,18 @@ func main() {
 // CHECK-NEXT:   %4 = insertvalue { %main.state, i64 } undef, %main.state %3, 0
 // CHECK-NEXT:   %5 = insertvalue { %main.state, i64 } %4, i64 %2, 1
 // CHECK-NEXT:   ret { %main.state, i64 } %5
+// ESCAPE-LABEL: define { %main.state, i64 } @main.returnStateAndMut(){{.*}} {
+// ESCAPE-NEXT: _llgo_0:
+// ESCAPE-NEXT:   %.stack = alloca i8, i64 8, align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack, i8 0, i64 8, i1 false)
+// ESCAPE-NEXT:   %0 = getelementptr inbounds %main.state, ptr %.stack, i32 0, i32 0
+// ESCAPE-NEXT:   store i64 1, ptr %0, align 8
+// ESCAPE-NEXT:   %1 = call i64 @"main.(*state).mutate"(ptr %.stack, i64 2)
+// ESCAPE-NEXT:   %2 = load %main.state, ptr %.stack, align 8
+// ESCAPE-NEXT:   %3 = insertvalue { %main.state, i64 } undef, %main.state %2, 0
+// ESCAPE-NEXT:   %4 = insertvalue { %main.state, i64 } %3, i64 %1, 1
+// ESCAPE-NEXT:   ret { %main.state, i64 } %4
+// ESCAPE-NEXT: }
 func returnStateAndMut() (state, int) {
 	x := state{v: 1}
 	return x, x.mutate(2)

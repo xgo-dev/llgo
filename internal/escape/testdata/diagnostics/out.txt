@@ -1,0 +1,56 @@
+; ModuleID = 'testdata/diagnostics/in.txt'
+source_filename = "testdata/diagnostics/in.txt"
+target datalayout = "e-p:64:64-i64:64-n32:64-S128"
+
+@escaped = global ptr null
+
+define ptr @summaries(ptr %safe, ptr %heap, ptr %content, ptr %result, ptr %mixed) {
+entry:
+  %value = load i8, ptr %safe, align 1
+  store ptr %heap, ptr @escaped, align 8
+  %loaded = load ptr, ptr %content, align 8
+  store ptr %loaded, ptr @escaped, align 8
+  store ptr %mixed, ptr @escaped, align 8
+  ret ptr %result
+}
+
+define ptr @content_result(ptr %p) {
+entry:
+  %loaded = load ptr, ptr %p, align 8
+  ret ptr %loaded
+}
+
+define ptr @identity(ptr %p) {
+entry:
+  ret ptr %p
+}
+
+define ptr @through_result(ptr %p) {
+entry:
+  %result = call ptr @identity(ptr %p)
+  ret ptr %result
+}
+
+define ptr @through_content_result(ptr %p) {
+entry:
+  %result = call ptr @content_result(ptr %p)
+  ret ptr %result
+}
+
+define void @discard_result(ptr %p) {
+entry:
+  %result = call ptr @identity(ptr %p)
+  ret void
+}
+
+define void @mutate(ptr %p) {
+entry:
+  store i8 1, ptr %p, align 1
+  ret void
+}
+
+define void @call_parameter(ptr %fn) {
+entry:
+  call void %fn()
+  ret void
+}

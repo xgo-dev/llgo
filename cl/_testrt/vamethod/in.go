@@ -117,6 +117,70 @@ type IFmt interface {
 // CHECK-NEXT:   %38 = extractvalue { %"{{.*}}/runtime/internal/runtime.iface", i1 } %36, 1
 // CHECK-NEXT:   br i1 %38, label %_llgo_2, label %_llgo_1
 // CHECK-NEXT: }
+// ESCAPE-LABEL: define void @main.main(){{.*}} {
+// ESCAPE-NEXT: _llgo_0:
+// ESCAPE-NEXT:   %.stack = alloca i8, i64 8, align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack, i8 0, i64 8, i1 false)
+// ESCAPE-NEXT:   call void @"main.(*CFmt).SetFormat"(ptr %.stack, ptr @0)
+// ESCAPE-NEXT:   %0 = getelementptr inbounds %main.CFmt, ptr %.stack, i32 0, i32 0
+// ESCAPE-NEXT:   %1 = load ptr, ptr %0, align 8
+// ESCAPE-NEXT:   %2 = call i32 (ptr, ...) @printf(ptr %1, ptr @1, i64 100)
+// ESCAPE-NEXT:   call void @"main.(*CFmt).SetFormat"(ptr %.stack, ptr @2)
+// ESCAPE-NEXT:   %3 = getelementptr inbounds %main.CFmt, ptr %.stack, i32 0, i32 0
+// ESCAPE-NEXT:   %4 = load ptr, ptr %3, align 8
+// ESCAPE-NEXT:   %5 = call i32 (ptr, ...) @printf(ptr %4, i64 200, ptr @3)
+// ESCAPE-NEXT:   %6 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// ESCAPE-NEXT:   %7 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_main.CFmt", ptr undef }, ptr %6, 1
+// ESCAPE-NEXT:   %8 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %7, 0
+// ESCAPE-NEXT:   %9 = call i1 @"{{.*}}/runtime/internal/runtime.Implements"(ptr @_llgo_main.IFmt, ptr %8)
+// ESCAPE-NEXT:   br i1 %9, label %_llgo_3, label %_llgo_4
+// ESCAPE-EMPTY:
+// ESCAPE-NEXT: _llgo_1:                                          ; preds = %_llgo_5
+// ESCAPE-NEXT:   %10 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// ESCAPE-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @20, i64 5 }, ptr %10, align 8
+// ESCAPE-NEXT:   %11 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %10, 1
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %11)
+// ESCAPE-NEXT:   unreachable
+// ESCAPE-EMPTY:
+// ESCAPE-NEXT: _llgo_2:                                          ; preds = %_llgo_5
+// ESCAPE-NEXT:   %12 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %36)
+// ESCAPE-NEXT:   %13 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %36, 0
+// ESCAPE-NEXT:   %14 = getelementptr ptr, ptr %13, i64 4
+// ESCAPE-NEXT:   %15 = load ptr, ptr %14, align 8
+// ESCAPE-NEXT:   %16 = insertvalue { ptr, ptr } undef, ptr %15, 0
+// ESCAPE-NEXT:   %17 = insertvalue { ptr, ptr } %16, ptr %12, 1
+// ESCAPE-NEXT:   %18 = extractvalue { ptr, ptr } %17, 1
+// ESCAPE-NEXT:   %19 = extractvalue { ptr, ptr } %17, 0
+// ESCAPE-NEXT:   call void %19(ptr %18, ptr @18)
+// ESCAPE-NEXT:   %20 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %36)
+// ESCAPE-NEXT:   %21 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %36, 0
+// ESCAPE-NEXT:   %22 = getelementptr ptr, ptr %21, i64 3
+// ESCAPE-NEXT:   %23 = load ptr, ptr %22, align 8
+// ESCAPE-NEXT:   %24 = insertvalue { ptr, ptr } undef, ptr %23, 0
+// ESCAPE-NEXT:   %25 = insertvalue { ptr, ptr } %24, ptr %20, 1
+// ESCAPE-NEXT:   %26 = extractvalue { ptr, ptr } %25, 1
+// ESCAPE-NEXT:   %27 = extractvalue { ptr, ptr } %25, 0
+// ESCAPE-NEXT:   %28 = call i32 (ptr, ...) %27(ptr %26, ptr @19, i64 100, i64 200)
+// ESCAPE-NEXT:   ret void
+// ESCAPE-EMPTY:
+// ESCAPE-NEXT: _llgo_3:                                          ; preds = %_llgo_0
+// ESCAPE-NEXT:   %29 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %7, 1
+// ESCAPE-NEXT:   %30 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$a85zs5wWQQoPIERm_en8plssh4spdIeeXZPC-E0TDh0", ptr %8)
+// ESCAPE-NEXT:   %31 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %30, 0
+// ESCAPE-NEXT:   %32 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %31, ptr %29, 1
+// ESCAPE-NEXT:   %33 = insertvalue { %"{{.*}}/runtime/internal/runtime.iface", i1 } undef, %"{{.*}}/runtime/internal/runtime.iface" %32, 0
+// ESCAPE-NEXT:   %34 = insertvalue { %"{{.*}}/runtime/internal/runtime.iface", i1 } %33, i1 true, 1
+// ESCAPE-NEXT:   br label %_llgo_5
+// ESCAPE-EMPTY:
+// ESCAPE-NEXT: _llgo_4:                                          ; preds = %_llgo_0
+// ESCAPE-NEXT:   br label %_llgo_5
+// ESCAPE-EMPTY:
+// ESCAPE-NEXT: _llgo_5:                                          ; preds = %_llgo_4, %_llgo_3
+// ESCAPE-NEXT:   %35 = phi { %"{{.*}}/runtime/internal/runtime.iface", i1 } [ %34, %_llgo_3 ], [ zeroinitializer, %_llgo_4 ]
+// ESCAPE-NEXT:   %36 = extractvalue { %"{{.*}}/runtime/internal/runtime.iface", i1 } %35, 0
+// ESCAPE-NEXT:   %37 = extractvalue { %"{{.*}}/runtime/internal/runtime.iface", i1 } %35, 1
+// ESCAPE-NEXT:   br i1 %37, label %_llgo_2, label %_llgo_1
+// ESCAPE-NEXT: }
 func main() {
 	cfmt := &CFmt{}
 	cfmt.SetFormat(c.Str("%s (%d)\n"))

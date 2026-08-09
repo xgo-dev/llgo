@@ -46,6 +46,17 @@ func Print(p *Foo) {
 // CHECK-NEXT:   call void @main.Print(ptr %0)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
+// ESCAPE-LABEL: define void @main.main(){{.*}} {
+// ESCAPE-NEXT: _llgo_0:
+// ESCAPE-NEXT:   %.stack = alloca i8, i64 8, align 4
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack, i8 0, i64 8, i1 false)
+// ESCAPE-NEXT:   %0 = getelementptr inbounds { i32, i1 }, ptr %.stack, i32 0, i32 0
+// ESCAPE-NEXT:   %1 = getelementptr inbounds { i32, i1 }, ptr %.stack, i32 0, i32 1
+// ESCAPE-NEXT:   store i32 100, ptr %0, align 4
+// ESCAPE-NEXT:   store i1 true, ptr %1, align 1
+// ESCAPE-NEXT:   call void @main.Print(ptr %.stack)
+// ESCAPE-NEXT:   ret void
+// ESCAPE-NEXT: }
 func main() {
 	foo := &Foo{100, true}
 	Print(foo)

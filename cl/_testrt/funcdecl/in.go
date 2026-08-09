@@ -82,6 +82,18 @@ func check(fn func()) {
 // CHECK-NEXT:   ret ptr %5
 // CHECK-NEXT: }
 
+// ESCAPE-LABEL: define ptr @main.closurePtr(%"{{.*}}/runtime/internal/runtime.eface" %0){{.*}} {
+// ESCAPE-NEXT: _llgo_0:
+// ESCAPE-NEXT:   %.stack = alloca i8, i64 16, align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack, i8 0, i64 16, i1 false)
+// ESCAPE-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %0, ptr %.stack, align 8
+// ESCAPE-NEXT:   %1 = getelementptr inbounds %main.rtype, ptr %.stack, i32 0, i32 1
+// ESCAPE-NEXT:   %2 = load ptr, ptr %1, align 8
+// ESCAPE-NEXT:   %3 = getelementptr inbounds { ptr, ptr }, ptr %2, i32 0, i32 0
+// ESCAPE-NEXT:   %4 = load ptr, ptr %3, align 8
+// ESCAPE-NEXT:   ret ptr %4
+// ESCAPE-NEXT: }
+
 func closurePtr(a any) unsafe.Pointer {
 	return (*rtype)(unsafe.Pointer(&a)).ptr.fn
 }

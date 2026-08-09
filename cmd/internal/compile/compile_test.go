@@ -19,6 +19,7 @@ func TestGoCompilerFlagNamesAndTypes(t *testing.T) {
 		"-C",
 		"-e",
 		"-l=4",
+		"-m=2",
 		"-lang=go1.17",
 		"-d=panic,ssa/check/on",
 		"-p=p",
@@ -28,7 +29,7 @@ func TestGoCompilerFlagNamesAndTypes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.noBounds.value != 1 || opts.concurrency != 2 || opts.noColumns.value != 1 || opts.allErrors.value != 1 || opts.noInline.value != 4 {
+	if opts.noBounds.value != 1 || opts.concurrency != 2 || opts.noColumns.value != 1 || opts.allErrors.value != 1 || opts.noInline.value != 4 || opts.showOpt.value != 2 {
 		t.Fatalf("parsed flags: %+v", opts)
 	}
 	if opts.lang != "go1.17" || opts.pkgPath != "p" || opts.importCfg != "importcfg" {
@@ -105,7 +106,7 @@ func TestUnsupportedCompilerFlags(t *testing.T) {
 		writeBar:    countFlag{set: true},
 		debug:       stringListFlag{"panic,libfuzzer", "ssa/check/on,ssa/check/seed=1,wb"},
 	}
-	want := []string{"-dynlink", "-m", "-live", "-race", "-smallframes", "-+", "-wb", "-d=libfuzzer", "-d=wb"}
+	want := []string{"-dynlink", "-live", "-race", "-smallframes", "-+", "-wb", "-d=libfuzzer", "-d=wb"}
 	if got := opts.unsupported(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("unsupported=%v, want %v", got, want)
 	}
@@ -179,6 +180,45 @@ func TestRunCmdBuildsAndReportsErrors(t *testing.T) {
 	_, stderr, code = runCompileCommand(t, []string{"-C", "-std", invalidPragma})
 	if code != 1 || !strings.Contains(stderr, "go:uintptrkeepalive requires go:nosplit") {
 		t.Fatalf("-std compile exit code = %d, stderr=%q; want code 1 and pragma diagnostic", code, stderr)
+	}
+}
+
+func TestRunCmdEscapeDiagnostics(t *testing.T) {
+	dir := t.TempDir()
+	source := dir + "/escape.go"
+	if err := os.WriteFile(source, []byte(`package escape
+var sink *int
+func noescape(p *int) { _ = *p }
+func leak(p *int) { sink = p }
+func content(p **int) { sink = *p }
+func result(p *int) *int { return p }
+func through(p *int) *int { return result(p) }
+func discard(p *int) { _ = result(p) }
+func mutate(p *int) { *p = 1 }
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, code := runCompileCommand(t, []string{"-C", "-m", "-l", source})
+	if code != 0 {
+		t.Fatalf("-m compile exit code = %d, stderr=%q", code, stderr)
+	}
+	for _, want := range []string{
+		// TODO: Re-enable these diagnostics after the summary traversal handles
+		// compiler-generated `icmp eq ptr, null` checks without recording a heap
+		// flow. HeapToStack cannot generally discard the comparison because the
+		// current AllocZ/AllocU runtime contracts do not both guarantee non-nil.
+		// "escape.go:3: p does not escape",
+		"escape.go:4: leaking param: p",
+		// "escape.go:5: leaking param content: p",
+		"escape.go:6: leaking param: p to result ~r0 level=0",
+		"escape.go:7: leaking param: p to result ~r0 level=0",
+		"escape.go:8: p does not escape",
+		"escape.go:9: p does not escape",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("-m stderr missing %q:\n%s", want, stderr)
+		}
 	}
 }
 

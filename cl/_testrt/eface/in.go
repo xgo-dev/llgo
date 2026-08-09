@@ -26,6 +26,16 @@ func (t *T) Invoke() {
 // CHECK-NEXT:   call void @main.dumpTyp(ptr %3, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
+// ESCAPE-LABEL: define void @main.dump(%"{{.*}}/runtime/internal/runtime.eface" %0){{.*}} {
+// ESCAPE-NEXT: _llgo_0:
+// ESCAPE-NEXT:   %.stack = alloca i8, i64 16, align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack, i8 0, i64 16, i1 false)
+// ESCAPE-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %0, ptr %.stack, align 8
+// ESCAPE-NEXT:   %1 = getelementptr inbounds %main.eface, ptr %.stack, i32 0, i32 0
+// ESCAPE-NEXT:   %2 = load ptr, ptr %1, align 8
+// ESCAPE-NEXT:   call void @main.dumpTyp(ptr %2, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
+// ESCAPE-NEXT:   ret void
+// ESCAPE-NEXT: }
 func dump(v any) {
 	e := (*eface)(unsafe.Pointer(&v))
 	dumpTyp(e._type, "")

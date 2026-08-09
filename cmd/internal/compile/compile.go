@@ -163,6 +163,7 @@ func runCmd(_ *base.Command, args []string) {
 	conf.NoErrorColumn = opts.noColumns.value != 0
 	conf.AllowNoBody = !opts.complete
 	conf.DisableBoundsChecks = opts.noBounds.value != 0
+	conf.EscapeDiagnostics = opts.showOpt.value != 0
 	var loaderCompilerFlags []string
 	if opts.allErrors.value != 0 {
 		loaderCompilerFlags = append(loaderCompilerFlags, "-e")
@@ -183,6 +184,11 @@ func runCmd(_ *base.Command, args []string) {
 		conf.OptLevel = optlevel.O0
 	}
 	pkgs, err := build.Do(files, conf)
+	if len(pkgs) != 0 {
+		for _, message := range pkgs[0].EscapeDiagnosticMessages {
+			fmt.Fprintln(os.Stderr, message)
+		}
+	}
 	if len(pkgs) != 0 && pkgs[0].LPkg != nil {
 		pkgs[0].LPkg.Prog.Dispose()
 	}
@@ -200,7 +206,6 @@ func (opts *options) unsupported() []string {
 		}
 	}
 	appendFlag(opts.dynlink, "-dynlink")
-	appendFlag(opts.showOpt.value != 0, "-m")
 	appendFlag(opts.live, "-live")
 	appendFlag(opts.race, "-race")
 	appendFlag(opts.smallFrames, "-smallframes")

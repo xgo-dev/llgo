@@ -38,6 +38,7 @@ import (
 	"sync/atomic"
 
 	"golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa/ssautil"
 
 	"github.com/goplus/llgo/cl"
 	llabi "github.com/goplus/llgo/internal/abi"
@@ -48,6 +49,7 @@ import (
 	"github.com/goplus/llgo/internal/dcepass"
 	"github.com/goplus/llgo/internal/deadcode"
 	"github.com/goplus/llgo/internal/env"
+	llescape "github.com/goplus/llgo/internal/escape"
 	"github.com/goplus/llgo/internal/firmware"
 	"github.com/goplus/llgo/internal/flash"
 	"github.com/goplus/llgo/internal/goembed"
@@ -188,6 +190,10 @@ type Config struct {
 	// DisableBoundsChecks disables index, slice, and slice-to-array conversion
 	// bounds checks while retaining required integer conversions and nil checks.
 	DisableBoundsChecks bool
+	// DisableEscapeAnalysis skips the heap-to-stack transform.
+	DisableEscapeAnalysis bool
+	// EscapeDiagnostics requests source-positioned parameter escape summaries.
+	EscapeDiagnostics bool
 
 	// PthreadStackSize sets a custom stack size, in bytes, for pthread-backed
 	// goroutines. A zero value keeps the platform pthread default.
@@ -1925,6 +1931,12 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	ret := aPkg.LPkg
 
 	ctx.cTransformer.SetSkipFuncs(cabiSkipFuncsForPlan9Asm(ctx, pkgPath, ret.Module()))
+	if !ctx.buildConf.DisableEscapeAnalysis {
+		result := llescape.TransformModule(ret.Module(), ctx.buildConf.EscapeDiagnostics)
+		if ctx.buildConf.EscapeDiagnostics {
+			aPkg.EscapeDiagnosticMessages = escapeDiagnosticMessages(aPkg, result, ctx.buildConf.NoErrorColumn)
+		}
+	}
 	llabi.LowerLargeAggregates(ctx.prog.TargetData(), ret.Module())
 	ctx.cTransformer.TransformModule(ret.Path(), ret.Module())
 	ctx.cTransformer.SetSkipFuncs(nil)
@@ -2006,6 +2018,59 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 		}
 	}
 	return nil
+}
+
+func escapeDiagnosticMessages(pkg *aPackage, result llescape.Result, noColumn bool) []string {
+	functions := make(map[string]*ssa.Function)
+	for fn := range ssautil.AllFunctions(pkg.SSA.Prog) {
+		if fn == nil || fn.Pkg != pkg.SSA || fn.Parent() != nil || fn.Synthetic != "" || fn.Origin() != nil || fn.Signature.Recv() != nil {
+			continue
+		}
+		functions[fn.String()] = fn
+	}
+
+	var messages []string
+	for _, summary := range result.Parameters {
+		fn := functions[summary.Function]
+		if fn == nil || summary.Parameter >= len(fn.Params) {
+			continue
+		}
+		param := fn.Params[summary.Parameter]
+		name := param.Name()
+		pos := pkg.Fset.Position(param.Pos())
+		if name == "" || !pos.IsValid() {
+			continue
+		}
+
+		var reports []string
+		if summary.HeapLevel == 0 {
+			reports = append(reports, "leaking param: "+name)
+		} else if summary.HeapLevel > 0 {
+			reports = append(reports, "leaking param content: "+name)
+		}
+		for _, leak := range summary.Results {
+			if leak.Result >= fn.Signature.Results().Len() {
+				continue
+			}
+			resultName := fn.Signature.Results().At(leak.Result).Name()
+			if resultName == "" {
+				resultName = fmt.Sprintf("~r%d", leak.Result)
+			}
+			reports = append(reports, fmt.Sprintf("leaking param: %s to result %s level=%d", name, resultName, leak.Level))
+		}
+		if len(reports) == 0 {
+			reports = append(reports, name+" does not escape")
+		}
+
+		position := fmt.Sprintf("%s:%d", pos.Filename, pos.Line)
+		if !noColumn {
+			position += fmt.Sprintf(":%d", pos.Column)
+		}
+		for _, report := range reports {
+			messages = append(messages, position+": "+report)
+		}
+	}
+	return messages
 }
 
 func printCompiledPackage(conf *Config, pkg *aPackage) {
@@ -2310,6 +2375,8 @@ type aPackage struct {
 	ArchiveFile string                 // archive file: .a (output of archiver, used for linking)
 	Meta        *meta.PackageMeta
 	rewriteVars map[string]string
+
+	EscapeDiagnosticMessages []string
 
 	// Cache related fields
 	Fingerprint string // fingerprint digest

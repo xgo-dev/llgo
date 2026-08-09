@@ -62,13 +62,41 @@ func LoadSpec(pkgDir string) (Spec, error) {
 	return Spec{Path: path, Text: string(data), Mode: ModeLiteral}, nil
 }
 
-func Check(spec Spec, actual string) error {
+func Check(spec Spec, actual string, prefixes ...string) error {
 	switch spec.Mode {
 	case ModeSkip:
 		return nil
 	case ModeFileCheck:
+		if len(prefixes) != 0 {
+			data, err := os.ReadFile(spec.Path)
+			if err != nil {
+				return err
+			}
+			lines := strings.Split(string(data), "\n")
+			used := make([]string, 0, len(prefixes))
+			for _, prefix := range prefixes {
+				for _, line := range lines {
+					line = strings.TrimSpace(line)
+					if !strings.HasPrefix(line, "//") {
+						continue
+					}
+					directive := strings.TrimSpace(strings.TrimPrefix(line, "//"))
+					if strings.HasPrefix(directive, prefix+":") || strings.HasPrefix(directive, prefix+"-") {
+						used = append(used, prefix)
+						break
+					}
+				}
+			}
+			if len(used) == 0 {
+				return nil
+			}
+			return filecheck.MatchWithPrefixes(spec.Path, actual, used...)
+		}
 		return filecheck.Match(spec.Path, actual)
 	case ModeLiteral:
+		if len(prefixes) != 0 {
+			return nil
+		}
 		if actual != spec.Text {
 			return fmt.Errorf("%s: literal LLVM IR mismatch", spec.Path)
 		}

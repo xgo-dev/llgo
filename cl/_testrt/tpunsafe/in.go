@@ -24,6 +24,16 @@ type M[T any] struct {
 // CHECK-NEXT:   call void @"main.(*M[int64]).check"(ptr %1, i64 8, i64 16, i64 8)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
+// ESCAPE-LABEL: define void @main.main(){{.*}} {
+// ESCAPE-NEXT: _llgo_0:
+// ESCAPE-NEXT:   %.stack = alloca i8, i64 12, align 1
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack, i8 0, i64 12, i1 false)
+// ESCAPE-NEXT:   call void @"main.(*M[bool]).check"(ptr %.stack, i64 1, i64 8, i64 1)
+// ESCAPE-NEXT:   %.stack1 = alloca i8, i64 32, align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack1, i8 0, i64 32, i1 false)
+// ESCAPE-NEXT:   call void @"main.(*M[int64]).check"(ptr %.stack1, i64 8, i64 16, i64 8)
+// ESCAPE-NEXT:   ret void
+// ESCAPE-NEXT: }
 func main() {
 	m1 := M[bool]{}
 	m1.check(1, 8, 1)

@@ -26,8 +26,11 @@ import (
 	"github.com/goplus/llgo/xtool/env/llvm"
 )
 
+var escapeChecks bool
+
 func main() {
 	llvm.SetupPath()
+	flag.BoolVar(&escapeChecks, "escape", false, "generate checks after escape analysis")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s <file-or-dir> [<file-or-dir>...]\n", filepath.Base(os.Args[0]))
 		flag.PrintDefaults()

@@ -1,0 +1,12 @@
+; ModuleID = 'testdata/address-space/in.txt'
+source_filename = "testdata/address-space/in.txt"
+target datalayout = "e-p:64:64-A5"
+
+declare ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64)
+
+define void @wrong_address_space() {
+entry:
+  %p = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 8)
+  store i8 1, ptr %p, align 1
+  ret void
+}

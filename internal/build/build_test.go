@@ -85,6 +85,22 @@ func TestConfigCloneDoesNotAliasInput(t *testing.T) {
 	}
 }
 
+func TestDisableEscapeAnalysis(t *testing.T) {
+	conf := NewDefaultConf(ModeGen)
+	conf.DisableEscapeAnalysis = true
+	pkgs, err := Do([]string{"./testdata/escape_phase1"}, conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 1 || pkgs[0].LPkg == nil {
+		t.Fatalf("generated packages = %#v", pkgs)
+	}
+	defer pkgs[0].LPkg.Prog.Dispose()
+	if ir := pkgs[0].LPkg.String(); !strings.Contains(ir, `call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocZ"`) {
+		t.Fatalf("disabled escape analysis changed heap allocation:\n%s", ir)
+	}
+}
+
 func TestResolveBuildConfigDefaultsAndValidation(t *testing.T) {
 	resolved, err := resolveBuildConfig(&Config{
 		BuildMode:    BuildModeCArchive,

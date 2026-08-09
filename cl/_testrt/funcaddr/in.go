@@ -41,6 +41,30 @@ func add(a, b int) int {
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
+// ESCAPE-LABEL: define void @main.main(){{.*}} {
+// ESCAPE-NEXT: _llgo_0:
+// ESCAPE-NEXT:   %.stack = alloca i8, i64 8, align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack, i8 0, i64 8, i1 false)
+// ESCAPE-NEXT:   store ptr @main.add, ptr %.stack, align 8
+// ESCAPE-NEXT:   %.stack1 = alloca i8, i64 8, align 8
+// ESCAPE-NEXT:   call void @llvm.memset.p0.i64(ptr %.stack1, i8 0, i64 8, i1 false)
+// ESCAPE-NEXT:   store ptr @"main.main$1", ptr %.stack1, align 8
+// ESCAPE-NEXT:   %0 = load ptr, ptr %.stack, align 8
+// ESCAPE-NEXT:   %1 = icmp eq ptr @main.add, %0
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %1)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   %2 = load ptr, ptr %.stack, align 8
+// ESCAPE-NEXT:   %3 = load ptr, ptr %.stack, align 8
+// ESCAPE-NEXT:   %4 = icmp eq ptr %2, %3
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %4)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   %5 = load ptr, ptr %.stack1, align 8
+// ESCAPE-NEXT:   %6 = load ptr, ptr %.stack1, align 8
+// ESCAPE-NEXT:   %7 = icmp eq ptr %5, %6
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %7)
+// ESCAPE-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// ESCAPE-NEXT:   ret void
+// ESCAPE-NEXT: }
 func main() {
 	var fn Add = add
 	// CHECK-LABEL: define i64 @"main.main$1"(i64 %0, i64 %1){{.*}} {
