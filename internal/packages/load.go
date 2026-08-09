@@ -257,19 +257,10 @@ func loadPackageEx(dedup Deduper, ld *loader, lpkg *loaderPackage) {
 		return // not a source package, don't get syntax trees
 	}
 
-	// go list has already captured cmd/compile's authoritative diagnostics in
-	// this block. For example, an unexpected else stops gc before recovery AST
-	// errors are reported, so do not append the local parser/type follow-ons.
-	hasCompilerSyntaxError := false
-	for _, err := range lpkg.Errors {
-		if err.Kind != packages.ListError || !strings.HasPrefix(err.Msg, "# ") {
-			continue
-		}
-		if _, diagnostics, ok := strings.Cut(err.Msg, "\n"); ok && strings.Contains(diagnostics, ": syntax error: ") {
-			hasCompilerSyntaxError = true
-			break
-		}
-	}
+	// A go list build diagnostic for this package's Go source is authoritative,
+	// so do not append local parser/type follow-ons or process the recovery AST
+	// as a valid package.
+	hasCompilerDiagnostics := hasGoSourceListDiagnostics(lpkg.Errors, lpkg.CompiledGoFiles)
 
 	appendError := func(err error) {
 		// Convert various error types into the one true Error.
@@ -289,7 +280,7 @@ func loadPackageEx(dedup Deduper, ld *loader, lpkg *loaderPackage) {
 
 		case scanner.ErrorList:
 			// from parser
-			if hasCompilerSyntaxError {
+			if hasCompilerDiagnostics {
 				return
 			}
 			for _, err := range err {
@@ -302,7 +293,7 @@ func loadPackageEx(dedup Deduper, ld *loader, lpkg *loaderPackage) {
 
 		case types.Error:
 			// from type checker
-			if hasCompilerSyntaxError {
+			if hasCompilerDiagnostics {
 				return
 			}
 			lpkg.TypeErrors = append(lpkg.TypeErrors, err)
@@ -630,6 +621,54 @@ func diagnosticFileLine(pos string) (file string, line int, ok bool) {
 		}
 	}
 	return prefix, last, true
+}
+
+// hasGoSourceListDiagnostics reports whether go list returned a positioned
+// ListError for one of the package's compiled Go files. For example:
+//
+//	# example.com/p
+//	load.go:2: undefined: missing
+//
+// The caller treats that go list block as authoritative and suppresses local
+// parser/type follow-on errors. The CompiledGoFiles check matters because go
+// list also forwards child-tool failures: an asm.s diagnostic must not match a
+// package whose compiled Go source is asm.go.
+func hasGoSourceListDiagnostics(errs []packages.Error, compiledGoFiles []string) bool {
+	for _, err := range errs {
+		if err.Kind != packages.ListError || !strings.HasPrefix(err.Msg, "# ") {
+			continue
+		}
+		for diagnostic := range strings.Lines(err.Msg) {
+			pos, _, ok := strings.Cut(diagnostic, ": ")
+			if !ok {
+				continue
+			}
+			diagnosticFile, _, ok := diagnosticFileLine(pos)
+			if !ok {
+				continue
+			}
+			for _, compiledGoFile := range compiledGoFiles {
+				if sameDiagnosticFile(diagnosticFile, compiledGoFile) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// sameDiagnosticFile accepts relative suffixes because go list diagnostics may
+// shorten an absolute CompiledGoFiles path. For example, example/load.go
+// matches /tmp/project/example/load.go. Requiring a path separator before the
+// suffix prevents load.go from matching myload.go.
+func sameDiagnosticFile(left, right string) bool {
+	left = filepath.Clean(left)
+	right = filepath.Clean(right)
+	if left == right {
+		return true
+	}
+	return !filepath.IsAbs(left) && strings.HasSuffix(right, string(filepath.Separator)+left) ||
+		!filepath.IsAbs(right) && strings.HasSuffix(left, string(filepath.Separator)+right)
 }
 
 func localVarHasDocComment(file *ast.File, comment *ast.Comment) bool {
