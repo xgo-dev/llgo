@@ -2628,6 +2628,24 @@ func TestTargetMachineAndDataLayout(t *testing.T) {
 	}
 }
 
+func TestWasmTargetSpec(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		target string
+		want   string
+	}{
+		{name: "Go environment", want: "wasm64-unknown-js"},
+		{name: "configured target", target: "wasm", want: "wasm32-unknown-js"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := (&Target{GOOS: "js", GOARCH: "wasm", Target: test.target}).Spec().Triple
+			if got != test.want {
+				t.Fatalf("triple = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestAbiTables(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.sizes = types.SizesFor("gc", runtime.GOARCH)

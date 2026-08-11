@@ -332,13 +332,37 @@ func TestDefaultBuildTags(t *testing.T) {
 	}{
 		{name: "native", goarch: "arm64", want: base},
 		{name: "raw wasm", goarch: "wasm", want: base + ",nogc"},
-		{name: "configured wasm target", goarch: "wasm", target: "wasip1", want: base},
+		{name: "configured wasm target", goarch: "wasm", target: "wasip1", want: base + ",nogc"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := defaultBuildTags(test.goarch, test.target); got != test.want {
 				t.Fatalf("defaultBuildTags(%q, %q) = %q, want %q", test.goarch, test.target, got, test.want)
 			}
 		})
+	}
+}
+
+func TestEffectiveWasmTypeSizes(t *testing.T) {
+	goSizes := types.SizesFor("gc", "wasm")
+	for _, test := range []struct {
+		name   string
+		goos   string
+		target string
+		want   int64
+	}{
+		{name: "Go js wasm", goos: "js", want: 8},
+		{name: "configured wasm", goos: "js", target: "wasm", want: 4},
+		{name: "WASI compatibility", goos: "wasip1", want: 4},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := effectiveTypeSizes(goSizes, test.goos, "wasm", test.target)
+			if size := got.Sizeof(types.Typ[types.Uintptr]); size != test.want {
+				t.Fatalf("uintptr size = %d, want %d", size, test.want)
+			}
+		})
+	}
+	if got := effectiveTypeSizes(goSizes, "linux", "amd64", ""); got != goSizes {
+		t.Fatal("native type sizes changed")
 	}
 }
 

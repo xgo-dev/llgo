@@ -1,7 +1,7 @@
-//go:build wasip1 || (js && tinygo.wasm)
+//go:build llgo && js && wasm
 
 /*
- * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.
+ * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,8 @@
  * limitations under the License.
  */
 
-package c
+package runtime
 
-// WASI and configured js/wasm targets use the wasm32 C data model.
-type (
-	Long  = int32
-	Ulong = uint32
-)
+// mOS is empty for the single-worker WebAssembly backend. The host owns the
+// physical worker instead of creating one for each M.
+type mOS struct{}

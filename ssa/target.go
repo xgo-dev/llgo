@@ -147,6 +147,11 @@ func (p *Target) Spec() (spec TargetSpec) {
 		}
 	case "wasm":
 		llvmarch = "wasm32"
+		// Keep raw js/wasm consistent with Go's 64-bit word model. Named
+		// targets use their existing wasm32 ABI.
+		if goos == "js" && p.Target == "" {
+			llvmarch = "wasm64"
+		}
 	default:
 		llvmarch = goarch
 	}

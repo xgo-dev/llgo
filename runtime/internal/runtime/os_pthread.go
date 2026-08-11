@@ -1,3 +1,5 @@
+//go:build !llgo || !js || !wasm
+
 /*
  * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
  *
@@ -63,8 +65,8 @@ func initThreadAttr(attr *pthread.Attr, stackSize uintptr) c.Int {
 	return 0
 }
 
-func exitCurrentM() {
-	mp := getg().m
-	mexit(mp)
+func goexitBackend(gp *g) {
+	leaveCurrentLocalContext()
+	mexit(gp.m)
 	pthread.Exit(nil)
 }
