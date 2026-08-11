@@ -2512,6 +2512,1260 @@
           ]
         }
       }
+    },
+    {
+      "source": {
+        "repository": "cpunion/llgo",
+        "sha": "e60b5fcc5b3abfa9c2cd44a7da9a54b6ad41a57c",
+        "ref": "codex/goroot-panic-pcline-20260811",
+        "url": "https://github.com/cpunion/llgo/commit/e60b5fcc5b3abfa9c2cd44a7da9a54b6ad41a57c",
+        "runUrl": "https://github.com/xgo-dev/llgo/actions/runs/31460076296",
+        "timestamp": "2026-08-11T04:56:51Z"
+      },
+      "platforms": {
+        "linux": {
+          "schemaVersion": 1,
+          "suiteId": "llgo-baseline",
+          "shardId": "merged",
+          "source": {
+            "repository": "cpunion/llgo",
+            "sha": "e60b5fcc5b3abfa9c2cd44a7da9a54b6ad41a57c",
+            "ref": "codex/goroot-panic-pcline-20260811",
+            "url": "https://github.com/cpunion/llgo/commit/e60b5fcc5b3abfa9c2cd44a7da9a54b6ad41a57c",
+            "runUrl": "https://github.com/xgo-dev/llgo/actions/runs/31460076296",
+            "timestamp": "2026-08-11T04:56:51Z"
+          },
+          "platform": {
+            "id": "linux",
+            "label": "Linux",
+            "os": "linux",
+            "arch": "amd64"
+          },
+          "units": {
+            "file-bytes": {
+              "better": "lower",
+              "assume": "exact"
+            },
+            "text-bytes": {
+              "better": "lower",
+              "assume": "exact"
+            },
+            "data-bytes": {
+              "better": "lower",
+              "assume": "exact"
+            },
+            "bss-bytes": {
+              "better": "lower",
+              "assume": "exact"
+            },
+            "build-ns": {
+              "better": "lower"
+            },
+            "run-ns": {
+              "better": "lower"
+            },
+            "ns/op": {
+              "better": "lower"
+            }
+          },
+          "benchmarks": [
+            {
+              "name": "BenchmarkProgram/cprintf",
+              "package": "github.com/goplus/llgo/benchmark/baseline",
+              "group": "programs",
+              "chart": "group:programs",
+              "samples": [
+                {
+                  "iterations": 1,
+                  "measurements": {
+                    "file-bytes": 18656,
+                    "text-bytes": 410,
+                    "data-bytes": 13218,
+                    "bss-bytes": 2265,
+                    "build-ns": 306689391,
+                    "run-ns": 1269529
+                  }
+                }
+              ],
+              "measurements": {
+                "bss-bytes": 2265,
+                "build-ns": 306689391,
+                "data-bytes": 13218,
+                "file-bytes": 18656,
+                "run-ns": 1269529,
+                "text-bytes": 410
+              }
+            },
+            {
+              "name": "BenchmarkProgram/fmtprintf",
+              "package": "github.com/goplus/llgo/benchmark/baseline",
+              "group": "programs",
+              "chart": "group:programs",
+              "samples": [
+                {
+                  "iterations": 1,
+                  "measurements": {
+                    "file-bytes": 4561944,
+                    "text-bytes": 827641,
+                    "data-bytes": 1836999,
+                    "bss-bytes": 306019,
+                    "build-ns": 3425277472,
+                    "run-ns": 8290997
+                  }
+                }
+              ],
+              "measurements": {
+                "bss-bytes": 306019,
+                "build-ns": 3425277472,
+                "data-bytes": 1836999,
+                "file-bytes": 4561944,
+                "run-ns": 8290997,
+                "text-bytes": 827641
+              }
+            },
+            {
+              "name": "BenchmarkProgram/println",
+              "package": "github.com/goplus/llgo/benchmark/baseline",
+              "group": "programs",
+              "chart": "group:programs",
+              "samples": [
+                {
+                  "iterations": 1,
+                  "measurements": {
+                    "file-bytes": 68512,
+                    "text-bytes": 21369,
+                    "data-bytes": 28120,
+                    "bss-bytes": 1532,
+                    "build-ns": 291797665,
+                    "run-ns": 1551500
+                  }
+                }
+              ],
+              "measurements": {
+                "bss-bytes": 1532,
+                "build-ns": 291797665,
+                "data-bytes": 28120,
+                "file-bytes": 68512,
+                "run-ns": 1551500,
+                "text-bytes": 21369
+              }
+            },
+            {
+              "name": "BenchmarkLookupPCRandom",
+              "package": "github.com/goplus/llgo/internal/build/funcinfo",
+              "group": "compiler",
+              "chart": "group:compiler",
+              "samples": [
+                {
+                  "iterations": 23288836,
+                  "measurements": {
+                    "ns/op": 13.07
+                  }
+                },
+                {
+                  "iterations": 23370229,
+                  "measurements": {
+                    "ns/op": 13.39
+                  }
+                },
+                {
+                  "iterations": 22874731,
+                  "measurements": {
+                    "ns/op": 13.43
+                  }
+                },
+                {
+                  "iterations": 23797058,
+                  "measurements": {
+                    "ns/op": 13.35
+                  }
+                },
+                {
+                  "iterations": 22561956,
+                  "measurements": {
+                    "ns/op": 13.41
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 13.39
+              }
+            },
+            {
+              "name": "BenchmarkMergeCompilerFlags",
+              "package": "github.com/goplus/llgo/internal/clang",
+              "group": "compiler",
+              "chart": "group:compiler",
+              "samples": [
+                {
+                  "iterations": 2033983,
+                  "measurements": {
+                    "ns/op": 151.1
+                  }
+                },
+                {
+                  "iterations": 1977010,
+                  "measurements": {
+                    "ns/op": 150.3
+                  }
+                },
+                {
+                  "iterations": 1973731,
+                  "measurements": {
+                    "ns/op": 150.2
+                  }
+                },
+                {
+                  "iterations": 1976899,
+                  "measurements": {
+                    "ns/op": 150
+                  }
+                },
+                {
+                  "iterations": 1980662,
+                  "measurements": {
+                    "ns/op": 150.2
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 150.2
+              }
+            },
+            {
+              "name": "BenchmarkMergeLinkerFlags",
+              "package": "github.com/goplus/llgo/internal/clang",
+              "group": "compiler",
+              "chart": "group:compiler",
+              "samples": [
+                {
+                  "iterations": 3177968,
+                  "measurements": {
+                    "ns/op": 94.33
+                  }
+                },
+                {
+                  "iterations": 3133774,
+                  "measurements": {
+                    "ns/op": 94.6
+                  }
+                },
+                {
+                  "iterations": 3152286,
+                  "measurements": {
+                    "ns/op": 94.35
+                  }
+                },
+                {
+                  "iterations": 3170236,
+                  "measurements": {
+                    "ns/op": 94.44
+                  }
+                },
+                {
+                  "iterations": 3135750,
+                  "measurements": {
+                    "ns/op": 94.15
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 94.35
+              }
+            },
+            {
+              "name": "BenchmarkChannelBuffered",
+              "package": "github.com/goplus/llgo/test/llgoext",
+              "group": "core",
+              "chart": "group:core",
+              "samples": [
+                {
+                  "iterations": 8762748,
+                  "measurements": {
+                    "ns/op": 34.29
+                  }
+                },
+                {
+                  "iterations": 8763138,
+                  "measurements": {
+                    "ns/op": 34.53
+                  }
+                },
+                {
+                  "iterations": 8749833,
+                  "measurements": {
+                    "ns/op": 34.26
+                  }
+                },
+                {
+                  "iterations": 8755875,
+                  "measurements": {
+                    "ns/op": 35.41
+                  }
+                },
+                {
+                  "iterations": 8721879,
+                  "measurements": {
+                    "ns/op": 34.27
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 34.29
+              }
+            },
+            {
+              "name": "BenchmarkChannelHandoff",
+              "package": "github.com/goplus/llgo/test/llgoext",
+              "group": "core",
+              "chart": "group:core",
+              "samples": [
+                {
+                  "iterations": 10000,
+                  "measurements": {
+                    "ns/op": 28355
+                  }
+                },
+                {
+                  "iterations": 10000,
+                  "measurements": {
+                    "ns/op": 28045
+                  }
+                },
+                {
+                  "iterations": 10000,
+                  "measurements": {
+                    "ns/op": 27428
+                  }
+                },
+                {
+                  "iterations": 10000,
+                  "measurements": {
+                    "ns/op": 28227
+                  }
+                },
+                {
+                  "iterations": 10000,
+                  "measurements": {
+                    "ns/op": 29337
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 28227
+              }
+            },
+            {
+              "name": "BenchmarkDefer",
+              "package": "github.com/goplus/llgo/test/llgoext",
+              "group": "core",
+              "chart": "group:core",
+              "samples": [
+                {
+                  "iterations": 5896776,
+                  "measurements": {
+                    "ns/op": 47.22
+                  }
+                },
+                {
+                  "iterations": 5927598,
+                  "measurements": {
+                    "ns/op": 53.2
+                  }
+                },
+                {
+                  "iterations": 6059715,
+                  "measurements": {
+                    "ns/op": 48.12
+                  }
+                },
+                {
+                  "iterations": 5916771,
+                  "measurements": {
+                    "ns/op": 48.17
+                  }
+                },
+                {
+                  "iterations": 5674017,
+                  "measurements": {
+                    "ns/op": 49.13
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 48.17
+              }
+            },
+            {
+              "name": "BenchmarkDirectCall",
+              "package": "github.com/goplus/llgo/test/llgoext",
+              "group": "core",
+              "chart": "group:core",
+              "samples": [
+                {
+                  "iterations": 192639042,
+                  "measurements": {
+                    "ns/op": 1.558
+                  }
+                },
+                {
+                  "iterations": 192753314,
+                  "measurements": {
+                    "ns/op": 1.556
+                  }
+                },
+                {
+                  "iterations": 192748002,
+                  "measurements": {
+                    "ns/op": 1.558
+                  }
+                },
+                {
+                  "iterations": 192736054,
+                  "measurements": {
+                    "ns/op": 1.556
+                  }
+                },
+                {
+                  "iterations": 192776334,
+                  "measurements": {
+                    "ns/op": 1.558
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 1.558
+              }
+            },
+            {
+              "name": "BenchmarkGlobalRead",
+              "package": "github.com/goplus/llgo/test/llgoext",
+              "group": "core",
+              "chart": "group:core",
+              "samples": [
+                {
+                  "iterations": 192784082,
+                  "measurements": {
+                    "ns/op": 1.556
+                  }
+                },
+                {
+                  "iterations": 192481459,
+                  "measurements": {
+                    "ns/op": 1.556
+                  }
+                },
+                {
+                  "iterations": 192625551,
+                  "measurements": {
+                    "ns/op": 1.556
+                  }
+                },
+                {
+                  "iterations": 192477177,
+                  "measurements": {
+                    "ns/op": 1.563
+                  }
+                },
+                {
+                  "iterations": 192448118,
+                  "measurements": {
+                    "ns/op": 1.556
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 1.556
+              }
+            },
+            {
+              "name": "BenchmarkGlobalWrite",
+              "package": "github.com/goplus/llgo/test/llgoext",
+              "group": "core",
+              "chart": "group:core",
+              "samples": [
+                {
+                  "iterations": 120547381,
+                  "measurements": {
+                    "ns/op": 2.487
+                  }
+                },
+                {
+                  "iterations": 120501547,
+                  "measurements": {
+                    "ns/op": 2.487
+                  }
+                },
+                {
+                  "iterations": 120624350,
+                  "measurements": {
+                    "ns/op": 2.49
+                  }
+                },
+                {
+                  "iterations": 120555350,
+                  "measurements": {
+                    "ns/op": 2.49
+                  }
+                },
+                {
+                  "iterations": 120546558,
+                  "measurements": {
+                    "ns/op": 2.488
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 2.488
+              }
+            },
+            {
+              "name": "BenchmarkGoroutine",
+              "package": "github.com/goplus/llgo/test/llgoext",
+              "group": "core",
+              "chart": "group:core",
+              "samples": [
+                {
+                  "iterations": 100,
+                  "measurements": {
+                    "ns/op": 32839
+                  }
+                },
+                {
+                  "iterations": 100,
+                  "measurements": {
+                    "ns/op": 44212
+                  }
+                },
+                {
+                  "iterations": 100,
+                  "measurements": {
+                    "ns/op": 32293
+                  }
+                },
+                {
+                  "iterations": 100,
+                  "measurements": {
+                    "ns/op": 31832
+                  }
+                },
+                {
+                  "iterations": 100,
+                  "measurements": {
+                    "ns/op": 32608
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 32608
+              }
+            },
+            {
+              "name": "BenchmarkInterfaceCall",
+              "package": "github.com/goplus/llgo/test/llgoext",
+              "group": "core",
+              "chart": "group:core",
+              "samples": [
+                {
+                  "iterations": 38507030,
+                  "measurements": {
+                    "ns/op": 7.816
+                  }
+                },
+                {
+                  "iterations": 38236146,
+                  "measurements": {
+                    "ns/op": 7.789
+                  }
+                },
+                {
+                  "iterations": 38498170,
+                  "measurements": {
+                    "ns/op": 7.783
+                  }
+                },
+                {
+                  "iterations": 38392938,
+                  "measurements": {
+                    "ns/op": 7.782
+                  }
+                },
+                {
+                  "iterations": 38504109,
+                  "measurements": {
+                    "ns/op": 7.783
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 7.783
+              }
+            },
+            {
+              "name": "BenchmarkRuntimeGetG",
+              "package": "github.com/goplus/llgo/test/llgoext",
+              "group": "core",
+              "chart": "group:core",
+              "samples": [
+                {
+                  "iterations": 137655124,
+                  "measurements": {
+                    "ns/op": 2.178
+                  }
+                },
+                {
+                  "iterations": 137652525,
+                  "measurements": {
+                    "ns/op": 2.185
+                  }
+                },
+                {
+                  "iterations": 137642622,
+                  "measurements": {
+                    "ns/op": 2.179
+                  }
+                },
+                {
+                  "iterations": 137434663,
+                  "measurements": {
+                    "ns/op": 2.18
+                  }
+                },
+                {
+                  "iterations": 137551192,
+                  "measurements": {
+                    "ns/op": 2.18
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 2.18
+              }
+            }
+          ]
+        },
+        "macos": {
+          "schemaVersion": 1,
+          "suiteId": "llgo-baseline",
+          "shardId": "merged",
+          "source": {
+            "repository": "cpunion/llgo",
+            "sha": "e60b5fcc5b3abfa9c2cd44a7da9a54b6ad41a57c",
+            "ref": "codex/goroot-panic-pcline-20260811",
+            "url": "https://github.com/cpunion/llgo/commit/e60b5fcc5b3abfa9c2cd44a7da9a54b6ad41a57c",
+            "runUrl": "https://github.com/xgo-dev/llgo/actions/runs/31460076296",
+            "timestamp": "2026-08-11T04:56:51Z"
+          },
+          "platform": {
+            "id": "macos",
+            "label": "macOS",
+            "os": "darwin",
+            "arch": "arm64"
+          },
+          "units": {
+            "file-bytes": {
+              "better": "lower",
+              "assume": "exact"
+            },
+            "text-bytes": {
+              "better": "lower",
+              "assume": "exact"
+            },
+            "data-bytes": {
+              "better": "lower",
+              "assume": "exact"
+            },
+            "bss-bytes": {
+              "better": "lower",
+              "assume": "exact"
+            },
+            "build-ns": {
+              "better": "lower"
+            },
+            "run-ns": {
+              "better": "lower"
+            },
+            "ns/op": {
+              "better": "lower"
+            }
+          },
+          "benchmarks": [
+            {
+              "name": "BenchmarkProgram/cprintf",
+              "package": "github.com/goplus/llgo/benchmark/baseline",
+              "group": "programs",
+              "chart": "group:programs",
+              "samples": [
+                {
+                  "iterations": 1,
+                  "measurements": {
+                    "file-bytes": 84672,
+                    "text-bytes": 15877,
+                    "data-bytes": 176,
+                    "bss-bytes": 17,
+                    "build-ns": 441502041,
+                    "run-ns": 3405625
+                  }
+                }
+              ],
+              "measurements": {
+                "bss-bytes": 17,
+                "build-ns": 441502041,
+                "data-bytes": 176,
+                "file-bytes": 84672,
+                "run-ns": 3405625,
+                "text-bytes": 15877
+              }
+            },
+            {
+              "name": "BenchmarkProgram/fmtprintf",
+              "package": "github.com/goplus/llgo/benchmark/baseline",
+              "group": "programs",
+              "chart": "group:programs",
+              "samples": [
+                {
+                  "iterations": 1,
+                  "measurements": {
+                    "file-bytes": 2990064,
+                    "text-bytes": 1760561,
+                    "data-bytes": 683608,
+                    "bss-bytes": 305275,
+                    "build-ns": 3237159375,
+                    "run-ns": 17564208
+                  }
+                }
+              ],
+              "measurements": {
+                "bss-bytes": 305275,
+                "build-ns": 3237159375,
+                "data-bytes": 683608,
+                "file-bytes": 2990064,
+                "run-ns": 17564208,
+                "text-bytes": 1760561
+              }
+            },
+            {
+              "name": "BenchmarkProgram/println",
+              "package": "github.com/goplus/llgo/benchmark/baseline",
+              "group": "programs",
+              "chart": "group:programs",
+              "samples": [
+                {
+                  "iterations": 1,
+                  "measurements": {
+                    "file-bytes": 121216,
+                    "text-bytes": 39521,
+                    "data-bytes": 8449,
+                    "bss-bytes": 291,
+                    "build-ns": 377000708,
+                    "run-ns": 4162875
+                  }
+                }
+              ],
+              "measurements": {
+                "bss-bytes": 291,
+                "build-ns": 377000708,
+                "data-bytes": 8449,
+                "file-bytes": 121216,
+                "run-ns": 4162875,
+                "text-bytes": 39521
+              }
+            },
+            {
+              "name": "BenchmarkLookupPCRandom",
+              "package": "github.com/goplus/llgo/internal/build/funcinfo",
+              "group": "compiler",
+              "chart": "group:compiler",
+              "samples": [
+                {
+                  "iterations": 22391260,
+                  "measurements": {
+                    "ns/op": 13.11
+                  }
+                },
+                {
+                  "iterations": 22610438,
+                  "measurements": {
+                    "ns/op": 13.04
+                  }
+                },
+                {
+                  "iterations": 24236872,
+                  "measurements": {
+                    "ns/op": 12.78
+                  }
+                },
+                {
+                  "iterations": 23361074,
+                  "measurements": {
+                    "ns/op": 12.98
+                  }
+                },
+                {
+                  "iterations": 22854457,
+                  "measurements": {
+                    "ns/op": 12.92
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 12.98
+              }
+            },
+            {
+              "name": "BenchmarkMergeCompilerFlags",
+              "package": "github.com/goplus/llgo/internal/clang",
+              "group": "compiler",
+              "chart": "group:compiler",
+              "samples": [
+                {
+                  "iterations": 2593132,
+                  "measurements": {
+                    "ns/op": 124
+                  }
+                },
+                {
+                  "iterations": 2416144,
+                  "measurements": {
+                    "ns/op": 125.9
+                  }
+                },
+                {
+                  "iterations": 2465415,
+                  "measurements": {
+                    "ns/op": 118.1
+                  }
+                },
+                {
+                  "iterations": 2548496,
+                  "measurements": {
+                    "ns/op": 115.6
+                  }
+                },
+                {
+                  "iterations": 2696908,
+                  "measurements": {
+                    "ns/op": 116.2
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 118.1
+              }
+            },
+            {
+              "name": "BenchmarkMergeLinkerFlags",
+              "package": "github.com/goplus/llgo/internal/clang",
+              "group": "compiler",
+              "chart": "group:compiler",
+              "samples": [
+                {
+                  "iterations": 3394208,
+                  "measurements": {
+                    "ns/op": 83.09
+                  }
+                },
+                {
+                  "iterations": 3604780,
+                  "measurements": {
+                    "ns/op": 81.41
+                  }
+                },
+                {
+                  "iterations": 3445090,
+                  "measurements": {
+                    "ns/op": 80.68
+                  }
+                },
+                {
+                  "iterations": 3561820,
+                  "measurements": {
+                    "ns/op": 86.99
+                  }
+                },
+                {
+                  "iterations": 3937760,
+                  "measurements": {
+                    "ns/op": 82.2
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 82.2
+              }
+            },
+            {
+              "name": "BenchmarkChannelBuffered",
+              "package": "github.com/goplus/llgo/test/llgoext",
+              "group": "core",
+              "chart": "group:core",
+              "samples": [
+                {
+                  "iterations": 12218611,
+                  "measurements": {
+                    "ns/op": 27.81
+                  }
+                },
+                {
+                  "iterations": 12928270,
+                  "measurements": {
+                    "ns/op": 26.83
+                  }
+                },
+                {
+                  "iterations": 10567214,
+                  "measurements": {
+                    "ns/op": 26.82
+                  }
+                },
+                {
+                  "iterations": 10448456,
+                  "measurements": {
+                    "ns/op": 30.32
+                  }
+                },
+                {
+                  "iterations": 11974095,
+                  "measurements": {
+                    "ns/op": 25.28
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 26.83
+              }
+            },
+            {
+              "name": "BenchmarkChannelHandoff",
+              "package": "github.com/goplus/llgo/test/llgoext",
+              "group": "core",
+              "chart": "group:core",
+              "samples": [
+                {
+                  "iterations": 36130,
+                  "measurements": {
+                    "ns/op": 8676
+                  }
+                },
+                {
+                  "iterations": 36462,
+                  "measurements": {
+                    "ns/op": 8274
+                  }
+                },
+                {
+                  "iterations": 34441,
+                  "measurements": {
+                    "ns/op": 7936
+                  }
+                },
+                {
+                  "iterations": 38046,
+                  "measurements": {
+                    "ns/op": 7581
+                  }
+                },
+                {
+                  "iterations": 40533,
+                  "measurements": {
+                    "ns/op": 8061
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 8061
+              }
+            },
+            {
+              "name": "BenchmarkDefer",
+              "package": "github.com/goplus/llgo/test/llgoext",
+              "group": "core",
+              "chart": "group:core",
+              "samples": [
+                {
+                  "iterations": 7543239,
+                  "measurements": {
+                    "ns/op": 43.66
+                  }
+                },
+                {
+                  "iterations": 7774605,
+                  "measurements": {
+                    "ns/op": 43.33
+                  }
+                },
+                {
+                  "iterations": 7457082,
+                  "measurements": {
+                    "ns/op": 39.64
+                  }
+                },
+                {
+                  "iterations": 7693396,
+                  "measurements": {
+                    "ns/op": 39.52
+                  }
+                },
+                {
+                  "iterations": 8571040,
+                  "measurements": {
+                    "ns/op": 36.95
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 39.64
+              }
+            },
+            {
+              "name": "BenchmarkDirectCall",
+              "package": "github.com/goplus/llgo/test/llgoext",
+              "group": "core",
+              "chart": "group:core",
+              "samples": [
+                {
+                  "iterations": 262509392,
+                  "measurements": {
+                    "ns/op": 1.124
+                  }
+                },
+                {
+                  "iterations": 255186939,
+                  "measurements": {
+                    "ns/op": 1.156
+                  }
+                },
+                {
+                  "iterations": 233433894,
+                  "measurements": {
+                    "ns/op": 1.119
+                  }
+                },
+                {
+                  "iterations": 225355357,
+                  "measurements": {
+                    "ns/op": 1.26
+                  }
+                },
+                {
+                  "iterations": 264894034,
+                  "measurements": {
+                    "ns/op": 1.141
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 1.141
+              }
+            },
+            {
+              "name": "BenchmarkGlobalRead",
+              "package": "github.com/goplus/llgo/test/llgoext",
+              "group": "core",
+              "chart": "group:core",
+              "samples": [
+                {
+                  "iterations": 253740380,
+                  "measurements": {
+                    "ns/op": 1.189
+                  }
+                },
+                {
+                  "iterations": 236200944,
+                  "measurements": {
+                    "ns/op": 1.277
+                  }
+                },
+                {
+                  "iterations": 255596678,
+                  "measurements": {
+                    "ns/op": 1.14
+                  }
+                },
+                {
+                  "iterations": 256415368,
+                  "measurements": {
+                    "ns/op": 1.123
+                  }
+                },
+                {
+                  "iterations": 260629806,
+                  "measurements": {
+                    "ns/op": 1.172
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 1.172
+              }
+            },
+            {
+              "name": "BenchmarkGlobalWrite",
+              "package": "github.com/goplus/llgo/test/llgoext",
+              "group": "core",
+              "chart": "group:core",
+              "samples": [
+                {
+                  "iterations": 247821324,
+                  "measurements": {
+                    "ns/op": 1.193
+                  }
+                },
+                {
+                  "iterations": 247574372,
+                  "measurements": {
+                    "ns/op": 1.174
+                  }
+                },
+                {
+                  "iterations": 251518455,
+                  "measurements": {
+                    "ns/op": 1.208
+                  }
+                },
+                {
+                  "iterations": 240911125,
+                  "measurements": {
+                    "ns/op": 1.203
+                  }
+                },
+                {
+                  "iterations": 255084867,
+                  "measurements": {
+                    "ns/op": 1.221
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 1.203
+              }
+            },
+            {
+              "name": "BenchmarkGoroutine",
+              "package": "github.com/goplus/llgo/test/llgoext",
+              "group": "core",
+              "chart": "group:core",
+              "samples": [
+                {
+                  "iterations": 100,
+                  "measurements": {
+                    "ns/op": 47124
+                  }
+                },
+                {
+                  "iterations": 100,
+                  "measurements": {
+                    "ns/op": 47349
+                  }
+                },
+                {
+                  "iterations": 100,
+                  "measurements": {
+                    "ns/op": 45558
+                  }
+                },
+                {
+                  "iterations": 100,
+                  "measurements": {
+                    "ns/op": 44536
+                  }
+                },
+                {
+                  "iterations": 100,
+                  "measurements": {
+                    "ns/op": 47652
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 47124
+              }
+            },
+            {
+              "name": "BenchmarkInterfaceCall",
+              "package": "github.com/goplus/llgo/test/llgoext",
+              "group": "core",
+              "chart": "group:core",
+              "samples": [
+                {
+                  "iterations": 57771465,
+                  "measurements": {
+                    "ns/op": 5.266
+                  }
+                },
+                {
+                  "iterations": 61331394,
+                  "measurements": {
+                    "ns/op": 5.612
+                  }
+                },
+                {
+                  "iterations": 63998293,
+                  "measurements": {
+                    "ns/op": 5.213
+                  }
+                },
+                {
+                  "iterations": 60051535,
+                  "measurements": {
+                    "ns/op": 5.22
+                  }
+                },
+                {
+                  "iterations": 54350287,
+                  "measurements": {
+                    "ns/op": 5.365
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 5.266
+              }
+            },
+            {
+              "name": "BenchmarkRuntimeGetG",
+              "package": "github.com/goplus/llgo/test/llgoext",
+              "group": "core",
+              "chart": "group:core",
+              "samples": [
+                {
+                  "iterations": 100000000,
+                  "measurements": {
+                    "ns/op": 2.547
+                  }
+                },
+                {
+                  "iterations": 127765093,
+                  "measurements": {
+                    "ns/op": 2.516
+                  }
+                },
+                {
+                  "iterations": 125874046,
+                  "measurements": {
+                    "ns/op": 2.817
+                  }
+                },
+                {
+                  "iterations": 94902921,
+                  "measurements": {
+                    "ns/op": 2.854
+                  }
+                },
+                {
+                  "iterations": 111523165,
+                  "measurements": {
+                    "ns/op": 2.685
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 2.685
+              }
+            }
+          ]
+        }
+      }
     }
   ]
 }
