@@ -1,7 +1,7 @@
-//go:build wasip1 || (js && tinygo.wasm)
+//go:build llgo && wasm && !(wasip1 && llgo.wasi_threads)
 
 /*
- * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.
+ * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,17 @@
  * limitations under the License.
  */
 
-package c
+package runtime
 
-// WASI and configured js/wasm targets use the wasm32 C data model.
-type (
-	Long  = int32
-	Ulong = uint32
-)
+var currentG *g
+
+func getg() *g {
+	if currentG == nil {
+		currentG = initRuntimeContext(allocRuntimeContext(), nil, _Grunning)
+	}
+	return currentG
+}
+
+func setg(gp *g) {
+	currentG = gp
+}

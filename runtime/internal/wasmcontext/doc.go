@@ -1,7 +1,5 @@
-//go:build wasip1 || (js && tinygo.wasm)
-
 /*
- * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.
+ * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +14,7 @@
  * limitations under the License.
  */
 
-package c
-
-// WASI and configured js/wasm targets use the wasm32 C data model.
-type (
-	Long  = int32
-	Ulong = uint32
-)
+// Package wasmcontext owns suspended WebAssembly execution contexts and their
+// backend-specific storage. Runtime schedulers provide root-aware allocation
+// callbacks during context creation and do not inspect the resulting buffers.
+package wasmcontext
