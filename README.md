@@ -344,7 +344,7 @@ Here are the Go packages that can be imported correctly:
 - [LLVM 18](https://llvm.org)
 - [Clang 18](https://clang.llvm.org)
 - [LLD 18](https://lld.llvm.org)
-- [pkg-config 0.29+](https://www.freedesktop.org/wiki/Software/pkg-config/)
+- [pkg-config 0.29+](https://gitlab.freedesktop.org/pkg-config/pkg-config)
 - [bdwgc/libgc 8.0+](https://www.hboehm.info/gc/)
 - [OpenSSL 3.0+](https://www.openssl.org/)
 - [zlib 1.2+](https://github.com/madler/zlib)
