@@ -213,6 +213,50 @@ func f() {}
 	}
 }
 
+func TestInlineAsmNoDebugPreservesBuilderLocation(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "asm.go", `package p
+func f() {}
+`, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typesPkg, err := (&types.Config{}).Check("example.com/p", fset, []*ast.File{file}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	prog := NewProgram(&Target{OptLevel: optlevel.O0})
+	defer prog.Dispose()
+	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	pkg := prog.NewPackage("p", "example.com/p")
+	pkg.InitDebug("p", "example.com/p", fset)
+	decl := file.Decls[0].(*ast.FuncDecl)
+	object := typesPkg.Scope().Lookup("f").(*types.Func)
+	fn := pkg.NewFunc("example.com/p.f", object.Type().(*types.Signature), InGo)
+	b := fn.MakeBody(1)
+	defer b.Dispose()
+	pos := fset.Position(decl.Body.Lbrace)
+	b.DebugFunction(fn, object.Scope(), fset.Position(object.Pos()), pos)
+	b.DISetCurrentDebugLocation(fn, pos)
+	b.InlineAsmNoDebug("nop")
+	b.Return()
+	b.EndBuild()
+	pkg.FinalizeDebug()
+
+	asm := fn.impl.EntryBasicBlock().FirstInstruction()
+	if !asm.InstructionDebugLoc().IsNil() {
+		t.Fatal("inline assembly retained the current debug location")
+	}
+	ret := llvm.NextInstruction(asm)
+	if ret.IsNil() || ret.InstructionDebugLoc().IsNil() {
+		t.Fatal("inline assembly cleared the builder debug location")
+	}
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("inline assembly debug metadata is invalid: %v\n%s", err, pkg.Module().String())
+	}
+}
+
 func newDebugRuntimePackage() *types.Package {
 	pkg := types.NewPackage(PkgRuntime, "runtime")
 	unsafePointer := types.Typ[types.UnsafePointer]

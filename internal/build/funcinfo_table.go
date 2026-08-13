@@ -412,7 +412,7 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 			llvm.ConstInt(countType, 0, false),
 		}))
 		pcLineCount.SetInitializer(llvm.ConstInt(countType, uint64(len(encoded.PCLines)), false))
-		if shouldEmitRuntimeSites(ctx) {
+		if shouldEmitRuntimePCLineSites(ctx) {
 			startName, endName := pcLineSiteSectionInfo.boundary(shouldEmitRuntimeMachOSites(ctx))
 			pcSiteStart := llvm.AddGlobal(mod, pcSiteRecordType, startName)
 			pcSiteEnd := llvm.AddGlobal(mod, pcSiteRecordType, endName)
@@ -424,9 +424,10 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		}
 	}
 	machOSites := shouldEmitRuntimeMachOSites(ctx)
-	emitSites := shouldEmitRuntimeSites(ctx)
-	emitEntrySites := shouldEmitRuntimeEntryELFSites(ctx) && len(encoded.Records) != 0
-	emitRuntimeFuncInfoSites(mod, ctx.prog.PointerSize(), machOSites, emitSites && len(pcLineValues) != 0, emitEntrySites)
+	emitPCLineSites := shouldEmitRuntimePCLineSites(ctx)
+	emitAddressSites := shouldEmitRuntimeAddressSites(ctx)
+	emitEntrySites := emitAddressSites && len(encoded.Records) != 0
+	emitRuntimeFuncInfoSites(mod, ctx.prog.PointerSize(), machOSites, emitPCLineSites && len(pcLineValues) != 0, emitEntrySites)
 	if emitEntrySites {
 		startName, endName := entrySiteSectionInfo.boundary(machOSites)
 		entryStart := llvm.AddGlobal(mod, funcEntryRecordType, startName)
@@ -601,9 +602,10 @@ func emitExternalFuncInfoTable(ctx *context, mod llvm.Module, records []funcInfo
 	used.SetSection("llvm.metadata")
 
 	machO := shouldEmitRuntimeMachOSites(ctx)
-	emitSites := shouldEmitRuntimeSites(ctx)
-	emitPCSites := emitSites && len(encoded.PCLines) != 0
-	emitEntrySites := shouldEmitRuntimeEntryELFSites(ctx) && len(encoded.Records) != 0
+	emitPCLineSites := shouldEmitRuntimePCLineSites(ctx)
+	emitAddressSites := shouldEmitRuntimeAddressSites(ctx)
+	emitPCSites := emitPCLineSites && len(encoded.PCLines) != 0
+	emitEntrySites := emitAddressSites && len(encoded.Records) != 0
 	emitRuntimeFuncInfoSites(mod, ctx.prog.PointerSize(), machO, emitPCSites, emitEntrySites)
 	if emitPCSites {
 		start, end := pcLineSiteSectionInfo.boundary(machO)
@@ -635,25 +637,34 @@ func shouldEmitRuntimeMachOSites(ctx *context) bool {
 		ctx.buildConf.Target == ""
 }
 
-// shouldEmitRuntimeSites reports whether the target object format has a
+// shouldEmitRuntimePCLineSites reports whether the target object format has a
 // DCE-safe section story for metadata site records. ELF uses SHF_LINK_ORDER
 // associated sections (honored by --gc-sections). The ELF sections are also
 // writable because shared libraries need dynamic relative relocations for the
 // absolute pointers stored in each record. Mach-O uses live_support sections:
 // under ld64/lld -dead_strip a live_support atom survives only if the atom it
 // references (the anchor inside the function body) is live, which is the same
-// records-follow-function semantics. Sites are additionally gated per Program:
-// debug builds keep the funcinfo tables but drop the body-embedded site records
-// (see Program.EnableFuncInfoSites).
-func shouldEmitRuntimeSites(ctx *context) bool {
+// records-follow-function semantics. Sites are additionally gated per Program.
+func shouldEmitRuntimePCLineSites(ctx *context) bool {
 	if ctx == nil || ctx.prog == nil || !ctx.prog.FuncInfoSitesEnabled() {
 		return false
 	}
 	return shouldEmitRuntimeELFSites(ctx) || shouldEmitRuntimeMachOSites(ctx)
 }
 
-func shouldEmitRuntimeEntryELFSites(ctx *context) bool {
-	return shouldEmitRuntimeSites(ctx)
+// shouldEmitRuntimeAddressSites controls function-entry address records. Their
+// entry-block inline assembly changes Darwin's initial
+// line row and makes LLDB expose inner lexical scopes too early. PC-line sites
+// do not have that problem when emitted without a debug location, so embedded
+// Darwin DWARF builds suppress only address sites. External PCLN still needs
+// final address records to construct its sidecar.
+func shouldEmitRuntimeAddressSites(ctx *context) bool {
+	if !shouldEmitRuntimePCLineSites(ctx) {
+		return false
+	}
+	conf := ctx.buildConf
+	return conf.Goos != "darwin" || conf.PCLNMode == PCLNExternal ||
+		!shouldEmitDebugInfo(conf, &ctx.crossCompile)
 }
 
 // siteSectionInfo names one metadata site section in both object formats.
@@ -727,7 +738,7 @@ func siteAnchorLabel(machO bool, kind string) string {
 }
 
 func emitFuncInfoEntrySites(ctx *context, pkg llssa.Package) {
-	if !shouldEmitRuntimeEntryELFSites(ctx) || pkg == nil || !ctx.prog.FuncInfoMetadataEnabled() {
+	if !shouldEmitRuntimeAddressSites(ctx) || pkg == nil || !ctx.prog.FuncInfoMetadataEnabled() {
 		return
 	}
 	mod := pkg.Module()
