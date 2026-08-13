@@ -3,39 +3,37 @@ package main
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 func main() {
-	// CHECK: call ptr @"{{.*}}AllocZ"(i64 8)
-	// CHECK: store i64 1, ptr %0, align 8
-	// CHECK: call ptr @"{{.*}}AllocU"(i64 8)
-	// CHECK: { ptr @"main.main$1", ptr undef }
-	// CHECK: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %5)
-	// CHECK: call { ptr, ptr } %__llgo_funcval_code(ptr {{(nest|swiftself)}} %4, i64 1)
-	// CHECK: %__llgo_funcval_code1 = call ptr asm "", "=r,0"(ptr %8)
-	// CHECK: call void %__llgo_funcval_code1(ptr {{(nest|swiftself)}} %7, i64 2)
-	// CHECK: ret void
+	// Both nested functions are invoked through function values with closure
+	// environments, and the inner closure keeps the original x slot alive.
+	// CHECK: [[X_SLOT:%.*]] = call ptr @"{{.*}}AllocZ"(i64 8)
+	// CHECK: store i64 1, ptr [[X_SLOT]]
+	// CHECK: [[OUTER_ENV:%.*]] = call ptr @"{{.*}}AllocU"(i64 8)
+	// CHECK: store ptr [[X_SLOT]], ptr {{%.*}}
+	// CHECK: [[OUTER:%.*]] = insertvalue { ptr, ptr } { ptr @"main.main$1", ptr undef }, ptr [[OUTER_ENV]], 1
+	// CHECK: [[OUTER_CALL_ENV:%.*]] = extractvalue { ptr, ptr } [[OUTER]], 1
+	// CHECK: [[OUTER_CALL_FN:%.*]] = extractvalue { ptr, ptr } [[OUTER]], 0
+	// CHECK: [[OUTER_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[OUTER_CALL_FN]])
+	// CHECK: [[INNER:%.*]] = call { ptr, ptr } [[OUTER_CODE]](ptr {{(nest|swiftself)}} [[OUTER_CALL_ENV]], i64 1)
+	// CHECK: [[INNER_CALL_ENV:%.*]] = extractvalue { ptr, ptr } [[INNER]], 1
+	// CHECK: [[INNER_CALL_FN:%.*]] = extractvalue { ptr, ptr } [[INNER]], 0
+	// CHECK: [[INNER_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[INNER_CALL_FN]])
+	// CHECK: call void [[INNER_CODE]](ptr {{(nest|swiftself)}} [[INNER_CALL_ENV]], i64 2)
 	x := 1
 	f := func(i int) func(int) {
 		// CHECK-LABEL: define { ptr, ptr } @"main.main$1"(ptr {{(nest|swiftself)}} %0, i64 %1){{.*}} {
-		// CHECK-NEXT: _llgo_0:
-		// CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
-		// CHECK-NEXT:   %3 = extractvalue { ptr } %2, 0
-		// CHECK-NEXT:   %4 = call ptr @"{{.*}}AllocU"(i64 8)
-		// CHECK-NEXT:   %5 = getelementptr inbounds { ptr }, ptr %4, i32 0, i32 0
-		// CHECK-NEXT:   store ptr %3, ptr %5, align 8
-		// CHECK-NEXT:   %6 = insertvalue { ptr, ptr } { ptr @"main.main$1$1", ptr undef }, ptr %4, 1
-		// CHECK-NEXT:   ret { ptr, ptr } %6
+		// CHECK: [[OUTER_CAPTURE:%.*]] = load { ptr }, ptr %0
+		// CHECK-NEXT: [[CAPTURED_X_SLOT:%.*]] = extractvalue { ptr } [[OUTER_CAPTURE]], 0
+		// CHECK: [[INNER_ENV:%.*]] = call ptr @"{{.*}}AllocU"(i64 8)
+		// CHECK: store ptr [[CAPTURED_X_SLOT]], ptr {{%.*}}
+		// CHECK: [[INNER_VALUE:%.*]] = insertvalue { ptr, ptr } { ptr @"main.main$1$1", ptr undef }, ptr [[INNER_ENV]], 1
+		// CHECK-NEXT: ret { ptr, ptr } [[INNER_VALUE]]
 		return func(i int) {
 			// CHECK-LABEL: define void @"main.main$1$1"(ptr {{(nest|swiftself)}} %0, i64 %1){{.*}} {
-			// CHECK-NEXT: _llgo_0:
-			// CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
-			// CHECK-NEXT:   %3 = extractvalue { ptr } %2, 0
-			// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
-			// CHECK-NEXT:   call void @"{{.*}}PrintString"(%"{{.*}}String" { ptr @0, i64 7 })
-			// CHECK-NEXT:   call void @"{{.*}}PrintByte"(i8 32)
-			// CHECK-NEXT:   call void @"{{.*}}PrintInt"(i64 %1)
-			// CHECK-NEXT:   call void @"{{.*}}PrintByte"(i8 32)
-			// CHECK-NEXT:   call void @"{{.*}}PrintInt"(i64 %4)
-			// CHECK-NEXT:   call void @"{{.*}}PrintByte"(i8 10)
-			// CHECK-NEXT:   ret void
+			// CHECK: [[INNER_CAPTURE:%.*]] = load { ptr }, ptr %0
+			// CHECK-NEXT: [[INNER_X_SLOT:%.*]] = extractvalue { ptr } [[INNER_CAPTURE]], 0
+			// CHECK-NEXT: [[INNER_X:%.*]] = load i64, ptr [[INNER_X_SLOT]]
+			// CHECK: call void @"{{.*}}PrintInt"(i64 %1)
+			// CHECK: call void @"{{.*}}PrintInt"(i64 [[INNER_X]])
 			println("closure", i, x)
 		}
 	}

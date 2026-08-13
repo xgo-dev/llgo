@@ -10,7 +10,7 @@ func f() *T {
 }
 
 // CHECK: ; Function Attrs: null_pointer_is_valid
-// CHECK: define void @"main.init#1"() #0 {
+// CHECK-LABEL: define void @"main.init#1"() #0 {
 func init() {
 	println("init")
 	defer func() {
@@ -19,7 +19,9 @@ func init() {
 			println("recover", e.Error())
 		}
 	}()
-	// CHECK: call ptr @main.f()
+	// CHECK: %[[NIL_T:[0-9]+]] = call ptr @main.f()
+	// CHECK: %[[FIELD:[0-9]+]] = getelementptr inbounds %main.T, ptr %[[NIL_T]], i32 0, i32 0
+	// CHECK: load i64, ptr %[[FIELD]]
 	println(f().s)
 }
 
