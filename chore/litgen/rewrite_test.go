@@ -393,6 +393,24 @@ func TestGeneralizeClosureEnvAttrs(t *testing.T) {
 	}
 }
 
+func TestScrubIRLineGeneralizesCgoSymbolHash(t *testing.T) {
+	line := `  %0 = load ptr, ptr @main._cgo_96608f8de8c8_Cfunc__Cmalloc, align 8`
+	got := scrubIRLine(line)
+	want := `  %0 = load ptr, ptr @main._cgo_{{[0-9a-f]+}}_Cfunc__Cmalloc, align 8`
+	if got != want {
+		t.Fatalf("scrubIRLine = %q, want %q", got, want)
+	}
+}
+
+func TestScrubIRLineEscapesFileCheckVariableSyntax(t *testing.T) {
+	line := `  call void @"main.(*Slice[[]int,int]).Append"()`
+	got := scrubIRLine(line)
+	want := `  call void @"main.(*Slice{{\[\[}}]int,int]).Append"()`
+	if got != want {
+		t.Fatalf("scrubIRLine = %q, want %q", got, want)
+	}
+}
+
 func TestGeneralizeModulePath_ReplacesOnlyQuotedSegments(t *testing.T) {
 	line := `  %0 = getelementptr inbounds %"go/example.Type", ptr @"go/example.fn"`
 	got := generalizeModulePath(line, "go")
