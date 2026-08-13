@@ -358,7 +358,7 @@ const (
 // CHECK: store i32 [[PRE_I]], ptr %{{[0-9]+}}
 // CHECK: [[PRE_YIELD_ENV:%[0-9]+]] = extractvalue { ptr, ptr } %1, 1
 // CHECK-NEXT: [[PRE_YIELD_CODE:%[0-9]+]] = extractvalue { ptr, ptr } %1, 0
-// CHECK: [[PRE_YIELD:%[0-9]+]] = call i1 %{{[^ ]+}}(ptr swiftself [[PRE_YIELD_ENV]], %main.Cursor %{{[0-9]+}})
+// CHECK: [[PRE_YIELD:%[0-9]+]] = call i1 %{{[^ ]+}}(ptr {{(nest|swiftself)}} [[PRE_YIELD_ENV]], %main.Cursor %{{[0-9]+}})
 // CHECK: br i1 [[PRE_YIELD]],
 // CHECK: [[PRE_AFTER_POP:%[0-9]+]] = add i32 [[PRE_SKIP_POP:%[0-9]+]], 1
 

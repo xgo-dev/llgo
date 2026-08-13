@@ -15,8 +15,10 @@ import (
 // CHECK: call i32 (ptr, ...) @printf(ptr @{{[0-9]+}})
 // CHECK-NEXT: ret void
 // CHECK-LABEL: define void @main.init(){{.*}} {
-// CHECK: [[ONCE_INIT:%[0-9]+]] = load %"{{.*}}Once", ptr @llgoSyncOnceInitVal
-// CHECK-NEXT: store %"{{.*}}Once" [[ONCE_INIT]], ptr @main.once
+// pthread_once_t is a named aggregate on Darwin and i32 on Linux. In both
+// cases, preserve the association from the runtime initializer to main.once.
+// CHECK: [[ONCE_INIT:%[0-9]+]] = load [[ONCE_TYPE:(i32|%"[^"]*Once")]], ptr @llgoSyncOnceInitVal
+// CHECK-NEXT: store [[ONCE_TYPE]] [[ONCE_INIT]], ptr @main.once
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: [[PREFIX:%[0-9]+]] = call %"{{.*}}String" @"{{.*}}StringFrom"(ptr @{{[0-9]+}}, i64 9)
 // CHECK-NEXT: call void @"{{.*}}PrintString"(%"{{.*}}String" [[PREFIX]])

@@ -20,7 +20,7 @@ import (
 // CHECK-NEXT: [[EV_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[EV_V]], 1
 // CHECK-NEXT: [[EV_RAW_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[EV_V]], 0
 // CHECK-NEXT: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr [[EV_RAW_CODE]])
-// CHECK-NEXT: [[EV_PTR:%[0-9]+]] = call %reflect.Value %__llgo_funcval_code(ptr swiftself [[EV_ENV]], %"{{.*}}/runtime/internal/runtime.eface" [[EV_ARG]])
+// CHECK-NEXT: [[EV_PTR:%[0-9]+]] = call %reflect.Value %__llgo_funcval_code(ptr {{(nest|swiftself)}} [[EV_ENV]], %"{{.*}}/runtime/internal/runtime.eface" [[EV_ARG]])
 // CHECK: [[EV_ELEM:%[0-9]+]] = call %reflect.Value @reflect.Value.Elem(%reflect.Value [[EV_PTR]])
 // CHECK: ret %reflect.Value [[EV_ELEM]]
 
@@ -53,7 +53,7 @@ import (
 // CHECK-NEXT: [[RW_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[RW_V]], 1
 // CHECK-NEXT: [[RW_RAW_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[RW_V]], 0
 // CHECK-NEXT: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr [[RW_RAW_CODE]])
-// CHECK-NEXT: [[RW_PTR:%[0-9]+]] = call %reflect.Value %__llgo_funcval_code(ptr swiftself [[RW_ENV]], %"{{.*}}/runtime/internal/runtime.eface" [[RW_ARG]])
+// CHECK-NEXT: [[RW_PTR:%[0-9]+]] = call %reflect.Value %__llgo_funcval_code(ptr {{(nest|swiftself)}} [[RW_ENV]], %"{{.*}}/runtime/internal/runtime.eface" [[RW_ARG]])
 // CHECK: [[RW_ELEM:%[0-9]+]] = call %reflect.Value @reflect.Value.Elem(%reflect.Value [[RW_PTR]])
 // CHECK: ret %reflect.Value [[RW_ELEM]]
 
@@ -65,7 +65,7 @@ import (
 // CHECK-NEXT: [[R_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[R_V]], 1
 // CHECK-NEXT: [[R_RAW_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[R_V]], 0
 // CHECK-NEXT: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr [[R_RAW_CODE]])
-// CHECK-NEXT: [[R_PTR:%[0-9]+]] = call %reflect.Value %__llgo_funcval_code(ptr swiftself [[R_ENV]], %"{{.*}}/runtime/internal/runtime.eface" [[R_ARG]])
+// CHECK-NEXT: [[R_PTR:%[0-9]+]] = call %reflect.Value %__llgo_funcval_code(ptr {{(nest|swiftself)}} [[R_ENV]], %"{{.*}}/runtime/internal/runtime.eface" [[R_ARG]])
 // CHECK: [[R_ELEM:%[0-9]+]] = call %reflect.Value @reflect.Value.Elem(%reflect.Value [[R_PTR]])
 // CHECK: ret %reflect.Value [[R_ELEM]]
 
@@ -137,7 +137,7 @@ import (
 // CHECK: [[SNAN_LOAD:%[0-9]+]] = load float, ptr @main.gFloat32
 // CHECK: [[SNAN_BITS:%[0-9]+]] = call i32 @math.Float32bits(float [[SNAN_LOAD]])
 // CHECK: [[SNAN_BAD:%[0-9]+]] = icmp ne i32 [[SNAN_BITS]], 2139095041
-// CHECK: [[SNAN_X:%[0-9]+]] = call %reflect.Value %{{[^ ]+}}(ptr swiftself %{{[0-9]+}}, %"{{.*}}/runtime/internal/runtime.eface" %{{[0-9]+}})
+// CHECK: [[SNAN_X:%[0-9]+]] = call %reflect.Value %{{[^ ]+}}(ptr {{(nest|swiftself)}} %{{[0-9]+}}, %"{{.*}}/runtime/internal/runtime.eface" %{{[0-9]+}})
 // CHECK: [[FLOAT32_TYPE:%[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.iface" @reflect.TypeOf(
 // CHECK: [[SNAN_Y:%[0-9]+]] = call %reflect.Value @reflect.Value.Convert(%reflect.Value [[SNAN_X]], %"{{.*}}/runtime/internal/runtime.iface" [[FLOAT32_TYPE]])
 // CHECK: [[SNAN_ANY:%[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value [[SNAN_Y]])

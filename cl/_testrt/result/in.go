@@ -32,13 +32,13 @@ func add2() (func(int, int) int, int) {
 // CHECK-NEXT: [[LOCAL_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[LOCAL_FN]], 1
 // CHECK-NEXT: [[LOCAL_RAW_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[LOCAL_FN]], 0
 // CHECK-NEXT: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr [[LOCAL_RAW_CODE]])
-// CHECK-NEXT: [[LOCAL_SUM:%[0-9]+]] = call i64 %__llgo_funcval_code(ptr swiftself [[LOCAL_ENV]], i64 100, i64 200)
+// CHECK-NEXT: [[LOCAL_SUM:%[0-9]+]] = call i64 %__llgo_funcval_code(ptr {{(nest|swiftself)}} [[LOCAL_ENV]], i64 100, i64 200)
 // CHECK-NEXT: call i32 (ptr, ...) @printf(ptr @{{[0-9]+}}, i64 [[LOCAL_SUM]])
 // CHECK-NEXT: [[ADD_FN:%[0-9]+]] = call { ptr, ptr } @main.add()
 // CHECK-NEXT: [[ADD_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[ADD_FN]], 1
 // CHECK-NEXT: [[ADD_RAW_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[ADD_FN]], 0
 // CHECK-NEXT: %__llgo_funcval_code1 = call ptr asm "", "=r,0"(ptr [[ADD_RAW_CODE]])
-// CHECK-NEXT: [[ADD_VALUE:%[0-9]+]] = call i64 %__llgo_funcval_code1(ptr swiftself [[ADD_ENV]], i64 100, i64 200)
+// CHECK-NEXT: [[ADD_VALUE:%[0-9]+]] = call i64 %__llgo_funcval_code1(ptr {{(nest|swiftself)}} [[ADD_ENV]], i64 100, i64 200)
 // CHECK-NEXT: call i32 (ptr, ...) @printf(ptr @{{[0-9]+}}, i64 [[ADD_VALUE]])
 // CHECK-NEXT: [[ADD2:%[0-9]+]] = call { { ptr, ptr }, i64 } @main.add2()
 // CHECK-NEXT: extractvalue { { ptr, ptr }, i64 } [[ADD2]], 0
@@ -47,7 +47,7 @@ func add2() (func(int, int) int, int) {
 // CHECK-NEXT: [[FINAL_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[FINAL_FN]], 1
 // CHECK-NEXT: [[FINAL_RAW_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[FINAL_FN]], 0
 // CHECK-NEXT: %__llgo_funcval_code2 = call ptr asm "", "=r,0"(ptr [[FINAL_RAW_CODE]])
-// CHECK-NEXT: [[FINAL_SUM:%[0-9]+]] = call i64 %__llgo_funcval_code2(ptr swiftself [[FINAL_ENV]], i64 100, i64 200)
+// CHECK-NEXT: [[FINAL_SUM:%[0-9]+]] = call i64 %__llgo_funcval_code2(ptr {{(nest|swiftself)}} [[FINAL_ENV]], i64 100, i64 200)
 // CHECK-NEXT: call i32 (ptr, ...) @printf(ptr @{{[0-9]+}}, i64 [[FINAL_SUM]], i64 [[ADD2_N]])
 func main() {
 	// CHECK-LABEL: define { ptr, ptr } @"main.main$1"(){{.*}} {

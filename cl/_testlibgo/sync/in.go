@@ -15,7 +15,7 @@ import (
 // CHECK-NEXT: store ptr [[STRING_ADDR]], ptr [[CAPTURE]]
 // CHECK-NEXT: [[CLOSURE:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.f$1", ptr undef }, ptr [[ENV]], 1
 // CHECK-NEXT: call void @"sync.(*Once).Do"(ptr @main.once, { ptr, ptr } [[CLOSURE]])
-// CHECK-LABEL: define void @"main.f$1"(ptr swiftself %0){{.*}} {
+// CHECK-LABEL: define void @"main.f$1"(ptr {{(nest|swiftself)}} %0){{.*}} {
 // CHECK: [[CAPTURED_ENV:%[0-9]+]] = load { ptr }, ptr %0
 // CHECK-NEXT: [[CAPTURED_ADDR:%[0-9]+]] = extractvalue { ptr } [[CAPTURED_ENV]], 0
 // CHECK-NEXT: [[CAPTURED_STRING:%[0-9]+]] = load %"{{.*}}String", ptr [[CAPTURED_ADDR]]

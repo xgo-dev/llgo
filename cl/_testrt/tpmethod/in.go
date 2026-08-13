@@ -37,7 +37,7 @@ func ReadFile(fileName string) Future[Tuple[error]] {
 	// CHECK-NEXT: [[RESOLVE_ENV:%[0-9]+]] = extractvalue { ptr, ptr } %0, 1
 	// CHECK-NEXT: [[RESOLVE_RAW_CODE:%[0-9]+]] = extractvalue { ptr, ptr } %0, 0
 	// CHECK-NEXT: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr [[RESOLVE_RAW_CODE]])
-	// CHECK-NEXT: call void %__llgo_funcval_code(ptr swiftself [[RESOLVE_ENV]], %"main.Tuple[error]" [[TUPLE]])
+	// CHECK-NEXT: call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} [[RESOLVE_ENV]], %"main.Tuple[error]" [[TUPLE]])
 
 	return Async[Tuple[error]](func(resolve func(Tuple[error])) {
 		resolve(Tuple[error]{v: nil})
@@ -87,7 +87,7 @@ func main() {
 // CHECK-NEXT: [[FN_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[FN]], 1
 // CHECK-NEXT: [[FN_RAW_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[FN]], 0
 // CHECK-NEXT: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr [[FN_RAW_CODE]])
-// CHECK-NEXT: call void %__llgo_funcval_code(ptr swiftself [[FN_ENV]], { ptr, ptr } %1)
+// CHECK-NEXT: call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} [[FN_ENV]], { ptr, ptr } %1)
 
 // CHECK-LABEL: define linkonce %"{{.*}}iface" @"main.(*Tuple[error]).Get"(ptr %0){{.*}} {
 // CHECK: [[GET_NIL:%[0-9]+]] = icmp eq ptr %0, null

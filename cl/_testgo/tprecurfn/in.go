@@ -21,7 +21,7 @@ func main() {
 	// CHECK-NEXT: [[FN_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[FN]], 1
 	// CHECK-NEXT: [[FN_RAW_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[FN]], 0
 	// CHECK-NEXT: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr [[FN_RAW_CODE]])
-	// CHECK-NEXT: call void %__llgo_funcval_code(ptr swiftself [[FN_ENV]], i64 100)
+	// CHECK-NEXT: call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} [[FN_ENV]], i64 100)
 	m := &My[int]{next: &My[int]{fn: func(n int) { println(n) }}}
 	m.next.fn(100)
 }

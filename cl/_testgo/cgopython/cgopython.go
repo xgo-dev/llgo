@@ -33,7 +33,7 @@ import "C"
 // CHECK: [[DEFER_PREV:%[0-9]+]] = getelementptr inbounds %"{{.*}}Defer", ptr [[DEFER]], i32 0, i32 2
 // CHECK-NEXT: store ptr [[OLD_DEFER]], ptr [[DEFER_PREV]]
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[DEFER]])
-// CHECK: [[JMP_RESULT:%[0-9]+]] = call i32 @sigsetjmp
+// CHECK: [[JMP_RESULT:%[0-9]+]] = call i32 @{{(__)?sigsetjmp}}
 // CHECK-NEXT: [[JMP_NORMAL:%[0-9]+]] = icmp eq i32 [[JMP_RESULT]], 0
 // CHECK-NEXT: br i1 [[JMP_NORMAL]], label %{{[^,]+}}, label %{{[^ ]+}}
 // CHECK: call [0 x i8] @main._Cfunc_Py_Finalize()

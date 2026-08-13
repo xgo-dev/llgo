@@ -15,7 +15,7 @@ import (
 // CHECK: [[CALL_ENV:%[0-9]+]] = extractvalue { ptr, ptr } %1, 1
 // CHECK-NEXT: [[CALL_RAW_CODE:%[0-9]+]] = extractvalue { ptr, ptr } %1, 0
 // CHECK-NEXT: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr [[CALL_RAW_CODE]])
-// CHECK-NEXT: [[GENERATED:%[0-9]+]] = call i32 %__llgo_funcval_code(ptr swiftself [[CALL_ENV]])
+// CHECK-NEXT: [[GENERATED:%[0-9]+]] = call i32 %__llgo_funcval_code(ptr {{(nest|swiftself)}} [[CALL_ENV]])
 // CHECK-NEXT: [[OUT_DATA:%[0-9]+]] = extractvalue %"{{.*}}Slice" [[OUT]], 0
 // CHECK-NEXT: [[BOUNDS_LEN:%[0-9]+]] = extractvalue %"{{.*}}Slice" [[OUT]], 1
 // CHECK: call void @"{{.*}}CheckIndexRange"(i1 {{.*}}, i64 [[GEN_INDEX]], i1 true, i64 [[BOUNDS_LEN]])
@@ -61,7 +61,7 @@ import (
 // CHECK-NEXT: [[BOUND_VALUE:%[0-9]+]] = load i32, ptr [[BOUND_VALUE_SLOT]]
 // CHECK-NEXT: call i32 (ptr, ...) @printf(ptr @{{[0-9]+}}, i32 [[BOUND_VALUE]])
 
-// CHECK-LABEL: define i32 @"main.main$1"(ptr swiftself %0){{.*}} {
+// CHECK-LABEL: define i32 @"main.main$1"(ptr {{(nest|swiftself)}} %0){{.*}} {
 // CHECK: [[GEN_ENV:%[0-9]+]] = load { ptr }, ptr %0
 // CHECK-NEXT: [[GEN_VALUE_PTR:%[0-9]+]] = extractvalue { ptr } [[GEN_ENV]], 0
 // CHECK-NEXT: [[GEN_VALUE:%[0-9]+]] = load i32, ptr [[GEN_VALUE_PTR]]
@@ -71,7 +71,7 @@ import (
 // CHECK-NEXT: [[GEN_RESULT_PTR:%[0-9]+]] = extractvalue { ptr } [[GEN_ENV]], 0
 // CHECK-NEXT: [[GEN_RESULT:%[0-9]+]] = load i32, ptr [[GEN_RESULT_PTR]]
 // CHECK-NEXT: ret i32 [[GEN_RESULT]]
-// CHECK-LABEL: define i32 @"main.(*generator).next$bound"(ptr swiftself %0){{.*}} {
+// CHECK-LABEL: define i32 @"main.(*generator).next$bound"(ptr {{(nest|swiftself)}} %0){{.*}} {
 // CHECK: [[BOUND_ENV:%[0-9]+]] = load { ptr }, ptr %0
 // CHECK-NEXT: [[BOUND_RECEIVER:%[0-9]+]] = extractvalue { ptr } [[BOUND_ENV]], 0
 // CHECK-NEXT: [[BOUND_RESULT:%[0-9]+]] = call i32 @"main.(*generator).next"(ptr [[BOUND_RECEIVER]])

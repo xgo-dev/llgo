@@ -29,7 +29,7 @@ func main() {
 	// CHECK-NEXT: [[DEFER_RESUME_FIELD:%[0-9]+]] = getelementptr inbounds %"{{.*}}.Defer", ptr [[DEFER_FRAME]], i32 0, i32 3
 	// CHECK-NEXT: [[DEFER_RETHROW_FIELD:%[0-9]+]] = getelementptr inbounds %"{{.*}}.Defer", ptr [[DEFER_FRAME]], i32 0, i32 4
 	// CHECK-NEXT: [[DEFER_HEAD_FIELD:%[0-9]+]] = getelementptr inbounds %"{{.*}}.Defer", ptr [[DEFER_FRAME]], i32 0, i32 5
-	// CHECK: [[SETJMP_RESULT:%[0-9]+]] = call i32 @sigsetjmp(ptr [[DEFER_JMPBUF]], i32 0)
+	// CHECK: [[SETJMP_RESULT:%[0-9]+]] = call i32 @{{(__)?sigsetjmp}}(ptr [[DEFER_JMPBUF]], i32 0)
 	// CHECK-NEXT: [[FIRST_ENTRY:%[0-9]+]] = icmp eq i32 [[SETJMP_RESULT]], 0
 	// CHECK-NEXT: br i1 [[FIRST_ENTRY]], label %{{.*}}, label %{{.*}}
 
