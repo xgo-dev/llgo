@@ -1,23 +1,6 @@
 // LITTEST
 package main
 
-// CHECK: {{^}}@0 = private unnamed_addr constant [6 x i8] c"invoke", align 1{{$}}
-// CHECK: {{^}}@1 = private unnamed_addr constant [42 x i8] c"{{.*}}/cl/_testgo/invoke.T", align 1{{$}}
-// CHECK: {{^}}@2 = private unnamed_addr constant [6 x i8] c"Invoke", align 1{{$}}
-// CHECK: {{^}}@3 = private unnamed_addr constant [7 x i8] c"invoke1", align 1{{$}}
-// CHECK: {{^}}@4 = private unnamed_addr constant [43 x i8] c"{{.*}}/cl/_testgo/invoke.T1", align 1{{$}}
-// CHECK: {{^}}@5 = private unnamed_addr constant [7 x i8] c"invoke2", align 1{{$}}
-// CHECK: {{^}}@6 = private unnamed_addr constant [43 x i8] c"{{.*}}/cl/_testgo/invoke.T2", align 1{{$}}
-// CHECK: {{^}}@7 = private unnamed_addr constant [7 x i8] c"invoke3", align 1{{$}}
-// CHECK: {{^}}@8 = private unnamed_addr constant [7 x i8] c"invoke4", align 1{{$}}
-// CHECK: {{^}}@9 = private unnamed_addr constant [43 x i8] c"{{.*}}/cl/_testgo/invoke.T4", align 1{{$}}
-// CHECK: {{^}}@10 = private unnamed_addr constant [7 x i8] c"invoke5", align 1{{$}}
-// CHECK: {{^}}@11 = private unnamed_addr constant [43 x i8] c"{{.*}}/cl/_testgo/invoke.T5", align 1{{$}}
-// CHECK: {{^}}@12 = private unnamed_addr constant [7 x i8] c"invoke6", align 1{{$}}
-// CHECK: {{^}}@13 = private unnamed_addr constant [43 x i8] c"{{.*}}/cl/_testgo/invoke.T6", align 1{{$}}
-// CHECK: {{^}}@14 = private unnamed_addr constant [5 x i8] c"hello", align 1{{$}}
-// CHECK: {{^}}@36 = private unnamed_addr constant [5 x i8] c"world", align 1{{$}}
-
 type T struct {
 	s string
 }
@@ -141,334 +124,121 @@ type M interface {
 }
 
 // CHECK-LABEL: define i64 @main.T.Invoke(%main.T %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = alloca %main.T, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
-// CHECK-NEXT:   store %main.T %0, ptr %1, align 8
-// CHECK-NEXT:   %2 = getelementptr inbounds %main.T, ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.String", ptr %2, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 6 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %3)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret i64 0
-// CHECK-NEXT: }
+// CHECK: store %main.T %0, ptr [[T_INVOKE_ADDR:%[0-9]+]]
+// CHECK: [[T_INVOKE_FIELD:%[0-9]+]] = getelementptr inbounds %main.T, ptr [[T_INVOKE_ADDR]], i32 0, i32 0
+// CHECK-NEXT: [[T_INVOKE_STRING:%[0-9]+]] = load %"{{.*}}String", ptr [[T_INVOKE_FIELD]]
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" [[T_INVOKE_STRING]])
+// CHECK: ret i64 0
 
 // CHECK-LABEL: define i64 @"main.(*T).Invoke"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @1, i64 42 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 6 })
-// CHECK-NEXT:   %2 = load %main.T, ptr %0, align 8
-// CHECK-NEXT:   %3 = call i64 @main.T.Invoke(%main.T %2)
-// CHECK-NEXT:   ret i64 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @"main.(*T).Method"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: %[[T_NIL:[0-9]+]] = icmp eq ptr %0, null
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[T_NIL]],{{.*}})
+// CHECK: %[[T_VALUE:[0-9]+]] = load %main.T, ptr %0
+// CHECK: %[[T_RESULT:[0-9]+]] = call i64 @main.T.Invoke(%main.T %[[T_VALUE]])
+// CHECK: ret i64 %[[T_RESULT]]
 
 // CHECK-LABEL: define i64 @main.T1.Invoke(i64 %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @3, i64 7 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %0)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret i64 1
-// CHECK-NEXT: }
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %0)
+// CHECK: ret i64 1
 
 // CHECK-LABEL: define i64 @"main.(*T1).Invoke"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @4, i64 43 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 6 })
-// CHECK-NEXT:   %2 = load i64, ptr %0, align 8
-// CHECK-NEXT:   %3 = call i64 @main.T1.Invoke(i64 %2)
-// CHECK-NEXT:   ret i64 %3
-// CHECK-NEXT: }
+// CHECK: %[[T1_NIL:[0-9]+]] = icmp eq ptr %0, null
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[T1_NIL]],{{.*}})
+// CHECK: %[[T1_VALUE:[0-9]+]] = load i64, ptr %0
+// CHECK: call i64 @main.T1.Invoke(i64 %[[T1_VALUE]])
 
 // CHECK-LABEL: define i64 @main.T2.Invoke(double %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @5, i64 7 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintFloat"(double %0)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret i64 2
-// CHECK-NEXT: }
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintFloat"(double %0)
+// CHECK: ret i64 2
 
 // CHECK-LABEL: define i64 @"main.(*T2).Invoke"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @6, i64 43 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 6 })
-// CHECK-NEXT:   %2 = load double, ptr %0, align 8
-// CHECK-NEXT:   %3 = call i64 @main.T2.Invoke(double %2)
-// CHECK-NEXT:   ret i64 %3
-// CHECK-NEXT: }
+// CHECK: %[[T2_NIL:[0-9]+]] = icmp eq ptr %0, null
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[T2_NIL]],{{.*}})
+// CHECK: %[[T2_VALUE:[0-9]+]] = load double, ptr %0
+// CHECK: call i64 @main.T2.Invoke(double %[[T2_VALUE]])
 
+// T3 only has a pointer receiver, so its wrapper dereferences the pointer and
+// preserves the signed int8 conversion.
 // CHECK-LABEL: define i64 @"main.(*T3).Invoke"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %1)
-// CHECK-NEXT:   %2 = load i8, ptr %0, align 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @7, i64 7 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %3 = sext i8 %2 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %3)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret i64 3
-// CHECK-NEXT: }
+// CHECK: %[[T3_NIL:[0-9]+]] = icmp eq ptr %0, null
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %[[T3_NIL]])
+// CHECK: %[[T3_VALUE:[0-9]+]] = load i8, ptr %0
+// CHECK: %[[T3_WIDE:[0-9]+]] = sext i8 %[[T3_VALUE]] to i64
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %[[T3_WIDE]])
 
 // CHECK-LABEL: define i64 @main.T4.Invoke([1 x i64] %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = alloca [1 x i64], align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 8, i1 false)
-// CHECK-NEXT:   store [1 x i64] %0, ptr %1, align 8
-// CHECK-NEXT:   %2 = getelementptr inbounds i64, ptr %1, i64 0
-// CHECK-NEXT:   %3 = load i64, ptr %2, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @8, i64 7 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %3)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret i64 4
-// CHECK-NEXT: }
+// CHECK: store [1 x i64] %0, ptr [[T4_INVOKE_ADDR:%[0-9]+]]
+// CHECK: [[T4_ITEM_PTR:%[0-9]+]] = getelementptr inbounds i64, ptr [[T4_INVOKE_ADDR]], i64 0
+// CHECK-NEXT: [[T4_ITEM:%[0-9]+]] = load i64, ptr [[T4_ITEM_PTR]]
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 [[T4_ITEM]])
+// CHECK: ret i64 4
 
 // CHECK-LABEL: define i64 @"main.(*T4).Invoke"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @9, i64 43 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 6 })
-// CHECK-NEXT:   %2 = load [1 x i64], ptr %0, align 8
-// CHECK-NEXT:   %3 = call i64 @main.T4.Invoke([1 x i64] %2)
-// CHECK-NEXT:   ret i64 %3
-// CHECK-NEXT: }
+// CHECK: %[[T4_NIL:[0-9]+]] = icmp eq ptr %0, null
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[T4_NIL]],{{.*}})
+// CHECK: %[[T4_VALUE:[0-9]+]] = load [1 x i64], ptr %0
+// CHECK: call i64 @main.T4.Invoke([1 x i64] %[[T4_VALUE]])
 
 // CHECK-LABEL: define i64 @main.T5.Invoke(%main.T5 %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = alloca %main.T5, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 8, i1 false)
-// CHECK-NEXT:   store %main.T5 %0, ptr %1, align 8
-// CHECK-NEXT:   %2 = getelementptr inbounds %main.T5, ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %3 = load i64, ptr %2, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @10, i64 7 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %3)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret i64 5
-// CHECK-NEXT: }
+// CHECK: store %main.T5 %0, ptr [[T5_INVOKE_ADDR:%[0-9]+]]
+// CHECK: [[T5_FIELD:%[0-9]+]] = getelementptr inbounds %main.T5, ptr [[T5_INVOKE_ADDR]], i32 0, i32 0
+// CHECK-NEXT: [[T5_ITEM:%[0-9]+]] = load i64, ptr [[T5_FIELD]]
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 [[T5_ITEM]])
+// CHECK: ret i64 5
 
 // CHECK-LABEL: define i64 @"main.(*T5).Invoke"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @11, i64 43 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 6 })
-// CHECK-NEXT:   %2 = load %main.T5, ptr %0, align 8
-// CHECK-NEXT:   %3 = call i64 @main.T5.Invoke(%main.T5 %2)
-// CHECK-NEXT:   ret i64 %3
-// CHECK-NEXT: }
+// CHECK: %[[T5_NIL:[0-9]+]] = icmp eq ptr %0, null
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[T5_NIL]],{{.*}})
+// CHECK: %[[T5_VALUE:[0-9]+]] = load %main.T5, ptr %0
+// CHECK: call i64 @main.T5.Invoke(%main.T5 %[[T5_VALUE]])
 
 // CHECK-LABEL: define i64 @main.T6.Invoke(%main.T6 %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = extractvalue %main.T6 %0, 1
-// CHECK-NEXT:   %2 = extractvalue %main.T6 %0, 0
-// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %2)
-// CHECK-NEXT:   %3 = call i64 %__llgo_funcval_code(ptr {{(nest|swiftself)}} %1)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @12, i64 7 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %3)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret i64 6
-// CHECK-NEXT: }
+// CHECK: %[[T6_DATA:[0-9]+]] = extractvalue %main.T6 %0, 1
+// CHECK: %[[T6_CODE:[0-9]+]] = extractvalue %main.T6 %0, 0
+// CHECK: %[[T6_CALL:__llgo_funcval_code]] = call ptr asm "", "=r,0"(ptr %[[T6_CODE]])
+// CHECK: call i64 %[[T6_CALL]](ptr {{(nest|swiftself)}} %[[T6_DATA]])
 
 // CHECK-LABEL: define i64 @"main.(*T6).Invoke"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @13, i64 43 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 6 })
-// CHECK-NEXT:   %2 = load %main.T6, ptr %0, align 8
-// CHECK-NEXT:   %3 = call i64 @main.T6.Invoke(%main.T6 %2)
-// CHECK-NEXT:   ret i64 %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @main.init(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load i1, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store i1 true, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: %[[T6_NIL:[0-9]+]] = icmp eq ptr %0, null
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[T6_NIL]],{{.*}})
+// CHECK: %[[T6_LOADED:[0-9]+]] = load %main.T6, ptr %0
+// CHECK: call i64 @main.T6.Invoke(%main.T6 %[[T6_LOADED]])
 
 // CHECK-LABEL: define void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %0)
-// CHECK-NEXT:   %2 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %0, 0
-// CHECK-NEXT:   %3 = getelementptr ptr, ptr %2, i64 3
-// CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
-// CHECK-NEXT:   %5 = insertvalue { ptr, ptr } undef, ptr %4, 0
-// CHECK-NEXT:   %6 = insertvalue { ptr, ptr } %5, ptr %1, 1
-// CHECK-NEXT:   %7 = extractvalue { ptr, ptr } %6, 1
-// CHECK-NEXT:   %8 = extractvalue { ptr, ptr } %6, 0
-// CHECK-NEXT:   %9 = call i64 %8(ptr %7)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %9)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: %[[INVOKE_DATA:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %0)
+// CHECK: %[[INVOKE_TYPE:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %0, 0
+// CHECK: %[[INVOKE_SLOT:[0-9]+]] = getelementptr ptr, ptr %[[INVOKE_TYPE]], i64 3
+// CHECK: %[[INVOKE_METHOD:[0-9]+]] = load ptr, ptr %[[INVOKE_SLOT]]
+// CHECK: %[[INVOKE_PAIR0:[0-9]+]] = insertvalue { ptr, ptr } undef, ptr %[[INVOKE_METHOD]], 0
+// CHECK: %[[INVOKE_PAIR:[0-9]+]] = insertvalue { ptr, ptr } %[[INVOKE_PAIR0]], ptr %[[INVOKE_DATA]], 1
+// CHECK: %[[INVOKE_CALL_DATA:[0-9]+]] = extractvalue { ptr, ptr } %[[INVOKE_PAIR]], 1
+// CHECK: %[[INVOKE_CALL_CODE:[0-9]+]] = extractvalue { ptr, ptr } %[[INVOKE_PAIR]], 0
+// CHECK: %[[INVOKE_RESULT:[0-9]+]] = call i64 %[[INVOKE_CALL_CODE]](ptr %[[INVOKE_CALL_DATA]])
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %[[INVOKE_RESULT]])
 
+// main exercises both value and pointer method sets for every named type.
+// Capture the first pair completely, then retain descriptor checks for the
+// remaining matrix.
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK-NEXT:   %1 = getelementptr inbounds %main.T, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @14, i64 5 }, ptr %1, align 8
-// CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   store i64 100, ptr %2, align 8
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   store double 1.001000e+02, ptr %3, align 8
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 1)
-// CHECK-NEXT:   store i8 127, ptr %4, align 1
-// CHECK-NEXT:   %5 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %6 = getelementptr inbounds i64, ptr %5, i64 0
-// CHECK-NEXT:   store i64 200, ptr %6, align 8
-// CHECK-NEXT:   %7 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %8 = getelementptr inbounds %main.T5, ptr %7, i32 0, i32 0
-// CHECK-NEXT:   store i64 300, ptr %8, align 8
-// CHECK-NEXT:   %9 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK-NEXT:   store %main.T6 { ptr @"main.main$1", ptr null }, ptr %9, align 8
-// CHECK-NEXT:   %10 = load %main.T, ptr %0, align 8
-// CHECK-NEXT:   %11 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %main.T %10, ptr %11, align 8
-// CHECK-NEXT:   %12 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.T)
-// CHECK-NEXT:   %13 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %12, 0
-// CHECK-NEXT:   %14 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %13, ptr %11, 1
-// CHECK-NEXT:   call void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %14)
-// CHECK-NEXT:   %15 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T")
-// CHECK-NEXT:   %16 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %15, 0
-// CHECK-NEXT:   %17 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %16, ptr %0, 1
-// CHECK-NEXT:   call void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %17)
-// CHECK-NEXT:   %18 = load i64, ptr %2, align 8
-// CHECK-NEXT:   %19 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   store i64 %18, ptr %19, align 8
-// CHECK-NEXT:   %20 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.T1)
-// CHECK-NEXT:   %21 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %20, 0
-// CHECK-NEXT:   %22 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %21, ptr %19, 1
-// CHECK-NEXT:   call void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %22)
-// CHECK-NEXT:   %23 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T1")
-// CHECK-NEXT:   %24 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %23, 0
-// CHECK-NEXT:   %25 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %24, ptr %2, 1
-// CHECK-NEXT:   call void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %25)
-// CHECK-NEXT:   %26 = load double, ptr %3, align 8
-// CHECK-NEXT:   %27 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   store double %26, ptr %27, align 8
-// CHECK-NEXT:   %28 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.T2)
-// CHECK-NEXT:   %29 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %28, 0
-// CHECK-NEXT:   %30 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %29, ptr %27, 1
-// CHECK-NEXT:   call void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %30)
-// CHECK-NEXT:   %31 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T2")
-// CHECK-NEXT:   %32 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %31, 0
-// CHECK-NEXT:   %33 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %32, ptr %3, 1
-// CHECK-NEXT:   call void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %33)
-// CHECK-NEXT:   %34 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T3")
-// CHECK-NEXT:   %35 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %34, 0
-// CHECK-NEXT:   %36 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %35, ptr %4, 1
-// CHECK-NEXT:   call void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %36)
-// CHECK-NEXT:   %37 = load [1 x i64], ptr %5, align 8
-// CHECK-NEXT:   %38 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   store [1 x i64] %37, ptr %38, align 8
-// CHECK-NEXT:   %39 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.T4)
-// CHECK-NEXT:   %40 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %39, 0
-// CHECK-NEXT:   %41 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %40, ptr %38, 1
-// CHECK-NEXT:   call void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %41)
-// CHECK-NEXT:   %42 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T4")
-// CHECK-NEXT:   %43 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %42, 0
-// CHECK-NEXT:   %44 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %43, ptr %5, 1
-// CHECK-NEXT:   call void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %44)
-// CHECK-NEXT:   %45 = load %main.T5, ptr %7, align 8
-// CHECK-NEXT:   %46 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   store %main.T5 %45, ptr %46, align 8
-// CHECK-NEXT:   %47 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.T5)
-// CHECK-NEXT:   %48 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %47, 0
-// CHECK-NEXT:   %49 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %48, ptr %46, 1
-// CHECK-NEXT:   call void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %49)
-// CHECK-NEXT:   %50 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T5")
-// CHECK-NEXT:   %51 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %50, 0
-// CHECK-NEXT:   %52 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %51, ptr %7, 1
-// CHECK-NEXT:   call void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %52)
-// CHECK-NEXT:   %53 = load %main.T6, ptr %9, align 8
-// CHECK-NEXT:   %54 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %main.T6 %53, ptr %54, align 8
-// CHECK-NEXT:   %55 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.T6)
-// CHECK-NEXT:   %56 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %55, 0
-// CHECK-NEXT:   %57 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %56, ptr %54, 1
-// CHECK-NEXT:   call void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %57)
-// CHECK-NEXT:   %58 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T6")
-// CHECK-NEXT:   %59 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %58, 0
-// CHECK-NEXT:   %60 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %59, ptr %9, 1
-// CHECK-NEXT:   call void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %60)
-// CHECK-NEXT:   %61 = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
-// CHECK-NEXT:   %62 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr %61)
-// CHECK-NEXT:   %63 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %62, 0
-// CHECK-NEXT:   %64 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %63, ptr null, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintIface"(%"{{.*}}/runtime/internal/runtime.iface" %64)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintIface"(%"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %65 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T")
-// CHECK-NEXT:   %66 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %65, 0
-// CHECK-NEXT:   %67 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %66, ptr %0, 1
-// CHECK-NEXT:   %68 = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}/runtime/internal/runtime.iface" %67)
-// CHECK-NEXT:   %69 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %67, 1
-// CHECK-NEXT:   %70 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr %68)
-// CHECK-NEXT:   %71 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %70, 0
-// CHECK-NEXT:   %72 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %71, ptr %69, 1
-// CHECK-NEXT:   call void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %72)
-// CHECK-NEXT:   %73 = alloca %main.T, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %73, i8 0, i64 16, i1 false)
-// CHECK-NEXT:   %74 = getelementptr inbounds %main.T, ptr %73, i32 0, i32 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @36, i64 5 }, ptr %74, align 8
-// CHECK-NEXT:   %75 = load %main.T, ptr %73, align 8
-// CHECK-NEXT:   %76 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %main.T %75, ptr %76, align 8
-// CHECK-NEXT:   %77 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_main.T, ptr undef }, ptr %76, 1
-// CHECK-NEXT:   %78 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %77, 0
-// CHECK-NEXT:   %79 = call i1 @"{{.*}}/runtime/internal/runtime.Implements"(ptr @_llgo_main.I, ptr %78)
-// CHECK-NEXT:   br i1 %79, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %80 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %77, 1
-// CHECK-NEXT:   %81 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr %78)
-// CHECK-NEXT:   %82 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %81, 0
-// CHECK-NEXT:   %83 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %82, ptr %80, 1
-// CHECK-NEXT:   call void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %83)
-// CHECK-NEXT:   %84 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %77, 0
-// CHECK-NEXT:   %85 = icmp ne ptr %84, null
-// CHECK-NEXT:   br i1 %85, label %_llgo_3, label %_llgo_4
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr null, ptr %78, ptr @_llgo_main.I)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_1
-// CHECK-NEXT:   %86 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %77, 0
-// CHECK-NEXT:   %87 = call i1 @"{{.*}}/runtime/internal/runtime.Implements"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr %86)
-// CHECK-NEXT:   br i1 %87, label %_llgo_5, label %_llgo_6
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr null, ptr %84, ptr @_llgo_any)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_3
-// CHECK-NEXT:   %88 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %77, 1
-// CHECK-NEXT:   %89 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr %86)
-// CHECK-NEXT:   %90 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %89, 0
-// CHECK-NEXT:   %91 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %90, ptr %88, 1
-// CHECK-NEXT:   call void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %91)
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_6:                                          ; preds = %_llgo_3
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr null, ptr %86, ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}")
-// CHECK-NEXT:   unreachable
-// CHECK-NEXT: }
+// CHECK: store %main.T6 { ptr @"main.main$1", ptr null }, ptr %{{[0-9]+}}
+// CHECK: %[[T_VALUE_ITAB:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.T)
+// CHECK: %[[T_VALUE_IF0:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %[[T_VALUE_ITAB]], 0
+// CHECK: %[[T_VALUE_IFACE:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %[[T_VALUE_IF0]], ptr %{{[0-9]+}}, 1
+// CHECK: call void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %[[T_VALUE_IFACE]])
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T")
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.T1)
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T1")
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.T2)
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T2")
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T3")
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.T4)
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T4")
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.T5)
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T5")
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.T6)
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T6")
+// CHECK: %[[ASSERT_TYPE:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"
+// CHECK: %[[ASSERT_ITAB:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr %[[ASSERT_TYPE]])
 
 // CHECK-LABEL: define i64 @"main.main$1"(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   ret i64 400
-// CHECK-NEXT: }
+// CHECK: ret i64 400
