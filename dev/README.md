@@ -148,6 +148,11 @@ short, handwritten FileCheck assertions for a single lowering or ABI property.
 Runtime output does not replace focused IR checks; it only removes the need for
 a second full-output snapshot.
 
+Use 100 FileCheck directive lines as an audit threshold rather than a size cap.
+For a larger handwritten fixture, every group should correspond to an explicit
+semantic contract. Convert long contiguous IR-shape checks to an opted-in
+`litgen` snapshot instead.
+
 ### Marker convention
 
 Source-embedded IR checks are enabled by putting this marker on the first line of the source file:

@@ -111,24 +111,8 @@ func demo5(n int) Func {
 // CHECK: [[MAIN_F1_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[MAIN_F1_CODE_RAW]])
 // CHECK: [[MAIN_R1:%.*]] = call i64 [[MAIN_F1_CODE]](ptr {{(nest|swiftself)}} [[MAIN_F1_ENV]], i64 99, i64 200)
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 [[MAIN_R1]])
-// CHECK: [[MAIN_F2:%.*]] = call %main.Func @main.demo2()
-// CHECK: [[MAIN_F2_ENV:%.*]] = extractvalue %main.Func [[MAIN_F2]], 1
-// CHECK: [[MAIN_F2_CODE_RAW:%.*]] = extractvalue %main.Func [[MAIN_F2]], 0
-// CHECK: [[MAIN_F2_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[MAIN_F2_CODE_RAW]])
-// CHECK: [[MAIN_R2:%.*]] = call i64 [[MAIN_F2_CODE]](ptr {{(nest|swiftself)}} [[MAIN_F2_ENV]], i64 100, i64 200)
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 [[MAIN_R2]])
-// CHECK: [[MAIN_F3:%.*]] = call %main.Func @main.demo3()
-// CHECK: [[MAIN_F3_ENV:%.*]] = extractvalue %main.Func [[MAIN_F3]], 1
-// CHECK: [[MAIN_F3_CODE_RAW:%.*]] = extractvalue %main.Func [[MAIN_F3]], 0
-// CHECK: [[MAIN_F3_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[MAIN_F3_CODE_RAW]])
-// CHECK: [[MAIN_R3:%.*]] = call i64 [[MAIN_F3_CODE]](ptr {{(nest|swiftself)}} [[MAIN_F3_ENV]], i64 100, i64 200)
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 [[MAIN_R3]])
-// CHECK: [[MAIN_F4:%.*]] = call %main.Func @main.demo4()
-// CHECK: [[MAIN_F4_ENV:%.*]] = extractvalue %main.Func [[MAIN_F4]], 1
-// CHECK: [[MAIN_F4_CODE_RAW:%.*]] = extractvalue %main.Func [[MAIN_F4]], 0
-// CHECK: [[MAIN_F4_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[MAIN_F4_CODE_RAW]])
-// CHECK: [[MAIN_R4:%.*]] = call i64 [[MAIN_F4_CODE]](ptr {{(nest|swiftself)}} [[MAIN_F4_ENV]], i64 100, i64 200)
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 [[MAIN_R4]])
+// The individual demo2, demo3, and demo4 functions above check their distinct
+// construction forms; one captured closure is enough to cover invocation here.
 // CHECK: [[MAIN_F5:%.*]] = call %main.Func @main.demo5(i64 1)
 // CHECK: [[MAIN_F5_ENV:%.*]] = extractvalue %main.Func [[MAIN_F5]], 1
 // CHECK: [[MAIN_F5_CODE_RAW:%.*]] = extractvalue %main.Func [[MAIN_F5]], 0

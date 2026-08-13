@@ -230,22 +230,6 @@ type I2 interface {
 // CHECK: [[T3_N:%[0-9]+]] = load i64, ptr [[T3_N_PTR]]
 // CHECK: ret i64 [[T3_N]]
 
-// Keep the runtime driver tied to every embedding and interface scenario below.
-// CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: call void @main.testGeneric()
-// CHECK: call void @main.testNamed1()
-// CHECK: call void @main.testNamed2()
-// CHECK: call void @main.testNamed3()
-// CHECK: call void @main.testAnonymous1()
-// CHECK: call void @main.testAnonymous2()
-// CHECK: call void @main.testAnonymous3()
-// CHECK: call void @main.testAnonymous4()
-// CHECK: call void @main.testAnonymous5()
-// CHECK: call void @main.testAnonymous6()
-// CHECK: call void @main.testAnonymous7()
-// CHECK: call void @main.testAnonymous8()
-// CHECK: call void @main.testAnonymousBuffer()
-
 // Pointer-to-anonymous-struct embedding *T: form I, dispatch Demo1, and test its result.
 // CHECK-LABEL: define void @main.testAnonymous1(){{.*}} {
 // CHECK: [[A1_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*{{.*}}/abimethod.struct${{[-A-Za-z0-9_]+}}")

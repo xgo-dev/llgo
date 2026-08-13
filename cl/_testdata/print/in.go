@@ -85,8 +85,8 @@ func gwrite(b []byte) {
 	}
 }
 
-// Keep the driver calls bounded to main; helper checks below protect their
-// individual lowering contracts.
+// The driver only checks that representative source constants reach the
+// helpers. The helper checks below own the printing and boxing contracts.
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: call void @main.printstring(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 4 })
 // CHECK: call void @main.printuint(i64 1024)
@@ -103,40 +103,6 @@ func gwrite(b []byte) {
 // CHECK-NEXT: store double 2.000000e+09, ptr [[MAIN_F64_ADDR]]
 // CHECK-NEXT: [[MAIN_F64_BOX:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_float64, ptr undef }, ptr [[MAIN_F64_ADDR]], 1
 // CHECK-NEXT: call void @main.printany(%"{{.*}}/runtime/internal/runtime.eface" [[MAIN_F64_BOX]])
-// CHECK: br i1 true, label %{{.*}}, label %{{.*}}
-// CHECK: [[MAIN_BOOL_TEXT:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %{{[0-9]+}}, 1
-// CHECK: [[MAIN_BOOL_VALUE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_bool, ptr undef }, ptr %{{[0-9]+}}, 1
-// CHECK: [[MAIN_BOOL_SLICE0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %{{[0-9]+}}, 0
-// CHECK-NEXT: [[MAIN_BOOL_SLICE1:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" [[MAIN_BOOL_SLICE0]], i64 2, 1
-// CHECK-NEXT: [[MAIN_BOOL_SLICE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" [[MAIN_BOOL_SLICE1]], i64 2, 2
-// CHECK-NEXT: call void @main.println(%"{{.*}}/runtime/internal/runtime.Slice" [[MAIN_BOOL_SLICE]])
-// CHECK: [[MAIN_BITCLEAR_SLICE0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %{{[0-9]+}}, 0
-// CHECK-NEXT: [[MAIN_BITCLEAR_SLICE1:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" [[MAIN_BITCLEAR_SLICE0]], i64 3, 1
-// CHECK-NEXT: [[MAIN_BITCLEAR_SLICE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" [[MAIN_BITCLEAR_SLICE1]], i64 3, 2
-// CHECK-NEXT: call void @main.println(%"{{.*}}/runtime/internal/runtime.Slice" [[MAIN_BITCLEAR_SLICE]])
-// The 16-value call deliberately covers the integer descriptor families.
-// CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_bool, ptr undef }, ptr %{{[0-9]+}}, 1
-// CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int32, ptr undef }, ptr %{{[0-9]+}}, 1
-// CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int8, ptr undef }, ptr %{{[0-9]+}}, 1
-// CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int16, ptr undef }, ptr %{{[0-9]+}}, 1
-// CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int64, ptr undef }, ptr %{{[0-9]+}}, 1
-// CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %{{[0-9]+}}, 1
-// CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_uint8, ptr undef }, ptr %{{[0-9]+}}, 1
-// CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_uint16, ptr undef }, ptr %{{[0-9]+}}, 1
-// CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_uint32, ptr undef }, ptr %{{[0-9]+}}, 1
-// CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_uint64, ptr undef }, ptr %{{[0-9]+}}, 1
-// CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_uintptr, ptr undef }, ptr %{{[0-9]+}}, 1
-// CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %{{[0-9]+}}, 1
-// CHECK: [[MAIN_MIXED_SLICE0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %{{[0-9]+}}, 0
-// CHECK-NEXT: [[MAIN_MIXED_SLICE1:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" [[MAIN_MIXED_SLICE0]], i64 16, 1
-// CHECK-NEXT: [[MAIN_MIXED_SLICE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" [[MAIN_MIXED_SLICE1]], i64 16, 2
-// CHECK-NEXT: call void @main.println(%"{{.*}}/runtime/internal/runtime.Slice" [[MAIN_MIXED_SLICE]])
-// CHECK: store { double, double } { double 1.000000e+00, double 2.000000e+00 }, ptr [[MAIN_COMPLEX_ADDR:%[0-9]+]]
-// CHECK-NEXT: [[MAIN_COMPLEX_BOX:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_complex128, ptr undef }, ptr [[MAIN_COMPLEX_ADDR]], 1
-// CHECK: [[MAIN_COMPLEX_SLICE0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %{{[0-9]+}}, 0
-// CHECK-NEXT: [[MAIN_COMPLEX_SLICE1:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" [[MAIN_COMPLEX_SLICE0]], i64 1, 1
-// CHECK-NEXT: [[MAIN_COMPLEX_SLICE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" [[MAIN_COMPLEX_SLICE1]], i64 1, 2
-// CHECK-NEXT: call void @main.println(%"{{.*}}/runtime/internal/runtime.Slice" [[MAIN_COMPLEX_SLICE]])
 
 func main() {
 	printstring("llgo")

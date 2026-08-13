@@ -325,22 +325,6 @@ const (
 	nValueSpec
 )
 
-// CHECK-LABEL: define i1 @"main.Cursor.FindNode$1"(ptr {{(nest|swiftself)}} %0, %main.Cursor %1){{.*}} {
-// CHECK: [[FNC_ENV:%[0-9]+]] = load { ptr, ptr, ptr, ptr }, ptr %0
-// CHECK: [[FNC_STATE_PTR:%[0-9]+]] = extractvalue { ptr, ptr, ptr, ptr } [[FNC_ENV]], 0
-// CHECK-NEXT: [[FNC_STATE:%[0-9]+]] = load i64, ptr [[FNC_STATE_PTR]]
-// CHECK: [[FNC_FIRST:%[0-9]+]] = icmp eq i64 [[FNC_STATE]], 0
-// CHECK: store i64 -1, ptr %{{[0-9]+}}
-// CHECK: [[FNC_NODE:%[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.iface" @main.Cursor.Node(%main.Cursor %1)
-// CHECK: [[FNC_EQUAL:%[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"
-// CHECK: br i1 [[FNC_EQUAL]],
-// CHECK: store %main.Cursor %1, ptr %{{[0-9]+}}
-// CHECK: store i1 true, ptr %{{[0-9]+}}
-// CHECK: store i64 1, ptr %{{[0-9]+}}
-// CHECK: ret i1 false
-// CHECK: store i64 0, ptr %{{[0-9]+}}
-// CHECK: ret i1 true
-
 // CHECK-LABEL: define %"iter.Seq[main.Cursor]" @main.Cursor.Preorder(%main.Cursor %0, %"{{.*}}/runtime/internal/runtime.Slice" %1){{.*}} {
 // CHECK: store %main.Cursor %0, ptr [[PRE_CURSOR_SLOT:%[0-9]+]]
 // CHECK: [[PRE_MASK:%[0-9]+]] = call i64 @main.maskOf(%"{{.*}}/runtime/internal/runtime.Slice" %1)

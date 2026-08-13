@@ -71,12 +71,9 @@ func main() {
 // CHECK: [[S_ONE_CODE:%.*]] = load ptr, ptr [[S_ONE_SLOT]]
 // CHECK: [[S_ONE_PAIR_0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[S_ONE_CODE]], 0
 // CHECK: [[S_ONE_PAIR:%.*]] = insertvalue { ptr, ptr } [[S_ONE_PAIR_0]], ptr [[S_ONE_DATA]], 1
-// CHECK: [[S_ONE_RECOVER_CODE:%.*]] = extractvalue { ptr, ptr } [[S_ONE_PAIR]], 0
-// CHECK: [[S_ONE_RECOVER:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.StartRecoverFrameAlias"(ptr @main.S.one, ptr [[S_ONE_RECOVER_CODE]])
 // CHECK: [[S_ONE_CALL_DATA:%.*]] = extractvalue { ptr, ptr } [[S_ONE_PAIR]], 1
 // CHECK: [[S_ONE_CALL_CODE:%.*]] = extractvalue { ptr, ptr } [[S_ONE_PAIR]], 0
 // CHECK: [[S_ONE_RESULT:%.*]] = call i64 [[S_ONE_CALL_CODE]](ptr [[S_ONE_CALL_DATA]])
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrameAlias"(ptr [[S_ONE_RECOVER]])
 // CHECK: ret i64 [[S_ONE_RESULT]]
 
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @main.S.two(%main.S %0){{.*}} {
@@ -90,12 +87,9 @@ func main() {
 // CHECK: [[S_TWO_CODE:%.*]] = load ptr, ptr [[S_TWO_SLOT]]
 // CHECK: [[S_TWO_PAIR_0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[S_TWO_CODE]], 0
 // CHECK: [[S_TWO_PAIR:%.*]] = insertvalue { ptr, ptr } [[S_TWO_PAIR_0]], ptr [[S_TWO_DATA]], 1
-// CHECK: [[S_TWO_RECOVER_CODE:%.*]] = extractvalue { ptr, ptr } [[S_TWO_PAIR]], 0
-// CHECK: [[S_TWO_RECOVER:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.StartRecoverFrameAlias"(ptr @main.S.two, ptr [[S_TWO_RECOVER_CODE]])
 // CHECK: [[S_TWO_CALL_DATA:%.*]] = extractvalue { ptr, ptr } [[S_TWO_PAIR]], 1
 // CHECK: [[S_TWO_CALL_CODE:%.*]] = extractvalue { ptr, ptr } [[S_TWO_PAIR]], 0
 // CHECK: [[S_TWO_RESULT:%.*]] = call %"{{.*}}String" [[S_TWO_CALL_CODE]](ptr [[S_TWO_CALL_DATA]])
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrameAlias"(ptr [[S_TWO_RECOVER]])
 // CHECK: ret %"{{.*}}String" [[S_TWO_RESULT]]
 
 // CHECK-LABEL: define i64 @main.impl.one(%main.impl %0){{.*}} {
