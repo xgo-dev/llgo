@@ -347,7 +347,7 @@ Here are the Go packages that can be imported correctly:
 - [pkg-config 0.29+](https://www.freedesktop.org/wiki/Software/pkg-config/)
 - [bdwgc/libgc 8.0+](https://www.hboehm.info/gc/)
 - [OpenSSL 3.0+](https://www.openssl.org/)
-- [zlib 1.2+](https://www.zlib.net)
+- [zlib 1.2+](https://github.com/madler/zlib)
 - [Python 3.12+](https://www.python.org) (optional, for [github.com/goplus/lib/py](https://pkg.go.dev/github.com/goplus/lib/py))
 
 ## How to install
