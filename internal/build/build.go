@@ -124,11 +124,11 @@ type OutFmtDetails struct {
 	Zip  string // ZIP/DFU output file path (.zip)
 }
 
-// ModuleHook observes a package module immediately after it is generated and
-// before TransformModule mutates it. The callback runs synchronously and
-// receives the live llvm.Module, so callers that need a stable snapshot should
-// consume it immediately (for example, by calling mod.String() inside the
-// hook).
+// ModuleHook observes a package module after aggregate and target ABI lowering
+// and before the LLVM optimization pipeline runs. The callback runs
+// synchronously and receives the live llvm.Module, so callers that need a
+// stable snapshot should consume it immediately (for example, by calling
+// mod.String() inside the hook).
 type ModuleHook func(pkg Package)
 
 type Config struct {
@@ -1982,10 +1982,6 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 	if !aPkg.CacheHit {
 		aPkg.Meta = ret.Meta
 	}
-	if hook := ctx.buildConf.ModuleHook; hook != nil {
-		hook(aPkg)
-	}
-
 	// If cache hit, we only needed to register types - skip compilation
 	if aPkg.CacheHit {
 		return nil, nil
@@ -2004,16 +2000,22 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	ctx.cTransformer.TransformModule(ret.Path(), ret.Module())
 	ctx.cTransformer.SetSkipFuncs(nil)
 
-	// Run the default LLVM optimization pipeline selected by the requested -O level.
-	if ctx.passOpt {
-		mod := ret.Module()
-		mod.SetDataLayout(ctx.prog.DataLayout())
-		mod.SetTarget(ctx.prog.Target().Spec().Triple)
-		pbo := gllvm.NewPassBuilderOptions()
-		defer pbo.Dispose()
+	mod := ret.Module()
+	mod.SetDataLayout(ctx.prog.DataLayout())
+	mod.SetTarget(ctx.prog.Target().Spec().Triple)
+	if ctx.passOpt || ctx.buildConf.ModuleHook != nil {
 		if err := gllvm.VerifyModule(mod, gllvm.ReturnStatusAction); err != nil {
 			return fmt.Errorf("verify LLVM module for %v failed: %w", pkgPath, err)
 		}
+	}
+	if hook := ctx.buildConf.ModuleHook; hook != nil {
+		hook(aPkg)
+	}
+
+	// Run the default LLVM optimization pipeline selected by the requested -O level.
+	if ctx.passOpt {
+		pbo := gllvm.NewPassBuilderOptions()
+		defer pbo.Dispose()
 		if err := mod.RunPasses(llvmPassPipeline(ctx.buildConf.OptLevel, ctx.buildConf.ltoMode()), ctx.prog.TargetMachine(), pbo); err != nil {
 			return fmt.Errorf("run LLVM passes failed for %v: %w", pkgPath, err)
 		}

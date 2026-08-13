@@ -906,6 +906,30 @@ func TestTryLoadFromCache_ForceRebuild(t *testing.T) {
 	if pkg.ArchiveFile != "" {
 		t.Error("ArchiveFile should not be populated when ForceRebuild is enabled")
 	}
+
+	// A hook must observe explicitly requested non-main packages even when a
+	// valid cache entry exists. Dependencies remain eligible for cache reuse.
+	ctx.buildConf.ForceRebuild = false
+	ctx.buildConf.ModuleHook = func(Package) {}
+	ctx.initial = []*packages.Package{pkg.Package}
+	if ctx.tryLoadFromCache(pkg) {
+		t.Error("initial package with ModuleHook should bypass the cache")
+	}
+	ctx.initial = nil
+	if !ctx.tryLoadFromCache(pkg) {
+		t.Error("dependency package with ModuleHook should remain cacheable")
+	}
+
+	ctx.buildConf.ModuleHook = nil
+	ctx.mode = ModeGen
+	ctx.initial = []*packages.Package{pkg.Package}
+	if ctx.tryLoadFromCache(pkg) {
+		t.Error("initial ModeGen package should bypass the cache")
+	}
+	ctx.initial = nil
+	if !ctx.tryLoadFromCache(pkg) {
+		t.Error("ModeGen dependency package should remain cacheable")
+	}
 }
 
 func TestSaveToCache_MainPackage(t *testing.T) {

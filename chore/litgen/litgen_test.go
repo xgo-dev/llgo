@@ -3,9 +3,16 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/goplus/llgo/internal/filecheck"
 )
+
+func hostSnapshotDirective() string {
+	return "// " + filecheck.TargetSnapshotPrefix(runtime.GOOS, runtime.GOARCH, "")
+}
 
 func TestProcessPath_SingleFileUsesContainingDir(t *testing.T) {
 	wd, err := os.Getwd()
@@ -39,7 +46,7 @@ func TestProcessPath_SingleFileUsesContainingDir(t *testing.T) {
 	if strings.Contains(text, "command-line-arguments") {
 		t.Fatalf("single-file mode should compile the containing package, got:\n%s", text)
 	}
-	want := `// CHECK-LABEL: define void @main.main(){{.*}} {`
+	want := hostSnapshotDirective() + `-LABEL: define void @main.main(){{.*}} {`
 	if !strings.Contains(text, want) {
 		t.Fatalf("missing canonical main check:\n%s", text)
 	}
@@ -77,7 +84,7 @@ func TestProcessPath_UsesFlagsFileTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "// CHECK-NEXT:   switch i32") {
+	if !strings.Contains(text, "// TARGET-WASM-NEXT:   switch i32") {
 		t.Fatalf("litgen did not use the wasm target from flags.txt:\n%s", text)
 	}
 	if strings.Contains(text, "blockaddress") || strings.Contains(text, "indirectbr") {
@@ -138,7 +145,7 @@ func TestProcessPath_UpdateOnlyWalksUnderscoreSuites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `// CHECK-LABEL: define i64 @main.value(){{.*}} {`) {
+	if !strings.Contains(string(data), hostSnapshotDirective()+`-LABEL: define i64 @main.value(){{.*}} {`) {
 		t.Fatalf("underscore suite was not refreshed:\n%s", data)
 	}
 }

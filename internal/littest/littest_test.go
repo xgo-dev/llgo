@@ -7,21 +7,13 @@ import (
 	"testing"
 )
 
-func TestLoadSpecPrefersMarkedSourceOverOutLL(t *testing.T) {
+func TestLoadSpecLoadsMarkedSource(t *testing.T) {
 	dir := t.TempDir()
 	err := os.WriteFile(filepath.Join(dir, "in.go"), []byte(`// LITTEST
 // CHECK: ret void
 package main
 
 func main() {}
-`), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = os.WriteFile(filepath.Join(dir, "out.ll"), []byte(`; ModuleID = 'main'
-define void @main() {
-  ret void
-}
 `), 0644)
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +59,7 @@ package main
 	}
 }
 
-func TestLoadSpecWorksWithoutOutLLWhenSourceChecksExist(t *testing.T) {
+func TestLoadSpecWorksWithSourceChecks(t *testing.T) {
 	dir := t.TempDir()
 	err := os.WriteFile(filepath.Join(dir, "in.go"), []byte(`// LITTEST
 package main
@@ -110,35 +102,105 @@ package main
 	}
 }
 
-func TestLoadSpecFallsBackToOutLLWithoutMarker(t *testing.T) {
+func TestFunctionChecksIgnoreFunctionOrder(t *testing.T) {
 	dir := t.TempDir()
-	err := os.WriteFile(filepath.Join(dir, "in.go"), []byte(`// CHECK: ret void
+	path := filepath.Join(dir, "in.go")
+	err := os.WriteFile(path, []byte(`// LITTEST
 package main
+
+// DARWIN-ARM64: [[G:@g]] = global i64 1
+// DARWIN-ARM64-LABEL: define void @a() {
+// DARWIN-ARM64-NEXT: entry:
+// DARWIN-ARM64-NEXT:   store i64 1, ptr [[G]]
+// DARWIN-ARM64-NEXT: }
+func a() {}
+
+// DARWIN-ARM64-LABEL: define void @b() {
+// DARWIN-ARM64-NEXT: entry:
+// DARWIN-ARM64-NEXT:   store i64 2, ptr [[G]]
+// DARWIN-ARM64-NEXT: }
+func b() {}
 `), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = os.WriteFile(filepath.Join(dir, "out.ll"), []byte(`; ModuleID = 'main'
-define void @main() {
-  ret void
+	spec := Spec{Path: path, Mode: ModeFileCheck}
+	actual := `@g = global i64 1
+
+define void @b() {
+entry:
+  store i64 2, ptr @g
 }
-`), 0644)
-	if err != nil {
+
+define void @a() {
+entry:
+  store i64 1, ptr @g
+}
+`
+	if err := Check(spec, actual, "CHECK", "DARWIN", "ARM64", "DARWIN-ARM64"); err != nil {
 		t.Fatal(err)
-	}
-	spec, err := LoadSpec(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if spec.Path != filepath.Join(dir, "out.ll") {
-		t.Fatalf("spec.Path = %q", spec.Path)
-	}
-	if spec.Mode != ModeLiteral {
-		t.Fatalf("spec.Mode = %v", spec.Mode)
 	}
 }
 
-func TestLoadSpecReportsMissingOutLL(t *testing.T) {
+func TestFunctionCheckDoesNotCrossClosingBrace(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "in.go")
+	err := os.WriteFile(path, []byte(`// LITTEST
+package main
+
+// CHECK-LABEL: define void @first()
+// CHECK: call void @only.in.second()
+func first() {}
+
+// CHECK-LABEL: define void @second()
+// CHECK: call void @only.in.second()
+func second() {}
+`), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := Spec{Path: path, Mode: ModeFileCheck}
+	actual := `define void @first() {
+  ret void
+}
+
+define void @second() {
+  call void @only.in.second()
+  ret void
+}
+`
+	if err := Check(spec, actual, "CHECK"); err == nil {
+		t.Fatal("a function check crossed the current function's closing brace")
+	}
+}
+
+func TestFunctionChecksPreserveCrossFunctionBindings(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "in.go")
+	err := os.WriteFile(path, []byte(`// LITTEST
+package main
+
+// CHECK-LABEL: define ptr @producer() {
+// CHECK: ret ptr [[TYPE:@type[0-9]+]]
+func producer() {}
+
+// CHECK-LABEL: define i1 @consumer(ptr %0) {
+// CHECK: [[MATCH:%[0-9]+]] = icmp eq ptr %0, [[TYPE]]
+func consumer() {}
+`), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sections, split, err := functionCheckSections(path, []string{"CHECK"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if split || sections != nil {
+		t.Fatalf("cross-function binding was split: %#v", sections)
+	}
+}
+
+func TestLoadSpecRequiresMarkedSource(t *testing.T) {
 	dir := t.TempDir()
 	err := os.WriteFile(filepath.Join(dir, "in.go"), []byte("package main\n"), 0644)
 	if err != nil {
@@ -148,20 +210,8 @@ func TestLoadSpecReportsMissingOutLL(t *testing.T) {
 	if err == nil {
 		t.Fatal("LoadSpec succeeded unexpectedly")
 	}
-}
-
-func TestLoadSpecSupportsSkipOutLL(t *testing.T) {
-	dir := t.TempDir()
-	err := os.WriteFile(filepath.Join(dir, "out.ll"), []byte(`;`), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec, err := LoadSpec(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if spec.Mode != ModeSkip {
-		t.Fatalf("spec.Mode = %v", spec.Mode)
+	if !strings.Contains(err.Error(), "missing // LITTEST source lit spec") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -207,21 +257,6 @@ func TestCheck(t *testing.T) {
 		want string
 	}{
 		{
-			name: "skip",
-			spec: Spec{Path: "skip", Mode: ModeSkip},
-		},
-		{
-			name: "literal match",
-			spec: Spec{Path: "literal", Text: "ok", Mode: ModeLiteral},
-			text: "ok",
-		},
-		{
-			name: "literal mismatch",
-			spec: Spec{Path: "literal", Text: "ok", Mode: ModeLiteral},
-			text: "bad",
-			want: "literal LLVM IR mismatch",
-		},
-		{
 			name: "filecheck match",
 			spec: Spec{Path: checkPath, Mode: ModeFileCheck},
 			text: "ok\n",
@@ -261,20 +296,9 @@ package main
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = os.WriteFile(filepath.Join(dir, "out.ll"), []byte(`; ModuleID = 'main'
-define void @main() {
-  ret void
-}
-`), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec, err := LoadSpec(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if spec.Path != filepath.Join(dir, "out.ll") {
-		t.Fatalf("spec.Path = %q", spec.Path)
+	_, err = LoadSpec(dir)
+	if err == nil {
+		t.Fatal("LoadSpec succeeded unexpectedly")
 	}
 }
 
@@ -287,20 +311,9 @@ package main
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = os.WriteFile(filepath.Join(dir, "out.ll"), []byte(`; ModuleID = 'main'
-define void @main() {
-  ret void
-}
-`), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec, err := LoadSpec(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if spec.Path != filepath.Join(dir, "out.ll") {
-		t.Fatalf("spec.Path = %q", spec.Path)
+	_, err = LoadSpec(dir)
+	if err == nil {
+		t.Fatal("LoadSpec succeeded unexpectedly")
 	}
 }
 
@@ -312,19 +325,8 @@ func TestLoadSpecIgnoresNonGoFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = os.WriteFile(filepath.Join(dir, "out.ll"), []byte(`; ModuleID = 'main'
-define void @main() {
-  ret void
-}
-`), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec, err := LoadSpec(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if spec.Path != filepath.Join(dir, "out.ll") {
-		t.Fatalf("spec.Path = %q", spec.Path)
+	_, err = LoadSpec(dir)
+	if err == nil {
+		t.Fatal("LoadSpec succeeded unexpectedly")
 	}
 }

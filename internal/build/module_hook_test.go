@@ -4,10 +4,11 @@
 package build
 
 import (
+	"strings"
 	"testing"
 )
 
-func TestModuleHookReceivesMainPackageModule(t *testing.T) {
+func TestModuleHookReceivesPostABIPreOptimizationModule(t *testing.T) {
 	conf := NewDefaultConf(ModeGen)
 
 	counts := make(map[string]int)
@@ -19,7 +20,7 @@ func TestModuleHookReceivesMainPackageModule(t *testing.T) {
 		}
 	}
 
-	pkgs, err := Do([]string{"../../cl/_testgo/print"}, conf)
+	pkgs, err := Do([]string{"../../cl/_testgo/localitycodegen"}, conf)
 	if err != nil {
 		t.Fatalf("Do failed: %v", err)
 	}
@@ -33,5 +34,12 @@ func TestModuleHookReceivesMainPackageModule(t *testing.T) {
 	}
 	if snapshots[mainPkg] == "" {
 		t.Fatalf("expected non-empty module snapshot for %s", mainPkg)
+	}
+	snapshot := snapshots[mainPkg]
+	if !strings.Contains(snapshot, "define void @main.values(ptr sret({ i64, ptr, ptr })") {
+		t.Fatalf("hook snapshot does not contain the lowered sret signature for main.values")
+	}
+	if strings.Contains(snapshot, "define { i64, ptr, ptr } @main.values()") {
+		t.Fatalf("hook snapshot still contains the pre-ABI main.values signature")
 	}
 }
