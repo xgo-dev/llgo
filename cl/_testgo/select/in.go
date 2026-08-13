@@ -1,10 +1,105 @@
 // LITTEST
 package main
 
-// CHECK: {{^}}@{{[0-9]+}} = private unnamed_addr constant [4 x i8] c"exit", align 1{{$}}
-// CHECK: {{^}}@{{[0-9]+}} = private unnamed_addr constant [3 x i8] c"ch1", align 1{{$}}
-// CHECK: {{^}}@{{[0-9]+}} = private unnamed_addr constant [3 x i8] c"ch2", align 1{{$}}
-// CHECK: {{^}}@{{[0-9]+}} = private unnamed_addr constant [31 x i8] c"blocking select matched no case", align 1{{$}}
+// Blocking send selection and receive-with-default use different runtime
+// entry points and result shapes.
+// CHECK: @[[EXIT_TEXT:[0-9]+]] = private unnamed_addr constant [4 x i8] c"exit"
+// CHECK: @[[CH1_TEXT:[0-9]+]] = private unnamed_addr constant [3 x i8] c"ch1"
+// CHECK: @[[CH2_TEXT:[0-9]+]] = private unnamed_addr constant [3 x i8] c"ch2"
+// CHECK-LABEL: define void @main.main(){{.*}} {
+// CHECK: call void @main.send()
+// CHECK-NEXT: call void @main.recv()
+// CHECK-NEXT: ret void
+// CHECK-LABEL: define void @main.recv(){{.*}} {
+// CHECK: [[RECV_CH1_OBJ:%[0-9]+]] = call ptr @"{{.*}}NewChan"(i64 16, i64 0)
+// CHECK: [[RECV_CH2_OBJ:%[0-9]+]] = call ptr @"{{.*}}NewChan"(i64 16, i64 0)
+// CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$1", ptr %{{[0-9]+}}, i64 0)
+// CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$2", ptr %{{[0-9]+}}, i64 0)
+// CHECK: [[RECV_CH1:%[0-9]+]] = load ptr, ptr %{{[0-9]+}}
+// CHECK-NEXT: [[RECV_CH2:%[0-9]+]] = load ptr, ptr %{{[0-9]+}}
+// CHECK: [[RECV_BUF1:%[0-9]+]] = alloca %"{{.*}}String"
+// CHECK: [[RECV_OP1_0:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" undef, ptr [[RECV_CH1]], 0
+// CHECK-NEXT: [[RECV_OP1_1:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[RECV_OP1_0]], ptr [[RECV_BUF1]], 1
+// CHECK-NEXT: [[RECV_OP1_2:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[RECV_OP1_1]], i32 16, 2
+// CHECK-NEXT: [[RECV_OP1:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[RECV_OP1_2]], i1 false, 3
+// CHECK: [[RECV_BUF2:%[0-9]+]] = alloca %"{{.*}}String"
+// CHECK: [[RECV_OP2_0:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" undef, ptr [[RECV_CH2]], 0
+// CHECK-NEXT: [[RECV_OP2_1:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[RECV_OP2_0]], ptr [[RECV_BUF2]], 1
+// CHECK-NEXT: [[RECV_OP2_2:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[RECV_OP2_1]], i32 16, 2
+// CHECK-NEXT: [[RECV_OP2:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[RECV_OP2_2]], i1 false, 3
+// CHECK: store %"{{.*}}ChanOp" [[RECV_OP1]], ptr %{{[0-9]+}}
+// CHECK: store %"{{.*}}ChanOp" [[RECV_OP2]], ptr %{{[0-9]+}}
+// CHECK: [[RECV_CASES:%[0-9]+]] = insertvalue %"{{.*}}Slice" %{{[0-9]+}}, i64 2, 2
+// CHECK-NEXT: [[TRY_SELECT:%[0-9]+]] = call { i64, i1, i1 } @"{{.*}}TrySelect"(%"{{.*}}Slice" [[RECV_CASES]])
+// CHECK-NEXT: [[TRY_INDEX:%[0-9]+]] = extractvalue { i64, i1, i1 } [[TRY_SELECT]], 0
+// CHECK-NEXT: [[TRY_OK:%[0-9]+]] = extractvalue { i64, i1, i1 } [[TRY_SELECT]], 1
+// CHECK-NEXT: [[TRY_SELECTED:%[0-9]+]] = extractvalue { i64, i1, i1 } [[TRY_SELECT]], 2
+// CHECK-NEXT: [[TRY_DISPATCH:%[0-9]+]] = select i1 [[TRY_SELECTED]], i64 [[TRY_INDEX]], i64 -1
+// CHECK: [[RECV_DATA1:%[0-9]+]] = extractvalue %"{{.*}}ChanOp" [[RECV_OP1]], 1
+// CHECK-NEXT: [[RECV_VALUE1:%[0-9]+]] = load %"{{.*}}String", ptr [[RECV_DATA1]]
+// CHECK-NEXT: [[RECV_DATA2:%[0-9]+]] = extractvalue %"{{.*}}ChanOp" [[RECV_OP2]], 1
+// CHECK-NEXT: [[RECV_VALUE2:%[0-9]+]] = load %"{{.*}}String", ptr [[RECV_DATA2]]
+// CHECK: [[RECV_RESULT0:%[0-9]+]] = insertvalue { i64, i1, %"{{.*}}String", %"{{.*}}String" } undef, i64 [[TRY_DISPATCH]], 0
+// CHECK-NEXT: [[RECV_RESULT1:%[0-9]+]] = insertvalue { i64, i1, %"{{.*}}String", %"{{.*}}String" } [[RECV_RESULT0]], i1 [[TRY_OK]], 1
+// CHECK-NEXT: [[RECV_RESULT2:%[0-9]+]] = insertvalue { i64, i1, %"{{.*}}String", %"{{.*}}String" } [[RECV_RESULT1]], %"{{.*}}String" [[RECV_VALUE1]], 2
+// CHECK-NEXT: [[RECV_RESULT:%[0-9]+]] = insertvalue { i64, i1, %"{{.*}}String", %"{{.*}}String" } [[RECV_RESULT2]], %"{{.*}}String" [[RECV_VALUE2]], 3
+// CHECK-NEXT: [[RECV_CASE:%[0-9]+]] = extractvalue { i64, i1, %"{{.*}}String", %"{{.*}}String" } [[RECV_RESULT]], 0
+// CHECK-NEXT: [[RECV_IS_CASE0:%[0-9]+]] = icmp eq i64 [[RECV_CASE]], 0
+// CHECK: [[RECV_PRINT1:%[0-9]+]] = extractvalue { i64, i1, %"{{.*}}String", %"{{.*}}String" } [[RECV_RESULT]], 2
+// CHECK-NEXT: call void @"{{.*}}PrintString"(%"{{.*}}String" [[RECV_PRINT1]])
+// CHECK: [[RECV_IS_CASE1:%[0-9]+]] = icmp eq i64 [[RECV_CASE]], 1
+// CHECK: [[RECV_PRINT2:%[0-9]+]] = extractvalue { i64, i1, %"{{.*}}String", %"{{.*}}String" } [[RECV_RESULT]], 3
+// CHECK-NEXT: call void @"{{.*}}PrintString"(%"{{.*}}String" [[RECV_PRINT2]])
+// CHECK: call void @"{{.*}}PrintString"(%"{{.*}}String" { ptr @[[EXIT_TEXT]], i64 4 })
+// CHECK-LABEL: define void @"main.recv$1"(ptr {{(nest|swiftself)}} %0){{.*}} {
+// CHECK: [[RECV1_ENV:%[0-9]+]] = load { ptr }, ptr %0
+// CHECK-NEXT: [[RECV1_CH_SLOT:%[0-9]+]] = extractvalue { ptr } [[RECV1_ENV]], 0
+// CHECK-NEXT: [[RECV1_CH:%[0-9]+]] = load ptr, ptr [[RECV1_CH_SLOT]]
+// CHECK: store %"{{.*}}String" { ptr @[[CH1_TEXT]], i64 3 }, ptr [[RECV1_VALUE:%[0-9]+]]
+// CHECK-NEXT: call i1 @"{{.*}}ChanSend"(ptr [[RECV1_CH]], ptr [[RECV1_VALUE]], i64 16)
+// CHECK-LABEL: define void @"main.recv$2"(ptr {{(nest|swiftself)}} %0){{.*}} {
+// CHECK: [[RECV2_ENV:%[0-9]+]] = load { ptr }, ptr %0
+// CHECK-NEXT: [[RECV2_CH_SLOT:%[0-9]+]] = extractvalue { ptr } [[RECV2_ENV]], 0
+// CHECK-NEXT: [[RECV2_CH:%[0-9]+]] = load ptr, ptr [[RECV2_CH_SLOT]]
+// CHECK: store %"{{.*}}String" { ptr @[[CH2_TEXT]], i64 3 }, ptr [[RECV2_VALUE:%[0-9]+]]
+// CHECK-NEXT: call i1 @"{{.*}}ChanSend"(ptr [[RECV2_CH]], ptr [[RECV2_VALUE]], i64 16)
+// CHECK-LABEL: define void @main.send(){{.*}} {
+// CHECK: [[SEND_CH1_OBJ:%[0-9]+]] = call ptr @"{{.*}}NewChan"(i64 8, i64 0)
+// CHECK: [[SEND_CH2_OBJ:%[0-9]+]] = call ptr @"{{.*}}NewChan"(i64 8, i64 0)
+// CHECK: [[SEND_CH1:%[0-9]+]] = load ptr, ptr %{{[0-9]+}}
+// CHECK-NEXT: [[SEND_CH2:%[0-9]+]] = load ptr, ptr %{{[0-9]+}}
+// CHECK: store i64 100, ptr [[SEND_BUF1:%[0-9]+]]
+// CHECK-NEXT: [[SEND_OP1_0:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" undef, ptr [[SEND_CH1]], 0
+// CHECK-NEXT: [[SEND_OP1_1:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[SEND_OP1_0]], ptr [[SEND_BUF1]], 1
+// CHECK-NEXT: [[SEND_OP1_2:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[SEND_OP1_1]], i32 8, 2
+// CHECK-NEXT: [[SEND_OP1:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[SEND_OP1_2]], i1 true, 3
+// CHECK: store i64 200, ptr [[SEND_BUF2:%[0-9]+]]
+// CHECK-NEXT: [[SEND_OP2_0:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" undef, ptr [[SEND_CH2]], 0
+// CHECK-NEXT: [[SEND_OP2_1:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[SEND_OP2_0]], ptr [[SEND_BUF2]], 1
+// CHECK-NEXT: [[SEND_OP2_2:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[SEND_OP2_1]], i32 8, 2
+// CHECK-NEXT: [[SEND_OP2:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[SEND_OP2_2]], i1 true, 3
+// CHECK: store %"{{.*}}ChanOp" [[SEND_OP1]], ptr %{{[0-9]+}}
+// CHECK: store %"{{.*}}ChanOp" [[SEND_OP2]], ptr %{{[0-9]+}}
+// CHECK: [[SEND_CASES:%[0-9]+]] = insertvalue %"{{.*}}Slice" %{{[0-9]+}}, i64 2, 2
+// CHECK-NEXT: [[SEND_SELECT:%[0-9]+]] = call { i64, i1 } @"{{.*}}Select"(%"{{.*}}Slice" [[SEND_CASES]])
+// CHECK-NEXT: [[SEND_CASE:%[0-9]+]] = extractvalue { i64, i1 } [[SEND_SELECT]], 0
+// CHECK: [[SEND_DISPATCH:%[0-9]+]] = extractvalue { i64, i1 } %{{[0-9]+}}, 0
+// CHECK-NEXT: [[SEND_IS_CASE0:%[0-9]+]] = icmp eq i64 [[SEND_DISPATCH]], 0
+// CHECK: [[SEND_IS_CASE1:%[0-9]+]] = icmp eq i64 [[SEND_DISPATCH]], 1
+// CHECK-LABEL: define void @"main.send$1"(ptr {{(nest|swiftself)}} %0){{.*}} {
+// CHECK: [[SEND1_ENV:%[0-9]+]] = load { ptr }, ptr %0
+// CHECK-NEXT: [[SEND1_CH_SLOT:%[0-9]+]] = extractvalue { ptr } [[SEND1_ENV]], 0
+// CHECK-NEXT: [[SEND1_CH:%[0-9]+]] = load ptr, ptr [[SEND1_CH_SLOT]]
+// CHECK: call i1 @"{{.*}}ChanRecv"(ptr [[SEND1_CH]], ptr [[SEND1_BUF:%[0-9]+]], i64 8)
+// CHECK-NEXT: [[SEND1_VALUE:%[0-9]+]] = load i64, ptr [[SEND1_BUF]]
+// CHECK: call void @"{{.*}}PrintInt"(i64 [[SEND1_VALUE]])
+// CHECK-LABEL: define void @"main.send$2"(ptr {{(nest|swiftself)}} %0){{.*}} {
+// CHECK: [[SEND2_ENV:%[0-9]+]] = load { ptr }, ptr %0
+// CHECK-NEXT: [[SEND2_CH_SLOT:%[0-9]+]] = extractvalue { ptr } [[SEND2_ENV]], 0
+// CHECK-NEXT: [[SEND2_CH:%[0-9]+]] = load ptr, ptr [[SEND2_CH_SLOT]]
+// CHECK: call i1 @"{{.*}}ChanRecv"(ptr [[SEND2_CH]], ptr [[SEND2_BUF:%[0-9]+]], i64 8)
+// CHECK-NEXT: [[SEND2_VALUE:%[0-9]+]] = load i64, ptr [[SEND2_BUF]]
+// CHECK: call void @"{{.*}}PrintInt"(i64 [[SEND2_VALUE]])
 
 func main() {
 	send()
@@ -49,307 +144,3 @@ func recv() {
 		}
 	}
 }
-
-// CHECK-LABEL: define void @main.init(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load i1, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store i1 true, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @main.send()
-// CHECK-NEXT:   call void @main.recv()
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @main.recv(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.NewChan"(i64 16, i64 0)
-// CHECK-NEXT:   store ptr %1, ptr %0, align 8
-// CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.NewChan"(i64 16, i64 0)
-// CHECK-NEXT:   store ptr %3, ptr %2, align 8
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   %5 = getelementptr inbounds { ptr }, ptr %4, i32 0, i32 0
-// CHECK-NEXT:   store ptr %0, ptr %5, align 8
-// CHECK-NEXT:   %6 = insertvalue { ptr, ptr } { ptr @"main.recv$1", ptr undef }, ptr %4, 1
-// CHECK-NEXT:   %7 = call ptr @"{{.*}}/runtime/internal/runtime.AllocRoot"(i64 16)
-// CHECK-NEXT:   %8 = getelementptr inbounds { { ptr, ptr } }, ptr %7, i32 0, i32 0
-// CHECK-NEXT:   store { ptr, ptr } %6, ptr %8, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.NewProc"(ptr @"main._llgo_routine$1", ptr %7, i64 0)
-// CHECK-NEXT:   %9 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   %10 = getelementptr inbounds { ptr }, ptr %9, i32 0, i32 0
-// CHECK-NEXT:   store ptr %2, ptr %10, align 8
-// CHECK-NEXT:   %11 = insertvalue { ptr, ptr } { ptr @"main.recv$2", ptr undef }, ptr %9, 1
-// CHECK-NEXT:   %12 = call ptr @"{{.*}}/runtime/internal/runtime.AllocRoot"(i64 16)
-// CHECK-NEXT:   %13 = getelementptr inbounds { { ptr, ptr } }, ptr %12, i32 0, i32 0
-// CHECK-NEXT:   store { ptr, ptr } %11, ptr %13, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.NewProc"(ptr @"main._llgo_routine$2", ptr %12, i64 0)
-// CHECK-NEXT:   br label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_4, %_llgo_0
-// CHECK-NEXT:   %14 = phi i64 [ 0, %_llgo_0 ], [ %50, %_llgo_4 ]
-// CHECK-NEXT:   %15 = icmp slt i64 %14, 2
-// CHECK-NEXT:   br i1 %15, label %_llgo_2, label %_llgo_3
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1
-// CHECK-NEXT:   %16 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %17 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %18 = call ptr @llvm.stacksave.p0()
-// CHECK-NEXT:   %19 = alloca %"{{.*}}/runtime/internal/runtime.String", align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %19, i8 0, i64 16, i1 false)
-// CHECK-NEXT:   %20 = insertvalue %"{{.*}}/runtime/internal/runtime.ChanOp" undef, ptr %16, 0
-// CHECK-NEXT:   %21 = insertvalue %"{{.*}}/runtime/internal/runtime.ChanOp" %20, ptr %19, 1
-// CHECK-NEXT:   %22 = insertvalue %"{{.*}}/runtime/internal/runtime.ChanOp" %21, i32 16, 2
-// CHECK-NEXT:   %23 = insertvalue %"{{.*}}/runtime/internal/runtime.ChanOp" %22, i1 false, 3
-// CHECK-NEXT:   %24 = alloca %"{{.*}}/runtime/internal/runtime.String", align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %24, i8 0, i64 16, i1 false)
-// CHECK-NEXT:   %25 = insertvalue %"{{.*}}/runtime/internal/runtime.ChanOp" undef, ptr %17, 0
-// CHECK-NEXT:   %26 = insertvalue %"{{.*}}/runtime/internal/runtime.ChanOp" %25, ptr %24, 1
-// CHECK-NEXT:   %27 = insertvalue %"{{.*}}/runtime/internal/runtime.ChanOp" %26, i32 16, 2
-// CHECK-NEXT:   %28 = insertvalue %"{{.*}}/runtime/internal/runtime.ChanOp" %27, i1 false, 3
-// CHECK-NEXT:   %29 = alloca i8, i64 48, align 1
-// CHECK-NEXT:   %30 = getelementptr %"{{.*}}/runtime/internal/runtime.ChanOp", ptr %29, i64 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.ChanOp" %23, ptr %30, align 8
-// CHECK-NEXT:   %31 = getelementptr %"{{.*}}/runtime/internal/runtime.ChanOp", ptr %29, i64 1
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.ChanOp" %28, ptr %31, align 8
-// CHECK-NEXT:   %32 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %29, 0
-// CHECK-NEXT:   %33 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %32, i64 2, 1
-// CHECK-NEXT:   %34 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %33, i64 2, 2
-// CHECK-NEXT:   %35 = call { i64, i1, i1 } @"{{.*}}/runtime/internal/runtime.TrySelect"(%"{{.*}}/runtime/internal/runtime.Slice" %34)
-// CHECK-NEXT:   %36 = extractvalue { i64, i1, i1 } %35, 0
-// CHECK-NEXT:   %37 = extractvalue { i64, i1, i1 } %35, 1
-// CHECK-NEXT:   %38 = extractvalue { i64, i1, i1 } %35, 2
-// CHECK-NEXT:   %39 = select i1 %38, i64 %36, i64 -1
-// CHECK-NEXT:   %40 = extractvalue %"{{.*}}/runtime/internal/runtime.ChanOp" %23, 1
-// CHECK-NEXT:   %41 = load %"{{.*}}/runtime/internal/runtime.String", ptr %40, align 8
-// CHECK-NEXT:   %42 = extractvalue %"{{.*}}/runtime/internal/runtime.ChanOp" %28, 1
-// CHECK-NEXT:   %43 = load %"{{.*}}/runtime/internal/runtime.String", ptr %42, align 8
-// CHECK-NEXT:   call void @llvm.stackrestore.p0(ptr %18)
-// CHECK-NEXT:   %44 = insertvalue { i64, i1, %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.String" } undef, i64 %39, 0
-// CHECK-NEXT:   %45 = insertvalue { i64, i1, %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.String" } %44, i1 %37, 1
-// CHECK-NEXT:   %46 = insertvalue { i64, i1, %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.String" } %45, %"{{.*}}/runtime/internal/runtime.String" %41, 2
-// CHECK-NEXT:   %47 = insertvalue { i64, i1, %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.String" } %46, %"{{.*}}/runtime/internal/runtime.String" %43, 3
-// CHECK-NEXT:   %48 = extractvalue { i64, i1, %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.String" } %47, 0
-// CHECK-NEXT:   %49 = icmp eq i64 %48, 0
-// CHECK-NEXT:   br i1 %49, label %_llgo_5, label %_llgo_6
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_1
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_8, %_llgo_7, %_llgo_5
-// CHECK-NEXT:   %50 = add i64 %14, 1
-// CHECK-NEXT:   br label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   %51 = extractvalue { i64, i1, %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.String" } %47, 2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %51)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   br label %_llgo_4
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_6:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   %52 = icmp eq i64 %48, 1
-// CHECK-NEXT:   br i1 %52, label %_llgo_7, label %_llgo_8
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_7:                                          ; preds = %_llgo_6
-// CHECK-NEXT:   %53 = extractvalue { i64, i1, %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.String" } %47, 3
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %53)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   br label %_llgo_4
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_6
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 4 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   br label %_llgo_4
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @"main.recv$1"(ptr {{(nest|swiftself)}} %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = load { ptr }, ptr %0, align 8
-// CHECK-NEXT:   %2 = extractvalue { ptr } %1, 0
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = call ptr @llvm.stacksave.p0()
-// CHECK-NEXT:   %5 = alloca %"{{.*}}/runtime/internal/runtime.String", align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %5, i8 0, i64 16, i1 false)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 3 }, ptr %5, align 8
-// CHECK-NEXT:   %6 = call i1 @"{{.*}}/runtime/internal/runtime.ChanSend"(ptr %3, ptr %5, i64 16)
-// CHECK-NEXT:   call void @llvm.stackrestore.p0(ptr %4)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @"main.recv$2"(ptr {{(nest|swiftself)}} %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = load { ptr }, ptr %0, align 8
-// CHECK-NEXT:   %2 = extractvalue { ptr } %1, 0
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = call ptr @llvm.stacksave.p0()
-// CHECK-NEXT:   %5 = alloca %"{{.*}}/runtime/internal/runtime.String", align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %5, i8 0, i64 16, i1 false)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 3 }, ptr %5, align 8
-// CHECK-NEXT:   %6 = call i1 @"{{.*}}/runtime/internal/runtime.ChanSend"(ptr %3, ptr %5, i64 16)
-// CHECK-NEXT:   call void @llvm.stackrestore.p0(ptr %4)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @main.send(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.NewChan"(i64 8, i64 0)
-// CHECK-NEXT:   store ptr %1, ptr %0, align 8
-// CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.NewChan"(i64 8, i64 0)
-// CHECK-NEXT:   store ptr %3, ptr %2, align 8
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   %5 = getelementptr inbounds { ptr }, ptr %4, i32 0, i32 0
-// CHECK-NEXT:   store ptr %0, ptr %5, align 8
-// CHECK-NEXT:   %6 = insertvalue { ptr, ptr } { ptr @"main.send$1", ptr undef }, ptr %4, 1
-// CHECK-NEXT:   %7 = call ptr @"{{.*}}/runtime/internal/runtime.AllocRoot"(i64 16)
-// CHECK-NEXT:   %8 = getelementptr inbounds { { ptr, ptr } }, ptr %7, i32 0, i32 0
-// CHECK-NEXT:   store { ptr, ptr } %6, ptr %8, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.NewProc"(ptr @"main._llgo_routine$3", ptr %7, i64 0)
-// CHECK-NEXT:   %9 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   %10 = getelementptr inbounds { ptr }, ptr %9, i32 0, i32 0
-// CHECK-NEXT:   store ptr %2, ptr %10, align 8
-// CHECK-NEXT:   %11 = insertvalue { ptr, ptr } { ptr @"main.send$2", ptr undef }, ptr %9, 1
-// CHECK-NEXT:   %12 = call ptr @"{{.*}}/runtime/internal/runtime.AllocRoot"(i64 16)
-// CHECK-NEXT:   %13 = getelementptr inbounds { { ptr, ptr } }, ptr %12, i32 0, i32 0
-// CHECK-NEXT:   store { ptr, ptr } %11, ptr %13, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.NewProc"(ptr @"main._llgo_routine$4", ptr %12, i64 0)
-// CHECK-NEXT:   %14 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %15 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %16 = call ptr @llvm.stacksave.p0()
-// CHECK-NEXT:   %17 = alloca i64, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %17, i8 0, i64 8, i1 false)
-// CHECK-NEXT:   store i64 100, ptr %17, align 8
-// CHECK-NEXT:   %18 = insertvalue %"{{.*}}/runtime/internal/runtime.ChanOp" undef, ptr %14, 0
-// CHECK-NEXT:   %19 = insertvalue %"{{.*}}/runtime/internal/runtime.ChanOp" %18, ptr %17, 1
-// CHECK-NEXT:   %20 = insertvalue %"{{.*}}/runtime/internal/runtime.ChanOp" %19, i32 8, 2
-// CHECK-NEXT:   %21 = insertvalue %"{{.*}}/runtime/internal/runtime.ChanOp" %20, i1 true, 3
-// CHECK-NEXT:   %22 = alloca i64, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %22, i8 0, i64 8, i1 false)
-// CHECK-NEXT:   store i64 200, ptr %22, align 8
-// CHECK-NEXT:   %23 = insertvalue %"{{.*}}/runtime/internal/runtime.ChanOp" undef, ptr %15, 0
-// CHECK-NEXT:   %24 = insertvalue %"{{.*}}/runtime/internal/runtime.ChanOp" %23, ptr %22, 1
-// CHECK-NEXT:   %25 = insertvalue %"{{.*}}/runtime/internal/runtime.ChanOp" %24, i32 8, 2
-// CHECK-NEXT:   %26 = insertvalue %"{{.*}}/runtime/internal/runtime.ChanOp" %25, i1 true, 3
-// CHECK-NEXT:   %27 = alloca i8, i64 48, align 1
-// CHECK-NEXT:   %28 = getelementptr %"{{.*}}/runtime/internal/runtime.ChanOp", ptr %27, i64 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.ChanOp" %21, ptr %28, align 8
-// CHECK-NEXT:   %29 = getelementptr %"{{.*}}/runtime/internal/runtime.ChanOp", ptr %27, i64 1
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.ChanOp" %26, ptr %29, align 8
-// CHECK-NEXT:   %30 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %27, 0
-// CHECK-NEXT:   %31 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %30, i64 2, 1
-// CHECK-NEXT:   %32 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %31, i64 2, 2
-// CHECK-NEXT:   %33 = call { i64, i1 } @"{{.*}}/runtime/internal/runtime.Select"(%"{{.*}}/runtime/internal/runtime.Slice" %32)
-// CHECK-NEXT:   %34 = extractvalue { i64, i1 } %33, 0
-// CHECK-NEXT:   %35 = extractvalue { i64, i1 } %33, 1
-// CHECK-NEXT:   call void @llvm.stackrestore.p0(ptr %16)
-// CHECK-NEXT:   %36 = insertvalue { i64, i1 } undef, i64 %34, 0
-// CHECK-NEXT:   %37 = insertvalue { i64, i1 } %36, i1 %35, 1
-// CHECK-NEXT:   %38 = extractvalue { i64, i1 } %37, 0
-// CHECK-NEXT:   %39 = icmp eq i64 %38, 0
-// CHECK-NEXT:   br i1 %39, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_2, %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %40 = icmp eq i64 %38, 1
-// CHECK-NEXT:   br i1 %40, label %_llgo_1, label %_llgo_3
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   %41 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 31 }, ptr %41, align 8
-// CHECK-NEXT:   %42 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %41, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %42)
-// CHECK-NEXT:   unreachable
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @"main.send$1"(ptr {{(nest|swiftself)}} %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = load { ptr }, ptr %0, align 8
-// CHECK-NEXT:   %2 = extractvalue { ptr } %1, 0
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = call ptr @llvm.stacksave.p0()
-// CHECK-NEXT:   %5 = alloca i64, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %5, i8 0, i64 8, i1 false)
-// CHECK-NEXT:   %6 = call i1 @"{{.*}}/runtime/internal/runtime.ChanRecv"(ptr %3, ptr %5, i64 8)
-// CHECK-NEXT:   %7 = load i64, ptr %5, align 8
-// CHECK-NEXT:   call void @llvm.stackrestore.p0(ptr %4)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %7)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @"main.send$2"(ptr {{(nest|swiftself)}} %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = load { ptr }, ptr %0, align 8
-// CHECK-NEXT:   %2 = extractvalue { ptr } %1, 0
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = call ptr @llvm.stacksave.p0()
-// CHECK-NEXT:   %5 = alloca i64, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %5, i8 0, i64 8, i1 false)
-// CHECK-NEXT:   %6 = call i1 @"{{.*}}/runtime/internal/runtime.ChanRecv"(ptr %3, ptr %5, i64 8)
-// CHECK-NEXT:   %7 = load i64, ptr %5, align 8
-// CHECK-NEXT:   call void @llvm.stackrestore.p0(ptr %4)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %7)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define ptr @"main._llgo_routine$1"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = load { { ptr, ptr } }, ptr %0, align 8
-// CHECK-NEXT:   %2 = extractvalue { { ptr, ptr } } %1, 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.FreeRoot"(ptr %0)
-// CHECK-NEXT:   %3 = extractvalue { ptr, ptr } %2, 1
-// CHECK-NEXT:   %4 = extractvalue { ptr, ptr } %2, 0
-// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %4)
-// CHECK-NEXT:   call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %3)
-// CHECK-NEXT:   ret ptr null
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define ptr @"main._llgo_routine$2"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = load { { ptr, ptr } }, ptr %0, align 8
-// CHECK-NEXT:   %2 = extractvalue { { ptr, ptr } } %1, 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.FreeRoot"(ptr %0)
-// CHECK-NEXT:   %3 = extractvalue { ptr, ptr } %2, 1
-// CHECK-NEXT:   %4 = extractvalue { ptr, ptr } %2, 0
-// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %4)
-// CHECK-NEXT:   call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %3)
-// CHECK-NEXT:   ret ptr null
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define ptr @"main._llgo_routine$3"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = load { { ptr, ptr } }, ptr %0, align 8
-// CHECK-NEXT:   %2 = extractvalue { { ptr, ptr } } %1, 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.FreeRoot"(ptr %0)
-// CHECK-NEXT:   %3 = extractvalue { ptr, ptr } %2, 1
-// CHECK-NEXT:   %4 = extractvalue { ptr, ptr } %2, 0
-// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %4)
-// CHECK-NEXT:   call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %3)
-// CHECK-NEXT:   ret ptr null
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define ptr @"main._llgo_routine$4"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = load { { ptr, ptr } }, ptr %0, align 8
-// CHECK-NEXT:   %2 = extractvalue { { ptr, ptr } } %1, 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.FreeRoot"(ptr %0)
-// CHECK-NEXT:   %3 = extractvalue { ptr, ptr } %2, 1
-// CHECK-NEXT:   %4 = extractvalue { ptr, ptr } %2, 0
-// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %4)
-// CHECK-NEXT:   call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %3)
-// CHECK-NEXT:   ret ptr null
-// CHECK-NEXT: }

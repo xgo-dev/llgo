@@ -24,8 +24,6 @@ import (
 
 	"github.com/goplus/llgo/cl/cltest"
 	"github.com/goplus/llgo/internal/build"
-	"github.com/goplus/llgo/internal/littest"
-	"github.com/goplus/llgo/internal/llgen"
 	"github.com/goplus/llgo/internal/lto"
 	"github.com/goplus/llgo/xtool/env/llvm"
 	"github.com/goplus/mod"
@@ -36,36 +34,9 @@ func main() {
 	dir, _, err := mod.FindGoMod(".")
 	check(err)
 
-	llgenDir(dir + "/cl/_testlibc")
-	llgenDir(dir + "/cl/_testlibgo")
-	llgenDir(dir + "/cl/_testrt")
-	llgenDir(dir + "/cl/_testgo")
-	llgenDir(dir + "/cl/_testpy")
-	llgenDir(dir + "/cl/_testdata")
 	genMetaDir(dir + "/cl/_testmeta")
 
 	genExpects(dir)
-}
-
-func llgenDir(dir string) {
-	fis, err := os.ReadDir(dir)
-	check(err)
-	for _, fi := range fis {
-		name := fi.Name()
-		if !fi.IsDir() || strings.HasPrefix(name, "_") {
-			continue
-		}
-		testDir := dir + "/" + name
-		skip, err := dirHasLITTESTSource(testDir)
-		check(err)
-		if skip {
-			fmt.Fprintln(os.Stderr, "skip llgen", testDir, "(// LITTEST)")
-			continue
-		}
-		fmt.Fprintln(os.Stderr, "llgen", testDir)
-		check(os.Chdir(testDir))
-		llgen.SmartDoFile(testDir)
-	}
 }
 
 func genExpects(root string) {
@@ -149,12 +120,4 @@ func check(err error) {
 	if err != nil {
 		panic(err)
 	}
-}
-
-func dirHasLITTESTSource(dir string) (bool, error) {
-	_, ok, err := littest.FindMarkedSourceFile(dir)
-	if err != nil {
-		return false, err
-	}
-	return ok, nil
 }

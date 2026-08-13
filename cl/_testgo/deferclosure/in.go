@@ -1,18 +1,113 @@
 // LITTEST
 package main
 
+// Cover the distinct deferred function-value forms in this test without
+// pinning the defer-node layout or basic blocks.
+// CHECK-LABEL: define void @"main.(*Handler).SetHandler"(ptr %0, { ptr, ptr } %1){{.*}} {
+// CHECK: [[HANDLER_FIELD:%.*]] = getelementptr inbounds %main.Handler, ptr %0, i32 0, i32 0
+// CHECK: store { ptr, ptr } %1, ptr [[HANDLER_FIELD]]
+
+// CHECK-LABEL: define void @"main.(*Processor).SetCallback"(ptr %0, { ptr, ptr } %1){{.*}} {
+// CHECK: [[PROCESSOR_FIELD:%.*]] = getelementptr inbounds %main.Processor, ptr %0, i32 0, i32 0
+// CHECK: store { ptr, ptr } %1, ptr [[PROCESSOR_FIELD]]
+
+// CHECK-LABEL: define void @main.main(){{.*}} {
+// CHECK: call void @main.testDeferMethodLiteral()
+// CHECK: call void @main.testDeferClosureValue()
+// CHECK: call void @main.testDeferStructClosure()
+// CHECK: call void @main.testDeferFieldAccess()
+
+// CHECK-LABEL: define void @main.testDeferClosureValue(){{.*}} {
+// The captured 42 is stored in the closure environment before the function pair is deferred.
+// CHECK: [[VALUE_CAPTURE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: store i64 42, ptr [[VALUE_CAPTURE]]
+// CHECK: [[VALUE_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK: store ptr [[VALUE_CAPTURE]], ptr %{{.*}}
+// CHECK: [[VALUE_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.testDeferClosureValue$1", ptr undef }, ptr [[VALUE_ENV]], 1
+// CHECK: [[VALUE_PREV_DEFER:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
+// CHECK: store { ptr, ptr } [[VALUE_FN]], ptr %{{.*}}
+// When unwound, the deferred function pair is removed, freed, and invoked with its environment.
+// CHECK: [[VALUE_NODE_DATA:%.*]] = load { ptr, i64, { ptr, ptr } }, ptr [[VALUE_NODE:%[-A-Za-z0-9_.]+]]
+// CHECK: [[VALUE_RUN_FN:%.*]] = extractvalue { ptr, i64, { ptr, ptr } } [[VALUE_NODE_DATA]], 2
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.FreeDeferNode"(ptr [[VALUE_NODE]])
+// CHECK: [[VALUE_RUN_ENV:%.*]] = extractvalue { ptr, ptr } [[VALUE_RUN_FN]], 1
+// CHECK: [[VALUE_RUN_CODE_RAW:%.*]] = extractvalue { ptr, ptr } [[VALUE_RUN_FN]], 0
+// CHECK: [[VALUE_RUN_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[VALUE_RUN_CODE_RAW]])
+// CHECK: call void [[VALUE_RUN_CODE]](ptr {{(nest|swiftself)}} [[VALUE_RUN_ENV]])
+
+// CHECK-LABEL: define void @"main.testDeferClosureValue$1"(ptr {{(nest|swiftself)}} %0){{.*}} {
+// CHECK: [[VALUE_BODY_ENV:%.*]] = load { ptr }, ptr %0
+// CHECK: [[VALUE_BODY_ADDR:%.*]] = extractvalue { ptr } [[VALUE_BODY_ENV]], 0
+// CHECK: [[VALUE_BODY_X:%.*]] = load i64, ptr [[VALUE_BODY_ADDR]]
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 [[VALUE_BODY_X]])
+
+// CHECK-LABEL: define void @main.testDeferFieldAccess(){{.*}} {
+// The field value, rather than its declaration, is the pair placed into the defer record.
+// CHECK: [[FIELD_HOLDER:%.*]] = alloca %main.FuncHolder
+// CHECK: [[FIELD_STORE_SLOT:%.*]] = getelementptr inbounds %main.FuncHolder, ptr [[FIELD_HOLDER]], i32 0, i32 0
+// CHECK: store volatile { ptr, ptr } { ptr @"main.testDeferFieldAccess$1", ptr null }, ptr [[FIELD_STORE_SLOT]]
+// CHECK: [[FIELD_LOAD_SLOT:%.*]] = getelementptr inbounds %main.FuncHolder, ptr [[FIELD_HOLDER]], i32 0, i32 0
+// CHECK: [[FIELD_FN:%.*]] = load volatile { ptr, ptr }, ptr [[FIELD_LOAD_SLOT]]
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
+// CHECK: store { ptr, ptr } [[FIELD_FN]], ptr %{{.*}}
+// CHECK: [[FIELD_NODE_DATA:%.*]] = load { ptr, i64, { ptr, ptr } }, ptr [[FIELD_NODE:%[-A-Za-z0-9_.]+]]
+// CHECK: [[FIELD_RUN_FN:%.*]] = extractvalue { ptr, i64, { ptr, ptr } } [[FIELD_NODE_DATA]], 2
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.FreeDeferNode"(ptr [[FIELD_NODE]])
+// CHECK: [[FIELD_RECOVER_CODE:%.*]] = extractvalue { ptr, ptr } [[FIELD_RUN_FN]], 0
+// CHECK: [[FIELD_RECOVER:%.*]] = call %"{{.*}}recoverState" @"{{.*}}/runtime/internal/runtime.StartRecoverFrame"(ptr [[FIELD_RECOVER_CODE]])
+// CHECK: [[FIELD_RUN_ENV:%.*]] = extractvalue { ptr, ptr } [[FIELD_RUN_FN]], 1
+// CHECK: [[FIELD_RUN_CODE_RAW:%.*]] = extractvalue { ptr, ptr } [[FIELD_RUN_FN]], 0
+// CHECK: [[FIELD_RUN_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[FIELD_RUN_CODE_RAW]])
+// CHECK: call void [[FIELD_RUN_CODE]](ptr {{(nest|swiftself)}} [[FIELD_RUN_ENV]])
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrame"(%"{{.*}}recoverState" [[FIELD_RECOVER]])
+
+// CHECK-LABEL: define void @"main.testDeferFieldAccess$1"(){{.*}} {
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" { ptr @{{.*}}, i64 19 })
+
+// CHECK-LABEL: define void @main.testDeferMethodLiteral(){{.*}} {
+// CHECK: [[METHOD_HANDLER:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK: call void @"main.(*Handler).SetHandler"(ptr [[METHOD_HANDLER]], { ptr, ptr } { ptr @"main.testDeferMethodLiteral$1", ptr null })
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
+// The deferred receiver and second literal are recorded independently.
+// CHECK: store ptr [[METHOD_HANDLER]], ptr [[METHOD_RECEIVER_SLOT:%.*]]
+// CHECK: store ptr @"main.testDeferMethodLiteral$2", ptr [[METHOD_CODE_SLOT:%.*]]
+// CHECK: [[METHOD_NODE_DATA:%.*]] = load { ptr, i64, ptr, ptr }, ptr [[METHOD_NODE:%[-A-Za-z0-9_.]+]]
+// CHECK: [[METHOD_RECEIVER:%.*]] = extractvalue { ptr, i64, ptr, ptr } [[METHOD_NODE_DATA]], 2
+// CHECK: [[METHOD_CODE:%.*]] = extractvalue { ptr, i64, ptr, ptr } [[METHOD_NODE_DATA]], 3
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.FreeDeferNode"(ptr [[METHOD_NODE]])
+// CHECK: [[METHOD_PAIR_0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[METHOD_CODE]], 0
+// CHECK: [[METHOD_PAIR:%.*]] = insertvalue { ptr, ptr } [[METHOD_PAIR_0]], ptr null, 1
+// CHECK: call void @"main.(*Handler).SetHandler"(ptr [[METHOD_RECEIVER]], { ptr, ptr } [[METHOD_PAIR]])
+
+// CHECK-LABEL: define void @"main.testDeferMethodLiteral$2"(i64 %0){{.*}} {
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %0)
+
+// CHECK-LABEL: define void @main.testDeferStructClosure(){{.*}} {
+// CHECK: [[STRUCT_PROCESSOR:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK: [[STRUCT_MSG:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK: store %"{{.*}}String" { ptr @{{.*}}, i64 8 }, ptr [[STRUCT_MSG]]
+// CHECK: [[STRUCT_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK: store ptr [[STRUCT_MSG]], ptr %{{.*}}
+// CHECK: [[STRUCT_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.testDeferStructClosure$1", ptr undef }, ptr [[STRUCT_ENV]], 1
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
+// CHECK: store ptr [[STRUCT_PROCESSOR]], ptr %{{.*}}
+// CHECK: store { ptr, ptr } [[STRUCT_FN]], ptr %{{.*}}
+// CHECK: [[STRUCT_NODE_DATA:%.*]] = load { ptr, i64, ptr, { ptr, ptr } }, ptr [[STRUCT_NODE:%[-A-Za-z0-9_.]+]]
+// CHECK: [[STRUCT_RUN_PROCESSOR:%.*]] = extractvalue { ptr, i64, ptr, { ptr, ptr } } [[STRUCT_NODE_DATA]], 2
+// CHECK: [[STRUCT_RUN_FN:%.*]] = extractvalue { ptr, i64, ptr, { ptr, ptr } } [[STRUCT_NODE_DATA]], 3
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.FreeDeferNode"(ptr [[STRUCT_NODE]])
+// CHECK: call void @"main.(*Processor).SetCallback"(ptr [[STRUCT_RUN_PROCESSOR]], { ptr, ptr } [[STRUCT_RUN_FN]])
+
+// CHECK-LABEL: define void @"main.testDeferStructClosure$1"(ptr {{(nest|swiftself)}} %0, %"{{.*}}String" %1){{.*}} {
+// CHECK: [[STRUCT_BODY_ENV:%.*]] = load { ptr }, ptr %0
+// CHECK: [[STRUCT_BODY_MSG_ADDR:%.*]] = extractvalue { ptr } [[STRUCT_BODY_ENV]], 0
+// CHECK: [[STRUCT_BODY_MSG:%.*]] = load %"{{.*}}String", ptr [[STRUCT_BODY_MSG_ADDR]]
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" %1)
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" [[STRUCT_BODY_MSG]])
+
 // Test deferred closure and method-value lowering.
 
 // Type for holding a function
-
-// CHECK: {{^}}@{{[0-9]+}} = private unnamed_addr constant [16 x i8] c"deferred closure", align 1{{$}}
-// CHECK: {{^}}@{{[0-9]+}} = private unnamed_addr constant [13 x i8] c"closure value", align 1{{$}}
-// CHECK: {{^}}@{{[0-9]+}} = private unnamed_addr constant [17 x i8] c"field access test", align 1{{$}}
-// CHECK: {{^}}@{{[0-9]+}} = private unnamed_addr constant [19 x i8] c"callback from field", align 1{{$}}
-// CHECK: {{^}}@{{[0-9]+}} = private unnamed_addr constant [13 x i8] c"before return", align 1{{$}}
-// CHECK: {{^}}@{{[0-9]+}} = private unnamed_addr constant [8 x i8] c"deferred", align 1{{$}}
-// CHECK: {{^}}@{{[0-9]+}} = private unnamed_addr constant [8 x i8] c"captured", align 1{{$}}
-// CHECK: {{^}}@{{[0-9]+}} = private unnamed_addr constant [19 x i8] c"struct closure test", align 1{{$}}
 
 type Handler struct {
 	fn func(int)
@@ -87,435 +182,3 @@ func main() {
 	testDeferStructClosure()
 	testDeferFieldAccess()
 }
-
-// CHECK-LABEL: define void @"main.(*Handler).SetHandler"(ptr %0, { ptr, ptr } %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds %main.Handler, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store { ptr, ptr } %1, ptr %2, align 8
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @"main.(*Processor).SetCallback"(ptr %0, { ptr, ptr } %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds %main.Processor, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store { ptr, ptr } %1, ptr %2, align 8
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @main.init(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load i1, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store i1 true, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @main.testDeferMethodLiteral()
-// CHECK-NEXT:   call void @main.testDeferClosureValue()
-// CHECK-NEXT:   call void @main.testDeferStructClosure()
-// CHECK-NEXT:   call void @main.testDeferFieldAccess()
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @main.testDeferClosureValue(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   store i64 42, ptr %0, align 8
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   %2 = getelementptr inbounds { ptr }, ptr %1, i32 0, i32 0
-// CHECK-NEXT:   store ptr %0, ptr %2, align 8
-// CHECK-NEXT:   %3 = insertvalue { ptr, ptr } { ptr @"main.testDeferClosureValue$1", ptr undef }, ptr %1, 1
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
-// CHECK-NEXT:   %5 = alloca i8
-// CHECK-NEXT:   %6 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 48)
-// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 0
-// CHECK-NEXT:   store ptr %5, ptr %7, align 8
-// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 1
-// CHECK-NEXT:   store i64 0, ptr %8, align 8
-// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 2
-// CHECK-NEXT:   store ptr %4, ptr %9, align 8
-// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 3
-// CHECK-NEXT:   store ptr blockaddress(@main.testDeferClosureValue, %_llgo_2), ptr %10, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %6)
-// CHECK-NEXT:   %11 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 1
-// CHECK-NEXT:   %12 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 3
-// CHECK-NEXT:   %13 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 4
-// CHECK-NEXT:   %14 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 5
-// CHECK-NEXT:   store ptr null, ptr %14, align 8
-// CHECK-NEXT:   %15 = call i32 @{{(__)?}}sigsetjmp(ptr %5, i32 0)
-// CHECK-NEXT:   %16 = icmp eq i32 %15, 0
-// CHECK-NEXT:   br i1 %16, label %_llgo_4, label %_llgo_5
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_3
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_5, %_llgo_4
-// CHECK-NEXT:   store ptr blockaddress(@main.testDeferClosureValue, %_llgo_3), ptr %12, align 8
-// CHECK-NEXT:   %17 = load i64, ptr %11, align 8
-// CHECK-NEXT:   %18 = load ptr, ptr %14, align 8
-// CHECK-NEXT:   %19 = icmp ne ptr %18, null
-// CHECK-NEXT:   br i1 %19, label %_llgo_7, label %_llgo_8
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_5, %_llgo_8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Rethrow"(ptr %4)
-// CHECK-NEXT:   br label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %20 = load ptr, ptr %14, align 8
-// CHECK-NEXT:   %21 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 32)
-// CHECK-NEXT:   %22 = getelementptr inbounds { ptr, i64, { ptr, ptr } }, ptr %21, i32 0, i32 0
-// CHECK-NEXT:   store ptr %20, ptr %22, align 8
-// CHECK-NEXT:   %23 = getelementptr inbounds { ptr, i64, { ptr, ptr } }, ptr %21, i32 0, i32 1
-// CHECK-NEXT:   store i64 0, ptr %23, align 8
-// CHECK-NEXT:   %24 = getelementptr inbounds { ptr, i64, { ptr, ptr } }, ptr %21, i32 0, i32 2
-// CHECK-NEXT:   store { ptr, ptr } %3, ptr %24, align 8
-// CHECK-NEXT:   store ptr %21, ptr %14, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 16 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   store ptr blockaddress(@main.testDeferClosureValue, %_llgo_6), ptr %13, align 8
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store ptr blockaddress(@main.testDeferClosureValue, %_llgo_3), ptr %13, align 8
-// CHECK-NEXT:   %25 = load ptr, ptr %12, align 8
-// CHECK-NEXT:   indirectbr ptr %25, [label %_llgo_3, label %_llgo_2]
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_6:                                          ; preds = %_llgo_8
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_7:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   %26 = load ptr, ptr %14, align 8
-// CHECK-NEXT:   %27 = load { ptr, i64, { ptr, ptr } }, ptr %26, align 8
-// CHECK-NEXT:   %28 = extractvalue { ptr, i64, { ptr, ptr } } %27, 0
-// CHECK-NEXT:   store ptr %28, ptr %14, align 8
-// CHECK-NEXT:   %29 = extractvalue { ptr, i64, { ptr, ptr } } %27, 2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.FreeDeferNode"(ptr %26)
-// CHECK-NEXT:   %30 = extractvalue { ptr, ptr } %29, 1
-// CHECK-NEXT:   %31 = extractvalue { ptr, ptr } %29, 0
-// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %31)
-// CHECK-NEXT:   call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %30)
-// CHECK-NEXT:   br label %_llgo_8
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_7, %_llgo_2
-// CHECK-NEXT:   %32 = load %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, align 8
-// CHECK-NEXT:   %33 = extractvalue %"{{.*}}/runtime/internal/runtime.Defer" %32, 2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %33)
-// CHECK-NEXT:   %34 = load ptr, ptr %13, align 8
-// CHECK-NEXT:   indirectbr ptr %34, [label %_llgo_3, label %_llgo_6]
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @"main.testDeferClosureValue$1"(ptr {{(nest|swiftself)}} %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = load { ptr }, ptr %0, align 8
-// CHECK-NEXT:   %2 = extractvalue { ptr } %1, 0
-// CHECK-NEXT:   %3 = load i64, ptr %2, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 13 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %3)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @main.testDeferFieldAccess(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = alloca %main.FuncHolder, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %0, i8 0, i64 16, i1 false)
-// CHECK-NEXT:   store volatile %main.FuncHolder zeroinitializer, ptr %0, align 8
-// CHECK-NEXT:   %1 = getelementptr inbounds %main.FuncHolder, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store volatile { ptr, ptr } { ptr @"main.testDeferFieldAccess$1", ptr null }, ptr %1, align 8
-// CHECK-NEXT:   %2 = getelementptr inbounds %main.FuncHolder, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load volatile { ptr, ptr }, ptr %2, align 8
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
-// CHECK-NEXT:   %5 = alloca i8
-// CHECK-NEXT:   %6 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 48)
-// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 0
-// CHECK-NEXT:   store ptr %5, ptr %7, align 8
-// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 1
-// CHECK-NEXT:   store i64 0, ptr %8, align 8
-// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 2
-// CHECK-NEXT:   store ptr %4, ptr %9, align 8
-// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 3
-// CHECK-NEXT:   store ptr blockaddress(@main.testDeferFieldAccess, %_llgo_2), ptr %10, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %6)
-// CHECK-NEXT:   %11 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 1
-// CHECK-NEXT:   %12 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 3
-// CHECK-NEXT:   %13 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 4
-// CHECK-NEXT:   %14 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, i32 0, i32 5
-// CHECK-NEXT:   store ptr null, ptr %14, align 8
-// CHECK-NEXT:   %15 = call i32 @{{(__)?}}sigsetjmp(ptr %5, i32 0)
-// CHECK-NEXT:   %16 = icmp eq i32 %15, 0
-// CHECK-NEXT:   br i1 %16, label %_llgo_4, label %_llgo_5
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_3
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_5, %_llgo_4
-// CHECK-NEXT:   store ptr blockaddress(@main.testDeferFieldAccess, %_llgo_3), ptr %12, align 8
-// CHECK-NEXT:   %17 = load i64, ptr %11, align 8
-// CHECK-NEXT:   %18 = load ptr, ptr %14, align 8
-// CHECK-NEXT:   %19 = icmp ne ptr %18, null
-// CHECK-NEXT:   br i1 %19, label %_llgo_7, label %_llgo_8
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_5, %_llgo_8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Rethrow"(ptr %4)
-// CHECK-NEXT:   br label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %20 = load ptr, ptr %14, align 8
-// CHECK-NEXT:   %21 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 32)
-// CHECK-NEXT:   %22 = getelementptr inbounds { ptr, i64, { ptr, ptr } }, ptr %21, i32 0, i32 0
-// CHECK-NEXT:   store ptr %20, ptr %22, align 8
-// CHECK-NEXT:   %23 = getelementptr inbounds { ptr, i64, { ptr, ptr } }, ptr %21, i32 0, i32 1
-// CHECK-NEXT:   store i64 0, ptr %23, align 8
-// CHECK-NEXT:   %24 = getelementptr inbounds { ptr, i64, { ptr, ptr } }, ptr %21, i32 0, i32 2
-// CHECK-NEXT:   store { ptr, ptr } %3, ptr %24, align 8
-// CHECK-NEXT:   store ptr %21, ptr %14, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 17 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   store ptr blockaddress(@main.testDeferFieldAccess, %_llgo_6), ptr %13, align 8
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store ptr blockaddress(@main.testDeferFieldAccess, %_llgo_3), ptr %13, align 8
-// CHECK-NEXT:   %25 = load ptr, ptr %12, align 8
-// CHECK-NEXT:   indirectbr ptr %25, [label %_llgo_3, label %_llgo_2]
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_6:                                          ; preds = %_llgo_8
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_7:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   %26 = load ptr, ptr %14, align 8
-// CHECK-NEXT:   %27 = load { ptr, i64, { ptr, ptr } }, ptr %26, align 8
-// CHECK-NEXT:   %28 = extractvalue { ptr, i64, { ptr, ptr } } %27, 0
-// CHECK-NEXT:   store ptr %28, ptr %14, align 8
-// CHECK-NEXT:   %29 = extractvalue { ptr, i64, { ptr, ptr } } %27, 2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.FreeDeferNode"(ptr %26)
-// CHECK-NEXT:   %30 = extractvalue { ptr, ptr } %29, 0
-// CHECK-NEXT:   %31 = call %"{{.*}}/runtime/internal/runtime.recoverState" @"{{.*}}/runtime/internal/runtime.StartRecoverFrame"(ptr %30)
-// CHECK-NEXT:   %32 = extractvalue { ptr, ptr } %29, 1
-// CHECK-NEXT:   %33 = extractvalue { ptr, ptr } %29, 0
-// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %33)
-// CHECK-NEXT:   call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrame"(%"{{.*}}/runtime/internal/runtime.recoverState" %31)
-// CHECK-NEXT:   br label %_llgo_8
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_7, %_llgo_2
-// CHECK-NEXT:   %34 = load %"{{.*}}/runtime/internal/runtime.Defer", ptr %6, align 8
-// CHECK-NEXT:   %35 = extractvalue %"{{.*}}/runtime/internal/runtime.Defer" %34, 2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %35)
-// CHECK-NEXT:   %36 = load ptr, ptr %13, align 8
-// CHECK-NEXT:   indirectbr ptr %36, [label %_llgo_3, label %_llgo_6]
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @"main.testDeferFieldAccess$1"(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 19 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @main.testDeferMethodLiteral(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK-NEXT:   call void @"main.(*Handler).SetHandler"(ptr %0, { ptr, ptr } { ptr @"main.testDeferMethodLiteral$1", ptr null })
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
-// CHECK-NEXT:   %2 = alloca i8
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 48)
-// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %3, i32 0, i32 0
-// CHECK-NEXT:   store ptr %2, ptr %4, align 8
-// CHECK-NEXT:   %5 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %3, i32 0, i32 1
-// CHECK-NEXT:   store i64 0, ptr %5, align 8
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %3, i32 0, i32 2
-// CHECK-NEXT:   store ptr %1, ptr %6, align 8
-// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %3, i32 0, i32 3
-// CHECK-NEXT:   store ptr blockaddress(@main.testDeferMethodLiteral, %_llgo_2), ptr %7, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %3)
-// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %3, i32 0, i32 1
-// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %3, i32 0, i32 3
-// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %3, i32 0, i32 4
-// CHECK-NEXT:   %11 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %3, i32 0, i32 5
-// CHECK-NEXT:   store ptr null, ptr %11, align 8
-// CHECK-NEXT:   %12 = call i32 @{{(__)?}}sigsetjmp(ptr %2, i32 0)
-// CHECK-NEXT:   %13 = icmp eq i32 %12, 0
-// CHECK-NEXT:   br i1 %13, label %_llgo_4, label %_llgo_5
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_3
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_5, %_llgo_4
-// CHECK-NEXT:   store ptr blockaddress(@main.testDeferMethodLiteral, %_llgo_3), ptr %9, align 8
-// CHECK-NEXT:   %14 = load i64, ptr %8, align 8
-// CHECK-NEXT:   %15 = load ptr, ptr %11, align 8
-// CHECK-NEXT:   %16 = icmp ne ptr %15, null
-// CHECK-NEXT:   br i1 %16, label %_llgo_7, label %_llgo_8
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_5, %_llgo_8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Rethrow"(ptr %1)
-// CHECK-NEXT:   br label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %17 = load ptr, ptr %11, align 8
-// CHECK-NEXT:   %18 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 32)
-// CHECK-NEXT:   %19 = getelementptr inbounds { ptr, i64, ptr, ptr }, ptr %18, i32 0, i32 0
-// CHECK-NEXT:   store ptr %17, ptr %19, align 8
-// CHECK-NEXT:   %20 = getelementptr inbounds { ptr, i64, ptr, ptr }, ptr %18, i32 0, i32 1
-// CHECK-NEXT:   store i64 0, ptr %20, align 8
-// CHECK-NEXT:   %21 = getelementptr inbounds { ptr, i64, ptr, ptr }, ptr %18, i32 0, i32 2
-// CHECK-NEXT:   store ptr %0, ptr %21, align 8
-// CHECK-NEXT:   %22 = getelementptr inbounds { ptr, i64, ptr, ptr }, ptr %18, i32 0, i32 3
-// CHECK-NEXT:   store ptr @"main.testDeferMethodLiteral$2", ptr %22, align 8
-// CHECK-NEXT:   store ptr %18, ptr %11, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 13 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   store ptr blockaddress(@main.testDeferMethodLiteral, %_llgo_6), ptr %10, align 8
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store ptr blockaddress(@main.testDeferMethodLiteral, %_llgo_3), ptr %10, align 8
-// CHECK-NEXT:   %23 = load ptr, ptr %9, align 8
-// CHECK-NEXT:   indirectbr ptr %23, [label %_llgo_3, label %_llgo_2]
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_6:                                          ; preds = %_llgo_8
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_7:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   %24 = load ptr, ptr %11, align 8
-// CHECK-NEXT:   %25 = load { ptr, i64, ptr, ptr }, ptr %24, align 8
-// CHECK-NEXT:   %26 = extractvalue { ptr, i64, ptr, ptr } %25, 0
-// CHECK-NEXT:   store ptr %26, ptr %11, align 8
-// CHECK-NEXT:   %27 = extractvalue { ptr, i64, ptr, ptr } %25, 2
-// CHECK-NEXT:   %28 = extractvalue { ptr, i64, ptr, ptr } %25, 3
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.FreeDeferNode"(ptr %24)
-// CHECK-NEXT:   %29 = insertvalue { ptr, ptr } undef, ptr %28, 0
-// CHECK-NEXT:   %30 = insertvalue { ptr, ptr } %29, ptr null, 1
-// CHECK-NEXT:   call void @"main.(*Handler).SetHandler"(ptr %27, { ptr, ptr } %30)
-// CHECK-NEXT:   br label %_llgo_8
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_7, %_llgo_2
-// CHECK-NEXT:   %31 = load %"{{.*}}/runtime/internal/runtime.Defer", ptr %3, align 8
-// CHECK-NEXT:   %32 = extractvalue %"{{.*}}/runtime/internal/runtime.Defer" %31, 2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %32)
-// CHECK-NEXT:   %33 = load ptr, ptr %10, align 8
-// CHECK-NEXT:   indirectbr ptr %33, [label %_llgo_3, label %_llgo_6]
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @"main.testDeferMethodLiteral$1"(i64 %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @"main.testDeferMethodLiteral$2"(i64 %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 8 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %0)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @main.testDeferStructClosure(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 8 }, ptr %1, align 8
-// CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   %3 = getelementptr inbounds { ptr }, ptr %2, i32 0, i32 0
-// CHECK-NEXT:   store ptr %1, ptr %3, align 8
-// CHECK-NEXT:   %4 = insertvalue { ptr, ptr } { ptr @"main.testDeferStructClosure$1", ptr undef }, ptr %2, 1
-// CHECK-NEXT:   %5 = call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
-// CHECK-NEXT:   %6 = alloca i8
-// CHECK-NEXT:   %7 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 48)
-// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %7, i32 0, i32 0
-// CHECK-NEXT:   store ptr %6, ptr %8, align 8
-// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %7, i32 0, i32 1
-// CHECK-NEXT:   store i64 0, ptr %9, align 8
-// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %7, i32 0, i32 2
-// CHECK-NEXT:   store ptr %5, ptr %10, align 8
-// CHECK-NEXT:   %11 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %7, i32 0, i32 3
-// CHECK-NEXT:   store ptr blockaddress(@main.testDeferStructClosure, %_llgo_2), ptr %11, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %7)
-// CHECK-NEXT:   %12 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %7, i32 0, i32 1
-// CHECK-NEXT:   %13 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %7, i32 0, i32 3
-// CHECK-NEXT:   %14 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %7, i32 0, i32 4
-// CHECK-NEXT:   %15 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %7, i32 0, i32 5
-// CHECK-NEXT:   store ptr null, ptr %15, align 8
-// CHECK-NEXT:   %16 = call i32 @{{(__)?}}sigsetjmp(ptr %6, i32 0)
-// CHECK-NEXT:   %17 = icmp eq i32 %16, 0
-// CHECK-NEXT:   br i1 %17, label %_llgo_4, label %_llgo_5
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_3
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_5, %_llgo_4
-// CHECK-NEXT:   store ptr blockaddress(@main.testDeferStructClosure, %_llgo_3), ptr %13, align 8
-// CHECK-NEXT:   %18 = load i64, ptr %12, align 8
-// CHECK-NEXT:   %19 = load ptr, ptr %15, align 8
-// CHECK-NEXT:   %20 = icmp ne ptr %19, null
-// CHECK-NEXT:   br i1 %20, label %_llgo_7, label %_llgo_8
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_5, %_llgo_8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Rethrow"(ptr %5)
-// CHECK-NEXT:   br label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %21 = load ptr, ptr %15, align 8
-// CHECK-NEXT:   %22 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 40)
-// CHECK-NEXT:   %23 = getelementptr inbounds { ptr, i64, ptr, { ptr, ptr } }, ptr %22, i32 0, i32 0
-// CHECK-NEXT:   store ptr %21, ptr %23, align 8
-// CHECK-NEXT:   %24 = getelementptr inbounds { ptr, i64, ptr, { ptr, ptr } }, ptr %22, i32 0, i32 1
-// CHECK-NEXT:   store i64 0, ptr %24, align 8
-// CHECK-NEXT:   %25 = getelementptr inbounds { ptr, i64, ptr, { ptr, ptr } }, ptr %22, i32 0, i32 2
-// CHECK-NEXT:   store ptr %0, ptr %25, align 8
-// CHECK-NEXT:   %26 = getelementptr inbounds { ptr, i64, ptr, { ptr, ptr } }, ptr %22, i32 0, i32 3
-// CHECK-NEXT:   store { ptr, ptr } %4, ptr %26, align 8
-// CHECK-NEXT:   store ptr %22, ptr %15, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 19 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   store ptr blockaddress(@main.testDeferStructClosure, %_llgo_6), ptr %14, align 8
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store ptr blockaddress(@main.testDeferStructClosure, %_llgo_3), ptr %14, align 8
-// CHECK-NEXT:   %27 = load ptr, ptr %13, align 8
-// CHECK-NEXT:   indirectbr ptr %27, [label %_llgo_3, label %_llgo_2]
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_6:                                          ; preds = %_llgo_8
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_7:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   %28 = load ptr, ptr %15, align 8
-// CHECK-NEXT:   %29 = load { ptr, i64, ptr, { ptr, ptr } }, ptr %28, align 8
-// CHECK-NEXT:   %30 = extractvalue { ptr, i64, ptr, { ptr, ptr } } %29, 0
-// CHECK-NEXT:   store ptr %30, ptr %15, align 8
-// CHECK-NEXT:   %31 = extractvalue { ptr, i64, ptr, { ptr, ptr } } %29, 2
-// CHECK-NEXT:   %32 = extractvalue { ptr, i64, ptr, { ptr, ptr } } %29, 3
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.FreeDeferNode"(ptr %28)
-// CHECK-NEXT:   call void @"main.(*Processor).SetCallback"(ptr %31, { ptr, ptr } %32)
-// CHECK-NEXT:   br label %_llgo_8
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_7, %_llgo_2
-// CHECK-NEXT:   %33 = load %"{{.*}}/runtime/internal/runtime.Defer", ptr %7, align 8
-// CHECK-NEXT:   %34 = extractvalue %"{{.*}}/runtime/internal/runtime.Defer" %33, 2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %34)
-// CHECK-NEXT:   %35 = load ptr, ptr %14, align 8
-// CHECK-NEXT:   indirectbr ptr %35, [label %_llgo_3, label %_llgo_6]
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @"main.testDeferStructClosure$1"(ptr {{(nest|swiftself)}} %0, %"{{.*}}/runtime/internal/runtime.String" %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
-// CHECK-NEXT:   %3 = extractvalue { ptr } %2, 0
-// CHECK-NEXT:   %4 = load %"{{.*}}/runtime/internal/runtime.String", ptr %3, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %1)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %4)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }

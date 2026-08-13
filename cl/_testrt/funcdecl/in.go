@@ -5,8 +5,36 @@ import (
 	"unsafe"
 )
 
-// CHECK: {{^}}@4 = private unnamed_addr constant [4 x i8] c"demo", align 1{{$}}
-// CHECK: {{^}}@5 = private unnamed_addr constant [5 x i8] c"hello", align 1{{$}}
+// A declared function is represented as a closure pair with a nil environment,
+// and interface assertions use the closure type descriptor.
+// CHECK-LABEL: define void @main.check({ ptr, ptr } %0){{.*}} {
+// CHECK: %[[DECL_BOX:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT: store { ptr, ptr } { ptr @main.demo, ptr null }, ptr %[[DECL_BOX]]
+// CHECK: %[[DECL_EFACE:[0-9]+]] = insertvalue %"{{.*}}runtime.eface" { ptr @[[CLOSURE_TYPE:"_llgo_closure\$[^"]+"]], ptr undef }, ptr %[[DECL_BOX]], 1
+// CHECK: %[[ARG_BOX:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT: store { ptr, ptr } %0, ptr %[[ARG_BOX]]
+// CHECK: %[[ARG_EFACE:[0-9]+]] = insertvalue %"{{.*}}runtime.eface" { ptr @[[CLOSURE_TYPE]], ptr undef }, ptr %[[ARG_BOX]], 1
+// CHECK: %[[DECL_TYPE:[0-9]+]] = extractvalue %"{{.*}}runtime.eface" %[[DECL_EFACE]], 0
+// CHECK-NEXT: %[[DECL_MATCH:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @[[CLOSURE_TYPE]], ptr %[[DECL_TYPE]])
+// CHECK: %[[ARG_TYPE:[0-9]+]] = extractvalue %"{{.*}}runtime.eface" %[[ARG_EFACE]], 0
+// CHECK-NEXT: %[[ARG_MATCH:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @[[CLOSURE_TYPE]], ptr %[[ARG_TYPE]])
+// CHECK: %[[DECL_PTR:[0-9]+]] = call ptr @main.closurePtr(%"{{.*}}runtime.eface" %[[DECL_EFACE]])
+// CHECK-NEXT: %[[ARG_PTR:[0-9]+]] = call ptr @main.closurePtr(%"{{.*}}runtime.eface" %[[ARG_EFACE]])
+// CHECK-NEXT: %[[SAME_PTR:[0-9]+]] = icmp eq ptr %[[DECL_PTR]], %[[ARG_PTR]]
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %[[SAME_PTR]])
+// CHECK-LABEL: define ptr @main.closurePtr(%"{{.*}}runtime.eface" %0){{.*}} {
+// CHECK: %[[EFACE_BOX:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK-NEXT: store %"{{.*}}runtime.eface" %0, ptr %[[EFACE_BOX]]
+// CHECK: %[[CLOSURE_SLOT:[0-9]+]] = getelementptr inbounds %main.rtype, ptr %[[EFACE_BOX]], i32 0, i32 1
+// CHECK-NEXT: %[[CLOSURE:[0-9]+]] = load ptr, ptr %[[CLOSURE_SLOT]]
+// CHECK-NEXT: %[[CODE_SLOT:[0-9]+]] = getelementptr inbounds { ptr, ptr }, ptr %[[CLOSURE]], i32 0, i32 0
+// CHECK-NEXT: %[[CODE:[0-9]+]] = load ptr, ptr %[[CODE_SLOT]]
+// CHECK-NEXT: ret ptr %[[CODE]]
+// CHECK-LABEL: define void @main.demo(){{.*}} {
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}runtime.String" { ptr @{{[0-9]+}}, i64 4 })
+// CHECK: ret void
+// CHECK-LABEL: define void @main.main(){{.*}} {
+// CHECK: call void @main.check({ ptr, ptr } { ptr @main.demo, ptr null })
 
 func check(fn func()) {
 	var a any = demo
@@ -37,95 +65,3 @@ func main() {
 	println("hello")
 	check(demo)
 }
-
-// CHECK-LABEL: define void @main.check({ ptr, ptr } %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store { ptr, ptr } { ptr @main.demo, ptr null }, ptr %1, align 8
-// CHECK-NEXT:   %2 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8", ptr undef }, ptr %1, 1
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store { ptr, ptr } %0, ptr %3, align 8
-// CHECK-NEXT:   %4 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8", ptr undef }, ptr %3, 1
-// CHECK-NEXT:   %5 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %2, 0
-// CHECK-NEXT:   %6 = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8", ptr %5)
-// CHECK-NEXT:   br i1 %6, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %7 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %2, 1
-// CHECK-NEXT:   %8 = load { ptr, ptr }, ptr %7, align 8
-// CHECK-NEXT:   %9 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %4, 0
-// CHECK-NEXT:   %10 = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8", ptr %9)
-// CHECK-NEXT:   br i1 %10, label %_llgo_3, label %_llgo_4
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr null, ptr %5, ptr @"_llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8")
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_1
-// CHECK-NEXT:   %11 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %4, 1
-// CHECK-NEXT:   %12 = load { ptr, ptr }, ptr %11, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintEface"(%"{{.*}}/runtime/internal/runtime.eface" %2)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintEface"(%"{{.*}}/runtime/internal/runtime.eface" %4)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %13 = extractvalue { ptr, ptr } %0, 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %13)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %14 = extractvalue { ptr, ptr } %8, 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %14)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %15 = extractvalue { ptr, ptr } %12, 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %15)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr @main.demo)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %16 = call ptr @main.closurePtr(%"{{.*}}/runtime/internal/runtime.eface" %2)
-// CHECK-NEXT:   %17 = call ptr @main.closurePtr(%"{{.*}}/runtime/internal/runtime.eface" %4)
-// CHECK-NEXT:   %18 = icmp eq ptr %16, %17
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %18)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr null, ptr %9, ptr @"_llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8")
-// CHECK-NEXT:   unreachable
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define ptr @main.closurePtr(%"{{.*}}/runtime/internal/runtime.eface" %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %0, ptr %1, align 8
-// CHECK-NEXT:   %2 = getelementptr inbounds %main.rtype, ptr %1, i32 0, i32 1
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = getelementptr inbounds { ptr, ptr }, ptr %3, i32 0, i32 0
-// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
-// CHECK-NEXT:   ret ptr %5
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @main.demo(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @4, i64 4 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @main.init(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load i1, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store i1 true, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @5, i64 5 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   call void @main.check({ ptr, ptr } { ptr @main.demo, ptr null })
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }

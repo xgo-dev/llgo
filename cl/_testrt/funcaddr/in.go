@@ -11,43 +11,22 @@ import (
 type Add func(int, int) int
 
 // CHECK-LABEL: define i64 @main.add(i64 %0, i64 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = add i64 %0, %1
-// CHECK-NEXT:   ret i64 %2
-// CHECK-NEXT: }
+// CHECK: [[ADD_RESULT:%[0-9]+]] = add i64 %0, %1
+// CHECK-NEXT: ret i64 [[ADD_RESULT]]
 func add(a, b int) int {
 	return a + b
 }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   store ptr @main.add, ptr %0, align 8
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   store ptr @"main.main$1", ptr %1, align 8
-// CHECK-NEXT:   %2 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %3 = icmp eq ptr @main.add, %2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %3)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %4 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %5 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %6 = icmp eq ptr %4, %5
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %6)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %7 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %8 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %9 = icmp eq ptr %7, %8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %9)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: store ptr @main.add, ptr [[DECLARED_SLOT:%[0-9]+]]
+// CHECK: store ptr @"main.main$1", ptr [[LITERAL_SLOT:%[0-9]+]]
+// CHECK: [[DECLARED_CODE:%[0-9]+]] = load ptr, ptr [[DECLARED_SLOT]]
+// CHECK-NEXT: [[DECLARED_MATCH:%[0-9]+]] = icmp eq ptr @main.add, [[DECLARED_CODE]]
+// CHECK: [[LITERAL_CODE1:%[0-9]+]] = load ptr, ptr [[LITERAL_SLOT]]
+// CHECK-NEXT: [[LITERAL_CODE2:%[0-9]+]] = load ptr, ptr [[LITERAL_SLOT]]
+// CHECK-NEXT: [[LITERAL_MATCH:%[0-9]+]] = icmp eq ptr [[LITERAL_CODE1]], [[LITERAL_CODE2]]
 func main() {
 	var fn Add = add
-	// CHECK-LABEL: define i64 @"main.main$1"(i64 %0, i64 %1){{.*}} {
-	// CHECK-NEXT: _llgo_0:
-	// CHECK-NEXT:   %2 = add i64 %0, %1
-	// CHECK-NEXT:   ret i64 %2
-	// CHECK-NEXT: }
 	var myfn Add = func(a, b int) int {
 		return a + b
 	}
@@ -55,3 +34,7 @@ func main() {
 	println(c.Func(fn) == *(*unsafe.Pointer)(unsafe.Pointer(&fn)))
 	println(c.Func(myfn) == *(*unsafe.Pointer)(unsafe.Pointer(&myfn)))
 }
+
+// CHECK-LABEL: define i64 @"main.main$1"(i64 %0, i64 %1){{.*}} {
+// CHECK: [[LITERAL_SUM:%[0-9]+]] = add i64 %0, %1
+// CHECK-NEXT: ret i64 [[LITERAL_SUM]]

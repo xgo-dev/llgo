@@ -7,104 +7,39 @@ import (
 	"github.com/goplus/llgo/runtime/abi"
 )
 
-// CHECK-LABEL: define void @"main.(*T).Invoke"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{.*}}, i64 6 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
 func (t *T) Invoke() {
 	println("invoke")
 }
 
 // CHECK-LABEL: define void @main.dump(%"{{.*}}/runtime/internal/runtime.eface" %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %0, ptr %1, align 8
-// CHECK-NEXT:   %2 = getelementptr inbounds %main.eface, ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   call void @main.dumpTyp(ptr %3, %"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: store %"{{.*}}eface" %0, ptr [[DUMP_ADDR:%[-A-Za-z0-9_.]+]]
+// CHECK: [[DUMP_TYPE_FIELD:%.*]] = getelementptr inbounds %main.eface, ptr [[DUMP_ADDR]], i32 0, i32 0
+// CHECK: [[DUMP_TYPE:%.*]] = load ptr, ptr [[DUMP_TYPE_FIELD]]
+// CHECK: call void @main.dumpTyp(ptr [[DUMP_TYPE]], %"{{.*}}String" zeroinitializer)
 func dump(v any) {
 	e := (*eface)(unsafe.Pointer(&v))
 	dumpTyp(e._type, "")
 }
 
 // CHECK-LABEL: define void @main.dumpTyp(ptr %0, %"{{.*}}/runtime/internal/runtime.String" %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %1)
-// CHECK-NEXT:   %2 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/abi.(*Type).String"(ptr %0)
-// CHECK-NEXT:   %3 = call i64 @"{{.*}}/runtime/abi.(*Type).Kind"(ptr %0)
-// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %5 = load i64, ptr %4, align 8
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %7 = load i64, ptr %6, align 8
-// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 2
-// CHECK-NEXT:   %9 = load i32, ptr %8, align 4
-// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 3
-// CHECK-NEXT:   %11 = load i8, ptr %10, align 1
-// CHECK-NEXT:   %12 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 4
-// CHECK-NEXT:   %13 = load i8, ptr %12, align 1
-// CHECK-NEXT:   %14 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 10
-// CHECK-NEXT:   %15 = load ptr, ptr %14, align 8
-// CHECK-NEXT:   %16 = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %2)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %3)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %5)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %7)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %17 = zext i32 %9 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %17)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %18 = zext i8 %11 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %18)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %19 = zext i8 %13 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %19)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %15)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %16)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %20 = call ptr @"{{.*}}/runtime/abi.(*Type).Elem"(ptr %0)
-// CHECK-NEXT:   %21 = icmp ne ptr %20, null
-// CHECK-NEXT:   br i1 %21, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %22 = call ptr @"{{.*}}/runtime/abi.(*Type).Elem"(ptr %0)
-// CHECK-NEXT:   %23 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @{{.*}}, i64 7 })
-// CHECK-NEXT:   call void @main.dumpTyp(ptr %22, %"{{.*}}/runtime/internal/runtime.String" %23)
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   %24 = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
-// CHECK-NEXT:   %25 = icmp ne ptr %24, null
-// CHECK-NEXT:   br i1 %25, label %_llgo_3, label %_llgo_4
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   %26 = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
-// CHECK-NEXT:   %27 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @{{.*}}, i64 9 })
-// CHECK-NEXT:   call void @main.dumpUncommon(ptr %26, %"{{.*}}/runtime/internal/runtime.String" %27)
-// CHECK-NEXT:   %28 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 10
-// CHECK-NEXT:   %29 = load ptr, ptr %28, align 8
-// CHECK-NEXT:   %30 = icmp ne ptr %29, null
-// CHECK-NEXT:   br i1 %30, label %_llgo_5, label %_llgo_4
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_5, %_llgo_3, %_llgo_2
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_3
-// CHECK-NEXT:   %31 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 10
-// CHECK-NEXT:   %32 = load ptr, ptr %31, align 8
-// CHECK-NEXT:   %33 = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %32)
-// CHECK-NEXT:   %34 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @{{.*}}, i64 9 })
-// CHECK-NEXT:   call void @main.dumpUncommon(ptr %33, %"{{.*}}/runtime/internal/runtime.String" %34)
-// CHECK-NEXT:   br label %_llgo_4
-// CHECK-NEXT: }
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" %1)
+// CHECK: [[TYPE_NAME:%.*]] = call %"{{.*}}String" @"{{.*}}/runtime/abi.(*Type).String"(ptr %0)
+// CHECK: [[TYPE_KIND:%.*]] = call i64 @"{{.*}}/runtime/abi.(*Type).Kind"(ptr %0)
+// CHECK: [[TYPE_UNCOMMON:%.*]] = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" [[TYPE_NAME]])
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 [[TYPE_KIND]])
+// CHECK: [[TYPE_ELEM:%.*]] = call ptr @"{{.*}}/runtime/abi.(*Type).Elem"(ptr %0)
+// CHECK: [[HAS_ELEM:%.*]] = icmp ne ptr [[TYPE_ELEM]], null
+// CHECK: br i1 [[HAS_ELEM]], label %{{.*}}, label %{{.*}}
+// CHECK: [[RECURSE_ELEM:%.*]] = call ptr @"{{.*}}/runtime/abi.(*Type).Elem"(ptr %0)
+// CHECK: [[ELEM_SEP:%.*]] = call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}String" %1, %"{{.*}}String" { ptr @{{.*}}, i64 7 })
+// CHECK: call void @main.dumpTyp(ptr [[RECURSE_ELEM]], %"{{.*}}String" [[ELEM_SEP]])
+// CHECK: [[RECHECK_UNCOMMON:%.*]] = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
+// CHECK: [[HAS_UNCOMMON:%.*]] = icmp ne ptr [[RECHECK_UNCOMMON]], null
+// CHECK: br i1 [[HAS_UNCOMMON]], label %{{.*}}, label %{{.*}}
+// CHECK: [[DUMP_UNCOMMON:%.*]] = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
+// CHECK: [[UNCOMMON_SEP:%.*]] = call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}String" %1, %"{{.*}}String" { ptr @{{.*}}, i64 9 })
+// CHECK: call void @main.dumpUncommon(ptr [[DUMP_UNCOMMON]], %"{{.*}}String" [[UNCOMMON_SEP]])
 func dumpTyp(t *abi.Type, sep string) {
 	print(sep)
 	println(t.String(), t.Kind(), t.Size_, t.PtrBytes, t.Hash, t.TFlag, t.Align_, t.PtrToThis_, t.Uncommon())
@@ -120,24 +55,18 @@ func dumpTyp(t *abi.Type, sep string) {
 }
 
 // CHECK-LABEL: define void @main.dumpUncommon(ptr %0, %"{{.*}}/runtime/internal/runtime.String" %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %1)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/runtime/abi.UncommonType", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.String", ptr %2, align 8
-// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/runtime/abi.UncommonType", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %5 = load i16, ptr %4, align 2
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/runtime/abi.UncommonType", ptr %0, i32 0, i32 2
-// CHECK-NEXT:   %7 = load i16, ptr %6, align 2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %3)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %8 = zext i16 %5 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %8)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %9 = zext i16 %7 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %9)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" %1)
+// CHECK: [[PKG_FIELD:%.*]] = getelementptr inbounds %"{{.*}}UncommonType", ptr %0, i32 0, i32 0
+// CHECK: [[PKG_PATH:%.*]] = load %"{{.*}}String", ptr [[PKG_FIELD]]
+// CHECK: [[MCOUNT_FIELD:%.*]] = getelementptr inbounds %"{{.*}}UncommonType", ptr %0, i32 0, i32 1
+// CHECK: [[MCOUNT:%.*]] = load i16, ptr [[MCOUNT_FIELD]]
+// CHECK: [[XCOUNT_FIELD:%.*]] = getelementptr inbounds %"{{.*}}UncommonType", ptr %0, i32 0, i32 2
+// CHECK: [[XCOUNT:%.*]] = load i16, ptr [[XCOUNT_FIELD]]
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" [[PKG_PATH]])
+// CHECK: [[MCOUNT64:%.*]] = zext i16 [[MCOUNT]] to i64
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 [[MCOUNT64]])
+// CHECK: [[XCOUNT64:%.*]] = zext i16 [[XCOUNT]] to i64
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 [[XCOUNT64]])
 
 func dumpUncommon(u *abi.UncommonType, sep string) {
 	print(sep)
@@ -152,21 +81,48 @@ type eface struct {
 }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 1)
-// CHECK: store i1 true, ptr {{%[0-9]+}}, align 1
-// CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_bool, ptr undef }
-// CHECK: call void @main.dump
-// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK: store i64 0, ptr {{%[0-9]+}}, align 8
-// CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }
-// CHECK: call void @main.dump
-// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 80)
-// CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"[10]_llgo_int"
-// CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_closure
-// CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"[]_llgo_int"
-// CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"{{.*}}/cl/_testrt/eface.struct
-// CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_main.T
-// CHECK: ret void
+// Every source value is boxed with its own descriptor and that exact eface is dumped.
+// CHECK: [[BOOL_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_bool, ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[BOOL_BOX]])
+// CHECK: [[INT_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_int, ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[INT_BOX]])
+// CHECK: [[INT8_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_int8, ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[INT8_BOX]])
+// CHECK: [[INT16_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_int16, ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[INT16_BOX]])
+// CHECK: [[INT32_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_int32, ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[INT32_BOX]])
+// CHECK: [[INT64_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_int64, ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[INT64_BOX]])
+// CHECK: [[UINT_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_uint, ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[UINT_BOX]])
+// CHECK: [[UINT8_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_uint8, ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[UINT8_BOX]])
+// CHECK: [[UINT16_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_uint16, ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[UINT16_BOX]])
+// CHECK: [[UINT32_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_uint32, ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[UINT32_BOX]])
+// CHECK: [[UINT64_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_uint64, ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[UINT64_BOX]])
+// CHECK: [[UINTPTR_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_uintptr, ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[UINTPTR_BOX]])
+// CHECK: [[FLOAT32_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_float32, ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[FLOAT32_BOX]])
+// CHECK: [[FLOAT64_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_float64, ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[FLOAT64_BOX]])
+// CHECK: [[ARRAY_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @"[10]_llgo_int", ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[ARRAY_BOX]])
+// CHECK: [[CLOSURE_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[CLOSURE_BOX]])
+// CHECK: call void @main.dump(%"{{.*}}eface" { ptr @"*_llgo_int", ptr null })
+// CHECK: [[SLICE_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @"[]_llgo_int", ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[SLICE_BOX]])
+// CHECK: [[STRING_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_string, ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[STRING_BOX]])
+// CHECK: [[STRUCT_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @"{{.*}}/cl/_testrt/eface.struct${{[-A-Za-z0-9_]+}}", ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[STRUCT_BOX]])
+// CHECK: [[NAMED_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_main.T, ptr undef }, ptr %{{.*}}, 1
+// CHECK: call void @main.dump(%"{{.*}}eface" [[NAMED_BOX]])
 func main() {
 	dump(true)
 	dump(0)
@@ -184,10 +140,6 @@ func main() {
 	dump(float64(0))
 	dump([10]int{})
 	dump(func() {})
-	// CHECK-LABEL: define void @"main.main$1"(){{.*}} {
-	// CHECK-NEXT: _llgo_0:
-	// CHECK-NEXT:   ret void
-	// CHECK-NEXT: }
 	dump((*int)(nil))
 	dump([]int{})
 	dump("hello")

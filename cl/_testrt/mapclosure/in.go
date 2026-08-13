@@ -6,18 +6,12 @@ type Type interface {
 }
 
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @main.demo(%"{{.*}}/runtime/internal/runtime.iface" %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %0)
-// CHECK-NEXT:   %2 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %0, 0
-// CHECK-NEXT:   %3 = getelementptr ptr, ptr %2, i64 3
-// CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
-// CHECK-NEXT:   %5 = insertvalue { ptr, ptr } undef, ptr %4, 0
-// CHECK-NEXT:   %6 = insertvalue { ptr, ptr } %5, ptr %1, 1
-// CHECK-NEXT:   %7 = extractvalue { ptr, ptr } %6, 1
-// CHECK-NEXT:   %8 = extractvalue { ptr, ptr } %6, 0
-// CHECK-NEXT:   %9 = call %"{{.*}}/runtime/internal/runtime.String" %8(ptr %7)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %9
-// CHECK-NEXT: }
+// CHECK: [[DEMO_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %0)
+// CHECK: [[DEMO_METHOD:%[0-9]+]] = load ptr, ptr %{{[0-9]+}}
+// CHECK: [[DEMO_PAIR0:%[0-9]+]] = insertvalue { ptr, ptr } undef, ptr [[DEMO_METHOD]], 0
+// CHECK-NEXT: [[DEMO_PAIR:%[0-9]+]] = insertvalue { ptr, ptr } [[DEMO_PAIR0]], ptr [[DEMO_DATA]], 1
+// CHECK: [[DEMO_RESULT:%[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.String" %{{[0-9]+}}(ptr %{{[0-9]+}})
+// CHECK-NEXT: ret %"{{.*}}/runtime/internal/runtime.String" [[DEMO_RESULT]]
 func demo(t Type) string {
 	return t.String()
 }
@@ -33,51 +27,38 @@ var (
 	list = []func(Type) string{demo}
 )
 
+// CHECK-LABEL: define void @main.init(){{.*}} {
+// CHECK: [[OP_MAP:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MakeMap"(ptr @"map[_llgo_string]_llgo_closure${{[-A-Za-z0-9_]+}}", i64 1)
+// CHECK: [[OP_SLOT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_string]_llgo_closure${{[-A-Za-z0-9_]+}}", ptr [[OP_MAP]], ptr %{{[0-9]+}})
+// CHECK-NEXT: store { ptr, ptr } { ptr @main.demo, ptr null }, ptr [[OP_SLOT]]
+// CHECK-NEXT: store ptr [[OP_MAP]], ptr @main.op
+// CHECK: store { ptr, ptr } { ptr @main.demo, ptr null }, ptr [[LIST_ELEM:%[0-9]+]]
+// CHECK: store %"{{.*}}/runtime/internal/runtime.Slice" [[LIST:%[0-9]+]], ptr @main.list
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK-NEXT:   %1 = getelementptr inbounds %main.typ, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @21, i64 5 }, ptr %1, align 8
-// CHECK-NEXT:   %2 = load ptr, ptr @main.op, align 8
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @20, i64 4 }, ptr %3, align 8
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.MapAccess1"(ptr @"map[_llgo_string]_llgo_closure${{[-A-Za-z0-9_]+}}", ptr %2, ptr %3)
-// CHECK-NEXT:   %5 = load { ptr, ptr }, ptr %4, align 8
-// CHECK-NEXT:   %6 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr @main.list, align 8
-// CHECK-NEXT:   %7 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %6, 0
-// CHECK-NEXT:   %8 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %6, 1
-// CHECK-NEXT:   %9 = icmp uge i64 0, %8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %9, {{.*}})
-// CHECK-NEXT:   %10 = getelementptr inbounds { ptr, ptr }, ptr %7, i64 0
-// CHECK-NEXT:   %11 = load { ptr, ptr }, ptr %10, align 8
-// CHECK-NEXT:   %12 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$O6rEVxIuA5O1E0KWpQBCgGx26X5gYhJ_nnJnHVL8_7U", ptr @"*_llgo_main.typ")
-// CHECK-NEXT:   %13 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %12, 0
-// CHECK-NEXT:   %14 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %13, ptr %0, 1
-// CHECK-NEXT:   %15 = extractvalue { ptr, ptr } %5, 1
-// CHECK-NEXT:   %16 = extractvalue { ptr, ptr } %5, 0
-// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %16)
-// CHECK-NEXT:   %17 = call %"{{.*}}/runtime/internal/runtime.String" %__llgo_funcval_code(ptr {{(nest|swiftself)}} %15, %"{{.*}}/runtime/internal/runtime.iface" %14)
-// CHECK-NEXT:   %18 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$O6rEVxIuA5O1E0KWpQBCgGx26X5gYhJ_nnJnHVL8_7U", ptr @"*_llgo_main.typ")
-// CHECK-NEXT:   %19 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %18, 0
-// CHECK-NEXT:   %20 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %19, ptr %0, 1
-// CHECK-NEXT:   %21 = extractvalue { ptr, ptr } %11, 1
-// CHECK-NEXT:   %22 = extractvalue { ptr, ptr } %11, 0
-// CHECK-NEXT:   %__llgo_funcval_code1 = call ptr asm "", "=r,0"(ptr %22)
-// CHECK-NEXT:   %23 = call %"{{.*}}/runtime/internal/runtime.String" %__llgo_funcval_code1(ptr {{(nest|swiftself)}} %21, %"{{.*}}/runtime/internal/runtime.iface" %20)
-// CHECK-NEXT:   %24 = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" %17, %"{{.*}}/runtime/internal/runtime.String" %23)
-// CHECK-NEXT:   %25 = xor i1 %24, true
-// CHECK-NEXT:   br i1 %25, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %26 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @25, i64 5 }, ptr %26, align 8
-// CHECK-NEXT:   %27 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %26, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %27)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[TYP:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK: [[LOADED_MAP:%[0-9]+]] = load ptr, ptr @main.op
+// CHECK: [[MAP_SLOT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MapAccess1"(ptr @"map[_llgo_string]_llgo_closure${{[-A-Za-z0-9_]+}}", ptr [[LOADED_MAP]], ptr %{{[0-9]+}})
+// CHECK-NEXT: [[MAP_FN:%[0-9]+]] = load { ptr, ptr }, ptr [[MAP_SLOT]]
+// CHECK-NEXT: [[LOADED_LIST:%[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr @main.list
+// CHECK-NEXT: [[LIST_DATA:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" [[LOADED_LIST]], 0
+// CHECK-NEXT: [[LIST_LEN:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" [[LOADED_LIST]], 1
+// CHECK: [[LIST_SLOT:%[0-9]+]] = getelementptr inbounds { ptr, ptr }, ptr [[LIST_DATA]], i64 0
+// CHECK-NEXT: [[LIST_FN:%[0-9]+]] = load { ptr, ptr }, ptr [[LIST_SLOT]]
+// CHECK-NEXT: [[ITAB1:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.typ")
+// CHECK: [[MAP_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[MAP_FN]], 1
+// CHECK-NEXT: [[MAP_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[MAP_FN]], 0
+// CHECK: [[MAP_RESULT:%[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.String" %__llgo_funcval_code(ptr {{(nest|swiftself)}} [[MAP_ENV]], %"{{.*}}/runtime/internal/runtime.iface" [[MAP_ARG:%[0-9]+]])
+// CHECK: [[ITAB2:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.typ")
+// CHECK: [[LIST_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[LIST_FN]], 1
+// CHECK-NEXT: [[LIST_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[LIST_FN]], 0
+// CHECK: [[LIST_RESULT:%[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.String" %__llgo_funcval_code1(ptr {{(nest|swiftself)}} [[LIST_ENV]], %"{{.*}}/runtime/internal/runtime.iface" [[LIST_ARG:%[0-9]+]])
+// CHECK-NEXT: [[SAME_RESULT:%[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" [[MAP_RESULT]], %"{{.*}}/runtime/internal/runtime.String" [[LIST_RESULT]])
+// CHECK-NEXT: [[RESULT_MISMATCH:%[0-9]+]] = xor i1 [[SAME_RESULT]], true
+// CHECK-NEXT: br i1 [[RESULT_MISMATCH]], label %{{.*}}, label %{{.*}}
+// CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @"main.(*typ).String"(ptr %0){{.*}} {
+// CHECK: [[STRING_FIELD:%[0-9]+]] = getelementptr inbounds %main.typ, ptr %0, i32 0, i32 0
+// CHECK-NEXT: [[STRING_VALUE:%[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.String", ptr [[STRING_FIELD]]
+// CHECK-NEXT: ret %"{{.*}}/runtime/internal/runtime.String" [[STRING_VALUE]]
 func main() {
 	t := &typ{"hello"}
 	fn1 := op["demo"]
@@ -86,13 +67,6 @@ func main() {
 		panic("error")
 	}
 }
-
-// CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @"main.(*typ).String"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds %main.typ, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load %"{{.*}}/runtime/internal/runtime.String", ptr %1, align 8
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %2
-// CHECK-NEXT: }
 
 func (t *typ) String() string {
 	return t.s

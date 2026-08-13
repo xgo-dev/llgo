@@ -3,6 +3,7 @@ package main
 
 import "reflect"
 
+// SYMBOL-NOT: main{{.*}}RawMessage{{.*}}drop
 // SYMBOL-DAG: main{{.*}}RawMessage{{.*}}UnmarshalJSON
 // SYMBOL-NOT: main{{.*}}RawMessage{{.*}}drop
 

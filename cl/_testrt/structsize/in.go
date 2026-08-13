@@ -16,10 +16,7 @@ type Foo struct {
 }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call i32 (ptr, ...) @printf(ptr @0, i64 14)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: call i32 (ptr, ...) @printf(ptr @{{[0-9]+}}, i64 14)
 func main() {
 	c.Printf(c.Str("%d"), unsafe.Sizeof(Foo{}))
 }

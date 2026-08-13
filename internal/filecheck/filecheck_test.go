@@ -132,6 +132,42 @@ func TestMatchSupportsCRLF(t *testing.T) {
 	}
 }
 
+func TestMatchWithTargetPrefixes(t *testing.T) {
+	spec := `// CHECK: common
+// DARWIN: darwin
+// ARM64: arm64
+// DARWIN-ARM64: combined
+// LINUX: linux
+`
+	input := "common\ndarwin\narm64\ncombined\n"
+	if err := MatchWithPrefixes(writeCheckFile(t, spec), input, TargetPrefixes("darwin", "arm64", "")...); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMatchWithTargetPrefixesAllowsUnusedAxes(t *testing.T) {
+	prefixes := TargetPrefixes("darwin", "arm64", "")
+	if err := MatchWithPrefixes(writeCheckFile(t, "// CHECK: common\n"), "common\n", prefixes...); err != nil {
+		t.Fatal(err)
+	}
+	if err := MatchWithPrefixes(writeCheckFile(t, "// DARWIN-ARM64: specific\n"), "specific\n", prefixes...); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTargetPrefixes(t *testing.T) {
+	got := strings.Join(TargetPrefixes("wasip1", "wasm", "wasm"), ",")
+	if want := "CHECK,WASIP1,WASM,WASIP1-WASM,TARGET-WASM"; got != want {
+		t.Fatalf("TargetPrefixes = %q, want %q", got, want)
+	}
+	if got := TargetSnapshotPrefix("darwin", "arm64", ""); got != "DARWIN-ARM64" {
+		t.Fatalf("TargetSnapshotPrefix = %q, want DARWIN-ARM64", got)
+	}
+	if got := TargetSnapshotPrefix("linux", "386", ""); got != "LINUX-ARCH-386" {
+		t.Fatalf("TargetSnapshotPrefix = %q, want LINUX-ARCH-386", got)
+	}
+}
+
 func writeCheckFile(t *testing.T, spec string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "test.go")

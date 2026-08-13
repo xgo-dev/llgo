@@ -10,15 +10,13 @@ type counter struct {
 }
 
 // CHECK-LABEL: define %main.stateFn @main.countState(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds %main.counter, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load i64, ptr %1, align 8
-// CHECK-NEXT:   %3 = add i64 %2, 1
-// CHECK-NEXT:   %4 = getelementptr inbounds %main.counter, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store i64 %3, ptr %4, align 8
-// CHECK: call void @"{{.*}}PrintString"(%"{{.*}}String" { ptr @0, i64 6 })
-// CHECK: call void @"{{.*}}PrintInt"(i64 %6)
-// CHECK: icmp sge i64 %8, %10
+// CHECK: %[[VALUE_PTR1:[0-9]+]] = getelementptr inbounds %main.counter, ptr %0, i32 0, i32 0
+// CHECK-NEXT: %[[OLD_VALUE:[0-9]+]] = load i64, ptr %[[VALUE_PTR1]]
+// CHECK-NEXT: %[[NEW_VALUE:[0-9]+]] = add i64 %[[OLD_VALUE]], 1
+// CHECK: store i64 %[[NEW_VALUE]], ptr %{{[0-9]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %[[PRINTED_VALUE:[0-9]+]])
+// CHECK: %[[DONE:[0-9]+]] = icmp sge i64 %{{[0-9]+}}, %{{[0-9]+}}
+// CHECK-NEXT: br i1 %[[DONE]], label %{{.*}}, label %{{.*}}
 // CHECK: ret %main.stateFn zeroinitializer
 // CHECK: ret %main.stateFn { ptr @main.countState, ptr null }
 func countState(c *counter) stateFn {
@@ -32,15 +30,17 @@ func countState(c *counter) stateFn {
 }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
+// CHECK: %[[COUNTER_OBJ:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 32)
+// CHECK: %[[MAX_SLOT:[0-9]+]] = getelementptr inbounds %main.counter, ptr %[[COUNTER_OBJ]], i32 0, i32 1
+// CHECK-NEXT: %[[STATE_SLOT:[0-9]+]] = getelementptr inbounds %main.counter, ptr %[[COUNTER_OBJ]], i32 0, i32 2
+// CHECK-NEXT: store i64 5, ptr %[[MAX_SLOT]]
+// CHECK-NEXT: store %main.stateFn { ptr @main.countState, ptr null }, ptr %[[STATE_SLOT]]
+// CHECK: %[[STATE:[0-9]+]] = load %main.stateFn, ptr %{{[0-9]+}}
+// CHECK-NEXT: %[[STATE_ENV:[0-9]+]] = extractvalue %main.stateFn %[[STATE]], 1
+// CHECK-NEXT: %[[STATE_CODE:[0-9]+]] = extractvalue %main.stateFn %[[STATE]], 0
+// CHECK: %[[NEXT_STATE:[0-9]+]] = call %main.stateFn %__llgo_funcval_code(ptr {{(nest|swiftself)}} %[[STATE_ENV]], ptr %[[COUNTER_OBJ]])
+// CHECK: store %main.stateFn %[[NEXT_STATE]], ptr %{{[0-9]+}}
 func main() {
-	// CHECK: call ptr @"{{.*}}AllocZ"(i64 32)
-	// CHECK: store i64 5, ptr %1, align 8
-	// CHECK: store %main.stateFn { ptr @main.countState, ptr null }, ptr %2, align 8
-	// CHECK: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %6)
-	// CHECK: call %main.stateFn %__llgo_funcval_code(ptr {{(nest|swiftself)}} %5, ptr %0)
-	// CHECK: store %main.stateFn %7, ptr %8, align 8
-	// CHECK: icmp ne ptr %11, null
-	// CHECK: br i1 %12, label %_llgo_1, label %_llgo_2
 	c := &counter{max: 5, state: countState}
 
 	for c.state != nil {

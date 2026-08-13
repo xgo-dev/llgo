@@ -5,10 +5,6 @@ import (
 	"unsafe"
 )
 
-// CHECK: {{^}}@0 = private unnamed_addr constant [30 x i8] c"unsafe.Slice: len out of range", align 1{{$}}
-// CHECK: {{^}}@1 = private unnamed_addr constant [46 x i8] c"unsafe.Slice: nil pointer with non-zero length", align 1{{$}}
-// CHECK: {{^}}@2 = private unnamed_addr constant [7 x i8] c"len > 0", align 1{{$}}
-
 func main() {
 	var s *int
 	var lens uint32
@@ -20,34 +16,12 @@ func main() {
 	}
 }
 
-// CHECK-LABEL: define void @main.init(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load i1, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store i1 true, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
+// A nil pointer is valid for unsafe.Slice only because the length is zero; the
+// compiler must fold all guards and the resulting length/branch consistently.
+// CHECK: [[LEN_RANGE:@[0-9]+]] = private unnamed_addr constant [30 x i8] c"unsafe.Slice: len out of range"
+// CHECK: [[NIL_NONZERO:@[0-9]+]] = private unnamed_addr constant [46 x i8] c"unsafe.Slice: nil pointer with non-zero length"
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertRuntimeError"(i1 false, %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 30 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertRuntimeError"(i1 false, %"{{.*}}/runtime/internal/runtime.String" { ptr @1, i64 46 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertRuntimeError"(i1 false, %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 30 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertRuntimeError"(i1 false, %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 30 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 0)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   br i1 false, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 7 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: call void @"{{.*}}AssertRuntimeError"(i1 false, %"{{.*}}String" { ptr [[LEN_RANGE]], i64 30 })
+// CHECK-NEXT: call void @"{{.*}}AssertRuntimeError"(i1 false, %"{{.*}}String" { ptr [[NIL_NONZERO]], i64 46 })
+// CHECK: call void @"{{.*}}PrintInt"(i64 0)
+// CHECK: br i1 false, label %{{.*}}, label %{{.*}}

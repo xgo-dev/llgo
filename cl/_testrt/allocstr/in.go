@@ -5,27 +5,20 @@ import (
 	"github.com/goplus/lib/c"
 )
 
-// CHECK: {{^}}%"{{.*}}/runtime/internal/runtime.String" = type { ptr, i64 }{{$}}
-// CHECK: {{^}}@0 = private unnamed_addr constant [12 x i8] c"Hello world\0A", align 1{{$}}
-
+// CHECK: [[HELLO_TEXT:@[0-9]+]] = private unnamed_addr constant [12 x i8] c"Hello world\0A"
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @main.hello(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 12 }
-// CHECK-NEXT: }
+// CHECK: ret %"{{.*}}/runtime/internal/runtime.String" { ptr [[HELLO_TEXT]], i64 12 }
 func hello() string {
 	return "Hello world\n"
 }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call %"{{.*}}/runtime/internal/runtime.String" @main.hello()
-// CHECK-NEXT:   %1 = extractvalue %"{{.*}}/runtime/internal/runtime.String" %0, 1
-// CHECK-NEXT:   %2 = add i64 %1, 1
-// CHECK-NEXT:   %3 = alloca i8, i64 %2, align 1
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.CStrCopy"(ptr %3, %"{{.*}}/runtime/internal/runtime.String" %0)
-// CHECK-NEXT:   %5 = call i32 (ptr, ...) @printf(ptr %4)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[TEXT:%[0-9]+]] = call %"{{.*}}String" @main.hello()
+// CHECK-NEXT: [[TEXT_LEN:%[0-9]+]] = extractvalue %"{{.*}}String" [[TEXT]], 1
+// CHECK-NEXT: [[CSTR_LEN:%[0-9]+]] = add i64 [[TEXT_LEN]], 1
+// CHECK-NEXT: [[CSTR_BUF:%[0-9]+]] = alloca i8, i64 [[CSTR_LEN]]
+// CHECK-NEXT: [[CSTR:%[0-9]+]] = call ptr @"{{.*}}CStrCopy"(ptr [[CSTR_BUF]], %"{{.*}}String" [[TEXT]])
+// CHECK-NEXT: call i32 (ptr, ...) @printf(ptr [[CSTR]])
 func main() {
 	c.Printf(c.AllocaCStr(hello()))
 }

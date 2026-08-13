@@ -28,10 +28,35 @@ import (
 	"github.com/goplus/llgo/internal/targets"
 )
 
+type GeneratedIR struct {
+	Text   string
+	GOOS   string
+	GOARCH string
+	Target string
+}
+
 func GenFrom(fileOrPkg string) string {
-	pkg, err := genFrom(fileOrPkg, 0)
+	return GenerateFrom(fileOrPkg).Text
+}
+
+func GenerateFrom(fileOrPkg string) GeneratedIR {
+	return GenerateFromWithConf(fileOrPkg, nil)
+}
+
+// GenerateFromWithConf compiles fileOrPkg through the normal package pipeline
+// and returns the module after target ABI lowering but before LLVM optimizer
+// passes. When conf is non-nil, its target and frontend options are preserved;
+// linked-build-only output settings are replaced with ModeGen behavior.
+func GenerateFromWithConf(fileOrPkg string, conf *build.Config) GeneratedIR {
+	pkg, err := genFromConfigured(fileOrPkg, conf)
 	check(err)
-	out := pkg.LPkg.String()
+	target := pkg.LPkg.Prog.Target()
+	out := GeneratedIR{
+		Text:   pkg.LPkg.String(),
+		GOOS:   target.GOOS,
+		GOARCH: target.GOARCH,
+		Target: target.Target,
+	}
 	// Release the compile's LLVM context: golden suites call GenFrom for
 	// every test dir inside one process, and undisposed contexts
 	// accumulate C++-side memory for the whole run.
@@ -39,12 +64,29 @@ func GenFrom(fileOrPkg string) string {
 	return out
 }
 
-func genFrom(pkgPath string, abiMode build.AbiMode) (build.Package, error) {
-	conf := &build.Config{
-		Mode:    build.ModeGen,
-		AbiMode: abiMode,
-		GenLL:   true,
+func genFromDefault(pkgPath string) (build.Package, error) {
+	return genFromConfigured(pkgPath, nil)
+}
+
+func genFromConfigured(pkgPath string, input *build.Config) (build.Package, error) {
+	conf := build.NewDefaultConf(build.ModeGen)
+	if input != nil {
+		*conf = *input
+		conf.Mode = build.ModeGen
+		conf.ModuleHook = nil
 	}
+	conf.GenLL = true
+	return genFromConf(pkgPath, conf)
+}
+
+func genFrom(pkgPath string, abiMode build.AbiMode) (build.Package, error) {
+	conf := build.NewDefaultConf(build.ModeGen)
+	conf.AbiMode = abiMode
+	conf.GenLL = true
+	return genFromConf(pkgPath, conf)
+}
+
+func genFromConf(pkgPath string, conf *build.Config) (build.Package, error) {
 	if err := applyFlagsFile(conf, filepath.Join(pkgPath, "flags.txt")); err != nil {
 		return nil, err
 	}
@@ -131,11 +173,7 @@ func SmartDoFileEx(pkgPath string, abiMode build.AbiMode) {
 	dir, _ := filepath.Split(pkg.GoFiles[0])
 	absDir, _ := filepath.Abs(dir)
 	absDir = filepath.ToSlash(absDir)
-	fname := autgenFile
-	if inCompilerDir(absDir) {
-		fname = "out.ll"
-	}
-	outFile := dir + fname
+	outFile := dir + autgenFile
 
 	b, err := os.ReadFile(outFile)
 	if err == nil && len(b) == 1 && b[0] == ';' {
@@ -145,7 +183,7 @@ func SmartDoFileEx(pkgPath string, abiMode build.AbiMode) {
 	if err = os.WriteFile(outFile, []byte(pkg.LPkg.String()), 0644); err != nil {
 		panic(err)
 	}
-	if false && fname == autgenFile {
+	if false {
 		genZip(absDir, "llgo_autogen.lla", autgenFile)
 	}
 }
@@ -156,8 +194,4 @@ func genZip(dir string, outFile, inFile string) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Run()
-}
-
-func inCompilerDir(dir string) bool {
-	return strings.Contains(dir, "/cl/_test")
 }

@@ -3,7 +3,7 @@ package main
 
 import _ "unsafe"
 
-// CHECK: {{^}}@_bar_x = external global { [16 x i8], [2 x ptr] }, align 8{{$}}
+// CHECK: {{^}}@_bar_x = external global { [16 x i8], [2 x ptr] }
 //
 //go:linkname barX _bar_x
 var barX struct {
@@ -11,7 +11,7 @@ var barX struct {
 	Callbacks [2]func()
 }
 
-// CHECK: {{^}}@_bar_y = external global { [16 x i8] }, align 1{{$}}
+// CHECK: {{^}}@_bar_y = external global { [16 x i8] }
 //
 //go:linkname barY _bar_y
 var barY struct {
@@ -19,11 +19,8 @@ var barY struct {
 }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load { [16 x i8], [2 x ptr] }, ptr @_bar_x, align 8
-// CHECK-NEXT:   %1 = load { [16 x i8] }, ptr @_bar_y, align 1
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: load { [16 x i8], [2 x ptr] }, ptr @_bar_x
+// CHECK: load { [16 x i8] }, ptr @_bar_y
 func main() {
 	_ = barX
 	_ = barY

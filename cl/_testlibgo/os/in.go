@@ -5,20 +5,16 @@ import "os"
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 func main() {
-	// CHECK-NEXT: _llgo_0:
-	// CHECK-NEXT:   %0 = call { %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.iface" } @os.Getwd()
-	// CHECK-NEXT:   %1 = extractvalue { %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.iface" } %0, 0
-	// CHECK-NEXT:   %2 = extractvalue { %"{{.*}}/runtime/internal/runtime.String", %"{{.*}}/runtime/internal/runtime.iface" } %0, 1
-	// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}/runtime/internal/runtime.iface" %2)
-	// CHECK-NEXT:   %4 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %2, 1
-	// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" undef, ptr %3, 0
-	// CHECK-NEXT:   %6 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" %5, ptr %4, 1
-	// CHECK-NEXT:   %7 = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
-	// CHECK-NEXT:   %8 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" undef, ptr %7, 0
-	// CHECK-NEXT:   %9 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" %8, ptr null, 1
-	// CHECK-NEXT:   %10 = call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"(%"{{.*}}/runtime/internal/runtime.eface" %6, %"{{.*}}/runtime/internal/runtime.eface" %9)
-	// CHECK-NEXT:   %11 = xor i1 %10, true
-	// CHECK-NEXT:   br i1 %11, label %_llgo_1, label %_llgo_2
+	// CHECK: [[GETWD:%[0-9]+]] = call { %"{{.*}}String", %"{{.*}}iface" } @os.Getwd()
+	// CHECK-NEXT: [[CWD:%[0-9]+]] = extractvalue { %"{{.*}}String", %"{{.*}}iface" } [[GETWD]], 0
+	// CHECK-NEXT: [[GETWD_ERR:%[0-9]+]] = extractvalue { %"{{.*}}String", %"{{.*}}iface" } [[GETWD]], 1
+	// CHECK: [[ERR_TYPE:%[0-9]+]] = call ptr @"{{.*}}IfaceType"(%"{{.*}}iface" [[GETWD_ERR]])
+	// CHECK: [[ERR_EFACE:%[0-9]+]] = insertvalue %"{{.*}}eface" %{{[0-9]+}}, ptr %{{[0-9]+}}, 1
+	// CHECK: [[NO_ERR_TYPE:%[0-9]+]] = call ptr @"{{.*}}IfaceType"(%"{{.*}}iface" zeroinitializer)
+	// CHECK: [[NO_ERR:%[0-9]+]] = insertvalue %"{{.*}}eface" %{{[0-9]+}}, ptr null, 1
+	// CHECK-NEXT: [[ERR_IS_NIL:%[0-9]+]] = call i1 @"{{.*}}EfaceEqual"(%"{{.*}}eface" [[ERR_EFACE]], %"{{.*}}eface" [[NO_ERR]])
+	// CHECK-NEXT: [[HAS_ERR:%[0-9]+]] = xor i1 [[ERR_IS_NIL]], true
+	// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" [[CWD]])
 	wd, err := os.Getwd()
 	if err != nil {
 		panic(err)

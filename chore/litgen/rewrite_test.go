@@ -1,9 +1,12 @@
 package main
 
 import (
+	"go/format"
 	"strings"
 	"testing"
 )
+
+var testGenerationConfig = generationConfig{allFunctions: true, checkGlobals: "smart"}
 
 func TestRewriteSource_InsertsMainAndClosure(t *testing.T) {
 	const src = `// LITTEST
@@ -26,7 +29,7 @@ _llgo_0:
 }
 
 `
-	got, err := rewriteSource(src, "in.go", "example.com/p", "example.com", ir)
+	got, err := rewriteSource(src, "in.go", "example.com/p", "example.com", ir, testGenerationConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +80,7 @@ _llgo_0:
   ret void
 }
 `
-	got, err := rewriteSource(src, "in.go", "example.com/p", "example.com", ir)
+	got, err := rewriteSource(src, "in.go", "example.com/p", "example.com", ir, testGenerationConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,13 +127,14 @@ _llgo_0:
   ret void
 }
 `
-	got, err := rewriteSource(src, "in.go", "example.com/p", "example.com", ir)
+	got, err := rewriteSource(src, "in.go", "example.com/p", "example.com", ir, testGenerationConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	addCheck := `// CHECK-LABEL: define i64 @"{{.*}}/p.add"(i64 %0, i64 %1){{.*}} {`
+	addCheck := `// CHECK-LABEL: define i64 @"{{.*}}/p.add"(`
+	addSame := `// CHECK-SAME: i64 %[[TMP0:[0-9]+]], i64 %[[TMP1:[0-9]+]]){{.*}} {`
 	initCheck := `// CHECK-LABEL: define void @"{{.*}}/p.init"(){{.*}} {`
-	if strings.Index(got, addCheck) < 0 || strings.Index(got, initCheck) < 0 {
+	if strings.Index(got, addCheck) < 0 || strings.Index(got, addSame) < 0 || strings.Index(got, initCheck) < 0 {
 		t.Fatalf("missing checks:\n%s", got)
 	}
 	if strings.Index(got, addCheck) > strings.Index(got, initCheck) {
@@ -155,20 +159,20 @@ _llgo_0:
   ret void
 }
 `
-	got, err := rewriteSource(src, "in.go", "example.com/p", "example.com", ir)
+	got, err := rewriteSource(src, "in.go", "example.com/p", "example.com", ir, testGenerationConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, `// CHECK: {{^}}@0 = private unnamed_addr constant [4 x i8] c"Hi\0A\00", align 1{{$}}`) {
+	if !strings.Contains(got, `// CHECK: {{^}}@[[GLOB0:[0-9]+]] = private unnamed_addr constant [4 x i8] c"Hi\0A\00", align 1{{$}}`) {
 		t.Fatalf("missing numeric global @0:\n%s", got)
 	}
-	if !strings.Contains(got, `// CHECK: {{^}}@1 = private unnamed_addr constant [3 x i8] c"%s\00", align 1{{$}}`) {
+	if !strings.Contains(got, `// CHECK: {{^}}@[[GLOB1:[0-9]+]] = private unnamed_addr constant [3 x i8] c"%s\00", align 1{{$}}`) {
 		t.Fatalf("missing numeric global @1:\n%s", got)
 	}
 	if strings.Contains(got, `// CHECK: {{^}}@"{{.*}}/p.named" = global i64 1{{$}}`) {
 		t.Fatalf("named globals should not be emitted by default:\n%s", got)
 	}
-	if strings.Index(got, `// CHECK: {{^}}@0 = private unnamed_addr constant [4 x i8] c"Hi\0A\00", align 1{{$}}`) > strings.Index(got, "func main()") {
+	if strings.Index(got, `// CHECK: {{^}}@[[GLOB0:[0-9]+]] = private unnamed_addr constant [4 x i8] c"Hi\0A\00", align 1{{$}}`) > strings.Index(got, "func main()") {
 		t.Fatalf("global checks should be placed before first declaration:\n%s", got)
 	}
 }
@@ -198,7 +202,7 @@ _llgo_0:
   ret double %1
 }
 `
-	got, err := rewriteSource(src, "in.go", "example.com/p", "example.com", ir)
+	got, err := rewriteSource(src, "in.go", "example.com/p", "example.com", ir, testGenerationConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,16 +211,17 @@ package main
 
 import _ "unsafe"
 
-// CHECK: {{^}}@0 = private unnamed_addr constant [4 x i8] c"sqrt"{{$}}
+// CHECK: {{^}}@[[GLOB0:[0-9]+]] = private unnamed_addr constant [4 x i8] c"sqrt"{{$}}
 
 //go:linkname cSqrt C.sqrt
 func cSqrt(float64) float64
 
-// CHECK-LABEL: define double @"{{.*}}/p.callSqrt"(double %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(ptr @0)
-// CHECK-NEXT:   %1 = call double @sqrt(double %0)
-// CHECK-NEXT:   ret double %1
+// CHECK-LABEL: define double @"{{.*}}/p.callSqrt"(
+// CHECK-SAME: double %[[TMP0:[0-9]+]]){{.*}} {
+// CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(ptr @[[GLOB0]])
+// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call double @sqrt(double %[[TMP0]])
+// CHECK-NEXT:   ret double %[[TMP1]]
 // CHECK-NEXT: }
 
 func callSqrt(x float64) float64 {
@@ -297,7 +302,7 @@ var (
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := rewriteSource(test.src, "in.go", "example.com/p", "example.com", test.ir)
+			got, err := rewriteSource(test.src, "in.go", "example.com/p", "example.com", test.ir, testGenerationConfig)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -335,7 +340,7 @@ _llgo_0:
   ret i64 2
 }
 `
-	got, err := rewriteSource(src, "in.go", "example.com/p", "example.com", ir)
+	got, err := rewriteSource(src, "in.go", "example.com/p", "example.com", ir, testGenerationConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,6 +394,24 @@ func TestGeneralizeClosureEnvAttrs(t *testing.T) {
 	}
 }
 
+func TestScrubIRLineGeneralizesCgoSymbolHash(t *testing.T) {
+	line := `  %0 = load ptr, ptr @main._cgo_96608f8de8c8_Cfunc__Cmalloc, align 8`
+	got := scrubIRLine(line)
+	want := `  %0 = load ptr, ptr @main._cgo_{{[0-9a-f]+}}_Cfunc__Cmalloc, align 8`
+	if got != want {
+		t.Fatalf("scrubIRLine = %q, want %q", got, want)
+	}
+}
+
+func TestScrubIRLineEscapesFileCheckVariableSyntax(t *testing.T) {
+	line := `  call void @"main.(*Slice[[]int,int]).Append"()`
+	got := scrubIRLine(line)
+	want := `  call void @"main.(*Slice{{\[\[}}]int,int]).Append"()`
+	if got != want {
+		t.Fatalf("scrubIRLine = %q, want %q", got, want)
+	}
+}
+
 func TestGeneralizeModulePath_ReplacesOnlyQuotedSegments(t *testing.T) {
 	line := `  %0 = getelementptr inbounds %"go/example.Type", ptr @"go/example.fn"`
 	got := generalizeModulePath(line, "go")
@@ -404,5 +427,257 @@ func TestGeneralizeModulePath_IgnoresEscapedQuotes(t *testing.T) {
 	want := "  !0 = !{!\"prefix \\\"quoted\\\" suffix\", !\"{{.*}}/example.fn\"}"
 	if got != want {
 		t.Fatalf("generalizeModulePath = %q, want %q", got, want)
+	}
+}
+
+func TestGenerationConfigForSourceProtectsManualChecks(t *testing.T) {
+	_, autogenerated, err := generationConfigForSource("// LITTEST\npackage main\n", commandOptions{globals: "smart"})
+	if autogenerated {
+		t.Fatal("manual source reported as autogenerated")
+	}
+	if err == nil || !strings.Contains(err.Error(), "refusing to replace manual CHECK lines") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGenerationConfigForSourceUsesEmbeddedArguments(t *testing.T) {
+	src := `// LITTEST
+// NOTE: Assertions have been autogenerated by chore/litgen UTC_ARGS: --function=run(?:\$[0-9]+)? --check-globals=none
+package main
+`
+	cfg, autogenerated, err := generationConfigForSource(src, commandOptions{globals: "smart"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !autogenerated {
+		t.Fatal("autogenerated note was not detected")
+	}
+	if cfg.allFunctions || len(cfg.functions) != 1 || cfg.functions[0] != `run(?:\$[0-9]+)?` {
+		t.Fatalf("unexpected function config: %+v", cfg)
+	}
+	if cfg.checkGlobals != "none" {
+		t.Fatalf("checkGlobals = %q, want none", cfg.checkGlobals)
+	}
+	if !cfg.matchesFunction("main.run$1", "example.com/p") || cfg.matchesFunction("main.main", "example.com/p") {
+		t.Fatalf("embedded function filter does not select only run closures")
+	}
+}
+
+func TestSetAutogeneratedNoteIsCanonicalAndIdempotent(t *testing.T) {
+	cfg := generationConfig{functions: []string{"run", `run\$1`}, checkGlobals: "smart"}
+	src := "// LITTEST\n// NOTE: Assertions have been autogenerated by chore/litgen UTC_ARGS: --all-functions --check-globals=all\npackage main\n"
+	wantNote := "// NOTE: Assertions have been autogenerated by chore/litgen UTC_ARGS: --function=run --function=run\\$1 --check-globals=smart"
+	got := setAutogeneratedNote(src, cfg)
+	if strings.Count(got, autogeneratedNote) != 1 || !strings.Contains(got, wantNote) {
+		t.Fatalf("unexpected autogenerated note:\n%s", got)
+	}
+	if again := setAutogeneratedNote(got, cfg); again != got {
+		t.Fatalf("setAutogeneratedNote is not idempotent:\n--- first ---\n%s--- second ---\n%s", got, again)
+	}
+}
+
+func TestStripCheckDirectivesPreservesOtherTargetSnapshots(t *testing.T) {
+	src := `// LITTEST
+// CHECK-LABEL: legacy
+// DARWIN-ARM64-LABEL: darwin
+// DARWIN-ARM64-NEXT: darwin body
+// LINUX-AMD64-LABEL: linux
+// LINUX-AMD64-NEXT: linux body
+package main
+`
+	got := stripCheckDirectives(src, "DARWIN-ARM64")
+	if strings.Contains(got, "legacy") || strings.Contains(got, "darwin") {
+		t.Fatalf("active or legacy directives were preserved:\n%s", got)
+	}
+	if !strings.Contains(got, "LINUX-AMD64-LABEL: linux") || !strings.Contains(got, "LINUX-AMD64-NEXT: linux body") {
+		t.Fatalf("other target snapshot was removed:\n%s", got)
+	}
+}
+
+func TestRewriteSourceUsesConfiguredPrefix(t *testing.T) {
+	const src = "// LITTEST\npackage main\n\nfunc main() {}\n"
+	const ir = "define void @main.main() {\n_llgo_0:\n  ret void\n}\n"
+	cfg := testGenerationConfig
+	cfg.checkPrefix = "LINUX-AMD64"
+	got, err := rewriteSource(src, "in.go", "example.com/p", "example.com", ir, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "// LINUX-AMD64-LABEL:") || strings.Contains(got, "// CHECK-LABEL:") {
+		t.Fatalf("configured prefix was not applied:\n%s", got)
+	}
+}
+
+func TestRewriteSourceTargetSnapshotsAreIdempotent(t *testing.T) {
+	const src = `// LITTEST
+package main
+
+// DARWIN-ARM64-LABEL: define void @main.main(){{.*}} {
+// DARWIN-ARM64-NEXT: entry:
+// DARWIN-ARM64-NEXT:   ret void
+// DARWIN-ARM64-NEXT: }
+
+func main() {}
+`
+	const ir = `define void @"example.com/p.main"() {
+entry:
+  ret void
+}
+`
+	cfg := testGenerationConfig
+	cfg.checkPrefix = "LINUX-AMD64"
+	rewrite := func(input string) string {
+		t.Helper()
+		cleaned := stripCheckDirectives(input, cfg.checkPrefix)
+		got, err := rewriteSource(cleaned, "in.go", "example.com/p", "example.com", ir, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		formatted, err := format.Source([]byte(got))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(formatted)
+	}
+	first := rewrite(src)
+	if !strings.Contains(first, "// DARWIN-ARM64-NEXT: }\n\n// LINUX-AMD64-LABEL:") {
+		t.Fatalf("target snapshots are not separated:\n%s", first)
+	}
+	if second := rewrite(first); second != first {
+		t.Fatalf("target rewrite is not idempotent:\n--- first ---\n%s--- second ---\n%s", first, second)
+	}
+}
+
+func TestMergeTargetSnapshotsKeepsOnlyDifferencesTargetSpecific(t *testing.T) {
+	const src = `// LITTEST
+// DARWIN-ARM64-LABEL: define void @main.f(
+// DARWIN-ARM64-SAME: [2 x i64] %[[TMP0:[0-9]+]]){{.*}} {
+// DARWIN-ARM64-NEXT: entry:
+// DARWIN-ARM64-NEXT:   call void @common()
+// DARWIN-ARM64-NEXT:   ret void
+// DARWIN-ARM64-NEXT: }
+
+// LINUX-AMD64-LABEL: define void @main.f(
+// LINUX-AMD64-SAME: ptr %[[TMP0:[0-9]+]], i64 %[[TMP1:[0-9]+]]){{.*}} {
+// LINUX-AMD64-NEXT: entry:
+// LINUX-AMD64-NEXT:   call void @common()
+// LINUX-AMD64-NEXT:   ret void
+// LINUX-AMD64-NEXT: }
+
+package main
+`
+	got := mergeTargetSnapshots(src, []string{"DARWIN-ARM64", "LINUX-AMD64"})
+	for _, common := range []string{
+		"// CHECK-LABEL: define void @main.f(",
+		"// CHECK-NEXT: entry:",
+		"// CHECK-NEXT:   call void @common()",
+		"// CHECK-NEXT:   ret void",
+		"// CHECK-NEXT: }",
+	} {
+		if !strings.Contains(got, common) {
+			t.Fatalf("missing common directive %q:\n%s", common, got)
+		}
+	}
+	if !strings.Contains(got, "// DARWIN-ARM64-SAME: [2 x i64]") ||
+		!strings.Contains(got, "// LINUX-AMD64-SAME: ptr") {
+		t.Fatalf("target-specific signatures were not preserved:\n%s", got)
+	}
+	expanded := expandTargetSnapshots(got, []string{"DARWIN-ARM64", "LINUX-AMD64"})
+	if remixed := mergeTargetSnapshots(expanded, []string{"DARWIN-ARM64", "LINUX-AMD64"}); remixed != got {
+		t.Fatalf("merged snapshots are not idempotent:\n--- first ---\n%s--- second ---\n%s", got, remixed)
+	}
+}
+
+func TestRewriteSourceFiltersFunctions(t *testing.T) {
+	const src = `// LITTEST
+package main
+
+func keep() {}
+func drop() {}
+`
+	const ir = `define void @main.keep() {
+_llgo_0:
+  ret void
+}
+define void @main.drop() {
+_llgo_0:
+  ret void
+}
+`
+	cfg := generationConfig{functions: []string{"keep"}, checkGlobals: "none"}
+	if err := cfg.compile(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := rewriteSource(src, "in.go", "example.com/p", "example.com", ir, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "@main.keep") || strings.Contains(got, "@main.drop") {
+		t.Fatalf("function filter mismatch:\n%s", got)
+	}
+}
+
+func TestRewriteSourceSmartGlobalsFollowSelectedFunctions(t *testing.T) {
+	const src = `// LITTEST
+package main
+
+func keep() {}
+func drop() {}
+`
+	const ir = `@0 = private unnamed_addr constant [4 x i8] c"keep"
+@1 = private unnamed_addr constant [4 x i8] c"drop"
+
+define void @main.keep() {
+_llgo_0:
+  call void @print(ptr @0)
+  ret void
+}
+
+define void @main.drop() {
+_llgo_0:
+  call void @print(ptr @1)
+  ret void
+}
+`
+	cfg := generationConfig{functions: []string{"keep"}, checkGlobals: "smart"}
+	if err := cfg.compile(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := rewriteSource(src, "in.go", "example.com/p", "example.com", ir, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `c"keep"`) {
+		t.Fatalf("selected function global is missing:\n%s", got)
+	}
+	if strings.Contains(got, `c"drop"`) {
+		t.Fatalf("unselected function global leaked into smart checks:\n%s", got)
+	}
+}
+
+func TestIRGeneralizerAbstractsNumberingButNotStrings(t *testing.T) {
+	g := newIRGeneralizer()
+	g.startFunction()
+	lines := []string{
+		`define void @main.f(i64 %0) {`,
+		`_llgo_0:`,
+		`  %1 = call ptr @use(i64 %0, ptr @12)`,
+		`  call void @print(ptr @12) ; text "%0 @12 _llgo_0"`,
+		`  br label %_llgo_0`,
+	}
+	var got []string
+	for _, line := range lines {
+		got = append(got, g.generalizeFunctionLine(line))
+	}
+	joined := strings.Join(got, "\n")
+	for _, want := range []string{
+		`%[[TMP0:[0-9]+]]`, `%[[TMP1:[0-9]+]]`, `%[[TMP0]]`,
+		`@[[GLOB12:[0-9]+]]`, `@[[GLOB12]]`,
+		`_llgo_[[BB0:[0-9]+]]`, `%_llgo_[[BB0]]`,
+		`"%0 @12 _llgo_0"`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("generalized output missing %q:\n%s", want, joined)
+		}
 	}
 }

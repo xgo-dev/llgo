@@ -334,6 +334,14 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 	if c.packageCacheDisabled(pkg.ID) {
 		return false
 	}
+	// ModeGen and ModuleHook are observation points for the packages explicitly
+	// named by the build. Loading one of those packages from cache would either
+	// return the freshly registered pre-lowering shell module or silently
+	// suppress the hook. Keep dependency cache hits enabled: the caller asked to
+	// observe its initial package modules, not to rebuild the world.
+	if pkgExists(c.initial, pkg.Package) && (c.mode == ModeGen || c.buildConf.ModuleHook != nil) {
+		return false
+	}
 
 	// Main packages are intentionally not written to the build cache because
 	// each executable's entry module is linked against the current main archive.

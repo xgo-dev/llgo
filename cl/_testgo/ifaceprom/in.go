@@ -5,11 +5,6 @@ package main
 // struct.  In particular, this test exercises that the correct
 // method is called.
 
-// CHECK: {{^}}@0 = private unnamed_addr constant [3 x i8] c"two", align 1{{$}}
-// CHECK: {{^}}@1 = private unnamed_addr constant [48 x i8] c"{{.*}}/cl/_testgo/ifaceprom.impl", align 1{{$}}
-// CHECK: {{^}}@2 = private unnamed_addr constant [3 x i8] c"one", align 1{{$}}
-// CHECK: {{^}}@13 = private unnamed_addr constant [4 x i8] c"pass", align 1{{$}}
-
 type I interface {
 	one() int
 	two() string
@@ -66,392 +61,192 @@ func main() {
 }
 
 // CHECK-LABEL: define i64 @main.S.one(%main.S %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = alloca %main.S, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
-// CHECK-NEXT:   store %main.S %0, ptr %1, align 8
-// CHECK-NEXT:   %2 = getelementptr inbounds %main.S, ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %2, align 8
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %3)
-// CHECK-NEXT:   %5 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %3, 0
-// CHECK-NEXT:   %6 = getelementptr ptr, ptr %5, i64 3
-// CHECK-NEXT:   %7 = load ptr, ptr %6, align 8
-// CHECK-NEXT:   %8 = insertvalue { ptr, ptr } undef, ptr %7, 0
-// CHECK-NEXT:   %9 = insertvalue { ptr, ptr } %8, ptr %4, 1
-// CHECK-NEXT:   %10 = extractvalue { ptr, ptr } %9, 0
-// CHECK-NEXT:   %11 = call ptr @"{{.*}}/runtime/internal/runtime.StartRecoverFrameAlias"(ptr @main.S.one, ptr %10)
-// CHECK-NEXT:   %12 = extractvalue { ptr, ptr } %9, 1
-// CHECK-NEXT:   %13 = extractvalue { ptr, ptr } %9, 0
-// CHECK-NEXT:   %14 = call i64 %13(ptr %12)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrameAlias"(ptr %11)
-// CHECK-NEXT:   ret i64 %14
-// CHECK-NEXT: }
+// CHECK: [[S_ONE_ADDR:%[0-9]+]] = alloca %main.S
+// CHECK: store %main.S %0, ptr [[S_ONE_ADDR]]
+// CHECK-NEXT: [[S_ONE_FIELD:%[0-9]+]] = getelementptr inbounds %main.S, ptr [[S_ONE_ADDR]], i32 0, i32 0
+// CHECK-NEXT: [[S_ONE_IFACE:%[0-9]+]] = load %"{{.*}}iface", ptr [[S_ONE_FIELD]]
+// CHECK: [[S_ONE_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}iface" [[S_ONE_IFACE]])
+// CHECK: [[S_ONE_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[S_ONE_IFACE]], 0
+// CHECK: [[S_ONE_SLOT:%.*]] = getelementptr ptr, ptr [[S_ONE_ITAB]], i64 3
+// CHECK: [[S_ONE_CODE:%.*]] = load ptr, ptr [[S_ONE_SLOT]]
+// CHECK: [[S_ONE_PAIR_0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[S_ONE_CODE]], 0
+// CHECK: [[S_ONE_PAIR:%.*]] = insertvalue { ptr, ptr } [[S_ONE_PAIR_0]], ptr [[S_ONE_DATA]], 1
+// CHECK: [[S_ONE_CALL_DATA:%.*]] = extractvalue { ptr, ptr } [[S_ONE_PAIR]], 1
+// CHECK: [[S_ONE_CALL_CODE:%.*]] = extractvalue { ptr, ptr } [[S_ONE_PAIR]], 0
+// CHECK: [[S_ONE_RESULT:%.*]] = call i64 [[S_ONE_CALL_CODE]](ptr [[S_ONE_CALL_DATA]])
+// CHECK: ret i64 [[S_ONE_RESULT]]
 
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @main.S.two(%main.S %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = alloca %main.S, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
-// CHECK-NEXT:   store %main.S %0, ptr %1, align 8
-// CHECK-NEXT:   %2 = getelementptr inbounds %main.S, ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %2, align 8
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %3)
-// CHECK-NEXT:   %5 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %3, 0
-// CHECK-NEXT:   %6 = getelementptr ptr, ptr %5, i64 4
-// CHECK-NEXT:   %7 = load ptr, ptr %6, align 8
-// CHECK-NEXT:   %8 = insertvalue { ptr, ptr } undef, ptr %7, 0
-// CHECK-NEXT:   %9 = insertvalue { ptr, ptr } %8, ptr %4, 1
-// CHECK-NEXT:   %10 = extractvalue { ptr, ptr } %9, 0
-// CHECK-NEXT:   %11 = call ptr @"{{.*}}/runtime/internal/runtime.StartRecoverFrameAlias"(ptr @main.S.two, ptr %10)
-// CHECK-NEXT:   %12 = extractvalue { ptr, ptr } %9, 1
-// CHECK-NEXT:   %13 = extractvalue { ptr, ptr } %9, 0
-// CHECK-NEXT:   %14 = call %"{{.*}}/runtime/internal/runtime.String" %13(ptr %12)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrameAlias"(ptr %11)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %14
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define i64 @"main.(*S).one"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds %main.S, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %1, align 8
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %2)
-// CHECK-NEXT:   %4 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %2, 0
-// CHECK-NEXT:   %5 = getelementptr ptr, ptr %4, i64 3
-// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
-// CHECK-NEXT:   %7 = insertvalue { ptr, ptr } undef, ptr %6, 0
-// CHECK-NEXT:   %8 = insertvalue { ptr, ptr } %7, ptr %3, 1
-// CHECK-NEXT:   %9 = extractvalue { ptr, ptr } %8, 0
-// CHECK-NEXT:   %10 = call ptr @"{{.*}}/runtime/internal/runtime.StartRecoverFrameAlias"(ptr @"main.(*S).one", ptr %9)
-// CHECK-NEXT:   %11 = extractvalue { ptr, ptr } %8, 1
-// CHECK-NEXT:   %12 = extractvalue { ptr, ptr } %8, 0
-// CHECK-NEXT:   %13 = call i64 %12(ptr %11)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrameAlias"(ptr %10)
-// CHECK-NEXT:   ret i64 %13
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @"main.(*S).two"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds %main.S, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %1, align 8
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %2)
-// CHECK-NEXT:   %4 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %2, 0
-// CHECK-NEXT:   %5 = getelementptr ptr, ptr %4, i64 4
-// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
-// CHECK-NEXT:   %7 = insertvalue { ptr, ptr } undef, ptr %6, 0
-// CHECK-NEXT:   %8 = insertvalue { ptr, ptr } %7, ptr %3, 1
-// CHECK-NEXT:   %9 = extractvalue { ptr, ptr } %8, 0
-// CHECK-NEXT:   %10 = call ptr @"{{.*}}/runtime/internal/runtime.StartRecoverFrameAlias"(ptr @"main.(*S).two", ptr %9)
-// CHECK-NEXT:   %11 = extractvalue { ptr, ptr } %8, 1
-// CHECK-NEXT:   %12 = extractvalue { ptr, ptr } %8, 0
-// CHECK-NEXT:   %13 = call %"{{.*}}/runtime/internal/runtime.String" %12(ptr %11)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrameAlias"(ptr %10)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %13
-// CHECK-NEXT: }
+// CHECK: [[S_TWO_ADDR:%[0-9]+]] = alloca %main.S
+// CHECK: store %main.S %0, ptr [[S_TWO_ADDR]]
+// CHECK-NEXT: [[S_TWO_FIELD:%[0-9]+]] = getelementptr inbounds %main.S, ptr [[S_TWO_ADDR]], i32 0, i32 0
+// CHECK-NEXT: [[S_TWO_IFACE:%[0-9]+]] = load %"{{.*}}iface", ptr [[S_TWO_FIELD]]
+// CHECK: [[S_TWO_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}iface" [[S_TWO_IFACE]])
+// CHECK: [[S_TWO_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[S_TWO_IFACE]], 0
+// CHECK: [[S_TWO_SLOT:%.*]] = getelementptr ptr, ptr [[S_TWO_ITAB]], i64 4
+// CHECK: [[S_TWO_CODE:%.*]] = load ptr, ptr [[S_TWO_SLOT]]
+// CHECK: [[S_TWO_PAIR_0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[S_TWO_CODE]], 0
+// CHECK: [[S_TWO_PAIR:%.*]] = insertvalue { ptr, ptr } [[S_TWO_PAIR_0]], ptr [[S_TWO_DATA]], 1
+// CHECK: [[S_TWO_CALL_DATA:%.*]] = extractvalue { ptr, ptr } [[S_TWO_PAIR]], 1
+// CHECK: [[S_TWO_CALL_CODE:%.*]] = extractvalue { ptr, ptr } [[S_TWO_PAIR]], 0
+// CHECK: [[S_TWO_RESULT:%.*]] = call %"{{.*}}String" [[S_TWO_CALL_CODE]](ptr [[S_TWO_CALL_DATA]])
+// CHECK: ret %"{{.*}}String" [[S_TWO_RESULT]]
 
 // CHECK-LABEL: define i64 @main.impl.one(%main.impl %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   ret i64 1
-// CHECK-NEXT: }
+// CHECK: ret i64 1
 
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @main.impl.two(%main.impl %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 3 }
-// CHECK-NEXT: }
+// CHECK: ret %"{{.*}}String" { ptr @{{.*}}, i64 3 }
 
 // CHECK-LABEL: define i64 @"main.(*impl).one"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @1, i64 48 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 3 })
-// CHECK-NEXT:   %2 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = call i64 @main.impl.one(%main.impl zeroinitializer)
-// CHECK-NEXT:   ret i64 %3
-// CHECK-NEXT: }
+// CHECK: [[IMPL_ONE_NIL:%[0-9]+]] = icmp eq ptr %0, null
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 [[IMPL_ONE_NIL]], %"{{.*}}String" {{.*}}, %"{{.*}}String" {{.*}})
+// CHECK: [[IMPL_ONE_RESULT:%.*]] = call i64 @main.impl.one(%main.impl zeroinitializer)
+// CHECK: ret i64 [[IMPL_ONE_RESULT]]
 
-// CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @"main.(*impl).two"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @1, i64 48 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 3 })
-// CHECK-NEXT:   %2 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 %2)
-// CHECK-NEXT:   %3 = call %"{{.*}}/runtime/internal/runtime.String" @main.impl.two(%main.impl zeroinitializer)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %3
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @main.init(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load i1, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store i1 true, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK-LABEL: define %"{{.*}}String" @"main.(*impl).two"(ptr %0){{.*}} {
+// CHECK: [[IMPL_TWO_NIL:%[0-9]+]] = icmp eq ptr %0, null
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 [[IMPL_TWO_NIL]], %"{{.*}}String" {{.*}}, %"{{.*}}String" {{.*}})
+// CHECK: [[IMPL_TWO_RESULT:%.*]] = call %"{{.*}}String" @main.impl.two(%main.impl zeroinitializer)
+// CHECK: ret %"{{.*}}String" [[IMPL_TWO_RESULT]]
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = alloca %main.S, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %0, i8 0, i64 16, i1 false)
-// CHECK-NEXT:   %1 = getelementptr inbounds %main.S, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 0)
-// CHECK-NEXT:   store %main.impl zeroinitializer, ptr %2, align 1
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"{{.*}}/cl/_testgo/ifaceprom.iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.impl)
-// CHECK-NEXT:   %4 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %3, 0
-// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %4, ptr %2, 1
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %5, ptr %1, align 8
-// CHECK-NEXT:   %6 = getelementptr inbounds %main.S, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %7 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %6, align 8
-// CHECK-NEXT:   %8 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %7)
-// CHECK-NEXT:   %9 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %7, 0
-// CHECK-NEXT:   %10 = getelementptr ptr, ptr %9, i64 3
-// CHECK-NEXT:   %11 = load ptr, ptr %10, align 8
-// CHECK-NEXT:   %12 = insertvalue { ptr, ptr } undef, ptr %11, 0
-// CHECK-NEXT:   %13 = insertvalue { ptr, ptr } %12, ptr %8, 1
-// CHECK-NEXT:   %14 = extractvalue { ptr, ptr } %13, 1
-// CHECK-NEXT:   %15 = extractvalue { ptr, ptr } %13, 0
-// CHECK-NEXT:   %16 = call i64 %15(ptr %14)
-// CHECK-NEXT:   %17 = icmp ne i64 %16, 1
-// CHECK-NEXT:   br i1 %17, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %18 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   store i64 %16, ptr %18, align 8
-// CHECK-NEXT:   %19 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %18, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %19)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %20 = load %main.S, ptr %0, align 8
-// CHECK-NEXT:   %21 = extractvalue %main.S %20, 0
-// CHECK-NEXT:   %22 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %21)
-// CHECK-NEXT:   %23 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %21, 0
-// CHECK-NEXT:   %24 = getelementptr ptr, ptr %23, i64 3
-// CHECK-NEXT:   %25 = load ptr, ptr %24, align 8
-// CHECK-NEXT:   %26 = insertvalue { ptr, ptr } undef, ptr %25, 0
-// CHECK-NEXT:   %27 = insertvalue { ptr, ptr } %26, ptr %22, 1
-// CHECK-NEXT:   %28 = extractvalue { ptr, ptr } %27, 1
-// CHECK-NEXT:   %29 = extractvalue { ptr, ptr } %27, 0
-// CHECK-NEXT:   %30 = call i64 %29(ptr %28)
-// CHECK-NEXT:   %31 = icmp ne i64 %30, 1
-// CHECK-NEXT:   br i1 %31, label %_llgo_3, label %_llgo_4
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   %32 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   store i64 %30, ptr %32, align 8
-// CHECK-NEXT:   %33 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %32, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %33)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   %34 = getelementptr inbounds %main.S, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %35 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %34, align 8
-// CHECK-NEXT:   %36 = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}/runtime/internal/runtime.iface" %35)
-// CHECK-NEXT:   %37 = icmp ne ptr %36, null
-// CHECK-NEXT:   br i1 %37, label %_llgo_17, label %_llgo_18
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_17
-// CHECK-NEXT:   %38 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   store i64 %93, ptr %38, align 8
-// CHECK-NEXT:   %39 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %38, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %39)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_6:                                          ; preds = %_llgo_17
-// CHECK-NEXT:   %40 = load %main.S, ptr %0, align 8
-// CHECK-NEXT:   %41 = extractvalue %main.S %40, 0
-// CHECK-NEXT:   %42 = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}/runtime/internal/runtime.iface" %41)
-// CHECK-NEXT:   %43 = icmp ne ptr %42, null
-// CHECK-NEXT:   br i1 %43, label %_llgo_19, label %_llgo_20
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_7:                                          ; preds = %_llgo_19
-// CHECK-NEXT:   %44 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   store i64 %100, ptr %44, align 8
-// CHECK-NEXT:   %45 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %44, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %45)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_8:                                          ; preds = %_llgo_19
-// CHECK-NEXT:   %46 = getelementptr inbounds %main.S, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %47 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %46, align 8
-// CHECK-NEXT:   %48 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %47)
-// CHECK-NEXT:   %49 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %47, 0
-// CHECK-NEXT:   %50 = getelementptr ptr, ptr %49, i64 4
-// CHECK-NEXT:   %51 = load ptr, ptr %50, align 8
-// CHECK-NEXT:   %52 = insertvalue { ptr, ptr } undef, ptr %51, 0
-// CHECK-NEXT:   %53 = insertvalue { ptr, ptr } %52, ptr %48, 1
-// CHECK-NEXT:   %54 = extractvalue { ptr, ptr } %53, 1
-// CHECK-NEXT:   %55 = extractvalue { ptr, ptr } %53, 0
-// CHECK-NEXT:   %56 = call %"{{.*}}/runtime/internal/runtime.String" %55(ptr %54)
-// CHECK-NEXT:   %57 = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" %56, %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 3 })
-// CHECK-NEXT:   %58 = xor i1 %57, true
-// CHECK-NEXT:   br i1 %58, label %_llgo_9, label %_llgo_10
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_9:                                          ; preds = %_llgo_8
-// CHECK-NEXT:   %59 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" %56, ptr %59, align 8
-// CHECK-NEXT:   %60 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %59, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %60)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_10:                                         ; preds = %_llgo_8
-// CHECK-NEXT:   %61 = load %main.S, ptr %0, align 8
-// CHECK-NEXT:   %62 = extractvalue %main.S %61, 0
-// CHECK-NEXT:   %63 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %62)
-// CHECK-NEXT:   %64 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %62, 0
-// CHECK-NEXT:   %65 = getelementptr ptr, ptr %64, i64 4
-// CHECK-NEXT:   %66 = load ptr, ptr %65, align 8
-// CHECK-NEXT:   %67 = insertvalue { ptr, ptr } undef, ptr %66, 0
-// CHECK-NEXT:   %68 = insertvalue { ptr, ptr } %67, ptr %63, 1
-// CHECK-NEXT:   %69 = extractvalue { ptr, ptr } %68, 1
-// CHECK-NEXT:   %70 = extractvalue { ptr, ptr } %68, 0
-// CHECK-NEXT:   %71 = call %"{{.*}}/runtime/internal/runtime.String" %70(ptr %69)
-// CHECK-NEXT:   %72 = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" %71, %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 3 })
-// CHECK-NEXT:   %73 = xor i1 %72, true
-// CHECK-NEXT:   br i1 %73, label %_llgo_11, label %_llgo_12
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_11:                                         ; preds = %_llgo_10
-// CHECK-NEXT:   %74 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" %71, ptr %74, align 8
-// CHECK-NEXT:   %75 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %74, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %75)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_12:                                         ; preds = %_llgo_10
-// CHECK-NEXT:   %76 = getelementptr inbounds %main.S, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %77 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %76, align 8
-// CHECK-NEXT:   %78 = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}/runtime/internal/runtime.iface" %77)
-// CHECK-NEXT:   %79 = icmp ne ptr %78, null
-// CHECK-NEXT:   br i1 %79, label %_llgo_21, label %_llgo_22
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_13:                                         ; preds = %_llgo_21
-// CHECK-NEXT:   %80 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" %107, ptr %80, align 8
-// CHECK-NEXT:   %81 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %80, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %81)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_14:                                         ; preds = %_llgo_21
-// CHECK-NEXT:   %82 = load %main.S, ptr %0, align 8
-// CHECK-NEXT:   %83 = extractvalue %main.S %82, 0
-// CHECK-NEXT:   %84 = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}/runtime/internal/runtime.iface" %83)
-// CHECK-NEXT:   %85 = icmp ne ptr %84, null
-// CHECK-NEXT:   br i1 %85, label %_llgo_23, label %_llgo_24
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_15:                                         ; preds = %_llgo_23
-// CHECK-NEXT:   %86 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" %115, ptr %86, align 8
-// CHECK-NEXT:   %87 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %86, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %87)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_16:                                         ; preds = %_llgo_23
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @13, i64 4 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_17:                                         ; preds = %_llgo_4
-// CHECK-NEXT:   %88 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   %89 = getelementptr inbounds { %"{{.*}}/runtime/internal/runtime.iface" }, ptr %88, i32 0, i32 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %35, ptr %89, align 8
-// CHECK-NEXT:   %90 = insertvalue { ptr, ptr } { ptr @"main.I.one$bound", ptr undef }, ptr %88, 1
-// CHECK-NEXT:   %91 = extractvalue { ptr, ptr } %90, 1
-// CHECK-NEXT:   %92 = extractvalue { ptr, ptr } %90, 0
-// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %92)
-// CHECK-NEXT:   %93 = call i64 %__llgo_funcval_code(ptr {{(nest|swiftself)}} %91)
-// CHECK-NEXT:   %94 = icmp ne i64 %93, 1
-// CHECK-NEXT:   br i1 %94, label %_llgo_5, label %_llgo_6
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_18:                                         ; preds = %_llgo_4
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr @_llgo_main.I, ptr %36, ptr @_llgo_main.I)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_19:                                         ; preds = %_llgo_6
-// CHECK-NEXT:   %95 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   %96 = getelementptr inbounds { %"{{.*}}/runtime/internal/runtime.iface" }, ptr %95, i32 0, i32 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %41, ptr %96, align 8
-// CHECK-NEXT:   %97 = insertvalue { ptr, ptr } { ptr @"main.I.one$bound", ptr undef }, ptr %95, 1
-// CHECK-NEXT:   %98 = extractvalue { ptr, ptr } %97, 1
-// CHECK-NEXT:   %99 = extractvalue { ptr, ptr } %97, 0
-// CHECK-NEXT:   %__llgo_funcval_code1 = call ptr asm "", "=r,0"(ptr %99)
-// CHECK-NEXT:   %100 = call i64 %__llgo_funcval_code1(ptr {{(nest|swiftself)}} %98)
-// CHECK-NEXT:   %101 = icmp ne i64 %100, 1
-// CHECK-NEXT:   br i1 %101, label %_llgo_7, label %_llgo_8
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_20:                                         ; preds = %_llgo_6
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr @_llgo_main.I, ptr %42, ptr @_llgo_main.I)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_21:                                         ; preds = %_llgo_12
-// CHECK-NEXT:   %102 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   %103 = getelementptr inbounds { %"{{.*}}/runtime/internal/runtime.iface" }, ptr %102, i32 0, i32 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %77, ptr %103, align 8
-// CHECK-NEXT:   %104 = insertvalue { ptr, ptr } { ptr @"main.I.two$bound", ptr undef }, ptr %102, 1
-// CHECK-NEXT:   %105 = extractvalue { ptr, ptr } %104, 1
-// CHECK-NEXT:   %106 = extractvalue { ptr, ptr } %104, 0
-// CHECK-NEXT:   %__llgo_funcval_code2 = call ptr asm "", "=r,0"(ptr %106)
-// CHECK-NEXT:   %107 = call %"{{.*}}/runtime/internal/runtime.String" %__llgo_funcval_code2(ptr {{(nest|swiftself)}} %105)
-// CHECK-NEXT:   %108 = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" %107, %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 3 })
-// CHECK-NEXT:   %109 = xor i1 %108, true
-// CHECK-NEXT:   br i1 %109, label %_llgo_13, label %_llgo_14
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_22:                                         ; preds = %_llgo_12
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr @_llgo_main.I, ptr %78, ptr @_llgo_main.I)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_23:                                         ; preds = %_llgo_14
-// CHECK-NEXT:   %110 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   %111 = getelementptr inbounds { %"{{.*}}/runtime/internal/runtime.iface" }, ptr %110, i32 0, i32 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %83, ptr %111, align 8
-// CHECK-NEXT:   %112 = insertvalue { ptr, ptr } { ptr @"main.I.two$bound", ptr undef }, ptr %110, 1
-// CHECK-NEXT:   %113 = extractvalue { ptr, ptr } %112, 1
-// CHECK-NEXT:   %114 = extractvalue { ptr, ptr } %112, 0
-// CHECK-NEXT:   %__llgo_funcval_code3 = call ptr asm "", "=r,0"(ptr %114)
-// CHECK-NEXT:   %115 = call %"{{.*}}/runtime/internal/runtime.String" %__llgo_funcval_code3(ptr {{(nest|swiftself)}} %113)
-// CHECK-NEXT:   %116 = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" %115, %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 3 })
-// CHECK-NEXT:   %117 = xor i1 %116, true
-// CHECK-NEXT:   br i1 %117, label %_llgo_15, label %_llgo_16
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_24:                                         ; preds = %_llgo_14
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr @_llgo_main.I, ptr %84, ptr @_llgo_main.I)
-// CHECK-NEXT:   unreachable
-// CHECK-NEXT: }
+// CHECK: [[IMPL_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 0)
+// CHECK: store %main.impl zeroinitializer, ptr [[IMPL_DATA]]
+// CHECK: [[IMPL_ITAB:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"{{.*}}/cl/_testgo/ifaceprom.iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.impl)
+// CHECK: [[MAIN_IFACE_0:%.*]] = insertvalue %"{{.*}}iface" undef, ptr [[IMPL_ITAB]], 0
+// CHECK: [[MAIN_IFACE:%.*]] = insertvalue %"{{.*}}iface" [[MAIN_IFACE_0]], ptr [[IMPL_DATA]], 1
+// CHECK: store %"{{.*}}iface" [[MAIN_IFACE]], ptr [[S_IFACE_FIELD:%.*]]
+// Direct s.I.one uses slot 3 and compares that call result with 1.
+// CHECK: [[DIRECT_ONE_IFACE:%.*]] = load %"{{.*}}iface", ptr %{{.*}}
+// CHECK: [[DIRECT_ONE_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}iface" [[DIRECT_ONE_IFACE]])
+// CHECK: [[DIRECT_ONE_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[DIRECT_ONE_IFACE]], 0
+// CHECK: [[DIRECT_ONE_SLOT:%.*]] = getelementptr ptr, ptr [[DIRECT_ONE_ITAB]], i64 3
+// CHECK: [[DIRECT_ONE_CODE:%.*]] = load ptr, ptr [[DIRECT_ONE_SLOT]]
+// CHECK: [[DIRECT_ONE_PAIR_0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[DIRECT_ONE_CODE]], 0
+// CHECK: [[DIRECT_ONE_PAIR:%.*]] = insertvalue { ptr, ptr } [[DIRECT_ONE_PAIR_0]], ptr [[DIRECT_ONE_DATA]], 1
+// CHECK: [[DIRECT_ONE_CALL_DATA:%.*]] = extractvalue { ptr, ptr } [[DIRECT_ONE_PAIR]], 1
+// CHECK: [[DIRECT_ONE_CALL_CODE:%.*]] = extractvalue { ptr, ptr } [[DIRECT_ONE_PAIR]], 0
+// CHECK: [[DIRECT_ONE_RESULT:%.*]] = call i64 [[DIRECT_ONE_CALL_CODE]](ptr [[DIRECT_ONE_CALL_DATA]])
+// CHECK: [[DIRECT_ONE_BAD:%.*]] = icmp ne i64 [[DIRECT_ONE_RESULT]], 1
+// CHECK: br i1 [[DIRECT_ONE_BAD]], label %{{.*}}, label %{{.*}}
+// Promoted s.one extracts the embedded interface and still uses slot 3.
+// CHECK: [[PROMOTED_ONE_S:%.*]] = load %main.S, ptr %{{.*}}
+// CHECK: [[PROMOTED_ONE_IFACE:%.*]] = extractvalue %main.S [[PROMOTED_ONE_S]], 0
+// CHECK: [[PROMOTED_ONE_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}iface" [[PROMOTED_ONE_IFACE]])
+// CHECK: [[PROMOTED_ONE_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[PROMOTED_ONE_IFACE]], 0
+// CHECK: [[PROMOTED_ONE_SLOT:%.*]] = getelementptr ptr, ptr [[PROMOTED_ONE_ITAB]], i64 3
+// CHECK: [[PROMOTED_ONE_CODE:%.*]] = load ptr, ptr [[PROMOTED_ONE_SLOT]]
+// CHECK: [[PROMOTED_ONE_PAIR_0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[PROMOTED_ONE_CODE]], 0
+// CHECK: [[PROMOTED_ONE_PAIR:%.*]] = insertvalue { ptr, ptr } [[PROMOTED_ONE_PAIR_0]], ptr [[PROMOTED_ONE_DATA]], 1
+// CHECK: [[PROMOTED_ONE_CALL_DATA:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_ONE_PAIR]], 1
+// CHECK: [[PROMOTED_ONE_CALL_CODE:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_ONE_PAIR]], 0
+// CHECK: [[PROMOTED_ONE_RESULT:%.*]] = call i64 [[PROMOTED_ONE_CALL_CODE]](ptr [[PROMOTED_ONE_CALL_DATA]])
+// CHECK: [[PROMOTED_ONE_BAD:%.*]] = icmp ne i64 [[PROMOTED_ONE_RESULT]], 1
+// CHECK: br i1 [[PROMOTED_ONE_BAD]], label %{{.*}}, label %{{.*}}
+// Both one method values first validate and retain their originating interfaces.
+// CHECK: [[ONE_CLOSURE_IFACE:%.*]] = load %"{{.*}}iface", ptr %{{.*}}
+// CHECK: [[ONE_CLOSURE_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[ONE_CLOSURE_IFACE]])
+// CHECK: [[ONE_CLOSURE_OK:%.*]] = icmp ne ptr [[ONE_CLOSURE_TYPE]], null
+// CHECK: br i1 [[ONE_CLOSURE_OK]], label %{{.*}}, label %{{.*}}
+// CHECK: [[PROMOTED_ONE_CLOSURE_S:%.*]] = load %main.S, ptr %{{.*}}
+// CHECK: [[PROMOTED_ONE_CLOSURE_IFACE:%.*]] = extractvalue %main.S [[PROMOTED_ONE_CLOSURE_S]], 0
+// CHECK: [[PROMOTED_ONE_CLOSURE_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[PROMOTED_ONE_CLOSURE_IFACE]])
+// CHECK: [[PROMOTED_ONE_CLOSURE_OK:%.*]] = icmp ne ptr [[PROMOTED_ONE_CLOSURE_TYPE]], null
+// CHECK: br i1 [[PROMOTED_ONE_CLOSURE_OK]], label %{{.*}}, label %{{.*}}
+// Direct and promoted two calls both use slot 4 and compare the returned string with "two".
+// CHECK: [[DIRECT_TWO_IFACE:%.*]] = load %"{{.*}}iface", ptr %{{.*}}
+// CHECK: [[DIRECT_TWO_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}iface" [[DIRECT_TWO_IFACE]])
+// CHECK: [[DIRECT_TWO_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[DIRECT_TWO_IFACE]], 0
+// CHECK: [[DIRECT_TWO_SLOT:%.*]] = getelementptr ptr, ptr [[DIRECT_TWO_ITAB]], i64 4
+// CHECK: [[DIRECT_TWO_CODE:%.*]] = load ptr, ptr [[DIRECT_TWO_SLOT]]
+// CHECK: [[DIRECT_TWO_PAIR_0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[DIRECT_TWO_CODE]], 0
+// CHECK: [[DIRECT_TWO_PAIR:%.*]] = insertvalue { ptr, ptr } [[DIRECT_TWO_PAIR_0]], ptr [[DIRECT_TWO_DATA]], 1
+// CHECK: [[DIRECT_TWO_CALL_DATA:%.*]] = extractvalue { ptr, ptr } [[DIRECT_TWO_PAIR]], 1
+// CHECK: [[DIRECT_TWO_CALL_CODE:%.*]] = extractvalue { ptr, ptr } [[DIRECT_TWO_PAIR]], 0
+// CHECK: [[DIRECT_TWO_RESULT:%.*]] = call %"{{.*}}String" [[DIRECT_TWO_CALL_CODE]](ptr [[DIRECT_TWO_CALL_DATA]])
+// CHECK: [[DIRECT_TWO_EQ:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}String" [[DIRECT_TWO_RESULT]], %"{{.*}}String" { ptr @{{.*}}, i64 3 })
+// CHECK: [[DIRECT_TWO_BAD:%.*]] = xor i1 [[DIRECT_TWO_EQ]], true
+// CHECK: br i1 [[DIRECT_TWO_BAD]], label %{{.*}}, label %{{.*}}
+// CHECK: [[PROMOTED_TWO_S:%.*]] = load %main.S, ptr %{{.*}}
+// CHECK: [[PROMOTED_TWO_IFACE:%.*]] = extractvalue %main.S [[PROMOTED_TWO_S]], 0
+// CHECK: [[PROMOTED_TWO_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}iface" [[PROMOTED_TWO_IFACE]])
+// CHECK: [[PROMOTED_TWO_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[PROMOTED_TWO_IFACE]], 0
+// CHECK: [[PROMOTED_TWO_SLOT:%.*]] = getelementptr ptr, ptr [[PROMOTED_TWO_ITAB]], i64 4
+// CHECK: [[PROMOTED_TWO_CODE:%.*]] = load ptr, ptr [[PROMOTED_TWO_SLOT]]
+// CHECK: [[PROMOTED_TWO_PAIR_0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[PROMOTED_TWO_CODE]], 0
+// CHECK: [[PROMOTED_TWO_PAIR:%.*]] = insertvalue { ptr, ptr } [[PROMOTED_TWO_PAIR_0]], ptr [[PROMOTED_TWO_DATA]], 1
+// CHECK: [[PROMOTED_TWO_CALL_DATA:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_TWO_PAIR]], 1
+// CHECK: [[PROMOTED_TWO_CALL_CODE:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_TWO_PAIR]], 0
+// CHECK: [[PROMOTED_TWO_RESULT:%.*]] = call %"{{.*}}String" [[PROMOTED_TWO_CALL_CODE]](ptr [[PROMOTED_TWO_CALL_DATA]])
+// CHECK: [[PROMOTED_TWO_EQ:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}String" [[PROMOTED_TWO_RESULT]], %"{{.*}}String" { ptr @{{.*}}, i64 3 })
+// CHECK: [[PROMOTED_TWO_BAD:%.*]] = xor i1 [[PROMOTED_TWO_EQ]], true
+// CHECK: br i1 [[PROMOTED_TWO_BAD]], label %{{.*}}, label %{{.*}}
+// CHECK: [[TWO_CLOSURE_IFACE:%.*]] = load %"{{.*}}iface", ptr %{{.*}}
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[TWO_CLOSURE_IFACE]])
+// CHECK: [[PROMOTED_TWO_CLOSURE_S:%.*]] = load %main.S, ptr %{{.*}}
+// CHECK: [[PROMOTED_TWO_CLOSURE_IFACE:%.*]] = extractvalue %main.S [[PROMOTED_TWO_CLOSURE_S]], 0
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[PROMOTED_TWO_CLOSURE_IFACE]])
+// The four late closure paths store those same interfaces into their bound environments.
+// CHECK: store %"{{.*}}iface" [[ONE_CLOSURE_IFACE]], ptr %{{.*}}
+// CHECK: [[ONE_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.I.one$bound", ptr undef }, ptr [[ONE_BOUND_ENV:%.*]], 1
+// CHECK: [[ONE_BOUND_CALL_ENV:%.*]] = extractvalue { ptr, ptr } [[ONE_BOUND]], 1
+// CHECK: [[ONE_BOUND_CODE_RAW:%.*]] = extractvalue { ptr, ptr } [[ONE_BOUND]], 0
+// CHECK: [[ONE_BOUND_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[ONE_BOUND_CODE_RAW]])
+// CHECK: [[ONE_BOUND_RESULT:%.*]] = call i64 [[ONE_BOUND_CODE]](ptr {{(nest|swiftself)}} [[ONE_BOUND_CALL_ENV]])
+// CHECK: [[ONE_BOUND_BAD:%.*]] = icmp ne i64 [[ONE_BOUND_RESULT]], 1
+// CHECK: store %"{{.*}}iface" [[PROMOTED_ONE_CLOSURE_IFACE]], ptr %{{.*}}
+// CHECK: [[PROMOTED_ONE_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.I.one$bound", ptr undef }, ptr %{{.*}}, 1
+// CHECK: [[PROMOTED_ONE_BOUND_ENV:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_ONE_BOUND]], 1
+// CHECK: [[PROMOTED_ONE_CODE_RAW:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_ONE_BOUND]], 0
+// CHECK: [[PROMOTED_ONE_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[PROMOTED_ONE_CODE_RAW]])
+// CHECK: [[PROMOTED_ONE_BOUND_RESULT:%.*]] = call i64 [[PROMOTED_ONE_CODE]](ptr {{(nest|swiftself)}} [[PROMOTED_ONE_BOUND_ENV]])
+// CHECK: [[PROMOTED_ONE_BOUND_BAD:%.*]] = icmp ne i64 [[PROMOTED_ONE_BOUND_RESULT]], 1
+// CHECK: store %"{{.*}}iface" [[TWO_CLOSURE_IFACE]], ptr %{{.*}}
+// CHECK: [[TWO_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.I.two$bound", ptr undef }, ptr %{{.*}}, 1
+// CHECK: [[TWO_BOUND_ENV:%.*]] = extractvalue { ptr, ptr } [[TWO_BOUND]], 1
+// CHECK: [[TWO_BOUND_CODE_RAW:%.*]] = extractvalue { ptr, ptr } [[TWO_BOUND]], 0
+// CHECK: [[TWO_BOUND_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[TWO_BOUND_CODE_RAW]])
+// CHECK: [[TWO_BOUND_RESULT:%.*]] = call %"{{.*}}String" [[TWO_BOUND_CODE]](ptr {{(nest|swiftself)}} [[TWO_BOUND_ENV]])
+// CHECK: [[TWO_BOUND_EQ:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}String" [[TWO_BOUND_RESULT]], %"{{.*}}String" { ptr @{{.*}}, i64 3 })
+// CHECK: store %"{{.*}}iface" [[PROMOTED_TWO_CLOSURE_IFACE]], ptr %{{.*}}
+// CHECK: [[PROMOTED_TWO_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.I.two$bound", ptr undef }, ptr %{{.*}}, 1
+// CHECK: [[PROMOTED_TWO_BOUND_ENV:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_TWO_BOUND]], 1
+// CHECK: [[PROMOTED_TWO_BOUND_CODE_RAW:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_TWO_BOUND]], 0
+// CHECK: [[PROMOTED_TWO_BOUND_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[PROMOTED_TWO_BOUND_CODE_RAW]])
+// CHECK: [[PROMOTED_TWO_BOUND_RESULT:%.*]] = call %"{{.*}}String" [[PROMOTED_TWO_BOUND_CODE]](ptr {{(nest|swiftself)}} [[PROMOTED_TWO_BOUND_ENV]])
+// CHECK: [[PROMOTED_TWO_BOUND_EQ:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}String" [[PROMOTED_TWO_BOUND_RESULT]], %"{{.*}}String" { ptr @{{.*}}, i64 3 })
 
 // CHECK-LABEL: define i64 @"main.I.one$bound"(ptr {{(nest|swiftself)}} %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = load { %"{{.*}}/runtime/internal/runtime.iface" }, ptr %0, align 8
-// CHECK-NEXT:   %2 = extractvalue { %"{{.*}}/runtime/internal/runtime.iface" } %1, 0
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %2)
-// CHECK-NEXT:   %4 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %2, 0
-// CHECK-NEXT:   %5 = getelementptr ptr, ptr %4, i64 3
-// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
-// CHECK-NEXT:   %7 = insertvalue { ptr, ptr } undef, ptr %6, 0
-// CHECK-NEXT:   %8 = insertvalue { ptr, ptr } %7, ptr %3, 1
-// CHECK-NEXT:   %9 = extractvalue { ptr, ptr } %8, 0
-// CHECK-NEXT:   %10 = call ptr @"{{.*}}/runtime/internal/runtime.StartRecoverFrameAlias"(ptr @"main.I.one$bound", ptr %9)
-// CHECK-NEXT:   %11 = extractvalue { ptr, ptr } %8, 1
-// CHECK-NEXT:   %12 = extractvalue { ptr, ptr } %8, 0
-// CHECK-NEXT:   %13 = call i64 %12(ptr %11)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrameAlias"(ptr %10)
-// CHECK-NEXT:   ret i64 %13
-// CHECK-NEXT: }
+// CHECK: [[BOUND_ONE_ENV:%[0-9]+]] = load { %"{{.*}}iface" }, ptr %0
+// CHECK: [[BOUND_ONE_IFACE:%.*]] = extractvalue { %"{{.*}}iface" } [[BOUND_ONE_ENV]], 0
+// CHECK: [[BOUND_ONE_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}iface" [[BOUND_ONE_IFACE]])
+// CHECK: [[BOUND_ONE_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[BOUND_ONE_IFACE]], 0
+// CHECK: [[BOUND_ONE_SLOT:%.*]] = getelementptr ptr, ptr [[BOUND_ONE_ITAB]], i64 3
+// CHECK: [[BOUND_ONE_CODE:%.*]] = load ptr, ptr [[BOUND_ONE_SLOT]]
+// CHECK-NEXT: [[BOUND_ONE_PAIR0:%[0-9]+]] = insertvalue { ptr, ptr } undef, ptr [[BOUND_ONE_CODE]], 0
+// CHECK-NEXT: [[BOUND_ONE_PAIR:%[0-9]+]] = insertvalue { ptr, ptr } [[BOUND_ONE_PAIR0]], ptr [[BOUND_ONE_DATA]], 1
+// CHECK-NEXT: [[BOUND_ONE_RECOVER_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[BOUND_ONE_PAIR]], 0
+// CHECK-NEXT: [[BOUND_ONE_RECOVER:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.StartRecoverFrameAlias"(ptr @"main.I.one$bound", ptr [[BOUND_ONE_RECOVER_CODE]])
+// CHECK-NEXT: [[BOUND_ONE_CALL_DATA:%[0-9]+]] = extractvalue { ptr, ptr } [[BOUND_ONE_PAIR]], 1
+// CHECK-NEXT: [[BOUND_ONE_CALL_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[BOUND_ONE_PAIR]], 0
+// CHECK-NEXT: [[BOUND_ONE_RESULT:%[0-9]+]] = call i64 [[BOUND_ONE_CALL_CODE]](ptr [[BOUND_ONE_CALL_DATA]])
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrameAlias"(ptr [[BOUND_ONE_RECOVER]])
+// CHECK: ret i64 [[BOUND_ONE_RESULT]]
 
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @"main.I.two$bound"(ptr {{(nest|swiftself)}} %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = load { %"{{.*}}/runtime/internal/runtime.iface" }, ptr %0, align 8
-// CHECK-NEXT:   %2 = extractvalue { %"{{.*}}/runtime/internal/runtime.iface" } %1, 0
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %2)
-// CHECK-NEXT:   %4 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %2, 0
-// CHECK-NEXT:   %5 = getelementptr ptr, ptr %4, i64 4
-// CHECK-NEXT:   %6 = load ptr, ptr %5, align 8
-// CHECK-NEXT:   %7 = insertvalue { ptr, ptr } undef, ptr %6, 0
-// CHECK-NEXT:   %8 = insertvalue { ptr, ptr } %7, ptr %3, 1
-// CHECK-NEXT:   %9 = extractvalue { ptr, ptr } %8, 0
-// CHECK-NEXT:   %10 = call ptr @"{{.*}}/runtime/internal/runtime.StartRecoverFrameAlias"(ptr @"main.I.two$bound", ptr %9)
-// CHECK-NEXT:   %11 = extractvalue { ptr, ptr } %8, 1
-// CHECK-NEXT:   %12 = extractvalue { ptr, ptr } %8, 0
-// CHECK-NEXT:   %13 = call %"{{.*}}/runtime/internal/runtime.String" %12(ptr %11)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrameAlias"(ptr %10)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %13
-// CHECK-NEXT: }
+// CHECK: [[BOUND_TWO_ENV:%[0-9]+]] = load { %"{{.*}}iface" }, ptr %0
+// CHECK: [[BOUND_TWO_IFACE:%.*]] = extractvalue { %"{{.*}}iface" } [[BOUND_TWO_ENV]], 0
+// CHECK: [[BOUND_TWO_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}iface" [[BOUND_TWO_IFACE]])
+// CHECK: [[BOUND_TWO_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[BOUND_TWO_IFACE]], 0
+// CHECK: [[BOUND_TWO_SLOT:%.*]] = getelementptr ptr, ptr [[BOUND_TWO_ITAB]], i64 4
+// CHECK: [[BOUND_TWO_CODE:%.*]] = load ptr, ptr [[BOUND_TWO_SLOT]]
+// CHECK-NEXT: [[BOUND_TWO_PAIR0:%[0-9]+]] = insertvalue { ptr, ptr } undef, ptr [[BOUND_TWO_CODE]], 0
+// CHECK-NEXT: [[BOUND_TWO_PAIR:%[0-9]+]] = insertvalue { ptr, ptr } [[BOUND_TWO_PAIR0]], ptr [[BOUND_TWO_DATA]], 1
+// CHECK-NEXT: [[BOUND_TWO_RECOVER_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[BOUND_TWO_PAIR]], 0
+// CHECK-NEXT: [[BOUND_TWO_RECOVER:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.StartRecoverFrameAlias"(ptr @"main.I.two$bound", ptr [[BOUND_TWO_RECOVER_CODE]])
+// CHECK-NEXT: [[BOUND_TWO_CALL_DATA:%[0-9]+]] = extractvalue { ptr, ptr } [[BOUND_TWO_PAIR]], 1
+// CHECK-NEXT: [[BOUND_TWO_CALL_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[BOUND_TWO_PAIR]], 0
+// CHECK-NEXT: [[BOUND_TWO_RESULT:%[0-9]+]] = call %"{{.*}}String" [[BOUND_TWO_CALL_CODE]](ptr [[BOUND_TWO_CALL_DATA]])
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrameAlias"(ptr [[BOUND_TWO_RECOVER]])
+// CHECK: ret %"{{.*}}String" [[BOUND_TWO_RESULT]]

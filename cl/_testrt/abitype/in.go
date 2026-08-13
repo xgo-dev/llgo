@@ -8,48 +8,23 @@ import (
 )
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 4)
-// CHECK-NEXT:   store i32 0, ptr %1, align 4
-// CHECK-NEXT:   %2 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int32, ptr undef }, ptr %1, 1
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %2, ptr %0, align 8
-// CHECK-NEXT:   %3 = getelementptr inbounds %main.eface, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
-// CHECK-NEXT:   %5 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/abi.(*Type).String"(ptr %4)
-// CHECK-NEXT:   %6 = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" %5, %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 })
-// CHECK-NEXT:   %7 = xor i1 %6, true
-// CHECK-NEXT:   br i1 %7, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %8 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @1, i64 14 }, ptr %8, align 8
-// CHECK-NEXT:   %9 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %8, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %9)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %10 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 1)
-// CHECK-NEXT:   store i8 0, ptr %10, align 1
-// CHECK-NEXT:   %11 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_uint8, ptr undef }, ptr %10, 1
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %11, ptr %0, align 8
-// CHECK-NEXT:   %12 = getelementptr inbounds %main.eface, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %13 = load ptr, ptr %12, align 8
-// CHECK-NEXT:   %14 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/abi.(*Type).String"(ptr %13)
-// CHECK-NEXT:   %15 = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" %14, %"{{.*}}/runtime/internal/runtime.String" { ptr @3, i64 5 })
-// CHECK-NEXT:   %16 = xor i1 %15, true
-// CHECK-NEXT:   br i1 %16, label %_llgo_3, label %_llgo_4
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   %17 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @4, i64 14 }, ptr %17, align 8
-// CHECK-NEXT:   %18 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %17, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %18)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[EFACE_STORAGE:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK: [[RUNE_EFACE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int32, ptr undef }, ptr %{{[0-9]+}}, 1
+// CHECK-NEXT: store %"{{.*}}/runtime/internal/runtime.eface" [[RUNE_EFACE]], ptr [[EFACE_STORAGE]]
+// CHECK: [[RUNE_TYPE_SLOT:%[0-9]+]] = getelementptr inbounds %main.eface, ptr [[EFACE_STORAGE]], i32 0, i32 0
+// CHECK-NEXT: [[RUNE_TYPE:%[0-9]+]] = load ptr, ptr [[RUNE_TYPE_SLOT]]
+// CHECK-NEXT: [[RUNE_NAME:%[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/abi.(*Type).String"(ptr [[RUNE_TYPE]])
+// CHECK-NEXT: [[RUNE_MATCH:%[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" [[RUNE_NAME]], %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 5 })
+// CHECK-NEXT: [[RUNE_BAD:%[0-9]+]] = xor i1 [[RUNE_MATCH]], true
+// CHECK-NEXT: br i1 [[RUNE_BAD]], label %{{.*}}, label %{{.*}}
+// CHECK: [[BYTE_EFACE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_uint8, ptr undef }, ptr %{{[0-9]+}}, 1
+// CHECK-NEXT: store %"{{.*}}/runtime/internal/runtime.eface" [[BYTE_EFACE]], ptr [[EFACE_STORAGE]]
+// CHECK: [[BYTE_TYPE_SLOT:%[0-9]+]] = getelementptr inbounds %main.eface, ptr [[EFACE_STORAGE]], i32 0, i32 0
+// CHECK-NEXT: [[BYTE_TYPE:%[0-9]+]] = load ptr, ptr [[BYTE_TYPE_SLOT]]
+// CHECK-NEXT: [[BYTE_NAME:%[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/abi.(*Type).String"(ptr [[BYTE_TYPE]])
+// CHECK-NEXT: [[BYTE_MATCH:%[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" [[BYTE_NAME]], %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 5 })
+// CHECK-NEXT: [[BYTE_BAD:%[0-9]+]] = xor i1 [[BYTE_MATCH]], true
+// CHECK-NEXT: br i1 [[BYTE_BAD]], label %{{.*}}, label %{{.*}}
 
 type eface struct {
 	typ  *abi.Type

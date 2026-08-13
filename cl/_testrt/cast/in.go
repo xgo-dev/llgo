@@ -3,33 +3,19 @@ package main
 
 //"github.com/goplus/lib/c"
 
-// CHECK: @0 = private unnamed_addr constant [5 x i8] c"error", align 1
-
 // CHECK-LABEL: define void @main.cvt32Fto32(float %0, i32 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = fcmp ole float %0, 0xC1E0000000000000
-// CHECK-NEXT:   %3 = fcmp oge float %0, 0x41E0000000000000
-// CHECK-NEXT:   %4 = fcmp uno float %0, %0
-// CHECK-NEXT:   %5 = select i1 %2, float 0.000000e+00, float %0
-// CHECK-NEXT:   %6 = select i1 %3, float 0.000000e+00, float %5
-// CHECK-NEXT:   %7 = select i1 %4, float 0.000000e+00, float %6
-// CHECK-NEXT:   %8 = fptosi float %7 to i32
-// CHECK-NEXT:   %9 = select i1 %2, i32 -2147483648, i32 %8
-// CHECK-NEXT:   %10 = select i1 %3, i32 2147483647, i32 %9
-// CHECK-NEXT:   %11 = select i1 %4, i32 0, i32 %10
-// CHECK-NEXT:   %12 = icmp ne i32 %11, %1
-// CHECK-NEXT:   br i1 %12, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %13 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, ptr %13, align 8
-// CHECK-NEXT:   %14 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %13, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %14)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[F32_I32_BELOW:%.*]] = fcmp ole float %0, {{.*}}
+// CHECK-NEXT: [[F32_I32_ABOVE:%.*]] = fcmp oge float %0, {{.*}}
+// CHECK-NEXT: [[F32_I32_NAN:%.*]] = fcmp uno float %0, %0
+// CHECK-NEXT: [[F32_I32_CLAMP_LOW:%.*]] = select i1 [[F32_I32_BELOW]], float 0.000000e+00, float %0
+// CHECK-NEXT: [[F32_I32_CLAMP_HIGH:%.*]] = select i1 [[F32_I32_ABOVE]], float 0.000000e+00, float [[F32_I32_CLAMP_LOW]]
+// CHECK-NEXT: [[F32_I32_FINITE:%.*]] = select i1 [[F32_I32_NAN]], float 0.000000e+00, float [[F32_I32_CLAMP_HIGH]]
+// CHECK-NEXT: [[F32_I32_RAW:%.*]] = fptosi float [[F32_I32_FINITE]] to i32
+// CHECK-NEXT: [[F32_I32_LOW:%.*]] = select i1 [[F32_I32_BELOW]], i32 -2147483648, i32 [[F32_I32_RAW]]
+// CHECK-NEXT: [[F32_I32_HIGH:%.*]] = select i1 [[F32_I32_ABOVE]], i32 2147483647, i32 [[F32_I32_LOW]]
+// CHECK-NEXT: [[F32_I32_VALUE:%.*]] = select i1 [[F32_I32_NAN]], i32 0, i32 [[F32_I32_HIGH]]
+// CHECK: [[F32_I32_BAD:%.*]] = icmp ne i32 [[F32_I32_VALUE]], %1
+// CHECK: br i1 [[F32_I32_BAD]], label %{{.*}}, label %{{.*}}
 
 func cvt32Fto32(a float32, b int32) {
 	if int32(a) != b {
@@ -38,31 +24,19 @@ func cvt32Fto32(a float32, b int32) {
 }
 
 // CHECK-LABEL: define void @main.cvt32Fto32U(float %0, i32 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = fcmp ole float %0, 0xC3E0000000000000
-// CHECK-NEXT:   %3 = fcmp oge float %0, 0x43E0000000000000
-// CHECK-NEXT:   %4 = fcmp uno float %0, %0
-// CHECK-NEXT:   %5 = select i1 %2, float 0.000000e+00, float %0
-// CHECK-NEXT:   %6 = select i1 %3, float 0.000000e+00, float %5
-// CHECK-NEXT:   %7 = select i1 %4, float 0.000000e+00, float %6
-// CHECK-NEXT:   %8 = fptosi float %7 to i64
-// CHECK-NEXT:   %9 = select i1 %2, i64 -9223372036854775808, i64 %8
-// CHECK-NEXT:   %10 = select i1 %3, i64 9223372036854775807, i64 %9
-// CHECK-NEXT:   %11 = select i1 %4, i64 0, i64 %10
-// CHECK-NEXT:   %12 = trunc i64 %11 to i32
-// CHECK-NEXT:   %13 = icmp ne i32 %12, %1
-// CHECK-NEXT:   br i1 %13, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %14 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, ptr %14, align 8
-// CHECK-NEXT:   %15 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %14, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %15)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[F32_U32_BELOW:%.*]] = fcmp ole float %0, {{.*}}
+// CHECK-NEXT: [[F32_U32_ABOVE:%.*]] = fcmp oge float %0, {{.*}}
+// CHECK-NEXT: [[F32_U32_NAN:%.*]] = fcmp uno float %0, %0
+// CHECK-NEXT: [[F32_U32_CLAMP_LOW:%.*]] = select i1 [[F32_U32_BELOW]], float 0.000000e+00, float %0
+// CHECK-NEXT: [[F32_U32_CLAMP_HIGH:%.*]] = select i1 [[F32_U32_ABOVE]], float 0.000000e+00, float [[F32_U32_CLAMP_LOW]]
+// CHECK-NEXT: [[F32_U32_FINITE:%.*]] = select i1 [[F32_U32_NAN]], float 0.000000e+00, float [[F32_U32_CLAMP_HIGH]]
+// CHECK-NEXT: [[F32_U32_RAW:%.*]] = fptosi float [[F32_U32_FINITE]] to i64
+// CHECK-NEXT: [[F32_U32_LOW:%.*]] = select i1 [[F32_U32_BELOW]], i64 -9223372036854775808, i64 [[F32_U32_RAW]]
+// CHECK-NEXT: [[F32_U32_HIGH:%.*]] = select i1 [[F32_U32_ABOVE]], i64 9223372036854775807, i64 [[F32_U32_LOW]]
+// CHECK-NEXT: [[F32_U32_VALUE64:%.*]] = select i1 [[F32_U32_NAN]], i64 0, i64 [[F32_U32_HIGH]]
+// CHECK: [[F32_U32_VALUE:%.*]] = trunc i64 [[F32_U32_VALUE64]] to i32
+// CHECK: [[F32_U32_BAD:%.*]] = icmp ne i32 [[F32_U32_VALUE]], %1
+// CHECK: br i1 [[F32_U32_BAD]], label %{{.*}}, label %{{.*}}
 
 func cvt32Fto32U(a float32, b uint32) {
 	if uint32(a) != b {
@@ -71,21 +45,9 @@ func cvt32Fto32U(a float32, b uint32) {
 }
 
 // CHECK-LABEL: define void @main.cvt32Fto64F(float %0, double %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = fpext float %0 to double
-// CHECK-NEXT:   %3 = fcmp une double %2, %1
-// CHECK-NEXT:   br i1 %3, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, ptr %4, align 8
-// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %4, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %5)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[F32_F64_VALUE:%.*]] = fpext float %0 to double
+// CHECK: [[F32_F64_BAD:%.*]] = fcmp une double [[F32_F64_VALUE]], %1
+// CHECK: br i1 [[F32_F64_BAD]], label %{{.*}}, label %{{.*}}
 
 func cvt32Fto64F(a float32, b float64) {
 	if float64(a) != b {
@@ -94,31 +56,19 @@ func cvt32Fto64F(a float32, b float64) {
 }
 
 // CHECK-LABEL: define void @main.cvt32Fto8(float %0, i8 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = fcmp ole float %0, 0xC1E0000000000000
-// CHECK-NEXT:   %3 = fcmp oge float %0, 0x41E0000000000000
-// CHECK-NEXT:   %4 = fcmp uno float %0, %0
-// CHECK-NEXT:   %5 = select i1 %2, float 0.000000e+00, float %0
-// CHECK-NEXT:   %6 = select i1 %3, float 0.000000e+00, float %5
-// CHECK-NEXT:   %7 = select i1 %4, float 0.000000e+00, float %6
-// CHECK-NEXT:   %8 = fptosi float %7 to i32
-// CHECK-NEXT:   %9 = select i1 %2, i32 -2147483648, i32 %8
-// CHECK-NEXT:   %10 = select i1 %3, i32 2147483647, i32 %9
-// CHECK-NEXT:   %11 = select i1 %4, i32 0, i32 %10
-// CHECK-NEXT:   %12 = trunc i32 %11 to i8
-// CHECK-NEXT:   %13 = icmp ne i8 %12, %1
-// CHECK-NEXT:   br i1 %13, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %14 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, ptr %14, align 8
-// CHECK-NEXT:   %15 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %14, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %15)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[F32_I8_BELOW:%.*]] = fcmp ole float %0, {{.*}}
+// CHECK-NEXT: [[F32_I8_ABOVE:%.*]] = fcmp oge float %0, {{.*}}
+// CHECK-NEXT: [[F32_I8_NAN:%.*]] = fcmp uno float %0, %0
+// CHECK-NEXT: [[F32_I8_CLAMP_LOW:%.*]] = select i1 [[F32_I8_BELOW]], float 0.000000e+00, float %0
+// CHECK-NEXT: [[F32_I8_CLAMP_HIGH:%.*]] = select i1 [[F32_I8_ABOVE]], float 0.000000e+00, float [[F32_I8_CLAMP_LOW]]
+// CHECK-NEXT: [[F32_I8_FINITE:%.*]] = select i1 [[F32_I8_NAN]], float 0.000000e+00, float [[F32_I8_CLAMP_HIGH]]
+// CHECK-NEXT: [[F32_I8_RAW:%.*]] = fptosi float [[F32_I8_FINITE]] to i32
+// CHECK-NEXT: [[F32_I8_LOW:%.*]] = select i1 [[F32_I8_BELOW]], i32 -2147483648, i32 [[F32_I8_RAW]]
+// CHECK-NEXT: [[F32_I8_HIGH:%.*]] = select i1 [[F32_I8_ABOVE]], i32 2147483647, i32 [[F32_I8_LOW]]
+// CHECK-NEXT: [[F32_I8_VALUE32:%.*]] = select i1 [[F32_I8_NAN]], i32 0, i32 [[F32_I8_HIGH]]
+// CHECK: [[F32_I8_VALUE:%.*]] = trunc i32 [[F32_I8_VALUE32]] to i8
+// CHECK: [[F32_I8_BAD:%.*]] = icmp ne i8 [[F32_I8_VALUE]], %1
+// CHECK: br i1 [[F32_I8_BAD]], label %{{.*}}, label %{{.*}}
 
 func cvt32Fto8(a float32, b int8) {
 	if int8(a) != b {
@@ -127,31 +77,19 @@ func cvt32Fto8(a float32, b int8) {
 }
 
 // CHECK-LABEL: define void @main.cvt32Fto8U(float %0, i8 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = fcmp ole float %0, 0xC1E0000000000000
-// CHECK-NEXT:   %3 = fcmp oge float %0, 0x41E0000000000000
-// CHECK-NEXT:   %4 = fcmp uno float %0, %0
-// CHECK-NEXT:   %5 = select i1 %2, float 0.000000e+00, float %0
-// CHECK-NEXT:   %6 = select i1 %3, float 0.000000e+00, float %5
-// CHECK-NEXT:   %7 = select i1 %4, float 0.000000e+00, float %6
-// CHECK-NEXT:   %8 = fptosi float %7 to i32
-// CHECK-NEXT:   %9 = select i1 %2, i32 -2147483648, i32 %8
-// CHECK-NEXT:   %10 = select i1 %3, i32 2147483647, i32 %9
-// CHECK-NEXT:   %11 = select i1 %4, i32 0, i32 %10
-// CHECK-NEXT:   %12 = trunc i32 %11 to i8
-// CHECK-NEXT:   %13 = icmp ne i8 %12, %1
-// CHECK-NEXT:   br i1 %13, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %14 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, ptr %14, align 8
-// CHECK-NEXT:   %15 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %14, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %15)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[F32_U8_BELOW:%.*]] = fcmp ole float %0, {{.*}}
+// CHECK-NEXT: [[F32_U8_ABOVE:%.*]] = fcmp oge float %0, {{.*}}
+// CHECK-NEXT: [[F32_U8_NAN:%.*]] = fcmp uno float %0, %0
+// CHECK-NEXT: [[F32_U8_CLAMP_LOW:%.*]] = select i1 [[F32_U8_BELOW]], float 0.000000e+00, float %0
+// CHECK-NEXT: [[F32_U8_CLAMP_HIGH:%.*]] = select i1 [[F32_U8_ABOVE]], float 0.000000e+00, float [[F32_U8_CLAMP_LOW]]
+// CHECK-NEXT: [[F32_U8_FINITE:%.*]] = select i1 [[F32_U8_NAN]], float 0.000000e+00, float [[F32_U8_CLAMP_HIGH]]
+// CHECK-NEXT: [[F32_U8_RAW:%.*]] = fptosi float [[F32_U8_FINITE]] to i32
+// CHECK-NEXT: [[F32_U8_LOW:%.*]] = select i1 [[F32_U8_BELOW]], i32 -2147483648, i32 [[F32_U8_RAW]]
+// CHECK-NEXT: [[F32_U8_HIGH:%.*]] = select i1 [[F32_U8_ABOVE]], i32 2147483647, i32 [[F32_U8_LOW]]
+// CHECK-NEXT: [[F32_U8_VALUE32:%.*]] = select i1 [[F32_U8_NAN]], i32 0, i32 [[F32_U8_HIGH]]
+// CHECK: [[F32_U8_VALUE:%.*]] = trunc i32 [[F32_U8_VALUE32]] to i8
+// CHECK: [[F32_U8_BAD:%.*]] = icmp ne i8 [[F32_U8_VALUE]], %1
+// CHECK: br i1 [[F32_U8_BAD]], label %{{.*}}, label %{{.*}}
 
 func cvt32Fto8U(a float32, b uint8) {
 	if uint8(a) != b {
@@ -160,21 +98,9 @@ func cvt32Fto8U(a float32, b uint8) {
 }
 
 // CHECK-LABEL: define void @main.cvt32to64(i32 %0, i64 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = sext i32 %0 to i64
-// CHECK-NEXT:   %3 = icmp ne i64 %2, %1
-// CHECK-NEXT:   br i1 %3, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, ptr %4, align 8
-// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %4, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %5)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[I32_I64_VALUE:%.*]] = sext i32 %0 to i64
+// CHECK: [[I32_I64_BAD:%.*]] = icmp ne i64 [[I32_I64_VALUE]], %1
+// CHECK: br i1 [[I32_I64_BAD]], label %{{.*}}, label %{{.*}}
 
 func cvt32to64(a int32, b int64) {
 	if int64(a) != b {
@@ -183,21 +109,9 @@ func cvt32to64(a int32, b int64) {
 }
 
 // CHECK-LABEL: define void @main.cvt64Fto32F(double %0, float %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = fptrunc double %0 to float
-// CHECK-NEXT:   %3 = fcmp une float %2, %1
-// CHECK-NEXT:   br i1 %3, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, ptr %4, align 8
-// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %4, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %5)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[F64_F32_VALUE:%.*]] = fptrunc double %0 to float
+// CHECK: [[F64_F32_BAD:%.*]] = fcmp une float [[F64_F32_VALUE]], %1
+// CHECK: br i1 [[F64_F32_BAD]], label %{{.*}}, label %{{.*}}
 
 func cvt64Fto32F(a float64, b float32) {
 	if float32(a) != b {
@@ -206,21 +120,9 @@ func cvt64Fto32F(a float64, b float32) {
 }
 
 // CHECK-LABEL: define void @main.cvt64Uto64F(i64 %0, double %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = uitofp i64 %0 to double
-// CHECK-NEXT:   %3 = fcmp une double %2, %1
-// CHECK-NEXT:   br i1 %3, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, ptr %4, align 8
-// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %4, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %5)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[U64_F64_VALUE:%.*]] = uitofp i64 %0 to double
+// CHECK: [[U64_F64_BAD:%.*]] = fcmp une double [[U64_F64_VALUE]], %1
+// CHECK: br i1 [[U64_F64_BAD]], label %{{.*}}, label %{{.*}}
 
 func cvt64Uto64F(a uint64, b float64) {
 	if float64(a) != b {
@@ -229,21 +131,9 @@ func cvt64Uto64F(a uint64, b float64) {
 }
 
 // CHECK-LABEL: define void @main.cvt64to64F(i64 %0, double %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = sitofp i64 %0 to double
-// CHECK-NEXT:   %3 = fcmp une double %2, %1
-// CHECK-NEXT:   br i1 %3, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, ptr %4, align 8
-// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %4, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %5)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[I64_F64_VALUE:%.*]] = sitofp i64 %0 to double
+// CHECK: [[I64_F64_BAD:%.*]] = fcmp une double [[I64_F64_VALUE]], %1
+// CHECK: br i1 [[I64_F64_BAD]], label %{{.*}}, label %{{.*}}
 
 func cvt64to64F(a int64, b float64) {
 	if float64(a) != b {
@@ -252,21 +142,9 @@ func cvt64to64F(a int64, b float64) {
 }
 
 // CHECK-LABEL: define void @main.cvt64to8(i64 %0, i8 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = trunc i64 %0 to i8
-// CHECK-NEXT:   %3 = icmp ne i8 %2, %1
-// CHECK-NEXT:   br i1 %3, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, ptr %4, align 8
-// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %4, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %5)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[I64_I8_VALUE:%.*]] = trunc i64 %0 to i8
+// CHECK: [[I64_I8_BAD:%.*]] = icmp ne i8 [[I64_I8_VALUE]], %1
+// CHECK: br i1 [[I64_I8_BAD]], label %{{.*}}, label %{{.*}}
 
 func cvt64to8(a int64, b int8) {
 	if int8(a) != b {
@@ -275,21 +153,9 @@ func cvt64to8(a int64, b int8) {
 }
 
 // CHECK-LABEL: define void @main.cvt64to8U(i64 %0, i8 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = trunc i64 %0 to i8
-// CHECK-NEXT:   %3 = icmp ne i8 %2, %1
-// CHECK-NEXT:   br i1 %3, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, ptr %4, align 8
-// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %4, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %5)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[I64_U8_VALUE:%.*]] = trunc i64 %0 to i8
+// CHECK: [[I64_U8_BAD:%.*]] = icmp ne i8 [[I64_U8_VALUE]], %1
+// CHECK: br i1 [[I64_U8_BAD]], label %{{.*}}, label %{{.*}}
 
 func cvt64to8U(a int, b uint8) {
 	if uint8(a) != b {
@@ -298,30 +164,18 @@ func cvt64to8U(a int, b uint8) {
 }
 
 // CHECK-LABEL: define void @main.cvtFtoUintptr(double %0, i64 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = fcmp olt double %0, 0.000000e+00
-// CHECK-NEXT:   %3 = fcmp oge double %0, 0x43F0000000000000
-// CHECK-NEXT:   %4 = fcmp uno double %0, %0
-// CHECK-NEXT:   %5 = select i1 %2, double 0.000000e+00, double %0
-// CHECK-NEXT:   %6 = select i1 %3, double 0.000000e+00, double %5
-// CHECK-NEXT:   %7 = select i1 %4, double 0.000000e+00, double %6
-// CHECK-NEXT:   %8 = fptoui double %7 to i64
-// CHECK-NEXT:   %9 = select i1 %3, i64 -1, i64 %8
-// CHECK-NEXT:   %10 = select i1 %2, i64 0, i64 %9
-// CHECK-NEXT:   %11 = select i1 %4, i64 0, i64 %10
-// CHECK-NEXT:   %12 = icmp ne i64 %11, %1
-// CHECK-NEXT:   br i1 %12, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %13 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, ptr %13, align 8
-// CHECK-NEXT:   %14 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %13, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %14)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[F64_UINTPTR_BELOW:%.*]] = fcmp olt double %0, 0.000000e+00
+// CHECK-NEXT: [[F64_UINTPTR_ABOVE:%.*]] = fcmp oge double %0, {{.*}}
+// CHECK-NEXT: [[F64_UINTPTR_NAN:%.*]] = fcmp uno double %0, %0
+// CHECK-NEXT: [[F64_UINTPTR_CLAMP_LOW:%.*]] = select i1 [[F64_UINTPTR_BELOW]], double 0.000000e+00, double %0
+// CHECK-NEXT: [[F64_UINTPTR_CLAMP_HIGH:%.*]] = select i1 [[F64_UINTPTR_ABOVE]], double 0.000000e+00, double [[F64_UINTPTR_CLAMP_LOW]]
+// CHECK-NEXT: [[F64_UINTPTR_FINITE:%.*]] = select i1 [[F64_UINTPTR_NAN]], double 0.000000e+00, double [[F64_UINTPTR_CLAMP_HIGH]]
+// CHECK-NEXT: [[F64_UINTPTR_RAW:%.*]] = fptoui double [[F64_UINTPTR_FINITE]] to i64
+// CHECK-NEXT: [[F64_UINTPTR_HIGH:%.*]] = select i1 [[F64_UINTPTR_ABOVE]], i64 -1, i64 [[F64_UINTPTR_RAW]]
+// CHECK-NEXT: [[F64_UINTPTR_LOW:%.*]] = select i1 [[F64_UINTPTR_BELOW]], i64 0, i64 [[F64_UINTPTR_HIGH]]
+// CHECK-NEXT: [[F64_UINTPTR_VALUE:%.*]] = select i1 [[F64_UINTPTR_NAN]], i64 0, i64 [[F64_UINTPTR_LOW]]
+// CHECK: [[F64_UINTPTR_BAD:%.*]] = icmp ne i64 [[F64_UINTPTR_VALUE]], %1
+// CHECK: br i1 [[F64_UINTPTR_BAD]], label %{{.*}}, label %{{.*}}
 
 func cvtFtoUintptr(a float64, b uintptr) {
 	if uintptr(a) != b {
@@ -330,33 +184,12 @@ func cvtFtoUintptr(a float64, b uintptr) {
 }
 
 // CHECK-LABEL: define void @main.cvtUinptr(i32 %0, i64 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = sext i32 %0 to i64
-// CHECK-NEXT:   %3 = icmp ne i64 %2, %1
-// CHECK-NEXT:   br i1 %3, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, ptr %4, align 8
-// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %4, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %5)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %6 = trunc i64 %1 to i32
-// CHECK-NEXT:   %7 = icmp ne i32 %6, %0
-// CHECK-NEXT:   br i1 %7, label %_llgo_3, label %_llgo_4
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   %8 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 }, ptr %8, align 8
-// CHECK-NEXT:   %9 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %8, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %9)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[INT_UINTPTR_VALUE:%.*]] = sext i32 %0 to i64
+// CHECK: [[INT_UINTPTR_BAD:%.*]] = icmp ne i64 [[INT_UINTPTR_VALUE]], %1
+// CHECK: br i1 [[INT_UINTPTR_BAD]], label %{{.*}}, label %{{.*}}
+// CHECK: [[UINTPTR_INT_VALUE:%.*]] = trunc i64 %1 to i32
+// CHECK: [[UINTPTR_INT_BAD:%.*]] = icmp ne i32 [[UINTPTR_INT_VALUE]], %0
+// CHECK: br i1 [[UINTPTR_INT_BAD]], label %{{.*}}, label %{{.*}}
 
 func cvtUinptr(a int32, b uintptr) {
 	if uintptr(a) != b {
@@ -447,76 +280,3 @@ func main() {
 	cvtFtoUintptr(0.0, 0)
 	cvtFtoUintptr(1e5, 100000)
 }
-
-// CHECK-LABEL: define void @main.init(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load i1, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store i1 true, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @main.cvt64to8(i64 0, i8 0)
-// CHECK-NEXT:   call void @main.cvt64to8(i64 127, i8 127)
-// CHECK-NEXT:   call void @main.cvt64to8(i64 128, i8 -128)
-// CHECK-NEXT:   call void @main.cvt64to8(i64 -128, i8 -128)
-// CHECK-NEXT:   call void @main.cvt64to8(i64 -129, i8 127)
-// CHECK-NEXT:   call void @main.cvt64to8(i64 256, i8 0)
-// CHECK-NEXT:   call void @main.cvt64to8U(i64 0, i8 0)
-// CHECK-NEXT:   call void @main.cvt64to8U(i64 255, i8 -1)
-// CHECK-NEXT:   call void @main.cvt64to8U(i64 256, i8 0)
-// CHECK-NEXT:   call void @main.cvt64to8U(i64 257, i8 1)
-// CHECK-NEXT:   call void @main.cvt64to8U(i64 -1, i8 -1)
-// CHECK-NEXT:   call void @main.cvt32Fto8(float 0x3FB99999A0000000, i8 0)
-// CHECK-NEXT:   call void @main.cvt32Fto8(float 0x405FC66660000000, i8 127)
-// CHECK-NEXT:   call void @main.cvt32Fto8(float 0x4060033340000000, i8 -128)
-// CHECK-NEXT:   call void @main.cvt32Fto8(float 0xC060033340000000, i8 -128)
-// CHECK-NEXT:   call void @main.cvt32Fto8(float 0xC060233340000000, i8 127)
-// CHECK-NEXT:   call void @main.cvt32Fto8(float 0x40700199A0000000, i8 0)
-// CHECK-NEXT:   call void @main.cvt32Fto8U(float 0.000000e+00, i8 0)
-// CHECK-NEXT:   call void @main.cvt32Fto8U(float 2.550000e+02, i8 -1)
-// CHECK-NEXT:   call void @main.cvt32Fto8U(float 2.560000e+02, i8 0)
-// CHECK-NEXT:   call void @main.cvt32Fto8U(float 2.570000e+02, i8 1)
-// CHECK-NEXT:   call void @main.cvt32Fto8U(float -1.000000e+00, i8 -1)
-// CHECK-NEXT:   call void @main.cvt32Fto32(float 0.000000e+00, i32 0)
-// CHECK-NEXT:   call void @main.cvt32Fto32(float 1.500000e+00, i32 1)
-// CHECK-NEXT:   call void @main.cvt32Fto32(float 0x41D1194D80000000, i32 1147483648)
-// CHECK-NEXT:   call void @main.cvt32Fto32(float 0xC1E0000000000000, i32 -2147483648)
-// CHECK-NEXT:   call void @main.cvt32Fto32U(float 0.000000e+00, i32 0)
-// CHECK-NEXT:   call void @main.cvt32Fto32U(float 1.500000e+00, i32 1)
-// CHECK-NEXT:   call void @main.cvt32Fto32U(float 0x41F0000000000000, i32 0)
-// CHECK-NEXT:   call void @main.cvt32Fto32U(float 0x41F3B9ACA0000000, i32 1000000000)
-// CHECK-NEXT:   call void @main.cvt32Fto32U(float 0xC1F0000000000000, i32 0)
-// CHECK-NEXT:   call void @main.cvt32Fto32U(float 0xC1D34BE880000000, i32 -1294967296)
-// CHECK-NEXT:   call void @main.cvt32Fto32U(float 0xBFF19999A0000000, i32 -1)
-// CHECK-NEXT:   call void @main.cvt32Fto64F(float 0.000000e+00, double 0.000000e+00)
-// CHECK-NEXT:   call void @main.cvt32Fto64F(float 1.500000e+00, double 1.500000e+00)
-// CHECK-NEXT:   call void @main.cvt32Fto64F(float 1.000000e+10, double 1.000000e+10)
-// CHECK-NEXT:   call void @main.cvt32Fto64F(float -1.000000e+10, double -1.000000e+10)
-// CHECK-NEXT:   call void @main.cvt64Fto32F(double 0.000000e+00, float 0.000000e+00)
-// CHECK-NEXT:   call void @main.cvt64Fto32F(double 1.500000e+00, float 1.500000e+00)
-// CHECK-NEXT:   call void @main.cvt64Fto32F(double 1.000000e+10, float 1.000000e+10)
-// CHECK-NEXT:   call void @main.cvt64Fto32F(double -1.000000e+10, float -1.000000e+10)
-// CHECK-NEXT:   call void @main.cvt64to64F(i64 0, double 0.000000e+00)
-// CHECK-NEXT:   call void @main.cvt64to64F(i64 10000000000, double 1.000000e+10)
-// CHECK-NEXT:   call void @main.cvt64to64F(i64 9223372036854775807, double 0x43E0000000000000)
-// CHECK-NEXT:   call void @main.cvt64to64F(i64 -9223372036854775807, double 0xC3E0000000000000)
-// CHECK-NEXT:   call void @main.cvt64Uto64F(i64 0, double 0.000000e+00)
-// CHECK-NEXT:   call void @main.cvt64Uto64F(i64 10000000000, double 1.000000e+10)
-// CHECK-NEXT:   call void @main.cvt64Uto64F(i64 9223372036854775807, double 0x43E0000000000000)
-// CHECK-NEXT:   call void @main.cvt64Uto64F(i64 -1, double 0x43F0000000000000)
-// CHECK-NEXT:   call void @main.cvt32to64(i32 0, i64 0)
-// CHECK-NEXT:   call void @main.cvt32to64(i32 2147483647, i64 2147483647)
-// CHECK-NEXT:   call void @main.cvtUinptr(i32 1024, i64 1024)
-// CHECK-NEXT:   call void @main.cvtFtoUintptr(double 1.000000e+02, i64 100)
-// CHECK-NEXT:   call void @main.cvtFtoUintptr(double 0.000000e+00, i64 0)
-// CHECK-NEXT:   call void @main.cvtFtoUintptr(double 1.000000e+05, i64 100000)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }

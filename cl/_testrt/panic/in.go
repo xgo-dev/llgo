@@ -2,13 +2,12 @@
 package main
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 13 }, ptr %0, align 8
-// CHECK-NEXT:   %1 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %0, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %1)
-// CHECK-NEXT:   unreachable
-// CHECK-NEXT: }
+// CHECK: [[PANIC_DATA:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 16)
+// CHECK-NEXT: store %"{{.*}}String" { ptr @{{[0-9]+}}, i64 13 }, ptr [[PANIC_DATA]]
+// CHECK-NEXT: [[PANIC_VALUE:%[0-9]+]] = insertvalue %"{{.*}}eface" { ptr @_llgo_string, ptr undef }, ptr [[PANIC_DATA]], 1
+// CHECK-NEXT: call void @"{{.*}}Panic"(%"{{.*}}eface" [[PANIC_VALUE]])
+// CHECK-NEXT: unreachable
+
 func main() {
 	panic("panic message")
 }
