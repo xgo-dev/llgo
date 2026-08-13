@@ -142,6 +142,12 @@ type pkgInfo struct {
 
 type none = struct{}
 
+type debugStableParam struct {
+	home  llssa.Expr
+	value ssa.Value
+	block *ssa.BasicBlock
+}
+
 type context struct {
 	prog                 llssa.Program
 	pkg                  llssa.Package
@@ -164,6 +170,8 @@ type context struct {
 	recoverFacts         *recoverFacts
 	debugDIVars          map[*types.Var]llssa.DIVar
 	debugAllocVars       map[*ssa.Alloc]*types.Var
+	debugAllocObjects    map[*types.Var]bool
+	debugStableParams    map[*types.Var]debugStableParam
 	runtimeCallerFuncs   map[*ssa.Function]bool
 	pcLineSeq            uint64
 	options              Options
@@ -676,9 +684,13 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			if dbgSymsEnabled {
 				p.debugDIVars = make(map[*types.Var]llssa.DIVar)
 				p.debugAllocVars = collectDebugAllocVariables(f)
+				p.debugAllocObjects = collectDebugAllocObjects(p.debugAllocVars)
+				p.debugStableParams = make(map[*types.Var]debugStableParam)
 			} else {
 				p.debugDIVars = nil
 				p.debugAllocVars = nil
+				p.debugAllocObjects = nil
+				p.debugStableParams = nil
 			}
 			dbgGoSSADump(f)
 			dbgInstrln("==> FuncBody", name)
@@ -847,6 +859,31 @@ func (p *context) debugRef(b llssa.Builder, v *ssa.DebugRef) {
 		// avoid generate local variable debug info of global variable in function
 		return
 	}
+	if !p.prog.DebugInfoOptimized() && p.debugAllocObjects[variable] {
+		// The variable already has a declaration tied to its real storage.
+		// A value DebugRef for an aggregate would replace it with a snapshot.
+		return
+	}
+	if stable, ok := p.debugStableParams[variable]; ok {
+		if stable.value == v.X && stable.block == v.Block() {
+			return
+		}
+		var value llssa.Expr
+		if iv, ok := v.X.(instrOrValue); ok {
+			var exists bool
+			value, exists = p.bvals[iv]
+			if !exists {
+				return
+			}
+		} else {
+			value = p.compileValue(b, v.X)
+		}
+		b.DIStore(stable.home, value)
+		stable.value = v.X
+		stable.block = v.Block()
+		p.debugStableParams[variable] = stable
+		return
+	}
 	pos := p.goProg.Fset.Position(v.Pos())
 	var value llssa.Expr
 	if iv, ok := v.X.(instrOrValue); ok {
@@ -874,7 +911,7 @@ func (p *context) debugRef(b llssa.Builder, v *ssa.DebugRef) {
 func (p *context) debugParams(b llssa.Builder, f *ssa.Function) {
 	for i, param := range f.Params {
 		variable := param.Object().(*types.Var)
-		if hasDebugAlloc(p.debugAllocVars, variable) {
+		if p.debugAllocObjects[variable] {
 			continue
 		}
 		pos := p.goProg.Fset.Position(param.Pos())
@@ -885,7 +922,11 @@ func (p *context) debugParams(b llssa.Builder, f *ssa.Function) {
 		if p.debugDIVars != nil {
 			p.debugDIVars[variable] = div
 		}
-		b.DIParam(variable, v, div, p.fn, pos, p.fn.Block(0))
+		if home := b.DIParamWithHome(variable, v, div, p.fn, pos, p.fn.Block(0)); !home.IsNil() {
+			p.debugStableParams[variable] = debugStableParam{
+				home: home, value: param, block: f.Blocks[0],
+			}
+		}
 	}
 }
 

@@ -609,52 +609,36 @@ var globalStructPtr *StructWithAllTypeFields
 // CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %7, i8 0, i64 80, i1 false)
 // CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   store %main.BigStruct %3, ptr %7, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %4, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %8 = getelementptr inbounds %main.TinyStruct, ptr %4, i32 0, i32 0
 // CHECK-NEXT:   %9 = load i64, ptr %8, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %5, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %10 = getelementptr inbounds %main.SmallStruct, ptr %5, i32 0, i32 0
 // CHECK-NEXT:   %11 = load i64, ptr %10, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %5, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %12 = getelementptr inbounds %main.SmallStruct, ptr %5, i32 0, i32 1
 // CHECK-NEXT:   %13 = load i64, ptr %12, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %6, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %14 = getelementptr inbounds %main.MidStruct, ptr %6, i32 0, i32 0
 // CHECK-NEXT:   %15 = load i64, ptr %14, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %6, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %16 = getelementptr inbounds %main.MidStruct, ptr %6, i32 0, i32 1
 // CHECK-NEXT:   %17 = load i64, ptr %16, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %6, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %18 = getelementptr inbounds %main.MidStruct, ptr %6, i32 0, i32 2
 // CHECK-NEXT:   %19 = load i64, ptr %18, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %20 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 0
 // CHECK-NEXT:   %21 = load i64, ptr %20, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %22 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 1
 // CHECK-NEXT:   %23 = load i64, ptr %22, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %24 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 2
 // CHECK-NEXT:   %25 = load i64, ptr %24, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %26 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 3
 // CHECK-NEXT:   %27 = load i64, ptr %26, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %28 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 4
 // CHECK-NEXT:   %29 = load i64, ptr %28, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %30 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 5
 // CHECK-NEXT:   %31 = load i64, ptr %30, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %32 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 6
 // CHECK-NEXT:   %33 = load i64, ptr %32, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %34 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 7
 // CHECK-NEXT:   %35 = load i64, ptr %34, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %36 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 8
 // CHECK-NEXT:   %37 = load i64, ptr %36, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %38 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 9
 // CHECK-NEXT:   %39 = load i64, ptr %38, align 8
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %9)
@@ -689,52 +673,36 @@ var globalStructPtr *StructWithAllTypeFields
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %39)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:     #dbg_declare(ptr %4, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %40 = getelementptr inbounds %main.TinyStruct, ptr %4, i32 0, i32 0
 // CHECK-NEXT:   store i64 10, ptr %40, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %5, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %41 = getelementptr inbounds %main.SmallStruct, ptr %5, i32 0, i32 0
 // CHECK-NEXT:   store i64 20, ptr %41, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %5, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %42 = getelementptr inbounds %main.SmallStruct, ptr %5, i32 0, i32 1
 // CHECK-NEXT:   store i64 21, ptr %42, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %6, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %43 = getelementptr inbounds %main.MidStruct, ptr %6, i32 0, i32 0
 // CHECK-NEXT:   store i64 40, ptr %43, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %6, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %44 = getelementptr inbounds %main.MidStruct, ptr %6, i32 0, i32 1
 // CHECK-NEXT:   store i64 41, ptr %44, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %6, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %45 = getelementptr inbounds %main.MidStruct, ptr %6, i32 0, i32 2
 // CHECK-NEXT:   store i64 42, ptr %45, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %46 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 0
 // CHECK-NEXT:   store i64 70, ptr %46, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %47 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 1
 // CHECK-NEXT:   store i64 71, ptr %47, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %48 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 2
 // CHECK-NEXT:   store i64 72, ptr %48, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %49 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 3
 // CHECK-NEXT:   store i64 73, ptr %49, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %50 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 4
 // CHECK-NEXT:   store i64 74, ptr %50, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %51 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 5
 // CHECK-NEXT:   store i64 75, ptr %51, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %52 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 6
 // CHECK-NEXT:   store i64 76, ptr %52, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %53 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 7
 // CHECK-NEXT:   store i64 77, ptr %53, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %54 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 8
 // CHECK-NEXT:   store i64 78, ptr %54, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %55 = getelementptr inbounds %main.BigStruct, ptr %7, i32 0, i32 9
 // CHECK-NEXT:   store i64 79, ptr %55, align 8
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 4 })
@@ -744,14 +712,18 @@ var globalStructPtr *StructWithAllTypeFields
 
 // CHECK-LABEL: define void @main.FuncStructPtrParams(ptr %0, ptr %1, ptr %2, ptr %3){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:     #dbg_value(ptr %0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(ptr %1, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(ptr %2, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(ptr %0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(ptr %1, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(ptr %2, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %4 = alloca ptr, align 8
+// CHECK-NEXT:   store ptr %0, ptr %4, align 8
+// CHECK-NEXT:     #dbg_declare(ptr %4, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %5 = alloca ptr, align 8
+// CHECK-NEXT:   store ptr %1, ptr %5, align 8
+// CHECK-NEXT:     #dbg_declare(ptr %5, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %6 = alloca ptr, align 8
+// CHECK-NEXT:   store ptr %2, ptr %6, align 8
+// CHECK-NEXT:     #dbg_declare(ptr %6, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %7 = alloca ptr, align 8
+// CHECK-NEXT:   store ptr %3, ptr %7, align 8
+// CHECK-NEXT:     #dbg_declare(ptr %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %0)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %1)
@@ -760,106 +732,70 @@ var globalStructPtr *StructWithAllTypeFields
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %3)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:     #dbg_value(ptr %0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %4 = getelementptr inbounds %main.TinyStruct, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store i64 10, ptr %4, align 8
-// CHECK-NEXT:     #dbg_value(ptr %1, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %5 = getelementptr inbounds %main.SmallStruct, ptr %1, i32 0, i32 0
-// CHECK-NEXT:   store i64 20, ptr %5, align 8
-// CHECK-NEXT:     #dbg_value(ptr %1, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %6 = getelementptr inbounds %main.SmallStruct, ptr %1, i32 0, i32 1
-// CHECK-NEXT:   store i64 21, ptr %6, align 8
-// CHECK-NEXT:     #dbg_value(ptr %2, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %7 = getelementptr inbounds %main.MidStruct, ptr %2, i32 0, i32 0
-// CHECK-NEXT:   store i64 40, ptr %7, align 8
-// CHECK-NEXT:     #dbg_value(ptr %2, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %8 = getelementptr inbounds %main.MidStruct, ptr %2, i32 0, i32 1
-// CHECK-NEXT:   store i64 41, ptr %8, align 8
-// CHECK-NEXT:     #dbg_value(ptr %2, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %9 = getelementptr inbounds %main.MidStruct, ptr %2, i32 0, i32 2
-// CHECK-NEXT:   store i64 42, ptr %9, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %10 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 0
-// CHECK-NEXT:   store i64 70, ptr %10, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %11 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 1
-// CHECK-NEXT:   store i64 71, ptr %11, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %12 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 2
-// CHECK-NEXT:   store i64 72, ptr %12, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %13 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 3
-// CHECK-NEXT:   store i64 73, ptr %13, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %14 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 4
-// CHECK-NEXT:   store i64 74, ptr %14, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %15 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 5
-// CHECK-NEXT:   store i64 75, ptr %15, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %16 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 6
-// CHECK-NEXT:   store i64 76, ptr %16, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %17 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 7
-// CHECK-NEXT:   store i64 77, ptr %17, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %18 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 8
-// CHECK-NEXT:   store i64 78, ptr %18, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %19 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 9
-// CHECK-NEXT:   store i64 79, ptr %19, align 8
-// CHECK-NEXT:     #dbg_value(ptr %0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %20 = getelementptr inbounds %main.TinyStruct, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %21 = load i64, ptr %20, align 8
-// CHECK-NEXT:     #dbg_value(ptr %1, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %22 = getelementptr inbounds %main.SmallStruct, ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %23 = load i64, ptr %22, align 8
-// CHECK-NEXT:     #dbg_value(ptr %1, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %24 = getelementptr inbounds %main.SmallStruct, ptr %1, i32 0, i32 1
+// CHECK-NEXT:   %8 = getelementptr inbounds %main.TinyStruct, ptr %0, i32 0, i32 0
+// CHECK-NEXT:   store i64 10, ptr %8, align 8
+// CHECK-NEXT:   %9 = getelementptr inbounds %main.SmallStruct, ptr %1, i32 0, i32 0
+// CHECK-NEXT:   store i64 20, ptr %9, align 8
+// CHECK-NEXT:   %10 = getelementptr inbounds %main.SmallStruct, ptr %1, i32 0, i32 1
+// CHECK-NEXT:   store i64 21, ptr %10, align 8
+// CHECK-NEXT:   %11 = getelementptr inbounds %main.MidStruct, ptr %2, i32 0, i32 0
+// CHECK-NEXT:   store i64 40, ptr %11, align 8
+// CHECK-NEXT:   %12 = getelementptr inbounds %main.MidStruct, ptr %2, i32 0, i32 1
+// CHECK-NEXT:   store i64 41, ptr %12, align 8
+// CHECK-NEXT:   %13 = getelementptr inbounds %main.MidStruct, ptr %2, i32 0, i32 2
+// CHECK-NEXT:   store i64 42, ptr %13, align 8
+// CHECK-NEXT:   %14 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 0
+// CHECK-NEXT:   store i64 70, ptr %14, align 8
+// CHECK-NEXT:   %15 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 1
+// CHECK-NEXT:   store i64 71, ptr %15, align 8
+// CHECK-NEXT:   %16 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 2
+// CHECK-NEXT:   store i64 72, ptr %16, align 8
+// CHECK-NEXT:   %17 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 3
+// CHECK-NEXT:   store i64 73, ptr %17, align 8
+// CHECK-NEXT:   %18 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 4
+// CHECK-NEXT:   store i64 74, ptr %18, align 8
+// CHECK-NEXT:   %19 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 5
+// CHECK-NEXT:   store i64 75, ptr %19, align 8
+// CHECK-NEXT:   %20 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 6
+// CHECK-NEXT:   store i64 76, ptr %20, align 8
+// CHECK-NEXT:   %21 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 7
+// CHECK-NEXT:   store i64 77, ptr %21, align 8
+// CHECK-NEXT:   %22 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 8
+// CHECK-NEXT:   store i64 78, ptr %22, align 8
+// CHECK-NEXT:   %23 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 9
+// CHECK-NEXT:   store i64 79, ptr %23, align 8
+// CHECK-NEXT:   %24 = getelementptr inbounds %main.TinyStruct, ptr %0, i32 0, i32 0
 // CHECK-NEXT:   %25 = load i64, ptr %24, align 8
-// CHECK-NEXT:     #dbg_value(ptr %2, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %26 = getelementptr inbounds %main.MidStruct, ptr %2, i32 0, i32 0
+// CHECK-NEXT:   %26 = getelementptr inbounds %main.SmallStruct, ptr %1, i32 0, i32 0
 // CHECK-NEXT:   %27 = load i64, ptr %26, align 8
-// CHECK-NEXT:     #dbg_value(ptr %2, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %28 = getelementptr inbounds %main.MidStruct, ptr %2, i32 0, i32 1
+// CHECK-NEXT:   %28 = getelementptr inbounds %main.SmallStruct, ptr %1, i32 0, i32 1
 // CHECK-NEXT:   %29 = load i64, ptr %28, align 8
-// CHECK-NEXT:     #dbg_value(ptr %2, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %30 = getelementptr inbounds %main.MidStruct, ptr %2, i32 0, i32 2
+// CHECK-NEXT:   %30 = getelementptr inbounds %main.MidStruct, ptr %2, i32 0, i32 0
 // CHECK-NEXT:   %31 = load i64, ptr %30, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %32 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 0
+// CHECK-NEXT:   %32 = getelementptr inbounds %main.MidStruct, ptr %2, i32 0, i32 1
 // CHECK-NEXT:   %33 = load i64, ptr %32, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %34 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 1
+// CHECK-NEXT:   %34 = getelementptr inbounds %main.MidStruct, ptr %2, i32 0, i32 2
 // CHECK-NEXT:   %35 = load i64, ptr %34, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %36 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 2
+// CHECK-NEXT:   %36 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 0
 // CHECK-NEXT:   %37 = load i64, ptr %36, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %38 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 3
+// CHECK-NEXT:   %38 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 1
 // CHECK-NEXT:   %39 = load i64, ptr %38, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %40 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 4
+// CHECK-NEXT:   %40 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 2
 // CHECK-NEXT:   %41 = load i64, ptr %40, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %42 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 5
+// CHECK-NEXT:   %42 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 3
 // CHECK-NEXT:   %43 = load i64, ptr %42, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %44 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 6
+// CHECK-NEXT:   %44 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 4
 // CHECK-NEXT:   %45 = load i64, ptr %44, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %46 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 7
+// CHECK-NEXT:   %46 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 5
 // CHECK-NEXT:   %47 = load i64, ptr %46, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %48 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 8
+// CHECK-NEXT:   %48 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 6
 // CHECK-NEXT:   %49 = load i64, ptr %48, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %50 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 9
+// CHECK-NEXT:   %50 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 7
 // CHECK-NEXT:   %51 = load i64, ptr %50, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %21)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %23)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// CHECK-NEXT:   %52 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 8
+// CHECK-NEXT:   %53 = load i64, ptr %52, align 8
+// CHECK-NEXT:   %54 = getelementptr inbounds %main.BigStruct, ptr %3, i32 0, i32 9
+// CHECK-NEXT:   %55 = load i64, ptr %54, align 8
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %25)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %27)
@@ -887,6 +823,10 @@ var globalStructPtr *StructWithAllTypeFields
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %49)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %51)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %53)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %55)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 4 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
@@ -895,164 +835,131 @@ var globalStructPtr *StructWithAllTypeFields
 
 // CHECK-LABEL: define { i64, %"{{.*}}/runtime/internal/runtime.iface" } @main.FuncWithAllTypeParams(i8 %0, i16 %1, i32 %2, i64 %3, i64 %4, i8 %5, i16 %6, i32 %7, i64 %8, i64 %9, float %10, double %11, i1 %12, { float, float } %13, { double, double } %14, %"{{.*}}/runtime/internal/runtime.Slice" %15, [3 x i64] %16, [3 x %main.E] %17, %"{{.*}}/runtime/internal/runtime.String" %18, %main.E %19, %main.StructWithAllTypeFields %20, ptr %21, ptr %22, %"{{.*}}/runtime/internal/runtime.iface" %23, ptr %24, ptr %25, %"{{.*}}/runtime/internal/runtime.iface" %26, { ptr, ptr } %27){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:     #dbg_value(i8 %0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i16 %1, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i32 %2, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i64 %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i64 %4, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i8 %5, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i16 %6, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i32 %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i64 %8, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i64 %9, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(float %10, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(double %11, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i1 %12, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %28 = alloca { float, float }, align 8
-// CHECK-NEXT:   store { float, float } %13, ptr %28, align 4
-// CHECK-NEXT:   %29 = load { float, float }, ptr %28, align 4
-// CHECK-NEXT:     #dbg_value(ptr %28, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %30 = alloca { double, double }, align 8
-// CHECK-NEXT:   store { double, double } %14, ptr %30, align 8
-// CHECK-NEXT:   %31 = load { double, double }, ptr %30, align 8
-// CHECK-NEXT:     #dbg_value(ptr %30, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %32 = alloca { ptr, i64, i64 }, align 8
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %15, ptr %32, align 8
-// CHECK-NEXT:   %33 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %32, align 8
-// CHECK-NEXT:     #dbg_value(ptr %32, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %34 = alloca %"{{.*}}/runtime/internal/runtime.String", align 8
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" %18, ptr %34, align 8
-// CHECK-NEXT:   %35 = load %"{{.*}}/runtime/internal/runtime.String", ptr %34, align 8
-// CHECK-NEXT:     #dbg_value(ptr %34, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(ptr %21, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(ptr %22, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %36 = alloca %"{{.*}}/runtime/internal/runtime.iface", align 8
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %23, ptr %36, align 8
-// CHECK-NEXT:   %37 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %36, align 8
-// CHECK-NEXT:     #dbg_value(ptr %36, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %38 = alloca { i64, i8, i8, i16, i32, ptr, ptr, i64, ptr }, align 8
-// CHECK-NEXT:   store ptr %24, ptr %38, align 8
-// CHECK-NEXT:   %39 = load ptr, ptr %38, align 8
-// CHECK-NEXT:     #dbg_value(ptr %38, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %40 = alloca ptr, align 8
-// CHECK-NEXT:   store ptr %25, ptr %40, align 8
-// CHECK-NEXT:   %41 = load ptr, ptr %40, align 8
-// CHECK-NEXT:     #dbg_value(ptr %40, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %42 = alloca %"{{.*}}/runtime/internal/runtime.iface", align 8
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %26, ptr %42, align 8
-// CHECK-NEXT:   %43 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %42, align 8
-// CHECK-NEXT:     #dbg_value(ptr %42, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %44 = alloca { ptr, ptr }, align 8
-// CHECK-NEXT:   store { ptr, ptr } %27, ptr %44, align 8
-// CHECK-NEXT:   %45 = load { ptr, ptr }, ptr %44, align 8
-// CHECK-NEXT:     #dbg_value(ptr %44, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %46 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
+// CHECK-NEXT:   %28 = alloca i8, align 1
+// CHECK-NEXT:   store i8 %0, ptr %28, align 1
+// CHECK-NEXT:     #dbg_declare(ptr %28, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %29 = alloca i16, align 2
+// CHECK-NEXT:   store i16 %1, ptr %29, align 2
+// CHECK-NEXT:     #dbg_declare(ptr %29, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %30 = alloca i32, align 4
+// CHECK-NEXT:   store i32 %2, ptr %30, align 4
+// CHECK-NEXT:     #dbg_declare(ptr %30, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %31 = alloca i64, align 8
+// CHECK-NEXT:   store i64 %3, ptr %31, align 8
+// CHECK-NEXT:     #dbg_declare(ptr %31, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %32 = alloca i64, align 8
+// CHECK-NEXT:   store i64 %4, ptr %32, align 8
+// CHECK-NEXT:     #dbg_declare(ptr %32, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %33 = alloca i8, align 1
+// CHECK-NEXT:   store i8 %5, ptr %33, align 1
+// CHECK-NEXT:     #dbg_declare(ptr %33, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %34 = alloca i16, align 2
+// CHECK-NEXT:   store i16 %6, ptr %34, align 2
+// CHECK-NEXT:     #dbg_declare(ptr %34, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %35 = alloca i32, align 4
+// CHECK-NEXT:   store i32 %7, ptr %35, align 4
+// CHECK-NEXT:     #dbg_declare(ptr %35, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %36 = alloca i64, align 8
+// CHECK-NEXT:   store i64 %8, ptr %36, align 8
+// CHECK-NEXT:     #dbg_declare(ptr %36, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %37 = alloca i64, align 8
+// CHECK-NEXT:   store i64 %9, ptr %37, align 8
+// CHECK-NEXT:     #dbg_declare(ptr %37, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %38 = alloca float, align 4
+// CHECK-NEXT:   store float %10, ptr %38, align 4
+// CHECK-NEXT:     #dbg_declare(ptr %38, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %39 = alloca double, align 8
+// CHECK-NEXT:   store double %11, ptr %39, align 8
+// CHECK-NEXT:     #dbg_declare(ptr %39, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %40 = alloca i1, align 1
+// CHECK-NEXT:   store i1 %12, ptr %40, align 1
+// CHECK-NEXT:     #dbg_declare(ptr %40, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %41 = alloca { float, float }, align 8
+// CHECK-NEXT:   store { float, float } %13, ptr %41, align 4
+// CHECK-NEXT:     #dbg_declare(ptr %41, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %42 = alloca { double, double }, align 8
+// CHECK-NEXT:   store { double, double } %14, ptr %42, align 8
+// CHECK-NEXT:     #dbg_declare(ptr %42, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %43 = alloca { ptr, i64, i64 }, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %15, ptr %43, align 8
+// CHECK-NEXT:     #dbg_declare(ptr %43, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %44 = alloca %"{{.*}}/runtime/internal/runtime.String", align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" %18, ptr %44, align 8
+// CHECK-NEXT:     #dbg_declare(ptr %44, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %45 = alloca ptr, align 8
+// CHECK-NEXT:   store ptr %21, ptr %45, align 8
+// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %46 = alloca ptr, align 8
+// CHECK-NEXT:   store ptr %22, ptr %46, align 8
 // CHECK-NEXT:     #dbg_declare(ptr %46, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   store [3 x i64] %16, ptr %46, align 8
-// CHECK-NEXT:   %47 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
+// CHECK-NEXT:   %47 = alloca %"{{.*}}/runtime/internal/runtime.iface", align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %23, ptr %47, align 8
 // CHECK-NEXT:     #dbg_declare(ptr %47, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   store [3 x %main.E] %17, ptr %47, align 8
-// CHECK-NEXT:   %48 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK-NEXT:   %48 = alloca { i64, i8, i8, i16, i32, ptr, ptr, i64, ptr }, align 8
+// CHECK-NEXT:   store ptr %24, ptr %48, align 8
 // CHECK-NEXT:     #dbg_declare(ptr %48, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   store %main.E %19, ptr %48, align 8
-// CHECK-NEXT:   %49 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 288)
+// CHECK-NEXT:   %49 = alloca ptr, align 8
+// CHECK-NEXT:   store ptr %25, ptr %49, align 8
 // CHECK-NEXT:     #dbg_declare(ptr %49, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   store %main.StructWithAllTypeFields %20, ptr %49, align 8
-// CHECK-NEXT:     #dbg_value(i8 %0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i16 %1, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i32 %2, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i64 %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i64 %4, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i8 %5, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i16 %6, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i32 %7, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i64 %8, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i64 %9, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(float %10, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(double %11, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i1 %12, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %50 = alloca { float, float }, align 8
-// CHECK-NEXT:   store { float, float } %13, ptr %50, align 4
-// CHECK-NEXT:   %51 = load { float, float }, ptr %50, align 4
-// CHECK-NEXT:     #dbg_value(ptr %50, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %52 = alloca { double, double }, align 8
-// CHECK-NEXT:   store { double, double } %14, ptr %52, align 8
-// CHECK-NEXT:   %53 = load { double, double }, ptr %52, align 8
-// CHECK-NEXT:     #dbg_value(ptr %52, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %54 = alloca { ptr, i64, i64 }, align 8
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %15, ptr %54, align 8
-// CHECK-NEXT:   %55 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %54, align 8
-// CHECK-NEXT:     #dbg_value(ptr %54, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_declare(ptr %46, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %56 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice2"(ptr %46, i64 8, i64 3, i64 0, i64 3, i1 true, i1 true, i1 true)
-// CHECK-NEXT:   %57 = alloca %"{{.*}}/runtime/internal/runtime.String", align 8
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" %18, ptr %57, align 8
-// CHECK-NEXT:   %58 = load %"{{.*}}/runtime/internal/runtime.String", ptr %57, align 8
-// CHECK-NEXT:     #dbg_value(ptr %57, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_declare(ptr %48, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_declare(ptr %49, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(ptr %21, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(ptr %22, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %59 = alloca %"{{.*}}/runtime/internal/runtime.iface", align 8
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %23, ptr %59, align 8
-// CHECK-NEXT:   %60 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %59, align 8
-// CHECK-NEXT:     #dbg_value(ptr %59, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %61 = alloca { i64, i8, i8, i16, i32, ptr, ptr, i64, ptr }, align 8
-// CHECK-NEXT:   store ptr %24, ptr %61, align 8
-// CHECK-NEXT:   %62 = load ptr, ptr %61, align 8
-// CHECK-NEXT:     #dbg_value(ptr %61, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %63 = alloca ptr, align 8
-// CHECK-NEXT:   store ptr %25, ptr %63, align 8
-// CHECK-NEXT:   %64 = load ptr, ptr %63, align 8
-// CHECK-NEXT:     #dbg_value(ptr %63, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %65 = alloca %"{{.*}}/runtime/internal/runtime.iface", align 8
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %26, ptr %65, align 8
-// CHECK-NEXT:   %66 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %65, align 8
-// CHECK-NEXT:     #dbg_value(ptr %65, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %67 = alloca { ptr, ptr }, align 8
-// CHECK-NEXT:   store { ptr, ptr } %27, ptr %67, align 8
-// CHECK-NEXT:   %68 = load { ptr, ptr }, ptr %67, align 8
-// CHECK-NEXT:     #dbg_value(ptr %67, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %69 = sext i8 %0 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %69)
+// CHECK-NEXT:   %50 = alloca %"{{.*}}/runtime/internal/runtime.iface", align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %26, ptr %50, align 8
+// CHECK-NEXT:     #dbg_declare(ptr %50, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %51 = alloca { ptr, ptr }, align 8
+// CHECK-NEXT:   store { ptr, ptr } %27, ptr %51, align 8
+// CHECK-NEXT:     #dbg_declare(ptr %51, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %52 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
+// CHECK-NEXT:     #dbg_declare(ptr %52, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   store [3 x i64] %16, ptr %52, align 8
+// CHECK-NEXT:   %53 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
+// CHECK-NEXT:     #dbg_declare(ptr %53, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   store [3 x %main.E] %17, ptr %53, align 8
+// CHECK-NEXT:   %54 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK-NEXT:     #dbg_declare(ptr %54, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   store %main.E %19, ptr %54, align 8
+// CHECK-NEXT:   %55 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 288)
+// CHECK-NEXT:     #dbg_declare(ptr %55, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   store %main.StructWithAllTypeFields %20, ptr %55, align 8
+// CHECK-NEXT:   %56 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice2"(ptr %52, i64 8, i64 3, i64 0, i64 3, i1 true, i1 true, i1 true)
+// CHECK-NEXT:   %57 = sext i8 %0 to i64
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %57)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %70 = sext i16 %1 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %70)
+// CHECK-NEXT:   %58 = sext i16 %1 to i64
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %58)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %71 = sext i32 %2 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %71)
+// CHECK-NEXT:   %59 = sext i32 %2 to i64
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %59)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %3)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %4)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %72 = zext i8 %5 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %72)
+// CHECK-NEXT:   %60 = zext i8 %5 to i64
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %60)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %73 = zext i16 %6 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %73)
+// CHECK-NEXT:   %61 = zext i16 %6 to i64
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %61)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %74 = zext i32 %7 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %74)
+// CHECK-NEXT:   %62 = zext i32 %7 to i64
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %62)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %8)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %9)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %75 = fpext float %10 to double
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintFloat"(double %75)
+// CHECK-NEXT:   %63 = fpext float %10 to double
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintFloat"(double %63)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintFloat"(double %11)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %12)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %76 = extractvalue { float, float } %13, 0
-// CHECK-NEXT:   %77 = extractvalue { float, float } %13, 1
-// CHECK-NEXT:   %78 = fpext float %76 to double
-// CHECK-NEXT:   %79 = fpext float %77 to double
-// CHECK-NEXT:   %80 = insertvalue { double, double } undef, double %78, 0
-// CHECK-NEXT:   %81 = insertvalue { double, double } %80, double %79, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintComplex"({ double, double } %81)
+// CHECK-NEXT:   %64 = extractvalue { float, float } %13, 0
+// CHECK-NEXT:   %65 = extractvalue { float, float } %13, 1
+// CHECK-NEXT:   %66 = fpext float %64 to double
+// CHECK-NEXT:   %67 = fpext float %65 to double
+// CHECK-NEXT:   %68 = insertvalue { double, double } undef, double %66, 0
+// CHECK-NEXT:   %69 = insertvalue { double, double } %68, double %67, 1
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintComplex"({ double, double } %69)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintComplex"({ double, double } %14)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
@@ -1062,9 +969,9 @@ var globalStructPtr *StructWithAllTypeFields
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %18)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %48)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %54)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %49)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %55)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %21)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
@@ -1078,124 +985,54 @@ var globalStructPtr *StructWithAllTypeFields
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintIface"(%"{{.*}}/runtime/internal/runtime.iface" %26)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %82 = extractvalue { ptr, ptr } %27, 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %82)
+// CHECK-NEXT:   %70 = extractvalue { ptr, ptr } %27, 0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %70)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:     #dbg_value(i8 9, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i16 10, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i32 11, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i64 12, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i64 13, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i8 14, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i16 15, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i32 16, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i64 17, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i64 18, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(float 1.900000e+01, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(double 2.000000e+01, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i1 false, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %83 = alloca { float, float }, align 8
-// CHECK-NEXT:   store { float, float } { float 2.100000e+01, float 2.200000e+01 }, ptr %83, align 4
-// CHECK-NEXT:   %84 = load { float, float }, ptr %83, align 4
-// CHECK-NEXT:     #dbg_value(ptr %83, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %85 = alloca { double, double }, align 8
-// CHECK-NEXT:   store { double, double } { double 2.300000e+01, double 2.400000e+01 }, ptr %85, align 8
-// CHECK-NEXT:   %86 = load { double, double }, ptr %85, align 8
-// CHECK-NEXT:     #dbg_value(ptr %85, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %87 = alloca { ptr, i64, i64 }, align 8
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %15, ptr %87, align 8
-// CHECK-NEXT:   %88 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %87, align 8
-// CHECK-NEXT:     #dbg_value(ptr %87, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %89 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
-// CHECK-NEXT:   %90 = getelementptr inbounds i64, ptr %89, i64 0
-// CHECK-NEXT:   store i64 31, ptr %90, align 8
-// CHECK-NEXT:   %91 = getelementptr inbounds i64, ptr %89, i64 1
-// CHECK-NEXT:   store i64 32, ptr %91, align 8
-// CHECK-NEXT:   %92 = getelementptr inbounds i64, ptr %89, i64 2
-// CHECK-NEXT:   store i64 33, ptr %92, align 8
-// CHECK-NEXT:   %93 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %89, 0
-// CHECK-NEXT:   %94 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %93, i64 3, 1
-// CHECK-NEXT:   %95 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %94, i64 3, 2
-// CHECK-NEXT:     #dbg_declare(ptr %46, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %96 = getelementptr inbounds i64, ptr %46, i64 0
-// CHECK-NEXT:   %97 = getelementptr inbounds i64, ptr %46, i64 1
-// CHECK-NEXT:   %98 = getelementptr inbounds i64, ptr %46, i64 2
-// CHECK-NEXT:   store i64 34, ptr %96, align 8
-// CHECK-NEXT:   store i64 35, ptr %97, align 8
-// CHECK-NEXT:   store i64 36, ptr %98, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %47, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %99 = getelementptr inbounds %main.E, ptr %47, i64 0
-// CHECK-NEXT:   %100 = getelementptr inbounds %main.E, ptr %99, i32 0, i32 0
-// CHECK-NEXT:   %101 = getelementptr inbounds %main.E, ptr %47, i64 1
-// CHECK-NEXT:   %102 = getelementptr inbounds %main.E, ptr %101, i32 0, i32 0
-// CHECK-NEXT:   %103 = getelementptr inbounds %main.E, ptr %47, i64 2
-// CHECK-NEXT:   %104 = getelementptr inbounds %main.E, ptr %103, i32 0, i32 0
-// CHECK-NEXT:   store i64 37, ptr %100, align 8
-// CHECK-NEXT:   store i64 38, ptr %102, align 8
-// CHECK-NEXT:   store i64 39, ptr %104, align 8
-// CHECK-NEXT:   %105 = alloca %"{{.*}}/runtime/internal/runtime.String", align 8
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 5 }, ptr %105, align 8
-// CHECK-NEXT:   %106 = load %"{{.*}}/runtime/internal/runtime.String", ptr %105, align 8
-// CHECK-NEXT:     #dbg_value(ptr %105, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_declare(ptr %48, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %107 = getelementptr inbounds %main.E, ptr %48, i32 0, i32 0
-// CHECK-NEXT:   store i64 40, ptr %107, align 8
-// CHECK-NEXT:     #dbg_value(i8 9, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i16 10, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i32 11, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i64 12, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i64 13, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i8 14, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i16 15, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i32 16, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i64 17, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i64 18, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(float 1.900000e+01, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(double 2.000000e+01, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i1 false, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %108 = alloca { float, float }, align 8
-// CHECK-NEXT:   store { float, float } { float 2.100000e+01, float 2.200000e+01 }, ptr %108, align 4
-// CHECK-NEXT:   %109 = load { float, float }, ptr %108, align 4
-// CHECK-NEXT:     #dbg_value(ptr %108, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %110 = alloca { double, double }, align 8
-// CHECK-NEXT:   store { double, double } { double 2.300000e+01, double 2.400000e+01 }, ptr %110, align 8
-// CHECK-NEXT:   %111 = load { double, double }, ptr %110, align 8
-// CHECK-NEXT:     #dbg_value(ptr %110, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %112 = alloca { ptr, i64, i64 }, align 8
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %95, ptr %112, align 8
-// CHECK-NEXT:   %113 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %112, align 8
-// CHECK-NEXT:     #dbg_value(ptr %112, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_declare(ptr %46, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %114 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice2"(ptr %46, i64 8, i64 3, i64 0, i64 3, i1 true, i1 true, i1 true)
-// CHECK-NEXT:     #dbg_declare(ptr %47, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %115 = alloca %"{{.*}}/runtime/internal/runtime.String", align 8
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 5 }, ptr %115, align 8
-// CHECK-NEXT:   %116 = load %"{{.*}}/runtime/internal/runtime.String", ptr %115, align 8
-// CHECK-NEXT:     #dbg_value(ptr %115, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_declare(ptr %48, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_declare(ptr %49, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(ptr %21, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(ptr %22, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %117 = alloca %"{{.*}}/runtime/internal/runtime.iface", align 8
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %23, ptr %117, align 8
-// CHECK-NEXT:   %118 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %117, align 8
-// CHECK-NEXT:     #dbg_value(ptr %117, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %119 = alloca { i64, i8, i8, i16, i32, ptr, ptr, i64, ptr }, align 8
-// CHECK-NEXT:   store ptr %24, ptr %119, align 8
-// CHECK-NEXT:   %120 = load ptr, ptr %119, align 8
-// CHECK-NEXT:     #dbg_value(ptr %119, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %121 = alloca ptr, align 8
-// CHECK-NEXT:   store ptr %25, ptr %121, align 8
-// CHECK-NEXT:   %122 = load ptr, ptr %121, align 8
-// CHECK-NEXT:     #dbg_value(ptr %121, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %123 = alloca %"{{.*}}/runtime/internal/runtime.iface", align 8
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %26, ptr %123, align 8
-// CHECK-NEXT:   %124 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %123, align 8
-// CHECK-NEXT:     #dbg_value(ptr %123, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %125 = alloca { ptr, ptr }, align 8
-// CHECK-NEXT:   store { ptr, ptr } %27, ptr %125, align 8
-// CHECK-NEXT:   %126 = load { ptr, ptr }, ptr %125, align 8
-// CHECK-NEXT:     #dbg_value(ptr %125, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
+// CHECK-NEXT:   store i8 9, ptr %28, align 1
+// CHECK-NEXT:   store i16 10, ptr %29, align 2
+// CHECK-NEXT:   store i32 11, ptr %30, align 4
+// CHECK-NEXT:   store i64 12, ptr %31, align 8
+// CHECK-NEXT:   store i64 13, ptr %32, align 8
+// CHECK-NEXT:   store i8 14, ptr %33, align 1
+// CHECK-NEXT:   store i16 15, ptr %34, align 2
+// CHECK-NEXT:   store i32 16, ptr %35, align 4
+// CHECK-NEXT:   store i64 17, ptr %36, align 8
+// CHECK-NEXT:   store i64 18, ptr %37, align 8
+// CHECK-NEXT:   store float 1.900000e+01, ptr %38, align 4
+// CHECK-NEXT:   store double 2.000000e+01, ptr %39, align 8
+// CHECK-NEXT:   store i1 false, ptr %40, align 1
+// CHECK-NEXT:   store { float, float } { float 2.100000e+01, float 2.200000e+01 }, ptr %41, align 4
+// CHECK-NEXT:   store { double, double } { double 2.300000e+01, double 2.400000e+01 }, ptr %42, align 8
+// CHECK-NEXT:   %71 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
+// CHECK-NEXT:   %72 = getelementptr inbounds i64, ptr %71, i64 0
+// CHECK-NEXT:   store i64 31, ptr %72, align 8
+// CHECK-NEXT:   %73 = getelementptr inbounds i64, ptr %71, i64 1
+// CHECK-NEXT:   store i64 32, ptr %73, align 8
+// CHECK-NEXT:   %74 = getelementptr inbounds i64, ptr %71, i64 2
+// CHECK-NEXT:   store i64 33, ptr %74, align 8
+// CHECK-NEXT:   %75 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %71, 0
+// CHECK-NEXT:   %76 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %75, i64 3, 1
+// CHECK-NEXT:   %77 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %76, i64 3, 2
+// CHECK-NEXT:   %78 = getelementptr inbounds i64, ptr %52, i64 0
+// CHECK-NEXT:   %79 = getelementptr inbounds i64, ptr %52, i64 1
+// CHECK-NEXT:   %80 = getelementptr inbounds i64, ptr %52, i64 2
+// CHECK-NEXT:   store i64 34, ptr %78, align 8
+// CHECK-NEXT:   store i64 35, ptr %79, align 8
+// CHECK-NEXT:   store i64 36, ptr %80, align 8
+// CHECK-NEXT:   %81 = getelementptr inbounds %main.E, ptr %53, i64 0
+// CHECK-NEXT:   %82 = getelementptr inbounds %main.E, ptr %81, i32 0, i32 0
+// CHECK-NEXT:   %83 = getelementptr inbounds %main.E, ptr %53, i64 1
+// CHECK-NEXT:   %84 = getelementptr inbounds %main.E, ptr %83, i32 0, i32 0
+// CHECK-NEXT:   %85 = getelementptr inbounds %main.E, ptr %53, i64 2
+// CHECK-NEXT:   %86 = getelementptr inbounds %main.E, ptr %85, i32 0, i32 0
+// CHECK-NEXT:   store i64 37, ptr %82, align 8
+// CHECK-NEXT:   store i64 38, ptr %84, align 8
+// CHECK-NEXT:   store i64 39, ptr %86, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 5 }, ptr %44, align 8
+// CHECK-NEXT:   %87 = getelementptr inbounds %main.E, ptr %54, i32 0, i32 0
+// CHECK-NEXT:   store i64 40, ptr %87, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %77, ptr %43, align 8
+// CHECK-NEXT:   %88 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice2"(ptr %52, i64 8, i64 3, i64 0, i64 3, i1 true, i1 true, i1 true)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 9)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 10)
@@ -1226,17 +1063,17 @@ var globalStructPtr *StructWithAllTypeFields
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintComplex"({ double, double } { double 2.300000e+01, double 2.400000e+01 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %95)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %77)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %114)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %88)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %47)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %53)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 5 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %48)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %54)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %49)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %55)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %21)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
@@ -1250,12 +1087,12 @@ var globalStructPtr *StructWithAllTypeFields
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintIface"(%"{{.*}}/runtime/internal/runtime.iface" %26)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %127 = extractvalue { ptr, ptr } %27, 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %127)
+// CHECK-NEXT:   %89 = extractvalue { ptr, ptr } %27, 0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %89)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %128 = call %"{{.*}}/runtime/internal/runtime.iface" @errors.New(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 10 })
-// CHECK-NEXT:   %129 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } { i64 1, %"{{.*}}/runtime/internal/runtime.iface" undef }, %"{{.*}}/runtime/internal/runtime.iface" %128, 1
-// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %129
+// CHECK-NEXT:   %90 = call %"{{.*}}/runtime/internal/runtime.iface" @errors.New(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 10 })
+// CHECK-NEXT:   %91 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } { i64 1, %"{{.*}}/runtime/internal/runtime.iface" undef }, %"{{.*}}/runtime/internal/runtime.iface" %90, 1
+// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %91
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @main.FuncWithAllTypeStructParam(%main.StructWithAllTypeFields %0){{.*}} !dbg !{{[0-9]+}} {
@@ -1263,17 +1100,13 @@ var globalStructPtr *StructWithAllTypeFields
 // CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 288)
 // CHECK-NEXT:     #dbg_declare(ptr %1, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   store %main.StructWithAllTypeFields %0, ptr %1, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %1, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %1)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:     #dbg_declare(ptr %1, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %2 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %1, i32 0, i32 0
 // CHECK-NEXT:   store i8 8, ptr %2, align 1
-// CHECK-NEXT:     #dbg_declare(ptr %1, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %3 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %1, i32 0, i32 18
 // CHECK-NEXT:   %4 = load %"{{.*}}/runtime/internal/runtime.String", ptr %3, align 8
 // CHECK-NEXT:   %5 = extractvalue %"{{.*}}/runtime/internal/runtime.String" %4, 1
-// CHECK-NEXT:     #dbg_declare(ptr %1, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %6 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %1, i32 0, i32 0
 // CHECK-NEXT:   %7 = load i8, ptr %6, align 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %5)
@@ -1349,11 +1182,12 @@ var globalStructPtr *StructWithAllTypeFields
 
 // CHECK-LABEL: define void @main.ScopeIf(i64 %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:     #dbg_value(i64 %0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %1 = alloca i64, align 8
+// CHECK-NEXT:   store i64 %0, ptr %1, align 8
+// CHECK-NEXT:     #dbg_declare(ptr %1, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:     #dbg_value(i64 1, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i64 %0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %1 = icmp eq i64 %0, 1
-// CHECK-NEXT:   br i1 %1, label %_llgo_1, label %_llgo_3
+// CHECK-NEXT:   %2 = icmp eq i64 %0, 1
+// CHECK-NEXT:   br i1 %2, label %_llgo_1, label %_llgo_3
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
 // CHECK-NEXT:     #dbg_value(i64 2, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
@@ -1394,11 +1228,12 @@ var globalStructPtr *StructWithAllTypeFields
 
 // CHECK-LABEL: define void @main.ScopeSwitch(i64 %0){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:     #dbg_value(i64 %0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %1 = alloca i64, align 8
+// CHECK-NEXT:   store i64 %0, ptr %1, align 8
+// CHECK-NEXT:     #dbg_declare(ptr %1, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:     #dbg_value(i64 0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i64 %0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %1 = icmp eq i64 %0, 1
-// CHECK-NEXT:   br i1 %1, label %_llgo_2, label %_llgo_4
+// CHECK-NEXT:   %2 = icmp eq i64 %0, 1
+// CHECK-NEXT:   br i1 %2, label %_llgo_2, label %_llgo_4
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_5, %_llgo_3, %_llgo_2
 // CHECK-NEXT:     #dbg_value(i64 0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
@@ -1412,7 +1247,7 @@ var globalStructPtr *StructWithAllTypeFields
 // CHECK-NEXT:     #dbg_value(i64 1, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 6 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:     #dbg_value(i64 %0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   store i64 %0, ptr %1, align 8
 // CHECK-NEXT:     #dbg_value(i64 0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:     #dbg_value(i64 1, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 2 })
@@ -1433,7 +1268,7 @@ var globalStructPtr *StructWithAllTypeFields
 // CHECK-NEXT:     #dbg_value(i64 2, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 6 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:     #dbg_value(i64 %0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   store i64 %0, ptr %1, align 8
 // CHECK-NEXT:     #dbg_value(i64 0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:     #dbg_value(i64 2, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 2 })
@@ -1451,17 +1286,16 @@ var globalStructPtr *StructWithAllTypeFields
 // CHECK-NEXT:   br label %_llgo_1
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %2 = icmp eq i64 %0, 2
-// CHECK-NEXT:   br i1 %2, label %_llgo_3, label %_llgo_5
+// CHECK-NEXT:   %3 = icmp eq i64 %0, 2
+// CHECK-NEXT:   br i1 %3, label %_llgo_3, label %_llgo_5
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_4
 // CHECK-NEXT:     #dbg_value(i64 3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_value(i64 %0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   store i64 %0, ptr %1, align 8
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 4 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %0)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:     #dbg_value(i64 %0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:     #dbg_value(i64 0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:     #dbg_value(i64 3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 2 })
@@ -1481,15 +1315,15 @@ var globalStructPtr *StructWithAllTypeFields
 
 // CHECK-LABEL: define i64 @"main.(*Struct).Foo"(ptr %0, %"{{.*}}/runtime/internal/runtime.Slice" %1, %"{{.*}}/runtime/internal/runtime.String" %2){{.*}} {
 // CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:     #dbg_value(ptr %0, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %3 = alloca { ptr, i64, i64 }, align 8
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %1, ptr %3, align 8
-// CHECK-NEXT:   %4 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %3, align 8
-// CHECK-NEXT:     #dbg_value(ptr %3, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
+// CHECK-NEXT:   %3 = alloca ptr, align 8
+// CHECK-NEXT:   store ptr %0, ptr %3, align 8
+// CHECK-NEXT:     #dbg_declare(ptr %3, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
+// CHECK-NEXT:   %4 = alloca { ptr, i64, i64 }, align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %1, ptr %4, align 8
+// CHECK-NEXT:     #dbg_declare(ptr %4, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %5 = alloca %"{{.*}}/runtime/internal/runtime.String", align 8
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" %2, ptr %5, align 8
-// CHECK-NEXT:   %6 = load %"{{.*}}/runtime/internal/runtime.String", ptr %5, align 8
-// CHECK-NEXT:     #dbg_value(ptr %5, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
+// CHECK-NEXT:     #dbg_declare(ptr %5, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   ret i64 1
 // CHECK-NEXT: }
 
@@ -1594,9 +1428,7 @@ var globalStructPtr *StructWithAllTypeFields
 // CHECK-NEXT:   %44 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
 // CHECK-NEXT:     #dbg_declare(ptr %44, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   store i64 100, ptr %44, align 8
-// CHECK-NEXT:     #dbg_value(i64 100, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %45 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 288)
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %46 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 0
 // CHECK-NEXT:   %47 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 1
@@ -1655,7 +1487,6 @@ var globalStructPtr *StructWithAllTypeFields
 // CHECK-NEXT:   %91 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %90, i32 0, i32 1
 // CHECK-NEXT:   store i16 100, ptr %91, align 2
 // CHECK-NEXT:   %92 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 21
-// CHECK-NEXT:     #dbg_declare(ptr %44, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   %93 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 22
 // CHECK-NEXT:   %94 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 23
 // CHECK-NEXT:   %95 = call ptr @"{{.*}}/runtime/internal/runtime.MakeMap"(ptr @"map[_llgo_string]_llgo_uint64", i64 2)
@@ -1714,136 +1545,91 @@ var globalStructPtr *StructWithAllTypeFields
 // CHECK-NEXT:   store { ptr, ptr } %107, ptr %104, align 8
 // CHECK-NEXT:   store i64 100, ptr %108, align 8
 // CHECK-NEXT:   store i64 200, ptr %109, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   store ptr %45, ptr @main.globalStructPtr, align 8
 // CHECK-NEXT:   %113 = load %main.StructWithAllTypeFields, ptr %45, align 8
-// CHECK-NEXT:   %114 = alloca %main.StructWithAllTypeFields, align 8
-// CHECK-NEXT:   store %main.StructWithAllTypeFields %113, ptr %114, align 8
-// CHECK-NEXT:   %115 = load %main.StructWithAllTypeFields, ptr %114, align 8
-// CHECK-NEXT:     #dbg_value(ptr %114, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
 // CHECK-NEXT:   store %main.StructWithAllTypeFields %113, ptr @main.globalStruct, align 8
-// CHECK-NEXT:   %116 = load i64, ptr @main.globalInt, align 8
+// CHECK-NEXT:   %114 = load i64, ptr @main.globalInt, align 8
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 10 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %116)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %114)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 2 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %45)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %117 = load %main.StructWithAllTypeFields, ptr %45, align 8
-// CHECK-NEXT:   %118 = alloca %main.StructWithAllTypeFields, align 8
-// CHECK-NEXT:   store %main.StructWithAllTypeFields %117, ptr %118, align 8
-// CHECK-NEXT:   %119 = load %main.StructWithAllTypeFields, ptr %118, align 8
-// CHECK-NEXT:     #dbg_value(ptr %118, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   call void @main.FuncWithAllTypeStructParam(%main.StructWithAllTypeFields %117)
+// CHECK-NEXT:   %115 = load %main.StructWithAllTypeFields, ptr %45, align 8
+// CHECK-NEXT:   call void @main.FuncWithAllTypeStructParam(%main.StructWithAllTypeFields %115)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 27 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %120 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 0
-// CHECK-NEXT:   %121 = load i8, ptr %120, align 1
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %122 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 1
-// CHECK-NEXT:   %123 = load i16, ptr %122, align 2
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %124 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 2
-// CHECK-NEXT:   %125 = load i32, ptr %124, align 4
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %126 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 3
-// CHECK-NEXT:   %127 = load i64, ptr %126, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %128 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 4
-// CHECK-NEXT:   %129 = load i64, ptr %128, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %130 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 5
-// CHECK-NEXT:   %131 = load i8, ptr %130, align 1
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %132 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 6
-// CHECK-NEXT:   %133 = load i16, ptr %132, align 2
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %134 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 7
-// CHECK-NEXT:   %135 = load i32, ptr %134, align 4
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %136 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 8
-// CHECK-NEXT:   %137 = load i64, ptr %136, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %138 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 9
-// CHECK-NEXT:   %139 = load i64, ptr %138, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %140 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 10
-// CHECK-NEXT:   %141 = load float, ptr %140, align 4
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %142 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 11
-// CHECK-NEXT:   %143 = load double, ptr %142, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %144 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 12
-// CHECK-NEXT:   %145 = load i1, ptr %144, align 1
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %146 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 13
-// CHECK-NEXT:   %147 = load { float, float }, ptr %146, align 4
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %148 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 14
-// CHECK-NEXT:   %149 = load { double, double }, ptr %148, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %150 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 15
-// CHECK-NEXT:   %151 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %150, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %152 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 16
-// CHECK-NEXT:   %153 = load [3 x i64], ptr %152, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %154 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 17
-// CHECK-NEXT:   %155 = load [3 x %main.E], ptr %154, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %156 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 18
-// CHECK-NEXT:   %157 = load %"{{.*}}/runtime/internal/runtime.String", ptr %156, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %158 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 19
-// CHECK-NEXT:   %159 = load %main.E, ptr %158, align 8
-// CHECK-NEXT:   %160 = load %main.StructWithAllTypeFields, ptr %45, align 8
-// CHECK-NEXT:   %161 = alloca %main.StructWithAllTypeFields, align 8
-// CHECK-NEXT:   store %main.StructWithAllTypeFields %160, ptr %161, align 8
-// CHECK-NEXT:   %162 = load %main.StructWithAllTypeFields, ptr %161, align 8
-// CHECK-NEXT:     #dbg_value(ptr %161, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %163 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 20
+// CHECK-NEXT:   %116 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 0
+// CHECK-NEXT:   %117 = load i8, ptr %116, align 1
+// CHECK-NEXT:   %118 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 1
+// CHECK-NEXT:   %119 = load i16, ptr %118, align 2
+// CHECK-NEXT:   %120 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 2
+// CHECK-NEXT:   %121 = load i32, ptr %120, align 4
+// CHECK-NEXT:   %122 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 3
+// CHECK-NEXT:   %123 = load i64, ptr %122, align 8
+// CHECK-NEXT:   %124 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 4
+// CHECK-NEXT:   %125 = load i64, ptr %124, align 8
+// CHECK-NEXT:   %126 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 5
+// CHECK-NEXT:   %127 = load i8, ptr %126, align 1
+// CHECK-NEXT:   %128 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 6
+// CHECK-NEXT:   %129 = load i16, ptr %128, align 2
+// CHECK-NEXT:   %130 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 7
+// CHECK-NEXT:   %131 = load i32, ptr %130, align 4
+// CHECK-NEXT:   %132 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 8
+// CHECK-NEXT:   %133 = load i64, ptr %132, align 8
+// CHECK-NEXT:   %134 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 9
+// CHECK-NEXT:   %135 = load i64, ptr %134, align 8
+// CHECK-NEXT:   %136 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 10
+// CHECK-NEXT:   %137 = load float, ptr %136, align 4
+// CHECK-NEXT:   %138 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 11
+// CHECK-NEXT:   %139 = load double, ptr %138, align 8
+// CHECK-NEXT:   %140 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 12
+// CHECK-NEXT:   %141 = load i1, ptr %140, align 1
+// CHECK-NEXT:   %142 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 13
+// CHECK-NEXT:   %143 = load { float, float }, ptr %142, align 4
+// CHECK-NEXT:   %144 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 14
+// CHECK-NEXT:   %145 = load { double, double }, ptr %144, align 8
+// CHECK-NEXT:   %146 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 15
+// CHECK-NEXT:   %147 = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %146, align 8
+// CHECK-NEXT:   %148 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 16
+// CHECK-NEXT:   %149 = load [3 x i64], ptr %148, align 8
+// CHECK-NEXT:   %150 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 17
+// CHECK-NEXT:   %151 = load [3 x %main.E], ptr %150, align 8
+// CHECK-NEXT:   %152 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 18
+// CHECK-NEXT:   %153 = load %"{{.*}}/runtime/internal/runtime.String", ptr %152, align 8
+// CHECK-NEXT:   %154 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 19
+// CHECK-NEXT:   %155 = load %main.E, ptr %154, align 8
+// CHECK-NEXT:   %156 = load %main.StructWithAllTypeFields, ptr %45, align 8
+// CHECK-NEXT:   %157 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 20
+// CHECK-NEXT:   %158 = load ptr, ptr %157, align 8
+// CHECK-NEXT:   %159 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 21
+// CHECK-NEXT:   %160 = load ptr, ptr %159, align 8
+// CHECK-NEXT:   %161 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 22
+// CHECK-NEXT:   %162 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %161, align 8
+// CHECK-NEXT:   %163 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 23
 // CHECK-NEXT:   %164 = load ptr, ptr %163, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %165 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 21
+// CHECK-NEXT:   %165 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 24
 // CHECK-NEXT:   %166 = load ptr, ptr %165, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %167 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 22
+// CHECK-NEXT:   %167 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 25
 // CHECK-NEXT:   %168 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %167, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %169 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 23
-// CHECK-NEXT:   %170 = load ptr, ptr %169, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %171 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 24
-// CHECK-NEXT:   %172 = load ptr, ptr %171, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %173 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 25
-// CHECK-NEXT:   %174 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %173, align 8
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %175 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 26
-// CHECK-NEXT:   %176 = load { ptr, ptr }, ptr %175, align 8
-// CHECK-NEXT:   %177 = call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @main.FuncWithAllTypeParams(i8 %121, i16 %123, i32 %125, i64 %127, i64 %129, i8 %131, i16 %133, i32 %135, i64 %137, i64 %139, float %141, double %143, i1 %145, { float, float } %147, { double, double } %149, %"{{.*}}/runtime/internal/runtime.Slice" %151, [3 x i64] %153, [3 x %main.E] %155, %"{{.*}}/runtime/internal/runtime.String" %157, %main.E %159, %main.StructWithAllTypeFields %160, ptr %164, ptr %166, %"{{.*}}/runtime/internal/runtime.iface" %168, ptr %170, ptr %172, %"{{.*}}/runtime/internal/runtime.iface" %174, { ptr, ptr } %176)
-// CHECK-NEXT:   %178 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %177, 0
-// CHECK-NEXT:   store i64 %178, ptr %44, align 8
-// CHECK-NEXT:     #dbg_value(i64 %178, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %179 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %177, 1
-// CHECK-NEXT:   %180 = alloca %"{{.*}}/runtime/internal/runtime.iface", align 8
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %179, ptr %180, align 8
-// CHECK-NEXT:   %181 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %180, align 8
-// CHECK-NEXT:     #dbg_value(ptr %180, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %182 = load i64, ptr %44, align 8
-// CHECK-NEXT:     #dbg_value(i64 %182, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %183 = alloca %"{{.*}}/runtime/internal/runtime.iface", align 8
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %179, ptr %183, align 8
-// CHECK-NEXT:   %184 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %183, align 8
-// CHECK-NEXT:     #dbg_value(ptr %183, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %182)
+// CHECK-NEXT:   %169 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 26
+// CHECK-NEXT:   %170 = load { ptr, ptr }, ptr %169, align 8
+// CHECK-NEXT:   %171 = call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @main.FuncWithAllTypeParams(i8 %117, i16 %119, i32 %121, i64 %123, i64 %125, i8 %127, i16 %129, i32 %131, i64 %133, i64 %135, float %137, double %139, i1 %141, { float, float } %143, { double, double } %145, %"{{.*}}/runtime/internal/runtime.Slice" %147, [3 x i64] %149, [3 x %main.E] %151, %"{{.*}}/runtime/internal/runtime.String" %153, %main.E %155, %main.StructWithAllTypeFields %156, ptr %158, ptr %160, %"{{.*}}/runtime/internal/runtime.iface" %162, ptr %164, ptr %166, %"{{.*}}/runtime/internal/runtime.iface" %168, { ptr, ptr } %170)
+// CHECK-NEXT:   %172 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %171, 0
+// CHECK-NEXT:   store i64 %172, ptr %44, align 8
+// CHECK-NEXT:   %173 = extractvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } %171, 1
+// CHECK-NEXT:   %174 = alloca %"{{.*}}/runtime/internal/runtime.iface", align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %173, ptr %174, align 8
+// CHECK-NEXT:     #dbg_value(ptr %174, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
+// CHECK-NEXT:   %175 = load i64, ptr %44, align 8
+// CHECK-NEXT:   %176 = alloca %"{{.*}}/runtime/internal/runtime.iface", align 8
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" %173, ptr %176, align 8
+// CHECK-NEXT:     #dbg_value(ptr %176, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %175)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintIface"(%"{{.*}}/runtime/internal/runtime.iface" %179)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintIface"(%"{{.*}}/runtime/internal/runtime.iface" %173)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   call void @main.ScopeIf(i64 1)
 // CHECK-NEXT:   call void @main.ScopeIf(i64 0)
@@ -1851,43 +1637,40 @@ var globalStructPtr *StructWithAllTypeFields
 // CHECK-NEXT:   call void @main.ScopeSwitch(i64 1)
 // CHECK-NEXT:   call void @main.ScopeSwitch(i64 2)
 // CHECK-NEXT:   call void @main.ScopeSwitch(i64 3)
-// CHECK-NEXT:   %185 = load ptr, ptr @main.globalStructPtr, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %185)
+// CHECK-NEXT:   %177 = load ptr, ptr @main.globalStructPtr, align 8
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %177)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr @main.globalStruct)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %186 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 0
-// CHECK-NEXT:   store i8 18, ptr %186, align 1
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %187 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 0
-// CHECK-NEXT:   %188 = load i8, ptr %187, align 1
-// CHECK-NEXT:   %189 = sext i8 %188 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %189)
+// CHECK-NEXT:   %178 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 0
+// CHECK-NEXT:   store i8 18, ptr %178, align 1
+// CHECK-NEXT:   %179 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %45, i32 0, i32 0
+// CHECK-NEXT:   %180 = load i8, ptr %179, align 1
+// CHECK-NEXT:   %181 = sext i8 %180 to i64
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %181)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %190 = load ptr, ptr @main.globalStructPtr, align 8
-// CHECK-NEXT:   %191 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %190, i32 0, i32 0
-// CHECK-NEXT:   %192 = load i8, ptr %191, align 1
-// CHECK-NEXT:   %193 = sext i8 %192 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %193)
+// CHECK-NEXT:   %182 = load ptr, ptr @main.globalStructPtr, align 8
+// CHECK-NEXT:   %183 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %182, i32 0, i32 0
+// CHECK-NEXT:   %184 = load i8, ptr %183, align 1
+// CHECK-NEXT:   %185 = sext i8 %184 to i64
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %185)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 4 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" zeroinitializer)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:     #dbg_declare(ptr %45, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %194 = load ptr, ptr @main.globalStructPtr, align 8
-// CHECK-NEXT:   %195 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %194, i32 0, i32 1
-// CHECK-NEXT:   %196 = load i16, ptr %195, align 2
-// CHECK-NEXT:   %197 = load ptr, ptr @main.globalStructPtr, align 8
+// CHECK-NEXT:   %186 = load ptr, ptr @main.globalStructPtr, align 8
+// CHECK-NEXT:   %187 = getelementptr inbounds %main.StructWithAllTypeFields, ptr %186, i32 0, i32 1
+// CHECK-NEXT:   %188 = load i16, ptr %187, align 2
+// CHECK-NEXT:   %189 = load ptr, ptr @main.globalStructPtr, align 8
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %45)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr @main.globalStruct)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %198 = sext i16 %196 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %198)
+// CHECK-NEXT:   %190 = sext i16 %188 to i64
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %190)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %197)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %189)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   store ptr null, ptr @main.globalStructPtr, align 8
 // CHECK-NEXT:   ret void
@@ -1897,23 +1680,18 @@ var globalStructPtr *StructWithAllTypeFields
 // CHECK-NEXT: _llgo_0:
 // CHECK-NEXT:   %2 = alloca %"{{.*}}/runtime/internal/runtime.String", align 8
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" %1, ptr %2, align 8
-// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.String", ptr %2, align 8
-// CHECK-NEXT:     #dbg_value(ptr %2, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
-// CHECK-NEXT:   %4 = alloca %"{{.*}}/runtime/internal/runtime.String", align 8
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" %1, ptr %4, align 8
-// CHECK-NEXT:   %5 = load %"{{.*}}/runtime/internal/runtime.String", ptr %4, align 8
-// CHECK-NEXT:     #dbg_value(ptr %4, !{{[0-9]+}}, !DIExpression(DW_OP_deref), !{{[0-9]+}})
+// CHECK-NEXT:     #dbg_declare(ptr %2, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 3 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %1)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %6 = load { ptr }, ptr %0, align 8
-// CHECK-NEXT:   %7 = extractvalue { ptr } %6, 0
-// CHECK-NEXT:   store i64 201, ptr %7, align 8
+// CHECK-NEXT:   %3 = load { ptr }, ptr %0, align 8
+// CHECK-NEXT:   %4 = extractvalue { ptr } %3, 0
+// CHECK-NEXT:   store i64 201, ptr %4, align 8
 // CHECK-NEXT:     #dbg_value(i64 201, !{{[0-9]+}}, !DIExpression(), !{{[0-9]+}})
-// CHECK-NEXT:   %8 = call %"{{.*}}/runtime/internal/runtime.iface" @errors.New(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 8 })
-// CHECK-NEXT:   %9 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } { i64 1, %"{{.*}}/runtime/internal/runtime.iface" undef }, %"{{.*}}/runtime/internal/runtime.iface" %8, 1
-// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %9
+// CHECK-NEXT:   %5 = call %"{{.*}}/runtime/internal/runtime.iface" @errors.New(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 8 })
+// CHECK-NEXT:   %6 = insertvalue { i64, %"{{.*}}/runtime/internal/runtime.iface" } { i64 1, %"{{.*}}/runtime/internal/runtime.iface" undef }, %"{{.*}}/runtime/internal/runtime.iface" %5, 1
+// CHECK-NEXT:   ret { i64, %"{{.*}}/runtime/internal/runtime.iface" } %6
 // CHECK-NEXT: }
 
 // CHECK: !llvm.dbg.cu = !{!{{[0-9]+}}}

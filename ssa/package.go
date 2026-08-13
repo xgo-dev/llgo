@@ -420,6 +420,12 @@ func (p Program) SetDebugInfoOptimized(enable bool) {
 	p.debugInfoOptimized = enable
 }
 
+// DebugInfoOptimized reports whether generated debug information is marked as
+// optimized for this program.
+func (p Program) DebugInfoOptimized() bool {
+	return p.debugInfoOptimized
+}
+
 func (p Program) SetNoInterfaceMethod(fullName string) {
 	p.packageSyntax.mu.Lock()
 	p.packageSyntax.noInterface[fullName] = none{}
