@@ -6,36 +6,23 @@ import (
 	"unicode"
 )
 
+// CHECK: [[HELLO:@[0-9]+]] = private unnamed_addr constant [6 x i8] c"Hello "
+// CHECK: [[WORLD:@[0-9]+]] = private unnamed_addr constant [5 x i8] c"World"
+// CHECK: [[WITH_HAN:@[0-9]+]] = private unnamed_addr constant [13 x i8] c"Hello, \E4\B8\96\E7\95\8C"
+// CHECK: [[WITHOUT_HAN:@[0-9]+]] = private unnamed_addr constant [12 x i8] c"Hello, world"
 // CHECK-LABEL: define void @main.main(){{.*}} {
 func main() {
-	// CHECK-NEXT: _llgo_0:
-	// CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 32)
-	// CHECK-NEXT:   %1 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.StringToBytes"(%"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 6 })
-	// CHECK-NEXT:   %2 = call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"strings.(*Builder).Write"(ptr %0, %"{{.*}}/runtime/internal/runtime.Slice" %1)
-	// CHECK-NEXT:   %3 = call { i64, %"{{.*}}/runtime/internal/runtime.iface" } @"strings.(*Builder).WriteString"(ptr %0, %"{{.*}}/runtime/internal/runtime.String" { ptr @1, i64 5 })
-	// CHECK-NEXT:   %4 = call i64 @"strings.(*Builder).Len"(ptr %0)
-	// CHECK-NEXT:   %5 = call i64 @"strings.(*Builder).Cap"(ptr %0)
-	// CHECK-NEXT:   %6 = call %"{{.*}}/runtime/internal/runtime.String" @"strings.(*Builder).String"(ptr %0)
-	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 4 })
-	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %4)
-	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @3, i64 4 })
-	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %5)
-	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @4, i64 7 })
-	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %6)
-	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-	// CHECK-NEXT:   %7 = call i64 @strings.IndexFunc(%"{{.*}}/runtime/internal/runtime.String" { ptr @5, i64 13 }, { ptr, ptr } { ptr @"main.main$1", ptr null })
-	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %7)
-	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-	// CHECK-NEXT:   %8 = call i64 @strings.IndexFunc(%"{{.*}}/runtime/internal/runtime.String" { ptr @6, i64 12 }, { ptr, ptr } { ptr @"main.main$1", ptr null })
-	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %8)
-	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-	// CHECK-NEXT:   ret void
-	// CHECK-NEXT: }
+	// All Builder operations use one receiver, and the queried values are printed.
+	// CHECK: [[BUILDER:%.*]] = call ptr @"{{.*}}AllocZ"(i64 32)
+	// CHECK: [[HELLO_BYTES:%.*]] = call %"{{.*}}Slice" @"{{.*}}StringToBytes"(%"{{.*}}String" { ptr [[HELLO]], i64 6 })
+	// CHECK: call { i64, %"{{.*}}iface" } @"strings.(*Builder).Write"(ptr [[BUILDER]], %"{{.*}}Slice" [[HELLO_BYTES]])
+	// CHECK: call { i64, %"{{.*}}iface" } @"strings.(*Builder).WriteString"(ptr [[BUILDER]], %"{{.*}}String" { ptr [[WORLD]], i64 5 })
+	// CHECK: [[BUILDER_LEN:%.*]] = call i64 @"strings.(*Builder).Len"(ptr [[BUILDER]])
+	// CHECK: [[BUILDER_CAP:%.*]] = call i64 @"strings.(*Builder).Cap"(ptr [[BUILDER]])
+	// CHECK: [[BUILDER_STRING:%.*]] = call %"{{.*}}String" @"strings.(*Builder).String"(ptr [[BUILDER]])
+	// CHECK: call void @"{{.*}}PrintInt"(i64 [[BUILDER_LEN]])
+	// CHECK: call void @"{{.*}}PrintInt"(i64 [[BUILDER_CAP]])
+	// CHECK: call void @"{{.*}}PrintString"(%"{{.*}}String" [[BUILDER_STRING]])
 	var b strings.Builder
 	b.Write([]byte("Hello "))
 	b.WriteString("World")
@@ -45,6 +32,15 @@ func main() {
 	f := func(c rune) bool {
 		return unicode.Is(unicode.Han, c)
 	}
+	// CHECK: [[WITH_HAN_INDEX:%.*]] = call i64 @strings.IndexFunc(%"{{.*}}String" { ptr [[WITH_HAN]], i64 13 }, { ptr, ptr } { ptr @"main.main$1", ptr null })
+	// CHECK-NEXT: call void @"{{.*}}PrintInt"(i64 [[WITH_HAN_INDEX]])
+	// CHECK: [[WITHOUT_HAN_INDEX:%.*]] = call i64 @strings.IndexFunc(%"{{.*}}String" { ptr [[WITHOUT_HAN]], i64 12 }, { ptr, ptr } { ptr @"main.main$1", ptr null })
+	// CHECK-NEXT: call void @"{{.*}}PrintInt"(i64 [[WITHOUT_HAN_INDEX]])
 	println(strings.IndexFunc("Hello, 世界", f))
 	println(strings.IndexFunc("Hello, world", f))
 }
+
+// CHECK-LABEL: define i1 @"main.main$1"(i32 %0){{.*}} {
+// CHECK: [[HAN_TABLE:%.*]] = load ptr, ptr @unicode.Han
+// CHECK-NEXT: [[IS_HAN:%.*]] = call i1 @unicode.Is(ptr [[HAN_TABLE]], i32 %0)
+// CHECK-NEXT: ret i1 [[IS_HAN]]
