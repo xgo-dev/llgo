@@ -23,97 +23,96 @@ type mspan struct {
 }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 64)
-// CHECK-NEXT:   store ptr %1, ptr %0, align 8
-// CHECK-NEXT:   %2 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %3 = getelementptr inbounds %main.mspan, ptr %2, i32 0, i32 4
-// CHECK-NEXT:   store i64 100, ptr %3, align 8
-// CHECK-NEXT:   %4 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %5 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 64)
-// CHECK-NEXT:   %6 = getelementptr inbounds %main.mspan, ptr %4, i32 0, i32 0
-// CHECK-NEXT:   store ptr %5, ptr %6, align 8
-// CHECK-NEXT:   %7 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %8 = getelementptr inbounds %main.mspan, ptr %7, i32 0, i32 0
-// CHECK-NEXT:   %9 = load ptr, ptr %8, align 8
-// CHECK-NEXT:   %10 = getelementptr inbounds %main.mspan, ptr %9, i32 0, i32 4
-// CHECK-NEXT:   store i64 200, ptr %10, align 8
-// CHECK-NEXT:   %11 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %12 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK-NEXT:   %13 = getelementptr inbounds %main.mspan, ptr %11, i32 0, i32 2
-// CHECK-NEXT:   store ptr %12, ptr %13, align 8
-// CHECK-NEXT:   %14 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %15 = getelementptr inbounds %main.mspan, ptr %14, i32 0, i32 2
-// CHECK-NEXT:   %16 = load ptr, ptr %15, align 8
-// CHECK-NEXT:   %17 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 64)
-// CHECK-NEXT:   %18 = getelementptr inbounds %main.mSpanList, ptr %16, i32 0, i32 1
-// CHECK-NEXT:   store ptr %17, ptr %18, align 8
-// CHECK-NEXT:   %19 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %20 = getelementptr inbounds %main.mspan, ptr %19, i32 0, i32 2
-// CHECK-NEXT:   %21 = load ptr, ptr %20, align 8
-// CHECK-NEXT:   %22 = getelementptr inbounds %main.mSpanList, ptr %21, i32 0, i32 1
-// CHECK-NEXT:   %23 = load ptr, ptr %22, align 8
-// CHECK-NEXT:   %24 = getelementptr inbounds %main.mspan, ptr %23, i32 0, i32 4
-// CHECK-NEXT:   store i64 300, ptr %24, align 8
-// CHECK-NEXT:   %25 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %26 = getelementptr inbounds %main.mspan, ptr %25, i32 0, i32 3
-// CHECK-NEXT:   %27 = getelementptr inbounds %main.minfo, ptr %26, i32 0, i32 1
-// CHECK-NEXT:   store i64 10, ptr %27, align 8
-// CHECK-NEXT:   %28 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %29 = getelementptr inbounds %main.mspan, ptr %28, i32 0, i32 3
-// CHECK-NEXT:   %30 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %31 = getelementptr inbounds %main.minfo, ptr %29, i32 0, i32 0
-// CHECK-NEXT:   store ptr %30, ptr %31, align 8
-// CHECK-NEXT:   %32 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %33 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   %34 = getelementptr inbounds { ptr }, ptr %33, i32 0, i32 0
-// CHECK-NEXT:   store ptr %0, ptr %34, align 8
-// CHECK-NEXT:   %35 = insertvalue { ptr, ptr } { ptr @"main.main$1", ptr undef }, ptr %33, 1
-// CHECK-NEXT:   %36 = getelementptr inbounds %main.mspan, ptr %32, i32 0, i32 5
-// CHECK-NEXT:   store { ptr, ptr } %35, ptr %36, align 8
-// CHECK-NEXT:   %37 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %38 = getelementptr inbounds %main.mspan, ptr %37, i32 0, i32 0
-// CHECK-NEXT:   %39 = load ptr, ptr %38, align 8
-// CHECK-NEXT:   %40 = getelementptr inbounds %main.mspan, ptr %39, i32 0, i32 4
-// CHECK-NEXT:   %41 = load i64, ptr %40, align 8
-// CHECK-NEXT:   %42 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %43 = getelementptr inbounds %main.mspan, ptr %42, i32 0, i32 2
-// CHECK-NEXT:   %44 = load ptr, ptr %43, align 8
-// CHECK-NEXT:   %45 = getelementptr inbounds %main.mSpanList, ptr %44, i32 0, i32 1
-// CHECK-NEXT:   %46 = load ptr, ptr %45, align 8
-// CHECK-NEXT:   %47 = getelementptr inbounds %main.mspan, ptr %46, i32 0, i32 4
-// CHECK-NEXT:   %48 = load i64, ptr %47, align 8
-// CHECK-NEXT:   %49 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %50 = getelementptr inbounds %main.mspan, ptr %49, i32 0, i32 3
-// CHECK-NEXT:   %51 = getelementptr inbounds %main.minfo, ptr %50, i32 0, i32 1
-// CHECK-NEXT:   %52 = load i64, ptr %51, align 8
-// CHECK-NEXT:   %53 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %54 = getelementptr inbounds %main.mspan, ptr %53, i32 0, i32 3
-// CHECK-NEXT:   %55 = getelementptr inbounds %main.minfo, ptr %54, i32 0, i32 0
-// CHECK-NEXT:   %56 = load ptr, ptr %55, align 8
-// CHECK-NEXT:   %57 = getelementptr inbounds %main.mspan, ptr %56, i32 0, i32 4
-// CHECK-NEXT:   %58 = load i64, ptr %57, align 8
-// CHECK-NEXT:   %59 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %60 = getelementptr inbounds %main.mspan, ptr %59, i32 0, i32 5
-// CHECK-NEXT:   %61 = load { ptr, ptr }, ptr %60, align 8
-// CHECK-NEXT:   %62 = extractvalue { ptr, ptr } %61, 1
-// CHECK-NEXT:   %63 = extractvalue { ptr, ptr } %61, 0
-// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %63)
-// CHECK-NEXT:   %64 = call i64 %__llgo_funcval_code(ptr {{(nest|swiftself)}} %62, i64 -2)
-// CHECK-NEXT:   %65 = load ptr, ptr %0, align 8
-// CHECK-NEXT:   %66 = getelementptr inbounds %main.mspan, ptr %65, i32 0, i32 3
-// CHECK-NEXT:   %67 = getelementptr inbounds %main.minfo, ptr %66, i32 0, i32 0
-// CHECK-NEXT:   %68 = load ptr, ptr %67, align 8
-// CHECK-NEXT:   %69 = getelementptr inbounds %main.mspan, ptr %68, i32 0, i32 5
-// CHECK-NEXT:   %70 = load { ptr, ptr }, ptr %69, align 8
-// CHECK-NEXT:   %71 = extractvalue { ptr, ptr } %70, 1
-// CHECK-NEXT:   %72 = extractvalue { ptr, ptr } %70, 0
-// CHECK-NEXT:   %__llgo_funcval_code1 = call ptr asm "", "=r,0"(ptr %72)
-// CHECK-NEXT:   %73 = call i64 %__llgo_funcval_code1(ptr {{(nest|swiftself)}} %71, i64 -3)
-// CHECK-NEXT:   %74 = call i32 (ptr, ...) @printf(ptr @0, i64 %41, i64 %48, i64 %52, i64 %58, i64 %64, i64 %73)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// The recursive named structure is rooted through a slot captured by check.
+// CHECK: [[M_SLOT:%.*]] = call ptr @"{{.*}}AllocZ"(i64 8)
+// CHECK: [[M:%.*]] = call ptr @"{{.*}}AllocZ"(i64 64)
+// CHECK-NEXT: store ptr [[M]], ptr [[M_SLOT]]
+// CHECK: [[M_FOR_VALUE:%.*]] = load ptr, ptr [[M_SLOT]]
+// CHECK-NEXT: [[M_VALUE_PTR:%.*]] = getelementptr inbounds %main.mspan, ptr [[M_FOR_VALUE]], i32 0, i32 4
+// CHECK-NEXT: store i64 100, ptr [[M_VALUE_PTR]]
+// CHECK: [[M_FOR_NEXT:%.*]] = load ptr, ptr [[M_SLOT]]
+// CHECK: [[NEXT:%.*]] = call ptr @"{{.*}}AllocZ"(i64 64)
+// CHECK: [[M_NEXT_PTR:%.*]] = getelementptr inbounds %main.mspan, ptr [[M_FOR_NEXT]], i32 0, i32 0
+// CHECK-NEXT: store ptr [[NEXT]], ptr [[M_NEXT_PTR]]
+// CHECK: [[M_FOR_NEXT_VALUE:%.*]] = load ptr, ptr [[M_SLOT]]
+// CHECK-NEXT: [[NEXT_FOR_VALUE_PTR:%.*]] = getelementptr inbounds %main.mspan, ptr [[M_FOR_NEXT_VALUE]], i32 0, i32 0
+// CHECK-NEXT: [[NEXT_FOR_VALUE:%.*]] = load ptr, ptr [[NEXT_FOR_VALUE_PTR]]
+// CHECK-NEXT: [[NEXT_VALUE_PTR:%.*]] = getelementptr inbounds %main.mspan, ptr [[NEXT_FOR_VALUE]], i32 0, i32 4
+// CHECK-NEXT: store i64 200, ptr [[NEXT_VALUE_PTR]]
+// CHECK: [[M_FOR_LIST:%.*]] = load ptr, ptr [[M_SLOT]]
+// CHECK: [[LIST:%.*]] = call ptr @"{{.*}}AllocZ"(i64 16)
+// CHECK: [[M_LIST_PTR:%.*]] = getelementptr inbounds %main.mspan, ptr [[M_FOR_LIST]], i32 0, i32 2
+// CHECK-NEXT: store ptr [[LIST]], ptr [[M_LIST_PTR]]
+// CHECK: [[M_FOR_LAST:%.*]] = load ptr, ptr [[M_SLOT]]
+// CHECK: [[M_LIST_FOR_LAST_PTR:%.*]] = getelementptr inbounds %main.mspan, ptr [[M_FOR_LAST]], i32 0, i32 2
+// CHECK-NEXT: [[LIST_FOR_LAST:%.*]] = load ptr, ptr [[M_LIST_FOR_LAST_PTR]]
+// CHECK: [[LAST:%.*]] = call ptr @"{{.*}}AllocZ"(i64 64)
+// CHECK: [[LIST_LAST_PTR:%.*]] = getelementptr inbounds %main.mSpanList, ptr [[LIST_FOR_LAST]], i32 0, i32 1
+// CHECK-NEXT: store ptr [[LAST]], ptr [[LIST_LAST_PTR]]
+// CHECK: [[M_FOR_LAST_VALUE:%.*]] = load ptr, ptr [[M_SLOT]]
+// CHECK-NEXT: [[M_LIST_VALUE_PTR:%.*]] = getelementptr inbounds %main.mspan, ptr [[M_FOR_LAST_VALUE]], i32 0, i32 2
+// CHECK-NEXT: [[LIST_FOR_VALUE:%.*]] = load ptr, ptr [[M_LIST_VALUE_PTR]]
+// CHECK-NEXT: [[LIST_LAST_VALUE_PTR:%.*]] = getelementptr inbounds %main.mSpanList, ptr [[LIST_FOR_VALUE]], i32 0, i32 1
+// CHECK-NEXT: [[LAST_FOR_VALUE:%.*]] = load ptr, ptr [[LIST_LAST_VALUE_PTR]]
+// CHECK-NEXT: [[LAST_VALUE_PTR:%.*]] = getelementptr inbounds %main.mspan, ptr [[LAST_FOR_VALUE]], i32 0, i32 4
+// CHECK-NEXT: store i64 300, ptr [[LAST_VALUE_PTR]]
+// CHECK: [[M_FOR_INFO:%.*]] = load ptr, ptr [[M_SLOT]]
+// CHECK-NEXT: [[M_INFO:%.*]] = getelementptr inbounds %main.mspan, ptr [[M_FOR_INFO]], i32 0, i32 3
+// CHECK-NEXT: [[INFO_VALUE_PTR:%.*]] = getelementptr inbounds %main.minfo, ptr [[M_INFO]], i32 0, i32 1
+// CHECK-NEXT: store i64 10, ptr [[INFO_VALUE_PTR]]
+// CHECK: [[M_FOR_INFO_SPAN:%.*]] = load ptr, ptr [[M_SLOT]]
+// CHECK-NEXT: [[M_INFO_FOR_SPAN:%.*]] = getelementptr inbounds %main.mspan, ptr [[M_FOR_INFO_SPAN]], i32 0, i32 3
+// CHECK-NEXT: [[M_SELF:%.*]] = load ptr, ptr [[M_SLOT]]
+// CHECK: [[INFO_SPAN_PTR:%.*]] = getelementptr inbounds %main.minfo, ptr [[M_INFO_FOR_SPAN]], i32 0, i32 0
+// CHECK-NEXT: store ptr [[M_SELF]], ptr [[INFO_SPAN_PTR]]
+// CHECK: [[M_FOR_CHECK:%.*]] = load ptr, ptr [[M_SLOT]]
+// CHECK: [[CHECK_ENV:%.*]] = call ptr @"{{.*}}AllocU"(i64 8)
+// CHECK: store ptr [[M_SLOT]], ptr {{%.*}}
+// CHECK: [[CHECK_CLOSURE:%.*]] = insertvalue { ptr, ptr } { ptr @"main.main$1", ptr undef }, ptr [[CHECK_ENV]], 1
+// CHECK: [[CHECK_FIELD:%.*]] = getelementptr inbounds %main.mspan, ptr [[M_FOR_CHECK]], i32 0, i32 5
+// CHECK-NEXT: store { ptr, ptr } [[CHECK_CLOSURE]], ptr [[CHECK_FIELD]]
+// The six printf values follow the source field paths, including two calls to
+// the same stored closure reached directly and through info.span.
+// CHECK: [[M_FOR_PRINT_NEXT:%.*]] = load ptr, ptr [[M_SLOT]]
+// CHECK-NEXT: [[PRINT_NEXT_PTR:%.*]] = getelementptr inbounds %main.mspan, ptr [[M_FOR_PRINT_NEXT]], i32 0, i32 0
+// CHECK-NEXT: [[PRINT_NEXT:%.*]] = load ptr, ptr [[PRINT_NEXT_PTR]]
+// CHECK-NEXT: [[PRINT_NEXT_VALUE_PTR:%.*]] = getelementptr inbounds %main.mspan, ptr [[PRINT_NEXT]], i32 0, i32 4
+// CHECK-NEXT: [[PRINT_NEXT_VALUE:%.*]] = load i64, ptr [[PRINT_NEXT_VALUE_PTR]]
+// CHECK: [[M_FOR_PRINT_LIST:%.*]] = load ptr, ptr [[M_SLOT]]
+// CHECK-NEXT: [[PRINT_LIST_PTR:%.*]] = getelementptr inbounds %main.mspan, ptr [[M_FOR_PRINT_LIST]], i32 0, i32 2
+// CHECK-NEXT: [[PRINT_LIST:%.*]] = load ptr, ptr [[PRINT_LIST_PTR]]
+// CHECK-NEXT: [[PRINT_LAST_PTR:%.*]] = getelementptr inbounds %main.mSpanList, ptr [[PRINT_LIST]], i32 0, i32 1
+// CHECK-NEXT: [[PRINT_LAST:%.*]] = load ptr, ptr [[PRINT_LAST_PTR]]
+// CHECK-NEXT: [[PRINT_LAST_VALUE_PTR:%.*]] = getelementptr inbounds %main.mspan, ptr [[PRINT_LAST]], i32 0, i32 4
+// CHECK-NEXT: [[PRINT_LAST_VALUE:%.*]] = load i64, ptr [[PRINT_LAST_VALUE_PTR]]
+// CHECK: [[M_FOR_PRINT_INFO:%.*]] = load ptr, ptr [[M_SLOT]]
+// CHECK-NEXT: [[PRINT_INFO:%.*]] = getelementptr inbounds %main.mspan, ptr [[M_FOR_PRINT_INFO]], i32 0, i32 3
+// CHECK-NEXT: [[PRINT_INFO_VALUE_PTR:%.*]] = getelementptr inbounds %main.minfo, ptr [[PRINT_INFO]], i32 0, i32 1
+// CHECK-NEXT: [[PRINT_INFO_VALUE:%.*]] = load i64, ptr [[PRINT_INFO_VALUE_PTR]]
+// CHECK: [[M_FOR_PRINT_SPAN:%.*]] = load ptr, ptr [[M_SLOT]]
+// CHECK-NEXT: [[PRINT_INFO2:%.*]] = getelementptr inbounds %main.mspan, ptr [[M_FOR_PRINT_SPAN]], i32 0, i32 3
+// CHECK-NEXT: [[PRINT_INFO_SPAN_PTR:%.*]] = getelementptr inbounds %main.minfo, ptr [[PRINT_INFO2]], i32 0, i32 0
+// CHECK-NEXT: [[PRINT_INFO_SPAN:%.*]] = load ptr, ptr [[PRINT_INFO_SPAN_PTR]]
+// CHECK-NEXT: [[PRINT_INFO_SPAN_VALUE_PTR:%.*]] = getelementptr inbounds %main.mspan, ptr [[PRINT_INFO_SPAN]], i32 0, i32 4
+// CHECK-NEXT: [[PRINT_INFO_SPAN_VALUE:%.*]] = load i64, ptr [[PRINT_INFO_SPAN_VALUE_PTR]]
+// CHECK: [[M_FOR_DIRECT_CHECK:%.*]] = load ptr, ptr [[M_SLOT]]
+// CHECK-NEXT: [[DIRECT_CHECK_PTR:%.*]] = getelementptr inbounds %main.mspan, ptr [[M_FOR_DIRECT_CHECK]], i32 0, i32 5
+// CHECK-NEXT: [[DIRECT_CHECK:%.*]] = load { ptr, ptr }, ptr [[DIRECT_CHECK_PTR]]
+// CHECK: [[DIRECT_ENV:%.*]] = extractvalue { ptr, ptr } [[DIRECT_CHECK]], 1
+// CHECK: [[DIRECT_FN:%.*]] = extractvalue { ptr, ptr } [[DIRECT_CHECK]], 0
+// CHECK: [[DIRECT_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[DIRECT_FN]])
+// CHECK-NEXT: [[DIRECT_RESULT:%.*]] = call i64 [[DIRECT_CODE]](ptr {{(nest|swiftself)}} [[DIRECT_ENV]], i64 -2)
+// CHECK: [[M_FOR_INDIRECT_CHECK:%.*]] = load ptr, ptr [[M_SLOT]]
+// CHECK-NEXT: [[INDIRECT_INFO:%.*]] = getelementptr inbounds %main.mspan, ptr [[M_FOR_INDIRECT_CHECK]], i32 0, i32 3
+// CHECK-NEXT: [[INDIRECT_SPAN_PTR:%.*]] = getelementptr inbounds %main.minfo, ptr [[INDIRECT_INFO]], i32 0, i32 0
+// CHECK-NEXT: [[INDIRECT_SPAN:%.*]] = load ptr, ptr [[INDIRECT_SPAN_PTR]]
+// CHECK-NEXT: [[INDIRECT_CHECK_PTR:%.*]] = getelementptr inbounds %main.mspan, ptr [[INDIRECT_SPAN]], i32 0, i32 5
+// CHECK-NEXT: [[INDIRECT_CHECK:%.*]] = load { ptr, ptr }, ptr [[INDIRECT_CHECK_PTR]]
+// CHECK: [[INDIRECT_ENV:%.*]] = extractvalue { ptr, ptr } [[INDIRECT_CHECK]], 1
+// CHECK: [[INDIRECT_FN:%.*]] = extractvalue { ptr, ptr } [[INDIRECT_CHECK]], 0
+// CHECK: [[INDIRECT_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[INDIRECT_FN]])
+// CHECK-NEXT: [[INDIRECT_RESULT:%.*]] = call i64 [[INDIRECT_CODE]](ptr {{(nest|swiftself)}} [[INDIRECT_ENV]], i64 -3)
+// CHECK-NEXT: call i32 (ptr, ...) @printf(ptr @{{[0-9]+}}, i64 [[PRINT_NEXT_VALUE]], i64 [[PRINT_LAST_VALUE]], i64 [[PRINT_INFO_VALUE]], i64 [[PRINT_INFO_SPAN_VALUE]], i64 [[DIRECT_RESULT]], i64 [[INDIRECT_RESULT]])
 func main() {
 	m := &mspan{}
 	m.value = 100
@@ -128,15 +127,13 @@ func main() {
 		return m.value * n
 	}
 	// CHECK-LABEL: define i64 @"main.main$1"(ptr {{(nest|swiftself)}} %0, i64 %1){{.*}} {
-	// CHECK-NEXT: _llgo_0:
-	// CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
-	// CHECK-NEXT:   %3 = extractvalue { ptr } %2, 0
-	// CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
-	// CHECK-NEXT:   %5 = getelementptr inbounds %main.mspan, ptr %4, i32 0, i32 4
-	// CHECK-NEXT:   %6 = load i64, ptr %5, align 8
-	// CHECK-NEXT:   %7 = mul i64 %6, %1
-	// CHECK-NEXT:   ret i64 %7
-	// CHECK-NEXT: }
+	// CHECK: [[NAMED_ENV:%.*]] = load { ptr }, ptr %0
+	// CHECK-NEXT: [[NAMED_M_PTR:%.*]] = extractvalue { ptr } [[NAMED_ENV]], 0
+	// CHECK-NEXT: [[NAMED_M:%.*]] = load ptr, ptr [[NAMED_M_PTR]]
+	// CHECK: [[NAMED_VALUE_PTR:%.*]] = getelementptr inbounds %main.mspan, ptr [[NAMED_M]], i32 0, i32 4
+	// CHECK-NEXT: [[NAMED_VALUE:%.*]] = load i64, ptr [[NAMED_VALUE_PTR]]
+	// CHECK-NEXT: [[NAMED_RESULT:%.*]] = mul i64 [[NAMED_VALUE]], %1
+	// CHECK-NEXT: ret i64 [[NAMED_RESULT]]
 	c.Printf(c.Str("%d %d %d %d %d %d\n"), m.next.value, m.list.last.value, m.info.info,
 		m.info.span.value, m.check(-2), m.info.span.check(-3))
 }

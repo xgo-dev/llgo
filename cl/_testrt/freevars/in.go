@@ -2,64 +2,48 @@
 package main
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @"main.main$1"({ ptr, ptr } { ptr @"main.main$2", ptr null })
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: call void @"main.main$1"({ ptr, ptr } { ptr @"main.main$2", ptr null })
 func main() {
 	// CHECK-LABEL: define void @"main.main$1"({ ptr, ptr } %0){{.*}} {
-	// CHECK-NEXT: _llgo_0:
-	// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-	// CHECK-NEXT:   store { ptr, ptr } %0, ptr %1, align 8
-	// CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-	// CHECK-NEXT:   %3 = getelementptr inbounds { ptr }, ptr %2, i32 0, i32 0
-	// CHECK-NEXT:   store ptr %1, ptr %3, align 8
-	// CHECK-NEXT:   %4 = insertvalue { ptr, ptr } { ptr @"main.main$1$1", ptr undef }, ptr %2, 1
-	// CHECK-NEXT:   %5 = extractvalue { ptr, ptr } %4, 1
-	// CHECK-NEXT:   %6 = extractvalue { ptr, ptr } %4, 0
-	// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %6)
-	// CHECK-NEXT:   call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %5, %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
-	// CHECK-NEXT:   ret void
-	// CHECK-NEXT: }
+	// CHECK: [[RESOLVE_ADDR:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 16)
+	// CHECK-NEXT: store { ptr, ptr } %0, ptr [[RESOLVE_ADDR]]
+	// CHECK-NEXT: [[ENV:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 8)
+	// CHECK-NEXT: [[CAPTURE:%[0-9]+]] = getelementptr inbounds { ptr }, ptr [[ENV]], i32 0, i32 0
+	// CHECK-NEXT: store ptr [[RESOLVE_ADDR]], ptr [[CAPTURE]]
+	// CHECK-NEXT: [[INNER:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.main$1$1", ptr undef }, ptr [[ENV]], 1
+	// CHECK-NEXT: [[INNER_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[INNER]], 1
+	// CHECK-NEXT: [[INNER_RAW_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[INNER]], 0
+	// CHECK-NEXT: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr [[INNER_RAW_CODE]])
+	// CHECK-NEXT: call void %__llgo_funcval_code(ptr swiftself [[INNER_ENV]], %"{{.*}}iface" zeroinitializer)
 	func(resolve func(error)) {
 
-		// CHECK-LABEL: define void @"main.main$1$1"(ptr {{(nest|swiftself)}} %0, %"{{.*}}/runtime/internal/runtime.iface" %1){{.*}} {
-		// CHECK-NEXT: _llgo_0:
-		// CHECK-NEXT:   %2 = load { ptr }, ptr %0, align 8
-		// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}/runtime/internal/runtime.iface" %1)
-		// CHECK-NEXT:   %4 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %1, 1
-		// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" undef, ptr %3, 0
-		// CHECK-NEXT:   %6 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" %5, ptr %4, 1
-		// CHECK-NEXT:   %7 = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
-		// CHECK-NEXT:   %8 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" undef, ptr %7, 0
-		// CHECK-NEXT:   %9 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" %8, ptr null, 1
-		// CHECK-NEXT:   %10 = call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"(%"{{.*}}/runtime/internal/runtime.eface" %6, %"{{.*}}/runtime/internal/runtime.eface" %9)
-		// CHECK-NEXT:   %11 = xor i1 %10, true
-		// CHECK-NEXT:   br i1 %11, label %_llgo_1, label %_llgo_2
-		// CHECK-EMPTY:
-		// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-		// CHECK-NEXT:   %12 = extractvalue { ptr } %2, 0
-		// CHECK-NEXT:   %13 = load { ptr, ptr }, ptr %12, align 8
-		// CHECK-NEXT:   %14 = extractvalue { ptr, ptr } %13, 1
-		// CHECK-NEXT:   %15 = extractvalue { ptr, ptr } %13, 0
-		// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %15)
-		// CHECK-NEXT:   call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %14, %"{{.*}}/runtime/internal/runtime.iface" %1)
-		// CHECK-NEXT:   ret void
-		// CHECK-EMPTY:
-		// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-		// CHECK-NEXT:   %16 = extractvalue { ptr } %2, 0
-		// CHECK-NEXT:   %17 = load { ptr, ptr }, ptr %16, align 8
-		// CHECK-NEXT:   %18 = extractvalue { ptr, ptr } %17, 1
-		// CHECK-NEXT:   %19 = extractvalue { ptr, ptr } %17, 0
-		// CHECK-NEXT:   %__llgo_funcval_code1 = call ptr asm "", "=r,0"(ptr %19)
-		// CHECK-NEXT:   call void %__llgo_funcval_code1(ptr {{(nest|swiftself)}} %18, %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
-		// CHECK-NEXT:   ret void
-		// CHECK-NEXT: }
+		// CHECK-LABEL: define void @"main.main$1$1"(ptr swiftself %0, %"{{.*}}iface" %1){{.*}} {
+		// CHECK: [[CAPTURED:%[0-9]+]] = load { ptr }, ptr %0
+		// CHECK-NEXT: [[ERR_TYPE:%[0-9]+]] = call ptr @"{{.*}}IfaceType"(%"{{.*}}iface" %1)
+		// CHECK-NEXT: [[ERR_DATA:%[0-9]+]] = extractvalue %"{{.*}}iface" %1, 1
+		// CHECK-NEXT: [[ERR_EFACE0:%[0-9]+]] = insertvalue %"{{.*}}eface" undef, ptr [[ERR_TYPE]], 0
+		// CHECK-NEXT: [[ERR_EFACE:%[0-9]+]] = insertvalue %"{{.*}}eface" [[ERR_EFACE0]], ptr [[ERR_DATA]], 1
+		// CHECK: [[NIL_TYPE:%[0-9]+]] = call ptr @"{{.*}}IfaceType"(%"{{.*}}iface" zeroinitializer)
+		// CHECK-NEXT: [[NIL_EFACE0:%[0-9]+]] = insertvalue %"{{.*}}eface" undef, ptr [[NIL_TYPE]], 0
+		// CHECK-NEXT: [[NIL_EFACE:%[0-9]+]] = insertvalue %"{{.*}}eface" [[NIL_EFACE0]], ptr null, 1
+		// CHECK-NEXT: [[IS_NIL:%[0-9]+]] = call i1 @"{{.*}}EfaceEqual"(%"{{.*}}eface" [[ERR_EFACE]], %"{{.*}}eface" [[NIL_EFACE]])
+		// CHECK-NEXT: [[HAS_ERR:%[0-9]+]] = xor i1 [[IS_NIL]], true
+		// CHECK-NEXT: br i1 [[HAS_ERR]], label %{{[^,]+}}, label %{{[^ ]+}}
+		// CHECK: [[RESOLVE_PTR:%[0-9]+]] = extractvalue { ptr } [[CAPTURED]], 0
+		// CHECK-NEXT: [[RESOLVE:%[0-9]+]] = load { ptr, ptr }, ptr [[RESOLVE_PTR]]
+		// CHECK-NEXT: [[RESOLVE_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[RESOLVE]], 1
+		// CHECK-NEXT: [[RESOLVE_RAW_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[RESOLVE]], 0
+		// CHECK-NEXT: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr [[RESOLVE_RAW_CODE]])
+		// CHECK-NEXT: call void %__llgo_funcval_code(ptr swiftself [[RESOLVE_ENV]], %"{{.*}}iface" %1)
+		// CHECK: [[NIL_RESOLVE_PTR:%[0-9]+]] = extractvalue { ptr } [[CAPTURED]], 0
+		// CHECK-NEXT: [[NIL_RESOLVE:%[0-9]+]] = load { ptr, ptr }, ptr [[NIL_RESOLVE_PTR]]
+		// CHECK-NEXT: [[NIL_RESOLVE_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[NIL_RESOLVE]], 1
+		// CHECK-NEXT: [[NIL_RESOLVE_RAW_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[NIL_RESOLVE]], 0
+		// CHECK-NEXT: %__llgo_funcval_code1 = call ptr asm "", "=r,0"(ptr [[NIL_RESOLVE_RAW_CODE]])
+		// CHECK-NEXT: call void %__llgo_funcval_code1(ptr swiftself [[NIL_RESOLVE_ENV]], %"{{.*}}iface" zeroinitializer)
 
-		// CHECK-LABEL: define void @"main.main$2"(%"{{.*}}/runtime/internal/runtime.iface" %0){{.*}} {
-		// CHECK-NEXT: _llgo_0:
-		// CHECK-NEXT:   ret void
-		// CHECK-NEXT: }
+		// CHECK-LABEL: define void @"main.main$2"(%"{{.*}}iface" %0){{.*}} {
+		// CHECK: ret void
 		func(err error) {
 			if err != nil {
 				resolve(err)

@@ -6,50 +6,39 @@ import (
 )
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   call void @"main.main$1"(i64 100, i64 200)
-// CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK-NEXT:   store { ptr, ptr } { ptr @"main.main$2", ptr null }, ptr %0, align 8
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   %2 = getelementptr inbounds { ptr }, ptr %1, i32 0, i32 0
-// CHECK-NEXT:   store ptr %0, ptr %2, align 8
-// CHECK-NEXT:   %3 = insertvalue { ptr, ptr } { ptr @"main.main$3", ptr undef }, ptr %1, 1
-// CHECK-NEXT:   %4 = extractvalue { ptr, ptr } %3, 1
-// CHECK-NEXT:   %5 = extractvalue { ptr, ptr } %3, 0
-// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %5)
-// CHECK-NEXT:   call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %4)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: call void @"main.main$1"(i64 100, i64 200)
+// CHECK-NEXT: [[FN1:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 16)
+// CHECK-NEXT: store { ptr, ptr } { ptr @"main.main$2", ptr null }, ptr [[FN1]]
+// CHECK-NEXT: [[ENV:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 8)
+// CHECK-NEXT: [[FN1_CAPTURE:%[0-9]+]] = getelementptr inbounds { ptr }, ptr [[ENV]], i32 0, i32 0
+// CHECK-NEXT: store ptr [[FN1]], ptr [[FN1_CAPTURE]]
+// CHECK-NEXT: [[FN2:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.main$3", ptr undef }, ptr [[ENV]], 1
+// CHECK-NEXT: [[FN2_DATA:%[0-9]+]] = extractvalue { ptr, ptr } [[FN2]], 1
+// CHECK-NEXT: [[FN2_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[FN2]], 0
+// CHECK-NEXT: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr [[FN2_CODE]])
+// CHECK-NEXT: call void %__llgo_funcval_code(ptr swiftself [[FN2_DATA]])
 func main() {
 	// CHECK-LABEL: define void @"main.main$1"(i64 %0, i64 %1){{.*}} {
-	// CHECK-NEXT: _llgo_0:
-	// CHECK-NEXT:   %2 = call i32 (ptr, ...) @printf(ptr @0, i64 %0, i64 %1)
-	// CHECK-NEXT:   ret void
-	// CHECK-NEXT: }
+	// CHECK: call i32 (ptr, ...) @printf(ptr @{{[0-9]+}}, i64 %0, i64 %1)
 	func(n1, n2 int) {
 		c.Printf(c.Str("%d %d\n"), n1, n2)
 	}(100, 200)
 
 	// CHECK-LABEL: define void @"main.main$2"(i64 %0, i64 %1){{.*}} {
-	// CHECK-NEXT: _llgo_0:
-	// CHECK-NEXT:   %2 = call i32 (ptr, ...) @printf(ptr @1, i64 %0, i64 %1)
-	// CHECK-NEXT:   ret void
-	// CHECK-NEXT: }
+	// CHECK: call i32 (ptr, ...) @printf(ptr @{{[0-9]+}}, i64 %0, i64 %1)
+	// CHECK-NEXT: ret void
 	fn1 := func(n1, n2 int) {
 		c.Printf(c.Str("%d %d\n"), n1, n2)
 	}
 
-	// CHECK-LABEL: define void @"main.main$3"(ptr {{(nest|swiftself)}} %0){{.*}} {
-	// CHECK-NEXT: _llgo_0:
-	// CHECK-NEXT:   %1 = load { ptr }, ptr %0, align 8
-	// CHECK-NEXT:   %2 = extractvalue { ptr } %1, 0
-	// CHECK-NEXT:   %3 = load { ptr, ptr }, ptr %2, align 8
-	// CHECK-NEXT:   %4 = extractvalue { ptr, ptr } %3, 1
-	// CHECK-NEXT:   %5 = extractvalue { ptr, ptr } %3, 0
-	// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %5)
-	// CHECK-NEXT:   call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %4, i64 100, i64 200)
-	// CHECK-NEXT:   ret void
-	// CHECK-NEXT: }
+	// CHECK-LABEL: define void @"main.main$3"(ptr swiftself %0){{.*}} {
+	// CHECK: [[CAPTURED_ENV:%[0-9]+]] = load { ptr }, ptr %0
+	// CHECK-NEXT: [[FN1_ADDR:%[0-9]+]] = extractvalue { ptr } [[CAPTURED_ENV]], 0
+	// CHECK-NEXT: [[CAPTURED_FN1:%[0-9]+]] = load { ptr, ptr }, ptr [[FN1_ADDR]]
+	// CHECK-NEXT: [[CAPTURED_FN1_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[CAPTURED_FN1]], 1
+	// CHECK-NEXT: [[CAPTURED_FN1_RAW_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[CAPTURED_FN1]], 0
+	// CHECK-NEXT: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr [[CAPTURED_FN1_RAW_CODE]])
+	// CHECK-NEXT: call void %__llgo_funcval_code(ptr swiftself [[CAPTURED_FN1_ENV]], i64 100, i64 200)
 	fn2 := func() {
 		fn1(100, 200)
 	}

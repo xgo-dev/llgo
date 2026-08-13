@@ -1,8 +1,50 @@
 // LITTEST
 package main
 
-// CHECK: {{^}}@{{[0-9]+}} = private unnamed_addr constant [5 x i8] c"error", align 1{{$}}
-// CHECK: {{^}}@{{[0-9]+}} = private unnamed_addr constant [10 x i8] c"must error", align 1{{$}}
+// Check the four semantically distinct make([]T, len, cap) cases: valid,
+// negative length, len greater than cap, and allocation-size overflow.
+// CHECK-LABEL: define void @"main.init#1"(){{.*}} {
+// CHECK: [[VALID1:%[0-9]+]] = call %"{{.*}}Slice" @"{{.*}}MakeSlice"(i64 2, i64 4, i64 8)
+// CHECK-NEXT: [[VALID1_LEN:%[0-9]+]] = extractvalue %"{{.*}}Slice" [[VALID1]], 1
+// CHECK-NEXT: [[VALID1_BAD_LEN:%[0-9]+]] = icmp ne i64 [[VALID1_LEN]], 2
+// CHECK: [[VALID1_CAP:%[0-9]+]] = extractvalue %"{{.*}}Slice" [[VALID1]], 2
+// CHECK-NEXT: [[VALID1_BAD_CAP:%[0-9]+]] = icmp ne i64 [[VALID1_CAP]], 4
+// CHECK-LABEL: define void @"main.init#2"(){{.*}} {
+// CHECK: [[VALID2:%[0-9]+]] = call %"{{.*}}Slice" @"{{.*}}MakeSlice"(i64 2, i64 4, i64 8)
+// CHECK-NEXT: [[VALID2_LEN:%[0-9]+]] = extractvalue %"{{.*}}Slice" [[VALID2]], 1
+// CHECK-NEXT: [[VALID2_BAD_LEN:%[0-9]+]] = icmp ne i64 [[VALID2_LEN]], 2
+// CHECK: [[VALID2_CAP:%[0-9]+]] = extractvalue %"{{.*}}Slice" [[VALID2]], 2
+// CHECK-NEXT: [[VALID2_BAD_CAP:%[0-9]+]] = icmp ne i64 [[VALID2_CAP]], 4
+// CHECK-LABEL: define void @"main.init#3"(){{.*}} {
+// CHECK: [[NEG_STATE:%[0-9]+]] = call %"{{.*}}recoverState" @"{{.*}}StartRecoverFrame"(ptr @"main.init#3$1")
+// CHECK-NEXT: call void @"main.init#3$1"()
+// CHECK-NEXT: call void @"{{.*}}EndRecoverFrame"(%"{{.*}}recoverState" [[NEG_STATE]])
+// CHECK: call %"{{.*}}Slice" @"{{.*}}MakeSlice"(i64 -1, i64 -1, i64 8)
+// CHECK-LABEL: define void @"main.init#3$1"(){{.*}} {
+// CHECK: call void @"{{.*}}BindRecoverFrame"(ptr @"main.init#3$1", ptr [[NEG_TOKEN:%[0-9]+]])
+// CHECK-NEXT: [[NEG_RECOVER:%[0-9]+]] = call %"{{.*}}eface" @"{{.*}}Recover"(ptr [[NEG_TOKEN]])
+// CHECK-NEXT: [[NEG_MISSING:%[0-9]+]] = call i1 @"{{.*}}EfaceEqual"(%"{{.*}}eface" [[NEG_RECOVER]], %"{{.*}}eface" zeroinitializer)
+// CHECK-NEXT: br i1 [[NEG_MISSING]], label %{{.*}}, label %{{.*}}
+// CHECK-LABEL: define void @"main.init#4"(){{.*}} {
+// CHECK: [[CAP_STATE:%[0-9]+]] = call %"{{.*}}recoverState" @"{{.*}}StartRecoverFrame"(ptr @"main.init#4$1")
+// CHECK-NEXT: call void @"main.init#4$1"()
+// CHECK-NEXT: call void @"{{.*}}EndRecoverFrame"(%"{{.*}}recoverState" [[CAP_STATE]])
+// CHECK: call %"{{.*}}Slice" @"{{.*}}MakeSlice"(i64 2, i64 1, i64 8)
+// CHECK-LABEL: define void @"main.init#4$1"(){{.*}} {
+// CHECK: call void @"{{.*}}BindRecoverFrame"(ptr @"main.init#4$1", ptr [[CAP_TOKEN:%[0-9]+]])
+// CHECK-NEXT: [[CAP_RECOVER:%[0-9]+]] = call %"{{.*}}eface" @"{{.*}}Recover"(ptr [[CAP_TOKEN]])
+// CHECK-NEXT: [[CAP_MISSING:%[0-9]+]] = call i1 @"{{.*}}EfaceEqual"(%"{{.*}}eface" [[CAP_RECOVER]], %"{{.*}}eface" zeroinitializer)
+// CHECK-NEXT: br i1 [[CAP_MISSING]], label %{{.*}}, label %{{.*}}
+// CHECK-LABEL: define void @"main.init#5"(){{.*}} {
+// CHECK: [[OVERFLOW_STATE:%[0-9]+]] = call %"{{.*}}recoverState" @"{{.*}}StartRecoverFrame"(ptr @"main.init#5$1")
+// CHECK-NEXT: call void @"main.init#5$1"()
+// CHECK-NEXT: call void @"{{.*}}EndRecoverFrame"(%"{{.*}}recoverState" [[OVERFLOW_STATE]])
+// CHECK: call %"{{.*}}Slice" @"{{.*}}MakeSlice"(i64 9223372036854775807, i64 9223372036854775807, i64 8)
+// CHECK-LABEL: define void @"main.init#5$1"(){{.*}} {
+// CHECK: call void @"{{.*}}BindRecoverFrame"(ptr @"main.init#5$1", ptr [[OVERFLOW_TOKEN:%[0-9]+]])
+// CHECK-NEXT: [[OVERFLOW_RECOVER:%[0-9]+]] = call %"{{.*}}eface" @"{{.*}}Recover"(ptr [[OVERFLOW_TOKEN]])
+// CHECK-NEXT: [[OVERFLOW_MISSING:%[0-9]+]] = call i1 @"{{.*}}EfaceEqual"(%"{{.*}}eface" [[OVERFLOW_RECOVER]], %"{{.*}}eface" zeroinitializer)
+// CHECK-NEXT: br i1 [[OVERFLOW_MISSING]], label %{{.*}}, label %{{.*}}
 
 func main() {
 }
@@ -58,291 +100,3 @@ func init() {
 	buf := make([]int, n)
 	_ = buf
 }
-
-// CHECK-LABEL: define void @main.init(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load i1, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store i1 true, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   call void @"main.init#1"()
-// CHECK-NEXT:   call void @"main.init#2"()
-// CHECK-NEXT:   call void @"main.init#3"()
-// CHECK-NEXT:   call void @"main.init#4"()
-// CHECK-NEXT:   call void @"main.init#5"()
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @"main.init#1"(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.MakeSlice"(i64 2, i64 4, i64 8)
-// CHECK-NEXT:   %1 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %0, 1
-// CHECK-NEXT:   %2 = icmp ne i64 %1, 2
-// CHECK-NEXT:   br i1 %2, label %_llgo_1, label %_llgo_3
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_3, %_llgo_0
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 5 }, ptr %3, align 8
-// CHECK-NEXT:   %4 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %3, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %4)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_3
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %5 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %0, 2
-// CHECK-NEXT:   %6 = icmp ne i64 %5, 4
-// CHECK-NEXT:   br i1 %6, label %_llgo_1, label %_llgo_2
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @"main.init#2"(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.MakeSlice"(i64 2, i64 4, i64 8)
-// CHECK-NEXT:   %1 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %0, 1
-// CHECK-NEXT:   %2 = icmp ne i64 %1, 2
-// CHECK-NEXT:   br i1 %2, label %_llgo_1, label %_llgo_3
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_3, %_llgo_0
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 5 }, ptr %3, align 8
-// CHECK-NEXT:   %4 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %3, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %4)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_3
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %5 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %0, 2
-// CHECK-NEXT:   %6 = icmp ne i64 %5, 4
-// CHECK-NEXT:   br i1 %6, label %_llgo_1, label %_llgo_2
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @"main.init#3"(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
-// CHECK-NEXT:   %1 = alloca i8
-// CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 48)
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 0
-// CHECK-NEXT:   store ptr %1, ptr %3, align 8
-// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 1
-// CHECK-NEXT:   store i64 0, ptr %4, align 8
-// CHECK-NEXT:   %5 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 2
-// CHECK-NEXT:   store ptr %0, ptr %5, align 8
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 3
-// CHECK-NEXT:   store ptr blockaddress(@"main.init#3", %_llgo_2), ptr %6, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %2)
-// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 1
-// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 3
-// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 4
-// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 5
-// CHECK-NEXT:   store ptr null, ptr %10, align 8
-// CHECK-NEXT:   %11 = call i32 @{{(__)?}}sigsetjmp(ptr %1, i32 0)
-// CHECK-NEXT:   %12 = icmp eq i32 %11, 0
-// CHECK-NEXT:   br i1 %12, label %_llgo_4, label %_llgo_5
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_3
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_5, %_llgo_4
-// CHECK-NEXT:   store ptr blockaddress(@"main.init#3", %_llgo_3), ptr %8, align 8
-// CHECK-NEXT:   %13 = load i64, ptr %7, align 8
-// CHECK-NEXT:   %14 = call %"{{.*}}/runtime/internal/runtime.recoverState" @"{{.*}}/runtime/internal/runtime.StartRecoverFrame"(ptr @"main.init#3$1")
-// CHECK-NEXT:   call void @"main.init#3$1"()
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrame"(%"{{.*}}/runtime/internal/runtime.recoverState" %14)
-// CHECK-NEXT:   %15 = load %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, align 8
-// CHECK-NEXT:   %16 = extractvalue %"{{.*}}/runtime/internal/runtime.Defer" %15, 2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %16)
-// CHECK-NEXT:   %17 = load ptr, ptr %9, align 8
-// CHECK-NEXT:   indirectbr ptr %17, [label %_llgo_3, label %_llgo_6]
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_5, %_llgo_2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Rethrow"(ptr %0)
-// CHECK-NEXT:   br label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %18 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.MakeSlice"(i64 -1, i64 -1, i64 8)
-// CHECK-NEXT:   store ptr blockaddress(@"main.init#3", %_llgo_6), ptr %9, align 8
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store ptr blockaddress(@"main.init#3", %_llgo_3), ptr %9, align 8
-// CHECK-NEXT:   %19 = load ptr, ptr %8, align 8
-// CHECK-NEXT:   indirectbr ptr %19, [label %_llgo_3, label %_llgo_2]
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_6:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @"main.init#3$1"(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = alloca i8, align 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.BindRecoverFrame"(ptr @"main.init#3$1", ptr %0)
-// CHECK-NEXT:   %1 = call %"{{.*}}/runtime/internal/runtime.eface" @"{{.*}}/runtime/internal/runtime.Recover"(ptr %0)
-// CHECK-NEXT:   %2 = call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"(%"{{.*}}/runtime/internal/runtime.eface" %1, %"{{.*}}/runtime/internal/runtime.eface" zeroinitializer)
-// CHECK-NEXT:   br i1 %2, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 10 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @"main.init#4"(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
-// CHECK-NEXT:   %1 = alloca i8
-// CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 48)
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 0
-// CHECK-NEXT:   store ptr %1, ptr %3, align 8
-// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 1
-// CHECK-NEXT:   store i64 0, ptr %4, align 8
-// CHECK-NEXT:   %5 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 2
-// CHECK-NEXT:   store ptr %0, ptr %5, align 8
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 3
-// CHECK-NEXT:   store ptr blockaddress(@"main.init#4", %_llgo_2), ptr %6, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %2)
-// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 1
-// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 3
-// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 4
-// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 5
-// CHECK-NEXT:   store ptr null, ptr %10, align 8
-// CHECK-NEXT:   %11 = call i32 @{{(__)?}}sigsetjmp(ptr %1, i32 0)
-// CHECK-NEXT:   %12 = icmp eq i32 %11, 0
-// CHECK-NEXT:   br i1 %12, label %_llgo_4, label %_llgo_5
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_3
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_5, %_llgo_4
-// CHECK-NEXT:   store ptr blockaddress(@"main.init#4", %_llgo_3), ptr %8, align 8
-// CHECK-NEXT:   %13 = load i64, ptr %7, align 8
-// CHECK-NEXT:   %14 = call %"{{.*}}/runtime/internal/runtime.recoverState" @"{{.*}}/runtime/internal/runtime.StartRecoverFrame"(ptr @"main.init#4$1")
-// CHECK-NEXT:   call void @"main.init#4$1"()
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrame"(%"{{.*}}/runtime/internal/runtime.recoverState" %14)
-// CHECK-NEXT:   %15 = load %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, align 8
-// CHECK-NEXT:   %16 = extractvalue %"{{.*}}/runtime/internal/runtime.Defer" %15, 2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %16)
-// CHECK-NEXT:   %17 = load ptr, ptr %9, align 8
-// CHECK-NEXT:   indirectbr ptr %17, [label %_llgo_3, label %_llgo_6]
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_5, %_llgo_2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Rethrow"(ptr %0)
-// CHECK-NEXT:   br label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %18 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.MakeSlice"(i64 2, i64 1, i64 8)
-// CHECK-NEXT:   store ptr blockaddress(@"main.init#4", %_llgo_6), ptr %9, align 8
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store ptr blockaddress(@"main.init#4", %_llgo_3), ptr %9, align 8
-// CHECK-NEXT:   %19 = load ptr, ptr %8, align 8
-// CHECK-NEXT:   indirectbr ptr %19, [label %_llgo_3, label %_llgo_2]
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_6:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @"main.init#4$1"(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = alloca i8, align 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.BindRecoverFrame"(ptr @"main.init#4$1", ptr %0)
-// CHECK-NEXT:   %1 = call %"{{.*}}/runtime/internal/runtime.eface" @"{{.*}}/runtime/internal/runtime.Recover"(ptr %0)
-// CHECK-NEXT:   %2 = call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"(%"{{.*}}/runtime/internal/runtime.eface" %1, %"{{.*}}/runtime/internal/runtime.eface" zeroinitializer)
-// CHECK-NEXT:   br i1 %2, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 10 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @"main.init#5"(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
-// CHECK-NEXT:   %1 = alloca i8
-// CHECK-NEXT:   %2 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 48)
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 0
-// CHECK-NEXT:   store ptr %1, ptr %3, align 8
-// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 1
-// CHECK-NEXT:   store i64 0, ptr %4, align 8
-// CHECK-NEXT:   %5 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 2
-// CHECK-NEXT:   store ptr %0, ptr %5, align 8
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 3
-// CHECK-NEXT:   store ptr blockaddress(@"main.init#5", %_llgo_2), ptr %6, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %2)
-// CHECK-NEXT:   %7 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 1
-// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 3
-// CHECK-NEXT:   %9 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 4
-// CHECK-NEXT:   %10 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, i32 0, i32 5
-// CHECK-NEXT:   store ptr null, ptr %10, align 8
-// CHECK-NEXT:   %11 = call i32 @{{(__)?}}sigsetjmp(ptr %1, i32 0)
-// CHECK-NEXT:   %12 = icmp eq i32 %11, 0
-// CHECK-NEXT:   br i1 %12, label %_llgo_4, label %_llgo_5
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_3
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_5, %_llgo_4
-// CHECK-NEXT:   store ptr blockaddress(@"main.init#5", %_llgo_3), ptr %8, align 8
-// CHECK-NEXT:   %13 = load i64, ptr %7, align 8
-// CHECK-NEXT:   %14 = call %"{{.*}}/runtime/internal/runtime.recoverState" @"{{.*}}/runtime/internal/runtime.StartRecoverFrame"(ptr @"main.init#5$1")
-// CHECK-NEXT:   call void @"main.init#5$1"()
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrame"(%"{{.*}}/runtime/internal/runtime.recoverState" %14)
-// CHECK-NEXT:   %15 = load %"{{.*}}/runtime/internal/runtime.Defer", ptr %2, align 8
-// CHECK-NEXT:   %16 = extractvalue %"{{.*}}/runtime/internal/runtime.Defer" %15, 2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.SetThreadDefer"(ptr %16)
-// CHECK-NEXT:   %17 = load ptr, ptr %9, align 8
-// CHECK-NEXT:   indirectbr ptr %17, [label %_llgo_3, label %_llgo_6]
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_5, %_llgo_2
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Rethrow"(ptr %0)
-// CHECK-NEXT:   br label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %18 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.MakeSlice"(i64 9223372036854775807, i64 9223372036854775807, i64 8)
-// CHECK-NEXT:   store ptr blockaddress(@"main.init#5", %_llgo_6), ptr %9, align 8
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store ptr blockaddress(@"main.init#5", %_llgo_3), ptr %9, align 8
-// CHECK-NEXT:   %19 = load ptr, ptr %8, align 8
-// CHECK-NEXT:   indirectbr ptr %19, [label %_llgo_3, label %_llgo_2]
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_6:                                          ; preds = %_llgo_2
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @"main.init#5$1"(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = alloca i8, align 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.BindRecoverFrame"(ptr @"main.init#5$1", ptr %0)
-// CHECK-NEXT:   %1 = call %"{{.*}}/runtime/internal/runtime.eface" @"{{.*}}/runtime/internal/runtime.Recover"(ptr %0)
-// CHECK-NEXT:   %2 = call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"(%"{{.*}}/runtime/internal/runtime.eface" %1, %"{{.*}}/runtime/internal/runtime.eface" zeroinitializer)
-// CHECK-NEXT:   br i1 %2, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 10 })
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }

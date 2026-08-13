@@ -1,33 +1,21 @@
 // LITTEST
 package main
 
-// CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @main.concat(%"{{.*}}/runtime/internal/runtime.Slice" %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %0, 1
-// CHECK-NEXT:   br label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_2, %_llgo_0
-// CHECK-NEXT:   %2 = phi %"{{.*}}/runtime/internal/runtime.String" [ zeroinitializer, %_llgo_0 ], [ %13, %_llgo_2 ]
-// CHECK-NEXT:   %3 = phi i64 [ -1, %_llgo_0 ], [ %4, %_llgo_2 ]
-// CHECK-NEXT:   %4 = add i64 %3, 1
-// CHECK-NEXT:   %5 = icmp slt i64 %4, %1
-// CHECK-NEXT:   br i1 %5, label %_llgo_2, label %_llgo_3
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1
-// CHECK-NEXT:   %6 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %0, 0
-// CHECK-NEXT:   %7 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %0, 1
-// CHECK-NEXT:   %8 = icmp slt i64 %4, 0
-// CHECK-NEXT:   %9 = icmp uge i64 %4, %7
-// CHECK-NEXT:   %10 = or i1 %9, %8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %10, {{.*}})
-// CHECK-NEXT:   %11 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.String", ptr %6, i64 %4
-// CHECK-NEXT:   %12 = load %"{{.*}}/runtime/internal/runtime.String", ptr %11, align 8
-// CHECK-NEXT:   %13 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" %2, %"{{.*}}/runtime/internal/runtime.String" %12)
-// CHECK-NEXT:   br label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_1
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %2
-// CHECK-NEXT: }
+// The loop carries both the accumulated string and the current index. The
+// element selected by that index must be concatenated into the carried value.
+// CHECK-LABEL: define %"{{.*}}String" @main.concat(%"{{.*}}Slice" %0){{.*}} {
+// CHECK: [[LEN:%[0-9]+]] = extractvalue %"{{.*}}Slice" %0, 1
+// CHECK: [[ACC:%[0-9]+]] = phi %"{{.*}}String" [ zeroinitializer, %{{.*}} ], [ [[NEXT_ACC:%[0-9]+]], %{{.*}} ]
+// CHECK-NEXT: [[PREV_INDEX:%[0-9]+]] = phi i64 [ -1, %{{.*}} ], [ [[INDEX:%[0-9]+]], %{{.*}} ]
+// CHECK-NEXT: [[INDEX]] = add i64 [[PREV_INDEX]], 1
+// CHECK-NEXT: [[MORE:%[0-9]+]] = icmp slt i64 [[INDEX]], [[LEN]]
+// CHECK: [[DATA:%[0-9]+]] = extractvalue %"{{.*}}Slice" %0, 0
+// CHECK-NEXT: [[BOUNDS_LEN:%[0-9]+]] = extractvalue %"{{.*}}Slice" %0, 1
+// CHECK: call void @"{{.*}}CheckIndexRange"(i1 {{.*}}, i64 [[INDEX]], i1 true, i64 [[BOUNDS_LEN]])
+// CHECK-NEXT: [[ELEM_ADDR:%[0-9]+]] = getelementptr inbounds %"{{.*}}String", ptr [[DATA]], i64 [[INDEX]]
+// CHECK-NEXT: [[ELEM:%[0-9]+]] = load %"{{.*}}String", ptr [[ELEM_ADDR]]
+// CHECK-NEXT: [[NEXT_ACC]] = call %"{{.*}}String" @"{{.*}}StringCat"(%"{{.*}}String" [[ACC]], %"{{.*}}String" [[ELEM]])
+// CHECK: ret %"{{.*}}String" [[ACC]]
 func concat(args ...string) (ret string) {
 	for _, v := range args {
 		ret += v
@@ -35,33 +23,27 @@ func concat(args ...string) (ret string) {
 	return
 }
 
-// CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @main.info(%"{{.*}}/runtime/internal/runtime.String" %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" zeroinitializer, %"{{.*}}/runtime/internal/runtime.String" %0)
-// CHECK-NEXT:   %2 = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 3 })
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %2
-// CHECK-NEXT: }
+// CHECK-LABEL: define %"{{.*}}String" @main.info(%"{{.*}}String" %0){{.*}} {
+// CHECK: [[INFO_PREFIX:%[0-9]+]] = call %"{{.*}}String" @"{{.*}}StringCat"(%"{{.*}}String" zeroinitializer, %"{{.*}}String" %0)
+// CHECK-NEXT: [[INFO_RESULT:%[0-9]+]] = call %"{{.*}}String" @"{{.*}}StringCat"(%"{{.*}}String" [[INFO_PREFIX]], %"{{.*}}String" { ptr @{{[0-9]+}}, i64 3 })
+// CHECK-NEXT: ret %"{{.*}}String" [[INFO_RESULT]]
 func info(s string) string {
 	return "" + s + "..."
 }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 48)
-// CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.String", ptr %0, i64 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @1, i64 5 }, ptr %1, align 8
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.String", ptr %0, i64 1
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @2, i64 1 }, ptr %2, align 8
-// CHECK-NEXT:   %3 = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.String", ptr %0, i64 2
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @3, i64 5 }, ptr %3, align 8
-// CHECK-NEXT:   %4 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %0, 0
-// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %4, i64 3, 1
-// CHECK-NEXT:   %6 = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %5, i64 3, 2
-// CHECK-NEXT:   %7 = call %"{{.*}}/runtime/internal/runtime.String" @main.concat(%"{{.*}}/runtime/internal/runtime.Slice" %6)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %7)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[ARGS_DATA:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 48)
+// CHECK-NEXT: [[ARG0:%[0-9]+]] = getelementptr inbounds %"{{.*}}String", ptr [[ARGS_DATA]], i64 0
+// CHECK-NEXT: store %"{{.*}}String" { ptr @{{[0-9]+}}, i64 5 }, ptr [[ARG0]]
+// CHECK-NEXT: [[ARG1:%[0-9]+]] = getelementptr inbounds %"{{.*}}String", ptr [[ARGS_DATA]], i64 1
+// CHECK-NEXT: store %"{{.*}}String" { ptr @{{[0-9]+}}, i64 1 }, ptr [[ARG1]]
+// CHECK-NEXT: [[ARG2:%[0-9]+]] = getelementptr inbounds %"{{.*}}String", ptr [[ARGS_DATA]], i64 2
+// CHECK-NEXT: store %"{{.*}}String" { ptr @{{[0-9]+}}, i64 5 }, ptr [[ARG2]]
+// CHECK-NEXT: [[ARGS0:%[0-9]+]] = insertvalue %"{{.*}}Slice" undef, ptr [[ARGS_DATA]], 0
+// CHECK-NEXT: [[ARGS1:%[0-9]+]] = insertvalue %"{{.*}}Slice" [[ARGS0]], i64 3, 1
+// CHECK-NEXT: [[ARGS:%[0-9]+]] = insertvalue %"{{.*}}Slice" [[ARGS1]], i64 3, 2
+// CHECK-NEXT: [[RESULT:%[0-9]+]] = call %"{{.*}}String" @main.concat(%"{{.*}}Slice" [[ARGS]])
+// CHECK-NEXT: call void @"{{.*}}PrintString"(%"{{.*}}String" [[RESULT]])
 func main() {
 	result := concat("Hello", " ", "World")
 	println(result)

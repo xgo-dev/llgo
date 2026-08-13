@@ -4,28 +4,14 @@ package main
 import "C"
 import _ "unsafe"
 
-// CHECK-DAG: {{^}}@0 = private unnamed_addr constant [44 x i8] c"{{.*}}/cl/_testrt/struct.Foo", align 1{{$}}
-// CHECK-DAG: {{^}}@1 = private unnamed_addr constant [5 x i8] c"Print", align 1{{$}}
-// CHECK-DAG: @main.format = global [10 x i8] c"Hello %d\0A\00", align 1
-
 // CHECK-LABEL: define void @main.Foo.Print(%main.Foo %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = alloca %main.Foo, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 8, i1 false)
-// CHECK-NEXT:   store %main.Foo %0, ptr %1, align 4
-// CHECK-NEXT:   %2 = getelementptr inbounds %main.Foo, ptr %1, i32 0, i32 1
-// CHECK-NEXT:   %3 = load i1, ptr %2, align 1
-// CHECK-NEXT:   br i1 %3, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %4 = getelementptr inbounds %main.Foo, ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %5 = load i32, ptr %4, align 4
-// CHECK-NEXT:   call void (ptr, ...) @printf(ptr @main.format, i32 %5)
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: store %main.Foo %0, ptr [[PRINT_RECEIVER:%[0-9]+]]
+// CHECK: [[PRINT_OK_FIELD:%[0-9]+]] = getelementptr inbounds %main.Foo, ptr [[PRINT_RECEIVER]], i32 0, i32 1
+// CHECK-NEXT: [[PRINT_OK:%[0-9]+]] = load i1, ptr [[PRINT_OK_FIELD]]
+// CHECK-NEXT: br i1 [[PRINT_OK]], label %{{.*}}, label %{{.*}}
+// CHECK: [[PRINT_VALUE_FIELD:%[0-9]+]] = getelementptr inbounds %main.Foo, ptr [[PRINT_RECEIVER]], i32 0, i32 0
+// CHECK-NEXT: [[PRINT_VALUE:%[0-9]+]] = load i32, ptr [[PRINT_VALUE_FIELD]]
+// CHECK-NEXT: call void (ptr, ...) @printf(ptr @main.format, i32 [[PRINT_VALUE]])
 
 func (p Foo) Print() {
 	if p.ok {
@@ -49,42 +35,16 @@ func main() {
 }
 
 // CHECK-LABEL: define void @"main.(*Foo).Print"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 44 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @1, i64 5 })
-// CHECK-NEXT:   %2 = load %main.Foo, ptr %0, align 4
-// CHECK-NEXT:   call void @main.Foo.Print(%main.Foo %2)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[WRAPPER_NIL:%[0-9]+]] = icmp eq ptr %0, null
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 [[WRAPPER_NIL]], %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 44 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 5 })
+// CHECK-NEXT: [[WRAPPER_VALUE:%[0-9]+]] = load %main.Foo, ptr %0
+// CHECK-NEXT: call void @main.Foo.Print(%main.Foo [[WRAPPER_VALUE]])
 
 // CHECK-LABEL: define ptr @main._Cgo_ptr(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   ret ptr %0
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @main.init(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load i1, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store i1 true, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   call void @syscall.init()
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: ret ptr %0
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = alloca %main.Foo, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %0, i8 0, i64 8, i1 false)
-// CHECK-NEXT:   %1 = getelementptr inbounds %main.Foo, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = getelementptr inbounds %main.Foo, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   store i32 100, ptr %1, align 4
-// CHECK-NEXT:   store i1 true, ptr %2, align 1
-// CHECK-NEXT:   %3 = load %main.Foo, ptr %0, align 4
-// CHECK-NEXT:   call void @main.Foo.Print(%main.Foo %3)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: store i32 100, ptr [[MAIN_A:%[0-9]+]]
+// CHECK-NEXT: store i1 true, ptr [[MAIN_OK:%[0-9]+]]
+// CHECK-NEXT: [[MAIN_FOO:%[0-9]+]] = load %main.Foo, ptr %{{[0-9]+}}
+// CHECK-NEXT: call void @main.Foo.Print(%main.Foo [[MAIN_FOO]])

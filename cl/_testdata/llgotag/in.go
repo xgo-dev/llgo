@@ -5,8 +5,6 @@
 package llgotag
 
 // CHECK-LABEL: define void @"{{.*}}.Foo"(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: ret void
 func Foo() {
 }

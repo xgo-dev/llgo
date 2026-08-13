@@ -3,10 +3,66 @@ package main
 
 import "github.com/goplus/lib/c"
 
-// CHECK: {{^}}@0 = private unnamed_addr constant [1 x i8] c"a", align 1{{$}}
-// CHECK: {{^}}@5 = private unnamed_addr constant [4 x i8] c"Info", align 1{{$}}
-// CHECK: {{^}}@10 = private unnamed_addr constant [5 x i8] c"hello", align 1{{$}}
-// CHECK: {{^}}@12 = private unnamed_addr constant [54 x i8] c"{{.*}}/cl/_testrt/tpabi.T[string, int]", align 1{{$}}
+// Generic instantiation keeps the concrete type in interface metadata and
+// preserves both value and pointer method ABIs. llgo.advance must lower to the
+// same array GEP for its C helper and linked method spellings.
+// CHECK-LABEL: define void @main.main(){{.*}} {
+// CHECK: [[ANY_VALUE:%[0-9]+]] = load %"main.T[string,int]", ptr
+// CHECK: [[ANY_DATA:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 24)
+// CHECK-NEXT: store %"main.T[string,int]" [[ANY_VALUE]], ptr [[ANY_DATA]]
+// CHECK-NEXT: [[ANY:%[0-9]+]] = insertvalue %"{{.*}}eface" { ptr @"_llgo_main.T[string,int]", ptr undef }, ptr [[ANY_DATA]], 1
+// CHECK-NEXT: [[ANY_TYPE:%[0-9]+]] = extractvalue %"{{.*}}eface" [[ANY]], 0
+// CHECK-NEXT: [[ASSERT_OK:%[0-9]+]] = icmp eq ptr [[ANY_TYPE]], @"_llgo_main.T[string,int]"
+// CHECK-NEXT: br i1 [[ASSERT_OK]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: {{^_llgo_[0-9]+:}}
+// CHECK: [[ASSERT_DATA:%[0-9]+]] = extractvalue %"{{.*}}eface" [[ANY]], 1
+// CHECK-NEXT: [[ASSERT_VALUE:%[0-9]+]] = load %"main.T[string,int]", ptr [[ASSERT_DATA]]
+// CHECK-NEXT: [[ASSERT_M:%[0-9]+]] = extractvalue %"main.T[string,int]" [[ASSERT_VALUE]], 0
+// CHECK-NEXT: call void @"{{.*}}PrintString"(%"{{.*}}String" [[ASSERT_M]])
+// CHECK: [[METHOD_VALUE:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 24)
+// CHECK: [[METHOD_M:%[0-9]+]] = getelementptr inbounds %"main.T[string,int]", ptr [[METHOD_VALUE]], i32 0, i32 0
+// CHECK-NEXT: [[METHOD_N:%[0-9]+]] = getelementptr inbounds %"main.T[string,int]", ptr [[METHOD_VALUE]], i32 0, i32 1
+// CHECK: store %"{{.*}}String" { ptr {{.*}}, i64 5 }, ptr [[METHOD_M]]
+// CHECK-NEXT: store i64 100, ptr [[METHOD_N]]
+// CHECK-NEXT: [[ITAB:%[0-9]+]] = call ptr @"{{.*}}NewItab"(ptr {{.*}}, ptr @"*_llgo_main.T[string,int]")
+// CHECK-NEXT: [[IFACE0:%[0-9]+]] = insertvalue %"{{.*}}iface" undef, ptr [[ITAB]], 0
+// CHECK-NEXT: [[IFACE:%[0-9]+]] = insertvalue %"{{.*}}iface" [[IFACE0]], ptr [[METHOD_VALUE]], 1
+// CHECK-NEXT: [[RECEIVER:%[0-9]+]] = call ptr @"{{.*}}IfacePtrData"(%"{{.*}}iface" [[IFACE]])
+// CHECK-NEXT: [[METHODS:%[0-9]+]] = extractvalue %"{{.*}}iface" [[IFACE]], 0
+// CHECK-NEXT: [[DEMO_SLOT:%[0-9]+]] = getelementptr ptr, ptr [[METHODS]], i64 3
+// CHECK-NEXT: [[DEMO_CODE:%[0-9]+]] = load ptr, ptr [[DEMO_SLOT]]
+// CHECK-NEXT: [[METHOD_PAIR0:%[0-9]+]] = insertvalue { ptr, ptr } undef, ptr [[DEMO_CODE]], 0
+// CHECK-NEXT: [[METHOD_PAIR:%[0-9]+]] = insertvalue { ptr, ptr } [[METHOD_PAIR0]], ptr [[RECEIVER]], 1
+// CHECK-NEXT: [[CALL_RECEIVER:%[0-9]+]] = extractvalue { ptr, ptr } [[METHOD_PAIR]], 1
+// CHECK-NEXT: [[CALL_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[METHOD_PAIR]], 0
+// CHECK-NEXT: call void [[CALL_CODE]](ptr [[CALL_RECEIVER]])
+// CHECK: [[K_VALUE:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 32)
+// CHECK: [[C_ADVANCE:%[0-9]+]] = getelementptr [4 x i64], ptr [[K_VALUE]], i64 1
+// CHECK-NEXT: call void @"{{.*}}PrintPointer"(ptr [[C_ADVANCE]])
+// CHECK: [[METHOD_ADVANCE:%[0-9]+]] = getelementptr [4 x i64], ptr [[K_VALUE]], i64 1
+// CHECK-NEXT: call void @"{{.*}}PrintPointer"(ptr [[METHOD_ADVANCE]])
+// CHECK: {{^_llgo_[0-9]+:}}
+// CHECK-NEXT: call void @"{{.*}}PanicTypeAssert"(ptr null, ptr [[ANY_TYPE]], ptr @"_llgo_main.T[string,int]")
+// CHECK-LABEL: define linkonce void @"main.T[string,int].Info"(%"main.T[string,int]"
+// CHECK: store %"main.T[string,int]" [[INFO_VALUE:%[0-9]+]], ptr [[INFO_ADDR:%[0-9]+]]
+// CHECK: [[INFO_M_FIELD:%[0-9]+]] = getelementptr inbounds %"main.T[string,int]", ptr [[INFO_ADDR]], i32 0, i32 0
+// CHECK-NEXT: [[INFO_M:%[0-9]+]] = load %"{{.*}}String", ptr [[INFO_M_FIELD]]
+// CHECK-NEXT: [[INFO_N_FIELD:%[0-9]+]] = getelementptr inbounds %"main.T[string,int]", ptr [[INFO_ADDR]], i32 0, i32 1
+// CHECK-NEXT: [[INFO_N:%[0-9]+]] = load i64, ptr [[INFO_N_FIELD]]
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" [[INFO_M]])
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 [[INFO_N]])
+// CHECK-LABEL: define linkonce void @"main.(*T[string,int]).Demo"(ptr
+// CHECK: [[DEMO_M_FIELD:%[0-9]+]] = getelementptr inbounds %"main.T[string,int]", ptr [[DEMO_RECEIVER:%[0-9]+]], i32 0, i32 0
+// CHECK-NEXT: [[DEMO_M:%[0-9]+]] = load %"{{.*}}String", ptr [[DEMO_M_FIELD]]
+// CHECK-NEXT: [[DEMO_N_FIELD:%[0-9]+]] = getelementptr inbounds %"main.T[string,int]", ptr [[DEMO_RECEIVER]], i32 0, i32 1
+// CHECK-NEXT: [[DEMO_N:%[0-9]+]] = load i64, ptr [[DEMO_N_FIELD]]
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" [[DEMO_M]])
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 [[DEMO_N]])
+// CHECK-LABEL: define linkonce void @"main.(*T[string,int]).Info"(ptr
+// CHECK: [[PTR_INFO_NIL:%[0-9]+]] = icmp eq ptr [[PTR_INFO_RECEIVER:%[0-9]+]], null
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 [[PTR_INFO_NIL]],{{.*}})
+// CHECK-NEXT: [[PTR_INFO_VALUE:%[0-9]+]] = load %"main.T[string,int]", ptr [[PTR_INFO_RECEIVER]]
+// CHECK-NEXT: call void @"main.T[string,int].Info"(%"main.T[string,int]" [[PTR_INFO_VALUE]])
 
 type T[M, N any] struct {
 	m M
@@ -42,115 +98,3 @@ func main() {
 	println(c.Advance(k, 1))
 	println(k.Advance(1))
 }
-
-// CHECK-LABEL: define void @main.init(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load i1, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store i1 true, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = alloca %"main.T[string,int]", align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %0, i8 0, i64 24, i1 false)
-// CHECK-NEXT:   %1 = getelementptr inbounds %"main.T[string,int]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = getelementptr inbounds %"main.T[string,int]", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 1 }, ptr %1, align 8
-// CHECK-NEXT:   store i64 1, ptr %2, align 8
-// CHECK-NEXT:   %3 = load %"main.T[string,int]", ptr %0, align 8
-// CHECK-NEXT:   %4 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 24)
-// CHECK-NEXT:   store %"main.T[string,int]" %3, ptr %4, align 8
-// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_main.T[string,int]", ptr undef }, ptr %4, 1
-// CHECK-NEXT:   %6 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %5, 0
-// CHECK-NEXT:   %7 = icmp eq ptr %6, @"_llgo_main.T[string,int]"
-// CHECK-NEXT:   br i1 %7, label %_llgo_1, label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %8 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %5, 1
-// CHECK-NEXT:   %9 = load %"main.T[string,int]", ptr %8, align 8
-// CHECK-NEXT:   %10 = extractvalue %"main.T[string,int]" %9, 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %10)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %11 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
-// CHECK-NEXT:   %12 = getelementptr inbounds %"main.T[string,int]", ptr %11, i32 0, i32 0
-// CHECK-NEXT:   %13 = getelementptr inbounds %"main.T[string,int]", ptr %11, i32 0, i32 1
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @10, i64 5 }, ptr %12, align 8
-// CHECK-NEXT:   store i64 100, ptr %13, align 8
-// CHECK-NEXT:   %14 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T[string,int]")
-// CHECK-NEXT:   %15 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %14, 0
-// CHECK-NEXT:   %16 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %15, ptr %11, 1
-// CHECK-NEXT:   %17 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %16)
-// CHECK-NEXT:   %18 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %16, 0
-// CHECK-NEXT:   %19 = getelementptr ptr, ptr %18, i64 3
-// CHECK-NEXT:   %20 = load ptr, ptr %19, align 8
-// CHECK-NEXT:   %21 = insertvalue { ptr, ptr } undef, ptr %20, 0
-// CHECK-NEXT:   %22 = insertvalue { ptr, ptr } %21, ptr %17, 1
-// CHECK-NEXT:   %23 = extractvalue { ptr, ptr } %22, 1
-// CHECK-NEXT:   %24 = extractvalue { ptr, ptr } %22, 0
-// CHECK-NEXT:   call void %24(ptr %23)
-// CHECK-NEXT:   %25 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 32)
-// CHECK-NEXT:   %26 = getelementptr inbounds i64, ptr %25, i64 0
-// CHECK-NEXT:   %27 = getelementptr inbounds i64, ptr %25, i64 1
-// CHECK-NEXT:   %28 = getelementptr inbounds i64, ptr %25, i64 2
-// CHECK-NEXT:   %29 = getelementptr inbounds i64, ptr %25, i64 3
-// CHECK-NEXT:   store i64 1, ptr %26, align 8
-// CHECK-NEXT:   store i64 2, ptr %27, align 8
-// CHECK-NEXT:   store i64 3, ptr %28, align 8
-// CHECK-NEXT:   store i64 4, ptr %29, align 8
-// CHECK-NEXT:   %30 = getelementptr [4 x i64], ptr %25, i64 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %30)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %31 = getelementptr [4 x i64], ptr %25, i64 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %31)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicTypeAssert"(ptr null, ptr %6, ptr @"_llgo_main.T[string,int]")
-// CHECK-NEXT:   unreachable
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce void @"main.T[string,int].Info"(%"main.T[string,int]" %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = alloca %"main.T[string,int]", align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 24, i1 false)
-// CHECK-NEXT:   store %"main.T[string,int]" %0, ptr %1, align 8
-// CHECK-NEXT:   %2 = getelementptr inbounds %"main.T[string,int]", ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.String", ptr %2, align 8
-// CHECK-NEXT:   %4 = getelementptr inbounds %"main.T[string,int]", ptr %1, i32 0, i32 1
-// CHECK-NEXT:   %5 = load i64, ptr %4, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %3)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %5)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce void @"main.(*T[string,int]).Demo"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds %"main.T[string,int]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load %"{{.*}}/runtime/internal/runtime.String", ptr %1, align 8
-// CHECK-NEXT:   %3 = getelementptr inbounds %"main.T[string,int]", ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %4 = load i64, ptr %3, align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %2)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %4)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
-
-// CHECK-LABEL: define linkonce void @"main.(*T[string,int]).Info"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @12, i64 54 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @5, i64 4 })
-// CHECK-NEXT:   %2 = load %"main.T[string,int]", ptr %0, align 8
-// CHECK-NEXT:   call void @"main.T[string,int].Info"(%"main.T[string,int]" %2)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }

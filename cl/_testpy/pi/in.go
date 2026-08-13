@@ -7,13 +7,10 @@ import (
 )
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load ptr, ptr @__llgo_py.math, align 8
-// CHECK-NEXT:   %1 = call ptr @PyObject_GetAttrString(ptr %0, ptr @1)
-// CHECK-NEXT:   %2 = call double @PyFloat_AsDouble(ptr %1)
-// CHECK-NEXT:   %3 = call i32 (ptr, ...) @printf(ptr @0, double %2)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[MATH:%[0-9]+]] = load ptr, ptr @__llgo_py.math
+// CHECK-NEXT: [[PI:%[0-9]+]] = call ptr @PyObject_GetAttrString(ptr [[MATH]], ptr @{{[0-9]+}})
+// CHECK-NEXT: [[PI_VALUE:%[0-9]+]] = call double @PyFloat_AsDouble(ptr [[PI]])
+// CHECK-NEXT: call i32 (ptr, ...) @printf(ptr @{{[0-9]+}}, double [[PI_VALUE]])
 func main() {
 	c.Printf(c.Str("pi = %f\n"), math.Pi.Float64())
 }

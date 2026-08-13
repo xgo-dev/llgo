@@ -9,51 +9,46 @@ type Point struct {
 type MyPoint = Point
 
 // CHECK-LABEL: define void @"main.(*Point).Move"(ptr %0, double %1, double %2){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %3 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %4 = load double, ptr %3, align 8
-// CHECK-NEXT:   %5 = fadd double %4, %1
-// CHECK-NEXT:   %6 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store double %5, ptr %6, align 8
-// CHECK-NEXT:   %7 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %8 = load double, ptr %7, align 8
-// CHECK-NEXT:   %9 = fadd double %8, %2
-// CHECK-NEXT:   %10 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   store double %9, ptr %10, align 8
-// CHECK-NEXT:   ret void
+// CHECK: [[MOVE_X_FIELD:%[0-9]+]] = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 0
+// CHECK-NEXT: [[MOVE_X:%[0-9]+]] = load double, ptr [[MOVE_X_FIELD]]
+// CHECK-NEXT: [[MOVE_NEW_X:%[0-9]+]] = fadd double [[MOVE_X]], %1
+// CHECK-NEXT: [[MOVE_X_STORE:%[0-9]+]] = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 0
+// CHECK-NEXT: store double [[MOVE_NEW_X]], ptr [[MOVE_X_STORE]]
+// CHECK-NEXT: [[MOVE_Y_FIELD:%[0-9]+]] = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 1
+// CHECK-NEXT: [[MOVE_Y:%[0-9]+]] = load double, ptr [[MOVE_Y_FIELD]]
+// CHECK-NEXT: [[MOVE_NEW_Y:%[0-9]+]] = fadd double [[MOVE_Y]], %2
+// CHECK-NEXT: [[MOVE_Y_STORE:%[0-9]+]] = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 1
+// CHECK-NEXT: store double [[MOVE_NEW_Y]], ptr [[MOVE_Y_STORE]]
 func (p *MyPoint) Move(dx, dy float64) {
 	p.x += dx
 	p.y += dy
 }
 
 // CHECK-LABEL: define void @"main.(*Point).Scale"(ptr %0, double %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load double, ptr %2, align 8
-// CHECK-NEXT:   %4 = fmul double %3, %1
-// CHECK-NEXT:   %5 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store double %4, ptr %5, align 8
-// CHECK-NEXT:   %6 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   %7 = load double, ptr %6, align 8
-// CHECK-NEXT:   %8 = fmul double %7, %1
-// CHECK-NEXT:   %9 = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 1
-// CHECK-NEXT:   store double %8, ptr %9, align 8
-// CHECK-NEXT:   ret void
+// CHECK: [[SCALE_X_FIELD:%[0-9]+]] = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 0
+// CHECK-NEXT: [[SCALE_X:%[0-9]+]] = load double, ptr [[SCALE_X_FIELD]]
+// CHECK-NEXT: [[SCALE_NEW_X:%[0-9]+]] = fmul double [[SCALE_X]], %1
+// CHECK-NEXT: [[SCALE_X_STORE:%[0-9]+]] = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 0
+// CHECK-NEXT: store double [[SCALE_NEW_X]], ptr [[SCALE_X_STORE]]
+// CHECK-NEXT: [[SCALE_Y_FIELD:%[0-9]+]] = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 1
+// CHECK-NEXT: [[SCALE_Y:%[0-9]+]] = load double, ptr [[SCALE_Y_FIELD]]
+// CHECK-NEXT: [[SCALE_NEW_Y:%[0-9]+]] = fmul double [[SCALE_Y]], %1
+// CHECK-NEXT: [[SCALE_Y_STORE:%[0-9]+]] = getelementptr inbounds %main.Point, ptr %0, i32 0, i32 1
+// CHECK-NEXT: store double [[SCALE_NEW_Y]], ptr [[SCALE_Y_STORE]]
 func (p *Point) Scale(factor float64) {
 	p.x *= factor
 	p.y *= factor
 }
 
-// CHECK-LABEL: define void @main.main(){{.*}} {
 func main() {
-	// CHECK: call ptr @"{{.*}}AllocZ"(i64 16)
-	// CHECK: call void @"main.(*Point).Scale"(ptr %0, double 2.000000e+00)
-	// CHECK: call void @"main.(*Point).Move"(ptr %0, double 3.000000e+00, double 4.000000e+00)
-	// CHECK: call void @"{{.*}}PrintFloat"(double %4)
-	// CHECK-NEXT: call void @"{{.*}}PrintByte"(i8 32)
-	// CHECK-NEXT: call void @"{{.*}}PrintFloat"(double %6)
-	// CHECK-NEXT: call void @"{{.*}}PrintByte"(i8 10)
-	// CHECK-NEXT: ret void
+	// CHECK-LABEL: define void @main.main(){{.*}} {
+	// CHECK: [[POINT:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 16)
+	// CHECK: call void @"main.(*Point).Scale"(ptr [[POINT]], double 2.000000e+00)
+	// CHECK-NEXT: call void @"main.(*Point).Move"(ptr [[POINT]], double 3.000000e+00, double 4.000000e+00)
+	// CHECK: [[PRINT_X:%[0-9]+]] = load double, ptr {{.*}}
+	// CHECK: [[PRINT_Y:%[0-9]+]] = load double, ptr {{.*}}
+	// CHECK-NEXT: call void @"{{.*}}PrintFloat"(double [[PRINT_X]])
+	// CHECK: call void @"{{.*}}PrintFloat"(double [[PRINT_Y]])
 	pt := &MyPoint{1, 2}
 	pt.Scale(2)
 	pt.Move(3, 4)

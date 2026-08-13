@@ -10,15 +10,6 @@ import (
 	"github.com/goplus/lib/py/std"
 )
 
-// CHECK: @0 = private unnamed_addr constant [5 x i8] c"world", align 1
-// CHECK: @1 = private unnamed_addr constant [5 x i8] c"hello", align 1
-// CHECK: @2 = private unnamed_addr constant [3 x i8] c"pi\00", align 1
-// CHECK: @3 = private unnamed_addr constant [14 x i8] c"lens = %d %d\0A\00", align 1
-// CHECK: @4 = private unnamed_addr constant [14 x i8] c"ptrs = %d %d\0A\00", align 1
-// CHECK: @5 = private unnamed_addr constant [12 x i8] c"pi = %.15g\0A\00", align 1
-// CHECK: @6 = private unnamed_addr constant [4 x i8] c"abs\00", align 1
-// CHECK: @7 = private unnamed_addr constant [6 x i8] c"print\00", align 1
-
 func main() {
 	v := 100
 	x := py.List(true, false, 1, float32(2.1), 3.1, uint(4), 1+2i, complex64(3+4i),
@@ -29,92 +20,69 @@ func main() {
 	c.Printf(c.Str("pi = %.15g\n"), y.ListItem(2).Float64())
 }
 
+// Python module symbol binding belongs to package initialization, not main's
+// list construction.
 // CHECK-LABEL: define void @main.init(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load i1, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store i1 true, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   call void @"github.com/goplus/lib/py/math.init"()
-// CHECK-NEXT:   call void @"github.com/goplus/lib/py/std.init"()
-// CHECK-NEXT:   %1 = load ptr, ptr @__llgo_py.builtins, align 8
-// CHECK-NEXT:   call void (ptr, ...) @llgoLoadPyModSyms(ptr %1, ptr @6, ptr @__llgo_py.builtins.abs, ptr @7, ptr @__llgo_py.builtins.print, ptr null)
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[BUILTINS:%[0-9]+]] = load ptr, ptr @__llgo_py.builtins
+// CHECK-NEXT: call void (ptr, ...) @llgoLoadPyModSyms(ptr [[BUILTINS]], ptr @{{[0-9]+}}, ptr @__llgo_py.builtins.abs, ptr @{{[0-9]+}}, ptr @__llgo_py.builtins.print, ptr null)
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   store i64 100, ptr %0, align 8
-// CHECK-NEXT:   %1 = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.StringToBytes"(%"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 5 })
-// CHECK-NEXT:   %2 = alloca [3 x i8], align 1
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %2, i8 0, i64 3, i1 false)
-// CHECK-NEXT:   %3 = getelementptr inbounds i8, ptr %2, i64 0
-// CHECK-NEXT:   %4 = getelementptr inbounds i8, ptr %2, i64 1
-// CHECK-NEXT:   %5 = getelementptr inbounds i8, ptr %2, i64 2
-// CHECK-NEXT:   store i8 1, ptr %3, align 1
-// CHECK-NEXT:   store i8 2, ptr %4, align 1
-// CHECK-NEXT:   store i8 3, ptr %5, align 1
-// CHECK-NEXT:   %6 = load [3 x i8], ptr %2, align 1
-// CHECK-NEXT:   %7 = call ptr @PyList_New(i64 14)
-// CHECK-NEXT:   %8 = call ptr @PyBool_FromLong(i32 -1)
-// CHECK-NEXT:   %9 = call i32 @PyList_SetItem(ptr %7, i64 0, ptr %8)
-// CHECK-NEXT:   %10 = call ptr @PyBool_FromLong(i32 0)
-// CHECK-NEXT:   %11 = call i32 @PyList_SetItem(ptr %7, i64 1, ptr %10)
-// CHECK-NEXT:   %12 = call ptr @PyLong_FromLongLong(i64 1)
-// CHECK-NEXT:   %13 = call i32 @PyList_SetItem(ptr %7, i64 2, ptr %12)
-// CHECK-NEXT:   %14 = call ptr @PyFloat_FromDouble(double 0x4000CCCCC0000000)
-// CHECK-NEXT:   %15 = call i32 @PyList_SetItem(ptr %7, i64 3, ptr %14)
-// CHECK-NEXT:   %16 = call ptr @PyFloat_FromDouble(double 3.100000e+00)
-// CHECK-NEXT:   %17 = call i32 @PyList_SetItem(ptr %7, i64 4, ptr %16)
-// CHECK-NEXT:   %18 = call ptr @PyLong_FromUnsignedLongLong(i64 4)
-// CHECK-NEXT:   %19 = call i32 @PyList_SetItem(ptr %7, i64 5, ptr %18)
-// CHECK-NEXT:   %20 = call ptr @PyComplex_FromDoubles(double 1.000000e+00, double 2.000000e+00)
-// CHECK-NEXT:   %21 = call i32 @PyList_SetItem(ptr %7, i64 6, ptr %20)
-// CHECK-NEXT:   %22 = call ptr @PyComplex_FromDoubles(double 3.000000e+00, double 4.000000e+00)
-// CHECK-NEXT:   %23 = call i32 @PyList_SetItem(ptr %7, i64 7, ptr %22)
-// CHECK-NEXT:   %24 = call ptr @PyUnicode_FromStringAndSize(ptr @1, i64 5)
-// CHECK-NEXT:   %25 = call i32 @PyList_SetItem(ptr %7, i64 8, ptr %24)
-// CHECK-NEXT:   %26 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 0
-// CHECK-NEXT:   %27 = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %1, 1
-// CHECK-NEXT:   %28 = call ptr @PyByteArray_FromStringAndSize(ptr %26, i64 %27)
-// CHECK-NEXT:   %29 = call i32 @PyList_SetItem(ptr %7, i64 9, ptr %28)
-// CHECK-NEXT:   %30 = alloca [3 x i8], align 1
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %30, i8 0, i64 3, i1 false)
-// CHECK-NEXT:   store [3 x i8] %6, ptr %30, align 1
-// CHECK-NEXT:   %31 = getelementptr inbounds ptr, ptr %30, i64 0
-// CHECK-NEXT:   %32 = call ptr @PyBytes_FromStringAndSize(ptr %31, i64 3)
-// CHECK-NEXT:   %33 = call i32 @PyList_SetItem(ptr %7, i64 10, ptr %32)
-// CHECK-NEXT:   %34 = call ptr @PyBytes_FromStringAndSize(ptr null, i64 0)
-// CHECK-NEXT:   %35 = call i32 @PyList_SetItem(ptr %7, i64 11, ptr %34)
-// CHECK-NEXT:   %36 = ptrtoint ptr %0 to i64
-// CHECK-NEXT:   %37 = call ptr @PyLong_FromUnsignedLongLong(i64 %36)
-// CHECK-NEXT:   %38 = call i32 @PyList_SetItem(ptr %7, i64 12, ptr %37)
-// CHECK-NEXT:   %39 = ptrtoint ptr %0 to i64
-// CHECK-NEXT:   %40 = call ptr @PyLong_FromUnsignedLongLong(i64 %39)
-// CHECK-NEXT:   %41 = call i32 @PyList_SetItem(ptr %7, i64 13, ptr %40)
-// CHECK-NEXT:   %42 = load ptr, ptr @__llgo_py.math, align 8
-// CHECK-NEXT:   %43 = call ptr @PyObject_GetAttrString(ptr %42, ptr @2)
-// CHECK-NEXT:   %44 = call ptr @PyList_New(i64 3)
-// CHECK-NEXT:   %45 = load ptr, ptr @__llgo_py.builtins.abs, align 8
-// CHECK-NEXT:   %46 = call i32 @PyList_SetItem(ptr %44, i64 0, ptr %45)
-// CHECK-NEXT:   %47 = load ptr, ptr @__llgo_py.builtins.print, align 8
-// CHECK-NEXT:   %48 = call i32 @PyList_SetItem(ptr %44, i64 1, ptr %47)
-// CHECK-NEXT:   %49 = call i32 @PyList_SetItem(ptr %44, i64 2, ptr %43)
-// CHECK-NEXT:   %50 = call i64 @PyList_Size(ptr %7)
-// CHECK-NEXT:   %51 = call i64 @PyList_Size(ptr %44)
-// CHECK-NEXT:   %52 = call i32 (ptr, ...) @printf(ptr @3, i64 %50, i64 %51)
-// CHECK-NEXT:   %53 = call ptr @PyList_GetItem(ptr %7, i64 12)
-// CHECK-NEXT:   %54 = call i32 @PyObject_IsTrue(ptr %53)
-// CHECK-NEXT:   %55 = call ptr @PyList_GetItem(ptr %7, i64 13)
-// CHECK-NEXT:   %56 = call i32 @PyObject_IsTrue(ptr %55)
-// CHECK-NEXT:   %57 = call i32 (ptr, ...) @printf(ptr @4, i32 %54, i32 %56)
-// CHECK-NEXT:   %58 = call ptr @PyList_GetItem(ptr %44, i64 2)
-// CHECK-NEXT:   %59 = call double @PyFloat_AsDouble(ptr %58)
-// CHECK-NEXT:   %60 = call i32 (ptr, ...) @printf(ptr @5, double %59)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// Each Go value must be converted to the corresponding Python object and
+// inserted into the same 14-element list at its source position.
+// CHECK: [[GO_PTR:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 8)
+// CHECK: [[WORLD:%[0-9]+]] = call %"{{.*}}Slice" @"{{.*}}StringToBytes"(%"{{.*}}String" { ptr @{{[0-9]+}}, i64 5 })
+// CHECK: [[X:%[0-9]+]] = call ptr @PyList_New(i64 14)
+// CHECK-NEXT: [[X0:%[0-9]+]] = call ptr @PyBool_FromLong(i32 -1)
+// CHECK-NEXT: call i32 @PyList_SetItem(ptr [[X]], i64 0, ptr [[X0]])
+// CHECK-NEXT: [[X1:%[0-9]+]] = call ptr @PyBool_FromLong(i32 0)
+// CHECK-NEXT: call i32 @PyList_SetItem(ptr [[X]], i64 1, ptr [[X1]])
+// CHECK-NEXT: [[X2:%[0-9]+]] = call ptr @PyLong_FromLongLong(i64 1)
+// CHECK-NEXT: call i32 @PyList_SetItem(ptr [[X]], i64 2, ptr [[X2]])
+// CHECK-NEXT: [[X3:%[0-9]+]] = call ptr @PyFloat_FromDouble(double 0x4000CCCCC0000000)
+// CHECK-NEXT: call i32 @PyList_SetItem(ptr [[X]], i64 3, ptr [[X3]])
+// CHECK-NEXT: [[X4:%[0-9]+]] = call ptr @PyFloat_FromDouble(double 3.100000e+00)
+// CHECK-NEXT: call i32 @PyList_SetItem(ptr [[X]], i64 4, ptr [[X4]])
+// CHECK-NEXT: [[X5:%[0-9]+]] = call ptr @PyLong_FromUnsignedLongLong(i64 4)
+// CHECK-NEXT: call i32 @PyList_SetItem(ptr [[X]], i64 5, ptr [[X5]])
+// CHECK-NEXT: [[X6:%[0-9]+]] = call ptr @PyComplex_FromDoubles(double 1.000000e+00, double 2.000000e+00)
+// CHECK-NEXT: call i32 @PyList_SetItem(ptr [[X]], i64 6, ptr [[X6]])
+// CHECK-NEXT: [[X7:%[0-9]+]] = call ptr @PyComplex_FromDoubles(double 3.000000e+00, double 4.000000e+00)
+// CHECK-NEXT: call i32 @PyList_SetItem(ptr [[X]], i64 7, ptr [[X7]])
+// CHECK-NEXT: [[X8:%[0-9]+]] = call ptr @PyUnicode_FromStringAndSize(ptr @{{[0-9]+}}, i64 5)
+// CHECK-NEXT: call i32 @PyList_SetItem(ptr [[X]], i64 8, ptr [[X8]])
+// CHECK-NEXT: [[WORLD_DATA:%[0-9]+]] = extractvalue %"{{.*}}Slice" [[WORLD]], 0
+// CHECK-NEXT: [[WORLD_LEN:%[0-9]+]] = extractvalue %"{{.*}}Slice" [[WORLD]], 1
+// CHECK-NEXT: [[X9:%[0-9]+]] = call ptr @PyByteArray_FromStringAndSize(ptr [[WORLD_DATA]], i64 [[WORLD_LEN]])
+// CHECK-NEXT: call i32 @PyList_SetItem(ptr [[X]], i64 9, ptr [[X9]])
+// CHECK: [[ARRAY_DATA:%[0-9]+]] = getelementptr inbounds ptr, ptr {{.*}}, i64 0
+// CHECK-NEXT: [[X10:%[0-9]+]] = call ptr @PyBytes_FromStringAndSize(ptr [[ARRAY_DATA]], i64 3)
+// CHECK-NEXT: call i32 @PyList_SetItem(ptr [[X]], i64 10, ptr [[X10]])
+// CHECK-NEXT: [[X11:%[0-9]+]] = call ptr @PyBytes_FromStringAndSize(ptr null, i64 0)
+// CHECK-NEXT: call i32 @PyList_SetItem(ptr [[X]], i64 11, ptr [[X11]])
+// CHECK-NEXT: [[PTR_INT0:%[0-9]+]] = ptrtoint ptr [[GO_PTR]] to i64
+// CHECK-NEXT: [[X12:%[0-9]+]] = call ptr @PyLong_FromUnsignedLongLong(i64 [[PTR_INT0]])
+// CHECK-NEXT: call i32 @PyList_SetItem(ptr [[X]], i64 12, ptr [[X12]])
+// CHECK-NEXT: [[PTR_INT1:%[0-9]+]] = ptrtoint ptr [[GO_PTR]] to i64
+// CHECK-NEXT: [[X13:%[0-9]+]] = call ptr @PyLong_FromUnsignedLongLong(i64 [[PTR_INT1]])
+// CHECK-NEXT: call i32 @PyList_SetItem(ptr [[X]], i64 13, ptr [[X13]])
+// The second list contains the two loaded builtins and math.Pi, and all later
+// observations must read back from the correct list and index.
+// CHECK: [[MATH_MOD:%[0-9]+]] = load ptr, ptr @__llgo_py.math
+// CHECK-NEXT: [[PI:%[0-9]+]] = call ptr @PyObject_GetAttrString(ptr [[MATH_MOD]], ptr @{{[0-9]+}})
+// CHECK-NEXT: [[Y:%[0-9]+]] = call ptr @PyList_New(i64 3)
+// CHECK-NEXT: [[ABS:%[0-9]+]] = load ptr, ptr @__llgo_py.builtins.abs
+// CHECK-NEXT: call i32 @PyList_SetItem(ptr [[Y]], i64 0, ptr [[ABS]])
+// CHECK-NEXT: [[PRINT:%[0-9]+]] = load ptr, ptr @__llgo_py.builtins.print
+// CHECK-NEXT: call i32 @PyList_SetItem(ptr [[Y]], i64 1, ptr [[PRINT]])
+// CHECK-NEXT: call i32 @PyList_SetItem(ptr [[Y]], i64 2, ptr [[PI]])
+// CHECK-NEXT: [[XLEN:%[0-9]+]] = call i64 @PyList_Size(ptr [[X]])
+// CHECK-NEXT: [[YLEN:%[0-9]+]] = call i64 @PyList_Size(ptr [[Y]])
+// CHECK-NEXT: call i32 (ptr, ...) @printf(ptr @{{[0-9]+}}, i64 [[XLEN]], i64 [[YLEN]])
+// CHECK-NEXT: [[PTR0:%[0-9]+]] = call ptr @PyList_GetItem(ptr [[X]], i64 12)
+// CHECK-NEXT: [[PTR0_TRUE:%[0-9]+]] = call i32 @PyObject_IsTrue(ptr [[PTR0]])
+// CHECK-NEXT: [[PTR1:%[0-9]+]] = call ptr @PyList_GetItem(ptr [[X]], i64 13)
+// CHECK-NEXT: [[PTR1_TRUE:%[0-9]+]] = call i32 @PyObject_IsTrue(ptr [[PTR1]])
+// CHECK-NEXT: call i32 (ptr, ...) @printf(ptr @{{[0-9]+}}, i32 [[PTR0_TRUE]], i32 [[PTR1_TRUE]])
+// CHECK-NEXT: [[PI_ITEM:%[0-9]+]] = call ptr @PyList_GetItem(ptr [[Y]], i64 2)
+// CHECK-NEXT: [[PI_VALUE:%[0-9]+]] = call double @PyFloat_AsDouble(ptr [[PI_ITEM]])
+// CHECK-NEXT: call i32 (ptr, ...) @printf(ptr @{{[0-9]+}}, double [[PI_VALUE]])

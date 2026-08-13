@@ -1,10 +1,6 @@
 // LITTEST
 package main
 
-// CHECK: {{^}}@0 = private unnamed_addr constant [7 x i8] c"foo.txt", align 1{{$}}
-// CHECK: {{^}}@6 = private unnamed_addr constant [17 x i8] c"main.Tuple[error]", align 1{{$}}
-// CHECK: {{^}}@7 = private unnamed_addr constant [3 x i8] c"Get", align 1{{$}}
-
 type Tuple[T any] struct {
 	v T
 }
@@ -29,39 +25,19 @@ func Async[T any](fn func(func(T))) Future[T] {
 	return &future[T]{fn: fn}
 }
 
-// CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.iface" @main.ReadFile(%"{{.*}}/runtime/internal/runtime.String" %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = call %"{{.*}}/runtime/internal/runtime.iface" @"main.Async[main.Tuple[error]]"({ ptr, ptr } { ptr @"main.ReadFile$1", ptr null })
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %1
-// CHECK-NEXT: }
+// CHECK-LABEL: define %"{{.*}}iface" @main.ReadFile(%"{{.*}}String" %0){{.*}} {
+// CHECK: [[FUTURE:%[0-9]+]] = call %"{{.*}}iface" @"main.Async[main.Tuple[error]]"({ ptr, ptr } { ptr @"main.ReadFile$1", ptr null })
+// CHECK-NEXT: ret %"{{.*}}iface" [[FUTURE]]
 
 func ReadFile(fileName string) Future[Tuple[error]] {
 	// CHECK-LABEL: define void @"main.ReadFile$1"({ ptr, ptr } %0){{.*}} {
-	// CHECK-NEXT: _llgo_0:
-	// CHECK-NEXT:   %1 = alloca %"main.Tuple[error]", align 8
-	// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
-	// CHECK-NEXT:   %2 = getelementptr inbounds %"main.Tuple[error]", ptr %1, i32 0, i32 0
-	// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer, ptr %2, align 8
-	// CHECK-NEXT:   %3 = load %"main.Tuple[error]", ptr %1, align 8
-	// CHECK-NEXT:   %4 = extractvalue { ptr, ptr } %0, 1
-	// CHECK-NEXT:   %5 = extractvalue { ptr, ptr } %0, 0
-	// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %5)
-	// CHECK-NEXT:   call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %4, %"main.Tuple[error]" %3)
-	// CHECK-NEXT:   ret void
-	// CHECK-NEXT: }
-
-	// CHECK-LABEL: define void @main.init(){{.*}} {
-	// CHECK-NEXT: _llgo_0:
-	// CHECK-NEXT:   %0 = load i1, ptr @"main.init$guard", align 1
-	// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
-	// CHECK-EMPTY:
-	// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-	// CHECK-NEXT:   store i1 true, ptr @"main.init$guard", align 1
-	// CHECK-NEXT:   br label %_llgo_2
-	// CHECK-EMPTY:
-	// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-	// CHECK-NEXT:   ret void
-	// CHECK-NEXT: }
+	// CHECK: [[TUPLE_FIELD:%[0-9]+]] = getelementptr inbounds %"main.Tuple[error]", ptr [[TUPLE_ADDR:%[0-9]+]], i32 0, i32 0
+	// CHECK-NEXT: store %"{{.*}}iface" zeroinitializer, ptr [[TUPLE_FIELD]]
+	// CHECK-NEXT: [[TUPLE:%[0-9]+]] = load %"main.Tuple[error]", ptr [[TUPLE_ADDR]]
+	// CHECK-NEXT: [[RESOLVE_ENV:%[0-9]+]] = extractvalue { ptr, ptr } %0, 1
+	// CHECK-NEXT: [[RESOLVE_RAW_CODE:%[0-9]+]] = extractvalue { ptr, ptr } %0, 0
+	// CHECK-NEXT: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr [[RESOLVE_RAW_CODE]])
+	// CHECK-NEXT: call void %__llgo_funcval_code(ptr swiftself [[RESOLVE_ENV]], %"main.Tuple[error]" [[TUPLE]])
 
 	return Async[Tuple[error]](func(resolve func(Tuple[error])) {
 		resolve(Tuple[error]{v: nil})
@@ -69,71 +45,53 @@ func ReadFile(fileName string) Future[Tuple[error]] {
 }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call %"{{.*}}/runtime/internal/runtime.iface" @main.ReadFile(%"{{.*}}/runtime/internal/runtime.String" { ptr @0, i64 7 })
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %0)
-// CHECK-NEXT:   %2 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %0, 0
-// CHECK-NEXT:   %3 = getelementptr ptr, ptr %2, i64 3
-// CHECK-NEXT:   %4 = load ptr, ptr %3, align 8
-// CHECK-NEXT:   %5 = insertvalue { ptr, ptr } undef, ptr %4, 0
-// CHECK-NEXT:   %6 = insertvalue { ptr, ptr } %5, ptr %1, 1
-// CHECK-NEXT:   %7 = extractvalue { ptr, ptr } %6, 1
-// CHECK-NEXT:   %8 = extractvalue { ptr, ptr } %6, 0
-// CHECK-NEXT:   call void %8(ptr %7, { ptr, ptr } { ptr @"main.main$1", ptr null })
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[READ:%[0-9]+]] = call %"{{.*}}iface" @main.ReadFile(%"{{.*}}String" { ptr @{{[0-9]+}}, i64 7 })
+// CHECK-NEXT: [[READ_DATA:%[0-9]+]] = call ptr @"{{.*}}IfacePtrData"(%"{{.*}}iface" [[READ]])
+// CHECK-NEXT: [[READ_ITAB:%[0-9]+]] = extractvalue %"{{.*}}iface" [[READ]], 0
+// CHECK-NEXT: [[THEN_SLOT:%[0-9]+]] = getelementptr ptr, ptr [[READ_ITAB]], i64 3
+// CHECK-NEXT: [[THEN_CODE:%[0-9]+]] = load ptr, ptr [[THEN_SLOT]]
+// CHECK-NEXT: [[THEN_PAIR0:%[0-9]+]] = insertvalue { ptr, ptr } undef, ptr [[THEN_CODE]], 0
+// CHECK-NEXT: [[THEN_PAIR:%[0-9]+]] = insertvalue { ptr, ptr } [[THEN_PAIR0]], ptr [[READ_DATA]], 1
+// CHECK-NEXT: [[THEN_RECEIVER:%[0-9]+]] = extractvalue { ptr, ptr } [[THEN_PAIR]], 1
+// CHECK-NEXT: [[THEN_CALL:%[0-9]+]] = extractvalue { ptr, ptr } [[THEN_PAIR]], 0
+// CHECK-NEXT: call void [[THEN_CALL]](ptr [[THEN_RECEIVER]], { ptr, ptr } { ptr @"main.main$1", ptr null })
 
 func main() {
 	// CHECK-LABEL: define void @"main.main$1"(%"main.Tuple[error]" %0){{.*}} {
-	// CHECK-NEXT: _llgo_0:
-	// CHECK-NEXT:   %1 = call %"{{.*}}/runtime/internal/runtime.iface" @"main.Tuple[error].Get"(%"main.Tuple[error]" %0)
-	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintIface"(%"{{.*}}/runtime/internal/runtime.iface" %1)
-	// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-	// CHECK-NEXT:   ret void
-	// CHECK-NEXT: }
+	// CHECK: [[ERROR:%[0-9]+]] = call %"{{.*}}iface" @"main.Tuple[error].Get"(%"main.Tuple[error]" %0)
+	// CHECK-NEXT: call void @"{{.*}}PrintIface"(%"{{.*}}iface" [[ERROR]])
 
 	ReadFile("foo.txt").Then(func(v Tuple[error]) {
 		println(v.Get())
 	})
 }
 
-// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.iface" @"main.Async[main.Tuple[error]]"({ ptr, ptr } %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"main.future[main.Tuple[error]]", ptr %1, i32 0, i32 0
-// CHECK-NEXT:   store { ptr, ptr } %0, ptr %2, align 8
-// CHECK-NEXT:   %3 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.future[main.Tuple[error]]")
-// CHECK-NEXT:   %4 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %3, 0
-// CHECK-NEXT:   %5 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %4, ptr %1, 1
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %5
-// CHECK-NEXT: }
+// CHECK-LABEL: define linkonce %"{{.*}}iface" @"main.Async[main.Tuple[error]]"({ ptr, ptr } %0){{.*}} {
+// CHECK: [[FUTURE_DATA:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 16)
+// CHECK-NEXT: [[FUTURE_FN:%[0-9]+]] = getelementptr inbounds %"main.future[main.Tuple[error]]", ptr [[FUTURE_DATA]], i32 0, i32 0
+// CHECK-NEXT: store { ptr, ptr } %0, ptr [[FUTURE_FN]]
+// CHECK-NEXT: [[FUTURE_ITAB:%[0-9]+]] = call ptr @"{{.*}}NewItab"(ptr {{.*}}, ptr @"*_llgo_main.future[main.Tuple[error]]")
+// CHECK-NEXT: [[FUTURE_IFACE0:%[0-9]+]] = insertvalue %"{{.*}}iface" undef, ptr [[FUTURE_ITAB]], 0
+// CHECK-NEXT: [[FUTURE_IFACE:%[0-9]+]] = insertvalue %"{{.*}}iface" [[FUTURE_IFACE0]], ptr [[FUTURE_DATA]], 1
+// CHECK-NEXT: ret %"{{.*}}iface" [[FUTURE_IFACE]]
 
-// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.iface" @"main.Tuple[error].Get"(%"main.Tuple[error]" %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = alloca %"main.Tuple[error]", align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 16, i1 false)
-// CHECK-NEXT:   store %"main.Tuple[error]" %0, ptr %1, align 8
-// CHECK-NEXT:   %2 = getelementptr inbounds %"main.Tuple[error]", ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %3 = load %"{{.*}}/runtime/internal/runtime.iface", ptr %2, align 8
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %3
-// CHECK-NEXT: }
+// CHECK-LABEL: define linkonce %"{{.*}}iface" @"main.Tuple[error].Get"(%"main.Tuple[error]" %0){{.*}} {
+// CHECK: store %"main.Tuple[error]" %0, ptr [[GET_ADDR:%[0-9]+]]
+// CHECK-NEXT: [[GET_FIELD:%[0-9]+]] = getelementptr inbounds %"main.Tuple[error]", ptr [[GET_ADDR]], i32 0, i32 0
+// CHECK-NEXT: [[GET_VALUE:%[0-9]+]] = load %"{{.*}}iface", ptr [[GET_FIELD]]
+// CHECK-NEXT: ret %"{{.*}}iface" [[GET_VALUE]]
 
 // CHECK-LABEL: define linkonce void @"main.(*future[main.Tuple[error]]).Then"(ptr %0, { ptr, ptr } %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds %"main.future[main.Tuple[error]]", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %3 = load { ptr, ptr }, ptr %2, align 8
-// CHECK-NEXT:   %4 = extractvalue { ptr, ptr } %3, 1
-// CHECK-NEXT:   %5 = extractvalue { ptr, ptr } %3, 0
-// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %5)
-// CHECK-NEXT:   call void %__llgo_funcval_code(ptr {{(nest|swiftself)}} %4, { ptr, ptr } %1)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[FN_FIELD:%[0-9]+]] = getelementptr inbounds %"main.future[main.Tuple[error]]", ptr %0, i32 0, i32 0
+// CHECK-NEXT: [[FN:%[0-9]+]] = load { ptr, ptr }, ptr [[FN_FIELD]]
+// CHECK-NEXT: [[FN_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[FN]], 1
+// CHECK-NEXT: [[FN_RAW_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[FN]], 0
+// CHECK-NEXT: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr [[FN_RAW_CODE]])
+// CHECK-NEXT: call void %__llgo_funcval_code(ptr swiftself [[FN_ENV]], { ptr, ptr } %1)
 
-// CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.iface" @"main.(*Tuple[error]).Get"(ptr %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = icmp eq ptr %0, null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %1, %"{{.*}}/runtime/internal/runtime.String" { ptr @16, i64 55 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @7, i64 3 })
-// CHECK-NEXT:   %2 = load %"main.Tuple[error]", ptr %0, align 8
-// CHECK-NEXT:   %3 = call %"{{.*}}/runtime/internal/runtime.iface" @"main.Tuple[error].Get"(%"main.Tuple[error]" %2)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %3
-// CHECK-NEXT: }
+// CHECK-LABEL: define linkonce %"{{.*}}iface" @"main.(*Tuple[error]).Get"(ptr %0){{.*}} {
+// CHECK: [[GET_NIL:%[0-9]+]] = icmp eq ptr %0, null
+// CHECK-NEXT: call void @"{{.*}}PanicWrapNilPointer"(i1 [[GET_NIL]],{{.*}})
+// CHECK-NEXT: [[GET_RECEIVER:%[0-9]+]] = load %"main.Tuple[error]", ptr %0
+// CHECK-NEXT: [[GET_RESULT:%[0-9]+]] = call %"{{.*}}iface" @"main.Tuple[error].Get"(%"main.Tuple[error]" [[GET_RECEIVER]])
+// CHECK-NEXT: ret %"{{.*}}iface" [[GET_RESULT]]

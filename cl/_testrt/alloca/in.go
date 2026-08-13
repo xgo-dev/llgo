@@ -11,9 +11,9 @@ import (
 func main() {
 	s := c.Str("Hi\n")
 	s2 := c.Alloca(4)
-	// CHECK: alloca i8, i64 4, align 1
-	// CHECK-NEXT: @memcpy(ptr {{%[0-9]+}}, ptr @0, i64 4)
-	// CHECK-NEXT: @printf(ptr @1, ptr {{%[0-9]+}})
+	// CHECK: [[ALLOCA_BUF:%[0-9]+]] = alloca i8, i64 4, align 1
+	// CHECK-NEXT: [[ALLOCA_COPY:%[0-9]+]] = call ptr @memcpy(ptr [[ALLOCA_BUF]], ptr @0, i64 4)
+	// CHECK-NEXT: [[ALLOCA_PRINT:%[0-9]+]] = call i32 (ptr, ...) @printf(ptr @1, ptr [[ALLOCA_BUF]])
 	// CHECK-NEXT: ret void
 	c.Memcpy(s2, c.Pointer(s), 4)
 	c.Printf(c.Str("%s"), s2)

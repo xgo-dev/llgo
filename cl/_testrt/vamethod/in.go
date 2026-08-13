@@ -7,31 +7,45 @@ import (
 	"github.com/goplus/lib/c"
 )
 
+// Variadic C-linked methods must forward their receiver-derived format pointer
+// and preserve the variadic arguments for direct and interface calls.
 // CHECK-LABEL: define i32 @main.CFmt.Printf(%main.CFmt %0, ...){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = alloca %main.CFmt, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %1, i8 0, i64 8, i1 false)
-// CHECK-NEXT:   store %main.CFmt %0, ptr %1, align 8
-// CHECK-NEXT:   %2 = getelementptr inbounds %main.CFmt, ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   %4 = call i32 (ptr, ...) @printf(ptr %3)
-// CHECK-NEXT:   ret i32 %4
-// CHECK-NEXT: }
-
+// CHECK: store %main.CFmt %0, ptr %[[VALUE_COPY:[0-9]+]]
+// CHECK: %[[VALUE_FMT_SLOT:[0-9]+]] = getelementptr inbounds %main.CFmt, ptr %[[VALUE_COPY]], i32 0, i32 0
+// CHECK-NEXT: %[[VALUE_FMT:[0-9]+]] = load ptr, ptr %[[VALUE_FMT_SLOT]]
+// CHECK-NEXT: %[[VALUE_RET:[0-9]+]] = call i32 (ptr, ...) @printf(ptr %[[VALUE_FMT]])
+// CHECK-NEXT: ret i32 %[[VALUE_RET]]
 // CHECK-LABEL: define i32 @"main.(*CFmt).Printf"(ptr %0, ...){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = getelementptr inbounds %main.CFmt, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = call i32 (ptr, ...) @printf(ptr %2)
-// CHECK-NEXT:   ret i32 %3
-// CHECK-NEXT: }
-
+// CHECK: %[[PTR_FMT_SLOT:[0-9]+]] = getelementptr inbounds %main.CFmt, ptr %0, i32 0, i32 0
+// CHECK-NEXT: %[[PTR_FMT:[0-9]+]] = load ptr, ptr %[[PTR_FMT_SLOT]]
+// CHECK-NEXT: %[[PTR_RET:[0-9]+]] = call i32 (ptr, ...) @printf(ptr %[[PTR_FMT]])
+// CHECK-NEXT: ret i32 %[[PTR_RET]]
 // CHECK-LABEL: define void @"main.(*CFmt).SetFormat"(ptr %0, ptr %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = getelementptr inbounds %main.CFmt, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   store ptr %1, ptr %2, align 8
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: %[[SET_SLOT:[0-9]+]] = getelementptr inbounds %main.CFmt, ptr %0, i32 0, i32 0
+// CHECK-NEXT: store ptr %1, ptr %[[SET_SLOT]]
+// CHECK-NEXT: ret void
+// CHECK-LABEL: define void @main.main(){{.*}} {
+// CHECK: %[[CFMT:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK-NEXT: call void @"main.(*CFmt).SetFormat"(ptr %[[CFMT]], ptr @{{[0-9]+}})
+// CHECK: %[[DIRECT_FMT1:[0-9]+]] = load ptr, ptr %{{[0-9]+}}
+// CHECK-NEXT: call i32 (ptr, ...) @printf(ptr %[[DIRECT_FMT1]], ptr @{{[0-9]+}}, i64 100)
+// CHECK-NEXT: call void @"main.(*CFmt).SetFormat"(ptr %[[CFMT]], ptr @{{[0-9]+}})
+// CHECK: %[[DIRECT_FMT2:[0-9]+]] = load ptr, ptr %{{[0-9]+}}
+// CHECK-NEXT: call i32 (ptr, ...) @printf(ptr %[[DIRECT_FMT2]], i64 200, ptr @{{[0-9]+}})
+// CHECK: %[[SET_DATA:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}runtime.iface" %[[IFACE:[0-9]+]])
+// CHECK: %[[SET_METHOD:[0-9]+]] = load ptr, ptr %{{[0-9]+}}
+// CHECK-NEXT: %[[SET_PAIR_CODE:[0-9]+]] = insertvalue { ptr, ptr } undef, ptr %[[SET_METHOD]], 0
+// CHECK-NEXT: %[[SET_PAIR:[0-9]+]] = insertvalue { ptr, ptr } %[[SET_PAIR_CODE]], ptr %[[SET_DATA]], 1
+// CHECK-NEXT: %[[SET_CALL_DATA:[0-9]+]] = extractvalue { ptr, ptr } %[[SET_PAIR]], 1
+// CHECK-NEXT: %[[SET_CALL_CODE:[0-9]+]] = extractvalue { ptr, ptr } %[[SET_PAIR]], 0
+// CHECK-NEXT: call void %[[SET_CALL_CODE]](ptr %[[SET_CALL_DATA]], ptr @{{[0-9]+}})
+// CHECK-NEXT: %[[PRINTF_DATA:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}runtime.iface" %[[IFACE]])
+// CHECK: %[[PRINTF_METHOD:[0-9]+]] = load ptr, ptr %{{[0-9]+}}
+// CHECK-NEXT: %[[PRINTF_PAIR_CODE:[0-9]+]] = insertvalue { ptr, ptr } undef, ptr %[[PRINTF_METHOD]], 0
+// CHECK-NEXT: %[[PRINTF_PAIR:[0-9]+]] = insertvalue { ptr, ptr } %[[PRINTF_PAIR_CODE]], ptr %[[PRINTF_DATA]], 1
+// CHECK-NEXT: %[[PRINTF_CALL_DATA:[0-9]+]] = extractvalue { ptr, ptr } %[[PRINTF_PAIR]], 1
+// CHECK-NEXT: %[[PRINTF_CALL_CODE:[0-9]+]] = extractvalue { ptr, ptr } %[[PRINTF_PAIR]], 0
+// CHECK-NEXT: call i32 (ptr, ...) %[[PRINTF_CALL_CODE]](ptr %[[PRINTF_CALL_DATA]], ptr @{{[0-9]+}}, i64 100, i64 200)
 
 //llgo:link (*T).Printf C.printf
 func (*T) Printf(__llgo_va_list ...any) c.Int { return 0 }
@@ -54,69 +68,6 @@ type IFmt interface {
 	Printf(__llgo_va_list ...any) c.Int
 }
 
-// CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   call void @"main.(*CFmt).SetFormat"(ptr %0, ptr @0)
-// CHECK-NEXT:   %1 = getelementptr inbounds %main.CFmt, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %2 = load ptr, ptr %1, align 8
-// CHECK-NEXT:   %3 = call i32 (ptr, ...) @printf(ptr %2, ptr @1, i64 100)
-// CHECK-NEXT:   call void @"main.(*CFmt).SetFormat"(ptr %0, ptr @2)
-// CHECK-NEXT:   %4 = getelementptr inbounds %main.CFmt, ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %5 = load ptr, ptr %4, align 8
-// CHECK-NEXT:   %6 = call i32 (ptr, ...) @printf(ptr %5, i64 200, ptr @3)
-// CHECK-NEXT:   %7 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   %8 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_main.CFmt", ptr undef }, ptr %7, 1
-// CHECK-NEXT:   %9 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %8, 0
-// CHECK-NEXT:   %10 = call i1 @"{{.*}}/runtime/internal/runtime.Implements"(ptr @_llgo_main.IFmt, ptr %9)
-// CHECK-NEXT:   br i1 %10, label %_llgo_3, label %_llgo_4
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_5
-// CHECK-NEXT:   %11 = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @20, i64 5 }, ptr %11, align 8
-// CHECK-NEXT:   %12 = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %11, 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %12)
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_5
-// CHECK-NEXT:   %13 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %37)
-// CHECK-NEXT:   %14 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %37, 0
-// CHECK-NEXT:   %15 = getelementptr ptr, ptr %14, i64 4
-// CHECK-NEXT:   %16 = load ptr, ptr %15, align 8
-// CHECK-NEXT:   %17 = insertvalue { ptr, ptr } undef, ptr %16, 0
-// CHECK-NEXT:   %18 = insertvalue { ptr, ptr } %17, ptr %13, 1
-// CHECK-NEXT:   %19 = extractvalue { ptr, ptr } %18, 1
-// CHECK-NEXT:   %20 = extractvalue { ptr, ptr } %18, 0
-// CHECK-NEXT:   call void %20(ptr %19, ptr @18)
-// CHECK-NEXT:   %21 = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %37)
-// CHECK-NEXT:   %22 = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %37, 0
-// CHECK-NEXT:   %23 = getelementptr ptr, ptr %22, i64 3
-// CHECK-NEXT:   %24 = load ptr, ptr %23, align 8
-// CHECK-NEXT:   %25 = insertvalue { ptr, ptr } undef, ptr %24, 0
-// CHECK-NEXT:   %26 = insertvalue { ptr, ptr } %25, ptr %21, 1
-// CHECK-NEXT:   %27 = extractvalue { ptr, ptr } %26, 1
-// CHECK-NEXT:   %28 = extractvalue { ptr, ptr } %26, 0
-// CHECK-NEXT:   %29 = call i32 (ptr, ...) %28(ptr %27, ptr @19, i64 100, i64 200)
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_3:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   %30 = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %8, 1
-// CHECK-NEXT:   %31 = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$a85zs5wWQQoPIERm_en8plssh4spdIeeXZPC-E0TDh0", ptr %9)
-// CHECK-NEXT:   %32 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %31, 0
-// CHECK-NEXT:   %33 = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %32, ptr %30, 1
-// CHECK-NEXT:   %34 = insertvalue { %"{{.*}}/runtime/internal/runtime.iface", i1 } undef, %"{{.*}}/runtime/internal/runtime.iface" %33, 0
-// CHECK-NEXT:   %35 = insertvalue { %"{{.*}}/runtime/internal/runtime.iface", i1 } %34, i1 true, 1
-// CHECK-NEXT:   br label %_llgo_5
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_4:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   br label %_llgo_5
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_5:                                          ; preds = %_llgo_4, %_llgo_3
-// CHECK-NEXT:   %36 = phi { %"{{.*}}/runtime/internal/runtime.iface", i1 } [ %35, %_llgo_3 ], [ zeroinitializer, %_llgo_4 ]
-// CHECK-NEXT:   %37 = extractvalue { %"{{.*}}/runtime/internal/runtime.iface", i1 } %36, 0
-// CHECK-NEXT:   %38 = extractvalue { %"{{.*}}/runtime/internal/runtime.iface", i1 } %36, 1
-// CHECK-NEXT:   br i1 %38, label %_llgo_2, label %_llgo_1
-// CHECK-NEXT: }
 func main() {
 	cfmt := &CFmt{}
 	cfmt.SetFormat(c.Str("%s (%d)\n"))

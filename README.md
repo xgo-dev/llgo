@@ -424,7 +424,7 @@ cd llgo
 * [llpyg](chore/llpyg): It is used to automatically convert Python libraries into Go packages that `llgo` can import. It depends on `pydump` and `pysigfetch` to accomplish the task.
 * [llgen](chore/llgen): It is used to compile Go packages into LLVM IR files (*.ll).
 * [gentests](chore/gentests): It refreshes the built-in golden test data under `cl/_test*`, including `out.ll` and `expect.txt`. Directories that use source-embedded `// LITTEST` checks are skipped for `out.ll` regeneration.
-* [litgen](chore/litgen): It generates and refreshes source-embedded `// LITTEST` FileCheck directives from the current LLVM IR for marked Go source files.
+* [litgen](chore/litgen): It maintains explicitly opted-in, source-embedded FileCheck snapshots. It supports function/global selection, update-only operation, stale-check verification, and stable LLVM value abstractions. Small handwritten checks remain manual.
 * [ssadump](chore/ssadump): It is a Go SSA builder and interpreter.
 
 For local workflows and test-golden refresh commands, see [dev/README.md](dev/README.md#6-refresh-test-goldens).

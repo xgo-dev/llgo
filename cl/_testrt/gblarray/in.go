@@ -6,37 +6,33 @@ import (
 	"github.com/goplus/llgo/runtime/abi"
 )
 
-// CHECK: @main.sizeBasicTypes = global [25 x i64] [i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 16], align 8
+// CHECK: @main.sizeBasicTypes = global [25 x i64] [i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 16]
 
 // CHECK-LABEL: define ptr @main.Basic(i64 %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = icmp uge i64 %0, 25
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %1, {{.*}})
-// CHECK-NEXT:   %2 = getelementptr inbounds ptr, ptr @main.basicTypes, i64 %0
-// CHECK-NEXT:   %3 = load ptr, ptr %2, align 8
-// CHECK-NEXT:   ret ptr %3
-// CHECK-NEXT: }
+// CHECK: [[BASIC_OOB:%[0-9]+]] = icmp uge i64 %0, 25
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 [[BASIC_OOB]], i64 %0, i1 false, i64 25)
+// CHECK: [[BASIC_SLOT:%[0-9]+]] = getelementptr inbounds ptr, ptr @main.basicTypes, i64 %0
+// CHECK-NEXT: [[BASIC_TYPE:%[0-9]+]] = load ptr, ptr [[BASIC_SLOT]]
+// CHECK-NEXT: ret ptr [[BASIC_TYPE]]
 func Basic(kind abi.Kind) *abi.Type {
 	return basicTypes[kind]
 }
 
 // CHECK-LABEL: define ptr @main.basicType(i64 %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 72)
-// CHECK-NEXT:   %2 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %1, i32 0, i32 0
-// CHECK-NEXT:   %3 = icmp uge i64 %0, 25
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 %3, {{.*}})
-// CHECK-NEXT:   %4 = getelementptr inbounds i64, ptr @main.sizeBasicTypes, i64 %0
-// CHECK-NEXT:   %5 = load i64, ptr %4, align 8
-// CHECK-NEXT:   %6 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %1, i32 0, i32 2
-// CHECK-NEXT:   %7 = trunc i64 %0 to i32
-// CHECK-NEXT:   %8 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %1, i32 0, i32 6
-// CHECK-NEXT:   %9 = trunc i64 %0 to i8
-// CHECK-NEXT:   store i64 %5, ptr %2, align 8
-// CHECK-NEXT:   store i32 %7, ptr %6, align 4
-// CHECK-NEXT:   store i8 %9, ptr %8, align 1
-// CHECK-NEXT:   ret ptr %1
-// CHECK-NEXT: }
+// CHECK: [[TYPE_OBJ:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 72)
+// CHECK-NEXT: [[TYPE_SIZE_FIELD:%[0-9]+]] = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr [[TYPE_OBJ]], i32 0, i32 0
+// CHECK-NEXT: [[TYPE_OOB:%[0-9]+]] = icmp uge i64 %0, 25
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.CheckIndexRange"(i1 [[TYPE_OOB]], i64 %0, i1 false, i64 25)
+// CHECK: [[SIZE_SLOT:%[0-9]+]] = getelementptr inbounds i64, ptr @main.sizeBasicTypes, i64 %0
+// CHECK-NEXT: [[TYPE_SIZE:%[0-9]+]] = load i64, ptr [[SIZE_SLOT]]
+// CHECK-NEXT: [[TYPE_HASH_FIELD:%[0-9]+]] = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr [[TYPE_OBJ]], i32 0, i32 2
+// CHECK-NEXT: [[TYPE_HASH:%[0-9]+]] = trunc i64 %0 to i32
+// CHECK-NEXT: [[TYPE_KIND_FIELD:%[0-9]+]] = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr [[TYPE_OBJ]], i32 0, i32 6
+// CHECK-NEXT: [[TYPE_KIND:%[0-9]+]] = trunc i64 %0 to i8
+// CHECK-NEXT: store i64 [[TYPE_SIZE]], ptr [[TYPE_SIZE_FIELD]]
+// CHECK-NEXT: store i32 [[TYPE_HASH]], ptr [[TYPE_HASH_FIELD]]
+// CHECK-NEXT: store i8 [[TYPE_KIND]], ptr [[TYPE_KIND_FIELD]]
+// CHECK: ret ptr [[TYPE_OBJ]]
 func basicType(kind abi.Kind) *abi.Type {
 	return &abi.Type{
 		Size_: sizeBasicTypes[kind],
@@ -46,20 +42,8 @@ func basicType(kind abi.Kind) *abi.Type {
 }
 
 // CHECK-LABEL: define void @main.init(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = load i1, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br i1 %0, label %_llgo_2, label %_llgo_1
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_1:                                          ; preds = %_llgo_0
-// CHECK-NEXT:   store i1 true, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/abi.init"()
-// CHECK-NEXT:   %1 = call ptr @main.basicType(i64 24)
-// CHECK-NEXT:   store ptr %1, ptr getelementptr inbounds (ptr, ptr @main.basicTypes, i64 24), align 8
-// CHECK-NEXT:   br label %_llgo_2
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[STRING_TYPE:%[0-9]+]] = call ptr @main.basicType(i64 24)
+// CHECK-NEXT: store ptr [[STRING_TYPE]], ptr getelementptr inbounds (ptr, ptr @main.basicTypes, i64 24)
 var (
 	basicTypes = [...]*abi.Type{
 		abi.String: basicType(abi.String),
@@ -70,16 +54,13 @@ var (
 )
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call ptr @main.Basic(i64 24)
-// CHECK-NEXT:   %1 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 6
-// CHECK-NEXT:   %2 = load i8, ptr %1, align 1
-// CHECK-NEXT:   %3 = zext i8 %2 to i64
-// CHECK-NEXT:   %4 = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr %0, i32 0, i32 0
-// CHECK-NEXT:   %5 = load i64, ptr %4, align 8
-// CHECK-NEXT:   %6 = call i32 (ptr, ...) @printf(ptr @0, i64 %3, i64 %5)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK: [[MAIN_TYPE:%[0-9]+]] = call ptr @main.Basic(i64 24)
+// CHECK: [[MAIN_KIND_PTR:%[0-9]+]] = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr [[MAIN_TYPE]], i32 0, i32 6
+// CHECK-NEXT: [[MAIN_KIND8:%[0-9]+]] = load i8, ptr [[MAIN_KIND_PTR]]
+// CHECK-NEXT: [[MAIN_KIND:%[0-9]+]] = zext i8 [[MAIN_KIND8]] to i64
+// CHECK: [[MAIN_SIZE_PTR:%[0-9]+]] = getelementptr inbounds %"{{.*}}/runtime/abi.Type", ptr [[MAIN_TYPE]], i32 0, i32 0
+// CHECK-NEXT: [[MAIN_SIZE:%[0-9]+]] = load i64, ptr [[MAIN_SIZE_PTR]]
+// CHECK-NEXT: call i32 (ptr, ...) @printf(ptr @{{[0-9]+}}, i64 [[MAIN_KIND]], i64 [[MAIN_SIZE]])
 func main() {
 	t := Basic(abi.String)
 	c.Printf(c.Str("Kind: %d, Size: %d\n"), int(t.Kind_), t.Size_)

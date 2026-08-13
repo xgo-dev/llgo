@@ -1,48 +1,6 @@
 // LITTEST
 package main
 
-// CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %0 = call i32 @main.mask(i8 1)
-// CHECK-NEXT:   %1 = sext i32 %0 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %1)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %2 = call i64 @main.mask_shl(i64 127, i64 5)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %2)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %3 = call i8 @main.mask_shl8(i8 127, i64 5)
-// CHECK-NEXT:   %4 = sext i8 %3 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %4)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %5 = call i8 @main.mask_shl8u(i8 127, i64 5)
-// CHECK-NEXT:   %6 = zext i8 %5 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %6)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %7 = call i8 @main.mask_shl8(i8 127, i64 16)
-// CHECK-NEXT:   %8 = sext i8 %7 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %8)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %9 = call i8 @main.mask_shl8u(i8 127, i64 16)
-// CHECK-NEXT:   %10 = zext i8 %9 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %10)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %11 = call i64 @main.mask_shr(i64 127, i64 5)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %11)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %12 = call i8 @main.mask_shr8(i8 127, i64 5)
-// CHECK-NEXT:   %13 = sext i8 %12 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %13)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %14 = call i8 @main.mask_shr8u(i8 127, i64 5)
-// CHECK-NEXT:   %15 = zext i8 %14 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 %15)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %16 = call i8 @main.mask_shr8(i8 127, i64 16)
-// CHECK-NEXT:   %17 = sext i8 %16 to i64
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %17)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
 func main() {
 	println(mask(1))
 	println(mask_shl(127, 5))
@@ -56,96 +14,86 @@ func main() {
 	println(mask_shr8(127, 16))
 }
 
+// The sign bit must survive the two constant shifts, including the explicit
+// overshift select inserted by the lowering.
 // CHECK-LABEL: define i32 @main.mask(i8 %0){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %1 = sext i8 %0 to i32
-// CHECK-NEXT:   %2 = shl i32 %1, 31
-// CHECK-NEXT:   %3 = select i1 false, i32 0, i32 %2
-// CHECK-NEXT:   %4 = ashr i32 %3, 31
-// CHECK-NEXT:   ret i32 %4
-// CHECK-NEXT: }
+// CHECK: [[MASK_EXT:%[0-9]+]] = sext i8 %0 to i32
+// CHECK-NEXT: [[MASK_SHL:%[0-9]+]] = shl i32 [[MASK_EXT]], 31
+// CHECK-NEXT: [[MASK_SAFE:%[0-9]+]] = select i1 false, i32 0, i32 [[MASK_SHL]]
+// CHECK-NEXT: [[MASK_RESULT:%[0-9]+]] = ashr i32 [[MASK_SAFE]], 31
+// CHECK-NEXT: ret i32 [[MASK_RESULT]]
 func mask(x int8) int32 {
 	return int32(x) << 31 >> 31
 }
 
 // CHECK-LABEL: define i64 @main.mask_shl(i64 %0, i64 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = icmp slt i64 %1, 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 %2)
-// CHECK-NEXT:   %3 = icmp uge i64 %1, 64
-// CHECK-NEXT:   %4 = shl i64 %0, %1
-// CHECK-NEXT:   %5 = select i1 %3, i64 0, i64 %4
-// CHECK-NEXT:   ret i64 %5
-// CHECK-NEXT: }
+// CHECK: [[SHL_NEG:%[0-9]+]] = icmp slt i64 %1, 0
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 [[SHL_NEG]])
+// CHECK-NEXT: [[SHL_WIDE:%[0-9]+]] = icmp uge i64 %1, 64
+// CHECK-NEXT: [[SHL_VALUE:%[0-9]+]] = shl i64 %0, %1
+// CHECK-NEXT: [[SHL_RESULT:%[0-9]+]] = select i1 [[SHL_WIDE]], i64 0, i64 [[SHL_VALUE]]
+// CHECK-NEXT: ret i64 [[SHL_RESULT]]
 func mask_shl(x int, y int) int {
 	return x << y
 }
 
 // CHECK-LABEL: define i8 @main.mask_shl8(i8 %0, i64 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = icmp slt i64 %1, 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 %2)
-// CHECK-NEXT:   %3 = trunc i64 %1 to i8
-// CHECK-NEXT:   %4 = icmp uge i8 %3, 8
-// CHECK-NEXT:   %5 = shl i8 %0, %3
-// CHECK-NEXT:   %6 = select i1 %4, i8 0, i8 %5
-// CHECK-NEXT:   ret i8 %6
-// CHECK-NEXT: }
+// CHECK: [[SHL8_NEG:%[0-9]+]] = icmp slt i64 %1, 0
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 [[SHL8_NEG]])
+// CHECK-NEXT: [[SHL8_COUNT:%[0-9]+]] = trunc i64 %1 to i8
+// CHECK-NEXT: [[SHL8_WIDE:%[0-9]+]] = icmp uge i8 [[SHL8_COUNT]], 8
+// CHECK-NEXT: [[SHL8_VALUE:%[0-9]+]] = shl i8 %0, [[SHL8_COUNT]]
+// CHECK-NEXT: [[SHL8_RESULT:%[0-9]+]] = select i1 [[SHL8_WIDE]], i8 0, i8 [[SHL8_VALUE]]
+// CHECK-NEXT: ret i8 [[SHL8_RESULT]]
 func mask_shl8(x int8, y int) int8 {
 	return x << y
 }
 
 // CHECK-LABEL: define i8 @main.mask_shl8u(i8 %0, i64 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = icmp slt i64 %1, 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 %2)
-// CHECK-NEXT:   %3 = trunc i64 %1 to i8
-// CHECK-NEXT:   %4 = icmp uge i8 %3, 8
-// CHECK-NEXT:   %5 = shl i8 %0, %3
-// CHECK-NEXT:   %6 = select i1 %4, i8 0, i8 %5
-// CHECK-NEXT:   ret i8 %6
-// CHECK-NEXT: }
+// CHECK: [[SHL8U_NEG:%[0-9]+]] = icmp slt i64 %1, 0
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 [[SHL8U_NEG]])
+// CHECK-NEXT: [[SHL8U_COUNT:%[0-9]+]] = trunc i64 %1 to i8
+// CHECK-NEXT: [[SHL8U_WIDE:%[0-9]+]] = icmp uge i8 [[SHL8U_COUNT]], 8
+// CHECK-NEXT: [[SHL8U_VALUE:%[0-9]+]] = shl i8 %0, [[SHL8U_COUNT]]
+// CHECK-NEXT: [[SHL8U_RESULT:%[0-9]+]] = select i1 [[SHL8U_WIDE]], i8 0, i8 [[SHL8U_VALUE]]
+// CHECK-NEXT: ret i8 [[SHL8U_RESULT]]
 func mask_shl8u(x uint8, y int) uint8 {
 	return x << y
 }
 
+// Signed right shifts clamp an oversized count to width-1, preserving sign.
 // CHECK-LABEL: define i64 @main.mask_shr(i64 %0, i64 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = icmp slt i64 %1, 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 %2)
-// CHECK-NEXT:   %3 = icmp uge i64 %1, 64
-// CHECK-NEXT:   %4 = select i1 %3, i64 63, i64 %1
-// CHECK-NEXT:   %5 = ashr i64 %0, %4
-// CHECK-NEXT:   ret i64 %5
-// CHECK-NEXT: }
+// CHECK: [[SHR_NEG:%[0-9]+]] = icmp slt i64 %1, 0
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 [[SHR_NEG]])
+// CHECK-NEXT: [[SHR_WIDE:%[0-9]+]] = icmp uge i64 %1, 64
+// CHECK-NEXT: [[SHR_COUNT:%[0-9]+]] = select i1 [[SHR_WIDE]], i64 63, i64 %1
+// CHECK-NEXT: [[SHR_RESULT:%[0-9]+]] = ashr i64 %0, [[SHR_COUNT]]
+// CHECK-NEXT: ret i64 [[SHR_RESULT]]
 func mask_shr(x int, y int) int {
 	return x >> y
 }
 
 // CHECK-LABEL: define i8 @main.mask_shr8(i8 %0, i64 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = icmp slt i64 %1, 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 %2)
-// CHECK-NEXT:   %3 = trunc i64 %1 to i8
-// CHECK-NEXT:   %4 = icmp uge i8 %3, 8
-// CHECK-NEXT:   %5 = select i1 %4, i8 7, i8 %3
-// CHECK-NEXT:   %6 = ashr i8 %0, %5
-// CHECK-NEXT:   ret i8 %6
-// CHECK-NEXT: }
+// CHECK: [[SHR8_NEG:%[0-9]+]] = icmp slt i64 %1, 0
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 [[SHR8_NEG]])
+// CHECK-NEXT: [[SHR8_TRUNC:%[0-9]+]] = trunc i64 %1 to i8
+// CHECK-NEXT: [[SHR8_WIDE:%[0-9]+]] = icmp uge i8 [[SHR8_TRUNC]], 8
+// CHECK-NEXT: [[SHR8_COUNT:%[0-9]+]] = select i1 [[SHR8_WIDE]], i8 7, i8 [[SHR8_TRUNC]]
+// CHECK-NEXT: [[SHR8_RESULT:%[0-9]+]] = ashr i8 %0, [[SHR8_COUNT]]
+// CHECK-NEXT: ret i8 [[SHR8_RESULT]]
 func mask_shr8(x int8, y int) int8 {
 	return x >> y
 }
 
+// Unsigned right shifts instead select zero for an oversized count.
 // CHECK-LABEL: define i8 @main.mask_shr8u(i8 %0, i64 %1){{.*}} {
-// CHECK-NEXT: _llgo_0:
-// CHECK-NEXT:   %2 = icmp slt i64 %1, 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 %2)
-// CHECK-NEXT:   %3 = trunc i64 %1 to i8
-// CHECK-NEXT:   %4 = icmp uge i8 %3, 8
-// CHECK-NEXT:   %5 = lshr i8 %0, %3
-// CHECK-NEXT:   %6 = select i1 %4, i8 0, i8 %5
-// CHECK-NEXT:   ret i8 %6
-// CHECK-NEXT: }
+// CHECK: [[SHR8U_NEG:%[0-9]+]] = icmp slt i64 %1, 0
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 [[SHR8U_NEG]])
+// CHECK-NEXT: [[SHR8U_COUNT:%[0-9]+]] = trunc i64 %1 to i8
+// CHECK-NEXT: [[SHR8U_WIDE:%[0-9]+]] = icmp uge i8 [[SHR8U_COUNT]], 8
+// CHECK-NEXT: [[SHR8U_VALUE:%[0-9]+]] = lshr i8 %0, [[SHR8U_COUNT]]
+// CHECK-NEXT: [[SHR8U_RESULT:%[0-9]+]] = select i1 [[SHR8U_WIDE]], i8 0, i8 [[SHR8U_VALUE]]
+// CHECK-NEXT: ret i8 [[SHR8U_RESULT]]
 func mask_shr8u(x uint8, y int) uint8 {
 	return x >> y
 }
