@@ -8,11 +8,11 @@
     {
       "source": {
         "repository": "xgo-dev/llgo",
-        "sha": "9084d6ec39f93f57c66d5ceaf3e138f75419bc95",
+        "sha": "7b0e00a8b7287b06cf3f852fa1a268a28d4e1275",
         "ref": "main",
-        "url": "https://github.com/xgo-dev/llgo/commit/9084d6ec39f93f57c66d5ceaf3e138f75419bc95",
-        "runUrl": "https://github.com/xgo-dev/llgo/actions/runs/31748207784",
-        "timestamp": "2026-08-13T22:01:31Z"
+        "url": "https://github.com/xgo-dev/llgo/commit/7b0e00a8b7287b06cf3f852fa1a268a28d4e1275",
+        "runUrl": "https://github.com/xgo-dev/llgo/actions/runs/31764675896",
+        "timestamp": "2026-08-14T02:45:04Z"
       },
       "platforms": {
         "linux": {
@@ -21,11 +21,11 @@
           "shardId": "merged",
           "source": {
             "repository": "xgo-dev/llgo",
-            "sha": "9084d6ec39f93f57c66d5ceaf3e138f75419bc95",
+            "sha": "7b0e00a8b7287b06cf3f852fa1a268a28d4e1275",
             "ref": "main",
-            "url": "https://github.com/xgo-dev/llgo/commit/9084d6ec39f93f57c66d5ceaf3e138f75419bc95",
-            "runUrl": "https://github.com/xgo-dev/llgo/actions/runs/31748207784",
-            "timestamp": "2026-08-13T22:01:31Z"
+            "url": "https://github.com/xgo-dev/llgo/commit/7b0e00a8b7287b06cf3f852fa1a268a28d4e1275",
+            "runUrl": "https://github.com/xgo-dev/llgo/actions/runs/31764675896",
+            "timestamp": "2026-08-14T02:45:04Z"
           },
           "platform": {
             "id": "linux",
@@ -74,17 +74,17 @@
                     "text-bytes": 410,
                     "data-bytes": 13218,
                     "bss-bytes": 2265,
-                    "build-ns": 314748906,
-                    "run-ns": 1312541
+                    "build-ns": 282451281,
+                    "run-ns": 1273134
                   }
                 }
               ],
               "measurements": {
                 "bss-bytes": 2265,
-                "build-ns": 314748906,
+                "build-ns": 282451281,
                 "data-bytes": 13218,
                 "file-bytes": 18656,
-                "run-ns": 1312541,
+                "run-ns": 1273134,
                 "text-bytes": 410
               }
             },
@@ -101,17 +101,17 @@
                     "text-bytes": 703561,
                     "data-bytes": 846835,
                     "bss-bytes": 305979,
-                    "build-ns": 2742937063,
-                    "run-ns": 3338179
+                    "build-ns": 2639720078,
+                    "run-ns": 3335059
                   }
                 }
               ],
               "measurements": {
                 "bss-bytes": 305979,
-                "build-ns": 2742937063,
+                "build-ns": 2639720078,
                 "data-bytes": 846835,
                 "file-bytes": 1885672,
-                "run-ns": 3338179,
+                "run-ns": 3335059,
                 "text-bytes": 703561
               }
             },
@@ -128,17 +128,17 @@
                     "text-bytes": 21337,
                     "data-bytes": 28120,
                     "bss-bytes": 1564,
-                    "build-ns": 311463848,
-                    "run-ns": 1739061
+                    "build-ns": 289060053,
+                    "run-ns": 1572089
                   }
                 }
               ],
               "measurements": {
                 "bss-bytes": 1564,
-                "build-ns": 311463848,
+                "build-ns": 289060053,
                 "data-bytes": 28120,
                 "file-bytes": 68480,
-                "run-ns": 1739061,
+                "run-ns": 1572089,
                 "text-bytes": 21337
               }
             },
@@ -149,38 +149,38 @@
               "chart": "group:compiler",
               "samples": [
                 {
-                  "iterations": 22560884,
+                  "iterations": 23461291,
+                  "measurements": {
+                    "ns/op": 13.23
+                  }
+                },
+                {
+                  "iterations": 23422677,
                   "measurements": {
                     "ns/op": 13.37
                   }
                 },
                 {
-                  "iterations": 21956472,
+                  "iterations": 23789498,
                   "measurements": {
-                    "ns/op": 13.34
+                    "ns/op": 13.14
                   }
                 },
                 {
-                  "iterations": 22411479,
+                  "iterations": 23817237,
                   "measurements": {
-                    "ns/op": 13.38
+                    "ns/op": 13.22
                   }
                 },
                 {
-                  "iterations": 23606366,
+                  "iterations": 23310826,
                   "measurements": {
-                    "ns/op": 13.32
-                  }
-                },
-                {
-                  "iterations": 23304271,
-                  "measurements": {
-                    "ns/op": 13.41
+                    "ns/op": 13.3
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 13.37
+                "ns/op": 13.23
               }
             },
             {
@@ -190,38 +190,38 @@
               "chart": "group:compiler",
               "samples": [
                 {
-                  "iterations": 2027736,
+                  "iterations": 2039934,
                   "measurements": {
-                    "ns/op": 150.8
+                    "ns/op": 150.6
                   }
                 },
                 {
-                  "iterations": 1962421,
+                  "iterations": 1976134,
                   "measurements": {
-                    "ns/op": 151.8
+                    "ns/op": 150.1
                   }
                 },
                 {
-                  "iterations": 1967824,
+                  "iterations": 1947369,
                   "measurements": {
-                    "ns/op": 151.7
+                    "ns/op": 150.9
                   }
                 },
                 {
-                  "iterations": 1967965,
+                  "iterations": 1971704,
                   "measurements": {
-                    "ns/op": 151.6
+                    "ns/op": 150.6
                   }
                 },
                 {
-                  "iterations": 1971378,
+                  "iterations": 1971567,
                   "measurements": {
-                    "ns/op": 151.1
+                    "ns/op": 150.7
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 151.6
+                "ns/op": 150.6
               }
             },
             {
@@ -231,33 +231,33 @@
               "chart": "group:compiler",
               "samples": [
                 {
-                  "iterations": 3118122,
+                  "iterations": 3176056,
+                  "measurements": {
+                    "ns/op": 94.77
+                  }
+                },
+                {
+                  "iterations": 3170544,
                   "measurements": {
                     "ns/op": 94.54
                   }
                 },
                 {
-                  "iterations": 3115431,
+                  "iterations": 3183358,
                   "measurements": {
-                    "ns/op": 94.44
+                    "ns/op": 94.46
                   }
                 },
                 {
-                  "iterations": 3133831,
+                  "iterations": 3163680,
                   "measurements": {
-                    "ns/op": 95.05
+                    "ns/op": 94.61
                   }
                 },
                 {
-                  "iterations": 3125534,
+                  "iterations": 3201272,
                   "measurements": {
-                    "ns/op": 94.5
-                  }
-                },
-                {
-                  "iterations": 3150534,
-                  "measurements": {
-                    "ns/op": 94.73
+                    "ns/op": 94.36
                   }
                 }
               ],
@@ -272,38 +272,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 8820705,
+                  "iterations": 8838162,
                   "measurements": {
-                    "ns/op": 34
+                    "ns/op": 34.02
                   }
                 },
                 {
-                  "iterations": 8833041,
+                  "iterations": 8826206,
                   "measurements": {
-                    "ns/op": 33.98
+                    "ns/op": 34.28
                   }
                 },
                 {
-                  "iterations": 8818720,
-                  "measurements": {
-                    "ns/op": 35.25
-                  }
-                },
-                {
-                  "iterations": 8831415,
+                  "iterations": 8837955,
                   "measurements": {
                     "ns/op": 33.96
                   }
                 },
                 {
-                  "iterations": 8796086,
+                  "iterations": 8825998,
                   "measurements": {
-                    "ns/op": 33.96
+                    "ns/op": 34.05
+                  }
+                },
+                {
+                  "iterations": 8828066,
+                  "measurements": {
+                    "ns/op": 33.99
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 33.98
+                "ns/op": 34.02
               }
             },
             {
@@ -315,36 +315,36 @@
                 {
                   "iterations": 10000,
                   "measurements": {
-                    "ns/op": 27602
+                    "ns/op": 29081
                   }
                 },
                 {
                   "iterations": 10000,
                   "measurements": {
-                    "ns/op": 27558
+                    "ns/op": 25231
                   }
                 },
                 {
                   "iterations": 10000,
                   "measurements": {
-                    "ns/op": 28976
+                    "ns/op": 28427
                   }
                 },
                 {
                   "iterations": 10000,
                   "measurements": {
-                    "ns/op": 30948
+                    "ns/op": 26620
                   }
                 },
                 {
                   "iterations": 10000,
                   "measurements": {
-                    "ns/op": 28532
+                    "ns/op": 25508
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 28532
+                "ns/op": 26620
               }
             },
             {
@@ -354,38 +354,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 6046269,
+                  "iterations": 6267495,
                   "measurements": {
-                    "ns/op": 47.84
+                    "ns/op": 45.97
                   }
                 },
                 {
-                  "iterations": 5986884,
+                  "iterations": 6298272,
                   "measurements": {
-                    "ns/op": 47.15
+                    "ns/op": 44.51
                   }
                 },
                 {
-                  "iterations": 6100819,
+                  "iterations": 6421857,
                   "measurements": {
-                    "ns/op": 47.55
+                    "ns/op": 45.07
                   }
                 },
                 {
-                  "iterations": 6051946,
+                  "iterations": 6382872,
                   "measurements": {
-                    "ns/op": 47.53
+                    "ns/op": 44.7
                   }
                 },
                 {
-                  "iterations": 6151435,
+                  "iterations": 6426268,
                   "measurements": {
-                    "ns/op": 47.79
+                    "ns/op": 44.47
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 47.55
+                "ns/op": 44.7
               }
             },
             {
@@ -395,72 +395,31 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 192815600,
-                  "measurements": {
-                    "ns/op": 1.562
-                  }
-                },
-                {
-                  "iterations": 192395284,
-                  "measurements": {
-                    "ns/op": 1.557
-                  }
-                },
-                {
-                  "iterations": 192713979,
-                  "measurements": {
-                    "ns/op": 1.557
-                  }
-                },
-                {
-                  "iterations": 191770441,
-                  "measurements": {
-                    "ns/op": 1.557
-                  }
-                },
-                {
-                  "iterations": 192739236,
-                  "measurements": {
-                    "ns/op": 1.555
-                  }
-                }
-              ],
-              "measurements": {
-                "ns/op": 1.557
-              }
-            },
-            {
-              "name": "BenchmarkGlobalRead",
-              "package": "github.com/goplus/llgo/test/llgoext",
-              "group": "core",
-              "chart": "group:core",
-              "samples": [
-                {
-                  "iterations": 192251656,
+                  "iterations": 192626631,
                   "measurements": {
                     "ns/op": 1.556
                   }
                 },
                 {
-                  "iterations": 192662641,
+                  "iterations": 191499128,
                   "measurements": {
-                    "ns/op": 1.557
+                    "ns/op": 1.573
                   }
                 },
                 {
-                  "iterations": 192689433,
+                  "iterations": 192420654,
                   "measurements": {
                     "ns/op": 1.558
                   }
                 },
                 {
-                  "iterations": 192792728,
+                  "iterations": 192864052,
                   "measurements": {
-                    "ns/op": 1.565
+                    "ns/op": 1.556
                   }
                 },
                 {
-                  "iterations": 192565058,
+                  "iterations": 192825726,
                   "measurements": {
                     "ns/op": 1.558
                   }
@@ -471,44 +430,85 @@
               }
             },
             {
+              "name": "BenchmarkGlobalRead",
+              "package": "github.com/goplus/llgo/test/llgoext",
+              "group": "core",
+              "chart": "group:core",
+              "samples": [
+                {
+                  "iterations": 192893706,
+                  "measurements": {
+                    "ns/op": 1.558
+                  }
+                },
+                {
+                  "iterations": 192748814,
+                  "measurements": {
+                    "ns/op": 1.556
+                  }
+                },
+                {
+                  "iterations": 192141304,
+                  "measurements": {
+                    "ns/op": 1.583
+                  }
+                },
+                {
+                  "iterations": 192906571,
+                  "measurements": {
+                    "ns/op": 1.556
+                  }
+                },
+                {
+                  "iterations": 192058761,
+                  "measurements": {
+                    "ns/op": 1.556
+                  }
+                }
+              ],
+              "measurements": {
+                "ns/op": 1.556
+              }
+            },
+            {
               "name": "BenchmarkGlobalWrite",
               "package": "github.com/goplus/llgo/test/llgoext",
               "group": "core",
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 120619498,
+                  "iterations": 120592581,
+                  "measurements": {
+                    "ns/op": 2.486
+                  }
+                },
+                {
+                  "iterations": 120634192,
                   "measurements": {
                     "ns/op": 2.487
                   }
                 },
                 {
-                  "iterations": 120614426,
+                  "iterations": 120698637,
                   "measurements": {
-                    "ns/op": 2.488
+                    "ns/op": 2.486
                   }
                 },
                 {
-                  "iterations": 120637323,
+                  "iterations": 120644511,
                   "measurements": {
-                    "ns/op": 2.489
+                    "ns/op": 2.487
                   }
                 },
                 {
-                  "iterations": 120596808,
+                  "iterations": 120692828,
                   "measurements": {
-                    "ns/op": 2.488
-                  }
-                },
-                {
-                  "iterations": 120604792,
-                  "measurements": {
-                    "ns/op": 2.488
+                    "ns/op": 2.486
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 2.488
+                "ns/op": 2.486
               }
             },
             {
@@ -520,36 +520,36 @@
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 32549
+                    "ns/op": 39492
                   }
                 },
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 32291
+                    "ns/op": 38926
                   }
                 },
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 31932
+                    "ns/op": 42413
                   }
                 },
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 31953
+                    "ns/op": 41734
                   }
                 },
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 32139
+                    "ns/op": 42813
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 32139
+                "ns/op": 41734
               }
             },
             {
@@ -559,38 +559,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 38523867,
+                  "iterations": 38206299,
                   "measurements": {
-                    "ns/op": 7.8
+                    "ns/op": 7.798
                   }
                 },
                 {
-                  "iterations": 34315794,
+                  "iterations": 38435323,
                   "measurements": {
-                    "ns/op": 8.721
+                    "ns/op": 7.782
                   }
                 },
                 {
-                  "iterations": 34391466,
+                  "iterations": 38578188,
                   "measurements": {
-                    "ns/op": 8.721
+                    "ns/op": 7.79
                   }
                 },
                 {
-                  "iterations": 38443548,
+                  "iterations": 38497191,
                   "measurements": {
-                    "ns/op": 7.778
+                    "ns/op": 7.782
                   }
                 },
                 {
-                  "iterations": 38540630,
+                  "iterations": 38163058,
                   "measurements": {
-                    "ns/op": 7.789
+                    "ns/op": 7.804
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 7.8
+                "ns/op": 7.79
               }
             },
             {
@@ -600,38 +600,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 137595086,
+                  "iterations": 137677754,
                   "measurements": {
-                    "ns/op": 2.178
+                    "ns/op": 2.179
                   }
                 },
                 {
-                  "iterations": 137223152,
-                  "measurements": {
-                    "ns/op": 2.198
-                  }
-                },
-                {
-                  "iterations": 137235837,
-                  "measurements": {
-                    "ns/op": 2.195
-                  }
-                },
-                {
-                  "iterations": 137416570,
+                  "iterations": 137289693,
                   "measurements": {
                     "ns/op": 2.183
                   }
                 },
                 {
-                  "iterations": 137791178,
+                  "iterations": 124160743,
                   "measurements": {
-                    "ns/op": 2.184
+                    "ns/op": 2.182
+                  }
+                },
+                {
+                  "iterations": 134904087,
+                  "measurements": {
+                    "ns/op": 2.182
+                  }
+                },
+                {
+                  "iterations": 137662252,
+                  "measurements": {
+                    "ns/op": 2.178
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 2.184
+                "ns/op": 2.182
               }
             }
           ]
@@ -642,11 +642,11 @@
           "shardId": "merged",
           "source": {
             "repository": "xgo-dev/llgo",
-            "sha": "9084d6ec39f93f57c66d5ceaf3e138f75419bc95",
+            "sha": "7b0e00a8b7287b06cf3f852fa1a268a28d4e1275",
             "ref": "main",
-            "url": "https://github.com/xgo-dev/llgo/commit/9084d6ec39f93f57c66d5ceaf3e138f75419bc95",
-            "runUrl": "https://github.com/xgo-dev/llgo/actions/runs/31748207784",
-            "timestamp": "2026-08-13T22:01:31Z"
+            "url": "https://github.com/xgo-dev/llgo/commit/7b0e00a8b7287b06cf3f852fa1a268a28d4e1275",
+            "runUrl": "https://github.com/xgo-dev/llgo/actions/runs/31764675896",
+            "timestamp": "2026-08-14T02:45:04Z"
           },
           "platform": {
             "id": "macos",
@@ -695,17 +695,17 @@
                     "text-bytes": 15877,
                     "data-bytes": 176,
                     "bss-bytes": 17,
-                    "build-ns": 320278875,
-                    "run-ns": 2555542
+                    "build-ns": 451347250,
+                    "run-ns": 3083584
                   }
                 }
               ],
               "measurements": {
                 "bss-bytes": 17,
-                "build-ns": 320278875,
+                "build-ns": 451347250,
                 "data-bytes": 176,
                 "file-bytes": 84672,
-                "run-ns": 2555542,
+                "run-ns": 3083584,
                 "text-bytes": 15877
               }
             },
@@ -722,17 +722,17 @@
                     "text-bytes": 1085649,
                     "data-bytes": 270424,
                     "bss-bytes": 305283,
-                    "build-ns": 2532234166,
-                    "run-ns": 13004291
+                    "build-ns": 2424560375,
+                    "run-ns": 10910791
                   }
                 }
               ],
               "measurements": {
                 "bss-bytes": 305283,
-                "build-ns": 2532234166,
+                "build-ns": 2424560375,
                 "data-bytes": 270424,
                 "file-bytes": 1890016,
-                "run-ns": 13004291,
+                "run-ns": 10910791,
                 "text-bytes": 1085649
               }
             },
@@ -749,17 +749,17 @@
                     "text-bytes": 39489,
                     "data-bytes": 8449,
                     "bss-bytes": 291,
-                    "build-ns": 313247417,
-                    "run-ns": 6509709
+                    "build-ns": 317681958,
+                    "run-ns": 3201458
                   }
                 }
               ],
               "measurements": {
                 "bss-bytes": 291,
-                "build-ns": 313247417,
+                "build-ns": 317681958,
                 "data-bytes": 8449,
                 "file-bytes": 121216,
-                "run-ns": 6509709,
+                "run-ns": 3201458,
                 "text-bytes": 39489
               }
             },
@@ -770,38 +770,38 @@
               "chart": "group:compiler",
               "samples": [
                 {
-                  "iterations": 24220405,
+                  "iterations": 23293959,
                   "measurements": {
-                    "ns/op": 13.45
+                    "ns/op": 11.57
                   }
                 },
                 {
-                  "iterations": 12650332,
+                  "iterations": 26552784,
                   "measurements": {
-                    "ns/op": 19.9
+                    "ns/op": 12.06
                   }
                 },
                 {
-                  "iterations": 17276410,
+                  "iterations": 24678662,
                   "measurements": {
-                    "ns/op": 17.38
+                    "ns/op": 11.89
                   }
                 },
                 {
-                  "iterations": 23103876,
+                  "iterations": 22635529,
                   "measurements": {
-                    "ns/op": 18.59
+                    "ns/op": 12.37
                   }
                 },
                 {
-                  "iterations": 24152643,
+                  "iterations": 25711254,
                   "measurements": {
-                    "ns/op": 16.46
+                    "ns/op": 11.51
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 17.38
+                "ns/op": 11.89
               }
             },
             {
@@ -811,38 +811,38 @@
               "chart": "group:compiler",
               "samples": [
                 {
-                  "iterations": 3013213,
+                  "iterations": 2932200,
                   "measurements": {
-                    "ns/op": 108.9
+                    "ns/op": 122.4
                   }
                 },
                 {
-                  "iterations": 2407600,
+                  "iterations": 2075926,
                   "measurements": {
-                    "ns/op": 119
+                    "ns/op": 146.8
                   }
                 },
                 {
-                  "iterations": 2863524,
+                  "iterations": 2266221,
                   "measurements": {
-                    "ns/op": 112.6
+                    "ns/op": 125.4
                   }
                 },
                 {
-                  "iterations": 2366800,
+                  "iterations": 2428332,
                   "measurements": {
-                    "ns/op": 124.1
+                    "ns/op": 114.3
                   }
                 },
                 {
-                  "iterations": 2430240,
+                  "iterations": 2654619,
                   "measurements": {
-                    "ns/op": 126
+                    "ns/op": 107
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 119
+                "ns/op": 122.4
               }
             },
             {
@@ -852,38 +852,38 @@
               "chart": "group:compiler",
               "samples": [
                 {
-                  "iterations": 3917500,
+                  "iterations": 4453317,
                   "measurements": {
-                    "ns/op": 77.94
+                    "ns/op": 66.24
                   }
                 },
                 {
-                  "iterations": 3653082,
+                  "iterations": 4586059,
                   "measurements": {
-                    "ns/op": 77.59
+                    "ns/op": 66.07
                   }
                 },
                 {
-                  "iterations": 3893500,
+                  "iterations": 3794865,
                   "measurements": {
-                    "ns/op": 77.26
+                    "ns/op": 76.19
                   }
                 },
                 {
-                  "iterations": 3894640,
+                  "iterations": 4013982,
                   "measurements": {
-                    "ns/op": 79.55
+                    "ns/op": 73.28
                   }
                 },
                 {
-                  "iterations": 3974066,
+                  "iterations": 3850543,
                   "measurements": {
-                    "ns/op": 76.15
+                    "ns/op": 71.86
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 77.59
+                "ns/op": 71.86
               }
             },
             {
@@ -893,38 +893,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 11441137,
+                  "iterations": 14678090,
                   "measurements": {
-                    "ns/op": 26.58
+                    "ns/op": 20.43
                   }
                 },
                 {
-                  "iterations": 11427862,
+                  "iterations": 14645308,
                   "measurements": {
-                    "ns/op": 26.76
+                    "ns/op": 20.56
                   }
                 },
                 {
-                  "iterations": 11125790,
+                  "iterations": 14655295,
                   "measurements": {
-                    "ns/op": 24.86
+                    "ns/op": 20.42
                   }
                 },
                 {
-                  "iterations": 13053172,
+                  "iterations": 14668909,
                   "measurements": {
-                    "ns/op": 24.35
+                    "ns/op": 20.44
                   }
                 },
                 {
-                  "iterations": 11970412,
+                  "iterations": 14702578,
                   "measurements": {
-                    "ns/op": 30.66
+                    "ns/op": 20.53
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 26.58
+                "ns/op": 20.44
               }
             },
             {
@@ -934,38 +934,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 32910,
+                  "iterations": 44944,
                   "measurements": {
-                    "ns/op": 13457
+                    "ns/op": 6537
                   }
                 },
                 {
-                  "iterations": 29312,
+                  "iterations": 46716,
                   "measurements": {
-                    "ns/op": 10045
+                    "ns/op": 6590
                   }
                 },
                 {
-                  "iterations": 38728,
+                  "iterations": 46622,
                   "measurements": {
-                    "ns/op": 7765
+                    "ns/op": 6488
                   }
                 },
                 {
-                  "iterations": 48501,
+                  "iterations": 46578,
                   "measurements": {
-                    "ns/op": 6717
+                    "ns/op": 6502
                   }
                 },
                 {
-                  "iterations": 39951,
+                  "iterations": 46598,
                   "measurements": {
-                    "ns/op": 8933
+                    "ns/op": 6750
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 8933
+                "ns/op": 6537
               }
             },
             {
@@ -975,38 +975,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 6790645,
+                  "iterations": 11242761,
                   "measurements": {
-                    "ns/op": 43.38
+                    "ns/op": 24.52
                   }
                 },
                 {
-                  "iterations": 7673479,
+                  "iterations": 11385451,
                   "measurements": {
-                    "ns/op": 38.85
+                    "ns/op": 24.6
                   }
                 },
                 {
-                  "iterations": 9997254,
+                  "iterations": 11312714,
                   "measurements": {
-                    "ns/op": 31.05
+                    "ns/op": 24.47
                   }
                 },
                 {
-                  "iterations": 9649094,
+                  "iterations": 11333995,
                   "measurements": {
-                    "ns/op": 31.68
+                    "ns/op": 24.92
                   }
                 },
                 {
-                  "iterations": 9679035,
+                  "iterations": 10970709,
                   "measurements": {
-                    "ns/op": 33.69
+                    "ns/op": 24.52
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 33.69
+                "ns/op": 24.52
               }
             },
             {
@@ -1016,38 +1016,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 198666396,
+                  "iterations": 318668251,
                   "measurements": {
-                    "ns/op": 1.364
+                    "ns/op": 0.9409
                   }
                 },
                 {
-                  "iterations": 220985658,
+                  "iterations": 318974320,
                   "measurements": {
-                    "ns/op": 1.478
+                    "ns/op": 0.9448
                   }
                 },
                 {
-                  "iterations": 205729920,
+                  "iterations": 318725522,
                   "measurements": {
-                    "ns/op": 1.398
+                    "ns/op": 0.942
                   }
                 },
                 {
-                  "iterations": 193844364,
+                  "iterations": 318670225,
                   "measurements": {
-                    "ns/op": 1.501
+                    "ns/op": 0.9406
                   }
                 },
                 {
-                  "iterations": 233940244,
+                  "iterations": 315048968,
                   "measurements": {
-                    "ns/op": 1.338
+                    "ns/op": 0.9462
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 1.398
+                "ns/op": 0.942
               }
             },
             {
@@ -1057,38 +1057,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 189011500,
+                  "iterations": 315297721,
                   "measurements": {
-                    "ns/op": 1.355
+                    "ns/op": 0.9428
                   }
                 },
                 {
-                  "iterations": 215175876,
+                  "iterations": 318601128,
                   "measurements": {
-                    "ns/op": 1.344
+                    "ns/op": 0.947
                   }
                 },
                 {
-                  "iterations": 212068586,
+                  "iterations": 319034389,
                   "measurements": {
-                    "ns/op": 1.476
+                    "ns/op": 0.9472
                   }
                 },
                 {
-                  "iterations": 214700790,
+                  "iterations": 316660569,
                   "measurements": {
-                    "ns/op": 1.795
+                    "ns/op": 0.9404
                   }
                 },
                 {
-                  "iterations": 231372727,
+                  "iterations": 315704592,
                   "measurements": {
-                    "ns/op": 1.318
+                    "ns/op": 0.9416
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 1.355
+                "ns/op": 0.9428
               }
             },
             {
@@ -1098,38 +1098,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 245058747,
+                  "iterations": 292898431,
                   "measurements": {
-                    "ns/op": 1.399
+                    "ns/op": 1.03
                   }
                 },
                 {
-                  "iterations": 211373540,
+                  "iterations": 302735337,
                   "measurements": {
-                    "ns/op": 1.292
+                    "ns/op": 0.9437
                   }
                 },
                 {
-                  "iterations": 218118232,
+                  "iterations": 318135865,
                   "measurements": {
-                    "ns/op": 1.279
+                    "ns/op": 0.9887
                   }
                 },
                 {
-                  "iterations": 184310563,
+                  "iterations": 290755196,
                   "measurements": {
-                    "ns/op": 1.511
+                    "ns/op": 1.027
                   }
                 },
                 {
-                  "iterations": 165514197,
+                  "iterations": 303903256,
                   "measurements": {
-                    "ns/op": 1.631
+                    "ns/op": 0.941
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 1.399
+                "ns/op": 0.9887
               }
             },
             {
@@ -1141,36 +1141,36 @@
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 25632
+                    "ns/op": 27643
                   }
                 },
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 26056
+                    "ns/op": 30696
                   }
                 },
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 25131
+                    "ns/op": 31228
                   }
                 },
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 28663
+                    "ns/op": 31258
                   }
                 },
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 28139
+                    "ns/op": 33158
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 26056
+                "ns/op": 31228
               }
             },
             {
@@ -1180,38 +1180,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 50145211,
+                  "iterations": 73323476,
                   "measurements": {
-                    "ns/op": 6.667
+                    "ns/op": 4.084
                   }
                 },
                 {
-                  "iterations": 50182252,
+                  "iterations": 73461891,
                   "measurements": {
-                    "ns/op": 6.739
+                    "ns/op": 4.092
                   }
                 },
                 {
-                  "iterations": 47061894,
+                  "iterations": 72569677,
                   "measurements": {
-                    "ns/op": 6.583
+                    "ns/op": 4.077
                   }
                 },
                 {
-                  "iterations": 49253335,
+                  "iterations": 72876700,
                   "measurements": {
-                    "ns/op": 6.429
+                    "ns/op": 4.077
                   }
                 },
                 {
-                  "iterations": 53440612,
+                  "iterations": 73602327,
                   "measurements": {
-                    "ns/op": 6.998
+                    "ns/op": 4.076
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 6.667
+                "ns/op": 4.077
               }
             },
             {
@@ -1221,38 +1221,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 137586802,
+                  "iterations": 148477792,
                   "measurements": {
-                    "ns/op": 2.39
+                    "ns/op": 1.897
                   }
                 },
                 {
-                  "iterations": 121219304,
+                  "iterations": 156917648,
                   "measurements": {
-                    "ns/op": 2.707
+                    "ns/op": 1.972
                   }
                 },
                 {
-                  "iterations": 127833712,
+                  "iterations": 143114122,
                   "measurements": {
-                    "ns/op": 2.473
+                    "ns/op": 2.001
                   }
                 },
                 {
-                  "iterations": 114397207,
+                  "iterations": 159462645,
                   "measurements": {
-                    "ns/op": 2.251
+                    "ns/op": 1.888
                   }
                 },
                 {
-                  "iterations": 124468773,
+                  "iterations": 159226794,
                   "measurements": {
-                    "ns/op": 2.229
+                    "ns/op": 1.882
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 2.39
+                "ns/op": 1.897
               }
             }
           ]
@@ -1262,11 +1262,11 @@
     {
       "source": {
         "repository": "cpunion/llgo",
-        "sha": "dd4eb50d7cdb5ee10438dafb6eca389f87cd1023",
+        "sha": "aaf28093643b7ee7da14c9489ecbc347f9e0e8d3",
         "ref": "codex/unused-nil-deref-load-only-20260813",
-        "url": "https://github.com/cpunion/llgo/commit/dd4eb50d7cdb5ee10438dafb6eca389f87cd1023",
-        "runUrl": "https://github.com/xgo-dev/llgo/actions/runs/31748207784",
-        "timestamp": "2026-08-13T22:01:31Z"
+        "url": "https://github.com/cpunion/llgo/commit/aaf28093643b7ee7da14c9489ecbc347f9e0e8d3",
+        "runUrl": "https://github.com/xgo-dev/llgo/actions/runs/31764675896",
+        "timestamp": "2026-08-14T02:45:04Z"
       },
       "platforms": {
         "linux": {
@@ -1275,11 +1275,11 @@
           "shardId": "merged",
           "source": {
             "repository": "cpunion/llgo",
-            "sha": "dd4eb50d7cdb5ee10438dafb6eca389f87cd1023",
+            "sha": "aaf28093643b7ee7da14c9489ecbc347f9e0e8d3",
             "ref": "codex/unused-nil-deref-load-only-20260813",
-            "url": "https://github.com/cpunion/llgo/commit/dd4eb50d7cdb5ee10438dafb6eca389f87cd1023",
-            "runUrl": "https://github.com/xgo-dev/llgo/actions/runs/31748207784",
-            "timestamp": "2026-08-13T22:01:31Z"
+            "url": "https://github.com/cpunion/llgo/commit/aaf28093643b7ee7da14c9489ecbc347f9e0e8d3",
+            "runUrl": "https://github.com/xgo-dev/llgo/actions/runs/31764675896",
+            "timestamp": "2026-08-14T02:45:04Z"
           },
           "platform": {
             "id": "linux",
@@ -1328,17 +1328,17 @@
                     "text-bytes": 410,
                     "data-bytes": 13218,
                     "bss-bytes": 2265,
-                    "build-ns": 308972699,
-                    "run-ns": 1319043
+                    "build-ns": 289518661,
+                    "run-ns": 1282853
                   }
                 }
               ],
               "measurements": {
                 "bss-bytes": 2265,
-                "build-ns": 308972699,
+                "build-ns": 289518661,
                 "data-bytes": 13218,
                 "file-bytes": 18656,
-                "run-ns": 1319043,
+                "run-ns": 1282853,
                 "text-bytes": 410
               }
             },
@@ -1355,17 +1355,17 @@
                     "text-bytes": 703801,
                     "data-bytes": 846839,
                     "bss-bytes": 305739,
-                    "build-ns": 2738831783,
-                    "run-ns": 3330895
+                    "build-ns": 2668932920,
+                    "run-ns": 3225402
                   }
                 }
               ],
               "measurements": {
                 "bss-bytes": 305739,
-                "build-ns": 2738831783,
+                "build-ns": 2668932920,
                 "data-bytes": 846839,
                 "file-bytes": 1885912,
-                "run-ns": 3330895,
+                "run-ns": 3225402,
                 "text-bytes": 703801
               }
             },
@@ -1382,17 +1382,17 @@
                     "text-bytes": 21337,
                     "data-bytes": 28120,
                     "bss-bytes": 1564,
-                    "build-ns": 301996759,
-                    "run-ns": 1654531
+                    "build-ns": 293916480,
+                    "run-ns": 1631462
                   }
                 }
               ],
               "measurements": {
                 "bss-bytes": 1564,
-                "build-ns": 301996759,
+                "build-ns": 293916480,
                 "data-bytes": 28120,
                 "file-bytes": 68480,
-                "run-ns": 1654531,
+                "run-ns": 1631462,
                 "text-bytes": 21337
               }
             },
@@ -1403,38 +1403,38 @@
               "chart": "group:compiler",
               "samples": [
                 {
-                  "iterations": 23121877,
+                  "iterations": 23577916,
                   "measurements": {
-                    "ns/op": 13.38
+                    "ns/op": 13.2
                   }
                 },
                 {
-                  "iterations": 22734075,
+                  "iterations": 22434225,
                   "measurements": {
-                    "ns/op": 13.34
+                    "ns/op": 13.4
                   }
                 },
                 {
-                  "iterations": 22381814,
+                  "iterations": 22506700,
                   "measurements": {
-                    "ns/op": 13.46
+                    "ns/op": 13.4
                   }
                 },
                 {
-                  "iterations": 22848844,
+                  "iterations": 23693551,
                   "measurements": {
-                    "ns/op": 13.43
+                    "ns/op": 13.31
                   }
                 },
                 {
-                  "iterations": 22666411,
+                  "iterations": 22378275,
                   "measurements": {
-                    "ns/op": 13.37
+                    "ns/op": 13.4
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 13.38
+                "ns/op": 13.4
               }
             },
             {
@@ -1444,38 +1444,38 @@
               "chart": "group:compiler",
               "samples": [
                 {
-                  "iterations": 2001147,
+                  "iterations": 1997005,
                   "measurements": {
-                    "ns/op": 152.5
+                    "ns/op": 152.2
                   }
                 },
                 {
-                  "iterations": 1965139,
+                  "iterations": 1960984,
                   "measurements": {
-                    "ns/op": 152.7
+                    "ns/op": 151.4
                   }
                 },
                 {
-                  "iterations": 1955346,
+                  "iterations": 1971699,
                   "measurements": {
-                    "ns/op": 152.8
+                    "ns/op": 150.2
                   }
                 },
                 {
-                  "iterations": 1962123,
+                  "iterations": 1971694,
                   "measurements": {
-                    "ns/op": 160.8
+                    "ns/op": 150.5
                   }
                 },
                 {
-                  "iterations": 1965117,
+                  "iterations": 1980025,
                   "measurements": {
-                    "ns/op": 152.3
+                    "ns/op": 150.6
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 152.7
+                "ns/op": 150.6
               }
             },
             {
@@ -1485,38 +1485,38 @@
               "chart": "group:compiler",
               "samples": [
                 {
-                  "iterations": 3156420,
+                  "iterations": 3164768,
                   "measurements": {
-                    "ns/op": 95.14
+                    "ns/op": 94.33
                   }
                 },
                 {
-                  "iterations": 3152116,
+                  "iterations": 3121528,
                   "measurements": {
-                    "ns/op": 94.85
+                    "ns/op": 94.68
                   }
                 },
                 {
-                  "iterations": 3109372,
+                  "iterations": 3129724,
                   "measurements": {
-                    "ns/op": 95.05
+                    "ns/op": 94.64
                   }
                 },
                 {
-                  "iterations": 3146973,
+                  "iterations": 3123098,
                   "measurements": {
-                    "ns/op": 95.22
+                    "ns/op": 95.39
                   }
                 },
                 {
-                  "iterations": 3113871,
+                  "iterations": 3152960,
                   "measurements": {
-                    "ns/op": 95.43
+                    "ns/op": 94.83
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 95.14
+                "ns/op": 94.68
               }
             },
             {
@@ -1526,38 +1526,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 8893716,
+                  "iterations": 8900022,
+                  "measurements": {
+                    "ns/op": 33.66
+                  }
+                },
+                {
+                  "iterations": 8920273,
+                  "measurements": {
+                    "ns/op": 33.86
+                  }
+                },
+                {
+                  "iterations": 8904601,
                   "measurements": {
                     "ns/op": 33.68
                   }
                 },
                 {
-                  "iterations": 8916363,
+                  "iterations": 8917747,
                   "measurements": {
-                    "ns/op": 33.68
+                    "ns/op": 33.66
                   }
                 },
                 {
-                  "iterations": 8921052,
+                  "iterations": 8905299,
                   "measurements": {
-                    "ns/op": 33.69
-                  }
-                },
-                {
-                  "iterations": 8918560,
-                  "measurements": {
-                    "ns/op": 33.85
-                  }
-                },
-                {
-                  "iterations": 8922865,
-                  "measurements": {
-                    "ns/op": 33.74
+                    "ns/op": 33.71
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 33.69
+                "ns/op": 33.68
               }
             },
             {
@@ -1569,36 +1569,36 @@
                 {
                   "iterations": 10000,
                   "measurements": {
-                    "ns/op": 27543
+                    "ns/op": 26084
                   }
                 },
                 {
                   "iterations": 10000,
                   "measurements": {
-                    "ns/op": 29903
+                    "ns/op": 26537
                   }
                 },
                 {
                   "iterations": 10000,
                   "measurements": {
-                    "ns/op": 27174
+                    "ns/op": 28066
                   }
                 },
                 {
                   "iterations": 10000,
                   "measurements": {
-                    "ns/op": 27030
+                    "ns/op": 25229
                   }
                 },
                 {
                   "iterations": 10000,
                   "measurements": {
-                    "ns/op": 25930
+                    "ns/op": 27820
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 27174
+                "ns/op": 26537
               }
             },
             {
@@ -1608,38 +1608,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 6037858,
+                  "iterations": 5967753,
                   "measurements": {
-                    "ns/op": 48.72
+                    "ns/op": 47.29
                   }
                 },
                 {
-                  "iterations": 6078396,
+                  "iterations": 6174868,
                   "measurements": {
-                    "ns/op": 47.16
+                    "ns/op": 47.99
                   }
                 },
                 {
-                  "iterations": 6259611,
+                  "iterations": 6117547,
                   "measurements": {
-                    "ns/op": 45.9
+                    "ns/op": 47.1
                   }
                 },
                 {
-                  "iterations": 6310956,
+                  "iterations": 6268518,
                   "measurements": {
-                    "ns/op": 46.47
+                    "ns/op": 47.82
                   }
                 },
                 {
-                  "iterations": 5783536,
+                  "iterations": 6110342,
                   "measurements": {
-                    "ns/op": 47.11
+                    "ns/op": 47.96
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 47.11
+                "ns/op": 47.82
               }
             },
             {
@@ -1649,33 +1649,33 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 192613490,
-                  "measurements": {
-                    "ns/op": 1.556
-                  }
-                },
-                {
-                  "iterations": 192705367,
-                  "measurements": {
-                    "ns/op": 1.583
-                  }
-                },
-                {
-                  "iterations": 191165665,
-                  "measurements": {
-                    "ns/op": 1.561
-                  }
-                },
-                {
-                  "iterations": 192722887,
+                  "iterations": 192665572,
                   "measurements": {
                     "ns/op": 1.557
                   }
                 },
                 {
-                  "iterations": 192637994,
+                  "iterations": 192530121,
+                  "measurements": {
+                    "ns/op": 1.558
+                  }
+                },
+                {
+                  "iterations": 192725666,
+                  "measurements": {
+                    "ns/op": 1.557
+                  }
+                },
+                {
+                  "iterations": 192756546,
                   "measurements": {
                     "ns/op": 1.556
+                  }
+                },
+                {
+                  "iterations": 192577200,
+                  "measurements": {
+                    "ns/op": 1.583
                   }
                 }
               ],
@@ -1690,38 +1690,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 192421477,
-                  "measurements": {
-                    "ns/op": 1.557
-                  }
-                },
-                {
-                  "iterations": 192739986,
-                  "measurements": {
-                    "ns/op": 1.557
-                  }
-                },
-                {
-                  "iterations": 192617617,
-                  "measurements": {
-                    "ns/op": 1.558
-                  }
-                },
-                {
-                  "iterations": 192625657,
-                  "measurements": {
-                    "ns/op": 1.557
-                  }
-                },
-                {
-                  "iterations": 192688380,
+                  "iterations": 189147372,
                   "measurements": {
                     "ns/op": 1.556
+                  }
+                },
+                {
+                  "iterations": 192848749,
+                  "measurements": {
+                    "ns/op": 1.556
+                  }
+                },
+                {
+                  "iterations": 192798211,
+                  "measurements": {
+                    "ns/op": 1.556
+                  }
+                },
+                {
+                  "iterations": 192817578,
+                  "measurements": {
+                    "ns/op": 1.557
+                  }
+                },
+                {
+                  "iterations": 192652384,
+                  "measurements": {
+                    "ns/op": 1.555
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 1.557
+                "ns/op": 1.556
               }
             },
             {
@@ -1731,38 +1731,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 120623450,
+                  "iterations": 120635707,
                   "measurements": {
-                    "ns/op": 2.486
+                    "ns/op": 2.487
                   }
                 },
                 {
-                  "iterations": 120612076,
+                  "iterations": 120601885,
                   "measurements": {
                     "ns/op": 2.488
                   }
                 },
                 {
-                  "iterations": 120662443,
+                  "iterations": 120656584,
                   "measurements": {
-                    "ns/op": 2.488
+                    "ns/op": 2.517
                   }
                 },
                 {
-                  "iterations": 120582235,
+                  "iterations": 100000000,
                   "measurements": {
-                    "ns/op": 2.488
+                    "ns/op": 2.508
                   }
                 },
                 {
-                  "iterations": 120442792,
+                  "iterations": 120704020,
                   "measurements": {
-                    "ns/op": 2.488
+                    "ns/op": 2.493
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 2.488
+                "ns/op": 2.493
               }
             },
             {
@@ -1774,36 +1774,36 @@
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 32583
+                    "ns/op": 30951
                   }
                 },
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 33387
+                    "ns/op": 32148
                   }
                 },
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 32470
+                    "ns/op": 32405
                   }
                 },
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 31811
+                    "ns/op": 31654
                   }
                 },
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 31952
+                    "ns/op": 32448
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 32470
+                "ns/op": 32148
               }
             },
             {
@@ -1813,38 +1813,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 38561030,
+                  "iterations": 38510900,
                   "measurements": {
-                    "ns/op": 7.781
+                    "ns/op": 7.782
                   }
                 },
                 {
-                  "iterations": 38487872,
-                  "measurements": {
-                    "ns/op": 7.786
-                  }
-                },
-                {
-                  "iterations": 38512522,
+                  "iterations": 36588381,
                   "measurements": {
                     "ns/op": 7.789
                   }
                 },
                 {
-                  "iterations": 38522928,
+                  "iterations": 38364456,
                   "measurements": {
-                    "ns/op": 7.787
+                    "ns/op": 7.782
                   }
                 },
                 {
-                  "iterations": 38510990,
+                  "iterations": 38467465,
                   "measurements": {
-                    "ns/op": 7.792
+                    "ns/op": 7.783
+                  }
+                },
+                {
+                  "iterations": 38559949,
+                  "measurements": {
+                    "ns/op": 7.799
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 7.787
+                "ns/op": 7.783
               }
             },
             {
@@ -1854,38 +1854,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 160665567,
-                  "measurements": {
-                    "ns/op": 1.867
-                  }
-                },
-                {
-                  "iterations": 160427610,
-                  "measurements": {
-                    "ns/op": 1.869
-                  }
-                },
-                {
-                  "iterations": 160341984,
+                  "iterations": 160547164,
                   "measurements": {
                     "ns/op": 1.868
                   }
                 },
                 {
-                  "iterations": 160209832,
+                  "iterations": 160210042,
                   "measurements": {
-                    "ns/op": 1.882
+                    "ns/op": 1.869
                   }
                 },
                 {
-                  "iterations": 159728612,
+                  "iterations": 160634929,
                   "measurements": {
-                    "ns/op": 1.893
+                    "ns/op": 1.871
+                  }
+                },
+                {
+                  "iterations": 160287553,
+                  "measurements": {
+                    "ns/op": 1.868
+                  }
+                },
+                {
+                  "iterations": 160673785,
+                  "measurements": {
+                    "ns/op": 1.867
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 1.869
+                "ns/op": 1.868
               }
             }
           ]
@@ -1896,11 +1896,11 @@
           "shardId": "merged",
           "source": {
             "repository": "cpunion/llgo",
-            "sha": "dd4eb50d7cdb5ee10438dafb6eca389f87cd1023",
+            "sha": "aaf28093643b7ee7da14c9489ecbc347f9e0e8d3",
             "ref": "codex/unused-nil-deref-load-only-20260813",
-            "url": "https://github.com/cpunion/llgo/commit/dd4eb50d7cdb5ee10438dafb6eca389f87cd1023",
-            "runUrl": "https://github.com/xgo-dev/llgo/actions/runs/31748207784",
-            "timestamp": "2026-08-13T22:01:31Z"
+            "url": "https://github.com/cpunion/llgo/commit/aaf28093643b7ee7da14c9489ecbc347f9e0e8d3",
+            "runUrl": "https://github.com/xgo-dev/llgo/actions/runs/31764675896",
+            "timestamp": "2026-08-14T02:45:04Z"
           },
           "platform": {
             "id": "macos",
@@ -1949,17 +1949,17 @@
                     "text-bytes": 15877,
                     "data-bytes": 176,
                     "bss-bytes": 17,
-                    "build-ns": 388275209,
-                    "run-ns": 3401458
+                    "build-ns": 272704167,
+                    "run-ns": 2260167
                   }
                 }
               ],
               "measurements": {
                 "bss-bytes": 17,
-                "build-ns": 388275209,
+                "build-ns": 272704167,
                 "data-bytes": 176,
                 "file-bytes": 84672,
-                "run-ns": 3401458,
+                "run-ns": 2260167,
                 "text-bytes": 15877
               }
             },
@@ -1976,17 +1976,17 @@
                     "text-bytes": 1085825,
                     "data-bytes": 270424,
                     "bss-bytes": 305283,
-                    "build-ns": 2523073375,
-                    "run-ns": 12702000
+                    "build-ns": 1940129584,
+                    "run-ns": 10608333
                   }
                 }
               ],
               "measurements": {
                 "bss-bytes": 305283,
-                "build-ns": 2523073375,
+                "build-ns": 1940129584,
                 "data-bytes": 270424,
                 "file-bytes": 1890016,
-                "run-ns": 12702000,
+                "run-ns": 10608333,
                 "text-bytes": 1085825
               }
             },
@@ -2003,17 +2003,17 @@
                     "text-bytes": 39489,
                     "data-bytes": 8449,
                     "bss-bytes": 291,
-                    "build-ns": 383525000,
-                    "run-ns": 4151166
+                    "build-ns": 274782000,
+                    "run-ns": 3155875
                   }
                 }
               ],
               "measurements": {
                 "bss-bytes": 291,
-                "build-ns": 383525000,
+                "build-ns": 274782000,
                 "data-bytes": 8449,
                 "file-bytes": 121216,
-                "run-ns": 4151166,
+                "run-ns": 3155875,
                 "text-bytes": 39489
               }
             },
@@ -2024,38 +2024,38 @@
               "chart": "group:compiler",
               "samples": [
                 {
-                  "iterations": 23794336,
+                  "iterations": 26411065,
                   "measurements": {
-                    "ns/op": 11.79
+                    "ns/op": 10.69
                   }
                 },
                 {
-                  "iterations": 25891642,
+                  "iterations": 28195819,
                   "measurements": {
-                    "ns/op": 11.86
+                    "ns/op": 10.6
                   }
                 },
                 {
-                  "iterations": 25476534,
+                  "iterations": 28235516,
                   "measurements": {
-                    "ns/op": 11.51
+                    "ns/op": 10.69
                   }
                 },
                 {
-                  "iterations": 23411740,
+                  "iterations": 27553692,
                   "measurements": {
-                    "ns/op": 11.64
+                    "ns/op": 10.63
                   }
                 },
                 {
-                  "iterations": 25815889,
+                  "iterations": 28197033,
                   "measurements": {
-                    "ns/op": 11.93
+                    "ns/op": 10.63
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 11.79
+                "ns/op": 10.63
               }
             },
             {
@@ -2065,38 +2065,38 @@
               "chart": "group:compiler",
               "samples": [
                 {
-                  "iterations": 2591407,
+                  "iterations": 3153019,
                   "measurements": {
-                    "ns/op": 130.8
+                    "ns/op": 95.51
                   }
                 },
                 {
-                  "iterations": 2514879,
+                  "iterations": 3091209,
                   "measurements": {
-                    "ns/op": 121.4
+                    "ns/op": 96.73
                   }
                 },
                 {
-                  "iterations": 2466256,
+                  "iterations": 3132860,
                   "measurements": {
-                    "ns/op": 146.3
+                    "ns/op": 95.75
                   }
                 },
                 {
-                  "iterations": 2491057,
+                  "iterations": 3104984,
                   "measurements": {
-                    "ns/op": 120.5
+                    "ns/op": 97.46
                   }
                 },
                 {
-                  "iterations": 2258960,
+                  "iterations": 2803194,
                   "measurements": {
-                    "ns/op": 119.2
+                    "ns/op": 99.07
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 121.4
+                "ns/op": 96.73
               }
             },
             {
@@ -2106,38 +2106,38 @@
               "chart": "group:compiler",
               "samples": [
                 {
-                  "iterations": 3247796,
+                  "iterations": 4762628,
                   "measurements": {
-                    "ns/op": 91.06
+                    "ns/op": 62.51
                   }
                 },
                 {
-                  "iterations": 3268628,
+                  "iterations": 4853720,
                   "measurements": {
-                    "ns/op": 91.41
+                    "ns/op": 62.32
                   }
                 },
                 {
-                  "iterations": 3225978,
+                  "iterations": 4876849,
                   "measurements": {
-                    "ns/op": 91.69
+                    "ns/op": 64.35
                   }
                 },
                 {
-                  "iterations": 3277316,
+                  "iterations": 4219858,
                   "measurements": {
-                    "ns/op": 110.4
+                    "ns/op": 71.16
                   }
                 },
                 {
-                  "iterations": 3311584,
+                  "iterations": 4546558,
                   "measurements": {
-                    "ns/op": 93.85
+                    "ns/op": 62.63
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 91.69
+                "ns/op": 62.63
               }
             },
             {
@@ -2147,38 +2147,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 12584222,
+                  "iterations": 14622050,
                   "measurements": {
-                    "ns/op": 23.13
+                    "ns/op": 20.66
                   }
                 },
                 {
-                  "iterations": 13883505,
+                  "iterations": 14748960,
                   "measurements": {
-                    "ns/op": 22.31
+                    "ns/op": 20.53
                   }
                 },
                 {
-                  "iterations": 13592676,
+                  "iterations": 14690668,
                   "measurements": {
-                    "ns/op": 22.14
+                    "ns/op": 20.43
                   }
                 },
                 {
-                  "iterations": 13346283,
+                  "iterations": 14607868,
                   "measurements": {
-                    "ns/op": 22.21
+                    "ns/op": 20.48
                   }
                 },
                 {
-                  "iterations": 13412140,
+                  "iterations": 14437912,
                   "measurements": {
-                    "ns/op": 22.17
+                    "ns/op": 20.57
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 22.21
+                "ns/op": 20.53
               }
             },
             {
@@ -2188,38 +2188,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 36373,
+                  "iterations": 43816,
                   "measurements": {
-                    "ns/op": 8660
+                    "ns/op": 6762
                   }
                 },
                 {
-                  "iterations": 40981,
+                  "iterations": 45556,
                   "measurements": {
-                    "ns/op": 6863
+                    "ns/op": 6634
                   }
                 },
                 {
-                  "iterations": 49706,
+                  "iterations": 47134,
                   "measurements": {
-                    "ns/op": 6921
+                    "ns/op": 6440
                   }
                 },
                 {
-                  "iterations": 37413,
+                  "iterations": 47223,
                   "measurements": {
-                    "ns/op": 8204
+                    "ns/op": 6521
                   }
                 },
                 {
-                  "iterations": 40584,
+                  "iterations": 46316,
                   "measurements": {
-                    "ns/op": 7977
+                    "ns/op": 6523
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 7977
+                "ns/op": 6523
               }
             },
             {
@@ -2229,38 +2229,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 8505721,
+                  "iterations": 11306550,
                   "measurements": {
-                    "ns/op": 35.22
+                    "ns/op": 24.45
                   }
                 },
                 {
-                  "iterations": 8591269,
+                  "iterations": 11434887,
                   "measurements": {
-                    "ns/op": 32.9
+                    "ns/op": 24.87
                   }
                 },
                 {
-                  "iterations": 9338835,
+                  "iterations": 11481769,
                   "measurements": {
-                    "ns/op": 32.94
+                    "ns/op": 24.57
                   }
                 },
                 {
-                  "iterations": 8405479,
+                  "iterations": 11524184,
                   "measurements": {
-                    "ns/op": 35.28
+                    "ns/op": 24.66
                   }
                 },
                 {
-                  "iterations": 7917333,
+                  "iterations": 10624372,
                   "measurements": {
-                    "ns/op": 32.84
+                    "ns/op": 24.63
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 32.94
+                "ns/op": 24.63
               }
             },
             {
@@ -2270,38 +2270,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 285187934,
+                  "iterations": 318967111,
                   "measurements": {
-                    "ns/op": 1.039
+                    "ns/op": 0.9413
                   }
                 },
                 {
-                  "iterations": 286443920,
+                  "iterations": 319044142,
                   "measurements": {
-                    "ns/op": 1.162
+                    "ns/op": 0.944
                   }
                 },
                 {
-                  "iterations": 280284331,
+                  "iterations": 318102692,
                   "measurements": {
-                    "ns/op": 1.159
+                    "ns/op": 0.9403
                   }
                 },
                 {
-                  "iterations": 265735213,
+                  "iterations": 318111547,
                   "measurements": {
-                    "ns/op": 1.095
+                    "ns/op": 0.9406
                   }
                 },
                 {
-                  "iterations": 284393547,
+                  "iterations": 319056724,
                   "measurements": {
-                    "ns/op": 1.073
+                    "ns/op": 0.9438
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 1.095
+                "ns/op": 0.9413
               }
             },
             {
@@ -2311,38 +2311,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 291820041,
+                  "iterations": 318922748,
                   "measurements": {
-                    "ns/op": 1.035
+                    "ns/op": 0.9423
                   }
                 },
                 {
-                  "iterations": 293694381,
+                  "iterations": 311620725,
                   "measurements": {
-                    "ns/op": 1.097
+                    "ns/op": 1.031
                   }
                 },
                 {
-                  "iterations": 294319148,
+                  "iterations": 290431962,
                   "measurements": {
-                    "ns/op": 1.074
+                    "ns/op": 0.9475
                   }
                 },
                 {
-                  "iterations": 267627052,
+                  "iterations": 318766724,
                   "measurements": {
-                    "ns/op": 1.106
+                    "ns/op": 0.9438
                   }
                 },
                 {
-                  "iterations": 256568692,
+                  "iterations": 318346999,
                   "measurements": {
-                    "ns/op": 1.121
+                    "ns/op": 0.9468
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 1.097
+                "ns/op": 0.9468
               }
             },
             {
@@ -2352,38 +2352,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 261857125,
+                  "iterations": 318897607,
                   "measurements": {
-                    "ns/op": 1.07
+                    "ns/op": 0.9464
                   }
                 },
                 {
-                  "iterations": 294659299,
+                  "iterations": 318670506,
                   "measurements": {
-                    "ns/op": 1.033
+                    "ns/op": 0.9488
                   }
                 },
                 {
-                  "iterations": 291920728,
+                  "iterations": 316660148,
                   "measurements": {
-                    "ns/op": 1.021
+                    "ns/op": 0.962
                   }
                 },
                 {
-                  "iterations": 285514084,
+                  "iterations": 292617622,
                   "measurements": {
-                    "ns/op": 1.027
+                    "ns/op": 1.03
                   }
                 },
                 {
-                  "iterations": 292043516,
+                  "iterations": 295924868,
                   "measurements": {
-                    "ns/op": 1.047
+                    "ns/op": 0.9523
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 1.033
+                "ns/op": 0.9523
               }
             },
             {
@@ -2395,36 +2395,36 @@
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 53942
+                    "ns/op": 19231
                   }
                 },
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 55536
+                    "ns/op": 26458
                   }
                 },
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 53584
+                    "ns/op": 27694
                   }
                 },
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 52317
+                    "ns/op": 29170
                   }
                 },
                 {
                   "iterations": 100,
                   "measurements": {
-                    "ns/op": 51386
+                    "ns/op": 29352
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 53584
+                "ns/op": 27694
               }
             },
             {
@@ -2434,38 +2434,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 66998562,
+                  "iterations": 73526401,
                   "measurements": {
-                    "ns/op": 4.997
+                    "ns/op": 4.077
                   }
                 },
                 {
-                  "iterations": 58252426,
+                  "iterations": 73030459,
                   "measurements": {
-                    "ns/op": 4.735
+                    "ns/op": 4.078
                   }
                 },
                 {
-                  "iterations": 65612510,
+                  "iterations": 73658784,
                   "measurements": {
-                    "ns/op": 4.651
+                    "ns/op": 4.089
                   }
                 },
                 {
-                  "iterations": 68104425,
+                  "iterations": 73304073,
                   "measurements": {
-                    "ns/op": 4.424
+                    "ns/op": 4.076
                   }
                 },
                 {
-                  "iterations": 68076732,
+                  "iterations": 71103391,
                   "measurements": {
-                    "ns/op": 4.454
+                    "ns/op": 4.076
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 4.651
+                "ns/op": 4.077
               }
             },
             {
@@ -2475,38 +2475,38 @@
               "chart": "group:core",
               "samples": [
                 {
-                  "iterations": 143109656,
+                  "iterations": 158488407,
                   "measurements": {
-                    "ns/op": 2.145
+                    "ns/op": 1.903
                   }
                 },
                 {
-                  "iterations": 146345954,
+                  "iterations": 159310045,
                   "measurements": {
-                    "ns/op": 2.04
+                    "ns/op": 1.887
                   }
                 },
                 {
-                  "iterations": 146776930,
+                  "iterations": 144873412,
                   "measurements": {
-                    "ns/op": 2.047
+                    "ns/op": 2.063
                   }
                 },
                 {
-                  "iterations": 138057852,
+                  "iterations": 158610220,
                   "measurements": {
-                    "ns/op": 2.106
+                    "ns/op": 1.88
                   }
                 },
                 {
-                  "iterations": 143620124,
+                  "iterations": 158593452,
                   "measurements": {
-                    "ns/op": 2.095
+                    "ns/op": 1.888
                   }
                 }
               ],
               "measurements": {
-                "ns/op": 2.095
+                "ns/op": 1.888
               }
             }
           ]
