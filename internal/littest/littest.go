@@ -59,10 +59,20 @@ func LoadSpec(pkgDir string) (Spec, error) {
 }
 
 func Check(spec Spec, actual string, targetPrefixes ...string) error {
+	actual = CanonicalizeLLVMIR(actual)
 	if len(targetPrefixes) == 0 {
 		return filecheck.Match(spec.Path, actual)
 	}
 	return filecheck.MatchWithTargetPrefixes(spec.Path, actual, targetPrefixes...)
+}
+
+// CanonicalizeLLVMIR removes LLVM-version-specific spellings that are not the
+// semantic contract of LLGo's IR tests. Verifier, object, link, and runtime
+// tests still consume the original IR.
+func CanonicalizeLLVMIR(ir string) string {
+	ir = strings.ReplaceAll(ir, "getelementptr inbounds nuw ", "getelementptr inbounds ")
+	ir = strings.ReplaceAll(ir, " captures(none)", " nocapture")
+	return ir
 }
 
 func FindMarkedSourceFile(dir string) (string, bool, error) {
