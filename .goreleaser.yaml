@@ -27,7 +27,7 @@ builds:
       - CC=o64-clang
       - CXX=o64-clang++
       - CGO_CPPFLAGS=-I{{.Env.SYSROOT_DARWIN_AMD64}}/crosscompile/clang/include -mmacosx-version-min=10.13 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
-      - CGO_LDFLAGS=-L{{.Env.SYSROOT_DARWIN_AMD64}}/crosscompile/clang/lib -mmacosx-version-min=10.13 -Wl,-search_paths_first -Wl,-headerpad_max_install_names -lLLVM-19 -lz -lm -Wl,-rpath,@executable_path/../crosscompile/clang/lib
+      - CGO_LDFLAGS=-L{{.Env.SYSROOT_DARWIN_AMD64}}/crosscompile/clang/lib -mmacosx-version-min=10.13 -Wl,-search_paths_first -Wl,-headerpad_max_install_names -lLLVM-{{.Env.LLGO_LLVM_MAJOR}} -lz -lm -Wl,-rpath,@executable_path/../crosscompile/clang/lib
     targets:
       - darwin_amd64
     mod_timestamp: "{{.CommitTimestamp}}"
@@ -43,7 +43,7 @@ builds:
       - CC=oa64-clang
       - CXX=oa64-clang++
       - CGO_CPPFLAGS=-I{{.Env.SYSROOT_DARWIN_ARM64}}/crosscompile/clang/include -mmacosx-version-min=10.13 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
-      - CGO_LDFLAGS=-L{{.Env.SYSROOT_DARWIN_ARM64}}/crosscompile/clang/lib -mmacosx-version-min=10.13 -Wl,-search_paths_first -Wl,-headerpad_max_install_names -lLLVM-19 -lz -lm -Wl,-rpath,@executable_path/../crosscompile/clang/lib
+      - CGO_LDFLAGS=-L{{.Env.SYSROOT_DARWIN_ARM64}}/crosscompile/clang/lib -mmacosx-version-min=10.13 -Wl,-search_paths_first -Wl,-headerpad_max_install_names -lLLVM-{{.Env.LLGO_LLVM_MAJOR}} -lz -lm -Wl,-rpath,@executable_path/../crosscompile/clang/lib
     targets:
       - darwin_arm64
     mod_timestamp: "{{.CommitTimestamp}}"
@@ -62,7 +62,7 @@ builds:
       - CXX={{.Env.SYSROOT_LINUX_AMD64}}/crosscompile/clang/bin/clang++
       - CGO_CPPFLAGS=--target=x86_64-linux-gnu --gcc-toolchain={{.Env.SYSROOT_LINUX_AMD64}}/usr --sysroot={{.Env.SYSROOT_LINUX_AMD64}} -I{{.Env.SYSROOT_LINUX_AMD64}}/crosscompile/clang/include -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
       - CGO_CXXFLAGS=-std=c++17 -nostdinc++ -isystem {{.Env.SYSROOT_LINUX_AMD64}}/usr/include/c++/10 -isystem {{.Env.SYSROOT_LINUX_AMD64}}/usr/include/x86_64-linux-gnu/c++/10 -isystem {{.Env.SYSROOT_LINUX_AMD64}}/usr/include/c++/10/backward
-      - CGO_LDFLAGS=--target=x86_64-linux-gnu --gcc-toolchain={{.Env.SYSROOT_LINUX_AMD64}}/usr --sysroot={{.Env.SYSROOT_LINUX_AMD64}} -L{{.Env.SYSROOT_LINUX_AMD64}}/crosscompile/clang/lib -L{{.Env.SYSROOT_LINUX_AMD64}}/usr/lib/gcc/x86_64-linux-gnu/10 -L{{.Env.SYSROOT_LINUX_AMD64}}/usr/lib/x86_64-linux-gnu -L{{.Env.SYSROOT_LINUX_AMD64}}/lib/x86_64-linux-gnu -lLLVM-19 -lz
+      - CGO_LDFLAGS=--target=x86_64-linux-gnu --gcc-toolchain={{.Env.SYSROOT_LINUX_AMD64}}/usr --sysroot={{.Env.SYSROOT_LINUX_AMD64}} -L{{.Env.SYSROOT_LINUX_AMD64}}/crosscompile/clang/lib -L{{.Env.SYSROOT_LINUX_AMD64}}/usr/lib/gcc/x86_64-linux-gnu/10 -L{{.Env.SYSROOT_LINUX_AMD64}}/usr/lib/x86_64-linux-gnu -L{{.Env.SYSROOT_LINUX_AMD64}}/lib/x86_64-linux-gnu -lLLVM-{{.Env.LLGO_LLVM_MAJOR}} -lz
       - CGO_LDFLAGS_ALLOW=(--target=.*|--gcc-toolchain=.*|--sysroot.*)
     targets:
       - linux_amd64
@@ -82,7 +82,7 @@ builds:
       - CXX={{.Env.SYSROOT_LINUX_AMD64}}/crosscompile/clang/bin/clang++
       - CGO_CPPFLAGS=--target=aarch64-linux-gnu --gcc-toolchain={{.Env.SYSROOT_LINUX_ARM64}}/usr --sysroot={{.Env.SYSROOT_LINUX_ARM64}} -I{{.Env.SYSROOT_LINUX_ARM64}}/crosscompile/clang/include -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
       - CGO_CXXFLAGS=-std=c++17 -nostdinc++ -isystem {{.Env.SYSROOT_LINUX_ARM64}}/usr/include/c++/10 -isystem {{.Env.SYSROOT_LINUX_ARM64}}/usr/include/aarch64-linux-gnu/c++/10 -isystem {{.Env.SYSROOT_LINUX_ARM64}}/usr/include/c++/10/backward
-      - CGO_LDFLAGS=--target=aarch64-linux-gnu --gcc-toolchain={{.Env.SYSROOT_LINUX_ARM64}}/usr --sysroot={{.Env.SYSROOT_LINUX_ARM64}} -L{{.Env.SYSROOT_LINUX_ARM64}}/crosscompile/clang/lib -L{{.Env.SYSROOT_LINUX_ARM64}}/usr/lib/gcc/aarch64-linux-gnu/10 -L{{.Env.SYSROOT_LINUX_ARM64}}/usr/lib/aarch64-linux-gnu -L{{.Env.SYSROOT_LINUX_ARM64}}/lib/aarch64-linux-gnu -lLLVM-19 -lz
+      - CGO_LDFLAGS=--target=aarch64-linux-gnu --gcc-toolchain={{.Env.SYSROOT_LINUX_ARM64}}/usr --sysroot={{.Env.SYSROOT_LINUX_ARM64}} -L{{.Env.SYSROOT_LINUX_ARM64}}/crosscompile/clang/lib -L{{.Env.SYSROOT_LINUX_ARM64}}/usr/lib/gcc/aarch64-linux-gnu/10 -L{{.Env.SYSROOT_LINUX_ARM64}}/usr/lib/aarch64-linux-gnu -L{{.Env.SYSROOT_LINUX_ARM64}}/lib/aarch64-linux-gnu -lLLVM-{{.Env.LLGO_LLVM_MAJOR}} -lz
       - CGO_LDFLAGS_ALLOW=(--target=.*|--gcc-toolchain=.*|--sysroot.*)
     targets:
       - linux_arm64

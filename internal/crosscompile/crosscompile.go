@@ -13,11 +13,13 @@ import (
 	"github.com/goplus/llgo/internal/crosscompile/compile"
 	"github.com/goplus/llgo/internal/env"
 	"github.com/goplus/llgo/internal/flash"
+	"github.com/goplus/llgo/internal/llvmpayload"
 	"github.com/goplus/llgo/internal/lto"
 	"github.com/goplus/llgo/internal/optlevel"
 	"github.com/goplus/llgo/internal/targets"
 	"github.com/goplus/llgo/internal/xtool/llvm"
 	envllvm "github.com/goplus/llgo/xtool/env/llvm"
+	gllvm "github.com/xgo-dev/llvm"
 )
 
 type Export struct {
@@ -68,11 +70,6 @@ func nativeDebugInfoPolicy(goos string) DebugInfoPolicy {
 var (
 	wasiSdkUrl      = "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-macos.tar.gz"
 	wasiMacosSubdir = "wasi-sdk-25.0-x86_64-macos"
-)
-
-var (
-	espClangBaseUrl = "https://github.com/goplus/espressif-llvm-project-prebuilt/releases/download/19.1.2_20250905-3"
-	espClangVersion = "19.1.2_20250905-3"
 )
 
 // cacheRoot can be overridden for testing
@@ -141,16 +138,25 @@ func getESPClangRoot(forceEspClang bool) (clangRoot string, err error) {
 		return "", nil
 	}
 
+	payload, err := llvmpayload.ForLLVMVersion(gllvm.Version)
+	if err != nil {
+		return "", err
+	}
+
 	// Try to download ESP Clang if platform is supported
 	platformSuffix := getESPClangPlatform(runtime.GOOS, runtime.GOARCH)
 	if platformSuffix != "" {
-		cacheClangDir := filepath.Join(cacheRoot(), "crosscompile", "esp-clang-"+espClangVersion)
+		artifact, artifactErr := payload.Artifact(platformSuffix)
+		if artifactErr != nil {
+			return "", artifactErr
+		}
+		cacheClangDir := filepath.Join(cacheRoot(), "crosscompile", "esp-clang-"+payload.Version())
 		if _, err = os.Stat(cacheClangDir); err != nil {
 			if !errors.Is(err, fs.ErrNotExist) {
 				return
 			}
 			fmt.Fprintln(os.Stderr, "ESP Clang not found in LLGO_ROOT or cache, will download.")
-			if err = checkDownloadAndExtractESPClang(platformSuffix, cacheClangDir); err != nil {
+			if err = checkDownloadAndExtractESPClang(artifact, cacheClangDir); err != nil {
 				return
 			}
 		}
@@ -164,30 +170,8 @@ func getESPClangRoot(forceEspClang bool) (clangRoot string, err error) {
 
 // getESPClangPlatform returns the platform suffix for ESP Clang downloads
 func getESPClangPlatform(goos, goarch string) string {
-	switch goos {
-	case "darwin":
-		switch goarch {
-		case "amd64":
-			return "x86_64-apple-darwin"
-		case "arm64":
-			return "aarch64-apple-darwin"
-		}
-	case "linux":
-		switch goarch {
-		case "amd64":
-			return "x86_64-linux-gnu"
-		case "arm64":
-			return "aarch64-linux-gnu"
-		case "arm":
-			return "arm-linux-gnueabihf"
-		}
-	case "windows":
-		switch goarch {
-		case "amd64":
-			return "x86_64-w64-mingw32"
-		}
-	}
-	return ""
+	platform, _ := llvmpayload.PlatformSuffix(goos, goarch)
+	return platform
 }
 
 // ldFlagsFromFileName extracts the library name from a filename for use in linker flags
