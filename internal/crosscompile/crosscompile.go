@@ -252,7 +252,10 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 			"-Wl,--icf=none",
 		}
 		if ltoMode.Enabled() {
-			export.LDFLAGS = append(export.LDFLAGS, ltoMode.ClangFlag(), "-Wl,--lto"+level.Flag())
+			export.LDFLAGS = append(export.LDFLAGS, ltoMode.ClangFlag())
+			if flag := ltoLinkerOptFlag(level); flag != "" {
+				export.LDFLAGS = append(export.LDFLAGS, flag)
+			}
 		}
 		if clangRoot != "" {
 			clangLib := filepath.Join(clangRoot, "lib")
@@ -463,6 +466,17 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 		return
 	}
 	return
+}
+
+func ltoLinkerOptFlag(level optlevel.Level) string {
+	switch level {
+	case optlevel.O0, optlevel.O1, optlevel.O2, optlevel.O3:
+		return "-Wl,--lto" + level.Flag()
+	default:
+		// LLD's --lto-O option accepts only numeric levels. Clang likewise
+		// omits it for -Os/-Oz and lets the size-optimized IR drive LTO.
+		return ""
+	}
 }
 
 // UseTarget loads configuration from a target name (e.g., "rp2040", "wasi")

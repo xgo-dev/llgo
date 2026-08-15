@@ -42,8 +42,25 @@ type pass struct {
 	liveSlots       map[meta.Symbol][]int
 }
 
+// Plan is the link-specific semantic result consumed by a backend rewrite.
+// The package metadata remains analyzer-independent; this structure is the
+// boundary between whole-program planning and LLVM module transformation.
+type Plan struct {
+	LiveSlots map[string][]int
+}
+
+// BuildPlan computes the conservative Go method liveness plan for one link.
+// rootNames are final linker-visible roots, not package-local source names.
+func BuildPlan(info *meta.GlobalSummary, rootNames []string) Plan {
+	return Plan{LiveSlots: analyze(info, rootNames)}
+}
+
 // Analyze returns live ABI method slot indexes by concrete type symbol name.
 func Analyze(info *meta.GlobalSummary, rootNames []string) map[string][]int {
+	return BuildPlan(info, rootNames).LiveSlots
+}
+
+func analyze(info *meta.GlobalSummary, rootNames []string) map[string][]int {
 	roots := make([]meta.Symbol, 0, len(rootNames))
 	for _, name := range rootNames {
 		if sym, ok := info.LookupSymbol(name); ok {

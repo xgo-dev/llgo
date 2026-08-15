@@ -38,6 +38,85 @@ func EmitStrongTypeOverrides(dst llvm.Module, srcMods []llvm.Module, liveSlots m
 	}
 }
 
+// RewriteTypeMethodTables rewrites ABI method table initializers in mod in
+// place. It preserves each type descriptor's existing linkage and COMDAT, so
+// ThinLTO sees one ordinary definition per package instead of an entry-module
+// strong override competing with weak_odr definitions.
+//
+// A missing type entry in liveSlots means that no method slot is demanded.
+// The method name and type are retained while IFn/TFn point at the runtime
+// unreachable stub, preserving ABI table shape and method matching metadata.
+func RewriteTypeMethodTables(mod llvm.Module, liveSlots map[string][]int, verbose bool) int {
+	if mod.IsNil() {
+		return 0
+	}
+	rewriter := &moduleRewriter{mod: mod}
+	rewritten := 0
+	for g := mod.FirstGlobal(); !g.IsNil(); g = llvm.NextGlobal(g) {
+		if g.IsDeclaration() || !g.IsGlobalConstant() {
+			continue
+		}
+		methodsVal, elemTy, ok := methodArray(g.Initializer())
+		if !ok {
+			continue
+		}
+		if rewriter.rewriteGlobal(g, methodsVal, elemTy, liveSlotSet(liveSlots[g.Name()]), verbose) {
+			rewritten++
+		}
+	}
+	return rewritten
+}
+
+type moduleRewriter struct {
+	mod         llvm.Module
+	unreachable llvm.Value
+}
+
+func (r *moduleRewriter) unreachableMethod() llvm.Value {
+	if r.unreachable.IsNil() {
+		r.unreachable = r.mod.NamedFunction(unreachableMethodName)
+	}
+	if r.unreachable.IsNil() {
+		r.unreachable = llvm.AddFunction(r.mod, unreachableMethodName,
+			llvm.FunctionType(r.mod.Context().VoidType(), nil, false))
+	}
+	return r.unreachable
+}
+
+func (r *moduleRewriter) rewriteGlobal(g, methodsVal llvm.Value, elemTy llvm.Type, keepIdx map[int]bool, verbose bool) bool {
+	init := g.Initializer()
+	fields := make([]llvm.Value, init.OperandsCount())
+	for i := range fields {
+		fields[i] = init.Operand(i)
+	}
+	methods := make([]llvm.Value, methodsVal.OperandsCount())
+	dropped := false
+	for i := range methods {
+		orig := methodsVal.Operand(i)
+		if keepIdx[i] {
+			methods[i] = orig
+			continue
+		}
+		dropped = true
+		if verbose {
+			fmt.Fprintf(os.Stderr, "[dce] drop method %s[%d] ifn=%s tfn=%s\n", g.Name(), i, orig.Operand(2).Name(), orig.Operand(3).Name())
+		}
+		unreachable := r.unreachableMethod()
+		methods[i] = llvm.ConstNamedStruct(elemTy, []llvm.Value{
+			orig.Operand(0),
+			orig.Operand(1),
+			unreachable,
+			unreachable,
+		})
+	}
+	if !dropped {
+		return false
+	}
+	fields[len(fields)-1] = llvm.ConstArray(elemTy, methods)
+	g.SetInitializer(constStructOfType(init.Type(), fields))
+	return true
+}
+
 type overrideEmitter struct {
 	dst    llvm.Module
 	values map[llvm.Value]llvm.Value

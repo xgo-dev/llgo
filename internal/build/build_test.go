@@ -1525,6 +1525,52 @@ func TestDeadcodeDropEnabled(t *testing.T) {
 	}
 }
 
+func TestThinLTODeadcodeEnabled(t *testing.T) {
+	tests := []struct {
+		name string
+		conf *Config
+		want bool
+	}{
+		{name: "not requested", conf: &Config{LTO: lto.Thin}, want: false},
+		{name: "thin lto", conf: &Config{DeadcodeDrop: true, LTO: lto.Thin}, want: buildenv.Dev},
+		{name: "lto off", conf: &Config{DeadcodeDrop: true, LTO: lto.Off}, want: false},
+		{name: "full lto", conf: &Config{DeadcodeDrop: true, LTO: lto.Full, DisableGoGlobalDCE: true}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.conf.thinLTODeadcodeEnabled(); got != tt.want {
+				t.Fatalf("thinLTODeadcodeEnabled() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestThinLTODeadcodeLinkerArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		conf *Config
+		want []string
+	}{
+		{name: "not requested", conf: &Config{LTO: lto.Thin}},
+		{name: "lto off", conf: &Config{DeadcodeDrop: true, LTO: lto.Off}},
+		{name: "full lto", conf: &Config{DeadcodeDrop: true, LTO: lto.Full, DisableGoGlobalDCE: true}},
+		{name: "thin lto deadcode", conf: &Config{DeadcodeDrop: true, LTO: lto.Thin}, want: []string{thinLTODeadcodeImportLimitFlag}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			want := tt.want
+			if !buildenv.Dev {
+				want = nil
+			}
+			if got := thinLTODeadcodeLinkerArgs(tt.conf); !reflect.DeepEqual(got, want) {
+				t.Fatalf("thinLTODeadcodeLinkerArgs() = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
 func TestPackageMetaEnabled(t *testing.T) {
 	tests := []struct {
 		name string
