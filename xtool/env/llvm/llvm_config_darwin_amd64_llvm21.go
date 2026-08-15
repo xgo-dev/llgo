@@ -1,4 +1,4 @@
-//go:build !byollvm && darwin && !amd64 && !llvm14 && !llvm15 && !llvm16 && !llvm17 && !llvm18 && !llvm20 && !llvm21 && !llvm22
+//go:build !byollvm && darwin && amd64 && llvm21
 
 /*
  * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.
@@ -18,4 +18,4 @@
 
 package llvm
 
-const ldLLVMConfigBin = "/opt/homebrew/opt/llvm@19/bin/llvm-config"
+const ldLLVMConfigBin = "/usr/local/opt/llvm@21/bin/llvm-config"

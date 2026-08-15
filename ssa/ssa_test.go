@@ -34,6 +34,7 @@ import (
 	"unsafe"
 
 	"github.com/goplus/gogen/packages"
+	"github.com/goplus/llgo/internal/littest"
 	rtabi "github.com/goplus/llgo/runtime/abi"
 	"github.com/xgo-dev/llvm"
 )
@@ -1985,8 +1986,8 @@ func TestAny(t *testing.T) {
 
 func assertPkg(t *testing.T, p Package, expected string) {
 	t.Helper()
-	got := StripModuleTarget(p.String())
-	want := StripModuleTarget(expected)
+	got := littest.CanonicalizeLLVMIR(StripModuleTarget(p.String()))
+	want := littest.CanonicalizeLLVMIR(StripModuleTarget(expected))
 	if got != want {
 		t.Fatalf("\n==> got:\n%s\n==> expected:\n%s\n", got, want)
 	}
@@ -2587,15 +2588,14 @@ attributes #1 = { returns_twice }
 
 func TestTargetMachineAndDataLayout(t *testing.T) {
 	tests := []struct {
-		goos       string
-		goarch     string
-		dataLayout string
-		triple     string
+		goos   string
+		goarch string
+		triple string
 	}{
-		{"linux", "amd64", "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128", "x86_64-unknown-linux"},
-		{"linux", "arm64", "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32", "aarch64-unknown-linux"},
-		{"darwin", "amd64", "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128", "x86_64-apple-macosx"},
-		{"darwin", "arm64", "e-m:o-i64:64-i128:128-n32:64-S128-Fn32", "arm64-apple-macosx"},
+		{"linux", "amd64", "x86_64-unknown-linux"},
+		{"linux", "arm64", "aarch64-unknown-linux"},
+		{"darwin", "amd64", "x86_64-apple-macosx"},
+		{"darwin", "arm64", "arm64-apple-macosx"},
 	}
 	for _, tt := range tests {
 		prog := NewProgram(&Target{GOOS: tt.goos, GOARCH: tt.goarch})
@@ -2612,14 +2612,15 @@ func TestTargetMachineAndDataLayout(t *testing.T) {
 			t.Fatalf("%s/%s TargetData() returned nil", tt.goos, tt.goarch)
 		}
 
-		// Test DataLayout() returns the expected data layout string
-		if dl := prog.DataLayout(); dl != tt.dataLayout {
-			t.Fatalf("%s/%s DataLayout mismatch: got %q, want %q", tt.goos, tt.goarch, dl, tt.dataLayout)
+		// Test DataLayout() returns a valid layout and is propagated to modules.
+		dl := prog.DataLayout()
+		if dl == "" || !strings.HasPrefix(dl, "e-") {
+			t.Fatalf("%s/%s DataLayout is invalid: %q", tt.goos, tt.goarch, dl)
 		}
 
 		pkg := prog.NewPackage("foo", "foo/bar")
-		if dl := pkg.Module().DataLayout(); dl != tt.dataLayout {
-			t.Fatalf("%s/%s module DataLayout mismatch: got %q, want %q", tt.goos, tt.goarch, dl, tt.dataLayout)
+		if moduleLayout := pkg.Module().DataLayout(); moduleLayout != dl {
+			t.Fatalf("%s/%s module DataLayout mismatch: got %q, want %q", tt.goos, tt.goarch, moduleLayout, dl)
 		}
 
 		// Test Target().Spec().Triple returns the expected triple

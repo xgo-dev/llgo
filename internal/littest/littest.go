@@ -63,19 +63,29 @@ func LoadSpec(pkgDir string) (Spec, error) {
 }
 
 func Check(spec Spec, actual string) error {
+	actual = CanonicalizeLLVMIR(actual)
 	switch spec.Mode {
 	case ModeSkip:
 		return nil
 	case ModeFileCheck:
 		return filecheck.Match(spec.Path, actual)
 	case ModeLiteral:
-		if actual != spec.Text {
+		if actual != CanonicalizeLLVMIR(spec.Text) {
 			return fmt.Errorf("%s: literal LLVM IR mismatch", spec.Path)
 		}
 		return nil
 	default:
 		return errors.New("unknown lit spec mode")
 	}
+}
+
+// CanonicalizeLLVMIR removes LLVM-version-specific spellings that are not the
+// semantic contract of LLGo's IR tests. Verifier, object, link, and runtime
+// tests still consume the original IR.
+func CanonicalizeLLVMIR(ir string) string {
+	ir = strings.ReplaceAll(ir, "getelementptr inbounds nuw ", "getelementptr inbounds ")
+	ir = strings.ReplaceAll(ir, " captures(none)", " nocapture")
+	return ir
 }
 
 func loadSourceSpec(pkgDir string) (Spec, bool, error) {
