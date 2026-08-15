@@ -1,4 +1,4 @@
-//go:build !byollvm && darwin && amd64 && !llvm14 && !llvm15 && !llvm16 && !llvm17 && !llvm18 && !llvm20 && !llvm21 && !llvm22
+//go:build !byollvm && darwin && amd64 && llvm19
 
 /*
  * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.

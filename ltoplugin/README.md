@@ -3,8 +3,7 @@
 This directory contains the optional LLVM new pass manager plugin used by LLGo
 full LTO builds. It is not required to build or use LLGo.
 
-Build with the same LLVM 19 or LLVM 21 toolchain selected for LLGo. For an
-LLVM 21 build:
+Build with the same LLVM 21 toolchain used by LLGo:
 
 ```sh
 cmake -S ltoplugin -B ltoplugin/build \
@@ -25,7 +24,7 @@ The plugin registers `llgo-lto-pre-globaldce` and also inserts that pass through
 LLVM's full LTO early extension point, so loading the plugin is enough for the
 pass to run before the normal full LTO optimization pipeline proceeds.
 
-LLGo forwards the plugin path through lld's `--load-pass-plugin` option. The
-supported LLVM 19 and LLVM 21 Mach-O linkers do not expose an equivalent new
-pass manager LTO plugin loading option, so LLGo rejects `-lto-pass-plugin` for
+LLGo forwards the plugin path through lld's `--load-pass-plugin` option. LLVM 21
+`ld64.lld` and Apple `ld64` do not expose an equivalent new pass manager LTO
+plugin loading option for Mach-O links, so LLGo rejects `-lto-pass-plugin` for
 Darwin targets until the linker side grows that support.

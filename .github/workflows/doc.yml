@@ -11,6 +11,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# Remote-install checks clone the current main branch, which may still default
+# to LLVM 19 while this upgrade PR is under review.
+env:
+  GOFLAGS: -tags=llvm21
+
 jobs:
   remote_install:
     timeout-minutes: 30
@@ -153,7 +158,7 @@ jobs:
           set -e
           set -x
           source doc/_readme/scripts/install_ubuntu.sh
-          echo "PATH=/usr/lib/llvm-19/bin:$PATH" >> $GITHUB_ENV
+          echo "PATH=/usr/lib/llvm-21/bin:$PATH" >> $GITHUB_ENV
 
       - name: Set up Python 3.12 on Windows
         if: startsWith(matrix.os, 'windows')

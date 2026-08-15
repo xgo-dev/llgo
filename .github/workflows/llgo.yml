@@ -25,36 +25,36 @@ jobs:
         # native toolchain profile, always with .go-version.
         include:
           - os: ubuntu-latest
-            llvm: 19
+            llvm: 21
           - os: macos-latest
-            llvm: 19
+            llvm: 21
           - os: windows-2022
-            llvm: 19
+            llvm: 21
             windows_abi: msvc
             windows_arch: amd64
             host_go_arch: x64
           - os: windows-2022
-            llvm: 19
+            llvm: 21
             windows_abi: mingw
             windows_arch: amd64
             host_go_arch: x64
           - os: windows-11-arm
-            llvm: 19
+            llvm: 21
             windows_abi: msvc
             windows_arch: arm64
             host_go_arch: x64
           - os: windows-11-arm
-            llvm: 19
+            llvm: 21
             windows_abi: mingw
             windows_arch: arm64
             host_go_arch: arm64
           - os: windows-2022
-            llvm: 19
+            llvm: 21
             windows_abi: msvc
             windows_arch: "386"
             host_go_arch: x64
           - os: windows-2022
-            llvm: 19
+            llvm: 21
             windows_abi: mingw
             windows_arch: "386"
             host_go_arch: x64
@@ -374,14 +374,14 @@ jobs:
         # runs take about 25 minutes each and would exceed 30 minutes combined.
         include:
           - os: ubuntu-latest
-            llvm: 19
+            llvm: 21
             go_version: "1.20-1.26"
             lane: compatibility
             shard_index: "0"
             shard_total: "1"
             check_symbols: true
           - os: ubuntu-latest
-            llvm: 19
+            llvm: 21
             go_version: "1.27"
             lane: full
             shard_index: "0"
@@ -389,7 +389,7 @@ jobs:
             check_symbols: true
             std_buildmodes: true
           - os: ubuntu-latest
-            llvm: 19
+            llvm: 21
             go_version: "1.27"
             lane: full
             shard_index: "1"
@@ -397,14 +397,14 @@ jobs:
             check_symbols: true
             std_buildmodes: true
           - os: macos-latest
-            llvm: 19
+            llvm: 21
             go_version: "1.27"
             lane: full
             shard_index: "0"
             shard_total: "1"
           # Each Windows ABI profile runs the latest complete set with -p=2.
           - os: windows-2022
-            llvm: 19
+            llvm: 21
             go_version: "1.27"
             lane: full
             shard_index: "0"
@@ -413,7 +413,7 @@ jobs:
             windows_arch: amd64
             host_go_arch: x64
           - os: windows-2022
-            llvm: 19
+            llvm: 21
             go_version: "1.27"
             lane: full
             shard_index: "0"
@@ -422,7 +422,7 @@ jobs:
             windows_arch: amd64
             host_go_arch: x64
           - os: windows-11-arm
-            llvm: 19
+            llvm: 21
             go_version: "1.27"
             lane: full
             shard_index: "0"
@@ -431,7 +431,7 @@ jobs:
             windows_arch: arm64
             host_go_arch: x64
           - os: windows-11-arm
-            llvm: 19
+            llvm: 21
             go_version: "1.27"
             lane: full
             shard_index: "0"
@@ -440,7 +440,7 @@ jobs:
             windows_arch: arm64
             host_go_arch: arm64
           - os: windows-2022
-            llvm: 19
+            llvm: 21
             go_version: "1.27"
             lane: full
             shard_index: "0"
@@ -449,7 +449,7 @@ jobs:
             windows_arch: "386"
             host_go_arch: x64
           - os: windows-2022
-            llvm: 19
+            llvm: 21
             go_version: "1.27"
             lane: full
             shard_index: "0"
@@ -552,7 +552,7 @@ jobs:
         # Native Darwin coverage remains in the primary LLGo lanes and release
         # artifact smoke tests.
         os: [ubuntu-latest]
-        llvm: [19]
+        llvm: [21]
     runs-on: ${{matrix.os}}
     steps:
       - uses: actions/checkout@v7
@@ -602,7 +602,7 @@ jobs:
       - name: Install host dependencies
         uses: ./.github/actions/setup-deps
         with:
-          llvm-version: 19
+          llvm-version: 21
 
       - name: Set up Go for building llgo
         uses: ./.github/actions/setup-go
@@ -633,7 +633,7 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/setup-deps
         with:
-          llvm-version: 19
+          llvm-version: 21
 
       - name: Set up Emscripten
         uses: emscripten-core/setup-emsdk@v15
