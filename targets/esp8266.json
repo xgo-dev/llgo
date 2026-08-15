@@ -1,7 +1,7 @@
 {
 	"inherits": ["xtensa"],
 	"cpu": "esp8266",
-	"features": "+debug,+density,+exception,+extendedl32r,+highpriinterrupts,+interrupt,+mul32,+nsa,+prid,+regprotect,+rvector,+timerint",
+	"features": "+debug,+density,+exception,+extendedl32r,+highpriinterrupts,+interrupt,+mul32,+nsa,+prid,+regprotect,+rvector",
 	"build-tags": ["esp8266", "esp"],
 	"scheduler": "tasks",
 	"linker": "ld.lld",

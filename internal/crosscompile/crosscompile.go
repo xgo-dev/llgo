@@ -53,6 +53,8 @@ type Export struct {
 	ClangBinPath   string   // Path to clang binary directory
 
 	LLVMTarget   string // LLVM Target
+	CPU          string // LLVM target CPU used by external code generation and cache identity
+	Features     string // LLVM target features used by external code generation and cache identity
 	TargetABI    string // RISC-V Target ABI (e.g., "lp64", "lp64d")
 	BinaryFormat string // Binary format (e.g., "elf", "esp", "uf2")
 	FormatDetail string // For uf2, it's uf2FamilyID
@@ -319,12 +321,28 @@ func ldFlagsFromFileName(fileName string) string {
 	return strings.TrimPrefix(strings.TrimSuffix(fileName, ".a"), "lib")
 }
 
+func lldLTOOptFlag(level optlevel.Level) (string, error) {
+	switch level {
+	case optlevel.O0, optlevel.O1, optlevel.O2, optlevel.O3:
+		return "--lto-" + level.Name(), nil
+	case optlevel.Os, optlevel.Oz:
+		// ld.lld only accepts numeric LTO optimization levels. Clang maps its
+		// size-oriented modes to O2 for the link-time optimization pipeline.
+		return "--lto-O2", nil
+	default:
+		return "", fmt.Errorf("invalid LTO optimization level %q", level)
+	}
+}
+
 // compileWithConfig compiles libraries according to the provided configuration
 // and returns the necessary linker flags for linking against the compiled libraries
 func compileWithConfig(
 	compileConfig compile.CompileConfig,
 	outputDir string, options compile.CompileOptions,
 ) (ldflags []string, err error) {
+	if err = os.MkdirAll(outputDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create compiled library cache %q: %w", outputDir, err)
+	}
 	ldflags = append(ldflags, "-nostdlib", "-L"+outputDir)
 
 	for _, group := range compileConfig.Groups {
@@ -735,6 +753,8 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 	export.GOARCH = config.GOARCH
 	export.ExtraFiles = config.ExtraFiles
 	export.LLVMTarget = config.LLVMTarget
+	export.CPU = config.CPU
+	export.Features = config.Features
 	export.TargetABI = config.TargetABI
 	export.BinaryFormat = config.BinaryFormat
 	export.FormatDetail = config.FormatDetail()
@@ -894,9 +914,17 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 	if config.LinkerScript != "" {
 		ldflags = append(ldflags, "-T", config.LinkerScript)
 	}
-	ldflags = append(ldflags, "-L", env.LLGoROOT()) // search targets/*.ld
-
 	var libcIncludeDir []string
+	var compiledLibraryKey string
+	if config.Libc != "" || config.RTLib != "" {
+		var compilerKey string
+		compilerKey, err = compilerCacheKey(export.CC)
+		if err != nil {
+			return
+		}
+		compiledLibraryKey = compiledLibraryCacheKey(compilerKey, ccflags, ldflags)
+	}
+	ldflags = append(ldflags, "-L", env.LLGoROOT()) // search targets/*.ld
 
 	if config.Libc != "" {
 		var outputDir string
@@ -904,7 +932,7 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 		var compileConfig compile.CompileConfig
 		baseDir := filepath.Join(cacheRoot(), "crosscompile")
 
-		outputDir, compileConfig, err = getLibcCompileConfigByName(baseDir, config.Libc, config.LLVMTarget, config.CPU)
+		outputDir, compileConfig, err = getLibcCompileConfigByName(baseDir, config.Libc, config.LLVMTarget, config.CPU, compiledLibraryKey)
 		if err != nil {
 			return
 		}
@@ -930,7 +958,7 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 		var compileConfig compile.CompileConfig
 		baseDir := filepath.Join(cacheRoot(), "crosscompile")
 
-		outputDir, compileConfig, err = getRTCompileConfigByName(baseDir, config.RTLib, config.LLVMTarget)
+		outputDir, compileConfig, err = getRTCompileConfigByName(baseDir, config.RTLib, config.LLVMTarget, compiledLibraryKey)
 		if err != nil {
 			return
 		}
