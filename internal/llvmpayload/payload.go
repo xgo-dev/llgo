@@ -1,0 +1,121 @@
+// Package llvmpayload defines the revision-locked LLVM toolchains distributed
+// with and downloaded by LLGo.
+package llvmpayload
+
+import (
+	"fmt"
+	"regexp"
+	"sort"
+	"strconv"
+)
+
+const releaseBaseURL = "https://github.com/goplus/espressif-llvm-project-prebuilt/releases/download"
+
+// DefaultMajor is the LLVM payload bundled into LLGo release archives.
+const DefaultMajor = 19
+
+var llvmMajorPattern = regexp.MustCompile(`(?:^|[^0-9])([0-9]+)\.[0-9]+`)
+
+type manifest struct {
+	llvmMajor int
+	version   string
+	sha256    map[string]string
+}
+
+// Artifact identifies one host-specific LLVM payload archive.
+type Artifact struct {
+	Platform string
+	Version  string
+	URL      string
+	SHA256   string
+}
+
+var manifests = map[int]manifest{
+	19: {
+		llvmMajor: 19,
+		version:   "19.1.2_20250905-3",
+		sha256: map[string]string{
+			"aarch64-apple-darwin": "4f15d18c93eabdace3eab901582e528ac334d328fb8f19f153ee55b2208d101b",
+			"aarch64-linux-gnu":    "b2d8e77bbf3394c6a1f0d66e59385d78d2b49b97ebe782e612cba7f93dcb2337",
+			"x86_64-apple-darwin":  "e4f329a911e813ee825984f039578614dc0fe69001c2afe3e61edf27821be3ad",
+			"x86_64-linux-gnu":     "e2e0c48cd76e45ceba910917a2a97988dc80e3bb6040ea262bfe9293d5d9ac57",
+		},
+	},
+}
+
+// ForLLVMVersion returns the payload compatible with an in-process LLVM
+// version such as "21.1.8".
+func ForLLVMVersion(version string) (Manifest, error) {
+	match := llvmMajorPattern.FindStringSubmatch(version)
+	if len(match) != 2 {
+		return Manifest{}, fmt.Errorf("parse LLVM version %q", version)
+	}
+	major, err := strconv.Atoi(match[1])
+	if err != nil {
+		return Manifest{}, fmt.Errorf("parse LLVM version %q: %w", version, err)
+	}
+	return ForMajor(major)
+}
+
+// ForMajor returns the published payload for one LLVM major version.
+func ForMajor(major int) (Manifest, error) {
+	payload, ok := manifests[major]
+	if !ok {
+		return Manifest{}, fmt.Errorf("no LLGo LLVM payload for major version %d", major)
+	}
+	return Manifest{payload: payload}, nil
+}
+
+func Default() (Manifest, error) { return ForMajor(DefaultMajor) }
+
+// Manifest provides read-only access to one payload release.
+type Manifest struct {
+	payload manifest
+}
+
+func (m Manifest) LLVMMajor() int { return m.payload.llvmMajor }
+
+func (m Manifest) Version() string { return m.payload.version }
+
+func (m Manifest) BaseURL() string {
+	return releaseBaseURL + "/" + m.payload.version
+}
+
+func (m Manifest) Platforms() []string {
+	platforms := make([]string, 0, len(m.payload.sha256))
+	for platform := range m.payload.sha256 {
+		platforms = append(platforms, platform)
+	}
+	sort.Strings(platforms)
+	return platforms
+}
+
+func (m Manifest) Artifact(platform string) (Artifact, error) {
+	checksum, ok := m.payload.sha256[platform]
+	if !ok {
+		return Artifact{}, fmt.Errorf("LLVM %d payload %s is unavailable for %s", m.LLVMMajor(), m.Version(), platform)
+	}
+	filename := fmt.Sprintf("clang-esp-%s-%s.tar.xz", m.Version(), platform)
+	return Artifact{
+		Platform: platform,
+		Version:  m.Version(),
+		URL:      m.BaseURL() + "/" + filename,
+		SHA256:   checksum,
+	}, nil
+}
+
+// PlatformSuffix maps the host platform to the suffix used by payload assets.
+func PlatformSuffix(goos, goarch string) (string, bool) {
+	switch goos + "/" + goarch {
+	case "darwin/amd64":
+		return "x86_64-apple-darwin", true
+	case "darwin/arm64":
+		return "aarch64-apple-darwin", true
+	case "linux/amd64":
+		return "x86_64-linux-gnu", true
+	case "linux/arm64":
+		return "aarch64-linux-gnu", true
+	default:
+		return "", false
+	}
+}

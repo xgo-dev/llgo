@@ -14,11 +14,13 @@ import (
 	"github.com/xgo-dev/llgo/internal/crosscompile/compile"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/flash"
+	"github.com/xgo-dev/llgo/internal/llvmpayload"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/targets"
 	"github.com/xgo-dev/llgo/internal/xtool/llvm"
 	envllvm "github.com/xgo-dev/llgo/xtool/env/llvm"
+	gllvm "github.com/xgo-dev/llvm"
 )
 
 type Export struct {
@@ -184,8 +186,6 @@ var (
 )
 
 var (
-	espClangBaseUrl        = "https://github.com/goplus/espressif-llvm-project-prebuilt/releases/download/19.1.2_20250905-3"
-	espClangVersion        = "19.1.2_20250905-3"
 	espClangWindowsBaseUrl = "https://github.com/espressif/llvm-project/releases/download/esp-19.1.2_20250312"
 	espClangWindowsVersion = "19.1.2_20250312"
 )
@@ -194,6 +194,20 @@ const espClangWindowsPlatform = "x86_64-w64-mingw32"
 
 // cacheRoot can be overridden for testing
 var cacheRoot = env.LLGoCacheDir
+
+var resolveESPClangArtifact = espClangArtifact
+
+func espClangArtifact(payload llvmpayload.Manifest, platform string) (llvmpayload.Artifact, error) {
+	if platform == espClangWindowsPlatform {
+		filename := fmt.Sprintf("clang-esp-%s-%s.tar.xz", espClangWindowsVersion, platform)
+		return llvmpayload.Artifact{
+			Platform: platform,
+			Version:  espClangWindowsVersion,
+			URL:      espClangWindowsBaseUrl + "/" + filename,
+		}, nil
+	}
+	return payload.Artifact(platform)
+}
 
 func cacheDir() string {
 	return filepath.Join(cacheRoot(), "crosscompile")
@@ -258,17 +272,25 @@ func getESPClangRoot(forceEspClang bool) (clangRoot string, err error) {
 		return "", nil
 	}
 
+	payload, err := llvmpayload.ForLLVMVersion(gllvm.Version)
+	if err != nil {
+		return "", err
+	}
+
 	// Try to download ESP Clang if platform is supported
 	platformSuffix := getESPClangPlatform(runtime.GOOS, runtime.GOARCH)
 	if platformSuffix != "" {
-		baseURL, version := espClangDownload(platformSuffix)
-		cacheClangDir := filepath.Join(cacheRoot(), "crosscompile", "esp-clang-"+version)
+		artifact, artifactErr := resolveESPClangArtifact(payload, platformSuffix)
+		if artifactErr != nil {
+			return "", artifactErr
+		}
+		cacheClangDir := filepath.Join(cacheRoot(), "crosscompile", "esp-clang-"+artifact.Version)
 		if _, err = os.Stat(cacheClangDir); err != nil {
 			if !errors.Is(err, fs.ErrNotExist) {
 				return
 			}
 			fmt.Fprintln(os.Stderr, "ESP Clang not found in LLGO_ROOT or cache, will download.")
-			if err = checkDownloadAndExtractESPClang(baseURL, version, platformSuffix, cacheClangDir); err != nil {
+			if err = checkDownloadAndExtractESPClang(artifact, cacheClangDir); err != nil {
 				return
 			}
 		}
@@ -282,42 +304,13 @@ func getESPClangRoot(forceEspClang bool) (clangRoot string, err error) {
 
 // getESPClangPlatform returns the platform suffix for ESP Clang downloads
 func getESPClangPlatform(goos, goarch string) string {
-	switch goos {
-	case "darwin":
-		switch goarch {
-		case "amd64":
-			return "x86_64-apple-darwin"
-		case "arm64":
-			return "aarch64-apple-darwin"
-		}
-	case "linux":
-		switch goarch {
-		case "amd64":
-			return "x86_64-linux-gnu"
-		case "arm64":
-			return "aarch64-linux-gnu"
-		case "arm":
-			return "arm-linux-gnueabihf"
-		}
-	case "windows":
-		switch goarch {
-		case "amd64", "arm64":
-			// Espressif publishes an x86-64 Windows host toolchain. Windows on
-			// ARM64 runs it through the system's x64 emulation layer.
-			return espClangWindowsPlatform
-		}
+	if goos == "windows" && (goarch == "amd64" || goarch == "arm64") {
+		// Espressif publishes an x86-64 Windows host toolchain. Windows on
+		// ARM64 runs it through the system's x64 emulation layer.
+		return espClangWindowsPlatform
 	}
-	return ""
-}
-
-func espClangDownload(platformSuffix string) (baseURL, version string) {
-	if platformSuffix == espClangWindowsPlatform {
-		// The LLGo-hosted 20250905 build does not publish a Windows archive.
-		// Use Espressif's official LLVM 19 Windows build instead of constructing
-		// a URL that can only return 404.
-		return espClangWindowsBaseUrl, espClangWindowsVersion
-	}
-	return espClangBaseUrl, espClangVersion
+	platform, _ := llvmpayload.PlatformSuffix(goos, goarch)
+	return platform
 }
 
 // ldFlagsFromFileName extracts the library name from a filename for use in linker flags

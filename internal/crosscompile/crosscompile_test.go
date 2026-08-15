@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/llvmpayload"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/xtool/llvm"
@@ -26,13 +27,17 @@ const (
 )
 
 func TestESPClangHostDownload(t *testing.T) {
+	payload, err := llvmpayload.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		goos, goarch string
 		wantPlatform string
 		wantVersion  string
 	}{
-		{"darwin", "arm64", "aarch64-apple-darwin", espClangVersion},
-		{"linux", "amd64", "x86_64-linux-gnu", espClangVersion},
+		{"darwin", "arm64", "aarch64-apple-darwin", payload.Version()},
+		{"linux", "amd64", "x86_64-linux-gnu", payload.Version()},
 		{"windows", "amd64", espClangWindowsPlatform, espClangWindowsVersion},
 		{"windows", "arm64", espClangWindowsPlatform, espClangWindowsVersion},
 	}
@@ -42,9 +47,13 @@ func TestESPClangHostDownload(t *testing.T) {
 			t.Errorf("getESPClangPlatform(%q, %q) = %q, want %q", test.goos, test.goarch, platform, test.wantPlatform)
 			continue
 		}
-		_, version := espClangDownload(platform)
-		if version != test.wantVersion {
-			t.Errorf("espClangDownload(%q) version = %q, want %q", platform, version, test.wantVersion)
+		artifact, err := espClangArtifact(payload, platform)
+		if err != nil {
+			t.Errorf("espClangArtifact(%q) error = %v", platform, err)
+			continue
+		}
+		if artifact.Version != test.wantVersion {
+			t.Errorf("espClangArtifact(%q) version = %q, want %q", platform, artifact.Version, test.wantVersion)
 		}
 	}
 }
@@ -402,16 +411,19 @@ func TestUseTargetESPClangDownloadError(t *testing.T) {
 	t.Setenv("LLGO_ROOT", llgoRoot)
 
 	originalCacheRoot := cacheRoot
-	originalBaseURL := espClangBaseUrl
-	originalWindowsBaseURL := espClangWindowsBaseUrl
+	originalResolver := resolveESPClangArtifact
 	cacheDir := t.TempDir()
 	cacheRoot = func() string { return cacheDir }
-	espClangBaseUrl = server.URL
-	espClangWindowsBaseUrl = server.URL
+	resolveESPClangArtifact = func(_ llvmpayload.Manifest, platform string) (llvmpayload.Artifact, error) {
+		return llvmpayload.Artifact{
+			Platform: platform,
+			Version:  "test",
+			URL:      server.URL + "/clang-esp-test.tar.xz",
+		}, nil
+	}
 	t.Cleanup(func() {
 		cacheRoot = originalCacheRoot
-		espClangBaseUrl = originalBaseURL
-		espClangWindowsBaseUrl = originalWindowsBaseURL
+		resolveESPClangArtifact = originalResolver
 	})
 
 	_, err := UseTarget("esp-test", optlevel.Oz, lto.Thin)

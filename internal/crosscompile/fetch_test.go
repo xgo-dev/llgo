@@ -22,6 +22,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/xgo-dev/llgo/internal/llvmpayload"
 )
 
 // Helper function to create a test tar.gz archive
@@ -828,7 +830,7 @@ func TestESPClangExtractionLogic(t *testing.T) {
 	}
 
 	// Test that function skips download for existing directory
-	err = checkDownloadAndExtractESPClang(espClangBaseUrl, espClangVersion, "linux", espClangDir)
+	err = checkDownloadAndExtractESPClang(llvmpayload.Artifact{}, espClangDir)
 	if err != nil {
 		t.Fatalf("checkDownloadAndExtractESPClang failed: %v", err)
 	}
@@ -918,9 +920,8 @@ func TestESPClangDownloadWhenNotExists(t *testing.T) {
 		t.Fatalf("Failed to read test archive: %v", err)
 	}
 
-	server := createTestServer(t, map[string]string{
-		fmt.Sprintf("clang-esp-%s-linux.tar.xz", espClangVersion): string(archiveContent),
-	})
+	const filename = "clang-esp-test-linux.tar.xz"
+	server := createTestServer(t, map[string]string{filename: string(archiveContent)})
 	defer server.Close()
 
 	// Override cacheRoot to use a temporary directory
@@ -929,16 +930,21 @@ func TestESPClangDownloadWhenNotExists(t *testing.T) {
 	cacheRoot = func() string { return tempCacheRoot }
 	defer func() { cacheRoot = originalCacheRoot }()
 
-	// Override espClangBaseUrl to use our test server
-	originalEspClangBaseUrl := espClangBaseUrl
-	espClangBaseUrl = server.URL
-	defer func() { espClangBaseUrl = originalEspClangBaseUrl }()
-
 	// Use a fresh temp directory that doesn't have ESP Clang
 	espClangDir := filepath.Join(tempCacheRoot, "esp-clang-test")
+	checksum, err := fileSHA256(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := llvmpayload.Artifact{
+		Platform: "linux",
+		Version:  "test",
+		URL:      server.URL + "/" + filename,
+		SHA256:   checksum,
+	}
 
 	// Test download and extract when directory doesn't exist
-	err = checkDownloadAndExtractESPClang(espClangBaseUrl, espClangVersion, "linux", espClangDir)
+	err = checkDownloadAndExtractESPClang(artifact, espClangDir)
 	if err != nil {
 		t.Fatalf("checkDownloadAndExtractESPClang failed: %v", err)
 	}
@@ -982,15 +988,18 @@ func TestESPClangDownloadLicenseFailure(t *testing.T) {
 	archivePath := createTestTarXz(t, map[string]string{
 		"esp-clang/bin/clang": "fake esp clang binary",
 	})
-
+	defer os.Remove(archivePath)
 	archiveContent, err := os.ReadFile(archivePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := createTestServer(t, map[string]string{
-		fmt.Sprintf("clang-esp-%s-linux.tar.xz", espClangVersion): string(archiveContent),
-	})
+	const filename = "clang-esp-test-linux.tar.xz"
+	server := createTestServer(t, map[string]string{filename: string(archiveContent)})
 	defer server.Close()
+	checksum, err := fileSHA256(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	llgoRoot := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(llgoRoot, "runtime"), 0o755); err != nil {
@@ -1005,7 +1014,12 @@ func TestESPClangDownloadLicenseFailure(t *testing.T) {
 	t.Setenv("LLGO_ROOT", llgoRoot)
 
 	destDir := filepath.Join(t.TempDir(), "esp-clang")
-	err = checkDownloadAndExtractESPClang(server.URL, espClangVersion, "linux", destDir)
+	err = checkDownloadAndExtractESPClang(llvmpayload.Artifact{
+		Platform: "linux",
+		Version:  "test",
+		URL:      server.URL + "/" + filename,
+		SHA256:   checksum,
+	}, destDir)
 	if err == nil || !strings.Contains(err.Error(), "read ESP Clang license") {
 		t.Fatalf("checkDownloadAndExtractESPClang() error = %v, want license read error", err)
 	}
@@ -1101,6 +1115,33 @@ func TestInstallESPClangLicenseWriteFailure(t *testing.T) {
 	err := installESPClangLicense(notDir)
 	if err == nil || !strings.Contains(err.Error(), "install ESP Clang license") {
 		t.Fatalf("installESPClangLicense() error = %v, want write error", err)
+	}
+}
+
+func TestESPClangRejectsChecksumMismatch(t *testing.T) {
+	archivePath := createTestTarGz(t, map[string]string{"esp-clang/bin/clang": "fake"})
+	defer os.Remove(archivePath)
+
+	archiveContent, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := createTestServer(t, map[string]string{"clang-esp-test-linux.tar.xz": string(archiveContent)})
+	defer server.Close()
+
+	destination := filepath.Join(t.TempDir(), "esp-clang")
+	artifact := llvmpayload.Artifact{
+		Platform: "linux",
+		Version:  "test",
+		URL:      server.URL + "/clang-esp-test-linux.tar.xz",
+		SHA256:   strings.Repeat("0", 64),
+	}
+	err = checkDownloadAndExtractESPClang(artifact, destination)
+	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("checksum mismatch error = %v", err)
+	}
+	if _, statErr := os.Stat(destination); !os.IsNotExist(statErr) {
+		t.Fatalf("destination exists after rejected download: %v", statErr)
 	}
 }
 

@@ -17,6 +17,9 @@ runs:
   steps:
     - name: Set up Go
       uses: ./.github/actions/setup-go
+    - name: Load LLVM payload contract
+      run: go run ./internal/llvmpayload/cmd/llvmpayload >> "$GITHUB_ENV"
+      shell: bash
     - name: Restore Linux sysroot cache
       id: cache-linux-sysroot
       uses: actions/cache/restore@v5
@@ -31,7 +34,7 @@ runs:
       uses: actions/cache/restore@v5
       with:
         path: ${{ inputs.esp-clang-cache-path }}
-        key: esp-clang-${{ hashFiles('.github/workflows/download_esp_clang.sh') }}
+        key: esp-clang-${{ hashFiles('.github/workflows/download_esp_clang.sh', 'internal/llvmpayload/**') }}
     - name: Download ESP Clang (if cache miss)
       if: steps.cache-esp-clang.outputs.cache-hit != 'true'
       run: bash .github/workflows/download_esp_clang.sh
@@ -41,7 +44,7 @@ runs:
       uses: actions/cache/save@v5
       with:
         path: ${{ inputs.esp-clang-cache-path }}
-        key: esp-clang-${{ hashFiles('.github/workflows/download_esp_clang.sh') }}
+        key: esp-clang-${{ hashFiles('.github/workflows/download_esp_clang.sh', 'internal/llvmpayload/**') }}
     - name: Check file
       run: tree .sysroot
       shell: bash

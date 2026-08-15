@@ -1,9 +1,20 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-ESP_CLANG_VERSION="19.1.2_20250905-3"
-BASE_URL="https://github.com/goplus/espressif-llvm-project-prebuilt/releases/download/${ESP_CLANG_VERSION}"
 LLVM_LICENSE="LICENSES/XGo-LLVM-Apache-2.0-WITH-LLVM-exception.txt"
+payload_env=$(mktemp)
+archive_file=""
+cleanup() {
+    rm -f "${payload_env}"
+    if [[ -n "${archive_file}" ]]; then
+        rm -f "${archive_file}"
+    fi
+}
+trap cleanup EXIT
+
+go run ./internal/llvmpayload/cmd/llvmpayload > "${payload_env}"
+# shellcheck disable=SC1090
+source "${payload_env}"
 
 get_esp_clang_platform() {
     local platform="$1"
@@ -34,22 +45,56 @@ get_esp_clang_platform() {
 
 get_filename() {
     local platform="$1"
-    local platform_suffix=$(get_esp_clang_platform "${platform}")
+    local platform_suffix
+    platform_suffix=$(get_esp_clang_platform "${platform}")
     echo "clang-esp-${ESP_CLANG_VERSION}-${platform_suffix}.tar.xz"
+}
+
+get_checksum() {
+    case "$1" in
+        "darwin-amd64") echo "${ESP_CLANG_SHA256_DARWIN_AMD64}" ;;
+        "darwin-arm64") echo "${ESP_CLANG_SHA256_DARWIN_ARM64}" ;;
+        "linux-amd64") echo "${ESP_CLANG_SHA256_LINUX_AMD64}" ;;
+        "linux-arm64") echo "${ESP_CLANG_SHA256_LINUX_ARM64}" ;;
+        *) echo "Error: Unsupported checksum platform: $1" >&2; exit 1 ;;
+    esac
+}
+
+verify_checksum() {
+    local filename="$1"
+    local expected="$2"
+    local actual
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual=$(sha256sum "${filename}" | awk '{print $1}')
+    else
+        actual=$(shasum -a 256 "${filename}" | awk '{print $1}')
+    fi
+    if [[ "${actual}" != "${expected}" ]]; then
+        echo "Error: checksum mismatch for ${filename}: got ${actual}, want ${expected}" >&2
+        exit 1
+    fi
 }
 
 download_and_extract() {
     local platform="$1"
     local os="${platform%-*}"
     local arch="${platform##*-}"
-    local filename=$(get_filename "${platform}")
-    local download_url="${BASE_URL}/${filename}"
+    local filename
+    local checksum
+    filename=$(get_filename "${platform}")
+    checksum=$(get_checksum "${platform}")
+    local download_url="${ESP_CLANG_BASE_URL}/${filename}"
     
     echo "Downloading ESP Clang for ${platform}..."
     echo "  URL: ${download_url}"
     
+    archive_file=$(mktemp)
+    curl -fsSL "${download_url}" -o "${archive_file}"
+    verify_checksum "${archive_file}" "${checksum}"
     mkdir -p ".sysroot/${os}/${arch}/crosscompile/clang"
-    curl -fsSL "${download_url}" | tar -xJ -C ".sysroot/${os}/${arch}/crosscompile/clang" --strip-components=1
+    tar -xJf "${archive_file}" -C ".sysroot/${os}/${arch}/crosscompile/clang" --strip-components=1
+    rm -f "${archive_file}"
+    archive_file=""
     
     if [[ ! -f ".sysroot/${os}/${arch}/crosscompile/clang/bin/clang++" ]]; then
         echo "Error: clang++ not found in ${platform} toolchain"
@@ -69,6 +114,10 @@ echo "Downloading ESP Clang toolchain version ${ESP_CLANG_VERSION}..."
 if [[ ! -f "${LLVM_LICENSE}" ]]; then
     echo "Error: complete LLVM license not found at ${LLVM_LICENSE}" >&2
     exit 1
+fi
+
+if [[ -n "${GITHUB_ENV:-}" ]]; then
+    echo "LLGO_LLVM_MAJOR=${ESP_CLANG_LLVM_MAJOR}" >> "${GITHUB_ENV}"
 fi
 
 for platform in "darwin-amd64" "darwin-arm64" "linux-amd64" "linux-arm64"; do
