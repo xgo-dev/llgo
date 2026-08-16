@@ -17,14 +17,136 @@
 package build
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/goplus/llgo/internal/mockable"
 	"github.com/goplus/llgo/internal/shellparse"
 )
+
+type testProgram struct {
+	app     string
+	pkgDir  string
+	pkgName string
+}
+
+type testRunResult struct {
+	failed  bool
+	skipped int
+}
+
+type testProgramResult struct {
+	program testProgram
+	output  []byte
+	err     error
+}
+
+func runNativeTest(commands commandEnv, program testProgram, conf *Config, stdout, stderr io.Writer) error {
+	if conf.PrintCommands {
+		fmt.Fprintf(stderr, "%s %s\n", program.app, strings.Join(conf.RunArgs, " "))
+	}
+	cmd := exec.Command(program.app, conf.RunArgs...)
+	commands.configure(cmd)
+	cmd.Dir = program.pkgDir
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	err := cmd.Run()
+	if err == nil {
+		return nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		fmt.Fprintf(stderr, "%s: exit code %d\n", program.app, exitErr.ExitCode())
+	} else {
+		fmt.Fprintf(stderr, "failed to run test %s: %v\n", program.app, err)
+	}
+	return err
+}
+
+func runNativeTestPrograms(commands commandEnv, programs []testProgram, conf *Config, stdout, stderr io.Writer) testRunResult {
+	parallelism := conf.BuildParallelism
+	if conf.TestRunSequential {
+		parallelism = 1
+	}
+	return runTestPrograms(programs, parallelism, conf.TestFailFast, conf.TestJSON, stdout, stderr,
+		func(program testProgram, output io.Writer) error {
+			return runNativeTest(commands, program, conf, output, output)
+		})
+}
+
+func reportTestProgramResult(stdout, stderr io.Writer, result testProgramResult, json bool) {
+	if len(result.output) != 0 {
+		_, _ = stdout.Write(result.output)
+		if result.output[len(result.output)-1] != '\n' {
+			fmt.Fprintln(stdout)
+		}
+	}
+	if result.err != nil {
+		fmt.Fprintf(stderr, "FAIL\t%s\n", result.program.pkgName)
+	} else if !json {
+		fmt.Fprintf(stdout, "ok  \t%s\n", result.program.pkgName)
+	}
+}
+
+func runTestPrograms(
+	programs []testProgram,
+	parallelism int,
+	failFast bool,
+	json bool,
+	stdout, stderr io.Writer,
+	run func(testProgram, io.Writer) error,
+) testRunResult {
+	if len(programs) == 0 {
+		return testRunResult{}
+	}
+	if parallelism == 0 {
+		parallelism = runtime.GOMAXPROCS(0)
+	}
+	if parallelism < 1 {
+		parallelism = 1
+	}
+	if parallelism > len(programs) {
+		parallelism = len(programs)
+	}
+
+	results := make(chan testProgramResult, parallelism)
+	start := func(program testProgram) {
+		go func() {
+			var output bytes.Buffer
+			err := run(program, &output)
+			results <- testProgramResult{program: program, output: output.Bytes(), err: err}
+		}()
+	}
+
+	next := 0
+	running := 0
+	for next < len(programs) && running < parallelism {
+		start(programs[next])
+		next++
+		running++
+	}
+
+	var result testRunResult
+	for running != 0 {
+		completed := <-results
+		reportTestProgramResult(stdout, stderr, completed, json)
+		if completed.err != nil {
+			result.failed = true
+		}
+		running--
+		if next < len(programs) && !(failFast && result.failed) {
+			start(programs[next])
+			next++
+			running++
+		}
+	}
+	result.skipped = len(programs) - next
+	return result
+}
 
 func runNative(ctx *context, app, pkgDir, pkgName string, conf *Config, mode Mode) error {
 	// Skip execution if CompileOnly is true
@@ -72,26 +194,9 @@ func runNative(ctx *context, app, pkgDir, pkgName string, conf *Config, mode Mod
 			mockable.Exit(s.ExitCode())
 		}
 	case ModeTest:
-		if conf.PrintCommands {
-			fmt.Fprintf(os.Stderr, "%s %s\n", app, strings.Join(conf.RunArgs, " "))
-		}
-		cmd := exec.Command(app, conf.RunArgs...)
-		ctx.commands.configure(cmd)
-		cmd.Dir = pkgDir
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				fmt.Fprintf(os.Stderr, "%s: exit code %d\n", app, exitErr.ExitCode())
-				if !ctx.testFail {
-					ctx.testFail = true
-				}
-			} else {
-				fmt.Fprintf(os.Stderr, "failed to run test %s: %v\n", app, err)
-				if !ctx.testFail {
-					ctx.testFail = true
-				}
-			}
+		program := testProgram{app: app, pkgDir: pkgDir, pkgName: pkgName}
+		if err := runNativeTest(ctx.commands, program, conf, os.Stdout, os.Stderr); err != nil {
+			ctx.testFail = true
 		}
 	case ModeCmpTest:
 		cmpTest(ctx.commands, pkgDir, pkgName, app, conf.GenExpect, conf.RunArgs)
