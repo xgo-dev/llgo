@@ -248,11 +248,14 @@ func TestUseTarget(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error for target %s: %v", tc.targetName, err)
 			}
-			if !export.DebugInfo.AlwaysOmit {
-				t.Fatalf("target %s debug-info policy = %+v, want AlwaysOmit", tc.targetName, export.DebugInfo)
+			if !export.DebugInfo.CanRetain() {
+				t.Fatalf("target %s debug-info policy = %+v, want retainable ELF DWARF", tc.targetName, export.DebugInfo)
 			}
-			if !slices.Contains(export.LDFLAGS, "-S") {
-				t.Fatalf("target %s declares AlwaysOmit without linker -S: %v", tc.targetName, export.LDFLAGS)
+			if slices.Contains(export.LDFLAGS, "-S") {
+				t.Fatalf("target %s unconditionally strips DWARF: %v", tc.targetName, export.LDFLAGS)
+			}
+			if !slices.Equal(export.DebugInfo.OmitLinkFlags, []string{"-S"}) {
+				t.Fatalf("target %s debug omission flags = %v, want [-S]", tc.targetName, export.DebugInfo.OmitLinkFlags)
 			}
 
 			// Check if LLVM target is in CCFLAGS
@@ -344,7 +347,9 @@ func TestUseWithTarget(t *testing.T) {
 		t.Error("Expected LDFLAGS to be set for native build")
 	}
 	wantDebugInfo := nativeDebugInfoPolicy(runtime.GOOS)
-	if export.DebugInfo.AlwaysOmit != wantDebugInfo.AlwaysOmit || !slices.Equal(export.DebugInfo.OmitLinkFlags, wantDebugInfo.OmitLinkFlags) {
+	if export.DebugInfo.Capability != wantDebugInfo.Capability ||
+		!slices.Equal(export.DebugInfo.PreserveLinkFlags, wantDebugInfo.PreserveLinkFlags) ||
+		!slices.Equal(export.DebugInfo.OmitLinkFlags, wantDebugInfo.OmitLinkFlags) {
 		t.Fatalf("native debug-info policy = %+v, want %+v", export.DebugInfo, wantDebugInfo)
 	}
 }
@@ -362,9 +367,35 @@ func TestNativeDebugInfoPolicy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.goos, func(t *testing.T) {
 			policy := nativeDebugInfoPolicy(tt.goos)
-			got := !policy.AlwaysOmit && slices.Equal(policy.OmitLinkFlags, []string{"-Wl,-S"})
+			got := policy.CanRetain() &&
+				slices.Equal(policy.PreserveLinkFlags, []string{"-gdwarf-4"}) &&
+				slices.Equal(policy.OmitLinkFlags, []string{"-Wl,-S"})
 			if got != tt.supported {
 				t.Fatalf("nativeDebugInfoPolicy(%q) = %+v, supported = %v", tt.goos, policy, got)
+			}
+		})
+	}
+}
+
+func TestTargetDebugInfoPolicy(t *testing.T) {
+	tests := []struct {
+		name      string
+		linker    string
+		target    string
+		canRetain bool
+		omitFlags []string
+	}{
+		{name: "ELF lld", linker: "ld.lld", target: "thumbv7em-none-unknown-eabi", canRetain: true, omitFlags: []string{"-S"}},
+		{name: "Wasm lld", linker: "wasm-ld", target: "wasm32-unknown-unknown", canRetain: true, omitFlags: []string{"-S"}},
+		{name: "mismatched ELF linker", linker: "ld.lld", target: "wasm32-unknown-unknown"},
+		{name: "mismatched Wasm linker", linker: "wasm-ld", target: "thumbv7em-none-unknown-eabi"},
+		{name: "unknown linker", linker: "custom-ld", target: "thumbv7em-none-unknown-eabi"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := targetDebugInfoPolicy(tt.linker, tt.target)
+			if got.CanRetain() != tt.canRetain || !slices.Equal(got.OmitLinkFlags, tt.omitFlags) {
+				t.Fatalf("targetDebugInfoPolicy(%q, %q) = %+v, want retain=%v flags=%v", tt.linker, tt.target, got, tt.canRetain, tt.omitFlags)
 			}
 		})
 	}

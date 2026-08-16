@@ -1696,9 +1696,7 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 		buildArgs = append(buildArgs, linuxExportDynamicArgs(ctx)...)
 	}
 
-	if shouldEmitDebugInfo(ctx.buildConf, &ctx.crossCompile) {
-		buildArgs = append(buildArgs, "-gdwarf-4")
-	}
+	buildArgs = append(buildArgs, dwarfPreserveLinkerArgs(ctx.buildConf, &ctx.crossCompile)...)
 
 	if ctx.buildConf.GenLL {
 		var compiledObjFiles []string

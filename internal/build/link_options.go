@@ -76,10 +76,10 @@ func omitDWARFRequested(conf *Config) bool {
 }
 
 // effectiveOmitDWARF combines command intent with the selected toolchain's
-// baseline behavior. Some fixed-target linkers always omit DWARF, so LLGo
-// should avoid generating debug metadata that cannot reach the artifact.
+// capability. LLGo avoids generating debug metadata when the linked output
+// format cannot retain it.
 func effectiveOmitDWARF(conf *Config, target *crosscompile.Export) bool {
-	return omitDWARFRequested(conf) || target.DebugInfo.AlwaysOmit
+	return omitDWARFRequested(conf) || !target.DebugInfo.CanRetain()
 }
 
 // shouldEmitDebugInfo reports whether this compilation should produce DWARF.
@@ -100,13 +100,13 @@ func validateLinkOptions(conf *Config, target *crosscompile.Export) error {
 	if err := conf.LinkOptions.validate(); err != nil {
 		return err
 	}
-	if conf.LinkOptions.DWARF == DWARFPreserve && target.DebugInfo.AlwaysOmit {
+	if conf.LinkOptions.DWARF == DWARFPreserve && !target.DebugInfo.CanRetain() {
 		return fmt.Errorf("preserving DWARF is not supported by the selected target linker")
 	}
 	if !omitDWARFRequested(conf) {
 		return nil
 	}
-	if target.DebugInfo.AlwaysOmit {
+	if !target.DebugInfo.CanRetain() {
 		return nil
 	}
 	if len(target.DebugInfo.OmitLinkFlags) == 0 {
@@ -120,7 +120,7 @@ func validateLinkOptions(conf *Config, target *crosscompile.Export) error {
 // earlier; this handles debug sections in native and prebuilt inputs without
 // rewriting the linked binary afterward.
 func dwarfLinkerArgs(conf *Config, target *crosscompile.Export) []string {
-	if target.DebugInfo.AlwaysOmit || !effectiveOmitDWARF(conf, target) {
+	if !target.DebugInfo.CanRetain() || !effectiveOmitDWARF(conf, target) {
 		return nil
 	}
 	// c-archive has no final native link step. Omitting generated DWARF is
@@ -129,4 +129,15 @@ func dwarfLinkerArgs(conf *Config, target *crosscompile.Export) []string {
 		return nil
 	}
 	return slices.Clone(target.DebugInfo.OmitLinkFlags)
+}
+
+// dwarfPreserveLinkerArgs returns options needed while linking a debug
+// artifact. Direct linker invocations retain input DWARF without a preserve
+// flag, while clang-driver invocations need -gdwarf-4; the invocation path,
+// rather than the linker executable name, determines the option.
+func dwarfPreserveLinkerArgs(conf *Config, target *crosscompile.Export) []string {
+	if !shouldEmitDebugInfo(conf, target) {
+		return nil
+	}
+	return slices.Clone(target.DebugInfo.PreserveLinkFlags)
 }
