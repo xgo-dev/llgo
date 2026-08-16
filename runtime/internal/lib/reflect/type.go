@@ -1523,24 +1523,24 @@ func MapOf(key, elem Type) Type {
 	mt.Hash = fnv1(etyp.Hash, 'm', byte(ktyp.Hash>>24), byte(ktyp.Hash>>16), byte(ktyp.Hash>>8), byte(ktyp.Hash))
 	mt.Key = ktyp
 	mt.Elem = etyp
-	mt.Bucket = bucketOf(ktyp, etyp)
+	mapTypeSetBucket(&mt, ktyp, etyp)
 	mt.Hasher = func(p unsafe.Pointer, seed uintptr) uintptr {
 		return typehash(ktyp, p, seed)
 	}
 	mt.Flags = 0
 	if ktyp.Size_ > maxKeySize {
-		mt.KeySize = uint8(goarch.PtrSize)
+		mapTypeSetKeySize(&mt, uint8(goarch.PtrSize))
 		mt.Flags |= 1 // indirect key
 	} else {
-		mt.KeySize = uint8(ktyp.Size_)
+		mapTypeSetKeySize(&mt, uint8(ktyp.Size_))
 	}
 	if etyp.Size_ > maxValSize {
-		mt.ValueSize = uint8(goarch.PtrSize)
+		mapTypeSetValueSize(&mt, uint8(goarch.PtrSize))
 		mt.Flags |= 2 // indirect value
 	} else {
-		mt.MapType.ValueSize = uint8(etyp.Size_)
+		mapTypeSetValueSize(&mt, uint8(etyp.Size_))
 	}
-	mt.MapType.BucketSize = uint16(mt.Bucket.Size_)
+	mapTypeSetBucketSize(&mt, ktyp, etyp)
 	if isReflexive(ktyp) {
 		mt.Flags |= 4
 	}

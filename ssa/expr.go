@@ -1342,6 +1342,14 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 	default:
 		log.Panicf("unreachable: %d(%T), %v\n", kind, raw, fn.RawType())
 	}
+	if kind == vkFuncDecl {
+		if ret, ok := b.callAMD64MapIntrinsic(fn, sig, args); ok {
+			return ret
+		}
+		if ret, ok := b.callARM64MapIntrinsic(fn, sig, args); ok {
+			return ret
+		}
+	}
 	var reflectCheck ReflectMethodCheck
 	if b.Pkg.Path() != "reflect" {
 		reflectCheck = b.checkReflect(fn, args)

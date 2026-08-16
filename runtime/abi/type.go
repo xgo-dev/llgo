@@ -202,37 +202,6 @@ type SliceType struct {
 	Elem *Type // slice element type
 }
 
-type MapType struct {
-	Type
-	Key    *Type
-	Elem   *Type
-	Bucket *Type // internal type representing a hash bucket
-	// function for hashing keys (ptr to key, seed) -> hash
-	Hasher     func(unsafe.Pointer, uintptr) uintptr
-	KeySize    uint8  // size of key slot
-	ValueSize  uint8  // size of elem slot
-	BucketSize uint16 // size of bucket
-	Flags      uint32
-}
-
-// Note: flag values must match those used in the TMAP case
-// in ../cmd/compile/internal/reflectdata/reflect.go:writeType.
-func (mt *MapType) IndirectKey() bool { // store ptr to key instead of key itself
-	return mt.Flags&1 != 0
-}
-func (mt *MapType) IndirectElem() bool { // store ptr to elem instead of elem itself
-	return mt.Flags&2 != 0
-}
-func (mt *MapType) ReflexiveKey() bool { // true if k==k for all keys
-	return mt.Flags&4 != 0
-}
-func (mt *MapType) NeedKeyUpdate() bool { // true if we need to update key on an overwrite
-	return mt.Flags&8 != 0
-}
-func (mt *MapType) HashMightPanic() bool { // true if hash function might panic
-	return mt.Flags&16 != 0
-}
-
 func (t *Type) Key() *Type {
 	if t.Kind() == Map {
 		return (*MapType)(unsafe.Pointer(t)).Key

@@ -32,6 +32,7 @@ type Target struct {
 	GOARM                   string // "5", "6", "7" (default)
 	Target                  string // target name from -target flag (e.g., "esp32", "arm7tdmi", "wasi")
 	LLVMTarget              string // physical LLVM target selected by a target configuration
+	BuildTags               string // comma-separated Go build tags used for the target runtime
 	OptLevel                optlevel.Level
 	SaturatingFloatToUint32 bool
 }
