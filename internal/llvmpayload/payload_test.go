@@ -6,12 +6,13 @@ import (
 	"testing"
 )
 
-func TestLLVM19Manifest(t *testing.T) {
-	manifest, err := ForLLVMVersion("LLVM 19.1.7")
+func testManifest(t *testing.T, llvmVersion, payloadVersion string, wantMajor int) {
+	t.Helper()
+	manifest, err := ForLLVMVersion(llvmVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.LLVMMajor() != 19 || manifest.Version() != "19.1.2_20250905-3" {
+	if manifest.LLVMMajor() != wantMajor || manifest.Version() != payloadVersion {
 		t.Fatalf("manifest identity = LLVM %d %s", manifest.LLVMMajor(), manifest.Version())
 	}
 	platforms := manifest.Platforms()
@@ -31,6 +32,14 @@ func TestLLVM19Manifest(t *testing.T) {
 			t.Errorf("artifact checksum = %q, err %v", artifact.SHA256, err)
 		}
 	}
+}
+
+func TestLLVM19Manifest(t *testing.T) {
+	testManifest(t, "LLVM 19.1.7", "19.1.2_20250905-3", 19)
+}
+
+func TestLLVM21Manifest(t *testing.T) {
+	testManifest(t, "LLVM 21.1.8", "21.1.3_20260816", 21)
 }
 
 func TestPayloadErrors(t *testing.T) {
