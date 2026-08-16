@@ -8,7 +8,7 @@ import (
 	c "github.com/goplus/llgo/runtime/internal/clite"
 	clitedebug "github.com/goplus/llgo/runtime/internal/clite/debug"
 	cliteos "github.com/goplus/llgo/runtime/internal/clite/os"
-	latomic "github.com/goplus/llgo/runtime/internal/lib/sync/atomic"
+	latomic "sync/atomic"
 )
 
 const (

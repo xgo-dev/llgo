@@ -5,11 +5,8 @@
 package sync
 
 import (
-	"sync"
 	"sync/atomic"
 	"unsafe"
-
-	"github.com/goplus/llgo/runtime/internal/clite/tls"
 )
 
 // A Pool is a set of temporary objects that may be individually saved and
@@ -65,7 +62,7 @@ type Pool struct {
 	// a value when Get would otherwise return nil.
 	// It may not be changed concurrently with calls to Get.
 	New  func() any
-	once sync.Once
+	once Once
 }
 
 // Local per-P Pool appendix.
@@ -131,11 +128,10 @@ func (p *Pool) pin() (*poolLocal, int) {
 	}
 
 	if ptr := atomic.LoadPointer(&p.local); ptr != nil {
-		handle := (*tls.Handle[*poolLocal])(ptr)
-		l := handle.Get()
+		l := (*poolLocal)(runtime_poolLocalGet(ptr))
 		if l == nil {
 			l = &poolLocal{}
-			handle.Set(l)
+			runtime_poolLocalSet(ptr, unsafe.Pointer(l))
 		}
 		return l, 0
 	}
@@ -145,16 +141,10 @@ func (p *Pool) pin() (*poolLocal, int) {
 
 func (p *Pool) pinSlow() (*poolLocal, int) {
 	p.once.Do(func() {
-		handle := tls.Alloc[*poolLocal](func(head **poolLocal) {
-			if head != nil {
-				atomic.StorePointer(&p.victim, unsafe.Pointer(*head))
-			}
-		})
-		atomic.StorePointer(&p.local, unsafe.Pointer(&handle))
+		atomic.StorePointer(&p.local, runtime_poolLocalAlloc(&p.victim))
 	})
-	handle := (*tls.Handle[*poolLocal])(p.local)
 	l := &poolLocal{}
-	handle.Set(l)
+	runtime_poolLocalSet(p.local, unsafe.Pointer(l))
 	return l, 0
 }
 
@@ -169,15 +159,13 @@ func (p *Pool) getSlow(pid int) any {
 	return nil
 }
 
-// noCopy may be added to structs which must not be copied
-// after the first use.
-//
-// See https://golang.org/issues/8005#issuecomment-190753527
-// for details.
-//
-// Note that it must not be embedded, due to the Lock and Unlock methods.
-type noCopy struct{}
+// The standard cleanup operates on a per-P array stored in Pool.local. LLGo
+// stores a dynamic TLS handle there instead and releases its locals at thread
+// exit, so the runtime GC hook must not reinterpret that pointer.
+func poolCleanup() {}
 
-// Lock is a no-op used by -copylocks checker from `go vet`.
-func (*noCopy) Lock()   {}
-func (*noCopy) Unlock() {}
+// Implemented in runtime. Keeping the dynamic TLS implementation behind these
+// hooks lets the patched standard package retain its original dependency graph.
+func runtime_poolLocalAlloc(victim *unsafe.Pointer) unsafe.Pointer
+func runtime_poolLocalGet(handle unsafe.Pointer) unsafe.Pointer
+func runtime_poolLocalSet(handle, local unsafe.Pointer)

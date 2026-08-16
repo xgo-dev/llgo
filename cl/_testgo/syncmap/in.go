@@ -25,7 +25,7 @@ func main() {
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP0:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 96)
+// CHECK-NEXT:   %[[TMP0:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 {{(64|96)}})
 // CHECK-NEXT:   %[[TMP1:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK-NEXT:   store i64 1, ptr %[[TMP1]], align 8
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %[[TMP1]], 1

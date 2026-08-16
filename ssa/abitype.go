@@ -293,6 +293,14 @@ func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value)
 	case *types.Map:
 		bucket := prog.abi.MapBucket(t)
 		flags := prog.abi.MapFlags(t)
+		keySize := prog.abi.Size(t.Key())
+		if flags&1 != 0 {
+			keySize = prog.abi.PtrSize
+		}
+		elemSize := prog.abi.Size(t.Elem())
+		if flags&2 != 0 {
+			elemSize = prog.abi.PtrSize
+		}
 		hash := b.Pkg.rtEnvFunc("typehash")
 		b.Pkg.recordAbiTypeFakeUse(global, hash.impl)
 		env := b.abiType(t.Key())
@@ -302,8 +310,8 @@ func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value)
 			b.abiType(abi.PublicType(t.Elem())).impl,
 			b.abiType(bucket).impl,
 			hasher.impl,
-			prog.IntVal(uint64(prog.abi.Size(t.Key())), prog.Byte()).impl,
-			prog.IntVal(uint64(prog.abi.Size(t.Elem())), prog.Byte()).impl,
+			prog.IntVal(uint64(keySize), prog.Byte()).impl,
+			prog.IntVal(uint64(elemSize), prog.Byte()).impl,
 			prog.IntVal(uint64(prog.abi.Size(bucket)), prog.Uint16()).impl,
 			prog.IntVal(uint64(flags), prog.Uint32()).impl,
 		}

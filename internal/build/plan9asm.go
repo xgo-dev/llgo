@@ -25,7 +25,7 @@ import (
 // NOTE: golang.org/x/tools/go/packages.Package does not expose SFiles, so we
 // query `go list -json` here to get the exact filtered set for GOOS/GOARCH.
 func compilePkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Package, verbose bool) ([]string, error) {
-	if llruntime.SourcePatchReplacesAsmForGOARCH(pkg.PkgPath, ctx.buildConf.Goarch) {
+	if len(ctx.patchFiles[pkg.PkgPath]) != 0 && llruntime.SourcePatchReplacesAsmForGOARCH(pkg.PkgPath, ctx.buildConf.Goarch) {
 		return nil, nil
 	}
 	sfiles, err := pkgSFiles(ctx, pkg)

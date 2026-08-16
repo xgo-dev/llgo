@@ -17,20 +17,20 @@ package main
 // names in isolation.
 // CHECK-LABEL: define void @main.make1(){{.*}} {
 // CHECK: %[[MAP:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MakeMap"(ptr @"map[_llgo_int]_llgo_string", i64 0)
-// CHECK: %[[ASSIGN:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_int]_llgo_string", ptr %[[MAP]], ptr %{{[0-9]+}})
+// CHECK: %[[ASSIGN:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MapAssignFast64"(ptr @"map[_llgo_int]_llgo_string", ptr %[[MAP]], i64 1)
 // CHECK: store %"{{.*}}/runtime/internal/runtime.String" {{.*}}, ptr %[[ASSIGN]]
-// CHECK: %[[VALUE:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MapAccess1"(ptr @"map[_llgo_int]_llgo_string", ptr %[[MAP]], ptr %{{[0-9]+}})
+// CHECK: %[[VALUE:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MapAccess1Fast64"(ptr @"map[_llgo_int]_llgo_string", ptr %[[MAP]], i64 1)
 // CHECK: load %"{{.*}}/runtime/internal/runtime.String", ptr %[[VALUE]]
 // CHECK: %[[ITER:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewMapIter"(ptr @"map[_llgo_int]_llgo_string", ptr %[[MAP]])
 // CHECK: %[[NEXT:[0-9]+]] = call { i1, ptr, ptr } @"{{.*}}/runtime/internal/runtime.MapIterNext"(ptr %[[ITER]])
 // CHECK: extractvalue { i1, ptr, ptr } %[[NEXT]], 0
 // CHECK: %[[MAP_LEN:[0-9]+]] = call i64 @"{{.*}}/runtime/internal/runtime.MapLen"(ptr %[[MAP]])
 // CHECK: %[[REVERSE:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MakeMap"(ptr @"map[_llgo_string]_llgo_int", i64 %[[MAP_LEN]])
-// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_string]_llgo_int", ptr %[[REVERSE]], ptr %{{[0-9]+}})
-// CHECK: %[[FOUND:[0-9]+]] = call { ptr, i1 } @"{{.*}}/runtime/internal/runtime.MapAccess2"(ptr @"map[_llgo_string]_llgo_int", ptr %[[REVERSE]], ptr %{{[0-9]+}})
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.MapAssignFastStr"(ptr @"map[_llgo_string]_llgo_int", ptr %[[REVERSE]], %"{{.*}}/runtime/internal/runtime.String" %{{[0-9]+}})
+// CHECK: %[[FOUND:[0-9]+]] = call { ptr, i1 } @"{{.*}}/runtime/internal/runtime.MapAccess2FastStr"(ptr @"map[_llgo_string]_llgo_int", ptr %[[REVERSE]], %"{{.*}}/runtime/internal/runtime.String" {{.*}})
 // CHECK: extractvalue { ptr, i1 } %[[FOUND]], 1
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.MapDelete"(ptr @"map[_llgo_string]_llgo_int", ptr %[[REVERSE]], ptr %{{[0-9]+}})
-// CHECK: %[[DELETED:[0-9]+]] = call { ptr, i1 } @"{{.*}}/runtime/internal/runtime.MapAccess2"(ptr @"map[_llgo_string]_llgo_int", ptr %[[REVERSE]], ptr %{{[0-9]+}})
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.MapDeleteFastStr"(ptr @"map[_llgo_string]_llgo_int", ptr %[[REVERSE]], %"{{.*}}/runtime/internal/runtime.String" {{.*}})
+// CHECK: %[[DELETED:[0-9]+]] = call { ptr, i1 } @"{{.*}}/runtime/internal/runtime.MapAccess2FastStr"(ptr @"map[_llgo_string]_llgo_int", ptr %[[REVERSE]], %"{{.*}}/runtime/internal/runtime.String" {{.*}})
 // CHECK: %[[STILL_PRESENT:[0-9]+]] = extractvalue { ptr, i1 } %[[DELETED]], 1
 // CHECK: %[[PAIR_OK:[0-9]+]] = insertvalue { i64, i1 } %{{[0-9]+}}, i1 %[[STILL_PRESENT]], 1
 // CHECK: %[[BRANCH_OK:[0-9]+]] = extractvalue { i64, i1 } %[[PAIR_OK]], 1
@@ -66,21 +66,21 @@ package main
 // CHECK: insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"chan _llgo_int", ptr undef }, ptr %[[CHAN]], 1
 // CHECK: call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"
 // CHECK: %[[CHAN_MAP:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MakeMap"(ptr @"map[chan _llgo_int]_llgo_int", i64 0)
-// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[chan _llgo_int]_llgo_int", ptr %[[CHAN_MAP]], ptr %{{[0-9]+}})
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.MapAssignFast64Ptr"(ptr @"map[chan _llgo_int]_llgo_int", ptr %[[CHAN_MAP]], ptr %[[CHAN]])
 
 // A named map uses its named descriptor for operations even though allocation
 // uses the identical underlying map layout.
 // CHECK-LABEL: define void @main.make6(){{.*}} {
 // CHECK: %[[NAMED_MAP:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MakeMap"(ptr @"map[_llgo_int]_llgo_string", i64 0)
-// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @_llgo_main.M, ptr %[[NAMED_MAP]], ptr %{{[0-9]+}})
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.MapAssignFast64"(ptr @_llgo_main.M, ptr %[[NAMED_MAP]], i64 1)
 // CHECK: call ptr @"{{.*}}/runtime/internal/runtime.NewMapIter"(ptr @_llgo_main.M, ptr %[[NAMED_MAP]])
 
 // A local named key has its own descriptor and the literal's two entries are
 // reflected in the allocation hint.
 // CHECK-LABEL: define void @main.make7(){{.*}} {
 // CHECK: %[[LOCAL_MAP:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MakeMap"(ptr @"map[_llgo_main.N.7.0]_llgo_string", i64 2)
-// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_main.N.7.0]_llgo_string", ptr %[[LOCAL_MAP]], ptr %{{[0-9]+}})
-// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.MapAccess1"(ptr @"map[_llgo_main.N.7.0]_llgo_string", ptr %[[LOCAL_MAP]], ptr %{{[0-9]+}})
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.MapAssignFast64"(ptr @"map[_llgo_main.N.7.0]_llgo_string", ptr %[[LOCAL_MAP]], i64 1)
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.MapAccess1Fast64"(ptr @"map[_llgo_main.N.7.0]_llgo_string", ptr %[[LOCAL_MAP]], i64 1)
 
 func main() {
 	make1()

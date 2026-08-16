@@ -11,7 +11,7 @@ import (
 	cliteos "github.com/goplus/llgo/runtime/internal/clite/os"
 	psync "github.com/goplus/llgo/runtime/internal/clite/pthread/sync"
 	ct "github.com/goplus/llgo/runtime/internal/clite/time"
-	latomic "github.com/goplus/llgo/runtime/internal/lib/sync/atomic"
+	latomic "sync/atomic"
 )
 
 // Minimal time/timer support for stdlib time on llgo.

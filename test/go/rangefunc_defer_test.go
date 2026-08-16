@@ -98,6 +98,40 @@ func TestRangeFuncDefersRunAfterReturn(t *testing.T) {
 	}
 }
 
+func rangefuncDeferReturnValue(stop int, saved *[]int) int {
+	if stop == 0 {
+		return 10
+	}
+	for i := range rangefuncDeferYield4 {
+		defer func() { *saved = append(*saved, i) }()
+		if i == stop {
+			return 10 + i
+		}
+	}
+	return 20
+}
+
+func TestRangeFuncDefersPreserveUnnamedReturnValue(t *testing.T) {
+	tests := []struct {
+		stop      int
+		wantValue int
+		wantSaved []int
+	}{
+		{stop: 0, wantValue: 10},
+		{stop: 2, wantValue: 12, wantSaved: []int{2, 1}},
+		{stop: 9, wantValue: 20, wantSaved: []int{4, 3, 2, 1}},
+	}
+	for _, test := range tests {
+		var saved []int
+		if got := rangefuncDeferReturnValue(test.stop, &saved); got != test.wantValue {
+			t.Errorf("stop %d: return value = %d, want %d", test.stop, got, test.wantValue)
+		}
+		if !reflect.DeepEqual(saved, test.wantSaved) {
+			t.Errorf("stop %d: deferred values = %v, want %v", test.stop, saved, test.wantSaved)
+		}
+	}
+}
+
 func TestRangeFuncDefersRunAfterLabeledBreak(t *testing.T) {
 	var saved []int
 	save := func(v int) {

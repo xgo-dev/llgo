@@ -1,3 +1,5 @@
+//go:build go1.26
+
 // Copyright 2024 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
@@ -7,12 +9,11 @@
 package unique
 
 import (
+	"internal/abi"
 	"runtime"
 	"sync"
 	"unsafe"
 	"weak"
-
-	"github.com/goplus/llgo/runtime/abi"
 )
 
 var zero uintptr

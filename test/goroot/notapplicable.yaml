@@ -48,6 +48,20 @@ not_applicable:
   - directive: run
     case: nilptr.go
     reason: "not applicable: this case requires explicit nil checks for large-offset array, slice, and struct operations whose derived address may be mapped and therefore not fault; LLGo relies on LLVM and target memory faults for these non-load forms, so reproducing cmd/compile's large-offset nil-check strategy is not currently an LLGo compatibility goal"
+  - platform: darwin/arm64
+    directive: runoutput
+    case: rangegen.go
+    reason: "not applicable: after the LLGo rangefunc return fix, this case is blocked by the upstream golang.org/x/tools/go/ssa labeled-goto defect tracked at https://github.com/golang/go/issues/80860 and fixed by https://github.com/golang/tools/pull/666; duplicating the dependency fix inside LLGo is not an LLGo compatibility goal while LLGo waits to update x/tools"
+  - version: go1.24
+    platform: linux/amd64
+    directive: runoutput
+    case: rangegen.go
+    reason: "not applicable: after the LLGo rangefunc return fix, this case is blocked by the upstream golang.org/x/tools/go/ssa labeled-goto defect tracked at https://github.com/golang/go/issues/80860 and fixed by https://github.com/golang/tools/pull/666; duplicating the dependency fix inside LLGo is not an LLGo compatibility goal while LLGo waits to update x/tools"
+  - version: go1.26
+    platform: linux/amd64
+    directive: runoutput
+    case: rangegen.go
+    reason: "not applicable: after the LLGo rangefunc return fix, this case is blocked by the upstream golang.org/x/tools/go/ssa labeled-goto defect tracked at https://github.com/golang/go/issues/80860 and fixed by https://github.com/golang/tools/pull/666; duplicating the dependency fix inside LLGo is not an LLGo compatibility goal while LLGo waits to update x/tools"
   - version: go1.26
     directive: errorcheck
     case: escape_array.go

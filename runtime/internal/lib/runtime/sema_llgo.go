@@ -6,7 +6,7 @@ import (
 	"unsafe"
 
 	psync "github.com/goplus/llgo/runtime/internal/clite/pthread/sync"
-	latomic "github.com/goplus/llgo/runtime/internal/lib/sync/atomic"
+	latomic "sync/atomic"
 )
 
 // Minimal semaphore + notify list support for stdlib sync on llgo/darwin.

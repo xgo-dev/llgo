@@ -168,6 +168,7 @@ type context struct {
 	pcLineSeq            uint64
 	options              Options
 	recoverSlots         map[*ssa.Alloc]none
+	implicitDeferResults []llssa.Expr
 
 	patches          Patches
 	blkInfos         []blocks.Info
@@ -656,7 +657,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		p.inits = append(p.inits, func() {
 			oldFn, oldGoFn, oldMethodNilDerefChecks, oldCallerFrameMark := p.fn, p.goFn, p.methodNilDerefChecks, p.callerFrameMark
 			oldLocalityFunction := p.locality.function
-			oldRecoverSlots := p.recoverSlots
+			oldRecoverSlots, oldImplicitDeferResults := p.recoverSlots, p.implicitDeferResults
 			p.fn = fn
 			p.goFn = f
 			p.callerFrameMark = llssa.Nil
@@ -671,6 +672,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 				p.fn, p.goFn, p.methodNilDerefChecks, p.callerFrameMark = oldFn, oldGoFn, oldMethodNilDerefChecks, oldCallerFrameMark
 				p.locality.function = oldLocalityFunction
 				p.recoverSlots = oldRecoverSlots
+				p.implicitDeferResults = oldImplicitDeferResults
 			}()
 			p.phis = nil
 			if dbgSymsEnabled {
@@ -901,6 +903,9 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 	var instrs = block.Instrs[n:]
 	var ret = fn.Block(block.Index)
 	b.SetBlock(ret)
+	if block.Index == 0 {
+		p.prepareImplicitDeferResults(b, block.Parent())
+	}
 	if block.Index == 0 && p.functionUsesRecover(block.Parent()) {
 		b.BindRecoverFrame()
 	}
@@ -1325,34 +1330,28 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			if _, ok := p.methodNilDerefChecks[v]; ok {
 				return p.compileCheckedDeref(b, v)
 			}
-			if isEffectfulArrayPointerDeref(v) {
+			effectfulArrayDeref := isEffectfulArrayPointerDeref(v)
+			if refs, ok := nonDebugReferrers(v); ok && len(refs) == 0 {
+				if skipUnusedArrayDeref(v) {
+					x := p.compileValue(b, v.X)
+					if effectfulArrayDeref {
+						p.recordPanicLocation(b, v.Pos())
+						b.AssertNilDeref(x)
+					}
+					return
+				}
+				// Elide the unused load, but keep an explicit nil check so the
+				// Go dereference still panics instead of relying on a trapping load.
+				x := p.compileValue(b, v.X)
+				p.recordPanicLocation(b, v.Pos())
+				p.assertNilDerefBase(b, v.X)
+				b.AssertNilDeref(x)
+				return
+			}
+			if effectfulArrayDeref {
 				x := p.compileValue(b, v.X)
 				p.recordPanicLocation(b, v.Pos())
 				b.AssertNilDeref(x)
-			}
-			if refs, ok := nonDebugReferrers(v); ok && len(refs) == 0 {
-				if t := p.type_(v.Type(), llssa.InGo); t.RawType() != nil {
-					if p.isLargeNonPointerValue(t) {
-						x := p.compileValue(b, v.X)
-						p.recordPanicLocation(b, v.Pos())
-						p.assertNilDerefBase(b, v.X)
-						b.AssertNilDeref(x)
-						return
-					}
-				}
-				if skipUnusedArrayDeref(v) {
-					p.compileValue(b, v.X)
-					return
-				}
-				if _, ok := types.Unalias(v.Type()).Underlying().(*types.Slice); ok {
-					// Zero-length slice-to-array conversions can leave only
-					// an unused slice deref; preserve its required nil check.
-					x := p.compileValue(b, v.X)
-					p.recordPanicLocation(b, v.Pos())
-					p.assertNilDerefBase(b, v.X)
-					b.AssertNilDeref(x)
-					return
-				}
 			}
 			if refs, ok := nonDebugReferrers(v); ok && len(refs) == 1 {
 				if _, ok := refs[0].(*ssa.MakeInterface); ok {
@@ -1806,6 +1805,7 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 	case *ssa.Return:
 		runDefers := p.returnNeedsImplicitRunDefers(v)
 		if runDefers {
+			p.spillImplicitDeferResults(b, v)
 			p.recordPanicLocation(b, v.Pos())
 			p.emitPCLineLabel(b, p.deferRunPos(v.Pos()))
 			b.RunDefers()
@@ -1814,15 +1814,18 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		if n := len(v.Results); n > 0 {
 			results = make([]llssa.Expr, n)
 			for i, r := range v.Results {
-				// A deferred call may change a named result independently of
-				// the SSA value in Return.Results. Reload the result's storage
-				// in the RunDefers continuation instead of depending on the
-				// particular SSA node used to form the return tuple.
+				// A deferred call may change a named result independently of the
+				// SSA value in Return.Results. An unnamed result, conversely,
+				// must retain its pre-defer SSA value even though that value may
+				// not dominate the shared RunDefers continuation. Reload either
+				// kind from its entry-block storage after RunDefers.
 				if runDefers {
 					if slot := p.namedResultSlot(i); slot != nil {
 						results[i] = b.Load(p.compileValue(b, slot))
 						continue
 					}
+					results[i] = b.Load(p.implicitDeferResultSlot(i))
+					continue
 				}
 				results[i] = p.compileValue(b, r)
 			}
@@ -2044,6 +2047,47 @@ func (p *context) deferRunPos(fallback token.Pos) token.Pos {
 		}
 	}
 	return fallback
+}
+
+// prepareImplicitDeferResults reserves entry-block storage for unnamed return
+// values that must survive the shared range-defer dispatcher. Named results
+// already have source-level slots that deferred calls are allowed to update.
+func (p *context) prepareImplicitDeferResults(b llssa.Builder, fn *ssa.Function) {
+	p.implicitDeferResults = nil
+	if !p.functionHasExplicitStackDeferInAnon(fn) {
+		return
+	}
+	results := fn.Signature.Results()
+	p.implicitDeferResults = make([]llssa.Expr, results.Len())
+	for i := 0; i < results.Len(); i++ {
+		if p.namedResultSlot(i) == nil {
+			p.implicitDeferResults[i] = b.Alloc(p.type_(results.At(i).Type(), llssa.InGo), false)
+		}
+	}
+}
+
+// spillImplicitDeferResults stores unnamed return values before RunDefers so
+// its continuation can reload the pre-defer values from entry-block slots.
+func (p *context) spillImplicitDeferResults(b llssa.Builder, ret *ssa.Return) {
+	for i, result := range ret.Results {
+		if p.namedResultSlot(i) == nil {
+			b.Store(p.implicitDeferResultSlot(i), p.compileValue(b, result))
+		}
+	}
+}
+
+// implicitDeferResultSlot makes the entry-block preparation invariant explicit:
+// compileBlock visits block 0 before any return block and reserves every unnamed
+// result slot needed by the same memoized defer predicate used at the return.
+func (p *context) implicitDeferResultSlot(index int) llssa.Expr {
+	if index < 0 || index >= len(p.implicitDeferResults) {
+		panic(fmt.Sprintf("missing implicit defer result slot %d", index))
+	}
+	slot := p.implicitDeferResults[index]
+	if slot.IsNil() {
+		panic(fmt.Sprintf("missing implicit defer result slot %d", index))
+	}
+	return slot
 }
 
 func (p *context) returnNeedsImplicitRunDefers(ret *ssa.Return) bool {

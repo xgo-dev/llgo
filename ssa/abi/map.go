@@ -30,14 +30,14 @@ func makefield(name string, t types.Type) *types.Var {
 	return types.NewField(token.NoPos, nil, name, t, false)
 }
 
-// MapBucketType makes the map bucket type given the type of the map.
-func MapBucketType(t *types.Map, sizes types.Sizes) types.Type {
+func (b *Builder) mapBucketType(t *types.Map) types.Type {
+	sizes := b.Sizes
 	keytype := t.Key()
 	elemtype := t.Elem()
-	if sizes.Sizeof(keytype) > MAXKEYSIZE {
+	if b.Size(keytype) > MAXKEYSIZE {
 		keytype = types.NewPointer(keytype)
 	}
-	if sizes.Sizeof(elemtype) > MAXELEMSIZE {
+	if b.Size(elemtype) > MAXELEMSIZE {
 		elemtype = types.NewPointer(elemtype)
 	}
 

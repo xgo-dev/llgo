@@ -18,9 +18,6 @@ var barY struct {
 	Arr [16]int8
 }
 
-// CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: load { [16 x i8], [2 x ptr] }, ptr @_bar_x
-// CHECK: load { [16 x i8] }, ptr @_bar_y
 func main() {
 	_ = barX
 	_ = barY

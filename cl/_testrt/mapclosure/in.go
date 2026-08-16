@@ -29,7 +29,7 @@ var (
 
 // CHECK-LABEL: define void @main.init(){{.*}} {
 // CHECK: [[OP_MAP:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MakeMap"(ptr @"map[_llgo_string]_llgo_closure${{[-A-Za-z0-9_]+}}", i64 1)
-// CHECK: [[OP_SLOT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_string]_llgo_closure${{[-A-Za-z0-9_]+}}", ptr [[OP_MAP]], ptr %{{[0-9]+}})
+// CHECK: [[OP_SLOT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MapAssignFastStr"(ptr @"map[_llgo_string]_llgo_closure${{[-A-Za-z0-9_]+}}", ptr [[OP_MAP]], %"{{.*}}/runtime/internal/runtime.String" {{.*}})
 // CHECK-NEXT: store { ptr, ptr } { ptr @main.demo, ptr null }, ptr [[OP_SLOT]]
 // CHECK-NEXT: store ptr [[OP_MAP]], ptr @main.op
 // CHECK: store { ptr, ptr } { ptr @main.demo, ptr null }, ptr [[LIST_ELEM:%[0-9]+]]
@@ -37,7 +37,7 @@ var (
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: [[TYP:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK: [[LOADED_MAP:%[0-9]+]] = load ptr, ptr @main.op
-// CHECK: [[MAP_SLOT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MapAccess1"(ptr @"map[_llgo_string]_llgo_closure${{[-A-Za-z0-9_]+}}", ptr [[LOADED_MAP]], ptr %{{[0-9]+}})
+// CHECK: [[MAP_SLOT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MapAccess1FastStr"(ptr @"map[_llgo_string]_llgo_closure${{[-A-Za-z0-9_]+}}", ptr [[LOADED_MAP]], %"{{.*}}/runtime/internal/runtime.String" {{.*}})
 // CHECK-NEXT: [[MAP_FN:%[0-9]+]] = load { ptr, ptr }, ptr [[MAP_SLOT]]
 // CHECK-NEXT: [[LOADED_LIST:%[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr @main.list
 // CHECK-NEXT: [[LIST_DATA:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" [[LOADED_LIST]], 0

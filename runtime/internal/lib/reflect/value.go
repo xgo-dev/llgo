@@ -1114,7 +1114,7 @@ func (v Value) Pointer() uintptr {
 	k := v.kind()
 	switch k {
 	case Pointer:
-		if v.typ().PtrBytes == 0 {
+		if !v.typ().Pointers() {
 			val := *(*uintptr)(v.ptr)
 			// Since it is a not-in-heap pointer, all pointers to the heap are
 			// forbidden! See comment in Value.Elem and issue #48399.
@@ -1738,7 +1738,7 @@ func (v Value) UnsafePointer() unsafe.Pointer {
 	k := v.kind()
 	switch k {
 	case Pointer:
-		if v.typ().PtrBytes == 0 {
+		if !v.typ().Pointers() {
 			// Since it is a not-in-heap pointer, all pointers to the heap are
 			// forbidden! See comment in Value.Elem and issue #48399.
 			if !verifyNotInHeapPtr(*(*uintptr)(v.ptr)) {

@@ -4,8 +4,8 @@ import (
 	"unsafe"
 
 	psync "github.com/goplus/llgo/runtime/internal/clite/pthread/sync"
-	latomic "github.com/goplus/llgo/runtime/internal/lib/sync/atomic"
 	llrt "github.com/goplus/llgo/runtime/internal/runtime"
+	latomic "sync/atomic"
 	_ "unsafe"
 )
 

@@ -14,11 +14,39 @@ var finalizerFFITypeClosure = ffi.StructOf(ffi.TypePointer, ffi.TypePointer)
 // Keep the Go ABI conversion local to finalizers. The low-level ffi package
 // should not depend on runtime/abi.
 func finalizerFFIType(typ *abi.Type) *ffi.Type {
-	switch kind := typ.Kind(); kind {
-	case abi.Bool, abi.Int, abi.Int8, abi.Int16, abi.Int32, abi.Int64,
-		abi.Uint, abi.Uint8, abi.Uint16, abi.Uint32, abi.Uint64, abi.Uintptr,
-		abi.Float32, abi.Float64, abi.Complex64, abi.Complex128:
-		return ffi.Typ[kind]
+	switch typ.Kind() {
+	case abi.Bool:
+		return ffi.TypeBool
+	case abi.Int:
+		return ffi.TypeInt
+	case abi.Int8:
+		return ffi.TypeInt8
+	case abi.Int16:
+		return ffi.TypeInt16
+	case abi.Int32:
+		return ffi.TypeInt32
+	case abi.Int64:
+		return ffi.TypeInt64
+	case abi.Uint:
+		return ffi.TypeUint
+	case abi.Uint8:
+		return ffi.TypeUint8
+	case abi.Uint16:
+		return ffi.TypeUint16
+	case abi.Uint32:
+		return ffi.TypeUint32
+	case abi.Uint64:
+		return ffi.TypeUint64
+	case abi.Uintptr:
+		return ffi.TypeUintptr
+	case abi.Float32:
+		return ffi.TypeFloat32
+	case abi.Float64:
+		return ffi.TypeFloat64
+	case abi.Complex64:
+		return ffi.TypeComplex64
+	case abi.Complex128:
+		return ffi.TypeComplex128
 	case abi.Array:
 		at := typ.ArrayType()
 		return ffi.ArrayOf(finalizerFFIType(at.Elem), int(at.Len))
@@ -55,8 +83,10 @@ func finalizerFFIStructType(typ *abi.Type) *ffi.Type {
 		fields = append(fields, finalizerFFIType(field.Typ))
 		off = field.Offset + field.Typ.Size_
 	}
-	// Do not pad to typ.Size_: trailing zero-sized fields can enlarge the
-	// Go-visible size without consuming registers in llgo's callable ABI.
+	// Zero-sized fields do not consume registers in llgo's callable ABI.
+	// Interior padding is already reconstructed from the following field's
+	// offset, so do not pad solely to typ.Size_: a trailing zero-sized field
+	// can enlarge the Go-visible size without adding an ABI slot.
 	return ffi.StructOf(fields...)
 }
 
@@ -99,14 +129,12 @@ func finalizerFFIReturnType(results []*abi.Type) *ffi.Type {
 	}
 }
 
-func newFinalizerFFISignature(ft *abi.FuncType, explicitEnv bool) (*ffi.Signature, []*ffi.Type, uintptr) {
+func newFinalizerFFISignature(ft *abi.FuncType, explicitEnv bool, argType *ffi.Type) (*ffi.Signature, []*ffi.Type, uintptr) {
 	paramTypes := make([]*ffi.Type, 0, 2)
 	if explicitEnv {
 		paramTypes = append(paramTypes, ffi.TypePointer)
 	}
-	// SetFinalizer currently requires the finalizer argument to have the
-	// object's pointer type exactly.
-	paramTypes = append(paramTypes, ffi.TypePointer)
+	paramTypes = append(paramTypes, argType)
 	sig, err := ffi.NewSignature(finalizerFFIReturnType(ft.Out), paramTypes...)
 	if err != nil {
 		panic(err)

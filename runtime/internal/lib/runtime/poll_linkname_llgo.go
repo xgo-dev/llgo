@@ -9,7 +9,7 @@ import (
 	cliteos "github.com/goplus/llgo/runtime/internal/clite/os"
 	psync "github.com/goplus/llgo/runtime/internal/clite/pthread/sync"
 	csyscall "github.com/goplus/llgo/runtime/internal/clite/syscall"
-	latomic "github.com/goplus/llgo/runtime/internal/lib/sync/atomic"
+	latomic "sync/atomic"
 )
 
 // Minimal runtime netpoll backing for internal/poll.

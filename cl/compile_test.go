@@ -83,6 +83,7 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/goexit",      // llgo panic: unsatisfied import internal/runtime/sys
 				"./_testgo/indexerr",    // unexpected output: len(dst)=12, len(src)=0 (got "fatal error")
 				"./_testgo/makeslice",   // unexpected output: len(dst)=23, len(src)=0 (got "fatal error\\nmust error")
+				"./_testgo/mapindirect", // ld.lld: error: undefined symbol: __atomic_fetch_or_4
 				"./_testgo/reflect",     // llgo panic: unsatisfied import internal/runtime/sys
 				"./_testgo/reflectconv", // llgo panic: unsatisfied import internal/sync
 				"./_testgo/reflectfn",   // llgo panic: unsatisfied import internal/runtime/sys
@@ -127,19 +128,20 @@ var embedTargetConfigs = []embedTargetConfig{
 		target: "esp32",
 		ignoreByDir: map[string][]string{
 			"./_testgo": {
-				"./_testgo/abimethod", // panic: internal/bytealg selected .s files require plan9asm translation
-				"./_testgo/alias",     // unexpected output
-				"./_testgo/cgodefer",  // panic: cannot build SSA for packages
-				"./_testgo/cgopython", // panic: cannot build SSA for packages
-				"./_testgo/cursor",    // panic: internal/bytealg: selected .s files require plan9asm translation
-				"./_testgo/defer4",    // runtime output: fatal error
-				"./_testgo/indexerr",  // runtime output: fatal error
-				"./_testgo/invoke",    // unexpected output
-				"./_testgo/makeslice", // runtime output: fatal error
-				"./_testgo/multiret",  // unexpected output
-				"./_testgo/select",    // timeout: emulator did not auto-exit
-				"./_testgo/sigsegv",   // unexpected output
-				"./_testgo/struczero", // timeout: emulator did not auto-exit
+				"./_testgo/abimethod",   // panic: internal/bytealg selected .s files require plan9asm translation
+				"./_testgo/alias",       // unexpected output
+				"./_testgo/cgodefer",    // panic: cannot build SSA for packages
+				"./_testgo/cgopython",   // panic: cannot build SSA for packages
+				"./_testgo/cursor",      // panic: internal/bytealg: selected .s files require plan9asm translation
+				"./_testgo/defer4",      // runtime output: fatal error
+				"./_testgo/indexerr",    // runtime output: fatal error
+				"./_testgo/invoke",      // unexpected output
+				"./_testgo/makeslice",   // runtime output: fatal error
+				"./_testgo/mapindirect", // fatal error: error in backend: Incomplete scavenging after 2nd pass
+				"./_testgo/multiret",    // unexpected output
+				"./_testgo/select",      // timeout: emulator did not auto-exit
+				"./_testgo/sigsegv",     // unexpected output
+				"./_testgo/struczero",   // timeout: emulator did not auto-exit
 				// Baremetal terminates after an outermost panic is recovered.
 				"./_testgo/nesteddeferpanic",
 			},

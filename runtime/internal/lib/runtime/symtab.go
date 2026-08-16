@@ -10,8 +10,8 @@ import (
 	c "github.com/goplus/llgo/runtime/internal/clite"
 	clitedebug "github.com/goplus/llgo/runtime/internal/clite/debug"
 	cliteos "github.com/goplus/llgo/runtime/internal/clite/os"
-	latomic "github.com/goplus/llgo/runtime/internal/lib/sync/atomic"
 	rtdebug "github.com/goplus/llgo/runtime/internal/runtime"
+	latomic "sync/atomic"
 )
 
 // Frames may be used to get function/file/line information for a

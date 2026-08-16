@@ -125,6 +125,30 @@ func TestDataKindOfCoverage(t *testing.T) {
 	_, _, _ = DataKindOf(types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Int])), 0, false)
 }
 
+func TestMapIndirectLayoutCoverage(t *testing.T) {
+	b := newCoverageBuilder()
+	large := types.NewArray(types.Typ[types.Uint64], 17) // 136 bytes
+	mapType := types.NewMap(large, large)
+
+	if got := b.MapFlags(mapType); got&3 != 3 {
+		t.Fatalf("MapFlags(large, large) = %#x, want both indirect flags", got)
+	}
+
+	bucket, ok := b.MapBucket(mapType).Underlying().(*types.Struct)
+	if !ok {
+		t.Fatalf("MapBucket(large, large) returned %T, want struct", b.MapBucket(mapType))
+	}
+	for _, field := range []int{1, 2} {
+		array, ok := bucket.Field(field).Type().(*types.Array)
+		if !ok {
+			t.Fatalf("bucket field %d has type %v, want array", field, bucket.Field(field).Type())
+		}
+		if _, ok := array.Elem().(*types.Pointer); !ok {
+			t.Fatalf("bucket field %d element is %v, want pointer", field, array.Elem())
+		}
+	}
+}
+
 func TestTypeNameAndHashingCoverage(t *testing.T) {
 	b := newCoverageBuilder()
 	pkg := types.NewPackage("example.com/p", "p")

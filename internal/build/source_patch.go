@@ -8,6 +8,7 @@ import (
 	"go/build"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -104,6 +105,14 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 	if err != nil {
 		return false, nil, nil, err
 	}
+	// LLGo may be built with a different Go toolchain from the GOROOT it is
+	// compiling. Keep GOOS/GOARCH filename filtering, but do not use the host
+	// toolchain's goexperiment and architecture feature tags to discard source
+	// files whose declarations still need to be replaced.
+	filenameCtx := buildCtx
+	filenameCtx.OpenFile = func(string) (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader("package sourcepatch\n")), nil
+	}
 
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -165,7 +174,7 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 			if !strings.HasSuffix(name, ".s") || strings.HasSuffix(name, "_test.s") {
 				continue
 			}
-			match, err := buildCtx.MatchFile(srcDir, name)
+			match, err := matchSourcePatchTargetFile(buildCtx, filenameCtx, srcDir, name)
 			if err != nil {
 				return false, nil, nil, fmt.Errorf("match stdlib assembly file %s: %w", filepath.Join(srcDir, name), err)
 			}
@@ -186,6 +195,13 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 			}
 			name := entry.Name()
 			if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+			match, err := matchSourcePatchTargetFile(buildCtx, filenameCtx, srcDir, name)
+			if err != nil {
+				return false, nil, nil, fmt.Errorf("match stdlib source file %s: %w", filepath.Join(srcDir, name), err)
+			}
+			if !match {
 				continue
 			}
 			filename := filepath.Join(srcDir, name)
@@ -210,10 +226,20 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 			if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 				continue
 			}
+			match, err := matchSourcePatchTargetFile(buildCtx, filenameCtx, srcDir, name)
+			if err != nil {
+				return false, nil, nil, fmt.Errorf("match stdlib source file %s: %w", filepath.Join(srcDir, name), err)
+			}
+			if !match {
+				continue
+			}
 			filename := filepath.Join(srcDir, name)
 			src, err := readOverlay(filename)
 			if err != nil {
 				return false, nil, nil, fmt.Errorf("read stdlib source file %s: %w", filename, err)
+			}
+			if !sourcePatchMayContainSkip(src, skips) {
+				continue
 			}
 			filtered, changedFile, err := filterSourcePatchFile(src, skips)
 			if err != nil {
@@ -236,6 +262,26 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 		changed = true
 	}
 	return changed, out, files, nil
+}
+
+func matchSourcePatchTargetFile(buildCtx, filenameCtx build.Context, dir, name string) (bool, error) {
+	match, err := buildCtx.MatchFile(dir, name)
+	if err != nil || match {
+		return match, err
+	}
+	return filenameCtx.MatchFile(dir, name)
+}
+
+func sourcePatchMayContainSkip(src []byte, skips map[string]struct{}) bool {
+	for key := range skips {
+		if i := strings.LastIndexByte(key, '.'); i >= 0 {
+			key = key[i+1:]
+		}
+		if bytes.Contains(src, []byte(key)) {
+			return true
+		}
+	}
+	return false
 }
 
 func newSourcePatchMatchContext(goroot string, ctx sourcePatchBuildContext) (build.Context, error) {

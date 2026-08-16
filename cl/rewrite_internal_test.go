@@ -938,6 +938,16 @@ func namedResult(stop bool) (result *int) {
 	}
 	return nil
 }
+
+func unnamedResult(stop bool) int {
+	if stop {
+		return 1
+	}
+	for v := range seq {
+		defer func() { _ = v }()
+	}
+	return 2
+}
 `)
 
 	ir := m.String()
@@ -991,6 +1001,22 @@ func lifted() (result int) { return }
 	ctx.goFn = ssaPkg.Func("lifted")
 	if got := ctx.namedResultSlot(0); got != nil {
 		t.Fatalf("lifted named result slot = %v, want nil", got)
+	}
+}
+
+func TestImplicitDeferResultSlotRejectsMissingSlot(t *testing.T) {
+	for _, ctx := range []*context{
+		{},
+		{implicitDeferResults: make([]llssa.Expr, 1)},
+	} {
+		func() {
+			defer func() {
+				if got := recover(); got != "missing implicit defer result slot 0" {
+					t.Fatalf("implicitDeferResultSlot panic = %v", got)
+				}
+			}()
+			ctx.implicitDeferResultSlot(0)
+		}()
 	}
 }
 
