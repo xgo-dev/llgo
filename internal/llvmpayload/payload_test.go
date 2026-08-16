@@ -43,6 +43,14 @@ func TestLLVM19Manifest(t *testing.T) {
 
 func TestLLVM21Manifest(t *testing.T) {
 	testManifest(t, "LLVM 21.1.8", "21.1.3_20260816", "xtensa_release_21.1.3_20260408", 21)
+
+	manifest, err := Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.LLVMMajor() != 21 || manifest.Version() != "21.1.3_20260816" {
+		t.Fatalf("default manifest identity = LLVM %d %s", manifest.LLVMMajor(), manifest.Version())
+	}
 }
 
 func TestPayloadErrors(t *testing.T) {

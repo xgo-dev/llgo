@@ -12,7 +12,7 @@ import (
 const releaseBaseURL = "https://github.com/goplus/espressif-llvm-project-prebuilt/releases/download"
 
 // DefaultMajor is the LLVM payload bundled into LLGo release archives.
-const DefaultMajor = 19
+const DefaultMajor = 21
 
 var llvmMajorPattern = regexp.MustCompile(`(?:^|[^0-9])([0-9]+)\.[0-9]+`)
 
