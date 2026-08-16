@@ -41,6 +41,16 @@ var manifests = map[int]manifest{
 			"x86_64-linux-gnu":     "e2e0c48cd76e45ceba910917a2a97988dc80e3bb6040ea262bfe9293d5d9ac57",
 		},
 	},
+	21: {
+		llvmMajor: 21,
+		version:   "21.1.3_20260816",
+		sha256: map[string]string{
+			"aarch64-apple-darwin": "a8c46104501c38a8a7359ec24bc4e9d646f9fec2bdb2b122cbbee78e060400d1",
+			"aarch64-linux-gnu":    "77f49d832e5f309ecd6baaf169c62e3b064b27f9bee5aedddb6e66c981d56f44",
+			"x86_64-apple-darwin":  "21159a4edb8948d83e1f73dfef394bca6941d0c4035da02f8c90ac59799893fa",
+			"x86_64-linux-gnu":     "582b787057c9e36e7d4db20aaed7bbba74c7ad0481489f034f09476703befbd5",
+		},
+	},
 }
 
 // ForLLVMVersion returns the payload compatible with an in-process LLVM
