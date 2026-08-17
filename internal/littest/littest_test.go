@@ -110,6 +110,16 @@ package main
 	}
 }
 
+func TestCanonicalizeLLVMIRVersionSpellings(t *testing.T) {
+	input := "  %1 = getelementptr inbounds nuw { ptr }, ptr %0, i32 0\n" +
+		"declare void @f(ptr captures(none) readonly)\n"
+	want := "  %1 = getelementptr inbounds { ptr }, ptr %0, i32 0\n" +
+		"declare void @f(ptr nocapture readonly)\n"
+	if got := CanonicalizeLLVMIR(input); got != want {
+		t.Fatalf("CanonicalizeLLVMIR() = %q, want %q", got, want)
+	}
+}
+
 func TestLoadSpecFallsBackToOutLLWithoutMarker(t *testing.T) {
 	dir := t.TempDir()
 	err := os.WriteFile(filepath.Join(dir, "in.go"), []byte(`// CHECK: ret void

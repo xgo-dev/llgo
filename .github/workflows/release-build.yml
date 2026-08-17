@@ -81,6 +81,7 @@ jobs:
           docker run \
             --rm \
             -e GITHUB_TOKEN=${GITHUB_TOKEN} \
+            -e LLGO_LLVM_MAJOR=${LLGO_LLVM_MAJOR} \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v $(pwd):/go/src/llgo \
             -w /go/src/llgo \
@@ -208,6 +209,7 @@ jobs:
           docker run \
             --rm \
             -e GITHUB_TOKEN=${GITHUB_TOKEN} \
+            -e LLGO_LLVM_MAJOR=${LLGO_LLVM_MAJOR} \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v $(pwd):/go/src/llgo \
             -w /go/src/llgo \

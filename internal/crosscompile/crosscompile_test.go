@@ -254,6 +254,9 @@ func TestUseTarget(t *testing.T) {
 			if !slices.Contains(export.LDFLAGS, "-S") {
 				t.Fatalf("target %s declares AlwaysOmit without linker -S: %v", tc.targetName, export.LDFLAGS)
 			}
+			if export.CPU != tc.expectCPU {
+				t.Fatalf("target %s exported CPU = %q, want %q", tc.targetName, export.CPU, tc.expectCPU)
+			}
 
 			// Check if LLVM target is in CCFLAGS
 			if tc.expectLLVM != "" {
@@ -477,6 +480,29 @@ func hasFlagValue(flags []string, flag, value string) bool {
 	return false
 }
 
+func TestLLDLTOOptFlag(t *testing.T) {
+	tests := []struct {
+		level optlevel.Level
+		want  string
+	}{
+		{optlevel.O0, "--lto-O0"},
+		{optlevel.O1, "--lto-O1"},
+		{optlevel.O2, "--lto-O2"},
+		{optlevel.O3, "--lto-O3"},
+		{optlevel.Os, "--lto-O2"},
+		{optlevel.Oz, "--lto-O2"},
+	}
+	for _, test := range tests {
+		got, err := lldLTOOptFlag(test.level)
+		if err != nil || got != test.want {
+			t.Errorf("lldLTOOptFlag(%v) = %q, %v; want %q", test.level, got, err, test.want)
+		}
+	}
+	if _, err := lldLTOOptFlag(optlevel.Unset); err == nil {
+		t.Fatal("lldLTOOptFlag accepted an unset level")
+	}
+}
+
 func TestUseTargetCodegenFlagsOnlyAddedToLDFlagsWithLTO(t *testing.T) {
 	const target = "k210"
 
@@ -503,6 +529,9 @@ func TestUseTargetCodegenFlagsOnlyAddedToLDFlagsWithLTO(t *testing.T) {
 	}
 	if !slices.Contains(withLTO.CCFLAGS, "-flto=thin") {
 		t.Fatalf("missing thin LTO ccflag: %v", withLTO.CCFLAGS)
+	}
+	if !slices.Contains(withLTO.LDFLAGS, "--lto-O2") {
+		t.Fatalf("missing numeric LTO optimization flag for Oz: %v", withLTO.LDFLAGS)
 	}
 	if !hasMllvmOption(withLTO.LDFLAGS, "-code-model=medium") {
 		t.Fatalf("missing -mllvm -code-model=medium in LDFLAGS when LTO enabled: %v", withLTO.LDFLAGS)

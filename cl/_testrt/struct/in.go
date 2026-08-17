@@ -36,7 +36,7 @@ func main() {
 
 // CHECK-LABEL: define void @"main.(*Foo).Print"(ptr %0){{.*}} {
 // CHECK: [[WRAPPER_NIL:%[0-9]+]] = icmp eq ptr %0, null
-// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 [[WRAPPER_NIL]], %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 44 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 5 })
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 [[WRAPPER_NIL]], %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 45 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 5 })
 // CHECK-NEXT: [[WRAPPER_VALUE:%[0-9]+]] = load %main.Foo, ptr %0
 // CHECK-NEXT: call void @main.Foo.Print(%main.Foo [[WRAPPER_VALUE]])
 
