@@ -5,8 +5,8 @@ package runtime
 import (
 	"unsafe"
 
-	c "github.com/goplus/llgo/runtime/internal/clite"
-	rtdebug "github.com/goplus/llgo/runtime/internal/runtime"
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
+	rtdebug "github.com/xgo-dev/llgo/runtime/internal/runtime"
 )
 
 // Hardware-fault stacks: a SA_SIGINFO handler captures the interrupted

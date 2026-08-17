@@ -24,7 +24,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/goplus/llgo/xtool/safesplit"
+	"github.com/xgo-dev/llgo/xtool/safesplit"
 )
 
 var (

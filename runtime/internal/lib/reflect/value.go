@@ -25,11 +25,11 @@ import (
 	"math"
 	"unsafe"
 
-	"github.com/goplus/llgo/runtime/abi"
-	"github.com/goplus/llgo/runtime/internal/clite/bitcast"
-	"github.com/goplus/llgo/runtime/internal/ffi"
-	"github.com/goplus/llgo/runtime/internal/runtime"
-	"github.com/goplus/llgo/runtime/internal/runtime/goarch"
+	"github.com/xgo-dev/llgo/runtime/abi"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/bitcast"
+	"github.com/xgo-dev/llgo/runtime/internal/ffi"
+	"github.com/xgo-dev/llgo/runtime/internal/runtime"
+	"github.com/xgo-dev/llgo/runtime/internal/runtime/goarch"
 )
 
 // Value is the reflection interface to a Go value.
@@ -1774,10 +1774,10 @@ func (v Value) UnsafePointer() unsafe.Pointer {
 	panic(&ValueError{"reflect.Value.UnsafePointer", v.kind()})
 }
 
-//go:linkname unsafe_New github.com/goplus/llgo/runtime/internal/runtime.New
+//go:linkname unsafe_New github.com/xgo-dev/llgo/runtime/internal/runtime.New
 func unsafe_New(*abi.Type) unsafe.Pointer
 
-//go:linkname unsafe_NewArray github.com/goplus/llgo/runtime/internal/runtime.NewArray
+//go:linkname unsafe_NewArray github.com/xgo-dev/llgo/runtime/internal/runtime.NewArray
 func unsafe_NewArray(*abi.Type, int) unsafe.Pointer
 
 // ValueOf returns a new Value initialized to the concrete value
@@ -2112,12 +2112,12 @@ func memmove(dst, src unsafe.Pointer, size uintptr)
 
 // typedmemmove copies a value of type t to dst from src.
 //
-//go:linkname typedmemmove github.com/goplus/llgo/runtime/internal/runtime.Typedmemmove
+//go:linkname typedmemmove github.com/xgo-dev/llgo/runtime/internal/runtime.Typedmemmove
 func typedmemmove(t *abi.Type, dst, src unsafe.Pointer)
 
 // typedmemclr zeros the value at ptr of type t.
 //
-//go:linkname typedmemclr github.com/goplus/llgo/runtime/internal/runtime.Typedmemclr
+//go:linkname typedmemclr github.com/xgo-dev/llgo/runtime/internal/runtime.Typedmemclr
 func typedmemclr(t *abi.Type, ptr unsafe.Pointer)
 
 // typedslicecopy copies a slice of elemType values from src to dst,
@@ -3362,22 +3362,22 @@ func cvtI2I(v Value, typ Type) Value {
 	return cvtT2I(v.Elem(), typ)
 }
 
-//go:linkname chancap github.com/goplus/llgo/runtime/internal/runtime.ChanCap
+//go:linkname chancap github.com/xgo-dev/llgo/runtime/internal/runtime.ChanCap
 func chancap(ch unsafe.Pointer) int
 
-//go:linkname chanlen github.com/goplus/llgo/runtime/internal/runtime.ChanLen
+//go:linkname chanlen github.com/xgo-dev/llgo/runtime/internal/runtime.ChanLen
 func chanlen(ch unsafe.Pointer) int
 
-//go:linkname makemap github.com/goplus/llgo/runtime/internal/runtime.MakeMap
+//go:linkname makemap github.com/xgo-dev/llgo/runtime/internal/runtime.MakeMap
 func makemap(t *abi.Type, cap int) (m unsafe.Pointer)
 
-//go:linkname maplen github.com/goplus/llgo/runtime/internal/runtime.MapLen
+//go:linkname maplen github.com/xgo-dev/llgo/runtime/internal/runtime.MapLen
 func maplen(ch unsafe.Pointer) int
 
-//go:linkname mapaccess github.com/goplus/llgo/runtime/internal/runtime.MapAccess2
+//go:linkname mapaccess github.com/xgo-dev/llgo/runtime/internal/runtime.MapAccess2
 func mapaccess(t *abi.Type, m unsafe.Pointer, key unsafe.Pointer) (val unsafe.Pointer, ok bool)
 
-//go:linkname mapassign0 github.com/goplus/llgo/runtime/internal/runtime.MapAssign
+//go:linkname mapassign0 github.com/xgo-dev/llgo/runtime/internal/runtime.MapAssign
 func mapassign0(t *abi.Type, m unsafe.Pointer, key unsafe.Pointer) unsafe.Pointer
 
 func mapassign(t *abi.Type, m unsafe.Pointer, key, val unsafe.Pointer) {
@@ -3396,13 +3396,13 @@ func mapassign(t *abi.Type, m unsafe.Pointer, key, val unsafe.Pointer) {
 // 	mapassign_faststr0(t, m, key, val)
 // }
 
-//go:linkname mapdelete github.com/goplus/llgo/runtime/internal/runtime.MapDelete
+//go:linkname mapdelete github.com/xgo-dev/llgo/runtime/internal/runtime.MapDelete
 func mapdelete(t *abi.Type, m unsafe.Pointer, key unsafe.Pointer)
 
 //go:noescape
 // func mapdelete_faststr(t *abi.Type, m unsafe.Pointer, key string)
 
-//go:linkname mapiterinit github.com/goplus/llgo/runtime/internal/runtime.mapiterinit
+//go:linkname mapiterinit github.com/xgo-dev/llgo/runtime/internal/runtime.mapiterinit
 func mapiterinit(t *abi.Type, m unsafe.Pointer, it *hiter)
 
 func mapiterkey(it *hiter) (key unsafe.Pointer) {
@@ -3413,16 +3413,16 @@ func mapiterelem(it *hiter) (elem unsafe.Pointer) {
 	return it.elem
 }
 
-//go:linkname mapiternext github.com/goplus/llgo/runtime/internal/runtime.mapiternext
+//go:linkname mapiternext github.com/xgo-dev/llgo/runtime/internal/runtime.mapiternext
 func mapiternext(it *hiter)
 
-//go:linkname mapclear github.com/goplus/llgo/runtime/internal/runtime.mapclear
+//go:linkname mapclear github.com/xgo-dev/llgo/runtime/internal/runtime.mapclear
 func mapclear(t *abi.Type, m unsafe.Pointer)
 
-//go:linkname typehash github.com/goplus/llgo/runtime/internal/runtime.typehashImpl
+//go:linkname typehash github.com/xgo-dev/llgo/runtime/internal/runtime.typehashImpl
 func typehash(t *abi.Type, p unsafe.Pointer, h uintptr) uintptr
 
-//go:linkname makechan github.com/goplus/llgo/runtime/internal/runtime.NewChan
+//go:linkname makechan github.com/xgo-dev/llgo/runtime/internal/runtime.NewChan
 func makechan(eltSize, cap int) unsafe.Pointer
 
 // MakeSlice creates a new zero-initialized slice value
@@ -3538,8 +3538,8 @@ func (v Value) Clear() {
 	}
 }
 
-//go:linkname sliceclear github.com/goplus/llgo/runtime/internal/runtime.SliceClear
+//go:linkname sliceclear github.com/xgo-dev/llgo/runtime/internal/runtime.SliceClear
 func sliceclear(t *abi.Type, s unsafeheaderSlice)
 
-//go:linkname ifaceE2I github.com/goplus/llgo/runtime/internal/runtime.IfaceE2I
+//go:linkname ifaceE2I github.com/xgo-dev/llgo/runtime/internal/runtime.IfaceE2I
 func ifaceE2I(t *abi.Type, src any, dst unsafe.Pointer)

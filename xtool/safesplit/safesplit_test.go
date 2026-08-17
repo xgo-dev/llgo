@@ -78,7 +78,7 @@ func TestSplitPkgConfigFlags(t *testing.T) {
 		ftest("-D VERSION=2.1 -D DEBUG=1", `["-DVERSION=2.1" "-DDEBUG=1"]`)
 	})
 
-	// case for https://github.com/goplus/llgo/issues/1244
+	// case for https://github.com/xgo-dev/llgo/issues/1244
 	t.Run("w_pipe", func(t *testing.T) {
 		ftest("-w -pipe", `["-w" "-pipe"]`)
 		ftest("-Os -w -pipe", `["-Os" "-w" "-pipe"]`)

@@ -25,7 +25,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 // cheaderWriter handles C header generation with type definition management
@@ -679,8 +679,7 @@ func genHeader(p ssa.Program, pkgs []ssa.Package, w io.Writer) error {
 		initFnName := pkg.Path() + ".init"
 		initFn := pkg.FuncOf(initFnName)
 		if initFn != nil {
-			// Generate C-compatible function name (replace . and / with _)
-			cInitFnName := strings.ReplaceAll(strings.ReplaceAll(initFnName, ".", "_"), "/", "_")
+			cInitFnName := cIdentifier(initFnName)
 			if err := hw.writeFunctionDecl(cInitFnName, initFnName, initFn); err != nil {
 				return fmt.Errorf("failed to write declaration for function %s: %w", initFnName, err)
 			}
@@ -689,6 +688,22 @@ func genHeader(p ssa.Program, pkgs []ssa.Package, w io.Writer) error {
 
 	// Write all content to output in the correct order
 	return hw.writeTo(w)
+}
+
+func cIdentifier(name string) string {
+	var out strings.Builder
+	out.Grow(len(name))
+	for i, r := range name {
+		valid := r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
+		if !valid {
+			r = '_'
+		}
+		if i == 0 && r >= '0' && r <= '9' {
+			out.WriteByte('_')
+		}
+		out.WriteRune(r)
+	}
+	return out.String()
 }
 
 func exportBelongsToPackage(pkgPath, name string) bool {

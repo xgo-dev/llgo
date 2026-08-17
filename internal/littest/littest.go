@@ -25,7 +25,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/goplus/llgo/internal/filecheck"
+	"github.com/xgo-dev/llgo/internal/filecheck"
 )
 
 type Mode int

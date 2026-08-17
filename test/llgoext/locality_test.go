@@ -23,9 +23,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/goplus/llgo/test/llgoext/testdata/localitybench"
-	"github.com/goplus/llgo/test/llgoext/testdata/localityfailure"
-	"github.com/goplus/llgo/test/llgoext/testdata/localityscope"
+	"github.com/xgo-dev/llgo/test/llgoext/testdata/localitybench"
+	"github.com/xgo-dev/llgo/test/llgoext/testdata/localityfailure"
+	"github.com/xgo-dev/llgo/test/llgoext/testdata/localityscope"
 )
 
 var initializerSequence int

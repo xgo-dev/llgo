@@ -4,7 +4,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/goplus/llgo/runtime/internal/runtime/goarch"
+	"github.com/xgo-dev/llgo/runtime/internal/runtime/goarch"
 )
 
 func TestEndianConstants(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"go/token"
 	"go/types"
 
-	"github.com/goplus/llgo/internal/debuginfo"
+	"github.com/xgo-dev/llgo/internal/debuginfo"
 	"github.com/xgo-dev/llvm"
 )
 

@@ -21,7 +21,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/goplus/llgo/xtool/nm"
+	"github.com/xgo-dev/llgo/xtool/nm"
 )
 
 // MatchedItem represents a matched item

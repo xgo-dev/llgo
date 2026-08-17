@@ -19,7 +19,7 @@ package runtime
 import (
 	"unsafe"
 
-	clitedebug "github.com/goplus/llgo/runtime/internal/clite/debug"
+	clitedebug "github.com/xgo-dev/llgo/runtime/internal/clite/debug"
 )
 
 type CallerFrame struct {

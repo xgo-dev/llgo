@@ -30,13 +30,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/goplus/llgo/cl/blocks"
-	"github.com/goplus/llgo/cl/ssawrap"
-	"github.com/goplus/llgo/internal/goembed"
-	"github.com/goplus/llgo/internal/typepatch"
+	"github.com/xgo-dev/llgo/cl/blocks"
+	"github.com/xgo-dev/llgo/cl/ssawrap"
+	"github.com/xgo-dev/llgo/internal/goembed"
+	"github.com/xgo-dev/llgo/internal/typepatch"
 	"golang.org/x/tools/go/ssa"
 
-	llssa "github.com/goplus/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
 // -----------------------------------------------------------------------------
@@ -756,12 +756,12 @@ func needsRuntimeStackNoInline(pkg *types.Package, f *ssa.Function) bool {
 		return false
 	}
 	switch pkg.Path() {
-	case "runtime", "github.com/goplus/llgo/runtime/internal/lib/runtime":
+	case "runtime", "github.com/xgo-dev/llgo/runtime/internal/lib/runtime":
 		switch f.Name() {
 		case "Caller", "Callers", "callers":
 			return true
 		}
-	case "github.com/goplus/llgo/runtime/internal/clite/debug":
+	case "github.com/xgo-dev/llgo/runtime/internal/clite/debug":
 		return f.Name() == "StackTrace"
 	}
 	return false
@@ -916,7 +916,7 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 	if block.Index == 0 && p.shouldTrackCallerFrames() {
 		p.pushCallerLocationFrame(b, block.Parent())
 	}
-	if block.Index == 0 && p.options.Trace && !strings.HasPrefix(fn.Name(), "github.com/goplus/llgo/runtime/internal/runtime.Print") {
+	if block.Index == 0 && p.options.Trace && !strings.HasPrefix(fn.Name(), "github.com/xgo-dev/llgo/runtime/internal/runtime.Print") {
 		b.Printf("call " + fn.Name() + "\n\x00")
 	}
 	// place here to avoid wrong current-block

@@ -7,15 +7,15 @@ _llgo_main.T:
 [OrdinaryEdges]
 *_llgo_main.T:
     _llgo_main.T
-    github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    github.com/xgo-dev/llgo/runtime/internal/runtime.memequalptr
 _llgo_main.T:
     *_llgo_main.T
-    github.com/goplus/llgo/runtime/internal/runtime.memequal0
+    github.com/xgo-dev/llgo/runtime/internal/runtime.memequal0
 main.init:
     main.init$guard
 main.main:
     _llgo_main.T
-    github.com/goplus/llgo/runtime/internal/runtime.AllocU
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU
     main.sink
 
 [UseIface]

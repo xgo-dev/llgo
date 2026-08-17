@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/internal/mockable"
+	"github.com/xgo-dev/llgo/internal/mockable"
 )
 
 func TestGoCompilerFlagNamesAndTypes(t *testing.T) {

@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/goplus/llgo/cmd/internal/flags"
-	"github.com/goplus/llgo/internal/build"
+	"github.com/xgo-dev/llgo/cmd/internal/flags"
+	"github.com/xgo-dev/llgo/internal/build"
 )
 
 func TestBuildFlagsWiring(t *testing.T) {
@@ -160,7 +160,7 @@ func TestCanRunPackagesInParallel(t *testing.T) {
 func TestListTestPackages(t *testing.T) {
 	conf := build.NewDefaultConf(build.ModeTest)
 	conf.BuildParallelism = 2
-	pkg := "github.com/goplus/llgo/internal/goflags"
+	pkg := "github.com/xgo-dev/llgo/internal/goflags"
 	got, err := listTestPackages(conf, []string{pkg, pkg})
 	if err != nil {
 		t.Fatal(err)

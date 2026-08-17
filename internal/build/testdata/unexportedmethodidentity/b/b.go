@@ -1,6 +1,6 @@
 package b
 
-import "github.com/goplus/llgo/internal/build/testdata/unexportedmethodidentity/a"
+import "github.com/xgo-dev/llgo/internal/build/testdata/unexportedmethodidentity/a"
 
 type T struct{ a.T }
 

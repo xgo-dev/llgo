@@ -9,7 +9,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/goplus/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/env"
 )
 
 var (

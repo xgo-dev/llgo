@@ -26,8 +26,8 @@ import (
 	"go/types"
 	"testing"
 
-	"github.com/goplus/llgo/internal/goembed"
-	"github.com/goplus/llgo/ssa/ssatest"
+	"github.com/xgo-dev/llgo/internal/goembed"
+	"github.com/xgo-dev/llgo/ssa/ssatest"
 	"golang.org/x/tools/go/ssa"
 )
 

@@ -30,7 +30,7 @@ import (
 
 	"golang.org/x/tools/go/ssa"
 
-	llssa "github.com/goplus/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
 var asmRegisterRegex = regexp.MustCompile(`\{[a-zA-Z]+\}`)
@@ -888,7 +888,7 @@ func (p *context) shouldTrackCallerFrames() bool {
 func canTrackCallerFramesForPackage(pkgPath string) bool {
 	return pkgPath != llssa.PkgRuntime &&
 		pkgPath != "runtime" &&
-		!strings.HasPrefix(pkgPath, "github.com/goplus/llgo/runtime/internal/")
+		!strings.HasPrefix(pkgPath, "github.com/xgo-dev/llgo/runtime/internal/")
 }
 
 func packageUsesRuntimeCaller(c *CallerTracking, pkg *ssa.Package) bool {
@@ -1824,7 +1824,7 @@ func isRuntimeCallerFunc(fn *ssa.Function) bool {
 		return false
 	}
 	switch fn.Pkg.Pkg.Path() {
-	case "runtime", "github.com/goplus/llgo/runtime/internal/lib/runtime":
+	case "runtime", "github.com/xgo-dev/llgo/runtime/internal/lib/runtime":
 		return isRuntimeCallerName(fn.Name())
 	case "runtime/debug":
 		return fn.Name() == "Stack"
@@ -1838,7 +1838,7 @@ func isRuntimeCallerFrameFunc(fn *ssa.Function) bool {
 		return false
 	}
 	switch fn.Pkg.Pkg.Path() {
-	case "runtime", "github.com/goplus/llgo/runtime/internal/lib/runtime":
+	case "runtime", "github.com/xgo-dev/llgo/runtime/internal/lib/runtime":
 		return isRuntimeCallerFrameName(fn.Name())
 	case "runtime/debug":
 		return fn.Name() == "Stack"
@@ -1852,7 +1852,7 @@ func isRuntimeCallerLookupFunc(fn *ssa.Function) bool {
 		return false
 	}
 	switch fn.Pkg.Pkg.Path() {
-	case "runtime", "github.com/goplus/llgo/runtime/internal/lib/runtime":
+	case "runtime", "github.com/xgo-dev/llgo/runtime/internal/lib/runtime":
 		switch fn.Name() {
 		case "Caller", "Callers", "Stack":
 			return true

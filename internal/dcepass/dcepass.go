@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	abiMethodTypeName     = "github.com/goplus/llgo/runtime/abi.Method"
-	unreachableMethodName = "github.com/goplus/llgo/runtime/internal/runtime.unreachableMethod"
+	abiMethodTypeName     = "github.com/xgo-dev/llgo/runtime/abi.Method"
+	unreachableMethodName = "github.com/xgo-dev/llgo/runtime/internal/runtime.unreachableMethod"
 )
 
 // EmitStrongTypeOverrides emits method-pruned strong ABI type symbols into dst.

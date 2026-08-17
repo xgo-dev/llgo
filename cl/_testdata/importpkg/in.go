@@ -1,7 +1,7 @@
 // LITTEST
 package main
 
-import "github.com/goplus/llgo/cl/_testdata/importpkg/stdio"
+import "github.com/xgo-dev/llgo/cl/_testdata/importpkg/stdio"
 
 // CHECK: @main.hello = global [7 x i8] c"Hello\0A\00"
 

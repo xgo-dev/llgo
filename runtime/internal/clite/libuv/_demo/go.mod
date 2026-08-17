@@ -1,4 +1,4 @@
-module github.com/goplus/llgo/runtime/internal/clite/libuv/_demo
+module github.com/xgo-dev/llgo/runtime/internal/clite/libuv/_demo
 
 go 1.24.2
 

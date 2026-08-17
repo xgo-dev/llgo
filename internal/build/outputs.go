@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/goplus/llgo/internal/crosscompile"
-	"github.com/goplus/llgo/internal/firmware"
+	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/firmware"
 )
 
 // OutputCfg contains the generated output paths and conversion configuration

@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/goplus/llgo/internal/meta"
+	"github.com/xgo-dev/llgo/internal/meta"
 )
 
 func main() {

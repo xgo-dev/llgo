@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"runtime"
 
-	dep "github.com/goplus/llgo/cl/_testgo/rewrite/dep"
+	dep "github.com/xgo-dev/llgo/cl/_testgo/rewrite/dep"
 )
 
 // Keep the package globals and imported/runtime calls distinct after name

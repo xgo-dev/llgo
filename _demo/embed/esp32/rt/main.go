@@ -3,7 +3,7 @@ package main
 import (
 	_ "unsafe"
 
-	"github.com/goplus/llgo/_demo/embed/esp32/watchdog"
+	"github.com/xgo-dev/llgo/_demo/embed/esp32/watchdog"
 )
 
 //

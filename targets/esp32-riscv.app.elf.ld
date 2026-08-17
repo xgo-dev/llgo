@@ -105,7 +105,7 @@ SECTIONS
   /* Stack must be placed after .dram0.dummy so that the IRAM gap is applied
    * first, preventing the stack from overlapping with IRAM text in physical
    * memory (IRAM and DRAM alias the same SRAM via different buses).
-   * See issue: https://github.com/goplus/llgo/issues/1656
+   * See issue: https://github.com/xgo-dev/llgo/issues/1656
    */
   .stack (NOLOAD) :
   {

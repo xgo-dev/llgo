@@ -1,7 +1,7 @@
 // LITTEST
 package main
 
-import "github.com/goplus/llgo/cl/_testdata/foo"
+import "github.com/xgo-dev/llgo/cl/_testdata/foo"
 
 // CHECK-LABEL: define %"{{.*}}eface" @main.Foo(){{.*}} {
 // CHECK: store i64 1, ptr %{{[0-9]+}}

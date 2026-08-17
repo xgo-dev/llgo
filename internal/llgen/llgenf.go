@@ -23,9 +23,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/goplus/llgo/internal/build"
-	"github.com/goplus/llgo/internal/goflags"
-	"github.com/goplus/llgo/internal/targets"
+	"github.com/xgo-dev/llgo/internal/build"
+	"github.com/xgo-dev/llgo/internal/goflags"
+	"github.com/xgo-dev/llgo/internal/targets"
 )
 
 func GenFrom(fileOrPkg string) string {

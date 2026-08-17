@@ -24,7 +24,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/goplus/llgo/internal/build"
+	"github.com/xgo-dev/llgo/internal/build"
 )
 
 // ParsedLinkFlags contains the Go linker options that LLGo currently handles.

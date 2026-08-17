@@ -34,7 +34,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goplus/llgo/internal/pclnmap"
+	"github.com/xgo-dev/llgo/internal/pclnmap"
 )
 
 // The fixture obtains both a function-value entry PC and a target mid-function
@@ -506,7 +506,7 @@ func writePCLNIntegrationSource(t *testing.T, source string) string {
 
 func pclnIntegrationHasLLGoRuntime(t *testing.T, path string) bool {
 	t.Helper()
-	const runtimeSymbol = "github.com/goplus/llgo/runtime/internal/runtime."
+	const runtimeSymbol = "github.com/xgo-dev/llgo/runtime/internal/runtime."
 	switch runtime.GOOS {
 	case "linux":
 		f, err := elf.Open(path)

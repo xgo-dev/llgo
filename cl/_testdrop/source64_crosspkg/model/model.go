@@ -1,6 +1,6 @@
 package model
 
-import "github.com/goplus/llgo/cl/_testdrop/source64_crosspkg/api"
+import "github.com/xgo-dev/llgo/cl/_testdrop/source64_crosspkg/api"
 
 type RuntimeSource struct {
 	n uint64

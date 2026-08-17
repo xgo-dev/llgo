@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/goplus/llgo/_xtool/clang/parser"
+	"github.com/xgo-dev/llgo/_xtool/clang/parser"
 )
 
 var (

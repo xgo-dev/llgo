@@ -6,8 +6,8 @@ package js
 import (
 	_ "unsafe"
 
-	c "github.com/goplus/llgo/runtime/internal/clite"
-	_ "github.com/goplus/llgo/runtime/internal/embind"
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
+	_ "github.com/xgo-dev/llgo/runtime/internal/embind"
 )
 
 var (

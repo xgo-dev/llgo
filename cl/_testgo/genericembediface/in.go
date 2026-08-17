@@ -2,7 +2,7 @@
 package main
 
 import (
-	"github.com/goplus/llgo/cl/_testgo/genericembediface/streamlib"
+	"github.com/xgo-dev/llgo/cl/_testgo/genericembediface/streamlib"
 )
 
 type Request struct{}

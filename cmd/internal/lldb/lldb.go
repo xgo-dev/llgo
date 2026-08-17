@@ -29,8 +29,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/goplus/llgo/cmd/internal/base"
-	"github.com/goplus/llgo/internal/mockable"
+	"github.com/xgo-dev/llgo/cmd/internal/base"
+	"github.com/xgo-dev/llgo/internal/mockable"
 )
 
 const minimumUpstreamLLDBVersion = 18

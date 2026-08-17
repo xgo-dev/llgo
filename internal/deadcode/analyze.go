@@ -4,7 +4,7 @@ import (
 	"go/token"
 	"sort"
 
-	"github.com/goplus/llgo/internal/meta"
+	"github.com/xgo-dev/llgo/internal/meta"
 )
 
 type ifaceMethodKey struct {

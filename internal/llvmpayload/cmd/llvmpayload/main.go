@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/goplus/llgo/internal/llvmpayload"
+	"github.com/xgo-dev/llgo/internal/llvmpayload"
 )
 
 func main() {

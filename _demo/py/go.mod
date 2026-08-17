@@ -1,4 +1,4 @@
-module github.com/goplus/llgo/_demo/py
+module github.com/xgo-dev/llgo/_demo/py
 
 go 1.20
 

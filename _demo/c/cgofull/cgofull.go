@@ -106,8 +106,8 @@ import (
 	"fmt"
 	"unsafe"
 
-	"github.com/goplus/llgo/_demo/c/cgofull/pymod1"
-	"github.com/goplus/llgo/_demo/c/cgofull/pymod2"
+	"github.com/xgo-dev/llgo/_demo/c/cgofull/pymod1"
+	"github.com/xgo-dev/llgo/_demo/c/cgofull/pymod2"
 )
 
 //export go_callback_not_use_in_go

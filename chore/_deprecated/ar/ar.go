@@ -29,7 +29,7 @@ import (
 	"time"
 
 	wasm "github.com/aykevl/go-wasm"
-	"github.com/goplus/llgo/xtool/ar"
+	"github.com/xgo-dev/llgo/xtool/ar"
 )
 
 // Create creates an arcive for static linking from a list of object files

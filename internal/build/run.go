@@ -22,8 +22,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/goplus/llgo/internal/mockable"
-	"github.com/goplus/llgo/internal/shellparse"
+	"github.com/xgo-dev/llgo/internal/mockable"
+	"github.com/xgo-dev/llgo/internal/shellparse"
 )
 
 func runNative(ctx *context, app, pkgDir, pkgName string, conf *Config, mode Mode) error {

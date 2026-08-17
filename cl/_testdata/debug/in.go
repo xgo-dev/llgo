@@ -121,9 +121,9 @@ func FuncWithAllTypeStructParam(s StructWithAllTypeFields) {
 	//   s.c128: complex128{real = 15, imag = 16}
 	//   s.slice: []int{21, 22, 23}
 	//   s.arr: [3]int{24, 25, 26}
-	//   s.arr2: [3]github.com/goplus/llgo/cl/_testdata/debug.E{{i = 27}, {i = 28}, {i = 29}}
+	//   s.arr2: [3]github.com/xgo-dev/llgo/cl/_testdata/debug.E{{i = 27}, {i = 28}, {i = 29}}
 	//   s.s: "hello"
-	//   s.e: github.com/goplus/llgo/cl/_testdata/debug.E{i = 30}
+	//   s.e: github.com/xgo-dev/llgo/cl/_testdata/debug.E{i = 30}
 	//   s.pad1: 100
 	//   s.pad2: 200
 	s.i8 = '\b'
@@ -176,7 +176,7 @@ func FuncWithAllTypeParams(
 	//   f64: 12
 	//   slice: []int{21, 22, 23}
 	//   arr: [3]int{24, 25, 26}
-	//   arr2: [3]github.com/goplus/llgo/cl/_testdata/debug.E{{i = 27}, {i = 28}, {i = 29}}
+	//   arr2: [3]github.com/xgo-dev/llgo/cl/_testdata/debug.E{{i = 27}, {i = 28}, {i = 29}}
 	//   slice[0]: 21
 	//   slice[1]: 22
 	//   slice[2]: 23
@@ -186,7 +186,7 @@ func FuncWithAllTypeParams(
 	//   arr2[0].i: 27
 	//   arr2[1].i: 28
 	//   arr2[2].i: 29
-	//   e: github.com/goplus/llgo/cl/_testdata/debug.E{i = 30}
+	//   e: github.com/xgo-dev/llgo/cl/_testdata/debug.E{i = 30}
 
 	// Expected(skip):
 	//   i8: '\b'
@@ -255,9 +255,9 @@ func FuncWithAllTypeParams(
 	//   c64: complex64{real = 21, imag = 22}
 	//   c128: complex128{real = 23, imag = 24}
 	//   slice: []int{31, 32, 33}
-	//   arr2: [3]github.com/goplus/llgo/cl/_testdata/debug.E{{i = 37}, {i = 38}, {i = 39}}
+	//   arr2: [3]github.com/xgo-dev/llgo/cl/_testdata/debug.E{{i = 37}, {i = 38}, {i = 39}}
 	//   s: "world"
-	//   e: github.com/goplus/llgo/cl/_testdata/debug.E{i = 40}
+	//   e: github.com/xgo-dev/llgo/cl/_testdata/debug.E{i = 40}
 
 	// Expected(skip):
 	//   arr: [3]int{34, 35, 36}
@@ -560,9 +560,9 @@ func main() {
 	//   s.c128: complex128{real = 15, imag = 16}
 	//   s.slice: []int{21, 22, 23}
 	//   s.arr: [3]int{24, 25, 26}
-	//   s.arr2: [3]github.com/goplus/llgo/cl/_testdata/debug.E{{i = 27}, {i = 28}, {i = 29}}
+	//   s.arr2: [3]github.com/xgo-dev/llgo/cl/_testdata/debug.E{{i = 27}, {i = 28}, {i = 29}}
 	//   s.s: "hello"
-	//   s.e: github.com/goplus/llgo/cl/_testdata/debug.E{i = 30}
+	//   s.e: github.com/xgo-dev/llgo/cl/_testdata/debug.E{i = 30}
 	//   s.pf.i16: 100
 	//   *(s.pf).i16: 100
 	//   *(s.pi): 100

@@ -7,9 +7,9 @@ package reflectlite
 import (
 	"unsafe"
 
-	"github.com/goplus/llgo/runtime/abi"
-	_ "github.com/goplus/llgo/runtime/internal/runtime"
-	"github.com/goplus/llgo/runtime/internal/runtime/goarch"
+	"github.com/xgo-dev/llgo/runtime/abi"
+	_ "github.com/xgo-dev/llgo/runtime/internal/runtime"
+	"github.com/xgo-dev/llgo/runtime/internal/runtime/goarch"
 )
 
 // Value is the reflection interface to a Go value.
@@ -327,10 +327,10 @@ func (v Value) Kind() Kind {
 	return v.kind()
 }
 
-//go:linkname chanlen github.com/goplus/llgo/runtime/internal/runtime.ChanLen
+//go:linkname chanlen github.com/xgo-dev/llgo/runtime/internal/runtime.ChanLen
 func chanlen(ch unsafe.Pointer) int
 
-//go:linkname maplen github.com/goplus/llgo/runtime/internal/runtime.MapLen
+//go:linkname maplen github.com/xgo-dev/llgo/runtime/internal/runtime.MapLen
 func maplen(ch unsafe.Pointer) int
 
 // Len returns v's length.
@@ -403,7 +403,7 @@ func (v Value) closureFunc() *abi.FuncType {
  * constructors
  */
 
-//go:linkname unsafe_New github.com/goplus/llgo/runtime/internal/runtime.New
+//go:linkname unsafe_New github.com/xgo-dev/llgo/runtime/internal/runtime.New
 func unsafe_New(*abi.Type) unsafe.Pointer
 
 // ValueOf returns a new Value initialized to the concrete value
@@ -466,10 +466,10 @@ func arrayAt(p unsafe.Pointer, i int, eltSize uintptr, whySafe string) unsafe.Po
 	return add(p, uintptr(i)*eltSize, "i < len")
 }
 
-//go:linkname ifaceE2I github.com/goplus/llgo/runtime/internal/runtime.IfaceE2I
+//go:linkname ifaceE2I github.com/xgo-dev/llgo/runtime/internal/runtime.IfaceE2I
 func ifaceE2I(t *abi.Type, src any, dst unsafe.Pointer)
 
 // typedmemmove copies a value of type t to dst from src.
 //
-//go:linkname typedmemmove github.com/goplus/llgo/runtime/internal/runtime.Typedmemmove
+//go:linkname typedmemmove github.com/xgo-dev/llgo/runtime/internal/runtime.Typedmemmove
 func typedmemmove(t *abi.Type, dst, src unsafe.Pointer)

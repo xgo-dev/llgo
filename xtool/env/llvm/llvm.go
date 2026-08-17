@@ -25,11 +25,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/goplus/llgo/internal/env"
-	"github.com/goplus/llgo/xtool/clang"
-	"github.com/goplus/llgo/xtool/llvm/install_name_tool"
-	"github.com/goplus/llgo/xtool/llvm/llvmlink"
-	"github.com/goplus/llgo/xtool/nm"
+	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/xtool/clang"
+	"github.com/xgo-dev/llgo/xtool/llvm/install_name_tool"
+	"github.com/xgo-dev/llgo/xtool/llvm/llvmlink"
+	"github.com/xgo-dev/llgo/xtool/nm"
 )
 
 // -----------------------------------------------------------------------------

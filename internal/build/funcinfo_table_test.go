@@ -27,9 +27,9 @@ import (
 
 	"github.com/xgo-dev/llvm"
 
-	"github.com/goplus/llgo/internal/lto"
-	"github.com/goplus/llgo/internal/packages"
-	llssa "github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llgo/internal/lto"
+	"github.com/xgo-dev/llgo/internal/packages"
+	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
 func TestFuncInfoTableMaterializesMetadataWithoutFunctionPointers(t *testing.T) {
@@ -53,6 +53,7 @@ func TestFuncInfoTableMaterializesMetadataWithoutFunctionPointers(t *testing.T) 
 			BuildMode: BuildModeExe,
 			Goos:      "linux",
 			Goarch:    "amd64",
+			PCLNMode:  PCLNNone, // Keep exact table assertions limited to supplied records.
 		},
 	}
 	entry := genMainModule(ctx, llssa.PkgRuntime, &packages.Package{
@@ -381,6 +382,7 @@ func TestFuncInfoTableMaterializesPCLineMetadata(t *testing.T) {
 			BuildMode: BuildModeExe,
 			Goos:      "linux",
 			Goarch:    "amd64",
+			PCLNMode:  PCLNNone, // Keep exact table assertions limited to supplied records.
 		},
 	}
 	entry := genMainModule(ctx, llssa.PkgRuntime, &packages.Package{
@@ -463,6 +465,7 @@ func TestFuncInfoTableEmptyDefinitions(t *testing.T) {
 			BuildMode: BuildModeExe,
 			Goos:      "linux",
 			Goarch:    "amd64",
+			PCLNMode:  PCLNNone, // Keep exact table assertions limited to supplied records.
 		},
 	}
 	entry := genMainModule(ctx, llssa.PkgRuntime, &packages.Package{

@@ -36,7 +36,7 @@ int main() {
     fflush(stdout);  // Force output
     
     // Initialize packages - call init functions first
-    github_com_goplus_llgo__demo_go_export_c_init();
+    github_com_xgo_dev_llgo__demo_go_export_c_init();
     main_init();
 
     // Verify that funcinfo is not merely linkable: runtime.Callers must yield

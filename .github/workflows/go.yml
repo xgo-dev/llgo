@@ -77,7 +77,7 @@ jobs:
           # Go 1.26.5 printf analyzer panic. Keep the normal go test vet gate
           # for every other package, and disable vet only for that package.
           go list ./... \
-            | grep -v '^github.com/goplus/llgo/test/go$' \
+            | grep -v '^github.com/xgo-dev/llgo/test/go$' \
             | xargs go test -timeout 45m -coverprofile="coverage-main.txt" -covermode=atomic \
                 -bench '^BenchmarkGo126' -benchtime=1x
           go test -timeout 45m -vet=off -coverprofile="coverage-test-go.txt" -covermode=atomic ./test/go
@@ -147,21 +147,21 @@ jobs:
           go tool cover -func=coverage-dev-globaldce-unit.txt
 
           go test -tags=dev -timeout 30m -covermode=atomic \
-            -coverpkg=github.com/goplus/llgo/ssa,github.com/goplus/llgo/internal/build,github.com/goplus/llgo/internal/crosscompile \
+            -coverpkg=github.com/xgo-dev/llgo/ssa,github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/internal/crosscompile \
             -coverprofile=coverage-dev-lto-globaldce-cl.txt \
             -run '^TestRunAndTestFromTestlto/globaldce_' \
             ./cl
           go tool cover -func=coverage-dev-lto-globaldce-cl.txt
 
           go test -tags=dev -timeout 30m -covermode=atomic \
-            -coverpkg=github.com/goplus/llgo/ssa,github.com/goplus/llgo/internal/build,github.com/goplus/llgo/internal/crosscompile \
+            -coverpkg=github.com/xgo-dev/llgo/ssa,github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/internal/crosscompile \
             -coverprofile=coverage-dev-lto-globaldce-symbols.txt \
             -run '^TestBuildAndCheckSymbolsFromTestlto/globaldce_' \
             ./cl
           go tool cover -func=coverage-dev-lto-globaldce-symbols.txt
 
           go test -tags=dev -timeout 30m -covermode=atomic \
-            -coverpkg=github.com/goplus/llgo/ssa,github.com/goplus/llgo/internal/build,github.com/goplus/llgo/internal/crosscompile \
+            -coverpkg=github.com/xgo-dev/llgo/ssa,github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/internal/crosscompile \
             -coverprofile=coverage-dev-lto-plugin-cl.txt \
             -run '^(TestRunAndTestFromTestltoLTOPlugin|TestBuildAndCheckSymbolsFromTestltoLTOPlugin)' \
             ./cl
@@ -179,7 +179,7 @@ jobs:
           flags: dev-lto-globaldce
 
   # Tests deletion of unreachable Go methods.
-  # See https://github.com/goplus/llgo/issues/1853.
+  # See https://github.com/xgo-dev/llgo/issues/1853.
   dev-go-methoddrop:
     name: Dev Go Method Drop
     timeout-minutes: 60

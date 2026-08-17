@@ -35,7 +35,7 @@ runs:
 
         libs_dir="${GITHUB_WORKSPACE}/_demo/c/cargs/libs"
         mkdir -p "${libs_dir}"
-        wget -P "${libs_dir}" "https://github.com/goplus/llpkg/releases/download/cargs/v1.0.0/${demo_pkg}"
+        wget -P "${libs_dir}" "https://github.com/xgo-dev/llpkg/releases/download/cargs/v1.0.0/${demo_pkg}"
         unzip -o "${libs_dir}/${demo_pkg}" -d "${libs_dir}"
 
         for tmpl in "${libs_dir}"/lib/pkgconfig/*.pc.tmpl; do

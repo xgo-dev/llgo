@@ -5,20 +5,20 @@ import (
 	_ "unsafe"
 
 	"github.com/goplus/lib/c"
-	_ "github.com/goplus/llgo/cl/_testrt/linkname/linktarget"
+	_ "github.com/xgo-dev/llgo/cl/_testrt/linkname/linktarget"
 )
 
-//go:linkname print github.com/goplus/llgo/cl/_testrt/linkname/linktarget.F
+//go:linkname print github.com/xgo-dev/llgo/cl/_testrt/linkname/linktarget.F
 func print(a, b, c, d *c.Char)
 
 type m struct {
 	s string
 }
 
-//go:linkname setInfo github.com/goplus/llgo/cl/_testrt/linkname/linktarget.(*m).setInfo
+//go:linkname setInfo github.com/xgo-dev/llgo/cl/_testrt/linkname/linktarget.(*m).setInfo
 func setInfo(*m, string)
 
-//go:linkname info github.com/goplus/llgo/cl/_testrt/linkname/linktarget.m.info
+//go:linkname info github.com/xgo-dev/llgo/cl/_testrt/linkname/linktarget.m.info
 func info(m) string
 
 // CHECK: @[[A:[0-9]+]] = private unnamed_addr constant [2 x i8] c"a\00"

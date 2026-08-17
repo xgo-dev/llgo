@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/goplus/llgo/_cmptest/interf/foo"
+	"github.com/xgo-dev/llgo/_cmptest/interf/foo"
 )
 
 func Foo() any {

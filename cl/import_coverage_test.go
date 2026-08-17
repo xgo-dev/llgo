@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/internal/env"
-	llssa "github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llgo/internal/env"
+	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
 func TestReplaceGoNameRuntimeBranch(t *testing.T) {

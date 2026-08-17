@@ -5,7 +5,7 @@ package runtime
 import (
 	_ "unsafe"
 
-	"github.com/goplus/llgo/runtime/internal/clite/pthread/sync"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/pthread/sync"
 )
 
 var (

@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/goplus/gogen/packages"
-	"github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -34,7 +34,7 @@ func TestGenCHeaderExport(t *testing.T) {
 	})
 
 	// Define main package and the 'Foo' type within it
-	mainPkgPath := "github.com/goplus/llgo/test_buildmode/main"
+	mainPkgPath := "github.com/xgo-dev/llgo/test_buildmode/main"
 	mainTypesPkg := types.NewPackage(mainPkgPath, "main")
 	fooFields := []*types.Var{
 		types.NewField(token.NoPos, mainTypesPkg, "a", types.Typ[types.Int], false),
@@ -67,7 +67,7 @@ func TestGenCHeaderExport(t *testing.T) {
 	mainPkg.SetExport("runtime.llgo_runtime_signalCallback", "llgo_runtime_signalCallback")
 
 	// Create package C
-	cPkgPath := "github.com/goplus/llgo/test_buildmode/bar"
+	cPkgPath := "github.com/xgo-dev/llgo/test_buildmode/bar"
 	cPkg := prog.NewPackage("C", cPkgPath)
 	addParams := types.NewTuple(
 		types.NewVar(token.NoPos, nil, "a", types.Typ[types.Int]),
@@ -117,7 +117,7 @@ func TestGenCHeaderExport(t *testing.T) {
 
 func TestGenHeaderMissingExport(t *testing.T) {
 	prog := ssa.NewProgram(nil)
-	pkgPath := "github.com/goplus/llgo/test_buildmode/missing"
+	pkgPath := "github.com/xgo-dev/llgo/test_buildmode/missing"
 	pkg := prog.NewPackage("missing", pkgPath)
 	pkg.SetExport("Missing", "Missing")
 
@@ -926,7 +926,7 @@ func TestGenHeaderWithInitFunction(t *testing.T) {
 	prog := ssa.NewProgram(nil)
 
 	// Create a package
-	pkgPath := "github.com/test/mypackage"
+	pkgPath := "github.com/xgo-dev/mypackage"
 	pkg := prog.NewPackage("", pkgPath)
 
 	// Create an init function signature: func()
@@ -951,8 +951,24 @@ func TestGenHeaderWithInitFunction(t *testing.T) {
 	}
 
 	// Should contain the init function declaration with C-compatible name
-	expectedInitName := "github_com_test_mypackage_init"
+	expectedInitName := "github_com_xgo_dev_mypackage_init"
 	if !strings.Contains(got, expectedInitName) {
 		t.Errorf("genHeader() should include init function declaration with name %s, got: %s", expectedInitName, got)
+	}
+}
+
+func TestCIdentifier(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{"github.com/xgo-dev/pkg.init", "github_com_xgo_dev_pkg_init"},
+		{"9pkg/☃.init", "_9pkg___init"},
+		{"_valid", "_valid"},
+	}
+	for _, test := range tests {
+		if got := cIdentifier(test.name); got != test.want {
+			t.Errorf("cIdentifier(%q) = %q, want %q", test.name, got, test.want)
+		}
 	}
 }

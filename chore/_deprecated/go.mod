@@ -1,10 +1,10 @@
-module github.com/goplus/llgo/_xtool
+module github.com/xgo-dev/llgo/_xtool
 
 go 1.20
 
 require (
 	github.com/aykevl/go-wasm v0.0.1
-	github.com/goplus/llgo v0.9.0
+	github.com/xgo-dev/llgo v0.9.0
 	github.com/json-iterator/go v1.1.12
 )
 

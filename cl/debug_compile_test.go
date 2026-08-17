@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/internal/optlevel"
-	llssa "github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llgo/internal/optlevel"
+	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"

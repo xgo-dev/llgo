@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/goplus/llgo/cmd/internal/base"
-	"github.com/goplus/llgo/internal/env"
+	"github.com/xgo-dev/llgo/cmd/internal/base"
+	"github.com/xgo-dev/llgo/internal/env"
 )
 
 // llgo version

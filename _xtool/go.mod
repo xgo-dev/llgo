@@ -1,4 +1,4 @@
-module github.com/goplus/llgo/_xtool
+module github.com/xgo-dev/llgo/_xtool
 
 go 1.20
 

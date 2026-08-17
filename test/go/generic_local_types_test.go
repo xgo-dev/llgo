@@ -52,7 +52,7 @@ func TestGenericNestedLocalRuntimeTypeNames(t *testing.T) {
 		t.Fatalf("direct local generic type name = %q, want %q", got, want)
 	}
 	nestedName := nested.String()
-	const nestedPrefix = "gotest.T[int;github.com/goplus/llgo/test/go.U[int;int]·"
+	const nestedPrefix = "gotest.T[int;github.com/xgo-dev/llgo/test/go.U[int;int]·"
 	if !strings.HasPrefix(nestedName, nestedPrefix) || !strings.HasSuffix(nestedName, "]") {
 		t.Fatalf("nested local generic type name = %q, want %q plus numeric suffix", nestedName, nestedPrefix)
 	}

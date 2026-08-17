@@ -23,9 +23,9 @@ import (
 	"go/types"
 	"strings"
 
-	"github.com/goplus/llgo/internal/locality"
-	localitylayout "github.com/goplus/llgo/internal/locality/layout"
-	llssa "github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llgo/internal/locality"
+	localitylayout "github.com/xgo-dev/llgo/internal/locality/layout"
+	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
 // PrepareLocalVariables extracts replayable initializer helpers before Go SSA

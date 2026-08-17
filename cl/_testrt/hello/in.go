@@ -1,7 +1,7 @@
 // LITTEST
 package main
 
-import "github.com/goplus/llgo/cl/_testrt/hello/libc"
+import "github.com/xgo-dev/llgo/cl/_testrt/hello/libc"
 
 // CHECK: {{^}}@main.format = global [10 x i8] c"Hello %d\0A\00"
 

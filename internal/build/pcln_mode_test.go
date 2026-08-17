@@ -25,8 +25,8 @@ import (
 	"strings"
 	"testing"
 
-	buildfuncinfo "github.com/goplus/llgo/internal/build/funcinfo"
-	"github.com/goplus/llgo/internal/pclnmap"
+	buildfuncinfo "github.com/xgo-dev/llgo/internal/build/funcinfo"
+	"github.com/xgo-dev/llgo/internal/pclnmap"
 )
 
 func TestPCLNModeStringAndValidity(t *testing.T) {

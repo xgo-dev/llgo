@@ -17,8 +17,8 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/goplus/llgo/internal/optlevel"
-	llvmenv "github.com/goplus/llgo/xtool/env/llvm"
+	"github.com/xgo-dev/llgo/internal/optlevel"
+	llvmenv "github.com/xgo-dev/llgo/xtool/env/llvm"
 )
 
 const dwarfLanguageC = 0x02

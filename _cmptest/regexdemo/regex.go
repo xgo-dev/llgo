@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/goplus/llgo/xtool/env"
+	"github.com/xgo-dev/llgo/xtool/env"
 )
 
 func main() {

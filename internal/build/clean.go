@@ -23,7 +23,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/goplus/llgo/internal/packages"
+	"github.com/xgo-dev/llgo/internal/packages"
 )
 
 /*

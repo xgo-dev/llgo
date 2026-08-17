@@ -1,6 +1,6 @@
 package flow
 
-import "github.com/goplus/llgo/cl/_testdrop/interface_demand_fixedpoint/api"
+import "github.com/xgo-dev/llgo/cl/_testdrop/interface_demand_fixedpoint/api"
 
 //go:noinline
 func Step(n int) int {

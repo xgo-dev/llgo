@@ -12,8 +12,8 @@ import (
 
 	"github.com/xgo-dev/llvm"
 
-	"github.com/goplus/llgo/internal/build"
-	"github.com/goplus/llgo/internal/cabi"
+	"github.com/xgo-dev/llgo/internal/build"
+	"github.com/xgo-dev/llgo/internal/cabi"
 )
 
 var (
@@ -257,7 +257,7 @@ func sretAttribute(ctx llvm.Context, typ llvm.Type) llvm.Attribute {
 }
 
 // TestIssue1608_AttrPointerReturnNoMemcpy is a regression test for
-// https://github.com/goplus/llgo/issues/1608
+// https://github.com/xgo-dev/llgo/issues/1608
 //
 // When transforming functions with sret (structure return), the optimizer
 // previously used memcpy from the load source address. However, if the source
@@ -598,11 +598,11 @@ source_filename = "test"
 %reflect.unsafeheaderSlice = type { ptr, i64, i64 }
 %Big = type { i64, i64, i64 }
 
-declare i64 @"github.com/goplus/llgo/runtime/internal/runtime.Typedslicecopy"(ptr, %reflect.unsafeheaderSlice, %reflect.unsafeheaderSlice)
+declare i64 @"github.com/xgo-dev/llgo/runtime/internal/runtime.Typedslicecopy"(ptr, %reflect.unsafeheaderSlice, %reflect.unsafeheaderSlice)
 
 define i64 @"pkg.copy"(%reflect.unsafeheaderSlice %0, %reflect.unsafeheaderSlice %1, %Big %2) {
 entry:
-  %3 = call i64 @"github.com/goplus/llgo/runtime/internal/runtime.Typedslicecopy"(ptr null, %reflect.unsafeheaderSlice %0, %reflect.unsafeheaderSlice %1)
+  %3 = call i64 @"github.com/xgo-dev/llgo/runtime/internal/runtime.Typedslicecopy"(ptr null, %reflect.unsafeheaderSlice %0, %reflect.unsafeheaderSlice %1)
   ret i64 %3
 }
 `
@@ -634,10 +634,10 @@ entry:
 	defer prog.Dispose()
 
 	tr := cabi.NewTransformer(prog, "", "", cabi.ModeAllFunc, true)
-	tr.SetSkipFuncs([]string{"github.com/goplus/llgo/runtime/internal/runtime.Typedslicecopy"})
+	tr.SetSkipFuncs([]string{"github.com/xgo-dev/llgo/runtime/internal/runtime.Typedslicecopy"})
 	tr.TransformModule("test", mod)
 
-	callee := mod.NamedFunction("github.com/goplus/llgo/runtime/internal/runtime.Typedslicecopy")
+	callee := mod.NamedFunction("github.com/xgo-dev/llgo/runtime/internal/runtime.Typedslicecopy")
 	if callee.IsNil() {
 		t.Fatal("Typedslicecopy declaration not found")
 	}
@@ -654,7 +654,7 @@ entry:
 		t.Fatal("pkg.copy not found")
 	}
 	ir := copyFn.String()
-	if !strings.Contains(ir, `call i64 @"github.com/goplus/llgo/runtime/internal/runtime.Typedslicecopy"(ptr`) {
+	if !strings.Contains(ir, `call i64 @"github.com/xgo-dev/llgo/runtime/internal/runtime.Typedslicecopy"(ptr`) {
 		t.Fatalf("call to Typedslicecopy missing:\n%s", ir)
 	}
 	if !strings.Contains(ir, "%reflect.unsafeheaderSlice") {
@@ -725,15 +725,15 @@ func TestModeAllFunc_RuntimeSliceWrap(t *testing.T) {
 	testIR := `; ModuleID = 'test'
 source_filename = "test"
 
-%"github.com/goplus/llgo/runtime/internal/runtime.Slice" = type { ptr, i64, i64 }
+%"github.com/xgo-dev/llgo/runtime/internal/runtime.Slice" = type { ptr, i64, i64 }
 %Big = type { i64, i64, i64 }
 
-define %"github.com/goplus/llgo/runtime/internal/runtime.Slice" @"pkg.keep"(%"github.com/goplus/llgo/runtime/internal/runtime.Slice" %0) {
+define %"github.com/xgo-dev/llgo/runtime/internal/runtime.Slice" @"pkg.keep"(%"github.com/xgo-dev/llgo/runtime/internal/runtime.Slice" %0) {
 entry:
-  ret %"github.com/goplus/llgo/runtime/internal/runtime.Slice" %0
+  ret %"github.com/xgo-dev/llgo/runtime/internal/runtime.Slice" %0
 }
 
-define i64 @"pkg.mixed"(%"github.com/goplus/llgo/runtime/internal/runtime.Slice" %0, %Big %1) {
+define i64 @"pkg.mixed"(%"github.com/xgo-dev/llgo/runtime/internal/runtime.Slice" %0, %Big %1) {
 entry:
   ret i64 0
 }
@@ -773,10 +773,10 @@ entry:
 		t.Fatal("pkg.keep not found")
 	}
 	keepHead := strings.SplitN(keep.String(), "\n", 2)[0]
-	if !strings.Contains(keepHead, "sret(%\"github.com/goplus/llgo/runtime/internal/runtime.Slice\")") {
+	if !strings.Contains(keepHead, "sret(%\"github.com/xgo-dev/llgo/runtime/internal/runtime.Slice\")") {
 		t.Fatalf("runtime slice return should use sret after rewrite:\n%s", keep.String())
 	}
-	if !strings.Contains(keepHead, "byval(%\"github.com/goplus/llgo/runtime/internal/runtime.Slice\")") {
+	if !strings.Contains(keepHead, "byval(%\"github.com/xgo-dev/llgo/runtime/internal/runtime.Slice\")") {
 		t.Fatalf("runtime slice param should use byval after rewrite:\n%s", keep.String())
 	}
 
@@ -785,7 +785,7 @@ entry:
 		t.Fatal("pkg.mixed not found")
 	}
 	mixedHead := strings.SplitN(mixed.String(), "\n", 2)[0]
-	if !strings.Contains(mixedHead, "byval(%\"github.com/goplus/llgo/runtime/internal/runtime.Slice\")") {
+	if !strings.Contains(mixedHead, "byval(%\"github.com/xgo-dev/llgo/runtime/internal/runtime.Slice\")") {
 		t.Fatalf("runtime slice param should be rewritten in mixed function:\n%s", mixed.String())
 	}
 	if !strings.Contains(mixedHead, "byval(%Big)") {

@@ -2,7 +2,7 @@
 
 package runtime
 
-import "github.com/goplus/llgo/runtime/internal/clite/sync/atomic"
+import "github.com/xgo-dev/llgo/runtime/internal/clite/sync/atomic"
 
 type memProfileCounter = uint64
 

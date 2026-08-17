@@ -2,9 +2,9 @@
 package main
 
 import (
-	"github.com/goplus/llgo/cl/_testdrop/interface_demand_fixedpoint/api"
-	"github.com/goplus/llgo/cl/_testdrop/interface_demand_fixedpoint/flow"
-	"github.com/goplus/llgo/cl/_testdrop/interface_demand_fixedpoint/model"
+	"github.com/xgo-dev/llgo/cl/_testdrop/interface_demand_fixedpoint/api"
+	"github.com/xgo-dev/llgo/cl/_testdrop/interface_demand_fixedpoint/flow"
+	"github.com/xgo-dev/llgo/cl/_testdrop/interface_demand_fixedpoint/model"
 )
 
 // SYMBOL-NOT: testdrop/interface_demand_fixedpoint/model{{.*}}Runner{{.*}}Drop

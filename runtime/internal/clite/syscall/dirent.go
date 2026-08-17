@@ -1,8 +1,8 @@
 package syscall
 
 import (
-	"github.com/goplus/llgo/runtime/internal/clite/byteorder"
-	"github.com/goplus/llgo/runtime/internal/clite/goarch"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/byteorder"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/goarch"
 )
 
 // readInt returns the size-bytes unsigned integer in native byte order at offset off.

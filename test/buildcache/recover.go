@@ -2,7 +2,7 @@
 
 package main
 
-import "github.com/goplus/llgo/test/buildcache/dep1"
+import "github.com/xgo-dev/llgo/test/buildcache/dep1"
 
 func verifyRecoverCache() {
 	var recovered any

@@ -6,12 +6,13 @@ package runtime
 import (
 	"unsafe"
 
-	c "github.com/goplus/llgo/runtime/internal/clite"
-	"github.com/goplus/llgo/runtime/internal/clite/libuv"
-	cliteos "github.com/goplus/llgo/runtime/internal/clite/os"
-	psync "github.com/goplus/llgo/runtime/internal/clite/pthread/sync"
-	ct "github.com/goplus/llgo/runtime/internal/clite/time"
 	latomic "sync/atomic"
+
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/libuv"
+	cliteos "github.com/xgo-dev/llgo/runtime/internal/clite/os"
+	psync "github.com/xgo-dev/llgo/runtime/internal/clite/pthread/sync"
+	ct "github.com/xgo-dev/llgo/runtime/internal/clite/time"
 )
 
 // Minimal time/timer support for stdlib time on llgo.

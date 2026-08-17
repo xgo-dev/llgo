@@ -3,9 +3,9 @@ package libuv
 import (
 	_ "unsafe"
 
-	c "github.com/goplus/llgo/runtime/internal/clite"
-	"github.com/goplus/llgo/runtime/internal/clite/net"
-	"github.com/goplus/llgo/runtime/internal/clite/syscall"
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/net"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/syscall"
 )
 
 const (

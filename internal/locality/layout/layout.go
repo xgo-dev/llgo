@@ -24,7 +24,7 @@ import (
 	"go/types"
 	"sort"
 
-	"github.com/goplus/llgo/internal/locality"
+	"github.com/xgo-dev/llgo/internal/locality"
 )
 
 // Storage identifies the physical addressing strategy selected for a variable.

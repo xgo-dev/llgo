@@ -26,8 +26,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/goplus/llgo/internal/littest"
-	"github.com/goplus/llgo/xtool/env/llvm"
+	"github.com/xgo-dev/llgo/internal/littest"
+	"github.com/xgo-dev/llgo/xtool/env/llvm"
 )
 
 type stringListFlag []string

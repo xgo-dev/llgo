@@ -29,7 +29,7 @@ import (
 	_ "unsafe"
 )
 
-//go:linkname runtimeGStateForTesting github.com/goplus/llgo/runtime/internal/runtime.GStateForTesting
+//go:linkname runtimeGStateForTesting github.com/xgo-dev/llgo/runtime/internal/runtime.GStateForTesting
 func runtimeGStateForTesting() (count uint64, mainExited bool)
 
 func init() {

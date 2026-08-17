@@ -20,7 +20,7 @@ import (
 	"flag"
 	"fmt"
 
-	"github.com/goplus/llgo/internal/build"
+	"github.com/xgo-dev/llgo/internal/build"
 )
 
 type pclnFlag struct {

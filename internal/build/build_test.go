@@ -23,15 +23,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/cl"
-	"github.com/goplus/llgo/internal/buildenv"
-	"github.com/goplus/llgo/internal/crosscompile"
-	"github.com/goplus/llgo/internal/env"
-	"github.com/goplus/llgo/internal/lto"
-	"github.com/goplus/llgo/internal/meta"
-	"github.com/goplus/llgo/internal/mockable"
-	"github.com/goplus/llgo/internal/packages"
-	llssa "github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llgo/cl"
+	"github.com/xgo-dev/llgo/internal/buildenv"
+	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/lto"
+	"github.com/xgo-dev/llgo/internal/meta"
+	"github.com/xgo-dev/llgo/internal/mockable"
+	"github.com/xgo-dev/llgo/internal/packages"
+	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -520,8 +520,8 @@ func TestWasmRuntimeAvoidsNativeHostDependencies(t *testing.T) {
 						t.Fatal(err)
 					}
 					switch path {
-					case "github.com/goplus/llgo/runtime/internal/clite/libuv",
-						"github.com/goplus/llgo/runtime/internal/clite/bdwgc":
+					case "github.com/xgo-dev/llgo/runtime/internal/clite/libuv",
+						"github.com/xgo-dev/llgo/runtime/internal/clite/bdwgc":
 						t.Fatalf("wasm selected %s, which imports native host dependency %s", name, path)
 					}
 				}
@@ -708,8 +708,8 @@ func TestFilterTestPackages(t *testing.T) {
 
 	t.Run("empty after filtering", func(t *testing.T) {
 		initial := []*packages.Package{
-			pkg("github.com/goplus/llgo/chore/ardump"),
-			pkg("github.com/goplus/llgo/chore/ardump [github.com/goplus/llgo/chore/ardump.test]"),
+			pkg("github.com/xgo-dev/llgo/chore/ardump"),
+			pkg("github.com/xgo-dev/llgo/chore/ardump [github.com/xgo-dev/llgo/chore/ardump.test]"),
 		}
 		filtered, err := filterTestPackages(initial, "")
 		if err != nil {
@@ -772,7 +772,7 @@ func TestFilterTestPackages(t *testing.T) {
 }
 
 const (
-	rewriteMainPkg = "github.com/goplus/llgo/cl/_testgo/rewrite"
+	rewriteMainPkg = "github.com/xgo-dev/llgo/cl/_testgo/rewrite"
 	rewriteDepPkg  = rewriteMainPkg + "/dep"
 	rewriteDirPath = "../../cl/_testgo/rewrite"
 )
@@ -1340,12 +1340,12 @@ func TestCHeaderPackagesExcludesStandardRuntime(t *testing.T) {
 	userLPkg := prog.NewPackage("example.com/p", "example.com/p")
 	userLPkg.SetExport("example.com/p.Export", "Export")
 	runtimeLPkg := prog.NewPackage("runtime", "runtime")
-	llgoRuntimeLPkg := prog.NewPackage("github.com/goplus/llgo/runtime/internal/lib/runtime", "github.com/goplus/llgo/runtime/internal/lib/runtime")
+	llgoRuntimeLPkg := prog.NewPackage("github.com/xgo-dev/llgo/runtime/internal/lib/runtime", "github.com/xgo-dev/llgo/runtime/internal/lib/runtime")
 	dependencyLPkg := prog.NewPackage("example.com/dep", "example.com/dep")
 	pkgs := []*aPackage{
 		{Package: &packages.Package{PkgPath: "example.com/p"}, LPkg: userLPkg},
 		{Package: &packages.Package{PkgPath: "runtime"}, LPkg: runtimeLPkg},
-		{Package: &packages.Package{PkgPath: "github.com/goplus/llgo/runtime/internal/lib/runtime"}, LPkg: llgoRuntimeLPkg},
+		{Package: &packages.Package{PkgPath: "github.com/xgo-dev/llgo/runtime/internal/lib/runtime"}, LPkg: llgoRuntimeLPkg},
 		{Package: &packages.Package{PkgPath: "example.com/dep"}, LPkg: dependencyLPkg},
 		nil,
 	}
@@ -1667,7 +1667,7 @@ func TestDoReportsAltPackageLocalityDirectiveError(t *testing.T) {
 	if err := os.MkdirAll(runtimePkgDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(runtimeDir, "go.mod"), []byte("module github.com/goplus/llgo/runtime\n\ngo 1.24.0\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(runtimeDir, "go.mod"), []byte("module github.com/xgo-dev/llgo/runtime\n\ngo 1.24.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(runtimePkgDir, "runtime.go"), []byte(`package runtime

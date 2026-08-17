@@ -10,8 +10,8 @@ import (
 	"testing"
 	"unsafe"
 
-	rabi "github.com/goplus/llgo/runtime/abi"
-	"github.com/goplus/llgo/ssa/abi"
+	rabi "github.com/xgo-dev/llgo/runtime/abi"
+	"github.com/xgo-dev/llgo/ssa/abi"
 )
 
 func TestBasic(t *testing.T) {

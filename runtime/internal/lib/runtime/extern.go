@@ -5,8 +5,8 @@
 package runtime
 
 import (
-	clitedebug "github.com/goplus/llgo/runtime/internal/clite/debug"
-	rtdebug "github.com/goplus/llgo/runtime/internal/runtime"
+	clitedebug "github.com/xgo-dev/llgo/runtime/internal/clite/debug"
+	rtdebug "github.com/xgo-dev/llgo/runtime/internal/runtime"
 )
 
 // callerLocation substitutes gc's placeholders for missing position info:

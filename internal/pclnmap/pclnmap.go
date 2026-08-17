@@ -26,7 +26,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/goplus/llgo/internal/build/funcinfo"
+	"github.com/xgo-dev/llgo/internal/build/funcinfo"
 )
 
 const (

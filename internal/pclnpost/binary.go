@@ -31,7 +31,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/goplus/llgo/internal/pclntab"
+	"github.com/xgo-dev/llgo/internal/pclntab"
 )
 
 type siteRecord struct {

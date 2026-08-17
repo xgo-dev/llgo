@@ -22,30 +22,30 @@ _llgo_string:
 [OrdinaryEdges]
 *_llgo_int:
     _llgo_int
-    github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    github.com/xgo-dev/llgo/runtime/internal/runtime.memequalptr
 *_llgo_main.Inner:
     _llgo_main.Inner
-    github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    github.com/xgo-dev/llgo/runtime/internal/runtime.memequalptr
 *_llgo_main.Outer:
     _llgo_main.Outer
-    github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    github.com/xgo-dev/llgo/runtime/internal/runtime.memequalptr
 *_llgo_string:
     _llgo_string
-    github.com/goplus/llgo/runtime/internal/runtime.memequalptr
+    github.com/xgo-dev/llgo/runtime/internal/runtime.memequalptr
 _llgo_int:
     *_llgo_int
-    github.com/goplus/llgo/runtime/internal/runtime.memequal64
+    github.com/xgo-dev/llgo/runtime/internal/runtime.memequal64
 _llgo_main.Inner:
     *_llgo_main.Inner
     _llgo_struct$MTAKiWNMPODH0G9-y5PI3BUGLd6hRciSbX1QTpCDOZg$fields
-    github.com/goplus/llgo/runtime/internal/runtime.structequal
+    github.com/xgo-dev/llgo/runtime/internal/runtime.structequal
 _llgo_main.Outer:
     *_llgo_main.Outer
     _llgo_struct$Z-8Mj1VAYg5xS_jUvJKfmUcA_2fP_OEHpanbgA_46rE$fields
-    github.com/goplus/llgo/runtime/internal/runtime.structequal
+    github.com/xgo-dev/llgo/runtime/internal/runtime.structequal
 _llgo_string:
     *_llgo_string
-    github.com/goplus/llgo/runtime/internal/runtime.strequal
+    github.com/xgo-dev/llgo/runtime/internal/runtime.strequal
 _llgo_struct$MTAKiWNMPODH0G9-y5PI3BUGLd6hRciSbX1QTpCDOZg$fields:
     _llgo_string
 _llgo_struct$Z-8Mj1VAYg5xS_jUvJKfmUcA_2fP_OEHpanbgA_46rE$fields:
@@ -55,7 +55,7 @@ main.init:
     main.init$guard
 main.main:
     _llgo_main.Outer
-    github.com/goplus/llgo/runtime/internal/runtime.AllocU
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU
     main.use
 
 [UseIface]

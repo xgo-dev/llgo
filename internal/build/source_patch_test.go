@@ -13,9 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/internal/env"
-	"github.com/goplus/llgo/internal/packages"
-	llruntime "github.com/goplus/llgo/runtime"
+	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/packages"
+	llruntime "github.com/xgo-dev/llgo/runtime"
 )
 
 func TestWasmRuntimeSourcePatchTypeChecks(t *testing.T) {
@@ -205,7 +205,7 @@ func TestSyscallSourcePatchPreservesTargetImplementations(t *testing.T) {
 			}
 			for _, file := range files {
 				patchFile := filepath.Join(runtime.GOROOT(), "src", "syscall", "z_llgo_patch_"+filepath.Base(file))
-				if strings.Contains(string(overlay[patchFile]), "github.com/goplus/llgo/runtime") {
+				if strings.Contains(string(overlay[patchFile]), "github.com/xgo-dev/llgo/runtime") {
 					t.Fatalf("overlay[%q] adds a private runtime dependency", patchFile)
 				}
 			}
@@ -303,7 +303,7 @@ func TestUniqueSourcePatchUsesStdlibDependencyGraph(t *testing.T) {
 			}
 			for _, file := range files {
 				src := string(overlay[filepath.Join(runtime.GOROOT(), "src", "unique", "z_llgo_patch_"+filepath.Base(file))])
-				if strings.Contains(src, "github.com/goplus/llgo/runtime/abi") {
+				if strings.Contains(src, "github.com/xgo-dev/llgo/runtime/abi") {
 					t.Fatalf("source patch %s adds the private runtime/abi dependency", file)
 				}
 			}

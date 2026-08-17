@@ -2,13 +2,13 @@
 package main
 
 import (
-	"github.com/goplus/llgo/cl/_testlto/globaldce_unexported_method_identity/base"
-	"github.com/goplus/llgo/cl/_testlto/globaldce_unexported_method_identity/other"
+	"github.com/xgo-dev/llgo/cl/_testlto/globaldce_unexported_method_identity/base"
+	"github.com/xgo-dev/llgo/cl/_testlto/globaldce_unexported_method_identity/other"
 )
 
-// CHECK-DAG: !"go.method.github.com/goplus/llgo/cl/_testlto/globaldce_unexported_method_identity/base.hidden:func() int"
-// CHECK-DAG: !"go.method.github.com/goplus/llgo/cl/_testlto/globaldce_unexported_method_identity/other.hidden:func() int"
-// CHECK-DAG: !"go.method.github.com/goplus/llgo/cl/_testlto/globaldce_unexported_method_identity.hidden:func() int"
+// CHECK-DAG: !"go.method.github.com/xgo-dev/llgo/cl/_testlto/globaldce_unexported_method_identity/base.hidden:func() int"
+// CHECK-DAG: !"go.method.github.com/xgo-dev/llgo/cl/_testlto/globaldce_unexported_method_identity/other.hidden:func() int"
+// CHECK-DAG: !"go.method.github.com/xgo-dev/llgo/cl/_testlto/globaldce_unexported_method_identity.hidden:func() int"
 // SYMBOL-NOT: globaldce_unexported_method_identity/other{{.*}}Other{{.*}}hidden
 // SYMBOL-NOT: main{{.*}}Local{{.*}}hidden
 // SYMBOL-DAG: globaldce_unexported_method_identity/base{{.*}}Exported{{.*}}hidden

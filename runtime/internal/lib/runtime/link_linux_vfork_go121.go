@@ -8,9 +8,9 @@ package runtime
 import (
 	_ "unsafe"
 
-	c "github.com/goplus/llgo/runtime/internal/clite"
-	cliteos "github.com/goplus/llgo/runtime/internal/clite/os"
-	clitesyscall "github.com/goplus/llgo/runtime/internal/clite/syscall"
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
+	cliteos "github.com/xgo-dev/llgo/runtime/internal/clite/os"
+	clitesyscall "github.com/xgo-dev/llgo/runtime/internal/clite/syscall"
 )
 
 //go:linkname c_syscall C.syscall

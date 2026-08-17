@@ -11,7 +11,7 @@ import "github.com/goplus/lib/c"
 // CHECK: {{^}}@[[GLOB0:[0-9]+]] = private unnamed_addr constant [1 x i8] c"a", align 1{{$}}
 // CHECK: {{^}}@[[GLOB5:[0-9]+]] = private unnamed_addr constant [4 x i8] c"Info", align 1{{$}}
 // CHECK: {{^}}@[[GLOB10:[0-9]+]] = private unnamed_addr constant [5 x i8] c"hello", align 1{{$}}
-// CHECK: {{^}}@[[GLOB12:[0-9]+]] = private unnamed_addr constant [54 x i8] c"{{.*}}/cl/_testrt/tpabi.T[string, int]", align 1{{$}}
+// CHECK: {{^}}@[[GLOB12:[0-9]+]] = private unnamed_addr constant [55 x i8] c"{{.*}}/cl/_testrt/tpabi.T[string, int]", align 1{{$}}
 
 type T[M, N any] struct {
 	m M
@@ -144,7 +144,7 @@ func main() {
 // CHECK-SAME: ptr %[[TMP0:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
 // CHECK-NEXT:   %[[TMP1:[0-9]+]] = icmp eq ptr %[[TMP0]], null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[TMP1]], %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB12]], i64 54 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB5]], i64 4 })
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[TMP1]], %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB12]], i64 55 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB5]], i64 4 })
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = load %"main.T[string,int]", ptr %[[TMP0]], align 8
 // CHECK-NEXT:   call void @"main.T[string,int].Info"(%"main.T[string,int]" %[[TMP2]])
 // CHECK-NEXT:   ret void

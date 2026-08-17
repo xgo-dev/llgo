@@ -23,8 +23,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/goplus/llgo/internal/locality"
-	localitylayout "github.com/goplus/llgo/internal/locality/layout"
+	"github.com/xgo-dev/llgo/internal/locality"
+	localitylayout "github.com/xgo-dev/llgo/internal/locality/layout"
 )
 
 type Locality = locality.Kind

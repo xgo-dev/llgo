@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/internal/crosscompile"
-	"github.com/goplus/llgo/internal/flash"
+	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/flash"
 )
 
 func TestBuildOutFmtsWithTarget(t *testing.T) {

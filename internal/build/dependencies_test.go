@@ -20,7 +20,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/goplus/llgo/internal/packages"
+	"github.com/xgo-dev/llgo/internal/packages"
 )
 
 func TestEffectiveDependenciesIncludesAlternateImports(t *testing.T) {

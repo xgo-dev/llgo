@@ -3,7 +3,7 @@ package reflect
 import (
 	"unsafe"
 
-	"github.com/goplus/llgo/runtime/internal/runtime"
+	"github.com/xgo-dev/llgo/runtime/internal/runtime"
 )
 
 // A SelectDir describes the communication direction of a select case.

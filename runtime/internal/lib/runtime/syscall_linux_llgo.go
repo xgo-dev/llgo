@@ -5,7 +5,7 @@ package runtime
 import (
 	"unsafe"
 
-	clitesyscall "github.com/goplus/llgo/runtime/internal/clite/syscall"
+	clitesyscall "github.com/xgo-dev/llgo/runtime/internal/clite/syscall"
 )
 
 // LLGo may run alongside threads created by C libraries, which the Go runtime

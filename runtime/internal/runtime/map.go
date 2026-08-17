@@ -7,9 +7,9 @@ package runtime
 import (
 	"unsafe"
 
-	"github.com/goplus/llgo/runtime/abi"
-	"github.com/goplus/llgo/runtime/internal/runtime/goarch"
-	"github.com/goplus/llgo/runtime/internal/runtime/math"
+	"github.com/xgo-dev/llgo/runtime/abi"
+	"github.com/xgo-dev/llgo/runtime/internal/runtime/goarch"
+	"github.com/xgo-dev/llgo/runtime/internal/runtime/math"
 )
 
 // This file contains the implementation of Go's map type.

@@ -37,10 +37,10 @@ type gcStats struct {
 	GCSys      uint64
 }
 
-//go:linkname gcCollect github.com/goplus/llgo/runtime/internal/runtime/tinygogc.GC
+//go:linkname gcCollect github.com/xgo-dev/llgo/runtime/internal/runtime/tinygogc.GC
 func gcCollect() uintptr
 
-//go:linkname readGCStats github.com/goplus/llgo/runtime/internal/runtime/tinygogc.ReadGCStats
+//go:linkname readGCStats github.com/xgo-dev/llgo/runtime/internal/runtime/tinygogc.ReadGCStats
 func readGCStats() gcStats
 
 func fail(msg string) bool {

@@ -25,8 +25,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/ssa"
-	"github.com/goplus/llgo/ssa/ssatest"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssatest"
 )
 
 func TestDeferInLoopIR(t *testing.T) {

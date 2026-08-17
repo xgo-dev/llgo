@@ -22,9 +22,9 @@ import (
 
 	"github.com/xgo-dev/llvm"
 
-	buildfuncinfo "github.com/goplus/llgo/internal/build/funcinfo"
-	"github.com/goplus/llgo/internal/pclnmap"
-	llssa "github.com/goplus/llgo/ssa"
+	buildfuncinfo "github.com/xgo-dev/llgo/internal/build/funcinfo"
+	"github.com/xgo-dev/llgo/internal/pclnmap"
+	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
 const (

@@ -26,8 +26,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/goplus/llgo/internal/env"
-	"github.com/goplus/llgo/runtime/abi"
+	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/runtime/abi"
 )
 
 // -----------------------------------------------------------------------------

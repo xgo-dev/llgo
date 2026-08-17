@@ -4,9 +4,9 @@ import (
 	"reflect"
 	"testing"
 
-	methods "github.com/goplus/llgo/test/go/kubelinkmethods"
-	slicesa "github.com/goplus/llgo/test/go/kubelinkslicesa"
-	slicesb "github.com/goplus/llgo/test/go/kubelinkslicesb"
+	methods "github.com/xgo-dev/llgo/test/go/kubelinkmethods"
+	slicesa "github.com/xgo-dev/llgo/test/go/kubelinkslicesa"
+	slicesb "github.com/xgo-dev/llgo/test/go/kubelinkslicesb"
 )
 
 type kubeLinkQueue interface {

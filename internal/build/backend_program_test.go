@@ -23,8 +23,8 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/goplus/llgo/internal/packages"
-	llssa "github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llgo/internal/packages"
+	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
 func TestNewBackendSessionCreatesIndependentLLVMState(t *testing.T) {

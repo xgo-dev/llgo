@@ -6,7 +6,7 @@ package build
 import (
 	"testing"
 
-	"github.com/goplus/llgo/internal/cabi"
+	"github.com/xgo-dev/llgo/internal/cabi"
 )
 
 func TestInternalRuntimeSysUsesPlan9AsmWithoutAltPkg(t *testing.T) {

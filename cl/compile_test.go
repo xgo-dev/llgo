@@ -27,13 +27,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/cl/cltest"
-	"github.com/goplus/llgo/internal/build"
-	"github.com/goplus/llgo/internal/buildenv"
-	"github.com/goplus/llgo/internal/cabi"
-	"github.com/goplus/llgo/internal/llgen"
-	"github.com/goplus/llgo/internal/lto"
-	llvmenv "github.com/goplus/llgo/xtool/env/llvm"
+	"github.com/xgo-dev/llgo/cl/cltest"
+	"github.com/xgo-dev/llgo/internal/build"
+	"github.com/xgo-dev/llgo/internal/buildenv"
+	"github.com/xgo-dev/llgo/internal/cabi"
+	"github.com/xgo-dev/llgo/internal/llgen"
+	"github.com/xgo-dev/llgo/internal/lto"
+	llvmenv "github.com/xgo-dev/llgo/xtool/env/llvm"
 )
 
 func testCompile(t *testing.T, src, expected string) {

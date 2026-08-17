@@ -23,9 +23,9 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/goplus/llgo/cl"
-	"github.com/goplus/llgo/internal/packages"
-	llssa "github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llgo/cl"
+	"github.com/xgo-dev/llgo/internal/packages"
+	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
 // packageInitOrder returns the packages reachable from root in the order in

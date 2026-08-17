@@ -1,7 +1,7 @@
 // LITTEST
 package main
 
-import "github.com/goplus/llgo/cl/_testdrop/exported_method_crosspkg/api"
+import "github.com/xgo-dev/llgo/cl/_testdrop/exported_method_crosspkg/api"
 
 // SYMBOL-NOT: main{{.*}}T{{.*}}Drop
 // SYMBOL-DAG: main{{.*}}T{{.*}}Keep

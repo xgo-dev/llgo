@@ -18,7 +18,7 @@
 
 package runtime
 
-import "github.com/goplus/llgo/runtime/internal/clite/sync/atomic"
+import "github.com/xgo-dev/llgo/runtime/internal/clite/sync/atomic"
 
 const (
 	mainExitedBit = uint64(1) << 63

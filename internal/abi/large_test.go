@@ -120,7 +120,7 @@ attributes #1 = { noinline }
 
 	caller := mod.NamedFunction("caller").String()
 	for _, want := range []string{
-		`call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocU"(i64 65537)`,
+		`call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU"(i64 65537)`,
 		"call void @callee(ptr sret([65537 x i8])",
 		`ptr "llgo.reflect.methodbyname.name"="1"`,
 		"call void @llvm.memcpy",

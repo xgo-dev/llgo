@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/goplus/llgo/xtool/env/llvm"
+	"github.com/xgo-dev/llgo/xtool/env/llvm"
 )
 
 func Match(filename, input string) error {

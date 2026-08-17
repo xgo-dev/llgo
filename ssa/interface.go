@@ -20,7 +20,7 @@ import (
 	"go/token"
 	"go/types"
 
-	"github.com/goplus/llgo/ssa/abi"
+	"github.com/xgo-dev/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
 )
 

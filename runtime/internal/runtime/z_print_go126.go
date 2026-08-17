@@ -18,7 +18,7 @@
 
 package runtime
 
-import c "github.com/goplus/llgo/runtime/internal/clite"
+import c "github.com/xgo-dev/llgo/runtime/internal/clite"
 
 func formatFloat(v float64) string {
 	if s, ok := formatSpecialFloat(v); ok {

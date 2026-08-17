@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/internal/crosscompile/compile/libc"
-	"github.com/goplus/llgo/internal/crosscompile/compile/rtlib"
+	"github.com/xgo-dev/llgo/internal/crosscompile/compile/libc"
+	"github.com/xgo-dev/llgo/internal/crosscompile/compile/rtlib"
 )
 
 const testCompilerKey = "llvm-21.1.3-deadbeef"

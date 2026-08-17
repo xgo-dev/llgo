@@ -2,8 +2,8 @@
 package main
 
 import (
-	"github.com/goplus/llgo/cl/_testdrop/generic_interface_crosspkg/api"
-	"github.com/goplus/llgo/cl/_testdrop/generic_interface_crosspkg/model"
+	"github.com/xgo-dev/llgo/cl/_testdrop/generic_interface_crosspkg/api"
+	"github.com/xgo-dev/llgo/cl/_testdrop/generic_interface_crosspkg/model"
 )
 
 // SYMBOL-NOT: testdrop/generic_interface_crosspkg/model{{.*}}Box{{.*}}int{{.*}}Drop

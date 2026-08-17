@@ -15,8 +15,8 @@ import (
 	"testing"
 
 	gpackages "github.com/goplus/gogen/packages"
-	llssa "github.com/goplus/llgo/ssa"
-	"github.com/goplus/llgo/ssa/ssatest"
+	llssa "github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssatest"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -395,8 +395,8 @@ func Use() callbackType { return CallbackTypes[1] }
 `
 	ir := compileWithRewrites(t, src, nil)
 	for _, want := range []string{
-		`@"staticinit.CallbackTypes$data" = global [2 x %"github.com/goplus/llgo/runtime/internal/runtime.String"]`,
-		`@staticinit.CallbackTypes = global %"github.com/goplus/llgo/runtime/internal/runtime.Slice" { ptr @"staticinit.CallbackTypes$data", i64 2, i64 2 }`,
+		`@"staticinit.CallbackTypes$data" = global [2 x %"github.com/xgo-dev/llgo/runtime/internal/runtime.String"]`,
+		`@staticinit.CallbackTypes = global %"github.com/xgo-dev/llgo/runtime/internal/runtime.Slice" { ptr @"staticinit.CallbackTypes$data", i64 2, i64 2 }`,
 		`c"BeforeCreate"`,
 		`c"AfterCreate"`,
 	} {
@@ -420,8 +420,8 @@ func Use() string { return CallbackTypes[1] }
 	ir := compileWithRewritesMode(t, src, nil,
 		ssa.SanityCheckFunctions|ssa.InstantiateGenerics|ssa.GlobalDebug)
 	for _, want := range []string{
-		`@"staticinit.CallbackTypes$data" = global [2 x %"github.com/goplus/llgo/runtime/internal/runtime.String"]`,
-		`@staticinit.CallbackTypes = global %"github.com/goplus/llgo/runtime/internal/runtime.Slice" { ptr @"staticinit.CallbackTypes$data", i64 2, i64 2 }`,
+		`@"staticinit.CallbackTypes$data" = global [2 x %"github.com/xgo-dev/llgo/runtime/internal/runtime.String"]`,
+		`@staticinit.CallbackTypes = global %"github.com/xgo-dev/llgo/runtime/internal/runtime.Slice" { ptr @"staticinit.CallbackTypes$data", i64 2, i64 2 }`,
 		`c"BeforeCreate"`,
 		`c"AfterCreate"`,
 	} {

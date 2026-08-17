@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/goplus/llgo/internal/packages"
+	"github.com/xgo-dev/llgo/internal/packages"
 )
 
 func TestCleanMainPkgRemovesPCLNSidecars(t *testing.T) {

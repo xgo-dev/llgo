@@ -26,8 +26,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/cmd/internal/base"
-	"github.com/goplus/llgo/internal/mockable"
+	"github.com/xgo-dev/llgo/cmd/internal/base"
+	"github.com/xgo-dev/llgo/internal/mockable"
 )
 
 func TestParseLLDBVersion(t *testing.T) {

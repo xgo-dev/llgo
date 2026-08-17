@@ -4,7 +4,7 @@
 package build
 
 import (
-	"github.com/goplus/llgo/internal/pclntab"
+	"github.com/xgo-dev/llgo/internal/pclntab"
 	llvm "github.com/xgo-dev/llvm"
 )
 

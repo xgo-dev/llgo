@@ -466,6 +466,74 @@ func main() {
 	}
 }
 
+// Scenario: the process-entry tail has gc's logical runtime.main and
+// runtime.goexit frames, including while an imported package is initialized.
+// The same module is executed by gc and LLGo.
+func TestCallerAcceptanceLogicalRuntimeTail(t *testing.T) {
+	dir := t.TempDir()
+	const mainSrc = `package main
+
+import (
+	"os"
+	"runtime"
+	_ "caller-tail/probe"
+)
+
+func main() {
+	want := []string{"main.main", "runtime.main", "runtime.goexit"}
+	for skip, name := range want {
+		pc, _, _, ok := runtime.Caller(skip)
+		if !ok || runtime.FuncForPC(pc).Name() != name {
+			panic("bad runtime caller tail")
+		}
+	}
+	os.Stdout.WriteString("CALLER_TAIL_OK\n")
+}
+`
+	const probeSrc = `package probe
+
+import (
+	"runtime"
+	"strings"
+)
+
+func init() {
+	var pcs [32]uintptr
+	n := runtime.Callers(0, pcs[:])
+	frames := runtime.CallersFrames(pcs[:n])
+	seenInit := false
+	var names []string
+	for {
+		frame, more := frames.Next()
+		names = append(names, frame.Function)
+		if strings.Contains(frame.Function, "/probe.init") {
+			seenInit = true
+		} else if seenInit && strings.HasPrefix(frame.Function, "runtime.") {
+			return
+		}
+		if !more {
+			panic("runtime initialization driver missing: " + strings.Join(names, ", "))
+		}
+	}
+}
+`
+	writeCallerAcceptanceModule(t, dir, map[string]string{
+		"main.go":        mainSrc,
+		"probe/probe.go": probeSrc,
+		"go.mod":         "module caller-tail\n\ngo 1.21\n",
+	})
+
+	goCmd := exec.Command("go", "run", ".")
+	goCmd.Dir = dir
+	if out, err := goCmd.CombinedOutput(); err != nil || !strings.Contains(string(out), "CALLER_TAIL_OK") {
+		t.Fatalf("gc caller-tail probe failed: %v\n%s", err, out)
+	}
+	out, err := runLLGoInModule(t, dir, "run", ".")
+	if err != nil || !strings.Contains(out, "CALLER_TAIL_OK") {
+		t.Fatalf("LLGo caller-tail probe failed: %v\n%s", err, out)
+	}
+}
+
 // Scenario: a hardware fault inside C code called from Go (NULL store in a
 // C helper) converts to a Go panic that recover observes with gc's error
 // text; the process must not die on the raw signal.

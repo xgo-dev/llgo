@@ -22,7 +22,7 @@ import (
 	"testing"
 
 	"github.com/goplus/gogen/packages"
-	"github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func NewProgram(t *testing.T, target *ssa.Target) ssa.Program {

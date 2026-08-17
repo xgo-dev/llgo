@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/internal/packages"
+	"github.com/xgo-dev/llgo/internal/packages"
 )
 
 func llFuncBody(ll, fnSig string) string {

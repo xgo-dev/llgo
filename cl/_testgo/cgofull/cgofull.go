@@ -107,8 +107,8 @@ import (
 	"fmt"
 	"unsafe"
 
-	"github.com/goplus/llgo/cl/_testgo/cgofull/pymod1"
-	"github.com/goplus/llgo/cl/_testgo/cgofull/pymod2"
+	"github.com/xgo-dev/llgo/cl/_testgo/cgofull/pymod1"
+	"github.com/xgo-dev/llgo/cl/_testgo/cgofull/pymod2"
 )
 
 // This is the broad CGo integration case. Check each boundary kind once:
@@ -121,7 +121,7 @@ import (
 // CHECK: [[C2_HAS_ERR:%.*]] = icmp ne i32 [[C2_ERRNO]], 0
 // CHECK: [[C2_ERRNO64:%.*]] = sext i32 [[C2_ERRNO]] to i64
 // CHECK: store i64 [[C2_ERRNO64]], ptr %{{.*}}
-// CHECK: call ptr @"github.com/goplus/llgo/runtime/internal/runtime.NewItab"(ptr {{.*}}, ptr @_llgo_syscall.Errno)
+// CHECK: call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.NewItab"(ptr {{.*}}, ptr @_llgo_syscall.Errno)
 // CHECK: br i1 [[C2_HAS_ERR]], label %{{.*}}, label %{{.*}}
 // CHECK: insertvalue { i32, %"{{.*}}iface" } undef, i32 [[C2_RESULT]], 0
 // CHECK: insertvalue { i32, %"{{.*}}iface" } undef, i32 [[C2_RESULT]], 0
@@ -132,36 +132,36 @@ import (
 
 // CHECK-LABEL: define i32 @go_callback(i32 %0){{.*}} {
 // CHECK: [[GO_CTX:%.*]] = alloca %"{{.*}}LocalContext"
-// CHECK: [[GO_TOKEN:%.*]] = call i64 @"github.com/goplus/llgo/runtime/internal/runtime.EnterLocalContext"(ptr [[GO_CTX]])
+// CHECK: [[GO_TOKEN:%.*]] = call i64 @"github.com/xgo-dev/llgo/runtime/internal/runtime.EnterLocalContext"(ptr [[GO_CTX]])
 // CHECK: [[GO_RESULT:%.*]] = add i32 %0, 1
-// CHECK: call void @"github.com/goplus/llgo/runtime/internal/runtime.LeaveLocalContext"(ptr [[GO_CTX]], i64 [[GO_TOKEN]])
+// CHECK: call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.LeaveLocalContext"(ptr [[GO_CTX]], i64 [[GO_TOKEN]])
 // CHECK: ret i32 [[GO_RESULT]]
 
 // CHECK-LABEL: define i32 @go_callback_not_use_in_go(i32 %0){{.*}} {
 // CHECK: [[UNUSED_CTX:%.*]] = alloca %"{{.*}}LocalContext"
-// CHECK: [[UNUSED_TOKEN:%.*]] = call i64 @"github.com/goplus/llgo/runtime/internal/runtime.EnterLocalContext"(ptr [[UNUSED_CTX]])
+// CHECK: [[UNUSED_TOKEN:%.*]] = call i64 @"github.com/xgo-dev/llgo/runtime/internal/runtime.EnterLocalContext"(ptr [[UNUSED_CTX]])
 // CHECK: [[UNUSED_RESULT:%.*]] = add i32 %0, 1
-// CHECK: call void @"github.com/goplus/llgo/runtime/internal/runtime.LeaveLocalContext"(ptr [[UNUSED_CTX]], i64 [[UNUSED_TOKEN]])
+// CHECK: call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.LeaveLocalContext"(ptr [[UNUSED_CTX]], i64 [[UNUSED_TOKEN]])
 // CHECK: ret i32 [[UNUSED_RESULT]]
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: call void @main.runPy()
 // CHECK: call void @main.triggerC2func()
-// CHECK: [[FOO:%.*]] = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocZ"(i64 4)
+// CHECK: [[FOO:%.*]] = call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ"(i64 4)
 // CHECK: [[FOO_A:%.*]] = getelementptr inbounds %{{.*}}, ptr [[FOO]], i32 0, i32 0
 // CHECK: store i32 1, ptr [[FOO_A]]
 // CHECK: call void @main.Foo(ptr [[FOO]])
 // CHECK: call void @main.Bar(ptr [[FOO]])
 // CHECK: call [0 x i8] @main._Cfunc_test_macros()
-// CHECK: [[MAIN_S4:%.*]] = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocZ"(i64 4)
+// CHECK: [[MAIN_S4:%.*]] = call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ"(i64 4)
 // CHECK: store i32 1, ptr %{{.*}}
-// CHECK: [[MAIN_S8:%.*]] = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[MAIN_S8:%.*]] = call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ"(i64 8)
 // CHECK: store i32 2, ptr %{{.*}}
-// CHECK: [[MAIN_S12:%.*]] = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocZ"(i64 12)
+// CHECK: [[MAIN_S12:%.*]] = call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ"(i64 12)
 // CHECK: store i32 3, ptr %{{.*}}
-// CHECK: [[MAIN_S16:%.*]] = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK: [[MAIN_S16:%.*]] = call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK: store i32 4, ptr %{{.*}}
-// CHECK: [[MAIN_S20:%.*]] = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocZ"(i64 20)
+// CHECK: [[MAIN_S20:%.*]] = call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ"(i64 20)
 // CHECK: store i32 5, ptr %{{.*}}
 // CHECK: [[MAIN_RESULT:%.*]] = call i32 @main._Cfunc_test_structs(ptr [[MAIN_S4]], ptr [[MAIN_S8]], ptr [[MAIN_S12]], ptr [[MAIN_S16]], ptr [[MAIN_S20]])
 // CHECK: store i32 [[MAIN_RESULT]], ptr %{{.*}}
@@ -179,13 +179,13 @@ import (
 // CHECK: call [0 x i8] @main._Cfunc_test_callback(ptr [[C_CB_PTR]])
 
 // CHECK-LABEL: define i32 @"main.runPy$1"(){{.*}} {
-// CHECK: [[FLOAT:%.*]] = call ptr @"github.com/goplus/llgo/cl/_testgo/cgofull/pymod1.Float"(double 1.230000e+00)
+// CHECK: [[FLOAT:%.*]] = call ptr @"github.com/xgo-dev/llgo/cl/_testgo/cgofull/pymod1.Float"(double 1.230000e+00)
 // CHECK: [[STDERR:%.*]] = call ptr @main._Cmacro_stderr()
 // CHECK: [[FLOAT_RESULT:%.*]] = call i32 @main._Cfunc_PyObject_Print(ptr [[FLOAT]], ptr [[STDERR]], i32 0)
 // CHECK: ret i32 [[FLOAT_RESULT]]
 
 // CHECK-LABEL: define i32 @"main.runPy$2"(){{.*}} {
-// CHECK: [[LONG:%.*]] = call ptr @"github.com/goplus/llgo/cl/_testgo/cgofull/pymod2.Long"(i64 123)
+// CHECK: [[LONG:%.*]] = call ptr @"github.com/xgo-dev/llgo/cl/_testgo/cgofull/pymod2.Long"(i64 123)
 // CHECK: [[LONG_STDOUT:%.*]] = call ptr @main._Cmacro_stdout()
 // CHECK: [[LONG_RESULT:%.*]] = call i32 @main._Cfunc_PyObject_Print(ptr [[LONG]], ptr [[LONG_STDOUT]], i32 0)
 // CHECK: ret i32 [[LONG_RESULT]]
@@ -197,24 +197,24 @@ import (
 // CHECK: ret i32 [[COMPLEX_RESULT]]
 
 // CHECK-LABEL: define void @main.triggerC2func(){{.*}} {
-// CHECK: [[TRIGGER_S4:%.*]] = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocZ"(i64 4)
+// CHECK: [[TRIGGER_S4:%.*]] = call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ"(i64 4)
 // CHECK: store i32 1, ptr %{{.*}}
-// CHECK: [[TRIGGER_S8:%.*]] = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[TRIGGER_S8:%.*]] = call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ"(i64 8)
 // CHECK: store i32 2, ptr %{{.*}}
-// CHECK: [[TRIGGER_S12:%.*]] = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocZ"(i64 12)
+// CHECK: [[TRIGGER_S12:%.*]] = call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ"(i64 12)
 // CHECK: store i32 3, ptr %{{.*}}
-// CHECK: [[TRIGGER_S16:%.*]] = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK: [[TRIGGER_S16:%.*]] = call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK: store i32 4, ptr %{{.*}}
-// CHECK: [[TRIGGER_S20:%.*]] = call ptr @"github.com/goplus/llgo/runtime/internal/runtime.AllocZ"(i64 20)
+// CHECK: [[TRIGGER_S20:%.*]] = call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ"(i64 20)
 // CHECK: store i32 5, ptr %{{.*}}
 // CHECK: [[TRIGGER_PAIR:%.*]] = call { i32, %"{{.*}}iface" } @main._C2func_test_structs(ptr [[TRIGGER_S4]], ptr [[TRIGGER_S8]], ptr [[TRIGGER_S12]], ptr [[TRIGGER_S16]], ptr [[TRIGGER_S20]])
 // CHECK: [[TRIGGER_RESULT:%.*]] = extractvalue { i32, %"{{.*}}iface" } [[TRIGGER_PAIR]], 0
 // CHECK: [[TRIGGER_ERR:%.*]] = extractvalue { i32, %"{{.*}}iface" } [[TRIGGER_PAIR]], 1
-// CHECK: call ptr @"github.com/goplus/llgo/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[TRIGGER_ERR]])
-// CHECK: [[ERR_IS_NIL:%.*]] = call i1 @"github.com/goplus/llgo/runtime/internal/runtime.EfaceEqual"
+// CHECK: call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[TRIGGER_ERR]])
+// CHECK: [[ERR_IS_NIL:%.*]] = call i1 @"github.com/xgo-dev/llgo/runtime/internal/runtime.EfaceEqual"
 // CHECK: [[HAS_ERROR:%.*]] = xor i1 [[ERR_IS_NIL]], true
 // CHECK: br i1 [[HAS_ERROR]], label %{{.*}}, label %{{.*}}
-// CHECK: call void @"github.com/goplus/llgo/runtime/internal/runtime.Panic"
+// CHECK: call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.Panic"
 // CHECK: [[TRIGGER_BAD:%.*]] = icmp ne i32 [[TRIGGER_RESULT]], 35
 // CHECK: br i1 [[TRIGGER_BAD]], label %{{.*}}, label %{{.*}}
 

@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/goplus/llgo/internal/pclnpost"
+	"github.com/xgo-dev/llgo/internal/pclnpost"
 )
 
 func main() {

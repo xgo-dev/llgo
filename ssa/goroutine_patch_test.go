@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/ssa"
-	"github.com/goplus/llgo/ssa/ssatest"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssatest"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -41,15 +41,15 @@ func TestGoClosureStartupUsesGCManagedMemory(t *testing.T) {
 	if strings.Contains(ir, "@free") {
 		t.Fatalf("goroutine startup data should not use free:\n%s", ir)
 	}
-	if !strings.Contains(ir, `"github.com/goplus/llgo/runtime/internal/runtime.AllocRoot"`) {
+	if !strings.Contains(ir, `"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocRoot"`) {
 		t.Fatalf("goroutine startup data should use scanned uncollectable memory:\n%s", ir)
 	}
-	if !strings.Contains(ir, `"github.com/goplus/llgo/runtime/internal/runtime.FreeRoot"`) {
+	if !strings.Contains(ir, `"github.com/xgo-dev/llgo/runtime/internal/runtime.FreeRoot"`) {
 		t.Fatalf("goroutine startup data should be freed after the entry call returns:\n%s", ir)
 	}
 	// The closure context must remain visible to the runtime GC until the
 	// uncollectable startup record is initialized.
-	if got := strings.Count(ir, `"github.com/goplus/llgo/runtime/internal/runtime.AllocU"`); got < 1 {
+	if got := strings.Count(ir, `"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU"`); got < 1 {
 		t.Fatalf("expected closure ctx to use AllocU, got %d:\n%s", got, ir)
 	}
 	if strings.Contains(ir, "EnterLocalContext") {
@@ -94,8 +94,8 @@ func TestGoPanicRoutineDoesNotReturnAfterUnreachable(t *testing.T) {
 	}
 
 	ir := pkg.String()
-	freeRoot := strings.Index(ir, `"github.com/goplus/llgo/runtime/internal/runtime.FreeRoot"`)
-	panicCall := strings.Index(ir, `"github.com/goplus/llgo/runtime/internal/runtime.Panic"`)
+	freeRoot := strings.Index(ir, `"github.com/xgo-dev/llgo/runtime/internal/runtime.FreeRoot"`)
+	panicCall := strings.Index(ir, `"github.com/xgo-dev/llgo/runtime/internal/runtime.Panic"`)
 	if freeRoot < 0 || panicCall < 0 || freeRoot > panicCall {
 		t.Fatalf("goroutine wrapper should free startup data before panic call:\n%s", ir)
 	}
@@ -117,7 +117,7 @@ func TestGoPassesConfiguredStackSizeToRuntime(t *testing.T) {
 	ob.Return()
 
 	ir := pkg.String()
-	if !strings.Contains(ir, `"github.com/goplus/llgo/runtime/internal/runtime.NewProc"`) {
+	if !strings.Contains(ir, `"github.com/xgo-dev/llgo/runtime/internal/runtime.NewProc"`) {
 		t.Fatalf("goroutine should delegate startup to the runtime:\n%s", ir)
 	}
 	if !strings.Contains(ir, "33554432") {
@@ -140,7 +140,7 @@ func TestGoPassesZeroStackSizeToRuntimeByDefault(t *testing.T) {
 	ob.Return()
 
 	ir := pkg.String()
-	if !strings.Contains(ir, `"github.com/goplus/llgo/runtime/internal/runtime.NewProc"`) {
+	if !strings.Contains(ir, `"github.com/xgo-dev/llgo/runtime/internal/runtime.NewProc"`) {
 		t.Fatalf("goroutine should delegate startup to the runtime:\n%s", ir)
 	}
 	if strings.Contains(ir, "pthread") {

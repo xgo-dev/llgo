@@ -3,7 +3,7 @@ package main
 import (
 	"github.com/goplus/lib/c"
 	"github.com/goplus/lib/c/math"
-	"github.com/goplus/llgo/_demo/c/cppintf/foo"
+	"github.com/xgo-dev/llgo/_demo/c/cppintf/foo"
 )
 
 type Bar struct {

@@ -22,8 +22,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/internal/build"
-	"github.com/goplus/llgo/internal/optlevel"
+	"github.com/xgo-dev/llgo/internal/build"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 )
 
 func TestApplyFlagsFile(t *testing.T) {

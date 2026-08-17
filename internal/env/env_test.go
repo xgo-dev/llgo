@@ -119,7 +119,7 @@ func TestLLGoRuntimeDir(t *testing.T) {
 		tmpDir := t.TempDir()
 		runtimeDir := filepath.Join(tmpDir, "runtime")
 		os.MkdirAll(runtimeDir, 0755)
-		goModContent := []byte("module github.com/goplus/llgo/runtime\n")
+		goModContent := []byte("module github.com/xgo-dev/llgo/runtime\n")
 		if err := os.WriteFile(filepath.Join(runtimeDir, "go.mod"), goModContent, 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -172,7 +172,7 @@ func TestLLGoROOT(t *testing.T) {
 		tmpDir := t.TempDir()
 		runtimeDir := filepath.Join(tmpDir, "runtime")
 		os.MkdirAll(runtimeDir, 0755)
-		goModContent := []byte("module github.com/goplus/llgo/runtime\n")
+		goModContent := []byte("module github.com/xgo-dev/llgo/runtime\n")
 		if err := os.WriteFile(filepath.Join(runtimeDir, "go.mod"), goModContent, 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -252,7 +252,7 @@ func TestIsLLGoRoot(t *testing.T) {
 		tmpDir := t.TempDir()
 		runtimeDir := filepath.Join(tmpDir, "runtime")
 		os.MkdirAll(runtimeDir, 0755)
-		goModContent := []byte("module github.com/goplus/llgo/runtime\n")
+		goModContent := []byte("module github.com/xgo-dev/llgo/runtime\n")
 		if err := os.WriteFile(filepath.Join(runtimeDir, "go.mod"), goModContent, 0644); err != nil {
 			t.Fatal(err)
 		}

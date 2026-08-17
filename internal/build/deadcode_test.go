@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/internal/meta"
-	"github.com/goplus/llgo/internal/packages"
-	llssa "github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llgo/internal/meta"
+	"github.com/xgo-dev/llgo/internal/packages"
+	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -116,7 +116,7 @@ func addMethodTypeGlobal(mod llvm.Module, name string) {
 	ptrTy := llvm.PointerType(fnTy, 0)
 	stringTy := ctx.StructCreateNamed("runtime/internal/runtime.String")
 	stringTy.StructSetBody([]llvm.Type{llvm.PointerType(ctx.Int8Type(), 0), ctx.Int64Type()}, false)
-	methodTy := ctx.StructCreateNamed("github.com/goplus/llgo/runtime/abi.Method")
+	methodTy := ctx.StructCreateNamed("github.com/xgo-dev/llgo/runtime/abi.Method")
 	methodTy.StructSetBody([]llvm.Type{stringTy, ptrTy, ptrTy, ptrTy}, false)
 
 	mtyp := llvm.AddGlobal(mod, ptrTy, "mtyp")

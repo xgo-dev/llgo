@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goplus/llgo/test/go/recoverpkg"
+	"github.com/xgo-dev/llgo/test/go/recoverpkg"
 )
 
 func TestRecoverCrossPackageDeferredFunction(t *testing.T) {

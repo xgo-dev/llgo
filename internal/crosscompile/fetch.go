@@ -16,7 +16,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/goplus/llgo/internal/llvmpayload"
+	"github.com/xgo-dev/llgo/internal/llvmpayload"
 )
 
 // checkDownloadAndExtractWasiSDK downloads and extracts WASI SDK

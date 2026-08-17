@@ -67,7 +67,7 @@ const (
 
 5. Write the corresponding function in `inih.go`
 
-Note that the basic C function type mapping to Go function type can be found at [https://github.com/goplus/llgo/blob/main/doc/Type-Mapping-between-C-and-Go.md](https://github.com/goplus/llgo/blob/main/doc/Type-Mapping-between-C-and-Go.md). Some types requiring special handling are listed at the end of this document for reference.
+Note that the basic C function type mapping to Go function type can be found at [https://github.com/xgo-dev/llgo/blob/main/doc/Type-Mapping-between-C-and-Go.md](https://github.com/xgo-dev/llgo/blob/main/doc/Type-Mapping-between-C-and-Go.md). Some types requiring special handling are listed at the end of this document for reference.
 
 ```go
 //go:linkname Parse C.ini_parse

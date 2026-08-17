@@ -85,7 +85,7 @@ func findLLGoRoot(t *testing.T) string {
 	}
 	for {
 		data, err := os.ReadFile(filepath.Join(dir, "go.mod"))
-		if err == nil && strings.Contains(string(data), "module github.com/goplus/llgo") {
+		if err == nil && strings.Contains(string(data), "module github.com/xgo-dev/llgo") {
 			return dir
 		}
 		parent := filepath.Dir(dir)

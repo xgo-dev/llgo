@@ -1,4 +1,4 @@
-module github.com/goplus/llgo/_demo/embed
+module github.com/xgo-dev/llgo/_demo/embed
 
 go 1.20
 

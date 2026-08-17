@@ -5,7 +5,7 @@ package runtime
 import (
 	"runtime"
 
-	"github.com/goplus/llgo/runtime/internal/runtime/tinygogc"
+	"github.com/xgo-dev/llgo/runtime/internal/runtime/tinygogc"
 )
 
 func ReadMemStats(m *runtime.MemStats) {

@@ -5,7 +5,7 @@ package runtime
 import (
 	"runtime"
 
-	"github.com/goplus/llgo/runtime/internal/clite/bdwgc"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/bdwgc"
 )
 
 func init() {

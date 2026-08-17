@@ -17,7 +17,7 @@
 package runtime
 
 import (
-	"github.com/goplus/llgo/runtime/abi"
+	"github.com/xgo-dev/llgo/runtime/abi"
 )
 
 type Kind = abi.Kind

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/internal/crosscompile"
-	"github.com/goplus/llgo/internal/lto"
-	llssa "github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/lto"
+	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
 func TestUseInMemoryNativeCodegenConf(t *testing.T) {

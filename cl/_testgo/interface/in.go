@@ -2,7 +2,7 @@
 package main
 
 import (
-	"github.com/goplus/llgo/cl/_testdata/foo"
+	"github.com/xgo-dev/llgo/cl/_testdata/foo"
 )
 
 type Game1 struct {

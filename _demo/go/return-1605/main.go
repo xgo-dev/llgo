@@ -1,6 +1,6 @@
 package main
 
-// Regression test for https://github.com/goplus/llgo/issues/1608
+// Regression test for https://github.com/xgo-dev/llgo/issues/1608
 
 type T struct {
 	data []int

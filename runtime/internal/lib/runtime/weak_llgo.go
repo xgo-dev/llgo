@@ -3,10 +3,11 @@ package runtime
 import (
 	"unsafe"
 
-	psync "github.com/goplus/llgo/runtime/internal/clite/pthread/sync"
-	llrt "github.com/goplus/llgo/runtime/internal/runtime"
 	latomic "sync/atomic"
 	_ "unsafe"
+
+	psync "github.com/xgo-dev/llgo/runtime/internal/clite/pthread/sync"
+	llrt "github.com/xgo-dev/llgo/runtime/internal/runtime"
 )
 
 type weakHandle struct {

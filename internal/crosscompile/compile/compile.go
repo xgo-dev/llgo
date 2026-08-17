@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/goplus/llgo/internal/clang"
+	"github.com/xgo-dev/llgo/internal/clang"
 )
 
 type CompileOptions struct {

@@ -33,8 +33,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/goplus/llgo/internal/llgen"
 	"github.com/goplus/mod"
+	"github.com/xgo-dev/llgo/internal/llgen"
 	"golang.org/x/mod/modfile"
 )
 

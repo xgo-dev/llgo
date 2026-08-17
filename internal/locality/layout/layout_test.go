@@ -22,7 +22,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/internal/locality"
+	"github.com/xgo-dev/llgo/internal/locality"
 )
 
 func TestPlanSharesPointerStorageAndPreservesKinds(t *testing.T) {

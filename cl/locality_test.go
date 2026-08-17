@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/goplus/llgo/ssa"
-	"github.com/goplus/llgo/ssa/abi"
-	"github.com/goplus/llgo/ssa/ssatest"
+	llssa "github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/abi"
+	"github.com/xgo-dev/llgo/ssa/ssatest"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -198,7 +198,7 @@ func values() (int, *int, int, *int) {
 	if got := strings.Count(ir, `@"example.com/locality.__llgo_local_cache" = thread_local global i64 0`); got != 1 {
 		t.Fatalf("package block caches = %d, want 1:\n%s", got, ir)
 	}
-	if got := strings.Count(ir, `call ptr @"github.com/goplus/llgo/runtime/internal/runtime.LocalPackage"`); got != 1 {
+	if got := strings.Count(ir, `call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.LocalPackage"`); got != 1 {
 		t.Fatalf("LocalPackage calls = %d, want one accessor definition:\n%s", got, ir)
 	}
 	values := llvmFunction(t, ir, "example.com/locality.values")

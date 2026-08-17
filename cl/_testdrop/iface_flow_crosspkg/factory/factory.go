@@ -1,6 +1,6 @@
 package factory
 
-import "github.com/goplus/llgo/cl/_testdrop/iface_flow_crosspkg/api"
+import "github.com/xgo-dev/llgo/cl/_testdrop/iface_flow_crosspkg/api"
 
 type T struct {
 	n int

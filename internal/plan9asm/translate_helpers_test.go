@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	llpackages "github.com/goplus/llgo/internal/packages"
+	llpackages "github.com/xgo-dev/llgo/internal/packages"
 	extplan9asm "github.com/xgo-dev/plan9asm"
 )
 

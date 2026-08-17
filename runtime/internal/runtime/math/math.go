@@ -1,6 +1,6 @@
 package math
 
-import "github.com/goplus/llgo/runtime/internal/runtime/goarch"
+import "github.com/xgo-dev/llgo/runtime/internal/runtime/goarch"
 
 const MaxUintptr = ^uintptr(0)
 

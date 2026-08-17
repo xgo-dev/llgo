@@ -21,8 +21,8 @@ builds:
     flags:
       - -tags=darwin,amd64,byollvm
     ldflags:
-      - -X github.com/goplus/llgo/internal/env.buildVersion=v{{.Version}}
-      - -X github.com/goplus/llgo/internal/env.buildTime={{.Date}}
+      - -X github.com/xgo-dev/llgo/internal/env.buildVersion=v{{.Version}}
+      - -X github.com/xgo-dev/llgo/internal/env.buildTime={{.Date}}
     env:
       - CC=o64-clang
       - CXX=o64-clang++
@@ -37,8 +37,8 @@ builds:
     flags:
       - -tags=darwin,arm64,byollvm
     ldflags:
-      - -X github.com/goplus/llgo/internal/env.buildVersion=v{{.Version}}
-      - -X github.com/goplus/llgo/internal/env.buildTime={{.Date}}
+      - -X github.com/xgo-dev/llgo/internal/env.buildVersion=v{{.Version}}
+      - -X github.com/xgo-dev/llgo/internal/env.buildTime={{.Date}}
     env:
       - CC=oa64-clang
       - CXX=oa64-clang++
@@ -53,8 +53,8 @@ builds:
     flags:
       - -tags=linux,amd64,byollvm
     ldflags:
-      - -X github.com/goplus/llgo/internal/env.buildVersion=v{{.Version}}
-      - -X github.com/goplus/llgo/internal/env.buildTime={{.Date}}
+      - -X github.com/xgo-dev/llgo/internal/env.buildVersion=v{{.Version}}
+      - -X github.com/xgo-dev/llgo/internal/env.buildTime={{.Date}}
       - "-extldflags=-Wl,-rpath,$ORIGIN/../crosscompile/clang/lib"
     env:
       # Use the packaged host Clang driver with the target's complete bullseye sysroot.
@@ -73,8 +73,8 @@ builds:
     flags:
       - -tags=linux,arm64,byollvm
     ldflags:
-      - -X github.com/goplus/llgo/internal/env.buildVersion=v{{.Version}}
-      - -X github.com/goplus/llgo/internal/env.buildTime={{.Date}}
+      - -X github.com/xgo-dev/llgo/internal/env.buildVersion=v{{.Version}}
+      - -X github.com/xgo-dev/llgo/internal/env.buildTime={{.Date}}
       - "-extldflags=-Wl,-rpath,$ORIGIN/../crosscompile/clang/lib"
     env:
       # The amd64 Clang driver is multi-target; libraries and headers stay arm64.
@@ -108,7 +108,7 @@ checksum:
 nfpms:
   - package_name: llgo
     vendor: goplus
-    homepage: https://github.com/goplus/llgo
+    homepage: https://github.com/xgo-dev/llgo
     maintainer: Aofei Sheng <aofei@aofeisheng.com>
     description: |
       LLGo is a Go compiler based on LLVM in order to better integrate Go with the C ecosystem including Python. It's a

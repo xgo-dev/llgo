@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/goplus/llgo/internal/packages"
+	"github.com/xgo-dev/llgo/internal/packages"
 	extplan9asm "github.com/xgo-dev/plan9asm"
 )
 

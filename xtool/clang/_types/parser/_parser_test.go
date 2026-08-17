@@ -24,7 +24,7 @@ import (
 	"go/types"
 	"testing"
 
-	ctypes "github.com/goplus/llgo/x/clang/types"
+	ctypes "github.com/xgo-dev/llgo/x/clang/types"
 )
 
 // -----------------------------------------------------------------------------

@@ -15,7 +15,7 @@ package js
 import (
 	"unsafe"
 
-	c "github.com/goplus/llgo/runtime/internal/clite"
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 )
 
 //llgo:skipall

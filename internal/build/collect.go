@@ -26,9 +26,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/goplus/llgo/internal/env"
-	"github.com/goplus/llgo/internal/meta"
-	"github.com/goplus/llgo/internal/packages"
+	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/meta"
+	"github.com/xgo-dev/llgo/internal/packages"
 	gopackages "golang.org/x/tools/go/packages"
 )
 

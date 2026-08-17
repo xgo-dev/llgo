@@ -20,7 +20,7 @@ import (
 	"go/token"
 	"go/types"
 
-	llabi "github.com/goplus/llgo/internal/abi"
+	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llvm"
 )
 

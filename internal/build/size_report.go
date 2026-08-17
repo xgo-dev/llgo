@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/goplus/llgo/xtool/env/llvm"
+	"github.com/xgo-dev/llgo/xtool/env/llvm"
 )
 
 type sectionKind int

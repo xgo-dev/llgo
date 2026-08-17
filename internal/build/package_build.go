@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/goplus/llgo/cl"
-	"github.com/goplus/llgo/internal/packages"
+	"github.com/xgo-dev/llgo/cl"
+	"github.com/xgo-dev/llgo/internal/packages"
 )
 
 type packageBuildTask struct {

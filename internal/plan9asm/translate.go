@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/goplus/llgo/internal/packages"
-	intllvm "github.com/goplus/llgo/internal/xtool/llvm"
+	"github.com/xgo-dev/llgo/internal/packages"
+	intllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
 	gllvm "github.com/xgo-dev/llvm"
 	extplan9asm "github.com/xgo-dev/plan9asm"
 )

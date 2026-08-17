@@ -16,7 +16,7 @@ max_group=0
 for test_pkg in "${test_pkgs[@]}"; do
 	read -r import_path package_dir < <(go list -tags=llgo -f '{{.ImportPath}} {{.Dir}}' "${test_pkg}")
 	case "${import_path}" in
-		github.com/goplus/llgo/test/std/*) ;;
+		github.com/xgo-dev/llgo/test/std/*) ;;
 		*)
 			echo "not a test/std package: ${test_pkg}" >&2
 			exit 2
@@ -41,7 +41,7 @@ done
 # weak.Pointer can otherwise assign shared instantiations to libunique.test and
 # leave another output with unresolved weak.Pointer methods.
 for i in "${!import_paths[@]}"; do
-	if [[ "${import_paths[$i]}" == "github.com/goplus/llgo/test/std/unique" ]]; then
+	if [[ "${import_paths[$i]}" == "github.com/xgo-dev/llgo/test/std/unique" ]]; then
 		max_group=$((max_group + 1))
 		groups[$i]="${max_group}"
 	fi

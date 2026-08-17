@@ -4,7 +4,7 @@ import (
 	"unsafe"
 
 	"github.com/goplus/lib/c"
-	"github.com/goplus/llgo/_demo/embed/esp32/watchdog"
+	"github.com/xgo-dev/llgo/_demo/embed/esp32/watchdog"
 )
 
 //

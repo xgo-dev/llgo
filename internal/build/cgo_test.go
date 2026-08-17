@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/internal/packages"
+	"github.com/xgo-dev/llgo/internal/packages"
 )
 
 func TestParseCgoDeclFlags(t *testing.T) {

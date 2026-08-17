@@ -23,7 +23,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/goplus/llgo/runtime/internal/clite/tls"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/tls"
 )
 
 func TestAllocReadWrite(t *testing.T) {

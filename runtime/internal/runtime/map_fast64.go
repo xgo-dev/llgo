@@ -7,8 +7,8 @@ package runtime
 import (
 	"unsafe"
 
-	"github.com/goplus/llgo/runtime/abi"
-	"github.com/goplus/llgo/runtime/internal/runtime/goarch"
+	"github.com/xgo-dev/llgo/runtime/abi"
+	"github.com/xgo-dev/llgo/runtime/internal/runtime/goarch"
 )
 
 func mapaccess1_fast64(t *maptype, h *hmap, key uint64) unsafe.Pointer {

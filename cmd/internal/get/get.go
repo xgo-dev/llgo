@@ -18,7 +18,7 @@
 package get
 
 import (
-	"github.com/goplus/llgo/cmd/internal/base"
+	"github.com/xgo-dev/llgo/cmd/internal/base"
 )
 
 // llgo get

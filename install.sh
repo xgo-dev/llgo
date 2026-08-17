@@ -10,7 +10,7 @@ cd "$SCRIPT_DIR"
 check_local_install() {
     if [ -f "go.mod" ]; then
         FIRST_LINE=$(head -n 1 go.mod)
-        if [ "$FIRST_LINE" = "module github.com/goplus/llgo" ]; then
+        if [ "$FIRST_LINE" = "module github.com/xgo-dev/llgo" ]; then
             return 0
         fi
     fi
@@ -19,7 +19,7 @@ check_local_install() {
 
 # Function to get latest release version
 get_latest_version() {
-    curl --silent "https://api.github.com/repos/goplus/llgo/releases/latest" |
+    curl --silent "https://api.github.com/repos/xgo-dev/llgo/releases/latest" |
     grep '"tag_name":' |
     sed -E 's/.*"([^"]+)".*/\1/'
 }
@@ -54,7 +54,7 @@ install_remote() {
     VERSION_NO_V=${VERSION#v}  # Remove the 'v' prefix
     SYSTEM=$(get_system_info)
     INSTALL_DIR="$HOME/.llgo"
-    DOWNLOAD_URL="https://github.com/goplus/llgo/releases/download/${VERSION}/llgo${VERSION_NO_V}.${SYSTEM}"
+    DOWNLOAD_URL="https://github.com/xgo-dev/llgo/releases/download/${VERSION}/llgo${VERSION_NO_V}.${SYSTEM}"
 
     echo "Installing llgo ${VERSION} for ${SYSTEM}..."
 

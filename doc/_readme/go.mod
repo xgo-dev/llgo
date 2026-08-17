@@ -1,4 +1,4 @@
-module github.com/goplus/llgo/doc/_readme
+module github.com/xgo-dev/llgo/doc/_readme
 
 go 1.20
 

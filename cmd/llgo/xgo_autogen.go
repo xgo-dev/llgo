@@ -4,18 +4,19 @@ package main
 
 import (
 	"fmt"
-	"github.com/goplus/cobra/xcmd"
-	"github.com/goplus/llgo/cmd/internal/build"
-	"github.com/goplus/llgo/cmd/internal/clean"
-	"github.com/goplus/llgo/cmd/internal/compile"
-	"github.com/goplus/llgo/cmd/internal/install"
-	"github.com/goplus/llgo/cmd/internal/lldb"
-	"github.com/goplus/llgo/cmd/internal/monitor"
-	"github.com/goplus/llgo/cmd/internal/run"
-	"github.com/goplus/llgo/cmd/internal/test"
-	"github.com/goplus/llgo/internal/env"
-	"github.com/qiniu/x/stringutil"
 	"runtime"
+
+	"github.com/goplus/cobra/xcmd"
+	"github.com/qiniu/x/stringutil"
+	"github.com/xgo-dev/llgo/cmd/internal/build"
+	"github.com/xgo-dev/llgo/cmd/internal/clean"
+	"github.com/xgo-dev/llgo/cmd/internal/compile"
+	"github.com/xgo-dev/llgo/cmd/internal/install"
+	"github.com/xgo-dev/llgo/cmd/internal/lldb"
+	"github.com/xgo-dev/llgo/cmd/internal/monitor"
+	"github.com/xgo-dev/llgo/cmd/internal/run"
+	"github.com/xgo-dev/llgo/cmd/internal/test"
+	"github.com/xgo-dev/llgo/internal/env"
 )
 
 const _ = true

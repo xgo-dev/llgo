@@ -12,7 +12,7 @@ const (
 	// compiler-generated temporaries.
 	MaxImplicitStackVarSize uint64 = 64 * 1024
 
-	runtimeAllocU = "github.com/goplus/llgo/runtime/internal/runtime.AllocU"
+	runtimeAllocU = "github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU"
 )
 
 // LowerLargeAggregates converts oversized direct aggregate returns to an

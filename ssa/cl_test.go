@@ -28,8 +28,8 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/goplus/llgo/cl/cltest"
-	"github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llgo/cl/cltest"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func TestMain(m *testing.M) {

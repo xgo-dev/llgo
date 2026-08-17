@@ -23,16 +23,16 @@ import (
 	"unsafe"
 )
 
-//go:linkname runtimeGetGForTest github.com/goplus/llgo/runtime/internal/runtime.getg
+//go:linkname runtimeGetGForTest github.com/xgo-dev/llgo/runtime/internal/runtime.getg
 func runtimeGetGForTest() unsafe.Pointer
 
-//go:linkname runtimeGetThreadDeferForGTest github.com/goplus/llgo/runtime/internal/runtime.GetThreadDefer
+//go:linkname runtimeGetThreadDeferForGTest github.com/xgo-dev/llgo/runtime/internal/runtime.GetThreadDefer
 func runtimeGetThreadDeferForGTest() unsafe.Pointer
 
-//go:linkname runtimeSetThreadDeferForGTest github.com/goplus/llgo/runtime/internal/runtime.SetThreadDefer
+//go:linkname runtimeSetThreadDeferForGTest github.com/xgo-dev/llgo/runtime/internal/runtime.SetThreadDefer
 func runtimeSetThreadDeferForGTest(unsafe.Pointer)
 
-//go:linkname runtimeClearThreadDeferForGTest github.com/goplus/llgo/runtime/internal/runtime.ClearThreadDefer
+//go:linkname runtimeClearThreadDeferForGTest github.com/xgo-dev/llgo/runtime/internal/runtime.ClearThreadDefer
 func runtimeClearThreadDeferForGTest()
 
 type runtimeGPointerResult struct {
@@ -76,7 +76,7 @@ func TestRuntimeGetGIsolation(t *testing.T) {
 	}
 }
 
-//go:linkname runtimeGMPForTesting github.com/goplus/llgo/runtime/internal/runtime.GMPForTesting
+//go:linkname runtimeGMPForTesting github.com/xgo-dev/llgo/runtime/internal/runtime.GMPForTesting
 func runtimeGMPForTesting() (goid, parentGoid uint64, mid int64, pid int32, gstatus, pstatus uint32, linked bool)
 
 const (

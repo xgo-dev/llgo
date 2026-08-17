@@ -38,18 +38,18 @@ import (
 	"testing"
 
 	"github.com/goplus/gogen/packages"
-	"github.com/goplus/llgo/cl"
-	"github.com/goplus/llgo/internal/build"
-	"github.com/goplus/llgo/internal/filecheck"
-	"github.com/goplus/llgo/internal/littest"
-	"github.com/goplus/llgo/internal/llgen"
-	"github.com/goplus/llgo/internal/mockable"
-	"github.com/goplus/llgo/ssa/ssatest"
 	"github.com/qiniu/x/test"
+	"github.com/xgo-dev/llgo/cl"
+	"github.com/xgo-dev/llgo/internal/build"
+	"github.com/xgo-dev/llgo/internal/filecheck"
+	"github.com/xgo-dev/llgo/internal/littest"
+	"github.com/xgo-dev/llgo/internal/llgen"
+	"github.com/xgo-dev/llgo/internal/mockable"
+	"github.com/xgo-dev/llgo/ssa/ssatest"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 
-	llssa "github.com/goplus/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
 func init() {

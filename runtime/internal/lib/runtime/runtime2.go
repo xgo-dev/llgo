@@ -7,7 +7,7 @@ package runtime
 import (
 	_ "unsafe"
 
-	psync "github.com/goplus/llgo/runtime/internal/clite/pthread/sync"
+	psync "github.com/xgo-dev/llgo/runtime/internal/clite/pthread/sync"
 )
 
 // Layout of in-memory per-function information prepared by linker
@@ -18,7 +18,7 @@ type _func struct {
 	unused [8]byte
 }
 
-//go:linkname goid github.com/goplus/llgo/runtime/internal/runtime.goid
+//go:linkname goid github.com/xgo-dev/llgo/runtime/internal/runtime.goid
 func goid() uint64
 
 func Stack(buf []byte, all bool) int {

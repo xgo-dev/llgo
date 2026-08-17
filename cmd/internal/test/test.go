@@ -13,10 +13,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/goplus/llgo/cmd/internal/base"
-	"github.com/goplus/llgo/cmd/internal/flags"
-	"github.com/goplus/llgo/internal/build"
-	"github.com/goplus/llgo/internal/mockable"
+	"github.com/xgo-dev/llgo/cmd/internal/base"
+	"github.com/xgo-dev/llgo/cmd/internal/flags"
+	"github.com/xgo-dev/llgo/internal/build"
+	"github.com/xgo-dev/llgo/internal/mockable"
 )
 
 // llgo test

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/goplus/llgo/internal/env"
-	"github.com/goplus/llgo/internal/shellparse"
+	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/shellparse"
 	"go.bug.st/serial"
 	"go.bug.st/serial/enumerator"
 )

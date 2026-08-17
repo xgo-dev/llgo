@@ -2,7 +2,7 @@ package main
 
 import (
 	"github.com/goplus/lib/c"
-	_ "github.com/goplus/llgo/_demo/embed/targetsbuild/C"
+	_ "github.com/xgo-dev/llgo/_demo/embed/targetsbuild/C"
 )
 
 func main() {

@@ -1,8 +1,9 @@
 package runtime
 
 import (
-	llruntime "github.com/goplus/llgo/runtime/internal/runtime"
 	_ "unsafe"
+
+	llruntime "github.com/xgo-dev/llgo/runtime/internal/runtime"
 )
 
 type TypeAssertionError = llruntime.TypeAssertionError

@@ -16,7 +16,7 @@
 
 package goflags
 
-import "github.com/goplus/llgo/internal/build"
+import "github.com/xgo-dev/llgo/internal/build"
 
 // ApplyBuildFlags validates and appends normalized Go build flags, and maps
 // the supported compiler and linker semantics into typed build configuration.

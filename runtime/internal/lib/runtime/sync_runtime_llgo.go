@@ -6,7 +6,7 @@ import (
 	_ "sync/atomic"
 	_ "unsafe"
 
-	psync "github.com/goplus/llgo/runtime/internal/clite/pthread/sync"
+	psync "github.com/xgo-dev/llgo/runtime/internal/clite/pthread/sync"
 )
 
 var poolCleanup func()

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/goplus/llgo/internal/crosscompile/compile"
+	"github.com/xgo-dev/llgo/internal/crosscompile/compile"
 )
 
 // GetPicolibcConfig returns the configuration for downloading and building picolibc

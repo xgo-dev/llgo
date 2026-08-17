@@ -6,8 +6,8 @@ package cl
 import (
 	"testing"
 
-	"github.com/goplus/llgo/internal/goembed"
-	llssa "github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llgo/internal/goembed"
+	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
 func TestApplyEmbedInits_NoInitAndMissingGlobal(t *testing.T) {

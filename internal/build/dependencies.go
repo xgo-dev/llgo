@@ -19,7 +19,7 @@ package build
 import (
 	"sort"
 
-	"github.com/goplus/llgo/internal/packages"
+	"github.com/xgo-dev/llgo/internal/packages"
 )
 
 // effectiveDependencies returns every package whose source contributes to an

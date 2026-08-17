@@ -29,8 +29,8 @@ import (
 	"strings"
 
 	"github.com/goplus/gogen"
-	"github.com/goplus/llgo/chore/llpyg/pysig"
-	"github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llgo/chore/llpyg/pysig"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 type symbol struct {

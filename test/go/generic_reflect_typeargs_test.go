@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/goplus/llgo/test/go/typeargpkg"
+	"github.com/xgo-dev/llgo/test/go/typeargpkg"
 )
 
 type genericReflectTuple[T any] struct {
@@ -24,17 +24,17 @@ func TestGenericReflectTypeArgString(t *testing.T) {
 		{
 			name: "nested same-package type arg",
 			got:  reflect.TypeOf(genericReflectFuture[genericReflectTuple[error]]{}).String(),
-			want: "gotest.genericReflectFuture[github.com/goplus/llgo/test/go.genericReflectTuple[error]]",
+			want: "gotest.genericReflectFuture[github.com/xgo-dev/llgo/test/go.genericReflectTuple[error]]",
 		},
 		{
 			name: "cross-package type arg",
 			got:  reflect.TypeOf(genericReflectFuture[typeargpkg.Item]{}).String(),
-			want: "gotest.genericReflectFuture[github.com/goplus/llgo/test/go/typeargpkg.Item]",
+			want: "gotest.genericReflectFuture[github.com/xgo-dev/llgo/test/go/typeargpkg.Item]",
 		},
 		{
 			name: "composite type arg",
 			got:  reflect.TypeOf(genericReflectFuture[*genericReflectTuple[error]]{}).String(),
-			want: "gotest.genericReflectFuture[*github.com/goplus/llgo/test/go.genericReflectTuple[error]]",
+			want: "gotest.genericReflectFuture[*github.com/xgo-dev/llgo/test/go.genericReflectTuple[error]]",
 		},
 	}
 

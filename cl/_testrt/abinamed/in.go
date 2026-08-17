@@ -4,7 +4,7 @@ package main
 import (
 	"unsafe"
 
-	"github.com/goplus/llgo/runtime/abi"
+	"github.com/xgo-dev/llgo/runtime/abi"
 )
 
 // Converting the two named values to interface{} must select their distinct

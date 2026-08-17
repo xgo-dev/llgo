@@ -5,10 +5,10 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/goplus/llgo/runtime/internal/clite/os"
-	"github.com/goplus/llgo/runtime/internal/clite/pthread/sync"
-	"github.com/goplus/llgo/runtime/internal/clite/setjmp"
-	"github.com/goplus/llgo/runtime/internal/clite/time"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/os"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/pthread/sync"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/setjmp"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/time"
 )
 
 func TestOSTypes(t *testing.T) {

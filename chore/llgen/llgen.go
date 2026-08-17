@@ -21,9 +21,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/goplus/llgo/internal/build"
-	"github.com/goplus/llgo/internal/llgen"
-	"github.com/goplus/llgo/xtool/env/llvm"
+	"github.com/xgo-dev/llgo/internal/build"
+	"github.com/xgo-dev/llgo/internal/llgen"
+	"github.com/xgo-dev/llgo/xtool/env/llvm"
 )
 
 var (

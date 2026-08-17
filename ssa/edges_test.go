@@ -3,7 +3,7 @@ package ssa
 import (
 	"testing"
 
-	"github.com/goplus/llgo/internal/meta"
+	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llvm"
 )
 

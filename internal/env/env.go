@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	LLGoCompilerPkg    = "github.com/goplus/llgo"
+	LLGoCompilerPkg    = "github.com/xgo-dev/llgo"
 	LLGoRuntimePkgName = "runtime"
 	LLGoRuntimePkg     = LLGoCompilerPkg + "/" + LLGoRuntimePkgName
 	envFileName        = "/internal/env/env.go"

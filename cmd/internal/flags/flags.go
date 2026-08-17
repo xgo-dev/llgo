@@ -6,11 +6,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/goplus/llgo/cmd/internal/compilerhash"
-	"github.com/goplus/llgo/internal/build"
-	"github.com/goplus/llgo/internal/buildenv"
-	"github.com/goplus/llgo/internal/lto"
-	"github.com/goplus/llgo/internal/optlevel"
+	"github.com/xgo-dev/llgo/cmd/internal/compilerhash"
+	"github.com/xgo-dev/llgo/internal/build"
+	"github.com/xgo-dev/llgo/internal/buildenv"
+	"github.com/xgo-dev/llgo/internal/lto"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 )
 
 var OutputFile string

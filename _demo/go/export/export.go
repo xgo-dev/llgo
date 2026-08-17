@@ -5,7 +5,7 @@ import (
 	"runtime"
 	"unsafe"
 
-	C "github.com/goplus/llgo/_demo/go/export/c"
+	C "github.com/xgo-dev/llgo/_demo/go/export/c"
 )
 
 // assert helper function for testing

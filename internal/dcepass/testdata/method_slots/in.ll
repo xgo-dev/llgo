@@ -4,7 +4,7 @@
 %"runtime/abi.StructType" = type { %"runtime/abi.Type", %"runtime.String", %"runtime.Slice" }
 %"runtime/abi.PtrType" = type { %"runtime/abi.Type", ptr }
 %"runtime/abi.UncommonType" = type { %"runtime.String", i16, i16, i32 }
-%"github.com/goplus/llgo/runtime/abi.Method" = type { %"runtime.String", ptr, ptr, ptr }
+%"github.com/xgo-dev/llgo/runtime/abi.Method" = type { %"runtime.String", ptr, ptr, ptr }
 %"runtime/abi.FuncType" = type { %"runtime/abi.Type", %"runtime.Slice", %"runtime.Slice" }
 %"runtime/abi.InterfaceType" = type { %"runtime/abi.Type", %"runtime.String", %"runtime.Slice" }
 %"runtime/abi.Imethod" = type { %"runtime.String", ptr }
@@ -18,28 +18,28 @@
 @int.name = private unnamed_addr constant [3 x i8] c"int", align 1
 @iface.name = private unnamed_addr constant [23 x i8] c"interface { Run() int }", align 1
 
-@_llgo_main.Task = weak_odr constant { %"runtime/abi.StructType", %"runtime/abi.UncommonType", [2 x %"github.com/goplus/llgo/runtime/abi.Method"] } {
+@_llgo_main.Task = weak_odr constant { %"runtime/abi.StructType", %"runtime/abi.UncommonType", [2 x %"github.com/xgo-dev/llgo/runtime/abi.Method"] } {
   %"runtime/abi.StructType" {
     %"runtime/abi.Type" { i64 0, i64 0, i32 1, i8 13, i8 1, i8 1, i8 25, { ptr, ptr } { ptr @memequal0, ptr @_llgo_main.Task }, ptr null, %"runtime.String" { ptr @task.name, i64 9 }, ptr @"*_llgo_main.Task" },
     %"runtime.String" zeroinitializer,
     %"runtime.Slice" zeroinitializer
   },
   %"runtime/abi.UncommonType" { %"runtime.String" { ptr @task.pkg, i64 4 }, i16 2, i16 2, i32 24 },
-  [2 x %"github.com/goplus/llgo/runtime/abi.Method"] [
-    %"github.com/goplus/llgo/runtime/abi.Method" { %"runtime.String" { ptr @method.drop, i64 4 }, ptr @_llgo_func$run, ptr @"main.(*Task).Drop", ptr @"main.Task.Drop" },
-    %"github.com/goplus/llgo/runtime/abi.Method" { %"runtime.String" { ptr @method.run, i64 3 }, ptr @_llgo_func$run, ptr @"main.(*Task).Run", ptr @"main.Task.Run" }
+  [2 x %"github.com/xgo-dev/llgo/runtime/abi.Method"] [
+    %"github.com/xgo-dev/llgo/runtime/abi.Method" { %"runtime.String" { ptr @method.drop, i64 4 }, ptr @_llgo_func$run, ptr @"main.(*Task).Drop", ptr @"main.Task.Drop" },
+    %"github.com/xgo-dev/llgo/runtime/abi.Method" { %"runtime.String" { ptr @method.run, i64 3 }, ptr @_llgo_func$run, ptr @"main.(*Task).Run", ptr @"main.Task.Run" }
   ]
 }, align 8
 
-@"*_llgo_main.Task" = weak_odr constant { %"runtime/abi.PtrType", %"runtime/abi.UncommonType", [2 x %"github.com/goplus/llgo/runtime/abi.Method"] } {
+@"*_llgo_main.Task" = weak_odr constant { %"runtime/abi.PtrType", %"runtime/abi.UncommonType", [2 x %"github.com/xgo-dev/llgo/runtime/abi.Method"] } {
   %"runtime/abi.PtrType" {
     %"runtime/abi.Type" { i64 8, i64 8, i32 2, i8 11, i8 8, i8 8, i8 54, { ptr, ptr } { ptr @memequalptr, ptr null }, ptr null, %"runtime.String" { ptr @task.name, i64 9 }, ptr null },
     ptr @_llgo_main.Task
   },
   %"runtime/abi.UncommonType" { %"runtime.String" { ptr @task.pkg, i64 4 }, i16 2, i16 2, i32 24 },
-  [2 x %"github.com/goplus/llgo/runtime/abi.Method"] [
-    %"github.com/goplus/llgo/runtime/abi.Method" { %"runtime.String" { ptr @method.drop, i64 4 }, ptr @_llgo_func$run, ptr @"main.(*Task).Drop", ptr @"main.(*Task).Drop" },
-    %"github.com/goplus/llgo/runtime/abi.Method" { %"runtime.String" { ptr @method.run, i64 3 }, ptr @_llgo_func$run, ptr @"main.(*Task).Run", ptr @"main.(*Task).Run" }
+  [2 x %"github.com/xgo-dev/llgo/runtime/abi.Method"] [
+    %"github.com/xgo-dev/llgo/runtime/abi.Method" { %"runtime.String" { ptr @method.drop, i64 4 }, ptr @_llgo_func$run, ptr @"main.(*Task).Drop", ptr @"main.(*Task).Drop" },
+    %"github.com/xgo-dev/llgo/runtime/abi.Method" { %"runtime.String" { ptr @method.run, i64 3 }, ptr @_llgo_func$run, ptr @"main.(*Task).Run", ptr @"main.(*Task).Run" }
   ]
 }, align 8
 

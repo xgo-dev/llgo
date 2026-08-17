@@ -20,7 +20,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/goplus/llgo/internal/build"
+	"github.com/xgo-dev/llgo/internal/build"
 )
 
 func TestParseLinkFlagsOrder(t *testing.T) {

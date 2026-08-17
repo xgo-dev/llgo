@@ -3,8 +3,8 @@ package runtime
 import (
 	"unsafe"
 
-	"github.com/goplus/llgo/runtime/abi"
-	"github.com/goplus/llgo/runtime/internal/runtime"
+	"github.com/xgo-dev/llgo/runtime/abi"
+	"github.com/xgo-dev/llgo/runtime/internal/runtime"
 )
 
 // A Pinner is a set of Go objects each pinned to a fixed location in memory. The

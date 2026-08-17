@@ -3,7 +3,7 @@ package meta_test
 import (
 	"testing"
 
-	"github.com/goplus/llgo/internal/meta"
+	"github.com/xgo-dev/llgo/internal/meta"
 )
 
 // buildPkgMain builds a "main" package that references a symbol from "runtime"

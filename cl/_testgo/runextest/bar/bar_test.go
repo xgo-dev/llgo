@@ -3,7 +3,7 @@ package bar_test
 import (
 	"testing"
 
-	"github.com/goplus/llgo/cl/_testgo/runextest/bar"
+	"github.com/xgo-dev/llgo/cl/_testgo/runextest/bar"
 )
 
 func TestBar(t *testing.T) {

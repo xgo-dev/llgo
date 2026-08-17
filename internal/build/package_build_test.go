@@ -30,10 +30,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goplus/llgo/cl"
-	"github.com/goplus/llgo/internal/env"
-	"github.com/goplus/llgo/internal/packages"
-	llssa "github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llgo/cl"
+	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/packages"
+	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 )
 

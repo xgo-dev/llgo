@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/goplus/llgo/internal/crosscompile/compile"
+	"github.com/xgo-dev/llgo/internal/crosscompile/compile"
 )
 
 func platformSpecifiedFiles(builtinsDir, target string) []string {

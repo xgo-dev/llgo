@@ -21,8 +21,8 @@ package runtime
 import (
 	"unsafe"
 
-	c "github.com/goplus/llgo/runtime/internal/clite"
-	ct "github.com/goplus/llgo/runtime/internal/clite/time"
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
+	ct "github.com/xgo-dev/llgo/runtime/internal/clite/time"
 )
 
 // nanotime1 keeps the previous behavior on remaining platforms.

@@ -3,8 +3,8 @@ package runtime
 import (
 	_ "unsafe"
 
-	c "github.com/goplus/llgo/runtime/internal/clite"
-	"github.com/goplus/llgo/runtime/internal/runtime/math"
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
+	"github.com/xgo-dev/llgo/runtime/internal/runtime/math"
 )
 
 //go:linkname c_rand C.rand

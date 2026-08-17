@@ -5,7 +5,7 @@ package runtime
 import (
 	_ "unsafe"
 
-	c "github.com/goplus/llgo/runtime/internal/clite"
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 )
 
 //go:linkname os_runtime_args os.runtime_args

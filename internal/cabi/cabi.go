@@ -3,7 +3,7 @@ package cabi
 import (
 	"strings"
 
-	"github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -513,7 +513,7 @@ func (p *Transformer) transformFuncBody(m llvm.Module, ctx llvm.Context, info *F
 				//
 				// Note: We don't use memcpy optimization here because the source
 				// address content may be modified between load and ret.
-				// See: https://github.com/goplus/llgo/issues/1608
+				// See: https://github.com/xgo-dev/llgo/issues/1608
 				b.CreateStore(ret, params[0])
 				rv = b.CreateRetVoid()
 			case AttrWidthType:

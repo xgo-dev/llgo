@@ -24,7 +24,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/internal/meta"
+	"github.com/xgo-dev/llgo/internal/meta"
 )
 
 func TestSanitizePkgPath(t *testing.T) {

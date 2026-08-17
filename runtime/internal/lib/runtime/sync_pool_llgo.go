@@ -4,7 +4,7 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/goplus/llgo/runtime/internal/clite/tls"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/tls"
 )
 
 //go:linkname syncRuntimePoolLocalAlloc sync.runtime_poolLocalAlloc

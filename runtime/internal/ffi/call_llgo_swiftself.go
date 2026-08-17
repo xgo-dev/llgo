@@ -5,7 +5,7 @@ package ffi
 import (
 	"unsafe"
 
-	"github.com/goplus/llgo/runtime/internal/clite/ffi"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/ffi"
 )
 
 const ClosureEnvExplicit = false

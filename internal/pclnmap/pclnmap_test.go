@@ -6,7 +6,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/goplus/llgo/internal/build/funcinfo"
+	"github.com/xgo-dev/llgo/internal/build/funcinfo"
 )
 
 func sampleData(t *testing.T) Data {

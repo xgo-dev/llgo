@@ -10,11 +10,11 @@ import (
 	"strings"
 	"sync"
 
-	llabi "github.com/goplus/llgo/internal/abi"
-	"github.com/goplus/llgo/internal/cabi"
-	"github.com/goplus/llgo/internal/packages"
-	llplan9asm "github.com/goplus/llgo/internal/plan9asm"
-	llruntime "github.com/goplus/llgo/runtime"
+	llabi "github.com/xgo-dev/llgo/internal/abi"
+	"github.com/xgo-dev/llgo/internal/cabi"
+	"github.com/xgo-dev/llgo/internal/packages"
+	llplan9asm "github.com/xgo-dev/llgo/internal/plan9asm"
+	llruntime "github.com/xgo-dev/llgo/runtime"
 	gllvm "github.com/xgo-dev/llvm"
 )
 
@@ -390,6 +390,14 @@ func pkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 	}
 	if v, ok := ctx.sfilesCache[pkg.ID]; ok {
 		return v, nil
+	}
+	// The synthetic test main shares the tested package's directory, so a
+	// directory scan may find assembly files that do not belong to testmain.
+	// Its generated import path (for example, example.com/p.test) is also not
+	// a package that can be queried directly with `go list`.
+	if ctx.mode == ModeTest && pkg.Name == "main" && strings.HasSuffix(pkg.ID, ".test") {
+		ctx.sfilesCache[pkg.ID] = nil
+		return nil, nil
 	}
 	// Some unit tests construct synthetic packages that are not loadable via
 	// `go list` (PkgPath not in any module, and Dir/Standard/Goroot unset).

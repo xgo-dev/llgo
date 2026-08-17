@@ -20,12 +20,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/goplus/llgo/cmd/internal/base"
-	"github.com/goplus/llgo/cmd/internal/flags"
-	"github.com/goplus/llgo/internal/crosscompile"
-	"github.com/goplus/llgo/internal/lto"
-	"github.com/goplus/llgo/internal/monitor"
-	"github.com/goplus/llgo/internal/optlevel"
+	"github.com/xgo-dev/llgo/cmd/internal/base"
+	"github.com/xgo-dev/llgo/cmd/internal/flags"
+	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/lto"
+	"github.com/xgo-dev/llgo/internal/monitor"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 )
 
 // Cmd represents the monitor command.

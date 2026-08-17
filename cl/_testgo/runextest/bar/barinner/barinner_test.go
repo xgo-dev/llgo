@@ -3,7 +3,7 @@ package barinner_test
 import (
 	"testing"
 
-	"github.com/goplus/llgo/cl/_testgo/runextest/bar/barinner"
+	"github.com/xgo-dev/llgo/cl/_testgo/runextest/bar/barinner"
 )
 
 func TestBarInner(t *testing.T) {

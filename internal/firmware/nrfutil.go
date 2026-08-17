@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"os"
 
-	"github.com/goplus/llgo/internal/crc16"
+	"github.com/xgo-dev/llgo/internal/crc16"
 )
 
 // Structure of the manifest.json file.

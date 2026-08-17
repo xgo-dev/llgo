@@ -22,8 +22,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/goplus/llgo/internal/pclnmap"
-	"github.com/goplus/llgo/internal/pclnpost"
+	"github.com/xgo-dev/llgo/internal/pclnmap"
+	"github.com/xgo-dev/llgo/internal/pclnpost"
 )
 
 func finalizeRuntimePCLN(ctx *context, out *OutFmtDetails, verbose bool) error {

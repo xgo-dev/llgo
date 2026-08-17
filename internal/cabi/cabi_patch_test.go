@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/goplus/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -291,7 +291,7 @@ func TestRuntimeHeaderWrapAndTypeInfo(t *testing.T) {
 
 	ctx := llvm.NewContext()
 	ptr := llvm.PointerType(ctx.Int8Type(), 0)
-	sliceTy := ctx.StructCreateNamed("github.com/goplus/llgo/runtime/internal/runtime.Slice")
+	sliceTy := ctx.StructCreateNamed("github.com/xgo-dev/llgo/runtime/internal/runtime.Slice")
 	sliceTy.StructSetBody([]llvm.Type{ptr, ctx.Int64Type(), ctx.Int64Type()}, false)
 
 	if !tr.IsWrapType(ctx, llvm.FunctionType(ctx.VoidType(), nil, false), sliceTy, 1) {

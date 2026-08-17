@@ -3,7 +3,7 @@ package libuv
 import (
 	_ "unsafe"
 
-	c "github.com/goplus/llgo/runtime/internal/clite"
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 )
 
 //go:linkname AsyncInitNoop C.llgo_uv_async_init_noop

@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/goplus/llgo/xtool/clang/preprocessor"
+	"github.com/xgo-dev/llgo/xtool/clang/preprocessor"
 )
 
 func usage() {

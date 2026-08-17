@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/goplus/llgo/internal/build/testdata/unexportedmethodidentity/b"
+	"github.com/xgo-dev/llgo/internal/build/testdata/unexportedmethodidentity/b"
 )
 
 func main() {

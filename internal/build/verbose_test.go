@@ -20,7 +20,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/goplus/llgo/internal/packages"
+	"github.com/xgo-dev/llgo/internal/packages"
 )
 
 func TestPrintCompiledPackage(t *testing.T) {

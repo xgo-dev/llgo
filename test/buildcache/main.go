@@ -6,9 +6,9 @@ package main
 import (
 	"github.com/goplus/lib/c"
 
-	"github.com/goplus/llgo/test/buildcache/dep1"
-	"github.com/goplus/llgo/test/buildcache/dep2"
-	"github.com/goplus/llgo/test/buildcache/dep3"
+	"github.com/xgo-dev/llgo/test/buildcache/dep1"
+	"github.com/xgo-dev/llgo/test/buildcache/dep2"
+	"github.com/xgo-dev/llgo/test/buildcache/dep3"
 )
 
 func main() {

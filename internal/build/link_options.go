@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/goplus/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/crosscompile"
 )
 
 // DWARFMode records whether the command layer requested that the backend

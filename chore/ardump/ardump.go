@@ -22,7 +22,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/goplus/llgo/xtool/ar"
+	"github.com/xgo-dev/llgo/xtool/ar"
 )
 
 func main() {

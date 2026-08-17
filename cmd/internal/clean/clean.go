@@ -18,9 +18,9 @@
 package clean
 
 import (
-	"github.com/goplus/llgo/cmd/internal/base"
-	"github.com/goplus/llgo/cmd/internal/flags"
-	"github.com/goplus/llgo/internal/build"
+	"github.com/xgo-dev/llgo/cmd/internal/base"
+	"github.com/xgo-dev/llgo/cmd/internal/flags"
+	"github.com/xgo-dev/llgo/internal/build"
 )
 
 // llgo build

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"unsafe"
 
-	rabi "github.com/goplus/llgo/runtime/abi"
+	rabi "github.com/xgo-dev/llgo/runtime/abi"
 )
 
 func newCoverageBuilder() *Builder {

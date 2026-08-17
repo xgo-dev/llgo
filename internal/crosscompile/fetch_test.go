@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goplus/llgo/internal/llvmpayload"
+	"github.com/xgo-dev/llgo/internal/llvmpayload"
 )
 
 // Helper function to create a test tar.gz archive

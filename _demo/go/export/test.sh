@@ -262,7 +262,7 @@ fi
 
 echo ""
 
-# TODO(lijie): Uncomment if https://github.com/goplus/llgo/pull/1268 merged
+# TODO(lijie): Uncomment if https://github.com/xgo-dev/llgo/pull/1268 merged
 # # Test 3: ESP32 target with c-archive mode
 # print_status "=== Test 3: Building with -target esp32 -buildmode c-archive ==="
 # if $LLGO_SCRIPT build -target esp32 -buildmode c-archive -o export .; then

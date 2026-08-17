@@ -4,7 +4,7 @@ package main
 
 // CHECK: {{^}}@[[GLOB0:[0-9]+]] = private unnamed_addr constant [7 x i8] c"foo.txt", align 1{{$}}
 // CHECK: {{^}}@[[GLOB7:[0-9]+]] = private unnamed_addr constant [3 x i8] c"Get", align 1{{$}}
-// CHECK: {{^}}@[[GLOB16:[0-9]+]] = private unnamed_addr constant [55 x i8] c"{{.*}}/cl/_testrt/tpmethod.Tuple[error]", align 1{{$}}
+// CHECK: {{^}}@[[GLOB16:[0-9]+]] = private unnamed_addr constant [56 x i8] c"{{.*}}/cl/_testrt/tpmethod.Tuple[error]", align 1{{$}}
 
 type Tuple[T any] struct {
 	v T
@@ -129,7 +129,7 @@ func main() {
 // CHECK-SAME: ptr %[[TMP0:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
 // CHECK-NEXT:   %[[TMP1:[0-9]+]] = icmp eq ptr %[[TMP0]], null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[TMP1]], %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB16]], i64 55 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB7]], i64 3 })
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[TMP1]], %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB16]], i64 56 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB7]], i64 3 })
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = load %"main.Tuple[error]", ptr %[[TMP0]], align 8
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.iface" @"main.Tuple[error].Get"(%"main.Tuple[error]" %[[TMP2]])
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %[[TMP3]]

@@ -4,7 +4,7 @@ import (
 	"math"
 	"unsafe"
 
-	"github.com/goplus/llgo/runtime/abi"
+	"github.com/xgo-dev/llgo/runtime/abi"
 )
 
 // OverflowComplex reports whether the complex128 x cannot be represented by v's type.
@@ -76,5 +76,5 @@ func SliceAt(typ Type, p unsafe.Pointer, n int) Value {
 	return Value{SliceOf(typ).common(), unsafe.Pointer(&s), flagIndir | flag(Slice)}
 }
 
-//go:linkname unsafeslice github.com/goplus/llgo/runtime/internal/runtime.unsafeslice
+//go:linkname unsafeslice github.com/xgo-dev/llgo/runtime/internal/runtime.unsafeslice
 func unsafeslice(et *abi.Type, ptr unsafe.Pointer, len int)

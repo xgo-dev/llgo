@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/goplus/llgo/cl/_testmeta/interface_generic_crosspkg/api"
-	"github.com/goplus/llgo/cl/_testmeta/interface_generic_crosspkg/model"
+	"github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/api"
+	"github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model"
 )
 
 var sink any

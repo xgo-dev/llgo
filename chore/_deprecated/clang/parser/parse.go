@@ -22,8 +22,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/goplus/llgo/xtool/clang/ast"
 	jsoniter "github.com/json-iterator/go"
+	"github.com/xgo-dev/llgo/xtool/clang/ast"
 )
 
 type Mode uint

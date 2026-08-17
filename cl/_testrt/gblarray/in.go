@@ -4,7 +4,7 @@ package main
 
 import (
 	"github.com/goplus/lib/c"
-	"github.com/goplus/llgo/runtime/abi"
+	"github.com/xgo-dev/llgo/runtime/abi"
 )
 
 // CHECK: {{^}}@[[GLOB0:[0-9]+]] = private unnamed_addr constant [20 x i8] c"Kind: %d, Size: %d\0A\00", align 1{{$}}

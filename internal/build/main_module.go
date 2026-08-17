@@ -30,8 +30,8 @@ import (
 	"go/token"
 	"go/types"
 
-	"github.com/goplus/llgo/internal/packages"
-	llssa "github.com/goplus/llgo/ssa"
+	"github.com/xgo-dev/llgo/internal/packages"
+	llssa "github.com/xgo-dev/llgo/ssa"
 	llvm "github.com/xgo-dev/llvm"
 )
 
@@ -46,6 +46,17 @@ type genConfig struct {
 	abiTypes      []llssa.AbiTypeInfo
 	funcInfo      []funcInfoRecord
 	pcLineInfo    []pcLineRecord
+}
+
+const (
+	processEntrySymbol = "main"
+	runtimeMainSymbol  = "runtime.main"
+	runtimeGoexitName  = "runtime.goexit"
+)
+
+func needsRuntimeMainFrame(ctx *context) bool {
+	conf := ctx.buildConf
+	return conf.BuildMode == BuildModeExe && !isWasmTarget(conf.Goos) && conf.PCLNMode != PCLNNone
 }
 
 // genMainModule generates the main entry module for an llgo program.
@@ -63,7 +74,24 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	argvValueType := prog.Pointer(prog.CStr())
 	argvVar := mainPkg.NewVarEx("__llgo_argv", prog.Pointer(argvValueType))
 	argvVar.InitNil()
-	emitFuncInfoTable(ctx, mainPkg, cfg.funcInfo, cfg.pcLineInfo)
+	funcInfo := cfg.funcInfo
+	if needsRuntimeMainFrame(ctx) {
+		// The native process entry is the physical frame below runtime.main,
+		// which is runtime.goexit in a Go traceback. Keep the required C symbol
+		// while giving both generated frames their logical Go names.
+		tailRecords := []funcInfoRecord{
+			{symbol: runtimeMainSymbol, name: runtimeMainSymbol},
+			{symbol: processEntrySymbol, name: runtimeGoexitName},
+		}
+		funcInfo = append(funcInfo, tailRecords...)
+		// Entry sites are emitted after these generated functions have bodies.
+		// Keep matching metadata in this module so the generic site emitter can
+		// attach the symbol IDs without adding a special PCLN path.
+		for _, rec := range tailRecords {
+			mainPkg.EmitFuncInfo(rec.symbol, rec.name, "", 0, 0)
+		}
+	}
+	emitFuncInfoTable(ctx, mainPkg, funcInfo, cfg.pcLineInfo)
 
 	exportFile := pkg.ExportFile
 	if exportFile == "" {
@@ -149,6 +177,7 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	if needStart(ctx) {
 		defineStart(mainPkg, entryFn, argvValueType)
 	}
+	emitFuncInfoEntrySites(ctx, mainPkg)
 
 	return mainAPkg
 }
@@ -245,19 +274,21 @@ type entryFunctions struct {
 // "main" for standard targets, or "__main_argc_argv" with hidden visibility
 // for WASM targets that don't require _start.
 //
-// The entry stores argc/argv, optionally disables stdio buffering, runs
-// initialization hooks (Python, runtime, package init), calls main.main,
-// finalizes Python if it was initialized, and returns 0.
+// The entry stores argc/argv, optionally disables stdio buffering, and manages
+// the local context. Native PCLN builds run the common startup sequence through
+// runtime.main; other builds run it inline. That sequence initializes Python,
+// the runtime stub/package, ABI types, and packages, calls main.main, and then
+// finalizes Python. The entry leaves the local context and returns 0.
 func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa.Global, argvType llssa.Type, fns entryFunctions) llssa.Function {
 	prog := pkg.Prog
-	entryName := "main"
+	entryName := processEntrySymbol
 	if !needStart(ctx) && isWasmTarget(ctx.buildConf.Goos) {
 		entryName = "__main_argc_argv"
 	}
 	sig := newEntrySignature(argvType.RawType())
 	fn := pkg.NewFunc(entryName, sig, llssa.InC)
 	fnVal := pkg.Module().NamedFunction(entryName)
-	if entryName != "main" {
+	if entryName != processEntrySymbol {
 		fnVal.SetVisibility(llvm.HiddenVisibility)
 		fnVal.SetUnnamedAddr(true)
 	}
@@ -272,6 +303,33 @@ func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa
 	if IsStdioNobuf() {
 		emitStdioNobuf(b, pkg, ctx.buildConf.Goos)
 	}
+	if needsRuntimeMainFrame(ctx) {
+		runtimeMain := defineRuntimeMainFunction(pkg, fns)
+		b.Call(runtimeMain.Expr)
+	} else {
+		emitRuntimeMainBody(b, fns)
+	}
+	if hasLocalContext {
+		b.LeaveLocalContext(localCtx, previousLocalCtx)
+	}
+	b.Return(prog.IntVal(0, prog.Int32()))
+	return fn
+}
+
+// defineRuntimeMainFunction gives native executables the same logical tail as
+// gc: user code is called by runtime.main, while the C entry below it is named
+// runtime.goexit in funcinfo metadata. The wrapper is a startup-only call.
+func defineRuntimeMainFunction(pkg llssa.Package, fns entryFunctions) llssa.Function {
+	fn := pkg.NewFunc(runtimeMainSymbol, llssa.NoArgsNoRet, llssa.InGo)
+	fn.Inline(llssa.NoInline)
+	fn.DisableTailCalls()
+	b := fn.MakeBody(1)
+	emitRuntimeMainBody(b, fns)
+	b.Return()
+	return fn
+}
+
+func emitRuntimeMainBody(b llssa.Builder, fns entryFunctions) {
 	if fns.pyInit != nil {
 		b.Call(fns.pyInit.Expr)
 	}
@@ -290,11 +348,6 @@ func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa
 	if fns.pyFinalize != nil {
 		b.Call(fns.pyFinalize.Expr)
 	}
-	if hasLocalContext {
-		b.LeaveLocalContext(localCtx, previousLocalCtx)
-	}
-	b.Return(prog.IntVal(0, prog.Int32()))
-	return fn
 }
 
 func defineStart(pkg llssa.Package, entry llssa.Function, argvType llssa.Type) {

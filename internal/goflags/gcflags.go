@@ -20,8 +20,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/goplus/llgo/internal/build"
-	"github.com/goplus/llgo/internal/optlevel"
+	"github.com/xgo-dev/llgo/internal/build"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 )
 
 // applyFrontendGCFlags maps the supported Go compiler flag subset to typed

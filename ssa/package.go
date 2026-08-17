@@ -25,10 +25,10 @@ import (
 	"strconv"
 	"unsafe"
 
-	"github.com/goplus/llgo/internal/env"
-	"github.com/goplus/llgo/internal/meta"
-	"github.com/goplus/llgo/internal/optlevel"
-	"github.com/goplus/llgo/ssa/abi"
+	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/meta"
+	"github.com/xgo-dev/llgo/internal/optlevel"
+	"github.com/xgo-dev/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/types/typeutil"
 )

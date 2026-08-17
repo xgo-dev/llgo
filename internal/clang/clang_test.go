@@ -447,7 +447,7 @@ func TestFlagMergingScenarios(t *testing.T) {
 			expectLink: []string{"-O3", "-lm", "-lpthread", "-static"},
 		},
 		{
-			// case from https://github.com/goplus/llgo/issues/1244
+			// case from https://github.com/xgo-dev/llgo/issues/1244
 			name:       "issue 1244",
 			envCFlags:  "-w -pipe -mmacosx-version-min=15 -isysroot/Library/Developer/CommandLineTools/SDKs/MacOSX15.sdk",
 			expectComp: []string{"-w", "-pipe", "-mmacosx-version-min=15", "-isysroot/Library/Developer/CommandLineTools/SDKs/MacOSX15.sdk"},

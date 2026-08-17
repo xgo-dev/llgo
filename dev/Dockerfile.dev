@@ -118,7 +118,7 @@ RUN set -eux; \
     cargs_pkg=""; \
   fi; \
   if [ -n "${cargs_pkg}" ]; then \
-    cargs_url="https://github.com/goplus/llpkg/releases/download/cargs/v${CARGS_VERSION}/${cargs_pkg}"; \
+    cargs_url="https://github.com/xgo-dev/llpkg/releases/download/cargs/v${CARGS_VERSION}/${cargs_pkg}"; \
     if curl -fL "${cargs_url}" -o /tmp/cargs.zip; then \
       unzip -q /tmp/cargs.zip -d "${LLGO_ASSETS_DIR}/cargs"; \
       rm -f /tmp/cargs.zip; \

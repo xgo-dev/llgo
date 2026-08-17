@@ -3,7 +3,7 @@ package runtime
 import (
 	_ "unsafe"
 
-	llrt "github.com/goplus/llgo/runtime/internal/runtime"
+	llrt "github.com/xgo-dev/llgo/runtime/internal/runtime"
 )
 
 var (

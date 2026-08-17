@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/internal/mockable"
+	"github.com/xgo-dev/llgo/internal/mockable"
 )
 
 func TestRunCmdPassesGoBuildFlags(t *testing.T) {

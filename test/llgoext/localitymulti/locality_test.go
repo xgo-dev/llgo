@@ -21,14 +21,14 @@ package localitymulti
 import (
 	"testing"
 
-	localityblock0 "github.com/goplus/llgo/test/llgoext/testdata/localityblocks/p0"
-	localityblock1 "github.com/goplus/llgo/test/llgoext/testdata/localityblocks/p1"
-	localityblock2 "github.com/goplus/llgo/test/llgoext/testdata/localityblocks/p2"
-	localityblock3 "github.com/goplus/llgo/test/llgoext/testdata/localityblocks/p3"
-	localityblock4 "github.com/goplus/llgo/test/llgoext/testdata/localityblocks/p4"
-	localityblock5 "github.com/goplus/llgo/test/llgoext/testdata/localityblocks/p5"
-	localityblock6 "github.com/goplus/llgo/test/llgoext/testdata/localityblocks/p6"
-	localityblock7 "github.com/goplus/llgo/test/llgoext/testdata/localityblocks/p7"
+	localityblock0 "github.com/xgo-dev/llgo/test/llgoext/testdata/localityblocks/p0"
+	localityblock1 "github.com/xgo-dev/llgo/test/llgoext/testdata/localityblocks/p1"
+	localityblock2 "github.com/xgo-dev/llgo/test/llgoext/testdata/localityblocks/p2"
+	localityblock3 "github.com/xgo-dev/llgo/test/llgoext/testdata/localityblocks/p3"
+	localityblock4 "github.com/xgo-dev/llgo/test/llgoext/testdata/localityblocks/p4"
+	localityblock5 "github.com/xgo-dev/llgo/test/llgoext/testdata/localityblocks/p5"
+	localityblock6 "github.com/xgo-dev/llgo/test/llgoext/testdata/localityblocks/p6"
+	localityblock7 "github.com/xgo-dev/llgo/test/llgoext/testdata/localityblocks/p7"
 )
 
 var benchmarkSink uintptr

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goplus/llgo/internal/lto"
-	"github.com/goplus/llgo/internal/optlevel"
-	"github.com/goplus/llgo/internal/xtool/llvm"
+	"github.com/xgo-dev/llgo/internal/lto"
+	"github.com/xgo-dev/llgo/internal/optlevel"
+	"github.com/xgo-dev/llgo/internal/xtool/llvm"
 )
 
 const (

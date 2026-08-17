@@ -5,7 +5,7 @@ package runtime
 import (
 	"unsafe"
 
-	rtdebug "github.com/goplus/llgo/runtime/internal/runtime"
+	rtdebug "github.com/xgo-dev/llgo/runtime/internal/runtime"
 )
 
 // c_framepointer returns its caller's frame pointer while the C helper frame
@@ -114,7 +114,7 @@ func trimPlumbingPCs(pcs []uintptr) []uintptr {
 	head := 0
 	for head < len(pcs) {
 		sym := frameSymbol(pcs[head] - 1)
-		if sym.function != "" && (hasPrefix(sym.function, "github.com/goplus/llgo/runtime/internal/") ||
+		if sym.function != "" && (hasPrefix(sym.function, "github.com/xgo-dev/llgo/runtime/internal/") ||
 			sym.function == "runtime.capturePanicPCs" || sym.function == "runtime.onFault" ||
 			sym.function == "runtime.fpWalkFrom") {
 			head++
@@ -272,7 +272,7 @@ func panicTraceback(skip int) bool {
 		// plumbing (Rethrow, Panic, ...); their depth varies by panic
 		// path, so filter by package rather than a fixed skip.
 		if skippingPlumbing {
-			if hasPrefix(name, "github.com/goplus/llgo/runtime/internal/") {
+			if hasPrefix(name, "github.com/xgo-dev/llgo/runtime/internal/") {
 				if more {
 					continue
 				}

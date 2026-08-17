@@ -5,8 +5,8 @@ package runtime
 import (
 	"unsafe"
 
-	"github.com/goplus/llgo/runtime/abi"
-	"github.com/goplus/llgo/runtime/internal/ffi"
+	"github.com/xgo-dev/llgo/runtime/abi"
+	"github.com/xgo-dev/llgo/runtime/internal/ffi"
 )
 
 var finalizerFFITypeClosure = ffi.StructOf(ffi.TypePointer, ffi.TypePointer)

@@ -148,7 +148,7 @@ func exportBenchmarks(dir, output string) error {
 
 	var data strings.Builder
 	fmt.Fprintf(&data, "goos: %s\ngoarch: %s\n", runtime.GOOS, runtime.GOARCH)
-	data.WriteString("pkg: github.com/goplus/llgo/benchmark/baseline\n")
+	data.WriteString("pkg: github.com/xgo-dev/llgo/benchmark/baseline\n")
 	for _, unit := range []string{
 		"file-bytes",
 		"text-bytes",

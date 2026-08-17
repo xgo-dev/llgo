@@ -24,7 +24,7 @@ import (
 	"go/types"
 	"testing"
 
-	"github.com/goplus/llgo/ssa/abi"
+	"github.com/xgo-dev/llgo/ssa/abi"
 )
 
 func TestMethodSymbolNamePreservesUnexportedPackageIdentity(t *testing.T) {

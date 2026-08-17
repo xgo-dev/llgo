@@ -24,7 +24,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/goplus/llgo/xtool/safesplit"
+	"github.com/xgo-dev/llgo/xtool/safesplit"
 )
 
 // Config represents clang configuration parameters.

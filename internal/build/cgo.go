@@ -30,9 +30,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/goplus/llgo/internal/buildtags"
-	llssa "github.com/goplus/llgo/ssa"
-	"github.com/goplus/llgo/xtool/safesplit"
+	"github.com/xgo-dev/llgo/internal/buildtags"
+	llssa "github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/xtool/safesplit"
 )
 
 type cgoDecl struct {

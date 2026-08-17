@@ -25,7 +25,7 @@ func TestValueMethodWrapperNilPointerPanic(t *testing.T) {
 		if !ok {
 			t.Fatalf("panic type = %T, want error", r)
 		}
-		const want = "value method github.com/goplus/llgo/test/go.panicWrapT.PanicWrapValueMethod called using nil *panicWrapT pointer"
+		const want = "value method github.com/xgo-dev/llgo/test/go.panicWrapT.PanicWrapValueMethod called using nil *panicWrapT pointer"
 		if got := err.Error(); got != want {
 			t.Fatalf("panic text = %q, want %q", got, want)
 		}

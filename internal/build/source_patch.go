@@ -16,7 +16,7 @@ import (
 	"strings"
 	"syscall"
 
-	llruntime "github.com/goplus/llgo/runtime"
+	llruntime "github.com/xgo-dev/llgo/runtime"
 	"golang.org/x/tools/go/ast/astutil"
 )
 

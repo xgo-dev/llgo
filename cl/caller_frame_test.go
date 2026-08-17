@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/goplus/gogen/packages"
-	llssa "github.com/goplus/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/ssa"
 	gossa "golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
@@ -248,7 +248,7 @@ func plain() {}
 		t.Fatal("Version should not be a runtime caller metadata function")
 	}
 
-	rtpkg, _ := buildCallerFrameSSAPackage(t, "github.com/goplus/llgo/runtime/internal/lib/runtime", `package runtime
+	rtpkg, _ := buildCallerFrameSSAPackage(t, "github.com/xgo-dev/llgo/runtime/internal/lib/runtime", `package runtime
 func Caller(skip int) (uintptr, string, int, bool) { return 0, "", 0, false }
 func FuncForPC(pc uintptr) uintptr { return 0 }
 `)
@@ -584,7 +584,7 @@ func TestCallerFrameTrackingEligibility(t *testing.T) {
 		{name: "stdlib", pkgPath: "fmt", track: true, want: true},
 		{name: "runtime", pkgPath: "runtime", track: true, want: false},
 		{name: "llgo runtime", pkgPath: llssa.PkgRuntime, track: true, want: false},
-		{name: "llgo runtime internal", pkgPath: "github.com/goplus/llgo/runtime/internal/foo", track: true, want: false},
+		{name: "llgo runtime internal", pkgPath: "github.com/xgo-dev/llgo/runtime/internal/foo", track: true, want: false},
 		{name: "command line package", pkgPath: "command-line-arguments", track: true, want: true},
 	}
 	for _, tt := range tests {
@@ -623,7 +623,7 @@ func f() { runtime.Caller(0) }
 	}
 	if canTrackCallerFramesForPackage("runtime") ||
 		canTrackCallerFramesForPackage(llssa.PkgRuntime) ||
-		canTrackCallerFramesForPackage("github.com/goplus/llgo/runtime/internal/lib") {
+		canTrackCallerFramesForPackage("github.com/xgo-dev/llgo/runtime/internal/lib") {
 		t.Fatal("runtime core must stay untracked")
 	}
 }

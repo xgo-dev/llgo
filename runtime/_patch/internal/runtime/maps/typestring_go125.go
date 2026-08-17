@@ -14,5 +14,5 @@ func typeString(typ *abi.Type) string {
 	return llgoTypeString(typ)
 }
 
-//go:linkname llgoTypeString github.com/goplus/llgo/runtime/abi.(*Type).String
+//go:linkname llgoTypeString github.com/xgo-dev/llgo/runtime/abi.(*Type).String
 func llgoTypeString(typ *abi.Type) string

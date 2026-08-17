@@ -1,4 +1,4 @@
-module github.com/goplus/llgo
+module github.com/xgo-dev/llgo
 
 go 1.24.0
 
@@ -6,10 +6,10 @@ require (
 	github.com/goplus/cobra v1.9.12 //xgo:class
 	github.com/goplus/gogen v1.23.5
 	github.com/goplus/lib v0.3.1
-	github.com/goplus/llgo/runtime v0.0.0-00010101000000-000000000000
 	github.com/goplus/mod v0.21.2
 	github.com/mattn/go-tty v0.0.8
 	github.com/qiniu/x v1.18.3
+	github.com/xgo-dev/llgo/runtime v0.0.0-00010101000000-000000000000
 	github.com/xgo-dev/llvm v0.9.6
 	github.com/xgo-dev/plan9asm v0.3.5
 	go.bug.st/serial v1.6.4
@@ -25,4 +25,4 @@ require (
 	golang.org/x/sync v0.17.0 // indirect
 )
 
-replace github.com/goplus/llgo/runtime => ./runtime
+replace github.com/xgo-dev/llgo/runtime => ./runtime
