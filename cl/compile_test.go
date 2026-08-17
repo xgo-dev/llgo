@@ -31,6 +31,7 @@ import (
 	"github.com/goplus/llgo/internal/build"
 	"github.com/goplus/llgo/internal/buildenv"
 	"github.com/goplus/llgo/internal/cabi"
+	"github.com/goplus/llgo/internal/filecheck"
 	"github.com/goplus/llgo/internal/llgen"
 	"github.com/goplus/llgo/internal/lto"
 	llvmenv "github.com/goplus/llgo/xtool/env/llvm"
@@ -387,6 +388,21 @@ func TestBuildAndCheckSymbolsFromTestltoLTOPluginAggregateABI(t *testing.T) {
 		"./_testlto/_globaldce_reflect_method_by_name_ltoplugin_string_abi_unknown")
 	if !strings.Contains(unknownResult, `metadata !"go.method.type.reflect"`) {
 		t.Fatalf("aggregate ABI output lost the unknown-name type marker\n%s", unknownResult)
+	}
+}
+
+func TestBuildAndCheckSymbolsFromTestltoLTOPluginSharedSRet(t *testing.T) {
+	conf := testltoLTOPluginConf(t, build.ModeGen)
+	checkFile := filepath.Join("..", "ltoplugin", "testdata", "shared_sret.ll")
+	opt := filepath.Join(llvmenv.New("").BinDir(), "opt")
+	cmd := exec.Command(opt, "-load-pass-plugin="+conf.LTOPlugin.Path,
+		"-passes=llgo-lto-pre-globaldce", "-S", "-o", "-", checkFile)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run LTO plugin for shared sret: %v\n%s", err, out)
+	}
+	if err := filecheck.Match(checkFile, string(out)); err != nil {
+		t.Fatal(err)
 	}
 }
 
