@@ -165,6 +165,7 @@ type context struct {
 	debugDIVars          map[*types.Var]llssa.DIVar
 	debugAllocVars       map[*ssa.Alloc]*types.Var
 	runtimeCallerFuncs   map[*ssa.Function]bool
+	panicSiteFuncs       map[*ssa.Function]bool
 	pcLineSeq            uint64
 	options              Options
 	recoverSlots         map[*ssa.Alloc]none
@@ -1335,7 +1336,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 				if skipUnusedArrayDeref(v) {
 					x := p.compileValue(b, v.X)
 					if effectfulArrayDeref {
-						p.recordPanicLocation(b, v.Pos())
+						p.recordPanicSite(b, v.Pos())
 						b.AssertNilDeref(x)
 					}
 					return
@@ -1343,14 +1344,14 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 				// Elide the unused load, but keep an explicit nil check so the
 				// Go dereference still panics instead of relying on a trapping load.
 				x := p.compileValue(b, v.X)
-				p.recordPanicLocation(b, v.Pos())
+				p.recordPanicSite(b, v.Pos())
 				p.assertNilDerefBase(b, v.X)
 				b.AssertNilDeref(x)
 				return
 			}
 			if effectfulArrayDeref {
 				x := p.compileValue(b, v.X)
-				p.recordPanicLocation(b, v.Pos())
+				p.recordPanicSite(b, v.Pos())
 				b.AssertNilDeref(x)
 			}
 			if refs, ok := nonDebugReferrers(v); ok && len(refs) == 1 {
@@ -1379,7 +1380,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		}
 		x := p.compileValue(b, v.X)
 		if v.Op != token.ARROW {
-			p.recordPanicLocation(b, v.Pos())
+			p.recordPanicSite(b, v.Pos())
 		}
 		if shouldAssertDirectNilDeref(v) {
 			b.AssertNilDeref(x)
@@ -1419,7 +1420,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		ret = b.Convert(p.type_(t, llssa.InGo), x)
 	case *ssa.FieldAddr:
 		x := p.compileValue(b, v.X)
-		p.recordPanicLocation(b, v.Pos())
+		p.recordPanicSite(b, v.Pos())
 		if p.isAddressOfFieldAddr(v) {
 			b.AssertNilDeref(x)
 		}
@@ -1446,12 +1447,12 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		}
 		x := p.compileValue(b, vx)
 		idx := p.compileValue(b, v.Index)
-		p.recordPanicLocation(b, v.Pos())
+		p.recordPanicSite(b, v.Pos())
 		ret = b.IndexAddr(x, idx)
 	case *ssa.Index:
 		x := p.compileValue(b, v.X)
 		idx := p.compileValue(b, v.Index)
-		p.recordPanicLocation(b, v.Pos())
+		p.recordPanicSite(b, v.Pos())
 		ret = b.Index(x, idx, func() (addr llssa.Expr, zero bool) {
 			switch n := v.X.(type) {
 			case *ssa.Const:
@@ -1485,7 +1486,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		if v.Max != nil {
 			max = p.compileValue(b, v.Max)
 		}
-		p.recordPanicLocation(b, v.Pos())
+		p.recordPanicSite(b, v.Pos())
 		ret = b.Slice(x, low, high, max)
 		ret.Type = p.type_(v.Type(), llssa.InGo)
 	case *ssa.MakeInterface:
@@ -1546,7 +1547,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	case *ssa.TypeAssert:
 		x := p.compileValue(b, v.X)
 		t := p.type_(v.AssertedType, llssa.InGo)
-		p.recordPanicLocation(b, v.Pos())
+		p.recordPanicSite(b, v.Pos())
 		ret = b.TypeAssert(x, t, v.CommaOk)
 	case *ssa.Extract:
 		x := p.compileValue(b, v.Tuple)
@@ -1587,7 +1588,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	case *ssa.SliceToArrayPointer:
 		t := p.type_(v.Type(), llssa.InGo)
 		x := p.compileValue(b, v.X)
-		p.recordPanicLocation(b, v.Pos())
+		p.recordPanicSite(b, v.Pos())
 		ret = b.SliceToArrayPointer(x, t)
 	default:
 		panic(fmt.Sprintf("compileInstrAndValue: unknown instr - %T\n", iv))
@@ -1846,7 +1847,7 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		m := p.compileValue(b, v.Map)
 		key := p.compileValue(b, v.Key)
 		val := p.compileValue(b, v.Value)
-		p.recordPanicLocation(b, v.Pos())
+		p.recordPanicSite(b, v.Pos())
 		b.MapUpdate(m, key, val)
 	case *ssa.Defer:
 		if v.DeferStack != nil {
@@ -1872,7 +1873,7 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 	case *ssa.Send:
 		ch := p.compileValue(b, v.Chan)
 		x := p.compileValue(b, v.X)
-		p.recordPanicLocation(b, v.Pos())
+		p.recordPanicSite(b, v.Pos())
 		b.Send(ch, x)
 	case *ssa.DebugRef:
 		if p.options.DebugSymbols && v.Parent().Origin() == nil {
@@ -1964,13 +1965,38 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 	panic(fmt.Sprintf("compileValue: unknown value - %T\n", v))
 }
 
+// isBlankFieldStore also recognizes stores into descendants of an aggregate
+// blank field. IndexAddr is followed only through an array's in-place storage,
+// never through a slice header into its separately allocated backing array.
+// The caller still evaluates the stored value for side effects.
 func isBlankFieldStore(addr ssa.Value) bool {
-	field, ok := addr.(*ssa.FieldAddr)
-	if !ok {
-		return false
+	for {
+		switch current := addr.(type) {
+		case *ssa.FieldAddr:
+			_, st, ok := fieldAddrStruct(current)
+			if !ok {
+				return false
+			}
+			if st.Field(current.Field).Name() == "_" {
+				return true
+			}
+			addr = current.X
+		case *ssa.IndexAddr:
+			if current.X == nil || current.X.Type() == nil {
+				return false
+			}
+			ptr, ok := current.X.Type().Underlying().(*types.Pointer)
+			if !ok {
+				return false
+			}
+			if _, ok := ptr.Elem().Underlying().(*types.Array); !ok {
+				return false
+			}
+			addr = current.X
+		default:
+			return false
+		}
 	}
-	_, st, ok := fieldAddrStruct(field)
-	return ok && st.Field(field.Field).Name() == "_"
 }
 
 const rangeOverFuncYieldSynthetic = "range-over-func yield"
@@ -2322,6 +2348,7 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 
 		trackCallerFrames:  filesUseRuntimeCaller(files) || packageUsesRuntimeCaller(ct, pkg),
 		runtimeCallerFuncs: runtimeCallerFuncSet(ct, pkg),
+		panicSiteFuncs:     recoverPanicSiteFuncSet(ct, pkg),
 	}
 	if embedMap != nil {
 		ctx.embedMap = *embedMap

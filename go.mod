@@ -9,7 +9,7 @@ require (
 	github.com/goplus/llgo/runtime v0.0.0-00010101000000-000000000000
 	github.com/goplus/mod v0.21.2
 	github.com/mattn/go-tty v0.0.8
-	github.com/qiniu/x v1.18.0
+	github.com/qiniu/x v1.18.3
 	github.com/xgo-dev/llvm v0.9.6
 	github.com/xgo-dev/plan9asm v0.3.5
 	go.bug.st/serial v1.6.4

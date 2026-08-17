@@ -393,6 +393,9 @@ func (p *context) buildStaticInitExpr(typ types.Type, node *staticInitNode) (lls
 		values := make([]llssa.Expr, u.NumFields())
 		for i := range values {
 			child := node.children[i]
+			if u.Field(i).Name() == "_" {
+				child = nil
+			}
 			value, ok := p.buildStaticInitExpr(u.Field(i).Type(), child)
 			if !ok {
 				return llssa.Expr{}, false

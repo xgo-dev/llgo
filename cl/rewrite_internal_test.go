@@ -213,6 +213,174 @@ func Use() string {
 	assertNoStoreToGlobal(t, ir, "@staticinit.MethodNames")
 }
 
+func TestStaticGlobalBlankFieldInit(t *testing.T) {
+	const src = `package staticinit
+
+type Nested struct {
+	Left int
+	_ int
+	Right int
+}
+
+type Outer struct {
+	Left int
+	_ Nested
+	Right int
+}
+
+var Flat = Nested{1, 2, 3}
+var Deep = Outer{4, Nested{5, 6, 7}, 8}
+
+func Use() int {
+	return Flat.Left + Flat.Right + Deep.Left + Deep.Right
+}
+`
+	ir := compileWithRewrites(t, src, nil)
+	for _, want := range []string{
+		"@staticinit.Flat = global %staticinit.Nested { i64 1, i64 0, i64 3 }",
+		"@staticinit.Deep = global %staticinit.Outer { i64 4, %staticinit.Nested zeroinitializer, i64 8 }",
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("blank field was not zeroed in static initializer %q:\n%s", want, ir)
+		}
+	}
+}
+
+func TestBlankFieldStoreRejectsInvalidAddresses(t *testing.T) {
+	for name, addr := range map[string]ssa.Value{
+		"nil":           nil,
+		"invalid field": &ssa.FieldAddr{},
+		"invalid index": &ssa.IndexAddr{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if isBlankFieldStore(addr) {
+				t.Fatal("invalid address was classified as a blank field store")
+			}
+		})
+	}
+}
+
+func TestBlankFieldStoreClassification(t *testing.T) {
+	const src = `package blankstore
+
+type Leaf struct {
+	Value int
+}
+
+type Outer struct {
+	_ Leaf
+	Keep Leaf
+	_ [2]Leaf
+	_ []Leaf
+}
+
+func next() int { return 1 }
+
+var Value = Outer{
+	Leaf{next()},
+	Leaf{next()},
+	[2]Leaf{{next()}, {next()}},
+	[]Leaf{{next()}},
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "blankstore.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importer := gpackages.NewImporter(fset)
+	pkg, _, err := ssautil.BuildPackage(
+		&types.Config{Importer: importer},
+		fset,
+		types.NewPackage("blankstore", "blankstore"),
+		[]*ast.File{file},
+		ssa.SanityCheckFunctions,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addressPath := func(addr ssa.Value) (fields []string, indexed bool) {
+		for {
+			switch current := addr.(type) {
+			case *ssa.FieldAddr:
+				_, st, ok := fieldAddrStruct(current)
+				if !ok {
+					return fields, indexed
+				}
+				fields = append(fields, st.Field(current.Field).Name())
+				addr = current.X
+			case *ssa.IndexAddr:
+				indexed = true
+				addr = current.X
+			default:
+				return fields, indexed
+			}
+		}
+	}
+
+	var (
+		blankSliceField                   *ssa.FieldAddr
+		sawDirectBlank, sawNestedBlank    bool
+		sawBlankArray, sawNonBlankSibling bool
+	)
+	initFn := pkg.Func("init")
+	for _, block := range initFn.Blocks {
+		for _, instr := range block.Instrs {
+			if field, ok := instr.(*ssa.FieldAddr); ok {
+				_, st, valid := fieldAddrStruct(field)
+				if valid && st.Field(field.Field).Name() == "_" {
+					if _, ok := st.Field(field.Field).Type().Underlying().(*types.Slice); ok {
+						blankSliceField = field
+					}
+				}
+			}
+			store, ok := instr.(*ssa.Store)
+			if !ok {
+				continue
+			}
+			fields, indexed := addressPath(store.Addr)
+			if len(fields) == 0 {
+				continue
+			}
+			want := false
+			for _, field := range fields {
+				want = want || field == "_"
+			}
+			if got := isBlankFieldStore(store.Addr); got != want {
+				t.Fatalf("isBlankFieldStore(%s) = %v, want %v", store.Addr, got, want)
+			}
+			switch {
+			case len(fields) == 1 && fields[0] == "_":
+				sawDirectBlank = true
+			case len(fields) > 1 && want && !indexed:
+				sawNestedBlank = true
+			case want && indexed:
+				sawBlankArray = true
+			case !want:
+				sawNonBlankSibling = true
+			}
+		}
+	}
+	if !sawDirectBlank || !sawNestedBlank || !sawBlankArray || !sawNonBlankSibling {
+		t.Fatalf(
+			"missing SSA classification coverage: direct=%v nested=%v array=%v sibling=%v",
+			sawDirectBlank,
+			sawNestedBlank,
+			sawBlankArray,
+			sawNonBlankSibling,
+		)
+	}
+	if blankSliceField == nil {
+		t.Fatal("missing blank slice field address")
+	}
+	// This shape is not currently emitted by go/ssa: it defensively verifies
+	// that a future IndexAddr form cannot cross a blank slice header.
+	if isBlankFieldStore(&ssa.IndexAddr{X: blankSliceField}) {
+		t.Fatal("slice backing-array address crossed the blank slice header")
+	}
+}
+
 func TestStaticGlobalSliceLiteralInit(t *testing.T) {
 	const src = `package staticinit
 

@@ -49,6 +49,8 @@ func main() {
 	checkClosureIndirectCaller()
 	checkAdjacentRuntimeStack()
 	checkRecoveredDebugStackBounds()
+	checkRecoveredStaticPanicLine()
+	checkRecoveredIndirectPanicLine()
 }
 
 //go:noinline
@@ -167,6 +169,40 @@ func checkRecoveredDebugStackBounds() {
 	_ = foo.Get(3) // BOUNDS_MARK
 }
 
+func checkRecoveredStaticPanicLine() {
+	defer expectRecoveredPanicLine("main.staticNilPanic", STATIC_NIL_PANIC_LINE)
+	staticNilPanic()
+}
+
+func staticNilPanic() {
+	var p *int
+	_ = *p // STATIC_NIL_PANIC_MARK
+}
+
+func checkRecoveredIndirectPanicLine() {
+	runRecoveredPanic("main.indirectBoundsPanic", INDIRECT_BOUNDS_PANIC_LINE, indirectBoundsPanic)
+}
+
+func runRecoveredPanic(name string, want int, fn func()) {
+	defer expectRecoveredPanicLine(name, want)
+	fn()
+}
+
+func indirectBoundsPanic() {
+	v := []int{0}
+	_ = v[1] // INDIRECT_BOUNDS_PANIC_MARK
+}
+
+func expectRecoveredPanicLine(name string, want int) {
+	if recover() == nil {
+		panic("missing panic for " + name)
+	}
+	stack := string(debug.Stack())
+	if got := stackLineFor(stack, name); got != want {
+		panic("bad recovered panic line for " + name + ": " + strconv.Itoa(got) + ", want " + strconv.Itoa(want) + "\n" + stack)
+	}
+}
+
 func stackLineFor(stack, fn string) int {
 	lines := strings.Split(stack, "\n")
 	for i := 0; i+1 < len(lines); i++ {
@@ -198,6 +234,8 @@ func TestRuntimeStatementLineInfo(t *testing.T) {
 	source = strings.ReplaceAll(source, "STACK_ONE_LINE", strconv.Itoa(markerLine(source, "STACK_ONE_MARK")))
 	source = strings.ReplaceAll(source, "STACK_TWO_LINE", strconv.Itoa(markerLine(source, "STACK_TWO_MARK")))
 	source = strings.ReplaceAll(source, "BOUNDS_LINE", strconv.Itoa(markerLine(source, "BOUNDS_MARK")))
+	source = strings.ReplaceAll(source, "STATIC_NIL_PANIC_LINE", strconv.Itoa(markerLine(source, "STATIC_NIL_PANIC_MARK")))
+	source = strings.ReplaceAll(source, "INDIRECT_BOUNDS_PANIC_LINE", strconv.Itoa(markerLine(source, "INDIRECT_BOUNDS_PANIC_MARK")))
 
 	dir := t.TempDir()
 	file := filepath.Join(dir, "main.go")
@@ -211,5 +249,51 @@ func TestRuntimeStatementLineInfo(t *testing.T) {
 	cmd.Dir = repoRoot
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("llgo statement line probe failed: %v\n%s", err, out)
+	}
+}
+
+const runtimeDeferredPanicLineProbe = `package main
+
+import "runtime/debug"
+
+func main() {
+	defer func() {
+		recover()
+		println(string(debug.Stack()))
+	}()
+	defer deferredPanic()
+	panic("start unwinding")
+}
+
+func deferredPanic() {
+	var p *int
+	_ = *p // DEFERRED_PANIC_MARK
+}
+`
+
+func TestRuntimeDeferredPanicLine(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(file, []byte(runtimeDeferredPanicLineProbe), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	repoRoot := findRepoRoot(t)
+	t.Setenv("LLGO_ROOT", repoRoot)
+	cmd := exec.Command("go", "run", "./cmd/llgo", "run", "-a", file)
+	cmd.Dir = repoRoot
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("llgo deferred panic line probe failed: %v\n%s", err, out)
+	}
+	stack := string(out)
+	frame := strings.Index(stack, "main.deferredPanic()")
+	want := "main.go:" + strconv.Itoa(markerLine(runtimeDeferredPanicLineProbe, "DEFERRED_PANIC_MARK"))
+	if frame < 0 {
+		t.Fatalf("deferred panic stack is missing main.deferredPanic:\n%s", stack)
+	}
+	lines := strings.SplitN(stack[frame:], "\n", 3)
+	if len(lines) < 2 || !strings.Contains(lines[1], want) {
+		t.Fatalf("deferred panic stack is missing %s:\n%s", want, stack)
 	}
 }
