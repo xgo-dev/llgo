@@ -1,5 +1,6 @@
 #include "LLGOLTOPasses.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/ConstantFolding.h"
@@ -1219,6 +1220,11 @@ Value *getSRetArg(CallBase *CB) {
   return nullptr;
 }
 
+Value *getSRetStorage(CallBase *CB) {
+  Value *SRet = getSRetArg(CB);
+  return SRet ? SRet->stripPointerCasts() : nullptr;
+}
+
 void addReflectMethodCheckedLoad(CallBase *CheckedLoad, StringRef GenericTypeID,
                                  SmallPtrSetImpl<CallBase *> &SeenLoads,
                                  SmallVectorImpl<CallBase *> &Loads) {
@@ -1288,7 +1294,20 @@ public:
 
     bool Changed = false;
     const DataLayout &DL = M.getDataLayout();
+    DenseMap<CallBase *, Value *> SRetStorageByCall;
+    DenseMap<Value *, SmallVector<CallBase *, 4>> CallsBySRetStorage;
     for (CallBase *ReflectCall : Calls) {
+      Value *SRetStorage = getSRetStorage(ReflectCall);
+      SRetStorageByCall.insert({ReflectCall, SRetStorage});
+      if (SRetStorage)
+        CallsBySRetStorage[SRetStorage].push_back(ReflectCall);
+    }
+
+    SmallPtrSet<CallBase *, 16> ProcessedCalls;
+    for (CallBase *ReflectCall : Calls) {
+      if (!ProcessedCalls.insert(ReflectCall).second)
+        continue;
+
       Attribute KindAttr = ReflectCall->getFnAttr(ReflectMethodByNameCallAttr);
       if (!KindAttr.isStringAttribute() || ReflectCall->arg_empty())
         continue;
@@ -1306,17 +1325,47 @@ public:
         continue;
       }
 
+      // Optimizations can leave several MethodByName calls sharing one sret
+      // slot. The checked-load walk starts from the slot and sees the loads for
+      // all of those calls. Refine them with the union of every provable name
+      // instead of letting the first call claim all of them. If any name is
+      // unknown, leave the generic markers intact so GlobalDCE remains
+      // conservative.
+      Value *SRetStorage = SRetStorageByCall.lookup(ReflectCall);
+      SmallVector<CallBase *, 4> SharedCalls{ReflectCall};
+      if (SRetStorage) {
+        for (CallBase *Candidate :
+             CallsBySRetStorage.find(SRetStorage)->second) {
+          if (Candidate == ReflectCall)
+            continue;
+          Attribute CandidateKind =
+              Candidate->getFnAttr(ReflectMethodByNameCallAttr);
+          if (!CandidateKind.isStringAttribute() ||
+              CandidateKind.getValueAsString() != Kind)
+            continue;
+          SharedCalls.push_back(Candidate);
+          ProcessedCalls.insert(Candidate);
+        }
+      }
+
       SmallVector<std::string, 4> Names;
-      bool KnownNames = collectStringSetFromCallArgs(ReflectCall, DL, Names);
+      bool KnownNames = true;
+      // The bounded name budget applies to the combined group. Exceeding it
+      // leaves every generic marker intact.
+      for (CallBase *SharedCall : SharedCalls) {
+        if (!collectStringSetFromCallArgs(SharedCall, DL, Names)) {
+          KnownNames = false;
+          break;
+        }
+      }
       if (!KnownNames || Names.empty())
         continue;
 
       SmallVector<CallBase *, 2> GenericLoads;
       SmallPtrSet<CallBase *, 4> SeenLoads;
       SmallPtrSet<Value *, 16> SeenValues;
-      collectSRetReflectMethodCheckedLoads(getSRetArg(ReflectCall),
-                                           GenericTypeID, SeenValues, SeenLoads,
-                                           GenericLoads);
+      collectSRetReflectMethodCheckedLoads(SRetStorage, GenericTypeID,
+                                           SeenValues, SeenLoads, GenericLoads);
       for (CallBase *GenericLoad : GenericLoads) {
         insertMethodNameChecks(GenericLoad, Names, Prefix);
         if (!eraseGenericCheckedLoad(GenericLoad))
