@@ -2,15 +2,21 @@ name: "Setup Go"
 description: "Set up and verify the requested Go toolchain"
 inputs:
   go-version:
-    description: "The exact Go version to install"
+    description: "The exact Go version to install; omit it for the LLGo build toolchain"
     required: false
-    # Keep this pin synchronized with the primary CI and release smoke-test
-    # matrices. Upgrade it in a dedicated toolchain-update PR.
-    default: "1.26.5"
+    default: ""
 runs:
   using: "composite"
   steps:
-    - name: Set up Go
+    - name: Set up the LLGo build toolchain
+      if: inputs.go-version == ''
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: .go-version
+        cache: false
+
+    - name: Set up an explicit Go toolchain
+      if: inputs.go-version != ''
       uses: actions/setup-go@v7
       with:
         go-version: ${{ inputs.go-version }}
@@ -22,6 +28,9 @@ runs:
         set -euo pipefail
 
         requested="${{ inputs.go-version }}"
+        if [[ -z "${requested}" ]]; then
+          requested="$(tr -d '[:space:]' < .go-version)"
+        fi
         requested="${requested#go}"
         actual="$(go env GOVERSION)"
         actual="${actual#go}"

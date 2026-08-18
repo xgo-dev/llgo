@@ -1,4 +1,4 @@
-//go:build go1.26
+//go:build go1.25
 
 package sync_test
 

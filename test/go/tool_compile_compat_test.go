@@ -185,6 +185,7 @@ func writeToolCompileSource(t *testing.T, dir, name, content string) {
 func writeToolCompileStdlibImportCfg(t *testing.T, dir string) {
 	t.Helper()
 	cmd := exec.Command("go", "list", "-export", "-f", "{{if .Export}}packagefile {{.ImportPath}}={{.Export}}{{end}}", "std")
+	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
 	if err != nil {

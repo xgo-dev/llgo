@@ -50,16 +50,59 @@ From anywhere inside the repo:
 ./dev/llgo_wasm.sh build ./...
 ```
 
-## 4) Run local CI (covers most checks)
+## 4) Run versioned tests
+
+Run one exact Go toolchain against its default representative/full package set:
+
+```bash
+./dev/test_go_version.sh 1.20
+./dev/test_go_version.sh 1.24 ./test/std/bytes
+```
+
+Run the complete Go 1.20 through Go 1.26 integration matrix:
+
+```bash
+./dev/test_go_versions.sh
+```
+
+This integration command is intentionally sequential and may take tens of
+minutes locally. CI invokes `test_go_version.sh` in separate versioned jobs
+instead of running the full integration script in one job.
+
+The corresponding wasm runtime commands are:
+
+```bash
+./dev/test_wasm_runtime_go_version.sh 1.24
+./dev/test_wasm_runtime_go_versions.sh
+```
+
+The native runtime module has matching single-version and integration entries:
+
+```bash
+./dev/test_runtime_go_version.sh 1.20
+./dev/test_runtime_go_versions.sh
+```
+
+Any standalone task can be run under an exact target toolchain with:
+
+```bash
+./dev/with_go_version.sh 1.20 ./dev/test_helloworld.sh 1.20
+```
+
+All scripts select exact toolchains, set `GOTOOLCHAIN=local` while testing, and
+build llgo and repository tools with the version pinned in `.go-version`.
+
+## 5) Run local CI (covers most checks)
 
 ```bash
 ./dev/local_ci.sh
 ```
 
-This script creates a temporary workspace, runs formatting/build/tests, runs `llgo test`, and then runs demo checks.
+This script creates a temporary workspace, runs formatting/build/tests, runs the
+complete versioned llgo test integration script, and then runs demo checks.
 You can control demo parallelism via `LLGO_DEMO_JOBS` (defaults to up to 4 jobs).
 
-## 5) `dev/docker.sh` (composition-friendly)
+## 6) `dev/docker.sh` (composition-friendly)
 
 `dev/docker.sh` is a thin wrapper around `docker compose`:
 
@@ -72,7 +115,7 @@ You can control demo parallelism via `LLGO_DEMO_JOBS` (defaults to up to 4 jobs)
 - If `[command...]` is provided, it runs that command and exits.
 - You must run it from within the repo (within `LLGO_ROOT`), and it will start in the matching repo subdirectory inside the container.
 
-## 6) Refresh test goldens
+## 7) Refresh test goldens
 
 LLGo has separate refresh flows for runtime data and LLVM IR checks:
 

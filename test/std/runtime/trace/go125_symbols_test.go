@@ -1,4 +1,4 @@
-//go:build go1.26
+//go:build go1.25
 
 package trace_test
 
@@ -27,7 +27,7 @@ func TestFlightRecorder(t *testing.T) {
 	if !recorder.Enabled() {
 		t.Fatal("flight recorder is disabled after Start")
 	}
-	trace.WithRegion(context.Background(), "go1.26", func() {
+	trace.WithRegion(context.Background(), "go1.25", func() {
 		trace.Log(context.Background(), "stdlib", "flight recorder")
 	})
 	var output bytes.Buffer

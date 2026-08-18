@@ -1,6 +1,6 @@
 # Standard Library Compatibility Tests
 
-This directory contains compatibility tests for the Go standard library on llgo. These tests ensure that llgo's libc-backed implementations conform to the Go standard library specification across the pinned supported CI toolchains (Go 1.25 and Go 1.26).
+This directory contains compatibility tests for the Go standard library on llgo. The tests run with real Go 1.20 through Go 1.26 toolchains and matching module versions, so release tags and available standard-library APIs reflect the version being checked. Go 1.25 and Go 1.26 receive full coverage on Linux and macOS; each earlier version runs a representative, resource-bounded package set on one platform.
 
 ## Directory Structure
 
@@ -144,6 +144,9 @@ llgo test ./test/...
 
 # Run specific package
 llgo test ./test/std/math/
+
+# Run with an exact older Go toolchain and matching release tags
+dev/test_go_version.sh 1.20 ./test/std/math
 ```
 
 ## Contributing New Package Tests

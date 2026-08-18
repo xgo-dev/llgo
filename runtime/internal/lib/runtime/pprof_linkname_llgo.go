@@ -56,11 +56,6 @@ func runtime_pprof_readProfile() (data []uint64, tags []unsafe.Pointer, eof bool
 	return cpuProfilePeriodRecord[:], cpuProfilePeriodTags[:], true
 }
 
-//go:linkname pprof_goroutineProfileWithLabels runtime.pprof_goroutineProfileWithLabels
-func pprof_goroutineProfileWithLabels(p []StackRecord, labels []unsafe.Pointer) (n int, ok bool) {
-	return 0, true
-}
-
 //go:linkname runtime_goroutineLeakGC runtime/pprof.runtime_goroutineLeakGC
 func runtime_goroutineLeakGC() {}
 

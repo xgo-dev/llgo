@@ -20,6 +20,7 @@ func buildWindowsFixture(t *testing.T) string {
 	}
 	out := filepath.Join(dir, "fixture.exe")
 	cmd := exec.Command("go", "build", "-o", out, src)
+	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOOS=windows", "GOARCH=amd64", "CGO_ENABLED=0")
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go build windows fixture: %v\n%s", err, b)

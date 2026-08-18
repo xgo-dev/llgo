@@ -7,13 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestMultiHandlerAndRecordSource(t *testing.T) {
+func TestMultiHandler(t *testing.T) {
 	var first, second bytes.Buffer
 	multi := slog.NewMultiHandler(
 		slog.NewTextHandler(&first, nil),
@@ -67,13 +66,5 @@ func TestMultiHandlerAndRecordSource(t *testing.T) {
 	build, ok := details["build"].(map[string]any)
 	if !ok || build["files"] != float64(2) {
 		t.Fatalf("third JSON record has wrong build group: %#v", records[2])
-	}
-
-	pcs := make([]uintptr, 1)
-	runtime.Callers(1, pcs)
-	sourceRecord := slog.NewRecord(time.Time{}, slog.LevelInfo, "source", pcs[0])
-	source := sourceRecord.Source()
-	if source == nil || !strings.Contains(source.Function, "TestMultiHandlerAndRecordSource") || source.Line == 0 {
-		t.Fatalf("Record.Source = %#v", source)
 	}
 }

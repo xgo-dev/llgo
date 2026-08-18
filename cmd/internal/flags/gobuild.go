@@ -29,7 +29,7 @@ func CaptureGoBuildFlags(cmd *base.Command) *base.PassArgs {
 	p := base.NewPassArgs(&cmd.Flag)
 	p.Bool("n")
 	p.Bool("linkshared", "race", "msan", "asan", "trimpath", "work")
-	p.Var("p", "asmflags", "compiler", "gcflags", "gccgoflags", "installsuffix", "ldflags", "pkgdir", "toolexec", "buildvcs")
+	p.Var("p", "asmflags", "compiler", "gcflags", "gccgoflags", "installsuffix", "ldflags", "modfile", "pkgdir", "toolexec", "buildvcs")
 	return p
 }
 

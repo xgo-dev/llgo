@@ -18,6 +18,7 @@ func buildDarwinFixture(t *testing.T) string {
 	}
 	out := filepath.Join(dir, "fixture")
 	cmd := exec.Command("go", "build", "-o", out, src)
+	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOOS=darwin", "GOARCH=amd64", "CGO_ENABLED=0")
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go build darwin fixture: %v\n%s", err, b)

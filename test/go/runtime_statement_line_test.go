@@ -18,7 +18,6 @@ package gotest
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -245,8 +244,7 @@ func TestRuntimeStatementLineInfo(t *testing.T) {
 
 	repoRoot := findRepoRoot(t)
 	t.Setenv("LLGO_ROOT", repoRoot)
-	cmd := exec.Command("go", "run", "./cmd/llgo", "run", "-a", file)
-	cmd.Dir = repoRoot
+	cmd := commandForTest(t, repoRoot, "go", "run", "./cmd/llgo", "run", "-a", file)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("llgo statement line probe failed: %v\n%s", err, out)
 	}
@@ -280,8 +278,7 @@ func TestRuntimeDeferredPanicLine(t *testing.T) {
 
 	repoRoot := findRepoRoot(t)
 	t.Setenv("LLGO_ROOT", repoRoot)
-	cmd := exec.Command("go", "run", "./cmd/llgo", "run", "-a", file)
-	cmd.Dir = repoRoot
+	cmd := commandForTest(t, repoRoot, "go", "run", "./cmd/llgo", "run", "-a", file)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("llgo deferred panic line probe failed: %v\n%s", err, out)

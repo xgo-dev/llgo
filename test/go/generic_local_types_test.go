@@ -3,7 +3,6 @@ package gotest
 import (
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -101,7 +100,7 @@ func TestGenericNestedLocalRuntimeTypeNamesForCommandLineMain(t *testing.T) {
 		t.Fatal(err)
 	}
 	repoRoot := genericLocalRepoRoot(t)
-	goOut := runGenericLocalProbe(t, repoRoot, "go", "run", file)
+	goOut := runGenericLocalProbe(t, dir, "go", "run", file)
 	const want = "main.T[int;int]\nmain.T[int;main.U[int;int]·3]\n"
 	if goOut != want {
 		t.Fatalf("go probe output = %q, want %q", goOut, want)
@@ -115,8 +114,7 @@ func TestGenericNestedLocalRuntimeTypeNamesForCommandLineMain(t *testing.T) {
 
 func runGenericLocalProbe(t *testing.T, dir, name string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
+	cmd := commandForTest(t, dir, name, args...)
 	cmd.Env = os.Environ()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

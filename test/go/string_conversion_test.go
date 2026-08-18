@@ -18,7 +18,6 @@ package gotest
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -99,7 +98,7 @@ func TestStringConversionFromWideIntegers(t *testing.T) {
 		t.Fatal(err)
 	}
 	repoRoot := findRepoRoot(t)
-	runStringConversionProbe(t, repoRoot, "go", "run", file)
+	runStringConversionProbe(t, dir, "go", "run", file)
 	t.Setenv("LLGO_ROOT", repoRoot)
 	runStringConversionProbe(t, repoRoot, "go", "run", "./cmd/llgo", "run", file)
 }
@@ -111,15 +110,14 @@ func TestEmptyStringToByteRuneSlicesNonNil(t *testing.T) {
 		t.Fatal(err)
 	}
 	repoRoot := findRepoRoot(t)
-	runStringConversionProbe(t, repoRoot, "go", "run", file)
+	runStringConversionProbe(t, dir, "go", "run", file)
 	t.Setenv("LLGO_ROOT", repoRoot)
 	runStringConversionProbe(t, repoRoot, "go", "run", "./cmd/llgo", "run", file)
 }
 
 func runStringConversionProbe(t *testing.T, dir, name string, args ...string) {
 	t.Helper()
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
+	cmd := commandForTest(t, dir, name, args...)
 	cmd.Env = os.Environ()
 	out, err := cmd.CombinedOutput()
 	if err != nil {

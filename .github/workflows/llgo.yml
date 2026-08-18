@@ -16,33 +16,17 @@ concurrency:
 
 jobs:
   llgo:
-    name: llgo (${{ matrix.lane }}, ${{ matrix.os }}, LLVM ${{ matrix.llvm }}, Go ${{ matrix.go }})
-    continue-on-error: ${{ matrix.lane == 'compatibility' }}
+    name: llgo (${{ matrix.os }}, LLVM ${{ matrix.llvm }})
     timeout-minutes: 60
     strategy:
       matrix:
-        # Compatibility results are tied to these exact patch releases.
-        # Keep the supported Go 1.25 and 1.26 endpoints on macOS so user
-        # projects exercise both runtime generations there. macOS Intel is
-        # covered by the release artifact smoke test, avoiding a duplicate
-        # 35-minute demo job.
+        # The compiler and all repository tooling are built only with Go 1.26.
+        # The runtime and demos keep their own module language versions.
         include:
           - os: ubuntu-latest
             llvm: 19
-            go: "1.25.0"
-            lane: compatibility
-          - os: ubuntu-latest
-            llvm: 19
-            go: "1.26.5"
-            lane: primary
           - os: macos-latest
             llvm: 19
-            go: "1.25.0"
-            lane: compatibility
-          - os: macos-latest
-            llvm: 19
-            go: "1.26.5"
-            lane: primary
     runs-on: ${{matrix.os}}
     steps:
       - uses: actions/checkout@v7
@@ -63,10 +47,9 @@ jobs:
           go install ./...
           echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> $GITHUB_ENV
 
-      - name: Set up Go for testing
-        uses: ./.github/actions/setup-go
-        with:
-          go-version: ${{matrix.go}}
+      - name: Test runtime module compatibility
+        if: matrix.os == 'ubuntu-latest'
+        run: dev/test_runtime_go_versions.sh
 
       - name: Test demo without RPATH (expect failure)
         run: |
@@ -124,11 +107,10 @@ jobs:
         run: cat result.md
 
       - name: Install LLDB for integration tests
-        if: ${{ matrix.os == 'ubuntu-latest' && matrix.lane == 'primary' }}
+        if: ${{ matrix.os == 'ubuntu-latest' }}
         run: sudo apt-get install -y lldb-${{matrix.llvm}}
 
       - name: LLDB integration tests
-        if: ${{ matrix.lane == 'primary' }}
         run: |
           echo "Test lldb with llgo plugin on ${{matrix.os}} with LLVM ${{matrix.llvm}}"
           bash cmd/llgo/lldbtest/runtest.sh -v
@@ -138,34 +120,92 @@ jobs:
         run: go test -timeout 15m ./internal/build -run '^TestStandardDWARF$' -count=1 -v
 
   test:
-    name: test (${{ matrix.lane }}, ${{ matrix.os }}, LLVM ${{ matrix.llvm }}, Go ${{ matrix.go }}, shard ${{ matrix.shard }})
-    continue-on-error: ${{ matrix.lane == 'compatibility' }}
-    timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 45 || 30 }}
+    name: test (${{ matrix.lane }}, ${{ matrix.os }}, Go ${{ matrix.go_version }}, shard ${{ matrix.shard_index }}/${{ matrix.shard_total }})
+    timeout-minutes: ${{ matrix.lane == 'full' && (startsWith(matrix.os, 'macos') && 45 || 40) || 30 }}
     strategy:
+      fail-fast: false
       matrix:
-        # Keep compatibility and primary toolchains pinned to exact patches.
-        os:
-          - macos-latest
-          - ubuntu-latest
-        llvm: [19]
-        go: ["1.25.0", "1.26.5"]
-        # In-command package parallelism lets Ubuntu use two shards while
-        # retaining headroom for the serial std build-mode checks.
-        shard: ["0", "1"]
+        # LLGo and the checker are always built with .go-version. Tests then
+        # switch to the exact target toolchain and a matching alternate
+        # modfile, so release tags and standard-library APIs are genuine.
         include:
-          - go: "1.25.0"
+          - os: ubuntu-latest
+            llvm: 19
+            go_version: "1.20"
             lane: compatibility
-          - go: "1.26.5"
-            lane: primary
-        exclude:
-          # The full demo lane above exercises Go 1.25 user-project/runtime
-          # compatibility on macOS. Keep the much larger per-package
-          # compatibility matrix on Ubuntu and use one parallel primary shard
-          # on macOS.
+            shard_index: "0"
+            shard_total: "1"
+            check_symbols: true
           - os: macos-latest
-            go: "1.25.0"
+            llvm: 19
+            go_version: "1.21"
+            lane: compatibility
+            shard_index: "0"
+            shard_total: "1"
+            check_symbols: true
+          - os: ubuntu-latest
+            llvm: 19
+            go_version: "1.22"
+            lane: compatibility
+            shard_index: "0"
+            shard_total: "1"
+            check_symbols: true
           - os: macos-latest
-            shard: "1"
+            llvm: 19
+            go_version: "1.23"
+            lane: compatibility
+            shard_index: "0"
+            shard_total: "1"
+            check_symbols: true
+          - os: ubuntu-latest
+            llvm: 19
+            go_version: "1.24"
+            lane: compatibility
+            shard_index: "0"
+            shard_total: "1"
+            check_symbols: true
+          - os: ubuntu-latest
+            llvm: 19
+            go_version: "1.25"
+            lane: full
+            shard_index: "0"
+            shard_total: "2"
+            check_symbols: true
+          - os: ubuntu-latest
+            llvm: 19
+            go_version: "1.25"
+            lane: full
+            shard_index: "1"
+            shard_total: "2"
+            check_symbols: true
+          - os: macos-latest
+            llvm: 19
+            go_version: "1.25"
+            lane: full
+            shard_index: "0"
+            shard_total: "1"
+          - os: ubuntu-latest
+            llvm: 19
+            go_version: "1.26"
+            lane: full
+            shard_index: "0"
+            shard_total: "2"
+            check_symbols: true
+            std_buildmodes: true
+          - os: ubuntu-latest
+            llvm: 19
+            go_version: "1.26"
+            lane: full
+            shard_index: "1"
+            shard_total: "2"
+            check_symbols: true
+            std_buildmodes: true
+          - os: macos-latest
+            llvm: 19
+            go_version: "1.26"
+            lane: full
+            shard_index: "0"
+            shard_total: "1"
     runs-on: ${{matrix.os}}
     steps:
       - uses: actions/checkout@v7
@@ -174,6 +214,7 @@ jobs:
         with:
           llvm-version: ${{matrix.llvm}}
       - name: Install further optional dependencies for demos
+        if: matrix.lane == 'full'
         run: |
           py_deps=(
             numpy # for github.com/goplus/lib/py/numpy
@@ -184,78 +225,44 @@ jobs:
       - name: Set up Go for build
         uses: ./.github/actions/setup-go
 
-      - name: Install
+      - name: Build and install llgo
         run: |
-          go install ./...
+          dev/build_ci_tools.sh "$RUNNER_TEMP/llgo-bin"
           echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> $GITHUB_ENV
 
-      - name: Set up Go for testing
-        uses: ./.github/actions/setup-go
-        with:
-          go-version: ${{matrix.go}}
-      - name: run llgo test
+      - name: Run versioned llgo tests
         env:
-          SHARD_INDEX: ${{ matrix.shard }}
-          SHARD_TOTAL: ${{ startsWith(matrix.os, 'macos') && '1' || '2' }}
-          TEST_JOBS: ${{ startsWith(matrix.os, 'macos') && '3' || '4' }}
+          LLGO: ${{ runner.temp }}/llgo-bin/llgo
+          CHECK_STD_SYMBOLS: ${{ runner.temp }}/llgo-bin/check_std_symbols
+          LLGO_BUILD_CACHE: "1"
+          LLGO_TEST_BENCH_GO126: "1"
+          LLGO_TEST_CHECK_SYMBOLS: ${{ matrix.check_symbols && '1' || '0' }}
+          LLGO_TEST_JOBS: ${{ startsWith(matrix.os, 'macos') && '3' || '4' }}
+          LLGO_TEST_STD_BUILDMODES: ${{ matrix.std_buildmodes && '1' || '0' }}
+          SHARD_INDEX: ${{ matrix.shard_index }}
+          SHARD_TOTAL: ${{ matrix.shard_total }}
         run: |
-          set -euo pipefail
-
-          pkgs=()
-          while IFS= read -r pkg; do
-            pkgs+=("${pkg}")
-          done < <(go list -tags=llgo ./test/... | sort)
-
-          selected=()
-          for i in "${!pkgs[@]}"; do
-            if (( i % SHARD_TOTAL == SHARD_INDEX )); then
-              selected+=("${pkgs[$i]}")
-            fi
-          done
-
-          echo "Shard: ${SHARD_INDEX}/${SHARD_TOTAL}, selected: ${#selected[@]} package(s)"
-          if [ "${#selected[@]}" -eq 0 ]; then
-            echo "No packages in this shard."
-            exit 0
-          fi
-          printf '  %s\n' "${selected[@]}"
-
-          std_pkgs=()
-          for pkg in "${selected[@]}"; do
-            if [[ "${{ matrix.os }}" == ubuntu-latest && "${{ matrix.go }}" == 1.26.5 && "${pkg}" == */test/std/* ]]; then
-              std_pkgs+=("${pkg}")
-            fi
-          done
-
-          echo "==> llgo test -p=${TEST_JOBS} (${#selected[@]} packages)"
-          SECONDS=0
-          llgo test -p="${TEST_JOBS}" -timeout=20m -bench='^BenchmarkGo126' -benchtime=1x "${selected[@]}"
-          echo "==> llgo test done (${SECONDS}s)"
-
-          if [[ "${#std_pkgs[@]}" -ne 0 ]]; then
-            dev/test_std_buildmodes.sh "${std_pkgs[@]}"
-          fi
+          dev/test_go_version.sh "${{ matrix.go_version }}"
 
   hello:
-    name: hello (${{ matrix.lane }}, ${{ matrix.os }}, LLVM ${{ matrix.llvm }}, Go ${{ matrix.go }})
-    continue-on-error: ${{ matrix.lane == 'compatibility' }}
+    name: hello (${{ matrix.lane }}, ${{ matrix.os }}, LLVM ${{ matrix.llvm }}, Go ${{ matrix.go_version }})
     timeout-minutes: 30
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
             llvm: 19
-            go: "1.25.0"
+            go_version: "1.20"
             lane: compatibility
           - os: ubuntu-latest
             llvm: 19
-            go: "1.26.5"
+            go_version: "1.26"
             lane: primary
           # Keep the Go 1.26 user-module compatibility matrix on both host
           # platforms; release artifact smoke tests alone only cover go 1.26.
           - os: macos-latest
             llvm: 19
-            go: "1.26.5"
+            go_version: "1.26"
             lane: primary
     runs-on: ${{matrix.os}}
     steps:
@@ -270,40 +277,47 @@ jobs:
 
       - name: Install llgo
         run: |
-          go install ./...
+          dev/build_ci_tools.sh "$RUNNER_TEMP/llgo-bin"
+          echo "$RUNNER_TEMP/llgo-bin" >> $GITHUB_PATH
           echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> $GITHUB_ENV
 
-      - name: Set up Go for testing
-        uses: ./.github/actions/setup-go
-        with:
-          go-version: ${{matrix.go}}
 
-      - name: Test Hello World with go.mod 1.21
-        if: startsWith(matrix.go, '1.25') || startsWith(matrix.go, '1.26')
+      - name: Test Hello World with go.mod 1.20
         uses: ./.github/actions/test-helloworld
         with:
-          go-version: ${{matrix.go}}
+          go-version: ${{ matrix.go_version }}
+          embedded: "false"
+          mod-version: "1.20"
+
+      - name: Test Hello World with go.mod 1.21
+        if: matrix.go_version == '1.26'
+        uses: ./.github/actions/test-helloworld
+        with:
+          go-version: ${{ matrix.go_version }}
+          embedded: "false"
           mod-version: "1.21"
 
       - name: Test Hello World with go.mod 1.22
-        if: startsWith(matrix.go, '1.25') || startsWith(matrix.go, '1.26')
+        if: matrix.go_version == '1.26'
         uses: ./.github/actions/test-helloworld
         with:
-          go-version: ${{matrix.go}}
+          go-version: ${{ matrix.go_version }}
+          embedded: "false"
           mod-version: "1.22"
 
       - name: Test Hello World with go.mod 1.24
-        if: startsWith(matrix.go, '1.25') || startsWith(matrix.go, '1.26')
+        if: matrix.go_version == '1.26'
         uses: ./.github/actions/test-helloworld
         with:
-          go-version: ${{matrix.go}}
+          go-version: ${{ matrix.go_version }}
+          embedded: "false"
           mod-version: "1.24"
 
       - name: Test Hello World with go.mod 1.26
-        if: startsWith(matrix.go, '1.26')
+        if: matrix.go_version == '1.26'
         uses: ./.github/actions/test-helloworld
         with:
-          go-version: ${{matrix.go}}
+          go-version: ${{ matrix.go_version }}
           mod-version: "1.26"
 
   cross-compile:
@@ -356,11 +370,14 @@ jobs:
           iwasm --stack-size=819200000 --heap-size=800000000 hello.wasm
 
   wasm-runtime:
+    name: wasm-runtime (Go ${{ matrix.go_version }})
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        go: ["1.25.0", "1.26.5"]
+        include:
+          - go_version: "1.24"
+          - go_version: "1.26"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -379,17 +396,12 @@ jobs:
 
       - name: Install llgo
         run: |
-          go install ./...
+          dev/build_ci_tools.sh "$RUNNER_TEMP/llgo-bin"
           echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> $GITHUB_ENV
-
-      - name: Set up Go for testing
-        uses: ./.github/actions/setup-go
-        with:
-          go-version: ${{matrix.go}}
 
       - name: Build standard runtime for wasm
         shell: bash
-        run: |
-          GOOS=js GOARCH=wasm llgo build -o "$RUNNER_TEMP/runtime-js.wasm" ./internal/build/testdata/wasm-runtime
-          GOOS=wasip1 GOARCH=wasm llgo build -o "$RUNNER_TEMP/runtime-wasip1.wasm" ./internal/build/testdata/wasm-runtime
-          file "$RUNNER_TEMP/runtime-js.wasm" "$RUNNER_TEMP/runtime-wasip1.wasm"
+        env:
+          LLGO: ${{ runner.temp }}/llgo-bin/llgo
+          LLGO_BUILD_CACHE: "1"
+        run: dev/test_wasm_runtime_go_version.sh "${{ matrix.go_version }}"

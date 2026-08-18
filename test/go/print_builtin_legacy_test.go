@@ -22,7 +22,6 @@ package gotest
 import (
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -56,8 +55,7 @@ func TestBuiltinPrintLegacyExponentWidth(t *testing.T) {
 	}
 
 	root := findLLGoRoot(t)
-	cmd := exec.Command("go", "run", "./cmd/llgo", "run", mainFile)
-	cmd.Dir = root
+	cmd := commandForTest(t, root, "go", "run", "./cmd/llgo", "run", mainFile)
 	cmd.Env = append(os.Environ(), "LLGO_ROOT="+root)
 
 	var stdout, stderr bytes.Buffer

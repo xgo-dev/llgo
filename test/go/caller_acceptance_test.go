@@ -387,8 +387,7 @@ func runLLGoProbeWithFlags(t *testing.T, dir string, flags ...string) (string, e
 	repoRoot := findRepoRoot(t)
 	t.Setenv("LLGO_ROOT", repoRoot)
 	args := append([]string{"run", "./cmd/llgo", "run", "-a"}, flags...)
-	cmd := exec.Command("go", append(args, filepath.Join(dir, "main.go"))...)
-	cmd.Dir = repoRoot
+	cmd := commandForTest(t, repoRoot, "go", append(args, filepath.Join(dir, "main.go"))...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -667,6 +666,9 @@ func acceptanceLLGoBinary(t *testing.T) string {
 	t.Helper()
 	repoRoot := findRepoRoot(t)
 	t.Setenv("LLGO_ROOT", repoRoot)
+	if llgo := configuredLLGo(t); llgo != "" {
+		return llgo
+	}
 	acceptanceLLGoOnce.Do(func() {
 		tmp, err := os.MkdirTemp("", "llgo-acceptance-bin")
 		if err != nil {

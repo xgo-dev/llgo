@@ -17,7 +17,7 @@ import (
 func TestApplyGoBuildFlags(t *testing.T) {
 	cmd := new(base.Command)
 	captured := CaptureGoBuildFlags(cmd)
-	if err := cmd.Flag.Parse([]string{"-ldflags=-s -w", "-gcflags=all=-N", "."}); err != nil {
+	if err := cmd.Flag.Parse([]string{"-ldflags=-s -w", "-gcflags=all=-N", "-modfile=test.mod", "."}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -25,7 +25,7 @@ func TestApplyGoBuildFlags(t *testing.T) {
 	if err := ApplyGoBuildFlags(conf, captured.Args); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"-tags=existing", "-ldflags=-s -w", "-gcflags=all=-N"}
+	want := []string{"-tags=existing", "-ldflags=-s -w", "-gcflags=all=-N", "-modfile=test.mod"}
 	if !reflect.DeepEqual(conf.GoBuildFlags, want) {
 		t.Fatalf("GoBuildFlags = %v, want %v", conf.GoBuildFlags, want)
 	}

@@ -18,7 +18,6 @@ package gotest
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -100,7 +99,7 @@ func TestBuiltinPrintOutputMatchesGo(t *testing.T) {
 	repoRoot := findBuiltinPrintRepoRoot(t)
 	goBin := filepath.Join(dir, "go-probe")
 	llgoBin := filepath.Join(dir, "llgo-probe")
-	runBuiltinPrintCommand(t, repoRoot, "go", "build", "-o", goBin, file)
+	runBuiltinPrintCommand(t, dir, "go", "build", "-o", goBin, file)
 	t.Setenv("LLGO_ROOT", repoRoot)
 	runBuiltinPrintCommand(t, repoRoot, "go", "run", "./cmd/llgo", "build", "-o", llgoBin, file)
 
@@ -113,8 +112,7 @@ func TestBuiltinPrintOutputMatchesGo(t *testing.T) {
 
 func runBuiltinPrintCommand(t *testing.T, dir, name string, args ...string) []byte {
 	t.Helper()
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
+	cmd := commandForTest(t, dir, name, args...)
 	cmd.Env = os.Environ()
 	out, err := cmd.CombinedOutput()
 	if err != nil {

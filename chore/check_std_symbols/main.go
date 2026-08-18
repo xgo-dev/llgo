@@ -3,7 +3,7 @@
 //
 // Usage:
 //
-//	go run ./chore/check_std_symbols -pkg math [-pkg strings ...]
+//	go run ./chore/check_std_symbols [-modfile test.mod] -pkg math [-pkg strings ...]
 //
 // The tool compares exported symbols from a package (via go doc) with
 // symbols used in test files, reporting any uncovered exported identifiers.
@@ -94,15 +94,17 @@ var testingCommonEmbeddedIn = []string{"T", "B", "F"}
 
 func main() {
 	var specs pkgSpecs
+	var modfile string
 	var verbose bool
 	flag.Var(&specs, "pkg", "package coverage check in the form <import path>=<test dir>")
+	flag.StringVar(&modfile, "modfile", "", "alternate go.mod used to load version-tagged tests")
 	flag.BoolVar(&verbose, "v", false, "display coverage status for each exported symbol")
 	flag.Parse()
 
 	debugUsed := os.Getenv("DEBUG_USED_SYMBOLS") != ""
 
 	if len(specs) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: go run ./chore/check_std_symbols -pkg math [-pkg strings ...]")
+		fmt.Fprintln(os.Stderr, "usage: go run ./chore/check_std_symbols [-modfile test.mod] -pkg math [-pkg strings ...]")
 		os.Exit(2)
 	}
 
@@ -110,6 +112,13 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to determine working directory: %v\n", err)
 		os.Exit(2)
+	}
+	if modfile != "" {
+		modfile, err = filepath.Abs(modfile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to resolve modfile: %v\n", err)
+			os.Exit(2)
+		}
 	}
 
 	var failures int
@@ -134,7 +143,7 @@ func main() {
 			failures++
 			continue
 		}
-		used, err := usedSymbols(testDir, spec.pkgPath)
+		used, err := usedSymbols(testDir, spec.pkgPath, modfile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to inspect tests in %s: %v\n", spec.testDir, err)
 			failures++
@@ -276,11 +285,14 @@ func receiverTypeName(recv string) string {
 	return parseIdentifier(typ)
 }
 
-func usedSymbols(testDir, targetPkg string) (map[string]bool, error) {
+func usedSymbols(testDir, targetPkg, modfile string) (map[string]bool, error) {
 	cfg := &packages.Config{
 		Mode:  packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports,
 		Dir:   testDir,
 		Tests: true,
+	}
+	if modfile != "" {
+		cfg.BuildFlags = []string{"-modfile=" + modfile}
 	}
 	pkgs, err := packages.Load(cfg, ".")
 	if err != nil {

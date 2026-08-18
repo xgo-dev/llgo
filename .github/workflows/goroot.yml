@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   goroot:
-    name: GOROOT (${{ matrix.lane }}, ${{ matrix.os }}, Go ${{ matrix.go-version }}, shard ${{ matrix.shard-index }}/4)
+    name: GOROOT (${{ matrix.lane }}, ${{ matrix.os }}, Go ${{ matrix.go-label }}, shard ${{ matrix.shard-index }}/4)
     timeout-minutes: 180
     env:
       GOPROXY: https://proxy.golang.org,direct
@@ -24,18 +24,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # These are reproducibility pins, not floating series selectors.
-        # Upgrade them together in a dedicated toolchain-update PR.
+        # Go 1.25 is an explicit compatibility target. The primary toolchain
+        # is read from .go-version after checkout.
         os: [macos-latest, ubuntu-latest]
-        go-version: ["1.25.0", "1.26.5"]
+        toolchain: [go1.25, current]
         shard-index: ["0", "1", "2", "3"]
         include:
-          - go-version: "1.25.0"
+          - toolchain: go1.25
+            go-version: "1.25.11"
+            go-label: "1.25.11"
             lane: compatibility
-          - go-version: "1.26.5"
+          - toolchain: current
+            go-version: ""
+            go-label: current
             lane: primary
-        # Keep both supported runtime generations on Linux and macOS. Go 1.25
-        # is intentionally omitted because it is not a compatibility target.
+        # Keep the compatibility and primary toolchains on Linux and macOS.
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -45,7 +48,14 @@ jobs:
         with:
           llvm-version: 19
 
-      - name: Set up Go
+      - name: Set up Go for building llgo and the runner
+        uses: ./.github/actions/setup-go
+
+      - name: Build llgo and the GOROOT runner
+        run: |
+          LLGO_BUILD_GOROOT_RUNNER=1 dev/build_ci_tools.sh "$RUNNER_TEMP/llgo-bin"
+
+      - name: Set up target Go
         uses: ./.github/actions/setup-go
         with:
           go-version: ${{ matrix.go-version }}
@@ -56,11 +66,11 @@ jobs:
           go env GOPROXY GOMODCACHE
           clang --version
 
-      - name: Download Go modules
-        timeout-minutes: 10
-        run: go mod download
-
       - name: Run GOROOT runner
+        env:
+          GOTOOLCHAIN: local
+          LLGO_GOROOT_RUNNER: ${{ runner.temp }}/llgo-bin/goroot-runner
+          LLGO_TEST_LLGO: ${{ runner.temp }}/llgo-bin/llgo
         run: |
           min_swap_free_mib=512
           if [[ "$RUNNER_OS" == "macOS" ]]; then
@@ -68,8 +78,9 @@ jobs:
             # does not mean the runner cannot make forward progress.
             min_swap_free_mib=0
           fi
+          target_goroot="$(go env GOROOT)"
           set +e
-          bash dev/test_goroot.sh -- \
+          bash dev/test_goroot.sh "$target_goroot" -- \
             -directive-mode ci \
             -min-swap-free-mib "$min_swap_free_mib" \
             -progress 60s \
@@ -83,9 +94,10 @@ jobs:
         if: always()
         env:
           MATRIX_OS: ${{ matrix.os }}
-          GO_VERSION: ${{ matrix.go-version }}
           SHARD_INDEX: ${{ matrix.shard-index }}
         run: |
+          GO_VERSION="$(GOTOOLCHAIN=local go env GOVERSION)"
+          GO_VERSION="${GO_VERSION#go}"
           log="$RUNNER_TEMP/goroot.log"
           report_dir="$RUNNER_TEMP/goroot-report"
           mkdir -p "$report_dir"
@@ -139,7 +151,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: goroot-stat-${{ matrix.os }}-${{ matrix.go-version }}-${{ matrix.shard-index }}
+          name: goroot-stat-${{ matrix.os }}-${{ matrix.toolchain }}-${{ matrix.shard-index }}
           path: ${{ runner.temp }}/goroot-report
           if-no-files-found: error
           retention-days: 7
@@ -167,6 +179,12 @@ jobs:
           find reports -type f -name 'failures-*.tsv' -exec cat {} + >"$failure_tsv"
 
           report_count=$(wc -l <"$summary_tsv" | tr -d ' ')
+          compatibility_version=$(awk -F '\t' '$2 ~ /^1\.25\./ { print $2; exit }' "$summary_tsv")
+          primary_version=$(awk -F '\t' '$2 ~ /^1\.26\./ { print $2; exit }' "$summary_tsv")
+          if [[ -z "$compatibility_version" || -z "$primary_version" ]]; then
+            echo "error: could not determine compatibility and primary Go versions" >&2
+            exit 1
+          fi
           write_row() {
             local label=$1
             local platform=$2
@@ -204,11 +222,11 @@ jobs:
             echo
             echo '| Platform / toolchain | Shards | Selected | Observed | Passed | Failed | Skipped |'
             echo '|---|---:|---:|---:|---:|---:|---:|'
-            write_row 'Darwin · Go 1.25.0' darwin/arm64 1.25.0 4
-            write_row 'Darwin · Go 1.26.5' darwin/arm64 1.26.5 4
+            write_row "Darwin · Go $compatibility_version" darwin/arm64 "$compatibility_version" 4
+            write_row "Darwin · Go $primary_version" darwin/arm64 "$primary_version" 4
             write_row '**Darwin total**' darwin/arm64 '' 8
-            write_row 'Linux · Go 1.25.0' linux/amd64 1.25.0 4
-            write_row 'Linux · Go 1.26.5' linux/amd64 1.26.5 4
+            write_row "Linux · Go $compatibility_version" linux/amd64 "$compatibility_version" 4
+            write_row "Linux · Go $primary_version" linux/amd64 "$primary_version" 4
             write_row '**Linux total**' linux/amd64 '' 8
             echo
             echo '_Passed means the runner classification succeeded; expected xfail/not-applicable failures and classified flakes are counted as Passed._'

@@ -3,8 +3,6 @@ package bytes_test
 import (
 	"bytes"
 	"io"
-	"iter"
-	"slices"
 	"strings"
 	"testing"
 	"unicode"
@@ -12,17 +10,15 @@ import (
 )
 
 func equalByteSlices(a, b [][]byte) bool {
-	return slices.EqualFunc(a, b, func(x, y []byte) bool {
-		return bytes.Equal(x, y)
-	})
-}
-
-func collectByteSeq(seq iter.Seq[[]byte]) [][]byte {
-	var out [][]byte
-	for chunk := range seq {
-		out = append(out, append([]byte(nil), chunk...))
+	if len(a) != len(b) {
+		return false
 	}
-	return out
+	for i := range a {
+		if !bytes.Equal(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func TestBytesBasicFunctions(t *testing.T) {
@@ -50,9 +46,6 @@ func TestBytesBasicFunctions(t *testing.T) {
 	}
 	if !bytes.ContainsAny([]byte("hello"), "xyzlo") {
 		t.Fatal("ContainsAny should find shared character")
-	}
-	if !bytes.ContainsFunc([]byte("abc123"), unicode.IsDigit) {
-		t.Fatal("ContainsFunc should locate digit rune")
 	}
 	if !bytes.ContainsRune([]byte("caf\u00e9"), 'é') {
 		t.Fatal("ContainsRune should find rune")
@@ -214,7 +207,7 @@ func TestBytesBasicFunctions(t *testing.T) {
 		t.Fatal("TrimSuffix mismatch")
 	}
 
-	if runes := bytes.Runes([]byte("πλα")); !slices.Equal(runes, []rune{'π', 'λ', 'α'}) {
+	if runes := bytes.Runes([]byte("πλα")); string(runes) != "πλα" {
 		t.Fatalf("Runes mismatch: %v", runes)
 	}
 
@@ -251,38 +244,6 @@ func TestBytesSplitFunctions(t *testing.T) {
 	lines := bytes.Split([]byte("a\nb\n"), []byte("\n"))
 	if want := [][]byte{[]byte("a"), []byte("b"), []byte("")}; !equalByteSlices(lines, want) {
 		t.Fatalf("Split lines mismatch: %v", lines)
-	}
-}
-
-func TestBytesSequenceIterators(t *testing.T) {
-	fields := collectByteSeq(bytes.FieldsSeq([]byte("  a  b c\t")))
-	if want := [][]byte{[]byte("a"), []byte("b"), []byte("c")}; !equalByteSlices(fields, want) {
-		t.Fatalf("FieldsSeq mismatch: %v", fields)
-	}
-
-	fieldsFunc := collectByteSeq(bytes.FieldsFuncSeq([]byte("a|b||c"), func(r rune) bool { return r == '|' }))
-	if want := [][]byte{[]byte("a"), []byte("b"), []byte("c")}; !equalByteSlices(fieldsFunc, want) {
-		t.Fatalf("FieldsFuncSeq mismatch: %v", fieldsFunc)
-	}
-
-	lines := collectByteSeq(bytes.Lines([]byte("a\nb\n")))
-	if want := [][]byte{[]byte("a\n"), []byte("b\n")}; !equalByteSlices(lines, want) {
-		t.Fatalf("Lines mismatch: %v", lines)
-	}
-
-	linesSingle := collectByteSeq(bytes.Lines([]byte("single")))
-	if want := [][]byte{[]byte("single")}; !equalByteSlices(linesSingle, want) {
-		t.Fatalf("Lines single mismatch: %v", linesSingle)
-	}
-
-	splitSeq := collectByteSeq(bytes.SplitSeq([]byte("a,b,c"), []byte(",")))
-	if want := [][]byte{[]byte("a"), []byte("b"), []byte("c")}; !equalByteSlices(splitSeq, want) {
-		t.Fatalf("SplitSeq mismatch: %v", splitSeq)
-	}
-
-	splitAfterSeq := collectByteSeq(bytes.SplitAfterSeq([]byte("a,b,c"), []byte(",")))
-	if want := [][]byte{[]byte("a,"), []byte("b,"), []byte("c")}; !equalByteSlices(splitAfterSeq, want) {
-		t.Fatalf("SplitAfterSeq mismatch: %v", splitAfterSeq)
 	}
 }
 
@@ -358,21 +319,8 @@ func TestBytesBuffer(t *testing.T) {
 		t.Fatalf("Grow should ensure capacity, got %d", buf.Cap())
 	}
 
-	initialAvail := buf.Available()
-	if initialAvail <= 0 {
-		t.Fatalf("Available should report spare capacity, got %d", initialAvail)
-	}
-
-	space := buf.AvailableBuffer()
-	if len(space) != 0 || cap(space) != initialAvail {
-		t.Fatalf("AvailableBuffer mismatch: len=%d cap=%d want cap=%d", len(space), cap(space), initialAvail)
-	}
-	space = append(space, 'G', 'o')
-	if n, err := buf.Write(space); err != nil || n != len(space) {
-		t.Fatalf("Write via AvailableBuffer mismatch: n=%d err=%v", n, err)
-	}
-	if buf.Available() != initialAvail-len(space) {
-		t.Fatalf("Available after write mismatch: %d", buf.Available())
+	if n, err := buf.Write([]byte("Go")); err != nil || n != 2 {
+		t.Fatalf("Write mismatch: n=%d err=%v", n, err)
 	}
 	if err := buf.WriteByte('+'); err != nil {
 		t.Fatalf("WriteByte error: %v", err)

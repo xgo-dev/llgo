@@ -95,48 +95,13 @@ ensure_llama2_model
 
 run_hello() {
 	local mod_version="$1"
-	local hello_dir="$tmp_root/helloworld-$mod_version"
-	rm -rf "$hello_dir" || true
-	mkdir -p "$hello_dir"
-	cat >"$hello_dir/go.mod" <<EOF
-module hello
-go $mod_version
-EOF
-	cat >"$hello_dir/main.go" <<'EOF'
-package main
-
-import (
-	"fmt"
-	"github.com/goplus/lib/c"
-	"github.com/goplus/lib/cpp/std"
-)
-
-func main() {
-	fmt.Println("Hello from fmt.Println")
-	println("Hello from builtin println")
-	c.Printf(c.Str("Hello from c printf\n"))
-	c.Printf(std.Str("Hello from cpp/std.Str\n").CStr())
-}
-EOF
-	(cd "$hello_dir" && go mod tidy)
-	local output
-	if ! output=$(cd "$hello_dir" && llgo run . 2>&1); then
-		printf "%s\n" "$output"
-		exit 1
+	local go_version=1.26
+	if [[ "$mod_version" == 1.20 ]]; then
+		go_version=1.20
 	fi
-	local expected=(
-		"Hello from fmt.Println"
-		"Hello from builtin println"
-		"Hello from c printf"
-		"Hello from cpp/std.Str"
-	)
-	for want in "${expected[@]}"; do
-		if ! grep -Fqx "$want" <<<"$output"; then
-			printf "%s\n" "$output"
-			echo "missing output: $want" >&2
-			exit 1
-		fi
-	done
+	LLGO="$(command -v llgo)" LLGO_HELLO_EMBED=0 \
+		"$repo_root/dev/with_go_version.sh" "$go_version" \
+		"$repo_root/dev/test_helloworld.sh" "$mod_version"
 }
 
 log_section "Format"
@@ -161,6 +126,9 @@ log_section "Go Build"
 log_section "Go Test"
 (cd "$workdir" && go test -timeout 30m ./...)
 
+log_section "Runtime module with Go 1.20 and Go 1.26"
+(cd "$workdir" && dev/test_runtime_go_versions.sh)
+
 log_section "Install llgo"
 (cd "$workdir" && go install -tags=dev ./cmd/llgo)
 gobin="$(cd "$workdir" && go env GOBIN)"
@@ -170,8 +138,8 @@ if [ -z "$gobin" ]; then
 fi
 export PATH="$gobin:$PATH"
 
-log_section "llgo test"
-(cd "$workdir" && llgo test -timeout 30m ./...)
+log_section "llgo test with Go 1.20 through Go 1.26"
+(cd "$workdir" && LLGO="$(command -v llgo)" dev/test_go_versions.sh)
 
 log_section "Demo Tests"
 demo_jobs="${LLGO_DEMO_JOBS:-}"
@@ -194,7 +162,7 @@ log_section "Build targets"
 
 log_section "Hello World"
 hello_logs=()
-for mod in 1.21 1.22 1.23 1.24; do
+for mod in 1.20 1.21 1.22 1.23 1.24 1.26; do
 	log="$tmp_root/hello-${mod}.log"
 	(run_hello "$mod") >"$log" 2>&1 &
 	hello_logs+=("$log:$!")

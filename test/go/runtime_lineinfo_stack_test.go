@@ -18,7 +18,6 @@ package gotest
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -214,8 +213,7 @@ func TestRuntimeLineInfoAndStack(t *testing.T) {
 
 	repoRoot := findRepoRoot(t)
 	t.Setenv("LLGO_ROOT", repoRoot)
-	cmd := exec.Command("go", "run", "./cmd/llgo", "run", "-a", file)
-	cmd.Dir = repoRoot
+	cmd := commandForTest(t, repoRoot, "go", "run", "./cmd/llgo", "run", "-a", file)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("llgo lineinfo probe failed: %v\n%s", err, out)
 	}
@@ -343,8 +341,7 @@ func TestRuntimeFuncInfoConcurrentFirstUse(t *testing.T) {
 
 	repoRoot := findRepoRoot(t)
 	t.Setenv("LLGO_ROOT", repoRoot)
-	cmd := exec.Command("go", "run", "./cmd/llgo", "run", "-a", file)
-	cmd.Dir = repoRoot
+	cmd := commandForTest(t, repoRoot, "go", "run", "./cmd/llgo", "run", "-a", file)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("llgo concurrent funcinfo probe failed: %v\n%s", err, out)
 	}

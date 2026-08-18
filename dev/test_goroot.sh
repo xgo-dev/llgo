@@ -68,11 +68,24 @@ for goroot in "${goroots[@]}"; do
 	echo "==== $version ($goroot) ===="
 	(
 		cd "$repo_root"
-		go_test_args=()
-		if [[ "${LLGO_GOROOT_VERBOSE:-0}" != "0" ]]; then
-			go_test_args+=("-v")
-		fi
 		goroot_gomaxprocs="${LLGO_GOROOT_GOMAXPROCS:-${GOMAXPROCS:-2}}"
-		run_with_heartbeat env GOMAXPROCS="$goroot_gomaxprocs" go test -p=1 ./test/goroot "${go_test_args[@]}" -count=1 -timeout 180m -args -goroot "$goroot" "${runner_args[@]}"
+		if [[ -n "${LLGO_GOROOT_RUNNER:-}" ]]; then
+			cd "$repo_root/test/goroot"
+			test_args=(-test.count=1 -test.timeout=180m)
+			if [[ "${LLGO_GOROOT_VERBOSE:-0}" != "0" ]]; then
+				test_args+=("-test.v")
+			fi
+			run_with_heartbeat env GOMAXPROCS="$goroot_gomaxprocs" \
+				"${LLGO_GOROOT_RUNNER}" "${test_args[@]}" \
+				-goroot "$goroot" "${runner_args[@]}"
+		else
+			go_test_args=()
+			if [[ "${LLGO_GOROOT_VERBOSE:-0}" != "0" ]]; then
+				go_test_args+=("-v")
+			fi
+			run_with_heartbeat env GOMAXPROCS="$goroot_gomaxprocs" \
+				go test -p=1 ./test/goroot "${go_test_args[@]}" \
+				-count=1 -timeout 180m -args -goroot "$goroot" "${runner_args[@]}"
+		fi
 	)
 done

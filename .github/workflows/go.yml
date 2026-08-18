@@ -74,7 +74,7 @@ jobs:
           set -euo pipefail
 
           # test/go intentionally contains compiler edge cases that make the
-          # Go 1.26.5 printf analyzer panic. Keep the normal go test vet gate
+          # The current Go 1.26 printf analyzer panics here. Keep the normal go test vet gate
           # for every other package, and disable vet only for that package.
           go list ./... \
             | grep -v '^github.com/xgo-dev/llgo/test/go$' \

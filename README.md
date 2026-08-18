@@ -340,7 +340,9 @@ Here are the Go packages that can be imported correctly:
 
 ## Dependencies
 
-- [Go 1.25+](https://go.dev)
+- [Go 1.26](https://go.dev) for building llgo. The runtime and demo modules
+  retain their declared Go 1.20 compatibility floor unless they use newer
+  language or standard-library features.
 - [LLVM 18](https://llvm.org)
 - [Clang 18](https://clang.llvm.org)
 - [LLD 18](https://lld.llvm.org)

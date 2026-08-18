@@ -101,6 +101,11 @@ func llgoIRFromProbe(t *testing.T, name, src string) string {
 	if err := os.WriteFile(mainFile, []byte(src), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if os.Getenv("LLGO_TEST_LLGEN") != "" {
+		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module llgo-ir-probe\n\ngo 1.20\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	runGoCmd(t, root, "run", "./chore/llgen", filepath.ToSlash(dir))
 	data, err := os.ReadFile(filepath.Join(dir, "llgo_autogen.ll"))

@@ -110,6 +110,9 @@ func faultLLGo(t *testing.T) string {
 	t.Helper()
 	repoRoot := findRepoRoot(t)
 	t.Setenv("LLGO_ROOT", repoRoot)
+	if llgo := configuredLLGo(t); llgo != "" {
+		return llgo
+	}
 	faultLLGoOnce.Do(func() {
 		tmp, err := os.MkdirTemp("", "llgo-fault-bin")
 		if err != nil {

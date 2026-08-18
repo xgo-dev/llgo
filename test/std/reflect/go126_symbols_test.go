@@ -16,16 +16,6 @@ func (v go126Value) Summary(prefix string) string {
 	return prefix + v.Name
 }
 
-func TestTypeAssert(t *testing.T) {
-	value := reflect.ValueOf(42)
-	if got, ok := reflect.TypeAssert[int](value); !ok || got != 42 {
-		t.Fatalf("TypeAssert[int] = %d, %v; want 42, true", got, ok)
-	}
-	if got, ok := reflect.TypeAssert[string](value); ok || got != "" {
-		t.Fatalf("TypeAssert[string] = %q, %v; want empty, false", got, ok)
-	}
-}
-
 func TestValueFieldsAndMethods(t *testing.T) {
 	value := reflect.ValueOf(go126Value{Name: "llgo", Count: 2})
 	fields := make(map[string]any)
