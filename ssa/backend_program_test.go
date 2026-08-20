@@ -28,6 +28,7 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	coordinator.DisableBoundsChecks(true)
 	coordinator.EnableGoGlobalDCE(true)
 	coordinator.EnableDeadcodeDrop(true)
+	coordinator.EnableMemoryProfiling(true)
 	coordinator.SetPthreadStackSize(4096)
 	coordinator.EnableLTOPluginMarkers(true)
 	coordinator.EnableFuncInfoMetadata(true)
@@ -77,7 +78,7 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	if backend.python() != nil {
 		t.Fatal("backend Program changed the prepared optional Python package")
 	}
-	if !backend.disableBoundsChecks || !backend.enableGoGlobalDCE || !backend.enableDeadcodeDrop ||
+	if !backend.disableBoundsChecks || !backend.enableGoGlobalDCE || !backend.enableDeadcodeDrop || !backend.MemoryProfilingEnabled() ||
 		backend.pthreadStackSize != 4096 || !backend.enableLTOPluginMarker ||
 		!backend.enableFuncInfoMetadata || !backend.enableFuncInfoSites || backend.debugInfoOptimized {
 		t.Fatal("backend Program did not preserve coordinator configuration")

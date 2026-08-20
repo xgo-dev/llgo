@@ -1414,12 +1414,13 @@ func TestCHeaderPackagesExcludesStandardRuntime(t *testing.T) {
 	userLPkg := prog.NewPackage("example.com/p", "example.com/p")
 	userLPkg.SetExport("example.com/p.Export", "Export")
 	runtimeLPkg := prog.NewPackage("runtime", "runtime")
-	llgoRuntimeLPkg := prog.NewPackage("github.com/xgo-dev/llgo/runtime/internal/lib/runtime", "github.com/xgo-dev/llgo/runtime/internal/lib/runtime")
+	llgoRuntimePath := altPkgPathPrefix + "runtime"
+	llgoRuntimeLPkg := prog.NewPackage(llgoRuntimePath, llgoRuntimePath)
 	dependencyLPkg := prog.NewPackage("example.com/dep", "example.com/dep")
 	pkgs := []*aPackage{
 		{Package: &packages.Package{PkgPath: "example.com/p"}, LPkg: userLPkg},
 		{Package: &packages.Package{PkgPath: "runtime"}, LPkg: runtimeLPkg},
-		{Package: &packages.Package{PkgPath: "github.com/xgo-dev/llgo/runtime/internal/lib/runtime"}, LPkg: llgoRuntimeLPkg},
+		{Package: &packages.Package{PkgPath: llgoRuntimePath}, LPkg: llgoRuntimeLPkg},
 		{Package: &packages.Package{PkgPath: "example.com/dep"}, LPkg: dependencyLPkg},
 		nil,
 	}

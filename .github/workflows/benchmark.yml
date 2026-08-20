@@ -25,7 +25,7 @@ jobs:
             id: macos
             display: macOS
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       GOMAXPROCS: "2"
       LLGO_ROOT: ${{ github.workspace }}
@@ -38,7 +38,16 @@ jobs:
         with:
           repository: ${{ github.event.pull_request.base.repo.full_name }}
           ref: ${{ github.event.pull_request.base.sha }}
-          path: .benchmark/source
+          path: .benchmark/base-source
+          persist-credentials: false
+
+      - name: Check out pull request head benchmark source
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: .benchmark/head-source
           persist-credentials: false
 
       - name: Install dependencies
@@ -49,41 +58,34 @@ jobs:
       - name: Set up Go
         uses: ./.github/actions/setup-go
 
-      - name: Measure pull request base
+      - name: Measure paired pull request revisions
         if: github.event_name == 'pull_request'
         run: |
           benchmark/baseline/run.sh \
-            "$GITHUB_WORKSPACE/.benchmark/source" \
+            "$GITHUB_WORKSPACE/.benchmark/base-source" \
             "$GITHUB_WORKSPACE/.benchmark/base-llgo" \
-            "$GITHUB_WORKSPACE/.benchmark/base-results"
-
-      - name: Check out pull request head benchmark source
-        if: github.event_name == 'pull_request'
-        uses: actions/checkout@v7
-        with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.sha }}
-          path: .benchmark/source
-          persist-credentials: false
+            "$GITHUB_WORKSPACE/.benchmark/base-results" \
+            "$GITHUB_WORKSPACE/.benchmark/head-source" \
+            "$GITHUB_WORKSPACE/.benchmark/llgo" \
+            "$GITHUB_WORKSPACE/.benchmark/results"
 
       - name: Measure current revision
+        if: github.event_name != 'pull_request'
         run: |
-          source_root="$GITHUB_WORKSPACE"
-          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-            source_root="$GITHUB_WORKSPACE/.benchmark/source"
-          fi
           benchmark/baseline/run.sh \
-            "$source_root" \
+            "$GITHUB_WORKSPACE" \
             "$GITHUB_WORKSPACE/.benchmark/llgo" \
             "$GITHUB_WORKSPACE/.benchmark/results"
 
       - name: Record benchmark result
-        uses: xgo-dev/setup-benchmark-go-action@v1.0.4
+        uses: xgo-dev/setup-benchmark-go-action@v1.0.5
         with:
           config: .github/llgo-benchmark.yml
           benchmark-file: .benchmark/results/benchmark.txt
           baseline-benchmark-file: >-
             ${{ github.event_name == 'pull_request' &&
                 '.benchmark/base-results/benchmark.txt' || '' }}
+          sample-pairing: >-
+            ${{ github.event_name == 'pull_request' && 'index' || '' }}
           platform-id: ${{ matrix.id }}
           platform-label: ${{ matrix.display }}

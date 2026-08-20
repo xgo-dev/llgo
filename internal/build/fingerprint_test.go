@@ -174,6 +174,22 @@ func TestManifestBuilder_SaturatingFloatToUint32(t *testing.T) {
 	}
 }
 
+func TestManifestBuilder_MemoryProfiling(t *testing.T) {
+	plain := newManifestBuilder()
+	profiled := newManifestBuilder()
+	profiled.pkg.MemoryProfiling = true
+	if plain.Fingerprint() == profiled.Fingerprint() {
+		t.Fatal("memory profiling did not change the package fingerprint")
+	}
+	data, err := decodeManifest(profiled.Build())
+	if err != nil {
+		t.Fatalf("decodeManifest: %v", err)
+	}
+	if data.Package == nil || !data.Package.MemoryProfiling {
+		t.Fatalf("memory profiling missing from manifest: %+v", data.Package)
+	}
+}
+
 func TestManifestBuilder_EmptySections(t *testing.T) {
 	m := newManifestBuilder()
 	content := m.Build()

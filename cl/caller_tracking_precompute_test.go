@@ -127,6 +127,35 @@ func Plain() { dep.Quiet() }
 	}
 }
 
+func TestCallerTrackingPrecomputePinsCrossPackageMemoryProfileAllocations(t *testing.T) {
+	dep, root := buildCallerFrameSSAProgram(t,
+		"example.com/dep", `package dep
+func Alloc() *[64]byte { return new([64]byte) }
+func Plain() int { return 1 }
+`,
+		"example.com/root", `package root
+import (
+	"example.com/dep"
+	"runtime"
+)
+func UseAlloc() *[64]byte { return dep.Alloc() }
+func Plain() int { return dep.Plain() }
+func Report(records []runtime.MemProfileRecord) { runtime.MemProfile(records, false) }
+`)
+	tracking := NewCallerTracking()
+	tracking.SetMemoryProfileAttribution(true)
+	tracking.Precompute([]*gossa.Package{dep, root})
+	if !runtimeCallerFuncSet(tracking, dep)[dep.Func("Alloc")] {
+		t.Fatal("cross-package allocation leaf was not pinned")
+	}
+	if !runtimeCallerFuncSet(tracking, root)[root.Func("UseAlloc")] {
+		t.Fatal("cross-package allocation wrapper was not pinned")
+	}
+	if runtimeCallerFuncSet(tracking, dep)[dep.Func("Plain")] || runtimeCallerFuncSet(tracking, root)[root.Func("Plain")] {
+		t.Fatal("unrelated cross-package path was pinned")
+	}
+}
+
 func TestCallerTrackingPrecomputeRejectsLatePackages(t *testing.T) {
 	dep, root := buildCallerFrameSSAProgram(t,
 		"example.com/dep", `package dep

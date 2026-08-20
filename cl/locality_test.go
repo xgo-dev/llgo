@@ -129,6 +129,24 @@ func value() *int { return pointer }
 	}
 }
 
+func TestNativeTLSAddressIsReusedWithinDominatingPath(t *testing.T) {
+	_, ir := compileLocalitySource(t, `package locality
+
+//llgo:tls
+var counter int
+
+func add() int {
+	counter++
+	counter++
+	return counter
+}
+`)
+	add := llvmFunction(t, ir, "example.com/locality.add")
+	if got := strings.Count(add, "@llvm.threadlocal.address"); got != 1 {
+		t.Fatalf("native TLS address resolutions = %d, want one:\n%s", got, add)
+	}
+}
+
 func llvmFunction(t *testing.T, ir, name string) string {
 	t.Helper()
 	markerAt := strings.Index(ir, `@"`+name+`"(`)

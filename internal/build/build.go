@@ -195,6 +195,10 @@ type Config struct {
 	// for float-to-uint32 conversions.
 	SaturatingFloatToUint32 bool
 
+	// memoryProfiling is derived from whole-program SSA before package cache
+	// lookup. Library build modes set it conservatively.
+	memoryProfiling bool
+
 	// PthreadStackSize sets a custom stack size, in bytes, for pthread-backed
 	// goroutines. A zero value keeps the platform pthread default.
 	PthreadStackSize int64
@@ -681,6 +685,20 @@ func Build(inv Invocation) ([]Package, error) {
 		return nil, err
 	}
 	buildSSAPkgs(ctx, append(append(altEntries, pkgEntries...), depEntries...))
+	memProfileConsumer := cl.MemProfileConsumer(progSSA.AllPackages())
+	conf.memoryProfiling = enableMemoryProfiling(conf.BuildMode, memProfileConsumer)
+	prog.EnableMemoryProfiling(conf.memoryProfiling)
+	if verbose {
+		reason := memProfileConsumer
+		if conf.BuildMode != BuildModeExe {
+			reason = string(conf.BuildMode)
+		}
+		if reason == "" {
+			reason = "not reachable"
+		}
+		fmt.Fprintf(os.Stderr, "memory profiling: %t (%s)\n", conf.memoryProfiling, reason)
+	}
+	ctx.callerTracking.SetMemoryProfileAttribution(conf.memoryProfiling)
 	callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
 	ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
 	callerSpan.done()
@@ -799,6 +817,10 @@ func Build(inv Invocation) ([]Package, error) {
 	}
 
 	return allPkgs, nil
+}
+
+func enableMemoryProfiling(mode BuildMode, consumer string) bool {
+	return mode != BuildModeExe || consumer != ""
 }
 
 // cHeaderPackages excludes the patched standard runtime implementation. Its

@@ -15,6 +15,7 @@ import (
 
 	"github.com/goplus/gogen/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
+	llabi "github.com/xgo-dev/llgo/ssa/abi"
 	gossa "golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
@@ -249,7 +250,7 @@ func plain() {}
 		t.Fatal("Version should not be a runtime caller metadata function")
 	}
 
-	rtpkg, _ := buildCallerFrameSSAPackage(t, "github.com/xgo-dev/llgo/runtime/internal/lib/runtime", `package runtime
+	rtpkg, _ := buildCallerFrameSSAPackage(t, llabi.PatchPathPrefix+"runtime", `package runtime
 func Caller(skip int) (uintptr, string, int, bool) { return 0, "", 0, false }
 func FuncForPC(pc uintptr) uintptr { return 0 }
 `)
@@ -762,6 +763,35 @@ func leaf() {}
 	}
 }
 
+func TestCompileMemoryProfileAllocationPCLineMetadata(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/profileline", `package profileline
+
+var sink *int
+
+func init() {
+//line profile_alloc.go:321
+	sink = new(int)
+}
+`)
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+			prog.EnableMemoryProfiling(enabled)
+			prog.EnableFuncInfoMetadata(true)
+			prog.EnableFuncInfoSites(true)
+			pkg, err := NewPackage(prog, ssapkg, files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ir := pkg.Module().String()
+			got := strings.Contains(ir, "!llgo.pcline") && strings.Contains(ir, `!"profile_alloc.go"`)
+			if got != enabled {
+				t.Fatalf("allocation pcline present = %v, memory profiling = %v\n%s", got, enabled, ir)
+			}
+		})
+	}
+}
+
 func TestCompileRuntimeCallerPCLineMetadata32Bit(t *testing.T) {
 	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
 import "runtime"
@@ -1225,5 +1255,147 @@ func TestDirectiveFilename(t *testing.T) {
 	}
 	if got := directiveFilename(nil, pos(0), "x.go"); got != "x.go" {
 		t.Fatal("nil fset must pass through")
+	}
+}
+
+// Packages that read the memory profile pin allocation paths, not unrelated
+// helpers: per-site heap attribution needs only the observable stack.
+func TestPackageReadsMemProfilePin(t *testing.T) {
+	ssapkg, _ := buildCallerFrameSSAPackage(t, "example.com/hp", `package main
+
+import "runtime"
+
+func allocLeaf() *[64]byte { return new([64]byte) }
+
+func allocWrapper() *[64]byte { return allocLeaf() }
+
+func plainHelper() int { return 1 }
+
+func main() {
+	runtime.MemProfileRate = 1
+	_ = allocWrapper()
+	_ = plainHelper()
+	var r [4]runtime.MemProfileRecord
+	runtime.MemProfile(r[:], true)
+}
+`)
+	set := runtimeCallerFuncSet(NewCallerTracking(), ssapkg)
+	for _, name := range []string{"allocLeaf", "allocWrapper", "main"} {
+		if !set[ssapkg.Func(name)] {
+			t.Fatalf("%s must be pinned in a memprofile-reading package", name)
+		}
+	}
+	if set[ssapkg.Func("plainHelper")] {
+		t.Fatal("plainHelper must remain inlineable in a memprofile-reading package")
+	}
+	quiet, _ := buildCallerFrameSSAPackage(t, "example.com/quiet", `package q
+
+func Helper() int { return 2 }
+`)
+	if set := runtimeCallerFuncSet(NewCallerTracking(), quiet); set[quiet.Func("Helper")] {
+		t.Fatal("quiet package must not be pinned")
+	}
+}
+
+func TestMemoryProfileConvertMayAllocate(t *testing.T) {
+	stringType := types.Typ[types.String]
+	intType := types.Typ[types.Int]
+	tests := []struct {
+		name     string
+		from, to types.Type
+		want     bool
+	}{
+		{"numeric", intType, types.Typ[types.Int64], false},
+		{"string to bytes", stringType, types.NewSlice(types.Typ[types.Uint8]), true},
+		{"runes to string", types.NewSlice(types.Typ[types.Int32]), stringType, true},
+		{"rune to string", types.Typ[types.Int32], stringType, true},
+		{"string to ints", stringType, types.NewSlice(intType), false},
+		{"pointer", types.NewPointer(intType), types.Typ[types.UnsafePointer], false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := memoryProfileConvertMayAllocate(test.from, test.to); got != test.want {
+				t.Fatalf("memoryProfileConvertMayAllocate(%v, %v) = %v, want %v", test.from, test.to, got, test.want)
+			}
+		})
+	}
+}
+
+func TestPackageReadsMemProfileDetection(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{
+			name: "MemProfile call",
+			src: `package p
+import "runtime"
+func report() {
+	var records []runtime.MemProfileRecord
+	runtime.MemProfile(records, true)
+}`,
+			want: true,
+		},
+		{
+			name: "MemProfileRate write",
+			src: `package p
+import "runtime"
+func enable() { runtime.MemProfileRate = 1 }`,
+			want: true,
+		},
+		{
+			name: "MemProfile function value",
+			src: `package p
+import "runtime"
+var report = runtime.MemProfile`,
+			want: true,
+		},
+		{
+			name: "unrelated runtime use",
+			src: `package p
+import "runtime"
+func goos() string { return runtime.GOOS }`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pkg, _ := buildCallerFrameSSAPackage(t, "example.com/"+tt.name, tt.src)
+			_, trackable := collectRuntimeCallerFunctions(pkg)
+			if got := packageReadsMemProfile(trackable); got != tt.want {
+				t.Fatalf("packageReadsMemProfile() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMemProfileConsumer(t *testing.T) {
+	quiet, _ := buildCallerFrameSSAPackage(t, "example.com/quiet", `package quiet
+func Value() int { return 1 }`)
+	if got := MemProfileConsumer([]*gossa.Package{quiet}); got != "" {
+		t.Fatal("quiet program unexpectedly enabled memory profiling")
+	}
+	pprof, _ := buildCallerFrameSSAPackage(t, "runtime/pprof", `package pprof`)
+	if got := MemProfileConsumer([]*gossa.Package{quiet, pprof}); got != "runtime/pprof" {
+		t.Fatal("runtime/pprof did not enable memory profiling")
+	}
+}
+
+func TestPackageReadsMemProfileSkipsFunctionWithoutPackage(t *testing.T) {
+	funcs := map[*gossa.Function]bool{new(gossa.Function): true}
+	if packageReadsMemProfile(funcs) {
+		t.Fatal("function without package metadata must not read the memory profile")
+	}
+}
+
+func TestPublicRuntimePath(t *testing.T) {
+	for path, want := range map[string]bool{
+		"runtime":                         true,
+		llabi.PatchPathPrefix + "runtime": true,
+		"runtime/debug":                   false,
+	} {
+		if got := isPublicRuntimePath(path); got != want {
+			t.Errorf("isPublicRuntimePath(%q) = %v, want %v", path, got, want)
+		}
 	}
 }

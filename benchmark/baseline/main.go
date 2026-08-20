@@ -48,15 +48,37 @@ type metric struct {
 }
 
 type workload struct {
-	name   string
-	source string
-	output string
+	name             string
+	source           string
+	output           string
+	args             []string
+	harnessSource    bool
+	internalDuration bool
 }
 
 var workloads = []workload{
 	{name: "cprintf", source: "benchmark/binary_size/cprintf/main.go", output: "Hello, world\n"},
 	{name: "println", source: "benchmark/binary_size/println/main.go", output: "Hello, world\n"},
 	{name: "fmtprintf", source: "benchmark/binary_size/fmtprintf/main.go", output: "Hello, world\n"},
+	{
+		name:             "memprofile-no-consumer",
+		source:           "benchmark/memprofile/noconsumer",
+		harnessSource:    true,
+		internalDuration: true,
+	},
+	{
+		name:             "memprofile-rate0",
+		source:           "benchmark/memprofile/enabled",
+		args:             []string{"rate0"},
+		harnessSource:    true,
+		internalDuration: true,
+	},
+	{
+		name:             "memprofile-default",
+		source:           "benchmark/memprofile/enabled",
+		harnessSource:    true,
+		internalDuration: true,
+	},
 }
 
 var expectedGoBenchmarks = []string{
@@ -74,7 +96,7 @@ var expectedGoBenchmarks = []string{
 	"BenchmarkRuntimeGetG",
 }
 
-const goBenchmarkSamples = 5
+const goBenchmarkSamples = 7
 
 type footprint struct {
 	file uint64
@@ -95,12 +117,16 @@ func main() {
 func runCLI(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("llgo-baseline", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	mode := flags.String("mode", "collect", "collect, validate, or export")
+	mode := flags.String("mode", "collect", "collect, collect-paired, validate, or export")
 	root := flags.String("root", ".", "LLGo repository root")
+	harnessRoot := flags.String("harness-root", ".", "benchmark harness repository root")
 	llgo := flags.String("llgo", "llgo", "LLGo command")
 	out := flags.String("out", filepath.Join("benchmark", "baseline", "out"), "result directory")
-	buildRuns := flags.Int("build-runs", 3, "build repetitions per workload")
-	runRuns := flags.Int("run-runs", 7, "process repetitions per workload")
+	baseRoot := flags.String("base-root", "", "comparison LLGo repository root")
+	baseLLGo := flags.String("base-llgo", "", "comparison LLGo command")
+	baseOut := flags.String("base-out", "", "comparison result directory")
+	buildRuns := flags.Int("build-runs", 6, "build repetitions per workload")
+	runRuns := flags.Int("run-runs", 18, "process repetitions per workload")
 	benchmarkOutput := flags.String(
 		"benchmark-output",
 		"",
@@ -112,7 +138,18 @@ func runCLI(ctx context.Context, args []string) error {
 
 	switch *mode {
 	case "collect":
-		return collect(ctx, *root, *llgo, *out, *buildRuns, *runRuns)
+		return collectWithHarness(ctx, *root, *harnessRoot, *llgo, *out, *buildRuns, *runRuns)
+	case "collect-paired":
+		if *baseRoot == "" || *baseLLGo == "" || *baseOut == "" {
+			return errors.New("collect-paired mode requires base-root, base-llgo, and base-out")
+		}
+		return collectPaired(
+			ctx,
+			collectionSpec{name: "base", root: *baseRoot, harnessRoot: *harnessRoot, llgo: *baseLLGo, out: *baseOut},
+			collectionSpec{name: "current", root: *root, harnessRoot: *harnessRoot, llgo: *llgo, out: *out},
+			*buildRuns,
+			*runRuns,
+		)
 	case "validate":
 		return validateArtifact(*out)
 	case "export":
@@ -196,51 +233,195 @@ func formatMetric(value float64) string {
 }
 
 func collect(ctx context.Context, root, llgo, out string, buildRuns, runRuns int) error {
+	return collectWithHarness(ctx, root, root, llgo, out, buildRuns, runRuns)
+}
+
+func collectWithHarness(
+	ctx context.Context, root, harnessRoot, llgo, out string, buildRuns, runRuns int,
+) error {
+	return collectSpecs(ctx, []collectionSpec{{
+		root: root, harnessRoot: harnessRoot, llgo: llgo, out: out,
+	}}, buildRuns, runRuns)
+}
+
+type collectionSpec struct {
+	name        string
+	root        string
+	harnessRoot string
+	llgo        string
+	out         string
+}
+
+type workloadMeasurement struct {
+	binary         string
+	buildDurations []time.Duration
+	runDurations   []time.Duration
+}
+
+type collectionState struct {
+	collectionSpec
+	binDir       string
+	env          []string
+	measurements []workloadMeasurement
+}
+
+func collectPaired(
+	ctx context.Context, base, current collectionSpec, buildRuns, runRuns int,
+) error {
+	return collectSpecs(ctx, []collectionSpec{base, current}, buildRuns, runRuns)
+}
+
+func collectSpecs(ctx context.Context, specs []collectionSpec, buildRuns, runRuns int) error {
 	if buildRuns <= 0 || runRuns <= 0 {
 		return errors.New("build and run repetitions must be positive")
 	}
-	root, err := filepath.Abs(root)
-	if err != nil {
-		return err
+	if len(specs) == 0 {
+		return errors.New("at least one collection is required")
 	}
-	out, err = filepath.Abs(out)
-	if err != nil {
-		return err
-	}
-	binDir := filepath.Join(out, "bin")
-	if err := os.RemoveAll(out); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		return err
-	}
-
-	env := append(os.Environ(),
-		"GOMAXPROCS=2",
-		"LLGO_ROOT="+root,
-		"LLGO_FULL_RPATH=true",
-	)
-	var sizes, timings []metric
-	for _, item := range workloads {
-		binary := filepath.Join(binDir, item.name)
-		// Keep first-use toolchain and filesystem caches out of the measured
-		// median so the first revision is not systematically disadvantaged.
-		if err := run(ctx, env, io.Discard, llgo, "build", "-o", binary, filepath.Join(root, item.source)); err != nil {
-			return fmt.Errorf("warm build %s: %w", item.name, err)
-		}
-		buildDurations := make([]time.Duration, 0, buildRuns)
-		for range buildRuns {
-			start := time.Now()
-			if err := run(ctx, env, io.Discard, llgo, "build", "-o", binary, filepath.Join(root, item.source)); err != nil {
-				return fmt.Errorf("build %s: %w", item.name, err)
-			}
-			buildDurations = append(buildDurations, time.Since(start))
-		}
-		timings = append(timings, durationMetric("compile/"+item.name, buildDurations))
-
-		size, err := inspectExecutable(binary)
+	states := make([]collectionState, len(specs))
+	for index, spec := range specs {
+		root, err := filepath.Abs(spec.root)
 		if err != nil {
-			return fmt.Errorf("inspect %s: %w", item.name, err)
+			return err
+		}
+		harnessRoot, err := filepath.Abs(spec.harnessRoot)
+		if err != nil {
+			return err
+		}
+		out, err := filepath.Abs(spec.out)
+		if err != nil {
+			return err
+		}
+		binDir := filepath.Join(out, "bin")
+		if err := os.RemoveAll(out); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			return err
+		}
+		states[index] = collectionState{
+			collectionSpec: collectionSpec{
+				name: spec.name, root: root, harnessRoot: harnessRoot, llgo: spec.llgo, out: out,
+			},
+			binDir:       binDir,
+			env:          append(os.Environ(), "GOMAXPROCS=2", "LLGO_ROOT="+root, "LLGO_FULL_RPATH=true"),
+			measurements: make([]workloadMeasurement, len(workloads)),
+		}
+	}
+
+	// Warm every workload before measuring any of them so the first workload
+	// does not pay unique toolchain and filesystem cache costs. Paired
+	// collections alternate which revision runs first for adjacent workloads.
+	for workloadIndex, item := range workloads {
+		for stateOffset := range states {
+			state := &states[collectionStateIndex(0, workloadIndex, stateOffset, len(states))]
+			if err := buildWorkload(ctx, state, item); err != nil {
+				return collectionError(state, "warm build", item.name, err)
+			}
+		}
+	}
+
+	// Rotate both workload and revision order across rounds. In paired mode each
+	// base/current measurement is adjacent, so runner drift is not attributed to
+	// one complete revision phase.
+	for round := range buildRuns {
+		for offset := range workloads {
+			index := (round + offset) % len(workloads)
+			item := workloads[index]
+			for stateOffset := range states {
+				state := &states[collectionStateIndex(round, index, stateOffset, len(states))]
+				start := time.Now()
+				if err := buildWorkload(ctx, state, item); err != nil {
+					return collectionError(state, "build", item.name, err)
+				}
+				state.measurements[index].buildDurations = append(
+					state.measurements[index].buildDurations, time.Since(start),
+				)
+			}
+		}
+	}
+
+	// Inspect final binaries and warm every execution path before timing.
+	for workloadIndex, item := range workloads {
+		for stateOffset := range states {
+			state := &states[collectionStateIndex(0, workloadIndex, stateOffset, len(states))]
+			binary := filepath.Join(state.binDir, item.name)
+			state.measurements[workloadIndex].binary = binary
+			if _, err := inspectExecutable(binary); err != nil {
+				return collectionError(state, "inspect", item.name, err)
+			}
+			if _, err := executeWorkload(ctx, state, item, binary); err != nil {
+				return collectionError(state, "execute", item.name, err)
+			}
+		}
+	}
+
+	for round := range runRuns {
+		for offset := range workloads {
+			index := (round + offset) % len(workloads)
+			item := workloads[index]
+			for stateOffset := range states {
+				state := &states[collectionStateIndex(round, index, stateOffset, len(states))]
+				measurement := &state.measurements[index]
+				duration, err := executeWorkload(ctx, state, item, measurement.binary)
+				if err != nil {
+					return collectionError(state, "execute", item.name, err)
+				}
+				measurement.runDurations = append(measurement.runDurations, duration)
+			}
+		}
+	}
+
+	for stateIndex := range states {
+		if err := writeCollection(&states[stateIndex]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func collectionStateIndex(round, workloadIndex, stateOffset, stateCount int) int {
+	return (round + workloadIndex + stateOffset) % stateCount
+}
+
+func buildWorkload(ctx context.Context, state *collectionState, item workload) error {
+	binary := filepath.Join(state.binDir, item.name)
+	sourceRoot := state.root
+	if item.harnessSource {
+		sourceRoot = state.harnessRoot
+	}
+	return run(ctx, state.env, io.Discard, state.llgo, "build", "-o", binary, filepath.Join(sourceRoot, item.source))
+}
+
+func executeWorkload(
+	ctx context.Context, state *collectionState, item workload, binary string,
+) (time.Duration, error) {
+	var output bytes.Buffer
+	start := time.Now()
+	if err := run(ctx, state.env, &output, binary, item.args...); err != nil {
+		return 0, err
+	}
+	duration := time.Since(start)
+	if item.internalDuration {
+		return parseInternalDuration(output.String())
+	}
+	if got := strings.ReplaceAll(output.String(), "\r\n", "\n"); got != item.output {
+		return 0, fmt.Errorf("output %q, want %q", got, item.output)
+	}
+	return duration, nil
+}
+
+func writeCollection(state *collectionState) error {
+	var sizes, timings []metric
+	for index, item := range workloads {
+		measurement := &state.measurements[index]
+		timings = append(timings,
+			durationMetric("compile/"+item.name, measurement.buildDurations),
+			durationMetric("run/"+item.name, measurement.runDurations),
+		)
+		size, err := inspectExecutable(measurement.binary)
+		if err != nil {
+			return collectionError(state, "inspect", item.name, err)
 		}
 		sizes = append(sizes,
 			byteMetric("binary/"+item.name+"/file", size.file),
@@ -248,29 +429,28 @@ func collect(ctx context.Context, root, llgo, out string, buildRuns, runRuns int
 			byteMetric("binary/"+item.name+"/data", size.data),
 			byteMetric("binary/"+item.name+"/bss", size.bss),
 		)
-
-		var output bytes.Buffer
-		if err := run(ctx, env, &output, binary); err != nil {
-			return fmt.Errorf("execute %s: %w", item.name, err)
-		}
-		if got := strings.ReplaceAll(output.String(), "\r\n", "\n"); got != item.output {
-			return fmt.Errorf("execute %s: output %q, want %q", item.name, got, item.output)
-		}
-		runDurations := make([]time.Duration, 0, runRuns)
-		for range runRuns {
-			start := time.Now()
-			if err := run(ctx, env, io.Discard, binary); err != nil {
-				return fmt.Errorf("execute %s: %w", item.name, err)
-			}
-			runDurations = append(runDurations, time.Since(start))
-		}
-		timings = append(timings, durationMetric("run/"+item.name, runDurations))
 	}
-
-	if err := writeMetrics(filepath.Join(out, "size.json"), sizes); err != nil {
+	if err := writeMetrics(filepath.Join(state.out, "size.json"), sizes); err != nil {
 		return err
 	}
-	return writeMetrics(filepath.Join(out, "time.json"), timings)
+	return writeMetrics(filepath.Join(state.out, "time.json"), timings)
+}
+
+func collectionError(state *collectionState, operation, workload string, err error) error {
+	prefix := ""
+	if state.name != "" {
+		prefix = state.name + " "
+	}
+	return fmt.Errorf("%s%s %s: %w", prefix, operation, workload, err)
+}
+
+func parseInternalDuration(output string) (time.Duration, error) {
+	value := strings.TrimSpace(output)
+	nanoseconds, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || nanoseconds < 0 {
+		return 0, fmt.Errorf("invalid internal duration %q", value)
+	}
+	return time.Duration(nanoseconds), nil
 }
 
 func run(ctx context.Context, env []string, output io.Writer, name string, args ...string) error {
@@ -298,7 +478,7 @@ func durationMetric(name string, values []time.Duration) metric {
 		Value: median,
 		Range: strconv.FormatInt(ordered[0].Nanoseconds(), 10) + ".." +
 			strconv.FormatInt(ordered[len(ordered)-1].Nanoseconds(), 10),
-		Extra: fmt.Sprintf("median of %d consecutive runs", len(ordered)),
+		Extra: fmt.Sprintf("median of %d rotated runs", len(ordered)),
 	}
 }
 

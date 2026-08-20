@@ -760,13 +760,13 @@ func needsRuntimeStackNoInline(pkg *types.Package, f *ssa.Function) bool {
 	if pkg == nil || f == nil || f.Signature.Recv() != nil {
 		return false
 	}
-	switch pkg.Path() {
-	case "runtime", "github.com/xgo-dev/llgo/runtime/internal/lib/runtime":
+	path := pkg.Path()
+	if isPublicRuntimePath(path) {
 		switch f.Name() {
 		case "Caller", "Callers", "callers":
 			return true
 		}
-	case "github.com/xgo-dev/llgo/runtime/internal/clite/debug":
+	} else if path == "github.com/xgo-dev/llgo/runtime/internal/clite/debug" {
 		return f.Name() == "StackTrace"
 	}
 	return false
@@ -1443,6 +1443,13 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			return
 		}
 		elem := p.type_(t.Elem(), llssa.InGo)
+		if v.Heap && p.prog.MemoryProfilingEnabled() {
+			// Heap allocations are memory-profile sample sites; give each
+			// one a statement anchor in tracked functions so sampled
+			// records attribute to the allocating line (heapsampling.go
+			// keys buckets by the leaf frame's exact line).
+			p.emitPCLineLabel(b, v.Pos())
+		}
 		ret = b.Alloc(elem, v.Heap)
 		p.debugAlloc(b, v, ret)
 		p.markRecoverSlot(v)
@@ -1950,7 +1957,7 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 		}
 		if p.options.DebugSymbols && p.localityAllowsGlobalDebug(v) {
 			pos := p.fset.Position(v.Pos())
-			b.DIGlobal(val, v.Name(), pos)
+			b.DIGlobal(p.localityGlobalDebugValue(v, val), v.Name(), pos)
 		}
 		return val
 	case *ssa.Const:

@@ -29,6 +29,15 @@ type MemProfileRecord struct {
 	Stack0                    [32]uintptr
 }
 
+// MemProfile reuses its caller's record storage for the internal snapshot.
+// Keep that zero-copy conversion guarded if either definition changes.
+var (
+	_ [unsafe.Sizeof(MemProfileRecord{}) - unsafe.Sizeof(llrt.MemProfileRecord{})]byte
+	_ [unsafe.Sizeof(llrt.MemProfileRecord{}) - unsafe.Sizeof(MemProfileRecord{})]byte
+	_ [unsafe.Offsetof(MemProfileRecord{}.Stack0) - unsafe.Offsetof(llrt.MemProfileRecord{}.Stack0)]byte
+	_ [unsafe.Offsetof(llrt.MemProfileRecord{}.Stack0) - unsafe.Offsetof(MemProfileRecord{}.Stack0)]byte
+)
+
 func (r *MemProfileRecord) InUseBytes() int64 {
 	return r.AllocBytes - r.FreeBytes
 }
@@ -53,30 +62,53 @@ type BlockProfileRecord struct {
 	Stack  []uintptr
 }
 
+// trimMemProfileStack drops the allocator/runtime plumbing the physical
+// capture recorded above the allocation site (AllocZ, the capture path
+// itself) so record stacks start at user code like gc's.
+func trimMemProfileStack(stk [32]uintptr) [32]uintptr {
+	i := 0
+	for i < len(stk) && stk[i] != 0 {
+		if !isRuntimePlumbingFrame(stk[i]) {
+			break
+		}
+		i++
+	}
+	if i == 0 {
+		return stk
+	}
+	var out [32]uintptr
+	copy(out[:], stk[i:])
+	return out
+}
+
+// isRuntimePlumbingFrame reports whether pc belongs to LLGo runtime
+// plumbing (allocator and capture hooks).
+func isRuntimePlumbingFrame(pc uintptr) bool {
+	name := frameSymbol(pc - 1).function
+	if name == "" {
+		return false
+	}
+	return hasPrefix(name, "github.com/xgo-dev/llgo/runtime/internal/") ||
+		name == "runtime.captureMemProfileStack"
+}
+
 func MemProfile(p []MemProfileRecord, inuseZero bool) (n int, ok bool) {
-	n, _ = llrt.MemProfile(nil, inuseZero)
-	if len(p) < n {
-		return n, false
-	}
-	if n == 0 {
-		return 0, true
-	}
-	var records [64]llrt.MemProfileRecord
-	if n > len(records) {
-		return n, false
-	}
-	n, ok = llrt.MemProfile(records[:n], inuseZero)
+	previous := llrt.MemProfilePause()
+	defer llrt.MemProfileResume(previous)
+	return memProfile(p, inuseZero)
+}
+
+func memProfile(p []MemProfileRecord, inuseZero bool) (n int, ok bool) {
+	// The public and core records deliberately have the same fixed layout.
+	// Reuse the caller buffer so reading a rate-1 profile does not recursively
+	// allocate progressively larger profile buffers and create more buckets.
+	records := unsafe.Slice((*llrt.MemProfileRecord)(unsafe.Pointer(unsafe.SliceData(p))), len(p))
+	n, ok = llrt.MemProfile(records, inuseZero)
 	if !ok {
 		return n, false
 	}
 	for i := 0; i < n; i++ {
-		p[i] = MemProfileRecord{
-			AllocBytes:   records[i].AllocBytes,
-			FreeBytes:    records[i].FreeBytes,
-			AllocObjects: records[i].AllocObjects,
-			FreeObjects:  records[i].FreeObjects,
-			Stack0:       records[i].Stack0,
-		}
+		p[i].Stack0 = trimMemProfileStack(p[i].Stack0)
 	}
 	return n, true
 }

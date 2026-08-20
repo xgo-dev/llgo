@@ -235,6 +235,7 @@ type aProgram struct {
 	enableGoGlobalDCE     bool
 	enableDeadcodeDrop    bool
 	disableBoundsChecks   bool
+	memoryProfiling       bool
 	pthreadStackSize      uint64
 	enableLTOPluginMarker bool
 
@@ -348,6 +349,7 @@ func (p Program) NewBackendProgram() Program {
 	backend.enableGoGlobalDCE = p.enableGoGlobalDCE
 	backend.enableDeadcodeDrop = p.enableDeadcodeDrop
 	backend.disableBoundsChecks = p.disableBoundsChecks
+	backend.memoryProfiling = p.memoryProfiling
 	backend.pthreadStackSize = p.pthreadStackSize
 	backend.enableLTOPluginMarker = p.enableLTOPluginMarker
 	backend.enableFuncInfoMetadata = p.enableFuncInfoMetadata
@@ -389,6 +391,17 @@ func (p Program) SetCompileMethods(check func(Package, types.Type)) {
 
 func (p Program) EnableGoGlobalDCE(enable bool) {
 	p.enableGoGlobalDCE = enable
+}
+
+// EnableMemoryProfiling selects whether allocator recording calls are emitted
+// for this whole-program build. The build coordinator sets it before package
+// backends start.
+func (p Program) EnableMemoryProfiling(enable bool) {
+	p.memoryProfiling = enable
+}
+
+func (p Program) MemoryProfilingEnabled() bool {
+	return p.memoryProfiling
 }
 
 func (p Program) EnableDeadcodeDrop(enable bool) {

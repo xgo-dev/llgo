@@ -24,6 +24,8 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
+var threadLocalAddressIntrinsic = llvm.LookupIntrinsicID("llvm.threadlocal.address")
+
 // -----------------------------------------------------------------------------
 
 func (b Builder) aggregateAllocU(t Type, flds ...llvm.Value) llvm.Value {
@@ -165,6 +167,19 @@ func (b Builder) AllocaT(t Type) (ret Expr) {
 	ret.impl = llvm.CreateAlloca(b.impl, t.ll)
 	ret.Type = prog.Pointer(t)
 	return
+}
+
+// ThreadLocalAddress materializes the address of a native TLS global. Keeping
+// this as an SSA value lets a caller reuse one target TLS resolver result for
+// all dominated accesses instead of resolving the global at every use.
+func (b Builder) ThreadLocalAddress(v Global) Expr {
+	if threadLocalAddressIntrinsic == 0 {
+		panic("ssa: llvm.threadlocal.address is unavailable")
+	}
+	return Expr{
+		b.impl.CreateIntrinsic(v.impl.Type(), threadLocalAddressIntrinsic, []llvm.Value{v.impl}, ""),
+		v.Type,
+	}
 }
 
 /* TODO(xsw):

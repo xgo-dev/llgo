@@ -40,7 +40,7 @@ func TestDurationMetric(t *testing.T) {
 	if got.Name != "compile/test" || got.Unit != "ns" || got.Value != 6 {
 		t.Fatalf("durationMetric = %+v", got)
 	}
-	if got.Range != "3..9" || got.Extra != "median of 3 consecutive runs" {
+	if got.Range != "3..9" || got.Extra != "median of 3 rotated runs" {
 		t.Fatalf("duration metadata = %+v", got)
 	}
 	if !slices.Equal(values, []time.Duration{9, 3, 6}) {
@@ -50,6 +50,18 @@ func TestDurationMetric(t *testing.T) {
 	even := durationMetric("compile/even", []time.Duration{8, 2})
 	if even.Value != 5 || even.Range != "2..8" {
 		t.Fatalf("even durationMetric = %+v", even)
+	}
+}
+
+func TestParseInternalDuration(t *testing.T) {
+	got, err := parseInternalDuration(" 123\n")
+	if err != nil || got != 123*time.Nanosecond {
+		t.Fatalf("parseInternalDuration = %v, %v", got, err)
+	}
+	for _, input := range []string{"", "not-a-duration", "-1"} {
+		if _, err := parseInternalDuration(input); err == nil {
+			t.Fatalf("parseInternalDuration(%q) unexpectedly succeeded", input)
+		}
 	}
 }
 
@@ -97,6 +109,7 @@ func TestExportBenchmarks(t *testing.T) {
 		"Unit file-bytes better=lower assume=exact",
 		"Unit build-ns better=lower",
 		"BenchmarkProgram/cprintf 1 1 file-bytes 1 text-bytes 1 data-bytes 1 bss-bytes 1 build-ns 1 run-ns",
+		"BenchmarkProgram/memprofile-no-consumer 1 1 file-bytes 1 text-bytes 1 data-bytes 1 bss-bytes 1 build-ns 1 run-ns",
 		"BenchmarkRuntimeGetG-1 100 12.5 ns/op",
 	} {
 		if !strings.Contains(text, want) {
@@ -293,7 +306,7 @@ func TestCollect(t *testing.T) {
 	})
 
 	out := filepath.Join(root, "out")
-	if err := collect(context.Background(), root, fakeLLGo, out, 1, 1); err != nil {
+	if err := collect(context.Background(), root, fakeLLGo, out, 2, 2); err != nil {
 		t.Fatal(err)
 	}
 	goText := makeGoBenchmarkText()
@@ -302,6 +315,68 @@ func TestCollect(t *testing.T) {
 	}
 	if err := validateArtifact(out); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCollectPaired(t *testing.T) {
+	if os.PathSeparator != '/' {
+		t.Skip("fake compiler uses a POSIX shell")
+	}
+	root := t.TempDir()
+	baseRoot := filepath.Join(root, "base")
+	currentRoot := filepath.Join(root, "current")
+	if err := os.MkdirAll(baseRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(currentRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	baseLLGo := writeFakeCompiler(t, baseRoot, "printf 'Hello, world\\n'")
+	currentLLGo := writeFakeCompiler(t, currentRoot, "printf 'Hello, world\\n'")
+
+	oldInspect := inspectExecutable
+	inspectExecutable = func(path string) (footprint, error) {
+		info, err := os.Stat(path)
+		if err != nil {
+			return footprint{}, err
+		}
+		return footprint{file: uint64(info.Size()), text: 10, data: 2, bss: 1}, nil
+	}
+	t.Cleanup(func() {
+		inspectExecutable = oldInspect
+	})
+
+	baseOut := filepath.Join(root, "base-out")
+	currentOut := filepath.Join(root, "current-out")
+	err := collectPaired(
+		context.Background(),
+		collectionSpec{name: "base", root: baseRoot, harnessRoot: root, llgo: baseLLGo, out: baseOut},
+		collectionSpec{name: "current", root: currentRoot, harnessRoot: root, llgo: currentLLGo, out: currentOut},
+		2,
+		2,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, out := range []string{baseOut, currentOut} {
+		if err := os.WriteFile(filepath.Join(out, "go.txt"), []byte(makeGoBenchmarkText()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateArtifact(out); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestCollectionStateIndexAlternatesEachWorkload(t *testing.T) {
+	for workloadIndex := range workloads {
+		first := collectionStateIndex(0, workloadIndex, 0, 2)
+		if second := collectionStateIndex(1, workloadIndex, 0, 2); second == first {
+			t.Fatalf("workload %d keeps state %d first across rounds", workloadIndex, first)
+		}
+		if peer := collectionStateIndex(0, workloadIndex, 1, 2); peer == first {
+			t.Fatalf("workload %d state order repeats %d within a round", workloadIndex, first)
+		}
 	}
 }
 
@@ -456,6 +531,10 @@ func TestRunCLI(t *testing.T) {
 		!strings.Contains(err.Error(), "unknown mode") {
 		t.Fatalf("unknown CLI error = %v", err)
 	}
+	if err := runCLI(context.Background(), []string{"-mode=collect-paired"}); err == nil ||
+		!strings.Contains(err.Error(), "requires base-root") {
+		t.Fatalf("collect-paired CLI error = %v", err)
+	}
 	if err := runCLI(context.Background(), []string{"-not-a-flag"}); err == nil {
 		t.Fatal("runCLI unexpectedly accepted an unknown flag")
 	}
@@ -486,10 +565,20 @@ while [ "$#" -gt 0 ]; do
     *) shift ;;
   esac
 done
-cat > "$out" <<'LLGO_BENCH_PROGRAM'
+case "$out" in
+  *memprofile-*)
+    cat > "$out" <<'LLGO_BENCH_PROGRAM'
+#!/bin/sh
+printf '1\n'
+LLGO_BENCH_PROGRAM
+    ;;
+  *)
+    cat > "$out" <<'LLGO_BENCH_PROGRAM'
 #!/bin/sh
 ` + program + `
 LLGO_BENCH_PROGRAM
+    ;;
+esac
 chmod +x "$out"
 `
 	return writeScript(t, filepath.Join(root, "llgo"), script)

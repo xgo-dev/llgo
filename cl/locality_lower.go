@@ -63,6 +63,11 @@ type localEnsureCacheKey struct {
 	kind  locality.Kind
 }
 
+type localTLSCacheKey struct {
+	block    *ssa.BasicBlock
+	variable *localVariable
+}
+
 // localityLowering owns all compiler state for TLS/GLS lowering. Only this
 // value is embedded in the general compiler context.
 type localityLowering struct {
@@ -75,6 +80,7 @@ type localityFunction struct {
 	block          *ssa.BasicBlock
 	packageBases   map[localBaseCacheKey]llssa.Expr
 	packageEnsures map[localEnsureCacheKey]bool
+	tlsAddresses   map[localTLSCacheKey]llssa.Expr
 	entry          *localEntryContext
 }
 
@@ -178,6 +184,21 @@ func (p *context) localityGlobalStorage(pkg llssa.Package, global *ssa.Global, n
 func (p *context) localityAllowsGlobalDebug(global *ssa.Global) bool {
 	variable := p.locality.variables[global]
 	return variable == nil || variable.planned.Storage == localitylayout.StorageNativeTLS
+}
+
+// localityGlobalDebugValue keeps debug metadata on the native TLS global.
+// Normal accesses use llvm.threadlocal.address instructions, which are values
+// rather than GlobalObjects and therefore cannot carry DIGlobal metadata.
+func (p *context) localityGlobalDebugValue(global *ssa.Global, value llssa.Expr) llssa.Expr {
+	variable := p.locality.variables[global]
+	if variable == nil || variable.planned.Storage != localitylayout.StorageNativeTLS {
+		return value
+	}
+	direct := variable.owner.direct[variable.planned.Name]
+	if direct == nil {
+		panic(fmt.Sprintf("missing native TLS storage for %s", variable.planned.Name))
+	}
+	return direct.Expr
 }
 
 func (p *context) localTypesPackage(fullName string) *types.Package {
@@ -345,7 +366,26 @@ func (p *context) localVariableAddr(b llssa.Builder, v *ssa.Global, info llssa.V
 		if direct == nil {
 			panic(fmt.Sprintf("missing native TLS storage for %s", name))
 		}
-		return direct.Expr
+		// Metadata probes have no instruction builder. Real lowering
+		// materializes and dominance-caches the address so Darwin TLV and ELF
+		// TLS code generation resolve it only once along a control-flow path.
+		if b == nil {
+			return direct.Expr
+		}
+		state := &p.locality.function
+		for block := state.block; block != nil; block = block.Idom() {
+			if addr, ok := state.tlsAddresses[localTLSCacheKey{block: block, variable: variable}]; ok {
+				return addr
+			}
+		}
+		addr := b.ThreadLocalAddress(direct)
+		if state.block != nil {
+			if state.tlsAddresses == nil {
+				state.tlsAddresses = make(map[localTLSCacheKey]llssa.Expr)
+			}
+			state.tlsAddresses[localTLSCacheKey{block: state.block, variable: variable}] = addr
+		}
+		return addr
 	}
 	base := p.localPackageBase(b, variable.owner)
 	return b.FieldAddr(base, variable.planned.Field)

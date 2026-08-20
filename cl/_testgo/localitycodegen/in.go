@@ -31,7 +31,8 @@ package main
 
 // CHECK-LABEL: define { i64, ptr, ptr } @main.values()
 // CHECK: call void @"main.__llgo_tls_init$ensure"()
-// CHECK: load i64, ptr @main.scalar
+// CHECK-NEXT: [[SCALAR_ADDR:%[0-9]+]] = call ptr @llvm.threadlocal.address{{.*}}(ptr @main.scalar)
+// CHECK-NEXT: load i64, ptr [[SCALAR_ADDR]]
 // CHECK: call ptr @main.__llgo_local_block()
 
 // CHECK-LABEL: define ptr @"main._llgo_routine$1"(ptr

@@ -29,6 +29,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/packages"
+	llssa "github.com/xgo-dev/llgo/ssa"
 	gopackages "golang.org/x/tools/go/packages"
 )
 
@@ -166,6 +167,9 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 
 	m.pkg.PkgPath = p.PkgPath
 	m.pkg.PkgID = p.ID
+	if p.PkgPath == llssa.PkgRuntime {
+		m.pkg.MemoryProfiling = c.buildConf.memoryProfiling
+	}
 
 	// Go source files
 	goFilesList, err := digestFilesWithOverlay(p.GoFiles, c.buildConf.Overlay)

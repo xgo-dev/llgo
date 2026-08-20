@@ -140,16 +140,17 @@ func (s *commonSection) empty() bool {
 }
 
 type packageSection struct {
-	PkgPath     string           `yaml:"pkg_path,omitempty"`
-	PkgID       string           `yaml:"pkg_id,omitempty"`
-	GoFiles     []fileDigest     `yaml:"go_files,omitempty"`
-	AltGoFiles  []fileDigest     `yaml:"alt_go_files,omitempty"`
-	OtherFiles  []fileDigest     `yaml:"other_files,omitempty"`
-	RewriteVars orderedStringMap `yaml:"rewrite_vars,omitempty"`
+	PkgPath         string           `yaml:"pkg_path,omitempty"`
+	PkgID           string           `yaml:"pkg_id,omitempty"`
+	MemoryProfiling bool             `yaml:"memory_profiling,omitempty"`
+	GoFiles         []fileDigest     `yaml:"go_files,omitempty"`
+	AltGoFiles      []fileDigest     `yaml:"alt_go_files,omitempty"`
+	OtherFiles      []fileDigest     `yaml:"other_files,omitempty"`
+	RewriteVars     orderedStringMap `yaml:"rewrite_vars,omitempty"`
 }
 
 func (s *packageSection) empty() bool {
-	return s.PkgPath == "" && s.PkgID == "" && len(s.GoFiles) == 0 && len(s.AltGoFiles) == 0 && len(s.OtherFiles) == 0 && len(s.RewriteVars) == 0
+	return s.PkgPath == "" && s.PkgID == "" && !s.MemoryProfiling && len(s.GoFiles) == 0 && len(s.AltGoFiles) == 0 && len(s.OtherFiles) == 0 && len(s.RewriteVars) == 0
 }
 
 // manifestBuilder builds manifest text with sorted sections.

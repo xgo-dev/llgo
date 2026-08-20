@@ -14,7 +14,7 @@ permissions:
 jobs:
   publish:
     if: github.event.workflow_run.conclusion == 'success'
-    uses: xgo-dev/setup-benchmark-go-action/.github/workflows/publish.yml@v1.0.4
+    uses: xgo-dev/setup-benchmark-go-action/.github/workflows/publish.yml@v1.0.5
     with:
       run_id: ${{ github.event.workflow_run.id }}
       config_path: .github/llgo-benchmark.yml
