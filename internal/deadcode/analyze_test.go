@@ -432,6 +432,48 @@ func TestAnalyze(t *testing.T) {
 	}
 }
 
+func TestBuildPlanWithFeedbackDropsFactsFromDeadFunction(t *testing.T) {
+	summary := newSummary(t, buildPackage(func(b *pkgBuilder) {
+		main := b.sym("pkg.main")
+		semanticDemand := b.sym("pkg.semanticDemand")
+		typ := b.sym("_llgo_pkg.T")
+		iface := b.sym("_llgo_iface$I")
+		mSig := methodSig(b, "M")
+
+		b.addIfaceEntry(iface, []pkgSig{mSig})
+		b.addMethodInfo(typ, []pkgSlot{
+			methodSlot(b, mSig, "pkg.(*T).M", "pkg.T.M"),
+		})
+		// The package Meta graph conservatively contains this edge. A later
+		// ThinLTO round can remove it after cross-package constant propagation.
+		b.addEdge(main, semanticDemand)
+		b.addEdge(semanticDemand, typ)
+		b.addUseIface(semanticDemand, typ)
+		b.addUseIfaceMethod(semanticDemand, iface, mSig)
+	}))
+
+	first := BuildPlan(summary, []string{"pkg.main"})
+	wantFirst := map[string][]int{"_llgo_pkg.T": {0}}
+	if !reflect.DeepEqual(first.LiveSlots, wantFirst) {
+		t.Fatalf("first plan LiveSlots = %#v, want %#v", first.LiveSlots, wantFirst)
+	}
+
+	second := BuildPlanWithFeedback(summary, []string{"pkg.main"}, Feedback{
+		DeadFunctions: map[string]struct{}{"pkg.semanticDemand": {}},
+	})
+	if len(second.LiveSlots) != 0 {
+		t.Fatalf("feedback plan LiveSlots = %#v, want empty", second.LiveSlots)
+	}
+
+	// A root is never suppressed by feedback, even if a stale producer lists it.
+	rooted := BuildPlanWithFeedback(summary, []string{"pkg.semanticDemand"}, Feedback{
+		DeadFunctions: map[string]struct{}{"pkg.semanticDemand": {}},
+	})
+	if !reflect.DeepEqual(rooted.LiveSlots, wantFirst) {
+		t.Fatalf("rooted feedback plan LiveSlots = %#v, want %#v", rooted.LiveSlots, wantFirst)
+	}
+}
+
 // ── test builder helpers ──────────────────────────────────────────────────────
 
 type pkgSig struct {
