@@ -179,22 +179,24 @@ func externalPCLineSites(info *binaryInfo, records []siteRecord) []ExternalSite 
 			OwnerSymbol: sym.name,
 		})
 	}
-	sort.Slice(sites, func(i, j int) bool {
-		if sites[i].PCOffset != sites[j].PCOffset {
-			return sites[i].PCOffset < sites[j].PCOffset
-		}
-		if sites[i].ID != sites[j].ID {
-			return sites[i].ID < sites[j].ID
-		}
-		return sites[i].OwnerSymbol < sites[j].OwnerSymbol
+	// Preserve linker-section order for records at the same PC. Consecutive
+	// zero-byte anchors use that order to make the last source statement win.
+	sort.SliceStable(sites, func(i, j int) bool {
+		return sites[i].PCOffset < sites[j].PCOffset
 	})
 	if len(sites) < 2 {
 		return sites
 	}
-	out := sites[:1]
-	for _, site := range sites[1:] {
-		last := out[len(out)-1]
-		if site.PCOffset == last.PCOffset && site.ID == last.ID && site.OwnerSymbol == last.OwnerSymbol {
+	out := sites[:0]
+	for _, site := range sites {
+		duplicate := false
+		for i := len(out) - 1; i >= 0 && out[i].PCOffset == site.PCOffset; i-- {
+			if out[i].ID == site.ID && out[i].OwnerSymbol == site.OwnerSymbol {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
 			continue
 		}
 		out = append(out, site)
