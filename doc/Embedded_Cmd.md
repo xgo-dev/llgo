@@ -2,7 +2,7 @@
 
 ## Flags
 
-- `-o <file>` - Specify output file name
+- `-o <file>` - Specify output file name (used as-is; no prefix or extension is added)
 - `-target <platform>` - Specify target platform for cross-compilation
 - `-obin` - Generate binary format output (requires `-target`)
 - `-ohex` - Generate Intel HEX format output (requires `-target`)

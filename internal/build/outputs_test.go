@@ -4,6 +4,8 @@
 package build
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -451,7 +453,18 @@ func TestBuildOutFmtsBuildModes(t *testing.T) {
 			target:      "",
 			goos:        "linux",
 			appExt:      ".a",
-			expectedOut: "libcustom.a",
+			expectedOut: "custom.a",
+		},
+		{
+			name:        "c_archive_build_with_outfile_without_extension",
+			pkgName:     "mylib",
+			buildMode:   BuildModeCArchive,
+			outFile:     "custom",
+			mode:        ModeBuild,
+			target:      "",
+			goos:        "linux",
+			appExt:      ".a",
+			expectedOut: "custom",
 		},
 		{
 			name:        "c_archive_build_with_path",
@@ -462,7 +475,7 @@ func TestBuildOutFmtsBuildModes(t *testing.T) {
 			target:      "",
 			goos:        "linux",
 			appExt:      ".a",
-			expectedOut: "build/libcustom.a",
+			expectedOut: "build/custom.a",
 		},
 
 		// C-Shared tests
@@ -498,6 +511,17 @@ func TestBuildOutFmtsBuildModes(t *testing.T) {
 			goos:        "darwin",
 			appExt:      ".dylib",
 			expectedOut: "libmylib.dylib",
+		},
+		{
+			name:        "c_shared_build_with_outfile",
+			pkgName:     "mylib",
+			buildMode:   BuildModeCShared,
+			outFile:     "custom.so",
+			mode:        ModeBuild,
+			target:      "",
+			goos:        "darwin",
+			appExt:      ".dylib",
+			expectedOut: "custom.so",
 		},
 		{
 			name:        "c_shared_embedded_target",
@@ -545,6 +569,28 @@ func TestBuildOutFmtsBuildModes(t *testing.T) {
 			appExt:      "",
 			expectedOut: "myapp",
 		},
+		{
+			name:        "exe_preserve_outfile_lib_prefix",
+			pkgName:     "myapp",
+			buildMode:   BuildModeExe,
+			outFile:     "libmyapp",
+			mode:        ModeBuild,
+			target:      "",
+			goos:        "linux",
+			appExt:      "",
+			expectedOut: "libmyapp",
+		},
+		{
+			name:        "exe_preserve_outfile_extension",
+			pkgName:     "myapp",
+			buildMode:   BuildModeExe,
+			outFile:     "myapp.bin",
+			mode:        ModeBuild,
+			target:      "",
+			goos:        "windows",
+			appExt:      ".exe",
+			expectedOut: "myapp.bin",
+		},
 	}
 
 	for _, tt := range tests {
@@ -568,6 +614,53 @@ func TestBuildOutFmtsBuildModes(t *testing.T) {
 			if result.Out != tt.expectedOut {
 				t.Errorf("buildOutFmts(%q, buildMode=%v, target=%q, goos=%q) = %q, want %q",
 					tt.pkgName, tt.buildMode, tt.target, tt.goos, result.Out, tt.expectedOut)
+			}
+		})
+	}
+}
+
+func TestBuildOutFmtsExplicitOutFile(t *testing.T) {
+	tests := []struct {
+		name        string
+		pkgName     string
+		conf        *Config
+		multiPkg    bool
+		wantOut     string
+		wantTempExt string
+	}{
+		{
+			name:    "test explicit file path",
+			pkgName: "mypackage.test",
+			conf: &Config{
+				Mode: ModeTest, OutFile: "custom.test", AppExt: ".test",
+			},
+			wantOut: "custom.test",
+		},
+		{
+			name:    "multiple build packages ignore explicit output file",
+			pkgName: "mylib",
+			conf: &Config{
+				Mode: ModeBuild, OutFile: "custom.a", BuildMode: BuildModeCArchive, AppExt: ".a",
+			},
+			multiPkg:    true,
+			wantTempExt: ".a",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildOutFmts(tt.pkgName, tt.conf, tt.multiPkg, &crosscompile.Export{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantOut != "" && got.Out != tt.wantOut {
+				t.Fatalf("buildOutFmts().Out = %q, want %q", got.Out, tt.wantOut)
+			}
+			if tt.wantTempExt != "" {
+				t.Cleanup(func() { _ = os.Remove(got.Out) })
+				if got.Out == tt.conf.OutFile || !strings.HasPrefix(filepath.Base(got.Out), tt.pkgName+"-") || !strings.HasSuffix(got.Out, tt.wantTempExt) {
+					t.Fatalf("buildOutFmts().Out = %q, want a temporary %s file for %q", got.Out, tt.wantTempExt, tt.pkgName)
+				}
 			}
 		})
 	}

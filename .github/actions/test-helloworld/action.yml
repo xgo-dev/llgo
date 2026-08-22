@@ -58,6 +58,6 @@ runs:
         func main() {
         }
         EOL
-        llgo build -v -target esp32-coreboard-v2 -o demo.out .
-        test -f demo.out.elf && echo "ESP32 cross-compilation test passed: demo.out.elf generated"
+        llgo build -v -target esp32-coreboard-v2 -o demo.elf .
+        test -f demo.elf && echo "ESP32 cross-compilation test passed: demo.elf generated"
         exit $?
