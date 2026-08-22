@@ -5,6 +5,7 @@ type Type interface {
 	String() string
 }
 
+// CHECK: @"main.list$data" = global [1 x { ptr, ptr }] [{ ptr, ptr } { ptr @main.demo, ptr null }]
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @main.demo(%"{{.*}}/runtime/internal/runtime.iface" %0){{.*}} {
 // CHECK: [[DEMO_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %0)
 // CHECK: [[DEMO_METHOD:%[0-9]+]] = load ptr, ptr %{{[0-9]+}}
@@ -32,8 +33,6 @@ var (
 // CHECK: [[OP_SLOT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MapAssignFastStr"(ptr @"map[_llgo_string]_llgo_closure${{[-A-Za-z0-9_]+}}", ptr [[OP_MAP]], %"{{.*}}/runtime/internal/runtime.String" {{.*}})
 // CHECK-NEXT: store { ptr, ptr } { ptr @main.demo, ptr null }, ptr [[OP_SLOT]]
 // CHECK-NEXT: store ptr [[OP_MAP]], ptr @main.op
-// CHECK: store { ptr, ptr } { ptr @main.demo, ptr null }, ptr [[LIST_ELEM:%[0-9]+]]
-// CHECK: store %"{{.*}}/runtime/internal/runtime.Slice" [[LIST:%[0-9]+]], ptr @main.list
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: [[TYP:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK: [[LOADED_MAP:%[0-9]+]] = load ptr, ptr @main.op

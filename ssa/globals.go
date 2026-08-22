@@ -69,6 +69,12 @@ func (prog Program) ConstArray(t Type, values []Expr) Expr {
 	return Expr{llvm.ConstArray(elem.ll, fields), t}
 }
 
+// ConstByteArray creates a compact LLVM constant for a Go byte array. Unlike
+// ConstArray, it does not allocate one LLVM value wrapper per array element.
+func (prog Program) ConstByteArray(t Type, value []byte) Expr {
+	return Expr{prog.ctx.ConstString(string(value), false), t}
+}
+
 // ConstSlice creates a slice constant backed by a writable package global.
 // The backing store must remain writable because a Go slice literal may be
 // mutated after package initialization.

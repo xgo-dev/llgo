@@ -513,6 +513,143 @@ func Use() int { return Entries[0].Points[1].X + len(Entries[0].Label) }
 	}
 }
 
+func TestStaticGlobalNestedSliceLiteralInit(t *testing.T) {
+	const src = `package staticinit
+
+type EventSpec struct {
+	Name     string
+	Args     []string
+	StackIDs []int
+}
+
+var specs = [2]EventSpec{
+	{Name: "first", Args: []string{"time", "stack"}, StackIDs: []int{1}},
+	{Name: "second", Args: []string{"id"}},
+}
+
+func Use() int { return len(specs[0].Args) + specs[0].StackIDs[0] }
+`
+	ir := compileWithRewrites(t, src, nil)
+	for _, want := range []string{
+		`@staticinit.specs = global [2 x %staticinit.EventSpec]`,
+		`@"staticinit.specs$data$0$1" = global [2 x %"github.com/xgo-dev/llgo/runtime/internal/runtime.String"]`,
+		`@"staticinit.specs$data$0$2" = global [1 x i64]`,
+		`@"staticinit.specs$data$1$1" = global [1 x %"github.com/xgo-dev/llgo/runtime/internal/runtime.String"]`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("missing nested slice initializer %q in IR:\n%s", want, ir)
+		}
+	}
+	if strings.Contains(ir, `@staticinit.specs = global [2 x %staticinit.EventSpec] zeroinitializer`) {
+		t.Fatalf("nested slices left the root global zero-initialized:\n%s", ir)
+	}
+	assertNoStoreToGlobal(t, ir, "@staticinit.specs")
+	if strings.Contains(ir, "runtime.AllocZ") {
+		t.Fatalf("nested slice initializer still allocates at runtime:\n%s", ir)
+	}
+}
+
+func TestStaticGlobalFunctionTableInit(t *testing.T) {
+	const src = `package staticinit
+
+type Handler struct {
+	Name string
+	Call func(int) int
+}
+
+func plusOne(v int) int { return v + 1 }
+func timesTwo(v int) int { return v * 2 }
+
+var Handlers = []*Handler{
+	{Name: "plus", Call: plusOne},
+	{Name: "times", Call: timesTwo},
+}
+
+func Use(v int) int { return Handlers[0].Call(v) }
+`
+	ir := compileWithRewrites(t, src, nil)
+	for _, want := range []string{
+		`@"staticinit.Handlers$data" = global [2 x ptr] [ptr @"staticinit.Handlers$data$0", ptr @"staticinit.Handlers$data$1"]`,
+		`@"staticinit.Handlers$data$0" = global %staticinit.Handler`,
+		`@"staticinit.Handlers$data$1" = global %staticinit.Handler`,
+		`{ ptr @staticinit.plusOne, ptr null }`,
+		`{ ptr @staticinit.timesTwo, ptr null }`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("missing static function table initializer %q in IR:\n%s", want, ir)
+		}
+	}
+	assertNoStoreToGlobal(t, ir, "@staticinit.Handlers")
+	if strings.Contains(ir, "runtime.AllocZ") {
+		t.Fatalf("static function table still allocates at runtime:\n%s", ir)
+	}
+}
+
+func TestStaticGlobalExplicitEnvFunctionFallsBack(t *testing.T) {
+	const src = `package staticinit
+
+//llgo:env
+func withEnv(v int) int { return v }
+
+var Handlers = []func(int) int{withEnv}
+
+func Use(v int) int { return Handlers[0](v) }
+`
+	ir := compileWithRewrites(t, src, nil)
+	if strings.Contains(ir, `@"staticinit.Handlers$data"`) {
+		t.Fatalf("explicit-env function unexpectedly used a static function table:\n%s", ir)
+	}
+	assertStoreToGlobal(t, ir, "@staticinit.Handlers")
+}
+
+func TestStaticGlobalZeroSizedPointerLiteralFallsBack(t *testing.T) {
+	const src = `package foo
+
+var Values = []*struct{}{{}}
+`
+	ssapkg := buildSSAPackage(t, src)
+	global := ssapkg.Members["Values"].(*ssa.Global)
+	initFn := ssapkg.Func("init")
+	var globalStore *ssa.Store
+	for _, block := range initFn.Blocks {
+		for _, instr := range block.Instrs {
+			if store, ok := instr.(*ssa.Store); ok && store.Addr == global {
+				globalStore = store
+			}
+		}
+	}
+	if globalStore == nil {
+		t.Fatal("store to Values not found")
+	}
+	if _, ok := staticSliceInitOf(globalStore); ok {
+		t.Fatal("zero-sized pointer values unexpectedly accepted by static slice folding")
+	}
+}
+
+func TestStaticGlobalInterfaceLiteralFallsBack(t *testing.T) {
+	const src = `package foo
+
+var Values = []any{1, "two"}
+`
+	ssapkg := buildSSAPackage(t, src)
+	global := ssapkg.Members["Values"].(*ssa.Global)
+	initFn := ssapkg.Func("init")
+	var globalStore *ssa.Store
+	for _, block := range initFn.Blocks {
+		for _, instr := range block.Instrs {
+			if store, ok := instr.(*ssa.Store); ok && store.Addr == global {
+				globalStore = store
+			}
+		}
+	}
+	if globalStore == nil {
+		t.Fatal("store to Values not found")
+	}
+	if _, ok := staticSliceInitOf(globalStore); ok {
+		t.Fatal("interface values unexpectedly accepted by static slice folding")
+	}
+}
+
 func TestStaticGlobalStructSliceDynamicFieldFallsBack(t *testing.T) {
 	const src = `package staticinit
 
@@ -769,7 +906,7 @@ func Use() string { return Zulu + Alpha }
 	}
 }
 
-func TestStaticGlobalInitSkipsLargeArray(t *testing.T) {
+func TestStaticGlobalInitFoldsLargeByteArray(t *testing.T) {
 	length := maxStaticInitArrayElements + 1
 	src := fmt.Sprintf(`package staticinit
 
@@ -778,11 +915,14 @@ var Large = [%d]byte{%d: 1}
 func Use() byte { return Large[%d] }
 `, length, length-1, length-1)
 	ir := compileWithRewrites(t, src, nil)
-	want := fmt.Sprintf("@staticinit.Large = global [%d x i8] zeroinitializer", length)
+	want := fmt.Sprintf("@staticinit.Large = global [%d x i8] c\"", length)
 	if !strings.Contains(ir, want) {
-		t.Fatalf("large array should keep a zero initializer:\n%s", ir)
+		t.Fatalf("large byte array should use a compact static initializer")
 	}
-	assertStoreToGlobal(t, ir, "@staticinit.Large")
+	if strings.Contains(ir, fmt.Sprintf("@staticinit.Large = global [%d x i8] zeroinitializer", length)) {
+		t.Fatal("large byte array still uses a zero initializer")
+	}
+	assertNoStoreToGlobal(t, ir, "@staticinit.Large")
 }
 
 func TestStaticInitHelperRejectsUnsupportedPaths(t *testing.T) {

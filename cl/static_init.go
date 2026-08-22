@@ -21,14 +21,16 @@ import (
 	"go/token"
 	"go/types"
 	"sort"
+	"strconv"
 	"strings"
 
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 )
 
-// Static folding is an optimization. Keep sparse large arrays in the package
-// initializer instead of materializing every zero element as an LLVM constant.
+// Static folding is an optimization. Keep sparse large non-byte arrays in the
+// package initializer instead of materializing every zero element as an LLVM
+// constant. Byte arrays use a compact LLVM string constant and are not capped.
 const maxStaticInitArrayElements = 1 << 16
 
 type staticInitPathElem struct {
@@ -36,9 +38,12 @@ type staticInitPathElem struct {
 }
 
 type staticInitStore struct {
-	store *ssa.Store
-	path  []staticInitPathElem
-	value *ssa.Const
+	store    *ssa.Store
+	path     []staticInitPathElem
+	value    *ssa.Const
+	function *ssa.Function
+	slice    *staticSliceInit
+	pointer  *staticPointerInit
 }
 
 type staticInitCandidate struct {
@@ -57,8 +62,17 @@ type staticSliceInit struct {
 	instrs []ssa.Instruction
 }
 
+type staticPointerInit struct {
+	alloc  *ssa.Alloc
+	stores []staticInitStore
+	instrs []ssa.Instruction
+}
+
 type staticInitNode struct {
 	value    *ssa.Const
+	function *ssa.Function
+	slice    *staticSliceInit
+	pointer  *staticPointerInit
 	children map[int]*staticInitNode
 }
 
@@ -145,6 +159,29 @@ func (p *context) collectStaticGlobalInits(pkg *ssa.Package) {
 					path:  path,
 					value: value,
 				})
+			} else if function, ok := staticInitFunctionOf(store.Val, store); ok {
+				candidate.stores = append(candidate.stores, staticInitStore{
+					store:    store,
+					path:     path,
+					function: function,
+				})
+				if closure, ok := store.Val.(*ssa.MakeClosure); ok {
+					candidate.instrs = append(candidate.instrs, closure)
+				}
+			} else if slice, ok := staticSliceInitOfVisited(store, make(map[*ssa.Alloc]bool)); ok {
+				candidate.stores = append(candidate.stores, staticInitStore{
+					store: store,
+					path:  path,
+					slice: slice,
+				})
+				candidate.instrs = append(candidate.instrs, slice.instrs...)
+			} else if pointer, ok := staticPointerInitOfVisited(store, make(map[*ssa.Alloc]bool)); ok {
+				candidate.stores = append(candidate.stores, staticInitStore{
+					store:   store,
+					path:    path,
+					pointer: pointer,
+				})
+				candidate.instrs = append(candidate.instrs, pointer.instrs...)
 			} else if unop, ok := store.Val.(*ssa.UnOp); ok && unop.Op == token.MUL {
 				if alloc, ok := unop.X.(*ssa.Alloc); ok && !alloc.Heap {
 					if !collectAllocStores(alloc, unop, store, path, &candidate.stores, &candidate.instrs, make(map[*ssa.Alloc]bool)) {
@@ -352,12 +389,118 @@ func handleStoreVal(store *ssa.Store, fullPath []staticInitPathElem, out *[]stat
 		})
 		return true
 	}
+	if function, ok := staticInitFunctionOf(store.Val, store); ok {
+		*out = append(*out, staticInitStore{
+			store:    store,
+			path:     fullPath,
+			function: function,
+		})
+		if closure, ok := store.Val.(*ssa.MakeClosure); ok {
+			*instrs = append(*instrs, closure)
+		}
+		return true
+	}
+	if slice, ok := staticSliceInitOfVisited(store, visited); ok {
+		*out = append(*out, staticInitStore{
+			store: store,
+			path:  fullPath,
+			slice: slice,
+		})
+		*instrs = append(*instrs, slice.instrs...)
+		return true
+	}
+	if pointer, ok := staticPointerInitOfVisited(store, visited); ok {
+		*out = append(*out, staticInitStore{
+			store:   store,
+			path:    fullPath,
+			pointer: pointer,
+		})
+		*instrs = append(*instrs, pointer.instrs...)
+		return true
+	}
 	if unop, ok := store.Val.(*ssa.UnOp); ok && unop.Op == token.MUL {
 		if innerAlloc, ok := unop.X.(*ssa.Alloc); ok && !innerAlloc.Heap {
 			return collectAllocStores(innerAlloc, unop, store, fullPath, out, instrs, visited)
 		}
 	}
 	return false
+}
+
+func staticPointerInitOfVisited(store *ssa.Store, visited map[*ssa.Alloc]bool) (*staticPointerInit, bool) {
+	if store == nil || store.Block() == nil {
+		return nil, false
+	}
+	alloc, ok := store.Val.(*ssa.Alloc)
+	if !ok || alloc.Parent() != store.Parent() || visited[alloc] {
+		return nil, false
+	}
+	ptr, ok := alloc.Type().Underlying().(*types.Pointer)
+	if !ok || staticInitZeroSized(ptr.Elem()) {
+		return nil, false
+	}
+	refs, ok := nonDebugReferrers(alloc)
+	if !ok {
+		return nil, false
+	}
+
+	visited[alloc] = true
+	ret := &staticPointerInit{alloc: alloc, instrs: []ssa.Instruction{store, alloc}}
+	seenTerminal := false
+	for _, ref := range refs {
+		switch ref := ref.(type) {
+		case *ssa.FieldAddr:
+			if !collectAddrStores(ref, alloc, nil, &ret.stores, &ret.instrs, visited) {
+				return nil, false
+			}
+			ret.instrs = append(ret.instrs, ref)
+		case *ssa.IndexAddr:
+			if !collectAddrStores(ref, alloc, nil, &ret.stores, &ret.instrs, visited) {
+				return nil, false
+			}
+			ret.instrs = append(ret.instrs, ref)
+		case *ssa.Store:
+			if ref == store && ref.Val == alloc {
+				if seenTerminal {
+					return nil, false
+				}
+				seenTerminal = true
+				continue
+			}
+			if ref.Addr != alloc || !handleStoreVal(ref, nil, &ret.stores, &ret.instrs, visited) {
+				return nil, false
+			}
+			ret.instrs = append(ret.instrs, ref)
+		default:
+			return nil, false
+		}
+	}
+	if !seenTerminal {
+		return nil, false
+	}
+	return ret, true
+}
+
+func staticInitFunctionOf(value ssa.Value, terminalStore *ssa.Store) (*ssa.Function, bool) {
+	switch value := value.(type) {
+	case *ssa.Function:
+		if value.Parent() == nil && len(value.FreeVars) == 0 {
+			return value, true
+		}
+	case *ssa.MakeClosure:
+		if len(value.Bindings) != 0 {
+			return nil, false
+		}
+		function, ok := value.Fn.(*ssa.Function)
+		if !ok || function.Parent() != nil || len(function.FreeVars) != 0 {
+			return nil, false
+		}
+		refs, ok := nonDebugReferrers(value)
+		if !ok || len(refs) != 1 || refs[0] != terminalStore {
+			return nil, false
+		}
+		return function, true
+	}
+	return nil, false
 }
 
 // staticInitStorePathToAlloc resolves the nested path elements from an address expression
@@ -391,6 +534,13 @@ func staticInitStorePathToAlloc(addr ssa.Value, target *ssa.Alloc) ([]staticInit
 }
 
 func staticSliceInitOf(store *ssa.Store) (*staticSliceInit, bool) {
+	return staticSliceInitOfVisited(store, make(map[*ssa.Alloc]bool))
+}
+
+func staticSliceInitOfVisited(store *ssa.Store, visited map[*ssa.Alloc]bool) (*staticSliceInit, bool) {
+	if store == nil || store.Block() == nil {
+		return nil, false
+	}
 	slice, ok := store.Val.(*ssa.Slice)
 	if !ok || slice.Low != nil || slice.High != nil || slice.Max != nil {
 		return nil, false
@@ -404,7 +554,7 @@ func staticSliceInitOf(store *ssa.Store) (*staticSliceInit, bool) {
 		return nil, false
 	}
 	array, ok := ptr.Elem().Underlying().(*types.Array)
-	if !ok || array.Len() == 0 || array.Len() > maxStaticInitArrayElements || staticInitZeroSized(array.Elem()) {
+	if !ok || array.Len() == 0 || !staticInitArraySizeAllowed(array) || staticInitZeroSized(array.Elem()) {
 		return nil, false
 	}
 
@@ -413,11 +563,20 @@ func staticSliceInitOf(store *ssa.Store) (*staticSliceInit, bool) {
 		instrs: []ssa.Instruction{store},
 	}
 
-	visited := make(map[*ssa.Alloc]bool)
 	if !collectAllocStores(alloc, slice, store, nil, &ret.stores, &ret.instrs, visited) {
 		return nil, false
 	}
 	return ret, true
+}
+
+func staticInitArraySizeAllowed(array *types.Array) bool {
+	if array.Len() < 0 || int64(int(array.Len())) != array.Len() {
+		return false
+	}
+	if basic, ok := array.Elem().Underlying().(*types.Basic); ok && basic.Kind() == types.Uint8 {
+		return true
+	}
+	return array.Len() <= maxStaticInitArrayElements
 }
 
 func staticInitZeroSized(typ types.Type) bool {
@@ -437,6 +596,21 @@ func staticInitZeroSized(typ types.Type) bool {
 }
 
 func (p *context) buildStaticSliceInit(global *ssa.Global, init *staticSliceInit) (llssa.Expr, bool) {
+	if global == nil || global.Object() == nil {
+		return llssa.Expr{}, false
+	}
+	sliceType, ok := global.Type().(*types.Pointer)
+	if !ok {
+		return llssa.Expr{}, false
+	}
+	return p.buildStaticSliceValue(p.globalFullName(global)+"$data", sliceType.Elem(), init)
+}
+
+func (p *context) buildStaticSliceValue(name string, typ types.Type, init *staticSliceInit) (llssa.Expr, bool) {
+	sliceType, ok := typ.Underlying().(*types.Slice)
+	if !ok || !types.Identical(sliceType.Elem(), init.array.Elem()) {
+		return llssa.Expr{}, false
+	}
 	n := int(init.array.Len())
 	elemType := init.array.Elem()
 	elemStores := make(map[int][]staticInitStore, n)
@@ -449,9 +623,12 @@ func (p *context) buildStaticSliceInit(global *ssa.Global, init *staticSliceInit
 			return llssa.Expr{}, false
 		}
 		elemStores[idx] = append(elemStores[idx], staticInitStore{
-			store: s.store,
-			path:  s.path[1:],
-			value: s.value,
+			store:    s.store,
+			path:     s.path[1:],
+			value:    s.value,
+			function: s.function,
+			slice:    s.slice,
+			pointer:  s.pointer,
 		})
 	}
 	values := make([]llssa.Expr, n)
@@ -459,18 +636,17 @@ func (p *context) buildStaticSliceInit(global *ssa.Global, init *staticSliceInit
 		stores := elemStores[i]
 		root := new(staticInitNode)
 		for _, store := range stores {
-			if !root.add(store.path, store.value) {
+			if !root.addStore(store) {
 				return llssa.Expr{}, false
 			}
 		}
 		var ok bool
-		values[i], ok = p.buildStaticInitExpr(elemType, root)
+		values[i], ok = p.buildStaticInitExprNamed(elemType, root, name+"$"+strconv.Itoa(i))
 		if !ok {
 			return llssa.Expr{}, false
 		}
 	}
-	sliceType := p.type_(global.Type().(*types.Pointer).Elem(), llssa.InGo)
-	return p.pkg.ConstSlice(p.globalFullName(global)+"$data", sliceType, values), true
+	return p.pkg.ConstSlice(name, p.type_(typ, llssa.InGo), values), true
 }
 
 func staticInitRootGlobal(addr ssa.Value) *ssa.Global {
@@ -531,22 +707,38 @@ func (p *context) buildStaticGlobalInit(global *ssa.Global, stores []staticInitS
 
 	root := new(staticInitNode)
 	for _, store := range stores {
-		if !root.add(store.path, store.value) {
+		if !root.addStore(store) {
 			return llssa.Expr{}, false
 		}
 	}
-	return p.buildStaticInitExpr(ptr.Elem(), root)
+	return p.buildStaticInitExprNamed(ptr.Elem(), root, p.globalFullName(global)+"$data")
+}
+
+func (n *staticInitNode) addStore(store staticInitStore) bool {
+	leaf := &staticInitNode{
+		value: store.value, function: store.function,
+		slice: store.slice, pointer: store.pointer,
+	}
+	if !leaf.hasLeaf() {
+		return false
+	}
+	return n.addLeaf(store.path, leaf)
 }
 
 func (n *staticInitNode) add(path []staticInitPathElem, value *ssa.Const) bool {
+	return n.addLeaf(path, &staticInitNode{value: value})
+}
+
+func (n *staticInitNode) addLeaf(path []staticInitPathElem, leaf *staticInitNode) bool {
 	if len(path) == 0 {
-		if n.value != nil || len(n.children) != 0 {
+		if n.hasLeaf() || len(n.children) != 0 {
 			return false
 		}
-		n.value = value
+		n.value, n.function = leaf.value, leaf.function
+		n.slice, n.pointer = leaf.slice, leaf.pointer
 		return true
 	}
-	if n.value != nil {
+	if n.hasLeaf() {
 		return false
 	}
 	head := path[0]
@@ -558,16 +750,46 @@ func (n *staticInitNode) add(path []staticInitPathElem, value *ssa.Const) bool {
 		child = new(staticInitNode)
 		n.children[head.index] = child
 	}
-	return child.add(path[1:], value)
+	return child.addLeaf(path[1:], leaf)
+}
+
+func (n *staticInitNode) hasLeaf() bool {
+	return n.value != nil || n.function != nil || n.slice != nil || n.pointer != nil
 }
 
 func (p *context) buildStaticInitExpr(typ types.Type, node *staticInitNode) (llssa.Expr, bool) {
+	return p.buildStaticInitExprNamed(typ, node, "__llgo.staticinit$data")
+}
+
+func (p *context) buildStaticInitExprNamed(typ types.Type, node *staticInitNode, name string) (llssa.Expr, bool) {
 	lltyp := p.type_(typ, llssa.InGo)
 	if node == nil {
 		return p.prog.Zero(lltyp), true
 	}
 	if node.value != nil {
 		return p.staticConstExpr(node.value, lltyp)
+	}
+	if node.function != nil {
+		if _, ok := typ.Underlying().(*types.Signature); !ok {
+			return llssa.Expr{}, false
+		}
+		// compileFunction is required here rather than funcOf: source declarations
+		// carrying //llgo:env must be materialized with their environment ABI before
+		// NeedsEnv is checked. Such functions then fail closed to runtime init.
+		function, _, ftype := p.compileFunction(node.function)
+		if function == nil || ftype != goFunc || function.NeedsEnv() {
+			return llssa.Expr{}, false
+		}
+		return p.prog.ConstStruct(lltyp, []llssa.Expr{
+			function.Expr,
+			p.prog.Nil(p.prog.VoidPtr()),
+		}), true
+	}
+	if node.slice != nil {
+		return p.buildStaticSliceValue(name, typ, node.slice)
+	}
+	if node.pointer != nil {
+		return p.buildStaticPointerValue(name, typ, node.pointer)
 	}
 
 	switch u := typ.Underlying().(type) {
@@ -578,7 +800,7 @@ func (p *context) buildStaticInitExpr(typ types.Type, node *staticInitNode) (lls
 			if u.Field(i).Name() == "_" {
 				child = nil
 			}
-			value, ok := p.buildStaticInitExpr(u.Field(i).Type(), child)
+			value, ok := p.buildStaticInitExprNamed(u.Field(i).Type(), child, name+"$"+strconv.Itoa(i))
 			if !ok {
 				return llssa.Expr{}, false
 			}
@@ -589,14 +811,17 @@ func (p *context) buildStaticInitExpr(typ types.Type, node *staticInitNode) (lls
 		}
 		return p.prog.ConstStruct(lltyp, values), true
 	case *types.Array:
-		if u.Len() > maxStaticInitArrayElements {
+		if !staticInitArraySizeAllowed(u) {
 			return llssa.Expr{}, false
+		}
+		if value, ok := staticInitByteArray(node, u); ok {
+			return p.prog.ConstByteArray(lltyp, value), true
 		}
 		n := int(u.Len())
 		values := make([]llssa.Expr, n)
 		for i := range values {
 			child := node.children[i]
-			value, ok := p.buildStaticInitExpr(u.Elem(), child)
+			value, ok := p.buildStaticInitExprNamed(u.Elem(), child, name+"$"+strconv.Itoa(i))
 			if !ok {
 				return llssa.Expr{}, false
 			}
@@ -612,6 +837,50 @@ func (p *context) buildStaticInitExpr(typ types.Type, node *staticInitNode) (lls
 		}
 		return llssa.Expr{}, false
 	}
+}
+
+func (p *context) buildStaticPointerValue(name string, typ types.Type, init *staticPointerInit) (llssa.Expr, bool) {
+	ptr, ok := typ.Underlying().(*types.Pointer)
+	if !ok {
+		return llssa.Expr{}, false
+	}
+	allocPtr, ok := init.alloc.Type().Underlying().(*types.Pointer)
+	if !ok || !types.Identical(ptr.Elem(), allocPtr.Elem()) {
+		return llssa.Expr{}, false
+	}
+	root := new(staticInitNode)
+	for _, store := range init.stores {
+		if !root.addStore(store) {
+			return llssa.Expr{}, false
+		}
+	}
+	value, ok := p.buildStaticInitExprNamed(ptr.Elem(), root, name+"$value")
+	if !ok {
+		return llssa.Expr{}, false
+	}
+	data := p.pkg.NewVarEx(name, p.prog.Pointer(p.type_(ptr.Elem(), llssa.InGo)))
+	data.Init(value)
+	return data.Expr, true
+}
+
+func staticInitByteArray(node *staticInitNode, array *types.Array) ([]byte, bool) {
+	basic, ok := array.Elem().Underlying().(*types.Basic)
+	if !ok || basic.Kind() != types.Uint8 || !staticInitChildrenInRange(node, int(array.Len())) {
+		return nil, false
+	}
+	value := make([]byte, int(array.Len()))
+	for index, child := range node.children {
+		if child == nil || child.value == nil || child.value.Value == nil || child.value.Value.Kind() != constant.Int ||
+			child.function != nil || child.slice != nil || child.pointer != nil || len(child.children) != 0 {
+			return nil, false
+		}
+		v, exact := constant.Uint64Val(constant.ToInt(child.value.Value))
+		if !exact || v > 0xff {
+			return nil, false
+		}
+		value[index] = byte(v)
+	}
+	return value, true
 }
 
 func staticInitChildrenInRange(node *staticInitNode, n int) bool {
