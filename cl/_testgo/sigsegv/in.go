@@ -9,7 +9,7 @@ func f() *T {
 	return nil
 }
 
-// CHECK: ; Function Attrs: null_pointer_is_valid
+// CHECK: ; Function Attrs: {{(minsize )?}}null_pointer_is_valid{{( optsize)?}}
 // CHECK-LABEL: define void @"main.init#1"() #0 {
 func init() {
 	println("init")
@@ -29,4 +29,4 @@ func main() {
 	println("main")
 }
 
-// CHECK: attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
+// CHECK: attributes #0 = { {{(minsize )?}}null_pointer_is_valid{{( optsize)?}} "frame-pointer"="non-leaf" }

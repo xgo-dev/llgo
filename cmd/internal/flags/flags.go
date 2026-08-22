@@ -200,7 +200,7 @@ func AddOptLevelFlags(fs *flag.FlagSet) {
 	fs.BoolFunc("O3", "Optimize aggressively", optLevelBoolFunc(optlevel.O3, "-O3"))
 	fs.BoolFunc("Os", "Optimize for size", optLevelBoolFunc(optlevel.Os, "-Os"))
 	fs.BoolFunc("Oz", "Optimize aggressively for size", optLevelBoolFunc(optlevel.Oz, "-Oz"))
-	fs.Func("O", "Optimization level (0,1,2,3,s,z)", func(val string) error {
+	fs.Func("O", "Optimization level (0,1,2,3,s,z; default z)", func(val string) error {
 		level, err := optlevel.Parse(val)
 		if err != nil {
 			return err

@@ -30,6 +30,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/mockable"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
@@ -99,6 +100,9 @@ func TestResolveBuildConfigDefaultsAndValidation(t *testing.T) {
 	}
 	if resolved.SizeFormat != "text" || resolved.SizeLevel != "module" {
 		t.Fatalf("size report defaults = %q, %q", resolved.SizeFormat, resolved.SizeLevel)
+	}
+	if resolved.OptLevel != optlevel.Oz {
+		t.Fatalf("default optimization level = %v, want %v", resolved.OptLevel, optlevel.Oz)
 	}
 	if _, err := resolveBuildConfig(&Config{SizeReport: true, SizeLevel: "invalid"}); err == nil {
 		t.Fatal("invalid size-reporting level succeeded")

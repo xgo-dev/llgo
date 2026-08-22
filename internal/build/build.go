@@ -2054,6 +2054,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	llabi.LowerLargeAggregates(ctx.prog.TargetData(), ret.Module())
 	ctx.cTransformer.TransformModule(ret.Path(), ret.Module())
 	ctx.cTransformer.SetSkipFuncs(nil)
+	applySizeOptimizationAttributes(ret.Module(), ctx.buildConf.OptLevel)
 
 	// Run the default LLVM optimization pipeline selected by the requested -O level.
 	if ctx.passOpt {
@@ -2141,6 +2142,7 @@ func printCompiledPackage(conf *Config, pkg *aPackage) {
 }
 
 func exportObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Package) (string, error) {
+	applySizeOptimizationAttributes(pkg.Module(), ctx.buildConf.OptLevel)
 	if useInMemoryNativeCodegen(ctx) {
 		return exportObjectInMemory(ctx, pkgPath, exportFile, pkg)
 	}
@@ -2795,10 +2797,33 @@ func effectiveOptLevel(conf *Config) optlevel.Level {
 	if conf != nil && conf.OptLevel.IsValid() {
 		return conf.OptLevel
 	}
-	if conf != nil && conf.Target != "" {
-		return optlevel.Oz
+	return optlevel.Default
+}
+
+// applySizeOptimizationAttributes records the per-function size policy that
+// LLVM preserves in bitcode and consumes during both ordinary and LTO
+// optimization/code generation. The PassBuilder's Os/Oz pipeline selection is
+// not sufficient by itself: unlike Clang's frontend, it does not add these
+// attributes to existing IR.
+func applySizeOptimizationAttributes(mod gllvm.Module, level optlevel.Level) {
+	if level != optlevel.Os && level != optlevel.Oz {
+		return
 	}
-	return optlevel.O2
+	ctx := mod.Context()
+	optSize := ctx.CreateEnumAttribute(gllvm.AttributeKindID("optsize"), 0)
+	var minSize gllvm.Attribute
+	if level == optlevel.Oz {
+		minSize = ctx.CreateEnumAttribute(gllvm.AttributeKindID("minsize"), 0)
+	}
+	for fn := mod.FirstFunction(); !fn.IsNil(); fn = gllvm.NextFunction(fn) {
+		if fn.IsDeclaration() {
+			continue
+		}
+		fn.AddFunctionAttr(optSize)
+		if !minSize.IsNil() {
+			fn.AddFunctionAttr(minSize)
+		}
+	}
 }
 
 func llvmPassPipeline(level optlevel.Level, ltoMode lto.Mode) string {

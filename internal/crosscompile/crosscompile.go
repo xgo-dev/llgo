@@ -217,6 +217,21 @@ func compileWithConfig(
 	return
 }
 
+// ltoLinkerOptFlag maps LLGo's optimization level to lld's numeric LTO
+// optimizer level. lld accepts only O0 through O3 here; Os/Oz are carried by
+// the optsize/minsize function attributes in LLGo's bitcode and use O2 as
+// LLVM's corresponding speed level.
+func ltoLinkerOptFlag(level optlevel.Level) string {
+	switch level {
+	case optlevel.O0, optlevel.O1, optlevel.O2, optlevel.O3:
+		return "--lto-" + level.Name()
+	case optlevel.Os, optlevel.Oz:
+		return "--lto-O2"
+	default:
+		return ""
+	}
+}
+
 func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool) (export Export, err error) {
 	targetTriple := llvm.GetTargetTriple(goos, goarch)
 	llgoRoot := env.LLGoROOT()
@@ -252,7 +267,10 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 			"-Wl,--icf=none",
 		}
 		if ltoMode.Enabled() {
-			export.LDFLAGS = append(export.LDFLAGS, ltoMode.ClangFlag(), "-Wl,--lto"+level.Flag())
+			export.LDFLAGS = append(export.LDFLAGS, ltoMode.ClangFlag())
+			if optFlag := ltoLinkerOptFlag(level); optFlag != "" {
+				export.LDFLAGS = append(export.LDFLAGS, "-Wl,"+optFlag)
+			}
 		}
 		if clangRoot != "" {
 			clangLib := filepath.Join(clangRoot, "lib")
@@ -543,7 +561,9 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 	cflags = append(cflags, expandedCFlags...)
 
 	if config.Linker == "ld.lld" && ltoMode.Enabled() {
-		ldflags = append(ldflags, "--lto"+level.Flag())
+		if optFlag := ltoLinkerOptFlag(level); optFlag != "" {
+			ldflags = append(ldflags, optFlag)
+		}
 		cflags = append(cflags, ltoMode.ClangFlag())
 		ccflags = append(ccflags, ltoMode.ClangFlag())
 	}
