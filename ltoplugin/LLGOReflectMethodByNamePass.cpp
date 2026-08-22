@@ -939,6 +939,35 @@ bool collectStringSetFromFunctionStringValueArg(
   return true;
 }
 
+// Size-oriented pre-link pipelines can deliberately leave small string
+// helpers uninlined. Follow a direct callee's return values so a finite set of
+// names remains visible to the MethodByName refinement without depending on
+// the inliner. Unknown or recursive return flows still fail closed through the
+// existing depth bound.
+bool collectStringSetFromDirectCallReturn(
+    CallBase *CB, const DataLayout &DL,
+    SmallVectorImpl<std::string> &Names, unsigned Depth) {
+  if (!CB)
+    return false;
+
+  auto *Callee = dyn_cast<Function>(CB->getCalledOperand()->stripPointerCasts());
+  if (!Callee || Callee->isDeclaration())
+    return false;
+
+  bool SawReturn = false;
+  for (BasicBlock &BB : *Callee) {
+    auto *Ret = dyn_cast<ReturnInst>(BB.getTerminator());
+    if (!Ret)
+      continue;
+    Value *ReturnValue = Ret->getReturnValue();
+    if (!ReturnValue ||
+        !collectStringSetFromStringValue(ReturnValue, DL, Names, Depth + 1))
+      return false;
+    SawReturn = true;
+  }
+  return SawReturn;
+}
+
 bool collectStringSetFromStringValue(Value *StringValue, const DataLayout &DL,
                                      SmallVectorImpl<std::string> &Names,
                                      unsigned Depth) {
@@ -952,6 +981,8 @@ bool collectStringSetFromStringValue(Value *StringValue, const DataLayout &DL,
     if (collectStringSetFromStringSlice2(CB, DL, Names, Depth))
       return true;
     if (collectStringSetFromStringCat(CB, DL, Names, Depth))
+      return true;
+    if (collectStringSetFromDirectCallReturn(CB, DL, Names, Depth))
       return true;
   }
 
