@@ -30,6 +30,7 @@ func (S) Drop() string {
 
 // Keep this helper call visible so the LTO plugin, rather than the pre-link
 // inliner, must recover its finite return set.
+//
 //go:noinline
 func methodName() string {
 	name := "KeepA"
