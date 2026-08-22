@@ -394,6 +394,28 @@ func TestOptimizationFlagPlacement(t *testing.T) {
 	}
 }
 
+func TestLTOLinkerOptFlag(t *testing.T) {
+	tests := []struct {
+		level optlevel.Level
+		want  string
+	}{
+		{level: optlevel.O0, want: "--lto-O0"},
+		{level: optlevel.O1, want: "--lto-O1"},
+		{level: optlevel.O2, want: "--lto-O2"},
+		{level: optlevel.O3, want: "--lto-O3"},
+		{level: optlevel.Os, want: "--lto-O2"},
+		{level: optlevel.Oz, want: "--lto-O2"},
+		{level: optlevel.Unset, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.level.String(), func(t *testing.T) {
+			if got := ltoLinkerOptFlag(tt.level); got != tt.want {
+				t.Fatalf("ltoLinkerOptFlag(%v) = %q, want %q", tt.level, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDevLTOGlobalDCEUseLTOFlagsControlledByOption(t *testing.T) {
 	export, err := use(runtime.GOOS, runtime.GOARCH, false, false, optlevel.O2, lto.Off, false)
 	if err != nil {
@@ -428,6 +450,17 @@ func TestDevLTOGlobalDCEUseLTOFlagsControlledByOption(t *testing.T) {
 	}
 	if !slices.Contains(thin.LDFLAGS, "-Wl,--lto-O2") {
 		t.Fatalf("missing thin LTO linker opt flag: %v", thin.LDFLAGS)
+	}
+
+	thinSize, err := use(runtime.GOOS, runtime.GOARCH, false, false, optlevel.Oz, lto.Thin, false)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !slices.Contains(thinSize.LDFLAGS, "-Wl,--lto-O2") {
+		t.Fatalf("missing numeric thin LTO linker opt flag for Oz: %v", thinSize.LDFLAGS)
+	}
+	if slices.Contains(thinSize.LDFLAGS, "-Wl,--lto-Oz") {
+		t.Fatalf("invalid size-valued thin LTO linker opt flag: %v", thinSize.LDFLAGS)
 	}
 
 	full, err := use(runtime.GOOS, runtime.GOARCH, false, false, optlevel.O2, lto.Full, false)
@@ -503,6 +536,12 @@ func TestUseTargetCodegenFlagsOnlyAddedToLDFlagsWithLTO(t *testing.T) {
 	}
 	if !slices.Contains(withLTO.CCFLAGS, "-flto=thin") {
 		t.Fatalf("missing thin LTO ccflag: %v", withLTO.CCFLAGS)
+	}
+	if !slices.Contains(withLTO.LDFLAGS, "--lto-O2") {
+		t.Fatalf("missing numeric thin LTO linker opt flag for Oz: %v", withLTO.LDFLAGS)
+	}
+	if slices.Contains(withLTO.LDFLAGS, "--lto-Oz") {
+		t.Fatalf("invalid size-valued thin LTO linker opt flag: %v", withLTO.LDFLAGS)
 	}
 	if !hasMllvmOption(withLTO.LDFLAGS, "-code-model=medium") {
 		t.Fatalf("missing -mllvm -code-model=medium in LDFLAGS when LTO enabled: %v", withLTO.LDFLAGS)

@@ -86,6 +86,7 @@ func compilePkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Package, verbo
 			llabi.LowerLargeAggregates(ctx.prog.TargetData(), mod)
 			ctx.cTransformer.TransformModule(pkg.PkgPath, mod)
 		}
+		applySizeOptimizationAttributes(mod, ctx.buildConf.OptLevel)
 		ll := mod.String()
 		mod.Dispose()
 

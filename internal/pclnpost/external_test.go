@@ -330,12 +330,14 @@ func TestExternalSitesFilterSortAndDedupe(t *testing.T) {
 
 	pcRecords := []siteRecord{
 		{pc: 0x1148, symbolID: 2},
+		{pc: 0x1108, symbolID: 3},
 		{pc: 0x1108, symbolID: 1},
-		{pc: 0x1108, symbolID: 1},
+		{pc: 0x1108, symbolID: 3}, // exact duplicate separated by another ID
 		{pc: 0x1180, symbolID: 3}, // text but no symbol owner
 		{pc: 0x1080, symbolID: 4},
 	}
 	wantPC := []ExternalSite{
+		{PCOffset: 0x108, ID: 3, OwnerSymbol: "example.com/p.A"},
 		{PCOffset: 0x108, ID: 1, OwnerSymbol: "example.com/p.A"},
 		{PCOffset: 0x148, ID: 2, OwnerSymbol: "example.com/p.B"},
 	}
