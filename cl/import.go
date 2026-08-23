@@ -30,6 +30,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/locality"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
@@ -555,6 +556,11 @@ func funcName(pkg *types.Package, fn *ssa.Function, org bool) string {
 		// will diverge for promoted unexported methods.
 		if method, ok := fn.Object().(*types.Func); ok {
 			fnName = llssa.MethodSymbolName(pkg, method, fnName)
+			if genmethod.SupportsGenericMethods && genmethod.IsGenericMethod(method.Type()) {
+				if targs := fn.TypeArgs(); len(targs) > 0 {
+					fnName += llssa.TypeArgs(targs)
+				}
+			}
 		}
 		// Synthesized $thunk/$bound functions have no Object. Their references
 		// are produced through this same funcName path, so the wrapper name is

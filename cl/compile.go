@@ -32,6 +32,7 @@ import (
 
 	"github.com/xgo-dev/llgo/cl/blocks"
 	"github.com/xgo-dev/llgo/cl/ssawrap"
+	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/goembed"
 	"github.com/xgo-dev/llgo/internal/typepatch"
 	"golang.org/x/tools/go/ssa"
@@ -373,6 +374,9 @@ func (p *context) compileMethodsIf(pkg llssa.Package, typ types.Type, keep func(
 	mthds := prog.MethodSets.MethodSet(typ)
 	for i, n := 0, mthds.Len(); i < n; i++ {
 		mthd := mthds.At(i)
+		if genmethod.SupportsGenericMethods && genmethod.IsGenericMethod(mthd.Type()) {
+			continue
+		}
 		if ssaMthd := p.methodValue(mthd); ssaMthd != nil {
 			if keep != nil && !keep(ssaMthd) {
 				continue

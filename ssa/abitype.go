@@ -24,6 +24,7 @@ import (
 	"go/types"
 	"sort"
 
+	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
 )
@@ -580,6 +581,9 @@ func (b Builder) abiInterfaceMethods(mset *types.MethodSet) []*types.Selection {
 	methods := make([]*types.Selection, 0, n)
 	for i := 0; i < n; i++ {
 		m := mset.At(i)
+		if genmethod.SupportsGenericMethods && genmethod.IsGenericMethod(m.Type()) {
+			continue
+		}
 		fn, _ := m.Obj().(*types.Func)
 		if b.Prog.isNoInterfaceMethod(fn) {
 			continue

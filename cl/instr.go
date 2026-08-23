@@ -30,6 +30,7 @@ import (
 
 	"golang.org/x/tools/go/ssa"
 
+	"github.com/xgo-dev/llgo/internal/genmethod"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
@@ -1493,7 +1494,11 @@ func collectRuntimeCallerMethods(pkg *ssa.Package, runtimeTypes []types.Type) []
 	addMethods := func(typ types.Type) {
 		methodSet := pkg.Prog.MethodSets.MethodSet(typ)
 		for i := 0; i < methodSet.Len(); i++ {
-			fn := pkg.Prog.MethodValue(methodSet.At(i))
+			meth := methodSet.At(i)
+			if genmethod.SupportsGenericMethods && genmethod.IsGenericMethod(meth.Type()) {
+				continue
+			}
+			fn := pkg.Prog.MethodValue(meth)
 			if fn != nil && !seen[fn] {
 				seen[fn] = true
 				methods = append(methods, fn)
@@ -1803,6 +1808,9 @@ func (a *runtimeCallerAnalysis) methodTargetsForType(typ types.Type, method *typ
 	for i := 0; i < methods.Len(); i++ {
 		sel := methods.At(i)
 		if sel.Obj().Name() != method.Name() {
+			continue
+		}
+		if genmethod.SupportsGenericMethods && genmethod.IsGenericMethod(sel.Type()) {
 			continue
 		}
 		fn := a.pkg.Prog.MethodValue(sel)
