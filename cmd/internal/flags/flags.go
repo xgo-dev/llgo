@@ -139,7 +139,7 @@ func AddLTOFlag(fs *flag.FlagSet) {
 	LTO = ltoFlag{Mode: lto.Off}
 	LTOPluginPath = ""
 	fs.Var(&LTO, "lto", "Enable LTO optimization: thin or full (default: off)")
-	fs.StringVar(&LTOPluginPath, "lto-pass-plugin", "", "Load an LLVM LTO pass plugin during full LTO (ELF lld only)")
+	fs.StringVar(&LTOPluginPath, "lto-pass-plugin", "", "Load an LLVM LTO pass plugin during ThinLTO or full LTO (ELF lld only)")
 }
 
 var GoGlobalDCE *bool
@@ -382,8 +382,8 @@ func UpdateConfig(conf *build.Config) error {
 		conf.PCLNModeSet = true
 	}
 	if LTOPluginPath != "" {
-		if conf.LTO != lto.Full {
-			return fmt.Errorf("lto pass plugin can only be enabled with full LTO (-lto=full)")
+		if !conf.LTO.Enabled() {
+			return fmt.Errorf("lto pass plugin requires ThinLTO or full LTO (-lto=thin or -lto=full)")
 		}
 		conf.LTOPlugin = lto.PassPlugin{Path: LTOPluginPath}
 	}

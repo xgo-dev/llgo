@@ -33,6 +33,8 @@ static constexpr char ReflectMethodByNameCallAttr[] =
     "llgo.reflect.methodbyname";
 static constexpr char ReflectMethodByNameArgAttr[] =
     "llgo.reflect.methodbyname.name";
+static constexpr char ReflectMethodByNameNamesAttr[] =
+    "llgo.reflect.methodbyname.names";
 static constexpr char ReflectMethodByNameValueKind[] = "value";
 static constexpr char ReflectMethodByNameTypeKind[] = "type";
 static constexpr char ReflectValueMethodTypeID[] = "go.method.value.reflect";
@@ -1361,6 +1363,20 @@ public:
       if (!KnownNames || Names.empty())
         continue;
 
+      // Preserve the analysis result for LLGo's ThinLTO feedback planner.
+      // Go method names cannot contain commas, so the compact encoding is
+      // unambiguous and remains easy to inspect in saved backend bitcode.
+      std::string EncodedNames;
+      for (const std::string &Name : Names) {
+        if (!EncodedNames.empty())
+          EncodedNames.push_back(',');
+        EncodedNames.append(Name);
+      }
+      ReflectCall->addFnAttr(Attribute::get(ReflectCall->getContext(),
+                                            ReflectMethodByNameNamesAttr,
+                                            EncodedNames));
+      Changed = true;
+
       SmallVector<CallBase *, 2> GenericLoads;
       SmallPtrSet<CallBase *, 4> SeenLoads;
       SmallPtrSet<Value *, 16> SeenValues;
@@ -1374,7 +1390,7 @@ public:
         Changed = true;
       }
 
-      if (!GenericLoads.empty() && std::getenv("LLGO_LTO_PLUGIN_VERBOSE")) {
+      if (std::getenv("LLGO_LTO_PLUGIN_VERBOSE")) {
         errs() << "llgo-lto-plugin: refined " << Kind << " to";
         for (const std::string &Name : Names)
           errs() << " " << Name;

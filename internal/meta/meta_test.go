@@ -4,10 +4,32 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"unsafe"
 )
+
+func TestDemandFunctionNames(t *testing.T) {
+	b := NewBuilder()
+	main := b.Sym("pkg.main")
+	reflectFn := b.Sym("pkg.reflectFn")
+	typ := b.Sym("_llgo_pkg.T")
+	b.AddIfaceUse(main, typ)
+	b.MarkReflect(reflectFn)
+	b.AddOrdinaryEdge(b.Sym("pkg.helper"), typ)
+	pm, err := b.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"pkg.main", "pkg.reflectFn"}
+	if got := pm.DemandFunctionNames(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("DemandFunctionNames() = %#v, want %#v", got, want)
+	}
+	if got := (*PackageMeta)(nil).DemandFunctionNames(); got != nil {
+		t.Fatalf("nil DemandFunctionNames() = %#v, want nil", got)
+	}
+}
 
 // TestWireLayout verifies the zero-copy structs match their on-disk byte layout:
 // correct total size and field offsets. If these drift, unsafe reinterpretation

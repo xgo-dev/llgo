@@ -429,6 +429,17 @@ func TestDevLTOGlobalDCEUseLTOFlagsControlledByOption(t *testing.T) {
 	if !slices.Contains(thin.LDFLAGS, "-Wl,--lto-O2") {
 		t.Fatalf("missing thin LTO linker opt flag: %v", thin.LDFLAGS)
 	}
+	for _, level := range []optlevel.Level{optlevel.Os, optlevel.Oz} {
+		thinSize, err := use(runtime.GOOS, runtime.GOARCH, false, false, level, lto.Thin, false)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		for _, flag := range thinSize.LDFLAGS {
+			if strings.HasPrefix(flag, "-Wl,--lto-O") {
+				t.Fatalf("unexpected numeric-only LTO linker opt flag for %s: %v", level, thinSize.LDFLAGS)
+			}
+		}
+	}
 
 	full, err := use(runtime.GOOS, runtime.GOARCH, false, false, optlevel.O2, lto.Full, false)
 	if err != nil {

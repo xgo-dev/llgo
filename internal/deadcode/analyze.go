@@ -30,28 +30,80 @@ type pass struct {
 	methodRefs        map[meta.MethodSig][]meta.Symbol // sig → []iface (built eagerly)
 	ifaceMethodCounts map[meta.Symbol]int              // iface → unique method name count
 	reachable         map[meta.Symbol]struct{}
+	blockedFunctions  map[meta.Symbol]struct{}
 	usedInIface       map[meta.Symbol]struct{}
 	processedIfaceTy  map[meta.Symbol]struct{}
 	workQueue         []meta.Symbol
 
 	ifaceMethod        map[ifaceMethodKey]struct{}
 	genericIfaceMethod map[meta.Name]struct{}
+	refinedMethodNames map[string]struct{}
+	refinedReflect     map[meta.Symbol][]string
 	reflectSeen        bool
 
 	markableMethods []methodRef
 	liveSlots       map[meta.Symbol][]int
 }
 
+// Plan is the link-specific semantic result consumed by a backend rewrite.
+// The package metadata remains analyzer-independent; this structure is the
+// boundary between whole-program planning and LLVM module transformation.
+type Plan struct {
+	LiveSlots map[string][]int
+}
+
+// Feedback carries facts learned after an LLVM optimization round. A function
+// listed in DeadFunctions still exists in the package metadata, but its
+// function-scoped edges and semantic demands no longer contribute to the next
+// plan because the optimized whole-program reference graph cannot reach it.
+//
+// Roots always win over feedback. Callers must only list functions proven dead
+// from post-optimization references; the mere absence of a function definition
+// is not proof because ThinLTO may have inlined it into a live caller.
+type Feedback struct {
+	DeadFunctions      map[string]struct{}
+	RefinedMethodNames map[string][]string
+}
+
+// BuildPlan computes the conservative Go method liveness plan for one link.
+// rootNames are final linker-visible roots, not package-local source names.
+func BuildPlan(info *meta.GlobalSummary, rootNames []string) Plan {
+	return BuildPlanWithFeedback(info, rootNames, Feedback{})
+}
+
+// BuildPlanWithFeedback computes a plan after removing function-scoped facts
+// that an LLVM optimization round proved unreachable.
+func BuildPlanWithFeedback(info *meta.GlobalSummary, rootNames []string, feedback Feedback) Plan {
+	return Plan{LiveSlots: analyze(info, rootNames, feedback)}
+}
+
 // Analyze returns live ABI method slot indexes by concrete type symbol name.
 func Analyze(info *meta.GlobalSummary, rootNames []string) map[string][]int {
+	return BuildPlan(info, rootNames).LiveSlots
+}
+
+func analyze(info *meta.GlobalSummary, rootNames []string, feedback Feedback) map[string][]int {
 	roots := make([]meta.Symbol, 0, len(rootNames))
+	deadFunctions := make(map[meta.Symbol]struct{}, len(feedback.DeadFunctions))
+	refinedReflect := make(map[meta.Symbol][]string, len(feedback.RefinedMethodNames))
+	for name := range feedback.DeadFunctions {
+		if sym, ok := info.LookupSymbol(name); ok {
+			deadFunctions[sym] = struct{}{}
+		}
+	}
+	for owner, names := range feedback.RefinedMethodNames {
+		if sym, ok := info.LookupSymbol(owner); ok {
+			refinedReflect[sym] = names
+		}
+	}
 	for _, name := range rootNames {
 		if sym, ok := info.LookupSymbol(name); ok {
 			roots = append(roots, sym)
+			delete(deadFunctions, sym)
 		}
 	}
 
-	liveSlots := deadcode(info, roots)
+	liveSlots := deadcode(info, roots, deadFunctions, refinedReflect)
 	out := make(map[string][]int, len(liveSlots))
 	for typ, slots := range liveSlots {
 		name := info.SymbolName(typ)
@@ -62,23 +114,27 @@ func Analyze(info *meta.GlobalSummary, rootNames []string) map[string][]int {
 	return out
 }
 
-func deadcode(info *meta.GlobalSummary, roots []meta.Symbol) map[meta.Symbol][]int {
+func deadcode(info *meta.GlobalSummary, roots []meta.Symbol, deadFunctions map[meta.Symbol]struct{}, refinedReflect map[meta.Symbol][]string) map[meta.Symbol][]int {
 	d := &pass{
 		info:               info,
 		methodImplKeys:     make(map[methodID][]ifaceMethodKey),
 		methodRefs:         make(map[meta.MethodSig][]meta.Symbol),
 		ifaceMethodCounts:  make(map[meta.Symbol]int),
 		reachable:          make(map[meta.Symbol]struct{}),
+		blockedFunctions:   deadFunctions,
 		usedInIface:        make(map[meta.Symbol]struct{}),
 		processedIfaceTy:   make(map[meta.Symbol]struct{}),
 		ifaceMethod:        make(map[ifaceMethodKey]struct{}),
 		genericIfaceMethod: make(map[meta.Name]struct{}),
+		refinedMethodNames: make(map[string]struct{}),
+		refinedReflect:     refinedReflect,
 		liveSlots:          make(map[meta.Symbol][]int),
 	}
 	d.buildMethodRefs()
 
 	// Seed the initial reachability flood with entry-point roots.
 	for _, root := range roots {
+		delete(d.blockedFunctions, root)
 		d.markReachable(root)
 	}
 
@@ -154,10 +210,21 @@ func (d *pass) flood() {
 			d.markReachable(dst)
 		}
 
-		for _, demand := range d.info.FuncDemands(sym) {
+		demands := d.info.FuncDemands(sym)
+		refinedNames, refined := d.refinedReflect[sym]
+		if refined && reflectDemandCount(demands) != 1 {
+			refined = false
+		}
+		for _, demand := range demands {
 			switch demand.Kind {
 			case meta.DemandReflectMethod:
-				d.reflectSeen = true
+				if refined {
+					for _, name := range refinedNames {
+						d.refinedMethodNames[name] = struct{}{}
+					}
+				} else {
+					d.reflectSeen = true
+				}
 			case meta.DemandUseIface:
 				d.markUsedInIface(demand.Target)
 			case meta.DemandIfaceMethod:
@@ -187,6 +254,16 @@ func (d *pass) flood() {
 			}
 		}
 	}
+}
+
+func reflectDemandCount(demands []meta.FuncDemand) int {
+	count := 0
+	for _, demand := range demands {
+		if demand.Kind == meta.DemandReflectMethod {
+			count++
+		}
+	}
+	return count
 }
 
 func (d *pass) methodMarkingLoop() bool {
@@ -231,6 +308,9 @@ func (d *pass) shouldKeep(method methodRef) bool {
 	if _, ok := d.genericIfaceMethod[method.slotInfo.Name]; ok {
 		return true
 	}
+	if _, ok := d.refinedMethodNames[d.info.Name(method.slotInfo.Name)]; ok {
+		return true
+	}
 
 	id := methodID{owner: method.owner, slot: method.slot}
 	for _, key := range d.methodImplKeys[id] {
@@ -256,6 +336,9 @@ func (d *pass) markMethod(method methodRef) {
 }
 
 func (d *pass) markReachable(sym meta.Symbol) {
+	if _, blocked := d.blockedFunctions[sym]; blocked {
+		return
+	}
 	if _, ok := d.reachable[sym]; ok {
 		return
 	}

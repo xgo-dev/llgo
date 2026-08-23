@@ -349,6 +349,32 @@ func (c *Config) deadcodeDropEnabled() bool {
 	return buildenv.Dev && c.DeadcodeDrop && !c.goGlobalDCEEnabled()
 }
 
+// thinLTODeadcodeEnabled selects the experimental planner/rewrite path. The
+// package archives are materialized only after the link-specific plan has been
+// computed so their ThinLTO summaries describe the rewritten method tables.
+func (c *Config) thinLTODeadcodeEnabled() bool {
+	return c != nil && c.deadcodeDropEnabled() && c.ltoMode() == lto.Thin
+}
+
+// thinLTOFeedbackEnabled selects the opt-in two-link prototype. It is kept
+// behind an environment gate while the archive overlay path is validated; the
+// ordinary ThinLTO deadcode build remains a single link by default.
+func (c *Config) thinLTOFeedbackEnabled() bool {
+	return c != nil && c.thinLTODeadcodeEnabled() && c.Goos == "linux" && c.Target == "" && c.BuildMode == BuildModeExe && os.Getenv("LLGO_THINLTO_FEEDBACK") == "1"
+}
+
+const thinLTODeadcodeImportLimitFlag = "-Wl,-mllvm,-import-instr-limit=5"
+
+func thinLTODeadcodeLinkerArgs(c *Config) []string {
+	if !c.thinLTODeadcodeEnabled() {
+		return nil
+	}
+	// LLVM's default import budget is performance-biased. Imported bodies also
+	// duplicate LLGo funcinfo sites, so use the established size-oriented
+	// budget while retaining imports of very small cross-package callees.
+	return []string{thinLTODeadcodeImportLimitFlag}
+}
+
 func (c *Config) packageMetaEnabled() bool {
 	return c.CollectPackageMeta || c.deadcodeDropEnabled()
 }
@@ -490,7 +516,11 @@ func Build(inv Invocation) ([]Package, error) {
 	if conf.PthreadStackSize > 0 {
 		prog.SetPthreadStackSize(uint64(conf.PthreadStackSize))
 	}
-	prog.EnableLTOPluginMarkers(conf.LTOPlugin.Enabled())
+	// ThinLTO feedback consumes the same MethodByName call-site markers as the
+	// optional full-LTO pass plugin.  The feedback path does not emit vcall
+	// checked-loads; it only asks LLVM to refine the dynamic string argument and
+	// feeds the resulting finite name set back into the Go deadcode planner.
+	prog.EnableLTOPluginMarkers(conf.LTOPlugin.Enabled() || conf.thinLTOFeedbackEnabled())
 	funcInfo := conf.Mode != ModeGen && conf.PCLNMode != PCLNNone
 	prog.EnableFuncInfoMetadata(funcInfo)
 	// Site records are inline-asm fragments inside function bodies. Darwin
@@ -1190,7 +1220,12 @@ func prePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
 	if err := ctx.collectFingerprint(aPkg); err != nil {
 		return err
 	}
-	ctx.tryLoadFromCache(aPkg)
+	// The first ThinLTO planner prototype needs the package LLVM modules alive
+	// until linkMainPkg computes the link-specific rewrite. Avoid consuming a
+	// prebuilt archive here; cache-aware bitcode overlays are a follow-up.
+	if !ctx.buildConf.thinLTODeadcodeEnabled() {
+		ctx.tryLoadFromCache(aPkg)
+	}
 	if verbose {
 		status := "MISS"
 		if aPkg.CacheHit {
@@ -1218,6 +1253,12 @@ func executePackageBuild(ctx *context, task *packageBuildTask, verbose bool) err
 func finalizePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
 	aPkg := task.pkg
 	if aPkg.CacheHit {
+		return nil
+	}
+	if ctx.buildConf.thinLTODeadcodeEnabled() {
+		if task.kind == cl.PkgLinkExtern {
+			appendExternalLinkArgs(ctx, aPkg, task.kindParam)
+		}
 		return nil
 	}
 	if err := normalizeToArchive(ctx, aPkg, verbose); err != nil {
@@ -1463,6 +1504,9 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 	var linkArgs []string
 	var rtLinkInputs []string
 	var rtLinkArgs []string
+	var firstThinLTOPlan deadcode.Plan
+	var thinLTOKnownDefinitions map[string]struct{}
+	var err error
 	linkedPkgs := make(map[string]bool) // Track linked packages by ID to avoid duplicates
 	var linkedOrder []Package
 	packages.Visit(visitRoots, nil, func(p *packages.Package) {
@@ -1517,6 +1561,34 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 		linkArgs = append(linkArgs, rtLinkArgs...)
 		archiveInputs = append(archiveInputs, rtLinkInputs...)
 	}
+	if ctx.buildConf.thinLTODeadcodeEnabled() {
+		firstThinLTOPlan, err = buildDeadcodePlan(linkedOrder, needRuntime)
+		if err != nil {
+			return err
+		}
+		if err := materializeThinLTODeadcodePlan(ctx, linkedOrder, firstThinLTOPlan, verbose); err != nil {
+			return err
+		}
+		if ctx.buildConf.thinLTOFeedbackEnabled() {
+			thinLTOKnownDefinitions = thinLTOFeedbackKnownDefinitions(linkedOrder)
+		}
+		// The package archives are intentionally delayed in this mode so the
+		// rewritten module, rather than the original module, supplies the
+		// ThinLTO summary. Rebuild the package input list after materialization.
+		archiveInputs = archiveInputs[:0]
+		for _, aPkg := range linkedOrder {
+			if aPkg == nil || aPkg.ArchiveFile == "" {
+				continue
+			}
+			if isRuntimePkg(aPkg.PkgPath) {
+				if needRuntime || needPyInit || ctx.buildConf.Target == "" {
+					archiveInputs = append(archiveInputs, aPkg.ArchiveFile)
+				}
+				continue
+			}
+			archiveInputs = append(archiveInputs, aPkg.ArchiveFile)
+		}
+	}
 
 	// Generate main module file (needed for global variables even in library modes)
 	// This is compiled directly to .o and added to linkInputs (not cached)
@@ -1543,7 +1615,7 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 		funcInfo:      funcInfo,
 		pcLineInfo:    pcLineInfo,
 	})
-	if ctx.buildConf.deadcodeDropEnabled() {
+	if ctx.buildConf.deadcodeDropEnabled() && !ctx.buildConf.thinLTODeadcodeEnabled() {
 		if err := applyDeadcodeDropOverrides(linkedOrder, entryPkg, needRuntime, verbose); err != nil {
 			return err
 		}
@@ -1580,6 +1652,10 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 	}
 	linkArgs = append(linkArgs, cSharedExportArgs(ctx, linkedOrder)...)
 
+	if ctx.buildConf.thinLTOFeedbackEnabled() {
+		feedbackOutput := outputPath + ".thinlto-feedback"
+		return runThinLTOFeedback(ctx, feedbackOutput, outputPath, linkInputs, linkArgs, linkedOrder, needRuntime, firstThinLTOPlan, thinLTOKnownDefinitions, verbose)
+	}
 	err = linkObjFiles(ctx, outputPath, linkInputs, linkArgs, verbose)
 	if err != nil {
 		return err
@@ -1596,16 +1672,65 @@ func linkedPackageMetas(pkgs []Package) []*meta.PackageMeta {
 	return metas
 }
 
-func applyDeadcodeDropOverrides(pkgs []Package, entryPkg Package, needRuntime bool, verbose bool) error {
+func buildDeadcodePlan(pkgs []Package, needRuntime bool) (deadcode.Plan, error) {
 	metas := linkedPackageMetas(pkgs)
 	summary, err := meta.NewGlobalSummary(metas)
 	if err != nil {
+		return deadcode.Plan{}, err
+	}
+	return deadcode.BuildPlan(summary, dceEntryRootCandidates(pkgs, needRuntime)), nil
+}
+
+func applyDeadcodeDropOverrides(pkgs []Package, entryPkg Package, needRuntime bool, verbose bool) error {
+	plan, err := buildDeadcodePlan(pkgs, needRuntime)
+	if err != nil {
 		return err
 	}
+	dcepass.EmitStrongTypeOverrides(entryPkg.LPkg.Module(), dceSourceModules(pkgs), plan.LiveSlots, verbose)
+	return nil
+}
 
-	roots := dceEntryRootCandidates(pkgs, needRuntime)
-	liveSlots := deadcode.Analyze(summary, roots)
-	dcepass.EmitStrongTypeOverrides(entryPkg.LPkg.Module(), dceSourceModules(pkgs), liveSlots, verbose)
+// materializeThinLTODeadcode applies the link-specific Go plan to each package
+// module before its ThinLTO bitcode is emitted. Package cache overlays are
+// deliberately out of scope for this first prototype; cache loading is
+// disabled for thinLTODeadcodeEnabled above, so every package still owns its
+// full LLVM module here.
+func materializeThinLTODeadcode(ctx *context, pkgs []Package, needRuntime, verbose bool) error {
+	plan, err := buildDeadcodePlan(pkgs, needRuntime)
+	if err != nil {
+		return err
+	}
+	return materializeThinLTODeadcodePlan(ctx, pkgs, plan, verbose)
+}
+
+func materializeThinLTODeadcodePlan(ctx *context, pkgs []Package, plan deadcode.Plan, verbose bool) error {
+	for _, aPkg := range pkgs {
+		if aPkg == nil || aPkg.LPkg == nil || aPkg.Package == nil {
+			continue
+		}
+		if aPkg.CacheHit {
+			return fmt.Errorf("thin LTO deadcode planner cannot rewrite cached package %s yet", aPkg.PkgPath)
+		}
+		if ctx.buildConf.thinLTOFeedbackEnabled() && aPkg.Meta != nil {
+			dcepass.MarkNoInlineFunctions(aPkg.LPkg.Module(), aPkg.Meta.DemandFunctionNames())
+		}
+		dcepass.RewriteTypeMethodTables(aPkg.LPkg.Module(), plan.LiveSlots, verbose)
+		if aPkg.Package.ExportFile == "" {
+			continue
+		}
+		exportFile, exportBuffer, err := exportPackageObject(ctx, aPkg.PkgPath, aPkg.Package.ExportFile, aPkg.LPkg)
+		if err != nil {
+			return fmt.Errorf("export rewritten ThinLTO object of %s failed: %w", aPkg.PkgPath, err)
+		}
+		if exportFile != "" {
+			aPkg.ObjFiles = append(aPkg.ObjFiles, exportFile)
+		} else {
+			aPkg.ObjBuffers = append(aPkg.ObjBuffers, exportBuffer)
+		}
+		if err := normalizeToArchive(ctx, aPkg, verbose); err != nil {
+			return fmt.Errorf("archive rewritten ThinLTO object of %s failed: %w", aPkg.PkgPath, err)
+		}
+	}
 	return nil
 }
 
@@ -1686,6 +1811,10 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 		return err
 	}
 	buildArgs = append(buildArgs, ltoPluginFlags...)
+	buildArgs = append(buildArgs, thinLTODeadcodeLinkerArgs(ctx.buildConf)...)
+	if ctx.buildConf.thinLTOFeedbackEnabled() && ctx.buildConf.LTO == lto.Thin {
+		buildArgs = append(buildArgs, "-Wl,--save-temps")
+	}
 
 	// Add build mode specific linker arguments
 	switch ctx.buildConf.BuildMode {
@@ -2065,7 +2194,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 		if err := gllvm.VerifyModule(mod, gllvm.ReturnStatusAction); err != nil {
 			return fmt.Errorf("verify LLVM module for %v failed: %w", pkgPath, err)
 		}
-		if err := mod.RunPasses(llvmPassPipeline(ctx.buildConf.OptLevel, ctx.buildConf.ltoMode()), ctx.prog.TargetMachine(), pbo); err != nil {
+		if err := mod.RunPasses(llvmPassPipeline(ctx.buildConf.OptLevel, ctx.buildConf.ltoMode(), ctx.buildConf.Goos), ctx.prog.TargetMachine(), pbo); err != nil {
 			return fmt.Errorf("run LLVM passes failed for %v: %w", pkgPath, err)
 		}
 	}
@@ -2118,6 +2247,12 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 		aPkg.LinkArgs = append(aPkg.LinkArgs, goCgoLinkArgs(ctx.buildConf.Goos, aPkg.AltPkg.Syntax)...)
 	}
 	if pkg.ExportFile != "" {
+		if ctx.buildConf.thinLTODeadcodeEnabled() {
+			if debugBuild || verbose {
+				fmt.Fprintf(os.Stderr, "==> Defer ThinLTO export %s: %s\n", aPkg.PkgPath, pkg.ExportFile)
+			}
+			return nil
+		}
 		exportFile, exportBuffer, err := exportPackageObject(ctx, pkg.PkgPath, pkg.ExportFile, ret)
 		if err != nil {
 			return fmt.Errorf("export object of %v failed: %v", pkgPath, err)
@@ -2801,12 +2936,23 @@ func effectiveOptLevel(conf *Config) optlevel.Level {
 	return optlevel.O2
 }
 
-func llvmPassPipeline(level optlevel.Level, ltoMode lto.Mode) string {
+func llvmPassPipeline(level optlevel.Level, ltoMode lto.Mode, goos string) string {
 	switch ltoMode {
 	case lto.Full:
 		return "lto-pre-link<" + level.Name() + ">"
 	case lto.Thin:
-		return "thinlto-pre-link<" + level.Name() + ">"
+		pipeline := "thinlto-pre-link<" + level.Name() + ">"
+		// LLVM 19's Mach-O LLD does not enable PTO.SLPVectorization for its
+		// LTO backend, unlike ELF LLD. Run SLP before emitting the ThinLTO
+		// summary so large constant store sequences are not lowered one byte
+		// at a time. O1 and Oz intentionally omit SLP in LLVM's pipelines.
+		if goos == "darwin" {
+			switch level {
+			case optlevel.O2, optlevel.O3, optlevel.Os:
+				pipeline += ",function(slp-vectorizer)"
+			}
+		}
+		return pipeline
 	default:
 		return "default<" + level.Name() + ">"
 	}

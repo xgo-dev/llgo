@@ -206,6 +206,22 @@ func (pm *PackageMeta) Close() error {
 	return nil
 }
 
+// DemandFunctionNames returns package-local symbols that own function-scoped
+// interface, method, or reflection demands. The returned strings alias the
+// PackageMeta backing bytes and must not be used after Close.
+func (pm *PackageMeta) DemandFunctionNames() []string {
+	if pm == nil {
+		return nil
+	}
+	var names []string
+	for sym := Symbol(0); sym < Symbol(pm.nsyms); sym++ {
+		if pm.hasFuncDemand(sym) {
+			names = append(names, pm.symbolName(sym))
+		}
+	}
+	return names
+}
+
 // symbolName returns the name of package-local sym as a string that aliases the
 // backing bytes. For a PackageMeta returned from Open, the string must not be
 // used after Close.

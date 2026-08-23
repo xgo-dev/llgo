@@ -54,6 +54,7 @@ func TestLLVMPassPipeline(t *testing.T) {
 	tests := []struct {
 		level   optlevel.Level
 		ltoMode lto.Mode
+		goos    string
 		want    string
 	}{
 		{level: optlevel.O0, want: "default<O0>"},
@@ -63,11 +64,16 @@ func TestLLVMPassPipeline(t *testing.T) {
 		{level: optlevel.Os, want: "default<Os>"},
 		{level: optlevel.Oz, want: "default<Oz>"},
 		{level: optlevel.O2, ltoMode: lto.Full, want: "lto-pre-link<O2>"},
-		{level: optlevel.Oz, ltoMode: lto.Thin, want: "thinlto-pre-link<Oz>"},
+		{level: optlevel.O2, ltoMode: lto.Thin, goos: "linux", want: "thinlto-pre-link<O2>"},
+		{level: optlevel.O1, ltoMode: lto.Thin, goos: "darwin", want: "thinlto-pre-link<O1>"},
+		{level: optlevel.O2, ltoMode: lto.Thin, goos: "darwin", want: "thinlto-pre-link<O2>,function(slp-vectorizer)"},
+		{level: optlevel.O3, ltoMode: lto.Thin, goos: "darwin", want: "thinlto-pre-link<O3>,function(slp-vectorizer)"},
+		{level: optlevel.Os, ltoMode: lto.Thin, goos: "darwin", want: "thinlto-pre-link<Os>,function(slp-vectorizer)"},
+		{level: optlevel.Oz, ltoMode: lto.Thin, goos: "darwin", want: "thinlto-pre-link<Oz>"},
 	}
 	for _, tt := range tests {
-		if got := llvmPassPipeline(tt.level, tt.ltoMode); got != tt.want {
-			t.Fatalf("llvmPassPipeline(%v, %v) = %q, want %q", tt.level, tt.ltoMode, got, tt.want)
+		if got := llvmPassPipeline(tt.level, tt.ltoMode, tt.goos); got != tt.want {
+			t.Fatalf("llvmPassPipeline(%v, %v, %q) = %q, want %q", tt.level, tt.ltoMode, tt.goos, got, tt.want)
 		}
 	}
 }
