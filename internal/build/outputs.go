@@ -54,36 +54,17 @@ func setOutFmt(conf *Config, formatName string) {
 	}
 }
 
-// buildOutFmts creates OutFmtDetails based on package, configuration and multi-package status
 // determineBaseNameAndDir extracts the base name and directory from configuration
-func determineBaseNameAndDir(pkgName string, conf *Config, multiPkg bool) (baseName, dir string) {
+func determineBaseNameAndDir(pkgName string, conf *Config) (baseName, dir string) {
 	switch conf.Mode {
 	case ModeInstall:
 		return pkgName, conf.BinPath
 	case ModeBuild:
-		if !multiPkg && conf.OutFile != "" {
-			dir = filepath.Dir(conf.OutFile)
-			baseName = strings.TrimSuffix(filepath.Base(conf.OutFile), conf.AppExt)
-			if dir == "." {
-				dir = ""
-			}
-			return baseName, dir
-		}
 		return pkgName, ""
 	case ModeTest:
 		if conf.OutFile != "" {
-			// Handle -o flag for test mode
-			if strings.HasSuffix(conf.OutFile, "/") || isDir(conf.OutFile) {
-				// If OutFile ends in / or is a directory, write pkg.test in that directory
-				// pkgName for test packages already includes .test suffix
-				return pkgName, conf.OutFile
-			}
-			// Otherwise, use the specified file path
-			dir = filepath.Dir(conf.OutFile)
-			baseName = strings.TrimSuffix(filepath.Base(conf.OutFile), conf.AppExt)
-			// Don't convert "." to "" for test mode with explicit output
-			// This preserves the information that user specified an output file
-			return baseName, dir
+			// Explicit file paths are handled by buildOutFmts before reaching here.
+			return pkgName, conf.OutFile
 		}
 		if conf.CompileOnly {
 			// -c without -o: write pkg.test in current directory
@@ -101,6 +82,15 @@ func determineBaseNameAndDir(pkgName string, conf *Config, multiPkg bool) (baseN
 func isDir(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+// explicitOutFile reports whether the user controls the final output path verbatim.
+func explicitOutFile(conf *Config, multiPkg bool) bool {
+	if conf.OutFile == "" || multiPkg {
+		return false
+	}
+	return conf.Mode == ModeBuild ||
+		(conf.Mode == ModeTest && !strings.HasSuffix(conf.OutFile, "/") && !isDir(conf.OutFile))
 }
 
 // applyPrefix applies build mode specific naming conventions
@@ -140,7 +130,9 @@ func applyPrefix(baseName string, buildMode BuildMode, target string, goos strin
 
 // buildOutputPath creates the final output path from baseName, dir and other parameters
 func buildOutputPath(baseName, dir string, conf *Config, multiPkg bool, appExt string) (string, error) {
-	baseName = applyPrefix(baseName, conf.BuildMode, conf.Target, conf.Goos)
+	if conf.OutFile == "" {
+		baseName = applyPrefix(baseName, conf.BuildMode, conf.Target, conf.Goos)
+	}
 
 	if dir != "" {
 		// dir == "." means current directory (explicit user specification)
@@ -161,18 +153,21 @@ func buildOutputPath(baseName, dir string, conf *Config, multiPkg bool, appExt s
 	}
 }
 
+// buildOutFmts creates OutFmtDetails based on package, configuration and multi-package status.
 func buildOutFmts(pkgName string, conf *Config, multiPkg bool, crossCompile *crosscompile.Export) (*OutFmtDetails, error) {
 	details := &OutFmtDetails{}
 
-	// Determine base name and directory
-	baseName, dir := determineBaseNameAndDir(pkgName, conf, multiPkg)
-
-	// Build output path
-	outputPath, err := buildOutputPath(baseName, dir, conf, multiPkg, conf.AppExt)
-	if err != nil {
-		return nil, err
+	if explicitOutFile(conf, multiPkg) {
+		// An explicit -o file name is authoritative: do not rewrite its prefix or extension.
+		details.Out = conf.OutFile
+	} else {
+		baseName, dir := determineBaseNameAndDir(pkgName, conf)
+		outputPath, err := buildOutputPath(baseName, dir, conf, multiPkg, conf.AppExt)
+		if err != nil {
+			return nil, err
+		}
+		details.Out = outputPath
 	}
-	details.Out = outputPath
 	if conf.PCLNMode == PCLNExternal {
 		details.PCLN = pclnSidecarPath(details.Out)
 	}

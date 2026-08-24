@@ -48,7 +48,7 @@ all: build-go $(TARGET)
 # Build the Go library first
 build-go:
 	@echo $(BUILD_MSG)
-	cd .. && ../../../dev/llgo.sh build -buildmode $(BUILDMODE) $(LLGOFLAGS) -o export .
+	cd .. && ../../../dev/llgo.sh build -buildmode $(BUILDMODE) $(LLGOFLAGS) -o $(notdir $(LIBRARY)) .
 
 # Build the C executable
 $(TARGET): $(SOURCES) $(LIBRARY) $(HEADER)

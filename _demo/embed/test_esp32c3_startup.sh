@@ -99,7 +99,7 @@ EOF
 
 echo "==> Building for ESP32-C3 target (ELF + BIN)..."
 cd "$TEMP_DIR"
-llgo build -target=esp32c3 -o test -obin "$TEST_GO"
+llgo build -target=esp32c3 -o test.elf -obin "$TEST_GO"
 
 if [ ! -f "$TEST_ELF" ]; then
     echo "✗ FAIL: Build failed, $TEST_ELF not found"

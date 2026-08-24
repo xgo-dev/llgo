@@ -739,8 +739,7 @@ func Build(inv Invocation) ([]Package, error) {
 
 			// Generate C headers for c-archive and c-shared modes before linking
 			if ctx.buildConf.BuildMode == BuildModeCArchive || ctx.buildConf.BuildMode == BuildModeCShared {
-				libname := strings.TrimSuffix(filepath.Base(outFmts.Out), conf.AppExt)
-				headerPath := filepath.Join(filepath.Dir(outFmts.Out), libname) + ".h"
+				libname, headerPath := cHeaderOutputPath(outFmts.Out)
 				pkgs := cHeaderPackages(allPkgs)
 				headerErr := header.GenHeaderFile(prog, pkgs, libname, headerPath, verbose)
 				if headerErr != nil {
@@ -805,6 +804,11 @@ func Build(inv Invocation) ([]Package, error) {
 	}
 
 	return allPkgs, nil
+}
+
+func cHeaderOutputPath(output string) (libname, headerPath string) {
+	libname = strings.TrimSuffix(filepath.Base(output), filepath.Ext(output))
+	return libname, filepath.Join(filepath.Dir(output), libname) + ".h"
 }
 
 // cHeaderPackages excludes the patched standard runtime implementation. Its

@@ -6,7 +6,7 @@ echo "Building for embedded target..."
 
 # Build for embedded target as executable
 # Use llgo directly instead of llgo.sh to avoid go.mod version check
-llgo build -o test-verify --target=esp32 .
+llgo build -o test-verify.elf --target=esp32 .
 
 echo "Checking exported symbols..."
 
@@ -44,7 +44,7 @@ echo ""
 
 echo "Testing that non-embedded target rejects different export names..."
 # Build without --target should fail with panic
-if llgo build -o test-notarget . 2>&1 | grep -q 'export comment has wrong name "LPSPI2_IRQHandler"'; then
+if llgo build -o test-notarget.elf . 2>&1 | grep -q 'export comment has wrong name "LPSPI2_IRQHandler"'; then
     echo "✅ Correctly rejected different export name on non-embedded target"
 else
     echo "❌ Should have panicked with 'export comment has wrong name' error"

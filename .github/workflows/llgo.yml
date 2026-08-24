@@ -347,7 +347,7 @@ jobs:
           echo "Testing cross-compilation wasm with $(go env GOVERSION)"
 
           # Compile for wasm architecture
-          GOOS=wasip1 GOARCH=wasm llgo build -o hello -tags=nogc -v ./helloc
+          GOOS=wasip1 GOARCH=wasm llgo build -o hello.wasm -tags=nogc -v ./helloc
 
           # Check file type
           file hello.wasm

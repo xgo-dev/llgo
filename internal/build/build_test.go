@@ -1018,13 +1018,33 @@ func TestRunPrintfWithStdioNobuf(t *testing.T) {
 	mockRun([]string{"../../cl/_testdata/printf"}, &Config{Mode: ModeRun})
 }
 
+func TestCHeaderOutputPath(t *testing.T) {
+	tests := []struct {
+		output         string
+		wantLibname    string
+		wantHeaderPath string
+	}{
+		{output: "libmylib.a", wantLibname: "libmylib", wantHeaderPath: "libmylib.h"},
+		{output: "build/custom.so", wantLibname: "custom", wantHeaderPath: "build/custom.h"},
+		{output: "/tmp/custom.dylib", wantLibname: "custom", wantHeaderPath: "/tmp/custom.h"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.output, func(t *testing.T) {
+			libname, headerPath := cHeaderOutputPath(tt.output)
+			if libname != tt.wantLibname || headerPath != tt.wantHeaderPath {
+				t.Fatalf("cHeaderOutputPath(%q) = (%q, %q), want (%q, %q)", tt.output, libname, headerPath, tt.wantLibname, tt.wantHeaderPath)
+			}
+		})
+	}
+}
+
 func TestTestOutputFileLogic(t *testing.T) {
 	// Test output file path determination logic for test mode
 	tests := []struct {
 		name        string
 		pkgName     string
 		conf        *Config
-		multiPkg    bool
 		wantBase    string
 		wantDir     string
 		description string
@@ -1033,34 +1053,14 @@ func TestTestOutputFileLogic(t *testing.T) {
 			name:        "compile only without -o",
 			pkgName:     "mypackage.test",
 			conf:        &Config{Mode: ModeTest, CompileOnly: true},
-			multiPkg:    false,
 			wantBase:    "mypackage.test",
 			wantDir:     ".",
 			description: "-c without -o: write pkg.test in current directory",
 		},
 		{
-			name:        "with -o absolute file path",
-			pkgName:     "mypackage",
-			conf:        &Config{Mode: ModeTest, OutFile: "/tmp/mytest.test", AppExt: ".test"},
-			multiPkg:    false,
-			wantBase:    "mytest",
-			wantDir:     "/tmp",
-			description: "-o with absolute file path: use specified file",
-		},
-		{
-			name:        "with -o relative file path",
-			pkgName:     "mypackage",
-			conf:        &Config{Mode: ModeTest, OutFile: "my.test", AppExt: ".test"},
-			multiPkg:    false,
-			wantBase:    "my",
-			wantDir:     ".",
-			description: "-o with relative file path: use specified file in current dir",
-		},
-		{
 			name:        "with -o directory",
 			pkgName:     "mypackage.test",
 			conf:        &Config{Mode: ModeTest, OutFile: "/tmp/build/", AppExt: ".test"},
-			multiPkg:    false,
 			wantBase:    "mypackage.test",
 			wantDir:     "/tmp/build/",
 			description: "-o with directory: write pkg.test in that directory",
@@ -1069,7 +1069,6 @@ func TestTestOutputFileLogic(t *testing.T) {
 			name:        "default test mode",
 			pkgName:     "mypackage",
 			conf:        &Config{Mode: ModeTest, AppExt: ".test"},
-			multiPkg:    false,
 			wantBase:    "mypackage",
 			wantDir:     "",
 			description: "default test mode: use temp file",
@@ -1078,7 +1077,7 @@ func TestTestOutputFileLogic(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			baseName, dir := determineBaseNameAndDir(tt.pkgName, tt.conf, tt.multiPkg)
+			baseName, dir := determineBaseNameAndDir(tt.pkgName, tt.conf)
 			if baseName != tt.wantBase {
 				t.Errorf("%s: got baseName=%q, want %q", tt.description, baseName, tt.wantBase)
 			}
