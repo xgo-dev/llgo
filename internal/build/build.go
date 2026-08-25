@@ -524,6 +524,7 @@ func Build(inv Invocation) ([]Package, error) {
 	if len(export.BuildTags) > 0 {
 		tags += "," + strings.Join(export.BuildTags, ",")
 	}
+	target.BuildTags = tags
 	goBuildFlags := []string{"-tags=" + tags}
 	goBuildFlags = append(goBuildFlags, conf.GoBuildFlags...)
 	cfg := &packages.Config{

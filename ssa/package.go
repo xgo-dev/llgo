@@ -23,6 +23,7 @@ import (
 	"log"
 	"runtime"
 	"strconv"
+	"strings"
 	"unsafe"
 
 	"github.com/xgo-dev/llgo/internal/env"
@@ -521,6 +522,37 @@ func (p Program) rtNamed(name string) *types.Named {
 		}
 	}
 	panic(fmt.Errorf("runtime type (%s) not found, install from pre-built package or set LLGO_ROOT", name))
+}
+
+func (p Program) swissMapABI() bool {
+	for _, tag := range strings.Split(p.target.BuildTags, ",") {
+		if tag == "swissmap" {
+			return true
+		}
+	}
+	return false
+}
+
+func (p Program) abiRuntimeType(t types.Type) types.Type {
+	if _, ok := types.Unalias(t).Underlying().(*types.Map); ok && p.swissMapABI() {
+		// The compiler process may have imported runtime with !swissmap, so its
+		// maptype alias cannot describe the target. Build the target layout from
+		// field types that are common to both map ABIs.
+		oldMap := p.rtNamed("maptype").Underlying().(*types.Struct)
+		fields := []*types.Var{
+			types.NewField(token.NoPos, nil, "Type", oldMap.Field(0).Type(), true),
+			types.NewField(token.NoPos, nil, "Key", oldMap.Field(1).Type(), false),
+			types.NewField(token.NoPos, nil, "Elem", oldMap.Field(2).Type(), false),
+			types.NewField(token.NoPos, nil, "Group", oldMap.Field(3).Type(), false),
+			types.NewField(token.NoPos, nil, "Hasher", oldMap.Field(4).Type(), false),
+			types.NewField(token.NoPos, nil, "GroupSize", types.Typ[types.Uintptr], false),
+			types.NewField(token.NoPos, nil, "SlotSize", types.Typ[types.Uintptr], false),
+			types.NewField(token.NoPos, nil, "ElemOff", types.Typ[types.Uintptr], false),
+			types.NewField(token.NoPos, nil, "Flags", types.Typ[types.Uint32], false),
+		}
+		return types.NewStruct(fields, nil)
+	}
+	return p.rtNamed(p.abi.RuntimeName(t))
 }
 
 func (p Program) rtType(name string) Type {
