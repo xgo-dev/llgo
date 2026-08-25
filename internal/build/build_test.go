@@ -1664,6 +1664,27 @@ func TestDeadcodeDropEnabled(t *testing.T) {
 	}
 }
 
+func TestThinLTODeadcodeEnabled(t *testing.T) {
+	tests := []struct {
+		name string
+		conf *Config
+		want bool
+	}{
+		{name: "thin lto with deadcode drop", conf: &Config{DeadcodeDrop: true, LTO: lto.Thin}, want: buildenv.Dev},
+		{name: "thin lto without deadcode drop", conf: &Config{LTO: lto.Thin}, want: false},
+		{name: "full lto uses global dce", conf: &Config{DeadcodeDrop: true, LTO: lto.Full}, want: false},
+		{name: "full lto with global dce disabled", conf: &Config{DeadcodeDrop: true, LTO: lto.Full, DisableGoGlobalDCE: true}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.conf.thinLTODeadcodeEnabled(); got != tt.want {
+				t.Fatalf("thinLTODeadcodeEnabled() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPackageMetaEnabled(t *testing.T) {
 	tests := []struct {
 		name string

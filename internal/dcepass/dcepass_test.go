@@ -59,6 +59,49 @@ func TestEmitStrongTypeOverrides(t *testing.T) {
 	}
 }
 
+func TestRewriteTypeMethodTablesInPlace(t *testing.T) {
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	mod := parseModule(t, &ctx, filepath.Join("testdata", "method_slots", "in.ll"))
+	defer mod.Dispose()
+
+	typeName := taskTypeName
+	g := mod.NamedGlobal(typeName)
+	if g.IsNil() {
+		t.Fatalf("missing package-owned type global %q", typeName)
+	}
+	linkage := g.Linkage()
+	if got := RewriteTypeMethodTables(mod, map[string][]int{typeName: {1}, ptrTaskTypeName: {1}}, false); got != 2 {
+		t.Fatalf("RewriteTypeMethodTables rewrote %d globals, want 2", got)
+	}
+	if got := g.Linkage(); got != linkage {
+		t.Fatalf("type global linkage changed from %v to %v", linkage, got)
+	}
+
+	out := mod.String()
+	if !strings.Contains(out, `ptr @"main.(*Task).Run", ptr @main.Task.Run`) {
+		t.Fatalf("live method slot was not preserved:\n%s", out)
+	}
+	if strings.Contains(out, `ptr @"main.(*Task).Drop", ptr @"main.Task.Drop"`) {
+		t.Fatalf("dead method slot still references Drop:\n%s", out)
+	}
+	if !strings.Contains(out, unreachableMethodName) {
+		t.Fatalf("rewritten module does not reference unreachable method:\n%s", out)
+	}
+	count := 0
+	for global := mod.FirstGlobal(); !global.IsNil(); global = llvm.NextGlobal(global) {
+		if global.Name() == typeName {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("package type global count = %d, want exactly one", count)
+	}
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("rewritten package module is invalid: %v\n%s", err, out)
+	}
+}
+
 func TestMethodArray(t *testing.T) {
 	ctx := llvm.NewContext()
 	defer ctx.Dispose()

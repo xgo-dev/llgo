@@ -1,6 +1,8 @@
 package build
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -83,6 +85,41 @@ func TestDCEEntryRootCandidatesIncludesCExports(t *testing.T) {
 	want := []string{"main.init", "main.main", "Add", "Zed"}
 	if got := dceEntryRootCandidates(pkgs, false); !reflect.DeepEqual(got, want) {
 		t.Fatalf("dceEntryRootCandidates() = %v, want %v", got, want)
+	}
+}
+
+func TestWriteCanonicalThinLTOBitcodeRoundTrip(t *testing.T) {
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	path := filepath.Join("..", "dcepass", "testdata", "method_slots", "in.ll")
+	buf, err := llvm.NewMemoryBufferFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod, err := ctx.ParseIR(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mod.Dispose()
+
+	canonical, err := writeCanonicalThinLTOBitcode(mod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(canonical)
+	if info, err := os.Stat(canonical); err != nil || info.Size() == 0 {
+		t.Fatalf("canonical ThinLTO bitcode stat = (%v, %v)", info, err)
+	}
+
+	parsedCtx := llvm.NewContext()
+	defer parsedCtx.Dispose()
+	parsed, err := parsedCtx.ParseBitcodeFile(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parsed.Dispose()
+	if err := llvm.VerifyModule(parsed, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("canonical ThinLTO bitcode is invalid: %v", err)
 	}
 }
 

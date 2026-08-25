@@ -418,6 +418,13 @@ func (c *Config) deadcodeDropEnabled() bool {
 	return buildenv.Dev && c.DeadcodeDrop && !c.goGlobalDCEEnabled()
 }
 
+// thinLTODeadcodeEnabled selects the package-owned rewrite path. ThinLTO
+// packages are materialized only after the link-specific Go plan is known so
+// the bitcode and its ThinLTO summary describe the rewritten method tables.
+func (c *Config) thinLTODeadcodeEnabled() bool {
+	return c != nil && c.deadcodeDropEnabled() && c.ltoMode() == lto.Thin
+}
+
 func (c *Config) packageMetaEnabled() bool {
 	return c.CollectPackageMeta || c.deadcodeDropEnabled()
 }
@@ -1283,7 +1290,13 @@ func prePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
 	if err := ctx.collectFingerprint(aPkg); err != nil {
 		return err
 	}
-	ctx.tryLoadFromCache(aPkg)
+	// The ThinLTO writeback mode needs the package-owned LLVM module and must
+	// materialize a link-specific archive after the global plan is known. A
+	// regular package cache hit only contains the already-published archive, so
+	// keep this first implementation on the source-build path.
+	if !ctx.buildConf.thinLTODeadcodeEnabled() {
+		ctx.tryLoadFromCache(aPkg)
+	}
 	if verbose {
 		status := "MISS"
 		if aPkg.CacheHit {
@@ -1311,6 +1324,13 @@ func executePackageBuild(ctx *context, task *packageBuildTask, verbose bool) err
 func finalizePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
 	aPkg := task.pkg
 	if aPkg.CacheHit {
+		return nil
+	}
+	if ctx.buildConf.thinLTODeadcodeEnabled() {
+		// Package export is deferred until linkMainPkg computes the global plan.
+		if task.kind == cl.PkgLinkExtern {
+			appendExternalLinkArgs(ctx, aPkg, task.kindParam)
+		}
 		return nil
 	}
 	if err := normalizeToArchive(ctx, aPkg, verbose); err != nil {
@@ -1611,6 +1631,30 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 		linkArgs = append(linkArgs, rtLinkArgs...)
 		archiveInputs = append(archiveInputs, rtLinkInputs...)
 	}
+	if ctx.buildConf.thinLTODeadcodeEnabled() {
+		plan, err := buildDeadcodePlan(linkedOrder, needRuntime)
+		if err != nil {
+			return err
+		}
+		if err := materializeThinLTODeadcodePlan(ctx, linkedOrder, plan, verbose); err != nil {
+			return err
+		}
+		// Package archives were intentionally deferred until the global plan
+		// was available. Rebuild the link inputs from the rewritten archives.
+		archiveInputs = archiveInputs[:0]
+		for _, aPkg := range linkedOrder {
+			if aPkg == nil || aPkg.ArchiveFile == "" {
+				continue
+			}
+			if isRuntimePkg(aPkg.PkgPath) {
+				if needRuntime || needPyInit || ctx.buildConf.Target == "" {
+					archiveInputs = append(archiveInputs, aPkg.ArchiveFile)
+				}
+				continue
+			}
+			archiveInputs = append(archiveInputs, aPkg.ArchiveFile)
+		}
+	}
 
 	// Generate main module file (needed for global variables even in library modes)
 	// This is compiled directly to .o and added to linkInputs (not cached)
@@ -1637,7 +1681,7 @@ func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPa
 		funcInfo:      funcInfo,
 		pcLineInfo:    pcLineInfo,
 	})
-	if ctx.buildConf.deadcodeDropEnabled() {
+	if ctx.buildConf.deadcodeDropEnabled() && !ctx.buildConf.thinLTODeadcodeEnabled() {
 		if err := applyDeadcodeDropOverrides(linkedOrder, entryPkg, needRuntime, verbose); err != nil {
 			return err
 		}
@@ -1699,9 +1743,19 @@ func fullRpathArgs(toolchain crosscompile.NativeToolchain, linkArgs []string) (r
 func linkedPackageMetas(pkgs []Package) []*meta.PackageMeta {
 	metas := make([]*meta.PackageMeta, 0, len(pkgs))
 	for _, pkg := range pkgs {
-		metas = append(metas, pkg.Meta)
+		if pkg != nil && pkg.Meta != nil {
+			metas = append(metas, pkg.Meta)
+		}
 	}
 	return metas
+}
+
+func buildDeadcodePlan(pkgs []Package, needRuntime bool) (map[string][]int, error) {
+	summary, err := meta.NewGlobalSummary(linkedPackageMetas(pkgs))
+	if err != nil {
+		return nil, err
+	}
+	return deadcode.Analyze(summary, dceEntryRootCandidates(pkgs, needRuntime)), nil
 }
 
 func applyDeadcodeDropOverrides(pkgs []Package, entryPkg Package, needRuntime bool, verbose bool) error {
@@ -1715,6 +1769,78 @@ func applyDeadcodeDropOverrides(pkgs []Package, entryPkg Package, needRuntime bo
 	liveSlots := deadcode.Analyze(summary, roots)
 	dcepass.EmitStrongTypeOverrides(entryPkg.LPkg.Module(), dceSourceModules(pkgs), liveSlots, verbose)
 	return nil
+}
+
+// materializeThinLTODeadcodePlan keeps the original package module untouched,
+// writes it as canonical ThinLTO bitcode, and applies the link-specific plan to
+// a fresh parsed module before creating the package archive. This is the
+// package-owned counterpart to applyDeadcodeDropOverrides: no same-name global
+// is emitted in the entry module.
+func materializeThinLTODeadcodePlan(ctx *context, pkgs []Package, liveSlots map[string][]int, verbose bool) error {
+	for _, aPkg := range pkgs {
+		if aPkg == nil || aPkg.LPkg == nil || aPkg.Package == nil || aPkg.Package.ExportFile == "" {
+			continue
+		}
+		if aPkg.CacheHit {
+			return fmt.Errorf("thin LTO deadcode cannot rewrite cached package %s", aPkg.PkgPath)
+		}
+
+		canonical, err := writeCanonicalThinLTOBitcode(aPkg.LPkg.Module())
+		if err != nil {
+			return fmt.Errorf("write canonical ThinLTO bitcode for %s: %w", aPkg.PkgPath, err)
+		}
+		func() {
+			defer os.Remove(canonical)
+			llvmCtx := gllvm.NewContext()
+			defer llvmCtx.Dispose()
+			mod, parseErr := llvmCtx.ParseBitcodeFile(canonical)
+			if parseErr != nil {
+				err = fmt.Errorf("parse canonical ThinLTO bitcode for %s: %w", aPkg.PkgPath, parseErr)
+				return
+			}
+			defer mod.Dispose()
+			dcepass.RewriteTypeMethodTables(mod, liveSlots, verbose)
+			buf := gllvm.WriteThinLTOBitcodeToMemoryBuffer(mod)
+			if buf.IsNil() {
+				err = fmt.Errorf("write rewritten ThinLTO bitcode for %s: empty buffer", aPkg.PkgPath)
+				return
+			}
+			aPkg.ObjBuffers = append(aPkg.ObjBuffers, packageArchiveBuffer{
+				name:   filepath.Base(aPkg.Package.ExportFile) + ".o",
+				buffer: buf,
+			})
+		}()
+		if err != nil {
+			return err
+		}
+		if err := normalizeToArchive(ctx, aPkg, verbose); err != nil {
+			return fmt.Errorf("archive rewritten ThinLTO package %s: %w", aPkg.PkgPath, err)
+		}
+	}
+	return nil
+}
+
+func writeCanonicalThinLTOBitcode(mod gllvm.Module) (string, error) {
+	buf := gllvm.WriteThinLTOBitcodeToMemoryBuffer(mod)
+	if buf.IsNil() {
+		return "", errors.New("empty ThinLTO bitcode buffer")
+	}
+	defer buf.Dispose()
+	f, err := os.CreateTemp("", "llgo-thinlto-canonical-*.bc")
+	if err != nil {
+		return "", err
+	}
+	name := f.Name()
+	if _, err := f.Write(buf.Bytes()); err != nil {
+		f.Close()
+		os.Remove(name)
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(name)
+		return "", err
+	}
+	return name, nil
 }
 
 func dceSourceModules(pkgs []Package) []gllvm.Module {
@@ -2285,6 +2411,11 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 		aPkg.LinkArgs = append(aPkg.LinkArgs, goCgoLinkArgs(ctx.buildConf.Goos, aPkg.AltPkg.Syntax)...)
 	}
 	if pkg.ExportFile != "" {
+		if ctx.buildConf.thinLTODeadcodeEnabled() {
+			// Keep the package module alive until linkMainPkg has merged all
+			// Meta and can apply one link-specific owner rewrite.
+			return nil
+		}
 		exportFile, exportBuffer, err := exportPackageObject(ctx, pkg.PkgPath, pkg.ExportFile, ret)
 		if err != nil {
 			return fmt.Errorf("export object of %v failed: %v", pkgPath, err)
