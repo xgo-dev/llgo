@@ -519,7 +519,7 @@ func (p *context) initLink(line string, prefix int, export bool, f func(inPkgNam
 
 // recvTypeName extracts the named base and pointer form from receiver syntax
 // that can denote a locally declared type. Other syntax is left to the type
-// checker to report.
+// checker to report. The pointer result is meaningful only when ok is true.
 func recvTypeName(typ ast.Expr) (name string, pointer, ok bool) {
 	switch t := typ.(type) {
 	case *ast.Ident:
@@ -554,8 +554,8 @@ func astFuncName(pkgPath string, fn *ast.FuncDecl, aliases map[string]ast.Expr) 
 		if len(recv.List) != 1 {
 			return "", "", false
 		}
-		recvName, pointer, ok := recvTypeName(recv.List[0].Type)
-		if !ok {
+		recvName, pointer, recvOK := recvTypeName(recv.List[0].Type)
+		if !recvOK {
 			return "", "", false
 		}
 		canonical := recvName
