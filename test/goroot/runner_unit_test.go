@@ -82,6 +82,58 @@ func TestReleaseTagsFor(t *testing.T) {
 	}
 }
 
+func TestWriteStdlibImportCfgIgnoresRepositoryModule(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake go tool uses a shell script")
+	}
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "pwd.log")
+	goTool := filepath.Join(dir, "go")
+	script := fmt.Sprintf("#!/bin/sh\npwd > %q\nprintf 'packagefile runtime=/tmp/runtime.a\\n'\n", logPath)
+	if err := os.WriteFile(goTool, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	configPath := writeStdlibImportCfg(t, goTool)
+	config, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(config), "packagefile runtime=/tmp/runtime.a\n"; got != want {
+		t.Fatalf("import config=%q, want %q", got, want)
+	}
+	commandDir, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(commandDir)) == wd {
+		t.Fatalf("go list std ran inside repository package directory %q", wd)
+	}
+}
+
+func TestBaselineEnvironmentsForceLocalToolchain(t *testing.T) {
+	t.Setenv("GOTOOLCHAIN", "auto")
+	for name, env := range map[string][]string{
+		"direct": baselineGoEnv(),
+		"runner": runnerEnv("/repo", "/goroot", "/gopath", nil),
+	} {
+		values := make(map[string]string)
+		for _, item := range env {
+			key, value, ok := strings.Cut(item, "=")
+			if ok {
+				values[key] = value
+			}
+		}
+		if got := values["GOTOOLCHAIN"]; got != "local" {
+			t.Errorf("%s environment GOTOOLCHAIN=%q, want local", name, got)
+		}
+	}
+}
+
 func TestXFailMatch(t *testing.T) {
 	cfg := xfailConfig{
 		Entries: []xfailEntry{{
@@ -112,9 +164,9 @@ func TestNotApplicableMatch(t *testing.T) {
 		}},
 	}
 	tc := testCase{RelPath: "writebarrier.go", Directive: "errorcheck"}
-	match, reason := cfg.Match("go1.26.5", "linux/amd64", tc)
+	match, reason := cfg.Match("go1.25.0", "darwin/arm64", tc)
 	if !match {
-		t.Fatal("expected not-applicable match")
+		t.Fatal("expected not-applicable match independent of version and platform")
 	}
 	if reason != "not applicable: this case checks gc write barriers; LLGo uses a collector without those barriers, so reproducing them is not an LLGo compatibility goal" {
 		t.Fatalf("reason=%q, want not-applicable reason", reason)
@@ -130,8 +182,6 @@ func TestRepositoryExpectationsAreSeparated(t *testing.T) {
 	}
 
 	type selector struct {
-		version   string
-		platform  string
 		directive string
 		casePath  string
 	}
@@ -140,7 +190,7 @@ func TestRepositoryExpectationsAreSeparated(t *testing.T) {
 		if strings.HasPrefix(entry.Reason, "not applicable:") {
 			t.Fatalf("xfail entry %q has a not-applicable reason", entry.Case)
 		}
-		xfailSelectors[selector{entry.Version, entry.Platform, entry.Directive, entry.Case}] = struct{}{}
+		xfailSelectors[selector{entry.Directive, entry.Case}] = struct{}{}
 	}
 	for _, entry := range notApplicable.Entries {
 		if !strings.HasPrefix(entry.Reason, "not applicable:") {
@@ -152,9 +202,76 @@ func TestRepositoryExpectationsAreSeparated(t *testing.T) {
 		if !strings.Contains(entry.Reason, "compatibility goal") {
 			t.Fatalf("not-applicable entry %q has reason %q without explaining why support is not planned", entry.Case, entry.Reason)
 		}
-		key := selector{entry.Version, entry.Platform, entry.Directive, entry.Case}
+		key := selector{entry.Directive, entry.Case}
 		if _, ok := xfailSelectors[key]; ok {
 			t.Fatalf("expectation selector appears in both files: %+v", key)
+		}
+	}
+}
+
+func TestStackIsGloballyNotApplicable(t *testing.T) {
+	repo := repoRoot(t)
+	xfails := loadXFailConfig(t, repo, filepath.Join("test", "goroot", "xfail.yaml"))
+	notApplicable := loadNotApplicableConfig(t, repo, filepath.Join("test", "goroot", "notapplicable.yaml"))
+	tc := testCase{RelPath: "stack.go", Directive: "run"}
+
+	for _, target := range []struct {
+		version  string
+		platform string
+	}{
+		{version: "go1.24.11", platform: "darwin/arm64"},
+		{version: "go1.25.0", platform: "linux/amd64"},
+		{version: "go1.26.5", platform: "darwin/arm64"},
+	} {
+		if match, _ := notApplicable.Match(target.version, target.platform, tc); !match {
+			t.Errorf("stack.go did not match not-applicable for %s/%s", target.version, target.platform)
+		}
+		if match, reason := xfails.MatchFlaky(target.version, target.platform, tc); match {
+			t.Errorf("stack.go still matched flake for %s/%s: %s", target.version, target.platform, reason)
+		}
+	}
+}
+
+func TestTypeparamChansIsGloballyFlaky(t *testing.T) {
+	repo := repoRoot(t)
+	xfails := loadXFailConfig(t, repo, filepath.Join("test", "goroot", "xfail.yaml"))
+	tc := testCase{RelPath: "typeparam/chans.go", Directive: "run"}
+
+	for _, target := range []struct {
+		version  string
+		platform string
+	}{
+		{version: "go1.24.11", platform: "darwin/arm64"},
+		{version: "go1.25.0", platform: "linux/amd64"},
+		{version: "go1.26.5", platform: "darwin/arm64"},
+	} {
+		if match, _ := xfails.MatchFlaky(target.version, target.platform, tc); !match {
+			t.Errorf("typeparam/chans.go did not match flake for %s/%s", target.version, target.platform)
+		}
+	}
+}
+
+func TestChanlinearIsGloballyHostSkipped(t *testing.T) {
+	repo := repoRoot(t)
+	xfails := loadXFailConfig(t, repo, filepath.Join("test", "goroot", "xfail.yaml"))
+	tc := testCase{RelPath: "chanlinear.go", Directive: "run"}
+
+	for _, target := range []struct {
+		version  string
+		platform string
+	}{
+		{version: "go1.24.11", platform: "darwin/arm64"},
+		{version: "go1.25.0", platform: "linux/amd64"},
+		{version: "go1.26.5", platform: "darwin/arm64"},
+	} {
+		if match, _ := xfails.MatchHostSkip(target.version, target.platform, tc); !match {
+			t.Errorf("chanlinear.go did not match host skip for %s/%s", target.version, target.platform)
+		}
+		if _, reason, match := xfails.MatchTimeout(target.version, target.platform, tc); match {
+			t.Errorf("chanlinear.go still matched timeout for %s/%s: %s", target.version, target.platform, reason)
+		}
+		if match, reason := xfails.MatchFlaky(target.version, target.platform, tc); match {
+			t.Errorf("chanlinear.go still matched flake for %s/%s: %s", target.version, target.platform, reason)
 		}
 	}
 }

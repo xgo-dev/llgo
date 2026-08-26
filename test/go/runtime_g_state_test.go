@@ -78,3 +78,28 @@ func TestRuntimeGStateIsolation(t *testing.T) {
 		t.Fatalf("main goroutine recovered %v, want %q", recovered, "main panic")
 	}
 }
+
+func TestRuntimeNumGoroutineTracksWorkers(t *testing.T) {
+	const workerCount = 8
+	ready := make(chan struct{}, workerCount)
+	release := make(chan struct{})
+	done := make(chan struct{}, workerCount)
+	for range workerCount {
+		go func() {
+			ready <- struct{}{}
+			<-release
+			done <- struct{}{}
+		}()
+	}
+	for range workerCount {
+		<-ready
+	}
+	if got := runtime.NumGoroutine(); got < workerCount+1 {
+		t.Fatalf("NumGoroutine with %d blocked workers = %d, want at least %d", workerCount, got, workerCount+1)
+	}
+
+	close(release)
+	for range workerCount {
+		<-done
+	}
+}

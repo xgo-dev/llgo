@@ -514,6 +514,9 @@ not_applicable:
     directive: run
     case: maymorestack.go
     reason: "not applicable: LLGo uses fixed native stacks, so gc's growable-stack maymorestack debug hook has no corresponding behavior; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - directive: run
+    case: stack.go
+    reason: "not applicable: this case recursively grows through 8,000 large frames to validate cmd/compile's stack-splitting implementation; LLGo maps each goroutine to a native OS thread with a fixed stack, so reproducing Go's growable-stack mechanism is not currently an LLGo compatibility goal"
   - version: go1.26
     directive: errorcheckandrundir
     case: intrinsic.go

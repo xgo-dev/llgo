@@ -94,7 +94,7 @@ func ThreadCreateProfile(p []StackRecord) (n int, ok bool) {
 }
 
 func NumGoroutine() int {
-	return 1
+	return llrt.NumGoroutine()
 }
 
 const funcForPCCacheSets = 1024

@@ -214,3 +214,11 @@ func GMPForTesting() (goid, parentGoid uint64, mid int64, pid int32, gstatus, ps
 func GStateForTesting() (count uint64, mainExited bool) {
 	return gStateForTesting()
 }
+
+// NumGoroutine returns the number of live runtime contexts. Calling getg first
+// ensures that a lazily initialized main or foreign thread is included.
+func NumGoroutine() int {
+	getg()
+	count, _ := gStateForTesting()
+	return int(count)
+}

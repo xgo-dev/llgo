@@ -23,7 +23,9 @@ behavior are classified separately through `notapplicable.yaml`, so the xfail
 count continues to represent remaining LLGo compatibility work. Only
 explicitly host-unsafe cases are skipped. Each not-applicable entry documents
 both the toolchain-specific mechanism under test and why the corresponding
-behavior is not an LLGo compatibility goal.
+behavior is not an LLGo compatibility goal. Not-applicable classification is
+global rather than version- or platform-specific, and both successful and
+failed execution are accepted; resource-guard failures remain fatal.
 
 Basic usage:
 

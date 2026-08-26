@@ -20,6 +20,7 @@ jobs:
     env:
       GOPROXY: https://proxy.golang.org,direct
       LLGO_GOROOT_HEARTBEAT_SECONDS: "60"
+      LLGO_GOROOT_GOMAXPROCS: "1"
       LLGO_GOROOT_VERBOSE: "1"
     strategy:
       fail-fast: false
@@ -123,7 +124,7 @@ jobs:
             echo '|---:|---:|---:|---:|---:|'
             echo "| $selected | $observed | $passed | $failed | $skipped |"
             echo
-            echo '_Passed means the runner classification succeeded; expected xfail/not-applicable failures and classified flakes are counted as Passed._'
+            echo '_Passed means the runner classification succeeded; expected xfail failures and classified not-applicable/flake outcomes are counted as Passed._'
             echo
             echo '**Failed case paths**'
             if [[ "$failed" -eq 0 ]]; then
@@ -211,7 +212,7 @@ jobs:
             write_row 'Linux · Go 1.26.5' linux/amd64 1.26.5 4
             write_row '**Linux total**' linux/amd64 '' 8
             echo
-            echo '_Passed means the runner classification succeeded; expected xfail/not-applicable failures and classified flakes are counted as Passed._'
+            echo '_Passed means the runner classification succeeded; expected xfail failures and classified not-applicable/flake outcomes are counted as Passed._'
             echo
             echo '### Failed case paths'
             if [[ -s "$failure_tsv" ]]; then
