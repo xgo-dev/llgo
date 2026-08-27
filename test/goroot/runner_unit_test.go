@@ -105,16 +105,15 @@ func TestXFailMatch(t *testing.T) {
 func TestNotApplicableMatch(t *testing.T) {
 	cfg := notApplicableConfig{
 		Entries: []xfailEntry{{
-			Version:   "go1.26",
 			Directive: "errorcheck",
 			Case:      "writebarrier.go",
 			Reason:    "not applicable: this case checks gc write barriers; LLGo uses a collector without those barriers, so reproducing them is not an LLGo compatibility goal",
 		}},
 	}
 	tc := testCase{RelPath: "writebarrier.go", Directive: "errorcheck"}
-	match, reason := cfg.Match("go1.26.5", "linux/amd64", tc)
+	match, reason := cfg.Match("go1.25.0", "darwin/arm64", tc)
 	if !match {
-		t.Fatal("expected not-applicable match")
+		t.Fatal("expected global not-applicable match")
 	}
 	if reason != "not applicable: this case checks gc write barriers; LLGo uses a collector without those barriers, so reproducing them is not an LLGo compatibility goal" {
 		t.Fatalf("reason=%q, want not-applicable reason", reason)
@@ -130,8 +129,6 @@ func TestRepositoryExpectationsAreSeparated(t *testing.T) {
 	}
 
 	type selector struct {
-		version   string
-		platform  string
 		directive string
 		casePath  string
 	}
@@ -140,9 +137,13 @@ func TestRepositoryExpectationsAreSeparated(t *testing.T) {
 		if strings.HasPrefix(entry.Reason, "not applicable:") {
 			t.Fatalf("xfail entry %q has a not-applicable reason", entry.Case)
 		}
-		xfailSelectors[selector{entry.Version, entry.Platform, entry.Directive, entry.Case}] = struct{}{}
+		xfailSelectors[selector{entry.Directive, entry.Case}] = struct{}{}
 	}
+	notApplicableSelectors := make(map[selector]struct{}, len(notApplicable.Entries))
 	for _, entry := range notApplicable.Entries {
+		if entry.Version != "" || entry.Platform != "" {
+			t.Fatalf("not-applicable entry %q must be global, got version=%q platform=%q", entry.Case, entry.Version, entry.Platform)
+		}
 		if !strings.HasPrefix(entry.Reason, "not applicable:") {
 			t.Fatalf("not-applicable entry %q has reason %q without the shared prefix", entry.Case, entry.Reason)
 		}
@@ -152,9 +153,122 @@ func TestRepositoryExpectationsAreSeparated(t *testing.T) {
 		if !strings.Contains(entry.Reason, "compatibility goal") {
 			t.Fatalf("not-applicable entry %q has reason %q without explaining why support is not planned", entry.Case, entry.Reason)
 		}
-		key := selector{entry.Version, entry.Platform, entry.Directive, entry.Case}
+		key := selector{entry.Directive, entry.Case}
 		if _, ok := xfailSelectors[key]; ok {
 			t.Fatalf("expectation selector appears in both files: %+v", key)
+		}
+		if _, ok := notApplicableSelectors[key]; ok {
+			t.Fatalf("duplicate global not-applicable selector: %+v", key)
+		}
+		notApplicableSelectors[key] = struct{}{}
+	}
+}
+
+func TestStackIsGloballyNotApplicable(t *testing.T) {
+	repo := repoRoot(t)
+	cfg := loadNotApplicableConfig(t, repo, filepath.Join("test", "goroot", "notapplicable.yaml"))
+	tc := testCase{RelPath: "stack.go", Directive: "run"}
+
+	for _, target := range []struct {
+		version  string
+		platform string
+	}{
+		{version: "go1.25.0", platform: "linux/amd64"},
+		{version: "go1.26.5", platform: "darwin/arm64"},
+	} {
+		if match, _ := cfg.Match(target.version, target.platform, tc); !match {
+			t.Errorf("stack.go did not match not-applicable for %s/%s", target.version, target.platform)
+		}
+	}
+}
+
+func TestObservedNotApplicableCasesAreGlobal(t *testing.T) {
+	repo := repoRoot(t)
+	cfg := loadNotApplicableConfig(t, repo, filepath.Join("test", "goroot", "notapplicable.yaml"))
+	cases := []testCase{
+		{RelPath: "deferfin.go", Directive: "run"},
+		{RelPath: "fixedbugs/issue24491b.go", Directive: "run"},
+		{RelPath: "fixedbugs/issue29362.go", Directive: "run"},
+		{RelPath: "fixedbugs/issue45045.go", Directive: "run"},
+		{RelPath: "fixedbugs/issue54343.go", Directive: "run"},
+		{RelPath: "maymorestack.go", Directive: "run"},
+		{RelPath: "rangegen.go", Directive: "runoutput"},
+		{RelPath: "stack.go", Directive: "run"},
+	}
+	for _, tc := range cases {
+		for _, target := range []struct {
+			version  string
+			platform string
+		}{
+			{version: "go1.25.0", platform: "linux/amd64"},
+			{version: "go1.26.5", platform: "darwin/arm64"},
+		} {
+			if match, _ := cfg.Match(target.version, target.platform, tc); !match {
+				t.Errorf("%s did not match not-applicable for %s/%s", tc.RelPath, target.version, target.platform)
+			}
+		}
+	}
+}
+
+func TestObservedFailuresHaveXFailClassifications(t *testing.T) {
+	repo := repoRoot(t)
+	cfg := loadXFailConfig(t, repo, filepath.Join("test", "goroot", "xfail.yaml"))
+	tests := []struct {
+		version  string
+		platform string
+		tc       testCase
+	}{
+		{version: "go1.25.0", platform: "darwin/arm64", tc: testCase{RelPath: "index0.go", Directive: "runoutput"}},
+		{version: "go1.25.0", platform: "linux/amd64", tc: testCase{RelPath: "fixedbugs/issue34123.go", Directive: "run"}},
+		{version: "go1.25.0", platform: "darwin/arm64", tc: testCase{RelPath: "fixedbugs/issue52612.go", Directive: "run"}},
+		{version: "go1.25.0", platform: "linux/amd64", tc: testCase{RelPath: "heapsampling.go", Directive: "run"}},
+		{version: "go1.26.5", platform: "linux/amd64", tc: testCase{RelPath: "convert5.go", Directive: "run"}},
+	}
+	for _, tt := range tests {
+		if match, _ := cfg.Match(tt.version, tt.platform, tt.tc); !match {
+			t.Errorf("%s did not match xfail for %s/%s", tt.tc.RelPath, tt.version, tt.platform)
+		}
+	}
+}
+
+func TestHostUnsafeCasesAreGloballySkipped(t *testing.T) {
+	repo := repoRoot(t)
+	cfg := loadXFailConfig(t, repo, filepath.Join("test", "goroot", "xfail.yaml"))
+	for _, casePath := range []string{"fixedbugs/issue16016.go", "chan/goroutines.go", "chanlinear.go"} {
+		tc := testCase{RelPath: casePath, Directive: "run"}
+		for _, target := range []struct {
+			version  string
+			platform string
+		}{
+			{version: "go1.25.0", platform: "linux/amd64"},
+			{version: "go1.26.5", platform: "darwin/arm64"},
+		} {
+			if match, _ := cfg.MatchHostSkip(target.version, target.platform, tc); !match {
+				t.Errorf("%s did not match host skip for %s/%s", casePath, target.version, target.platform)
+			}
+			if _, reason, match := cfg.MatchTimeout(target.version, target.platform, tc); match {
+				t.Errorf("%s also matched timeout for %s/%s: %s", casePath, target.version, target.platform, reason)
+			}
+			if match, reason := cfg.MatchFlaky(target.version, target.platform, tc); match {
+				t.Errorf("%s also matched flake for %s/%s: %s", casePath, target.version, target.platform, reason)
+			}
+		}
+	}
+}
+
+func TestTypeparamChansIsGloballyFlaky(t *testing.T) {
+	repo := repoRoot(t)
+	cfg := loadXFailConfig(t, repo, filepath.Join("test", "goroot", "xfail.yaml"))
+	tc := testCase{RelPath: "typeparam/chans.go", Directive: "run"}
+	for _, target := range []struct {
+		version  string
+		platform string
+	}{
+		{version: "go1.25.0", platform: "linux/amd64"},
+		{version: "go1.26.5", platform: "darwin/arm64"},
+	} {
+		if match, _ := cfg.MatchFlaky(target.version, target.platform, tc); !match {
+			t.Errorf("typeparam/chans.go did not match flake for %s/%s", target.version, target.platform)
 		}
 	}
 }
