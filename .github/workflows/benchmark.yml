@@ -201,7 +201,10 @@ jobs:
         # base contains Windows support.
         continue-on-error: ${{ startsWith(matrix.id, 'windows-') }}
         shell: bash
+        # The PR base still defaults to LLVM 19 until this upgrade lands, but
+        # the benchmark intentionally compares both revisions with LLVM 21.
         env:
+          GOFLAGS: -tags=llvm21
           LLGO_BENCHMARK_PREBUILT_LLGO: ${{ matrix.windows_arch && matrix.windows_arch != 'amd64' && '.benchmark/base-llgo.exe' || '' }}
         run: |
           benchmark/baseline/run.sh \
