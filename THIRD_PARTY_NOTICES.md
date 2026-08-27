@@ -74,13 +74,10 @@ development- and test-only modules are not included.
 
 ## LLVM/Clang
 
-LLGo can download an Espressif-maintained ESP LLVM/Clang toolchain matching
-the LLVM major linked into LLGo:
+LLGo can download the Espressif-maintained ESP LLVM/Clang 21 toolchain
+[`21.1.3_20260816`](https://github.com/goplus/espressif-llvm-project-prebuilt/releases/tag/21.1.3_20260816).
 
-- LLVM 19: [`19.1.2_20250905-3`](https://github.com/goplus/espressif-llvm-project-prebuilt/releases/tag/19.1.2_20250905-3)
-- LLVM 21: [`21.1.3_20260816`](https://github.com/goplus/espressif-llvm-project-prebuilt/releases/tag/21.1.3_20260816)
-
-Current LLGo release archives use the LLVM 19 payload and include it under
+Current LLGo release archives use the LLVM 21 payload and include it under
 `crosscompile/clang`, because the shipped `llgo` executable dynamically links
 its LLVM library.
 
@@ -112,7 +109,7 @@ firmware.
 | WASI SDK 25 | [`WebAssembly/wasi-sdk`](https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-25) | upstream `LICENSE` and license files in the SDK |
 | picolibc/newlib sources | [`goplus/picolibc`](https://github.com/goplus/picolibc) | upstream `COPYING.picolibc` and `COPYING.NEWLIB` |
 | ESP newlib sources | [`goplus/newlib`](https://github.com/goplus/newlib/tree/esp-4.3.0_20250211-patch7) | upstream `COPYING.NEWLIB` and applicable file notices |
-| compiler-rt sources | [`goplus/compiler-rt` LLVM 19](https://github.com/goplus/compiler-rt/tree/xtensa_release_19.1.2) or [LLVM 21](https://github.com/goplus/compiler-rt/tree/xtensa_release_21.1.3_20260408), selected with the linked LLVM major | upstream `LICENSE.TXT` (Apache-2.0 WITH LLVM-exception) |
+| compiler-rt sources | [`goplus/compiler-rt` LLVM 21](https://github.com/goplus/compiler-rt/tree/xtensa_release_21.1.3_20260408) | upstream `LICENSE.TXT` (Apache-2.0 WITH LLVM-exception) |
 
 Firmware or other binaries built from downloaded C library sources may carry
 their own redistribution requirements. Distributors of those outputs should

@@ -11,11 +11,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# Remote-install checks clone the current main branch, which may still default
-# to LLVM 19 while this upgrade PR is under review.
-env:
-  GOFLAGS: -tags=llvm21
-
 jobs:
   remote_install:
     timeout-minutes: 30

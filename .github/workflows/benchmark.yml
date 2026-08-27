@@ -73,9 +73,6 @@ jobs:
     env:
       GOMAXPROCS: "2"
       LLGO_ROOT: ${{ github.workspace }}
-      # The PR base may still default to LLVM 19 while this upgrade is under
-      # review; select LLVM 21 explicitly for an apples-to-apples comparison.
-      GOFLAGS: -tags=llvm21
     steps:
       - uses: actions/checkout@v7
         with:

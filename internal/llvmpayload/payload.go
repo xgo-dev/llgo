@@ -1,4 +1,4 @@
-// Package llvmpayload defines the revision-locked LLVM toolchains distributed
+// Package llvmpayload defines the revision-locked LLVM toolchain distributed
 // with and downloaded by LLGo.
 package llvmpayload
 
@@ -32,17 +32,6 @@ type Artifact struct {
 }
 
 var manifests = map[int]manifest{
-	19: {
-		llvmMajor:         19,
-		version:           "19.1.2_20250905-3",
-		compilerRTVersion: "xtensa_release_19.1.2",
-		sha256: map[string]string{
-			"aarch64-apple-darwin": "4f15d18c93eabdace3eab901582e528ac334d328fb8f19f153ee55b2208d101b",
-			"aarch64-linux-gnu":    "b2d8e77bbf3394c6a1f0d66e59385d78d2b49b97ebe782e612cba7f93dcb2337",
-			"x86_64-apple-darwin":  "e4f329a911e813ee825984f039578614dc0fe69001c2afe3e61edf27821be3ad",
-			"x86_64-linux-gnu":     "e2e0c48cd76e45ceba910917a2a97988dc80e3bb6040ea262bfe9293d5d9ac57",
-		},
-	},
 	21: {
 		llvmMajor:         21,
 		version:           "21.1.3_20260816",

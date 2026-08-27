@@ -7,34 +7,31 @@ import (
 )
 
 func TestGetCompilerRTConfig_LibConfig(t *testing.T) {
-	for _, test := range []struct {
-		llvmVersion string
-		want        string
-	}{
-		{llvmVersion: "19.1.7", want: "xtensa_release_19.1.2"},
-		{llvmVersion: "21.1.8", want: "xtensa_release_21.1.3_20260408"},
-	} {
-		config, err := compilerRTConfigForLLVMVersion(test.llvmVersion)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if config.Name != "compiler-rt" {
-			t.Errorf("LLVM %s name = %q", test.llvmVersion, config.Name)
-		}
-		if config.Version != test.want {
-			t.Errorf("LLVM %s version = %q, want %q", test.llvmVersion, config.Version, test.want)
-		}
-		wantURL := "https://github.com/goplus/compiler-rt/archive/refs/tags/" + test.want + ".tar.gz"
-		if config.Url != wantURL {
-			t.Errorf("LLVM %s URL = %q, want %q", test.llvmVersion, config.Url, wantURL)
-		}
-		wantString := "compiler-rt-" + test.want
-		if config.ResourceSubDir != wantString || config.String() != wantString {
-			t.Errorf("LLVM %s archive identity = %q / %q, want %q", test.llvmVersion, config.ResourceSubDir, config.String(), wantString)
-		}
+	const llvmVersion = "21.1.8"
+	const want = "xtensa_release_21.1.3_20260408"
+	config, err := compilerRTConfigForLLVMVersion(llvmVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Name != "compiler-rt" {
+		t.Errorf("LLVM %s name = %q", llvmVersion, config.Name)
+	}
+	if config.Version != want {
+		t.Errorf("LLVM %s version = %q, want %q", llvmVersion, config.Version, want)
+	}
+	wantURL := "https://github.com/goplus/compiler-rt/archive/refs/tags/" + want + ".tar.gz"
+	if config.Url != wantURL {
+		t.Errorf("LLVM %s URL = %q, want %q", llvmVersion, config.Url, wantURL)
+	}
+	wantString := "compiler-rt-" + want
+	if config.ResourceSubDir != wantString || config.String() != wantString {
+		t.Errorf("LLVM %s archive identity = %q / %q, want %q", llvmVersion, config.ResourceSubDir, config.String(), wantString)
 	}
 	if _, err := compilerRTConfigForLLVMVersion("development"); err == nil {
 		t.Fatal("invalid LLVM version accepted")
+	}
+	if _, err := compilerRTConfigForLLVMVersion("19.1.7"); err == nil {
+		t.Fatal("unsupported LLVM version accepted")
 	}
 }
 

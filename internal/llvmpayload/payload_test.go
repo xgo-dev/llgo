@@ -37,10 +37,6 @@ func testManifest(t *testing.T, llvmVersion, payloadVersion, compilerRTVersion s
 	}
 }
 
-func TestLLVM19Manifest(t *testing.T) {
-	testManifest(t, "LLVM 19.1.7", "19.1.2_20250905-3", "xtensa_release_19.1.2", 19)
-}
-
 func TestLLVM21Manifest(t *testing.T) {
 	testManifest(t, "LLVM 21.1.8", "21.1.3_20260816", "xtensa_release_21.1.3_20260408", 21)
 
@@ -57,10 +53,10 @@ func TestPayloadErrors(t *testing.T) {
 	if _, err := ForLLVMVersion("development"); err == nil {
 		t.Fatal("invalid LLVM version accepted")
 	}
-	if _, err := ForMajor(20); err == nil {
+	if _, err := ForMajor(19); err == nil {
 		t.Fatal("unpublished LLVM major accepted")
 	}
-	manifest, err := ForMajor(19)
+	manifest, err := ForMajor(21)
 	if err != nil {
 		t.Fatal(err)
 	}
