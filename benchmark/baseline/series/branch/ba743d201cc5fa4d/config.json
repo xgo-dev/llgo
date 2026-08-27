@@ -45,7 +45,7 @@
           "^programs$"
         ],
         "metrics": [
-          "^(file-bytes|build-ns|run-ns)$"
+          "^(file-bytes|text-bytes|build-ns|run-ns)$"
         ]
       },
       "table": {
@@ -69,6 +69,10 @@
         "metrics": {
           "file-bytes": {
             "title": "File size",
+            "format": "bytes"
+          },
+          "text-bytes": {
+            "title": "Text size",
             "format": "bytes"
           },
           "build-ns": {
