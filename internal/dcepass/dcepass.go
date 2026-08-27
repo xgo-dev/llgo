@@ -224,7 +224,7 @@ func (e *overrideEmitter) cloneType(src llvm.Type) llvm.Type {
 				dst = ctx.StructCreateNamed(name)
 			}
 			e.types[src] = dst
-			if dst.StructElementTypesCount() == 0 && src.StructElementTypesCount() != 0 {
+			if dst.IsStructOpaque() && !src.IsStructOpaque() {
 				dst.StructSetBody(e.cloneTypes(src.StructElementTypes()), src.IsStructPacked())
 			}
 			return dst

@@ -121,6 +121,9 @@ func TestCloneTypesAcrossContexts(t *testing.T) {
 	emitter := newOverrideEmitter(dst)
 	named := srcCtx.StructCreateNamed("named")
 	named.StructSetBody([]llvm.Type{srcCtx.Int32Type()}, false)
+	empty := srcCtx.StructCreateNamed("empty")
+	empty.StructSetBody(nil, false)
+	opaque := srcCtx.StructCreateNamed("opaque")
 	existing := srcCtx.StructCreateNamed("existing")
 	existing.StructSetBody([]llvm.Type{srcCtx.Int32Type()}, false)
 	dstExisting := dstCtx.StructCreateNamed("existing")
@@ -137,6 +140,8 @@ func TestCloneTypesAcrossContexts(t *testing.T) {
 		srcCtx.IntType(17),
 		llvm.FunctionType(srcCtx.VoidType(), []llvm.Type{srcCtx.Int32Type()}, true),
 		named,
+		empty,
+		opaque,
 		existing,
 		srcCtx.StructType([]llvm.Type{srcCtx.Int8Type(), srcCtx.Int16Type()}, true),
 		llvm.ArrayType(srcCtx.Int32Type(), 3),
@@ -161,6 +166,12 @@ func TestCloneTypesAcrossContexts(t *testing.T) {
 	clonedNamed := emitter.cloneType(named)
 	if clonedNamed.C == named.C || clonedNamed.StructElementTypesCount() != 1 {
 		t.Fatalf("identified struct was not recreated in the destination context: %s", clonedNamed)
+	}
+	if got := emitter.cloneType(empty); got.IsStructOpaque() || got.StructElementTypesCount() != 0 {
+		t.Fatalf("defined empty struct was not preserved: %s", got)
+	}
+	if got := emitter.cloneType(opaque); !got.IsStructOpaque() {
+		t.Fatalf("opaque struct was not preserved: %s", got)
 	}
 	if got := emitter.cloneType(existing); got.C != dstExisting.C {
 		t.Fatalf("existing destination type was not reused: got %s, want %s", got, dstExisting)
@@ -256,7 +267,8 @@ func TestCloneConstantsRejectsUnsupportedLLVMForms(t *testing.T) {
 @target = external global i8
 @bitcast_expr = global double bitcast (i64 ptrtoint (ptr @target to i64) to double)
 @trunc_expr = global i32 trunc (i64 add (i64 ptrtoint (ptr @target to i64), i64 1) to i32)
-@unsupported_expr = global i64 mul (i64 ptrtoint (ptr @target to i64), i64 2)
+@addrspace_target = external addrspace(1) global i8
+@unsupported_expr = global ptr addrspacecast (ptr addrspace(1) @addrspace_target to ptr)
 @block_addr = global ptr blockaddress(@block_target, %entry)
 
 define void @block_target() {
