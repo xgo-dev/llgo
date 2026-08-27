@@ -7,33 +7,34 @@ import (
 )
 
 func TestGetCompilerRTConfig_LibConfig(t *testing.T) {
-	config := GetCompilerRTConfig()
-
-	// Test basic configuration fields
-	expectedName := "compiler-rt"
-	if config.Name != expectedName {
-		t.Errorf("Expected Name '%s', got '%s'", expectedName, config.Name)
+	for _, test := range []struct {
+		llvmVersion string
+		want        string
+	}{
+		{llvmVersion: "19.1.7", want: "xtensa_release_19.1.2"},
+		{llvmVersion: "21.1.8", want: "xtensa_release_21.1.3_20260408"},
+	} {
+		config, err := compilerRTConfigForLLVMVersion(test.llvmVersion)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.Name != "compiler-rt" {
+			t.Errorf("LLVM %s name = %q", test.llvmVersion, config.Name)
+		}
+		if config.Version != test.want {
+			t.Errorf("LLVM %s version = %q, want %q", test.llvmVersion, config.Version, test.want)
+		}
+		wantURL := "https://github.com/goplus/compiler-rt/archive/refs/tags/" + test.want + ".tar.gz"
+		if config.Url != wantURL {
+			t.Errorf("LLVM %s URL = %q, want %q", test.llvmVersion, config.Url, wantURL)
+		}
+		wantString := "compiler-rt-" + test.want
+		if config.ResourceSubDir != wantString || config.String() != wantString {
+			t.Errorf("LLVM %s archive identity = %q / %q, want %q", test.llvmVersion, config.ResourceSubDir, config.String(), wantString)
+		}
 	}
-
-	expectedVersion := "xtensa_release_19.1.2"
-	if config.Version != expectedVersion {
-		t.Errorf("Expected Version '%s', got '%s'", expectedVersion, config.Version)
-	}
-
-	expectedUrl := "https://github.com/goplus/compiler-rt/archive/refs/tags/xtensa_release_19.1.2.tar.gz"
-	if config.Url != expectedUrl {
-		t.Errorf("Expected Url '%s', got '%s'", expectedUrl, config.Url)
-	}
-
-	expectedArchiveSrcDir := "compiler-rt-xtensa_release_19.1.2"
-	if config.ResourceSubDir != expectedArchiveSrcDir {
-		t.Errorf("Expected ResourceSubDir '%s', got '%s'", expectedArchiveSrcDir, config.ResourceSubDir)
-	}
-
-	// Test String() method
-	expectedString := "compiler-rt-xtensa_release_19.1.2"
-	if config.String() != expectedString {
-		t.Errorf("Expected String() '%s', got '%s'", expectedString, config.String())
+	if _, err := compilerRTConfigForLLVMVersion("development"); err == nil {
+		t.Fatal("invalid LLVM version accepted")
 	}
 }
 

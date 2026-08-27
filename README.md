@@ -306,9 +306,9 @@ llgo run .
 ## Dependencies
 
 - [Go 1.27](https://go.dev) for building LLGo; CI validates user packages separately with Go 1.20 through Go 1.27
-- [LLVM 19](https://llvm.org)
-- [Clang 19](https://clang.llvm.org)
-- [LLD 19](https://lld.llvm.org)
+- [LLVM 19](https://llvm.org) (default) or LLVM 21 (`GOFLAGS=-tags=llvm21`)
+- [Clang 19](https://clang.llvm.org) or Clang 21, matching LLVM
+- [LLD 19](https://lld.llvm.org) or LLD 21, matching LLVM
 - [pkg-config 0.29+](https://gitlab.freedesktop.org/pkg-config/pkg-config)
 - [bdwgc/libgc 8.0+](https://www.hboehm.info/gc/)
 - [libffi](https://sourceware.org/libffi/)

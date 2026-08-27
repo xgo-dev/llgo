@@ -149,11 +149,15 @@ func TestGetRTCompileConfigByName(t *testing.T) {
 		}
 		group := cfg.Groups[0]
 
-		expectedDir := compiledLibraryDir(baseDir, rtlib.GetCompilerRTConfig(), testCompilerKey)
+		compilerRTConfig, err := rtlib.GetCompilerRTConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectedDir := compiledLibraryDir(baseDir, compilerRTConfig, testCompilerKey)
 		if outputDir != expectedDir {
 			t.Fatalf("output dir = %q, want %q", outputDir, expectedDir)
 		}
-		expectedFile := filepath.Join(baseDir, rtlib.GetCompilerRTConfig().String(), "lib", "builtins", "absvdi2.c")
+		expectedFile := filepath.Join(baseDir, compilerRTConfig.String(), "lib", "builtins", "absvdi2.c")
 		if !slices.Contains(group.Files, expectedFile) {
 			t.Errorf("Expected files [%s], got: %v", expectedFile, group.Files)
 		}

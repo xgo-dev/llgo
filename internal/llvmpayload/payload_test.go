@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func testManifest(t *testing.T, llvmVersion, payloadVersion string, wantMajor int) {
+func testManifest(t *testing.T, llvmVersion, payloadVersion, compilerRTVersion string, wantMajor int) {
 	t.Helper()
 	manifest, err := ForLLVMVersion(llvmVersion)
 	if err != nil {
@@ -14,6 +14,9 @@ func testManifest(t *testing.T, llvmVersion, payloadVersion string, wantMajor in
 	}
 	if manifest.LLVMMajor() != wantMajor || manifest.Version() != payloadVersion {
 		t.Fatalf("manifest identity = LLVM %d %s", manifest.LLVMMajor(), manifest.Version())
+	}
+	if manifest.CompilerRTVersion() != compilerRTVersion {
+		t.Fatalf("compiler-rt version = %q, want %q", manifest.CompilerRTVersion(), compilerRTVersion)
 	}
 	platforms := manifest.Platforms()
 	if len(platforms) != 4 {
@@ -35,11 +38,11 @@ func testManifest(t *testing.T, llvmVersion, payloadVersion string, wantMajor in
 }
 
 func TestLLVM19Manifest(t *testing.T) {
-	testManifest(t, "LLVM 19.1.7", "19.1.2_20250905-3", 19)
+	testManifest(t, "LLVM 19.1.7", "19.1.2_20250905-3", "xtensa_release_19.1.2", 19)
 }
 
 func TestLLVM21Manifest(t *testing.T) {
-	testManifest(t, "LLVM 21.1.8", "21.1.3_20260816", 21)
+	testManifest(t, "LLVM 21.1.8", "21.1.3_20260816", "xtensa_release_21.1.3_20260408", 21)
 }
 
 func TestPayloadErrors(t *testing.T) {

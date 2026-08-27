@@ -108,7 +108,10 @@ func getRTCompileConfigByName(baseDir, rtName, target, compilerKey string) (outp
 
 	switch rtName {
 	case "compiler-rt":
-		config = rtlib.GetCompilerRTConfig()
+		config, err = rtlib.GetCompilerRTConfig()
+		if err != nil {
+			return
+		}
 		sourceDir = filepath.Join(baseDir, config.String())
 		compileConfig = rtlib.GetCompilerRTCompileConfig(sourceDir, target)
 	default:

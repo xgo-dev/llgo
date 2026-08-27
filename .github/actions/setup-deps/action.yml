@@ -512,6 +512,16 @@ runs:
           19)
             llvm_version=19.1.7
             package_version=19.1.7-1
+            runtime_package_version=19.1.7-1
+            libxml2_package=libxml2-2.12.9-2
+            llvm_tools_package=
+            ;;
+          21)
+            llvm_version=21.1.8
+            package_version=21.1.8-4
+            runtime_package_version=21.1.8-1
+            libxml2_package=
+            llvm_tools_package=llvm-tools-21.1.8-4
             ;;
           *)
             echo "unsupported Windows LLVM version: $llvm_major" >&2
@@ -540,20 +550,31 @@ runs:
           "llvm-$package_version"
           "llvm-libs-$package_version"
           "lld-$package_version"
-          "libc++-$package_version"
-          "libunwind-$package_version"
-          # LLVM 19 imports libxml2-2.dll. Current MSYS2 libxml2 releases use
-          # a newer DLL ABI, so keep the matching archived runtime package.
-          "libxml2-2.12.9-2"
+          "libc++-$runtime_package_version"
+          "libunwind-$runtime_package_version"
         )
+        # LLVM 19 imports libxml2-2.dll. Current MSYS2 libxml2 releases
+        # provide libxml2-16.dll after an ABI version bump. LLVM 21 uses the
+        # current ABI and lets pacman resolve it normally.
+        if [[ -n "$libxml2_package" ]]; then
+          packages+=("$libxml2_package")
+        fi
+        if [[ -n "$llvm_tools_package" ]]; then
+          packages+=("$llvm_tools_package")
+        fi
         urls=()
         for package in "${packages[@]}"; do
           urls+=("$repo/$prefix-$package-any.pkg.tar.zst")
         done
 
-        # LLVM 19 predates the compiler-runtime dependency rename from
-        # gcc-libs to cc-libs. libc++ supplies the required runtime; satisfy
-        # only the renamed package metadata while installing the pinned set.
+        # Keep only the mutually versioned LLVM split packages on archived
+        # URLs. Their ordinary runtime dependencies have no version constraint
+        # in the package metadata, so let pacman resolve current versions
+        # instead of relying on old package files that MSYS2 eventually prunes.
+        # Archived LLVM packages retain the compiler-runtime package identity
+        # from their publication date. libc++ already supplies that runtime,
+        # so satisfy only the renamed metadata while pacman resolves current
+        # unversioned dependencies.
         assumed_cc_runtime="$prefix-cc-libs=$llvm_version"
         pacman --noconfirm -U \
           --assume-installed "$assumed_cc_runtime" \
@@ -572,18 +593,37 @@ runs:
           "$prefix-make" \
           make
 
-        for package in clang clang-libs compiler-rt llvm llvm-libs lld libc++ libunwind; do
+        for package in clang clang-libs compiler-rt llvm llvm-libs lld; do
           installed="$(pacman -Q "$prefix-$package" | awk '{print $2}')"
           if [[ "$installed" != "$package_version" ]]; then
             echo "expected $package $package_version, got $installed" >&2
             exit 1
           fi
         done
-        installed_libxml2="$(pacman -Q "$prefix-libxml2" | awk '{print $2}')"
-        if [[ "$installed_libxml2" != "2.12.9-2" ]]; then
-          echo "expected libxml2 2.12.9-2, got $installed_libxml2" >&2
-          exit 1
+        for package in libc++ libunwind; do
+          installed="$(pacman -Q "$prefix-$package" | awk '{print $2}')"
+          if [[ "$installed" != "$runtime_package_version" ]]; then
+            echo "expected $package $runtime_package_version, got $installed" >&2
+            exit 1
+          fi
+        done
+        if [[ -n "$llvm_tools_package" ]]; then
+          installed="$(pacman -Q "$prefix-llvm-tools" | awk '{print $2}')"
+          if [[ "$installed" != "$package_version" ]]; then
+            echo "expected llvm-tools $package_version, got $installed" >&2
+            exit 1
+          fi
         fi
+        if [[ -n "$libxml2_package" ]]; then
+          installed_libxml2="$(pacman -Q "$prefix-libxml2" | awk '{print $2}')"
+          if [[ "$installed_libxml2" != "2.12.9-2" ]]; then
+            echo "expected libxml2 2.12.9-2, got $installed_libxml2" >&2
+            exit 1
+          fi
+        fi
+        for package in libxml2 libuv gc libatomic_ops cjson; do
+          pacman -Q "$prefix-$package"
+        done
 
         # MSYS2 does not ship llvm.pc. Generate the versioned metadata from
         # its authoritative llvm-config in CLANG64's normal package root.

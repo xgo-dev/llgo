@@ -17,9 +17,10 @@ const DefaultMajor = 19
 var llvmMajorPattern = regexp.MustCompile(`(?:^|[^0-9])([0-9]+)\.[0-9]+`)
 
 type manifest struct {
-	llvmMajor int
-	version   string
-	sha256    map[string]string
+	llvmMajor         int
+	version           string
+	compilerRTVersion string
+	sha256            map[string]string
 }
 
 // Artifact identifies one host-specific LLVM payload archive.
@@ -32,8 +33,9 @@ type Artifact struct {
 
 var manifests = map[int]manifest{
 	19: {
-		llvmMajor: 19,
-		version:   "19.1.2_20250905-3",
+		llvmMajor:         19,
+		version:           "19.1.2_20250905-3",
+		compilerRTVersion: "xtensa_release_19.1.2",
 		sha256: map[string]string{
 			"aarch64-apple-darwin": "4f15d18c93eabdace3eab901582e528ac334d328fb8f19f153ee55b2208d101b",
 			"aarch64-linux-gnu":    "b2d8e77bbf3394c6a1f0d66e59385d78d2b49b97ebe782e612cba7f93dcb2337",
@@ -42,8 +44,9 @@ var manifests = map[int]manifest{
 		},
 	},
 	21: {
-		llvmMajor: 21,
-		version:   "21.1.3_20260816",
+		llvmMajor:         21,
+		version:           "21.1.3_20260816",
+		compilerRTVersion: "xtensa_release_21.1.3_20260408",
 		sha256: map[string]string{
 			"aarch64-apple-darwin": "a8c46104501c38a8a7359ec24bc4e9d646f9fec2bdb2b122cbbee78e060400d1",
 			"aarch64-linux-gnu":    "77f49d832e5f309ecd6baaf169c62e3b064b27f9bee5aedddb6e66c981d56f44",
@@ -86,6 +89,8 @@ type Manifest struct {
 func (m Manifest) LLVMMajor() int { return m.payload.llvmMajor }
 
 func (m Manifest) Version() string { return m.payload.version }
+
+func (m Manifest) CompilerRTVersion() string { return m.payload.compilerRTVersion }
 
 func (m Manifest) BaseURL() string {
 	return releaseBaseURL + "/" + m.payload.version
