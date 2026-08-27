@@ -2991,8 +2991,8 @@ func TestTargetMachineAndDataLayout(t *testing.T) {
 		goarch string
 		triple string
 	}{
-		{"linux", "amd64", "x86_64-unknown-linux"},
-		{"linux", "arm64", "aarch64-unknown-linux"},
+		{"linux", "amd64", "x86_64-unknown-linux-gnu"},
+		{"linux", "arm64", "aarch64-unknown-linux-gnu"},
 		{"darwin", "amd64", "x86_64-apple-macosx"},
 		{"darwin", "arm64", "arm64-apple-macosx"},
 	}

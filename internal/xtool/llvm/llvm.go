@@ -80,6 +80,11 @@ func GetTargetTripleWithGOARM(goos, goarch, goarm string) string {
 		if !armConfig.SoftFloat {
 			triple += "hf"
 		}
+	} else if llvmos == "linux" {
+		// Keep the GNU environment explicit. Recent Clang versions use it to
+		// map an unknown-vendor target to Debian's vendor-less GCC install
+		// triple (for example, aarch64-linux-gnu).
+		triple += "-gnu"
 	}
 	return triple
 }
