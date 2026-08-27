@@ -1,5 +1,3 @@
-//go:build !llgo
-
 package ssa_test
 
 import (

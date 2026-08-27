@@ -1,7 +1,4 @@
-//go:build !llgo
-// +build !llgo
-
-package abi
+package abi_test
 
 import (
 	"fmt"

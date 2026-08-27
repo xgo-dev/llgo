@@ -10,8 +10,7 @@ import (
 )
 
 // os.Executable (darwin) expects runtime to populate os.executablePath.
-// Upstream Go runtime sets this during startup; llgo sets it from argv[0],
-// which is sufficient for stdlib os tests.
+// Upstream Go runtime sets this during startup.
 //
 //go:linkname executablePath os.executablePath
 var executablePath string
@@ -33,8 +32,23 @@ func os_runtime_args() []string {
 		}
 		args = append(args, c.GoString(p))
 	}
-	if len(args) > 0 && executablePath == "" {
-		executablePath = args[0]
+	if executablePath == "" {
+		// Darwin puts the executable path in the first Apple vector entry,
+		// after argv, envv, and their terminating nil pointers.
+		n := argc + 1
+		for c.Index(c.Argv, n) != nil {
+			n++
+		}
+		if p := c.Index(c.Argv, n+1); p != nil {
+			executablePath = c.GoString(p)
+			const prefix = "executable_path="
+			if len(executablePath) >= len(prefix) && executablePath[:len(prefix)] == prefix {
+				executablePath = executablePath[len(prefix):]
+			}
+		}
+		if executablePath == "" && len(args) > 0 {
+			executablePath = args[0]
+		}
 	}
 	return args
 }

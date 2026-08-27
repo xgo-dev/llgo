@@ -1,6 +1,3 @@
-//go:build !llgo
-// +build !llgo
-
 package build
 
 import (
@@ -139,10 +136,18 @@ printf '%s\n' '-I/request/include -DREQUEST="request value"'
 	t.Setenv("PATH", dir)
 
 	commands := commandEnv{dir: dir, environ: []string{"PATH=" + dir}}
-	got, err := parseCgoDeclWithCommandEnv(commands, "#cgo linux pkg-config: request")
+	decls, err := parseCgoDeclWithCommandEnv(commands, "#cgo linux pkg-config: request")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(decls) != 1 {
+		t.Fatalf("parseCgoDeclWithCommandEnv(pkg-config) = %#v, want one declaration", decls)
+	}
+	gotDecl, err := resolveCgoPkgConfig(commands, decls[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := []cgoDecl{gotDecl}
 	want := []cgoDecl{{
 		tag:     "linux",
 		cflags:  []string{"-I/request/include", `-DREQUEST="request value"`},
@@ -151,14 +156,63 @@ printf '%s\n' '-I/request/include -DREQUEST="request value"'
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("parseCgoDeclWithCommandEnv(pkg-config) = %#v, want %#v", got, want)
 	}
+	active := decls[0]
+	active.tag = ""
+	cflags, cxxflags, ldflags, err := selectCgoFlags(commands, nil, []cgoDecl{active})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cflags, want[0].cflags) || len(cxxflags) != 0 || !reflect.DeepEqual(ldflags, want[0].ldflags) {
+		t.Fatalf("selectCgoFlags() = %v, %v, %v, want %v, [], %v", cflags, cxxflags, ldflags, want[0].cflags, want[0].ldflags)
+	}
 
 	for _, arg := range []string{"--libs", "--cflags"} {
 		t.Run("failed "+arg, func(t *testing.T) {
 			commands := commandEnv{dir: dir, environ: []string{"PATH=" + dir, "PKG_CONFIG_TEST_FAIL=" + arg}}
-			if _, err := parseCgoDeclWithCommandEnv(commands, "#cgo pkg-config: request"); err == nil || !strings.Contains(err.Error(), "pkg-config") {
-				t.Fatalf("parseCgoDeclWithCommandEnv(pkg-config) error = %v, want pkg-config failure", err)
+			decl := cgoDecl{pkgConfig: "request"}
+			if _, err := resolveCgoPkgConfig(commands, decl); err == nil || !strings.Contains(err.Error(), "pkg-config") {
+				t.Fatalf("resolveCgoPkgConfig() error = %v, want pkg-config failure", err)
+			}
+			if _, _, _, err := selectCgoFlags(commands, nil, []cgoDecl{decl}); err == nil || !strings.Contains(err.Error(), "pkg-config") {
+				t.Fatalf("selectCgoFlags() error = %v, want pkg-config failure", err)
 			}
 		})
+	}
+}
+
+func TestSelectCgoFlagsSkipsInactivePkgConfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test helper uses a shell script")
+	}
+
+	dir := t.TempDir()
+	tool := filepath.Join(dir, "pkg-config")
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	commands := commandEnv{dir: dir, environ: []string{"PATH=" + dir}}
+	decls := []cgoDecl{{tag: "llgo_missing_cgo_tag", pkgConfig: "missing"}}
+	cflags, cxxflags, ldflags, err := selectCgoFlags(commands, nil, decls)
+	if err != nil {
+		t.Fatalf("inactive pkg-config directive was resolved: %v", err)
+	}
+	if len(cflags) != 0 || len(cxxflags) != 0 || len(ldflags) != 0 {
+		t.Fatalf("inactive pkg-config flags = %v, %v, %v, want empty", cflags, cxxflags, ldflags)
+	}
+}
+
+func TestSplitCgoLinkerFlagFramework(t *testing.T) {
+	tests := []struct {
+		flag string
+		want []string
+	}{
+		{"-framework CoreFoundation", []string{"-framework", "CoreFoundation"}},
+		{"-L/request/lib", []string{"-L/request/lib"}},
+	}
+	for _, test := range tests {
+		if got := splitCgoLinkerFlag(test.flag); !reflect.DeepEqual(got, test.want) {
+			t.Errorf("splitCgoLinkerFlag(%q) = %v, want %v", test.flag, got, test.want)
+		}
 	}
 }
 

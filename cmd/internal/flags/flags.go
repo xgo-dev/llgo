@@ -53,13 +53,16 @@ var DeadcodeDrop bool
 var PthreadStackSize byteSizeFlag
 var OptLevel optlevel.Level
 
-type byteSizeFlag int64
+type byteSizeFlag struct {
+	value int64
+	set   bool
+}
 
 func (p *byteSizeFlag) String() string {
 	if p == nil {
 		return "0"
 	}
-	return strconv.FormatInt(int64(*p), 10)
+	return strconv.FormatInt(p.value, 10)
 }
 
 func (p *byteSizeFlag) Set(v string) error {
@@ -67,7 +70,8 @@ func (p *byteSizeFlag) Set(v string) error {
 	if err != nil {
 		return err
 	}
-	*p = byteSizeFlag(n)
+	p.value = n
+	p.set = true
 	return nil
 }
 
@@ -211,7 +215,7 @@ func AddOptLevelFlags(fs *flag.FlagSet) {
 
 func AddBuildFlags(fs *flag.FlagSet) {
 	DeadcodeDrop = false
-	PthreadStackSize = 0
+	PthreadStackSize = byteSizeFlag{}
 	fs.BoolVar(&ForceRebuild, "a", false, "Force rebuilding of packages that are already up-to-date")
 	fs.BoolVar(&PrintCommands, "x", false, "Print the commands")
 	if buildenv.Dev {
@@ -373,7 +377,9 @@ func UpdateConfig(conf *build.Config) error {
 	conf.Port = Port
 	conf.BaudRate = BaudRate
 	conf.ForceRebuild = ForceRebuild
-	conf.PthreadStackSize = int64(PthreadStackSize)
+	if PthreadStackSize.set {
+		conf.PthreadStackSize = PthreadStackSize.value
+	}
 	if LTO.Specified {
 		conf.LTO = LTO.Mode
 	}

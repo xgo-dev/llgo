@@ -1,6 +1,3 @@
-//go:build !llgo
-// +build !llgo
-
 package cl
 
 import (

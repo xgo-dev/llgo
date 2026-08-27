@@ -1,5 +1,3 @@
-//go:build !llgo
-
 package env
 
 import (

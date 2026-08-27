@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	gllvm "github.com/xgo-dev/llvm"
 )
@@ -63,6 +64,15 @@ func (c *context) createPackageArchiveFile(archivePath string, pkg *aPackage, ve
 	if err := os.MkdirAll(filepath.Dir(archivePath), 0o755); err != nil {
 		return err
 	}
+	// LLVM's in-process archive writer installs fatal-signal handlers while
+	// creating its temporary archive. On Linux that replaces the SIGXCPU
+	// handler BDWGC uses to resume stopped threads, so a self-hosted compiler
+	// can terminate during its next collection. Keep in-memory code generation,
+	// but let an external archiver publish those buffers when llgo is the host
+	// compiler.
+	if useExternalPackageArchiver {
+		return c.createPackageArchiveFileWithExternalArchiver(archivePath, pkg, verbose)
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(archivePath), filepath.Base(archivePath)+".tmp-*")
 	if err != nil {
 		return err
@@ -96,4 +106,32 @@ func (c *context) createPackageArchiveFile(archivePath string, pkg *aPackage, ve
 		return fmt.Errorf("publish archive %s: %w", archivePath, err)
 	}
 	return nil
+}
+
+func (c *context) createPackageArchiveFileWithExternalArchiver(archivePath string, pkg *aPackage, verbose bool) error {
+	membersDir, err := os.MkdirTemp(filepath.Dir(archivePath), filepath.Base(archivePath)+".members-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(membersDir)
+
+	objFiles := append([]string(nil), pkg.ObjFiles...)
+	for i, member := range pkg.ObjBuffers {
+		if member.name == "" {
+			return fmt.Errorf("archive member %d has an empty name", i)
+		}
+		if member.buffer.IsNil() {
+			return fmt.Errorf("archive member %d (%q) has a nil buffer", i, member.name)
+		}
+		memberDir := filepath.Join(membersDir, strconv.Itoa(i))
+		if err := os.Mkdir(memberDir, 0o755); err != nil {
+			return err
+		}
+		memberPath := filepath.Join(memberDir, filepath.Base(member.name))
+		if err := os.WriteFile(memberPath, member.buffer.Bytes(), 0o644); err != nil {
+			return err
+		}
+		objFiles = append(objFiles, memberPath)
+	}
+	return c.createArchiveFile(archivePath, objFiles, verbose)
 }

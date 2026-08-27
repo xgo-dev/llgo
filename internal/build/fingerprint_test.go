@@ -1,5 +1,3 @@
-//go:build !llgo
-
 /*
  * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.
  *
@@ -151,6 +149,26 @@ func TestManifestBuilder_DisableBoundsChecks(t *testing.T) {
 	}
 	if data.Common == nil || !data.Common.DisableBoundsChecks {
 		t.Fatalf("decoded common section = %#v, want disabled bounds checks", data.Common)
+	}
+}
+
+func TestManifestBuilder_PthreadStackSize(t *testing.T) {
+	platformDefault := newManifestBuilder()
+	largeStack := newManifestBuilder()
+	largeStack.common.PthreadStackSize = 32 << 20
+
+	if largeStack.common.empty() {
+		t.Fatal("pthread stack size did not make the common section non-empty")
+	}
+	if platformDefault.Fingerprint() == largeStack.Fingerprint() {
+		t.Fatal("pthread stack size did not change the build fingerprint")
+	}
+	data, err := decodeManifest(largeStack.Build())
+	if err != nil {
+		t.Fatalf("decodeManifest: %v", err)
+	}
+	if data.Common == nil || data.Common.PthreadStackSize != 32<<20 {
+		t.Fatalf("decoded common section = %#v, want pthread stack size %d", data.Common, 32<<20)
 	}
 }
 

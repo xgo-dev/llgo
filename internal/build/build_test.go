@@ -1,6 +1,3 @@
-//go:build !llgo
-// +build !llgo
-
 package build
 
 import (
@@ -155,6 +152,16 @@ func TestNewDefaultConfDoesNotCreateBinDir(t *testing.T) {
 	}
 	if _, err := os.Stat(binDir); !os.IsNotExist(err) {
 		t.Fatalf("NewDefaultConf created bin directory: %v", err)
+	}
+}
+
+func TestNewDefaultConfPthreadStackSize(t *testing.T) {
+	t.Setenv("GOBIN", t.TempDir())
+	if got := NewDefaultConf(ModeTest).PthreadStackSize; got != defaultTestPthreadStackSize {
+		t.Fatalf("test PthreadStackSize = %d, want %d", got, defaultTestPthreadStackSize)
+	}
+	if got := NewDefaultConf(ModeBuild).PthreadStackSize; got != 0 {
+		t.Fatalf("build PthreadStackSize = %d, want 0", got)
 	}
 }
 

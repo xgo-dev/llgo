@@ -1,4 +1,4 @@
-//go:build !llgo && !windows
+//go:build !windows
 
 package build
 

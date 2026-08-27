@@ -1,6 +1,3 @@
-//go:build !llgo
-// +build !llgo
-
 /*
  * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
  *
@@ -23,6 +20,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -82,6 +80,70 @@ func TestNormalizeToArchiveUsesMemoryBuffer(t *testing.T) {
 			t.Errorf("archive does not contain member %q", name)
 		}
 	}
+}
+
+func TestCreatePackageArchiveFileWithExternalArchiver(t *testing.T) {
+	llvmCtx := gllvm.NewContext()
+	defer llvmCtx.Dispose()
+	mod := llvmCtx.NewModule("external-archive")
+	defer mod.Dispose()
+	mod.SetTarget(gllvm.DefaultTargetTriple())
+	gllvm.AddFunction(mod, "external_archive_symbol", gllvm.FunctionType(llvmCtx.Int32Type(), nil, false))
+
+	buffer := gllvm.WriteBitcodeToMemoryBuffer(mod)
+	defer buffer.Dispose()
+	pkg := &aPackage{ObjBuffers: []packageArchiveBuffer{{name: "memory-member.bc", buffer: buffer}}}
+	ctx := &context{
+		buildConf: &Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH},
+		commands:  commandEnv{environ: os.Environ()},
+	}
+	archivePath := filepath.Join(t.TempDir(), "external.a")
+	if err := ctx.createPackageArchiveFileWithExternalArchiver(archivePath, pkg, false); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(data, []byte("!<arch>\n")) {
+		t.Fatalf("archive has invalid magic: %q", data[:8])
+	}
+	if !bytes.Contains(data, []byte("memory-member.bc")) {
+		t.Fatal("archive does not contain memory-member.bc")
+	}
+
+	t.Run("invalid members", func(t *testing.T) {
+		for _, member := range []packageArchiveBuffer{
+			{buffer: buffer},
+			{name: "nil.bc"},
+			{name: ".", buffer: buffer},
+		} {
+			pkg := &aPackage{ObjBuffers: []packageArchiveBuffer{member}}
+			if err := ctx.createPackageArchiveFileWithExternalArchiver(filepath.Join(t.TempDir(), "invalid.a"), pkg, false); err == nil {
+				t.Fatalf("createPackageArchiveFileWithExternalArchiver succeeded for member %+v", member)
+			}
+		}
+	})
+
+	t.Run("invalid archive parent", func(t *testing.T) {
+		parent := filepath.Join(t.TempDir(), "file")
+		if err := os.WriteFile(parent, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := ctx.createPackageArchiveFileWithExternalArchiver(filepath.Join(parent, "invalid.a"), pkg, false); err == nil {
+			t.Fatal("createPackageArchiveFileWithExternalArchiver succeeded below a regular file")
+		}
+	})
+
+	t.Run("missing file member", func(t *testing.T) {
+		pkg := &aPackage{
+			ObjFiles:   []string{filepath.Join(t.TempDir(), "missing.o")},
+			ObjBuffers: []packageArchiveBuffer{{name: "memory-member.bc", buffer: buffer}},
+		}
+		if err := ctx.createPackageArchiveFileWithExternalArchiver(filepath.Join(t.TempDir(), "invalid.a"), pkg, false); err == nil {
+			t.Fatal("createPackageArchiveFileWithExternalArchiver succeeded with a missing file member")
+		}
+	})
 }
 
 func TestPackageArchiveEdgeCases(t *testing.T) {

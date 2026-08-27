@@ -131,6 +131,7 @@ type commonSection struct {
 	DisableBoundsChecks     bool         `yaml:"DISABLE_BOUNDS_CHECKS,omitempty"`
 	SaturatingFloatToUint32 bool         `yaml:"SATURATING_FLOAT_TO_UINT32,omitempty"`
 	LocalContext            bool         `yaml:"LOCAL_CONTEXT,omitempty"`
+	PthreadStackSize        int64        `yaml:"PTHREAD_STACK_SIZE,omitempty"`
 	CC                      string       `yaml:"CC,omitempty"`
 	CCFlags                 []string     `yaml:"CCFLAGS,omitempty"`
 	CFlags                  []string     `yaml:"CFLAGS,omitempty"`
@@ -143,7 +144,7 @@ func (s *commonSection) empty() bool {
 	return s.AbiMode == "" && len(s.BuildTags) == 0 && s.Target == "" && s.TargetABI == "" &&
 		s.PlatformABI == "" && s.ObjectFormat == "" && s.DriverFlavor == "" && s.LinkerFlavor == "" &&
 		!s.GoGlobalDCE && !s.EnableLTOPlugin && !s.EmitDWARF && s.PCLNMode == "" &&
-		!s.DisableBoundsChecks && !s.SaturatingFloatToUint32 && !s.LocalContext &&
+		!s.DisableBoundsChecks && !s.SaturatingFloatToUint32 && !s.LocalContext && s.PthreadStackSize == 0 &&
 		s.CC == "" && len(s.CCFlags) == 0 && len(s.CFlags) == 0 && len(s.LDFlags) == 0 &&
 		s.Linker == "" && len(s.ExtraFiles) == 0
 }

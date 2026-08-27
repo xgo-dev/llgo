@@ -15,6 +15,71 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  self-host:
+    name: self-host (${{ matrix.os }}, LLVM ${{ matrix.llvm }}, Go ${{ matrix.go }})
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - ubuntu-latest
+        llvm: [19]
+        go: ["1.26.5"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        uses: ./.github/actions/setup-deps
+        with:
+          llvm-version: ${{ matrix.llvm }}
+
+      - name: Set up Go
+        uses: ./.github/actions/setup-go
+        with:
+          go-version: ${{ matrix.go }}
+
+      - name: Set LLGO_ROOT
+        run: echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+
+      - name: Build stage 1 with Go
+        run: |
+          set -euo pipefail
+
+          stage1_dir="$RUNNER_TEMP/llgo-stage1"
+          mkdir -p "$stage1_dir"
+          go build -o "$stage1_dir/llgo" ./cmd/llgo
+          "$stage1_dir/llgo" version
+
+      - name: Build stage 2 with LLGo
+        run: |
+          set -euo pipefail
+
+          stage1="$RUNNER_TEMP/llgo-stage1/llgo"
+          stage2_dir="$RUNNER_TEMP/llgo-stage2"
+          mkdir -p "$stage2_dir"
+          "$stage1" build -o "$stage2_dir/llgo" ./cmd/llgo
+          "$stage2_dir/llgo" version
+          file "$stage2_dir/llgo"
+          echo "$stage2_dir" >> "$GITHUB_PATH"
+
+      - name: Test with stage 2
+        run: |
+          set -euo pipefail
+
+          test "$(command -v llgo)" = "$RUNNER_TEMP/llgo-stage2/llgo"
+          LLGO_BUILD_CACHE=off llgo test -timeout=10m ./test/std/io/ioutil
+          LLGO_BUILD_CACHE=off llgo test -timeout=10m -run '^TestRuntimeGMPLinks$' ./test/llgoext
+
+      - name: Run demos with stage 2
+        run: |
+          set -euo pipefail
+
+          test "$(command -v llgo)" = "$RUNNER_TEMP/llgo-stage2/llgo"
+          (cd _demo/go && LLGO_BUILD_CACHE=off llgo run ./defer)
+          (cd _demo/c && LLGO_BUILD_CACHE=off llgo run ./hello)
+
   llgo:
     name: llgo (${{ matrix.lane }}, ${{ matrix.os }}, LLVM ${{ matrix.llvm }}, Go ${{ matrix.go }})
     continue-on-error: ${{ matrix.lane == 'compatibility' }}

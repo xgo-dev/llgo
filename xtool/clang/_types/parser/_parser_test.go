@@ -1,6 +1,3 @@
-//go:build !llgo
-// +build !llgo
-
 /*
  * Copyright (c) 2022 The XGo Authors (xgo.dev). All rights reserved.
  *

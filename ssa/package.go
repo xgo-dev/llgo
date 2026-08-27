@@ -476,8 +476,8 @@ type closureEnvDirectiveKey struct {
 	pos  token.Pos
 }
 
-// SetClosureEnvDirective records that a source function declaration has the
-// llgo:env directive. name and pos identify the source declaration rather
+// SetClosureEnvDirective records that a source function declaration has an
+// LLGo closure-environment directive. name and pos identify the declaration
 // than its resolved linker symbol, so aliases retain independent ABI metadata.
 func (p Program) SetClosureEnvDirective(fset *token.FileSet, name string, pos token.Pos) {
 	key := closureEnvDirectiveKey{fset: fset, name: name, pos: pos}

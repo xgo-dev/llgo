@@ -81,6 +81,8 @@ const (
 	ModeGen
 )
 
+const defaultTestPthreadStackSize = 32 << 20
+
 type BuildMode string
 
 const (
@@ -381,6 +383,9 @@ func NewDefaultConf(mode Mode) *Config {
 		AbiMode:            cabi.ModeAllFunc,
 		OmitDWARFByDefault: mode != ModeGen,
 		PCLNMode:           PCLNEmbedded,
+	}
+	if mode == ModeTest {
+		conf.PthreadStackSize = defaultTestPthreadStackSize
 	}
 	return conf
 }

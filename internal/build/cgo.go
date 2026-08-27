@@ -36,10 +36,11 @@ import (
 )
 
 type cgoDecl struct {
-	tag      string
-	cflags   []string
-	cxxflags []string
-	ldflags  []string
+	tag       string
+	pkgConfig string
+	cflags    []string
+	cxxflags  []string
+	ldflags   []string
 }
 
 type cgoSrcFile struct {
@@ -77,28 +78,9 @@ func buildCgo(ctx *context, pkg *aPackage, files []*ast.File, externs []string, 
 	if err != nil {
 		return
 	}
-	tagUsed := make(map[string]bool)
-	for _, cdecl := range cdecls {
-		if cdecl.tag != "" {
-			tagUsed[cdecl.tag] = false
-		}
-	}
-	buildtags.CheckTags(ctx.conf.BuildFlags, tagUsed)
-	cflags := []string{}
-	cxxflags := []string{}
-	ldflags := []string{}
-	for _, cdecl := range cdecls {
-		if cdecl.tag == "" || tagUsed[cdecl.tag] {
-			if len(cdecl.cflags) > 0 {
-				cflags = append(cflags, cdecl.cflags...)
-			}
-			if len(cdecl.cxxflags) > 0 {
-				cxxflags = append(cxxflags, cdecl.cxxflags...)
-			}
-			if len(cdecl.ldflags) > 0 {
-				ldflags = append(ldflags, cdecl.ldflags...)
-			}
-		}
+	cflags, cxxflags, ldflags, err := selectCgoFlags(ctx.commands, ctx.conf.BuildFlags, cdecls)
+	if err != nil {
+		return nil, nil, err
 	}
 	incDirs := make(map[string]none)
 	for _, preamble := range preambles {
@@ -138,9 +120,19 @@ func buildCgo(ctx *context, pkg *aPackage, files []*ast.File, externs []string, 
 		}, verbose)
 	}
 	for _, ldflag := range ldflags {
-		cgoLdflags = append(cgoLdflags, safesplit.SplitPkgConfigFlags(ldflag)...)
+		cgoLdflags = append(cgoLdflags, splitCgoLinkerFlag(ldflag)...)
 	}
 	return
+}
+
+func splitCgoLinkerFlag(flag string) []string {
+	if framework, ok := strings.CutPrefix(flag, "-framework "); ok {
+		framework = strings.TrimSpace(framework)
+		if framework != "" {
+			return []string{"-framework", framework}
+		}
+	}
+	return safesplit.SplitPkgConfigFlags(flag)
 }
 
 func collectCgoSymbols(externs []string) map[string]string {
@@ -475,24 +467,9 @@ func parseCgoDeclWithCommandEnv(commands commandEnv, line string) (cgoDecls []cg
 
 	switch flag {
 	case "pkg-config":
-		libsCmd := exec.Command("pkg-config", "--libs", arg)
-		commands.configure(libsCmd)
-		ldflags, e := libsCmd.Output()
-		if e != nil {
-			err = fmt.Errorf("pkg-config: %v", e)
-			return
-		}
-		flagsCmd := exec.Command("pkg-config", "--cflags", arg)
-		commands.configure(flagsCmd)
-		cflags, e := flagsCmd.Output()
-		if e != nil {
-			err = fmt.Errorf("pkg-config: %v", e)
-			return
-		}
 		cgoDecls = append(cgoDecls, cgoDecl{
-			tag:     tag,
-			cflags:  safesplit.SplitPkgConfigFlags(string(cflags)),
-			ldflags: safesplit.SplitPkgConfigFlags(string(ldflags)),
+			tag:       tag,
+			pkgConfig: arg,
 		})
 	case "CPPFLAGS", "CFLAGS":
 		cgoDecls = append(cgoDecls, cgoDecl{
@@ -513,4 +490,51 @@ func parseCgoDeclWithCommandEnv(commands commandEnv, line string) (cgoDecls []cg
 		err = fmt.Errorf("unsupported cgo flag type: %s", flag)
 	}
 	return
+}
+
+// selectCgoFlags filters conditional directives before resolving pkg-config.
+// Running pkg-config while parsing would make an inactive directive, such as
+// a Windows-only LLVM dependency on Darwin, fail the whole build.
+func selectCgoFlags(commands commandEnv, buildFlags []string, decls []cgoDecl) (cflags, cxxflags, ldflags []string, err error) {
+	tagUsed := make(map[string]bool)
+	for _, decl := range decls {
+		if decl.tag != "" {
+			tagUsed[decl.tag] = false
+		}
+	}
+	buildtags.CheckTags(buildFlags, tagUsed)
+	for _, decl := range decls {
+		if decl.tag != "" && !tagUsed[decl.tag] {
+			continue
+		}
+		if decl.pkgConfig != "" {
+			decl, err = resolveCgoPkgConfig(commands, decl)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+		}
+		cflags = append(cflags, decl.cflags...)
+		cxxflags = append(cxxflags, decl.cxxflags...)
+		ldflags = append(ldflags, decl.ldflags...)
+	}
+	return
+}
+
+func resolveCgoPkgConfig(commands commandEnv, decl cgoDecl) (cgoDecl, error) {
+	libsCmd := exec.Command("pkg-config", "--libs", decl.pkgConfig)
+	commands.configure(libsCmd)
+	ldflags, err := libsCmd.Output()
+	if err != nil {
+		return cgoDecl{}, fmt.Errorf("pkg-config: %v", err)
+	}
+	flagsCmd := exec.Command("pkg-config", "--cflags", decl.pkgConfig)
+	commands.configure(flagsCmd)
+	cflags, err := flagsCmd.Output()
+	if err != nil {
+		return cgoDecl{}, fmt.Errorf("pkg-config: %v", err)
+	}
+	decl.pkgConfig = ""
+	decl.cflags = append(decl.cflags, safesplit.SplitPkgConfigFlags(string(cflags))...)
+	decl.ldflags = append(decl.ldflags, safesplit.SplitPkgConfigFlags(string(ldflags))...)
+	return decl, nil
 }

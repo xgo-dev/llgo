@@ -120,6 +120,12 @@ func TestExecutable(t *testing.T) {
 	if exe == "" {
 		t.Error("Executable() returned empty string")
 	}
+	if !filepath.IsAbs(exe) {
+		t.Errorf("Executable() returned non-absolute path %q", exe)
+	}
+	if _, err := os.Stat(exe); err != nil {
+		t.Errorf("Executable() returned unusable path %q: %v", exe, err)
+	}
 }
 
 func TestExpand(t *testing.T) {

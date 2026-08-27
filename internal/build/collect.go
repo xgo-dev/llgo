@@ -141,6 +141,7 @@ func (c *context) collectCommonInputs(m *manifestBuilder) {
 	m.common.DisableBoundsChecks = c.buildConf.DisableBoundsChecks
 	m.common.SaturatingFloatToUint32 = c.buildConf.SaturatingFloatToUint32
 	m.common.LocalContext = c.prog != nil && c.prog.NeedsLocalContext()
+	m.common.PthreadStackSize = c.buildConf.PthreadStackSize
 
 	// Compiler configuration
 	if c.crossCompile.CC != "" {

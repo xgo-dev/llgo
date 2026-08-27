@@ -817,6 +817,8 @@ func filterRunOutput(in []byte) []byte {
 			continue
 		case bytes.HasPrefix(trim, []byte("ld: warning: ")):
 			continue
+		case isUnrecognizedTargetFeatureWarning(trim):
+			continue
 		}
 		out.Write(p)
 	}
@@ -824,6 +826,12 @@ func filterRunOutput(in []byte) []byte {
 		return nil
 	}
 	return out.Bytes()
+}
+
+func isUnrecognizedTargetFeatureWarning(line []byte) bool {
+	const suffix = "' is not a recognized feature for this target (ignoring feature)"
+	return len(line) > len(suffix)+2 && line[0] == '\'' &&
+		(line[1] == '+' || line[1] == '-') && bytes.HasSuffix(line, []byte(suffix))
 }
 
 func CompileIREx(t *testing.T, src any, fname string, dbg bool, configure func(llssa.Program)) string {
