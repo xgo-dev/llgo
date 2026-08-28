@@ -191,7 +191,7 @@ jobs:
           - ubuntu-latest
           - windows-2022
         llvm: [19]
-        go: ["1.25.0", "1.26.7"]
+        go: ["1.25.0", "1.26.7", "1.27.0"]
         # In-command package parallelism lets Ubuntu use two shards while
         # retaining headroom for the serial std build-mode checks.
         shard: ["0", "1"]
@@ -199,6 +199,8 @@ jobs:
           - go: "1.25.0"
             lane: compatibility
           - go: "1.26.7"
+            lane: primary
+          - go: "1.27.0"
             lane: primary
         exclude:
           # The full demo lane above exercises Go 1.25 user-project/runtime
@@ -226,8 +228,13 @@ jobs:
       - name: Install further optional dependencies for demos
         uses: ./.github/actions/setup-demo-deps
 
-      - name: Set up Go for build
+      - name: Set up Go for build and testing
         uses: ./.github/actions/setup-go
+        with:
+          # Build with the newest toolchain so the resulting llgo remains
+          # runnable against older Go standard libraries in compatibility
+          # jobs, while Go 1.27 is built and run with the same toolchain.
+          go-version: "1.27.0"
 
       - name: Install
         shell: bash
@@ -322,6 +329,18 @@ jobs:
           - os: windows-2022
             llvm: 19
             go: "1.26.7"
+            lane: primary
+          - os: ubuntu-latest
+            llvm: 19
+            go: "1.27.0"
+            lane: primary
+          - os: macos-latest
+            llvm: 19
+            go: "1.27.0"
+            lane: primary
+          - os: windows-2022
+            llvm: 19
+            go: "1.27.0"
             lane: primary
     runs-on: ${{matrix.os}}
     steps:
@@ -427,7 +446,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go: ["1.25.0", "1.26.7"]
+        go: ["1.25.0", "1.26.7", "1.27.0"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
