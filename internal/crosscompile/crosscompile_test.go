@@ -4,6 +4,7 @@
 package crosscompile
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,10 +14,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/crosscompile/compile"
 	"github.com/xgo-dev/llgo/internal/llvmpayload"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/xtool/llvm"
+	gllvm "github.com/xgo-dev/llvm"
 )
 
 const (
@@ -38,8 +41,8 @@ func TestESPClangHostDownload(t *testing.T) {
 	}{
 		{"darwin", "arm64", "aarch64-apple-darwin", payload.Version()},
 		{"linux", "amd64", "x86_64-linux-gnu", payload.Version()},
-		{"windows", "amd64", espClangWindowsPlatform, espClangWindowsVersion},
-		{"windows", "arm64", espClangWindowsPlatform, espClangWindowsVersion},
+		{"windows", "amd64", "x86_64-w64-mingw32", "21.1.3_20260408"},
+		{"windows", "arm64", "x86_64-w64-mingw32", "21.1.3_20260408"},
 	}
 	for _, test := range tests {
 		platform := getESPClangPlatform(test.goos, test.goarch)
@@ -47,14 +50,47 @@ func TestESPClangHostDownload(t *testing.T) {
 			t.Errorf("getESPClangPlatform(%q, %q) = %q, want %q", test.goos, test.goarch, platform, test.wantPlatform)
 			continue
 		}
-		artifact, err := espClangArtifact(payload, platform)
+		artifact, err := payload.Artifact(platform)
 		if err != nil {
-			t.Errorf("espClangArtifact(%q) error = %v", platform, err)
+			t.Errorf("Artifact(%q) error = %v", platform, err)
 			continue
 		}
 		if artifact.Version != test.wantVersion {
-			t.Errorf("espClangArtifact(%q) version = %q, want %q", platform, artifact.Version, test.wantVersion)
+			t.Errorf("Artifact(%q) version = %q, want %q", platform, artifact.Version, test.wantVersion)
 		}
+	}
+}
+
+func TestESPClangArtifactError(t *testing.T) {
+	if _, err := llvmpayload.ForLLVMVersion(gllvm.Version); err != nil {
+		t.Skipf("linked LLVM is not the release payload: %v", err)
+	}
+
+	t.Setenv("LLGO_ROOT", t.TempDir())
+	originalCacheRoot := cacheRoot
+	originalResolver := resolveESPClangArtifact
+	cacheRoot = func() string { return t.TempDir() }
+	want := errors.New("artifact unavailable")
+	resolveESPClangArtifact = func(llvmpayload.Manifest, string) (llvmpayload.Artifact, error) {
+		return llvmpayload.Artifact{}, want
+	}
+	t.Cleanup(func() {
+		cacheRoot = originalCacheRoot
+		resolveESPClangArtifact = originalResolver
+	})
+
+	if _, err := getESPClangRoot(true); !errors.Is(err, want) {
+		t.Fatalf("getESPClangRoot error = %v, want %v", err, want)
+	}
+}
+
+func TestCompileWithConfigRejectsFileAsOutputDir(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "output")
+	if err := os.WriteFile(output, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := compileWithConfig(compile.CompileConfig{}, output, compile.CompileOptions{}); err == nil || !strings.Contains(err.Error(), "create compiled library cache") {
+		t.Fatalf("compileWithConfig error = %v", err)
 	}
 }
 

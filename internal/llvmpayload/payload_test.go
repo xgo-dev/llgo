@@ -19,15 +19,18 @@ func testManifest(t *testing.T, llvmVersion, payloadVersion, compilerRTVersion s
 		t.Fatalf("compiler-rt version = %q, want %q", manifest.CompilerRTVersion(), compilerRTVersion)
 	}
 	platforms := manifest.Platforms()
-	if len(platforms) != 4 {
-		t.Fatalf("platform count = %d, want 4: %v", len(platforms), platforms)
+	if len(platforms) != 5 {
+		t.Fatalf("platform count = %d, want 5: %v", len(platforms), platforms)
 	}
 	for _, platform := range platforms {
 		artifact, err := manifest.Artifact(platform)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.HasSuffix(artifact.URL, "clang-esp-"+manifest.Version()+"-"+platform+".tar.xz") {
+		if artifact.Platform != platform {
+			t.Errorf("artifact platform = %q, want %q", artifact.Platform, platform)
+		}
+		if !strings.HasSuffix(artifact.URL, "clang-esp-"+artifact.Version+"-"+platform+".tar.xz") {
 			t.Errorf("artifact URL = %q", artifact.URL)
 		}
 		checksum, err := hex.DecodeString(artifact.SHA256)
@@ -46,6 +49,19 @@ func TestLLVM21Manifest(t *testing.T) {
 	}
 	if manifest.LLVMMajor() != 21 || manifest.Version() != "21.1.3_20260816" {
 		t.Fatalf("default manifest identity = LLVM %d %s", manifest.LLVMMajor(), manifest.Version())
+	}
+	windows, err := manifest.Artifact("x86_64-w64-mingw32")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if windows.Version != "21.1.3_20260408" {
+		t.Fatalf("Windows artifact version = %q", windows.Version)
+	}
+	if windows.URL != "https://github.com/espressif/llvm-project/releases/download/esp-21.1.3_20260408/clang-esp-21.1.3_20260408-x86_64-w64-mingw32.tar.xz" {
+		t.Fatalf("Windows artifact URL = %q", windows.URL)
+	}
+	if windows.SHA256 != "415566ace6f47a9abc302b4ba79776d27668fd3f4e9c0d26861ec4f970323618" {
+		t.Fatalf("Windows artifact checksum = %q", windows.SHA256)
 	}
 }
 
@@ -76,7 +92,8 @@ func TestPlatformSuffix(t *testing.T) {
 		{goos: "linux", goarch: "amd64", want: "x86_64-linux-gnu", ok: true},
 		{goos: "linux", goarch: "arm64", want: "aarch64-linux-gnu", ok: true},
 		{goos: "linux", goarch: "arm", ok: false},
-		{goos: "windows", goarch: "amd64", ok: false},
+		{goos: "windows", goarch: "amd64", want: "x86_64-w64-mingw32", ok: true},
+		{goos: "windows", goarch: "arm64", want: "x86_64-w64-mingw32", ok: true},
 	}
 	for _, test := range tests {
 		got, ok := PlatformSuffix(test.goos, test.goarch)

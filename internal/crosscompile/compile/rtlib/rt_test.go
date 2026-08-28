@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	gllvm "github.com/xgo-dev/llvm"
 )
 
 func TestGetCompilerRTConfig_LibConfig(t *testing.T) {
@@ -32,6 +34,18 @@ func TestGetCompilerRTConfig_LibConfig(t *testing.T) {
 	}
 	if _, err := compilerRTConfigForLLVMVersion("19.1.7"); err == nil {
 		t.Fatal("unsupported LLVM version accepted")
+	}
+
+	defaultConfig, err := GetCompilerRTConfig()
+	if strings.HasPrefix(gllvm.Version, "21.") {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if defaultConfig.Version != want {
+			t.Errorf("default compiler-rt version = %q, want %q", defaultConfig.Version, want)
+		}
+	} else if err == nil {
+		t.Fatalf("unsupported linked LLVM %s unexpectedly resolved to %q", gllvm.Version, defaultConfig.Version)
 	}
 }
 

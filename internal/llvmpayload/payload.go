@@ -9,7 +9,12 @@ import (
 	"strconv"
 )
 
-const releaseBaseURL = "https://github.com/goplus/espressif-llvm-project-prebuilt/releases/download"
+const (
+	releaseBaseURL           = "https://github.com/goplus/espressif-llvm-project-prebuilt/releases/download"
+	espLLVM21WindowsBaseURL  = "https://github.com/espressif/llvm-project/releases/download/esp-21.1.3_20260408"
+	espLLVM21WindowsVersion  = "21.1.3_20260408"
+	espLLVM21WindowsPlatform = "x86_64-w64-mingw32"
+)
 
 // DefaultMajor is the LLVM payload bundled into LLGo release archives.
 const DefaultMajor = 21
@@ -21,6 +26,13 @@ type manifest struct {
 	version           string
 	compilerRTVersion string
 	sha256            map[string]string
+	artifactOverrides map[string]artifactOverride
+}
+
+type artifactOverride struct {
+	version string
+	baseURL string
+	sha256  string
 }
 
 // Artifact identifies one host-specific LLVM payload archive.
@@ -41,6 +53,13 @@ var manifests = map[int]manifest{
 			"aarch64-linux-gnu":    "77f49d832e5f309ecd6baaf169c62e3b064b27f9bee5aedddb6e66c981d56f44",
 			"x86_64-apple-darwin":  "21159a4edb8948d83e1f73dfef394bca6941d0c4035da02f8c90ac59799893fa",
 			"x86_64-linux-gnu":     "582b787057c9e36e7d4db20aaed7bbba74c7ad0481489f034f09476703befbd5",
+		},
+		artifactOverrides: map[string]artifactOverride{
+			espLLVM21WindowsPlatform: {
+				version: espLLVM21WindowsVersion,
+				baseURL: espLLVM21WindowsBaseURL,
+				sha256:  "415566ace6f47a9abc302b4ba79776d27668fd3f4e9c0d26861ec4f970323618",
+			},
 		},
 	},
 }
@@ -86,8 +105,11 @@ func (m Manifest) BaseURL() string {
 }
 
 func (m Manifest) Platforms() []string {
-	platforms := make([]string, 0, len(m.payload.sha256))
+	platforms := make([]string, 0, len(m.payload.sha256)+len(m.payload.artifactOverrides))
 	for platform := range m.payload.sha256 {
+		platforms = append(platforms, platform)
+	}
+	for platform := range m.payload.artifactOverrides {
 		platforms = append(platforms, platform)
 	}
 	sort.Strings(platforms)
@@ -95,6 +117,15 @@ func (m Manifest) Platforms() []string {
 }
 
 func (m Manifest) Artifact(platform string) (Artifact, error) {
+	if override, ok := m.payload.artifactOverrides[platform]; ok {
+		filename := fmt.Sprintf("clang-esp-%s-%s.tar.xz", override.version, platform)
+		return Artifact{
+			Platform: platform,
+			Version:  override.version,
+			URL:      override.baseURL + "/" + filename,
+			SHA256:   override.sha256,
+		}, nil
+	}
 	checksum, ok := m.payload.sha256[platform]
 	if !ok {
 		return Artifact{}, fmt.Errorf("LLVM %d payload %s is unavailable for %s", m.LLVMMajor(), m.Version(), platform)
@@ -119,6 +150,10 @@ func PlatformSuffix(goos, goarch string) (string, bool) {
 		return "x86_64-linux-gnu", true
 	case "linux/arm64":
 		return "aarch64-linux-gnu", true
+	case "windows/amd64", "windows/arm64":
+		// Espressif publishes an x86-64 Windows host toolchain. Windows on
+		// ARM64 runs it through the system's x64 emulation layer.
+		return espLLVM21WindowsPlatform, true
 	default:
 		return "", false
 	}

@@ -984,6 +984,12 @@ func TestExtractTarXzError(t *testing.T) {
 	}
 }
 
+func TestFileSHA256MissingFile(t *testing.T) {
+	if _, err := fileSHA256(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("fileSHA256 accepted a missing file")
+	}
+}
+
 func TestESPClangDownloadLicenseFailure(t *testing.T) {
 	archivePath := createTestTarXz(t, map[string]string{
 		"esp-clang/bin/clang": "fake esp clang binary",

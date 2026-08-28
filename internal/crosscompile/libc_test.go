@@ -4,7 +4,9 @@ package crosscompile
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -43,6 +45,34 @@ func TestCompilerVersionCacheKey(t *testing.T) {
 	}
 	if a, b := compiledLibraryCacheKey(first, []string{"-Oz", "-flto=thin"}), compiledLibraryCacheKey(first, []string{"-Oz"}); a == b {
 		t.Fatalf("compiled library cache key ignores code-generation flags: %q", a)
+	}
+	if _, err := compilerVersionCacheKey("not a compiler version", nil); err == nil {
+		t.Fatal("compilerVersionCacheKey accepted output without a version")
+	}
+}
+
+func TestCompilerCacheKeyErrors(t *testing.T) {
+	if _, err := compilerCacheKey(filepath.Join(t.TempDir(), "missing-clang")); err == nil {
+		t.Fatal("compilerCacheKey accepted a missing compiler")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("test helper uses a shell script")
+	}
+
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	clang := filepath.Join(binDir, "clang")
+	if err := os.WriteFile(clang, []byte("#!/bin/sh\nprintf '%s\\n' 'clang version 21.1.3'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "LLGO-LLVM-MANIFEST.txt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := compilerCacheKey(clang); err == nil || !strings.Contains(err.Error(), "read compiler payload contract") {
+		t.Fatalf("compilerCacheKey unreadable manifest error = %v", err)
 	}
 }
 

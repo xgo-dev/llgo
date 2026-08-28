@@ -187,29 +187,10 @@ var (
 	wasiMacosSubdir = "wasi-sdk-25.0-x86_64-macos"
 )
 
-var (
-	espClangWindowsBaseUrl = "https://github.com/espressif/llvm-project/releases/download/esp-19.1.2_20250312"
-	espClangWindowsVersion = "19.1.2_20250312"
-)
-
-const espClangWindowsPlatform = "x86_64-w64-mingw32"
-
 // cacheRoot can be overridden for testing
 var cacheRoot = env.LLGoCacheDir
 
-var resolveESPClangArtifact = espClangArtifact
-
-func espClangArtifact(payload llvmpayload.Manifest, platform string) (llvmpayload.Artifact, error) {
-	if platform == espClangWindowsPlatform {
-		filename := fmt.Sprintf("clang-esp-%s-%s.tar.xz", espClangWindowsVersion, platform)
-		return llvmpayload.Artifact{
-			Platform: platform,
-			Version:  espClangWindowsVersion,
-			URL:      espClangWindowsBaseUrl + "/" + filename,
-		}, nil
-	}
-	return payload.Artifact(platform)
-}
+var resolveESPClangArtifact = llvmpayload.Manifest.Artifact
 
 func cacheDir() string {
 	return filepath.Join(cacheRoot(), "crosscompile")
@@ -306,11 +287,6 @@ func getESPClangRoot(forceEspClang bool) (clangRoot string, err error) {
 
 // getESPClangPlatform returns the platform suffix for ESP Clang downloads
 func getESPClangPlatform(goos, goarch string) string {
-	if goos == "windows" && (goarch == "amd64" || goarch == "arm64") {
-		// Espressif publishes an x86-64 Windows host toolchain. Windows on
-		// ARM64 runs it through the system's x64 emulation layer.
-		return espClangWindowsPlatform
-	}
 	platform, _ := llvmpayload.PlatformSuffix(goos, goarch)
 	return platform
 }
