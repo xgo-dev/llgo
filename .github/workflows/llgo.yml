@@ -241,8 +241,8 @@ jobs:
         if: ${{ matrix.os == 'windows-2022' && matrix.windows_abi == 'mingw' && matrix.windows_arch == 'amd64' }}
         shell: msys2 {0}
         env:
-          MSYS2_LLDB_PACKAGE_VERSION: "19.1.7-1"
-          MSYS2_PYTHON_PACKAGE_VERSION: "3.12.8-2"
+          MSYS2_LLDB_PACKAGE_VERSION: "21.1.8-3"
+          MSYS2_PYTHON_PACKAGE_VERSION: "3.14.6-2"
         run: |
           set -euo pipefail
           repo=https://repo.msys2.org/mingw/clang64
