@@ -69,6 +69,9 @@ func TestPayloadErrors(t *testing.T) {
 	if _, err := ForLLVMVersion("development"); err == nil {
 		t.Fatal("invalid LLVM version accepted")
 	}
+	if _, err := ForLLVMVersion(strings.Repeat("9", 100) + ".1.0"); err == nil {
+		t.Fatal("overflowing LLVM major accepted")
+	}
 	if _, err := ForMajor(19); err == nil {
 		t.Fatal("unpublished LLVM major accepted")
 	}

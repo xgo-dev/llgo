@@ -259,8 +259,12 @@ func fileSHA256(filename string) (string, error) {
 		return "", err
 	}
 	defer file.Close()
+	return readerSHA256(file)
+}
+
+func readerSHA256(reader io.Reader) (string, error) {
 	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
+	if _, err := io.Copy(hash, reader); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
