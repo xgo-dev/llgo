@@ -27,12 +27,21 @@ jobs:
           - os: macos-latest
             llvm: 19
             go: "1.26.7"
+          - os: macos-latest
+            llvm: 19
+            go: "1.27.0"
           - os: ubuntu-latest
+            llvm: 19
+            go: "1.26.7"
+          - os: ubuntu-latest
+            llvm: 19
+            go: "1.27.0"
+          - os: windows-2022
             llvm: 19
             go: "1.26.7"
           - os: windows-2022
             llvm: 19
-            go: "1.26.7"
+            go: "1.27.0"
     runs-on: ${{matrix.os}}
     steps:
       - uses: actions/checkout@v7

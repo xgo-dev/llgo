@@ -422,7 +422,7 @@ type I2 interface {
 // IP.Store and IP.Load must operate on the same Pointer[any] interface value.
 // CHECK-LABEL: define void @main.testGeneric(){{.*}} {
 // CHECK: [[P_OBJECT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT: [[P_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.Pointer[any]")
+// CHECK-NEXT: [[P_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.Pointer{{\[.*\]}}")
 // CHECK: [[P_I0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr [[P_ITAB]], 0
 // CHECK-NEXT: [[P_IFACE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" [[P_I0]], ptr [[P_OBJECT]], 1
 // CHECK: [[P_VALUE:%[0-9]+]] = call ptr @"main.testGeneric$1"()
@@ -595,15 +595,15 @@ type I2 interface {
 // CHECK: ret %"{{.*}}/runtime/internal/runtime.String" [[BSP_STRING]]
 
 // Atomic Load and Store must address Pointer[any].v and preserve seq_cst ordering.
-// CHECK-LABEL: define linkonce ptr @"main.(*Pointer[any]).Load"(ptr %0){{.*}} {
+// CHECK-LABEL: define linkonce ptr @"main.(*Pointer{{\[.*\]}}).Load"(ptr %0){{.*}} {
 // CHECK: [[LOAD_NIL:%[0-9]+]] = icmp eq ptr %0, null
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 [[LOAD_NIL]])
-// CHECK: [[LOAD_V:%[0-9]+]] = getelementptr inbounds %"main.Pointer[any]", ptr %0, i32 0, i32 1
+// CHECK: [[LOAD_V:%[0-9]+]] = getelementptr inbounds %"main.Pointer{{\[.*\]}}", ptr %0, i32 0, i32 1
 // CHECK: [[LOAD_VALUE:%[0-9]+]] = load atomic ptr, ptr [[LOAD_V]] seq_cst
 // CHECK: ret ptr [[LOAD_VALUE]]
 
-// CHECK-LABEL: define linkonce void @"main.(*Pointer[any]).Store"(ptr %0, ptr %1){{.*}} {
+// CHECK-LABEL: define linkonce void @"main.(*Pointer{{\[.*\]}}).Store"(ptr %0, ptr %1){{.*}} {
 // CHECK: [[STORE_NIL:%[0-9]+]] = icmp eq ptr %0, null
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 [[STORE_NIL]])
-// CHECK: [[STORE_V:%[0-9]+]] = getelementptr inbounds %"main.Pointer[any]", ptr %0, i32 0, i32 1
+// CHECK: [[STORE_V:%[0-9]+]] = getelementptr inbounds %"main.Pointer{{\[.*\]}}", ptr %0, i32 0, i32 1
 // CHECK: store atomic ptr %1, ptr [[STORE_V]] seq_cst
