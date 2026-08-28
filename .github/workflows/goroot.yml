@@ -1,6 +1,8 @@
 name: GOROOT
 
 on:
+  pull_request:
+    types: [labeled, synchronize, reopened]
   workflow_dispatch:
   schedule:
     # 02:00 Asia/Shanghai (18:00 UTC on the previous day).
@@ -15,6 +17,10 @@ concurrency:
 
 jobs:
   goroot:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.action == 'labeled' && github.event.label.name == 'go-test-compat') ||
+      (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'go-test-compat'))
     name: GOROOT (${{ matrix.lane }}, ${{ matrix.os }}, Go ${{ matrix.go-version }}, shard ${{ matrix.shard-index }}/4)
     timeout-minutes: 180
     env:
@@ -152,7 +158,7 @@ jobs:
 
   goroot-summary:
     name: GOROOT summary
-    if: always()
+    if: always() && needs.goroot.result != 'skipped'
     needs: goroot
     runs-on: ubuntu-latest
     steps:
