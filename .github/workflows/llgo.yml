@@ -5,17 +5,30 @@ name: LLGo
 
 on:
   push:
-    branches:
+    branches-ignore:
       - main
+      - "release/**"
+    paths-ignore:
+      - "**/*.md"
   pull_request:
     branches: ["**"]
+    types: [labeled, synchronize, reopened]
+    paths-ignore:
+      - "**/*.md"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  gate:
+    if: github.event_name != 'pull_request' || github.repository == 'xgo-dev/llgo'
+    uses: ./.github/workflows/ci-gate.yml
+
   llgo:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     name: llgo (${{ matrix.lane }}, ${{ matrix.os }}, LLVM ${{ matrix.llvm }}, Go ${{ matrix.go }})
     continue-on-error: ${{ matrix.lane == 'compatibility' }}
     timeout-minutes: 60
@@ -179,6 +192,8 @@ jobs:
         run: go test -timeout 15m ./internal/build -run '^TestStandardDWARF$' -count=1 -v
 
   test:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     name: test (${{ matrix.lane }}, ${{ matrix.os }}, LLVM ${{ matrix.llvm }}, Go ${{ matrix.go }}, shard ${{ matrix.shard }})
     continue-on-error: ${{ matrix.lane == 'compatibility' }}
     timeout-minutes: ${{ startsWith(matrix.os, 'windows') && 60 || startsWith(matrix.os, 'macos') && 45 || 30 }}
@@ -299,6 +314,8 @@ jobs:
           fi
 
   hello:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     name: hello (${{ matrix.lane }}, ${{ matrix.os }}, LLVM ${{ matrix.llvm }}, Go ${{ matrix.go }})
     continue-on-error: ${{ matrix.lane == 'compatibility' }}
     timeout-minutes: 30
@@ -374,6 +391,8 @@ jobs:
           mod-version: "1.26"
 
   cross-compile:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     timeout-minutes: 30
     strategy:
       matrix:
@@ -423,6 +442,8 @@ jobs:
           iwasm --stack-size=819200000 --heap-size=800000000 hello.wasm
 
   wasm-runtime:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     timeout-minutes: 30
     strategy:
       fail-fast: false

@@ -2,12 +2,19 @@ name: Release Build
 
 on:
   push:
-    branches:
+    branches-ignore:
       - main
+      - "release/**"
     tags:
       - "*"
+    paths-ignore:
+      - "**/*.md"
   pull_request:
     branches: ["**"]
+    types: [labeled, synchronize, reopened]
+    paths-ignore:
+      - "**/*.md"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -19,7 +26,13 @@ env:
   GORELEASER_CROSS_IMAGE: ghcr.io/goreleaser/goreleaser-cross:v1.26.4
 
 jobs:
+  gate:
+    if: github.event_name != 'pull_request' || github.repository == 'xgo-dev/llgo'
+    uses: ./.github/workflows/ci-gate.yml
+
   setup:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     outputs:
       linux-cache-key: ${{ steps.cache-keys.outputs.linux-key }}

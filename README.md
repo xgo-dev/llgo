@@ -396,6 +396,12 @@ cd llgo
 
 For local workflows and test-golden refresh commands, see [dev/README.md](dev/README.md#6-refresh-test-goldens).
 
+## Contributing
+
+Before opening an upstream pull request, follow the
+[fork-first CI workflow](CONTRIBUTING.md) and provide the passing fork test PR
+requested by the pull request template.
+
 How do I generate these tools?
 
 <!-- embedme doc/_readme/scripts/install_full.sh#L2-L1000 -->

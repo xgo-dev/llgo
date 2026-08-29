@@ -2,17 +2,42 @@ name: Docs
 
 on:
   push:
-    branches:
+    branches-ignore:
       - main
+      - "release/**"
+    paths:
+      - ".github/actions/**"
+      - ".github/workflows/ci-gate.yml"
+      - ".github/workflows/doc.yml"
+      - "doc/**"
+      - "go.mod"
+      - "go.sum"
+      - "README.md"
   pull_request:
     branches: ["**"]
+    types: [labeled, synchronize, reopened]
+    paths:
+      - ".github/actions/**"
+      - ".github/workflows/ci-gate.yml"
+      - ".github/workflows/doc.yml"
+      - "doc/**"
+      - "go.mod"
+      - "go.sum"
+      - "README.md"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  gate:
+    if: github.event_name != 'pull_request' || github.repository == 'xgo-dev/llgo'
+    uses: ./.github/workflows/ci-gate.yml
+
   remote_install:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     timeout-minutes: 30
     strategy:
       matrix:
@@ -47,6 +72,8 @@ jobs:
           source doc/_readme/scripts/run.sh
 
   local_install:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     timeout-minutes: 30
     strategy:
       matrix:
@@ -116,6 +143,8 @@ jobs:
           source doc/_readme/scripts/run.sh
 
   local_install_full:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     timeout-minutes: 30
     strategy:
       matrix:

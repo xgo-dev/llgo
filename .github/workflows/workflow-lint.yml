@@ -1,0 +1,38 @@
+name: Workflow Lint
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - ".github/actionlint.yaml"
+      - ".github/actions/**"
+      - ".github/scripts/**"
+      - ".github/workflows/**"
+  pull_request:
+    branches: ["**"]
+    paths:
+      - ".github/actionlint.yaml"
+      - ".github/actions/**"
+      - ".github/scripts/**"
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    if: >-
+      github.event_name == 'pull_request' && github.repository == 'xgo-dev/llgo' ||
+      github.event_name == 'push' &&
+      (github.event.repository.fork && github.ref_name != github.event.repository.default_branch ||
+      github.repository == 'xgo-dev/llgo' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-go
+      - name: Check workflow syntax
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes=
+      - name: Test CI gate decisions
+        run: python3 .github/scripts/test_ci_gate.py
+      - name: Test PR metadata validation
+        run: node --test .github/scripts/test_pr_metadata.js

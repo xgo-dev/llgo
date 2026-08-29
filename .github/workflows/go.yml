@@ -5,17 +5,30 @@ name: Go
 
 on:
   push:
-    branches:
+    branches-ignore:
       - main
+      - "release/**"
+    paths-ignore:
+      - "**/*.md"
   pull_request:
     branches: ["**"]
+    types: [labeled, synchronize, reopened]
+    paths-ignore:
+      - "**/*.md"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  gate:
+    if: github.event_name != 'pull_request' || github.repository == 'xgo-dev/llgo'
+    uses: ./.github/workflows/ci-gate.yml
+
   test:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     # The known-good #172 Windows coverage run took about 56 minutes. Leave
     # room for runner variance and the additional shared-matrix checks without
     # changing the established Linux/macOS budget.
@@ -146,6 +159,8 @@ jobs:
           token: ${{secrets.CODECOV_TOKEN}}
 
   dev-lto-globaldce:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     name: Dev LTO GlobalDCE
     timeout-minutes: 60
     runs-on: ubuntu-latest
@@ -227,6 +242,8 @@ jobs:
   # Tests deletion of unreachable Go methods.
   # See https://github.com/xgo-dev/llgo/issues/1853.
   dev-go-methoddrop:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     name: Dev Go Method Drop
     timeout-minutes: 60
     runs-on: ubuntu-latest

@@ -1,0 +1,84 @@
+name: PR Metadata
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  review-readiness:
+    name: review readiness
+    if: github.repository == 'xgo-dev/llgo'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out metadata validator
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts/pr_metadata.js
+          sparse-checkout-cone-mode: false
+      - name: Validate fork test PR
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const path = require('path');
+            const {validatePullRequest} = require(path.join(
+              process.env.GITHUB_WORKSPACE,
+              '.github/scripts/pr_metadata.js',
+            ));
+
+            try {
+              const evidence = await validatePullRequest({
+                body: context.payload.pull_request.body,
+                upstreamRepository: context.payload.repository.full_name,
+                source: context.payload.pull_request,
+                github,
+              });
+              core.notice(
+                `Fork CI evidence matches ${context.payload.pull_request.head.label}` +
+                `@${context.payload.pull_request.head.sha}: ${evidence.url}`,
+              );
+            } catch (error) {
+              core.setFailed(error.message);
+            }
+
+  full-ci-authorization:
+    name: full CI authorization
+    needs: review-readiness
+    if: always() && github.repository == 'xgo-dev/llgo'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require reviewer authorization
+        env:
+          REVIEW_READY: ${{ needs.review-readiness.result == 'success' }}
+          HAS_NEED_REVIEW: ${{ contains(github.event.pull_request.labels.*.name, 'need-review') }}
+        run: |
+          if [[ "$REVIEW_READY" != "true" ]]; then
+            {
+              echo "### Review is blocked"
+              echo
+              echo "Complete the pull request template and link fork CI from the same repository, branch, and commit."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error title=Review blocked::The review readiness check must pass before reviewer authorization."
+            exit 1
+          fi
+
+          if [[ "$HAS_NEED_REVIEW" != "true" ]]; then
+            {
+              echo "### Full CI is blocked"
+              echo
+              echo "A reviewer must inspect the linked fork CI and add the \`need-review\` label."
+              echo "Until then, this check intentionally fails so the pull request cannot look fully validated."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error title=Full CI blocked::A reviewer must add the need-review label after checking the fork CI."
+            exit 1
+          fi
+
+          {
+            echo "### Full CI authorized"
+            echo
+            echo "The template and fork evidence passed review readiness, and the \`need-review\` label is present."
+          } >> "$GITHUB_STEP_SUMMARY"

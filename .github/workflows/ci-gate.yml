@@ -1,0 +1,76 @@
+name: CI Gate
+
+on:
+  workflow_call:
+    outputs:
+      run:
+        description: Whether the calling workflow may allocate heavy runners.
+        value: ${{ jobs.gate.outputs.run }}
+      reason:
+        description: Human-readable gate decision.
+        value: ${{ jobs.gate.outputs.reason }}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+      reason: ${{ steps.gate.outputs.reason }}
+    steps:
+      - name: Check out gate implementation
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+
+      - id: review-readiness
+        name: Validate review readiness
+        if: github.event_name == 'pull_request' && github.repository == 'xgo-dev/llgo'
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ github.token }}
+          result-encoding: string
+          script: |
+            const path = require('path');
+            const {validatePullRequest} = require(path.join(
+              process.env.GITHUB_WORKSPACE,
+              '.github/scripts/pr_metadata.js',
+            ));
+
+            try {
+              const evidence = await validatePullRequest({
+                body: context.payload.pull_request.body,
+                upstreamRepository: context.payload.repository.full_name,
+                source: context.payload.pull_request,
+                github,
+              });
+              core.notice(`Review-ready fork evidence: ${evidence.url}`);
+              return 'true';
+            } catch (error) {
+              core.notice(`Full CI remains blocked: ${error.message}`);
+              return 'false';
+            }
+
+      - id: gate
+        name: Decide whether heavy CI may run
+        env:
+          CI_EVENT_NAME: ${{ github.event_name }}
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_REPOSITORY_IS_FORK: ${{ github.event.repository.fork }}
+          CI_REF_TYPE: ${{ github.ref_type }}
+          CI_REF_NAME: ${{ github.ref_name }}
+          CI_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          CI_EVENT_ACTION: ${{ github.event.action }}
+          CI_EVENT_LABEL: ${{ github.event.label.name }}
+          CI_PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          CI_REVIEW_READY: ${{ steps.review-readiness.outputs.result }}
+        run: python3 .github/scripts/ci_gate.py >> "$GITHUB_OUTPUT"
+
+      - name: Report decision
+        env:
+          CI_GATE_REASON: ${{ steps.gate.outputs.reason }}
+        run: echo "::notice title=CI gate::$CI_GATE_REASON"

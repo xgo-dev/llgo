@@ -91,7 +91,9 @@ python tokenizer.py --tokenizer-model=/path/to/CodeLlama-7b-Instruct/tokenizer.m
 
 ## huggingface models
 
-We can load any huggingface models that use the Llama 2 architecture. See the script [export.py](export.py) and the `--hf` flag to export the model .bin file.
+We can load any huggingface models that use the Llama 2 architecture. See the
+upstream [export.py](https://github.com/karpathy/llama2.c/blob/master/export.py)
+script and the `--hf` flag to export the model .bin file.
 
 ## models
 
