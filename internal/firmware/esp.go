@@ -96,7 +96,7 @@ func makeESPFirmareImage(infile, outfile, format string) error {
 	if makeImage {
 		// For QEMU emulation, we need to place the image at the correct offset.
 		// ESP32 (Xtensa): bootloader starts at 0x1000, so we pad 4KB of zeros.
-		// ESP32-C3 (RISC-V): bootloader starts at 0x0, so no padding needed.
+		// ESP32-C3/ESP32-C6 (RISC-V): bootloader starts at 0x0, so no padding needed.
 		if chip == "esp32" {
 			outf.Write(make([]byte, 4096))
 		}
@@ -107,11 +107,18 @@ func makeESPFirmareImage(infile, outfile, format string) error {
 	chip_id := map[string]uint16{
 		"esp32":   0x0000,
 		"esp32c3": 0x0005,
+		"esp32c6": 0x000d,
 	}[chip]
+	spiSpeedSize := uint8(0x1f) // 80MHz, 2MB on ESP32 and ESP32-C3.
+	if chip == "esp32c6" {
+		// ESP32-C6 ROM uses frequency code 0 for both 40MHz and 80MHz as a
+		// workaround for its MSPI high-speed divider. Code 0xf is C3-only.
+		spiSpeedSize = 0x10 // ESP32-C6 frequency code 0, 2MB.
+	}
 
 	// Image header.
 	switch chip {
-	case "esp32", "esp32c3":
+	case "esp32", "esp32c3", "esp32c6":
 		// Header format:
 		// https://github.com/espressif/esp-idf/blob/v4.3/components/bootloader_support/include/esp_app_format.h#L71
 		// Note: not adding a SHA256 hash as the binary is modified by
@@ -132,8 +139,8 @@ func makeESPFirmareImage(infile, outfile, format string) error {
 		}{
 			magic:          0xE9,
 			segment_count:  byte(len(segments)),
-			spi_mode:       2,    // ESP_IMAGE_SPI_MODE_DIO
-			spi_speed_size: 0x1f, // ESP_IMAGE_SPI_SPEED_80M, ESP_IMAGE_FLASH_SIZE_2MB
+			spi_mode:       2, // ESP_IMAGE_SPI_MODE_DIO
+			spi_speed_size: spiSpeedSize,
 			entry_addr:     uint32(inf.Entry),
 			wp_pin:         0xEE, // disable WP pin
 			chip_id:        chip_id,
@@ -157,7 +164,7 @@ func makeESPFirmareImage(infile, outfile, format string) error {
 			entry_addr:     uint32(inf.Entry),
 		})
 	default:
-		return fmt.Errorf("builder: unknown binary format %#v, expected esp32 or esp8266", format)
+		return fmt.Errorf("builder: unknown binary format %#v, expected esp32, esp32c3, esp32c6, or esp8266", format)
 	}
 
 	// Write all segments to the image.

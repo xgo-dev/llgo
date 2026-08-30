@@ -262,6 +262,14 @@ func TestUseTarget(t *testing.T) {
 			expectMarch: "-march=rv32imc", // ESP32-C3 uses rv32imc (no A extension)
 		},
 		{
+			name:        "ESP32-C6 Target (ESP RISC-V)",
+			targetName:  "esp32c6",
+			expectError: false,
+			expectLLVM:  "riscv32-esp-elf",
+			expectCPU:   "generic-rv32",
+			expectMarch: "-march=rv32imac_zicsr_zifencei",
+		},
+		{
 			name:        "Nonexistent Target",
 			targetName:  "nonexistent-target",
 			expectError: true,
