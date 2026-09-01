@@ -8,7 +8,8 @@
     "^Benchmark(MergeCompilerFlags|MergeLinkerFlags|LookupPCRandom)$",
     "^Benchmark(RuntimeGetG|Global(Read|Write))$",
     "^Benchmark(DirectCall|InterfaceCall|Defer|Goroutine)$",
-    "^BenchmarkChannel(Buffered|Handoff)$"
+    "^BenchmarkChannel(Buffered|Handoff)$",
+    "^BenchmarkTimer(AfterFuncZeroDelivery|CreateStop|RearmStopped|ResetActive|ResetHeap1024)/(Go|LLGo)$"
   ],
   "exclude": [],
   "maxBenchmarks": 500,
@@ -33,6 +34,13 @@
         "^(RuntimeGetG|Global(Read|Write))$",
         "^(DirectCall|InterfaceCall|Defer|Goroutine)$",
         "^Channel(Buffered|Handoff)$"
+      ],
+      "chart": "combined"
+    },
+    "timers": {
+      "title": "Timers",
+      "match": [
+        "^Timer(AfterFuncZeroDelivery|CreateStop|RearmStopped|ResetActive|ResetHeap1024)/(Go|LLGo)$"
       ],
       "chart": "combined"
     }
@@ -108,6 +116,36 @@
         "missing": "error",
         "empty": "error",
         "max-rows": 200
+      }
+    },
+    "timers": {
+      "title": "Timer runtime benchmarks",
+      "select": {
+        "groups": [
+          "^timers$"
+        ],
+        "metrics": [
+          "^ns/op$"
+        ]
+      },
+      "table": {
+        "rows": [
+          "platform",
+          "benchmark"
+        ],
+        "columns": [
+          "metric"
+        ],
+        "collapsed": false,
+        "missing": "error",
+        "empty": "error",
+        "max-rows": 200,
+        "dimensions": {
+          "benchmark": {
+            "title": "Operation and runtime",
+            "trim-prefix": "BenchmarkTimer"
+          }
+        }
       }
     }
   }
