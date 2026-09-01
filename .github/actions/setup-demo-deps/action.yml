@@ -14,17 +14,18 @@ runs:
   using: "composite"
   steps:
     - name: Set up Python 3.12 on Windows
-      if: runner.os == 'Windows'
+      if: runner.os == 'Windows' && inputs.windows-arch == 'amd64'
       id: windows_python
       uses: actions/setup-python@v6
       with:
         # The x64 MSVC LLDB embeds the 3.12.7 hosted-tool-cache prefix.
         # A newer 3.12 patch is ABI-compatible, but LLDB combines its embedded
         # stdlib path with that installation and cannot import encodings. Keep
-        # the MinGW demo environment on the normal latest 3.12 patch. This is
-        # the host-tools interpreter: use x64 on Windows ARM, where emulation
-        # retains access to wheels that upstream projects do not publish for
-        # native ARM64 Python. The target interpreter is installed below.
+        # the MinGW demo environment on the normal latest 3.12 patch. Only the
+        # amd64 debugger needs this host interpreter. Cross-architecture lanes
+        # install their native target and LLDB interpreters below; asking an
+        # ARM64 runner to unpack the x64 hosted-tool-cache payload can crash
+        # PowerShell's ARM64 CLR before emulation is involved.
         python-version: ${{ inputs.windows-abi == 'msvc' && '3.12.7' || '3.12' }}
         architecture: x64
         # setup-python otherwise replaces PKG_CONFIG_PATH, hiding the native
@@ -256,7 +257,7 @@ runs:
       run: |
         $ErrorActionPreference = "Stop"
 
-        $hostPython = "${{ steps.windows_python.outputs.python-path }}"
+        $hostPython = "${{ steps.windows_python.outputs.python-path || steps.windows_target_python.outputs.python-path }}"
         $python = "${{ steps.windows_target_python.outputs.python-path || steps.windows_python.outputs.python-path }}"
         $packages = @("numpy")
         if ("${{ inputs.windows-arch }}" -eq "amd64") {
