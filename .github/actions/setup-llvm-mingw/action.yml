@@ -7,7 +7,7 @@ inputs:
   llvm-version:
     description: "LLGo host LLVM major version"
     required: false
-    default: "19"
+    default: "21"
 
 runs:
   using: "composite"
@@ -16,8 +16,8 @@ runs:
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
-        if ("${{ inputs.llvm-version }}" -ne "19") {
-          throw "llvm-mingw 20250114 is paired with LLVM 19, not ${{ inputs.llvm-version }}"
+        if ("${{ inputs.llvm-version }}" -ne "21") {
+          throw "llvm-mingw 20251216 is paired with LLVM 21, not ${{ inputs.llvm-version }}"
         }
         if ("${{ inputs.windows-arch }}" -ne "386") {
           throw "The native llvm-mingw target currently qualifies windows/386, not windows/${{ inputs.windows-arch }}"
@@ -28,8 +28,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        if [[ "${{ inputs.llvm-version }}" != 19 ]]; then
-          echo "llvm-mingw 20250114 is paired with LLVM 19, not ${{ inputs.llvm-version }}" >&2
+        if [[ "${{ inputs.llvm-version }}" != 21 ]]; then
+          echo "llvm-mingw 20251216 is paired with LLVM 21, not ${{ inputs.llvm-version }}" >&2
           exit 1
         fi
         case "${{ inputs.windows-arch }}" in
@@ -45,15 +45,15 @@ runs:
       id: llvm_mingw_cache
       uses: actions/cache/restore@v4
       with:
-        path: ${{ runner.tool_cache }}\llvm-mingw\20250114\ucrt-x86_64
-        key: llvm-mingw-20250114-ucrt-x86_64-9395d95c089611e6cd728c9a07219ffc5ac706e0c719833a2f7e64a706a81541
+        path: ${{ runner.tool_cache }}\llvm-mingw\20251216\ucrt-x86_64
+        key: llvm-mingw-20251216-ucrt-x86_64-2d96a4b758f7f8deaec5065833fe025aa53cfc5f704d0524002510984da0ccf4
 
     - name: Install llvm-mingw
       if: runner.os == 'Windows' && steps.llvm_mingw_cache.outputs.cache-hit != 'true'
       shell: pwsh
       env:
-        LLVM_MINGW_VERSION: "20250114"
-        LLVM_MINGW_SHA256: 9395d95c089611e6cd728c9a07219ffc5ac706e0c719833a2f7e64a706a81541
+        LLVM_MINGW_VERSION: "20251216"
+        LLVM_MINGW_SHA256: 2d96a4b758f7f8deaec5065833fe025aa53cfc5f704d0524002510984da0ccf4
       run: |
         $ErrorActionPreference = "Stop"
         $asset = "llvm-mingw-$env:LLVM_MINGW_VERSION-ucrt-x86_64.zip"
@@ -84,8 +84,8 @@ runs:
       if: runner.os == 'Windows' && steps.llvm_mingw_cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4
       with:
-        path: ${{ runner.tool_cache }}\llvm-mingw\20250114\ucrt-x86_64
-        key: llvm-mingw-20250114-ucrt-x86_64-9395d95c089611e6cd728c9a07219ffc5ac706e0c719833a2f7e64a706a81541
+        path: ${{ runner.tool_cache }}\llvm-mingw\20251216\ucrt-x86_64
+        key: llvm-mingw-20251216-ucrt-x86_64-2d96a4b758f7f8deaec5065833fe025aa53cfc5f704d0524002510984da0ccf4
 
     - name: Restore llvm-mingw target dependencies
       if: runner.os == 'Windows'
@@ -93,7 +93,7 @@ runs:
       uses: actions/cache/restore@v4
       with:
         path: ${{ runner.tool_cache }}\llgo-mingw-vcpkg\${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}\386
-        key: llgo-llvm-mingw-20250114-ucrt-386-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}
+        key: llgo-llvm-mingw-20251216-ucrt-386-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}
 
     - name: Build llvm-mingw target dependencies
       if: runner.os == 'Windows' && steps.llvm_mingw_vcpkg_cache.outputs.cache-hit != 'true'
@@ -106,7 +106,7 @@ runs:
         $sourceRoot = Join-Path $env:RUNNER_TEMP "llgo-mingw-vcpkg-source"
         $installRoot = Join-Path $env:RUNNER_TOOL_CACHE "llgo-mingw-vcpkg\$env:VCPKG_MANIFEST_HASH\386"
         $manifestRoot = Join-Path $env:GITHUB_WORKSPACE ".github\windows\vcpkg"
-        $llvmMingwRoot = Join-Path $env:RUNNER_TOOL_CACHE "llvm-mingw\20250114\ucrt-x86_64"
+        $llvmMingwRoot = Join-Path $env:RUNNER_TOOL_CACHE "llvm-mingw\20251216\ucrt-x86_64"
         $llvmMingwBin = Join-Path $llvmMingwRoot "bin"
         $env:PATH = "$llvmMingwBin;$env:PATH"
 
@@ -137,7 +137,7 @@ runs:
       uses: actions/cache/save@v4
       with:
         path: ${{ runner.tool_cache }}\llgo-mingw-vcpkg\${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}\386
-        key: llgo-llvm-mingw-20250114-ucrt-386-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}
+        key: llgo-llvm-mingw-20251216-ucrt-386-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}
 
     - name: Configure llvm-mingw target
       if: runner.os == 'Windows'
@@ -146,7 +146,7 @@ runs:
         VCPKG_MANIFEST_HASH: ${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}
       run: |
         $ErrorActionPreference = "Stop"
-        $llvmMingwRoot = Join-Path $env:RUNNER_TOOL_CACHE "llvm-mingw\20250114\ucrt-x86_64"
+        $llvmMingwRoot = Join-Path $env:RUNNER_TOOL_CACHE "llvm-mingw\20251216\ucrt-x86_64"
         $llvmMingwBin = Join-Path $llvmMingwRoot "bin"
         $llvmMingwRuntimeBin = Join-Path $llvmMingwRoot "i686-w64-mingw32\bin"
         $compiler = Join-Path $llvmMingwBin "i686-w64-mingw32-clang.exe"
@@ -237,24 +237,24 @@ runs:
       id: cross_host_llvm_mingw_cache
       uses: actions/cache/restore@v4
       with:
-        path: ${{ runner.tool_cache }}/llvm-mingw/20250114/ucrt-${{ runner.os }}-${{ runner.arch }}
-        key: llvm-mingw-20250114-ucrt-${{ runner.os }}-${{ runner.arch }}-${{ runner.os == 'macOS' && '80b2e7ade71ba2dfe9e8d27fe47ae5738b1fb8d34e057faa2beef3070392f2d6' || 'a16f52dee819797248e6c7d63b8b1e50a92119f45767ecd8e9633d1733b896e2' }}
+        path: ${{ runner.tool_cache }}/llvm-mingw/20251216/ucrt-${{ runner.os }}-${{ runner.arch }}
+        key: llvm-mingw-20251216-ucrt-${{ runner.os }}-${{ runner.arch }}-${{ runner.os == 'macOS' && '38bb5e48ec3e0ce95fb901f4efff0bd6ffa966d1b32539a6510af816a959d160' || 'db561734a05eb4a0695d5e901aadd6c1cda74bba4c9e102b677f81c6fd59849a' }}
 
     - name: Install cross-host llvm-mingw
       if: runner.os != 'Windows' && env.LLGO_MINGW_CROSS_ROOT == '' && steps.cross_host_llvm_mingw_cache.outputs.cache-hit != 'true'
       shell: bash
       env:
-        LLVM_MINGW_VERSION: "20250114"
+        LLVM_MINGW_VERSION: "20251216"
       run: |
         set -euo pipefail
         case "$RUNNER_OS/$RUNNER_ARCH" in
           Linux/X64)
-            asset="llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-20.04-x86_64.tar.xz"
-            sha256=a16f52dee819797248e6c7d63b8b1e50a92119f45767ecd8e9633d1733b896e2
+            asset="llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-x86_64.tar.xz"
+            sha256=db561734a05eb4a0695d5e901aadd6c1cda74bba4c9e102b677f81c6fd59849a
             ;;
           macOS/ARM64|macOS/X64)
             asset="llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-macos-universal.tar.xz"
-            sha256=80b2e7ade71ba2dfe9e8d27fe47ae5738b1fb8d34e057faa2beef3070392f2d6
+            sha256=38bb5e48ec3e0ce95fb901f4efff0bd6ffa966d1b32539a6510af816a959d160
             ;;
           *)
             echo "llvm-mingw has no qualified $RUNNER_OS/$RUNNER_ARCH host archive" >&2
@@ -288,8 +288,8 @@ runs:
       if: runner.os != 'Windows' && env.LLGO_MINGW_CROSS_ROOT == '' && steps.cross_host_llvm_mingw_cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4
       with:
-        path: ${{ runner.tool_cache }}/llvm-mingw/20250114/ucrt-${{ runner.os }}-${{ runner.arch }}
-        key: llvm-mingw-20250114-ucrt-${{ runner.os }}-${{ runner.arch }}-${{ runner.os == 'macOS' && '80b2e7ade71ba2dfe9e8d27fe47ae5738b1fb8d34e057faa2beef3070392f2d6' || 'a16f52dee819797248e6c7d63b8b1e50a92119f45767ecd8e9633d1733b896e2' }}
+        path: ${{ runner.tool_cache }}/llvm-mingw/20251216/ucrt-${{ runner.os }}-${{ runner.arch }}
+        key: llvm-mingw-20251216-ucrt-${{ runner.os }}-${{ runner.arch }}-${{ runner.os == 'macOS' && '38bb5e48ec3e0ce95fb901f4efff0bd6ffa966d1b32539a6510af816a959d160' || 'db561734a05eb4a0695d5e901aadd6c1cda74bba4c9e102b677f81c6fd59849a' }}
 
     - name: Restore cross-host target dependencies
       if: runner.os != 'Windows'
@@ -297,7 +297,7 @@ runs:
       uses: actions/cache/restore@v4
       with:
         path: ${{ runner.tool_cache }}/llgo-mingw-vcpkg/${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}/${{ runner.os }}-${{ runner.arch }}/${{ inputs.windows-arch }}
-        key: llgo-llvm-mingw-20250114-ucrt-${{ runner.os }}-${{ runner.arch }}-${{ inputs.windows-arch }}-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}
+        key: llgo-llvm-mingw-20251216-ucrt-${{ runner.os }}-${{ runner.arch }}-${{ inputs.windows-arch }}-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}
 
     - name: Build cross-host target dependencies
       if: runner.os != 'Windows' && steps.cross_host_vcpkg_cache.outputs.cache-hit != 'true'
@@ -316,7 +316,7 @@ runs:
         source_root="$RUNNER_TEMP/llgo-mingw-vcpkg-source"
         install_root="$RUNNER_TOOL_CACHE/llgo-mingw-vcpkg/$VCPKG_MANIFEST_HASH/${RUNNER_OS}-${RUNNER_ARCH}/${{ inputs.windows-arch }}"
         manifest_root="$GITHUB_WORKSPACE/.github/windows/vcpkg"
-        llvm_mingw_root="${LLGO_MINGW_CROSS_ROOT:-$RUNNER_TOOL_CACHE/llvm-mingw/20250114/ucrt-${RUNNER_OS}-${RUNNER_ARCH}}"
+        llvm_mingw_root="${LLGO_MINGW_CROSS_ROOT:-$RUNNER_TOOL_CACHE/llvm-mingw/20251216/ucrt-${RUNNER_OS}-${RUNNER_ARCH}}"
         export PATH="$llvm_mingw_root/bin:$PATH"
 
         # Do not let target-specific compiler variables from the invoking job
@@ -347,7 +347,7 @@ runs:
       uses: actions/cache/save@v4
       with:
         path: ${{ runner.tool_cache }}/llgo-mingw-vcpkg/${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}/${{ runner.os }}-${{ runner.arch }}/${{ inputs.windows-arch }}
-        key: llgo-llvm-mingw-20250114-ucrt-${{ runner.os }}-${{ runner.arch }}-${{ inputs.windows-arch }}-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}
+        key: llgo-llvm-mingw-20251216-ucrt-${{ runner.os }}-${{ runner.arch }}-${{ inputs.windows-arch }}-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}
 
     - name: Configure cross-host llvm-mingw target
       if: runner.os != 'Windows'
@@ -374,7 +374,7 @@ runs:
             ;;
         esac
 
-        llvm_mingw_root="${LLGO_MINGW_CROSS_ROOT:-$RUNNER_TOOL_CACHE/llvm-mingw/20250114/ucrt-${RUNNER_OS}-${RUNNER_ARCH}}"
+        llvm_mingw_root="${LLGO_MINGW_CROSS_ROOT:-$RUNNER_TOOL_CACHE/llvm-mingw/20251216/ucrt-${RUNNER_OS}-${RUNNER_ARCH}}"
         target_bin="$llvm_mingw_root/bin"
         runtime_bin="$llvm_mingw_root/$prefix/bin"
         compiler="$target_bin/$prefix-clang"
