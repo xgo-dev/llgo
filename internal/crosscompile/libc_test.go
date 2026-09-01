@@ -4,7 +4,9 @@ package crosscompile
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -13,6 +15,67 @@ import (
 	"github.com/xgo-dev/llgo/internal/crosscompile/compile/rtlib"
 )
 
+const testCompilerKey = "llvm-21.1.3-deadbeef"
+
+func TestCompilerVersionCacheKey(t *testing.T) {
+	first, err := compilerVersionCacheKey("clang version 21.1.3 (https://example.test/llvm abc123)\nInstalledDir: /one", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := compilerVersionCacheKey("clang version 21.1.3 (https://example.test/llvm abc123)\nInstalledDir: /two", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatalf("cache key depends on install directory: %q != %q", first, second)
+	}
+	different, err := compilerVersionCacheKey("clang version 21.1.3 (https://example.test/llvm def456)", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if different == first {
+		t.Fatalf("cache key ignores compiler revision: %q", first)
+	}
+	patched, err := compilerVersionCacheKey("clang version 21.1.3 (https://example.test/llvm abc123)", []byte("llvm_source_patch_sha256=abc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patched == first {
+		t.Fatalf("cache key ignores payload contract: %q", first)
+	}
+	if a, b := compiledLibraryCacheKey(first, []string{"-Oz", "-flto=thin"}), compiledLibraryCacheKey(first, []string{"-Oz"}); a == b {
+		t.Fatalf("compiled library cache key ignores code-generation flags: %q", a)
+	}
+	if _, err := compilerVersionCacheKey("not a compiler version", nil); err == nil {
+		t.Fatal("compilerVersionCacheKey accepted output without a version")
+	}
+}
+
+func TestCompilerCacheKeyErrors(t *testing.T) {
+	if _, err := compilerCacheKey(filepath.Join(t.TempDir(), "missing-clang")); err == nil {
+		t.Fatal("compilerCacheKey accepted a missing compiler")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("test helper uses a shell script")
+	}
+
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	clang := filepath.Join(binDir, "clang")
+	if err := os.WriteFile(clang, []byte("#!/bin/sh\nprintf '%s\\n' 'clang version 21.1.3'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "LLGO-LLVM-MANIFEST.txt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := compilerCacheKey(clang); err == nil || !strings.Contains(err.Error(), "read compiler payload contract") {
+		t.Fatalf("compilerCacheKey unreadable manifest error = %v", err)
+	}
+}
+
 func TestGetLibcCompileConfigByName(t *testing.T) {
 	baseDir := filepath.FromSlash("/test/base")
 	target := "armv7"
@@ -20,21 +83,21 @@ func TestGetLibcCompileConfigByName(t *testing.T) {
 
 	needSkipDownload = true
 	t.Run("EmptyName", func(t *testing.T) {
-		_, _, err := getLibcCompileConfigByName(baseDir, "", target, mcpu)
+		_, _, err := getLibcCompileConfigByName(baseDir, "", target, mcpu, testCompilerKey)
 		if err == nil || err.Error() != "libc name cannot be empty" {
 			t.Errorf("Expected empty name error, got: %v", err)
 		}
 	})
 
 	t.Run("UnsupportedLibc", func(t *testing.T) {
-		_, _, err := getLibcCompileConfigByName(baseDir, "invalid", target, mcpu)
+		_, _, err := getLibcCompileConfigByName(baseDir, "invalid", target, mcpu, testCompilerKey)
 		if err == nil || err.Error() != "unsupported libc: invalid" {
 			t.Errorf("Expected unsupported libc error, got: %v", err)
 		}
 	})
 
 	t.Run("Picolibc", func(t *testing.T) {
-		_, cfg, err := getLibcCompileConfigByName(baseDir, "picolibc", target, mcpu)
+		outputDir, cfg, err := getLibcCompileConfigByName(baseDir, "picolibc", target, mcpu, testCompilerKey)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -44,19 +107,23 @@ func TestGetLibcCompileConfigByName(t *testing.T) {
 		}
 		group := cfg.Groups[0]
 
+		expectedDir := compiledLibraryDir(baseDir, libc.GetPicolibcConfig(), testCompilerKey)
+		if outputDir != expectedDir {
+			t.Fatalf("output dir = %q, want %q", outputDir, expectedDir)
+		}
 		expectedFile := filepath.Join(baseDir, libc.GetPicolibcConfig().String(), "newlib", "libc", "string", "memmem.c")
 		if !slices.Contains(group.Files, expectedFile) {
 			t.Errorf("Expected files [%s], got: %v", expectedFile, group.Files)
 		}
 
-		expectedFlag := "-I" + filepath.Join("/test", "base", libc.GetPicolibcConfig().String())
+		expectedFlag := "-I" + filepath.Join(baseDir, libc.GetPicolibcConfig().String())
 		if !slices.Contains(group.CFlags, expectedFlag) {
 			t.Errorf("Expected flags [%s], got: %v", expectedFlag, group.CFlags)
 		}
 	})
 
 	t.Run("NewlibESP32", func(t *testing.T) {
-		_, cfg, err := getLibcCompileConfigByName(baseDir, "newlib-esp32", target, mcpu)
+		outputDir, cfg, err := getLibcCompileConfigByName(baseDir, "newlib-esp32", target, mcpu, testCompilerKey)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -66,6 +133,10 @@ func TestGetLibcCompileConfigByName(t *testing.T) {
 		}
 		group := cfg.Groups[0]
 
+		expectedDir := compiledLibraryDir(baseDir, libc.GetNewlibESP32Config(), testCompilerKey)
+		if outputDir != expectedDir {
+			t.Fatalf("output dir = %q, want %q", outputDir, expectedDir)
+		}
 		expectedFile := filepath.Join(baseDir, libc.GetNewlibESP32Config().String(), "libgloss", "xtensa", "crt1-boards.S")
 		if !slices.Contains(group.Files, expectedFile) {
 			t.Errorf("Expected files [%s], got: %v", expectedFile, group.Files)
@@ -84,21 +155,21 @@ func TestGetRTCompileConfigByName(t *testing.T) {
 	needSkipDownload = true
 
 	t.Run("EmptyName", func(t *testing.T) {
-		_, _, err := getRTCompileConfigByName(baseDir, "", target)
+		_, _, err := getRTCompileConfigByName(baseDir, "", target, testCompilerKey)
 		if err == nil || err.Error() != "rt name cannot be empty" {
 			t.Errorf("Expected empty name error, got: %v", err)
 		}
 	})
 
 	t.Run("UnsupportedRT", func(t *testing.T) {
-		_, _, err := getRTCompileConfigByName(baseDir, "invalid", target)
+		_, _, err := getRTCompileConfigByName(baseDir, "invalid", target, testCompilerKey)
 		if err == nil || err.Error() != "unsupported rt: invalid" {
 			t.Errorf("Expected unsupported rt error, got: %v", err)
 		}
 	})
 
 	t.Run("CompilerRT", func(t *testing.T) {
-		_, cfg, err := getRTCompileConfigByName(baseDir, "compiler-rt", target)
+		outputDir, cfg, err := getRTCompileConfigByName(baseDir, "compiler-rt", target, testCompilerKey)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -108,7 +179,15 @@ func TestGetRTCompileConfigByName(t *testing.T) {
 		}
 		group := cfg.Groups[0]
 
-		expectedFile := filepath.Join(baseDir, rtlib.GetCompilerRTConfig().String(), "lib", "builtins", "absvdi2.c")
+		compilerRTConfig, err := rtlib.GetCompilerRTConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectedDir := compiledLibraryDir(baseDir, compilerRTConfig, testCompilerKey)
+		if outputDir != expectedDir {
+			t.Fatalf("output dir = %q, want %q", outputDir, expectedDir)
+		}
+		expectedFile := filepath.Join(baseDir, compilerRTConfig.String(), "lib", "builtins", "absvdi2.c")
 		if !slices.Contains(group.Files, expectedFile) {
 			t.Errorf("Expected files [%s], got: %v", expectedFile, group.Files)
 		}

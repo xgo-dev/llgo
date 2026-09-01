@@ -153,7 +153,7 @@ jobs:
           set -e
           set -x
           source doc/_readme/scripts/install_ubuntu.sh
-          echo "PATH=/usr/lib/llvm-19/bin:$PATH" >> $GITHUB_ENV
+          echo "PATH=/usr/lib/llvm-21/bin:$PATH" >> $GITHUB_ENV
 
       - name: Set up Python 3.12 on Windows
         if: startsWith(matrix.os, 'windows')

@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(LLGOLTOPlugin LANGUAGES CXX)
+project(LLGOLTOPlugin LANGUAGES C CXX)
 
 find_package(LLVM REQUIRED CONFIG)
 
-if(NOT LLVM_VERSION_MAJOR EQUAL 19)
-  message(FATAL_ERROR "LLGo LTO plugin requires LLVM 19.x, found ${LLVM_PACKAGE_VERSION}")
+if(NOT LLVM_VERSION_MAJOR EQUAL 21)
+  message(FATAL_ERROR "LLGo LTO plugin requires LLVM 21.x, found ${LLVM_PACKAGE_VERSION}")
 endif()
 
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")

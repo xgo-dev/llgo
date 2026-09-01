@@ -165,8 +165,7 @@ func main() {
 
 Additional demos are available in the `_demo` directory (prefixed with `_` so the `go` command skips them):
 
-* [hello](_demo/c/hello/hello.go): call C `printf` to print `Hello world`
-* [concat](_demo/c/concat/concat.go): call C `fprintf` with `stderr`
+* [hello](_demo/c/hello/main.go): call C `printf` and `fprintf` with standard output and standard error
 * [qsort](_demo/c/qsort/qsort.go): call a C function that takes a callback (e.g. `qsort`)
 
 To run a demo (see [How to install](#how-to-install) if `llgo` isn't installed yet):
@@ -291,9 +290,7 @@ Here we define two 3x3 matrices a and b, add them to get x, and then print the r
 
 The `_demo/py/` directory contains some python related demos:
 
-* [callpy](_demo/py/callpy/callpy.go): call Python standard library function `math.sqrt`
-* [pi](_demo/py/pi/pi.go): print python constants `math.pi`
-* [statistics](_demo/py/statistics/statistics.go): define a python list and call `statistics.mean` to get the mean
+* [basic](_demo/py/basic/main.go): use Python standard library functions, constants, and statistics
 * [matrix](_demo/py/matrix/matrix.go): a basic `numpy` demo
 
 To run these demos (If you haven't installed `llgo` yet, please refer to [How to install](#how-to-install)):
@@ -306,9 +303,9 @@ llgo run .
 ## Dependencies
 
 - [Go 1.27](https://go.dev) for building LLGo; CI validates user packages separately with Go 1.20 through Go 1.27
-- [LLVM 19](https://llvm.org)
-- [Clang 19](https://clang.llvm.org)
-- [LLD 19](https://lld.llvm.org)
+- [LLVM 21](https://llvm.org)
+- [Clang 21](https://clang.llvm.org)
+- [LLD 21](https://lld.llvm.org)
 - [pkg-config 0.29+](https://gitlab.freedesktop.org/pkg-config/pkg-config)
 - [bdwgc/libgc 8.0+](https://www.hboehm.info/gc/)
 - [libffi](https://sourceware.org/libffi/)
@@ -326,9 +323,9 @@ Follow these steps to install the `llgo` command, whose usage is similar to the 
 
 ```sh
 brew update
-brew install llvm@19 lld@19 bdw-gc openssl cjson libffi pkg-config
+brew install llvm@21 lld@21 bdw-gc openssl cjson libffi libuv pkg-config
 brew install python@3.12 # optional
-brew link --overwrite llvm@19 lld@19 libffi
+brew link --overwrite llvm@21 lld@21 libffi
 # curl https://raw.githubusercontent.com/xgo-dev/llgo/refs/heads/main/install.sh | bash
 ./install.sh
 ```
@@ -340,10 +337,10 @@ brew link --overwrite llvm@19 lld@19 libffi
 <!-- embedme doc/_readme/scripts/install_ubuntu.sh#L2-L1000 -->
 
 ```sh
-echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-19 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-21 main" | sudo tee /etc/apt/sources.list.d/llvm.list
 wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
 sudo apt-get update
-sudo apt-get install -y llvm-19-dev clang-19 libclang-19-dev lld-19 libunwind-19-dev libc++-19-dev pkg-config libgc-dev libssl-dev zlib1g-dev libffi-dev libcjson-dev libsqlite3-dev
+sudo apt-get install -y llvm-21-dev clang-21 libclang-21-dev lld-21 libunwind-21-dev libc++-21-dev pkg-config libgc-dev libssl-dev zlib1g-dev libffi-dev libcjson-dev libsqlite3-dev libuv1-dev
 sudo apt-get install -y python3.12-dev # optional
 #curl https://raw.githubusercontent.com/xgo-dev/llgo/refs/heads/main/install.sh | bash
 ./install.sh
@@ -352,10 +349,10 @@ sudo apt-get install -y python3.12-dev # optional
 #### Alpine Linux
 
 ```sh
-apk add go llvm19-dev clang19-dev lld19 pkgconf gc-dev libunwind-dev openssl-dev zlib-dev
+apk add go llvm21-dev clang21-dev lld21 pkgconf gc-dev libunwind-dev openssl-dev zlib-dev
 apk add python3-dev # optional
 apk add g++ # build only
-export LLVM_CONFIG=/usr/lib/llvm19/bin/llvm-config
+export LLVM_CONFIG=/usr/lib/llvm21/bin/llvm-config
 export CGO_CPPFLAGS="$($LLVM_CONFIG --cppflags)"
 export CGO_CXXFLAGS=-std=c++17
 export CGO_LDFLAGS="$($LLVM_CONFIG --ldflags) $($LLVM_CONFIG --libs all)"

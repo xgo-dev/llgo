@@ -22,14 +22,14 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            llvm: 19
+            llvm: 21
           - os: ubuntu-latest
-            llvm: 19
+            llvm: 21
           - os: windows-2022
-            llvm: 19
+            llvm: 21
             windows_abi: msvc
           - os: windows-2022
-            llvm: 19
+            llvm: 21
             windows_abi: mingw
     runs-on: ${{matrix.os}}
     steps:

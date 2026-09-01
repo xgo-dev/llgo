@@ -121,6 +121,31 @@ func TestConfigCloneDoesNotAliasInput(t *testing.T) {
 	}
 }
 
+func TestValidateLLVMToolchain(t *testing.T) {
+	if err := validateLLVMToolchain(crosscompile.Export{CC: "gcc"}); err != nil {
+		t.Fatalf("non-Clang compiler rejected: %v", err)
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("test helper uses shell scripts")
+	}
+
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"llvm-config", "clang", "ld.lld"} {
+		tool := filepath.Join(binDir, name)
+		contents := "#!/bin/sh\nprintf '%s\\n' 'LLVM " + llvm.Version + "'\n"
+		if err := os.WriteFile(tool, []byte(contents), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := validateLLVMToolchain(crosscompile.Export{ClangRoot: root}); err != nil {
+		t.Fatalf("matching ClangRoot rejected: %v", err)
+	}
+}
+
 func TestResolveBuildConfigDefaultsAndValidation(t *testing.T) {
 	resolved, err := resolveBuildConfig(&Config{
 		BuildMode:    BuildModeCArchive,

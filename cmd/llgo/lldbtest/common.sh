@@ -19,7 +19,7 @@ find_lldb() {
         if command -v "$lldb_path" >/dev/null 2>&1; then
             local version
             version=$("$lldb_path" --version | grep -oE '[0-9]+' | head -1)
-            if [ "$version" -ge 18 ]; then
+            if [[ "$version" =~ ^[0-9]+$ ]] && [ "$version" -ge 18 ]; then
                 echo "$lldb_path"
                 return 0
             fi

@@ -4,36 +4,48 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	gllvm "github.com/xgo-dev/llvm"
 )
 
 func TestGetCompilerRTConfig_LibConfig(t *testing.T) {
-	config := GetCompilerRTConfig()
-
-	// Test basic configuration fields
-	expectedName := "compiler-rt"
-	if config.Name != expectedName {
-		t.Errorf("Expected Name '%s', got '%s'", expectedName, config.Name)
+	const llvmVersion = "21.1.8"
+	const want = "xtensa_release_21.1.3_20260408"
+	config, err := compilerRTConfigForLLVMVersion(llvmVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Name != "compiler-rt" {
+		t.Errorf("LLVM %s name = %q", llvmVersion, config.Name)
+	}
+	if config.Version != want {
+		t.Errorf("LLVM %s version = %q, want %q", llvmVersion, config.Version, want)
+	}
+	wantURL := "https://github.com/goplus/compiler-rt/archive/refs/tags/" + want + ".tar.gz"
+	if config.Url != wantURL {
+		t.Errorf("LLVM %s URL = %q, want %q", llvmVersion, config.Url, wantURL)
+	}
+	wantString := "compiler-rt-" + want
+	if config.ResourceSubDir != wantString || config.String() != wantString {
+		t.Errorf("LLVM %s archive identity = %q / %q, want %q", llvmVersion, config.ResourceSubDir, config.String(), wantString)
+	}
+	if _, err := compilerRTConfigForLLVMVersion("development"); err == nil {
+		t.Fatal("invalid LLVM version accepted")
+	}
+	if _, err := compilerRTConfigForLLVMVersion("19.1.7"); err == nil {
+		t.Fatal("unsupported LLVM version accepted")
 	}
 
-	expectedVersion := "xtensa_release_19.1.2"
-	if config.Version != expectedVersion {
-		t.Errorf("Expected Version '%s', got '%s'", expectedVersion, config.Version)
-	}
-
-	expectedUrl := "https://github.com/goplus/compiler-rt/archive/refs/tags/xtensa_release_19.1.2.tar.gz"
-	if config.Url != expectedUrl {
-		t.Errorf("Expected Url '%s', got '%s'", expectedUrl, config.Url)
-	}
-
-	expectedArchiveSrcDir := "compiler-rt-xtensa_release_19.1.2"
-	if config.ResourceSubDir != expectedArchiveSrcDir {
-		t.Errorf("Expected ResourceSubDir '%s', got '%s'", expectedArchiveSrcDir, config.ResourceSubDir)
-	}
-
-	// Test String() method
-	expectedString := "compiler-rt-xtensa_release_19.1.2"
-	if config.String() != expectedString {
-		t.Errorf("Expected String() '%s', got '%s'", expectedString, config.String())
+	defaultConfig, err := GetCompilerRTConfig()
+	if strings.HasPrefix(gllvm.Version, "21.") {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if defaultConfig.Version != want {
+			t.Errorf("default compiler-rt version = %q, want %q", defaultConfig.Version, want)
+		}
+	} else if err == nil {
+		t.Fatalf("unsupported linked LLVM %s unexpectedly resolved to %q", gllvm.Version, defaultConfig.Version)
 	}
 }
 

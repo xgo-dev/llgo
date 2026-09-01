@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile/compile"
+	"github.com/xgo-dev/llgo/internal/llvmpayload"
+	gllvm "github.com/xgo-dev/llvm"
 )
 
 func platformSpecifiedFiles(builtinsDir, target string) []string {
@@ -104,13 +106,22 @@ func withPlatformSpecifiedFiles(baseDir, target string, files []string) []string
 	return append(files, platformSpecifiedFiles(builtinsDir, target)...)
 }
 
-func GetCompilerRTConfig() compile.LibConfig {
+func GetCompilerRTConfig() (compile.LibConfig, error) {
+	return compilerRTConfigForLLVMVersion(gllvm.Version)
+}
+
+func compilerRTConfigForLLVMVersion(llvmVersion string) (compile.LibConfig, error) {
+	payload, err := llvmpayload.ForLLVMVersion(llvmVersion)
+	if err != nil {
+		return compile.LibConfig{}, err
+	}
+	version := payload.CompilerRTVersion()
 	return compile.LibConfig{
 		Name:           "compiler-rt",
-		Url:            "https://github.com/goplus/compiler-rt/archive/refs/tags/xtensa_release_19.1.2.tar.gz",
-		Version:        "xtensa_release_19.1.2",
-		ResourceSubDir: "compiler-rt-xtensa_release_19.1.2",
-	}
+		Url:            "https://github.com/goplus/compiler-rt/archive/refs/tags/" + version + ".tar.gz",
+		Version:        version,
+		ResourceSubDir: "compiler-rt-" + version,
+	}, nil
 }
 
 func GetCompilerRTCompileConfig(baseDir, target string) compile.CompileConfig {

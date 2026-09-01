@@ -10,7 +10,7 @@ require (
 	github.com/mattn/go-tty v0.0.8
 	github.com/qiniu/x v1.18.3
 	github.com/xgo-dev/llgo/runtime v0.0.0-00010101000000-000000000000
-	github.com/xgo-dev/llvm v0.9.7
+	github.com/xgo-dev/llvm v0.9.8
 	github.com/xgo-dev/plan9asm v0.5.1
 	go.bug.st/serial v1.6.4
 	go.yaml.in/yaml/v3 v3.0.5
@@ -26,3 +26,6 @@ require (
 )
 
 replace github.com/xgo-dev/llgo/runtime => ./runtime
+
+// Temporary: use goplus/lib#27 until its LLVM 21 metadata is merged.
+replace github.com/goplus/lib => github.com/zhouguangyuan0718/lib v0.0.0-20260901051643-a8f1f8266c99

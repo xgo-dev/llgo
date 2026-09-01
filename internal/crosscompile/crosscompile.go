@@ -14,11 +14,13 @@ import (
 	"github.com/xgo-dev/llgo/internal/crosscompile/compile"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/flash"
+	"github.com/xgo-dev/llgo/internal/llvmpayload"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/targets"
 	"github.com/xgo-dev/llgo/internal/xtool/llvm"
 	envllvm "github.com/xgo-dev/llgo/xtool/env/llvm"
+	gllvm "github.com/xgo-dev/llvm"
 )
 
 type Export struct {
@@ -51,6 +53,8 @@ type Export struct {
 	ClangBinPath   string   // Path to clang binary directory
 
 	LLVMTarget   string // LLVM Target
+	CPU          string // LLVM target CPU used by external code generation and cache identity
+	Features     string // LLVM target features used by external code generation and cache identity
 	TargetABI    string // RISC-V Target ABI (e.g., "lp64", "lp64d")
 	BinaryFormat string // Binary format (e.g., "elf", "esp", "uf2")
 	FormatDetail string // For uf2, it's uf2FamilyID
@@ -183,17 +187,10 @@ var (
 	wasiMacosSubdir = "wasi-sdk-25.0-x86_64-macos"
 )
 
-var (
-	espClangBaseUrl        = "https://github.com/goplus/espressif-llvm-project-prebuilt/releases/download/19.1.2_20250905-3"
-	espClangVersion        = "19.1.2_20250905-3"
-	espClangWindowsBaseUrl = "https://github.com/espressif/llvm-project/releases/download/esp-19.1.2_20250312"
-	espClangWindowsVersion = "19.1.2_20250312"
-)
-
-const espClangWindowsPlatform = "x86_64-w64-mingw32"
-
 // cacheRoot can be overridden for testing
 var cacheRoot = env.LLGoCacheDir
+
+var resolveESPClangArtifact = llvmpayload.Manifest.Artifact
 
 func cacheDir() string {
 	return filepath.Join(cacheRoot(), "crosscompile")
@@ -258,17 +255,25 @@ func getESPClangRoot(forceEspClang bool) (clangRoot string, err error) {
 		return "", nil
 	}
 
+	payload, err := llvmpayload.ForLLVMVersion(gllvm.Version)
+	if err != nil {
+		return "", err
+	}
+
 	// Try to download ESP Clang if platform is supported
 	platformSuffix := getESPClangPlatform(runtime.GOOS, runtime.GOARCH)
 	if platformSuffix != "" {
-		baseURL, version := espClangDownload(platformSuffix)
-		cacheClangDir := filepath.Join(cacheRoot(), "crosscompile", "esp-clang-"+version)
+		artifact, artifactErr := resolveESPClangArtifact(payload, platformSuffix)
+		if artifactErr != nil {
+			return "", artifactErr
+		}
+		cacheClangDir := filepath.Join(cacheRoot(), "crosscompile", "esp-clang-"+artifact.Version)
 		if _, err = os.Stat(cacheClangDir); err != nil {
 			if !errors.Is(err, fs.ErrNotExist) {
 				return
 			}
 			fmt.Fprintln(os.Stderr, "ESP Clang not found in LLGO_ROOT or cache, will download.")
-			if err = checkDownloadAndExtractESPClang(baseURL, version, platformSuffix, cacheClangDir); err != nil {
+			if err = checkDownloadAndExtractESPClang(artifact, cacheClangDir); err != nil {
 				return
 			}
 		}
@@ -282,42 +287,8 @@ func getESPClangRoot(forceEspClang bool) (clangRoot string, err error) {
 
 // getESPClangPlatform returns the platform suffix for ESP Clang downloads
 func getESPClangPlatform(goos, goarch string) string {
-	switch goos {
-	case "darwin":
-		switch goarch {
-		case "amd64":
-			return "x86_64-apple-darwin"
-		case "arm64":
-			return "aarch64-apple-darwin"
-		}
-	case "linux":
-		switch goarch {
-		case "amd64":
-			return "x86_64-linux-gnu"
-		case "arm64":
-			return "aarch64-linux-gnu"
-		case "arm":
-			return "arm-linux-gnueabihf"
-		}
-	case "windows":
-		switch goarch {
-		case "amd64", "arm64":
-			// Espressif publishes an x86-64 Windows host toolchain. Windows on
-			// ARM64 runs it through the system's x64 emulation layer.
-			return espClangWindowsPlatform
-		}
-	}
-	return ""
-}
-
-func espClangDownload(platformSuffix string) (baseURL, version string) {
-	if platformSuffix == espClangWindowsPlatform {
-		// The LLGo-hosted 20250905 build does not publish a Windows archive.
-		// Use Espressif's official LLVM 19 Windows build instead of constructing
-		// a URL that can only return 404.
-		return espClangWindowsBaseUrl, espClangWindowsVersion
-	}
-	return espClangBaseUrl, espClangVersion
+	platform, _ := llvmpayload.PlatformSuffix(goos, goarch)
+	return platform
 }
 
 // ldFlagsFromFileName extracts the library name from a filename for use in linker flags
@@ -326,12 +297,28 @@ func ldFlagsFromFileName(fileName string) string {
 	return strings.TrimPrefix(strings.TrimSuffix(fileName, ".a"), "lib")
 }
 
+func lldLTOOptFlag(level optlevel.Level) (string, error) {
+	switch level {
+	case optlevel.O0, optlevel.O1, optlevel.O2, optlevel.O3:
+		return "--lto-" + level.Name(), nil
+	case optlevel.Os, optlevel.Oz:
+		// ld.lld only accepts numeric LTO optimization levels. Clang maps its
+		// size-oriented modes to O2 for the link-time optimization pipeline.
+		return "--lto-O2", nil
+	default:
+		return "", fmt.Errorf("invalid LTO optimization level %q", level)
+	}
+}
+
 // compileWithConfig compiles libraries according to the provided configuration
 // and returns the necessary linker flags for linking against the compiled libraries
 func compileWithConfig(
 	compileConfig compile.CompileConfig,
 	outputDir string, options compile.CompileOptions,
 ) (ldflags []string, err error) {
+	if err = os.MkdirAll(outputDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create compiled library cache %q: %w", outputDir, err)
+	}
 	ldflags = append(ldflags, "-nostdlib", "-L"+outputDir)
 
 	for _, group := range compileConfig.Groups {
@@ -742,6 +729,8 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 	export.GOARCH = config.GOARCH
 	export.ExtraFiles = config.ExtraFiles
 	export.LLVMTarget = config.LLVMTarget
+	export.CPU = config.CPU
+	export.Features = config.Features
 	export.TargetABI = config.TargetABI
 	export.BinaryFormat = config.BinaryFormat
 	export.FormatDetail = config.FormatDetail()
@@ -901,9 +890,17 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 	if config.LinkerScript != "" {
 		ldflags = append(ldflags, "-T", config.LinkerScript)
 	}
-	ldflags = append(ldflags, "-L", env.LLGoROOT()) // search targets/*.ld
-
 	var libcIncludeDir []string
+	var compiledLibraryKey string
+	if config.Libc != "" || config.RTLib != "" {
+		var compilerKey string
+		compilerKey, err = compilerCacheKey(export.CC)
+		if err != nil {
+			return
+		}
+		compiledLibraryKey = compiledLibraryCacheKey(compilerKey, ccflags, ldflags)
+	}
+	ldflags = append(ldflags, "-L", env.LLGoROOT()) // search targets/*.ld
 
 	if config.Libc != "" {
 		var outputDir string
@@ -911,7 +908,7 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 		var compileConfig compile.CompileConfig
 		baseDir := filepath.Join(cacheRoot(), "crosscompile")
 
-		outputDir, compileConfig, err = getLibcCompileConfigByName(baseDir, config.Libc, config.LLVMTarget, config.CPU)
+		outputDir, compileConfig, err = getLibcCompileConfigByName(baseDir, config.Libc, config.LLVMTarget, config.CPU, compiledLibraryKey)
 		if err != nil {
 			return
 		}
@@ -937,7 +934,7 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 		var compileConfig compile.CompileConfig
 		baseDir := filepath.Join(cacheRoot(), "crosscompile")
 
-		outputDir, compileConfig, err = getRTCompileConfigByName(baseDir, config.RTLib, config.LLVMTarget)
+		outputDir, compileConfig, err = getRTCompileConfigByName(baseDir, config.RTLib, config.LLVMTarget, compiledLibraryKey)
 		if err != nil {
 			return
 		}

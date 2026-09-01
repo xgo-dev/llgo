@@ -13,22 +13,31 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Set up Python 3.12 on Windows
-      if: runner.os == 'Windows'
+    - name: Set up x64 host Python 3.12 on Windows
+      if: runner.os == 'Windows' && inputs.windows-arch != 'arm64'
       id: windows_python
       uses: actions/setup-python@v6
       with:
-        # LLVM 19.1.3's MSVC LLDB embeds the 3.12.7 hosted-tool-cache prefix.
-        # A newer 3.12 patch is ABI-compatible, but LLDB combines its embedded
-        # stdlib path with that installation and cannot import encodings. Keep
-        # the MinGW demo environment on the normal latest 3.12 patch. This is
-        # the host-tools interpreter: use x64 on Windows ARM, where emulation
-        # retains access to wheels that upstream projects do not publish for
-        # native ARM64 Python. The target interpreter is installed below.
-        python-version: ${{ inputs.windows-abi == 'msvc' && '3.12.7' || '3.12' }}
+        # Demo tools embed Python 3.12. Cross-architecture lanes install their
+        # native target and LLDB interpreters below. Asking an ARM64 runner to
+        # unpack the x64 hosted-tool-cache payload can crash PowerShell's ARM64
+        # CLR before emulation is involved, so that native runner is the sole
+        # exception.
+        python-version: "3.12"
         architecture: x64
         # setup-python otherwise replaces PKG_CONFIG_PATH, hiding the native
         # vcpkg metadata installed by setup-deps from LLGo's runtime build.
+        update-environment: false
+
+    - name: Set up LLDB Python 3.10 on Windows amd64
+      if: runner.os == 'Windows' && inputs.windows-abi == 'msvc' && inputs.windows-arch == 'amd64'
+      id: windows_lldb_python_amd64
+      uses: actions/setup-python@v6
+      with:
+        # LLVM's official 21.1.8 x64 release is built against Python 3.10;
+        # installing Python 3.12 cannot satisfy its python310.dll import.
+        python-version: "3.10"
+        architecture: x64
         update-environment: false
 
     - name: Set up target Python 3.12 on Windows
@@ -48,7 +57,7 @@ runs:
       id: windows_lldb_python_386
       uses: actions/setup-python@v6
       with:
-        # LLVM's official 19.1.7 Win32 LLDB links python310.dll. Keep this
+        # LLVM's official 21.1.8 Win32 LLDB links python310.dll. Keep this
         # debugger runtime separate from the target Python 3.12 demo library.
         python-version: "3.10"
         architecture: x86
@@ -59,7 +68,7 @@ runs:
       id: windows_lldb_python
       uses: actions/setup-python@v6
       with:
-        # LLVM's official 19.1.7 Windows-on-Arm LLDB links python311.dll.
+        # LLVM's official 21.1.8 Windows-on-Arm LLDB links python311.dll.
         # 3.11.9 is the final ARM64 artifact in actions/python-versions.
         python-version: "3.11.9"
         architecture: arm64
@@ -86,6 +95,18 @@ runs:
         $prefix = (& $python -c "import sys; print(sys.base_prefix)").Trim()
         if (-not (Test-Path (Join-Path $prefix "python310.dll"))) {
           throw "The native x86 LLDB Python runtime is incomplete: $prefix"
+        }
+        Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_WINDOWS_LLDB_PYTHON_HOME=$prefix"
+
+    - name: Configure LLDB Python on Windows amd64
+      if: runner.os == 'Windows' && inputs.windows-abi == 'msvc' && inputs.windows-arch == 'amd64'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        $python = "${{ steps.windows_lldb_python_amd64.outputs.python-path }}"
+        $prefix = (& $python -c "import sys; print(sys.base_prefix)").Trim()
+        if (-not (Test-Path (Join-Path $prefix "python310.dll"))) {
+          throw "The native x64 LLDB Python runtime is incomplete: $prefix"
         }
         Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_WINDOWS_LLDB_PYTHON_HOME=$prefix"
 
@@ -256,7 +277,7 @@ runs:
       run: |
         $ErrorActionPreference = "Stop"
 
-        $hostPython = "${{ steps.windows_python.outputs.python-path }}"
+        $hostPython = "${{ steps.windows_python.outputs.python-path || steps.windows_target_python.outputs.python-path }}"
         $python = "${{ steps.windows_target_python.outputs.python-path || steps.windows_python.outputs.python-path }}"
         $packages = @("numpy")
         if ("${{ inputs.windows-arch }}" -eq "amd64") {

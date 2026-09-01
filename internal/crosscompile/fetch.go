@@ -5,6 +5,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/llvmpayload"
 )
 
 const espClangLicenseFile = "XGo-LLVM-Apache-2.0-WITH-LLVM-exception.txt"
@@ -47,7 +50,7 @@ func checkDownloadAndExtractWasiSDK(dir string) (wasiSdkRoot string, err error) 
 }
 
 // checkDownloadAndExtractESPClang downloads and extracts ESP Clang binaries and libraries
-func checkDownloadAndExtractESPClang(baseURL, version, platformSuffix, dir string) error {
+func checkDownloadAndExtractESPClang(artifact llvmpayload.Artifact, dir string) error {
 	// Check if already exists
 	if _, err := os.Stat(dir); err == nil {
 		return nil
@@ -66,12 +69,11 @@ func checkDownloadAndExtractESPClang(baseURL, version, platformSuffix, dir strin
 		return nil
 	}
 
-	clangUrl := fmt.Sprintf("%s/clang-esp-%s-%s.tar.xz", baseURL, version, platformSuffix)
-	description := fmt.Sprintf("ESP Clang %s-%s", version, platformSuffix)
+	description := fmt.Sprintf("ESP Clang %s-%s", artifact.Version, artifact.Platform)
 
 	// Use temporary extraction directory for ESP Clang special handling
 	tempExtractDir := dir + ".extract"
-	if err := downloadAndExtractArchive(clangUrl, tempExtractDir, description); err != nil {
+	if err := downloadAndExtractArchiveWithChecksum(artifact.URL, tempExtractDir, description, artifact.SHA256); err != nil {
 		return err
 	}
 	defer os.RemoveAll(tempExtractDir)
@@ -191,6 +193,10 @@ func lockReleaseError(unlockErr, closeErr error) error {
 
 // downloadAndExtractArchive downloads and extracts an archive to the destination directory (without locking)
 func downloadAndExtractArchive(url, destDir, description string) error {
+	return downloadAndExtractArchiveWithChecksum(url, destDir, description, "")
+}
+
+func downloadAndExtractArchiveWithChecksum(url, destDir, description, expectedSHA256 string) error {
 	fmt.Fprintf(os.Stderr, "Downloading %s...\n", description)
 
 	// Use temporary extraction directory
@@ -207,6 +213,15 @@ func downloadAndExtractArchive(url, destDir, description string) error {
 	localFile := filepath.Join(tempDir, filename)
 	if err := downloadFile(url, localFile); err != nil {
 		return fmt.Errorf("failed to download %s from %s: %w", description, url, err)
+	}
+	if expectedSHA256 != "" {
+		actualSHA256, err := fileSHA256(localFile)
+		if err != nil {
+			return fmt.Errorf("calculate %s checksum: %w", description, err)
+		}
+		if !strings.EqualFold(actualSHA256, expectedSHA256) {
+			return fmt.Errorf("%s checksum mismatch: got %s, want %s", description, actualSHA256, expectedSHA256)
+		}
 	}
 
 	// Extract the archive
@@ -236,6 +251,23 @@ func downloadAndExtractArchive(url, destDir, description string) error {
 
 	fmt.Fprintf(os.Stderr, "%s downloaded and extracted successfully.\n", description)
 	return nil
+}
+
+func fileSHA256(filename string) (string, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	return readerSHA256(file)
+}
+
+func readerSHA256(reader io.Reader) (string, error) {
+	hash := sha256.New()
+	if _, err := io.Copy(hash, reader); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func downloadFile(url, filepath string) error {

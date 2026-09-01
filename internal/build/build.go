@@ -64,6 +64,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/typepatch"
 	"github.com/xgo-dev/llgo/ssa/abi"
 	xenv "github.com/xgo-dev/llgo/xtool/env"
+	envllvm "github.com/xgo-dev/llgo/xtool/env/llvm"
 	gllvm "github.com/xgo-dev/llvm"
 
 	llruntime "github.com/xgo-dev/llgo/runtime"
@@ -501,6 +502,9 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 	export, err := crosscompile.UseWithGOARMAndToolchain(conf.Goos, conf.Goarch, conf.GOARM, conf.Target, IsWasiThreadsEnabled(), forceEspClang, conf.OptLevel, conf.ltoMode(), conf.goGlobalDCEEnabled(), nativeInput)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup crosscompile: %w", err)
+	}
+	if err := validateLLVMToolchain(export); err != nil {
+		return nil, fmt.Errorf("invalid LLVM toolchain: %w", err)
 	}
 	// Update GOOS/GOARCH from export if target was used
 	if conf.Target != "" && export.GOOS != "" {
@@ -962,6 +966,22 @@ func parseNativeToolchainInput(commands commandEnv, options LinkOptions, resolve
 		*setting.out = args
 	}
 	return input, nil
+}
+
+func validateLLVMToolchain(export crosscompile.Export) error {
+	if export.ClangRoot != "" {
+		binDir := filepath.Join(export.ClangRoot, "bin")
+		return envllvm.ValidateToolchainMajor(gllvm.Version,
+			filepath.Join(binDir, "llvm-config"),
+			filepath.Join(binDir, "clang"),
+			filepath.Join(binDir, "ld.lld"),
+		)
+	}
+	compiler := filepath.Base(export.CC)
+	if compiler != "clang" && compiler != "clang++" {
+		return nil
+	}
+	return envllvm.ValidateToolchainMajor(gllvm.Version, "llvm-config", export.CC, "ld.lld")
 }
 
 // cHeaderPackages excludes the patched standard runtime implementation. Its
@@ -1463,7 +1483,7 @@ func appendExternalLinkArgs(ctx *context, aPkg *aPackage, spec string) {
 	} else {
 		linkFile := expdArgs[0]
 		dir, lib := filepath.Split(linkFile)
-		pkgLinkArgs = append(pkgLinkArgs, "-l"+lib)
+		pkgLinkArgs = append(pkgLinkArgs, externalLibraryLinkArg(ctx.crossCompile.Toolchain, lib))
 		if dir != "" {
 			pkgLinkArgs = append(pkgLinkArgs, "-L"+dir)
 			atomic.AddInt32(&ctx.nLibdir, 1)
@@ -1475,6 +1495,16 @@ func appendExternalLinkArgs(ctx *context, aPkg *aPackage, spec string) {
 		}
 	}
 	aPkg.LinkArgs = append(aPkg.LinkArgs, pkgLinkArgs...)
+}
+
+func externalLibraryLinkArg(toolchain crosscompile.NativeToolchain, lib string) string {
+	// LLGo packages use "c++" as the portable spelling for the target C++
+	// standard library. The MSVC ABI provides that library as msvcprt.lib;
+	// spelling it as -lc++ instead asks lld-link for the unrelated c++.lib.
+	if lib == "c++" && toolchain.CXXRuntime == crosscompile.CXXRuntimeMSVC {
+		return "-lmsvcprt"
+	}
+	return "-l" + lib
 }
 
 var (

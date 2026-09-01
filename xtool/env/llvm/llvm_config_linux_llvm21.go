@@ -1,4 +1,4 @@
-//go:build !byollvm && linux && llvm19
+//go:build !byollvm && linux && !llvm14 && !llvm15 && !llvm16 && !llvm17 && !llvm18 && !llvm19 && !llvm20 && !llvm22
 
 /*
  * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.
@@ -18,4 +18,4 @@
 
 package llvm
 
-const ldLLVMConfigBin = "/usr/lib/llvm-19/bin/llvm-config"
+const ldLLVMConfigBin = "/usr/lib/llvm-21/bin/llvm-config"
