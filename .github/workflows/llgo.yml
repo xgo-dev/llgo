@@ -202,11 +202,21 @@ jobs:
               fi
             done
           fi
-          # esptool inspects target firmware but runs on the CI host. Windows
-          # ARM64 only builds the image, so it neither inspects it nor needs
-          # esptool's native cryptography dependency. The 386 lane uses the
-          # x64 host Python instead of cross-building that dependency.
-          if [[ "$RUNNER_OS" != "Windows" || "${{ matrix.windows_arch }}" != "arm64" ]]; then
+          # esptool inspects target firmware but runs on the CI host. PyPI has
+          # no Windows ARM64 cryptography wheel, and this image-info test does
+          # not import espsecure (the only esptool component that uses it).
+          # Install the pure test dependency closure instead of trying to
+          # build cryptography and OpenSSL on the runner. The 386 lane uses
+          # x64 host Python and its normal wheels.
+          if [[ "$RUNNER_OS" == "Windows" && "${{ matrix.windows_arch }}" == "arm64" ]]; then
+            python -m pip install --no-deps esptool==5.1.0
+            python -m pip install \
+              'bitstring!=4.2.0,>=3.1.6' \
+              'pyserial>=3.3' \
+              'reedsolo<1.8,>=1.5.3' \
+              'PyYAML>=5.1' \
+              intelhex rich_click 'click<9'
+          else
             if [[ "$RUNNER_OS" == "Windows" && -n "${LLGO_WINDOWS_PYTHON_HOME:-}" ]]; then
               host_python_home="$(cygpath -u "$LLGO_WINDOWS_PYTHON_HOME")"
               export PATH="$host_python_home:$PATH"
@@ -285,6 +295,7 @@ jobs:
             # The upstream x64 LLVM archive records its build runner's Python
             # home. setup-demo-deps installs that exact Python patch release.
             $env:PYTHONHOME = $env:LLGO_WINDOWS_PYTHON_HOME
+            $env:PATH = "$env:LLGO_WINDOWS_PYTHON_HOME;$env:PATH"
           }
           Write-Host "Test lldb with llgo plugin on ${{matrix.os}} with LLVM ${{matrix.llvm}}"
           bash cmd/llgo/lldbtest/runtest.sh -v
