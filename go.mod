@@ -28,4 +28,4 @@ require (
 replace github.com/xgo-dev/llgo/runtime => ./runtime
 
 // Temporary: use goplus/lib#27 until its LLVM 21 metadata is merged.
-replace github.com/goplus/lib => github.com/zhouguangyuan0718/lib v0.0.0-20260829113337-5762a8b8a78f
+replace github.com/goplus/lib => github.com/zhouguangyuan0718/lib v0.0.0-20260901051643-a8f1f8266c99
