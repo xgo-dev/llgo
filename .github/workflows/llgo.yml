@@ -202,14 +202,17 @@ jobs:
               fi
             done
           fi
-          # esptool inspects target firmware but runs on the CI host. For a
-          # cross-architecture Windows lane, use the x64 host Python so pip
-          # can install its native dependencies without cross-building them.
-          if [[ "$RUNNER_OS" == "Windows" && -n "${LLGO_WINDOWS_PYTHON_HOME:-}" ]]; then
-            host_python_home="$(cygpath -u "$LLGO_WINDOWS_PYTHON_HOME")"
-            export PATH="$host_python_home:$PATH"
+          # esptool inspects target firmware but runs on the CI host. Windows
+          # ARM64 only builds the image, so it neither inspects it nor needs
+          # esptool's native cryptography dependency. The 386 lane uses the
+          # x64 host Python instead of cross-building that dependency.
+          if [[ "$RUNNER_OS" != "Windows" || "${{ matrix.windows_arch }}" != "arm64" ]]; then
+            if [[ "$RUNNER_OS" == "Windows" && -n "${LLGO_WINDOWS_PYTHON_HOME:-}" ]]; then
+              host_python_home="$(cygpath -u "$LLGO_WINDOWS_PYTHON_HOME")"
+              export PATH="$host_python_home:$PATH"
+            fi
+            python -m pip install esptool==5.1.0
           fi
-          python -m pip install esptool==5.1.0
           cd _demo/embed
           chmod +x test_esp32c3_startup.sh
           args=()
