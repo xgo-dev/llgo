@@ -103,7 +103,7 @@ if ($env:PKG_CONFIG -or $env:PKG_CONFIG_PATH) {
 if ($Profile -eq "msvc" -and $env:LLGO_MSYS2_LOCATION) {
   throw "The MSVC lane still exports LLGO_MSYS2_LOCATION"
 }
-& pkg-config --modversion llvm-19 | Out-Null
+& pkg-config --modversion llvm-21 | Out-Null
 Assert-Success "Reading LLVM metadata through the profile-local pkg-config"
 
 $compilerArgs = @()
