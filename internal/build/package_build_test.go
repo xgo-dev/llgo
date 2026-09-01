@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/xgo-dev/llgo/cl"
+	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -200,6 +201,31 @@ func TestPrePackageBuildSkipsExternalLinkOnlyPackage(t *testing.T) {
 	}
 	if len(pkg.LinkArgs) != 1 || pkg.LinkArgs[0] != "-lexample" {
 		t.Fatalf("external link args = %q, want [-lexample]", pkg.LinkArgs)
+	}
+}
+
+func TestPrePackageBuildMapsCXXRuntimeLibraryForMSVC(t *testing.T) {
+	pkg := &aPackage{Package: &packages.Package{
+		ID:      "example.com/cxx",
+		PkgPath: "example.com/cxx",
+		Name:    "cxx",
+		Types:   types.NewPackage("example.com/cxx", "cxx"),
+	}}
+	ctx := &context{
+		buildConf: &Config{},
+		crossCompile: crosscompile.Export{Toolchain: crosscompile.NativeToolchain{
+			CXXRuntime: crosscompile.CXXRuntimeMSVC,
+		}},
+	}
+	task := &packageBuildTask{pkg: pkg, kind: cl.PkgLinkExtern, kindParam: "c++"}
+	if err := prePackageBuild(ctx, task, false); err != nil {
+		t.Fatal(err)
+	}
+	if !task.skip {
+		t.Fatal("external C++ runtime package was not skipped")
+	}
+	if got, want := strings.Join(pkg.LinkArgs, " "), "-lmsvcprt"; got != want {
+		t.Fatalf("external C++ runtime link args = %q, want %q", got, want)
 	}
 }
 

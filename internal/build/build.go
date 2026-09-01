@@ -1483,7 +1483,7 @@ func appendExternalLinkArgs(ctx *context, aPkg *aPackage, spec string) {
 	} else {
 		linkFile := expdArgs[0]
 		dir, lib := filepath.Split(linkFile)
-		pkgLinkArgs = append(pkgLinkArgs, "-l"+lib)
+		pkgLinkArgs = append(pkgLinkArgs, externalLibraryLinkArg(ctx.crossCompile.Toolchain, lib))
 		if dir != "" {
 			pkgLinkArgs = append(pkgLinkArgs, "-L"+dir)
 			atomic.AddInt32(&ctx.nLibdir, 1)
@@ -1495,6 +1495,16 @@ func appendExternalLinkArgs(ctx *context, aPkg *aPackage, spec string) {
 		}
 	}
 	aPkg.LinkArgs = append(aPkg.LinkArgs, pkgLinkArgs...)
+}
+
+func externalLibraryLinkArg(toolchain crosscompile.NativeToolchain, lib string) string {
+	// LLGo packages use "c++" as the portable spelling for the target C++
+	// standard library. The MSVC ABI provides that library as msvcprt.lib;
+	// spelling it as -lc++ instead asks lld-link for the unrelated c++.lib.
+	if lib == "c++" && toolchain.CXXRuntime == crosscompile.CXXRuntimeMSVC {
+		return "-lmsvcprt"
+	}
+	return "-l" + lib
 }
 
 var (
