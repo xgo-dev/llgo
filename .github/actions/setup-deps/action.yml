@@ -340,13 +340,15 @@ runs:
         # ordered static link as standard -L/-l flags so pkgconf does not treat
         # backslashes as escapes and Go's CGO flag validation remains intact.
         $ldflags = (@("-L$llvmLibDir") + @($libraryFlags)) -join " "
-        @"
+        $llvmPC = @"
         Name: LLVM ${{ inputs.llvm-version }}
         Description: LLVM ${{ inputs.llvm-version }} host compiler and linker flags
         Version: $env:LLVM_VERSION
         Cflags: $cflags
         Libs: $ldflags
-        "@ | Set-Content -Encoding ascii (Join-Path $pcDir "llvm-${{ inputs.llvm-version }}.pc")
+        "@
+        $llvmPC | Set-Content -Encoding ascii (Join-Path $pcDir "llvm-${{ inputs.llvm-version }}.pc")
+        $llvmPC | Set-Content -Encoding ascii (Join-Path $pcDir "llvm.pc")
 
         # Upstream Windows LLVM release archives contain LLVMFileCheck.lib but
         # omit the FileCheck executable used by LLGo's IR regression tests.
@@ -421,6 +423,13 @@ runs:
         set -euo pipefail
         MSYS2_ARG_CONV_EXCL='*' exec "$pkgconfUnix" --dont-define-prefix "--with-path=$pcDirUnix" "--with-path=$vcpkgLibPCUnix" "--with-path=$vcpkgSharePCUnix" "`$@"
         "@ | Set-Content -Encoding ascii $pkgconfShell
+
+        foreach ($package in @("llvm", "llvm-${{ inputs.llvm-version }}")) {
+          & $pkgconfWrapper --modversion $package
+          if ($LASTEXITCODE -ne 0) {
+            throw "MSVC pkg-config metadata for $package is unavailable"
+          }
+        }
 
         $gcLibFlags = ((& $pkgconfWrapper --libs bdw-gc) -join " ").Trim() -split '\s+'
         if ($LASTEXITCODE -ne 0) {
@@ -602,8 +611,10 @@ runs:
           pacman -Q "$prefix-$package"
         done
 
-        # MSYS2 does not ship llvm.pc. Generate the versioned metadata from
-        # its authoritative llvm-config in CLANG64's normal package root.
+        # MSYS2 does not ship llvm.pc. Generate both a selected-version file
+        # and a stable alias from its authoritative llvm-config in CLANG64's
+        # normal package root. Libraries can use the alias while this setup
+        # step remains responsible for enforcing the requested LLVM version.
         cflags="$(llvm-config --cflags)"
         ldflags="$(llvm-config --ldflags --libs all --system-libs)"
         cflags="${cflags//$'\r'/}"
@@ -618,7 +629,7 @@ runs:
           "Version: $llvm_version" \
           "Cflags: $cflags" \
           "Libs: $ldflags" \
-          > "$pc_dir/llvm-$llvm_major.pc"
+          | tee "$pc_dir/llvm-$llvm_major.pc" > "$pc_dir/llvm.pc"
 
     - name: Configure independent Windows MinGW profile
       if: runner.os == 'Windows' && inputs.install-llvm == 'true' && inputs.windows-abi == 'mingw'
@@ -634,7 +645,12 @@ runs:
         $clang = Join-Path $mingwBin "clang.exe"
         $pkgconf = Join-Path $mingwBin "pkgconf.exe"
         $pcDir = Join-Path $mingwRoot "lib\pkgconfig"
-        foreach ($path in @($clang, $pkgconf, (Join-Path $pcDir "llvm-${{ inputs.llvm-version }}.pc"))) {
+        foreach ($path in @(
+          $clang,
+          $pkgconf,
+          (Join-Path $pcDir "llvm-${{ inputs.llvm-version }}.pc"),
+          (Join-Path $pcDir "llvm.pc")
+        )) {
           if (-not (Test-Path $path)) {
             throw "The MinGW profile is incomplete: $path was not found"
           }
@@ -667,7 +683,7 @@ runs:
         MSYS2_ARG_CONV_EXCL='*' exec "$pkgconfUnix" --dont-define-prefix "--with-path=$profilePCUnix" "--with-path=$pcDirUnix" "`$@"
         "@ | Set-Content -Encoding ascii $pkgConfigShell
 
-        foreach ($package in @("llvm-${{ inputs.llvm-version }}", "bdw-gc", "libffi", "libuv", "openssl", "libcjson", "sqlite3", "zlib")) {
+        foreach ($package in @("llvm", "llvm-${{ inputs.llvm-version }}", "bdw-gc", "libffi", "libuv", "openssl", "libcjson", "sqlite3", "zlib")) {
           & $pkgConfig --modversion $package
           if ($LASTEXITCODE -ne 0) {
             throw "MinGW pkg-config metadata for $package is unavailable"
