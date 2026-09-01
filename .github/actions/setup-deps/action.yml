@@ -39,11 +39,14 @@ runs:
       id: windows_llvm_cache
       uses: actions/cache/restore@v4
       with:
-        path: ${{ runner.tool_cache }}\llgo-llvm\clang+llvm-21.1.8-x86_64-pc-windows-msvc
-        key: llgo-llvm-21.1.8-full-target-windows-x64-749d22f565fcd5718dbed06512572d0e5353b502c03fe1f7f17ee8b8aca21a47
+        # Cache the hash-pinned release payload rather than its extracted tree.
+        # GitHub's Windows cache archive did not round-trip every executable
+        # from the LLVM development package, notably llvm-config.exe.
+        path: ${{ runner.tool_cache }}\llgo-llvm-archives\clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz
+        key: llgo-llvm-21.1.8-full-target-windows-x64-749d22f565fcd5718dbed06512572d0e5353b502c03fe1f7f17ee8b8aca21a47-archive-v1
 
     - name: Install full-target Windows LLVM
-      if: runner.os == 'Windows' && inputs.install-llvm == 'true' && inputs.windows-abi == 'msvc' && steps.windows_llvm_cache.outputs.cache-hit != 'true'
+      if: runner.os == 'Windows' && inputs.install-llvm == 'true' && inputs.windows-abi == 'msvc'
       shell: pwsh
       env:
         # Use the official development archive rather than the smaller Windows
@@ -58,12 +61,19 @@ runs:
         }
 
         $archiveName = "clang+llvm-$env:LLVM_VERSION-x86_64-pc-windows-msvc.tar.xz"
-        $archive = Join-Path $env:RUNNER_TEMP $archiveName
-        $urlAsset = $archiveName.Replace("+", "%2B")
-        $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$env:LLVM_VERSION/$urlAsset"
-        & curl.exe --fail --location --retry 5 --retry-all-errors --output $archive $url
-        if ($LASTEXITCODE -ne 0) {
-          throw "Downloading LLVM failed with exit code $LASTEXITCODE"
+        $archiveParent = Join-Path $env:RUNNER_TOOL_CACHE "llgo-llvm-archives"
+        $archive = Join-Path $archiveParent $archiveName
+        if ("${{ steps.windows_llvm_cache.outputs.cache-hit }}" -ne "true") {
+          New-Item -ItemType Directory -Force $archiveParent | Out-Null
+          $urlAsset = $archiveName.Replace("+", "%2B")
+          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$env:LLVM_VERSION/$urlAsset"
+          & curl.exe --fail --location --retry 5 --retry-all-errors --output $archive $url
+          if ($LASTEXITCODE -ne 0) {
+            throw "Downloading LLVM failed with exit code $LASTEXITCODE"
+          }
+        }
+        if (-not (Test-Path $archive)) {
+          throw "The cached LLVM archive is missing: $archive"
         }
         $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash
         if (-not $actual.Equals($env:LLVM_ARCHIVE_SHA256, [StringComparison]::OrdinalIgnoreCase)) {
@@ -76,6 +86,12 @@ runs:
         $sevenZip = Join-Path $env:ProgramFiles "7-Zip\7z.exe"
         if (-not (Test-Path $sevenZip)) {
           throw "7-Zip was not found at $sevenZip"
+        }
+        if (Test-Path $extractParent) {
+          Remove-Item -LiteralPath $extractParent -Recurse -Force
+        }
+        if (Test-Path $installRoot) {
+          Remove-Item -LiteralPath $installRoot -Recurse -Force
         }
         New-Item -ItemType Directory -Force $extractParent, $installParent | Out-Null
         & $sevenZip x -y "-o$extractParent" $archive
@@ -97,14 +113,14 @@ runs:
           throw "llvm-config.exe was not found in the full-target LLVM archive"
         }
         Move-Item -LiteralPath $extractedRoot.FullName -Destination $installRoot
-        Remove-Item -LiteralPath $archive, $tar.FullName
+        Remove-Item -LiteralPath $extractParent -Recurse -Force
 
     - name: Save full-target Windows LLVM
       if: runner.os == 'Windows' && inputs.install-llvm == 'true' && inputs.windows-abi == 'msvc' && steps.windows_llvm_cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4
       with:
-        path: ${{ runner.tool_cache }}\llgo-llvm\clang+llvm-21.1.8-x86_64-pc-windows-msvc
-        key: llgo-llvm-21.1.8-full-target-windows-x64-749d22f565fcd5718dbed06512572d0e5353b502c03fe1f7f17ee8b8aca21a47
+        path: ${{ runner.tool_cache }}\llgo-llvm-archives\clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz
+        key: llgo-llvm-21.1.8-full-target-windows-x64-749d22f565fcd5718dbed06512572d0e5353b502c03fe1f7f17ee8b8aca21a47-archive-v1
 
     - name: Cache target-native Windows LLVM support
       if: runner.os == 'Windows' && inputs.install-llvm == 'true' && inputs.windows-arch != 'amd64'
@@ -364,7 +380,7 @@ runs:
         & (Join-Path $llvmBin "clang++.exe") `
           --target=x86_64-pc-windows-msvc `
           -fuse-ld=lld `
-          -fms-runtime-lib=dll `
+          -fms-runtime-lib=static `
           -std=c++17 `
           "-I$llvmIncludeDir" `
           $fileCheckSource `
@@ -422,11 +438,11 @@ runs:
         # Go's Windows external linker detects LLD through the compiler command
         # prefix. Without this option it emits a GNU ld linker script that the
         # native MSVC linker dialect cannot consume.
-        # The upstream full-target LLVM archive uses the dynamic MSVC runtime.
-        # Make host cgo objects match it so lld-link does not reject mixed /MT
-        # and /MD RuntimeLibrary directives.
-        Add-Content -Encoding utf8 $env:GITHUB_ENV "CC=clang --target=x86_64-pc-windows-msvc -fuse-ld=lld -fms-runtime-lib=dll"
-        Add-Content -Encoding utf8 $env:GITHUB_ENV "CXX=clang++ --target=x86_64-pc-windows-msvc -fuse-ld=lld -fms-runtime-lib=dll -std=c++17"
+        # The upstream LLVM 21 development archive builds its static libraries
+        # against the static MSVC runtime. Match it in FileCheck and all host
+        # cgo objects so lld-link sees one RuntimeLibrary directive.
+        Add-Content -Encoding utf8 $env:GITHUB_ENV "CC=clang --target=x86_64-pc-windows-msvc -fuse-ld=lld -fms-runtime-lib=static"
+        Add-Content -Encoding utf8 $env:GITHUB_ENV "CXX=clang++ --target=x86_64-pc-windows-msvc -fuse-ld=lld -fms-runtime-lib=static -std=c++17"
         Add-Content -Encoding utf8 $env:GITHUB_ENV "CGO_ENABLED=1"
         Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_WINDOWS_TARGET_TRIPLE=$($target.Triple)"
         Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_WINDOWS_VCPKG_TRIPLET=$($target.VcpkgTriplet)"
