@@ -470,6 +470,8 @@ runs:
           $lldbRoot = Join-Path $env:RUNNER_TOOL_CACHE "llgo-compiler-rt\$env:LLVM_TARGET_VERSION\$($target.GoArch)\lldb"
           $lldb = Join-Path $lldbRoot "bin\lldb.exe"
           Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_WINDOWS_LLDB_PYTHONPATH=$(Join-Path $lldbRoot 'lib\site-packages')"
+        } else {
+          Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_WINDOWS_LLDB_PYTHONPATH=$(Join-Path $llvmRoot 'lib\site-packages')"
         }
         if (-not (Test-Path $lldb)) {
           throw "lldb.exe was not found for Windows $($target.GoArch)"

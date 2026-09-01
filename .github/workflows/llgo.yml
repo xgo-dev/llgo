@@ -292,10 +292,11 @@ jobs:
             $env:PYTHONIOENCODING = "utf-8"
             $env:PATH = "$env:LLGO_WINDOWS_LLDB_PYTHON_HOME;$env:PATH"
           } else {
-            # The upstream x64 LLVM archive records its build runner's Python
-            # home. setup-demo-deps installs that exact Python patch release.
-            $env:PYTHONHOME = $env:LLGO_WINDOWS_PYTHON_HOME
-            $env:PATH = "$env:LLGO_WINDOWS_PYTHON_HOME;$env:PATH"
+            # LLVM's official x64 release links python310.dll even though the
+            # demos embed Python 3.12. Keep the debugger runtime independent.
+            $env:PYTHONHOME = $env:LLGO_WINDOWS_LLDB_PYTHON_HOME
+            $env:PYTHONPATH = $env:LLGO_WINDOWS_LLDB_PYTHONPATH
+            $env:PATH = "$env:LLGO_WINDOWS_LLDB_PYTHON_HOME;$env:PATH"
           }
           Write-Host "Test lldb with llgo plugin on ${{matrix.os}} with LLVM ${{matrix.llvm}}"
           bash cmd/llgo/lldbtest/runtest.sh -v
