@@ -1,5 +1,5 @@
 name: "Setup Embedded Dependencies"
-description: "Install dependencies required for embedded QEMU tests"
+description: "Install dependencies required for embedded emulator tests"
 
 runs:
   using: "composite"
@@ -72,3 +72,19 @@ runs:
         Get-Command qemu-system-xtensa | Select-Object -ExpandProperty Source
         qemu-system-riscv32 --version
         qemu-system-xtensa --version
+
+    - name: Install ESP32-C6 emulator on Unix
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        chmod +x .github/workflows/install-esp-emulator.sh
+        EMULATOR_DIR=".cache/esp-emulator"
+        .github/workflows/install-esp-emulator.sh "$EMULATOR_DIR"
+        echo "${PWD}/${EMULATOR_DIR}/bin" >> "$GITHUB_PATH"
+
+    - name: Verify ESP32-C6 emulator installation on Unix
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        command -v esp-emu
+        esp-emu --version

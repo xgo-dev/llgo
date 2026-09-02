@@ -218,6 +218,14 @@ jobs:
           fi
           ./test_esp32c3_startup.sh "${args[@]}"
 
+      - name: Test ESP32-C6 target regression
+        shell: bash
+        run: |
+          echo "Testing ESP32-C6 target regressions..."
+          cd _demo/embed
+          chmod +x test_esp32c6_startup.sh
+          ./test_esp32c6_startup.sh
+
       - name: _xtool build tests
         # _xtool contains host developer utilities that link the host LLVM and
         # Python libraries. Windows amd64 already covers that build; the 386

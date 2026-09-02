@@ -895,15 +895,17 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 		// double.
 		ccflags = append(ccflags, "-mdouble=64")
 	case "riscv32":
-		// Check llvm-target to distinguish ESP RISC-V chips from others
-		// ESP series (riscv32-esp-elf) only supports RV32IMC (no A/D/F extensions)
-		// Other RISC-V32 targets support RV32IMAC (with A extension)
-		if config.LLVMTarget == "riscv32-esp-elf" {
-			ccflags = append(ccflags, "-march=rv32imc")
-		} else {
-			ccflags = append(ccflags, "-march=rv32imac")
+		// Keep LLVM code generation and the C/newlib build on the same ISA.
+		// ESP32-C3 and ESP32-C6 share a triple but have different extensions,
+		// so the target description is the source of truth when it specifies
+		// an architecture.
+		march := "-march=rv32imac"
+		for _, flag := range config.CFlags {
+			if strings.HasPrefix(flag, "-march=") {
+				march = flag
+			}
 		}
-		ccflags = append(ccflags, "-fforce-enable-int128")
+		ccflags = append(ccflags, march, "-fforce-enable-int128")
 	case "riscv64":
 		ccflags = append(ccflags, "-march=rv64gc")
 		// codegen option should be added to ldflags for lto

@@ -10,6 +10,9 @@
 	"serial": "usb",
 	"rtlib": "compiler-rt",
 	"libc": "newlib-esp32",
+	"cflags": [
+		"-march=rv32imc"
+	],
 	"ldflags": [
 		"--undefined=_printf_float"
 	],
