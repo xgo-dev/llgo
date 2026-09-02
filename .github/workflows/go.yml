@@ -84,6 +84,16 @@ jobs:
           # one ordinary package run does not prove mutual exclusion.
           go test -count=20 -timeout=10m -run 'Lock' ./internal/crosscompile
 
+          # These tests recover runtime faults before the protected-memory
+          # checks that exposed corruption on some hosted amd64 runners. Stress
+          # the shared Windows exception-stack preparation independently of the
+          # much larger coverage command below.
+          go test -count=100 -timeout=10m \
+            -ldflags='-linkmode=external -extldflags=-lsynchronization' \
+            -coverprofile="$RUNNER_TEMP/windows-exception-stress.txt" -covermode=atomic \
+            -run '^(TestMapUpdateRHSNilDerefOrder|TestMapUpdateAppendRHSOrder|TestMultipleAssignmentMapUpdateBeforeNilStore|TestMultipleAssignmentOrderBeforeLaterPanic|TestBinOpIntegerDivideByZeroPanics|TestBinOpIntegerRemainderByZeroPanics)$' \
+            ./test/go
+
           # The runtime is a nested module and is therefore outside ./....
           # These host-side FFI tests still need native Windows coverage.
           (

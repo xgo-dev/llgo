@@ -33,7 +33,7 @@ func TestRecoverAfterFaultPreservesNamedResult(t *testing.T) {
 	// the same deterministic recovery check.
 	oldGCPercent := debug.SetGCPercent(-1)
 	defer debug.SetGCPercent(oldGCPercent)
-	ensureRecoverableFaultStackHeadroom()
+	ensureWindowsExceptionStackHeadroom()
 
 	old := debug.SetPanicOnFault(true)
 	defer debug.SetPanicOnFault(old)

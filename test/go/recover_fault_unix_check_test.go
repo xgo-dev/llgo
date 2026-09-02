@@ -6,6 +6,4 @@ import "testing"
 
 func enterRecoverableFaultTest(t *testing.T) bool { return true }
 
-func ensureRecoverableFaultStackHeadroom() {}
-
 func checkRecoveredFaultAddress(t *testing.T, err error, address *byte) {}

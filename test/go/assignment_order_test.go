@@ -3,6 +3,10 @@ package gotest
 import "testing"
 
 func TestMapUpdateRHSNilDerefOrder(t *testing.T) {
+	if !enterWindowsExceptionTest(t) {
+		return
+	}
+
 	var sink bool
 
 	tests := []struct {
@@ -88,6 +92,10 @@ func TestMapUpdateRHSNilDerefOrder(t *testing.T) {
 }
 
 func TestMapUpdateAppendRHSOrder(t *testing.T) {
+	if !enterWindowsExceptionTest(t) {
+		return
+	}
+
 	var sink bool
 
 	tests := []struct {
@@ -139,6 +147,10 @@ func TestMapUpdateAppendRHSOrder(t *testing.T) {
 // Mirrors fixedbugs/issue23017: LHS addresses are evaluated before stores,
 // then stores proceed left-to-right even when a later store panics.
 func TestMultipleAssignmentMapUpdateBeforeNilStore(t *testing.T) {
+	if !enterWindowsExceptionTest(t) {
+		return
+	}
+
 	m := map[int]int{}
 	var p *int
 
@@ -154,6 +166,10 @@ func TestMultipleAssignmentMapUpdateBeforeNilStore(t *testing.T) {
 }
 
 func TestMultipleAssignmentOrderBeforeLaterPanic(t *testing.T) {
+	if !enterWindowsExceptionTest(t) {
+		return
+	}
+
 	t.Run("slice index", func(t *testing.T) {
 		m := map[int]int{}
 		p := []int{}
@@ -266,6 +282,7 @@ func TestMultipleAssignmentAddressUsesPreAssignmentValue(t *testing.T) {
 
 func expectPanic(t *testing.T, f func()) {
 	t.Helper()
+	ensureWindowsExceptionStackHeadroom()
 	defer func() {
 		if recover() == nil {
 			t.Fatal("expected panic")
