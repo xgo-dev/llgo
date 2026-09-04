@@ -261,6 +261,46 @@ func TestWasmDynamicClosureUsesTwoExplicitTypedEdges(t *testing.T) {
 	}
 }
 
+func TestWasm64DynamicClosureCodeGenAfterOz(t *testing.T) {
+	Initialize(InitAllTargets | InitAllTargetInfos | InitAllTargetMCs | InitAllAsmPrinters)
+	prog := NewProgram(&Target{
+		GOOS:       "js",
+		GOARCH:     "wasm",
+		LLVMTarget: "wasm64-unknown-emscripten",
+	})
+	defer prog.Dispose()
+	setTestRuntime(t, prog)
+	pkg := prog.NewPackage("p", "example.com/p")
+
+	params := types.NewTuple(types.NewVar(token.NoPos, nil, "x", types.Typ[types.Int]))
+	results := types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Int]))
+	sig := types.NewSignatureType(nil, nil, nil, params, results, false)
+	envStruct := types.NewStruct(
+		[]*types.Var{types.NewField(token.NoPos, nil, "capture", types.Typ[types.Int], false)},
+		nil,
+	)
+	env := types.NewParam(token.NoPos, nil, "$env", types.NewPointer(envStruct))
+	entry := pkg.NewEnvFunc("captured", sig, InGo, env, false)
+	newMatrixCaller(pkg, "callCaptured", sig, func(b Builder) Expr {
+		return b.MakeClosure(entry.Expr, []Expr{prog.Val(7)})
+	})
+
+	mod := pkg.Module()
+	pbo := llvm.NewPassBuilderOptions()
+	defer pbo.Dispose()
+	if err := mod.RunPasses("default<Oz>", prog.TargetMachine(), pbo); err != nil {
+		t.Fatal(err)
+	}
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("optimized wasm64 closure module is invalid: %v\n%s", err, mod.String())
+	}
+	obj, err := prog.TargetMachine().EmitToMemoryBuffer(mod, llvm.ObjectFile)
+	if err != nil {
+		t.Fatalf("emit optimized wasm64 closure object: %v\n%s", err, mod.String())
+	}
+	obj.Dispose()
+}
+
 func TestNativeDynamicClosureIdentityBarrierSurvivesO2(t *testing.T) {
 	for _, pipeline := range []string{"default<O2>", "lto<O2>"} {
 		t.Run(pipeline, func(t *testing.T) {

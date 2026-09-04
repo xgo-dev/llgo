@@ -1519,6 +1519,13 @@ func (b Builder) callClosure(fn, data Expr, sig *types.Signature, args []Expr) (
 		return
 	}
 
+	// Explicit-context targets use two physical call signatures for one Go
+	// funcval type. Keep the code pointer opaque so optimization cannot
+	// devirtualize both edges to one entry with the other edge's signature.
+	fnSlot := b.AllocaT(fn.Type)
+	b.Store(fnSlot, fn).SetVolatile(true)
+	fn = b.Load(fnSlot).SetVolatile(true)
+
 	logicalBlock := b.blk
 	entryBlock := b.impl.GetInsertBlock()
 	blks := b.Func.MakeBlocks(3)

@@ -1741,8 +1741,8 @@ func TestCallClosureDynamic(t *testing.T) {
 	ir := pkg.String()
 	for _, want := range []string{
 		"icmp ne ptr %2, null",
-		"call i32 %3(ptr ",
-		"call i32 %3(i32 %1)",
+		"call i32 %5(ptr ",
+		"call i32 %5(i32 %1)",
 		"phi i32",
 	} {
 		if !strings.Contains(ir, want) {
