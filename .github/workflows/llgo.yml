@@ -126,6 +126,11 @@ jobs:
           -Profile "${{ matrix.windows_abi }}"
           -GoArch "${{ matrix.windows_arch || 'amd64' }}"
 
+      - name: Test Windows CPU profiler context
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\.github\workflows\test_windows_cpuprof.ps1
+
       - name: Test demo without RPATH (expect failure)
         if: runner.os != 'Windows'
         run: |

@@ -10,16 +10,43 @@ import (
 	"time"
 )
 
+var cpuProfileSink uint64 = 1
+
+// Keep the sampled function entirely computational. Checking the clock here
+// can put samples in Windows time helpers instead of this function; recovering
+// this caller from a foreign frame is a separate stack-unwinding contract.
+// Carry a nonlinear result between batches so optimization cannot discard the
+// work or replace a batch with one affine operation.
+//
 //go:noinline
-func cpuProfileHotLoop(d time.Duration) uint64 {
-	deadline := time.Now().Add(d)
-	x := uint64(1)
-	for time.Now().Before(deadline) {
-		for i := 0; i < 10000; i++ {
-			x = x*1664525 + 1013904223
-		}
+func cpuProfileHotLoop(x uint64) uint64 {
+	for i := 0; i < 100000; i++ {
+		x ^= x >> 12
+		x ^= x << 25
+		x ^= x >> 27
+		x *= 2685821657736338717
 	}
 	return x
+}
+
+func cpuProfileWork(d time.Duration) uint64 {
+	start := time.Now()
+	x := cpuProfileSink
+	// Like Go's pprof CPU hog, require actual work as well as elapsed time.
+	// A busy runner must not spend the whole sampling interval descheduled and
+	// then finish after only checking the wall clock.
+	for batches := 0; batches < 500 || time.Since(start) < d; batches++ {
+		x = cpuProfileHotLoop(x)
+	}
+	cpuProfileSink = x
+	return x
+}
+
+func TestCPUProfileWorkload(t *testing.T) {
+	const want uint64 = 0x2a08f1edef4e04ba
+	if got := cpuProfileHotLoop(1); got != want {
+		t.Fatalf("CPU profile workload = %#x, want %#x", got, want)
+	}
 }
 
 func readCPUProfile(t *testing.T, data []byte) []byte {
@@ -82,7 +109,7 @@ func collectCPUProfile(t *testing.T, work func(time.Duration)) {
 
 func TestStartStopCPUProfile(t *testing.T) {
 	collectCPUProfile(t, func(duration time.Duration) {
-		_ = cpuProfileHotLoop(duration)
+		_ = cpuProfileWork(duration)
 	})
 }
 
@@ -105,7 +132,7 @@ func TestStartCPUProfileTwice(t *testing.T) {
 	if err := pprof.StartCPUProfile(&restarted); err != nil {
 		t.Fatalf("StartCPUProfile after stop failed: %v", err)
 	}
-	_ = cpuProfileHotLoop(300 * time.Millisecond)
+	_ = cpuProfileWork(300 * time.Millisecond)
 	pprof.StopCPUProfile()
 	// This test owns the profiler lifecycle contract: a second start must fail,
 	// and a profile stopped afterward must be restartable. Requiring this short
@@ -119,9 +146,11 @@ func TestCPUProfileGoroutine(t *testing.T) {
 	collectCPUProfile(t, func(duration time.Duration) {
 		done := make(chan uint64, 1)
 		go func() {
-			done <- cpuProfileHotLoop(duration)
+			done <- cpuProfileWork(duration)
 		}()
-		<-done
+		if result := <-done; result == 0 {
+			t.Fatal("CPU profile workload lost its nonzero state")
+		}
 	})
 }
 

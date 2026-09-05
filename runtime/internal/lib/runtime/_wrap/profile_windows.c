@@ -166,7 +166,10 @@ static void llgo_prof_drop(void)
 #define LLGO_PROF_CONTEXT_FLAGS_OFFSET 48
 #define LLGO_PROF_CONTEXT_PC_OFFSET 248
 #define LLGO_PROF_CONTEXT_FP_OFFSET 160
-#define LLGO_PROF_CONTEXT_CONTROL 0x00100001UL
+/* AMD64 CONTEXT_CONTROL includes RIP/RSP but not RBP. The frame walk also
+ * needs CONTEXT_INTEGER. Otherwise RBP is not requested and caller recovery
+ * depends on register contents that GetThreadContext does not guarantee. */
+#define LLGO_PROF_CONTEXT_CONTROL 0x00100003UL
 #endif
 
 #else
@@ -182,6 +185,17 @@ static llgo_uintptr llgo_prof_context_word(const unsigned char *context,
     return value;
 }
 
+/* The caller supplies a 16-byte-aligned buffer of LLGO_PROF_CONTEXT_SIZE
+ * bytes and must suspend the target thread before requesting its context. */
+static int llgo_prof_get_context(llgo_handle thread, unsigned char *context)
+{
+    llgo_dword flags = LLGO_PROF_CONTEXT_CONTROL;
+
+    memset(context, 0, LLGO_PROF_CONTEXT_SIZE);
+    memcpy(context + LLGO_PROF_CONTEXT_FLAGS_OFFSET, &flags, sizeof(flags));
+    return GetThreadContext(thread, context) != 0;
+}
+
 static void llgo_prof_walk_frames(struct llgo_prof_sample *sample,
                                   llgo_uintptr fp)
 {
@@ -189,7 +203,11 @@ static void llgo_prof_walk_frames(struct llgo_prof_sample *sample,
 
     /* LLGo retains frame pointers in hosted Go and C functions. Read the
      * chain through ReadProcessMemory so a stale or foreign frame terminates
-     * the sample instead of faulting the profiler thread. */
+     * the sample instead of faulting the profiler thread.
+     * A Win64 frame register can be an addressing base, not a linked frame
+     * record: capturing it does not make this a complete Windows unwinder.
+     * Do not call RtlLookupFunctionEntry here while a thread is suspended;
+     * its internal locks may be owned by that thread. */
     while (fp != 0 && sample->n < LLGO_PROF_STACK) {
         llgo_uintptr words[2];
         llgo_uintptr prev;
@@ -218,13 +236,10 @@ static int llgo_prof_capture(llgo_handle thread,
     unsigned char storage[LLGO_PROF_CONTEXT_SIZE + 15];
     unsigned char *context =
         (unsigned char *)(((llgo_uintptr)(storage + 15)) & ~(llgo_uintptr)15);
-    llgo_dword flags = LLGO_PROF_CONTEXT_CONTROL;
     llgo_uintptr pc;
     llgo_uintptr fp;
 
-    memset(context, 0, LLGO_PROF_CONTEXT_SIZE);
-    memcpy(context + LLGO_PROF_CONTEXT_FLAGS_OFFSET, &flags, sizeof(flags));
-    if (!GetThreadContext(thread, context))
+    if (!llgo_prof_get_context(thread, context))
         return 0;
     pc = llgo_prof_context_word(context, LLGO_PROF_CONTEXT_PC_OFFSET);
     if (pc < 4096)
