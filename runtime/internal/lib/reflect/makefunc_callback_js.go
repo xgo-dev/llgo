@@ -1,4 +1,4 @@
-//go:build llgo && js && wasm
+//go:build llgo && js && wasm && !llgo_noffi
 
 package reflect
 
