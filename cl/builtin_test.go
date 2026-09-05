@@ -39,6 +39,34 @@ func TestConstBool(t *testing.T) {
 	}
 }
 
+func TestSetFinalizerLoweringTargetsRuntimeOnly(t *testing.T) {
+	const source = `package foo
+import "runtime"
+type T int
+func finalizer(*T) {}
+func runtimeCall(p *T) { runtime.SetFinalizer(p, finalizer) }
+func clearRuntimeCall(p *T) { runtime.SetFinalizer(p, nil) }
+func deferredRuntimeCall(p *T) { defer runtime.SetFinalizer(p, finalizer) }
+func SetFinalizer(any, any) {}
+func userCall(p *T) { SetFinalizer(p, finalizer) }`
+	_, module := mustCompileLLPkgFromSrc(t, source)
+	runtimeCall := mustNamedFunction(t, module, "foo.runtimeCall").String()
+	if !strings.Contains(runtimeCall, "SetFinalizerPtr") || strings.Contains(runtimeCall, "runtime.SetFinalizer(") {
+		t.Fatal("runtime.SetFinalizer was not lowered")
+	}
+	clear := mustNamedFunction(t, module, "foo.clearRuntimeCall").String()
+	if !strings.Contains(clear, "SetFinalizerPtr") || strings.Contains(clear, "runtime.SetFinalizer(") {
+		t.Fatal("nil runtime.SetFinalizer was not lowered")
+	}
+	deferred := mustNamedFunction(t, module, "foo.deferredRuntimeCall").String()
+	if !strings.Contains(deferred, "SetFinalizerPtr") || strings.Contains(deferred, "runtime.SetFinalizer(") {
+		t.Fatal("deferred runtime.SetFinalizer was not lowered")
+	}
+	if strings.Contains(mustNamedFunction(t, module, "foo.userCall").String(), "SetFinalizerPtr") {
+		t.Fatal("user-defined SetFinalizer was lowered")
+	}
+}
+
 func TestCompileTailUnreachableOmitsSyntheticReturn(t *testing.T) {
 	_, m := mustCompileLLPkgFromSrc(t, `
 package foo
