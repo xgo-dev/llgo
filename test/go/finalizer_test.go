@@ -107,6 +107,41 @@ func TestRuntimeSetFinalizerCancel(t *testing.T) {
 	}
 }
 
+type finalizerMethodValue struct {
+	value int
+}
+
+var finalizerMethodDone chan<- int
+
+func (p *finalizerMethodValue) close() {
+	finalizerMethodDone <- p.value
+}
+
+func finalizerMethodWithResult(p *finalizerMethodValue) int {
+	finalizerMethodDone <- p.value
+	return p.value
+}
+
+func TestRuntimeSetFinalizerMethodExpression(t *testing.T) {
+	done := make(chan int, 1)
+	finalizerMethodDone = done
+	registerFinalizerForTest(func() {
+		p := &finalizerMethodValue{value: 42}
+		runtime.SetFinalizer(p, (*finalizerMethodValue).close)
+	})
+	waitForFinalizerValue(t, done, 42)
+}
+
+func TestRuntimeSetFinalizerIgnoredResult(t *testing.T) {
+	done := make(chan int, 1)
+	finalizerMethodDone = done
+	registerFinalizerForTest(func() {
+		p := &finalizerMethodValue{value: 42}
+		runtime.SetFinalizer(p, finalizerMethodWithResult)
+	})
+	waitForFinalizerValue(t, done, 42)
+}
+
 func TestRuntimeSetFinalizerWithLargeResult(t *testing.T) {
 	finalized := make(chan int, 1)
 	registerFinalizerForTest(func() {
