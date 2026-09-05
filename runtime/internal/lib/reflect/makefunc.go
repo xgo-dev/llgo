@@ -1,3 +1,5 @@
+//go:build !llgo_noffi
+
 /*
  * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.
  *
@@ -264,46 +266,6 @@ type methodValue struct {
 	rcvr   Value
 }
 */
-
-// makeMethodValue converts v from the rcvr+method index representation
-// of a method value to an actual method func value, which is
-// basically the receiver value with a special bit set, into a true
-// func value - a value holding an actual func. The output is
-// semantically equivalent to the input as far as the user of package
-// reflect can tell, but the true func representation can be handled
-// by code like Convert and Interface and Assign.
-func makeMethodValue(op string, v Value) Value {
-	if v.flag&flagMethod == 0 {
-		panic("reflect: internal error: invalid use of makeMethodValue")
-	}
-
-	// Ignoring the flagMethod bit, v describes the receiver, not the method type.
-	fl := v.flag & (flagRO | flagAddr | flagIndir)
-	fl |= flag(v.typ().Kind())
-	rcvr := Value{v.typ(), v.ptr, fl}
-
-	// Validate the method now so Interface and Convert keep their eager panic
-	// behavior. The resulting libffi closure is a true no-env C entry; its
-	// userdata owns the receiver state. Pointing a hidden-env funcval directly
-	// at Ifn would be invalid because Ifn expects the receiver as an ordinary
-	// first ABI argument.
-	_, _, recoverTo := methodReceiver(op, rcvr, int(v.flag)>>flagMethodShift)
-	method := v
-	callOp := "Call"
-	if method.Type().(*rtype).t.FuncType().Variadic() {
-		callOp = "CallSlice"
-	}
-	ret := makeFunc(v.Type(), func(args []Value) []Value {
-		return method.call(callOp, args)
-	}, recoverTo)
-	// Cause panic if method is not appropriate.
-	// The panic would still happen during the call if we omit this,
-	// but we want Interface() and other operations to fail early.
-	ret.flag |= v.flag & flagRO
-	return ret
-}
-
-var unsafePointerType = rtypeOf(unsafe.Pointer(nil))
 
 /*
 func methodValueCallCodePtr() uintptr {
