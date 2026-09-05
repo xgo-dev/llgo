@@ -23,6 +23,7 @@ import (
 	"go/token"
 	"go/types"
 	"log"
+	"sync/atomic"
 
 	"github.com/xgo-dev/llvm"
 )
@@ -1665,6 +1666,14 @@ func (b Builder) checkReflect(fn Expr, args []Expr) (check ReflectMethodCheck) {
 		reflectKind = ReflectSliceOf
 	case "reflect.StructOf":
 		reflectKind = ReflectStructOf
+	case "reflect.Value.Call", "reflect.Value.CallSlice", "reflect.MakeFunc", "runtime.SetFinalizer":
+		pkg.NeedFFI = true
+	case "syscall.NewCallback", "syscall.NewCallbackCDecl":
+		// Windows callback closures are implemented with libffi. Keep the
+		// noffi runtime variant for targets where these APIs cannot exist.
+		if b.Prog.Target().effectiveGOOS() == "windows" {
+			pkg.NeedFFI = true
+		}
 	case "reflect.Value.Method":
 		if len(args) == 2 {
 			if v, ok := extractConstInt(args[1].impl); ok {
@@ -2162,6 +2171,82 @@ func llvmFields(vals []Expr, t *types.Struct, b Builder) (ret []llvm.Value) {
 		}
 	}
 	return
+}
+
+// LowerSetFinalizerCall builds the fixed-pointer callee and arguments without
+// emitting the call. The caller can therefore preserve Call/Defer/Go timing.
+func (b Builder) LowerSetFinalizerCall(args []Expr) (Expr, []Expr, bool) {
+	return b.lowerSetFinalizerCall(args)
+}
+
+func (b Builder) lowerSetFinalizerCall(args []Expr) (Expr, []Expr, bool) {
+	if len(args) != 2 {
+		return Nil, nil, false
+	}
+	objRaw := args[0].RawType()
+	ptrType, ok := objRaw.Underlying().(*types.Pointer)
+	if !ok {
+		return Nil, nil, false
+	}
+	// Some targets (notably the standard wasm runtime) do not provide the
+	// pointer-finalizer entry. Keep the original SetFinalizer call there.
+	runtimePkg := b.Prog.runtime()
+	if runtimePkg == nil {
+		return Nil, nil, false
+	}
+	if _, ok := runtimePkg.Scope().Lookup("SetFinalizerPtr").(*types.Func); !ok {
+		return Nil, nil, false
+	}
+	runtimeFn := b.Pkg.RuntimeFunc("SetFinalizerPtr")
+	runtimeSig := runtimeFn.RawType().Underlying().(*types.Signature)
+	// A nil finalizer clears an existing registration while avoiding the boxed
+	// runtime.SetFinalizer path.
+	if args[1].IsNil() || (args[1].impl.IsConstant() && args[1].impl.IsNull()) {
+		return runtimeFn, []Expr{b.Convert(b.Prog.VoidPtr(), args[0]),
+			b.Prog.Nil(b.Prog.rawType(runtimeSig.Params().At(1).Type()))}, true
+	}
+	finalizerSig, ok := args[1].RawType().Underlying().(*types.Signature)
+	if !ok || finalizerSig.Params().Len() != 1 {
+		return Nil, nil, false
+	}
+	argType := finalizerSig.Params().At(0).Type()
+	if !setFinalizerArgCompatible(objRaw, ptrType, argType) || args[1].kind != vkFuncDecl {
+		return Nil, nil, false
+	}
+	unsafePtr := types.Typ[types.UnsafePointer]
+	wrapperSig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, nil, "ptr", unsafePtr)),
+		types.NewTuple(), false)
+	name := fmt.Sprintf("%s$setFinalizer.%d", b.Pkg.Path(), atomic.AddUint64(&b.Pkg.setFinalizerWrapperSeq, 1))
+	wrapper := b.Pkg.NewFunc(name, wrapperSig, InGo)
+	wb := wrapper.MakeBody(1)
+	converted := wb.Convert(b.Prog.rawType(ptrType), wb.Param(0))
+	if !types.Identical(argType, ptrType) {
+		converted = wb.Convert(b.Prog.rawType(argType), converted)
+	}
+	wb.Call(args[1], converted)
+	wb.Return()
+	fn := wb.MakeClosure(wrapper.Expr, nil)
+	obj := b.Convert(b.Prog.VoidPtr(), args[0])
+	return runtimeFn, []Expr{obj, fn}, true
+}
+
+func setFinalizerArgCompatible(objRaw types.Type, objType *types.Pointer, argType types.Type) bool {
+	switch t := argType.Underlying().(type) {
+	case *types.Pointer:
+		if !types.Identical(t, objType) {
+			_, objNamed := objRaw.(*types.Named)
+			_, argNamed := argType.(*types.Named)
+			if !types.Identical(objType.Elem(), t.Elem()) || (objNamed && argNamed) {
+				return false
+			}
+		}
+		return true
+	case *types.Interface:
+		return t.NumMethods() == 0 || types.Implements(objType, t)
+	default:
+		return false
+	}
 }
 
 // -----------------------------------------------------------------------------

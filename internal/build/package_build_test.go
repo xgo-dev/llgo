@@ -54,6 +54,21 @@ func TestPackageBuildTask(t *testing.T) {
 	}
 }
 
+func TestPackageFFINeeded(t *testing.T) {
+	makeTask := func(need bool) *packageBuildTask {
+		return newPackageBuildTask(&aPackage{
+			Package: &packages.Package{PkgPath: "example.com/p", Types: types.NewPackage("example.com/p", "p")},
+			NeedFFI: need,
+		})
+	}
+	if packageFFINeeded([]*packageBuildTask{makeTask(false)}) {
+		t.Fatal("packageFFINeeded(false) = true")
+	}
+	if !packageFFINeeded([]*packageBuildTask{makeTask(false), makeTask(true)}) {
+		t.Fatal("packageFFINeeded with an FFI package = false")
+	}
+}
+
 func TestPackageBuildTaskSpecialKinds(t *testing.T) {
 	decl := newPackageBuildTask(&aPackage{Package: &packages.Package{
 		PkgPath: "unsafe",

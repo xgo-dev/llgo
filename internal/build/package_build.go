@@ -314,6 +314,7 @@ func (ctx *context) executeIsolatedPackage(task *packageBuildTask, verbose bool)
 	owned = false
 	if task.needsRuntimeSignals() {
 		task.pkg.setNeedRuntimeOrPyInit(task.pkg.LPkg.NeedRuntime, task.pkg.LPkg.NeedPyInit)
+		task.pkg.NeedFFI = task.pkg.LPkg.NeedFFI
 	}
 	// Cache hits still rebuild the frontend module in the isolated Program even
 	// though they skip backend emission. Linking needs a small metadata subset of
@@ -408,4 +409,13 @@ func packageRuntimeNeeds(tasks []*packageBuildTask) (needRuntime, needPyInit boo
 		needPyInit = needPyInit || task.pkg.NeedPyInit
 	}
 	return
+}
+
+func packageFFINeeded(tasks []*packageBuildTask) bool {
+	for _, task := range tasks {
+		if task.pkg.NeedFFI {
+			return true
+		}
+	}
+	return false
 }
