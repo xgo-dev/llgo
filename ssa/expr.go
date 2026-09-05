@@ -1450,10 +1450,6 @@ func (b Builder) MakeClosure(fn Expr, bindings []Expr) Expr {
 			data = b.Alloc(tctx, true).impl
 		} else {
 			data = b.aggregateAllocU(tctx, llvmFields(bindings, rawCtx, b)...)
-			// A non-zero closure environment allocation either succeeds or does not
-			// return. Mark the return value (attribute index 0) non-null so
-			// LLVM can eliminate the impossible no-environment call edge.
-			data.AddCallSiteAttribute(0, prog.ctx.CreateEnumAttribute(llvm.AttributeKindID("nonnull"), 0))
 		}
 	} else if len(bindings) != 0 {
 		panic("ssa: closure bindings supplied to a no-env function")

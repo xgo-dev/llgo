@@ -25,7 +25,7 @@ type namedFunc func(int) int
 // CHECK: call %{{.*}} @reflect.Value.Interface(%reflect.Value [[FUNC_RESULT]])
 
 // CHECK-LABEL: define void @main.functionPointers(){{.*}} {
-// CHECK: [[CAPTURED_ENV:%[0-9]+]] = call nonnull ptr @"{{.*}}AllocU"(i64 8)
+// CHECK: [[CAPTURED_ENV:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 8)
 // CHECK: [[CAPTURED_PAIR:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.functionPointers$1", ptr undef }, ptr [[CAPTURED_ENV]], 1
 // CHECK-NEXT: [[CAPTURED_BOX:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 16)
 // CHECK-NEXT: store { ptr, ptr } [[CAPTURED_PAIR]], ptr [[CAPTURED_BOX]]

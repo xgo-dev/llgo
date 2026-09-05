@@ -16,7 +16,7 @@ import (
 // CHECK: ret i64 ptrtoint (ptr @write to i64)
 // CHECK-LABEL: define i64 @"{{.*}}.UseClosure"(){{.*}} {
 // CHECK: [[UC_X:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT: [[UC_ENV:%[0-9]+]] = call nonnull ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT: [[UC_ENV:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK-NEXT: [[UC_X_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr [[UC_ENV]], i32 0, i32 0
 // CHECK-NEXT: store ptr [[UC_X]], ptr [[UC_X_SLOT]]
 // CHECK-NEXT: [[UC_CLOSURE:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"{{.*}}.UseClosure$1", ptr undef }, ptr [[UC_ENV]], 1

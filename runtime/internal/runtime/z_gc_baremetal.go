@@ -24,10 +24,11 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/runtime/tinygogc"
 )
 
-// AllocU allocates uninitialized memory.
+// AllocU allocates uninitialized memory and returns a non-nil pointer or panics.
+// tinygogc returns a non-nil sentinel for zero-byte requests.
 func AllocU(size uintptr) unsafe.Pointer {
 	ret := tinygogc.Alloc(size)
-	if ret == nil && size != 0 {
+	if ret == nil {
 		panic("out of memory")
 	}
 	recordMemProfileAlloc(size)
@@ -36,13 +37,15 @@ func AllocU(size uintptr) unsafe.Pointer {
 
 // AllocZ allocates zero-initialized memory.
 func AllocZ(size uintptr) unsafe.Pointer {
-	ret := tinygogc.Alloc(size)
-	recordMemProfileAlloc(size)
-	return ret
+	return AllocU(size)
 }
 
 func AllocRoot(size uintptr) unsafe.Pointer {
-	return tinygogc.Alloc(size)
+	ret := tinygogc.Alloc(size)
+	if ret == nil {
+		panic("out of memory")
+	}
+	return ret
 }
 
 func FreeRoot(ptr unsafe.Pointer) {
