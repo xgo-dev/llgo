@@ -192,7 +192,10 @@ func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
 		for _, decl := range file.Decls {
 			switch decl := decl.(type) {
 			case *ast.FuncDecl:
-				fullName, inPkgName := astFuncName(pkgPath, decl)
+				fullName, inPkgName, ok := astFuncName(pkgPath, decl)
+				if !ok {
+					continue
+				}
 				if preloaded {
 					if exportName, ok := p.prog.PackageExport(fullName); ok {
 						p.pkg.SetExport(fullName, exportName)
@@ -464,26 +467,27 @@ func (p *context) initLink(line string, prefix int, export bool, f func(inPkgNam
 	}
 }
 
-func recvTypeName(typ ast.Expr) string {
-retry:
+// recvTypeName extracts the named base and pointer form from receiver syntax
+// that can denote a locally declared type. Other syntax is left to the type
+// checker to report. The pointer result is meaningful only when ok is true.
+func recvTypeName(typ ast.Expr) (name string, pointer, ok bool) {
 	switch t := typ.(type) {
 	case *ast.Ident:
-		return t.Name
+		return t.Name, false, true
 	case *ast.IndexExpr:
-		return trecvTypeName(t.X, t.Index)
+		return recvTypeName(t.X)
 	case *ast.IndexListExpr:
-		return trecvTypeName(t.X, t.Indices...)
+		return recvTypeName(t.X)
 	case *ast.ParenExpr:
-		typ = t.X
-		goto retry
+		return recvTypeName(t.X)
+	case *ast.StarExpr:
+		name, nestedPointer, ok := recvTypeName(t.X)
+		if !ok || nestedPointer {
+			return "", false, false
+		}
+		return name, true, true
 	}
-	panic("unreachable")
-}
-
-// TODO(xsw): support generic type
-func trecvTypeName(t ast.Expr, indices ...ast.Expr) string {
-	_ = indices
-	return t.(*ast.Ident).Name
+	return "", false, false
 }
 
 // inPkgName:
@@ -492,19 +496,25 @@ func trecvTypeName(t ast.Expr, indices ...ast.Expr) string {
 // fullName:
 // - func: pkg.name
 // - method: pkg.(T).name, pkg.(*T).name
-func astFuncName(pkgPath string, fn *ast.FuncDecl) (fullName, inPkgName string) {
+// Invalid receiver syntax returns ok=false so declaration metadata collection
+// does not mask the type-checking diagnostic with an internal panic.
+func astFuncName(pkgPath string, fn *ast.FuncDecl) (fullName, inPkgName string, ok bool) {
 	name := fn.Name.Name
-	if recv := fn.Recv; recv != nil && len(recv.List) == 1 {
-		var method string
-		t := recv.List[0].Type
-		if tp, ok := t.(*ast.StarExpr); ok {
-			method = "(*" + recvTypeName(tp.X) + ")." + name
-		} else {
-			method = recvTypeName(t) + "." + name
+	if recv := fn.Recv; recv != nil {
+		if len(recv.List) != 1 {
+			return "", "", false
 		}
-		return pkgPath + "." + method, method
+		recvName, pointer, recvOK := recvTypeName(recv.List[0].Type)
+		if !recvOK {
+			return "", "", false
+		}
+		method := recvName + "." + name
+		if pointer {
+			method = "(*" + recvName + ")." + name
+		}
+		return pkgPath + "." + method, method, true
 	}
-	return pkgPath + "." + name, name
+	return pkgPath + "." + name, name, true
 }
 
 func typesFuncName(pkgPath string, fn *types.Func) (fullName, inPkgName string) {
@@ -907,7 +917,10 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 				if err := locality.ValidateFuncBody(fset, decl.Body); err != nil {
 					return err
 				}
-				fullName, inPkgName := astFuncName(pkgPath, decl)
+				fullName, inPkgName, ok := astFuncName(pkgPath, decl)
+				if !ok {
+					continue
+				}
 				syms[inPkgName] = fullName
 				hasLinkname, err := collectDeclarationDirectivesWithOptions(prog, fset, decl.Doc, fullName, inPkgName, decl.Pos(), options)
 				if err != nil {

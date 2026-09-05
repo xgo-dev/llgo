@@ -592,8 +592,9 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	// ParsePkgSyntax is the sole //llgo:env extractor. Lowering only consumes
 	// its source-declaration cache; imported env entries use NewEnvFunc.
 	if decl, ok := f.Syntax().(*ast.FuncDecl); ok {
-		fullName, _ := astFuncName(llssa.PathOf(pkgTypes), decl)
-		hasExplicitEnv = p.prog.HasClosureEnvDirective(p.goProg.Fset, fullName, decl.Pos())
+		if fullName, _, ok := astFuncName(llssa.PathOf(pkgTypes), decl); ok {
+			hasExplicitEnv = p.prog.HasClosureEnvDirective(p.goProg.Fset, fullName, decl.Pos())
+		}
 	}
 	hasCtx := hasFreeVars && !elideFreeVarEnv || hasExplicitEnv
 	var ctx *types.Var
