@@ -1234,7 +1234,8 @@ std::optional<uint64_t> checkedLoadOffset(CallBase *CheckedLoad) {
   return Offset->getZExtValue();
 }
 
-Constant *collectStaticItabArgumentTarget(Argument *Arg, uint64_t PointerOffset,
+Constant *collectStaticItabArgumentTarget(Argument *Arg, ArrayRef<unsigned> Indices,
+                                          uint64_t PointerOffset,
                                           uint64_t LoadOffset, StringRef TypeID,
                                           const DataLayout &DL);
 
@@ -1277,7 +1278,8 @@ std::optional<StaticItabSlot> resolveNewItabSlot(Module &M, CallBase *NewItab,
   return resolveStaticItabSlot(Template, Offset, TypeID, DL);
 }
 
-Constant *collectStaticItabArgumentTarget(Argument *Arg, uint64_t PointerOffset,
+Constant *collectStaticItabArgumentTarget(Argument *Arg, ArrayRef<unsigned> Indices,
+                                          uint64_t PointerOffset,
                                           uint64_t LoadOffset, StringRef TypeID,
                                           const DataLayout &DL) {
   Function *F = Arg->getParent();
@@ -1291,6 +1293,14 @@ Constant *collectStaticItabArgumentTarget(Argument *Arg, uint64_t PointerOffset,
         Arg->getArgNo() >= CB->arg_size())
       return nullptr;
     Value *Actual = CB->getArgOperand(Arg->getArgNo());
+    if (!Indices.empty()) {
+      // Aggregate ABIs keep the interface's itab in a struct argument.
+      // Recover only a proven field value; an unknown caller must retain
+      // the checked load and its broad method root.
+      Actual = FindInsertedValue(Actual, Indices);
+      if (!Actual)
+        return nullptr;
+    }
     auto Slot =
         resolveStaticItabSlot(Actual, PointerOffset + LoadOffset, TypeID, DL);
     CallBase *NewItab = nullptr;
@@ -1364,10 +1374,17 @@ bool devirtualizeStaticItabCalls(Module &M, const DataLayout &DL) {
           auto *Arg = Base && PointerOffset >= 0
                           ? dyn_cast<Argument>(Base->stripPointerCasts())
                           : nullptr;
+          ArrayRef<unsigned> Indices;
+          if (!Arg && Base && PointerOffset >= 0) {
+            if (auto *Extract = dyn_cast<ExtractValueInst>(Base)) {
+              Arg = dyn_cast<Argument>(Extract->getAggregateOperand());
+              Indices = Extract->getIndices();
+            }
+          }
           if (Arg) {
             Target = collectStaticItabArgumentTarget(
-                Arg, static_cast<uint64_t>(PointerOffset), *LoadOffset, *TypeID,
-                DL);
+                Arg, Indices, static_cast<uint64_t>(PointerOffset), *LoadOffset,
+                *TypeID, DL);
           } else if (auto *NewItab =
                          Base ? dyn_cast<CallBase>(Base->stripPointerCasts())
                               : nullptr) {

@@ -322,8 +322,15 @@ func TestBuildAndCheckSymbolsFromTestltoLTOPlugin(t *testing.T) {
 	// See TestBuildAndCheckSymbolsFromTestlto: dynamic main.* exports retain
 	// otherwise-dead symbols on Linux and would mask the plugin's DCE result.
 	buildConf.PCLNMode = build.PCLNNone
+	if runtime.GOOS == "darwin" {
+		// Size-optimized Darwin executables strip local symbols after LTO.
+		// Preserve debug info so these checks observe the optimized methods
+		// before symbol stripping, without changing the optimization level.
+		buildConf.LinkOptions.DWARF = build.DWARFPreserve
+	}
 	cltest.BuildAndCheckSymbolsFromDir(t, "", "./_testlto", testltoLTOPluginTests,
 		cltest.WithRunConfig(buildConf),
+		cltest.WithOutputCheck(true),
 	)
 }
 
@@ -546,6 +553,76 @@ func TestBuildAndCheckSymbolsFromTestltoLTOPluginAggregateABI(t *testing.T) {
 		"./_testlto/_globaldce_reflect_method_by_name_ltoplugin_string_abi_unknown")
 	if strings.Contains(unknownResult, `metadata !"go.method.type.reflect"`) {
 		t.Fatalf("aggregate ABI output retained a generic type Func marker\n%s", unknownResult)
+	}
+}
+
+func TestLTOPluginAggregateStaticItabDevirt(t *testing.T) {
+	conf := testltoLTOPluginConf(t, build.ModeGen)
+	const input = `
+target datalayout = "e-p:64:64-i64:64-n8:16:32:64-S128"
+%iface = type { ptr, ptr }
+
+@interface.I = constant i8 0
+@type.A = constant i8 0
+@type.B = constant i8 0
+@_llgo_itab$A = weak_odr constant { ptr, ptr, i32, [1 x ptr] } { ptr @interface.I, ptr @type.A, i32 0, [1 x ptr] [ptr @A.M] }, !llgo.static.itab.slot !0
+@_llgo_itab$B = weak_odr constant { ptr, ptr, i32, [1 x ptr] } { ptr @interface.I, ptr @type.B, i32 0, [1 x ptr] [ptr @B.M] }, !llgo.static.itab.slot !0
+
+declare ptr @runtime.NewItab(ptr, ptr)
+declare { ptr, i1 } @llvm.type.checked.load(ptr, i32, metadata)
+declare void @sink(ptr)
+define void @A.M() { ret void }
+define void @B.M() { ret void }
+
+define internal void @invoke(%iface %v) {
+  %itab = extractvalue %iface %v, 0
+  %slot = getelementptr i8, ptr %itab, i64 24
+  %checked = call { ptr, i1 } @llvm.type.checked.load(ptr %slot, i32 0, metadata !"go.method.M:func()")
+  %fn = extractvalue { ptr, i1 } %checked, 0
+  call void @sink(ptr %fn)
+  ret void
+}
+
+define void @entry(%iface %unknown) {
+  %itab.a = call ptr @runtime.NewItab(ptr @interface.I, ptr @type.A)
+  %a0 = insertvalue %iface undef, ptr %itab.a, 0
+  %a = insertvalue %iface %a0, ptr null, 1
+  %itab.b = call ptr @runtime.NewItab(ptr @interface.I, ptr @type.B)
+  %b0 = insertvalue %iface undef, ptr %itab.b, 0
+  %b = insertvalue %iface %b0, ptr null, 1
+  call void @invoke(%iface %a)
+  ; EXTRA_CALL
+  ret void
+}
+!0 = !{i64 24, !"go.method.M:func()"}
+`
+	for _, tt := range []struct {
+		name  string
+		extra string
+		want  int
+	}{
+		{"known", "", 0},
+		{"same_target", "call void @invoke(%iface %a)", 0},
+		{"unknown_caller", "call void @invoke(%iface %unknown)", 1},
+		{"conflicting_targets", "call void @invoke(%iface %b)", 1},
+		{"escaping_function", "call void @sink(ptr @invoke)", 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			opt := filepath.Join(llvmenv.New("").BinDir(), "opt")
+			cmd := exec.Command(opt, "-load-pass-plugin="+conf.LTOPlugin.Path,
+				"-passes=llgo-lto-pre-globaldce", "-verify-each", "-S", "-o", "-")
+			cmd.Stdin = strings.NewReader(strings.Replace(input, "; EXTRA_CALL", tt.extra, 1))
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("run aggregate static itab pass: %v\n%s", err, out)
+			}
+			if got := strings.Count(string(out), "call { ptr, i1 } @llvm.type.checked.load"); got != tt.want {
+				t.Fatalf("remaining checked loads = %d, want %d\n%s", got, tt.want, out)
+			}
+			if tt.want == 0 && !strings.Contains(string(out), "{ ptr @A.M, i1 true }") {
+				t.Fatalf("known aggregate itab did not resolve to A.M\n%s", out)
+			}
+		})
 	}
 }
 

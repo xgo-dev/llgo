@@ -76,26 +76,29 @@ func TestClangFlag(t *testing.T) {
 }
 
 func TestPassPluginLinkerFlags(t *testing.T) {
-	if got, err := (PassPlugin{}).LinkerFlags("linux"); err != nil || got != nil {
-		t.Fatalf("disabled plugin flags = %v, err = %v; want nil, nil", got, err)
-	}
-
-	if _, err := (PassPlugin{Path: "/tmp/libLLGOLTOPlugin.dylib"}).LinkerFlags("darwin"); err == nil {
-		t.Fatal("darwin plugin flags expected error")
-	}
-
 	if (PassPlugin{}).Enabled() {
 		t.Fatal("empty plugin should be disabled")
 	}
-
-	plugin := PassPlugin{Path: "/tmp/libLLGOLTOPlugin.so"}
-	want := []string{"-Wl,--load-pass-plugin=/tmp/libLLGOLTOPlugin.so"}
-	got, err := plugin.LinkerFlags("linux")
-	if err != nil {
-		t.Fatalf("LinkerFlags() error: %v", err)
+	for _, goos := range []string{"linux", "darwin", "windows"} {
+		if got, err := (PassPlugin{}).LinkerFlags(goos); err != nil || got != nil {
+			t.Fatalf("disabled plugin flags on %s = %v, err = %v; want nil, nil", goos, got, err)
+		}
 	}
-	if !sameStrings(got, want) {
-		t.Fatalf("LinkerFlags() = %v, want %v", got, want)
+	for _, goos := range []string{"linux", "darwin"} {
+		t.Run(goos, func(t *testing.T) {
+			plugin := PassPlugin{Path: "/tmp/plugin dir,with comma/LLGOLTOPlugin.so"}
+			want := []string{"-Xlinker", "--load-pass-plugin=" + plugin.Path}
+			got, err := plugin.LinkerFlags(goos)
+			if err != nil {
+				t.Fatalf("LinkerFlags() error: %v", err)
+			}
+			if !sameStrings(got, want) {
+				t.Fatalf("LinkerFlags() = %v, want %v", got, want)
+			}
+		})
+	}
+	if got, err := (PassPlugin{Path: "C:/plugins/LLGOLTOPlugin.dll"}).LinkerFlags("windows"); err == nil || got != nil {
+		t.Fatalf("windows plugin flags = %v, err = %v; want nil and an unsupported error", got, err)
 	}
 }
 

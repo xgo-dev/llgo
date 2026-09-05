@@ -64,8 +64,10 @@ func (p PassPlugin) LinkerFlags(goos string) ([]string, error) {
 	if !p.Enabled() {
 		return nil, nil
 	}
-	if goos == "darwin" {
-		return nil, fmt.Errorf("LTO pass plugins are not supported on darwin by the bundled ld64.lld or Apple ld64")
+	if goos == "windows" {
+		return nil, fmt.Errorf("LTO pass plugins are not supported on windows: LLVM 22 lld-link and MinGW lld do not expose a new pass manager plugin loading option")
 	}
-	return []string{"-Wl,--load-pass-plugin=" + p.Path}, nil
+	// Both ELF lld and LLVM 22 Mach-O ld64.lld support this option.
+	// Use -Xlinker so commas in the plugin path are not split by clang.
+	return []string{"-Xlinker", "--load-pass-plugin=" + p.Path}, nil
 }

@@ -186,6 +186,44 @@ jobs:
           files: coverage-main.txt,coverage-compiler.txt,coverage-test-go.txt
           disable_search: true
 
+  macos-lto-plugin:
+    name: macOS LTO plugin
+    timeout-minutes: 45
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        uses: ./.github/actions/setup-deps
+        with:
+          llvm-version: 22
+
+      - name: Set up Go
+        uses: ./.github/actions/setup-go
+
+      - name: Set LLGO_ROOT
+        run: echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+
+      - name: Build LTO plugin
+        run: |
+          set -euo pipefail
+          cmake -S ltoplugin -B ltoplugin/build \
+            -DLLVM_DIR="$(llvm-config --cmakedir)" \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build ltoplugin/build --config Release
+          test -f ltoplugin/build/LLGOLTOPlugin.dylib
+          echo "LLGO_LTO_PLUGIN=$GITHUB_WORKSPACE/ltoplugin/build/LLGOLTOPlugin.dylib" >> "$GITHUB_ENV"
+
+      - name: Test LTO plugin passes, runtime behavior, and retained symbols
+        env:
+          LLGO_BUILD_CACHE: "off"
+        run: |
+          set -euo pipefail
+          go test -tags=dev -count=1 ./internal/lto ./cmd/internal/flags
+          go test -tags=dev -count=1 -timeout=30m \
+            -run '^(TestRunAndTestFromTestltoLTOPlugin|TestBuildAndCheckSymbolsFromTestltoLTOPlugin|TestLTOPlugin)' \
+            ./cl
+
   dev-lto-globaldce:
     name: Dev LTO GlobalDCE
     timeout-minutes: 60
@@ -250,7 +288,7 @@ jobs:
           go test -tags=dev -timeout 30m -covermode=atomic \
             -coverpkg=github.com/xgo-dev/llgo/ssa,github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/internal/crosscompile \
             -coverprofile=coverage-dev-lto-plugin-cl.txt \
-            -run '^(TestRunAndTestFromTestltoLTOPlugin|TestBuildAndCheckSymbolsFromTestltoLTOPlugin)' \
+            -run '^(TestRunAndTestFromTestltoLTOPlugin|TestBuildAndCheckSymbolsFromTestltoLTOPlugin|TestLTOPlugin)' \
             ./cl
           go tool cover -func=coverage-dev-lto-plugin-cl.txt
 
