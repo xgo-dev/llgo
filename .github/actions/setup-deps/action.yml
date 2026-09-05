@@ -482,11 +482,17 @@ runs:
         path-type: inherit
         update: true
 
+    - name: Test MSYS2 package retry helper
+      if: runner.os == 'Windows' && inputs.install-llvm == 'true' && inputs.windows-abi == 'mingw'
+      shell: msys2 {0}
+      run: .github/actions/setup-deps/pacman_retry_test.sh
+
     - name: Install Windows MinGW dependencies
       if: runner.os == 'Windows' && inputs.install-llvm == 'true' && inputs.windows-abi == 'mingw'
       shell: msys2 {0}
       run: |
         set -euo pipefail
+        source .github/actions/setup-deps/pacman_retry.sh
 
         llvm_major="${{ inputs.llvm-version }}"
         case "$llvm_major" in
@@ -536,10 +542,10 @@ runs:
         # gcc-libs to cc-libs. libc++ supplies the required runtime; satisfy
         # only the renamed package metadata while installing the pinned set.
         assumed_cc_runtime="$prefix-cc-libs=$llvm_version"
-        pacman --noconfirm -U \
+        pacman_with_retry --noconfirm -U \
           --assume-installed "$assumed_cc_runtime" \
           "${urls[@]}"
-        pacman --noconfirm -S --needed \
+        pacman_with_retry --noconfirm -S --needed \
           --assume-installed "$assumed_cc_runtime" \
           "$prefix-pkgconf" \
           "$prefix-sqlite3" \

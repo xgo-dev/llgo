@@ -253,13 +253,14 @@ jobs:
           MSYS2_PYTHON_PACKAGE_VERSION: "3.12.8-2"
         run: |
           set -euo pipefail
+          source .github/actions/setup-deps/pacman_retry.sh
           repo=https://repo.msys2.org/mingw/clang64
           prefix=mingw-w64-clang-x86_64
           pacman_args=(--noconfirm -U)
           for dependency in cc-libs expat bzip2 mpdecimal ncurses openssl sqlite3 tcl tk tzdata; do
             pacman_args+=(--assume-installed "$prefix-$dependency")
           done
-          pacman "${pacman_args[@]}" \
+          pacman_with_retry "${pacman_args[@]}" \
             "$repo/$prefix-python-$MSYS2_PYTHON_PACKAGE_VERSION-any.pkg.tar.zst" \
             "$repo/$prefix-lldb-$MSYS2_LLDB_PACKAGE_VERSION-any.pkg.tar.zst"
 
