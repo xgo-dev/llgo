@@ -40,6 +40,43 @@ func TestExplicitDeferStackIR(t *testing.T) {
 	if !strings.Contains(ir, "sigsetjmp") && !strings.Contains(ir, "setjmp") {
 		t.Fatalf("expected explicit defer stack setup in IR, got:\n%s", ir)
 	}
+	if strings.Contains(ir, "SetDeferGCRoot") {
+		t.Fatalf("disabled root publication changed defer setup:\n%s", ir)
+	}
+}
+
+func TestDeferCapturesGCRootChain(t *testing.T) {
+	prog := ssatest.NewProgram(t, nil)
+	prog.EnableGCRoots(true)
+	pkg := prog.NewPackage("foo", "foo")
+
+	callee := pkg.NewFunc("callee", ssa.NoArgsNoRet, ssa.InGo)
+	cb := callee.MakeBody(1)
+	cb.Return()
+	cb.EndBuild()
+
+	fn := pkg.NewFunc("main", ssa.NoArgsNoRet, ssa.InGo)
+	b := fn.MakeBody(1)
+	fn.SetRecover(fn.MakeBlock())
+	b.Defer(ssa.DeferAlways, callee.Expr, ssa.Builder.Call)
+	b.Return()
+	b.EndBuild()
+
+	ir := pkg.Module().String()
+	for _, want := range []string{"SetDeferGCRoot", "RestoreDeferGCRoot"} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("root-enabled defer did not call %s:\n%s", want, ir)
+		}
+	}
+	call := strings.Index(ir, `.SetDeferGCRoot"(ptr `)
+	lineEnd := -1
+	if call >= 0 {
+		lineEnd = strings.IndexByte(ir[call:], '\n')
+	}
+	if call < 0 || lineEnd < 0 || !strings.Contains(ir, `@llvm_gc_root_chain`) ||
+		!strings.Contains(ir[call:call+lineEnd], `, ptr `) {
+		t.Fatalf("root-enabled defer did not pass the compiler chain explicitly:\n%s", ir)
+	}
 }
 
 func TestExplicitDeferStackFallbackAndNilBuiltin(t *testing.T) {

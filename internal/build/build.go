@@ -517,6 +517,11 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 	if conf.Target != "" && export.GOARCH != "" {
 		conf.Goarch = export.GOARCH
 	}
+	wasmGC, err := configureWasmGC(conf, &export)
+	if err != nil {
+		return nil, err
+	}
+	applyWasmGCLinkFlags(conf, &export)
 	if conf.AppExt == "" {
 		conf.AppExt = defaultAppExt(conf)
 	}
@@ -539,11 +544,16 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 		OptLevel:                conf.OptLevel,
 		SaturatingFloatToUint32: conf.SaturatingFloatToUint32,
 	}
-	tags := defaultBuildTags(conf.Goarch, conf.Target) + "," + target.ClosureEnvBuildTag()
-	// R0 preserves the existing collector-free wasm runtime. The named target
-	// metadata therefore declares gc=none as well. A later runtime PR updates
-	// both after suspended roots and safepoints are implemented for each profile.
-	if conf.Target != "" && export.WasmABI != crosscompile.WasmABIUnspecified {
+	tags := defaultBuildTags(conf.Goarch, conf.Target)
+	if wasmGC && conf.Target == "" {
+		// An explicit development build selects the wasm collector instead of
+		// the raw profile's compatibility nogc runtime.
+		tags = strings.TrimSuffix(tags, ",nogc")
+	}
+	tags += "," + target.ClosureEnvBuildTag()
+	// Profiles without R2 collector support retain the collector-free runtime.
+	if conf.Target != "" && export.WasmABI != crosscompile.WasmABIUnspecified &&
+		!slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.gc.linear") {
 		tags += ",nogc"
 	}
 	if conf.PCLNMode == PCLNExternal {
@@ -598,6 +608,8 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 	}
 	prog.EnableGoGlobalDCE(conf.goGlobalDCEEnabled())
 	prog.EnableDeadcodeDrop(conf.deadcodeDropEnabled())
+	prog.EnableGCRoots(wasmGC)
+	prog.EnableCooperativeSafepoints(wasmGC)
 	if conf.PthreadStackSize > 0 {
 		prog.SetPthreadStackSize(uint64(conf.PthreadStackSize))
 	}
@@ -1237,6 +1249,64 @@ func defaultBuildTags(goarch, target string) string {
 		tags += ",nogc"
 	}
 	return tags
+}
+
+func configureWasmGC(conf *Config, export *crosscompile.Export) (bool, error) {
+	explicit := slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.gc.linear")
+	if conf.Goarch != "wasm" {
+		if explicit {
+			return false, fmt.Errorf("llgo.wasm.gc.linear does not support GOARCH=%s", conf.Goarch)
+		}
+		return false, nil
+	}
+
+	defaultEnabled := false
+	switch export.WasmABI {
+	case crosscompile.WasmABIEmscripten, crosscompile.WasmABIEmscriptenMemory64:
+		defaultEnabled = true
+	case crosscompile.WasmABIWASIPreview1:
+		if IsWasiThreadsEnabled() {
+			if explicit {
+				return false, errors.New("llgo.wasm.gc.linear requires single-worker WASI (set LLGO_WASI_THREADS=0)")
+			}
+			return false, nil
+		}
+		defaultEnabled = true
+	case crosscompile.WasmABIUnspecified:
+		// Raw GOOS/GOARCH builds retain their current compatibility behavior
+		// until the official-Go wasm ABI line is complete. The explicit tag is
+		// still available for focused runtime development.
+		if explicit && conf.Goos != "js" && conf.Goos != "wasip1" {
+			return false, fmt.Errorf("llgo.wasm.gc.linear does not support GOOS=%s", conf.Goos)
+		}
+		if explicit && conf.Goos == "wasip1" && IsWasiThreadsEnabled() {
+			return false, errors.New("llgo.wasm.gc.linear requires single-worker WASI (set LLGO_WASI_THREADS=0)")
+		}
+	default:
+		if explicit {
+			return false, fmt.Errorf("llgo.wasm.gc.linear does not support WebAssembly ABI %q", export.WasmABI)
+		}
+		return false, nil
+	}
+
+	enabled := explicit || defaultEnabled
+	if enabled && !explicit {
+		if conf.Tags != "" {
+			conf.Tags += ","
+		}
+		conf.Tags += "llgo.wasm.gc.linear"
+	}
+	return enabled, nil
+}
+
+func applyWasmGCLinkFlags(conf *Config, export *crosscompile.Export) {
+	if conf.Goos != "js" || conf.Goarch != "wasm" ||
+		!slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.gc.linear") {
+		return
+	}
+	if !slices.Contains(export.LDFLAGS, "-sMALLOC=none") {
+		export.LDFLAGS = append(export.LDFLAGS, "-sMALLOC=none")
+	}
 }
 
 func effectiveTypeSizes(sizes types.Sizes, arch string, wasmABI crosscompile.WasmABI) types.Sizes {

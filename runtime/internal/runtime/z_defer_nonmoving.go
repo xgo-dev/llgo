@@ -1,4 +1,4 @@
-//go:build baremetal && !nogc
+//go:build (baremetal && !nogc) || (wasm && llgo.wasm.gc.linear)
 
 /*
  * Copyright (c) 2025 The XGo Authors (xgo.dev). All rights reserved.
@@ -20,9 +20,6 @@ package runtime
 
 import "unsafe"
 
-// FreeDeferNode is a no-op in baremetal environment.
-// Defer nodes become unreachable after being unlinked from the chain,
-// and tinygogc will reclaim them in the next GC cycle.
+// FreeDeferNode leaves unreachable nodes for the collector.
 func FreeDeferNode(ptr unsafe.Pointer) {
-	// no-op: let tinygogc collect
 }

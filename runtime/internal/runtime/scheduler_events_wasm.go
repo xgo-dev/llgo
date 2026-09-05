@@ -28,13 +28,17 @@ func RegisterWasmTimerHooks(poll func(), wait func() (uint64, bool)) {
 	wasmTimerWaitHook = wait
 }
 
-func popWasmRunq() *g {
+func pollWasmEvents() {
 	if wasmCallbackPollHook != nil {
 		wasmCallbackPollHook()
 	}
 	if wasmPollTimersHook != nil {
 		wasmPollTimersHook()
 	}
+}
+
+func popWasmRunq() *g {
+	pollWasmEvents()
 	return wasmSched.runq.Pop()
 }
 

@@ -1,4 +1,4 @@
-//go:build !nogc && !baremetal
+//go:build !nogc && !baremetal && !wasm
 
 /*
  * Copyright (c) 2025 The XGo Authors (xgo.dev). All rights reserved.

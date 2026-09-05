@@ -25,16 +25,6 @@ import (
 
 // -----------------------------------------------------------------------------
 
-// Defer presents defer statements in a function.
-type Defer struct {
-	Addr unsafe.Pointer // sigjmpbuf
-	Bits uintptr
-	Link *Defer
-	Reth unsafe.Pointer // native block address or wasm continuation selector
-	Rund unsafe.Pointer // native block address or wasm continuation selector
-	Args unsafe.Pointer // defer func and args links
-}
-
 // panicNode is LLGo's longjmp-backed counterpart of the standard runtime's
 // _panic record. prev is the _panic.link equivalent; defer_ records the
 // explicit defer frame currently owning the unwind.

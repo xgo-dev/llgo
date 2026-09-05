@@ -1,4 +1,4 @@
-//go:build llgo && baremetal
+//go:build llgo && (baremetal || (wasm && !(wasip1 && llgo.wasi_threads)))
 
 /*
  * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
@@ -18,6 +18,8 @@
 
 package runtime
 
-// Bare-metal runtimes have one execution context and do not introduce a native
-// TLS relocation merely by linking the locality runtime support.
+// Bare-metal and single-worker WebAssembly runtimes have one physical execution
+// context. Keep this bootstrap cache outside generated locality storage:
+// EnterLocalContext must be able to install the first context before that
+// storage can be accessed. Multi-worker WASI selects the native TLS variant.
 var currentLocalContext uintptr

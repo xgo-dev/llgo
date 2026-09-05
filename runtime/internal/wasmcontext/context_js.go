@@ -66,7 +66,3 @@ func (ctx *Context) Close(free func(unsafe.Pointer)) {
 	freeStorage(ctx.stack, ctx.asyncifyStack, free)
 	*ctx = Context{}
 }
-
-func (ctx *Context) Swap(next *Context) {
-	emscripten.FiberSwap(&ctx.fiber, &next.fiber)
-}
