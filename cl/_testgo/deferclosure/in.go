@@ -21,7 +21,7 @@ package main
 // The captured 42 is stored in the closure environment before the function pair is deferred.
 // CHECK: [[VALUE_CAPTURE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
 // CHECK: store i64 42, ptr [[VALUE_CAPTURE]]
-// CHECK: [[VALUE_ENV:%.*]] = call nonnull ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK: [[VALUE_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK: store ptr [[VALUE_CAPTURE]], ptr %{{.*}}
 // CHECK: [[VALUE_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.testDeferClosureValue$1", ptr undef }, ptr [[VALUE_ENV]], 1
 // CHECK: [[VALUE_PREV_DEFER:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
@@ -89,7 +89,7 @@ package main
 // CHECK: [[STRUCT_PROCESSOR:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK: [[STRUCT_MSG:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK: store %"{{.*}}String" { ptr @{{.*}}, i64 8 }, ptr [[STRUCT_MSG]]
-// CHECK: [[STRUCT_ENV:%.*]] = call nonnull ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK: [[STRUCT_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK: store ptr [[STRUCT_MSG]], ptr %{{.*}}
 // CHECK: [[STRUCT_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.testDeferStructClosure$1", ptr undef }, ptr [[STRUCT_ENV]], 1
 // CHECK: call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()

@@ -380,6 +380,15 @@ func (p Package) newFunc(
 		llvmName = p.Prog.stdcallSymbolName(name)
 	}
 	fn := llvm.AddFunction(p.mod, llvmName, t.ll)
+	switch name {
+	case "github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU",
+		"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ",
+		"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocRoot":
+		// These runtime allocators return a non-null pointer, even for zero
+		// bytes, or panic. Attach the contract to declarations as well as
+		// definitions so every module can use it without LTO or inlining.
+		fn.AddAttributeAtIndex(0, p.Prog.ctx.CreateEnumAttribute(llvm.AttributeKindID("nonnull"), 0))
+	}
 	if bg == InStdcall {
 		fn.SetFunctionCallConv(p.Prog.stdcallCallConv())
 	}

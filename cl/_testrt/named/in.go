@@ -55,7 +55,7 @@ func main() {
 // CHECK: %[[ROOTSLOT:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
 // CHECK: %[[ROOT:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 64)
 // CHECK: store ptr %[[ROOT]], ptr %[[ROOTSLOT]], align 8
-// CHECK: %[[ENV:[0-9]+]] = call nonnull ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK: %[[ENV:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK: %[[ENVSLOT:[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %[[ENV]], i32 0, i32 0
 // CHECK: store ptr %[[ROOTSLOT]], ptr %[[ENVSLOT]], align 8
 // CHECK: %[[CLOSURE:[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.main$1", ptr undef }, ptr %[[ENV]], 1

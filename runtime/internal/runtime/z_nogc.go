@@ -25,10 +25,15 @@ import (
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 )
 
-// AllocU allocates uninitialized memory.
+// AllocU allocates uninitialized memory and returns a non-nil pointer or panics.
+// A zero-byte request still allocates at least one byte.
 func AllocU(size uintptr) unsafe.Pointer {
-	ret := c.Malloc(size)
-	if ret == nil && size != 0 {
+	n := size
+	if n == 0 {
+		n = 1
+	}
+	ret := c.Malloc(n)
+	if ret == nil {
 		panic("out of memory")
 	}
 	recordMemProfileAlloc(size)
@@ -37,13 +42,20 @@ func AllocU(size uintptr) unsafe.Pointer {
 
 // AllocZ allocates zero-initialized memory.
 func AllocZ(size uintptr) unsafe.Pointer {
-	ret := c.Malloc(size)
-	recordMemProfileAlloc(size)
-	return c.Memset(ret, 0, size)
+	ret := AllocU(size)
+	c.Memset(ret, 0, size)
+	return ret
 }
 
 func AllocRoot(size uintptr) unsafe.Pointer {
-	return c.Malloc(size)
+	if size == 0 {
+		size = 1
+	}
+	ret := c.Malloc(size)
+	if ret == nil {
+		panic("out of memory")
+	}
+	return ret
 }
 
 func FreeRoot(ptr unsafe.Pointer) {

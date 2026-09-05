@@ -17,7 +17,7 @@ package main
 // CHECK: call void @"{{.*}}PrintInt"(i64 [[CH1_LEN]])
 // CHECK: call void @"{{.*}}PrintInt"(i64 [[CH1_CAP]])
 // CHECK: call void @"{{.*}}PrintEface"(%"{{.*}}eface" [[CH1_EFACE]])
-// CHECK: [[SEND_ENV:%.*]] = call nonnull ptr @"{{.*}}AllocU"(i64 8)
+// CHECK: [[SEND_ENV:%.*]] = call ptr @"{{.*}}AllocU"(i64 8)
 // CHECK: store ptr [[CH1_SLOT]], ptr {{%.*}}
 // CHECK: [[SEND_CLOSURE:%.*]] = insertvalue { ptr, ptr } { ptr @"main.main$1", ptr undef }, ptr [[SEND_ENV]], 1
 // CHECK: store { ptr, ptr } [[SEND_CLOSURE]], ptr {{%.*}}
@@ -32,7 +32,7 @@ package main
 // CHECK: [[CH2_SLOT:%.*]] = call ptr @"{{.*}}AllocZ"(i64 8)
 // CHECK: [[CH2:%.*]] = call ptr @"{{.*}}NewChan"(i64 8, i64 10)
 // CHECK-NEXT: store ptr [[CH2]], ptr [[CH2_SLOT]]
-// CHECK: [[CLOSE_ENV:%.*]] = call nonnull ptr @"{{.*}}AllocU"(i64 8)
+// CHECK: [[CLOSE_ENV:%.*]] = call ptr @"{{.*}}AllocU"(i64 8)
 // CHECK: store ptr [[CH2_SLOT]], ptr {{%.*}}
 // CHECK: [[CLOSE_CLOSURE:%.*]] = insertvalue { ptr, ptr } { ptr @"main.main$2", ptr undef }, ptr [[CLOSE_ENV]], 1
 // CHECK: store { ptr, ptr } [[CLOSE_CLOSURE]], ptr {{%.*}}
