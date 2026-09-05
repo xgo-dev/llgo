@@ -143,6 +143,119 @@ jobs:
           retention-days: 3
           include-hidden-files: true
 
+      - name: Upload release metadata
+        uses: actions/upload-artifact@v7
+        with:
+          name: llgo-release-metadata
+          path: .dist/metadata.json
+          if-no-files-found: error
+          retention-days: 3
+          include-hidden-files: true
+
+  build-windows:
+    needs: build
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [msvc, mingw]
+        goarch: [amd64, arm64]
+        include:
+          - goarch: amd64
+            os: windows-2022
+          - goarch: arm64
+            os: windows-11-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install build dependencies
+        uses: ./.github/actions/setup-deps
+        with:
+          windows-abi: ${{ matrix.abi }}
+          windows-arch: ${{ matrix.goarch }}
+      - name: Set up Go
+        uses: ./.github/actions/setup-go
+        with:
+          # MSVC uses the x64 bootstrap Clang, with architecture-matched LLVM
+          # libraries and SDK for the resulting llgo.exe. MinGW builds natively.
+          architecture: ${{ matrix.abi == 'mingw' && matrix.goarch == 'arm64' && 'arm64' || 'x64' }}
+      - name: Cache ARM64 MSVC release SDK
+        if: matrix.abi == 'msvc' && matrix.goarch == 'arm64'
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.tool_cache }}/llgo-release-llvm/22.1.8/arm64
+          key: llgo-release-llvm-22.1.8-arm64-de718c58ebbc5f61d58c17b90457fcf42983bc2c4a4aba3e010d108713bfd7f1
+      - name: Download release metadata
+        uses: actions/download-artifact@v8
+        with:
+          name: llgo-release-metadata
+          path: .windows-dist
+      - name: Test Windows packaging checks
+        shell: pwsh
+        run: ./.github/windows/release-lib_test.ps1
+      - name: Build integrated Windows archive
+        shell: pwsh
+        run: >-
+          ./.github/windows/build-release.ps1
+          -Profile '${{ matrix.abi }}' -GoArch '${{ matrix.goarch }}'
+      - name: Upload Windows archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: llgo-windows-${{ matrix.goarch }}-${{ matrix.abi }}
+          path: |
+            .windows-dist/*.windows-${{ matrix.goarch }}-${{ matrix.abi }}.tar.gz
+            .windows-dist/*.windows-${{ matrix.goarch }}-${{ matrix.abi }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 3
+          include-hidden-files: true
+          compression-level: 0
+
+  test-windows-artifacts:
+    needs: build-windows
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [msvc, mingw]
+        goarch: [amd64, arm64]
+        include:
+          - goarch: amd64
+            os: windows-2022
+          - goarch: arm64
+            os: windows-11-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Go
+        uses: ./.github/actions/setup-go
+      - name: Download Windows archive
+        uses: actions/download-artifact@v8
+        with:
+          name: llgo-windows-${{ matrix.goarch }}-${{ matrix.abi }}
+          path: .windows-dist
+      # Execute the unpacked compiler before installing any LLVM or native
+      # dependencies: this catches missing DLLs that the build runner can mask.
+      - name: Verify standalone compiler and archive
+        shell: pwsh
+        run: >-
+          ./.github/windows/test-release.ps1 -CheckOnly
+          -Profile '${{ matrix.abi }}' -GoArch '${{ matrix.goarch }}'
+      - name: Install native target dependencies
+        uses: ./.github/actions/setup-deps
+        with:
+          windows-abi: ${{ matrix.abi }}
+          windows-arch: ${{ matrix.goarch }}
+      - name: Activate native Windows target
+        uses: ./.github/actions/activate-windows-target
+        with:
+          windows-abi: ${{ matrix.abi }}
+          windows-arch: ${{ matrix.goarch }}
+      - name: Test extracted native and embedded compiler
+        shell: pwsh
+        run: >-
+          ./.github/windows/test-release.ps1
+          -Profile '${{ matrix.abi }}' -GoArch '${{ matrix.goarch }}'
+
   test-artifacts:
     needs: build
     strategy:
@@ -196,7 +309,7 @@ jobs:
   release:
     permissions:
       contents: write
-    needs: [setup, test-artifacts, populate-linux-sysroot]
+    needs: [setup, test-artifacts, test-windows-artifacts, populate-linux-sysroot]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:
@@ -211,6 +324,27 @@ jobs:
           path: .sysroot
       - name: Set up Release
         uses: ./.github/actions/setup-goreleaser
+      - name: Download tested Windows archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: llgo-windows-*
+          merge-multiple: true
+          path: .windows-dist
+      - name: Verify all four Windows archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          cd .windows-dist
+          archives=(llgo*.windows-*.tar.gz)
+          test "${#archives[@]}" = 4
+          for arch in amd64 arm64; do
+            for abi in msvc mingw; do
+              archive="llgo${version}.windows-${arch}-${abi}.tar.gz"
+              test -s "$archive"
+              sha256sum -c "$archive.sha256"
+            done
+          done
       - name: Run GoReleaser (Release)
         env:
           GITHUB_TOKEN: ${{github.token}}

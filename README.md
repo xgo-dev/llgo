@@ -53,7 +53,7 @@ Other targets may not provide every OS service or implementation-specific runtim
 
 | Target | Current coverage |
 | --- | --- |
-| Native | Linux amd64/arm64 and macOS amd64/arm64 [release artifacts](https://github.com/xgo-dev/llgo/releases); primary CI on Linux amd64 and macOS arm64 |
+| Native | Linux amd64/arm64, macOS amd64/arm64, and Windows amd64/arm64 (MSVC and MinGW) release builds; primary CI on Linux amd64, macOS arm64, and Windows toolchain profiles |
 | WebAssembly | `js/wasm` and `wasip1/wasm` builds; WASI and Emscripten CI coverage |
 | Embedded | [`-target`](doc/Embedded_Cmd.md) configurations for supported boards and MCUs, with selected QEMU/emulator smoke tests |
 
@@ -392,6 +392,21 @@ llgo run .
 ```
 
 ### on Windows
+
+The release workflow builds four integrated Windows archives:
+`llgo<VERSION>.windows-{amd64,arm64}-{msvc,mingw}.tar.gz`. Check the
+[release assets](https://github.com/xgo-dev/llgo/releases) for availability in
+each version. Add the extracted `bin` directory to `PATH`; the archives keep
+the same `runtime`, `targets`, and `crosscompile/clang` layout as Unix releases.
+The MSVC compiler links LLVM statically; MinGW archives include the native
+LLVM and C++ DLL dependencies beside `llgo.exe`.
+
+Use the archive matching your native architecture and toolchain profile. Native
+programs still need the corresponding SDK/CRT, Clang, and dependencies described
+below: Visual Studio's C++ developer environment for MSVC, or MSYS2 `CLANG64`
+(`amd64`) / `CLANGARM64` (`arm64`) for MinGW. The bundled ESP Clang remains the
+upstream x64 Windows payload, including in ARM64 archives, and runs through
+Windows' x64 emulation there; `llgo.exe` itself is native ARM64 in those archives.
 
 The recommended GNU-hosted setup is an MSYS2 `CLANG64` shell. Install the LLVM
 22 stack and LLGo's native dependencies, then provide the versioned pkg-config
