@@ -1,14 +1,16 @@
-//go:build !nogc && baremetal
+//go:build (baremetal && !nogc) || (wasm && llgo.wasm.gc.linear)
 
 package runtime
 
 import (
 	"runtime"
 
+	llruntime "github.com/xgo-dev/llgo/runtime/internal/runtime"
 	"github.com/xgo-dev/llgo/runtime/internal/runtime/tinygogc"
 )
 
 func ReadMemStats(m *runtime.MemStats) {
+	llruntime.AssertNilDeref(m == nil)
 	stats := tinygogc.ReadGCStats()
 	m.Alloc = stats.Alloc
 	m.TotalAlloc = stats.TotalAlloc

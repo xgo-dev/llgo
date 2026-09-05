@@ -59,19 +59,6 @@ func (ctx *Context) Close(free func(unsafe.Pointer)) {
 	*ctx = Context{}
 }
 
-func (ctx *Context) Resume() {
-	if !ctx.launched {
-		contextLaunch(ctx)
-		ctx.launched = true
-		return
-	}
-	contextRewind(ctx)
-}
-
-func (ctx *Context) Suspend() {
-	contextUnwind(ctx)
-}
-
 //go:linkname contextLaunch C.__llgo_wasm_context_launch
 func contextLaunch(*Context)
 
@@ -80,5 +67,3 @@ func contextRewind(*Context)
 
 //go:linkname contextUnwind C.__llgo_wasm_context_unwind
 func contextUnwind(*Context)
-
-const LLGoFiles = "_asm/context_wasm.S"

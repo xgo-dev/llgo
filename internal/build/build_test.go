@@ -759,6 +759,56 @@ func TestDefaultBuildTags(t *testing.T) {
 	}
 }
 
+func TestConfigureWasmGC(t *testing.T) {
+	t.Setenv("LLGO_WASI_THREADS", "0")
+	tests := []struct {
+		name   string
+		conf   Config
+		abi    crosscompile.WasmABI
+		wantGC bool
+		err    bool
+	}{
+		{name: "Emscripten", conf: Config{Goos: "js", Goarch: "wasm"}, abi: crosscompile.WasmABIEmscripten, wantGC: true},
+		{name: "Emscripten Memory64", conf: Config{Goos: "js", Goarch: "wasm"}, abi: crosscompile.WasmABIEmscriptenMemory64, wantGC: true},
+		{name: "WASI", conf: Config{Goos: "wasip1", Goarch: "wasm"}, abi: crosscompile.WasmABIWASIPreview1, wantGC: true},
+		{name: "raw wasm", conf: Config{Goos: "js", Goarch: "wasm"}},
+		{name: "raw wasm explicit", conf: Config{Goos: "js", Goarch: "wasm", Tags: "other,llgo.wasm.gc.linear"}, wantGC: true},
+		{name: "native", conf: Config{Goos: "linux", Goarch: "amd64"}},
+		{name: "native explicit", conf: Config{Goos: "linux", Goarch: "amd64", Tags: "llgo.wasm.gc.linear"}, err: true},
+		{name: "unsupported raw host", conf: Config{Goos: "linux", Goarch: "wasm", Tags: "llgo.wasm.gc.linear"}, err: true},
+		{name: "freestanding explicit", conf: Config{Goos: "linux", Goarch: "wasm", Tags: "llgo.wasm.gc.linear"}, abi: crosscompile.WasmABIFreestanding, err: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			export := crosscompile.Export{WasmABI: test.abi}
+			enabled, err := configureWasmGC(&test.conf, &export)
+			if (err != nil) != test.err {
+				t.Fatalf("configureWasmGC error = %v, want error %v", err, test.err)
+			}
+			if enabled != test.wantGC {
+				t.Fatalf("configureWasmGC enabled = %v, want %v", enabled, test.wantGC)
+			}
+			applyWasmGCLinkFlags(&test.conf, &export)
+			if got := slices.Contains(export.LDFLAGS, "-sMALLOC=none"); got != (test.wantGC && test.conf.Goos == "js") {
+				t.Fatalf("MALLOC=none present = %v", got)
+			}
+			if test.wantGC && !slices.Contains(splitSourcePatchBuildTags(test.conf.Tags), "llgo.wasm.gc.linear") {
+				t.Fatalf("internal GC tag missing from %q", test.conf.Tags)
+			}
+		})
+	}
+}
+
+func TestConfigureWasmGCRejectsWASIThreads(t *testing.T) {
+	t.Setenv("LLGO_WASI_THREADS", "1")
+	for _, abi := range []crosscompile.WasmABI{crosscompile.WasmABIUnspecified, crosscompile.WasmABIWASIPreview1} {
+		conf := Config{Goos: "wasip1", Goarch: "wasm", Tags: "llgo.wasm.gc.linear"}
+		if _, err := configureWasmGC(&conf, &crosscompile.Export{WasmABI: abi}); err == nil {
+			t.Fatalf("expected llgo.wasm.gc.linear with WASI threads and ABI %q to fail", abi)
+		}
+	}
+}
+
 func TestWasmRuntimeAvoidsNativeHostDependencies(t *testing.T) {
 	runtimeDir := filepath.Join(env.LLGoRuntimeDir(), "internal", "lib", "runtime")
 	for _, goos := range []string{"js", "wasip1"} {
@@ -766,7 +816,7 @@ func TestWasmRuntimeAvoidsNativeHostDependencies(t *testing.T) {
 			ctx := gobuild.Default
 			ctx.GOOS = goos
 			ctx.GOARCH = "wasm"
-			ctx.BuildTags = []string{"llgo", "nogc"}
+			ctx.BuildTags = []string{"llgo", "nogc", "llgo.wasm.gc.linear"}
 			pkg, err := ctx.ImportDir(runtimeDir, 0)
 			if err != nil {
 				t.Fatal(err)
@@ -793,8 +843,9 @@ func TestWasmRuntimeAvoidsNativeHostDependencies(t *testing.T) {
 			}
 
 			for _, name := range []string{
-				"mfinal_nogc.go",
+				"mfinal_wasm.go",
 				"runtime_baremetal.go",
+				"runtime_gc_nonmoving.go",
 				"signal_baremetal_llgo.go",
 				"time_wasm_llgo.go",
 				"unwind_wasm_llgo.go",
@@ -869,18 +920,23 @@ func TestWasmRuntimeBackendSelection(t *testing.T) {
 	}{
 		{
 			name: "raw JS and Emscripten profiles", goos: "js", tags: []string{"llgo", "nogc"},
-			want: []string{"g_wasm.go", "os_wasm.go", "proc_wasm.go", "runqueue_wasm.go", "fatal_emscripten.go"},
-			omit: []string{"g_tls.go", "os_pthread.go", "proc_pthread.go", "fatal_default.go"},
+			want: []string{"g_wasm.go", "os_wasm.go", "proc_wasm.go", "runqueue_wasm.go", "fatal_emscripten.go", "local_context_baremetal.go"},
+			omit: []string{"g_tls.go", "os_pthread.go", "proc_pthread.go", "fatal_default.go", "local_context_tls.go"},
 		},
 		{
 			name: "legacy wasm alias", goos: "js", tags: []string{"llgo", "tinygo.wasm", "nogc"},
-			want: []string{"g_wasm.go", "os_wasm.go", "proc_wasm.go", "runqueue_wasm.go", "fatal_emscripten.go"},
-			omit: []string{"g_tls.go", "os_pthread.go", "proc_pthread.go", "fatal_default.go"},
+			want: []string{"g_wasm.go", "os_wasm.go", "proc_wasm.go", "runqueue_wasm.go", "fatal_emscripten.go", "local_context_baremetal.go"},
+			omit: []string{"g_tls.go", "os_pthread.go", "proc_pthread.go", "fatal_default.go", "local_context_tls.go"},
 		},
 		{
 			name: "single-worker WASI", goos: "wasip1", tags: []string{"llgo", "nogc"},
-			want: []string{"g_wasm.go", "os_wasm.go", "proc_wasip1.go", "runqueue_wasm.go", "fatal_wasip1.go"},
-			omit: []string{"g_tls.go", "os_pthread.go", "proc_pthread.go", "fatal_default.go"},
+			want: []string{"g_wasm.go", "os_wasm.go", "proc_wasip1.go", "runqueue_wasm.go", "fatal_wasip1.go", "local_context_baremetal.go"},
+			omit: []string{"g_tls.go", "os_pthread.go", "proc_pthread.go", "fatal_default.go", "local_context_tls.go"},
+		},
+		{
+			name: "multi-worker WASI", goos: "wasip1", tags: []string{"llgo", "nogc", "llgo.wasi_threads"},
+			want: []string{"g_tls.go", "os_pthread.go", "proc_pthread.go", "fatal_default.go", "local_context_tls.go"},
+			omit: []string{"g_wasm.go", "os_wasm.go", "proc_wasip1.go", "runqueue_wasm.go", "fatal_wasip1.go", "local_context_baremetal.go"},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

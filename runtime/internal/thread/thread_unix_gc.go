@@ -1,4 +1,4 @@
-//go:build !windows && !nogc && !baremetal
+//go:build !windows && !wasm && !nogc && !baremetal
 
 package thread
 

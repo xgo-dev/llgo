@@ -9,6 +9,7 @@ wasmtime_cmd="${WASMTIME:-wasmtime}"
 scheduler_fixture="${repo_root}/internal/build/testdata/wasm-scheduler"
 timer_fixture="${repo_root}/internal/build/testdata/wasm-timers"
 callback_fixture="${repo_root}/internal/build/testdata/wasm-callback"
+gc_fixture="${repo_root}/internal/build/testdata/wasm-gc"
 test_fixture="${repo_root}/internal/build/testdata/wasm-test"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/llgo-wasm-single-worker.XXXXXX")"
 trap 'rm -rf "${work_dir}"' EXIT
@@ -110,6 +111,14 @@ expect_failure "fatal error: no goroutines (main called runtime.Goexit) - deadlo
 run_emscripten emscripten emscripten-runner.mjs "${timer_fixture}" "wasm timers ok" "timers-emscripten"
 run_emscripten emscripten-memory64 emscripten-memory64-runner.mjs "${timer_fixture}" "wasm timers ok" "timers-memory64"
 run_wasi wasi "${timer_fixture}" "wasm timers ok" "timers-wasi"
+
+# R2 enables the non-moving collector by default for each canonical
+# single-worker C profile. This fixture covers active and suspended G roots,
+# closures/interfaces/aggregates, panic/recover unwinding, pure-Go loop
+# safepoints, reclamation, aligned allocation, and memory growth.
+run_emscripten emscripten emscripten-runner.mjs "${gc_fixture}" "wasm gc ok" "gc-emscripten"
+run_emscripten emscripten-memory64 emscripten-memory64-runner.mjs "${gc_fixture}" "wasm gc ok" "gc-memory64"
+run_wasi wasi "${gc_fixture}" "wasm gc ok" "gc-wasi"
 
 # A registered JS callback is a host wake source even when no Go timer exists.
 # This catches treating an empty timer heap as an immediate deadlock.

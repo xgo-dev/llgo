@@ -1,4 +1,4 @@
-//go:build !baremetal
+//go:build !baremetal && (!wasm || !llgo.wasm.gc.linear)
 
 package runtime
 

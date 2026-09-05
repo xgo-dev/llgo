@@ -41,6 +41,11 @@ func FiberInitCurrent(fiber *Fiber, asyncifyStack c.Pointer, asyncifyStackSize u
 func FiberSwap(fiber, next *Fiber) {
 }
 
+// llgo:link FiberRewinding C.llgo_emscripten_fiber_rewinding
+func FiberRewinding() c.Int {
+	return 0
+}
+
 // llgo:link ForceExit C.emscripten_force_exit
 func ForceExit(status c.Int) {
 }

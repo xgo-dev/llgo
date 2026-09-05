@@ -1,4 +1,4 @@
-//go:build !nogc && baremetal
+//go:build (baremetal && !nogc) || (wasm && llgo.wasm.gc.linear)
 
 /*
  * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.
@@ -24,7 +24,6 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/runtime/tinygogc"
 )
 
-// AllocU allocates uninitialized memory.
 func AllocU(size uintptr) unsafe.Pointer {
 	ret := tinygogc.Alloc(size)
 	if ret == nil && size != 0 {
@@ -34,7 +33,6 @@ func AllocU(size uintptr) unsafe.Pointer {
 	return ret
 }
 
-// AllocZ allocates zero-initialized memory.
 func AllocZ(size uintptr) unsafe.Pointer {
 	ret := tinygogc.Alloc(size)
 	recordMemProfileAlloc(size)
@@ -46,15 +44,12 @@ func AllocRoot(size uintptr) unsafe.Pointer {
 }
 
 func FreeRoot(ptr unsafe.Pointer) {
+	tinygogc.Free(ptr)
 }
 
-// AddCleanupPtr is not implemented in baremetal builds because tinygogc
-// does not support finalizers. Cleanup functions will never be called.
-//
-// Returns: a no-op cancel function
+// AddCleanupPtr is not implemented by the non-moving collector.
 func AddCleanupPtr(ptr unsafe.Pointer, cleanup func()) (cancel func()) {
-	// Not implemented: tinygogc does not support finalizers
-	return func() {} // no-op cancel
+	return func() {}
 }
 
 func AddCancelableCleanupPtr(ptr unsafe.Pointer, cleanup func()) uint64 {

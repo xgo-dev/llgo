@@ -32,6 +32,7 @@ import (
 
 	"github.com/xgo-dev/llgo/cl/blocks"
 	"github.com/xgo-dev/llgo/cl/ssawrap"
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/goembed"
 	"github.com/xgo-dev/llgo/internal/typepatch"
@@ -170,6 +171,10 @@ type context struct {
 	debugAllocVars       map[*ssa.Alloc]*types.Var
 	runtimeCallerFuncs   map[*ssa.Function]bool
 	panicSiteFuncs       map[*ssa.Function]bool
+	gcRoots              map[ssa.Value][]llssa.Expr
+	gcClosureRoot        llssa.Expr
+	safepointEntry       bool
+	safepoints           map[ssa.Instruction]struct{}
 	pcLineSeq            uint64
 	// The runtime PC-line table stores file and line, but not column. Keep the
 	// last emitted position within one SSA basic block so repeated checks for a
@@ -683,6 +688,8 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			oldFn, oldGoFn, oldMethodNilDerefChecks, oldCallerFrameMark := p.fn, p.goFn, p.methodNilDerefChecks, p.callerFrameMark
 			oldLocalityFunction := p.locality.function
 			oldRecoverSlots, oldImplicitDeferResults := p.recoverSlots, p.implicitDeferResults
+			oldGCRoots, oldGCClosureRoot := p.gcRoots, p.gcClosureRoot
+			oldSafepointEntry, oldSafepoints := p.safepointEntry, p.safepoints
 			p.fn = fn
 			p.goFn = f
 			p.callerFrameMark = llssa.Nil
@@ -698,6 +705,8 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 				p.locality.function = oldLocalityFunction
 				p.recoverSlots = oldRecoverSlots
 				p.implicitDeferResults = oldImplicitDeferResults
+				p.gcRoots, p.gcClosureRoot = oldGCRoots, oldGCClosureRoot
+				p.safepointEntry, p.safepoints = oldSafepointEntry, oldSafepoints
 			}()
 			p.phis = nil
 			if dbgSymsEnabled {
@@ -718,6 +727,9 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			p.prepareExportedLocalContext(f)
 			p.bvals = make(map[ssa.Value]llssa.Expr)
 			p.methodNilDerefChecks = collectMethodNilDerefChecks(f)
+			p.prepareCooperativeSafepoints(f, isCgo)
+			p.prepareGCRoots(f, hasCtx)
+			p.initGCRoots(b, f)
 			off := make([]int, len(f.Blocks))
 			if isCgo {
 				p.cgoArgs = make([]llssa.Expr, len(f.Params))
@@ -763,12 +775,16 @@ func funcInfoDisplayName(goName string) string {
 }
 
 func hasNoInlineDirective(f *ssa.Function) bool {
+	return hasFuncDirective(f, "go:noinline")
+}
+
+func hasFuncDirective(f *ssa.Function, name string) bool {
 	decl, _ := f.Syntax().(*ast.FuncDecl)
 	if decl == nil || decl.Doc == nil {
 		return false
 	}
-	for _, c := range decl.Doc.List {
-		if c.Text == "//go:noinline" {
+	for _, item := range directive.ParseGroup(decl.Doc) {
+		if item.Name == name {
 			return true
 		}
 	}
@@ -1033,6 +1049,9 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 	if p.options.DebugSymbols && block.Parent().Origin() == nil && block.Index == 0 {
 		p.debugParams(b, block.Parent())
 	}
+	if block.Index == 0 && p.safepointEntry {
+		p.emitCooperativeSafepoint(b)
+	}
 
 	if doModInit {
 		p.initializeLocalGuards(b)
@@ -1056,6 +1075,9 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 	isCgoC2 := isCgoC2func(fnName)
 	isCgoCmacro := isCgoCmacro(fnName)
 	for i, instr := range instrs {
+		if p.isCooperativeSafepoint(instr) {
+			p.emitCooperativeSafepoint(b)
+		}
 		if i == 1 && doModInit && p.state == pkgInPatch { // in patch package but no pkgFNoOldInit
 			initFnNameOld := initFnNameOfHasPatch(p.fn.Name())
 			fnOld := pkg.NewFunc(initFnNameOld, llssa.NoArgsNoRet, llssa.InC)
@@ -1417,6 +1439,7 @@ func (p *context) compilePhis(b llssa.Builder, block *ssa.BasicBlock) int {
 			for i := 0; i < n; i++ {
 				iv := block.Instrs[i].(*ssa.Phi)
 				p.bvals[iv] = rets[i]
+				p.publishGCRoot(b, iv, rets[i])
 			}
 			return n
 		}
@@ -1451,6 +1474,11 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		// instruction can panic while formatting, hiding this compiler error and,
 		// on affected Windows hosts, turning the diagnostic into a hardware fault.
 		log.Panicf("unreachable: %T\n", iv)
+	}
+	if _, ok := p.gcRoots[iv]; ok {
+		defer func() {
+			p.publishGCRoot(b, iv, ret)
+		}()
 	}
 	switch v := iv.(type) {
 	case *ssa.Call:

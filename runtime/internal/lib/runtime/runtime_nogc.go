@@ -1,4 +1,4 @@
-//go:build nogc
+//go:build nogc && (!wasm || !llgo.wasm.gc.linear)
 
 package runtime
 

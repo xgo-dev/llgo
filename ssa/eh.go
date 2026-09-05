@@ -382,6 +382,9 @@ func (b Builder) initDeferState(procBlk, rethrowBlk BasicBlock) (*aDefer, Expr, 
 	ptr := b.aggregateAllocU(prog.Defer(), jb.impl, zero.impl, link.impl, b.deferTargetValue(initialReth).impl)
 	deferData := Expr{ptr, prog.DeferPtr()}
 	b.Call(b.Pkg.rtFunc("SetThreadDefer"), deferData)
+	if prog.GCRootsEnabled() {
+		b.Call(b.Pkg.rtFunc("SetDeferGCRoot"), deferData, b.currentGCRootChain())
+	}
 	bitsPtr := b.FieldAddr(deferData, deferBits)
 	rethPtr := b.FieldAddr(deferData, deferRethrow)
 	rundPtr := b.FieldAddr(deferData, deferRunDefers)
@@ -395,6 +398,9 @@ func (b Builder) initDeferState(procBlk, rethrowBlk BasicBlock) (*aDefer, Expr, 
 
 	czero := prog.IntVal(0, prog.CInt())
 	retval := b.Sigsetjmp(jb, czero)
+	if prog.GCRootsEnabled() {
+		b.Call(b.Pkg.rtFunc("RestoreDeferGCRoot"), deferData)
+	}
 
 	self.defer_ = &aDefer{
 		data:        deferData,

@@ -27,6 +27,7 @@ import (
 
 type runtimeContextPlatform struct {
 	context    wasmcontext.Context
+	gcRoot     wasmGCRootContext
 	runqNext   *g
 	runqQueued bool
 }
@@ -44,8 +45,13 @@ func runtimeContextAllocSize() uintptr {
 	return (unsafe.Sizeof(runtimeContext{}) + alignment - 1) &^ (alignment - 1)
 }
 
+var wasmSystemGCRoot wasmGCRootContext
+
 func initRuntimeContext(ctx *runtimeContext, callergp *g, status uint32) *g {
 	gp := initG(ctx, callergp, status)
+	if wasmGCRootEnabled {
+		registerWasmGCRoot(&ctx.platform.gcRoot, false)
+	}
 	if status == _Grunning {
 		initWasmScheduler(gp)
 	}
@@ -58,6 +64,9 @@ func initWasmScheduler(gp *g) {
 		return
 	}
 	wasmSched.started = true
+	if wasmGCRootEnabled {
+		registerWasmGCRoot(&wasmSystemGCRoot, true)
+	}
 	mp := &wasmSched.m
 	pp := &wasmSched.p
 	mp.curg = gp
@@ -80,7 +89,7 @@ func RunWasmMain() {
 		fatal("runtime: invalid WebAssembly main goroutine")
 		return
 	}
-	if !initWasmContext(gp, wasmcontext.Entry(wasmMainTask), nil, wasmMainStackSize) {
+	if !initWasmContext(gp, wasmcontext.Entry(wasmMainStart), nil, wasmMainStackSize) {
 		panic("runtime: failed to allocate WebAssembly goroutine stack")
 	}
 
@@ -111,6 +120,11 @@ func RunWasmMain() {
 	}
 }
 
+func wasmMainStart(arg unsafe.Pointer) unsafe.Pointer {
+	finishWasmGCRootRebuild()
+	return wasmMainTask(arg)
+}
+
 func runWasmContext(gp *g) {
 	if readgstatus(gp) == _Grunnable {
 		casgstatus(gp, _Grunnable, _Grunning)
@@ -121,7 +135,12 @@ func runWasmContext(gp *g) {
 	pp.m = mp
 	gp.m = mp
 	setg(gp)
-	gp.context.platform.context.Resume()
+	gp.context.platform.context.Resume(
+		wasmGCRootPointer(&gp.context.platform.gcRoot),
+	)
+	if wasmGCRootEnabled {
+		adoptWasmGCRoot(&wasmSystemGCRoot)
+	}
 }
 
 func releaseWasmOwnership(gp *g) {
@@ -159,11 +178,15 @@ func releaseWasmContext(gp *g) {
 		return
 	}
 	ctx := gp.context
+	if wasmGCRootEnabled {
+		unregisterWasmGCRoot(&ctx.platform.gcRoot)
+	}
 	ctx.platform.context.Close(FreeRoot)
 	freeRuntimeContext(ctx)
 }
 
 func wasmGStart(arg unsafe.Pointer) unsafe.Pointer {
+	finishWasmGCRootRebuild()
 	gp := (*g)(arg)
 	if gp == nil || getg() != gp {
 		fatal("runtime: invalid WebAssembly goroutine entry")
@@ -183,13 +206,13 @@ func goschedBackend() {
 		fatal("runtime: current goroutine is already in WebAssembly run queue")
 		return
 	}
-	gp.context.platform.context.Suspend()
+	gp.context.platform.context.Suspend(wasmGCRootPointer(&wasmSystemGCRoot))
 }
 
 func gopark() {
 	gp := getg()
 	casgstatus(gp, _Grunning, _Gwaiting)
-	gp.context.platform.context.Suspend()
+	gp.context.platform.context.Suspend(wasmGCRootPointer(&wasmSystemGCRoot))
 }
 
 func goready(gp *g) {
@@ -207,7 +230,7 @@ func goexitBackend(gp *g) {
 	releaseStartArg(gp)
 	casgstatus(gp, _Grunning, _Gdead)
 	releaseGAndCheckDeadlock()
-	gp.context.platform.context.Suspend()
+	gp.context.platform.context.Suspend(wasmGCRootPointer(&wasmSystemGCRoot))
 	fatal("runtime: resumed dead WebAssembly goroutine")
 }
 
