@@ -939,9 +939,11 @@ type aPackage struct {
 	goStrs map[string]llvm.Value
 	fnlink func(string) string
 
-	iRoutine int
+	iRoutine               int
+	setFinalizerWrapperSeq uint64
 
 	NeedRuntime         bool
+	NeedFFI             bool // whether generated code uses reflect's libffi paths
 	NeedPyInit          bool
 	NeedAbiInit         int // bitmask of Reflect* flags indicating which reflect type-construction operations are used
 	MethodByIndex       map[int]none

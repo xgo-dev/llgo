@@ -2524,6 +2524,22 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			p.inCFunc = false
 			ret = p.emitDo(b, act, ds, mayRecover, aFn.Expr, llssa.Builder.Call, args...)
 		case goFunc:
+			if cv.Name() == "SetFinalizer" && cv.Pkg != nil && cv.Pkg.Pkg != nil &&
+				llssa.PathOf(cv.Pkg.Pkg) == "runtime" {
+				// The Go SSA builder boxes SetFinalizer's any arguments. Recover the
+				// concrete operands from those MakeInterface nodes for lowering.
+				if obj, fn, ok := finalizerConcreteArgs(args); ok {
+					var rawFn llssa.Expr
+					if c, nilConst := fn.(*ssa.Const); !nilConst || c.Value != nil {
+						rawFn = p.compileValue(b, fn)
+					}
+					rawArgs := []llssa.Expr{p.compileValue(b, obj), rawFn}
+					if loweredFn, loweredArgs, ok := b.LowerSetFinalizerCall(rawArgs); ok {
+						ret = p.emitDo(b, act, ds, mayRecover, loweredFn, llssa.Builder.Call, loweredArgs...)
+						return
+					}
+				}
+			}
 			args := p.compileValues(b, args, kind)
 			ret = p.emitDo(b, act, ds, mayRecover, aFn.Expr, llssa.Builder.Call, args...)
 		case pyFunc:
@@ -2662,6 +2678,23 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		ret = p.emitDo(b, act, ds, mayRecover, fn, llssa.Builder.Call, args...)
 	}
 	return
+}
+
+func finalizerConcreteArgs(args []ssa.Value) (ssa.Value, ssa.Value, bool) {
+	if len(args) != 2 {
+		return nil, nil, false
+	}
+	objIface, ok := args[0].(*ssa.MakeInterface)
+	if !ok {
+		return nil, nil, false
+	}
+	fn := args[1]
+	if fnIface, ok := fn.(*ssa.MakeInterface); ok {
+		fn = fnIface.X
+	} else if c, nilConst := fn.(*ssa.Const); !nilConst || c.Value != nil {
+		return nil, nil, false
+	}
+	return objIface.X, fn, true
 }
 
 func (p *context) compileDynamicCallValues(b llssa.Builder, call *ssa.CallCommon, hasVArg int) []llssa.Expr {
