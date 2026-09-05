@@ -2038,16 +2038,23 @@ func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Va
 	if typ.Kind() == abi.Func {
 		typ = closureOf(typ.FuncType())
 	}
+	assignDst := dst
+	if dst.Kind() == abi.Func {
+		// Function values use LLGo's closure struct as their physical
+		// representation. Compare against the same canonical closure type
+		// as the source value, while retaining dst for the returned Value.
+		assignDst = closureOf(dst.FuncType())
+	}
 
 	switch {
-	case directlyAssignable(dst, typ):
+	case directlyAssignable(assignDst, typ):
 		// Overwrite type so that they match.
 		// Same memory layout, so no harm done.
 		fl := v.flag&(flagAddr|flagIndir) | v.flag.ro()
 		fl |= flag(dst.Kind())
 		return Value{dst, v.ptr, fl}
 
-	case implements(dst, typ):
+	case implements(assignDst, typ):
 		if v.Kind() == Interface && v.IsNil() {
 			// A nil ReadWriter passed to nil Reader is OK,
 			// but using ifaceE2I below will panic.
