@@ -57,8 +57,8 @@ included in a firmware image.
 
 ## Go modules compiled into the llgo executable
 
-This list is limited to modules in the shipped Darwin and Linux executable;
-development- and test-only modules are not included.
+This list is limited to modules in the shipped Darwin, Linux, and Windows
+executables; development- and test-only modules are not included.
 
 | Module | License |
 | --- | --- |
@@ -78,10 +78,13 @@ LLGo can download the Espressif-maintained ESP LLVM/Clang 22 toolchain
 [`22.1.4_20260905`](https://github.com/goplus/espressif-llvm-project-prebuilt/releases/tag/22.1.4_20260905).
 
 Current LLGo release archives use the LLVM 22 payload and include it under
-`crosscompile/clang`, because the shipped `llgo` executable dynamically links
-its LLVM library. Each payload includes `THIRD-PARTY-LICENSES.txt` and the
-component license texts for LLVM, Clang, LLD, compiler-rt, libc++, libc++abi,
-and libunwind.
+`crosscompile/clang`. Darwin and Linux executables dynamically link its LLVM
+library. Windows MSVC executables statically link the official LLVM 22.1.8
+development libraries; Windows MinGW executables carry their MSYS2 LLVM and
+transitive runtime DLLs in `bin`, with the component licenses preserved under
+`LICENSES/windows-runtime`. Each ESP payload includes `THIRD-PARTY-LICENSES.txt`
+and the component license texts for LLVM, Clang, LLD, compiler-rt, libc++,
+libc++abi, and libunwind.
 
 LLVM, Clang, LLD, libc++, libc++abi, libunwind, compiler-rt, and other
 LLVM-project components are licensed under Apache License 2.0 with LLVM
