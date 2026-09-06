@@ -43,6 +43,7 @@ func (p Function) NewGCRoots(count int) []Expr {
 	if count <= 0 {
 		return nil
 	}
+	p.CheckAttributeInstrumentation("compiler-generated GC root publication", "memory", "captures")
 	if !p.gcRootPrev.IsNil() {
 		panic("ssa: GC roots already reserved")
 	}

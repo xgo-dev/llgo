@@ -1,7 +1,10 @@
 // Package abi contains target-independent lowering for LLGo's internal ABI.
 package abi
 
-import "github.com/xgo-dev/llvm"
+import (
+	"github.com/xgo-dev/llgo/internal/funcattrs"
+	"github.com/xgo-dev/llvm"
+)
 
 const (
 	// MaxStackVarSize matches cmd/compile's default limit for explicitly
@@ -154,6 +157,9 @@ func (l largeAggregateLowerer) transformCall(m llvm.Module, call llvm.Value) {
 	newCall := llvm.CreateCall(b, newType, call.CalledValue(), params)
 	newCall.AddCallSiteAttribute(1, sretAttribute(ctx, retType))
 	copyClosureEnvCallAttrs(call, newCall, 1)
+	if err := funcattrs.RemapCall(call, newCall, indirectAttributeMapping(oldType.ParamTypesCount())); err != nil {
+		panic(err)
+	}
 	if !reflectMethodByName.IsNil() {
 		newCall.AddCallSiteAttribute(-1, reflectMethodByName)
 	}
@@ -183,6 +189,9 @@ func (l largeAggregateLowerer) transformFunc(m llvm.Module, fn llvm.Value) {
 	nfn.SetLinkage(fn.Linkage())
 	nfn.SetFunctionCallConv(fn.FunctionCallConv())
 	nfn.AddAttributeAtIndex(1, sretAttribute(ctx, retType))
+	if err := funcattrs.RemapFunction(fn, nfn, indirectAttributeMapping(oldType.ParamTypesCount())); err != nil {
+		panic(err)
+	}
 	for _, attr := range fn.GetFunctionAttributes() {
 		nfn.AddFunctionAttr(attr)
 	}

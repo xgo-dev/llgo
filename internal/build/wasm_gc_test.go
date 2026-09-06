@@ -3,6 +3,8 @@ package build
 import (
 	"strings"
 	"testing"
+
+	"github.com/xgo-dev/llvm"
 )
 
 func TestWasmGCRootFrameLinksRuntimeChain(t *testing.T) {
@@ -10,11 +12,18 @@ func TestWasmGCRootFrameLinksRuntimeChain(t *testing.T) {
 	conf.Target = "wasi"
 	conf.Tags = "llgo.wasm.gc.linear"
 	modules := make(map[string]string)
+	var copyContract, lengthContract bool
 	conf.ModuleHook = func(pkg Package) {
 		switch pkg.PkgPath {
 		case "github.com/xgo-dev/llgo/runtime/internal/gcroot",
 			"github.com/xgo-dev/llgo/internal/build/testdata/wasm-gc-liveness":
 			modules[pkg.PkgPath] = pkg.LPkg.String()
+		case "github.com/xgo-dev/llgo/runtime/internal/runtime":
+			mod := pkg.LPkg.Module()
+			copy := mod.NamedFunction(pkg.PkgPath + ".CStrCopy")
+			length := mod.NamedFunction(pkg.PkgPath + ".MapLen")
+			copyContract = !copy.GetEnumAttributeAtIndex(-1, llvm.AttributeKindID("memory")).IsNil()
+			lengthContract = !length.GetEnumAttributeAtIndex(0, llvm.AttributeKindID("range")).IsNil()
 		}
 	}
 	if _, err := Do([]string{"./testdata/wasm-gc-liveness"}, conf); err != nil {
@@ -22,6 +31,9 @@ func TestWasmGCRootFrameLinksRuntimeChain(t *testing.T) {
 	}
 	if len(modules) != 2 {
 		t.Fatalf("observed %d relevant modules, want 2", len(modules))
+	}
+	if copyContract || !lengthContract {
+		t.Fatalf("linear GC contracts: CStrCopy memory=%v, MapLen range=%v; want conservative copy and preserved scalar range", copyContract, lengthContract)
 	}
 	mainIR := modules["github.com/xgo-dev/llgo/internal/build/testdata/wasm-gc-liveness"]
 	if !strings.Contains(mainIR, "@llvm_gc_root_chain") {
