@@ -383,8 +383,13 @@ func (b Builder) checkUnsafeBuiltinBounds(name string, data, size Expr, elemSize
 
 	uptr := prog.Uintptr()
 	length := castUintptr(b, size.impl, size.Type, uptr)
+	// This check observes an address only; the original pointer is retained
+	// in the resulting string or slice. Use the DataLayout address width,
+	// which can be narrower than the pointer representation.
+	addr := b.impl.CreatePtrToAddr(data.impl, "")
+	addrTy := addr.Type()
 	maxAddr := ^uint64(0)
-	if bits := uint(prog.PointerSize() * 8); bits < 64 {
+	if bits := uint(addrTy.IntTypeWidth()); bits < 64 {
 		maxAddr = (uint64(1) << bits) - 1
 	}
 	maxLen := llvm.ConstInt(uptr.ll, maxAddr/elemSize, false)
@@ -396,7 +401,9 @@ func (b Builder) checkUnsafeBuiltinBounds(name string, data, size Expr, elemSize
 		byteSize = b.impl.CreateMul(length, llvm.ConstInt(uptr.ll, elemSize, false), "")
 	}
 	lastOffset := b.impl.CreateSub(byteSize, llvm.ConstInt(uptr.ll, 1, false), "")
-	addr := llvm.CreatePtrToInt(b.impl, data.impl, uptr.ll)
+	if lastOffset.Type() != addrTy {
+		lastOffset = b.impl.CreateTrunc(lastOffset, addrTy, "")
+	}
 	end := b.impl.CreateAdd(addr, lastOffset, "")
 	wrapped := llvm.CreateICmp(b.impl, llvm.IntULT, end, addr)
 	b.assertRuntimeError(llvm.CreateAnd(b.impl, isNonZero, wrapped), name+": len out of range")
