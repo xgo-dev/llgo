@@ -2,7 +2,7 @@
 
 These fixed programs keep LLGo binary-size measurements comparable across
 linker and PCLN packaging changes. The comprehensive linker/PCLN matrix is
-maintained by `xgo-dev/benchmarks`; `benchmark/baseline` reuses the three
+maintained by `llgo-test/benchmarks`; `benchmark/baseline` reuses the three
 smallest workloads for the per-commit lightweight size and timing gate.
 
 - `cprintf`: the smallest C-library hello world, using only `lib/c.Printf`.

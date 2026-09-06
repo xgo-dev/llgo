@@ -1,6 +1,7 @@
 name: Notify benchmarks
 
 on:
+  workflow_dispatch:
   # A push to main is the authoritative post-merge state, including squash and
   # rebase merges. The classifier below decides whether the change affects the
   # compiler and should start the expensive benchmarks.
@@ -32,9 +33,8 @@ jobs:
     if: github.repository == 'xgo-dev/llgo' && github.event_name != 'pull_request'
     runs-on: [qiniu, ubuntu-24.04]
     env:
-      # Set this repository variable to the temporary personal repository
-      # before the migration, then remove it to use xgo-dev/benchmarks.
-      BENCHMARKS_REPOSITORY: ${{ vars.BENCHMARKS_REPOSITORY || 'xgo-dev/benchmarks' }}
+      # Override this repository variable only when testing another receiver.
+      BENCHMARKS_REPOSITORY: ${{ vars.BENCHMARKS_REPOSITORY || 'llgo-test/benchmarks' }}
       BENCHMARKS_DISPATCH_TOKEN: ${{ secrets.BENCHMARKS_DISPATCH_TOKEN }}
       RELEASE_TAG: ${{ github.event.release.tag_name }}
     steps:
@@ -59,7 +59,7 @@ jobs:
             --github-summary "$GITHUB_STEP_SUMMARY"
 
       - name: Request benchmarks for this LLGo revision
-        if: github.event_name == 'release' || steps.changes.outputs.compiler == 'true'
+        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch' || steps.changes.outputs.compiler == 'true'
         run: |
           set -euo pipefail
           if [[ -z "$BENCHMARKS_DISPATCH_TOKEN" ]]; then
@@ -80,6 +80,14 @@ jobs:
               llgo_commit="$(awk -v ref="$tag_ref" '$2 == ref { print $1; exit }' <<<"$tag_rows")"
             fi
             event_type=llgo-tag-released
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            # Manual runs are an end-to-end transport check, not a request to
+            # benchmark the selected workflow ref. Always resolve authoritative
+            # main so the llgo-main-updated event cannot carry a branch commit.
+            llgo_commit="$(git ls-remote \
+              "https://github.com/${GITHUB_REPOSITORY}.git" \
+              refs/heads/main | awk 'NR == 1 { print $1 }')"
+            event_type=llgo-main-updated
           else
             llgo_commit="$GITHUB_SHA"
             event_type=llgo-main-updated
