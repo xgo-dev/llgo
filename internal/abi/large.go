@@ -288,10 +288,7 @@ func (l largeAggregateLowerer) allocResult(m llvm.Module, ctx llvm.Context, b ll
 	intType := ctx.IntType(l.td.PointerSize() * 8)
 	ptrType := llvm.PointerType(ctx.Int8Type(), 0)
 	fnType := llvm.FunctionType(ptrType, []llvm.Type{intType}, false)
-	fn := m.NamedFunction(runtimeAllocU)
-	if fn.IsNil() {
-		fn = llvm.AddFunction(m, runtimeAllocU, fnType)
-	}
+	fn := m.GetOrInsertFunction(runtimeAllocU, fnType)
 	size := llvm.ConstInt(intType, l.td.TypeAllocSize(typ), false)
 	return llvm.CreateCall(b, fnType, fn, []llvm.Value{size})
 }
