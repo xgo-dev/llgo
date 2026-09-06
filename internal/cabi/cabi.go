@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/funcattrs"
 	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 )
@@ -398,6 +399,9 @@ func (p *Transformer) transformFunc(m llvm.Module, fn llvm.Value) bool {
 		}
 	}
 	copyClosureEnvFunctionAttrs(fn, nfn, paramMap)
+	if err := funcattrs.RemapFunction(fn, nfn, attributeMapping(&info, paramMap)); err != nil {
+		panic(err)
+	}
 	if !preloweredSRet.IsNil() {
 		nfn.AddAttributeAtIndex(1, preloweredSRet)
 	}
@@ -786,6 +790,9 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 			))
 		}
 		copyClosureEnvCallAttrs(call, replacement, paramMap)
+		if err := funcattrs.RemapCall(call, replacement, attributeMapping(&info, paramMap)); err != nil {
+			panic(err)
+		}
 	}
 
 	var instr llvm.Value

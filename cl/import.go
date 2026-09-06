@@ -30,6 +30,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/funcattrs"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/locality"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -719,6 +720,7 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 		pkg = origin.Pkg.Pkg
 		p.ensureLoaded(pkg)
 		orgName = funcName(pkg, origin, true)
+		p.prog.SetFunctionAttributeOrigin(funcName(pkg, fn, false), orgName)
 	} else {
 		fname := fn.Name()
 		if checkCgo(fname) && !cgoIgnored(fname) {
@@ -901,6 +903,9 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 				break
 			}
 		}
+		if err := validateAttributePlacement(fset, file); err != nil {
+			return err
+		}
 		for _, decl := range file.Decls {
 			switch decl := decl.(type) {
 			case *ast.FuncDecl:
@@ -912,6 +917,21 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 				}
 				fullName, inPkgName := astFuncName(pkgPath, decl)
 				syms[inPkgName] = fullName
+				attrs, err := funcattrs.Parse(fset, decl)
+				if err != nil {
+					return err
+				}
+				if err = prog.SetFunctionAttributes(fullName, attrs); err != nil {
+					return err
+				}
+				if len(attrs) != 0 {
+					if fn := sourceAttributeFunction(pkg, decl); fn != nil {
+						bits := int(prog.SizeOf(prog.Int()) * 8)
+						if err = funcattrs.Validate(attrs, fn.Type().(*types.Signature), bits, true); err != nil {
+							return err
+						}
+					}
+				}
 				hasLinkname, err := collectDeclarationDirectivesWithOptions(prog, fset, decl.Doc, fullName, inPkgName, decl.Pos(), options)
 				if err != nil {
 					return err
@@ -923,6 +943,21 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 				}
 				ctx.processNoInterfaceByDoc(decl.Doc, fullName)
 			case *ast.GenDecl:
+				if err := funcattrs.Reject(fset, decl.Doc); err != nil {
+					return err
+				}
+				for _, spec := range decl.Specs {
+					switch spec := spec.(type) {
+					case *ast.TypeSpec:
+						if err := funcattrs.Reject(fset, spec.Doc); err != nil {
+							return err
+						}
+					case *ast.ValueSpec:
+						if err := funcattrs.Reject(fset, spec.Doc); err != nil {
+							return err
+						}
+					}
+				}
 				if decl.Tok == token.VAR {
 					for _, spec := range decl.Specs {
 						for _, name := range spec.(*ast.ValueSpec).Names {

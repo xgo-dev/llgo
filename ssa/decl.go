@@ -392,6 +392,7 @@ func (p Package) newFunc(
 		// definitions so every module can use it without LTO or inlining.
 		fn.AddAttributeAtIndex(0, p.Prog.ctx.CreateEnumAttribute(llvm.AttributeKindID("nonnull"), 0))
 	}
+	p.Prog.applyFunctionAttributes(fn, name, sig, env != nil)
 	if bg == InStdcall {
 		fn.SetFunctionCallConv(p.Prog.stdcallCallConv())
 	}
