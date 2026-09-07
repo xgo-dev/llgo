@@ -95,7 +95,15 @@ type pointerFinalizerEntry struct {
 	prevCb unsafe.Pointer
 	arg    unsafe.Pointer
 	next   unsafe.Pointer
+	state  int32
 }
+
+const (
+	pointerFinalizerActive int32 = iota
+	pointerFinalizerQueued
+	pointerFinalizerRunning
+	pointerFinalizerStopped
+)
 
 // RunPointerFinalizers drains typed finalizers queued by BDWGC callbacks.
 func RunPointerFinalizers() {
@@ -111,6 +119,10 @@ func RunPointerFinalizers() {
 	}
 	var done []*pointerFinalizerEntry
 	for e := queue; e != nil; e = (*pointerFinalizerEntry)(e.next) {
+		oldState, _ := atomic.CompareAndExchange(&e.state, pointerFinalizerQueued, pointerFinalizerRunning)
+		if oldState != pointerFinalizerQueued {
+			continue
+		}
 		if e.prevFn != nil {
 			e.prevFn(e.arg, e.prevCb)
 		}
@@ -144,6 +156,12 @@ func initPointerFinalizers() {
 
 func pointerFinalizerCallback(ptr unsafe.Pointer, cb unsafe.Pointer) {
 	e := (*pointerFinalizerEntry)(cb)
+	// Claim the entry before publishing it. Cancellation can then prevent a
+	// callback that races with BDWGC's callback thread from entering the queue.
+	oldState, _ := atomic.CompareAndExchange(&e.state, pointerFinalizerActive, pointerFinalizerQueued)
+	if oldState != pointerFinalizerActive {
+		return
+	}
 	e.arg = ptr
 	for {
 		head := atomic.Load(&pointerFinalizers.pending)
@@ -333,6 +351,9 @@ func SetFinalizerPtr(obj unsafe.Pointer, finalizer func(unsafe.Pointer)) {
 	old := pointerFinalizers.m[key]
 	delete(pointerFinalizers.m, key)
 	if old != nil {
+		// The BDWGC callback may already have published old on the pending
+		// list. Mark it stopped so a later drain cannot invoke it.
+		atomic.Store(&old.state, pointerFinalizerStopped)
 		var ignoredFn bdwgc.FinalizerFunc
 		var ignoredCb unsafe.Pointer
 		bdwgc.RegisterFinalizer(obj, old.prevFn, old.prevCb, &ignoredFn, &ignoredCb)
