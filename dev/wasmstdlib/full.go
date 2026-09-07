@@ -34,12 +34,14 @@ type selectedPackage struct {
 
 func discoverFull(root string) ([]string, error) {
 	seen := map[string]bool{}
-	err := filepath.WalkDir(filepath.Join(root, "test"), func(path string, d fs.DirEntry, err error) error {
+	testRoot := filepath.Join(root, "test")
+	err := filepath.WalkDir(testRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() == "testdata" || d.Name() == "vendor" || strings.HasPrefix(d.Name(), ".") || strings.HasPrefix(d.Name(), "_") {
+			isReviewedStressRoot := path == filepath.Join(testRoot, "_stress")
+			if d.Name() == "testdata" || d.Name() == "vendor" || strings.HasPrefix(d.Name(), ".") || strings.HasPrefix(d.Name(), "_") && !isReviewedStressRoot {
 				return filepath.SkipDir
 			}
 			return nil
@@ -62,24 +64,18 @@ func discoverFull(root string) ([]string, error) {
 }
 
 func fullProfile(name string) (profile, error) {
-	switch name {
-	case "GJS":
-		return profile{Name: name, GOOS: "js"}, nil
-	case "GWASI":
-		return profile{Name: name, GOOS: "wasip1"}, nil
-	default:
-		return selectProfile(name)
-	}
+	return selectProfile(name)
 }
 
 func fullCommand(p profile, goCmd, llgo, goRoot, pkg string) command {
-	args := []string{"test", "-v", "-count=1", "-timeout=60s"}
+	args := []string{"test", "-v", "-count=1", "-timeout=" + fullTestTimeout(pkg)}
 	env := map[string]string{}
 	program := llgo
 	if p.Reference {
 		program = goCmd
 		args = append(args, "-exec="+strconv.Quote(filepath.Join(goRoot, "lib", "wasm", "go_"+p.GOOS+"_wasm_exec")))
 		env["GOWASIRUNTIME"] = "wasmtime"
+		env["GOMAXPROCS"] = "1"
 	}
 	if p.Target != "" {
 		args = append(args, "-target", p.Target, "-emulator")
@@ -96,6 +92,51 @@ func fullCommand(p profile, goCmd, llgo, goRoot, pkg string) command {
 	return command{"timeout", append([]string{"--kill-after=10s", "5m", program}, args...), env}
 }
 
+func fullTestTimeout(pkg string) string {
+	// Keep the global default strict while allowing reviewed, finite wasm work
+	// enough time to finish.
+	switch pkg {
+	case "test/std/crypto/dsa", "test/std/crypto/rsa", "test/std/go/types", "test/std/os", "test/std/runtime/pprof":
+		return "3m"
+	}
+	if strings.HasPrefix(pkg, "test/_stress/") {
+		return "3m"
+	}
+	return "60s"
+}
+
+func fullSourceContext(p profile) (tags string, cgo string) {
+	return sourceContext(p)
+}
+
+// fullSourceExclusion classifies packages whose own build constraints define
+// them outside every wasm source context. Keep this list narrow and explicit:
+// an unrecognized source exclusion remains a failing acceptance result.
+func fullSourceExclusion(p profile, pkg string) (string, bool) {
+	switch pkg {
+	case "test/_stress/runtime/cpuprof":
+		return "SIGPROF stress requires a native Darwin or Linux process", true
+	case "test/_stress/runtime/finalizer":
+		return "BDWGC finalizer stress is native-only; linear-GC finalizers are covered by target runtime tests", true
+	case "test/_stress/runtime/signal":
+		return "POSIX signal stress is excluded by its native-only build contract", true
+	case "test/std/plugin":
+		return "tests select only darwin, linux, or windows; wasm has no dynamic plugin loader", true
+	case "test/std/syscall":
+		return "tests select Unix or Windows syscall surfaces, neither of which is the js/wasm or wasip1/wasm ABI", true
+	case "test/windows":
+		return "Windows-only integration suite", true
+	case "test/cgo":
+		return "the Go cgo frontend does not support GOARCH=wasm; C interoperability is covered by dedicated LLGo target tests", true
+	case "test/std/runtime/cgo":
+		return "runtime/cgo requires the unsupported GOARCH=wasm cgo frontend; handle and host-boundary behavior has dedicated target tests", true
+	case "test/llgoext", "test/llgoext/localitymulti":
+		if p.Reference {
+			return "LLGo extension tests require LLGo-only build tags and runtime APIs", true
+		}
+	}
+	return "", false
+}
 func testWitness(pkg selectedPackage) (string, error) {
 	for _, file := range append(append([]string{}, pkg.TestGoFiles...), pkg.XTestGoFiles...) {
 		f, err := parser.ParseFile(token.NewFileSet(), filepath.Join(pkg.Dir, file), nil, 0)
@@ -162,11 +203,12 @@ func runFullAt(root, name, reportPath, goCmd, llgo string, shard, shards int, st
 	}
 	goRoot := strings.TrimSpace(string(data))
 	listArgs := []string{"list", "-e", "-json"}
-	if !p.Reference {
-		listArgs = append(listArgs, "-tags=llgo")
+	tags, cgo := fullSourceContext(p)
+	if tags != "" {
+		listArgs = append(listArgs, "-tags="+tags)
 	}
 	listArgs = append(listArgs, "./test/...")
-	data, err = structured(root, command{goCmd, listArgs, map[string]string{"GOOS": p.GOOS, "GOARCH": "wasm", "CGO_ENABLED": "0"}})
+	data, err = structured(root, command{goCmd, listArgs, map[string]string{"GOOS": p.GOOS, "GOARCH": "wasm", "CGO_ENABLED": cgo}})
 	if err != nil {
 		return err
 	}
@@ -198,8 +240,14 @@ func runFullAt(root, name, reportPath, goCmd, llgo string, shard, shards int, st
 		switch {
 		case e.Package == "test/goroot":
 			e.Status, e.Reason = "separate-suite", "host-side target runner is executed by the wasm GOROOT acceptance jobs"
+		case e.Package == "test/cmd/llgo":
+			e.Status, e.Reason = "separate-suite", "host-side compiler integration suite is executed by the regular Go workflow"
 		case !exists || len(pkg.TestGoFiles)+len(pkg.XTestGoFiles) == 0:
-			e.Status, e.Reason = "source-excluded", "no tests selected by source context; applicability not yet established"
+			if reason, classified := fullSourceExclusion(p, e.Package); classified {
+				e.Status, e.Reason = "not-applicable", reason
+			} else {
+				e.Status, e.Reason = "source-excluded", "no tests selected by source context; applicability not yet established"
+			}
 		case pkg.Error != nil:
 			e.Status, e.Reason = "fail", pkg.Error.Err
 		default:
@@ -221,7 +269,7 @@ func runFullAt(root, name, reportPath, goCmd, llgo string, shard, shards int, st
 				e.Status, e.Reason = "fail", runErr.Error()
 			}
 		}
-		if e.Status != "pass" && e.Status != "separate-suite" {
+		if e.Status != "pass" && e.Status != "separate-suite" && e.Status != "not-applicable" {
 			failures++
 		}
 		fmt.Printf("%s %s: %s %s\n", name, e.Package, e.Status, e.Reason)

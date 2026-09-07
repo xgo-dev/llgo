@@ -10,6 +10,8 @@ go run ./dev/wasmstdlib -full -profile J32-GoJS -shard 0 -shards 2 -llgo /path/t
 
 Each package has a bounded build/run time and a separate guest test deadline. LLGo package compilation is cached within the job, but `-count=1` keeps execution mandatory. `other-shard`, `not-run`, and interrupted `incomplete` results are never counted as passes. W3 separately runs the target-aware GOROOT corpus and browser acceptance.
 
+Reviewed exclusions are reported as `not-applicable` with a profile-specific reason. Native-only signal, CPU-profiler and BDWGC stress suites; OS-only plugin, syscall and Windows suites; and the unsupported Go `cgo` frontend are not counted as passes. Dedicated target tests continue to cover LLGo's C ABI and host boundaries.
+
 ## W2 focused standard-library slice
 
 This bounded W2 acceptance slice runs the complete repository test packages for `errors`, `sort`, `encoding/binary`, `fmt`, `strconv`, and `io`. It exercises error wrapping and assertion, reflection-based sorting, byte-order interfaces, structured encoding, varints, fixed- and native-width integer boundaries, formatting and scanning interfaces, readers and writers, and pipe goroutine/timer coordination.
