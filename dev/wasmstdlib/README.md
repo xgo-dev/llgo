@@ -8,7 +8,7 @@
 go run ./dev/wasmstdlib -full -profile J32-GoJS -shard 0 -shards 2 -llgo /path/to/llgo -report /tmp/full.json
 ```
 
-Each package has a bounded build/run time and a separate guest test deadline. LLGo package compilation is cached within the job, but `-count=1` keeps execution mandatory. `other-shard`, `not-run`, and interrupted `incomplete` results are never counted as passes. W3 separately runs the target-aware GOROOT corpus and browser acceptance.
+The full audit requires GNU `timeout`. Each package has a five-minute build/run budget and a separate 60-second guest deadline, extended only for reviewed finite slow packages. LLGo package compilation is cached within the job, but `-count=1` keeps execution mandatory. The normally pattern-excluded `_stress/runtime/timer` package is named explicitly and runs with `LLGO_STRESS_PROFILE=quick`. `other-shard`, `not-run`, and interrupted `incomplete` results are never counted as passes. W3 separately runs the target-aware GOROOT corpus and browser acceptance.
 
 Reviewed exclusions are reported as `not-applicable` with a profile-specific reason. Native-only signal, CPU-profiler and BDWGC stress suites; OS-only plugin, syscall and Windows suites; and the unsupported Go `cgo` frontend are not counted as passes. Dedicated target tests continue to cover LLGo's C ABI and host boundaries.
 

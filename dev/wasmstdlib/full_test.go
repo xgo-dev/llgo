@@ -76,7 +76,7 @@ func TestFullAuditContinuesAndPreservesShardAccounting(t *testing.T) {
 
 func TestFullDiscoveryIncludesRootAndExcludedSource(t *testing.T) {
 	root := t.TempDir()
-	for _, path := range []string{"test/main_test.go", "test/_stress/runtime/cpuprof/a_test.go", "test/windows/a_test.go", "test/std/io/a_test.go", "test/goroot/runner_test.go", "test/testdata/hidden_test.go"} {
+	for _, path := range []string{"test/main_test.go", "test/_stress/runtime/cpuprof/a_test.go", "test/_stress/runtime/timer/a_test.go", "test/windows/a_test.go", "test/std/io/a_test.go", "test/goroot/runner_test.go", "test/_manualtest/fail/a_test.go", "test/testdata/hidden_test.go"} {
 		name := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(name), 0755); err != nil {
 			t.Fatal(err)
@@ -86,7 +86,7 @@ func TestFullDiscoveryIncludesRootAndExcludedSource(t *testing.T) {
 		}
 	}
 	got, err := discoverFull(root)
-	want := []string{"test", "test/_stress/runtime/cpuprof", "test/goroot", "test/std/io", "test/windows"}
+	want := []string{"test", "test/_stress/runtime/cpuprof", "test/_stress/runtime/timer", "test/goroot", "test/std/io", "test/windows"}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, %v; want %v", got, err, want)
 	}
@@ -211,6 +211,23 @@ func TestFullProfileCommandsKeepLLGoAndReferenceDistinct(t *testing.T) {
 	}
 }
 
+func TestFullStressCommandsUseQuickProfile(t *testing.T) {
+	p, err := fullProfile("J32-Emscripten")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := fullCommand(p, "go", "llgo", "/goroot", "test/_stress/runtime/timer")
+	if got := cmd.Env["LLGO_STRESS_PROFILE"]; got != "quick" {
+		t.Fatalf("stress profile = %q", got)
+	}
+	if !slices.Contains(cmd.Args, "-timeout=3m") {
+		t.Fatalf("stress test deadline is not targeted: %+v", cmd)
+	}
+	if got := cmd.Args[len(cmd.Args)-1]; got != "./test/_stress/runtime/timer/timer_stress_test.go" {
+		t.Fatalf("stress package argument = %q", got)
+	}
+}
+
 func TestFullSourceContextMatchesCompilerProfiles(t *testing.T) {
 	tests := []struct {
 		name, wantCGO string
@@ -251,7 +268,7 @@ func TestFullSourceExclusionsAreProfileSpecific(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, pkg := range []string{"test/std/plugin", "test/std/syscall", "test/windows"} {
+		for _, pkg := range []string{"test/_stress/runtime/cpuprof", "test/_stress/runtime/finalizer", "test/_stress/runtime/signal", "test/std/plugin", "test/std/syscall", "test/windows"} {
 			if reason, ok := fullSourceExclusion(p, pkg); !ok || reason == "" {
 				t.Fatalf("%s did not classify %s", name, pkg)
 			}
@@ -275,6 +292,9 @@ func TestFullLongTimeoutIsTargeted(t *testing.T) {
 	}
 	if got := fullTestTimeout("test/std/crypto/aes"); got != "60s" {
 		t.Fatalf("default timeout = %q", got)
+	}
+	if got := fullTestTimeout("test/_stress/runtime/timer"); got != "3m" {
+		t.Fatalf("stress timeout = %q", got)
 	}
 }
 
