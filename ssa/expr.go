@@ -1503,6 +1503,7 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 	}
 	var reflectCheck ReflectMethodCheck
 	if b.Pkg.Path() != "reflect" {
+		b.checkFFI(fn)
 		reflectCheck = b.checkReflect(fn, args)
 	}
 	ret.Type = b.Prog.retType(sig)
@@ -1648,6 +1649,22 @@ const (
 	ReflectMethodMask     = ReflectMethodByIndex | ReflectMethodByName | ReflectMethodDynamic | reflectTypeMethodMask
 )
 
+func (b Builder) checkFFI(fn Expr) {
+	pkg := b.Pkg
+	if !pkg.NeedFFI {
+		switch fn.Name() {
+		case "reflect.Value.Call", "reflect.Value.CallSlice", "reflect.MakeFunc", "runtime.SetFinalizer":
+			pkg.NeedFFI = true
+		case "syscall.NewCallback", "syscall.NewCallbackCDecl":
+			// Windows callback closures are implemented with libffi. Keep the
+			// noffi runtime variant for targets where these APIs cannot exist.
+			if b.Prog.Target().effectiveGOOS() == "windows" {
+				pkg.NeedFFI = true
+			}
+		}
+	}
+}
+
 func (b Builder) checkReflect(fn Expr, args []Expr) (check ReflectMethodCheck) {
 	pkg := b.Pkg
 	reflectKind := 0
@@ -1666,14 +1683,6 @@ func (b Builder) checkReflect(fn Expr, args []Expr) (check ReflectMethodCheck) {
 		reflectKind = ReflectSliceOf
 	case "reflect.StructOf":
 		reflectKind = ReflectStructOf
-	case "reflect.Value.Call", "reflect.Value.CallSlice", "reflect.MakeFunc", "runtime.SetFinalizer":
-		pkg.NeedFFI = true
-	case "syscall.NewCallback", "syscall.NewCallbackCDecl":
-		// Windows callback closures are implemented with libffi. Keep the
-		// noffi runtime variant for targets where these APIs cannot exist.
-		if b.Prog.Target().effectiveGOOS() == "windows" {
-			pkg.NeedFFI = true
-		}
 	case "reflect.Value.Method":
 		if len(args) == 2 {
 			if v, ok := extractConstInt(args[1].impl); ok {
@@ -2208,8 +2217,8 @@ func (b Builder) lowerSetFinalizerCall(args []Expr) (Expr, []Expr, bool) {
 	if !ok {
 		return Nil, nil, false
 	}
-	// Some targets (notably the standard wasm runtime) do not provide the
-	// pointer-finalizer entry. Keep the original SetFinalizer call there.
+	// The nogc and wasm runtime variants do not provide the pointer-finalizer
+	// entry. Keep the original SetFinalizer call there.
 	runtimePkg := b.Prog.runtime()
 	if runtimePkg == nil {
 		return Nil, nil, false

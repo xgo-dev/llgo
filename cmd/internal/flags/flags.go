@@ -146,7 +146,7 @@ var CheckFFI *bool
 
 func AddCheckFFIFlag(fs *flag.FlagSet) {
 	CheckFFI = nil
-	fs.BoolFunc("check-libffi", "Automatically select reflect without libffi when possible (default: true with -lto=full)", func(v string) error {
+	fs.BoolFunc("check-libffi", "Automatically select runtime and reflect without libffi when possible (default: true with -lto=full)", func(v string) error {
 		enabled, err := strconv.ParseBool(v)
 		if err != nil {
 			return err

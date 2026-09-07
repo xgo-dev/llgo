@@ -67,6 +67,24 @@ func userCall(p *T) { SetFinalizer(p, finalizer) }`
 	}
 }
 
+func TestSetFinalizerLoweringSkipsWasm(t *testing.T) {
+	const source = `package foo
+import "runtime"
+type T int
+func finalizer(*T) {}
+func runtimeCall(p *T) { runtime.SetFinalizer(p, finalizer) }`
+	ssaPkg, _, files := buildGoSSAPkg(t, source)
+	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
+	pkg, err := NewPackage(prog, ssaPkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := mustNamedFunction(t, pkg.Module(), "foo.runtimeCall").String()
+	if strings.Contains(ir, "SetFinalizerPtr") || !strings.Contains(ir, "runtime.SetFinalizer(") {
+		t.Fatalf("wasm runtime.SetFinalizer was lowered:\n%s", ir)
+	}
+}
+
 func TestCompileTailUnreachableOmitsSyntheticReturn(t *testing.T) {
 	_, m := mustCompileLLPkgFromSrc(t, `
 package foo
