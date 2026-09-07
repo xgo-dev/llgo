@@ -38,6 +38,37 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
+func TestSetFinalizerArgCompatible(t *testing.T) {
+	pkg := types.NewPackage("example.com/p", "p")
+	elem := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "T", nil), types.NewStruct(nil, nil), nil)
+	ptr := types.NewPointer(elem)
+	otherPtr := types.NewPointer(elem)
+	if !setFinalizerArgCompatible(ptr, ptr, ptr) || !setFinalizerArgCompatible(ptr, ptr, otherPtr) {
+		t.Fatal("identical pointer arguments were rejected")
+	}
+	if !setFinalizerArgCompatible(ptr, ptr, types.NewPointer(elem)) {
+		t.Fatal("unnamed pointer argument was rejected")
+	}
+	otherElem := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "U", nil), types.NewStruct(nil, nil), nil)
+	if setFinalizerArgCompatible(ptr, ptr, types.NewPointer(otherElem)) {
+		t.Fatal("pointer with a different element type was accepted")
+	}
+	empty := types.NewInterfaceType(nil, nil)
+	empty.Complete()
+	if !setFinalizerArgCompatible(ptr, ptr, empty) {
+		t.Fatal("empty interface argument was rejected")
+	}
+	method := types.NewFunc(token.NoPos, pkg, "M", types.NewSignatureType(nil, nil, nil, nil, nil, false))
+	iface := types.NewInterfaceType([]*types.Func{method}, nil)
+	iface.Complete()
+	if setFinalizerArgCompatible(ptr, ptr, iface) {
+		t.Fatal("unimplemented interface argument was accepted")
+	}
+	if setFinalizerArgCompatible(ptr, ptr, types.Typ[types.Int]) {
+		t.Fatal("non-pointer argument was accepted")
+	}
+}
+
 func TestEndDefer(t *testing.T) {
 	prog := NewProgram(nil)
 	pkg := prog.NewPackage("foo", "foo")

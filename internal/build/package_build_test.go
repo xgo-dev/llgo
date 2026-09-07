@@ -102,6 +102,29 @@ func TestPackageFFINeeded(t *testing.T) {
 	}
 }
 
+func TestBuildTagHelpers(t *testing.T) {
+	if !hasBuildTag("foo, llgo_noffi", "llgo_noffi") {
+		t.Fatal("hasBuildTag did not trim tag whitespace")
+	}
+	if hasBuildTag("foo,llgo_noffi_extra", "llgo_noffi") {
+		t.Fatal("hasBuildTag matched a partial tag")
+	}
+	if got := appendBuildTag("", "llgo_noffi"); got != "llgo_noffi" {
+		t.Fatalf("appendBuildTag empty = %q", got)
+	}
+	if got := appendBuildTag("foo", "llgo_noffi"); got != "foo,llgo_noffi" {
+		t.Fatalf("appendBuildTag existing = %q", got)
+	}
+	reflectPkg := &aPackage{Package: &packages.Package{PkgPath: "reflect"}}
+	otherPkg := &aPackage{Package: &packages.Package{PkgPath: "example.com/p"}}
+	if !hasLinkedReflect([]*aPackage{nil, otherPkg, reflectPkg}) {
+		t.Fatal("hasLinkedReflect did not find reflect")
+	}
+	if hasLinkedReflect([]*aPackage{nil, otherPkg}) {
+		t.Fatal("hasLinkedReflect found reflect unexpectedly")
+	}
+}
+
 func TestPackageBuildTaskSpecialKinds(t *testing.T) {
 	decl := newPackageBuildTask(&aPackage{Package: &packages.Package{
 		PkgPath: "unsafe",
