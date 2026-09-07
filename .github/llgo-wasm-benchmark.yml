@@ -19,7 +19,7 @@ views:
       empty: error
       dimensions:
         benchmark:
-          title: Profile and compiler
+          title: Example, profile and compiler
           trim-prefix: BenchmarkWasmSize/
       metrics:
         module-bytes:
@@ -40,7 +40,7 @@ views:
       empty: error
       dimensions:
         benchmark:
-          title: Profile
+          title: Example and profile
           trim-prefix: BenchmarkWasmBuild/
       metrics:
         build-ns:

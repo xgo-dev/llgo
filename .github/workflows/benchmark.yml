@@ -260,6 +260,9 @@ jobs:
     env:
       GOMAXPROCS: "2"
       LLGO_ROOT: ${{ github.workspace }}
+      # Keep the existing println timing budget. The two additional examples
+      # are built once for exact output sizes without redundant warm-ups.
+      LLGO_WASM_BENCH_BUILD_RUNS: "1"
       GOFLAGS: -tags=llvm22
     steps:
       - uses: actions/checkout@v7
@@ -323,6 +326,9 @@ jobs:
 
       - name: Set up Go
         uses: ./.github/actions/setup-go
+
+      - name: Test WebAssembly benchmark matrix and runner
+        run: go test ./benchmark/wasm -count=1
 
       - name: Measure pull request base
         if: >-
