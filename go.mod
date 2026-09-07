@@ -26,3 +26,6 @@ require (
 )
 
 replace github.com/xgo-dev/llgo/runtime => ./runtime
+
+// Temporary dependency on https://github.com/xgo-dev/llvm/pull/52.
+replace github.com/xgo-dev/llvm => github.com/zhouguangyuan0718/go-llvm v0.0.0-20260905230337-4de18f5844ba
