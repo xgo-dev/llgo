@@ -3,67 +3,159 @@ package main
 import (
 	"context"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestRunCLICollectsEveryWasmProfile(t *testing.T) {
-	root := t.TempDir()
-	fixture := filepath.Join(root, "benchmark", "binary_size", "println", "main.go")
-	if err := os.MkdirAll(filepath.Dir(fixture), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(fixture, []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	out := filepath.Join(t.TempDir(), "results")
-	var calls int
-	runner := func(_ context.Context, dir string, env []string, name string, args ...string) error {
-		calls++
-		if dir != root || (name != "fake-llgo" && name != "fake-go") {
-			t.Fatalf("runner = (%q, %q), want (%q, fake-llgo or fake-go)", dir, name, root)
-		}
-		output := args[slices.Index(args, "-o")+1]
-		if err := os.WriteFile(strings.TrimSuffix(output, filepath.Ext(output))+".wasm", []byte("\x00asmfixture"), 0o644); err != nil {
-			return err
-		}
-		if filepath.Ext(output) == ".mjs" {
-			return os.WriteFile(output, []byte("export default {}"), 0o644)
-		}
-		return nil
-	}
-	if code := runMain(context.Background(), io.Discard, []string{
-		"-root", root,
-		"-llgo", "fake-llgo",
-		"-go", "fake-go",
-		"-out", out,
-		"-build-runs", "1",
-	}, runner); code != 0 {
-		t.Fatalf("runMain exit code = %d, want 0", code)
-	}
-	if want := len(wasmProfiles)*2 + len(goWasmProfiles); calls != want {
-		t.Fatalf("build calls = %d, want %d", calls, want)
-	}
-	data, err := os.ReadFile(filepath.Join(out, "benchmark.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(data)
-	for _, profile := range wasmProfiles {
-		if !strings.Contains(text, "BenchmarkWasmSize/"+profile.name+"/LLGo ") ||
-			!strings.Contains(text, "BenchmarkWasmBuild/"+profile.name+" ") {
-			t.Errorf("result omits LLGo %s measurements:\n%s", profile.name, text)
-		}
-	}
-	for _, profile := range goWasmProfiles {
-		if !strings.Contains(text, "BenchmarkWasmSize/"+profile.name+"/Go ") {
-			t.Errorf("result omits official Go %s size:\n%s", profile.name, text)
-		}
+func TestRunCLICollectsEveryExampleAndProfile(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		flags []string
+		runs  int
+	}{
+		{name: "default", runs: 3},
+		{name: "one-sample", flags: []string{"-build-runs", "1"}, runs: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			out := filepath.Join(t.TempDir(), "results")
+			// Specify the acceptance matrix independently of the production lists:
+			// removing an example/profile there must make this test fail.
+			profiles := []string{
+				"j32-goos-js",
+				"w32-goos-wasip1",
+				"j32-emscripten",
+				"j64-emscripten-memory64",
+				"w32-wasi",
+			}
+			targets := map[string]string{
+				"j32-emscripten":          "emscripten",
+				"j64-emscripten-memory64": "emscripten-memory64",
+				"w32-wasi":                "wasi",
+			}
+			gooses := map[string]string{
+				"j32-goos-js":     "js",
+				"w32-goos-wasip1": "wasip1",
+			}
+			wantCalls := make(map[string]int)
+			wantMetrics := make(map[string]int)
+			for _, example := range []string{"cprintf", "println", "fmtprintf"} {
+				fixture := filepath.Join(root, "benchmark", "binary_size", example, "main.go")
+				if err := os.MkdirAll(filepath.Dir(fixture), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(fixture, []byte("fixture "+example), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				for _, profile := range profiles {
+					metricName := profile
+					if example != "println" {
+						metricName = example + "/" + profile
+					}
+					wantCalls[example+"/"+profile+"/fake-llgo"] = 1
+					wantMetrics["BenchmarkWasmSize/"+metricName+"/LLGo"] = 1
+					if example == "println" {
+						wantCalls[example+"/"+profile+"/fake-llgo"] = test.runs + 1
+						wantMetrics["BenchmarkWasmBuild/"+metricName] = 1
+					}
+					if example != "cprintf" && gooses[profile] != "" {
+						wantCalls[example+"/"+profile+"/fake-go"] = 1
+						wantMetrics["BenchmarkWasmSize/"+metricName+"/Go"] = 1
+					}
+				}
+			}
+			calls := make(map[string]int)
+			artifacts := make(map[string]string)
+			outputOwners := make(map[string]string)
+			runner := func(_ context.Context, dir string, env []string, name string, args ...string) error {
+				if dir != root || (name != "fake-llgo" && name != "fake-go") {
+					t.Fatalf("runner = (%q, %q), want (%q, fake-llgo or fake-go)", dir, name, root)
+				}
+				fixture := args[len(args)-1]
+				example := filepath.Base(filepath.Dir(fixture))
+				data, err := os.ReadFile(fixture)
+				if err != nil || string(data) != "fixture "+example {
+					t.Fatalf("unexpected source %s: data=%q, error=%v", fixture, data, err)
+				}
+				output := args[slices.Index(args, "-o")+1]
+				profile := strings.TrimPrefix(filepath.Base(filepath.Dir(output)), "go-")
+				key := example + "/" + profile + "/" + name
+				if _, ok := wantCalls[key]; !ok {
+					t.Fatalf("unexpected compiler/example/profile combination %q", key)
+				}
+				calls[key]++
+				if previous, ok := outputOwners[output]; ok && previous != key {
+					t.Fatalf("artifact %s shared by %s and %s", output, previous, key)
+				}
+				outputOwners[output] = key
+				profileDir := profile
+				if name == "fake-go" {
+					profileDir = "go-" + profile
+				}
+				ext := ".wasm"
+				if name == "fake-llgo" && (profile == "j32-goos-js" || profile == "j32-emscripten" || profile == "j64-emscripten-memory64") {
+					ext = ".mjs"
+				}
+				if want := filepath.Join(out, example, "bin", profileDir, "program"+ext); output != want {
+					t.Fatalf("output = %s, want %s", output, want)
+				}
+				for _, setting := range []string{"LLGO_ROOT=" + root, "LLGO_BUILD_CACHE=off"} {
+					if !slices.Contains(env, setting) {
+						t.Errorf("%s environment omits %s", key, setting)
+					}
+				}
+				targetIndex := slices.Index(args, "-target")
+				if target := targets[profile]; target != "" {
+					if targetIndex < 0 || args[targetIndex+1] != target {
+						t.Fatalf("%s target arguments = %v, want %s", key, args, target)
+					}
+				} else if goos := gooses[profile]; goos == "" || targetIndex >= 0 || !slices.Contains(env, "GOOS="+goos) || !slices.Contains(env, "GOARCH=wasm") {
+					t.Fatalf("%s compiler selection: args=%v, env=%v", key, args, env)
+				}
+				module := strings.TrimSuffix(output, ext) + ".wasm"
+				artifacts[module] = "\x00asm" + key
+				if err := os.WriteFile(module, []byte(artifacts[module]), 0o644); err != nil {
+					return err
+				}
+				if ext == ".mjs" {
+					artifacts[output] = "// " + key
+					return os.WriteFile(output, []byte(artifacts[output]), 0o644)
+				}
+				return nil
+			}
+			args := append([]string{"-root", root, "-llgo", "fake-llgo", "-go", "fake-go", "-out", out}, test.flags...)
+			var stderr strings.Builder
+			if code := runMain(context.Background(), &stderr, args, runner); code != 0 {
+				t.Fatalf("runMain exit code = %d: %s", code, stderr.String())
+			}
+			if !reflect.DeepEqual(calls, wantCalls) {
+				t.Fatalf("build calls = %v, want %v", calls, wantCalls)
+			}
+			for path, want := range artifacts {
+				got, err := os.ReadFile(path)
+				if err != nil || string(got) != want {
+					t.Errorf("artifact overwritten/removed: %s: data=%q, error=%v", path, got, err)
+				}
+			}
+			data, err := os.ReadFile(filepath.Join(out, "benchmark.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			metrics := make(map[string]int)
+			for _, line := range strings.Split(string(data), "\n") {
+				if strings.HasPrefix(line, "Benchmark") {
+					metrics[strings.Fields(line)[0]]++
+				}
+			}
+			if !reflect.DeepEqual(metrics, wantMetrics) {
+				t.Fatalf("benchmark matrix = %v, want %v", metrics, wantMetrics)
+			}
+		})
 	}
 }
 
@@ -71,7 +163,7 @@ func TestMeasureGoProfile(t *testing.T) {
 	root := t.TempDir()
 	out := filepath.Join(t.TempDir(), "out")
 	fixture := filepath.Join(root, "main.go")
-	profile := goWasmProfile{name: "js", goos: "js"}
+	profile := goWasmProfile{name: "j32-goos-js", goos: "js"}
 	var gotEnv []string
 	result, err := measureGoProfile(context.Background(), func(_ context.Context, dir string, env []string, name string, args ...string) error {
 		if dir != root || name != "fake-go" {
@@ -84,7 +176,7 @@ func TestMeasureGoProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.name != "js" || result.moduleBytes != int64(len("\x00asmfixture")) {
+	if result.name != "j32-goos-js" || result.moduleBytes != int64(len("\x00asmfixture")) {
 		t.Fatalf("measurement = %+v", result)
 	}
 	if !slices.Contains(gotEnv, "GOOS=js") || !slices.Contains(gotEnv, "GOARCH=wasm") {
@@ -189,7 +281,7 @@ func TestRunCLIReturnsBuildFailure(t *testing.T) {
 	}, func(context.Context, string, []string, string, ...string) error {
 		return want
 	})
-	if !errors.Is(err, want) || !strings.Contains(err.Error(), "build "+wasmProfiles[0].name) {
+	if !errors.Is(err, want) || !strings.Contains(err.Error(), "build println/j32-goos-js") {
 		t.Fatalf("runCLI error = %v, want wrapped %v", err, want)
 	}
 }
@@ -214,6 +306,11 @@ func TestMeasureProfileFailures(t *testing.T) {
 	fixture := filepath.Join(root, "main.go")
 	profile := wasmProfile{name: "test", outputExt: ".wasm"}
 	want := errors.New("compiler failed")
+	if _, err := measureProfile(context.Background(), func(context.Context, string, []string, string, ...string) error {
+		return want
+	}, nil, root, "llgo", out, fixture, profile, 0); !errors.Is(err, want) || strings.Contains(err.Error(), "warm build") {
+		t.Fatalf("size-only build error = %v", err)
+	}
 
 	if _, err := measureProfile(context.Background(), func(context.Context, string, []string, string, ...string) error {
 		return want
