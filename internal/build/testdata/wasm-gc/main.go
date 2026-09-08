@@ -25,6 +25,7 @@ func main() {
 	}
 	testCGlobalRoot()
 	testRoots()
+	testUintptrEscapesRoots()
 	testCooperativeSafepoint()
 	testSuspendedGRoots()
 	testTimerWaitingRoot()
