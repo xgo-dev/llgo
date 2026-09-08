@@ -23,7 +23,7 @@ package main
 // CHECK: store { ptr, ptr } [[SEND_CLOSURE]], ptr {{%.*}}
 // CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$1", ptr {{%.*}})
 // CHECK: [[CH1_RECV:%.*]] = load ptr, ptr [[CH1_SLOT]]
-// CHECK: [[CH1_RECV_BUF:%.*]] = alloca i64
+// CHECK: call void @llvm.memset.p0.i64(ptr [[CH1_RECV_BUF:%.*]], i8 0, i64 8, i1 false)
 // CHECK: call i1 @"{{.*}}ChanRecv"(ptr [[CH1_RECV]], ptr [[CH1_RECV_BUF]], i64 8)
 // CHECK-NEXT: [[CH1_VALUE:%.*]] = load volatile i64, ptr [[CH1_RECV_BUF]]
 // CHECK-NEXT: call void @llvm.stackrestore
@@ -39,7 +39,7 @@ package main
 // CHECK: store { ptr, ptr } [[CLOSE_CLOSURE]], ptr {{%.*}}
 // CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$2", ptr {{%.*}})
 // CHECK: [[CH2_RECV:%.*]] = load ptr, ptr [[CH2_SLOT]]
-// CHECK: [[CH2_RECV_BUF:%.*]] = alloca i64
+// CHECK: call void @llvm.memset.p0.i64(ptr [[CH2_RECV_BUF:%.*]], i8 0, i64 8, i1 false)
 // CHECK: [[CH2_OK:%.*]] = call i1 @"{{.*}}ChanRecv"(ptr [[CH2_RECV]], ptr [[CH2_RECV_BUF]], i64 8)
 // CHECK-NEXT: [[CH2_VALUE:%.*]] = load volatile i64, ptr [[CH2_RECV_BUF]]
 // CHECK-NEXT: call void @llvm.stackrestore
@@ -55,7 +55,7 @@ package main
 // CHECK: [[SEND_CAPTURE:%.*]] = load { ptr }, ptr %0
 // CHECK-NEXT: [[SEND_SLOT:%.*]] = extractvalue { ptr } [[SEND_CAPTURE]], 0
 // CHECK-NEXT: [[SEND_CH:%.*]] = load ptr, ptr [[SEND_SLOT]]
-// CHECK: [[SEND_BUF:%.*]] = alloca i64
+// CHECK: call void @llvm.memset.p0.i64(ptr [[SEND_BUF:%.*]], i8 0, i64 8, i1 false)
 // CHECK: store i64 100, ptr [[SEND_BUF]]
 // CHECK-NEXT: call i1 @"{{.*}}ChanSend"(ptr [[SEND_CH]], ptr [[SEND_BUF]], i64 8)
 

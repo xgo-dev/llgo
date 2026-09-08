@@ -47,7 +47,7 @@ type N struct {
 // unsafe.Slice validates pointer/length overflow, then constructs a slice whose
 // data and length are the values consumed by ordinary bounds checks.
 // CHECK: %[[ARRAY:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK: %[[ARRAY_TMP:[0-9]+]] = alloca [2 x i64]
+// CHECK: call void @llvm.memset.p0.i64(ptr %[[ARRAY_TMP:[0-9]+]], i8 0, i64 16, i1 false)
 // CHECK: %[[ELEM0:[0-9]+]] = getelementptr inbounds i64, ptr %[[ARRAY_TMP]], i64 0
 // CHECK: %[[ELEM1:[0-9]+]] = getelementptr inbounds i64, ptr %[[ARRAY_TMP]], i64 1
 // CHECK: store i64 1, ptr %[[ELEM0]]

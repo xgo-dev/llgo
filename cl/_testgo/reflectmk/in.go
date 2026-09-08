@@ -112,9 +112,8 @@ func methodByName(name string) {
 
 // Type.Method's returned Method is stored and its Name field is what reaches
 // StringEqual. MethodByName additionally carries the tuple's ok bit to a branch.
-// CHECK-DAG: %[[METHOD_SLOT:[0-9]+]] = alloca %reflect.Method
 // CHECK-DAG: %[[METHOD:[0-9]+]] = call %reflect.Method %{{[0-9]+}}(ptr %{{[0-9]+}}, i64 0)
-// CHECK-DAG: store %reflect.Method %[[METHOD]], ptr %[[METHOD_SLOT]]
+// CHECK-DAG: store %reflect.Method %[[METHOD]], ptr %[[METHOD_SLOT:[0-9]+]]
 // CHECK-DAG: %[[METHOD_NAME_PTR:[0-9]+]] = getelementptr inbounds nuw %reflect.Method, ptr %[[METHOD_SLOT]], i32 0, i32 0
 // CHECK-DAG: %[[METHOD_NAME:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.String", ptr %[[METHOD_NAME_PTR]]
 // CHECK-DAG: call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" %[[METHOD_NAME]],{{.*}})

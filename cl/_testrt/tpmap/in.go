@@ -31,66 +31,66 @@ func main() {
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP0:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MakeMap"(ptr @"map[_llgo_main.cacheKey]_llgo_string", i64 0)
-// CHECK-NEXT:   %[[TMP1:[0-9]+]] = alloca %main.cacheKey, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP1]], i8 0, i64 48, i1 false)
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP1]], i32 0, i32 0
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP1]], i32 0, i32 1
+// CHECK-NEXT:   %[[TMP0:[0-9]+]] = alloca %"main.T3[interface{}]", align 8
+// CHECK-NEXT:   %[[TMP1:[0-9]+]] = alloca %main.T2, align 8
+// CHECK-NEXT:   %[[TMP2:[0-9]+]] = alloca %main.cacheKey, align 8
+// CHECK-NEXT:   %[[TMP3:[0-9]+]] = alloca %"main.T3[interface{}]", align 8
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = alloca %main.T2, align 8
+// CHECK-NEXT:   %[[TMP5:[0-9]+]] = alloca %main.cacheKey, align 8
+// CHECK-NEXT:   %[[TMP6:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MakeMap"(ptr @"map[_llgo_main.cacheKey]_llgo_string", i64 0)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP5]], i8 0, i64 48, i1 false)
+// CHECK-NEXT:   %[[TMP7:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP5]], i32 0, i32 0
+// CHECK-NEXT:   %[[TMP8:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP5]], i32 0, i32 1
 // CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP4]], i8 0, i64 8, i1 false)
-// CHECK-NEXT:   %[[TMP5:[0-9]+]] = getelementptr inbounds nuw %main.T2, ptr %[[TMP4]], i32 0, i32 0
-// CHECK-NEXT:   store i64 0, ptr %[[TMP5]], align 8
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = load %main.T2, ptr %[[TMP4]], align 8
-// CHECK-NEXT:   %[[TMP7:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP1]], i32 0, i32 2
-// CHECK-NEXT:   %[[TMP8:[0-9]+]] = alloca %"main.T3{{\[.*\]}}", align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP8]], i8 0, i64 16, i1 false)
-// CHECK-NEXT:   %[[TMP9:[0-9]+]] = getelementptr inbounds nuw %"main.T3{{\[.*\]}}", ptr %[[TMP8]], i32 0, i32 0
-// CHECK-NEXT:   %[[TMP10:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   store i64 0, ptr %[[TMP10]], align 8
-// CHECK-NEXT:   %[[TMP11:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %[[TMP10]], 1
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %[[TMP11]], ptr %[[TMP9]], align 8
-// CHECK-NEXT:   %[[TMP12:[0-9]+]] = load %"main.T3{{\[.*\]}}", ptr %[[TMP8]], align 8
-// CHECK-NEXT:   %[[TMP13:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP1]], i32 0, i32 3
-// CHECK-NEXT:   %[[TMP14:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP1]], i32 0, i32 4
-// CHECK-NEXT:   store i64 0, ptr %[[TMP2]], align 8
-// CHECK-NEXT:   store %main.T2 %[[TMP6]], ptr %[[TMP3]], align 8
-// CHECK-NEXT:   store %"main.T3{{\[.*\]}}" %[[TMP12]], ptr %[[TMP7]], align 8
-// CHECK-NEXT:   store ptr null, ptr %[[TMP13]], align 8
-// CHECK-NEXT:   store i64 0, ptr %[[TMP14]], align 8
-// CHECK-NEXT:   %[[TMP15:[0-9]+]] = load %main.cacheKey, ptr %[[TMP1]], align 8
-// CHECK-NEXT:   %[[TMP16:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 48)
-// CHECK-NEXT:   store %main.cacheKey %[[TMP15]], ptr %[[TMP16]], align 8
-// CHECK-NEXT:   %[[TMP17:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_main.cacheKey]_llgo_string", ptr %[[TMP0]], ptr %[[TMP16]])
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB29]], i64 5 }, ptr %[[TMP17]], align 8
-// CHECK-NEXT:   %[[TMP18:[0-9]+]] = alloca %main.cacheKey, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP18]], i8 0, i64 48, i1 false)
-// CHECK-NEXT:   %[[TMP19:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP18]], i32 0, i32 0
-// CHECK-NEXT:   %[[TMP20:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP18]], i32 0, i32 1
-// CHECK-NEXT:   %[[TMP21:[0-9]+]] = alloca %main.T2, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP21]], i8 0, i64 8, i1 false)
-// CHECK-NEXT:   %[[TMP22:[0-9]+]] = getelementptr inbounds nuw %main.T2, ptr %[[TMP21]], i32 0, i32 0
-// CHECK-NEXT:   store i64 0, ptr %[[TMP22]], align 8
-// CHECK-NEXT:   %[[TMP23:[0-9]+]] = load %main.T2, ptr %[[TMP21]], align 8
-// CHECK-NEXT:   %[[TMP24:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP18]], i32 0, i32 2
-// CHECK-NEXT:   %[[TMP25:[0-9]+]] = alloca %"main.T3{{\[.*\]}}", align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP25]], i8 0, i64 16, i1 false)
-// CHECK-NEXT:   %[[TMP26:[0-9]+]] = getelementptr inbounds nuw %"main.T3{{\[.*\]}}", ptr %[[TMP25]], i32 0, i32 0
+// CHECK-NEXT:   %[[TMP9:[0-9]+]] = getelementptr inbounds nuw %main.T2, ptr %[[TMP4]], i32 0, i32 0
+// CHECK-NEXT:   store i64 0, ptr %[[TMP9]], align 8
+// CHECK-NEXT:   %[[TMP10:[0-9]+]] = load %main.T2, ptr %[[TMP4]], align 8
+// CHECK-NEXT:   %[[TMP11:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP5]], i32 0, i32 2
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP3]], i8 0, i64 16, i1 false)
+// CHECK-NEXT:   %[[TMP12:[0-9]+]] = getelementptr inbounds nuw %"main.T3[interface{}]", ptr %[[TMP3]], i32 0, i32 0
+// CHECK-NEXT:   %[[TMP13:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT:   store i64 0, ptr %[[TMP13]], align 8
+// CHECK-NEXT:   %[[TMP14:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %[[TMP13]], 1
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %[[TMP14]], ptr %[[TMP12]], align 8
+// CHECK-NEXT:   %[[TMP15:[0-9]+]] = load %"main.T3[interface{}]", ptr %[[TMP3]], align 8
+// CHECK-NEXT:   %[[TMP16:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP5]], i32 0, i32 3
+// CHECK-NEXT:   %[[TMP17:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP5]], i32 0, i32 4
+// CHECK-NEXT:   store i64 0, ptr %[[TMP7]], align 8
+// CHECK-NEXT:   store %main.T2 %[[TMP10]], ptr %[[TMP8]], align 8
+// CHECK-NEXT:   store %"main.T3[interface{}]" %[[TMP15]], ptr %[[TMP11]], align 8
+// CHECK-NEXT:   store ptr null, ptr %[[TMP16]], align 8
+// CHECK-NEXT:   store i64 0, ptr %[[TMP17]], align 8
+// CHECK-NEXT:   %[[TMP18:[0-9]+]] = load %main.cacheKey, ptr %[[TMP5]], align 8
+// CHECK-NEXT:   %[[TMP19:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 48)
+// CHECK-NEXT:   store %main.cacheKey %[[TMP18]], ptr %[[TMP19]], align 8
+// CHECK-NEXT:   %[[TMP20:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_main.cacheKey]_llgo_string", ptr %[[TMP6]], ptr %[[TMP19]])
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB29]], i64 5 }, ptr %[[TMP20]], align 8
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP2]], i8 0, i64 48, i1 false)
+// CHECK-NEXT:   %[[TMP21:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP2]], i32 0, i32 0
+// CHECK-NEXT:   %[[TMP22:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP2]], i32 0, i32 1
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP1]], i8 0, i64 8, i1 false)
+// CHECK-NEXT:   %[[TMP23:[0-9]+]] = getelementptr inbounds nuw %main.T2, ptr %[[TMP1]], i32 0, i32 0
+// CHECK-NEXT:   store i64 0, ptr %[[TMP23]], align 8
+// CHECK-NEXT:   %[[TMP24:[0-9]+]] = load %main.T2, ptr %[[TMP1]], align 8
+// CHECK-NEXT:   %[[TMP25:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP2]], i32 0, i32 2
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP0]], i8 0, i64 16, i1 false)
+// CHECK-NEXT:   %[[TMP26:[0-9]+]] = getelementptr inbounds nuw %"main.T3[interface{}]", ptr %[[TMP0]], i32 0, i32 0
 // CHECK-NEXT:   %[[TMP27:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK-NEXT:   store i64 0, ptr %[[TMP27]], align 8
 // CHECK-NEXT:   %[[TMP28:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %[[TMP27]], 1
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %[[TMP28]], ptr %[[TMP26]], align 8
-// CHECK-NEXT:   %[[TMP29:[0-9]+]] = load %"main.T3{{\[.*\]}}", ptr %[[TMP25]], align 8
-// CHECK-NEXT:   %[[TMP30:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP18]], i32 0, i32 3
-// CHECK-NEXT:   %[[TMP31:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP18]], i32 0, i32 4
-// CHECK-NEXT:   store i64 0, ptr %[[TMP19]], align 8
-// CHECK-NEXT:   store %main.T2 %[[TMP23]], ptr %[[TMP20]], align 8
-// CHECK-NEXT:   store %"main.T3{{\[.*\]}}" %[[TMP29]], ptr %[[TMP24]], align 8
+// CHECK-NEXT:   %[[TMP29:[0-9]+]] = load %"main.T3[interface{}]", ptr %[[TMP0]], align 8
+// CHECK-NEXT:   %[[TMP30:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP2]], i32 0, i32 3
+// CHECK-NEXT:   %[[TMP31:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP2]], i32 0, i32 4
+// CHECK-NEXT:   store i64 0, ptr %[[TMP21]], align 8
+// CHECK-NEXT:   store %main.T2 %[[TMP24]], ptr %[[TMP22]], align 8
+// CHECK-NEXT:   store %"main.T3[interface{}]" %[[TMP29]], ptr %[[TMP25]], align 8
 // CHECK-NEXT:   store ptr null, ptr %[[TMP30]], align 8
 // CHECK-NEXT:   store i64 0, ptr %[[TMP31]], align 8
-// CHECK-NEXT:   %[[TMP32:[0-9]+]] = load %main.cacheKey, ptr %[[TMP18]], align 8
+// CHECK-NEXT:   %[[TMP32:[0-9]+]] = load %main.cacheKey, ptr %[[TMP2]], align 8
 // CHECK-NEXT:   %[[TMP33:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 48)
 // CHECK-NEXT:   store %main.cacheKey %[[TMP32]], ptr %[[TMP33]], align 8
-// CHECK-NEXT:   %[[TMP34:[0-9]+]] = call { ptr, i1 } @"{{.*}}/runtime/internal/runtime.MapAccess2"(ptr @"map[_llgo_main.cacheKey]_llgo_string", ptr %[[TMP0]], ptr %[[TMP33]])
+// CHECK-NEXT:   %[[TMP34:[0-9]+]] = call { ptr, i1 } @"{{.*}}/runtime/internal/runtime.MapAccess2"(ptr @"map[_llgo_main.cacheKey]_llgo_string", ptr %[[TMP6]], ptr %[[TMP33]])
 // CHECK-NEXT:   %[[TMP35:[0-9]+]] = extractvalue { ptr, i1 } %[[TMP34]], 0
 // CHECK-NEXT:   %[[TMP36:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.String", ptr %[[TMP35]], align 8
 // CHECK-NEXT:   %[[TMP37:[0-9]+]] = extractvalue { ptr, i1 } %[[TMP34]], 1

@@ -67,19 +67,19 @@ func main() {
 // CHECK-LABEL: define void @main.check32(
 // CHECK-SAME: %"{{.*}}/runtime/internal/runtime.eface" %[[TMP0:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %[[TMP0]], ptr %[[TMP1]], align 8
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.eface", ptr %[[TMP1]], align 8
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[TMP2]], 0
-// CHECK-NEXT:   %[[TMP4:[0-9]+]] = icmp eq ptr %[[TMP3]], @_llgo_float32
-// CHECK-NEXT:   br i1 %[[TMP4]], label %_llgo_[[BB5:[0-9]+]], label %_llgo_[[BB6:[0-9]+]]
+// CHECK-NEXT:   %[[TMP1:[0-9]+]] = alloca %main.eface, align 8
+// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %[[TMP0]], ptr %[[TMP2]], align 8
+// CHECK-NEXT:   %[[TMP3:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.eface", ptr %[[TMP2]], align 8
+// CHECK-NEXT:   %[[TMP4:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[TMP3]], 0
+// CHECK-NEXT:   %[[TMP5:[0-9]+]] = icmp eq ptr %[[TMP4]], @_llgo_float32
+// CHECK-NEXT:   br i1 %[[TMP5]], label %_llgo_[[BB5:[0-9]+]], label %_llgo_[[BB6:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB1:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP5:[0-9]+]] = alloca %main.eface, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP5]], i8 0, i64 16, i1 false)
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = load %main.eface, ptr %[[TMP1]], align 8
-// CHECK-NEXT:   store %main.eface %[[TMP6]], ptr %[[TMP5]], align 8
-// CHECK-NEXT:   %[[TMP7:[0-9]+]] = getelementptr inbounds nuw %main.eface, ptr %[[TMP5]], i32 0, i32 1
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP1]], i8 0, i64 16, i1 false)
+// CHECK-NEXT:   %[[TMP6:[0-9]+]] = load %main.eface, ptr %[[TMP2]], align 8
+// CHECK-NEXT:   store %main.eface %[[TMP6]], ptr %[[TMP1]], align 8
+// CHECK-NEXT:   %[[TMP7:[0-9]+]] = getelementptr inbounds nuw %main.eface, ptr %[[TMP1]], i32 0, i32 1
 // CHECK-NEXT:   %[[TMP8:[0-9]+]] = load ptr, ptr %[[TMP7]], align 8
 // CHECK-NEXT:   %[[TMP9:[0-9]+]] = load i32, ptr %[[TMP8]], align 4
 // CHECK-NEXT:   %[[TMP10:[0-9]+]] = icmp ne i32 %[[TMP9]], 1078530011
@@ -103,7 +103,7 @@ func main() {
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB5]]:
-// CHECK-NEXT:   %[[TMP15:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[TMP2]], 1
+// CHECK-NEXT:   %[[TMP15:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[TMP3]], 1
 // CHECK-NEXT:   %[[TMP16:[0-9]+]] = load float, ptr %[[TMP15]], align 4
 // CHECK-NEXT:   %[[TMP17:[0-9]+]] = insertvalue { float, i1 } undef, float %[[TMP16]], 0
 // CHECK-NEXT:   %[[TMP18:[0-9]+]] = insertvalue { float, i1 } %[[TMP17]], i1 true, 1
@@ -122,25 +122,25 @@ func main() {
 // CHECK-LABEL: define void @main.check64(
 // CHECK-SAME: %"{{.*}}/runtime/internal/runtime.eface" %[[TMP0:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %[[TMP0]], ptr %[[TMP1]], align 8
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.eface", ptr %[[TMP1]], align 8
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[TMP2]], 0
-// CHECK-NEXT:   %[[TMP4:[0-9]+]] = icmp eq ptr %[[TMP3]], @_llgo_float64
-// CHECK-NEXT:   br i1 %[[TMP4]], label %_llgo_[[BB6:[0-9]+]], label %_llgo_[[BB7:[0-9]+]]
+// CHECK-NEXT:   %[[TMP1:[0-9]+]] = alloca %main.u64parts, align 8
+// CHECK-NEXT:   %[[TMP2:[0-9]+]] = alloca %main.eface, align 8
+// CHECK-NEXT:   %[[TMP3:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %[[TMP0]], ptr %[[TMP3]], align 8
+// CHECK-NEXT:   %[[TMP4:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.eface", ptr %[[TMP3]], align 8
+// CHECK-NEXT:   %[[TMP5:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[TMP4]], 0
+// CHECK-NEXT:   %[[TMP6:[0-9]+]] = icmp eq ptr %[[TMP5]], @_llgo_float64
+// CHECK-NEXT:   br i1 %[[TMP6]], label %_llgo_[[BB6:[0-9]+]], label %_llgo_[[BB7:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB1:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP5:[0-9]+]] = alloca %main.eface, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP5]], i8 0, i64 16, i1 false)
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = load %main.eface, ptr %[[TMP1]], align 8
-// CHECK-NEXT:   store %main.eface %[[TMP6]], ptr %[[TMP5]], align 8
-// CHECK-NEXT:   %[[TMP7:[0-9]+]] = alloca %main.u64parts, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP7]], i8 0, i64 8, i1 false)
-// CHECK-NEXT:   %[[TMP8:[0-9]+]] = getelementptr inbounds nuw %main.eface, ptr %[[TMP5]], i32 0, i32 1
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP2]], i8 0, i64 16, i1 false)
+// CHECK-NEXT:   %[[TMP7:[0-9]+]] = load %main.eface, ptr %[[TMP3]], align 8
+// CHECK-NEXT:   store %main.eface %[[TMP7]], ptr %[[TMP2]], align 8
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP1]], i8 0, i64 8, i1 false)
+// CHECK-NEXT:   %[[TMP8:[0-9]+]] = getelementptr inbounds nuw %main.eface, ptr %[[TMP2]], i32 0, i32 1
 // CHECK-NEXT:   %[[TMP9:[0-9]+]] = load ptr, ptr %[[TMP8]], align 8
 // CHECK-NEXT:   %[[TMP10:[0-9]+]] = load %main.u64parts, ptr %[[TMP9]], align 4
-// CHECK-NEXT:   store %main.u64parts %[[TMP10]], ptr %[[TMP7]], align 4
-// CHECK-NEXT:   %[[TMP11:[0-9]+]] = getelementptr inbounds nuw %main.u64parts, ptr %[[TMP7]], i32 0, i32 0
+// CHECK-NEXT:   store %main.u64parts %[[TMP10]], ptr %[[TMP1]], align 4
+// CHECK-NEXT:   %[[TMP11:[0-9]+]] = getelementptr inbounds nuw %main.u64parts, ptr %[[TMP1]], i32 0, i32 0
 // CHECK-NEXT:   %[[TMP12:[0-9]+]] = load i32, ptr %[[TMP11]], align 4
 // CHECK-NEXT:   %[[TMP13:[0-9]+]] = icmp ne i32 %[[TMP12]], 1405670641
 // CHECK-NEXT:   br i1 %[[TMP13]], label %_llgo_[[BB3:[0-9]+]], label %_llgo_[[BB5:[0-9]+]]
@@ -163,13 +163,13 @@ func main() {
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB5]]:
-// CHECK-NEXT:   %[[TMP18:[0-9]+]] = getelementptr inbounds nuw %main.u64parts, ptr %[[TMP7]], i32 0, i32 1
+// CHECK-NEXT:   %[[TMP18:[0-9]+]] = getelementptr inbounds nuw %main.u64parts, ptr %[[TMP1]], i32 0, i32 1
 // CHECK-NEXT:   %[[TMP19:[0-9]+]] = load i32, ptr %[[TMP18]], align 4
 // CHECK-NEXT:   %[[TMP20:[0-9]+]] = icmp ne i32 %[[TMP19]], 1074340347
 // CHECK-NEXT:   br i1 %[[TMP20]], label %_llgo_[[BB3]], label %_llgo_[[BB4]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB6]]:
-// CHECK-NEXT:   %[[TMP21:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[TMP2]], 1
+// CHECK-NEXT:   %[[TMP21:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[TMP4]], 1
 // CHECK-NEXT:   %[[TMP22:[0-9]+]] = load double, ptr %[[TMP21]], align 8
 // CHECK-NEXT:   %[[TMP23:[0-9]+]] = insertvalue { double, i1 } undef, double %[[TMP22]], 0
 // CHECK-NEXT:   %[[TMP24:[0-9]+]] = insertvalue { double, i1 } %[[TMP23]], i1 true, 1
