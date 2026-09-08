@@ -66,7 +66,9 @@ type aBuilder struct {
 
 	diScopeCache map[*types.Scope]DIScope // avoid duplicated DILexicalBlock(s)
 	diFuncScope  *types.Scope
-	diLocation   llvm.DebugLoc
+	// diLocation mirrors the LLVM builder state. Route every debug-location
+	// mutation through setDebugLocation so generated builders can copy it safely.
+	diLocation llvm.DebugLoc
 }
 
 // Builder represents a builder for creating instructions in a function.

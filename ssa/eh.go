@@ -232,6 +232,8 @@ func (b Builder) cLongjmp(jb, retval Expr) {
 
 func (p Function) deferInitBuilder(from Builder) (b Builder, next BasicBlock) {
 	b = p.NewBuilder()
+	// NewBuilder supplies a line-zero function location for generated code;
+	// replace it only when the originating builder has a source location.
 	if loc := from.diLocation; p.diFunc != nil && !loc.Scope.IsNil() {
 		b.setDebugLocation(loc)
 	}
