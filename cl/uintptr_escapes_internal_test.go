@@ -43,6 +43,16 @@ func forward(p uintptr, rest ...uintptr) { marked(p, rest...) }
 func unmarked() { ordinary(uintptr(unsafe.Pointer(new(int)))) }
 func integer(p uintptr) { ordinary(p) }
 func arithmetic(p unsafe.Pointer) { marked(uintptr(p) + 1) }
+type MyInt int
+func integerConversion(p unsafe.Pointer) { marked(uintptr(MyInt(uintptr(p)))) }
+func narrowConversion(p unsafe.Pointer) { marked(uintptr(uint32(uintptr(p)))) }
+func allocatedSlice(p unsafe.Pointer) {
+ rest := make([]uintptr, 1)
+ rest[0] = uintptr(p)
+ marked(0, rest...)
+}
+func savedSlice(rest []uintptr) { marked(0, rest...) }
+func repeated(p unsafe.Pointer) { marked(uintptr(p)); marked(uintptr(p)) }
 func merged(p, q unsafe.Pointer, choose bool) {
  value := uintptr(p)
  if choose { value = uintptr(q) }
@@ -59,6 +69,8 @@ func convert(p unsafe.Pointer) { named(Word(uintptr(p))) }
 	}{
 		{"marked", 1}, {"direct", 2}, {"goroutine", 1}, {"deferred", 1},
 		{"forward", 1}, {"unmarked", 0}, {"integer", 0}, {"arithmetic", 0},
+		{"integerConversion", 0}, {"narrowConversion", 0}, {"allocatedSlice", 0},
+		{"savedSlice", 0}, {"repeated", 1},
 		{"merged", 2}, {"named", 1}, {"convert", 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -116,6 +128,7 @@ func method() { Outer{}.Marked(uintptr(unsafe.Pointer(new(int)))) }
 func expression() { Outer.Marked(Outer{}, uintptr(unsafe.Pointer(new(int)))) }
 func bound() { f := Outer{}.Marked; f(uintptr(unsafe.Pointer(new(int)))) }
 func unmarkedBound() { f := Outer{}.Ordinary; f(uintptr(unsafe.Pointer(new(int)))) }
+func invoked(i interface{ Marked(uintptr) }, p unsafe.Pointer) { i.Marked(uintptr(p)) }
 `)
 	for _, name := range []string{"method", "expression", "bound"} {
 		if roots := uintptrEscapesRoots(pkg.Func(name)); len(roots) != 1 {
@@ -127,6 +140,9 @@ func unmarkedBound() { f := Outer{}.Ordinary; f(uintptr(unsafe.Pointer(new(int))
 	}
 	if roots := uintptrEscapesRoots(pkg.Func("unmarkedBound")); len(roots) != 0 {
 		t.Fatalf("ordinary bound method inherited pointer semantics: %v", roots)
+	}
+	if roots := uintptrEscapesRoots(pkg.Func("invoked")); len(roots) != 0 {
+		t.Fatalf("interface call inherited implementation pragma: %v", roots)
 	}
 }
 
