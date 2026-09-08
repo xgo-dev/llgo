@@ -150,14 +150,16 @@ func (b Builder) Alloc(elem Type, heap bool) (ret Expr) {
 		// A local denotes one slot per call, even if its declaration is inside
 		// a loop. Keep the reservation in the entry block and initialization at
 		// the declaration, otherwise LLVM grows the stack on every iteration.
-		entryBuilder := b.Func.NewBuilder()
+		// This builder emits only an alloca. Avoid constructing a full Go
+		// Builder (and its debug-scope cache) on the local-allocation hot path.
+		entryBuilder := prog.ctx.NewBuilder()
 		entry := b.Func.impl.FirstBasicBlock()
 		if first := entry.FirstInstruction(); !first.IsNil() {
-			entryBuilder.impl.SetInsertPointBefore(first)
+			entryBuilder.SetInsertPointBefore(first)
 		} else {
-			entryBuilder.impl.SetInsertPointAtEnd(entry)
+			entryBuilder.SetInsertPointAtEnd(entry)
 		}
-		ret = Expr{llvm.CreateAlloca(entryBuilder.impl, elem.ll), prog.VoidPtr()}
+		ret = Expr{llvm.CreateAlloca(entryBuilder, elem.ll), prog.VoidPtr()}
 		entryBuilder.Dispose()
 		ret.impl = b.zeroinit(ret, size).impl
 	}
