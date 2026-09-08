@@ -830,13 +830,20 @@ func (b Builder) DIGlobal(v Expr, name string, pos token.Position) {
 	b.Pkg.glbDbgVars[v] = true
 }
 
+func (b Builder) setDebugLocation(loc llvm.DebugLoc) {
+	// The LLVM binding's getter cannot read an unset location. Keep the
+	// logical source location here, including for builders created before
+	// DebugFunction attaches the function's DISubprogram.
+	b.diLocation = loc
+	b.impl.SetCurrentDebugLocation(loc.Line, loc.Col, loc.Scope, loc.InlinedAt)
+}
+
 func (b Builder) DISetCurrentDebugLocation(diScope DIScope, pos token.Position) {
-	b.impl.SetCurrentDebugLocation(
-		uint(pos.Line),
-		uint(pos.Column),
-		diScope.scopeMeta(b.di(), pos).ll,
-		llvm.Metadata{},
-	)
+	b.setDebugLocation(llvm.DebugLoc{
+		Line:  uint(pos.Line),
+		Col:   uint(pos.Column),
+		Scope: diScope.scopeMeta(b.di(), pos).ll,
+	})
 }
 
 func (b Builder) DebugFunction(f Function, funcScope *types.Scope, pos token.Position, bodyPos token.Position) {
@@ -869,12 +876,11 @@ func (b Builder) DebugFunction(f Function, funcScope *types.Scope, pos token.Pos
 		}
 		p.impl.SetSubprogram(p.diFunc.ll)
 	}
-	b.impl.SetCurrentDebugLocation(
-		uint(bodyPos.Line),
-		uint(bodyPos.Column),
-		p.diFunc.ll,
-		llvm.Metadata{},
-	)
+	b.setDebugLocation(llvm.DebugLoc{
+		Line:  uint(bodyPos.Line),
+		Col:   uint(bodyPos.Column),
+		Scope: p.diFunc.ll,
+	})
 }
 
 func (b Builder) Param(idx int) Expr {

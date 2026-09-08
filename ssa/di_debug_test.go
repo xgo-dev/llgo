@@ -317,6 +317,63 @@ func f() {}
 	}
 }
 
+func TestSyntheticBuilderDebugLocation(t *testing.T) {
+	for _, mode := range []string{"before debug init", "after debug init", "without debug"} {
+		t.Run(mode, func(t *testing.T) {
+			prog := NewProgram(&Target{OptLevel: optlevel.O0})
+			defer prog.Dispose()
+			prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+			pkg := prog.NewPackage("p", "example.com/p")
+			fn := pkg.NewFunc("example.com/p.f", NoArgsNoRet, InGo)
+			body := fn.MakeBody(1)
+			defer body.Dispose()
+			body.Return()
+
+			var synthetic Builder
+			if mode != "after debug init" {
+				synthetic = fn.NewBuilder()
+			}
+			debug := mode != "without debug"
+			if debug {
+				pkg.InitDebug("p", "example.com/p", token.NewFileSet())
+				pos := token.Position{Filename: "defer.go", Line: 2, Column: 1}
+				body.DebugFunction(fn, nil, pos, pos)
+			}
+			if synthetic == nil {
+				synthetic = fn.NewBuilder()
+				if synthetic.diLocation.Scope != fn.diFunc.ll {
+					t.Fatal("new synthetic builder has no function debug scope")
+				}
+			}
+			defer synthetic.Dispose()
+
+			init, next := fn.deferInitBuilder(synthetic)
+			defer init.Dispose()
+			if debug {
+				loc := init.impl.GetCurrentDebugLocation()
+				if loc.Scope != fn.diFunc.ll || loc.Line != 0 || loc.Col != 0 || !loc.InlinedAt.IsNil() {
+					t.Fatalf("synthetic location = %+v, want line zero in the function scope", loc)
+				}
+			} else if !init.diLocation.Scope.IsNil() {
+				t.Fatal("non-debug function acquired debug info")
+			}
+			// A recursive call is inlinable and forces LLVM's !dbg verifier to
+			// exercise the same rule as calls in generated defer paths.
+			call := init.impl.CreateCall(fn.impl.GlobalValueType(), fn.impl, nil, "")
+			if debug && call.InstructionDebugLoc().IsNil() {
+				t.Fatal("synthetic call has no debug location")
+			}
+			init.Jump(next)
+			if debug {
+				pkg.FinalizeDebug()
+			}
+			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("invalid synthetic debug metadata: %v\n%s", err, pkg.Module().String())
+			}
+		})
+	}
+}
+
 func newDebugRuntimePackage() *types.Package {
 	pkg := types.NewPackage(PkgRuntime, "runtime")
 	unsafePointer := types.Typ[types.UnsafePointer]
