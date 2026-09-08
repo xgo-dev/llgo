@@ -374,6 +374,36 @@ func TestSyntheticBuilderDebugLocation(t *testing.T) {
 	}
 }
 
+func TestSetBlockRestoresTrackedDebugLocation(t *testing.T) {
+	prog := NewProgram(&Target{OptLevel: optlevel.O0})
+	defer prog.Dispose()
+	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	pkg := prog.NewPackage("p", "example.com/p")
+	pkg.InitDebug("p", "example.com/p", token.NewFileSet())
+	fn := pkg.NewFunc("example.com/p.f", NoArgsNoRet, InGo)
+	builder := fn.MakeBody(2)
+	defer builder.Dispose()
+	pos := token.Position{Filename: "blocks.go", Line: 3, Column: 2}
+	builder.DebugFunction(fn, nil, pos, pos)
+	builder.Jump(fn.Block(1))
+
+	// Model LLVM losing its current location during a synthetic CFG rewrite.
+	// SetBlock must restore the Go-side shadow before emitting in the new block.
+	builder.impl.SetCurrentDebugLocation(0, 0, llvm.Metadata{}, llvm.Metadata{})
+	builder.SetBlock(fn.Block(1))
+	call := builder.impl.CreateCall(fn.impl.GlobalValueType(), fn.impl, nil, "")
+	loc := call.InstructionDebugLoc()
+	if loc.IsNil() || loc.LocationLine() != uint(pos.Line) || loc.LocationColumn() != uint(pos.Column) {
+		t.Fatalf("restored call location = %+v, want %s:%d:%d", loc, pos.Filename, pos.Line, pos.Column)
+	}
+	builder.Return()
+
+	pkg.FinalizeDebug()
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("invalid restored debug metadata: %v\n%s", err, pkg.Module().String())
+	}
+}
+
 func newDebugRuntimePackage() *types.Package {
 	pkg := types.NewPackage(PkgRuntime, "runtime")
 	unsafePointer := types.Typ[types.UnsafePointer]

@@ -835,6 +835,14 @@ func (b Builder) setDebugLocation(loc llvm.DebugLoc) {
 	// logical source location here, including for builders created before
 	// DebugFunction attaches the function's DISubprogram.
 	b.diLocation = loc
+	b.restoreDebugLocation()
+}
+
+func (b Builder) restoreDebugLocation() {
+	loc := b.diLocation
+	if loc.Scope.IsNil() {
+		return
+	}
 	b.impl.SetCurrentDebugLocation(loc.Line, loc.Col, loc.Scope, loc.InlinedAt)
 }
 

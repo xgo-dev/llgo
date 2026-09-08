@@ -139,6 +139,10 @@ func (b Builder) SetBlockEx(blk BasicBlock, pos InsertPoint, setBlk bool) {
 	if setBlk {
 		b.blk = blk
 	}
+	// Synthetic control-flow rewrites can leave the underlying LLVM builder
+	// without a current location. Reapply the tracked location at the common
+	// block-positioning boundary before subsequent instructions are emitted.
+	b.restoreDebugLocation()
 }
 
 func instrAfterInit(blk llvm.BasicBlock) llvm.Value {
