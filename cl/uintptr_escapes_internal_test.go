@@ -153,6 +153,7 @@ func Marked(p uintptr) {}
 //go:uintptrescapes
 func Generic[T any](p uintptr) {}
 func Ordinary(p uintptr) {}
+func OrdinaryGeneric[T any](p uintptr) {}
 `, "example.com/caller", `package caller
 import (
  "unsafe"
@@ -161,13 +162,16 @@ import (
 func direct() { dep.Marked(uintptr(unsafe.Pointer(new(int)))) }
 func generic() { dep.Generic[int](uintptr(unsafe.Pointer(new(int)))) }
 func ordinary() { dep.Ordinary(uintptr(unsafe.Pointer(new(int)))) }
+func ordinaryGeneric() { dep.OrdinaryGeneric[int](uintptr(unsafe.Pointer(new(int)))) }
 `)
 	for _, name := range []string{"direct", "generic"} {
 		if roots := uintptrEscapesRoots(pkg.Func(name)); len(roots) != 1 {
 			t.Errorf("cross-package %s roots = %v, want one conversion source", name, roots)
 		}
 	}
-	if roots := uintptrEscapesRoots(pkg.Func("ordinary")); len(roots) != 0 {
-		t.Fatalf("ordinary imported function inherited pointer semantics: %v", roots)
+	for _, name := range []string{"ordinary", "ordinaryGeneric"} {
+		if roots := uintptrEscapesRoots(pkg.Func(name)); len(roots) != 0 {
+			t.Fatalf("ordinary imported %s inherited pointer semantics: %v", name, roots)
+		}
 	}
 }
