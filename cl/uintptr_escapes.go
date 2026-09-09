@@ -125,10 +125,12 @@ func hasUintptrEscapesDirective(fn *ssa.Function) bool {
 			return false
 		}
 		seen[fn] = true
-		if hasFuncDirective(fn, "go:uintptrescapes") {
+		// Generic directives belong to the source declaration. Visit it
+		// first; an instantiated body may also retain the same syntax.
+		if origin := fn.Origin(); origin != nil && visit(origin) {
 			return true
 		}
-		if origin := fn.Origin(); origin != nil && visit(origin) {
+		if hasFuncDirective(fn, "go:uintptrescapes") {
 			return true
 		}
 		// SSA promoted-method wrappers, thunks (method expressions), and
