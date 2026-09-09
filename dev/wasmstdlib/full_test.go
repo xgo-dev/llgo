@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -10,6 +11,27 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestFullFailureOutputIsImmediateAndLiteral(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		out  string
+		want string
+	}{
+		{name: "empty"},
+		{name: "unterminated", out: "compile failed", want: "\n--- J32-Emscripten test/std/crypto/dsa failure output ---\n| compile failed\n--- end failure output ---\n"},
+		{name: "multiline", out: "=== RUN TestGenerateParameters\npanic: test timed out\n", want: "\n--- J32-Emscripten test/std/crypto/dsa failure output ---\n| === RUN TestGenerateParameters\n| panic: test timed out\n--- end failure output ---\n"},
+		{name: "workflow commands", out: "::error::literal diagnostic\n\n::endgroup::\n", want: "\n--- J32-Emscripten test/std/crypto/dsa failure output ---\n| ::error::literal diagnostic\n| \n| ::endgroup::\n--- end failure output ---\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var output bytes.Buffer
+			writeFullFailureOutput(&output, "J32-Emscripten", "test/std/crypto/dsa", []byte(tt.out))
+			if got := output.String(); got != tt.want {
+				t.Fatalf("output = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestFullAuditContinuesAndPreservesShardAccounting(t *testing.T) {
 	root := t.TempDir()

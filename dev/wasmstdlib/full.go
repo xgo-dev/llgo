@@ -286,6 +286,7 @@ func runFullAt(root, name, reportPath, goCmd, llgo string, shard, shards int, st
 			e.Status = "pass"
 			if runErr != nil {
 				e.Status, e.Reason = "fail", runErr.Error()
+				writeFullFailureOutput(os.Stdout, name, e.Package, out)
 			}
 		}
 		if e.Status != "pass" && e.Status != "separate-suite" && e.Status != "not-applicable" {
@@ -307,4 +308,18 @@ func runFullAt(root, name, reportPath, goCmd, llgo string, shard, shards int, st
 		return fmt.Errorf("%s shard %d/%d: %d unresolved/failed packages", name, shard, shards, failures)
 	}
 	return nil
+}
+
+// Show a failing package's diagnostics before the rest of a long shard finishes.
+// Keep the original artifact intact, and prefix streamed lines so test output
+// cannot be interpreted as GitHub Actions workflow commands.
+func writeFullFailureOutput(w io.Writer, profile, pkg string, out []byte) {
+	if len(out) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "\n--- %s %s failure output ---\n", profile, pkg)
+	for _, line := range strings.Split(strings.TrimSuffix(string(out), "\n"), "\n") {
+		fmt.Fprintf(w, "| %s\n", line)
+	}
+	fmt.Fprintln(w, "--- end failure output ---")
 }
