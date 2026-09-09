@@ -149,6 +149,12 @@ var pointerFinalizers struct {
 	pending unsafe.Pointer
 }
 
+// CancelBoxedFinalizer is installed by the public runtime package. A lowered
+// SetFinalizer(nil) must also drop a leftover any-argument registration that
+// the typed table cannot see. If restore is true, BDWGC is returned to that
+// entry's previous callback so an AddCleanup chain is not discarded.
+var CancelBoxedFinalizer func(obj unsafe.Pointer, restore bool) bool
+
 func initPointerFinalizers() {
 	pointerFinalizers.mu.Init(nil)
 	pointerFinalizers.m = make(map[uintptr]*pointerFinalizerEntry)
@@ -354,13 +360,16 @@ func SetFinalizerPtr(obj unsafe.Pointer, finalizer func(unsafe.Pointer)) {
 		// The BDWGC callback may already have published old on the pending
 		// list. Mark it stopped so a later drain cannot invoke it.
 		atomic.Store(&old.state, pointerFinalizerStopped)
+	}
+	if finalizer == nil {
+		cancelPointerFinalizer(obj, old)
+		pointerFinalizers.mu.Unlock()
+		return
+	}
+	if old != nil {
 		var ignoredFn bdwgc.FinalizerFunc
 		var ignoredCb unsafe.Pointer
 		bdwgc.RegisterFinalizer(obj, old.prevFn, old.prevCb, &ignoredFn, &ignoredCb)
-	}
-	if finalizer == nil {
-		pointerFinalizers.mu.Unlock()
-		return
 	}
 
 	var ignoredFn bdwgc.FinalizerFunc
@@ -370,6 +379,23 @@ func SetFinalizerPtr(obj unsafe.Pointer, finalizer func(unsafe.Pointer)) {
 	e.prevCb = ignoredCb
 	pointerFinalizers.m[key] = e
 	pointerFinalizers.mu.Unlock()
+}
+
+func cancelPointerFinalizer(obj unsafe.Pointer, old *pointerFinalizerEntry) {
+	if old != nil {
+		// Stop a leftover boxed registration without restoring it: old.prevFn
+		// is the cleanup chain, or a boxed callback that now chains to it.
+		if CancelBoxedFinalizer != nil {
+			CancelBoxedFinalizer(obj, false)
+		}
+		var ignoredFn bdwgc.FinalizerFunc
+		var ignoredCb unsafe.Pointer
+		bdwgc.RegisterFinalizer(obj, old.prevFn, old.prevCb, &ignoredFn, &ignoredCb)
+		return
+	}
+	if CancelBoxedFinalizer != nil {
+		CancelBoxedFinalizer(obj, true)
+	}
 }
 
 // AddCancelableCleanupPtr registers a cleanup and returns a stable, pointer-free
