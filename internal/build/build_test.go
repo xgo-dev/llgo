@@ -764,8 +764,8 @@ func TestDefaultBuildTags(t *testing.T) {
 		want   string
 	}{
 		{name: "native", goarch: "arm64", want: base},
-		{name: "raw wasm", goarch: "wasm", want: base + ",nogc"},
-		{name: "configured wasm target", goarch: "wasm", target: "wasip1", want: base},
+		{name: "raw wasm", goarch: "wasm", want: base},
+		{name: "configured wasm target", goarch: "wasm", target: "wasi", want: base},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := defaultBuildTags(test.goarch, test.target); got != test.want {
@@ -778,25 +778,22 @@ func TestDefaultBuildTags(t *testing.T) {
 func TestConfigureWasmGC(t *testing.T) {
 	t.Setenv("LLGO_WASI_THREADS", "0")
 	tests := []struct {
-		name   string
-		conf   Config
-		abi    crosscompile.WasmABI
-		wantGC bool
-		err    bool
+		name    string
+		conf    Config
+		profile crosscompile.WasmProfile
+		wantGC  bool
+		err     bool
 	}{
-		{name: "Emscripten", conf: Config{Goos: "js", Goarch: "wasm"}, abi: crosscompile.WasmABIEmscripten, wantGC: true},
-		{name: "Emscripten Memory64", conf: Config{Goos: "js", Goarch: "wasm"}, abi: crosscompile.WasmABIEmscriptenMemory64, wantGC: true},
-		{name: "WASI", conf: Config{Goos: "wasip1", Goarch: "wasm"}, abi: crosscompile.WasmABIWASIPreview1, wantGC: true},
-		{name: "raw wasm", conf: Config{Goos: "js", Goarch: "wasm"}},
-		{name: "raw wasm explicit", conf: Config{Goos: "js", Goarch: "wasm", Tags: "other,llgo.wasm.gc.linear"}, wantGC: true},
+		{name: "J32", conf: Config{Goos: "js", Goarch: "wasm"}, profile: crosscompile.WasmProfileJ32, wantGC: true},
+		{name: "J64", conf: Config{Goos: "js", Goarch: "wasm"}, profile: crosscompile.WasmProfileJ64, wantGC: true},
+		{name: "W32", conf: Config{Goos: "wasip1", Goarch: "wasm"}, profile: crosscompile.WasmProfileW32, wantGC: true},
 		{name: "native", conf: Config{Goos: "linux", Goarch: "amd64"}},
 		{name: "native explicit", conf: Config{Goos: "linux", Goarch: "amd64", Tags: "llgo.wasm.gc.linear"}, err: true},
-		{name: "unsupported raw host", conf: Config{Goos: "linux", Goarch: "wasm", Tags: "llgo.wasm.gc.linear"}, err: true},
-		{name: "freestanding explicit", conf: Config{Goos: "linux", Goarch: "wasm", Tags: "llgo.wasm.gc.linear"}, abi: crosscompile.WasmABIFreestanding, err: true},
+		{name: "missing profile", conf: Config{Goos: "js", Goarch: "wasm", Tags: "llgo.wasm.gc.linear"}, err: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			export := crosscompile.Export{WasmABI: test.abi}
+			export := crosscompile.Export{WasmProfile: test.profile}
 			enabled, err := configureWasmGC(&test.conf, &export)
 			if (err != nil) != test.err {
 				t.Fatalf("configureWasmGC error = %v, want error %v", err, test.err)
@@ -817,10 +814,16 @@ func TestConfigureWasmGC(t *testing.T) {
 
 func TestConfigureWasmGCRejectsWASIThreads(t *testing.T) {
 	t.Setenv("LLGO_WASI_THREADS", "1")
-	for _, abi := range []crosscompile.WasmABI{crosscompile.WasmABIUnspecified, crosscompile.WasmABIWASIPreview1} {
-		conf := Config{Goos: "wasip1", Goarch: "wasm", Tags: "llgo.wasm.gc.linear"}
-		if _, err := configureWasmGC(&conf, &crosscompile.Export{WasmABI: abi}); err == nil {
-			t.Fatalf("expected llgo.wasm.gc.linear with WASI threads and ABI %q to fail", abi)
+	conf := Config{Goos: "wasip1", Goarch: "wasm", Tags: "llgo.wasm.gc.linear"}
+	if _, err := configureWasmGC(&conf, &crosscompile.Export{WasmProfile: crosscompile.WasmProfileW32}); err == nil {
+		t.Fatal("expected llgo.wasm.gc.linear with WASI threads to fail")
+	}
+}
+
+func TestNeedStartWASITargetAliases(t *testing.T) {
+	for _, target := range []string{"wasi", "wasip1"} {
+		if needStart(&context{buildConf: &Config{Target: target}}) {
+			t.Errorf("target %q unexpectedly requested LLGo's generic _start", target)
 		}
 	}
 }
@@ -877,22 +880,20 @@ func TestWasmRuntimeAvoidsNativeHostDependencies(t *testing.T) {
 func TestEffectiveWasmTypeSizes(t *testing.T) {
 	base := &types.StdSizes{WordSize: 16, MaxAlign: 16}
 	for _, test := range []struct {
-		name string
-		arch string
-		abi  crosscompile.WasmABI
-		want int64
+		name    string
+		arch    string
+		profile crosscompile.WasmProfile
+		want    int64
 	}{
-		{"unspecified native", "amd64", crosscompile.WasmABIUnspecified, 16},
-		{"raw wasm compatibility", "wasm", crosscompile.WasmABIUnspecified, 4},
-		{"Emscripten wasm32", "wasm", crosscompile.WasmABIEmscripten, 4},
-		{"Emscripten Memory64", "wasm", crosscompile.WasmABIEmscriptenMemory64, 8},
-		{"WASI Preview 1", "wasm", crosscompile.WasmABIWASIPreview1, 4},
-		{"WASI Preview 2", "arm", crosscompile.WasmABIWASIPreview2, 4},
-		{"freestanding wasm32", "arm", crosscompile.WasmABIFreestanding, 4},
-		{"unknown profile", "wasm", crosscompile.WasmABI("unknown"), 16},
+		{"native", "amd64", crosscompile.WasmProfileNone, 16},
+		{"unresolved wasm", "wasm", crosscompile.WasmProfileNone, 4},
+		{"J32", "wasm", crosscompile.WasmProfileJ32, 4},
+		{"J64", "wasm", crosscompile.WasmProfileJ64, 8},
+		{"W32", "wasm", crosscompile.WasmProfileW32, 4},
+		{"unknown profile", "wasm", crosscompile.WasmProfile("unknown"), 4},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got := effectiveTypeSizes(base, test.arch, test.abi).Sizeof(types.Typ[types.Uintptr])
+			got := effectiveTypeSizes(base, test.arch, test.profile).Sizeof(types.Typ[types.Uintptr])
 			if got != test.want {
 				t.Fatalf("uintptr size = %d, want %d", got, test.want)
 			}
@@ -936,11 +937,6 @@ func TestWasmRuntimeBackendSelection(t *testing.T) {
 	}{
 		{
 			name: "raw JS and Emscripten profiles", goos: "js", tags: []string{"llgo", "nogc"},
-			want: []string{"g_wasm.go", "os_wasm.go", "proc_wasm.go", "runqueue_wasm.go", "fatal_emscripten.go", "local_context_baremetal.go"},
-			omit: []string{"g_tls.go", "os_pthread.go", "proc_pthread.go", "fatal_default.go", "local_context_tls.go"},
-		},
-		{
-			name: "legacy wasm alias", goos: "js", tags: []string{"llgo", "tinygo.wasm", "nogc"},
 			want: []string{"g_wasm.go", "os_wasm.go", "proc_wasm.go", "runqueue_wasm.go", "fatal_emscripten.go", "local_context_baremetal.go"},
 			omit: []string{"g_tls.go", "os_pthread.go", "proc_pthread.go", "fatal_default.go", "local_context_tls.go"},
 		},

@@ -23,17 +23,16 @@ func TestWasmRuntimeSourcePatchTypeChecks(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		goos       string
-		abi        crosscompile.WasmABI
+		profile    crosscompile.WasmProfile
 		buildFlags []string
 	}{
 		{name: "raw js wasm32", goos: "js"},
-		{name: "legacy wasm alias", goos: "js", abi: crosscompile.WasmABIEmscripten, buildFlags: []string{"-tags=llgo.wasm.emscripten,tinygo.wasm,nogc"}},
-		{name: "Emscripten wasm32", goos: "js", abi: crosscompile.WasmABIEmscripten, buildFlags: []string{"-tags=llgo.wasm.emscripten,nogc"}},
-		{name: "Emscripten GC wasm32", goos: "js", abi: crosscompile.WasmABIEmscripten, buildFlags: []string{"-tags=llgo,llgo.wasm.emscripten,llgo.wasm.gc.linear"}},
-		{name: "Emscripten Memory64", goos: "js", abi: crosscompile.WasmABIEmscriptenMemory64, buildFlags: []string{"-tags=llgo.wasm.emscripten,llgo.wasm.emscripten.memory64,nogc"}},
-		{name: "Emscripten GC Memory64", goos: "js", abi: crosscompile.WasmABIEmscriptenMemory64, buildFlags: []string{"-tags=llgo,llgo.wasm.emscripten,llgo.wasm.emscripten.memory64,llgo.wasm.gc.linear"}},
+		{name: "Emscripten wasm32", goos: "js", profile: crosscompile.WasmProfileJ32, buildFlags: []string{"-tags=llgo.wasm.emscripten,nogc"}},
+		{name: "Emscripten GC wasm32", goos: "js", profile: crosscompile.WasmProfileJ32, buildFlags: []string{"-tags=llgo,llgo.wasm.emscripten,llgo.wasm.gc.linear"}},
+		{name: "Emscripten Memory64", goos: "js", profile: crosscompile.WasmProfileJ64, buildFlags: []string{"-tags=llgo.wasm.emscripten,llgo.wasm.emscripten.memory64,nogc"}},
+		{name: "Emscripten GC Memory64", goos: "js", profile: crosscompile.WasmProfileJ64, buildFlags: []string{"-tags=llgo,llgo.wasm.emscripten,llgo.wasm.emscripten.memory64,llgo.wasm.gc.linear"}},
 		{name: "WASI wasm32", goos: "wasip1"},
-		{name: "WASI GC wasm32", goos: "wasip1", abi: crosscompile.WasmABIWASIPreview1, buildFlags: []string{"-tags=llgo,llgo.wasm.wasi,llgo.wasm.gc.linear"}},
+		{name: "WASI GC wasm32", goos: "wasip1", profile: crosscompile.WasmProfileW32, buildFlags: []string{"-tags=llgo,llgo.wasm.wasi,llgo.wasm.gc.linear"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			cfgEnv := append(os.Environ(), "GOOS="+test.goos, "GOARCH=wasm")
@@ -51,7 +50,7 @@ func TestWasmRuntimeSourcePatchTypeChecks(t *testing.T) {
 				t.Fatal(err)
 			}
 			pkgs, err := packages.LoadEx(nil, func(sizes types.Sizes, _ string, arch string) types.Sizes {
-				return effectiveTypeSizes(sizes, arch, test.abi)
+				return effectiveTypeSizes(sizes, arch, test.profile)
 			}, &packages.Config{
 				Mode:       loadSyntax | packages.NeedDeps | packages.NeedModule | packages.NeedExportFile,
 				Env:        cfgEnv,

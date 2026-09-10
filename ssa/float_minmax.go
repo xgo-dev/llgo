@@ -23,7 +23,7 @@ func (b Builder) floatMinMax(op token.Token, a, c llvm.Value) llvm.Value {
 func (p *Target) useFloatMinMaxIntrinsics() bool {
 	// Named targets may retarget the emitted IR in an external compiler with
 	// different floating-point features. Keep their lowering portable.
-	if p.Target != "" && p.WasmABI == "" {
+	if p.Target != "" && p.WasmProfile == "" {
 		return false
 	}
 	spec := p.Spec()

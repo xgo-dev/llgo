@@ -4,6 +4,7 @@
 	"build-tags": ["llgo.wasm.wasi"],
 	"goos": "wasip1",
 	"goarch": "wasm",
-	"wasm-abi": "wasi-preview1",
+	"wasm-profile": "w32",
+	"wasm-provider": "wasi",
 	"emulator": "wasmtime run -W exceptions=y --dir={tmpDir}::/tmp {}"
 }

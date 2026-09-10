@@ -463,15 +463,15 @@ func TestUseTarget(t *testing.T) {
 
 func TestEmscriptenTargetProfiles(t *testing.T) {
 	tests := []struct {
-		name       string
-		wantABI    WasmABI
-		wantTriple string
-		wantTags   []string
-		memory64   bool
+		name        string
+		wantProfile WasmProfile
+		wantTriple  string
+		wantTags    []string
+		memory64    bool
 	}{
-		{"emscripten", WasmABIEmscripten, "wasm32-unknown-emscripten", []string{"llgo.wasm.emscripten"}, false},
-		{"wasm", WasmABIEmscripten, "wasm32-unknown-emscripten", []string{"llgo.wasm.emscripten", "tinygo.wasm"}, false},
-		{"emscripten-memory64", WasmABIEmscriptenMemory64, "wasm64-unknown-emscripten", []string{"llgo.wasm.emscripten", "llgo.wasm.emscripten.memory64"}, true},
+		{"emscripten", WasmProfileJ32, "wasm32-unknown-emscripten", []string{"llgo.wasm.emscripten"}, false},
+		{"emscripten-memory64", WasmProfileJ64, "wasm64-unknown-emscripten", []string{"llgo.wasm.emscripten", "llgo.wasm.emscripten.memory64"}, true},
+		{"wasm", WasmProfileJ32, "wasm32-unknown-emscripten", []string{"llgo.wasm.emscripten"}, false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -479,10 +479,10 @@ func TestEmscriptenTargetProfiles(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if export.WasmABI != test.wantABI || export.LLVMTarget != test.wantTriple ||
+			if export.WasmProfile != test.wantProfile || export.WasmProvider != WasmProviderEmscripten || export.LLVMTarget != test.wantTriple ||
 				export.GOOS != "js" || export.GOARCH != "wasm" || export.CC != "emcc" {
-				t.Fatalf("export = ABI %q, LLVM %q, %s/%s, CC %q",
-					export.WasmABI, export.LLVMTarget, export.GOOS, export.GOARCH, export.CC)
+				t.Fatalf("export = profile/provider %q/%q, LLVM %q, %s/%s, CC %q",
+					export.WasmProfile, export.WasmProvider, export.LLVMTarget, export.GOOS, export.GOARCH, export.CC)
 			}
 			for _, tag := range test.wantTags {
 				if !slices.Contains(export.BuildTags, tag) {
@@ -538,27 +538,19 @@ func TestEmscriptenAsyncifyLinkOptimization(t *testing.T) {
 	}
 }
 
-func TestWASIProfileTargets(t *testing.T) {
-	for _, test := range []struct {
-		name     string
-		wantTags []string
-	}{
-		{"wasi", []string{"llgo.wasm.wasi"}},
-		{"wasip1", []string{"llgo.wasm.wasi", "tinygo.wasm"}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			export, err := Use("", "", test.name, false, false, optlevel.O2, lto.Off, false)
+func TestWASIProfileTarget(t *testing.T) {
+	for _, target := range []string{"wasi", "wasip1"} {
+		t.Run(target, func(t *testing.T) {
+			export, err := Use("", "", target, false, false, optlevel.O2, lto.Off, false)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if export.WasmABI != WasmABIWASIPreview1 || export.LLVMTarget != "wasm32-unknown-wasip1" ||
+			if export.WasmProfile != WasmProfileW32 || export.WasmProvider != WasmProviderWASI || export.LLVMTarget != "wasm32-unknown-wasip1" ||
 				export.GOOS != "wasip1" || export.GOARCH != "wasm" {
-				t.Fatalf("export = ABI %q, LLVM %q, %s/%s", export.WasmABI, export.LLVMTarget, export.GOOS, export.GOARCH)
+				t.Fatalf("export = profile/provider %q/%q, LLVM %q, %s/%s", export.WasmProfile, export.WasmProvider, export.LLVMTarget, export.GOOS, export.GOARCH)
 			}
-			for _, tag := range test.wantTags {
-				if !slices.Contains(export.BuildTags, tag) {
-					t.Errorf("build tags %v do not contain %q", export.BuildTags, tag)
-				}
+			if !slices.Contains(export.BuildTags, "llgo.wasm.wasi") {
+				t.Errorf("build tags %v do not contain llgo.wasm.wasi", export.BuildTags)
 			}
 			if slices.Contains(export.LDFLAGS, "-Wl,--import-memory,") || slices.Contains(export.LDFLAGS, "-Wl,--import-memory") {
 				t.Fatalf("single-worker WASI unexpectedly imports host memory: %v", export.LDFLAGS)
@@ -572,21 +564,21 @@ func TestWASIProfileTargets(t *testing.T) {
 
 func TestAppendEmscriptenLibffiSearchPath(t *testing.T) {
 	var export Export
-	appendEmscriptenLibffiSearchPath(&export, "", WasmABIEmscripten)
+	appendEmscriptenLibffiSearchPath(&export, "", WasmProfileJ32)
 	if len(export.LDFLAGS) != 0 {
 		t.Fatalf("empty LLGO_ROOT appended %v", export.LDFLAGS)
 	}
-	appendEmscriptenLibffiSearchPath(&export, "/llgo", WasmABIEmscriptenMemory64)
+	appendEmscriptenLibffiSearchPath(&export, "/llgo", WasmProfileJ64)
 	want64 := "-L" + filepath.Join("/llgo", wasm64LibffiRelDir)
 	if !slices.Contains(export.LDFLAGS, want64) {
 		t.Fatalf("memory64 LDFLAGS %v do not search %s", export.LDFLAGS, want64)
 	}
-	appendEmscriptenLibffiSearchPath(&export, "/llgo", WasmABIUnspecified)
+	appendEmscriptenLibffiSearchPath(&export, "/llgo", WasmProfileNone)
 	want32 := "-L" + filepath.Join("/llgo", wasm32LibffiRelDir)
 	if !slices.Contains(export.LDFLAGS, want32) {
 		t.Fatalf("unspecified ABI LDFLAGS %v do not search %s", export.LDFLAGS, want32)
 	}
-	appendEmscriptenLibffiSearchPath(&export, "/llgo", WasmABIEmscripten)
+	appendEmscriptenLibffiSearchPath(&export, "/llgo", WasmProfileJ32)
 	n := 0
 	for _, flag := range export.LDFLAGS {
 		if flag == want32 {
@@ -655,13 +647,13 @@ func TestEmscriptenLibffiSearchPath(t *testing.T) {
 	}
 }
 
-func TestRawWasmStandardTagsRemainUnqualified(t *testing.T) {
+func TestRawWasmProfiles(t *testing.T) {
 	js, err := use("js", "wasm", false, false, optlevel.O2, lto.Off, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if js.WasmABI != WasmABIUnspecified || js.LLVMTarget != "" {
-		t.Fatalf("raw js/wasm was relabeled as ABI %q, LLVM profile %q", js.WasmABI, js.LLVMTarget)
+	if js.WasmProfile != WasmProfileJ32 || js.WasmProvider != WasmProviderGoJS || js.LLVMTarget != "wasm32-unknown-emscripten" {
+		t.Fatalf("raw js/wasm = profile/provider %q/%q, LLVM profile %q", js.WasmProfile, js.WasmProvider, js.LLVMTarget)
 	}
 	if !slices.Contains(js.LDFLAGS, "-sENVIRONMENT=web,worker") ||
 		slices.Contains(js.LDFLAGS, "-sENVIRONMENT=web,worker,node") {
@@ -675,8 +667,8 @@ func TestRawWasmStandardTagsRemainUnqualified(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wasi.WasmABI != WasmABIUnspecified || wasi.LLVMTarget != "" {
-		t.Fatalf("raw wasip1/wasm was relabeled as ABI %q, LLVM profile %q", wasi.WasmABI, wasi.LLVMTarget)
+	if wasi.WasmProfile != WasmProfileW32 || wasi.WasmProvider != WasmProviderWASI || wasi.LLVMTarget != "wasm32-unknown-wasip1" {
+		t.Fatalf("raw wasip1/wasm = profile/provider %q/%q, LLVM profile %q", wasi.WasmProfile, wasi.WasmProvider, wasi.LLVMTarget)
 	}
 	if slices.Contains(wasi.LDFLAGS, "-Wl,--import-memory,") || slices.Contains(wasi.LDFLAGS, "-Wl,--import-memory") {
 		t.Fatal("raw single-worker WASI unexpectedly imports host memory")
@@ -684,8 +676,8 @@ func TestRawWasmStandardTagsRemainUnqualified(t *testing.T) {
 	if !wasi.WasmPostLink.Asyncify {
 		t.Fatal("raw single-worker WASI does not request Asyncify post-link processing")
 	}
-	if slices.Contains(wasi.BuildTags, "llgo.wasm.wasi") {
-		t.Fatalf("raw wasip1/wasm acquired a WASI C-profile source tag: %v", wasi.BuildTags)
+	if !slices.Contains(wasi.BuildTags, "llgo.wasm.wasi") {
+		t.Fatalf("raw wasip1/wasm did not select the WASI provider source tag: %v", wasi.BuildTags)
 	}
 }
 
@@ -712,12 +704,57 @@ func writeWasmTargetFixture(t *testing.T, name, config string) {
 	t.Setenv("LLGO_ROOT", root)
 }
 
+func TestNamedWasmTargetUsesInheritedProfile(t *testing.T) {
+	writeWasmTargetFixture(t, "hosted-j32", `{
+		"llvm-target":"wasm32-unknown-emscripten",
+		"cpu":"generic",
+		"build-tags":["llgo.wasm.test-provider"],
+		"goos":"js",
+		"goarch":"wasm",
+		"wasm-profile":"j32",
+		"wasm-provider":"emscripten"
+	}`)
+	root := os.Getenv("LLGO_ROOT")
+	if err := os.WriteFile(
+		filepath.Join(root, "targets", "custom-wasm-alias.json"),
+		[]byte(`{"inherits":["hosted-j32"]}`), 0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	export, err := Use("", "", "custom-wasm-alias", false, false, optlevel.O2, lto.Off, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if export.WasmProfile != WasmProfileJ32 || export.WasmProvider != WasmProviderEmscripten || export.CC != "emcc" {
+		t.Fatalf("inherited target selected profile/provider %q/%q with compiler %q", export.WasmProfile, export.WasmProvider, export.CC)
+	}
+	if !slices.Contains(export.BuildTags, "llgo.wasm.test-provider") {
+		t.Fatalf("inherited target lost provider tags: %v", export.BuildTags)
+	}
+}
+
 func TestWasmProfileValidationErrors(t *testing.T) {
-	if _, err := useWithGOARMAndToolchain(
-		"js", "wasm", "", false, false, optlevel.O2, lto.Off, false,
-		NativeToolchainInput{}, WasmABI("invalid"),
-	); err == nil || !strings.Contains(err.Error(), "unsupported WebAssembly ABI profile") {
-		t.Fatalf("invalid direct profile error = %v", err)
+	for _, test := range []struct {
+		name     string
+		profile  WasmProfile
+		provider WasmProvider
+	}{
+		{"unknown profile", WasmProfile("invalid"), WasmProviderGoJS},
+		{"unknown provider", WasmProfileJ32, WasmProvider("invalid")},
+		{"missing profile", WasmProfileNone, WasmProviderGoJS},
+		{"J64 GoJS", WasmProfileJ64, WasmProviderGoJS},
+		{"W32 Emscripten", WasmProfileW32, WasmProviderEmscripten},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := useWithGOARMAndToolchain(
+				"js", "wasm", "", false, false, optlevel.O2, lto.Off, false,
+				NativeToolchainInput{}, test.profile, test.provider,
+			)
+			if err == nil || !strings.Contains(err.Error(), "unsupported WebAssembly profile/provider") {
+				t.Fatalf("invalid direct profile/provider error = %v", err)
+			}
+		})
 	}
 
 	t.Run("generic target", func(t *testing.T) {
@@ -726,10 +763,11 @@ func TestWasmProfileValidationErrors(t *testing.T) {
 			"cpu":"generic",
 			"goos":"linux",
 			"goarch":"wasm",
-			"wasm-abi":"invalid"
+			"wasm-profile":"invalid",
+			"wasm-provider":"gojs"
 		}`)
 		_, err := UseTarget("invalid-wasm", optlevel.O2, lto.Off)
-		if err == nil || !strings.Contains(err.Error(), "unsupported WebAssembly ABI profile") {
+		if err == nil || !strings.Contains(err.Error(), "unsupported WebAssembly profile/provider") {
 			t.Fatalf("invalid target profile error = %v", err)
 		}
 	})
@@ -747,10 +785,11 @@ func TestWasmProfileValidationErrors(t *testing.T) {
 			"llvm-target":"wasm32-unknown-emscripten",
 			"goos":"js",
 			"goarch":"wasm",
-			"wasm-abi":"invalid"
+			"wasm-profile":"invalid",
+			"wasm-provider":"emscripten"
 		}`)
 		_, err := Use("", "", "emscripten", false, false, optlevel.O2, lto.Off, false)
-		if err == nil || !strings.Contains(err.Error(), "unsupported WebAssembly ABI profile") {
+		if err == nil || !strings.Contains(err.Error(), "unsupported WebAssembly profile/provider") {
 			t.Fatalf("invalid named profile error = %v", err)
 		}
 	})
@@ -760,7 +799,8 @@ func TestWasmProfileValidationErrors(t *testing.T) {
 			"llvm-target":"wasm32-unknown-emscripten",
 			"goos":"plan9",
 			"goarch":"wasm",
-			"wasm-abi":"emscripten"
+			"wasm-profile":"j32",
+			"wasm-provider":"emscripten"
 		}`)
 		_, err := Use("", "", "emscripten", false, false, optlevel.O2, lto.Off, false)
 		if err == nil || !strings.Contains(err.Error(), "unsupported GOOS for WebAssembly") {
@@ -773,7 +813,8 @@ func TestWasmProfileValidationErrors(t *testing.T) {
 			"llvm-target":"wasm32-wrong-emscripten",
 			"goos":"js",
 			"goarch":"wasm",
-			"wasm-abi":"emscripten"
+			"wasm-profile":"j32",
+			"wasm-provider":"emscripten"
 		}`)
 		_, err := Use("", "", "emscripten", false, false, optlevel.O2, lto.Off, false)
 		if err == nil || !strings.Contains(err.Error(), "requires \"wasm32-unknown-emscripten\"") {
