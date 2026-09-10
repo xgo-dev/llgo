@@ -964,7 +964,8 @@ type aPackage struct {
 	fnlink func(string) string
 
 	iRoutine               int
-	setFinalizerWrapperSeq uint64
+	setFinalizerPtr        Expr
+	setFinalizerPtrChecked bool
 
 	NeedRuntime         bool
 	NeedFFI             bool // whether generated code uses reflect's libffi paths
@@ -1064,6 +1065,19 @@ func (p Package) rtEnvFunc(fnName string) Expr {
 // RuntimeFunc returns a declaration for a function in LLGo's internal runtime.
 func (p Package) RuntimeFunc(fnName string) Expr {
 	return p.rtFunc(fnName)
+}
+
+func (p Package) runtimeSetFinalizerPtr() Expr {
+	if p.setFinalizerPtrChecked {
+		return p.setFinalizerPtr
+	}
+	p.setFinalizerPtrChecked = true
+	rt := p.Prog.runtime()
+	if rt == nil || rt.Scope().Lookup("SetFinalizerPtr") == nil {
+		return Nil
+	}
+	p.setFinalizerPtr = p.RuntimeFunc("SetFinalizerPtr")
+	return p.setFinalizerPtr
 }
 
 func (p Package) cFunc(fullName string, sig *types.Signature) Expr {

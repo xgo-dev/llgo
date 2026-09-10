@@ -2654,8 +2654,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			ret = p.emitDo(b, act, ds, mayRecover, aFn.Expr, llssa.Builder.Call, args...)
 		case goFunc:
 			if cv.Name() == "SetFinalizer" && cv.Pkg != nil && cv.Pkg.Pkg != nil &&
-				llssa.PathOf(cv.Pkg.Pkg) == "runtime" &&
-				p.prog.Target().GOARCH != "wasm" {
+				llssa.PathOf(cv.Pkg.Pkg) == "runtime" {
 				// The Go SSA builder boxes SetFinalizer's any arguments. Recover the
 				// concrete operands from those MakeInterface nodes for lowering.
 				if obj, fn, ok := finalizerConcreteArgs(args); ok {

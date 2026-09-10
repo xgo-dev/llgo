@@ -49,7 +49,7 @@ func clearRuntimeCall(p *T) { runtime.SetFinalizer(p, nil) }
 func deferredRuntimeCall(p *T) { defer runtime.SetFinalizer(p, finalizer) }
 func SetFinalizer(any, any) {}
 func userCall(p *T) { SetFinalizer(p, finalizer) }`
-	_, module := mustCompileLLPkgFromSrc(t, source)
+	pkg, module := mustCompileLLPkgFromSrc(t, source)
 	runtimeCall := mustNamedFunction(t, module, "foo.runtimeCall").String()
 	if !strings.Contains(runtimeCall, "SetFinalizerPtr") || strings.Contains(runtimeCall, "runtime.SetFinalizer(") {
 		t.Fatal("runtime.SetFinalizer was not lowered")
@@ -65,6 +65,9 @@ func userCall(p *T) { SetFinalizer(p, finalizer) }`
 	if strings.Contains(mustNamedFunction(t, module, "foo.userCall").String(), "SetFinalizerPtr") {
 		t.Fatal("user-defined SetFinalizer was lowered")
 	}
+	if pkg.NeedFFI {
+		t.Fatal("lowered runtime.SetFinalizer should not require libffi")
+	}
 }
 
 func TestSetFinalizerLoweringSkipsWasm(t *testing.T) {
@@ -79,9 +82,26 @@ func runtimeCall(p *T) { runtime.SetFinalizer(p, finalizer) }`
 	if err != nil {
 		t.Fatal(err)
 	}
-	ir := mustNamedFunction(t, pkg.Module(), "foo.runtimeCall").String()
-	if strings.Contains(ir, "SetFinalizerPtr") || !strings.Contains(ir, "runtime.SetFinalizer(") {
-		t.Fatalf("wasm runtime.SetFinalizer was lowered:\n%s", ir)
+	if pkg.NeedFFI {
+		t.Fatal("named runtime.SetFinalizer should not require libffi when lowered or when SetFinalizerPtr is absent")
+	}
+}
+
+func TestSetFinalizerClosureRequiresFFI(t *testing.T) {
+	const source = `package foo
+import "runtime"
+type T int
+func runtimeCall(p *T) {
+	n := 1
+	runtime.SetFinalizer(p, func(*T) { _ = n })
+}`
+	pkg, module := mustCompileLLPkgFromSrc(t, source)
+	ir := mustNamedFunction(t, module, "foo.runtimeCall").String()
+	if strings.Contains(ir, "SetFinalizerPtr") {
+		t.Fatal("capturing finalizer closure should not be lowered")
+	}
+	if !pkg.NeedFFI {
+		t.Fatal("unlowered runtime.SetFinalizer closure should require libffi")
 	}
 }
 
