@@ -376,6 +376,12 @@ func TestNeedsWasmRuntimeScheduler(t *testing.T) {
 			want:   true,
 		},
 		{
+			name:   "raw_gojs",
+			conf:   Config{BuildMode: BuildModeExe},
+			target: crosscompile.Export{WasmProfile: crosscompile.WasmProfileJ32, WasmProvider: crosscompile.WasmProviderGoJS},
+			want:   true,
+		},
+		{
 			name: "wasi_asyncify",
 			conf: Config{BuildMode: BuildModeExe},
 			target: crosscompile.Export{

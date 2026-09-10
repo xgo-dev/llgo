@@ -189,7 +189,7 @@ func TestRunCLIReturnsBuildFailure(t *testing.T) {
 	}, func(context.Context, string, []string, string, ...string) error {
 		return want
 	})
-	if !errors.Is(err, want) || !strings.Contains(err.Error(), "build js") {
+	if !errors.Is(err, want) || !strings.Contains(err.Error(), "build "+wasmProfiles[0].name) {
 		t.Fatalf("runCLI error = %v, want wrapped %v", err, want)
 	}
 }

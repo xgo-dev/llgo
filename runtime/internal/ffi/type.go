@@ -113,7 +113,7 @@ func ArrayOf(elem *Type, N int) *Type {
 		0,
 		0,
 		ffi.Struct,
-		&fs[0],
+		typePointerArray(fs),
 	}
 }
 
@@ -127,6 +127,6 @@ func StructOf(fields ...*Type) *Type {
 		0,
 		0,
 		ffi.Struct,
-		&fs[0],
+		typePointerArray(fs),
 	}
 }

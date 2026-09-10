@@ -30,7 +30,7 @@ func (b Builder) aggregateAllocU(t Type, flds ...llvm.Value) llvm.Value {
 	prog := b.Prog
 	size := prog.SizeOf(t)
 	ptr := b.allocUninited(prog.IntVal(size, prog.Uintptr())).impl
-	aggregateInit(b.impl, ptr, t.ll, flds...)
+	b.aggregateInit(ptr, t, flds...)
 	return ptr
 }
 
@@ -38,7 +38,7 @@ func (b Builder) aggregateAlloca(t Type, flds ...llvm.Value) llvm.Value {
 	prog := b.Prog
 	size := prog.SizeOf(t)
 	ptr := b.Alloca(prog.IntVal(size, prog.Uintptr())).impl
-	aggregateInit(b.impl, ptr, t.ll, flds...)
+	b.aggregateInit(ptr, t, flds...)
 	return ptr
 }
 
@@ -46,7 +46,7 @@ func (b Builder) aggregateMalloc(t Type, flds ...llvm.Value) llvm.Value {
 	prog := b.Prog
 	size := prog.SizeOf(t)
 	ptr := b.malloc(prog.IntVal(size, prog.Uintptr())).impl
-	aggregateInit(b.impl, ptr, t.ll, flds...)
+	b.aggregateInit(ptr, t, flds...)
 	return ptr
 }
 
@@ -68,13 +68,15 @@ func (b Builder) aggregateValue(t Type, flds ...llvm.Value) Expr {
 	return Expr{agg, t}
 }
 
-func aggregateInit(b llvm.Builder, ptr llvm.Value, tll llvm.Type, flds ...llvm.Value) {
+func (b Builder) aggregateInit(ptr llvm.Value, t Type, flds ...llvm.Value) {
 	for i, fld := range flds {
-		b.CreateStore(fld, llvm.CreateStructGEP(b, tll, ptr, i))
+		fld = b.wrapStructField(t, i, fld)
+		b.impl.CreateStore(fld, llvm.CreateStructGEP(b.impl, t.ll, ptr, i))
 	}
 }
 
 func (b Builder) wrapStructField(t Type, index int, value llvm.Value) llvm.Value {
+	value = b.toStorageValue(b.Prog.aggregateElementType(t, index), value)
 	layout, ok := b.Prog.structLayout(t)
 	if !ok || index >= len(layout.wrapped) || !layout.wrapped[index] {
 		return value
@@ -86,17 +88,16 @@ func (b Builder) wrapStructField(t Type, index int, value llvm.Value) llvm.Value
 
 func (b Builder) unwrapStructField(t Type, index int, value llvm.Value) llvm.Value {
 	layout, ok := b.Prog.structLayout(t)
-	if !ok || index >= len(layout.wrapped) || !layout.wrapped[index] {
-		return value
+	if ok && index < len(layout.wrapped) && layout.wrapped[index] {
+		// LLVM instructions such as cmpxchg have a fixed native aggregate result
+		// type even when the attached Go semantic type needs explicit padding.
+		// Such an extracted value is already the field scalar and must not be
+		// treated as the in-memory wrapper.
+		if value.Type() == t.ll.StructElementTypes()[index] {
+			value = b.impl.CreateExtractValue(value, 0, "")
+		}
 	}
-	// LLVM instructions such as cmpxchg have a fixed native aggregate result
-	// type even when the attached Go semantic type needs explicit 386 padding.
-	// Such an extracted value is already the field scalar and must not be
-	// treated as the in-memory wrapper.
-	if value.Type() != t.ll.StructElementTypes()[index] {
-		return value
-	}
-	return b.impl.CreateExtractValue(value, 0, "")
+	return b.fromStorageValue(b.Prog.aggregateElementType(t, index), value)
 }
 
 /*
@@ -159,7 +160,9 @@ func (b Builder) Alloc(elem Type, heap bool) (ret Expr) {
 		} else {
 			entryBuilder.SetInsertPointAtEnd(entry)
 		}
-		ret = Expr{llvm.CreateAlloca(entryBuilder, elem.ll), prog.VoidPtr()}
+		alloca := llvm.CreateAlloca(entryBuilder, prog.storageType(elem))
+		prog.requireStorageAlignment(alloca, elem)
+		ret = Expr{alloca, prog.VoidPtr()}
 		entryBuilder.Dispose()
 		ret.impl = b.zeroinit(ret, size).impl
 	}
@@ -196,7 +199,8 @@ func (b Builder) Alloca(n Expr) (ret Expr) {
 func (b Builder) AllocaT(t Type) (ret Expr) {
 	dbgInstrf("AllocaT %v\n", t.RawType())
 	prog := b.Prog
-	ret.impl = llvm.CreateAlloca(b.impl, t.ll)
+	ret.impl = llvm.CreateAlloca(b.impl, prog.storageType(t))
+	prog.requireStorageAlignment(ret.impl, t)
 	ret.Type = prog.Pointer(t)
 	return
 }
@@ -312,7 +316,8 @@ func (b Builder) zeroinit(ptr, size Expr) Expr {
 // ArrayAlloca reserves space for an array of n elements of type telem.
 func (b Builder) ArrayAlloca(telem Type, n Expr) (ret Expr) {
 	dbgInstrf("ArrayAlloca %v, %v\n", telem.raw.Type, n.impl)
-	ret.impl = llvm.CreateArrayAlloca(b.impl, telem.ll, n.impl)
+	ret.impl = llvm.CreateArrayAlloca(b.impl, b.Prog.storageType(telem), n.impl)
+	b.Prog.requireStorageAlignment(ret.impl, telem)
 	ret.Type = b.Prog.Pointer(telem)
 	return
 }
@@ -351,23 +356,32 @@ const (
 // Atomic performs an atomic operation on the memory location pointed to by ptr.
 func (b Builder) Atomic(op AtomicOp, ptr, val Expr) Expr {
 	dbgInstrf("Atomic %v, %v, %v\n", op, ptr.impl, val.impl)
-	t := b.Prog.Elem(ptr.Type)
+	storageType := b.Prog.Elem(ptr.Type)
+	t := b.Prog.withoutNativeStorage(storageType)
 	val = b.ChangeType(t, val)
-	ret := b.impl.CreateAtomicRMW(op, ptr.impl, val.impl, llvm.AtomicOrderingSequentiallyConsistent, false)
-	return Expr{ret, t}
+	stored := b.toAtomicStorageValue(storageType, val.impl)
+	ret := b.impl.CreateAtomicRMW(op, ptr.impl, stored, llvm.AtomicOrderingSequentiallyConsistent, false)
+	return Expr{b.fromAtomicStorageValue(storageType, ret), t}
 }
 
 // AtomicCmpXchg performs an atomic compare-and-swap operation on the memory location pointed to by ptr.
 func (b Builder) AtomicCmpXchg(ptr, old, new Expr) Expr {
 	dbgInstrf("AtomicCmpXchg %v, %v, %v\n", ptr.impl, old.impl, new.impl)
 	prog := b.Prog
-	t := prog.Elem(ptr.Type)
+	storageType := prog.Elem(ptr.Type)
+	t := prog.withoutNativeStorage(storageType)
 	old = b.ChangeType(t, old)
 	new = b.ChangeType(t, new)
 	ret := b.impl.CreateAtomicCmpXchg(
-		ptr.impl, old.impl, new.impl,
+		ptr.impl, b.toAtomicStorageValue(storageType, old.impl), b.toAtomicStorageValue(storageType, new.impl),
 		llvm.AtomicOrderingSequentiallyConsistent, llvm.AtomicOrderingSequentiallyConsistent, false)
-	return Expr{ret, prog.Struct(t, prog.Bool())}
+	resultType := prog.Struct(t, prog.Bool())
+	if !prog.needsWidePointerStorage(storageType) && !prog.isNativeStorage(storageType) {
+		return Expr{ret, resultType}
+	}
+	oldValue := b.fromAtomicStorageValue(storageType, b.impl.CreateExtractValue(ret, 0, ""))
+	success := b.impl.CreateExtractValue(ret, 1, "")
+	return b.aggregateValue(resultType, oldValue, success)
 }
 
 func (b Builder) AssertNilDeref(ptr Expr) {
@@ -451,12 +465,18 @@ func (b Builder) Load(ptr Expr) Expr {
 		return b.pyLoad(ptr)
 	}
 	b.assertStaticNilDeref(ptr)
-	telem := b.Prog.Elem(ptr.Type)
-	if b.Prog.SizeOf(telem) == 0 {
+	storageType := b.Prog.Elem(ptr.Type)
+	telem := b.Prog.withoutNativeStorage(storageType)
+	if b.Prog.SizeOf(storageType) == 0 {
 		b.AssertNilDeref(ptr)
 		return b.Prog.Zero(telem)
 	}
-	return Expr{llvm.CreateLoad(b.impl, telem.ll, ptr.impl), telem}
+	if b.Prog.needsWidePointerStorage(storageType) {
+		stored := llvm.CreateLoad(b.impl, b.Prog.tyInt(), ptr.impl)
+		return Expr{b.fromAtomicStorageValue(storageType, stored), telem}
+	}
+	stored := llvm.CreateLoad(b.impl, b.Prog.storageType(storageType), ptr.impl)
+	return Expr{b.fromStorageValue(storageType, stored), telem}
 }
 
 // Store stores val at the pointer ptr.
@@ -465,7 +485,11 @@ func (b Builder) Store(ptr, val Expr) Expr {
 	dbgInstrf("Store %v, %v, %v\n", raw, ptr.impl, val.impl)
 	val = checkExpr(val, raw.(*types.Pointer).Elem(), b)
 	b.assertStaticNilDeref(ptr)
-	return Expr{b.impl.CreateStore(val.impl, ptr.impl), b.Prog.Void()}
+	storageType := b.Prog.Elem(ptr.Type)
+	if b.Prog.needsWidePointerStorage(storageType) {
+		return Expr{b.impl.CreateStore(b.toAtomicStorageValue(storageType, val.impl), ptr.impl), b.Prog.Void()}
+	}
+	return Expr{b.impl.CreateStore(b.toStorageValue(storageType, val.impl), ptr.impl), b.Prog.Void()}
 }
 
 // Advance returns the pointer ptr advanced by offset.
@@ -473,11 +497,11 @@ func (b Builder) Advance(ptr Expr, offset Expr) Expr {
 	dbgInstrf("Advance %v, %v\n", ptr.impl, offset.impl)
 	var elem llvm.Type
 	var prog = b.Prog
-	switch t := ptr.raw.Type.(type) {
+	switch ptr.raw.Type.(type) {
 	case *types.Basic: // void
 		elem = prog.tyInt8()
 	default:
-		elem = prog.rawType(t.(*types.Pointer).Elem()).ll
+		elem = prog.storageType(prog.Elem(ptr.Type))
 	}
 	ret := llvm.CreateGEP(b.impl, elem, ptr.impl, []llvm.Value{offset.impl})
 	return Expr{ret, ptr.Type}

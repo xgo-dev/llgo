@@ -100,7 +100,7 @@ func (p *goProgram) Alignof(T types.Type) int64 {
 // A negative entry in the result indicates that the struct is too large.
 func (p *goProgram) Offsetsof(fields []*types.Var) (ret []int64) {
 	prog := Program(unsafe.Pointer(p))
-	ptrSize := int64(prog.PointerSize())
+	ptrSize := int64(prog.GoWordSize())
 	if abi.IsClosureFields(fields) {
 		return []int64{0, ptrSize}
 	}
@@ -118,7 +118,7 @@ func (p *goProgram) Offsetsof(fields []*types.Var) (ret []int64) {
 // A negative result indicates that T is too large.
 func (p *goProgram) Sizeof(T types.Type) int64 {
 	prog := Program(unsafe.Pointer(p))
-	ptrSize := int64(prog.PointerSize())
+	ptrSize := int64(prog.GoWordSize())
 	baseSize := prog.sizes.Sizeof(T) + p.extraSize(T, ptrSize)
 	switch T.Underlying().(type) {
 	case *types.Struct, *types.Array:
@@ -190,7 +190,7 @@ func (p Program) TypeSizes(sizes types.Sizes) types.Sizes {
 // TODO(xsw):
 // how to generate platform independent code?
 func (p Program) SizeOf(typ Type, n ...int64) uint64 {
-	size := p.td.TypeAllocSize(typ.ll)
+	size := p.td.TypeAllocSize(p.storageType(typ))
 	if len(n) != 0 {
 		size *= uint64(n[0])
 	}
@@ -199,7 +199,15 @@ func (p Program) SizeOf(typ Type, n ...int64) uint64 {
 
 // AlignOf returns the ABI alignment of typ for the current target.
 func (p Program) AlignOf(typ Type) uint64 {
-	return uint64(p.td.ABITypeAlignment(typ.ll))
+	if p.needsWidePointerStorage(typ) {
+		return uint64(p.GoWordSize())
+	}
+	if p.GoWordSize() > p.PointerSize() && !p.isNativeStorage(typ) {
+		if _, ok := types.Unalias(typ.raw.Type).Underlying().(*types.Array); ok {
+			return p.AlignOf(p.Index(typ))
+		}
+	}
+	return uint64(p.td.ABITypeAlignment(p.storageType(typ)))
 }
 
 // OffsetOf returns the offset of a field in a struct.
@@ -234,21 +242,52 @@ func (p Program) Slice(typ Type) Type {
 }
 
 func (p Program) Pointer(typ Type) Type {
-	return p.rawType(types.NewPointer(typ.raw.Type))
+	ret := p.rawType(types.NewPointer(typ.raw.Type))
+	if p.isNativeStorage(typ) || p.hasNativeTypeLayout(typ.raw.Type) {
+		return p.withNativeStorage(ret)
+	}
+	return ret
 }
 
 func (p Program) Elem(typ Type) Type {
 	elem := typ.raw.Type.Underlying().(interface {
 		Elem() types.Type
 	}).Elem()
-	return p.rawType(elem)
+	return p.childStorageType(typ, elem)
 }
 
 func (p Program) Index(typ Type) Type {
-	return p.rawType(indexType(typ.raw.Type))
+	return p.childStorageType(typ, indexType(typ.raw.Type))
 }
 
 func (p Program) Field(typ Type, i int) Type {
+	// Strings, slices, and interfaces have synthetic LLVM aggregate
+	// representations even though their source-level go/types forms are not
+	// structs. Describe those fields here so storage conversions can apply the
+	// same pointer-slot rules as ordinary Go structs.
+	switch typ.kind {
+	case vkString:
+		if i == 0 {
+			return p.VoidPtr()
+		}
+		if i == 1 {
+			return p.Int()
+		}
+		panic("Field: string index out of range")
+	case vkSlice:
+		if i == 0 {
+			return p.VoidPtr()
+		}
+		if i == 1 || i == 2 {
+			return p.Int()
+		}
+		panic("Field: slice index out of range")
+	case vkEface, vkIface:
+		if i == 0 || i == 1 {
+			return p.VoidPtr()
+		}
+		panic("Field: interface index out of range")
+	}
 	var fld *types.Var
 	switch t := typ.raw.Type.Underlying().(type) {
 	case *types.Tuple:
@@ -269,7 +308,7 @@ func (p Program) Field(typ Type, i int) Type {
 		}
 		fld = st.Field(i)
 	}
-	return p.rawType(fld.Type())
+	return p.childStorageType(typ, fld.Type())
 }
 
 func typeStringWithPkg(t types.Type) string {
@@ -314,7 +353,7 @@ func (p Program) tyInt1() llvm.Type {
 
 func (p Program) tyInt() llvm.Type {
 	if p.intType.IsNil() {
-		p.intType = llvmIntType(p.ctx, p.td.PointerSize())
+		p.intType = llvmIntType(p.ctx, p.GoWordSize())
 	}
 	return p.intType
 }
@@ -428,7 +467,7 @@ func (p Program) toType(raw types.Type) Type {
 		return &aType{p.toLLVMTuple(t), typ, vkTuple}
 	case *types.Array:
 		elem := p.rawType(t.Elem())
-		return &aType{llvm.ArrayType(elem.ll, int(t.Len())), typ, vkArray}
+		return &aType{llvm.ArrayType(p.storageType(elem), int(t.Len())), typ, vkArray}
 	case *types.Chan:
 		return &aType{llvm.PointerType(p.rtChan(), 0), typ, vkChan}
 	case *types.Alias:
@@ -466,19 +505,27 @@ func IsClosure(raw *types.Struct) bool {
 	return abi.IsClosure(raw)
 }
 
-func (p Program) toLLVMFields(raw *types.Struct) (fields []llvm.Type) {
+func (p Program) toLLVMFields(raw *types.Struct, native bool) (fields []llvm.Type) {
 	n := raw.NumFields()
 	if n > 0 {
 		fields = make([]llvm.Type, n)
 		for i := 0; i < n; i++ {
-			fields[i] = p.rawType(p.patch(raw.Field(i).Type())).ll
+			fieldRaw := p.patch(raw.Field(i).Type())
+			field := p.rawType(fieldRaw)
+			if native {
+				field = p.withNativeStorage(field)
+			}
+			fields[i] = field.ll
+			if !native {
+				fields[i] = p.storageType(field)
+			}
 		}
 	}
 	return
 }
 
 func (p Program) toLLVMTuple(t *types.Tuple) llvm.Type {
-	if p.target.effectiveGOARCH() != "386" {
+	if p.target.effectiveGOARCH() != "386" && !(p.target.effectiveGOARCH() == "wasm" && p.target.WasmProfile != "") {
 		return p.ctx.StructType(p.toLLVMTypes(t, t.Len()), false)
 	}
 	fields := make([]*types.Var, t.Len())
@@ -507,24 +554,49 @@ func (p Program) toLLVMTypes(t *types.Tuple, n int) (ret []llvm.Type) {
 }
 
 func (p Program) toLLVMFunc(sig *types.Signature) llvm.Type {
+	return p.toLLVMFuncBackground(sig, InGo)
+}
+
+func (p Program) toLLVMFuncBackground(sig *types.Signature, bg Background) llvm.Type {
+	valueBackground := bg
+	if bg == InStdcall {
+		// Stdcall validation applies to the function type as a whole; its scalar
+		// parameter and result types use the same native storage rules as C.
+		valueBackground = InC
+	}
 	tParams := sig.Params()
 	n := tParams.Len()
 	hasVArg := HasNameValist(sig)
 	if hasVArg {
 		n--
 	}
-	params := p.toLLVMTypes(tParams, n)
+	params := make([]llvm.Type, n)
+	for i := range params {
+		params[i] = p.Type(p.patch(tParams.At(i).Type()), valueBackground).ll
+	}
 	out := sig.Results()
 	var ret llvm.Type
 	switch nret := out.Len(); nret {
 	case 0:
 		ret = p.tyVoid()
 	case 1:
-		ret = p.rawType(out.At(0).Type()).ll
+		ret = p.Type(p.patch(out.At(0).Type()), valueBackground).ll
 	default:
-		ret = p.toLLVMTuple(out)
+		if isNativeFuncBackground(bg) {
+			ret = p.ctx.StructType(p.toLLVMNativeTypes(out, out.Len()), false)
+		} else {
+			ret = p.toLLVMTuple(out)
+		}
 	}
 	return llvm.FunctionType(ret, params, hasVArg)
+}
+
+func (p Program) toLLVMNativeTypes(t *types.Tuple, n int) []llvm.Type {
+	ret := make([]llvm.Type, n)
+	for i := range ret {
+		ret[i] = p.Type(p.patch(t.At(i).Type()), InC).ll
+	}
+	return ret
 }
 
 func (p Program) toLLVMFuncPtr(_ *types.Signature) llvm.Type {
@@ -645,7 +717,7 @@ func (p Program) namedStructLayoutEquivalent(existing Type, raw *types.Named) bo
 		return false
 	}
 	existingFields := existing.ll.StructElementTypes()
-	rawFields := p.toLLVMFields(rs)
+	rawFields := p.toLLVMFields(rs, p.hasNativeStructLayout(raw))
 	if len(existingFields) != len(rawFields) {
 		return false
 	}

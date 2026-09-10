@@ -149,7 +149,7 @@ func loadExternalPCLN() bool {
 		if read <= 0 {
 			return false
 		}
-		off += read
+		off += int(read)
 	}
 	view, ok := validateExternalPCLN(raw, uintptr(info.Fbase))
 	if !ok {

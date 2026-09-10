@@ -142,6 +142,9 @@ type aProgram struct {
 	// LLVM type is not a safe identity for this metadata.
 	structLayouts    typeutil.Map
 	hasStructLayouts bool
+	// nativeStorage marks transient Type views whose addressable storage is
+	// owned by a C/host ABI rather than by the Go data model.
+	nativeStorage map[Type]struct{}
 
 	intType   llvm.Type
 	int1Type  llvm.Type
@@ -151,6 +154,9 @@ type aProgram struct {
 	int64Type llvm.Type
 	voidType  llvm.Type
 	voidPtrTy llvm.Type
+	// Eight-byte in-memory Go pointer slot used when Core Wasm addresses are
+	// 32-bit. Pointer expressions themselves remain native wasm addresses.
+	widePtrStorageTy llvm.Type
 
 	c64Type  llvm.Type
 	c128Type llvm.Type
@@ -322,17 +328,18 @@ func NewProgram(target *Target) Program {
 		// TODO(xsw): Finalize may cause panic, so comment it.
 		ctx.Finalize()
 	*/
-	is32Bits := (td.PointerSize() == 4 || is32Bits(target.GOARCH))
 	packageSyntax := newPackageSyntaxData()
 	prog := &aProgram{
 		ctx: ctx, gocvt: newGoTypes(packageSyntax),
-		target: target, td: td, tm: tm, is32Bits: is32Bits,
+		target: target, td: td, tm: tm,
 		ptrSize: td.PointerSize(), named: make(map[string]Type), fnnamed: make(map[string]int),
+		nativeStorage: make(map[Type]struct{}),
 		packageSyntax: packageSyntax, localities: newLocalityInfos(),
 		abiSymbol:          make(map[string]*AbiSymbol),
 		debugInfoOptimized: target.effectiveOptLevel() != optlevel.O0,
 	}
-	prog.abi.Init(uintptr(prog.ptrSize), (*goProgram)(unsafe.Pointer(prog)))
+	prog.is32Bits = prog.GoWordSize() == 4
+	prog.abi.Init(uintptr(prog.GoWordSize()), (*goProgram)(unsafe.Pointer(prog)))
 	return prog
 }
 

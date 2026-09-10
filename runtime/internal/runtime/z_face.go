@@ -130,7 +130,10 @@ func NewItab(inter *InterfaceType, typ *Type) *Itab {
 	if u == nil {
 		ret.fun[0] = 0
 	} else {
-		data := (*uintptr)(c.Advance(ptr, int(itabHdrSize)))
+		// Locate the variable tail in bytes, then index it as Go uintptr slots.
+		// On J32 C pointer arrays have four-byte elements while itab function
+		// slots follow Go's eight-byte word model.
+		data := c.Advance(ptr, int(itabHdrSize))
 		mthds := u.Methods()
 		for i, m := range inter.Methods {
 			fn, matched := findMethod(mthds, m)
@@ -144,7 +147,8 @@ func NewItab(inter *InterfaceType, typ *Type) *Itab {
 				// and only panics on call, not at assertion time.
 				fn = abi.Text(c.Func(unreachableMethod))
 			}
-			*c.Advance(data, i) = uintptr(fn)
+			slot := unsafe.Add(data, uintptr(i)*unsafe.Sizeof(uintptr(0)))
+			*(*uintptr)(slot) = uintptr(fn)
 		}
 	}
 	if ret.fun[0] != 0 {

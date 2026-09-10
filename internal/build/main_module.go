@@ -74,7 +74,8 @@ func needsWasmRuntimeScheduler(ctx *context) bool {
 	if ctx.crossCompile.WasmPostLink.Asyncify {
 		return true
 	}
-	return ctx.crossCompile.WasmProvider == crosscompile.WasmProviderEmscripten
+	return ctx.crossCompile.WasmProfile == crosscompile.WasmProfileJ32 ||
+		ctx.crossCompile.WasmProfile == crosscompile.WasmProfileJ64
 }
 
 // genMainModule generates the main entry module for an llgo program.
@@ -369,7 +370,14 @@ func defineCExportWrappers(pkg llssa.Package, exports []cExport, ensureInit llss
 	)
 	for _, export := range exports {
 		implementation := pkg.NewFunc(export.goName, export.sig, llssa.InGo)
-		wrapper := pkg.NewFunc(export.cName, export.sig, llssa.InGo)
+		wrapperBackground := llssa.InGo
+		if target := pkg.Prog.Target(); target != nil && target.GOARCH == "wasm" && target.WasmProfile != "" {
+			// Go's wasm32 uintptr is 64-bit, while C size_t and uintptr_t at
+			// a Memory32 entry are 32-bit. Keep the implementation on the Go
+			// ABI and adapt widths at the externally visible wrapper.
+			wrapperBackground = llssa.InC
+		}
+		wrapper := pkg.NewFunc(export.cName, export.sig, wrapperBackground)
 		b := wrapper.MakeBody(1)
 		if ensureInit != nil {
 			b.Call(ensureInit.Expr)

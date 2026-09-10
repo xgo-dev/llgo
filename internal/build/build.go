@@ -541,11 +541,10 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 		Target:                  conf.Target,
 		LLVMTarget:              export.LLVMTarget,
 		WasmProfile:             string(export.WasmProfile),
-		WasmProvider:            string(export.WasmProvider),
 		OptLevel:                conf.OptLevel,
 		SaturatingFloatToUint32: conf.SaturatingFloatToUint32,
 	}
-	tags := defaultBuildTags(conf.Goarch, conf.Target)
+	tags := DefaultBuildTags(conf.Goarch, conf.Target)
 	tags += "," + target.ClosureEnvBuildTag()
 	if conf.PCLNMode == PCLNExternal {
 		// Select the optional runtime loader as part of the normal package
@@ -578,7 +577,10 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 		Debug:        emitDebugInfo,
 		DebugSymbols: emitDebugInfo,
 		Trace:        IsTraceEnabled(),
-		ExportRename: conf.Target != "",
+		// Hosted wasm profiles need renamed //export symbols for allocator and
+		// host entries even when selected through raw GOOS/GOARCH rather than a
+		// named -target.
+		ExportRename: conf.Target != "" || export.WasmProfile != crosscompile.WasmProfileNone,
 		ShadowStack:  useShadowStack(conf.Goarch),
 	}
 	preloadOptions := frontendOptions
@@ -614,8 +616,8 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 	// reconstruct every Go entry PC through dlsym. External mode always needs
 	// final-PC sites for sidecar construction.
 	prog.EnableFuncInfoSites(shouldEnablePCLNSites(conf, funcInfo, emitDebugInfo))
-	sizes := func(sizes types.Sizes, compiler, arch string) types.Sizes {
-		sizes = effectiveTypeSizes(sizes, arch, export.WasmProfile)
+	sizes := func(sizes types.Sizes, _, _ string) types.Sizes {
+		sizes = effectiveTypeSizes(sizes, export.WasmProfile)
 		return prog.TypeSizes(sizes)
 	}
 	dedup := packages.NewDeduper()
@@ -1232,11 +1234,7 @@ func cSharedImportLibraryArgs(toolchain crosscompile.NativeToolchain, output str
 }
 
 // DefaultBuildTags returns the build tags LLGo always enables for a target.
-func DefaultBuildTags(goarch, target string) string {
-	return defaultBuildTags(goarch, target)
-}
-
-func defaultBuildTags(goarch, target string) string {
+func DefaultBuildTags(_, _ string) string {
 	return "llgo,math_big_pure_go,purego"
 }
 
@@ -1294,16 +1292,11 @@ func applyWasmGCLinkFlags(conf *Config, export *crosscompile.Export) {
 	}
 }
 
-func effectiveTypeSizes(sizes types.Sizes, arch string, profile crosscompile.WasmProfile) types.Sizes {
+func effectiveTypeSizes(sizes types.Sizes, profile crosscompile.WasmProfile) types.Sizes {
 	switch profile {
-	case crosscompile.WasmProfileJ32, crosscompile.WasmProfileW32:
-		return &types.StdSizes{WordSize: 4, MaxAlign: 4}
-	case crosscompile.WasmProfileJ64:
+	case crosscompile.WasmProfileJ32, crosscompile.WasmProfileJ64, crosscompile.WasmProfileW32:
 		return &types.StdSizes{WordSize: 8, MaxAlign: 8}
 	default:
-		if arch == "wasm" {
-			return &types.StdSizes{WordSize: 4, MaxAlign: 4}
-		}
 		return sizes
 	}
 }

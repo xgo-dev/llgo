@@ -64,7 +64,7 @@ func TestProcessPath_UsesFlagsFileTarget(t *testing.T) {
 	if err := os.WriteFile(sourceFile, []byte("// LITTEST\npackage main\n\nfunc main() { defer func() {}() }\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(pkgDir, "flags.txt"), []byte("-target=emscripten\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(pkgDir, "flags.txt"), []byte("-target=wasm\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -77,7 +77,7 @@ func TestProcessPath_UsesFlagsFileTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "// CHECK-NEXT:   switch i32") {
+	if !strings.Contains(text, "// CHECK-NEXT:   switch i64") {
 		t.Fatalf("litgen did not use the wasm target from flags.txt:\n%s", text)
 	}
 	if strings.Contains(text, "blockaddress") || strings.Contains(text, "indirectbr") {
