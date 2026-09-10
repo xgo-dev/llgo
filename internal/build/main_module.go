@@ -74,12 +74,7 @@ func needsWasmRuntimeScheduler(ctx *context) bool {
 	if ctx.crossCompile.WasmPostLink.Asyncify {
 		return true
 	}
-	switch ctx.crossCompile.WasmABI {
-	case crosscompile.WasmABIEmscripten, crosscompile.WasmABIEmscriptenMemory64:
-		return true
-	default:
-		return false
-	}
+	return ctx.crossCompile.WasmProvider == crosscompile.WasmProviderEmscripten
 }
 
 // genMainModule generates the main entry module for an llgo program.

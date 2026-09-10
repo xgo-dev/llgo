@@ -133,8 +133,8 @@ go -C "${repo_root}/runtime" test -count=1 -cover ./internal/runtime/tinygogc
 fi
 
 if [[ "${suite}" != "test-command" ]]; then
-# Canonical C-ecosystem profiles exercise the same scheduler semantics under
-# Emscripten wasm32, Emscripten Memory64/LP64, and WASI Preview 1.
+# Canonical hosted targets exercise the same scheduler semantics under J32
+# Emscripten, J64 Emscripten Memory64, and W32 WASI Preview 1.
 run_emscripten emscripten emscripten-runner.mjs "${scheduler_fixture}" "wasm scheduler ok" "scheduler-emscripten"
 run_emscripten emscripten-memory64 emscripten-memory64-runner.mjs "${scheduler_fixture}" "wasm scheduler ok" "scheduler-memory64"
 run_wasi wasi "${scheduler_fixture}" "wasm scheduler ok" "scheduler-wasi"
@@ -158,7 +158,7 @@ run_emscripten emscripten-memory64 emscripten-memory64-runner.mjs "${timer_fixtu
 run_wasi wasi "${timer_fixture}" "wasm timers ok" "timers-wasi"
 
 # R2 enables the non-moving collector by default for each canonical
-# single-worker C profile. This fixture covers active and suspended G roots,
+# single-worker hosted target. This fixture covers active and suspended G roots,
 # closures/interfaces/aggregates, panic/recover unwinding, pure-Go loop
 # safepoints, reclamation, aligned allocation, and memory growth.
 run_emscripten emscripten emscripten-runner.mjs "${gc_fixture}" "wasm gc ok" "gc-emscripten"
@@ -176,10 +176,6 @@ run_wasi wasi "${lifecycle_fixture}" "wasm lifecycle ok" "lifecycle-wasi"
 run_emscripten emscripten emscripten-runner.mjs "${callback_fixture}" "wasm callback-only wake ok" "callback-emscripten"
 run_emscripten emscripten-memory64 emscripten-memory64-runner.mjs "${callback_fixture}" "wasm callback-only wake ok" "callback-memory64"
 
-# Keep the legacy named aliases executable while raw js/wasm remains the
-# browser/worker-only compatibility path defined by R0.
-run_emscripten wasm emscripten-runner.mjs "${scheduler_fixture}" "wasm scheduler ok" "scheduler-legacy-wasm"
-run_wasi wasip1 "${scheduler_fixture}" "wasm scheduler ok" "scheduler-legacy-wasip1"
 fi
 
 if [[ "${suite}" != "runtime" ]]; then

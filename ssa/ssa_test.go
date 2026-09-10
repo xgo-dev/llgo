@@ -3186,15 +3186,14 @@ func TestWindowsTargetTriple(t *testing.T) {
 
 func TestWasmTargetSpec(t *testing.T) {
 	for _, test := range []struct {
-		name, target, llvmTarget, wasmABI, want string
+		name, target, llvmTarget, wasmProfile, want string
 	}{
 		{name: "raw js wasm32", want: "wasm32-unknown-js"},
-		{name: "legacy named wasm", target: "wasm", llvmTarget: "wasm32-unknown-emscripten", wasmABI: "emscripten", want: "wasm32-unknown-emscripten"},
-		{name: "Emscripten wasm32", target: "emscripten", llvmTarget: "wasm32-unknown-emscripten", wasmABI: "emscripten", want: "wasm32-unknown-emscripten"},
-		{name: "Emscripten Memory64", target: "emscripten-memory64", llvmTarget: "wasm64-unknown-emscripten", wasmABI: "emscripten-memory64", want: "wasm64-unknown-emscripten"},
+		{name: "Emscripten wasm32", target: "emscripten", llvmTarget: "wasm32-unknown-emscripten", wasmProfile: "j32", want: "wasm32-unknown-emscripten"},
+		{name: "Emscripten Memory64", target: "emscripten-memory64", llvmTarget: "wasm64-unknown-emscripten", wasmProfile: "j64", want: "wasm64-unknown-emscripten"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got := (&Target{GOOS: "js", GOARCH: "wasm", Target: test.target, LLVMTarget: test.llvmTarget, WasmABI: test.wasmABI}).Spec().Triple
+			got := (&Target{GOOS: "js", GOARCH: "wasm", Target: test.target, LLVMTarget: test.llvmTarget, WasmProfile: test.wasmProfile}).Spec().Triple
 			if got != test.want {
 				t.Fatalf("triple = %q, want %q", got, test.want)
 			}

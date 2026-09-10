@@ -14,10 +14,10 @@ type Config struct {
 	BuildTags []string `json:"build-tags"`
 	GOOS      string   `json:"goos"`
 	GOARCH    string   `json:"goarch"`
-	// WasmABI identifies the WebAssembly ecosystem ABI independently of
-	// GOOS/GOARCH and source-selection build tags. It is empty for non-wasm
-	// targets.
-	WasmABI string `json:"wasm-abi"`
+	// WasmProfile identifies the memory/host ABI pair. WasmProvider selects the
+	// concrete host implementation without creating another source profile.
+	WasmProfile  string `json:"wasm-profile"`
+	WasmProvider string `json:"wasm-provider"`
 
 	// Compiler and linker configuration
 	Libc         string   `json:"libc"`

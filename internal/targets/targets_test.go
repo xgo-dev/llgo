@@ -294,16 +294,14 @@ func TestResolverWithRealTargets(t *testing.T) {
 func TestWebAssemblyProfileTargets(t *testing.T) {
 	resolver := NewDefaultResolver()
 	tests := []struct {
-		name, llvmTarget, goos, goarch, wasmABI string
-		wantTags                                []string
+		name, llvmTarget, goos, goarch, profile, provider string
+		wantTags                                          []string
 	}{
-		{"emscripten", "wasm32-unknown-emscripten", "js", "wasm", "emscripten", []string{"llgo.wasm.emscripten"}},
-		{"emscripten-memory64", "wasm64-unknown-emscripten", "js", "wasm", "emscripten-memory64", []string{"llgo.wasm.emscripten", "llgo.wasm.emscripten.memory64"}},
-		{"wasm", "wasm32-unknown-emscripten", "js", "wasm", "emscripten", []string{"llgo.wasm.emscripten", "tinygo.wasm"}},
-		{"wasi", "wasm32-unknown-wasip1", "wasip1", "wasm", "wasi-preview1", []string{"llgo.wasm.wasi"}},
-		{"wasip1", "wasm32-unknown-wasip1", "wasip1", "wasm", "wasi-preview1", []string{"llgo.wasm.wasi", "tinygo.wasm"}},
-		{"wasm-unknown", "wasm32-unknown-unknown", "linux", "arm", "freestanding", []string{"llgo.wasm.freestanding", "tinygo.wasm", "wasm_unknown"}},
-		{"wasip2", "wasm32-unknown-wasi", "linux", "arm", "wasi-preview2", []string{"llgo.wasm.wasi", "tinygo.wasm", "wasip2"}},
+		{"emscripten", "wasm32-unknown-emscripten", "js", "wasm", "j32", "emscripten", []string{"llgo.wasm.emscripten"}},
+		{"emscripten-memory64", "wasm64-unknown-emscripten", "js", "wasm", "j64", "emscripten", []string{"llgo.wasm.emscripten", "llgo.wasm.emscripten.memory64"}},
+		{"wasm", "wasm32-unknown-emscripten", "js", "wasm", "j32", "emscripten", []string{"llgo.wasm.emscripten"}},
+		{"wasi", "wasm32-unknown-wasip1", "wasip1", "wasm", "w32", "wasi", []string{"llgo.wasm.wasi"}},
+		{"wasip1", "wasm32-unknown-wasip1", "wasip1", "wasm", "w32", "wasi", []string{"llgo.wasm.wasi"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -311,11 +309,11 @@ func TestWebAssemblyProfileTargets(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if config.LLVMTarget != test.llvmTarget || config.GOOS != test.goos ||
-				config.GOARCH != test.goarch || config.WasmABI != test.wasmABI {
-				t.Fatalf("profile = LLVM %q, %s/%s, ABI %q; want LLVM %q, %s/%s, ABI %q",
-					config.LLVMTarget, config.GOOS, config.GOARCH, config.WasmABI,
-					test.llvmTarget, test.goos, test.goarch, test.wasmABI)
+			if config.LLVMTarget != test.llvmTarget || config.GOOS != test.goos || config.GOARCH != test.goarch ||
+				config.WasmProfile != test.profile || config.WasmProvider != test.provider {
+				t.Fatalf("profile = LLVM %q, %s/%s, %q/%q; want LLVM %q, %s/%s, %q/%q",
+					config.LLVMTarget, config.GOOS, config.GOARCH, config.WasmProfile, config.WasmProvider,
+					test.llvmTarget, test.goos, test.goarch, test.profile, test.provider)
 			}
 			if config.CPU != "generic" {
 				t.Errorf("CPU = %q, want generic", config.CPU)
@@ -325,16 +323,19 @@ func TestWebAssemblyProfileTargets(t *testing.T) {
 					t.Errorf("build tags %v do not contain %q", config.BuildTags, tag)
 				}
 			}
-			if strings.HasPrefix(test.name, "emscripten") || test.name == "wasm" {
+			if slices.Contains(config.BuildTags, "tinygo.wasm") {
+				t.Errorf("build tags %v retain the obsolete TinyGo compatibility tag", config.BuildTags)
+			}
+			if test.provider == "emscripten" {
 				wantRunner := "emscripten-runner.mjs"
-				if test.name == "emscripten-memory64" {
+				if test.profile == "j64" {
 					wantRunner = "emscripten-memory64-runner.mjs"
 				}
 				if !strings.Contains(config.Emulator, wantRunner) {
 					t.Errorf("emulator %q does not instantiate Emscripten module output", config.Emulator)
 				}
 			}
-			if test.name == "wasi" || test.name == "wasip1" {
+			if test.provider == "wasi" {
 				// R1 translates LLVM's legacy Wasm SjLj encoding to standardized
 				// exnref instructions after Asyncify instrumentation. Wasmtime keeps
 				// that proposal opt-in, so the inherited public emulator must enable it.

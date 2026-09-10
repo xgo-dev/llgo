@@ -364,20 +364,16 @@ func TestNeedsWasmRuntimeScheduler(t *testing.T) {
 		want   bool
 	}{
 		{
-			name: "emscripten",
-			conf: Config{BuildMode: BuildModeExe},
-			target: crosscompile.Export{
-				WasmABI: crosscompile.WasmABIEmscripten,
-			},
-			want: true,
+			name:   "emscripten",
+			conf:   Config{BuildMode: BuildModeExe},
+			target: crosscompile.Export{WasmProfile: crosscompile.WasmProfileJ32, WasmProvider: crosscompile.WasmProviderEmscripten},
+			want:   true,
 		},
 		{
-			name: "emscripten_memory64",
-			conf: Config{BuildMode: BuildModeExe},
-			target: crosscompile.Export{
-				WasmABI: crosscompile.WasmABIEmscriptenMemory64,
-			},
-			want: true,
+			name:   "emscripten_memory64",
+			conf:   Config{BuildMode: BuildModeExe},
+			target: crosscompile.Export{WasmProfile: crosscompile.WasmProfileJ64, WasmProvider: crosscompile.WasmProviderEmscripten},
+			want:   true,
 		},
 		{
 			name: "wasi_asyncify",
@@ -388,16 +384,9 @@ func TestNeedsWasmRuntimeScheduler(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "emscripten_library",
-			conf: Config{BuildMode: BuildModeCArchive},
-			target: crosscompile.Export{
-				WasmABI: crosscompile.WasmABIEmscripten,
-			},
-		},
-		{
-			name:   "freestanding",
-			conf:   Config{BuildMode: BuildModeExe},
-			target: crosscompile.Export{WasmABI: crosscompile.WasmABIFreestanding},
+			name:   "emscripten_library",
+			conf:   Config{BuildMode: BuildModeCArchive},
+			target: crosscompile.Export{WasmProfile: crosscompile.WasmProfileJ32, WasmProvider: crosscompile.WasmProviderEmscripten},
 		},
 	}
 	for _, test := range tests {
