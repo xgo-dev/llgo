@@ -49,8 +49,8 @@ func TestWasmRuntimeSourcePatchTypeChecks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			pkgs, err := packages.LoadEx(nil, func(sizes types.Sizes, _ string, arch string) types.Sizes {
-				return effectiveTypeSizes(sizes, arch, test.profile)
+			pkgs, err := packages.LoadEx(nil, func(sizes types.Sizes, _, _ string) types.Sizes {
+				return effectiveTypeSizes(sizes, test.profile)
 			}, &packages.Config{
 				Mode:       loadSyntax | packages.NeedDeps | packages.NeedModule | packages.NeedExportFile,
 				Env:        cfgEnv,

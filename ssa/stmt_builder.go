@@ -178,17 +178,24 @@ func (b Builder) Return(results ...Expr) {
 	case 1:
 		raw := b.Func.raw.Type.(*types.Signature).Results().At(0).Type()
 		ret := checkExpr(results[0], raw, b)
-		b.impl.CreateRet(ret.impl)
+		b.impl.CreateRet(b.fitLLVMValue(ret.impl, ret.Type, b.Func.ll.ReturnType()))
 	default:
 		tret := b.Func.raw.Type.(*types.Signature).Results()
-		n := tret.Len()
-		typs := make([]Type, n)
-		for i := 0; i < n; i++ {
-			typs[i] = b.Prog.Type(tret.At(i).Type(), InC)
+		values := llvmParams(0, results, tret, b)
+		if !b.Prog.isNativeStorage(b.Func.Type) {
+			typ := b.Prog.rawType(tret)
+			expr := b.aggregateValue(typ, values...)
+			b.impl.CreateRet(expr.impl)
+			return
 		}
-		typ := b.Prog.Struct(typs...)
-		expr := b.aggregateValue(typ, llvmParams(0, results, tret, b)...)
-		b.impl.CreateRet(expr.impl)
+		physical := b.Func.ll.ReturnType()
+		elements := physical.StructElementTypes()
+		aggregate := llvm.Undef(physical)
+		for i, value := range values {
+			source := b.Prog.rawType(tret.At(i).Type())
+			aggregate = b.impl.CreateInsertValue(aggregate, b.fitLLVMValue(value, source, elements[i]), i, "")
+		}
+		b.impl.CreateRet(aggregate)
 	}
 }
 

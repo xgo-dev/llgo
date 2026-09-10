@@ -95,8 +95,9 @@ func (b Builder) MakeString(cstr Expr, n ...Expr) (ret Expr) {
 // StringData returns the data pointer of a string.
 func (b Builder) StringData(x Expr) Expr {
 	dbgInstrf("StringData %v\n", x.impl)
+	typ := b.Prog.Pointer(b.Prog.Byte())
 	ptr := llvm.CreateExtractValue(b.impl, x.impl, 0)
-	return Expr{ptr, b.Prog.Pointer(b.Prog.Byte())}
+	return Expr{b.fromStorageValue(typ, ptr), typ}
 }
 
 // StringLen returns the length of a string.
@@ -111,10 +112,11 @@ func (b Builder) StringLen(x Expr) Expr {
 // SliceData returns the data pointer of a slice.
 func (b Builder) SliceData(x Expr) Expr {
 	dbgInstrf("SliceData %v\n", x.impl)
-	ptr := llvm.CreateExtractValue(b.impl, x.impl, 0)
 	ty := x.Type.RawType()
 	tySlice := ty.Underlying().(*types.Slice)
-	return Expr{ptr, b.Prog.Pointer(b.Prog.rawType(tySlice.Elem()))}
+	typ := b.Prog.Pointer(b.Prog.rawType(tySlice.Elem()))
+	ptr := llvm.CreateExtractValue(b.impl, x.impl, 0)
+	return Expr{b.fromStorageValue(typ, ptr), typ}
 }
 
 // SliceLen returns the length of a slice.
@@ -156,7 +158,7 @@ func (b Builder) IndexAddr(x, idx Expr) Expr {
 		max := b.SliceLen(x)
 		idx = b.checkIndex(idx, max)
 		indices := []llvm.Value{idx.impl}
-		return Expr{llvm.CreateInBoundsGEP(b.impl, telem.ll, ptr.impl, indices), pt}
+		return Expr{llvm.CreateInBoundsGEP(b.impl, prog.storageType(telem), ptr.impl, indices), pt}
 	case *types.Pointer:
 		ar := t.Elem().Underlying().(*types.Array)
 		max := prog.IntVal(uint64(ar.Len()), prog.Int())
@@ -166,7 +168,7 @@ func (b Builder) IndexAddr(x, idx Expr) Expr {
 		}
 	}
 	indices := []llvm.Value{idx.impl}
-	return Expr{llvm.CreateInBoundsGEP(b.impl, telem.ll, x.impl, indices), pt}
+	return Expr{llvm.CreateInBoundsGEP(b.impl, prog.storageType(telem), x.impl, indices), pt}
 }
 
 func isKnownNonNilArrayBase(v llvm.Value) bool {
@@ -377,7 +379,7 @@ func (b Builder) Index(x, idx Expr, takeAddr func() (addr Expr, zero bool)) Expr
 	}
 	pt := prog.Pointer(telem)
 	indices := []llvm.Value{idx.impl}
-	buf := Expr{llvm.CreateInBoundsGEP(b.impl, telem.ll, ptr.impl, indices), pt}
+	buf := Expr{llvm.CreateInBoundsGEP(b.impl, prog.storageType(telem), ptr.impl, indices), pt}
 	return b.Load(buf)
 }
 
@@ -648,12 +650,14 @@ func (b Builder) Lookup(x, key Expr, commaOk bool) (ret Expr) {
 		} else {
 			name = "MapAccess1Fat"
 		}
-		args = append(args, b.Pkg.mapZeroAddr(vsize, prog.td.ABITypeAlignment(vtyp.ll)))
+		args = append(args, b.Pkg.mapZeroAddr(vsize, int(prog.AlignOf(vtyp))))
 	}
 	if commaOk {
 		vals := b.Call(b.Pkg.rtFunc(name), args...)
-		val := b.Load(Expr{b.impl.CreateExtractValue(vals.impl, 0, ""), prog.Pointer(vtyp)})
-		ok := b.impl.CreateExtractValue(vals.impl, 1, "")
+		valuePtr := b.getField(vals, 0)
+		valuePtr.Type = prog.Pointer(vtyp)
+		val := b.Load(valuePtr)
+		ok := b.getField(vals, 1).impl
 		t := prog.Struct(vtyp, prog.Bool())
 		return b.aggregateValue(t, val.impl, ok)
 	} else {
@@ -712,7 +716,7 @@ func mapKeyFastKind(prog Program, mapType types.Type) mapFastKind {
 	if prog.SizeOf(prog.rawType(m.Elem())) > abi.MAXELEMSIZE {
 		return mapFastNone
 	}
-	ptrSize := prog.PointerSize()
+	ptrSize := prog.GoWordSize()
 	key := types.Unalias(m.Key()).Underlying()
 	switch key := key.(type) {
 	case *types.Basic:
@@ -901,7 +905,7 @@ func (b Builder) Next(typ Type, iter Expr, isString bool) Expr {
 	ktyp := prog.Type(typ.raw.Type.Underlying().(*types.Map).Key(), InGo)
 	vtyp := prog.Type(typ.raw.Type.Underlying().(*types.Map).Elem(), InGo)
 	rets := b.InlineCall(b.Pkg.rtFunc("MapIterNext"), iter)
-	ok := b.impl.CreateExtractValue(rets.impl, 0, "")
+	ok := b.getField(rets, 0).impl
 	t := prog.Struct(prog.Bool(), ktyp, vtyp)
 	blks := b.Func.MakeBlocks(3)
 	b.If(Expr{ok, prog.Bool()}, blks[0], blks[1])
@@ -910,17 +914,17 @@ func (b Builder) Next(typ Type, iter Expr, isString bool) Expr {
 	phi.AddIncoming(b, blks[:2], func(i int, blk BasicBlock) Expr {
 		b.SetBlockEx(blk, AtEnd, false)
 		if i == 0 {
-			k := b.impl.CreateExtractValue(rets.impl, 1, "")
-			v := b.impl.CreateExtractValue(rets.impl, 2, "")
+			k := b.getField(rets, 1).impl
+			v := b.getField(rets, 2).impl
 			valTrue := b.aggregateValue(t, prog.BoolVal(true).impl,
-				llvm.CreateLoad(b.impl, ktyp.ll, k),
-				llvm.CreateLoad(b.impl, vtyp.ll, v))
+				b.Load(Expr{k, prog.Pointer(ktyp)}).impl,
+				b.Load(Expr{v, prog.Pointer(vtyp)}).impl)
 			b.Jump(blks[2])
 			return valTrue
 		}
 		valFalse := b.aggregateValue(t, prog.BoolVal(false).impl,
-			llvm.ConstNull(ktyp.ll),
-			llvm.ConstNull(vtyp.ll))
+			prog.Zero(ktyp).impl,
+			prog.Zero(vtyp).impl)
 		b.Jump(blks[2])
 		return valFalse
 	})
@@ -1069,12 +1073,12 @@ func (b Builder) Select(states []*SelectState, blocking bool) (ret Expr) {
 	tSlice := lastParamType(prog, fn)
 	slice := b.selectOpsSlice(tSlice, ops)
 	ret = b.Call(fn, slice)
-	chosen := b.impl.CreateExtractValue(ret.impl, 0, "")
-	recvOK := b.impl.CreateExtractValue(ret.impl, 1, "")
+	chosen := b.getField(ret, 0).impl
+	recvOK := b.getField(ret, 1).impl
 	if !blocking {
 		// runtime.TrySelect returns (isel, recvOK, tryOK). recvOK is only meaningful
 		// for receives; selection success is reported by tryOK.
-		tryOK := b.impl.CreateExtractValue(ret.impl, 2, "")
+		tryOK := b.getField(ret, 2).impl
 		chosen = llvm.CreateSelect(b.impl, tryOK, chosen, prog.Val(-1).impl)
 	}
 	results := []llvm.Value{chosen, recvOK}
@@ -1085,7 +1089,9 @@ func (b Builder) Select(states []*SelectState, blocking bool) (ret Expr) {
 			// The receive buffer was allocated after StackSave and becomes invalid
 			// at StackRestore. Keep its load from being sunk past that boundary.
 			typs = append(typs, etyp)
-			r := b.Load(Expr{b.impl.CreateExtractValue(ops[i].impl, 1, ""), prog.Pointer(etyp)})
+			valuePtr := b.getField(ops[i], 1)
+			valuePtr.Type = prog.Pointer(etyp)
+			r := b.Load(valuePtr)
 			if prog.SizeOf(etyp) != 0 { // Zero-sized Load returns a constant.
 				r.SetVolatile(true)
 			}

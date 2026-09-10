@@ -23,6 +23,7 @@ func main() {
 	if testAlignedAlloc() == 0 {
 		panic("aligned allocation failed")
 	}
+	testCGlobalRoot()
 	testRoots()
 	testCooperativeSafepoint()
 	testSuspendedGRoots()
@@ -34,6 +35,22 @@ func main() {
 	testReclamation()
 	testHeapGrowth()
 	println("wasm gc ok")
+}
+
+func testCGlobalRoot() {
+	if size, offset := testCPointerSize(), testCGlobalRootWordOffset(); (size == 4 && offset != 4) || (size == 8 && offset != 0) {
+		panic("unexpected C global root layout")
+	}
+	testSetCGlobalRoot()
+	testClobberCStack(8)
+	_ = clobberStack(32, 1)
+	allocateGarbage()
+	runtime.GC()
+	runtime.GC()
+	if testReadCGlobalRoot() != 0x123456789abcdef0 {
+		panic("C global root was not retained")
+	}
+	testClearCGlobalRoot()
 }
 
 func testExitedGStorageRelease() {

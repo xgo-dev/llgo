@@ -55,14 +55,29 @@ func (v Expr) IsNil() bool {
 
 // SetOrdering sets the ordering of the atomic operation.
 func (v Expr) SetOrdering(ordering AtomicOrdering) Expr {
-	v.impl.SetOrdering(ordering)
+	v.memoryInstruction().SetOrdering(ordering)
 	return v
 }
 
 // SetVolatile marks a load or store as volatile.
 func (v Expr) SetVolatile(volatile bool) Expr {
-	v.impl.SetVolatile(volatile)
+	v.memoryInstruction().SetVolatile(volatile)
 	return v
+}
+
+// memoryInstruction returns the underlying load or atomic instruction when a
+// storage-width conversion represents its logical Go value to callers.
+func (v Expr) memoryInstruction() llvm.Value {
+	if cast := v.impl.IsAIntToPtrInst(); !cast.IsNil() {
+		return cast.Operand(0)
+	}
+	if cast := v.impl.IsAZExtInst(); !cast.IsNil() {
+		return cast.Operand(0)
+	}
+	if cast := v.impl.IsASExtInst(); !cast.IsNil() {
+		return cast.Operand(0)
+	}
+	return v.impl
 }
 
 func (v Expr) SetName(alias string) Expr {
@@ -124,7 +139,7 @@ func (p Program) Zero(t Type) Expr {
 		kind := u.Kind()
 		switch {
 		case kind >= types.Bool && kind <= types.Uintptr:
-			ret = llvm.ConstInt(p.rawType(u).ll, 0, false)
+			ret = llvm.ConstInt(t.ll, 0, false)
 		case kind == types.String:
 			ret = p.Zero(p.rtType("String")).impl
 		case kind == types.UnsafePointer:
@@ -171,7 +186,7 @@ func (p Program) Zero(t Type) Expr {
 		for i := 0; i < n; i++ {
 			flds[i] = p.Zero(p.rawType(u.At(i).Type())).impl
 		}
-		ret = p.ctx.ConstStruct(flds, false)
+		ret = p.constStructValue(t, flds)
 	default:
 		log.Panicln("todo:", u)
 	}
@@ -726,8 +741,8 @@ func (b Builder) BinOp(op token.Token, x, y Expr) Expr {
 		case vkStruct:
 			return b.StructBinOp(op, x, y, Nil, Nil)
 		case vkSlice:
-			dx := b.impl.CreateExtractValue(x.impl, 0, "")
-			dy := b.impl.CreateExtractValue(y.impl, 0, "")
+			dx := b.getField(x, 0).impl
+			dy := b.getField(y, 0).impl
 			switch op {
 			case token.EQL:
 				return Expr{b.impl.CreateICmp(llvm.IntEQ, dx, dy, ""), tret}
@@ -778,7 +793,7 @@ func (b Builder) StructBinOp(op token.Token, x, y, xaddr, yaddr Expr) Expr {
 	typ := x.raw.Type.Underlying().(*types.Struct)
 	size := uint64(prog.abi.Size(typ))
 	regular := prog.abi.IsRegularMemory(typ)
-	if !regular || CanInlineStructEqual(typ, size, prog.PointerSize()) {
+	if !regular || CanInlineStructEqual(typ, size, prog.GoWordSize()) {
 		ret := prog.BoolVal(true)
 		for i, n := 0, typ.NumFields(); i < n; i++ {
 			if typ.Field(i).Name() == "_" {
@@ -1005,7 +1020,7 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 		case vkClosure:
 			// TODO(xsw): change type should be a noop instruction
 			convType := func() Expr {
-				r := Expr{llvm.CreateAlloca(b.impl, t.ll), b.Prog.Pointer(t)}
+				r := b.AllocaT(t)
 				b.Store(r, x)
 				return b.Load(r)
 			}
@@ -1047,9 +1062,9 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 		if x.impl.Type().String() == t.ll.String() {
 			ret.impl = x.impl
 		} else {
-			ptr := llvm.CreateAlloca(b.impl, t.ll)
-			b.impl.CreateStore(x.impl, ptr)
-			ret.impl = llvm.CreateLoad(b.impl, t.ll, ptr)
+			ptr := b.AllocaT(t)
+			b.Store(ptr, x)
+			ret.impl = b.Load(ptr).impl
 		}
 	}
 	ret.Type = t
@@ -1464,7 +1479,7 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 		ret.Type = b.Prog.retType(sig)
 		ret.impl = llvm.CreateCall(
 			b.impl,
-			b.Prog.FuncDecl(entrySig, InC).ll,
+			b.Prog.toLLVMFunc(entrySig),
 			fn.impl,
 			llvmParamsEx(data, args, entrySig.Params(), b),
 		)
@@ -1486,7 +1501,25 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 		reflectCheck = b.checkReflect(fn, args)
 	}
 	ret.Type = b.Prog.retType(sig)
-	ret.impl = llvm.CreateCall(b.impl, ll, fn.impl, llvmParamsEx(data, args, sig.Params(), b))
+	params := llvmParamsEx(data, args, sig.Params(), b)
+	physicalParams := ll.ParamTypes()
+	for i := range params {
+		if i < len(physicalParams) {
+			source := args[i]
+			if !data.IsNil() {
+				if i == 0 {
+					source = data
+				} else {
+					source = args[i-1]
+				}
+			}
+			params[i] = b.fitLLVMValue(params[i], source.Type, physicalParams[i])
+		}
+	}
+	ret.impl = llvm.CreateCall(b.impl, ll, fn.impl, params)
+	if ret.Type != b.Prog.Void() {
+		ret.impl = b.fitLLVMResult(ret.impl, ret.Type)
+	}
 	b.setNativeCallConv(ret.impl, fn)
 	if reflectCheck.Kind&ReflectMethodByName != 0 && reflectCheck.Name == "" {
 		nameArgIndex := len(args) - 1
@@ -1513,10 +1546,10 @@ func (b Builder) callClosure(fn, data Expr, sig *types.Signature, args []Expr) (
 	envParams[0] = data.impl
 	copy(envParams[1:], params)
 
-	noEnvType := prog.FuncDecl(sig, InC).ll
+	noEnvType := prog.toLLVMFunc(sig)
 	envParam := types.NewParam(token.NoPos, nil, "$env", types.Typ[types.UnsafePointer])
 	envSig := FuncAddCtx(envParam, sig)
-	envType := prog.FuncDecl(envSig, InC).ll
+	envType := prog.toLLVMFunc(envSig)
 
 	// A known code pointer uses the entry metadata directly. This preserves the
 	// exact prototype and avoids the identity barrier needed by dynamic native
@@ -1940,7 +1973,7 @@ func (b Builder) BuiltinCall(fn string, args ...Expr) (ret Expr) {
 		return b.Prog.IntVal(b.Prog.SizeOf(args[0].Type), b.Prog.Uintptr())
 	case "Alignof":
 		// instance of generic function
-		return b.Prog.Val(int(b.Prog.td.ABITypeAlignment(args[0].ll)))
+		return b.Prog.Val(int(b.Prog.AlignOf(args[0].Type)))
 	case "Offsetof":
 		// instance of generic function
 		if load := args[0].impl.IsALoadInst(); !load.IsNil() {

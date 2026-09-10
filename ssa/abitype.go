@@ -271,7 +271,10 @@ func (b Builder) abiTuples(t *types.Tuple, name string) llvm.Value {
 		}
 		ft := prog.AbiTypePtr()
 		atyp := prog.rawType(types.NewArray(ft.RawType(), int64(n)))
-		data := Expr{llvm.ConstArray(ft.ll, fields), atyp}
+		for i, field := range fields {
+			fields[i] = prog.toStorageConstant(ft, field)
+		}
+		data := Expr{llvm.ConstArray(prog.storageType(ft), fields), atyp}
 		g = b.Pkg.doNewVar(name, prog.Pointer(atyp))
 		g.Init(data)
 		g.impl.SetGlobalConstant(true)
@@ -819,7 +822,10 @@ func (p Package) getAbiTypesFor(name string, filter func(sym *AbiSymbol) bool) E
 	}
 	ft := prog.AbiTypePtr()
 	atyp := prog.rawType(types.NewArray(ft.RawType(), int64(len(names))))
-	data := Expr{llvm.ConstArray(ft.ll, fields), atyp}
+	for i, field := range fields {
+		fields[i] = prog.toStorageConstant(ft, field)
+	}
+	data := Expr{llvm.ConstArray(prog.storageType(ft), fields), atyp}
 	array := p.doNewVar(name+"$array", prog.Pointer(atyp))
 	array.Init(data)
 	array.impl.SetGlobalConstant(true)

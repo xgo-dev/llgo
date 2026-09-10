@@ -95,21 +95,24 @@ func emval_equals(first, second Value) bool {
 	return cEmvalEquals(first.emvalHandle(), second.emvalHandle())
 }
 
-func emvalArgs(args *Value, nargs c.Int) []uintptr {
+func emvalArgs(args *Value, nargs c.Int) []c.Ulong {
 	if nargs == 0 {
 		return nil
 	}
 	values := unsafe.Slice(args, int(nargs))
-	handles := make([]uintptr, len(values))
+	// EM_VAL is a physical C pointer. Use the Emscripten C word here rather
+	// than Go uintptr: J32 keeps Go uintptr at 64 bits, while C pointer arrays
+	// still have four-byte elements.
+	handles := make([]c.Ulong, len(values))
 	for i := range values {
-		handles[i] = values[i].emvalHandle()
+		handles[i] = c.Ulong(values[i].emvalHandle())
 	}
 	return handles
 }
 
 func emval_method_call(object Value, name *c.Char, args *Value, nargs c.Int, err *c.Int) Value {
 	handles := emvalArgs(args, nargs)
-	var data *uintptr
+	var data *c.Ulong
 	if len(handles) != 0 {
 		data = &handles[0]
 	}
@@ -118,7 +121,7 @@ func emval_method_call(object Value, name *c.Char, args *Value, nargs c.Int, err
 
 func emval_call(fn Value, args *Value, nargs c.Int, kind c.Int, err *c.Int) Value {
 	handles := emvalArgs(args, nargs)
-	var data *uintptr
+	var data *c.Ulong
 	if len(handles) != 0 {
 		data = &handles[0]
 	}
@@ -195,10 +198,10 @@ func cEmvalAsString(v uintptr) string
 func cEmvalEquals(first, second uintptr) bool
 
 //go:linkname cEmvalMethodCall C.llgo_emval_method_call
-func cEmvalMethodCall(object uintptr, name *c.Char, args *uintptr, nargs c.Int, err *c.Int) uintptr
+func cEmvalMethodCall(object uintptr, name *c.Char, args *c.Ulong, nargs c.Int, err *c.Int) uintptr
 
 //go:linkname cEmvalCall C.llgo_emval_call
-func cEmvalCall(fn uintptr, args *uintptr, nargs c.Int, kind c.Int, err *c.Int) uintptr
+func cEmvalCall(fn uintptr, args *c.Ulong, nargs c.Int, kind c.Int, err *c.Int) uintptr
 
 //go:linkname cEmvalMemoryViewUint8 C.llgo_emval_memory_view_uint8
 func cEmvalMemoryViewUint8(length c.SizeT, data *c.Uint8T) uintptr

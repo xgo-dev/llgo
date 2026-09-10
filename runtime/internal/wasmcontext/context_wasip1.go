@@ -29,6 +29,8 @@ type Entry func(unsafe.Pointer) unsafe.Pointer
 
 // Context is the state consumed by Binaryen Asyncify. The first five fields
 // have fixed wasm32 offsets shared with context_wasm.S.
+//
+//llgo:type C
 type Context struct {
 	entry         unsafe.Pointer
 	arg           unsafe.Pointer

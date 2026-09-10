@@ -878,7 +878,7 @@ func (b Builder) DebugFunction(f Function, funcScope *types.Scope, pos token.Pos
 }
 
 func (b Builder) Param(idx int) Expr {
-	return b.Func.Param(idx)
+	return b.logicalValue(b.Func.Param(idx))
 }
 
 // -----------------------------------------------------------------------------

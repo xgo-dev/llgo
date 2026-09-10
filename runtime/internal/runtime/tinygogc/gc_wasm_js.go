@@ -26,7 +26,7 @@ func wasmMemalign(alignment, size uintptr) unsafe.Pointer {
 }
 
 func wasmValidMemalign(alignment uintptr) bool {
-	return alignment >= unsafe.Sizeof(uintptr(0)) && alignment&(alignment-1) == 0
+	return alignment >= gcScanWordSize && alignment&(alignment-1) == 0
 }
 
 //export malloc

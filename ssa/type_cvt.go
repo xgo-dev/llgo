@@ -76,7 +76,11 @@ func (p Program) Type(typ types.Type, bg Background) Type {
 	if bg == InGo {
 		typ, _ = p.gocvt.cvtType(typ)
 	}
-	return p.rawType(typ)
+	ret := p.rawType(typ)
+	if isNativeFuncBackground(bg) {
+		return p.withNativeStorage(ret)
+	}
+	return ret
 }
 
 // FuncDecl converts a Go/C function declaration into raw type.
@@ -90,7 +94,11 @@ func (p Program) FuncDecl(sig *types.Signature, bg Background) Type {
 	} else if recv != nil { // even in C, we need to add ctx for method
 		sig = FuncAddCtx(recv, sig)
 	}
-	return &aType{p.toLLVMFunc(sig), rawType{sig}, vkFuncDecl}
+	ret := &aType{p.toLLVMFuncBackground(sig, bg), rawType{sig}, vkFuncDecl}
+	if isNativeFuncBackground(bg) {
+		return p.withNativeStorage(ret)
+	}
+	return ret
 }
 
 // Closure creates a closture type for a function.

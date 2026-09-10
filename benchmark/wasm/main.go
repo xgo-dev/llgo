@@ -46,21 +46,19 @@ type goWasmProfile struct {
 }
 
 var wasmProfiles = []wasmProfile{
-	// GOOS/GOARCH entries measure the current implementation without
-	// claiming the official-Go ABI contract assigned to the later G1/G2 work.
-	{name: "js", goos: "js", outputExt: ".mjs", hasJSGlue: true},
-	{name: "wasip1", goos: "wasip1", outputExt: ".wasm"},
-	{name: "ec32", target: "emscripten", outputExt: ".mjs", hasJSGlue: true},
-	{name: "ec64", target: "emscripten-memory64", outputExt: ".mjs", hasJSGlue: true},
-	{name: "wc32", target: "wasi", outputExt: ".wasm"},
+	{name: "j32-goos-js", goos: "js", outputExt: ".mjs", hasJSGlue: true},
+	{name: "w32-goos-wasip1", goos: "wasip1", outputExt: ".wasm"},
+	{name: "j32-emscripten", target: "emscripten", outputExt: ".mjs", hasJSGlue: true},
+	{name: "j64-emscripten-memory64", target: "emscripten-memory64", outputExt: ".mjs", hasJSGlue: true},
+	{name: "w32-wasi", target: "wasi", outputExt: ".wasm"},
 }
 
 // The official Go compiler has no Emscripten or Memory64 ABI mode. Keep its
 // size references limited to the two profiles that describe the same
 // GOOS/GOARCH contract instead of presenting a C-ABI build as equivalent.
 var goWasmProfiles = []goWasmProfile{
-	{name: "js", goos: "js"},
-	{name: "wasip1", goos: "wasip1"},
+	{name: "j32-goos-js", goos: "js"},
+	{name: "w32-goos-wasip1", goos: "wasip1"},
 }
 
 type commandRunner func(context.Context, string, []string, string, ...string) error

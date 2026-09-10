@@ -87,12 +87,18 @@ func (b Builder) staticItab(rawIntf *types.Interface, concrete types.Type, tintf
 	}
 	hashBytes := sha256.Sum256([]byte(typeName))
 	hash := binary.LittleEndian.Uint32(hashBytes[:4])
-	global.impl.SetInitializer(prog.ctx.ConstStruct([]llvm.Value{
+	global.impl.SetInitializer(prog.constStructValue(staticType, []llvm.Value{
 		tintf.impl,
 		typ.impl,
 		prog.IntVal(uint64(hash), prog.Uint32()).impl,
-		llvm.ConstArray(ptr.ll, funcs),
-	}, false))
+		llvm.ConstArray(prog.storageType(ptr), func() []llvm.Value {
+			stored := make([]llvm.Value, len(funcs))
+			for i, fn := range funcs {
+				stored[i] = prog.toStorageConstant(ptr, fn)
+			}
+			return stored
+		}()),
+	}))
 	global.impl.SetGlobalConstant(true)
 	b.Pkg.setODRLinkage(global.impl, llvm.WeakODRLinkage)
 
@@ -101,7 +107,7 @@ func (b Builder) staticItab(rawIntf *types.Interface, concrete types.Type, tintf
 	// in LLVM's type-test candidate sets before the plugin consumes it.
 	slotKind := prog.ctx.MDKindID("llgo.static.itab.slot")
 	funOffset := uint64(prog.td.ElementOffset(staticType.ll, 3))
-	stride := uint64(prog.td.TypeAllocSize(ptr.ll))
+	stride := uint64(prog.td.TypeAllocSize(prog.storageType(ptr)))
 	interfaceTypeID := prog.interfaceCapabilityKey(rawIntf)
 	for i := range methods {
 		offset := funOffset + uint64(i)*stride
@@ -243,10 +249,22 @@ func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
 		b.Store(vptr, x)
 		return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, vptr.impl), tinter}
 	}
-	ximpl := x.impl
+	value := x
 	if lvl > 0 {
-		ximpl = extractVal(b.impl, ximpl, lvl)
+		for range lvl {
+			switch value.raw.Type.Underlying().(type) {
+			case *types.Struct:
+				value = b.getField(value, 0)
+			case *types.Array:
+				telem := prog.Index(value.Type)
+				impl := llvm.CreateExtractValue(b.impl, value.impl, 0)
+				value = Expr{b.fromStorageValue(telem, impl), telem}
+			default:
+				panic("direct interface wrapper is not a singleton aggregate")
+			}
+		}
 	}
+	ximpl := value.impl
 	var u llvm.Value
 	switch kind {
 	case abi.Pointer:
@@ -322,20 +340,14 @@ func (b Builder) recordInterfaceInfo(t *types.Interface, typeName string) {
 func (b Builder) valFromData(typ Type, data llvm.Value) Expr {
 	prog := b.Prog
 	if !directIfaceType(typ.raw.Type) {
-		impl := b.impl
-		tll := typ.ll
-		tptr := llvm.PointerType(tll, 0)
-		ptr := llvm.CreatePointerCast(impl, data, tptr)
-		return Expr{llvm.CreateLoad(impl, tll, ptr), typ}
+		stored := llvm.CreateLoad(b.impl, prog.storageType(typ), data)
+		return Expr{b.fromStorageValue(typ, stored), typ}
 	}
 	kind, real, lvl := abi.DataKindOf(typ.raw.Type, 0, prog.is32Bits)
 	switch kind {
 	case abi.Indirect:
-		impl := b.impl
-		tll := typ.ll
-		tptr := llvm.PointerType(tll, 0)
-		ptr := llvm.CreatePointerCast(impl, data, tptr)
-		return Expr{llvm.CreateLoad(impl, tll, ptr), typ}
+		stored := llvm.CreateLoad(b.impl, prog.storageType(typ), data)
+		return Expr{b.fromStorageValue(typ, stored), typ}
 	}
 	t := typ
 	if lvl > 0 {
@@ -349,21 +361,12 @@ func (b Builder) valFromData(typ Type, data llvm.Value) Expr {
 		return b.buildVal(typ, castInt(b, x, prog.Uintptr(), t), lvl)
 	case abi.BitCast:
 		x := castUintptr(b, data, prog.VoidPtr(), prog.Uintptr())
-		if int(prog.SizeOf(t)) != prog.PointerSize() {
+		if int(prog.SizeOf(t)) != prog.GoWordSize() {
 			x = castInt(b, x, prog.Uintptr(), prog.Int32())
 		}
 		return b.buildVal(typ, llvm.CreateBitCast(b.impl, x, t.ll), lvl)
 	}
 	panic("todo")
-}
-
-func extractVal(b llvm.Builder, val llvm.Value, lvl int) llvm.Value {
-	for lvl > 0 {
-		// TODO(xsw): check array support
-		val = llvm.CreateExtractValue(b, val, 0)
-		lvl--
-	}
-	return val
 }
 
 func (b Builder) buildVal(typ Type, val llvm.Value, lvl int) Expr {
@@ -512,19 +515,22 @@ func (b Builder) InterfaceData(x Expr) Expr {
 }
 
 func (b Builder) faceData(x llvm.Value) llvm.Value {
-	return llvm.CreateExtractValue(b.impl, x, 1)
+	stored := llvm.CreateExtractValue(b.impl, x, 1)
+	return b.fromStorageValue(b.Prog.VoidPtr(), stored)
 }
 
 func (b Builder) faceItab(x llvm.Value) llvm.Value {
-	return llvm.CreateExtractValue(b.impl, x, 0)
+	stored := llvm.CreateExtractValue(b.impl, x, 0)
+	return b.fromStorageValue(b.Prog.VoidPtrPtr(), stored)
 }
 
 func (b Builder) faceAbiType(x Expr) Expr {
 	if x.kind == vkIface {
 		return b.InlineCall(b.Pkg.rtFunc("IfaceType"), x)
 	}
-	typ := llvm.CreateExtractValue(b.impl, x.impl, 0)
-	return Expr{typ, b.Prog.AbiTypePtr()}
+	typ := b.Prog.AbiTypePtr()
+	stored := llvm.CreateExtractValue(b.impl, x.impl, 0)
+	return Expr{b.fromStorageValue(typ, stored), typ}
 }
 
 // -----------------------------------------------------------------------------

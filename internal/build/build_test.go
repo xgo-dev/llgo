@@ -768,7 +768,7 @@ func TestDefaultBuildTags(t *testing.T) {
 		{name: "configured wasm target", goarch: "wasm", target: "wasi", want: base},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := defaultBuildTags(test.goarch, test.target); got != test.want {
+			if got := DefaultBuildTags(test.goarch, test.target); got != test.want {
 				t.Fatalf("defaultBuildTags(%q, %q) = %q, want %q", test.goarch, test.target, got, test.want)
 			}
 		})
@@ -881,19 +881,17 @@ func TestEffectiveWasmTypeSizes(t *testing.T) {
 	base := &types.StdSizes{WordSize: 16, MaxAlign: 16}
 	for _, test := range []struct {
 		name    string
-		arch    string
 		profile crosscompile.WasmProfile
 		want    int64
 	}{
-		{"native", "amd64", crosscompile.WasmProfileNone, 16},
-		{"unresolved wasm", "wasm", crosscompile.WasmProfileNone, 4},
-		{"J32", "wasm", crosscompile.WasmProfileJ32, 4},
-		{"J64", "wasm", crosscompile.WasmProfileJ64, 8},
-		{"W32", "wasm", crosscompile.WasmProfileW32, 4},
-		{"unknown profile", "wasm", crosscompile.WasmProfile("unknown"), 4},
+		{"unresolved", crosscompile.WasmProfileNone, 16},
+		{"J32", crosscompile.WasmProfileJ32, 8},
+		{"J64", crosscompile.WasmProfileJ64, 8},
+		{"W32", crosscompile.WasmProfileW32, 8},
+		{"unknown profile", crosscompile.WasmProfile("unknown"), 16},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got := effectiveTypeSizes(base, test.arch, test.profile).Sizeof(types.Typ[types.Uintptr])
+			got := effectiveTypeSizes(base, test.profile).Sizeof(types.Typ[types.Uintptr])
 			if got != test.want {
 				t.Fatalf("uintptr size = %d, want %d", got, test.want)
 			}
