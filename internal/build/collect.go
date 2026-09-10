@@ -653,7 +653,6 @@ func copyFileAtomic(src, dst string) error {
 	if err := in.Close(); err != nil {
 		return err
 	}
-
 	if err := tmp.Chmod(0o644); err != nil {
 		return err
 	}
