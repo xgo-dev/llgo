@@ -76,6 +76,11 @@ static volatile uint8_t llgo_emval_invoke_pending;
 
 EM_JS_DEPS(llgo_emval_install_invoke_js, "$Emval,$getWasmTableEntry,$Asyncify,$Fibers");
 EM_JS(void, llgo_emval_install_invoke_js, (uint8_t *pending_flag, uintptr_t callback, int pointer_bytes), {
+    // Reinstalling would drop queued host events. Keep the first bridge for
+    // the life of the module.
+    if (Module["_llgo_invoke"]) {
+        return;
+    }
     const pending = [];
     const pendingFlag = Number(pending_flag);
     const dispatch = Asyncify.instrumentFunction(getWasmTableEntry(Number(callback)));
@@ -111,7 +116,13 @@ EM_JS(void, llgo_emval_install_invoke_js, (uint8_t *pending_flag, uintptr_t call
     };
 });
 
+static bool llgo_emval_invoke_installed;
+
 void llgo_emval_install_invoke(void (*callback)(EM_VAL)) {
+    if (llgo_emval_invoke_installed) {
+        return;
+    }
+    llgo_emval_invoke_installed = true;
     llgo_emval_invoke_pending = 0;
     llgo_emval_install_invoke_js(const_cast<uint8_t *>(&llgo_emval_invoke_pending), uintptr_t(callback), sizeof(EM_VAL));
 }
