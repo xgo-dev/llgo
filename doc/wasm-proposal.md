@@ -2,7 +2,18 @@
 
 Status: draft. Tracking issue: [xgo-dev/llgo#2152](https://github.com/xgo-dev/llgo/issues/2152).
 
-R1 through R3 are merged. They provide the single-worker scheduler, blocking and timers, linear-memory GC and lifecycle support, and reliable `llgo build`, `llgo run`, and `llgo test` workflows. The remaining work starts at W1 and completes the supported WebAssembly profiles before advanced engine features are added.
+R1 through R3, including R2.1, are merged and remain the delivered foundation of this proposal. W1-W3 build on that foundation to complete the supported WebAssembly profiles before advanced engine features are added.
+
+## Delivered milestones: R1-R3 (merged)
+
+| Milestone | Delivered scope | Merged PRs |
+| --- | --- | --- |
+| R1: single-worker runtime | Emscripten Fiber and WASI Asyncify scheduling; blocking channels/select/sync, timers and Sleep, host wakeups, and representative public `llgo test` execution. | [#2472](https://github.com/xgo-dev/llgo/pull/2472) |
+| R2: linear-memory GC | Non-moving collection, compiler and suspended-goroutine roots, cooperative safepoints, and root-chain recovery across panic/recover and Asyncify replay. | [#2487](https://github.com/xgo-dev/llgo/pull/2487) |
+| R2.1: object lifecycles | Finalizers, cleanup callbacks, weak-reference expiration, callback ordering and cancellation, and executable lifecycle regressions. | [#2492](https://github.com/xgo-dev/llgo/pull/2492) |
+| R3: toolchain workflows | Compile-only test artifacts and named-target routing; explicit ownership of the Asyncify/optimization pipeline; executable scheduler, GC, lifecycle, callback, and test-command integration checks. | [#2511](https://github.com/xgo-dev/llgo/pull/2511), [#2488](https://github.com/xgo-dev/llgo/pull/2488) |
+
+These merged milestones establish the runtime/toolchain baseline. The revised Go data model, independent host providers, standard-library completeness, and full compatibility and size/performance acceptance remain the W1-W3 work defined below.
 
 ## Profile model
 
@@ -48,7 +59,7 @@ LLGo's Core Wasm C ABI is unrelated to the WIT Canonical ABI. Future WASI Previe
 
 A feature is implemented only when CI executes it on every applicable path. The minimum hosted matrix contains four paths: J32/GoJS, J32/Emscripten, J64/Emscripten Memory64, and W32/WASI. Tests use real Node, browser, and Wasmtime execution where applicable and cover `llgo build/run/test`, artifacts, host callbacks and exit, C boundaries, reflection, GC and suspension, `test/**`, `test/std`, and every applicable GOROOT case. Only reviewed `xfail` and `notapplicable` classifications may be excluded. Each W-stage PR carries focused executable CI; compile-only coverage does not count. Final acceptance also checks compiler coverage, `cprintf`/`println`/`fmtprintf` and reflection size, runtime benchmarks, native and embedded regressions, and removal of diagnostic or superseded changes.
 
-## PR plan
+## Remaining PR plan: W1-W3
 
 ### W1: profiles and ABI foundation
 
@@ -72,7 +83,18 @@ W64, WASI Preview 2 and WIT components, threads and Atomics, WasmGC, Exception H
 
 状态：草案。跟踪 issue：[xgo-dev/llgo#2152](https://github.com/xgo-dev/llgo/issues/2152)。
 
-R1 至 R3 已经合并，已提供单 worker 调度、阻塞与定时器、线性内存 GC 与生命周期支持，以及可靠的 `llgo build`、`llgo run`、`llgo test` 流程。后续工作从 W1 重新编号，在引入高级引擎特性之前完成当前支持的 WebAssembly profile。
+R1 至 R3（包括 R2.1）已经合并，作为本提案已交付的基础继续保留。W1-W3 在此基础上完成当前支持的 WebAssembly profile，再推进高级引擎特性。
+
+## 已交付里程碑：R1-R3（已合并）
+
+| 阶段 | 已交付范围 | 已合并 PR |
+| --- | --- | --- |
+| R1：单 worker runtime | Emscripten Fiber 与 WASI Asyncify 调度；channel/select/sync 阻塞、timer 与 Sleep、host 唤醒，以及代表性 `llgo test` 执行。 | [#2472](https://github.com/xgo-dev/llgo/pull/2472) |
+| R2：线性内存 GC | 非移动回收、编译器及挂起 goroutine 的根、协作 safepoint，以及 panic/recover 和 Asyncify replay 过程中的根链恢复。 | [#2487](https://github.com/xgo-dev/llgo/pull/2487) |
+| R2.1：对象生命周期 | Finalizer、cleanup callback、弱引用失效、回调顺序与取消，以及实际执行的生命周期回归测试。 | [#2492](https://github.com/xgo-dev/llgo/pull/2492) |
+| R3：工具链流程 | 编译后不执行的测试产物与 named-target 路由；明确 Asyncify/优化流水线的处理归属；实际执行调度、GC、生命周期、callback 和测试命令集成检查。 | [#2511](https://github.com/xgo-dev/llgo/pull/2511), [#2488](https://github.com/xgo-dev/llgo/pull/2488) |
+
+这些已合并阶段构成 runtime/工具链基础。新的 Go 数据模型、独立 host provider、标准库完整性，以及完整兼容验收和体积/性能验收，仍由下述 W1-W3 完成。
 
 ## Profile 模型
 
@@ -118,7 +140,7 @@ LLGo Core Wasm C ABI 与 WIT Canonical ABI 无关。未来 WASI Preview 2 将在
 
 功能只有在 CI 对所有适用路径实际执行后才算完成。最小 hosted 矩阵包含四条路径：J32/GoJS、J32/Emscripten、J64/Emscripten Memory64、W32/WASI。测试按适用范围在真实 Node、浏览器和 Wasmtime 中运行，覆盖 `llgo build/run/test`、产物、host 回调与退出、C 边界、反射、GC 与挂起、`test/**`、`test/std` 以及全部适用 GOROOT case；只允许排除经过审查的 `xfail` 和 `notapplicable`。每个 W 阶段 PR 自带聚焦的可执行 CI，compile-only 不算覆盖。最终验收还检查编译器覆盖率、`cprintf`/`println`/`fmtprintf` 与反射体积、runtime benchmark、native/embedded 回归，以及诊断和被取代变更的清理。
 
-## PR 计划
+## 后续 PR 规划：W1-W3
 
 ### W1：Profile 与 ABI 基础
 
