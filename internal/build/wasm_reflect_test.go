@@ -50,6 +50,12 @@ func TestConfigureWasmReflectBridges(t *testing.T) {
 			false,
 		},
 		{
+			"fmt reflection metadata does not require bridges",
+			&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"},
+			`package main; import "fmt"; func main() { _ = fmt.Sprintf("%v", 1) }`,
+			false,
+		},
+		{
 			"GoJS reflection uses libffi",
 			&llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
 			`package main; import "reflect"; func main() { reflect.ValueOf(func() {}).Call(nil) }`,
@@ -109,6 +115,9 @@ func TestProgramUsesWasmReflectBridgesReachability(t *testing.T) {
 		{"dead call", `package main; import "reflect"; func dead(v reflect.Value) { v.Call(nil) }; func main() {}`, false},
 		{"reachable call", `package main; import "reflect"; func live(v reflect.Value) { v.Call(nil) }; func main() { live(reflect.Value{}) }`, true},
 		{"function value call", `package main; import "reflect"; var call = reflect.Value.Call; func main() { call(reflect.Value{}, nil) }`, true},
+		{"bound method call", `package main; import "reflect"; func main() { call := reflect.Value{}.Call; call(nil) }`, true},
+		{"function value make func", `package main; import "reflect"; var makeFunc = reflect.MakeFunc; func main() { makeFunc(reflect.TypeOf(func() {}), func([]reflect.Value) []reflect.Value { return nil }) }`, true},
+		{"function value sequence", `package main; import "reflect"; var sequence = reflect.Value.Seq; func main() { _ = sequence(reflect.ValueOf(1)) }`, true},
 		{"interface call", `package main; import "reflect"; type caller interface { Call([]reflect.Value) []reflect.Value }; func main() { var call caller = reflect.Value{}; call.Call(nil) }`, true},
 	}
 	for _, test := range tests {
@@ -119,6 +128,10 @@ func TestProgramUsesWasmReflectBridgesReachability(t *testing.T) {
 				t.Fatalf("reachable programUsesWasmReflectBridges() = %v, want %v", got, test.want)
 			}
 		})
+	}
+
+	if programMayCallWasmReflectBridgeIndirectly(nil) {
+		t.Fatal("nil reachable set may not require bridges")
 	}
 }
 
