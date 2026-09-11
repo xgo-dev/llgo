@@ -196,6 +196,8 @@ func callFuncHot() { callFunc(leaf) }
 func (workerImpl) Work() {}
 func callWorker(w workerIface) { w.Work() }
 func workerHot() { var w workerIface = workerImpl{}; callWorker(w) }
+func generic[T any]() { runtime.Caller(0) }
+func genericCaller() { generic[int]() }
 func plain() {}
 `)
 	callerCaches := NewCallerTracking()
@@ -218,6 +220,13 @@ func plain() {}
 		t.Fatal("plain function should not report runtime caller usage")
 	}
 	runtimeCallerFuncs := runtimeCallerFuncSet(callerCaches, ssapkg)
+	var genericInstance *gossa.Function
+	forEachCall(ssapkg.Func("genericCaller"), func(call *gossa.CallCommon) {
+		genericInstance = call.StaticCallee()
+	})
+	if genericInstance == nil || !runtimeCallerFuncs[genericInstance] {
+		t.Fatal("instantiated generic runtime.Caller use should retain its own frame")
+	}
 	for _, name := range []string{"dynamic", "dynamicCaller", "interfaceDispatch", "interfaceCaller", "closureLayer", "closureCaller"} {
 		if !runtimeCallerFuncs[ssapkg.Func(name)] {
 			t.Fatalf("%s should be tracked because dynamic calls may reach runtime stack APIs", name)

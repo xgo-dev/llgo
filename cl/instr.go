@@ -1620,6 +1620,13 @@ func functionBelongsToPackage(pkg *ssa.Package, fn *ssa.Function) bool {
 	if fn.Pkg == pkg {
 		return true
 	}
+	// Instantiated package-level generic functions have no SSA package of
+	// their own. Their origin still belongs to the source package and must be
+	// included in caller tracking; otherwise runtime.Caller inside the
+	// instantiation observes its caller as the current frame.
+	if origin := fn.Origin(); origin != nil && origin != fn {
+		return functionBelongsToPackage(pkg, origin)
+	}
 	return fn.Pkg == nil && fn.Parent() != nil && functionBelongsToPackage(pkg, fn.Parent())
 }
 
