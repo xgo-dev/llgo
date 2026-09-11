@@ -14,6 +14,54 @@ func TestAssertNilDerefZeroExprNoPanic(t *testing.T) {
 	b.AssertNilDeref(Expr{})
 }
 
+func TestPhiIncomingControlFlowTracksPredecessor(t *testing.T) {
+	prog := NewProgram(&Target{
+		GOOS:       "js",
+		GOARCH:     "wasm",
+		LLVMTarget: "wasm32-unknown-emscripten",
+	})
+	defer prog.Dispose()
+	prog.SetRuntime(func() *types.Package {
+		rt := types.NewPackage(PkgRuntime, "runtime")
+		params := types.NewTuple(types.NewVar(token.NoPos, nil, "nil", types.Typ[types.Bool]))
+		sig := types.NewSignatureType(nil, nil, nil, params, nil, false)
+		rt.Scope().Insert(types.NewFunc(token.NoPos, rt, "AssertNilDeref", sig))
+		return rt
+	})
+
+	empty := types.NewStruct(nil, nil)
+	params := types.NewTuple(
+		types.NewVar(token.NoPos, nil, "choose", types.Typ[types.Bool]),
+		types.NewVar(token.NoPos, nil, "value", types.NewPointer(empty)),
+	)
+	results := types.NewTuple(types.NewVar(token.NoPos, nil, "", empty))
+	sig := types.NewSignatureType(nil, nil, nil, params, results, false)
+	pkg := prog.NewPackage("p", "example.com/phi")
+	fn := pkg.NewFunc("selectValue", sig, InGo)
+	b := fn.MakeBody(4)
+	predWithCheck, predWithoutCheck, merge := fn.Block(1), fn.Block(2), fn.Block(3)
+	b.If(fn.Param(0), predWithCheck, predWithoutCheck)
+	b.SetBlock(predWithCheck).Jump(merge)
+	b.SetBlock(predWithoutCheck).Jump(merge)
+	b.SetBlock(merge)
+	phi := b.Phi(prog.Type(empty, InGo))
+	b.Return(phi.Expr)
+	phi.AddIncoming(b, []BasicBlock{predWithCheck, predWithoutCheck}, func(i int, blk BasicBlock) Expr {
+		b.SetBlockEx(blk, BeforeLast, false)
+		if i == 0 {
+			// A zero-sized load still requires a nil check. The check splits this
+			// incoming edge, so the phi must use the resulting success block.
+			return b.Load(fn.Param(1))
+		}
+		return prog.Zero(prog.Type(empty, InGo))
+	})
+	b.EndBuild()
+
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("phi did not follow the split incoming edge: %v\n%s", err, pkg.Module().String())
+	}
+}
+
 func TestAssertNilDerefColdCall(t *testing.T) {
 	Initialize(InitAllTargets | InitAllTargetInfos | InitAllTargetMCs | InitAllAsmPrinters)
 	for _, target := range []*Target{
