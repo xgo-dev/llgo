@@ -41,6 +41,52 @@ func configureWasmReflectBridges(ctx *context) {
 	target.WasmReflectBridges = wasiProvider && programUsesWasmReflectBridges(ctx.progSSA, wasmReflectRoots(ctx))
 }
 
+// configureWasmFuncInfoEntries keeps table-index metadata out of ordinary
+// Wasm programs. The records deliberately retain address-taken functions, so
+// emitting them unconditionally would turn dead function values into link
+// roots. Executables need the records only when runtime.FuncForPC is reachable;
+// library builds remain conservative because their external call roots are not
+// represented by main/init reachability.
+func configureWasmFuncInfoEntries(ctx *context) {
+	if ctx == nil || ctx.prog == nil || ctx.prog.Target() == nil {
+		return
+	}
+	target := ctx.prog.Target()
+	if target.GOARCH != "wasm" {
+		return
+	}
+	if ctx.buildConf == nil || ctx.buildConf.BuildMode != BuildModeExe {
+		target.WasmFuncInfoEntries = true
+		return
+	}
+	target.WasmFuncInfoEntries = programUsesRuntimeFuncForPC(ctx.progSSA, wasmReflectRoots(ctx))
+}
+
+func programUsesRuntimeFuncForPC(prog *ssa.Program, roots []*ssa.Function) bool {
+	if prog == nil {
+		return false
+	}
+	if len(roots) != 0 {
+		for fn := range rta.Analyze(roots, false).Reachable {
+			if isRuntimeFuncForPC(fn) {
+				return true
+			}
+		}
+		return false
+	}
+	for fn := range ssautil.AllFunctions(prog) {
+		if isRuntimeFuncForPC(fn) {
+			return true
+		}
+	}
+	return false
+}
+
+func isRuntimeFuncForPC(fn *ssa.Function) bool {
+	return fn != nil && fn.Pkg != nil && fn.Pkg.Pkg != nil &&
+		fn.Pkg.Pkg.Path() == "runtime" && fn.Name() == "FuncForPC"
+}
+
 func wasmReflectRoots(ctx *context) (roots []*ssa.Function) {
 	if ctx == nil || ctx.progSSA == nil {
 		return nil

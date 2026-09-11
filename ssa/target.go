@@ -40,6 +40,7 @@ type Target struct {
 	WasmProfile             string // logical hosted WebAssembly profile (j32, j64, or w32)
 	WasmProvider            string // hosted WebAssembly provider (gojs, emscripten, or wasi)
 	WasmReflectBridges      bool   // emit statically typed reflection bridges for this program
+	WasmFuncInfoEntries     bool   // emit table-index symbolization records for this program
 	OptLevel                optlevel.Level
 	SaturatingFloatToUint32 bool
 }
