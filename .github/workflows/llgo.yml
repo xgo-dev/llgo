@@ -721,3 +721,12 @@ jobs:
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
           LLGO_BUILD_CACHE: "off"
         run: dev/test_wasm_single_worker.sh "${{ matrix.suite }}"
+
+      - name: Compare JavaScript call semantics with Go
+        if: matrix.suite == 'test-command'
+        shell: bash
+        run: |
+          GOOS=js GOARCH=wasm go test \
+            -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" \
+            -run '^TestJSCall' -count=1 -timeout=30s \
+            ./internal/build/testdata/wasm-test
