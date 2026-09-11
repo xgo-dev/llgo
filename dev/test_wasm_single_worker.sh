@@ -198,6 +198,10 @@ run_llgo_go_profile_run() {
 }
 
 if [[ "${suite}" != "test-command" ]]; then
+# Check finalizer registry scaling and queue removal without timing or
+# conservative-root assumptions, alongside the real Wasm lifecycle fixtures.
+go -C "${repo_root}" test ./internal/build -run '^TestWasmFinalizerCandidates$' -count=1
+
 # Canonical hosted targets exercise the same scheduler semantics under J32
 # Emscripten, J64 Emscripten Memory64, and W32 WASI Preview 1.
 run_emscripten emscripten emscripten-runner.mjs "${scheduler_fixture}" "wasm scheduler ok" "scheduler-emscripten"
