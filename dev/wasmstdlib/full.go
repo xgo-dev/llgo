@@ -56,10 +56,9 @@ func discoverFull(root string) ([]string, error) {
 			return nil
 		}
 		if strings.HasSuffix(d.Name(), "_test.go") {
-			rel, err := filepath.Rel(root, filepath.Dir(path))
-			if err != nil {
-				return err
-			}
+			// WalkDir only yields descendants of testRoot, which is itself a
+			// descendant of root, so both paths necessarily share a volume.
+			rel, _ := filepath.Rel(root, filepath.Dir(path))
 			seen[filepath.ToSlash(rel)] = true
 		}
 		return nil
@@ -197,7 +196,11 @@ func testWitness(pkg selectedPackage) (string, error) {
 }
 
 func runFull(name, reportPath, goCmd, llgo string, shard, shards int) error {
-	root, err := os.Getwd()
+	return runFullFrom(os.Getwd, name, reportPath, goCmd, llgo, shard, shards)
+}
+
+func runFullFrom(getwd func() (string, error), name, reportPath, goCmd, llgo string, shard, shards int) error {
+	root, err := getwd()
 	if err != nil {
 		return err
 	}
@@ -225,16 +228,15 @@ func runFullAt(root, name, reportPath, goCmd, llgo string, shard, shards int, st
 	}
 	result := "incomplete"
 	save := func() error {
-		data, err := json.MarshalIndent(struct {
+		// This report contains only strings, integers, and slices of the same;
+		// json.MarshalIndent therefore cannot fail.
+		data, _ := json.MarshalIndent(struct {
 			Profile  string        `json:"profile"`
 			Result   string        `json:"result"`
 			Shard    int           `json:"shard"`
 			Shards   int           `json:"shards"`
 			Packages []fullPackage `json:"packages"`
 		}{name, result, shard, shards, entries}, "", "  ")
-		if err != nil {
-			return err
-		}
 		return os.WriteFile(reportPath, append(data, '\n'), 0644)
 	}
 	if err := save(); err != nil {
@@ -267,10 +269,8 @@ func runFullAt(root, name, reportPath, goCmd, llgo string, shard, shards int, st
 		} else if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(root, pkg.Dir)
-		if err != nil {
-			return err
-		}
+		// The ./test/... query only returns directories below root.
+		rel, _ := filepath.Rel(root, pkg.Dir)
 		selected[filepath.ToSlash(rel)] = pkg
 	}
 	stressDir := filepath.Join(root, filepath.FromSlash(wasmTimerStressPackage))

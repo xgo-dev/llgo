@@ -276,6 +276,10 @@ func TestFullAuditRejectsInvalidPreparation(t *testing.T) {
 	if err := runFull("J32-GoJS", "", "go", "llgo", 0, 1); err == nil {
 		t.Fatal("runFull lost argument validation")
 	}
+	getwdErr := errors.New("synthetic getwd failure")
+	if err := runFullFrom(func() (string, error) { return "", getwdErr }, "J32-GoJS", "report.json", "go", "llgo", 0, 1); !errors.Is(err, getwdErr) {
+		t.Fatal("runFull hid a missing working directory")
+	}
 }
 
 func TestFullAuditReportsPreparationCommandFailures(t *testing.T) {
@@ -336,6 +340,103 @@ func unusedStructured(selected []byte) func(string, command) ([]byte, error) {
 		}
 		return selected, nil
 	}
+}
+
+func fullAuditFixture(t *testing.T, pkg string) (root string, selected []byte) {
+	t.Helper()
+	root = t.TempDir()
+	dir := filepath.Join(root, filepath.FromSlash(pkg))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "fixture_test.go"), []byte("package fixture\nimport \"testing\"\nfunc TestFixture(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(selectedPackage{Dir: dir, TestGoFiles: []string{"fixture_test.go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root, data
+}
+
+func TestFullAuditReportsArtifactWriteFailures(t *testing.T) {
+	validRun := func(string, command) ([]byte, error) {
+		return []byte("=== RUN   TestFixture\n--- PASS: TestFixture (0.00s)\nPASS\n"), nil
+	}
+
+	t.Run("log directory", func(t *testing.T) {
+		root, selected := fullAuditFixture(t, "test/a")
+		reportPath := filepath.Join(root, "report.json")
+		if err := os.WriteFile(reportPath+".logs", []byte("blocks directory creation"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := runFullAt(root, "J32-GoJS", reportPath, "go", "llgo", 0, 1, unusedStructured(selected), validRun); err == nil {
+			t.Fatal("accepted an unwritable log directory")
+		}
+	})
+
+	t.Run("package log", func(t *testing.T) {
+		root, selected := fullAuditFixture(t, "test/a")
+		reportPath := filepath.Join(root, "report.json")
+		if err := os.MkdirAll(filepath.Join(reportPath+".logs", "test_a.log"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := runFullAt(root, "J32-GoJS", reportPath, "go", "llgo", 0, 1, unusedStructured(selected), validRun); err == nil {
+			t.Fatal("accepted an unwritable package log")
+		}
+	})
+
+	t.Run("incremental report", func(t *testing.T) {
+		root, selected := fullAuditFixture(t, "test/a")
+		reportPath := filepath.Join(root, "report.json")
+		run := func(string, command) ([]byte, error) {
+			if err := os.Remove(reportPath); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(reportPath, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return validRun("", command{})
+		}
+		if err := runFullAt(root, "J32-GoJS", reportPath, "go", "llgo", 0, 1, unusedStructured(selected), run); err == nil {
+			t.Fatal("accepted an unwritable incremental report")
+		}
+	})
+
+	t.Run("final report", func(t *testing.T) {
+		root, selected := fullAuditFixture(t, "test/a")
+		reportPath := filepath.Join(root, "report.json")
+		structured := func(_ string, c command) ([]byte, error) {
+			if c.Args[0] == "env" {
+				return []byte("/goroot"), nil
+			}
+			if err := os.Remove(reportPath); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(reportPath, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return selected, nil
+		}
+		if err := runFullAt(root, "J32-GoJS", reportPath, "go", "llgo", 1, 2, structured, validRun); err == nil {
+			t.Fatal("accepted an unwritable final report")
+		}
+	})
+
+	t.Run("host artifact", func(t *testing.T) {
+		root, selected := fullAuditFixture(t, "test/go")
+		reportPath := filepath.Join(root, "report.json")
+		blocker := filepath.Join(root, "not-a-temp-directory")
+		if err := os.WriteFile(blocker, []byte("block"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {
+			t.Setenv(name, blocker)
+		}
+		if err := runFullAt(root, "J32-GoJS", reportPath, "go", "llgo", 0, 1, unusedStructured(selected), validRun); err == nil {
+			t.Fatal("accepted failure to create a reusable host artifact")
+		}
+	})
 }
 
 func TestFullAuditClassifiesUnknownSelectionAndWitnessFailures(t *testing.T) {

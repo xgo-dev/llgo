@@ -89,12 +89,32 @@ func TestFullFatalValidatorsRejectFalsePositives(t *testing.T) {
 	if err := validateFullFinalizerInvalid([]byte("fatal error: runtime.SetFinalizer: cannot pass *value to finalizer func(...*value) because dotdotdot"), exitErr, "variadic"); err != nil {
 		t.Fatal(err)
 	}
-	if validateFullFinalizerInvalid([]byte("runtime.SetFinalizer: cannot pass"), nil, "wrong type") == nil {
-		t.Fatal("accepted successful invalid-finalizer child")
+	for _, bad := range []struct {
+		name string
+		out  string
+		err  error
+	}{
+		{name: "successful child", out: "runtime.SetFinalizer: cannot pass", err: nil},
+		{name: "missing variadic detail", out: "runtime.SetFinalizer: cannot pass", err: exitErr},
+		{name: "missing diagnostic", out: "fatal error", err: exitErr},
+		{name: "unknown case", out: "fatal error", err: exitErr},
+	} {
+		caseName := "wrong type"
+		if bad.name == "missing variadic detail" {
+			caseName = "variadic"
+		} else if bad.name == "unknown case" {
+			caseName = "unknown"
+		}
+		if validateFullFinalizerInvalid([]byte(bad.out), bad.err, caseName) == nil {
+			t.Fatalf("accepted invalid-finalizer result %q", bad.name)
+		}
 	}
 
 	if err := validateFullBuiltinPrint([]byte(fullBuiltinPrintWant), nil); err != nil {
 		t.Fatal(err)
+	}
+	if validateFullBuiltinPrint([]byte(fullBuiltinPrintWant), exitErr) == nil {
+		t.Fatal("accepted failed builtin-print child")
 	}
 	if validateFullBuiltinPrint([]byte(fullBuiltinPrintWant+"PASS\n"), nil) == nil {
 		t.Fatal("accepted noisy builtin-print output")
@@ -102,8 +122,61 @@ func TestFullFatalValidatorsRejectFalsePositives(t *testing.T) {
 	if err := validateFullGoexitLifecycle([]byte("WORKER_RETURNING\nfatal error: no goroutines (main called runtime.Goexit) - deadlock!"), exitErr); err != nil {
 		t.Fatal(err)
 	}
+	if validateFullGoexitLifecycle([]byte("WORKER_RETURNING\nfatal error: no goroutines (main called runtime.Goexit) - deadlock!"), nil) == nil {
+		t.Fatal("accepted successful Goexit lifecycle child")
+	}
 	if validateFullGoexitLifecycle([]byte("fatal error: no goroutines (main called runtime.Goexit) - deadlock!\nWORKER_RETURNING"), exitErr) == nil {
 		t.Fatal("accepted reversed Goexit lifecycle")
+	}
+
+	if validateFullPanic(t.TempDir(), []byte(panicOut), exitErr) == nil {
+		t.Fatal("accepted panic result without its source file")
+	}
+	missingMarkerRoot := t.TempDir()
+	missingMarkerDir := filepath.Join(missingMarkerRoot, "test", "go")
+	if err := os.MkdirAll(missingMarkerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(missingMarkerDir, "caller_runtime_test.go"), []byte("panic() // PANIC_MARK\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if validateFullPanic(missingMarkerRoot, []byte(panicOut), exitErr) == nil {
+		t.Fatal("accepted panic source without every marker")
+	}
+	if validateFullPanic(root, []byte(strings.ReplaceAll(panicOut, "callerPanicCaller", "wrongCaller")), exitErr) == nil {
+		t.Fatal("accepted panic output without every required frame")
+	}
+}
+
+func TestRunFullHostCheckRecordsFailuresAndWriteErrors(t *testing.T) {
+	root := t.TempDir()
+	reportPath := filepath.Join(root, "report.json")
+	if err := os.MkdirAll(reportPath+".logs", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := errors.New("invalid child result")
+	entry := &fullPackage{}
+	err := runFullHostCheck(root, reportPath, "J32-GoJS", "test/go", "child.log", "panic contract", command{}, entry, func([]byte, error) error {
+		return sentinel
+	}, func(string, command) ([]byte, error) {
+		return []byte("child diagnostics"), nil
+	})
+	if !errors.Is(err, sentinel) || len(entry.HostChecks) != 1 || entry.HostChecks[0].Status != "fail" || entry.HostChecks[0].Reason != sentinel.Error() {
+		t.Fatalf("host failure = %v, checks = %+v", err, entry.HostChecks)
+	}
+	if data, err := os.ReadFile(filepath.Join(reportPath+".logs", "child.log")); err != nil || string(data) != "child diagnostics" {
+		t.Fatalf("host failure log = %q, %v", data, err)
+	}
+
+	missingLogsReport := filepath.Join(root, "missing", "report.json")
+	err = runFullHostCheck(root, missingLogsReport, "J32-GoJS", "test/go", "child.log", "panic contract", command{}, &fullPackage{}, func([]byte, error) error {
+		t.Fatal("validator ran after log write failure")
+		return nil
+	}, func(string, command) ([]byte, error) {
+		return []byte("child diagnostics"), nil
+	})
+	if err == nil {
+		t.Fatal("host check hid its log write failure")
 	}
 }
 
