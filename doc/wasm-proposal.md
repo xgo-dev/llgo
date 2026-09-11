@@ -57,7 +57,7 @@ LLGo's Core Wasm C ABI is unrelated to the WIT Canonical ABI. Future WASI Previe
 
 ## Acceptance
 
-A feature is implemented only when CI executes it on every applicable path. The minimum hosted matrix contains four paths: J32/GoJS, J32/Emscripten, J64/Emscripten Memory64, and W32/WASI. Tests use real Node, browser, and Wasmtime execution where applicable and cover `llgo build/run/test`, artifacts, host callbacks and exit, C boundaries, reflection, GC and suspension, `test/**`, `test/std`, and every applicable GOROOT case. Only reviewed `xfail` and `notapplicable` classifications may be excluded. Each W-stage PR carries focused executable CI; compile-only coverage does not count. Final acceptance also checks compiler coverage, `cprintf`/`println`/`fmtprintf` and reflection size, runtime benchmarks, native and embedded regressions, and removal of diagnostic or superseded changes.
+A feature is implemented only when CI executes it on every applicable path. The minimum hosted matrix contains four paths: J32/GoJS, J32/Emscripten, J64/Emscripten Memory64, and W32/WASI. Tests use real Node, browser, and Wasmtime execution where applicable and cover `llgo build/run/test`, artifacts, host callbacks and exit, C boundaries, reflection, GC and suspension, `test/**`, `test/std`, and every applicable GOROOT case. The complete GOROOT corpus runs on the canonical Go-compatible J32/GoJS path, while all four paths run GOROOT sentinels and the complete applicable repository package suite; this avoids multiplying more than two thousand compiler conformance cases by provider paths whose differences are covered by target integration tests. Only reviewed `xfail` and `notapplicable` classifications may be excluded. Each W-stage PR carries focused executable CI; compile-only coverage does not count. Final acceptance also checks compiler coverage, `cprintf`/`println`/`fmtprintf` and reflection size, runtime benchmarks, native and embedded regressions, and removal of diagnostic or superseded changes.
 
 ## Remaining PR plan: W1-W3
 
@@ -71,7 +71,7 @@ Complete the GoJS, Emscripten, and WASI providers; consolidate output/FS behavio
 
 ### W3: full compatibility acceptance and consolidation
 
-Run and classify the full applicable `test/**` and GOROOT corpus across the four paths, retire unnecessary skips, finish issues exposed by those tests, audit the accumulated diff, split out independently useful fixes, and enforce coverage, size, performance, native, and embedded gates. W3 completes the currently supported WebAssembly scope.
+Run and classify the full applicable `test/**` suite on all four paths, the complete applicable GOROOT corpus on J32/GoJS, and GOROOT sentinels on every path; retire unnecessary skips, finish issues exposed by those tests, audit the accumulated diff, split out independently useful fixes, and enforce coverage, size, performance, native, and embedded gates. W3 completes the currently supported WebAssembly scope.
 
 ## Deferred work
 
@@ -138,7 +138,7 @@ LLGo Core Wasm C ABI 与 WIT Canonical ABI 无关。未来 WASI Preview 2 将在
 
 ## 验收
 
-功能只有在 CI 对所有适用路径实际执行后才算完成。最小 hosted 矩阵包含四条路径：J32/GoJS、J32/Emscripten、J64/Emscripten Memory64、W32/WASI。测试按适用范围在真实 Node、浏览器和 Wasmtime 中运行，覆盖 `llgo build/run/test`、产物、host 回调与退出、C 边界、反射、GC 与挂起、`test/**`、`test/std` 以及全部适用 GOROOT case；只允许排除经过审查的 `xfail` 和 `notapplicable`。每个 W 阶段 PR 自带聚焦的可执行 CI，compile-only 不算覆盖。最终验收还检查编译器覆盖率、`cprintf`/`println`/`fmtprintf` 与反射体积、runtime benchmark、native/embedded 回归，以及诊断和被取代变更的清理。
+功能只有在 CI 对所有适用路径实际执行后才算完成。最小 hosted 矩阵包含四条路径：J32/GoJS、J32/Emscripten、J64/Emscripten Memory64、W32/WASI。测试按适用范围在真实 Node、浏览器和 Wasmtime 中运行，覆盖 `llgo build/run/test`、产物、host 回调与退出、C 边界、反射、GC 与挂起、`test/**`、`test/std` 以及全部适用 GOROOT case。完整 GOROOT corpus 在规范性的 Go 兼容 J32/GoJS 路径运行，四条路径都运行 GOROOT sentinel 和完整的适用仓库 package suite；这样无需把两千多个编译器一致性 case 机械乘以 host provider，而 provider 差异由 target 集成测试覆盖。只允许排除经过审查的 `xfail` 和 `notapplicable`。每个 W 阶段 PR 自带聚焦的可执行 CI，compile-only 不算覆盖。最终验收还检查编译器覆盖率、`cprintf`/`println`/`fmtprintf` 与反射体积、runtime benchmark、native/embedded 回归，以及诊断和被取代变更的清理。
 
 ## 后续 PR 规划：W1-W3
 
@@ -152,7 +152,7 @@ LLGo Core Wasm C ABI 与 WIT Canonical ABI 无关。未来 WASI Preview 2 将在
 
 ### W3：完整兼容验收与收敛
 
-在四条路径上运行并分类全部适用 `test/**` 与 GOROOT case，清理不必要的 skip，修复测试暴露的问题，审计累计 diff，把可独立复用的修复拆出，并执行覆盖率、体积、性能、native 和 embedded gate。W3 完成当前支持的 WebAssembly 范围。
+在四条路径上运行并分类全部适用 `test/**`，在 J32/GoJS 上运行完整适用 GOROOT corpus，并在每条路径运行 GOROOT sentinel；清理不必要的 skip，修复测试暴露的问题，审计累计 diff，把可独立复用的修复拆出，并执行覆盖率、体积、性能、native 和 embedded gate。W3 完成当前支持的 WebAssembly 范围。
 
 ## 延期范围
 
