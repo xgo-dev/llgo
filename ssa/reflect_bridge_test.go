@@ -99,6 +99,60 @@ func TestCompactWasmBridgeID(t *testing.T) {
 	}
 }
 
+func TestWasmReflectRootShape(t *testing.T) {
+	Initialize(InitAllTargets | InitAllTargetInfos | InitAllTargetMCs)
+	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32", WasmProvider: "wasi", WasmReflectBridges: true})
+	defer prog.Dispose()
+	setTestRuntime(t, prog)
+
+	shape := func(typ types.Type) string {
+		var value strings.Builder
+		prog.appendWasmRootShape(&value, prog.Type(typ, InC))
+		return value.String()
+	}
+	ptr := types.NewPointer(types.Typ[types.Int])
+	directRoot := shape(ptr)
+	for name, typ := range map[string]types.Type{
+		"map":     types.NewMap(types.Typ[types.String], types.Typ[types.Int]),
+		"channel": types.NewChan(types.SendRecv, types.Typ[types.Int]),
+	} {
+		if got := shape(typ); got != directRoot {
+			t.Errorf("%s root shape = %q, want direct root %q", name, got, directRoot)
+		}
+	}
+	if got := shape(types.Typ[types.Int]); got == directRoot {
+		t.Fatalf("scalar root shape = %q, want a non-root shape", got)
+	}
+
+	stringShape := shape(types.Typ[types.String])
+	sliceShape := shape(types.NewSlice(types.Typ[types.Int]))
+	if stringShape == sliceShape || !strings.HasSuffix(stringShape, "0r") || !strings.HasSuffix(sliceShape, "0r") {
+		t.Fatalf("string/slice root shapes = %q/%q", stringShape, sliceShape)
+	}
+	emptyInterface := types.NewInterfaceType(nil, nil).Complete()
+	if got := shape(emptyInterface); got != "i1r" {
+		t.Fatalf("interface root shape = %q", got)
+	}
+
+	fields := []*types.Var{
+		types.NewField(token.NoPos, nil, "Pointer", ptr, false),
+		types.NewField(token.NoPos, nil, "Scalar", types.Typ[types.Int], false),
+	}
+	if got := shape(types.NewStruct(fields, nil)); got != "{r,-,}" {
+		t.Fatalf("struct root shape = %q", got)
+	}
+	tuple := types.NewTuple(
+		types.NewParam(token.NoPos, nil, "pointer", ptr),
+		types.NewParam(token.NoPos, nil, "scalar", types.Typ[types.Int]),
+	)
+	if got := shape(tuple); got != "{r,-,}" {
+		t.Fatalf("tuple root shape = %q", got)
+	}
+	if got := shape(types.NewArray(ptr, 2)); got != "[2:r]" {
+		t.Fatalf("array root shape = %q", got)
+	}
+}
+
 func TestExtractConstStringFromWideWasmStorage(t *testing.T) {
 	Initialize(InitAllTargets | InitAllTargetInfos | InitAllTargetMCs)
 	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32", WasmProvider: "wasi", WasmReflectBridges: true})
