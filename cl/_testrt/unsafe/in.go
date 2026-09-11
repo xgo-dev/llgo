@@ -28,6 +28,8 @@ type N struct {
 // CHECK: ret ptr inttoptr (i64 100 to ptr)
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
+// CHECK-NEXT: _llgo_{{[0-9]+}}:
+// CHECK-NEXT: %[[ARRAY_TMP:[0-9]+]] = alloca [2 x i64], align 8
 // Sizeof, Alignof, and Offsetof are compile-time constants. Each of the ten
 // source comparisons must fold to the non-panic edge.
 // CHECK-COUNT-10: br i1 false
@@ -47,7 +49,7 @@ type N struct {
 // unsafe.Slice validates pointer/length overflow, then constructs a slice whose
 // data and length are the values consumed by ordinary bounds checks.
 // CHECK: %[[ARRAY:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK: call void @llvm.memset.p0.i64(ptr %[[ARRAY_TMP:[0-9]+]], i8 0, i64 16, i1 false)
+// CHECK: call void @llvm.memset.p0.i64(ptr %[[ARRAY_TMP]], i8 0, i64 16, i1 false)
 // CHECK: %[[ELEM0:[0-9]+]] = getelementptr inbounds i64, ptr %[[ARRAY_TMP]], i64 0
 // CHECK: %[[ELEM1:[0-9]+]] = getelementptr inbounds i64, ptr %[[ARRAY_TMP]], i64 1
 // CHECK: store i64 1, ptr %[[ELEM0]]

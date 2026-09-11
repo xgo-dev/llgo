@@ -77,6 +77,9 @@ func methodByName(name string) {
 }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
+// CHECK-NEXT: _llgo_{{[0-9]+}}:
+// CHECK-NEXT: %{{[0-9]+}} = alloca %reflect.Method, align 8
+// CHECK-NEXT: %[[METHOD_SLOT:[0-9]+]] = alloca %reflect.Method, align 8
 // Recover the element Type from *Point and reuse that exact interface for all
 // constructor inputs.
 // CHECK-DAG: %[[PTR_TYPE:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.iface" @reflect.TypeOf(%"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_main.Point", ptr null })
@@ -113,7 +116,8 @@ func methodByName(name string) {
 // Type.Method's returned Method is stored and its Name field is what reaches
 // StringEqual. MethodByName additionally carries the tuple's ok bit to a branch.
 // CHECK-DAG: %[[METHOD:[0-9]+]] = call %reflect.Method %{{[0-9]+}}(ptr %{{[0-9]+}}, i64 0)
-// CHECK-DAG: store %reflect.Method %[[METHOD]], ptr %[[METHOD_SLOT:[0-9]+]]
+// CHECK-DAG: call void @llvm.memset.p0.i64(ptr %[[METHOD_SLOT]], i8 0, i64 80, i1 false)
+// CHECK-DAG: store %reflect.Method %[[METHOD]], ptr %[[METHOD_SLOT]]
 // CHECK-DAG: %[[METHOD_NAME_PTR:[0-9]+]] = getelementptr inbounds nuw %reflect.Method, ptr %[[METHOD_SLOT]], i32 0, i32 0
 // CHECK-DAG: %[[METHOD_NAME:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.String", ptr %[[METHOD_NAME_PTR]]
 // CHECK-DAG: call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" %[[METHOD_NAME]],{{.*}})
