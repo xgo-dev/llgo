@@ -44,14 +44,14 @@ J32 has two provider acceptance paths: the Go-compatible JavaScript shim and Ems
 ## Compatibility contract
 
 - J32 and W32 implement the official Go WebAssembly sizes, alignment, standard build constraints, runtime behavior, and applicable standard-library surface. Binary compatibility with Go compiler object files is not required.
-- The J32 Go provider does not depend on emval, Emscripten FS, or `ffi_call_js`. The Emscripten provider adapts the same Go-facing APIs to Emscripten services.
+- The J32 Go provider reuses the selected GOROOT's `syscall/js` source and does not expose emval as its Go-facing API. Its initial host adapter may reuse Emscripten glue, filesystem services, and the WebAssembly libffi backend; this is source/API compatibility, not stock `wasm_exec.js` binary compatibility.
 - J32 and J64 expose `syscall/js` through their selected JavaScript provider. C code remains available through the explicit C ABI; arbitrary Emscripten-dependent libraries require the Emscripten provider.
 - W32 uses the Go WASI Preview 1 host contract and can use wasi-libc without becoming a separate C profile.
 - Host adapters own imports, startup, filesystems, callbacks, timers, process exit, and artifact sidecars. Runtime scheduling, GC, panic/defer/recover, reflection semantics, and caller metadata remain provider-independent where possible.
 
 ## Reflection and foreign calls
 
-`reflect.Value.Call`, `CallSlice`, methods, and `reflect.MakeFunc` are required capabilities, not profile definitions. The Emscripten J32/J64 provider may use the WebAssembly libffi backend from [#2549](https://github.com/xgo-dev/llgo/pull/2549). The Go JavaScript and WASI providers must use a host-independent backend: preferably a shared WebAssembly libffi implementation, with compact signature-deduplicated typed bridges retained only if libffi cannot cover the provider. The selected backend must preserve GC roots, suspension, panic/recover, closures, aggregate ABI lowering, and deterministic errors. Size and performance comparisons decide the fallback; a backend may not impose Emscripten dependencies on another provider.
+`reflect.Value.Call`, `CallSlice`, methods, and `reflect.MakeFunc` are required capabilities, not profile definitions. J32/GoJS, J32/Emscripten, and J64/Emscripten use the WebAssembly libffi backend from [#2549](https://github.com/xgo-dev/llgo/pull/2549), which provides generic dynamic calls without generating a bridge for every function signature. W32/WASI has no JavaScript table adapter, so it uses compact compiler-generated typed bridges deduplicated by lowered signature and emitted only when whole-program reachability finds a dynamic reflection call. The selected backend must preserve GC roots, suspension, panic/recover, closures, aggregate ABI lowering, and deterministic errors. Typed-bridge size and compile-time cost must remain confined to WASI and are measured in acceptance.
 
 LLGo's Core Wasm C ABI is unrelated to the WIT Canonical ABI. Future WASI Preview 2 support will add generated WIT lift/lower adapters outside the ordinary Go and C calling conventions; it is not part of W1-W3.
 
@@ -125,14 +125,14 @@ J32 有两条 provider 验收路径：Go 兼容 JavaScript shim 和 Emscripten�
 ## 兼容约定
 
 - J32 和 W32 实现官方 Go WebAssembly 的尺寸、对齐、标准 build constraints、runtime 行为和适用标准库，不要求与 Go 编译器 object 文件二进制兼容。
-- J32 Go provider 不依赖 emval、Emscripten FS 或 `ffi_call_js`；Emscripten provider 把相同的 Go API 适配到 Emscripten 服务。
+- J32 Go provider 复用所选 GOROOT 的 `syscall/js` 源码，并且不把 emval 暴露为 Go 侧 API。初始 host adapter 可以复用 Emscripten glue、文件系统服务和 WebAssembly libffi 后端；这里保证的是源码/API 兼容，而不是 stock `wasm_exec.js` 二进制兼容。
 - J32 和 J64 通过所选 JavaScript provider 提供 `syscall/js`。C 代码通过显式 C ABI 使用；依赖 Emscripten runtime 的任意 C 库仍要求 Emscripten provider。
 - W32 使用 Go WASI Preview 1 host contract，并可使用 wasi-libc，不再因此拆出单独 C profile。
 - Host adapter 负责 imports、启动、文件系统、回调、定时器、进程退出和产物 sidecar。调度、GC、panic/defer/recover、反射语义和 caller metadata 在可行范围内保持 provider 无关。
 
 ## 反射与外部调用
 
-`reflect.Value.Call`、`CallSlice`、方法和 `reflect.MakeFunc` 是必须能力，不是 profile 定义。Emscripten J32/J64 provider 可以使用 [#2549](https://github.com/xgo-dev/llgo/pull/2549) 的 WebAssembly libffi 后端。Go JavaScript 与 WASI provider 必须使用 host-independent 后端：优先实现共用的 WebAssembly libffi；只有 libffi 无法覆盖该 provider 时才保留经过体积优化、按签名去重的 typed bridge。最终后端必须正确处理 GC root、挂起、panic/recover、闭包、聚合 ABI lowering 和确定性错误，并以体积、性能对比决定 fallback，不能让一个 provider 向另一个 provider 泄漏 Emscripten 依赖。
+`reflect.Value.Call`、`CallSlice`、方法和 `reflect.MakeFunc` 是必须能力，不是 profile 定义。J32/GoJS、J32/Emscripten 和 J64/Emscripten 使用 [#2549](https://github.com/xgo-dev/llgo/pull/2549) 的 WebAssembly libffi 后端，以通用动态调用避免为每个函数签名生成 bridge。W32/WASI 没有 JavaScript table adapter，因此使用按 lowering 后签名去重的 compact typed bridge，并且只在 whole-program 可达性分析发现动态反射调用时生成。最终后端必须正确处理 GC root、挂起、panic/recover、闭包、聚合 ABI lowering 和确定性错误；typed bridge 的体积与编译时间开销必须严格限制在 WASI，并在验收中测量。
 
 LLGo Core Wasm C ABI 与 WIT Canonical ABI 无关。未来 WASI Preview 2 将在普通 Go/C 调用约定之外生成 WIT lift/lower adapter，不属于 W1-W3。
 
