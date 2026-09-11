@@ -682,7 +682,6 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, wasiThreads, forceEspC
 			"-L" + libDir,
 			"-Wl,--allow-undefined",
 			"-Wl,--export-memory",
-			"-Wl,--initial-memory=67108864", // 64MB
 			// Some LLVM 19 wasm-ld distributions place static data before the
 			// process stack by default. The single-worker runtime and Binaryen
 			// Asyncify switch __stack_pointer; that host-dependent layout traps
@@ -709,6 +708,7 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, wasiThreads, forceEspC
 			export.BuildTags = append(export.BuildTags, "llgo.wasi_threads")
 			export.LDFLAGS = append(
 				export.LDFLAGS,
+				"-Wl,--initial-memory=67108864", // Preserve the shared-memory backend's host contract.
 				"-Wl,--import-memory",
 				"-lwasi-emulated-pthread",
 				"-lpthread",

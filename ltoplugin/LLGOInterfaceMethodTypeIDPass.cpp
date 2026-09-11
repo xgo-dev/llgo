@@ -133,7 +133,8 @@ bool isInterfaceBaseTypeID(StringRef TypeID) {
 }
 
 [[noreturn]] void invalidMetadata(const Twine &Reason) {
-  report_fatal_error(
+  // Reject invalid input without invoking crash reporters or symbolizers.
+  reportFatalUsageError(
       Twine("llgo-lto-plugin: invalid interface type-id metadata: ") + Reason);
 }
 

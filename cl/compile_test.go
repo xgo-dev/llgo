@@ -20,6 +20,7 @@
 package cl_test
 
 import (
+	"context"
 	"go/token"
 	"go/types"
 	"os"
@@ -29,6 +30,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xgo-dev/llgo/cl/cltest"
 	"github.com/xgo-dev/llgo/internal/build"
@@ -454,12 +456,18 @@ define void @entry(ptr %itab) {
 }
 attributes #0 = { ` + test.attrs + ` }
 `
-			cmd := exec.Command(opt, "-load-pass-plugin="+conf.LTOPlugin.Path,
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, opt, "-load-pass-plugin="+conf.LTOPlugin.Path,
 				"-passes=llgo-interface-method-typeids", "-disable-output")
+			cmd.WaitDelay = time.Second
 			cmd.Stdin = strings.NewReader(input)
 			out, err := cmd.CombinedOutput()
-			if err == nil {
-				t.Fatalf("malformed interface metadata was accepted:\n%s", out)
+			if ctx.Err() != nil {
+				t.Fatalf("malformed-metadata diagnostic did not terminate: %v\n%s", ctx.Err(), out)
+			}
+			if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+				t.Fatalf("malformed metadata must exit 1, not crash or succeed: %v\n%s", err, out)
 			}
 			if !strings.Contains(string(out), "invalid interface type-id metadata:") {
 				t.Fatalf("unexpected malformed-metadata diagnostic: %v\n%s", err, out)

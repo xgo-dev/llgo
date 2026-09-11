@@ -18,7 +18,7 @@ trap 'rm -rf "${work_dir}"' EXIT
 export LLGO_WASM_TEST_ENV=wasm-env-ok
 
 case "${suite}" in
-all | runtime | test-command) ;;
+all | runtime | test-command | gc-heap) ;;
 *)
 	echo "unknown single-worker WebAssembly suite: ${suite}" >&2
 	exit 2
@@ -83,6 +83,63 @@ run_wasi() {
 	grep -Fq "${expected}" "${work_dir}/${name}.out"
 }
 
+wasi_heap_layout() {
+	# Instantiate without starting Go: startup itself needs the GC heap. These
+	# linker exports let the test derive the boundary from the actual module.
+	"${node_cmd}" - "$1" <<'JS'
+const fs = require('node:fs');
+const {WASI} = require('node:wasi');
+const wasi = new WASI({version: 'preview1', args: ['heap-layout'], env: {}, preopens: {}});
+const module = new WebAssembly.Module(fs.readFileSync(process.argv[2]));
+const instance = new WebAssembly.Instance(module, {wasi_snapshot_preview1: wasi.wasiImport});
+console.log(instance.exports.__global_base.value, instance.exports.__heap_base.value,
+  instance.exports.memory.buffer.byteLength);
+JS
+}
+
+run_wasi_empty_heap() {
+	local response="${work_dir}/heap-objects.rsp"
+	local module="${work_dir}/gc-wasi-objects.wasm"
+	local heap_flags base heap memory aligned_base boundary_heap boundary_memory
+	# An object-only user response file must not acquire an implicit 54 MiB
+	# heap. No response-file parsing is needed to preserve user memory policy.
+	clang --target=wasm32-unknown-unknown -c -x c /dev/null -o "${work_dir}/heap-empty.o"
+	printf '"%s"\n' "${work_dir}/heap-empty.o" > "${response}"
+	heap_flags="${LDFLAGS:-} -Wl,@${response} -Wl,--export=__heap_base,--export=__global_base"
+	# Reuse package archives between these links. Changing only linker options
+	# must not require rebuilding the runtime; the rest of the suite keeps its
+	# caller-selected cache policy.
+	LLGO_BUILD_CACHE=on LDFLAGS="${heap_flags}" \
+		run_wasi wasi "${gc_fixture}" "wasm gc ok" "gc-wasi-objects"
+	read -r base heap memory < <(wasi_heap_layout "${module}")
+	echo "WASI object response: heap base=${heap}, initial memory=${memory}"
+	if (( heap > memory || memory - heap >= 65536 )); then
+		echo "unexpected initial heap for object response: base=${heap}, memory=${memory}" >&2
+		exit 1
+	fi
+
+	# Shift static data by its page-rounding slack to create an exact, real
+	# __heap_base == memory.size boundary, independent of fixture/code size.
+	aligned_base=$((base + memory - heap))
+	heap_flags+=" -Wl,--initial-heap=0,--global-base=${aligned_base}"
+	LLGO_BUILD_CACHE=on LDFLAGS="${heap_flags}" \
+		run_wasi wasi "${gc_fixture}" "wasm gc ok" "gc-wasi-empty"
+	read -r base boundary_heap boundary_memory < <(wasi_heap_layout "${work_dir}/gc-wasi-empty.wasm")
+	echo "WASI zero heap: heap base=${boundary_heap}, initial memory=${boundary_memory}"
+	if (( boundary_heap != boundary_memory )); then
+		echo "zero-heap test missed boundary: base=${boundary_heap}, memory=${boundary_memory}" >&2
+		exit 1
+	fi
+
+	# The same valid module must fail clearly if the host cannot grow its empty
+	# heap. Neither an arbitrary trap nor a link failure satisfies this check.
+	module="${work_dir}/gc-wasi-empty-limited.wasm"
+	LLGO_BUILD_CACHE=on LDFLAGS="${heap_flags} -Wl,--max-memory=${boundary_memory}" \
+		"${llgo_cmd}" build -target wasi -o "${module}" "${gc_fixture}"
+	wasm-tools validate --features all "${module}"
+	expect_failure "gc: invalid heap range" "${wasmtime_cmd}" run -W exceptions=y "${module}"
+}
+
 run_llgo_test() {
 	local target="$1"
 	local name="$2"
@@ -125,7 +182,7 @@ run_llgo_test_compile_only() {
 	esac
 }
 
-if [[ "${suite}" != "test-command" ]]; then
+if [[ "${suite}" == "all" || "${suite}" == "runtime" ]]; then
 # Canonical C-ecosystem profiles exercise the same scheduler semantics under
 # Emscripten wasm32, Emscripten Memory64/LP64, and WASI Preview 1.
 run_emscripten emscripten emscripten-runner.mjs "${scheduler_fixture}" "wasm scheduler ok" "scheduler-emscripten"
@@ -175,7 +232,11 @@ run_emscripten wasm emscripten-runner.mjs "${scheduler_fixture}" "wasm scheduler
 run_wasi wasip1 "${scheduler_fixture}" "wasm scheduler ok" "scheduler-legacy-wasip1"
 fi
 
-if [[ "${suite}" != "runtime" ]]; then
+if [[ "${suite}" != "test-command" ]]; then
+run_wasi_empty_heap
+fi
+
+if [[ "${suite}" == "all" || "${suite}" == "test-command" ]]; then
 # Exercise test-main generation, process exit, verbose output, and host runners
 # through the public test command. The JS-specific callback case also verifies
 # that host readiness interrupts a longer Go timer wait without re-entering an

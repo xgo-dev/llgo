@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"syscall"
 	"testing"
@@ -104,12 +105,12 @@ func TestRunProgramWaitDelayCleansDescendant(t *testing.T) {
 
 			deadline := time.Now().Add(2 * time.Second)
 			for {
-				probeErr := syscall.Kill(pid, 0)
-				if errors.Is(probeErr, syscall.ESRCH) {
-					break
-				}
+				exited, probeErr := processHasExited(pid)
 				if probeErr != nil {
 					t.Fatalf("probe descendant %d: %v", pid, probeErr)
+				}
+				if exited {
+					break
 				}
 				if time.Now().After(deadline) {
 					t.Fatalf("descendant %d is still running after runProgram returned", pid)
@@ -117,5 +118,94 @@ func TestRunProgramWaitDelayCleansDescendant(t *testing.T) {
 				time.Sleep(10 * time.Millisecond)
 			}
 		})
+	}
+}
+
+func processHasExited(pid int) (bool, error) {
+	err := syscall.Kill(pid, 0)
+	if errors.Is(err, syscall.ESRCH) {
+		return true, nil
+	}
+	if err != nil || runtime.GOOS != "linux" {
+		return false, err
+	}
+	// A container's PID 1 need not reap orphaned descendants. kill(pid, 0)
+	// still succeeds for a zombie, although SIGKILL has already stopped it.
+	stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if os.IsNotExist(err) || errors.Is(err, syscall.ESRCH) {
+		return true, nil // Reaped between the signal probe and the proc read.
+	}
+	if err != nil {
+		return false, err
+	}
+	return procStatHasExited(stat)
+}
+
+func procStatHasExited(stat []byte) (bool, error) {
+	// comm may contain spaces and parentheses; state follows the last ')'.
+	end := bytes.LastIndexByte(stat, ')')
+	if end < 0 || end+3 >= len(stat) || stat[end+1] != ' ' || stat[end+3] != ' ' {
+		return false, fmt.Errorf("invalid process stat %q", stat)
+	}
+	return stat[end+2] == 'Z' || stat[end+2] == 'X', nil
+}
+
+func TestProcStatHasExited(t *testing.T) {
+	for _, tt := range []struct {
+		stat    string
+		exited  bool
+		invalid bool
+	}{
+		{"42 (sleep) S 1 42 0", false, false},
+		{"42 (sleep) R 1 42 0", false, false},
+		{"42 (sleep) Z 1 42 0", true, false},
+		{"42 (a name ) with parentheses) Z 1 42 0", true, false},
+		{"42 (sleep) X 1 42 0", true, false},
+		{"", false, true},
+		{"42 (sleep)", false, true},
+		{"42 (sleep) Z", false, true},
+	} {
+		t.Run(tt.stat, func(t *testing.T) {
+			got, err := procStatHasExited([]byte(tt.stat))
+			if got != tt.exited || (err != nil) != tt.invalid {
+				t.Fatalf("process stat = %v, %v; want exited=%v, invalid=%v", got, err, tt.exited, tt.invalid)
+			}
+		})
+	}
+}
+
+func TestProcessHasExited(t *testing.T) {
+	guardTestTimeout(t)
+	if exited, err := processHasExited(os.Getpid()); err != nil || exited {
+		t.Fatalf("live process: exited=%v, err=%v", exited, err)
+	}
+	cmd := exec.Command("/bin/sh", "-c", "exit 0")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Wait() })
+	if runtime.GOOS == "linux" {
+		// Leave our child unreaped so this test does not depend on PID 1's
+		// behavior, even on a host with a fully functioning init process.
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			exited, err := processHasExited(cmd.Process.Pid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if exited {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("terminated but unreaped child was reported as running")
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if exited, err := processHasExited(cmd.Process.Pid); err != nil || !exited {
+		t.Fatalf("reaped child: exited=%v, err=%v", exited, err)
 	}
 }

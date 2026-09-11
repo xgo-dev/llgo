@@ -258,6 +258,9 @@ func TestUseWASIThreadsImportsMemory(t *testing.T) {
 	if !slices.Contains(export.LDFLAGS, "-Wl,--import-memory") {
 		t.Fatalf("LDFLAGS do not import shared host memory: %v", export.LDFLAGS)
 	}
+	if !slices.Contains(export.LDFLAGS, "-Wl,--initial-memory=67108864") {
+		t.Fatalf("WASI pthread initial-memory contract changed: %v", export.LDFLAGS)
+	}
 	if export.WasmPostLink.Asyncify {
 		t.Fatal("WASI pthread mode requests single-worker Asyncify processing")
 	}
@@ -534,6 +537,9 @@ func TestWASIProfileTargets(t *testing.T) {
 			if !export.WasmPostLink.Asyncify {
 				t.Fatal("single-worker WASI does not request Asyncify post-link processing")
 			}
+			if slices.Contains(export.LDFLAGS, "-Wl,--initial-memory=67108864") {
+				t.Fatalf("WASI C profile caps initial memory independently of static data: %v", export.LDFLAGS)
+			}
 		})
 	}
 }
@@ -651,6 +657,9 @@ func TestRawWasmStandardTagsRemainUnqualified(t *testing.T) {
 	}
 	if !wasi.WasmPostLink.Asyncify {
 		t.Fatal("raw single-worker WASI does not request Asyncify post-link processing")
+	}
+	if slices.Contains(wasi.LDFLAGS, "-Wl,--initial-memory=67108864") {
+		t.Fatalf("raw Go WASI profile caps initial memory independently of static data: %v", wasi.LDFLAGS)
 	}
 	if slices.Contains(wasi.BuildTags, "llgo.wasm.wasi") {
 		t.Fatalf("raw wasip1/wasm acquired a WASI C-profile source tag: %v", wasi.BuildTags)

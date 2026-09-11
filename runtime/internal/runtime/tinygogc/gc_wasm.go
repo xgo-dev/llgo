@@ -16,6 +16,14 @@ const wasmPageSize = uintptr(64 << 10)
 func gcMemoryLayout() (heapStart, heapEnd, globalsStart, globalsEnd, stackTop uintptr) {
 	heapStart = alignUp(gcWasmHeapBase(), bytesPerBlock)
 	heapEnd = alignDown(gcWasmMemorySize(), bytesPerBlock)
+	// A zero initial heap can leave no page-rounding slack after static data.
+	// Bootstrap the metadata before the first allocation can use growHeap.
+	// Do not use gcGrowMemory here: the package heapStart is not initialized yet.
+	if heapStart == heapEnd && heapEnd <= ^uintptr(0)-wasmPageSize {
+		if gcWasmGrowMemory(heapEnd+wasmPageSize) != 0 {
+			heapEnd = alignDown(gcWasmMemorySize(), bytesPerBlock)
+		}
+	}
 	globalsStart = gcWasmGlobalsStart()
 	globalsEnd = gcWasmGlobalsEnd()
 	stackTop = gcWasmStackTop()
