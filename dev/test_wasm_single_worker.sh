@@ -83,6 +83,34 @@ run_wasi() {
 	grep -Fq "${expected}" "${work_dir}/${name}.out"
 }
 
+run_host_call_boundaries() {
+	local module="$1"
+	local mode operation status expected marker
+	for mode in return throw exit-0 exit-7; do
+		for operation in Call Invoke New; do
+			expected=0
+			marker="wasm host call boundary ok"
+			if [[ "${mode}" == exit-* ]]; then
+				expected="${mode#exit-}"
+				marker="wasm host exit reached"
+			fi
+			status=0
+			run_with_timeout "${node_cmd}" "${repo_root}/dev/test_wasm_js_boundary.mjs" \
+				"${module}" "${mode}" "${operation}" > "${work_dir}/host-call.out" 2>&1 || status=$?
+			cat "${work_dir}/host-call.out"
+			if [[ ${status} -ne ${expected} ]]; then
+				echo "${mode}/${operation}: expected exit ${expected}, got ${status}" >&2
+				exit 1
+			fi
+			grep -Fq "${marker}" "${work_dir}/host-call.out"
+			grep -Fq "wasm host boundary runner ok" "${work_dir}/host-call.out"
+			if grep -Eq '^(panic:|fatal error:)' "${work_dir}/host-call.out"; then
+				exit 1
+			fi
+		done
+	done
+}
+
 run_llgo_test() {
 	local target="$1"
 	local name="$2"
@@ -175,6 +203,10 @@ run_wasi wasi "${lifecycle_fixture}" "wasm lifecycle ok" "lifecycle-wasi"
 # This catches treating an empty timer heap as an immediate deadlock.
 run_emscripten emscripten emscripten-runner.mjs "${callback_fixture}" "wasm callback-only wake ok" "callback-emscripten"
 run_emscripten emscripten-memory64 emscripten-memory64-runner.mjs "${callback_fixture}" "wasm callback-only wake ok" "callback-memory64"
+
+# Reuse both callback modules: no extra compilations for the JS boundary cases.
+run_host_call_boundaries "${work_dir}/callback-emscripten.mjs"
+run_host_call_boundaries "${work_dir}/callback-memory64.mjs"
 
 fi
 
