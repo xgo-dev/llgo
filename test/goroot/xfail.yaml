@@ -353,28 +353,23 @@ xfails:
     directive: run
     case: linkmain_run.go
     reason: the nested baseline go run exits unsuccessfully in the Go 1.26 Windows MSVC arm64 target environment
-  - version: go1.26
-    directive: errorcheck
+  - directive: errorcheck
     case: fixedbugs/issue4776.go
     reason: llgo parser uses a different missing-package-clause diagnostic
-  - version: go1.26
-    directive: errorcheck
+  - directive: errorcheck
     case: fixedbugs/issue4405.go
     reason: llgo parser recovery emits additional malformed-statement diagnostics
-  - version: go1.26
-    directive: errorcheck
+  - directive: errorcheck
     case: fixedbugs/issue13266.go
     reason: llgo parser uses a different malformed-package-clause diagnostic
   - version: go1.26
     directive: errorcheck
     case: fixedbugs/issue20789.go
     reason: llgo parser does not emit the expected malformed-name diagnostic
-  - version: go1.26
-    directive: errorcheck
+  - directive: errorcheck
     case: fixedbugs/bug050.go
     reason: llgo parser emits an additional malformed-declaration diagnostic
-  - version: go1.26
-    directive: errorcheck
+  - directive: errorcheck
     case: bombad.go
     reason: llgo parser recovery emits additional byte-order-mark diagnostics
 
