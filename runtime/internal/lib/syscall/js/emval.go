@@ -89,6 +89,7 @@ func emval_typeof(value Value) Value {
 func emval_instanceof(object, constructor Value) bool {
 	return cEmvalInstanceof(object.emvalHandle(), constructor.emvalHandle())
 }
+func emval_length(object Value) int   { return int(cEmvalLength(object.emvalHandle())) }
 func emval_as_double(v Value) float64 { return cEmvalAsDouble(v.emvalHandle()) }
 func emval_as_string(v Value) string  { return cEmvalAsString(v.emvalHandle()) }
 func emval_equals(first, second Value) bool {
@@ -190,6 +191,9 @@ func cEmvalTypeof(value uintptr) uintptr
 
 //go:linkname cEmvalInstanceof C.llgo_emval_instanceof
 func cEmvalInstanceof(object, constructor uintptr) bool
+
+//go:linkname cEmvalLength C.llgo_emval_length
+func cEmvalLength(object uintptr) float64
 
 //go:linkname cEmvalAsDouble C.llgo_emval_as_double
 func cEmvalAsDouble(v uintptr) float64
