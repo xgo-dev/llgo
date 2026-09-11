@@ -1,9 +1,12 @@
 package cgi_test
 
 import (
+	"bytes"
+	"log"
 	"net/http/cgi"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -67,18 +70,31 @@ func TestPublicAPISymbols(t *testing.T) {
 }
 
 func TestHandlerServeHTTP(t *testing.T) {
+	var logs bytes.Buffer
 	h := &cgi.Handler{
-		Path: os.Args[0],
-		Root: "/cgi-bin",
-		Dir:  t.TempDir(),
-		Args: []string{"-test.run=^TestCGIHelperProcess$"},
-		Env:  []string{cgiHelperEnv + "=1"},
+		Path:   os.Args[0],
+		Root:   "/cgi-bin",
+		Dir:    t.TempDir(),
+		Args:   []string{"-test.run=^TestCGIHelperProcess$"},
+		Env:    []string{cgiHelperEnv + "=1"},
+		Logger: log.New(&logs, "", 0),
 	}
 	req := httptest.NewRequest("GET", "http://example.com/cgi-bin/app.sh?x=1&y=2", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 
 	res := w.Result()
+	if runtime.GOARCH == "wasm" {
+		// CGI process execution is unavailable in Go's wasm profiles. Exercise
+		// and check the handler's HTTP error response, not a fictitious child.
+		if res.StatusCode != 500 || !strings.Contains(strings.ToLower(logs.String()), "not implemented") {
+			t.Fatalf("unsupported CGI execution: status=%d log=%q", res.StatusCode, logs.String())
+		}
+		if w.Body.Len() != 0 {
+			t.Fatalf("unexpected CGI error body: %q", w.Body.String())
+		}
+		return
+	}
 	if res.StatusCode != 200 {
 		t.Fatalf("status = %d, want 200", res.StatusCode)
 	}

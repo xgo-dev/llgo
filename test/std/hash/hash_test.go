@@ -106,9 +106,6 @@ func (h *mockHash64) Sum64() uint64 {
 	return result
 }
 
-// Note: hash.Cloner and hash.XOF are not exported interfaces in the hash package
-// Only Hash, Hash32, and Hash64 are available for testing
-
 func TestHashInterface(t *testing.T) {
 	h := newMockHash(8, 4)
 
@@ -358,12 +355,6 @@ func TestImplementationEdgeCases(t *testing.T) {
 			t.Fatalf("Size() = %d, want 8", h.Size())
 		}
 	})
-}
-
-func TestSkippedInterfaces(t *testing.T) {
-	// Test that Cloner and XOF interfaces are not exported
-	// These interfaces exist internally but are not available for import
-	t.Skip("hash.Cloner and hash.XOF are not exported interfaces in hash package")
 }
 
 // Benchmark tests for hash operations

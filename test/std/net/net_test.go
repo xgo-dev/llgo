@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -893,6 +894,9 @@ func TestListenPacket(t *testing.T) {
 
 func TestInterfaces(t *testing.T) {
 	ifaces, err := net.Interfaces()
+	if checkWasmInterfaces(t, ifaces, err) {
+		return
+	}
 	if err != nil {
 		t.Fatalf("Interfaces error: %v", err)
 	}
@@ -903,6 +907,11 @@ func TestInterfaces(t *testing.T) {
 
 func TestInterfaceByName(t *testing.T) {
 	ifaces, err := net.Interfaces()
+	if checkWasmInterfaces(t, ifaces, err) {
+		iface, err := net.InterfaceByName("llgo-no-such-interface")
+		checkMissingWasmInterface(t, iface, err)
+		return
+	}
 	if err != nil || len(ifaces) == 0 {
 		t.Skip("No interfaces found")
 	}
@@ -917,6 +926,11 @@ func TestInterfaceByName(t *testing.T) {
 
 func TestInterfaceByIndex(t *testing.T) {
 	ifaces, err := net.Interfaces()
+	if checkWasmInterfaces(t, ifaces, err) {
+		iface, err := net.InterfaceByIndex(1)
+		checkMissingWasmInterface(t, iface, err)
+		return
+	}
 	if err != nil || len(ifaces) == 0 {
 		t.Skip("No interfaces found")
 	}
@@ -934,6 +948,12 @@ func TestInterfaceAddrs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InterfaceAddrs error: %v", err)
 	}
+	if runtime.GOARCH == "wasm" {
+		if len(addrs) != 0 {
+			t.Fatalf("wasm InterfaceAddrs = %v, want empty list", addrs)
+		}
+		return
+	}
 	if len(addrs) == 0 {
 		t.Skip("No interface addresses found")
 	}
@@ -941,6 +961,14 @@ func TestInterfaceAddrs(t *testing.T) {
 
 func TestInterfaceAddrsMethod(t *testing.T) {
 	ifaces, err := net.Interfaces()
+	if checkWasmInterfaces(t, ifaces, err) {
+		iface := &net.Interface{Index: 1}
+		addrs, err := iface.Addrs()
+		if err != nil || len(addrs) != 0 {
+			t.Fatalf("wasm Interface.Addrs = %v, %v; want empty list, nil", addrs, err)
+		}
+		return
+	}
 	if err != nil || len(ifaces) == 0 {
 		t.Skip("No interfaces found")
 	}
@@ -953,6 +981,14 @@ func TestInterfaceAddrsMethod(t *testing.T) {
 
 func TestInterfaceMulticastAddrs(t *testing.T) {
 	ifaces, err := net.Interfaces()
+	if checkWasmInterfaces(t, ifaces, err) {
+		iface := &net.Interface{Index: 1}
+		addrs, err := iface.MulticastAddrs()
+		if err != nil || len(addrs) != 0 {
+			t.Fatalf("wasm Interface.MulticastAddrs = %v, %v; want empty list, nil", addrs, err)
+		}
+		return
+	}
 	if err != nil || len(ifaces) == 0 {
 		t.Skip("No interfaces found")
 	}

@@ -30,7 +30,27 @@ func TestConcurrentOperations(t *testing.T) {
 }
 
 func TestConcurrentCAS(t *testing.T) {
-	t.Skip("Concurrent CAS test skipped due to potential infinite loop")
+	var counter atomic.Int32
+	done := make(chan struct{}, 5)
+	for range 5 {
+		go func() {
+			for range 100 {
+				for {
+					old := counter.Load()
+					if counter.CompareAndSwap(old, old+1) {
+						break
+					}
+				}
+			}
+			done <- struct{}{}
+		}()
+	}
+	for range 5 {
+		<-done
+	}
+	if got := counter.Load(); got != 500 {
+		t.Fatalf("Concurrent CAS operations: got %d, want 500", got)
+	}
 }
 
 // Benchmark functions

@@ -10,7 +10,7 @@ import (
 func TestInfoPopulation(t *testing.T) {
 	src := `package sample
 
-import "fmt"
+import "example.org/fixture/fmt"
 
 type MyType struct{ X int }
 

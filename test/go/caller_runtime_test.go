@@ -38,7 +38,13 @@ var (
 
 func init() {
 	_, callerInitFile, callerInitLine, _ = runtime.Caller(0)
-	if os.Getenv(callerPanicChild) == "1" {
+	panicChild := os.Getenv(callerPanicChild) == "1"
+	// Wasm guests cannot spawn a subprocess. The host acceptance driver reuses
+	// the test binary and requests the same init-time panic through argv.
+	for _, arg := range os.Args[1:] {
+		panicChild = panicChild || arg == "-llgo.caller-panic-child"
+	}
+	if panicChild {
 		callerPanicCaller() // PANIC_INIT_MARK
 	}
 }
@@ -55,7 +61,7 @@ func callerPanicCaller() {
 
 func testCallerPanicTraceback(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "-test.run=^$")
-	cmd.Env = append(os.Environ(), callerPanicChild+"=1")
+	cmd.Env = append(os.Environ(), callerPanicChild+"=1", "GOTRACEBACK=single")
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("panic child unexpectedly succeeded:\n%s", output)
