@@ -14,8 +14,8 @@ var (
 )
 
 // RegisterWasmCallbackPoll connects a host callback source to the logical
-// scheduler. Host bridges only queue callbacks and wake the host wait; the Go
-// callbacks themselves are started as ordinary Gs from this poll point.
+// scheduler. The hook dispatches queued external events on ordinary Gs and
+// coordinates return from synchronous JS events after runnable Go work drains.
 func RegisterWasmCallbackPoll(poll func()) {
 	wasmCallbackPollHook = poll
 }

@@ -55,7 +55,7 @@ func emval_get_module_property(name *c.Char) Value {
 	return valueFromEmval(cEmvalGetModuleProperty(name))
 }
 
-func emval_install_invoke()              { cEmvalInstallInvoke() }
+func emval_install_invoke()              { cEmvalInstallInvoke(dispatchSynchronousCallback) }
 func emval_has_pending_invoke() bool     { return cEmvalHasPendingInvoke() }
 func emval_take_pending_invoke() uintptr { return cEmvalTakePendingInvoke() }
 
@@ -141,7 +141,10 @@ func cEmvalGetGlobal(name *c.Char) uintptr
 func cEmvalGetModuleProperty(name *c.Char) uintptr
 
 //go:linkname cEmvalInstallInvoke C.llgo_emval_install_invoke
-func cEmvalInstallInvoke()
+func cEmvalInstallInvoke(handler emvalCallback)
+
+//llgo:type C
+type emvalCallback func(c.Ulong)
 
 //go:linkname cEmvalTakePendingInvoke C.llgo_emval_take_pending_invoke
 func cEmvalTakePendingInvoke() uintptr
