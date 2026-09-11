@@ -704,7 +704,7 @@ jobs:
         shell: bash
         env:
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
-          LLGO_BUILD_CACHE: "off"
+          LLGO_BUILD_CACHE: "1"
         run: dev/test_wasm_target_profiles.sh
 
       - name: Build standard runtime for wasm
@@ -712,14 +712,14 @@ jobs:
         shell: bash
         env:
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
-          LLGO_BUILD_CACHE: "off"
+          LLGO_BUILD_CACHE: "1"
         run: dev/test_wasm_runtime_go_versions.sh 1.24 1.27
 
       - name: Test single-worker wasm schedulers
         shell: bash
         env:
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
-          LLGO_BUILD_CACHE: "off"
+          LLGO_BUILD_CACHE: "1"
         run: dev/test_wasm_single_worker.sh "${{ matrix.suite }}"
 
       - name: Compare JavaScript call semantics with Go
