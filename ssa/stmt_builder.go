@@ -341,9 +341,26 @@ type Phi struct {
 func (p Phi) AddIncoming(b Builder, preds []BasicBlock, f func(i int, blk BasicBlock) Expr) {
 	raw := p.raw.Type
 	vals := make([]llvm.Value, len(preds))
+	logicalBlock := b.blk
+	defer func() {
+		b.blk = logicalBlock
+	}()
 	for iblk, blk := range preds {
+		oldTail := blk.last
+		terminator := oldTail.LastInstruction()
+		// Incoming values are emitted into their predecessor blocks. Keep the
+		// builder's logical block in sync as well: lowering an incoming value can
+		// split that predecessor (for example, to emit a nil check) and must then
+		// update the predecessor's LLVM tail used by the phi. If that happens,
+		// move the predecessor's existing terminator to the new tail as well.
+		b.blk = blk
 		val := f(iblk, blk)
 		vals[iblk] = checkExpr(val, raw, b).impl
+		if blk.last != oldTail && !terminator.IsNil() {
+			terminator.RemoveFromParentAsInstruction()
+			b.impl.SetInsertPointAtEnd(blk.last)
+			b.impl.Insert(terminator)
+		}
 	}
 	bs := llvmPredBlocks(preds)
 	p.impl.AddIncoming(vals, bs)
