@@ -1724,6 +1724,7 @@ func TestConvertStringFromWideIntegers(t *testing.T) {
 func TestCallClosureDynamic(t *testing.T) {
 	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm"})
 	defer prog.Dispose()
+	setTestRuntime(t, prog)
 	pkg := prog.NewPackage("bar", "foo/bar")
 
 	params := types.NewTuple(types.NewVar(0, nil, "x", types.Typ[types.Int]))

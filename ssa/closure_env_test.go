@@ -216,6 +216,7 @@ func TestWasmDynamicClosureUsesTwoExplicitTypedEdges(t *testing.T) {
 	Initialize(InitAllTargets | InitAllTargetInfos | InitAllTargetMCs)
 	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm"})
 	defer prog.Dispose()
+	setTestRuntime(t, prog)
 	pkg := prog.NewPackage("p", "example.com/p")
 
 	params := types.NewTuple(types.NewVar(token.NoPos, nil, "x", types.Typ[types.Int]))
