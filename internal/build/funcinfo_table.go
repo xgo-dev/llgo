@@ -678,6 +678,7 @@ const (
 	siteObjectELF
 	siteObjectMachO
 	siteObjectCOFF
+	siteObjectWasm
 )
 
 func runtimeSiteObjectFormat(ctx *context) siteObjectFormat {
@@ -688,9 +689,17 @@ func runtimeSiteObjectFormat(ctx *context) siteObjectFormat {
 		return siteObjectMachO
 	case shouldEmitRuntimeCOFFSites(ctx):
 		return siteObjectCOFF
+	case shouldEmitRuntimeWasmSites(ctx):
+		return siteObjectWasm
 	default:
 		return siteObjectUnsupported
 	}
+}
+
+func shouldEmitRuntimeWasmSites(ctx *context) bool {
+	return ctx != nil &&
+		ctx.buildConf != nil &&
+		ctx.buildConf.Goarch == "wasm"
 }
 
 // shouldEmitRuntimeSites reports whether the target object format has a
@@ -851,6 +860,10 @@ func emitFuncInfoEntrySites(ctx *context, pkg llssa.Package) {
 	if len(symbolIDs) == 0 {
 		return
 	}
+	if runtimeSiteObjectFormat(ctx) == siteObjectWasm {
+		emitWasmFuncInfoEntrySites(mod, symbolIDs)
+		return
+	}
 	// This is LLGo's DCE-safe substitute for the function PC list that Go's
 	// linker has while building pclntab. The inline-asm fragment lives in a
 	// section tied to the function body (SHF_LINK_ORDER on ELF; live_support
@@ -942,6 +955,61 @@ func emitFuncInfoEntrySites(ctx *context, pkg llssa.Package) {
 	}
 }
 
+// emitWasmFuncInfoEntrySites records table indices for functions whose address
+// is already used by the program. WebAssembly has no native text address or
+// dladdr lookup; a function value is represented by its indirect-function
+// table index instead. Restricting the table to functions that were already
+// address-taken preserves GlobalDCE while making reflect.Value.Pointer usable
+// with runtime.FuncForPC, as it is in the Go wasm runtime.
+func emitWasmFuncInfoEntrySites(mod llvm.Module, symbolIDs map[string]uint64) {
+	ctx := mod.Context()
+	ptrType := llvm.PointerType(ctx.Int8Type(), 0)
+	recordType := ctx.StructType([]llvm.Type{ptrType, ctx.Int64Type()}, false)
+	values := make([]llvm.Value, 0)
+	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+		if fn.IsDeclaration() || fn.BasicBlocksCount() == 0 || !functionAddressTaken(fn) {
+			continue
+		}
+		symbolID := symbolIDs[fn.Name()]
+		if symbolID == 0 {
+			continue
+		}
+		values = append(values, llvm.ConstNamedStruct(recordType, []llvm.Value{
+			llvm.ConstBitCast(fn, ptrType),
+			llvm.ConstInt(ctx.Int64Type(), symbolID, false),
+		}))
+	}
+	if len(values) == 0 {
+		return
+	}
+	arrayType := llvm.ArrayType(recordType, len(values))
+	data := llvm.AddGlobal(mod, arrayType, "__llgo_wasm_funcinfo_entries")
+	data.SetInitializer(llvm.ConstArray(recordType, values))
+	data.SetLinkage(llvm.PrivateLinkage)
+	data.SetGlobalConstant(true)
+	data.SetSection(entrySiteSectionInfo.elf)
+	data.SetAlignment(8)
+	appendLLVMUsed(mod, data)
+}
+
+func appendLLVMUsed(mod llvm.Module, value llvm.Value) {
+	ptrType := llvm.PointerType(mod.Context().Int8Type(), 0)
+	values := []llvm.Value{llvm.ConstBitCast(value, ptrType)}
+	if used := mod.NamedGlobal("llvm.used"); !used.IsNil() {
+		if init := used.Initializer(); !init.IsNil() {
+			for i, n := 0, init.OperandsCount(); i < n; i++ {
+				values = append(values, llvm.ConstBitCast(init.Operand(i), ptrType))
+			}
+		}
+		used.EraseFromParentAsGlobal()
+	}
+	init := llvm.ConstArray(ptrType, values)
+	used := llvm.AddGlobal(mod, init.Type(), "llvm.used")
+	used.SetInitializer(init)
+	used.SetLinkage(llvm.AppendingLinkage)
+	used.SetSection("llvm.metadata")
+}
+
 func functionAddressTaken(fn llvm.Value) bool {
 	for use := fn.FirstUse(); !use.IsNil(); use = use.NextUse() {
 		user := use.User()
@@ -990,6 +1058,21 @@ const funcInfoMetaRecordMagic = uint64(0x3154454D4F474C4C)
 
 func emitRuntimeFuncInfoSites(mod llvm.Module, pointerSize int, format siteObjectFormat, entrySiteInfo siteSectionInfo, pcSite bool, entrySite bool) {
 	if !pcSite && !entrySite {
+		return
+	}
+	if format == siteObjectWasm {
+		ctx := mod.Context()
+		ptrType := llvm.PointerType(ctx.Int8Type(), 0)
+		recordType := ctx.StructType([]llvm.Type{ptrType, ctx.Int64Type()}, false)
+		if entrySite {
+			zero := llvm.AddGlobal(mod, recordType, "__llgo_wasm_funcinfo_zero")
+			zero.SetInitializer(llvm.ConstNull(recordType))
+			zero.SetLinkage(llvm.PrivateLinkage)
+			zero.SetGlobalConstant(true)
+			zero.SetSection(entrySiteInfo.elf)
+			zero.SetAlignment(8)
+			appendLLVMUsed(mod, zero)
+		}
 		return
 	}
 	// COFF boundaries are ordinary LLVM globals in $a/$z subsections. The

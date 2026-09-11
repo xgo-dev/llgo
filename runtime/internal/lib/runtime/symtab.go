@@ -947,14 +947,17 @@ func appendRuntimeFuncInfoEntryFrames(frames []runtimeFuncPCFrame, entries []uin
 		if funcIndex == 0 || uintptr(funcIndex) > runtimeFuncInfoCount {
 			continue
 		}
-		*(*runtimeFuncPCFrame)(unsafe.Add(frameBase, uintptr(nframes)*frameSize)) = runtimeFuncPCFrame{
-			entry:     site.pc,
-			funcIndex: funcIndex,
-		}
+		pc := rtdebug.FunctionPC(unsafe.Pointer(site.pc))
+		// Write the fields directly. A composite assignment here used to lower
+		// through a fresh stack temporary on every loop iteration, exhausting a
+		// fixed WebAssembly goroutine stack while indexing a large program.
+		frame := (*runtimeFuncPCFrame)(unsafe.Add(frameBase, uintptr(nframes)*frameSize))
+		frame.entry = pc
+		frame.funcIndex = funcIndex
 		nframes++
 		entry := (*uintptr)(unsafe.Add(entryBase, uintptr(funcIndex)*unsafe.Sizeof(uintptr(0))))
-		if *entry == 0 || site.pc < *entry {
-			*entry = site.pc
+		if *entry == 0 || pc < *entry {
+			*entry = pc
 		}
 		used = true
 	}
@@ -2075,10 +2078,12 @@ func frameSymbol(pc uintptr) pcSymbol {
 }
 
 func frameSymbolUncached(pc uintptr) pcSymbol {
-	if pc&3 != 0 && !prebuiltTextContains(pc+1) {
+	if pc&3 != 0 && (GOARCH == "wasm" || !prebuiltTextContains(pc+1)) {
 		// Unaligned pcs outside the text range are shadow-stack synthetic
-		// markers. Text-range pcs — return addresses minus one, and on
-		// amd64 any instruction pc — flow through the normal lookups:
+		// markers. Wasm function PCs are shifted to keep these low bits
+		// unambiguous. On native targets, text-range pcs — return addresses
+		// minus one, and on amd64 any instruction pc — flow through the normal
+		// lookups:
 		// pcline nearest-below is byte-exact, no alignment games (rounding
 		// by instruction size was an arm64-only assumption).
 		if frame, ok := rtdebug.FrameForPC(pc); ok {

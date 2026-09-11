@@ -1144,7 +1144,7 @@ func (v Value) Pointer() uintptr {
 		if p != nil && v.typ_.IsClosure() {
 			p = *(*unsafe.Pointer)(p)
 		}
-		return uintptr(p)
+		return runtime.FunctionPC(p)
 
 	case Slice:
 		return uintptr((*unsafeheaderSlice)(v.ptr).Data)

@@ -347,6 +347,52 @@ func TestWin32FuncInfoUsesExactEntryForAddressTakenFunction(t *testing.T) {
 	buf.Dispose()
 }
 
+func TestWasmFuncInfoUsesTableIndexForAddressTakenFunction(t *testing.T) {
+	prog := llssa.NewProgram(&llssa.Target{
+		GOOS:       "js",
+		GOARCH:     "wasm",
+		LLVMTarget: "wasm32-unknown-emscripten",
+	})
+	defer prog.Dispose()
+	prog.EnableFuncInfoMetadata(true)
+	prog.EnableFuncInfoSites(true)
+	ctx := &context{
+		prog: prog,
+		buildConf: &Config{
+			BuildMode: BuildModeExe,
+			Goos:      "js",
+			Goarch:    "wasm",
+		},
+	}
+	pkg := prog.NewPackage("example.com/p", "example.com/p")
+	for _, name := range []string{"example.com/p.direct", "example.com/p.addressed"} {
+		pkg.EmitFuncInfo(name, name, "p.go", 1, 1)
+		pkg.NewFunc(name, llssa.NoArgsNoRet, llssa.InGo).MakeBody(1).Return()
+	}
+	addressed := pkg.Module().NamedFunction("example.com/p.addressed")
+	keep := llvm.AddGlobal(pkg.Module(), addressed.Type(), "example.com/p.funcValue")
+	keep.SetInitializer(addressed)
+	i8 := pkg.Module().Context().Int8Type()
+	preexisting := llvm.AddGlobal(pkg.Module(), i8, "example.com/p.preexistingUsed")
+	preexisting.SetInitializer(llvm.ConstInt(i8, 0, false))
+	appendLLVMUsed(pkg.Module(), preexisting)
+
+	emitFuncInfoEntrySites(ctx, pkg)
+	ir := pkg.String()
+	if got := strings.Count(ir, `section "llgo_funcinfo_entry"`); got != 1 {
+		t.Fatalf("wasm funcinfo entry record count = %d, want 1:\n%s", got, ir)
+	}
+	if !strings.Contains(ir, `ptr @"example.com/p.addressed"`) {
+		t.Fatalf("wasm address-taken function is not recorded:\n%s", ir)
+	}
+	if strings.Contains(ir, `ptr @"example.com/p.direct"`) {
+		t.Fatalf("wasm direct-only function unexpectedly has an entry record:\n%s", ir)
+	}
+	if got := strings.Count(ir, `@llvm.used = appending global [2 x ptr]`); got != 1 {
+		t.Fatalf("wasm llvm.used merge count = %d, want 1:\n%s", got, ir)
+	}
+}
+
 func TestFuncInfoTableSitesDisabledKeepsTables(t *testing.T) {
 	prog := llssa.NewProgram(nil)
 	src := prog.NewPackage("example.com/p", "example.com/p")
