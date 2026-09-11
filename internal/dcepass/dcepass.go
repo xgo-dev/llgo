@@ -93,12 +93,8 @@ func (e *overrideEmitter) emitTypeOverride(srcType, methodsVal llvm.Value, elemT
 }
 
 func (e *overrideEmitter) unreachableMethod() llvm.Value {
-	fn := e.dst.NamedFunction(unreachableMethodName)
-	if fn.IsNil() {
-		fn = llvm.AddFunction(e.dst, unreachableMethodName,
-			llvm.FunctionType(e.dst.Context().VoidType(), nil, false))
-	}
-	return fn
+	return e.dst.GetOrInsertFunction(unreachableMethodName,
+		llvm.FunctionType(e.dst.Context().VoidType(), nil, false))
 }
 
 func (e *overrideEmitter) ensureOverrideGlobal(src llvm.Value) llvm.Value {
@@ -269,10 +265,7 @@ func (e *overrideEmitter) cloneGlobalValue(v llvm.Value) llvm.Value {
 	// time; the override initializer only needs a destination-owned reference
 	// with the same function type.
 	if fn := v.IsAFunction(); !fn.IsNil() {
-		dstFn := e.dst.NamedFunction(fn.Name())
-		if dstFn.IsNil() {
-			dstFn = llvm.AddFunction(e.dst, fn.Name(), e.cloneType(fn.GlobalValueType()))
-		}
+		dstFn := e.dst.GetOrInsertFunction(fn.Name(), e.cloneType(fn.GlobalValueType()))
 		e.values[v] = dstFn
 		return dstFn
 	}
