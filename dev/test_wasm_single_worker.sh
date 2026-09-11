@@ -12,6 +12,7 @@ callback_fixture="${repo_root}/internal/build/testdata/wasm-callback"
 gc_fixture="${repo_root}/internal/build/testdata/wasm-gc"
 lifecycle_fixture="${repo_root}/internal/build/testdata/wasm-lifecycle"
 test_fixture="${repo_root}/internal/build/testdata/wasm-test"
+runner_test_fixture="${repo_root}/internal/build/testdata/wasm-runner-test"
 suite="${1:-all}"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/llgo-wasm-single-worker.XXXXXX")"
 trap 'rm -rf "${work_dir}"' EXIT
@@ -171,6 +172,7 @@ run_llgo_go_profile_test() {
 	local goos="$1"
 	local name="$2"
 	local pattern="${3:-}"
+	local fixture="${4:-${test_fixture}}"
 	local output="${work_dir}/${name}.out"
 	local test_args=(-v -count=1 -timeout=30s)
 	if [[ -n "${pattern}" ]]; then
@@ -179,7 +181,7 @@ run_llgo_go_profile_test() {
 
 	echo "testing public llgo test command for GOOS=${goos} GOARCH=wasm"
 	run_with_timeout_limit 300s env GOOS="${goos}" GOARCH=wasm \
-		"${llgo_cmd}" test "${test_args[@]}" "${test_fixture}" 2>&1 | tee "${output}"
+		"${llgo_cmd}" test "${test_args[@]}" "${fixture}" 2>&1 | tee "${output}"
 	grep -Fq "PASS" "${output}"
 }
 
@@ -257,7 +259,7 @@ run_llgo_test_compile_only wasi "test-compile-only-wasi"
 # callback and filesystem set; Go WASI uses the smaller host-neutral subset to
 # cover its automatic runner without duplicating the named-WASI acceptance.
 run_llgo_go_profile_test js "test-gojs"
-run_llgo_go_profile_test wasip1 "test-gowasi" '^Test(StandardLibraryWasmAssembly|Scheduler|PanicRecoverAndCaller)$'
+run_llgo_go_profile_test wasip1 "test-gowasi" '^TestRawWasmRunner$' "${runner_test_fixture}"
 fi
 
 echo "single-worker WebAssembly ${suite} checks passed"
