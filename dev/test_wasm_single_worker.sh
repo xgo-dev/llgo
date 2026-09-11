@@ -160,6 +160,22 @@ if [[ "${suite}" == "all" || "${suite}" == "runtime" ]]; then
 go -C "${repo_root}/runtime" test -count=1 -cover ./internal/runtime/tinygogc
 fi
 
+run_llgo_go_profile_test() {
+	local goos="$1"
+	local name="$2"
+	local pattern="${3:-}"
+	local output="${work_dir}/${name}.out"
+	local test_args=(-v -count=1 -timeout=30s)
+	if [[ -n "${pattern}" ]]; then
+		test_args+=(-run "${pattern}")
+	fi
+
+	echo "testing public llgo test command for GOOS=${goos} GOARCH=wasm"
+	run_with_timeout_limit 300s env GOOS="${goos}" GOARCH=wasm \
+		"${llgo_cmd}" test "${test_args[@]}" "${test_fixture}" 2>&1 | tee "${output}"
+	grep -Fq "PASS" "${output}"
+}
+
 if [[ "${suite}" != "test-command" ]]; then
 # Canonical hosted targets exercise the same scheduler semantics under J32
 # Emscripten, J64 Emscripten Memory64, and W32 WASI Preview 1.
@@ -221,6 +237,12 @@ run_llgo_test wasi "test-wasi"
 run_llgo_test_compile_only emscripten "test-compile-only-emscripten"
 run_llgo_test_compile_only emscripten-memory64 "test-compile-only-memory64"
 run_llgo_test_compile_only wasi "test-compile-only-wasi"
+# Raw GOOS/GOARCH selection must remain executable through the public command,
+# not merely compile under the named C-ABI targets. GoJS runs the complete JS
+# callback and filesystem set; Go WASI uses the smaller host-neutral subset to
+# cover its automatic runner without duplicating the named-WASI acceptance.
+run_llgo_go_profile_test js "test-gojs"
+run_llgo_go_profile_test wasip1 "test-gowasi" '^Test(StandardLibraryWasmAssembly|Scheduler|PanicRecoverAndCaller)$'
 fi
 
 echo "single-worker WebAssembly ${suite} checks passed"
