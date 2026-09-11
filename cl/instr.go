@@ -397,7 +397,11 @@ func (p *context) funcAddr(b llssa.Builder, args []ssa.Value) llssa.Expr {
 
 // func funcPCABI0(fn any) uintptr
 func (p *context) funcPCABI0(b llssa.Builder, args []ssa.Value) llssa.Expr {
-	return p.funcPCABI0Value(b, args[0])
+	pc := p.funcPCABI0Value(b, args[0])
+	if target := p.prog.Target(); target != nil && target.GOARCH == "wasm" {
+		pc = b.BinOp(token.SHL, pc, p.prog.IntVal(2, pc.Type))
+	}
+	return pc
 }
 
 func (p *context) funcPCABI0Value(b llssa.Builder, v ssa.Value) llssa.Expr {
