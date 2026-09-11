@@ -196,3 +196,103 @@ func TestFullHostChecksReuseThePackageBuild(t *testing.T) {
 		t.Fatalf("temporary artifact directory retained: %v", err)
 	}
 }
+
+func TestFullHostChecksCoverRootAndLLGoExtensionSuites(t *testing.T) {
+	exitErr := fullHostCheckTestExit(t)
+	root := t.TempDir()
+	packages := []selectedPackage{
+		{Dir: filepath.Join(root, "test"), TestGoFiles: []string{"root_test.go"}},
+		{Dir: filepath.Join(root, "test", "llgoext"), TestGoFiles: []string{"llgoext_test.go"}},
+	}
+	for i, pkg := range packages {
+		if err := os.MkdirAll(pkg.Dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		source := "package acceptance\nfunc TestWitness(t *T) {}\n"
+		if err := os.WriteFile(filepath.Join(pkg.Dir, pkg.TestGoFiles[0]), []byte(source), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		packages[i] = pkg
+	}
+	var listOutput []byte
+	for _, pkg := range packages {
+		data, err := json.Marshal(pkg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		listOutput = append(listOutput, data...)
+		listOutput = append(listOutput, '\n')
+	}
+	structured := func(_ string, cmd command) ([]byte, error) {
+		if cmd.Args[0] == "env" {
+			return []byte("/goroot"), nil
+		}
+		return listOutput, nil
+	}
+	for _, profileName := range []string{"J32-GoJS", "W32-WASI"} {
+		t.Run(profileName, func(t *testing.T) {
+			artifacts := map[string]string{}
+			builds, children := 0, 0
+			run := func(_ string, cmd command) ([]byte, error) {
+				selector := cmd.Args[len(cmd.Args)-1]
+				switch selector {
+				case "./test", "./test/llgoext":
+					builds++
+					i := slices.Index(cmd.Args, "-o")
+					if i < 0 {
+						t.Fatalf("%s did not retain its artifact: %+v", selector, cmd)
+					}
+					artifacts[selector] = cmd.Args[i+1]
+					return []byte("--- PASS: TestWitness (0.00s)\nPASS\n"), nil
+				case "-llgo.builtin-print-child":
+					children++
+					if !slices.Contains(cmd.Args, artifacts["./test"]) {
+						t.Fatalf("builtin-print check did not reuse root artifact: %+v", cmd)
+					}
+					return []byte(fullBuiltinPrintWant), nil
+				case "-llgo.main-goexit-lifecycle-child":
+					children++
+					if !slices.Contains(cmd.Args, artifacts["./test/llgoext"]) {
+						t.Fatalf("Goexit check did not reuse llgoext artifact: %+v", cmd)
+					}
+					return []byte("WORKER_RETURNING\nfatal error: no goroutines (main called runtime.Goexit) - deadlock!"), exitErr
+				default:
+					t.Fatalf("unexpected command: %+v", cmd)
+					return nil, nil
+				}
+			}
+			reportPath := filepath.Join(root, profileName+".json")
+			if err := runFullAt(root, profileName, reportPath, "go", "llgo", 0, 1, structured, run); err != nil {
+				t.Fatal(err)
+			}
+			if builds != 2 || children != 2 {
+				t.Fatalf("builds/children = %d/%d", builds, children)
+			}
+			wantExt := ".wasm"
+			if profileName == "J32-GoJS" {
+				wantExt = ".mjs"
+			}
+			for pkg, artifact := range artifacts {
+				if filepath.Ext(artifact) != wantExt {
+					t.Errorf("%s artifact = %q, want %s", pkg, artifact, wantExt)
+				}
+			}
+			data, err := os.ReadFile(reportPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var report struct{ Packages []fullPackage }
+			if err := json.Unmarshal(data, &report); err != nil {
+				t.Fatal(err)
+			}
+			if len(report.Packages) != 2 {
+				t.Fatalf("packages = %s", data)
+			}
+			for _, pkg := range report.Packages {
+				if pkg.Status != "pass" || len(pkg.HostChecks) != 1 || pkg.HostChecks[0].Status != "pass" {
+					t.Fatalf("host check was not recorded: %+v", pkg)
+				}
+			}
+		})
+	}
+}
