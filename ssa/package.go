@@ -977,6 +977,8 @@ type aPackage struct {
 	llvmUsedValues []llvm.Value
 
 	abiTypeFakeUseCache map[llvm.Value][]llvm.Value
+
+	wasmReflectBridges map[string]wasmReflectBridgePair
 }
 
 type none struct{}

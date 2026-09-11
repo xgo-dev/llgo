@@ -541,6 +541,7 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 		Target:                  conf.Target,
 		LLVMTarget:              export.LLVMTarget,
 		WasmProfile:             string(export.WasmProfile),
+		WasmProvider:            string(export.WasmProvider),
 		OptLevel:                conf.OptLevel,
 		SaturatingFloatToUint32: conf.SaturatingFloatToUint32,
 	}
@@ -823,6 +824,7 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 	ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
 	callerSpan.done()
 	ctx.frontendOptions.ReceiverNilChecks = collectReceiverNilChecks(initial, altPkgs)
+	configureWasmReflectBridges(ctx)
 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	allPkgs = append(allPkgs, depPkgs...)

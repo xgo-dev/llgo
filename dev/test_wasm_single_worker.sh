@@ -271,7 +271,7 @@ run_llgo_test_compile_only wasi "test-compile-only-wasi"
 # callback and filesystem set; Go WASI uses the smaller host-neutral subset to
 # cover its automatic runner without duplicating the named-WASI acceptance.
 run_llgo_go_profile_test js "test-gojs"
-run_llgo_go_profile_test wasip1 "test-gowasi" '^TestRawWasmRunner$' "${runner_test_fixture}"
+run_llgo_go_profile_test wasip1 "test-gowasi" '^TestRawWasm(Runner|ReflectionBridge)$' "${runner_test_fixture}"
 run_llgo_go_profile_run js "run-gojs"
 run_llgo_go_profile_run wasip1 "run-gowasi"
 fi

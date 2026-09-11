@@ -1,4 +1,4 @@
-//go:build !llgo || !windows || nogc || baremetal
+//go:build (!llgo || !wasm || !wasip1) && (!llgo || !windows || nogc || baremetal)
 
 package reflect
 
