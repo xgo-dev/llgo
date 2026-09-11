@@ -70,7 +70,7 @@ func TestConfigureWasmReflectBridges(t *testing.T) {
 			ctx := &context{
 				prog:    prog,
 				progSSA: pkg.Prog,
-				initial: []*packages.Package{{Types: pkg.Pkg}},
+				initial: []*packages.Package{nil, {}, {Types: types.NewPackage("example.com/missing", "missing")}, {Types: pkg.Pkg}},
 			}
 			configureWasmReflectBridges(ctx)
 			if got := test.target.WasmReflectBridges; got != test.expected {
@@ -80,9 +80,21 @@ func TestConfigureWasmReflectBridges(t *testing.T) {
 	}
 
 	configureWasmReflectBridges(nil)
+	if roots := wasmReflectRoots(nil); roots != nil {
+		t.Fatalf("wasmReflectRoots(nil) = %v", roots)
+	}
 }
 
 func TestProgramUsesWasmReflectBridges(t *testing.T) {
+	if programUsesWasmReflectBridges(nil, nil) {
+		t.Fatal("nil program may not require reflection bridges")
+	}
+	if isWasmReflectBridgeCall(nil) {
+		t.Fatal("nil call may not be a reflection bridge")
+	}
+	if got := ssaFunctionPackagePath(nil); got != "" {
+		t.Fatalf("nil function package path = %q", got)
+	}
 	tests := []struct {
 		name string
 		src  string
