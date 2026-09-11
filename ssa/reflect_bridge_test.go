@@ -99,6 +99,86 @@ func TestCompactWasmBridgeID(t *testing.T) {
 	}
 }
 
+func TestWasmLLVMTypeShape(t *testing.T) {
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+
+	tests := []struct {
+		name string
+		typ  llvm.Type
+		want string
+	}{
+		{"void", ctx.VoidType(), "v"},
+		{"float", ctx.FloatType(), "f"},
+		{"double", ctx.DoubleType(), "d"},
+		{"x86 fp80", ctx.X86FP80Type(), "x80"},
+		{"fp128", ctx.FP128Type(), "f128"},
+		{"ppc fp128", ctx.PPCFP128Type(), "p128"},
+		{"integer", ctx.IntType(17), "i17"},
+		{"function", llvm.FunctionType(ctx.VoidType(), []llvm.Type{ctx.Int32Type()}, true), "(i32,*)v"},
+		{"struct", ctx.StructType([]llvm.Type{ctx.Int8Type(), ctx.Int16Type()}, false), "{i8,i16,}"},
+		{"packed struct", ctx.StructType([]llvm.Type{ctx.Int8Type(), ctx.Int16Type()}, true), "<i8,i16,>"},
+		{"array", llvm.ArrayType(ctx.Int32Type(), 3), "[3:i32]"},
+		{"pointer", llvm.PointerType(ctx.Int8Type(), 5), "p5"},
+		{"vector", llvm.VectorType(ctx.Int16Type(), 4), "V4:i16"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var shape strings.Builder
+			appendWasmLLVMTypeShape(&shape, test.typ)
+			if got := shape.String(); got != test.want {
+				t.Fatalf("shape = %q, want %q", got, test.want)
+			}
+		})
+	}
+	t.Run("unsupported", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("unsupported LLVM type did not panic")
+			}
+		}()
+		appendWasmLLVMTypeShape(new(strings.Builder), ctx.LabelType())
+	})
+}
+
+func TestWasmReflectBridgeEmptyAndMultipleResults(t *testing.T) {
+	Initialize(InitAllTargets | InitAllTargetInfos | InitAllTargetMCs)
+	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32", WasmProvider: "wasi", WasmReflectBridges: true})
+	defer prog.Dispose()
+	setTestRuntime(t, prog)
+	prog.EnableGCRoots(true)
+	pkg := prog.NewPackage("p", "example.com/p")
+
+	pkg.wasmReflectBridge(NoArgsNoRet)
+	results := types.NewTuple(
+		types.NewParam(token.NoPos, nil, "", types.Typ[types.Int64]),
+		types.NewParam(token.NoPos, nil, "", types.Typ[types.String]),
+	)
+	pkg.wasmReflectBridge(types.NewSignatureType(nil, nil, nil, nil, results, false))
+	if err := llvm.VerifyModule(pkg.mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(pkg.wasmReflectBridges); got != 2 {
+		t.Fatalf("bridge shapes = %d, want 2", got)
+	}
+}
+
+func TestWasmMethodExpressionSignature(t *testing.T) {
+	plain := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	if got := methodExprSignature(plain); got != plain {
+		t.Fatal("non-method signature was rewritten")
+	}
+	pkg := types.NewPackage("example.com/p", "p")
+	recv := types.NewVar(token.NoPos, pkg, "receiver", types.NewPointer(types.Typ[types.Int]))
+	param := types.NewParam(token.NoPos, pkg, "values", types.NewSlice(types.Typ[types.String]))
+	result := types.NewParam(token.NoPos, pkg, "", types.Typ[types.Bool])
+	method := types.NewSignatureType(recv, nil, nil, types.NewTuple(param), types.NewTuple(result), true)
+	expression := methodExprSignature(method)
+	if expression.Recv() != nil || expression.Params().Len() != 2 || expression.Params().At(0).Type() != recv.Type() || expression.Params().At(1) != param || expression.Results().At(0) != result || !expression.Variadic() {
+		t.Fatalf("method expression signature = %s", expression)
+	}
+}
+
 func TestWasmReflectRootShape(t *testing.T) {
 	Initialize(InitAllTargets | InitAllTargetInfos | InitAllTargetMCs)
 	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32", WasmProvider: "wasi", WasmReflectBridges: true})
