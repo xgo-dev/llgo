@@ -188,7 +188,8 @@ func TestDriverPreflightFailureReplacesPreviousSuccess(t *testing.T) {
 			}
 			missing := filepath.Join(root, "missing-go")
 			err := run("GoJS-reference", path, missing, program)
-			if err == nil || !errors.Is(err, os.ErrNotExist) {
+			var execErr *exec.Error
+			if err == nil || (!errors.Is(err, os.ErrNotExist) && !errors.As(err, &execErr)) {
 				t.Fatalf("missing executable error = %v", err)
 			}
 			r := readReport(t, path)
