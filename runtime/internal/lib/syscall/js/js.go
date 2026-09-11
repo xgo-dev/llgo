@@ -508,7 +508,7 @@ func (v Value) New(args ...any) (res Value) {
 	}
 	if err != 0 {
 		if vType := v.Type(); vType != TypeFunction { // check here to avoid overhead in success case
-			panic(&ValueError{"Value.Invoke", vType})
+			panic(&ValueError{"Value.New", vType})
 		}
 		panic(Error{res})
 	}

@@ -57,6 +57,8 @@ func TestJSCallReceiverAndArguments(t *testing.T) {
 	fn := constructor.New("a", "b", "'use strict'; return [this, a, b];")
 	object := js.Global().Get("Object").New()
 	object.Set("method", fn)
+	object.Set("方法", fn)
+	object.Set("", fn)
 	argument := js.Global().Get("Object").New()
 	check := func(result, receiver js.Value) {
 		t.Helper()
@@ -66,10 +68,33 @@ func TestJSCallReceiverAndArguments(t *testing.T) {
 		}
 	}
 	check(object.Call("method", argument, 42), object)
+	check(object.Call("方法", argument, 42), object)
+	check(object.Call("", argument, 42), object)
 	check(fn.Invoke(argument, 42), js.Undefined())
 	result := fn.New(argument, 42)
 	if !result.Index(0).InstanceOf(fn) {
 		t.Fatal("New did not construct a fresh receiver")
 	}
 	check(result, result.Index(0))
+}
+
+func TestJSCallInvalidOperands(t *testing.T) {
+	for _, test := range []struct {
+		method string
+		call   func()
+	}{
+		{"Value.Call", func() { js.Null().Call("method") }},
+		{"Value.Invoke", func() { js.Null().Invoke() }},
+		{"Value.New", func() { js.Null().New() }},
+	} {
+		t.Run(test.method, func(t *testing.T) {
+			defer func() {
+				err, ok := recover().(*js.ValueError)
+				if !ok || err.Method != test.method || err.Type != js.TypeNull {
+					t.Fatalf("invalid operand panic = %#v, want %s on null", err, test.method)
+				}
+			}()
+			test.call()
+		})
+	}
 }
