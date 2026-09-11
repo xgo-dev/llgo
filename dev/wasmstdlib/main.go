@@ -307,15 +307,28 @@ func runSlice(r *report, cases []testCase, run func(testCase) ([]byte, error), s
 }
 
 func main() {
-	profileName := flag.String("profile", "", "J32-GoJS, J32-Emscripten, J64-Emscripten, W32-WASI, GoJS-reference, or GoWASI-reference")
-	reportPath := flag.String("report", "", "output JSON file (required)")
-	llgo := flag.String("llgo", "llgo", "LLGo executable")
-	goCmd := flag.String("go", "go", "Go executable")
-	flag.Parse()
-	if err := run(*profileName, *reportPath, *goCmd, *llgo); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	os.Exit(runMain(os.Args[1:], os.Stderr))
+
+}
+
+func runMain(args []string, stderr io.Writer) int {
+	flags := flag.NewFlagSet("wasmstdlib", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	profileName := flags.String("profile", "", "J32-GoJS, J32-Emscripten, J64-Emscripten, W32-WASI, GoJS-reference, or GoWASI-reference")
+	reportPath := flags.String("report", "", "output JSON file (required)")
+	llgo := flags.String("llgo", "llgo", "LLGo executable")
+	goCmd := flags.String("go", "go", "Go executable")
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
 	}
+	if err := run(*profileName, *reportPath, *goCmd, *llgo); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return 0
 }
 
 func run(name, reportPath, goCmd, llgo string) (retErr error) {

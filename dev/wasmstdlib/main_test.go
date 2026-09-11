@@ -98,6 +98,32 @@ func readReport(t *testing.T, path string) report {
 	return r
 }
 
+func TestDriverCLI(t *testing.T) {
+	var stderr strings.Builder
+	if code := runMain([]string{"-unknown"}, &stderr); code != 2 || !strings.Contains(stderr.String(), "flag provided but not defined") {
+		t.Fatalf("flag error: code=%d stderr=%q", code, stderr.String())
+	}
+	stderr.Reset()
+	if code := runMain([]string{"-h"}, &stderr); code != 0 || !strings.Contains(stderr.String(), "Usage of wasmstdlib") {
+		t.Fatalf("help: code=%d stderr=%q", code, stderr.String())
+	}
+	stderr.Reset()
+	if code := runMain([]string{"-profile=J32-GoJS"}, &stderr); code != 1 || !strings.Contains(stderr.String(), "-report is required") {
+		t.Fatalf("run error: code=%d stderr=%q", code, stderr.String())
+	}
+
+	root, program := driverFixture(t)
+	stderr.Reset()
+	reportPath := filepath.Join(root, "cli.json")
+	args := []string{"-profile=GoJS-reference", "-report=" + reportPath, "-go=" + program, "-llgo=" + program}
+	if code := runMain(args, &stderr); code != 0 || stderr.Len() != 0 {
+		t.Fatalf("success: code=%d stderr=%q", code, stderr.String())
+	}
+	if got := readReport(t, reportPath); got.Result != "pass" {
+		t.Fatalf("report = %+v", got)
+	}
+}
+
 func TestDriverReportAndSummary(t *testing.T) {
 	root, program := driverFixture(t)
 	for _, name := range []string{"J32-GoJS", "J32-Emscripten", "J64-Emscripten", "W32-WASI", "GoJS-reference", "GoWASI-reference"} {
