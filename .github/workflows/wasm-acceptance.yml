@@ -142,6 +142,7 @@ jobs:
 
   packages:
     name: wasm test acceptance (${{ matrix.profile }}, ${{ matrix.shard }}/2)
+    needs: goroot-smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     strategy:
