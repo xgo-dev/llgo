@@ -66,11 +66,25 @@ Multiple toolchains:
 bash ./dev/test_goroot.sh /path/to/go1.23 /path/to/go1.24 -- -dirs . -case '^helloworld\.go$'
 ```
 
+Host-driven WebAssembly execution keeps discovery and result comparison in the
+native runner while compiling both the official Go baseline and LLGo output for
+WebAssembly. LLGo supports `EC32`, `EC64`, `WC32`, `GJS`, and `GWASI`; the
+generated programs run through the profile's Node or Wasmtime adapter.
+
+```bash
+go test ./test/goroot -count=1 -args \
+  -goroot "$(go env GOROOT)" \
+  -wasm-profile EC32 \
+  -directive-mode ci \
+  -case '^helloworld\.go$'
+```
+
 Useful flags:
 
 - `-goroot`: upstream Go toolchain root to read tests from
 - `-go`: baseline `go` binary; defaults to `<goroot>/bin/go`
 - `-llgo`: existing `llgo` binary to use; otherwise one is built from the current checkout
+- `-wasm-profile`: host-driven target execution (`EC32`, `EC64`, `WC32`, `GJS`, or `GWASI`)
 - `-dirs`: comma-separated `GOROOT/test` subdirectories to scan
 - `-case`: regexp filter on the relative case path
 - `-directive-mode`: case discovery mode: `legacy`, `ci`, `runlike`, or `coverage`

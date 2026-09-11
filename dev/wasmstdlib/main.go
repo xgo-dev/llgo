@@ -319,6 +319,9 @@ func main() {
 func runMain(args []string, stderr io.Writer) int {
 	flags := flag.NewFlagSet("wasmstdlib", flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	full := flags.Bool("full", false, "audit all test/ packages, continuing after failures")
+	shard := flags.Int("shard", 0, "full-audit shard index")
+	shards := flags.Int("shards", 1, "full-audit shard count")
 	profileName := flags.String("profile", "", "J32-GoJS, J32-Emscripten, J64-Emscripten, W32-WASI, GoJS-reference, or GoWASI-reference")
 	reportPath := flags.String("report", "", "output JSON file (required)")
 	llgo := flags.String("llgo", "llgo", "LLGo executable")
@@ -329,7 +332,13 @@ func runMain(args []string, stderr io.Writer) int {
 		}
 		return 2
 	}
-	if err := run(*profileName, *reportPath, *goCmd, *llgo); err != nil {
+	var err error
+	if *full {
+		err = runFull(*profileName, *reportPath, *goCmd, *llgo, *shard, *shards)
+	} else {
+		err = run(*profileName, *reportPath, *goCmd, *llgo)
+	}
+	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}

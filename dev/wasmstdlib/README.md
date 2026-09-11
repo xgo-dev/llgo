@@ -1,5 +1,17 @@
 # WebAssembly standard-library behavior and reference hosts
 
+## W3 full package audit
+
+`-full` discovers every test package below `test/` independently of build tags, executes one deterministic shard, continues after individual failures, and preserves JSON accounting plus per-package logs. Source exclusions and host-only suites must be classified explicitly; an unknown exclusion remains a failure rather than becoming a compatibility pass.
+
+```sh
+go run ./dev/wasmstdlib -full -profile J32-GoJS -shard 0 -shards 2 -llgo /path/to/llgo -report /tmp/full.json
+```
+
+Each package has a bounded build/run time and a separate guest test deadline. LLGo package compilation is cached within the job, but `-count=1` keeps execution mandatory. `other-shard`, `not-run`, and interrupted `incomplete` results are never counted as passes. W3 separately runs the target-aware GOROOT corpus and browser acceptance.
+
+## W2 focused standard-library slice
+
 This bounded W2 acceptance slice runs the complete repository test packages for `errors`, `sort`, `encoding/binary`, `fmt`, `strconv`, and `io`. It exercises error wrapping and assertion, reflection-based sorting, byte-order interfaces, structured encoding, varints, fixed- and native-width integer boundaries, formatting and scanning interfaces, readers and writers, and pipe goroutine/timer coordination.
 
 No test-name filter or blanket skip is used. The driver clears inherited `GOFLAGS` and sets `GOENV=off`, so command-line or saved Go configuration cannot silently narrow the suite. Explicit process environment such as `GOPROXY` remains available.
