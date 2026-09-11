@@ -367,6 +367,37 @@ func TestMeasureProfileFailures(t *testing.T) {
 	}
 }
 
+func TestWriteResultsPreservesZeroBuildDuration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "benchmark.txt")
+	// A fast build can take less than the clock resolution. Zero is a valid
+	// sample, not an indication that this example was measured for size only.
+	results := []measurement{
+		{name: "timed-zero", buildMeasured: true},
+		{name: "timed-positive", build: 17 * time.Nanosecond, buildMeasured: true},
+		{name: "size-only"},
+	}
+	if err := writeResults(path, results, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var builds []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "BenchmarkWasmBuild/") {
+			builds = append(builds, line)
+		}
+	}
+	want := []string{
+		"BenchmarkWasmBuild/timed-zero 1 0 build-ns",
+		"BenchmarkWasmBuild/timed-positive 1 17 build-ns",
+	}
+	if !slices.Equal(builds, want) {
+		t.Fatalf("build metrics = %v, want %v", builds, want)
+	}
+}
+
 func TestWriteResultsReturnsFilesystemError(t *testing.T) {
 	err := writeResults(filepath.Join(t.TempDir(), "missing", "benchmark.txt"), nil, nil)
 	if err == nil {
