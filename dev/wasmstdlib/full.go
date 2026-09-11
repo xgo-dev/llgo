@@ -20,10 +20,17 @@ import (
 // and failures remain unresolved until reviewed individually; independently
 // executable host-side suites are named explicitly in the report.
 type fullPackage struct {
-	Package string `json:"package"`
-	Status  string `json:"status"`
-	Reason  string `json:"reason,omitempty"`
-	Tests   int    `json:"passed_top_level_tests"`
+	Package    string          `json:"package"`
+	Status     string          `json:"status"`
+	Reason     string          `json:"reason,omitempty"`
+	Tests      int             `json:"passed_top_level_tests"`
+	HostChecks []fullHostCheck `json:"host_checks,omitempty"`
+}
+
+type fullHostCheck struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
 }
 
 type selectedPackage struct {
@@ -84,6 +91,16 @@ func fullCommand(p profile, goCmd, llgo, goRoot, pkg string) command {
 	} else {
 		env["GOOS"], env["GOARCH"], env["CGO_ENABLED"] = p.GOOS, "wasm", "0"
 	}
+	if !p.Reference && p.GOOS == "js" {
+		// Report fixed Fiber-stack exhaustion at the offending frame rather
+		// than after it has corrupted an unrelated heap object.
+		args = append(args, "-ldflags=-extldflags=-sSTACK_OVERFLOW_CHECK=2")
+	}
+	if !p.Reference && !fullNeedsPCLN(pkg) {
+		// Embedded symbolization needs a second final link after function
+		// addresses are known. Most packages do not inspect runtime metadata.
+		args = append(args, "-pclntab=none")
+	}
 	packageArg := "./" + pkg
 	if pkg == wasmTimerStressPackage {
 		// The Go command excludes underscore directories from package patterns,
@@ -101,6 +118,21 @@ func fullCommand(p profile, goCmd, llgo, goRoot, pkg string) command {
 	}
 	// GNU timeout bounds compilation as well as execution, including children.
 	return command{"timeout", append([]string{"--kill-after=10s", "5m", program}, args...), env}
+}
+
+func fullNeedsPCLN(pkg string) bool {
+	for _, prefix := range []string{
+		"test/go",
+		"test/llgoext",
+		"test/std/runtime",
+		"test/std/net/http/pprof",
+		"test/std/log/slog",
+	} {
+		if pkg == prefix || strings.HasPrefix(pkg, prefix+"/") {
+			return true
+		}
+	}
+	return pkg == "test"
 }
 
 func fullTestTimeout(pkg string) string {
@@ -277,12 +309,38 @@ func runFullAt(root, name, reportPath, goCmd, llgo string, shard, shards int, st
 				break
 			}
 			fmt.Printf("%s %s\n", name, e.Package)
-			out, runErr := run(root, fullCommand(p, goCmd, llgo, goRoot, e.Package))
+			cmd := fullCommand(p, goCmd, llgo, goRoot, e.Package)
+			var hostArtifact string
+			if e.Package == "test/go" || e.Package == "test" || e.Package == "test/llgoext" {
+				dir, err := os.MkdirTemp("", "llgo-wasm-host-check-")
+				if err != nil {
+					return err
+				}
+				defer os.RemoveAll(dir)
+				hostArtifact = filepath.Join(dir, strings.ReplaceAll(e.Package, "/", "-")+".wasm")
+				if p.GOOS == "js" && !p.Reference {
+					hostArtifact = filepath.Join(dir, strings.ReplaceAll(e.Package, "/", "-")+".mjs")
+				}
+				cmd.Args = append(cmd.Args[:len(cmd.Args)-1], "-o", hostArtifact, cmd.Args[len(cmd.Args)-1])
+			}
+			out, runErr := run(root, cmd)
 			if err := os.WriteFile(filepath.Join(reportPath+".logs", strings.ReplaceAll(e.Package, "/", "_")+".log"), out, 0644); err != nil {
 				return err
 			}
 			if runErr == nil {
 				e.Tests, runErr = validateOutput(out, witness)
+			}
+			if e.Package == "test/go" && hostArtifact != "" {
+				runErr = errors.Join(runErr, runFullPanicHostCheck(root, reportPath, name, p, goRoot, hostArtifact, e, run))
+				for _, invalid := range fullFinalizerInvalidCases {
+					runErr = errors.Join(runErr, runFullFinalizerHostCheck(root, reportPath, name, p, goRoot, hostArtifact, invalid, e, run))
+				}
+			}
+			if e.Package == "test" && hostArtifact != "" {
+				runErr = errors.Join(runErr, runFullBuiltinPrintHostCheck(root, reportPath, name, p, goRoot, hostArtifact, e, run))
+			}
+			if e.Package == "test/llgoext" && hostArtifact != "" {
+				runErr = errors.Join(runErr, runFullGoexitHostCheck(root, reportPath, name, p, goRoot, hostArtifact, e, run))
 			}
 			e.Status = "pass"
 			if runErr != nil {
