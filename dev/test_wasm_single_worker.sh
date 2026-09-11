@@ -83,6 +83,13 @@ run_wasi() {
 	grep -Fq "${expected}" "${work_dir}/${name}.out"
 }
 
+run_browser() {
+	local module="$1"
+	local expected="$2"
+	run_with_timeout_limit 90s "${node_cmd}" "${repo_root}/dev/test_wasm_browser.mjs" \
+		"${module}" "${expected}"
+}
+
 run_host_call_boundaries() {
 	local module="$1"
 	local mode operation status expected marker
@@ -219,6 +226,14 @@ run_wasi wasi "${lifecycle_fixture}" "wasm lifecycle ok" "lifecycle-wasi"
 # This catches treating an empty timer heap as an immediate deadlock.
 run_emscripten emscripten emscripten-runner.mjs "${callback_fixture}" "wasm callback-only wake ok" "callback-emscripten"
 run_emscripten emscripten-memory64 emscripten-memory64-runner.mjs "${callback_fixture}" "wasm callback-only wake ok" "callback-memory64"
+
+# A real browser must run both the named Emscripten provider and the raw J32
+# GoJS provider. Reuse the named callback artifact and compile only one extra
+# module so this gate does not duplicate the full Node matrix.
+run_browser "${work_dir}/callback-emscripten.mjs" "wasm callback-only wake ok"
+env GOOS=js GOARCH=wasm "${llgo_cmd}" build -o "${work_dir}/callback-gojs.mjs" "${callback_fixture}"
+wasm-tools validate --features all "${work_dir}/callback-gojs.wasm"
+run_browser "${work_dir}/callback-gojs.mjs" "wasm callback-only wake ok"
 
 # Reuse both callback modules: no extra compilations for the JS boundary cases.
 run_host_call_boundaries "${work_dir}/callback-emscripten.mjs"
