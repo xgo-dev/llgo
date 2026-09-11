@@ -1,4 +1,4 @@
-//go:build llgo && !baremetal && !nogc
+//go:build llgo && !baremetal && !nogc && !wasm
 
 package gotest
 

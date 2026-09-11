@@ -1330,7 +1330,10 @@ func applyWasmGCLinkFlags(conf *Config, export *crosscompile.Export) {
 func effectiveTypeSizes(sizes types.Sizes, profile crosscompile.WasmProfile) types.Sizes {
 	switch profile {
 	case crosscompile.WasmProfileJ32, crosscompile.WasmProfileJ64, crosscompile.WasmProfileW32:
-		return &types.StdSizes{WordSize: 8, MaxAlign: 8}
+		// StdSizes omits struct tail padding. Its nested-field offsets then
+		// disagree with LLVM's physical layout, so reflected fields and unsafe
+		// constants can address padding instead of the following field.
+		return types.SizesFor("gc", "amd64")
 	default:
 		return sizes
 	}

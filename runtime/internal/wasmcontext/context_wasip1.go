@@ -32,13 +32,16 @@ type Entry func(unsafe.Pointer) unsafe.Pointer
 //
 //llgo:type C
 type Context struct {
-	entry         unsafe.Pointer
-	arg           unsafe.Pointer
+	entry unsafe.Pointer
+	arg   unsafe.Pointer
+	// asyncifyStack is the mutable start cursor in Binaryen's Asyncify data
+	// structure. Unwinding advances it, so it is not the allocation owner.
 	asyncifyStack unsafe.Pointer
 	asyncifyEnd   unsafe.Pointer
 	stackPointer  unsafe.Pointer
 	launched      bool
 	stack         unsafe.Pointer
+	asyncifyBase  unsafe.Pointer
 }
 
 func (ctx *Context) Init(entry Entry, arg unsafe.Pointer, stackSize uintptr, alloc func(uintptr) unsafe.Pointer, free func(unsafe.Pointer)) bool {
@@ -50,6 +53,7 @@ func (ctx *Context) Init(entry Entry, arg unsafe.Pointer, stackSize uintptr, all
 	ctx.arg = arg
 	ctx.asyncifyStack = asyncifyStack
 	ctx.asyncifyEnd = unsafe.Add(asyncifyStack, asyncifySize)
+	ctx.asyncifyBase = asyncifyStack
 	ctx.stackPointer = unsafe.Add(stack, stackSize)
 	ctx.launched = false
 	ctx.stack = stack
@@ -57,7 +61,10 @@ func (ctx *Context) Init(entry Entry, arg unsafe.Pointer, stackSize uintptr, all
 }
 
 func (ctx *Context) Close(free func(unsafe.Pointer)) {
-	freeStorage(ctx.stack, ctx.asyncifyStack, free)
+	// Binaryen advances asyncifyStack while unwinding. Only asyncifyBase is
+	// guaranteed to remain the pointer returned by the allocator, including
+	// when runtime.Goexit abandons a context before a rewind resets it.
+	freeStorage(ctx.stack, ctx.asyncifyBase, free)
 	*ctx = Context{}
 }
 

@@ -43,6 +43,12 @@ func syscall_runtime_envs() []string {
 	return out
 }
 
+//go:linkname syscall_Getpagesize syscall.Getpagesize
+func syscall_Getpagesize() int {
+	// WebAssembly linear memory grows in 64 KiB pages, as in Go's os_wasm.go.
+	return 64 * 1024
+}
+
 //go:linkname syscall_runtimeSetenv syscall.runtimeSetenv
 func syscall_runtimeSetenv(key, value string) {
 	cliteos.Setenv(c.AllocaCStr(key), c.AllocaCStr(value), 1)

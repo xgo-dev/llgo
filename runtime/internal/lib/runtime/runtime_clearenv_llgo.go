@@ -1,4 +1,4 @@
-//go:build go1.26 && (linux || darwin)
+//go:build go1.26 && (linux || darwin || (wasm && !baremetal))
 
 package runtime
 

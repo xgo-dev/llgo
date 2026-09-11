@@ -889,6 +889,39 @@ func TestEffectiveWasmTypeSizes(t *testing.T) {
 	}
 }
 
+func TestWasmNestedStructTypeSizes(t *testing.T) {
+	common := types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, nil, "Name", types.Typ[types.String], false),
+		types.NewField(token.NoPos, nil, "ID", types.Typ[types.Int32], false),
+	}, nil)
+	fields := []*types.Var{
+		types.NewField(token.NoPos, nil, "Common", common, false),
+		types.NewField(token.NoPos, nil, "Elem", types.Typ[types.Int32], false),
+	}
+	for _, profile := range []crosscompile.WasmProfile{
+		crosscompile.WasmProfileJ32,
+		crosscompile.WasmProfileJ64,
+		crosscompile.WasmProfileW32,
+	} {
+		t.Run(string(profile), func(t *testing.T) {
+			sizes := effectiveTypeSizes(nil, profile)
+			if got := sizes.Sizeof(common); got != 24 {
+				t.Errorf("nested struct size = %d, want 24 including tail padding", got)
+			}
+			if got := sizes.Offsetsof(fields)[1]; got != 24 {
+				t.Errorf("following field offset = %d, want 24", got)
+			}
+			outer := types.NewStruct(fields, nil)
+			if got := sizes.Sizeof(outer); got != 32 {
+				t.Errorf("outer struct size = %d, want 32", got)
+			}
+			if got := sizes.Sizeof(types.NewArray(outer, 2)); got != 64 {
+				t.Errorf("outer struct array size = %d, want 64", got)
+			}
+		})
+	}
+}
+
 func TestEmscriptenCTypeSourceSelection(t *testing.T) {
 	runtimeDir := filepath.Join(env.LLGoRuntimeDir(), "internal", "clite")
 	for _, test := range []struct {
