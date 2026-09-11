@@ -186,7 +186,7 @@ func ValueOf(x any) Value {
 }
 
 func stringVal(x string) Value {
-	return emval_new_string(c.AllocaCStr(x))
+	return emval_new_string(c.AllocaCStr(x), c.SizeT(len(x)))
 }
 
 // Type represents the JavaScript type of a Value.
@@ -384,7 +384,7 @@ func (v Value) Length() int {
 	if vType := v.Type(); !vType.isObject() {
 		panic(&ValueError{"Value.SetIndex", vType})
 	}
-	return emval_get_property(v, emval_new_string(c.Str("length"))).Int()
+	return emval_get_property(v, emval_new_string(c.Str("length"), 6)).Int()
 	//r := valueLength(v.ref)
 	//runtime.KeepAlive(v)
 	//return r
@@ -399,13 +399,13 @@ func (v Value) Length() int {
 func (v Value) Call(m string, args ...any) (res Value) {
 	var err c.Int
 	if len(args) == 0 {
-		res = emval_method_call(v, c.AllocaCStr(m), nil, 0, &err)
+		res = emval_method_call(v, c.AllocaCStr(m), c.SizeT(len(m)), nil, 0, &err)
 	} else {
 		vargs := make([]Value, len(args))
 		for i := 0; i < len(args); i++ {
 			vargs[i] = ValueOf(args[i])
 		}
-		res = emval_method_call(v, c.AllocaCStr(m), *(**Value)(unsafe.Pointer(&vargs)), c.Int(len(args)), &err)
+		res = emval_method_call(v, c.AllocaCStr(m), c.SizeT(len(m)), *(**Value)(unsafe.Pointer(&vargs)), c.Int(len(args)), &err)
 	}
 	if err != 0 {
 		if vType := v.Type(); !vType.isObject() { // check here to avoid overhead in success case
