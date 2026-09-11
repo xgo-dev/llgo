@@ -18,6 +18,7 @@ package build
 
 import (
 	"go/types"
+	"strings"
 
 	"golang.org/x/tools/go/callgraph/rta"
 	"golang.org/x/tools/go/ssa"
@@ -66,16 +67,66 @@ func programUsesWasmReflectBridges(prog *ssa.Program, roots []*ssa.Function) boo
 		return false
 	}
 	if len(roots) != 0 {
-		for fn := range rta.Analyze(roots, false).Reachable {
-			if isWasmReflectBridgeFunction(fn) || functionCallsWasmReflectBridge(fn) {
+		result := rta.Analyze(roots, false)
+		for fn := range result.Reachable {
+			if functionCallsWasmReflectBridge(fn) {
 				return true
 			}
 		}
-		return false
+		// RTA conservatively retains wrapper methods for address-taken
+		// reflect.Value values. Require an actual direct call above, or a
+		// plausible indirect function/interface call here, so ordinary value
+		// inspection (notably fmt) does not turn on every typed bridge.
+		return programMayCallWasmReflectBridgeIndirectly(result.Reachable)
 	}
 	for fn := range ssautil.AllFunctions(prog) {
 		if functionCallsWasmReflectBridge(fn) {
 			return true
+		}
+	}
+	return false
+}
+
+func programMayCallWasmReflectBridgeIndirectly(reachable map[*ssa.Function]struct{ AddrTaken bool }) bool {
+	var functionSignatures []*types.Signature
+	for fn := range reachable {
+		if fn == nil || ssaFunctionPackagePath(fn) != reflectPackagePath {
+			continue
+		}
+		// RTA creates thunks and bound wrappers only when a method is used as
+		// a function value. Plain pointer wrappers retain the original name.
+		if name, suffix, ok := strings.Cut(fn.Name(), "$"); ok {
+			if fn.Parent() == nil && suffix != "" && isWasmReflectBridgeName(name) {
+				return true
+			}
+			continue
+		}
+		if isWasmReflectBridgeFunction(fn) && fn.Signature.Recv() == nil {
+			functionSignatures = append(functionSignatures, fn.Signature)
+		}
+	}
+	for fn := range reachable {
+		if fn == nil || ssaFunctionPackagePath(fn) == reflectPackagePath {
+			continue
+		}
+		for _, block := range fn.Blocks {
+			for _, instruction := range block.Instrs {
+				call, ok := instruction.(ssa.CallInstruction)
+				if !ok || call.Common() == nil || call.Common().StaticCallee() != nil {
+					continue
+				}
+				common := call.Common()
+				if common.IsInvoke() && common.Method != nil && isWasmReflectBridgeName(common.Method.Name()) {
+					return true
+				}
+				if !common.IsInvoke() {
+					for _, signature := range functionSignatures {
+						if types.Identical(common.Signature(), signature) {
+							return true
+						}
+					}
+				}
+			}
 		}
 	}
 	return false
@@ -107,7 +158,11 @@ func isWasmReflectBridgeFunction(fn *ssa.Function) bool {
 	if fn == nil || ssaFunctionPackagePath(fn) != reflectPackagePath {
 		return false
 	}
-	switch fn.Name() {
+	return isWasmReflectBridgeName(fn.Name())
+}
+
+func isWasmReflectBridgeName(name string) bool {
+	switch name {
 	case "Call", "CallSlice", "MakeFunc", "Seq", "Seq2":
 		return true
 	default:
