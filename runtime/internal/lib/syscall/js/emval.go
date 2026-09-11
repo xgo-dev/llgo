@@ -60,8 +60,8 @@ func emval_has_pending_invoke() bool     { return cEmvalHasPendingInvoke() }
 func emval_take_pending_invoke() uintptr { return cEmvalTakePendingInvoke() }
 
 func emval_new_double(v float64) Value { return valueFromEmval(cEmvalNewDouble(v)) }
-func emval_new_string(str *c.Char) Value {
-	return valueFromEmval(cEmvalNewString(str))
+func emval_new_string(str *c.Char, length c.SizeT) Value {
+	return valueFromEmval(cEmvalNewString(str, length))
 }
 func emval_new_object() Value { return valueFromEmval(cEmvalNewObject()) }
 func emval_new_array() Value  { return valueFromEmval(cEmvalNewArray()) }
@@ -110,13 +110,13 @@ func emvalArgs(args *Value, nargs c.Int) []c.Ulong {
 	return handles
 }
 
-func emval_method_call(object Value, name *c.Char, args *Value, nargs c.Int, err *c.Int) Value {
+func emval_method_call(object Value, name *c.Char, nameLength c.SizeT, args *Value, nargs c.Int, err *c.Int) Value {
 	handles := emvalArgs(args, nargs)
 	var data *c.Ulong
 	if len(handles) != 0 {
 		data = &handles[0]
 	}
-	return valueFromEmval(cEmvalMethodCall(object.emvalHandle(), name, data, nargs, err))
+	return valueFromEmval(cEmvalMethodCall(object.emvalHandle(), name, nameLength, data, nargs, err))
 }
 
 func emval_call(fn Value, args *Value, nargs c.Int, kind c.Int, err *c.Int) Value {
@@ -156,7 +156,7 @@ func cEmvalDecref(value uintptr)
 func cEmvalNewDouble(v float64) uintptr
 
 //go:linkname cEmvalNewString C.llgo_emval_new_string
-func cEmvalNewString(str *c.Char) uintptr
+func cEmvalNewString(str *c.Char, length c.SizeT) uintptr
 
 //go:linkname cEmvalNewObject C.llgo_emval_new_object
 func cEmvalNewObject() uintptr
@@ -198,7 +198,7 @@ func cEmvalAsString(v uintptr) string
 func cEmvalEquals(first, second uintptr) bool
 
 //go:linkname cEmvalMethodCall C.llgo_emval_method_call
-func cEmvalMethodCall(object uintptr, name *c.Char, args *c.Ulong, nargs c.Int, err *c.Int) uintptr
+func cEmvalMethodCall(object uintptr, name *c.Char, nameLength c.SizeT, args *c.Ulong, nargs c.Int, err *c.Int) uintptr
 
 //go:linkname cEmvalCall C.llgo_emval_call
 func cEmvalCall(fn uintptr, args *c.Ulong, nargs c.Int, kind c.Int, err *c.Int) uintptr

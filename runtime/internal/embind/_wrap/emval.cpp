@@ -120,8 +120,16 @@ EM_VAL llgo_emval_new_double(double v) {
     return take_value(v);
 }
 
-EM_VAL llgo_emval_new_string(const char *str) {
-    return _emval_new_u8string(str);
+// Go strings carry a byte length and may contain embedded NUL characters.
+EM_JS_DEPS(llgo_emval_string_bytes, "$Emval,$UTF8ToString");
+EM_JS(EM_VAL, llgo_emval_string_bytes,
+      (const char *str, size_t length, int pointer_bytes), {
+    const handle = Emval.toHandle(UTF8ToString(Number(str), Number(length), true));
+    return pointer_bytes === 8 ? BigInt(handle) : handle;
+});
+
+EM_VAL llgo_emval_new_string(const char *str, size_t length) {
+    return llgo_emval_string_bytes(str, length, sizeof(EM_VAL));
 }
 
 EM_VAL llgo_emval_new_object() {
@@ -189,7 +197,7 @@ bool llgo_emval_equals(EM_VAL first, EM_VAL second) {
 // syscall/js bridge by returning the original thrown value plus an error bit.
 EM_JS_DEPS(llgo_emval_try_call, "$Emval,$UTF8ToString,$ExitStatus");
 EM_JS(EM_VAL, llgo_emval_try_call,
-      (EM_VAL handle, const char *method, EM_VAL *args, int nargs, int kind,
+      (EM_VAL handle, const char *method, size_t method_length, EM_VAL *args, int nargs, int kind,
        int *error, int pointer_bytes), {
     const argv = [];
     const slots = pointer_bytes === 8 ? HEAPU64 : HEAPU32;
@@ -202,7 +210,8 @@ EM_JS(EM_VAL, llgo_emval_try_call,
     try {
         const value = Emval.toValue(Number(handle) || 2);
         if (method) {
-            result = Reflect.apply(Reflect.get(value, UTF8ToString(Number(method))), value, argv);
+            const name = UTF8ToString(Number(method), Number(method_length), true);
+            result = Reflect.apply(Reflect.get(value, name), value, argv);
         } else if (kind === 1) {
             result = Reflect.construct(value, argv);
         } else {
@@ -225,12 +234,12 @@ EM_JS(EM_VAL, llgo_emval_try_call,
     return pointer_bytes === 8 ? BigInt(resultHandle) : resultHandle;
 });
 
-EM_VAL llgo_emval_method_call(EM_VAL object, const char *name, EM_VAL args[], int nargs, int *error) {
-    return llgo_emval_try_call(object, name, args, nargs, 0, error, sizeof(EM_VAL));
+EM_VAL llgo_emval_method_call(EM_VAL object, const char *name, size_t name_length, EM_VAL args[], int nargs, int *error) {
+    return llgo_emval_try_call(object, name, name_length, args, nargs, 0, error, sizeof(EM_VAL));
 }
 
 EM_VAL llgo_emval_call(EM_VAL fn, EM_VAL args[], int nargs, int kind, int *error) {
-    return llgo_emval_try_call(fn, nullptr, args, nargs, kind, error, sizeof(EM_VAL));
+    return llgo_emval_try_call(fn, nullptr, 0, args, nargs, kind, error, sizeof(EM_VAL));
 }
 
 EM_VAL llgo_emval_memory_view_uint8(size_t length, uint8_t *data) {

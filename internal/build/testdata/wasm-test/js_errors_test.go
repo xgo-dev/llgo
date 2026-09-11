@@ -98,3 +98,18 @@ func TestJSCallInvalidOperands(t *testing.T) {
 		})
 	}
 }
+
+func TestJSCallEmbeddedNUL(t *testing.T) {
+	for _, text := range []string{"", "plain", "中文", "a\x00b", "\x00中文\x00"} {
+		if got := js.ValueOf(text).String(); got != text {
+			t.Errorf("string round trip = %q, want %q", got, text)
+		}
+	}
+	object := js.Global().Get("Function").New(`return {
+		"method": function() { return 7; },
+		"method\u0000suffix": function() { return 42; }
+	}`).Invoke()
+	if got := object.Call("method\x00suffix").Int(); got != 42 {
+		t.Fatalf("method with embedded NUL returned %d, want 42", got)
+	}
+}
