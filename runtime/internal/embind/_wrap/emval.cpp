@@ -200,6 +200,14 @@ bool llgo_emval_instanceof(EM_VAL object, EM_VAL constructor) {
     return _emval_instanceof(llgo_emval_normalize(object), llgo_emval_normalize(constructor));
 }
 
+EM_JS_DEPS(llgo_emval_length, "$Emval");
+EM_JS(double, llgo_emval_length, (EM_VAL object), {
+    const length = parseInt(Emval.toValue(Number(object) || 2).length);
+    // wasm_exec.js writes non-finite results through setInt64, which produces
+    // zero. Normalize here before Go converts the result to int.
+    return Number.isFinite(length) ? length : 0;
+});
+
 double llgo_emval_as_double(EM_VAL v) {
     return as_value<double>(llgo_emval_normalize(v));
 }
