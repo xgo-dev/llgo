@@ -2,26 +2,23 @@
 
 package runtime
 
-// The native hook walks frame pointers. WebAssembly records compiler caller
-// frames, which must be captured before longjmp discards deferred-call frames.
-// Install this in the core so an unrecovered panic has a Go traceback even
-// when the program never imports the public runtime package.
+// The native hook walks frame pointers. WebAssembly instead keeps a logical
+// shadow stack for the functions whose frames are observable. Install the
+// printer in the core so an unrecovered panic has a Go traceback even when the
+// program never imports the public runtime package.
 func init() {
-	PanicPCSnapshot = captureWasmPanicPCs
 	PanicTraceback = printWasmPanicTraceback
 }
 
-func captureWasmPanicPCs() {
-	p := panicPCStoreForG()
-	n := Callers(1, p.pcs[:])
-	StorePanicPCs(p.pcs[:n])
-}
-
 func printWasmPanicTraceback(_ int) bool {
+	store := callerLocationStoreCurrent
+	if store == nil {
+		return false
+	}
 	printed := false
-	for _, pc := range PanicPCs() {
-		frame, ok := FrameForPC(pc)
-		if !ok || frame.Function == "" || frame.Function == "runtime.main" || frame.Function == "runtime.goexit" {
+	for i := len(store.stack) - 1; i >= 0; i-- {
+		frame := store.stack[i]
+		if frame.Function == "" || frame.Function == "runtime.main" || frame.Function == "runtime.goexit" {
 			continue
 		}
 		if !printed {

@@ -158,6 +158,10 @@ func panicTracebackSite() {
 
 //go:noinline
 func panicTracebackCaller() {
+	// Exercise the longjmp path before the fatal panic reaches the core
+	// traceback hook. The logical shadow stack must retain both user frames
+	// after this defer has run.
+	defer func() {}()
 	panicTracebackSite()
 }
 
