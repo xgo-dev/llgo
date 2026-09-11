@@ -55,18 +55,22 @@ jobs:
         run: |
           go build -o "$RUNNER_TEMP/llgo" ./cmd/llgo
           go test -c -o "$RUNNER_TEMP/goroot-runner" ./test/goroot
-      - name: Exercise every runnable directive path
+      - name: Exercise representative runnable cases
         env:
           PROFILE: ${{ matrix.profile }}
         run: |
+          set -o pipefail
           target_goroot="$(go env GOROOT)"
-          "$RUNNER_TEMP/goroot-runner" -test.v -test.count=1 -test.timeout=40m \
-            -goroot "$target_goroot" -llgo "$RUNNER_TEMP/llgo" \
-            -wasm-profile "$PROFILE" -directive-mode ci \
-            -case '^(helloworld\.go|bom\.go|fixedbugs/issue46234\.go)$' \
-            -max-rss-mib 4096 -rss-warn-mib 1024 \
-            -min-memory-free-percent 15 -min-swap-free-mib 512 \
-            2>&1 | tee "$RUNNER_TEMP/goroot-$PROFILE.log"
+          (
+            cd test/goroot
+            "$RUNNER_TEMP/goroot-runner" -test.v -test.run '^TestGoRootRunCases$' \
+              -test.count=1 -test.timeout=40m \
+              -goroot "$target_goroot" -llgo "$RUNNER_TEMP/llgo" \
+              -wasm-profile "$PROFILE" -directive-mode ci \
+              -case '^(helloworld\.go|bom\.go)$' \
+              -max-rss-mib 4096 -rss-warn-mib 1024 \
+              -min-memory-free-percent 15 -min-swap-free-mib 512
+          ) 2>&1 | tee "$RUNNER_TEMP/goroot-$PROFILE.log"
       - name: Preserve sentinel log
         if: always()
         uses: actions/upload-artifact@v7
@@ -116,14 +120,18 @@ jobs:
           PROFILE: ${{ matrix.profile }}
           SHARD: ${{ matrix.shard }}
         run: |
+          set -o pipefail
           target_goroot="$(go env GOROOT)"
-          "$RUNNER_TEMP/goroot-runner" -test.v -test.count=1 -test.timeout=175m \
-            -goroot "$target_goroot" -llgo "$RUNNER_TEMP/llgo" \
-            -wasm-profile "$PROFILE" -directive-mode ci \
-            -progress 60s -shard-index "$SHARD" -shard-total 4 \
-            -max-rss-mib 4096 -rss-warn-mib 1024 \
-            -min-memory-free-percent 15 -min-swap-free-mib 512 \
-            2>&1 | tee "$RUNNER_TEMP/goroot-$PROFILE-$SHARD.log"
+          (
+            cd test/goroot
+            "$RUNNER_TEMP/goroot-runner" -test.v -test.run '^TestGoRootRunCases$' \
+              -test.count=1 -test.timeout=175m \
+              -goroot "$target_goroot" -llgo "$RUNNER_TEMP/llgo" \
+              -wasm-profile "$PROFILE" -directive-mode ci \
+              -progress 60s -shard-index "$SHARD" -shard-total 4 \
+              -max-rss-mib 4096 -rss-warn-mib 1024 \
+              -min-memory-free-percent 15 -min-swap-free-mib 512
+          ) 2>&1 | tee "$RUNNER_TEMP/goroot-$PROFILE-$SHARD.log"
       - name: Preserve complete shard log
         if: always()
         uses: actions/upload-artifact@v7

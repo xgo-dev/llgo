@@ -49,7 +49,7 @@ func TestGOROOTWasmBuildAndRunCommands(t *testing.T) {
 	if err != nil || app != "node" || !reflect.DeepEqual(args, []string{filepath.Join("/llgo", "targets", "emscripten-memory64-runner.mjs"), "out.mjs", "one"}) {
 		t.Fatalf("LLGo command: %q %v %v", app, args, err)
 	}
-	if envEntry(targetEnv, "GOOS") != "js" || envEntry(targetEnv, "GOARCH") != "wasm" || envEntry(targetEnv, "CGO_ENABLED") != "0" {
+	if envEntry(targetEnv, "GOOS") != "js" || envEntry(targetEnv, "GOARCH") != "wasm" || envEntry(targetEnv, "CGO_ENABLED") != "0" || envEntry(targetEnv, "GOMAXPROCS") != "1" {
 		t.Fatalf("target env: %v", targetEnv)
 	}
 	app, args, _, err = gorootArtifactCommand("/work", "go.wasm", false, env, "two")

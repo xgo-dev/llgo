@@ -59,6 +59,18 @@ func gorootTargetEnv(env []string) []string {
 	return out
 }
 
+func gorootRuntimeEnv(env []string) []string {
+	out := gorootTargetEnv(env)
+	if _, ok := activeGOROOTWasmProfile(); ok {
+		// Official Go's current js/wasm and wasip1/wasm ports do not create
+		// operating-system threads. These profiles intentionally exercise the
+		// same single-worker contract in LLGo while the native driver and the
+		// compiler may continue to use the CI job's wider GOMAXPROCS setting.
+		out = upsertEnv(out, "GOMAXPROCS=1")
+	}
+	return out
+}
+
 func gorootArtifactPath(rootDir, label string, llgo bool) string {
 	p, ok := activeGOROOTWasmProfile()
 	if ok {
@@ -114,7 +126,7 @@ func gorootArtifactCommand(dir, artifact string, llgo bool, env []string, progra
 			return "", nil, nil, errors.New("target Go execution requires GOROOT")
 		}
 		runner := filepath.Join(goroot, "lib", "wasm", "go_"+p.goos+"_wasm_exec")
-		return runner, append([]string{artifact}, programArgs...), gorootTargetEnv(env), nil
+		return runner, append([]string{artifact}, programArgs...), gorootRuntimeEnv(env), nil
 	}
 	root := envEntry(env, "LLGO_ROOT")
 	if root == "" {
@@ -124,9 +136,9 @@ func gorootArtifactCommand(dir, artifact string, llgo bool, env []string, progra
 		args := []string{"run", "-W", "exceptions=y", "--dir=."}
 		args = append(args, artifact)
 		args = append(args, programArgs...)
-		return "wasmtime", args, gorootTargetEnv(env), nil
+		return "wasmtime", args, gorootRuntimeEnv(env), nil
 	}
 	runner := filepath.Join(root, "targets", p.runner)
 	args := append([]string{runner, artifact}, programArgs...)
-	return "node", args, gorootTargetEnv(env), nil
+	return "node", args, gorootRuntimeEnv(env), nil
 }
