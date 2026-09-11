@@ -62,6 +62,10 @@ func checkCurrentG() {
 
 func main() {
 	checkWasmModel()
+	if schedulerPanicTracebackMode() != 0 {
+		panicTracebackCaller()
+		return
+	}
 	if schedulerMainGoexitMode() != 0 {
 		testMainGoexit()
 		return
@@ -145,6 +149,16 @@ func main() {
 	testGoroutineLifecycle()
 	testBlockingPrimitives()
 	println("wasm scheduler ok")
+}
+
+//go:noinline
+func panicTracebackSite() {
+	panic("wasm scheduler traceback")
+}
+
+//go:noinline
+func panicTracebackCaller() {
+	panicTracebackSite()
 }
 
 func testBlockingPrimitives() {

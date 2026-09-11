@@ -25,7 +25,7 @@ func Rethrow(link *Defer) {
 				debug.PrintStack(2)
 			}
 			c.Free(unsafe.Pointer(node))
-			c.Exit(2)
+			exitPanic()
 		} else {
 			gcroot.BeginSJLJReplay()
 			gcroot.RestoreChain(link.gcRoot)
