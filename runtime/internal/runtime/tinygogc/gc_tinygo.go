@@ -73,6 +73,7 @@ var (
 	gcMallocs     uint64  // total number of allocations
 	gcFrees       uint64  // total number of objects freed
 	gcFreedBlocks uint64  // total number of freed blocks
+	gcNumGC       uint32  // total number of completed collection cycles
 
 	// stackOverflow is a flag which is set when the GC scans too deep while marking.
 	// After it is set, all marked allocations must be re-scanned.
@@ -460,6 +461,7 @@ func gc() (freeBytes uintptr) {
 	// Sweep phase: free all non-marked objects and unmark marked objects for
 	// the next collection cycle.
 	freeBytes = sweep()
+	gcNumGC++
 
 	return
 }

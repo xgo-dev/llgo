@@ -24,6 +24,7 @@ func ReadMemStats(m *runtime.MemStats) {
 	m.StackInuse = stats.StackInuse
 	m.StackSys = stats.StackSys
 	m.GCSys = stats.GCSys
+	m.NumGC = stats.NumGC
 }
 
 func GC() {
