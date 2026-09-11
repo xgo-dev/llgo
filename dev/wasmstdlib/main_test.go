@@ -114,7 +114,10 @@ func TestDriverCLI(t *testing.T) {
 	if code := runMain([]string{"-profile=J32-GoJS"}, &stderr); code != 1 || !strings.Contains(stderr.String(), "-report is required") {
 		t.Fatalf("run error: code=%d stderr=%q", code, stderr.String())
 	}
-
+	stderr.Reset()
+	if code := runMain([]string{"-full", "-profile=J32-GoJS"}, &stderr); code != 1 || !strings.Contains(stderr.String(), "requires report") {
+		t.Fatalf("full error: code=%d stderr=%q", code, stderr.String())
+	}
 	root, program := driverFixture(t)
 	stderr.Reset()
 	reportPath := filepath.Join(root, "cli.json")
