@@ -21,12 +21,6 @@ using namespace emscripten::internal;
     (__EMSCRIPTEN_MAJOR__ > 4 || \
      (__EMSCRIPTEN_MAJOR__ == 4 && (__EMSCRIPTEN_MINOR__ > 0 || __EMSCRIPTEN_TINY__ >= 11)))
 
-template<typename T>
-TYPEID take_typeid() {
-    typename WithPolicies<>::template ArgTypeList<T> targetType;
-    return targetType.getTypes()[0];    
-}
-
 template<typename T, typename... Policies>
 EM_VAL take_value(T&& value, Policies...) {
 #if LLGO_EMVAL_INVOKER_API
@@ -61,29 +55,6 @@ struct GoString {
     char *data;
     int len;   
 };
-
-static TYPEID typeid_val = take_typeid<val>();
-
-#if LLGO_EMVAL_INVOKER_API
-EM_INVOKER take_invoker(int nargs, EM_INVOKER_KIND kind, const TYPEID *types) {
-    static thread_local std::vector<EM_INVOKER> invokers[3];
-    std::vector<EM_INVOKER>& byArity = invokers[static_cast<int>(kind)];
-    if (byArity.size() <= static_cast<size_t>(nargs)) {
-        byArity.resize(nargs + 1, nullptr);
-    }
-    EM_INVOKER& invoker = byArity[nargs];
-    if (invoker == nullptr) {
-        invoker = _emval_create_invoker(nargs + 1, types, kind);
-    }
-    return invoker;
-}
-
-EM_VAL take_val_result(EM_GENERIC_WIRE_TYPE result) {
-    using WireType = BindingType<val>::WireType;
-    WireType wire = GenericWireTypeConverter<WireType>::from(result);
-    return BindingType<val>::fromWireType(wire).release_ownership();
-}
-#endif
 
 extern "C" {
 
@@ -214,89 +185,52 @@ bool llgo_emval_equals(EM_VAL first, EM_VAL second) {
     return _emval_equals(llgo_emval_normalize(first), llgo_emval_normalize(second));
 }
 
-EM_VAL llgo_emval_method_call(EM_VAL object, const char* name, EM_VAL args[], int nargs, int *error) {
-    std::vector<TYPEID> arr;
-    arr.resize(nargs+1);
-    std::vector<GenericWireType> elements;
-    elements.resize(nargs);
-    GenericWireType *cursor = elements.data();
-    arr[0] = typeid_val;
-    for (int i = 0; i < nargs; i++) {
-        arr[i+1] = typeid_val;
-        EM_VAL arg = llgo_emval_normalize(args[i]);
-        _emval_incref(arg);
-        writeGenericWireTypes(cursor, arg);
+// JavaScript throws cannot be caught by C++ catch(val). Match Go's
+// syscall/js bridge by returning the original thrown value plus an error bit.
+EM_JS_DEPS(llgo_emval_try_call, "$Emval,$UTF8ToString,$ExitStatus");
+EM_JS(EM_VAL, llgo_emval_try_call,
+      (EM_VAL handle, const char *method, EM_VAL *args, int nargs, int kind,
+       int *error, int pointer_bytes), {
+    const argv = [];
+    const slots = pointer_bytes === 8 ? HEAPU64 : HEAPU32;
+    const first = Number(args) / pointer_bytes;
+    for (let i = 0; i < nargs; i++) {
+        argv.push(Emval.toValue(Number(slots[first + i]) || 2));
     }
-#if LLGO_EMVAL_INVOKER_API
-    EM_INVOKER caller = take_invoker(nargs, EM_INVOKER_KIND::METHOD, arr.data());
-#else
-    EM_METHOD_CALLER caller = _emval_get_method_caller(nargs+1,&arr[0],EM_METHOD_CALLER_KIND::FUNCTION);
-#endif
-    EM_GENERIC_WIRE_TYPE ret;
+    let result;
+    let failed = 0;
     try {
-        EM_DESTRUCTORS destructors = nullptr;
-#if LLGO_EMVAL_INVOKER_API
-        ret = _emval_invoke(caller, llgo_emval_normalize(object), name, &destructors, elements.data());
-        DestructorsRunner dr(destructors);
-#else
-        ret = _emval_call_method(caller, llgo_emval_normalize(object), name, &destructors, elements.data());
-#endif
-    } catch(const emscripten::val& jsErr) {
-        printf("error\n");
-        *error = 1;
-        return EM_VAL(internal::_EMVAL_UNDEFINED);
+        const value = Emval.toValue(Number(handle) || 2);
+        if (method) {
+            result = Reflect.apply(Reflect.get(value, UTF8ToString(Number(method))), value, argv);
+        } else if (kind === 1) {
+            result = Reflect.construct(value, argv);
+        } else {
+            result = Reflect.apply(value, undefined, argv);
+        }
+    } catch (thrown) {
+        // Emscripten exit/suspension and native Wasm exceptions carry runtime
+        // control flow, not syscall/js errors. Keep them with their owner.
+        if (thrown === 'unwind' || thrown instanceof ExitStatus ||
+            (typeof WebAssembly.Exception === 'function' && thrown instanceof WebAssembly.Exception)) {
+            throw thrown;
+        }
+        failed = 1;
+        result = thrown;
     }
-#if LLGO_EMVAL_INVOKER_API
-    return take_val_result(ret);
-#else
-    return fromGenericWireType<val>(ret).release_ownership();
-#endif
+    // A callback may grow memory. Use the current heap view after the call.
+    HEAP32[Number(error) / 4] = failed;
+    const resultHandle = Emval.toHandle(result);
+    // EM_VAL is a C pointer even though Emval's JS table uses numeric handles.
+    return pointer_bytes === 8 ? BigInt(resultHandle) : resultHandle;
+});
+
+EM_VAL llgo_emval_method_call(EM_VAL object, const char *name, EM_VAL args[], int nargs, int *error) {
+    return llgo_emval_try_call(object, name, args, nargs, 0, error, sizeof(EM_VAL));
 }
 
-/*
-kind:
-FUNCTION = 0,
-CONSTRUCTOR = 1,
-*/
 EM_VAL llgo_emval_call(EM_VAL fn, EM_VAL args[], int nargs, int kind, int *error) {
-   std::vector<TYPEID> arr;
-   arr.resize(nargs+1);
-   std::vector<GenericWireType> elements;
-   elements.resize(nargs);
-   GenericWireType *cursor = elements.data();
-   arr[0] = typeid_val;
-   for (int i = 0; i < nargs; i++) {
-       arr[i+1] = typeid_val;
-       EM_VAL arg = llgo_emval_normalize(args[i]);
-       _emval_incref(arg);
-       writeGenericWireTypes(cursor, arg);
-   }
-#if LLGO_EMVAL_INVOKER_API
-   EM_INVOKER_KIND invokerKind = kind == 0
-       ? EM_INVOKER_KIND::FUNCTION
-       : EM_INVOKER_KIND::CONSTRUCTOR;
-   EM_INVOKER caller = take_invoker(nargs, invokerKind, arr.data());
-#else
-   EM_METHOD_CALLER caller = _emval_get_method_caller(nargs+1,&arr[0],EM_METHOD_CALLER_KIND(kind));
-#endif
-   EM_GENERIC_WIRE_TYPE ret;
-   try {
-       EM_DESTRUCTORS destructors = nullptr;
-#if LLGO_EMVAL_INVOKER_API
-       ret = _emval_invoke(caller, llgo_emval_normalize(fn), nullptr, &destructors, elements.data());
-       DestructorsRunner dr(destructors);
-#else
-       ret = _emval_call(caller, llgo_emval_normalize(fn), &destructors, elements.data());
-#endif
-   } catch(const emscripten::val& jsErr) {
-       *error = 1;
-       return EM_VAL(internal::_EMVAL_UNDEFINED);
-   }
-#if LLGO_EMVAL_INVOKER_API
-   return take_val_result(ret);
-#else
-   return fromGenericWireType<val>(ret).release_ownership();
-#endif
+    return llgo_emval_try_call(fn, nullptr, args, nargs, kind, error, sizeof(EM_VAL));
 }
 
 EM_VAL llgo_emval_memory_view_uint8(size_t length, uint8_t *data) {
