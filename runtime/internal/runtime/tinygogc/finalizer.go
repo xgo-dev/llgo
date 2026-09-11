@@ -144,28 +144,29 @@ func preserveFinalizableObjects() {
 	finishMark()
 	finalizerDependencyScan = false
 
-	for block := uintptr(0); block < endBlock; block++ {
-		state := gcStateOf(block)
-		if state != blockStateHead && state != blockStateMark {
+	// Only registered candidates can become ready. Walking the entire heap
+	// and searching the callback list for every object multiplies both costs.
+	for record := finalizers; record != nil; {
+		key := record.objectKey
+		if !record.candidate || finalizerObjectBlocked(key) {
+			record = record.next
 			continue
 		}
-		key := encodeFinalizerAddress(gcAddressOf(block))
-		record := candidateForObject(key)
-		if record == nil {
-			continue
-		}
+		kind := objectCleanup
 		if hasCandidateFinalizer(key) {
-			if finalizerObjectBlocked(key) || !queueCallbacksForObject(key, objectFinalizer) {
-				continue
-			}
-		} else {
-			if finalizerObjectBlocked(key) || !queueCallbacksForObject(key, objectCleanup) {
-				continue
-			}
+			kind = objectFinalizer
 		}
-		if state == blockStateHead {
+		block := finalizerObjectBlock(record)
+		if !queueCallbacksForObject(key, kind) {
+			record = record.next
+			continue
+		}
+		if gcStateOf(block) == blockStateHead {
 			startMark(block)
 		}
+		// Queueing removes every matching record, including possible successors.
+		// Resume from the remaining registry, not from detached list links.
+		record = finalizers
 	}
 
 	// A cycle of finalizable objects has no valid dependency order. Preserve it
@@ -203,9 +204,8 @@ func finalizerObjectState(record *finalizerRecord) uint8 {
 	return gcStateOf(finalizerObjectBlock(record))
 }
 
-// These lookups intentionally scan the callback list while the allocator is
-// stopped. Building an index here would itself allocate; registered lifecycle
-// callbacks are expected to remain a small set.
+// These lookups do not allocate while the collector is stopped. Object
+// addresses remain encoded so the registry itself does not retain candidates.
 func candidateForObject(key uintptr) *finalizerRecord {
 	for record := finalizers; record != nil; record = record.next {
 		if record.candidate && record.objectKey == key {
@@ -267,6 +267,15 @@ func queueCallbacksForObject(key uintptr, kind finalizerKind) bool {
 		record.readyNext = readyFinalizers
 		readyFinalizers = record
 		queued = true
+	}
+	if queued {
+		// Visit each object only once per cycle. A cleanup left behind after
+		// its finalizer is queued must wait for a later collection.
+		for record := finalizers; record != nil; record = record.next {
+			if record.objectKey == key {
+				record.candidate = false
+			}
+		}
 	}
 	return queued
 }
