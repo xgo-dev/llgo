@@ -105,8 +105,13 @@ const (
 	// import is not listed, Asyncify cannot unwind a sleeping Go function
 	// invoked by reflect.Value.Call / MakeFunc.
 	emscriptenAsyncifyImports = "-sASYNCIFY_IMPORTS=llgo_wasm_host_wait_async,ffi_call_js"
-	wasm32LibffiRelDir        = "runtime/internal/clite/ffi/wasm32"
-	wasm64LibffiRelDir        = "runtime/internal/clite/ffi/wasm64"
+	// libffi's JavaScript closure trampoline recreates its temporary return and
+	// argument buffers during rewind. Keep the three thin entry functions out
+	// of Asyncify so each replay observes the current trampoline buffers; their
+	// separately instrumented callees retain the suspended Go invocation.
+	emscriptenAsyncifyRemove = `-sASYNCIFY_REMOVE=["*llgo_reflect_bind0_js*","*llgo_reflect_bind1_js*","*llgo_reflect_bindn_js*"]`
+	wasm32LibffiRelDir       = "runtime/internal/clite/ffi/wasm32"
+	wasm64LibffiRelDir       = "runtime/internal/clite/ffi/wasm64"
 )
 
 func (profile WasmProfile) valid() bool {
@@ -808,6 +813,7 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, wasiThreads, forceEspC
 			"-sEXPORT_ALL=1",
 			"-sASYNCIFY=1",
 			emscriptenAsyncifyImports,
+			emscriptenAsyncifyRemove,
 			"-sSTACK_SIZE=5242880", // 5MB
 		}...)
 		appendEmscriptenLibffiSearchPath(&export, llgoRoot, wasmProfile)

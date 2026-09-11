@@ -107,6 +107,9 @@ func TestReflectDynamicMakeFunc(t *testing.T) {
 func TestReflectFuncOfStaticConversion(t *testing.T) {
 	typ := reflect.FuncOf([]reflect.Type{reflect.TypeOf(0)}, []reflect.Type{reflect.TypeOf(0)}, false)
 	value := reflect.MakeFunc(typ, func(in []reflect.Value) []reflect.Value {
+		// Exercise an Asyncify unwind while libffi's closure trampoline owns
+		// temporary argument and result buffers.
+		runtime.Gosched()
 		return []reflect.Value{reflect.ValueOf(int(in[0].Int()) + 1)}
 	})
 	callable := value.Interface().(func(int) int)
