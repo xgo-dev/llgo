@@ -83,6 +83,23 @@ func TestRunNativeTest(t *testing.T) {
 		}
 	})
 
+	t.Run("Go-compatible wasm runner", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		program := testProgram{
+			app:       "program.wasm",
+			pkgDir:    t.TempDir(),
+			pkgName:   "wasm",
+			runner:    fmt.Sprintf("%q -test.run=^TestRunNativeTestHelper$ -- success %q", executable, "{}"),
+			runnerEnv: map[string]string{"": "program.wasm"},
+		}
+		if err := runNativeTest(commands, program, &Config{PrintCommands: true}, &stdout, &stderr); err != nil {
+			t.Fatalf("runNativeTest with wasm runner: %v", err)
+		}
+		if !strings.Contains(stdout.String(), "PASS") || !strings.Contains(stderr.String(), executable) || !strings.Contains(stderr.String(), "program.wasm") {
+			t.Fatalf("runner output not captured: stdout=%q stderr=%q", stdout.String(), stderr.String())
+		}
+	})
+
 	t.Run("exit error", func(t *testing.T) {
 		var stderr bytes.Buffer
 		conf := &Config{RunArgs: append(args, "exit")}
@@ -107,6 +124,45 @@ func TestRunNativeTest(t *testing.T) {
 	})
 }
 
+func TestGoCompatibleWasmRunner(t *testing.T) {
+	t.Setenv("LLGO_WASM_RUNTIME", "wasmtime")
+	js := goCompatibleWasmRunner(&Config{Goos: "js", Goarch: "wasm"})
+	if !strings.Contains(js, "emscripten-runner.mjs") || !strings.Contains(js, "{}") {
+		t.Fatalf("js runner = %q", js)
+	}
+	if got, want := goCompatibleWasmRunner(&Config{Goos: "wasip1", Goarch: "wasm"}), `wasmtime run --dir=/ --env PWD --env PATH -W exceptions=y -W multi-memory=y -W max-wasm-stack=8388608 "{}"`; got != want {
+		t.Fatalf("WASI runner = %q, want %q", got, want)
+	}
+	if got := goCompatibleWasmRunner(&Config{Target: "wasi", Goos: "wasip1", Goarch: "wasm"}); got != "" {
+		t.Fatalf("named target acquired raw runner %q", got)
+	}
+}
+
+func TestWasmTestRunnerUsesPackageDirectory(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	program := testProgram{
+		pkgDir: dir,
+		runner: fmt.Sprintf("%q -test.run=^TestRunNativeTestHelper$ -- cwd", executable),
+	}
+	commands := commandEnv{environ: withEnv(os.Environ(), "PWD=stale-working-directory")}
+	var stdout, stderr bytes.Buffer
+	if err := runNativeTest(commands, program, &Config{}, &stdout, &stderr); err != nil {
+		t.Fatalf("runner: %v; stderr=%s", err, stderr.String())
+	}
+	// TempDir can contain symlinked ancestors (for example /var on macOS).
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), resolved+"\n"+dir+"\n") {
+		t.Fatalf("runner did not use package directory and PWD: %q", stdout.String())
+	}
+}
+
 func TestRunNativeTestHelper(t *testing.T) {
 	args := os.Args
 	for i, arg := range args {
@@ -114,6 +170,17 @@ func TestRunNativeTestHelper(t *testing.T) {
 			continue
 		}
 		switch args[i+1] {
+		case "cwd":
+			dir, err := os.Getwd()
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir, err = filepath.EvalSymlinks(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fmt.Fprintln(os.Stdout, dir)
+			fmt.Fprintln(os.Stdout, os.Getenv("PWD"))
 		case "success":
 			fmt.Fprint(os.Stdout, "stdout")
 			fmt.Fprint(os.Stdout, os.Getenv("LLGO_RUN_NATIVE_TEST_ENV"))
