@@ -87,10 +87,11 @@ var goWasmProfiles = []goWasmProfile{
 type commandRunner func(context.Context, string, []string, string, ...string) error
 
 type measurement struct {
-	name        string
-	moduleBytes int64
-	glueBytes   int64
-	build       time.Duration
+	name          string
+	moduleBytes   int64
+	glueBytes     int64
+	build         time.Duration
+	buildMeasured bool
 }
 
 func main() {
@@ -245,6 +246,7 @@ func measureProfile(
 	}
 	if len(durations) != 0 {
 		result.build = medianDuration(durations)
+		result.buildMeasured = true
 	}
 	return result, nil
 }
@@ -313,7 +315,7 @@ func writeResults(path string, measurements, goSizes []measurement) error {
 			result.moduleBytes,
 			result.glueBytes,
 		)
-		if result.build != 0 {
+		if result.buildMeasured {
 			fmt.Fprintf(
 				&output,
 				"BenchmarkWasmBuild/%s 1 %d build-ns\n",
