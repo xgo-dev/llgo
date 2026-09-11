@@ -45,6 +45,16 @@ type Target struct {
 	SaturatingFloatToUint32 bool
 }
 
+// IsRuntimeSupportPackage reports whether path is part of the selected Go or
+// LLGo runtime implementation rather than an ordinary user/library package.
+func IsRuntimeSupportPackage(path string) bool {
+	if path == "runtime" || strings.HasPrefix(path, "runtime/internal/") || strings.HasPrefix(path, "internal/runtime/") {
+		return true
+	}
+	runtimeModule := strings.TrimSuffix(PkgRuntime, "/internal/runtime")
+	return path == runtimeModule || strings.HasPrefix(path, runtimeModule+"/")
+}
+
 func (p *Target) usesWasmReflectBridges() bool {
 	if p == nil || p.effectiveGOARCH() != "wasm" {
 		return false

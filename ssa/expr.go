@@ -1539,7 +1539,8 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 func (b Builder) callClosure(fn, data Expr, sig *types.Signature, args []Expr) (ret Expr) {
 	prog := b.Prog
 	ret.Type = prog.retType(sig)
-	if prog.target.GOARCH == "wasm" || sig.Results().Len() == 1 && prog.SizeOf(ret.Type) == 0 {
+	if (prog.target.GOARCH == "wasm" && !IsRuntimeSupportPackage(b.Pkg.Path())) ||
+		sig.Results().Len() == 1 && prog.SizeOf(ret.Type) == 0 {
 		// A null table entry traps outside Go's recover path on WebAssembly.
 		b.AssertNilDeref(fn)
 	}

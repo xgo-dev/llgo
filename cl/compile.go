@@ -2171,7 +2171,11 @@ func instructionPrecedes(before, after ssa.Instruction) bool {
 func (p *context) needsWasmNilGuard(addr ssa.Value) bool {
 	// Linear memory includes address zero, and WebAssembly traps do not enter
 	// Go's panic/recover machinery. Native guard-page assumptions do not apply.
-	return p.prog.Target().GOARCH == "wasm" && !isKnownNonNilAddr(addr) && !isWrapNilCheckCall(addr)
+	// Runtime support packages maintain their own pointer invariants; routing an
+	// internal failure through the recoverable user-panic path makes almost the
+	// entire runtime reachable from every checked load and store.
+	return p.prog.Target().GOARCH == "wasm" && !llssa.IsRuntimeSupportPackage(p.pkg.Path()) &&
+		!isKnownNonNilAddr(addr) && !isWrapNilCheckCall(addr)
 }
 
 // assertNilDerefBase uses pointer-returning checks to rewrite p.bvals. Keep its

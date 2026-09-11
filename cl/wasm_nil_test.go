@@ -31,3 +31,21 @@ func Selected(p, q *int, b bool) int { if b { p = q }; return *p }
 		})
 	}
 }
+
+func TestWasmNilChecksExcludeRuntimeSupportPackages(t *testing.T) {
+	for _, test := range []struct {
+		path string
+		want bool
+	}{
+		{path: "example.com/app", want: true},
+		{path: "runtime"},
+		{path: "runtime/internal/sys"},
+		{path: "internal/runtime/atomic"},
+		{path: llssa.PkgRuntime},
+		{path: strings.TrimSuffix(llssa.PkgRuntime, "/internal/runtime") + "/internal/lib/runtime"},
+	} {
+		if got := !llssa.IsRuntimeSupportPackage(test.path); got != test.want {
+			t.Errorf("recoverable nil checks for %q = %v, want %v", test.path, got, test.want)
+		}
+	}
+}
