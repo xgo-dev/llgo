@@ -43,10 +43,12 @@ jobs:
         with:
           version: '4.0.21'
       - uses: actions/setup-node@v7
+        if: ${{ matrix.profile != 'W32-WASI' }}
         with:
           node-version: '24'
       - uses: ./.github/actions/setup-binaryen
       - uses: bytecodealliance/actions/wasmtime/setup@v1
+        if: ${{ matrix.profile == 'W32-WASI' }}
         with:
           version: '39.0.1'
       - uses: ./.github/actions/setup-go
@@ -103,9 +105,6 @@ jobs:
         with:
           node-version: '24'
       - uses: ./.github/actions/setup-binaryen
-      - uses: bytecodealliance/actions/wasmtime/setup@v1
-        with:
-          version: '39.0.1'
       - uses: ./.github/actions/setup-go
       - name: Build LLGo and host-side GOROOT runner
         run: |
@@ -159,10 +158,12 @@ jobs:
         with:
           version: '4.0.21'
       - uses: actions/setup-node@v7
+        if: ${{ matrix.profile != 'W32-WASI' }}
         with:
           node-version: '24'
       - uses: ./.github/actions/setup-binaryen
       - uses: bytecodealliance/actions/wasmtime/setup@v1
+        if: ${{ matrix.profile == 'W32-WASI' }}
         with:
           version: '39.0.1'
       - uses: ./.github/actions/setup-go
