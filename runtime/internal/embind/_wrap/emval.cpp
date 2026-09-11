@@ -74,26 +74,46 @@ EM_VAL llgo_emval_get_module_property(const char *name) {
 
 static volatile uint8_t llgo_emval_invoke_pending;
 
-EM_JS(void, llgo_emval_install_invoke_js, (uint8_t *pending_flag), {
+EM_JS_DEPS(llgo_emval_install_invoke_js, "$Emval,$getWasmTableEntry,$Asyncify,$Fibers");
+EM_JS(void, llgo_emval_install_invoke_js, (uint8_t *pending_flag, uintptr_t callback, int pointer_bytes), {
     const pending = [];
     const pendingFlag = Number(pending_flag);
+    const dispatch = Asyncify.instrumentFunction(getWasmTableEntry(Number(callback)));
     Module['llgoWasmPendingInvokes'] = pending;
     Module['_llgo_invoke'] = function(event) {
+        if (Asyncify.exportCallStack.length) {
+            const handle = Emval.toHandle(event);
+            // Give reentrant Go its own unwind boundary. Replaying the
+            // enclosing JS call would repeat arbitrary host side effects.
+            const callStack = Asyncify.exportCallStack;
+            const trampolineRunning = Fibers.trampolineRunning;
+            Asyncify.exportCallStack = [];
+            Fibers.trampolineRunning = false;
+            try {
+                dispatch(pointer_bytes === 8 ? BigInt(handle) : handle);
+            } finally {
+                Asyncify.exportCallStack = callStack;
+                Fibers.trampolineRunning = trampolineRunning;
+            }
+            return event.result;
+        }
         pending.push(event);
         HEAPU8[pendingFlag] = 1;
         const state = Module['llgoWasmHostWait'];
         if (state !== undefined && state.wake !== undefined) {
             const wake = state.wake;
             delete state.wake;
-            setTimeout(wake, 0);
+            // No compiled frames are active. Resume Go before returning the
+            // callback result to the event's JavaScript caller.
+            wake();
         }
-        return true;
+        return event.result;
     };
 });
 
-void llgo_emval_install_invoke(void) {
+void llgo_emval_install_invoke(void (*callback)(EM_VAL)) {
     llgo_emval_invoke_pending = 0;
-    llgo_emval_install_invoke_js(const_cast<uint8_t *>(&llgo_emval_invoke_pending));
+    llgo_emval_install_invoke_js(const_cast<uint8_t *>(&llgo_emval_invoke_pending), uintptr_t(callback), sizeof(EM_VAL));
 }
 
 bool llgo_emval_has_pending_invoke(void) {
