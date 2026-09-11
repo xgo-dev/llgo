@@ -1719,7 +1719,21 @@ func extractConstInt(v llvm.Value) (r int, ok bool) {
 
 func extractConstString(v llvm.Value) (str string, ok bool) {
 	if st := v.IsAConstantStruct(); !st.IsNil() {
-		if init := st.Operand(0).Initializer(); !init.IsNil() {
+		data := st.Operand(0)
+		for {
+			if global := data.IsAGlobalVariable(); !global.IsNil() {
+				data = global
+				break
+			}
+			if data.OperandsCount() == 0 ||
+				(data.IsAConstantStruct().IsNil() && data.IsAConstantExpr().IsNil()) {
+				return "", false
+			}
+			// Wide Memory32 Go pointer storage and constant pointer casts both
+			// retain the actual string global as their first operand.
+			data = data.Operand(0)
+		}
+		if init := data.Initializer(); !init.IsNil() {
 			return init.ConstGetAsString(), true
 		}
 	}

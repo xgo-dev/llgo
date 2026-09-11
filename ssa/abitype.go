@@ -348,6 +348,10 @@ func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value)
 			b.abiTuples(t.Params(), name+"$in"),
 			b.abiTuples(t.Results(), name+"$out"),
 		}
+		if prog.target.usesWasmReflectBridges() {
+			bridges := pkg.wasmReflectBridge(t)
+			fields = append(fields, bridges.call.impl, bridges.make.impl)
+		}
 	case *types.Struct:
 		name, _ = prog.abi.TypeName(t)
 		var pkgPath string
@@ -562,6 +566,17 @@ func (b Builder) abiUncommonMethods(t types.Type, methods []*types.Selection) ll
 		values = append(values, ifn)
 		values = append(values, tfn)
 		fields[i] = prog.constStructValue(ft, values)
+		if prog.target.usesWasmReflectBridges() {
+			// Type.Method constructs a method-expression signature at runtime.
+			// Retain that descriptor with the method wrapper only when reflection
+			// can expose it.
+			expression := methodExprSignature(m.Type().(*types.Signature))
+			b.abiType(expression)
+			if mb := b.Pkg.metaBuilder; mb != nil {
+				expressionName, _ := prog.abi.TypeName(expression)
+				mb.AddOrdinaryEdge(mb.Sym(tfn.Name()), mb.Sym(expressionName))
+			}
+		}
 		if mb := b.Pkg.metaBuilder; mb != nil {
 			mtypeName, _ := prog.abi.TypeName(ftyp)
 			mb.AddMethodSlot(mb.Sym(typeName), fullName, mb.Sym(mtypeName), mb.Sym(ifn.Name()), mb.Sym(tfn.Name()))

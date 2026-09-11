@@ -38,8 +38,17 @@ type Target struct {
 	Target                  string // target name from -target flag (e.g., "esp32", "arm7tdmi", "wasi")
 	LLVMTarget              string // physical LLVM target selected by a target configuration
 	WasmProfile             string // logical hosted WebAssembly profile (j32, j64, or w32)
+	WasmProvider            string // hosted WebAssembly provider (gojs, emscripten, or wasi)
+	WasmReflectBridges      bool   // emit statically typed reflection bridges for this program
 	OptLevel                optlevel.Level
 	SaturatingFloatToUint32 bool
+}
+
+func (p *Target) usesWasmReflectBridges() bool {
+	if p == nil || p.effectiveGOARCH() != "wasm" {
+		return false
+	}
+	return p.WasmReflectBridges && p.WasmProvider == "wasi"
 }
 
 func (p *Target) effectiveGOOS() string {

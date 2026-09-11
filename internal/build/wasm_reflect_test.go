@@ -1,0 +1,142 @@
+/*
+ * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package build
+
+import (
+	"go/ast"
+	"go/importer"
+	"go/parser"
+	"go/token"
+	"go/types"
+	"testing"
+
+	llssa "github.com/xgo-dev/llgo/ssa"
+	"golang.org/x/tools/go/packages"
+	"golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa/ssautil"
+)
+
+func TestConfigureWasmReflectBridges(t *testing.T) {
+	tests := []struct {
+		name     string
+		target   *llssa.Target
+		src      string
+		expected bool
+	}{
+		{
+			"reachable WASI reflection",
+			&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"},
+			`package main; import "reflect"; func main() { reflect.ValueOf(func() {}).Call(nil) }`,
+			true,
+		},
+		{
+			"dead WASI reflection",
+			&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"},
+			`package main; import "reflect"; func dead(v reflect.Value) { v.Call(nil) }; func main() {}`,
+			false,
+		},
+		{
+			"GoJS reflection uses libffi",
+			&llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
+			`package main; import "reflect"; func main() { reflect.ValueOf(func() {}).Call(nil) }`,
+			false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			pkg := buildWasmReflectTestProgram(t, test.src)
+			prog := llssa.NewProgram(test.target)
+			defer prog.Dispose()
+			ctx := &context{
+				prog:    prog,
+				progSSA: pkg.Prog,
+				initial: []*packages.Package{{Types: pkg.Pkg}},
+			}
+			configureWasmReflectBridges(ctx)
+			if got := test.target.WasmReflectBridges; got != test.expected {
+				t.Fatalf("WasmReflectBridges = %v, want %v", got, test.expected)
+			}
+		})
+	}
+
+	configureWasmReflectBridges(nil)
+}
+
+func TestProgramUsesWasmReflectBridges(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{"no reflection", `package p; func f() int { return 1 }`, false},
+		{"metadata only", `package p; import "reflect"; func f() reflect.Type { return reflect.TypeOf(1) }`, false},
+		{"value call", `package p; import "reflect"; func f(v reflect.Value) { v.Call(nil) }`, true},
+		{"call slice", `package p; import "reflect"; func f(v reflect.Value) { v.CallSlice(nil) }`, true},
+		{"make func", `package p; import "reflect"; func f(t reflect.Type, fn func([]reflect.Value) []reflect.Value) { reflect.MakeFunc(t, fn) }`, true},
+		{"sequence", `package p; import "reflect"; func f(v reflect.Value) { _ = v.Seq() }`, true},
+		{"sequence two", `package p; import "reflect"; func f(v reflect.Value) { _ = v.Seq2() }`, true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			pkg := buildWasmReflectTestProgram(t, test.src)
+			if got := programUsesWasmReflectBridges(pkg.Prog, nil); got != test.want {
+				t.Fatalf("programUsesWasmReflectBridges() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestProgramUsesWasmReflectBridgesReachability(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{"dead call", `package main; import "reflect"; func dead(v reflect.Value) { v.Call(nil) }; func main() {}`, false},
+		{"reachable call", `package main; import "reflect"; func live(v reflect.Value) { v.Call(nil) }; func main() { live(reflect.Value{}) }`, true},
+		{"function value call", `package main; import "reflect"; var call = reflect.Value.Call; func main() { call(reflect.Value{}, nil) }`, true},
+		{"interface call", `package main; import "reflect"; type caller interface { Call([]reflect.Value) []reflect.Value }; func main() { var call caller = reflect.Value{}; call.Call(nil) }`, true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			pkg := buildWasmReflectTestProgram(t, test.src)
+			roots := []*ssa.Function{pkg.Func("init"), pkg.Func("main")}
+			if got := programUsesWasmReflectBridges(pkg.Prog, roots); got != test.want {
+				t.Fatalf("reachable programUsesWasmReflectBridges() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func buildWasmReflectTestProgram(t *testing.T, src string) *ssa.Package {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "p.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := types.NewPackage("example.com/"+file.Name.Name, file.Name.Name)
+	pkg, _, err := ssautil.BuildPackage(
+		&types.Config{Importer: importer.Default()}, fset,
+		checked, []*ast.File{file},
+		ssa.SanityCheckFunctions|ssa.InstantiateGenerics,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pkg
+}
