@@ -16,16 +16,16 @@
  * limitations under the License.
  */
 
-package localityfailure
-
-const Failure = "locality initializer failed"
+// Package localitynilfailure exercises cached panic(nil) from a GLS package
+// initializer independently of other deliberately failing initializers.
+package localitynilfailure
 
 var attempts int
 
 func initialize() int {
 	attempts++
 	if attempts > 1 {
-		panic(Failure)
+		panic(nil)
 	}
 	return attempts
 }

@@ -28,6 +28,7 @@ import (
 type runtimeContextPlatform struct {
 	context    wasmcontext.Context
 	gcRoot     wasmGCRootContext
+	glsContext LocalContext
 	runqNext   *g
 	runqQueued bool
 	// Keep runqQueued inside unsafe.Sizeof(runtimeContext{}) on wasm32. LLVM
@@ -213,6 +214,7 @@ func releaseWasmContext(gp *g) {
 	if wasmGCRootEnabled {
 		unregisterWasmGCRoot(&ctx.platform.gcRoot)
 	}
+	releaseGoroutineLocalBlocks(&ctx.platform.glsContext)
 	ctx.platform.context.Close(FreeRoot)
 	freeRuntimeContext(ctx)
 }
@@ -291,6 +293,8 @@ func ReadyForTesting(handle unsafe.Pointer) {
 func SchedulerStateForTesting() (runq uintptr, mid int64, pid int32) {
 	return wasmSched.runq.Len(), wasmSched.m.id, wasmSched.p.id
 }
+
+func SchedulerMultiplexesGoroutinesForTesting() bool { return true }
 
 func GMPForTesting() (goid, parentGoid uint64, mid int64, pid int32, gstatus, pstatus uint32, linked bool) {
 	gp := getg()

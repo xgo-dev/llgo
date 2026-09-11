@@ -818,6 +818,32 @@ func TestNeedStartWASITargetAliases(t *testing.T) {
 	}
 }
 
+func TestUsesSingleWorkerWasmScheduler(t *testing.T) {
+	tests := []struct {
+		name, goos, goarch string
+		wasiThreads        bool
+		want               bool
+	}{
+		{"Emscripten", "js", "wasm", false, true},
+		{"Emscripten ignores WASI setting", "js", "wasm", true, true},
+		{"single-worker WASI", "wasip1", "wasm", false, true},
+		{"WASI threads", "wasip1", "wasm", true, false},
+		{"native", "linux", "amd64", false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(llgoWasiThreads, strconv.FormatBool(tt.wasiThreads))
+			conf := &Config{Goos: tt.goos, Goarch: tt.goarch}
+			if got := usesSingleWorkerWasmScheduler(conf); got != tt.want {
+				t.Fatalf("usesSingleWorkerWasmScheduler(%s/%s) = %v, want %v", tt.goos, tt.goarch, got, tt.want)
+			}
+		})
+	}
+	if usesSingleWorkerWasmScheduler(nil) {
+		t.Fatal("nil configuration selected the single-worker scheduler")
+	}
+}
+
 func TestWasmRuntimeAvoidsNativeHostDependencies(t *testing.T) {
 	runtimeDir := filepath.Join(env.LLGoRuntimeDir(), "internal", "lib", "runtime")
 	for _, goos := range []string{"js", "wasip1"} {

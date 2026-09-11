@@ -187,6 +187,13 @@ func BlockName(path string) string { return qualify(path, "__llgo_local_block") 
 // BlockCacheName returns the package block's owner-local direct-cache symbol.
 func BlockCacheName(path string) string { return qualify(path, "__llgo_local_cache") }
 
+// GoroutineBlockName returns the logical-G package-block accessor symbol used
+// by schedulers that multiplex goroutines on physical threads.
+func GoroutineBlockName(path string) string { return qualify(path, "__llgo_gls_block") }
+
+// GoroutineBlockKeyName returns the process-global identity for that block.
+func GoroutineBlockKeyName(path string) string { return qualify(path, "__llgo_gls_key") }
+
 // InitName returns the package/kind initializer dispatcher symbol.
 func InitName(path string, kind locality.Kind) string {
 	return qualify(path, "__llgo_"+kind.String()+"_init")

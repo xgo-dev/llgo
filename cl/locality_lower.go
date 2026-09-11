@@ -38,23 +38,36 @@ type localVariable struct {
 }
 
 type localPackage struct {
-	plan      localitylayout.Package
-	typ       llssa.Type
-	blockFunc llssa.Function
-	direct    map[string]llssa.Global
-	init      map[locality.Kind]*localInitializer
+	plan          localitylayout.Package
+	typ           llssa.Type
+	blockFunc     llssa.Function
+	blockFields   map[string]int
+	glsTyp        llssa.Type
+	glsBlockFunc  llssa.Function
+	glsFields     map[string]int
+	glsInitFields localInitializerFields
+	direct        map[string]llssa.Global
+	init          map[locality.Kind]*localInitializer
 }
 
 type localInitializer struct {
 	guard        llssa.Global
 	failureCache llssa.Global
+	logical      bool
+	fields       localInitializerFields
 	dispatch     llssa.Function
 	ensure       llssa.Function
 }
 
+type localInitializerFields struct {
+	guard   int
+	failure int
+}
+
 type localBaseCacheKey struct {
-	block *ssa.BasicBlock
-	owner *localPackage
+	block      *ssa.BasicBlock
+	owner      *localPackage
+	logicalGLS bool
 }
 
 type localEnsureCacheKey struct {
@@ -169,6 +182,9 @@ func (p *context) localityGlobalStorage(pkg llssa.Package, global *ssa.Global, n
 	if variable == nil {
 		panic(fmt.Sprintf("missing locality layout for %s", name))
 	}
+	if p.prog.LogicalGoroutineLocalityEnabled() && variable.planned.Info.Locality == locality.Goroutine {
+		return nil, true
+	}
 	if variable.planned.Storage == localitylayout.StoragePackage {
 		return nil, true
 	}
@@ -177,7 +193,9 @@ func (p *context) localityGlobalStorage(pkg llssa.Package, global *ssa.Global, n
 
 func (p *context) localityAllowsGlobalDebug(global *ssa.Global) bool {
 	variable := p.locality.variables[global]
-	return variable == nil || variable.planned.Storage == localitylayout.StorageNativeTLS
+	return variable == nil ||
+		(!p.prog.LogicalGoroutineLocalityEnabled() || variable.planned.Info.Locality != locality.Goroutine) &&
+			variable.planned.Storage == localitylayout.StorageNativeTLS
 }
 
 func (p *context) localTypesPackage(fullName string) *types.Package {
@@ -240,7 +258,25 @@ func (p *context) localPackageFor(typesPkg *types.Package, pkg llssa.Package, de
 }
 
 func (p *context) buildLocalPackage(pkg llssa.Package, owner *localPackage, define bool) {
+	logicalGLS := p.prog.LogicalGoroutineLocalityEnabled()
+	blockVariables := owner.plan.Block
+	var glsVariables []localitylayout.Variable
+	if logicalGLS {
+		blockVariables = nil
+		for _, variable := range owner.plan.Variables {
+			if variable.Info.Locality == locality.Goroutine {
+				glsVariables = append(glsVariables, variable)
+				continue
+			}
+			if variable.Storage == localitylayout.StoragePackage {
+				blockVariables = append(blockVariables, variable)
+			}
+		}
+	}
 	for _, variable := range owner.plan.Variables {
+		if logicalGLS && variable.Info.Locality == locality.Goroutine {
+			continue
+		}
 		if variable.Storage != localitylayout.StorageNativeTLS {
 			continue
 		}
@@ -248,10 +284,12 @@ func (p *context) buildLocalPackage(pkg llssa.Package, owner *localPackage, defi
 		global := pkg.NewThreadLocalVar(variable.Name, typ, llssa.InGo)
 		owner.direct[variable.Name] = global
 	}
-	if len(owner.plan.Block) != 0 {
-		fields := make([]*types.Var, len(owner.plan.Block))
-		for index, variable := range owner.plan.Block {
+	if len(blockVariables) != 0 {
+		fields := make([]*types.Var, len(blockVariables))
+		owner.blockFields = make(map[string]int, len(blockVariables))
+		for index, variable := range blockVariables {
 			fields[index] = types.NewField(token.NoPos, nil, fmt.Sprintf("v%d", index), p.patchType(variable.Type), false)
+			owner.blockFields[variable.Name] = index
 		}
 		structType := types.NewStruct(fields, nil)
 		owner.typ = p.prog.Type(structType, llssa.InGo)
@@ -270,6 +308,38 @@ func (p *context) buildLocalPackage(pkg llssa.Package, owner *localPackage, defi
 			)
 		}
 	}
+	if len(glsVariables) != 0 {
+		fields := make([]*types.Var, 0, len(glsVariables)+2)
+		owner.glsFields = make(map[string]int, len(glsVariables))
+		for _, variable := range glsVariables {
+			owner.glsFields[variable.Name] = len(fields)
+			fields = append(fields, types.NewField(
+				token.NoPos, nil, fmt.Sprintf("v%d", len(fields)), p.patchType(variable.Type), false,
+			))
+		}
+		if len(owner.plan.Initializers(locality.Goroutine)) != 0 {
+			owner.glsInitFields.guard = len(fields)
+			fields = append(fields, types.NewField(token.NoPos, nil, "initGuard", types.Typ[types.Uint8], false))
+			owner.glsInitFields.failure = len(fields)
+			fields = append(fields, types.NewField(token.NoPos, nil, "initFailure", p.prog.Any().RawType(), false))
+		}
+		structType := types.NewStruct(fields, nil)
+		owner.glsTyp = p.prog.Type(structType, llssa.InGo)
+		key := pkg.NewVar(localitylayout.GoroutineBlockKeyName(owner.plan.Path), types.NewPointer(types.Typ[types.Uintptr]), llssa.InGo)
+		if define {
+			key.InitNil()
+		}
+		result := types.NewPointer(structType)
+		owner.glsBlockFunc = pkg.NewFunc(localitylayout.GoroutineBlockName(owner.plan.Path), noArgResultSignature(result), llssa.InGo)
+		owner.glsBlockFunc.Inline(llssa.AlwaysInline)
+		if define && !owner.glsBlockFunc.HasBody() {
+			owner.glsBlockFunc.BuildGoroutineLocalPackageAccessor(
+				key.Expr,
+				p.prog.IntVal(p.prog.SizeOf(owner.glsTyp), p.prog.Uintptr()),
+				p.prog.IntVal(p.prog.AlignOf(owner.glsTyp), p.prog.Uintptr()),
+			)
+		}
+	}
 	for _, kind := range []locality.Kind{locality.Thread, locality.Goroutine} {
 		initializers := owner.plan.Initializers(kind)
 		if len(initializers) == 0 {
@@ -281,16 +351,23 @@ func (p *context) buildLocalPackage(pkg llssa.Package, owner *localPackage, defi
 
 func (p *context) buildLocalInitializer(pkg llssa.Package, owner *localPackage, kind locality.Kind, initializers []localitylayout.Initializer, define bool) *localInitializer {
 	ret := &localInitializer{}
-	ret.guard = pkg.NewThreadLocalVar(localitylayout.GuardName(owner.plan.Path, kind), types.NewPointer(types.Typ[types.Uint8]), llssa.InGo)
-	ret.failureCache = pkg.NewThreadLocalVar(localitylayout.FailureCacheName(owner.plan.Path, kind), types.NewPointer(types.Typ[types.Uintptr]), llssa.InGo)
+	ret.logical = p.prog.LogicalGoroutineLocalityEnabled() && kind == locality.Goroutine
+	if ret.logical {
+		ret.fields = owner.glsInitFields
+	} else {
+		ret.guard = pkg.NewThreadLocalVar(localitylayout.GuardName(owner.plan.Path, kind), types.NewPointer(types.Typ[types.Uint8]), llssa.InGo)
+		ret.failureCache = pkg.NewThreadLocalVar(localitylayout.FailureCacheName(owner.plan.Path, kind), types.NewPointer(types.Typ[types.Uintptr]), llssa.InGo)
+	}
 	ret.dispatch = pkg.NewFunc(localitylayout.InitName(owner.plan.Path, kind), llssa.NoArgsNoRet, llssa.InGo)
 	ret.ensure = pkg.NewFunc(localitylayout.EnsureName(owner.plan.Path, kind), llssa.NoArgsNoRet, llssa.InGo)
 	ret.ensure.Inline(llssa.AlwaysInline)
 	if !define {
 		return ret
 	}
-	ret.guard.InitNil()
-	ret.failureCache.InitNil()
+	if !ret.logical {
+		ret.guard.InitNil()
+		ret.failureCache.InitNil()
+	}
 	if !ret.dispatch.HasBody() {
 		b := ret.dispatch.MakeBody(1)
 		for _, initializer := range initializers {
@@ -302,14 +379,25 @@ func (p *context) buildLocalInitializer(pkg llssa.Package, owner *localPackage, 
 	}
 	if !ret.ensure.HasBody() {
 		b := ret.ensure.MakeBody(3)
-		ready := b.BinOp(token.EQL, b.Load(ret.guard.Expr), p.prog.IntVal(localInitReady, p.prog.Byte()))
+		var guard, failure llssa.Expr
+		ensureFunc := "EnsureLocalInitializer"
+		if ret.logical {
+			base := b.Call(owner.glsBlockFunc.Expr)
+			guard = b.FieldAddr(base, ret.fields.guard)
+			failure = b.FieldAddr(base, ret.fields.failure)
+			ensureFunc = "EnsureGoroutineLocalInitializer"
+		} else {
+			guard = ret.guard.Expr
+			failure = ret.failureCache.Expr
+		}
+		ready := b.BinOp(token.EQL, b.Load(guard), p.prog.IntVal(localInitReady, p.prog.Byte()))
 		b.If(ready, ret.ensure.Block(2), ret.ensure.Block(1))
 		b.SetBlock(ret.ensure.Block(1))
 		closure := b.MakeClosure(ret.dispatch.Expr, nil)
 		b.Call(
-			pkg.RuntimeFunc("EnsureLocalInitializer"),
-			ret.guard.Expr,
-			ret.failureCache.Expr,
+			pkg.RuntimeFunc(ensureFunc),
+			guard,
+			failure,
 			closure,
 		)
 		b.Jump(ret.ensure.Block(2))
@@ -340,6 +428,14 @@ func (p *context) localVariableAddr(b llssa.Builder, v *ssa.Global, info llssa.V
 		p.locality.variables[v] = variable
 	}
 	p.ensureLocalInitializer(b, variable.owner, info.Locality)
+	if p.prog.LogicalGoroutineLocalityEnabled() && info.Locality == locality.Goroutine {
+		field, ok := variable.owner.glsFields[variable.planned.Name]
+		if !ok {
+			panic(fmt.Sprintf("missing logical GLS field for %s", name))
+		}
+		base := p.localPackageBase(b, variable.owner, true)
+		return b.FieldAddr(base, field)
+	}
 	if variable.planned.Storage == localitylayout.StorageNativeTLS {
 		direct := variable.owner.direct[variable.planned.Name]
 		if direct == nil {
@@ -347,8 +443,16 @@ func (p *context) localVariableAddr(b llssa.Builder, v *ssa.Global, info llssa.V
 		}
 		return direct.Expr
 	}
-	base := p.localPackageBase(b, variable.owner)
-	return b.FieldAddr(base, variable.planned.Field)
+	base := p.localPackageBase(b, variable.owner, false)
+	field := variable.planned.Field
+	if p.prog.LogicalGoroutineLocalityEnabled() {
+		var ok bool
+		field, ok = variable.owner.blockFields[variable.planned.Name]
+		if !ok {
+			panic(fmt.Sprintf("missing thread-local package field for %s", name))
+		}
+	}
+	return b.FieldAddr(base, field)
 }
 
 func (p *context) localVariableAddress(b llssa.Builder, variable *ssa.Global, name string) (llssa.Expr, bool) {
@@ -367,19 +471,23 @@ func (p *context) resolveLocality(pkg *types.Package, name string) (llssa.Variab
 	return info, ok
 }
 
-func (p *context) localPackageBase(b llssa.Builder, owner *localPackage) llssa.Expr {
+func (p *context) localPackageBase(b llssa.Builder, owner *localPackage, logicalGLS bool) llssa.Expr {
 	state := &p.locality.function
 	for block := state.block; block != nil; block = block.Idom() {
-		if base, ok := state.packageBases[localBaseCacheKey{block: block, owner: owner}]; ok {
+		if base, ok := state.packageBases[localBaseCacheKey{block: block, owner: owner, logicalGLS: logicalGLS}]; ok {
 			return base
 		}
 	}
-	base := b.Call(owner.blockFunc.Expr)
+	blockFunc := owner.blockFunc
+	if logicalGLS {
+		blockFunc = owner.glsBlockFunc
+	}
+	base := b.Call(blockFunc.Expr)
 	if state.block != nil {
 		if state.packageBases == nil {
 			state.packageBases = make(map[localBaseCacheKey]llssa.Expr)
 		}
-		state.packageBases[localBaseCacheKey{block: state.block, owner: owner}] = base
+		state.packageBases[localBaseCacheKey{block: state.block, owner: owner, logicalGLS: logicalGLS}] = base
 	}
 	return base
 }
@@ -414,7 +522,14 @@ func (p *context) initializeLocalGuards(b llssa.Builder) {
 	}
 	for _, kind := range []locality.Kind{locality.Thread, locality.Goroutine} {
 		if initializer := owner.init[kind]; initializer != nil {
-			b.Store(initializer.guard.Expr, p.prog.IntVal(localInitReady, p.prog.Byte()))
+			var guard llssa.Expr
+			if initializer.logical {
+				base := p.localPackageBase(b, owner, true)
+				guard = b.FieldAddr(base, initializer.fields.guard)
+			} else {
+				guard = initializer.guard.Expr
+			}
+			b.Store(guard, p.prog.IntVal(localInitReady, p.prog.Byte()))
 		}
 	}
 }

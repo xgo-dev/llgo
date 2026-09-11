@@ -127,6 +127,8 @@ func goschedBackend() {
 }
 
 // GMPForTesting reports the current runtime ownership graph.
+func SchedulerMultiplexesGoroutinesForTesting() bool { return false }
+
 func GMPForTesting() (goid, parentGoid uint64, mid int64, pid int32, gstatus, pstatus uint32, linked bool) {
 	gp := getg()
 	if gp == nil || gp.m == nil || gp.m.p == nil {

@@ -603,6 +603,7 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 	prog.EnableGoGlobalDCE(conf.goGlobalDCEEnabled())
 	prog.EnableDeadcodeDrop(conf.deadcodeDropEnabled())
 	prog.EnableGCRoots(wasmGC)
+	prog.EnableLogicalGoroutineLocality(usesSingleWorkerWasmScheduler(conf))
 	prog.EnableCooperativeSafepoints(wasmGC)
 	if conf.PthreadStackSize > 0 {
 		prog.SetPthreadStackSize(uint64(conf.PthreadStackSize))
@@ -1314,6 +1315,20 @@ func configureWasmGC(conf *Config, export *crosscompile.Export) (bool, error) {
 		conf.Tags += "llgo.wasm.gc.linear"
 	}
 	return enabled, nil
+}
+
+func usesSingleWorkerWasmScheduler(conf *Config) bool {
+	if conf == nil || conf.Goarch != "wasm" {
+		return false
+	}
+	switch conf.Goos {
+	case "js":
+		return true
+	case "wasip1":
+		return !IsWasiThreadsEnabled()
+	default:
+		return false
+	}
 }
 
 func applyWasmGCLinkFlags(conf *Config, export *crosscompile.Export) {
