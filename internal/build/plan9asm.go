@@ -380,6 +380,11 @@ func hasAltPkgForTarget(conf *Config, pkgPath string) bool {
 	if conf == nil || !llruntime.HasAltPkgForGOARCH(pkgPath, conf.Goarch) {
 		return false
 	}
+	if pkgPath == "syscall/js" && conf.Target == "" && conf.Goos == "js" && conf.Goarch == "wasm" {
+		// J32/GoJS retains the selected GOROOT's Go implementation. Its
+		// source patch adapts only host imports and the runtime event entry.
+		return false
+	}
 	if llruntime.HasAdditiveAltPkgForGOARCH(pkgPath, conf.Goarch) {
 		return true
 	}

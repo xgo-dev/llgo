@@ -121,6 +121,35 @@ func TestEmscriptenRuntimeHostImportsUseCABI(t *testing.T) {
 	}
 }
 
+func TestGoJSKeepsGOROOTSyscallJS(t *testing.T) {
+	conf := NewDefaultConf(ModeGen)
+	conf.Goos, conf.Goarch = "js", "wasm"
+	if hasAltPkgForTarget(conf, "syscall/js") {
+		t.Fatal("J32/GoJS still replaces syscall/js")
+	}
+	var jsIR string
+	conf.ModuleHook = func(pkg Package) {
+		if pkg.PkgPath == "syscall/js" {
+			jsIR = pkg.LPkg.String()
+		}
+	}
+	if _, err := Do([]string{"./testdata/wasm-callback"}, conf); err != nil {
+		t.Fatal(err)
+	}
+	for _, symbol := range []string{"syscall/js.makeValue", "syscall/js.handleEvent", "syscall/js.hostEventHandler"} {
+		if !strings.Contains(jsIR, symbol) {
+			t.Errorf("missing GOROOT implementation or host hook %s", symbol)
+		}
+	}
+	if strings.Contains(jsIR, "cEmval") || strings.Contains(jsIR, `"wasm-import-module"="gojs"`) {
+		t.Fatal("J32/GoJS still uses an unadapted syscall/js backend")
+	}
+	conf.Target = "emscripten"
+	if !hasAltPkgForTarget(conf, "syscall/js") {
+		t.Fatal("named Emscripten profile lost its C-ABI backend")
+	}
+}
+
 func logPackageErrors(t *testing.T, pkg *packages.Package, seen map[string]bool) {
 	t.Helper()
 	if pkg == nil || seen[pkg.ID] {
