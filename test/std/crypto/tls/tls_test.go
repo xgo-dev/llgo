@@ -16,8 +16,11 @@ import (
 	"time"
 )
 
+// Certificate fixtures need only exercise TLS parsing and configuration.
+const testRSAKeyBits = 1024
+
 func generateTestCert(t *testing.T) ([]byte, []byte) {
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
 	if err != nil {
 		t.Fatalf("Failed to generate private key: %v", err)
 	}
