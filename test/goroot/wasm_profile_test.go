@@ -21,16 +21,14 @@ func selectGOROOTWasmProfile(name string) (gorootWasmProfile, bool, error) {
 	switch name {
 	case "":
 		return gorootWasmProfile{}, false, nil
-	case "EC32":
+	case "J32-Emscripten":
 		return gorootWasmProfile{name: name, target: "emscripten", goos: "js", llgoSuffix: ".mjs", runner: "emscripten-runner.mjs"}, true, nil
-	case "EC64":
+	case "J64-Emscripten":
 		return gorootWasmProfile{name: name, target: "emscripten-memory64", goos: "js", llgoSuffix: ".mjs", runner: "emscripten-memory64-runner.mjs"}, true, nil
-	case "WC32":
+	case "W32-WASI":
 		return gorootWasmProfile{name: name, target: "wasi", goos: "wasip1", llgoSuffix: ".wasm", runner: "wasmtime"}, true, nil
-	case "GJS":
+	case "J32-GoJS":
 		return gorootWasmProfile{name: name, goos: "js", llgoSuffix: ".mjs", runner: "emscripten-runner.mjs"}, true, nil
-	case "GWASI":
-		return gorootWasmProfile{name: name, goos: "wasip1", llgoSuffix: ".wasm", runner: "wasmtime"}, true, nil
 	default:
 		return gorootWasmProfile{}, false, fmt.Errorf("unknown -wasm-profile=%q", name)
 	}

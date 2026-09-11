@@ -15,11 +15,10 @@ func withGOROOTWasmProfile(t *testing.T, name string) {
 
 func TestGOROOTWasmProfiles(t *testing.T) {
 	want := map[string]struct{ target, goos, suffix, runner string }{
-		"EC32":  {"emscripten", "js", ".mjs", "emscripten-runner.mjs"},
-		"EC64":  {"emscripten-memory64", "js", ".mjs", "emscripten-memory64-runner.mjs"},
-		"WC32":  {"wasi", "wasip1", ".wasm", "wasmtime"},
-		"GJS":   {"", "js", ".mjs", "emscripten-runner.mjs"},
-		"GWASI": {"", "wasip1", ".wasm", "wasmtime"},
+		"J32-GoJS":       {"", "js", ".mjs", "emscripten-runner.mjs"},
+		"J32-Emscripten": {"emscripten", "js", ".mjs", "emscripten-runner.mjs"},
+		"J64-Emscripten": {"emscripten-memory64", "js", ".mjs", "emscripten-memory64-runner.mjs"},
+		"W32-WASI":       {"wasi", "wasip1", ".wasm", "wasmtime"},
 	}
 	for name, expected := range want {
 		got, ok, err := selectGOROOTWasmProfile(name)
@@ -36,7 +35,7 @@ func TestGOROOTWasmProfiles(t *testing.T) {
 }
 
 func TestGOROOTWasmBuildAndRunCommands(t *testing.T) {
-	withGOROOTWasmProfile(t, "EC64")
+	withGOROOTWasmProfile(t, "J64-Emscripten")
 	env := []string{"GOROOT=/go", "LLGO_ROOT=/llgo", "GOOS=linux", "GOARCH=amd64"}
 	if got := gorootArtifactPath("/tmp", "llgo", true); got != filepath.Join("/tmp", "llgo.mjs") {
 		t.Fatal(got)
@@ -59,7 +58,7 @@ func TestGOROOTWasmBuildAndRunCommands(t *testing.T) {
 }
 
 func TestGOROOTWasiRunCommand(t *testing.T) {
-	withGOROOTWasmProfile(t, "GWASI")
+	withGOROOTWasmProfile(t, "W32-WASI")
 	env := []string{"GOROOT=/go", "LLGO_ROOT=/llgo"}
 	app, args, targetEnv, err := gorootArtifactCommand("/work", "out.wasm", true, env, "arg")
 	want := []string{"run", "-W", "exceptions=y", "--dir=.", "out.wasm", "arg"}
