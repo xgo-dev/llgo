@@ -156,6 +156,7 @@ func TestFullAuditClassifiesHostDriverSuiteWithoutExecutingIt(t *testing.T) {
 
 func TestFullAuditAcceptsReviewedSourceExclusions(t *testing.T) {
 	root := t.TempDir()
+	var inventory []byte
 	packages := []string{
 		"test/_stress/runtime/cpuprof",
 		"test/_stress/runtime/finalizer",
@@ -174,12 +175,17 @@ func TestFullAuditAcceptsReviewedSourceExclusions(t *testing.T) {
 		if err := os.WriteFile(name, []byte("//go:build windows\n\npackage excluded\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		data, err := json.Marshal(selectedPackage{Dir: filepath.Dir(name), TestGoFiles: []string{"excluded_test.go"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		inventory = append(inventory, data...)
 	}
 	structured := func(_ string, c command) ([]byte, error) {
 		if c.Args[0] == "env" {
 			return []byte("/goroot"), nil
 		}
-		return nil, nil
+		return inventory, nil
 	}
 	run := func(string, command) ([]byte, error) {
 		t.Fatal("source-excluded package was executed")
@@ -204,6 +210,48 @@ func TestFullAuditAcceptsReviewedSourceExclusions(t *testing.T) {
 		if pkg.Status != "not-applicable" || pkg.Reason == "" {
 			t.Fatalf("reviewed exclusion accounting: %s", data)
 		}
+	}
+}
+
+func TestFullAuditDoesNotHideSourceSelectionErrors(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "test", "broken")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "broken_test.go"), []byte("package broken\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pkg := selectedPackage{Dir: dir}
+	pkg.Error = &struct{ Err string }{Err: "synthetic go list failure"}
+	inventory, err := json.Marshal(pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	structured := func(_ string, c command) ([]byte, error) {
+		if c.Args[0] == "env" {
+			return []byte("/goroot"), nil
+		}
+		return inventory, nil
+	}
+	run := func(string, command) ([]byte, error) {
+		t.Fatal("package with a source-selection error was executed")
+		return nil, nil
+	}
+	reportPath := filepath.Join(root, "report.json")
+	if err := runFullAt(root, "J32-GoJS", reportPath, "go", "llgo", 0, 1, structured, run); err == nil {
+		t.Fatal("source-selection error was hidden")
+	}
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report struct{ Packages []fullPackage }
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Packages) != 1 || report.Packages[0].Status != "fail" || !strings.Contains(report.Packages[0].Reason, "synthetic go list failure") {
+		t.Fatalf("source-selection accounting: %s", data)
 	}
 }
 

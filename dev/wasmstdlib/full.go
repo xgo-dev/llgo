@@ -256,19 +256,20 @@ func runFullAt(root, name, reportPath, goCmd, llgo string, shard, shards int, st
 			continue
 		}
 		pkg, exists := selected[e.Package]
+		exclusionReason, excluded := fullSourceExclusion(p, e.Package)
 		switch {
 		case e.Package == "test/goroot":
 			e.Status, e.Reason = "separate-suite", "host-side target runner is executed by the wasm GOROOT acceptance jobs"
 		case e.Package == "test/cmd/llgo":
 			e.Status, e.Reason = "separate-suite", "host-side compiler integration suite is executed by the regular Go workflow"
-		case !exists || len(pkg.TestGoFiles)+len(pkg.XTestGoFiles) == 0:
-			if reason, classified := fullSourceExclusion(p, e.Package); classified {
-				e.Status, e.Reason = "not-applicable", reason
-			} else {
-				e.Status, e.Reason = "source-excluded", "no tests selected by source context; applicability not yet established"
-			}
+		case excluded:
+			e.Status, e.Reason = "not-applicable", exclusionReason
+		case !exists:
+			e.Status, e.Reason = "source-excluded", "package absent from source selection; applicability not yet established"
 		case pkg.Error != nil:
 			e.Status, e.Reason = "fail", pkg.Error.Err
+		case len(pkg.TestGoFiles)+len(pkg.XTestGoFiles) == 0:
+			e.Status, e.Reason = "source-excluded", "no tests selected by source context; applicability not yet established"
 		default:
 			witness, err := testWitness(pkg)
 			if err != nil {
