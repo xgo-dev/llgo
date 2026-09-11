@@ -1974,8 +1974,8 @@ func (p *context) pushCallerLocationFrame(b llssa.Builder, fn *ssa.Function) {
 		directiveFilename(p.fset, fn.Pos(), pos.Filename, p.sourceLine),
 	)
 	entry := b.Convert(p.prog.Uintptr(), p.fn.Expr)
-	p.callerFrameMark = b.Call(
-		p.runtimeFunc("PushCallerLocationFrame", pushCallerLocationFrameSig()),
+	p.callerFrameMark = p.callRuntimeLocation(
+		b, "PushCallerLocationFrame",
 		entry,
 		b.Str(p.runtimeCallerFrameName()),
 		b.Str(pos.Filename),
@@ -2021,13 +2021,32 @@ func (p *context) recordRuntimeLocation(b llssa.Builder, pos token.Pos, fn strin
 	if position.Line <= 0 || position.Filename == "" {
 		return
 	}
-	b.Call(
-		p.runtimeFunc(fn, recordRuntimeLocationSig()),
+	p.callRuntimeLocation(
+		b, fn,
 		b.Convert(p.prog.Uintptr(), p.fn.Expr),
 		b.Str(p.runtimeCallerFrameName()),
 		b.Str(position.Filename),
 		p.prog.IntVal(uint64(position.Line), p.prog.Int()),
 	)
+}
+
+// callRuntimeLocation keeps static strings out of the caller's Wasm C stack.
+// The C ABI passes each Go string indirectly; separate instrumentation calls
+// otherwise reserve separate aggregate argument slots in every recursive
+// frame, even though all those strings refer to immutable compiler literals.
+func (p *context) callRuntimeLocation(b llssa.Builder, fn string, entry, name, file, line llssa.Expr) llssa.Expr {
+	push := fn == "PushCallerLocationFrame"
+	if target := p.prog.Target(); target != nil && target.GOARCH == "wasm" {
+		return b.Call(
+			p.runtimeFunc(fn+"Wasm", wasmRuntimeLocationSig(push)),
+			entry, b.StringData(name), b.StringLen(name), b.StringData(file), b.StringLen(file), line,
+		)
+	}
+	sig := recordRuntimeLocationSig()
+	if push {
+		sig = pushCallerLocationFrameSig()
+	}
+	return b.Call(p.runtimeFunc(fn, sig), entry, name, file, line)
 }
 
 func (p *context) recordCallerLocationForCall(b llssa.Builder, call *ssa.CallCommon) {
@@ -2243,6 +2262,23 @@ func recordRuntimeLocationSig() *types.Signature {
 		),
 		nil,
 		false,
+	)
+}
+
+func wasmRuntimeLocationSig(push bool) *types.Signature {
+	var results *types.Tuple
+	if push {
+		results = types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Int]))
+	}
+	return types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(
+			types.NewVar(token.NoPos, nil, "entry", types.Typ[types.Uintptr]),
+			types.NewVar(token.NoPos, nil, "nameData", types.NewPointer(types.Typ[types.Byte])),
+			types.NewVar(token.NoPos, nil, "nameLen", types.Typ[types.Int]),
+			types.NewVar(token.NoPos, nil, "fileData", types.NewPointer(types.Typ[types.Byte])),
+			types.NewVar(token.NoPos, nil, "fileLen", types.Typ[types.Int]),
+			types.NewVar(token.NoPos, nil, "line", types.Typ[types.Int]),
+		), results, false,
 	)
 }
 

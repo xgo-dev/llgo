@@ -141,6 +141,7 @@ func main() {
 	if seenGCount != len(seenG) {
 		panic("not all goroutines ran")
 	}
+	testAtomicSchedulingBoundary()
 	testGoroutineLifecycle()
 	testBlockingPrimitives()
 	println("wasm scheduler ok")
@@ -393,6 +394,30 @@ func testMainGoexit() {
 		println("WORKER_RETURNING")
 	}()
 	runtime.Goexit()
+}
+
+// The scheduler calls typed atomics while transitioning G state. A nosplit
+// caller must not acquire scheduling points through those wrappers. Keep a G
+// runnable for more atomic calls than the cooperative polling quantum.
+//
+//go:nosplit
+func testAtomicSchedulingBoundary() {
+	ran := false
+	done := make(chan struct{})
+	go func() {
+		ran = true
+		close(done)
+	}()
+	var counter atomic.Uint64
+	for i := uint64(0); i < 4096; i++ {
+		if counter.Add(1) != i+1 || counter.Load() != i+1 {
+			panic("unexpected atomic counter value")
+		}
+	}
+	if ran {
+		panic("typed atomic operation yielded inside a runtime scheduling boundary")
+	}
+	<-done
 }
 
 func testGoroutineLifecycle() {

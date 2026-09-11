@@ -55,7 +55,10 @@ func safepointPackagePath(fn *ssa.Function) string {
 }
 
 func excludeSafepointPackage(path string) bool {
-	if path == "runtime" || strings.HasPrefix(path, "internal/runtime/") {
+	// Runtime critical sections use the public typed atomic wrappers too.
+	// Yielding at those method entries can suspend a G after its status has
+	// changed to waiting or dead but before the context switch has completed.
+	if path == "runtime" || path == "sync/atomic" || strings.HasPrefix(path, "internal/runtime/") {
 		return true
 	}
 	runtimeModule := strings.TrimSuffix(llssa.PkgRuntime, "/internal/runtime")
