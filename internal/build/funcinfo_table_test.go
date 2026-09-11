@@ -349,9 +349,10 @@ func TestWin32FuncInfoUsesExactEntryForAddressTakenFunction(t *testing.T) {
 
 func TestWasmFuncInfoUsesTableIndexForAddressTakenFunction(t *testing.T) {
 	prog := llssa.NewProgram(&llssa.Target{
-		GOOS:       "js",
-		GOARCH:     "wasm",
-		LLVMTarget: "wasm32-unknown-emscripten",
+		GOOS:                "js",
+		GOARCH:              "wasm",
+		LLVMTarget:          "wasm32-unknown-emscripten",
+		WasmFuncInfoEntries: true,
 	})
 	defer prog.Dispose()
 	prog.EnableFuncInfoMetadata(true)

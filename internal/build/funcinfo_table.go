@@ -698,8 +698,11 @@ func runtimeSiteObjectFormat(ctx *context) siteObjectFormat {
 
 func shouldEmitRuntimeWasmSites(ctx *context) bool {
 	return ctx != nil &&
+		ctx.prog != nil &&
+		ctx.prog.Target() != nil &&
 		ctx.buildConf != nil &&
-		ctx.buildConf.Goarch == "wasm"
+		ctx.buildConf.Goarch == "wasm" &&
+		ctx.prog.Target().WasmFuncInfoEntries
 }
 
 // shouldEmitRuntimeSites reports whether the target object format has a

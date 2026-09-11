@@ -825,6 +825,7 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 	callerSpan.done()
 	ctx.frontendOptions.ReceiverNilChecks = collectReceiverNilChecks(initial, altPkgs)
 	configureWasmReflectBridges(ctx)
+	configureWasmFuncInfoEntries(ctx)
 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	allPkgs = append(allPkgs, depPkgs...)

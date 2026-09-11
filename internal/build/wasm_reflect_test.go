@@ -85,6 +85,71 @@ func TestConfigureWasmReflectBridges(t *testing.T) {
 	}
 }
 
+func TestConfigureWasmFuncInfoEntries(t *testing.T) {
+	tests := []struct {
+		name      string
+		target    *llssa.Target
+		buildMode BuildMode
+		src       string
+		want      bool
+	}{
+		{
+			name:      "plain executable",
+			target:    &llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
+			buildMode: BuildModeExe,
+			src:       `package main; func main() {}`,
+		},
+		{
+			name:      "reachable FuncForPC",
+			target:    &llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
+			buildMode: BuildModeExe,
+			src:       `package main; import "runtime"; func main() { _ = runtime.FuncForPC(0) }`,
+			want:      true,
+		},
+		{
+			name:      "dead FuncForPC",
+			target:    &llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
+			buildMode: BuildModeExe,
+			src:       `package main; import "runtime"; func dead() { _ = runtime.FuncForPC(0) }; func main() {}`,
+		},
+		{
+			name:      "wasm library",
+			target:    &llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
+			buildMode: BuildModeCArchive,
+			src:       `package main; func main() {}`,
+			want:      true,
+		},
+		{
+			name:      "native",
+			target:    &llssa.Target{GOOS: "linux", GOARCH: "amd64"},
+			buildMode: BuildModeExe,
+			src:       `package main; import "runtime"; func main() { _ = runtime.FuncForPC(0) }`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			pkg := buildWasmReflectTestProgram(t, test.src)
+			prog := llssa.NewProgram(test.target)
+			defer prog.Dispose()
+			ctx := &context{
+				prog:      prog,
+				progSSA:   pkg.Prog,
+				initial:   []*packages.Package{{Types: pkg.Pkg}},
+				buildConf: &Config{BuildMode: test.buildMode},
+			}
+			configureWasmFuncInfoEntries(ctx)
+			if got := test.target.WasmFuncInfoEntries; got != test.want {
+				t.Fatalf("WasmFuncInfoEntries = %v, want %v", got, test.want)
+			}
+		})
+	}
+
+	configureWasmFuncInfoEntries(nil)
+	if programUsesRuntimeFuncForPC(nil, nil) || isRuntimeFuncForPC(nil) {
+		t.Fatal("nil program unexpectedly requires Wasm function entries")
+	}
+}
+
 func TestProgramUsesWasmReflectBridges(t *testing.T) {
 	if programUsesWasmReflectBridges(nil, nil) {
 		t.Fatal("nil program may not require reflection bridges")
