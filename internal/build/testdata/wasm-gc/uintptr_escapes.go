@@ -42,7 +42,7 @@ func checkUintptrRoots(first, second uintptr, rest ...uintptr) {
 	}
 }
 
-// This extends the existing three-profile GC fixture, so the regression runs
+// This extends the existing Emscripten wasm32/wasm64 and WASI GC fixture, so it runs
 // in CI without an additional test binary, workflow job, or dependency.
 func testUintptrEscapesRoots() {
 	checkUintptrRoots(uintptr(newUintptrRoot()), uintptr(laterUintptrRoot()),

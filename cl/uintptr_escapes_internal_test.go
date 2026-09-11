@@ -8,11 +8,75 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"strings"
 	"testing"
 
+	llssa "github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
+
+func TestUintptrEscapesRootsWasmStorage(t *testing.T) {
+	const src = `package roots
+import "unsafe"
+func collect()
+//go:uintptrescapes
+func marked(p uintptr) { collect(); _ = *(*int)(unsafe.Pointer(p)) }
+func integer(p uintptr) { collect() }
+func source() unsafe.Pointer
+func laterArgument() uintptr
+//go:uintptrescapes
+func two(uintptr, uintptr)
+func caller() { two(uintptr(source()), laterArgument()) }
+`
+	for _, tc := range []struct {
+		profile, goos, triple, rootArray, rootStore string
+		pointerSize                                 int
+	}{
+		{"j32", "js", "wasm32-unknown-emscripten", "[1 x { ptr, i32 }]", "store i64 ", 4},
+		{"j64", "js", "wasm64-unknown-emscripten", "[1 x ptr]", "store ptr ", 8},
+		{"w32", "wasip1", "wasm32-unknown-wasip1", "[1 x { ptr, i32 }]", "store i64 ", 4},
+	} {
+		t.Run(tc.profile, func(t *testing.T) {
+			ssaPkg, files := buildCallerFrameSSAPackage(t, "roots", src)
+			prog := newLLSSAProgForTarget(t, &llssa.Target{
+				GOOS: tc.goos, GOARCH: "wasm", LLVMTarget: tc.triple, WasmProfile: tc.profile,
+			})
+			defer prog.Dispose()
+			prog.EnableGCRoots(true)
+			if prog.PointerSize() != tc.pointerSize || prog.GoWordSize() != 8 {
+				t.Fatalf("physical pointer/Go word sizes = %d/%d, want %d/8", prog.PointerSize(), prog.GoWordSize(), tc.pointerSize)
+			}
+			pkg, err := NewPackage(prog, ssaPkg, files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("invalid root module: %v\n%s", err, pkg.String())
+			}
+			marked := mustNamedFunction(t, pkg.Module(), "roots.marked")
+			if got := marked.Param(0).Type().IntTypeWidth(); got != 64 {
+				t.Fatalf("Go uintptr parameter width = %d, want 64", got)
+			}
+			for _, want := range []string{tc.rootArray, "inttoptr i64", "@llvm_gc_root_chain"} {
+				if !strings.Contains(marked.String(), want) {
+					t.Fatalf("uintptr root is missing %q:\n%s", want, marked)
+				}
+			}
+			integer := mustNamedFunction(t, pkg.Module(), "roots.integer").String()
+			if strings.Contains(integer, "@llvm_gc_root_chain") {
+				t.Fatalf("ordinary uintptr became a root:\n%s", integer)
+			}
+			caller := mustNamedFunction(t, pkg.Module(), "roots.caller").String()
+			source := strings.Index(caller, "call ptr @roots.source()")
+			later := strings.Index(caller, "call i64 @roots.laterArgument()")
+			if source < 0 || later <= source || !strings.Contains(caller[source:later], tc.rootStore) {
+				t.Fatalf("source pointer was not published in a Go root slot before the next argument:\n%s", caller)
+			}
+		})
+	}
+}
 
 func uintptrEscapesPackage(t *testing.T, src string) *ssa.Package {
 	t.Helper()
