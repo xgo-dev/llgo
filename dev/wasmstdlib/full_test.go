@@ -255,6 +255,145 @@ func TestFullAuditDoesNotHideSourceSelectionErrors(t *testing.T) {
 	}
 }
 
+func TestFullAuditRejectsInvalidPreparation(t *testing.T) {
+	unused := func(string, command) ([]byte, error) {
+		t.Fatal("external command ran after invalid preparation")
+		return nil, nil
+	}
+	if err := runFullAt(t.TempDir(), "J32-GoJS", "", "go", "llgo", 0, 1, unused, unused); err == nil {
+		t.Fatal("accepted an empty report path")
+	}
+	if err := runFullAt(t.TempDir(), "J32-GoJS", "report.json", "go", "llgo", 1, 1, unused, unused); err == nil {
+		t.Fatal("accepted an out-of-range shard")
+	}
+	if err := runFullAt(t.TempDir(), "unknown", "report.json", "go", "llgo", 0, 1, unused, unused); err == nil {
+		t.Fatal("accepted an unknown profile")
+	}
+	if err := runFullAt(t.TempDir(), "J32-GoJS", "report.json", "go", "llgo", 0, 1, unused, unused); err == nil {
+		t.Fatal("accepted a root without test sources")
+	}
+	t.Chdir(t.TempDir())
+	if err := runFull("J32-GoJS", "", "go", "llgo", 0, 1); err == nil {
+		t.Fatal("runFull lost argument validation")
+	}
+}
+
+func TestFullAuditReportsPreparationCommandFailures(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "test", "a")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a_test.go"), []byte("package a\nimport \"testing\"\nfunc TestA(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := json.Marshal(selectedPackage{Dir: dir, TestGoFiles: []string{"a_test.go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sentinel := errors.New("synthetic preparation failure")
+	for _, tt := range []struct {
+		name       string
+		structured func(string, command) ([]byte, error)
+	}{
+		{name: "go env", structured: func(string, command) ([]byte, error) { return nil, sentinel }},
+		{name: "go list", structured: func(_ string, c command) ([]byte, error) {
+			if c.Args[0] == "env" {
+				return []byte("/goroot"), nil
+			}
+			return nil, sentinel
+		}},
+		{name: "malformed list", structured: func(_ string, c command) ([]byte, error) {
+			if c.Args[0] == "env" {
+				return []byte("/goroot"), nil
+			}
+			return []byte("{"), nil
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			reportPath := filepath.Join(t.TempDir(), "report.json")
+			err := runFullAt(root, "J32-GoJS", reportPath, "go", "llgo", 0, 1, tt.structured, func(string, command) ([]byte, error) {
+				t.Fatal("package command ran after preparation failure")
+				return nil, nil
+			})
+			if err == nil {
+				t.Fatal("preparation failure was hidden")
+			}
+			if tt.name != "malformed list" && !errors.Is(err, sentinel) {
+				t.Fatalf("error = %v, want %v", err, sentinel)
+			}
+		})
+	}
+	if err := runFullAt(root, "J32-GoJS", filepath.Join(root, "missing", "report.json"), "go", "llgo", 0, 1, unusedStructured(selected), unusedStructured(selected)); err == nil {
+		t.Fatal("initial report write failure was hidden")
+	}
+}
+
+func unusedStructured(selected []byte) func(string, command) ([]byte, error) {
+	return func(_ string, c command) ([]byte, error) {
+		if c.Args[0] == "env" {
+			return []byte("/goroot"), nil
+		}
+		return selected, nil
+	}
+}
+
+func TestFullAuditClassifiesUnknownSelectionAndWitnessFailures(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"test/goroot/runner_test.go": "package goroot\n",
+		"test/missing/a_test.go":     "package missing\nimport \"testing\"\nfunc TestMissing(t *testing.T) {}\n",
+		"test/empty/a_test.go":       "package empty\n",
+		"test/bad/a_test.go":         "package bad\nfunc TestBad(\n",
+	}
+	for name, contents := range files {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, name), []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var selected []byte
+	for _, pkg := range []selectedPackage{
+		{Dir: filepath.Join(root, "test", "empty")},
+		{Dir: filepath.Join(root, "test", "bad"), TestGoFiles: []string{"a_test.go"}},
+	} {
+		data, err := json.Marshal(pkg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		selected = append(selected, data...)
+	}
+	reportPath := filepath.Join(root, "report.json")
+	err := runFullAt(root, "J32-GoJS", reportPath, "go", "llgo", 0, 1, unusedStructured(selected), func(string, command) ([]byte, error) {
+		t.Fatal("unvalidated package was executed")
+		return nil, nil
+	})
+	if err == nil {
+		t.Fatal("unresolved inventory was accepted")
+	}
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report struct{ Packages []fullPackage }
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"test/bad":     "unresolved",
+		"test/empty":   "source-excluded",
+		"test/goroot":  "separate-suite",
+		"test/missing": "source-excluded",
+	}
+	for _, pkg := range report.Packages {
+		if pkg.Status != want[pkg.Package] || pkg.Reason == "" {
+			t.Fatalf("classification for %s = %+v", pkg.Package, pkg)
+		}
+	}
+}
+
 func TestFullProfileCommandsKeepLLGoAndReferenceDistinct(t *testing.T) {
 	for _, name := range []string{"J32-GoJS", "J32-Emscripten", "J64-Emscripten", "W32-WASI", "GoJS-reference", "GoWASI-reference"} {
 		p, err := fullProfile(name)
@@ -350,6 +489,12 @@ func TestFullSourceExclusionsAreProfileSpecific(t *testing.T) {
 		}
 		if _, ok := fullSourceExclusion(p, "test/std/fmt"); ok {
 			t.Fatalf("%s classified an applicable package", name)
+		}
+		for _, pkg := range []string{"test/llgoext", "test/llgoext/localitymulti"} {
+			_, excluded := fullSourceExclusion(p, pkg)
+			if excluded != p.Reference {
+				t.Fatalf("%s extension classification for %s = %v", name, pkg, excluded)
+			}
 		}
 	}
 }
