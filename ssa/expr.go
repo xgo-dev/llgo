@@ -412,9 +412,13 @@ func (b Builder) checkUnsafeBuiltinBounds(name string, data, size Expr, elemSize
 	}
 	lastOffset := b.impl.CreateSub(byteSize, llvm.ConstInt(uptr.ll, 1, false), "")
 	addr := llvm.CreatePtrToInt(b.impl, data.impl, uptr.ll)
-	end := b.impl.CreateAdd(addr, lastOffset, "")
-	wrapped := llvm.CreateICmp(b.impl, llvm.IntULT, end, addr)
-	b.assertRuntimeError(llvm.CreateAnd(b.impl, isNonZero, wrapped), name+": len out of range")
+	// The semantic uintptr may be wider than the physical address space (for
+	// example J32 stores Go words in i64 over wasm32 memory). An addition in
+	// that wider integer does not wrap at the real pointer boundary, so compare
+	// the final offset with the remaining physical address range directly.
+	remaining := b.impl.CreateSub(llvm.ConstInt(uptr.ll, maxAddr, false), addr, "")
+	exceedsAddressSpace := llvm.CreateICmp(b.impl, llvm.IntUGT, lastOffset, remaining)
+	b.assertRuntimeError(llvm.CreateAnd(b.impl, isNonZero, exceedsAddressSpace), name+": len out of range")
 }
 
 func (b Builder) assertRuntimeError(check llvm.Value, msg string) {

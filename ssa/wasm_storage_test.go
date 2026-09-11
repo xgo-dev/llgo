@@ -368,6 +368,32 @@ func TestWasm32NativeBoundaryKeepsPhysicalWordWidth(t *testing.T) {
 	}
 }
 
+func TestWasm32UnsafeBoundsUsePhysicalAddressWidth(t *testing.T) {
+	prog := newJ32Program(t)
+	setTestRuntime(t, prog)
+	pkg := prog.NewPackage("p", "example.com/p")
+	data := types.NewParam(token.NoPos, nil, "data", types.NewPointer(types.Typ[types.Byte]))
+	size := types.NewParam(token.NoPos, nil, "size", types.Typ[types.Int])
+	sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(data, size), nil, false)
+	fn := pkg.NewFunc("example.com/p.unsafeBounds", sig, InGo)
+	b := fn.MakeBody(1)
+	b.checkedUnsafeString(b.Param(0), b.Param(1))
+	b.checkedUnsafeSlice(b.Param(0), b.Param(1))
+	b.Return()
+	b.EndBuild()
+
+	ir := fn.impl.String()
+	if got := strings.Count(ir, "sub i64 4294967295"); got != 2 {
+		t.Fatalf("J32 unsafe bounds contain %d physical-address remainders, want 2:\n%s", got, ir)
+	}
+	if got := strings.Count(ir, "icmp ugt i64"); got < 4 {
+		t.Fatalf("J32 unsafe bounds contain %d unsigned range checks, want at least 4:\n%s", got, ir)
+	}
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("invalid J32 unsafe-bounds module: %v\n%s", err, ir)
+	}
+}
+
 func TestWasm32NativeStructAndGCRootStorage(t *testing.T) {
 	prog := newJ32Program(t)
 	setTestRuntime(t, prog)
