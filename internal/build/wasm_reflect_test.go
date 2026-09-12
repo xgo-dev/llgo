@@ -168,6 +168,9 @@ func TestProgramUsesWasmReflectBridges(t *testing.T) {
 	if got := ssaFunctionPackagePath(nil); got != "" {
 		t.Fatalf("nil function package path = %q", got)
 	}
+	if got := ssaFunctionPackagePath(new(ssa.Function)); got != "" {
+		t.Fatalf("synthetic function package path = %q", got)
+	}
 	tests := []struct {
 		name string
 		src  string
