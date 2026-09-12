@@ -46,9 +46,11 @@ type goWasmProfile struct {
 }
 
 type wasmExample struct {
-	name        string
-	goReference bool
-	timed       bool
+	name          string
+	source        string
+	goReference   bool
+	timed         bool
+	timedProfiles []string
 }
 
 var wasmExamples = []wasmExample{
@@ -57,6 +59,20 @@ var wasmExamples = []wasmExample{
 	// support. Do not manufacture a Go reference by replacing its source.
 	{name: "cprintf"},
 	{name: "fmtprintf", goReference: true},
+	// reflectcall forces both dynamic call directions to be retained. In W32
+	// this measures the typed-bridge fallback; JavaScript providers use libffi.
+	{name: "reflectcall", source: "benchmark/wasm/testdata/reflectcall/main.go", goReference: true, timedProfiles: []string{"w32-wasi"}},
+}
+
+func (example wasmExample) measuresBuild(profile string) bool {
+	return example.timed || slices.Contains(example.timedProfiles, profile)
+}
+
+func (example wasmExample) sourcePath(root string) string {
+	if example.source != "" {
+		return filepath.Join(root, filepath.FromSlash(example.source))
+	}
+	return filepath.Join(root, "benchmark", "binary_size", example.name, "main.go")
 }
 
 func (example wasmExample) metricName(profile string) string {
@@ -144,11 +160,11 @@ func runCLI(ctx context.Context, args []string, runner commandRunner) error {
 	measurements := make([]measurement, 0, len(wasmExamples)*len(wasmProfiles))
 	var goSizes []measurement
 	for _, example := range wasmExamples {
-		fixture := filepath.Join(absRoot, "benchmark", "binary_size", example.name, "main.go")
+		fixture := example.sourcePath(absRoot)
 		exampleOut := filepath.Join(absOut, example.name)
 		for _, profile := range wasmProfiles {
 			profileBuildRuns := 0
-			if example.timed {
+			if example.measuresBuild(profile.name) {
 				profileBuildRuns = *buildRuns
 			}
 			result, err := measureProfile(ctx, runner, env, absRoot, *llgo, exampleOut, fixture, profile, profileBuildRuns)
