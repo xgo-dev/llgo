@@ -1,268 +1,216 @@
-# Source function contracts
+# Source function attributes
 
-LLGo defines `//llgo:attribute` in terms of Go source values and observable
-behavior. LLVM attributes are an implementation mechanism, not the language of
-the contracts. Every package, including the runtime, uses the same mechanism.
-See [proposal #2518](https://github.com/xgo-dev/llgo/issues/2518).
+Proposal: [#2518](https://github.com/xgo-dev/llgo/issues/2518).
+Implementation for review: [#2572](https://github.com/xgo-dev/llgo/pull/2572).
 
-This revision replaces the original scalar-only prototype and the proposed
-general ABI reconstruction framework. Value facts are materialized before ABI
-lowering; behavior effects are composed with physical ABI operations.
+## 1. Which attributes are proposed?
 
-## Meaning and syntax
+Use `//llgo:attribute` on a function or method declaration:
+
+- Parameters and results: `nonnull`, `range`, `nonnegative`, `align`.
+- A result equal to an input: `same_as`.
+- Memory access and pointer retention: `memory`, `access`, `capture`.
+- Function execution: `nofree`, `nosync`, `nounwind`, `willreturn`, `noreturn`.
+- Optimization hint: `cold`.
+
+These apply to ordinary Go packages and the runtime. This proposal does not add
+allocation-size, no-alias or lifetime attributes.
+
+## 2. What does each attribute mean?
+
+### Parameters and results
+
+| Attribute | Applies to | Meaning |
+| --- | --- | --- |
+| `nonnull` | Pointer parameter or result | The pointer is not nil. |
+| `range(lo, hi)` | Integer parameter or result | `lo <= value && value < hi`. Bounds must fit the Go type; the interval cannot wrap around. |
+| `nonnegative` | Integer parameter or result | `value >= 0`. The width of `int` follows the target platform. |
+| `align(N)` | Pointer parameter or result | The pointer address is a multiple of N, a positive power of two. This alone permits nil and does not promise that dereferencing is valid. |
+| `same_as(param(p))` | Pointer or integer result | The result equals the value of parameter p at function entry. It does not mean the value of p after reassignment. `same_as(receiver)` also works. |
+
+Integer `same_as` requires the same Go type, with type aliases resolved.
+Pointer types may differ if the conversion preserves the pointer, including
+conversion to or from `unsafe.Pointer`.
+
+Choose a parameter, result or receiver with `param(name|index)`,
+`result(name|index)` or `receiver`. Indices start at zero in the Go signature,
+excluding the receiver and compiler-added parameters. Use `.field(Name)` for a
+struct field and `.element(index)` for a fixed-array element. These do not
+automatically dereference a pointer.
+
+For example:
 
 ```go
-//llgo:attribute result(p) nonnull same_as(param(input))
-//llgo:attribute result(n) range(0, 64)
-func Checked(input *Node) (p *Node, n uint32) {
-    if input == nil {
-        panic("nil pointer")
-    }
-    return input, 16
+type Result struct {
+    P *int
+    N uint32
 }
 
-//llgo:attribute param(arg).field(P) nonnull
-//llgo:attribute result(0).field(Count) range(0, 64)
-func Transform(arg Pair) Pair
+//llgo:attribute result(out).field(P) nonnull same_as(param(p))
+//llgo:attribute result(out).field(N) range(0, 64)
+func Make(p *int, n uint32) (out Result) {
+    if p == nil {
+        panic("nil pointer")
+    }
+    return Result{P: p, N: n & 63}
+}
 ```
 
-Contracts are unchecked promises. LLGo checks syntax, source types, consistency
-and supported representations; it does not prove arbitrary bodies or insert
-runtime guards. An invocation violating a semantic contract is outside the
-contract's defined behavior. `cold` is only an optimization hint.
+The two lines say: when Make returns normally, out.P is non-nil and equals the
+input p, and out.N is below 64. They do **not** say that passing nil is forbidden:
+Make(nil, n) still panics.
 
-Input contracts hold for the logical **entry value**. Result contracts hold only
-after **normal completion**, including deferred work. A recovered panic followed
-by a return must satisfy result contracts. An unwinding or nonreturning call
-provides no result facts. The example accepts nil and panics; its result
-postcondition must not become an input precondition.
+Parameter attributes describe entry values. Result attributes apply after a
+normal return, including any defer that changes a result. These are promises
+from the programmer, not inserted runtime checks. LLGo checks syntax and types
+but does not prove every function body. Incorrect promises can produce
+incorrect optimized code.
 
-Both `//llgo:` and `// llgo:` are accepted in declaration comments. Multiple
-lines combine; whitespace separates attributes on a line. Selectors are:
+### Memory access and pointer retention
 
-* `param(name)` / `param(index)`: zero-based source parameter position.
-* `result(name)` / `result(index)`: zero-based source result position.
-* `receiver`: the method receiver, separate from parameter numbering.
-* `.field(name)` / `.element(index)`: append an explicitly named struct field
-  or a fixed-array element selected by a nonnegative integer literal; nested
-  paths are supported.
-
-Names resolve during syntax preloading, before import data may lose them.
-Grouped parameters occupy separate positions; unnamed and blank values use
-indices. Hidden closure environments, sret pointers and ABI fragments do not
-change these positions. Paths never implicitly dereference pointers, search
-promoted fields, or expose slice/string/interface implementation fields.
-Generic paths and types are validated on concrete instantiation.
-
-## Value contracts
-
-| Contract | Subject | Source meaning |
+| Attribute | Applies to | Meaning |
 | --- | --- | --- |
-| `nonnull` | Pointer input/result leaf | Not nil at the boundary. |
-| `range(lo, hi)` | Integer input/result leaf | Mathematical, nonempty, non-wrapping half-open interval within the source type's domain. |
-| `nonnegative` | Integer input/result leaf | At least zero, using target width for `int`, `uint` and `uintptr`. |
-| `align(N)` | Pointer input/result leaf | Address is a multiple of positive power-of-two N; nil is permitted. |
-| `same_as(param(...))` / `same_as(receiver...)` | Integer/pointer result leaf | Same logical value as the selected input's entry snapshot. |
+| `memory(...)` | Function | Restricts access through input pointers, to global memory and to external state during this call and the calls it makes. Local variables and ABI copies are handled separately below. |
+| `access(none/read/write/readwrite)` | Pointer parameter, including a pointer field | Permits neither reading nor writing, only reading, only writing, or both through that pointer. This does not by itself prohibit retaining the pointer. |
+| `capture(none)` | Pointer parameter, including a pointer field | Does not save the pointer or its address anywhere visible outside the call, or return it. Even temporary publication in a global is prohibited. |
+| `capture(results)` | Same | May retain the pointer only by returning it, including inside a returned struct. |
+| `capture(any)` | Same | No restriction on retaining the pointer. |
 
-Integer `same_as` requires identical source types after aliases are resolved.
-Pointer relations permit identity-preserving pointer-type conversions,
-including `unsafe.Pointer`. The relation preserves pointer identity and access
-capability; an integer address comparison alone is insufficient.
+For `memory`, the modes are `none`, `read`, `write` and `readwrite`:
 
-Bounds are integer literals, not target bit-pattern syntax. Full-domain ranges
-need no optimizer fact. `range` and `nonnegative` combine by intersection;
-an empty intersection is rejected. Different repeated values of an attribute
-are rejected; identical declarations are accepted. Alignment alone implies no
-allocation, initialized storage, dereferenceability or non-nullness.
-N must fit the target pointer width. Alignments above the native LLVM attribute
-limit use an address predicate instead.
+- `memory(none)`: no access through input pointers, to globals or to external state.
+- `memory(read)`: reads are permitted, writes are not.
+- `memory(args: read)`: only reads through pointers obtained from input parameters.
+- `memory(args: readwrite, other: read)`: reads/writes through input pointers,
+  but only reads of other memory.
 
-## Behavior contracts
+A default mode applies to both `args` and `other`; an explicit location
+overrides it. With no default, unspecified locations are `none`.
 
-These constrain a complete invocation, including calls and callbacks. They are
-not predicates on one SSA value and cannot be implemented by `llvm.assume`.
+For `args`, the way the pointer is obtained matters. Access through a global
+is `other`, even if that global happens to equal an input pointer. Loading a
+second pointer from the memory addressed by an input does not automatically
+make accesses through that second pointer part of `args`.
 
-| Contract | Meaning |
+Clock/entropy observations, I/O and volatile/device interactions require
+`other: readwrite`, so the optimizer cannot merge repeated observations merely
+because the program made no intervening memory write. Reading ordinary program
+globals only needs `other: read`.
+
+### Function execution
+
+| Attribute | Meaning |
 | --- | --- |
-| `memory(mode, args: mode, other: mode)` | Permitted observable-state accesses: `none`, `read`, `write`, `readwrite`. |
-| `access(mode)` on pointer input leaf | Permitted reads/writes through that pointer's derived access paths. |
-| `capture(none)` on pointer input leaf | No externally retained address or access capability, including temporary publication and result capture. |
-| `capture(results)` | Capture only through logical normal results, including pointer fields. |
-| `capture(any)` | No capture restriction. |
-| `nofree` | Does not invalidate existing storage by deallocation, directly or transitively. |
-| `nosync` | Performs no synchronization with other threads. |
-| `nounwind` | Does not unwind out of the invocation. |
-| `willreturn` | Does not diverge indefinitely; control returns to an existing caller frame normally or by unwinding. |
-| `noreturn` | Never completes normally; unwinding is allowed. |
-| `cold` | Invocation is expected to be uncommon; a hint only. |
+| `nofree` | Does not free storage that already existed before the call, including through another function. |
+| `nosync` | Does not synchronize with other threads, including through another function. |
+| `nounwind` | Does not propagate a panic or other stack unwinding to its caller. A panic recovered internally is not excluded. |
+| `willreturn` | The call eventually finishes, normally or by unwinding; it cannot run indefinitely. |
+| `noreturn` | The call never returns normally. It can panic or run indefinitely. |
+| `cold` | Calls are expected to be uncommon; this is an optimization hint. |
 
-A default memory mode applies to both locations; explicit locations override
-it. An omitted default is `none`: `memory(args: read)` permits only
-input-derived reads. Duplicate locations/defaults and unknown modes are errors.
+These are independent. For example, `memory(read)` does not imply `nosync` or
+`willreturn`. A function that always propagates a panic can have both
+`willreturn` and `noreturn`.
 
-`args` classifies an **access origin**, not a partition of memory objects.
-It covers accesses derived from pointer leaves of logical entry inputs. An
-access through a global remains `other` even when that global aliases an input.
-A pointer loaded from pointed-to memory is a new root, not automatically part
-of a recursively reachable input graph. This admits conservative native
-lowering without whole-program alias analysis.
+## 3. How is each attribute implemented under different ABIs?
 
-`other` covers remaining program and external observable state. I/O,
-volatile/device interactions, clock or entropy observations, and events whose
-result or effect can change without an intervening program write require
-`other: readwrite`. Thus `memory(none)` excludes these events, and readonly
-does not incorrectly permit their calls to be merged. Reading ordinary stable
-program globals needs `other: read`. There is no separate `noexternal`
-contract in this revision.
+An ABI determines how arguments and results are passed. The cases that matter
+here are:
 
-`access(read)` permits capture unless separately restricted.
-`capture(none)` does not add Go escape analysis's `noescape` promise.
-`memory(read)` does not imply termination, absence of synchronization or
-unwinding. `noreturn` and `willreturn` can coexist for an always-unwinding
-invocation.
+1. **Direct values:** a Go pointer or integer is also an LLVM pointer or integer
+   parameter/result.
+2. **Packed or split values:** a struct is passed as one integer or several
+   registers. Its fields must be extracted before applying field attributes.
+3. **Indirect input / byval:** the caller passes the address of an argument
+   copy. This includes LLVM byval; not every target uses that exact attribute.
+4. **Indirect result / sret:** the caller supplies storage, and the callee writes
+   its result there. Multiple Go results may be combined into this storage.
 
-Prototype spellings `readonly`/`writeonly`,
-`captures(none)`/`captures(ret: address, provenance)`, `argmem`, and
-single-result input `returned` normalize to `access`, `capture`, `args`,
-and result `same_as`. New code should use the source vocabulary. Arbitrary LLVM
-string attributes are not accepted.
+These are passing forms, not four disjoint architectures. One function can use
+several forms. For example, the tests exercise LLVM byval on amd64 and indirect
+input passing without that attribute on Darwin arm64.
 
-## Value lowering across ABI changes
+### nonnull, range, nonnegative, align and same_as
 
-The frontend retains a typed, versioned source model: selectors, paths,
-semantic kinds, typed operands and positions. LLVM indices and encodings are
-separate backend data.
+`llvm.assume(condition)` tells LLVM that a condition is guaranteed at that point.
+It does not check the condition at runtime.
 
-1. Resolve each source leaf to a logical LLVM value while Go types and target
-   layout are available. Account for target wrappers/padding and multiple
-   results; source field numbers need not equal LLVM field numbers.
-2. Before large-aggregate and C ABI conversion, emit input facts at function
-   entry and normal-result facts at known direct calls. Install native
-   attributes as well when a logical leaf is a matching scalar.
-3. Existing ABI conversion replaces old parameters/call results with their
-   reconstructed values. The fact instructions follow those replacements.
-4. Ordinary LLVM optimization consumes the facts. Remove the temporary value
-   plan after materialization; retain the source contract separately.
-
-| Source fact | Direct scalar | Packed/split value | Byval input | Sret/multiple results |
+| Attribute | Direct value | Packed/split fields | Indirect input / byval | Indirect result / sret |
 | --- | --- | --- | --- | --- |
-| `nonnull` | Native attribute plus fact | Fact on reconstructed pointer | Extract pointer leaf, then assume non-null | After normal call, extract returned leaf and assume non-null |
-| `range` / `nonnegative` | Native range plus integer fact | Original width/sign, not carrier high bits | Fact on extracted integer | Fact on loaded/reconstructed result leaf |
-| `align` | Native alignment when representable, plus address fact | Fact on reconstructed pointer | Contained pointer, not container alignment | Returned pointer value, not sret storage |
-| `same_as` | Native `returned` where valid, plus forwarding | Forward source-width input | Forward entry leaf snapshot | Forward selected existing result projections; retain bulk result transport |
+| `nonnull` | LLVM `nonnull`; also emit an assumption where the value is used by the implementation. | Extract the pointer field, then assume it is non-nil. | Load the pointer field, then assume it is non-nil. | After the call returns normally, load the pointer field and assume it is non-nil. |
+| `range` | LLVM `range` plus an assumption for the interval. | Extract the integer at its Go width, then assume the interval. | Load the integer field, then assume the interval. | Load the returned integer after the call, then assume the interval. |
+| `nonnegative` | Use the corresponding LLVM range and `value >= 0` assumption. | Extract the Go integer, then assume it is nonnegative. | Load the integer field, then assume it is nonnegative. | Load the returned integer after the call, then assume it is nonnegative. |
+| `align` | LLVM `align` when supported, plus an assumption about the pointer address. | Extract the pointer, then assume the address is aligned. | Load the pointer field, then assume its address is aligned. | Load the returned pointer after the call, then assume its address is aligned. |
+| `same_as` | Use LLVM `returned` when parameter/result representations match; replace uses of the result with the entry parameter value. | For matching result-field extractions, use the corresponding entry input value. | Save the input field value before the call; use that value for matching results. | For matching result-field extractions, use the saved input value after the call. Other fields retain their actual returned values. |
 
-Alignment facts currently require integral address-space-zero pointers;
-unsupported representations are diagnosed. Current collectors do not relocate
-objects or native stacks. Pointer `same_as` forwarding relies on that stable
-representation; a future moving collector must forward the relocated input and
-disable native `returned` when machine bits can change.
+Four details prevent wrong implementations:
 
-`same_as` preserves the call, its effects, exceptional behavior and all other
-result components. For a scalar result, forward the input snapshot directly.
-For an aggregate result, forward existing projections of the selected leaf
-to that snapshot, while retaining the actual returned aggregate for bulk
-transfers. The contract already guarantees that its selected leaf has the same
-identity. Rebuilding the whole aggregate with `insertvalue` solely to carry a
-relation could turn an 80 KB indirect copy back into a large SSA value and is
-unnecessary. An equality assumption relates the actual leaf and the snapshot
-as an optimization aid for later projections; it does not create or replace
-pointer access provenance.
+- A non-null byval/sret **storage address** says nothing about a pointer stored
+  **inside** it. In the example, the assumption concerns out.P.
+- An `int8` range applies to the extracted 8-bit field, not the whole register
+  that also contains other fields.
+- Result assumptions belong after a successful return. They must not remove a
+  call that may panic. With LLVM invoke, they are placed only on its normal path.
+- `same_as` uses the entry input value, not a later load of changed input memory.
+  Whole struct copies keep the actual returned struct; the implementation need
+  not rebuild a large struct just to replace one field.
 
-The input snapshot is never reconstructed by reloading a mutated input
-variable or byval buffer after the call. Result facts never precede a possibly
-panicking call. The production path uses direct LLVM calls. For `invoke`, facts
-belong on a split normal edge, with successor PHIs repaired. An invoke that
-also requires an unsupported signature-changing ABI conversion is diagnosed.
-Unknown function-value/interface calls inherit no callee contract.
+The current compiler inserts these operations before changing LLVM function
+signatures for the ABI. Existing ABI conversion then replaces the arguments and
+results they refer to. No extra wrapper call is required.
 
-Large aggregate facts must not force whole-object loads merely to inspect a
-leaf. The large-aggregate pass scalarizes extract-only loads at the original
-snapshot point and keeps bulk transport as copies. Moving a scalar load to a
-later user could observe an intervening write and is invalid.
+### memory, access and capture
 
-## Behavior lowering and generated operations
+These cannot be implemented by assuming a condition about one value. The LLVM
+attributes must describe the memory operations that the generated code performs.
 
-Native effects summarize **physical** operations. Compose source restrictions
-with ABI transport rather than copying them unchanged:
+| Attribute | Direct pointer parameters/results | Packed or indirect input containing pointers | Indirect result / sret |
+| --- | --- | --- | --- |
+| `memory` | Use LLVM `memory` with the corresponding permitted reads/writes. | Include reads needed for indirect argument copies. If a pointer inside a struct cannot be described as LLVM argument memory, allow the corresponding accesses to other memory too. | Include writes to result storage. |
+| `access` | Use LLVM parameter `readnone`, `readonly` or `writeonly`; readwrite needs no restriction. | The address of the struct is not the pointer field. Where LLVM cannot express the field restriction, omit that optimization. | A direct input pointer keeps its restriction; result-storage writes are accounted for separately. |
+| `capture(none)` | Use LLVM `captures(none)` on the input pointer. | If no LLVM pointer parameter represents the selected field, omit that optimization. | Keep it on a direct input pointer. Returning that pointer through sret would violate the programmer's promise. |
+| `capture(results)` | Use LLVM's return-only capture attribute on the input pointer. This can include fields of a directly returned struct. | If no LLVM pointer parameter represents the selected field, omit that optimization. | Do not keep LLVM return-only capture: storing a pointer through sret is not LLVM's return-value mechanism. Allow broader capture. |
+| `capture(any)` | No restrictive LLVM attribute. | Same. | Same. |
 
-| Conversion | Physical adjustment |
+For example, a source function with `memory(none)` may still need these LLVM
+attributes solely because of its calling convention:
+
+| Generated operations | LLVM memory attribute |
 | --- | --- |
-| Byval transport | Include reads of input storage. |
-| Sret transport | Include writes of result storage. |
-| Pointer leaf inside aggregate | Widen source `args` into other native locations when no pointer parameter represents the root. |
-| Hidden pointer `access`/`capture` | Retain source meaning and report conservative lowering; never annotate the container instead. |
-| `capture(results)` via sret | Widen native capture: a store through sret is not LLVM return capture. |
-| Pure finite packing/copying | Preserve control-flow properties when generated operations satisfy them. |
+| Direct values or register packing only | `memory(none)` |
+| Read an indirect argument copy | `memory(argmem: read)` |
+| Write an indirect result | `memory(argmem: write)` |
+| Both of the above | `memory(argmem: readwrite)` |
 
-The backend records whether an effect has a native consumer or was lowered
-conservatively, with its reason. Metadata alone does not demonstrate optimizer
-consumption. This revision accepts reduced effect precision on hidden pointer
-leaves. It adds no permanent adapter calls, custom effect optimizer or second
-ABI reconstruction framework.
+Omitting a field-specific LLVM restriction loses some optimization; it does not
+change what the source annotation means. The current implementation records this
+choice instead of attaching an incorrect attribute to the struct address.
 
-An assumption expressing an already-promised value does not make a pure source
-function impure: LLVM retains the intrinsic's own control-dependence behavior.
-Actual transport reads/writes and runtime effects still require composition.
+### nofree, nosync, nounwind, willreturn, noreturn and cold
 
-GC root publication and cooperative safepoints may add memory, capture,
-synchronization, allocation or unwinding behavior. In either mode, apply a
-uniform conservative policy to **definitions and imported declarations**:
-remove native memory/access/capture and
-`nofree`/`nosync`/`nounwind`/`willreturn` restrictions; keep value facts,
-`cold` and `noreturn`. A declaration must not remain stronger than its
-compiled implementation.
+| Attribute | LLVM implementation | Effect of ordinary packing, byval and sret |
+| --- | --- | --- |
+| `nofree` | LLVM `nofree` | Keep it when the added operations only copy data and free nothing. |
+| `nosync` | LLVM `nosync` | Keep it when the added operations perform no synchronization. |
+| `nounwind` | LLVM `nounwind` | Keep it when the added operations cannot unwind. |
+| `willreturn` | LLVM `willreturn` | Keep it for finite packing/copying operations. |
+| `noreturn` | LLVM `noreturn` | Keep it if the generated function still cannot return normally. |
+| `cold` | LLVM `cold` | Independent of how parameters and results are passed. |
 
-Unexpected compiler-generated heap allocation is not a harmless ABI copy.
-Implicit allocation with surviving strong behavior attributes must be diagnosed
-rather than silently producing a false physical contract. Value-only contracts
-remain usable. Explicit source allocation and transitive source calls remain
-the annotation author's responsibility. A precise allocator/instrumentation
-effect model is separate work. The same diagnostic policy covers unmodelled
-compiler runtime protocols, including closure/defer state, recover frames,
-local-context entry/exit and lazy package storage, shadow-stack updates and
-function tracing. These operations must not leave a stronger caller declaration
-than the generated implementation.
+If the compiler adds runtime work, simple copying is no longer the whole story.
+The current implementation handles this as follows:
 
-## Import, cache and runtime integration
+- In GC-root-publication or cooperative-safepoint modes, omit restrictive LLVM
+  memory/access/capture and nofree/nosync/nounwind/willreturn attributes on both
+  definitions and imported declarations. Keep the value attributes, cold and
+  noreturn.
+- For other runtime operations not yet accounted for, such as implicit heap
+  allocation, defer support, per-thread/per-goroutine storage or call logging,
+  report an error if the memory, synchronization or execution restrictions
+  would otherwise be incorrect.
 
-Syntax preloading shares contracts with backend programs and imported caller
-declarations. Linkname aliases merge deterministically with conflict and type
-checks. Generic instances bind to their declaration and validate their concrete
-signatures. Build constraints select declarations normally. Annotation-only
-changes must invalidate dependent artifacts; cache hits must preserve the
-same contracts and optimization behavior.
-
-Runtime annotations live on actual declarations. Allocator non-null results,
-checked-pointer results, length ranges, memory helpers and panic hints use
-public machinery, without a runtime function-name whitelist. Target-mode
-instrumentation policy applies uniformly.
-
-## Implementation plan and acceptance checks
-
-1. **Source model:** typed operands, selectors, generic/type validation,
-   deterministic merging and serialization round trips. Cover invalid paths,
-   target-width bounds, conflicts, aliases and source numbering.
-2. **Value materialization:** logical boundary facts and forwarding before ABI
-   conversion, target layouts and removal of temporary plans. Verify IR before
-   and after lowering. Compare optimized branches against controls, including
-   nil panic paths and unrelated carrier bits.
-3. **Effect composition:** scalar native effects, hidden roots, byval/sret
-   transport, capture channels and uniform instrumentation policy. Check both
-   declarations and definitions, including conservative outcomes.
-4. **Integration:** imports/linknames/generics, runtime migration, large
-   aggregate snapshots, annotation-only cache invalidation and reuse. Run the
-   CLI and runtime tests under normal GC and `nogc`.
-5. **Qualification:** amd64, arm64, 386 and wasm layout/IR checks; distinguish
-   object generation from execution. Record exact source head, LLVM payload
-   and native environment in the delivery report.
-
-Expected benefits include eliminating redundant tests, result comparisons and
-eligible repeated calls. Work scales with annotated leaves and known calls,
-not every aggregate field. Unoptimized builds may retain extract/compare/assume
-instructions; optimized code should remove redundant facts. Broad performance
-improvement requires measurements and is not asserted here.
-
-Deferred vocabulary includes allocation size/family, fresh/noalias results,
-dereferenceable or initialized extents, lifetimes, slice projections and
-arbitrary relations. Zero-sized allocator results do not imply freshness.
-Each extension needs useful consumers and a separate semantic design.
+Current limits: pointer forwarding assumes the existing non-moving collectors;
+unusual pointer representations may not support the alignment implementation.
+Invoke calls that require unsupported ABI signature changes are diagnosed.
+Unknown function-value/interface calls do not inherit a specific callee's
+attributes.
