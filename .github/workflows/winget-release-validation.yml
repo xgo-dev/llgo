@@ -50,7 +50,7 @@ jobs:
             $arch = @{ amd64 = 'x64'; arm64 = 'arm64' }['${{ matrix.goarch }}']
             $packages = @(Get-ChildItem (Join-Path $deps $arch) -Recurse -File | Where-Object { $_.Extension -in @('.appx', '.msix') })
             if (-not $packages.Count) { throw "Missing WinGet dependencies for $arch" }
-            Add-AppxPackage -Path (Join-Path $temporary 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle') -DependencyPath $packages.FullName
+            Add-AppxPackage -Path (Join-Path $temporary 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle') -DependencyPath $packages.FullName -ForceApplicationShutdown
           }
           $env:PATH += ';' + (Join-Path $env:LOCALAPPDATA 'Microsoft/WindowsApps')
           (Join-Path $env:LOCALAPPDATA 'Microsoft/WindowsApps') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
