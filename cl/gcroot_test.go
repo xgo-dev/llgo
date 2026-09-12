@@ -13,12 +13,15 @@ import (
 
 func TestCompileLargeSnapshotGCRoots(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		size int
-		root bool
+		name   string
+		size   int
+		goarch string
+		root   bool
 	}{
-		{"threshold", 65536, false},
-		{"large", 65537, true},
+		{"native threshold", 65536, "", false},
+		{"native large", 65537, "", true},
+		{"wasm below copy threshold", 4095, "wasm", false},
+		{"wasm copy threshold", 4096, "wasm", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := fmt.Sprintf(`package main
@@ -30,9 +33,15 @@ func keep(live *int, source *[%d]byte) *int {
 `, tc.size, tc.size)
 			ir := cltest.CompileIREx(t, src, "snapshot.go", false, func(prog llssa.Program) {
 				prog.EnableGCRoots(true)
+				if tc.goarch != "" {
+					prog.Target().GOARCH = tc.goarch
+				}
 			})
 			if got := strings.Contains(ir, "@llvm_gc_root_chain"); got != tc.root {
 				t.Fatalf("snapshot root frame = %v, want %v:\n%s", got, tc.root, ir)
+			}
+			if tc.root && !strings.Contains(ir, "[2 x ptr]") {
+				t.Fatalf("snapshot did not root both the live value and source:\n%s", ir)
 			}
 		})
 	}

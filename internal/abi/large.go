@@ -11,6 +11,9 @@ const (
 	// MaxImplicitStackVarSize matches cmd/compile's default limit for
 	// compiler-generated temporaries.
 	MaxImplicitStackVarSize uint64 = 64 * 1024
+	// MinWasmAggregateCopySize is the point at which Wasm aggregate loads and
+	// stores are lowered to memory intrinsics to avoid LLVM scalarization.
+	MinWasmAggregateCopySize uint64 = 4 * 1024
 
 	runtimeAllocU = "github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU"
 )
@@ -35,7 +38,7 @@ func LowerLargeAggregates(td llvm.TargetData, m llvm.Module, config AggregateLow
 // wrappers. Return types and the native stack/return ABI limits are unchanged.
 func LowerWasmAggregateCopies(td llvm.TargetData, m llvm.Module, config AggregateLoweringConfig) int {
 	l := newLargeAggregateLowerer(td, config)
-	l.copyMinSize = 4 << 10
+	l.copyMinSize = MinWasmAggregateCopySize
 	changed := 0
 	for {
 		count := l.transformStoredLoads(m)

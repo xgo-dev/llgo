@@ -195,7 +195,9 @@ func (p *context) isGCSafepoint(instr ssa.Instruction) bool {
 		case *types.Array, *types.Struct:
 			// ABI lowering snapshots large aggregate loads on the heap after
 			// this root plan is built. Account for that added allocation now.
-			if p.prog.SizeOf(p.type_(load.Type(), llssa.InGo)) > llabi.MaxImplicitStackVarSize {
+			size := p.prog.SizeOf(p.type_(load.Type(), llssa.InGo))
+			if size > llabi.MaxImplicitStackVarSize ||
+				(p.prog.Target().GOARCH == "wasm" && size >= llabi.MinWasmAggregateCopySize) {
 				return true
 			}
 		}
