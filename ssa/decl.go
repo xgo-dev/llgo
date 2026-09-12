@@ -517,13 +517,20 @@ func (p Function) NewBuilder() Builder {
 	b := prog.ctx.NewBuilder()
 	// TODO(xsw): Finalize may cause panic, so comment it.
 	// b.Finalize()
-	return &aBuilder{
+	ret := &aBuilder{
 		impl:         b,
 		Func:         p,
 		Pkg:          p.Pkg,
 		Prog:         prog,
 		diScopeCache: make(map[*types.Scope]DIScope),
 	}
+	if p.diFunc != nil {
+		// Synthetic builders emit calls too. LLVM requires a location for
+		// inlinable calls in a function with debug info; line zero denotes
+		// compiler-generated code without inventing a source position.
+		ret.setDebugLocation(llvm.DebugLoc{Scope: p.diFunc.ll})
+	}
+	return ret
 }
 
 // HasBody reports whether the function has a body.

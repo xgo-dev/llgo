@@ -11,18 +11,21 @@ package main
 // CHECK-NEXT: call void @main.recv()
 // CHECK-NEXT: ret void
 // CHECK-LABEL: define void @main.recv(){{.*}} {
+// CHECK-NEXT: _llgo_{{[0-9]+}}:
+// CHECK-NEXT: [[RECV_BUF2:%[0-9]+]] = alloca %"{{.*}}String", align 8
+// CHECK-NEXT: [[RECV_BUF1:%[0-9]+]] = alloca %"{{.*}}String", align 8
 // CHECK: [[RECV_CH1_OBJ:%[0-9]+]] = call ptr @"{{.*}}NewChan"(i64 16, i64 0)
 // CHECK: [[RECV_CH2_OBJ:%[0-9]+]] = call ptr @"{{.*}}NewChan"(i64 16, i64 0)
 // CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$1", ptr %{{[0-9]+}})
 // CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$2", ptr %{{[0-9]+}})
 // CHECK: [[RECV_CH1:%[0-9]+]] = load ptr, ptr %{{[0-9]+}}
 // CHECK-NEXT: [[RECV_CH2:%[0-9]+]] = load ptr, ptr %{{[0-9]+}}
-// CHECK: [[RECV_BUF1:%[0-9]+]] = alloca %"{{.*}}String"
+// CHECK: call void @llvm.memset.p0.i64(ptr [[RECV_BUF1]], i8 0, i64 16, i1 false)
 // CHECK: [[RECV_OP1_0:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" undef, ptr [[RECV_CH1]], 0
 // CHECK-NEXT: [[RECV_OP1_1:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[RECV_OP1_0]], ptr [[RECV_BUF1]], 1
 // CHECK-NEXT: [[RECV_OP1_2:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[RECV_OP1_1]], i32 16, 2
 // CHECK-NEXT: [[RECV_OP1:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[RECV_OP1_2]], i1 false, 3
-// CHECK: [[RECV_BUF2:%[0-9]+]] = alloca %"{{.*}}String"
+// CHECK: call void @llvm.memset.p0.i64(ptr [[RECV_BUF2]], i8 0, i64 16, i1 false)
 // CHECK: [[RECV_OP2_0:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" undef, ptr [[RECV_CH2]], 0
 // CHECK-NEXT: [[RECV_OP2_1:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[RECV_OP2_0]], ptr [[RECV_BUF2]], 1
 // CHECK-NEXT: [[RECV_OP2_2:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[RECV_OP2_1]], i32 16, 2

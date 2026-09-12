@@ -147,7 +147,20 @@ func (b Builder) Alloc(elem Type, heap bool) (ret Expr) {
 	} else {
 		// Stack-local zero-sized variables keep a distinct alloca. Only heap
 		// allocations and package globals use the shared module sentinel.
-		ret = Expr{llvm.CreateAlloca(b.impl, elem.ll), prog.VoidPtr()}
+		// A local denotes one slot per call, even if its declaration is inside
+		// a loop. Keep the reservation in the entry block and initialization at
+		// the declaration, otherwise LLVM grows the stack on every iteration.
+		// This builder emits only an alloca. Avoid constructing a full Go
+		// Builder (and its debug-scope cache) on the local-allocation hot path.
+		entryBuilder := prog.ctx.NewBuilder()
+		entry := b.Func.impl.FirstBasicBlock()
+		if first := entry.FirstInstruction(); !first.IsNil() {
+			entryBuilder.SetInsertPointBefore(first)
+		} else {
+			entryBuilder.SetInsertPointAtEnd(entry)
+		}
+		ret = Expr{llvm.CreateAlloca(entryBuilder, elem.ll), prog.VoidPtr()}
+		entryBuilder.Dispose()
 		ret.impl = b.zeroinit(ret, size).impl
 	}
 	ret.Type = prog.Pointer(elem)

@@ -73,35 +73,35 @@ func main() {
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP0:[0-9]+]] = alloca %"main.Data[int]", align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP0]], i8 0, i64 8, i1 false)
-// CHECK-NEXT:   %[[TMP1:[0-9]+]] = getelementptr inbounds nuw %"main.Data[int]", ptr %[[TMP0]], i32 0, i32 0
-// CHECK-NEXT:   store i64 1, ptr %[[TMP1]], align 8
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = load %"main.Data[int]", ptr %[[TMP0]], align 8
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = extractvalue %"main.Data[int]" %[[TMP2]], 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %[[TMP3]])
+// CHECK-NEXT:   %[[TMP0:[0-9]+]] = alloca %"main.Data[string]", align 8
+// CHECK-NEXT:   %[[TMP1:[0-9]+]] = alloca %"main.Data[int]", align 8
+// CHECK-NEXT:   %[[TMP2:[0-9]+]] = alloca %"main.Data[string]", align 8
+// CHECK-NEXT:   %[[TMP3:[0-9]+]] = alloca %"main.Data[int]", align 8
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP3]], i8 0, i64 8, i1 false)
+// CHECK-NEXT:   %[[TMP4:[0-9]+]] = getelementptr inbounds nuw %"main.Data[int]", ptr %[[TMP3]], i32 0, i32 0
+// CHECK-NEXT:   store i64 1, ptr %[[TMP4]], align 8
+// CHECK-NEXT:   %[[TMP5:[0-9]+]] = load %"main.Data[int]", ptr %[[TMP3]], align 8
+// CHECK-NEXT:   %[[TMP6:[0-9]+]] = extractvalue %"main.Data[int]" %[[TMP5]], 0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %[[TMP6]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %[[TMP4:[0-9]+]] = alloca %"main.Data[string]", align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP4]], i8 0, i64 16, i1 false)
-// CHECK-NEXT:   %[[TMP5:[0-9]+]] = getelementptr inbounds nuw %"main.Data[string]", ptr %[[TMP4]], i32 0, i32 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB0]], i64 5 }, ptr %[[TMP5]], align 8
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = load %"main.Data[string]", ptr %[[TMP4]], align 8
-// CHECK-NEXT:   %[[TMP7:[0-9]+]] = extractvalue %"main.Data[string]" %[[TMP6]], 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %[[TMP7]])
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP2]], i8 0, i64 16, i1 false)
+// CHECK-NEXT:   %[[TMP7:[0-9]+]] = getelementptr inbounds nuw %"main.Data[string]", ptr %[[TMP2]], i32 0, i32 0
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB0]], i64 5 }, ptr %[[TMP7]], align 8
+// CHECK-NEXT:   %[[TMP8:[0-9]+]] = load %"main.Data[string]", ptr %[[TMP2]], align 8
+// CHECK-NEXT:   %[[TMP9:[0-9]+]] = extractvalue %"main.Data[string]" %[[TMP8]], 0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %[[TMP9]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %[[TMP8:[0-9]+]] = alloca %"main.Data[int]", align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP8]], i8 0, i64 8, i1 false)
-// CHECK-NEXT:   %[[TMP9:[0-9]+]] = getelementptr inbounds nuw %"main.Data[int]", ptr %[[TMP8]], i32 0, i32 0
-// CHECK-NEXT:   store i64 100, ptr %[[TMP9]], align 8
-// CHECK-NEXT:   %[[TMP10:[0-9]+]] = load %"main.Data[int]", ptr %[[TMP8]], align 8
-// CHECK-NEXT:   %[[TMP11:[0-9]+]] = extractvalue %"main.Data[int]" %[[TMP10]], 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %[[TMP11]])
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP1]], i8 0, i64 8, i1 false)
+// CHECK-NEXT:   %[[TMP10:[0-9]+]] = getelementptr inbounds nuw %"main.Data[int]", ptr %[[TMP1]], i32 0, i32 0
+// CHECK-NEXT:   store i64 100, ptr %[[TMP10]], align 8
+// CHECK-NEXT:   %[[TMP11:[0-9]+]] = load %"main.Data[int]", ptr %[[TMP1]], align 8
+// CHECK-NEXT:   %[[TMP12:[0-9]+]] = extractvalue %"main.Data[int]" %[[TMP11]], 0
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %[[TMP12]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %[[TMP12:[0-9]+]] = alloca %"main.Data[string]", align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP12]], i8 0, i64 16, i1 false)
-// CHECK-NEXT:   %[[TMP13:[0-9]+]] = getelementptr inbounds nuw %"main.Data[string]", ptr %[[TMP12]], i32 0, i32 0
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP0]], i8 0, i64 16, i1 false)
+// CHECK-NEXT:   %[[TMP13:[0-9]+]] = getelementptr inbounds nuw %"main.Data[string]", ptr %[[TMP0]], i32 0, i32 0
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB0]], i64 5 }, ptr %[[TMP13]], align 8
-// CHECK-NEXT:   %[[TMP14:[0-9]+]] = load %"main.Data[string]", ptr %[[TMP12]], align 8
+// CHECK-NEXT:   %[[TMP14:[0-9]+]] = load %"main.Data[string]", ptr %[[TMP0]], align 8
 // CHECK-NEXT:   %[[TMP15:[0-9]+]] = extractvalue %"main.Data[string]" %[[TMP14]], 0
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %[[TMP15]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)

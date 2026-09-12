@@ -85,38 +85,38 @@ func main() {
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP0:[0-9]+]] = alloca %main.bar, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP0]], i8 0, i64 16, i1 false)
-// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call { %main.bar, i1 } @main.Foo(%"{{.*}}/runtime/internal/runtime.eface" zeroinitializer)
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = extractvalue { %main.bar, i1 } %[[TMP1]], 0
-// CHECK-NEXT:   store %main.bar %[[TMP2]], ptr %[[TMP0]], align 8
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = extractvalue { %main.bar, i1 } %[[TMP1]], 1
-// CHECK-NEXT:   %[[TMP4:[0-9]+]] = getelementptr inbounds nuw %main.bar, ptr %[[TMP0]], i32 0, i32 0
-// CHECK-NEXT:   %[[TMP5:[0-9]+]] = load ptr, ptr %[[TMP4]], align 8
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = getelementptr inbounds nuw %main.bar, ptr %[[TMP0]], i32 0, i32 1
-// CHECK-NEXT:   %[[TMP7:[0-9]+]] = load float, ptr %[[TMP6]], align 4
-// CHECK-NEXT:   %[[TMP8:[0-9]+]] = xor i1 %[[TMP3]], true
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %[[TMP5]])
+// CHECK-NEXT:   %[[TMP0:[0-9]+]] = alloca %"{{.*}}/cl/_testdata/foo.Foo", align 8
+// CHECK-NEXT:   %[[TMP1:[0-9]+]] = alloca %main.bar, align 8
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP1]], i8 0, i64 16, i1 false)
+// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call { %main.bar, i1 } @main.Foo(%"{{.*}}/runtime/internal/runtime.eface" zeroinitializer)
+// CHECK-NEXT:   %[[TMP3:[0-9]+]] = extractvalue { %main.bar, i1 } %[[TMP2]], 0
+// CHECK-NEXT:   store %main.bar %[[TMP3]], ptr %[[TMP1]], align 8
+// CHECK-NEXT:   %[[TMP4:[0-9]+]] = extractvalue { %main.bar, i1 } %[[TMP2]], 1
+// CHECK-NEXT:   %[[TMP5:[0-9]+]] = getelementptr inbounds nuw %main.bar, ptr %[[TMP1]], i32 0, i32 0
+// CHECK-NEXT:   %[[TMP6:[0-9]+]] = load ptr, ptr %[[TMP5]], align 8
+// CHECK-NEXT:   %[[TMP7:[0-9]+]] = getelementptr inbounds nuw %main.bar, ptr %[[TMP1]], i32 0, i32 1
+// CHECK-NEXT:   %[[TMP8:[0-9]+]] = load float, ptr %[[TMP7]], align 4
+// CHECK-NEXT:   %[[TMP9:[0-9]+]] = xor i1 %[[TMP4]], true
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %[[TMP6]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   %[[TMP9:[0-9]+]] = fpext float %[[TMP7]] to double
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintFloat"(double %[[TMP9]])
+// CHECK-NEXT:   %[[TMP10:[0-9]+]] = fpext float %[[TMP8]] to double
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintFloat"(double %[[TMP10]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB11]], i64 6 })
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %[[TMP8]])
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %[[TMP9]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %[[TMP10:[0-9]+]] = alloca %"{{.*}}/cl/_testdata/foo.Foo", align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP10]], i8 0, i64 16, i1 false)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP0]], i8 0, i64 16, i1 false)
 // CHECK-NEXT:   %[[TMP11:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testdata/foo.Foo" zeroinitializer, ptr %[[TMP11]], align 8
 // CHECK-NEXT:   %[[TMP12:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_{{.*}}/cl/_testdata/foo.Foo", ptr undef }, ptr %[[TMP11]], 1
 // CHECK-NEXT:   %[[TMP13:[0-9]+]] = call { %"{{.*}}/cl/_testdata/foo.Foo", i1 } @main.Bar(%"{{.*}}/runtime/internal/runtime.eface" %[[TMP12]])
 // CHECK-NEXT:   %[[TMP14:[0-9]+]] = extractvalue { %"{{.*}}/cl/_testdata/foo.Foo", i1 } %[[TMP13]], 0
-// CHECK-NEXT:   store %"{{.*}}/cl/_testdata/foo.Foo" %[[TMP14]], ptr %[[TMP10]], align 8
+// CHECK-NEXT:   store %"{{.*}}/cl/_testdata/foo.Foo" %[[TMP14]], ptr %[[TMP0]], align 8
 // CHECK-NEXT:   %[[TMP15:[0-9]+]] = extractvalue { %"{{.*}}/cl/_testdata/foo.Foo", i1 } %[[TMP13]], 1
-// CHECK-NEXT:   %[[TMP16:[0-9]+]] = load %"{{.*}}/cl/_testdata/foo.Foo", ptr %[[TMP10]], align 8
+// CHECK-NEXT:   %[[TMP16:[0-9]+]] = load %"{{.*}}/cl/_testdata/foo.Foo", ptr %[[TMP0]], align 8
 // CHECK-NEXT:   %[[TMP17:[0-9]+]] = call ptr @"{{.*}}/cl/_testdata/foo.Foo.Pb"(%"{{.*}}/cl/_testdata/foo.Foo" %[[TMP16]])
-// CHECK-NEXT:   %[[TMP18:[0-9]+]] = getelementptr inbounds nuw %"{{.*}}/cl/_testdata/foo.Foo", ptr %[[TMP10]], i32 0, i32 1
+// CHECK-NEXT:   %[[TMP18:[0-9]+]] = getelementptr inbounds nuw %"{{.*}}/cl/_testdata/foo.Foo", ptr %[[TMP0]], i32 0, i32 1
 // CHECK-NEXT:   %[[TMP19:[0-9]+]] = load float, ptr %[[TMP18]], align 4
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %[[TMP17]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)

@@ -11,12 +11,24 @@ type T *N
 type S []int
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
+// CHECK-NEXT: _llgo_{{[0-9]+}}:
+// CHECK-NEXT: %[[NAMED_TMP:[0-9]+]] = alloca [2 x i64], align 8
+// CHECK-NEXT: %[[INTS:[0-9]+]] = alloca [5 x i64], align 8
+// CHECK-NEXT: %[[ROW1_TMP:[0-9]+]] = alloca [2 x i64], align 8
+// CHECK-NEXT: %{{[0-9]+}} = alloca [2 x i64], align 8
+// CHECK-NEXT: %[[MATRIX:[0-9]+]] = alloca [2 x [2 x i64]], align 8
+// CHECK-NEXT: %[[ROW:[0-9]+]] = alloca [2 x i64], align 8
+// CHECK-NEXT: %[[POINT2_TMP:[0-9]+]] = alloca %main.point, align 8
+// CHECK-NEXT: %{{[0-9]+}} = alloca %main.point, align 8
+// CHECK-NEXT: %{{[0-9]+}} = alloca %main.point, align 8
+// CHECK-NEXT: %[[POINTS:[0-9]+]] = alloca [3 x %main.point], align 8
+// CHECK-NEXT: %[[POINT:[0-9]+]] = alloca %main.point, align 8
 // Array-of-struct selection: index 2 is loaded as a point, then both fields of
 // that selected value are consumed.
-// CHECK: %[[POINT:[0-9]+]] = alloca %main.point
-// CHECK: %[[POINTS:[0-9]+]] = alloca [3 x %main.point]
+// CHECK: call void @llvm.memset.p0.i64(ptr %[[POINT]], i8 0, i64 16, i1 false)
+// CHECK: call void @llvm.memset.p0.i64(ptr %[[POINTS]], i8 0, i64 48, i1 false)
 // CHECK: %[[POINT2_DST:[0-9]+]] = getelementptr inbounds %main.point, ptr %[[POINTS]], i64 2
-// CHECK: %[[POINT2_TMP:[0-9]+]] = alloca %main.point
+// CHECK: call void @llvm.memset.p0.i64(ptr %[[POINT2_TMP]], i8 0, i64 16, i1 false)
 // CHECK: %[[POINT2_INIT_X:[0-9]+]] = getelementptr inbounds nuw %main.point, ptr %[[POINT2_TMP]], i32 0, i32 0
 // CHECK: %[[POINT2_INIT_Y:[0-9]+]] = getelementptr inbounds nuw %main.point, ptr %[[POINT2_TMP]], i32 0, i32 1
 // CHECK: store i64 5, ptr %[[POINT2_INIT_X]]
@@ -33,10 +45,10 @@ type S []int
 // CHECK: load i64, ptr %[[POINT_Y]]
 
 // Nested arrays select row 1 before indexing its two elements.
-// CHECK: %[[ROW:[0-9]+]] = alloca [2 x i64]
-// CHECK: %[[MATRIX:[0-9]+]] = alloca [2 x [2 x i64]]
+// CHECK: call void @llvm.memset.p0.i64(ptr %[[ROW]], i8 0, i64 16, i1 false)
+// CHECK: call void @llvm.memset.p0.i64(ptr %[[MATRIX]], i8 0, i64 32, i1 false)
 // CHECK: %[[ROW1_DST:[0-9]+]] = getelementptr inbounds [2 x i64], ptr %[[MATRIX]], i64 1
-// CHECK: %[[ROW1_TMP:[0-9]+]] = alloca [2 x i64]
+// CHECK: call void @llvm.memset.p0.i64(ptr %[[ROW1_TMP]], i8 0, i64 16, i1 false)
 // CHECK: %[[ROW1_INIT_0:[0-9]+]] = getelementptr inbounds i64, ptr %[[ROW1_TMP]], i64 0
 // CHECK: %[[ROW1_INIT_1:[0-9]+]] = getelementptr inbounds i64, ptr %[[ROW1_TMP]], i64 1
 // CHECK: store i64 3, ptr %[[ROW1_INIT_0]]
@@ -52,7 +64,7 @@ type S []int
 
 // The SSA-known array index is folded to element 2 without losing the selected
 // element load.
-// CHECK: %[[INTS:[0-9]+]] = alloca [5 x i64]
+// CHECK: call void @llvm.memset.p0.i64(ptr %[[INTS]], i8 0, i64 40, i1 false)
 // CHECK: %[[INT2_INIT:[0-9]+]] = getelementptr inbounds i64, ptr %[[INTS]], i64 2
 // CHECK: store i64 3, ptr %[[INT2_INIT]]
 // CHECK: %[[INT2:[0-9]+]] = getelementptr inbounds i64, ptr %[[INTS]], i64 2
@@ -70,7 +82,7 @@ type S []int
 // Named pointer-to-array indexing and named-slice indexing use different
 // lowering. The slice predicate, length and data pointer must stay associated.
 // CHECK: %[[NAMED_ARRAY:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK: %[[NAMED_TMP:[0-9]+]] = alloca [2 x i64]
+// CHECK: call void @llvm.memset.p0.i64(ptr %[[NAMED_TMP]], i8 0, i64 16, i1 false)
 // CHECK: %[[NAMED_INIT_0:[0-9]+]] = getelementptr inbounds i64, ptr %[[NAMED_TMP]], i64 0
 // CHECK: %[[NAMED_INIT_1:[0-9]+]] = getelementptr inbounds i64, ptr %[[NAMED_TMP]], i64 1
 // CHECK: store i64 1, ptr %[[NAMED_INIT_0]]

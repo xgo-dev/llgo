@@ -232,11 +232,10 @@ func (b Builder) cLongjmp(jb, retval Expr) {
 
 func (p Function) deferInitBuilder(from Builder) (b Builder, next BasicBlock) {
 	b = p.NewBuilder()
-	if p.diFunc != nil {
-		loc := from.impl.GetCurrentDebugLocation()
-		if !loc.Scope.IsNil() {
-			b.impl.SetCurrentDebugLocation(loc.Line, loc.Col, loc.Scope, loc.InlinedAt)
-		}
+	// NewBuilder supplies a line-zero function location for generated code;
+	// replace it only when the originating builder has a source location.
+	if loc := from.diLocation; p.diFunc != nil && !loc.Scope.IsNil() {
+		b.setDebugLocation(loc)
 	}
 	next = b.setBlockMoveLast(p.blks[0])
 	p.blks[0].last = next.last
