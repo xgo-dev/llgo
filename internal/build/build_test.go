@@ -37,6 +37,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv("LLGO_TEST_NODE_HELPER") == "1" && strings.TrimSuffix(strings.ToLower(filepath.Base(os.Args[0])), ".exe") == "node" {
+		os.Exit(0)
+	}
 	if mode := os.Getenv("LLGO_TEST_WASM_OPT_HELPER"); mode != "" {
 		if argsFile := os.Getenv("ARGS_FILE"); argsFile != "" {
 			file, err := os.OpenFile(argsFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
@@ -1649,9 +1652,14 @@ func TestExecuteInitialPackageLinkRawWasmRunUsesHostRunner(t *testing.T) {
 	// Shadow Node with a successful host runner. The test is for post-link
 	// dispatch; JavaScript execution itself is covered by the wasm CI fixture.
 	binDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(binDir, "node"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	nodeName := "node"
+	if runtime.GOOS == "windows" {
+		nodeName += ".exe"
+	}
+	if err := os.Link(os.Args[0], filepath.Join(binDir, nodeName)); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("LLGO_TEST_NODE_HELPER", "1")
 	t.Setenv("PATH", binDir)
 	commands := commandEnv{environ: withEnv(os.Environ(), "PATH="+binDir)}
 	output := filepath.Join(t.TempDir(), "raw-gojs.wasm")
