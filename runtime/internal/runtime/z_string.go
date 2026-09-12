@@ -47,6 +47,7 @@ func StringCat(a, b String) String {
 // -----------------------------------------------------------------------------
 
 // CStrCopy copies a Go string to a C string buffer and returns it.
+//
 //llgo:attr memory(read, args: readwrite)
 //llgo:attr param(dest) access(write) capture(results)
 //llgo:attr result(0) same_as(param(dest))
