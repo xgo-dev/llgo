@@ -14,9 +14,9 @@ import (
 
 func TestImportedGenericSourceContractsValidateConcreteInstance(t *testing.T) {
 	for _, test := range []struct {
-		name  string
-		field string
-		want  string
+		name string
+		typ  string
+		want string
 	}{
 		{"pointer", "*int", ""},
 		{"integer", "int", "nonnull requires a pointer, got int"},
@@ -37,14 +37,13 @@ func TestImportedGenericSourceContractsValidateConcreteInstance(t *testing.T) {
 				return pkg, info, file
 			}
 			dep, depInfo, depFile := check("example.com/contractdep", "contractdep.go", `package contractdep
-//llgo:attribute param(v).field(P) nonnull
-//llgo:attribute result(0).field(P) same_as(param(v).field(P))
+//llgo:attribute param(v) nonnull
+//llgo:attribute result(0) same_as(param(v))
 func Identity[T any](v T) T { return v }
 `, nil)
 			root, rootInfo, rootFile := check("example.com/contractuser", "contractuser.go", `package contractuser
 import "example.com/contractdep"
-type Box struct { P `+test.field+` }
-func Use(v Box) Box { return contractdep.Identity(v) }
+func Use(v `+test.typ+`) `+test.typ+` { return contractdep.Identity(v) }
 `, importerFunc(func(path string) (*types.Package, error) {
 				if path == dep.Path() {
 					return dep, nil
@@ -57,9 +56,9 @@ func Use(v Box) Box { return contractdep.Identity(v) }
 			goProg.Build()
 			coordinator := newLLSSAProg(t)
 			defer coordinator.Dispose()
-			// Source T has no fields until instantiated. Preload must accept
+			// Source T is unknown until instantiated. Preload must accept
 			// the declaration, then the caller's separate backend must retain
-			// its origin and check the selected concrete field.
+			// its origin and check the concrete parameter type.
 			for _, input := range []struct {
 				pkg  *types.Package
 				file *ast.File

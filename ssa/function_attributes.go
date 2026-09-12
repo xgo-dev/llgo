@@ -106,8 +106,8 @@ func (p Program) applyFunctionAttributes(fn llvm.Value, name string, sig *types.
 	if hasEnvironment {
 		offset = 1
 	}
-	resolve := func(target funcattrs.Target, path []int) ([]int, error) {
-		return p.functionAttributePath(sig, target, path, bg), nil
+	resolve := func(index int) []int {
+		return p.functionAttributeResultPath(sig, index, bg)
 	}
 	if err = funcattrs.Apply(p.ctx, fn, sig, attrs, offset, p.Int().ll.IntTypeWidth(), resolve); err != nil {
 		panic(err)
@@ -117,41 +117,14 @@ func (p Program) applyFunctionAttributes(fn llvm.Value, name string, sig *types.
 	}
 }
 
-// functionAttributePath composes source selectors with target layout wrappers
-// while the original Go types are available. Source field numbering alone is
-// insufficient on 386, where both structs and multiple results may wrap fields
-// to preserve Go's alignment and padding.
-func (p Program) functionAttributePath(sig *types.Signature, target funcattrs.Target, path []int, bg Background) []int {
-	var root types.Type
-	var indices []int
-	switch target.Scope {
-	case funcattrs.Receiver:
-		root = sig.Recv().Type()
-	case funcattrs.Parameter:
-		root = sig.Params().At(target.Index).Type()
-	case funcattrs.Result:
-		root = sig.Results().At(target.Index).Type()
-		if sig.Results().Len() > 1 {
-			converted := p.FuncDecl(sig, bg).raw.Type.(*types.Signature)
-			tuple := p.retType(converted)
-			indices = append(indices, target.Index)
-			if layout, ok := p.structLayout(tuple); ok && layout.wrapped[target.Index] {
-				indices = append(indices, 0)
-			}
-		}
-	}
-	typ := p.Type(root, bg)
-	for _, index := range path {
-		indices = append(indices, index)
-		switch typ.raw.Type.Underlying().(type) {
-		case *types.Struct:
-			if layout, ok := p.structLayout(typ); ok && layout.wrapped[index] {
-				indices = append(indices, 0)
-			}
-			typ = p.Field(typ, index)
-		case *types.Array:
-			typ = p.Elem(typ)
-		}
+// functionAttributeResultPath locates a whole Go result in a multi-result
+// LLVM value. On 386 an extra wrapper preserves Go alignment and padding.
+func (p Program) functionAttributeResultPath(sig *types.Signature, index int, bg Background) []int {
+	indices := []int{index}
+	converted := p.FuncDecl(sig, bg).raw.Type.(*types.Signature)
+	tuple := p.retType(converted)
+	if layout, ok := p.structLayout(tuple); ok && layout.wrapped[index] {
+		indices = append(indices, 0)
 	}
 	return indices
 }

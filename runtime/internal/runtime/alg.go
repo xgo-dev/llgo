@@ -26,17 +26,14 @@ func memhash0(p unsafe.Pointer, h uintptr) uintptr {
 // Export the hash entry points needed by Go standard-library packages that
 // reference runtime.memhash* through linkname.
 //
-//llgo:attribute nofree nosync nounwind willreturn
 //llgo:attribute memory(read)
 //llgo:attribute param(p) access(read) capture(none)
 func Memhash(p unsafe.Pointer, seed, size uintptr) uintptr { return memhash(p, seed, size) }
 
-//llgo:attribute nofree nosync nounwind willreturn
 //llgo:attribute memory(read)
 //llgo:attribute param(p) access(read) capture(none)
 func Memhash32(p unsafe.Pointer, seed uintptr) uintptr { return memhash32(p, seed) }
 
-//llgo:attribute nofree nosync nounwind willreturn
 //llgo:attribute memory(read)
 //llgo:attribute param(p) access(read) capture(none)
 func Memhash64(p unsafe.Pointer, seed uintptr) uintptr { return memhash64(p, seed) }

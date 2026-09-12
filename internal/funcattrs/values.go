@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"go/types"
-	"strings"
 
 	"github.com/xgo-dev/llvm"
 )
@@ -29,21 +28,20 @@ type boundValueContract struct {
 }
 
 type valuePlan struct {
-	Version     int
-	PointerBits int
-	Contracts   []boundValueContract
+	Version   int
+	Contracts []boundValueContract
 }
 
 func isValueContract(name string) bool {
 	switch name {
-	case "nonnull", "range", "nonnegative", "align", "same_as":
+	case "nonnull", "range", "nonnegative", "same_as":
 		return true
 	}
 	return false
 }
 
-func bindValueSubject(sig *types.Signature, target Target, environment int, resolver PathResolver) (valueSubject, types.Type, error) {
-	leaf, path, err := ResolveTarget(sig, target)
+func bindValueSubject(sig *types.Signature, target Target, environment int, resolver ResultPathResolver) (valueSubject, types.Type, error) {
+	leaf, err := ResolveTarget(sig, target)
 	if err != nil {
 		return valueSubject{}, nil, err
 	}
@@ -57,12 +55,12 @@ func bindValueSubject(sig *types.Signature, target Target, environment int, reso
 			bound.Parameter++
 		}
 	}
-	if resolver != nil {
-		path, err = resolver(target, path)
-	} else if target.Scope == Result && sig.Results().Len() > 1 {
-		path = append([]int{target.Index}, path...)
+	if target.Scope == Result && sig.Results().Len() > 1 {
+		bound.Path = []int{target.Index}
+		if resolver != nil {
+			bound.Path = resolver(target.Index)
+		}
 	}
-	bound.Path = path
 	return bound, leaf, err
 }
 
@@ -97,8 +95,8 @@ func subjectLLVMType(fn llvm.Value, subject valueSubject) (llvm.Type, error) {
 	return typ, nil
 }
 
-func prepareValueContracts(ctx llvm.Context, fn llvm.Value, sig *types.Signature, attrs []Attribute, environment, intBits int, resolver PathResolver) error {
-	plan := valuePlan{Version: 1, PointerBits: intBits}
+func prepareValueContracts(ctx llvm.Context, fn llvm.Value, sig *types.Signature, attrs []Attribute, environment, intBits int, resolver ResultPathResolver) error {
+	plan := valuePlan{Version: 1}
 	for _, source := range attrs {
 		if !isValueContract(source.Name) {
 			continue
@@ -115,24 +113,11 @@ func prepareValueContracts(ctx llvm.Context, fn llvm.Value, sig *types.Signature
 		index := target.Parameter + 1
 		direct := len(target.Path) == 0
 		switch source.Name {
-		case "nonnull", "align":
+		case "nonnull":
 			if typ.TypeKind() != llvm.PointerTypeKind {
 				return source.Error("pointer contract does not select a logical LLVM pointer")
 			}
-			if source.Name == "align" {
-				// Current LLGo targets use stable integral pointers in address
-				// space zero. A pointer-address mask is not a portable lowering
-				// for nonintegral or target-specific pointer representations.
-				if typ.PointerAddressSpace() != 0 || nonIntegralAddressSpaceZero(fn.GlobalParent().DataLayout()) {
-					return source.Error("align needs an integral pointer representation in address space zero")
-				}
-				if source.Alignment == 1 {
-					continue
-				}
-				if direct && source.Alignment <= 1<<32 {
-					fn.AddAttributeAtIndex(index, ctx.CreateEnumAttribute(llvm.AttributeKindID("align"), source.Alignment))
-				}
-			} else if direct {
+			if direct {
 				fn.AddAttributeAtIndex(index, ctx.CreateEnumAttribute(llvm.AttributeKindID("nonnull"), 0))
 			}
 		case "range", "nonnegative":
@@ -182,20 +167,6 @@ func prepareValueContracts(ctx llvm.Context, fn llvm.Value, sig *types.Signature
 	return nil
 }
 
-func nonIntegralAddressSpaceZero(layout string) bool {
-	for _, component := range strings.Split(layout, "-") {
-		if !strings.HasPrefix(component, "ni:") {
-			continue
-		}
-		for _, space := range strings.Split(strings.TrimPrefix(component, "ni:"), ":") {
-			if space == "0" {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // MaterializeValueContracts runs once while function signatures and call values
 // still have their logical representation. Subsequent ABI passes already replace
 // old parameters and call results with reconstructed values, so these facts follow
@@ -231,7 +202,7 @@ func MaterializeValueContracts(m llvm.Module) error {
 		for _, contract := range plan.Contracts {
 			if contract.Target.Parameter >= 0 {
 				value := extractValue(b, fn.Param(contract.Target.Parameter), contract.Target.Path)
-				emitValueFact(b, value, contract, plan.PointerBits)
+				emitValueFact(b, value, contract)
 			}
 		}
 	}
@@ -319,7 +290,7 @@ func materializeCallResults(b llvm.Builder, call llvm.Value, plan valuePlan) {
 	for _, contract := range results {
 		if contract.From == nil {
 			value := extractValue(b, result, contract.Target.Path)
-			emitValueFact(b, value, contract, plan.PointerBits)
+			emitValueFact(b, value, contract)
 		}
 	}
 	if result != call {
@@ -406,7 +377,7 @@ func normalContinuation(b llvm.Builder, call llvm.Value) llvm.Value {
 	return branch
 }
 
-func emitValueFact(b llvm.Builder, value llvm.Value, contract boundValueContract, pointerBits int) {
+func emitValueFact(b llvm.Builder, value llvm.Value, contract boundValueContract) {
 	ctx := value.Type().Context()
 	var predicate llvm.Value
 	switch contract.Source.Name {
@@ -419,11 +390,6 @@ func emitValueFact(b llvm.Builder, value llvm.Value, contract boundValueContract
 		width := llvm.ConstInt(value.Type(), contract.Upper-contract.Lower, false)
 		distance := b.CreateSub(value, lower, "contract.range.offset")
 		predicate = b.CreateICmp(llvm.IntULT, distance, width, "contract.range")
-	case "align":
-		integer := ctx.IntType(pointerBits)
-		address := b.CreatePtrToInt(value, integer, "contract.address")
-		lowBits := b.CreateAnd(address, llvm.ConstInt(integer, contract.Source.Alignment-1, false), "contract.alignment.bits")
-		predicate = b.CreateICmp(llvm.IntEQ, lowBits, llvm.ConstNull(integer), "contract.aligned")
 	default:
 		return
 	}

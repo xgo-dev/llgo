@@ -3,7 +3,6 @@
 package funcattrs
 
 import (
-	"errors"
 	"fmt"
 	"go/ast"
 	"go/token"
@@ -26,31 +25,14 @@ const (
 	Receiver  Scope = "receiver"
 )
 
-type PathKind string
-
-const (
-	FieldPath   PathKind = "field"
-	ElementPath PathKind = "element"
-)
-
-// PathStep selects a struct field or array element. Paths never implicitly
-// dereference a pointer or traverse a slice backing store.
-type PathStep struct {
-	Kind  PathKind
-	Field string
-	Index int
-}
-
-// Target identifies a logical source value. Index excludes compiler-owned
-// arguments; Path is relative to the source value before ABI transformation.
+// Target identifies a whole source parameter, receiver, result or function.
 type Target struct {
 	Scope Scope
 	Index int
-	Path  []PathStep
 }
 
 func (t Target) Equal(other Target) bool {
-	return t.Scope == other.Scope && t.Index == other.Index && slices.Equal(t.Path, other.Path)
+	return t.Scope == other.Scope && t.Index == other.Index
 }
 
 func (t Target) String() string {
@@ -62,13 +44,6 @@ func (t Target) String() string {
 		s = fmt.Sprintf("result(%d)", t.Index)
 	default:
 		s = string(t.Scope)
-	}
-	for _, step := range t.Path {
-		if step.Kind == FieldPath {
-			s += ".field(" + step.Field + ")"
-		} else {
-			s += fmt.Sprintf(".element(%d)", step.Index)
-		}
 	}
 	return s
 }
@@ -89,16 +64,15 @@ type RangeBounds struct {
 }
 
 type Attribute struct {
-	Target    Target
-	Name      string
-	Args      string // Canonical spelling; backends consume the typed operands below.
-	Position  token.Position
-	Range     *RangeBounds
-	Alignment uint64
-	From      *Target // same_as denotes the logical input snapshot at function entry.
-	Access    AccessMode
-	Capture   CaptureMode
-	Memory    MemoryEffects
+	Target   Target
+	Name     string
+	Args     string // Canonical spelling; backends consume the typed operands below.
+	Position token.Position
+	Range    *RangeBounds
+	From     *Target // same_as denotes the logical input snapshot at function entry.
+	Access   AccessMode
+	Capture  CaptureMode
+	Memory   MemoryEffects
 }
 
 func (a Attribute) Error(format string, args ...any) error {
@@ -208,7 +182,7 @@ func split(s string) ([]string, error) {
 	return words, nil
 }
 
-// expression also accepts nesting for same_as(param(...).field(...)).
+// expression also accepts nesting for same_as(param(...)).
 func expression(s string) (name, args string, err error) {
 	name = s
 	if i := strings.IndexByte(s, '('); i >= 0 {
@@ -280,38 +254,8 @@ func parseTarget(decl *ast.FuncDecl, s string) (Target, error) {
 		}
 		s = s[end+1:]
 	}
-	for s != "" {
-		if !strings.HasPrefix(s, ".") {
-			return target, fmt.Errorf("invalid selector path %q", s)
-		}
-		s = s[1:]
-		i := strings.IndexByte(s, '(')
-		if i < 0 {
-			return target, fmt.Errorf("expected .field(name) or .element(index)")
-		}
-		end, err := closingParen(s, i)
-		if err != nil {
-			return target, err
-		}
-		arg := strings.TrimSpace(s[i+1 : end])
-		var step PathStep
-		switch s[:i] {
-		case "field":
-			if !token.IsIdentifier(arg) || arg == "_" {
-				return target, fmt.Errorf("field requires a nonblank field name")
-			}
-			step = PathStep{Kind: FieldPath, Field: arg}
-		case "element":
-			index, err := strconv.ParseUint(arg, 0, 63)
-			if err != nil || uint64(int(index)) != index {
-				return target, fmt.Errorf("element requires a nonnegative constant integer index")
-			}
-			step = PathStep{Kind: ElementPath, Index: int(index)}
-		default:
-			return target, fmt.Errorf("unsupported selector step %q", s[:i])
-		}
-		target.Path = append(target.Path, step)
-		s = s[end+1:]
+	if s != "" {
+		return target, fmt.Errorf("unsupported selector suffix %q: select the whole parameter or result", s)
 	}
 	return target, nil
 }
@@ -386,7 +330,7 @@ func normalize(a Attribute) (Attribute, error) {
 	result := a.Target.Scope == Result
 	valid, takesArgs := false, false
 	switch a.Name {
-	case "cold", "noreturn", "nounwind", "willreturn", "nofree", "nosync":
+	case "cold", "noreturn":
 		valid = function
 	case "memory":
 		valid, takesArgs = function, true
@@ -394,7 +338,7 @@ func normalize(a Attribute) (Attribute, error) {
 		valid, takesArgs = input, true
 	case "nonnull", "nonnegative":
 		valid = input || result
-	case "range", "align":
+	case "range":
 		valid, takesArgs = input || result, true
 	case "same_as":
 		valid, takesArgs = result, true
@@ -434,13 +378,6 @@ func normalize(a Attribute) (Attribute, error) {
 			a.Range = &RangeBounds{Lower: lo, Upper: hi}
 			a.Args = lo.String() + "," + hi.String()
 		}
-	case "align":
-		a.Alignment, err = strconv.ParseUint(a.Args, 0, 64)
-		if err != nil || a.Alignment == 0 || a.Alignment&(a.Alignment-1) != 0 {
-			err = fmt.Errorf("align requires a positive power-of-two integer literal")
-		} else {
-			a.Args = strconv.FormatUint(a.Alignment, 10)
-		}
 	case "same_as":
 		if a.From == nil || (a.From.Scope != Parameter && a.From.Scope != Receiver) {
 			err = fmt.Errorf("same_as requires an input param(...) or receiver selector")
@@ -465,10 +402,8 @@ func Merge(attrs ...[]Attribute) ([]Attribute, error) {
 			if err != nil {
 				return nil, err
 			}
-			a.Target.Path = slices.Clone(a.Target.Path)
 			if a.From != nil {
 				from := *a.From
-				from.Path = slices.Clone(from.Path)
 				a.From = &from
 			}
 			duplicate := false
@@ -510,49 +445,13 @@ func bounds(args string) (*big.Int, *big.Int, error) {
 	return lo, hi, nil
 }
 
-// ErrUnresolvedTypeParameter means a path needs a concrete generic instance.
-var ErrUnresolvedTypeParameter = errors.New("selector path requires a concrete type argument")
-
-// ResolveTarget returns the leaf type and its struct/array index path. Indices
-// are relative to the selected source root, not physical parameter/result slots.
-func ResolveTarget(sig *types.Signature, target Target) (types.Type, []int, error) {
+// ResolveTarget returns the Go type of the selected whole input or result.
+func ResolveTarget(sig *types.Signature, target Target) (types.Type, error) {
 	t := rootType(sig, target)
 	if t == nil {
-		return nil, nil, fmt.Errorf("selector %s does not exist in this signature", target)
+		return nil, fmt.Errorf("selector %s does not exist in this signature", target)
 	}
-	var path []int
-	for _, step := range target.Path {
-		if _, ok := types.Unalias(t).(*types.TypeParam); ok {
-			return nil, nil, ErrUnresolvedTypeParameter
-		}
-		switch step.Kind {
-		case FieldPath:
-			st, ok := t.Underlying().(*types.Struct)
-			if !ok {
-				return nil, nil, fmt.Errorf("field(%s) requires a struct value, got %s", step.Field, t)
-			}
-			i := 0
-			for i < st.NumFields() && (st.Field(i).Name() != step.Field || step.Field == "_") {
-				i++
-			}
-			if i == st.NumFields() {
-				return nil, nil, fmt.Errorf("unknown field %q in %s", step.Field, t)
-			}
-			path, t = append(path, i), st.Field(i).Type()
-		case ElementPath:
-			ar, ok := t.Underlying().(*types.Array)
-			if !ok {
-				return nil, nil, fmt.Errorf("element(%d) requires an array value, got %s", step.Index, t)
-			}
-			if step.Index < 0 || int64(step.Index) >= ar.Len() {
-				return nil, nil, fmt.Errorf("element index %d is outside array length %d", step.Index, ar.Len())
-			}
-			path, t = append(path, step.Index), ar.Elem()
-		default:
-			return nil, nil, fmt.Errorf("unsupported selector path kind %q", step.Kind)
-		}
-	}
-	return t, path, nil
+	return t, nil
 }
 
 func rootType(sig *types.Signature, target Target) types.Type {
@@ -577,7 +476,7 @@ func rootType(sig *types.Signature, target Target) types.Type {
 }
 
 func valueType(sig *types.Signature, target Target) types.Type {
-	t, _, _ := ResolveTarget(sig, target)
+	t, _ := ResolveTarget(sig, target)
 	return t
 }
 
@@ -611,10 +510,7 @@ func Validate(attrs []Attribute, sig *types.Signature, intBits int, deferTypePar
 		if a.Target.Scope == Function {
 			continue
 		}
-		t, _, err := ResolveTarget(sig, a.Target)
-		if errors.Is(err, ErrUnresolvedTypeParameter) && deferTypeParams {
-			continue
-		}
+		t, err := ResolveTarget(sig, a.Target)
 		if err != nil {
 			return a.Error("%v", err)
 		}
@@ -622,12 +518,9 @@ func Validate(attrs []Attribute, sig *types.Signature, intBits int, deferTypePar
 			continue
 		}
 		switch a.Name {
-		case "nonnull", "align", "access", "capture":
+		case "nonnull", "access", "capture":
 			if !pointer(t) {
 				return a.Error("%s requires a pointer, got %s", a.Name, t)
-			}
-			if a.Name == "align" && intBits < 64 && a.Alignment >= uint64(1)<<uint(intBits) {
-				return a.Error("alignment does not fit the target pointer width")
 			}
 		case "same_as":
 			if !pointer(t) && !integer(t) {
@@ -636,10 +529,7 @@ func Validate(attrs []Attribute, sig *types.Signature, intBits int, deferTypePar
 			if a.From == nil {
 				return a.Error("same_as requires an input selector")
 			}
-			from, _, err := ResolveTarget(sig, *a.From)
-			if errors.Is(err, ErrUnresolvedTypeParameter) && deferTypeParams {
-				continue
-			}
+			from, err := ResolveTarget(sig, *a.From)
 			if err != nil {
 				return a.Error("same_as input: %v", err)
 			}
