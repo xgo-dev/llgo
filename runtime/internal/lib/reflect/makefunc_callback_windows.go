@@ -1,4 +1,4 @@
-//go:build llgo && windows && !nogc && !baremetal
+//go:build llgo && windows && !nogc && !baremetal && !llgo_noffi
 
 package reflect
 

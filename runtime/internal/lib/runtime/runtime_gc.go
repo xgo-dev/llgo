@@ -6,6 +6,7 @@ import (
 	"runtime"
 
 	"github.com/xgo-dev/llgo/runtime/internal/clite/bdwgc"
+	llruntime "github.com/xgo-dev/llgo/runtime/internal/runtime"
 )
 
 func init() {
@@ -54,6 +55,7 @@ func collectAndRunFinalizers() {
 	// allocation to invoke the callbacks that feed runFinalizers.
 	bdwgc.InvokeFinalizers()
 	runFinalizers()
+	llruntime.RunPointerFinalizers()
 }
 
 func saturatingSub(x, y uintptr) uintptr {

@@ -21,6 +21,89 @@ func getBDWGCFinalizeOnDemand() int32
 //go:linkname setBDWGCFinalizeOnDemand C.GC_set_finalize_on_demand
 func setBDWGCFinalizeOnDemand(enabled int32)
 
+func TestRuntimeSetFinalizerCancelAfterBoxedThenTyped(t *testing.T) {
+	finalized := make(chan struct{}, 2)
+	finalizerCancelDone = finalized
+	func() {
+		x := new(int)
+		runtime.SetFinalizer(x, func(*int) {
+			finalized <- struct{}{}
+		})
+		runtime.SetFinalizer(x, finalizerCancelSentinel)
+		runtime.SetFinalizer(x, nil)
+	}()
+	assertCanceledFinalizer(t, finalized)
+}
+
+func TestRuntimeSetFinalizerCancelPreservesCleanup(t *testing.T) {
+	cleaned := make(chan struct{}, 1)
+	registerFinalizerForTest(func() {
+		x := new(int)
+		runtime.AddCleanup(x, func(struct{}) {
+			cleaned <- struct{}{}
+		}, struct{}{})
+		runtime.SetFinalizer(x, nil)
+	})
+	waitForFinalizerSignal(t, cleaned)
+}
+
+func TestRuntimeSetFinalizerCancelAfterBoxedKeepsCleanup(t *testing.T) {
+	cleaned := make(chan struct{}, 1)
+	finalized := make(chan struct{}, 1)
+	registerFinalizerForTest(func() {
+		x := new(int)
+		runtime.AddCleanup(x, func(struct{}) {
+			cleaned <- struct{}{}
+		}, struct{}{})
+		runtime.SetFinalizer(x, func(*int) {
+			finalized <- struct{}{}
+		})
+		runtime.SetFinalizer(x, nil)
+	})
+	waitForFinalizerSignal(t, cleaned)
+	select {
+	case <-finalized:
+		t.Fatal("canceled finalizer ran")
+	default:
+	}
+}
+
+func TestRuntimeSetFinalizerCancelAfterBoxedThenCleanup(t *testing.T) {
+	cleaned := make(chan struct{}, 1)
+	finalized := make(chan struct{}, 1)
+	registerFinalizerForTest(func() {
+		x := new(int)
+		runtime.SetFinalizer(x, func(*int) {
+			finalized <- struct{}{}
+		})
+		runtime.AddCleanup(x, func(struct{}) {
+			cleaned <- struct{}{}
+		}, struct{}{})
+		runtime.SetFinalizer(x, nil)
+	})
+	waitForFinalizerSignal(t, cleaned)
+	select {
+	case <-finalized:
+		t.Fatal("canceled finalizer ran")
+	default:
+	}
+}
+
+func waitForFinalizerSignal(t *testing.T, done <-chan struct{}) {
+	t.Helper()
+	deadline := time.After(3 * time.Second)
+	for {
+		runGCWithTimeout(t)
+		select {
+		case <-done:
+			return
+		case <-deadline:
+			t.Fatal("cleanup did not run")
+		default:
+		}
+	}
+}
+
 func TestRuntimeAddCleanupStop(t *testing.T) {
 	old := getBDWGCFinalizeOnDemand()
 	setBDWGCFinalizeOnDemand(1)

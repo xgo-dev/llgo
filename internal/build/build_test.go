@@ -243,6 +243,28 @@ func TestDoDoesNotModifyConfigOnValidationError(t *testing.T) {
 	}
 }
 
+func TestBuildCheckFFIRestartsWithoutFFI(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/checkffi\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "checkffi.go"), []byte("package checkffi\n\nimport \"reflect\"\n\nfunc F() reflect.Type { return reflect.TypeOf(0) }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	conf := NewDefaultConf(ModeGen)
+	conf.CheckFFI = true
+	conf.LTO = lto.Full
+	t.Setenv(llgoBuildCache, "0")
+	pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 1 || pkgs[0].PkgPath != "example.com/checkffi" {
+		t.Fatalf("Build returned packages = %+v, want example.com/checkffi", pkgs)
+	}
+	pkgs[0].LPkg.Prog.Dispose()
+}
+
 func TestInvocationUsesExplicitWorkingDirectory(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/requestdir\n\ngo 1.24\n"), 0o644); err != nil {

@@ -91,20 +91,66 @@ func TestRuntimeSetFinalizerCancel(t *testing.T) {
 	finalized := make(chan struct{}, 1)
 	func() {
 		x := new(int)
+		// Capturing closures stay on the boxed path; SetFinalizer(nil) is
+		// lowered to SetFinalizerPtr. Cancel must still drop that leftover.
 		runtime.SetFinalizer(x, func(*int) {
 			finalized <- struct{}{}
 		})
 		runtime.SetFinalizer(x, nil)
 	}()
+	assertCanceledFinalizer(t, finalized)
+}
 
-	for i := 0; i < 3; i++ {
-		runGCWithTimeout(t)
-	}
-	select {
-	case <-finalized:
-		t.Fatal("canceled finalizer ran")
-	case <-time.After(50 * time.Millisecond):
-	}
+var finalizerCancelDone chan<- struct{}
+
+func finalizerCancelSentinel(*int) {
+	finalizerCancelDone <- struct{}{}
+}
+
+func TestRuntimeSetFinalizerCancelNamedFunction(t *testing.T) {
+	done := make(chan struct{}, 1)
+	finalizerCancelDone = done
+	func() {
+		x := new(int)
+		runtime.SetFinalizer(x, finalizerCancelSentinel)
+		runtime.SetFinalizer(x, nil)
+	}()
+	assertCanceledFinalizer(t, done)
+}
+
+type finalizerMethodValue struct {
+	value int
+}
+
+var finalizerMethodDone chan<- int
+
+func (p *finalizerMethodValue) close() {
+	finalizerMethodDone <- p.value
+}
+
+func finalizerMethodWithResult(p *finalizerMethodValue) int {
+	finalizerMethodDone <- p.value
+	return p.value
+}
+
+func TestRuntimeSetFinalizerMethodExpression(t *testing.T) {
+	done := make(chan int, 1)
+	finalizerMethodDone = done
+	registerFinalizerForTest(func() {
+		p := &finalizerMethodValue{value: 42}
+		runtime.SetFinalizer(p, (*finalizerMethodValue).close)
+	})
+	waitForFinalizerValue(t, done, 42)
+}
+
+func TestRuntimeSetFinalizerIgnoredResult(t *testing.T) {
+	done := make(chan int, 1)
+	finalizerMethodDone = done
+	registerFinalizerForTest(func() {
+		p := &finalizerMethodValue{value: 42}
+		runtime.SetFinalizer(p, finalizerMethodWithResult)
+	})
+	waitForFinalizerValue(t, done, 42)
 }
 
 func TestRuntimeSetFinalizerWithLargeResult(t *testing.T) {
@@ -162,6 +208,18 @@ func waitForFinalizerValue(t *testing.T, finalized <-chan int, want int) {
 			t.Fatal("finalizer did not run")
 		default:
 		}
+	}
+}
+
+func assertCanceledFinalizer(t *testing.T, finalized <-chan struct{}) {
+	t.Helper()
+	for i := 0; i < 3; i++ {
+		runGCWithTimeout(t)
+	}
+	select {
+	case <-finalized:
+		t.Fatal("canceled finalizer ran")
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 

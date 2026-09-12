@@ -143,6 +143,7 @@ type Config struct {
 	Target             string // target name (e.g., "rp2040", "wasi") - takes precedence over Goos/Goarch
 	OptLevel           optlevel.Level
 	LTO                lto.Mode
+	CheckFFI           bool // automatically restart with noffi reflect tags when NeedFFI is false
 	LTOPlugin          lto.PassPlugin
 	BinPath            string
 	AppExt             string  // ".exe" on Windows, empty on Unix
@@ -227,6 +228,7 @@ type Config struct {
 	// fixtures that intentionally avoid importing github.com/goplus/lib/py.
 	// Production callers leave this nil; the provider is evaluated once per Do.
 	TestPythonPackage func() *types.Package
+	noFFIRestart      bool // internal: this build already restarted with noffi reflect tags
 }
 
 type Rewrites map[string]string
@@ -872,6 +874,16 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 	if err != nil {
 		return nil, err
 	}
+	// When enabled, retry once with the noffi reflect implementation if the
+	// complete package graph does not require libffi.
+	if conf.CheckFFI && !conf.noFFIRestart && !ctx.needFFI && hasLinkedReflect(allPkgs) && !hasBuildTag(conf.Tags, "llgo_noffi") {
+		restarted := conf.clone()
+		restarted.Tags = appendBuildTag(restarted.Tags, "llgo_noffi")
+		restarted.Tags = appendBuildTag(restarted.Tags, "llgo_methodvalue_noffi")
+		restarted.noFFIRestart = true
+		return Build(Invocation{Args: inv.Args, Config: restarted, Dir: dir,
+			compileOnly: inv.compileOnly, disableMultiFallback: inv.disableMultiFallback})
+	}
 
 	if mode == ModeGen {
 		for _, pkg := range allPkgs {
@@ -918,6 +930,31 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 	}
 
 	return allPkgs, errors.Join(linkErrs...)
+}
+
+func hasLinkedReflect(pkgs []*aPackage) bool {
+	for _, pkg := range pkgs {
+		if pkg != nil && pkg.Package != nil && pkg.PkgPath == "reflect" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasBuildTag(tags, want string) bool {
+	for _, tag := range strings.Split(tags, ",") {
+		if strings.TrimSpace(tag) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func appendBuildTag(tags, tag string) string {
+	if tags == "" {
+		return tag
+	}
+	return tags + "," + tag
 }
 
 func useShadowStack(goarch string) bool {
@@ -1410,7 +1447,11 @@ type context struct {
 	output         bool
 	passOpt        bool
 
-	buildConf       *Config
+	buildConf *Config
+	// needFFI is aggregated after ordinary packages finish lowering and before
+	// runtime packages are built. This is the earliest point where checkReflect
+	// has observed all user-package calls.
+	needFFI         bool
 	crossCompile    crosscompile.Export
 	commands        commandEnv
 	frontendOptions cl.Options
@@ -1738,6 +1779,7 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 		if err := buildPackageGroup(ctx, normalTasks, verbose); err != nil {
 			return nil, err
 		}
+		ctx.needFFI = packageFFINeeded(normalTasks)
 		return pkgs, nil
 	}
 
@@ -1746,6 +1788,7 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 	if err := buildPackageGroup(ctx, normalTasks, verbose); err != nil {
 		return nil, err
 	}
+	ctx.needFFI = packageFFINeeded(normalTasks)
 	needRuntime, needPyInit := packageRuntimeNeeds(normalTasks)
 
 	if needRuntime || needPyInit {
@@ -1804,6 +1847,7 @@ func executePackageBuild(ctx *context, task *packageBuildTask, verbose bool) err
 	}
 	if task.needsRuntimeSignals() && aPkg.LPkg != nil {
 		aPkg.setNeedRuntimeOrPyInit(aPkg.LPkg.NeedRuntime, aPkg.LPkg.NeedPyInit)
+		aPkg.NeedFFI = aPkg.LPkg.NeedFFI
 	}
 	return nil
 }
@@ -2121,7 +2165,6 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 				methodByName[k] = none{}
 			}
 		}
-
 		linkArgs = append(linkArgs, aPkg.LinkArgs...)
 		if aPkg.ArchiveFile != "" {
 			archiveInputs = append(archiveInputs, aPkg.ArchiveFile)
@@ -3287,6 +3330,7 @@ type aPackage struct {
 	LPkg   llssa.Package
 
 	NeedRt          bool
+	NeedFFI         bool
 	NeedPyInit      bool
 	ssaInstructions int64
 	linkSnapshot    *packageLinkSnapshot

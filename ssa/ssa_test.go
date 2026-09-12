@@ -38,6 +38,168 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
+func TestSetFinalizerArgCompatible(t *testing.T) {
+	pkg := types.NewPackage("example.com/p", "p")
+	elem := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "T", nil), types.NewStruct(nil, nil), nil)
+	ptr := types.NewPointer(elem)
+	otherPtr := types.NewPointer(elem)
+	if !setFinalizerArgCompatible(ptr, ptr, ptr) || !setFinalizerArgCompatible(ptr, ptr, otherPtr) {
+		t.Fatal("identical pointer arguments were rejected")
+	}
+	if !setFinalizerArgCompatible(ptr, ptr, types.NewPointer(elem)) {
+		t.Fatal("unnamed pointer argument was rejected")
+	}
+	otherElem := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "U", nil), types.NewStruct(nil, nil), nil)
+	if setFinalizerArgCompatible(ptr, ptr, types.NewPointer(otherElem)) {
+		t.Fatal("pointer with a different element type was accepted")
+	}
+	empty := types.NewInterfaceType(nil, nil)
+	empty.Complete()
+	if !setFinalizerArgCompatible(ptr, ptr, empty) {
+		t.Fatal("empty interface argument was rejected")
+	}
+	method := types.NewFunc(token.NoPos, pkg, "M", types.NewSignatureType(nil, nil, nil, nil, nil, false))
+	iface := types.NewInterfaceType([]*types.Func{method}, nil)
+	iface.Complete()
+	if setFinalizerArgCompatible(ptr, ptr, iface) {
+		t.Fatal("unimplemented interface argument was accepted")
+	}
+	if setFinalizerArgCompatible(ptr, ptr, types.Typ[types.Int]) {
+		t.Fatal("non-pointer argument was accepted")
+	}
+}
+
+func TestLowerSetFinalizerCallRejectsUnsupportedForms(t *testing.T) {
+	prog := NewProgram(&Target{GOOS: "linux", GOARCH: "amd64"})
+	defer prog.Dispose()
+	prog.SetRuntime(func() *types.Package {
+		fset := token.NewFileSet()
+		imp := packages.NewImporter(fset)
+		pkg, err := imp.Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	runtimePkg := prog.runtime()
+	ptr := types.Typ[types.UnsafePointer]
+	finalizer := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, runtimePkg, "ptr", ptr)),
+		types.NewTuple(), false)
+	pkg := prog.NewPackage("example.com/finalizer", "finalizer")
+	typePkg := types.NewPackage("example.com/finalizer", "finalizer")
+	objType := types.NewPointer(types.NewNamed(types.NewTypeName(token.NoPos, typePkg, "T", nil), types.NewStruct(nil, nil), nil))
+	fn := pkg.NewFunc("test", types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(
+			types.NewVar(token.NoPos, nil, "obj", objType),
+			types.NewVar(token.NoPos, nil, "n", types.Typ[types.Int]),
+		),
+		types.NewTuple(), false), InGo)
+	b := fn.MakeBody(1)
+	obj := fn.Param(0)
+
+	if _, _, ok := b.LowerSetFinalizerCall(nil); ok {
+		t.Fatal("accepted wrong argument count")
+	}
+	if _, _, ok := b.LowerSetFinalizerCall([]Expr{fn.Param(1), fn.Param(1)}); ok {
+		t.Fatal("accepted non-pointer object")
+	}
+
+	badArity := pkg.NewFunc("badArity", types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(), types.NewTuple(), false), InGo)
+	badArity.MakeBody(1).Return()
+	if _, _, ok := b.LowerSetFinalizerCall([]Expr{obj, badArity.Expr}); ok {
+		t.Fatal("accepted finalizer with zero parameters")
+	}
+
+	badType := pkg.NewFunc("badType", types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Int])),
+		types.NewTuple(), false), InGo)
+	badType.MakeBody(1).Return()
+	if _, _, ok := b.LowerSetFinalizerCall([]Expr{obj, badType.Expr}); ok {
+		t.Fatal("accepted incompatible finalizer")
+	}
+
+	nilFn := prog.Nil(prog.rawType(finalizer))
+	if _, _, ok := b.LowerSetFinalizerCall([]Expr{obj, nilFn}); !ok {
+		t.Fatal("rejected nil finalizer")
+	}
+
+	if got := pkg.runtimeSetFinalizerPtr(); got.IsNil() {
+		t.Fatal("cached SetFinalizerPtr lookup returned nil")
+	}
+
+	finalizerFn := pkg.NewFunc("finalizer", types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, nil, "", objType)),
+		types.NewTuple(), false), InGo)
+	finalizerFn.MakeBody(1).Return()
+	if _, _, ok := b.LowerSetFinalizerCall([]Expr{obj, finalizerFn.Expr}); !ok {
+		t.Fatal("rejected compatible named finalizer")
+	}
+	if _, _, ok := b.LowerSetFinalizerCall([]Expr{obj, finalizerFn.Expr}); !ok {
+		t.Fatal("rejected reused named finalizer wrapper")
+	}
+
+	unnamedPtr := types.NewPointer(objType.Elem())
+	unnamedFn := pkg.NewFunc("unnamedFinalizer", types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, nil, "", unnamedPtr)),
+		types.NewTuple(), false), InGo)
+	unnamedFn.MakeBody(1).Return()
+	if _, _, ok := b.LowerSetFinalizerCall([]Expr{obj, unnamedFn.Expr}); !ok {
+		t.Fatal("rejected unnamed pointer finalizer")
+	}
+}
+
+func TestCheckFFIMarksLibffiUses(t *testing.T) {
+	prog := NewProgram(&Target{GOOS: "windows", GOARCH: "amd64"})
+	defer prog.Dispose()
+	prog.SetRuntime(func() *types.Package {
+		fset := token.NewFileSet()
+		imp := packages.NewImporter(fset)
+		pkg, err := imp.Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("example.com/ffi", "ffi")
+	fn := pkg.NewFunc("test", NoArgsNoRet, InGo)
+	b := fn.MakeBody(1)
+
+	b.checkFFI(pkg.NewFunc("runtime.SetFinalizer", NoArgsNoRet, InGo).Expr)
+	if !pkg.NeedFFI {
+		t.Fatal("boxed SetFinalizer did not require libffi")
+	}
+	pkg.NeedFFI = false
+	b.checkFFI(pkg.NewFunc("syscall.NewCallback", NoArgsNoRet, InGo).Expr)
+	if !pkg.NeedFFI {
+		t.Fatal("Windows NewCallback did not require libffi")
+	}
+	pkg.NeedFFI = false
+	b.checkFFI(pkg.NewFunc("reflect.MakeFunc", NoArgsNoRet, InGo).Expr)
+	if !pkg.NeedFFI {
+		t.Fatal("MakeFunc did not require libffi")
+	}
+}
+
+func TestRuntimeSetFinalizerPtrMissing(t *testing.T) {
+	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm"})
+	defer prog.Dispose()
+	prog.SetRuntime(types.NewPackage(PkgRuntime, "runtime"))
+	pkg := prog.NewPackage("example.com/finalizer", "finalizer")
+	fn := pkg.NewFunc("test", NoArgsNoRet, InGo)
+	b := fn.MakeBody(1)
+	if !pkg.runtimeSetFinalizerPtr().IsNil() {
+		t.Fatal("missing SetFinalizerPtr was treated as present")
+	}
+	if _, _, ok := b.LowerSetFinalizerCall(nil); ok {
+		t.Fatal("lowered a finalizer without SetFinalizerPtr")
+	}
+	if !pkg.runtimeSetFinalizerPtr().IsNil() {
+		t.Fatal("missing SetFinalizerPtr cache was overwritten")
+	}
+}
+
 func TestEndDefer(t *testing.T) {
 	prog := NewProgram(nil)
 	pkg := prog.NewPackage("foo", "foo")

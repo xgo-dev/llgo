@@ -88,6 +88,95 @@ type cleanupSlot struct {
 	generation uint32
 }
 
+type pointerFinalizerEntry struct {
+	fn     func(unsafe.Pointer)
+	prevFn bdwgc.FinalizerFunc
+	prevCb unsafe.Pointer
+	arg    unsafe.Pointer
+	next   unsafe.Pointer
+	state  int32
+}
+
+const (
+	pointerFinalizerActive int32 = iota
+	pointerFinalizerQueued
+	pointerFinalizerRunning
+	pointerFinalizerStopped
+)
+
+// RunPointerFinalizers drains typed finalizers queued by BDWGC callbacks.
+func RunPointerFinalizers() {
+	// BDWGC callbacks publish a LIFO list without taking a lock. Reverse it
+	// after detaching so finalizers retain their arrival order.
+	head := (*pointerFinalizerEntry)(atomic.Exchange(&pointerFinalizers.pending, nil))
+	var queue *pointerFinalizerEntry
+	for head != nil {
+		next := (*pointerFinalizerEntry)(atomic.Load(&head.next))
+		head.next = unsafe.Pointer(queue)
+		queue = head
+		head = next
+	}
+	var done []*pointerFinalizerEntry
+	for e := queue; e != nil; e = (*pointerFinalizerEntry)(e.next) {
+		oldState, _ := atomic.CompareAndExchange(&e.state, pointerFinalizerQueued, pointerFinalizerRunning)
+		if oldState != pointerFinalizerQueued {
+			continue
+		}
+		if e.prevFn != nil {
+			e.prevFn(e.arg, e.prevCb)
+		}
+		e.fn(e.arg)
+		done = append(done, e)
+	}
+	if len(done) != 0 {
+		pointerFinalizers.mu.Lock()
+		for _, e := range done {
+			// Complement the address so this uintptr key cannot retain the object.
+			key := ^uintptr(e.arg)
+			if pointerFinalizers.m[key] == e {
+				delete(pointerFinalizers.m, key)
+			}
+		}
+		pointerFinalizers.mu.Unlock()
+	}
+}
+
+var pointerFinalizers struct {
+	once    psync.Once
+	mu      psync.Mutex
+	m       map[uintptr]*pointerFinalizerEntry
+	pending unsafe.Pointer
+}
+
+// CancelBoxedFinalizer is installed by the public runtime package. A lowered
+// SetFinalizer(nil) must also drop a leftover any-argument registration that
+// the typed table cannot see. If restore is true, BDWGC is returned to that
+// entry's previous callback so an AddCleanup chain is not discarded.
+var CancelBoxedFinalizer func(obj unsafe.Pointer, restore bool) bool
+
+func initPointerFinalizers() {
+	pointerFinalizers.mu.Init(nil)
+	pointerFinalizers.m = make(map[uintptr]*pointerFinalizerEntry)
+}
+
+func pointerFinalizerCallback(ptr unsafe.Pointer, cb unsafe.Pointer) {
+	e := (*pointerFinalizerEntry)(cb)
+	// Claim the entry before publishing it. Cancellation can then prevent a
+	// callback that races with BDWGC's callback thread from entering the queue.
+	oldState, _ := atomic.CompareAndExchange(&e.state, pointerFinalizerActive, pointerFinalizerQueued)
+	if oldState != pointerFinalizerActive {
+		return
+	}
+	e.arg = ptr
+	for {
+		head := atomic.Load(&pointerFinalizers.pending)
+		atomic.Store(&e.next, head)
+		if _, ok := atomic.CompareAndExchange(&pointerFinalizers.pending, head, unsafe.Pointer(e)); ok {
+			return
+		}
+	}
+}
+
 // cleanupSlots keeps callback entries reachable without storing an object
 // pointer in runtime.Cleanup. Slots are reused only after BDWGC invokes the
 // finalizer, and the generation in each id makes stale Cleanup values harmless.
@@ -198,6 +287,67 @@ func AddCleanupPtr(ptr unsafe.Pointer, cleanup func()) (cancel func()) {
 	registerCleanupPtr(ptr, e)
 	return func() {
 		atomic.Store(&e.state, cleanupStopped)
+	}
+}
+
+// SetFinalizerPtr registers a compiler-generated fixed-pointer wrapper. It has
+// an independent registry and replacement semantics from AddCleanupPtr.
+func SetFinalizerPtr(obj unsafe.Pointer, finalizer func(unsafe.Pointer)) {
+	if obj == nil {
+		panic("runtime.SetFinalizerPtr: ptr is nil")
+	}
+	pointerFinalizers.once.Do(initPointerFinalizers)
+	// Complement the address so this uintptr key cannot retain the object.
+	key := ^uintptr(obj)
+	var e *pointerFinalizerEntry
+	if finalizer != nil {
+		// Keep allocation out of the registry critical section. The callback is
+		// lock-free because BDWGC may run it during this allocation.
+		e = &pointerFinalizerEntry{fn: finalizer}
+	}
+
+	pointerFinalizers.mu.Lock()
+	old := pointerFinalizers.m[key]
+	delete(pointerFinalizers.m, key)
+	if old != nil {
+		// The BDWGC callback may already have published old on the pending
+		// list. Mark it stopped so a later drain cannot invoke it.
+		atomic.Store(&old.state, pointerFinalizerStopped)
+	}
+	if finalizer == nil {
+		cancelPointerFinalizer(obj, old)
+		pointerFinalizers.mu.Unlock()
+		return
+	}
+	if old != nil {
+		var ignoredFn bdwgc.FinalizerFunc
+		var ignoredCb unsafe.Pointer
+		bdwgc.RegisterFinalizer(obj, old.prevFn, old.prevCb, &ignoredFn, &ignoredCb)
+	}
+
+	var ignoredFn bdwgc.FinalizerFunc
+	var ignoredCb unsafe.Pointer
+	bdwgc.RegisterFinalizer(obj, pointerFinalizerCallback, unsafe.Pointer(e), &ignoredFn, &ignoredCb)
+	e.prevFn = ignoredFn
+	e.prevCb = ignoredCb
+	pointerFinalizers.m[key] = e
+	pointerFinalizers.mu.Unlock()
+}
+
+func cancelPointerFinalizer(obj unsafe.Pointer, old *pointerFinalizerEntry) {
+	if old != nil {
+		// Stop a leftover boxed registration without restoring it: old.prevFn
+		// is the cleanup chain, or a boxed callback that now chains to it.
+		if CancelBoxedFinalizer != nil {
+			CancelBoxedFinalizer(obj, false)
+		}
+		var ignoredFn bdwgc.FinalizerFunc
+		var ignoredCb unsafe.Pointer
+		bdwgc.RegisterFinalizer(obj, old.prevFn, old.prevCb, &ignoredFn, &ignoredCb)
+		return
+	}
+	if CancelBoxedFinalizer != nil {
+		CancelBoxedFinalizer(obj, true)
 	}
 }
 
