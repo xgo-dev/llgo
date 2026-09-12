@@ -3,7 +3,6 @@
 package llgoext
 
 import (
-	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -32,31 +31,20 @@ func TestRuntimeFuncInfoKeepsSourceName(t *testing.T) {
 }
 
 func TestRuntimeFuncInfoFramePCStatementLine(t *testing.T) {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("current source file is unavailable")
-	}
-	source, err := os.ReadFile(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := 0
-	for index, line := range strings.Split(string(source), "\n") {
-		if strings.HasSuffix(strings.TrimSpace(line), "// CALLERS_PC_MARK") {
-			want = index + 1
-			break
-		}
-	}
-	if want == 0 {
-		t.Fatal("CALLERS_PC_MARK is missing")
-	}
-	checkRuntimeFuncInfoFramePCStatementLine(t, want)
+	checkRuntimeFuncInfoFramePCStatementLine(t)
 }
 
 //go:noinline
-func checkRuntimeFuncInfoFramePCStatementLine(t *testing.T, want int) {
+func checkRuntimeFuncInfoFramePCStatementLine(t *testing.T) {
 	var pcs [8]uintptr
+	_, wantFile, wantLine, ok := runtime.Caller(0)
 	n := runtime.Callers(0, pcs[:]) // CALLERS_PC_MARK
+	if !ok {
+		t.Fatal("current source position is unavailable")
+	}
+	// The Callers statement immediately follows the Caller statement, so this
+	// remains independent of access to the source tree at run time.
+	wantLine++
 	frames := runtime.CallersFrames(pcs[:n])
 	for {
 		frame, more := frames.Next()
@@ -66,8 +54,8 @@ func checkRuntimeFuncInfoFramePCStatementLine(t *testing.T, want int) {
 				t.Fatal("FuncForPC(pc-1) returned nil")
 			}
 			file, line := fn.FileLine(frame.PC - 1)
-			if !strings.HasSuffix(file, "runtime_funcinfo_test.go") || line != want {
-				t.Fatalf("Func.FileLine(pc-1) = %s:%d, want line %d", file, line, want)
+			if file != wantFile || line != wantLine {
+				t.Fatalf("Func.FileLine(pc-1) = %s:%d, want %s:%d", file, line, wantFile, wantLine)
 			}
 			return
 		}
