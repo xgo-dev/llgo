@@ -36,28 +36,39 @@ func TestWasmRuntimeSourcePatchTypeChecks(t *testing.T) {
 		{name: "WASI GC wasm32", goos: "wasip1", abi: crosscompile.WasmABIWASIPreview1, buildFlags: []string{"-tags=llgo,llgo.wasm.wasi,llgo.wasm.gc.linear"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			cfgEnv := append(os.Environ(), "GOOS="+test.goos, "GOARCH=wasm")
-			goroot, goversion, err := env.GOROOTAndGOVERSIONWithEnv(cfgEnv)
+			cfgEnv := withEnv(os.Environ(), "GOOS="+test.goos, "GOARCH=wasm")
+			sourceGo, err := resolveSourceGoConfig(commandEnv{environ: cfgEnv}, "")
 			if err != nil {
 				t.Fatal(err)
 			}
-			overlay, _, err := buildSourcePatchOverlayForGOROOT(nil, env.LLGoRuntimeDir(), goroot, sourcePatchBuildContext{
+			cfgEnv = sourceGo.apply(cfgEnv)
+			overlay, llgoFiles, err := buildSourcePatchOverlayForGOROOT(nil, env.LLGoRuntimeDir(), sourceGo.GOROOT, sourcePatchBuildContext{
 				goos:       test.goos,
 				goarch:     "wasm",
-				goversion:  goversion,
+				goversion:  sourceGo.GOVERSION,
+				toolTags:   sourceGo.toolTags,
 				buildFlags: test.buildFlags,
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			pkgs, err := packages.LoadEx(nil, func(sizes types.Sizes, _ string, arch string) types.Sizes {
+			// Use the same source-patch path as Build. Passing these overlays
+			// to cmd/go is invalid when a downloaded GOROOT is in GOMODCACHE.
+			dedup := packages.NewDeduper()
+			dedup.SetLLGoFiles(llgoFiles)
+			pkgs, err := packages.LoadEx(dedup, func(sizes types.Sizes, _ string, arch string) types.Sizes {
 				return effectiveTypeSizes(sizes, arch, test.abi)
 			}, &packages.Config{
 				Mode:       loadSyntax | packages.NeedDeps | packages.NeedModule | packages.NeedExportFile,
 				Env:        cfgEnv,
 				Fset:       token.NewFileSet(),
-				Overlay:    overlay,
 				BuildFlags: test.buildFlags,
+				ParseFile: func(fset *token.FileSet, filename string, src []byte) (*ast.File, error) {
+					if data, ok := overlay[filename]; ok {
+						src = data
+					}
+					return parser.ParseFile(fset, filename, src, parser.AllErrors|parser.ParseComments)
+				},
 			}, "runtime")
 			if err != nil {
 				t.Fatal(err)
