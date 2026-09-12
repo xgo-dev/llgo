@@ -95,9 +95,12 @@ func TestWasm32PointerSlotsConvertAtMemoryBoundary(t *testing.T) {
 		"alloca { ptr, i32 }, align 8",
 		"global { ptr, i32 }",
 		"ptr @\"example.com/p.target\", i32 0",
-		"store i64 ptrtoint",
+		"ptrtoint (ptr",
+		"to i32",
+		"zext i32",
 		"load i64",
-		"inttoptr i64",
+		"trunc i64",
+		"inttoptr i32",
 	} {
 		if !strings.Contains(ir, want) {
 			t.Fatalf("J32 pointer slot IR does not contain %q:\n%s", want, ir)
@@ -105,6 +108,63 @@ func TestWasm32PointerSlotsConvertAtMemoryBoundary(t *testing.T) {
 	}
 	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
 		t.Fatalf("invalid J32 pointer-storage module: %v\n%s", err, ir)
+	}
+}
+
+func TestWasm32GEPIndexesUsePhysicalAddressWidth(t *testing.T) {
+	prog := newJ32Program(t)
+	setTestRuntime(t, prog)
+	prog.disableBoundsChecks = true
+	pkg := prog.NewPackage("p", "example.com/p")
+	index := types.NewParam(token.NoPos, nil, "index", types.Typ[types.Int])
+
+	str := types.NewParam(token.NoPos, nil, "value", types.Typ[types.String])
+	byteResult := types.NewParam(token.NoPos, nil, "", types.Typ[types.Byte])
+	indexSig := types.NewSignatureType(nil, nil, nil, types.NewTuple(str, index), types.NewTuple(byteResult), false)
+	indexFn := pkg.NewFunc("example.com/p.index", indexSig, InGo)
+	ib := indexFn.MakeBody(1)
+	ib.Return(ib.Index(ib.Param(0), ib.Param(1), func() (Expr, bool) { return Nil, false }))
+	ib.EndBuild()
+
+	ptrType := types.NewPointer(types.Typ[types.Byte])
+	ptr := types.NewParam(token.NoPos, nil, "ptr", ptrType)
+	ptrResult := types.NewParam(token.NoPos, nil, "", ptrType)
+	advanceSig := types.NewSignatureType(nil, nil, nil, types.NewTuple(ptr, index), types.NewTuple(ptrResult), false)
+	advanceFn := pkg.NewFunc("example.com/p.advance", advanceSig, InGo)
+	ab := advanceFn.MakeBody(1)
+	ab.Return(ab.Advance(ab.Param(0), ab.Param(1)))
+	ab.EndBuild()
+
+	arrayType := types.NewArray(types.Typ[types.Byte], 16)
+	array := types.NewParam(token.NoPos, nil, "array", types.NewPointer(arrayType))
+	addrResult := types.NewParam(token.NoPos, nil, "", types.NewPointer(types.Typ[types.Byte]))
+	addrSig := types.NewSignatureType(nil, nil, nil, types.NewTuple(array, index), types.NewTuple(addrResult), false)
+	addrFn := pkg.NewFunc("example.com/p.addr", addrSig, InGo)
+	adb := addrFn.MakeBody(1)
+	adb.Return(adb.IndexAddr(adb.Param(0), adb.Param(1)))
+	adb.EndBuild()
+
+	ir := pkg.Module().String()
+	if got := strings.Count(ir, "trunc i64"); got < 3 {
+		t.Fatalf("J32 GEP paths contain %d physical-index truncations, want at least 3:\n%s", got, ir)
+	}
+	var physicalGEPs int
+	for _, line := range strings.Split(ir, "\n") {
+		if !strings.Contains(line, "getelementptr") || !strings.Contains(line, "i8, ptr") {
+			continue
+		}
+		if strings.Contains(line, ", i64 ") {
+			t.Fatalf("J32 GEP retains an i64 index: %s\n%s", line, ir)
+		}
+		if strings.Contains(line, ", i32 ") {
+			physicalGEPs++
+		}
+	}
+	if physicalGEPs < 3 {
+		t.Fatalf("J32 GEP paths contain %d i32 indexes, want at least 3:\n%s", physicalGEPs, ir)
+	}
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("invalid J32 GEP module: %v\n%s", err, ir)
 	}
 }
 

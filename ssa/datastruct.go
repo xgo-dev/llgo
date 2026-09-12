@@ -157,12 +157,14 @@ func (b Builder) IndexAddr(x, idx Expr) Expr {
 		ptr := b.SliceData(x)
 		max := b.SliceLen(x)
 		idx = b.checkIndex(idx, max)
+		idx = b.physicalPointerIndex(idx)
 		indices := []llvm.Value{idx.impl}
 		return Expr{llvm.CreateInBoundsGEP(b.impl, prog.storageType(telem), ptr.impl, indices), pt}
 	case *types.Pointer:
 		ar := t.Elem().Underlying().(*types.Array)
 		max := prog.IntVal(uint64(ar.Len()), prog.Int())
 		idx = b.checkIndex(idx, max)
+		idx = b.physicalPointerIndex(idx)
 		if !isKnownNonNilArrayBase(x.impl) {
 			b.AssertNilDeref(x)
 		}
@@ -370,6 +372,7 @@ func (b Builder) Index(x, idx Expr, takeAddr func() (addr Expr, zero bool)) Expr
 		max = prog.IntVal(uint64(t.Len()), prog.Int())
 	}
 	idx = b.checkIndex(idx, max)
+	idx = b.physicalPointerIndex(idx)
 	if zero {
 		return prog.Zero(telem)
 	}
