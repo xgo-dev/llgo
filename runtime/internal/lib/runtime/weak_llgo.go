@@ -13,6 +13,7 @@ import (
 type weakHandle struct {
 	key  uintptr
 	live uint32
+	next unsafe.Pointer // next dead handle; never a pointer to the referent
 }
 
 // BDWGC conservatively treats pointer-looking uintptr values as live roots.
@@ -30,11 +31,40 @@ var weakState struct {
 	once psync.Once
 	mu   psync.Mutex
 	m    map[uintptr]*weakHandle
+	dead unsafe.Pointer
 }
 
 func initWeakState() {
 	weakState.mu.Init(nil)
 	weakState.m = make(map[uintptr]*weakHandle)
+}
+
+// retireWeakHandle runs inside a GC finalizer. Even a map lookup can allocate
+// and invoke another finalizer on the same thread, so this path must neither
+// allocate nor take weakState.mu. Each handle is published exactly once.
+func retireWeakHandle(h *weakHandle) {
+	latomic.StoreUint32(&h.live, 0)
+	for {
+		head := latomic.LoadPointer(&weakState.dead)
+		h.next = head
+		if latomic.CompareAndSwapPointer(&weakState.dead, head, unsafe.Pointer(h)) {
+			return
+		}
+	}
+}
+
+// drainWeakHandles runs during registration with weakState.mu held. Detach only
+// one batch so concurrent cleanup cannot keep a registration here indefinitely.
+func drainWeakHandles() {
+	for h := (*weakHandle)(latomic.SwapPointer(&weakState.dead, nil)); h != nil; {
+		next := (*weakHandle)(h.next)
+		h.next = nil
+		// The address may already belong to a new object with a new handle.
+		if weakState.m[h.key] == h {
+			delete(weakState.m, h.key)
+		}
+		h = next
+	}
 }
 
 func llgoRegisterWeakPointer(p unsafe.Pointer) unsafe.Pointer {
@@ -45,7 +75,9 @@ func llgoRegisterWeakPointer(p unsafe.Pointer) unsafe.Pointer {
 
 	key := encodeWeakPointer(p)
 	weakState.mu.Lock()
-	if h := weakState.m[key]; h != nil {
+	drainWeakHandles()
+	// A cleanup may mark a handle dead before publishing it to the queue.
+	if h := weakState.m[key]; h != nil && latomic.LoadUint32(&h.live) != 0 {
 		weakState.mu.Unlock()
 		return unsafe.Pointer(h)
 	}
@@ -53,15 +85,9 @@ func llgoRegisterWeakPointer(p unsafe.Pointer) unsafe.Pointer {
 	weakState.m[key] = h
 	weakState.mu.Unlock()
 
-	// Keep the cleanup closure limited to encoded identities. Capturing p here
-	// would turn the cleanup itself into a strong reference to the referent.
+	// Capture only the handle with its encoded identity, never the referent p.
 	llrt.AddCleanupPtr(p, func() {
-		latomic.StoreUint32(&h.live, 0)
-		weakState.mu.Lock()
-		if weakState.m[key] == h {
-			delete(weakState.m, key)
-		}
-		weakState.mu.Unlock()
+		retireWeakHandle(h)
 	})
 	return unsafe.Pointer(h)
 }

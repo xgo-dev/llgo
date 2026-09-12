@@ -128,3 +128,24 @@ func TestPointerNilInput(t *testing.T) {
 		t.Errorf("Make(nil).Value() = %v, want nil", val)
 	}
 }
+
+func TestPointerIdentity(t *testing.T) {
+	x, y := new([256]byte), new([256]byte)
+	x[0], y[0] = 1, 2
+	xw, yw := weak.Make(x), weak.Make(y)
+	if xw != weak.Make(x) {
+		t.Fatal("repeated Make returned a different handle for the same object")
+	}
+	if xw == yw {
+		t.Fatal("Make returned the same handle for distinct objects")
+	}
+	runtime.GC()
+	if xw != weak.Make(x) || yw != weak.Make(y) {
+		t.Fatal("GC changed the identity of a live weak pointer")
+	}
+	if xw.Value() != x || yw.Value() != y {
+		t.Fatal("GC invalidated a live weak pointer")
+	}
+	runtime.KeepAlive(x)
+	runtime.KeepAlive(y)
+}
