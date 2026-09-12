@@ -368,6 +368,44 @@ func unrelated() {}
 	}
 }
 
+func TestCompileRuntimeNilCheckCondition(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, llssa.PkgRuntime, `package runtime
+//go:noinline
+func AssertNilDeref(b bool) { if b { for {} } }
+func ordinary(b bool) { if b { for {} } }
+`)
+	for _, target := range []*llssa.Target{
+		{GOOS: "linux", GOARCH: "amd64"},
+		{GOOS: "js", GOARCH: "wasm"},
+	} {
+		t.Run(target.GOARCH, func(t *testing.T) {
+			prog := newLLSSAProgForTarget(t, target)
+			pkg, err := NewPackage(prog, ssapkg, files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const barrier = `asm sideeffect "", "=r,0"`
+			for _, name := range []string{"AssertNilDeref", "ordinary"} {
+				ir := pkg.Module().NamedFunction(llssa.PkgRuntime + "." + name).String()
+				want := name == "AssertNilDeref" && target.GOARCH != "wasm"
+				if strings.Contains(ir, barrier) != want {
+					t.Fatalf("unexpected LTO condition barrier for %s:\n%s", name, ir)
+				}
+				if want {
+					for _, line := range strings.Split(ir, "\n") {
+						if strings.Contains(line, barrier) {
+							result := strings.TrimSpace(strings.Split(line, " = ")[0])
+							if !strings.Contains(ir, "br i1 "+result+",") {
+								t.Fatalf("nil helper does not branch on the opaque condition:\n%s", ir)
+							}
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestCompileRuntimeCallerPanicPCLineMetadata(t *testing.T) {
 	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
 import "runtime"
@@ -439,11 +477,13 @@ func pinnedPanicSite() {
 		}
 		return count
 	}
-	if got := countPCLine("example.com/foo.repeatedPanicLeaf", "repeated_panic_site.go", 345); got != 1 {
-		t.Fatalf("same-line panic sites in one basic block produced %d metadata records, want 1:\n%s", got, ir)
+	// The source block shares one anchor, while each cold nil-check block
+	// needs its own anchor in case the backend moves it after another line.
+	if got := countPCLine("example.com/foo.repeatedPanicLeaf", "repeated_panic_site.go", 345); got != 3 {
+		t.Fatalf("one source block and two nil-check blocks produced %d metadata records, want 3:\n%s", got, ir)
 	}
-	if got := countPCLine("example.com/foo.branchPanicLeaf", "branch_panic_site.go", 456); got != 2 {
-		t.Fatalf("same-line panic sites in separate basic blocks produced %d metadata records, want 2:\n%s", got, ir)
+	if got := countPCLine("example.com/foo.branchPanicLeaf", "branch_panic_site.go", 456); got != 4 {
+		t.Fatalf("two source blocks and two nil-check blocks produced %d metadata records, want 4:\n%s", got, ir)
 	}
 	if strings.Contains(ir, `!"non_recover_site.go"`) {
 		t.Fatalf("ordinary pinned function unexpectedly received implicit panic-site metadata:\n%s", ir)

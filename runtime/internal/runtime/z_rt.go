@@ -37,7 +37,6 @@ type panicNode struct {
 type recoverState struct {
 	frame  unsafe.Pointer
 	panic_ unsafe.Pointer
-	active unsafe.Pointer
 }
 
 // movePanicToDefer advances a panic and the goroutine's unwind cursor to the
@@ -72,7 +71,9 @@ func Recover(token unsafe.Pointer) (ret any) {
 	if ptr != nil && ptr == gp.panic_ {
 		node := (*panicNode)(ptr)
 		gp.panic_ = node.prev
-		gp.recoverFrame = nil
+		// Keep the activation token until its deferred call returns, so a
+		// same-value repanic can reuse the original snapshot. Clearing the
+		// eligible panic still prevents any subsequent recover from succeeding.
 		gp.recoverPanic = nil
 		ret = node.arg
 		c.Free(unsafe.Pointer(node))
@@ -89,8 +90,10 @@ func Recover(token unsafe.Pointer) (ret any) {
 		// to mark.
 		if RecoverMark != nil {
 			RecoverMark()
+			if gp.panicPCs.n != 0 {
+				gp.panicPCs.recovered = recoveredPanic{value: ret, frame: gp.recoverFrame}
+			}
 		}
-		rememberRecoveredPanic(ret, gp.recoverActive)
 	}
 	return
 }
@@ -103,9 +106,8 @@ func Recover(token unsafe.Pointer) (ret any) {
 // counterpart to gorecover locating the matching _panic through stack frames.
 func StartRecoverFrame(frame unsafe.Pointer) recoverState {
 	gp := getg()
-	old := recoverState{frame: gp.recoverFrame, panic_: gp.recoverPanic, active: gp.recoverActive}
+	old := recoverState{frame: gp.recoverFrame, panic_: gp.recoverPanic}
 	gp.recoverFrame = frame
-	gp.recoverActive = frame
 	gp.recoverPanic = nil
 	if ptr := gp.panic_; ptr != nil && (*panicNode)(ptr).defer_ == gp.defer_ {
 		gp.recoverPanic = ptr
@@ -116,10 +118,11 @@ func StartRecoverFrame(frame unsafe.Pointer) recoverState {
 // EndRecoverFrame restores direct recover permission after a deferred call.
 func EndRecoverFrame(state recoverState) {
 	gp := getg()
-	clearRecoveredPanic(gp.recoverActive)
+	if gp.panicPCs.recovered.frame == gp.recoverFrame {
+		gp.panicPCs.recovered = recoveredPanic{}
+	}
 	gp.recoverFrame = state.frame
 	gp.recoverPanic = state.panic_
-	gp.recoverActive = state.active
 }
 
 // BindRecoverFrame replaces a deferred function's code token with the unique
@@ -129,9 +132,6 @@ func BindRecoverFrame(function, activation unsafe.Pointer) {
 	gp := getg()
 	if gp.recoverFrame == function {
 		gp.recoverFrame = activation
-	}
-	if gp.recoverActive == function {
-		gp.recoverActive = activation
 	}
 }
 
@@ -151,7 +151,13 @@ func StartRecoverFrameAlias(from, to unsafe.Pointer) unsafe.Pointer {
 // wrappers share their caller's eligible panic rather than opening a nested
 // defer scope.
 func EndRecoverFrameAlias(frame unsafe.Pointer) {
-	getg().recoverFrame = frame
+	gp := getg()
+	// The wrapped activation has returned too; do not retain its recovered
+	// value when restoring the transparent wrapper's direct-call token.
+	if gp.recoverFrame != frame && gp.panicPCs.recovered.frame == gp.recoverFrame {
+		gp.panicPCs.recovered = recoveredPanic{}
+	}
+	gp.recoverFrame = frame
 }
 
 // panicIsSuspended reports whether ptr belongs to an outer panic whose direct
@@ -175,8 +181,7 @@ func (gp *g) abortPanics() {
 	}
 	gp.recoverFrame = nil
 	gp.recoverPanic = nil
-	gp.recoverActive = nil
-	gp.panicPCs.clearRecovered()
+	gp.panicPCs.recovered = recoveredPanic{}
 	if discarded && PanicRecovered != nil {
 		PanicRecovered()
 	}
@@ -200,7 +205,9 @@ func Panic(v any) {
 	if v == nil {
 		v = &PanicNilError{}
 	}
-	SavePanicCallerFrames(v)
+	if PanicPCSnapshot != nil {
+		PanicPCSnapshot(v)
+	}
 	gp := getg()
 	ptr := (*panicNode)(c.Malloc(unsafe.Sizeof(panicNode{})))
 	ptr.prev = gp.panic_

@@ -183,6 +183,7 @@ type context struct {
 	safepointEntry       bool
 	safepoints           map[ssa.Instruction]struct{}
 	pcLineSeq            uint64
+	panicSitePos         token.Pos
 	// The runtime PC-line table stores file and line, but not column. Keep the
 	// last emitted position within one SSA basic block so repeated checks for a
 	// single source line can share an anchor.
@@ -774,6 +775,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			for _, childInit := range childInits {
 				childInit()
 			}
+			p.panicSitePos = token.NoPos
 			b.EndBuild()
 		})
 	}
@@ -1032,6 +1034,7 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 	// block's anchor, so deduplication must never cross a block boundary.
 	p.lastPCLineFile = ""
 	p.lastPCLineLine = 0
+	p.panicSitePos = token.NoPos
 	oldLocalBlock := p.locality.function.block
 	p.locality.function.block = block
 	defer func() { p.locality.function.block = oldLocalBlock }()
@@ -2189,6 +2192,7 @@ func (p *context) getDebugLocScope(v *ssa.Function, pos token.Pos) *types.Scope 
 }
 
 func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
+	p.panicSitePos = token.NoPos
 	if _, ok := p.staticInitInstrs[instr]; ok {
 		return
 	}

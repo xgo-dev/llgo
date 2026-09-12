@@ -108,6 +108,38 @@ func callerLaterSameValuePanic() {
 	panic(recovered) // LATER_SAME_VALUE_PANIC_MARK
 }
 
+type callerRepanicReceiver struct{}
+
+//go:noinline
+func (callerRepanicReceiver) repanic() {
+	if v := recover(); v != nil {
+		panic(v)
+	}
+}
+
+//go:noinline
+func callerWrappedRepanic(indirect bool) {
+	// A pointer implementing this value-receiver method needs a transparent
+	// wrapper. Only the direct deferred invocation is allowed to recover.
+	var receiver interface{ repanic() } = &callerRepanicReceiver{}
+	if indirect {
+		defer func() {
+			v := recover()
+			receiver.repanic()
+			panic(v)
+		}()
+	} else {
+		defer receiver.repanic()
+	}
+	callerRepanicOrigin()
+}
+
+//go:noinline
+func callerSliceRepanic() {
+	defer func() { panic(recover()) }()
+	panic([]int{1}) // SLICE_REPANIC_ORIGIN_MARK
+}
+
 func TestCallerRepanicTraceback(t *testing.T) {
 	mode := os.Getenv(callerRepanicChild)
 	switch mode {
@@ -119,6 +151,12 @@ func TestCallerRepanicTraceback(t *testing.T) {
 		return
 	case "later":
 		callerLaterSameValuePanic()
+		return
+	case "wrapper", "indirect-wrapper":
+		callerWrappedRepanic(mode == "indirect-wrapper")
+		return
+	case "slice":
+		callerSliceRepanic()
 		return
 	}
 
@@ -142,13 +180,19 @@ func TestCallerRepanicTraceback(t *testing.T) {
 		return string(output)
 	}
 
-	same := run("same")
-	for _, want := range []string{
-		"callerRepanicOrigin",
-		"caller_runtime_test.go:" + strconv.Itoa(markerLine(string(source), "REPANIC_ORIGIN_MARK")),
-	} {
-		if !strings.Contains(same, want) {
-			t.Fatalf("same-value repanic traceback is missing %q:\n%s", want, same)
+	for _, mode := range []string{"same", "wrapper", "indirect-wrapper", "slice"} {
+		name, marker := "callerRepanicOrigin", "REPANIC_ORIGIN_MARK"
+		if mode == "slice" {
+			name, marker = "callerSliceRepanic", "SLICE_REPANIC_ORIGIN_MARK"
+		}
+		same := run(mode)
+		for _, want := range []string{
+			name,
+			"caller_runtime_test.go:" + strconv.Itoa(markerLine(string(source), marker)),
+		} {
+			if !strings.Contains(same, want) {
+				t.Fatalf("%s repanic traceback is missing %q:\n%s", mode, want, same)
+			}
 		}
 	}
 
