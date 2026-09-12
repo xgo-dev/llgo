@@ -30,6 +30,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/funcattrs"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/locality"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -398,6 +399,9 @@ func (p *context) processNoInterfaceByDoc(doc *ast.CommentGroup, fullName string
 			p.prog.SetNoInterfaceMethod(fullName)
 			return
 		}
+		if isFunctionAttributeComment(line) {
+			continue
+		}
 		if !strings.HasPrefix(line, "//go:") {
 			return
 		}
@@ -433,11 +437,18 @@ func (p *context) initLinkname(line string, allowExport bool, f func(inPkgName s
 		line = line + " " + funcName
 		p.initLink(line, len(export), true, f)
 		return hasLinkname
-	} else if strings.HasPrefix(line, directive) {
+	} else if strings.HasPrefix(line, directive) || isFunctionAttributeComment(line) {
 		// skip unknown annotation but continue to parse the next annotation
 		return unknownDirective
 	}
 	return noDirective
+}
+
+// Source contracts are consumed by the syntax preload. They must not stop the
+// legacy backward scan from finding a preceding export or linkname directive.
+func isFunctionAttributeComment(line string) bool {
+	item, ok := directive.Parse(&ast.Comment{Text: line})
+	return ok && item.Name == "llgo:attr"
 }
 
 func (p *context) initLink(line string, prefix int, export bool, f func(inPkgName string, isExport bool) (fullName string, isVar, ok bool)) {
@@ -719,6 +730,7 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 		pkg = origin.Pkg.Pkg
 		p.ensureLoaded(pkg)
 		orgName = funcName(pkg, origin, true)
+		p.prog.SetFunctionAttributeOrigin(funcName(pkg, fn, false), orgName)
 	} else {
 		fname := fn.Name()
 		if checkCgo(fname) && !cgoIgnored(fname) {
@@ -901,6 +913,9 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 				break
 			}
 		}
+		if err := validateAttributePlacement(fset, file); err != nil {
+			return err
+		}
 		for _, decl := range file.Decls {
 			switch decl := decl.(type) {
 			case *ast.FuncDecl:
@@ -912,6 +927,21 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 				}
 				fullName, inPkgName := astFuncName(pkgPath, decl)
 				syms[inPkgName] = fullName
+				attrs, err := funcattrs.Parse(fset, decl)
+				if err != nil {
+					return err
+				}
+				if err = prog.SetFunctionAttributes(fullName, attrs); err != nil {
+					return err
+				}
+				if len(attrs) != 0 {
+					if fn := sourceAttributeFunction(pkg, decl); fn != nil {
+						bits := int(prog.SizeOf(prog.Int()) * 8)
+						if err = funcattrs.Validate(attrs, fn.Type().(*types.Signature), bits, true); err != nil {
+							return err
+						}
+					}
+				}
 				hasLinkname, err := collectDeclarationDirectivesWithOptions(prog, fset, decl.Doc, fullName, inPkgName, decl.Pos(), options)
 				if err != nil {
 					return err
@@ -923,6 +953,21 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 				}
 				ctx.processNoInterfaceByDoc(decl.Doc, fullName)
 			case *ast.GenDecl:
+				if err := funcattrs.Reject(fset, decl.Doc); err != nil {
+					return err
+				}
+				for _, spec := range decl.Specs {
+					switch spec := spec.(type) {
+					case *ast.TypeSpec:
+						if err := funcattrs.Reject(fset, spec.Doc); err != nil {
+							return err
+						}
+					case *ast.ValueSpec:
+						if err := funcattrs.Reject(fset, spec.Doc); err != nil {
+							return err
+						}
+					}
+				}
 				if decl.Tok == token.VAR {
 					for _, spec := range decl.Specs {
 						for _, name := range spec.(*ast.ValueSpec).Names {

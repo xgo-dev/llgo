@@ -1,0 +1,263 @@
+//go:build llgo
+
+package test
+
+import (
+	"testing"
+	"unsafe"
+
+	rt "github.com/xgo-dev/llgo/runtime/internal/runtime"
+)
+
+//go:noinline
+//llgo:attr result(0) nonnull same_as(param(p))
+func checkedAttributePointer[T any](p *T) *T {
+	if p == nil {
+		panic("nil attribute pointer")
+	}
+	return p
+}
+
+type attributeReceiver struct{ value int }
+
+//llgo:attr result(0) nonnull same_as(receiver)
+func (p *attributeReceiver) checked() *attributeReceiver {
+	if p == nil {
+		panic("nil attribute receiver")
+	}
+	return p
+}
+
+//go:noinline
+//llgo:attr result(0) range(0, 64)
+func attributeBounded(x uint32) uint32 { return x & 63 }
+
+type attributeContainer struct {
+	P       *int
+	N       uint32
+	Payload [64]byte
+}
+
+//go:noinline
+//llgo:attr memory(none)
+//llgo:attr param(p) nonnull access(none) capture(results)
+//llgo:attr result(pointer) nonnull same_as(param(p))
+//llgo:attr result(count) range(0,64)
+func attributeAggregate(input attributeContainer, p *int, n uint32) (pointer *int, count uint32, result attributeContainer) {
+	input.P = p
+	input.N = n & 63
+	return p, input.N, input
+}
+
+//go:noinline
+//llgo:attr result(0) same_as(param(p))
+func attributeEntrySnapshot(p *int, source *attributeContainer, replacement *int) *int {
+	source.P = replacement
+	return p
+}
+
+type attributePacked struct {
+	Signed int8
+	Count  uint8
+	Bytes  [6]byte
+}
+
+//go:noinline
+//llgo:attr param(n) range(-3,5)
+//llgo:attr result(signed) same_as(param(n))
+//llgo:attr result(count) range(0,64)
+func attributePackedRoundTrip(input attributePacked, n int8) (signed int8, count uint8, result attributePacked) {
+	input.Signed = n
+	input.Count &= 63
+	return n, input.Count, input
+}
+
+type attributeLarge struct {
+	P       *int
+	Payload [10000]uint64
+	Count   uint32
+}
+
+//go:noinline
+//llgo:attr param(p) nonnull
+func attributeLargeResult(p *int) (out attributeLarge) {
+	out.P = p
+	out.Payload[0], out.Payload[9999] = 19, 101
+	out.Count = 7
+	return
+}
+
+func TestSourceContractsAfterABI(t *testing.T) {
+	value := 17
+	in := attributeContainer{P: &value, N: 999, Payload: [64]byte{0: 1, 63: 2}}
+	for n := uint32(0); n < 130; n++ {
+		p, count, out := attributeAggregate(in, &value, n)
+		if p != &value || count != n%64 || out.P != &value || out.N != n%64 || out.Payload != in.Payload {
+			t.Fatal("indirect arguments or multiple results changed across ABI conversion")
+		}
+		if in.N != 999 {
+			t.Fatal("callee changed the caller's by-value input")
+		}
+	}
+	replacement := 29
+	old := attributeEntrySnapshot(in.P, &in, &replacement)
+	if old != &value || in.P != &replacement {
+		t.Fatal("same_as reloaded changed input memory")
+	}
+	for n := int8(-3); n < 5; n++ {
+		in := attributePacked{Signed: n, Count: 193, Bytes: [6]byte{0: 11, 5: 253}}
+		signed, count, out := attributePackedRoundTrip(in, n)
+		if signed != n || count != 1 || out.Signed != n || out.Count != 1 || out.Bytes != in.Bytes {
+			t.Fatalf("packed argument or multiple results changed unrelated data: %#v", out)
+		}
+	}
+	large := attributeLargeResult(&value)
+	if large.P != &value || large.Count != 7 || large.Payload[0] != 19 || large.Payload[9999] != 101 {
+		t.Fatal("large indirect result lost values")
+	}
+}
+
+func TestSourceAttributesInOrdinaryPackage(t *testing.T) {
+	x := 37
+	if checkedAttributePointer(&x) != &x {
+		t.Fatal("generic pointer relation changed")
+	}
+	y := "value"
+	if checkedAttributePointer(&y) != &y {
+		t.Fatal("second generic instance changed")
+	}
+	p := &attributeReceiver{value: 19}
+	if p.checked() != p {
+		t.Fatal("receiver relation changed")
+	}
+	for i := uint32(0); i < 130; i++ {
+		if attributeBounded(i) != i%64 {
+			t.Fatal("range contract changed value")
+		}
+	}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("generic nil call lost panic")
+		}
+	}()
+	checkedAttributePointer[int](nil)
+	t.Fatal("generic nil call returned")
+}
+
+//go:linkname runtimeMemequal github.com/xgo-dev/llgo/runtime/internal/runtime.memequal
+func runtimeMemequal(a, b unsafe.Pointer, size uintptr) bool
+
+//go:linkname reflectTypedmemmove reflect.typedmemmove
+func reflectTypedmemmove(typ *rt.Type, dst, src unsafe.Pointer)
+
+func TestRuntimeCheckedPointer(t *testing.T) {
+	x := 42
+	p := unsafe.Pointer(&x)
+	if rt.AssertNilDerefPtr(p) != p {
+		t.Fatal("checked pointer identity changed")
+	}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("nil pointer check did not raise a recoverable panic")
+		}
+	}()
+	rt.AssertNilDerefPtr(nil)
+	t.Fatal("nil pointer check returned")
+}
+
+func TestRuntimeMemoryContracts(t *testing.T) {
+	if !runtimeMemequal(nil, nil, 0) {
+		t.Fatal("zero-byte equality must accept nil")
+	}
+	a, b := [4]byte{1, 2, 3, 4}, [4]byte{1, 2, 3, 4}
+	if !runtimeMemequal(unsafe.Pointer(&a), unsafe.Pointer(&b), 4) {
+		t.Fatal("equal bytes differ")
+	}
+	b[2] = 9
+	if runtimeMemequal(unsafe.Pointer(&a), unsafe.Pointer(&b), 4) {
+		t.Fatal("equality did not observe an intervening write")
+	}
+	// memmove permits overlap in both directions. The reflect linkname entry
+	// must retain the same contract as the compiler's runtime entry.
+	for _, move := range []func(*rt.Type, unsafe.Pointer, unsafe.Pointer){rt.Typedmemmove, reflectTypedmemmove} {
+		x := [5]byte{1, 2, 3, 4, 5}
+		typ := rt.Type{Size_: 4}
+		move(&typ, unsafe.Pointer(&x[1]), unsafe.Pointer(&x[0]))
+		if x != [5]byte{1, 1, 2, 3, 4} {
+			t.Fatalf("forward overlap: %v", x)
+		}
+		move(&typ, unsafe.Pointer(&x[0]), unsafe.Pointer(&x[1]))
+		if x != [5]byte{1, 2, 3, 4, 4} {
+			t.Fatalf("backward overlap: %v", x)
+		}
+		move(nil, nil, nil) // equality fast path does not inspect the type
+	}
+	rt.Typedmemclr(&rt.Type{Size_: 4}, unsafe.Pointer(&a))
+	if a != [4]byte{} {
+		t.Fatalf("clear: %v", a)
+	}
+	buf := [8]byte{7, 7, 7, 7, 7, 7, 7, 7}
+	for _, s := range []string{"", "abc"} {
+		result := rt.CStrCopy(unsafe.Pointer(&buf[0]), *(*rt.String)(unsafe.Pointer(&s)))
+		if unsafe.Pointer(result) != unsafe.Pointer(&buf[0]) || buf[len(s)] != 0 || string(buf[:len(s)]) != s {
+			t.Fatalf("C string copy %q: %v", s, buf)
+		}
+	}
+}
+
+func TestRuntimeReadContracts(t *testing.T) {
+	if rt.MapLen(nil) != 0 || rt.ChanCap(nil) != 0 {
+		t.Fatal("nil length/capacity must be zero")
+	}
+	m := map[int]int{1: 10}
+	mp := (*rt.Map)(*(*unsafe.Pointer)(unsafe.Pointer(&m)))
+	if rt.MapLen(mp) != 1 {
+		t.Fatal("map length")
+	}
+	m[2] = 20
+	if rt.MapLen(mp) != 2 {
+		t.Fatal("map length did not observe insertion")
+	}
+	ch := make(chan int, 3)
+	cp := (*rt.Chan)(*(*unsafe.Pointer)(unsafe.Pointer(&ch)))
+	if rt.ChanCap(cp) != 3 {
+		t.Fatal("channel capacity")
+	}
+	for _, pair := range []struct {
+		a, b        string
+		equal, less bool
+	}{
+		{"", "", true, false}, {"", "x", false, true},
+		{"ab", "abc", false, true}, {"abc", "abd", false, true},
+		{"abc", "abc", true, false}, {"abd", "abc", false, false},
+	} {
+		ra, rb := *(*rt.String)(unsafe.Pointer(&pair.a)), *(*rt.String)(unsafe.Pointer(&pair.b))
+		if rt.StringEqual(ra, rb) != pair.equal || rt.StringLess(ra, rb) != pair.less {
+			t.Fatalf("string comparison: %q %q", pair.a, pair.b)
+		}
+	}
+}
+
+func TestRuntimePanicContracts(t *testing.T) {
+	for _, raise := range []func(){
+		func() { rt.Panic("test") },
+		func() { rt.Panic(nil) },
+		func() { rt.PanicErrorString("test") },
+		func() { rt.PanicIndex(3, 2) },
+		func() { rt.PanicIndexU(3, 2) },
+		func() { rt.PanicSliceConvert(3, 2) },
+		func() { rt.PanicTypeAssertionError("test") },
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("panic was not recoverable")
+				}
+			}()
+			raise()
+			t.Fatal("panic entry returned normally")
+		}()
+	}
+	// Rethrow is also used with no active panic and must return normally.
+	rt.Rethrow(nil)
+}

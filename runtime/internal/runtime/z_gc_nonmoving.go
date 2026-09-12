@@ -26,6 +26,8 @@ import (
 
 // AllocU allocates uninitialized memory and returns a non-nil pointer or panics.
 // Zero-byte requests return the shared zerobase without allocating.
+//
+//llgo:attr result(0) nonnull
 func AllocU(size uintptr) unsafe.Pointer {
 	if size == 0 {
 		return unsafe.Pointer(&zerobase)
@@ -38,10 +40,12 @@ func AllocU(size uintptr) unsafe.Pointer {
 	return ret
 }
 
+//llgo:attr result(0) nonnull
 func AllocZ(size uintptr) unsafe.Pointer {
 	return AllocU(size)
 }
 
+//llgo:attr result(0) nonnull
 func AllocRoot(size uintptr) unsafe.Pointer {
 	if size == 0 {
 		return unsafe.Pointer(&zerobase)
