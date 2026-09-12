@@ -63,17 +63,17 @@ func AssertIndexRange(b bool) {
 	}
 }
 
-//llgo:attribute cold noreturn
+//llgo:attr cold noreturn
 func PanicErrorString(msg string) {
 	panic(errorString(msg))
 }
 
-//llgo:attribute cold noreturn
+//llgo:attr cold noreturn
 func PanicIndex(x int, y int) {
 	panic(boundsError{x: int64(x), signed: true, y: y, code: boundsIndex})
 }
 
-//llgo:attribute cold noreturn
+//llgo:attr cold noreturn
 func PanicIndexU(x uint, y int) {
 	panic(boundsError{x: int64(x), signed: false, y: y, code: boundsIndex})
 }
@@ -91,7 +91,7 @@ func AssertNilDeref(b bool) {
 	}
 }
 
-//llgo:attribute result(0) nonnull same_as(param(ptr))
+//llgo:attr result(0) nonnull same_as(param(ptr))
 func AssertNilDerefPtr(ptr unsafe.Pointer) unsafe.Pointer {
 	AssertNilDeref(ptr == nil)
 	return ptr
@@ -131,7 +131,7 @@ func panicWrapTypeName(recvType string) string {
 	return recvType
 }
 
-//llgo:attribute cold noreturn
+//llgo:attr cold noreturn
 func PanicTypeAssertionError(msg string) {
 	panic(typeAssertionErrorString(msg))
 }

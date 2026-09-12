@@ -37,8 +37,8 @@ func TestImportedGenericSourceContractsValidateConcreteInstance(t *testing.T) {
 				return pkg, info, file
 			}
 			dep, depInfo, depFile := check("example.com/contractdep", "contractdep.go", `package contractdep
-//llgo:attribute param(v) nonnull
-//llgo:attribute result(0) same_as(param(v))
+//llgo:attr param(v) nonnull
+//llgo:attr result(0) same_as(param(v))
 func Identity[T any](v T) T { return v }
 `, nil)
 			root, rootInfo, rootFile := check("example.com/contractuser", "contractuser.go", `package contractuser

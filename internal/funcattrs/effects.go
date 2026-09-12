@@ -164,7 +164,7 @@ func containsPointer(t llvm.Type) bool {
 	return false
 }
 
-var parameterEffectAttributes = []string{"readnone", "readonly", "writeonly", "captures"}
+var parameterEffectAttributes = []string{"readnone", "readonly", "writeonly", "captures", "noalias"}
 
 // RemapFunctionEffects must run after any blanket copying of native function
 // attributes. ABI lowering adds effects even when no source contract exists.
@@ -247,7 +247,7 @@ func ApplyEffects(ctx llvm.Context, fn llvm.Value, sig *types.Signature, attrs [
 			lowering = append(lowering, record)
 			continue
 		}
-		if attr.Name != "access" && attr.Name != "capture" {
+		if attr.Name != "access" && attr.Name != "capture" && attr.Name != "noalias" {
 			continue
 		}
 		index := 1 + environment
@@ -265,7 +265,9 @@ func ApplyEffects(ctx llvm.Context, fn llvm.Value, sig *types.Signature, attrs [
 			continue
 		}
 		name, value := "", uint64(0)
-		if attr.Name == "access" {
+		if attr.Name == "noalias" {
+			name = "noalias"
+		} else if attr.Name == "access" {
 			switch attr.Access {
 			case AccessNone:
 				name = "readnone"
@@ -402,7 +404,7 @@ func WidenForUnknownInstrumentation(fn llvm.Value) {
 			fn.RemoveEnumAttributeAtIndex(i, llvm.AttributeKindID(name))
 		}
 	}
-	markConservativeEffects(fn, "target mode permits compiler-generated runtime instrumentation", "memory", "nofree", "nosync", "nounwind", "willreturn", "access", "capture")
+	markConservativeEffects(fn, "target mode permits compiler-generated runtime instrumentation", "memory", "nofree", "nosync", "nounwind", "willreturn", "access", "capture", "noalias")
 }
 
 // CheckInstrumentation rejects an unmodelled generated operation only when a
@@ -433,8 +435,11 @@ func CheckInstrumentation(fn llvm.Value, reason string, names ...string) error {
 }
 
 func HasNativeEffectRestriction(fn llvm.Value, name string) bool {
-	if name == "capture" || name == "access" {
+	if name == "capture" || name == "access" || name == "noalias" {
 		attributes := []string{"captures"}
+		if name == "noalias" {
+			attributes = []string{"noalias"}
+		}
 		if name == "access" {
 			attributes = []string{"readonly", "writeonly", "readnone"}
 		}

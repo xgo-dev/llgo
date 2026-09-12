@@ -385,7 +385,7 @@ func (l largeAggregateLowerer) rewriteStoredResult(ctx llvm.Context, value, resu
 
 func (l largeAggregateLowerer) allocResult(m llvm.Module, ctx llvm.Context, b llvm.Builder, typ llvm.Type) llvm.Value {
 	if err := funcattrs.CheckInstrumentation(b.GetInsertBlock().Parent(), "large ABI result allocation",
-		"memory", "nofree", "nosync", "nounwind", "willreturn", "capture", "access"); err != nil {
+		"memory", "nofree", "nosync", "nounwind", "willreturn", "capture", "access", "noalias"); err != nil {
 		panic(err)
 	}
 	intType := ctx.IntType(l.td.PointerSize() * 8)

@@ -81,8 +81,8 @@ entry:
 }
 `)
 	attachValueTestContracts(t, mod, "F", `
-//llgo:attribute result(out) nonnull same_as(param(p))
-//llgo:attribute result(n) range(-3,4)
+//llgo:attr result(out) nonnull same_as(param(p))
+//llgo:attr result(n) range(-3,4)
 func F(p *int) (out *int, n int8)
 `)
 	if err := MaterializeValueContracts(mod); err != nil {
@@ -119,9 +119,9 @@ entry:
 }
 `)
 	attachValueTestContracts(t, mod, "Input", `
-//llgo:attribute param(p) nonnull
-//llgo:attribute param(n) range(-4,5) nonnegative
-//llgo:attribute param(element) range(0,10)
+//llgo:attr param(p) nonnull
+//llgo:attr param(n) range(-4,5) nonnegative
+//llgo:attr param(element) range(0,10)
 func Input(p *int, n int8, element int16) bool
 `)
 	if err := MaterializeValueContracts(mod); err != nil {
@@ -144,7 +144,7 @@ entry:
 }
 `)
 	attachValueTestContracts(t, mod, "Checked", `
-//llgo:attribute result(0) nonnull same_as(param(p))
+//llgo:attr result(0) nonnull same_as(param(p))
 func Checked(p *int) *int
 `)
 	if err := MaterializeValueContracts(mod); err != nil {
@@ -174,7 +174,7 @@ unwind:
 }
 `)
 	attachValueTestContracts(t, mod, "Checked", `
-//llgo:attribute result(0) nonnull same_as(param(p))
+//llgo:attr result(0) nonnull same_as(param(p))
 func Checked(p *int) *int
 `)
 	if err := MaterializeValueContracts(mod); err != nil {

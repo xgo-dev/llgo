@@ -187,7 +187,7 @@ func c_framepointer() unsafe.Pointer
 
 // Panic panics with a value.
 //
-//llgo:attribute cold noreturn
+//llgo:attr cold noreturn
 func Panic(v any) {
 	if v == nil {
 		v = &PanicNilError{}

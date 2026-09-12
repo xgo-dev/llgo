@@ -10,7 +10,7 @@ import (
 )
 
 //go:noinline
-//llgo:attribute result(0) nonnull same_as(param(p))
+//llgo:attr result(0) nonnull same_as(param(p))
 func checkedAttributePointer[T any](p *T) *T {
 	if p == nil {
 		panic("nil attribute pointer")
@@ -20,7 +20,7 @@ func checkedAttributePointer[T any](p *T) *T {
 
 type attributeReceiver struct{ value int }
 
-//llgo:attribute result(0) nonnull same_as(receiver)
+//llgo:attr result(0) nonnull same_as(receiver)
 func (p *attributeReceiver) checked() *attributeReceiver {
 	if p == nil {
 		panic("nil attribute receiver")
@@ -29,7 +29,7 @@ func (p *attributeReceiver) checked() *attributeReceiver {
 }
 
 //go:noinline
-//llgo:attribute result(0) range(0, 64)
+//llgo:attr result(0) range(0, 64)
 func attributeBounded(x uint32) uint32 { return x & 63 }
 
 type attributeContainer struct {
@@ -39,10 +39,10 @@ type attributeContainer struct {
 }
 
 //go:noinline
-//llgo:attribute memory(none)
-//llgo:attribute param(p) nonnull access(none) capture(results)
-//llgo:attribute result(pointer) nonnull same_as(param(p))
-//llgo:attribute result(count) range(0,64)
+//llgo:attr memory(none)
+//llgo:attr param(p) nonnull access(none) capture(results)
+//llgo:attr result(pointer) nonnull same_as(param(p))
+//llgo:attr result(count) range(0,64)
 func attributeAggregate(input attributeContainer, p *int, n uint32) (pointer *int, count uint32, result attributeContainer) {
 	input.P = p
 	input.N = n & 63
@@ -50,7 +50,7 @@ func attributeAggregate(input attributeContainer, p *int, n uint32) (pointer *in
 }
 
 //go:noinline
-//llgo:attribute result(0) same_as(param(p))
+//llgo:attr result(0) same_as(param(p))
 func attributeEntrySnapshot(p *int, source *attributeContainer, replacement *int) *int {
 	source.P = replacement
 	return p
@@ -63,9 +63,9 @@ type attributePacked struct {
 }
 
 //go:noinline
-//llgo:attribute param(n) range(-3,5)
-//llgo:attribute result(signed) same_as(param(n))
-//llgo:attribute result(count) range(0,64)
+//llgo:attr param(n) range(-3,5)
+//llgo:attr result(signed) same_as(param(n))
+//llgo:attr result(count) range(0,64)
 func attributePackedRoundTrip(input attributePacked, n int8) (signed int8, count uint8, result attributePacked) {
 	input.Signed = n
 	input.Count &= 63
@@ -79,7 +79,7 @@ type attributeLarge struct {
 }
 
 //go:noinline
-//llgo:attribute param(p) nonnull
+//llgo:attr param(p) nonnull
 func attributeLargeResult(p *int) (out attributeLarge) {
 	out.P = p
 	out.Payload[0], out.Payload[9999] = 19, 101
