@@ -524,8 +524,21 @@ func TestRecoverFixedbug73916NestedRecoverDoesNotRecover(t *testing.T) {
 func skipBeforeGo126(t *testing.T) {
 	t.Helper()
 	version := runtime.Version()
-	if strings.HasPrefix(version, "go1.26") || strings.HasPrefix(version, "devel") {
+	if strings.HasPrefix(version, "devel") {
 		return
+	}
+	const prefix = "go1."
+	if strings.HasPrefix(version, prefix) {
+		minor := 0
+		for _, digit := range version[len(prefix):] {
+			if digit < '0' || digit > '9' {
+				break
+			}
+			minor = minor*10 + int(digit-'0')
+		}
+		if minor >= 26 {
+			return
+		}
 	}
 	t.Skip("requires Go 1.26 recover semantics")
 }
