@@ -340,7 +340,8 @@ jobs:
           benchmark/wasm/run.sh \
             .benchmark/wasm-base-source \
             .benchmark/wasm-base-llgo \
-            .benchmark/wasm-base-results
+            .benchmark/wasm-base-results \
+            .benchmark/wasm-head-source
 
       - name: Measure current revision
         shell: bash

@@ -23,6 +23,7 @@ func TestRunCLICollectsEveryExampleAndProfile(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
+			fixtureRoot := t.TempDir()
 			out := filepath.Join(t.TempDir(), "results")
 			// Specify the acceptance matrix independently of the production lists:
 			// removing an example/profile there must make this test fail.
@@ -45,11 +46,11 @@ func TestRunCLICollectsEveryExampleAndProfile(t *testing.T) {
 			wantCalls := make(map[string]int)
 			wantMetrics := make(map[string]int)
 			for _, example := range []string{"cprintf", "println", "fmtprintf", "reflectcall"} {
-				fixtureRoot := filepath.Join("benchmark", "binary_size")
+				fixtureDir := filepath.Join("benchmark", "binary_size")
 				if example == "reflectcall" {
-					fixtureRoot = filepath.Join("benchmark", "wasm", "testdata")
+					fixtureDir = filepath.Join("benchmark", "wasm", "testdata")
 				}
-				fixture := filepath.Join(root, fixtureRoot, example, "main.go")
+				fixture := filepath.Join(fixtureRoot, fixtureDir, example, "main.go")
 				if err := os.MkdirAll(filepath.Dir(fixture), 0o755); err != nil {
 					t.Fatal(err)
 				}
@@ -132,7 +133,7 @@ func TestRunCLICollectsEveryExampleAndProfile(t *testing.T) {
 				}
 				return nil
 			}
-			args := append([]string{"-root", root, "-llgo", "fake-llgo", "-go", "fake-go", "-out", out}, test.flags...)
+			args := append([]string{"-root", root, "-fixture-root", fixtureRoot, "-llgo", "fake-llgo", "-go", "fake-go", "-out", out}, test.flags...)
 			var stderr strings.Builder
 			if code := runMain(context.Background(), &stderr, args, runner); code != 0 {
 				t.Fatalf("runMain exit code = %d: %s", code, stderr.String())
