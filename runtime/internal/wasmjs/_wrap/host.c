@@ -17,6 +17,30 @@ EM_JS(void, llgo_js_random_data, (uint8_t *data, size_t length), {
 
 EM_JS(void, llgo_js_host, (int32_t op, uint64_t *frame), {
     const address = Number(frame);
+    // GOROOT's syscall_js.go captures process during package initialization.
+    // Browsers do not provide it, so preserve the fallback contract installed
+    // by Go's lib/wasm/wasm_exec.js. Check at the host boundary because a
+    // runner may remove Node's process object after Emscripten initialization.
+    // Native Node process objects are left untouched.
+    if (!globalThis.process) {
+        const enosys = () => {
+            const error = new Error('not implemented');
+            error.code = 'ENOSYS';
+            return error;
+        };
+        globalThis.process = {
+            getuid() { return -1; },
+            getgid() { return -1; },
+            geteuid() { return -1; },
+            getegid() { return -1; },
+            getgroups() { throw enosys(); },
+            pid: -1,
+            ppid: -1,
+            umask() { throw enosys(); },
+            cwd() { throw enosys(); },
+            chdir() { throw enosys(); },
+        };
+    }
     let state = Module['llgoGoJS'];
     if (!state) {
         state = {
