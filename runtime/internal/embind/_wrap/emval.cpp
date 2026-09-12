@@ -270,10 +270,25 @@ EM_VAL llgo_emval_call(EM_VAL fn, EM_VAL args[], int nargs, int kind, int *error
     return llgo_emval_try_call(fn, nullptr, 0, args, nargs, kind, error, sizeof(EM_VAL));
 }
 
-EM_VAL llgo_emval_memory_view_uint8(size_t length, uint8_t *data) {
-    val view{ typed_memory_view<uint8_t>(length,data) };
-    return view.release_ownership();
-}
+// Keep the heap view and the JavaScript copy in one host call. Returning a
+// typed_memory_view to Go is unsafe here: preparing a later emval call may grow
+// Wasm memory and detach that view's ArrayBuffer before TypedArray.set runs.
+EM_JS_DEPS(llgo_emval_copy_bytes, "$Emval");
+EM_JS(double, llgo_emval_copy_bytes,
+      (uint8_t *data, size_t length, EM_VAL handle, int to_go), {
+    const value = Emval.toValue(Number(handle) || 2);
+    if (!(value instanceof Uint8Array || value instanceof Uint8ClampedArray)) {
+        return -1;
+    }
+    const address = Number(data);
+    const count = Math.min(Number(length), value.length);
+    if (to_go) {
+        HEAPU8.set(value.subarray(0, count), address);
+    } else {
+        value.set(HEAPU8.subarray(address, address + count));
+    }
+    return count;
+});
 
 void llgo_emval_dump(EM_VAL v) {
     v = llgo_emval_normalize(v);

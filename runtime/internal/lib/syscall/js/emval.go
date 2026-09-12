@@ -129,8 +129,19 @@ func emval_call(fn Value, args *Value, nargs c.Int, kind c.Int, err *c.Int) Valu
 	return valueFromEmval(cEmvalCall(fn.emvalHandle(), data, nargs, kind, err))
 }
 
-func emval_memory_view_uint8(length c.SizeT, data *c.Uint8T) Value {
-	return valueFromEmval(cEmvalMemoryViewUint8(length, data))
+func emval_copy_bytes(data []byte, value Value, toGo bool) (int, bool) {
+	var ptr *c.Uint8T
+	if len(data) != 0 {
+		ptr = (*c.Uint8T)(unsafe.Pointer(&data[0]))
+	}
+	direction := c.Int(0)
+	if toGo {
+		direction = 1
+	}
+	n := int(cEmvalCopyBytes(ptr, c.SizeT(len(data)), value.emvalHandle(), direction))
+	runtime.KeepAlive(data)
+	runtime.KeepAlive(value)
+	return n, n >= 0
 }
 
 func emval_dump(v Value) { cEmvalDump(v.emvalHandle()) }
@@ -210,8 +221,8 @@ func cEmvalMethodCall(object uintptr, name *c.Char, nameLength c.SizeT, args *c.
 //go:linkname cEmvalCall C.llgo_emval_call
 func cEmvalCall(fn uintptr, args *c.Ulong, nargs c.Int, kind c.Int, err *c.Int) uintptr
 
-//go:linkname cEmvalMemoryViewUint8 C.llgo_emval_memory_view_uint8
-func cEmvalMemoryViewUint8(length c.SizeT, data *c.Uint8T) uintptr
+//go:linkname cEmvalCopyBytes C.llgo_emval_copy_bytes
+func cEmvalCopyBytes(data *c.Uint8T, length c.SizeT, value uintptr, toGo c.Int) c.Double
 
 //go:linkname cEmvalDump C.llgo_emval_dump
 func cEmvalDump(v uintptr)
