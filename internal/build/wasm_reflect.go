@@ -228,14 +228,5 @@ func ssaFunctionPackagePath(fn *ssa.Function) string {
 			return pkg.Path()
 		}
 	}
-	if signature, ok := fn.Type().(*types.Signature); ok && signature.Recv() != nil {
-		typ := signature.Recv().Type()
-		if pointer, ok := typ.(*types.Pointer); ok {
-			typ = pointer.Elem()
-		}
-		if named, ok := typ.(*types.Named); ok && named.Obj().Pkg() != nil {
-			return named.Obj().Pkg().Path()
-		}
-	}
 	return ""
 }

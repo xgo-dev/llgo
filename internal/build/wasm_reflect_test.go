@@ -148,6 +148,14 @@ func TestConfigureWasmFuncInfoEntries(t *testing.T) {
 	if programUsesRuntimeFuncForPC(nil, nil) || isRuntimeFuncForPC(nil) {
 		t.Fatal("nil program unexpectedly requires Wasm function entries")
 	}
+	withFuncForPC := buildWasmReflectTestProgram(t, `package p; import "runtime"; func f() { _ = runtime.FuncForPC(0) }`)
+	if !programUsesRuntimeFuncForPC(withFuncForPC.Prog, nil) {
+		t.Fatal("whole-program scan did not find runtime.FuncForPC")
+	}
+	withoutFuncForPC := buildWasmReflectTestProgram(t, `package p; func f() {}`)
+	if programUsesRuntimeFuncForPC(withoutFuncForPC.Prog, nil) {
+		t.Fatal("whole-program scan found an absent runtime.FuncForPC")
+	}
 }
 
 func TestProgramUsesWasmReflectBridges(t *testing.T) {
@@ -196,6 +204,8 @@ func TestProgramUsesWasmReflectBridgesReachability(t *testing.T) {
 		{"function value make func", `package main; import "reflect"; var makeFunc = reflect.MakeFunc; func main() { makeFunc(reflect.TypeOf(func() {}), func([]reflect.Value) []reflect.Value { return nil }) }`, true},
 		{"function value sequence", `package main; import "reflect"; var sequence = reflect.Value.Seq; func main() { _ = sequence(reflect.ValueOf(1)) }`, true},
 		{"interface call", `package main; import "reflect"; type caller interface { Call([]reflect.Value) []reflect.Value }; func main() { var call caller = reflect.Value{}; call.Call(nil) }`, true},
+		{"unrelated bound method", `package main; type value int; func (value) M() {}; func main() { var v value; call := v.M; call() }`, false},
+		{"unrelated reflect bound method", `package main; import "reflect"; func main() { typ := reflect.TypeOf(0); name := typ.String; _ = name() }`, false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

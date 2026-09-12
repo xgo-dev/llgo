@@ -370,9 +370,13 @@ func TestWasmFuncInfoUsesTableIndexForAddressTakenFunction(t *testing.T) {
 		pkg.EmitFuncInfo(name, name, "p.go", 1, 1)
 		pkg.NewFunc(name, llssa.NoArgsNoRet, llssa.InGo).MakeBody(1).Return()
 	}
+	pkg.NewFunc("example.com/p.unindexed", llssa.NoArgsNoRet, llssa.InGo).MakeBody(1).Return()
 	addressed := pkg.Module().NamedFunction("example.com/p.addressed")
 	keep := llvm.AddGlobal(pkg.Module(), addressed.Type(), "example.com/p.funcValue")
 	keep.SetInitializer(addressed)
+	unindexed := pkg.Module().NamedFunction("example.com/p.unindexed")
+	unindexedKeep := llvm.AddGlobal(pkg.Module(), unindexed.Type(), "example.com/p.unindexedFuncValue")
+	unindexedKeep.SetInitializer(unindexed)
 	i8 := pkg.Module().Context().Int8Type()
 	preexisting := llvm.AddGlobal(pkg.Module(), i8, "example.com/p.preexistingUsed")
 	preexisting.SetInitializer(llvm.ConstInt(i8, 0, false))
@@ -389,8 +393,53 @@ func TestWasmFuncInfoUsesTableIndexForAddressTakenFunction(t *testing.T) {
 	if strings.Contains(ir, `ptr @"example.com/p.direct"`) {
 		t.Fatalf("wasm direct-only function unexpectedly has an entry record:\n%s", ir)
 	}
+	if got := strings.Count(ir, `ptr @"example.com/p.unindexed"`); got != 1 {
+		t.Fatalf("wasm function without symbol metadata has %d references, want only its address-taken use:\n%s", got, ir)
+	}
 	if got := strings.Count(ir, `@llvm.used = appending global [2 x ptr]`); got != 1 {
 		t.Fatalf("wasm llvm.used merge count = %d, want 1:\n%s", got, ir)
+	}
+}
+
+func TestWasmFuncInfoOmitsEmptyEntryArray(t *testing.T) {
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	mod := ctx.NewModule("wasm-funcinfo-empty")
+	defer mod.Dispose()
+	fnType := llvm.FunctionType(ctx.VoidType(), nil, false)
+	fn := llvm.AddFunction(mod, "unindexed", fnType)
+	block := ctx.AddBasicBlock(fn, "entry")
+	builder := ctx.NewBuilder()
+	builder.SetInsertPointAtEnd(block)
+	builder.CreateRetVoid()
+	builder.Dispose()
+	keep := llvm.AddGlobal(mod, fn.Type(), "unindexed.funcvalue")
+	keep.SetInitializer(fn)
+
+	emitWasmFuncInfoEntrySites(mod, nil)
+	if got := mod.NamedGlobal("__llgo_wasm_funcinfo_entries"); !got.IsNil() {
+		t.Fatalf("empty Wasm funcinfo entry array was emitted:\n%s", mod.String())
+	}
+}
+
+func TestEmitRuntimeFuncInfoSitesWasm(t *testing.T) {
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	withEntries := ctx.NewModule("wasm-runtime-funcinfo")
+	defer withEntries.Dispose()
+	emitRuntimeFuncInfoSites(withEntries, 4, siteObjectWasm, entrySiteSectionInfo, false, true)
+	ir := withEntries.String()
+	for _, want := range []string{"@__llgo_wasm_funcinfo_zero", `section "llgo_funcinfo_entry"`, `@llvm.used = appending global [1 x ptr]`} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("Wasm runtime funcinfo carrier is missing %q:\n%s", want, ir)
+		}
+	}
+
+	pcLineOnly := ctx.NewModule("wasm-runtime-pcline")
+	defer pcLineOnly.Dispose()
+	emitRuntimeFuncInfoSites(pcLineOnly, 4, siteObjectWasm, entrySiteSectionInfo, true, false)
+	if ir := pcLineOnly.String(); strings.Contains(ir, "__llgo_wasm_funcinfo_zero") {
+		t.Fatalf("PC-line-only Wasm runtime emitted an entry carrier:\n%s", ir)
 	}
 }
 

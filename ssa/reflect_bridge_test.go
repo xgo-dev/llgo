@@ -3,6 +3,8 @@
 package ssa
 
 import (
+	"go/build"
+	"go/importer"
 	"go/token"
 	"go/types"
 	"strings"
@@ -179,6 +181,51 @@ func TestWasmMethodExpressionSignature(t *testing.T) {
 	}
 }
 
+func TestWasmReflectTypeDescriptorsCarryBridges(t *testing.T) {
+	Initialize(InitAllTargets | InitAllTargetInfos | InitAllTargetMCs)
+	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32", WasmProvider: "wasi", WasmReflectBridges: true})
+	defer prog.Dispose()
+	buildContext := build.Default
+	build.Default.GOOS = "wasip1"
+	build.Default.GOARCH = "wasm"
+	build.Default.BuildTags = []string{"llgo"}
+	t.Cleanup(func() { build.Default = buildContext })
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+
+	goPkg := types.NewPackage("example.com/p", "p")
+	callback := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewParam(token.NoPos, nil, "value", types.Typ[types.Int64])),
+		types.NewTuple(types.NewParam(token.NoPos, nil, "ok", types.Typ[types.Bool])), false)
+	named := types.NewNamed(types.NewTypeName(token.NoPos, goPkg, "T", nil), types.NewStruct(nil, nil), nil)
+	receiver := types.NewVar(token.NoPos, goPkg, "", named)
+	named.AddMethod(types.NewFunc(token.NoPos, goPkg, "M", types.NewSignatureType(receiver, nil, nil, callback.Params(), callback.Results(), false)))
+
+	pkg := prog.NewPackageEx("p", goPkg.Path(), true)
+	fn := pkg.NewFunc("use", NoArgsNoRet, InGo)
+	b := fn.MakeBody(1)
+	b.abiType(callback)
+	b.abiType(named)
+	b.Return()
+
+	if len(pkg.wasmReflectBridges) < 2 {
+		t.Fatalf("reflection descriptors generated %d bridge shapes, want at least 2", len(pkg.wasmReflectBridges))
+	}
+	metadata, err := pkg.metaBuilder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer metadata.Close()
+	if got := metadata.String(); !strings.Contains(got, "[OrdinaryEdges]") {
+		t.Fatalf("method expression descriptor edge is missing:\n%s", got)
+	}
+}
+
 func TestWasmReflectRootShape(t *testing.T) {
 	Initialize(InitAllTargets | InitAllTargetInfos | InitAllTargetMCs)
 	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32", WasmProvider: "wasi", WasmReflectBridges: true})
@@ -245,6 +292,13 @@ func TestExtractConstStringFromWideWasmStorage(t *testing.T) {
 	value := b.Str("Add")
 	if got, ok := extractConstString(value.impl); !ok || got != "Add" {
 		t.Fatalf("extractConstString(%s) = %q, %v", value.impl.String(), got, ok)
+	}
+	invalid := llvm.ConstStruct([]llvm.Value{
+		llvm.Undef(prog.Int32().ll),
+		llvm.ConstInt(prog.Int32().ll, 1, false),
+	}, false)
+	if got, ok := extractConstString(invalid); ok {
+		t.Fatalf("extractConstString(%s) = %q, true; want a miss", invalid.String(), got)
 	}
 	b.Return()
 	b.EndBuild()

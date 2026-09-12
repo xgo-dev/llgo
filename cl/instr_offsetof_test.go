@@ -27,6 +27,7 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/goplus/gogen/packages"
@@ -439,6 +440,36 @@ func fakeUnknown() {}
 	mustPanic(t, "unknown llgo instruction ftype", func() {
 		ctx.call(nil, llssa.Call, &gossa.CallCommon{Value: fn})
 	})
+}
+
+func TestFuncPCABI0NormalizesWasmTableIndex(t *testing.T) {
+	ssaPkg, _, files := buildGoSSAPkg(t, `package foo
+import _ "unsafe"
+
+//go:linkname funcPCABI0 llgo.funcPCABI0
+func funcPCABI0(fn any) uintptr
+
+func callback() {}
+func callbackPC() uintptr { return funcPCABI0(callback) }
+`)
+	target := &llssa.Target{
+		GOOS:         "js",
+		GOARCH:       "wasm",
+		Target:       "emscripten",
+		LLVMTarget:   "wasm32-unknown-emscripten",
+		WasmProfile:  "j32",
+		WasmProvider: "emscripten",
+	}
+	prog := newLLSSAProgForTarget(t, target)
+	defer prog.Dispose()
+	pkg, err := NewPackage(prog, ssaPkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.Module().String()
+	if !strings.Contains(ir, "shl i32") && !strings.Contains(ir, "shl i64") {
+		t.Fatalf("Wasm funcPCABI0 did not normalize the table index:\n%s", ir)
+	}
 }
 
 func mustPanic(t *testing.T, name string, fn func()) {
