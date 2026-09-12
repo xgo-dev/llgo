@@ -669,6 +669,7 @@ var llgoInstrs = map[string]int{
 	"float32Bits":     llgoFloat32Bits,
 	"float64FromBits": llgoFloat64FromBits,
 	"float64Bits":     llgoFloat64Bits,
+	"umulOverflow":    llgoUMulOverflow,
 }
 
 // funcOf returns a function by name and set ftype = goFunc, cFunc, etc.
@@ -2664,6 +2665,17 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		case llgoFloat64Bits:
 			args := p.compileValues(b, args, kind)
 			ret = p.bitCastIntrinsic(b, args, types.Typ[types.Uint64], "math.Float64bits")
+		case llgoUMulOverflow:
+			results := call.Signature().Results()
+			if len(args) != 2 || results.Len() != 2 ||
+				!types.Identical(results.At(0).Type(), args[0].Type()) ||
+				!types.Identical(results.At(1).Type(), types.Typ[types.Bool]) {
+				panic("umulOverflow(a, b T) (T, bool): invalid arguments")
+			}
+			args := p.compileValues(b, args, kind)
+			ret = p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+				return b.UMulOverflow(args[0], args[1])
+			}, args...)
 		case llgoUnreachable: // func unreachable()
 			b.Unreachable()
 		case llgoAtomicLoad:
