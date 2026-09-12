@@ -16,7 +16,7 @@ Invoke-WinGet @('validate', '--manifest', $manifest)
 Remove-Item Env:LLGO_ROOT -ErrorAction SilentlyContinue
 Invoke-WinGet @('install', '--manifest', $manifest, '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
 try {
-  Invoke-WinGet @('list', '--id', $identifier, '--exact', '--accept-source-agreements', '--disable-interactivity')
+  Invoke-WinGet @('list', '--name', "LLGo ($Profile)", '--exact', '--accept-source-agreements', '--disable-interactivity')
   # Read the updated persistent PATH rather than retaining the pre-install one.
   $env:PATH = [Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH', 'User')
   $llgo = (Get-Command llgo.exe).Source
@@ -27,7 +27,7 @@ try {
   Write-Host "Installed command: $llgo"
   Write-Host $output
 } finally {
-  Invoke-WinGet @('uninstall', '--id', $identifier, '--exact', '--silent', '--disable-interactivity')
+  Invoke-WinGet @('uninstall', '--name', "LLGo ($Profile)", '--exact', '--silent', '--disable-interactivity')
 }
 $env:PATH = [Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH', 'User')
 if (Get-Command llgo.exe -ErrorAction SilentlyContinue) { throw 'The llgo command remains after uninstall' }

@@ -30,9 +30,27 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $ProgressPreference = 'SilentlyContinue'
           if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
-            Install-PackageProvider -Name NuGet -Force | Out-Null
-            Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery -Scope CurrentUser | Out-Null
-            Repair-WinGetPackageManager -AllUsers
+            # Bootstrap from verified release files, avoiding the module's
+            # failing latest-release discovery on the ARM64 image.
+            $base = 'https://github.com/microsoft/winget-cli/releases/download/v1.29.290'
+            $files = @{
+              'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle' = '6824b6e9484ab24687d99a0c829d2bcbcc7849a70a4d0f596fc43c89d20dff15'
+              'DesktopAppInstaller_Dependencies.zip' = '50c377516749002dcdda9c8e52f26e8e2ea73d52131ce96ffd082dcf60ca6677'
+            }
+            $temporary = Join-Path $env:RUNNER_TEMP 'winget-bootstrap'
+            New-Item -ItemType Directory -Force $temporary | Out-Null
+            foreach ($name in $files.Keys) {
+              $path = Join-Path $temporary $name
+              curl.exe --fail --location --retry 5 --retry-all-errors --output $path "$base/$name"
+              if ($LASTEXITCODE -ne 0) { throw "Downloading $name failed" }
+              if ((Get-FileHash $path -Algorithm SHA256).Hash -ne $files[$name]) { throw "Invalid hash for $name" }
+            }
+            $deps = Join-Path $temporary 'dependencies'
+            Expand-Archive (Join-Path $temporary 'DesktopAppInstaller_Dependencies.zip') $deps
+            $arch = @{ amd64 = 'x64'; arm64 = 'arm64' }['${{ matrix.goarch }}']
+            $packages = @(Get-ChildItem (Join-Path $deps $arch) -Recurse -File | Where-Object { $_.Extension -in @('.appx', '.msix') })
+            if (-not $packages.Count) { throw "Missing WinGet dependencies for $arch" }
+            Add-AppxPackage -Path (Join-Path $temporary 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle') -DependencyPath $packages.FullName
           }
           $env:PATH += ';' + (Join-Path $env:LOCALAPPDATA 'Microsoft/WindowsApps')
           (Join-Path $env:LOCALAPPDATA 'Microsoft/WindowsApps') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
