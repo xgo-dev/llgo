@@ -260,8 +260,8 @@ jobs:
     env:
       GOMAXPROCS: "2"
       LLGO_ROOT: ${{ github.workspace }}
-      # Keep the existing println timing budget. The two additional examples
-      # are built once for exact output sizes without redundant warm-ups.
+      # Keep the existing println timing budget. Other examples are built once
+      # for exact sizes; only W32 repeats reflectcall to measure bridge cost.
       LLGO_WASM_BENCH_BUILD_RUNS: "1"
       GOFLAGS: -tags=llvm22
     steps:

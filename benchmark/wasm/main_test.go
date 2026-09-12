@@ -44,8 +44,12 @@ func TestRunCLICollectsEveryExampleAndProfile(t *testing.T) {
 			}
 			wantCalls := make(map[string]int)
 			wantMetrics := make(map[string]int)
-			for _, example := range []string{"cprintf", "println", "fmtprintf"} {
-				fixture := filepath.Join(root, "benchmark", "binary_size", example, "main.go")
+			for _, example := range []string{"cprintf", "println", "fmtprintf", "reflectcall"} {
+				fixtureRoot := filepath.Join("benchmark", "binary_size")
+				if example == "reflectcall" {
+					fixtureRoot = filepath.Join("benchmark", "wasm", "testdata")
+				}
+				fixture := filepath.Join(root, fixtureRoot, example, "main.go")
 				if err := os.MkdirAll(filepath.Dir(fixture), 0o755); err != nil {
 					t.Fatal(err)
 				}
@@ -59,7 +63,7 @@ func TestRunCLICollectsEveryExampleAndProfile(t *testing.T) {
 					}
 					wantCalls[example+"/"+profile+"/fake-llgo"] = 1
 					wantMetrics["BenchmarkWasmSize/"+metricName+"/LLGo"] = 1
-					if example == "println" {
+					if example == "println" || (example == "reflectcall" && profile == "w32-wasi") {
 						wantCalls[example+"/"+profile+"/fake-llgo"] = test.runs + 1
 						wantMetrics["BenchmarkWasmBuild/"+metricName] = 1
 					}
