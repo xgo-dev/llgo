@@ -55,6 +55,16 @@ func F(a, b unsafe.Pointer) (p unsafe.Pointer) { return a }`)
 
 func TestSourceAttributeDiagnostics(t *testing.T) {
 	for _, tc := range []struct{ directive, signature, want string }{
+		{"", "func F() {}", "expected an attribute"},
+		{"memory(read))", "func F() {}", "unbalanced parentheses"},
+		{"(cold)", "func F() {}", "invalid attribute expression"},
+		{"cold(extra)", "func F() {}", "invalid arguments"},
+		{"param(0) readonly(extra)", "func F(p *int) {}", "invalid arguments"},
+		{"param(0) access", "func F(p *int) {}", "invalid arguments"},
+		{"result(0) range(1)", "func F() int { return 0 }", "two integer literals"},
+		{"result(0) same_as(missing)", "func F(p *int) *int { return p }", "same_as"},
+		{"result(0) same_as(other(0))", "func F(p *int) *int { return p }", "same_as"},
+		{"result(0) returned", "func F(p *int) *int { return p }", "returned requires an input"},
 		{"hot", "func F() {}", "unsupported attribute"},
 		{"nonnull", "func F() {}", "not supported on function"},
 		{"param(missing) readonly", "func F(p *int) {}", "unknown source value"},
