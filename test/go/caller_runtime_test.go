@@ -144,7 +144,8 @@ func TestCallerRepanicTraceback(t *testing.T) {
 	mode := os.Getenv(callerRepanicChild)
 	switch mode {
 	case "same":
-		callerRepanicOrigin()
+		// Match llcppg: both nested tRunner repanics must retain the nil site.
+		t.Run("origin", func(t *testing.T) { callerRepanicOrigin() })
 		return
 	case "different":
 		callerReplacementPanic()
