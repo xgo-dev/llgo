@@ -428,14 +428,6 @@ xfails:
     reason: LLGo does not yet diagnose a method declaration on a non-local type
   - platform: js/wasm
     directive: run
-    case: fixedbugs/issue58300.go
-    reason: LLGo reports reflect-generated closure symbols instead of the original function names on WebAssembly
-  - platform: js/wasm
-    directive: run
-    case: fixedbugs/issue58300b.go
-    reason: LLGo reports reflect-generated closure symbols instead of the original function names on WebAssembly
-  - platform: js/wasm
-    directive: run
     case: fixedbugs/issue5856.go
     reason: LLGo reports the deferred panic caller from the defer statement rather than the enclosing call site on WebAssembly
   - platform: js/wasm
