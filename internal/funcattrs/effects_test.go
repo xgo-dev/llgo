@@ -9,6 +9,44 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
+func TestLLVMInfersExecutionAttributesWithoutSourceAnnotations(t *testing.T) {
+	mod := valueTestModule(t, `
+declare i32 @unknown(i32)
+define i32 @add_one(i32 %x) {
+  %r = add i32 %x, 1
+  ret i32 %r
+}
+define i32 @calls_unknown(i32 %x) {
+  %r = call i32 @unknown(i32 %x)
+  ret i32 %r
+}
+define void @forever() {
+  br label %loop
+loop:
+  br label %loop
+}
+`)
+	names := []string{"nofree", "nosync", "nounwind", "willreturn"}
+	for _, name := range names {
+		if !mod.NamedFunction("add_one").GetEnumFunctionAttribute(llvm.AttributeKindID(name)).IsNil() {
+			t.Fatalf("%s unexpectedly present before inference", name)
+		}
+	}
+	optimizeValueTest(t, mod)
+	for _, name := range names {
+		kind := llvm.AttributeKindID(name)
+		if mod.NamedFunction("add_one").GetEnumFunctionAttribute(kind).IsNil() {
+			t.Errorf("LLVM did not infer %s from the function body", name)
+		}
+		if !mod.NamedFunction("calls_unknown").GetEnumFunctionAttribute(kind).IsNil() {
+			t.Errorf("LLVM assumed %s across an unknown external call", name)
+		}
+	}
+	if !mod.NamedFunction("forever").GetEnumFunctionAttribute(llvm.AttributeKindID("willreturn")).IsNil() {
+		t.Fatal("an infinite loop was marked willreturn")
+	}
+}
+
 func TestMemoryEffectGrammar(t *testing.T) {
 	for _, test := range []struct {
 		text string

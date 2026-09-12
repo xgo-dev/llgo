@@ -88,7 +88,7 @@ func F() int { return counter }
 			name: "shadow stack",
 			source: `package effects
 import "runtime"
-//llgo:attribute nosync
+//llgo:attribute memory(none)
 //go:noinline
 func F() uintptr { pc, _, _, _ := runtime.Caller(0); return pc }
 `,

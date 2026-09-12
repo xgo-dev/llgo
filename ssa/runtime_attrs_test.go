@@ -92,11 +92,9 @@ func TestRuntimeContracts(t *testing.T) {
 								t.Errorf("unexpected %q:\n%s", absent, ir)
 							}
 						}
-						if test.name != "AssertNilDerefPtr" {
-							for _, want := range []string{"nofree", "nosync", "nounwind", "willreturn"} {
-								if !strings.Contains(ir, want) {
-									t.Errorf("missing %s:\n%s", want, ir)
-								}
+						for _, name := range []string{"nofree", "nosync", "nounwind", "willreturn"} {
+							if !fn.impl.GetEnumAttributeAtIndex(-1, llvm.AttributeKindID(name)).IsNil() {
+								t.Errorf("source declaration supplied compiler-managed %s", name)
 							}
 						}
 						if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {

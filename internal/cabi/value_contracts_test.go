@@ -55,18 +55,18 @@ func TestValueContractsSurviveByvalSretAndPackedABI(t *testing.T) {
 			pkg := prog.NewPackage("contracts", "contracts")
 			callee := contractTestDeclaration(t, prog, pkg, `
 type Pair struct { P *int; N int64; Extra [24]byte }
-//llgo:attribute param(p).field(P) nonnull
-//llgo:attribute result(q).field(P) nonnull same_as(param(p).field(P))
+//llgo:attribute param(p) nonnull
+//llgo:attribute result(q) nonnull same_as(param(p))
 //llgo:attribute result(n) range(0,7)
-func F(p Pair) (q Pair, n int8)
+func F(input Pair, p *int) (q *int, n int64, output Pair)
 `, "contracts.F")
 			calleeType := callee.Type.RawType().(*types.Signature)
 			callerSig := types.NewSignatureType(nil, nil, nil, calleeType.Params(),
 				types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Bool])), false)
 			caller := pkg.NewFunc("contracts.Caller", callerSig, llssa.InGo)
 			b := caller.MakeBody(1)
-			r := b.Call(callee.Expr, caller.Param(0))
-			pointer := b.Field(b.Extract(r, 0), 0)
+			r := b.Call(callee.Expr, caller.Param(0), caller.Param(1))
+			pointer := b.Extract(r, 0)
 			badPointer := b.BinOp(token.EQL, pointer, prog.Nil(pointer.Type))
 			n := b.Extract(r, 1)
 			negative := b.BinOp(token.LSS, n, prog.IntVal(0, n.Type))
@@ -76,11 +76,11 @@ func F(p Pair) (q Pair, n int8)
 
 			packed := contractTestDeclaration(t, prog, pkg, `
 type Packed struct { N int8; Other [7]byte }
-//llgo:attribute param(p).field(N) range(-3,4)
-func PackedInput(p Packed) bool
+//llgo:attribute param(n) range(-3,4)
+func PackedInput(p Packed, n int8) bool
 `, "contracts.PackedInput")
 			pbody := packed.MakeBody(1)
-			value := pbody.Field(packed.Param(0), 0)
+			value := packed.Param(1)
 			pbody.Return(pbody.BinOp(token.GTR, value, prog.IntVal(3, value.Type)))
 			pbody.EndBuild()
 

@@ -165,7 +165,6 @@ func MapIterNext(it *llgoMapIter) (ok bool, k unsafe.Pointer, v unsafe.Pointer) 
 	return
 }
 
-//llgo:attribute nofree nosync nounwind willreturn
 //llgo:attribute memory(args: read)
 //llgo:attribute param(h) access(read) capture(none)
 //llgo:attribute result(0) nonnegative

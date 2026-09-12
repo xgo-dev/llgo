@@ -39,21 +39,21 @@ type attributeContainer struct {
 }
 
 //go:noinline
-//llgo:attribute memory(none) nofree nosync nounwind willreturn
-//llgo:attribute param(input).field(P) nonnull access(none) capture(results)
-//llgo:attribute result(p) nonnull same_as(param(input).field(P))
-//llgo:attribute result(result).field(P) nonnull same_as(param(input).field(P))
-//llgo:attribute result(result).field(N) range(0, 64)
-func attributeAggregate(input attributeContainer, n uint32) (p *int, result attributeContainer) {
+//llgo:attribute memory(none)
+//llgo:attribute param(p) nonnull access(none) capture(results)
+//llgo:attribute result(pointer) nonnull same_as(param(p))
+//llgo:attribute result(count) range(0,64)
+func attributeAggregate(input attributeContainer, p *int, n uint32) (pointer *int, count uint32, result attributeContainer) {
+	input.P = p
 	input.N = n & 63
-	return input.P, input
+	return p, input.N, input
 }
 
 //go:noinline
-//llgo:attribute result(0) same_as(param(input).field(P))
-func attributeEntrySnapshot(input attributeContainer, source *attributeContainer, replacement *int) *int {
+//llgo:attribute result(0) same_as(param(p))
+func attributeEntrySnapshot(p *int, source *attributeContainer, replacement *int) *int {
 	source.P = replacement
-	return input.P
+	return p
 }
 
 type attributePacked struct {
@@ -63,13 +63,13 @@ type attributePacked struct {
 }
 
 //go:noinline
-//llgo:attribute param(input).field(Signed) range(-3, 5)
-//llgo:attribute result(0).field(Signed) same_as(param(input).field(Signed))
-//llgo:attribute result(0).field(Count) range(0, 64)
-//llgo:attribute result(0).field(Bytes).element(5) same_as(param(input).field(Bytes).element(5))
-func attributePackedRoundTrip(input attributePacked) attributePacked {
+//llgo:attribute param(n) range(-3,5)
+//llgo:attribute result(signed) same_as(param(n))
+//llgo:attribute result(count) range(0,64)
+func attributePackedRoundTrip(input attributePacked, n int8) (signed int8, count uint8, result attributePacked) {
+	input.Signed = n
 	input.Count &= 63
-	return input
+	return n, input.Count, input
 }
 
 type attributeLarge struct {
@@ -79,8 +79,7 @@ type attributeLarge struct {
 }
 
 //go:noinline
-//llgo:attribute result(0).field(P) same_as(param(p))
-//llgo:attribute result(0).field(Count) range(0, 64)
+//llgo:attribute param(p) nonnull
 func attributeLargeResult(p *int) (out attributeLarge) {
 	out.P = p
 	out.Payload[0], out.Payload[9999] = 19, 101
@@ -92,30 +91,29 @@ func TestSourceContractsAfterABI(t *testing.T) {
 	value := 17
 	in := attributeContainer{P: &value, N: 999, Payload: [64]byte{0: 1, 63: 2}}
 	for n := uint32(0); n < 130; n++ {
-		p, out := attributeAggregate(in, n)
-		if p != &value || out.P != &value || out.N != n%64 || out.Payload != in.Payload {
-			t.Fatal("aggregate input or multiple results changed across ABI conversion")
+		p, count, out := attributeAggregate(in, &value, n)
+		if p != &value || count != n%64 || out.P != &value || out.N != n%64 || out.Payload != in.Payload {
+			t.Fatal("indirect arguments or multiple results changed across ABI conversion")
 		}
 		if in.N != 999 {
 			t.Fatal("callee changed the caller's by-value input")
 		}
 	}
 	replacement := 29
-	before := in
-	old := attributeEntrySnapshot(in, &in, &replacement)
-	if old != &value || in.P != &replacement || before.P != &value {
-		t.Fatal("same_as reloaded a changed input instead of forwarding its entry snapshot")
+	old := attributeEntrySnapshot(in.P, &in, &replacement)
+	if old != &value || in.P != &replacement {
+		t.Fatal("same_as reloaded changed input memory")
 	}
 	for n := int8(-3); n < 5; n++ {
 		in := attributePacked{Signed: n, Count: 193, Bytes: [6]byte{0: 11, 5: 253}}
-		out := attributePackedRoundTrip(in)
-		if out.Signed != n || out.Count != 1 || out.Bytes != in.Bytes {
-			t.Fatalf("packed field contract changed unrelated bits: %#v", out)
+		signed, count, out := attributePackedRoundTrip(in, n)
+		if signed != n || count != 1 || out.Signed != n || out.Count != 1 || out.Bytes != in.Bytes {
+			t.Fatalf("packed argument or multiple results changed unrelated data: %#v", out)
 		}
 	}
 	large := attributeLargeResult(&value)
 	if large.P != &value || large.Count != 7 || large.Payload[0] != 19 || large.Payload[9999] != 101 {
-		t.Fatal("large indirect result lost values or contract fields")
+		t.Fatal("large indirect result lost values")
 	}
 }
 

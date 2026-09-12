@@ -239,7 +239,7 @@ func ApplyEffects(ctx llvm.Context, fn llvm.Value, sig *types.Signature, attrs [
 				if HasHiddenPointerRoots(fn) && attr.Memory.Args&^attr.Memory.Other != 0 {
 					record.Disposition, record.Reason = EffectConservative, "input pointer roots are carried inside aggregates"
 				}
-			case "cold", "noreturn", "nounwind", "willreturn", "nofree", "nosync":
+			case "cold", "noreturn":
 				fn.AddFunctionAttr(ctx.CreateEnumAttribute(llvm.AttributeKindID(attr.Name), 0))
 			default:
 				continue
@@ -259,7 +259,7 @@ func ApplyEffects(ctx llvm.Context, fn llvm.Value, sig *types.Signature, attrs [
 		}
 		// A contract on an aggregate leaf cannot be attached to its carrier.
 		// Keep the typed source fact; the native invocation summary is wider.
-		if len(attr.Target.Path) != 0 || index > fn.ParamsCount() || fn.Param(index-1).Type().TypeKind() != llvm.PointerTypeKind {
+		if index > fn.ParamsCount() || fn.Param(index-1).Type().TypeKind() != llvm.PointerTypeKind {
 			record.Disposition, record.Reason = EffectConservative, "selected pointer has no native pointer parameter"
 			lowering = append(lowering, record)
 			continue

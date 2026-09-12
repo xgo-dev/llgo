@@ -55,16 +55,15 @@ func optimizeValueTest(t *testing.T, mod llvm.Module) {
 	}
 }
 
-func TestValueContractsMaterializeLogicalLeaves(t *testing.T) {
+func TestValueContractsMaterializeMultipleResults(t *testing.T) {
 	mod := valueTestModule(t, `
-%Pair = type { ptr, i8, [2 x i16] }
-declare { %Pair, i8 } @F(%Pair)
+declare { ptr, i8 } @F(ptr)
 
-define i1 @caller(%Pair %p) {
+define i1 @caller(ptr %p) {
 entry:
-  %r = call { %Pair, i8 } @F(%Pair %p)
-  %result.p = extractvalue { %Pair, i8 } %r, 0, 0
-  %result.n = extractvalue { %Pair, i8 } %r, 1
+  %r = call { ptr, i8 } @F(ptr %p)
+  %result.p = extractvalue { ptr, i8 } %r, 0
+  %result.n = extractvalue { ptr, i8 } %r, 1
   %nil = icmp eq ptr %result.p, null
   %small = icmp slt i8 %result.n, -3
   %large = icmp sge i8 %result.n, 4
@@ -73,20 +72,18 @@ entry:
   ret i1 %bad
 }
 
-define i1 @relation(%Pair %p) {
+define i1 @relation(ptr %p) {
 entry:
-  %r = call { %Pair, i8 } @F(%Pair %p)
-  %result.p = extractvalue { %Pair, i8 } %r, 0, 0
-  %input.p = extractvalue %Pair %p, 0
-  %same = icmp eq ptr %result.p, %input.p
+  %r = call { ptr, i8 } @F(ptr %p)
+  %result.p = extractvalue { ptr, i8 } %r, 0
+  %same = icmp eq ptr %result.p, %p
   ret i1 %same
 }
 `)
 	attachValueTestContracts(t, mod, "F", `
-type Pair struct { P *int; N int8; A [2]int16 }
-//llgo:attribute result(out).field(P) nonnull same_as(param(p).field(P))
+//llgo:attribute result(out) nonnull same_as(param(p))
 //llgo:attribute result(n) range(-3,4)
-func F(p Pair) (out Pair, n int8)
+func F(p *int) (out *int, n int8)
 `)
 	if err := MaterializeValueContracts(mod); err != nil {
 		t.Fatal(err)
@@ -107,35 +104,25 @@ func F(p Pair) (out Pair, n int8)
 	}
 }
 
-func TestValueContractsEntryIntersectionAndAlignment(t *testing.T) {
+func TestValueContractsEntryIntersection(t *testing.T) {
 	mod := valueTestModule(t, `
-%Pair = type { ptr, i8, [2 x i16] }
-define i1 @Input(%Pair %p) {
+define i1 @Input(ptr %pointer, i8 %n, i16 %element) {
 entry:
-  %pointer = extractvalue %Pair %p, 0
-  %n = extractvalue %Pair %p, 1
-  %array = extractvalue %Pair %p, 2
-  %element = extractvalue [2 x i16] %array, 1
   %nil = icmp eq ptr %pointer, null
   %negative = icmp slt i8 %n, 0
   %large = icmp sge i8 %n, 5
-  %address = ptrtoint ptr %pointer to i64
-  %low = and i64 %address, 15
-  %misaligned = icmp ne i64 %low, 0
   %element.bad = icmp sgt i16 %element, 9
   %a = or i1 %nil, %negative
-  %b = or i1 %large, %misaligned
-  %c = or i1 %a, %b
+  %c = or i1 %a, %large
   %bad = or i1 %c, %element.bad
   ret i1 %bad
 }
 `)
 	attachValueTestContracts(t, mod, "Input", `
-type Pair struct { P *int; N int8; A [2]int16 }
-//llgo:attribute param(p).field(P) nonnull align(16)
-//llgo:attribute param(p).field(N) range(-4,5) nonnegative
-//llgo:attribute param(p).field(A).element(1) range(0,10)
-func Input(p Pair) bool
+//llgo:attribute param(p) nonnull
+//llgo:attribute param(n) range(-4,5) nonnegative
+//llgo:attribute param(element) range(0,10)
+func Input(p *int, n int8, element int16) bool
 `)
 	if err := MaterializeValueContracts(mod); err != nil {
 		t.Fatal(err)

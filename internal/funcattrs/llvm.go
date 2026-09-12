@@ -11,19 +11,18 @@ import (
 // physical parameter numbers are stored separately in a short-lived value plan.
 const Metadata = "llgo.source.attributes.v1"
 
-// PathResolver maps a resolved source leaf to the current logical LLVM value.
-// The returned path includes any result-tuple index and target layout wrappers.
-// ABI packing and indirect transport have not happened at this point.
-type PathResolver func(Target, []int) ([]int, error)
+// ResultPathResolver locates one Go result in LLVM's multi-result value,
+// including target-specific padding wrappers. It is not source field syntax.
+type ResultPathResolver func(index int) []int
 
-func Apply(ctx llvm.Context, fn llvm.Value, sig *types.Signature, attrs []Attribute, environment, intBits int, resolver ...PathResolver) error {
+func Apply(ctx llvm.Context, fn llvm.Value, sig *types.Signature, attrs []Attribute, environment, intBits int, resolver ...ResultPathResolver) error {
 	if len(attrs) == 0 {
 		return nil
 	}
 	if err := Validate(attrs, sig, intBits, false); err != nil {
 		return err
 	}
-	var resolve PathResolver
+	var resolve ResultPathResolver
 	if len(resolver) != 0 {
 		resolve = resolver[0]
 	}
@@ -54,9 +53,8 @@ const (
 )
 
 type ABIValue struct {
-	Kind      Representation
-	Indices   []int // LLVM attribute indices: 0 = return, 1.. = arguments
-	FieldPath []int
+	Kind    Representation
+	Indices []int // LLVM attribute indices: 0 = return, 1.. = arguments
 }
 
 type ABIMapping struct {

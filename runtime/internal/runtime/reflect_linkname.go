@@ -32,7 +32,6 @@ func reflect_unsafe_NewArray(t *Type, n int) unsafe.Pointer {
 }
 
 //go:linkname reflect_typedmemmove reflect.typedmemmove
-//llgo:attribute nofree nosync nounwind willreturn
 //llgo:attribute memory(args: readwrite)
 //llgo:attribute param(t) access(read) capture(none)
 //llgo:attribute param(dst) access(write) capture(none)

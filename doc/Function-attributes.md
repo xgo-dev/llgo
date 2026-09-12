@@ -1,216 +1,149 @@
 # Source function attributes
 
 Proposal: [#2518](https://github.com/xgo-dev/llgo/issues/2518).
-Implementation for review: [#2572](https://github.com/xgo-dev/llgo/pull/2572).
+Implementation: [#2572](https://github.com/xgo-dev/llgo/pull/2572).
 
 ## 1. Which attributes are proposed?
 
-Use `//llgo:attribute` on a function or method declaration:
+Only three kinds of objects can be annotated: **the function, a whole parameter,
+or one whole Go result**.
 
-- Parameters and results: `nonnull`, `range`, `nonnegative`, `align`.
-- A result equal to an input: `same_as`.
-- Memory access and pointer retention: `memory`, `access`, `capture`.
-- Function execution: `nofree`, `nosync`, `nounwind`, `willreturn`, `noreturn`.
-- Optimization hint: `cold`.
+| Object | Attributes |
+| --- | --- |
+| Pointer parameter/result | `nonnull` |
+| Integer parameter/result | `range(lo, hi)`, `nonnegative` |
+| Pointer/integer result | `same_as(param(...))` |
+| Pointer parameter | `access(...)`, `capture(...)` |
+| Function | `memory(...)`, `noreturn`, `cold` |
 
-These apply to ordinary Go packages and the runtime. This proposal does not add
-allocation-size, no-alias or lifetime attributes.
+Select parameters and results with `param(name|index)` and
+`result(name|index)`. Indices start at zero in the Go signature and exclude
+compiler-added parameters and the receiver. `receiver` selects a method's
+receiving parameter; it uses the same input attributes. Attributes without a
+selector apply to the function.
+
+There is no `field` or `element` syntax. For example, `nonnull` can describe
+a pointer result, but cannot describe a pointer member inside a struct result.
+Attributes retain their type requirements; a whole struct is not a pointer.
+
+`align` is deferred. `nofree`, `nosync`, `nounwind`, and `willreturn` are
+not accepted as source annotations. The compiler handles these internally.
+They are not universally true defaults: LLVM may infer them from a function
+body, but cannot assume them across arbitrary external calls or infinite loops.
 
 ## 2. What does each attribute mean?
 
-### Parameters and results
+| Attribute | Meaning |
+| --- | --- |
+| `nonnull` | The pointer is not nil. It does not by itself guarantee valid dereferencing. |
+| `range(lo, hi)` | `lo <= value && value < hi`. Bounds must fit the Go integer type, without wrapping. |
+| `nonnegative` | `value >= 0`; the width of int follows the target. |
+| `same_as(param(p))` | The result equals the value of p when the function was entered, before any reassignment. Integer types must match; pointer conversions must preserve the pointer. |
+| `memory(...)` | Restricts this call and its callees' access through input pointers, to global memory and to external state. Local variables and ABI argument/result copies are handled separately. |
+| `access(none/read/write/readwrite)` | Permits no reads/writes, only reads, only writes, or both through the selected pointer parameter. It does not restrict saving that pointer. |
+| `capture(none)` | Does not save the pointer or its address anywhere visible outside the call, even temporarily, or return it. |
+| `capture(results)` | May save the pointer only by returning it, including within a returned struct. |
+| `capture(any)` | No restriction on saving the pointer. |
+| `noreturn` | Never returns normally; it may panic or run indefinitely. |
+| `cold` | Calls are expected to be uncommon; an optimization hint. |
 
-| Attribute | Applies to | Meaning |
-| --- | --- | --- |
-| `nonnull` | Pointer parameter or result | The pointer is not nil. |
-| `range(lo, hi)` | Integer parameter or result | `lo <= value && value < hi`. Bounds must fit the Go type; the interval cannot wrap around. |
-| `nonnegative` | Integer parameter or result | `value >= 0`. The width of `int` follows the target platform. |
-| `align(N)` | Pointer parameter or result | The pointer address is a multiple of N, a positive power of two. This alone permits nil and does not promise that dereferencing is valid. |
-| `same_as(param(p))` | Pointer or integer result | The result equals the value of parameter p at function entry. It does not mean the value of p after reassignment. `same_as(receiver)` also works. |
+Memory modes are none/read/write/readwrite. Examples:
 
-Integer `same_as` requires the same Go type, with type aliases resolved.
-Pointer types may differ if the conversion preserves the pointer, including
-conversion to or from `unsafe.Pointer`.
+- `memory(none)`: no access through input pointers, to globals or to external state.
+- `memory(read)`: reads are allowed, writes are not.
+- `memory(args: read)`: only reads through pointers obtained from input parameters.
+- `memory(args: readwrite, other: read)`: reads/writes through input pointers;
+  other memory is only read.
 
-Choose a parameter, result or receiver with `param(name|index)`,
-`result(name|index)` or `receiver`. Indices start at zero in the Go signature,
-excluding the receiver and compiler-added parameters. Use `.field(Name)` for a
-struct field and `.element(index)` for a fixed-array element. These do not
-automatically dereference a pointer.
+A default mode applies to both args and other; an explicit location overrides
+it. Without a default, unspecified locations are none. Access through a global
+is other even if its pointer happens to equal an input. A second pointer loaded
+from input-addressed memory is not automatically part of args.
+
+Clocks, entropy, I/O and volatile/device observations require
+`other: readwrite`, so repeated observations are not merged merely because
+there is no intervening ordinary memory write. Reading ordinary globals only
+needs `other: read`.
 
 For example:
 
 ```go
-type Result struct {
-    P *int
-    N uint32
-}
-
-//llgo:attribute result(out).field(P) nonnull same_as(param(p))
-//llgo:attribute result(out).field(N) range(0, 64)
-func Make(p *int, n uint32) (out Result) {
+//llgo:attribute result(out) nonnull same_as(param(p))
+//llgo:attribute result(count) range(0, 64)
+func Make(p *int, n uint32) (out *int, count uint32) {
     if p == nil {
         panic("nil pointer")
     }
-    return Result{P: p, N: n & 63}
+    return p, n & 63
 }
 ```
 
-The two lines say: when Make returns normally, out.P is non-nil and equals the
-input p, and out.N is below 64. They do **not** say that passing nil is forbidden:
-Make(nil, n) still panics.
+These describe successful returns: out is non-nil and equals the input p, and
+count is below 64. They do not prohibit calling Make(nil, n), which still panics.
 
-Parameter attributes describe entry values. Result attributes apply after a
-normal return, including any defer that changes a result. These are promises
-from the programmer, not inserted runtime checks. LLGo checks syntax and types
-but does not prove every function body. Incorrect promises can produce
-incorrect optimized code.
+Input attributes describe entry values. Result attributes hold after normal
+return, including defer changes. They are programmer promises, not runtime
+checks. LLGo checks syntax and types but does not prove arbitrary bodies;
+incorrect promises can cause incorrect optimization.
 
-### Memory access and pointer retention
+## 3. How are the attributes implemented under different ABIs?
 
-| Attribute | Applies to | Meaning |
+An ABI can pass values directly, pack/split them into registers, or pass an
+argument-copy address (including LLVM byval). It can also place multiple Go
+results in caller-provided memory, using sret.
+
+Even when several results share registers or sret storage, each `result(i)`
+still refers to the corresponding complete Go result. No source field syntax
+is needed to locate it.
+
+`llvm.assume(condition)` tells LLVM a condition is guaranteed; it does not
+perform a runtime check.
+
+| Attribute | Direct matching LLVM value | After packing/splitting or indirect return |
 | --- | --- | --- |
-| `memory(...)` | Function | Restricts access through input pointers, to global memory and to external state during this call and the calls it makes. Local variables and ABI copies are handled separately below. |
-| `access(none/read/write/readwrite)` | Pointer parameter, including a pointer field | Permits neither reading nor writing, only reading, only writing, or both through that pointer. This does not by itself prohibit retaining the pointer. |
-| `capture(none)` | Pointer parameter, including a pointer field | Does not save the pointer or its address anywhere visible outside the call, or return it. Even temporary publication in a global is prohibited. |
-| `capture(results)` | Same | May retain the pointer only by returning it, including inside a returned struct. |
-| `capture(any)` | Same | No restriction on retaining the pointer. |
+| `nonnull` | LLVM nonnull and a non-null assumption. | Extract/load the selected Go pointer result and assume it is non-null. Do not annotate the sret storage address instead. |
+| `range` / `nonnegative` | LLVM range and the corresponding integer condition. | Extract/load the selected Go integer at its original width and apply the condition. Do not constrain unrelated bits in the same register. |
+| `same_as` | LLVM returned when suitable; use the entry input value in place of result uses. | After the call, matching reads of the selected Go result can use the entry input value. Other results keep their actual returned values. |
+| `noreturn` | LLVM noreturn. | Keep it if the generated function still cannot return normally. |
+| `cold` | LLVM cold. | Independent of how values are passed. |
 
-For `memory`, the modes are `none`, `read`, `write` and `readwrite`:
+Result assumptions belong after a normal return, not before a possibly panicking
+call. With LLVM invoke, they go only on its normal path. same_as uses the input
+value from entry, not a later reload of changed input memory.
 
-- `memory(none)`: no access through input pointers, to globals or to external state.
-- `memory(read)`: reads are permitted, writes are not.
-- `memory(args: read)`: only reads through pointers obtained from input parameters.
-- `memory(args: readwrite, other: read)`: reads/writes through input pointers,
-  but only reads of other memory.
+The compiler inserts these operations before ABI signature conversion.
+Existing ABI conversion adjusts the parameters/results they refer to; no
+additional wrapper call is required.
 
-A default mode applies to both `args` and `other`; an explicit location
-overrides it. With no default, unspecified locations are `none`.
+Memory and pointer-saving attributes need different treatment:
 
-For `args`, the way the pointer is obtained matters. Access through a global
-is `other`, even if that global happens to equal an input pointer. Loading a
-second pointer from the memory addressed by an input does not automatically
-make accesses through that second pointer part of `args`.
+| Attribute | Direct pointer parameters | ABI adjustments |
+| --- | --- | --- |
+| `memory` | Use the corresponding LLVM memory attribute. | Include indirect argument reads and sret writes. If input pointers are inside an aggregate and LLVM cannot classify their accesses as argument memory, permit the corresponding other-memory accesses too. |
+| `access` | Use LLVM parameter readnone/readonly/writeonly; readwrite adds no restriction. | Preserve only on a matching pointer parameter. An aggregate storage address must not stand in for a different pointer value. |
+| `capture(none)` | Use LLVM captures(none). | Keep it on a matching pointer input. Returning that pointer via sret would violate the source promise. |
+| `capture(results)` | Use LLVM return-only capture. | Remove that native restriction when results use sret: writing through sret is a memory store, not an LLVM return value. |
+| `capture(any)` | No restrictive LLVM attribute. | No additional restriction. |
 
-Clock/entropy observations, I/O and volatile/device interactions require
-`other: readwrite`, so the optimizer cannot merge repeated observations merely
-because the program made no intervening memory write. Reading ordinary program
-globals only needs `other: read`.
+For a source function with memory(none), ABI copies alone may require:
 
-### Function execution
-
-| Attribute | Meaning |
+| Added operations | LLVM attribute |
 | --- | --- |
-| `nofree` | Does not free storage that already existed before the call, including through another function. |
-| `nosync` | Does not synchronize with other threads, including through another function. |
-| `nounwind` | Does not propagate a panic or other stack unwinding to its caller. A panic recovered internally is not excluded. |
-| `willreturn` | The call eventually finishes, normally or by unwinding; it cannot run indefinitely. |
-| `noreturn` | The call never returns normally. It can panic or run indefinitely. |
-| `cold` | Calls are expected to be uncommon; this is an optimization hint. |
-
-These are independent. For example, `memory(read)` does not imply `nosync` or
-`willreturn`. A function that always propagates a panic can have both
-`willreturn` and `noreturn`.
-
-## 3. How is each attribute implemented under different ABIs?
-
-An ABI determines how arguments and results are passed. The cases that matter
-here are:
-
-1. **Direct values:** a Go pointer or integer is also an LLVM pointer or integer
-   parameter/result.
-2. **Packed or split values:** a struct is passed as one integer or several
-   registers. Its fields must be extracted before applying field attributes.
-3. **Indirect input / byval:** the caller passes the address of an argument
-   copy. This includes LLVM byval; not every target uses that exact attribute.
-4. **Indirect result / sret:** the caller supplies storage, and the callee writes
-   its result there. Multiple Go results may be combined into this storage.
-
-These are passing forms, not four disjoint architectures. One function can use
-several forms. For example, the tests exercise LLVM byval on amd64 and indirect
-input passing without that attribute on Darwin arm64.
-
-### nonnull, range, nonnegative, align and same_as
-
-`llvm.assume(condition)` tells LLVM that a condition is guaranteed at that point.
-It does not check the condition at runtime.
-
-| Attribute | Direct value | Packed/split fields | Indirect input / byval | Indirect result / sret |
-| --- | --- | --- | --- | --- |
-| `nonnull` | LLVM `nonnull`; also emit an assumption where the value is used by the implementation. | Extract the pointer field, then assume it is non-nil. | Load the pointer field, then assume it is non-nil. | After the call returns normally, load the pointer field and assume it is non-nil. |
-| `range` | LLVM `range` plus an assumption for the interval. | Extract the integer at its Go width, then assume the interval. | Load the integer field, then assume the interval. | Load the returned integer after the call, then assume the interval. |
-| `nonnegative` | Use the corresponding LLVM range and `value >= 0` assumption. | Extract the Go integer, then assume it is nonnegative. | Load the integer field, then assume it is nonnegative. | Load the returned integer after the call, then assume it is nonnegative. |
-| `align` | LLVM `align` when supported, plus an assumption about the pointer address. | Extract the pointer, then assume the address is aligned. | Load the pointer field, then assume its address is aligned. | Load the returned pointer after the call, then assume its address is aligned. |
-| `same_as` | Use LLVM `returned` when parameter/result representations match; replace uses of the result with the entry parameter value. | For matching result-field extractions, use the corresponding entry input value. | Save the input field value before the call; use that value for matching results. | For matching result-field extractions, use the saved input value after the call. Other fields retain their actual returned values. |
-
-Four details prevent wrong implementations:
-
-- A non-null byval/sret **storage address** says nothing about a pointer stored
-  **inside** it. In the example, the assumption concerns out.P.
-- An `int8` range applies to the extracted 8-bit field, not the whole register
-  that also contains other fields.
-- Result assumptions belong after a successful return. They must not remove a
-  call that may panic. With LLVM invoke, they are placed only on its normal path.
-- `same_as` uses the entry input value, not a later load of changed input memory.
-  Whole struct copies keep the actual returned struct; the implementation need
-  not rebuild a large struct just to replace one field.
-
-The current compiler inserts these operations before changing LLVM function
-signatures for the ABI. Existing ABI conversion then replaces the arguments and
-results they refer to. No extra wrapper call is required.
-
-### memory, access and capture
-
-These cannot be implemented by assuming a condition about one value. The LLVM
-attributes must describe the memory operations that the generated code performs.
-
-| Attribute | Direct pointer parameters/results | Packed or indirect input containing pointers | Indirect result / sret |
-| --- | --- | --- | --- |
-| `memory` | Use LLVM `memory` with the corresponding permitted reads/writes. | Include reads needed for indirect argument copies. If a pointer inside a struct cannot be described as LLVM argument memory, allow the corresponding accesses to other memory too. | Include writes to result storage. |
-| `access` | Use LLVM parameter `readnone`, `readonly` or `writeonly`; readwrite needs no restriction. | The address of the struct is not the pointer field. Where LLVM cannot express the field restriction, omit that optimization. | A direct input pointer keeps its restriction; result-storage writes are accounted for separately. |
-| `capture(none)` | Use LLVM `captures(none)` on the input pointer. | If no LLVM pointer parameter represents the selected field, omit that optimization. | Keep it on a direct input pointer. Returning that pointer through sret would violate the programmer's promise. |
-| `capture(results)` | Use LLVM's return-only capture attribute on the input pointer. This can include fields of a directly returned struct. | If no LLVM pointer parameter represents the selected field, omit that optimization. | Do not keep LLVM return-only capture: storing a pointer through sret is not LLVM's return-value mechanism. Allow broader capture. |
-| `capture(any)` | No restrictive LLVM attribute. | Same. | Same. |
-
-For example, a source function with `memory(none)` may still need these LLVM
-attributes solely because of its calling convention:
-
-| Generated operations | LLVM memory attribute |
-| --- | --- |
-| Direct values or register packing only | `memory(none)` |
+| Direct values/register packing only | `memory(none)` |
 | Read an indirect argument copy | `memory(argmem: read)` |
-| Write an indirect result | `memory(argmem: write)` |
-| Both of the above | `memory(argmem: readwrite)` |
+| Write result storage | `memory(argmem: write)` |
+| Both | `memory(argmem: readwrite)` |
 
-Omitting a field-specific LLVM restriction loses some optimization; it does not
-change what the source annotation means. The current implementation records this
-choice instead of attaching an incorrect attribute to the struct address.
+Where LLVM cannot express a restriction correctly, the implementation permits
+more operations and loses some optimization. It does not attach an incorrect
+attribute to another value. These choices are recorded for inspection.
 
-### nofree, nosync, nounwind, willreturn, noreturn and cold
+Compiler-added GC pointer registration or scheduling checks can perform further
+operations. The current implementation removes incompatible native restrictions
+consistently from both definitions and imported declarations. Other unmodelled
+runtime work, such as implicit allocation or defer support, is diagnosed if it
+would conflict with a retained source restriction.
 
-| Attribute | LLVM implementation | Effect of ordinary packing, byval and sret |
-| --- | --- | --- |
-| `nofree` | LLVM `nofree` | Keep it when the added operations only copy data and free nothing. |
-| `nosync` | LLVM `nosync` | Keep it when the added operations perform no synchronization. |
-| `nounwind` | LLVM `nounwind` | Keep it when the added operations cannot unwind. |
-| `willreturn` | LLVM `willreturn` | Keep it for finite packing/copying operations. |
-| `noreturn` | LLVM `noreturn` | Keep it if the generated function still cannot return normally. |
-| `cold` | LLVM `cold` | Independent of how parameters and results are passed. |
-
-If the compiler adds runtime work, simple copying is no longer the whole story.
-The current implementation handles this as follows:
-
-- In GC-root-publication or cooperative-safepoint modes, omit restrictive LLVM
-  memory/access/capture and nofree/nosync/nounwind/willreturn attributes on both
-  definitions and imported declarations. Keep the value attributes, cold and
-  noreturn.
-- For other runtime operations not yet accounted for, such as implicit heap
-  allocation, defer support, per-thread/per-goroutine storage or call logging,
-  report an error if the memory, synchronization or execution restrictions
-  would otherwise be incorrect.
-
-Current limits: pointer forwarding assumes the existing non-moving collectors;
-unusual pointer representations may not support the alignment implementation.
-Invoke calls that require unsupported ABI signature changes are diagnosed.
-Unknown function-value/interface calls do not inherit a specific callee's
-attributes.
+Current limits: pointer same_as assumes the existing non-moving collectors.
+Unsupported invoke signature changes are diagnosed. Unknown function-value or
+interface calls do not inherit a particular callee's attributes.

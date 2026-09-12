@@ -2,14 +2,12 @@ package funcattrs
 
 import (
 	"encoding/json"
-	"errors"
 	"go/ast"
 	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -77,21 +75,21 @@ func TestSourceAttributeDiagnostics(t *testing.T) {
 		{"cold()", "func F() {}", "empty arguments"},
 		{"param(0)", "func F(p int) {}", "expected an attribute"},
 		{"noexternal", "func F() {}", "unsupported attribute"},
-		{"param(0) align(0)", "func F(p *int) {}", "positive power-of-two"},
-		{"param(0) align(3)", "func F(p *int) {}", "positive power-of-two"},
-		{"param(0) align(1 6)", "func F(p *int) {}", "positive power-of-two"},
+		{"param(0) align(0)", "func F(p *int) {}", "unsupported attribute"},
+		{"param(0) align(3)", "func F(p *int) {}", "unsupported attribute"},
+		{"param(0) align(1 6)", "func F(p *int) {}", "unsupported attribute"},
 		{"param(0) range(1 2, 20)", "func F(p int) {}", "integer literals"},
 		{"param(0) access(invalid)", "func F(p *int) {}", "unknown access mode"},
 		{"result(0) access(read)", "func F() *int { return nil }", "not supported on result"},
 		{"result(0) capture(none)", "func F() *int { return nil }", "not supported on result"},
-		{"param(0).field(p) nonnull", "func F(s *struct{p *int}) {}", "requires a struct value"},
-		{"param(0).field(missing) nonnull", "func F(s struct{p *int}) {}", "unknown field"},
-		{"param(0).field(_) nonnull", "func F(s struct{_ *int}) {}", "nonblank field name"},
-		{"param(0).element(2) nonnull", "func F(s [2]*int) {}", "outside array length"},
-		{"param(0).element(-1) nonnull", "func F(s [2]*int) {}", "constant integer index"},
-		{"param(0).element(i) nonnull", "func F(s [2]*int) {}", "constant integer index"},
-		{"param(0).element(0) nonnull", "func F(s []*int) {}", "requires an array value"},
-		{"param(0).deref(p) nonnull", "func F(s *int) {}", "unsupported selector step"},
+		{"param(0).field(p) nonnull", "func F(s *struct{p *int}) {}", "unsupported selector suffix"},
+		{"param(0).field(missing) nonnull", "func F(s struct{p *int}) {}", "unsupported selector suffix"},
+		{"param(0).field(_) nonnull", "func F(s struct{_ *int}) {}", "unsupported selector suffix"},
+		{"param(0).element(2) nonnull", "func F(s [2]*int) {}", "unsupported selector suffix"},
+		{"param(0).element(-1) nonnull", "func F(s [2]*int) {}", "unsupported selector suffix"},
+		{"param(0).element(i) nonnull", "func F(s [2]*int) {}", "unsupported selector suffix"},
+		{"param(0).element(0) nonnull", "func F(s []*int) {}", "unsupported selector suffix"},
+		{"param(0).deref(p) nonnull", "func F(s *int) {}", "unsupported selector suffix"},
 		{"param(0) same_as(param(0))", "func F(s int) int { return s }", "not supported on parameter"},
 		{"result(0) same_as(result(0))", "func F(s int) int { return s }", "requires an input"},
 		{"result(0) same_as(param(0))", "func F(s int32) uint32 { return 0 }", "identical integer source types"},
@@ -111,49 +109,45 @@ func TestSourceAttributeDiagnostics(t *testing.T) {
 	}
 }
 
-func TestSourcePathsAndMultipleResults(t *testing.T) {
-	attrs, sig, err := parseTest(t, `type Box struct { Data [3]*int; Count int32 }
-//llgo:attribute param(b).field(Data).element(0x2) nonnull align(16) access(read) capture(results)
-//llgo:attribute param(b).field(Count) range(-4, 20) nonnegative
-//llgo:attribute result(out).field(Data).element(1) nonnull same_as(param(b).field(Data).element(2))
-//llgo:attribute result(n) range(0, 32)
-func F(b Box) (out Box, n int32) { return b, b.Count }`)
+func TestSourceAttributesExcludeCompilerManagedProperties(t *testing.T) {
+	for _, attribute := range []string{"param(p) align(16)", "nofree", "nosync", "nounwind", "willreturn", "param(p).field(P) nonnull", "param(p).element(0) nonnull"} {
+		t.Run(attribute, func(t *testing.T) {
+			_, _, err := parseTest(t, "//llgo:attribute "+attribute+"\nfunc F(p *int) {}")
+			if err == nil || !strings.Contains(err.Error(), "unsupported") {
+				t.Fatalf("source annotation accepted: %s, error = %v", attribute, err)
+			}
+		})
+	}
+}
+
+func TestSourceMultipleResults(t *testing.T) {
+	attrs, sig, err := parseTest(t, `//llgo:attribute param(p) nonnull access(read) capture(results)
+//llgo:attribute param(n) range(-4,20) nonnegative
+//llgo:attribute result(out) nonnull same_as(param(p))
+//llgo:attribute result(count) range(0,32)
+func F(p *int, n int32) (out *int, count int32) { return p,n }`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Validate(attrs, sig, 64, false); err != nil {
+	if err = Validate(attrs, sig, 64, false); err != nil {
 		t.Fatal(err)
 	}
-	if len(attrs) != 9 {
-		t.Fatalf("attributes = %#v", attrs)
+	if len(attrs) != 8 {
+		t.Fatalf("attributes = %+v", attrs)
 	}
 	for _, a := range attrs {
-		leaf, path, err := ResolveTarget(sig, a.Target)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if a.Target.Scope == Parameter && a.Target.Path[0].Field == "Data" {
-			if !pointer(leaf) || !slices.Equal(path, []int{0, 2}) {
-				t.Fatalf("leaf %s path %v", leaf, path)
-			}
-		}
-		if a.Name == "same_as" {
-			if a.Target.String() != "result(0).field(Data).element(1)" || a.From.String() != "param(0).field(Data).element(2)" {
-				t.Fatalf("same_as = %+v", a)
-			}
-		}
-		if a.Name == "align" && a.Alignment != 16 {
-			t.Fatalf("alignment = %d", a.Alignment)
+		if a.Name == "same_as" && (a.Target.String() != "result(0)" || a.From.String() != "param(0)") {
+			t.Fatalf("same_as = %+v", a)
 		}
 	}
 }
 
 func TestSourceReceiverAndUnnamedValues(t *testing.T) {
-	attrs, sig, err := parseTest(t, `type Box struct { P *int }
-//llgo:attribute receiver.field(P) nonnull
-//llgo:attribute param(0) range(-4, 4)
-//llgo:attribute result(1) same_as(receiver.field(P))
-func (Box) F(int) (bool, *int) { return false,nil }`)
+	attrs, sig, err := parseTest(t, `type Box struct{ P *int }
+//llgo:attribute receiver nonnull
+//llgo:attribute param(0) range(-4,4)
+//llgo:attribute result(1) same_as(receiver)
+func (*Box) F(int) (bool,*Box) { return false,nil }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,9 +156,9 @@ func (Box) F(int) (bool, *int) { return false,nil }`)
 	}
 	for _, a := range attrs {
 		if a.Target.Scope == Receiver {
-			leaf, path, err := ResolveTarget(sig, a.Target)
-			if err != nil || !pointer(leaf) || !slices.Equal(path, []int{0}) {
-				t.Fatalf("%s %v %v", leaf, path, err)
+			typ, err := ResolveTarget(sig, a.Target)
+			if err != nil || !pointer(typ) {
+				t.Fatalf("receiver %v: %v", typ, err)
 			}
 		}
 	}
@@ -227,46 +221,12 @@ func TestSourcePublicContractModes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	attrs, sig, err := parseTest(t, "//llgo:attribute cold noreturn nounwind willreturn nofree nosync\nfunc F() { panic(0) }")
+	attrs, sig, err := parseTest(t, "//llgo:attribute cold noreturn\nfunc F() { panic(0) }")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// These assertions may imply an unreachable definition, but no pair is
-	// syntactically contradictory: willreturn also admits stack unwinding.
 	if err = Validate(attrs, sig, 64, false); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestSourceGenericPaths(t *testing.T) {
-	attrs, sig, err := parseTest(t, `//llgo:attribute param(v).field(P) nonnull
-//llgo:attribute result(0) same_as(param(v).field(P))
-func F[T any](v T) *int { return nil }`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err = ResolveTarget(sig, attrs[0].Target); !errors.Is(err, ErrUnresolvedTypeParameter) {
-		t.Fatalf("unresolved path = %v", err)
-	}
-	if err = Validate(attrs, sig, 64, true); err != nil {
-		t.Fatal(err)
-	}
-	for _, tc := range []struct {
-		field types.Type
-		valid bool
-	}{
-		{types.NewPointer(types.Typ[types.Int]), true},
-		{types.Typ[types.Int], false},
-	} {
-		box := types.NewStruct([]*types.Var{types.NewVar(token.NoPos, nil, "P", tc.field)}, nil)
-		instance, err := types.Instantiate(nil, sig, []types.Type{box}, true)
-		if err != nil {
-			t.Fatal(err)
-		}
-		err = Validate(attrs, instance.(*types.Signature), 64, false)
-		if (err == nil) != tc.valid {
-			t.Fatalf("field %s: valid %v, err %v", tc.field, tc.valid, err)
-		}
 	}
 }
 
@@ -300,9 +260,9 @@ func F(v Counter) int { return int(v) }`)
 	}
 }
 
-func TestSourceMergeOwnsPathsAndCanonicalRange(t *testing.T) {
-	attrs, _, err := parseTest(t, `//llgo:attribute param(v).element(1) range(0x0,0x10) range(0,16)
-func F(v [2]int) {}`)
+func TestSourceMergeOwnsCanonicalRange(t *testing.T) {
+	attrs, _, err := parseTest(t, `//llgo:attribute param(v) range(0x0,0x10) range(0,16)
+func F(v int) {}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,14 +273,13 @@ func F(v [2]int) {}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	attrs[0].Target.Path[0].Index = 0
 	attrs[0].Range.Upper.SetInt64(8)
-	if merged[0].Target.Path[0].Index != 1 || merged[0].Range.Upper.Int64() != 16 {
+	if merged[0].Range.Upper.Int64() != 16 {
 		t.Fatal("Merge retained mutable source operands")
 	}
 }
 
-func TestSourceWideRangesAndAlignment(t *testing.T) {
+func TestSourceWideRanges(t *testing.T) {
 	attrs, sig, err := parseTest(t, `//llgo:attribute param(v) range(0,18446744073709551616)
 //llgo:attribute result(0) nonnegative
 func F(v uint64) uint64 { return v }`)
@@ -336,25 +295,15 @@ func F(v uint64) uint64 { return v }`)
 	if err = Validate(attrs, sig, 64, false); err != nil {
 		t.Fatal(err)
 	}
-	attrs, sig, err = parseTest(t, "//llgo:attribute param(0) align(0x100000000)\nfunc F(p *int) {}")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = Validate(attrs, sig, 64, false); err != nil {
-		t.Fatal(err)
-	}
-	if err = Validate(attrs, sig, 32, false); err == nil {
-		t.Fatal("32-bit oversized alignment accepted")
-	}
+
 }
 
 func TestSourceTypedOperandsJSONRoundTrip(t *testing.T) {
-	attrs, sig, err := parseTest(t, `type Box struct{ P [2]*int; N uint64 }
-//llgo:attribute memory(read,argmem:readwrite)
-//llgo:attribute param(v).field(P).element(1) nonnull align(16) access(read) capture(results)
-//llgo:attribute param(v).field(N) range(0,18446744073709551616)
-//llgo:attribute result(1).field(P).element(0) same_as(param(v).field(P).element(1))
-func F(v Box) (bool,Box) { return false,v }`)
+	attrs, sig, err := parseTest(t, `//llgo:attribute memory(read,argmem:readwrite)
+//llgo:attribute param(p) nonnull access(read) capture(results)
+//llgo:attribute param(n) range(0,18446744073709551616)
+//llgo:attribute result(1) same_as(param(p))
+func F(p *int, n uint64) (bool,*int) { return false,p }`)
 	if err != nil {
 		t.Fatal(err)
 	}

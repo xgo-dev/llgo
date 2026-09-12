@@ -47,7 +47,6 @@ func StringCat(a, b String) String {
 // -----------------------------------------------------------------------------
 
 // CStrCopy copies a Go string to a C string buffer and returns it.
-//llgo:attribute nofree nosync nounwind willreturn
 //llgo:attribute memory(read, args: readwrite)
 //llgo:attribute param(dest) access(write) capture(results)
 //llgo:attribute result(0) same_as(param(dest))
@@ -195,7 +194,6 @@ func StringFromUint64(r uint64) String {
 	return StringFromRune(rune(r))
 }
 
-//llgo:attribute nofree nosync nounwind willreturn
 //llgo:attribute memory(read)
 func StringEqual(x, y String) bool {
 	if x.len != y.len {
@@ -211,7 +209,6 @@ func StringEqual(x, y String) bool {
 	return true
 }
 
-//llgo:attribute nofree nosync nounwind willreturn
 //llgo:attribute memory(read)
 func StringLess(x, y String) bool {
 	n := x.len
