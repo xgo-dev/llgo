@@ -127,7 +127,7 @@ func TestRunNativeTest(t *testing.T) {
 func TestGoCompatibleWasmRunner(t *testing.T) {
 	t.Setenv("LLGO_WASM_RUNTIME", "wasmtime")
 	js := goCompatibleWasmRunner(&Config{Goos: "js", Goarch: "wasm"})
-	if !strings.Contains(js, "emscripten-runner.mjs") || !strings.Contains(js, "{}") {
+	if !strings.Contains(js, "emscripten-runner.mjs") || !strings.Contains(js, "--browser-only") || !strings.Contains(js, "{}") {
 		t.Fatalf("js runner = %q", js)
 	}
 	if got, want := goCompatibleWasmRunner(&Config{Goos: "wasip1", Goarch: "wasm"}), `wasmtime run --dir=/ --env PWD --env PATH -W exceptions=y -W multi-memory=y -W max-wasm-stack=8388608 "{}"`; got != want {
