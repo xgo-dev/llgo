@@ -400,3 +400,9 @@ not_applicable:
   - directive: buildrundir
     case: retjmp.go
     reason: "not applicable: LLGo does not accept Go assembler, so its return-jump ABI is outside the supported build path; supporting this toolchain-specific behavior is not an LLGo compatibility goal"
+  - directive: errorcheck
+    case: nilptr5_wasm.go
+    reason: "not applicable: this case asserts cmd/compile-specific -d=nil optimization diagnostics for WebAssembly; LLGo delegates those optimizations to LLVM, so reproducing gc compiler diagnostics is not an LLGo compatibility goal"
+  - directive: runindir
+    case: wasmmemsize.go
+    reason: "not applicable: this case uses Go assembler to enforce the standard Go allocator's current 3 MiB WebAssembly memory threshold; LLGo uses tinygogc and the Emscripten layout, so matching that implementation-specific threshold is not an LLGo compatibility goal"

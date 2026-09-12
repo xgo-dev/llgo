@@ -10,11 +10,12 @@ import (
 )
 
 type gorootWasmProfile struct {
-	name       string
-	target     string
-	goos       string
-	llgoSuffix string
-	runner     string
+	name        string
+	target      string
+	goos        string
+	llgoSuffix  string
+	runner      string
+	browserOnly bool
 }
 
 func selectGOROOTWasmProfile(name string) (gorootWasmProfile, bool, error) {
@@ -28,7 +29,7 @@ func selectGOROOTWasmProfile(name string) (gorootWasmProfile, bool, error) {
 	case "W32-WASI":
 		return gorootWasmProfile{name: name, target: "wasi", goos: "wasip1", llgoSuffix: ".wasm", runner: "wasmtime"}, true, nil
 	case "J32-GoJS":
-		return gorootWasmProfile{name: name, goos: "js", llgoSuffix: ".mjs", runner: "emscripten-runner.mjs"}, true, nil
+		return gorootWasmProfile{name: name, goos: "js", llgoSuffix: ".mjs", runner: "emscripten-runner.mjs", browserOnly: true}, true, nil
 	default:
 		return gorootWasmProfile{}, false, fmt.Errorf("unknown -wasm-profile=%q", name)
 	}
@@ -137,6 +138,11 @@ func gorootArtifactCommand(dir, artifact string, llgo bool, env []string, progra
 		return "wasmtime", args, gorootRuntimeEnv(env), nil
 	}
 	runner := filepath.Join(root, "targets", p.runner)
-	args := append([]string{runner, artifact}, programArgs...)
+	args := []string{runner}
+	if p.browserOnly {
+		args = append(args, "--browser-only")
+	}
+	args = append(args, artifact)
+	args = append(args, programArgs...)
 	return "node", args, gorootRuntimeEnv(env), nil
 }

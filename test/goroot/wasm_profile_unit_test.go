@@ -57,6 +57,16 @@ func TestGOROOTWasmBuildAndRunCommands(t *testing.T) {
 	}
 }
 
+func TestGOROOTGoJSRunCommandModelsBrowser(t *testing.T) {
+	withGOROOTWasmProfile(t, "J32-GoJS")
+	env := []string{"GOROOT=/go", "LLGO_ROOT=/llgo"}
+	app, args, _, err := gorootArtifactCommand("/work", "out.mjs", true, env, "arg")
+	want := []string{filepath.Join("/llgo", "targets", "emscripten-runner.mjs"), "--browser-only", "out.mjs", "arg"}
+	if err != nil || app != "node" || !reflect.DeepEqual(args, want) {
+		t.Fatalf("GoJS command: %q %v %v", app, args, err)
+	}
+}
+
 func TestGOROOTWasiRunCommand(t *testing.T) {
 	withGOROOTWasmProfile(t, "W32-WASI")
 	env := []string{"GOROOT=/go", "LLGO_ROOT=/llgo"}

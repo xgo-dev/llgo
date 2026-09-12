@@ -1,6 +1,11 @@
 # Windows platform selectors may use windows/ARCH for both ABIs or the more
 # specific windows-msvc/ARCH and windows-mingw/ARCH forms.
 host_skips:
+  - version: go1.27
+    platform: linux/amd64
+    directive: runoutput
+    case: rangegen.go
+    reason: the Go 1.27 generator exceeds the hosted runner's 4 GiB process-group limit before LLGo is invoked
   - directive: run
     case: fixedbugs/issue16016.go
     reason: the test intentionally creates enough goroutines to exhaust LLGo's one-thread-per-goroutine host limit
@@ -21,6 +26,31 @@ host_skips:
     case: fixedbugs/bug449.go
     reason: go1.26 bug449 generated build exceeds the linux/amd64 hosted runner memory budget
 timeouts:
+  - platform: js/wasm
+    directive: run
+    case: cmplxdivide.go
+    timeout: 10m
+    reason: LLVM lowering of the large complex-division table exceeds the default build timeout on hosted runners
+  - platform: js/wasm
+    directive: run
+    case: finprofiled.go
+    timeout: 2m
+    reason: the finalizer profiling stress program needs more than the default minute under the GoJS runner
+  - platform: js/wasm
+    directive: run
+    case: winbatch.go
+    timeout: 2m
+    reason: the Windows batching stress program needs more than the default minute under the GoJS runner
+  - platform: js/wasm
+    directive: rundir
+    case: typeparam/chansimp.go
+    timeout: 2m
+    reason: the generic channel directory test needs more than the default minute under the GoJS runner
+  - platform: js/wasm
+    directive: run
+    case: fixedbugs/issue78081.go
+    timeout: 3m
+    reason: the single-worker stack and GC stress loop needs more than the default minute under the GoJS runner
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue79186.go
@@ -376,3 +406,43 @@ xfails:
   - directive: run
     case: heapsampling.go
     reason: LLGo does not currently report the heap-profile samples required by this runtime test
+  - platform: js/wasm
+    directive: run
+    case: init1.go
+    reason: the conservative linear collector retains enough loop-temporary pointers to grow memory past this Go allocator threshold
+  - platform: js/wasm
+    directive: run
+    case: inline_literal.go
+    reason: LLGo's WebAssembly PC-line table includes a runtime log frame outside the inlined function's source range
+  - platform: js/wasm
+    directive: run
+    case: fixedbugs/issue14646.go
+    reason: LLGo reports the recovered caller one source line earlier than cmd/compile on WebAssembly
+  - platform: js/wasm
+    directive: run
+    case: fixedbugs/issue22662.go
+    reason: LLGo does not preserve the omitted filename in this sequence of line directives on WebAssembly
+  - platform: js/wasm
+    directive: errorcheck
+    case: fixedbugs/issue5089.go
+    reason: LLGo does not yet diagnose a method declaration on a non-local type
+  - platform: js/wasm
+    directive: run
+    case: fixedbugs/issue58300.go
+    reason: LLGo reports reflect-generated closure symbols instead of the original function names on WebAssembly
+  - platform: js/wasm
+    directive: run
+    case: fixedbugs/issue58300b.go
+    reason: LLGo reports reflect-generated closure symbols instead of the original function names on WebAssembly
+  - platform: js/wasm
+    directive: run
+    case: fixedbugs/issue5856.go
+    reason: LLGo reports the deferred panic caller from the defer statement rather than the enclosing call site on WebAssembly
+  - platform: js/wasm
+    directive: run
+    case: fixedbugs/issue59680.go
+    reason: the fixed WebAssembly goroutine stack cannot grow through the test's 10,101 recursive frames
+  - platform: js/wasm
+    directive: run
+    case: fixedbugs/issue4618.go
+    reason: LLGo currently leaves one allocation in the unused local-pointer path that cmd/compile eliminates

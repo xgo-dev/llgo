@@ -334,6 +334,8 @@ func TestObservedNotApplicableCasesAreGlobal(t *testing.T) {
 		{RelPath: "fixedbugs/issue54343.go", Directive: "run"},
 		{RelPath: "maymorestack.go", Directive: "run"},
 		{RelPath: "stack.go", Directive: "run"},
+		{RelPath: "nilptr5_wasm.go", Directive: "errorcheck"},
+		{RelPath: "wasmmemsize.go", Directive: "runindir"},
 	}
 	for _, tc := range cases {
 		for _, target := range []struct {
@@ -365,6 +367,16 @@ func TestObservedFailuresHaveXFailClassifications(t *testing.T) {
 		{version: "go1.26.7", platform: "windows-msvc/amd64", tc: testCase{RelPath: "fixedbugs/issue58300.go", Directive: "run"}},
 		{version: "go1.26.7", platform: "windows-msvc/386", tc: testCase{RelPath: "fixedbugs/issue23305.go", Directive: "run"}},
 		{version: "go1.26.7", platform: "windows-msvc/386", tc: testCase{RelPath: "fixedbugs/issue42032.go", Directive: "run"}},
+		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "init1.go", Directive: "run"}},
+		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "inline_literal.go", Directive: "run"}},
+		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue14646.go", Directive: "run"}},
+		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue22662.go", Directive: "run"}},
+		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue5089.go", Directive: "errorcheck"}},
+		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue58300.go", Directive: "run"}},
+		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue58300b.go", Directive: "run"}},
+		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue5856.go", Directive: "run"}},
+		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue59680.go", Directive: "run"}},
+		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue4618.go", Directive: "run"}},
 	}
 	for _, tt := range tests {
 		if match, _ := cfg.Match(tt.version, tt.platform, tt.tc); !match {
@@ -388,10 +400,40 @@ func TestObservedPassesDoNotHaveXFailClassifications(t *testing.T) {
 		{version: "go1.27.0", platform: "linux/amd64", tc: testCase{RelPath: "fixedbugs/issue34123.go", Directive: "run"}},
 		{version: "go1.27.0", platform: "windows-msvc/amd64", tc: testCase{RelPath: "fixedbugs/issue34123.go", Directive: "run"}},
 		{version: "go1.27.0", platform: "darwin/arm64", tc: testCase{RelPath: "fixedbugs/issue52612.go", Directive: "run"}},
+		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "typeparam/dictionaryCapture-noinline.go", Directive: "run"}},
+		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue68525.go", Directive: "run"}},
 	}
 	for _, tt := range tests {
 		if match, reason := cfg.Match(tt.version, tt.platform, tt.tc); match {
 			t.Errorf("%s unexpectedly matched xfail for %s/%s: %s", tt.tc.RelPath, tt.version, tt.platform, reason)
+		}
+	}
+}
+
+func TestWasmObservedResourceExceptions(t *testing.T) {
+	repo := repoRoot(t)
+	cfg := loadXFailConfig(t, repo, filepath.Join("test", "goroot", "xfail.yaml"))
+	rangegen := testCase{RelPath: "rangegen.go", Directive: "runoutput"}
+	if match, _ := cfg.MatchHostSkip("go1.27.0", "linux/amd64", rangegen); !match {
+		t.Fatal("Go 1.27 linux/amd64 rangegen did not match its host resource skip")
+	}
+	if match, reason := cfg.MatchHostSkip("go1.26.7", "linux/amd64", rangegen); match {
+		t.Fatalf("Go 1.26 linux/amd64 rangegen unexpectedly matched host skip: %s", reason)
+	}
+	for _, tt := range []struct {
+		tc      testCase
+		timeout time.Duration
+	}{
+		{testCase{RelPath: "cmplxdivide.go", Directive: "run"}, 10 * time.Minute},
+		{testCase{RelPath: "finprofiled.go", Directive: "run"}, 2 * time.Minute},
+		{testCase{RelPath: "winbatch.go", Directive: "run"}, 2 * time.Minute},
+		{testCase{RelPath: "typeparam/chansimp.go", Directive: "rundir"}, 2 * time.Minute},
+		{testCase{RelPath: "fixedbugs/issue78081.go", Directive: "run"}, 3 * time.Minute},
+	} {
+		tc := tt.tc
+		timeout, _, match := cfg.MatchTimeout("go1.27.0", "js/wasm", tc)
+		if !match || timeout != tt.timeout {
+			t.Errorf("timeout for %s = %s, %v; want %s, true", tc.RelPath, timeout, match, tt.timeout)
 		}
 	}
 }
