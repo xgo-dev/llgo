@@ -21,6 +21,7 @@ func TestAllocatorNonNullAcrossModules(t *testing.T) {
 		t.Run(target.LLVMTarget, func(t *testing.T) {
 			prog := NewProgram(target)
 			defer prog.Dispose()
+			loadRuntimeSourceAttributes(t, prog)
 			kind := llvm.AttributeKindID("nonnull")
 			for _, module := range []string{PkgRuntime, "example.com/caller"} {
 				pkg := prog.NewPackage("p", module)

@@ -3,6 +3,7 @@
 package funcattrs
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/token"
@@ -25,18 +26,79 @@ const (
 	Receiver  Scope = "receiver"
 )
 
-// Target identifies a logical source value. Index never includes compiler-owned
-// arguments and remains meaningful if an ABI splits or stores that value.
-type Target struct {
-	Scope Scope
+type PathKind string
+
+const (
+	FieldPath   PathKind = "field"
+	ElementPath PathKind = "element"
+)
+
+// PathStep selects a struct field or array element. Paths never implicitly
+// dereference a pointer or traverse a slice backing store.
+type PathStep struct {
+	Kind  PathKind
+	Field string
 	Index int
 }
 
+// Target identifies a logical source value. Index excludes compiler-owned
+// arguments; Path is relative to the source value before ABI transformation.
+type Target struct {
+	Scope Scope
+	Index int
+	Path  []PathStep
+}
+
+func (t Target) Equal(other Target) bool {
+	return t.Scope == other.Scope && t.Index == other.Index && slices.Equal(t.Path, other.Path)
+}
+
+func (t Target) String() string {
+	var s string
+	switch t.Scope {
+	case Parameter:
+		s = fmt.Sprintf("param(%d)", t.Index)
+	case Result:
+		s = fmt.Sprintf("result(%d)", t.Index)
+	default:
+		s = string(t.Scope)
+	}
+	for _, step := range t.Path {
+		if step.Kind == FieldPath {
+			s += ".field(" + step.Field + ")"
+		} else {
+			s += fmt.Sprintf(".element(%d)", step.Index)
+		}
+	}
+	return s
+}
+
+type CaptureMode uint8
+
+const (
+	CaptureNone CaptureMode = iota
+	CaptureResults
+	CaptureAny
+)
+
+// RangeBounds contains mathematical integers with an exclusive upper bound.
+// It stays source-width independent until IntegerRange validates a concrete type.
+type RangeBounds struct {
+	Lower *big.Int
+	Upper *big.Int
+}
+
 type Attribute struct {
-	Target   Target
-	Name     string
-	Args     string
-	Position token.Position
+	Target    Target
+	Name      string
+	Args      string // Canonical spelling; backends consume the typed operands below.
+	Position  token.Position
+	Range     *RangeBounds
+	Alignment uint64
+	From      *Target // same_as denotes the logical input snapshot at function entry.
+	Access    AccessMode
+	Capture   CaptureMode
+	Memory    MemoryEffects
 }
 
 func (a Attribute) Error(format string, args ...any) error {
@@ -51,47 +113,50 @@ func Parse(fset *token.FileSet, decl *ast.FuncDecl) ([]Attribute, error) {
 		if d.Name != "llgo:attribute" {
 			continue
 		}
-		a := Attribute{Target: Target{Scope: Function}, Position: fset.Position(d.Pos)}
+		base := Attribute{Target: Target{Scope: Function}, Position: fset.Position(d.Pos)}
 		words, err := split(d.Args)
 		if err != nil {
-			return nil, a.Error("%v", err)
+			return nil, base.Error("%v", err)
 		}
 		if len(words) == 0 {
-			return nil, a.Error("expected an attribute")
+			return nil, base.Error("expected an attribute")
 		}
-		name, args, err := expression(words[0])
-		if err != nil {
-			return nil, a.Error("%v", err)
-		}
-		switch name {
-		case "param", "result":
-			fields := decl.Type.Params
-			a.Target.Scope = Parameter
-			if name == "result" {
-				fields, a.Target.Scope = decl.Type.Results, Result
-			}
-			index, err := selectIndex(fields, args)
+		if isSelector(words[0]) {
+			base.Target, err = parseTarget(decl, words[0])
 			if err != nil {
-				return nil, a.Error("%s: %v", name, err)
+				return nil, base.Error("%v", err)
 			}
-			a.Target.Index = index
-			words = words[1:]
-		case "receiver":
-			if args != "" || words[0] != "receiver" || decl.Recv == nil {
-				return nil, a.Error("receiver requires a method")
-			}
-			a.Target.Scope = Receiver
 			words = words[1:]
 		}
 		if len(words) == 0 {
-			return nil, a.Error("expected an attribute after selector")
+			return nil, base.Error("expected an attribute after selector")
 		}
 		for _, word := range words {
+			a := base
 			a.Name, a.Args, err = expression(word)
 			if err != nil {
 				return nil, a.Error("%v", err)
 			}
-			if err = checkSyntax(a); err != nil {
+			if a.Name == "same_as" {
+				from, err := parseTarget(decl, a.Args)
+				if err != nil {
+					return nil, a.Error("same_as: %v", err)
+				}
+				a.From = &from
+			}
+			if a.Name == "returned" {
+				if a.Args != "" || (a.Target.Scope != Parameter && a.Target.Scope != Receiver) {
+					return nil, a.Error("returned requires an input selector and no arguments")
+				}
+				if fieldCount(decl.Type.Results) != 1 {
+					return nil, a.Error("returned requires exactly one source result; use result(...) same_as(...) otherwise")
+				}
+				from := a.Target
+				a.Target, a.Name, a.From = Target{Scope: Result}, "same_as", &from
+				a.Args = from.String()
+			}
+			a, err = normalize(a)
+			if err != nil {
 				return nil, err
 			}
 			attrs = append(attrs, a)
@@ -100,7 +165,7 @@ func Parse(fset *token.FileSet, decl *ast.FuncDecl) ([]Attribute, error) {
 	return Merge(attrs)
 }
 
-// Reject reports attributes attached to declarations/locations outside v1.
+// Reject reports attributes attached outside named function declarations.
 func Reject(fset *token.FileSet, doc *ast.CommentGroup) error {
 	for _, d := range directive.ParseGroup(doc) {
 		if d.Name == "llgo:attribute" {
@@ -143,21 +208,115 @@ func split(s string) ([]string, error) {
 	return words, nil
 }
 
+// expression also accepts nesting for same_as(param(...).field(...)).
 func expression(s string) (name, args string, err error) {
 	name = s
 	if i := strings.IndexByte(s, '('); i >= 0 {
-		if !strings.HasSuffix(s, ")") || strings.ContainsAny(s[i+1:len(s)-1], "()") {
+		end, e := closingParen(s, i)
+		if e != nil || end != len(s)-1 {
 			return "", "", fmt.Errorf("invalid attribute expression %q", s)
 		}
-		name, args = s[:i], strings.TrimSpace(s[i+1:len(s)-1])
+		name, args = s[:i], strings.TrimSpace(s[i+1:end])
 		if args == "" {
 			return "", "", fmt.Errorf("empty arguments for %s", name)
 		}
 	}
+	if name != "range" && !token.IsIdentifier(name) {
+		return "", "", fmt.Errorf("invalid attribute expression %q", s)
+	}
 	return
 }
 
-func selectIndex(fields *ast.FieldList, selector string) (int, error) {
+func closingParen(s string, start int) (int, error) {
+	depth := 0
+	for i := start; i < len(s); i++ {
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("unbalanced parentheses")
+}
+
+func isSelector(s string) bool {
+	return s == "receiver" || strings.HasPrefix(s, "receiver.") || strings.HasPrefix(s, "receiver(") ||
+		s == "param" || strings.HasPrefix(s, "param(") || s == "result" || strings.HasPrefix(s, "result(")
+}
+
+func parseTarget(decl *ast.FuncDecl, s string) (Target, error) {
+	var target Target
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "receiver") {
+		if decl.Recv == nil {
+			return target, fmt.Errorf("receiver requires a method")
+		}
+		target.Scope, s = Receiver, s[len("receiver"):]
+	} else {
+		i := strings.IndexByte(s, '(')
+		if i < 0 {
+			return target, fmt.Errorf("expected param(...), result(...), or receiver selector")
+		}
+		end, err := closingParen(s, i)
+		if err != nil {
+			return target, err
+		}
+		var fields *ast.FieldList
+		switch s[:i] {
+		case "param":
+			target.Scope, fields = Parameter, decl.Type.Params
+		case "result":
+			target.Scope, fields = Result, decl.Type.Results
+		default:
+			return target, fmt.Errorf("expected an input or result selector, got %q", s[:i])
+		}
+		target.Index, err = selectIndex(fields, strings.TrimSpace(s[i+1:end]))
+		if err != nil {
+			return target, err
+		}
+		s = s[end+1:]
+	}
+	for s != "" {
+		if !strings.HasPrefix(s, ".") {
+			return target, fmt.Errorf("invalid selector path %q", s)
+		}
+		s = s[1:]
+		i := strings.IndexByte(s, '(')
+		if i < 0 {
+			return target, fmt.Errorf("expected .field(name) or .element(index)")
+		}
+		end, err := closingParen(s, i)
+		if err != nil {
+			return target, err
+		}
+		arg := strings.TrimSpace(s[i+1 : end])
+		var step PathStep
+		switch s[:i] {
+		case "field":
+			if !token.IsIdentifier(arg) || arg == "_" {
+				return target, fmt.Errorf("field requires a nonblank field name")
+			}
+			step = PathStep{Kind: FieldPath, Field: arg}
+		case "element":
+			index, err := strconv.ParseUint(arg, 0, 63)
+			if err != nil || uint64(int(index)) != index {
+				return target, fmt.Errorf("element requires a nonnegative constant integer index")
+			}
+			step = PathStep{Kind: ElementPath, Index: int(index)}
+		default:
+			return target, fmt.Errorf("unsupported selector step %q", s[:i])
+		}
+		target.Path = append(target.Path, step)
+		s = s[end+1:]
+	}
+	return target, nil
+}
+
+func fieldNames(fields *ast.FieldList) []string {
 	var names []string
 	if fields != nil {
 		for _, f := range fields.List {
@@ -169,6 +328,13 @@ func selectIndex(fields *ast.FieldList, selector string) (int, error) {
 			}
 		}
 	}
+	return names
+}
+
+func fieldCount(fields *ast.FieldList) int { return len(fieldNames(fields)) }
+
+func selectIndex(fields *ast.FieldList, selector string) (int, error) {
+	names := fieldNames(fields)
 	if i, err := strconv.Atoi(selector); err == nil && i >= 0 && i < len(names) {
 		return i, nil
 	}
@@ -181,8 +347,40 @@ func selectIndex(fields *ast.FieldList, selector string) (int, error) {
 }
 
 func compact(s string) string { return strings.Join(strings.Fields(s), "") }
+func accessString(mode AccessMode) string {
+	return [...]string{"none", "read", "write", "readwrite"}[mode]
+}
 
-func checkSyntax(a Attribute) error {
+// normalize is the only string-to-contract translation point. It also populates
+// typed operands for programmatically constructed attributes passed to Merge.
+func normalize(a Attribute) (Attribute, error) {
+	a.Args = strings.TrimSpace(a.Args)
+	switch a.Name {
+	case "readonly", "writeonly":
+		if a.Args != "" {
+			return a, a.Error("invalid arguments for %s", a.Name)
+		}
+		if a.Name == "readonly" {
+			a.Args = "read"
+		} else {
+			a.Args = "write"
+		}
+		a.Name = "access"
+	case "captures":
+		a.Name = "capture"
+		if compact(a.Args) == "ret:address,provenance" {
+			a.Args = "results"
+		}
+	case "memory":
+		parts := strings.Split(a.Args, ",")
+		for i, part := range parts {
+			location, mode, ok := strings.Cut(part, ":")
+			if ok && strings.TrimSpace(location) == "argmem" {
+				parts[i] = "args:" + mode
+			}
+		}
+		a.Args = strings.Join(parts, ",")
+	}
 	function := a.Target.Scope == Function
 	input := a.Target.Scope == Parameter || a.Target.Scope == Receiver
 	result := a.Target.Scope == Result
@@ -192,56 +390,90 @@ func checkSyntax(a Attribute) error {
 		valid = function
 	case "memory":
 		valid, takesArgs = function, true
-	case "readonly", "writeonly", "returned":
-		valid = input
-	case "captures":
+	case "access", "capture":
 		valid, takesArgs = input, true
-	case "nonnull":
+	case "nonnull", "nonnegative":
 		valid = input || result
-	case "range":
+	case "range", "align":
+		valid, takesArgs = input || result, true
+	case "same_as":
 		valid, takesArgs = result, true
-	case "nonnegative":
-		valid = result
 	default:
-		return a.Error("unsupported attribute %q", a.Name)
+		return a, a.Error("unsupported attribute %q", a.Name)
 	}
 	if !valid {
-		return a.Error("%s is not supported on %s", a.Name, a.Target.Scope)
+		return a, a.Error("%s is not supported on %s", a.Name, a.Target.Scope)
 	}
 	if takesArgs != (a.Args != "") {
-		return a.Error("invalid arguments for %s", a.Name)
+		return a, a.Error("invalid arguments for %s", a.Name)
 	}
+	var err error
 	switch a.Name {
 	case "memory":
-		switch compact(a.Args) {
-		case "read", "argmem:read", "argmem:readwrite", "read,argmem:readwrite":
-		default:
-			return a.Error("unsupported memory effects %q", a.Args)
+		a.Memory, err = ParseMemoryEffects(a.Args)
+		if err == nil {
+			a.Args = "args:" + accessString(a.Memory.Args) + ",other:" + accessString(a.Memory.Other)
 		}
-	case "captures":
-		switch compact(a.Args) {
-		case "none", "ret:address,provenance":
+	case "access":
+		a.Access, err = ParseAccessMode(a.Args)
+	case "capture":
+		switch a.Args {
+		case "none":
+			a.Capture = CaptureNone
+		case "results":
+			a.Capture = CaptureResults
+		case "any":
+			a.Capture = CaptureAny
 		default:
-			return a.Error("unsupported capture effects %q", a.Args)
+			err = fmt.Errorf("unsupported capture effects %q", a.Args)
 		}
 	case "range":
-		if _, _, err := bounds(a.Args); err != nil {
-			return a.Error("%v", err)
+		var lo, hi *big.Int
+		lo, hi, err = bounds(a.Args)
+		if err == nil {
+			a.Range = &RangeBounds{Lower: lo, Upper: hi}
+			a.Args = lo.String() + "," + hi.String()
+		}
+	case "align":
+		a.Alignment, err = strconv.ParseUint(a.Args, 0, 64)
+		if err != nil || a.Alignment == 0 || a.Alignment&(a.Alignment-1) != 0 {
+			err = fmt.Errorf("align requires a positive power-of-two integer literal")
+		} else {
+			a.Args = strconv.FormatUint(a.Alignment, 10)
+		}
+	case "same_as":
+		if a.From == nil || (a.From.Scope != Parameter && a.From.Scope != Receiver) {
+			err = fmt.Errorf("same_as requires an input param(...) or receiver selector")
+		} else {
+			a.Args = a.From.String()
 		}
 	}
-	return nil
+	if err != nil {
+		return a, a.Error("%v", err)
+	}
+	return a, nil
 }
 
-// Merge is deterministic and checks conflicts across both repeated annotations
-// and declarations of the same resolved symbol. Returned slices are immutable.
+// Merge checks repeated declarations deterministically and owns copies of all
+// mutable operands. Source spellings are canonicalized before conflict checks.
 func Merge(attrs ...[]Attribute) ([]Attribute, error) {
 	var out []Attribute
 	for _, list := range attrs {
 		for _, a := range list {
-			a.Args = compact(a.Args)
+			var err error
+			a, err = normalize(a)
+			if err != nil {
+				return nil, err
+			}
+			a.Target.Path = slices.Clone(a.Target.Path)
+			if a.From != nil {
+				from := *a.From
+				from.Path = slices.Clone(from.Path)
+				a.From = &from
+			}
 			duplicate := false
 			for _, prev := range out {
-				if prev.Target != a.Target {
+				if !prev.Target.Equal(a.Target) {
 					continue
 				}
 				if prev.Name == a.Name {
@@ -250,9 +482,6 @@ func Merge(attrs ...[]Attribute) ([]Attribute, error) {
 					}
 					duplicate = true
 				}
-				if prev.Name == "readonly" && a.Name == "writeonly" || prev.Name == "writeonly" && a.Name == "readonly" || prev.Name == "range" && a.Name == "nonnegative" || prev.Name == "nonnegative" && a.Name == "range" {
-					return nil, a.Error("conflicting %s and %s", prev.Name, a.Name)
-				}
 			}
 			if !duplicate {
 				out = append(out, a)
@@ -260,11 +489,8 @@ func Merge(attrs ...[]Attribute) ([]Attribute, error) {
 		}
 	}
 	slices.SortFunc(out, func(a, b Attribute) int {
-		if n := strings.Compare(string(a.Target.Scope), string(b.Target.Scope)); n != 0 {
+		if n := strings.Compare(a.Target.String(), b.Target.String()); n != 0 {
 			return n
-		}
-		if a.Target.Index != b.Target.Index {
-			return a.Target.Index - b.Target.Index
 		}
 		return strings.Compare(a.Name, b.Name)
 	})
@@ -284,22 +510,75 @@ func bounds(args string) (*big.Int, *big.Int, error) {
 	return lo, hi, nil
 }
 
-func valueType(sig *types.Signature, t Target) types.Type {
-	switch t.Scope {
+// ErrUnresolvedTypeParameter means a path needs a concrete generic instance.
+var ErrUnresolvedTypeParameter = errors.New("selector path requires a concrete type argument")
+
+// ResolveTarget returns the leaf type and its struct/array index path. Indices
+// are relative to the selected source root, not physical parameter/result slots.
+func ResolveTarget(sig *types.Signature, target Target) (types.Type, []int, error) {
+	t := rootType(sig, target)
+	if t == nil {
+		return nil, nil, fmt.Errorf("selector %s does not exist in this signature", target)
+	}
+	var path []int
+	for _, step := range target.Path {
+		if _, ok := types.Unalias(t).(*types.TypeParam); ok {
+			return nil, nil, ErrUnresolvedTypeParameter
+		}
+		switch step.Kind {
+		case FieldPath:
+			st, ok := t.Underlying().(*types.Struct)
+			if !ok {
+				return nil, nil, fmt.Errorf("field(%s) requires a struct value, got %s", step.Field, t)
+			}
+			i := 0
+			for i < st.NumFields() && (st.Field(i).Name() != step.Field || step.Field == "_") {
+				i++
+			}
+			if i == st.NumFields() {
+				return nil, nil, fmt.Errorf("unknown field %q in %s", step.Field, t)
+			}
+			path, t = append(path, i), st.Field(i).Type()
+		case ElementPath:
+			ar, ok := t.Underlying().(*types.Array)
+			if !ok {
+				return nil, nil, fmt.Errorf("element(%d) requires an array value, got %s", step.Index, t)
+			}
+			if step.Index < 0 || int64(step.Index) >= ar.Len() {
+				return nil, nil, fmt.Errorf("element index %d is outside array length %d", step.Index, ar.Len())
+			}
+			path, t = append(path, step.Index), ar.Elem()
+		default:
+			return nil, nil, fmt.Errorf("unsupported selector path kind %q", step.Kind)
+		}
+	}
+	return t, path, nil
+}
+
+func rootType(sig *types.Signature, target Target) types.Type {
+	if sig == nil || target.Index < 0 {
+		return nil
+	}
+	switch target.Scope {
 	case Receiver:
-		if sig.Recv() != nil {
+		if sig.Recv() != nil && target.Index == 0 {
 			return sig.Recv().Type()
 		}
 	case Parameter:
-		if t.Index < sig.Params().Len() {
-			return sig.Params().At(t.Index).Type()
+		if target.Index < sig.Params().Len() {
+			return sig.Params().At(target.Index).Type()
 		}
 	case Result:
-		if t.Index < sig.Results().Len() {
-			return sig.Results().At(t.Index).Type()
+		if target.Index < sig.Results().Len() {
+			return sig.Results().At(target.Index).Type()
 		}
 	}
 	return nil
+}
+
+func valueType(sig *types.Signature, target Target) types.Type {
+	t, _, _ := ResolveTarget(sig, target)
+	return t
 }
 
 func pointer(t types.Type) bool {
@@ -315,49 +594,71 @@ func pointer(t types.Type) bool {
 	return false
 }
 
-// Validate checks a concrete source signature. During preloading, deferTypeParams
-// permits type-dependent checks to run when an instance is lowered instead.
+func integer(t types.Type) bool {
+	b, ok := t.Underlying().(*types.Basic)
+	return ok && b.Info()&types.IsInteger != 0
+}
+
+func unresolved(t types.Type) bool {
+	_, ok := types.Unalias(t).(*types.TypeParam)
+	return ok
+}
+
+// Validate checks concrete source types. Preloading may defer type-dependent
+// checks until a generic instance is lowered with concrete type arguments.
 func Validate(attrs []Attribute, sig *types.Signature, intBits int, deferTypeParams bool) error {
-	returned := false
 	for _, a := range attrs {
 		if a.Target.Scope == Function {
 			continue
 		}
-		t := valueType(sig, a.Target)
-		if t == nil {
-			return a.Error("selector does not exist in this signature")
+		t, _, err := ResolveTarget(sig, a.Target)
+		if errors.Is(err, ErrUnresolvedTypeParameter) && deferTypeParams {
+			continue
 		}
-		if a.Target.Scope == Result && sig.Results().Len() != 1 {
-			return a.Error("result contracts require a single scalar result in v1")
+		if err != nil {
+			return a.Error("%v", err)
 		}
-		if _, ok := types.Unalias(t).(*types.TypeParam); ok && deferTypeParams {
+		if unresolved(t) && deferTypeParams {
 			continue
 		}
 		switch a.Name {
-		case "nonnull", "readonly", "writeonly", "captures":
+		case "nonnull", "align", "access", "capture":
 			if !pointer(t) {
 				return a.Error("%s requires a pointer, got %s", a.Name, t)
 			}
-		case "returned":
-			if returned || sig.Results().Len() != 1 {
-				return a.Error("returned requires one source value and one scalar result")
+			if a.Name == "align" && intBits < 64 && a.Alignment >= uint64(1)<<uint(intBits) {
+				return a.Error("alignment does not fit the target pointer width")
 			}
-			returned = true
-			rt := sig.Results().At(0).Type()
-			if _, ok := types.Unalias(rt).(*types.TypeParam); ok && deferTypeParams {
+		case "same_as":
+			if !pointer(t) && !integer(t) {
+				return a.Error("same_as requires an integer or pointer result, got %s", t)
+			}
+			if a.From == nil {
+				return a.Error("same_as requires an input selector")
+			}
+			from, _, err := ResolveTarget(sig, *a.From)
+			if errors.Is(err, ErrUnresolvedTypeParameter) && deferTypeParams {
 				continue
 			}
-			if !(pointer(t) && pointer(rt)) && !types.Identical(t, rt) {
-				return a.Error("returned parameter and result must have compatible scalar types")
+			if err != nil {
+				return a.Error("same_as input: %v", err)
 			}
-			if !pointer(t) {
-				if _, ok := t.Underlying().(*types.Basic); !ok {
-					return a.Error("returned requires a scalar value")
-				}
+			if unresolved(from) && deferTypeParams {
+				continue
+			}
+			if !(pointer(t) && pointer(from)) && !types.Identical(types.Unalias(t), types.Unalias(from)) {
+				return a.Error("same_as requires compatible pointer types or identical integer source types, got %s and %s", from, t)
 			}
 		case "range", "nonnegative":
 			if _, _, _, err := IntegerRange(a, t, intBits); err != nil {
 				return err
+			}
+			if a.Name == "range" && a.Range != nil && a.Range.Upper.Sign() <= 0 {
+				for _, other := range attrs {
+					if other.Name == "nonnegative" && other.Target.Equal(a.Target) {
+						return a.Error("conflicting range and nonnegative contracts")
+					}
+				}
 			}
 		}
 	}
@@ -367,10 +668,10 @@ func Validate(attrs []Attribute, sig *types.Signature, intBits int, deferTypePar
 // IntegerRange returns target-width bit-pattern bounds, not source indices.
 // full reports that the source promise covers the whole integer domain.
 func IntegerRange(a Attribute, t types.Type, intBits int) (bits int, values [2]uint64, full bool, err error) {
-	b, ok := t.Underlying().(*types.Basic)
-	if !ok || b.Info()&types.IsInteger == 0 {
-		return 0, values, false, a.Error("%s requires an integer result", a.Name)
+	if t == nil || !integer(t) {
+		return 0, values, false, a.Error("%s requires an integer value", a.Name)
 	}
+	b := t.Underlying().(*types.Basic)
 	switch b.Kind() {
 	case types.Int8, types.Uint8:
 		bits = 8
@@ -385,6 +686,9 @@ func IntegerRange(a Attribute, t types.Type, intBits int) (bits int, values [2]u
 	default:
 		return 0, values, false, a.Error("unsupported integer type %s", t)
 	}
+	if bits != 8 && bits != 16 && bits != 32 && bits != 64 {
+		return 0, values, false, a.Error("unsupported target integer width %d", bits)
+	}
 	unsigned := b.Info()&types.IsUnsigned != 0
 	min, max := new(big.Int), new(big.Int).Lsh(big.NewInt(1), uint(bits))
 	if !unsigned {
@@ -393,10 +697,10 @@ func IntegerRange(a Attribute, t types.Type, intBits int) (bits int, values [2]u
 	}
 	lo, hi := new(big.Int), new(big.Int).Set(max)
 	if a.Name == "range" {
-		lo, hi, err = bounds(a.Args)
-		if err != nil {
-			return 0, values, false, a.Error("%v", err)
+		if a.Range == nil || a.Range.Lower == nil || a.Range.Upper == nil {
+			return 0, values, false, a.Error("range has no parsed integer bounds")
 		}
+		lo, hi = a.Range.Lower, a.Range.Upper
 	}
 	if lo.Cmp(min) < 0 || hi.Cmp(max) > 0 {
 		return 0, values, false, a.Error("range does not fit %s on this target", t)

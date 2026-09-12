@@ -63,7 +63,7 @@ func TestSourceScalarAttributesSurviveAggregateArgumentABI(t *testing.T) {
 	}
 }
 
-func TestSourceABIRejectsIndirectMemoryContract(t *testing.T) {
+func TestSourceABIWidensIndirectMemoryContract(t *testing.T) {
 	llvm.InitializeAllTargets()
 	llvm.InitializeAllTargetInfos()
 	llvm.InitializeAllTargetMCs()
@@ -75,11 +75,15 @@ func TestSourceABIRejectsIndirectMemoryContract(t *testing.T) {
 	fn := llvm.AddFunction(mod, "indirect_readonly", llvm.FunctionType(agg, nil, false))
 	fn.AddFunctionAttr(ctx.CreateEnumAttribute(llvm.AttributeKindID("memory"), 0x555))
 	fn.AddFunctionAttr(ctx.CreateStringAttribute(funcattrs.Metadata, "[]"))
-	defer func() {
-		err := recover()
-		if err == nil || !strings.Contains(fmt.Sprint(err), "indirect ABI result") {
-			t.Fatalf("error = %v", err)
-		}
-	}()
 	NewTransformer(p, mod.Target(), "", false).TransformModule("bad", mod)
+	physical := mod.NamedFunction("indirect_readonly")
+	if physical.GetEnumAttributeAtIndex(1, llvm.AttributeKindID("sret")).IsNil() {
+		t.Fatal("test did not exercise an indirect return")
+	}
+	if got := physical.GetEnumAttributeAtIndex(-1, llvm.AttributeKindID("memory")).GetEnumValue(); got != 0x557 {
+		t.Fatalf("sret storage write is missing from the physical memory summary: %#x", got)
+	}
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
 }

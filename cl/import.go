@@ -399,6 +399,9 @@ func (p *context) processNoInterfaceByDoc(doc *ast.CommentGroup, fullName string
 			p.prog.SetNoInterfaceMethod(fullName)
 			return
 		}
+		if isFunctionAttributeComment(line) {
+			continue
+		}
 		if !strings.HasPrefix(line, "//go:") {
 			return
 		}
@@ -434,11 +437,18 @@ func (p *context) initLinkname(line string, allowExport bool, f func(inPkgName s
 		line = line + " " + funcName
 		p.initLink(line, len(export), true, f)
 		return hasLinkname
-	} else if strings.HasPrefix(line, directive) {
+	} else if strings.HasPrefix(line, directive) || isFunctionAttributeComment(line) {
 		// skip unknown annotation but continue to parse the next annotation
 		return unknownDirective
 	}
 	return noDirective
+}
+
+// Source contracts are consumed by the syntax preload. They must not stop the
+// legacy backward scan from finding a preceding export or linkname directive.
+func isFunctionAttributeComment(line string) bool {
+	item, ok := directive.Parse(&ast.Comment{Text: line})
+	return ok && item.Name == "llgo:attribute"
 }
 
 func (p *context) initLink(line string, prefix int, export bool, f func(inPkgName string, isExport bool) (fullName string, isVar, ok bool)) {

@@ -1,7 +1,6 @@
 package ssa
 
 import (
-	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -65,20 +64,36 @@ func loadRuntimeSourceAttributes(t *testing.T, prog Program) {
 	}
 }
 
-func TestSourceAttributesRejectGCRootPublication(t *testing.T) {
+func TestSourceAttributesGCRootPolicyMatchesImportedDeclarations(t *testing.T) {
 	prog := NewProgram(nil)
 	defer prog.Dispose()
+	prog.EnableGCRoots(true)
+	prog.EnableCooperativeSafepoints(true)
 	loadRuntimeSourceAttributes(t, prog)
 	p := prog.NewPackage("roots", "roots")
 	sig := runtimeContractSignature([]types.Type{types.Typ[types.UnsafePointer]}, types.Typ[types.Int])
 	fn := p.NewFunc(PkgRuntime+".MapLen", sig, InGo)
-	defer func() {
-		err := recover()
-		if err == nil || !strings.Contains(fmt.Sprint(err), "compiler-generated GC root publication") || !strings.Contains(fmt.Sprint(err), "z_map.go:") {
-			t.Fatalf("error = %v", err)
+	// A caller's imported declaration must already have the same conservative
+	// effects before a definition and its root plan exist.
+	imported := prog.NewPackage("caller", "caller").NewFunc(PkgRuntime+".MapLen", sig, InGo)
+	for _, function := range []Function{fn, imported} {
+		for _, name := range []string{"memory", "nofree", "nosync", "nounwind", "willreturn"} {
+			if !function.impl.GetEnumAttributeAtIndex(-1, llvm.AttributeKindID(name)).IsNil() {
+				t.Errorf("declaration retained %s in instrumented target mode", name)
+			}
 		}
-	}()
+		for _, name := range []string{"readonly", "captures"} {
+			if !function.impl.GetEnumAttributeAtIndex(1, llvm.AttributeKindID(name)).IsNil() {
+				t.Errorf("declaration retained parameter %s in instrumented target mode", name)
+			}
+		}
+		if function.impl.GetEnumAttributeAtIndex(0, llvm.AttributeKindID("range")).IsNil() {
+			t.Error("instrumentation dropped the independent result range")
+		}
+	}
+	fn.MakeBody(1)
 	fn.NewGCRoots(1)
+	fn.CheckAttributeInstrumentation("cooperative safepoints", "memory", "capture")
 }
 
 func TestSourceAttributesHiddenEnvironmentAndGenericOrigin(t *testing.T) {

@@ -2,72 +2,36 @@ package funcattrs
 
 import (
 	"encoding/json"
-	"fmt"
 	"go/types"
 
 	"github.com/xgo-dev/llvm"
 )
 
-// Metadata retains logical contracts through function recreation and bitcode.
-// LLVM does not interpret this string; Apply and Remap materialize actual facts.
-const Metadata = "llgo.source.attributes"
+// Metadata carries source contracts through bitcode. Backend decisions and
+// physical parameter numbers are stored separately in a short-lived value plan.
+const Metadata = "llgo.source.attributes.v1"
 
-// LLVM 22 MemoryEffects: two ModRef bits per location, ArgMem first. CaptureInfo
-// uses the low four bits for the return channel. Keep encodings in the backend.
-const memoryRead = 0x555
+// PathResolver maps a resolved source leaf to the current logical LLVM value.
+// The returned path includes any result-tuple index and target layout wrappers.
+// ABI packing and indirect transport have not happened at this point.
+type PathResolver func(Target, []int) ([]int, error)
 
-func Apply(ctx llvm.Context, fn llvm.Value, sig *types.Signature, attrs []Attribute, environment, intBits int) error {
+func Apply(ctx llvm.Context, fn llvm.Value, sig *types.Signature, attrs []Attribute, environment, intBits int, resolver ...PathResolver) error {
 	if len(attrs) == 0 {
 		return nil
 	}
 	if err := Validate(attrs, sig, intBits, false); err != nil {
 		return err
 	}
-	for _, a := range attrs {
-		index := -1
-		switch a.Target.Scope {
-		case Result:
-			index = 0
-		case Receiver:
-			index = 1 + environment
-		case Parameter:
-			index = 1 + environment + a.Target.Index
-			if sig.Recv() != nil {
-				index++
-			}
-		}
-		name, value := a.Name, uint64(0)
-		switch name {
-		case "memory":
-			switch a.Args {
-			case "read":
-				value = memoryRead
-			case "argmem:read":
-				value = 1
-			case "argmem:readwrite":
-				value = 3
-			case "read,argmem:readwrite":
-				value = memoryRead | 3
-			}
-		case "captures":
-			if a.Args != "none" {
-				value = 0xf
-			}
-		case "range", "nonnegative":
-			bits, values, full, err := IntegerRange(a, valueType(sig, a.Target), intBits)
-			if err != nil {
-				return err
-			}
-			if !full {
-				fn.AddAttributeAtIndex(index, ctx.CreateConstantRangeAttribute(llvm.AttributeKindID("range"), bits, values[:1], values[1:]))
-			}
-			continue
-		case "returned":
-			if fn.GlobalValueType().ReturnType() != fn.Param(index-1).Type() || !scalar(fn.GlobalValueType().ReturnType()) {
-				return a.Error("returned requires an unchanged scalar ABI value in v1")
-			}
-		}
-		fn.AddAttributeAtIndex(index, ctx.CreateEnumAttribute(llvm.AttributeKindID(name), value))
+	var resolve PathResolver
+	if len(resolver) != 0 {
+		resolve = resolver[0]
+	}
+	if err := prepareValueContracts(ctx, fn, sig, attrs, environment, intBits, resolve); err != nil {
+		return err
+	}
+	if err := ApplyEffects(ctx, fn, sig, attrs, environment, intBits); err != nil {
+		return err
 	}
 	data, err := json.Marshal(attrs)
 	if err != nil {
@@ -77,17 +41,9 @@ func Apply(ctx llvm.Context, fn llvm.Value, sig *types.Signature, attrs []Attrib
 	return nil
 }
 
-func scalar(t llvm.Type) bool {
-	switch t.TypeKind() {
-	case llvm.PointerTypeKind, llvm.IntegerTypeKind, llvm.FloatTypeKind, llvm.DoubleTypeKind:
-		return true
-	}
-	return false
-}
-
-// Representation describes where a logical ABI value goes. A source-level
-// Target remains separate from this physical mapping. Later passes can describe
-// fragments, field paths and storage instead of overloading a parameter index.
+// Representation records what happens to a previous LLVM value. Source value
+// facts already refer to logical SSA values and follow their ABI replacements;
+// this map is only needed to retain sound native attributes and effect summaries.
 type Representation uint8
 
 const (
@@ -110,55 +66,41 @@ type ABIMapping struct {
 
 func DirectValue(index int) ABIValue { return ABIValue{Kind: Direct, Indices: []int{index}} }
 
-var valueAttributes = []string{"nonnull", "readonly", "writeonly", "captures", "returned", "range"}
+var valueAttributes = []string{"nonnull", "align", "returned", "range"}
 
-// RemapFunction preserves the v1 facts whenever an ABI recreates a function,
-// even when only an unrelated aggregate argument changes the signature.
+// RemapFunction runs after blanket function-attribute copying, so generated
+// transport effects can widen the copied summary. A native value attribute is
+// preserved only on an unchanged direct value; logical facts survive in the body.
 func RemapFunction(from, to llvm.Value, m ABIMapping) error {
-	strict := !from.GetStringAttributeAtIndex(-1, Metadata).IsNil()
-	failure := func(err error) error {
-		if err == nil {
-			return nil
-		}
-		if strict {
-			var attrs []Attribute
-			if json.Unmarshal([]byte(from.GetStringAttributeAtIndex(-1, Metadata).GetStringValue()), &attrs) == nil && len(attrs) != 0 {
-				return attrs[0].Error("%s: %v", to.Name(), err)
-			}
-		}
-		return err
-	}
-	if strict && m.Result.Kind == Indirect {
-		if attr := from.GetEnumAttributeAtIndex(-1, llvm.AttributeKindID("memory")); !attr.IsNil() && attr.GetEnumValue()&2 == 0 {
-			return failure(fmt.Errorf("memory contract does not support an indirect ABI result in v1"))
-		}
-	}
-	return failure(remap(to.Name(), strict, m, from.GetEnumAttributeAtIndex, to.AddAttributeAtIndex))
+	remapValues(m, from.GetEnumAttributeAtIndex, to.AddAttributeAtIndex, to.RemoveEnumAttributeAtIndex)
+	RemapFunctionEffects(from, to, m)
+	return nil
 }
 
-// RemapCall also handles explicit call-site attributes produced by other
-// lowering paths. Direct-call contracts remain available on the declaration.
 func RemapCall(from, to llvm.Value, m ABIMapping) error {
-	strict := !from.GetCallSiteStringAttribute(-1, Metadata).IsNil()
-	return remap("call", strict, m, from.GetCallSiteEnumAttribute, to.AddCallSiteAttribute)
+	// ABI call replacements are new instructions and do not blanket-copy
+	// returned attributes, so dropping an incompatible one needs no removal.
+	remapValues(m, from.GetCallSiteEnumAttribute, to.AddCallSiteAttribute, nil)
+	RemapCallEffects(from, to, m)
+	return nil
 }
 
-func remap(name string, strict bool, m ABIMapping, get func(int, uint) llvm.Attribute, add func(int, llvm.Attribute)) error {
+func remapValues(m ABIMapping, get func(int, uint) llvm.Attribute, add func(int, llvm.Attribute), remove func(int, uint)) {
 	values := append([]ABIValue{m.Result}, m.Params...)
 	for old, v := range values {
-		for _, a := range valueAttributes {
-			attr := get(old, llvm.AttributeKindID(a))
-			if attr.IsNil() {
-				continue
-			}
-			if v.Kind != Direct || len(v.Indices) != 1 || a == "returned" && m.Result.Kind != Direct {
-				if strict {
-					return fmt.Errorf("llgo:attribute: %s: %s on ABI value %d is not supported after this transformation in v1", name, a, old)
+		if v.Kind != Direct || len(v.Indices) != 1 {
+			continue
+		}
+		for _, name := range valueAttributes {
+			if name == "returned" && m.Result.Kind != Direct {
+				if remove != nil {
+					remove(v.Indices[0], llvm.AttributeKindID(name))
 				}
 				continue
 			}
-			add(v.Indices[0], attr)
+			if attr := get(old, llvm.AttributeKindID(name)); !attr.IsNil() {
+				add(v.Indices[0], attr)
+			}
 		}
 	}
-	return nil
 }

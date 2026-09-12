@@ -30,7 +30,9 @@ func TestRuntimeContracts(t *testing.T) {
 		absent []string
 	}{
 		{"AssertNilDerefPtr", []string{"declare nonnull ptr", "ptr returned"}, []string{"ptr nonnull", "memory(", "noreturn", "willreturn", "nounwind"}},
-		{"CStrCopy", []string{"ptr returned writeonly captures(ret: address, provenance)", "memory(read, argmem: readwrite)"}, []string{"noalias", "nonnull"}},
+		// String carries a hidden pointer root, so the generic memory summary
+		// conservatively widens args effects into other native locations.
+		{"CStrCopy", []string{"ptr returned writeonly captures(ret: address, provenance)", "memory(readwrite)"}, []string{"noalias", "nonnull"}},
 		{"memequal", []string{"ptr readonly captures(none)", "memory(argmem: read)"}, []string{"nonnull", "noalias"}},
 		{"StringEqual", []string{"memory(read)"}, []string{"memory(argmem:"}},
 		{"StringLess", []string{"memory(read)"}, nil},
@@ -113,7 +115,11 @@ func TestRuntimePanicContractsAndExclusions(t *testing.T) {
 	loadRuntimeSourceAttributes(t, prog)
 	for _, name := range []string{"Panic", "PanicErrorString", "PanicIndex", "PanicIndexU", "PanicSliceConvert", "PanicTypeAssert", "PanicTypeAssertionError", "PanicExtendIndex", "PanicExtendIndexU", "Rethrow", "throw", "AssertIndex", "PanicWrapNilPointer", "ChanLen", "Recover", "Implements", "AllocU", "AllocZ", "AllocRoot", "NewItab"} {
 		pkg := prog.NewPackage(name, "test/panic")
-		fn := pkg.NewFunc(PkgRuntime+"."+name, NoArgsNoRet, InGo)
+		sig := NoArgsNoRet
+		if name == "AllocU" || name == "AllocZ" || name == "AllocRoot" {
+			sig = prog.tyMalloc()
+		}
+		fn := pkg.NewFunc(PkgRuntime+"."+name, sig, InGo)
 		panicEntry := strings.HasPrefix(name, "Panic") && name != "PanicWrapNilPointer"
 		for _, attr := range []string{"cold", "noreturn"} {
 			if got := !fn.impl.GetEnumAttributeAtIndex(-1, llvm.AttributeKindID(attr)).IsNil(); got != panicEntry {

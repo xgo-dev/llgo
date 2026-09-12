@@ -10,8 +10,7 @@ import (
 )
 
 //go:noinline
-//llgo:attribute param(p) returned
-//llgo:attribute result(0) nonnull
+//llgo:attribute result(0) nonnull same_as(param(p))
 func checkedAttributePointer[T any](p *T) *T {
 	if p == nil {
 		panic("nil attribute pointer")
@@ -21,8 +20,7 @@ func checkedAttributePointer[T any](p *T) *T {
 
 type attributeReceiver struct{ value int }
 
-//llgo:attribute receiver returned
-//llgo:attribute result(0) nonnull
+//llgo:attribute result(0) nonnull same_as(receiver)
 func (p *attributeReceiver) checked() *attributeReceiver {
 	if p == nil {
 		panic("nil attribute receiver")
@@ -33,6 +31,93 @@ func (p *attributeReceiver) checked() *attributeReceiver {
 //go:noinline
 //llgo:attribute result(0) range(0, 64)
 func attributeBounded(x uint32) uint32 { return x & 63 }
+
+type attributeContainer struct {
+	P       *int
+	N       uint32
+	Payload [64]byte
+}
+
+//go:noinline
+//llgo:attribute memory(none) nofree nosync nounwind willreturn
+//llgo:attribute param(input).field(P) nonnull access(none) capture(results)
+//llgo:attribute result(p) nonnull same_as(param(input).field(P))
+//llgo:attribute result(result).field(P) nonnull same_as(param(input).field(P))
+//llgo:attribute result(result).field(N) range(0, 64)
+func attributeAggregate(input attributeContainer, n uint32) (p *int, result attributeContainer) {
+	input.N = n & 63
+	return input.P, input
+}
+
+//go:noinline
+//llgo:attribute result(0) same_as(param(input).field(P))
+func attributeEntrySnapshot(input attributeContainer, source *attributeContainer, replacement *int) *int {
+	source.P = replacement
+	return input.P
+}
+
+type attributePacked struct {
+	Signed int8
+	Count  uint8
+	Bytes  [6]byte
+}
+
+//go:noinline
+//llgo:attribute param(input).field(Signed) range(-3, 5)
+//llgo:attribute result(0).field(Signed) same_as(param(input).field(Signed))
+//llgo:attribute result(0).field(Count) range(0, 64)
+//llgo:attribute result(0).field(Bytes).element(5) same_as(param(input).field(Bytes).element(5))
+func attributePackedRoundTrip(input attributePacked) attributePacked {
+	input.Count &= 63
+	return input
+}
+
+type attributeLarge struct {
+	P       *int
+	Payload [10000]uint64
+	Count   uint32
+}
+
+//go:noinline
+//llgo:attribute result(0).field(P) same_as(param(p))
+//llgo:attribute result(0).field(Count) range(0, 64)
+func attributeLargeResult(p *int) (out attributeLarge) {
+	out.P = p
+	out.Payload[0], out.Payload[9999] = 19, 101
+	out.Count = 7
+	return
+}
+
+func TestSourceContractsAfterABI(t *testing.T) {
+	value := 17
+	in := attributeContainer{P: &value, N: 999, Payload: [64]byte{0: 1, 63: 2}}
+	for n := uint32(0); n < 130; n++ {
+		p, out := attributeAggregate(in, n)
+		if p != &value || out.P != &value || out.N != n%64 || out.Payload != in.Payload {
+			t.Fatal("aggregate input or multiple results changed across ABI conversion")
+		}
+		if in.N != 999 {
+			t.Fatal("callee changed the caller's by-value input")
+		}
+	}
+	replacement := 29
+	before := in
+	old := attributeEntrySnapshot(in, &in, &replacement)
+	if old != &value || in.P != &replacement || before.P != &value {
+		t.Fatal("same_as reloaded a changed input instead of forwarding its entry snapshot")
+	}
+	for n := int8(-3); n < 5; n++ {
+		in := attributePacked{Signed: n, Count: 193, Bytes: [6]byte{0: 11, 5: 253}}
+		out := attributePackedRoundTrip(in)
+		if out.Signed != n || out.Count != 1 || out.Bytes != in.Bytes {
+			t.Fatalf("packed field contract changed unrelated bits: %#v", out)
+		}
+	}
+	large := attributeLargeResult(&value)
+	if large.P != &value || large.Count != 7 || large.Payload[0] != 19 || large.Payload[9999] != 101 {
+		t.Fatal("large indirect result lost values or contract fields")
+	}
+}
 
 func TestSourceAttributesInOrdinaryPackage(t *testing.T) {
 	x := 37

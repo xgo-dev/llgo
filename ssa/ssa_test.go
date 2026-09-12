@@ -1753,6 +1753,8 @@ func TestCallClosureDynamic(t *testing.T) {
 
 func TestMakeClosureWithCtx(t *testing.T) {
 	prog := NewProgram(nil)
+	defer prog.Dispose()
+	loadRuntimeSourceAttributes(t, prog)
 	prog.SetRuntime(func() *types.Package {
 		fset := token.NewFileSet()
 		imp := packages.NewImporter(fset)

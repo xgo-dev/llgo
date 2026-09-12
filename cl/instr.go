@@ -1939,6 +1939,7 @@ func (p *context) pushCallerLocationFrame(b llssa.Builder, fn *ssa.Function) {
 	if fn == nil {
 		return
 	}
+	b.Func.CheckImplicitRuntimeEffects("compiler-generated shadow stack frame")
 	pos := p.fset.Position(fn.Pos())
 	pos.Filename = runtimeSourceFilename(
 		p.prog.Target(),
@@ -1992,6 +1993,7 @@ func (p *context) recordRuntimeLocation(b llssa.Builder, pos token.Pos, fn strin
 	if position.Line <= 0 || position.Filename == "" {
 		return
 	}
+	b.Func.CheckImplicitRuntimeEffects("compiler-generated shadow stack location update")
 	b.Call(
 		p.runtimeFunc(fn, recordRuntimeLocationSig()),
 		b.Convert(p.prog.Uintptr(), p.fn.Expr),
@@ -2179,6 +2181,7 @@ func (p *context) popCallerLocationFrame(b llssa.Builder) {
 	if p.callerFrameMark.IsNil() {
 		return
 	}
+	b.Func.CheckImplicitRuntimeEffects("compiler-generated shadow stack frame removal")
 	b.Call(p.runtimeFunc("PopCallerLocationFrame", popCallerLocationFrameSig()), p.callerFrameMark)
 }
 

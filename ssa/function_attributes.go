@@ -1,7 +1,6 @@
 package ssa
 
 import (
-	"encoding/json"
 	"go/types"
 	"sort"
 	"strings"
@@ -23,24 +22,38 @@ func (p Program) SetFunctionAttributes(name string, attrs []funcattrs.Attribute)
 	return err
 }
 
-// CheckAttributeInstrumentation rejects known compiler-inserted effects that
-// v1 cannot reconcile with a source contract. No package receives an exemption.
+// CheckAttributeInstrumentation accounts for compiler-owned operations. Target
+// mode effects are already widened on every declaration; these local calls
+// document the emitted operation and protect future instrumentation additions.
 func (f Function) CheckAttributeInstrumentation(reason string, names ...string) {
-	metadata := f.impl.GetStringAttributeAtIndex(-1, funcattrs.Metadata)
-	if metadata.IsNil() {
-		return
-	}
-	var attrs []funcattrs.Attribute
-	if err := json.Unmarshal([]byte(metadata.GetStringValue()), &attrs); err != nil {
-		panic(err)
-	}
-	for _, a := range attrs {
-		for _, name := range names {
-			if a.Name == name {
-				panic(a.Error("%s with %s is not supported in v1", name, reason))
+	switch reason {
+	case "compiler-generated GC root publication":
+		if !f.Prog.GCRootsEnabled() && !f.Prog.CooperativeSafepointsEnabled() {
+			if err := funcattrs.CheckInstrumentation(f.impl, reason, "memory", "capture"); err != nil {
+				panic(err)
 			}
 		}
+		funcattrs.WidenForGCRootPublication(f.impl)
+		return
+	case "cooperative safepoints":
+		if !f.Prog.GCRootsEnabled() && !f.Prog.CooperativeSafepointsEnabled() {
+			if err := funcattrs.CheckInstrumentation(f.impl, reason, "memory", "capture", "access", "nofree", "nosync", "nounwind", "willreturn"); err != nil {
+				panic(err)
+			}
+		}
+		funcattrs.WidenForUnknownInstrumentation(f.impl)
+		return
 	}
+	if err := funcattrs.CheckInstrumentation(f.impl, reason, names...); err != nil {
+		panic(err)
+	}
+}
+
+// CheckImplicitRuntimeEffects guards compiler-owned runtime protocols whose
+// footprint is not yet available in every caller's declaration. It leaves
+// explicit source operations governed by their ordinary contract promises.
+func (f Function) CheckImplicitRuntimeEffects(reason string) {
+	f.CheckAttributeInstrumentation(reason, "memory", "nofree", "nosync", "nounwind", "willreturn", "capture", "access")
 }
 
 // SetFunctionAttributeOrigin binds a concrete generic symbol to its declaration.
@@ -84,7 +97,7 @@ func (p Program) functionAttributes(name string) ([]funcattrs.Attribute, error) 
 	return funcattrs.Merge(sets...)
 }
 
-func (p Program) applyFunctionAttributes(fn llvm.Value, name string, sig *types.Signature, hasEnvironment bool) {
+func (p Program) applyFunctionAttributes(fn llvm.Value, name string, sig *types.Signature, hasEnvironment bool, bg Background) {
 	attrs, err := p.functionAttributes(name)
 	if err != nil {
 		panic(err)
@@ -93,7 +106,52 @@ func (p Program) applyFunctionAttributes(fn llvm.Value, name string, sig *types.
 	if hasEnvironment {
 		offset = 1
 	}
-	if err = funcattrs.Apply(p.ctx, fn, sig, attrs, offset, p.Int().ll.IntTypeWidth()); err != nil {
+	resolve := func(target funcattrs.Target, path []int) ([]int, error) {
+		return p.functionAttributePath(sig, target, path, bg), nil
+	}
+	if err = funcattrs.Apply(p.ctx, fn, sig, attrs, offset, p.Int().ll.IntTypeWidth(), resolve); err != nil {
 		panic(err)
 	}
+	if p.GCRootsEnabled() || p.CooperativeSafepointsEnabled() {
+		funcattrs.WidenForUnknownInstrumentation(fn)
+	}
+}
+
+// functionAttributePath composes source selectors with target layout wrappers
+// while the original Go types are available. Source field numbering alone is
+// insufficient on 386, where both structs and multiple results may wrap fields
+// to preserve Go's alignment and padding.
+func (p Program) functionAttributePath(sig *types.Signature, target funcattrs.Target, path []int, bg Background) []int {
+	var root types.Type
+	var indices []int
+	switch target.Scope {
+	case funcattrs.Receiver:
+		root = sig.Recv().Type()
+	case funcattrs.Parameter:
+		root = sig.Params().At(target.Index).Type()
+	case funcattrs.Result:
+		root = sig.Results().At(target.Index).Type()
+		if sig.Results().Len() > 1 {
+			converted := p.FuncDecl(sig, bg).raw.Type.(*types.Signature)
+			tuple := p.retType(converted)
+			indices = append(indices, target.Index)
+			if layout, ok := p.structLayout(tuple); ok && layout.wrapped[target.Index] {
+				indices = append(indices, 0)
+			}
+		}
+	}
+	typ := p.Type(root, bg)
+	for _, index := range path {
+		indices = append(indices, index)
+		switch typ.raw.Type.Underlying().(type) {
+		case *types.Struct:
+			if layout, ok := p.structLayout(typ); ok && layout.wrapped[index] {
+				indices = append(indices, 0)
+			}
+			typ = p.Field(typ, index)
+		case *types.Array:
+			typ = p.Elem(typ)
+		}
+	}
+	return indices
 }

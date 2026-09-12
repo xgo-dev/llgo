@@ -3,11 +3,13 @@
 package abi
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/funcattrs"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -317,8 +319,9 @@ entry:
 		t.Fatalf("copy_once retained a direct large aggregate copy:\n%s", copyOnce)
 	}
 	mixed := mod.NamedFunction("mixed_use").String()
-	if !strings.Contains(mixed, "load [65537 x i8]") || !strings.Contains(mixed, "store [65537 x i8]") {
-		t.Fatalf("mixed non-store use was unexpectedly rewritten:\n%s", mixed)
+	if strings.Contains(mixed, "load [65537 x i8]") || strings.Contains(mixed, "store [65537 x i8]") ||
+		!strings.Contains(mixed, "load i8") || !strings.Contains(mixed, "call void @llvm.memmove") {
+		t.Fatalf("field projection prevented lowering the large copy:\n%s", mixed)
 	}
 	small := mod.NamedFunction("small_copy").String()
 	if !strings.Contains(small, "load [65536 x i8]") || !strings.Contains(small, "store [65536 x i8]") {
@@ -327,4 +330,133 @@ entry:
 	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 		t.Fatalf("stored-load module is invalid: %v\n%s", err, mod.String())
 	}
+}
+
+func TestLargeAggregateProjectionKeepsSnapshot(t *testing.T) {
+	const testIR = `
+%Pair = type { i8, ptr }
+%Large = type <{ i8, [65537 x %Pair] }>
+
+declare void @mutate(ptr)
+declare %Large @produce()
+declare void @llvm.assume(i1)
+
+define ptr @snapshot(ptr %src, ptr %dst) {
+entry:
+  %value = load %Large, ptr %src, align 16
+  call void @mutate(ptr %src)
+  %array = extractvalue %Large %value, 1
+  %pair = extractvalue [65537 x %Pair] %array, 0
+  %pointer = extractvalue %Pair %pair, 1
+  %nonnull = icmp ne ptr %pointer, null
+  call void @llvm.assume(i1 %nonnull)
+  store %Large %value, ptr %dst, align 1
+  ret ptr %pointer
+}
+
+define ptr @result(ptr %dst) {
+entry:
+  %value = call %Large @produce()
+  %array = extractvalue %Large %value, 1
+  %pair = extractvalue [65537 x %Pair] %array, 0
+  %pointer = extractvalue %Pair %pair, 1
+  %nonnull = icmp ne ptr %pointer, null
+  call void @llvm.assume(i1 %nonnull)
+  store %Large %value, ptr %dst, align 1
+  ret ptr %pointer
+}
+
+define i8 @high_index(ptr %src) {
+entry:
+  %value = load [2147483649 x i8], ptr %src, align 1
+  %element = extractvalue [2147483649 x i8] %value, 2147483648
+  ret i8 %element
+}
+`
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	path := filepath.Join(t.TempDir(), "projection.ll")
+	if err := os.WriteFile(path, []byte(testIR), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	buf, err := llvm.NewMemoryBufferFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod, err := ctx.ParseIR(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mod.Dispose()
+	td := llvm.NewTargetData("e-p:64:64-i64:64-n32:64-S128")
+	defer td.Dispose()
+	mod.SetDataLayout(td.String())
+	LowerLargeAggregates(td, mod)
+	for _, name := range []string{"snapshot", "result"} {
+		body := mod.NamedFunction(name).String()
+		if strings.Contains(body, "load %Large") || strings.Contains(body, "store %Large") ||
+			strings.Contains(body, "load [65537") || strings.Contains(body, "store [65537") {
+			t.Fatalf("%s retained a giant value for a field contract:\n%s", name, body)
+		}
+		if !strings.Contains(body, "call void @llvm.assume") || !strings.Contains(body, "call void @llvm.memcpy") {
+			t.Fatalf("%s lost the fact or the value copy:\n%s", name, body)
+		}
+		if !strings.Contains(body, "load %Pair") || !strings.Contains(body, "align 1") {
+			t.Fatalf("%s did not read the packed field conservatively:\n%s", name, body)
+		}
+	}
+	body := mod.NamedFunction("snapshot").String()
+	if strings.Index(body, "load %Pair") > strings.Index(body, "call void @mutate") {
+		t.Fatalf("field was reloaded after its source mutation:\n%s", body)
+	}
+	if body := mod.NamedFunction("result").String(); strings.Count(body, "AllocU") != 1 {
+		t.Fatalf("result projection introduced a second heap snapshot:\n%s", body)
+	}
+	if body := mod.NamedFunction("high_index").String(); !strings.Contains(body, "i64 2147483648") || strings.Contains(body, "load [2147483649") {
+		t.Fatalf("large array projection lost its positive target-width index:\n%s", body)
+	}
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("projection lowering produced invalid IR: %v\n%s", err, mod.String())
+	}
+}
+
+func TestLargeABIAllocationChecksSourceEffects(t *testing.T) {
+	const testIR = `
+declare [65537 x i8] @produce() memory(none)
+define [65537 x i8] @caller() memory(none) {
+entry:
+  %value = call [65537 x i8] @produce()
+  ret [65537 x i8] %value
+}
+`
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	path := filepath.Join(t.TempDir(), "allocation_effects.ll")
+	if err := os.WriteFile(path, []byte(testIR), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	buf, err := llvm.NewMemoryBufferFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod, err := ctx.ParseIR(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mod.Dispose()
+	attrs, err := json.Marshal([]funcattrs.Attribute{{Target: funcattrs.Target{Scope: funcattrs.Function}, Name: "memory"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod.NamedFunction("caller").AddFunctionAttr(ctx.CreateStringAttribute(funcattrs.Metadata, string(attrs)))
+	td := llvm.NewTargetData("e-p:64:64-i64:64-n32:64-S128")
+	defer td.Dispose()
+	defer func() {
+		failure := recover()
+		err, ok := failure.(error)
+		if !ok || !strings.Contains(err.Error(), "large ABI result allocation") {
+			t.Fatalf("unaccounted heap transport did not diagnose its source effect restriction: %v", failure)
+		}
+	}()
+	LowerLargeAggregates(td, mod)
 }

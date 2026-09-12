@@ -166,8 +166,8 @@ func ChanLen(p *Chan) (n int) {
 }
 
 //llgo:attribute nofree nosync nounwind willreturn
-//llgo:attribute memory(argmem: read)
-//llgo:attribute param(p) readonly captures(none)
+//llgo:attribute memory(args: read)
+//llgo:attribute param(p) access(read) capture(none)
 //llgo:attribute result(0) nonnegative
 func ChanCap(p *Chan) int {
 	if p == nil {
