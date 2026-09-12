@@ -1,6 +1,11 @@
 package main
 
-import "unsafe"
+import (
+	"reflect"
+	"runtime"
+	"strings"
+	"unsafe"
+)
 
 const LLGoFiles = "_wrap/profile.c"
 
@@ -38,6 +43,36 @@ func checkClosureABI() {
 		defer keepDynamic(plainRecover)()
 		panic(42)
 	}()
+}
+
+func functionValueSymbolizationTargetA(n int) int {
+	return n % 2
+}
+
+func functionValueSymbolizationTargetB(n int) int {
+	return functionValueSymbolizationTargetA(n)
+}
+
+func checkFunctionValueSymbolization() {
+	for _, test := range []struct {
+		name string
+		fn   func(int) int
+	}{
+		{"A", functionValueSymbolizationTargetA},
+		{"B", functionValueSymbolizationTargetB},
+	} {
+		pc := reflect.ValueOf(test.fn).Pointer()
+		fn := runtime.FuncForPC(pc)
+		want := ".functionValueSymbolizationTarget" + test.name
+		got := "<nil>"
+		if fn != nil {
+			got = fn.Name()
+		}
+		if !strings.HasSuffix(got, want) {
+			println("function value symbolization mismatch", test.name, pc, got)
+			panic("function value symbolization failed")
+		}
+	}
 }
 
 func checkNativeNarrowing() {
@@ -86,5 +121,6 @@ func main() {
 	}
 	checkClosureABI()
 	checkNativeNarrowing()
+	checkFunctionValueSymbolization()
 	println("wasm ABI profile ok")
 }
