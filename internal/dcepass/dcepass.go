@@ -167,6 +167,8 @@ func (e *overrideEmitter) cloneConstExpr(v llvm.Value, dstTy llvm.Type) llvm.Val
 		clone = llvm.ConstIntToPtr(ops[0], dstTy)
 	case llvm.PtrToInt:
 		clone = llvm.ConstPtrToInt(ops[0], dstTy)
+	case llvm.PtrToAddr:
+		clone = llvm.ConstPtrToAddr(ops[0], dstTy)
 	case llvm.Trunc:
 		clone = llvm.ConstTrunc(ops[0], dstTy)
 	case llvm.Add:

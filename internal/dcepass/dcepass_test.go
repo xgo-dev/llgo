@@ -240,6 +240,7 @@ func TestCloneConstantsAcrossContexts(t *testing.T) {
 		llvm.ConstGEP(arrayTy, array, []llvm.Value{zero, one}),
 		llvm.ConstIntToPtr(llvm.ConstInt(i64, 16, false), llvm.PointerType(srcCtx.Int8Type(), 0)),
 		ptrInt,
+		llvm.ConstPtrToAddr(array, i64),
 		llvm.ConstTrunc(ptrInt, i32),
 		llvm.ConstAdd(ptrInt, llvm.ConstInt(i64, 1, false)),
 		llvm.ConstSub(ptrInt, llvm.ConstInt(i64, 1, false)),
