@@ -125,16 +125,43 @@ func TestRunNativeTest(t *testing.T) {
 }
 
 func TestGoCompatibleWasmRunner(t *testing.T) {
-	t.Setenv("LLGO_WASM_RUNTIME", "wasmtime")
 	js := goCompatibleWasmRunner(&Config{Goos: "js", Goarch: "wasm"})
 	if !strings.Contains(js, "emscripten-runner.mjs") || !strings.Contains(js, "--browser-only") || !strings.Contains(js, "{}") {
 		t.Fatalf("js runner = %q", js)
 	}
-	if got, want := goCompatibleWasmRunner(&Config{Goos: "wasip1", Goarch: "wasm"}), `wasmtime run --dir=/ --env PWD --env PATH -W exceptions=y -W multi-memory=y -W max-wasm-stack=8388608 "{}"`; got != want {
-		t.Fatalf("WASI runner = %q, want %q", got, want)
+	for _, test := range []struct {
+		name    string
+		runtime string
+		want    string
+	}{
+		{
+			name:    "wasmtime",
+			runtime: "wasmtime",
+			want:    `wasmtime run --dir=/ --env PWD --env PATH -W exceptions=y -W multi-memory=y -W max-wasm-stack=8388608 "{}"`,
+		},
+		{
+			name:    "iwasm",
+			runtime: "iwasm",
+			want:    `iwasm --stack-size=819200000 --heap-size=800000000 "{}"`,
+		},
+		{
+			name:    "custom",
+			runtime: "wasmer run",
+			want:    `wasmer run "{}"`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("LLGO_WASM_RUNTIME", test.runtime)
+			if got := goCompatibleWasmRunner(&Config{Goos: "wasip1", Goarch: "wasm"}); got != test.want {
+				t.Fatalf("WASI runner = %q, want %q", got, test.want)
+			}
+		})
 	}
 	if got := goCompatibleWasmRunner(&Config{Target: "wasi", Goos: "wasip1", Goarch: "wasm"}); got != "" {
 		t.Fatalf("named target acquired raw runner %q", got)
+	}
+	if got := goCompatibleWasmRunner(&Config{Goos: "plan9", Goarch: "wasm"}); got != "" {
+		t.Fatalf("unsupported wasm host acquired raw runner %q", got)
 	}
 }
 

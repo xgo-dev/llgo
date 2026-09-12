@@ -13,6 +13,7 @@ gc_fixture="${repo_root}/internal/build/testdata/wasm-gc"
 lifecycle_fixture="${repo_root}/internal/build/testdata/wasm-lifecycle"
 test_fixture="${repo_root}/internal/build/testdata/wasm-test"
 runner_test_fixture="${repo_root}/internal/build/testdata/wasm-runner-test"
+runner_run_fixture="${repo_root}/internal/build/testdata/wasm-runner-run"
 suite="${1:-all}"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/llgo-wasm-single-worker.XXXXXX")"
 trap 'rm -rf "${work_dir}"' EXIT
@@ -185,6 +186,17 @@ run_llgo_go_profile_test() {
 	grep -Fq "PASS" "${output}"
 }
 
+run_llgo_go_profile_run() {
+	local goos="$1"
+	local name="$2"
+	local output="${work_dir}/${name}.out"
+
+	echo "testing public llgo run command for GOOS=${goos} GOARCH=wasm"
+	run_with_timeout_limit 300s env GOOS="${goos}" GOARCH=wasm \
+		"${llgo_cmd}" run "${runner_run_fixture}" 2>&1 | tee "${output}"
+	grep -Fq "raw wasm run ok" "${output}"
+}
+
 if [[ "${suite}" != "test-command" ]]; then
 # Canonical hosted targets exercise the same scheduler semantics under J32
 # Emscripten, J64 Emscripten Memory64, and W32 WASI Preview 1.
@@ -260,6 +272,8 @@ run_llgo_test_compile_only wasi "test-compile-only-wasi"
 # cover its automatic runner without duplicating the named-WASI acceptance.
 run_llgo_go_profile_test js "test-gojs"
 run_llgo_go_profile_test wasip1 "test-gowasi" '^TestRawWasmRunner$' "${runner_test_fixture}"
+run_llgo_go_profile_run js "run-gojs"
+run_llgo_go_profile_run wasip1 "run-gowasi"
 fi
 
 echo "single-worker WebAssembly ${suite} checks passed"

@@ -1635,6 +1635,60 @@ func TestExecuteInitialPackageLinkCompileOnlyNamedTargetDoesNotExecute(t *testin
 	}
 }
 
+func TestExecuteInitialPackageLinkRawWasmRunUsesHostRunner(t *testing.T) {
+	t.Setenv("LLGO_TEST_LINKER_HELPER", "write")
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "runtime"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "runtime", "go.mod"), []byte("module github.com/xgo-dev/llgo/runtime\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LLGO_ROOT", root)
+
+	// Shadow Node with a successful host runner. The test is for post-link
+	// dispatch; JavaScript execution itself is covered by the wasm CI fixture.
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "node"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	commands := commandEnv{environ: withEnv(os.Environ(), "PATH="+binDir)}
+	output := filepath.Join(t.TempDir(), "raw-gojs.wasm")
+	conf := &Config{
+		Mode:      ModeRun,
+		BuildMode: BuildModeExe,
+		Goos:      "js",
+		Goarch:    "wasm",
+		PCLNMode:  PCLNNone,
+	}
+	ctx := &context{
+		mode:      ModeRun,
+		buildConf: conf,
+		commands:  commands,
+		crossCompile: crosscompile.Export{
+			CC: os.Args[0],
+		},
+	}
+	link := &initialPackageLink{
+		pkg: &packages.Package{
+			Dir:     t.TempDir(),
+			PkgPath: "example.com/raw-gojs",
+		},
+		conf:    conf,
+		outFmts: &OutFmtDetails{Out: output},
+		plan:    &mainLinkPlan{outputPath: output},
+	}
+
+	program, err := executeInitialPackageLink(ctx, link, true, false)
+	if err != nil {
+		t.Fatalf("raw GoJS run: %v", err)
+	}
+	if program != nil {
+		t.Fatalf("raw GoJS run returned test program: %+v", program)
+	}
+}
+
 func TestShouldDisableClangImplicitWasmOptOnlyForWasmPostLinkClang(t *testing.T) {
 	ctx := &context{
 		buildConf: &Config{Goarch: "wasm"},
