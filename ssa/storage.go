@@ -247,14 +247,43 @@ func (p Program) fitLLVMConstant(value llvm.Value, source Type, target llvm.Type
 
 func (b Builder) toAtomicStorageValue(t Type, value llvm.Value) llvm.Value {
 	if b.Prog.needsWidePointerStorage(t) {
-		return llvm.CreatePtrToInt(b.impl, value, b.Prog.tyInt())
+		physical := llvmIntType(b.Prog.ctx, b.Prog.PointerSize())
+		value = llvm.CreatePtrToInt(b.impl, value, physical)
+		return llvm.CreateZExt(b.impl, value, b.Prog.tyInt())
 	}
 	return b.toStorageValue(t, value)
 }
 
 func (b Builder) fromAtomicStorageValue(t Type, value llvm.Value) llvm.Value {
 	if b.Prog.needsWidePointerStorage(t) {
+		physical := llvmIntType(b.Prog.ctx, b.Prog.PointerSize())
+		value = llvm.CreateTrunc(b.impl, value, physical)
 		return llvm.CreateIntToPtr(b.impl, value, t.ll)
 	}
 	return b.fromStorageValue(t, value)
+}
+
+// physicalPointerIndex converts a semantically Go-sized index to the integer
+// width used by the target's linear-memory addresses. LLVM permits wider GEP
+// indices, but the WebAssembly backend can otherwise leave an i64 address on a
+// memory32 load at -O0 instead of inserting i32.wrap_i64.
+func (b Builder) physicalPointerIndex(index Expr) Expr {
+	if b.Prog.GoWordSize() <= b.Prog.PointerSize() {
+		return index
+	}
+	physical := llvmIntType(b.Prog.ctx, b.Prog.PointerSize())
+	if index.impl.Type() == physical {
+		return index
+	}
+	if index.impl.Type().TypeKind() != llvm.IntegerTypeKind {
+		panic("ssa: non-integer pointer index")
+	}
+	if index.impl.Type().IntTypeWidth() <= physical.IntTypeWidth() {
+		return index
+	}
+	index.impl = llvm.CreateTrunc(b.impl, index.impl, physical)
+	t := *index.Type
+	t.ll = physical
+	index.Type = &t
+	return index
 }

@@ -490,6 +490,7 @@ func (b Builder) Advance(ptr Expr, offset Expr) Expr {
 	default:
 		elem = prog.storageType(prog.Elem(ptr.Type))
 	}
+	offset = b.physicalPointerIndex(offset)
 	ret := llvm.CreateGEP(b.impl, elem, ptr.impl, []llvm.Value{offset.impl})
 	return Expr{ret, ptr.Type}
 }
