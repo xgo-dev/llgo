@@ -83,6 +83,20 @@ EM_VAL take_val_result(EM_GENERIC_WIRE_TYPE result) {
     WireType wire = GenericWireTypeConverter<WireType>::from(result);
     return BindingType<val>::fromWireType(wire).release_ownership();
 }
+
+// _emval_invoke throws a native JavaScript exception. Wasm C++ catch clauses
+// do not see that object, so convert it here before returning to Go.
+EM_JS(EM_GENERIC_WIRE_TYPE, llgo_emval_invoke, (EM_INVOKER caller, EM_VAL handle, const char* methodName, EM_DESTRUCTORS* destructors, void* args, int *error, EM_VAL *thrown), {
+    try {
+        HEAP32[error >> 2] = 0;
+        HEAPU32[thrown >> 2] = 0;
+        return emval_methodCallers[caller](handle, methodName, destructors, args);
+    } catch (jsErr) {
+        HEAP32[error >> 2] = 1;
+        HEAPU32[thrown >> 2] = Emval.toHandle(jsErr);
+        return 0;
+    }
+});
 #endif
 
 extern "C" {
@@ -104,23 +118,33 @@ EM_VAL llgo_emval_get_module_property(const char *name) {
 static volatile uint8_t llgo_emval_invoke_pending;
 
 EM_JS(void, llgo_emval_install_invoke_js, (uint8_t *pending_flag), {
+    // Reinstalling would drop queued host events. Keep the first bridge for
+    // the life of the module.
+    if (Module["_llgo_invoke"]) {
+        return;
+    }
     const pending = [];
     const pendingFlag = Number(pending_flag);
-    Module['llgoWasmPendingInvokes'] = pending;
-    Module['_llgo_invoke'] = function(event) {
+    Module["llgoWasmPendingInvokes"] = pending;
+    Module["_llgo_invoke"] = function(event) {
         pending.push(event);
         HEAPU8[pendingFlag] = 1;
-        const state = Module['llgoWasmHostWait'];
+        const state = Module["llgoWasmHostWait"];
         if (state !== undefined && state.wake !== undefined) {
             const wake = state.wake;
             delete state.wake;
             setTimeout(wake, 0);
         }
-        return true;
     };
 });
 
+static bool llgo_emval_invoke_installed;
+
 void llgo_emval_install_invoke(void) {
+    if (llgo_emval_invoke_installed) {
+        return;
+    }
+    llgo_emval_invoke_installed = true;
     llgo_emval_invoke_pending = 0;
     llgo_emval_install_invoke_js(const_cast<uint8_t *>(&llgo_emval_invoke_pending));
 }
@@ -232,23 +256,25 @@ EM_VAL llgo_emval_method_call(EM_VAL object, const char* name, EM_VAL args[], in
 #else
     EM_METHOD_CALLER caller = _emval_get_method_caller(nargs+1,&arr[0],EM_METHOD_CALLER_KIND::FUNCTION);
 #endif
-    EM_GENERIC_WIRE_TYPE ret;
-    try {
-        EM_DESTRUCTORS destructors = nullptr;
+    EM_DESTRUCTORS destructors = nullptr;
+    *error = 0;
 #if LLGO_EMVAL_INVOKER_API
-        ret = _emval_invoke(caller, llgo_emval_normalize(object), name, &destructors, elements.data());
-        DestructorsRunner dr(destructors);
-#else
-        ret = _emval_call_method(caller, llgo_emval_normalize(object), name, &destructors, elements.data());
-#endif
-    } catch(const emscripten::val& jsErr) {
-        printf("error\n");
-        *error = 1;
-        return EM_VAL(internal::_EMVAL_UNDEFINED);
+    EM_VAL thrown = nullptr;
+    EM_GENERIC_WIRE_TYPE ret = llgo_emval_invoke(caller, llgo_emval_normalize(object), name, &destructors, elements.data(), error, &thrown);
+    if (*error) {
+        return thrown;
     }
-#if LLGO_EMVAL_INVOKER_API
+    DestructorsRunner dr(destructors);
     return take_val_result(ret);
 #else
+    EM_GENERIC_WIRE_TYPE ret;
+    try {
+        ret = _emval_call_method(caller, llgo_emval_normalize(object), name, &destructors, elements.data());
+    } catch(const emscripten::val& jsErr) {
+        *error = 1;
+        emscripten::val errorValue = jsErr;
+        return errorValue.release_ownership();
+    }
     return fromGenericWireType<val>(ret).release_ownership();
 #endif
 }
@@ -279,22 +305,25 @@ EM_VAL llgo_emval_call(EM_VAL fn, EM_VAL args[], int nargs, int kind, int *error
 #else
    EM_METHOD_CALLER caller = _emval_get_method_caller(nargs+1,&arr[0],EM_METHOD_CALLER_KIND(kind));
 #endif
-   EM_GENERIC_WIRE_TYPE ret;
-   try {
-       EM_DESTRUCTORS destructors = nullptr;
+   EM_DESTRUCTORS destructors = nullptr;
+   *error = 0;
 #if LLGO_EMVAL_INVOKER_API
-       ret = _emval_invoke(caller, llgo_emval_normalize(fn), nullptr, &destructors, elements.data());
-       DestructorsRunner dr(destructors);
-#else
-       ret = _emval_call(caller, llgo_emval_normalize(fn), &destructors, elements.data());
-#endif
-   } catch(const emscripten::val& jsErr) {
-       *error = 1;
-       return EM_VAL(internal::_EMVAL_UNDEFINED);
+   EM_VAL thrown = nullptr;
+   EM_GENERIC_WIRE_TYPE ret = llgo_emval_invoke(caller, llgo_emval_normalize(fn), nullptr, &destructors, elements.data(), error, &thrown);
+   if (*error) {
+       return thrown;
    }
-#if LLGO_EMVAL_INVOKER_API
+   DestructorsRunner dr(destructors);
    return take_val_result(ret);
 #else
+   EM_GENERIC_WIRE_TYPE ret;
+   try {
+       ret = _emval_call(caller, llgo_emval_normalize(fn), &destructors, elements.data());
+   } catch(const emscripten::val& jsErr) {
+       *error = 1;
+       emscripten::val errorValue = jsErr;
+       return errorValue.release_ownership();
+   }
    return fromGenericWireType<val>(ret).release_ownership();
 #endif
 }

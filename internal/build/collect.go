@@ -614,15 +614,22 @@ func copyFileAtomic(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
+	same, err := sameFilePath(src, dst)
+	if err != nil {
+		return err
+	}
+	if same {
+		return nil
+	}
 
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	defer in.Close()
 
 	tmp, err := os.CreateTemp(filepath.Dir(dst), filepath.Base(dst)+".tmp-*")
 	if err != nil {
+		in.Close()
 		return err
 	}
 	tmpName := tmp.Name()
@@ -635,17 +642,80 @@ func copyFileAtomic(src, dst string) error {
 	}()
 
 	if _, err := io.Copy(tmp, in); err != nil {
+		in.Close()
 		return err
 	}
-
+	if err := in.Close(); err != nil {
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
 
-	if err := os.Rename(tmpName, dst); err != nil {
+	if err := replaceFile(tmpName, dst); err != nil {
 		return err
 	}
 
 	cleanup = false
+	return nil
+}
+
+func sameFilePath(a, b string) (bool, error) {
+	absA, err := filepath.Abs(a)
+	if err != nil {
+		return false, err
+	}
+	absB, err := filepath.Abs(b)
+	if err != nil {
+		return false, err
+	}
+	if absA == absB {
+		return true, nil
+	}
+	fa, err := os.Stat(absA)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	fb, err := os.Stat(absB)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return os.SameFile(fa, fb), nil
+}
+
+func replaceFile(src, dst string) error {
+	err := os.Rename(src, dst)
+	if err == nil {
+		return nil
+	}
+	info, statErr := os.Lstat(dst)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			return os.Rename(src, dst)
+		}
+		return err
+	}
+	// os.Remove deletes an empty directory. Keep the original rename error so
+	// callers cannot replace a directory with a regular file.
+	if info.IsDir() {
+		return err
+	}
+	// Windows cannot replace a destination that still has an open handle, and
+	// some antivirus scanners keep one briefly after Close. Remove then retry.
+	if rmErr := os.Remove(dst); rmErr != nil && !os.IsNotExist(rmErr) {
+		return err
+	}
+	if err2 := os.Rename(src, dst); err2 != nil {
+		return err
+	}
 	return nil
 }

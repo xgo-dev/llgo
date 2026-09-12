@@ -109,7 +109,11 @@ func TestMain(m *testing.M) {
 			fmt.Fprintln(os.Stderr, "missing -o")
 			os.Exit(9)
 		}
-		if err := os.WriteFile(output, []byte("linked"), 0o666); err != nil {
+		payload := "linked"
+		if mode == "write-html" {
+			payload = `<html><script type=module>import init from"./main.js"</script></html>`
+		}
+		if err := os.WriteFile(output, []byte(payload), 0o666); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(10)
 		}
@@ -1651,6 +1655,125 @@ func TestExecuteInitialPackageLinkCompileOnlyNamedTargetDoesNotExecute(t *testin
 	}
 	if data, err := os.ReadFile(output); err != nil || string(data) != "linked" {
 		t.Fatalf("linked output = %q, %v", data, err)
+	}
+}
+
+func TestExecuteMainLinkNilPlan(t *testing.T) {
+	if err := executeMainLink(&context{buildConf: &Config{BuildMode: BuildModeExe}}, nil, false); err == nil {
+		t.Fatal("nil plan succeeded")
+	}
+}
+
+func TestExecuteMainLinkPublishesEmscriptenBrowserHost(t *testing.T) {
+	t.Setenv("LLGO_TEST_LINKER_HELPER", "write-html")
+	root := writeFakeLLGoRoot(t, true)
+	t.Setenv("LLGO_ROOT", root)
+	output := filepath.Join(t.TempDir(), "main.html")
+	ctx := &context{
+		mode: ModeBuild,
+		buildConf: &Config{
+			Mode:      ModeBuild,
+			BuildMode: BuildModeExe,
+			Goos:      "js",
+			Goarch:    "wasm",
+			PCLNMode:  PCLNNone,
+		},
+		crossCompile: crosscompile.Export{CC: os.Args[0]},
+	}
+	stale := filepath.Join(filepath.Dir(output), "main.mjs")
+	if err := os.WriteFile(stale, []byte("stale-wasm64-glue"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := executeMainLink(ctx, &mainLinkPlan{outputPath: output}, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale main.mjs still present: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(output), wasmFSScriptName)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), `<script src="./wasm_fs.js"></script>`) {
+		t.Fatalf("HTML = %q", got)
+	}
+}
+
+func TestExecuteMainLinkReportsEmscriptenBrowserHostError(t *testing.T) {
+	t.Setenv("LLGO_TEST_LINKER_HELPER", "write-html")
+	root := writeFakeLLGoRoot(t, false)
+	t.Setenv("LLGO_ROOT", root)
+	output := filepath.Join(t.TempDir(), "main.html")
+	ctx := &context{
+		mode: ModeBuild,
+		buildConf: &Config{
+			Mode:      ModeBuild,
+			BuildMode: BuildModeExe,
+			Goos:      "js",
+			Goarch:    "wasm",
+			PCLNMode:  PCLNNone,
+		},
+		crossCompile: crosscompile.Export{CC: os.Args[0]},
+	}
+	if err := executeMainLink(ctx, &mainLinkPlan{outputPath: output}, false); err == nil {
+		t.Fatal("missing wasm_fs.js succeeded")
+	}
+}
+
+func TestExecuteMainLinkReportsLinkError(t *testing.T) {
+	t.Setenv("LLGO_TEST_LINKER_HELPER", "fail")
+	ctx := &context{
+		mode:         ModeBuild,
+		buildConf:    &Config{Mode: ModeBuild, BuildMode: BuildModeExe, PCLNMode: PCLNNone},
+		crossCompile: crosscompile.Export{CC: os.Args[0]},
+	}
+	if err := executeMainLink(ctx, &mainLinkPlan{outputPath: filepath.Join(t.TempDir(), "app")}, false); err == nil {
+		t.Fatal("link failure succeeded")
+	}
+}
+
+func TestExecuteMainLinkReportsPrepareOutputError(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(parent, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := &context{
+		buildConf:    &Config{BuildMode: BuildModeExe, Goos: "wasip1", Goarch: "wasm", PCLNMode: PCLNNone},
+		crossCompile: crosscompile.Export{WasmPostLink: crosscompile.WasmPostLink{Asyncify: true}},
+	}
+	if err := executeMainLink(ctx, &mainLinkPlan{outputPath: filepath.Join(parent, "app.wasm")}, false); err == nil {
+		t.Fatal("prepare output below a regular file succeeded")
+	}
+}
+
+func TestExecuteMainLinkReportsWasmPostLinkError(t *testing.T) {
+	t.Setenv("LLGO_TEST_LINKER_HELPER", "write")
+	t.Setenv("WASMOPT", filepath.Join(t.TempDir(), "missing-wasm-opt"))
+	output := filepath.Join(t.TempDir(), "app.wasm")
+	conf := &Config{
+		Mode:      ModeBuild,
+		BuildMode: BuildModeExe,
+		Goos:      "wasip1",
+		Goarch:    "wasm",
+		PCLNMode:  PCLNNone,
+	}
+	ctx := &context{
+		mode:      ModeBuild,
+		buildConf: conf,
+		crossCompile: crosscompile.Export{
+			CC:           os.Args[0],
+			WasmPostLink: crosscompile.WasmPostLink{Asyncify: true},
+		},
+	}
+	err := executeMainLink(ctx, &mainLinkPlan{outputPath: output}, false)
+	if err == nil {
+		t.Fatal("expected wasm-opt failure")
+	}
+	if !strings.Contains(err.Error(), "wasm-opt") {
+		t.Fatalf("error = %v, want wasm-opt failure", err)
 	}
 }
 

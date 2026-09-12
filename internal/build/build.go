@@ -2228,15 +2228,22 @@ func executeMainLink(ctx *context, plan *mainLinkPlan, verbose bool) error {
 	if plan == nil {
 		return errors.New("missing main link plan")
 	}
-	linkOutput, err := prepareWasmLinkOutput(ctx.buildConf, &ctx.crossCompile, plan.outputPath)
+	driverOut := emscriptenDriverOutput(ctx.buildConf, plan.outputPath)
+	linkOutput, err := prepareWasmLinkOutput(ctx.buildConf, &ctx.crossCompile, driverOut)
 	if err != nil {
 		return err
 	}
-	defer cleanupWasmLinkOutput(linkOutput, plan.outputPath)
+	defer cleanupWasmLinkOutput(linkOutput, driverOut)
 	if err := linkObjFiles(ctx, linkOutput, plan.linkInputs, plan.linkArgs, verbose); err != nil {
 		return err
 	}
-	return publishWasmLinkOutput(ctx, linkOutput, plan.outputPath, verbose)
+	if err := publishWasmLinkOutput(ctx, linkOutput, driverOut, verbose); err != nil {
+		return err
+	}
+	if err := removeStaleEmscriptenGlue(ctx.buildConf, driverOut); err != nil {
+		return err
+	}
+	return publishEmscriptenBrowserHost(ctx, driverOut, verbose)
 }
 
 func fullRpathArgs(toolchain crosscompile.NativeToolchain, linkArgs []string) (rpathArgs []string) {
