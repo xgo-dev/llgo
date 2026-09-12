@@ -21,6 +21,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  browser:
+    name: real-browser GoJS callback
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: -tags=llvm22
+      LLGO_BUILD_CACHE: 'on'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-deps
+        with:
+          llvm-version: 22
+      - uses: emscripten-core/setup-emsdk@v15
+        with:
+          version: '4.0.21'
+      - uses: ./.github/actions/setup-go
+      - name: Require the hosted browser
+        run: |
+          command -v google-chrome
+          google-chrome --version
+      - name: Build LLGo
+        run: go build -o "$RUNNER_TEMP/llgo" ./cmd/llgo
+      - name: Run the GoJS artifact in Chrome
+        env:
+          BROWSER_BIN: google-chrome
+          LLGO: ${{ runner.temp }}/llgo
+        run: dev/test_wasm_browser.sh
+
   goroot-smoke:
     name: wasm GOROOT sentinels (${{ matrix.profile }})
     runs-on: ubuntu-24.04
