@@ -183,6 +183,7 @@ type context struct {
 	safepointEntry       bool
 	safepoints           map[ssa.Instruction]struct{}
 	pcLineSeq            uint64
+	panicSitePos         token.Pos
 	// The runtime PC-line table stores file and line, but not column. Keep the
 	// last emitted position within one SSA basic block so repeated checks for a
 	// single source line can share an anchor.
@@ -774,6 +775,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			for _, childInit := range childInits {
 				childInit()
 			}
+			p.panicSitePos = token.NoPos
 			b.EndBuild()
 		})
 	}
@@ -1032,6 +1034,7 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 	// block's anchor, so deduplication must never cross a block boundary.
 	p.lastPCLineFile = ""
 	p.lastPCLineLine = 0
+	p.panicSitePos = token.NoPos
 	oldLocalBlock := p.locality.function.block
 	p.locality.function.block = block
 	defer func() { p.locality.function.block = oldLocalBlock }()
@@ -2189,6 +2192,7 @@ func (p *context) getDebugLocScope(v *ssa.Function, pos token.Pos) *types.Scope 
 }
 
 func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
+	p.panicSitePos = token.NoPos
 	if _, ok := p.staticInitInstrs[instr]; ok {
 		return
 	}
@@ -2236,11 +2240,11 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		}
 		ptr := p.compileValue(b, va)
 		val := p.compileValue(b, v.Val)
-		// Windows access violations report the faulting store PC. Preserve that
-		// exact source site for the SEH fault bridge without adding one carrier
-		// record per potential pointer store to ELF and Mach-O binaries, whose
-		// existing fault paths do not require this Windows-specific metadata.
-		if p.prog.Target().GOOS == "windows" && !isKnownNonNilAddr(va) && !isWrapNilCheckCall(va) {
+		// Hardware faults report the store instruction itself rather than a
+		// runtime nil-check return address. Preserve its exact source site on
+		// every native target; recordPanicSite scopes the metadata to functions
+		// whose recovered panic stack can be observed.
+		if !isKnownNonNilAddr(va) && !isWrapNilCheckCall(va) {
 			p.recordPanicSite(b, v.Pos())
 		}
 		store := b.Store(ptr, val)

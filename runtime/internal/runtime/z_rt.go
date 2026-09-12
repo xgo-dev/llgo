@@ -71,7 +71,9 @@ func Recover(token unsafe.Pointer) (ret any) {
 	if ptr != nil && ptr == gp.panic_ {
 		node := (*panicNode)(ptr)
 		gp.panic_ = node.prev
-		gp.recoverFrame = nil
+		// Keep the activation token until its deferred call returns, so a
+		// same-value repanic can reuse the original snapshot. Clearing the
+		// eligible panic still prevents any subsequent recover from succeeding.
 		gp.recoverPanic = nil
 		ret = node.arg
 		c.Free(unsafe.Pointer(node))
@@ -88,6 +90,9 @@ func Recover(token unsafe.Pointer) (ret any) {
 		// to mark.
 		if RecoverMark != nil {
 			RecoverMark()
+			if gp.panicPCs.n != 0 {
+				gp.panicPCs.recovered = recoveredPanic{value: ret, frame: gp.recoverFrame}
+			}
 		}
 	}
 	return
@@ -113,6 +118,9 @@ func StartRecoverFrame(frame unsafe.Pointer) recoverState {
 // EndRecoverFrame restores direct recover permission after a deferred call.
 func EndRecoverFrame(state recoverState) {
 	gp := getg()
+	if gp.panicPCs.recovered.frame == gp.recoverFrame {
+		gp.panicPCs.recovered = recoveredPanic{}
+	}
 	gp.recoverFrame = state.frame
 	gp.recoverPanic = state.panic_
 }
@@ -143,7 +151,13 @@ func StartRecoverFrameAlias(from, to unsafe.Pointer) unsafe.Pointer {
 // wrappers share their caller's eligible panic rather than opening a nested
 // defer scope.
 func EndRecoverFrameAlias(frame unsafe.Pointer) {
-	getg().recoverFrame = frame
+	gp := getg()
+	// The wrapped activation has returned too; do not retain its recovered
+	// value when restoring the transparent wrapper's direct-call token.
+	if gp.recoverFrame != frame && gp.panicPCs.recovered.frame == gp.recoverFrame {
+		gp.panicPCs.recovered = recoveredPanic{}
+	}
+	gp.recoverFrame = frame
 }
 
 // panicIsSuspended reports whether ptr belongs to an outer panic whose direct
@@ -167,6 +181,7 @@ func (gp *g) abortPanics() {
 	}
 	gp.recoverFrame = nil
 	gp.recoverPanic = nil
+	gp.panicPCs.recovered = recoveredPanic{}
 	if discarded && PanicRecovered != nil {
 		PanicRecovered()
 	}
@@ -190,7 +205,9 @@ func Panic(v any) {
 	if v == nil {
 		v = &PanicNilError{}
 	}
-	SavePanicCallerFrames()
+	if PanicPCSnapshot != nil {
+		PanicPCSnapshot(v)
+	}
 	gp := getg()
 	ptr := (*panicNode)(c.Malloc(unsafe.Sizeof(panicNode{})))
 	ptr.prev = gp.panic_

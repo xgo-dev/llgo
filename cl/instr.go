@@ -1965,6 +1965,17 @@ func (p *context) recordPanicSite(b llssa.Builder, pos token.Pos) {
 	p.recordPanicLocation(b, pos)
 	if p.panicSiteFuncs[p.goFn] {
 		p.emitPCLineLabel(b, pos)
+		p.panicSitePos = pos
+		// Install once per builder, not once per instruction. Nil-check
+		// lowering invokes it after entering its separate failure block.
+		if b.PanicSite == nil {
+			b.PanicSite = func(b llssa.Builder) {
+				if p.panicSitePos.IsValid() {
+					p.lastPCLineFile = ""
+					p.emitPCLineLabel(b, p.panicSitePos)
+				}
+			}
+		}
 	}
 }
 

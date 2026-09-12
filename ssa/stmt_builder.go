@@ -64,6 +64,11 @@ type aBuilder struct {
 	Pkg  Package
 	Prog Program
 
+	// PanicSite emits source metadata at an implicit panic's cold call site.
+	// The frontend owns the current source position; the lowering owns the
+	// failure block, which machine block placement can move away from it.
+	PanicSite func(Builder)
+
 	diScopeCache map[*types.Scope]DIScope // avoid duplicated DILexicalBlock(s)
 	diFuncScope  *types.Scope
 }
@@ -78,6 +83,7 @@ func (b Builder) EndBuild() {
 	}
 	b.Func.endDefer(b)
 	b.Func.endGCRoots(b)
+	b.preserveNilCheckCondition()
 }
 
 // Dispose disposes of the builder.

@@ -33,6 +33,7 @@ go test -race -count=3 -timeout=20m ./runtime/timer
 /tmp/llgo-runtime-stress test -count=3 -timeout=30m ./runtime/signal
 /tmp/llgo-runtime-stress test -count=3 -timeout=30m ./runtime/cpuprof
 /tmp/llgo-runtime-stress test -count=3 -timeout=30m ./runtime/finalizer
+/tmp/llgo-runtime-stress test -count=3 -timeout=5m ./runtime/weak
 ```
 
 The signal suite is LLGo-only and targets Unix hosts. The CPU profile suite is
@@ -66,3 +67,12 @@ regress fatal native-handler replacement windows. The finalizer suite
 repeatedly publishes large finalizer batches while many goroutines call
 `runtime.GC`, and checks that queued callbacks are neither corrupted nor
 delivered twice.
+
+The weak suite creates batches of weak pointers in a goroutine that exits,
+then performs bounded collections while retaining only the weak handles. It
+regresses cleanup callbacks recursively invoking another cleanup while
+allocating under the weak registry lock. Each batch must expire more than half
+its handles, and a separate helper process enforces a 60-second deadline even
+if the tested runtime deadlocks. It uses only public Go APIs and also runs with
+`go test` on Go 1.24 or newer. Use identical profiles before and after the fix;
+neither sleeping nor reducing allocation pressure is part of the workload.

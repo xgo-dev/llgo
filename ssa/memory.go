@@ -372,12 +372,46 @@ func (b Builder) AssertNilDeref(ptr Expr) {
 	blks := b.Func.MakeBlocks(2)
 	b.If(isNil, blks[0], blks[1])
 	b.SetBlockEx(blks[0], AtEnd, false)
+	if b.PanicSite != nil {
+		b.PanicSite(b)
+	}
 	b.Call(b.Pkg.rtFunc("AssertNilDeref"), b.Prog.BoolVal(true))
-	// Like the bounds-check failure path, this cannot return normally. Keep
-	// a post-call instruction for panic return-address line information.
-	b.Jump(blks[0])
+	if b.Prog.NeedsFramePointer() {
+		// AssertNilDeref(true) never returns. A self-loop here, however, lets
+		// LLVM infer noreturn for statically nil callers and place their
+		// callers' return PCs at the next function entry. Keep a formal return
+		// so those PCs stay inside the caller. Do not join the success block:
+		// that would lose its non-nil fact and force spills around cold calls.
+		// These undefined results are never observed; this is not a Go return
+		// and must not dispatch defers or other source-level return handling.
+		ret := b.Func.impl.GlobalValueType().ReturnType()
+		if ret.TypeKind() == llvm.VoidTypeKind {
+			b.impl.CreateRetVoid()
+		} else {
+			b.impl.CreateRet(llvm.Undef(ret))
+		}
+	} else {
+		b.Jump(blks[0])
+	}
 	b.SetBlockEx(blks[1], AtEnd, false)
 	b.blk.last = blks[1].last
+}
+
+func (b Builder) preserveNilCheckCondition() {
+	if b.Func.Name() != PkgRuntime+".AssertNilDeref" || !b.Prog.NeedsFramePointer() {
+		return
+	}
+	// Keep the runtime helper potentially returning even when LTO sees that
+	// every caller passes true. A matching-register constraint preserves the
+	// condition without instructions. Put the barrier in this one noinline
+	// helper, not at every nil check: per-call barriers inhibit optimization
+	// of otherwise pure callers and increase code size substantially.
+	b.impl.SetInsertPointBefore(b.Func.impl.EntryBasicBlock().FirstInstruction())
+	param := b.Func.Param(0)
+	opaque := b.InlineAsmFull("", "=r,0", b.Prog.Bool(), []Expr{param})
+	param.impl.ReplaceAllUsesWith(opaque.impl)
+	// Replace the body's uses, not the barrier's own input.
+	opaque.impl.SetOperand(0, param.impl)
 }
 
 func (b Builder) NilDerefCheck(ptr Expr) Expr {

@@ -23,8 +23,8 @@ func init() {
 
 // capturePanicPCs runs at panic time, before any longjmp unwinding, and
 // stores the physical pc chain for later splicing (see spliceCallers).
-func capturePanicPCs() {
-	if !fpUnwindAvailable() {
+func capturePanicPCs(v any) {
+	if !rtdebug.SavePanicCallerFrames(v) || !fpUnwindAvailable() {
 		return
 	}
 	var pcs [64]uintptr
