@@ -2214,8 +2214,7 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	ctx.stripDarwinLTOLocals = false
 	entryPkg := genMainModule(ctx, llssa.PkgRuntime, pkg, &preparation.gen)
 	cExports := preparation.gen.cExports
-	if len(cExports) != 0 {
-		lowerLargeAggregates(ctx.prog, entryPkg.LPkg.Module())
+	if lowerMainCExportAggregates(ctx.prog, entryPkg.LPkg.Module(), cExports) {
 		ctx.cTransformer.TransformModule(entryPkg.LPkg.Path(), entryPkg.LPkg.Module())
 	}
 	if ctx.buildConf.deadcodeDropEnabled() {
@@ -2877,6 +2876,14 @@ func lowerLargeAggregates(prog llssa.Program, mod gllvm.Module) {
 		GCRoots:    prog.GCRootsEnabled(),
 		Wasm:       prog.Target().GOARCH == "wasm",
 	})
+}
+
+func lowerMainCExportAggregates(prog llssa.Program, mod gllvm.Module, exports []cExport) bool {
+	if len(exports) == 0 {
+		return false
+	}
+	lowerLargeAggregates(prog, mod)
+	return true
 }
 
 // compilePackageModule applies LLVM transforms and emits package objects.

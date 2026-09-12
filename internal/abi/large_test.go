@@ -27,6 +27,10 @@ func TestLargeAggregateThreshold(t *testing.T) {
 	if !l.isLargeAggregate(llvm.ArrayType(ctx.Int8Type(), int(MaxImplicitStackVarSize+1))) {
 		t.Fatal("aggregate above the implicit stack limit was not classified as large")
 	}
+	l.copyMinSize = MinWasmAggregateCopySize
+	if l.isLargeCopy(ctx.Int64Type()) {
+		t.Fatal("scalar type was classified as a Wasm aggregate copy")
+	}
 }
 
 func TestLowerWasmAggregateCopies(t *testing.T) {

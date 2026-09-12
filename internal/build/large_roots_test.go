@@ -24,7 +24,12 @@ func TestLowerLargeAggregatesGCPolicy(t *testing.T) {
 			defer b.Dispose()
 			b.SetInsertPointAtEnd(ctx.AddBasicBlock(fn, "entry"))
 			b.CreateRet(llvm.ConstNull(typ))
-			lowerLargeAggregates(prog, mod)
+			if lowerMainCExportAggregates(prog, mod, nil) {
+				t.Fatal("empty C export set requested ABI lowering")
+			}
+			if !lowerMainCExportAggregates(prog, mod, []cExport{{}}) {
+				t.Fatal("non-empty C export set skipped ABI lowering")
+			}
 			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 				t.Fatal(err)
 			}
