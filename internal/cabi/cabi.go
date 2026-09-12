@@ -636,6 +636,7 @@ func (p *Transformer) transformFuncBody(m llvm.Module, ctx llvm.Context, info *F
 			}
 			bb = llvm.NextBasicBlock(bb)
 		}
+		var returnSlot llvm.Value
 		for _, instr := range retInstrs {
 			ret := instr.Operand(0)
 			b.SetInsertPointBefore(instr)
@@ -659,8 +660,8 @@ func (p *Transformer) transformFuncBody(m llvm.Module, ctx llvm.Context, info *F
 				// See: https://github.com/xgo-dev/llgo/issues/1608
 				b.CreateStore(nativeRet, params[0])
 				rv = b.CreateRetVoid()
-			case AttrWidthType:
-				if p.optimize && !info.Return.hasNativeLayoutConversion() {
+			case AttrWidthType, AttrWidthType2:
+				if info.Return.Kind == AttrWidthType && p.optimize && !info.Return.hasNativeLayoutConversion() {
 					if load := ret.IsALoadInst(); !load.IsNil() && !load.IsVolatile() && llvm.NextInstruction(load) == instr {
 						iptr := b.CreateBitCast(ret.Operand(0), llvm.PointerType(nft.ReturnType(), 0), "")
 						value := b.CreateLoad(nft.ReturnType(), iptr, "")
@@ -669,16 +670,17 @@ func (p *Transformer) transformFuncBody(m llvm.Module, ctx llvm.Context, info *F
 						break
 					}
 				}
-				// Materialize the saved SSA value. The return may be a load whose
-				// source was modified after that load but before the return.
-				ptr := llvm.CreateAlloca(b, info.Return.nativeType())
-				b.CreateStore(nativeRet, ptr)
-				iptr := b.CreateBitCast(ptr, llvm.PointerType(nft.ReturnType(), 0), "")
-				rv = b.CreateRet(b.CreateLoad(nft.ReturnType(), iptr, ""))
-			case AttrWidthType2:
-				ptr := llvm.CreateAlloca(b, info.Return.nativeType())
-				b.CreateStore(nativeRet, ptr)
-				iptr := b.CreateBitCast(ptr, llvm.PointerType(nft.ReturnType(), 0), "")
+				// A single entry-block slot lets SROA promote conversions from
+				// every return path. Only the alloca moves: materialize the saved
+				// SSA value here, since a load's source may have changed before
+				// the return. The slot never escapes and return paths are disjoint.
+				if returnSlot.IsNil() {
+					b.SetInsertPointBefore(nfn.EntryBasicBlock().FirstInstruction())
+					returnSlot = llvm.CreateAlloca(b, info.Return.nativeType())
+					b.SetInsertPointBefore(instr)
+				}
+				b.CreateStore(nativeRet, returnSlot)
+				iptr := b.CreateBitCast(returnSlot, llvm.PointerType(nft.ReturnType(), 0), "")
 				rv = b.CreateRet(b.CreateLoad(nft.ReturnType(), iptr, ""))
 			}
 			instr.ReplaceAllUsesWith(rv)
