@@ -1294,8 +1294,10 @@ const coldFuncInfoEntryScanLimit = 4096
 
 // coldFuncInfoScanRange scans one {pc, symbolID} record section for the
 // anchor nearest at-or-after pc within the warm path's entry slack (anchors
-// are emitted from LLVM IR and land after the backend prologue). It returns
-// the matched funcinfo index and delta, or (0, maxDelta) on miss.
+// are emitted from LLVM IR and land after the backend prologue). Raw records
+// carry native code pointers, or WebAssembly table indices; FunctionPC puts
+// both in the same PC space used by reflect.Value.Pointer. It returns the
+// matched funcinfo index and delta, or (0, maxDelta) on miss.
 func coldFuncInfoScanRange(start, end, size, pc uintptr, bestDelta uintptr) (uint32, uintptr) {
 	if start == 0 || end <= start || size == 0 || (end-start)%size != 0 {
 		return 0, bestDelta
@@ -1307,10 +1309,14 @@ func coldFuncInfoScanRange(start, end, size, pc uintptr, bestDelta uintptr) (uin
 	bestIndex := uint32(0)
 	for i := uintptr(0); i < nsite; i++ {
 		site := (*runtimeFuncInfoEntryRecord)(unsafe.Pointer(start + i*size))
-		if site.symbolID == 0 || site.pc < pc {
+		if site.symbolID == 0 || site.pc == 0 {
 			continue
 		}
-		delta := site.pc - pc
+		entry := rtdebug.FunctionPC(unsafe.Pointer(site.pc))
+		if entry < pc {
+			continue
+		}
+		delta := entry - pc
 		if delta >= bestDelta {
 			continue
 		}
