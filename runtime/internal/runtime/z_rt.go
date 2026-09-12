@@ -176,6 +176,7 @@ func (gp *g) abortPanics() {
 	gp.recoverFrame = nil
 	gp.recoverPanic = nil
 	gp.recoverActive = nil
+	gp.panicPCs.clearRecovered()
 	if discarded && PanicRecovered != nil {
 		PanicRecovered()
 	}

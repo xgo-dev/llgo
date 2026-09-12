@@ -374,9 +374,10 @@ func (b Builder) AssertNilDeref(ptr Expr) {
 	b.SetBlockEx(blks[0], AtEnd, false)
 	b.Call(b.Pkg.rtFunc("AssertNilDeref"), b.Prog.BoolVal(true))
 	// AssertNilDeref(true) cannot return normally, but keep a formal edge to
-	// the continuation. An infinite failure loop lets LLVM prove a statically
-	// nil caller does not return; its caller's saved return PC can then equal
-	// the next function entry, and panic snapshots lose that caller identity.
+	// the continuation rather than a self-looping failure terminator. The
+	// self-loop lets LLVM prove a statically nil caller does not return; its
+	// caller's saved return PC can then equal the next function entry, and
+	// panic snapshots lose that caller identity.
 	b.Jump(blks[1])
 	b.SetBlockEx(blks[1], AtEnd, false)
 	b.blk.last = blks[1].last

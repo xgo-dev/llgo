@@ -309,6 +309,8 @@ func (p *panicPCStore) rememberRecovered(v any, frame unsafe.Pointer) {
 
 func (p *panicPCStore) takeRecovered(v any) bool {
 	e := efaceOf(&v)
+	// Raw interface data identity is the panic identity: rethrowing the value
+	// returned by recover preserves both words of that interface unchanged.
 	same := p.recoveredFrame != nil && p.recoveredFrame == getg().recoverActive &&
 		e._type == p.recoveredType && e.data == p.recoveredData
 	p.clearRecovered()
