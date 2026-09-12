@@ -126,6 +126,7 @@ func runCLI(ctx context.Context, args []string, runner commandRunner) error {
 	flags := flag.NewFlagSet("llgo-wasm-benchmark", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	root := flags.String("root", ".", "LLGo repository root")
+	fixtureRoot := flags.String("fixture-root", "", "repository root containing benchmark fixtures (defaults to -root)")
 	llgo := flags.String("llgo", "llgo", "LLGo command")
 	goCommand := flags.String("go", "go", "Go command")
 	out := flags.String("out", filepath.Join("benchmark", "wasm", "out"), "result directory")
@@ -140,6 +141,13 @@ func runCLI(ctx context.Context, args []string, runner commandRunner) error {
 	absRoot, err := filepath.Abs(*root)
 	if err != nil {
 		return err
+	}
+	absFixtureRoot := absRoot
+	if *fixtureRoot != "" {
+		absFixtureRoot, err = filepath.Abs(*fixtureRoot)
+		if err != nil {
+			return err
+		}
 	}
 	absOut, err := filepath.Abs(*out)
 	if err != nil {
@@ -160,7 +168,7 @@ func runCLI(ctx context.Context, args []string, runner commandRunner) error {
 	measurements := make([]measurement, 0, len(wasmExamples)*len(wasmProfiles))
 	var goSizes []measurement
 	for _, example := range wasmExamples {
-		fixture := example.sourcePath(absRoot)
+		fixture := example.sourcePath(absFixtureRoot)
 		exampleOut := filepath.Join(absOut, example.name)
 		for _, profile := range wasmProfiles {
 			profileBuildRuns := 0
