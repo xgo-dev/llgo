@@ -27,6 +27,7 @@ const runtimeLocalContext = "LocalContext"
 // installs it for the current outermost Go entry. previous is nonzero only for
 // a nested entry that inherited an existing context.
 func (b Builder) EnterLocalContext() (ctx, previous Expr) {
+	b.Func.CheckImplicitRuntimeEffects("compiler-generated local context entry")
 	fn := b.Pkg.rtFunc("EnterLocalContext")
 	params := fn.raw.Type.(*types.Signature).Params()
 	ctxPtr := b.Prog.rawType(params.At(0).Type())
@@ -39,6 +40,7 @@ func (b Builder) EnterLocalContext() (ctx, previous Expr) {
 // LeaveLocalContext restores an inherited context or drops the stack roots
 // installed by EnterLocalContext.
 func (b Builder) LeaveLocalContext(ctx, previous Expr) {
+	b.Func.CheckImplicitRuntimeEffects("compiler-generated local context exit")
 	b.Call(b.Pkg.rtFunc("LeaveLocalContext"), ctx, previous)
 }
 

@@ -3,12 +3,14 @@
 package ssa
 
 import (
+	"fmt"
 	"go/token"
 	"go/types"
 	"strings"
 	"testing"
 
 	llabi "github.com/xgo-dev/llgo/internal/abi"
+	"github.com/xgo-dev/llgo/internal/funcattrs"
 )
 
 func TestAllocLargeLocalOnHeap(t *testing.T) {
@@ -43,4 +45,26 @@ func TestAllocLargeLocalOnHeap(t *testing.T) {
 	if !pkg.NeedRuntime {
 		t.Fatal("large local heap allocation did not mark the runtime as needed")
 	}
+}
+
+func TestLargeLocalRejectsUnmodelledContractEffects(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	attrs := []funcattrs.Attribute{{
+		Target: funcattrs.Target{Scope: funcattrs.Function}, Name: "memory", Args: "none",
+		Position: token.Position{Filename: "large.go", Line: 3},
+	}}
+	if err := prog.SetFunctionAttributes("large", attrs); err != nil {
+		t.Fatal(err)
+	}
+	fn := prog.NewPackage("large", "large").NewFunc("large", NoArgsNoRet, InGo)
+	b := fn.MakeBody(1)
+	large := prog.Type(types.NewArray(types.Typ[types.Byte], int64(llabi.MaxStackVarSize+1)), InGo)
+	defer func() {
+		err := recover()
+		if err == nil || !strings.Contains(fmt.Sprint(err), "large.go:3") || !strings.Contains(fmt.Sprint(err), "compiler-generated heap allocation for a large local") {
+			t.Fatalf("unexpected diagnostic: %v", err)
+		}
+	}()
+	b.Alloc(large, false)
 }

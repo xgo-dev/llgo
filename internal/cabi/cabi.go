@@ -153,6 +153,9 @@ func (p *Transformer) TransformModule(path string, m llvm.Module) {
 		for !bb.IsNil() {
 			instr := bb.FirstInstruction()
 			for !instr.IsNil() {
+				if !instr.IsAInvokeInst().IsNil() && p.isWrapFunctionType(ctx, instr.CalledFunctionType()) {
+					panic("cabi: invoke requires unsupported ABI signature conversion")
+				}
 				if call := instr.IsACallInst(); !call.IsNil() {
 					if p.shouldSkipCall(call) {
 						instr = llvm.NextInstruction(instr)
@@ -399,9 +402,6 @@ func (p *Transformer) transformFunc(m llvm.Module, fn llvm.Value) bool {
 		}
 	}
 	copyClosureEnvFunctionAttrs(fn, nfn, paramMap)
-	if err := funcattrs.RemapFunction(fn, nfn, attributeMapping(&info, paramMap)); err != nil {
-		panic(err)
-	}
 	if !preloweredSRet.IsNil() {
 		nfn.AddAttributeAtIndex(1, preloweredSRet)
 	}
@@ -410,6 +410,9 @@ func (p *Transformer) transformFunc(m llvm.Module, fn llvm.Value) bool {
 	nfn.SetFunctionCallConv(fn.FunctionCallConv())
 	for _, attr := range fn.GetFunctionAttributes() {
 		nfn.AddAttributeAtIndex(-1, attr)
+	}
+	if err := funcattrs.RemapFunction(fn, nfn, attributeMapping(&info, paramMap)); err != nil {
+		panic(err)
 	}
 	if sp := fn.Subprogram(); !sp.IsNil() {
 		nfn.SetSubprogram(sp)

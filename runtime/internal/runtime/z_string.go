@@ -47,6 +47,10 @@ func StringCat(a, b String) String {
 // -----------------------------------------------------------------------------
 
 // CStrCopy copies a Go string to a C string buffer and returns it.
+//llgo:attribute nofree nosync nounwind willreturn
+//llgo:attribute memory(read, args: readwrite)
+//llgo:attribute param(dest) access(write) capture(results)
+//llgo:attribute result(0) same_as(param(dest))
 func CStrCopy(dest unsafe.Pointer, s String) *int8 {
 	n := s.len
 	c.Memcpy(dest, s.data, uintptr(n))
@@ -191,6 +195,8 @@ func StringFromUint64(r uint64) String {
 	return StringFromRune(rune(r))
 }
 
+//llgo:attribute nofree nosync nounwind willreturn
+//llgo:attribute memory(read)
 func StringEqual(x, y String) bool {
 	if x.len != y.len {
 		return false
@@ -205,6 +211,8 @@ func StringEqual(x, y String) bool {
 	return true
 }
 
+//llgo:attribute nofree nosync nounwind willreturn
+//llgo:attribute memory(read)
 func StringLess(x, y String) bool {
 	n := x.len
 	if n > y.len {

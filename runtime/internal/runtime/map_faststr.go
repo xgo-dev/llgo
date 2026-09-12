@@ -21,6 +21,10 @@ func stringStructOf(s *string) *stringStruct {
 	return (*stringStruct)(unsafe.Pointer(s))
 }
 
+//llgo:attribute nofree nosync nounwind willreturn
+//llgo:attribute memory(args: read)
+//llgo:attribute param(p) access(read) capture(none)
+//llgo:attribute param(q) access(read) capture(none)
 func memequal(p, q unsafe.Pointer, size uintptr) bool {
 	if size == 0 {
 		return true

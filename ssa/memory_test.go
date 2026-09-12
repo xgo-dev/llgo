@@ -25,6 +25,7 @@ func TestAssertNilDerefColdCall(t *testing.T) {
 		t.Run(target.LLVMTarget, func(t *testing.T) {
 			prog := NewProgram(target)
 			defer prog.Dispose()
+			loadRuntimeSourceAttributes(t, prog)
 			prog.SetRuntime(func() *types.Package {
 				rt := types.NewPackage(PkgRuntime, "runtime")
 				params := types.NewTuple(types.NewVar(token.NoPos, nil, "nil", types.Typ[types.Bool]))
