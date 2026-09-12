@@ -218,10 +218,11 @@ type context struct {
 	trackCallerFrames bool
 	callerFrameMark   llssa.Expr
 
-	staticGlobalInits map[*ssa.Global]llssa.Expr
-	staticInitStores  map[*ssa.Store]none
-	staticInitInstrs  map[ssa.Instruction]none
-	locality          localityLowering
+	staticGlobalInits    map[*ssa.Global]llssa.Expr
+	staticInitStores     map[*ssa.Store]none
+	staticInitInstrs     map[ssa.Instruction]none
+	staticMapSliceValues map[*ssa.MapUpdate]llssa.Expr
+	locality             localityLowering
 }
 
 func (p *context) rewriteValue(name string) (string, bool) {
@@ -2293,7 +2294,12 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 	case *ssa.MapUpdate:
 		m := p.compileValue(b, v.Map)
 		key := p.compileValue(b, v.Key)
-		val := p.compileValue(b, v.Value)
+		var val llssa.Expr
+		if expr, ok := p.staticMapSliceValues[v]; ok {
+			val = expr
+		} else {
+			val = p.compileValue(b, v.Value)
+		}
 		p.recordPanicSite(b, v.Pos())
 		b.MapUpdate(m, key, val)
 	case *ssa.Defer:
@@ -2860,6 +2866,7 @@ func processPkg(ctx *context, ret llssa.Package, pkg *ssa.Package) {
 	}
 
 	ctx.collectStaticGlobalInits(pkg)
+	ctx.collectStaticMapInits(pkg)
 
 	members := make([]*namedMember, 0, len(pkg.Members))
 	skips := ctx.skips

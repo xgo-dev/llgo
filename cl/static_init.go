@@ -196,11 +196,7 @@ func (p *context) collectStaticGlobalInits(pkg *ssa.Package) {
 		if !ok {
 			continue
 		}
-		if p.staticGlobalInits == nil {
-			p.staticGlobalInits = make(map[*ssa.Global]llssa.Expr)
-			p.staticInitStores = make(map[*ssa.Store]none)
-			p.staticInitInstrs = make(map[ssa.Instruction]none)
-		}
+		p.ensureStaticInitState()
 		p.staticGlobalInits[global] = init
 		if candidate.slice != nil {
 			for _, instr := range candidate.slice.instrs {
@@ -216,13 +212,25 @@ func (p *context) collectStaticGlobalInits(pkg *ssa.Package) {
 	}
 }
 
+func instructionConsumes(instr ssa.Instruction, val ssa.Value) bool {
+	switch instr := instr.(type) {
+	case *ssa.Store:
+		return instr != nil && instr.Val == val
+	case *ssa.MapUpdate:
+		return instr != nil && instr.Value == val
+	default:
+		return false
+	}
+}
+
 // collectAllocStores recursively traces store instructions made to an alloc,
 // recording constant stores into out and tracking intermediate instructions for suppression.
-// terminal must be the exact load or full-slice value consumed only by terminalStore;
-// any other escaping use rejects the fold. The visited map guards against cyclic pointer graphs.
+// terminal must be the exact load or full-slice value consumed only by consumer,
+// which may be a *ssa.Store or *ssa.MapUpdate; any other escaping use rejects
+// the fold. The visited map guards against cyclic pointer graphs.
 // A false result may leave partial entries in out and instrs; callers must discard the entire
 // candidate on failure.
-func collectAllocStores(alloc *ssa.Alloc, terminal ssa.Value, terminalStore *ssa.Store, basePath []staticInitPathElem, out *[]staticInitStore, instrs *[]ssa.Instruction, visited map[*ssa.Alloc]bool) bool {
+func collectAllocStores(alloc *ssa.Alloc, terminal ssa.Value, consumer ssa.Instruction, basePath []staticInitPathElem, out *[]staticInitStore, instrs *[]ssa.Instruction, visited map[*ssa.Alloc]bool) bool {
 	if visited[alloc] {
 		return false
 	}
@@ -238,11 +246,11 @@ func collectAllocStores(alloc *ssa.Alloc, terminal ssa.Value, terminalStore *ssa
 	default:
 		return false
 	}
-	if terminalStore == nil || terminalStore.Val != terminal {
+	if consumer == nil || !instructionConsumes(consumer, terminal) {
 		return false
 	}
 	terminalRefs, ok := nonDebugReferrers(terminal)
-	if !ok || len(terminalRefs) != 1 || terminalRefs[0] != terminalStore {
+	if !ok || len(terminalRefs) != 1 || terminalRefs[0] != consumer {
 		return false
 	}
 	visited[alloc] = true
@@ -527,12 +535,28 @@ func staticSliceInitOfVisited(store *ssa.Store, visited map[*ssa.Alloc]bool) (*s
 	if store == nil || store.Block() == nil {
 		return nil, false
 	}
-	slice, ok := store.Val.(*ssa.Slice)
+	init, ok := staticSliceInitFromValueVisited(store.Val, store, visited)
+	if ok {
+		init.store = store
+		init.instrs = append(init.instrs, store)
+	}
+	return init, ok
+}
+
+func staticSliceInitFromValue(val ssa.Value, consumer ssa.Instruction) (*staticSliceInit, bool) {
+	return staticSliceInitFromValueVisited(val, consumer, make(map[*ssa.Alloc]bool))
+}
+
+func staticSliceInitFromValueVisited(val ssa.Value, consumer ssa.Instruction, visited map[*ssa.Alloc]bool) (*staticSliceInit, bool) {
+	if consumer == nil || consumer.Block() == nil {
+		return nil, false
+	}
+	slice, ok := val.(*ssa.Slice)
 	if !ok || slice.Low != nil || slice.High != nil || slice.Max != nil {
 		return nil, false
 	}
 	alloc, ok := slice.X.(*ssa.Alloc)
-	if !ok || alloc.Parent() != store.Parent() {
+	if !ok || alloc.Parent() != consumer.Parent() {
 		return nil, false
 	}
 	if visited == nil {
@@ -543,16 +567,28 @@ func staticSliceInitOfVisited(store *ssa.Store, visited map[*ssa.Alloc]bool) (*s
 		return nil, false
 	}
 	array, ok := ptr.Elem().Underlying().(*types.Array)
-	if !ok || array.Len() == 0 || array.Len() > maxStaticInitArrayElements || staticInitZeroSized(array.Elem()) {
+	if !ok || !staticInitBoundedArraySizeAllowed(array) || staticInitZeroSized(array.Elem()) {
 		return nil, false
 	}
 
 	ret := &staticSliceInit{
-		store: store, slice: slice, alloc: alloc, array: array,
-		instrs: []ssa.Instruction{store},
+		slice: slice, alloc: alloc, array: array,
+		instrs: []ssa.Instruction{},
+	}
+	if array.Len() == 0 {
+		ret.instrs = []ssa.Instruction{alloc, slice}
+		refs, ok := nonDebugReferrers(alloc)
+		if !ok || len(refs) != 1 || refs[0] != slice {
+			return nil, false
+		}
+		sliceRefs, ok := nonDebugReferrers(slice)
+		if !ok || len(sliceRefs) != 1 || sliceRefs[0] != consumer {
+			return nil, false
+		}
+		return ret, true
 	}
 
-	if !collectAllocStores(alloc, slice, store, nil, &ret.stores, &ret.instrs, visited) {
+	if !collectAllocStores(alloc, slice, consumer, nil, &ret.stores, &ret.instrs, visited) {
 		return nil, false
 	}
 	return ret, true
@@ -564,6 +600,16 @@ func staticInitArraySizeAllowed(array *types.Array) bool {
 	}
 	if basic, ok := array.Elem().Underlying().(*types.Basic); ok && basic.Kind() == types.Uint8 {
 		return true
+	}
+	return array.Len() <= maxStaticInitArrayElements
+}
+
+// staticInitBoundedArraySizeAllowed always caps array length, including byte
+// arrays. Slice backing stores keep this cap so huge []byte literals stay in
+// the package initializer instead of a giant LLVM string constant.
+func staticInitBoundedArraySizeAllowed(array *types.Array) bool {
+	if array.Len() < 0 || int64(int(array.Len())) != array.Len() {
+		return false
 	}
 	return array.Len() <= maxStaticInitArrayElements
 }
@@ -636,6 +682,209 @@ func (p *context) buildStaticSliceValue(name string, typ types.Type, init *stati
 		}
 	}
 	return p.pkg.ConstSlice(name, p.type_(typ, llssa.InGo), values), true
+}
+
+func (p *context) ensureStaticInitState() {
+	if p.staticGlobalInits == nil {
+		p.staticGlobalInits = make(map[*ssa.Global]llssa.Expr)
+	}
+	if p.staticInitStores == nil {
+		p.staticInitStores = make(map[*ssa.Store]none)
+	}
+	if p.staticInitInstrs == nil {
+		p.staticInitInstrs = make(map[ssa.Instruction]none)
+	}
+	if p.staticMapSliceValues == nil {
+		p.staticMapSliceValues = make(map[*ssa.MapUpdate]llssa.Expr)
+	}
+}
+
+// collectStaticMapInits folds package-level map[K][]T variables whose keys are
+// constants and whose values are statically constructible slices. The match is
+// by SSA shape, not by variable name. Any non-foldable entry abandons the
+// whole map so init keeps the original MakeMap/MapUpdate sequence.
+func (p *context) collectStaticMapInits(pkg *ssa.Package) {
+	initFn := pkg.Func("init")
+	if initFn == nil || initFn.Synthetic != "package initializer" {
+		return
+	}
+	eligible := p.staticMapSliceGlobals(pkg)
+	if len(eligible) == 0 {
+		return
+	}
+	stores := findSoleMakeMapStores(initFn, eligible)
+	updatesByMap := mapUpdatesInBlockOrder(initFn)
+	for global, ms := range stores {
+		p.tryStaticMapInit(global, eligible[global], ms.store, ms.makeMap, updatesByMap[ms.makeMap])
+	}
+}
+
+func (p *context) staticMapSliceGlobals(pkg *ssa.Package) map[*ssa.Global]*types.Map {
+	eligible := make(map[*ssa.Global]*types.Map)
+	for name, member := range pkg.Members {
+		if _, skip := p.skips[name]; skip {
+			continue
+		}
+		global, ok := member.(*ssa.Global)
+		if !ok || isCgoFuncPtrVar(global.Name()) {
+			continue
+		}
+		if _, rewritten := p.rewriteValue(p.globalFullName(global)); rewritten {
+			continue
+		}
+		ptr, ok := global.Type().(*types.Pointer)
+		if !ok {
+			continue
+		}
+		mapType, ok := ptr.Elem().Underlying().(*types.Map)
+		if !ok {
+			continue
+		}
+		if _, ok := mapType.Elem().Underlying().(*types.Slice); !ok {
+			continue
+		}
+		_, vtype, define := p.varName(global.Pkg.Pkg, global)
+		if !define || vtype != goVar {
+			continue
+		}
+		if info, ok := p.resolveLocality(global.Pkg.Pkg, llssa.FullName(global.Pkg.Pkg, global.Name())); ok && info.Locality != llssa.LocalityNone {
+			continue
+		}
+		eligible[global] = mapType
+	}
+	return eligible
+}
+
+type makeMapStore struct {
+	store   *ssa.Store
+	makeMap *ssa.MakeMap
+}
+
+func findSoleMakeMapStores(initFn *ssa.Function, eligible map[*ssa.Global]*types.Map) map[*ssa.Global]makeMapStore {
+	found := make(map[*ssa.Global]makeMapStore)
+	ambiguous := make(map[*ssa.Global]none)
+	for _, block := range initFn.Blocks {
+		for _, instr := range block.Instrs {
+			s, ok := instr.(*ssa.Store)
+			if !ok {
+				continue
+			}
+			global := staticInitRootGlobal(s.Addr)
+			if _, ok := eligible[global]; !ok {
+				continue
+			}
+			if _, skip := ambiguous[global]; skip {
+				continue
+			}
+			path, ok := staticInitStorePath(s.Addr)
+			if !ok || len(path) != 0 {
+				delete(found, global)
+				ambiguous[global] = none{}
+				continue
+			}
+			mm, ok := s.Val.(*ssa.MakeMap)
+			if !ok {
+				delete(found, global)
+				ambiguous[global] = none{}
+				continue
+			}
+			if _, dup := found[global]; dup {
+				delete(found, global)
+				ambiguous[global] = none{}
+				continue
+			}
+			found[global] = makeMapStore{store: s, makeMap: mm}
+		}
+	}
+	return found
+}
+
+func mapUpdatesInBlockOrder(initFn *ssa.Function) map[*ssa.MakeMap][]*ssa.MapUpdate {
+	updates := make(map[*ssa.MakeMap][]*ssa.MapUpdate)
+	for _, block := range initFn.Blocks {
+		for _, instr := range block.Instrs {
+			update, ok := instr.(*ssa.MapUpdate)
+			if !ok {
+				continue
+			}
+			makeMap, ok := update.Map.(*ssa.MakeMap)
+			if !ok {
+				continue
+			}
+			updates[makeMap] = append(updates[makeMap], update)
+		}
+	}
+	return updates
+}
+
+func (p *context) tryStaticMapInit(global *ssa.Global, mapType *types.Map, store *ssa.Store, makeMap *ssa.MakeMap, ordered []*ssa.MapUpdate) {
+	refs, ok := nonDebugReferrers(makeMap)
+	if !ok {
+		return
+	}
+	seen := make(map[*ssa.MapUpdate]none, len(ordered))
+	for _, ref := range refs {
+		switch ref := ref.(type) {
+		case *ssa.Store:
+			if ref != store {
+				return
+			}
+		case *ssa.MapUpdate:
+			if ref.Map != makeMap {
+				return
+			}
+			seen[ref] = none{}
+		default:
+			return
+		}
+	}
+	if len(ordered) != len(seen) {
+		return
+	}
+	for _, update := range ordered {
+		if _, ok := seen[update]; !ok {
+			return
+		}
+	}
+
+	slices := make([]*staticSliceInit, len(ordered))
+	for i, update := range ordered {
+		if _, ok := update.Key.(*ssa.Const); !ok {
+			return
+		}
+		slice, ok := staticSliceInitFromValue(update.Value, update)
+		if !ok {
+			return
+		}
+		slices[i] = slice
+	}
+
+	type builtEntry struct {
+		update *ssa.MapUpdate
+		expr   llssa.Expr
+		slice  *staticSliceInit
+	}
+	built := make([]builtEntry, 0, len(ordered))
+	globalName, _, _ := p.varName(global.Pkg.Pkg, global)
+	for i, update := range ordered {
+		name := globalName + "$m" + strconv.Itoa(i)
+		expr, ok := p.buildStaticSliceValue(name, mapType.Elem(), slices[i])
+		if !ok {
+			return
+		}
+		built = append(built, builtEntry{update: update, expr: expr, slice: slices[i]})
+	}
+
+	p.ensureStaticInitState()
+	for _, entry := range built {
+		p.staticMapSliceValues[entry.update] = entry.expr
+		for _, instr := range entry.slice.instrs {
+			p.staticInitInstrs[instr] = none{}
+		}
+		for _, s := range entry.slice.stores {
+			p.staticInitStores[s.store] = none{}
+		}
+	}
 }
 
 func staticInitRootGlobal(addr ssa.Value) *ssa.Global {
