@@ -29,7 +29,7 @@ func (f Function) CheckAttributeInstrumentation(reason string, names ...string) 
 	switch reason {
 	case "compiler-generated GC root publication":
 		if !f.Prog.GCRootsEnabled() && !f.Prog.CooperativeSafepointsEnabled() {
-			if err := funcattrs.CheckInstrumentation(f.impl, reason, "memory", "capture"); err != nil {
+			if err := funcattrs.CheckInstrumentation(f.impl, reason, "memory", "capture", "noalias"); err != nil {
 				panic(err)
 			}
 		}
@@ -37,7 +37,7 @@ func (f Function) CheckAttributeInstrumentation(reason string, names ...string) 
 		return
 	case "cooperative safepoints":
 		if !f.Prog.GCRootsEnabled() && !f.Prog.CooperativeSafepointsEnabled() {
-			if err := funcattrs.CheckInstrumentation(f.impl, reason, "memory", "capture", "access", "nofree", "nosync", "nounwind", "willreturn"); err != nil {
+			if err := funcattrs.CheckInstrumentation(f.impl, reason, "memory", "capture", "access", "noalias", "nofree", "nosync", "nounwind", "willreturn"); err != nil {
 				panic(err)
 			}
 		}
@@ -53,7 +53,7 @@ func (f Function) CheckAttributeInstrumentation(reason string, names ...string) 
 // footprint is not yet available in every caller's declaration. It leaves
 // explicit source operations governed by their ordinary contract promises.
 func (f Function) CheckImplicitRuntimeEffects(reason string) {
-	f.CheckAttributeInstrumentation(reason, "memory", "nofree", "nosync", "nounwind", "willreturn", "capture", "access")
+	f.CheckAttributeInstrumentation(reason, "memory", "nofree", "nosync", "nounwind", "willreturn", "capture", "access", "noalias")
 }
 
 // SetFunctionAttributeOrigin binds a concrete generic symbol to its declaration.

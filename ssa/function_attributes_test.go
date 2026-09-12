@@ -101,8 +101,8 @@ func TestSourceAttributesHiddenEnvironmentAndGenericOrigin(t *testing.T) {
 	defer prog.Dispose()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "env.go", `package p
-//llgo:attribute param(p) returned
-//llgo:attribute result(0) nonnull
+//llgo:attr param(p) returned
+//llgo:attr result(0) nonnull
 func F(p *int) *int { return p }
 `, parser.ParseComments)
 	if err != nil {
@@ -134,5 +134,43 @@ func F(p *int) *int { return p }
 		if err = llvm.VerifyModule(p.Module(), llvm.ReturnStatusAction); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestSourceNoAliasInstrumentation(t *testing.T) {
+	for _, mode := range []string{"none", "roots", "safepoints"} {
+		t.Run(mode, func(t *testing.T) {
+			prog := NewProgram(nil)
+			defer prog.Dispose()
+			prog.EnableGCRoots(mode == "roots")
+			prog.EnableCooperativeSafepoints(mode == "safepoints")
+			attr := funcattrs.Attribute{Target: funcattrs.Target{Scope: funcattrs.Parameter, Index: 0}, Name: "noalias"}
+			if err := prog.SetFunctionAttributes("p.F", []funcattrs.Attribute{attr}); err != nil {
+				t.Fatal(err)
+			}
+			ptr := types.NewPointer(types.Typ[types.Int])
+			sig := runtimeContractSignature([]types.Type{ptr}, ptr)
+			for _, owner := range []string{"p", "caller"} {
+				fn := prog.NewPackage(owner, owner).NewFunc("p.F", sig, InGo)
+				retained := !fn.impl.GetEnumAttributeAtIndex(1, llvm.AttributeKindID("noalias")).IsNil()
+				if retained != (mode == "none") {
+					t.Fatalf("%s: unexpected noalias policy in %s", owner, mode)
+				}
+				if mode == "none" {
+					func() {
+						defer func() {
+							failure := recover()
+							err, ok := failure.(error)
+							if !ok || !strings.Contains(err.Error(), "cooperative safepoints") {
+								t.Fatalf("unexpected instrumentation diagnostic: %v", failure)
+							}
+						}()
+						fn.CheckAttributeInstrumentation("cooperative safepoints")
+					}()
+				} else {
+					fn.CheckAttributeInstrumentation("cooperative safepoints")
+				}
+			}
+		})
 	}
 }

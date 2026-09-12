@@ -76,7 +76,7 @@ type Attribute struct {
 }
 
 func (a Attribute) Error(format string, args ...any) error {
-	return fmt.Errorf("%s: llgo:attribute: %s", a.Position, fmt.Sprintf(format, args...))
+	return fmt.Errorf("%s: llgo:attr: %s", a.Position, fmt.Sprintf(format, args...))
 }
 
 // Parse resolves source selectors before imported signatures can lose parameter
@@ -84,7 +84,10 @@ func (a Attribute) Error(format string, args ...any) error {
 func Parse(fset *token.FileSet, decl *ast.FuncDecl) ([]Attribute, error) {
 	var attrs []Attribute
 	for _, d := range directive.ParseGroup(decl.Doc) {
-		if d.Name != "llgo:attribute" {
+		if d.Name == "llgo:attribute" {
+			return nil, (Attribute{Position: fset.Position(d.Pos)}).Error("use //llgo:attr")
+		}
+		if d.Name != "llgo:attr" {
 			continue
 		}
 		base := Attribute{Target: Target{Scope: Function}, Position: fset.Position(d.Pos)}
@@ -142,7 +145,7 @@ func Parse(fset *token.FileSet, decl *ast.FuncDecl) ([]Attribute, error) {
 // Reject reports attributes attached outside named function declarations.
 func Reject(fset *token.FileSet, doc *ast.CommentGroup) error {
 	for _, d := range directive.ParseGroup(doc) {
-		if d.Name == "llgo:attribute" {
+		if d.Name == "llgo:attr" {
 			return (Attribute{Position: fset.Position(d.Pos)}).Error("requires a named function or method declaration")
 		}
 	}
@@ -334,6 +337,8 @@ func normalize(a Attribute) (Attribute, error) {
 		valid = function
 	case "memory":
 		valid, takesArgs = function, true
+	case "noalias":
+		valid = input
 	case "access", "capture":
 		valid, takesArgs = input, true
 	case "nonnull", "nonnegative":
@@ -518,7 +523,7 @@ func Validate(attrs []Attribute, sig *types.Signature, intBits int, deferTypePar
 			continue
 		}
 		switch a.Name {
-		case "nonnull", "access", "capture":
+		case "nonnull", "access", "capture", "noalias":
 			if !pointer(t) {
 				return a.Error("%s requires a pointer, got %s", a.Name, t)
 			}

@@ -16,36 +16,37 @@ import (
 func TestSourceFunctionAttributes(t *testing.T) {
 	prog, ir := compileLocalitySource(t, `package p
 type T struct { x int }
-//llgo:attribute param(p) returned
-//llgo:attribute result(0) nonnull
+//llgo:attr param(p) returned
+//llgo:attr result(0) nonnull
 func F(p *int) *int { return p }
-//llgo:attribute receiver readonly captures(none)
-//llgo:attribute memory(argmem: read)
+//llgo:attr receiver readonly captures(none) noalias
+//llgo:attr memory(argmem: read)
 func (p *T) Read() int { return p.x }
-//llgo:attribute result(0) nonnegative
+//llgo:attr result(0) nonnegative
 func Count() int { return 5 }
-//llgo:attribute param(p) returned
-//llgo:attribute result(0) nonnull
+//llgo:attr param(p) returned
+//llgo:attr result(0) nonnull
+//llgo:attr param(p) noalias
 func Generic[T any](p *T) *T { return p }
 func UseGeneric(p *int) *int { return Generic(p) }
 `)
 	defer prog.Dispose()
-	for _, want := range []string{`define nonnull ptr @"example.com/locality.F"(ptr returned`, "ptr readonly captures(none)", "range(i64 0, -9223372036854775808)", "llgo.source.attributes"} {
+	for _, want := range []string{`define nonnull ptr @"example.com/locality.F"(ptr returned`, "ptr noalias readonly captures(none)", "range(i64 0, -9223372036854775808)", "llgo.source.attributes"} {
 		if !strings.Contains(ir, want) {
 			t.Errorf("missing %q:\n%s", want, ir)
 		}
 	}
-	if !strings.Contains(ir, `Generic[int]"(ptr returned`) {
+	if !strings.Contains(ir, `Generic[int]"(ptr noalias returned`) {
 		t.Fatalf("generic instance lost source attributes:\n%s", ir)
 	}
 }
 
 func TestSourceAttributePlacementDiagnostics(t *testing.T) {
 	for _, body := range []string{
-		"//llgo:attribute cold\nvar x int",
-		"type T struct {\n//llgo:attribute cold\n x int\n}",
-		"type I interface {\n//llgo:attribute cold\n M()\n}",
-		"func F() {\n//llgo:attribute cold\n f := func() {}; f()\n}",
+		"//llgo:attr cold\nvar x int",
+		"type T struct {\n//llgo:attr cold\n x int\n}",
+		"type I interface {\n//llgo:attr cold\n M()\n}",
+		"func F() {\n//llgo:attr cold\n f := func() {}; f()\n}",
 	} {
 		fset := token.NewFileSet()
 		f, err := parser.ParseFile(fset, "placement.go", "package p\n"+body, parser.ParseComments)
@@ -70,8 +71,9 @@ func TestSourceAttributesPreloadedAcrossBackendsAndLinknames(t *testing.T) {
 	src := `package owner
 import "unsafe"
 //go:linkname Copy shared_copy
-//llgo:attribute param(p) returned
-//llgo:attribute result(0) nonnull
+//llgo:attr param(p) returned
+//llgo:attr result(0) nonnull
+//llgo:attr param(p) noalias
 func Copy(p unsafe.Pointer) unsafe.Pointer { return p }
 `
 	f, err := parser.ParseFile(fset, "owner.go", src, parser.ParseComments)
@@ -92,7 +94,7 @@ func Copy(p unsafe.Pointer) unsafe.Pointer { return p }
 		backend := coordinator.NewBackendProgram()
 		p := backend.NewPackage(name, name)
 		p.NewFunc("shared_copy", sig, llssa.InGo)
-		if !strings.Contains(p.String(), "declare nonnull ptr @shared_copy(ptr returned") {
+		if !strings.Contains(p.String(), "declare nonnull ptr @shared_copy(ptr noalias returned") {
 			t.Fatalf("%s lost contract:\n%s", name, p.String())
 		}
 		if err = llvm.VerifyModule(p.Module(), llvm.ReturnStatusAction); err != nil {

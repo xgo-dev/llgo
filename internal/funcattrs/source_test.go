@@ -30,9 +30,9 @@ func parseTest(t *testing.T, source string) ([]Attribute, *types.Signature, erro
 }
 
 func TestSourceSelectorsAndValidation(t *testing.T) {
-	attrs, sig, err := parseTest(t, `//llgo:attribute param(b) readonly captures(none)
-// llgo:attribute param(0) returned
-//llgo:attribute result(p) nonnull
+	attrs, sig, err := parseTest(t, `//llgo:attr param(b) readonly captures(none)
+// llgo:attr param(0) returned
+//llgo:attr result(p) nonnull
 func F(a, b unsafe.Pointer) (p unsafe.Pointer) { return a }`)
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestSourceAttributeDiagnostics(t *testing.T) {
 		{"result(0) range(-10,0) nonnegative", "func F() int { return 0 }", "conflicting range and nonnegative"},
 	} {
 		t.Run(tc.directive, func(t *testing.T) {
-			a, s, err := parseTest(t, "//llgo:attribute "+tc.directive+"\n"+tc.signature)
+			a, s, err := parseTest(t, "//llgo:attr "+tc.directive+"\n"+tc.signature)
 			if err == nil {
 				err = Validate(a, s, 64, false)
 			}
@@ -112,7 +112,7 @@ func TestSourceAttributeDiagnostics(t *testing.T) {
 func TestSourceAttributesExcludeCompilerManagedProperties(t *testing.T) {
 	for _, attribute := range []string{"param(p) align(16)", "nofree", "nosync", "nounwind", "willreturn", "param(p).field(P) nonnull", "param(p).element(0) nonnull"} {
 		t.Run(attribute, func(t *testing.T) {
-			_, _, err := parseTest(t, "//llgo:attribute "+attribute+"\nfunc F(p *int) {}")
+			_, _, err := parseTest(t, "//llgo:attr "+attribute+"\nfunc F(p *int) {}")
 			if err == nil || !strings.Contains(err.Error(), "unsupported") {
 				t.Fatalf("source annotation accepted: %s, error = %v", attribute, err)
 			}
@@ -121,10 +121,10 @@ func TestSourceAttributesExcludeCompilerManagedProperties(t *testing.T) {
 }
 
 func TestSourceMultipleResults(t *testing.T) {
-	attrs, sig, err := parseTest(t, `//llgo:attribute param(p) nonnull access(read) capture(results)
-//llgo:attribute param(n) range(-4,20) nonnegative
-//llgo:attribute result(out) nonnull same_as(param(p))
-//llgo:attribute result(count) range(0,32)
+	attrs, sig, err := parseTest(t, `//llgo:attr param(p) nonnull access(read) capture(results)
+//llgo:attr param(n) range(-4,20) nonnegative
+//llgo:attr result(out) nonnull same_as(param(p))
+//llgo:attr result(count) range(0,32)
 func F(p *int, n int32) (out *int, count int32) { return p,n }`)
 	if err != nil {
 		t.Fatal(err)
@@ -144,9 +144,9 @@ func F(p *int, n int32) (out *int, count int32) { return p,n }`)
 
 func TestSourceReceiverAndUnnamedValues(t *testing.T) {
 	attrs, sig, err := parseTest(t, `type Box struct{ P *int }
-//llgo:attribute receiver nonnull
-//llgo:attribute param(0) range(-4,4)
-//llgo:attribute result(1) same_as(receiver)
+//llgo:attr receiver nonnull
+//llgo:attr param(0) range(-4,4)
+//llgo:attr result(1) same_as(receiver)
 func (*Box) F(int) (bool,*Box) { return false,nil }`)
 	if err != nil {
 		t.Fatal(err)
@@ -165,9 +165,9 @@ func (*Box) F(int) (bool,*Box) { return false,nil }`)
 }
 
 func TestSourceCanonicalAliases(t *testing.T) {
-	attrs, sig, err := parseTest(t, `//llgo:attribute memory(read, argmem:readwrite) memory(args:readwrite,other:read)
-//llgo:attribute param(p) readonly access(read) captures(ret: address, provenance) capture(results) returned
-//llgo:attribute result(0) same_as(param(0))
+	attrs, sig, err := parseTest(t, `//llgo:attr memory(read, argmem:readwrite) memory(args:readwrite,other:read)
+//llgo:attr param(p) readonly access(read) captures(ret: address, provenance) capture(results) returned
+//llgo:attr result(0) same_as(param(0))
 func F(p unsafe.Pointer) *int8 { return (*int8)(p) }`)
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +204,7 @@ func F(p unsafe.Pointer) *int8 { return (*int8)(p) }`)
 
 func TestSourcePublicContractModes(t *testing.T) {
 	for _, mode := range []string{"none", "read", "write", "readwrite"} {
-		attrs, sig, err := parseTest(t, "//llgo:attribute memory("+mode+")\n//llgo:attribute param(0) access("+mode+")\nfunc F(p *int) {}")
+		attrs, sig, err := parseTest(t, "//llgo:attr memory("+mode+")\n//llgo:attr param(0) access("+mode+")\nfunc F(p *int) {}")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -213,7 +213,7 @@ func TestSourcePublicContractModes(t *testing.T) {
 		}
 	}
 	for _, mode := range []string{"none", "results", "any"} {
-		attrs, sig, err := parseTest(t, "//llgo:attribute param(0) capture("+mode+")\nfunc F(p *int) {}")
+		attrs, sig, err := parseTest(t, "//llgo:attr param(0) capture("+mode+")\nfunc F(p *int) {}")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -221,7 +221,7 @@ func TestSourcePublicContractModes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	attrs, sig, err := parseTest(t, "//llgo:attribute cold noreturn\nfunc F() { panic(0) }")
+	attrs, sig, err := parseTest(t, "//llgo:attr cold noreturn\nfunc F() { panic(0) }")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,8 +231,8 @@ func TestSourcePublicContractModes(t *testing.T) {
 }
 
 func TestSourceGenericValueAndIntegerIdentity(t *testing.T) {
-	attrs, sig, err := parseTest(t, `//llgo:attribute param(v) range(0,128)
-//llgo:attribute result(0) same_as(param(v))
+	attrs, sig, err := parseTest(t, `//llgo:attr param(v) range(0,128)
+//llgo:attr result(0) same_as(param(v))
 func F[T ~int8 | ~int16](v T) T { return v }`)
 	if err != nil {
 		t.Fatal(err)
@@ -250,7 +250,7 @@ func F[T ~int8 | ~int16](v T) T { return v }`)
 		}
 	}
 	attrs, sig, err = parseTest(t, `type Counter int
-//llgo:attribute result(0) same_as(param(0))
+//llgo:attr result(0) same_as(param(0))
 func F(v Counter) int { return int(v) }`)
 	if err != nil {
 		t.Fatal(err)
@@ -261,7 +261,7 @@ func F(v Counter) int { return int(v) }`)
 }
 
 func TestSourceMergeOwnsCanonicalRange(t *testing.T) {
-	attrs, _, err := parseTest(t, `//llgo:attribute param(v) range(0x0,0x10) range(0,16)
+	attrs, _, err := parseTest(t, `//llgo:attr param(v) range(0x0,0x10) range(0,16)
 func F(v int) {}`)
 	if err != nil {
 		t.Fatal(err)
@@ -280,8 +280,8 @@ func F(v int) {}`)
 }
 
 func TestSourceWideRanges(t *testing.T) {
-	attrs, sig, err := parseTest(t, `//llgo:attribute param(v) range(0,18446744073709551616)
-//llgo:attribute result(0) nonnegative
+	attrs, sig, err := parseTest(t, `//llgo:attr param(v) range(0,18446744073709551616)
+//llgo:attr result(0) nonnegative
 func F(v uint64) uint64 { return v }`)
 	if err != nil {
 		t.Fatal(err)
@@ -299,10 +299,10 @@ func F(v uint64) uint64 { return v }`)
 }
 
 func TestSourceTypedOperandsJSONRoundTrip(t *testing.T) {
-	attrs, sig, err := parseTest(t, `//llgo:attribute memory(read,argmem:readwrite)
-//llgo:attribute param(p) nonnull access(read) capture(results)
-//llgo:attribute param(n) range(0,18446744073709551616)
-//llgo:attribute result(1) same_as(param(p))
+	attrs, sig, err := parseTest(t, `//llgo:attr memory(read,argmem:readwrite)
+//llgo:attr param(p) nonnull access(read) capture(results)
+//llgo:attr param(n) range(0,18446744073709551616)
+//llgo:attr result(1) same_as(param(p))
 func F(p *int, n uint64) (bool,*int) { return false,p }`)
 	if err != nil {
 		t.Fatal(err)
@@ -341,7 +341,7 @@ func F(p *int, n uint64) (bool,*int) { return false,p }`)
 
 func TestTargetSizedRanges(t *testing.T) {
 	for _, bits := range []int{32, 64} {
-		a, s, err := parseTest(t, "//llgo:attribute result(0) nonnegative\nfunc F() int { return 0 }")
+		a, s, err := parseTest(t, "//llgo:attr result(0) nonnegative\nfunc F() int { return 0 }")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -350,7 +350,7 @@ func TestTargetSizedRanges(t *testing.T) {
 			t.Fatalf("%d: %d %v %v %v", bits, n, v, full, err)
 		}
 	}
-	a, s, err := parseTest(t, "//llgo:attribute result(0) range(-128, 128)\nfunc F() int8 { return 0 }")
+	a, s, err := parseTest(t, "//llgo:attr result(0) range(-128, 128)\nfunc F() int8 { return 0 }")
 	if err != nil {
 		t.Fatal(err)
 	}

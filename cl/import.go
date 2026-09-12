@@ -448,7 +448,7 @@ func (p *context) initLinkname(line string, allowExport bool, f func(inPkgName s
 // legacy backward scan from finding a preceding export or linkname directive.
 func isFunctionAttributeComment(line string) bool {
 	item, ok := directive.Parse(&ast.Comment{Text: line})
-	return ok && item.Name == "llgo:attribute"
+	return ok && item.Name == "llgo:attr"
 }
 
 func (p *context) initLink(line string, prefix int, export bool, f func(inPkgName string, isExport bool) (fullName string, isVar, ok bool)) {

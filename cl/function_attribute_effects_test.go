@@ -21,7 +21,7 @@ func TestSourceContractRejectsUnmodelledImplicitRuntimeProtocols(t *testing.T) {
 		{
 			name: "closure allocation",
 			source: `package effects
-//llgo:attribute memory(none)
+//llgo:attr memory(none)
 //go:noinline
 func F(x int) func() int { return func() int { return x } }
 `,
@@ -31,7 +31,7 @@ func F(x int) func() int { return func() int { return x } }
 			name: "defer protocol",
 			source: `package effects
 func cleanup() {}
-//llgo:attribute memory(none)
+//llgo:attr memory(none)
 //go:noinline
 func F() { defer cleanup() }
 `,
@@ -43,7 +43,7 @@ func F() { defer cleanup() }
 //llgointernal:gls
 var pointer *int
 //export F
-//llgo:attribute memory(read)
+//llgo:attr memory(read)
 //go:noinline
 func F() *int { return nil }
 `,
@@ -54,7 +54,7 @@ func F() *int { return nil }
 			source: `package effects
 //llgointernal:gls
 var pointer *int
-// llgo:attribute memory(read)
+// llgo:attr memory(read)
 //export F
 //go:noinline
 func F() *int { return nil }
@@ -66,7 +66,7 @@ func F() *int { return nil }
 			source: `package effects
 //llgointernal:gls
 var pointer *int
-//llgo:attribute memory(read)
+//llgo:attr memory(read)
 //go:noinline
 func F() *int { return pointer }
 `,
@@ -78,7 +78,7 @@ func F() *int { return pointer }
 func initialValue() int { return 42 }
 //llgointernal:tls
 var counter = initialValue()
-//llgo:attribute memory(read)
+//llgo:attr memory(read)
 //go:noinline
 func F() int { return counter }
 `,
@@ -88,7 +88,7 @@ func F() int { return counter }
 			name: "shadow stack",
 			source: `package effects
 import "runtime"
-//llgo:attribute memory(none)
+//llgo:attr memory(none)
 //go:noinline
 func F() uintptr { pc, _, _, _ := runtime.Caller(0); return pc }
 `,
@@ -98,7 +98,7 @@ func F() uintptr { pc, _, _, _ := runtime.Caller(0); return pc }
 		{
 			name: "tracing",
 			source: `package effects
-//llgo:attribute memory(none)
+//llgo:attr memory(none)
 //go:noinline
 func F() int { return 42 }
 `,

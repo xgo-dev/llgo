@@ -8,7 +8,7 @@ import (
 )
 
 func TestDirectRangeIntersectionOptimization(t *testing.T) {
-	attrs, sig, err := parseTest(t, "//llgo:attribute result(0) range(-4,20) nonnegative\nfunc F() int32 { return 0 }")
+	attrs, sig, err := parseTest(t, "//llgo:attr result(0) range(-4,20) nonnegative\nfunc F() int32 { return 0 }")
 	if err != nil {
 		t.Fatal(err)
 	}
