@@ -33,10 +33,12 @@ func TestESPClangHostDownload(t *testing.T) {
 		wantPlatform string
 	}{
 		{"darwin", "arm64", "aarch64-apple-darwin"},
+		{"darwin", "amd64", "x86_64-apple-darwin"},
+		{"linux", "arm64", "aarch64-linux-gnu"},
 		{"linux", "amd64", "x86_64-linux-gnu"},
 		{"windows", "386", "x86_64-w64-mingw32"},
 		{"windows", "amd64", "x86_64-w64-mingw32"},
-		{"windows", "arm64", "x86_64-w64-mingw32"},
+		{"windows", "arm64", "aarch64-w64-mingw32"},
 	}
 	for _, test := range tests {
 		platform := getESPClangPlatform(test.goos, test.goarch)
@@ -47,6 +49,36 @@ func TestESPClangHostDownload(t *testing.T) {
 		if espClangSHA256[platform] == "" {
 			t.Errorf("ESP Clang %s %s has no checksum", espClangVersion, platform)
 		}
+	}
+}
+
+func TestESPClangCacheSeparatesHosts(t *testing.T) {
+	legacy := filepath.Join(cacheDir(), "esp-clang-"+espClangVersion)
+	x64 := espClangCacheDir(getESPClangPlatform("windows", "amd64"))
+	arm64 := espClangCacheDir(getESPClangPlatform("windows", "arm64"))
+	if x64 == arm64 || x64 == legacy || arm64 == legacy {
+		t.Fatalf("ESP payload caches overlap: x64=%q arm64=%q legacy=%q", x64, arm64, legacy)
+	}
+}
+
+func TestESPClangDoesNotReuseLegacyCache(t *testing.T) {
+	writeWasmTargetFixture(t, "", "")
+	originalCacheRoot, originalBaseURL := cacheRoot, espClangBaseUrl
+	root := t.TempDir()
+	cacheRoot = func() string { return root }
+	server := httptest.NewServer(http.NotFoundHandler())
+	espClangBaseUrl = server.URL
+	t.Cleanup(func() {
+		cacheRoot, espClangBaseUrl = originalCacheRoot, originalBaseURL
+		server.Close()
+	})
+	legacy := filepath.Join(cacheDir(), "esp-clang-"+espClangVersion)
+	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := getESPClangRoot(true)
+	if got != "" || err == nil || !strings.Contains(err.Error(), "404 Not Found") {
+		t.Fatalf("getESPClangRoot() = %q, %v; want a fresh download instead of legacy cache %q", got, err, legacy)
 	}
 }
 

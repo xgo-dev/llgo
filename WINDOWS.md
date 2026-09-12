@@ -10,7 +10,7 @@ The integrated package contains LLGo, its own DLL dependencies, `runtime`, `targ
 | Compile native Windows programs | Go, native Clang/Clang++ and a linker, matching SDK/CRT and native libraries, and pkg-config. |
 | Compile ESP firmware | Go and the bundled ESP toolchain. The first build may download and compile target libraries such as newlib and compiler-rt. |
 
-Do not use `crosscompile/clang` as your native Windows Clang. The ESP payload is x64, including in the ARM64 release, where it uses Windows x64 emulation. Use one native ABI profile at a time; mixing MSVC and MinGW headers, libraries, DLLs, or pkg-config metadata can break builds.
+Do not use `crosscompile/clang` as your native Windows Clang. The ESP tools and their DLLs match the release host architecture; ARM64 packages run them natively. Use one native ABI profile at a time; mixing MSVC and MinGW headers, libraries, DLLs, or pkg-config metadata can break builds.
 
 ## Versions and shared dependencies
 

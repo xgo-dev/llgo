@@ -184,7 +184,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ runner.tool_cache }}/llgo-release-downloads/esp
-          key: llgo-release-esp-archive-v1-3d32533daec8be08e608496eff817798eb7d3c25f07a02de1f1c94c0a0bbb8b3
+          key: llgo-release-esp-archive-v2-${{ matrix.goarch }}-${{ hashFiles('.github/windows/build-release.ps1') }}
           enableCrossOsArchive: true
       - name: Download release metadata
         uses: actions/download-artifact@v8
