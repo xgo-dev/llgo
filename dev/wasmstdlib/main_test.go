@@ -38,7 +38,10 @@ func TestMain(m *testing.M) {
 			if mode == "bad-list" {
 				fmt.Println("invalid JSON")
 			} else {
-				for _, tc := range acceptance {
+				for index, tc := range acceptance {
+					if mode == "missing-package" && index == len(acceptance)-1 {
+						continue
+					}
 					fmt.Printf("{\"ImportPath\":%q,\"XTestGoFiles\":[\"suite_test.go\"]}\n", packagePrefix+tc.Package)
 				}
 			}
@@ -124,6 +127,22 @@ func TestDriverCLI(t *testing.T) {
 	}
 }
 
+func TestDriverMainEntry(t *testing.T) {
+	oldArgs, oldExit, oldStderr := os.Args, exitProcess, processStderr
+	defer func() {
+		os.Args, exitProcess, processStderr = oldArgs, oldExit, oldStderr
+	}()
+	var stderr strings.Builder
+	exitCode := -1
+	os.Args = []string{"wasmstdlib", "-h"}
+	processStderr = &stderr
+	exitProcess = func(code int) { exitCode = code }
+	main()
+	if exitCode != 0 || !strings.Contains(stderr.String(), "Usage of wasmstdlib") {
+		t.Fatalf("main exit = %d, stderr = %q", exitCode, stderr.String())
+	}
+}
+
 func TestDriverReportAndSummary(t *testing.T) {
 	root, program := driverFixture(t)
 	for _, name := range []string{"J32-GoJS", "J32-Emscripten", "J64-Emscripten", "W32-WASI", "GoJS-reference", "GoWASI-reference"} {
@@ -152,7 +171,7 @@ func TestDriverReportAndSummary(t *testing.T) {
 			}
 		})
 	}
-	for _, mode := range []string{"bad-env", "env-failure", "list-failure", "bad-list", "test-failure"} {
+	for _, mode := range []string{"bad-env", "env-failure", "list-failure", "bad-list", "missing-package", "test-failure"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Setenv("LLGO_WASMSTDLIB_TEST_MODE", mode)
 			path := filepath.Join(root, mode+".json")
@@ -197,6 +216,47 @@ func TestDriverReportAndSummary(t *testing.T) {
 	if err := run("J32-Emscripten", "", program, program); err == nil {
 		t.Fatal("accepted missing report path")
 	}
+}
+
+func TestDriverPreparationFailures(t *testing.T) {
+	t.Run("working directory", func(t *testing.T) {
+		want := errors.New("working directory unavailable")
+		old := getwdForRun
+		getwdForRun = func() (string, error) { return "", want }
+		defer func() { getwdForRun = old }()
+		err := run("J32-Emscripten", filepath.Join(t.TempDir(), "getwd.json"), "unused", "unused")
+		if !errors.Is(err, want) {
+			t.Fatalf("working-directory error = %v", err)
+		}
+	})
+
+	t.Run("source inventory", func(t *testing.T) {
+		root := t.TempDir()
+		t.Chdir(root)
+		err := run("J32-Emscripten", filepath.Join(root, "inventory.json"), "unused", "unused")
+		if err == nil || !strings.Contains(err.Error(), "discover source inventory") {
+			t.Fatalf("source-inventory error = %v", err)
+		}
+	})
+
+	t.Run("source inventory report", func(t *testing.T) {
+		root, _ := driverFixture(t)
+		want := errors.New("source inventory report unavailable")
+		old := writeRunFile
+		calls := 0
+		writeRunFile = func(path string, data []byte, mode os.FileMode) error {
+			calls++
+			if calls == 1 {
+				return os.WriteFile(path, data, mode)
+			}
+			return want
+		}
+		defer func() { writeRunFile = old }()
+		err := run("J32-Emscripten", filepath.Join(root, "inventory-write.json"), "unused", "unused")
+		if !errors.Is(err, want) || calls < 2 {
+			t.Fatalf("source-inventory report error = %v, writes = %d", err, calls)
+		}
+	})
 }
 
 func TestDriverPreflightFailureReplacesPreviousSuccess(t *testing.T) {

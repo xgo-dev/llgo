@@ -1,6 +1,7 @@
 package cl
 
 import (
+	"fmt"
 	"go/ast"
 	"go/importer"
 	"go/parser"
@@ -297,6 +298,18 @@ func values() (int, *int, int, *int) {
 			t.Fatalf("values does not access %s:\n%s", accessor, values)
 		}
 	}
+}
+
+func TestRequireLocalityField(t *testing.T) {
+	if got := requireLocalityField(map[string]int{"value": 3}, "value", "logical GLS"); got != 3 {
+		t.Fatalf("field = %d, want 3", got)
+	}
+	defer func() {
+		if got := recover(); got == nil || !strings.Contains(fmt.Sprint(got), "missing logical GLS field for absent") {
+			t.Fatalf("missing-field panic = %v", got)
+		}
+	}()
+	requireLocalityField(nil, "absent", "logical GLS")
 }
 
 func TestLocalityDebugInfoOnlyUsesFixedGlobals(t *testing.T) {

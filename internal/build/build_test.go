@@ -828,6 +828,7 @@ func TestUsesSingleWorkerWasmScheduler(t *testing.T) {
 		{"Emscripten ignores WASI setting", "js", "wasm", true, true},
 		{"single-worker WASI", "wasip1", "wasm", false, true},
 		{"WASI threads", "wasip1", "wasm", true, false},
+		{"unsupported wasm host", "plan9", "wasm", false, false},
 		{"native", "linux", "amd64", false, false},
 	}
 	for _, tt := range tests {

@@ -429,10 +429,7 @@ func (p *context) localVariableAddr(b llssa.Builder, v *ssa.Global, info llssa.V
 	}
 	p.ensureLocalInitializer(b, variable.owner, info.Locality)
 	if p.prog.LogicalGoroutineLocalityEnabled() && info.Locality == locality.Goroutine {
-		field, ok := variable.owner.glsFields[variable.planned.Name]
-		if !ok {
-			panic(fmt.Sprintf("missing logical GLS field for %s", name))
-		}
+		field := requireLocalityField(variable.owner.glsFields, variable.planned.Name, "logical GLS")
 		base := p.localPackageBase(b, variable.owner, true)
 		return b.FieldAddr(base, field)
 	}
@@ -446,13 +443,17 @@ func (p *context) localVariableAddr(b llssa.Builder, v *ssa.Global, info llssa.V
 	base := p.localPackageBase(b, variable.owner, false)
 	field := variable.planned.Field
 	if p.prog.LogicalGoroutineLocalityEnabled() {
-		var ok bool
-		field, ok = variable.owner.blockFields[variable.planned.Name]
-		if !ok {
-			panic(fmt.Sprintf("missing thread-local package field for %s", name))
-		}
+		field = requireLocalityField(variable.owner.blockFields, variable.planned.Name, "thread-local package")
 	}
 	return b.FieldAddr(base, field)
+}
+
+func requireLocalityField(fields map[string]int, name, storage string) int {
+	field, ok := fields[name]
+	if !ok {
+		panic(fmt.Sprintf("missing %s field for %s", storage, name))
+	}
+	return field
 }
 
 func (p *context) localVariableAddress(b llssa.Builder, variable *ssa.Global, name string) (llssa.Expr, bool) {

@@ -106,10 +106,9 @@ func discover(root string) ([]string, error) {
 			return nil
 		}
 		if strings.HasSuffix(d.Name(), "_test.go") {
-			rel, err := filepath.Rel(base, filepath.Dir(path))
-			if err != nil {
-				return err
-			}
+			// WalkDir only returns descendants of base, so Rel cannot cross a
+			// volume or otherwise fail here.
+			rel, _ := filepath.Rel(base, filepath.Dir(path))
 			seen[filepath.ToSlash(rel)] = true
 		}
 		return nil
@@ -306,9 +305,15 @@ func runSlice(r *report, cases []testCase, run func(testCase) ([]byte, error), s
 	return save(r)
 }
 
-func main() {
-	os.Exit(runMain(os.Args[1:], os.Stderr))
+var (
+	exitProcess             = os.Exit
+	processStderr io.Writer = os.Stderr
+	getwdForRun             = os.Getwd
+	writeRunFile            = os.WriteFile
+)
 
+func main() {
+	exitProcess(runMain(os.Args[1:], processStderr))
 }
 
 func runMain(args []string, stderr io.Writer) int {
@@ -337,11 +342,10 @@ func run(name, reportPath, goCmd, llgo string) (retErr error) {
 	}
 	r := &report{Schema: 1, Profile: name, Result: "preparing", Packages: []entry{}}
 	save := func(r *report) error {
-		data, err := json.MarshalIndent(r, "", "  ")
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(reportPath, append(data, '\n'), 0o644)
+		// report contains only JSON scalar values and slices, so this fixed
+		// schema cannot produce an unsupported-value or cycle error.
+		data, _ := json.MarshalIndent(r, "", "  ")
+		return writeRunFile(reportPath, append(data, '\n'), 0o644)
 	}
 	// Every invocation replaces an earlier result before preparing commands.
 	// Preserve errors from preparation and summary writing as well as tests.
@@ -364,7 +368,7 @@ func run(name, reportPath, goCmd, llgo string) (retErr error) {
 	if p.Reference {
 		r.Implementation, r.Contract = "go-reference", "official Go compiler and host helper; not LLGo output"
 	}
-	root, err := os.Getwd()
+	root, err := getwdForRun()
 	if err != nil {
 		return err
 	}
