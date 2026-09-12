@@ -33,7 +33,6 @@ func TestLowerLargeAggregates(t *testing.T) {
 	const testIR = `
 %Large = type [65537 x i8]
 %Small = type [65536 x i8]
-
 define %Large @callee(ptr nonnull %src) #1 {
 entry:
   %value = load %Large, ptr %src, align 1
@@ -100,7 +99,7 @@ attributes #1 = { noinline }
 	td := llvm.NewTargetData("e-m:o-i64:64-i128:128-n32:64-S128")
 	defer td.Dispose()
 
-	LowerLargeAggregates(td, mod)
+	LowerLargeAggregates(td, mod, AggregateLoweringConfig{})
 
 	callee := mod.NamedFunction("callee").String()
 	if !strings.Contains(callee, "define void @callee(ptr sret([65537 x i8])") {
@@ -194,7 +193,7 @@ entry:
 	td := llvm.NewTargetData("e-m:o-i64:64-i128:128-n32:64-S128")
 	defer td.Dispose()
 
-	LowerLargeAggregates(td, mod)
+	LowerLargeAggregates(td, mod, AggregateLoweringConfig{})
 
 	nest := llvm.AttributeKindID("nest")
 	callee := mod.NamedFunction("callee")
@@ -242,6 +241,34 @@ func TestLowerLargeAggregateStoredLoads(t *testing.T) {
 	const testIR = `
 %Large = type [65537 x i8]
 %Small = type [65536 x i8]
+%WithPointer = type { ptr, %Large }
+declare void @mutate(ptr)
+
+define void @copy_volatile(ptr %src, ptr %dst) {
+entry:
+  store volatile %WithPointer zeroinitializer, ptr %dst, align 1
+  %value = load volatile %Large, ptr %src, align 1
+  store %Large %value, ptr %dst, align 1
+  ret void
+}
+
+define ptr @project_volatile(ptr %src, ptr %dst) {
+entry:
+  %value = load volatile %WithPointer, ptr %src, align 1
+  call void @mutate(ptr %src)
+  store volatile %WithPointer %value, ptr %dst, align 1
+  %pointer = extractvalue %WithPointer %value, 0
+  ret ptr %pointer
+}
+
+define void @unsupported_value(ptr %src, ptr %dst) {
+entry:
+  %value = load %Large, ptr %src, align 1
+  %changed = insertvalue %Large %value, i8 1, 0
+  store %Large %changed, ptr %dst, align 1
+  ret void
+}
+
 
 define void @copy_twice(ptr %src, ptr %dst1, ptr %dst2) {
 entry:
@@ -294,7 +321,7 @@ entry:
 	td := llvm.NewTargetData("e-m:o-i64:64-i128:128-n32:64-S128")
 	defer td.Dispose()
 
-	LowerLargeAggregates(td, mod)
+	LowerLargeAggregates(td, mod, AggregateLoweringConfig{})
 
 	copyTwice := mod.NamedFunction("copy_twice").String()
 	if got := strings.Count(copyTwice, "call void @llvm.memcpy"); got != 3 {
@@ -317,8 +344,26 @@ entry:
 		t.Fatalf("copy_once retained a direct large aggregate copy:\n%s", copyOnce)
 	}
 	mixed := mod.NamedFunction("mixed_use").String()
-	if !strings.Contains(mixed, "load [65537 x i8]") || !strings.Contains(mixed, "store [65537 x i8]") {
-		t.Fatalf("mixed non-store use was unexpectedly rewritten:\n%s", mixed)
+	if strings.Contains(mixed, "load [65537 x i8]") || strings.Contains(mixed, "store [65537 x i8]") ||
+		strings.Contains(mixed, "extractvalue") || !strings.Contains(mixed, "load i8") {
+		t.Fatalf("mixed projection/store did not use the same snapshot:\n%s", mixed)
+	}
+	volatile := mod.NamedFunction("copy_volatile").String()
+	if strings.Contains(volatile, "load volatile") || strings.Contains(volatile, "store volatile") ||
+		strings.Count(volatile, "i1 true)") != 2 || !strings.Contains(volatile, "@llvm.memmove") || !strings.Contains(volatile, "@llvm.memset") {
+		t.Fatalf("volatile adjacent copy lost its memory semantics:\n%s", volatile)
+	}
+	projected := mod.NamedFunction("project_volatile").String()
+	if strings.Contains(projected, "load volatile") || strings.Contains(projected, "extractvalue") ||
+		strings.Count(projected, "i1 true)") != 2 || !strings.Contains(projected, "load ptr") {
+		t.Fatalf("volatile projected snapshot was not lowered:\n%s", projected)
+	}
+	if strings.Index(projected, "@llvm.memcpy") >= strings.Index(projected, "@mutate") {
+		t.Fatalf("snapshot moved after source mutation:\n%s", projected)
+	}
+	unsupported := mod.NamedFunction("unsupported_value").String()
+	if !strings.Contains(unsupported, "insertvalue") || !strings.Contains(unsupported, "load [65537 x i8]") {
+		t.Fatalf("unsupported aggregate user was partially rewritten:\n%s", unsupported)
 	}
 	small := mod.NamedFunction("small_copy").String()
 	if !strings.Contains(small, "load [65536 x i8]") || !strings.Contains(small, "store [65536 x i8]") {

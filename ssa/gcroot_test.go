@@ -137,6 +137,30 @@ func TestAggregateGCRootPointers(t *testing.T) {
 	}
 }
 
+func TestGCRootPointersSkipPointerFreeAggregates(t *testing.T) {
+	bytes := types.NewArray(types.Typ[types.Byte], 128<<10)
+	holder := types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, nil, "pointer", types.NewPointer(types.Typ[types.Int]), false),
+		types.NewField(token.NoPos, nil, "data", bytes, false),
+	}, nil)
+	for i, typ := range []types.Type{bytes, holder} {
+		prog := ssatest.NewProgram(t, &ssa.Target{GOOS: "js", GOARCH: "wasm"})
+		pkg := prog.NewPackage("main", "main")
+		param := types.NewParam(token.NoPos, nil, "value", typ)
+		sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(param), nil, false)
+		fn := pkg.NewFunc("main.roots", sig, ssa.InGo)
+		b := fn.MakeBody(1)
+		if roots := b.GCRootPointers(b.Param(0)); len(roots) != i {
+			t.Fatalf("root count=%d, want %d", len(roots), i)
+		}
+		b.Return()
+		b.EndBuild()
+		if ir := pkg.String(); strings.Count(ir, "extractvalue") != i {
+			t.Fatalf("pointer-free fields produced root-extraction instructions:\n%s", ir)
+		}
+	}
+}
+
 func assertPanics(t *testing.T, fn func()) {
 	t.Helper()
 	defer func() {

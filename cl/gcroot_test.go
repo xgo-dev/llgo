@@ -3,12 +3,40 @@
 package cl_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/cl/cltest"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
+
+func TestCompileLargeSnapshotGCRoots(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		size int
+		root bool
+	}{
+		{"threshold", 65536, false},
+		{"large", 65537, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := fmt.Sprintf(`package main
+var sink [%d]byte
+func keep(live *int, source *[%d]byte) *int {
+    sink = *source
+    return live
+}
+`, tc.size, tc.size)
+			ir := cltest.CompileIREx(t, src, "snapshot.go", false, func(prog llssa.Program) {
+				prog.EnableGCRoots(true)
+			})
+			if got := strings.Contains(ir, "@llvm_gc_root_chain"); got != tc.root {
+				t.Fatalf("snapshot root frame = %v, want %v:\n%s", got, tc.root, ir)
+			}
+		})
+	}
+}
 
 func TestCompileDirectGCRoots(t *testing.T) {
 	const src = `package main

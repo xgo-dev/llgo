@@ -223,11 +223,16 @@ func (b Builder) appendGCRootPointers(roots *[]Expr, value Expr) {
 			count = raw.Len()
 		}
 		for i := 0; i < count; i++ {
-			b.appendGCRootPointers(roots, b.Field(value, i))
+			if b.Prog.GCRootCount(b.Prog.Field(value.Type, i)) != 0 {
+				b.appendGCRootPointers(roots, b.Field(value, i))
+			}
 		}
 	case vkArray:
 		raw := value.Type.raw.Type.Underlying().(*types.Array)
 		elem := b.Prog.Index(value.Type)
+		if b.Prog.GCRootCount(elem) == 0 {
+			return
+		}
 		for i := 0; i < int(raw.Len()); i++ {
 			part := llvm.CreateExtractValue(b.impl, value.impl, i)
 			part = b.fromStorageValue(elem, part)
