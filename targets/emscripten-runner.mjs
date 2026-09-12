@@ -4,22 +4,25 @@ import { pathToFileURL } from "node:url";
 import "./emscripten-node-polyfills.mjs";
 import { runEmscriptenModule } from "./emscripten-exit-status.mjs";
 
-if (process.argv.length < 3) {
-	throw new Error("usage: node emscripten-runner.mjs <module.mjs> [arguments...]");
+const nodeProcess = globalThis.process;
+const browserOnly = nodeProcess.argv[2] === "--browser-only";
+const moduleArg = browserOnly ? 3 : 2;
+if (nodeProcess.argv.length <= moduleArg) {
+	throw new Error("usage: node emscripten-runner.mjs [--browser-only] <module.mjs> [arguments...]");
 }
 
-const moduleURL = pathToFileURL(process.argv[2]);
+const moduleURL = pathToFileURL(nodeProcess.argv[moduleArg]);
 const loaded = await import(moduleURL);
 if (typeof loaded.default !== "function") {
-	throw new Error(`${process.argv[2]} does not export an Emscripten module factory`);
+	throw new Error(`${nodeProcess.argv[moduleArg]} does not export an Emscripten module factory`);
 }
 const wasmURL = new URL(moduleURL);
 wasmURL.pathname = wasmURL.pathname.replace(/\.[^/.]+$/, ".wasm");
 const moduleOptions = {
-	arguments: process.argv.slice(3),
+	arguments: nodeProcess.argv.slice(moduleArg + 1),
 	preRun: [module => {
 		if (module.ENV != null) {
-			Object.assign(module.ENV, process.env);
+			Object.assign(module.ENV, nodeProcess.env);
 		}
 	}],
 };
@@ -43,6 +46,13 @@ try {
 	if (error?.code !== "ENOENT") {
 		throw error;
 	}
+}
+if (browserOnly) {
+	// Raw GOOS=js GOARCH=wasm output intentionally excludes Emscripten's Node
+	// host. Model a browser before invoking even unoptimized glue, whose
+	// environment assertions run before instantiateWasm can supply the binary.
+	globalThis.window ??= globalThis;
+	globalThis.process = undefined;
 }
 await Promise.race([
 	runEmscriptenModule(loaded.default, moduleOptions),

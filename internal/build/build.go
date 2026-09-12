@@ -1108,7 +1108,7 @@ func goCompatibleWasmRunner(conf *Config) string {
 	}
 	switch conf.Goos {
 	case "js":
-		return fmt.Sprintf("node %q %q", filepath.Join(env.LLGoROOT(), "targets", "emscripten-runner.mjs"), "{}")
+		return fmt.Sprintf("node %q --browser-only %q", filepath.Join(env.LLGoROOT(), "targets", "emscripten-runner.mjs"), "{}")
 	case "wasip1":
 		runtimeCommand := WasmRuntime()
 		switch runtimeCommand {

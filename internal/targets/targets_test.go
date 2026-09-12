@@ -381,6 +381,29 @@ func TestEmscriptenRunnersForwardProgramArguments(t *testing.T) {
 	}
 }
 
+func TestEmscriptenRunnerModelsBrowserForRawGoJS(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatalf("node is required to test the Emscripten runner: %v", err)
+	}
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := filepath.Join(t.TempDir(), "module.mjs")
+	const source = `export default async function() {
+	if (globalThis.window !== globalThis) throw new Error('browser window is missing');
+	if (globalThis.process !== undefined) throw new Error('Node process leaked into browser-only output');
+}`
+	if err := os.WriteFile(module, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(node, filepath.Join(root, "targets", "emscripten-runner.mjs"), "--browser-only", module)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("browser-only runner failed: %v\n%s", err, output)
+	}
+}
+
 func TestEmscriptenRunnersConsumeExitStatus(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
