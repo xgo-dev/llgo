@@ -29,6 +29,47 @@ func TestLargeAggregateThreshold(t *testing.T) {
 	}
 }
 
+func TestLowerWasmAggregateCopies(t *testing.T) {
+	const testIR = `
+define void @copy(ptr %src, ptr %dst) {
+entry:
+  %value = load [4096 x i8], ptr %src
+  store [4096 x i8] %value, ptr %dst
+  ret void
+}
+`
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	path := filepath.Join(t.TempDir(), "wasm_copy.ll")
+	if err := os.WriteFile(path, []byte(testIR), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	buf, err := llvm.NewMemoryBufferFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod, err := ctx.ParseIR(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mod.Dispose()
+	td := llvm.NewTargetData("e-p:32:32-i64:64-n32:64-S128")
+	defer td.Dispose()
+	config := AggregateLoweringConfig{GoWordSize: 8, GCRoots: true, Wasm: true}
+	if got := LowerWasmAggregateCopies(td, mod, config); got != 1 {
+		t.Fatalf("lowered %d copies, want 1", got)
+	}
+	if got := LowerWasmAggregateCopies(td, mod, config); got != 0 {
+		t.Fatalf("second pass lowered %d copies, want 0", got)
+	}
+	if body := mod.NamedFunction("copy").String(); !strings.Contains(body, "@llvm.memmove") {
+		t.Fatalf("copy was not lowered to memmove:\n%s", body)
+	}
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("invalid lowered module: %v\n%s", err, mod.String())
+	}
+}
+
 func TestLowerLargeAggregates(t *testing.T) {
 	const testIR = `
 %Large = type [65537 x i8]
