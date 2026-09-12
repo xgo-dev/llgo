@@ -1,0 +1,52 @@
+name: WinGet release validation
+on:
+  push:
+    branches: [codex/winget-v1.0.3-20260912]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: winget-release-validation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [MSVC, MinGW]
+        goarch: [amd64, arm64]
+        include:
+          - goarch: amd64
+            runner: windows-2025
+          - goarch: arm64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Bootstrap stable WinGet
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
+            Install-PackageProvider -Name NuGet -Force | Out-Null
+            Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery -Scope CurrentUser | Out-Null
+            Repair-WinGetPackageManager -AllUsers
+          }
+          $env:PATH += ';' + (Join-Path $env:LOCALAPPDATA 'Microsoft/WindowsApps')
+          (Join-Path $env:LOCALAPPDATA 'Microsoft/WindowsApps') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          winget --version
+          if ($LASTEXITCODE -ne 0) { throw 'WinGet bootstrap failed' }
+      - name: Validate manifest and installed release lifecycle
+        shell: pwsh
+        run: ./.github/windows/test-winget-release.ps1 -GoArch ${{ matrix.goarch }} -Profile ${{ matrix.profile }}
+      - name: Preserve WinGet diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: winget-logs-${{ matrix.goarch }}-${{ matrix.profile }}
+          path: |
+            ~/AppData/Local/Packages/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe/LocalState/DiagOutputDir/
+            ~/AppData/Local/Microsoft/WinGet/DiagOutputDir/
+          if-no-files-found: ignore
