@@ -1,0 +1,141 @@
+name: Validate Qiniu shard-0 runtime fix (temporary)
+
+# Draft #2573 is only the diagnostic entry point. Compile the two pinned
+# contribution merge trees without adding diagnostic files to either PR.
+# A comment review leaves their unrelated matrices suppressed by [skip ci].
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+
+jobs:
+  shard0:
+    if: >-
+      github.repository == 'xgo-dev/llgo' &&
+      github.event.pull_request.number == 2573 &&
+      github.event.review.user.login == 'cpunion' &&
+      github.event.review.state == 'commented' &&
+      startsWith(github.event.review.body, 'diagnose-qiniu-shard0')
+    runs-on: [qiniu, ubuntu-24.04-large]
+    name: shard0 (${{ matrix.trial }})
+    # Match the original job budget. Its previously passing execution took
+    # 22m02s before the added weak-pointer regression, so a 25m whole-job limit
+    # could turn ordinary setup variance into an unrelated timeout.
+    timeout-minutes: 60
+    env:
+      DIAGNOSTIC_TRIAL: ${{ matrix.trial }}
+      DIAGNOSTIC_REVISION: ${{ matrix.revision }}
+      DIAGNOSTIC_BASE_REVISION: ${{ matrix.base_revision }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Revalidate only #2575 after widening the old-runtime signature from
+          # map lookup to either allocating map operation. The dependent #2567
+          # merge passed the complete job in run 34702086188.
+          - trial: runtime-fix
+            revision: abe30d37b322005249f42f7052198480d232faf2
+            base_revision: b07cd12ad1ace793047dcf1c12ece8c01b139565
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The review belongs to #2573, not the contribution being measured.
+          # Explicitly pin the target's real CI merge tree, never github.sha.
+          ref: ${{ matrix.revision }}
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: diagnostic-harness
+      - name: Keep diagnostic files outside the compiler checkout
+        run: |
+          harness_dir=$(mktemp -d "$RUNNER_TEMP/shard0-harness.XXXXXX")
+          mv diagnostic-harness "$harness_dir/source"
+          echo "DIAGNOSTIC_HARNESS=$harness_dir/source" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/shard0-diagnostics"
+          echo "DIAGNOSTIC_OUTPUT=$RUNNER_TEMP/shard0-diagnostics" >> "$GITHUB_ENV"
+          git status --porcelain > "$RUNNER_TEMP/shard0-diagnostics/status-before-setup.txt"
+      - uses: ./.github/actions/setup-deps
+        with:
+          llvm-version: '22'
+      - uses: ./.github/actions/setup-embed-deps
+      - uses: ./.github/actions/setup-demo-deps
+        with:
+          install-lldb-python: 'true'
+      - uses: ./.github/actions/setup-go
+      - uses: ./.github/actions/setup-llgo-cache
+        with:
+          build-cache-mode: 'off'
+          crosscompile-cache-mode: restore
+      - name: Resolve the target PR package cache
+        id: cache-profile
+        run: |
+          source dev/llgo_cache_dir.sh
+          echo "root=$(llgo_cache_dir)" >> "$GITHUB_OUTPUT"
+          clang_version="$(clang --version | sed -nE '1s/.*version ([0-9]+([.][0-9]+)+).*/\1/p')"
+          prefix="llgo-build-v2-Linux-X64-native-native-$(go env GOVERSION)-clang-${clang_version}"
+          echo "key=$prefix-$DIAGNOSTIC_REVISION" >> "$GITHUB_OUTPUT"
+          echo "base-key=$prefix-$DIAGNOSTIC_BASE_REVISION" >> "$GITHUB_OUTPUT"
+      - name: Restore the target tree or main package cache
+        id: package-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.cache-profile.outputs.root }}/build
+          key: ${{ steps.cache-profile.outputs.key }}
+          restore-keys: ${{ steps.cache-profile.outputs.base-key }}
+      - name: Build the target CI compiler revision
+        run: |
+          mkdir -p "$RUNNER_TEMP/shard0-diagnostics"
+          git status --porcelain > "$RUNNER_TEMP/shard0-diagnostics/status-before-build.txt"
+          git diff --stat > "$RUNNER_TEMP/shard0-diagnostics/diff-before-build.txt"
+          dev/build_ci_tools.sh "$RUNNER_TEMP/llgo-bin"
+          go version -m "$RUNNER_TEMP/llgo-bin/llgo" > "$RUNNER_TEMP/shard0-diagnostics/compiler-build-info.txt"
+          echo "$RUNNER_TEMP/llgo-bin" >> "$GITHUB_PATH"
+          echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          sudo apt-get install -y gdb
+      - name: Replay shard 0 with original arguments and external diagnostics
+        timeout-minutes: 26
+        env:
+          DIAGNOSTIC_CACHE_HIT: ${{ steps.package-cache.outputs.cache-hit }}
+          DIAGNOSTIC_CACHE_KEY: ${{ steps.cache-profile.outputs.key }}
+          DIAGNOSTIC_CACHE_MATCHED_KEY: ${{ steps.package-cache.outputs.cache-matched-key }}
+          LLGO_BUILD_CACHE: '1'
+          LLGO_TEST_BENCH_GO126: '1'
+          LLGO_TEST_CHECK_SYMBOLS: '1'
+          LLGO_TEST_STD_BUILDMODES: '1'
+          SHARD_INDEX: '0'
+          SHARD_TOTAL: '2'
+        run: bash "$DIAGNOSTIC_HARNESS/dev/diagnose_qiniu_shard0.sh"
+      - name: Complete the original Linux job integration checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash "$DIAGNOSTIC_HARNESS/dev/diagnose_qiniu_shard0_post.sh" 2>&1 | tee "$DIAGNOSTIC_OUTPUT/post-shard0.log"
+      - name: Verify the old runtime weak-pointer deadlock signature
+        if: matrix.trial == 'runtime-fix'
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash "$DIAGNOSTIC_HARNESS/dev/diagnose_qiniu_weak_baseline.sh" 2>&1 | tee "$DIAGNOSTIC_OUTPUT/weak-baseline.log"
+      - name: Stress the fixed weak-pointer runtime three times
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d test/_stress/runtime/weak
+          cd test/_stress
+          started=$SECONDS
+          timeout --signal=TERM --kill-after=10s 5m \
+            "$RUNNER_TEMP/llgo-bin/llgo" test -v -count=3 -timeout=3m \
+            ./runtime/weak 2>&1 | tee "$DIAGNOSTIC_OUTPUT/weak-fixed.log"
+          printf '\nWeak-pointer regression: all three iterations passed in %ss.\n' "$((SECONDS - started))" >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve diagnostics before the runner's one-hour deadline
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qiniu-shard0-${{ matrix.trial }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/shard0-diagnostics/
+          retention-days: 7
+          if-no-files-found: error

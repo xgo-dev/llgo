@@ -33,6 +33,7 @@ go test -race -count=3 -timeout=20m ./runtime/timer
 /tmp/llgo-runtime-stress test -count=3 -timeout=30m ./runtime/signal
 /tmp/llgo-runtime-stress test -count=3 -timeout=30m ./runtime/cpuprof
 /tmp/llgo-runtime-stress test -count=3 -timeout=30m ./runtime/finalizer
+GC_MARKERS=1 /tmp/llgo-runtime-stress test -count=3 -timeout=10m ./runtime/gc
 ```
 
 The signal suite is LLGo-only and targets Unix hosts. The CPU profile suite is
@@ -66,3 +67,13 @@ regress fatal native-handler replacement windows. The finalizer suite
 repeatedly publishes large finalizer batches while many goroutines call
 `runtime.GC`, and checks that queued callbacks are neither corrupted nor
 delivered twice.
+
+The GC progress suite runs allocations and both MakeFunc goroutine signatures
+against an unthrottled collector, with no sleeps or retries in the workload.
+It reports allocation, callback, and collection counts, fails if progress stalls
+for five seconds, and uses a separate process with a 90-second deadline because
+GC starvation can delay the tested runtime's own timeout machinery. Run the
+same test binary parameters and `LLGO_STRESS_PROFILE` before and after a runtime
+change; reducing pressure is not a fix. `GC_MARKERS=1` makes the single-marker
+case explicit; also validate with it unset for the platform default. This suite
+also runs with `go test` to check the harness independently.
