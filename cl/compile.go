@@ -2236,11 +2236,11 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		}
 		ptr := p.compileValue(b, va)
 		val := p.compileValue(b, v.Val)
-		// Windows access violations report the faulting store PC. Preserve that
-		// exact source site for the SEH fault bridge without adding one carrier
-		// record per potential pointer store to ELF and Mach-O binaries, whose
-		// existing fault paths do not require this Windows-specific metadata.
-		if p.prog.Target().GOOS == "windows" && !isKnownNonNilAddr(va) && !isWrapNilCheckCall(va) {
+		// Hardware faults report the store instruction itself rather than a
+		// runtime nil-check return address. Preserve its exact source site on
+		// every native target; recordPanicSite scopes the metadata to functions
+		// whose recovered panic stack can be observed.
+		if !isKnownNonNilAddr(va) && !isWrapNilCheckCall(va) {
 			p.recordPanicSite(b, v.Pos())
 		}
 		store := b.Store(ptr, val)

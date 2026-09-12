@@ -26,7 +26,10 @@ import (
 	"testing"
 )
 
-const callerPanicChild = "LLGO_TEST_CALLER_PANIC"
+const (
+	callerPanicChild   = "LLGO_TEST_CALLER_PANIC"
+	callerRepanicChild = "LLGO_TEST_CALLER_REPANIC"
+)
 
 var (
 	callerInitFile string
@@ -77,6 +80,91 @@ func TestCallerPanicTraceback(t *testing.T) {
 		if !strings.Contains(string(output), want) {
 			t.Fatalf("panic traceback is missing %q:\n%s", want, output)
 		}
+	}
+}
+
+//go:noinline
+func callerRepanicOrigin() {
+	var pointer *int
+	_ = *pointer // REPANIC_ORIGIN_MARK
+}
+
+//go:noinline
+func callerReplacementPanic() {
+	defer func() {
+		_ = recover()
+		panic("replacement panic") // REPLACEMENT_PANIC_MARK
+	}()
+	panic("original panic")
+}
+
+//go:noinline
+func callerLaterSameValuePanic() {
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		panic("earlier panic")
+	}()
+	panic(recovered) // LATER_SAME_VALUE_PANIC_MARK
+}
+
+func TestCallerRepanicTraceback(t *testing.T) {
+	mode := os.Getenv(callerRepanicChild)
+	switch mode {
+	case "same":
+		callerRepanicOrigin()
+		return
+	case "different":
+		callerReplacementPanic()
+		return
+	case "later":
+		callerLaterSameValuePanic()
+		return
+	}
+
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("current source file is unavailable")
+	}
+	source, err := os.ReadFile(sourceFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(mode string) string {
+		t.Helper()
+		cmd := exec.Command(os.Args[0], "-test.run=^TestCallerRepanicTraceback$")
+		cmd.Env = append(os.Environ(), callerRepanicChild+"="+mode)
+		output, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("%s repanic child unexpectedly succeeded:\n%s", mode, output)
+		}
+		return string(output)
+	}
+
+	same := run("same")
+	for _, want := range []string{
+		"callerRepanicOrigin",
+		"caller_runtime_test.go:" + strconv.Itoa(markerLine(string(source), "REPANIC_ORIGIN_MARK")),
+	} {
+		if !strings.Contains(same, want) {
+			t.Fatalf("same-value repanic traceback is missing %q:\n%s", want, same)
+		}
+	}
+
+	different := run("different")
+	for _, want := range []string{
+		"panic: replacement panic",
+		"caller_runtime_test.go:" + strconv.Itoa(markerLine(string(source), "REPLACEMENT_PANIC_MARK")),
+	} {
+		if !strings.Contains(different, want) {
+			t.Fatalf("replacement panic traceback is missing %q:\n%s", want, different)
+		}
+	}
+	later := run("later")
+	wantLater := "caller_runtime_test.go:" + strconv.Itoa(markerLine(string(source), "LATER_SAME_VALUE_PANIC_MARK"))
+	if !strings.Contains(later, wantLater) {
+		t.Fatalf("same value panicked after its recover activation returned is missing %q:\n%s", wantLater, later)
 	}
 }
 

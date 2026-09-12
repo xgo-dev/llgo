@@ -232,12 +232,20 @@ func Callers(skip int, pcs []uintptr) int {
 // splice back in.
 var PanicPCSnapshot func()
 
-func SavePanicCallerFrames() {
+func SavePanicCallerFrames(v any) {
 	// A fault handler stores the fault-site snapshot right before it
 	// panics; the regular capture here must not overwrite it.
 	p := panicPCStoreForG()
 	if p.armed != 0 {
 		p.armed = 0
+		return
+	}
+	// A recovered panic may be thrown again before its deferred activation
+	// returns. gc keeps the original _panic record in that case, so its
+	// traceback still starts at the original panic site. LLGo has already
+	// longjmp-unwound that stack; retain its snapshot when both the raw
+	// interface identity and the recovering activation still match.
+	if p.takeRecovered(v) {
 		return
 	}
 	if PanicPCSnapshot != nil {
@@ -246,12 +254,15 @@ func SavePanicCallerFrames() {
 }
 
 type panicPCStore struct {
-	n      int32
-	armed  int32
-	fault  int32
-	recFP1 uintptr
-	recFP2 uintptr
-	pcs    [64]uintptr
+	n              int32
+	armed          int32
+	fault          int32
+	recFP1         uintptr
+	recFP2         uintptr
+	recoveredType  *_type
+	recoveredData  unsafe.Pointer
+	recoveredFrame unsafe.Pointer
+	pcs            [64]uintptr
 }
 
 func panicPCStoreForG() *panicPCStore {
@@ -282,6 +293,47 @@ func storePanicPCs(pcs []uintptr, armed int32) {
 	p.fault = armed
 	p.recFP1 = 0
 	p.recFP2 = 0
+	p.clearRecovered()
+}
+
+func (p *panicPCStore) rememberRecovered(v any, frame unsafe.Pointer) {
+	if p.n == 0 || frame == nil {
+		p.clearRecovered()
+		return
+	}
+	e := efaceOf(&v)
+	p.recoveredType = e._type
+	p.recoveredData = e.data
+	p.recoveredFrame = frame
+}
+
+func (p *panicPCStore) takeRecovered(v any) bool {
+	e := efaceOf(&v)
+	same := p.recoveredFrame != nil && p.recoveredFrame == getg().recoverActive &&
+		e._type == p.recoveredType && e.data == p.recoveredData
+	p.clearRecovered()
+	if same {
+		p.recFP1 = 0
+		p.recFP2 = 0
+	}
+	return same
+}
+
+func (p *panicPCStore) clearRecovered() {
+	p.recoveredType = nil
+	p.recoveredData = nil
+	p.recoveredFrame = nil
+}
+
+func rememberRecoveredPanic(v any, frame unsafe.Pointer) {
+	panicPCStoreForG().rememberRecovered(v, frame)
+}
+
+func clearRecoveredPanic(frame unsafe.Pointer) {
+	p := panicPCStoreForG()
+	if frame != nil && frame == p.recoveredFrame {
+		p.clearRecovered()
+	}
 }
 
 // PanicPCsAreFault reports whether the stored snapshot came from a

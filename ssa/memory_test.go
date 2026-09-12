@@ -63,9 +63,10 @@ func TestAssertNilDerefColdCall(t *testing.T) {
 						}
 					}
 					failure := branch.Successor(0)
-					back := failure.LastInstruction()
-					if back.InstructionOpcode() != llvm.Br || back.SuccessorsCount() != 1 || back.Successor(0) != failure {
-						t.Fatalf("nil failure must not return to the successful path:\n%s", fn.impl.String())
+					continuation := branch.Successor(1)
+					next := failure.LastInstruction()
+					if next.InstructionOpcode() != llvm.Br || next.SuccessorsCount() != 1 || next.Successor(0) != continuation {
+						t.Fatalf("nil failure must retain a formal continuation edge:\n%s", fn.impl.String())
 					}
 				}
 			}

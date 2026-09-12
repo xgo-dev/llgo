@@ -37,6 +37,7 @@ type panicNode struct {
 type recoverState struct {
 	frame  unsafe.Pointer
 	panic_ unsafe.Pointer
+	active unsafe.Pointer
 }
 
 // movePanicToDefer advances a panic and the goroutine's unwind cursor to the
@@ -89,6 +90,7 @@ func Recover(token unsafe.Pointer) (ret any) {
 		if RecoverMark != nil {
 			RecoverMark()
 		}
+		rememberRecoveredPanic(ret, gp.recoverActive)
 	}
 	return
 }
@@ -101,8 +103,9 @@ func Recover(token unsafe.Pointer) (ret any) {
 // counterpart to gorecover locating the matching _panic through stack frames.
 func StartRecoverFrame(frame unsafe.Pointer) recoverState {
 	gp := getg()
-	old := recoverState{frame: gp.recoverFrame, panic_: gp.recoverPanic}
+	old := recoverState{frame: gp.recoverFrame, panic_: gp.recoverPanic, active: gp.recoverActive}
 	gp.recoverFrame = frame
+	gp.recoverActive = frame
 	gp.recoverPanic = nil
 	if ptr := gp.panic_; ptr != nil && (*panicNode)(ptr).defer_ == gp.defer_ {
 		gp.recoverPanic = ptr
@@ -113,8 +116,10 @@ func StartRecoverFrame(frame unsafe.Pointer) recoverState {
 // EndRecoverFrame restores direct recover permission after a deferred call.
 func EndRecoverFrame(state recoverState) {
 	gp := getg()
+	clearRecoveredPanic(gp.recoverActive)
 	gp.recoverFrame = state.frame
 	gp.recoverPanic = state.panic_
+	gp.recoverActive = state.active
 }
 
 // BindRecoverFrame replaces a deferred function's code token with the unique
@@ -124,6 +129,9 @@ func BindRecoverFrame(function, activation unsafe.Pointer) {
 	gp := getg()
 	if gp.recoverFrame == function {
 		gp.recoverFrame = activation
+	}
+	if gp.recoverActive == function {
+		gp.recoverActive = activation
 	}
 }
 
@@ -167,6 +175,7 @@ func (gp *g) abortPanics() {
 	}
 	gp.recoverFrame = nil
 	gp.recoverPanic = nil
+	gp.recoverActive = nil
 	if discarded && PanicRecovered != nil {
 		PanicRecovered()
 	}
@@ -190,7 +199,7 @@ func Panic(v any) {
 	if v == nil {
 		v = &PanicNilError{}
 	}
-	SavePanicCallerFrames()
+	SavePanicCallerFrames(v)
 	gp := getg()
 	ptr := (*panicNode)(c.Malloc(unsafe.Sizeof(panicNode{})))
 	ptr.prev = gp.panic_

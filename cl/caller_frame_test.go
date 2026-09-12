@@ -450,7 +450,7 @@ func pinnedPanicSite() {
 	}
 }
 
-func TestCompileRuntimeCallerStorePanicPCLineMetadataIsWindowsOnly(t *testing.T) {
+func TestCompileRuntimeCallerStorePanicPCLineMetadataOnNativeTargets(t *testing.T) {
 	const source = `package foo
 import "runtime"
 
@@ -471,10 +471,10 @@ func storePanicLeaf(p *int) {
 `
 	for _, test := range []struct {
 		goos string
-		want bool
 	}{
-		{goos: "linux", want: false},
-		{goos: "windows", want: true},
+		{goos: "linux"},
+		{goos: "darwin"},
+		{goos: "windows"},
 	} {
 		t.Run(test.goos, func(t *testing.T) {
 			ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", source)
@@ -494,8 +494,8 @@ func storePanicLeaf(p *int) {
 					break
 				}
 			}
-			if got != test.want {
-				t.Fatalf("store panic-site metadata present = %v, want %v for %s:\n%s", got, test.want, test.goos, ir)
+			if !got {
+				t.Fatalf("store panic-site metadata is missing for %s:\n%s", test.goos, ir)
 			}
 		})
 	}
