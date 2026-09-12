@@ -97,6 +97,9 @@ func (c *context) collectEnvInputs(m *manifestBuilder) {
 	m.env.Goamd64 = c.buildConf.GOAMD64
 	m.env.Goarm = c.buildConf.GOARM
 	m.env.Goarm64 = c.buildConf.GOARM64
+	m.env.Goexperiment = c.buildConf.GOEXPERIMENT
+	m.env.SourceGoVersion = c.buildConf.sourceGoVersion
+	m.env.ToolTags = slices.Clone(c.buildConf.toolTags)
 	m.env.LlvmTriple = c.crossCompile.LLVMTarget
 	m.env.LlgoVersion = env.Version()
 	m.env.LlgoCompilerHash = c.buildConf.CompilerHash

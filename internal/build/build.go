@@ -140,6 +140,7 @@ type Config struct {
 	GOAMD64            string // amd64 microarchitecture level: v1 through v4
 	GOARM              string // arm architecture and floating-point implementation
 	GOARM64            string // arm64 ISA version and optional lse/crypto extensions
+	GOEXPERIMENT       string // Go experiments; empty inherits cmd/go configuration, "none" disables defaults
 	Target             string // target name (e.g., "rp2040", "wasi") - takes precedence over Goos/Goarch
 	OptLevel           optlevel.Level
 	LTO                lto.Mode
@@ -233,6 +234,10 @@ type Config struct {
 	Coverage                   *CoverageConfig
 	coverage                   *coverageBuild
 	coverageProfileInitialized bool
+
+	// Resolved once per invocation, independently of the Go version that built LLGo.
+	sourceGoVersion string
+	toolTags        []string
 }
 
 type Rewrites map[string]string
@@ -254,6 +259,7 @@ func (c *Config) clone() *Config {
 	}
 	cloned.RunArgs = slices.Clone(c.RunArgs)
 	cloned.GoBuildFlags = slices.Clone(c.GoBuildFlags)
+	cloned.toolTags = slices.Clone(c.toolTags)
 	cloned.Overlay = cloneOverlay(c.Overlay)
 	if c.coverage != nil && c.coverage.inputOverlaySet {
 		// Coverage-generated files belong to the current loaded graph. Carrying
@@ -709,15 +715,22 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if patterns == nil {
 		patterns = []string{"."}
 	}
-	sourcePatchGOROOT, sourcePatchGoVersion, err := env.GOROOTAndGOVERSIONWithEnv(cfg.Env)
+	sourceGo, err := resolveSourceGoConfig(commandEnv{dir: cfg.Dir, environ: cfg.Env}, conf.GOEXPERIMENT)
 	if err != nil {
 		return nil, err
 	}
+	sourcePatchGOROOT, sourcePatchGoVersion := sourceGo.GOROOT, sourceGo.GOVERSION
+	conf.GOEXPERIMENT = sourceGo.GOEXPERIMENT
+	conf.sourceGoVersion = sourceGo.GOVERSION
+	conf.toolTags = slices.Clone(sourceGo.toolTags)
+	cfg.Env = sourceGo.apply(cfg.Env)
+	commands.environ = sourceGo.apply(commands.environ)
 	var llgoFiles map[string][]string
 	conf.Overlay, llgoFiles, err = buildSourcePatchOverlayForGOROOT(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourcePatchBuildContext{
 		goos:       conf.Goos,
 		goarch:     conf.Goarch,
 		goversion:  sourcePatchGoVersion,
+		toolTags:   sourceGo.toolTags,
 		buildFlags: cfg.BuildFlags,
 	})
 	if err != nil {
