@@ -328,6 +328,7 @@ func TestObservedNotApplicableCasesAreGlobal(t *testing.T) {
 	cfg := loadNotApplicableConfig(t, repo, filepath.Join("test", "goroot", "notapplicable.yaml"))
 	cases := []testCase{
 		{RelPath: "deferfin.go", Directive: "run"},
+		{RelPath: "finprofiled.go", Directive: "run"},
 		{RelPath: "fixedbugs/issue24491b.go", Directive: "run"},
 		{RelPath: "fixedbugs/issue29362.go", Directive: "run"},
 		{RelPath: "fixedbugs/issue45045.go", Directive: "run"},
@@ -368,6 +369,8 @@ func TestObservedFailuresHaveXFailClassifications(t *testing.T) {
 		{version: "go1.26.7", platform: "windows-msvc/386", tc: testCase{RelPath: "fixedbugs/issue23305.go", Directive: "run"}},
 		{version: "go1.26.7", platform: "windows-msvc/386", tc: testCase{RelPath: "fixedbugs/issue42032.go", Directive: "run"}},
 		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "init1.go", Directive: "run"}},
+		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "cmplxdivide.go", Directive: "run"}},
+		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "typeparam/chansimp.go", Directive: "rundir"}},
 		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "inline_literal.go", Directive: "run"}},
 		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue14646.go", Directive: "run"}},
 		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue22662.go", Directive: "run"}},
@@ -424,16 +427,22 @@ func TestWasmObservedResourceExceptions(t *testing.T) {
 		tc      testCase
 		timeout time.Duration
 	}{
-		{testCase{RelPath: "cmplxdivide.go", Directive: "run"}, 10 * time.Minute},
-		{testCase{RelPath: "finprofiled.go", Directive: "run"}, 2 * time.Minute},
 		{testCase{RelPath: "winbatch.go", Directive: "run"}, 2 * time.Minute},
-		{testCase{RelPath: "typeparam/chansimp.go", Directive: "rundir"}, 2 * time.Minute},
 		{testCase{RelPath: "fixedbugs/issue78081.go", Directive: "run"}, 3 * time.Minute},
 	} {
 		tc := tt.tc
 		timeout, _, match := cfg.MatchTimeout("go1.27.0", "js/wasm", tc)
 		if !match || timeout != tt.timeout {
 			t.Errorf("timeout for %s = %s, %v; want %s, true", tc.RelPath, timeout, match, tt.timeout)
+		}
+	}
+	for _, tc := range []testCase{
+		{RelPath: "cmplxdivide.go", Directive: "run"},
+		{RelPath: "finprofiled.go", Directive: "run"},
+		{RelPath: "typeparam/chansimp.go", Directive: "rundir"},
+	} {
+		if _, reason, match := cfg.MatchTimeout("go1.27.0", "js/wasm", tc); match {
+			t.Errorf("%s retained an ineffective wasm timeout override: %s", tc.RelPath, reason)
 		}
 	}
 }

@@ -5,6 +5,9 @@
 # Applicability is global: entries must not select a Go version or platform.
 not_applicable:
   - directive: run
+    case: finprofiled.go
+    reason: "not applicable: this case requires gc's 16-byte tiny allocator blocks and private MemProfile bookkeeping for finalizer-resurrected subobjects; LLGo uses BDWGC or tinygogc without that allocator/profile mechanism, so reproducing it is not an LLGo compatibility goal"
+  - directive: run
     case: fixedbugs/issue15277.go
     reason: "not applicable: this case requires precise PC-specific stack and register liveness after a value's last use; LLGo uses conservative BDWGC roots, so exact GC liveness is not currently an LLGo compatibility goal"
   - directive: run

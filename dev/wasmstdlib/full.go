@@ -116,7 +116,17 @@ func fullCommand(p profile, goCmd, llgo, goRoot, pkg string) command {
 		env["LLGO_STRESS_PROFILE"] = "quick"
 	}
 	// GNU timeout bounds compilation as well as execution, including children.
-	return command{"timeout", append([]string{"--kill-after=10s", "5m", program}, args...), env}
+	return command{"timeout", append([]string{"--kill-after=10s", fullCommandTimeout(p, pkg), program}, args...), env}
+}
+
+func fullCommandTimeout(p profile, pkg string) string {
+	// Portable WASI reflection has no host libffi. net/rpc's reflected method
+	// registry therefore emits the largest typed-bridge/link workload in the
+	// suite and can cross the strict default on hosted LLVM 22 runners.
+	if p.Name == "W32-WASI" && pkg == "test/std/net/rpc" {
+		return "10m"
+	}
+	return "5m"
 }
 
 func fullNeedsPCLN(pkg string) bool {

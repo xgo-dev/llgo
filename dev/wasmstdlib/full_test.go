@@ -614,6 +614,31 @@ func TestFullLongTimeoutIsTargeted(t *testing.T) {
 	}
 }
 
+func TestFullCommandTimeoutIsTargeted(t *testing.T) {
+	wasi, err := fullProfile("W32-WASI")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gojs, err := fullProfile("J32-GoJS")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fullCommandTimeout(wasi, "test/std/net/rpc"); got != "10m" {
+		t.Fatalf("W32 net/rpc command timeout = %q, want 10m", got)
+	}
+	for _, tc := range []struct {
+		profile profile
+		pkg     string
+	}{
+		{wasi, "test/std/net/http"},
+		{gojs, "test/std/net/rpc"},
+	} {
+		if got := fullCommandTimeout(tc.profile, tc.pkg); got != "5m" {
+			t.Errorf("%s %s command timeout = %q, want 5m", tc.profile.Name, tc.pkg, got)
+		}
+	}
+}
+
 func TestFullWitnessUsesOnlySelectedSources(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "a_test.go"), []byte("package test\nimport \"testing\"\nfunc TestMain(m *testing.M) {}\nfunc TestWorks(t *testing.T) {}\n"), 0644); err != nil {

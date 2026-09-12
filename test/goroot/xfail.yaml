@@ -28,24 +28,9 @@ host_skips:
 timeouts:
   - platform: js/wasm
     directive: run
-    case: cmplxdivide.go
-    timeout: 10m
-    reason: LLVM lowering of the large complex-division table exceeds the default build timeout on hosted runners
-  - platform: js/wasm
-    directive: run
-    case: finprofiled.go
-    timeout: 2m
-    reason: the finalizer profiling stress program needs more than the default minute under the GoJS runner
-  - platform: js/wasm
-    directive: run
     case: winbatch.go
     timeout: 2m
     reason: the Windows batching stress program needs more than the default minute under the GoJS runner
-  - platform: js/wasm
-    directive: rundir
-    case: typeparam/chansimp.go
-    timeout: 2m
-    reason: the generic channel directory test needs more than the default minute under the GoJS runner
   - platform: js/wasm
     directive: run
     case: fixedbugs/issue78081.go
@@ -406,6 +391,14 @@ xfails:
   - directive: run
     case: heapsampling.go
     reason: LLGo does not currently report the heap-profile samples required by this runtime test
+  - platform: js/wasm
+    directive: run
+    case: cmplxdivide.go
+    reason: LLVM 22 lowering of this large complex-division constant table does not complete within the hosted WebAssembly build budget
+  - platform: js/wasm
+    directive: rundir
+    case: typeparam/chansimp.go
+    reason: the Ranger subtest requires its receiver finalizer to run at an exact liveness boundary, while LLGo's conservative WebAssembly roots can retain the receiver
   - platform: js/wasm
     directive: run
     case: init1.go
