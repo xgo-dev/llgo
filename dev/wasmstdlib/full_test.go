@@ -668,15 +668,19 @@ func TestFullCommandTimeoutIsTargeted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := fullCommandTimeout(wasi, "test/std/net/rpc"); got != "10m" {
-		t.Fatalf("W32 net/rpc command timeout = %q, want 10m", got)
+	for _, pkg := range []string{"test/std/net/rpc", "test/std/net/rpc/jsonrpc"} {
+		if got := fullCommandTimeout(wasi, pkg); got != "10m" {
+			t.Errorf("W32 %s command timeout = %q, want 10m", pkg, got)
+		}
 	}
 	for _, tc := range []struct {
 		profile profile
 		pkg     string
 	}{
 		{wasi, "test/std/net/http"},
+		{wasi, "test/std/net/rpc/internal"},
 		{gojs, "test/std/net/rpc"},
+		{gojs, "test/std/net/rpc/jsonrpc"},
 	} {
 		if got := fullCommandTimeout(tc.profile, tc.pkg); got != "5m" {
 			t.Errorf("%s %s command timeout = %q, want 5m", tc.profile.Name, tc.pkg, got)

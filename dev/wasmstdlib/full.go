@@ -120,11 +120,15 @@ func fullCommand(p profile, goCmd, llgo, goRoot, pkg string) command {
 }
 
 func fullCommandTimeout(p profile, pkg string) string {
-	// Portable WASI reflection has no host libffi. net/rpc's reflected method
-	// registry therefore emits the largest typed-bridge/link workload in the
-	// suite and can cross the strict default on hosted LLVM 22 runners.
-	if p.Name == "W32-WASI" && pkg == "test/std/net/rpc" {
-		return "10m"
+	// Portable WASI reflection has no host libffi. The net/rpc packages'
+	// reflected method registries therefore emit the largest typed-bridge/link
+	// workloads in the suite and can cross the strict default on hosted LLVM 22
+	// runners.
+	if p.Name == "W32-WASI" {
+		switch pkg {
+		case "test/std/net/rpc", "test/std/net/rpc/jsonrpc":
+			return "10m"
+		}
 	}
 	return "5m"
 }
