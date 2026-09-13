@@ -36,6 +36,26 @@ func fullPanicCommand(p profile, root, goRoot, artifact string) command {
 	return fullChildCommand(p, root, goRoot, artifact, "-llgo.caller-panic-child")
 }
 
+type fullRepanicCase struct {
+	mode     string
+	function string
+	marker   string
+	message  string
+}
+
+var fullRepanicCases = []fullRepanicCase{
+	{mode: "same", function: "callerRepanicOrigin", marker: "REPANIC_ORIGIN_MARK"},
+	{mode: "wrapper", function: "callerRepanicOrigin", marker: "REPANIC_ORIGIN_MARK"},
+	{mode: "indirect-wrapper", function: "callerRepanicOrigin", marker: "REPANIC_ORIGIN_MARK"},
+	{mode: "slice", function: "callerSliceRepanic", marker: "SLICE_REPANIC_ORIGIN_MARK"},
+	{mode: "different", function: "callerReplacementPanic", marker: "REPLACEMENT_PANIC_MARK", message: "panic: replacement panic"},
+	{mode: "later", function: "callerLaterSameValuePanic", marker: "LATER_SAME_VALUE_PANIC_MARK"},
+}
+
+func fullRepanicCommand(p profile, root, goRoot, artifact, mode string) command {
+	return fullChildCommand(p, root, goRoot, artifact, "-llgo.caller-repanic-child="+mode)
+}
+
 var fullFinalizerInvalidCases = []string{"non-function", "no parameters", "two parameters", "variadic", "wrong type"}
 
 func fullFinalizerInvalidCommand(p profile, root, goRoot, artifact, name string) command {
@@ -133,6 +153,37 @@ func validateFullPanic(root string, out []byte, runErr error) error {
 	return nil
 }
 
+func validateFullRepanic(root string, c fullRepanicCase, out []byte, runErr error) error {
+	var exit *exec.ExitError
+	if !errors.As(runErr, &exit) || exit.ExitCode() < 1 || exit.ExitCode() > 2 {
+		return fmt.Errorf("%s repanic child must exit 1 or 2, not succeed, time out, or fail to launch: %v", c.mode, runErr)
+	}
+	source, err := os.ReadFile(filepath.Join(root, "test", "go", "caller_runtime_test.go"))
+	if err != nil {
+		return err
+	}
+	line := 0
+	for i, text := range strings.Split(string(source), "\n") {
+		if strings.HasSuffix(strings.TrimSpace(text), "// "+c.marker) {
+			line = i + 1
+			break
+		}
+	}
+	if line == 0 {
+		return fmt.Errorf("missing repanic source marker %s", c.marker)
+	}
+	location := fmt.Sprintf("caller_runtime_test.go:%d", line)
+	if !regexp.MustCompile(regexp.QuoteMeta(location) + `(?:\D|$)`).Match(out) {
+		return fmt.Errorf("%s repanic child traceback missing exact source location %q", c.mode, location)
+	}
+	for _, text := range []string{c.function, c.message} {
+		if text != "" && !strings.Contains(string(out), text) {
+			return fmt.Errorf("%s repanic child traceback missing %q", c.mode, text)
+		}
+	}
+	return nil
+}
+
 type fullHostValidator func([]byte, error) error
 
 func runFullHostCheck(root, reportPath, profileName, packageName, logName, checkName string, cmd command, e *fullPackage, validate fullHostValidator, run func(string, command) ([]byte, error)) error {
@@ -154,6 +205,12 @@ func runFullHostCheck(root, reportPath, profileName, packageName, logName, check
 func runFullPanicHostCheck(root, reportPath, profileName string, p profile, goRoot, artifact string, e *fullPackage, run func(string, command) ([]byte, error)) error {
 	return runFullHostCheck(root, reportPath, profileName, "test/go", "test_go_panic_child.log", "unrecovered init panic traceback", fullPanicCommand(p, root, goRoot, artifact), e, func(out []byte, err error) error {
 		return validateFullPanic(root, out, err)
+	}, run)
+}
+
+func runFullRepanicHostCheck(root, reportPath, profileName string, p profile, goRoot, artifact string, c fullRepanicCase, e *fullPackage, run func(string, command) ([]byte, error)) error {
+	return runFullHostCheck(root, reportPath, profileName, "test/go", "test_go_repanic_"+c.mode+".log", c.mode+" repanic traceback", fullRepanicCommand(p, root, goRoot, artifact, c.mode), e, func(out []byte, err error) error {
+		return validateFullRepanic(root, c, out, err)
 	}, run)
 }
 

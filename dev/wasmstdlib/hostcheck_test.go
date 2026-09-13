@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -20,6 +21,12 @@ func TestFullChildCommandProfiles(t *testing.T) {
 		cmd := fullPanicCommand(p, "/repo", "/goroot", "/compiled-test")
 		if cmd.Program != "timeout" || cmd.Args[1] != "30s" || !slices.Contains(cmd.Args, "/compiled-test") || cmd.Args[len(cmd.Args)-1] != "-llgo.caller-panic-child" {
 			t.Fatalf("%s did not reuse and bound the child binary: %+v", name, cmd)
+		}
+		for _, repanic := range fullRepanicCases {
+			repanicCmd := fullRepanicCommand(p, "/repo", "/goroot", "/compiled-test", repanic.mode)
+			if repanicCmd.Args[len(repanicCmd.Args)-1] != "-llgo.caller-repanic-child="+repanic.mode {
+				t.Fatalf("%s/%s missing repanic selector: %+v", name, repanic.mode, repanicCmd)
+			}
 		}
 		joined := strings.Join(cmd.Args, " ")
 		switch {
@@ -63,7 +70,10 @@ func TestFullFatalValidatorsRejectFalsePositives(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "caller_runtime_test.go"), []byte("panic() // PANIC_MARK\ncall() // PANIC_CALLER_MARK\n"), 0o644); err != nil {
+	callerSource := "panic() // PANIC_MARK\ncall() // PANIC_CALLER_MARK\n" +
+		"origin() // REPANIC_ORIGIN_MARK\nslice() // SLICE_REPANIC_ORIGIN_MARK\n" +
+		"replacement() // REPLACEMENT_PANIC_MARK\nlater() // LATER_SAME_VALUE_PANIC_MARK\n"
+	if err := os.WriteFile(filepath.Join(dir, "caller_runtime_test.go"), []byte(callerSource), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	panicOut := "panic: acceptance-boom\ngoroutine 1 [running]:\ncallerPanicBoom\ncaller_runtime_test.go:1\ncallerPanicCaller\ncaller_runtime_test.go:2\n"
@@ -132,6 +142,30 @@ func TestFullFatalValidatorsRejectFalsePositives(t *testing.T) {
 	if validateFullPanic(t.TempDir(), []byte(panicOut), exitErr) == nil {
 		t.Fatal("accepted panic result without its source file")
 	}
+	for _, repanic := range fullRepanicCases {
+		line := map[string]int{
+			"REPANIC_ORIGIN_MARK":         3,
+			"SLICE_REPANIC_ORIGIN_MARK":   4,
+			"REPLACEMENT_PANIC_MARK":      5,
+			"LATER_SAME_VALUE_PANIC_MARK": 6,
+		}[repanic.marker]
+		out := repanic.function + "\ncaller_runtime_test.go:" + strconv.Itoa(line) + "\n" + repanic.message
+		if err := validateFullRepanic(root, repanic, []byte(out), exitErr); err != nil {
+			t.Fatalf("%s: %v", repanic.mode, err)
+		}
+		if validateFullRepanic(root, repanic, []byte(out), nil) == nil {
+			t.Fatalf("%s accepted successful child", repanic.mode)
+		}
+		if validateFullRepanic(root, repanic, []byte(repanic.function+"\ncaller_runtime_test.go:60\n"+repanic.message), exitErr) == nil {
+			t.Fatalf("%s accepted wrong source line", repanic.mode)
+		}
+		if validateFullRepanic(root, repanic, []byte("caller_runtime_test.go:"+strconv.Itoa(line)), exitErr) == nil {
+			t.Fatalf("%s accepted missing traceback identity", repanic.mode)
+		}
+	}
+	if validateFullRepanic(t.TempDir(), fullRepanicCases[0], nil, exitErr) == nil {
+		t.Fatal("accepted repanic result without its source file")
+	}
 	missingMarkerRoot := t.TempDir()
 	missingMarkerDir := filepath.Join(missingMarkerRoot, "test", "go")
 	if err := os.MkdirAll(missingMarkerDir, 0o755); err != nil {
@@ -139,6 +173,9 @@ func TestFullFatalValidatorsRejectFalsePositives(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(missingMarkerDir, "caller_runtime_test.go"), []byte("panic() // PANIC_MARK\n"), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	if validateFullRepanic(missingMarkerRoot, fullRepanicCases[0], nil, exitErr) == nil {
+		t.Fatal("accepted repanic result without its source marker")
 	}
 	if validateFullPanic(missingMarkerRoot, []byte(panicOut), exitErr) == nil {
 		t.Fatal("accepted panic source without every marker")
@@ -209,7 +246,9 @@ func TestFullHostChecksReuseThePackageBuild(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	source := "package gotest\nfunc TestWitness(t *T) {}\nfunc boom() {} // PANIC_MARK\nfunc caller() {} // PANIC_CALLER_MARK\n"
+	source := "package gotest\nfunc TestWitness(t *T) {}\nfunc boom() {} // PANIC_MARK\nfunc caller() {} // PANIC_CALLER_MARK\n" +
+		"func origin() {} // REPANIC_ORIGIN_MARK\nfunc slice() {} // SLICE_REPANIC_ORIGIN_MARK\n" +
+		"func replacement() {} // REPLACEMENT_PANIC_MARK\nfunc later() {} // LATER_SAME_VALUE_PANIC_MARK\n"
 	if err := os.WriteFile(filepath.Join(dir, "caller_runtime_test.go"), []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -242,6 +281,17 @@ func TestFullHostChecksReuseThePackageBuild(t *testing.T) {
 		if selector == "-llgo.caller-panic-child" {
 			return []byte("panic: acceptance-boom\ngoroutine 1 [running]:\ncallerPanicBoom\ncaller_runtime_test.go:3\ncallerPanicCaller\ncaller_runtime_test.go:4\n"), exitErr
 		}
+		for _, repanic := range fullRepanicCases {
+			if selector == "-llgo.caller-repanic-child="+repanic.mode {
+				line := map[string]int{
+					"REPANIC_ORIGIN_MARK":         5,
+					"SLICE_REPANIC_ORIGIN_MARK":   6,
+					"REPLACEMENT_PANIC_MARK":      7,
+					"LATER_SAME_VALUE_PANIC_MARK": 8,
+				}[repanic.marker]
+				return []byte(repanic.function + "\ncaller_runtime_test.go:" + strconv.Itoa(line) + "\n" + repanic.message), exitErr
+			}
+		}
 		out := "fatal error: runtime.SetFinalizer: cannot pass *gotest.value to finalizer func(*int)"
 		if strings.Contains(selector, "non-function") {
 			out = "fatal error: runtime.SetFinalizer: second argument is int, not a function"
@@ -254,7 +304,7 @@ func TestFullHostChecksReuseThePackageBuild(t *testing.T) {
 	if err := runFullAt(root, "W32-WASI", reportPath, "go", "llgo", 0, 1, structured, run); err != nil {
 		t.Fatal(err)
 	}
-	if builds != 1 || children != 1+len(fullFinalizerInvalidCases) {
+	if builds != 1 || children != 1+len(fullRepanicCases)+len(fullFinalizerInvalidCases) {
 		t.Fatalf("builds/children = %d/%d", builds, children)
 	}
 	data, err := os.ReadFile(reportPath)
@@ -265,7 +315,7 @@ func TestFullHostChecksReuseThePackageBuild(t *testing.T) {
 	if err := json.Unmarshal(data, &report); err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Packages) != 1 || len(report.Packages[0].HostChecks) != 1+len(fullFinalizerInvalidCases) {
+	if len(report.Packages) != 1 || len(report.Packages[0].HostChecks) != 1+len(fullRepanicCases)+len(fullFinalizerInvalidCases) {
 		t.Fatalf("missing host checks: %s", data)
 	}
 	if _, err := os.Stat(filepath.Dir(artifact)); !os.IsNotExist(err) {

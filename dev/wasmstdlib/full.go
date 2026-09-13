@@ -366,6 +366,9 @@ func runFullAt(root, name, reportPath, goCmd, llgo string, shard, shards int, st
 			}
 			if e.Package == "test/go" && hostArtifactReady {
 				runErr = errors.Join(runErr, runFullPanicHostCheck(root, reportPath, name, p, goRoot, hostArtifact, e, run))
+				for _, repanic := range fullRepanicCases {
+					runErr = errors.Join(runErr, runFullRepanicHostCheck(root, reportPath, name, p, goRoot, hostArtifact, repanic, e, run))
+				}
 				for _, invalid := range fullFinalizerInvalidCases {
 					runErr = errors.Join(runErr, runFullFinalizerHostCheck(root, reportPath, name, p, goRoot, hostArtifact, invalid, e, run))
 				}
