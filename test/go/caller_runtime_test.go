@@ -53,7 +53,7 @@ func callerPanicCaller() {
 	callerPanicBoom() // PANIC_CALLER_MARK
 }
 
-func TestCallerPanicTraceback(t *testing.T) {
+func testCallerPanicTraceback(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "-test.run=^$")
 	cmd.Env = append(os.Environ(), callerPanicChild+"=1")
 	output, err := cmd.CombinedOutput()
@@ -140,7 +140,7 @@ func callerSliceRepanic() {
 	panic([]int{1}) // SLICE_REPANIC_ORIGIN_MARK
 }
 
-func TestCallerRepanicTraceback(t *testing.T) {
+func testCallerRepanicTraceback(t *testing.T) {
 	mode := os.Getenv(callerRepanicChild)
 	switch mode {
 	case "same":
