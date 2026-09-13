@@ -678,6 +678,13 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Set up Chrome for browser acceptance
+        if: matrix.suite == 'runtime'
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          install-dependencies: true
+
       - name: Set up Binaryen
         uses: ./.github/actions/setup-binaryen
 
@@ -718,6 +725,7 @@ jobs:
       - name: Test single-worker wasm schedulers
         shell: bash
         env:
+          CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
           LLGO_BUILD_CACHE: "1"
         run: dev/test_wasm_single_worker.sh "${{ matrix.suite }}"
