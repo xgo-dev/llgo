@@ -1660,8 +1660,9 @@ func TestExecuteInitialPackageLinkRawWasmRunUsesHostRunner(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("LLGO_TEST_NODE_HELPER", "1")
-	t.Setenv("PATH", binDir)
-	commands := commandEnv{environ: withEnv(os.Environ(), "PATH="+binDir)}
+	pathEnv := binDir + string(os.PathListSeparator) + os.Getenv("PATH")
+	t.Setenv("PATH", pathEnv)
+	commands := commandEnv{environ: withEnv(os.Environ(), "PATH="+pathEnv)}
 	output := filepath.Join(t.TempDir(), "raw-gojs.wasm")
 	conf := &Config{
 		Mode:      ModeRun,
