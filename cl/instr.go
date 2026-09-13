@@ -609,6 +609,7 @@ func (p *context) bitCastIntrinsic(b llssa.Builder, args []llssa.Expr, result ty
 // -----------------------------------------------------------------------------
 
 var llgoInstrs = map[string]int{
+	"simd128":     llgoSIMD128,
 	"cstr":        llgoCstr,
 	"advance":     llgoAdvance,
 	"index":       llgoIndex,
@@ -2560,6 +2561,11 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		args := p.compileValues(b, args, kind)
 		ret = p.emitDo(b, act, ds, false, llssa.Builtin(fn), llssa.Builder.Call, args...)
 	case *ssa.Function:
+		if _, ok := p.simd128Method(cv); ok && act != llssa.Call {
+			fn := p.compileValue(b, cv)
+			ret = p.emitDo(b, act, ds, mayRecover, fn, llssa.Builder.Call, p.compileValues(b, args, kind)...)
+			return
+		}
 		aFn, pyFn, ftype := p.compileFunction(cv)
 		// TODO(xsw): check ca != llssa.Call
 		switch ftype {
@@ -2574,6 +2580,8 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		case pyFunc:
 			args := p.compileValues(b, args, kind)
 			ret = p.emitDo(b, act, ds, mayRecover, pyFn.Expr, llssa.Builder.Call, args...)
+		case llgoSIMD128:
+			ret = p.simd128Call(b, cv, args)
 		case llgoPyList:
 			args := p.compileValues(b, args, fnHasVArg)
 			ret = b.PyList(args...)
