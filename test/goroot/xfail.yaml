@@ -405,10 +405,6 @@ xfails:
     reason: the conservative linear collector retains enough loop-temporary pointers to grow memory past this Go allocator threshold
   - platform: js/wasm
     directive: run
-    case: inline_literal.go
-    reason: LLGo's WebAssembly PC-line table includes a runtime log frame outside the inlined function's source range
-  - platform: js/wasm
-    directive: run
     case: fixedbugs/issue14646.go
     reason: LLGo reports the recovered caller one source line earlier than cmd/compile on WebAssembly
   - platform: js/wasm
