@@ -40,6 +40,9 @@ func LowerWasmAggregateCopies(td llvm.TargetData, m llvm.Module, config Aggregat
 	l := newLargeAggregateLowerer(td, config)
 	l.copyMinSize = MinWasmAggregateCopySize
 	changed := 0
+	// The pass is monotonic: every rewrite removes one qualifying aggregate
+	// load, and can expose only projections into a strictly nested aggregate.
+	// It never recreates the load or a containing projection it just removed.
 	for {
 		count := l.transformStoredLoads(m)
 		if count == 0 {
@@ -49,7 +52,6 @@ func LowerWasmAggregateCopies(td llvm.TargetData, m llvm.Module, config Aggregat
 		// Projecting a field of an aggregate snapshot can expose another
 		// large load, for example the array argument inside a deferred call's
 		// closure. Lower those loads too before handing the module to LLVM.
-		// Each projection descends into a strictly nested aggregate type.
 	}
 	if l.roots {
 		l.publishRoots(m)

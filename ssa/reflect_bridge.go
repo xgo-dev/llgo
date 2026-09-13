@@ -224,6 +224,9 @@ func (p Package) newWasmReflectCallBridge(rawSig *types.Signature, name string) 
 func (b Builder) wasmReflectSlot(base Expr, i int) Expr {
 	prog := b.Prog
 	storage := prog.storageType(prog.VoidPtr())
+	// The Go-word index is a compile-time constant and is folded into the GEP
+	// offset before physical Memory32 address lowering. Only dynamic addresses
+	// need physicalPointerIndex conversion.
 	slot := llvm.CreateInBoundsGEP(b.impl, storage, base.impl, []llvm.Value{
 		llvm.ConstInt(prog.Int().ll, uint64(i), false),
 	})
@@ -287,6 +290,8 @@ func (b Builder) wasmReflectFrame(tuple *types.Tuple, value func(int) Expr) (Exp
 			initial = value(i)
 		}
 		b.Store(slots[i], initial)
+		// As in wasmReflectSlot, this constant Go-word index is folded before
+		// Memory32 physical address lowering.
 		address := llvm.CreateInBoundsGEP(b.impl, storage, frame.impl, []llvm.Value{
 			llvm.ConstInt(prog.Int().ll, uint64(i), false),
 		})

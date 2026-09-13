@@ -27,9 +27,7 @@ func TestWasmFinalizerCandidates(t *testing.T) {
 	wanted := map[string]bool{
 		"encodeFinalizerAddress": true, "preserveFinalizableObjects": true,
 		"finalizerObjectBlock": true, "finalizerObjectState": true,
-		"candidateForObject": true, "earlierFinalizerForObject": true,
-		"hasCandidateFinalizer": true, "finalizerObjectBlocked": true,
-		"queueCallbacksForObject": true,
+		"markFinalizerObjectBlocked": true,
 	}
 	var source bytes.Buffer
 	source.WriteString(finalizerCandidateTestSource)
@@ -40,6 +38,7 @@ func TestWasmFinalizerCandidates(t *testing.T) {
 				continue
 			}
 			delete(wanted, decl.Name.Name)
+			countFinalizerLoopVisits(decl)
 		case *ast.GenDecl:
 			if decl.Tok == token.IMPORT {
 				continue
@@ -66,6 +65,23 @@ func TestWasmFinalizerCandidates(t *testing.T) {
 	}
 }
 
+// Instrument registry loops in the copied production operations. This makes
+// the scaling assertion deterministic instead of relying on a wall-clock
+// timeout that varies with CI load.
+func countFinalizerLoopVisits(decl *ast.FuncDecl) {
+	ast.Inspect(decl.Body, func(node ast.Node) bool {
+		loop, ok := node.(*ast.ForStmt)
+		if !ok {
+			return true
+		}
+		loop.Body.List = append([]ast.Stmt{&ast.IncDecStmt{
+			X:   ast.NewIdent("registryReads"),
+			Tok: token.INC,
+		}}, loop.Body.List...)
+		return true
+	})
+}
+
 const finalizerCandidateTestSource = `package candidates
 import (
   "testing"
@@ -82,6 +98,7 @@ const (
 var heap []byte
 var states [endBlock]uint8
 var metadataReads int
+var registryReads int
 func gcStateOf(block uintptr) uint8 { metadataReads++; return states[block] }
 func gcAddressOf(block uintptr) uintptr { return uintptr(unsafe.Pointer(&heap[block*blockBytes])) }
 func blockFromAddr(addr uintptr) uintptr { return (addr - gcAddressOf(0)) / blockBytes }
@@ -94,6 +111,7 @@ func resetCollector() {
   for i := range states { states[i] = blockStateHead }
   finalizers, readyFinalizers = nil, nil
   metadataReads = 0
+  registryReads = 0
 }
 func recordFor(block uintptr, kind finalizerKind) *finalizerRecord {
   return &finalizerRecord{
@@ -148,5 +166,22 @@ func TestInterleavedRecords(t *testing.T) {
   if metadataReads > 100 { t.Fatalf("three records inspected %d heap blocks", metadataReads) }
   if f, c := readyCounts(t); f != 0 || c != 3 { t.Fatalf("later ready finalizers/cleanups = %d/%d, want 0/3", f, c) }
   if finalizers != nil { t.Fatal("queue traversal lost pending records") }
+}
+func TestCandidateTraversalScalesLinearly(t *testing.T) {
+  resetCollector()
+  const count = 1024
+  records := make([]*finalizerRecord, count)
+  for i := range records {
+    records[i] = recordFor(uintptr(i+1), objectFinalizer)
+    if i != 0 { records[i-1].next = records[i] }
+  }
+  finalizers = records[0]
+  preserveFinalizableObjects()
+  if registryReads > 5*count {
+    t.Fatalf("%d records required %d registry visits, want linear traversal", count, registryReads)
+  }
+  if f, c := readyCounts(t); f != count || c != 0 {
+    t.Fatalf("ready finalizers/cleanups = %d/%d, want %d/0", f, c, count)
+  }
 }
 `

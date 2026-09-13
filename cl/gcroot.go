@@ -76,7 +76,9 @@ func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
 		typ := p.type_(value.Type(), llssa.InGo)
 		n := p.prog.GCRootCount(typ)
 		if basicKind(value.Type()) == types.Uintptr {
-			// Only pragma-designated uintptr parameters enter planned.
+			// Only pragma-designated uintptr parameters enter planned. Keep this
+			// single-slot reservation paired with publishGCRoot's direct SetGCRoot:
+			// uintptr has no ordinary pointer layout for GCRootPointers to expand.
 			n = 1
 		}
 		if n != 0 {
@@ -269,6 +271,8 @@ func (p *context) publishGCRoot(b llssa.Builder, value ssa.Value, expr llssa.Exp
 		return
 	}
 	if basicKind(value.Type()) == types.Uintptr {
+		// prepareGCRoots reserves exactly one slot for pragma-designated uintptr
+		// values even though their ordinary GC root count is zero.
 		b.SetGCRoot(slots[0], expr)
 		return
 	}
