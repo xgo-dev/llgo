@@ -397,6 +397,7 @@ func TestEmscriptenRunnersConsumeExitStatus(t *testing.T) {
 	error.status = status;
 	return error;
 }
+
 export default async function(config) {
 	const status = Number(config.arguments[0]);
 	const mode = config.arguments[1];
@@ -441,6 +442,37 @@ export default async function(config) {
 				t.Fatalf("runner consumed an ordinary error with a status field:\n%s", output)
 			}
 		})
+	}
+}
+
+func TestEmscriptenRunnerReportsInstantiationFailure(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatalf("node is required to test the Emscripten runner: %v", err)
+	}
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tempDir := t.TempDir()
+	module := filepath.Join(tempDir, "invalid.mjs")
+	const source = `export default async function(config) {
+	config.instantiateWasm({}, () => {});
+	await new Promise(() => {});
+}`
+	if err := os.WriteFile(module, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, "invalid.wasm"), []byte("invalid wasm"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(node, filepath.Join(root, "targets", "emscripten-runner.mjs"), module)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("runner accepted an invalid WebAssembly module:\n%s", output)
+	}
+	if !strings.Contains(string(output), "CompileError") {
+		t.Fatalf("runner did not report the instantiation error: %v\n%s", err, output)
 	}
 }
 
