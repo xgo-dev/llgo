@@ -168,6 +168,9 @@ func (p Program) storageType(t Type) llvm.Type {
 }
 
 func (p Program) requireStorageAlignment(value llvm.Value, t Type) {
+	if !p.usesWideGoStorage() {
+		return
+	}
 	storage := p.storageType(t)
 	want := p.AlignOf(t)
 	if have := uint64(p.td.ABITypeAlignment(storage)); want > have {

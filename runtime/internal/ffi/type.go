@@ -109,12 +109,7 @@ func ArrayOf(elem *Type, N int) *Type {
 	for i := 0; i < N; i++ {
 		fs[i] = elem
 	}
-	return &Type{
-		0,
-		0,
-		ffi.Struct,
-		typePointerArray(fs),
-	}
+	return newAggregateType(0, 0, ffi.Struct, fs)
 }
 
 func StructOf(fields ...*Type) *Type {
@@ -123,10 +118,5 @@ func StructOf(fields ...*Type) *Type {
 	}
 	fs := make([]*Type, len(fields)+1)
 	copy(fs, fields)
-	return &Type{
-		0,
-		0,
-		ffi.Struct,
-		typePointerArray(fs),
-	}
+	return newAggregateType(0, 0, ffi.Struct, fs)
 }
