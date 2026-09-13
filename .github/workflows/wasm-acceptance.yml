@@ -110,14 +110,16 @@ jobs:
           if-no-files-found: error
 
   goroot:
-    name: wasm GOROOT (J32-GoJS, ${{ matrix.shard }}/4)
+    name: wasm GOROOT (J32-GoJS, ${{ matrix.shard }}/6)
     needs: goroot-smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        # The four-shard staging jobs took 76-84 minutes. Six shards keep the
+        # same corpus below an hour on every eligible Linux runner pool.
+        shard: [0, 1, 2, 3, 4, 5]
     env:
       GOMAXPROCS: '2'
       GOFLAGS: -tags=llvm22
@@ -152,7 +154,7 @@ jobs:
               -test.count=1 -test.timeout=175m \
               -goroot "$target_goroot" -llgo "$RUNNER_TEMP/llgo" \
               -wasm-profile "$PROFILE" -directive-mode coverage \
-              -progress 60s -shard-index "$SHARD" -shard-total 4 \
+              -progress 60s -shard-index "$SHARD" -shard-total 6 \
               -max-rss-mib 4096 -rss-warn-mib 1024 \
               -min-memory-free-percent 15 -min-swap-free-mib 512
           ) 2>&1 | tee "$RUNNER_TEMP/goroot-$PROFILE-$SHARD.log"
@@ -165,7 +167,7 @@ jobs:
           if-no-files-found: error
 
   packages:
-    name: wasm test acceptance (${{ matrix.profile }}, ${{ matrix.shard }}/2)
+    name: wasm test acceptance (${{ matrix.profile }}, ${{ matrix.shard }}/${{ matrix.profile == 'W32-WASI' && 5 || 3 }})
     needs: goroot-smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -173,7 +175,14 @@ jobs:
       fail-fast: false
       matrix:
         profile: [J32-GoJS, J32-Emscripten, J64-Emscripten, W32-WASI]
-        shard: [0, 1]
+        # Three shards keep the JavaScript providers below an hour. WASI's
+        # Binaryen/Asyncify links need five without multiplying its corpus.
+        shard: [0, 1, 2]
+        include:
+          - profile: W32-WASI
+            shard: 3
+          - profile: W32-WASI
+            shard: 4
     env:
       GOMAXPROCS: '2'
       GOFLAGS: -tags=llvm22
@@ -204,9 +213,10 @@ jobs:
         env:
           PROFILE: ${{ matrix.profile }}
           SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ matrix.profile == 'W32-WASI' && 5 || 3 }}
         run: |
           go run ./dev/wasmstdlib -full -profile "$PROFILE" \
-            -shard "$SHARD" -shards 2 -llgo "$RUNNER_TEMP/llgo" \
+            -shard "$SHARD" -shards "$SHARDS" -llgo "$RUNNER_TEMP/llgo" \
             -report "$RUNNER_TEMP/acceptance.json"
       - name: Preserve all results and individual package logs
         if: always()

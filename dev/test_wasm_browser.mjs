@@ -12,6 +12,9 @@ const modulePath = path.resolve(process.argv[2]);
 const expected = process.argv[3];
 const root = path.dirname(modulePath);
 const moduleName = path.basename(modulePath);
+const browserProfile = path.join(root, `.chrome-profile-${process.pid}`);
+let resolvePageResult;
+const pageResult = new Promise(resolve => resolvePageResult = resolve);
 
 async function findChrome() {
 	const candidates = [
@@ -41,10 +44,18 @@ function page() {
 const result = document.querySelector("#result");
 const output = [];
 const expected = ${JSON.stringify(expected)};
+let finished = false;
+const finish = (status, detail) => {
+	if (finished) return;
+	finished = true;
+	result.dataset.status = status;
+	const report = String(detail).slice(-4096);
+	fetch("/__result?" + new URLSearchParams({ status, detail: report }), { keepalive: true }).catch(() => {});
+};
 const write = value => {
 	output.push(String(value));
 	result.textContent = output.join("\\n");
-	if (result.textContent.includes(expected)) result.dataset.status = "success";
+	if (result.textContent.includes(expected)) finish("success", result.textContent);
 };
 for (const method of ["log", "info", "warn", "error"]) {
 	const original = console[method].bind(console);
@@ -58,10 +69,10 @@ try {
 	await loaded.default({ print: write, printErr: write });
 } catch (error) {
 	write(error?.stack || error);
-	result.dataset.status = "failure";
+	finish("failure", result.textContent);
 }
 setTimeout(() => {
-	if (result.dataset.status === "running") result.dataset.status = "failure";
+	finish("failure", result.textContent || "browser page timed out after 25 seconds");
 }, 25000);
 </script>`;
 }
@@ -69,6 +80,16 @@ setTimeout(() => {
 const server = http.createServer(async (request, response) => {
 	try {
 		const url = new URL(request.url, "http://localhost");
+		if (url.pathname === "/__result") {
+			const status = url.searchParams.get("status");
+			if (status !== "success" && status !== "failure") {
+				response.writeHead(400).end("invalid browser result");
+				return;
+			}
+			response.end("ok");
+			resolvePageResult({ pageStatus: status, detail: url.searchParams.get("detail") || "" });
+			return;
+		}
 		if (url.pathname === "/") {
 			response.setHeader("Content-Type", "text/html; charset=utf-8");
 			response.end(page());
@@ -90,6 +111,19 @@ const server = http.createServer(async (request, response) => {
 	}
 });
 
+function killBrowser(child) {
+	if (child.pid === undefined) return;
+	if (process.platform !== "win32") {
+		try {
+			process.kill(-child.pid, "SIGKILL");
+			return;
+		} catch {
+			// Fall back to the direct child if it has already left its group.
+		}
+	}
+	child.kill("SIGKILL");
+}
+
 await new Promise((resolve, reject) => {
 	server.once("error", reject);
 	server.listen(0, "127.0.0.1", resolve);
@@ -100,35 +134,55 @@ try {
 	const { port } = server.address();
 	const child = spawn(chrome, [
 		"--headless=new",
+		`--user-data-dir=${browserProfile}`,
+		"--no-first-run",
+		"--no-default-browser-check",
+		"--disable-background-networking",
 		"--disable-dev-shm-usage",
 		"--disable-gpu",
 		"--no-sandbox",
-		"--virtual-time-budget=30000",
-		"--dump-dom",
+		"--proxy-server=direct://",
+		"--proxy-bypass-list=*",
 		`http://127.0.0.1:${port}/`,
-	]);
+	], { detached: process.platform !== "win32" });
 	let stdout = "";
 	let stderr = "";
 	child.stdout.setEncoding("utf8").on("data", chunk => stdout += chunk);
 	child.stderr.setEncoding("utf8").on("data", chunk => stderr += chunk);
-	const timer = setTimeout(() => child.kill("SIGKILL"), 60000);
-	const status = await new Promise((resolve, reject) => {
-		child.once("error", reject);
-		child.once("close", resolve);
+	const closed = new Promise(resolve => {
+		child.once("error", error => resolve({ error }));
+		child.once("close", status => resolve({ status, closed: true }));
 	});
+	let timer;
+	const outcome = await Promise.race([
+		pageResult,
+		closed,
+		new Promise(resolve => {
+			timer = setTimeout(() => resolve({ timedOut: true }), 60000);
+		}),
+	]);
 	clearTimeout(timer);
-	process.stdout.write(stdout);
-	if (status !== 0) {
+	killBrowser(child);
+	child.stdout.destroy();
+	child.stderr.destroy();
+	child.unref();
+	if (outcome.timedOut) {
+		process.stdout.write(stdout);
 		process.stderr.write(stderr);
-		throw new Error(`headless browser exited with status ${status}`);
+		throw new Error("headless browser timed out after 60 seconds");
 	}
-	if (!stdout.includes('data-status="success"')) {
+	if (outcome.error) throw outcome.error;
+	if (outcome.closed) {
+		process.stdout.write(stdout);
 		process.stderr.write(stderr);
-		throw new Error("WebAssembly browser module did not complete successfully");
+		throw new Error(`headless browser exited with status ${outcome.status}`);
 	}
-	if (!stdout.includes(expected)) {
-		throw new Error(`WebAssembly browser output does not contain ${JSON.stringify(expected)}`);
+	if (outcome.pageStatus !== "success") {
+		process.stderr.write(stderr);
+		throw new Error(`WebAssembly browser module failed: ${outcome.detail}`);
 	}
+	process.stdout.write(`${outcome.detail}\n`);
 } finally {
+	server.closeAllConnections?.();
 	await new Promise(resolve => server.close(resolve));
 }
