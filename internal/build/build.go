@@ -2214,8 +2214,8 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	ctx.stripDarwinLTOLocals = false
 	entryPkg := genMainModule(ctx, llssa.PkgRuntime, pkg, &preparation.gen)
 	cExports := preparation.gen.cExports
-	if lowerMainCExportAggregates(ctx.prog, entryPkg.LPkg.Module(), cExports) {
-		ctx.cTransformer.TransformModule(entryPkg.LPkg.Path(), entryPkg.LPkg.Module())
+	if _, err := lowerMainCExportModule(ctx, entryPkg.LPkg, cExports); err != nil {
+		return nil, err
 	}
 	if ctx.buildConf.deadcodeDropEnabled() {
 		if err := applyDeadcodeDropOverrides(preparation.linkedOrder, entryPkg, preparation.gen.rtInit, verbose); err != nil {
@@ -2886,6 +2886,48 @@ func lowerMainCExportAggregates(prog llssa.Program, mod gllvm.Module, exports []
 	return true
 }
 
+func lowerMainCExportModule(ctx *context, pkg llssa.Package, exports []cExport) (bool, error) {
+	mod := pkg.Module()
+	if !lowerMainCExportAggregates(ctx.prog, mod, exports) {
+		return false, nil
+	}
+	ctx.cTransformer.TransformModule(pkg.Path(), mod)
+	if ctx.buildConf.Goarch != "wasm" {
+		return true, nil
+	}
+
+	// C ABI lowering can introduce 4-64 KiB aggregate snapshots in export
+	// wrappers. Apply the same post-C-ABI Wasm passes as package modules.
+	lowerWasmAggregateCopies(ctx.buildConf.Goarch, ctx.prog.TargetData(), mod, llabi.AggregateLoweringConfig{
+		GoWordSize: ctx.prog.GoWordSize(),
+		GCRoots:    ctx.prog.GCRootsEnabled(),
+		Wasm:       true,
+	})
+	applySizeOptimizationAttributes(mod, ctx.buildConf.OptLevel)
+	if err := optimizeLLVMModule(ctx, pkg.Path(), mod); err != nil {
+		return true, err
+	}
+	localizeWasmStackAddresses(ctx.buildConf.Goarch, mod)
+	return true, nil
+}
+
+func optimizeLLVMModule(ctx *context, pkgPath string, mod gllvm.Module) error {
+	if !ctx.passOpt {
+		return nil
+	}
+	mod.SetDataLayout(ctx.prog.DataLayout())
+	mod.SetTarget(ctx.prog.Target().Spec().Triple)
+	pbo := gllvm.NewPassBuilderOptions()
+	defer pbo.Dispose()
+	if err := gllvm.VerifyModule(mod, gllvm.ReturnStatusAction); err != nil {
+		return fmt.Errorf("verify LLVM module for %v failed: %w", pkgPath, err)
+	}
+	if err := mod.RunPasses(llvmPassPipeline(ctx.buildConf.OptLevel, ctx.buildConf.ltoMode()), ctx.prog.TargetMachine(), pbo); err != nil {
+		return fmt.Errorf("run LLVM passes failed for %v: %w", pkgPath, err)
+	}
+	return nil
+}
+
 // compilePackageModule applies LLVM transforms and emits package objects.
 func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbose bool) error {
 	pkg := aPkg.Package
@@ -2930,18 +2972,8 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	}
 
 	// Run the default LLVM optimization pipeline selected by the requested -O level.
-	if ctx.passOpt {
-		mod := ret.Module()
-		mod.SetDataLayout(ctx.prog.DataLayout())
-		mod.SetTarget(ctx.prog.Target().Spec().Triple)
-		pbo := gllvm.NewPassBuilderOptions()
-		defer pbo.Dispose()
-		if err := gllvm.VerifyModule(mod, gllvm.ReturnStatusAction); err != nil {
-			return fmt.Errorf("verify LLVM module for %v failed: %w", pkgPath, err)
-		}
-		if err := mod.RunPasses(llvmPassPipeline(ctx.buildConf.OptLevel, ctx.buildConf.ltoMode()), ctx.prog.TargetMachine(), pbo); err != nil {
-			return fmt.Errorf("run LLVM passes failed for %v: %w", pkgPath, err)
-		}
+	if err := optimizeLLVMModule(ctx, pkgPath, ret.Module()); err != nil {
+		return err
 	}
 	localizeWasmStackAddresses(ctx.buildConf.Goarch, ret.Module())
 	dropUnusedWindowsTestMain(ctx, aPkg, ret.Module())
