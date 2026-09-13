@@ -43,6 +43,11 @@ func resolveSourceGoConfig(commands commandEnv, experiment string) (sourceGoConf
 	}
 	commands.environ = withResolvedGoToolchain(commands.environ, cfg.GOVERSION)
 	commands.environ = withEnv(commands.environ, "GOROOT="+cfg.GOROOT, "GOEXPERIMENT="+resolvedExperiment)
+	// The compiler has already been selected in the invocation directory.
+	// Inspect its build context without loading the user's module: versioned
+	// builds may pass a separate -modfile to the source loader, and the real
+	// go.mod can require a newer Go version than the selected source compiler.
+	commands.environ = withEnv(commands.environ, "GO111MODULE=off", "GOWORK=off", "GOFLAGS=")
 	cmd = commands.configure(exec.Command("go", "list", "-f", "{{join context.ToolTags \",\"}}", "unsafe"))
 	output, err = cmd.Output()
 	if err != nil {

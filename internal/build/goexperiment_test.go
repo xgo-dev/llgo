@@ -125,12 +125,27 @@ func TestGOEXPERIMENTSnapshotFromGOENV(t *testing.T) {
 
 func TestResolveSourceGoUsesInvocationDir(t *testing.T) {
 	commands := experimentCommands(t, "")
-	commands.environ = withEnv(commands.environ, "GOTOOLCHAIN=local")
+	commands.environ = withEnv(commands.environ, "GOTOOLCHAIN=path")
 	if err := os.WriteFile(filepath.Join(commands.dir, "go.mod"), []byte("module example.org/future\n\ngo 1.999\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resolveSourceGoConfig(commands, ""); err == nil || !strings.Contains(err.Error(), "requires go >= 1.999") {
+	if _, err := resolveSourceGoConfig(commands, ""); err == nil || !strings.Contains(err.Error(), "go1.999") {
 		t.Fatalf("source configuration did not use invocation module: %v", err)
+	}
+}
+
+func TestSourceGoToolTagsIgnoreModuleMinimum(t *testing.T) {
+	commands := experimentCommands(t, "")
+	commands.environ = withEnv(commands.environ, "GOTOOLCHAIN=local")
+	if err := os.WriteFile(filepath.Join(commands.dir, "go.mod"), []byte("module example.org/versioned\n\ngo 1.999\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Versioned builds can supply a different module file to the package
+	// loader. Tool tags describe the already selected compiler, independently
+	// of that module's minimum Go version and the eventual source build flags.
+	cfg := mustResolveSourceGo(t, commands, "")
+	if !slices.Contains(cfg.toolTags, "amd64.v3") {
+		t.Fatalf("missing selected toolchain tags: %v", cfg.toolTags)
 	}
 }
 
