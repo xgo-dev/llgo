@@ -669,6 +669,7 @@ const (
 	llgoFloat32Bits        = llgoInstrBase + 0x4a
 	llgoFloat64FromBits    = llgoInstrBase + 0x4b
 	llgoFloat64Bits        = llgoInstrBase + 0x4c
+	llgoSIMD128            = llgoInstrBase + 0x4d
 
 	llgoAtomicOpLast = llgoAtomicOpBase + int(llssa.OpUMin)
 )
@@ -765,6 +766,9 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 			return nil, v[5:], llgoInstr
 		}
 		return pkg, v, goFunc
+	}
+	if _, ok := p.simd128Method(fn); ok {
+		return nil, "simd128", llgoInstr
 	}
 	// Stdlib compiler intrinsics that are defined as `panic("intrinsic")` in
 	// source form. LLGo doesn't run Go escape analysis, so we can lower these to
