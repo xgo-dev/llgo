@@ -21,20 +21,28 @@ func PE(t testing.TB) string    { return write(t, "fixture.exe", dataPE) }
 
 func write(t testing.TB, name, encoded string) string {
 	t.Helper()
-	r, err := gzip.NewReader(base64.NewDecoder(base64.StdEncoding, strings.NewReader(encoded)))
+	path, err := materialize(t.TempDir(), name, encoded)
 	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := r.Close(); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func materialize(dir, name, encoded string) (string, error) {
+	r, err := gzip.NewReader(base64.NewDecoder(base64.StdEncoding, strings.NewReader(encoded)))
+	if err != nil {
+		return "", err
+	}
+	data, err := io.ReadAll(r)
+	if closeErr := r.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
 }

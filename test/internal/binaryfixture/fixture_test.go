@@ -5,8 +5,31 @@ import (
 	"debug/elf"
 	"debug/macho"
 	"debug/pe"
+	"encoding/base64"
+	"path/filepath"
 	"testing"
 )
+
+func TestMaterializeRejectsInvalidFixtures(t *testing.T) {
+	if _, err := materialize(t.TempDir(), "fixture.o", "not base64"); err == nil {
+		t.Fatal("materialize accepted invalid base64")
+	}
+
+	compressed, err := base64.StdEncoding.DecodeString(dataELF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed[len(compressed)-1] ^= 0xff
+	corrupt := base64.StdEncoding.EncodeToString(compressed)
+	if _, err := materialize(t.TempDir(), "fixture.o", corrupt); err == nil {
+		t.Fatal("materialize accepted a corrupt gzip stream")
+	}
+
+	missing := filepath.Join(t.TempDir(), "missing")
+	if _, err := materialize(missing, "fixture.o", dataELF); err == nil {
+		t.Fatal("materialize wrote into a missing directory")
+	}
+}
 
 func TestParserFixturesContainCodeAndDWARF(t *testing.T) {
 	for _, kind := range []string{"ELF", "MachO", "PE"} {
