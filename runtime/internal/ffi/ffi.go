@@ -39,7 +39,7 @@ func NewSignature(ret *Type, args ...*Type) (*Signature, error) {
 // should use NewSignature; the explicit form is needed for platforms such as
 // windows/386 that expose more than one C calling convention.
 func NewSignatureWithABI(abi ABI, ret *Type, args ...*Type) (*Signature, error) {
-	cif, atype := newSignatureStorage(args)
+	cif, atype := newSignatureStorage(ret, args)
 	status := ffi.PrepCif(cif, abi, c.Uint(len(args)), ret, atype)
 	if status == 0 {
 		return cif, nil
@@ -48,7 +48,7 @@ func NewSignatureWithABI(abi ABI, ret *Type, args ...*Type) (*Signature, error) 
 }
 
 func NewSignatureVar(ret *Type, fixed int, args ...*Type) (*Signature, error) {
-	cif, atype := newSignatureStorage(args)
+	cif, atype := newSignatureStorage(ret, args)
 	status := ffi.PrepCifVar(cif, DefaultABI, c.Uint(fixed), c.Uint(len(args)), ret, atype)
 	if status == ffi.OK {
 		return cif, nil

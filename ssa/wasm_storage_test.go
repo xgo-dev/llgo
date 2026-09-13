@@ -89,6 +89,11 @@ func TestNativeStorageViewsAreCachedAndWasmOnly(t *testing.T) {
 	if got := len(prog.nativeStorage); got != 2 {
 		t.Fatalf("J32 native storage cache contains %d entries, want 2", got)
 	}
+	words := prog.rawType(types.NewArray(types.Typ[types.Uintptr], 2))
+	nativeWords := prog.withNativeStorage(words)
+	if got := nativeWords.ll.String(); got != "[2 x i32]" {
+		t.Fatalf("J32 native uintptr array type = %s, want [2 x i32]", got)
+	}
 
 	native := NewProgram(nil)
 	t.Cleanup(native.Dispose)
@@ -99,6 +104,78 @@ func TestNativeStorageViewsAreCachedAndWasmOnly(t *testing.T) {
 	if native.nativeStorage != nil {
 		t.Fatal("native target allocated the wasm storage-view cache")
 	}
+	if got := native.nativeStorageLLVMType(types.Typ[types.Uintptr], nativeWord.ll); got != nativeWord.ll {
+		t.Fatalf("native uintptr storage type = %s, want %s", got, nativeWord.ll)
+	}
+}
+
+func TestWasm32StorageIntegerConversions(t *testing.T) {
+	prog := newJ32Program(t)
+	setTestRuntime(t, prog)
+	pkg := prog.NewPackage("p", "example.com/p")
+	word := types.Typ[types.Int]
+	param := types.NewParam(token.NoPos, nil, "word", word)
+	result := types.NewParam(token.NoPos, nil, "", word)
+	sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(param), types.NewTuple(result), false)
+
+	fn := pkg.NewFunc("example.com/p.narrowInt", sig, InGo)
+	b := fn.MakeBody(1)
+	b.fitLLVMValue(b.Param(0).impl, prog.Int(), prog.Int32().ll)
+	b.Return(b.Param(0))
+	b.EndBuild()
+
+	extended := prog.fitLLVMConstant(
+		llvm.ConstInt(prog.Int32().ll, ^uint64(0), true), prog.Int32(), prog.Int().ll,
+	)
+	if got := extended.Type().IntTypeWidth(); got != 64 {
+		t.Fatalf("extended signed native int width = %d, want 64", got)
+	}
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("out-of-range signed native integer constant did not fail")
+			}
+		}()
+		prog.fitLLVMConstant(prog.IntVal(uint64(1)<<31, prog.Int()).impl, prog.Int(), prog.Int32().ll)
+	}()
+
+	ir := pkg.Module().String()
+	for _, want := range []string{"sext i32", "trunc i64", "icmp ne i64", "AssertRuntimeError"} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("J32 signed native boundary IR does not contain %q:\n%s", want, ir)
+		}
+	}
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("invalid J32 signed native-boundary module: %v\n%s", err, ir)
+	}
+}
+
+func TestWasm32PhysicalPointerIndexBounds(t *testing.T) {
+	prog := newJ32Program(t)
+	pkg := prog.NewPackage("p", "example.com/p")
+	fn := pkg.NewFunc("example.com/p.index", NoArgsNoRet, InGo)
+	b := fn.MakeBody(1)
+
+	i32 := prog.Int32()
+	alreadyPhysical := Expr{llvm.ConstInt(i32.ll, 0, false), i32}
+	if got := b.physicalPointerIndex(alreadyPhysical); got.impl != alreadyPhysical.impl {
+		t.Fatal("physical i32 pointer index was unnecessarily converted")
+	}
+	i16 := prog.Type(types.Typ[types.Int16], InGo)
+	narrow := Expr{llvm.ConstInt(i16.ll, 0, false), i16}
+	if got := b.physicalPointerIndex(narrow); got.impl != narrow.impl {
+		t.Fatal("narrow pointer index was unnecessarily converted")
+	}
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("non-integer pointer index did not fail")
+			}
+		}()
+		b.physicalPointerIndex(prog.FloatVal(0, prog.Float32()))
+	}()
+	b.Return()
+	b.EndBuild()
 }
 
 func TestWasm32PointerSlotsConvertAtMemoryBoundary(t *testing.T) {

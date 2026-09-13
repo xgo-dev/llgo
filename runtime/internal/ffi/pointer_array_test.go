@@ -5,17 +5,35 @@ package ffi
 import (
 	"runtime"
 	"testing"
+	"unsafe"
 )
 
-func TestNewSignatureStorageOwnsArgumentArray(t *testing.T) {
+func TestNewSignatureStorageOwnsTypes(t *testing.T) {
+	ret := &Type{}
 	first := &Type{}
 	second := &Type{}
 	args := []*Type{first}
-	cif, atype := newSignatureStorage(args)
+	cif, atype := newSignatureStorage(ret, args)
 	args[0] = second
 
 	if got := *atype; got != first {
 		t.Fatalf("libffi argument type = %p, want %p", got, first)
 	}
+	if got := (*signatureStorage)(unsafe.Pointer(cif)).ret; got != ret {
+		t.Fatalf("libffi return type root = %p, want %p", got, ret)
+	}
 	runtime.KeepAlive(cif)
+}
+
+func TestNewAggregateTypeOwnsElementArray(t *testing.T) {
+	first := &Type{}
+	second := &Type{}
+	elements := []*Type{first}
+	typ := StructOf(elements...)
+	elements[0] = second
+
+	if got := *typ.Elements; got != first {
+		t.Fatalf("aggregate element type = %p, want %p", got, first)
+	}
+	runtime.KeepAlive(typ)
 }
