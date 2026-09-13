@@ -50,14 +50,14 @@ func bind0(_ *ffi.Signature, _ unsafe.Pointer, args *unsafe.Pointer, userdata un
 	fd.call(ins)
 }
 
-func bind1(_ *ffi.Signature, ret unsafe.Pointer, args *unsafe.Pointer, userdata unsafe.Pointer) {
+func bind1(cif *ffi.Signature, ret unsafe.Pointer, args *unsafe.Pointer, userdata unsafe.Pointer) {
 	fd := (*funcData)(userdata)
 	ins := make([]Value, fd.nin)
 	for i := 0; i < fd.nin; i++ {
 		ins[i] = makeFuncArgValue(ffi.Index(args, uintptr(i)), fd.ftyp.In[i])
 	}
 	out := validateMakeFuncResults(fd.call(ins), fd.ftyp, fd.tout)
-	storeMakeFuncResult(ret, out[0], fd.tout[0])
+	storeMakeFuncFFIResult(ret, out[0], fd.tout[0], cif.RType)
 }
 
 func bindn(cif *ffi.Signature, ret unsafe.Pointer, args *unsafe.Pointer, userdata unsafe.Pointer) {
@@ -68,10 +68,10 @@ func bindn(cif *ffi.Signature, ret unsafe.Pointer, args *unsafe.Pointer, userdat
 	}
 	outs := validateMakeFuncResults(fd.call(ins), fd.ftyp, fd.tout)
 	var offset uintptr
-	alignment := uintptr(cif.RType.Alignment)
 	for i, out := range outs {
 		typ := fd.tout[i]
-		storeMakeFuncResult(add(ret, offset, ""), out, typ)
-		offset += (typ.Size_ + alignment - 1) &^ (alignment - 1)
+		field, fieldOffset, next := ffiResultField(cif.RType, i, offset)
+		storeMakeFuncFFIResult(add(ret, fieldOffset, ""), out, typ, field)
+		offset = next
 	}
 }

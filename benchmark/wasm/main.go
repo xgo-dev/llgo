@@ -59,8 +59,9 @@ var wasmExamples = []wasmExample{
 	// support. Do not manufacture a Go reference by replacing its source.
 	{name: "cprintf"},
 	{name: "fmtprintf", goReference: true},
-	// reflectcall forces both dynamic call directions to be retained. In W32
-	// this measures the typed-bridge fallback; JavaScript providers use libffi.
+	// reflectcall forces both dynamic call directions to be retained. Both W32
+	// entries use typed bridges, but time one representative WASI build to keep
+	// the CI cost bounded; JavaScript providers use libffi.
 	{name: "reflectcall", source: "benchmark/wasm/testdata/reflectcall/main.go", goReference: true, timedProfiles: []string{"w32-wasi"}},
 }
 

@@ -37,3 +37,15 @@ func TestNewAggregateTypeOwnsElementArray(t *testing.T) {
 	}
 	runtime.KeepAlive(typ)
 }
+
+func TestTypeElement(t *testing.T) {
+	typ := StructOf(TypeInt64, TypeInt8, TypeInt16)
+	for i, want := range []*Type{TypeInt64, TypeInt8, TypeInt16} {
+		if got := TypeElement(typ, uintptr(i)); got != want {
+			t.Fatalf("TypeElement(%d) = %p, want %p", i, got, want)
+		}
+	}
+	if TypeElement(nil, 0) != nil || TypeElement(new(Type), 0) != nil {
+		t.Fatal("TypeElement accepted an absent element array")
+	}
+}

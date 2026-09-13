@@ -17,12 +17,12 @@
 package build
 
 import (
-	"go/types"
 	"strings"
 
 	"golang.org/x/tools/go/callgraph/rta"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
+	"golang.org/x/tools/go/types/typeutil"
 )
 
 const reflectPackagePath = "reflect"
@@ -170,7 +170,7 @@ func (use *wasmProgramUse) usesWasmReflectBridges() bool {
 }
 
 func programMayCallWasmReflectBridgeIndirectly(reachable map[*ssa.Function]struct{ AddrTaken bool }) bool {
-	var functionSignatures []*types.Signature
+	var functionSignatures typeutil.Map
 	for fn := range reachable {
 		if fn == nil || ssaFunctionPackagePath(fn) != reflectPackagePath {
 			continue
@@ -184,7 +184,7 @@ func programMayCallWasmReflectBridgeIndirectly(reachable map[*ssa.Function]struc
 			continue
 		}
 		if isWasmReflectBridgeFunction(fn) && fn.Signature.Recv() == nil {
-			functionSignatures = append(functionSignatures, fn.Signature)
+			functionSignatures.Set(fn.Signature, struct{}{})
 		}
 	}
 	for fn := range reachable {
@@ -201,12 +201,8 @@ func programMayCallWasmReflectBridgeIndirectly(reachable map[*ssa.Function]struc
 				if common.IsInvoke() && common.Method != nil && isWasmReflectBridgeName(common.Method.Name()) {
 					return true
 				}
-				if !common.IsInvoke() {
-					for _, signature := range functionSignatures {
-						if types.Identical(common.Signature(), signature) {
-							return true
-						}
-					}
+				if !common.IsInvoke() && functionSignatures.At(common.Signature()) != nil {
+					return true
 				}
 			}
 		}
