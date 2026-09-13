@@ -74,6 +74,15 @@ func TestChdir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if goJSBrowserProcessUnavailable {
+		if err := os.Chdir(tmpDir); !errors.Is(err, syscall.ENOSYS) {
+			t.Fatalf("Chdir(%q) error = %v, want ENOSYS", tmpDir, err)
+		}
+		if newDir, err := os.Getwd(); err != nil || canonicalPath(newDir) != canonicalPath(origDir) {
+			t.Fatalf("Getwd after unsupported Chdir = %q, %v; want %q, nil", newDir, err, origDir)
+		}
+		return
+	}
 	defer os.Chdir(origDir)
 
 	if err := os.Chdir(tmpDir); err != nil {
@@ -280,6 +289,12 @@ func TestSetenvUnsetenv(t *testing.T) {
 
 func TestGetpid(t *testing.T) {
 	pid := os.Getpid()
+	if goJSBrowserProcessUnavailable {
+		if pid != -1 {
+			t.Errorf("Getpid() = %d, want -1 without a browser process", pid)
+		}
+		return
+	}
 	if pid <= 0 {
 		t.Errorf("Getpid() = %d, want > 0", pid)
 	}
@@ -287,6 +302,12 @@ func TestGetpid(t *testing.T) {
 
 func TestGetppid(t *testing.T) {
 	ppid := os.Getppid()
+	if goJSBrowserProcessUnavailable {
+		if ppid != -1 {
+			t.Errorf("Getppid() = %d, want -1 without a browser process", ppid)
+		}
+		return
+	}
 	if ppid <= 0 {
 		t.Errorf("Getppid() = %d, want > 0", ppid)
 	}
@@ -294,42 +315,56 @@ func TestGetppid(t *testing.T) {
 
 func TestGetuid(t *testing.T) {
 	uid := os.Getuid()
-	if runtime.GOOS == "windows" && uid != -1 {
+	if goJSBrowserProcessUnavailable && uid != -1 {
+		t.Errorf("Getuid() = %d, want -1 without a browser process", uid)
+	} else if runtime.GOOS == "windows" && uid != -1 {
 		t.Errorf("Getuid() = %d, want -1 on Windows", uid)
-	} else if runtime.GOOS != "windows" && uid < 0 {
+	} else if runtime.GOOS != "windows" && !goJSBrowserProcessUnavailable && uid < 0 {
 		t.Errorf("Getuid() = %d, want >= 0", uid)
 	}
 }
 
 func TestGeteuid(t *testing.T) {
 	euid := os.Geteuid()
-	if runtime.GOOS == "windows" && euid != -1 {
+	if goJSBrowserProcessUnavailable && euid != -1 {
+		t.Errorf("Geteuid() = %d, want -1 without a browser process", euid)
+	} else if runtime.GOOS == "windows" && euid != -1 {
 		t.Errorf("Geteuid() = %d, want -1 on Windows", euid)
-	} else if runtime.GOOS != "windows" && euid < 0 {
+	} else if runtime.GOOS != "windows" && !goJSBrowserProcessUnavailable && euid < 0 {
 		t.Errorf("Geteuid() = %d, want >= 0", euid)
 	}
 }
 
 func TestGetgid(t *testing.T) {
 	gid := os.Getgid()
-	if runtime.GOOS == "windows" && gid != -1 {
+	if goJSBrowserProcessUnavailable && gid != -1 {
+		t.Errorf("Getgid() = %d, want -1 without a browser process", gid)
+	} else if runtime.GOOS == "windows" && gid != -1 {
 		t.Errorf("Getgid() = %d, want -1 on Windows", gid)
-	} else if runtime.GOOS != "windows" && gid < 0 {
+	} else if runtime.GOOS != "windows" && !goJSBrowserProcessUnavailable && gid < 0 {
 		t.Errorf("Getgid() = %d, want >= 0", gid)
 	}
 }
 
 func TestGetegid(t *testing.T) {
 	egid := os.Getegid()
-	if runtime.GOOS == "windows" && egid != -1 {
+	if goJSBrowserProcessUnavailable && egid != -1 {
+		t.Errorf("Getegid() = %d, want -1 without a browser process", egid)
+	} else if runtime.GOOS == "windows" && egid != -1 {
 		t.Errorf("Getegid() = %d, want -1 on Windows", egid)
-	} else if runtime.GOOS != "windows" && egid < 0 {
+	} else if runtime.GOOS != "windows" && !goJSBrowserProcessUnavailable && egid < 0 {
 		t.Errorf("Getegid() = %d, want >= 0", egid)
 	}
 }
 
 func TestGetgroups(t *testing.T) {
 	groups, err := os.Getgroups()
+	if goJSBrowserProcessUnavailable {
+		if !errors.Is(err, syscall.ENOSYS) || len(groups) != 0 {
+			t.Errorf("Getgroups() = %v, %v; want empty groups and ENOSYS without a browser process", groups, err)
+		}
+		return
+	}
 	if runtime.GOOS == "windows" {
 		if err == nil || len(groups) != 0 {
 			t.Errorf("Getgroups() = %v, %v; want empty groups and unsupported error", groups, err)
@@ -1021,6 +1056,15 @@ func TestFileChdir(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.Close()
+	if goJSBrowserProcessUnavailable {
+		if err := f.Chdir(); !errors.Is(err, syscall.ENOSYS) {
+			t.Fatalf("File.Chdir error = %v, want ENOSYS", err)
+		}
+		if wd, err := os.Getwd(); err != nil || canonicalPath(wd) != canonicalPath(origDir) {
+			t.Fatalf("Getwd after unsupported File.Chdir = %q, %v; want %q, nil", wd, err, origDir)
+		}
+		return
+	}
 
 	if err := f.Chdir(); err != nil {
 		t.Errorf("File.Chdir failed: %v", err)
@@ -1047,6 +1091,15 @@ func TestFileChdirRestoresRelativeDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer orig.Close()
+	if goJSBrowserProcessUnavailable {
+		if err := os.Chdir(t.TempDir()); !errors.Is(err, syscall.ENOSYS) {
+			t.Fatalf("Chdir error = %v, want ENOSYS", err)
+		}
+		if err := orig.Chdir(); !errors.Is(err, syscall.ENOSYS) {
+			t.Fatalf("File.Chdir error = %v, want ENOSYS", err)
+		}
+		return
+	}
 
 	if err := os.Chdir(t.TempDir()); err != nil {
 		t.Fatal(err)
