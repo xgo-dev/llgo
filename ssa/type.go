@@ -243,6 +243,9 @@ func (p Program) Slice(typ Type) Type {
 
 func (p Program) Pointer(typ Type) Type {
 	ret := p.rawType(types.NewPointer(typ.raw.Type))
+	if !p.usesWideGoStorage() {
+		return ret
+	}
 	if p.isNativeStorage(typ) || p.hasNativeTypeLayout(typ.raw.Type) {
 		return p.withNativeStorage(ret)
 	}
@@ -513,10 +516,8 @@ func (p Program) toLLVMFields(raw *types.Struct, native bool) (fields []llvm.Typ
 			fieldRaw := p.patch(raw.Field(i).Type())
 			field := p.rawType(fieldRaw)
 			if native {
-				field = p.withNativeStorage(field)
-			}
-			fields[i] = field.ll
-			if !native {
+				fields[i] = p.withNativeStorage(field).ll
+			} else {
 				fields[i] = p.storageType(field)
 			}
 		}

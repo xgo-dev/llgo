@@ -142,9 +142,11 @@ type aProgram struct {
 	// LLVM type is not a safe identity for this metadata.
 	structLayouts    typeutil.Map
 	hasStructLayouts bool
-	// nativeStorage marks transient Type views whose addressable storage is
-	// owned by a C/host ABI rather than by the Go data model.
-	nativeStorage map[Type]struct{}
+	// nativeStorage caches transient Type views whose addressable storage is
+	// owned by a C/host ABI rather than by the Go data model. Canonical types
+	// map to their native view, while native views map to themselves.
+	nativeStorage map[Type]Type
+	goWordSize    int
 
 	intType   llvm.Type
 	int1Type  llvm.Type
@@ -329,14 +331,21 @@ func NewProgram(target *Target) Program {
 		ctx.Finalize()
 	*/
 	packageSyntax := newPackageSyntaxData()
+	goWordSize := td.PointerSize()
+	if target.effectiveGOARCH() == "wasm" && target.WasmProfile != "" {
+		goWordSize = 8
+	}
 	prog := &aProgram{
 		ctx: ctx, gocvt: newGoTypes(packageSyntax),
 		target: target, td: td, tm: tm,
-		ptrSize: td.PointerSize(), named: make(map[string]Type), fnnamed: make(map[string]int),
-		nativeStorage: make(map[Type]struct{}),
+		ptrSize: td.PointerSize(), goWordSize: goWordSize,
+		named: make(map[string]Type), fnnamed: make(map[string]int),
 		packageSyntax: packageSyntax, localities: newLocalityInfos(),
 		abiSymbol:          make(map[string]*AbiSymbol),
 		debugInfoOptimized: target.effectiveOptLevel() != optlevel.O0,
+	}
+	if goWordSize > prog.ptrSize {
+		prog.nativeStorage = make(map[Type]Type)
 	}
 	prog.is32Bits = prog.GoWordSize() == 4
 	prog.abi.Init(uintptr(prog.GoWordSize()), (*goProgram)(unsafe.Pointer(prog)))

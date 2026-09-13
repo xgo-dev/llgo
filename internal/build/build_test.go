@@ -757,21 +757,8 @@ func TestNeedsLinuxNoPIE(t *testing.T) {
 
 func TestDefaultBuildTags(t *testing.T) {
 	const base = "llgo,math_big_pure_go,purego"
-	for _, test := range []struct {
-		name   string
-		goarch string
-		target string
-		want   string
-	}{
-		{name: "native", goarch: "arm64", want: base},
-		{name: "raw wasm", goarch: "wasm", want: base},
-		{name: "configured wasm target", goarch: "wasm", target: "wasi", want: base},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if got := DefaultBuildTags(test.goarch, test.target); got != test.want {
-				t.Fatalf("defaultBuildTags(%q, %q) = %q, want %q", test.goarch, test.target, got, test.want)
-			}
-		})
+	if got := DefaultBuildTags(); got != base {
+		t.Fatalf("DefaultBuildTags() = %q, want %q", got, base)
 	}
 }
 

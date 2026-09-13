@@ -27,10 +27,11 @@ import (
 // Wasm addresses are i32. Pointer expressions remain LLVM pointers so memory
 // operations use the physical address width.
 func (p Program) GoWordSize() int {
-	if p.target != nil && p.target.effectiveGOARCH() == "wasm" && p.target.WasmProfile != "" {
-		return 8
-	}
-	return p.PointerSize()
+	return p.goWordSize
+}
+
+func (p Program) usesWideGoStorage() bool {
+	return p.goWordSize > p.ptrSize
 }
 
 func (p Program) needsWidePointerStorage(t Type) bool {
@@ -46,18 +47,22 @@ func (p Program) needsWidePointerStorage(t Type) bool {
 }
 
 func (p Program) isNativeStorage(t Type) bool {
-	_, ok := p.nativeStorage[t]
-	return ok
+	native, ok := p.nativeStorage[t]
+	return ok && native == t
 }
 
 func (p Program) withNativeStorage(t Type) Type {
-	if t == nil || p.isNativeStorage(t) {
+	if t == nil || !p.usesWideGoStorage() {
 		return t
+	}
+	if native, ok := p.nativeStorage[t]; ok {
+		return native
 	}
 	clone := *t
 	clone.ll = p.nativeStorageLLVMType(t.raw.Type, t.ll)
 	ret := &clone
-	p.nativeStorage[ret] = struct{}{}
+	p.nativeStorage[t] = ret
+	p.nativeStorage[ret] = ret
 	return ret
 }
 
@@ -139,6 +144,9 @@ func (p Program) withoutNativeStorage(t Type) Type {
 
 func (p Program) childStorageType(parent Type, child types.Type) Type {
 	t := p.rawType(child)
+	if !p.usesWideGoStorage() {
+		return t
+	}
 	if p.isNativeStorage(parent) || p.hasNativeTypeLayout(parent.raw.Type) || p.hasNativeTypeLayout(child) {
 		return p.withNativeStorage(t)
 	}

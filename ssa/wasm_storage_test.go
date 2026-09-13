@@ -76,6 +76,31 @@ func TestWasm32UsesGo64WordStorage(t *testing.T) {
 	}
 }
 
+func TestNativeStorageViewsAreCachedAndWasmOnly(t *testing.T) {
+	prog := newJ32Program(t)
+	word := prog.Uintptr()
+	first := prog.withNativeStorage(word)
+	if first == word {
+		t.Fatal("J32 native uintptr storage reused the Go64 view")
+	}
+	if second := prog.withNativeStorage(word); second != first {
+		t.Fatal("J32 native uintptr storage was not cached")
+	}
+	if got := len(prog.nativeStorage); got != 2 {
+		t.Fatalf("J32 native storage cache contains %d entries, want 2", got)
+	}
+
+	native := NewProgram(nil)
+	t.Cleanup(native.Dispose)
+	nativeWord := native.Uintptr()
+	if got := native.withNativeStorage(nativeWord); got != nativeWord {
+		t.Fatal("native target created an unnecessary storage view")
+	}
+	if native.nativeStorage != nil {
+		t.Fatal("native target allocated the wasm storage-view cache")
+	}
+}
+
 func TestWasm32PointerSlotsConvertAtMemoryBoundary(t *testing.T) {
 	prog := newJ32Program(t)
 	pkg := prog.NewPackage("p", "example.com/p")

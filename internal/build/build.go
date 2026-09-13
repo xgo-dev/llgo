@@ -544,7 +544,7 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 		OptLevel:                conf.OptLevel,
 		SaturatingFloatToUint32: conf.SaturatingFloatToUint32,
 	}
-	tags := DefaultBuildTags(conf.Goarch, conf.Target)
+	tags := DefaultBuildTags()
 	tags += "," + target.ClosureEnvBuildTag()
 	if conf.PCLNMode == PCLNExternal {
 		// Select the optional runtime loader as part of the normal package
@@ -1233,8 +1233,8 @@ func cSharedImportLibraryArgs(toolchain crosscompile.NativeToolchain, output str
 	return []string{"-Xlinker", "--out-implib", "-Xlinker", imports}
 }
 
-// DefaultBuildTags returns the build tags LLGo always enables for a target.
-func DefaultBuildTags(_, _ string) string {
+// DefaultBuildTags returns the build tags LLGo always enables.
+func DefaultBuildTags() string {
 	return "llgo,math_big_pure_go,purego"
 }
 
