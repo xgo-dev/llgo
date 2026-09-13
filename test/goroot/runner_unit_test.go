@@ -268,6 +268,28 @@ func TestRepositoryExpectationsAreSeparated(t *testing.T) {
 	if len(notApplicable.Entries) == 0 {
 		t.Fatal("not-applicable expectation file is empty")
 	}
+	checkSelector := func(kind, directive, casePath string) {
+		t.Helper()
+		if directive == "" || casePath == "" {
+			t.Fatalf("%s expectation has an empty directive or case: directive=%q case=%q", kind, directive, casePath)
+		}
+		if strings.ContainsAny(casePath, "*?[\\") {
+			t.Fatalf("%s expectation case %q is not a literal path", kind, casePath)
+		}
+	}
+	for kind, entries := range map[string][]xfailEntry{
+		"xfail":          xfails.Entries,
+		"flake":          xfails.Flakes,
+		"host skip":      xfails.HostSkips,
+		"not applicable": notApplicable.Entries,
+	} {
+		for _, entry := range entries {
+			checkSelector(kind, entry.Directive, entry.Case)
+		}
+	}
+	for _, entry := range xfails.Timeouts {
+		checkSelector("timeout", entry.Directive, entry.Case)
+	}
 
 	type selector struct {
 		directive string

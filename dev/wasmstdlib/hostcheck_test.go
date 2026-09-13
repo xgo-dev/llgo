@@ -229,6 +229,9 @@ func TestFullHostChecksReuseThePackageBuild(t *testing.T) {
 				t.Fatal("package test did not retain its artifact")
 			}
 			artifact = cmd.Args[i+1]
+			if err := os.WriteFile(artifact, []byte("wasm"), 0o644); err != nil {
+				t.Fatal(err)
+			}
 			return []byte("--- PASS: TestWitness (0.00s)\nPASS\n"), nil
 		}
 		children++
@@ -316,6 +319,9 @@ func TestFullHostChecksCoverRootAndLLGoExtensionSuites(t *testing.T) {
 						t.Fatalf("%s did not retain its artifact: %+v", selector, cmd)
 					}
 					artifacts[selector] = cmd.Args[i+1]
+					if err := os.WriteFile(artifacts[selector], []byte("wasm"), 0o644); err != nil {
+						t.Fatal(err)
+					}
 					return []byte("--- PASS: TestWitness (0.00s)\nPASS\n"), nil
 				case "-llgo.builtin-print-child":
 					children++

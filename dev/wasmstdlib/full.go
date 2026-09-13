@@ -172,6 +172,8 @@ func fullSourceExclusion(p profile, pkg string) (string, bool) {
 		return "BDWGC finalizer stress is native-only; linear-GC finalizers are covered by target runtime tests", true
 	case "test/_stress/runtime/signal":
 		return "POSIX signal stress is excluded by its native-only build contract", true
+	case "test/_stress/runtime/weak":
+		return "weak-reference stress explicitly excludes wasm; linear-GC weak cleanup is covered by target lifecycle tests", true
 	case "test/std/plugin":
 		return "tests select only darwin, linux, or windows; wasm has no dynamic plugin loader", true
 	case "test/std/syscall":
@@ -189,6 +191,18 @@ func fullSourceExclusion(p profile, pkg string) (string, bool) {
 	}
 	return "", false
 }
+
+func validateFullHostArtifact(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("host artifact %q was not produced: %w", path, err)
+	}
+	if !info.Mode().IsRegular() || info.Size() == 0 {
+		return fmt.Errorf("host artifact %q is not a non-empty regular file", path)
+	}
+	return nil
+}
+
 func testWitness(pkg selectedPackage) (string, error) {
 	for _, file := range append(append([]string{}, pkg.TestGoFiles...), pkg.XTestGoFiles...) {
 		f, err := parser.ParseFile(token.NewFileSet(), filepath.Join(pkg.Dir, file), nil, 0)
@@ -340,16 +354,22 @@ func runFullAt(root, name, reportPath, goCmd, llgo string, shard, shards int, st
 			if runErr == nil {
 				e.Tests, runErr = validateOutput(out, witness)
 			}
-			if e.Package == "test/go" && hostArtifact != "" {
+			hostArtifactReady := false
+			if hostArtifact != "" {
+				artifactErr := validateFullHostArtifact(hostArtifact)
+				runErr = errors.Join(runErr, artifactErr)
+				hostArtifactReady = artifactErr == nil
+			}
+			if e.Package == "test/go" && hostArtifactReady {
 				runErr = errors.Join(runErr, runFullPanicHostCheck(root, reportPath, name, p, goRoot, hostArtifact, e, run))
 				for _, invalid := range fullFinalizerInvalidCases {
 					runErr = errors.Join(runErr, runFullFinalizerHostCheck(root, reportPath, name, p, goRoot, hostArtifact, invalid, e, run))
 				}
 			}
-			if e.Package == "test" && hostArtifact != "" {
+			if e.Package == "test" && hostArtifactReady {
 				runErr = errors.Join(runErr, runFullBuiltinPrintHostCheck(root, reportPath, name, p, goRoot, hostArtifact, e, run))
 			}
-			if e.Package == "test/llgoext" && hostArtifact != "" {
+			if e.Package == "test/llgoext" && hostArtifactReady {
 				runErr = errors.Join(runErr, runFullGoexitHostCheck(root, reportPath, name, p, goRoot, hostArtifact, e, run))
 			}
 			e.Status = "pass"

@@ -161,6 +161,7 @@ func TestFullAuditAcceptsReviewedSourceExclusions(t *testing.T) {
 		"test/_stress/runtime/cpuprof",
 		"test/_stress/runtime/finalizer",
 		"test/_stress/runtime/signal",
+		"test/_stress/runtime/weak",
 		"test/cgo",
 		"test/std/plugin",
 		"test/std/runtime/cgo",
@@ -439,6 +440,50 @@ func TestFullAuditReportsArtifactWriteFailures(t *testing.T) {
 	})
 }
 
+func TestFullAuditRejectsMissingHostArtifact(t *testing.T) {
+	root, selected := fullAuditFixture(t, "test/go")
+	reportPath := filepath.Join(root, "report.json")
+	run := func(_ string, cmd command) ([]byte, error) {
+		if slices.Contains(cmd.Args, "./test/go") {
+			return []byte("=== RUN   TestFixture\n--- PASS: TestFixture (0.00s)\nPASS\n"), nil
+		}
+		t.Fatal("host child ran without its compiled artifact")
+		return nil, nil
+	}
+	err := runFullAt(root, "W32-WASI", reportPath, "go", "llgo", 0, 1, unusedStructured(selected), run)
+	if err == nil {
+		t.Fatal("missing host artifact was accepted")
+	}
+	data, readErr := os.ReadFile(reportPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !strings.Contains(string(data), "host artifact") || !strings.Contains(string(data), "was not produced") {
+		t.Fatalf("missing artifact was not reported directly: %s", data)
+	}
+}
+
+func TestFullHostArtifactMustBeNonEmptyRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := validateFullHostArtifact(dir); err == nil {
+		t.Fatal("directory was accepted as a host artifact")
+	}
+	empty := filepath.Join(dir, "empty.wasm")
+	if err := os.WriteFile(empty, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateFullHostArtifact(empty); err == nil {
+		t.Fatal("empty file was accepted as a host artifact")
+	}
+	valid := filepath.Join(dir, "valid.wasm")
+	if err := os.WriteFile(valid, []byte("wasm"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateFullHostArtifact(valid); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFullAuditClassifiesUnknownSelectionAndWitnessFailures(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
@@ -578,7 +623,7 @@ func TestFullSourceExclusionsAreProfileSpecific(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, pkg := range []string{"test/_stress/runtime/cpuprof", "test/_stress/runtime/finalizer", "test/_stress/runtime/signal", "test/std/plugin", "test/std/syscall", "test/windows"} {
+		for _, pkg := range []string{"test/_stress/runtime/cpuprof", "test/_stress/runtime/finalizer", "test/_stress/runtime/signal", "test/_stress/runtime/weak", "test/std/plugin", "test/std/syscall", "test/windows"} {
 			if reason, ok := fullSourceExclusion(p, pkg); !ok || reason == "" {
 				t.Fatalf("%s did not classify %s", name, pkg)
 			}

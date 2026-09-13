@@ -197,7 +197,7 @@ func validateOutput(output []byte, witness string) (int, error) {
 		status, rest, ok := strings.Cut(line[marker+4:], ": ")
 		fields := strings.Fields(rest)
 		validRecord := ok && len(fields) == 2 && strings.HasPrefix(fields[1], "(") && strings.HasSuffix(fields[1], ")")
-		if status == "FAIL" || status == "SKIP" && (!validRecord || !strings.Contains(fields[0], "/")) {
+		if status == "FAIL" || (status == "SKIP" && (!validRecord || !strings.Contains(fields[0], "/"))) {
 			return 0, fmt.Errorf("failed or skipped test: %s", line[marker:])
 		}
 		if validRecord && status == "PASS" && !strings.Contains(fields[0], "/") {
