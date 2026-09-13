@@ -66,6 +66,10 @@ func main() {
 		panicTracebackCaller()
 		return
 	}
+	if schedulerRepanicTracebackMode() != 0 {
+		repanicTracebackCaller()
+		return
+	}
 	if schedulerMainGoexitMode() != 0 {
 		testMainGoexit()
 		return
@@ -145,6 +149,7 @@ func main() {
 	if seenGCount != len(seenG) {
 		panic("not all goroutines ran")
 	}
+	testCallerCacheIsolation()
 	testAtomicSchedulingBoundary()
 	testGoroutineLifecycle()
 	testBlockingPrimitives()
@@ -163,6 +168,61 @@ func panicTracebackCaller() {
 	// after this defer has run.
 	defer func() {}()
 	panicTracebackSite()
+}
+
+//go:noinline
+func repanicTracebackOrigin() {
+	var pointer *int
+	_ = *pointer
+}
+
+//go:noinline
+func repanicTracebackCaller() {
+	defer func() {
+		if value := recover(); value != nil {
+			panic(value)
+		}
+	}()
+	func() {
+		defer func() {
+			if value := recover(); value != nil {
+				panic(value)
+			}
+		}()
+		repanicTracebackOrigin()
+	}()
+}
+
+func testCallerCacheIsolation() {
+	done := make(chan struct{})
+	go func() {
+		callerCacheA()
+		done <- struct{}{}
+	}()
+	<-done
+	go func() {
+		callerCacheB()
+		done <- struct{}{}
+	}()
+	<-done
+}
+
+//go:noinline
+func callerCacheA() {
+	pc, _, _, ok := runtime.Caller(0)
+	fn := runtime.FuncForPC(pc)
+	if !ok || fn == nil || fn.Name() != "main.callerCacheA" {
+		panic("caller cache A mismatch")
+	}
+}
+
+//go:noinline
+func callerCacheB() {
+	pc, _, _, ok := runtime.Caller(0)
+	fn := runtime.FuncForPC(pc)
+	if !ok || fn == nil || fn.Name() != "main.callerCacheB" {
+		panic("caller cache B mismatch")
+	}
 }
 
 func testBlockingPrimitives() {

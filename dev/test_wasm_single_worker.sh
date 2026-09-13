@@ -230,6 +230,15 @@ expect_failure "main.panicTracebackCaller" \
 expect_failure "main.panicTracebackCaller" \
 	"${wasmtime_cmd}" run -W exceptions=y --env LLGO_WASM_SCHEDULER_PANIC_TRACEBACK=1 "${work_dir}/scheduler-wasi.wasm"
 
+# A recovered panic rethrown from nested deferred activations keeps the
+# original panic site, matching Go's same-value repanic traceback semantics.
+expect_failure "main.repanicTracebackOrigin" \
+	env LLGO_WASM_SCHEDULER_REPANIC_TRACEBACK=1 "${node_cmd}" "${repo_root}/targets/emscripten-runner.mjs" "${work_dir}/scheduler-emscripten.mjs"
+expect_failure "main.repanicTracebackOrigin" \
+	env LLGO_WASM_SCHEDULER_REPANIC_TRACEBACK=1 "${node_cmd}" "${repo_root}/targets/emscripten-memory64-runner.mjs" "${work_dir}/scheduler-memory64.mjs"
+expect_failure "main.repanicTracebackOrigin" \
+	"${wasmtime_cmd}" run -W exceptions=y --env LLGO_WASM_SCHEDULER_REPANIC_TRACEBACK=1 "${work_dir}/scheduler-wasi.wasm"
+
 # Timers share the Go-derived heap but use different host-wait backends.
 run_emscripten emscripten emscripten-runner.mjs "${timer_fixture}" "wasm timers ok" "timers-emscripten"
 run_emscripten emscripten-memory64 emscripten-memory64-runner.mjs "${timer_fixture}" "wasm timers ok" "timers-memory64"

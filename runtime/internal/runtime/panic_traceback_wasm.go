@@ -10,14 +10,37 @@ func init() {
 	PanicTraceback = printWasmPanicTraceback
 }
 
+func capturePanicCallerFrames(v any) {
+	gp := getg()
+	p := &gp.panicPCs
+	// Match interface identity rather than Go equality so uncomparable panic
+	// values can reuse the original prefix too. A different panic replaces it.
+	value, recovered := efaceOf(&v), efaceOf(&p.recovered.value)
+	same := p.recovered.frame != nil && p.recovered.frame == gp.recoverFrame &&
+		value._type == recovered._type && value.data == recovered.data
+	p.recovered = recoveredPanic{}
+	if same {
+		return
+	}
+	store := callerLocationStoreCurrent
+	if store == nil {
+		return
+	}
+	store.panicDepth = len(store.stack)
+}
+
 func printWasmPanicTraceback(_ int) bool {
 	store := callerLocationStoreCurrent
 	if store == nil {
 		return false
 	}
+	frames := store.stack
+	if snapshot := activePanicCallerFrames(); len(snapshot) != 0 {
+		frames = snapshot
+	}
 	printed := false
-	for i := len(store.stack) - 1; i >= 0; i-- {
-		frame := store.stack[i]
+	for i := len(frames) - 1; i >= 0; i-- {
+		frame := frames[i]
 		if frame.Function == "" || frame.Function == "runtime.main" || frame.Function == "runtime.goexit" {
 			continue
 		}
@@ -34,4 +57,23 @@ func printWasmPanicTraceback(_ int) bool {
 		print(":", frame.Line, "\n")
 	}
 	return printed
+}
+
+func activePanicCallerFrames() []CallerFrame {
+	store := callerLocationStoreCurrent
+	if store == nil || store.panicDepth == 0 || store.panicDepth > len(store.stack) {
+		return nil
+	}
+	return store.stack[:store.panicDepth]
+}
+
+func panicCallerSnapshotAvailable() bool {
+	store := callerLocationStoreCurrent
+	return store != nil && store.panicDepth != 0 && store.panicDepth <= len(store.stack)
+}
+
+func clearPanicCallerSnapshot() {
+	if store := callerLocationStoreCurrent; store != nil {
+		store.panicDepth = 0
+	}
 }

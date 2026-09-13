@@ -29,11 +29,11 @@ type CallerFrame struct {
 	File      string
 	Line      int
 	StartLine int
-	// captured memoizes the interned synthetic PC base (seq << 2) for this
-	// exact frame content. It is cleared whenever the frame's line info
-	// changes, so repeated Caller/Callers walks over an unchanged stack skip
-	// the intern hash probe entirely. Only meaningful inside shadow-stack
-	// slots; ignored by frame comparison and hashing.
+	// captured memoizes the one-based synthetic frame index for this exact
+	// frame content. It is cleared whenever the frame's line info changes, so
+	// repeated Caller/Callers walks over an unchanged stack skip the intern
+	// hash probe entirely. Only meaningful inside shadow-stack slots; ignored
+	// by frame comparison and hashing.
 	captured uintptr
 }
 
@@ -47,12 +47,15 @@ const (
 )
 
 type callerLocationStore struct {
-	frames        []CallerFrame
-	stack         []CallerFrame
+	frames []CallerFrame
+	stack  []CallerFrame
+	// panicDepth freezes this prefix while a recovered panic can be rethrown.
+	// The backing stack itself is the snapshot, avoiding a per-panic copy.
+	panicDepth    int
 	synthetic     []CallerFrame
 	syntheticHash []uintptr
 	// Memoized synthetic PC bases for the static frames emitted around every
-	// Callers walk. Per-store because synthetic sequences are per-store.
+	// Callers walk. Per-store because the corresponding frame metadata is.
 	callersPCBase uintptr
 	mainPCBase    uintptr
 	goexitPCBase  uintptr
@@ -80,6 +83,11 @@ func PopCallerLocationFrame(mark int) {
 	oldLen := len(store.stack)
 	if mark < 0 || mark > oldLen {
 		return
+	}
+	if mark < store.panicDepth && store.panicDepth <= oldLen {
+		// A same-value repanic keeps the original Go panic record and source
+		// stack. Preserve that prefix across the corresponding longjmps.
+		mark = store.panicDepth
 	}
 	var zero CallerFrame
 	for i := mark; i < oldLen; i++ {
@@ -429,14 +437,23 @@ func syntheticFrameForPC(pc uintptr) (CallerFrame, bool) {
 	if store == nil {
 		return CallerFrame{}, false
 	}
-	seq := pc >> 2
-	if seq == 0 || seq > uintptr(len(store.synthetic)) {
+	base := pc &^ callerPCMask
+	// Sequence assignment is monotonic, so the subset appended to one
+	// goroutine's store remains sorted even when other goroutines interleave.
+	lo, hi := 0, len(store.synthetic)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		midBase := store.synthetic[mid].PC &^ callerPCMask
+		if midBase < base {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	if lo == len(store.synthetic) || store.synthetic[lo].PC&^callerPCMask != base {
 		return CallerFrame{}, false
 	}
-	frame := store.synthetic[seq-1]
-	if frame.PC>>2 != seq {
-		return CallerFrame{}, false
-	}
+	frame := store.synthetic[lo]
 	frame.PC = pc
 	if frame.Entry == 0 {
 		frame.Entry = pc
@@ -456,8 +473,7 @@ func callerLocationStoreForGoroutine() *callerLocationStore {
 func (s *callerLocationStore) captureFrame(frame CallerFrame, pcValue uintptr) CallerFrame {
 	idx := s.internSyntheticFrame(frame)
 	rec := s.synthetic[idx]
-	seq := uintptr(idx + 1)
-	rec.PC = (seq << 2) | pcValue
+	rec.PC = rec.PC&^callerPCMask | pcValue
 	if rec.Entry == 0 {
 		rec.Entry = rec.PC
 	}
@@ -468,22 +484,22 @@ func (s *callerLocationStore) captureFrame(frame CallerFrame, pcValue uintptr) C
 // interned base in the slot so an unchanged frame costs two loads instead of
 // a hash probe plus frame comparison.
 func (s *callerLocationStore) capturePC(frame *CallerFrame, pcValue uintptr) uintptr {
-	if frame.captured != 0 {
-		return frame.captured | pcValue
+	idx := int(frame.captured) - 1
+	if idx < 0 {
+		idx = s.internSyntheticFrame(*frame)
+		frame.captured = uintptr(idx + 1)
 	}
-	idx := s.internSyntheticFrame(*frame)
-	base := uintptr(idx+1) << 2
-	frame.captured = base
+	base := s.synthetic[idx].PC &^ callerPCMask
 	return base | pcValue
 }
 
 // captureFrameAt is capturePC plus the full frame copy Caller needs.
 func (s *callerLocationStore) captureFrameAt(frame *CallerFrame, pcValue uintptr) CallerFrame {
 	pc := s.capturePC(frame, pcValue)
-	rec := s.synthetic[(pc>>2)-1]
+	rec := s.synthetic[int(frame.captured)-1]
 	rec.PC = pc
 	if rec.Entry == 0 {
-		rec.Entry = rec.PC
+		rec.Entry = pc
 	}
 	return rec
 }
@@ -492,7 +508,8 @@ func (s *callerLocationStore) captureFrameAt(frame *CallerFrame, pcValue uintptr
 // runtime.main) in the per-store cache slot.
 func (s *callerLocationStore) staticPC(frame CallerFrame, cache *uintptr, pcValue uintptr) uintptr {
 	if *cache == 0 {
-		*cache = uintptr(s.internSyntheticFrame(frame)+1) << 2
+		idx := s.internSyntheticFrame(frame)
+		*cache = s.synthetic[idx].PC &^ callerPCMask
 	}
 	return *cache | pcValue
 }
@@ -509,7 +526,7 @@ func (s *callerLocationStore) internSyntheticFrame(frame CallerFrame) int {
 	for {
 		idx := s.syntheticHash[slot]
 		if idx == 0 {
-			frame.PC = (uintptr(len(s.synthetic)+1) << 2) | callerPCValue
+			frame.PC = nextCallerPCBase(s) | callerPCValue
 			s.synthetic = append(s.synthetic, frame)
 			s.syntheticHash[slot] = uintptr(len(s.synthetic))
 			return len(s.synthetic) - 1

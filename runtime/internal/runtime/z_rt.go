@@ -90,9 +90,9 @@ func Recover(token unsafe.Pointer) (ret any) {
 		// to mark.
 		if RecoverMark != nil {
 			RecoverMark()
-			if gp.panicPCs.n != 0 {
-				gp.panicPCs.recovered = recoveredPanic{value: ret, frame: gp.recoverFrame}
-			}
+		}
+		if panicCallerSnapshotAvailable() {
+			gp.panicPCs.recovered = recoveredPanic{value: ret, frame: gp.recoverFrame}
 		}
 	}
 	return
@@ -120,6 +120,7 @@ func EndRecoverFrame(state recoverState) {
 	gp := getg()
 	if gp.panicPCs.recovered.frame == gp.recoverFrame {
 		gp.panicPCs.recovered = recoveredPanic{}
+		clearPanicCallerSnapshot()
 	}
 	gp.recoverFrame = state.frame
 	gp.recoverPanic = state.panic_
@@ -156,6 +157,7 @@ func EndRecoverFrameAlias(frame unsafe.Pointer) {
 	// value when restoring the transparent wrapper's direct-call token.
 	if gp.recoverFrame != frame && gp.panicPCs.recovered.frame == gp.recoverFrame {
 		gp.panicPCs.recovered = recoveredPanic{}
+		clearPanicCallerSnapshot()
 	}
 	gp.recoverFrame = frame
 }
@@ -182,6 +184,7 @@ func (gp *g) abortPanics() {
 	gp.recoverFrame = nil
 	gp.recoverPanic = nil
 	gp.panicPCs.recovered = recoveredPanic{}
+	clearPanicCallerSnapshot()
 	if discarded && PanicRecovered != nil {
 		PanicRecovered()
 	}
@@ -205,6 +208,7 @@ func Panic(v any) {
 	if v == nil {
 		v = &PanicNilError{}
 	}
+	capturePanicCallerFrames(v)
 	if PanicPCSnapshot != nil {
 		PanicPCSnapshot(v)
 	}

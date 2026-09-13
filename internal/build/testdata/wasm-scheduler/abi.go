@@ -15,3 +15,6 @@ func schedulerMainGoexitMode() int32
 
 //go:linkname schedulerPanicTracebackMode C.llgo_test_scheduler_panic_traceback
 func schedulerPanicTracebackMode() int32
+
+//go:linkname schedulerRepanicTracebackMode C.llgo_test_scheduler_repanic_traceback
+func schedulerRepanicTracebackMode() int32
