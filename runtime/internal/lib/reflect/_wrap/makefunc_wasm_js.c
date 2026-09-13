@@ -6,7 +6,8 @@
 
 extern int llgo_emscripten_asyncify_state(void);
 extern void *llgo_reflect_invoke_js(void **args, void *userdata);
-extern void llgo_reflect_store1_js(void *ret, void *userdata, void *result);
+extern void llgo_reflect_store1_js(ffi_cif *cif, void *ret, void *userdata,
+                                   void *result);
 extern void llgo_reflect_storen_js(ffi_cif *cif, void *ret, void *userdata,
                                    void *result);
 
@@ -24,10 +25,9 @@ void llgo_reflect_bind0_js(ffi_cif *cif, void *ret, void **args,
 void llgo_reflect_bind1_js(ffi_cif *cif, void *ret, void **args,
                            void *userdata) {
   void *result;
-  (void)cif;
   result = llgo_reflect_invoke_js(args, userdata);
   if (llgo_emscripten_asyncify_state() == 0)
-    llgo_reflect_store1_js(ret, userdata, result);
+    llgo_reflect_store1_js(cif, ret, userdata, result);
 }
 
 void llgo_reflect_bindn_js(ffi_cif *cif, void *ret, void **args,

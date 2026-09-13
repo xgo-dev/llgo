@@ -171,7 +171,7 @@ func copyBytesToJS(dst ref, src []byte) (int, bool) {
 
 var hostEventHandler func() bool
 var hostEventPending uint32
-var hostEventDispatching bool
+var hostEventFetching bool
 
 func setEventHandler(fn func() bool) {
 	hostEventHandler = fn
@@ -191,12 +191,12 @@ func dispatchHostEvent() {
 }
 
 func pollHostEvents() {
-	if hostEventPending != 0 && !hostEventDispatching {
-		hostEventDispatching = true
+	if hostEventPending != 0 && !hostEventFetching {
+		hostEventFetching = true
 		go func() {
 			var f hostFrame
 			hostCallOp(hostTakeEvent, &f)
-			hostEventDispatching = false
+			hostEventFetching = false
 			dispatchHostEvent()
 		}()
 	}

@@ -27,6 +27,7 @@ import (
 
 	"github.com/xgo-dev/llgo/runtime/abi"
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
+	"github.com/xgo-dev/llgo/runtime/internal/ffi"
 	"github.com/xgo-dev/llgo/runtime/internal/runtime"
 )
 
@@ -86,6 +87,28 @@ func storeMakeFuncResult(ret unsafe.Pointer, v Value, typ *abi.Type) {
 		return
 	}
 	c.Memmove(ret, toFFIArg(v, typ), typ.Size_)
+}
+
+func storeMakeFuncFFIResult(ret unsafe.Pointer, v Value, typ *abi.Type, ffiType *ffi.Type) {
+	size := typ.Size_
+	if ffiType.Size < size {
+		size = ffiType.Size
+	}
+	if size != 0 {
+		c.Memmove(ret, toFFIArg(v, typ), size)
+	}
+}
+
+func ffiResultField(aggregate *ffi.Type, index int, offset uintptr) (field *ffi.Type, fieldOffset, next uintptr) {
+	field = ffi.TypeElement(aggregate, uintptr(index))
+	if field == nil {
+		panic("reflect: missing libffi result field")
+	}
+	fieldOffset = offset
+	if alignment := uintptr(field.Alignment); alignment > 1 {
+		fieldOffset = align(fieldOffset, alignment)
+	}
+	return field, fieldOffset, fieldOffset + field.Size
 }
 
 func ffiToValue(ptr unsafe.Pointer, typ *abi.Type) (v Value) {

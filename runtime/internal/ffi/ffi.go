@@ -89,3 +89,12 @@ func (c *Closure) Bind(cif *Signature, fn ffi.ClosureFunc, userdata unsafe.Point
 func Index(args *unsafe.Pointer, i uintptr) unsafe.Pointer {
 	return ffi.Index(args, i)
 }
+
+// TypeElement returns one entry from a null-terminated aggregate element
+// array. The array follows the physical pointer width used by libffi.
+func TypeElement(aggregate *Type, i uintptr) *Type {
+	if aggregate == nil || aggregate.Elements == nil {
+		return nil
+	}
+	return (*Type)(ffi.Index((*unsafe.Pointer)(unsafe.Pointer(aggregate.Elements)), i))
+}

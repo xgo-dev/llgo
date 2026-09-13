@@ -199,3 +199,26 @@ func TestReflectABIKinds(t *testing.T) {
 	})
 	check("MakeFunc", value.Call(arguments))
 }
+
+func TestReflectMixedResultLayout(t *testing.T) {
+	type signature func() (int64, int8, int16)
+	check := func(name string, results []reflect.Value) {
+		t.Helper()
+		if len(results) != 3 || results[0].Int() != 0x1122334455667788 || results[1].Int() != 0x21 || results[2].Int() != 0x3344 {
+			t.Fatalf("%s results = %v", name, results)
+		}
+	}
+	implementation := signature(func() (int64, int8, int16) {
+		return 0x1122334455667788, 0x21, 0x3344
+	})
+	check("Call", reflect.ValueOf(implementation).Call(nil))
+
+	value := reflect.MakeFunc(reflect.TypeOf(signature(nil)), func([]reflect.Value) []reflect.Value {
+		return []reflect.Value{
+			reflect.ValueOf(int64(0x1122334455667788)),
+			reflect.ValueOf(int8(0x21)),
+			reflect.ValueOf(int16(0x3344)),
+		}
+	})
+	check("MakeFunc", value.Call(nil))
+}

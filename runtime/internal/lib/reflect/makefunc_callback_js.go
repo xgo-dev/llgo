@@ -56,10 +56,10 @@ func invokeJSMakeFunc(args *unsafe.Pointer, userdata unsafe.Pointer) unsafe.Poin
 }
 
 //export llgo_reflect_store1_js
-func storeJSMakeFuncResult1(ret, userdata, result unsafe.Pointer) {
+func storeJSMakeFuncResult1(cif *ffi.Signature, ret, userdata, result unsafe.Pointer) {
 	fd := (*funcData)(userdata)
 	out := (*jsMakeFuncResult)(result).out
-	storeMakeFuncResult(ret, out[0], fd.tout[0])
+	storeMakeFuncFFIResult(ret, out[0], fd.tout[0], cif.RType)
 }
 
 //export llgo_reflect_storen_js
@@ -67,10 +67,10 @@ func storeJSMakeFuncResultN(cif *ffi.Signature, ret, userdata, result unsafe.Poi
 	fd := (*funcData)(userdata)
 	outs := (*jsMakeFuncResult)(result).out
 	var offset uintptr
-	alignment := uintptr(cif.RType.Alignment)
 	for i, out := range outs {
 		typ := fd.tout[i]
-		storeMakeFuncResult(add(ret, offset, ""), out, typ)
-		offset += (typ.Size_ + alignment - 1) &^ (alignment - 1)
+		field, fieldOffset, next := ffiResultField(cif.RType, i, offset)
+		storeMakeFuncFFIResult(add(ret, fieldOffset, ""), out, typ, field)
+		offset = next
 	}
 }
