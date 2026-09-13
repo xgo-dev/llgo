@@ -4,7 +4,6 @@ package runtime
 
 import (
 	"unsafe"
-	_ "unsafe"
 )
 
 //go:linkname goJSRandomData C.llgo_js_random_data

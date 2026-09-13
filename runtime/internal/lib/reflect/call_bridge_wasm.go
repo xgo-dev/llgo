@@ -11,6 +11,16 @@ import (
 
 const useWasmReflectBridges = true
 
+var (
+	wasmReflectOnlyPointer    unsafe.Pointer
+	wasmMakeFuncInvokePointer unsafe.Pointer
+)
+
+func init() {
+	wasmReflectOnlyPointer = ValueOf(wasmReflectOnly).UnsafePointer()
+	wasmMakeFuncInvokePointer = ValueOf(wasmMakeFuncInvoke).UnsafePointer()
+}
+
 func callWasmBridge(ft *abi.FuncType, fn, env unsafe.Pointer, method bool, prefix []unsafe.Pointer, in []Value) []Value {
 	if method {
 		env = *(*unsafe.Pointer)(prefix[0])
@@ -25,7 +35,7 @@ func callWasmBridge(ft *abi.FuncType, fn, env unsafe.Pointer, method bool, prefi
 	for i, typ := range tout {
 		results[i] = runtime.AllocZ(typ.Size_)
 	}
-	if fn == ValueOf(wasmReflectOnly).UnsafePointer() && !method {
+	if fn == wasmReflectOnlyPointer && !method {
 		wasmMakeFuncInvoke(env, unsafe.SliceData(args), unsafe.SliceData(results))
 	} else {
 		code := ft.Call_
@@ -66,10 +76,10 @@ func makeProviderFunc(ft *abi.FuncType, fn func([]Value) []Value, recoverTo unsa
 	if code == nil {
 		// A FuncOf signature with dynamically created parameter types cannot
 		// appear at a compiled call site. It remains callable via reflection.
-		code = ValueOf(wasmReflectOnly).UnsafePointer()
+		code = wasmReflectOnlyPointer
 	}
 	data := &wasmMakeFuncData{
-		callback: ValueOf(wasmMakeFuncInvoke).UnsafePointer(),
+		callback: wasmMakeFuncInvokePointer,
 		data: funcData{
 			ftyp: ft, tout: toRuntimeTypes(ft.Out), fn: fn, nin: len(ft.In),
 			recoverFrom: code, recoverTo: recoverTo,

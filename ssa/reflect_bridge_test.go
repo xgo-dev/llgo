@@ -253,7 +253,7 @@ func TestWasmReflectRootShape(t *testing.T) {
 
 	stringShape := shape(types.Typ[types.String])
 	sliceShape := shape(types.NewSlice(types.Typ[types.Int]))
-	if stringShape == sliceShape || !strings.HasSuffix(stringShape, "0r") || !strings.HasSuffix(sliceShape, "0r") {
+	if stringShape != "s0r" || sliceShape != "l0r" {
 		t.Fatalf("string/slice root shapes = %q/%q", stringShape, sliceShape)
 	}
 	emptyInterface := types.NewInterfaceType(nil, nil).Complete()
