@@ -1447,6 +1447,9 @@ type context struct {
 	stripDarwinLTOLocals bool
 
 	buildTrace *buildTracer
+
+	wasmProgramUseOnce sync.Once
+	wasmProgramUse     *wasmProgramUse
 }
 
 // backendAbiTypes snapshots Go-owned type identities from isolated Programs

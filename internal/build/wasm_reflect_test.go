@@ -158,6 +158,40 @@ func TestConfigureWasmFuncInfoEntries(t *testing.T) {
 	}
 }
 
+func TestConfigureWasmProgramAnalysisShared(t *testing.T) {
+	pkg := buildWasmReflectTestProgram(t, `package main
+import (
+	"reflect"
+	"runtime"
+)
+func main() {
+	reflect.ValueOf(func() {}).Call(nil)
+	_ = runtime.FuncForPC(0)
+}`)
+	target := &llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"}
+	prog := llssa.NewProgram(target)
+	defer prog.Dispose()
+	ctx := &context{
+		prog:      prog,
+		progSSA:   pkg.Prog,
+		initial:   []*packages.Package{{Types: pkg.Pkg}},
+		buildConf: &Config{BuildMode: BuildModeExe},
+	}
+
+	configureWasmReflectBridges(ctx)
+	analysis := ctx.wasmProgramUse
+	if analysis == nil {
+		t.Fatal("reflection configuration did not analyze the WebAssembly program")
+	}
+	configureWasmFuncInfoEntries(ctx)
+	if ctx.wasmProgramUse != analysis {
+		t.Fatal("reflection bridges and function metadata used different program analyses")
+	}
+	if !target.WasmReflectBridges || !target.WasmFuncInfoEntries {
+		t.Fatalf("WebAssembly features = bridges %v, function entries %v", target.WasmReflectBridges, target.WasmFuncInfoEntries)
+	}
+}
+
 func TestProgramUsesWasmReflectBridges(t *testing.T) {
 	if programUsesWasmReflectBridges(nil, nil) {
 		t.Fatal("nil program may not require reflection bridges")

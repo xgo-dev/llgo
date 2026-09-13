@@ -38,7 +38,7 @@ func configureWasmReflectBridges(ctx *context) {
 	}
 	target := ctx.prog.Target()
 	wasiProvider := target.GOARCH == "wasm" && target.WasmProvider == "wasi"
-	target.WasmReflectBridges = wasiProvider && programUsesWasmReflectBridges(ctx.progSSA, wasmReflectRoots(ctx))
+	target.WasmReflectBridges = wasiProvider && wasmProgramUseFor(ctx).usesWasmReflectBridges()
 }
 
 // configureWasmFuncInfoEntries keeps table-index metadata out of ordinary
@@ -59,22 +59,55 @@ func configureWasmFuncInfoEntries(ctx *context) {
 		target.WasmFuncInfoEntries = true
 		return
 	}
-	target.WasmFuncInfoEntries = programUsesRuntimeFuncForPC(ctx.progSSA, wasmReflectRoots(ctx))
+	target.WasmFuncInfoEntries = wasmProgramUseFor(ctx).usesRuntimeFuncForPC()
+}
+
+type wasmProgramUse struct {
+	rooted    bool
+	reachable map[*ssa.Function]struct{ AddrTaken bool }
+	all       map[*ssa.Function]bool
+}
+
+func wasmProgramUseFor(ctx *context) *wasmProgramUse {
+	if ctx == nil {
+		return nil
+	}
+	ctx.wasmProgramUseOnce.Do(func() {
+		ctx.wasmProgramUse = analyzeWasmProgramUse(ctx.progSSA, wasmReflectRoots(ctx))
+	})
+	return ctx.wasmProgramUse
+}
+
+func analyzeWasmProgramUse(prog *ssa.Program, roots []*ssa.Function) *wasmProgramUse {
+	use := &wasmProgramUse{rooted: len(roots) != 0}
+	if prog == nil {
+		return use
+	}
+	if use.rooted {
+		use.reachable = rta.Analyze(roots, false).Reachable
+	} else {
+		use.all = ssautil.AllFunctions(prog)
+	}
+	return use
 }
 
 func programUsesRuntimeFuncForPC(prog *ssa.Program, roots []*ssa.Function) bool {
-	if prog == nil {
+	return analyzeWasmProgramUse(prog, roots).usesRuntimeFuncForPC()
+}
+
+func (use *wasmProgramUse) usesRuntimeFuncForPC() bool {
+	if use == nil {
 		return false
 	}
-	if len(roots) != 0 {
-		for fn := range rta.Analyze(roots, false).Reachable {
+	if use.rooted {
+		for fn := range use.reachable {
 			if isRuntimeFuncForPC(fn) {
 				return true
 			}
 		}
 		return false
 	}
-	for fn := range ssautil.AllFunctions(prog) {
+	for fn := range use.all {
 		if isRuntimeFuncForPC(fn) {
 			return true
 		}
@@ -109,12 +142,15 @@ func wasmReflectRoots(ctx *context) (roots []*ssa.Function) {
 }
 
 func programUsesWasmReflectBridges(prog *ssa.Program, roots []*ssa.Function) bool {
-	if prog == nil {
+	return analyzeWasmProgramUse(prog, roots).usesWasmReflectBridges()
+}
+
+func (use *wasmProgramUse) usesWasmReflectBridges() bool {
+	if use == nil {
 		return false
 	}
-	if len(roots) != 0 {
-		result := rta.Analyze(roots, false)
-		for fn := range result.Reachable {
+	if use.rooted {
+		for fn := range use.reachable {
 			if functionCallsWasmReflectBridge(fn) {
 				return true
 			}
@@ -123,9 +159,9 @@ func programUsesWasmReflectBridges(prog *ssa.Program, roots []*ssa.Function) boo
 		// reflect.Value values. Require an actual direct call above, or a
 		// plausible indirect function/interface call here, so ordinary value
 		// inspection (notably fmt) does not turn on every typed bridge.
-		return programMayCallWasmReflectBridgeIndirectly(result.Reachable)
+		return programMayCallWasmReflectBridgeIndirectly(use.reachable)
 	}
-	for fn := range ssautil.AllFunctions(prog) {
+	for fn := range use.all {
 		if functionCallsWasmReflectBridge(fn) {
 			return true
 		}

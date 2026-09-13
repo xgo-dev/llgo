@@ -5,7 +5,10 @@
 
 package js
 
-import "unsafe"
+import (
+	"runtime"
+	"unsafe"
+)
 
 // hostFrame has fixed-width slots; Go refs keep GOROOT's NaN-boxed format.
 type hostFrame [6]uint64
@@ -60,12 +63,14 @@ func finalizeRef(r ref) {
 func stringVal(s string) ref {
 	f := hostFrame{0, 0, uint64(uintptr(unsafe.Pointer(unsafe.StringData(s)))), uint64(len(s))}
 	hostCallOp(hostString, &f)
+	runtime.KeepAlive(s)
 	return ref(f[0])
 }
 
 func valueGet(v ref, key string) ref {
 	f := propertyFrame(v, key)
 	hostCallOp(hostGet, &f)
+	runtime.KeepAlive(key)
 	return ref(f[0])
 }
 
@@ -73,11 +78,13 @@ func valueSet(v ref, key string, x ref) {
 	f := propertyFrame(v, key)
 	f[1] = uint64(x)
 	hostCallOp(hostSet, &f)
+	runtime.KeepAlive(key)
 }
 
 func valueDelete(v ref, key string) {
 	f := propertyFrame(v, key)
 	hostCallOp(hostDelete, &f)
+	runtime.KeepAlive(key)
 }
 
 func propertyFrame(v ref, key string) hostFrame {
@@ -103,7 +110,9 @@ func valueLength(v ref) int {
 
 func valueCall(v ref, method string, args []ref) (ref, bool) {
 	f := propertyFrame(v, method)
-	return callFrame(hostCall, &f, args)
+	result, ok := callFrame(hostCall, &f, args)
+	runtime.KeepAlive(method)
+	return result, ok
 }
 
 func valueInvoke(v ref, args []ref) (ref, bool) {
@@ -120,6 +129,7 @@ func callFrame(op int32, f *hostFrame, args []ref) (ref, bool) {
 	f[4] = uint64(uintptr(unsafe.Pointer(unsafe.SliceData(args))))
 	f[5] = uint64(len(args))
 	hostCallOp(op, f)
+	runtime.KeepAlive(args)
 	return ref(f[0]), f[1] != 0
 }
 
@@ -132,6 +142,7 @@ func valuePrepareString(v ref) (ref, int) {
 func valueLoadString(v ref, b []byte) {
 	f := bytesFrame(v, b)
 	hostCallOp(hostLoadString, &f)
+	runtime.KeepAlive(b)
 }
 
 func valueInstanceOf(v, constructor ref) bool {
@@ -147,12 +158,14 @@ func bytesFrame(v ref, b []byte) hostFrame {
 func copyBytesToGo(dst []byte, src ref) (int, bool) {
 	f := bytesFrame(src, dst)
 	hostCallOp(hostCopyToGo, &f)
+	runtime.KeepAlive(dst)
 	return int(f[0]), f[1] != 0
 }
 
 func copyBytesToJS(dst ref, src []byte) (int, bool) {
 	f := bytesFrame(dst, src)
 	hostCallOp(hostCopyToJS, &f)
+	runtime.KeepAlive(src)
 	return int(f[0]), f[1] != 0
 }
 
@@ -169,7 +182,12 @@ func setEventHandler(fn func() bool) {
 // Nested Go-to-JS-to-Go calls run on the calling G, matching Go's event
 // handler contract. External events enter through the scheduler below.
 func dispatchHostEvent() {
-	handleHostEvent(func() { hostEventHandler() })
+	handleHostEvent(func() {
+		// GOROOT uses the result to distinguish an event from its timer wake.
+		// LLGo invokes this trampoline only after publishing a host event;
+		// timers use the scheduler's separate host-wait backend.
+		_ = hostEventHandler()
+	})
 }
 
 func pollHostEvents() {

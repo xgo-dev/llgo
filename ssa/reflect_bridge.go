@@ -133,8 +133,11 @@ func (p Program) appendWasmRootShape(shape *strings.Builder, typ Type) {
 	switch typ.kind {
 	case vkPtr, vkMap, vkChan:
 		shape.WriteByte('r')
-	case vkString, vkSlice:
-		shape.WriteByte(byte('a' + typ.kind))
+	case vkString:
+		shape.WriteByte('s')
+		shape.WriteString("0r")
+	case vkSlice:
+		shape.WriteByte('l')
 		shape.WriteString("0r")
 	case vkEface, vkIface:
 		shape.WriteByte('i')
