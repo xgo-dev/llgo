@@ -139,6 +139,10 @@ function encoder() {
   assertEq(ctx.fs.openSync("/tmp/review2.txt", 64, 0o666), 10, "openSync fd");
   const n = ctx.fs.writeSync(10, encoder().encode("hi"), 0, 2, null);
   assertEq(n, 2, "writeSync bytes");
+  assert(ctx.fs.readSync === undefined, "readSync must not be synthesized; blocking reads freeze the scheduler");
+  assert(ctx.fs.fsyncSync === undefined, "fsyncSync must not be synthesized; blocking fsync freezes the scheduler");
+  assert(typeof ctx.fs.writeSync === "function", "writeSync remains available for non-blocking writes");
+  assert(typeof ctx.fs.openSync === "function", "openSync remains available");
   assertEq(ctx.path.resolve("foo", "../bar"), "/tmp/bar", "path.resolve uses cwd and normalizes ..");
   assertEq(ctx.path.resolve("/a", "b", "/c", "d"), "/c/d", "path.resolve resets on absolute segment");
   assertEq(ctx.path.resolve(1, "x"), "/tmp/1/x", "path.resolve stringifies non-string segments");

@@ -213,11 +213,16 @@
   }
 
   function addSyncMethods(fs) {
+    // read and fsync can block the host (stdin, pipes, slow disks). The Go
+    // fsCall path keeps those methods async even when *Sync exists, so do not
+    // synthesize blocking wrappers that would freeze the single-threaded
+    // scheduler if anything selected them by method existence.
+    const skipSync = { read: true, fsync: true };
     const names = Object.keys(fs);
     for (let i = 0; i < names.length; i++) {
       const name = names[i];
       if (name === "constants" || name.endsWith("Sync") || typeof fs[name] !== "function") continue;
-      if (fs[name + "Sync"]) continue;
+      if (skipSync[name] || fs[name + "Sync"]) continue;
       const asyncFn = fs[name];
       fs[name + "Sync"] = function () {
         const args = Array.prototype.slice.call(arguments);
