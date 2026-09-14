@@ -150,6 +150,39 @@ function encoder() {
 }
 
 {
+  const ctx = loadShim();
+  const errnoError = (errno) => {
+    const e = new Error("ErrnoError");
+    e.code = "ErrnoError";
+    e.errno = errno;
+    return e;
+  };
+  ctx.llgoAttachWasmFS({
+    FS: {
+      write() { throw errnoError(44); },
+      getStreamChecked() { return {}; },
+      chdir() { throw errnoError(44); },
+    },
+  });
+  let threw = false;
+  try {
+    ctx.fs.writeSync(10, encoder().encode("x"), 0, 1, null);
+  } catch (e) {
+    threw = true;
+    assertEq(e.code, "ENOENT", "writeSync normalizes ErrnoError errno to Node code");
+  }
+  assert(threw, "writeSync threw");
+  threw = false;
+  try {
+    ctx.process.chdir("/missing");
+  } catch (e) {
+    threw = true;
+    assertEq(e.code, "ENOENT", "chdir normalizes ErrnoError errno to Node code");
+  }
+  assert(threw, "chdir threw");
+}
+
+{
   const printed = [];
   const ctx = loadShim({ Module: { print: (line) => printed.push(line) } });
   assert(typeof ctx.fs.writeSync === "function", "global Module is attached at load");

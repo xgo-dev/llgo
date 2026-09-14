@@ -22,6 +22,16 @@ func TestStandardLibraryWasmAssembly(t *testing.T) {
 	}
 }
 
+func TestStatMissingPathIsNotExist(t *testing.T) {
+	_, err := os.Stat("/llgo-pr2539-definitely-does-not-exist")
+	if err == nil {
+		t.Fatal("Stat of missing path succeeded")
+	}
+	if !os.IsNotExist(err) {
+		t.Fatalf("Stat missing path: %v, want os.IsNotExist", err)
+	}
+}
+
 func TestSyncFileIO(t *testing.T) {
 	path := "llgo-fs-sync.txt"
 	const want = "hello-sync\n"

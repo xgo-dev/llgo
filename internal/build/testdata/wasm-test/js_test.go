@@ -160,6 +160,31 @@ func installDelayedFSMethod(t *testing.T, name, syncName string, params []any, b
 	`))
 }
 
+func TestJSCallPreservesThrownError(t *testing.T) {
+	fn := js.Global().Get("Function").New(`
+		const err = new Error("missing");
+		err.code = "ENOENT";
+		throw err;
+	`)
+	obj := js.Global().Get("Object").New()
+	obj.Set("boom", fn)
+
+	defer func() {
+		rec := recover()
+		if rec == nil {
+			t.Fatal("Call did not panic")
+		}
+		jsErr, ok := rec.(js.Error)
+		if !ok {
+			t.Fatalf("recovered %T %v, want js.Error", rec, rec)
+		}
+		if got := jsErr.Get("code").String(); got != "ENOENT" {
+			t.Fatalf("js.Error code = %q, want ENOENT", got)
+		}
+	}()
+	obj.Call("boom")
+}
+
 func TestJSValueZeroIsUndefined(t *testing.T) {
 	var value js.Value
 	if !value.IsUndefined() || value.Type() != js.TypeUndefined {

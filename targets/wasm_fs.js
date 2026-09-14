@@ -202,14 +202,19 @@
   }
 
   function writeSync(fd, buf, offset, length, position) {
-    if (typeof offset === "number" && typeof length === "number") {
-      buf = sliceBuf(buf, offset, length);
+    try {
+      if (typeof offset === "number" && typeof length === "number") {
+        buf = sliceBuf(buf, offset, length);
+      }
+      if (fd === 1 || fd === 2) {
+        if (position != null) throw enosys();
+        return writeStdio(fd, buf);
+      }
+      return emFS().write(streamOf(fd), buf, 0, buf.length, position == null ? undefined : position);
+    } catch (e) {
+      // Optimized Emscripten ErrnoError has errno but no Node-style code.
+      throw toNodeError(e);
     }
-    if (fd === 1 || fd === 2) {
-      if (position != null) throw enosys();
-      return writeStdio(fd, buf);
-    }
-    return emFS().write(streamOf(fd), buf, 0, buf.length, position == null ? undefined : position);
   }
 
   function addSyncMethods(fs) {
@@ -366,7 +371,13 @@
       cwd() { return currentCwd(); },
       chdir(path) {
         const fs = currentFS();
-        if (fs && fs.chdir) fs.chdir(path);
+        if (fs && fs.chdir) {
+          try {
+            fs.chdir(path);
+          } catch (e) {
+            throw toNodeError(e);
+          }
+        }
       },
     };
   }
