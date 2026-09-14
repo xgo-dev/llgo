@@ -30,7 +30,7 @@ define i32 @read_same() {
 }
 `)
 		if annotated {
-			attrs, sig, err := parseTest(t, "//llgo:attr param(p) noalias\nfunc F(p, q *int32) int32 { return 0 }")
+			attrs, sig, err := parseTest(t, "//llgo:param(p) noalias\nfunc F(p, q *int32) int32 { return 0 }")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -53,7 +53,7 @@ define i32 @read_same() {
 
 func TestNoAliasRemapsParameterNotTransport(t *testing.T) {
 	mod := valueTestModule(t, "declare void @old(ptr)\ndeclare void @direct(ptr, ptr)\ndeclare void @indirect(ptr)\n")
-	attrs, sig, err := parseTest(t, "//llgo:attr param(p) noalias\nfunc F(p *int32) {}")
+	attrs, sig, err := parseTest(t, "//llgo:param(p) noalias\nfunc F(p *int32) {}")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -743,7 +743,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			p.methodNilDerefChecks, p.recvNilDerefChecks = collectMethodNilDerefChecks(f, p.options.ReceiverNilChecks)
 			p.prepareCooperativeSafepoints(f, isCgo)
 			if p.safepointEntry {
-				fn.CheckAttributeInstrumentation("cooperative safepoints", "memory", "nofree", "nosync", "nounwind", "willreturn", "captures")
+				fn.CheckAttributeInstrumentation("cooperative safepoints", "access", "noalias")
 			}
 			p.prepareGCRoots(f, hasCtx)
 			p.initGCRoots(b, f)

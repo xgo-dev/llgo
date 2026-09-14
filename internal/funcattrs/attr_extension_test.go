@@ -6,8 +6,8 @@ import (
 )
 
 func TestAttrSyntaxAndNoAlias(t *testing.T) {
-	attrs, sig, err := parseTest(t, `// llgo:attr cold
-//llgo:attr param(p) noalias
+	attrs, sig, err := parseTest(t, `// llgo:cold
+//llgo:param(p) noalias
 func F(p *int) { *p = 1 }`)
 	if err != nil {
 		t.Fatal(err)
@@ -26,7 +26,7 @@ func TestAttrNoAliasValidation(t *testing.T) {
 		{"noalias", "func F() {}"},
 		{"param(p) noalias", "func F(p int) {}"},
 	} {
-		attrs, sig, err := parseTest(t, "//llgo:attr "+tc.directive+"\n"+tc.sig)
+		attrs, sig, err := parseTest(t, "//llgo:"+tc.directive+"\n"+tc.sig)
 		if err == nil {
 			err = Validate(attrs, sig, 64, false)
 		}
@@ -38,7 +38,7 @@ func TestAttrNoAliasValidation(t *testing.T) {
 
 func TestAttrRejectsOldSpelling(t *testing.T) {
 	_, _, err := parseTest(t, "//llgo:attribute cold\nfunc F() {}")
-	if err == nil || !strings.Contains(err.Error(), "use //llgo:attr") {
+	if err == nil || !strings.Contains(err.Error(), "write attributes directly") {
 		t.Fatalf("old spelling diagnostic = %v", err)
 	}
 }

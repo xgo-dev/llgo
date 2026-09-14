@@ -34,7 +34,7 @@ type valuePlan struct {
 
 func isValueContract(name string) bool {
 	switch name {
-	case "nonnull", "range", "nonnegative", "same_as":
+	case "nonnull", "range", "nonnegative", "sameas":
 		return true
 	}
 	return false
@@ -135,9 +135,9 @@ func prepareValueContracts(ctx llvm.Context, fn llvm.Value, sig *types.Signature
 			if direct {
 				fn.AddAttributeAtIndex(index, ctx.CreateConstantRangeAttribute(llvm.AttributeKindID("range"), bits, bounds[:1], bounds[1:]))
 			}
-		case "same_as":
+		case "sameas":
 			if source.From == nil {
-				return source.Error("same_as is missing its input selector")
+				return source.Error("sameas is missing its input selector")
 			}
 			from, _, err := bindValueSubject(sig, *source.From, environment, resolver)
 			if err != nil {
@@ -145,7 +145,7 @@ func prepareValueContracts(ctx llvm.Context, fn llvm.Value, sig *types.Signature
 			}
 			fromType, err := subjectLLVMType(fn, from)
 			if err != nil || fromType != typ {
-				return source.Error("same_as values do not share a logical LLVM representation")
+				return source.Error("sameas values do not share a logical LLVM representation")
 			}
 			bound.From = &from
 			// Current LLGo collectors do not relocate objects or native stacks.

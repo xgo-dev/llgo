@@ -51,10 +51,7 @@ func validateAttributePlacement(fset *token.FileSet, file *ast.File) error {
 	}
 	for _, group := range file.Comments {
 		for _, d := range directive.ParseGroup(group) {
-			if d.Name == "llgo:attribute" {
-				return (funcattrs.Attribute{Position: fset.Position(d.Pos)}).Error("use //llgo:attr")
-			}
-			if d.Name == "llgo:attr" && !allowed[d.Pos] {
+			if funcattrs.IsSourceDirective(d) && !allowed[d.Pos] {
 				return (funcattrs.Attribute{Position: fset.Position(d.Pos)}).Error("requires a named function or method declaration")
 			}
 		}

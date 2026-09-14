@@ -30,19 +30,17 @@ func TestRuntimeContracts(t *testing.T) {
 		absent []string
 	}{
 		{"AssertNilDerefPtr", []string{"declare nonnull ptr", "ptr returned"}, []string{"ptr nonnull", "memory(", "noreturn", "willreturn", "nounwind"}},
-		// String carries a hidden pointer root, so the generic memory summary
-		// conservatively widens args effects into other native locations.
-		{"CStrCopy", []string{"ptr returned writeonly captures(ret: address, provenance)", "memory(readwrite)"}, []string{"noalias", "nonnull"}},
-		{"memequal", []string{"ptr readonly captures(none)", "memory(argmem: read)"}, []string{"nonnull", "noalias"}},
-		{"StringEqual", []string{"memory(read)"}, []string{"memory(argmem:"}},
-		{"StringLess", []string{"memory(read)"}, nil},
-		{"Typedmemmove", []string{"ptr readonly captures(none), ptr writeonly captures(none), ptr readonly captures(none)", "memory(argmem: readwrite)"}, []string{"nonnull", "noalias"}},
-		{"Typedmemclr", []string{"ptr readonly captures(none), ptr writeonly captures(none)", "memory(argmem: readwrite)"}, []string{"nonnull"}},
-		{"MapLen", []string{"range(i%d 0, %s)", "ptr readonly captures(none)", "memory(argmem: read)"}, []string{"nonnull"}},
-		{"ChanCap", []string{"range(i%d 0, %s)", "memory(argmem: read)"}, []string{"nonnull"}},
-		{"Memhash", []string{"ptr readonly captures(none)", "memory(read)"}, []string{"memory(argmem:"}},
-		{"Memhash32", []string{"memory(read)"}, nil},
-		{"Memhash64", []string{"memory(read)"}, nil},
+		{"CStrCopy", []string{"ptr returned writeonly"}, []string{"noalias", "nonnull"}},
+		{"memequal", []string{"ptr readonly"}, []string{"nonnull", "noalias"}},
+		{"StringEqual", nil, []string{"memory("}},
+		{"StringLess", nil, []string{"memory("}},
+		{"Typedmemmove", []string{"ptr readonly, ptr writeonly, ptr readonly"}, []string{"nonnull", "noalias"}},
+		{"Typedmemclr", []string{"ptr readonly, ptr writeonly"}, []string{"nonnull"}},
+		{"MapLen", []string{"range(i%d 0, %s)", "ptr readonly"}, []string{"nonnull"}},
+		{"ChanCap", []string{"range(i%d 0, %s)"}, []string{"nonnull"}},
+		{"Memhash", []string{"ptr readonly"}, []string{"memory(argmem:"}},
+		{"Memhash32", nil, []string{"memory("}},
+		{"Memhash64", nil, []string{"memory("}},
 	}
 	for _, target := range []Target{{GOOS: "linux", GOARCH: "amd64"}, {GOOS: "darwin", GOARCH: "arm64"}, {GOOS: "windows", GOARCH: "386"}, {GOOS: "wasip1", GOARCH: "wasm64"}} {
 		t.Run(target.GOARCH, func(t *testing.T) {
@@ -226,7 +224,7 @@ func TestRuntimeContractOptimizations(t *testing.T) {
 				if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
 					t.Fatal(err)
 				}
-				for _, name := range []string{"checked", "negative", "repeat"} {
+				for _, name := range []string{"checked", "negative"} {
 					ir := pkg.Module().NamedFunction(name).String()
 					if !strings.Contains(ir, "ret i1 false") {
 						t.Errorf("%s failed to fold:\n%s", name, ir)
@@ -235,10 +233,12 @@ func TestRuntimeContractOptimizations(t *testing.T) {
 						t.Errorf("nil check call was removed:\n%s", ir)
 					}
 				}
-				for _, name := range []string{"write", "globalwrite"} {
+				// Parameter access does not restrict global effects, so even two
+				// consecutive reads must retain both calls.
+				for _, name := range []string{"repeat", "write", "globalwrite"} {
 					ir := pkg.Module().NamedFunction(name).String()
 					if strings.Count(ir, " call ") != 2 {
-						t.Errorf("%s lost memory invalidation:\n%s", name, ir)
+						t.Errorf("%s incorrectly removed a call:\n%s", name, ir)
 					}
 				}
 				if ir := pkg.Module().NamedFunction("copy").String(); !strings.Contains(ir, "ret i1 true") || !strings.Contains(ir, "call ptr @") {

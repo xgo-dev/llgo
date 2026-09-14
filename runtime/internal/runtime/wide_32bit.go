@@ -32,12 +32,14 @@ func NewChan64(eltSize int, cap64 int64) *Chan {
 // targets. Their high/low-word interface follows runtime.panicExtendIndex in
 // the standard Go runtime.
 //
-//llgo:attr cold noreturn
+//llgo:cold
+//llgo:noreturn
 func PanicExtendIndex(hi int, lo uint, y int) {
 	panic(boundsError{x: int64(hi)<<32 + int64(lo), signed: true, y: y, code: boundsIndex})
 }
 
-//llgo:attr cold noreturn
+//llgo:cold
+//llgo:noreturn
 func PanicExtendIndexU(hi uint, lo uint, y int) {
 	panic(boundsError{x: int64(hi)<<32 + int64(lo), signed: false, y: y, code: boundsIndex})
 }

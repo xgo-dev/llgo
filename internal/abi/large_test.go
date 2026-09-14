@@ -421,51 +421,44 @@ entry:
 }
 
 func TestLargeABIAllocationChecksSourceEffects(t *testing.T) {
-	for _, name := range []string{"memory", "noalias"} {
-		t.Run(name, func(t *testing.T) {
-			testIR := `
+	testIR := `
 declare [65537 x i8] @produce() memory(none)
-define [65537 x i8] @caller() memory(none) {
+define [65537 x i8] @caller(ptr noalias %p) {
 entry:
   %value = call [65537 x i8] @produce()
   ret [65537 x i8] %value
 }
 `
-			attribute := funcattrs.Attribute{Target: funcattrs.Target{Scope: funcattrs.Function}, Name: "memory"}
-			if name == "noalias" {
-				testIR = strings.Replace(testIR, "@caller() memory(none)", "@caller(ptr noalias %p)", 1)
-				attribute = funcattrs.Attribute{Target: funcattrs.Target{Scope: funcattrs.Parameter, Index: 0}, Name: "noalias"}
-			}
-			ctx := llvm.NewContext()
-			defer ctx.Dispose()
-			path := filepath.Join(t.TempDir(), "allocation_effects.ll")
-			if err := os.WriteFile(path, []byte(testIR), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			buf, err := llvm.NewMemoryBufferFromFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			mod, err := ctx.ParseIR(buf)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer mod.Dispose()
-			attrs, err := json.Marshal([]funcattrs.Attribute{attribute})
-			if err != nil {
-				t.Fatal(err)
-			}
-			mod.NamedFunction("caller").AddFunctionAttr(ctx.CreateStringAttribute(funcattrs.Metadata, string(attrs)))
-			td := llvm.NewTargetData("e-p:64:64-i64:64-n32:64-S128")
-			defer td.Dispose()
-			defer func() {
-				failure := recover()
-				err, ok := failure.(error)
-				if !ok || !strings.Contains(err.Error(), "large ABI result allocation") {
-					t.Fatalf("unaccounted heap transport did not diagnose its source effect restriction: %v", failure)
-				}
-			}()
-			LowerLargeAggregates(td, mod)
-		})
+	attribute := funcattrs.Attribute{Target: funcattrs.Target{Scope: funcattrs.Parameter}, Name: "noalias"}
+
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	path := filepath.Join(t.TempDir(), "allocation_effects.ll")
+	if err := os.WriteFile(path, []byte(testIR), 0o644); err != nil {
+		t.Fatal(err)
 	}
+	buf, err := llvm.NewMemoryBufferFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod, err := ctx.ParseIR(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mod.Dispose()
+	attrs, err := json.Marshal([]funcattrs.Attribute{attribute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod.NamedFunction("caller").AddFunctionAttr(ctx.CreateStringAttribute(funcattrs.Metadata, string(attrs)))
+	td := llvm.NewTargetData("e-p:64:64-i64:64-n32:64-S128")
+	defer td.Dispose()
+	defer func() {
+		failure := recover()
+		err, ok := failure.(error)
+		if !ok || !strings.Contains(err.Error(), "large ABI result allocation") {
+			t.Fatalf("unaccounted heap transport did not diagnose its source effect restriction: %v", failure)
+		}
+	}()
+	LowerLargeAggregates(td, mod)
 }
