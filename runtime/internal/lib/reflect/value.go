@@ -2703,6 +2703,21 @@ func methodReceiver(op string, v Value, methodIndex int) (rcvrtype *abi.Type, t 
 	return
 }
 
+func methodValueThunk(op string, v Value, methodIndex int) unsafe.Pointer {
+	_, _, ifn := methodReceiver(op, v, methodIndex)
+	var thunk abi.Text
+	if v.typ().Kind() == abi.Interface {
+		iface := (*nonEmptyInterface)(v.ptr)
+		thunk = iface.itab.typ.MethodValueThunkByIfn(abi.Text(ifn))
+	} else {
+		thunk = v.typ().MethodValueThunk(methodIndex)
+	}
+	if thunk == nil {
+		panic("reflect: missing method value thunk")
+	}
+	return unsafe.Pointer(thunk)
+}
+
 // convertOp returns the function to convert a value of type src
 // to a value of type dst. If the conversion is illegal, convertOp returns nil.
 func convertOp(dst, src *abi.Type) func(Value, Type) Value {

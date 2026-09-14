@@ -108,6 +108,24 @@ func runtimeIface(p *T) { runtime.SetFinalizer(p, finalizeIface) }`
 	}
 }
 
+func TestMethodValueInterfaceDoesNotRequireFFI(t *testing.T) {
+	const source = `package foo
+import "reflect"
+type T int
+func (t *T) M(x int) int { return 40 + x }
+func use() int {
+	return reflect.ValueOf(new(T)).MethodByName("M").Interface().(func(int) int)(2)
+}`
+	pkg, module := mustCompileLLPkgFromSrc(t, source)
+	if pkg.NeedFFI {
+		t.Fatal("named method value Interface() should not require libffi")
+	}
+	ir := module.String()
+	if !strings.Contains(ir, "$methodvalue") {
+		t.Fatalf("missing method value thunk:\n%s", ir)
+	}
+}
+
 func TestMakeFuncValueRequiresFFI(t *testing.T) {
 	const source = `package foo
 import "reflect"

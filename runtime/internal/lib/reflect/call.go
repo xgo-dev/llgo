@@ -29,16 +29,6 @@ func (v Value) call(op string, in []Value) (out []Value) {
 		fn = c.fn
 		env = c.env
 		tin = ft.In
-		if methodvalueNoFFIRepresentation && env != nil {
-			if direct, ok := directMethodValueEnvAt(env); ok {
-				// A direct method value stores its receiver in the closure
-				// context. It is an ordinary method argument, not a hidden
-				// closure environment, on either ABI.
-				tin = append([]*abi.Type{direct.receiverType}, tin...)
-				args = append(args, direct.receiver)
-				env = nil
-			}
-		}
 		if env != nil && ffi.ClosureEnvExplicit {
 			tin = append([]*abi.Type{rtypeOf(unsafe.Pointer(nil))}, tin...)
 			ioff = 1

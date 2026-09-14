@@ -4,32 +4,21 @@ package reflect
 
 import (
 	"unsafe"
-
-	"github.com/xgo-dev/llgo/runtime/abi"
 )
 
 const methodvalueNoFFIRepresentation = true
 
 type directMethodValueEnv struct {
-	marker       *byte
-	receiver     unsafe.Pointer
-	receiverType *abi.Type
+	receiver unsafe.Pointer
 }
 
-var directMethodValueMarker byte
-
-func directMethodValueEnvAt(p unsafe.Pointer) (*directMethodValueEnv, bool) {
-	if p == nil {
-		return nil, false
-	}
-	env := (*directMethodValueEnv)(p)
-	if env.marker != &directMethodValueMarker {
-		return nil, false
-	}
-	return env, true
+func directMethodValueEnvAt(unsafe.Pointer) (*directMethodValueEnv, bool) {
+	return nil, false
 }
 
-// makeMethodValue builds the direct closure representation for llgo_noffi.
+// makeMethodValue builds a Go funcval whose code is an ABI-correct thunk.
+// The thunk loads the receiver from the hidden closure environment and calls
+// the real method with that receiver as its ordinary first argument.
 func makeMethodValue(op string, v Value) Value {
 	if v.flag&flagMethod == 0 {
 		panic("reflect: internal error: invalid use of makeMethodValue")
@@ -38,12 +27,10 @@ func makeMethodValue(op string, v Value) Value {
 	fl |= flag(v.typ().Kind())
 	rcvr := Value{v.typ(), v.ptr, fl}
 
-	_, _, fn := methodReceiver(op, rcvr, int(v.flag)>>flagMethodShift)
+	fn := methodValueThunk(op, rcvr, int(v.flag)>>flagMethodShift)
 	var receiver unsafe.Pointer
 	storeRcvr(v, unsafe.Pointer(&receiver))
-	env := &directMethodValueEnv{
-		marker: &directMethodValueMarker, receiver: receiver, receiverType: rcvr.typ(),
-	}
+	env := &directMethodValueEnv{receiver: receiver}
 	fv := &struct {
 		fn  unsafe.Pointer
 		env unsafe.Pointer
