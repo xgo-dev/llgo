@@ -370,7 +370,6 @@ func (b Builder) getDeferInCurrentBlock() *aDefer {
 }
 
 func (b Builder) initDeferState(procBlk, rethrowBlk BasicBlock) (*aDefer, Expr, Expr) {
-	b.Func.CheckImplicitRuntimeEffects("compiler-generated defer runtime protocol")
 	self := b.Func
 	prog := b.Prog
 	zero := prog.Val(uintptr(0))
@@ -694,7 +693,6 @@ func (b Builder) callRecoverScopedDefer(fn Expr, mayRecover bool, call func()) {
 		call()
 		return
 	}
-	b.Func.CheckImplicitRuntimeEffects("compiler-generated deferred recover frame")
 	prev := b.Call(b.Pkg.rtFunc("StartRecoverFrame"), token)
 	call()
 	b.Call(b.Pkg.rtFunc("EndRecoverFrame"), prev)
@@ -707,7 +705,6 @@ func (b Builder) CallRecoverAlias(from Expr, mayRecover bool, fn Expr, buildCall
 	if from.IsNil() || token.IsNil() {
 		return buildCall(b, fn, args...)
 	}
-	b.Func.CheckImplicitRuntimeEffects("compiler-generated recover alias frame")
 	prev := b.Call(
 		b.Pkg.rtFunc("StartRecoverFrameAlias"),
 		b.PtrCast(b.Prog.VoidPtr(), from),
@@ -876,7 +873,6 @@ func (b Builder) Unreachable() {
 // when this invocation is the direct deferred call. Recursive calls to the
 // same function therefore cannot recover the caller's panic.
 func (b Builder) BindRecoverFrame() {
-	b.Func.CheckImplicitRuntimeEffects("compiler-generated recover activation frame")
 	token := b.AllocaT(b.Prog.Byte())
 	token = b.PtrCast(b.Prog.VoidPtr(), token)
 	b.Func.recoverToken = token

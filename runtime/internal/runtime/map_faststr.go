@@ -21,8 +21,6 @@ func stringStructOf(s *string) *stringStruct {
 	return (*stringStruct)(unsafe.Pointer(s))
 }
 
-//llgo:param(p) access(read)
-//llgo:param(q) access(read)
 func memequal(p, q unsafe.Pointer, size uintptr) bool {
 	if size == 0 {
 		return true

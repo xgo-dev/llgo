@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/xgo-dev/llgo/internal/funcattrs"
 	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 )
@@ -153,9 +152,6 @@ func (p *Transformer) TransformModule(path string, m llvm.Module) {
 		for !bb.IsNil() {
 			instr := bb.FirstInstruction()
 			for !instr.IsNil() {
-				if !instr.IsAInvokeInst().IsNil() && p.isWrapFunctionType(ctx, instr.CalledFunctionType()) {
-					panic("cabi: invoke requires unsupported ABI signature conversion")
-				}
 				if call := instr.IsACallInst(); !call.IsNil() {
 					if p.shouldSkipCall(call) {
 						instr = llvm.NextInstruction(instr)
@@ -410,9 +406,6 @@ func (p *Transformer) transformFunc(m llvm.Module, fn llvm.Value) bool {
 	nfn.SetFunctionCallConv(fn.FunctionCallConv())
 	for _, attr := range fn.GetFunctionAttributes() {
 		nfn.AddAttributeAtIndex(-1, attr)
-	}
-	if err := funcattrs.RemapFunction(fn, nfn, attributeMapping(&info, paramMap)); err != nil {
-		panic(err)
 	}
 	if sp := fn.Subprogram(); !sp.IsNil() {
 		nfn.SetSubprogram(sp)
@@ -795,9 +788,6 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 			))
 		}
 		copyClosureEnvCallAttrs(call, replacement, paramMap)
-		if err := funcattrs.RemapCall(call, replacement, attributeMapping(&info, paramMap)); err != nil {
-			panic(err)
-		}
 	}
 
 	var instr llvm.Value

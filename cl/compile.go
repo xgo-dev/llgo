@@ -743,9 +743,6 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			p.bvals = make(map[ssa.Value]llssa.Expr)
 			p.methodNilDerefChecks, p.recvNilDerefChecks = collectMethodNilDerefChecks(f, p.options.ReceiverNilChecks)
 			p.prepareCooperativeSafepoints(f, isCgo)
-			if p.safepointEntry {
-				fn.CheckAttributeInstrumentation("cooperative safepoints", "access", "noalias")
-			}
 			p.prepareGCRoots(f, hasCtx)
 			p.initGCRoots(b, f)
 			off := make([]int, len(f.Blocks))
@@ -1063,7 +1060,6 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 		p.pushCallerLocationFrame(b, block.Parent())
 	}
 	if block.Index == 0 && p.options.Trace && !strings.HasPrefix(fn.Name(), "github.com/xgo-dev/llgo/runtime/internal/runtime.Print") {
-		b.Func.CheckImplicitRuntimeEffects("compiler-generated function tracing")
 		b.Printf("call " + fn.Name() + "\n\x00")
 	}
 	// place here to avoid wrong current-block
