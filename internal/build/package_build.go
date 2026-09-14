@@ -419,3 +419,45 @@ func packageFFINeeded(tasks []*packageBuildTask) bool {
 	}
 	return false
 }
+
+// scanPackageFFI lowers ordinary packages far enough to set NeedFFI, then
+// discards the modules. CheckFFI uses this to choose libffi vs noffi before
+// any package LLVM backend or LTO.
+func scanPackageFFI(ctx *context, tasks []*packageBuildTask, verbose bool) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	if err := preparePackageBuilds(ctx, tasks, verbose); err != nil {
+		return err
+	}
+	indexes := make([]int, 0, len(tasks))
+	for i, task := range tasks {
+		if !task.skip && task.needsRuntimeSignals() {
+			indexes = append(indexes, i)
+		}
+	}
+	if len(indexes) == 0 {
+		return nil
+	}
+	return runBoundedPackageJobs(ctx.buildConf.parallelism(), indexes, func(index int) error {
+		return scanPackageNeedFFI(ctx, tasks[index], verbose)
+	})
+}
+
+func scanPackageNeedFFI(ctx *context, task *packageBuildTask, verbose bool) error {
+	session := ctx.newBackendSession()
+	defer func() {
+		task.pkg.LPkg = nil
+		session.prog.Dispose()
+	}()
+	backendCtx := ctx.newBackendTask(session)
+	if _, err := preparePackageModule(backendCtx, task.pkg, verbose); err != nil {
+		return err
+	}
+	if task.pkg.LPkg == nil {
+		return nil
+	}
+	task.pkg.setNeedRuntimeOrPyInit(task.pkg.LPkg.NeedRuntime, task.pkg.LPkg.NeedPyInit)
+	task.pkg.NeedFFI = task.pkg.LPkg.NeedFFI
+	return nil
+}

@@ -134,16 +134,19 @@ type OutFmtDetails struct {
 type ModuleHook func(pkg Package)
 
 type Config struct {
-	Goos               string
-	Goarch             string
-	GO386              string // 386 floating-point implementation: sse2 or softfloat
-	GOAMD64            string // amd64 microarchitecture level: v1 through v4
-	GOARM              string // arm architecture and floating-point implementation
-	GOARM64            string // arm64 ISA version and optional lse/crypto extensions
-	Target             string // target name (e.g., "rp2040", "wasi") - takes precedence over Goos/Goarch
-	OptLevel           optlevel.Level
-	LTO                lto.Mode
-	CheckFFI           bool // automatically restart with noffi reflect tags when NeedFFI is false
+	Goos     string
+	Goarch   string
+	GO386    string // 386 floating-point implementation: sse2 or softfloat
+	GOAMD64  string // amd64 microarchitecture level: v1 through v4
+	GOARM    string // arm architecture and floating-point implementation
+	GOARM64  string // arm64 ISA version and optional lse/crypto extensions
+	Target   string // target name (e.g., "rp2040", "wasi") - takes precedence over Goos/Goarch
+	OptLevel optlevel.Level
+	LTO      lto.Mode
+	// CheckFFI selects reflect/runtime without libffi when the package graph
+	// does not use libffi. A frontend-only scan decides this before the LLVM
+	// backend and LTO run, so those stages execute once.
+	CheckFFI           bool
 	LTOPlugin          lto.PassPlugin
 	BinPath            string
 	AppExt             string  // ".exe" on Windows, empty on Unix
@@ -868,18 +871,19 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 		return allPkgs, errors.Join(errs...)
 	}
 	allPkgs, err = buildAllPkgs(ctx, allPkgs, verbose)
-	if err != nil {
-		return nil, err
-	}
-	// When enabled, retry once with the noffi reflect implementation if the
-	// complete package graph does not require libffi.
-	if conf.CheckFFI && !conf.noFFIRestart && !ctx.needFFI && hasLinkedReflect(allPkgs) && !hasBuildTag(conf.Tags, "llgo_noffi") {
+	if errors.Is(err, errRestartWithoutFFI) {
+		if verbose {
+			fmt.Fprintln(os.Stderr, "check-libffi: no libffi uses; compiling reflect/runtime without libffi")
+		}
 		restarted := conf.clone()
 		restarted.Tags = appendBuildTag(restarted.Tags, "llgo_noffi")
 		restarted.Tags = appendBuildTag(restarted.Tags, "llgo_methodvalue_noffi")
 		restarted.noFFIRestart = true
 		return Build(Invocation{Args: inv.Args, Config: restarted, Dir: dir,
 			compileOnly: inv.compileOnly, disableMultiFallback: inv.disableMultiFallback})
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	if mode == ModeGen {
@@ -927,6 +931,15 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 	}
 
 	return allPkgs, errors.Join(linkErrs...)
+}
+
+// errRestartWithoutFFI asks Build to reload with noffi tags after a
+// frontend-only scan found no libffi uses. The LLVM backend and LTO then run
+// once on the noffi graph instead of compiling the libffi graph first.
+var errRestartWithoutFFI = errors.New("restart build without libffi")
+
+func shouldScanFFI(conf *Config) bool {
+	return conf != nil && conf.CheckFFI && !conf.noFFIRestart && !hasBuildTag(conf.Tags, "llgo_noffi")
 }
 
 func hasLinkedReflect(pkgs []*aPackage) bool {
@@ -1467,9 +1480,8 @@ type context struct {
 	passOpt        bool
 
 	buildConf *Config
-	// needFFI is aggregated after ordinary packages finish lowering and before
-	// runtime packages are built. This is the earliest point where checkReflect
-	// has observed all user-package calls.
+	// needFFI is aggregated from ordinary-package frontend lowering. CheckFFI
+	// uses a frontend-only scan so the LLVM backend does not run twice.
 	needFFI         bool
 	crossCompile    crosscompile.Export
 	commands        commandEnv
@@ -1793,6 +1805,16 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 	}
 	// Resolve the lazy Plan 9 policy before workers start.
 	_ = ctx.plan9asmEnabled("")
+
+	if shouldScanFFI(ctx.buildConf) && hasLinkedReflect(pkgs) {
+		if err := scanPackageFFI(ctx, normalTasks, verbose); err != nil {
+			return nil, err
+		}
+		ctx.needFFI = packageFFINeeded(normalTasks)
+		if !ctx.needFFI {
+			return nil, errRestartWithoutFFI
+		}
+	}
 
 	// Host links always include runtime, so put ordinary and runtime packages in
 	// the same cost-ordered worker pool. This avoids making runtime wait behind
