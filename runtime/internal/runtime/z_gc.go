@@ -166,6 +166,11 @@ func pointerFinalizerCallback(ptr unsafe.Pointer, cb unsafe.Pointer) {
 	// callback that races with BDWGC's callback thread from entering the queue.
 	oldState, _ := atomic.CompareAndExchange(&e.state, pointerFinalizerActive, pointerFinalizerQueued)
 	if oldState != pointerFinalizerActive {
+		// A later AddCleanup may still chain through this stopped entry.
+		// Forward the previous callback so earlier cleanups are not dropped.
+		if oldState == pointerFinalizerStopped && e.prevFn != nil {
+			e.prevFn(ptr, e.prevCb)
+		}
 		return
 	}
 	e.arg = ptr
@@ -366,17 +371,18 @@ func SetFinalizerPtr(obj unsafe.Pointer, finalizer func(unsafe.Pointer)) {
 		pointerFinalizers.mu.Unlock()
 		return
 	}
-	if old != nil {
-		var ignoredFn bdwgc.FinalizerFunc
-		var ignoredCb unsafe.Pointer
-		bdwgc.RegisterFinalizer(obj, old.prevFn, old.prevCb, &ignoredFn, &ignoredCb)
-	}
 
-	var ignoredFn bdwgc.FinalizerFunc
-	var ignoredCb unsafe.Pointer
-	bdwgc.RegisterFinalizer(obj, pointerFinalizerCallback, unsafe.Pointer(e), &ignoredFn, &ignoredCb)
-	e.prevFn = ignoredFn
-	e.prevCb = ignoredCb
+	var curFn bdwgc.FinalizerFunc
+	var curCb unsafe.Pointer
+	bdwgc.RegisterFinalizer(obj, pointerFinalizerCallback, unsafe.Pointer(e), &curFn, &curCb)
+	if old != nil && curCb == unsafe.Pointer(old) {
+		// Replaced our own slot; keep the chain from before this typed entry.
+		e.prevFn = old.prevFn
+		e.prevCb = old.prevCb
+	} else {
+		e.prevFn = curFn
+		e.prevCb = curCb
+	}
 	pointerFinalizers.m[key] = e
 	pointerFinalizers.mu.Unlock()
 }
@@ -388,13 +394,25 @@ func cancelPointerFinalizer(obj unsafe.Pointer, old *pointerFinalizerEntry) {
 		if CancelBoxedFinalizer != nil {
 			CancelBoxedFinalizer(obj, false)
 		}
-		var ignoredFn bdwgc.FinalizerFunc
-		var ignoredCb unsafe.Pointer
-		bdwgc.RegisterFinalizer(obj, old.prevFn, old.prevCb, &ignoredFn, &ignoredCb)
+		restorePointerFinalizerSlot(obj, old)
 		return
 	}
 	if CancelBoxedFinalizer != nil {
 		CancelBoxedFinalizer(obj, true)
+	}
+}
+
+// restorePointerFinalizerSlot restores prev only when the typed entry still
+// owns the BDWGC slot. If AddCleanup (or another callback) installed a newer
+// chain afterward, put that chain back so cancellation does not discard it.
+func restorePointerFinalizerSlot(obj unsafe.Pointer, old *pointerFinalizerEntry) {
+	var curFn bdwgc.FinalizerFunc
+	var curCb unsafe.Pointer
+	bdwgc.RegisterFinalizer(obj, old.prevFn, old.prevCb, &curFn, &curCb)
+	if curCb != unsafe.Pointer(old) {
+		var ignoredFn bdwgc.FinalizerFunc
+		var ignoredCb unsafe.Pointer
+		bdwgc.RegisterFinalizer(obj, curFn, curCb, &ignoredFn, &ignoredCb)
 	}
 }
 

@@ -118,6 +118,34 @@ func TestRuntimeSetFinalizerCancelNamedFunction(t *testing.T) {
 	assertCanceledFinalizer(t, done)
 }
 
+func TestRuntimeSetFinalizerNamedCancelAfterCleanup(t *testing.T) {
+	cleaned := make(chan struct{}, 8)
+	done := make(chan struct{}, 8)
+	finalizerCancelDone = done
+	registerFinalizerForTest(func() {
+		for range 8 {
+			x := new(int)
+			runtime.SetFinalizer(x, finalizerCancelSentinel)
+			runtime.AddCleanup(x, func(struct{}) {
+				cleaned <- struct{}{}
+			}, struct{}{})
+			runtime.SetFinalizer(x, nil)
+		}
+	})
+	deadline := time.After(3 * time.Second)
+	for {
+		runGCWithTimeout(t)
+		select {
+		case <-cleaned:
+			assertCanceledFinalizer(t, done)
+			return
+		case <-deadline:
+			t.Fatal("cleanup did not run")
+		default:
+		}
+	}
+}
+
 type finalizerMethodValue struct {
 	value int
 }
