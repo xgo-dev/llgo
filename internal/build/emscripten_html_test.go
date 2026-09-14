@@ -295,6 +295,63 @@ func TestInstallEmscriptenBrowserHostJS(t *testing.T) {
 	}
 }
 
+func TestInstallEmscriptenBrowserHostRejectsOutputCollision(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "shim", wasmFSScriptName)
+	if err := os.MkdirAll(filepath.Dir(src), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const shim = "/* shim */\n"
+	if err := os.WriteFile(src, []byte(shim), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(dir, "out", wasmFSScriptName)
+	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const module = "export default function Module() {}\n"
+	if err := os.WriteFile(output, []byte(module), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := installEmscriptenBrowserHost(src, output)
+	if err == nil || !strings.Contains(err.Error(), "collides") {
+		t.Fatalf("collision error = %v", err)
+	}
+	got, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != module {
+		t.Fatalf("colliding copy replaced the module: %q", got)
+	}
+
+	mjsDir := filepath.Join(dir, "mjs")
+	if err := os.MkdirAll(mjsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mjs := filepath.Join(mjsDir, "wasm_fs.mjs")
+	if err := os.WriteFile(mjs, []byte(module), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := installEmscriptenBrowserHost(src, mjs); err != nil {
+		t.Fatal(err)
+	}
+	sidecar, err := os.ReadFile(filepath.Join(mjsDir, wasmFSScriptName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(sidecar) != shim {
+		t.Fatalf("sidecar wasm_fs.js = %q, want shim", sidecar)
+	}
+	got, err = os.ReadFile(mjs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != module {
+		t.Fatalf("mjs module was modified: %q", got)
+	}
+}
+
 func TestInstallEmscriptenBrowserHostErrors(t *testing.T) {
 	dir := t.TempDir()
 	htmlPath := filepath.Join(dir, "out", "main.html")

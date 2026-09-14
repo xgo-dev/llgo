@@ -98,13 +98,24 @@ func publishEmscriptenBrowserHostFrom(ctx *context, output string, verbose bool,
 		return err
 	}
 	if ctx.shouldPrintCommands(verbose) {
-		fmt.Fprintf(os.Stderr, "copy %s -> %s\n", src, filepath.Join(filepath.Dir(output), wasmFSScriptName))
+		fmt.Fprintf(os.Stderr, "copy %s -> %s\n", src, emscriptenBrowserHostSidecar(output))
 	}
 	return nil
 }
 
+func emscriptenBrowserHostSidecar(output string) string {
+	return filepath.Join(filepath.Dir(output), wasmFSScriptName)
+}
+
 func installEmscriptenBrowserHost(src, output string) error {
-	dst := filepath.Join(filepath.Dir(output), wasmFSScriptName)
+	dst := emscriptenBrowserHostSidecar(output)
+	same, err := sameFilePath(output, dst)
+	if err != nil {
+		return fmt.Errorf("copy %s: %w", wasmFSScriptName, err)
+	}
+	if same {
+		return fmt.Errorf("copy %s: output %s collides with the browser host sidecar", wasmFSScriptName, output)
+	}
 	if err := copyFileAtomic(src, dst); err != nil {
 		return fmt.Errorf("copy %s: %w", wasmFSScriptName, err)
 	}

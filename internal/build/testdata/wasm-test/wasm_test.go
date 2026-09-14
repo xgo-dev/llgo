@@ -23,7 +23,10 @@ func TestStandardLibraryWasmAssembly(t *testing.T) {
 }
 
 func TestStatMissingPathIsNotExist(t *testing.T) {
-	_, err := os.Stat("/llgo-pr2539-definitely-does-not-exist")
+	// Relative so WASI can resolve through the preopened working directory.
+	// Absolute paths outside preopens return EBADF ("Bad file number")
+	// instead of ENOENT. On js/wasm this still uses fs.statSync.
+	_, err := os.Stat("llgo-pr2539-definitely-does-not-exist")
 	if err == nil {
 		t.Fatal("Stat of missing path succeeded")
 	}

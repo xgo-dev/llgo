@@ -1836,6 +1836,38 @@ func TestExecuteMainLinkNativeJSOutputKeepsSiblingMjs(t *testing.T) {
 	}
 }
 
+func TestExecuteMainLinkRejectsWasmFSJSCollision(t *testing.T) {
+	t.Setenv("LLGO_TEST_LINKER_HELPER", "write")
+	root := writeFakeLLGoRoot(t, true)
+	t.Setenv("LLGO_ROOT", root)
+	output := filepath.Join(t.TempDir(), wasmFSScriptName)
+	ctx := &context{
+		mode: ModeBuild,
+		buildConf: &Config{
+			Mode:      ModeBuild,
+			BuildMode: BuildModeExe,
+			Goos:      "js",
+			Goarch:    "wasm",
+			PCLNMode:  PCLNNone,
+		},
+		crossCompile: crosscompile.Export{CC: os.Args[0]},
+	}
+	err := executeMainLink(ctx, &mainLinkPlan{outputPath: output}, false)
+	if err == nil || !strings.Contains(err.Error(), "collides") {
+		t.Fatalf("collision error = %v", err)
+	}
+	got, readErr := os.ReadFile(output)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) == "/* shim */\n" {
+		t.Fatal("colliding copy replaced the generated module with the shim")
+	}
+	if string(got) != "linked" {
+		t.Fatalf("output = %q, want the generated module", got)
+	}
+}
+
 func TestExecuteMainLinkReportsEmscriptenBrowserHostError(t *testing.T) {
 	t.Setenv("LLGO_TEST_LINKER_HELPER", "write-html")
 	root := writeFakeLLGoRoot(t, false)
