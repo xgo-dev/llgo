@@ -119,13 +119,15 @@ try {
     -SHA256 $espChecksum `
     -CacheDirectory (Join-Path $env:RUNNER_TOOL_CACHE 'llgo-release-downloads/esp') `
     -Destination $espParent
-  Assert-ReleaseESPPayload -Root (Join-Path $espParent 'esp-clang') -GoArch $GoArch -Version $espVersion
   $crosscompile = Join-Path $stage 'crosscompile'
   New-Item -ItemType Directory $crosscompile | Out-Null
   Move-Item -LiteralPath (Join-Path $espParent 'esp-clang') -Destination (Join-Path $crosscompile 'clang')
 } finally {
   if (Test-Path $espParent) { Remove-Item -LiteralPath $espParent -Recurse -Force }
 }
+# Validate from the final location so tools executed by these checks are not
+# subsequently moved or deleted with the temporary extraction directory.
+Assert-ReleaseESPPayload -Root (Join-Path $crosscompile 'clang') -GoArch $GoArch -Version $espVersion
 Copy-Item -LiteralPath (Join-Path $root 'LICENSES/XGo-LLVM-Apache-2.0-WITH-LLVM-exception.txt') `
   -Destination (Join-Path $stage 'crosscompile/clang/LICENSE-LLVM.txt')
 @{
