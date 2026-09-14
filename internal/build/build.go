@@ -2262,7 +2262,7 @@ func executeMainLink(ctx *context, plan *mainLinkPlan, verbose bool) error {
 	if err := publishWasmLinkOutput(ctx, linkOutput, driverOut, verbose); err != nil {
 		return err
 	}
-	if err := removeStaleEmscriptenGlue(driverOut); err != nil {
+	if err := removeStaleEmscriptenGlue(ctx.buildConf, driverOut); err != nil {
 		return err
 	}
 	return publishEmscriptenBrowserHost(ctx, driverOut, verbose)

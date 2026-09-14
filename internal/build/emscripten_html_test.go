@@ -36,14 +36,41 @@ func TestRemoveStaleEmscriptenGlue(t *testing.T) {
 	if err := os.WriteFile(stale, []byte("stale"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := removeStaleEmscriptenGlue(html); err != nil {
+	conf := &Config{BuildMode: BuildModeExe, Target: "emscripten", Goos: "js"}
+	if err := removeStaleEmscriptenGlue(conf, html); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Fatalf("stale glue still present: %v", err)
 	}
-	if err := removeStaleEmscriptenGlue(html); err != nil {
+	if err := removeStaleEmscriptenGlue(conf, html); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRemoveStaleEmscriptenGlueSkipsNonEmscriptenOutput(t *testing.T) {
+	dir := t.TempDir()
+	output := filepath.Join(dir, "app.js")
+	sibling := filepath.Join(dir, "app.mjs")
+	if err := os.WriteFile(sibling, []byte("unrelated"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		conf *Config
+	}{
+		{name: "native", conf: &Config{BuildMode: BuildModeExe, Goos: runtime.GOOS}},
+		{name: "wasi", conf: &Config{BuildMode: BuildModeExe, Target: "wasi", Goos: "wasip1"}},
+		{name: "archive", conf: &Config{BuildMode: BuildModeCArchive, Target: "emscripten", Goos: "js"}},
+		{name: "nil config"},
+	}
+	for _, test := range tests {
+		if err := removeStaleEmscriptenGlue(test.conf, output); err != nil {
+			t.Fatalf("%s: %v", test.name, err)
+		}
+		if _, err := os.Stat(sibling); err != nil {
+			t.Fatalf("%s: sibling app.mjs was removed: %v", test.name, err)
+		}
 	}
 }
 
@@ -61,7 +88,8 @@ func TestRemoveStaleEmscriptenGlueReportsError(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
-	if err := removeStaleEmscriptenGlue(html); err == nil {
+	conf := &Config{BuildMode: BuildModeExe, Target: "emscripten", Goos: "js"}
+	if err := removeStaleEmscriptenGlue(conf, html); err == nil {
 		t.Fatal("expected error removing stale glue from a read-only directory")
 	}
 }

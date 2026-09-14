@@ -69,7 +69,13 @@ func staleEmscriptenGluePath(driverOut string) string {
 	}
 }
 
-func removeStaleEmscriptenGlue(driverOut string) error {
+func removeStaleEmscriptenGlue(conf *Config, driverOut string) error {
+	// Native and non-Emscripten links can use .js/.mjs names too. Only the
+	// Emscripten JS executable contract owns the alternate glue sidecar
+	// (.js ↔ .mjs) left behind when switching emcc -o suffixes.
+	if !needsEmscriptenBrowserHost(conf, driverOut) {
+		return nil
+	}
 	stale := staleEmscriptenGluePath(driverOut)
 	if stale == "" {
 		return nil

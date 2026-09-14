@@ -1806,6 +1806,36 @@ func TestExecuteMainLinkPublishesEmscriptenBrowserHost(t *testing.T) {
 	}
 }
 
+func TestExecuteMainLinkNativeJSOutputKeepsSiblingMjs(t *testing.T) {
+	t.Setenv("LLGO_TEST_LINKER_HELPER", "write")
+	dir := t.TempDir()
+	output := filepath.Join(dir, "app.js")
+	sibling := filepath.Join(dir, "app.mjs")
+	if err := os.WriteFile(sibling, []byte("unrelated"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := &context{
+		mode: ModeBuild,
+		buildConf: &Config{
+			Mode:      ModeBuild,
+			BuildMode: BuildModeExe,
+			Goos:      runtime.GOOS,
+			Goarch:    runtime.GOARCH,
+			PCLNMode:  PCLNNone,
+		},
+		crossCompile: crosscompile.Export{CC: os.Args[0]},
+	}
+	if err := executeMainLink(ctx, &mainLinkPlan{outputPath: output}, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(sibling); err != nil || string(got) != "unrelated" {
+		t.Fatalf("unrelated sibling app.mjs = %q, %v", got, err)
+	}
+	if got, err := os.ReadFile(output); err != nil || string(got) != "linked" {
+		t.Fatalf("native app.js = %q, %v", got, err)
+	}
+}
+
 func TestExecuteMainLinkReportsEmscriptenBrowserHostError(t *testing.T) {
 	t.Setenv("LLGO_TEST_LINKER_HELPER", "write-html")
 	root := writeFakeLLGoRoot(t, false)
