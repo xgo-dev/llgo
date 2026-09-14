@@ -32,9 +32,6 @@ func reflect_unsafe_NewArray(t *Type, n int) unsafe.Pointer {
 }
 
 //go:linkname reflect_typedmemmove reflect.typedmemmove
-//llgo:param(t) access(read)
-//llgo:param(dst) access(write)
-//llgo:param(src) access(read)
 func reflect_typedmemmove(t *Type, dst, src unsafe.Pointer) {
 	Typedmemmove(t, dst, src)
 }

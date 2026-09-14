@@ -94,7 +94,6 @@ func AssertNilDeref(b bool) {
 	}
 }
 
-//llgo:result(0) nonnull sameas(ptr)
 func AssertNilDerefPtr(ptr unsafe.Pointer) unsafe.Pointer {
 	AssertNilDeref(ptr == nil)
 	return ptr

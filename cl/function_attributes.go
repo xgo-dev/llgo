@@ -1,46 +1,20 @@
 package cl
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
-	"go/types"
+	"strings"
 
 	"github.com/xgo-dev/llgo/internal/directive"
-	"github.com/xgo-dev/llgo/internal/funcattrs"
 )
 
-// The syntax preload can use an export-data-only package, where private
-// functions are absent. Their contracts are still parsed and are type checked
-// when a definition or caller-side declaration is lowered.
-func sourceAttributeFunction(pkg *types.Package, decl *ast.FuncDecl) *types.Func {
-	if decl.Recv == nil {
-		fn, _ := pkg.Scope().Lookup(decl.Name.Name).(*types.Func)
-		return fn
-	}
-	if len(decl.Recv.List) != 1 {
-		return nil
-	}
-	recv := decl.Recv.List[0].Type
-	if p, ok := recv.(*ast.StarExpr); ok {
-		recv = p.X
-	}
-	obj, ok := pkg.Scope().Lookup(recvTypeName(recv)).(*types.TypeName)
-	if !ok {
-		return nil
-	}
-	named, ok := types.Unalias(obj.Type()).(*types.Named)
-	if !ok {
-		return nil
-	}
-	for i := 0; i < named.NumMethods(); i++ {
-		if method := named.Method(i); method.Name() == decl.Name.Name {
-			return method
-		}
-	}
-	return nil
+func isFunctionAttributeComment(line string) bool {
+	item, ok := directive.Parse(&ast.Comment{Text: line})
+	return ok && (item.Name == "llgo:cold" || item.Name == "llgo:noreturn")
 }
 
-func validateAttributePlacement(fset *token.FileSet, file *ast.File) error {
+func validateFunctionAttributes(fset *token.FileSet, file *ast.File) error {
 	allowed := make(map[token.Pos]bool)
 	for _, decl := range file.Decls {
 		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Doc != nil {
@@ -50,9 +24,21 @@ func validateAttributePlacement(fset *token.FileSet, file *ast.File) error {
 		}
 	}
 	for _, group := range file.Comments {
-		for _, d := range directive.ParseGroup(group) {
-			if funcattrs.IsSourceDirective(d) && !allowed[d.Pos] {
-				return (funcattrs.Attribute{Position: fset.Position(d.Pos)}).Error("requires a named function or method declaration")
+		for _, item := range directive.ParseGroup(group) {
+			name := item.Name
+			if i := strings.IndexAny(name, "(."); i >= 0 {
+				name = name[:i]
+			}
+			switch name {
+			case "llgo:param", "llgo:result", "llgo:receiver":
+				return fmt.Errorf("%s: %s attributes are not yet supported", fset.Position(item.Pos), name)
+			case "llgo:cold", "llgo:noreturn":
+				if !allowed[item.Pos] {
+					return fmt.Errorf("%s: %s requires a named function or method declaration", fset.Position(item.Pos), name)
+				}
+				if name != item.Name || item.Args != "" {
+					return fmt.Errorf("%s: %s takes no arguments; write each function attribute on its own line", fset.Position(item.Pos), name)
+				}
 			}
 		}
 	}
