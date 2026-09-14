@@ -384,7 +384,7 @@ func (p Package) newFunc(
 	}
 	fn := llvm.AddFunction(p.mod, llvmName, t.ll)
 	p.Prog.applyFunctionAttributes(fn, name)
-	p.Prog.applyValueAttributes(fn, name, sig, env != nil)
+	p.Prog.applyValueAttributes(fn, name, sig, env != nil, bg)
 	switch name {
 	case "github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU",
 		"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ",

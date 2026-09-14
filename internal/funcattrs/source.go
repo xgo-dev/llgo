@@ -60,6 +60,7 @@ type Attribute struct {
 	Args     string // Canonical spelling; backends consume the typed operands below.
 	Position token.Position
 	Range    *RangeBounds
+	From     *Target // Ordinary parameter entry value used by sameas.
 }
 
 func (a Attribute) Error(format string, args ...any) error {
@@ -76,7 +77,7 @@ func IsSourceDirective(d directive.Directive) bool {
 		name = name[:i]
 	}
 	switch name {
-	case "param", "result", "receiver", "nonnull", "range", "nonnegative":
+	case "param", "result", "receiver", "nonnull", "range", "nonnegative", "sameas":
 		return true
 	}
 	return false
@@ -101,9 +102,7 @@ func Parse(fset *token.FileSet, decl *ast.FuncDecl) ([]Attribute, error) {
 			if err != nil {
 				return nil, base.Error("%v", err)
 			}
-			if base.Target.Scope == Result && fieldCount(decl.Type.Results) != 1 {
-				return nil, base.Error("result attributes currently require exactly one source result")
-			}
+
 			words = words[1:]
 			if len(words) == 0 {
 				return nil, base.Error("expected an attribute after selector")
@@ -118,6 +117,16 @@ func Parse(fset *token.FileSet, decl *ast.FuncDecl) ([]Attribute, error) {
 				return nil, a.Error("%v", err)
 			}
 
+			if a.Name == "sameas" {
+				if !token.IsIdentifier(a.Args) || a.Args == "_" {
+					return nil, a.Error("sameas expects a parameter name")
+				}
+				index, err := selectIndex(decl.Type.Params, a.Args)
+				if err != nil {
+					return nil, a.Error("sameas: %v", err)
+				}
+				a.From = &Target{Scope: Parameter, Index: index}
+			}
 			a, err = normalize(a)
 			if err != nil {
 				return nil, err
@@ -287,6 +296,8 @@ func normalize(a Attribute) (Attribute, error) {
 		valid = input || result
 	case "range":
 		valid, takesArgs = input || result, true
+	case "sameas":
+		valid, takesArgs = result, true
 	default:
 		return a, a.Error("unsupported attribute %q", a.Name)
 	}
@@ -306,6 +317,12 @@ func normalize(a Attribute) (Attribute, error) {
 			a.Args = lo.String() + "," + hi.String()
 		}
 
+	case "sameas":
+		if a.From == nil || a.From.Scope != Parameter {
+			err = fmt.Errorf("sameas requires a parameter name")
+		} else {
+			a.Args = a.From.String()
+		}
 	}
 	if err != nil {
 		return a, a.Error("%v", err)
@@ -325,6 +342,10 @@ func Merge(attrs ...[]Attribute) ([]Attribute, error) {
 				return nil, err
 			}
 
+			if a.From != nil {
+				from := *a.From
+				a.From = &from
+			}
 			duplicate := false
 			for _, prev := range out {
 				if !prev.Target.Equal(a.Target) {
@@ -437,6 +458,23 @@ func Validate(attrs []Attribute, sig *types.Signature, intBits int, deferTypePar
 				return a.Error("%s requires a pointer, got %s", a.Name, t)
 			}
 
+		case "sameas":
+			if !pointer(t) && !integer(t) {
+				return a.Error("sameas requires an integer or pointer result, got %s", t)
+			}
+			if a.From == nil {
+				return a.Error("sameas requires an input selector")
+			}
+			from, err := ResolveTarget(sig, *a.From)
+			if err != nil {
+				return a.Error("sameas input: %v", err)
+			}
+			if unresolved(from) && deferTypeParams {
+				continue
+			}
+			if !(pointer(t) && pointer(from)) && !types.Identical(types.Unalias(t), types.Unalias(from)) {
+				return a.Error("sameas requires compatible pointer types or identical integer source types, got %s and %s", from, t)
+			}
 		case "range", "nonnegative":
 			if _, _, _, err := IntegerRange(a, t, intBits); err != nil {
 				return err
