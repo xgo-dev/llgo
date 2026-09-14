@@ -192,6 +192,24 @@ func TestCheckFFIMarksLibffiUses(t *testing.T) {
 	}
 }
 
+func TestCheckFFIMarksHigherOrderMakeFunc(t *testing.T) {
+	prog := NewProgram(&Target{GOOS: "linux", GOARCH: "amd64"})
+	defer prog.Dispose()
+	pkg := prog.NewPackage("example.com/ffi", "ffi")
+	makeFuncSig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	makeFunc := pkg.NewFunc("reflect.MakeFunc", makeFuncSig, InGo)
+	invoke := pkg.NewFunc("invokeMakeFunc", types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, nil, "makeFunc", makeFuncSig)),
+		nil, false), InGo)
+	invoke.MakeBody(1).Return()
+	fn := pkg.NewFunc("test", NoArgsNoRet, InGo)
+	b := fn.MakeBody(1)
+	b.Call(invoke.Expr, makeFunc.Expr)
+	if !pkg.NeedFFI {
+		t.Fatal("higher-order MakeFunc did not require libffi")
+	}
+}
+
 func TestRuntimeSetFinalizerPtrMissing(t *testing.T) {
 	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm"})
 	defer prog.Dispose()

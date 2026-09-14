@@ -1418,6 +1418,7 @@ func (b Builder) PtrCast(t Type, x Expr) Expr {
 //	t1 = make closure bound$(main.I).add [i]
 func (b Builder) MakeClosure(fn Expr, bindings []Expr) Expr {
 	dbgInstrf("MakeClosure %v, %v\n", fn, bindings)
+	b.checkFFI(fn)
 	prog := b.Prog
 	sig := fn.raw.Type.(*types.Signature)
 	data := prog.Nil(prog.VoidPtr()).impl
@@ -1650,22 +1651,23 @@ const (
 
 func (b Builder) checkFFI(fn Expr) {
 	pkg := b.Pkg
-	if !pkg.NeedFFI {
-		switch fn.Name() {
-		case "reflect.Value.Call", "reflect.Value.CallSlice", "reflect.MakeFunc":
+	if pkg.NeedFFI || pkg.Path() == "reflect" {
+		return
+	}
+	switch fn.Name() {
+	case "reflect.Value.Call", "reflect.Value.CallSlice", "reflect.MakeFunc":
+		pkg.NeedFFI = true
+	case "runtime.SetFinalizer":
+		// Boxed SetFinalizer uses libffi only when the runtime provides
+		// SetFinalizerPtr (native GC). nogc, wasm, and baremetal omit it.
+		if !pkg.runtimeSetFinalizerPtr().IsNil() {
 			pkg.NeedFFI = true
-		case "runtime.SetFinalizer":
-			// Boxed SetFinalizer uses libffi only when the runtime provides
-			// SetFinalizerPtr (native GC). nogc, wasm, and baremetal omit it.
-			if !pkg.runtimeSetFinalizerPtr().IsNil() {
-				pkg.NeedFFI = true
-			}
-		case "syscall.NewCallback", "syscall.NewCallbackCDecl":
-			// Windows callback closures are implemented with libffi. Keep the
-			// noffi runtime variant for targets where these APIs cannot exist.
-			if b.Prog.Target().effectiveGOOS() == "windows" {
-				pkg.NeedFFI = true
-			}
+		}
+	case "syscall.NewCallback", "syscall.NewCallbackCDecl":
+		// Windows callback closures are implemented with libffi. Keep the
+		// noffi runtime variant for targets where these APIs cannot exist.
+		if b.Prog.Target().effectiveGOOS() == "windows" {
+			pkg.NeedFFI = true
 		}
 	}
 }
@@ -2126,6 +2128,9 @@ func checkExpr(v Expr, t types.Type, b Builder) Expr {
 		}
 		if v.kind == vkClosure {
 			return v
+		}
+		if v.kind == vkFuncDecl {
+			b.checkFFI(v)
 		}
 		prog := b.Prog
 		fnType := prog.Field(tclosure, 0)

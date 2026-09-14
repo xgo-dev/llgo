@@ -108,6 +108,19 @@ func runtimeIface(p *T) { runtime.SetFinalizer(p, finalizeIface) }`
 	}
 }
 
+func TestMakeFuncValueRequiresFFI(t *testing.T) {
+	const source = `package foo
+import "reflect"
+func invokeMakeFunc(makeFunc func(reflect.Type, func([]reflect.Value) []reflect.Value) reflect.Value) {
+	makeFunc(reflect.TypeOf((func())(nil)), func([]reflect.Value) []reflect.Value { return nil })
+}
+func use() { invokeMakeFunc(reflect.MakeFunc) }`
+	pkg, _ := mustCompileLLPkgFromSrc(t, source)
+	if !pkg.NeedFFI {
+		t.Fatal("higher-order reflect.MakeFunc should require libffi")
+	}
+}
+
 func TestSetFinalizerClosureRequiresFFI(t *testing.T) {
 	const source = `package foo
 import "runtime"
