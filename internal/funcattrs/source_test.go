@@ -118,7 +118,6 @@ func TestSourceValueDiagnostics(t *testing.T) {
 		{"param(0) (nonnull)", "func F(p *int) {}", "invalid attribute expression"},
 		{"param(0) nonnull()", "func F(p *int) {}", "empty arguments"},
 		{"param(0) nonnull(x)", "func F(p *int) {}", "invalid arguments"},
-		{"param(0) access(read)", "func F(p *int) {}", "unsupported attribute"},
 		{"result range(1)", "func F() int { return 0 }", "two integer literals"},
 		{"result range(128,256)", "func F() int8 { return 0 }", "does not fit"},
 		{"result range(3,3)", "func F() int { return 0 }", "nonempty"},

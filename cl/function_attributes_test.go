@@ -66,7 +66,7 @@ func TestFunctionAttributeDiagnostics(t *testing.T) {
 		{"// llgo:noreturn()\nfunc F() {}", "takes no arguments"},
 		{"//llgo:cold(x)\nfunc F() {}", "takes no arguments"},
 
-		{"type T int\n//llgo:receiver noalias\nfunc (T) F() {}", "unsupported attribute"},
+		{"type T int\n//llgo:receiver noalias\nfunc (T) F() {}", "requires a pointer"},
 	} {
 		fs := token.NewFileSet()
 		file, err := parser.ParseFile(fs, "attributes.go", "package p\n"+test.source, parser.ParseComments)

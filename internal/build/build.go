@@ -2195,7 +2195,7 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 		return nil, err
 	}
 	if len(cExports) != 0 {
-		llabi.LowerLargeAggregates(ctx.prog.TargetData(), entryPkg.LPkg.Module())
+		llabi.LowerLargeAggregates(ctx.prog.TargetData(), entryPkg.LPkg.Module(), ctx.prog.CheckPointerEffects)
 		ctx.cTransformer.TransformModule(entryPkg.LPkg.Path(), entryPkg.LPkg.Module())
 	}
 	if ctx.buildConf.deadcodeDropEnabled() {
@@ -2859,7 +2859,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	if err := ctx.prog.MaterializeValueAttributes(ret.Module()); err != nil {
 		return err
 	}
-	llabi.LowerLargeAggregates(ctx.prog.TargetData(), ret.Module())
+	llabi.LowerLargeAggregates(ctx.prog.TargetData(), ret.Module(), ctx.prog.CheckPointerEffects)
 	ctx.cTransformer.TransformModule(ret.Path(), ret.Module())
 	ctx.cTransformer.SetSkipFuncs(nil)
 	if ctx.buildConf.Goos == "windows" {

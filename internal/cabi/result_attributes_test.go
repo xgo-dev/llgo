@@ -55,7 +55,7 @@ func TestValueContractsSurviveByvalSretAndPackedABI(t *testing.T) {
 			pkg := prog.NewPackage("contracts", "contracts")
 			callee := contractTestDeclaration(t, prog, pkg, `
 type Pair struct { P *int; N int64; Extra [24]byte }
-//llgo:param(p) nonnull
+//llgo:param(p) nonnull noalias access(read)
 //llgo:result(q) nonnull sameas(p)
 //llgo:result(n) range(0,7)
 func F(input Pair, p *int) (q *int, n int64, output Pair)
@@ -92,6 +92,17 @@ func PackedInput(p Packed, n int8) bool
 			NewTransformer(prog, mod.Target(), "", false).TransformModule("contracts", mod)
 			physical := mod.NamedFunction("contracts.F")
 
+			for _, name := range []string{"noalias", "readonly"} {
+				kind := llvm.AttributeKindID(name)
+				if physical.GetEnumAttributeAtIndex(physical.ParamsCount(), kind).IsNil() {
+					t.Fatalf("%s lost from the source pointer: %s", name, physical.String())
+				}
+				for index := 1; index < physical.ParamsCount(); index++ {
+					if !physical.GetEnumAttributeAtIndex(index, kind).IsNil() {
+						t.Fatalf("%s moved onto ABI transfer storage: %s", name, physical.String())
+					}
+				}
+			}
 			if physical.GlobalValueType() == logicalType {
 				t.Fatal("test did not exercise aggregate ABI rewriting")
 			}

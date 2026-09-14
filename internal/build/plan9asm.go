@@ -86,7 +86,7 @@ func compilePkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Package, verbo
 		// runtime asm uses hand-written calling conventions and must stay on
 		// original Go ABI semantics.
 		if pkg.PkgPath != "runtime" {
-			llabi.LowerLargeAggregates(ctx.prog.TargetData(), mod)
+			llabi.LowerLargeAggregates(ctx.prog.TargetData(), mod, ctx.prog.CheckPointerEffects)
 			ctx.cTransformer.TransformModule(pkg.PkgPath, mod)
 		}
 		applySizeOptimizationAttributes(mod, ctx.buildConf.OptLevel)

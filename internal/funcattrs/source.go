@@ -57,7 +57,7 @@ type RangeBounds struct {
 type Attribute struct {
 	Target   Target
 	Name     string
-	Args     string // Canonical spelling; backends consume the typed operands below.
+	Args     string // Canonical arguments, including the validated access mode.
 	Position token.Position
 	Range    *RangeBounds
 	From     *Target // Ordinary parameter entry value used by sameas.
@@ -77,7 +77,7 @@ func IsSourceDirective(d directive.Directive) bool {
 		name = name[:i]
 	}
 	switch name {
-	case "param", "result", "receiver", "nonnull", "range", "nonnegative", "sameas":
+	case "param", "result", "receiver", "nonnull", "range", "nonnegative", "sameas", "access", "noalias":
 		return true
 	}
 	return false
@@ -292,6 +292,10 @@ func normalize(a Attribute) (Attribute, error) {
 	result := a.Target.Scope == Result
 	valid, takesArgs := false, false
 	switch a.Name {
+	case "noalias":
+		valid = input
+	case "access":
+		valid, takesArgs = input, true
 	case "nonnull", "nonnegative":
 		valid = input || result
 	case "range":
@@ -309,6 +313,12 @@ func normalize(a Attribute) (Attribute, error) {
 	}
 	var err error
 	switch a.Name {
+	case "access":
+		switch a.Args {
+		case "none", "read", "write", "readwrite":
+		default:
+			err = fmt.Errorf("unknown access mode %q", a.Args)
+		}
 	case "range":
 		var lo, hi *big.Int
 		lo, hi, err = bounds(a.Args)
@@ -453,7 +463,7 @@ func Validate(attrs []Attribute, sig *types.Signature, intBits int, deferTypePar
 			continue
 		}
 		switch a.Name {
-		case "nonnull":
+		case "nonnull", "access", "noalias":
 			if !pointer(t) {
 				return a.Error("%s requires a pointer, got %s", a.Name, t)
 			}

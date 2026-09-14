@@ -58,5 +58,20 @@ func Make(p *int, n uint32) (out *int, count uint32) {
 
 With multiple Go results, select each whole result by name or zero-based index. The selector remains stable if the ABI packs or splits the results or returns them through caller-provided storage. The call and its possible panic remain; only the guaranteed results can be simplified. `sameas` uses the evaluated input value, even if memory supplying that input changes during the call.
 
-`access` and `noalias` are the final step of #2590.
+### Pointer access attributes
+
+| Attribute | Applicable value | Meaning |
+| --- | --- | --- |
+| `access(none/read/write/readwrite)` | Pointer parameter or receiver | Restricts reads and writes through this pointer and pointers derived from it. |
+| `noalias` | Pointer parameter or receiver | Memory accessed through this pointer that is modified during the call must be accessed only through this pointer or pointers derived from it. |
+
+These promises cover the entire call, including its callees. They do not imply non-nullness. `access(read)` still permits writes through other parameters or globals; `access(write)` still permits reads through other parameters. `access(readwrite)` imposes no access restriction. `noalias` follows [LLVM pointer-parameter semantics](https://releases.llvm.org/22.1.0/docs/LangRef.html#parameter-attributes): shared reads of unmodified memory are allowed, even when the pointers are equal.
+
+```go
+//llgo:param(dst) access(write)
+//llgo:param(src) access(read)
+func CopyOne(dst, src *int) { *dst = *src }
+```
+
+LLGo preserves these restrictions on the selected pointer when other arguments or results change during ABI conversion. Modes with compiler-generated GC root publication or cooperative safepoints conservatively omit native pointer restrictions in both definitions and imported declarations. Value guarantees remain available. Other compiler-generated runtime operations that cannot be reconciled with a retained restriction produce a diagnostic at its source annotation.
 
