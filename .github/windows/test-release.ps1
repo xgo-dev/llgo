@@ -35,6 +35,11 @@ if ($metadata.goos -ne 'windows' -or $metadata.goarch -ne $GoArch -or $metadata.
 $commit = (& git rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $metadata.commit -ne $commit) { throw 'The release belongs to a different commit' }
 
+if ($metadata.esp_clang_host -ne "windows/$GoArch") {
+  throw 'The ESP toolchain host does not match the LLGo release host'
+}
+Assert-ReleaseESPPayload -Root (Join-Path $releaseRoot 'crosscompile/clang') -GoArch $GoArch -Version $metadata.esp_clang_version
+
 $llgo = Join-Path $releaseRoot 'bin/llgo.exe'
 $readObj = Join-Path $releaseRoot 'crosscompile/clang/bin/llvm-readobj.exe'
 Copy-ReleaseDLLs -ReadObj $readObj -Executable $llgo -GoArch $GoArch -Profile $Profile -CheckOnly

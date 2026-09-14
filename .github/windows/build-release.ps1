@@ -102,17 +102,24 @@ if ($Profile -eq 'mingw') {
     -Destination (Join-Path $stage 'LICENSES/windows-runtime') -Recurse
 }
 
-# Keep the existing integrated layout. ESP's Windows payload is x64 for both
-# host architectures, as in LLGo's existing Windows ARM64 download path.
-$espVersion = '22.1.4_20260905'
-$espAsset = "clang-esp-$espVersion-x86_64-w64-mingw32.tar.xz"
+# ESP tools match the LLGo host architecture for both MSVC and MinGW packages.
+$espVersion = '22.1.4_20260912'
+$espTarget = @{ amd64 = 'x86_64-w64-mingw32'; arm64 = 'aarch64-w64-mingw32' }[$GoArch]
+$espChecksums = @{
+  amd64 = '49ba5159967f1f3cdc11b51d902595baaf0f94bf6c73fb4b880940f30a2d6f4f'
+  arm64 = '02521d03911dadbd84ecfb27903e59dae1d9f12c45245982caea7dad6e6d4188'
+}
+$espChecksum = $espChecksums[$GoArch]
+if (-not $espChecksum) { throw "Missing pinned ESP Clang checksum for windows/$GoArch" }
+$espAsset = "clang-esp-$espVersion-$espTarget.tar.xz"
 $espParent = Join-Path $env:RUNNER_TEMP ('llgo-release-esp-' + [Guid]::NewGuid())
 try {
   Expand-ReleaseXz `
-    -URL "https://github.com/goplus/espressif-llvm-project-prebuilt/releases/download/$espVersion/$espAsset" `
-    -SHA256 '3d32533daec8be08e608496eff817798eb7d3c25f07a02de1f1c94c0a0bbb8b3' `
+    -URL "https://github.com/xgo-dev/espressif-llvm-project-prebuilt/releases/download/$espVersion/$espAsset" `
+    -SHA256 $espChecksum `
     -CacheDirectory (Join-Path $env:RUNNER_TOOL_CACHE 'llgo-release-downloads/esp') `
     -Destination $espParent
+  Assert-ReleaseESPPayload -Root (Join-Path $espParent 'esp-clang') -GoArch $GoArch -Version $espVersion
   $crosscompile = Join-Path $stage 'crosscompile'
   New-Item -ItemType Directory $crosscompile | Out-Null
   Move-Item -LiteralPath (Join-Path $espParent 'esp-clang') -Destination (Join-Path $crosscompile 'clang')
@@ -130,7 +137,8 @@ Copy-Item -LiteralPath (Join-Path $root 'LICENSES/XGo-LLVM-Apache-2.0-WITH-LLVM-
   abi = $Profile
   llvm_version = $llvmVersion
   esp_clang_version = $espVersion
-  esp_clang_host = 'windows/amd64'
+  esp_clang_host = "windows/$GoArch"
+  esp_clang_sha256 = $espChecksum
 } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $stage 'release.json')
 
 # Directory records must be STORE for WinGet compatibility.

@@ -40,10 +40,9 @@ func TestRuntimeStatementLineInfo(t *testing.T) {
 	checkRuntimeClosureIndirectCaller(t)
 	checkAdjacentRuntimeStack(t)
 	checkRecoveredDebugStackBounds(t, runtimeStatementMarkerLine(t, "// BOUNDS_MARK"))
-	checkRecoveredStaticPanicLine(t)
-	if runtime.GOOS == "windows" {
-		checkRecoveredStorePanicLine(t)
-	}
+	t.Run("panic_caller", checkRuntimePanicCaller)
+	t.Run("load_panic_line", checkRecoveredStaticPanicLine)
+	t.Run("store_panic_line", checkRecoveredStorePanicLine)
 	checkRecoveredIndirectPanicLine(t)
 }
 
@@ -184,21 +183,68 @@ func checkRecoveredDebugStackBounds(t *testing.T, want int) {
 }
 
 func checkRecoveredStaticPanicLine(t *testing.T) {
-	checkRecoveredPanicLine(t, "runtimeStatementStaticNilPanic", runtimeStatementMarkerLine(t, "// STATIC_NIL_PANIC_MARK"), runtimeStatementStaticNilPanic)
+	runtimeStatementStaticNilPanic(t, nil, runtimeStatementMarkerLine(t, "// STATIC_NIL_PANIC_MARK"))
 }
 
-func runtimeStatementStaticNilPanic() {
-	var pointer *int
-	_ = *pointer // STATIC_NIL_PANIC_MARK
+var runtimeStatementPanicSink int64
+var runtimeStatementNilPointer *int
+
+// issue27201: distinguish the faulting load from the following statement.
+//
+//go:noinline
+func runtimeStatementStaticNilPanic(t *testing.T, pointer *int32, want int) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("missing nil load panic")
+		}
+		var buf [4096]byte
+		n := runtime.Stack(buf[:], false)
+		stack := string(buf[:n])
+		if got := runtimeStackLineFor(stack, "runtimeStatementStaticNilPanic"); got != want {
+			t.Fatalf("recovered nil load line = %d, want %d\n%s", got, want, stack)
+		}
+	}()
+	value := *pointer // STATIC_NIL_PANIC_MARK
+	runtimeStatementPanicSink = int64(value)
 }
 
 func checkRecoveredStorePanicLine(t *testing.T) {
 	checkRecoveredPanicLine(t, "runtimeStatementStoreNilPanic", runtimeStatementMarkerLine(t, "// STORE_NIL_PANIC_MARK"), runtimeStatementStoreNilPanic)
 }
 
+// issue34123: distinguish a faulting store from the earlier pointer load.
+//
+//go:noinline
 func runtimeStatementStoreNilPanic() {
-	var pointer *int
-	*pointer = 1 // STORE_NIL_PANIC_MARK
+	pointer := runtimeStatementNilPointer
+	runtimeStatementPanicSink = 11
+	*pointer = 12 // STORE_NIL_PANIC_MARK
+}
+
+// issue17381: a statically panicking leaf must not lose its caller's return PC.
+//
+//go:noinline
+func checkRuntimePanicCaller(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("missing nil panic")
+		}
+		var pcs [20]uintptr
+		n := runtime.Callers(1, pcs[:])
+		for _, pc := range pcs[:n] {
+			if fn := runtime.FuncForPC(pc); fn != nil && strings.HasSuffix(fn.Name(), ".checkRuntimePanicCaller") {
+				return
+			}
+		}
+		t.Fatalf("missing original caller after nil panic: %x", pcs[:n])
+	}()
+	runtimeStatementNilFrame()
+}
+
+//go:noinline
+func runtimeStatementNilFrame() {
+	var frame [1]int
+	*(*int)(nil) = frame[0]
 }
 
 func checkRecoveredIndirectPanicLine(t *testing.T) {

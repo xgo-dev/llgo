@@ -153,3 +153,47 @@ function Expand-ReleaseXz {
     Remove-Item -LiteralPath $temporary -Recurse -Force
   }
 }
+
+function Assert-ReleaseESPPayload {
+  param([string]$Root, [string]$GoArch, [string]$Version)
+
+  $target = @{ amd64 = 'x86_64-w64-mingw32'; arm64 = 'aarch64-w64-mingw32' }[$GoArch]
+  $want = @{ amd64 = 'AMD64'; arm64 = 'ARM64' }[$GoArch]
+  $manifest = Get-Content -LiteralPath (Join-Path $Root 'LLGO-LLVM-MANIFEST.txt')
+  if (-not $target -or $manifest -notcontains "host_target=$target") {
+    throw "The ESP payload manifest does not match windows/$GoArch"
+  }
+  if (-not $Version -or $manifest -notcontains "payload_version=$Version") {
+    throw "The ESP payload manifest does not match version $Version"
+  }
+  $bin = Join-Path $Root 'bin'
+  $readObj = Join-Path $bin 'llvm-readobj.exe'
+  $binaries = @(Get-ChildItem -LiteralPath $bin -File |
+    Where-Object { $_.Extension -in @('.exe', '.dll') })
+  if (-not $binaries.Count) { throw 'The ESP payload contains no PE binaries' }
+  foreach ($binary in $binaries) {
+    # ESP tools execute in separate processes and carry their own MinGW DLLs,
+    # independently of the LLGo compiler's MSVC or MinGW runtime profile.
+    $pe = Get-ReleasePE -ReadObj $readObj -Path $binary.FullName
+    if ($pe.Machine -ne $want) {
+      throw "$($binary.Name) has PE machine $($pe.Machine), expected ESP host $want"
+    }
+    foreach ($dll in $pe.Imports) {
+      if ($dll -match '^(api-ms-|ext-ms-)') { continue }
+      if (-not (Test-Path -LiteralPath (Join-Path $bin $dll)) -and
+          -not (Test-Path -LiteralPath (Join-Path $env:SystemRoot "System32/$dll"))) {
+        throw "$($binary.Name) imports $dll, which is absent from the ESP payload and Windows"
+      }
+    }
+  }
+  $savedPath = $env:PATH
+  try {
+    $env:PATH = "$bin;$env:SystemRoot/System32;$env:SystemRoot"
+    foreach ($tool in @('clang', 'clang++', 'ld.lld', 'llc', 'opt', 'llvm-config')) {
+      $null = Invoke-ReleaseCapture (Join-Path $bin "$tool.exe") @('--version')
+    }
+  } finally {
+    $env:PATH = $savedPath
+  }
+  Write-Host "Validated native ESP tools and DLLs for windows/$GoArch"
+}

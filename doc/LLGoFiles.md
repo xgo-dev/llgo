@@ -1,10 +1,10 @@
 # LLGoFiles — Attaching C/C++ Source Files to Go Packages
 
-This proposal introduces `LLGoFiles`, a package-level declaration that lets a Go package participate in compilation together with a set of C/C++ source files. Unlike cgo, which embeds C code inline inside `import "C"` comment blocks, `LLGoFiles` keeps the native sources as ordinary files on disk (by convention under a `_wrap` subdirectory) and simply tells the LLGo compiler which of them belong to the package's build.
+This proposal introduces `LLGoFiles`, a package-level declaration that lets a Go package participate in compilation together with a set of C/C++ source files. Unlike cgo, which embeds C code inline inside `import "C"` comment blocks, `LLGoFiles` keeps the native sources as ordinary files on disk (by convention under a `_wrap` subdirectory) and tells the LLGo compiler which of them belong to the package's build — optionally together with the compiler flags needed to build them.
 
 ## Motivation
 
-LLGo compiles Go to LLVM IR specifically to make interoperation with the C/C++ ecosystem cheap and direct. A recurring need in that ecosystem work is wrapping an existing C/C++ library: a small amount of glue code has to sit between the native API and the Go-visible declarations LLGo binds against.
+LLGo compiles Go to LLVM IR specifically to make interoperation with the C/C++ ecosystem cheap and direct. A recurring need in that ecosystem work is wrapping an existing C/C++ library: a small amount of glue code has to sit between the native API and the Go-visible declarations LLGo binds against, and that glue code often depends on a system library's own include paths and definitions.
 
 cgo already solves a version of this problem, but its approach — pasting C source into a comment above `import "C"` — has drawbacks that get worse as the wrapper grows:
 
@@ -14,13 +14,24 @@ cgo already solves a version of this problem, but its approach — pasting C sou
 - **Diffs and reviews suffer.** Native code changes and Go code changes are interleaved in the same file, making history and review harder to read.
 - **Limited to one native language.** cgo's `import "C"` model is inherently tied to C. Since LLGoFiles just hands files off to the compiler by extension, it extends naturally to other native languages LLVM/clang can handle — Objective-C (`.m`/`.mm`) being an immediate case, with room to grow further as LLGo's needs expand.
 
-LLGoFiles addresses this by treating the native sources as first-class files that live next to the package, compiled and linked as part of building it, without changing how the Go side of the package looks or is written.
+LLGoFiles addresses this by treating the native sources — and the flags needed to compile them — as first-class, self-contained build metadata that lives next to the package, without changing how the Go side of the package looks or is written.
 
 ## Design
 
-### Declaration
+### Declaration format
 
-A package opts in by declaring an untyped string constant:
+A package opts in by declaring an untyped string constant named `LLGoFiles`, whose value has the form:
+
+```
+[<cflags>:]file1[;file2;...]
+```
+
+That is: the value is a semicolon-separated list of one or more native source file paths, optionally preceded by a compiler-flags segment and a colon separator.
+
+- **File list** (required). One or more paths to C/C++/Objective-C source files, relative to the Go package's directory, separated by `;`.
+- **`<cflags>` segment** (optional). If a colon (`:`) appears in the value, everything before it is treated as the compiler flags to use when compiling every file in the list that follows; everything after it is the file list. If no colon is present, the entire value is the file list and no extra flags are passed beyond LLGo's defaults.
+
+A bare file list, with no cflags segment:
 
 ```go
 package embind
@@ -28,10 +39,7 @@ package embind
 const LLGoFiles = "_wrap/emval.cpp"
 ```
 
-- **`LLGoFiles`** lists the C/C++ source files to compile as part of this package. A single string names one file; multiple files use a semicolon-separated string or a parallel list.
-- Paths are relative to the Go package's directory.
-
-For example, a package that needs two native files compiles both by listing them separated by `;`:
+Multiple files, still with no cflags segment:
 
 ```go
 package embind
@@ -39,9 +47,36 @@ package embind
 const LLGoFiles = "_wrap/emval.cpp;_wrap/emval_helpers.cpp"
 ```
 
-This is a plain constant declaration — no new Go syntax is introduced. The LLGo compiler recognizes the identifier `LLGoFiles` the same way it already recognizes other package-level LLGo directives, by name, at the package level.
+A cflags segment supplying an include path used by both files it governs:
 
-Because `LLGoFiles` is an ordinary Go constant, it composes naturally with Go's build-tag mechanism. Platform- or condition-specific native sources are expressed the normal Go way — a filename suffix like `_linux.go`/`_darwin.go` or an explicit `//go:build` constraint — with a different `LLGoFiles` value declared in each variant:
+```go
+package embind
+
+const LLGoFiles = "-I./_wrap/include: _wrap/emval.cpp;_wrap/emval_helpers.cpp"
+```
+
+### Deriving cflags from external tools
+
+The `<cflags>` segment is not limited to a literal, hand-written flag string. It also accepts command substitution — `$(...)` — so that flags can be generated by querying the system for a library's own build metadata, instead of hardcoding paths that vary by platform or install location:
+
+```go
+package embind
+
+const LLGoFiles = "$(pkg-config --cflags libffi): _wrap/libffi.c"
+```
+
+Here, `$(pkg-config --cflags libffi)` is executed at build time and its output is substituted in as the cflags for `_wrap/libffi.c`.
+
+**Command substitution is whitelisted, not general shell execution.** To keep `LLGoFiles` from becoming an arbitrary code-execution vector inside a Go constant, the compiler only recognizes and runs a fixed set of known build-metadata tools inside `$(...)` — currently:
+
+- `pkg-config`
+- `llvm-config`
+
+Any other command inside `$(...)` is rejected; it is not passed to a shell for general evaluation. This keeps the mechanism expressive enough to cover the common case — asking a library's own tooling for its correct flags — without turning a source-level constant into a way to run unrelated commands during compilation.
+
+### Composing with Go's build-tag mechanism
+
+Because `LLGoFiles` is an ordinary Go constant, it composes naturally with Go's build-tag mechanism — including when a cflags segment is present. Platform- or condition-specific native sources (and their flags) are expressed the normal Go way — a filename suffix like `_linux.go`/`_darwin.go` or an explicit `//go:build` constraint — with a different `LLGoFiles` value declared in each variant:
 
 ```go
 // embind_darwin.go
@@ -58,10 +93,10 @@ const LLGoFiles = "_wrap/emval_darwin.mm"
 
 package embind
 
-const LLGoFiles = "_wrap/emval_linux.cpp"
+const LLGoFiles = "$(pkg-config --cflags libffi): _wrap/emval_linux.cpp"
 ```
 
-No separate mechanism for conditional native-source selection is needed; the same build-constraint evaluation Go already performs on the surrounding file decides which `LLGoFiles` constant is active.
+No separate mechanism for conditional native-source or flag selection is needed; the same build-constraint evaluation Go already performs on the surrounding file decides which `LLGoFiles` constant — file list, cflags, or both — is active.
 
 ### The `_wrap` convention
 
@@ -80,8 +115,10 @@ The leading underscore keeps `go build`/`go vet` and other standard Go tooling f
 
 When LLGo builds a package that declares `LLGoFiles`:
 
-1. Each listed file is compiled with the appropriate native compiler, selected by file extension (`clang` for `.c`, `clang++` for `.cpp`, `clang` in Objective-C mode for `.m`/`.mm`, and so on).
-2. The resulting object code is linked into the same LLVM module / final binary as the package's Go-derived code.
+1. The declared value is parsed into an optional cflags segment and a file list, as described above.
+2. If the cflags segment contains a whitelisted command substitution, that command is run and its output is resolved into the literal flags for this build.
+3. Each listed file is compiled with the appropriate native compiler, selected by file extension (`clang` for `.c`, `clang++` for `.cpp`, `clang` in Objective-C mode for `.m`/`.mm`, and so on), passing it the resolved cflags.
+4. The resulting object code is linked into the same LLVM module / final binary as the package's Go-derived code.
 
 From the perspective of a consumer of the package, nothing changes: they still `import` it like any other Go package. `LLGoFiles` is purely a build-time instruction to the LLGo compiler.
 
@@ -92,6 +129,7 @@ From the perspective of a consumer of the package, nothing changes: they still `
 | Native code location | Inline, in a comment above `import "C"` | Separate files, conventionally under `_wrap/` |
 | Tooling for native code | Limited (lives inside a Go comment) | Full — normal `.c`/`.cpp` files |
 | Multiple translation units | Awkward | Natural — list several files |
+| Compiler flags | Via `#cgo CFLAGS`/`#cgo pkg-config` directives in the comment | Via the optional `<cflags>:` segment, including whitelisted `pkg-config`/`llvm-config` substitution |
 | C++ support | Partial, C-oriented | First-class |
 | Go-side syntax | `import "C"` + pseudo-package `C` | Unchanged; declared via `const LLGoFiles = ...` |
 | Native language support | C only | Any language clang/LLVM can compile, selected by file extension (C, C++, Objective-C, and beyond) |
@@ -100,7 +138,7 @@ LLGoFiles is not intended to replace cgo's `import "C"` mechanism for existing c
 
 ## Example
 
-Wrapping a small C++ helper for an `embind`-style binding:
+Wrapping a small C++ helper for an `embind`-style binding, where the helper needs `libffi`'s include path:
 
 ```
 embind/
@@ -114,7 +152,7 @@ embind/
 ```go
 package embind
 
-const LLGoFiles = "_wrap/emval.cpp"
+const LLGoFiles = "$(pkg-config --cflags libffi): _wrap/emval.cpp"
 
 //go:linkname emvalIncRef C.emval_incref
 func emvalIncRef(handle uintptr)
@@ -123,28 +161,33 @@ func emvalIncRef(handle uintptr)
 `_wrap/emval.cpp`:
 
 ```cpp
+#include <ffi.h>
 #include "emval.h"
 
 extern "C" void emval_incref(uintptr_t handle) {
-    // native glue logic
+    // native glue logic, using libffi
 }
 ```
 
-Consumers simply `import "path/to/embind"` and use the exported Go API; the `.cpp` file is compiled and linked in automatically.
+Consumers simply `import "path/to/embind"` and use the exported Go API; `pkg-config --cflags libffi` is resolved and `_wrap/emval.cpp` is compiled and linked in automatically.
 
 ## Alternatives Considered
 
 - **Keep using cgo's inline model exclusively.** Rejected as the primary mechanism because it does not scale well to real C++ wrappers with multiple files and degrades native-code tooling and review quality.
-- **A separate build-system file (e.g. a small YAML/JSON manifest) listing native sources.** Rejected because `LLGoFiles` needs to compose with Go's own build-tag-based conditional compilation — different platforms often need a different set of native sources (e.g. one `LLGoFiles` list in a `_linux.go` file, another in a `_darwin.go` file, or files gated by `//go:build` constraints). A Go constant automatically inherits this for free, since it is declared inside an ordinary Go source file and is included or excluded by the same build-tag rules as everything else in that file. A separate manifest format would need to reinvent Go's build-constraint mechanism (or bolt on an ad hoc equivalent) to express the same per-platform variation, and would then have to be kept in sync with the Go files' own tags by hand.
-- **A directory-scanning convention** (compile every `.c`/`.cpp` file found under `_wrap/` automatically, with no explicit `LLGoFiles` declaration). Rejected as the primary mechanism because it is implicit and makes the set of compiled files harder to see at a glance; an explicit constant keeps the package's native footprint self-documenting. This could still be offered later as an opt-in convenience on top of `LLGoFiles`.
+- **A separate build-system file (e.g. a small YAML/JSON manifest) listing native sources and flags.** Rejected because `LLGoFiles` needs to compose with Go's own build-tag-based conditional compilation — different platforms often need a different file list, a different set of flags, or both (e.g. one `LLGoFiles` value in a `_linux.go` file, another in a `_darwin.go` file, or values gated by `//go:build` constraints). A Go constant automatically inherits this for free, since it is declared inside an ordinary Go source file and is included or excluded by the same build-tag rules as everything else in that file. A separate manifest format would need to reinvent Go's build-constraint mechanism (or bolt on an ad hoc equivalent) to express the same per-platform variation, and would then have to be kept in sync with the Go files' own tags by hand.
+- **A directory-scanning convention** (compile every `.c`/`.cpp` file found under `_wrap/` automatically, with no explicit `LLGoFiles` declaration). Rejected as the primary mechanism because it is implicit, makes the set of compiled files harder to see at a glance, and gives no natural place to attach per-file-set compiler flags. An explicit constant keeps the package's native footprint — files and flags alike — self-documenting. This could still be offered later as an opt-in convenience on top of `LLGoFiles`.
+- **Unrestricted shell command substitution inside `<cflags>`.** Rejected on security grounds: a package-level Go constant is easy to overlook during review, and allowing arbitrary commands there would make `LLGoFiles` a code-execution vector triggered simply by building the package. Restricting substitution to a small whitelist (`pkg-config`, `llvm-config`) keeps the common "ask the library for its own flags" use case working without that risk.
 
 ## Open Questions
 
-- Exact syntax for multiple files: semicolon-separated single string vs. a Go string slice constant (constants must currently be untyped, so a slice would require a different mechanism, e.g. a `var` recognized by name, or a delimiter convention within the string).
-- Whether per-file or package-wide compiler flags are needed for the listed sources, and if so, how they'd be expressed.
+- Exact syntax for multiple files beyond the current semicolon-separated single string — e.g. whether a Go string slice constant should also be supported (constants must currently be untyped, so a slice would require a different mechanism, such as a `var` recognized by name).
+- Whether the cflags segment should support anything beyond a single `$(...)` substitution — e.g. mixing literal flags with a substitution in the same segment, or multiple substitutions.
+- Whether the whitelist of substitutable commands should be extensible by the user (e.g. via a project-level configuration), or remain fixed to `pkg-config`/`llvm-config`.
+- Whether per-file (as opposed to per-`LLGoFiles`-declaration) compiler flags are needed, for packages that mix native files with very different flag requirements.
 - How `LLGoFiles` should interact with `go vet`/`gofmt` and other tooling that is unaware of the `_wrap` convention (informational only today, since the directory is already excluded from the Go build).
 - Whether the `_wrap` directory name should be formalized as a requirement, or remain a recommended-but-not-enforced convention.
 
 ## Compatibility
 
 This is a purely additive change. Packages that do not declare `LLGoFiles` are unaffected. Packages using cgo's `import "C"` mechanism continue to work as before; `LLGoFiles` is an alternative, not a replacement.
+

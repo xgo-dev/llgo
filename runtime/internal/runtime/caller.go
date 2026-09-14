@@ -230,28 +230,51 @@ func Callers(skip int, pcs []uintptr) int {
 // after recover) see the panic-site frames; LLGo's longjmp unwinding
 // removes them physically, and this snapshot is what caller-info APIs
 // splice back in.
-var PanicPCSnapshot func()
+var PanicPCSnapshot func(any)
 
-func SavePanicCallerFrames() {
+// SavePanicCallerFrames reports whether the public runtime should capture a
+// new snapshot. It is called by the snapshot hook so programs without that
+// hook do not link the recovered-panic bookkeeping.
+func SavePanicCallerFrames(v any) bool {
 	// A fault handler stores the fault-site snapshot right before it
 	// panics; the regular capture here must not overwrite it.
-	p := panicPCStoreForG()
+	gp := getg()
+	p := &gp.panicPCs
 	if p.armed != 0 {
 		p.armed = 0
-		return
+		return false
 	}
-	if PanicPCSnapshot != nil {
-		PanicPCSnapshot()
+	// A recovered panic may be thrown again before its deferred activation
+	// returns. gc keeps the original _panic record in that case, so its
+	// traceback still starts at the original panic site. LLGo has already
+	// longjmp-unwound that stack; retain its snapshot when both the raw
+	// interface identity and the recovering activation still match.
+	// Compare the raw interface words, not Go equality: even an uncomparable
+	// panic value retains its identity when the recovered interface is rethrown.
+	e, recovered := efaceOf(&v), efaceOf(&p.recovered.value)
+	same := p.recovered.frame != nil && p.recovered.frame == gp.recoverFrame &&
+		e._type == recovered._type && e.data == recovered.data
+	p.recovered = recoveredPanic{}
+	if same {
+		p.recFP1 = 0
+		p.recFP2 = 0
 	}
+	return !same
+}
+
+type recoveredPanic struct {
+	value any
+	frame unsafe.Pointer
 }
 
 type panicPCStore struct {
-	n      int32
-	armed  int32
-	fault  int32
-	recFP1 uintptr
-	recFP2 uintptr
-	pcs    [64]uintptr
+	n         int32
+	armed     int32
+	fault     int32
+	recFP1    uintptr
+	recFP2    uintptr
+	recovered recoveredPanic
+	pcs       [64]uintptr
 }
 
 func panicPCStoreForG() *panicPCStore {
@@ -282,6 +305,7 @@ func storePanicPCs(pcs []uintptr, armed int32) {
 	p.fault = armed
 	p.recFP1 = 0
 	p.recFP2 = 0
+	p.recovered = recoveredPanic{}
 }
 
 // PanicPCsAreFault reports whether the stored snapshot came from a

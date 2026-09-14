@@ -390,7 +390,7 @@ The release workflow builds four integrated Windows variants, each as a ZIP: `ll
 
 See [Windows release dependencies and PowerShell setup](WINDOWS.md) for the external tools, ABI-specific libraries, and pkg-config configuration needed to compile native programs. The document is included in every Windows ZIP.
 
-Use the archive matching your native architecture and toolchain profile. Native programs still need the corresponding SDK/CRT, Clang, and dependencies described below: Visual Studio's C++ developer environment for MSVC, or MSYS2 `CLANG64` (`amd64`) / `CLANGARM64` (`arm64`) for MinGW. The bundled ESP Clang remains the upstream x64 Windows payload, including in ARM64 archives, and runs through Windows' x64 emulation there; `llgo.exe` itself is native ARM64 in those archives.
+Use the archive matching your native architecture and toolchain profile. Native programs still need the corresponding SDK/CRT, Clang, and dependencies described below: Visual Studio's C++ developer environment for MSVC, or MSYS2 `CLANG64` (`amd64`) / `CLANGARM64` (`arm64`) for MinGW. The bundled ESP Clang matches the host architecture: ARM64 archives contain native ARM64 ESP tools and DLLs for both MSVC and MinGW variants.
 
 The recommended GNU-hosted setup is an MSYS2 `CLANG64` shell. Install the LLVM 22 stack and LLGo's native dependencies, then provide the versioned pkg-config metadata used by the Go/C++ bindings:
 

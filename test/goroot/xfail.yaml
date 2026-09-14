@@ -179,14 +179,6 @@ xfails:
     directive: runoutput
     case: rangegen.go
     reason: the current golang.org/x/tools/go/ssa dependency mishandles labeled branches in generated range-over-function code; update x/tools after https://github.com/golang/tools/pull/666 lands
-  - platform: darwin/arm64
-    directive: run
-    case: fixedbugs/issue34123.go
-    reason: LLGo reports the deferred recovery frame two source lines earlier than cmd/compile
-  - platform: linux/amd64
-    directive: run
-    case: fixedbugs/issue34123.go
-    reason: LLGo reports the deferred recovery frame two source lines earlier than cmd/compile
   - directive: run
     case: fixedbugs/issue80196.go
     reason: LLGo overflows its native stack while repeatedly assigning the escaped named result in this test

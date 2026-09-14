@@ -862,14 +862,43 @@ func TypeOf(i any) Type {
 	return toType((*abi.Type)(unsafe.Pointer(eface.typ)))
 }
 
-var namedFuncMap sync.Map // map[*abi.StructType]*abi.FuncType
+// Use typed maps: LLGo's sync.Map compatibility implementation performs linear
+// searches. Both directions must identify the same canonical descriptor pair.
+var namedFuncTypes struct {
+	sync.Mutex
+	funcs    map[*abi.StructType]*abi.FuncType
+	closures map[*abi.FuncType]*abi.StructType
+}
+
+// publishNamedFunc rechecks both directions after constructing a candidate
+// outside the lock. Losing candidates must never enter either index.
+func publishNamedFunc(ct *abi.StructType, ft *abi.FuncType) (*abi.StructType, *abi.FuncType) {
+	namedFuncTypes.Lock()
+	defer namedFuncTypes.Unlock()
+	if existing := namedFuncTypes.funcs[ct]; existing != nil {
+		return ct, existing
+	}
+	if existing := namedFuncTypes.closures[ft]; existing != nil {
+		return existing, ft
+	}
+	if namedFuncTypes.funcs == nil {
+		namedFuncTypes.funcs = make(map[*abi.StructType]*abi.FuncType)
+		namedFuncTypes.closures = make(map[*abi.FuncType]*abi.StructType)
+	}
+	namedFuncTypes.funcs[ct] = ft
+	namedFuncTypes.closures[ft] = ct
+	return ct, ft
+}
 
 func toFuncType(typ *abi.StructType) *abi.FuncType {
 	if !typ.HasName() {
 		return typ.Fields[0].Typ.FuncType()
 	}
-	if i, ok := namedFuncMap.Load(typ); ok {
-		return i.(*abi.FuncType)
+	namedFuncTypes.Lock()
+	cached := namedFuncTypes.funcs[typ]
+	namedFuncTypes.Unlock()
+	if cached != nil {
+		return cached
 	}
 	size := unsafe.Sizeof(abi.FuncType{})
 	u := typ.Uncommon()
@@ -910,8 +939,8 @@ func toFuncType(typ *abi.StructType) *abi.FuncType {
 			*(*abi.Method)(telemPtr) = *(*abi.Method)(uelemPtr)
 		}
 	}
-	tt, _ := namedFuncMap.LoadOrStore(typ, t)
-	return tt.(*abi.FuncType)
+	_, canonical := publishNamedFunc(typ, t)
+	return canonical
 }
 
 func toClosureType(typ *abi.FuncType) *abi.StructType {
@@ -970,7 +999,6 @@ func toClosureType(typ *abi.FuncType) *abi.StructType {
 			*(*abi.Method)(telemPtr) = *(*abi.Method)(uelemPtr)
 		}
 	}
-	namedFuncMap.Store(t, typ)
 	return t
 }
 
@@ -981,7 +1009,25 @@ func rtypeOf(i any) *abi.Type {
 }
 
 // ptrMap is the cache for PointerTo.
-var ptrMap sync.Map // map[*rtype]*ptrType
+// Keep it typed too: a linear sync.Map lookup here would negate the reverse
+// index's benefit for named functions without pointer methods.
+var ptrMap struct {
+	sync.Mutex
+	m map[*rtype]*ptrType
+}
+
+func cachePointer(t *rtype, p *ptrType) *abi.Type {
+	ptrMap.Lock()
+	defer ptrMap.Unlock()
+	if existing := ptrMap.m[t]; existing != nil {
+		return &existing.Type
+	}
+	if ptrMap.m == nil {
+		ptrMap.m = make(map[*rtype]*ptrType)
+	}
+	ptrMap.m[t] = p
+	return &p.Type
+}
 
 // PtrTo returns the pointer type with element t.
 // For example, if t represents type Foo, PtrTo(t) represents *Foo.
@@ -1013,8 +1059,11 @@ func (t *rtype) ptrTo() *abi.Type {
 		return at.PtrToThis_
 	}
 	// Check the cache.
-	if pi, ok := ptrMap.Load(t); ok {
-		return &pi.(*ptrType).Type
+	ptrMap.Lock()
+	cached := ptrMap.m[t]
+	ptrMap.Unlock()
+	if cached != nil {
+		return &cached.Type
 	}
 
 	// Look in known types.
@@ -1023,8 +1072,7 @@ func (t *rtype) ptrTo() *abi.Type {
 		if p.Elem != &t.t {
 			continue
 		}
-		pi, _ := ptrMap.LoadOrStore(t, p)
-		return &pi.(*ptrType).Type
+		return cachePointer(t, p)
 	}
 
 	// Create a new ptrType starting with the description
@@ -1050,8 +1098,7 @@ func (t *rtype) ptrTo() *abi.Type {
 
 	pp.Elem = at
 
-	pi, _ := ptrMap.LoadOrStore(t, &pp)
-	return &pi.(*ptrType).Type
+	return cachePointer(t, &pp)
 }
 
 func ptrTo(t *abi.Type) *abi.Type {
@@ -2298,18 +2345,15 @@ var closureLookupCache struct {
 // Struct returns a struct type.
 func closureOf(ftyp *abi.FuncType) *abi.Type {
 	if ftyp.HasName() {
-		var t *abi.StructType
-		namedFuncMap.Range(func(key interface{}, value interface{}) bool {
-			if value == ftyp {
-				t = key.(*abi.StructType)
-				return false
-			}
-			return true
-		})
-		if t != nil {
-			return &t.Type
+		namedFuncTypes.Lock()
+		cached := namedFuncTypes.closures[ftyp]
+		namedFuncTypes.Unlock()
+		if cached != nil {
+			return &cached.Type
 		}
-		return &toClosureType(ftyp).Type
+		t := toClosureType(ftyp)
+		canonical, _ := publishNamedFunc(t, ftyp)
+		return &canonical.Type
 	}
 
 	fields := []abi.StructField{
