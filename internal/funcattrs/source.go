@@ -48,14 +48,6 @@ func (t Target) String() string {
 	return s
 }
 
-type CaptureMode uint8
-
-const (
-	CaptureNone CaptureMode = iota
-	CaptureResults
-	CaptureAny
-)
-
 // RangeBounds contains mathematical integers with an exclusive upper bound.
 // It stays source-width independent until IntegerRange validates a concrete type.
 type RangeBounds struct {
@@ -69,14 +61,32 @@ type Attribute struct {
 	Args     string // Canonical spelling; backends consume the typed operands below.
 	Position token.Position
 	Range    *RangeBounds
-	From     *Target // same_as denotes the logical input snapshot at function entry.
+	From     *Target // sameas denotes the logical input snapshot at function entry.
 	Access   AccessMode
-	Capture  CaptureMode
-	Memory   MemoryEffects
 }
 
 func (a Attribute) Error(format string, args ...any) error {
-	return fmt.Errorf("%s: llgo:attr: %s", a.Position, fmt.Sprintf(format, args...))
+	return fmt.Errorf("%s: llgo: %s", a.Position, fmt.Sprintf(format, args...))
+}
+
+// IsSourceDirective distinguishes attributes from existing LLGo directives.
+// Former attribute entry points are recognized so they produce a diagnostic.
+func IsSourceDirective(d directive.Directive) bool {
+	name := strings.TrimPrefix(d.Name, "llgo:")
+	if name == d.Name {
+		return false
+	}
+	if i := strings.IndexAny(name, "(."); i >= 0 {
+		name = name[:i]
+	}
+	switch name {
+	case "param", "result", "receiver", "cold", "noreturn",
+		"nonnull", "range", "nonnegative", "sameas", "access", "noalias",
+		"returned", "readonly", "writeonly", "captures", "same_as", "align",
+		"attr", "attribute", "memory", "capture", "nofree", "nosync", "nounwind", "willreturn":
+		return true
+	}
+	return false
 }
 
 // Parse resolves source selectors before imported signatures can lose parameter
@@ -84,19 +94,16 @@ func (a Attribute) Error(format string, args ...any) error {
 func Parse(fset *token.FileSet, decl *ast.FuncDecl) ([]Attribute, error) {
 	var attrs []Attribute
 	for _, d := range directive.ParseGroup(decl.Doc) {
-		if d.Name == "llgo:attribute" {
-			return nil, (Attribute{Position: fset.Position(d.Pos)}).Error("use //llgo:attr")
-		}
-		if d.Name != "llgo:attr" {
+		if !IsSourceDirective(d) {
 			continue
 		}
 		base := Attribute{Target: Target{Scope: Function}, Position: fset.Position(d.Pos)}
-		words, err := split(d.Args)
+		if d.Name == "llgo:attr" || d.Name == "llgo:attribute" {
+			return nil, base.Error("write attributes directly as //llgo:param(...), //llgo:result(...), //llgo:receiver, //llgo:cold or //llgo:noreturn")
+		}
+		words, err := split(strings.TrimPrefix(d.Name, "llgo:") + " " + d.Args)
 		if err != nil {
 			return nil, base.Error("%v", err)
-		}
-		if len(words) == 0 {
-			return nil, base.Error("expected an attribute")
 		}
 		if isSelector(words[0]) {
 			base.Target, err = parseTarget(decl, words[0])
@@ -104,9 +111,11 @@ func Parse(fset *token.FileSet, decl *ast.FuncDecl) ([]Attribute, error) {
 				return nil, base.Error("%v", err)
 			}
 			words = words[1:]
-		}
-		if len(words) == 0 {
-			return nil, base.Error("expected an attribute after selector")
+			if len(words) == 0 {
+				return nil, base.Error("expected an attribute after selector")
+			}
+		} else if len(words) != 1 {
+			return nil, base.Error("each function attribute must be written on its own //llgo: line")
 		}
 		for _, word := range words {
 			a := base
@@ -114,23 +123,15 @@ func Parse(fset *token.FileSet, decl *ast.FuncDecl) ([]Attribute, error) {
 			if err != nil {
 				return nil, a.Error("%v", err)
 			}
-			if a.Name == "same_as" {
-				from, err := parseTarget(decl, a.Args)
+			if a.Name == "sameas" {
+				if !token.IsIdentifier(a.Args) || a.Args == "_" {
+					return nil, a.Error("sameas expects a parameter name")
+				}
+				index, err := selectIndex(decl.Type.Params, a.Args)
 				if err != nil {
-					return nil, a.Error("same_as: %v", err)
+					return nil, a.Error("sameas: %v", err)
 				}
-				a.From = &from
-			}
-			if a.Name == "returned" {
-				if a.Args != "" || (a.Target.Scope != Parameter && a.Target.Scope != Receiver) {
-					return nil, a.Error("returned requires an input selector and no arguments")
-				}
-				if fieldCount(decl.Type.Results) != 1 {
-					return nil, a.Error("returned requires exactly one source result; use result(...) same_as(...) otherwise")
-				}
-				from := a.Target
-				a.Target, a.Name, a.From = Target{Scope: Result}, "same_as", &from
-				a.Args = from.String()
+				a.From = &Target{Scope: Parameter, Index: index}
 			}
 			a, err = normalize(a)
 			if err != nil {
@@ -145,7 +146,7 @@ func Parse(fset *token.FileSet, decl *ast.FuncDecl) ([]Attribute, error) {
 // Reject reports attributes attached outside named function declarations.
 func Reject(fset *token.FileSet, doc *ast.CommentGroup) error {
 	for _, d := range directive.ParseGroup(doc) {
-		if d.Name == "llgo:attr" {
+		if IsSourceDirective(d) {
 			return (Attribute{Position: fset.Position(d.Pos)}).Error("requires a named function or method declaration")
 		}
 	}
@@ -185,7 +186,7 @@ func split(s string) ([]string, error) {
 	return words, nil
 }
 
-// expression also accepts nesting for same_as(param(...)).
+// expression separates an attribute name from its parenthesized arguments.
 func expression(s string) (name, args string, err error) {
 	name = s
 	if i := strings.IndexByte(s, '('); i >= 0 {
@@ -228,6 +229,12 @@ func isSelector(s string) bool {
 func parseTarget(decl *ast.FuncDecl, s string) (Target, error) {
 	var target Target
 	s = strings.TrimSpace(s)
+	if s == "result" {
+		if fieldCount(decl.Type.Results) != 1 {
+			return target, fmt.Errorf("result shorthand requires exactly one source result")
+		}
+		return Target{Scope: Result}, nil
+	}
 	if strings.HasPrefix(s, "receiver") {
 		if decl.Recv == nil {
 			return target, fmt.Errorf("receiver requires a method")
@@ -293,41 +300,10 @@ func selectIndex(fields *ast.FieldList, selector string) (int, error) {
 	return 0, fmt.Errorf("unknown source value %q", selector)
 }
 
-func compact(s string) string { return strings.Join(strings.Fields(s), "") }
-func accessString(mode AccessMode) string {
-	return [...]string{"none", "read", "write", "readwrite"}[mode]
-}
-
 // normalize is the only string-to-contract translation point. It also populates
 // typed operands for programmatically constructed attributes passed to Merge.
 func normalize(a Attribute) (Attribute, error) {
 	a.Args = strings.TrimSpace(a.Args)
-	switch a.Name {
-	case "readonly", "writeonly":
-		if a.Args != "" {
-			return a, a.Error("invalid arguments for %s", a.Name)
-		}
-		if a.Name == "readonly" {
-			a.Args = "read"
-		} else {
-			a.Args = "write"
-		}
-		a.Name = "access"
-	case "captures":
-		a.Name = "capture"
-		if compact(a.Args) == "ret:address,provenance" {
-			a.Args = "results"
-		}
-	case "memory":
-		parts := strings.Split(a.Args, ",")
-		for i, part := range parts {
-			location, mode, ok := strings.Cut(part, ":")
-			if ok && strings.TrimSpace(location) == "argmem" {
-				parts[i] = "args:" + mode
-			}
-		}
-		a.Args = strings.Join(parts, ",")
-	}
 	function := a.Target.Scope == Function
 	input := a.Target.Scope == Parameter || a.Target.Scope == Receiver
 	result := a.Target.Scope == Result
@@ -335,17 +311,15 @@ func normalize(a Attribute) (Attribute, error) {
 	switch a.Name {
 	case "cold", "noreturn":
 		valid = function
-	case "memory":
-		valid, takesArgs = function, true
 	case "noalias":
 		valid = input
-	case "access", "capture":
+	case "access":
 		valid, takesArgs = input, true
 	case "nonnull", "nonnegative":
 		valid = input || result
 	case "range":
 		valid, takesArgs = input || result, true
-	case "same_as":
+	case "sameas":
 		valid, takesArgs = result, true
 	default:
 		return a, a.Error("unsupported attribute %q", a.Name)
@@ -358,24 +332,8 @@ func normalize(a Attribute) (Attribute, error) {
 	}
 	var err error
 	switch a.Name {
-	case "memory":
-		a.Memory, err = ParseMemoryEffects(a.Args)
-		if err == nil {
-			a.Args = "args:" + accessString(a.Memory.Args) + ",other:" + accessString(a.Memory.Other)
-		}
 	case "access":
 		a.Access, err = ParseAccessMode(a.Args)
-	case "capture":
-		switch a.Args {
-		case "none":
-			a.Capture = CaptureNone
-		case "results":
-			a.Capture = CaptureResults
-		case "any":
-			a.Capture = CaptureAny
-		default:
-			err = fmt.Errorf("unsupported capture effects %q", a.Args)
-		}
 	case "range":
 		var lo, hi *big.Int
 		lo, hi, err = bounds(a.Args)
@@ -383,9 +341,9 @@ func normalize(a Attribute) (Attribute, error) {
 			a.Range = &RangeBounds{Lower: lo, Upper: hi}
 			a.Args = lo.String() + "," + hi.String()
 		}
-	case "same_as":
-		if a.From == nil || (a.From.Scope != Parameter && a.From.Scope != Receiver) {
-			err = fmt.Errorf("same_as requires an input param(...) or receiver selector")
+	case "sameas":
+		if a.From == nil || a.From.Scope != Parameter {
+			err = fmt.Errorf("sameas requires a parameter name")
 		} else {
 			a.Args = a.From.String()
 		}
@@ -480,11 +438,6 @@ func rootType(sig *types.Signature, target Target) types.Type {
 	return nil
 }
 
-func valueType(sig *types.Signature, target Target) types.Type {
-	t, _ := ResolveTarget(sig, target)
-	return t
-}
-
 func pointer(t types.Type) bool {
 	if t == nil {
 		return false
@@ -523,26 +476,26 @@ func Validate(attrs []Attribute, sig *types.Signature, intBits int, deferTypePar
 			continue
 		}
 		switch a.Name {
-		case "nonnull", "access", "capture", "noalias":
+		case "nonnull", "access", "noalias":
 			if !pointer(t) {
 				return a.Error("%s requires a pointer, got %s", a.Name, t)
 			}
-		case "same_as":
+		case "sameas":
 			if !pointer(t) && !integer(t) {
-				return a.Error("same_as requires an integer or pointer result, got %s", t)
+				return a.Error("sameas requires an integer or pointer result, got %s", t)
 			}
 			if a.From == nil {
-				return a.Error("same_as requires an input selector")
+				return a.Error("sameas requires an input selector")
 			}
 			from, err := ResolveTarget(sig, *a.From)
 			if err != nil {
-				return a.Error("same_as input: %v", err)
+				return a.Error("sameas input: %v", err)
 			}
 			if unresolved(from) && deferTypeParams {
 				continue
 			}
 			if !(pointer(t) && pointer(from)) && !types.Identical(types.Unalias(t), types.Unalias(from)) {
-				return a.Error("same_as requires compatible pointer types or identical integer source types, got %s and %s", from, t)
+				return a.Error("sameas requires compatible pointer types or identical integer source types, got %s and %s", from, t)
 			}
 		case "range", "nonnegative":
 			if _, _, _, err := IntegerRange(a, t, intBits); err != nil {

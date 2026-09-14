@@ -21,9 +21,9 @@ func TestSourceContractRejectsUnmodelledImplicitRuntimeProtocols(t *testing.T) {
 		{
 			name: "closure allocation",
 			source: `package effects
-//llgo:attr memory(none)
+//llgo:param(p) noalias
 //go:noinline
-func F(x int) func() int { return func() int { return x } }
+func F(p *int, x int) func() int { return func() int { return x } }
 `,
 			reason: "compiler-generated heap allocation for closure or defer state",
 		},
@@ -31,9 +31,9 @@ func F(x int) func() int { return func() int { return x } }
 			name: "defer protocol",
 			source: `package effects
 func cleanup() {}
-//llgo:attr memory(none)
+//llgo:param(p) noalias
 //go:noinline
-func F() { defer cleanup() }
+func F(p *int) { defer cleanup() }
 `,
 			reason: "compiler-generated defer runtime protocol",
 		},
@@ -43,9 +43,9 @@ func F() { defer cleanup() }
 //llgointernal:gls
 var pointer *int
 //export F
-//llgo:attr memory(read)
+//llgo:param(p) noalias
 //go:noinline
-func F() *int { return nil }
+func F(p *int) *int { return nil }
 `,
 			reason: "compiler-generated local context entry",
 		},
@@ -54,10 +54,10 @@ func F() *int { return nil }
 			source: `package effects
 //llgointernal:gls
 var pointer *int
-// llgo:attr memory(read)
+// llgo:param(p) noalias
 //export F
 //go:noinline
-func F() *int { return nil }
+func F(p *int) *int { return nil }
 `,
 			reason: "compiler-generated local context entry",
 		},
@@ -66,9 +66,9 @@ func F() *int { return nil }
 			source: `package effects
 //llgointernal:gls
 var pointer *int
-//llgo:attr memory(read)
+//llgo:param(p) noalias
 //go:noinline
-func F() *int { return pointer }
+func F(p *int) *int { return pointer }
 `,
 			reason: "compiler-generated local package storage lookup",
 		},
@@ -78,9 +78,9 @@ func F() *int { return pointer }
 func initialValue() int { return 42 }
 //llgointernal:tls
 var counter = initialValue()
-//llgo:attr memory(read)
+//llgo:param(p) noalias
 //go:noinline
-func F() int { return counter }
+func F(p *int) int { return counter }
 `,
 			reason: "compiler-generated local package initialization",
 		},
@@ -88,9 +88,9 @@ func F() int { return counter }
 			name: "shadow stack",
 			source: `package effects
 import "runtime"
-//llgo:attr memory(none)
+//llgo:param(p) noalias
 //go:noinline
-func F() uintptr { pc, _, _, _ := runtime.Caller(0); return pc }
+func F(p *int) uintptr { pc, _, _, _ := runtime.Caller(0); return pc }
 `,
 			reason:  "compiler-generated shadow stack",
 			options: Options{ShadowStack: true},
@@ -98,9 +98,9 @@ func F() uintptr { pc, _, _, _ := runtime.Caller(0); return pc }
 		{
 			name: "tracing",
 			source: `package effects
-//llgo:attr memory(none)
+//llgo:param(p) noalias
 //go:noinline
-func F() int { return 42 }
+func F(p *int) int { return 42 }
 `,
 			reason:  "compiler-generated function tracing",
 			options: Options{Trace: true},

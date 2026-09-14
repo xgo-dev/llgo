@@ -101,8 +101,8 @@ func TestSourceAttributesHiddenEnvironmentAndGenericOrigin(t *testing.T) {
 	defer prog.Dispose()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "env.go", `package p
-//llgo:attr param(p) returned
-//llgo:attr result(0) nonnull
+//llgo:result sameas(p)
+//llgo:result nonnull
 func F(p *int) *int { return p }
 `, parser.ParseComments)
 	if err != nil {

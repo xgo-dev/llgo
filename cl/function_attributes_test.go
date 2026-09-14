@@ -16,22 +16,21 @@ import (
 func TestSourceFunctionAttributes(t *testing.T) {
 	prog, ir := compileLocalitySource(t, `package p
 type T struct { x int }
-//llgo:attr param(p) returned
-//llgo:attr result(0) nonnull
+//llgo:result sameas(p)
+//llgo:result nonnull
 func F(p *int) *int { return p }
-//llgo:attr receiver readonly captures(none) noalias
-//llgo:attr memory(argmem: read)
+//llgo:receiver access(read) noalias
 func (p *T) Read() int { return p.x }
-//llgo:attr result(0) nonnegative
+//llgo:result nonnegative
 func Count() int { return 5 }
-//llgo:attr param(p) returned
-//llgo:attr result(0) nonnull
-//llgo:attr param(p) noalias
+//llgo:result sameas(p)
+//llgo:result nonnull
+//llgo:param(p) noalias
 func Generic[T any](p *T) *T { return p }
 func UseGeneric(p *int) *int { return Generic(p) }
 `)
 	defer prog.Dispose()
-	for _, want := range []string{`define nonnull ptr @"example.com/locality.F"(ptr returned`, "ptr noalias readonly captures(none)", "range(i64 0, -9223372036854775808)", "llgo.source.attributes"} {
+	for _, want := range []string{`define nonnull ptr @"example.com/locality.F"(ptr returned`, "ptr noalias readonly", "range(i64 0, -9223372036854775808)", "llgo.source.attributes"} {
 		if !strings.Contains(ir, want) {
 			t.Errorf("missing %q:\n%s", want, ir)
 		}
@@ -43,10 +42,10 @@ func UseGeneric(p *int) *int { return Generic(p) }
 
 func TestSourceAttributePlacementDiagnostics(t *testing.T) {
 	for _, body := range []string{
-		"//llgo:attr cold\nvar x int",
-		"type T struct {\n//llgo:attr cold\n x int\n}",
-		"type I interface {\n//llgo:attr cold\n M()\n}",
-		"func F() {\n//llgo:attr cold\n f := func() {}; f()\n}",
+		"//llgo:cold\nvar x int",
+		"type T struct {\n//llgo:cold\n x int\n}",
+		"type I interface {\n//llgo:cold\n M()\n}",
+		"func F() {\n//llgo:cold\n f := func() {}; f()\n}",
 	} {
 		fset := token.NewFileSet()
 		f, err := parser.ParseFile(fset, "placement.go", "package p\n"+body, parser.ParseComments)
@@ -71,9 +70,9 @@ func TestSourceAttributesPreloadedAcrossBackendsAndLinknames(t *testing.T) {
 	src := `package owner
 import "unsafe"
 //go:linkname Copy shared_copy
-//llgo:attr param(p) returned
-//llgo:attr result(0) nonnull
-//llgo:attr param(p) noalias
+//llgo:result sameas(p)
+//llgo:result nonnull
+//llgo:param(p) noalias
 func Copy(p unsafe.Pointer) unsafe.Pointer { return p }
 `
 	f, err := parser.ParseFile(fset, "owner.go", src, parser.ParseComments)

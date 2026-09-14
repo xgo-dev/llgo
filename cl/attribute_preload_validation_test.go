@@ -13,15 +13,15 @@ import (
 
 func TestSourceAttributePreloadDiagnostics(t *testing.T) {
 	for _, tc := range []struct{ source, want string }{
-		{"//llgo:attr cold(extra)\nfunc F() {}", "invalid arguments"},
-		{"//llgo:attr param(p) noalias\nfunc F(p int) {}", "noalias requires a pointer"},
-		{"//llgo:attribute cold\nfunc F() {}", "use //llgo:attr"},
+		{"//llgo:cold(extra)\nfunc F() {}", "invalid arguments"},
+		{"//llgo:param(p) noalias\nfunc F(p int) {}", "noalias requires a pointer"},
+		{"//llgo:attribute cold\nfunc F() {}", "write attributes directly"},
 		{`import _ "unsafe"
 //go:linkname A shared_function
-//llgo:attr result(0) range(0,10)
+//llgo:result(0) range(0,10)
 func A() int { return 0 }
 //go:linkname B shared_function
-//llgo:attr result(0) range(0,20)
+//llgo:result(0) range(0,20)
 func B() int { return 0 }`, "conflicting range"},
 	} {
 		t.Run(tc.want, func(t *testing.T) {
@@ -36,8 +36,8 @@ func B() int { return 0 }`, "conflicting range"},
 func TestSourcePreloadRejectsConflictingKnownDeclaration(t *testing.T) {
 	fs := token.NewFileSet()
 	file, err := parser.ParseFile(fs, "conflict.go", `package p
-//llgo:attr memory(read)
-func F() {}
+//llgo:param(p) access(read)
+func F(p *int) {}
 `, parser.ParseComments)
 	if err != nil {
 		t.Fatal(err)
@@ -48,11 +48,11 @@ func F() {}
 	}
 	prog := newLLSSAProg(t)
 	defer prog.Dispose()
-	if err = prog.SetFunctionAttributes("p.F", []funcattrs.Attribute{{Target: funcattrs.Target{Scope: funcattrs.Function}, Name: "memory", Args: "none"}}); err != nil {
+	if err = prog.SetFunctionAttributes("p.F", []funcattrs.Attribute{{Target: funcattrs.Target{Scope: funcattrs.Parameter}, Name: "access", Args: "none"}}); err != nil {
 		t.Fatal(err)
 	}
 	err = ParsePkgSyntax(prog, fs, pkg, []*ast.File{file})
-	if err == nil || !strings.Contains(err.Error(), "conflicting memory") || !strings.Contains(err.Error(), "conflict.go:2:") {
+	if err == nil || !strings.Contains(err.Error(), "conflicting access") || !strings.Contains(err.Error(), "conflict.go:2:") {
 		t.Fatalf("conflicting preloaded declaration accepted: %v", err)
 	}
 }

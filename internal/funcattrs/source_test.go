@@ -30,9 +30,9 @@ func parseTest(t *testing.T, source string) ([]Attribute, *types.Signature, erro
 }
 
 func TestSourceSelectorsAndValidation(t *testing.T) {
-	attrs, sig, err := parseTest(t, `//llgo:attr param(b) readonly captures(none)
-// llgo:attr param(0) returned
-//llgo:attr result(p) nonnull
+	attrs, sig, err := parseTest(t, `//llgo:param(b) access(read) noalias
+// llgo:result sameas(a)
+//llgo:result(p) nonnull
 func F(a, b unsafe.Pointer) (p unsafe.Pointer) { return a }`)
 	if err != nil {
 		t.Fatal(err)
@@ -55,86 +55,71 @@ func F(a, b unsafe.Pointer) (p unsafe.Pointer) { return a }`)
 
 func TestSourceAttributeDiagnostics(t *testing.T) {
 	for _, tc := range []struct{ directive, signature, want string }{
-		{"", "func F() {}", "expected an attribute"},
-		{"memory(read))", "func F() {}", "unbalanced parentheses"},
-		{"(cold)", "func F() {}", "invalid attribute expression"},
+		{"cold noreturn", "func F() {}", "own //llgo: line"},
 		{"cold(extra)", "func F() {}", "invalid arguments"},
-		{"param(0) readonly(extra)", "func F(p *int) {}", "invalid arguments"},
-		{"param(0) access", "func F(p *int) {}", "invalid arguments"},
-		{"result(0) range(1)", "func F() int { return 0 }", "two integer literals"},
-		{"result(0) same_as(missing)", "func F(p *int) *int { return p }", "same_as"},
-		{"result(0) same_as(other(0))", "func F(p *int) *int { return p }", "same_as"},
-		{"result(0) returned", "func F(p *int) *int { return p }", "returned requires an input"},
-		{"hot", "func F() {}", "unsupported attribute"},
-		{"nonnull", "func F() {}", "not supported on function"},
-		{"param(missing) readonly", "func F(p *int) {}", "unknown source value"},
-		{"param(1) readonly", "func F(p *int) {}", "unknown source value"},
-		{"param(-1) readonly", "func F(p *int) {}", "unknown source value"},
-		{"receiver readonly", "func F() {}", "requires a method"},
-		{"param(0) readonly", "func F(p string) {}", "requires a pointer"},
+		{"param(p) cold", "func F(p *int) {}", "not supported on parameter"},
+		{"param(p) hot", "func F(p *int) {}", "unsupported attribute"},
+		{"param(missing) nonnull", "func F(p *int) {}", "unknown source value"},
+		{"param(1) nonnull", "func F(p *int) {}", "unknown source value"},
+		{"param(-1) nonnull", "func F(p *int) {}", "unknown source value"},
+		{"param(_) nonnull", "func F(_ *int) {}", "unknown source value"},
+		{"receiver nonnull", "func F() {}", "requires a method"},
+		{"param(0) access(read)", "func F(p string) {}", "requires a pointer"},
 		{"result(0) nonnegative", "func F() *int { return nil }", "integer value"},
-		{"param(0) returned", "func F(p *int) int { return 0 }", "compatible pointer types"},
-		{"memory(inaccessible: write)", "func F() {}", "unknown memory location"},
-		{"param(0) captures(address)", "func F(p *int) {}", "unsupported capture effects"},
-		{"param(0) readonly writeonly", "func F(p *int) {}", "conflicting"},
-		{"memory(read) memory(argmem: read)", "func F() {}", "conflicting"},
-		{"result(0) range(128, 256)", "func F() int8 { return 0 }", "does not fit"},
-		{"result(0) range(3, 3)", "func F() int { return 0 }", "nonempty"},
-		{"result(0) range(0, n)", "func F() int { return 0 }", "integer literals"},
-		{"memory(read", "func F() {}", "unbalanced"},
-		{"cold()", "func F() {}", "empty arguments"},
+		{"result", "func F() {}", "exactly one source result"},
+		{"result nonnull", "func F() (*int,*int) { return nil,nil }", "exactly one source result"},
+		{"result", "func F() *int { return nil }", "expected an attribute"},
 		{"param(0)", "func F(p int) {}", "expected an attribute"},
-		{"noexternal", "func F() {}", "unsupported attribute"},
-		{"param(0) align(0)", "func F(p *int) {}", "unsupported attribute"},
-		{"param(0) align(3)", "func F(p *int) {}", "unsupported attribute"},
-		{"param(0) align(1 6)", "func F(p *int) {}", "unsupported attribute"},
-		{"param(0) range(1 2, 20)", "func F(p int) {}", "integer literals"},
+		{"param(0) nonnull)", "func F(p *int) {}", "unbalanced"},
+		{"param(0) nonnull(", "func F(p *int) {}", "unbalanced"},
+		{"param(0) (nonnull)", "func F(p *int) {}", "invalid attribute expression"},
+		{"param(0) nonnull()", "func F(p *int) {}", "empty arguments"},
+		{"param(0) noalias(x)", "func F(p *int) {}", "invalid arguments"},
+		{"param(0) access", "func F(p *int) {}", "invalid arguments"},
 		{"param(0) access(invalid)", "func F(p *int) {}", "unknown access mode"},
+		{"param(0) access(read) access(write)", "func F(p *int) {}", "conflicting"},
 		{"result(0) access(read)", "func F() *int { return nil }", "not supported on result"},
-		{"result(0) capture(none)", "func F() *int { return nil }", "not supported on result"},
-		{"param(0).field(p) nonnull", "func F(s *struct{p *int}) {}", "unsupported selector suffix"},
-		{"param(0).field(missing) nonnull", "func F(s struct{p *int}) {}", "unsupported selector suffix"},
-		{"param(0).field(_) nonnull", "func F(s struct{_ *int}) {}", "unsupported selector suffix"},
-		{"param(0).element(2) nonnull", "func F(s [2]*int) {}", "unsupported selector suffix"},
-		{"param(0).element(-1) nonnull", "func F(s [2]*int) {}", "unsupported selector suffix"},
-		{"param(0).element(i) nonnull", "func F(s [2]*int) {}", "unsupported selector suffix"},
-		{"param(0).element(0) nonnull", "func F(s []*int) {}", "unsupported selector suffix"},
-		{"param(0).deref(p) nonnull", "func F(s *int) {}", "unsupported selector suffix"},
-		{"param(0) same_as(param(0))", "func F(s int) int { return s }", "not supported on parameter"},
-		{"result(0) same_as(result(0))", "func F(s int) int { return s }", "requires an input"},
-		{"result(0) same_as(param(0))", "func F(s int32) uint32 { return 0 }", "identical integer source types"},
-		{"result(0) same_as(param(0))", "func F(s bool) bool { return s }", "integer or pointer result"},
-		{"param(0) returned", "func F(s int) (int,int) { return s,s }", "exactly one source result"},
+		{"result(0) range(1)", "func F() int { return 0 }", "two integer literals"},
+		{"result(0) range(128,256)", "func F() int8 { return 0 }", "does not fit"},
+		{"result(0) range(3,3)", "func F() int { return 0 }", "nonempty"},
+		{"result(0) range(0,n)", "func F() int { return 0 }", "integer literals"},
+		{"param(0).field(p) nonnull", "func F(p *int) {}", "unsupported selector suffix"},
+		{"param(0).element(0) nonnull", "func F(p [2]*int) {}", "unsupported selector suffix"},
+		{"param(0) sameas(s)", "func F(s int) int { return s }", "not supported on parameter"},
+		{"result(0) sameas(0)", "func F(s int) int { return s }", "parameter name"},
+		{"result(0) sameas(_)", "func F(_ int) int { return 0 }", "parameter name"},
+		{"result(0) sameas(param(s))", "func F(s int) int { return s }", "parameter name"},
+		{"result(0) sameas(missing)", "func F(s int) int { return s }", "unknown source value"},
+		{"result(0) sameas(s)", "func F(s int32) uint32 { return 0 }", "identical integer source types"},
+		{"result(0) sameas(s)", "func F(s bool) bool { return s }", "integer or pointer result"},
 		{"result(0) range(-10,0) nonnegative", "func F() int { return 0 }", "conflicting range and nonnegative"},
 	} {
 		t.Run(tc.directive, func(t *testing.T) {
-			a, s, err := parseTest(t, "//llgo:attr "+tc.directive+"\n"+tc.signature)
+			attrs, sig, err := parseTest(t, "//llgo:"+tc.directive+"\n"+tc.signature)
 			if err == nil {
-				err = Validate(a, s, 64, false)
+				err = Validate(attrs, sig, 64, false)
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "attributes.go:4:") {
-				t.Fatalf("error = %v, want %s with source position", err, tc.want)
+				t.Fatalf("diagnostic = %v; want %q at source annotation", err, tc.want)
 			}
 		})
 	}
 }
 
-func TestSourceAttributesExcludeCompilerManagedProperties(t *testing.T) {
-	for _, attribute := range []string{"param(p) align(16)", "nofree", "nosync", "nounwind", "willreturn", "param(p).field(P) nonnull", "param(p).element(0) nonnull"} {
-		t.Run(attribute, func(t *testing.T) {
-			_, _, err := parseTest(t, "//llgo:attr "+attribute+"\nfunc F(p *int) {}")
-			if err == nil || !strings.Contains(err.Error(), "unsupported") {
-				t.Fatalf("source annotation accepted: %s, error = %v", attribute, err)
-			}
-		})
+func TestSourceAttributesRejectRemovedScope(t *testing.T) {
+	for _, text := range []string{"memory(none)", "capture(none)", "nofree", "nosync", "nounwind", "willreturn", "param(p) capture(none)", "param(p) readonly", "param(p) returned", "param(p) align(16)", "result same_as(param(p))", "attr result(0) nonnull"} {
+		_, _, err := parseTest(t, "//llgo:"+text+"\nfunc F(p *int) *int { return p }")
+		if err == nil {
+			t.Errorf("accepted removed attribute %s", text)
+		}
 	}
 }
 
 func TestSourceMultipleResults(t *testing.T) {
-	attrs, sig, err := parseTest(t, `//llgo:attr param(p) nonnull access(read) capture(results)
-//llgo:attr param(n) range(-4,20) nonnegative
-//llgo:attr result(out) nonnull same_as(param(p))
-//llgo:attr result(count) range(0,32)
+	attrs, sig, err := parseTest(t, `//llgo:param(p) nonnull access(read)
+//llgo:param(n) range(-4,20) nonnegative
+//llgo:result(out) nonnull sameas(p)
+//llgo:result(count) range(0,32)
 func F(p *int, n int32) (out *int, count int32) { return p,n }`)
 	if err != nil {
 		t.Fatal(err)
@@ -142,21 +127,21 @@ func F(p *int, n int32) (out *int, count int32) { return p,n }`)
 	if err = Validate(attrs, sig, 64, false); err != nil {
 		t.Fatal(err)
 	}
-	if len(attrs) != 8 {
+	if len(attrs) != 7 {
 		t.Fatalf("attributes = %+v", attrs)
 	}
 	for _, a := range attrs {
-		if a.Name == "same_as" && (a.Target.String() != "result(0)" || a.From.String() != "param(0)") {
-			t.Fatalf("same_as = %+v", a)
+		if a.Name == "sameas" && (a.Target.String() != "result(0)" || a.From.String() != "param(0)") {
+			t.Fatalf("sameas = %+v", a)
 		}
 	}
 }
 
 func TestSourceReceiverAndUnnamedValues(t *testing.T) {
 	attrs, sig, err := parseTest(t, `type Box struct{ P *int }
-//llgo:attr receiver nonnull
-//llgo:attr param(0) range(-4,4)
-//llgo:attr result(1) same_as(receiver)
+//llgo:receiver nonnull
+//llgo:param(0) range(-4,4)
+//llgo:result(1) nonnull
 func (*Box) F(int) (bool,*Box) { return false,nil }`)
 	if err != nil {
 		t.Fatal(err)
@@ -174,47 +159,24 @@ func (*Box) F(int) (bool,*Box) { return false,nil }`)
 	}
 }
 
-func TestSourceCanonicalAliases(t *testing.T) {
-	attrs, sig, err := parseTest(t, `//llgo:attr memory(read, argmem:readwrite) memory(args:readwrite,other:read)
-//llgo:attr param(p) readonly access(read) captures(ret: address, provenance) capture(results) returned
-//llgo:attr result(0) same_as(param(0))
-func F(p unsafe.Pointer) *int8 { return (*int8)(p) }`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = Validate(attrs, sig, 64, false); err != nil {
-		t.Fatal(err)
-	}
-	if len(attrs) != 4 {
-		t.Fatalf("aliases did not deduplicate: %+v", attrs)
-	}
-	for _, a := range attrs {
-		switch a.Name {
-		case "memory":
-			if a.Memory != (MemoryEffects{Args: AccessReadWrite, Other: AccessRead}) {
-				t.Fatalf("effects = %+v", a.Memory)
-			}
-		case "access":
-			if a.Access != AccessRead {
-				t.Fatalf("access = %v", a.Access)
-			}
-		case "capture":
-			if a.Capture != CaptureResults {
-				t.Fatalf("capture = %v", a.Capture)
-			}
-		case "same_as":
-			if a.From == nil || a.From.Index != 0 || a.Target.Scope != Result {
-				t.Fatalf("same_as = %+v", a)
-			}
-		default:
-			t.Fatalf("noncanonical attribute %s", a.Name)
+func TestSourceRepeatedAttributesAndResultShorthand(t *testing.T) {
+	for _, signature := range []string{"func F(p unsafe.Pointer) *int8 { return (*int8)(p) }", "func F(p unsafe.Pointer) (out *int8) { return (*int8)(p) }", "func F(p unsafe.Pointer) (_ *int8) { return (*int8)(p) }"} {
+		attrs, sig, err := parseTest(t, "// llgo:param(p) access(read) access(read) noalias\n//llgo:result sameas(p)\n//llgo:result(0) sameas(p)\n"+signature)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = Validate(attrs, sig, 64, false); err != nil {
+			t.Fatal(err)
+		}
+		if len(attrs) != 3 {
+			t.Fatalf("duplicate annotations were not merged: %+v", attrs)
 		}
 	}
 }
 
 func TestSourcePublicContractModes(t *testing.T) {
 	for _, mode := range []string{"none", "read", "write", "readwrite"} {
-		attrs, sig, err := parseTest(t, "//llgo:attr memory("+mode+")\n//llgo:attr param(0) access("+mode+")\nfunc F(p *int) {}")
+		attrs, sig, err := parseTest(t, "//llgo:param(0) access("+mode+")\nfunc F(p *int) {}")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -222,18 +184,12 @@ func TestSourcePublicContractModes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, mode := range []string{"none", "results", "any"} {
-		attrs, sig, err := parseTest(t, "//llgo:attr param(0) capture("+mode+")\nfunc F(p *int) {}")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err = Validate(attrs, sig, 64, false); err != nil {
-			t.Fatal(err)
-		}
-	}
-	attrs, sig, err := parseTest(t, "//llgo:attr cold noreturn\nfunc F() { panic(0) }")
+	attrs, sig, err := parseTest(t, "//llgo:cold\n// llgo:noreturn\nfunc F() { panic(0) }")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(attrs) != 2 {
+		t.Fatalf("missing independent function attributes: %+v", attrs)
 	}
 	if err = Validate(attrs, sig, 64, false); err != nil {
 		t.Fatal(err)
@@ -241,8 +197,8 @@ func TestSourcePublicContractModes(t *testing.T) {
 }
 
 func TestSourceGenericValueAndIntegerIdentity(t *testing.T) {
-	attrs, sig, err := parseTest(t, `//llgo:attr param(v) range(0,128)
-//llgo:attr result(0) same_as(param(v))
+	attrs, sig, err := parseTest(t, `//llgo:param(v) range(0,128)
+//llgo:result(0) sameas(v)
 func F[T ~int8 | ~int16](v T) T { return v }`)
 	if err != nil {
 		t.Fatal(err)
@@ -260,7 +216,7 @@ func F[T ~int8 | ~int16](v T) T { return v }`)
 		}
 	}
 	attrs, sig, err = parseTest(t, `type Counter int
-//llgo:attr result(0) same_as(param(0))
+//llgo:result(0) sameas(v)
 func F(v Counter) int { return int(v) }`)
 	if err != nil {
 		t.Fatal(err)
@@ -271,7 +227,7 @@ func F(v Counter) int { return int(v) }`)
 }
 
 func TestSourceMergeOwnsCanonicalRange(t *testing.T) {
-	attrs, _, err := parseTest(t, `//llgo:attr param(v) range(0x0,0x10) range(0,16)
+	attrs, _, err := parseTest(t, `//llgo:param(v) range(0x0,0x10) range(0,16)
 func F(v int) {}`)
 	if err != nil {
 		t.Fatal(err)
@@ -290,8 +246,8 @@ func F(v int) {}`)
 }
 
 func TestSourceWideRanges(t *testing.T) {
-	attrs, sig, err := parseTest(t, `//llgo:attr param(v) range(0,18446744073709551616)
-//llgo:attr result(0) nonnegative
+	attrs, sig, err := parseTest(t, `//llgo:param(v) range(0,18446744073709551616)
+//llgo:result(0) nonnegative
 func F(v uint64) uint64 { return v }`)
 	if err != nil {
 		t.Fatal(err)
@@ -309,10 +265,9 @@ func F(v uint64) uint64 { return v }`)
 }
 
 func TestSourceTypedOperandsJSONRoundTrip(t *testing.T) {
-	attrs, sig, err := parseTest(t, `//llgo:attr memory(read,argmem:readwrite)
-//llgo:attr param(p) nonnull access(read) capture(results)
-//llgo:attr param(n) range(0,18446744073709551616)
-//llgo:attr result(1) same_as(param(p))
+	attrs, sig, err := parseTest(t, `//llgo:param(p) nonnull access(read)
+//llgo:param(n) range(0,18446744073709551616)
+//llgo:result(1) sameas(p)
 func F(p *int, n uint64) (bool,*int) { return false,p }`)
 	if err != nil {
 		t.Fatal(err)
@@ -351,7 +306,7 @@ func F(p *int, n uint64) (bool,*int) { return false,p }`)
 
 func TestTargetSizedRanges(t *testing.T) {
 	for _, bits := range []int{32, 64} {
-		a, s, err := parseTest(t, "//llgo:attr result(0) nonnegative\nfunc F() int { return 0 }")
+		a, s, err := parseTest(t, "//llgo:result(0) nonnegative\nfunc F() int { return 0 }")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -360,12 +315,33 @@ func TestTargetSizedRanges(t *testing.T) {
 			t.Fatalf("%d: %d %v %v %v", bits, n, v, full, err)
 		}
 	}
-	a, s, err := parseTest(t, "//llgo:attr result(0) range(-128, 128)\nfunc F() int8 { return 0 }")
+	a, s, err := parseTest(t, "//llgo:result(0) range(-128, 128)\nfunc F() int8 { return 0 }")
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, _, full, err := IntegerRange(a[0], s.Results().At(0).Type(), 64)
 	if err != nil || !full {
 		t.Fatalf("full signed domain = %v, %v", full, err)
+	}
+}
+
+func TestSourceSelectorWhitespaceAndBlankInput(t *testing.T) {
+	attrs, sig, err := parseTest(t, `// llgo:param( 0 ) nonnull
+//llgo:param( value ) range( 0, 64 )
+// llgo:result sameas( value )
+func F(_ *int, value uint32) uint32 { return value }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = Validate(attrs, sig, 64, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(attrs) != 3 {
+		t.Fatalf("attributes = %+v", attrs)
+	}
+	for _, a := range attrs {
+		if a.Name == "sameas" && (a.From.Scope != Parameter || a.From.Index != 1) {
+			t.Fatalf("wrong entry parameter: %+v", a)
+		}
 	}
 }

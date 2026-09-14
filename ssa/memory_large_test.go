@@ -51,13 +51,13 @@ func TestLargeLocalRejectsUnmodelledContractEffects(t *testing.T) {
 	prog := NewProgram(nil)
 	defer prog.Dispose()
 	attrs := []funcattrs.Attribute{{
-		Target: funcattrs.Target{Scope: funcattrs.Function}, Name: "memory", Args: "none",
+		Target: funcattrs.Target{Scope: funcattrs.Parameter}, Name: "noalias",
 		Position: token.Position{Filename: "large.go", Line: 3},
 	}}
 	if err := prog.SetFunctionAttributes("large", attrs); err != nil {
 		t.Fatal(err)
 	}
-	fn := prog.NewPackage("large", "large").NewFunc("large", NoArgsNoRet, InGo)
+	fn := prog.NewPackage("large", "large").NewFunc("large", runtimeContractSignature([]types.Type{types.NewPointer(types.Typ[types.Int])}, nil), InGo)
 	b := fn.MakeBody(1)
 	large := prog.Type(types.NewArray(types.Typ[types.Byte], int64(llabi.MaxStackVarSize+1)), InGo)
 	defer func() {

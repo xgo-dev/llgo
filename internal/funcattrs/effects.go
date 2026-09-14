@@ -20,18 +20,6 @@ const (
 	AccessReadWrite
 )
 
-// MemoryEffects bounds observable state accesses, classified by source pointer
-// root. Args does not include accesses through a pointer merely because it
-// aliases an input: the access must derive from an entry pointer leaf. Other
-// includes other program storage and external state. I/O, volatile/device
-// access, and observations such as clocks or entropy which can change without
-// a program write require Other=AccessReadWrite, modelling an observable event.
-// Both memory(none) and memory(read) exclude these interactions.
-type MemoryEffects struct {
-	Args  AccessMode
-	Other AccessMode
-}
-
 type EffectDisposition string
 
 const (
@@ -66,56 +54,6 @@ func ParseAccessMode(s string) (AccessMode, error) {
 	return 0, fmt.Errorf("unknown access mode %q", s)
 }
 
-// ParseMemoryEffects accepts a default mode and optional args/other overrides.
-// An omitted default is none. Repeated locations/defaults are errors so the
-// result never depends on the annotation's word order.
-func ParseMemoryEffects(s string) (MemoryEffects, error) {
-	var effects MemoryEffects
-	var defaultMode AccessMode
-	var args, other *AccessMode
-	hasDefault := false
-	for _, part := range strings.Split(s, ",") {
-		location, mode, located := strings.Cut(part, ":")
-		if !located {
-			if hasDefault {
-				return effects, fmt.Errorf("memory has multiple default modes")
-			}
-			value, err := ParseAccessMode(part)
-			if err != nil {
-				return effects, err
-			}
-			defaultMode, hasDefault = value, true
-			continue
-		}
-		value, err := ParseAccessMode(mode)
-		if err != nil {
-			return effects, err
-		}
-		switch strings.TrimSpace(location) {
-		case "args":
-			if args != nil {
-				return effects, fmt.Errorf("memory repeats args")
-			}
-			args = &value
-		case "other":
-			if other != nil {
-				return effects, fmt.Errorf("memory repeats other")
-			}
-			other = &value
-		default:
-			return effects, fmt.Errorf("unknown memory location %q", strings.TrimSpace(location))
-		}
-	}
-	effects.Args, effects.Other = defaultMode, defaultMode
-	if args != nil {
-		effects.Args = *args
-	}
-	if other != nil {
-		effects.Other = *other
-	}
-	return effects, nil
-}
-
 // LLVM 22 has six locations with two ModRef bits each. Keep these physical
 // encodings in the backend: they are not part of the source contract format.
 const (
@@ -124,45 +62,6 @@ const (
 	nativeReturnCapture  uint64 = 0xf
 	nativeAllCapture     uint64 = 0xff
 )
-
-// NativeMemoryEffects widens logical input accesses when a pointer leaf is
-// carried in an aggregate rather than being a native pointer argument. This
-// loses some alias precision, but never assigns a pointee's access permission
-// to the byval container that happens to transport its pointer.
-func NativeMemoryEffects(effects MemoryEffects, hiddenRoots bool) uint64 {
-	other := effects.Other
-	if hiddenRoots {
-		other |= effects.Args
-	}
-	return (uint64(other)*0x555)&^nativeArgumentMemory | uint64(effects.Args)
-}
-
-// HasHiddenPointerRoots reports pointer leaves which native parameter
-// attributes cannot describe. An ordinary scalar pointer is already a root.
-func HasHiddenPointerRoots(fn llvm.Value) bool {
-	for _, param := range fn.GlobalValueType().ParamTypes() {
-		if param.TypeKind() != llvm.PointerTypeKind && containsPointer(param) {
-			return true
-		}
-	}
-	return false
-}
-
-func containsPointer(t llvm.Type) bool {
-	switch t.TypeKind() {
-	case llvm.PointerTypeKind:
-		return true
-	case llvm.StructTypeKind:
-		for _, field := range t.StructElementTypes() {
-			if containsPointer(field) {
-				return true
-			}
-		}
-	case llvm.ArrayTypeKind, llvm.VectorTypeKind:
-		return containsPointer(t.ElementType())
-	}
-	return false
-}
 
 var parameterEffectAttributes = []string{"readnone", "readonly", "writeonly", "captures", "noalias"}
 
@@ -196,12 +95,6 @@ func remapEffectDispositions(from, to llvm.Value, mapping ABIMapping) {
 		} else {
 			record.Disposition, record.Reason = EffectConservative, "ABI conversion has no native pointer parameter for the selected value"
 		}
-		if record.Name == "capture" && mapping.Result.Kind == Indirect {
-			capture := from.GetEnumAttributeAtIndex(old, llvm.AttributeKindID("captures"))
-			if !capture.IsNil() && capture.GetEnumValue()&nativeReturnCapture != 0 {
-				record.Disposition, record.Reason = EffectConservative, "logical result capture becomes a store through the indirect result slot"
-			}
-		}
 	}
 	data, err := json.Marshal(lowering)
 	if err != nil {
@@ -230,15 +123,6 @@ func ApplyEffects(ctx llvm.Context, fn llvm.Value, sig *types.Signature, attrs [
 		record := EffectLowering{Target: attr.Target, Name: attr.Name, Disposition: EffectNative}
 		if attr.Target.Scope == Function {
 			switch attr.Name {
-			case "memory":
-				effects := NativeMemoryEffects(attr.Memory, HasHiddenPointerRoots(fn))
-				// A contract assume models an already-required condition, not
-				// an observable storage access. LLVM's intrinsic-only control
-				// dependency does not widen the enclosing memory contract.
-				fn.AddFunctionAttr(ctx.CreateEnumAttribute(llvm.AttributeKindID("memory"), effects))
-				if HasHiddenPointerRoots(fn) && attr.Memory.Args&^attr.Memory.Other != 0 {
-					record.Disposition, record.Reason = EffectConservative, "input pointer roots are carried inside aggregates"
-				}
 			case "cold", "noreturn":
 				fn.AddFunctionAttr(ctx.CreateEnumAttribute(llvm.AttributeKindID(attr.Name), 0))
 			default:
@@ -247,7 +131,7 @@ func ApplyEffects(ctx llvm.Context, fn llvm.Value, sig *types.Signature, attrs [
 			lowering = append(lowering, record)
 			continue
 		}
-		if attr.Name != "access" && attr.Name != "capture" && attr.Name != "noalias" {
+		if attr.Name != "access" && attr.Name != "noalias" {
 			continue
 		}
 		index := 1 + environment
@@ -257,14 +141,14 @@ func ApplyEffects(ctx llvm.Context, fn llvm.Value, sig *types.Signature, attrs [
 				index++
 			}
 		}
-		// A contract on an aggregate leaf cannot be attached to its carrier.
-		// Keep the typed source fact; the native invocation summary is wider.
+		// A source pointer must have a native pointer parameter to carry
+		// its access or aliasing restriction.
 		if index > fn.ParamsCount() || fn.Param(index-1).Type().TypeKind() != llvm.PointerTypeKind {
 			record.Disposition, record.Reason = EffectConservative, "selected pointer has no native pointer parameter"
 			lowering = append(lowering, record)
 			continue
 		}
-		name, value := "", uint64(0)
+		name := ""
 		if attr.Name == "noalias" {
 			name = "noalias"
 		} else if attr.Name == "access" {
@@ -276,16 +160,9 @@ func ApplyEffects(ctx llvm.Context, fn llvm.Value, sig *types.Signature, attrs [
 			case AccessWrite:
 				name = "writeonly"
 			}
-		} else {
-			switch attr.Capture {
-			case CaptureNone:
-				name = "captures"
-			case CaptureResults:
-				name, value = "captures", nativeReturnCapture
-			}
 		}
 		if name != "" {
-			fn.AddAttributeAtIndex(index, ctx.CreateEnumAttribute(llvm.AttributeKindID(name), value))
+			fn.AddAttributeAtIndex(index, ctx.CreateEnumAttribute(llvm.AttributeKindID(name), 0))
 		}
 		record.PhysicalIndex = index
 		lowering = append(lowering, record)
@@ -388,7 +265,6 @@ func WidenForGCRootPublication(fn llvm.Value) {
 	for i := 1; i <= fn.ParamsCount(); i++ {
 		fn.RemoveEnumAttributeAtIndex(i, llvm.AttributeKindID("captures"))
 	}
-	markConservativeEffects(fn, "compiler-generated GC root publication", "memory", "capture")
 }
 
 // WidenForUnknownInstrumentation preserves hints and no-normal-return while
@@ -404,7 +280,7 @@ func WidenForUnknownInstrumentation(fn llvm.Value) {
 			fn.RemoveEnumAttributeAtIndex(i, llvm.AttributeKindID(name))
 		}
 	}
-	markConservativeEffects(fn, "target mode permits compiler-generated runtime instrumentation", "memory", "nofree", "nosync", "nounwind", "willreturn", "access", "capture", "noalias")
+	markConservativeEffects(fn, "target mode permits compiler-generated runtime instrumentation", "access", "noalias")
 }
 
 // CheckInstrumentation rejects an unmodelled generated operation only when a
@@ -423,9 +299,6 @@ func CheckInstrumentation(fn llvm.Value, reason string, names ...string) error {
 	}
 	for _, attr := range attrs {
 		for _, name := range names {
-			if name == "captures" {
-				name = "capture"
-			}
 			if attr.Name == name && HasNativeEffectRestriction(fn, name) {
 				return attr.Error("%s cannot yet account for %s", name, reason)
 			}
@@ -435,24 +308,21 @@ func CheckInstrumentation(fn llvm.Value, reason string, names ...string) error {
 }
 
 func HasNativeEffectRestriction(fn llvm.Value, name string) bool {
-	if name == "capture" || name == "access" || name == "noalias" {
-		attributes := []string{"captures"}
-		if name == "noalias" {
-			attributes = []string{"noalias"}
-		}
-		if name == "access" {
-			attributes = []string{"readonly", "writeonly", "readnone"}
-		}
-		for i := 1; i <= fn.ParamsCount(); i++ {
-			for _, attribute := range attributes {
-				attr := fn.GetEnumAttributeAtIndex(i, llvm.AttributeKindID(attribute))
-				if !attr.IsNil() && (attribute != "captures" || attr.GetEnumValue() != nativeAllCapture) {
-					return true
-				}
-			}
-		}
+	var attributes []string
+	switch name {
+	case "noalias":
+		attributes = []string{"noalias"}
+	case "access":
+		attributes = []string{"readonly", "writeonly", "readnone"}
+	default:
 		return false
 	}
-	attr := fn.GetEnumAttributeAtIndex(-1, llvm.AttributeKindID(name))
-	return !attr.IsNil() && (name != "memory" || attr.GetEnumValue() != nativeAllMemory)
+	for i := 1; i <= fn.ParamsCount(); i++ {
+		for _, attribute := range attributes {
+			if !fn.GetEnumAttributeAtIndex(i, llvm.AttributeKindID(attribute)).IsNil() {
+				return true
+			}
+		}
+	}
+	return false
 }

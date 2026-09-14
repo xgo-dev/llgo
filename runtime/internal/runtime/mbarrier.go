@@ -147,10 +147,9 @@ import (
 // TODO: Perfect for go:nosplitrec since we can't have a safe point
 // anywhere in the bulk barrier or memmove.
 //
-//llgo:attr memory(args: readwrite)
-//llgo:attr param(typ) access(read) capture(none)
-//llgo:attr param(dst) access(write) capture(none)
-//llgo:attr param(src) access(read) capture(none)
+//llgo:param(typ) access(read)
+//llgo:param(dst) access(write)
+//llgo:param(src) access(read)
 func Typedmemmove(typ *Type, dst, src unsafe.Pointer) {
 	if dst == src {
 		return
@@ -324,9 +323,8 @@ func reflect_typedslicecopy(elemType *_type, dst, src slice) int {
 //
 // TODO: A "go:nosplitrec" annotation would be perfect for this.
 //
-//llgo:attr memory(args: readwrite)
-//llgo:attr param(typ) access(read) capture(none)
-//llgo:attr param(ptr) access(write) capture(none)
+//llgo:param(typ) access(read)
+//llgo:param(ptr) access(write)
 func Typedmemclr(typ *Type, ptr unsafe.Pointer) {
 	c.Memset(ptr, 0, typ.Size_)
 }

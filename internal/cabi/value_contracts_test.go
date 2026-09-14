@@ -55,9 +55,9 @@ func TestValueContractsSurviveByvalSretAndPackedABI(t *testing.T) {
 			pkg := prog.NewPackage("contracts", "contracts")
 			callee := contractTestDeclaration(t, prog, pkg, `
 type Pair struct { P *int; N int64; Extra [24]byte }
-//llgo:attr param(p) nonnull noalias
-//llgo:attr result(q) nonnull same_as(param(p))
-//llgo:attr result(n) range(0,7)
+//llgo:param(p) nonnull noalias
+//llgo:result(q) nonnull sameas(p)
+//llgo:result(n) range(0,7)
 func F(input Pair, p *int) (q *int, n int64, output Pair)
 `, "contracts.F")
 			calleeType := callee.Type.RawType().(*types.Signature)
@@ -76,7 +76,7 @@ func F(input Pair, p *int) (q *int, n int64, output Pair)
 
 			packed := contractTestDeclaration(t, prog, pkg, `
 type Packed struct { N int8; Other [7]byte }
-//llgo:attr param(n) range(-3,4)
+//llgo:param(n) range(-3,4)
 func PackedInput(p Packed, n int8) bool
 `, "contracts.PackedInput")
 			pbody := packed.MakeBody(1)

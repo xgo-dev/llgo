@@ -13,13 +13,13 @@ func TestValueContractRejectsMismatchedLogicalSignature(t *testing.T) {
 	for _, tc := range []struct {
 		name, ir, source, want string
 	}{
-		{"missing input", "declare void @F()", "//llgo:attr param(p) nonnull\nfunc F(p *int) {}", "source parameter has no logical LLVM value"},
-		{"pointer as integer", "declare void @F(i64)", "//llgo:attr param(p) nonnull\nfunc F(p *int) {}", "logical LLVM pointer"},
-		{"integer width", "declare i64 @F()", "//llgo:attr result(0) range(0,8)\nfunc F() int32 { return 0 }", "source-width LLVM integer"},
-		{"forwarding representation", "declare ptr @F(i64)", "//llgo:attr result(0) same_as(param(p))\nfunc F(p *int) *int { return p }", "same_as values do not share"},
-		{"missing tuple slot", "declare {ptr} @F()", "//llgo:attr result(1) nonnull\nfunc F() (int, *int) { return 0,nil }", "source field has no LLVM representation"},
-		{"scalar as tuple", "declare ptr @F()", "//llgo:attr result(1) nonnull\nfunc F() (int, *int) { return 0,nil }", "nonaggregate LLVM value"},
-		{"missing array slot", "declare [1 x ptr] @F()", "//llgo:attr result(1) nonnull\nfunc F() (*int, *int) { return nil,nil }", "source element has no LLVM representation"},
+		{"missing input", "declare void @F()", "//llgo:param(p) nonnull\nfunc F(p *int) {}", "source parameter has no logical LLVM value"},
+		{"pointer as integer", "declare void @F(i64)", "//llgo:param(p) nonnull\nfunc F(p *int) {}", "logical LLVM pointer"},
+		{"integer width", "declare i64 @F()", "//llgo:result(0) range(0,8)\nfunc F() int32 { return 0 }", "source-width LLVM integer"},
+		{"forwarding representation", "declare ptr @F(i64)", "//llgo:result(0) sameas(p)\nfunc F(p *int) *int { return p }", "sameas values do not share"},
+		{"missing tuple slot", "declare {ptr} @F()", "//llgo:result(1) nonnull\nfunc F() (int, *int) { return 0,nil }", "source field has no LLVM representation"},
+		{"scalar as tuple", "declare ptr @F()", "//llgo:result(1) nonnull\nfunc F() (int, *int) { return 0,nil }", "nonaggregate LLVM value"},
+		{"missing array slot", "declare [1 x ptr] @F()", "//llgo:result(1) nonnull\nfunc F() (*int, *int) { return nil,nil }", "source element has no LLVM representation"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mod := valueTestModule(t, tc.ir)
@@ -48,8 +48,8 @@ define i1 @caller(ptr %p) {
   ret i1 %ok
 }
 `)
-	attachValueTestContracts(t, mod, "F", `//llgo:attr result(0) same_as(param(p))
-//llgo:attr result(1) nonnull
+	attachValueTestContracts(t, mod, "F", `//llgo:result(0) sameas(p)
+//llgo:result(1) nonnull
 func F(p *int) (*int, *int) { return p,p }`)
 	if err := MaterializeValueContracts(mod); err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestUnsignedNonnegativeAddsNoRestriction(t *testing.T) {
 define i32 @F(i32 %n) { ret i32 %n }
 define i32 @caller(i32 %n) { %r = call i32 @F(i32 %n) ret i32 %r }
 `)
-	attachValueTestContracts(t, mod, "F", "//llgo:attr param(n) nonnegative\nfunc F(n uint32) uint32 { return n }")
+	attachValueTestContracts(t, mod, "F", "//llgo:param(n) nonnegative\nfunc F(n uint32) uint32 { return n }")
 	if err := MaterializeValueContracts(mod); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ define i64 @caller(ptr %p) {
 
 
 `)
-	attachValueTestContracts(t, mod, "F", "//llgo:attr result(0) nonnull\nfunc F(p *int) *int { return p }")
+	attachValueTestContracts(t, mod, "F", "//llgo:result(0) nonnull\nfunc F(p *int) *int { return p }")
 	err := MaterializeValueContracts(mod)
 	if err == nil || !strings.Contains(err.Error(), "incompatible logical prototype") {
 		t.Fatalf("incompatible imported call accepted: %v", err)
@@ -107,13 +107,13 @@ func TestValueContractRejectsInvalidBitcodePlan(t *testing.T) {
 
 func TestMethodContractsKeepReceiverAndParameterWithEnvironment(t *testing.T) {
 	mod := valueTestModule(t, `
-define ptr @F(ptr %env, ptr %recv, ptr %p) { ret ptr %recv }
+define ptr @F(ptr %env, ptr %recv, ptr %p) { ret ptr %p }
 `)
 	attrs, sig, err := parseTest(t, `type T int
-//llgo:attr receiver nonnull noalias
-//llgo:attr param(p) nonnull access(none) capture(none)
-//llgo:attr result(0) same_as(receiver)
-func (r *T) F(p *int) *T { return r }
+//llgo:receiver nonnull noalias
+//llgo:param(p) nonnull access(none)
+//llgo:result(0) sameas(p)
+func (r *T) F(p *int) *int { return p }
 `)
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +125,7 @@ func (r *T) F(p *int) *T { return r }
 	for _, tc := range []struct {
 		index int
 		name  string
-	}{{2, "nonnull"}, {2, "noalias"}, {2, "returned"}, {3, "nonnull"}, {3, "readnone"}, {3, "captures"}} {
+	}{{2, "nonnull"}, {2, "noalias"}, {3, "returned"}, {3, "nonnull"}, {3, "readnone"}} {
 		if fn.GetEnumAttributeAtIndex(tc.index, llvm.AttributeKindID(tc.name)).IsNil() {
 			t.Fatalf("lost %s on %d: %s", tc.name, tc.index, fn.String())
 		}
@@ -146,9 +146,9 @@ func (r *T) F(p *int) *T { return r }
 // stale selectors cannot silently migrate to another parameter or result.
 func TestContractsRejectChangedImportedSignature(t *testing.T) {
 	for _, tc := range []struct{ source, replacement, ir, want string }{
-		{"//llgo:attr result(1) nonnull\nfunc F() (*int,*int) { return nil,nil }", "func F() *int { return nil }", "declare ptr @F()", "selector result(1) does not exist"},
-		{"//llgo:attr result(0) same_as(param(q))\nfunc F(p,q *int) *int { return q }", "func F(p *int) *int { return p }", "declare ptr @F(ptr)", "same_as input: selector param(1) does not exist"},
-		{"type T int\n//llgo:attr receiver nonnull\nfunc (p *T) F() {}", "func F() {}", "declare void @F()", "selector receiver does not exist"},
+		{"//llgo:result(1) nonnull\nfunc F() (*int,*int) { return nil,nil }", "func F() *int { return nil }", "declare ptr @F()", "selector result(1) does not exist"},
+		{"//llgo:result(0) sameas(q)\nfunc F(p,q *int) *int { return q }", "func F(p *int) *int { return p }", "declare ptr @F(ptr)", "sameas input: selector param(1) does not exist"},
+		{"type T int\n//llgo:receiver nonnull\nfunc (p *T) F() {}", "func F() {}", "declare void @F()", "selector receiver does not exist"},
 	} {
 		t.Run(tc.want, func(t *testing.T) {
 			attrs, _, err := parseTest(t, tc.source)

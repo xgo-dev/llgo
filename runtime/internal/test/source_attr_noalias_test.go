@@ -5,7 +5,7 @@ package test
 import "testing"
 
 //go:noinline
-//llgo:attr param(p) noalias
+//llgo:param(p) noalias
 func attributeNoAliasStore(p, q *int32) int32 {
 	*p = 1
 	*q = 2
@@ -13,7 +13,7 @@ func attributeNoAliasStore(p, q *int32) int32 {
 }
 
 //go:noinline
-//llgo:attr param(p) noalias
+//llgo:param(p) noalias
 func attributeNoAliasRead(p, q *int32) int32 { return *p + *q }
 
 func TestSourceAttrNoAlias(t *testing.T) {
