@@ -146,7 +146,7 @@ var CheckFFI *bool
 
 func AddCheckFFIFlag(fs *flag.FlagSet) {
 	CheckFFI = nil
-	fs.BoolFunc("check-libffi", "Automatically select runtime and reflect without libffi when possible (default: true with -lto=full; frontend scan, then one backend/LTO)", func(v string) error {
+	fs.BoolFunc("check-libffi", "Automatically select runtime and reflect without libffi when possible (default: false; frontend scan, then one backend/LTO)", func(v string) error {
 		enabled, err := strconv.ParseBool(v)
 		if err != nil {
 			return err
@@ -390,7 +390,6 @@ func UpdateConfig(conf *build.Config) error {
 	if LTO.Specified {
 		conf.LTO = LTO.Mode
 	}
-	conf.CheckFFI = conf.LTO == lto.Full
 	if CheckFFI != nil {
 		conf.CheckFFI = *CheckFFI
 	}
