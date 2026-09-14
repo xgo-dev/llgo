@@ -62,7 +62,89 @@ func (l largeAggregateLowerer) transformModule(m llvm.Module) {
 	for _, fn := range funcs {
 		l.transformFunc(m, fn)
 	}
+	l.scalarizeExtractedLoads(m)
 	l.transformStoredLoads(m)
+}
+
+// scalarizeExtractedLoads keeps projected fields from forcing an otherwise
+// indirect large value back through SelectionDAG. Read each projection at the original
+// aggregate load: extracting it later must still observe that saved value if
+// the source storage has since changed.
+func (l largeAggregateLowerer) scalarizeExtractedLoads(m llvm.Module) {
+	var loads []llvm.Value
+	for fn := m.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+		for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+			for instr := bb.FirstInstruction(); !instr.IsNil(); instr = llvm.NextInstruction(instr) {
+				load := instr.IsALoadInst()
+				if !load.IsNil() && !load.IsVolatile() && l.isLargeAggregate(load.Type()) {
+					loads = append(loads, load)
+				}
+			}
+		}
+	}
+	for _, load := range loads {
+		l.scalarizeLoadProjections(m.Context(), load)
+		if load.FirstUse().IsNil() {
+			load.EraseFromParentAsInstruction()
+		}
+	}
+}
+
+func (l largeAggregateLowerer) scalarizeLoadProjections(ctx llvm.Context, load llvm.Value) {
+	b := ctx.NewBuilder()
+	defer b.Dispose()
+	b.SetInsertPointBefore(load)
+	rootType := load.Type()
+	rootAlign := load.Alignment()
+	if rootAlign == 0 {
+		rootAlign = l.td.ABITypeAlignment(rootType)
+	}
+	var visit func(llvm.Value, []uint32)
+	visit = func(value llvm.Value, path []uint32) {
+		var extracts []llvm.Value
+		for use := value.FirstUse(); !use.IsNil(); use = use.NextUse() {
+			if extract := use.User().IsAExtractValueInst(); !extract.IsNil() {
+				extracts = append(extracts, extract)
+			}
+		}
+		for _, extract := range extracts {
+			indices := append(append([]uint32(nil), path...), extract.Indices()...)
+			if l.isLargeAggregate(extract.Type()) {
+				visit(extract, indices)
+				if extract.FirstUse().IsNil() {
+					extract.EraseFromParentAsInstruction()
+				}
+				continue
+			}
+			gepIndices := []llvm.Value{llvm.ConstInt(ctx.Int32Type(), 0, false)}
+			typ, offset := rootType, uint64(0)
+			for _, index := range indices {
+				switch typ.TypeKind() {
+				case llvm.StructTypeKind:
+					gepIndices = append(gepIndices, llvm.ConstInt(ctx.Int32Type(), uint64(index), false))
+					offset += l.td.ElementOffset(typ, int(index))
+					typ = typ.StructElementTypes()[index]
+				case llvm.ArrayTypeKind:
+					// Array indices are signed GEP operands. Use the target pointer
+					// width so a valid large 64-bit array index cannot become negative.
+					gepIndices = append(gepIndices, llvm.ConstInt(ctx.IntType(l.td.PointerSize()*8), uint64(index), false))
+					typ = typ.ElementType()
+					offset += uint64(index) * l.td.TypeAllocSize(typ)
+				}
+			}
+			ptr := b.CreateGEP(rootType, load.Operand(0), gepIndices, "aggregate.field.addr")
+			field := b.CreateLoad(extract.Type(), ptr, "aggregate.field")
+			alignment := rootAlign
+			for offset%uint64(alignment) != 0 {
+				alignment /= 2
+			}
+			field.SetAlignment(alignment)
+			field.InstructionSetDebugLoc(load.InstructionDebugLoc())
+			extract.ReplaceAllUsesWith(field)
+			extract.EraseFromParentAsInstruction()
+		}
+	}
+	visit(load, nil)
 }
 
 // transformStoredLoads prevents a large aggregate load from reaching
@@ -169,6 +251,8 @@ func (l largeAggregateLowerer) transformCall(m llvm.Module, call llvm.Value) {
 	value.InstructionSetDebugLoc(call.InstructionDebugLoc())
 	call.ReplaceAllUsesWith(value)
 	call.EraseFromParentAsInstruction()
+	// Read result fields before rewriting whole-value copies from this slot.
+	l.scalarizeLoadProjections(ctx, value)
 	l.rewriteStoredResult(ctx, value, result, retType)
 }
 
