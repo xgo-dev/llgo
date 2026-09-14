@@ -36,6 +36,16 @@ timeouts:
     case: fixedbugs/issue78081.go
     timeout: 6m
     reason: the 1.6 million-iteration stack and GC stress loop took 147s on a passing GoJS run and exceeded 180s on another runner
+  - platform: js/wasm
+    directive: run
+    case: fixedbugs/issue79186.go
+    timeout: 2m
+    reason: the 51.2 million-operation RWMutex loop passed in 55.7s on GoJS and exceeded the default minute on another runner
+  - platform: js/wasm
+    directive: runoutput
+    case: fixedbugs/issue5162.go
+    timeout: 4m
+    reason: building the 768 generated array-comparison functions took 168.8s on GoJS, leaving only 11s below the default build limit
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue79186.go

@@ -429,6 +429,8 @@ func TestObservedPassesDoNotHaveXFailClassifications(t *testing.T) {
 		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "inline_literal.go", Directive: "run"}},
 		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "winbatch.go", Directive: "run"}},
 		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue78081.go", Directive: "run"}},
+		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue79186.go", Directive: "run"}},
+		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue5162.go", Directive: "runoutput"}},
 	}
 	for _, tt := range tests {
 		if match, reason := cfg.Match(tt.version, tt.platform, tt.tc); match {
@@ -440,6 +442,7 @@ func TestObservedPassesDoNotHaveXFailClassifications(t *testing.T) {
 func TestWasmObservedResourceExceptions(t *testing.T) {
 	repo := repoRoot(t)
 	cfg := loadXFailConfig(t, repo, filepath.Join("test", "goroot", "xfail.yaml"))
+	notApplicable := loadNotApplicableConfig(t, repo, filepath.Join("test", "goroot", "notapplicable.yaml"))
 	rangegen := testCase{RelPath: "rangegen.go", Directive: "runoutput"}
 	if match, _ := cfg.MatchHostSkip("go1.27.0", "linux/amd64", rangegen); !match {
 		t.Fatal("Go 1.27 linux/amd64 rangegen did not match its host resource skip")
@@ -448,20 +451,33 @@ func TestWasmObservedResourceExceptions(t *testing.T) {
 		t.Fatalf("Go 1.26 linux/amd64 rangegen unexpectedly matched host skip: %s", reason)
 	}
 	for _, tt := range []struct {
-		tc      testCase
-		timeout time.Duration
+		tc            testCase
+		timeout       time.Duration
+		nativeTimeout time.Duration
 	}{
-		{testCase{RelPath: "winbatch.go", Directive: "run"}, 4 * time.Minute},
-		{testCase{RelPath: "fixedbugs/issue78081.go", Directive: "run"}, 6 * time.Minute},
+		{testCase{RelPath: "winbatch.go", Directive: "run"}, 4 * time.Minute, 0},
+		{testCase{RelPath: "fixedbugs/issue78081.go", Directive: "run"}, 6 * time.Minute, 0},
+		{testCase{RelPath: "fixedbugs/issue79186.go", Directive: "run"}, 2 * time.Minute, 90 * time.Second},
+		{testCase{RelPath: "fixedbugs/issue5162.go", Directive: "runoutput"}, 4 * time.Minute, 0},
 	} {
 		tc := tt.tc
 		timeout, _, match := cfg.MatchTimeout("go1.27.0", "js/wasm", tc)
 		if !match || timeout != tt.timeout {
 			t.Errorf("timeout for %s = %s, %v; want %s, true", tc.RelPath, timeout, match, tt.timeout)
 		}
+		if match, reason := cfg.MatchFlaky("go1.27.0", "js/wasm", tc); match {
+			t.Errorf("%s unexpectedly matched a wasm flake: %s", tc.RelPath, reason)
+		}
+		if match, reason := notApplicable.Match("go1.27.0", "js/wasm", tc); match {
+			t.Errorf("%s unexpectedly matched wasm not-applicable: %s", tc.RelPath, reason)
+		}
 		for _, platform := range []string{"linux/amd64", "darwin/arm64", "windows-msvc/arm64", "wasip1/wasm"} {
-			if _, reason, match := cfg.MatchTimeout("go1.27.0", platform, tc); match {
-				t.Errorf("GoJS timeout leaked to %s for %s: %s", platform, tc.RelPath, reason)
+			want := tt.nativeTimeout
+			if platform == "wasip1/wasm" {
+				want = 0
+			}
+			if timeout, _, match := cfg.MatchTimeout("go1.27.0", platform, tc); timeout != want || match != (want != 0) {
+				t.Errorf("timeout for %s/%s = %s, %v; want %s, %v", platform, tc.RelPath, timeout, match, want, want != 0)
 			}
 		}
 	}
