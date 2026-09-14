@@ -17,13 +17,14 @@ const (
 
 // LowerLargeAggregates converts oversized direct aggregate returns and copies
 // to indirect memory operations before target-specific C ABI lowering runs.
-func LowerLargeAggregates(td llvm.TargetData, m llvm.Module) {
-	l := largeAggregateLowerer{td: td}
+func LowerLargeAggregates(td llvm.TargetData, m llvm.Module, checks ...func(llvm.Value, string) error) {
+	l := largeAggregateLowerer{td: td, checks: checks}
 	l.transformModule(m)
 }
 
 type largeAggregateLowerer struct {
-	td llvm.TargetData
+	td     llvm.TargetData
+	checks []func(llvm.Value, string) error
 }
 
 func (l largeAggregateLowerer) isLargeAggregate(typ llvm.Type) bool {
@@ -369,6 +370,11 @@ func (l largeAggregateLowerer) rewriteStoredResult(ctx llvm.Context, value, resu
 }
 
 func (l largeAggregateLowerer) allocResult(m llvm.Module, ctx llvm.Context, b llvm.Builder, typ llvm.Type) llvm.Value {
+	for _, check := range l.checks {
+		if err := check(b.GetInsertBlock().Parent(), "large ABI result allocation"); err != nil {
+			panic(err)
+		}
+	}
 	intType := ctx.IntType(l.td.PointerSize() * 8)
 	ptrType := llvm.PointerType(ctx.Int8Type(), 0)
 	fnType := llvm.FunctionType(ptrType, []llvm.Type{intType}, false)

@@ -58,6 +58,21 @@ func (p Program) applyValueAttributes(fn llvm.Value, name string, sig *types.Sig
 	if err := funcattrs.Apply(p.ctx, fn, sig, attrs, offset, p.Int().ll.IntTypeWidth()); err != nil {
 		panic(err)
 	}
+	// Root publication and safepoints can introduce accesses outside the
+	// source body. Use the same conservative policy for imported declarations.
+	if !p.GCRootsEnabled() && !p.CooperativeSafepointsEnabled() {
+		if err := funcattrs.ApplyPointerEffects(p.ctx, fn, sig, attrs, offset); err != nil {
+			panic(err)
+		}
+		for _, attr := range attrs {
+			if attr.Name == "noalias" || attr.Name == "access" {
+				if p.pointerEffects == nil {
+					p.pointerEffects = make(map[string][]funcattrs.Attribute)
+				}
+				p.pointerEffects[fn.Name()] = append(p.pointerEffects[fn.Name()], attr)
+			}
+		}
+	}
 	plan, err := funcattrs.PrepareResultAttributes(p.ctx, fn, sig, attrs, offset, p.Int().ll.IntTypeWidth(), func(index int) []int {
 		path := []int{index}
 		converted := p.FuncDecl(sig, bg).raw.Type.(*types.Signature)

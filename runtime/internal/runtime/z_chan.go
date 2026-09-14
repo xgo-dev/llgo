@@ -165,6 +165,7 @@ func ChanLen(p *Chan) (n int) {
 	return
 }
 
+//llgo:param(p) access(read)
 //llgo:result nonnegative
 func ChanCap(p *Chan) int {
 	if p == nil {
