@@ -166,17 +166,16 @@ jobs:
           # remaining test/go sources pass go test's default vet checks.
           go list ./... \
             | grep -v '^github.com/xgo-dev/llgo/test/go$' \
-            | grep -v '^github.com/xgo-dev/llgo/cl$' \
+            | grep -Ev '^github.com/xgo-dev/llgo/(cl|ssa|internal/funcattrs|internal/cabi)$' \
             | xargs "${main_go_test[@]}" -timeout 45m -coverprofile="coverage-main.txt" -covermode=atomic \
                 -bench '^BenchmarkGo126' -benchtime=1x
 
-          # Compiler fixtures owned by cl exercise ssa in-process. Instrument
-          # both packages in this single test binary so coverage follows those
-          # calls without restoring duplicate fixture tests under ssa.
+          # Compiler and ABI fixtures exercise source attributes across package
+          # boundaries. Collect one instrumented profile for those calls.
           "${go_test[@]}" -timeout 45m \
-            -coverpkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/ssa \
+            -coverpkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/ssa,github.com/xgo-dev/llgo/internal/funcattrs,github.com/xgo-dev/llgo/internal/cabi \
             -coverprofile="coverage-compiler.txt" -covermode=atomic \
-            -bench '^BenchmarkGo126' -benchtime=1x ./cl
+            -bench '^BenchmarkGo126' -benchtime=1x ./cl ./ssa ./internal/funcattrs ./internal/cabi
           # The direct language tests recover hardware faults. Some Windows
           # hosts need more exception stack than stock Go reserves (golang/go#81238).
           # Apply the measured workaround only to this host Go test binary.

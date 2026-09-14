@@ -65,9 +65,8 @@ func TestFunctionAttributeDiagnostics(t *testing.T) {
 		{"//llgo:cold noreturn\nfunc F() {}", "takes no arguments"},
 		{"// llgo:noreturn()\nfunc F() {}", "takes no arguments"},
 		{"//llgo:cold(x)\nfunc F() {}", "takes no arguments"},
-		{"//llgo:param(p) nonnull\nfunc F(p *int) {}", "not yet supported"},
-		{"//llgo:result nonnull\nfunc F() *int { return nil }", "not yet supported"},
-		{"type T int\n//llgo:receiver noalias\nfunc (T) F() {}", "not yet supported"},
+
+		{"type T int\n//llgo:receiver noalias\nfunc (T) F() {}", "unsupported attribute"},
 	} {
 		fs := token.NewFileSet()
 		file, err := parser.ParseFile(fs, "attributes.go", "package p\n"+test.source, parser.ParseComments)
