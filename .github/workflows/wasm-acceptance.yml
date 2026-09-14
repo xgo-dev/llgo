@@ -38,15 +38,22 @@ jobs:
         with:
           version: '4.0.21'
       - uses: ./.github/actions/setup-go
+      - name: Set up Chrome
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          install-dependencies: true
       - name: Require the hosted browser
+        env:
+          BROWSER_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
         run: |
-          command -v google-chrome
-          google-chrome --version
+          test -x "$BROWSER_BIN"
+          "$BROWSER_BIN" --version
       - name: Build LLGo
         run: go build -o "$RUNNER_TEMP/llgo" ./cmd/llgo
       - name: Run the GoJS artifact in Chrome
         env:
-          BROWSER_BIN: google-chrome
+          BROWSER_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           LLGO: ${{ runner.temp }}/llgo
         run: dev/test_wasm_browser.sh
 
