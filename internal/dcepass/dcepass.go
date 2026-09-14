@@ -60,11 +60,13 @@ func (e *overrideEmitter) emitTypeOverride(srcType, methodsVal llvm.Value, elemT
 	fieldCount := init.OperandsCount()
 	fields := make([]llvm.Value, fieldCount)
 	methodOp := fieldCount - 1
+	thunkOp := -1
 	if last := init.Operand(methodOp); last.Type().TypeKind() == llvm.ArrayTypeKind && last.Type().ElementType().TypeKind() == llvm.PointerTypeKind && fieldCount >= 2 {
+		thunkOp = methodOp
 		methodOp = fieldCount - 2
 	}
 	for i := 0; i < fieldCount; i++ {
-		if i == methodOp {
+		if i == methodOp || i == thunkOp {
 			continue
 		}
 		fields[i] = e.cloneConst(init.Operand(i))
@@ -93,6 +95,18 @@ func (e *overrideEmitter) emitTypeOverride(srcType, methodsVal llvm.Value, elemT
 		})
 	}
 	fields[methodOp] = llvm.ConstArray(dstElemTy, methods)
+	if thunkOp >= 0 {
+		origThunks := init.Operand(thunkOp)
+		thunks := make([]llvm.Value, origThunks.OperandsCount())
+		for i := range thunks {
+			if keepIdx[i] {
+				thunks[i] = e.cloneConst(origThunks.Operand(i))
+				continue
+			}
+			thunks[i] = unreachableMethod
+		}
+		fields[thunkOp] = llvm.ConstArray(e.cloneType(origThunks.Type().ElementType()), thunks)
+	}
 
 	dstType.SetInitializer(constStructOfType(e.cloneType(init.Type()), fields))
 	dstType.SetGlobalConstant(true)

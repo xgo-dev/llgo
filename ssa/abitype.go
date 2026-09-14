@@ -632,11 +632,10 @@ func (b Builder) abiMethodValueThunk(ifn Function, mSig *types.Signature) llvm.V
 	}, nil)
 	envVar := types.NewVar(token.NoPos, nil, "$env", types.NewPointer(envStruct))
 	name := ifn.Name() + "$methodvalue"
-	if existing := b.Pkg.FuncOf(name); existing != nil {
-		return existing.impl
+	wrapper := b.Pkg.NewEnvFunc(name, goSig, InGo, envVar, true)
+	if wrapper.HasBody() {
+		return wrapper.impl
 	}
-	wrapper := b.Pkg.NewEnvFunc(name, goSig, InGo, envVar, false)
-	wrapper.impl.SetLinkage(llvm.InternalLinkage)
 	body := wrapper.MakeBody(1)
 	body.AssertNilDeref(wrapper.Env())
 	recvVal := body.Field(body.Load(wrapper.Env()), 0)
