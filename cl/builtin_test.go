@@ -87,6 +87,27 @@ func runtimeCall(p *T) { runtime.SetFinalizer(p, finalizer) }`
 	}
 }
 
+func TestSetFinalizerNamedInterfaceLowering(t *testing.T) {
+	const source = `package foo
+import "runtime"
+type T int
+func (p *T) Value() int { return int(*p) }
+func finalizeAny(v any) {}
+func finalizeIface(v interface{ Value() int }) {}
+func runtimeAny(p *T) { runtime.SetFinalizer(p, finalizeAny) }
+func runtimeIface(p *T) { runtime.SetFinalizer(p, finalizeIface) }`
+	pkg, module := mustCompileLLPkgFromSrc(t, source)
+	for _, name := range []string{"foo.runtimeAny", "foo.runtimeIface"} {
+		ir := mustNamedFunction(t, module, name).String()
+		if !strings.Contains(ir, "SetFinalizerPtr") || strings.Contains(ir, "runtime.SetFinalizer(") {
+			t.Fatalf("%s was not lowered:\n%s", name, ir)
+		}
+	}
+	if pkg.NeedFFI {
+		t.Fatal("named interface finalizers should not require libffi")
+	}
+}
+
 func TestSetFinalizerClosureRequiresFFI(t *testing.T) {
 	const source = `package foo
 import "runtime"

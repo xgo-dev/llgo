@@ -2255,7 +2255,11 @@ func (b Builder) LowerSetFinalizerCall(args []Expr) (Expr, []Expr, bool) {
 		wb := wrapper.MakeBody(1)
 		converted := wb.Convert(b.Prog.rawType(ptrType), wb.Param(0))
 		if !types.Identical(argType, ptrType) {
-			converted = wb.Convert(b.Prog.rawType(argType), converted)
+			if _, ok := argType.Underlying().(*types.Interface); ok {
+				converted = wb.MakeInterface(b.Prog.Type(argType, InGo), converted)
+			} else {
+				converted = wb.Convert(b.Prog.rawType(argType), converted)
+			}
 		}
 		wb.Call(args[1], converted)
 		wb.Return()

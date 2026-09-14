@@ -64,6 +64,16 @@ func TestSetFinalizerArgCompatible(t *testing.T) {
 	if setFinalizerArgCompatible(ptr, ptr, iface) {
 		t.Fatal("unimplemented interface argument was accepted")
 	}
+	valueResults := types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Int]))
+	elem.AddMethod(types.NewFunc(token.NoPos, pkg, "Value", types.NewSignatureType(
+		types.NewVar(token.NoPos, pkg, "", ptr), nil, nil, nil, valueResults, false)))
+	implemented := types.NewInterfaceType([]*types.Func{
+		types.NewFunc(token.NoPos, pkg, "Value", types.NewSignatureType(nil, nil, nil, nil, valueResults, false)),
+	}, nil)
+	implemented.Complete()
+	if !setFinalizerArgCompatible(ptr, ptr, implemented) {
+		t.Fatal("implemented interface argument was rejected")
+	}
 	if setFinalizerArgCompatible(ptr, ptr, types.Typ[types.Int]) {
 		t.Fatal("non-pointer argument was accepted")
 	}
