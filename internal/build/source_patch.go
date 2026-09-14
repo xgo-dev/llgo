@@ -35,6 +35,7 @@ type sourcePatchBuildContext struct {
 	goos       string
 	goarch     string
 	goversion  string
+	toolTags   []string
 	buildFlags []string
 }
 
@@ -296,6 +297,9 @@ func newSourcePatchMatchContext(goroot string, ctx sourcePatchBuildContext) (bui
 		buildCtx.GOARCH = ctx.goarch
 	}
 	buildCtx.BuildTags = parseSourcePatchBuildTags(ctx.buildFlags)
+	if ctx.toolTags != nil {
+		buildCtx.ToolTags = slices.Clone(ctx.toolTags)
+	}
 	if ctx.goversion != "" {
 		releaseTags, err := releaseTagsForGoVersion(ctx.goversion)
 		if err != nil {
