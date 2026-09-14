@@ -30,6 +30,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/funcattrs"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/locality"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -921,6 +922,20 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 				}
 				fullName, inPkgName := astFuncName(pkgPath, decl)
 				syms[inPkgName] = fullName
+				attrs, err := funcattrs.Parse(fset, decl)
+				if err != nil {
+					return err
+				}
+				if err = prog.SetValueAttributes(fullName, attrs); err != nil {
+					return err
+				}
+				if len(attrs) != 0 {
+					if fn := sourceAttributeFunction(pkg, decl); fn != nil {
+						if err = funcattrs.Validate(attrs, fn.Type().(*types.Signature), int(prog.SizeOf(prog.Int())*8), true); err != nil {
+							return err
+						}
+					}
+				}
 				hasLinkname, err := collectDeclarationDirectivesWithOptions(prog, fset, decl.Doc, fullName, inPkgName, decl.Pos(), options)
 				if err != nil {
 					return err

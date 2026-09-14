@@ -19,6 +19,8 @@ package ssa
 import (
 	"go/types"
 	"sync"
+
+	"github.com/xgo-dev/llgo/internal/funcattrs"
 )
 
 // packageSyntaxData is Go-owned metadata collected before LLVM package
@@ -36,6 +38,7 @@ type packageSyntaxData struct {
 	typeBackgrounds      map[string]Background
 	functionAttributes   map[string]FunctionAttributes
 	attributeOrigins     map[string]string
+	valueAttributes      map[string][]funcattrs.Attribute
 }
 
 func newPackageSyntaxData() *packageSyntaxData {
@@ -49,6 +52,7 @@ func newPackageSyntaxData() *packageSyntaxData {
 		typeBackgrounds:      make(map[string]Background),
 		functionAttributes:   make(map[string]FunctionAttributes),
 		attributeOrigins:     make(map[string]string),
+		valueAttributes:      make(map[string][]funcattrs.Attribute),
 	}
 }
 

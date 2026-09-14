@@ -7,11 +7,12 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/directive"
+	"github.com/xgo-dev/llgo/internal/funcattrs"
 )
 
 func isFunctionAttributeComment(line string) bool {
 	item, ok := directive.Parse(&ast.Comment{Text: line})
-	return ok && (item.Name == "llgo:cold" || item.Name == "llgo:noreturn")
+	return ok && (item.Name == "llgo:cold" || item.Name == "llgo:noreturn" || funcattrs.IsSourceDirective(item))
 }
 
 func validateFunctionAttributes(fset *token.FileSet, file *ast.File) error {
@@ -29,9 +30,10 @@ func validateFunctionAttributes(fset *token.FileSet, file *ast.File) error {
 			if i := strings.IndexAny(name, "(."); i >= 0 {
 				name = name[:i]
 			}
+			if funcattrs.IsSourceDirective(item) && !allowed[item.Pos] {
+				return fmt.Errorf("%s: %s requires a named function or method declaration", fset.Position(item.Pos), name)
+			}
 			switch name {
-			case "llgo:param", "llgo:result", "llgo:receiver":
-				return fmt.Errorf("%s: %s attributes are not yet supported", fset.Position(item.Pos), name)
 			case "llgo:cold", "llgo:noreturn":
 				if !allowed[item.Pos] {
 					return fmt.Errorf("%s: %s requires a named function or method declaration", fset.Position(item.Pos), name)

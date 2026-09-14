@@ -37,17 +37,11 @@ func (p Program) functionAttributes(name string) FunctionAttributes {
 	if origin, ok := data.attributeOrigins[name]; ok {
 		name = origin
 	}
-	resolve := func(s string) string {
-		// Match the frontend's one-step symbol resolution.
-		if link, ok := data.linknames[s]; ok {
-			return strings.TrimPrefix(strings.TrimPrefix(link, "C."), "stdcall.")
-		}
-		return s
-	}
-	resolved := resolve(name)
+
+	resolved := data.resolveAttributeName(name)
 	var attrs FunctionAttributes
 	for source, flags := range data.functionAttributes {
-		if source == name || resolve(source) == resolved {
+		if source == name || data.resolveAttributeName(source) == resolved {
 			attrs |= flags
 		}
 	}
@@ -62,4 +56,11 @@ func (p Program) applyFunctionAttributes(fn llvm.Value, name string) {
 	if attrs&FunctionNoReturn != 0 {
 		fn.AddFunctionAttr(p.ctx.CreateEnumAttribute(llvm.AttributeKindID("noreturn"), 0))
 	}
+}
+
+func (data *packageSyntaxData) resolveAttributeName(name string) string {
+	if link, ok := data.linknames[name]; ok {
+		return strings.TrimPrefix(strings.TrimPrefix(link, "C."), "stdcall.")
+	}
+	return name
 }
