@@ -23,10 +23,3 @@ The properties apply to definitions and imported declarations, including methods
 
 Parameter, receiver and result attributes will be implemented in subsequent steps of #2590. Their directives currently produce a diagnostic.
 
-## 中文说明
-
-本阶段实现 #2590 的两个函数属性：`cold` 表示调用预计较少，是优化提示；`noreturn` 表示函数不会正常返回，可以 panic 或一直运行。
-
-每个属性独占一行，放在具名函数或方法声明前；支持 `//llgo:` 和 `// llgo:`，可以组合、重复。`noreturn` 是程序员的保证，编译器不证明函数行为，也不插入运行时检查。函数自身通过 defer/recover 正常返回时不能声明该属性；调用者仍可恢复其 panic。
-
-属性适用于定义、导入声明、泛型实例与 linkname，并在 ABI 转换和缓存构建中保留。参数、接收者及返回值属性按 #2590 后续分步实现，目前使用这些指令会报错。
