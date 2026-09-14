@@ -3,7 +3,7 @@ package test
 import "testing"
 
 //go:noinline
-//llgo:result nonnull
+//llgo:result nonnull sameas(p)
 func checkedValueAttribute[T any](p *T) *T {
 	if p == nil {
 		panic("nil value attribute")

@@ -21,7 +21,7 @@ func Fatal(message string) {
 
 The properties apply to definitions and imported declarations, including methods, generic instances and declarations connected by linkname. They are preserved by ABI conversion and cached builds. The runtime uses the same source directives as ordinary packages.
 
-## Parameter and single-result attributes
+## Parameter and result attributes
 
 Use `//llgo:param(name|index)`, `//llgo:receiver`, or `//llgo:result(name|index)` to select a whole Go value. Indices start at zero; the receiver is separate. A function with exactly one result also permits `//llgo:result`. Both comment spacings accepted for function attributes are accepted here.
 
@@ -43,5 +43,20 @@ func Checked(p *int) *int {
 
 Source selectors are resolved before exported signatures can lose parameter names. Imports, linkname declarations and generic instances preserve the guarantees; concrete generic types are checked at instantiation. ABI conversion preserves attributes on the corresponding scalar values when other arguments are packed or passed indirectly.
 
-Result attributes currently require exactly one result. Multiple-result guarantees, `sameas`, `access` and `noalias` are subsequent steps of #2590.
+### Result relations and multiple results
+
+`sameas(name)` states that an integer or pointer result equals the entry value of the ordinary parameter named `name`. Integer types must match; pointer conversions must preserve the pointer. Like other result guarantees, it applies after normal return, including changes made by deferred functions.
+
+```go
+//llgo:result(out) nonnull sameas(p)
+//llgo:result(count) range(0,64)
+func Make(p *int, n uint32) (out *int, count uint32) {
+    if p == nil { panic("nil pointer") }
+    return p, n & 63
+}
+```
+
+With multiple Go results, select each whole result by name or zero-based index. The selector remains stable if the ABI packs or splits the results or returns them through caller-provided storage. The call and its possible panic remain; only the guaranteed results can be simplified. `sameas` uses the evaluated input value, even if memory supplying that input changes during the call.
+
+`access` and `noalias` are the final step of #2590.
 

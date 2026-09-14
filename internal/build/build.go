@@ -2191,6 +2191,9 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	ctx.stripDarwinLTOLocals = false
 	entryPkg := genMainModule(ctx, llssa.PkgRuntime, pkg, &preparation.gen)
 	cExports := preparation.gen.cExports
+	if err := ctx.prog.MaterializeValueAttributes(entryPkg.LPkg.Module()); err != nil {
+		return nil, err
+	}
 	if len(cExports) != 0 {
 		llabi.LowerLargeAggregates(ctx.prog.TargetData(), entryPkg.LPkg.Module())
 		ctx.cTransformer.TransformModule(entryPkg.LPkg.Path(), entryPkg.LPkg.Module())
@@ -2853,6 +2856,9 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	ret := aPkg.LPkg
 
 	ctx.cTransformer.SetSkipFuncs(cabiSkipFuncsForPlan9Asm(ctx, pkgPath, ret.Module()))
+	if err := ctx.prog.MaterializeValueAttributes(ret.Module()); err != nil {
+		return err
+	}
 	llabi.LowerLargeAggregates(ctx.prog.TargetData(), ret.Module())
 	ctx.cTransformer.TransformModule(ret.Path(), ret.Module())
 	ctx.cTransformer.SetSkipFuncs(nil)

@@ -1,10 +1,11 @@
 package ssa
 
 import (
-	"github.com/xgo-dev/llgo/internal/funcattrs"
-	"github.com/xgo-dev/llvm"
 	"go/types"
 	"sort"
+
+	"github.com/xgo-dev/llgo/internal/funcattrs"
+	"github.com/xgo-dev/llvm"
 )
 
 func (p Program) SetValueAttributes(name string, attrs []funcattrs.Attribute) error {
@@ -42,7 +43,7 @@ func (p Program) valueAttributes(name string) ([]funcattrs.Attribute, error) {
 	return funcattrs.Merge(sets...)
 }
 
-func (p Program) applyValueAttributes(fn llvm.Value, name string, sig *types.Signature, environment bool) {
+func (p Program) applyValueAttributes(fn llvm.Value, name string, sig *types.Signature, environment bool, bg Background) {
 	attrs, err := p.valueAttributes(name)
 	if err != nil {
 		panic(err)
@@ -57,4 +58,38 @@ func (p Program) applyValueAttributes(fn llvm.Value, name string, sig *types.Sig
 	if err := funcattrs.Apply(p.ctx, fn, sig, attrs, offset, p.Int().ll.IntTypeWidth()); err != nil {
 		panic(err)
 	}
+	plan, err := funcattrs.PrepareResultAttributes(p.ctx, fn, sig, attrs, offset, p.Int().ll.IntTypeWidth(), func(index int) []int {
+		path := []int{index}
+		converted := p.FuncDecl(sig, bg).raw.Type.(*types.Signature)
+		if layout, ok := p.structLayout(p.retType(converted)); ok && layout.wrapped[index] {
+			path = append(path, 0)
+		}
+		return path
+	})
+	if err != nil {
+		panic(err)
+	}
+	if len(plan) != 0 {
+		if p.valuePlans == nil {
+			p.valuePlans = make(map[llvm.Value]funcattrs.ValuePlan)
+		}
+		p.valuePlans[fn] = plan
+	}
+}
+
+// MaterializeValueAttributes consumes only plans belonging to this module.
+func (p Program) MaterializeValueAttributes(m llvm.Module) error {
+	plans := make(map[llvm.Value]funcattrs.ValuePlan)
+	for fn := m.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+		if plan, ok := p.valuePlans[fn]; ok {
+			plans[fn] = plan
+		}
+	}
+	if err := funcattrs.MaterializeValueContracts(m, plans); err != nil {
+		return err
+	}
+	for fn := range plans {
+		delete(p.valuePlans, fn)
+	}
+	return nil
 }

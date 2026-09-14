@@ -112,7 +112,6 @@ func TestSourceValueDiagnostics(t *testing.T) {
 		{"receiver nonnull", "func F() {}", "requires a method"},
 		{"param(0) nonnull", "func F(p string) {}", "requires a pointer"},
 		{"result", "func F() {}", "exactly one source result"},
-		{"result(0) nonnull", "func F() (*int,*int) { return nil,nil }", "exactly one source result"},
 		{"result", "func F() *int { return nil }", "expected an attribute"},
 		{"param(0) nonnull)", "func F(p *int) {}", "unbalanced"},
 		{"param(0) nonnull(", "func F(p *int) {}", "unbalanced"},
@@ -155,6 +154,30 @@ func TestGenericValueAttributeValidation(t *testing.T) {
 		err = Validate(attrs, instance.(*types.Signature), 64, false)
 		if (err == nil) != (typ == types.Typ[types.Int]) {
 			t.Fatalf("%s: %v", typ, err)
+		}
+	}
+}
+
+func TestSourceResultRelations(t *testing.T) {
+	for _, tc := range []struct{ selector, signature, want string }{
+		{"result sameas(p)", "func F(p *int) *int { return p }", ""},
+		{"result(out) sameas(p) nonnull", "func F(p *int) (out *int,n int) { return p,0 }", ""},
+		{"result sameas(p)", "func F(p int32) uint32 { return 0 }", "identical integer"},
+		{"result sameas(p)", "func F(p bool) bool { return p }", "integer or pointer"},
+		{"result sameas(0)", "func F(p int) int { return p }", "parameter name"},
+		{"result sameas(missing)", "func F(p int) int { return p }", "unknown source value"},
+		{"param(p) sameas(p)", "func F(p int) int { return p }", "not supported on parameter"},
+	} {
+		attrs, sig, err := parseTest(t, "//llgo:"+tc.selector+"\n"+tc.signature)
+		if err == nil {
+			err = Validate(attrs, sig, 64, false)
+		}
+		if tc.want == "" {
+			if err != nil {
+				t.Fatal(err)
+			}
+		} else if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%s: %v", tc.selector, err)
 		}
 	}
 }
