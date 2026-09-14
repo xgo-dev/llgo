@@ -3,7 +3,7 @@ module github.com/xgo-dev/llgo
 go 1.27.0
 
 require (
-	github.com/goplus/cobra v1.9.12 //xgo:class
+	github.com/goplus/cobra v1.10.8 //xgo:class
 	github.com/goplus/gogen v1.23.5
 	github.com/goplus/lib v0.5.2
 	github.com/goplus/mod v0.22.0
