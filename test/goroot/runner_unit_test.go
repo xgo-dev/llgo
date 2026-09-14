@@ -427,6 +427,8 @@ func TestObservedPassesDoNotHaveXFailClassifications(t *testing.T) {
 		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue58300.go", Directive: "run"}},
 		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue58300b.go", Directive: "run"}},
 		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "inline_literal.go", Directive: "run"}},
+		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "winbatch.go", Directive: "run"}},
+		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue78081.go", Directive: "run"}},
 	}
 	for _, tt := range tests {
 		if match, reason := cfg.Match(tt.version, tt.platform, tt.tc); match {
@@ -449,13 +451,18 @@ func TestWasmObservedResourceExceptions(t *testing.T) {
 		tc      testCase
 		timeout time.Duration
 	}{
-		{testCase{RelPath: "winbatch.go", Directive: "run"}, 2 * time.Minute},
-		{testCase{RelPath: "fixedbugs/issue78081.go", Directive: "run"}, 3 * time.Minute},
+		{testCase{RelPath: "winbatch.go", Directive: "run"}, 4 * time.Minute},
+		{testCase{RelPath: "fixedbugs/issue78081.go", Directive: "run"}, 6 * time.Minute},
 	} {
 		tc := tt.tc
 		timeout, _, match := cfg.MatchTimeout("go1.27.0", "js/wasm", tc)
 		if !match || timeout != tt.timeout {
 			t.Errorf("timeout for %s = %s, %v; want %s, true", tc.RelPath, timeout, match, tt.timeout)
+		}
+		for _, platform := range []string{"linux/amd64", "darwin/arm64", "windows-msvc/arm64", "wasip1/wasm"} {
+			if _, reason, match := cfg.MatchTimeout("go1.27.0", platform, tc); match {
+				t.Errorf("GoJS timeout leaked to %s for %s: %s", platform, tc.RelPath, reason)
+			}
 		}
 	}
 	for _, tc := range []testCase{

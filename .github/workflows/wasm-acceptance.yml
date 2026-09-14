@@ -117,17 +117,18 @@ jobs:
           if-no-files-found: error
 
   goroot:
-    name: wasm GOROOT (J32-GoJS, ${{ matrix.shard }}/7)
+    name: wasm GOROOT (J32-GoJS, ${{ matrix.shard }}/9)
     needs: goroot-smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
-        # Six upstream shards exposed a 62-minute worst-case execution step.
-        # Replaying all 2,316 measured case times puts seven shards below 47
-        # minutes, leaving setup and runner-lease headroom with one extra job.
-        shard: [0, 1, 2, 3, 4, 5, 6]
+        # Seven shards took up to 51 minutes of measured case execution, and
+        # other runners disconnected after over an hour without uploading logs.
+        # Replaying all 2,316 case times across nine shards estimates at most
+        # 41 minutes, leaving more setup and runner-variance headroom.
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8]
     env:
       GOMAXPROCS: '2'
       GOFLAGS: -tags=llvm22
@@ -162,7 +163,7 @@ jobs:
               -test.count=1 -test.timeout=175m \
               -goroot "$target_goroot" -llgo "$RUNNER_TEMP/llgo" \
               -wasm-profile "$PROFILE" -directive-mode coverage \
-              -progress 60s -shard-index "$SHARD" -shard-total 7 \
+              -progress 60s -shard-index "$SHARD" -shard-total 9 \
               -max-rss-mib 4096 -rss-warn-mib 1024 \
               -min-memory-free-percent 15 -min-swap-free-mib 512
           ) 2>&1 | tee "$RUNNER_TEMP/goroot-$PROFILE-$SHARD.log"

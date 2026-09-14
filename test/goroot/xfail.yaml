@@ -29,13 +29,13 @@ timeouts:
   - platform: js/wasm
     directive: run
     case: winbatch.go
-    timeout: 2m
-    reason: the Windows batching stress program needs more than the default minute under the GoJS runner
+    timeout: 4m
+    reason: walking GOROOT through the GoJS filesystem took 115s on a passing hosted run; allow runner variance beyond the former 120s limit
   - platform: js/wasm
     directive: run
     case: fixedbugs/issue78081.go
-    timeout: 3m
-    reason: the single-worker stack and GC stress loop needs more than the default minute under the GoJS runner
+    timeout: 6m
+    reason: the 1.6 million-iteration stack and GC stress loop took 147s on a passing GoJS run and exceeded 180s on another runner
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue79186.go
