@@ -11,6 +11,7 @@ import (
 	"github.com/xgo-dev/llgo/cmd/internal/compile"
 	"github.com/xgo-dev/llgo/cmd/internal/env"
 	"github.com/xgo-dev/llgo/cmd/internal/install"
+	"github.com/xgo-dev/llgo/cmd/internal/list"
 	"github.com/xgo-dev/llgo/cmd/internal/lldb"
 	"github.com/xgo-dev/llgo/cmd/internal/monitor"
 	"github.com/xgo-dev/llgo/cmd/internal/run"
@@ -42,6 +43,10 @@ type Cmd_get struct {
 	*App
 }
 type Cmd_install struct {
+	xcmd.Command
+	*App
+}
+type Cmd_list struct {
 	xcmd.Command
 	*App
 }
@@ -89,14 +94,15 @@ func (this *App) Main() {
 	_xgo_obj3 := &Cmd_env{App: this}
 	_xgo_obj4 := &Cmd_get{App: this}
 	_xgo_obj5 := &Cmd_install{App: this}
-	_xgo_obj6 := &Cmd_lldb{App: this}
-	_xgo_obj7 := &Cmd_monitor{App: this}
-	_xgo_obj8 := &Cmd_run{App: this}
-	_xgo_obj9 := &Cmd_test{App: this}
-	_xgo_obj10 := &Cmd_tool{App: this}
-	_xgo_obj11 := &Cmd_tool_compile{App: this}
-	_xgo_obj12 := &Cmd_version{App: this}
-	xcmd.Gopt_App_Main(this, _xgo_obj0, _xgo_obj1, _xgo_obj2, _xgo_obj3, _xgo_obj4, _xgo_obj5, _xgo_obj6, _xgo_obj7, _xgo_obj8, _xgo_obj9, _xgo_obj10, _xgo_obj11, _xgo_obj12)
+	_xgo_obj6 := &Cmd_list{App: this}
+	_xgo_obj7 := &Cmd_lldb{App: this}
+	_xgo_obj8 := &Cmd_monitor{App: this}
+	_xgo_obj9 := &Cmd_run{App: this}
+	_xgo_obj10 := &Cmd_test{App: this}
+	_xgo_obj11 := &Cmd_tool{App: this}
+	_xgo_obj12 := &Cmd_tool_compile{App: this}
+	_xgo_obj13 := &Cmd_version{App: this}
+	xcmd.Gopt_App_Main(this, _xgo_obj0, _xgo_obj1, _xgo_obj2, _xgo_obj3, _xgo_obj4, _xgo_obj5, _xgo_obj6, _xgo_obj7, _xgo_obj8, _xgo_obj9, _xgo_obj10, _xgo_obj11, _xgo_obj12, _xgo_obj13)
 }
 
 //line cmd/llgo/build_cmd.gox:20
@@ -209,6 +215,25 @@ func (this *Cmd_install) Main(_xgo_arg0 string) {
 }
 func (this *Cmd_install) Classfname() string {
 	return "install"
+}
+
+//line cmd/llgo/list_cmd.gox:16
+func (this *Cmd_list) Main(_xgo_arg0 string) {
+	this.Command.Main(_xgo_arg0)
+//line cmd/llgo/list_cmd.gox:16:1
+	this.Use("list [-target name] [list flags] [packages]")
+//line cmd/llgo/list_cmd.gox:18:1
+	this.Short("List packages using LLGo source-selection rules")
+//line cmd/llgo/list_cmd.gox:20:1
+	this.FlagOff()
+//line cmd/llgo/list_cmd.gox:22:1
+	this.Run__1(func(args []string) {
+//line cmd/llgo/list_cmd.gox:23:1
+		list.Cmd.Run(list.Cmd, args)
+	})
+}
+func (this *Cmd_list) Classfname() string {
+	return "list"
 }
 
 //line cmd/llgo/lldb_cmd.gox:20
