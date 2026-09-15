@@ -59,6 +59,8 @@ func Ordinary() {}
 func TestFunctionAttributeDiagnostics(t *testing.T) {
 	for _, test := range []struct{ source, want string }{
 		{"//llgo:cold\nvar x int", "named function"},
+		{"//llgo:cold\n\nfunc F() {}", "named function"},
+		{"func F() {} //llgo:cold", "named function"},
 		{"type T struct {\n//llgo:noreturn\n x int\n}", "named function"},
 		{"type T interface {\n//llgo:cold\n M()\n}", "named function"},
 		{"func F() {\n//llgo:cold\n f := func() {}; f()\n}", "named function"},
