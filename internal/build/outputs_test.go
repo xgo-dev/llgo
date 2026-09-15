@@ -40,7 +40,7 @@ func TestWebAssemblyTargetDefaultExtension(t *testing.T) {
 			t.Errorf("target %q extension = %q, want .mjs", target, got)
 		}
 	}
-	for _, target := range []string{"wasi", "wasip1", "wasip2", "wasm-unknown"} {
+	for _, target := range []string{"wasi", "wasip1"} {
 		if got := defaultAppExt(&Config{BuildMode: BuildModeExe, Target: target}); got != ".wasm" {
 			t.Errorf("target %q extension = %q, want .wasm", target, got)
 		}

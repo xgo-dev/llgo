@@ -540,22 +540,12 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 		GOARM64:                 conf.GOARM64,
 		Target:                  conf.Target,
 		LLVMTarget:              export.LLVMTarget,
-		WasmABI:                 string(export.WasmABI),
+		WasmProfile:             string(export.WasmProfile),
 		OptLevel:                conf.OptLevel,
 		SaturatingFloatToUint32: conf.SaturatingFloatToUint32,
 	}
-	tags := defaultBuildTags(conf.Goarch, conf.Target)
-	if wasmGC && conf.Target == "" {
-		// An explicit development build selects the wasm collector instead of
-		// the raw profile's compatibility nogc runtime.
-		tags = strings.TrimSuffix(tags, ",nogc")
-	}
+	tags := DefaultBuildTags()
 	tags += "," + target.ClosureEnvBuildTag()
-	// Profiles without R2 collector support retain the collector-free runtime.
-	if conf.Target != "" && export.WasmABI != crosscompile.WasmABIUnspecified &&
-		!slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.gc.linear") {
-		tags += ",nogc"
-	}
 	if conf.PCLNMode == PCLNExternal {
 		// Select the optional runtime loader as part of the normal package
 		// cache key. Embedded and none builds do not compile any loader or
@@ -587,7 +577,10 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 		Debug:        emitDebugInfo,
 		DebugSymbols: emitDebugInfo,
 		Trace:        IsTraceEnabled(),
-		ExportRename: conf.Target != "",
+		// Hosted wasm profiles need renamed //export symbols for allocator and
+		// host entries even when selected through raw GOOS/GOARCH rather than a
+		// named -target.
+		ExportRename: conf.Target != "" || export.WasmProfile != crosscompile.WasmProfileNone,
 		ShadowStack:  useShadowStack(conf.Goarch),
 	}
 	preloadOptions := frontendOptions
@@ -623,8 +616,8 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 	// reconstruct every Go entry PC through dlsym. External mode always needs
 	// final-PC sites for sidecar construction.
 	prog.EnableFuncInfoSites(shouldEnablePCLNSites(conf, funcInfo, emitDebugInfo))
-	sizes := func(sizes types.Sizes, compiler, arch string) types.Sizes {
-		sizes = effectiveTypeSizes(sizes, arch, export.WasmABI)
+	sizes := func(sizes types.Sizes, _, _ string) types.Sizes {
+		sizes = effectiveTypeSizes(sizes, export.WasmProfile)
 		return prog.TypeSizes(sizes)
 	}
 	dedup := packages.NewDeduper()
@@ -1240,20 +1233,9 @@ func cSharedImportLibraryArgs(toolchain crosscompile.NativeToolchain, output str
 	return []string{"-Xlinker", "--out-implib", "-Xlinker", imports}
 }
 
-// DefaultBuildTags returns the build tags LLGo always enables for a target.
-func DefaultBuildTags(goarch, target string) string {
-	return defaultBuildTags(goarch, target)
-}
-
-func defaultBuildTags(goarch, target string) string {
-	tags := "llgo,math_big_pure_go,purego"
-	// Preserve the collector-free compatibility runtime for raw wasm builds.
-	// Named profiles add this tag after target resolution; R2 replaces it once
-	// suspended roots are visible to the wasm collector.
-	if goarch == "wasm" && target == "" {
-		tags += ",nogc"
-	}
-	return tags
+// DefaultBuildTags returns the build tags LLGo always enables.
+func DefaultBuildTags() string {
+	return "llgo,math_big_pure_go,purego"
 }
 
 func configureWasmGC(conf *Config, export *crosscompile.Export) (bool, error) {
@@ -1266,10 +1248,10 @@ func configureWasmGC(conf *Config, export *crosscompile.Export) (bool, error) {
 	}
 
 	defaultEnabled := false
-	switch export.WasmABI {
-	case crosscompile.WasmABIEmscripten, crosscompile.WasmABIEmscriptenMemory64:
+	switch export.WasmProfile {
+	case crosscompile.WasmProfileJ32, crosscompile.WasmProfileJ64:
 		defaultEnabled = true
-	case crosscompile.WasmABIWASIPreview1:
+	case crosscompile.WasmProfileW32:
 		if IsWasiThreadsEnabled() {
 			if explicit {
 				return false, errors.New("llgo.wasm.gc.linear requires single-worker WASI (set LLGO_WASI_THREADS=0)")
@@ -1277,19 +1259,14 @@ func configureWasmGC(conf *Config, export *crosscompile.Export) (bool, error) {
 			return false, nil
 		}
 		defaultEnabled = true
-	case crosscompile.WasmABIUnspecified:
-		// Raw GOOS/GOARCH builds retain their current compatibility behavior
-		// until the official-Go wasm ABI line is complete. The explicit tag is
-		// still available for focused runtime development.
-		if explicit && conf.Goos != "js" && conf.Goos != "wasip1" {
-			return false, fmt.Errorf("llgo.wasm.gc.linear does not support GOOS=%s", conf.Goos)
+	case crosscompile.WasmProfileNone:
+		if explicit {
+			return false, fmt.Errorf("llgo.wasm.gc.linear requires a supported hosted WebAssembly profile")
 		}
-		if explicit && conf.Goos == "wasip1" && IsWasiThreadsEnabled() {
-			return false, errors.New("llgo.wasm.gc.linear requires single-worker WASI (set LLGO_WASI_THREADS=0)")
-		}
+		return false, nil
 	default:
 		if explicit {
-			return false, fmt.Errorf("llgo.wasm.gc.linear does not support WebAssembly ABI %q", export.WasmABI)
+			return false, fmt.Errorf("llgo.wasm.gc.linear does not support WebAssembly profile %q", export.WasmProfile)
 		}
 		return false, nil
 	}
@@ -1306,6 +1283,7 @@ func configureWasmGC(conf *Config, export *crosscompile.Export) (bool, error) {
 
 func applyWasmGCLinkFlags(conf *Config, export *crosscompile.Export) {
 	if conf.Goos != "js" || conf.Goarch != "wasm" ||
+		(export.WasmProfile != crosscompile.WasmProfileJ32 && export.WasmProfile != crosscompile.WasmProfileJ64) ||
 		!slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.gc.linear") {
 		return
 	}
@@ -1314,21 +1292,9 @@ func applyWasmGCLinkFlags(conf *Config, export *crosscompile.Export) {
 	}
 }
 
-func effectiveTypeSizes(sizes types.Sizes, arch string, wasmABI crosscompile.WasmABI) types.Sizes {
-	if wasmABI == crosscompile.WasmABIUnspecified {
-		// Preserve main's current raw wasm layout until G1/G2 completes the
-		// official Go ABI. Crucially, this temporary implementation gap does
-		// not add a C-ecosystem source tag or cache identity.
-		if arch == "wasm" {
-			return &types.StdSizes{WordSize: 4, MaxAlign: 4}
-		}
-		return sizes
-	}
-	switch wasmABI {
-	case crosscompile.WasmABIEmscripten, crosscompile.WasmABIWASIPreview1,
-		crosscompile.WasmABIWASIPreview2, crosscompile.WasmABIFreestanding:
-		return &types.StdSizes{WordSize: 4, MaxAlign: 4}
-	case crosscompile.WasmABIEmscriptenMemory64:
+func effectiveTypeSizes(sizes types.Sizes, profile crosscompile.WasmProfile) types.Sizes {
+	switch profile {
+	case crosscompile.WasmProfileJ32, crosscompile.WasmProfileJ64, crosscompile.WasmProfileW32:
 		return &types.StdSizes{WordSize: 8, MaxAlign: 8}
 	default:
 		return sizes
@@ -1594,7 +1560,8 @@ func (c *context) irCompiler() *clang.Cmd {
 
 func (c *context) irClangConfig() clang.Config {
 	config := c.clangConfig()
-	if c.crossCompile.WasmABI == crosscompile.WasmABIEmscriptenMemory64 {
+	if c.crossCompile.WasmProfile == crosscompile.WasmProfileJ64 &&
+		c.crossCompile.WasmProvider == crosscompile.WasmProviderEmscripten {
 		// cmd/llgo puts the LLVM installation selected at build time first in
 		// PATH. Do not inherit emcc's command prefix here: only its target and
 		// optimization flags are relevant when consuming LLVM IR. Preserve the
@@ -2773,7 +2740,7 @@ func needStart(ctx *context) bool {
 		return !isWasmTarget(ctx.buildConf.Goos)
 	}
 	switch ctx.buildConf.Target {
-	case "wasi", "wasip1", "wasip2":
+	case "wasi", "wasip1":
 		// WASI libc owns _start and calls __main_argc_argv after initializing
 		// argc/argv and its process state. Defining LLGo's generic weak _start
 		// makes current wasi-libc select __main_void and drop the Go entry.

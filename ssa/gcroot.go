@@ -51,19 +51,20 @@ func (p Function) NewGCRoots(count int) []Expr {
 	entry := p.Block(0)
 
 	prog := p.Prog
-	voidPtr := prog.tyVoidPtr()
-	rootArrayType := llvm.ArrayType(voidPtr, count)
-	frameType := prog.ctx.StructType([]llvm.Type{voidPtr, voidPtr, rootArrayType}, false)
+	rootValueType := prog.VoidPtr()
+	rootStorageType := prog.storageType(rootValueType)
+	rootArrayType := llvm.ArrayType(rootStorageType, count)
+	frameType := prog.ctx.StructType([]llvm.Type{rootStorageType, rootStorageType, rootArrayType}, false)
 	originalEntry := entry.first
 	prologue := prog.ctx.InsertBasicBlock(originalEntry, "gcroot.entry")
 	initialize := prog.ctx.InsertBasicBlock(originalEntry, "gcroot.init")
 	b.impl.SetInsertPointAtEnd(prologue)
 	frame := llvm.CreateAlloca(b.impl, frameType)
 
-	chain := p.gcRootChain()
-	prev := llvm.CreateLoad(b.impl, voidPtr, chain)
+	chain := Expr{p.gcRootChain(), prog.Pointer(rootValueType)}
+	prev := b.Load(chain)
 	nextSlot := llvm.CreateStructGEP(b.impl, frameType, frame, 0)
-	reentered := llvm.CreateICmp(b.impl, llvm.IntEQ, prev, frame)
+	reentered := llvm.CreateICmp(b.impl, llvm.IntEQ, prev.impl, frame)
 	sjljReplaying := llvm.CreateLoad(b.impl, prog.Bool().ll, p.gcRootSJLJReplaying())
 	// SJLJ/Asyncify replays discarded function entries on the way back to a
 	// setjmp. Their stack slots must be reused without publishing dead frames.
@@ -73,23 +74,24 @@ func (p Function) NewGCRoots(count int) []Expr {
 	roots := make([]Expr, count)
 	rootArray := llvm.CreateStructGEP(b.impl, frameType, frame, 2)
 	zero := llvm.ConstInt(prog.tyInt32(), 0, false)
+	rootSlotType := prog.Pointer(rootValueType)
 	for i := range roots {
 		index := llvm.ConstInt(prog.tyInt32(), uint64(i), false)
 		root := llvm.CreateInBoundsGEP(b.impl, rootArrayType, rootArray, []llvm.Value{zero, index})
-		roots[i] = Expr{root, prog.Pointer(prog.VoidPtr())}
+		roots[i] = Expr{root, rootSlotType}
 	}
 	b.impl.CreateCondBr(reusingFrame, originalEntry, initialize)
 
 	b.impl.SetInsertPointAtEnd(initialize)
-	b.impl.CreateStore(prev, nextSlot)
-	b.impl.CreateStore(frameMap, llvm.CreateStructGEP(b.impl, frameType, frame, 1))
+	b.Store(Expr{nextSlot, rootSlotType}, prev)
+	b.Store(Expr{llvm.CreateStructGEP(b.impl, frameType, frame, 1), rootSlotType}, Expr{frameMap, rootValueType})
 	for _, root := range roots {
-		b.impl.CreateStore(llvm.ConstNull(voidPtr), root.impl)
+		b.Store(root, prog.Nil(rootValueType))
 	}
-	b.impl.CreateStore(frame, chain)
+	b.Store(chain, Expr{frame, rootValueType})
 	b.impl.CreateBr(originalEntry)
-	p.gcRootFrame = Expr{frame, prog.VoidPtr()}
-	p.gcRootPrev = Expr{nextSlot, prog.Pointer(prog.VoidPtr())}
+	p.gcRootFrame = Expr{frame, rootValueType}
+	p.gcRootPrev = Expr{nextSlot, rootSlotType}
 	return roots
 }
 
@@ -101,11 +103,12 @@ func (b Builder) SetGCRoot(root, value Expr) {
 func (p Function) gcRootChain() llvm.Value {
 	global := p.Pkg.mod.NamedGlobal(gcRootChainName)
 	if global.IsNil() {
-		global = llvm.AddGlobal(p.Pkg.mod, p.Prog.tyVoidPtr(), gcRootChainName)
+		storageType := p.Prog.storageType(p.Prog.VoidPtr())
+		global = llvm.AddGlobal(p.Pkg.mod, storageType, gcRootChainName)
 	}
-	global.SetInitializer(llvm.ConstNull(p.Prog.tyVoidPtr()))
+	global.SetInitializer(llvm.ConstNull(global.GlobalValueType()))
 	global.SetLinkage(llvm.LinkOnceAnyLinkage)
-	global.SetAlignment(p.Prog.PointerSize())
+	global.SetAlignment(int(p.Prog.AlignOf(p.Prog.VoidPtr())))
 	return global
 }
 
@@ -124,8 +127,8 @@ func (p Function) gcRootSJLJReplaying() llvm.Value {
 // Runtime helpers must not discover this through a Go call: their own root
 // frame is already linked by then and would be mistaken for the caller frame.
 func (b Builder) currentGCRootChain() Expr {
-	chain := b.Func.gcRootChain()
-	return Expr{llvm.CreateLoad(b.impl, b.Prog.tyVoidPtr(), chain), b.Prog.VoidPtr()}
+	chain := Expr{b.Func.gcRootChain(), b.Prog.Pointer(b.Prog.VoidPtr())}
+	return b.Load(chain)
 }
 
 func (p Function) newGCRootMap(count int) llvm.Value {
@@ -154,13 +157,14 @@ func (p Function) endGCRoots(b Builder) {
 			continue
 		}
 		b.impl.SetInsertPointBefore(term)
-		current := llvm.CreateLoad(b.impl, p.Prog.tyVoidPtr(), chain)
-		prev := llvm.CreateLoad(b.impl, p.Prog.tyVoidPtr(), p.gcRootPrev.impl)
+		chainSlot := Expr{chain, p.Prog.Pointer(p.Prog.VoidPtr())}
+		current := b.Load(chainSlot)
+		prev := b.Load(p.gcRootPrev)
 		// A helper replayed during a non-local return can finish without ever
 		// linking its frame. Only the actual chain head owns a pop operation.
-		linked := llvm.CreateICmp(b.impl, llvm.IntEQ, current, p.gcRootFrame.impl)
-		restored := llvm.CreateSelect(b.impl, linked, prev, current)
-		b.impl.CreateStore(restored, chain)
+		linked := llvm.CreateICmp(b.impl, llvm.IntEQ, current.impl, p.gcRootFrame.impl)
+		restored := llvm.CreateSelect(b.impl, linked, prev.impl, current.impl)
+		b.Store(chainSlot, Expr{restored, p.Prog.VoidPtr()})
 	}
 }
 
@@ -209,8 +213,7 @@ func (b Builder) appendGCRootPointers(roots *[]Expr, value Expr) {
 	case vkEface, vkIface:
 		*roots = append(*roots, b.InterfaceData(value))
 	case vkClosure:
-		data := llvm.CreateExtractValue(b.impl, value.impl, 1)
-		*roots = append(*roots, Expr{data, b.Prog.VoidPtr()})
+		*roots = append(*roots, b.Convert(b.Prog.VoidPtr(), b.getField(value, 1)))
 	case vkStruct, vkTuple:
 		var count int
 		switch raw := value.Type.raw.Type.Underlying().(type) {
@@ -227,6 +230,7 @@ func (b Builder) appendGCRootPointers(roots *[]Expr, value Expr) {
 		elem := b.Prog.Index(value.Type)
 		for i := 0; i < int(raw.Len()); i++ {
 			part := llvm.CreateExtractValue(b.impl, value.impl, i)
+			part = b.fromStorageValue(elem, part)
 			b.appendGCRootPointers(roots, Expr{part, elem})
 		}
 	}

@@ -37,10 +37,11 @@ type Export struct {
 	// outputs. It is independent of the host shell and remains empty for named
 	// embedded/WebAssembly targets that drive their linker directly.
 	Toolchain NativeToolchain
-	// WasmABI is the selected WebAssembly ecosystem ABI. Unlike GOOS/GOARCH,
-	// it is authoritative for pointer layout, toolchain flags, and package-cache
-	// separation; the validated profile also selects its C data-model tags.
-	WasmABI WasmABI
+	// WasmProfile is the selected memory/host ABI pair. WasmProvider identifies
+	// the concrete host implementation without creating another source profile.
+	// Both values participate in package-cache identity.
+	WasmProfile  WasmProfile
+	WasmProvider WasmProvider
 
 	// Additional fields from target configuration
 	BuildTags      []string
@@ -82,18 +83,20 @@ type NativeToolchain struct {
 	ToolsetVersion string
 }
 
-// WasmABI identifies a physical WebAssembly ecosystem ABI. Keep this
-// separate from GOOS/GOARCH: those values primarily select Go sources and do
-// not uniquely determine an Emscripten, WASI, freestanding, or Go ABI.
-type WasmABI string
+// WasmProfile is a hosted memory ABI and host ABI pair. C interoperability is
+// a capability of the profile rather than a separate profile family.
+type WasmProfile string
 
 const (
-	WasmABIUnspecified        WasmABI = ""
-	WasmABIEmscripten         WasmABI = "emscripten"
-	WasmABIEmscriptenMemory64 WasmABI = "emscripten-memory64"
-	WasmABIWASIPreview1       WasmABI = "wasi-preview1"
-	WasmABIWASIPreview2       WasmABI = "wasi-preview2"
-	WasmABIFreestanding       WasmABI = "freestanding"
+	WasmProfileNone WasmProfile = ""
+	WasmProfileJ32  WasmProfile = "j32"
+	WasmProfileJ64  WasmProfile = "j64"
+	WasmProfileW32  WasmProfile = "w32"
+
+	WasmProviderNone       WasmProvider = ""
+	WasmProviderGoJS       WasmProvider = "gojs"
+	WasmProviderEmscripten WasmProvider = "emscripten"
+	WasmProviderWASI       WasmProvider = "wasi"
 
 	emscriptenBrowserEnvironment = "-sENVIRONMENT=web,worker"
 	emscriptenNamedEnvironment   = "-sENVIRONMENT=web,worker,node"
@@ -106,11 +109,40 @@ const (
 	wasm64LibffiRelDir        = "runtime/internal/clite/ffi/wasm64"
 )
 
-func (abi WasmABI) valid() bool {
-	switch abi {
-	case WasmABIUnspecified, WasmABIEmscripten, WasmABIEmscriptenMemory64,
-		WasmABIWASIPreview1, WasmABIWASIPreview2, WasmABIFreestanding:
+func (profile WasmProfile) valid() bool {
+	switch profile {
+	case WasmProfileNone, WasmProfileJ32, WasmProfileJ64, WasmProfileW32:
 		return true
+	default:
+		return false
+	}
+}
+
+// WasmProvider selects imports, host glue, and packaging for a profile.
+type WasmProvider string
+
+func (provider WasmProvider) valid() bool {
+	switch provider {
+	case WasmProviderNone, WasmProviderGoJS, WasmProviderEmscripten, WasmProviderWASI:
+		return true
+	default:
+		return false
+	}
+}
+
+func validWasmSelection(profile WasmProfile, provider WasmProvider) bool {
+	if !profile.valid() || !provider.valid() {
+		return false
+	}
+	switch profile {
+	case WasmProfileNone:
+		return provider == WasmProviderNone
+	case WasmProfileJ32:
+		return provider == WasmProviderGoJS || provider == WasmProviderEmscripten
+	case WasmProfileJ64:
+		return provider == WasmProviderEmscripten
+	case WasmProfileW32:
+		return provider == WasmProviderWASI
 	default:
 		return false
 	}
@@ -499,20 +531,20 @@ func use(goos, goarch string, wasiThreads, forceEspClang bool, level optlevel.Le
 }
 
 func useWithGOARM(goos, goarch, goarm string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool) (export Export, err error) {
-	return useWithGOARMAndToolchain(goos, goarch, goarm, wasiThreads, forceEspClang, level, ltoMode, goGlobalDCE, NativeToolchainInput{}, WasmABIUnspecified)
+	return useWithGOARMAndToolchain(goos, goarch, goarm, wasiThreads, forceEspClang, level, ltoMode, goGlobalDCE, NativeToolchainInput{}, WasmProfileNone, WasmProviderNone)
 }
 
-func useWithGOARMAndToolchain(goos, goarch, goarm string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool, nativeInput NativeToolchainInput, wasmABI WasmABI) (export Export, err error) {
-	if !wasmABI.valid() {
-		return export, fmt.Errorf("unsupported WebAssembly ABI profile %q", wasmABI)
+func useWithGOARMAndToolchain(goos, goarch, goarm string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool, nativeInput NativeToolchainInput, wasmProfile WasmProfile, wasmProvider WasmProvider) (export Export, err error) {
+	if !validWasmSelection(wasmProfile, wasmProvider) {
+		return export, fmt.Errorf("unsupported WebAssembly profile/provider %q/%q", wasmProfile, wasmProvider)
 	}
 	targetTriple := llvm.GetTargetTripleWithGOARM(goos, goarch, goarm)
-	switch wasmABI {
-	case WasmABIEmscripten:
+	switch wasmProfile {
+	case WasmProfileJ32:
 		targetTriple = "wasm32-unknown-emscripten"
-	case WasmABIEmscriptenMemory64:
+	case WasmProfileJ64:
 		targetTriple = "wasm64-unknown-emscripten"
-	case WasmABIWASIPreview1:
+	case WasmProfileW32:
 		targetTriple = "wasm32-unknown-wasip1"
 	}
 	llgoRoot := env.LLGoROOT()
@@ -620,9 +652,23 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, wasiThreads, forceEspC
 	if goarch != "wasm" {
 		return
 	}
-	if wasmABI != WasmABIUnspecified {
-		export.WasmABI = wasmABI
-		export.LLVMTarget = targetTriple
+	if wasmProfile == WasmProfileNone {
+		switch goos {
+		case "js":
+			wasmProfile, wasmProvider = WasmProfileJ32, WasmProviderGoJS
+			targetTriple = "wasm32-unknown-emscripten"
+		case "wasip1":
+			wasmProfile, wasmProvider = WasmProfileW32, WasmProviderWASI
+			targetTriple = "wasm32-unknown-wasip1"
+		default:
+			return export, fmt.Errorf("GOOS=%s GOARCH=wasm has no supported hosted profile", goos)
+		}
+	}
+	export.WasmProfile = wasmProfile
+	export.WasmProvider = wasmProvider
+	export.LLVMTarget = targetTriple
+	if wasmProvider == WasmProviderWASI {
+		export.BuildTags = appendUniqueStrings(export.BuildTags, "llgo.wasm.wasi")
 	}
 	export.DebugInfo.OmitLinkFlags = []string{"-Wl,-S"}
 
@@ -722,13 +768,6 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, wasiThreads, forceEspC
 		}
 
 	case "js":
-		if wasmABI == WasmABIUnspecified {
-			// Preserve the existing raw js/wasm driver while keeping its source
-			// constraints unqualified: js && wasm denotes the official Go
-			// platform, not an Emscripten C profile. The Go ABI gap is closed by
-			// the separate G1/G2 work.
-			targetTriple = "wasm32-unknown-emscripten"
-		}
 		// Emscripten configuration using system installation
 		// Specify emcc as the compiler
 		export.CC = "emcc"
@@ -771,7 +810,7 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, wasiThreads, forceEspC
 			emscriptenAsyncifyImports,
 			"-sSTACK_SIZE=5242880", // 5MB
 		}...)
-		appendEmscriptenLibffiSearchPath(&export, llgoRoot, wasmABI)
+		appendEmscriptenLibffiSearchPath(&export, llgoRoot, wasmProfile)
 	default:
 		err = errors.New("unsupported GOOS for WebAssembly: " + goos)
 		return
@@ -779,14 +818,14 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, wasiThreads, forceEspC
 	return
 }
 
-func appendEmscriptenLibffiSearchPath(export *Export, llgoRoot string, wasmABI WasmABI) {
+func appendEmscriptenLibffiSearchPath(export *Export, llgoRoot string, wasmProfile WasmProfile) {
 	// An empty LLGO_ROOT leaves -lffi without a search path; the linker then
 	// reports that it cannot find -lffi.
 	if llgoRoot == "" {
 		return
 	}
 	dir := wasm32LibffiRelDir
-	if wasmABI == WasmABIEmscriptenMemory64 {
+	if wasmProfile == WasmProfileJ64 {
 		dir = wasm64LibffiRelDir
 	}
 	export.LDFLAGS = append(export.LDFLAGS, "-L"+filepath.Join(llgoRoot, dir))
@@ -840,9 +879,10 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 	if cpu == "" {
 		return export, fmt.Errorf("target '%s' does not have a valid CPU configuration", targetName)
 	}
-	wasmABI := WasmABI(config.WasmABI)
-	if !wasmABI.valid() {
-		return Export{}, fmt.Errorf("target %q has unsupported WebAssembly ABI profile %q", targetName, config.WasmABI)
+	wasmProfile := WasmProfile(config.WasmProfile)
+	wasmProvider := WasmProvider(config.WasmProvider)
+	if !validWasmSelection(wasmProfile, wasmProvider) {
+		return Export{}, fmt.Errorf("target %q has unsupported WebAssembly profile/provider %q/%q", targetName, config.WasmProfile, config.WasmProvider)
 	}
 
 	// The downloaded Espressif toolchain carries all backends used by LLGo's
@@ -859,7 +899,8 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 	export.BuildTags = config.BuildTags
 	export.GOOS = config.GOOS
 	export.GOARCH = config.GOARCH
-	export.WasmABI = wasmABI
+	export.WasmProfile = wasmProfile
+	export.WasmProvider = wasmProvider
 	export.ExtraFiles = config.ExtraFiles
 	export.LLVMTarget = config.LLVMTarget
 	export.TargetABI = config.TargetABI
@@ -1111,54 +1152,51 @@ func UseWithGOARM(goos, goarch, goarm, targetName string, wasiThreads, forceEspC
 // host commands and preserve their existing toolchain selection.
 func UseWithGOARMAndToolchain(goos, goarch, goarm, targetName string, wasiThreads, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool, nativeInput NativeToolchainInput) (export Export, err error) {
 	if targetName == "" {
-		return useWithGOARMAndToolchain(goos, goarch, goarm, wasiThreads, forceEspClang, level, ltoMode, goGlobalDCE, nativeInput, WasmABIUnspecified)
+		return useWithGOARMAndToolchain(goos, goarch, goarm, wasiThreads, forceEspClang, level, ltoMode, goGlobalDCE, nativeInput, WasmProfileNone, WasmProviderNone)
 	}
 
-	// These named targets use the same installed ecosystem toolchains as the
-	// raw compatibility paths. Resolve their configuration first so aliases,
-	// profile identity, source tags, and the physical LLVM triple stay
-	// declarative, then set up emcc or WASI SDK without treating them as a
-	// generic embedded clang target.
-	switch targetName {
-	case "emscripten", "emscripten-memory64", "wasm", "wasi", "wasip1":
-		resolver := targets.NewDefaultResolver()
-		config, resolveErr := resolver.Resolve(targetName)
-		if resolveErr != nil {
-			return export, fmt.Errorf("failed to resolve target %s: %w", targetName, resolveErr)
-		}
-		wasmABI := WasmABI(config.WasmABI)
-		if !wasmABI.valid() || wasmABI == WasmABIUnspecified {
-			return export, fmt.Errorf("target %q has unsupported WebAssembly ABI profile %q", targetName, config.WasmABI)
-		}
-		export, err = useWithGOARMAndToolchain(config.GOOS, config.GOARCH, "", wasiThreads, false, level, ltoMode, goGlobalDCE, nativeInput, wasmABI)
-		if err != nil {
-			return export, err
-		}
-		if export.LLVMTarget != config.LLVMTarget {
-			return export, fmt.Errorf(
-				"target %q declares LLVM target %q, but WebAssembly ABI profile %q requires %q",
-				targetName, config.LLVMTarget, wasmABI, export.LLVMTarget,
-			)
-		}
-		export.GOOS = config.GOOS
-		export.GOARCH = config.GOARCH
-		export.Emulator = env.ExpandEnvWithDefault(config.Emulator, buildEnvMap(env.LLGoROOT()), "{}")
-		export.BuildTags = appendUniqueStrings(export.BuildTags, config.BuildTags...)
-		if wasmABI == WasmABIEmscripten || wasmABI == WasmABIEmscriptenMemory64 {
-			// The existing raw js/wasm path remains browser/worker-only. Named
-			// Emscripten targets also promise their configured Node emulator, so
-			// enable that host without changing raw output or its glue size.
-			for i, flag := range export.LDFLAGS {
-				if flag == emscriptenBrowserEnvironment {
-					export.LDFLAGS[i] = emscriptenNamedEnvironment
-				}
-			}
-			// Asyncify otherwise keeps Node alive after exit(2), so fatal runtime
-			// errors neither terminate the process nor produce a useful status.
-			export.LDFLAGS = appendUniqueStrings(export.LDFLAGS, "-sEXIT_RUNTIME=1")
-		}
-		return export, nil
-	default:
+	// Resolve every named target before selecting its toolchain. Inherited wasm
+	// profile/provider metadata is authoritative, so aliases and downstream
+	// target definitions do not require another name switch here.
+	resolver := targets.NewDefaultResolver()
+	config, resolveErr := resolver.Resolve(targetName)
+	if resolveErr != nil {
+		return export, fmt.Errorf("failed to resolve target %s: %w", targetName, resolveErr)
+	}
+	wasmProfile := WasmProfile(config.WasmProfile)
+	wasmProvider := WasmProvider(config.WasmProvider)
+	if wasmProfile == WasmProfileNone && wasmProvider == WasmProviderNone {
 		return UseTarget(targetName, level, ltoMode)
 	}
+	if !validWasmSelection(wasmProfile, wasmProvider) {
+		return export, fmt.Errorf("target %q has unsupported WebAssembly profile/provider %q/%q", targetName, config.WasmProfile, config.WasmProvider)
+	}
+	export, err = useWithGOARMAndToolchain(config.GOOS, config.GOARCH, "", wasiThreads, false, level, ltoMode, goGlobalDCE, nativeInput, wasmProfile, wasmProvider)
+	if err != nil {
+		return export, err
+	}
+	if export.LLVMTarget != config.LLVMTarget {
+		return export, fmt.Errorf(
+			"target %q declares LLVM target %q, but WebAssembly profile/provider %q/%q requires %q",
+			targetName, config.LLVMTarget, wasmProfile, wasmProvider, export.LLVMTarget,
+		)
+	}
+	export.GOOS = config.GOOS
+	export.GOARCH = config.GOARCH
+	export.Emulator = env.ExpandEnvWithDefault(config.Emulator, buildEnvMap(env.LLGoROOT()), "{}")
+	export.BuildTags = appendUniqueStrings(export.BuildTags, config.BuildTags...)
+	if wasmProvider == WasmProviderEmscripten {
+		// The existing raw js/wasm path remains browser/worker-only. Named
+		// Emscripten targets also promise their configured Node emulator, so
+		// enable that host without changing raw output or its glue size.
+		for i, flag := range export.LDFLAGS {
+			if flag == emscriptenBrowserEnvironment {
+				export.LDFLAGS[i] = emscriptenNamedEnvironment
+			}
+		}
+		// Asyncify otherwise keeps Node alive after exit(2), so fatal runtime
+		// errors neither terminate the process nor produce a useful status.
+		export.LDFLAGS = appendUniqueStrings(export.LDFLAGS, "-sEXIT_RUNTIME=1")
+	}
+	return export, nil
 }

@@ -472,12 +472,11 @@ func markRoots(start, end uintptr) {
 	if start >= end {
 		gcPanic(c.Str("gc: unexpected range to mark"))
 	}
-	// Reduce the end bound to avoid reading too far on platforms where pointer alignment is smaller than pointer size.
-	// If the size of the range is 0, then end will be slightly below start after this.
-	end -= unsafe.Sizeof(end) - unsafe.Alignof(end)
-
-	for addr := start; addr < end; addr += unsafe.Alignof(addr) {
-		root := *(*uintptr)(unsafe.Pointer(addr))
+	if end-start < gcScanWordSize {
+		return
+	}
+	for addr := start; addr <= end-gcScanWordSize; addr += gcScanWordSize {
+		root := loadGCScanWord(addr)
 		markRoot(addr, root)
 	}
 }
@@ -497,9 +496,9 @@ func startMark(root uintptr) {
 		markHeads.remember(block, endBlock)
 		start, end := gcAddressOf(block), gcAddressOf(endBlock)
 
-		for addr := start; addr != end; addr += unsafe.Alignof(addr) {
+		for addr := start; addr != end; addr += gcScanWordSize {
 			// Load the word.
-			word := *(*uintptr)(unsafe.Pointer(addr))
+			word := loadGCScanWord(addr)
 
 			if !isPointer(word) {
 				// Not a heap pointer.

@@ -322,7 +322,7 @@ func defaultAppExt(conf *Config) string {
 				// product. ES-module glue is the executable; emcc emits the
 				// sibling .wasm module that it loads.
 				return ".mjs"
-			case "wasi", "wasip1", "wasip2", "wasm-unknown":
+			case "wasi", "wasip1":
 				return ".wasm"
 			}
 			// Preserve the historical extension for custom/future WASI and

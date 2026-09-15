@@ -52,6 +52,9 @@ func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
 		typ := p.type_(value.Type(), llssa.InGo)
 		return p.prog.GCRootCount(typ) != 0
 	}, p.isGCSafepoint)
+	for value := range uintptrEscapesRoots(fn) {
+		planned[value] = struct{}{}
+	}
 	if p.safepointEntry {
 		for _, param := range fn.Params {
 			if !mayContainGCRoot(param.Type()) {
@@ -70,7 +73,12 @@ func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
 			return
 		}
 		typ := p.type_(value.Type(), llssa.InGo)
-		if n := p.prog.GCRootCount(typ); n != 0 {
+		n := p.prog.GCRootCount(typ)
+		if basicKind(value.Type()) == types.Uintptr {
+			// Only pragma-designated uintptr parameters enter planned.
+			n = 1
+		}
+		if n != 0 {
 			counts[value] = n
 			total += n
 		}
@@ -245,6 +253,10 @@ func basicKind(typ types.Type) types.BasicKind {
 func (p *context) publishGCRoot(b llssa.Builder, value ssa.Value, expr llssa.Expr) {
 	slots, ok := p.gcRoots[value]
 	if !ok || expr.IsNil() {
+		return
+	}
+	if basicKind(value.Type()) == types.Uintptr {
+		b.SetGCRoot(slots[0], expr)
 		return
 	}
 	roots := b.GCRootPointers(expr)

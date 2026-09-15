@@ -23,5 +23,6 @@ result_directory="$(cd "$3" && pwd)"
   LLGO_ROOT="$source_root" go run ./benchmark/wasm \
     -root "$source_root" \
     -llgo "$llgo_output" \
-    -out "$result_directory"
+    -out "$result_directory" \
+    -build-runs "${LLGO_WASM_BENCH_BUILD_RUNS:-3}"
 )

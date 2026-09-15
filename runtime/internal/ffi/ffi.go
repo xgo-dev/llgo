@@ -39,37 +39,25 @@ func NewSignature(ret *Type, args ...*Type) (*Signature, error) {
 // should use NewSignature; the explicit form is needed for platforms such as
 // windows/386 that expose more than one C calling convention.
 func NewSignatureWithABI(abi ABI, ret *Type, args ...*Type) (*Signature, error) {
-	var cif Signature
-	var atype **Type
-	if len(args) > 0 {
-		atype = &args[0]
-	}
-	status := ffi.PrepCif(&cif, abi, c.Uint(len(args)), ret, atype)
+	cif, atype := newSignatureStorage(ret, args)
+	status := ffi.PrepCif(cif, abi, c.Uint(len(args)), ret, atype)
 	if status == 0 {
-		return &cif, nil
+		return cif, nil
 	}
 	return nil, Error(status)
 }
 
 func NewSignatureVar(ret *Type, fixed int, args ...*Type) (*Signature, error) {
-	var cif Signature
-	var atype **Type
-	if len(args) > 0 {
-		atype = &args[0]
-	}
-	status := ffi.PrepCifVar(&cif, DefaultABI, c.Uint(fixed), c.Uint(len(args)), ret, atype)
+	cif, atype := newSignatureStorage(ret, args)
+	status := ffi.PrepCifVar(cif, DefaultABI, c.Uint(fixed), c.Uint(len(args)), ret, atype)
 	if status == ffi.OK {
-		return &cif, nil
+		return cif, nil
 	}
 	return nil, Error(status)
 }
 
 func Call(cif *Signature, fn unsafe.Pointer, ret unsafe.Pointer, args ...unsafe.Pointer) {
-	var avalues *unsafe.Pointer
-	if len(args) > 0 {
-		avalues = &args[0]
-	}
-	ffi.Call(cif, fn, ret, avalues)
+	ffi.Call(cif, fn, ret, valuePointerArray(args))
 }
 
 type Closure struct {

@@ -9,11 +9,13 @@
  * source-level argument. Keep this physical ABI detail at the runtime edge;
  * ordinary finalizer calls remain Go func-value calls.
  */
+#include <stdint.h>
+
 typedef void (*llgo_wasm_sret_func)(void *, void *);
 typedef void (*llgo_wasm_sret_closure)(void *, void *, void *);
 typedef struct {
-    void *type_or_itab;
-    void *data;
+    uint64_t type_or_itab;
+    uint64_t data;
 } llgo_wasm_interface;
 typedef void (*llgo_wasm_interface_sret_func)(void *, llgo_wasm_interface);
 typedef void (*llgo_wasm_interface_sret_closure)(void *, void *,
@@ -31,7 +33,8 @@ void llgo_wasm_call_sret(void *function, void *result, void *environment,
 void llgo_wasm_call_interface_sret(void *function, void *result,
                                    void *environment, void *type_or_itab,
                                    void *data) {
-    llgo_wasm_interface argument = {type_or_itab, data};
+    llgo_wasm_interface argument = {(uint64_t)(uintptr_t)type_or_itab,
+                                    (uint64_t)(uintptr_t)data};
     if (environment != 0) {
         ((llgo_wasm_interface_sret_closure)function)(result, environment,
                                                      argument);

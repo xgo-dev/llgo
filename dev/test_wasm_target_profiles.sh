@@ -5,6 +5,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 llgo_cmd="${LLGO:-llgo}"
 node_cmd="${NODE:-node}"
+wasmtime_cmd="${WASMTIME:-wasmtime}"
 fixture="${repo_root}/internal/build/testdata/wasm-profile"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/llgo-wasm-target-profiles.XXXXXX")"
 trap 'rm -rf "${work_dir}"' EXIT
@@ -50,24 +51,30 @@ build_wasi() {
 
 	"${llgo_cmd}" build -target "${target}" -o "${module}" "${fixture}"
 	assert_wasm_module "${module}"
+	if command -v timeout >/dev/null 2>&1; then
+		timeout 60s "${wasmtime_cmd}" run -W exceptions=y "${module}"
+	else
+		"${wasmtime_cmd}" run -W exceptions=y "${module}"
+	fi
 }
 
 build_emscripten emscripten emscripten
 build_emscripten emscripten-memory64 emscripten-memory64
-build_emscripten wasm legacy-wasm
 
 raw_js="${work_dir}/raw-js.mjs"
 GOOS=js GOARCH=wasm "${llgo_cmd}" build -o "${raw_js}" "${fixture}"
 assert_wasm_module "${work_dir}/raw-js.wasm"
+run_node emscripten-runner.mjs "${raw_js}"
 
-# R0 verifies that both names link a genuine WASI module while preserving the
-# existing host contract. R1 changes process entry, memory ownership, longjmp,
-# and scheduling together, then executes the same probes under Wasmtime.
 build_wasi wasi wasi
-build_wasi wasip1 legacy-wasip1
 
 raw_wasi="${work_dir}/raw-wasip1.wasm"
 GOOS=wasip1 GOARCH=wasm "${llgo_cmd}" build -o "${raw_wasi}" "${fixture}"
 assert_wasm_module "${raw_wasi}"
+if command -v timeout >/dev/null 2>&1; then
+	timeout 60s "${wasmtime_cmd}" run -W exceptions=y "${raw_wasi}"
+else
+	"${wasmtime_cmd}" run -W exceptions=y "${raw_wasi}"
+fi
 
 echo "WebAssembly target profile checks passed"

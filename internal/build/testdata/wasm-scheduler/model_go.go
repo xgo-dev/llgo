@@ -7,10 +7,10 @@ import (
 )
 
 func checkWasmModel() {
-	if unsafe.Sizeof(uintptr(0)) != 4 {
-		panic("raw and wasm32 C profiles must use 32-bit words")
+	if unsafe.Sizeof(uintptr(0)) != 8 {
+		panic("Memory32 profiles must retain the Go 64-bit word model")
 	}
 	if cLongSize() != 4 {
-		panic("raw and wasm32 C profiles must use the wasm32 C data model")
+		panic("Memory32 profiles must use the ILP32 C data model")
 	}
 }
