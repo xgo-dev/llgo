@@ -337,35 +337,38 @@ type aFunction struct {
 type Function = *aFunction
 
 // NewFunc creates a new function.
-func (p Package) NewFunc(name string, sig *types.Signature, bg Background) Function {
-	return p.NewFuncEx(name, sig, bg, false, false)
+func (p Package) NewFunc(name string, sig *types.Signature, bg Background, attrs ...FunctionAttributes) Function {
+	return p.NewFuncEx(name, sig, bg, false, false, attrs...)
 }
 
 // NewFuncEx creates a new function.
-func (p Package) NewFuncEx(name string, sig *types.Signature, bg Background, hasFreeVars bool, instantiated bool) Function {
+func (p Package) NewFuncEx(name string, sig *types.Signature, bg Background, hasFreeVars bool, instantiated bool, attrs ...FunctionAttributes) Function {
 	if hasFreeVars {
 		panic("ssa: NewFuncEx cannot represent an environment; use NewEnvFunc")
 	}
-	return p.newFunc(name, sig, bg, nil, instantiated)
+	return p.newFunc(name, sig, bg, nil, instantiated, attrs...)
 }
 
 // NewEnvFunc creates a function whose Go signature is sig and whose physical
 // LLVM entry has an additional compiler-owned environment parameter.
 func (p Package) NewEnvFunc(
-	name string, sig *types.Signature, bg Background, env *types.Var, instantiated bool,
+	name string, sig *types.Signature, bg Background, env *types.Var, instantiated bool, attrs ...FunctionAttributes,
 ) Function {
 	if env == nil {
 		panic("ssa: nil closure environment")
 	}
-	return p.newFunc(name, sig, bg, env, instantiated)
+	return p.newFunc(name, sig, bg, env, instantiated, attrs...)
 }
 
 func (p Package) newFunc(
-	name string, sig *types.Signature, bg Background, env *types.Var, instantiated bool,
+	name string, sig *types.Signature, bg Background, env *types.Var, instantiated bool, attrs ...FunctionAttributes,
 ) Function {
 	if v, ok := p.fns[name]; ok {
 		if v.NeedsEnv() != (env != nil) {
 			panic("ssa: conflicting closure environment ABI for " + name)
+		}
+		for _, attr := range attrs {
+			attr.apply(p.Prog.ctx, v.impl)
 		}
 		return v
 	}
@@ -383,7 +386,9 @@ func (p Package) newFunc(
 		llvmName = p.Prog.stdcallSymbolName(name)
 	}
 	fn := llvm.AddFunction(p.mod, llvmName, t.ll)
-	p.Prog.applyFunctionAttributes(fn, name)
+	for _, attr := range attrs {
+		attr.apply(p.Prog.ctx, fn)
+	}
 	switch name {
 	case "github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU",
 		"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ",

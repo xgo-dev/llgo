@@ -1021,7 +1021,7 @@ func (p Package) rtFunc(fnName string) Expr {
 		name = p.fnlink(name)
 	}
 	sig := fn.Type().(*types.Signature)
-	return p.NewFunc(name, sig, InGo).Expr
+	return p.NewFunc(name, sig, InGo, p.Prog.SourceFunctionAttributes(FullName(fn.Pkg(), fnName))).Expr
 }
 
 // rtEnvFunc returns a runtime entry whose source-level signature excludes its
@@ -1036,7 +1036,7 @@ func (p Package) rtEnvFunc(fnName string) Expr {
 	}
 	sig := fn.Type().(*types.Signature)
 	env := types.NewVar(token.NoPos, nil, "$env", types.Typ[types.UnsafePointer])
-	return p.NewEnvFunc(name, sig, InGo, env, false).Expr
+	return p.NewEnvFunc(name, sig, InGo, env, false, p.Prog.SourceFunctionAttributes(FullName(fn.Pkg(), fnName))).Expr
 }
 
 // RuntimeFunc returns a declaration for a function in LLGo's internal runtime.
@@ -1045,7 +1045,7 @@ func (p Package) RuntimeFunc(fnName string) Expr {
 }
 
 func (p Package) cFunc(fullName string, sig *types.Signature) Expr {
-	return p.NewFunc(fullName, sig, InC).Expr
+	return p.NewFunc(fullName, sig, InC, p.Prog.SourceFunctionAttributes(fullName)).Expr
 }
 
 // -----------------------------------------------------------------------------

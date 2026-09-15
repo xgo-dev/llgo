@@ -383,7 +383,7 @@ func (p *context) funcPCABI0Value(b llssa.Builder, v ssa.Value) llssa.Expr {
 		if cname := extractTrampolineCName(v.Name()); cname != "" {
 			cname = p.remapTrampolineCName(cname)
 			fnSig := p.syscallFnSig(len(v.Params))
-			cfn := b.Pkg.NewFunc(cname, fnSig, llssa.InC)
+			cfn := b.Pkg.NewFunc(cname, fnSig, llssa.InC, p.prog.SourceFunctionAttributes(cname))
 			return b.Convert(p.type_(types.Typ[types.Uintptr], llssa.InGo), cfn.Expr)
 		}
 		if aFn, _, _ := p.compileFunction(v); aFn != nil {
@@ -700,10 +700,12 @@ func (p *context) funcOf(fn *ssa.Function) (aFn llssa.Function, pyFn llssa.PyObj
 			sig := p.patchType(fn.Signature).(*types.Signature)
 			// Source env-bearing bodies are created by compileFuncDecl before
 			// lowering. Imported declarations cannot reconstruct //llgo:env.
-			aFn = pkg.NewFuncEx(name, sig, llssa.Background(ftype), false, p.needsLinkOnce(fn))
+			aFn = pkg.NewFuncEx(name, sig, llssa.Background(ftype), false, p.needsLinkOnce(fn), p.functionAttributes(fn))
 			if disableInline {
 				aFn.Inline(llssa.NoInline)
 			}
+		} else {
+			aFn.SetAttributes(p.functionAttributes(fn))
 		}
 	}
 	return
@@ -2186,9 +2188,10 @@ func (p *context) runtimeFunc(name string, sig *types.Signature) llssa.Expr {
 	p.pkg.NeedRuntime = true
 	fullName := llssa.PkgRuntime + "." + name
 	if fn := p.pkg.FuncOf(fullName); fn != nil {
+		fn.SetAttributes(p.prog.SourceFunctionAttributes(fullName))
 		return fn.Expr
 	}
-	return p.pkg.NewFuncEx(fullName, sig, llssa.InGo, false, false).Expr
+	return p.pkg.NewFuncEx(fullName, sig, llssa.InGo, false, false, p.prog.SourceFunctionAttributes(fullName)).Expr
 }
 
 func pushCallerLocationFrameSig() *types.Signature {

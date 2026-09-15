@@ -650,7 +650,8 @@ func (b Builder) abiMethodFunc(anonymous bool, mPkg *types.Package, mName string
 	if b.Pkg.fnlink != nil {
 		fullName = b.Pkg.fnlink(fullName)
 	}
-	return b.Pkg.NewFunc(fullName, mSig, InGo) // TODO(xsw): use rawType to speed up
+	sourceName := FuncName(mPkg, mName, mSig.Recv(), true)
+	return b.Pkg.NewFunc(fullName, mSig, InGo, b.Prog.SourceFunctionAttributes(sourceName)) // TODO(xsw): use rawType to speed up
 }
 
 /*
