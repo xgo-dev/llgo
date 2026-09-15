@@ -144,9 +144,6 @@ func itoa(buf []byte, val uint64) []byte {
 }
 
 // failures in the conversion ([x]T)(s) or (*[x]T)(s), 0 <= x <= y, y == len(s)
-//
-//llgo:cold
-//llgo:noreturn
 func PanicSliceConvert(x int, y int) {
 	panic(boundsError{x: int64(x), signed: true, y: y, code: boundsConvert})
 }
@@ -161,8 +158,6 @@ type TypeAssertionError struct {
 
 func (*TypeAssertionError) RuntimeError() {}
 
-//llgo:cold
-//llgo:noreturn
 func PanicTypeAssert(source, concrete, asserted *_type) {
 	missingMethod := ""
 	if concrete != nil {
