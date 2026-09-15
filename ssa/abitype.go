@@ -626,6 +626,9 @@ func (b Builder) abiMethodValueThunk(ifn Function, mSig *types.Signature) llvm.V
 	if recv == nil {
 		panic("ssa: method value thunk requires a receiver")
 	}
+	if HasNameValist(mSig) {
+		return llvm.ConstNull(b.Prog.VoidPtr().ll)
+	}
 	goSig := types.NewSignatureType(nil, nil, nil, mSig.Params(), mSig.Results(), mSig.Variadic())
 	envStruct := types.NewStruct([]*types.Var{
 		types.NewVar(token.NoPos, nil, "recv", recv.Type()),
@@ -639,7 +642,7 @@ func (b Builder) abiMethodValueThunk(ifn Function, mSig *types.Signature) llvm.V
 	body := wrapper.MakeBody(1)
 	body.AssertNilDeref(wrapper.Env())
 	recvVal := body.Field(body.Load(wrapper.Env()), 0)
-	n := goSig.Params().Len()
+	n := len(wrapper.params)
 	args := make([]Expr, 1+n)
 	args[0] = recvVal
 	for i := 0; i < n; i++ {

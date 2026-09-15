@@ -17,9 +17,13 @@ _llgo_github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.Box[
 [OrdinaryEdges]
 *_llgo_github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.Box[int]:
     _llgo_github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.Box[int]
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.(*Box[int]).Drop$methodvalue
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.(*Box[int]).Value$methodvalue
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequalptr
 *_llgo_github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.Box[string]:
     _llgo_github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.Box[string]
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.(*Box[string]).Drop$methodvalue
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.(*Box[string]).Value$methodvalue
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequalptr
 _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA:
     _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA$out
@@ -50,10 +54,22 @@ github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.(*Box[int]
     _llgo_string
     github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU
     github.com/xgo-dev/llgo/runtime/internal/runtime.Panic
+github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.(*Box[int]).Drop$methodvalue:
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.(*Box[int]).Drop
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.(*Box[int]).Value$methodvalue:
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.(*Box[int]).Value
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
 github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.(*Box[string]).Drop:
     _llgo_string
     github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU
     github.com/xgo-dev/llgo/runtime/internal/runtime.Panic
+github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.(*Box[string]).Drop$methodvalue:
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.(*Box[string]).Drop
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.(*Box[string]).Value$methodvalue:
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.(*Box[string]).Value
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
 github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.struct$XNpHe-3-A25gBmHjYdF74H8M4k3Eik680huOzY6OtaU$fields:
     _llgo_string
 github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.struct$lOhriNu2BrWBR2Mh8k-KggMYlAw0Wx-2ftE2_gNyubg$fields:

@@ -17,6 +17,8 @@ _llgo_github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.Source:
 [OrdinaryEdges]
 *_llgo_github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.Source:
     _llgo_github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.Source
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.(*Source).Close$methodvalue
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.(*Source).Read$methodvalue
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequalptr
 []_llgo_uint8:
     _llgo_uint8
@@ -41,6 +43,8 @@ _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to$out:
     _llgo_string
 _llgo_github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.Source:
     *_llgo_github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.Source
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.(*Source).Close$methodvalue
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.(*Source).Read$methodvalue
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequal0
 _llgo_iface$Fh8eUJ-Gw4e6TYuajcFIOSCuqSPKAt5nS4ow7xeGXEU$imethods:
     _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
@@ -55,6 +59,12 @@ _llgo_string:
     github.com/xgo-dev/llgo/runtime/internal/runtime.strequal
 _llgo_uint8:
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequal8
+github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.(*Source).Close$methodvalue:
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.(*Source).Close
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.(*Source).Read$methodvalue:
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.(*Source).Read
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
 main.init:
     github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.init
     main.init$guard
