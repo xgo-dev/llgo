@@ -176,25 +176,83 @@ func TestCollectFingerprint(t *testing.T) {
 	}
 }
 
-func TestWasmABISeparatesPackageFingerprints(t *testing.T) {
-	fingerprint := func(abi crosscompile.WasmABI) (*commonSection, string) {
+func TestWasmProfileAndProviderSeparatePackageFingerprints(t *testing.T) {
+	fingerprint := func(profile crosscompile.WasmProfile, provider crosscompile.WasmProvider) (*commonSection, string) {
 		ctx := &context{
 			buildConf:    &Config{Goos: "js", Goarch: "wasm", Target: "emscripten"},
-			crossCompile: crosscompile.Export{WasmABI: abi},
+			crossCompile: crosscompile.Export{WasmProfile: profile, WasmProvider: provider},
 		}
 		manifest := newManifestBuilder()
 		ctx.collectCommonInputs(manifest)
 		return &manifest.common, manifest.Fingerprint()
 	}
 
-	wasm32, fp32 := fingerprint(crosscompile.WasmABIEmscripten)
-	wasm64, fp64 := fingerprint(crosscompile.WasmABIEmscriptenMemory64)
-	if wasm32.WasmABI != string(crosscompile.WasmABIEmscripten) ||
-		wasm64.WasmABI != string(crosscompile.WasmABIEmscriptenMemory64) {
-		t.Fatalf("manifest WASM_ABI fields = %q, %q", wasm32.WasmABI, wasm64.WasmABI)
+	wasm32, fp32 := fingerprint(crosscompile.WasmProfileJ32, crosscompile.WasmProviderEmscripten)
+	wasm64, fp64 := fingerprint(crosscompile.WasmProfileJ64, crosscompile.WasmProviderEmscripten)
+	if wasm32.WasmProfile != string(crosscompile.WasmProfileJ32) ||
+		wasm64.WasmProfile != string(crosscompile.WasmProfileJ64) {
+		t.Fatalf("manifest WASM_PROFILE fields = %q, %q", wasm32.WasmProfile, wasm64.WasmProfile)
 	}
 	if fp32 == fp64 {
 		t.Fatal("Emscripten wasm32 and Memory64 reused the same package fingerprint")
+	}
+	gojs, fpGoJS := fingerprint(crosscompile.WasmProfileJ32, crosscompile.WasmProviderGoJS)
+	if gojs.WasmProvider != string(crosscompile.WasmProviderGoJS) || fpGoJS == fp32 {
+		t.Fatal("GoJS and Emscripten providers reused the same package fingerprint")
+	}
+}
+
+func TestWasmReflectBridgesParticipateInFingerprint(t *testing.T) {
+	fingerprint := func(enabled bool) (*commonSection, string) {
+		prog := llssa.NewProgram(&llssa.Target{
+			GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32", WasmProvider: "wasi",
+			WasmReflectBridges: enabled,
+		})
+		defer prog.Dispose()
+		ctx := &context{
+			buildConf:    &Config{Goos: "wasip1", Goarch: "wasm", Target: "wasi"},
+			crossCompile: crosscompile.Export{WasmProfile: crosscompile.WasmProfileW32, WasmProvider: crosscompile.WasmProviderWASI},
+			prog:         prog,
+		}
+		manifest := newManifestBuilder()
+		ctx.collectCommonInputs(manifest)
+		return &manifest.common, manifest.Fingerprint()
+	}
+
+	plain, plainFingerprint := fingerprint(false)
+	bridged, bridgedFingerprint := fingerprint(true)
+	if plain.WasmReflectBridges || !bridged.WasmReflectBridges {
+		t.Fatalf("WASM_REFLECT_BRIDGES fields = %v, %v", plain.WasmReflectBridges, bridged.WasmReflectBridges)
+	}
+	if plainFingerprint == bridgedFingerprint {
+		t.Fatal("reflection bridge programs reused an unbridged package fingerprint")
+	}
+}
+
+func TestWasmFuncInfoEntriesParticipateInFingerprint(t *testing.T) {
+	fingerprint := func(enabled bool) (*commonSection, string) {
+		prog := llssa.NewProgram(&llssa.Target{
+			GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "gojs",
+			WasmFuncInfoEntries: enabled,
+		})
+		defer prog.Dispose()
+		ctx := &context{
+			buildConf:    &Config{Goos: "js", Goarch: "wasm"},
+			crossCompile: crosscompile.Export{WasmProfile: crosscompile.WasmProfileJ32, WasmProvider: crosscompile.WasmProviderGoJS},
+			prog:         prog,
+		}
+		manifest := newManifestBuilder()
+		ctx.collectCommonInputs(manifest)
+		return &manifest.common, manifest.Fingerprint()
+	}
+
+	plain, plainFingerprint := fingerprint(false)
+	withEntries, entriesFingerprint := fingerprint(true)
+	if plain.WasmFuncInfoEntries || !withEntries.WasmFuncInfoEntries {
+		t.Fatalf("WASM_FUNCINFO_ENTRIES fields = %v, %v", plain.WasmFuncInfoEntries, withEntries.WasmFuncInfoEntries)
+	}
+	if plainFingerprint == entriesFingerprint {
+		t.Fatal("function-entry programs reused a package fingerprint without entries")
 	}
 }
 

@@ -3,6 +3,7 @@
 package main
 
 const (
-	expectedWordSize  = 8
-	expectedCLongSize = 8
+	expectedGoWordSize   = 8
+	expectedCPointerSize = 8
+	expectedCLongSize    = 8
 )

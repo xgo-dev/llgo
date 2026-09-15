@@ -77,7 +77,7 @@ func TestProcessPath_UsesFlagsFileTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "// CHECK-NEXT:   switch i32") {
+	if !strings.Contains(text, "// CHECK-NEXT:   switch i64") {
 		t.Fatalf("litgen did not use the wasm target from flags.txt:\n%s", text)
 	}
 	if strings.Contains(text, "blockaddress") || strings.Contains(text, "indirectbr") {

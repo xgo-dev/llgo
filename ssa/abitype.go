@@ -271,7 +271,10 @@ func (b Builder) abiTuples(t *types.Tuple, name string) llvm.Value {
 		}
 		ft := prog.AbiTypePtr()
 		atyp := prog.rawType(types.NewArray(ft.RawType(), int64(n)))
-		data := Expr{llvm.ConstArray(ft.ll, fields), atyp}
+		for i, field := range fields {
+			fields[i] = prog.toStorageConstant(ft, field)
+		}
+		data := Expr{llvm.ConstArray(prog.storageType(ft), fields), atyp}
 		g = b.Pkg.doNewVar(name, prog.Pointer(atyp))
 		g.Init(data)
 		g.impl.SetGlobalConstant(true)
@@ -344,6 +347,10 @@ func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value)
 		fields = []llvm.Value{
 			b.abiTuples(t.Params(), name+"$in"),
 			b.abiTuples(t.Results(), name+"$out"),
+		}
+		if prog.target.usesWasmReflectBridges() {
+			bridges := pkg.wasmReflectBridge(t)
+			fields = append(fields, bridges.call.impl, bridges.make.impl)
 		}
 	case *types.Struct:
 		name, _ = prog.abi.TypeName(t)
@@ -559,6 +566,17 @@ func (b Builder) abiUncommonMethods(t types.Type, methods []*types.Selection) ll
 		values = append(values, ifn)
 		values = append(values, tfn)
 		fields[i] = prog.constStructValue(ft, values)
+		if prog.target.usesWasmReflectBridges() {
+			// Type.Method constructs a method-expression signature at runtime.
+			// Retain that descriptor with the method wrapper only when reflection
+			// can expose it.
+			expression := methodExprSignature(m.Type().(*types.Signature))
+			b.abiType(expression)
+			if mb := b.Pkg.metaBuilder; mb != nil {
+				expressionName, _ := prog.abi.TypeName(expression)
+				mb.AddOrdinaryEdge(mb.Sym(tfn.Name()), mb.Sym(expressionName))
+			}
+		}
 		if mb := b.Pkg.metaBuilder; mb != nil {
 			mtypeName, _ := prog.abi.TypeName(ftyp)
 			mb.AddMethodSlot(mb.Sym(typeName), fullName, mb.Sym(mtypeName), mb.Sym(ifn.Name()), mb.Sym(tfn.Name()))
@@ -819,7 +837,10 @@ func (p Package) getAbiTypesFor(name string, filter func(sym *AbiSymbol) bool) E
 	}
 	ft := prog.AbiTypePtr()
 	atyp := prog.rawType(types.NewArray(ft.RawType(), int64(len(names))))
-	data := Expr{llvm.ConstArray(ft.ll, fields), atyp}
+	for i, field := range fields {
+		fields[i] = prog.toStorageConstant(ft, field)
+	}
+	data := Expr{llvm.ConstArray(prog.storageType(ft), fields), atyp}
 	array := p.doNewVar(name+"$array", prog.Pointer(atyp))
 	array.Init(data)
 	array.impl.SetGlobalConstant(true)

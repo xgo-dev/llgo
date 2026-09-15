@@ -276,18 +276,43 @@ func (p *context) cgoCgocall(b llssa.Builder, args []ssa.Value) (ret llssa.Expr)
 // -----------------------------------------------------------------------------
 
 // func index(arr *T, idx int) T
-func (p *context) index(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
-	return b.Load(p.advance(b, args))
+func (p *context) index(b llssa.Builder, args []ssa.Value, native ...bool) (ret llssa.Expr) {
+	return b.Load(p.advance(b, args, native...))
 }
 
 // func advance(ptr *T, offset int) *T
-func (p *context) advance(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
+func (p *context) advance(b llssa.Builder, args []ssa.Value, native ...bool) (ret llssa.Expr) {
 	if len(args) == 2 {
 		ptr := p.compileValue(b, args[0])
+		if len(native) != 0 && native[0] {
+			// c.Advance and c.Index walk objects laid out by the C ABI. On J32,
+			// their pointer elements occupy four bytes even though Go pointer
+			// slots occupy eight. Preserve that distinction on the expression so
+			// Builder.Advance can select the physical element layout.
+			ptr.Type = p.type_(args[0].Type(), llssa.InC)
+		}
 		offset := p.compileValue(b, args[1])
 		return b.Advance(ptr, offset)
 	}
 	panic("advance(p ptr, offset int): invalid arguments")
+}
+
+func isCLayoutPointerIntrinsic(fn *ssa.Function) bool {
+	if fn == nil {
+		return false
+	}
+	if origin := fn.Origin(); origin != nil {
+		fn = origin
+	}
+	if fn.Pkg == nil || fn.Pkg.Pkg == nil {
+		return false
+	}
+	switch fn.Pkg.Pkg.Path() {
+	case "github.com/goplus/lib/c", "github.com/xgo-dev/llgo/runtime/internal/clite":
+		return true
+	default:
+		return false
+	}
 }
 
 // func alloca(size uintptr) unsafe.Pointer
@@ -372,7 +397,11 @@ func (p *context) funcAddr(b llssa.Builder, args []ssa.Value) llssa.Expr {
 
 // func funcPCABI0(fn any) uintptr
 func (p *context) funcPCABI0(b llssa.Builder, args []ssa.Value) llssa.Expr {
-	return p.funcPCABI0Value(b, args[0])
+	pc := p.funcPCABI0Value(b, args[0])
+	if target := p.prog.Target(); target != nil && target.GOARCH == "wasm" {
+		pc = b.BinOp(token.SHL, pc, p.prog.IntVal(2, pc.Type))
+	}
+	return pc
 }
 
 func (p *context) funcPCABI0Value(b llssa.Builder, v ssa.Value) llssa.Expr {
@@ -2615,9 +2644,9 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		case llgoCgoCgocall:
 			ret = p.cgoCgocall(b, args)
 		case llgoAdvance:
-			ret = p.advance(b, args)
+			ret = p.advance(b, args, isCLayoutPointerIntrinsic(cv))
 		case llgoIndex:
-			ret = p.index(b, args)
+			ret = p.index(b, args, isCLayoutPointerIntrinsic(cv))
 		case llgoAlloca:
 			ret = p.alloca(b, args)
 		case llgoAllocaCStr:

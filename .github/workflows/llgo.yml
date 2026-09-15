@@ -603,7 +603,7 @@ jobs:
           echo "Testing cross-compilation wasm with $(go env GOVERSION)"
 
           # Compile for wasm architecture
-          GOOS=wasip1 GOARCH=wasm llgo build -o hello.wasm -tags=nogc -v ./helloc
+          GOOS=wasip1 GOARCH=wasm llgo build -o hello.wasm -v ./helloc
 
           # Check file type
           file hello.wasm
@@ -678,6 +678,13 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Set up Chrome for browser acceptance
+        if: matrix.suite == 'runtime'
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          install-dependencies: true
+
       - name: Set up Binaryen
         uses: ./.github/actions/setup-binaryen
 
@@ -704,7 +711,7 @@ jobs:
         shell: bash
         env:
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
-          LLGO_BUILD_CACHE: "off"
+          LLGO_BUILD_CACHE: "1"
         run: dev/test_wasm_target_profiles.sh
 
       - name: Build standard runtime for wasm
@@ -712,12 +719,22 @@ jobs:
         shell: bash
         env:
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
-          LLGO_BUILD_CACHE: "off"
+          LLGO_BUILD_CACHE: "1"
         run: dev/test_wasm_runtime_go_versions.sh 1.24 1.27
 
       - name: Test single-worker wasm schedulers
         shell: bash
         env:
+          CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
-          LLGO_BUILD_CACHE: "off"
+          LLGO_BUILD_CACHE: "1"
         run: dev/test_wasm_single_worker.sh "${{ matrix.suite }}"
+
+      - name: Compare JavaScript call semantics with Go
+        if: matrix.suite == 'test-command'
+        shell: bash
+        run: |
+          GOOS=js GOARCH=wasm go test \
+            -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" \
+            -run '^TestJS(Call|Host)' -count=1 -timeout=30s \
+            ./internal/build/testdata/wasm-test

@@ -35,6 +35,7 @@ type runtimeContextPlatform struct {
 var wasmSched struct {
 	m       m
 	p       p
+	systemG g
 	runq    runqueue.Queue[*g]
 	started bool
 }
@@ -63,12 +64,12 @@ func initWasmScheduler(gp *g) {
 		fatal("runtime: WebAssembly scheduler initialized twice")
 		return
 	}
-	wasmSched.started = true
 	if wasmGCRootEnabled {
 		registerWasmGCRoot(&wasmSystemGCRoot, true)
 	}
 	mp := &wasmSched.m
 	pp := &wasmSched.p
+	systemG := &wasmSched.systemG
 	mp.curg = gp
 	mp.p = pp
 	mp.id = nextMid(mp)
@@ -76,6 +77,9 @@ func initWasmScheduler(gp *g) {
 	setpstatus(pp, _Prunning)
 	pp.m = mp
 	gp.m = mp
+	systemG.atomicstatus = _Grunning
+	systemG.m = mp
+	wasmSched.started = true
 }
 
 //go:linkname wasmMainTask __llgo_wasm_main
@@ -138,6 +142,10 @@ func runWasmContext(gp *g) {
 	gp.context.platform.context.Resume(
 		wasmGCRootPointer(&gp.context.platform.gcRoot),
 	)
+	// Resume returns on the scheduler's physical system stack. Keep callbacks
+	// and timer polling detached from the G that just suspended or exited.
+	setg(&wasmSched.systemG)
+	wasmSched.m.curg = &wasmSched.systemG
 	if wasmGCRootEnabled {
 		adoptWasmGCRoot(&wasmSystemGCRoot)
 	}
@@ -147,7 +155,6 @@ func releaseWasmOwnership(gp *g) {
 	if gp != nil {
 		gp.m = nil
 	}
-	wasmSched.m.curg = nil
 }
 
 func newprocBackend(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, callergp *g) {

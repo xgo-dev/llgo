@@ -219,7 +219,8 @@ func TestIRCompilerUsesMatchingLLVMForEmscriptenMemory64(t *testing.T) {
 		t.Fatalf("default IR compiler = %q %q, want emcc command", config.CC, config.CCArgs)
 	}
 
-	ctx.crossCompile.WasmABI = crosscompile.WasmABIEmscriptenMemory64
+	ctx.crossCompile.WasmProfile = crosscompile.WasmProfileJ64
+	ctx.crossCompile.WasmProvider = crosscompile.WasmProviderEmscripten
 	config = ctx.irClangConfig()
 	if config.CC != "clang" || len(config.CCArgs) != 0 {
 		t.Fatalf("Memory64 IR compiler = %q %q, want matching LLVM clang", config.CC, config.CCArgs)

@@ -71,6 +71,7 @@ func (p Package) NewConst(name string, val constant.Value) NamedConst {
 type aGlobal struct {
 	Expr
 	isZeroSizedAlias bool
+	prog             Program
 }
 
 // A Global is a named Value holding the address of a package-level
@@ -196,7 +197,8 @@ func (p Package) doNewVar(name string, t Type) Global {
 }
 
 func (p Package) doNewVarEx(name string, t Type, threadLocal bool) Global {
-	typ := p.Prog.Elem(t).ll
+	elem := p.Prog.Elem(t)
+	typ := p.Prog.storageType(elem)
 	if !threadLocal && p.Prog.td.TypeAllocSize(typ) == 0 {
 		var rt *types.Package
 		if p.Prog.rt != nil || p.Prog.rtget != nil {
@@ -212,7 +214,7 @@ func (p Package) doNewVarEx(name string, t Type, threadLocal bool) Global {
 				// The returned Global intentionally points at the shared
 				// sentinel; the alias above preserves this package variable's
 				// symbol for external references.
-				ret := &aGlobal{Expr: zero, isZeroSizedAlias: true}
+				ret := &aGlobal{Expr: zero, isZeroSizedAlias: true, prog: p.Prog}
 				p.vars[name] = ret
 				return ret
 			}
@@ -220,9 +222,9 @@ func (p Package) doNewVarEx(name string, t Type, threadLocal bool) Global {
 	}
 	gbl := llvm.AddGlobal(p.mod, typ, name)
 	gbl.SetThreadLocal(threadLocal)
-	alignment := p.Prog.td.ABITypeAlignment(typ)
+	alignment := int(p.Prog.AlignOf(elem))
 	gbl.SetAlignment(alignment)
-	ret := &aGlobal{Expr: Expr{gbl, t}}
+	ret := &aGlobal{Expr: Expr{gbl, t}, prog: p.Prog}
 	p.vars[name] = ret
 	return ret
 }
@@ -239,7 +241,8 @@ func (g Global) Init(v Expr) {
 	if g.isZeroSizedAlias {
 		return
 	}
-	g.impl.SetInitializer(v.impl)
+	elem := g.prog.Elem(g.Type)
+	g.impl.SetInitializer(g.prog.toStorageConstant(elem, v.impl))
 }
 
 func (g Global) InitNil() {
@@ -375,7 +378,11 @@ func (p Package) newFunc(
 		envType = p.Prog.Type(env.Type(), InGo)
 		rawEnv := types.NewParam(env.Pos(), env.Pkg(), env.Name(), envType.raw.Type)
 		entrySig := FuncAddCtx(rawEnv, t.raw.Type.(*types.Signature))
-		t = &aType{p.Prog.toLLVMFunc(entrySig), t.raw, vkFuncDecl}
+		entry := Type(&aType{p.Prog.toLLVMFuncBackground(entrySig, bg), t.raw, vkFuncDecl})
+		if isNativeFuncBackground(bg) {
+			entry = p.Prog.withNativeStorage(entry)
+		}
+		t = entry
 	}
 	dbgInstrln("NewFunc", name, t.raw.Type, "needsEnv:", envType != nil)
 	llvmName := name
@@ -447,8 +454,12 @@ func newParams(fn Type, prog Program) (params []Type, hasVArg bool) {
 			n--
 		}
 		params = make([]Type, n)
+		bg := InGo
+		if prog.isNativeStorage(fn) {
+			bg = InC
+		}
 		for i := 0; i < n; i++ {
-			params[i] = prog.rawType(in.At(i).Type())
+			params[i] = prog.Type(in.At(i).Type(), bg)
 		}
 	}
 	return

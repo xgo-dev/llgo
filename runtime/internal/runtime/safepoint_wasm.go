@@ -34,6 +34,12 @@ func cooperativeSafepointSlow() {
 	if !wasmSched.started {
 		return
 	}
+	// Timer and host callback hooks run on the physical scheduler stack. They
+	// may make ordinary Gs runnable, but cannot suspend this synthetic system G
+	// through a goroutine context.
+	if getg() == &wasmSched.systemG {
+		return
+	}
 	pollWasmEvents()
 	if wasmSched.runq.Len() != 0 {
 		goschedBackend()

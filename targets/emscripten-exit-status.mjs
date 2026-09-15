@@ -1,3 +1,5 @@
+const nodeProcess = globalThis.process;
+
 export async function runEmscriptenModule(factory, options) {
 	let exitStatus = 0;
 
@@ -7,7 +9,7 @@ export async function runEmscriptenModule(factory, options) {
 		if (status !== 0) {
 			exitStatus = status;
 		}
-		process.exitCode = exitStatus;
+		nodeProcess.exitCode = exitStatus;
 	};
 	const consumeExitStatus = error => {
 		if (error?.name !== "ExitStatus" || !Number.isInteger(error.status)) {
@@ -17,8 +19,8 @@ export async function runEmscriptenModule(factory, options) {
 		return true;
 	};
 	const uninstall = () => {
-		process.off("uncaughtException", handleUncaughtException);
-		process.off("unhandledRejection", handleUnhandledRejection);
+		nodeProcess.off("uncaughtException", handleUncaughtException);
+		nodeProcess.off("unhandledRejection", handleUnhandledRejection);
 	};
 	const handleUncaughtException = error => {
 		if (!consumeExitStatus(error)) {
@@ -37,8 +39,8 @@ export async function runEmscriptenModule(factory, options) {
 	// same ExitStatus can arrive after that factory has already resolved, either
 	// as an uncaught exception or an unhandled rejection. Keep these handlers
 	// installed through process shutdown so all three paths share one contract.
-	process.on("uncaughtException", handleUncaughtException);
-	process.on("unhandledRejection", handleUnhandledRejection);
+	nodeProcess.on("uncaughtException", handleUncaughtException);
+	nodeProcess.on("unhandledRejection", handleUnhandledRejection);
 
 	try {
 		await factory({ ...options, onExit: recordExit });
@@ -48,5 +50,5 @@ export async function runEmscriptenModule(factory, options) {
 			throw error;
 		}
 	}
-	process.exitCode = exitStatus;
+	nodeProcess.exitCode = exitStatus;
 }

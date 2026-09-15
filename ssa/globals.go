@@ -28,7 +28,7 @@ func (pkg Package) AddGlobalString(name string, value string) {
 	styp := prog.String()
 	data := pkg.createGlobalStr(value)
 	length := prog.IntVal(uint64(len(value)), prog.Uintptr())
-	cv := llvm.ConstNamedStruct(styp.ll, []llvm.Value{data, length.impl})
+	cv := prog.constStructValue(styp, []llvm.Value{data, length.impl})
 	pkg.NewVarEx(name, prog.Pointer(styp)).Init(Expr{cv, styp})
 }
 
@@ -41,7 +41,7 @@ func (pkg Package) ConstString(value string) Expr {
 	styp := prog.String()
 	data := pkg.createGlobalStr(value)
 	length := prog.IntVal(uint64(len(value)), prog.Uintptr())
-	cv := llvm.ConstNamedStruct(styp.ll, []llvm.Value{data, length.impl})
+	cv := prog.constStructValue(styp, []llvm.Value{data, length.impl})
 	return Expr{cv, styp}
 }
 
@@ -55,7 +55,7 @@ func (pkg Package) ConstBytes(value []byte) Expr {
 	}
 	data := pkg.createGlobalBytes(value)
 	n := prog.IntVal(uint64(len(value)), prog.Int())
-	cv := llvm.ConstNamedStruct(styp.ll, []llvm.Value{data, n.impl, n.impl})
+	cv := prog.constStructValue(styp, []llvm.Value{data, n.impl, n.impl})
 	return Expr{cv, styp}
 }
 
@@ -64,9 +64,9 @@ func (prog Program) ConstArray(t Type, values []Expr) Expr {
 	elem := prog.Index(t)
 	fields := make([]llvm.Value, len(values))
 	for i, value := range values {
-		fields[i] = value.impl
+		fields[i] = prog.toStorageConstant(elem, value.impl)
 	}
-	return Expr{llvm.ConstArray(elem.ll, fields), t}
+	return Expr{llvm.ConstArray(prog.storageType(elem), fields), t}
 }
 
 // ConstByteArray creates a compact LLVM constant for a Go byte array. Unlike
@@ -86,7 +86,7 @@ func (pkg Package) ConstSlice(name string, t Type, values []Expr) Expr {
 	data.Init(prog.ConstArray(array, values))
 
 	n := prog.IntVal(uint64(len(values)), prog.Int())
-	cv := llvm.ConstNamedStruct(t.ll, []llvm.Value{data.impl, n.impl, n.impl})
+	cv := prog.constStructValue(t, []llvm.Value{data.impl, n.impl, n.impl})
 	return Expr{cv, t}
 }
 
@@ -127,6 +127,7 @@ func (prog Program) wrapStructConstant(t Type, index int, value llvm.Value) llvm
 }
 
 func (prog Program) wrapStructConstantAs(t Type, structType llvm.Type, index int, value llvm.Value) llvm.Value {
+	value = prog.toStorageConstant(prog.Field(t, index), value)
 	layout, ok := prog.structLayout(t)
 	if !ok || index >= len(layout.wrapped) || !layout.wrapped[index] {
 		return value

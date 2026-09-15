@@ -5,6 +5,10 @@ package main
 import "syscall/js"
 
 func main() {
+	if probe := js.Global().Get("llgoHostProbe"); !probe.IsUndefined() {
+		testHostCallBoundary(probe)
+		return
+	}
 	done := make(chan struct{})
 	callback := js.FuncOf(func(js.Value, []js.Value) any {
 		close(done)
