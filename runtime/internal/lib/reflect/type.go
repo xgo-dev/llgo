@@ -95,6 +95,8 @@ func (t *rtype) uncommon() *abi.UncommonType {
 	return t.t.Uncommon()
 }
 
+var unsafePointerType = rtypeOf(unsafe.Pointer(nil))
+
 // ChanDir represents a channel type's direction.
 type ChanDir int
 

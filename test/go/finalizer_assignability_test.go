@@ -44,6 +44,18 @@ func (p *finalizerInterfaceValue) finalizerValue() int {
 	return p.value
 }
 
+var finalizerNamedAnyDone chan<- int
+
+func namedFinalizerAny(v any) {
+	finalizerNamedAnyDone <- v.(*finalizerAssignableValue).value
+}
+
+var finalizerNamedIfaceDone chan<- int
+
+func namedFinalizerImplementedInterface(v interface{ finalizerValue() int }) {
+	finalizerNamedIfaceDone <- v.finalizerValue()
+}
+
 func TestRuntimeSetFinalizerAssignableArgumentTypes(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -101,6 +113,47 @@ func TestRuntimeSetFinalizerAssignableArgumentTypes(t *testing.T) {
 			registerFinalizerForTest(func() {
 				for range registrations {
 					tt.register(done, want)
+				}
+			})
+			waitForFinalizerValue(t, done, want)
+		})
+	}
+}
+
+func TestRuntimeSetFinalizerNamedInterfaceFunctions(t *testing.T) {
+	tests := []struct {
+		name     string
+		bind     *chan<- int
+		register func(int)
+	}{
+		{
+			name: "named any",
+			bind: &finalizerNamedAnyDone,
+			register: func(value int) {
+				p := &finalizerAssignableValue{value: value, keep: new(int)}
+				runtime.SetFinalizer(p, namedFinalizerAny)
+			},
+		},
+		{
+			name: "named implemented interface",
+			bind: &finalizerNamedIfaceDone,
+			register: func(value int) {
+				p := &finalizerInterfaceValue{value: value, keep: new(int)}
+				runtime.SetFinalizer(p, namedFinalizerImplementedInterface)
+			},
+		},
+	}
+
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const registrations = 8
+			const wantBase = 86420
+			want := wantBase + i
+			done := make(chan int, registrations)
+			*tt.bind = done
+			registerFinalizerForTest(func() {
+				for range registrations {
+					tt.register(want)
 				}
 			})
 			waitForFinalizerValue(t, done, want)

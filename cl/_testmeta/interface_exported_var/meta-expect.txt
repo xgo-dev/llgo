@@ -38,11 +38,33 @@ _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
 [OrdinaryEdges]
 *_llgo_encoding/binary.littleEndian:
     _llgo_encoding/binary.littleEndian
+    encoding/binary.(*littleEndian).AppendUint16$methodvalue
+    encoding/binary.(*littleEndian).AppendUint32$methodvalue
+    encoding/binary.(*littleEndian).AppendUint64$methodvalue
+    encoding/binary.(*littleEndian).GoString$methodvalue
+    encoding/binary.(*littleEndian).PutUint16$methodvalue
+    encoding/binary.(*littleEndian).PutUint32$methodvalue
+    encoding/binary.(*littleEndian).PutUint64$methodvalue
+    encoding/binary.(*littleEndian).String$methodvalue
+    encoding/binary.(*littleEndian).Uint16$methodvalue
+    encoding/binary.(*littleEndian).Uint32$methodvalue
+    encoding/binary.(*littleEndian).Uint64$methodvalue
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequalptr
 []_llgo_uint8:
     _llgo_uint8
 _llgo_encoding/binary.littleEndian:
     *_llgo_encoding/binary.littleEndian
+    encoding/binary.(*littleEndian).AppendUint16$methodvalue
+    encoding/binary.(*littleEndian).AppendUint32$methodvalue
+    encoding/binary.(*littleEndian).AppendUint64$methodvalue
+    encoding/binary.(*littleEndian).GoString$methodvalue
+    encoding/binary.(*littleEndian).PutUint16$methodvalue
+    encoding/binary.(*littleEndian).PutUint32$methodvalue
+    encoding/binary.(*littleEndian).PutUint64$methodvalue
+    encoding/binary.(*littleEndian).String$methodvalue
+    encoding/binary.(*littleEndian).Uint16$methodvalue
+    encoding/binary.(*littleEndian).Uint32$methodvalue
+    encoding/binary.(*littleEndian).Uint64$methodvalue
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequal0
 _llgo_func$HQem8FNvPqrEVQ_c0XssBDFXIDOnET_Ex7o3PlV9bSs:
     _llgo_func$HQem8FNvPqrEVQ_c0XssBDFXIDOnET_Ex7o3PlV9bSs$in
@@ -129,6 +151,39 @@ _llgo_uint64:
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequal64
 _llgo_uint8:
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequal8
+encoding/binary.(*littleEndian).AppendUint16$methodvalue:
+    encoding/binary.(*littleEndian).AppendUint16
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+encoding/binary.(*littleEndian).AppendUint32$methodvalue:
+    encoding/binary.(*littleEndian).AppendUint32
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+encoding/binary.(*littleEndian).AppendUint64$methodvalue:
+    encoding/binary.(*littleEndian).AppendUint64
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+encoding/binary.(*littleEndian).GoString$methodvalue:
+    encoding/binary.(*littleEndian).GoString
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+encoding/binary.(*littleEndian).PutUint16$methodvalue:
+    encoding/binary.(*littleEndian).PutUint16
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+encoding/binary.(*littleEndian).PutUint32$methodvalue:
+    encoding/binary.(*littleEndian).PutUint32
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+encoding/binary.(*littleEndian).PutUint64$methodvalue:
+    encoding/binary.(*littleEndian).PutUint64
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+encoding/binary.(*littleEndian).String$methodvalue:
+    encoding/binary.(*littleEndian).String
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+encoding/binary.(*littleEndian).Uint16$methodvalue:
+    encoding/binary.(*littleEndian).Uint16
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+encoding/binary.(*littleEndian).Uint32$methodvalue:
+    encoding/binary.(*littleEndian).Uint32
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+encoding/binary.(*littleEndian).Uint64$methodvalue:
+    encoding/binary.(*littleEndian).Uint64
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
 main.init:
     encoding/binary.init
     main.init$guard

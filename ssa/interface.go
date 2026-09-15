@@ -83,7 +83,7 @@ func (b Builder) staticItab(rawIntf *types.Interface, concrete types.Type, tintf
 	global := b.Pkg.NewVarEx(name, prog.Pointer(staticType))
 	funcs := make([]llvm.Value, len(methods))
 	for i, method := range methods {
-		funcs[i], _ = b.abiMethodFuncs(concrete, method)
+		funcs[i], _, _ = b.abiMethodFuncs(concrete, method)
 	}
 	hashBytes := sha256.Sum256([]byte(typeName))
 	hash := binary.LittleEndian.Uint32(hashBytes[:4])

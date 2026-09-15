@@ -1,4 +1,4 @@
-//go:build !nogc || windows
+//go:build (!nogc || windows) && !llgo_noffi
 
 package runtime
 

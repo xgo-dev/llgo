@@ -101,3 +101,24 @@ pkg.caller:
 		t.Fatalf("metadata mismatch\ngot:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+func TestFinalizerConcreteArgs(t *testing.T) {
+	obj := &ssa.MakeInterface{X: &ssa.Parameter{}}
+	fn := &ssa.MakeInterface{X: &ssa.Parameter{}}
+	if _, _, ok := finalizerConcreteArgs(nil); ok {
+		t.Fatal("accepted wrong argument count")
+	}
+	if _, _, ok := finalizerConcreteArgs([]ssa.Value{&ssa.Parameter{}, fn}); ok {
+		t.Fatal("accepted non-interface object")
+	}
+	if _, _, ok := finalizerConcreteArgs([]ssa.Value{obj, &ssa.Parameter{}}); ok {
+		t.Fatal("accepted non-interface finalizer")
+	}
+	nilFn := ssa.NewConst(nil, types.Typ[types.UnsafePointer])
+	if gotObj, gotFn, ok := finalizerConcreteArgs([]ssa.Value{obj, nilFn}); !ok || gotObj != obj.X || gotFn != nilFn {
+		t.Fatal("did not accept nil finalizer")
+	}
+	if gotObj, gotFn, ok := finalizerConcreteArgs([]ssa.Value{obj, fn}); !ok || gotObj != obj.X || gotFn != fn.X {
+		t.Fatal("did not unwrap interface finalizer")
+	}
+}

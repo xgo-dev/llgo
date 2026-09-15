@@ -35,3 +35,17 @@ func TestReflectTypeMethodFuncInterfaceTypeIdentity(t *testing.T) {
 		t.Fatalf("value method func returned %d, want 9", got)
 	}
 }
+
+type reflectMethodValueCallT struct{}
+
+func (*reflectMethodValueCallT) M(x int) int { return 40 + x }
+
+func TestReflectValueMethodByNameInterfaceCall(t *testing.T) {
+	f, ok := reflect.ValueOf(&reflectMethodValueCallT{}).MethodByName("M").Interface().(func(int) int)
+	if !ok {
+		t.Fatalf("MethodByName.Interface() has type %T, want func(int) int", reflect.ValueOf(&reflectMethodValueCallT{}).MethodByName("M").Interface())
+	}
+	if got := f(2); got != 42 {
+		t.Fatalf("method value call returned %d, want 42", got)
+	}
+}

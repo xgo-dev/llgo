@@ -142,6 +142,19 @@ func AddLTOFlag(fs *flag.FlagSet) {
 }
 
 var GoGlobalDCE *bool
+var CheckFFI *bool
+
+func AddCheckFFIFlag(fs *flag.FlagSet) {
+	CheckFFI = nil
+	fs.BoolFunc("check-libffi", "Automatically select runtime and reflect without libffi when possible (default: false; frontend scan, then one backend/LTO)", func(v string) error {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return err
+		}
+		CheckFFI = &enabled
+		return nil
+	})
+}
 
 func AddGlobalDCEFlag(fs *flag.FlagSet) {
 	GoGlobalDCE = nil
@@ -218,6 +231,7 @@ func AddBuildFlags(fs *flag.FlagSet) {
 	}
 	AddOptLevelFlags(fs)
 	AddLTOFlag(fs)
+	AddCheckFFIFlag(fs)
 	AddGlobalDCEFlag(fs)
 	addPCLNFlag(fs)
 	fs.StringVar(&Tags, "tags", "", "Build tags")
@@ -375,6 +389,9 @@ func UpdateConfig(conf *build.Config) error {
 	conf.PthreadStackSize = int64(PthreadStackSize)
 	if LTO.Specified {
 		conf.LTO = LTO.Mode
+	}
+	if CheckFFI != nil {
+		conf.CheckFFI = *CheckFFI
 	}
 	if PCLN.Specified {
 		conf.PCLNMode = PCLN.Mode
