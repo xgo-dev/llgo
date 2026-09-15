@@ -14,6 +14,7 @@ import (
 	"github.com/xgo-dev/llgo/cmd/internal/lldb"
 	"github.com/xgo-dev/llgo/cmd/internal/monitor"
 	"github.com/xgo-dev/llgo/cmd/internal/run"
+	"github.com/xgo-dev/llgo/cmd/internal/targets"
 	"github.com/xgo-dev/llgo/cmd/internal/test"
 	env1 "github.com/xgo-dev/llgo/internal/env"
 	"runtime"
@@ -60,6 +61,10 @@ type Cmd_run struct {
 	xcmd.Command
 	*App
 }
+type Cmd_targets struct {
+	xcmd.Command
+	*App
+}
 type Cmd_test struct {
 	xcmd.Command
 	*App
@@ -92,11 +97,12 @@ func (this *App) Main() {
 	_xgo_obj6 := &Cmd_lldb{App: this}
 	_xgo_obj7 := &Cmd_monitor{App: this}
 	_xgo_obj8 := &Cmd_run{App: this}
-	_xgo_obj9 := &Cmd_test{App: this}
-	_xgo_obj10 := &Cmd_tool{App: this}
-	_xgo_obj11 := &Cmd_tool_compile{App: this}
-	_xgo_obj12 := &Cmd_version{App: this}
-	xcmd.Gopt_App_Main(this, _xgo_obj0, _xgo_obj1, _xgo_obj2, _xgo_obj3, _xgo_obj4, _xgo_obj5, _xgo_obj6, _xgo_obj7, _xgo_obj8, _xgo_obj9, _xgo_obj10, _xgo_obj11, _xgo_obj12)
+	_xgo_obj9 := &Cmd_targets{App: this}
+	_xgo_obj10 := &Cmd_test{App: this}
+	_xgo_obj11 := &Cmd_tool{App: this}
+	_xgo_obj12 := &Cmd_tool_compile{App: this}
+	_xgo_obj13 := &Cmd_version{App: this}
+	xcmd.Gopt_App_Main(this, _xgo_obj0, _xgo_obj1, _xgo_obj2, _xgo_obj3, _xgo_obj4, _xgo_obj5, _xgo_obj6, _xgo_obj7, _xgo_obj8, _xgo_obj9, _xgo_obj10, _xgo_obj11, _xgo_obj12, _xgo_obj13)
 }
 
 //line cmd/llgo/build_cmd.gox:20
@@ -266,6 +272,25 @@ func (this *Cmd_run) Main(_xgo_arg0 string) {
 }
 func (this *Cmd_run) Classfname() string {
 	return "run"
+}
+
+//line cmd/llgo/targets_cmd.gox:16
+func (this *Cmd_targets) Main(_xgo_arg0 string) {
+	this.Command.Main(_xgo_arg0)
+//line cmd/llgo/targets_cmd.gox:16:1
+	this.Use("targets [-json] [name ...]")
+//line cmd/llgo/targets_cmd.gox:18:1
+	this.Short("List and inspect LLGo target configurations")
+//line cmd/llgo/targets_cmd.gox:20:1
+	this.FlagOff()
+//line cmd/llgo/targets_cmd.gox:22:1
+	this.Run__1(func(args []string) {
+//line cmd/llgo/targets_cmd.gox:23:1
+		targets.Cmd.Run(targets.Cmd, args)
+	})
+}
+func (this *Cmd_targets) Classfname() string {
+	return "targets"
 }
 
 //line cmd/llgo/test_cmd.gox:20

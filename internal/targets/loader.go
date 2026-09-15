@@ -12,6 +12,7 @@ import (
 type Loader struct {
 	targetsDir string
 	cache      map[string]*RawConfig
+	loading    map[string]bool
 }
 
 // NewLoader creates a new target configuration loader
@@ -19,11 +20,15 @@ func NewLoader(targetsDir string) *Loader {
 	return &Loader{
 		targetsDir: targetsDir,
 		cache:      make(map[string]*RawConfig),
+		loading:    make(map[string]bool),
 	}
 }
 
 // LoadRaw loads a raw configuration without resolving inheritance
 func (l *Loader) LoadRaw(name string) (*RawConfig, error) {
+	if err := validateTargetName(name); err != nil {
+		return nil, err
+	}
 	// Check cache first
 	if config, exists := l.cache[name]; exists {
 		return config, nil
@@ -55,6 +60,12 @@ func (l *Loader) LoadRaw(name string) (*RawConfig, error) {
 
 // Load loads a target configuration with inheritance resolved
 func (l *Loader) Load(name string) (*Config, error) {
+	if l.loading[name] {
+		return nil, fmt.Errorf("target inheritance cycle involving %s", name)
+	}
+	l.loading[name] = true
+	defer delete(l.loading, name)
+
 	raw, err := l.LoadRaw(name)
 	if err != nil {
 		return nil, err
@@ -78,6 +89,9 @@ func (l *Loader) LoadAll() (map[string]*Config, error) {
 		}
 
 		name := strings.TrimSuffix(entry.Name(), ".json")
+		if validateTargetName(name) != nil {
+			continue
+		}
 		config, err := l.Load(name)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load target %s: %w", name, err)
@@ -238,8 +252,24 @@ func (l *Loader) ListTargets() ([]string, error) {
 		}
 
 		name := strings.TrimSuffix(entry.Name(), ".json")
+		if validateTargetName(name) != nil {
+			continue
+		}
 		targets = append(targets, name)
 	}
 
 	return targets, nil
+}
+
+func validateTargetName(name string) error {
+	if name == "" {
+		return fmt.Errorf("target name is empty")
+	}
+	for _, char := range name {
+		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || char == '-' || char == '_' {
+			continue
+		}
+		return fmt.Errorf("invalid target name %q", name)
+	}
+	return nil
 }
