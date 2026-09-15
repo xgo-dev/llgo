@@ -19,7 +19,16 @@ func (attrs FunctionAttributes) apply(ctx llvm.Context, fn llvm.Value) {
 	}
 }
 
-// SetAttributes adds source properties to this module's function object.
+// Attributes returns the properties carried by this function.
+func (f Function) Attributes() FunctionAttributes {
+	return f.attributes
+}
+
+// SetAttributes adds properties to a source declaration or a module function.
+// Properties set before LLVM materialization are applied when it is created.
 func (f Function) SetAttributes(attrs FunctionAttributes) {
-	attrs.apply(f.Prog.ctx, f.impl)
+	f.attributes |= attrs
+	if !f.impl.IsNil() {
+		attrs.apply(f.Prog.ctx, f.impl)
+	}
 }

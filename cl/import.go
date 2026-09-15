@@ -916,7 +916,10 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 				}
 				fullName, inPkgName := astFuncName(pkgPath, decl)
 				syms[inPkgName] = fullName
-				prog.DeclareSourceFunction(fullName, llssa.SourceFunction{Syntax: decl, Attributes: parseFunctionAttributes(decl.Doc)})
+				if attrs := parseFunctionAttributes(decl.Doc); attrs != 0 {
+					fn := prog.DeclareFunction(fullName)
+					fn.SetAttributes(attrs)
+				}
 				hasLinkname, err := collectDeclarationDirectivesWithOptions(prog, fset, decl.Doc, fullName, inPkgName, decl.Pos(), options)
 				if err != nil {
 					return err

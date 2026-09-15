@@ -679,6 +679,7 @@ func (p Program) NewPackageEx(name, pkgPath string, metaCollect bool) Package {
 
 		abiTypeFakeUseCache: make(map[llvm.Value][]llvm.Value),
 	}
+	ret.importFunctionDeclarations()
 	if metaCollect {
 		ret.metaBuilder = meta.NewBuilder()
 		ret.abiTypeWithUncommon = make(map[llvm.Value]struct{})
@@ -1021,7 +1022,7 @@ func (p Package) rtFunc(fnName string) Expr {
 		name = p.fnlink(name)
 	}
 	sig := fn.Type().(*types.Signature)
-	return p.NewFunc(name, sig, InGo, p.Prog.SourceFunctionAttributes(FullName(fn.Pkg(), fnName))).Expr
+	return p.NewFunc(name, sig, InGo).Expr
 }
 
 // rtEnvFunc returns a runtime entry whose source-level signature excludes its
@@ -1036,7 +1037,7 @@ func (p Package) rtEnvFunc(fnName string) Expr {
 	}
 	sig := fn.Type().(*types.Signature)
 	env := types.NewVar(token.NoPos, nil, "$env", types.Typ[types.UnsafePointer])
-	return p.NewEnvFunc(name, sig, InGo, env, false, p.Prog.SourceFunctionAttributes(FullName(fn.Pkg(), fnName))).Expr
+	return p.NewEnvFunc(name, sig, InGo, env, false).Expr
 }
 
 // RuntimeFunc returns a declaration for a function in LLGo's internal runtime.
@@ -1045,7 +1046,7 @@ func (p Package) RuntimeFunc(fnName string) Expr {
 }
 
 func (p Package) cFunc(fullName string, sig *types.Signature) Expr {
-	return p.NewFunc(fullName, sig, InC, p.Prog.SourceFunctionAttributes(fullName)).Expr
+	return p.NewFunc(fullName, sig, InC).Expr
 }
 
 // -----------------------------------------------------------------------------
