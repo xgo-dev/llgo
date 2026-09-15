@@ -8,6 +8,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/directive"
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"golang.org/x/tools/go/ssa"
 )
 
 // Recognition, validation and collection use the same supported directive set.
@@ -59,4 +60,27 @@ func validateFunctionAttribute(item directive.Directive, onFunction bool) error 
 		return fmt.Errorf("%s takes no arguments; write each function attribute on its own line", name)
 	}
 	return nil
+}
+
+func parseFunctionAttributes(doc *ast.CommentGroup) llssa.FunctionAttributes {
+	var attrs llssa.FunctionAttributes
+	for _, item := range directive.ParseGroup(doc) {
+		attrs |= functionAttributeDirectives[item.Name]
+	}
+	return attrs
+}
+
+// Resolve the source declaration while the frontend function still carries its
+// generic origin. The backend receives properties, not an instance-name mapping.
+func (p *context) functionAttributes(fn *ssa.Function) llssa.FunctionAttributes {
+	if origin := fn.Origin(); origin != nil {
+		fn = origin
+	}
+	owner := p.goTyps
+	if fn.Pkg != nil {
+		owner = fn.Pkg.Pkg
+	} else if obj := fn.Object(); obj != nil {
+		owner = obj.Pkg()
+	}
+	return p.prog.SourceFunctionAttributes(funcName(owner, fn, true))
 }

@@ -311,13 +311,8 @@ func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.Fil
 	linkCollected := false
 	hasClosureEnv := false
 	wasmImportSeen := false
-	var functionAttrs llssa.FunctionAttributes
 	for n := len(directives) - 1; n >= 0; n-- {
 		item := directives[n]
-		if attrs := functionAttributeDirectives[item.Name]; attrs != 0 {
-			functionAttrs |= attrs
-			continue
-		}
 		switch item.Name {
 		case "go:linkname", "llgo:link":
 			if linkCollected {
@@ -352,9 +347,6 @@ func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.Fil
 				prog.SetWasmImport(fullName, fields[0], fields[1])
 			}
 		}
-	}
-	if functionAttrs != 0 {
-		prog.SetFunctionAttributes(fullName, functionAttrs)
 	}
 	if hasClosureEnv {
 		prog.SetClosureEnvDirective(fset, fullName, funcPos)
@@ -728,7 +720,6 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 		pkg = origin.Pkg.Pkg
 		p.ensureLoaded(pkg)
 		orgName = funcName(pkg, origin, true)
-		p.prog.SetFunctionAttributeOrigin(funcName(pkg, fn, false), orgName)
 	} else {
 		fname := fn.Name()
 		if checkCgo(fname) && !cgoIgnored(fname) {
@@ -925,6 +916,7 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 				}
 				fullName, inPkgName := astFuncName(pkgPath, decl)
 				syms[inPkgName] = fullName
+				prog.DeclareSourceFunction(fullName, llssa.SourceFunction{Syntax: decl, Attributes: parseFunctionAttributes(decl.Doc)})
 				hasLinkname, err := collectDeclarationDirectivesWithOptions(prog, fset, decl.Doc, fullName, inPkgName, decl.Pos(), options)
 				if err != nil {
 					return err

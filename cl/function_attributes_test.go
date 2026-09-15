@@ -12,6 +12,7 @@ import (
 
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
+	"golang.org/x/tools/go/ssa"
 )
 
 func TestFunctionAttributes(t *testing.T) {
@@ -53,6 +54,54 @@ func Ordinary() {}
 		if strings.Contains(attrs, "cold") != test.cold || strings.Contains(attrs, "noreturn") != test.noreturn {
 			t.Errorf("%s: %s", test.symbol, attrs)
 		}
+	}
+}
+
+func TestFunctionAttributesWithExportOnlyPreload(t *testing.T) {
+	fs := token.NewFileSet()
+	file, err := parser.ParseFile(fs, "private.go", `package owner
+//llgo:cold
+//llgo:noreturn
+func private[T any](p *T) { for {} }
+func Use(p *int) { private(p) }
+`, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := []*ast.File{file}
+	coordinator := newLLSSAProg(t)
+	defer coordinator.Dispose()
+	// Export data may omit private functions. The source declaration must
+	// survive before a different type-checking pass creates their objects.
+	exported := types.NewPackage("owner", "owner")
+	if err = ParsePkgSyntax(coordinator, fs, exported, files); err != nil {
+		t.Fatal(err)
+	}
+	info := newLocalityTypeInfo()
+	owner, err := (&types.Config{}).Check("owner", fs, files, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	goProg := ssa.NewProgram(fs, ssa.SanityCheckFunctions)
+	goPkg := goProg.CreatePackage(owner, files, info, true)
+	goPkg.Build()
+	backend := coordinator.NewBackendProgram()
+	defer backend.Dispose()
+	compiled, _, err := NewPackageExWithEmbedMetaOptions(backend, nil, nil, nil, goPkg, files, nil, false, Options{PreloadedSyntax: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := compiled.Module().NamedFunction("owner.private[int]")
+	if fn.IsNil() {
+		t.Fatal("missing private generic instance")
+	}
+	for _, name := range []string{"cold", "noreturn"} {
+		if fn.GetEnumAttributeAtIndex(-1, llvm.AttributeKindID(name)).IsNil() {
+			t.Fatalf("private generic instance lost %s: %s", name, fn.String())
+		}
+	}
+	if err = llvm.VerifyModule(compiled.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -116,7 +165,7 @@ func Fatal() { for {} }
 	for _, name := range []string{"owner.Stop", "owner.Fatal", "shared_stop"} {
 		backend := coordinator.NewBackendProgram()
 		pkg := backend.NewPackage("caller", "caller")
-		pkg.NewFunc(name, sig, llssa.InGo)
+		pkg.NewFunc(name, sig, llssa.InGo, backend.SourceFunctionAttributes(name))
 		fn := pkg.Module().FirstFunction()
 		for _, attr := range []string{"cold", "noreturn"} {
 			if fn.GetEnumAttributeAtIndex(-1, llvm.AttributeKindID(attr)).IsNil() {
