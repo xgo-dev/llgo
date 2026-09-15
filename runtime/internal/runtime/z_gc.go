@@ -72,6 +72,7 @@ type entry struct {
 	slot  *cleanupSlot
 	id    uint64 // non-zero for a Cleanup handle
 	state int32
+	next  *entry // pending user cleanup; protected by cleanupQueue.mu
 }
 
 const (
@@ -89,8 +90,8 @@ type cleanupSlot struct {
 }
 
 // cleanupSlots keeps callback entries reachable without storing an object
-// pointer in runtime.Cleanup. Slots are reused only after BDWGC invokes the
-// finalizer, and the generation in each id makes stale Cleanup values harmless.
+// pointer in runtime.Cleanup. Slots are reused only after the cleanup worker
+// completes, and the generation in each id makes stale Cleanup values harmless.
 var cleanupSlots struct {
 	once psync.Once
 	mu   psync.Mutex
@@ -100,11 +101,62 @@ var cleanupSlots struct {
 
 func initCleanupSlots() {
 	cleanupSlots.mu.Init(nil)
+	cleanupQueue.mu.Init(nil)
+	cleanupQueue.ready.Init(nil)
+	go runCleanups()
 }
 
-// freeCleanupSlot is called from BDWGC finalizers. It must not allocate or
-// acquire a lock: BDWGC may invoke another finalizer while Go code is in a
-// collector allocation or map operation.
+// BDWGC may invoke finalizers synchronously from any allocation, including
+// allocations made with application locks held. Never run user callbacks there.
+// This intrusive queue needs no allocation. Nothing holding its native mutex
+// allocates or calls Go/user code that could reenter a BDWGC finalizer.
+var cleanupQueue struct {
+	mu    psync.Mutex
+	ready psync.Cond
+	head  *entry
+}
+
+func queueCleanup(e *entry) {
+	cleanupQueue.mu.Lock()
+	e.next = cleanupQueue.head
+	cleanupQueue.head = e
+	cleanupQueue.ready.Signal()
+	cleanupQueue.mu.Unlock()
+}
+
+func runCleanups() {
+	for {
+		cleanupQueue.mu.Lock()
+		for cleanupQueue.head == nil {
+			cleanupQueue.ready.Wait(&cleanupQueue.mu)
+		}
+		head := cleanupQueue.head
+		cleanupQueue.head = nil
+		cleanupQueue.mu.Unlock()
+		for head != nil {
+			e := head
+			head = e.next
+			e.next = nil
+			// Execute outside the queue lock so allocations made by a callback
+			// can enqueue more cleanups without reentering user code. Hosted
+			// goroutines each own an OS thread: reuse this worker rather than
+			// creating a thread for every cleanup. A long-running callback
+			// delays subsequent callbacks, as with a serial finalizer worker.
+			runCleanup(e)
+		}
+	}
+}
+
+func runCleanup(e *entry) {
+	_, run := atomic.CompareAndExchange(&e.state, cleanupActive, cleanupRunning)
+	if run {
+		e.fn()
+	}
+	atomic.Store(&e.state, cleanupDone)
+	freeCleanupSlot(e)
+}
+
+// freeCleanupSlot publishes completed slots without allocating or locking.
 func freeCleanupSlot(e *entry) {
 	slot := e.slot
 	if _, ok := atomic.CompareAndExchange(&slot.entry, unsafe.Pointer(e), nil); !ok {
@@ -119,7 +171,7 @@ func freeCleanupSlot(e *entry) {
 	}
 }
 
-// popCleanupSlot runs with cleanupSlots.mu held. Finalizers publish freed slots
+// popCleanupSlot runs with cleanupSlots.mu held. Workers publish freed slots
 // concurrently, so the free-list head still requires atomic operations.
 func popCleanupSlot() *cleanupSlot {
 	for {
@@ -170,12 +222,7 @@ func finalizer(ptr unsafe.Pointer, cb unsafe.Pointer) {
 		}
 		return
 	}
-	_, run := atomic.CompareAndExchange(&e.state, cleanupActive, cleanupRunning)
-	if run {
-		e.fn()
-	}
-	atomic.Store(&e.state, cleanupDone)
-	freeCleanupSlot(e)
+	queueCleanup(e)
 }
 
 func registerCleanupPtr(ptr unsafe.Pointer, e *entry) {
@@ -209,8 +256,8 @@ func AddCancelableCleanupPtr(ptr unsafe.Pointer, cleanup func()) uint64 {
 	return e.id
 }
 
-// StopCleanupPtr cancels a pending cleanup. If its finalizer has already
-// claimed the entry, Stop has no effect, matching runtime.Cleanup.Stop.
+// StopCleanupPtr cancels a pending cleanup, including a queued one. If a worker
+// has already claimed the entry, Stop has no effect.
 func StopCleanupPtr(id uint64) {
 	if id == 0 {
 		return
