@@ -3,13 +3,12 @@
 package main
 
 // The fixture covers a matrix of fixed array/slice and signed/unsigned index
-// lowering. Follow each predicate into the panic branch and each index into
-// PanicIndex/PanicIndexU; helper names alone would not prove that the right condition
-// is being checked.
+// lowering. Signed and unsigned indexes share a single unsigned comparison
+// (idx >=u len); signed negatives fail as large unsigned values. Follow each
+// predicate into the panic branch and each index into PanicIndex/PanicIndexU.
 // CHECK-LABEL: define void @main.array(i64 %0){{.*}} {
-// CHECK: %[[ARRAY_NEG:[0-9]+]] = icmp slt i64 %0, 0
-// CHECK: %[[ARRAY_UPPER:[0-9]+]] = icmp uge i64 %0, 2
-// CHECK: %[[ARRAY_OOB:[0-9]+]] = or i1 %[[ARRAY_UPPER]], %[[ARRAY_NEG]]
+// CHECK-NOT: icmp slt
+// CHECK: %[[ARRAY_OOB:[0-9]+]] = icmp uge i64 %0, 2
 // CHECK: br i1 %[[ARRAY_OOB]], label %{{_llgo_[0-9]+}}, label %{{_llgo_[0-9]+}}
 // CHECK: call void @"{{.*}}PanicIndex"(i64 %0, i64 2)
 // CHECK-NEXT: br label %{{_llgo_[0-9]+}}
@@ -21,13 +20,12 @@ package main
 // CHECK: call void @"{{.*}}PanicIndexU"(i64 %0, i64 2)
 // CHECK-NEXT: br label %{{_llgo_[0-9]+}}
 
-// Narrow signed indices must be sign-extended before the shared signed bounds
-// predicate and before addressing the selected element.
+// Narrow signed indices must be sign-extended before the shared unsigned
+// bounds predicate and before addressing the selected element.
 // CHECK-LABEL: define i64 @main.narrowArray(i8 %0){{.*}} {
 // CHECK: [[NARROW:%.*]] = sext i8 %0 to i64
-// CHECK: [[NARROW_NEG:%.*]] = icmp slt i64 [[NARROW]], 0
-// CHECK: [[NARROW_UPPER:%.*]] = icmp uge i64 [[NARROW]], 2
-// CHECK: [[NARROW_OOB:%.*]] = or i1 [[NARROW_UPPER]], [[NARROW_NEG]]
+// CHECK-NOT: icmp slt
+// CHECK: [[NARROW_OOB:%.*]] = icmp uge i64 [[NARROW]], 2
 // CHECK: call void @"{{.*}}PanicIndex"(i64 [[NARROW]], i64 2)
 // CHECK: getelementptr inbounds i64, ptr %{{.*}}, i64 [[NARROW]]
 
@@ -35,9 +33,8 @@ package main
 // remains a runtime scenario; one lowering contract is sufficient here.
 // CHECK-LABEL: define void @main.slice(i64 %0){{.*}} {
 // CHECK: %[[SLICE_LEN:[0-9]+]] = extractvalue %"{{.*}}Slice" %{{[0-9]+}}, 1
-// CHECK: %[[SLICE_NEG:[0-9]+]] = icmp slt i64 %0, 0
-// CHECK: %[[SLICE_UPPER:[0-9]+]] = icmp uge i64 %0, %[[SLICE_LEN]]
-// CHECK: %[[SLICE_OOB:[0-9]+]] = or i1 %[[SLICE_UPPER]], %[[SLICE_NEG]]
+// CHECK-NOT: icmp slt
+// CHECK: %[[SLICE_OOB:[0-9]+]] = icmp uge i64 %0, %[[SLICE_LEN]]
 // CHECK: br i1 %[[SLICE_OOB]], label %{{_llgo_[0-9]+}}, label %{{_llgo_[0-9]+}}
 // CHECK: call void @"{{.*}}PanicIndex"(i64 %0, i64 %[[SLICE_LEN]])
 // CHECK-NEXT: br label %{{_llgo_[0-9]+}}
@@ -50,9 +47,7 @@ func narrowArray(n int8) int {
 // the statically unreachable success edge must still lower the zero-value map
 // lookup against a nil map pointer instead of crashing the compiler.
 // CHECK-LABEL: define i64 @main.zeroMapLookup(i64 %0){{.*}} {
-// CHECK: [[ZERO_NEG:%[0-9]+]] = icmp slt i64 %0, 0
-// CHECK-NEXT: [[ZERO_UPPER:%[0-9]+]] = icmp uge i64 %0, 0
-// CHECK-NEXT: [[ZERO_OOB:%[0-9]+]] = or i1 [[ZERO_UPPER]], [[ZERO_NEG]]
+// CHECK: [[ZERO_OOB:%[0-9]+]] = icmp uge i64 %0, 0
 // CHECK-NEXT: br i1 [[ZERO_OOB]], label %{{_llgo_[0-9]+}}, label %{{_llgo_[0-9]+}}
 // CHECK: call void @"{{.*}}PanicIndex"(i64 %0, i64 0)
 // CHECK: [[MAP_SLOT:%[0-9]+]] = call ptr @"{{.*}}MapAccess1Fast64"(ptr @"map[_llgo_int]_llgo_int", ptr null, i64 0)

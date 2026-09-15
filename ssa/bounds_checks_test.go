@@ -43,6 +43,49 @@ func TestBoundsCheckModesIR(t *testing.T) {
 	}
 }
 
+func TestSignedIndexUsesUnsignedCompare(t *testing.T) {
+	prog := ssatest.NewProgram(t, nil)
+	t.Cleanup(prog.Dispose)
+
+	byteSlice := types.NewSlice(types.Typ[types.Byte])
+	byteArray := types.NewArray(types.Typ[types.Byte], 4)
+	byteArrayPtr := types.NewPointer(byteArray)
+	params := types.NewTuple(
+		types.NewVar(0, nil, "slice", byteSlice),
+		types.NewVar(0, nil, "array", byteArrayPtr),
+		types.NewVar(0, nil, "idx", types.Typ[types.Int]),
+		types.NewVar(0, nil, "uidx", types.Typ[types.Uint]),
+	)
+	sig := types.NewSignatureType(nil, nil, nil, params, nil, false)
+	pkg := prog.NewPackage("bounds", "example.com/bounds")
+	fn := pkg.NewFunc("signedIndex", sig, ssa.InGo)
+	b := fn.MakeBody(1)
+	b.IndexAddr(fn.Param(0), fn.Param(2))
+	b.IndexAddr(fn.Param(1), fn.Param(2))
+	b.IndexAddr(fn.Param(0), fn.Param(3))
+	b.Return()
+	b.EndBuild()
+
+	ir := pkg.String()
+	if strings.Contains(ir, "icmp slt") {
+		t.Errorf("signed index still emits a separate min check:\n%s", ir)
+	}
+	if strings.Contains(ir, "or i1") {
+		t.Errorf("signed index still ors min and max checks:\n%s", ir)
+	}
+	// All three IndexAddr sites use function parameters, so indexNeedsCheck
+	// cannot fold any of them away.
+	if got := strings.Count(ir, "icmp uge"); got != 3 {
+		t.Errorf("signed/unsigned index IR contains %d icmp uge, want 3:\n%s", got, ir)
+	}
+	if !strings.Contains(ir, "PanicIndex\"") {
+		t.Errorf("signed index IR does not call PanicIndex:\n%s", ir)
+	}
+	if !strings.Contains(ir, "PanicIndexU\"") {
+		t.Errorf("unsigned index IR does not call PanicIndexU:\n%s", ir)
+	}
+}
+
 func TestWideIndexBoundsCheck386(t *testing.T) {
 	t.Setenv("GOOS", "windows")
 	t.Setenv("GOARCH", "386")
