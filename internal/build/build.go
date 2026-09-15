@@ -1549,7 +1549,8 @@ func preloadPatchedPackageSyntax(prog llssa.Program, patches cl.Patches, dedup p
 		}
 		fset := alt.Fset
 		files := slices.Clone(alt.Syntax)
-		if original := dedup.Check(pkgPath); original != nil {
+		original := dedup.Check(pkgPath)
+		if original != nil {
 			fset = original.Fset
 			files = append(slices.Clone(original.Syntax), files...)
 			packageOptions.AllowInternalDirectives = isStandardLibraryPackage(original.Package, goroot)
@@ -1557,6 +1558,11 @@ func preloadPatchedPackageSyntax(prog llssa.Program, patches cl.Patches, dedup p
 		if err := cl.ParsePkgSyntaxWithOptions(prog, fset, patch.Types, files, packageOptions); err != nil {
 			return err
 		}
+		var originalTypes *types.Package
+		if original != nil {
+			originalTypes = original.Types
+		}
+		cl.BindPackageFunctionDeclarations(prog, originalTypes, patch.Types, fset, alt.Syntax)
 	}
 	return nil
 }

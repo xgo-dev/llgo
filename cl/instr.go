@@ -675,7 +675,8 @@ var llgoInstrs = map[string]int{
 // funcOf returns a function by name and set ftype = goFunc, cFunc, etc.
 // or returns nil and set ftype = llgoCstr, llgoAlloca, llgoUnreachable, etc.
 func (p *context) funcOf(fn *ssa.Function) (aFn llssa.Function, pyFn llssa.PyObjRef, ftype int) {
-	pkgTypes, name, ftype := p.funcName(fn)
+	source := p.function(fn)
+	pkgTypes, name, ftype := p.funcName(source)
 	switch ftype {
 	case pyFunc:
 		if kind, mod := pkgKindByScope(pkgTypes.Scope()); kind == PkgPyModule {
@@ -706,6 +707,7 @@ func (p *context) funcOf(fn *ssa.Function) (aFn llssa.Function, pyFn llssa.PyObj
 			}
 		}
 	}
+	source.impl = aFn
 	return
 }
 
@@ -2275,8 +2277,8 @@ func (p *context) deferStackOwner(fn *ssa.Function) llssa.Function {
 	if fn == nil {
 		return nil
 	}
-	if owner := p.funcs[fn]; owner != nil {
-		return owner
+	if owner := p.funcs[fn]; owner != nil && owner.impl != nil {
+		return owner.impl
 	}
 	owner, _, kind := p.compileFunction(fn)
 	if kind == ignoredFunc {
