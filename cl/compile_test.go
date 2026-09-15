@@ -956,16 +956,17 @@ var a int
 source_filename = "foo"
 
 @foo.a = global i64 0, align 8
-@"foo.init$guard" = global i1 false, align 1
+@"foo.init$guard" = global i8 0, align 1
 
 ; Function Attrs: null_pointer_is_valid
 define void @foo.init() #0 {
 _llgo_0:
-  %0 = load i1, ptr @"foo.init$guard", align 1
-  br i1 %0, label %_llgo_2, label %_llgo_1
+  %0 = load i8, ptr @"foo.init$guard", align 1
+  %1 = trunc i8 %0 to i1
+  br i1 %1, label %_llgo_2, label %_llgo_1
 
 _llgo_1:                                          ; preds = %_llgo_0
-  store i1 true, ptr @"foo.init$guard", align 1
+  store i8 1, ptr @"foo.init$guard", align 1
   br label %_llgo_2
 
 _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
@@ -985,7 +986,7 @@ func fn(a int, b float64) int {
 `, `; ModuleID = 'foo'
 source_filename = "foo"
 
-@"foo.init$guard" = global i1 false, align 1
+@"foo.init$guard" = global i8 0, align 1
 
 ; Function Attrs: null_pointer_is_valid
 define i64 @foo.fn(i64 %0, double %1) #0 {
@@ -996,11 +997,12 @@ _llgo_0:
 ; Function Attrs: null_pointer_is_valid
 define void @foo.init() #0 {
 _llgo_0:
-  %0 = load i1, ptr @"foo.init$guard", align 1
-  br i1 %0, label %_llgo_2, label %_llgo_1
+  %0 = load i8, ptr @"foo.init$guard", align 1
+  %1 = trunc i8 %0 to i1
+  br i1 %1, label %_llgo_2, label %_llgo_1
 
 _llgo_1:                                          ; preds = %_llgo_0
-  store i1 true, ptr @"foo.init$guard", align 1
+  store i8 1, ptr @"foo.init$guard", align 1
   br label %_llgo_2
 
 _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0
@@ -1025,16 +1027,17 @@ func use(b bool) uint8 {
 `, `; ModuleID = 'foo'
 source_filename = "foo"
 
-@"foo.init$guard" = global i1 false, align 1
+@"foo.init$guard" = global i8 0, align 1
 
 ; Function Attrs: null_pointer_is_valid
 define void @foo.init() #0 {
 _llgo_0:
-  %0 = load i1, ptr @"foo.init$guard", align 1
-  br i1 %0, label %_llgo_2, label %_llgo_1
+  %0 = load i8, ptr @"foo.init$guard", align 1
+  %1 = trunc i8 %0 to i1
+  br i1 %1, label %_llgo_2, label %_llgo_1
 
 _llgo_1:                                          ; preds = %_llgo_0
-  store i1 true, ptr @"foo.init$guard", align 1
+  store i8 1, ptr @"foo.init$guard", align 1
   br label %_llgo_2
 
 _llgo_2:                                          ; preds = %_llgo_1, %_llgo_0

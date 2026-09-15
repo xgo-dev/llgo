@@ -196,7 +196,7 @@ func (p Package) doNewVar(name string, t Type) Global {
 }
 
 func (p Package) doNewVarEx(name string, t Type, threadLocal bool) Global {
-	typ := p.Prog.Elem(t).ll
+	typ := p.Prog.llvmMemType(p.Prog.Elem(t))
 	if !threadLocal && p.Prog.td.TypeAllocSize(typ) == 0 {
 		var rt *types.Package
 		if p.Prog.rt != nil || p.Prog.rtget != nil {
@@ -239,7 +239,16 @@ func (g Global) Init(v Expr) {
 	if g.isZeroSizedAlias {
 		return
 	}
-	g.impl.SetInitializer(v.impl)
+	val := v.impl
+	gty := g.impl.GlobalValueType()
+	if val.Type() != gty && isLLVMInt1(val.Type()) && gty.TypeKind() == llvm.IntegerTypeKind && gty.IntTypeWidth() == 8 {
+		var n uint64
+		if c := val.IsAConstantInt(); !c.IsNil() && val.ZExtValue() != 0 {
+			n = 1
+		}
+		val = llvm.ConstInt(gty, n, false)
+	}
+	g.impl.SetInitializer(val)
 }
 
 func (g Global) InitNil() {

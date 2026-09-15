@@ -62,11 +62,16 @@ func (pkg Package) ConstBytes(value []byte) Expr {
 // ConstArray creates an LLVM constant array expression.
 func (prog Program) ConstArray(t Type, values []Expr) Expr {
 	elem := prog.Index(t)
+	mem := prog.llvmMemType(elem)
 	fields := make([]llvm.Value, len(values))
 	for i, value := range values {
-		fields[i] = value.impl
+		v := value.impl
+		if isLLVMInt1(v.Type()) && mem.TypeKind() == llvm.IntegerTypeKind && mem.IntTypeWidth() == 8 {
+			v = prog.boolToMemConst(v)
+		}
+		fields[i] = v
 	}
-	return Expr{llvm.ConstArray(elem.ll, fields), t}
+	return Expr{llvm.ConstArray(mem, fields), t}
 }
 
 // ConstByteArray creates a compact LLVM constant for a Go byte array. Unlike
@@ -127,11 +132,18 @@ func (prog Program) wrapStructConstant(t Type, index int, value llvm.Value) llvm
 }
 
 func (prog Program) wrapStructConstantAs(t Type, structType llvm.Type, index int, value llvm.Value) llvm.Value {
+	elem := structType.StructElementTypes()[index]
+	mem := elem
+	if mem.TypeKind() == llvm.StructTypeKind && len(mem.StructElementTypes()) > 0 {
+		mem = mem.StructElementTypes()[0]
+	}
+	if isLLVMInt1(value.Type()) && mem.TypeKind() == llvm.IntegerTypeKind && mem.IntTypeWidth() == 8 {
+		value = prog.boolToMemConst(value)
+	}
 	layout, ok := prog.structLayout(t)
 	if !ok || index >= len(layout.wrapped) || !layout.wrapped[index] {
 		return value
 	}
-	elem := structType.StructElementTypes()[index]
 	parts := elem.StructElementTypes()
 	values := []llvm.Value{value}
 	if len(parts) == 2 {

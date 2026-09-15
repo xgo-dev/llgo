@@ -7,8 +7,9 @@ import _ "unsafe"
 // CHECK-LABEL: define void @main.Foo.Print(%main.Foo %0){{.*}} {
 // CHECK: store %main.Foo %0, ptr [[PRINT_RECEIVER:%[0-9]+]]
 // CHECK: [[PRINT_OK_FIELD:%[0-9]+]] = getelementptr inbounds nuw %main.Foo, ptr [[PRINT_RECEIVER]], i32 0, i32 1
-// CHECK-NEXT: [[PRINT_OK:%[0-9]+]] = load i1, ptr [[PRINT_OK_FIELD]]
-// CHECK-NEXT: br i1 [[PRINT_OK]], label %{{.*}}, label %{{.*}}
+// CHECK-NEXT: [[PRINT_OK:%[0-9]+]] = load i8, ptr [[PRINT_OK_FIELD]]
+// CHECK-NEXT: [[PRINT_OK_I1:%[0-9]+]] = trunc i8 [[PRINT_OK]] to i1
+// CHECK-NEXT: br i1 [[PRINT_OK_I1]], label %{{.*}}, label %{{.*}}
 // CHECK: [[PRINT_VALUE_FIELD:%[0-9]+]] = getelementptr inbounds nuw %main.Foo, ptr [[PRINT_RECEIVER]], i32 0, i32 0
 // CHECK-NEXT: [[PRINT_VALUE:%[0-9]+]] = load i32, ptr [[PRINT_VALUE_FIELD]]
 // CHECK-NEXT: call void (ptr, ...) @printf(ptr @main.format, i32 [[PRINT_VALUE]])
@@ -45,6 +46,6 @@ func main() {
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: store i32 100, ptr [[MAIN_A:%[0-9]+]]
-// CHECK-NEXT: store i1 true, ptr [[MAIN_OK:%[0-9]+]]
+// CHECK-NEXT: store i8 1, ptr [[MAIN_OK:%[0-9]+]]
 // CHECK-NEXT: [[MAIN_FOO:%[0-9]+]] = load %main.Foo, ptr %{{[0-9]+}}
 // CHECK-NEXT: call void @main.Foo.Print(%main.Foo [[MAIN_FOO]])

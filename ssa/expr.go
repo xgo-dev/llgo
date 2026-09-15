@@ -872,9 +872,9 @@ func (b Builder) arrayBinOp(op token.Token, x, y, xaddr, yaddr Expr) Expr {
 		elem := prog.Elem(x.Type)
 		ret := prog.BoolVal(true)
 		for i, n := 0, int(typ.Len()); i < n; i++ {
-			fx := b.impl.CreateExtractValue(x.impl, i, "")
-			fy := b.impl.CreateExtractValue(y.impl, i, "")
-			r := b.BinOp(token.EQL, Expr{fx, elem}, Expr{fy, elem})
+			fx := b.fromMemory(b.impl.CreateExtractValue(x.impl, i, ""), elem)
+			fy := b.fromMemory(b.impl.CreateExtractValue(y.impl, i, ""), elem)
+			r := b.BinOp(token.EQL, fx, fy)
 			ret = Expr{b.impl.CreateAnd(ret.impl, r.impl, ""), tret}
 		}
 		if op == token.NEQ {
@@ -1005,7 +1005,7 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 		case vkClosure:
 			// TODO(xsw): change type should be a noop instruction
 			convType := func() Expr {
-				r := Expr{llvm.CreateAlloca(b.impl, t.ll), b.Prog.Pointer(t)}
+				r := Expr{llvm.CreateAlloca(b.impl, b.Prog.llvmMemType(t)), b.Prog.Pointer(t)}
 				b.Store(r, x)
 				return b.Load(r)
 			}
@@ -1047,9 +1047,9 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 		if x.impl.Type().String() == t.ll.String() {
 			ret.impl = x.impl
 		} else {
-			ptr := llvm.CreateAlloca(b.impl, t.ll)
+			ptr := llvm.CreateAlloca(b.impl, b.Prog.llvmMemType(t))
 			b.impl.CreateStore(x.impl, ptr)
-			ret.impl = llvm.CreateLoad(b.impl, t.ll, ptr)
+			ret.impl = llvm.CreateLoad(b.impl, b.Prog.llvmMemType(t), ptr)
 		}
 	}
 	ret.Type = t
@@ -1756,7 +1756,7 @@ func (b Builder) compareSelect(op token.Token, x Expr, y ...Expr) Expr {
 	}
 	for _, v := range y {
 		cond := b.BinOp(op, ret, v)
-		sel := llvm.CreateSelect(b.impl, cond.impl, ret.impl, v.impl)
+		sel := llvm.CreateSelect(b.impl, b.boolI1(cond), ret.impl, v.impl)
 		ret = Expr{sel, ret.Type}
 	}
 	return ret
@@ -1764,7 +1764,7 @@ func (b Builder) compareSelect(op token.Token, x Expr, y ...Expr) Expr {
 
 // SelectValue chooses between two values based on the condition.
 func (b Builder) SelectValue(cond Expr, a Expr, bExpr Expr) Expr {
-	sel := llvm.CreateSelect(b.impl, cond.impl, a.impl, bExpr.impl)
+	sel := llvm.CreateSelect(b.impl, b.boolI1(cond), a.impl, bExpr.impl)
 	return Expr{sel, a.Type}
 }
 

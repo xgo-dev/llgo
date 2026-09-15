@@ -188,12 +188,7 @@ func (b Builder) Return(results ...Expr) {
 		b.impl.CreateRet(ret.impl)
 	default:
 		tret := b.Func.raw.Type.(*types.Signature).Results()
-		n := tret.Len()
-		typs := make([]Type, n)
-		for i := 0; i < n; i++ {
-			typs[i] = b.Prog.Type(tret.At(i).Type(), InC)
-		}
-		typ := b.Prog.Struct(typs...)
+		typ := b.Prog.rawType(tret)
 		expr := b.aggregateValue(typ, llvmParams(0, results, tret, b)...)
 		b.impl.CreateRet(expr.impl)
 	}
@@ -237,7 +232,7 @@ func (b Builder) If(cond Expr, thenb, elseb BasicBlock) {
 		panic("mismatched function")
 	}
 	dbgInstrf("If %v, _llgo_%v, _llgo_%v\n", cond.impl, thenb.idx, elseb.idx)
-	b.impl.CreateCondBr(cond.impl, thenb.first, elseb.first)
+	b.impl.CreateCondBr(b.boolI1(cond), thenb.first, elseb.first)
 }
 
 // IfThen emits an if-then instruction.

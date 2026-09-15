@@ -446,7 +446,7 @@ func (b Builder) TypeAssert(x Expr, assertedTyp Type, commaOk bool) Expr {
 
 	if commaOk {
 		prog := b.Prog
-		t := prog.Struct(assertedTyp, prog.Bool())
+		t := prog.commaOk(assertedTyp)
 		blks := b.Func.MakeBlocks(3)
 		b.If(eq, blks[0], blks[1])
 

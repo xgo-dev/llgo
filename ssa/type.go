@@ -428,7 +428,7 @@ func (p Program) toType(raw types.Type) Type {
 		return &aType{p.toLLVMTuple(t), typ, vkTuple}
 	case *types.Array:
 		elem := p.rawType(t.Elem())
-		return &aType{llvm.ArrayType(elem.ll, int(t.Len())), typ, vkArray}
+		return &aType{llvm.ArrayType(p.llvmMemType(elem), int(t.Len())), typ, vkArray}
 	case *types.Chan:
 		return &aType{llvm.PointerType(p.rtChan(), 0), typ, vkChan}
 	case *types.Alias:
@@ -471,7 +471,7 @@ func (p Program) toLLVMFields(raw *types.Struct) (fields []llvm.Type) {
 	if n > 0 {
 		fields = make([]llvm.Type, n)
 		for i := 0; i < n; i++ {
-			fields[i] = p.rawType(p.patch(raw.Field(i).Type())).ll
+			fields[i] = p.llvmMemType(p.rawType(p.patch(raw.Field(i).Type())))
 		}
 	}
 	return
