@@ -135,12 +135,22 @@ func (c *Cmd) Compile(args ...string) error {
 
 // Link executes a linking command with merged flags.
 func (c *Cmd) Link(args ...string) error {
+	return c.exec(c.linkArguments(args...)...)
+}
+
+// LinkArguments returns the effective driver arguments, including its command
+// prefix and environment flags, without executing the linker. Inspecting these
+// arguments preserves explicit user options when selecting linker defaults.
+func (c *Cmd) LinkArguments(args ...string) []string {
+	return slices.Concat(c.prefixArgs, c.linkArguments(args...))
+}
+
+func (c *Cmd) linkArguments(args ...string) []string {
 	flags := c.mergeLinkerFlags()
 	allArgs := make([]string, 0, len(flags)+len(args))
 	allArgs = append(allArgs, flags...)
 	allArgs = append(allArgs, args...)
-	allArgs = resolveMSVCImportLibraries(c.Dir, allArgs)
-	return c.exec(allArgs...)
+	return resolveMSVCImportLibraries(c.Dir, allArgs)
 }
 
 // resolveMSVCImportLibraries lets clang's MSVC driver consume library names
