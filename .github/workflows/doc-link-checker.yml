@@ -20,7 +20,8 @@ concurrency:
 
 jobs:
   doc_verify:
-    runs-on: ${{ github.repository_owner == 'xgo-dev' && fromJSON('["qiniu", "ubuntu-24.04"]') || 'ubuntu-24.04' }}
+    # This small external-link check needs a reliable public-network route.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
