@@ -28,7 +28,8 @@ func TestFunctionAttributesSurviveABI(t *testing.T) {
 			sig := types.NewSignatureType(nil, nil, nil,
 				types.NewTuple(types.NewParam(token.NoPos, nil, "value", param)),
 				types.NewTuple(types.NewParam(token.NoPos, nil, "", result)), false)
-			pkg.NewFunc("p.Stop", sig, ssa.InGo, ssa.FunctionCold|ssa.FunctionNoReturn)
+			decl := pkg.NewFunc("p.Stop", sig, ssa.InGo)
+			decl.SetAttributes(ssa.FunctionCold | ssa.FunctionNoReturn)
 			abi.LowerLargeAggregates(prog.TargetData(), pkg.Module())
 			cabi.NewTransformer(prog, "", "", false).TransformModule("p", pkg.Module())
 			fn := pkg.Module().NamedFunction("p.Stop")

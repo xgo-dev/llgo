@@ -34,7 +34,7 @@ type packageSyntaxData struct {
 	parsedPackages       map[*types.Package]struct{}
 	noInterface          map[string]none
 	typeBackgrounds      map[string]Background
-	sourceFunctions      map[string]*SourceFunction
+	functions            []Function
 }
 
 func newPackageSyntaxData() *packageSyntaxData {
@@ -46,7 +46,6 @@ func newPackageSyntaxData() *packageSyntaxData {
 		parsedPackages:       make(map[*types.Package]struct{}),
 		noInterface:          make(map[string]none),
 		typeBackgrounds:      make(map[string]Background),
-		sourceFunctions:      make(map[string]*SourceFunction),
 	}
 }
 

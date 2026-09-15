@@ -70,17 +70,14 @@ func parseFunctionAttributes(doc *ast.CommentGroup) llssa.FunctionAttributes {
 	return attrs
 }
 
-// Resolve the source declaration while the frontend function still carries its
-// generic origin. The backend receives properties, not an instance-name mapping.
-func (p *context) functionAttributes(fn *ssa.Function) llssa.FunctionAttributes {
+// Generic instances retain their source declaration through Origin. Read its
+// syntax directly, including private functions omitted by export-data preload.
+func sourceFunctionAttributes(fn *ssa.Function) llssa.FunctionAttributes {
 	if origin := fn.Origin(); origin != nil {
 		fn = origin
 	}
-	owner := p.goTyps
-	if fn.Pkg != nil {
-		owner = fn.Pkg.Pkg
-	} else if obj := fn.Object(); obj != nil {
-		owner = obj.Pkg()
+	if decl, ok := fn.Syntax().(*ast.FuncDecl); ok {
+		return parseFunctionAttributes(decl.Doc)
 	}
-	return p.prog.SourceFunctionAttributes(funcName(owner, fn, true))
+	return 0
 }

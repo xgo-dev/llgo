@@ -626,7 +626,6 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		dbgInstrln("==> NewFunc", name, "type:", sig.Recv(), sig, "ftype:", ftype)
 	}
 	if fn != nil {
-		fn.SetAttributes(p.functionAttributes(f))
 		if fn.NeedsEnv() != hasCtx {
 			panic("conflicting closure environment ABI for " + name)
 		}
@@ -636,11 +635,12 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	}
 	if fn == nil {
 		if hasCtx {
-			fn = pkg.NewEnvFunc(name, sig, llssa.Background(ftype), ctx, p.needsLinkOnce(f), p.functionAttributes(f))
+			fn = pkg.NewEnvFunc(name, sig, llssa.Background(ftype), ctx, p.needsLinkOnce(f))
 		} else {
-			fn = pkg.NewFuncEx(name, sig, llssa.Background(ftype), false, p.needsLinkOnce(f), p.functionAttributes(f))
+			fn = pkg.NewFuncEx(name, sig, llssa.Background(ftype), false, p.needsLinkOnce(f))
 		}
 	}
+	fn.SetAttributes(sourceFunctionAttributes(f))
 	if p.prog.Target().GOARCH == "wasm" {
 		if decl, ok := f.Syntax().(*ast.FuncDecl); ok {
 			fullName, _ := astFuncName(llssa.PathOf(pkgTypes), decl)
@@ -1613,7 +1613,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 				if cname := strings.TrimPrefix(name[:len(name)-16], "libc_"); cname != "" {
 					cname = p.remapTrampolineCName(cname)
 					fnSig := p.syscallFnSig(0)
-					cfn := b.Pkg.NewFunc(cname, fnSig, llssa.InC, p.prog.SourceFunctionAttributes(cname))
+					cfn := b.Pkg.NewFunc(cname, fnSig, llssa.InC)
 					ret = b.Convert(p.type_(types.Typ[types.Uintptr], llssa.InGo), cfn.Expr)
 					p.bvals[iv] = ret
 					return ret

@@ -27,6 +27,10 @@ func (*T) Rare() {}
 //llgo:noreturn
 func Generic[T any](v *T) { for {} }
 func Use(p *int) { Generic(p) }
+type Box[T any] struct{ value T }
+//llgo:cold
+func (*Box[T]) Rare() {}
+func UseBox(p *Box[int]) { p.Rare() }
 //export Exported
 //llgo:cold
 func Exported() {}
@@ -40,6 +44,7 @@ func Ordinary() {}
 		{"example.com/locality.Fatal", true, true},
 		{"example.com/locality.(*T).Rare", true, false},
 		{"example.com/locality.Generic[int]", false, true},
+		{"example.com/locality.(*Box[int]).Rare", true, false},
 		{"Exported", true, false},
 		{"example.com/locality.Ordinary", false, false},
 	} {
@@ -161,20 +166,47 @@ func Fatal() { for {} }
 	if err = ParsePkgSyntax(coordinator, fs, owner, []*ast.File{file}); err != nil {
 		t.Fatal(err)
 	}
-	sig := owner.Scope().Lookup("Stop").Type().(*types.Signature)
-	for _, name := range []string{"owner.Stop", "owner.Fatal", "shared_stop"} {
+	callerFile, err := parser.ParseFile(fs, "caller.go", `package caller
+import "owner"
+func Call() { owner.Stop() }
+`, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := newLocalityTypeInfo()
+	callerFiles := []*ast.File{callerFile}
+	caller, err := (&types.Config{Importer: importerFunc(func(string) (*types.Package, error) {
+		return owner, nil
+	})}).Check("caller", fs, callerFiles, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	goProg := ssa.NewProgram(fs, ssa.SanityCheckFunctions)
+	// Import declarations deliberately have no source syntax.
+	imported := goProg.CreatePackage(owner, nil, nil, true)
+	if imported.Func("Stop").Syntax() != nil {
+		t.Fatal("expected an export-only imported function")
+	}
+	goPkg := goProg.CreatePackage(caller, callerFiles, info, true)
+	goPkg.Build()
+	for i := 0; i < 2; i++ {
 		backend := coordinator.NewBackendProgram()
-		pkg := backend.NewPackage("caller", "caller")
-		pkg.NewFunc(name, sig, llssa.InGo, backend.SourceFunctionAttributes(name))
-		fn := pkg.Module().FirstFunction()
-		for _, attr := range []string{"cold", "noreturn"} {
-			if fn.GetEnumAttributeAtIndex(-1, llvm.AttributeKindID(attr)).IsNil() {
-				t.Errorf("%s lost %s", name, attr)
-			}
-		}
-		if err = llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		defer backend.Dispose()
+		compiled, _, err := NewPackageExWithEmbedMetaOptions(backend, nil, nil, nil, goPkg, callerFiles, nil, false, Options{PreloadedSyntax: true})
+		if err != nil {
 			t.Fatal(err)
 		}
-		backend.Dispose()
+		fn := compiled.Module().NamedFunction("shared_stop")
+		if fn.IsNil() {
+			t.Fatal("missing imported declaration")
+		}
+		for _, attr := range []string{"cold", "noreturn"} {
+			if fn.GetEnumAttributeAtIndex(-1, llvm.AttributeKindID(attr)).IsNil() {
+				t.Errorf("imported declaration lost %s", attr)
+			}
+		}
+		if err = llvm.VerifyModule(compiled.Module(), llvm.ReturnStatusAction); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
