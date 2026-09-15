@@ -53,6 +53,34 @@ func TestBuildLocalPackageAccessor(t *testing.T) {
 	}
 }
 
+func TestBuildGoroutineLocalPackageAccessor(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.SetRuntime(localContextTestRuntime())
+	pkg := prog.NewPackage("accessor", "example.com/accessor")
+	key := pkg.NewVar("example.com/accessor.key", types.NewPointer(types.Typ[types.Uintptr]), InGo)
+	key.InitNil()
+	field := types.NewField(token.NoPos, nil, "value", types.Typ[types.Int], false)
+	block := types.NewStruct([]*types.Var{field}, nil)
+	blockType := prog.Type(block, InGo)
+	result := types.NewPointer(block)
+	results := types.NewTuple(types.NewVar(token.NoPos, nil, "", result))
+	accessor := pkg.NewFunc("example.com/accessor.gls", types.NewSignatureType(nil, nil, nil, nil, results, false), InGo)
+	accessor.BuildGoroutineLocalPackageAccessor(
+		key.Expr,
+		prog.IntVal(prog.SizeOf(blockType), prog.Uintptr()),
+		prog.IntVal(prog.AlignOf(blockType), prog.Uintptr()),
+	)
+
+	ir := pkg.String()
+	if !strings.Contains(ir, `@"example.com/accessor.key" = global i64 0`) ||
+		strings.Contains(ir, `@"example.com/accessor.key" = thread_local`) {
+		t.Fatalf("logical package key is not process-global:\n%s", ir)
+	}
+	if !strings.Contains(ir, `call ptr @"`+PkgRuntime+`.GoroutineLocalPackage"(ptr @"example.com/accessor.key"`) {
+		t.Fatalf("accessor has no logical-G package lookup:\n%s", ir)
+	}
+}
+
 func localContextTestRuntime() *types.Package {
 	pkg := types.NewPackage(PkgRuntime, "runtime")
 	unsafePointer := types.Typ[types.UnsafePointer]
@@ -64,5 +92,6 @@ func localContextTestRuntime() *types.Package {
 	)
 	results := types.NewTuple(types.NewVar(token.NoPos, pkg, "", unsafePointer))
 	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "LocalPackage", types.NewSignatureType(nil, nil, nil, params, results, false)))
+	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "GoroutineLocalPackage", types.NewSignatureType(nil, nil, nil, params, results, false)))
 	return pkg
 }

@@ -276,18 +276,43 @@ func (p *context) cgoCgocall(b llssa.Builder, args []ssa.Value) (ret llssa.Expr)
 // -----------------------------------------------------------------------------
 
 // func index(arr *T, idx int) T
-func (p *context) index(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
-	return b.Load(p.advance(b, args))
+func (p *context) index(b llssa.Builder, args []ssa.Value, native ...bool) (ret llssa.Expr) {
+	return b.Load(p.advance(b, args, native...))
 }
 
 // func advance(ptr *T, offset int) *T
-func (p *context) advance(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
+func (p *context) advance(b llssa.Builder, args []ssa.Value, native ...bool) (ret llssa.Expr) {
 	if len(args) == 2 {
 		ptr := p.compileValue(b, args[0])
+		if len(native) != 0 && native[0] {
+			// c.Advance and c.Index walk objects laid out by the C ABI. On J32,
+			// their pointer elements occupy four bytes even though Go pointer
+			// slots occupy eight. Preserve that distinction on the expression so
+			// Builder.Advance can select the physical element layout.
+			ptr.Type = p.type_(args[0].Type(), llssa.InC)
+		}
 		offset := p.compileValue(b, args[1])
 		return b.Advance(ptr, offset)
 	}
 	panic("advance(p ptr, offset int): invalid arguments")
+}
+
+func isCLayoutPointerIntrinsic(fn *ssa.Function) bool {
+	if fn == nil {
+		return false
+	}
+	if origin := fn.Origin(); origin != nil {
+		fn = origin
+	}
+	if fn.Pkg == nil || fn.Pkg.Pkg == nil {
+		return false
+	}
+	switch fn.Pkg.Pkg.Path() {
+	case "github.com/goplus/lib/c", "github.com/xgo-dev/llgo/runtime/internal/clite":
+		return true
+	default:
+		return false
+	}
 }
 
 // func alloca(size uintptr) unsafe.Pointer
@@ -372,7 +397,11 @@ func (p *context) funcAddr(b llssa.Builder, args []ssa.Value) llssa.Expr {
 
 // func funcPCABI0(fn any) uintptr
 func (p *context) funcPCABI0(b llssa.Builder, args []ssa.Value) llssa.Expr {
-	return p.funcPCABI0Value(b, args[0])
+	pc := p.funcPCABI0Value(b, args[0])
+	if target := p.prog.Target(); target != nil && target.GOARCH == "wasm" {
+		pc = b.BinOp(token.SHL, pc, p.prog.IntVal(2, pc.Type))
+	}
+	return pc
 }
 
 func (p *context) funcPCABI0Value(b llssa.Builder, v ssa.Value) llssa.Expr {
@@ -1591,6 +1620,13 @@ func functionBelongsToPackage(pkg *ssa.Package, fn *ssa.Function) bool {
 	if fn.Pkg == pkg {
 		return true
 	}
+	// Instantiated package-level generic functions have no SSA package of
+	// their own. Their origin still belongs to the source package and must be
+	// included in caller tracking; otherwise runtime.Caller inside the
+	// instantiation observes its caller as the current frame.
+	if origin := fn.Origin(); origin != nil && origin != fn {
+		return functionBelongsToPackage(pkg, origin)
+	}
 	return fn.Pkg == nil && fn.Parent() != nil && functionBelongsToPackage(pkg, fn.Parent())
 }
 
@@ -1945,8 +1981,8 @@ func (p *context) pushCallerLocationFrame(b llssa.Builder, fn *ssa.Function) {
 		directiveFilename(p.fset, fn.Pos(), pos.Filename, p.sourceLine),
 	)
 	entry := b.Convert(p.prog.Uintptr(), p.fn.Expr)
-	p.callerFrameMark = b.Call(
-		p.runtimeFunc("PushCallerLocationFrame", pushCallerLocationFrameSig()),
+	p.callerFrameMark = p.callRuntimeLocation(
+		b, "PushCallerLocationFrame",
 		entry,
 		b.Str(p.runtimeCallerFrameName()),
 		b.Str(pos.Filename),
@@ -1992,13 +2028,32 @@ func (p *context) recordRuntimeLocation(b llssa.Builder, pos token.Pos, fn strin
 	if position.Line <= 0 || position.Filename == "" {
 		return
 	}
-	b.Call(
-		p.runtimeFunc(fn, recordRuntimeLocationSig()),
+	p.callRuntimeLocation(
+		b, fn,
 		b.Convert(p.prog.Uintptr(), p.fn.Expr),
 		b.Str(p.runtimeCallerFrameName()),
 		b.Str(position.Filename),
 		p.prog.IntVal(uint64(position.Line), p.prog.Int()),
 	)
+}
+
+// callRuntimeLocation keeps static strings out of the caller's Wasm C stack.
+// The C ABI passes each Go string indirectly; separate instrumentation calls
+// otherwise reserve separate aggregate argument slots in every recursive
+// frame, even though all those strings refer to immutable compiler literals.
+func (p *context) callRuntimeLocation(b llssa.Builder, fn string, entry, name, file, line llssa.Expr) llssa.Expr {
+	push := fn == "PushCallerLocationFrame"
+	if target := p.prog.Target(); target != nil && target.GOARCH == "wasm" {
+		return b.Call(
+			p.runtimeFunc(fn+"Wasm", wasmRuntimeLocationSig(push)),
+			entry, b.StringData(name), b.StringLen(name), b.StringData(file), b.StringLen(file), line,
+		)
+	}
+	sig := recordRuntimeLocationSig()
+	if push {
+		sig = pushCallerLocationFrameSig()
+	}
+	return b.Call(p.runtimeFunc(fn, sig), entry, name, file, line)
 }
 
 func (p *context) recordCallerLocationForCall(b llssa.Builder, call *ssa.CallCommon) {
@@ -2214,6 +2269,23 @@ func recordRuntimeLocationSig() *types.Signature {
 		),
 		nil,
 		false,
+	)
+}
+
+func wasmRuntimeLocationSig(push bool) *types.Signature {
+	var results *types.Tuple
+	if push {
+		results = types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Int]))
+	}
+	return types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(
+			types.NewVar(token.NoPos, nil, "entry", types.Typ[types.Uintptr]),
+			types.NewVar(token.NoPos, nil, "nameData", types.NewPointer(types.Typ[types.Byte])),
+			types.NewVar(token.NoPos, nil, "nameLen", types.Typ[types.Int]),
+			types.NewVar(token.NoPos, nil, "fileData", types.NewPointer(types.Typ[types.Byte])),
+			types.NewVar(token.NoPos, nil, "fileLen", types.Typ[types.Int]),
+			types.NewVar(token.NoPos, nil, "line", types.Typ[types.Int]),
+		), results, false,
 	)
 }
 
@@ -2615,9 +2687,9 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		case llgoCgoCgocall:
 			ret = p.cgoCgocall(b, args)
 		case llgoAdvance:
-			ret = p.advance(b, args)
+			ret = p.advance(b, args, isCLayoutPointerIntrinsic(cv))
 		case llgoIndex:
-			ret = p.index(b, args)
+			ret = p.index(b, args, isCLayoutPointerIntrinsic(cv))
 		case llgoAlloca:
 			ret = p.alloca(b, args)
 		case llgoAllocaCStr:

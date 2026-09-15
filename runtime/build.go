@@ -92,6 +92,7 @@ var sourcePatchPkgs = map[string]struct{}{
 	"sync":                         {},
 	"sync/atomic":                  {},
 	"syscall":                      {},
+	"syscall/js":                   {},
 	"unique":                       {},
 }
 

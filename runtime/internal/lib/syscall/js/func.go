@@ -15,9 +15,11 @@ import (
 )
 
 var (
-	funcsMu    sync.Mutex
-	funcs             = make(map[uint32]func(Value, []Value) any)
-	nextFuncID uint32 = 1
+	funcsMu                sync.Mutex
+	funcs                         = make(map[uint32]func(Value, []Value) any)
+	nextFuncID             uint32 = 1
+	activeCallbacks        uint32
+	callbackPollRegistered bool
 )
 
 // Func is a wrapped Go function to be called by JavaScript.
@@ -28,20 +30,19 @@ type Func struct {
 
 // FuncOf returns a function to be used by JavaScript.
 //
-// The Go function fn is eventually called with the value of JavaScript's
-// "this" keyword and the arguments of the invocation. In LLGo's Emscripten C
-// profiles the host callback only queues an event and wakes the scheduler; Go
-// dispatch happens later on a new goroutine, after the JavaScript bridge has
-// returned. The JavaScript invocation therefore returns undefined rather than
-// synchronously returning fn's result. This prevents a callback from reentering
-// Go while an Asyncify context is suspended.
+// The Go function fn is called with JavaScript's "this" and arguments, and
+// its result is returned synchronously. Nested calls run on the calling G;
+// external events resume the scheduler and run on a new G. A callback may
+// block on Go goroutines or timers, but must not wait for another asynchronous
+// JS event: its caller still owns the JS event loop, as in the Go runtime.
 //
 // Func.Release must be called to free up resources when the function will not be invoked any more.
 func FuncOf(fn func(this Value, args []Value) any) Func {
 	funcsMu.Lock()
-	if len(funcs) == 0 {
+	if !callbackPollRegistered {
 		emval_install_invoke()
 		llruntime.RegisterWasmCallbackPoll(pollCallbacks)
+		callbackPollRegistered = true
 	}
 	id := nextFuncID
 	nextFuncID++
@@ -56,7 +57,7 @@ func FuncOf(fn func(this Value, args []Value) any) Func {
 	factory := functionConstructor.New(ValueOf("invoke"), ValueOf(`
 		return function() {
 			const event = { id:`+sid+`, this: this, args: arguments };
-			invoke(event);
+			return invoke(event);
 		};
 	`))
 	wrap := factory.Invoke(invoke)
@@ -83,9 +84,33 @@ func itoa(buf []byte, val uint64) []byte {
 func (c Func) Release() {
 	funcsMu.Lock()
 	delete(funcs, c.id)
-	if len(funcs) == 0 {
+	stopCallbackPollLocked()
+	funcsMu.Unlock()
+}
+
+func stopCallbackPollLocked() {
+	if len(funcs) == 0 && activeCallbacks == 0 && !emval_has_pending_invoke() {
 		llruntime.RegisterWasmCallbackPoll(nil)
+		callbackPollRegistered = false
 	}
+}
+
+func retainCallback() {
+	funcsMu.Lock()
+	activeCallbacks++
+	funcsMu.Unlock()
+}
+
+func dispatchSynchronousCallback(handle c.Ulong) {
+	retainCallback()
+	runCallback(uintptr(handle))
+}
+
+func runCallback(handle uintptr) {
+	llruntime.HandleWasmEvent(func() { dispatchCallback(handle) })
+	funcsMu.Lock()
+	activeCallbacks--
+	stopCallbackPollLocked()
 	funcsMu.Unlock()
 }
 
@@ -118,14 +143,13 @@ func pollCallbacks() {
 	// The host sets a byte in wasm memory when it enqueues the first event, so
 	// an idle scheduler does not cross the wasm/JavaScript boundary merely to
 	// inspect an empty JavaScript array.
-	if !emval_has_pending_invoke() {
-		return
-	}
-	for {
+	for emval_has_pending_invoke() {
 		handle := emval_take_pending_invoke()
 		if handle == 0 {
-			return
+			break
 		}
-		go dispatchCallback(handle)
+		retainCallback()
+		go runCallback(handle)
 	}
+	llruntime.PollWasmEvent()
 }

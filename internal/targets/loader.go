@@ -134,8 +134,11 @@ func (l *Loader) mergeConfig(dst, src *Config) {
 	if src.GOARCH != "" {
 		dst.GOARCH = src.GOARCH
 	}
-	if src.WasmABI != "" {
-		dst.WasmABI = src.WasmABI
+	if src.WasmProfile != "" {
+		dst.WasmProfile = src.WasmProfile
+	}
+	if src.WasmProvider != "" {
+		dst.WasmProvider = src.WasmProvider
 	}
 	if src.Libc != "" {
 		dst.Libc = src.Libc

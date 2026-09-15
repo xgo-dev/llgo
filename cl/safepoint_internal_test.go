@@ -13,11 +13,14 @@ func TestExcludeSafepointPackage(t *testing.T) {
 		want bool
 	}{
 		{path: "runtime", want: true},
+		{path: "sync/atomic", want: true},
 		{path: "internal/runtime/atomic", want: true},
 		{path: "github.com/xgo-dev/llgo/runtime", want: true},
 		{path: "github.com/xgo-dev/llgo/runtime/internal/wasmevent", want: true},
 		{path: "github.com/xgo-dev/llgo/runtimeextra"},
 		{path: "example.com/app/runtime"},
+		{path: "sync"},
+		{path: "example.com/sync/atomic"},
 	}
 	for _, test := range tests {
 		if got := excludeSafepointPackage(test.path); got != test.want {

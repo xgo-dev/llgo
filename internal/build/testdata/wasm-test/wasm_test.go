@@ -4,7 +4,9 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"math"
+	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -32,6 +34,27 @@ func TestScheduler(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("goroutine did not make progress")
+	}
+}
+
+//go:noinline
+func functionValueSymbolizationTarget() {}
+
+func TestFunctionValueSymbolization(t *testing.T) {
+	pc := reflect.ValueOf(functionValueSymbolizationTarget).Pointer()
+	fn := runtime.FuncForPC(pc)
+	if fn == nil || !strings.HasSuffix(fn.Name(), ".functionValueSymbolizationTarget") {
+		t.Fatalf("FuncForPC(reflect.Value.Pointer()) = %v for %#x", fn, pc)
+	}
+}
+
+func TestGCStatsCountCollections(t *testing.T) {
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	if after.NumGC <= before.NumGC {
+		t.Fatalf("NumGC = %d after explicit collection, want greater than %d", after.NumGC, before.NumGC)
 	}
 }
 

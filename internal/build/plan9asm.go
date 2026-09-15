@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 
-	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llplan9asm "github.com/xgo-dev/llgo/internal/plan9asm"
 	llruntime "github.com/xgo-dev/llgo/runtime"
@@ -86,7 +85,7 @@ func compilePkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Package, verbo
 		// runtime asm uses hand-written calling conventions and must stay on
 		// original Go ABI semantics.
 		if pkg.PkgPath != "runtime" {
-			llabi.LowerLargeAggregates(ctx.prog.TargetData(), mod)
+			lowerLargeAggregates(ctx.prog, mod)
 			ctx.cTransformer.TransformModule(pkg.PkgPath, mod)
 		}
 		applySizeOptimizationAttributes(mod, ctx.buildConf.OptLevel)
@@ -378,6 +377,11 @@ func (ctx *context) plan9asmEnabled(pkgPath string) bool {
 
 func hasAltPkgForTarget(conf *Config, pkgPath string) bool {
 	if conf == nil || !llruntime.HasAltPkgForGOARCH(pkgPath, conf.Goarch) {
+		return false
+	}
+	if pkgPath == "syscall/js" && conf.Target == "" && conf.Goos == "js" && conf.Goarch == "wasm" {
+		// J32/GoJS retains the selected GOROOT's Go implementation. Its
+		// source patch adapts only host imports and the runtime event entry.
 		return false
 	}
 	if llruntime.HasAdditiveAltPkgForGOARCH(pkgPath, conf.Goarch) {

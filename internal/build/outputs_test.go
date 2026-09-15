@@ -35,12 +35,25 @@ func TestBuildOutFmtsIsolatesImplicitNativeTestOutput(t *testing.T) {
 }
 
 func TestWebAssemblyTargetDefaultExtension(t *testing.T) {
+	for _, mode := range []Mode{ModeRun, ModeTest} {
+		if got := defaultAppExt(&Config{Mode: mode, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm"}); got != ".mjs" {
+			t.Errorf("raw js/wasm execution extension = %q, want .mjs", got)
+		}
+	}
+	for _, conf := range []*Config{
+		{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm"},
+		{Mode: ModeTest, CompileOnly: true, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm"},
+	} {
+		if got := defaultAppExt(conf); got != ".wasm" {
+			t.Errorf("raw js/wasm non-execution extension = %q, want .wasm", got)
+		}
+	}
 	for _, target := range []string{"emscripten", "emscripten-memory64", "wasm"} {
 		if got := defaultAppExt(&Config{BuildMode: BuildModeExe, Target: target}); got != ".mjs" {
 			t.Errorf("target %q extension = %q, want .mjs", target, got)
 		}
 	}
-	for _, target := range []string{"wasi", "wasip1", "wasip2", "wasm-unknown"} {
+	for _, target := range []string{"wasi", "wasip1"} {
 		if got := defaultAppExt(&Config{BuildMode: BuildModeExe, Target: target}); got != ".wasm" {
 			t.Errorf("target %q extension = %q, want .wasm", target, got)
 		}

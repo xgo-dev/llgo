@@ -261,13 +261,6 @@ type ChanType struct {
 	Dir  ChanDir
 }
 
-// funcType represents a function type.
-type FuncType struct {
-	Type
-	In  []*Type
-	Out []*Type
-}
-
 // Variadic reports whether the function type is variadic.
 func (p *FuncType) Variadic() bool {
 	return p.TFlag&TFlagVariadic != 0

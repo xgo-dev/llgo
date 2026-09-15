@@ -19,8 +19,9 @@ func externalPCLNExecutablePath() string {
 		if n < 0 {
 			return ""
 		}
-		if n < len(buf) {
-			return string(buf[:n])
+		count := int(n)
+		if count < len(buf) {
+			return string(buf[:count])
 		}
 	}
 	return ""

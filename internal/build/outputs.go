@@ -314,6 +314,13 @@ func defaultAppExt(conf *Config) string {
 				return ext
 			}
 		}
+		if conf.Target == "" && conf.Goos == "js" &&
+			(conf.Mode == ModeRun || conf.Mode == ModeTest && !conf.CompileOnly) {
+			// Like cmd/go's go_js_wasm_exec contract, execution needs a host
+			// adapter. Emit Emscripten's ES-module glue for the implicit run/test
+			// artifact; plain build and test -c continue to produce a .wasm file.
+			return ".mjs"
+		}
 		// For executable mode, handle target-specific logic
 		if conf.Target != "" {
 			switch conf.Target {
@@ -322,7 +329,7 @@ func defaultAppExt(conf *Config) string {
 				// product. ES-module glue is the executable; emcc emits the
 				// sibling .wasm module that it loads.
 				return ".mjs"
-			case "wasi", "wasip1", "wasip2", "wasm-unknown":
+			case "wasi", "wasip1":
 				return ".wasm"
 			}
 			// Preserve the historical extension for custom/future WASI and

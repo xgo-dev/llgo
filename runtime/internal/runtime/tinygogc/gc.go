@@ -142,6 +142,9 @@ type GCStats struct {
 
 	// GCSys is bytes of memory in garbage collection metadata.
 	GCSys uint64
+
+	// NumGC is the number of completed GC cycles.
+	NumGC uint32
 }
 
 func ReadGCStats() GCStats {
@@ -174,6 +177,7 @@ func ReadGCStats() GCStats {
 		StackInuse: uint64(stackInuse),
 		StackSys:   uint64(stackSys),
 		GCSys:      uint64(heapEnd - uintptr(metadataStart)),
+		NumGC:      gcNumGC,
 	}
 
 	unlock(&gcMutex)

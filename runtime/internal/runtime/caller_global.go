@@ -21,3 +21,9 @@ package runtime
 // Bare-metal runtimes have one execution context and must not introduce a
 // native TLS relocation for the locality package cache.
 var callerLocationStoreCurrent *callerLocationStore
+
+// This source set has one global caller store, so its local index is already
+// process-unique and does not require an atomic operation.
+func nextCallerPCBase(store *callerLocationStore) uintptr {
+	return uintptr(len(store.synthetic)+1) << 2
+}

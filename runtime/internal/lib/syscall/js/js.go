@@ -186,7 +186,7 @@ func ValueOf(x any) Value {
 }
 
 func stringVal(x string) Value {
-	return emval_new_string(c.AllocaCStr(x))
+	return emval_new_string(c.AllocaCStr(x), c.SizeT(len(x)))
 }
 
 // Type represents the JavaScript type of a Value.
@@ -382,9 +382,9 @@ func (v Value) SetIndex(i int, x any) {
 // It panics if v is not a JavaScript object.
 func (v Value) Length() int {
 	if vType := v.Type(); !vType.isObject() {
-		panic(&ValueError{"Value.SetIndex", vType})
+		panic(&ValueError{"Value.Length", vType})
 	}
-	return emval_get_property(v, emval_new_string(c.Str("length"))).Int()
+	return emval_length(v)
 	//r := valueLength(v.ref)
 	//runtime.KeepAlive(v)
 	//return r
@@ -399,13 +399,13 @@ func (v Value) Length() int {
 func (v Value) Call(m string, args ...any) (res Value) {
 	var err c.Int
 	if len(args) == 0 {
-		res = emval_method_call(v, c.AllocaCStr(m), nil, 0, &err)
+		res = emval_method_call(v, c.AllocaCStr(m), c.SizeT(len(m)), nil, 0, &err)
 	} else {
 		vargs := make([]Value, len(args))
 		for i := 0; i < len(args); i++ {
 			vargs[i] = ValueOf(args[i])
 		}
-		res = emval_method_call(v, c.AllocaCStr(m), *(**Value)(unsafe.Pointer(&vargs)), c.Int(len(args)), &err)
+		res = emval_method_call(v, c.AllocaCStr(m), c.SizeT(len(m)), *(**Value)(unsafe.Pointer(&vargs)), c.Int(len(args)), &err)
 	}
 	if err != 0 {
 		if vType := v.Type(); !vType.isObject() { // check here to avoid overhead in success case
@@ -508,7 +508,7 @@ func (v Value) New(args ...any) (res Value) {
 	}
 	if err != 0 {
 		if vType := v.Type(); vType != TypeFunction { // check here to avoid overhead in success case
-			panic(&ValueError{"Value.Invoke", vType})
+			panic(&ValueError{"Value.New", vType})
 		}
 		panic(Error{res})
 	}
@@ -676,13 +676,11 @@ func (e *ValueError) Error() string {
 // It panics if src is not a Uint8Array or Uint8ClampedArray.
 // It returns the number of bytes copied, which will be the minimum of the lengths of src and dst.
 func CopyBytesToGo(dst []byte, src Value) int {
-	if !(emval_instanceof(src, uint8Array) || emval_instanceof(src, uint8ClampedArray)) {
-		return 0
+	n, ok := emval_copy_bytes(dst, src, true)
+	if !ok {
+		panic("syscall/js: CopyBytesToGo: expected src to be a Uint8Array or Uint8ClampedArray")
 	}
-	toCopy := src.Call("subarray", 0, len(dst))
-	view := emval_memory_view_uint8(uintptr(len(dst)), *(**byte)(unsafe.Pointer(&dst)))
-	view.Call("set", toCopy)
-	return toCopy.Length()
+	return n
 	// n, ok := copyBytesToGo(dst, src.ref)
 	// runtime.KeepAlive(src)
 	// if !ok {
@@ -721,13 +719,11 @@ func CopyBytesToGo(dst []byte, src Value) int {
 // It panics if dst is not a Uint8Array or Uint8ClampedArray.
 // It returns the number of bytes copied, which will be the minimum of the lengths of src and dst.
 func CopyBytesToJS(dst Value, src []byte) int {
-	if !(emval_instanceof(dst, uint8Array) || emval_instanceof(dst, uint8ClampedArray)) {
-		return 0
+	n, ok := emval_copy_bytes(src, dst, false)
+	if !ok {
+		panic("syscall/js: CopyBytesToJS: expected dst to be a Uint8Array or Uint8ClampedArray")
 	}
-	view := emval_memory_view_uint8(uintptr(len(src)), *(**byte)(unsafe.Pointer(&src)))
-	toCopy := view.Call("subarray", 0, dst.Length())
-	dst.Call("set", toCopy)
-	return toCopy.Length()
+	return n
 	// n, ok := copyBytesToJS(dst.ref, src)
 	// runtime.KeepAlive(dst)
 	// if !ok {
@@ -752,11 +748,6 @@ func CopyBytesToJS(dst Value, src []byte) int {
 		this.mem.setUint8(sp + 48, 1);
 	},
 */
-
-var (
-	uint8Array        = emval_get_global(c.Str("Uint8Array"))
-	uint8ClampedArray = emval_get_global(c.Str("Uint8ClampedArray"))
-)
 
 // copyBytesToJS copies bytes from src to dst.
 //

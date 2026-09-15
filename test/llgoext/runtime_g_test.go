@@ -79,6 +79,9 @@ func TestRuntimeGetGIsolation(t *testing.T) {
 //go:linkname runtimeGMPForTesting github.com/xgo-dev/llgo/runtime/internal/runtime.GMPForTesting
 func runtimeGMPForTesting() (goid, parentGoid uint64, mid int64, pid int32, gstatus, pstatus uint32, linked bool)
 
+//go:linkname runtimeSchedulerMultiplexesForTesting github.com/xgo-dev/llgo/runtime/internal/runtime.SchedulerMultiplexesGoroutinesForTesting
+func runtimeSchedulerMultiplexesForTesting() bool
+
 const (
 	runtimeGRunning = 2
 	runtimePRunning = 1
@@ -143,6 +146,7 @@ func TestRuntimeGMPLinks(t *testing.T) {
 	seenG := map[uint64]bool{parent.goid: true}
 	seenM := map[int64]bool{parent.mid: true}
 	seenP := map[int32]bool{parent.pid: true}
+	multiplexed := runtimeSchedulerMultiplexesForTesting()
 	for i := 0; i < cap(results); i++ {
 		state := <-results
 		checkRunningRuntimeGMP(t, state)
@@ -152,11 +156,17 @@ func TestRuntimeGMPLinks(t *testing.T) {
 		if seenG[state.goid] {
 			t.Fatalf("duplicate G id %d", state.goid)
 		}
-		if seenM[state.mid] {
-			t.Fatalf("duplicate M id %d", state.mid)
-		}
-		if seenP[state.pid] {
-			t.Fatalf("duplicate P id %d", state.pid)
+		if multiplexed {
+			if state.mid != parent.mid || state.pid != parent.pid {
+				t.Fatalf("multiplexed G %d used M/P %d/%d, want %d/%d", state.goid, state.mid, state.pid, parent.mid, parent.pid)
+			}
+		} else {
+			if seenM[state.mid] {
+				t.Fatalf("duplicate M id %d", state.mid)
+			}
+			if seenP[state.pid] {
+				t.Fatalf("duplicate P id %d", state.pid)
+			}
 		}
 		seenG[state.goid] = true
 		seenM[state.mid] = true

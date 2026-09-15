@@ -70,7 +70,7 @@ func (b Builder) Go(fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args .
 	// Keep the startup record in scanned, uncollectable GC memory until the
 	// new routine has finished its entry call.
 	dataPtr := b.Call(pkg.rtFunc("AllocRoot"), prog.IntVal(prog.SizeOf(t), prog.Uintptr())).impl
-	aggregateInit(b.impl, dataPtr, t.ll, flds...)
+	b.aggregateInit(dataPtr, t, flds...)
 	data := Expr{dataPtr, voidPtr}
 	b.Call(pkg.rtFunc("NewProc"), pkg.routine(t, fn, buildCall, len(args)), data)
 }
@@ -109,12 +109,11 @@ func (p Package) routine(t Type, fn Expr, buildCall func(Builder, Expr, ...Expr)
 	if fn != Nil && fn.kind != vkBuiltin {
 		savedType := fn.Type
 		fn = b.getField(data, 0)
-		// Interface invocation pairs are structurally funcvals, but their data
-		// word remains an ordinary receiver argument after crossing the
-		// goroutine startup record.
-		if savedType.kind == vkIfaceMethod {
-			fn.Type = savedType
-		}
+		// A raw signature field is represented as an opaque function pointer and
+		// cannot retain whether its call ABI is Go or C. Restore the original
+		// semantic kind after crossing the startup record. This also preserves
+		// interface invocation pairs, whose data word remains a receiver argument.
+		fn.Type = savedType
 		offset = 1
 	}
 	for i := 0; i < n; i++ {

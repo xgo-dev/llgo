@@ -20,6 +20,7 @@ import (
 	"go/token"
 	"go/types"
 
+	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llgo/internal/gcrootplan"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
@@ -52,6 +53,9 @@ func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
 		typ := p.type_(value.Type(), llssa.InGo)
 		return p.prog.GCRootCount(typ) != 0
 	}, p.isGCSafepoint)
+	for value := range uintptrEscapesRoots(fn) {
+		planned[value] = struct{}{}
+	}
 	if p.safepointEntry {
 		for _, param := range fn.Params {
 			if !mayContainGCRoot(param.Type()) {
@@ -70,7 +74,14 @@ func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
 			return
 		}
 		typ := p.type_(value.Type(), llssa.InGo)
-		if n := p.prog.GCRootCount(typ); n != 0 {
+		n := p.prog.GCRootCount(typ)
+		if basicKind(value.Type()) == types.Uintptr {
+			// Only pragma-designated uintptr parameters enter planned. Keep this
+			// single-slot reservation paired with publishGCRoot's direct SetGCRoot:
+			// uintptr has no ordinary pointer layout for GCRootPointers to expand.
+			n = 1
+		}
+		if n != 0 {
 			counts[value] = n
 			total += n
 		}
@@ -181,6 +192,18 @@ func (p *context) functionHasGCSafepoint(fn *ssa.Function) bool {
 }
 
 func (p *context) isGCSafepoint(instr ssa.Instruction) bool {
+	if load, ok := instr.(*ssa.UnOp); ok && load.Op == token.MUL {
+		switch load.Type().Underlying().(type) {
+		case *types.Array, *types.Struct:
+			// ABI lowering snapshots large aggregate loads on the heap after
+			// this root plan is built. Account for that added allocation now.
+			size := p.prog.SizeOf(p.type_(load.Type(), llssa.InGo))
+			if size > llabi.MaxImplicitStackVarSize ||
+				(p.prog.Target().GOARCH == "wasm" && size >= llabi.MinWasmAggregateCopySize) {
+				return true
+			}
+		}
+	}
 	return gcSafepoint(instr) || p.isCooperativeSafepoint(instr)
 }
 
@@ -245,6 +268,12 @@ func basicKind(typ types.Type) types.BasicKind {
 func (p *context) publishGCRoot(b llssa.Builder, value ssa.Value, expr llssa.Expr) {
 	slots, ok := p.gcRoots[value]
 	if !ok || expr.IsNil() {
+		return
+	}
+	if basicKind(value.Type()) == types.Uintptr {
+		// prepareGCRoots reserves exactly one slot for pragma-designated uintptr
+		// values even though their ordinary GC root count is zero.
+		b.SetGCRoot(slots[0], expr)
 		return
 	}
 	roots := b.GCRootPointers(expr)

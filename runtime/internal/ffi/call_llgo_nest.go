@@ -14,9 +14,5 @@ const ClosureEnvExplicit = false
 // native final hop passes env separately in LLVM's nest register, using
 // ffi_call_go directly when libffi selects the same physical register.
 func CallWithEnv(cif *Signature, fn, env, ret unsafe.Pointer, args ...unsafe.Pointer) {
-	var avalues *unsafe.Pointer
-	if len(args) > 0 {
-		avalues = &args[0]
-	}
-	ffi.CallWithEnv(cif, fn, ret, avalues, env)
+	ffi.CallWithEnv(cif, fn, ret, valuePointerArray(args), env)
 }

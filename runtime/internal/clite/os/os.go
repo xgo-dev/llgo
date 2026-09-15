@@ -75,7 +75,7 @@ func Link(oldpath *c.Char, newpath *c.Char) c.Int
 func Symlink(target *c.Char, linkpath *c.Char) c.Int
 
 //go:linkname Readlink C.readlink
-func Readlink(path *c.Char, buf c.Pointer, bufsize uintptr) int
+func Readlink(path *c.Char, buf c.Pointer, bufsize c.SizeT) c.SsizeT
 
 //go:linkname Unlink C.unlink
 func Unlink(path *c.Char) c.Int
@@ -170,16 +170,16 @@ func Mknod(path *c.Char, mode ModeT, dev DevT) c.Int
 func Close(fd c.Int) c.Int
 
 //go:linkname Read C.read
-func Read(fd c.Int, buf c.Pointer, count uintptr) int
+func Read(fd c.Int, buf c.Pointer, count c.SizeT) c.SsizeT
 
 //go:linkname Write C.write
-func Write(fd c.Int, buf c.Pointer, count uintptr) int
+func Write(fd c.Int, buf c.Pointer, count c.SizeT) c.SsizeT
 
 //go:linkname Pread C.pread
-func Pread(fd c.Int, buf c.Pointer, count uintptr, offset OffT) int
+func Pread(fd c.Int, buf c.Pointer, count c.SizeT, offset OffT) c.SsizeT
 
 //go:linkname Pwrite C.pwrite
-func Pwrite(fd c.Int, buf c.Pointer, count uintptr, offset OffT) int
+func Pwrite(fd c.Int, buf c.Pointer, count c.SizeT, offset OffT) c.SsizeT
 
 //go:linkname Lseek C.lseek
 func Lseek(fd c.Int, offset OffT, whence c.Int) OffT

@@ -23,17 +23,16 @@ func TestWasmRuntimeSourcePatchTypeChecks(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		goos       string
-		abi        crosscompile.WasmABI
+		profile    crosscompile.WasmProfile
 		buildFlags []string
 	}{
 		{name: "raw js wasm32", goos: "js"},
-		{name: "legacy wasm alias", goos: "js", abi: crosscompile.WasmABIEmscripten, buildFlags: []string{"-tags=llgo.wasm.emscripten,tinygo.wasm,nogc"}},
-		{name: "Emscripten wasm32", goos: "js", abi: crosscompile.WasmABIEmscripten, buildFlags: []string{"-tags=llgo.wasm.emscripten,nogc"}},
-		{name: "Emscripten GC wasm32", goos: "js", abi: crosscompile.WasmABIEmscripten, buildFlags: []string{"-tags=llgo,llgo.wasm.emscripten,llgo.wasm.gc.linear"}},
-		{name: "Emscripten Memory64", goos: "js", abi: crosscompile.WasmABIEmscriptenMemory64, buildFlags: []string{"-tags=llgo.wasm.emscripten,llgo.wasm.emscripten.memory64,nogc"}},
-		{name: "Emscripten GC Memory64", goos: "js", abi: crosscompile.WasmABIEmscriptenMemory64, buildFlags: []string{"-tags=llgo,llgo.wasm.emscripten,llgo.wasm.emscripten.memory64,llgo.wasm.gc.linear"}},
+		{name: "Emscripten wasm32", goos: "js", profile: crosscompile.WasmProfileJ32, buildFlags: []string{"-tags=llgo.wasm.emscripten,nogc"}},
+		{name: "Emscripten GC wasm32", goos: "js", profile: crosscompile.WasmProfileJ32, buildFlags: []string{"-tags=llgo,llgo.wasm.emscripten,llgo.wasm.gc.linear"}},
+		{name: "Emscripten Memory64", goos: "js", profile: crosscompile.WasmProfileJ64, buildFlags: []string{"-tags=llgo.wasm.emscripten,llgo.wasm.emscripten.memory64,nogc"}},
+		{name: "Emscripten GC Memory64", goos: "js", profile: crosscompile.WasmProfileJ64, buildFlags: []string{"-tags=llgo,llgo.wasm.emscripten,llgo.wasm.emscripten.memory64,llgo.wasm.gc.linear"}},
 		{name: "WASI wasm32", goos: "wasip1"},
-		{name: "WASI GC wasm32", goos: "wasip1", abi: crosscompile.WasmABIWASIPreview1, buildFlags: []string{"-tags=llgo,llgo.wasm.wasi,llgo.wasm.gc.linear"}},
+		{name: "WASI GC wasm32", goos: "wasip1", profile: crosscompile.WasmProfileW32, buildFlags: []string{"-tags=llgo,llgo.wasm.wasi,llgo.wasm.gc.linear"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			cfgEnv := append(os.Environ(), "GOOS="+test.goos, "GOARCH=wasm")
@@ -50,8 +49,8 @@ func TestWasmRuntimeSourcePatchTypeChecks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			pkgs, err := packages.LoadEx(nil, func(sizes types.Sizes, _ string, arch string) types.Sizes {
-				return effectiveTypeSizes(sizes, arch, test.abi)
+			pkgs, err := packages.LoadEx(nil, func(sizes types.Sizes, _, _ string) types.Sizes {
+				return effectiveTypeSizes(sizes, test.profile)
 			}, &packages.Config{
 				Mode:       loadSyntax | packages.NeedDeps | packages.NeedModule | packages.NeedExportFile,
 				Env:        cfgEnv,
@@ -119,6 +118,35 @@ func TestEmscriptenRuntimeHostImportsUseCABI(t *testing.T) {
 	}
 	if strings.Contains(sysrandIR, `"wasm-import-name"="runtime.getRandomData"`) {
 		t.Fatal("crypto/internal/sysrand retains the official gojs host import in the Emscripten profile")
+	}
+}
+
+func TestGoJSKeepsGOROOTSyscallJS(t *testing.T) {
+	conf := NewDefaultConf(ModeGen)
+	conf.Goos, conf.Goarch = "js", "wasm"
+	if hasAltPkgForTarget(conf, "syscall/js") {
+		t.Fatal("J32/GoJS still replaces syscall/js")
+	}
+	var jsIR string
+	conf.ModuleHook = func(pkg Package) {
+		if pkg.PkgPath == "syscall/js" {
+			jsIR = pkg.LPkg.String()
+		}
+	}
+	if _, err := Do([]string{"./testdata/wasm-callback"}, conf); err != nil {
+		t.Fatal(err)
+	}
+	for _, symbol := range []string{"syscall/js.makeValue", "syscall/js.handleEvent", "syscall/js.hostEventHandler"} {
+		if !strings.Contains(jsIR, symbol) {
+			t.Errorf("missing GOROOT implementation or host hook %s", symbol)
+		}
+	}
+	if strings.Contains(jsIR, "cEmval") || strings.Contains(jsIR, `"wasm-import-module"="gojs"`) {
+		t.Fatal("J32/GoJS still uses an unadapted syscall/js backend")
+	}
+	conf.Target = "emscripten"
+	if !hasAltPkgForTarget(conf, "syscall/js") {
+		t.Fatal("named Emscripten profile lost its C-ABI backend")
 	}
 }
 

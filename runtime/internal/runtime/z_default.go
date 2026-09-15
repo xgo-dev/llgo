@@ -30,7 +30,7 @@ func Rethrow(link *Defer) {
 				debug.PrintStack(2)
 			}
 			c.Free(unsafe.Pointer(node))
-			c.Exit(2)
+			exitPanic()
 		} else {
 			c.Siglongjmp(link.Addr, 1)
 		}

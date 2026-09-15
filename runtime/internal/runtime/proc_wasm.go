@@ -28,6 +28,7 @@ import (
 type runtimeContextPlatform struct {
 	context    wasmcontext.Context
 	gcRoot     wasmGCRootContext
+	glsContext LocalContext
 	runqNext   *g
 	runqQueued bool
 	// Keep runqQueued inside unsafe.Sizeof(runtimeContext{}) on wasm32. LLVM
@@ -39,6 +40,7 @@ type runtimeContextPlatform struct {
 var wasmSched struct {
 	m       m
 	p       p
+	systemG g
 	runq    runqueue.Queue[*g]
 	system  wasmcontext.Context
 	started bool
@@ -68,12 +70,12 @@ func initWasmScheduler(gp *g) {
 		fatal("runtime: WebAssembly scheduler initialized twice")
 		return
 	}
-	wasmSched.started = true
 	if wasmGCRootEnabled {
 		registerWasmGCRoot(&wasmSystemGCRoot, true)
 	}
 	mp := &wasmSched.m
 	pp := &wasmSched.p
+	systemG := &wasmSched.systemG
 	mp.curg = gp
 	mp.p = pp
 	mp.id = nextMid(mp)
@@ -81,6 +83,9 @@ func initWasmScheduler(gp *g) {
 	setpstatus(pp, _Prunning)
 	pp.m = mp
 	gp.m = mp
+	systemG.atomicstatus = _Grunning
+	systemG.m = mp
+	wasmSched.started = true
 }
 
 //go:linkname wasmMainTask __llgo_wasm_main
@@ -165,13 +170,17 @@ func runWasmContext(gp *g) {
 		&gp.context.platform.context,
 		wasmGCRootPointer(&gp.context.platform.gcRoot),
 	)
+	// Host callbacks and timer polling run on the physical system stack. Do
+	// not leave currentG pointing at the suspended G: it may be released before
+	// event polling, and a compiler safepoint in a callback must not requeue it.
+	setg(&wasmSched.systemG)
+	wasmSched.m.curg = &wasmSched.systemG
 }
 
 func releaseWasmOwnership(gp *g) {
 	if gp != nil {
 		gp.m = nil
 	}
-	wasmSched.m.curg = nil
 }
 
 func newprocBackend(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, callergp *g) {
@@ -205,6 +214,7 @@ func releaseWasmContext(gp *g) {
 	if wasmGCRootEnabled {
 		unregisterWasmGCRoot(&ctx.platform.gcRoot)
 	}
+	releaseGoroutineLocalBlocks(&ctx.platform.glsContext)
 	ctx.platform.context.Close(FreeRoot)
 	freeRuntimeContext(ctx)
 }
@@ -283,6 +293,8 @@ func ReadyForTesting(handle unsafe.Pointer) {
 func SchedulerStateForTesting() (runq uintptr, mid int64, pid int32) {
 	return wasmSched.runq.Len(), wasmSched.m.id, wasmSched.p.id
 }
+
+func SchedulerMultiplexesGoroutinesForTesting() bool { return true }
 
 func GMPForTesting() (goid, parentGoid uint64, mid int64, pid int32, gstatus, pstatus uint32, linked bool) {
 	gp := getg()

@@ -29,6 +29,7 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	coordinator.EnableGoGlobalDCE(true)
 	coordinator.EnableDeadcodeDrop(true)
 	coordinator.EnableGCRoots(true)
+	coordinator.EnableLogicalGoroutineLocality(true)
 	coordinator.EnableCooperativeSafepoints(true)
 	coordinator.SetPthreadStackSize(4096)
 	coordinator.EnableLTOPluginMarkers(true)
@@ -83,7 +84,8 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	if backend.python() != nil {
 		t.Fatal("backend Program changed the prepared optional Python package")
 	}
-	if !backend.disableBoundsChecks || !backend.enableGoGlobalDCE || !backend.enableDeadcodeDrop || !backend.enableGCRoots || !backend.enableSafepoints ||
+	if !backend.disableBoundsChecks || !backend.enableGoGlobalDCE || !backend.enableDeadcodeDrop || !backend.enableGCRoots ||
+		!backend.logicalGoroutineLocal || !backend.enableSafepoints ||
 		backend.pthreadStackSize != 4096 || !backend.enableLTOPluginMarker ||
 		!backend.enableFuncInfoMetadata || !backend.enableFuncInfoSites || backend.debugInfoOptimized ||
 		!backend.emitCodeViewDebugInfo {

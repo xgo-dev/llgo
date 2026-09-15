@@ -161,6 +161,48 @@ func TestLLGoEnvironment(t *testing.T) {
 	}
 }
 
+func TestWasmTargetEnvironment(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LLGO_ROOT", root)
+	for _, test := range []struct {
+		target, profile, provider, goos, goarch, llvmTarget string
+	}{
+		{"emscripten", "j32", "emscripten", "js", "wasm", "wasm32-unknown-emscripten"},
+		{"emscripten-memory64", "j64", "emscripten", "js", "wasm", "wasm64-unknown-emscripten"},
+		{"wasi", "w32", "wasi", "wasip1", "wasm", "wasm32-unknown-wasip1"},
+		{"wasm", "j32", "emscripten", "js", "wasm", "wasm32-unknown-emscripten"},
+		{"wasip1", "w32", "wasi", "wasip1", "wasm", "wasm32-unknown-wasip1"},
+		{"cortex-m0", "", "", "linux", "arm", "thumbv6m-unknown-unknown-eabi"},
+	} {
+		t.Run(test.target, func(t *testing.T) {
+			var output bytes.Buffer
+			args := []string{"-json", "-target", test.target, "LLGO_TARGET", "LLGO_TARGET_WASM_PROFILE", "LLGO_TARGET_WASM_PROVIDER", "LLGO_TARGET_GOOS", "LLGO_TARGET_GOARCH", "LLGO_TARGET_LLVM_TARGET"}
+			if err := run(args, nil, &output, &output); err != nil {
+				t.Fatalf("env %q: %v, %s", args, err, &output)
+			}
+			var got map[string]string
+			if err := json.Unmarshal(output.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			for name, want := range map[string]string{
+				"LLGO_TARGET":               test.target,
+				"LLGO_TARGET_WASM_PROFILE":  test.profile,
+				"LLGO_TARGET_WASM_PROVIDER": test.provider,
+				"LLGO_TARGET_GOOS":          test.goos,
+				"LLGO_TARGET_GOARCH":        test.goarch,
+				"LLGO_TARGET_LLVM_TARGET":   test.llvmTarget,
+			} {
+				if value, ok := got[name]; !ok || value != want {
+					t.Errorf("%s = %q (present %v), want %q", name, value, ok, want)
+				}
+			}
+		})
+	}
+}
+
 func TestExtendedFormattingAndHelpers(t *testing.T) {
 	t.Setenv("LLGO_ROOT", "")
 	t.Setenv("LLVM_CONFIG", filepath.Join(t.TempDir(), "missing-llvm-config"))

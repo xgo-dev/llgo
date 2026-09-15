@@ -260,6 +260,9 @@ jobs:
     env:
       GOMAXPROCS: "2"
       LLGO_ROOT: ${{ github.workspace }}
+      # Keep the existing println timing budget. Other examples are built once
+      # for exact sizes; only W32 repeats reflectcall to measure bridge cost.
+      LLGO_WASM_BENCH_BUILD_RUNS: "1"
       GOFLAGS: -tags=llvm22
     steps:
       - uses: actions/checkout@v7
@@ -324,6 +327,9 @@ jobs:
       - name: Set up Go
         uses: ./.github/actions/setup-go
 
+      - name: Test WebAssembly benchmark matrix and runner
+        run: go test ./benchmark/wasm -count=1
+
       - name: Measure pull request base
         if: >-
           github.event_name == 'pull_request' &&
@@ -334,7 +340,8 @@ jobs:
           benchmark/wasm/run.sh \
             .benchmark/wasm-base-source \
             .benchmark/wasm-base-llgo \
-            .benchmark/wasm-base-results
+            .benchmark/wasm-base-results \
+            .benchmark/wasm-head-source
 
       - name: Measure current revision
         shell: bash

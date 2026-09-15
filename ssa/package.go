@@ -142,6 +142,11 @@ type aProgram struct {
 	// LLVM type is not a safe identity for this metadata.
 	structLayouts    typeutil.Map
 	hasStructLayouts bool
+	// nativeStorage caches transient Type views whose addressable storage is
+	// owned by a C/host ABI rather than by the Go data model. Canonical types
+	// map to their native view, while native views map to themselves.
+	nativeStorage map[Type]Type
+	goWordSize    int
 
 	intType   llvm.Type
 	int1Type  llvm.Type
@@ -151,6 +156,9 @@ type aProgram struct {
 	int64Type llvm.Type
 	voidType  llvm.Type
 	voidPtrTy llvm.Type
+	// Eight-byte in-memory Go pointer slot used when Core Wasm addresses are
+	// 32-bit. Pointer expressions themselves remain native wasm addresses.
+	widePtrStorageTy llvm.Type
 
 	c64Type  llvm.Type
 	c128Type llvm.Type
@@ -240,6 +248,7 @@ type aProgram struct {
 	enableGoGlobalDCE     bool
 	enableDeadcodeDrop    bool
 	enableGCRoots         bool
+	logicalGoroutineLocal bool
 	enableSafepoints      bool
 	disableBoundsChecks   bool
 	pthreadStackSize      uint64
@@ -322,17 +331,25 @@ func NewProgram(target *Target) Program {
 		// TODO(xsw): Finalize may cause panic, so comment it.
 		ctx.Finalize()
 	*/
-	is32Bits := (td.PointerSize() == 4 || is32Bits(target.GOARCH))
 	packageSyntax := newPackageSyntaxData()
+	goWordSize := td.PointerSize()
+	if target.effectiveGOARCH() == "wasm" && target.WasmProfile != "" {
+		goWordSize = 8
+	}
 	prog := &aProgram{
 		ctx: ctx, gocvt: newGoTypes(packageSyntax),
-		target: target, td: td, tm: tm, is32Bits: is32Bits,
-		ptrSize: td.PointerSize(), named: make(map[string]Type), fnnamed: make(map[string]int),
+		target: target, td: td, tm: tm,
+		ptrSize: td.PointerSize(), goWordSize: goWordSize,
+		named: make(map[string]Type), fnnamed: make(map[string]int),
 		packageSyntax: packageSyntax, localities: newLocalityInfos(),
 		abiSymbol:          make(map[string]*AbiSymbol),
 		debugInfoOptimized: target.effectiveOptLevel() != optlevel.O0,
 	}
-	prog.abi.Init(uintptr(prog.ptrSize), (*goProgram)(unsafe.Pointer(prog)))
+	if goWordSize > prog.ptrSize {
+		prog.nativeStorage = make(map[Type]Type)
+	}
+	prog.is32Bits = prog.GoWordSize() == 4
+	prog.abi.Init(uintptr(prog.GoWordSize()), (*goProgram)(unsafe.Pointer(prog)))
 	return prog
 }
 
@@ -356,6 +373,7 @@ func (p Program) NewBackendProgram() Program {
 	backend.enableGoGlobalDCE = p.enableGoGlobalDCE
 	backend.enableDeadcodeDrop = p.enableDeadcodeDrop
 	backend.enableGCRoots = p.enableGCRoots
+	backend.logicalGoroutineLocal = p.logicalGoroutineLocal
 	backend.enableSafepoints = p.enableSafepoints
 	backend.disableBoundsChecks = p.disableBoundsChecks
 	backend.pthreadStackSize = p.pthreadStackSize
@@ -961,6 +979,8 @@ type aPackage struct {
 	llvmUsedValues []llvm.Value
 
 	abiTypeFakeUseCache map[llvm.Value][]llvm.Value
+
+	wasmReflectBridges map[string]wasmReflectBridgePair
 }
 
 type none struct{}

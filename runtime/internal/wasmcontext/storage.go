@@ -19,8 +19,10 @@ package wasmcontext
 import "unsafe"
 
 const (
-	defaultStackSize         = uintptr(64 << 10)
-	defaultAsyncifyStackSize = uintptr(64 << 10)
+	// A suspension within Go code spills the complete active Wasm call chain,
+	// not just the host-call boundary. Keep independent Fiber and Asyncify
+	// buffers with the same profile-specific budget.
+	defaultAsyncifyStackSize = defaultStackSize
 	stackAlignment           = uintptr(16)
 )
 
