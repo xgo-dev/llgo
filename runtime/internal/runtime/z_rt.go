@@ -201,9 +201,6 @@ const (
 func c_framepointer() unsafe.Pointer
 
 // Panic panics with a value.
-//
-//llgo:cold
-//llgo:noreturn
 func Panic(v any) {
 	if v == nil {
 		v = &PanicNilError{}

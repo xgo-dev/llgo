@@ -169,7 +169,7 @@ type context struct {
 	methodNilDerefChecks map[*ssa.UnOp]none
 	recvNilDerefChecks   map[*ssa.UnOp]token.Pos
 	vargs                map[*ssa.Alloc][]llssa.Expr // varargs
-	funcs                map[*ssa.Function]llssa.Function
+	funcs                map[*ssa.Function]*aFunction
 	linkOnceFns          map[*ssa.Function]none
 	stackDefers          map[*ssa.Function]bool
 	anonDefers           map[*ssa.Function]bool
@@ -394,7 +394,7 @@ func (p *context) compileMethodsIf(pkg llssa.Package, typ types.Type, keep func(
 			if keep != nil && !keep(ssaMthd) {
 				continue
 			}
-			p.compileFuncDecl(pkg, ssaMthd)
+			p.compileFuncDecl(pkg, p.function(ssaMthd))
 		}
 	}
 }
@@ -580,8 +580,9 @@ func hasInstantiatedRecv(recv *types.Var) bool {
 	return false
 }
 
-func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Function, llssa.PyObjRef, int) {
-	pkgTypes, name, ftype := p.funcName(f)
+func (p *context) compileFuncDecl(pkg llssa.Package, source *aFunction) (llssa.Function, llssa.PyObjRef, int) {
+	f := source.Function
+	pkgTypes, name, ftype := p.funcName(source)
 	if ftype != goFunc {
 		return nil, nil, ignoredFunc
 	}
@@ -607,10 +608,9 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	elideFreeVarEnv := p.canElideZeroSizedClosureEnv(f)
 	hasExplicitEnv := false
 	// ParsePkgSyntax is the sole //llgo:env extractor. Lowering only consumes
-	// its source-declaration cache; imported env entries use NewEnvFunc.
-	if decl, ok := f.Syntax().(*ast.FuncDecl); ok {
-		fullName, _ := astFuncName(llssa.PathOf(pkgTypes), decl)
-		hasExplicitEnv = p.prog.HasClosureEnvDirective(p.goProg.Fset, fullName, decl.Pos())
+	// the function declaration object; imported env entries use NewEnvFunc.
+	if _, ok := f.Syntax().(*ast.FuncDecl); ok {
+		hasExplicitEnv = source.declaration.HasExplicitEnv()
 	}
 	hasCtx := hasFreeVars && !elideFreeVarEnv || hasExplicitEnv
 	var ctx *types.Var
@@ -630,6 +630,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			panic("conflicting closure environment ABI for " + name)
 		}
 		if fn.HasBody() {
+			source.impl = fn
 			return fn, nil, goFunc
 		}
 	}
@@ -640,11 +641,9 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			fn = pkg.NewFuncEx(name, sig, llssa.Background(ftype), false, p.needsLinkOnce(f))
 		}
 	}
-	fn.SetAttributes(sourceFunctionAttributes(f))
 	if p.prog.Target().GOARCH == "wasm" {
-		if decl, ok := f.Syntax().(*ast.FuncDecl); ok {
-			fullName, _ := astFuncName(llssa.PathOf(pkgTypes), decl)
-			if module, importName, ok := p.prog.WasmImport(fullName); ok {
+		if _, ok := f.Syntax().(*ast.FuncDecl); ok {
+			if module, importName, ok := source.declaration.WasmImport(); ok {
 				fn.SetWasmImport(module, importName)
 			}
 		}
@@ -659,7 +658,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	if noInlineDirective || runtimeStackNoInline || pcLineNoInline || usesRecover {
 		fn.DisableTailCalls()
 	}
-	p.funcs[f] = fn
+	source.impl = fn
 	isCgo := isCgoExternSymbol(f)
 	if nblk := len(f.Blocks); nblk > 0 {
 		if p.prog.FuncInfoMetadataEnabled() {
@@ -679,7 +678,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			parentInits := p.inits
 			p.inits = nil
 			for _, af := range f.AnonFuncs {
-				p.compileFuncDecl(pkg, af)
+				p.compileFuncDecl(pkg, p.function(af))
 			}
 			childInits = append(childInits, p.inits...)
 			p.inits = parentInits
@@ -1189,7 +1188,7 @@ func (p *context) isDirectTailUnreachableCall(instr ssa.Instruction, tail []ssa.
 	if !ok {
 		return false
 	}
-	_, name, kind := p.funcName(fn)
+	_, name, kind := p.funcName(p.function(fn))
 	if kind != llgoInstr || llgoInstrs[name] != llgoUnreachable {
 		return false
 	}
@@ -2358,7 +2357,7 @@ func (p *context) compileFunction(v *ssa.Function) (goFn llssa.Function, pyFn ll
 	// TODO(xsw) v.Pkg == nil: means auto generated function?
 	if v.Pkg == p.goPkg || v.Pkg == nil {
 		// function in this package
-		goFn, pyFn, kind = p.compileFuncDecl(p.pkg, v)
+		goFn, pyFn, kind = p.compileFuncDecl(p.pkg, p.function(v))
 		if kind != ignoredFunc {
 			return
 		}
@@ -2379,7 +2378,7 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 			}
 		}
 	case *ssa.Function:
-		if _, _, ftype := p.funcName(v); ftype == llgoInstr {
+		if _, _, ftype := p.funcName(p.function(v)); ftype == llgoInstr {
 			v = ssawrap.MakeCallWrapper(p.goProg, v)
 		}
 		aFn, pyFn, _ := p.compileFunction(v)
@@ -2790,7 +2789,7 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		options:          options,
 		skips:            make(map[string]none),
 		vargs:            make(map[*ssa.Alloc][]llssa.Expr),
-		funcs:            make(map[*ssa.Function]llssa.Function),
+		funcs:            make(map[*ssa.Function]*aFunction),
 		linkOnceFns:      make(map[*ssa.Function]none),
 		recoverFacts:     ct.recoverAnalysis(),
 		addrOfFieldAddrs: collectAddrOfFieldSelectors(files),
@@ -2900,7 +2899,7 @@ func processPkg(ctx *context, ret llssa.Package, pkg *ssa.Package) {
 				// Do not try to build generic (non-instantiated) functions.
 				continue
 			}
-			ctx.compileFuncDecl(ret, member)
+			ctx.compileFuncDecl(ret, ctx.function(member))
 		case *ssa.Type:
 			ctx.compileType(ret, member)
 		case *ssa.Global:

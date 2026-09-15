@@ -63,20 +63,14 @@ func AssertIndexRange(b bool) {
 	}
 }
 
-//llgo:cold
-//llgo:noreturn
 func PanicErrorString(msg string) {
 	panic(errorString(msg))
 }
 
-//llgo:cold
-//llgo:noreturn
 func PanicIndex(x int, y int) {
 	panic(boundsError{x: int64(x), signed: true, y: y, code: boundsIndex})
 }
 
-//llgo:cold
-//llgo:noreturn
 func PanicIndexU(x uint, y int) {
 	panic(boundsError{x: int64(x), signed: false, y: y, code: boundsIndex})
 }
@@ -133,8 +127,6 @@ func panicWrapTypeName(recvType string) string {
 	return recvType
 }
 
-//llgo:cold
-//llgo:noreturn
 func PanicTypeAssertionError(msg string) {
 	panic(typeAssertionErrorString(msg))
 }

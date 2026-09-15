@@ -311,9 +311,6 @@ type aFunction struct {
 	Pkg  Package
 	Prog Program
 
-	sourceName string // source declarations only; no LLVM representation yet
-	attributes FunctionAttributes
-
 	blks []BasicBlock
 
 	defer_           *aDefer
@@ -366,8 +363,7 @@ func (p Package) NewEnvFunc(
 func (p Package) newFunc(
 	name string, sig *types.Signature, bg Background, env *types.Var, instantiated bool,
 ) Function {
-	ret := p.fns[name]
-	if v := ret; v != nil && !v.impl.IsNil() {
+	if v, ok := p.fns[name]; ok {
 		if v.NeedsEnv() != (env != nil) {
 			panic("ssa: conflicting closure environment ABI for " + name)
 		}
@@ -419,31 +415,28 @@ func (p Package) newFunc(
 	if p.isPreservedName(name) {
 		p.markLLVMUsed(fn)
 	}
-	if ret == nil {
-		ret = &aFunction{}
-		p.fns[name] = ret
-	}
-	ret.initLLVM(fn, t, p, envType)
+	ret := newFunction(fn, t, p, p.Prog, envType)
+	p.fns[name] = ret
 	return ret
 }
 
-// FuncOf returns a materialized function by name. A preloaded source
-// declaration still needs NewFunc or NewEnvFunc to supply its signature.
+// FuncOf returns a function by name.
 func (p Package) FuncOf(name string) Function {
-	if fn := p.fns[name]; fn != nil && !fn.impl.IsNil() {
-		return fn
-	}
-	return nil
+	return p.fns[name]
 }
 
-func (f Function) initLLVM(fn llvm.Value, t Type, pkg Package, env Type) {
-	f.Expr = Expr{fn, t}
-	f.Pkg, f.Prog = pkg, pkg.Prog
-	f.params, f.hasVArg = newParams(t, pkg.Prog)
-	f.env = env
-	f.fakeUses = make([]llvm.Value, 0, 4)
-	f.fakeUseSet = make(map[llvm.Value]struct{})
-	f.attributes.apply(pkg.Prog.ctx, fn)
+func newFunction(fn llvm.Value, t Type, pkg Package, prog Program, env Type) Function {
+	params, hasVArg := newParams(t, prog)
+	return &aFunction{
+		Expr:       Expr{fn, t},
+		Pkg:        pkg,
+		Prog:       prog,
+		params:     params,
+		env:        env,
+		hasVArg:    hasVArg,
+		fakeUses:   make([]llvm.Value, 0, 4),
+		fakeUseSet: make(map[llvm.Value]struct{}),
+	}
 }
 
 func newParams(fn Type, prog Program) (params []Type, hasVArg bool) {
@@ -461,11 +454,8 @@ func newParams(fn Type, prog Program) (params []Type, hasVArg bool) {
 	return
 }
 
-// Name returns the source name before materialization and the LLVM symbol after it.
+// Name returns the function's name.
 func (p Function) Name() string {
-	if p.impl.IsNil() {
-		return p.sourceName
-	}
 	return p.impl.Name()
 }
 

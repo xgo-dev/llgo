@@ -28,7 +28,6 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/goembed"
 	"github.com/xgo-dev/llgo/ssa/ssatest"
-	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -36,10 +35,8 @@ func TestPreloadedSyntaxFeedsBackendWithoutLateDiscovery(t *testing.T) {
 	const source = `package C
 
 //export callback
-//llgo:cold
 func Callback() {}
 
-//llgo:cold
 func XDefault() {}
 `
 	fset := token.NewFileSet()
@@ -83,8 +80,6 @@ func XDefault() {}
 		}
 		if fn := compiled.FuncOf(fullName); fn == nil {
 			t.Errorf("FuncOf(%q) = nil, want wrapped implementation", fullName)
-		} else if compiled.Module().NamedFunction(fullName).GetEnumAttributeAtIndex(-1, llvm.AttributeKindID("cold")).IsNil() {
-			t.Errorf("wrapped implementation %q lost cold", fullName)
 		}
 		if fn := compiled.FuncOf(want); fn != nil {
 			t.Errorf("FuncOf(%q) = %q, want final-link wrapper only", want, fn.Name())
