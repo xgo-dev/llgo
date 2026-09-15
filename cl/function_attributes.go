@@ -7,40 +7,56 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/directive"
+	llssa "github.com/xgo-dev/llgo/ssa"
 )
+
+// Recognition, validation and collection use the same supported directive set.
+var functionAttributeDirectives = map[string]llssa.FunctionAttributes{
+	"llgo:cold":     llssa.FunctionCold,
+	"llgo:noreturn": llssa.FunctionNoReturn,
+}
 
 func isFunctionAttributeComment(line string) bool {
 	item, ok := directive.Parse(&ast.Comment{Text: line})
-	return ok && (item.Name == "llgo:cold" || item.Name == "llgo:noreturn")
+	return ok && functionAttributeDirectives[item.Name] != 0
 }
 
 func validateFunctionAttributes(fset *token.FileSet, file *ast.File) error {
-	allowed := make(map[token.Pos]bool)
+	functionDocs := make(map[*ast.CommentGroup]bool)
 	for _, decl := range file.Decls {
 		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Doc != nil {
-			for _, c := range fn.Doc.List {
-				allowed[c.Pos()] = true
+			functionDocs[fn.Doc] = true
+		}
+	}
+	// Inspect all comments so attributes inside bodies or on other declarations
+	// are diagnosed as well as attributes attached to functions.
+	for _, group := range file.Comments {
+		for _, item := range directive.ParseGroup(group) {
+			if err := validateFunctionAttribute(item, functionDocs[group]); err != nil {
+				return fmt.Errorf("%s: %w", fset.Position(item.Pos), err)
 			}
 		}
 	}
-	for _, group := range file.Comments {
-		for _, item := range directive.ParseGroup(group) {
-			name := item.Name
-			if i := strings.IndexAny(name, "(."); i >= 0 {
-				name = name[:i]
-			}
-			switch name {
-			case "llgo:param", "llgo:result", "llgo:receiver":
-				return fmt.Errorf("%s: %s attributes are not yet supported", fset.Position(item.Pos), name)
-			case "llgo:cold", "llgo:noreturn":
-				if !allowed[item.Pos] {
-					return fmt.Errorf("%s: %s requires a named function or method declaration", fset.Position(item.Pos), name)
-				}
-				if name != item.Name || item.Args != "" {
-					return fmt.Errorf("%s: %s takes no arguments; write each function attribute on its own line", fset.Position(item.Pos), name)
-				}
-			}
-		}
+	return nil
+}
+
+func validateFunctionAttribute(item directive.Directive, onFunction bool) error {
+	name := item.Name
+	if i := strings.IndexAny(name, "(."); i >= 0 {
+		name = name[:i]
+	}
+	switch name {
+	case "llgo:param", "llgo:result", "llgo:receiver":
+		return fmt.Errorf("%s attributes are not yet supported", name)
+	}
+	if functionAttributeDirectives[name] == 0 {
+		return nil
+	}
+	if !onFunction {
+		return fmt.Errorf("%s requires a named function or method declaration", name)
+	}
+	if name != item.Name || item.Args != "" {
+		return fmt.Errorf("%s takes no arguments; write each function attribute on its own line", name)
 	}
 	return nil
 }

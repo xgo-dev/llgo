@@ -311,8 +311,13 @@ func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.Fil
 	linkCollected := false
 	hasClosureEnv := false
 	wasmImportSeen := false
+	var functionAttrs llssa.FunctionAttributes
 	for n := len(directives) - 1; n >= 0; n-- {
 		item := directives[n]
+		if attrs := functionAttributeDirectives[item.Name]; attrs != 0 {
+			functionAttrs |= attrs
+			continue
+		}
 		switch item.Name {
 		case "go:linkname", "llgo:link":
 			if linkCollected {
@@ -333,10 +338,6 @@ func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.Fil
 			prog.SetLinkname(fullName, item.Args)
 			prog.SetPackageExport(fullName, item.Args)
 			linkCollected = true
-		case "llgo:cold":
-			prog.SetFunctionAttributes(fullName, llssa.FunctionCold)
-		case "llgo:noreturn":
-			prog.SetFunctionAttributes(fullName, llssa.FunctionNoReturn)
 		case "llgo:env":
 			if funcPos.IsValid() {
 				hasClosureEnv = true
@@ -351,6 +352,9 @@ func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.Fil
 				prog.SetWasmImport(fullName, fields[0], fields[1])
 			}
 		}
+	}
+	if functionAttrs != 0 {
+		prog.SetFunctionAttributes(fullName, functionAttrs)
 	}
 	if hasClosureEnv {
 		prog.SetClosureEnvDirective(fset, fullName, funcPos)
