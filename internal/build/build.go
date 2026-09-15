@@ -540,22 +540,13 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 		GOARM64:                 conf.GOARM64,
 		Target:                  conf.Target,
 		LLVMTarget:              export.LLVMTarget,
-		WasmABI:                 string(export.WasmABI),
+		WasmProfile:             string(export.WasmProfile),
+		WasmProvider:            string(export.WasmProvider),
 		OptLevel:                conf.OptLevel,
 		SaturatingFloatToUint32: conf.SaturatingFloatToUint32,
 	}
-	tags := defaultBuildTags(conf.Goarch, conf.Target)
-	if wasmGC && conf.Target == "" {
-		// An explicit development build selects the wasm collector instead of
-		// the raw profile's compatibility nogc runtime.
-		tags = strings.TrimSuffix(tags, ",nogc")
-	}
+	tags := DefaultBuildTags()
 	tags += "," + target.ClosureEnvBuildTag()
-	// Profiles without R2 collector support retain the collector-free runtime.
-	if conf.Target != "" && export.WasmABI != crosscompile.WasmABIUnspecified &&
-		!slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.gc.linear") {
-		tags += ",nogc"
-	}
 	if conf.PCLNMode == PCLNExternal {
 		// Select the optional runtime loader as part of the normal package
 		// cache key. Embedded and none builds do not compile any loader or
@@ -587,7 +578,10 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 		Debug:        emitDebugInfo,
 		DebugSymbols: emitDebugInfo,
 		Trace:        IsTraceEnabled(),
-		ExportRename: conf.Target != "",
+		// Hosted wasm profiles need renamed //export symbols for allocator and
+		// host entries even when selected through raw GOOS/GOARCH rather than a
+		// named -target.
+		ExportRename: conf.Target != "" || export.WasmProfile != crosscompile.WasmProfileNone,
 		ShadowStack:  useShadowStack(conf.Goarch),
 	}
 	preloadOptions := frontendOptions
@@ -609,6 +603,7 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 	prog.EnableGoGlobalDCE(conf.goGlobalDCEEnabled())
 	prog.EnableDeadcodeDrop(conf.deadcodeDropEnabled())
 	prog.EnableGCRoots(wasmGC)
+	prog.EnableLogicalGoroutineLocality(usesSingleWorkerWasmScheduler(conf))
 	prog.EnableCooperativeSafepoints(wasmGC)
 	if conf.PthreadStackSize > 0 {
 		prog.SetPthreadStackSize(uint64(conf.PthreadStackSize))
@@ -623,8 +618,8 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 	// reconstruct every Go entry PC through dlsym. External mode always needs
 	// final-PC sites for sidecar construction.
 	prog.EnableFuncInfoSites(shouldEnablePCLNSites(conf, funcInfo, emitDebugInfo))
-	sizes := func(sizes types.Sizes, compiler, arch string) types.Sizes {
-		sizes = effectiveTypeSizes(sizes, arch, export.WasmABI)
+	sizes := func(sizes types.Sizes, _, _ string) types.Sizes {
+		sizes = effectiveTypeSizes(sizes, export.WasmProfile)
 		return prog.TypeSizes(sizes)
 	}
 	dedup := packages.NewDeduper()
@@ -830,6 +825,8 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 	ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
 	callerSpan.done()
 	ctx.frontendOptions.ReceiverNilChecks = collectReceiverNilChecks(initial, altPkgs)
+	configureWasmReflectBridges(ctx)
+	configureWasmFuncInfoEntries(ctx)
 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	allPkgs = append(allPkgs, depPkgs...)
@@ -1072,17 +1069,23 @@ func executeInitialPackageLink(ctx *context, link *initialPackageLink, verbose, 
 		}
 	case ModeRun, ModeTest, ModeCmpTest:
 		if link.conf.Target == "" {
+			runner := goCompatibleWasmRunner(link.conf)
 			if link.conf.Mode == ModeTest {
 				program := &testProgram{
-					app:     link.outFmts.Out,
-					pkgDir:  link.pkg.Dir,
-					pkgName: strings.TrimSuffix(link.pkg.PkgPath, ".test"),
+					app:       link.outFmts.Out,
+					pkgDir:    link.pkg.Dir,
+					pkgName:   strings.TrimSuffix(link.pkg.PkgPath, ".test"),
+					runner:    runner,
+					runnerEnv: envMap,
 				}
 				if cleanupTemp {
 					program.temporaryOutputs = link.outFmts
 					cleanupTemp = false // runNativeTest now owns the temporary output.
 				}
 				return program, nil
+			}
+			if runner != "" && link.conf.Mode == ModeRun {
+				return nil, runInEmulator(linkCtx.commands, runner, envMap, link.pkg.Dir, link.pkg.PkgPath, link.conf, link.conf.Mode, verbose)
 			}
 			return nil, runNative(linkCtx, link.outFmts.Out, link.pkg.Dir, link.pkg.PkgPath, link.conf, link.conf.Mode)
 		}
@@ -1098,6 +1101,32 @@ func executeInitialPackageLink(ctx *context, link *initialPackageLink, verbose, 
 		}, verbose)
 	}
 	return nil, nil
+}
+
+// goCompatibleWasmRunner preserves cmd/go's raw GOOS/GOARCH source selection
+// while routing the linked module through the host adapter required to execute
+// it. Named targets already obtain their runner from the target definition.
+func goCompatibleWasmRunner(conf *Config) string {
+	if conf == nil || conf.Target != "" || conf.Goarch != "wasm" {
+		return ""
+	}
+	switch conf.Goos {
+	case "js":
+		return fmt.Sprintf("node %q --browser-only %q", filepath.Join(env.LLGoROOT(), "targets", "emscripten-runner.mjs"), "{}")
+	case "wasip1":
+		runtimeCommand := WasmRuntime()
+		switch runtimeCommand {
+		case "wasmtime":
+			// Match Go's go_wasip1_wasm_exec helper by exposing the host
+			// filesystem and package working directory to run/test binaries.
+			return `wasmtime run --dir=/ --env PWD --env PATH -W exceptions=y -W multi-memory=y -W max-wasm-stack=8388608 "{}"`
+		case "iwasm":
+			return `iwasm --stack-size=819200000 --heap-size=800000000 "{}"`
+		default:
+			return runtimeCommand + ` "{}"`
+		}
+	}
+	return ""
 }
 
 func newLinkExecutionContext(ctx *context, plan *mainLinkPlan) *context {
@@ -1240,20 +1269,9 @@ func cSharedImportLibraryArgs(toolchain crosscompile.NativeToolchain, output str
 	return []string{"-Xlinker", "--out-implib", "-Xlinker", imports}
 }
 
-// DefaultBuildTags returns the build tags LLGo always enables for a target.
-func DefaultBuildTags(goarch, target string) string {
-	return defaultBuildTags(goarch, target)
-}
-
-func defaultBuildTags(goarch, target string) string {
-	tags := "llgo,math_big_pure_go,purego"
-	// Preserve the collector-free compatibility runtime for raw wasm builds.
-	// Named profiles add this tag after target resolution; R2 replaces it once
-	// suspended roots are visible to the wasm collector.
-	if goarch == "wasm" && target == "" {
-		tags += ",nogc"
-	}
-	return tags
+// DefaultBuildTags returns the build tags LLGo always enables.
+func DefaultBuildTags() string {
+	return "llgo,math_big_pure_go,purego"
 }
 
 func configureWasmGC(conf *Config, export *crosscompile.Export) (bool, error) {
@@ -1266,10 +1284,10 @@ func configureWasmGC(conf *Config, export *crosscompile.Export) (bool, error) {
 	}
 
 	defaultEnabled := false
-	switch export.WasmABI {
-	case crosscompile.WasmABIEmscripten, crosscompile.WasmABIEmscriptenMemory64:
+	switch export.WasmProfile {
+	case crosscompile.WasmProfileJ32, crosscompile.WasmProfileJ64:
 		defaultEnabled = true
-	case crosscompile.WasmABIWASIPreview1:
+	case crosscompile.WasmProfileW32:
 		if IsWasiThreadsEnabled() {
 			if explicit {
 				return false, errors.New("llgo.wasm.gc.linear requires single-worker WASI (set LLGO_WASI_THREADS=0)")
@@ -1277,19 +1295,14 @@ func configureWasmGC(conf *Config, export *crosscompile.Export) (bool, error) {
 			return false, nil
 		}
 		defaultEnabled = true
-	case crosscompile.WasmABIUnspecified:
-		// Raw GOOS/GOARCH builds retain their current compatibility behavior
-		// until the official-Go wasm ABI line is complete. The explicit tag is
-		// still available for focused runtime development.
-		if explicit && conf.Goos != "js" && conf.Goos != "wasip1" {
-			return false, fmt.Errorf("llgo.wasm.gc.linear does not support GOOS=%s", conf.Goos)
+	case crosscompile.WasmProfileNone:
+		if explicit {
+			return false, fmt.Errorf("llgo.wasm.gc.linear requires a supported hosted WebAssembly profile")
 		}
-		if explicit && conf.Goos == "wasip1" && IsWasiThreadsEnabled() {
-			return false, errors.New("llgo.wasm.gc.linear requires single-worker WASI (set LLGO_WASI_THREADS=0)")
-		}
+		return false, nil
 	default:
 		if explicit {
-			return false, fmt.Errorf("llgo.wasm.gc.linear does not support WebAssembly ABI %q", export.WasmABI)
+			return false, fmt.Errorf("llgo.wasm.gc.linear does not support WebAssembly profile %q", export.WasmProfile)
 		}
 		return false, nil
 	}
@@ -1304,8 +1317,23 @@ func configureWasmGC(conf *Config, export *crosscompile.Export) (bool, error) {
 	return enabled, nil
 }
 
+func usesSingleWorkerWasmScheduler(conf *Config) bool {
+	if conf == nil || conf.Goarch != "wasm" {
+		return false
+	}
+	switch conf.Goos {
+	case "js":
+		return true
+	case "wasip1":
+		return !IsWasiThreadsEnabled()
+	default:
+		return false
+	}
+}
+
 func applyWasmGCLinkFlags(conf *Config, export *crosscompile.Export) {
 	if conf.Goos != "js" || conf.Goarch != "wasm" ||
+		(export.WasmProfile != crosscompile.WasmProfileJ32 && export.WasmProfile != crosscompile.WasmProfileJ64) ||
 		!slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.gc.linear") {
 		return
 	}
@@ -1314,22 +1342,13 @@ func applyWasmGCLinkFlags(conf *Config, export *crosscompile.Export) {
 	}
 }
 
-func effectiveTypeSizes(sizes types.Sizes, arch string, wasmABI crosscompile.WasmABI) types.Sizes {
-	if wasmABI == crosscompile.WasmABIUnspecified {
-		// Preserve main's current raw wasm layout until G1/G2 completes the
-		// official Go ABI. Crucially, this temporary implementation gap does
-		// not add a C-ecosystem source tag or cache identity.
-		if arch == "wasm" {
-			return &types.StdSizes{WordSize: 4, MaxAlign: 4}
-		}
-		return sizes
-	}
-	switch wasmABI {
-	case crosscompile.WasmABIEmscripten, crosscompile.WasmABIWASIPreview1,
-		crosscompile.WasmABIWASIPreview2, crosscompile.WasmABIFreestanding:
-		return &types.StdSizes{WordSize: 4, MaxAlign: 4}
-	case crosscompile.WasmABIEmscriptenMemory64:
-		return &types.StdSizes{WordSize: 8, MaxAlign: 8}
+func effectiveTypeSizes(sizes types.Sizes, profile crosscompile.WasmProfile) types.Sizes {
+	switch profile {
+	case crosscompile.WasmProfileJ32, crosscompile.WasmProfileJ64, crosscompile.WasmProfileW32:
+		// StdSizes omits struct tail padding. Its nested-field offsets then
+		// disagree with LLVM's physical layout, so reflected fields and unsafe
+		// constants can address padding instead of the following field.
+		return types.SizesFor("gc", "amd64")
 	default:
 		return sizes
 	}
@@ -1446,6 +1465,9 @@ type context struct {
 	stripDarwinLTOLocals bool
 
 	buildTrace *buildTracer
+
+	wasmProgramUseOnce sync.Once
+	wasmProgramUse     *wasmProgramUse
 }
 
 // backendAbiTypes snapshots Go-owned type identities from isolated Programs
@@ -1594,7 +1616,8 @@ func (c *context) irCompiler() *clang.Cmd {
 
 func (c *context) irClangConfig() clang.Config {
 	config := c.clangConfig()
-	if c.crossCompile.WasmABI == crosscompile.WasmABIEmscriptenMemory64 {
+	if c.crossCompile.WasmProfile == crosscompile.WasmProfileJ64 &&
+		c.crossCompile.WasmProvider == crosscompile.WasmProviderEmscripten {
 		// cmd/llgo puts the LLVM installation selected at build time first in
 		// PATH. Do not inherit emcc's command prefix here: only its target and
 		// optimization flags are relevant when consuming LLVM IR. Preserve the
@@ -2191,9 +2214,8 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	ctx.stripDarwinLTOLocals = false
 	entryPkg := genMainModule(ctx, llssa.PkgRuntime, pkg, &preparation.gen)
 	cExports := preparation.gen.cExports
-	if len(cExports) != 0 {
-		llabi.LowerLargeAggregates(ctx.prog.TargetData(), entryPkg.LPkg.Module())
-		ctx.cTransformer.TransformModule(entryPkg.LPkg.Path(), entryPkg.LPkg.Module())
+	if _, err := lowerMainCExportModule(ctx, entryPkg.LPkg, cExports); err != nil {
+		return nil, err
 	}
 	if ctx.buildConf.deadcodeDropEnabled() {
 		if err := applyDeadcodeDropOverrides(preparation.linkedOrder, entryPkg, preparation.gen.rtInit, verbose); err != nil {
@@ -2773,7 +2795,7 @@ func needStart(ctx *context) bool {
 		return !isWasmTarget(ctx.buildConf.Goos)
 	}
 	switch ctx.buildConf.Target {
-	case "wasi", "wasip1", "wasip2":
+	case "wasi", "wasip1":
 		// WASI libc owns _start and calls __main_argc_argv after initializing
 		// argc/argv and its process state. Defining LLGo's generic weak _start
 		// makes current wasi-libc select __main_void and drop the Go entry.
@@ -2846,6 +2868,66 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 	return externs, nil
 }
 
+// lowerLargeAggregates is shared by package, export-wrapper, and translated
+// assembly modules so every late allocation follows the selected GC policy.
+func lowerLargeAggregates(prog llssa.Program, mod gllvm.Module) {
+	llabi.LowerLargeAggregates(prog.TargetData(), mod, llabi.AggregateLoweringConfig{
+		GoWordSize: prog.GoWordSize(),
+		GCRoots:    prog.GCRootsEnabled(),
+		Wasm:       prog.Target().GOARCH == "wasm",
+	})
+}
+
+func lowerMainCExportAggregates(prog llssa.Program, mod gllvm.Module, exports []cExport) bool {
+	if len(exports) == 0 {
+		return false
+	}
+	lowerLargeAggregates(prog, mod)
+	return true
+}
+
+func lowerMainCExportModule(ctx *context, pkg llssa.Package, exports []cExport) (bool, error) {
+	mod := pkg.Module()
+	if !lowerMainCExportAggregates(ctx.prog, mod, exports) {
+		return false, nil
+	}
+	ctx.cTransformer.TransformModule(pkg.Path(), mod)
+	if ctx.buildConf.Goarch != "wasm" {
+		return true, nil
+	}
+
+	// C ABI lowering can introduce 4-64 KiB aggregate snapshots in export
+	// wrappers. Apply the same post-C-ABI Wasm passes as package modules.
+	lowerWasmAggregateCopies(ctx.buildConf.Goarch, ctx.prog.TargetData(), mod, llabi.AggregateLoweringConfig{
+		GoWordSize: ctx.prog.GoWordSize(),
+		GCRoots:    ctx.prog.GCRootsEnabled(),
+		Wasm:       true,
+	})
+	applySizeOptimizationAttributes(mod, ctx.buildConf.OptLevel)
+	if err := optimizeLLVMModule(ctx, pkg.Path(), mod); err != nil {
+		return true, err
+	}
+	localizeWasmStackAddresses(ctx.buildConf.Goarch, mod)
+	return true, nil
+}
+
+func optimizeLLVMModule(ctx *context, pkgPath string, mod gllvm.Module) error {
+	if !ctx.passOpt {
+		return nil
+	}
+	mod.SetDataLayout(ctx.prog.DataLayout())
+	mod.SetTarget(ctx.prog.Target().Spec().Triple)
+	pbo := gllvm.NewPassBuilderOptions()
+	defer pbo.Dispose()
+	if err := gllvm.VerifyModule(mod, gllvm.ReturnStatusAction); err != nil {
+		return fmt.Errorf("verify LLVM module for %v failed: %w", pkgPath, err)
+	}
+	if err := mod.RunPasses(llvmPassPipeline(ctx.buildConf.OptLevel, ctx.buildConf.ltoMode()), ctx.prog.TargetMachine(), pbo); err != nil {
+		return fmt.Errorf("run LLVM passes failed for %v: %w", pkgPath, err)
+	}
+	return nil
+}
+
 // compilePackageModule applies LLVM transforms and emits package objects.
 func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbose bool) error {
 	pkg := aPkg.Package
@@ -2853,7 +2935,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	ret := aPkg.LPkg
 
 	ctx.cTransformer.SetSkipFuncs(cabiSkipFuncsForPlan9Asm(ctx, pkgPath, ret.Module()))
-	llabi.LowerLargeAggregates(ctx.prog.TargetData(), ret.Module())
+	lowerLargeAggregates(ctx.prog, ret.Module())
 	ctx.cTransformer.TransformModule(ret.Path(), ret.Module())
 	ctx.cTransformer.SetSkipFuncs(nil)
 	if ctx.buildConf.Goos == "windows" {
@@ -2865,6 +2947,11 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 			return err
 		}
 	}
+	lowerWasmAggregateCopies(ctx.buildConf.Goarch, ctx.prog.TargetData(), ret.Module(), llabi.AggregateLoweringConfig{
+		GoWordSize: ctx.prog.GoWordSize(),
+		GCRoots:    ctx.prog.GCRootsEnabled(),
+		Wasm:       true,
+	})
 	applySizeOptimizationAttributes(ret.Module(), ctx.buildConf.OptLevel)
 	printCmds := ctx.shouldPrintCommands(verbose)
 	if ctx.mode != ModeGen {
@@ -2885,19 +2972,10 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	}
 
 	// Run the default LLVM optimization pipeline selected by the requested -O level.
-	if ctx.passOpt {
-		mod := ret.Module()
-		mod.SetDataLayout(ctx.prog.DataLayout())
-		mod.SetTarget(ctx.prog.Target().Spec().Triple)
-		pbo := gllvm.NewPassBuilderOptions()
-		defer pbo.Dispose()
-		if err := gllvm.VerifyModule(mod, gllvm.ReturnStatusAction); err != nil {
-			return fmt.Errorf("verify LLVM module for %v failed: %w", pkgPath, err)
-		}
-		if err := mod.RunPasses(llvmPassPipeline(ctx.buildConf.OptLevel, ctx.buildConf.ltoMode()), ctx.prog.TargetMachine(), pbo); err != nil {
-			return fmt.Errorf("run LLVM passes failed for %v: %w", pkgPath, err)
-		}
+	if err := optimizeLLVMModule(ctx, pkgPath, ret.Module()); err != nil {
+		return err
 	}
+	localizeWasmStackAddresses(ctx.buildConf.Goarch, ret.Module())
 	dropUnusedWindowsTestMain(ctx, aPkg, ret.Module())
 	emitFuncInfoEntrySites(ctx, ret)
 	// ModeGen callers consume the in-memory LLVM module directly. They do not

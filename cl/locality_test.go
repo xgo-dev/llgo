@@ -1,6 +1,7 @@
 package cl
 
 import (
+	"fmt"
 	"go/ast"
 	"go/importer"
 	"go/parser"
@@ -21,6 +22,14 @@ func compileLocalitySource(t *testing.T, src string) (llssa.Program, string) {
 }
 
 func compileLocalitySourceWithOptions(t *testing.T, src string, options Options) (llssa.Program, string) {
+	return compileLocalitySourceMode(t, src, options, false)
+}
+
+func compileLogicalGLSSource(t *testing.T, src string) (llssa.Program, string) {
+	return compileLocalitySourceMode(t, src, Options{}, true)
+}
+
+func compileLocalitySourceMode(t *testing.T, src string, options Options, logicalGLS bool) (llssa.Program, string) {
 	t.Helper()
 	options.AllowInternalDirectives = true
 	fset := token.NewFileSet()
@@ -38,6 +47,7 @@ func compileLocalitySourceWithOptions(t *testing.T, src string, options Options)
 	prog := ssatest.NewProgramEx(t, nil, imp)
 	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	prog.SetRuntime(localityRuntimePackage())
+	prog.EnableLogicalGoroutineLocality(logicalGLS)
 	if err := ParsePkgSyntaxWithOptions(prog, fset, pkg, files, options); err != nil {
 		t.Fatal(err)
 	}
@@ -83,6 +93,13 @@ func localityRuntimePackage() *types.Package {
 	localContextName := types.NewTypeName(token.NoPos, pkg, "LocalContext", nil)
 	localContext := types.NewNamed(localContextName, types.NewStruct([]*types.Var{blocks}, nil), nil)
 	pkg.Scope().Insert(localContextName)
+	efaceName := types.NewTypeName(token.NoPos, pkg, "Eface", nil)
+	efaceFields := []*types.Var{
+		types.NewField(token.NoPos, pkg, "typ", unsafePointer, false),
+		types.NewField(token.NoPos, pkg, "data", unsafePointer, false),
+	}
+	types.NewNamed(efaceName, types.NewStruct(efaceFields, nil), nil)
+	pkg.Scope().Insert(efaceName)
 
 	localPackageParams := types.NewTuple(
 		types.NewParam(token.NoPos, pkg, "cache", types.NewPointer(types.Typ[types.Uintptr])),
@@ -91,6 +108,7 @@ func localityRuntimePackage() *types.Package {
 	)
 	localPackageResults := types.NewTuple(types.NewParam(token.NoPos, pkg, "", types.Typ[types.UnsafePointer]))
 	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "LocalPackage", types.NewSignatureType(nil, nil, nil, localPackageParams, localPackageResults, false)))
+	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "GoroutineLocalPackage", types.NewSignatureType(nil, nil, nil, localPackageParams, localPackageResults, false)))
 
 	callback := types.NewSignatureType(nil, nil, nil, nil, nil, false)
 	ensureParams := types.NewTuple(
@@ -99,6 +117,12 @@ func localityRuntimePackage() *types.Package {
 		types.NewParam(token.NoPos, pkg, "initialize", callback),
 	)
 	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "EnsureLocalInitializer", types.NewSignatureType(nil, nil, nil, ensureParams, nil, false)))
+	logicalEnsureParams := types.NewTuple(
+		types.NewParam(token.NoPos, pkg, "state", types.NewPointer(types.Typ[types.Uint8])),
+		types.NewParam(token.NoPos, pkg, "failure", types.NewPointer(types.NewInterfaceType(nil, nil).Complete())),
+		types.NewParam(token.NoPos, pkg, "initialize", callback),
+	)
+	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "EnsureGoroutineLocalInitializer", types.NewSignatureType(nil, nil, nil, logicalEnsureParams, nil, false)))
 
 	contextPointer := types.NewPointer(localContext)
 	enterParams := types.NewTuple(types.NewParam(token.NoPos, pkg, "ctx", contextPointer))
@@ -223,6 +247,69 @@ func values() (int, *int, int, *int) {
 	if !prog.NeedsLocalContext() {
 		t.Fatal("pointer-bearing local variables did not enable a local context")
 	}
+}
+
+func TestLogicalGoroutineLocalityKeepsTLSPhysical(t *testing.T) {
+	_, ir := compileLogicalGLSSource(t, `package locality
+
+var backing int
+func scalar() int { return 42 }
+func pointer() *int { return &backing }
+
+//llgointernal:tls
+var tlsScalar = scalar()
+//llgointernal:tls
+var tlsPointer = pointer()
+//llgointernal:gls
+var glsScalar = scalar()
+//llgointernal:gls
+var glsPointer = pointer()
+
+func values() (int, *int, int, *int) {
+	return tlsScalar, tlsPointer, glsScalar, glsPointer
+}
+`)
+
+	if !strings.Contains(ir, `@"example.com/locality.tlsScalar" = thread_local global i64`) {
+		t.Fatalf("pointer-free TLS lost native storage:\n%s", ir)
+	}
+	for _, name := range []string{"glsScalar", "glsPointer"} {
+		if strings.Contains(ir, `@"example.com/locality.`+name+`" =`) {
+			t.Fatalf("logical GLS %s was emitted as a fixed global:\n%s", name, ir)
+		}
+	}
+	if !strings.Contains(ir, `@"example.com/locality.__llgo_gls_key" = global i64 0`) ||
+		strings.Contains(ir, `@"example.com/locality.__llgo_gls_key" = thread_local`) {
+		t.Fatalf("logical GLS package key is not process-global:\n%s", ir)
+	}
+	glsAccessor := llvmFunction(t, ir, "example.com/locality.__llgo_gls_block")
+	if !strings.Contains(glsAccessor, `GoroutineLocalPackage`) ||
+		strings.Contains(glsAccessor, llssa.PkgRuntime+`.LocalPackage"(`) {
+		t.Fatalf("logical GLS accessor uses the physical locality cache:\n%s", glsAccessor)
+	}
+	glsEnsure := llvmFunction(t, ir, "example.com/locality.__llgo_gls_init$ensure")
+	if !strings.Contains(glsEnsure, `EnsureGoroutineLocalInitializer`) ||
+		strings.Contains(ir, `@"example.com/locality.__llgo_gls_init$guard"`) {
+		t.Fatalf("logical GLS initializer state is not owned by the G:\n%s", glsEnsure)
+	}
+	values := llvmFunction(t, ir, "example.com/locality.values")
+	for _, accessor := range []string{"__llgo_local_block", "__llgo_gls_block"} {
+		if !strings.Contains(values, accessor) {
+			t.Fatalf("values does not access %s:\n%s", accessor, values)
+		}
+	}
+}
+
+func TestRequireLocalityField(t *testing.T) {
+	if got := requireLocalityField(map[string]int{"value": 3}, "value", "logical GLS"); got != 3 {
+		t.Fatalf("field = %d, want 3", got)
+	}
+	defer func() {
+		if got := recover(); got == nil || !strings.Contains(fmt.Sprint(got), "missing logical GLS field for absent") {
+			t.Fatalf("missing-field panic = %v", got)
+		}
+	}()
+	requireLocalityField(nil, "absent", "logical GLS")
 }
 
 func TestLocalityDebugInfoOnlyUsesFixedGlobals(t *testing.T) {

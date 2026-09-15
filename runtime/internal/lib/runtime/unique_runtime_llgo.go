@@ -1,4 +1,4 @@
-//go:build darwin || linux || windows
+//go:build darwin || linux || windows || (baremetal && !nogc) || (wasm && llgo.wasm.gc.linear)
 
 package runtime
 

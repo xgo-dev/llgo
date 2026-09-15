@@ -4,6 +4,7 @@
 	"build-tags": ["llgo.wasm.emscripten"],
 	"goos": "js",
 	"goarch": "wasm",
-	"wasm-abi": "emscripten",
+	"wasm-profile": "j32",
+	"wasm-provider": "emscripten",
 	"emulator": "node \"{root}/targets/emscripten-runner.mjs\" \"{}\""
 }

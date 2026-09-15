@@ -37,6 +37,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv("LLGO_TEST_NODE_HELPER") == "1" && strings.TrimSuffix(strings.ToLower(filepath.Base(os.Args[0])), ".exe") == "node" {
+		os.Exit(0)
+	}
 	if mode := os.Getenv("LLGO_TEST_WASM_OPT_HELPER"); mode != "" {
 		if argsFile := os.Getenv("ARGS_FILE"); argsFile != "" {
 			file, err := os.OpenFile(argsFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
@@ -757,46 +760,30 @@ func TestNeedsLinuxNoPIE(t *testing.T) {
 
 func TestDefaultBuildTags(t *testing.T) {
 	const base = "llgo,math_big_pure_go,purego"
-	for _, test := range []struct {
-		name   string
-		goarch string
-		target string
-		want   string
-	}{
-		{name: "native", goarch: "arm64", want: base},
-		{name: "raw wasm", goarch: "wasm", want: base + ",nogc"},
-		{name: "configured wasm target", goarch: "wasm", target: "wasip1", want: base},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if got := defaultBuildTags(test.goarch, test.target); got != test.want {
-				t.Fatalf("defaultBuildTags(%q, %q) = %q, want %q", test.goarch, test.target, got, test.want)
-			}
-		})
+	if got := DefaultBuildTags(); got != base {
+		t.Fatalf("DefaultBuildTags() = %q, want %q", got, base)
 	}
 }
 
 func TestConfigureWasmGC(t *testing.T) {
 	t.Setenv("LLGO_WASI_THREADS", "0")
 	tests := []struct {
-		name   string
-		conf   Config
-		abi    crosscompile.WasmABI
-		wantGC bool
-		err    bool
+		name    string
+		conf    Config
+		profile crosscompile.WasmProfile
+		wantGC  bool
+		err     bool
 	}{
-		{name: "Emscripten", conf: Config{Goos: "js", Goarch: "wasm"}, abi: crosscompile.WasmABIEmscripten, wantGC: true},
-		{name: "Emscripten Memory64", conf: Config{Goos: "js", Goarch: "wasm"}, abi: crosscompile.WasmABIEmscriptenMemory64, wantGC: true},
-		{name: "WASI", conf: Config{Goos: "wasip1", Goarch: "wasm"}, abi: crosscompile.WasmABIWASIPreview1, wantGC: true},
-		{name: "raw wasm", conf: Config{Goos: "js", Goarch: "wasm"}},
-		{name: "raw wasm explicit", conf: Config{Goos: "js", Goarch: "wasm", Tags: "other,llgo.wasm.gc.linear"}, wantGC: true},
+		{name: "J32", conf: Config{Goos: "js", Goarch: "wasm"}, profile: crosscompile.WasmProfileJ32, wantGC: true},
+		{name: "J64", conf: Config{Goos: "js", Goarch: "wasm"}, profile: crosscompile.WasmProfileJ64, wantGC: true},
+		{name: "W32", conf: Config{Goos: "wasip1", Goarch: "wasm"}, profile: crosscompile.WasmProfileW32, wantGC: true},
 		{name: "native", conf: Config{Goos: "linux", Goarch: "amd64"}},
 		{name: "native explicit", conf: Config{Goos: "linux", Goarch: "amd64", Tags: "llgo.wasm.gc.linear"}, err: true},
-		{name: "unsupported raw host", conf: Config{Goos: "linux", Goarch: "wasm", Tags: "llgo.wasm.gc.linear"}, err: true},
-		{name: "freestanding explicit", conf: Config{Goos: "linux", Goarch: "wasm", Tags: "llgo.wasm.gc.linear"}, abi: crosscompile.WasmABIFreestanding, err: true},
+		{name: "missing profile", conf: Config{Goos: "js", Goarch: "wasm", Tags: "llgo.wasm.gc.linear"}, err: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			export := crosscompile.Export{WasmABI: test.abi}
+			export := crosscompile.Export{WasmProfile: test.profile}
 			enabled, err := configureWasmGC(&test.conf, &export)
 			if (err != nil) != test.err {
 				t.Fatalf("configureWasmGC error = %v, want error %v", err, test.err)
@@ -817,11 +804,44 @@ func TestConfigureWasmGC(t *testing.T) {
 
 func TestConfigureWasmGCRejectsWASIThreads(t *testing.T) {
 	t.Setenv("LLGO_WASI_THREADS", "1")
-	for _, abi := range []crosscompile.WasmABI{crosscompile.WasmABIUnspecified, crosscompile.WasmABIWASIPreview1} {
-		conf := Config{Goos: "wasip1", Goarch: "wasm", Tags: "llgo.wasm.gc.linear"}
-		if _, err := configureWasmGC(&conf, &crosscompile.Export{WasmABI: abi}); err == nil {
-			t.Fatalf("expected llgo.wasm.gc.linear with WASI threads and ABI %q to fail", abi)
+	conf := Config{Goos: "wasip1", Goarch: "wasm", Tags: "llgo.wasm.gc.linear"}
+	if _, err := configureWasmGC(&conf, &crosscompile.Export{WasmProfile: crosscompile.WasmProfileW32}); err == nil {
+		t.Fatal("expected llgo.wasm.gc.linear with WASI threads to fail")
+	}
+}
+
+func TestNeedStartWASITargetAliases(t *testing.T) {
+	for _, target := range []string{"wasi", "wasip1"} {
+		if needStart(&context{buildConf: &Config{Target: target}}) {
+			t.Errorf("target %q unexpectedly requested LLGo's generic _start", target)
 		}
+	}
+}
+
+func TestUsesSingleWorkerWasmScheduler(t *testing.T) {
+	tests := []struct {
+		name, goos, goarch string
+		wasiThreads        bool
+		want               bool
+	}{
+		{"Emscripten", "js", "wasm", false, true},
+		{"Emscripten ignores WASI setting", "js", "wasm", true, true},
+		{"single-worker WASI", "wasip1", "wasm", false, true},
+		{"WASI threads", "wasip1", "wasm", true, false},
+		{"unsupported wasm host", "plan9", "wasm", false, false},
+		{"native", "linux", "amd64", false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(llgoWasiThreads, strconv.FormatBool(tt.wasiThreads))
+			conf := &Config{Goos: tt.goos, Goarch: tt.goarch}
+			if got := usesSingleWorkerWasmScheduler(conf); got != tt.want {
+				t.Fatalf("usesSingleWorkerWasmScheduler(%s/%s) = %v, want %v", tt.goos, tt.goarch, got, tt.want)
+			}
+		})
+	}
+	if usesSingleWorkerWasmScheduler(nil) {
+		t.Fatal("nil configuration selected the single-worker scheduler")
 	}
 }
 
@@ -877,24 +897,53 @@ func TestWasmRuntimeAvoidsNativeHostDependencies(t *testing.T) {
 func TestEffectiveWasmTypeSizes(t *testing.T) {
 	base := &types.StdSizes{WordSize: 16, MaxAlign: 16}
 	for _, test := range []struct {
-		name string
-		arch string
-		abi  crosscompile.WasmABI
-		want int64
+		name    string
+		profile crosscompile.WasmProfile
+		want    int64
 	}{
-		{"unspecified native", "amd64", crosscompile.WasmABIUnspecified, 16},
-		{"raw wasm compatibility", "wasm", crosscompile.WasmABIUnspecified, 4},
-		{"Emscripten wasm32", "wasm", crosscompile.WasmABIEmscripten, 4},
-		{"Emscripten Memory64", "wasm", crosscompile.WasmABIEmscriptenMemory64, 8},
-		{"WASI Preview 1", "wasm", crosscompile.WasmABIWASIPreview1, 4},
-		{"WASI Preview 2", "arm", crosscompile.WasmABIWASIPreview2, 4},
-		{"freestanding wasm32", "arm", crosscompile.WasmABIFreestanding, 4},
-		{"unknown profile", "wasm", crosscompile.WasmABI("unknown"), 16},
+		{"unresolved", crosscompile.WasmProfileNone, 16},
+		{"J32", crosscompile.WasmProfileJ32, 8},
+		{"J64", crosscompile.WasmProfileJ64, 8},
+		{"W32", crosscompile.WasmProfileW32, 8},
+		{"unknown profile", crosscompile.WasmProfile("unknown"), 16},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got := effectiveTypeSizes(base, test.arch, test.abi).Sizeof(types.Typ[types.Uintptr])
+			got := effectiveTypeSizes(base, test.profile).Sizeof(types.Typ[types.Uintptr])
 			if got != test.want {
 				t.Fatalf("uintptr size = %d, want %d", got, test.want)
+			}
+		})
+	}
+}
+
+func TestWasmNestedStructTypeSizes(t *testing.T) {
+	common := types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, nil, "Name", types.Typ[types.String], false),
+		types.NewField(token.NoPos, nil, "ID", types.Typ[types.Int32], false),
+	}, nil)
+	fields := []*types.Var{
+		types.NewField(token.NoPos, nil, "Common", common, false),
+		types.NewField(token.NoPos, nil, "Elem", types.Typ[types.Int32], false),
+	}
+	for _, profile := range []crosscompile.WasmProfile{
+		crosscompile.WasmProfileJ32,
+		crosscompile.WasmProfileJ64,
+		crosscompile.WasmProfileW32,
+	} {
+		t.Run(string(profile), func(t *testing.T) {
+			sizes := effectiveTypeSizes(nil, profile)
+			if got := sizes.Sizeof(common); got != 24 {
+				t.Errorf("nested struct size = %d, want 24 including tail padding", got)
+			}
+			if got := sizes.Offsetsof(fields)[1]; got != 24 {
+				t.Errorf("following field offset = %d, want 24", got)
+			}
+			outer := types.NewStruct(fields, nil)
+			if got := sizes.Sizeof(outer); got != 32 {
+				t.Errorf("outer struct size = %d, want 32", got)
+			}
+			if got := sizes.Sizeof(types.NewArray(outer, 2)); got != 64 {
+				t.Errorf("outer struct array size = %d, want 64", got)
 			}
 		})
 	}
@@ -936,11 +985,6 @@ func TestWasmRuntimeBackendSelection(t *testing.T) {
 	}{
 		{
 			name: "raw JS and Emscripten profiles", goos: "js", tags: []string{"llgo", "nogc"},
-			want: []string{"g_wasm.go", "os_wasm.go", "proc_wasm.go", "runqueue_wasm.go", "fatal_emscripten.go", "local_context_baremetal.go"},
-			omit: []string{"g_tls.go", "os_pthread.go", "proc_pthread.go", "fatal_default.go", "local_context_tls.go"},
-		},
-		{
-			name: "legacy wasm alias", goos: "js", tags: []string{"llgo", "tinygo.wasm", "nogc"},
 			want: []string{"g_wasm.go", "os_wasm.go", "proc_wasm.go", "runqueue_wasm.go", "fatal_emscripten.go", "local_context_baremetal.go"},
 			omit: []string{"g_tls.go", "os_pthread.go", "proc_pthread.go", "fatal_default.go", "local_context_tls.go"},
 		},
@@ -1651,6 +1695,66 @@ func TestExecuteInitialPackageLinkCompileOnlyNamedTargetDoesNotExecute(t *testin
 	}
 	if data, err := os.ReadFile(output); err != nil || string(data) != "linked" {
 		t.Fatalf("linked output = %q, %v", data, err)
+	}
+}
+
+func TestExecuteInitialPackageLinkRawWasmRunUsesHostRunner(t *testing.T) {
+	t.Setenv("LLGO_TEST_LINKER_HELPER", "write")
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "runtime"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "runtime", "go.mod"), []byte("module github.com/xgo-dev/llgo/runtime\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LLGO_ROOT", root)
+
+	// Shadow Node with a successful host runner. The test is for post-link
+	// dispatch; JavaScript execution itself is covered by the wasm CI fixture.
+	binDir := t.TempDir()
+	nodeName := "node"
+	if runtime.GOOS == "windows" {
+		nodeName += ".exe"
+	}
+	if err := os.Link(os.Args[0], filepath.Join(binDir, nodeName)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LLGO_TEST_NODE_HELPER", "1")
+	pathEnv := binDir + string(os.PathListSeparator) + os.Getenv("PATH")
+	t.Setenv("PATH", pathEnv)
+	commands := commandEnv{environ: withEnv(os.Environ(), "PATH="+pathEnv)}
+	output := filepath.Join(t.TempDir(), "raw-gojs.wasm")
+	conf := &Config{
+		Mode:      ModeRun,
+		BuildMode: BuildModeExe,
+		Goos:      "js",
+		Goarch:    "wasm",
+		PCLNMode:  PCLNNone,
+	}
+	ctx := &context{
+		mode:      ModeRun,
+		buildConf: conf,
+		commands:  commands,
+		crossCompile: crosscompile.Export{
+			CC: os.Args[0],
+		},
+	}
+	link := &initialPackageLink{
+		pkg: &packages.Package{
+			Dir:     t.TempDir(),
+			PkgPath: "example.com/raw-gojs",
+		},
+		conf:    conf,
+		outFmts: &OutFmtDetails{Out: output},
+		plan:    &mainLinkPlan{outputPath: output},
+	}
+
+	program, err := executeInitialPackageLink(ctx, link, true, false)
+	if err != nil {
+		t.Fatalf("raw GoJS run: %v", err)
+	}
+	if program != nil {
+		t.Fatalf("raw GoJS run returned test program: %+v", program)
 	}
 }
 

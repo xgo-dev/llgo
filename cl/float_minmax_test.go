@@ -29,6 +29,7 @@ func TestFloatMinMaxLowering(t *testing.T) {
 		{llssa.Target{GOOS: "windows", GOARCH: "386"}, true},
 		{llssa.Target{GOOS: "windows", GOARCH: "386", GO386: "softfloat"}, false},
 		{llssa.Target{GOOS: "wasip1", GOARCH: "wasm"}, true},
+		{llssa.Target{GOOS: "js", GOARCH: "wasm", Target: "emscripten", LLVMTarget: "wasm32-unknown-emscripten", WasmProfile: "j32"}, true},
 		{llssa.Target{GOOS: "linux", GOARCH: "arm", GOARM: "7"}, false},
 		{llssa.Target{GOOS: "linux", GOARCH: "arm", GOARM: "5"}, false},
 		{llssa.Target{GOOS: "linux", GOARCH: "riscv64"}, false},

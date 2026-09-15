@@ -37,9 +37,29 @@ type Target struct {
 	GOARM64                 string // "v8.0" (default) through "v9.5", with optional extensions
 	Target                  string // target name from -target flag (e.g., "esp32", "arm7tdmi", "wasi")
 	LLVMTarget              string // physical LLVM target selected by a target configuration
-	WasmABI                 string // explicit WebAssembly ecosystem ABI/profile
+	WasmProfile             string // logical hosted WebAssembly profile (j32, j64, or w32)
+	WasmProvider            string // hosted WebAssembly provider (gojs, emscripten, or wasi)
+	WasmReflectBridges      bool   // emit statically typed reflection bridges for this program
+	WasmFuncInfoEntries     bool   // emit table-index symbolization records for this program
 	OptLevel                optlevel.Level
 	SaturatingFloatToUint32 bool
+}
+
+// IsRuntimeSupportPackage reports whether path is part of the selected Go or
+// LLGo runtime implementation rather than an ordinary user/library package.
+func IsRuntimeSupportPackage(path string) bool {
+	if path == "runtime" || strings.HasPrefix(path, "runtime/internal/") || strings.HasPrefix(path, "internal/runtime/") {
+		return true
+	}
+	runtimeModule := strings.TrimSuffix(PkgRuntime, "/internal/runtime")
+	return path == runtimeModule || strings.HasPrefix(path, runtimeModule+"/")
+}
+
+func (p *Target) usesWasmReflectBridges() bool {
+	if p == nil || p.effectiveGOARCH() != "wasm" {
+		return false
+	}
+	return p.WasmReflectBridges && p.WasmProvider == "wasi"
 }
 
 func (p *Target) effectiveGOOS() string {
@@ -151,20 +171,13 @@ func (p *Target) Spec() (spec TargetSpec) {
 	// Named embedded targets keep their existing backend triple here: their
 	// external compiler may support a target such as Xtensa that the host LLVM
 	// library used to build LLGo does not register.
-	if p.LLVMTarget != "" && (p.Target == "" || p.WasmABI != "") {
+	if p.LLVMTarget != "" && (p.Target == "" || p.WasmProfile != "") {
 		spec.Triple = p.LLVMTarget
 	}
 	// Build validates these settings before constructing Target. Spec also
 	// accepts hand-built Targets, so it intentionally uses each resolver's
 	// documented Go-default fallback when its error cannot be returned here.
-	backendArch := goarch
-	if p.WasmABI != "" && strings.HasPrefix(p.LLVMTarget, "wasm") {
-		// Some legacy freestanding/component target configs borrow linux/arm
-		// only for source selection. Their physical backend remains wasm and
-		// must not receive ARM CPU features.
-		backendArch = "wasm"
-	}
-	switch backendArch {
+	switch goarch {
 	case "386":
 		spec.CPU = "pentium4"
 		go386, _ := archcfg.Resolve386(p.goArchitectureSetting(p.GO386))

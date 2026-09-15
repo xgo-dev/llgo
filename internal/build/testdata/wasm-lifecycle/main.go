@@ -7,9 +7,10 @@ import (
 )
 
 type object struct {
-	value int
-	next  *object
-	pad   [64]byte
+	value           int
+	next            *object
+	pad             [64]byte
+	finalizerEvents chan<- int
 }
 
 func (o *object) Value() int { return o.value }
@@ -19,7 +20,6 @@ type valued interface {
 }
 
 var weakObject weak.Pointer[object]
-var nonCapturingEvents chan<- int
 
 func main() {
 	testFinalizerCalls()
@@ -157,43 +157,65 @@ type aggregateResult struct {
 }
 
 func nonCapturingPointerFinalizer(value *object) aggregateResult {
-	nonCapturingEvents <- 11
+	value.finalizerEvents <- 11
 	return aggregateResult{value.value, value.value + 1}
 }
 
 func nonCapturingInterfaceFinalizer(value valued) aggregateResult {
-	nonCapturingEvents <- 12
+	value.(*object).finalizerEvents <- 12
 	return aggregateResult{value.Value(), value.Value() + 1}
 }
 
 //go:noinline
 func installNonCapturingFinalizers(events chan<- int) {
-	nonCapturingEvents = events
-	pointer := &object{value: 51}
-	iface := &object{value: 52}
+	pointer := &object{value: 51, finalizerEvents: events}
+	iface := &object{value: 52, finalizerEvents: events}
 	runtime.SetFinalizer(pointer, nonCapturingPointerFinalizer)
 	runtime.SetFinalizer(iface, nonCapturingInterfaceFinalizer)
 }
 
 func testFinalizerCalls() {
-	events := make(chan int, 12)
+	const kinds, copies = 12, 3
+	var events [copies]chan int
+	for i := range events {
+		events[i] = make(chan int, kinds)
+	}
 	done := make(chan struct{})
 	go func() {
-		installFinalizerCalls(events)
+		// Static bytes may look like an interior pointer to one of these
+		// objects. Exercise every ABI without requiring every conservatively
+		// retained object to become eligible for finalization.
+		for _, batch := range events {
+			installFinalizerCalls(batch)
+		}
 		close(done)
 	}()
 	<-done
-	collectUntil("typed finalizers", func() bool { return len(events) == 12 })
 
-	seen := [13]bool{}
-	for range 12 {
-		event := <-events
-		if event < 1 || event > 12 || seen[event] {
-			panic("typed finalizer ran with an invalid or duplicate event")
+	var seen [copies][kinds + 1]bool
+	var covered [kinds + 1]bool
+	remaining := kinds
+	drain := func() bool {
+		for copy, batch := range events {
+			for len(batch) != 0 {
+				event := <-batch
+				// A separate channel per copy identifies each registration,
+				// so repetitions cannot hide a duplicate callback.
+				if event < 1 || event > kinds || seen[copy][event] {
+					panic("typed finalizer ran with an invalid or duplicate event")
+				}
+				seen[copy][event] = true
+				if !covered[event] {
+					covered[event] = true
+					remaining--
+				}
+			}
 		}
-		seen[event] = true
+		return remaining == 0
 	}
-	nonCapturingEvents = nil
+	collectUntil("typed finalizers", drain)
+	collectCycles(4)
+	drain()
 }
 
 //go:noinline

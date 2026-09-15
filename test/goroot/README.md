@@ -66,11 +66,22 @@ Multiple toolchains:
 bash ./dev/test_goroot.sh /path/to/go1.23 /path/to/go1.24 -- -dirs . -case '^helloworld\.go$'
 ```
 
+Host-driven WebAssembly execution keeps discovery and result comparison in the native runner while compiling both the official Go baseline and LLGo output for WebAssembly. The four W3 paths are `J32-GoJS` (wasm32 with Go-compatible js/wasm source/API), `J32-Emscripten` (wasm32 with the Emscripten JS provider), `J64-Emscripten` (wasm64 with the Emscripten JS provider), and `W32-WASI` (wasm32 with WASI Preview 1). Generated programs run through the profile's Node or Wasmtime adapter.
+
+```bash
+go test ./test/goroot -count=1 -args \
+  -goroot "$(go env GOROOT)" \
+  -wasm-profile J32-Emscripten \
+  -directive-mode ci \
+  -case '^helloworld\.go$'
+```
+
 Useful flags:
 
 - `-goroot`: upstream Go toolchain root to read tests from
 - `-go`: baseline `go` binary; defaults to `<goroot>/bin/go`
 - `-llgo`: existing `llgo` binary to use; otherwise one is built from the current checkout
+- `-wasm-profile`: host-driven target execution (`J32-GoJS`, `J32-Emscripten`, `J64-Emscripten`, or `W32-WASI`)
 - `-dirs`: comma-separated `GOROOT/test` subdirectories to scan
 - `-case`: regexp filter on the relative case path
 - `-directive-mode`: case discovery mode: `legacy`, `ci`, `runlike`, or `coverage`

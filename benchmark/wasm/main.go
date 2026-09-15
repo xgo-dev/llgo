@@ -45,31 +45,70 @@ type goWasmProfile struct {
 	goos string
 }
 
+type wasmExample struct {
+	name          string
+	source        string
+	goReference   bool
+	timed         bool
+	timedProfiles []string
+}
+
+var wasmExamples = []wasmExample{
+	{name: "println", goReference: true, timed: true},
+	// cprintf calls LLGo's C FFI, which the official Go wasm compiler does not
+	// support. Do not manufacture a Go reference by replacing its source.
+	{name: "cprintf"},
+	{name: "fmtprintf", goReference: true},
+	// reflectcall forces both dynamic call directions to be retained. Both W32
+	// entries use typed bridges, but time one representative WASI build to keep
+	// the CI cost bounded; JavaScript providers use libffi.
+	{name: "reflectcall", source: "benchmark/wasm/testdata/reflectcall/main.go", goReference: true, timedProfiles: []string{"w32-wasi"}},
+}
+
+func (example wasmExample) measuresBuild(profile string) bool {
+	return example.timed || slices.Contains(example.timedProfiles, profile)
+}
+
+func (example wasmExample) sourcePath(root string) string {
+	if example.source != "" {
+		return filepath.Join(root, filepath.FromSlash(example.source))
+	}
+	return filepath.Join(root, "benchmark", "binary_size", example.name, "main.go")
+}
+
+func (example wasmExample) metricName(profile string) string {
+	// Preserve the original println series so adding examples does not discard
+	// its existing history. The new examples have explicit name prefixes.
+	if example.name == "println" {
+		return profile
+	}
+	return example.name + "/" + profile
+}
+
 var wasmProfiles = []wasmProfile{
-	// GOOS/GOARCH entries measure the current implementation without
-	// claiming the official-Go ABI contract assigned to the later G1/G2 work.
-	{name: "js", goos: "js", outputExt: ".mjs", hasJSGlue: true},
-	{name: "wasip1", goos: "wasip1", outputExt: ".wasm"},
-	{name: "ec32", target: "emscripten", outputExt: ".mjs", hasJSGlue: true},
-	{name: "ec64", target: "emscripten-memory64", outputExt: ".mjs", hasJSGlue: true},
-	{name: "wc32", target: "wasi", outputExt: ".wasm"},
+	{name: "j32-goos-js", goos: "js", outputExt: ".mjs", hasJSGlue: true},
+	{name: "w32-goos-wasip1", goos: "wasip1", outputExt: ".wasm"},
+	{name: "j32-emscripten", target: "emscripten", outputExt: ".mjs", hasJSGlue: true},
+	{name: "j64-emscripten-memory64", target: "emscripten-memory64", outputExt: ".mjs", hasJSGlue: true},
+	{name: "w32-wasi", target: "wasi", outputExt: ".wasm"},
 }
 
 // The official Go compiler has no Emscripten or Memory64 ABI mode. Keep its
 // size references limited to the two profiles that describe the same
 // GOOS/GOARCH contract instead of presenting a C-ABI build as equivalent.
 var goWasmProfiles = []goWasmProfile{
-	{name: "js", goos: "js"},
-	{name: "wasip1", goos: "wasip1"},
+	{name: "j32-goos-js", goos: "js"},
+	{name: "w32-goos-wasip1", goos: "wasip1"},
 }
 
 type commandRunner func(context.Context, string, []string, string, ...string) error
 
 type measurement struct {
-	name        string
-	moduleBytes int64
-	glueBytes   int64
-	build       time.Duration
+	name          string
+	moduleBytes   int64
+	glueBytes     int64
+	build         time.Duration
+	buildMeasured bool
 }
 
 func main() {
@@ -88,10 +127,11 @@ func runCLI(ctx context.Context, args []string, runner commandRunner) error {
 	flags := flag.NewFlagSet("llgo-wasm-benchmark", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	root := flags.String("root", ".", "LLGo repository root")
+	fixtureRoot := flags.String("fixture-root", "", "repository root containing benchmark fixtures (defaults to -root)")
 	llgo := flags.String("llgo", "llgo", "LLGo command")
 	goCommand := flags.String("go", "go", "Go command")
 	out := flags.String("out", filepath.Join("benchmark", "wasm", "out"), "result directory")
-	buildRuns := flags.Int("build-runs", 3, "build repetitions per profile")
+	buildRuns := flags.Int("build-runs", 3, "build repetitions per timed profile")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -102,6 +142,13 @@ func runCLI(ctx context.Context, args []string, runner commandRunner) error {
 	absRoot, err := filepath.Abs(*root)
 	if err != nil {
 		return err
+	}
+	absFixtureRoot := absRoot
+	if *fixtureRoot != "" {
+		absFixtureRoot, err = filepath.Abs(*fixtureRoot)
+		if err != nil {
+			return err
+		}
 	}
 	absOut, err := filepath.Abs(*out)
 	if err != nil {
@@ -119,22 +166,34 @@ func runCLI(ctx context.Context, args []string, runner commandRunner) error {
 		"LLGO_ROOT="+absRoot,
 		"LLGO_BUILD_CACHE=off",
 	)
-	fixture := filepath.Join(absRoot, "benchmark", "binary_size", "println", "main.go")
-	measurements := make([]measurement, 0, len(wasmProfiles))
-	for _, profile := range wasmProfiles {
-		result, err := measureProfile(ctx, runner, env, absRoot, *llgo, absOut, fixture, profile, *buildRuns)
-		if err != nil {
-			return fmt.Errorf("build %s: %w", profile.name, err)
+	measurements := make([]measurement, 0, len(wasmExamples)*len(wasmProfiles))
+	var goSizes []measurement
+	for _, example := range wasmExamples {
+		fixture := example.sourcePath(absFixtureRoot)
+		exampleOut := filepath.Join(absOut, example.name)
+		for _, profile := range wasmProfiles {
+			profileBuildRuns := 0
+			if example.measuresBuild(profile.name) {
+				profileBuildRuns = *buildRuns
+			}
+			result, err := measureProfile(ctx, runner, env, absRoot, *llgo, exampleOut, fixture, profile, profileBuildRuns)
+			if err != nil {
+				return fmt.Errorf("build %s/%s: %w", example.name, profile.name, err)
+			}
+			result.name = example.metricName(profile.name)
+			measurements = append(measurements, result)
 		}
-		measurements = append(measurements, result)
-	}
-	goSizes := make([]measurement, 0, len(goWasmProfiles))
-	for _, profile := range goWasmProfiles {
-		result, err := measureGoProfile(ctx, runner, env, absRoot, *goCommand, absOut, fixture, profile)
-		if err != nil {
-			return fmt.Errorf("build official Go %s: %w", profile.name, err)
+		if !example.goReference {
+			continue
 		}
-		goSizes = append(goSizes, result)
+		for _, profile := range goWasmProfiles {
+			result, err := measureGoProfile(ctx, runner, env, absRoot, *goCommand, exampleOut, fixture, profile)
+			if err != nil {
+				return fmt.Errorf("build official Go %s/%s: %w", example.name, profile.name, err)
+			}
+			result.name = example.metricName(profile.name)
+			goSizes = append(goSizes, result)
+		}
 	}
 	return writeResults(filepath.Join(absOut, "benchmark.txt"), measurements, goSizes)
 }
@@ -168,17 +227,24 @@ func measureProfile(
 		}
 		return runner(ctx, root, profileEnv, llgo, args...)
 	}
-	// Keep first-use filesystem and host-tool caches outside the samples.
-	if err := build(); err != nil {
-		return measurement{}, fmt.Errorf("warm build: %w", err)
-	}
-	durations := make([]time.Duration, 0, buildRuns)
-	for range buildRuns {
-		start := time.Now()
+	var durations []time.Duration
+	if buildRuns == 0 {
 		if err := build(); err != nil {
 			return measurement{}, err
 		}
-		durations = append(durations, time.Since(start))
+	} else {
+		// Keep first-use filesystem and host-tool caches outside the samples.
+		if err := build(); err != nil {
+			return measurement{}, fmt.Errorf("warm build: %w", err)
+		}
+		durations = make([]time.Duration, 0, buildRuns)
+		for range buildRuns {
+			start := time.Now()
+			if err := build(); err != nil {
+				return measurement{}, err
+			}
+			durations = append(durations, time.Since(start))
+		}
 	}
 
 	module := output
@@ -198,12 +264,16 @@ func measureProfile(
 	if err != nil {
 		return measurement{}, err
 	}
-	return measurement{
+	result := measurement{
 		name:        profile.name,
 		moduleBytes: moduleBytes,
 		glueBytes:   glueBytes,
-		build:       medianDuration(durations),
-	}, nil
+	}
+	if len(durations) != 0 {
+		result.build = medianDuration(durations)
+		result.buildMeasured = true
+	}
+	return result, nil
 }
 
 func measureGoProfile(
@@ -270,12 +340,14 @@ func writeResults(path string, measurements, goSizes []measurement) error {
 			result.moduleBytes,
 			result.glueBytes,
 		)
-		fmt.Fprintf(
-			&output,
-			"BenchmarkWasmBuild/%s 1 %d build-ns\n",
-			result.name,
-			result.build.Nanoseconds(),
-		)
+		if result.buildMeasured {
+			fmt.Fprintf(
+				&output,
+				"BenchmarkWasmBuild/%s 1 %d build-ns\n",
+				result.name,
+				result.build.Nanoseconds(),
+			)
+		}
 	}
 	for _, result := range goSizes {
 		fmt.Fprintf(

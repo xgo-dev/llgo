@@ -1144,7 +1144,7 @@ func (v Value) Pointer() uintptr {
 		if p != nil && v.typ_.IsClosure() {
 			p = *(*unsafe.Pointer)(p)
 		}
-		return uintptr(p)
+		return runtime.FunctionPC(p)
 
 	case Slice:
 		return uintptr((*unsafeheaderSlice)(v.ptr).Data)
@@ -2569,6 +2569,9 @@ func (v Value) call(op string, in []Value) (out []Value) {
 	if nin != len(ft.In) {
 		panic("reflect.Value.Call: wrong argument count")
 	}
+	if useWasmReflectBridges {
+		return callWasmBridge(ft, fn, env, v.flag&flagMethod != 0, args, in)
+	}
 
 	ffiArgs := make([]*ffi.Type, 0, len(tin)+4)
 	for i := 0; i < ioff; i++ {
@@ -2601,20 +2604,34 @@ func (v Value) call(op string, in []Value) (out []Value) {
 	switch n := len(tout); n {
 	case 0:
 	case 1:
-		out := NewAt(toType(tout[0]), ret).Elem()
-		resolveIndirectValue(&out, tout[0])
-		return []Value{out}
+		return []Value{valueFromFFIResult(ret, tout[0], sig.RType)}
 	default:
 		out = make([]Value, n)
-		alignment := uintptr(sig.RType.Alignment)
 		var off uintptr
 		for i, tout := range tout {
-			out[i] = NewAt(toType(tout), add(ret, off, "")).Elem()
-			resolveIndirectValue(&out[i], tout)
-			off += (tout.Size_ + alignment - 1) &^ (alignment - 1)
+			field, fieldOffset, next := ffiResultField(sig.RType, i, off)
+			out[i] = valueFromFFIResult(add(ret, fieldOffset, ""), tout, field)
+			off = next
 		}
 	}
 	return
+}
+
+func valueFromFFIResult(ptr unsafe.Pointer, typ *abi.Type, ffiType *ffi.Type) Value {
+	if ffiType.Size != typ.Size_ {
+		storage := runtime.AllocZ(typ.Size_)
+		size := ffiType.Size
+		if typ.Size_ < size {
+			size = typ.Size_
+		}
+		if size != 0 {
+			memmove(storage, ptr, size)
+		}
+		ptr = storage
+	}
+	out := NewAt(toType(typ), ptr).Elem()
+	resolveIndirectValue(&out, typ)
+	return out
 }
 
 func toRuntimeTypes(typs []*abi.Type) []*abi.Type {

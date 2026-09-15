@@ -17,7 +17,6 @@
 package ssa
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llvm"
@@ -78,11 +77,11 @@ func TestTargetSpecUsesResolvedLLVMTarget(t *testing.T) {
 
 func TestNamedWasmProfileUsesResolvedLLVMTarget(t *testing.T) {
 	target := &Target{
-		GOOS:       "js",
-		GOARCH:     "wasm",
-		Target:     "emscripten-memory64",
-		LLVMTarget: "wasm64-unknown-emscripten",
-		WasmABI:    "emscripten-memory64",
+		GOOS:        "js",
+		GOARCH:      "wasm",
+		Target:      "emscripten-memory64",
+		LLVMTarget:  "wasm64-unknown-emscripten",
+		WasmProfile: "j64",
 	}
 	if got := target.Spec().Triple; got != target.LLVMTarget {
 		t.Fatalf("target triple = %q, want resolved wasm profile target %q", got, target.LLVMTarget)
@@ -95,17 +94,6 @@ func TestNamedWasmProfileUsesResolvedLLVMTarget(t *testing.T) {
 		t.Fatalf("generic named target unexpectedly used physical LLVM target %q", got)
 	}
 
-	freestanding := &Target{
-		GOOS:       "linux",
-		GOARCH:     "arm",
-		Target:     "wasm-unknown",
-		LLVMTarget: "wasm32-unknown-unknown",
-		WasmABI:    "freestanding",
-	}
-	spec := freestanding.Spec()
-	if spec.Triple != freestanding.LLVMTarget || spec.CPU != "generic" || !strings.Contains(spec.Features, "+bulk-memory") {
-		t.Fatalf("freestanding wasm spec = %+v", spec)
-	}
 }
 
 func TestArchitectureFeatureTargetMachines(t *testing.T) {

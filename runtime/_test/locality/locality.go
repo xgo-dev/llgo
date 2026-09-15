@@ -22,11 +22,16 @@ import (
 	"runtime"
 	"sync/atomic"
 	"testing"
+	_ "unsafe"
 
 	"github.com/xgo-dev/llgo/runtime/_test/locality/testdata/localitybench"
 	"github.com/xgo-dev/llgo/runtime/_test/locality/testdata/localityfailure"
+	"github.com/xgo-dev/llgo/runtime/_test/locality/testdata/localitynilfailure"
 	"github.com/xgo-dev/llgo/runtime/_test/locality/testdata/localityscope"
 )
+
+//go:linkname schedulerMultiplexesGoroutinesForTesting github.com/xgo-dev/llgo/runtime/internal/runtime.SchedulerMultiplexesGoroutinesForTesting
+func schedulerMultiplexesGoroutinesForTesting() bool
 
 var initializerSequence int
 
@@ -88,20 +93,33 @@ func TestTLSAndGLSIsolation(t *testing.T) {
 	}()
 	child := <-done
 
-	if child.first.tlsCounter != 0 || child.first.glsCounter != 0 {
+	multiplexed := schedulerMultiplexesGoroutinesForTesting()
+	if multiplexed {
+		if child.first.tlsCounter != parentSet.tlsCounter || child.first.glsCounter != 0 {
+			t.Fatalf("multiplexed child locality = %+v, parent = %+v", child.first, parentSet)
+		}
+	} else if child.first.tlsCounter != 0 || child.first.glsCounter != 0 {
 		t.Fatalf("child inherited parent local values: %+v", child.first)
 	}
 	if child.first != child.again {
 		t.Fatalf("child initializer ran more than once: first=%+v again=%+v", child.first, child.again)
 	}
-	if child.first.initializedTLS == parentInitial.initializedTLS || child.first.initializedGLS == parentInitial.initializedGLS {
+	if multiplexed {
+		if child.first.initializedTLS != parentInitial.initializedTLS || child.first.initializedGLS == parentInitial.initializedGLS {
+			t.Fatalf("multiplexed child initialization: parent=%+v child=%+v", parentInitial, child.first)
+		}
+	} else if child.first.initializedTLS == parentInitial.initializedTLS || child.first.initializedGLS == parentInitial.initializedGLS {
 		t.Fatalf("child reused parent initialization: parent=%+v child=%+v", parentInitial, child.first)
 	}
 	if child.set.tlsCounter != 31 || child.set.glsCounter != 32 {
 		t.Fatalf("child local writes were lost: %+v", child.set)
 	}
-	if got := snapshotLocality(); got != parentSet {
-		t.Fatalf("child changed parent local values: got=%+v want=%+v", got, parentSet)
+	wantParent := parentSet
+	if multiplexed {
+		wantParent.tlsCounter = child.set.tlsCounter
+	}
+	if got := snapshotLocality(); got != wantParent {
+		t.Fatalf("child changed parent local values: got=%+v want=%+v", got, wantParent)
 	}
 }
 
@@ -147,13 +165,13 @@ func TestNilPanickingInitializerIsSticky(t *testing.T) {
 		var recovered any
 		func() {
 			defer func() { recovered = recover() }()
-			_ = localityfailure.NilValue()
+			_ = localitynilfailure.Value()
 		}()
 		if recovered == nil {
 			t.Fatalf("attempt %d did not re-panic", attempt)
 		}
 	}
-	if attempts := localityfailure.NilAttempts(); attempts != 2 {
+	if attempts := localitynilfailure.Attempts(); attempts != 2 {
 		t.Fatalf("initializer attempts = %d, want 2", attempts)
 	}
 }
@@ -423,10 +441,12 @@ func TestMultiValueInitializerUsesOneGroup(t *testing.T) {
 }
 
 func TestCrossPackageMixedInitializerGroup(t *testing.T) {
+	parentAddress := localityscope.MixedScalarAddress()
 	before := localityscope.MixedCalls()
 	type result struct {
 		scalar        int
 		pointer       *int
+		address       *int
 		addressStable bool
 		calls         int
 	}
@@ -437,12 +457,21 @@ func TestCrossPackageMixedInitializerGroup(t *testing.T) {
 		done <- result{
 			scalar:        scalar,
 			pointer:       localityscope.MixedPointer(),
+			address:       address,
 			addressStable: address == localityscope.MixedScalarAddress(),
 			calls:         localityscope.MixedCalls(),
 		}
 	}()
 	got := <-done
-	if got.scalar == 0 || got.pointer == nil || !got.addressStable || got.calls != before+1 {
+	// TLS belongs to the worker, unlike the GLS groups tested above. Logical
+	// goroutines multiplexed on one worker must reuse its initialized block.
+	multiplexed := schedulerMultiplexesGoroutinesForTesting()
+	wantCalls := before + 1
+	if multiplexed {
+		wantCalls = before
+	}
+	if got.scalar == 0 || got.pointer == nil || !got.addressStable || got.calls != wantCalls ||
+		(got.address == parentAddress) != multiplexed {
 		t.Fatalf("cross-package mixed initializer = %+v, baseline %d", got, before)
 	}
 }

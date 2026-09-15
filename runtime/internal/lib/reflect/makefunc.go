@@ -23,7 +23,6 @@
 package reflect
 
 import (
-	"sync"
 	"unsafe"
 
 	"github.com/xgo-dev/llgo/runtime/abi"
@@ -53,80 +52,10 @@ func makeFunc(typ Type, fn func(args []Value) (results []Value), recoverTo unsaf
 
 	t := typ.common()
 	ftyp := (*funcType)(unsafe.Pointer(t))
-	ins := ftyp.In
-	sig, err := toFFISig(ins, ftyp.Out)
-	if err != nil {
-		panic(err)
-	}
-	outs := toRuntimeTypes(ftyp.Out)
-	closure := ffi.NewClosure()
-	userdata := &funcData{
-		ftyp:        ftyp,
-		fn:          fn,
-		nin:         len(ftyp.In),
-		tout:        outs,
-		recoverFrom: closure.Fn,
-		recoverTo:   recoverTo,
-	}
-
-	err = closure.Bind(sig, makeFuncCallback(len(ftyp.Out)), unsafe.Pointer(userdata))
-	if err != nil {
-		panic("libffi error: " + err.Error())
-	}
-	// keep alive for bdw-gc
-	keepMutex.Lock()
-	keepAlive = append(keepAlive, closure, sig, userdata)
-	keepMutex.Unlock()
-
-	styp := closureOf(ftyp)
-	fv := &struct {
-		fn  unsafe.Pointer
-		env unsafe.Pointer
-	}{closure.Fn, nil}
-	return Value{styp, unsafe.Pointer(fv), flagIndir | flag(Func)}
+	return makeProviderFunc(ftyp, fn, recoverTo)
 }
 
-var (
-	keepMutex sync.Mutex
-	keepAlive []any
-)
-
-func bind0(cif *ffi.Signature, ret unsafe.Pointer, args *unsafe.Pointer, userdata unsafe.Pointer) {
-	fd := (*funcData)(userdata)
-	ins := make([]Value, fd.nin)
-	for i := 0; i < fd.nin; i++ {
-		ins[i] = ffiToValue(ffi.Index(args, uintptr(i)), fd.ftyp.In[i])
-	}
-	fd.call(ins)
-}
-
-func bind1(cif *ffi.Signature, ret unsafe.Pointer, args *unsafe.Pointer, userdata unsafe.Pointer) {
-	fd := (*funcData)(userdata)
-	ins := make([]Value, fd.nin)
-	for i := 0; i < fd.nin; i++ {
-		ins[i] = ffiToValue(ffi.Index(args, uintptr(i)), fd.ftyp.In[i])
-	}
-	out := validateMakeFuncResults(fd.call(ins), fd.ftyp, fd.tout)
-	storeMakeFuncResult(ret, out[0], fd.tout[0])
-}
-
-func bindn(cif *ffi.Signature, ret unsafe.Pointer, args *unsafe.Pointer, userdata unsafe.Pointer) {
-	fd := (*funcData)(userdata)
-	ins := make([]Value, fd.nin)
-	for i := 0; i < fd.nin; i++ {
-		ins[i] = ffiToValue(ffi.Index(args, uintptr(i)), fd.ftyp.In[i])
-	}
-	outs := validateMakeFuncResults(fd.call(ins), fd.ftyp, fd.tout)
-	var offset uintptr = 0
-	alignment := uintptr(cif.RType.Alignment)
-	for i, out := range outs {
-		typ := fd.tout[i]
-		storeMakeFuncResult(add(ret, offset, ""), out, typ)
-		offset += (typ.Size_ + alignment - 1) &^ (alignment - 1)
-	}
-}
-
-// call crosses the libffi entry stub as a transparent wrapper. This mirrors
+// call crosses the provider's entry stub as a transparent wrapper. This mirrors
 // the Go runtime's treatment of reflect.makeFuncStub and methodValueCall as
 // wrapper frames when deciding whether recover is called directly.
 func (fd *funcData) call(in []Value) []Value {
@@ -160,6 +89,28 @@ func storeMakeFuncResult(ret unsafe.Pointer, v Value, typ *abi.Type) {
 	c.Memmove(ret, toFFIArg(v, typ), typ.Size_)
 }
 
+func storeMakeFuncFFIResult(ret unsafe.Pointer, v Value, typ *abi.Type, ffiType *ffi.Type) {
+	size := typ.Size_
+	if ffiType.Size < size {
+		size = ffiType.Size
+	}
+	if size != 0 {
+		c.Memmove(ret, toFFIArg(v, typ), size)
+	}
+}
+
+func ffiResultField(aggregate *ffi.Type, index int, offset uintptr) (field *ffi.Type, fieldOffset, next uintptr) {
+	field = ffi.TypeElement(aggregate, uintptr(index))
+	if field == nil {
+		panic("reflect: missing libffi result field")
+	}
+	fieldOffset = offset
+	if alignment := uintptr(field.Alignment); alignment > 1 {
+		fieldOffset = align(fieldOffset, alignment)
+	}
+	return field, fieldOffset, fieldOffset + field.Size
+}
+
 func ffiToValue(ptr unsafe.Pointer, typ *abi.Type) (v Value) {
 	kind := typ.Kind()
 	if typ.Kind() == abi.Func {
@@ -182,6 +133,20 @@ func ffiToValue(ptr unsafe.Pointer, typ *abi.Type) (v Value) {
 		v.ptr = *(*unsafe.Pointer)(ptr)
 	}
 	return
+}
+
+// makeFuncArgValue detaches indirect arguments from the provider's temporary
+// call frame. MakeFunc exposes ordinary Values, so they must remain valid if
+// the implementation retains them after the generated function returns.
+func makeFuncArgValue(ptr unsafe.Pointer, typ *abi.Type) Value {
+	v := ffiToValue(ptr, typ)
+	if v.flag&flagIndir == 0 || typ.Kind() == abi.Func {
+		return v
+	}
+	owned := unsafe_New(v.typ_)
+	typedmemmove(v.typ_, owned, v.ptr)
+	v.ptr = owned
+	return v
 }
 
 /*

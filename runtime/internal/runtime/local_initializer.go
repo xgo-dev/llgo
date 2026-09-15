@@ -31,13 +31,24 @@ const (
 // in the current owner. Recursive access observes partial initialization; a
 // recovered failure remains failed and re-panics on every later access.
 func EnsureLocalInitializer(state *uint8, failureCache *uintptr, initialize func()) {
+	ensureLocalInitializer(state, nil, failureCache, initialize)
+}
+
+// EnsureGoroutineLocalInitializer uses failure storage from the logical G's
+// package block. It must not route that state through LocalPackage, whose cache
+// belongs to the physical worker.
+func EnsureGoroutineLocalInitializer(state *uint8, failure *any, initialize func()) {
+	ensureLocalInitializer(state, failure, nil, initialize)
+}
+
+func ensureLocalInitializer(state *uint8, failure *any, failureCache *uintptr, initialize func()) {
 	switch *state {
 	case localInitReady:
 		return
 	case localInitInitializing:
 		return
 	case localInitFailed:
-		panic(*localInitializerFailure(failureCache))
+		panic(*localInitializerFailureStorage(failure, failureCache))
 	case localInitUninitialized:
 	default:
 		panic("runtime: invalid local initializer state")
@@ -49,13 +60,20 @@ func EnsureLocalInitializer(state *uint8, failureCache *uintptr, initialize func
 			return
 		}
 		value := recover()
-		*localInitializerFailure(failureCache) = value
+		*localInitializerFailureStorage(failure, failureCache) = value
 		*state = localInitFailed
 		panic(value)
 	}()
 	initialize()
 	completed = true
 	*state = localInitReady
+}
+
+func localInitializerFailureStorage(failure *any, cache *uintptr) *any {
+	if failure != nil {
+		return failure
+	}
+	return localInitializerFailure(cache)
 }
 
 func localInitializerFailure(cache *uintptr) *any {

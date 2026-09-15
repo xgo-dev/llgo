@@ -185,17 +185,24 @@ func (b Builder) Return(results ...Expr) {
 	case 1:
 		raw := b.Func.raw.Type.(*types.Signature).Results().At(0).Type()
 		ret := checkExpr(results[0], raw, b)
-		b.impl.CreateRet(ret.impl)
+		b.impl.CreateRet(b.fitLLVMValue(ret.impl, ret.Type, b.Func.ll.ReturnType()))
 	default:
 		tret := b.Func.raw.Type.(*types.Signature).Results()
-		n := tret.Len()
-		typs := make([]Type, n)
-		for i := 0; i < n; i++ {
-			typs[i] = b.Prog.Type(tret.At(i).Type(), InC)
+		values := llvmParams(0, results, tret, b)
+		if !b.Prog.isNativeStorage(b.Func.Type) {
+			typ := b.Prog.rawType(tret)
+			expr := b.aggregateValue(typ, values...)
+			b.impl.CreateRet(expr.impl)
+			return
 		}
-		typ := b.Prog.Struct(typs...)
-		expr := b.aggregateValue(typ, llvmParams(0, results, tret, b)...)
-		b.impl.CreateRet(expr.impl)
+		physical := b.Func.ll.ReturnType()
+		elements := physical.StructElementTypes()
+		aggregate := llvm.Undef(physical)
+		for i, value := range values {
+			source := b.Prog.rawType(tret.At(i).Type())
+			aggregate = b.impl.CreateInsertValue(aggregate, b.fitLLVMValue(value, source, elements[i]), i, "")
+		}
+		b.impl.CreateRet(aggregate)
 	}
 }
 
@@ -341,9 +348,26 @@ type Phi struct {
 func (p Phi) AddIncoming(b Builder, preds []BasicBlock, f func(i int, blk BasicBlock) Expr) {
 	raw := p.raw.Type
 	vals := make([]llvm.Value, len(preds))
+	logicalBlock := b.blk
+	defer func() {
+		b.blk = logicalBlock
+	}()
 	for iblk, blk := range preds {
+		oldTail := blk.last
+		terminator := oldTail.LastInstruction()
+		// Incoming values are emitted into their predecessor blocks. Keep the
+		// builder's logical block in sync as well: lowering an incoming value can
+		// split that predecessor (for example, to emit a nil check) and must then
+		// update the predecessor's LLVM tail used by the phi. If that happens,
+		// move the predecessor's existing terminator to the new tail as well.
+		b.blk = blk
 		val := f(iblk, blk)
 		vals[iblk] = checkExpr(val, raw, b).impl
+		if blk.last != oldTail && !terminator.IsNil() {
+			terminator.RemoveFromParentAsInstruction()
+			b.impl.SetInsertPointAtEnd(blk.last)
+			b.impl.Insert(terminator)
+		}
 	}
 	bs := llvmPredBlocks(preds)
 	p.impl.AddIncoming(vals, bs)

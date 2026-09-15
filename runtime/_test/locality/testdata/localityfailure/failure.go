@@ -30,28 +30,10 @@ func initialize() int {
 	return attempts
 }
 
-//llgointernal:tls
+//llgointernal:gls
 var value = initialize()
 
 //go:noinline
 func Value() int { return value }
 
 func Attempts() int { return attempts }
-
-var nilAttempts int
-
-func initializeNil() int {
-	nilAttempts++
-	if nilAttempts > 1 {
-		panic(nil)
-	}
-	return nilAttempts
-}
-
-//llgointernal:gls
-var nilValue = initializeNil()
-
-//go:noinline
-func NilValue() int { return nilValue }
-
-func NilAttempts() int { return nilAttempts }

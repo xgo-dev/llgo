@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -29,14 +30,22 @@ func TestRootFileOperations(t *testing.T) {
 	if err != nil || string(data) != "contents" {
 		t.Fatalf("ReadFile = %q, %v; want contents, nil", data, err)
 	}
-	if err := root.Chmod("nested/dir/source.txt", 0600); err != nil {
+	if err := root.Chmod("nested/dir/source.txt", 0600); runtime.GOOS == "wasip1" {
+		if !errors.Is(err, syscall.ENOSYS) {
+			t.Fatalf("Root.Chmod = %v, want ENOSYS", err)
+		}
+	} else if err != nil {
 		t.Fatal(err)
 	}
 	when := time.Unix(123456789, 0)
 	if err := root.Chtimes("nested/dir/source.txt", when, when); err != nil {
 		t.Fatal(err)
 	}
-	if err := root.Chown("nested/dir/source.txt", -1, -1); runtime.GOOS == "windows" {
+	if err := root.Chown("nested/dir/source.txt", -1, -1); runtime.GOOS == "wasip1" {
+		if !errors.Is(err, syscall.ENOSYS) {
+			t.Fatalf("Root.Chown = %v, want ENOSYS", err)
+		}
+	} else if runtime.GOOS == "windows" {
 		if err == nil {
 			t.Fatal("Chown succeeded on Windows, want an unsupported-operation error")
 		}
@@ -52,7 +61,11 @@ func TestRootFileOperations(t *testing.T) {
 	if err := root.Symlink("dir/source.txt", "nested/symlink.txt"); err != nil {
 		t.Fatal(err)
 	}
-	if err := root.Lchown("nested/symlink.txt", -1, -1); runtime.GOOS == "windows" {
+	if err := root.Lchown("nested/symlink.txt", -1, -1); runtime.GOOS == "wasip1" {
+		if !errors.Is(err, syscall.ENOSYS) {
+			t.Fatalf("Root.Lchown = %v, want ENOSYS", err)
+		}
+	} else if runtime.GOOS == "windows" {
 		if err == nil {
 			t.Fatal("Lchown succeeded on Windows, want an unsupported-operation error")
 		}

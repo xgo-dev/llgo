@@ -62,3 +62,14 @@ func (p Function) BuildLocalPackageAccessor(cache, size, align Expr) {
 	b.Return(b.Convert(prog.rawType(result), raw))
 	b.EndBuild()
 }
+
+// BuildGoroutineLocalPackageAccessor resolves a package block through the
+// current logical G. The global key identifies the package but never caches a
+// worker-specific address.
+func (p Function) BuildGoroutineLocalPackageAccessor(key, size, align Expr) {
+	b := p.MakeBody(1)
+	raw := b.Call(p.Pkg.rtFunc("GoroutineLocalPackage"), key, size, align)
+	result := p.raw.Type.(*types.Signature).Results().At(0).Type()
+	b.Return(b.Convert(p.Prog.rawType(result), raw))
+	b.EndBuild()
+}

@@ -18,9 +18,24 @@
 
 package runtime
 
+import "github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
+
 // callerLocationStoreCurrent follows the logical goroutine: its shadow stack
 // and synthetic PCs must move with that goroutine when the backend eventually
 // permits migration between OS threads.
 //
 //llgointernal:gls
 var callerLocationStoreCurrent *callerLocationStore
+
+// callerPCSequence makes synthetic PCs unique across goroutine-local stores.
+// The public runtime caches FuncForPC results process-wide, so reusing a
+// compact local sequence would let one goroutine resolve another's frame.
+var callerPCSequence uintptr
+
+func nextCallerPCBase(*callerLocationStore) uintptr {
+	seq := atomic.Add(&callerPCSequence, uintptr(1)) + 1
+	if seq == 0 || seq > ^uintptr(0)>>2 {
+		fatal("runtime: caller PC sequence exhausted")
+	}
+	return seq << 2
+}

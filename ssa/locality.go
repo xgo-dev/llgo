@@ -44,6 +44,20 @@ const (
 	LocalStoragePackage   = localitylayout.StoragePackage
 )
 
+// EnableLogicalGoroutineLocality stores GLS variables on the logical G rather
+// than in native TLS. Bounded schedulers enable it when multiple goroutines can
+// run sequentially on one physical worker.
+func (p Program) EnableLogicalGoroutineLocality(enable bool) {
+	if p != nil {
+		p.logicalGoroutineLocal = enable
+	}
+}
+
+// LogicalGoroutineLocalityEnabled reports whether GLS follows the logical G.
+func (p Program) LogicalGoroutineLocalityEnabled() bool {
+	return p != nil && p.logicalGoroutineLocal
+}
+
 // VariableLocality is the locality metadata attached to one package variable.
 type VariableLocality struct {
 	LocalStorage LocalStorage

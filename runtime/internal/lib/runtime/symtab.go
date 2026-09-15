@@ -947,14 +947,17 @@ func appendRuntimeFuncInfoEntryFrames(frames []runtimeFuncPCFrame, entries []uin
 		if funcIndex == 0 || uintptr(funcIndex) > runtimeFuncInfoCount {
 			continue
 		}
-		*(*runtimeFuncPCFrame)(unsafe.Add(frameBase, uintptr(nframes)*frameSize)) = runtimeFuncPCFrame{
-			entry:     site.pc,
-			funcIndex: funcIndex,
-		}
+		pc := rtdebug.FunctionPC(unsafe.Pointer(site.pc))
+		// Write the fields directly. A composite assignment here used to lower
+		// through a fresh stack temporary on every loop iteration, exhausting a
+		// fixed WebAssembly goroutine stack while indexing a large program.
+		frame := (*runtimeFuncPCFrame)(unsafe.Add(frameBase, uintptr(nframes)*frameSize))
+		frame.entry = pc
+		frame.funcIndex = funcIndex
 		nframes++
 		entry := (*uintptr)(unsafe.Add(entryBase, uintptr(funcIndex)*unsafe.Sizeof(uintptr(0))))
-		if *entry == 0 || site.pc < *entry {
-			*entry = site.pc
+		if *entry == 0 || pc < *entry {
+			*entry = pc
 		}
 		used = true
 	}
@@ -1291,8 +1294,10 @@ const coldFuncInfoEntryScanLimit = 4096
 
 // coldFuncInfoScanRange scans one {pc, symbolID} record section for the
 // anchor nearest at-or-after pc within the warm path's entry slack (anchors
-// are emitted from LLVM IR and land after the backend prologue). It returns
-// the matched funcinfo index and delta, or (0, maxDelta) on miss.
+// are emitted from LLVM IR and land after the backend prologue). Raw records
+// carry native code pointers, or WebAssembly table indices; FunctionPC puts
+// both in the same PC space used by reflect.Value.Pointer. It returns the
+// matched funcinfo index and delta, or (0, maxDelta) on miss.
 func coldFuncInfoScanRange(start, end, size, pc uintptr, bestDelta uintptr) (uint32, uintptr) {
 	if start == 0 || end <= start || size == 0 || (end-start)%size != 0 {
 		return 0, bestDelta
@@ -1304,10 +1309,14 @@ func coldFuncInfoScanRange(start, end, size, pc uintptr, bestDelta uintptr) (uin
 	bestIndex := uint32(0)
 	for i := uintptr(0); i < nsite; i++ {
 		site := (*runtimeFuncInfoEntryRecord)(unsafe.Pointer(start + i*size))
-		if site.symbolID == 0 || site.pc < pc {
+		if site.symbolID == 0 || site.pc == 0 {
 			continue
 		}
-		delta := site.pc - pc
+		entry := rtdebug.FunctionPC(unsafe.Pointer(site.pc))
+		if entry < pc {
+			continue
+		}
+		delta := entry - pc
 		if delta >= bestDelta {
 			continue
 		}
@@ -2075,10 +2084,12 @@ func frameSymbol(pc uintptr) pcSymbol {
 }
 
 func frameSymbolUncached(pc uintptr) pcSymbol {
-	if pc&3 != 0 && !prebuiltTextContains(pc+1) {
+	if pc&3 != 0 && (GOARCH == "wasm" || !prebuiltTextContains(pc+1)) {
 		// Unaligned pcs outside the text range are shadow-stack synthetic
-		// markers. Text-range pcs — return addresses minus one, and on
-		// amd64 any instruction pc — flow through the normal lookups:
+		// markers. Wasm function PCs are shifted to keep these low bits
+		// unambiguous. On native targets, text-range pcs — return addresses
+		// minus one, and on amd64 any instruction pc — flow through the normal
+		// lookups:
 		// pcline nearest-below is byte-exact, no alignment games (rounding
 		// by instruction size was an arm64-only assumption).
 		if frame, ok := rtdebug.FrameForPC(pc); ok {

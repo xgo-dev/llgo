@@ -106,7 +106,7 @@ func (p *context) isLargeNonPointerValue(t llssa.Type) bool {
 	}
 	// Very large values may be addressed far beyond the first guard page. Emit
 	// an explicit nil check instead of relying on the eventual load to fault.
-	ptrSize := int64(p.prog.PointerSize())
+	ptrSize := int64(p.prog.GoWordSize())
 	sizes := &types.StdSizes{WordSize: ptrSize, MaxAlign: ptrSize}
 	return sizes.Sizeof(raw) > maxDirectDerefSize
 }
@@ -635,10 +635,24 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		}
 	}
 	if fn == nil {
+		background := llssa.Background(ftype)
+		if target := p.prog.Target(); target != nil && target.GOARCH == "wasm" && target.WasmProfile != "" {
+			// Executable-mode //export functions keep their final C symbol in
+			// the defining package instead of going through the library wrapper
+			// generated at final link. Give that entry the native wasm ABI so
+			// Memory32 size_t/uintptr_t parameters remain i32 while the function
+			// body continues to use the Go 64-bit word model.
+			for _, exportName := range p.pkg.ExportFuncs() {
+				if exportName == name {
+					background = llssa.InC
+					break
+				}
+			}
+		}
 		if hasCtx {
-			fn = pkg.NewEnvFunc(name, sig, llssa.Background(ftype), ctx, p.needsLinkOnce(f))
+			fn = pkg.NewEnvFunc(name, sig, background, ctx, p.needsLinkOnce(f))
 		} else {
-			fn = pkg.NewFuncEx(name, sig, llssa.Background(ftype), false, p.needsLinkOnce(f))
+			fn = pkg.NewFuncEx(name, sig, background, false, p.needsLinkOnce(f))
 		}
 	}
 	if p.prog.Target().GOARCH == "wasm" {
@@ -1543,7 +1557,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		} else if typ, ok := v.X.Type().Underlying().(*types.Struct); ok && (v.Op == token.EQL || v.Op == token.NEQ) {
 			xaddr, yaddr := llssa.Nil, llssa.Nil
 			size := p.prog.SizeOf(p.type_(v.X.Type(), llssa.InGo))
-			if p.prog.IsRegularMemory(v.X.Type()) && !llssa.CanInlineStructEqual(typ, size, p.prog.PointerSize()) {
+			if p.prog.IsRegularMemory(v.X.Type()) && !llssa.CanInlineStructEqual(typ, size, p.prog.GoWordSize()) {
 				xaddr = p.structZeroCompareAddr(b, v.X, v.Y, v)
 				yaddr = p.structZeroCompareAddr(b, v.Y, v.X, v)
 			}
@@ -1624,7 +1638,10 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		if v.Op != token.ARROW {
 			p.recordPanicSite(b, v.Pos())
 		}
-		if shouldAssertDirectNilDeref(v) {
+		if shouldAssertDirectNilDeref(v) || v.Op == token.MUL && p.needsWasmNilGuard(v.X) {
+			if p.needsWasmNilGuard(v.X) {
+				p.emitNilDerefBaseCheck(b, v.X)
+			}
 			b.AssertNilDeref(x)
 		}
 		if v.Op == token.ARROW {
@@ -1998,7 +2015,7 @@ func (p *context) canElideStructZeroCompareLoad(load *ssa.UnOp) bool {
 		return false
 	}
 	size := p.prog.SizeOf(p.type_(load.Type(), llssa.InGo))
-	if llssa.CanInlineStructEqual(typ, size, p.prog.PointerSize()) {
+	if llssa.CanInlineStructEqual(typ, size, p.prog.GoWordSize()) {
 		return false
 	}
 	other := comparison.X
@@ -2152,6 +2169,16 @@ func instructionPrecedes(before, after ssa.Instruction) bool {
 	return false
 }
 
+func (p *context) needsWasmNilGuard(addr ssa.Value) bool {
+	// Linear memory includes address zero, and WebAssembly traps do not enter
+	// Go's panic/recover machinery. Native guard-page assumptions do not apply.
+	// Runtime support packages maintain their own pointer invariants; routing an
+	// internal failure through the recoverable user-panic path makes almost the
+	// entire runtime reachable from every checked load and store.
+	return p.prog.Target().GOARCH == "wasm" && !llssa.IsRuntimeSupportPackage(p.pkg.Path()) &&
+		!isKnownNonNilAddr(addr) && !isWrapNilCheckCall(addr)
+}
+
 // assertNilDerefBase uses pointer-returning checks to rewrite p.bvals. Keep its
 // traversal in sync with emitNilDerefBaseCheck, which emits cold failure
 // branches without replacing cached addresses for delayed receiver checks.
@@ -2241,11 +2268,19 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		}
 		ptr := p.compileValue(b, va)
 		val := p.compileValue(b, v.Val)
+		wasmNilGuard := p.needsWasmNilGuard(va)
+		if wasmNilGuard {
+			p.recordPanicSite(b, v.Pos())
+			// A field assignment evaluates its RHS before faulting on a nil
+			// destination. Check the original base here, not at FieldAddr.
+			p.emitNilDerefBaseCheck(b, va)
+			b.AssertNilDeref(ptr)
+		}
 		// Hardware faults report the store instruction itself rather than a
 		// runtime nil-check return address. Preserve its exact source site on
 		// every native target; recordPanicSite scopes the metadata to functions
 		// whose recovered panic stack can be observed.
-		if !isKnownNonNilAddr(va) && !isWrapNilCheckCall(va) {
+		if !wasmNilGuard && !isKnownNonNilAddr(va) && !isWrapNilCheckCall(va) {
 			p.recordPanicSite(b, v.Pos())
 		}
 		store := b.Store(ptr, val)

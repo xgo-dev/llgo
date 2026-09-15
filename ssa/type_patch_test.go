@@ -37,6 +37,34 @@ func TestFieldOutOfRangePanicsWithTypeString(t *testing.T) {
 	_ = p.Field(typ, 1)
 }
 
+func TestSyntheticFieldOutOfRangePanics(t *testing.T) {
+	prog := NewProgram(nil)
+	t.Cleanup(prog.Dispose)
+	empty := types.NewInterfaceType(nil, nil)
+	empty.Complete()
+	for _, test := range []struct {
+		name string
+		typ  types.Type
+		kind valueKind
+		idx  int
+		want string
+	}{
+		{name: "string", typ: types.Typ[types.String], kind: vkString, idx: 2, want: "Field: string index out of range"},
+		{name: "slice", typ: types.NewSlice(types.Typ[types.Byte]), kind: vkSlice, idx: 3, want: "Field: slice index out of range"},
+		{name: "interface", typ: empty, kind: vkEface, idx: 2, want: "Field: interface index out of range"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			defer func() {
+				got := recover()
+				if got == nil || got != test.want {
+					t.Fatalf("panic = %v, want %q", got, test.want)
+				}
+			}()
+			prog.Field(&aType{raw: rawType{Type: test.typ}, kind: test.kind}, test.idx)
+		})
+	}
+}
+
 func TestTypeStringWithPkgAndIsPkgScope(t *testing.T) {
 	obj := types.NewTypeName(token.NoPos, nil, "Local", nil)
 	local := types.NewNamed(obj, types.Typ[types.Int], nil)

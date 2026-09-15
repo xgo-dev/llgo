@@ -104,6 +104,12 @@ func TestNames(t *testing.T) {
 	if got := BlockCacheName("example.com/p"); got != "example.com/p.__llgo_local_cache" {
 		t.Fatal(got)
 	}
+	if got := GoroutineBlockName("example.com/p"); got != "example.com/p.__llgo_gls_block" {
+		t.Fatal(got)
+	}
+	if got := GoroutineBlockKeyName("example.com/p"); got != "example.com/p.__llgo_gls_key" {
+		t.Fatal(got)
+	}
 	if got := InitName("example.com/p", locality.Thread); got != "example.com/p.__llgo_tls_init" {
 		t.Fatal(got)
 	}

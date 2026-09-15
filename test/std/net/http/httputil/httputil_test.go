@@ -18,6 +18,19 @@ type bytePool struct{}
 func (bytePool) Get() []byte { return make([]byte, 0, 1024) }
 func (bytePool) Put([]byte)  {}
 
+func localServerClient(t *testing.T, server *httptest.Server) *http.Client {
+	t.Helper()
+	client := server.Client()
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("test server transport has type %T, want *http.Transport", client.Transport)
+	}
+	transport = transport.Clone()
+	transport.DialContext = (&net.Dialer{}).DialContext
+	client.Transport = transport
+	return client
+}
+
 func TestDumpHelpers(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/path?q=1", strings.NewReader("abc"))
 	dumpReq, err := httputil.DumpRequest(req, true)
@@ -109,6 +122,7 @@ func TestReverseProxy(t *testing.T) {
 		t.Fatalf("Parse backend URL: %v", err)
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.Transport = localServerClient(t, backend).Transport
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "http://front.example/direct", nil)
@@ -123,7 +137,7 @@ func TestReverseProxy(t *testing.T) {
 	front := httptest.NewServer(proxy)
 	defer front.Close()
 
-	resp, err := http.Get(front.URL + "/echo")
+	resp, err := localServerClient(t, front).Get(front.URL + "/echo")
 	if err != nil {
 		t.Fatalf("GET via proxy: %v", err)
 	}
