@@ -12,15 +12,15 @@ import (
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
-// FunctionDocs indexes source comments for imported functions without syntax.
+// FunctionAttributes indexes source comments for imported functions without syntax.
 // The loader fills it before starting backend compilation. Attribute values
 // live on aFunction, not in this index. The zero value is ready for use.
-type FunctionDocs struct {
+type FunctionAttributes struct {
 	mu       sync.RWMutex
 	packages map[*types.Package]map[string]*ast.CommentGroup
 }
 
-func (d *FunctionDocs) lookup(pkg *types.Package, name string) (*ast.CommentGroup, bool) {
+func (d *FunctionAttributes) lookup(pkg *types.Package, name string) (*ast.CommentGroup, bool) {
 	if d == nil {
 		return nil, false
 	}
@@ -30,7 +30,7 @@ func (d *FunctionDocs) lookup(pkg *types.Package, name string) (*ast.CommentGrou
 	return doc, ok
 }
 
-func (d *FunctionDocs) collect(pkg *types.Package, files []*ast.File) {
+func (d *FunctionAttributes) collect(pkg *types.Package, files []*ast.File) {
 	if d == nil {
 		return
 	}

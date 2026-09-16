@@ -890,7 +890,7 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 			return err
 		}
 	}
-	options.FunctionDocs.collect(pkg, files)
+	options.FunctionAttributes.collect(pkg, files)
 	if prog.PackageSyntaxParsed(pkg) {
 		return nil
 	}

@@ -77,9 +77,9 @@ type Options struct {
 	// ReceiverNilChecks retains pointer-method selection semantics erased
 	// during Go SSA construction. It is collected from checked source info.
 	ReceiverNilChecks *ReceiverNilChecks
-	// FunctionDocs carries source comments across package and cache boundaries.
+	// FunctionAttributes carries source comments across package and cache boundaries.
 	// A shared index must be populated before concurrent backend compilation.
-	FunctionDocs *FunctionDocs
+	FunctionAttributes *FunctionAttributes
 }
 
 // SetDebug sets debug flags.
@@ -2781,9 +2781,9 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		pkg.Pkg = pkgTypes
 		patch.Alt.Pkg = pkgTypes
 	}
-	if options.FunctionDocs == nil {
-		options.FunctionDocs = new(FunctionDocs)
-		options.FunctionDocs.collect(pkgTypes, files)
+	if options.FunctionAttributes == nil {
+		options.FunctionAttributes = new(FunctionAttributes)
+		options.FunctionAttributes.collect(pkgTypes, files)
 	}
 	if !options.PreloadedSyntax {
 		if err = ParsePkgSyntaxWithOptions(prog, pkgProg.Fset, pkgTypes, files, options); err != nil {

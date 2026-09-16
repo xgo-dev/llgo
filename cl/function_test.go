@@ -120,7 +120,7 @@ func TestFunctionAttributesImportedDeclaration(t *testing.T) {
 	goPkg.Build()
 	coordinator := newLLSSAProg(t)
 	defer coordinator.Dispose()
-	options := Options{FunctionDocs: new(FunctionDocs)}
+	options := Options{FunctionAttributes: new(FunctionAttributes)}
 	if err := ParsePkgSyntaxWithOptions(coordinator, fset, dep, []*ast.File{depFile}, options); err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestFunctionAttributesPackagePatch(t *testing.T) {
 		files := []*ast.File{originalFile, alternateFile}
 		prog := newLLSSAProg(t)
 		defer prog.Dispose()
-		options := Options{FunctionDocs: new(FunctionDocs)}
+		options := Options{FunctionAttributes: new(FunctionAttributes)}
 		if preloaded {
 			if err := ParsePkgSyntaxWithOptions(prog, fset, patches["p"].Types, files, options); err != nil {
 				t.Fatal(err)

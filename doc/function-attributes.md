@@ -31,7 +31,7 @@ even when `go:linkname` makes them refer to one backend symbol; each promise mus
 be valid for the implementation it names. An indirect call with an unknown target
 does not acquire guarantees merely from its Go function type.
 
-For embedders using `cl.Options`, share a `FunctionDocs` index between
+For embedders using `cl.Options`, share a `FunctionAttributes` index between
 `ParsePkgSyntaxWithOptions` calls and package compilations to provide annotations
 for imports without Go SSA syntax. Finish populating it before concurrent backend
 compilation. The normal build driver does this automatically, including cached

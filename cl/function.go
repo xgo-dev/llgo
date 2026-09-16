@@ -50,26 +50,26 @@ func (p *context) function(fn *ssa.Function) aFunction {
 		}
 		name, _ := astFuncName(llssa.PathOf(owner), decl)
 		doc := decl.Doc
-		if patched, ok := p.patchFunctionDoc(owner, name); ok {
+		if patched, ok := p.patchFunctionAttributeSource(owner, name); ok {
 			doc = patched
 		}
 		f.readAttributes(doc)
 	} else if obj, ok := origin.Object().(*types.Func); ok && origin.Prog.FuncValue(obj) == origin {
 		// Export-only functions have no syntax and are marked synthetic by
 		// x/tools. Match the declaration itself, excluding method wrappers.
-		f.readAttributes(p.functionDoc(obj))
+		f.readAttributes(p.functionAttributeSource(obj))
 	}
 	return f
 }
 
-func (p *context) patchFunctionDoc(pkg *types.Package, name string) (*ast.CommentGroup, bool) {
+func (p *context) patchFunctionAttributeSource(pkg *types.Package, name string) (*ast.CommentGroup, bool) {
 	if patch, ok := p.patches[llssa.PathOf(pkg)]; ok {
-		return p.options.FunctionDocs.lookup(patch.Types, name)
+		return p.options.FunctionAttributes.lookup(patch.Types, name)
 	}
 	return nil, false
 }
 
-func (p *context) functionDoc(fn *types.Func) *ast.CommentGroup {
+func (p *context) functionAttributeSource(fn *types.Func) *ast.CommentGroup {
 	fn = fn.Origin()
 	if fn.Pkg() == nil {
 		return nil
@@ -82,10 +82,10 @@ func (p *context) functionDoc(fn *types.Func) *ast.CommentGroup {
 		}
 	}
 	name, _ := typesFuncName(llssa.PathOf(fn.Pkg()), fn)
-	if doc, ok := p.patchFunctionDoc(fn.Pkg(), name); ok {
+	if doc, ok := p.patchFunctionAttributeSource(fn.Pkg(), name); ok {
 		return doc
 	}
-	doc, _ := p.options.FunctionDocs.lookup(fn.Pkg(), name)
+	doc, _ := p.options.FunctionAttributes.lookup(fn.Pkg(), name)
 	return doc
 }
 
@@ -93,6 +93,6 @@ func (p *context) functionDoc(fn *types.Func) *ast.CommentGroup {
 // They use the same source lookup without making ssa depend on the frontend.
 func (p *context) initFunctionAttributes(fn llssa.Function, source *types.Func) {
 	var f aFunction
-	f.readAttributes(p.functionDoc(source))
+	f.readAttributes(p.functionAttributeSource(source))
 	f.applyAttributes(fn)
 }
