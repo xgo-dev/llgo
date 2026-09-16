@@ -66,17 +66,49 @@ func BindPackageFunctionDeclarations(prog llssa.Program, original, patched *type
 	for _, file := range files {
 		for _, node := range file.Decls {
 			if decl, ok := node.(*ast.FuncDecl); ok {
-				if decl.Recv == nil && decl.Name.Name == "init" {
-					continue
-				}
-				name, _ := astFuncName(llssa.PathOf(patched), decl)
-				replacement := prog.SourceFunctionDeclaration(patched, fset, name, decl.Pos())
-				if replacement == nil {
-					continue
-				}
-				prog.ReplaceFunctionDeclarations(patched, replacement)
-				if original != nil {
-					prog.ReplaceFunctionDeclarations(original, replacement)
+				bindFunctionDeclaration(prog, original, patched, fset, decl)
+			}
+		}
+	}
+}
+
+func bindFunctionDeclaration(prog llssa.Program, original, patched *types.Package, fset *token.FileSet, decl *ast.FuncDecl) {
+	if decl.Recv == nil && decl.Name.Name == "init" {
+		return
+	}
+	name, _ := astFuncName(llssa.PathOf(patched), decl)
+	replacement := prog.SourceFunctionDeclaration(patched, fset, name, decl.Pos())
+	if replacement == nil {
+		return
+	}
+	prog.ReplaceFunctionDeclarations(patched, replacement)
+	if original != nil {
+		prog.ReplaceFunctionDeclarations(original, replacement)
+	}
+}
+
+// bindFunctionDeclarations selects declarations from the alternate SSA package.
+// The one-shot entry point receives combined source files, so those files alone
+// do not distinguish replacement declarations from original declarations.
+func (p Patch) bindFunctionDeclarations(prog llssa.Program, original *types.Package) {
+	bind := func(fn *ssa.Function) {
+		if fn == nil {
+			return
+		}
+		if decl, ok := fn.Syntax().(*ast.FuncDecl); ok {
+			bindFunctionDeclaration(prog, original, p.Types, p.Alt.Prog.Fset, decl)
+		}
+	}
+	for _, member := range p.Alt.Members {
+		switch member := member.(type) {
+		case *ssa.Function:
+			bind(member)
+		case *ssa.Type:
+			// Methods are not package members. Visit only the methods declared
+			// on this type, excluding aliases and promoted method wrappers.
+			if named, ok := member.Type().(*types.Named); ok && named.Obj() == member.Object() {
+				for i := 0; i < named.NumMethods(); i++ {
+					bind(p.Alt.Prog.FuncValue(named.Method(i)))
 				}
 			}
 		}

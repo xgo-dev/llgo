@@ -7,7 +7,8 @@ import (
 
 // FunctionDeclaration owns the source information for one function or method.
 // Distinct declarations remain independent even when they link to one symbol.
-// It contains no LLVM state and is shared read-only after syntax preparation.
+// It contains no LLVM state and is shared read-only once concurrent backend
+// compilation starts.
 type FunctionDeclaration struct {
 	pkg  *types.Package
 	fset *token.FileSet
@@ -156,7 +157,7 @@ func (f *FunctionDeclaration) Effective() *FunctionDeclaration {
 	return f
 }
 
-// ReplaceFunctionDeclarations records the build driver's package replacement.
+// ReplaceFunctionDeclarations records an explicit package replacement.
 // The original declarations retain their own metadata and source identity.
 func (p Program) ReplaceFunctionDeclarations(pkg *types.Package, replacement *FunctionDeclaration) {
 	data := p.packageSyntax

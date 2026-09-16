@@ -772,9 +772,11 @@ func (p *context) funcName(source *aFunction) (*types.Package, string, int) {
 	if source.declaration == nil {
 		source.declaration = p.functionDeclaration(fn)
 	}
-	declaration := source.declaration
-	v, linked := declaration.Linkname()
-	if declaration == nil {
+	var v string
+	var linked bool
+	if declaration := source.declaration; declaration != nil {
+		v, linked = declaration.Linkname()
+	} else {
 		v, linked = p.prog.Linkname(orgName)
 	}
 	if linked {

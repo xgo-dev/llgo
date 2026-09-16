@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/typepatch"
+	"github.com/xgo-dev/llgo/ssa/abi"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -194,5 +196,68 @@ func TestFunctionDeclarationKeepsPendingNoInterface(t *testing.T) {
 	decl := prog.SourceFunctionDeclaration(owner, fs, "p.T.M", file.Decls[1].Pos())
 	if decl != pending || !decl.NoInterface() {
 		t.Fatal("syntax preparation lost the pending nointerface directive")
+	}
+}
+
+// Exercise the public one-shot entry point without preparing or binding the
+// declarations explicitly: it must honor the same patches as the build driver.
+func TestOneShotPackagePatchBindsFunctionDeclarations(t *testing.T) {
+	for _, test := range []struct {
+		name, original, alternate string
+	}{
+		{
+			"function",
+			"func F() {}\nfunc Call() { F() }",
+			"//llgo:link F llgo.unreachable\nfunc F()",
+		},
+		{
+			"generic function",
+			"func F[T any](v T) {}\nfunc Call() { F(1) }",
+			"//llgo:link F llgo.unreachable\nfunc F[T any](v T) {}",
+		},
+		{
+			"value method",
+			"type T struct{}\nfunc (T) F() {}\nfunc Call() { T{}.F() }",
+			"type T struct{}\n//llgo:link T.F llgo.unreachable\nfunc (T) F()",
+		},
+		{
+			"pointer method",
+			"type T struct{}\nfunc (*T) F() {}\nfunc Call() { new(T).F() }",
+			"type T struct{}\n//llgo:link (*T).F llgo.unreachable\nfunc (*T) F()",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			goProg := ssa.NewProgram(fset, ssa.SanityCheckFunctions|ssa.InstantiateGenerics)
+			build := func(path, source string) (*ssa.Package, *ast.File) {
+				t.Helper()
+				file, err := parser.ParseFile(fset, path+".go", "package p\n"+source, parser.ParseComments)
+				if err != nil {
+					t.Fatal(err)
+				}
+				info := newLocalityTypeInfo()
+				owner, err := (&types.Config{}).Check(path, fset, []*ast.File{file}, info)
+				if err != nil {
+					t.Fatal(err)
+				}
+				pkg := goProg.CreatePackage(owner, []*ast.File{file}, info, true)
+				pkg.Build()
+				return pkg, file
+			}
+			original, originalFile := build("p", test.original)
+			alternate, alternateFile := build(abi.PatchPathPrefix+"p", test.alternate)
+			patches := Patches{"p": {Alt: alternate, Types: typepatch.Clone(alternate.Pkg)}}
+			prog := newLLSSAProg(t)
+			defer prog.Dispose()
+			compiled, _, err := NewPackageExWithEmbedMetaOptions(prog, nil, patches, nil, original,
+				[]*ast.File{originalFile, alternateFile}, nil, false, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := compiled.Module().NamedFunction("p.Call").String()
+			if !strings.Contains(body, "unreachable") || strings.Contains(body, "call ") {
+				t.Fatalf("caller did not use the patched intrinsic:\n%s", body)
+			}
+		})
 	}
 }
