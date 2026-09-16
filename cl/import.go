@@ -514,13 +514,24 @@ func typesFuncName(pkgPath string, fn *types.Func) (fullName, inPkgName string) 
 		var method string
 		t := recv.Type()
 		if tp, ok := t.(*types.Pointer); ok {
-			method = "(*" + tp.Elem().(*types.Named).Obj().Name() + ")." + name
+			method = "(*" + typesRecvTypeName(tp.Elem()) + ")." + name
 		} else {
-			method = t.(*types.Named).Obj().Name() + "." + name
+			method = typesRecvTypeName(t) + "." + name
 		}
 		return pkgPath + "." + method, method
 	}
 	return pkgPath + "." + name, name
+}
+
+func typesRecvTypeName(typ types.Type) string {
+	// Keep the declared alias spelling to match astFuncName's source key.
+	switch t := typ.(type) {
+	case *types.Named:
+		return t.Obj().Name()
+	case *types.Alias:
+		return t.Obj().Name()
+	}
+	panic("unexpected method receiver type")
 }
 
 // TODO(xsw): may can use typesFuncName

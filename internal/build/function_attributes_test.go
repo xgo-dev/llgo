@@ -33,6 +33,8 @@ func TestFunctionAttributesCacheAndUnwind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Exercise Windows checkout line endings on every host.
+	original = []byte(strings.ReplaceAll(strings.ReplaceAll(string(original), "\r\n", "\n"), "\n", "\r\n"))
 	const prefix = "github.com/xgo-dev/llgo/internal/build/testdata/functionattrs"
 	for _, phase := range []struct {
 		name      string
@@ -47,8 +49,8 @@ func TestFunctionAttributesCacheAndUnwind(t *testing.T) {
 		t.Run(phase.name, func(t *testing.T) {
 			source := string(original)
 			if !phase.annotated {
-				source = strings.ReplaceAll(source, "//llgo:cold\n", "")
-				source = strings.ReplaceAll(source, "//llgo:noreturn\n", "")
+				source = strings.ReplaceAll(source, "//llgo:cold", "")
+				source = strings.ReplaceAll(source, "//llgo:noreturn", "")
 			}
 			conf := NewDefaultConf(ModeBuild)
 			conf.Tags = phase.tags

@@ -254,3 +254,43 @@ func Box(value T) any { return value }
 		t.Fatal(err)
 	}
 }
+
+func TestFunctionAttributesAliasReceiver(t *testing.T) {
+	for _, tc := range []struct{ name, alias, receiver, symbol string }{
+		{"value", "T", "Alias", "T.Stop"},
+		{"pointer_alias", "*T", "Alias", "(*T).Stop"},
+		{"pointer_to_alias", "T", "*Alias", "(*T).Stop"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			goPkg, _, files := buildGoSSAPkg(t, `package attr
+type T struct{}
+type Alias = `+tc.alias+`
+//llgo:cold
+//llgo:noreturn
+func (`+tc.receiver+`) Stop() { for {} }
+func Box(value *T) any { return value }
+`)
+			prog := newLLSSAProg(t)
+			defer prog.Dispose()
+			pkg, err := NewPackage(prog, goPkg, files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkFunctionAttributes(t, pkg.Module().NamedFunction("attr."+tc.symbol), true, true)
+			// The backend also looks up methods without their Go SSA syntax.
+			index := new(FunctionAttributes)
+			index.collect(goPkg.Pkg, files)
+			ctx := &context{options: Options{FunctionAttributes: index}}
+			typ := goPkg.Pkg.Scope().Lookup("T").Type()
+			method := types.NewMethodSet(types.NewPointer(typ)).Lookup(goPkg.Pkg, "Stop").Obj().(*types.Func)
+			var source aFunction
+			source.readAttributes(ctx.functionAttributeSource(method))
+			if !source.cold || !source.noreturn {
+				t.Fatal("alias receiver lost its source attributes")
+			}
+			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
