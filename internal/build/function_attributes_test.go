@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -62,12 +63,33 @@ func TestFunctionAttributesCacheAndUnwind(t *testing.T) {
 			conf.Overlay = map[string][]byte{depFile: []byte(source)}
 			var mu sync.Mutex
 			checked := false
+			checkedRuntime := false
 			conf.ModuleHook = func(pkg Package) {
-				if pkg.PkgPath != prefix || pkg.LPkg == nil {
+				if pkg.LPkg == nil {
 					return
 				}
 				mu.Lock()
 				defer mu.Unlock()
+				if pkg.PkgPath == ssa.PkgRuntime {
+					checkRuntimeFunctionAttributes(t, pkg.LPkg.Module())
+					checkedRuntime = true
+					return
+				}
+				if pkg.PkgPath == prefix+"/dep" {
+					fn := pkg.LPkg.Module().NamedFunction(ssa.PkgRuntime + ".Panic")
+					if fn.IsNil() {
+						t.Error("missing imported runtime.Panic declaration")
+						return
+					}
+					for _, name := range []string{"cold", "noreturn"} {
+						if fn.GetEnumFunctionAttribute(llvm.AttributeKindID(name)).IsNil() {
+							t.Errorf("imported runtime.Panic lost %s", name)
+						}
+					}
+				}
+				if pkg.PkgPath != prefix {
+					return
+				}
 				for _, symbol := range []string{"Stop", "Generic[int]", "T.Stop"} {
 					fn := pkg.LPkg.Module().NamedFunction(prefix + "/dep." + symbol)
 					if fn.IsNil() {
@@ -90,6 +112,9 @@ func TestFunctionAttributesCacheAndUnwind(t *testing.T) {
 			if !checked {
 				t.Fatal("caller module was not checked")
 			}
+			if (phase.name == "first" || phase.name == "nogc") && !checkedRuntime {
+				t.Fatal("runtime module was not checked")
+			}
 			found := false
 			for _, pkg := range pkgs {
 				if pkg.PkgPath == prefix+"/dep" {
@@ -106,5 +131,40 @@ func TestFunctionAttributesCacheAndUnwind(t *testing.T) {
 				t.Fatalf("panic/defer/recover execution: %v\n%s", err, out)
 			}
 		})
+	}
+}
+
+func checkRuntimeFunctionAttributes(t *testing.T, mod llvm.Module) {
+	t.Helper()
+	for _, tc := range []struct {
+		name           string
+		cold, noreturn bool
+	}{
+		{"Panic", true, true}, {"PanicSignal", true, true},
+		{"PanicErrorString", true, true}, {"PanicIndex", true, true}, {"PanicIndexU", true, true},
+		{"PanicTypeAssertionError", true, true}, {"panicBounds", true, true},
+		{"PanicSliceConvert", true, true}, {"PanicTypeAssert", true, true},
+		{"panicmakeslicelen", true, true}, {"panicmakeslicecap", true, true},
+		{"panicgrowslicelen", true, true}, {"panicMakeChanSize", true, true},
+		{"panicSendOnClosedChan", true, true}, {"Goexit", false, true},
+		{"TracePanic", true, false}, {"throw", true, false}, {"fatal", true, false},
+		{"unreachableMethod", true, false},
+		// These helpers also run on normal paths and may return.
+		{"Rethrow", false, false}, {"AssertNilDeref", false, false},
+		{"PanicWrapNilPointer", false, false},
+	} {
+		fn := mod.NamedFunction(ssa.PkgRuntime + "." + tc.name)
+		if fn.IsNil() {
+			t.Errorf("missing runtime.%s", tc.name)
+			continue
+		}
+		for name, want := range map[string]bool{"cold": tc.cold, "noreturn": tc.noreturn} {
+			if got := !fn.GetEnumFunctionAttribute(llvm.AttributeKindID(name)).IsNil(); got != want {
+				t.Errorf("runtime.%s: %s = %v, want %v", tc.name, name, got, want)
+			}
+		}
+		if tc.noreturn && !fn.GetEnumFunctionAttribute(llvm.AttributeKindID("nounwind")).IsNil() {
+			t.Errorf("runtime.%s must preserve unwinding", tc.name)
+		}
 	}
 }

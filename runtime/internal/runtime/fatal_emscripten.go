@@ -7,6 +7,8 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/clite/emscripten"
 )
 
+//llgo:cold
+//llgo:noreturn
 func fatal(s string) {
 	print("fatal error: ", s, "\n")
 	// A pending Asyncify host wait keeps the Emscripten runtime alive after
