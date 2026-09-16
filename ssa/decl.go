@@ -627,4 +627,15 @@ func (p Function) SetWasmImport(module, name string) {
 	p.impl.AddFunctionAttr(ctx.CreateStringAttribute("wasm-import-name", name))
 }
 
+// SetCold marks calls to this function as unlikely.
+func (p Function) SetCold() {
+	p.impl.AddFunctionAttr(p.Prog.ctx.CreateEnumAttribute(llvm.AttributeKindID("cold"), 0))
+}
+
+// SetNoReturn promises that the function never returns normally. It does not
+// prevent unwinding, so panic and deferred calls retain their usual behavior.
+func (p Function) SetNoReturn() {
+	p.impl.AddFunctionAttr(p.Prog.ctx.CreateEnumAttribute(llvm.AttributeKindID("noreturn"), 0))
+}
+
 // -----------------------------------------------------------------------------

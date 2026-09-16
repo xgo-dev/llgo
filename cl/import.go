@@ -885,6 +885,12 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 	if pkg == nil {
 		return nil
 	}
+	for _, file := range files {
+		if err := validateFunctionAttributes(fset, file); err != nil {
+			return err
+		}
+	}
+	options.FunctionDocs.collect(pkg, files)
 	if prog.PackageSyntaxParsed(pkg) {
 		return nil
 	}

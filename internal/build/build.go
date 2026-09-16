@@ -582,6 +582,7 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 		// named -target.
 		ExportRename: conf.Target != "" || export.WasmProfile != crosscompile.WasmProfileNone,
 		ShadowStack:  useShadowStack(conf.Goarch),
+		FunctionDocs: new(cl.FunctionDocs),
 	}
 	preloadOptions := frontendOptions
 	llssaInitOnce.Do(func() {
