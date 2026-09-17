@@ -48,6 +48,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/dcepass"
 	"github.com/xgo-dev/llgo/internal/deadcode"
 	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/exportdata"
 	"github.com/xgo-dev/llgo/internal/firmware"
 	"github.com/xgo-dev/llgo/internal/flash"
 	"github.com/xgo-dev/llgo/internal/goarch"
@@ -583,6 +584,7 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 		// named -target.
 		ExportRename: conf.Target != "" || export.WasmProfile != crosscompile.WasmProfileNone,
 		ShadowStack:  useShadowStack(conf.Goarch),
+		Exports:      new(cl.PackageExports),
 	}
 	preloadOptions := frontendOptions
 	llssaInitOnce.Do(func() {
@@ -3374,6 +3376,7 @@ type aPackage struct {
 	ObjBuffers   []packageArchiveBuffer // LLVM-produced in-memory archive members
 	ArchiveFile  string                 // archive file: .a (output of archiver, used for linking)
 	Meta         *meta.PackageMeta
+	Exports      *exportdata.Package
 	rewriteVars  map[string]string
 	tempObjFiles []string // process-private C/C++/assembly objects consumed by ArchiveFile
 

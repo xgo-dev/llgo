@@ -26,10 +26,11 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/exportdata"
 	"go.yaml.in/yaml/v3"
 )
 
-// depEntry captures dependency identity plus either version or fingerprint.
+// depEntry captures dependency identity, module version, and effective build fingerprint.
 type depEntry struct {
 	ID          string `yaml:"id"`
 	Version     string `yaml:"version,omitempty"`
@@ -45,11 +46,12 @@ type manifestMetadata struct {
 
 // manifestData is the structured representation of manifest content.
 type manifestData struct {
-	Env      *envSection       `yaml:"env,omitempty"`
-	Common   *commonSection    `yaml:"common,omitempty"`
-	Package  *packageSection   `yaml:"package,omitempty"`
-	Metadata *manifestMetadata `yaml:"metadata,omitempty"`
-	Deps     []depEntry        `yaml:"deps,omitempty"`
+	Exports  *exportdata.Package `yaml:"exports,omitempty"`
+	Env      *envSection         `yaml:"env,omitempty"`
+	Common   *commonSection      `yaml:"common,omitempty"`
+	Package  *packageSection     `yaml:"package,omitempty"`
+	Metadata *manifestMetadata   `yaml:"metadata,omitempty"`
+	Deps     []depEntry          `yaml:"deps,omitempty"`
 }
 
 // orderedStringMap keeps deterministic order for map[string]string when marshaling.
@@ -117,6 +119,7 @@ func (s *envSection) empty() bool {
 }
 
 type commonSection struct {
+	ExportVersion           int          `yaml:"EXPORT_VERSION,omitempty"`
 	BuildTags               []string     `yaml:"BUILD_TAGS,omitempty"`
 	Target                  string       `yaml:"TARGET,omitempty"`
 	TargetABI               string       `yaml:"TARGET_ABI,omitempty"`
@@ -158,7 +161,7 @@ type commonSection struct {
 }
 
 func (s *commonSection) empty() bool {
-	return len(s.BuildTags) == 0 && s.Target == "" && s.TargetABI == "" && s.WasmProfile == "" && s.WasmProvider == "" &&
+	return s.ExportVersion == 0 && len(s.BuildTags) == 0 && s.Target == "" && s.TargetABI == "" && s.WasmProfile == "" && s.WasmProvider == "" &&
 		!s.WasmReflectBridges && !s.WasmFuncInfoEntries && s.PlatformABI == "" && s.ObjectFormat == "" && s.DriverFlavor == "" && s.LinkerFlavor == "" &&
 		s.TargetTriple == "" && s.CRTFlavor == "" && s.CXXRuntime == "" &&
 		s.SDKVersion == "" && s.CRTVersion == "" && s.ToolsetVersion == "" &&
@@ -200,7 +203,7 @@ func newManifestBuilder() *manifestBuilder {
 	return &manifestBuilder{}
 }
 
-// Build generates the sorted manifest text in INI format.
+// Build generates the sorted manifest text in YAML format.
 func (m *manifestBuilder) Build() string {
 	env := m.env
 	common := m.common
@@ -247,7 +250,7 @@ func (d manifestData) isEmpty() bool {
 	return (d.Env == nil || d.Env.empty()) &&
 		(d.Common == nil || d.Common.empty()) &&
 		(d.Package == nil || d.Package.empty()) &&
-		len(d.Deps) == 0 && d.Metadata == nil
+		len(d.Deps) == 0 && d.Metadata == nil && d.Exports == nil
 }
 
 func buildManifestYAML(data manifestData) (string, error) {
@@ -399,4 +402,15 @@ func digestFilesWithOverlay(paths []string, overlay map[string][]byte) ([]fileDi
 	sort.Slice(digests, func(i, j int) bool { return digests[i].Path < digests[j].Path })
 
 	return digests, nil
+}
+
+// manifestInputFingerprint excludes derived build outputs, including exports.
+func manifestInputFingerprint(data manifestData) (string, error) {
+	data.Metadata, data.Exports = nil, nil
+	content, err := buildManifestYAML(data)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(hash[:]), nil
 }

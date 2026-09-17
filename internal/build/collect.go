@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/exportdata"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -126,6 +127,7 @@ func (c *context) collectEnvInputs(m *manifestBuilder) {
 
 // collectCommonInputs collects common build configuration inputs.
 func (c *context) collectCommonInputs(m *manifestBuilder) {
+	m.common.ExportVersion = exportdata.Version
 	if c.buildConf.Tags != "" {
 		m.common.BuildTags = strings.Split(c.buildConf.Tags, ",")
 	}
@@ -308,7 +310,6 @@ func (c *context) dependencyFingerprint(dep *packages.Package) (depEntry, error)
 	entry := depEntry{ID: dep.ID}
 	if v := moduleVersion(dep.Module); v != "" {
 		entry.Version = v
-		return entry, nil
 	}
 
 	if c.pkgByID != nil {
@@ -443,6 +444,14 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 	if err != nil {
 		return false
 	}
+	data, err := decodeManifest(content)
+	if err != nil || data.Exports.Validate() != nil {
+		return false
+	}
+	fingerprint, err := manifestInputFingerprint(data)
+	if err != nil || fingerprint != pkg.Fingerprint {
+		return false
+	}
 	var pkgMeta *meta.PackageMeta
 	if c.buildConf.packageMetaEnabled() {
 		pkgMeta, err = readMeta(paths.Meta)
@@ -463,6 +472,7 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 	pkg.NeedRt = meta.NeedRt
 	pkg.NeedPyInit = meta.NeedPyInit
 	pkg.Meta = pkgMeta
+	pkg.Exports = data.Exports
 	pkg.CacheHit = true
 
 	return true
@@ -589,6 +599,17 @@ func (c *context) saveToCache(pkg *aPackage) error {
 	if err != nil {
 		return fmt.Errorf("decode manifest: %w", err)
 	}
+
+	if pkg.Exports == nil {
+		pkg.Exports, err = collectPackageExports(pkg)
+		if err != nil {
+			return err
+		}
+	}
+	if err := pkg.Exports.Validate(); err != nil {
+		return err
+	}
+	data.Exports = pkg.Exports
 
 	meta := &manifestMetadata{
 		LinkArgs:   append([]string(nil), pkg.LinkArgs...),

@@ -177,6 +177,8 @@ func findMethod(mthds []abi.Method, im abi.Imethod) (abi.Text, bool) {
 
 // unreachableMethod matches Go's runtime.unreachableMethod: method entries
 // proven unreachable by link-time DCE are redirected here and should never run.
+//
+//llgo:cold
 func unreachableMethod() {
 	throw("unreachable method called. linker bug?")
 }
