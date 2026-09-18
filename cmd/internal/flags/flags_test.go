@@ -323,7 +323,7 @@ func TestDeadcodeDropBuildFlag(t *testing.T) {
 	}
 }
 
-func TestBuildPthreadStackSizeFlag(t *testing.T) {
+func TestBuildGoroutineStackSizeFlags(t *testing.T) {
 	tests := []struct {
 		arg  string
 		want int64
@@ -335,47 +335,37 @@ func TestBuildPthreadStackSizeFlag(t *testing.T) {
 		{arg: "0", want: 0},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.arg, func(t *testing.T) {
-			fs := flag.NewFlagSet("pthread-stack-size", flag.ContinueOnError)
+	for _, name := range []string{"goroutine-stack-size", "pthread-stack-size"} {
+		for _, tt := range tests {
+			t.Run(name+"/"+tt.arg, func(t *testing.T) {
+				fs := flag.NewFlagSet(name, flag.ContinueOnError)
+				fs.SetOutput(new(bytes.Buffer))
+				AddBuildFlags(fs)
+				if err := fs.Parse([]string{"-" + name + "=" + tt.arg}); err != nil {
+					t.Fatalf("Parse unexpected error: %v", err)
+				}
+				conf := &build.Config{}
+				if err := UpdateConfig(conf); err != nil {
+					t.Fatalf("UpdateConfig error: %v", err)
+				}
+				if conf.PthreadStackSize != tt.want {
+					t.Fatalf("conf.PthreadStackSize = %d, want %d", conf.PthreadStackSize, tt.want)
+				}
+			})
+		}
+	}
+}
+
+func TestBuildGoroutineStackSizeFlagsRejectNegative(t *testing.T) {
+	for _, name := range []string{"goroutine-stack-size", "pthread-stack-size"} {
+		t.Run(name, func(t *testing.T) {
+			fs := flag.NewFlagSet(name, flag.ContinueOnError)
 			fs.SetOutput(new(bytes.Buffer))
 			AddBuildFlags(fs)
-			if err := fs.Parse([]string{"-pthread-stack-size=" + tt.arg}); err != nil {
-				t.Fatalf("Parse unexpected error: %v", err)
-			}
-			conf := &build.Config{}
-			if err := UpdateConfig(conf); err != nil {
-				t.Fatalf("UpdateConfig error: %v", err)
-			}
-			if conf.PthreadStackSize != tt.want {
-				t.Fatalf("conf.PthreadStackSize = %d, want %d", conf.PthreadStackSize, tt.want)
+			if err := fs.Parse([]string{"-" + name + "=-1"}); err == nil {
+				t.Fatal("Parse expected error")
 			}
 		})
-	}
-}
-
-func TestBuildPthreadStackSizeFlagRejectsNegative(t *testing.T) {
-	fs := flag.NewFlagSet("pthread-stack-size-negative", flag.ContinueOnError)
-	fs.SetOutput(new(bytes.Buffer))
-	AddBuildFlags(fs)
-	if err := fs.Parse([]string{"-pthread-stack-size=-1"}); err == nil {
-		t.Fatal("Parse expected error")
-	}
-}
-
-func TestBuildGoroutineStackSizeFlag(t *testing.T) {
-	fs := flag.NewFlagSet("goroutine-stack-size", flag.ContinueOnError)
-	fs.SetOutput(new(bytes.Buffer))
-	AddBuildFlags(fs)
-	if err := fs.Parse([]string{"-goroutine-stack-size=2MB"}); err != nil {
-		t.Fatal(err)
-	}
-	conf := &build.Config{}
-	if err := UpdateConfig(conf); err != nil || conf.PthreadStackSize != 2<<20 {
-		t.Fatalf("stack size = %d, error = %v", conf.PthreadStackSize, err)
-	}
-	if err := fs.Parse([]string{"-goroutine-stack-size=-1"}); err == nil {
-		t.Fatal("negative stack size accepted")
 	}
 }
 

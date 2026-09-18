@@ -10,8 +10,14 @@ if [[ $# -eq 0 ]]; then
 	set -- emscripten emscripten-memory64
 fi
 for target in "$@"; do
+	case "${target}" in
+		emscripten|emscripten-memory64) ;;
+		*) echo "unsupported stack-check target: ${target}" >&2; exit 2 ;;
+	esac
 	runner="${repo_root}/targets/${target}-runner.mjs"
-	for size in 128KB 1MB; do
+	for test_case in 128KB:overflow 1MB:success; do
+		size="${test_case%%:*}"
+		expected="${test_case#*:}"
 		module="${work_dir}/${target}-${size}.mjs"
 		"${llgo_cmd}" build -target "${target}" -goroutine-stack-size="${size}" \
 			-o "${module}" "${repo_root}/internal/build/testdata/wasm-stack-bounds"
@@ -21,7 +27,7 @@ for target in "$@"; do
 		else
 			"${node_cmd}" "${runner}" "${module}" > "${module}.log" 2>&1 || status=$?
 		fi
-		if [[ "${size}" == 128KB ]]; then
+		if [[ "${expected}" == overflow ]]; then
 			if [[ ${status} -eq 0 ]] || ! grep -Fq 'Aborted(stack overflow' "${module}.log"; then
 				cat "${module}.log"
 				echo "${target}: expected checked stack overflow, got ${status}" >&2

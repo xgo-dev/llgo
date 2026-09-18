@@ -2945,6 +2945,7 @@ func runBuildAndCompare(t *testing.T, casePath, workDir, rootDir string, env []s
 	if err := ensureBuiltBinary(goBin, "baseline go build"); err != nil {
 		return err
 	}
+	llgoBuildFlags = gorootWasmCaseBuildFlags(casePath, llgoBuildFlags)
 	llgoBuildStdout, llgoBuildStderr, llgoBuildExit, llgoBuildDur, err := runProgram(workDir, llgoBin, targetEnv, buildTimeout, gorootBuildArgs(true, llgoBuildFlags, llgoOut, ".")...)
 	metrics.llgoBuild += llgoBuildDur
 	if cmdErr := requireSuccessfulExit(err, llgoBuildExit); cmdErr != nil {

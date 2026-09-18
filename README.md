@@ -70,6 +70,9 @@ set `-goroutine-stack-size=2MB` when building (the existing `-pthread-stack-size
 flag remains an alias). This sets both the goroutine stack and its Asyncify
 buffer; it does not change the main goroutine's stack. JavaScript-hosted builds
 check stack bounds and abort on overflow instead of corrupting linear memory.
+These checks remain enabled in optimized builds: checking each stack-pointer
+update adds code and execution overhead, but a return-time cookie check alone
+cannot prevent a goroutine from overwriting adjacent memory.
 
 
 ## C/C++ support

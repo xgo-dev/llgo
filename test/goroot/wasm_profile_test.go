@@ -146,3 +146,13 @@ func gorootArtifactCommand(dir, artifact string, llgo bool, env []string, progra
 	args = append(args, programArgs...)
 	return "node", args, gorootRuntimeEnv(env), nil
 }
+
+// uintptrescapes deliberately forces stack growth with 4096 recursive frames.
+// LLGo's wasm goroutine stacks are fixed, so reserve a test-specific budget.
+// Other cases retain the default to avoid multiplying every goroutine's memory.
+func gorootWasmCaseBuildFlags(casePath string, flags []string) []string {
+	if _, ok := activeGOROOTWasmProfile(); ok && casePath == "uintptrescapes.go" {
+		return append(append([]string(nil), flags...), "-goroutine-stack-size=8MB")
+	}
+	return flags
+}

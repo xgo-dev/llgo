@@ -76,3 +76,21 @@ func TestGOROOTWasiRunCommand(t *testing.T) {
 		t.Fatalf("WASI command: %q %v %v %v", app, args, targetEnv, err)
 	}
 }
+
+func TestGOROOTWasmStackGrowthBudget(t *testing.T) {
+	for _, profile := range []string{"", "J32-GoJS", "J32-Emscripten", "J64-Emscripten", "W32-WASI"} {
+		t.Run(profile, func(t *testing.T) {
+			withGOROOTWasmProfile(t, profile)
+			for _, path := range []string{"uintptrescapes.go", "helloworld.go"} {
+				want := []string{"-tags=x"}
+				if profile != "" && path == "uintptrescapes.go" {
+					want = append(want, "-goroutine-stack-size=8MB")
+				}
+				got := gorootWasmCaseBuildFlags(path, []string{"-tags=x"})
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("%s: got %v, want %v", path, got, want)
+				}
+			}
+		})
+	}
+}
