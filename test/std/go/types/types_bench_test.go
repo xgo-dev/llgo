@@ -2,7 +2,6 @@ package types_test
 
 import (
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -12,7 +11,7 @@ import (
 func BenchmarkTypeCheckSmallPackage(b *testing.B) {
 	const src = `package bench
 
-import "fmt"
+import "example.org/fixture/fmt"
 
 type Number interface{
     ~int | ~float64
@@ -44,7 +43,7 @@ func run() {
 			Instances:  make(map[*ast.Ident]types.Instance),
 		}
 
-		conf := types.Config{Importer: importer.Default()}
+		conf := types.Config{Importer: testImporter(b)}
 		if _, err := conf.Check("bench", fset, []*ast.File{file}, &info); err != nil {
 			b.Fatalf("type-check failed: %v", err)
 		}

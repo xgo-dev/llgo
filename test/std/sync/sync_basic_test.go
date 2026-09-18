@@ -67,14 +67,6 @@ func TestWaitGroupBasic(t *testing.T) {
 	wg.Wait()
 }
 
-func TestPoolSkip(t *testing.T) {
-	t.Skip("Pool has type assertion issues in LLGo runtime")
-}
-
-func TestCondSkip(t *testing.T) {
-	t.Skip("Cond has type assertion issues in LLGo runtime")
-}
-
 func TestConcurrentAccess(t *testing.T) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup

@@ -1,6 +1,11 @@
 # Windows platform selectors may use windows/ARCH for both ABIs or the more
 # specific windows-msvc/ARCH and windows-mingw/ARCH forms.
 host_skips:
+  - version: go1.27
+    platform: linux/amd64
+    directive: runoutput
+    case: rangegen.go
+    reason: the Go 1.27 generator exceeds the hosted runner's 4 GiB process-group limit before LLGo is invoked
   - directive: run
     case: fixedbugs/issue16016.go
     reason: the test intentionally creates enough goroutines to exhaust LLGo's one-thread-per-goroutine host limit
@@ -21,6 +26,26 @@ host_skips:
     case: fixedbugs/bug449.go
     reason: go1.26 bug449 generated build exceeds the linux/amd64 hosted runner memory budget
 timeouts:
+  - platform: js/wasm
+    directive: run
+    case: winbatch.go
+    timeout: 4m
+    reason: walking GOROOT through the GoJS filesystem took 115s on a passing hosted run; allow runner variance beyond the former 120s limit
+  - platform: js/wasm
+    directive: run
+    case: fixedbugs/issue78081.go
+    timeout: 6m
+    reason: the 1.6 million-iteration stack and GC stress loop took 147s on a passing GoJS run and exceeded 180s on another runner
+  - platform: js/wasm
+    directive: run
+    case: fixedbugs/issue79186.go
+    timeout: 2m
+    reason: the 51.2 million-operation RWMutex loop passed in 55.7s on GoJS and exceeded the default minute on another runner
+  - platform: js/wasm
+    directive: runoutput
+    case: fixedbugs/issue5162.go
+    timeout: 4m
+    reason: building the 768 generated array-comparison functions took 168.8s on GoJS, leaving only 11s below the default build limit
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue79186.go
@@ -353,31 +378,62 @@ xfails:
     directive: run
     case: linkmain_run.go
     reason: the nested baseline go run exits unsuccessfully in the Go 1.26 Windows MSVC arm64 target environment
-  - version: go1.26
-    directive: errorcheck
+  - directive: errorcheck
     case: fixedbugs/issue4776.go
     reason: llgo parser uses a different missing-package-clause diagnostic
-  - version: go1.26
-    directive: errorcheck
+  - directive: errorcheck
     case: fixedbugs/issue4405.go
     reason: llgo parser recovery emits additional malformed-statement diagnostics
-  - version: go1.26
-    directive: errorcheck
+  - directive: errorcheck
     case: fixedbugs/issue13266.go
     reason: llgo parser uses a different malformed-package-clause diagnostic
   - version: go1.26
     directive: errorcheck
     case: fixedbugs/issue20789.go
     reason: llgo parser does not emit the expected malformed-name diagnostic
-  - version: go1.26
-    directive: errorcheck
+  - directive: errorcheck
     case: fixedbugs/bug050.go
     reason: llgo parser emits an additional malformed-declaration diagnostic
-  - version: go1.26
-    directive: errorcheck
+  - directive: errorcheck
     case: bombad.go
     reason: llgo parser recovery emits additional byte-order-mark diagnostics
 
   - directive: run
     case: heapsampling.go
     reason: LLGo does not currently report the heap-profile samples required by this runtime test
+  - platform: js/wasm
+    directive: run
+    case: cmplxdivide.go
+    reason: LLVM 22 lowering of this large complex-division constant table does not complete within the hosted WebAssembly build budget
+  - platform: js/wasm
+    directive: rundir
+    case: typeparam/chansimp.go
+    reason: the Ranger subtest requires its receiver finalizer to run at an exact liveness boundary, while LLGo's conservative WebAssembly roots can retain the receiver
+  - platform: js/wasm
+    directive: run
+    case: init1.go
+    reason: the conservative linear collector retains enough loop-temporary pointers to grow memory past this Go allocator threshold
+  - platform: js/wasm
+    directive: run
+    case: fixedbugs/issue14646.go
+    reason: LLGo reports the recovered caller one source line earlier than cmd/compile on WebAssembly
+  - platform: js/wasm
+    directive: run
+    case: fixedbugs/issue22662.go
+    reason: LLGo does not preserve the omitted filename in this sequence of line directives on WebAssembly
+  - platform: js/wasm
+    directive: errorcheck
+    case: fixedbugs/issue5089.go
+    reason: LLGo does not yet diagnose a method declaration on a non-local type
+  - platform: js/wasm
+    directive: run
+    case: fixedbugs/issue5856.go
+    reason: LLGo reports the deferred panic caller from the defer statement rather than the enclosing call site on WebAssembly
+  - platform: js/wasm
+    directive: run
+    case: fixedbugs/issue59680.go
+    reason: the fixed WebAssembly goroutine stack cannot grow through the test's 10,101 recursive frames
+  - platform: js/wasm
+    directive: run
+    case: fixedbugs/issue4618.go
+    reason: LLGo currently leaves one allocation in the unused local-pointer path that cmd/compile eliminates

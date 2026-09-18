@@ -8,11 +8,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
+
+	"github.com/xgo-dev/llgo/test/internal/binaryfixture"
 )
 
 func buildWindowsFixture(t *testing.T) string {
 	t.Helper()
+	if runtime.GOARCH == "wasm" {
+		return binaryfixture.PE(t)
+	}
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.go")
 	if err := os.WriteFile(src, []byte("package main\nfunc main(){}\n"), 0o644); err != nil {

@@ -2,11 +2,37 @@ package net_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
+	"runtime"
+	"syscall"
 	"testing"
 	"time"
 )
+
+func checkSocketOption(t *testing.T, name string, err error) {
+	t.Helper()
+	if err == nil {
+		return
+	}
+	if runtime.GOARCH == "wasm" && (errors.Is(err, syscall.ENOPROTOOPT) || errors.Is(err, syscall.ENOTSUP)) {
+		return
+	}
+	t.Errorf("%s error: %v", name, err)
+}
+
+func acceptWasmDNSFailure(t *testing.T, name string, err error) bool {
+	t.Helper()
+	if runtime.GOARCH != "wasm" || err == nil {
+		return false
+	}
+	var dnsErr *net.DNSError
+	if !errors.As(err, &dnsErr) {
+		t.Fatalf("%s = %v; want *net.DNSError on Go wasm", name, err)
+	}
+	return true
+}
 
 func TestParseIP(t *testing.T) {
 	tests := []struct {
@@ -893,6 +919,9 @@ func TestListenPacket(t *testing.T) {
 
 func TestInterfaces(t *testing.T) {
 	ifaces, err := net.Interfaces()
+	if checkWasmInterfaces(t, ifaces, err) {
+		return
+	}
 	if err != nil {
 		t.Fatalf("Interfaces error: %v", err)
 	}
@@ -903,6 +932,11 @@ func TestInterfaces(t *testing.T) {
 
 func TestInterfaceByName(t *testing.T) {
 	ifaces, err := net.Interfaces()
+	if checkWasmInterfaces(t, ifaces, err) {
+		iface, err := net.InterfaceByName("llgo-no-such-interface")
+		checkMissingWasmInterface(t, iface, err)
+		return
+	}
 	if err != nil || len(ifaces) == 0 {
 		t.Skip("No interfaces found")
 	}
@@ -917,6 +951,11 @@ func TestInterfaceByName(t *testing.T) {
 
 func TestInterfaceByIndex(t *testing.T) {
 	ifaces, err := net.Interfaces()
+	if checkWasmInterfaces(t, ifaces, err) {
+		iface, err := net.InterfaceByIndex(1)
+		checkMissingWasmInterface(t, iface, err)
+		return
+	}
 	if err != nil || len(ifaces) == 0 {
 		t.Skip("No interfaces found")
 	}
@@ -934,6 +973,12 @@ func TestInterfaceAddrs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InterfaceAddrs error: %v", err)
 	}
+	if runtime.GOARCH == "wasm" {
+		if len(addrs) != 0 {
+			t.Fatalf("wasm InterfaceAddrs = %v, want empty list", addrs)
+		}
+		return
+	}
 	if len(addrs) == 0 {
 		t.Skip("No interface addresses found")
 	}
@@ -941,6 +986,14 @@ func TestInterfaceAddrs(t *testing.T) {
 
 func TestInterfaceAddrsMethod(t *testing.T) {
 	ifaces, err := net.Interfaces()
+	if checkWasmInterfaces(t, ifaces, err) {
+		iface := &net.Interface{Index: 1}
+		addrs, err := iface.Addrs()
+		if err != nil || len(addrs) != 0 {
+			t.Fatalf("wasm Interface.Addrs = %v, %v; want empty list, nil", addrs, err)
+		}
+		return
+	}
 	if err != nil || len(ifaces) == 0 {
 		t.Skip("No interfaces found")
 	}
@@ -953,6 +1006,14 @@ func TestInterfaceAddrsMethod(t *testing.T) {
 
 func TestInterfaceMulticastAddrs(t *testing.T) {
 	ifaces, err := net.Interfaces()
+	if checkWasmInterfaces(t, ifaces, err) {
+		iface := &net.Interface{Index: 1}
+		addrs, err := iface.MulticastAddrs()
+		if err != nil || len(addrs) != 0 {
+			t.Fatalf("wasm Interface.MulticastAddrs = %v, %v; want empty list, nil", addrs, err)
+		}
+		return
+	}
 	if err != nil || len(ifaces) == 0 {
 		t.Skip("No interfaces found")
 	}
@@ -1114,6 +1175,9 @@ func TestResolverLookupAddr(t *testing.T) {
 	r := net.DefaultResolver
 	names, err := r.LookupAddr(context.Background(), "127.0.0.1")
 	if err != nil {
+		if acceptWasmDNSFailure(t, "Resolver.LookupAddr", err) {
+			return
+		}
 		t.Skip("LookupAddr failed (may not have reverse DNS)")
 	}
 	_ = names
@@ -1123,6 +1187,9 @@ func TestResolverLookupCNAME(t *testing.T) {
 	r := net.DefaultResolver
 	cname, err := r.LookupCNAME(context.Background(), "localhost")
 	if err != nil {
+		if acceptWasmDNSFailure(t, "Resolver.LookupCNAME", err) {
+			return
+		}
 		t.Skipf("LookupCNAME error (DNS configuration issue): %v", err)
 	}
 	if cname == "" {
@@ -1153,6 +1220,9 @@ func TestLookupIP(t *testing.T) {
 func TestLookupAddr(t *testing.T) {
 	names, err := net.LookupAddr("127.0.0.1")
 	if err != nil {
+		if acceptWasmDNSFailure(t, "LookupAddr", err) {
+			return
+		}
 		t.Skip("LookupAddr failed (may not have reverse DNS)")
 	}
 	_ = names
@@ -1161,6 +1231,9 @@ func TestLookupAddr(t *testing.T) {
 func TestLookupCNAME(t *testing.T) {
 	cname, err := net.LookupCNAME("localhost")
 	if err != nil {
+		if acceptWasmDNSFailure(t, "LookupCNAME", err) {
+			return
+		}
 		t.Skipf("LookupCNAME error (DNS configuration issue): %v", err)
 	}
 	if cname == "" {
@@ -1181,6 +1254,9 @@ func TestLookupPort(t *testing.T) {
 func TestLookupTXT(t *testing.T) {
 	records, err := net.LookupTXT("localhost")
 	if err != nil {
+		if acceptWasmDNSFailure(t, "LookupTXT", err) {
+			return
+		}
 		t.Skip("LookupTXT failed")
 	}
 	_ = records
@@ -1189,6 +1265,9 @@ func TestLookupTXT(t *testing.T) {
 func TestLookupMX(t *testing.T) {
 	records, err := net.LookupMX("localhost")
 	if err != nil {
+		if acceptWasmDNSFailure(t, "LookupMX", err) {
+			return
+		}
 		t.Skip("LookupMX failed")
 	}
 	_ = records
@@ -1197,6 +1276,9 @@ func TestLookupMX(t *testing.T) {
 func TestLookupNS(t *testing.T) {
 	records, err := net.LookupNS("localhost")
 	if err != nil {
+		if acceptWasmDNSFailure(t, "LookupNS", err) {
+			return
+		}
 		t.Skip("LookupNS failed")
 	}
 	_ = records
@@ -1205,6 +1287,9 @@ func TestLookupNS(t *testing.T) {
 func TestLookupSRV(t *testing.T) {
 	cname, records, err := net.LookupSRV("xmpp-server", "tcp", "localhost")
 	if err != nil {
+		if acceptWasmDNSFailure(t, "LookupSRV", err) {
+			return
+		}
 		t.Skip("LookupSRV failed")
 	}
 	_, _ = cname, records
@@ -1306,29 +1391,16 @@ func TestTCPConnMethods(t *testing.T) {
 	tcpConn := conn.(*net.TCPConn)
 	defer tcpConn.Close()
 
-	if err := tcpConn.SetKeepAlive(true); err != nil {
-		t.Errorf("SetKeepAlive error: %v", err)
-	}
-
-	if err := tcpConn.SetKeepAlivePeriod(time.Second); err != nil {
-		t.Errorf("SetKeepAlivePeriod error: %v", err)
-	}
+	checkSocketOption(t, "SetKeepAlive", tcpConn.SetKeepAlive(true))
+	checkSocketOption(t, "SetKeepAlivePeriod", tcpConn.SetKeepAlivePeriod(time.Second))
 
 	if err := tcpConn.SetLinger(0); err != nil {
 		t.Errorf("SetLinger error: %v", err)
 	}
 
-	if err := tcpConn.SetNoDelay(true); err != nil {
-		t.Errorf("SetNoDelay error: %v", err)
-	}
-
-	if err := tcpConn.SetReadBuffer(4096); err != nil {
-		t.Errorf("SetReadBuffer error: %v", err)
-	}
-
-	if err := tcpConn.SetWriteBuffer(4096); err != nil {
-		t.Errorf("SetWriteBuffer error: %v", err)
-	}
+	checkSocketOption(t, "SetNoDelay", tcpConn.SetNoDelay(true))
+	checkSocketOption(t, "SetReadBuffer", tcpConn.SetReadBuffer(4096))
+	checkSocketOption(t, "SetWriteBuffer", tcpConn.SetWriteBuffer(4096))
 
 	// CloseRead/CloseWrite may fail on some platforms if connection is not established
 	if err := tcpConn.CloseRead(); err != nil {
@@ -1369,13 +1441,8 @@ func TestUDPConnMethods(t *testing.T) {
 	}
 	defer conn.Close()
 
-	if err := conn.SetReadBuffer(4096); err != nil {
-		t.Errorf("SetReadBuffer error: %v", err)
-	}
-
-	if err := conn.SetWriteBuffer(4096); err != nil {
-		t.Errorf("SetWriteBuffer error: %v", err)
-	}
+	checkSocketOption(t, "SetReadBuffer", conn.SetReadBuffer(4096))
+	checkSocketOption(t, "SetWriteBuffer", conn.SetWriteBuffer(4096))
 }
 
 func TestTCPListenerMethods(t *testing.T) {
@@ -1446,22 +1513,22 @@ func TestResolverLookupMethods(t *testing.T) {
 	}
 
 	_, err = r.LookupMX(ctx, "localhost")
-	if err != nil {
+	if err != nil && !acceptWasmDNSFailure(t, "Resolver.LookupMX", err) {
 		t.Skip("LookupMX failed")
 	}
 
 	_, err = r.LookupNS(ctx, "localhost")
-	if err != nil {
+	if err != nil && !acceptWasmDNSFailure(t, "Resolver.LookupNS", err) {
 		t.Skip("LookupNS failed")
 	}
 
 	_, err = r.LookupTXT(ctx, "localhost")
-	if err != nil {
+	if err != nil && !acceptWasmDNSFailure(t, "Resolver.LookupTXT", err) {
 		t.Skip("LookupTXT failed")
 	}
 
 	_, _, err = r.LookupSRV(ctx, "xmpp-server", "tcp", "localhost")
-	if err != nil {
+	if err != nil && !acceptWasmDNSFailure(t, "Resolver.LookupSRV", err) {
 		t.Skip("LookupSRV failed")
 	}
 
@@ -1628,9 +1695,7 @@ func TestTCPConnKeepAliveConfig(t *testing.T) {
 		Enable: true,
 		Idle:   time.Second,
 	}
-	if err := tcpConn.SetKeepAliveConfig(kac); err != nil {
-		t.Errorf("SetKeepAliveConfig error: %v", err)
-	}
+	checkSocketOption(t, "SetKeepAliveConfig", tcpConn.SetKeepAliveConfig(kac))
 }
 
 func TestTCPConnMultipathTCP(t *testing.T) {

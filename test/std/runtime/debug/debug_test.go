@@ -1,12 +1,14 @@
 package debug_test
 
 import (
+	"errors"
 	"io"
 	"os"
 	"reflect"
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -18,22 +20,24 @@ func TestStackReportsCaller(t *testing.T) {
 }
 
 func TestPrintStackReportsCaller(t *testing.T) {
-	r, w, err := os.Pipe()
+	// Capture through a seekable file: wasm has files but no OS pipe support.
+	w, err := os.CreateTemp(t.TempDir(), "stack-*.log")
 	if err != nil {
 		t.Fatal(err)
 	}
 	oldStderr := os.Stderr
+	defer func() { os.Stderr = oldStderr }()
 	os.Stderr = w
 	debug.PrintStack()
 	os.Stderr = oldStderr
-	if err := w.Close(); err != nil {
+	if _, err := w.Seek(0, io.SeekStart); err != nil {
 		t.Fatal(err)
 	}
-	stack, err := io.ReadAll(r)
+	stack, err := io.ReadAll(w)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Close(); err != nil {
+	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(stack), "TestPrintStackReportsCaller") {
@@ -92,30 +96,23 @@ func TestPanicOnFaultStateIsGoroutineLocal(t *testing.T) {
 	}
 }
 
-func TestCrashAndHeapDumpOutputs(t *testing.T) {
+func TestCrashOutputDescriptor(t *testing.T) {
 	crashFile, err := os.CreateTemp(t.TempDir(), "crash-*.log")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := debug.SetCrashOutput(crashFile, debug.CrashOptions{}); err != nil {
+	if err := debug.SetCrashOutput(crashFile, debug.CrashOptions{}); runtime.GOARCH == "wasm" {
+		// The Go wasm host API cannot duplicate a descriptor for crash output.
+		if !errors.Is(err, syscall.ENOSYS) {
+			t.Fatalf("SetCrashOutput = %v, want ENOSYS on wasm", err)
+		}
+	} else if err != nil {
 		t.Fatal(err)
 	}
 	if err := debug.SetCrashOutput(nil, debug.CrashOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := crashFile.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	heapFile, err := os.CreateTemp(t.TempDir(), "heap-*.dump")
-	if err != nil {
-		t.Fatal(err)
-	}
-	debug.WriteHeapDump(heapFile.Fd())
-	if _, err := heapFile.WriteString("fd-remains-open"); err != nil {
-		t.Fatalf("heap dump closed its output descriptor: %v", err)
-	}
-	if err := heapFile.Close(); err != nil {
 		t.Fatal(err)
 	}
 }

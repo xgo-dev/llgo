@@ -2,7 +2,6 @@ package types_test
 
 import (
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
 	gotypes "go/types"
@@ -16,7 +15,7 @@ func parseAndCheckPackage(t *testing.T, filename, src string, info *gotypes.Info
 	if err != nil {
 		t.Fatalf("ParseFile(%s): %v", filename, err)
 	}
-	conf := gotypes.Config{Importer: importer.Default()}
+	conf := gotypes.Config{Importer: testImporter(t)}
 	pkg, err := conf.Check("example.org/p", fset, []*ast.File{file}, info)
 	if err != nil {
 		t.Fatalf("Config.Check: %v", err)
@@ -26,7 +25,7 @@ func parseAndCheckPackage(t *testing.T, filename, src string, info *gotypes.Info
 
 func TestConfigCheckAndInfo(t *testing.T) {
 	src := `package p
-import "fmt"
+import "example.org/fixture/fmt"
 type S struct{ X int }
 func (S) M() string { return fmt.Sprint("m") }
 var _ = S{}.M()

@@ -20,12 +20,8 @@ func TestUDPConnMethodCoverage(t *testing.T) {
 		}
 	})
 
-	if err := server.SetReadBuffer(4096); err != nil {
-		t.Errorf("server SetReadBuffer: %v", err)
-	}
-	if err := server.SetWriteBuffer(4096); err != nil {
-		t.Errorf("server SetWriteBuffer: %v", err)
-	}
+	checkSocketOption(t, "server SetReadBuffer", server.SetReadBuffer(4096))
+	checkSocketOption(t, "server SetWriteBuffer", server.SetWriteBuffer(4096))
 	if err := server.SetDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Errorf("server SetDeadline: %v", err)
 	}
@@ -63,12 +59,8 @@ func TestUDPConnMethodCoverage(t *testing.T) {
 	}
 	defer client.Close()
 
-	if err := client.SetReadBuffer(4096); err != nil {
-		t.Errorf("client SetReadBuffer: %v", err)
-	}
-	if err := client.SetWriteBuffer(4096); err != nil {
-		t.Errorf("client SetWriteBuffer: %v", err)
-	}
+	checkSocketOption(t, "client SetReadBuffer", client.SetReadBuffer(4096))
+	checkSocketOption(t, "client SetWriteBuffer", client.SetWriteBuffer(4096))
 	if err := client.SetDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Errorf("client SetDeadline: %v", err)
 	}

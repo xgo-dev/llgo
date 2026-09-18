@@ -5,7 +5,7 @@ package gotest
 import "testing"
 
 // Wasm guests cannot create the subprocesses required by these checks. The
-// Wasm acceptance host launches retained test artifacts for fatal-path checks.
+// Wasm acceptance host launches the fatal paths using retained test artifacts.
 func TestCallerPanicTraceback(t *testing.T) {
 	testCallerPanicTraceback(t)
 }

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
 	gotypes "go/types"
@@ -22,7 +21,7 @@ func countSeq[T any](seq iter.Seq[T]) int {
 
 func TestObjectsAndBasicTypesAPI(t *testing.T) {
 	src := `package p
-import f "fmt"
+import f "example.org/fixture/fmt"
 type A = int
 type N int
 type S struct{ N }
@@ -322,7 +321,7 @@ var _ = T{}.M()
 
 func TestGenericsAliasTypeCollectionsAndImporters(t *testing.T) {
 	src := `package p
-import _ "fmt"
+import _ "example.org/fixture/fmt"
 type A = int
 type Box[T any] struct{ V T }
 func Make[T any](v T) Box[T] { return Box[T]{V: v} }
@@ -474,15 +473,15 @@ func Make[T any](v T) Box[T] { return Box[T]{V: v} }
 	}
 
 	// Importer / ImporterFrom / ImportMode / Qualifier.
-	var imp gotypes.Importer = importer.Default()
-	if _, err := imp.Import("fmt"); err != nil {
+	var imp gotypes.Importer = testImporter(t)
+	if _, err := imp.Import("example.org/fixture/fmt"); err != nil {
 		t.Fatalf("Importer.Import(fmt): %v", err)
 	}
 	impFrom, ok := imp.(gotypes.ImporterFrom)
 	if !ok {
-		t.Fatal("importer.Default should implement types.ImporterFrom")
+		t.Fatal("fixture importer should implement types.ImporterFrom")
 	}
-	if _, err := impFrom.ImportFrom("fmt", "", 0); err != nil {
+	if _, err := impFrom.ImportFrom("example.org/fixture/fmt", "", 0); err != nil {
 		t.Fatalf("ImporterFrom.ImportFrom(fmt): %v", err)
 	}
 	var _ gotypes.ImportMode = 0
@@ -509,7 +508,7 @@ func Make[T any](v T) Box[T] { return Box[T]{V: v} }
 	checkPkg := gotypes.NewPackage("example.org/checker", "checker")
 	checkInfo := &gotypes.Info{}
 	ensureInfoMaps(checkInfo)
-	checker := gotypes.NewChecker(&gotypes.Config{Importer: importer.Default()}, fileset, checkPkg, checkInfo)
+	checker := gotypes.NewChecker(&gotypes.Config{Importer: testImporter(t)}, fileset, checkPkg, checkInfo)
 	if err := checker.Files([]*ast.File{file}); err != nil {
 		t.Fatalf("Checker.Files: %v", err)
 	}
