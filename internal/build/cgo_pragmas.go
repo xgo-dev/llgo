@@ -4,15 +4,18 @@ import (
 	"fmt"
 	"go/ast"
 	"os"
+	"path"
 	"strconv"
 	"strings"
+	"unicode"
 
 	gllvm "github.com/xgo-dev/llvm"
 )
 
 type cgoImportDynamicDecl struct {
-	local string
-	alias string
+	local   string
+	alias   string
+	library string
 }
 
 func collectGoCgoPragmas(files []*ast.File) (ldflags []string, dynimports []cgoImportDynamicDecl) {
@@ -46,12 +49,17 @@ func collectGoCgoPragmas(files []*ast.File) (ldflags []string, dynimports []cgoI
 						if len(toks) > 1 && toks[1] != "" {
 							alias = toks[1]
 						}
-						if local == "" || alias == "" || local == alias {
+						if local == "" || alias == "" {
 							continue
 						}
+						library := ""
+						if len(toks) > 2 {
+							library = toks[2]
+						}
 						dynimports = append(dynimports, cgoImportDynamicDecl{
-							local: local,
-							alias: alias,
+							local:   local,
+							alias:   alias,
+							library: library,
 						})
 					}
 				}
@@ -61,8 +69,34 @@ func collectGoCgoPragmas(files []*ast.File) (ldflags []string, dynimports []cgoI
 	return
 }
 
-func goCgoLinkArgs(files []*ast.File) []string {
-	ldflags, _ := collectGoCgoPragmas(files)
+func goCgoLinkArgs(files []*ast.File, goos string) []string {
+	ldflags, imports := collectGoCgoPragmas(files)
+	if goos != "darwin" {
+		return ldflags
+	}
+	seen := make(map[string]bool)
+	for _, imp := range imports {
+		lib := imp.library
+		if lib == "" || seen[lib] {
+			continue
+		}
+		seen[lib] = true
+		// System libraries may exist only in dyld's shared cache. Let the native
+		// compiler resolve their SDK stubs instead of opening the runtime path.
+		if strings.HasPrefix(lib, "/System/Library/Frameworks/") {
+			rest := strings.TrimPrefix(lib, "/System/Library/Frameworks/")
+			if name, _, ok := strings.Cut(rest, ".framework/"); ok && !strings.Contains(name, "/") {
+				ldflags = append(ldflags, "-framework", name)
+				continue
+			}
+		}
+		if path.Dir(lib) == "/usr/lib" && strings.HasPrefix(path.Base(lib), "lib") && strings.HasSuffix(lib, ".dylib") {
+			name := strings.TrimSuffix(strings.TrimPrefix(path.Base(lib), "lib"), ".dylib")
+			ldflags = append(ldflags, "-l"+name)
+		} else {
+			ldflags = append(ldflags, lib)
+		}
+	}
 	return ldflags
 }
 
@@ -284,7 +318,35 @@ func splitCommentLines(text string) []string {
 }
 
 func splitDirectiveArgs(s string) []string {
-	fields := strings.Fields(strings.TrimSpace(s))
+	// Match cmd/compile's pragma field boundaries: quoted regions are single
+	// fields, and an unterminated trailing quoted region is ignored. This also
+	// handles the extra trailing quote in Go 1.27 runtime/sys_darwin.go.
+	var fields []string
+	start, quoted := -1, false
+	for i, ch := range s {
+		if ch == '"' {
+			if quoted {
+				fields = append(fields, s[start:i+1])
+				start = -1
+			} else {
+				if start >= 0 {
+					fields = append(fields, s[start:i])
+				}
+				start = i
+			}
+			quoted = !quoted
+		} else if !quoted && unicode.IsSpace(ch) {
+			if start >= 0 {
+				fields = append(fields, s[start:i])
+				start = -1
+			}
+		} else if start < 0 {
+			start = i
+		}
+	}
+	if !quoted && start >= 0 {
+		fields = append(fields, s[start:])
+	}
 	out := make([]string, 0, len(fields))
 	for _, f := range fields {
 		if u, err := strconv.Unquote(f); err == nil {

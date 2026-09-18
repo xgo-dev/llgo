@@ -40,13 +40,16 @@ func TestForeignARM64Callback(t *testing.T) {
 		"main.go": `package main
 import (_ "syscall"; "unsafe")
 //go:cgo_import_dynamic imported_strlen strlen "/usr/lib/libSystem.B.dylib"
-var entry uintptr
+//go:cgo_import_dynamic imported_cf CFBooleanGetTypeID "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
+var entry, cfEntry uintptr
 //go:linkname call syscall.syscall6
 func call(fn,a1,a2,a3,a4,a5,a6 uintptr)(r1,r2,err uintptr)
 func main(){
  s:=[]byte("native ABI\x00")
  n,_,_:=call(entry,uintptr(unsafe.Pointer(&s[0])),0,0,0,0,0)
  if n!=10 {panic("native callback lost its argument or result")}
+ id,_,_:=call(cfEntry,0,0,0,0,0,0)
+ if id==0 {panic("missing framework function")}
  println("ok")
 }
 `,
@@ -60,6 +63,10 @@ TEXT callback<>(SB), NOSPLIT|NOFRAME, $0
  RET
 GLOBL ·entry(SB), RODATA, $8
 DATA ·entry(SB)/8, $callback<>(SB)
+TEXT cftramp<>(SB), NOSPLIT, $0-0
+ JMP imported_cf(SB)
+GLOBL ·cfEntry(SB), RODATA, $8
+DATA ·cfEntry(SB)/8, $cftramp<>(SB)
 `,
 	}
 	for name, s := range files {
