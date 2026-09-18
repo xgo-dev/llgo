@@ -349,6 +349,31 @@ func (t *UncommonType) Methods() []Method {
 	return methods
 }
 
+func (t *Type) MethodValueThunk(i int) Text {
+	ut := t.Uncommon()
+	if ut == nil || uint(i) >= uint(ut.Mcount) {
+		return nil
+	}
+	methodsPtr := addChecked(unsafe.Pointer(ut), uintptr(ut.Moff), "t.mcount > 0")
+	thunksPtr := addChecked(methodsPtr, uintptr(ut.Mcount)*unsafe.Sizeof(Method{}), "method value thunks")
+	elem := addChecked(thunksPtr, uintptr(i)*unsafe.Sizeof(Text(nil)), "thunk")
+	return *(*Text)(elem)
+}
+
+func (t *Type) MethodValueThunkByIfn(ifn Text) Text {
+	ut := t.Uncommon()
+	if ut == nil {
+		return nil
+	}
+	ms := ut.Methods()
+	for i := range ms {
+		if ms[i].Ifn_ == ifn {
+			return t.MethodValueThunk(i)
+		}
+	}
+	return nil
+}
+
 func (t *UncommonType) ExportedMethods() []Method {
 	if t.Xcount == 0 {
 		return nil

@@ -547,18 +547,19 @@ type Method struct {
 }
 */
 
-func (b Builder) abiUncommonMethods(t types.Type, methods []*types.Selection) llvm.Value {
+func (b Builder) abiUncommonMethods(t types.Type, methods []*types.Selection) (methodArr, thunkArr llvm.Value) {
 	prog := b.Prog
 	ft := prog.rtType("Method")
 	n := len(methods)
 	fields := make([]llvm.Value, n)
+	thunks := make([]llvm.Value, n)
 	typeName, _ := prog.abi.TypeName(t)
 	for i := 0; i < n; i++ {
 		m := methods[i]
 		obj := m.Obj().(*types.Func)
 		fullName := abiMethodName(obj)
 		name := b.Str(fullName).impl
-		ifn, tfn := b.abiMethodFuncs(t, m)
+		ifn, tfn, bfn := b.abiMethodFuncs(t, m)
 		var values []llvm.Value
 		values = append(values, name)
 		ftyp := funcType(prog, m.Type())
@@ -566,6 +567,7 @@ func (b Builder) abiUncommonMethods(t types.Type, methods []*types.Selection) ll
 		values = append(values, ifn)
 		values = append(values, tfn)
 		fields[i] = prog.constStructValue(ft, values)
+		thunks[i] = bfn
 		if prog.target.usesWasmReflectBridges() {
 			// Type.Method constructs a method-expression signature at runtime.
 			// Retain that descriptor with the method wrapper only when reflection
@@ -582,13 +584,13 @@ func (b Builder) abiUncommonMethods(t types.Type, methods []*types.Selection) ll
 			mb.AddMethodSlot(mb.Sym(typeName), fullName, mb.Sym(mtypeName), mb.Sym(ifn.Name()), mb.Sym(tfn.Name()))
 		}
 	}
-	return llvm.ConstArray(ft.ll, fields)
+	return llvm.ConstArray(ft.ll, fields), llvm.ConstArray(prog.VoidPtr().ll, thunks)
 }
 
 // abiMethodFuncs returns the interface-call and method-expression entry points
 // stored in a concrete type's method metadata. Keep this shared with static
 // itab construction so both representations select exactly the same wrapper.
-func (b Builder) abiMethodFuncs(t types.Type, m *types.Selection) (ifn, tfn llvm.Value) {
+func (b Builder) abiMethodFuncs(t types.Type, m *types.Selection) (ifn, tfn, bfn llvm.Value) {
 	pkg, _ := b.abiUncommonPkg(t)
 	anonymous := pkg == nil
 	if anonymous {
@@ -603,13 +605,64 @@ func (b Builder) abiMethodFuncs(t types.Type, m *types.Selection) (ifn, tfn llvm
 	// Tfn is used as a method-expression funcval. Its explicit receiver is
 	// already part of that semantic signature, so it is a no-env entry.
 	tfn = tfnFn.impl
+	ifnFn := tfnFn
 	ifn = tfn
+	ifnSig := mSig
 	if _, ok := m.Recv().Underlying().(*types.Pointer); !ok {
 		pRecv := types.NewVar(token.NoPos, pkg, "", types.NewPointer(mSig.Recv().Type()))
-		pSig := types.NewSignature(pRecv, mSig.Params(), mSig.Results(), mSig.Variadic())
-		ifn = b.abiMethodFunc(anonymous, pkg, mSymbolName, pSig).impl
+		ifnSig = types.NewSignature(pRecv, mSig.Params(), mSig.Results(), mSig.Variadic())
+		ifnFn = b.abiMethodFunc(anonymous, pkg, mSymbolName, ifnSig)
+		ifn = ifnFn.impl
 	}
+	bfn = b.abiMethodValueThunk(ifnFn, ifnSig)
 	return
+}
+
+// abiMethodValueThunk builds a closure entry that loads the one-word receiver
+// from the hidden environment and calls the interface-call method with that
+// receiver as its ordinary first ABI argument.
+func (b Builder) abiMethodValueThunk(ifn Function, mSig *types.Signature) llvm.Value {
+	recv := mSig.Recv()
+	if recv == nil {
+		panic("ssa: method value thunk requires a receiver")
+	}
+	if HasNameValist(mSig) {
+		return llvm.ConstNull(b.Prog.VoidPtr().ll)
+	}
+	goSig := types.NewSignatureType(nil, nil, nil, mSig.Params(), mSig.Results(), mSig.Variadic())
+	envStruct := types.NewStruct([]*types.Var{
+		types.NewVar(token.NoPos, nil, "recv", recv.Type()),
+	}, nil)
+	envVar := types.NewVar(token.NoPos, nil, "$env", types.NewPointer(envStruct))
+	name := ifn.Name() + "$methodvalue"
+	wrapper := b.Pkg.NewEnvFunc(name, goSig, InGo, envVar, true)
+	if wrapper.HasBody() {
+		return wrapper.impl
+	}
+	body := wrapper.MakeBody(1)
+	body.AssertNilDeref(wrapper.Env())
+	recvVal := body.Field(body.Load(wrapper.Env()), 0)
+	n := len(wrapper.params)
+	args := make([]Expr, 1+n)
+	args[0] = recvVal
+	for i := 0; i < n; i++ {
+		args[i+1] = wrapper.Param(i)
+	}
+	callee := Expr{ifn.impl, b.Prog.FuncDecl(methodExprSignature(mSig), InGo)}
+	result := body.Call(callee, args...)
+	switch r := goSig.Results().Len(); r {
+	case 0:
+		body.Return()
+	case 1:
+		body.Return(result)
+	default:
+		results := make([]Expr, r)
+		for i := range results {
+			results[i] = body.Extract(result, i)
+		}
+		body.Return(results...)
+	}
+	return wrapper.impl
 }
 
 func (b Builder) abiInterfaceMethods(mset *types.MethodSet) []*types.Selection {
@@ -708,6 +761,7 @@ func (b Builder) abiType(t types.Type) Expr {
 				types.NewVar(token.NoPos, nil, "T", rt),
 				types.NewVar(token.NoPos, nil, "U", ut),
 				types.NewVar(token.NoPos, nil, "M", types.NewArray(mt, int64(methodCount))),
+				types.NewVar(token.NoPos, nil, "B", types.NewArray(types.Typ[types.UnsafePointer], int64(methodCount))),
 			}
 			typ = types.NewStruct(structFields, nil)
 		}
@@ -721,10 +775,12 @@ func (b Builder) abiType(t types.Type) Expr {
 			}, extendedFields...)
 		}
 		if hasUncommon {
+			methodArr, thunkArr := b.abiUncommonMethods(t, methods)
 			fields = []llvm.Value{
 				prog.constStructValue(prog.Type(rt, InGo), fields),
 				b.abiUncommonType(t, methods),
-				b.abiUncommonMethods(t, methods),
+				methodArr,
+				thunkArr,
 			}
 			if pkg.metaBuilder != nil {
 				pkg.abiTypeWithUncommon[g.impl] = struct{}{}
@@ -795,6 +851,7 @@ func (p Package) RegisterAbiTypes(infos []AbiTypeInfo) {
 				types.NewVar(token.NoPos, nil, "T", rt),
 				types.NewVar(token.NoPos, nil, "U", ut),
 				types.NewVar(token.NoPos, nil, "M", types.NewArray(mt, int64(len(methods)))),
+				types.NewVar(token.NoPos, nil, "B", types.NewArray(types.Typ[types.UnsafePointer], int64(len(methods)))),
 			}, nil)
 		}
 		p.Prog.abiSymbol[info.Name] = &AbiSymbol{

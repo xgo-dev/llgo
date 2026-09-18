@@ -74,6 +74,34 @@ _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
 [OrdinaryEdges]
 *_llgo_bytes.Buffer:
     _llgo_bytes.Buffer
+    bytes.(*Buffer).Available$methodvalue
+    bytes.(*Buffer).AvailableBuffer$methodvalue
+    bytes.(*Buffer).Bytes$methodvalue
+    bytes.(*Buffer).Cap$methodvalue
+    bytes.(*Buffer).Grow$methodvalue
+    bytes.(*Buffer).Len$methodvalue
+    bytes.(*Buffer).Next$methodvalue
+    bytes.(*Buffer).Peek$methodvalue
+    bytes.(*Buffer).Read$methodvalue
+    bytes.(*Buffer).ReadByte$methodvalue
+    bytes.(*Buffer).ReadBytes$methodvalue
+    bytes.(*Buffer).ReadFrom$methodvalue
+    bytes.(*Buffer).ReadRune$methodvalue
+    bytes.(*Buffer).ReadString$methodvalue
+    bytes.(*Buffer).Reset$methodvalue
+    bytes.(*Buffer).String$methodvalue
+    bytes.(*Buffer).Truncate$methodvalue
+    bytes.(*Buffer).UnreadByte$methodvalue
+    bytes.(*Buffer).UnreadRune$methodvalue
+    bytes.(*Buffer).Write$methodvalue
+    bytes.(*Buffer).WriteByte$methodvalue
+    bytes.(*Buffer).WriteRune$methodvalue
+    bytes.(*Buffer).WriteString$methodvalue
+    bytes.(*Buffer).WriteTo$methodvalue
+    bytes.(*Buffer).empty$methodvalue
+    bytes.(*Buffer).grow$methodvalue
+    bytes.(*Buffer).readSlice$methodvalue
+    bytes.(*Buffer).tryGrowByReslice$methodvalue
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequalptr
 []_llgo_uint8:
     _llgo_uint8
@@ -240,6 +268,90 @@ _llgo_string:
     github.com/xgo-dev/llgo/runtime/internal/runtime.strequal
 _llgo_uint8:
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequal8
+bytes.(*Buffer).Available$methodvalue:
+    bytes.(*Buffer).Available
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).AvailableBuffer$methodvalue:
+    bytes.(*Buffer).AvailableBuffer
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).Bytes$methodvalue:
+    bytes.(*Buffer).Bytes
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).Cap$methodvalue:
+    bytes.(*Buffer).Cap
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).Grow$methodvalue:
+    bytes.(*Buffer).Grow
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).Len$methodvalue:
+    bytes.(*Buffer).Len
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).Next$methodvalue:
+    bytes.(*Buffer).Next
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).Peek$methodvalue:
+    bytes.(*Buffer).Peek
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).Read$methodvalue:
+    bytes.(*Buffer).Read
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).ReadByte$methodvalue:
+    bytes.(*Buffer).ReadByte
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).ReadBytes$methodvalue:
+    bytes.(*Buffer).ReadBytes
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).ReadFrom$methodvalue:
+    bytes.(*Buffer).ReadFrom
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).ReadRune$methodvalue:
+    bytes.(*Buffer).ReadRune
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).ReadString$methodvalue:
+    bytes.(*Buffer).ReadString
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).Reset$methodvalue:
+    bytes.(*Buffer).Reset
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).String$methodvalue:
+    bytes.(*Buffer).String
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).Truncate$methodvalue:
+    bytes.(*Buffer).Truncate
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).UnreadByte$methodvalue:
+    bytes.(*Buffer).UnreadByte
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).UnreadRune$methodvalue:
+    bytes.(*Buffer).UnreadRune
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).Write$methodvalue:
+    bytes.(*Buffer).Write
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).WriteByte$methodvalue:
+    bytes.(*Buffer).WriteByte
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).WriteRune$methodvalue:
+    bytes.(*Buffer).WriteRune
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).WriteString$methodvalue:
+    bytes.(*Buffer).WriteString
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).WriteTo$methodvalue:
+    bytes.(*Buffer).WriteTo
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).empty$methodvalue:
+    bytes.(*Buffer).empty
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).grow$methodvalue:
+    bytes.(*Buffer).grow
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).readSlice$methodvalue:
+    bytes.(*Buffer).readSlice
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+bytes.(*Buffer).tryGrowByReslice$methodvalue:
+    bytes.(*Buffer).tryGrowByReslice
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
 bytes.struct$8M6lRFZ7Fk2XCr2laNI9Y7uQtk2A8VDBrezMuq2Fkuo$fields:
     []_llgo_uint8
     _llgo_bytes.readOp

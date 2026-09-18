@@ -1,4 +1,4 @@
-//go:build !nogc && !wasm
+//go:build !nogc && !wasm && !llgo_noffi
 
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license.
@@ -61,6 +61,38 @@ func initFinalizerState() {
 	finalizerState.registryMu.Init(nil)
 	finalizerState.queueMu.Init(nil)
 	finalizerState.m = make(map[uintptr]*finalizerEntry)
+}
+
+func init() {
+	llruntime.CancelBoxedFinalizer = cancelBoxedFinalizer
+}
+
+func cancelBoxedFinalizer(obj unsafe.Pointer, restore bool) bool {
+	finalizerState.once.Do(initFinalizerState)
+	key := hideFinalizerPtr(obj)
+	finalizerState.registryMu.Lock()
+	old := finalizerState.m[key]
+	if old == nil {
+		finalizerState.registryMu.Unlock()
+		return false
+	}
+	atomic.Store(&old.state, finalizerStopped)
+	delete(finalizerState.m, key)
+	if restore {
+		// Restore prev only when this boxed entry still owns the BDWGC slot.
+		// A later AddCleanup chains through the boxed callback; overwriting
+		// that slot would drop the cleanup.
+		var curFn bdwgc.FinalizerFunc
+		var curCb unsafe.Pointer
+		bdwgc.RegisterFinalizer(obj, old.prevFn, old.prevCb, &curFn, &curCb)
+		if curCb != unsafe.Pointer(old) {
+			var ignoredFn bdwgc.FinalizerFunc
+			var ignoredCb unsafe.Pointer
+			bdwgc.RegisterFinalizer(obj, curFn, curCb, &ignoredFn, &ignoredCb)
+		}
+	}
+	finalizerState.registryMu.Unlock()
+	return true
 }
 
 func SetFinalizer(obj any, finalizer any) {
