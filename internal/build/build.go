@@ -207,8 +207,8 @@ type Config struct {
 	// for float-to-uint32 conversions.
 	SaturatingFloatToUint32 bool
 
-	// PthreadStackSize sets a custom stack size, in bytes, for pthread-backed
-	// goroutines. A zero value keeps the platform pthread default.
+	// PthreadStackSize sets a custom stack size, in bytes, for native and Wasm
+	// goroutines. A zero value keeps the backend's default.
 	PthreadStackSize int64
 
 	// DisableGoGlobalDCE disables Go-specific global DCE metadata emission

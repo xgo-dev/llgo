@@ -363,6 +363,22 @@ func TestBuildPthreadStackSizeFlagRejectsNegative(t *testing.T) {
 	}
 }
 
+func TestBuildGoroutineStackSizeFlag(t *testing.T) {
+	fs := flag.NewFlagSet("goroutine-stack-size", flag.ContinueOnError)
+	fs.SetOutput(new(bytes.Buffer))
+	AddBuildFlags(fs)
+	if err := fs.Parse([]string{"-goroutine-stack-size=2MB"}); err != nil {
+		t.Fatal(err)
+	}
+	conf := &build.Config{}
+	if err := UpdateConfig(conf); err != nil || conf.PthreadStackSize != 2<<20 {
+		t.Fatalf("stack size = %d, error = %v", conf.PthreadStackSize, err)
+	}
+	if err := fs.Parse([]string{"-goroutine-stack-size=-1"}); err == nil {
+		t.Fatal("negative stack size accepted")
+	}
+}
+
 func TestBuildLTOPassPluginFlags(t *testing.T) {
 	fs := flag.NewFlagSet("lto-pass-plugin", flag.ContinueOnError)
 	fs.SetOutput(new(bytes.Buffer))

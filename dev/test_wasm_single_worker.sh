@@ -174,6 +174,7 @@ run_llgo_test_compile_only() {
 }
 
 if [[ "${suite}" == "all" || "${suite}" == "runtime" ]]; then
+LLGO="${llgo_cmd}" NODE="${node_cmd}" bash "${repo_root}/dev/test_wasm_stack_bounds.sh"
 # The runtime is a nested Go module and is not covered by root-level go test.
 # Exercise the collector's allocation-free interval helper on the host before
 # the target fixtures check marking, reclamation, and finalizer integration.
