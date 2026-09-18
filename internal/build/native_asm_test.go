@@ -11,25 +11,6 @@ import (
 	"testing"
 )
 
-func TestForeignARM64Selection(t *testing.T) {
-	for _, tc := range []struct {
-		src  string
-		want bool
-	}{
-		{"TEXT raw<>(SB), NOSPLIT, $0-0\n JMP imported(SB)\n", true},
-		{"TEXT raw<>(SB), NOSPLIT|NOFRAME, $0\n BL imported(SB)\n RET\n", true},
-		{"TEXT ·declared(SB), NOSPLIT, $0-0\n RET\n", false},
-		{"TEXT raw<>(SB), 0, $0-0\n RET\n", false},
-		{"TEXT raw<>(SB), NOSPLIT, $8-0\n RET\n", false},
-		{"TEXT raw<>(SB), NOSPLIT, $0-0\n BL imported(SB)\n RET\n", false},
-		{"TEXT raw<>(SB), NOSPLIT, $0-0\n RET\nTEXT ·goFunc(SB),NOSPLIT,$0\nRET\n", false},
-	} {
-		if got := len(foreignARM64Functions([]byte(tc.src))) != 0; got != tc.want {
-			t.Errorf("selection(%q) = %v", tc.src, got)
-		}
-	}
-}
-
 func TestForeignARM64Callback(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("native darwin/arm64 execution")

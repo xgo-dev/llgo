@@ -5,56 +5,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"strings"
 
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/packages"
-	llplan9asm "github.com/xgo-dev/llgo/internal/plan9asm"
 	"github.com/xgo-dev/llgo/ssa/abi"
 	llvm "github.com/xgo-dev/llvm"
+	extplan9asm "github.com/xgo-dev/plan9asm"
 )
-
-var nativeTextRE = regexp.MustCompile(`(?m)^\s*TEXT\s+([^\s(),]+)<>\(SB\),\s*([^,]+),\s*\$0(?:-0)?\s*(?://[^\n]*)?$`)
-
-// foreignARM64Functions selects files made entirely of raw foreign-ABI
-// callbacks/trampolines. Go-declared functions continue through typed LLVM
-// lowering. NOSPLIT and zero Go frames are required; the callback may manage
-// its own native frame explicitly with NOFRAME.
-func foreignARM64Functions(src []byte) map[string]bool {
-	matches := nativeTextRE.FindAllSubmatchIndex(src, -1)
-	if len(matches) == 0 || len(reTextLines.FindAll(src, -1)) != len(matches) {
-		return nil
-	}
-	result := make(map[string]bool)
-	for i, m := range matches {
-		flags := string(src[m[4]:m[5]])
-		if !hasAsmFlag(flags, "NOSPLIT") {
-			return nil
-		}
-		end := len(src)
-		if i+1 < len(matches) {
-			end = matches[i+1][0]
-		}
-		if !hasAsmFlag(flags, "NOFRAME") && nativeCallRE.Match(src[m[1]:end]) {
-			return nil
-		}
-		result[string(src[m[2]:m[3]])] = true
-	}
-	return result
-}
-
-var reTextLines = regexp.MustCompile(`(?m)^\s*TEXT\b`)
-var nativeCallRE = regexp.MustCompile(`(?m)^\s*(?:CALL|BL)\s`)
-
-func hasAsmFlag(flags, want string) bool {
-	for _, f := range strings.Split(flags, "|") {
-		if strings.TrimSpace(f) == want {
-			return true
-		}
-	}
-	return false
-}
 
 func compileForeignARM64Asm(ctx *context, aPkg *aPackage, pkg *packages.Package, sfile string, src []byte) (string, bool, error) {
 	if ctx.buildConf.Goos != "darwin" || ctx.buildConf.Goarch != "arm64" {
@@ -64,7 +21,7 @@ func compileForeignARM64Asm(ctx *context, aPkg *aPackage, pkg *packages.Package,
 	if len(decls) == 0 {
 		return "", false, nil
 	}
-	funcs := foreignARM64Functions(src)
+	funcs := extplan9asm.ForeignARM64Functions(src)
 	if len(funcs) == 0 {
 		return "", false, nil
 	}
@@ -99,7 +56,7 @@ func compileForeignARM64Asm(ctx *context, aPkg *aPackage, pkg *packages.Package,
 	if err != nil {
 		return "", true, err
 	}
-	assembly, data, err := llplan9asm.NativeARM64Object(object, funcs, imports, pkgPath)
+	assembly, data, err := extplan9asm.TranslateNativeARM64Object(object, funcs, imports, pkgPath)
 	if err != nil {
 		return "", true, err
 	}
