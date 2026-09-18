@@ -196,3 +196,21 @@ func TestRecursiveNamedTypesWithoutConversionKeepTheirIdentity(t *testing.T) {
 		t.Fatalf("plain recursive B conversion = (%v, %v), want original type", got, changed)
 	}
 }
+
+// Two edges to each previous node give exponentially many paths but only a
+// small number of distinct types. A conversion query must visit each once.
+func TestSharedNamedTypeConversionGraph(t *testing.T) {
+	pkg := types.NewPackage("example.com/sharedgraph", "sharedgraph")
+	var typ types.Type = types.Typ[types.Int]
+	for i := 0; i < 48; i++ {
+		typ = types.NewNamed(types.NewTypeName(token.NoPos, pkg, "Node", nil),
+			types.NewStruct([]*types.Var{
+				types.NewField(token.NoPos, pkg, "Left", types.NewPointer(typ), false),
+				types.NewField(token.NoPos, pkg, "Right", types.NewPointer(typ), false),
+			}, nil), nil)
+	}
+	cvt := newGoTypes()
+	if got, changed := cvt.cvtNamed(typ.(*types.Named)); changed || got != typ {
+		t.Fatalf("shared graph conversion = (%v, %v), want original type", got, changed)
+	}
+}
