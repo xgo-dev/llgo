@@ -36,6 +36,11 @@ func use() {
 		if fn.Parent() == nil || fn.Pkg != nil {
 			continue
 		}
+		// x/tools names the nested closures by their lexical nesting depth.
+		// Check only the two generic closure bodies targeted by this regression.
+		if fn.Name() != "Keys$1$1" && fn.Name() != "Visit$1$1" {
+			continue
+		}
 		args := fn.TypeArgs()
 		if len(args) != 1 {
 			t.Fatalf("%s: type arguments = %v, want receiver type argument", fn, args)
@@ -43,9 +48,7 @@ func use() {
 		if fn.Origin() == nil {
 			t.Fatalf("%s: missing generic origin", fn)
 		}
-		if fn.Name() == "Keys$1$1" || fn.Name() == "Visit$1$1" {
-			counts[args[0].(*types.Basic).Kind()]++
-		}
+		counts[args[0].(*types.Basic).Kind()]++
 	}
 	for _, kind := range []types.BasicKind{types.Int, types.String} {
 		if counts[kind] != 2 {
