@@ -46,7 +46,7 @@ func TestTBasicMethods(t *testing.T) {
 
 	// Test Chdir
 	origDir := t.TempDir()
-	t.Chdir(origDir)
+	testChdir(t, origDir, func() { t.Chdir(origDir) })
 }
 
 func TestTFailureMethods(t *testing.T) {
@@ -167,7 +167,7 @@ func BenchmarkBMethods(b *testing.B) {
 
 	dir := b.TempDir()
 	if dir != "" {
-		b.Chdir(dir)
+		testChdir(b, dir, func() { b.Chdir(dir) })
 	}
 
 	b.Setenv("BENCH_VAR", "value")
@@ -307,7 +307,7 @@ func FuzzExample(f *testing.F) {
 
 	dir := f.TempDir()
 	if dir != "" {
-		f.Chdir(dir)
+		testChdir(f, dir, func() { f.Chdir(dir) })
 	}
 
 	f.Setenv("FUZZ_VAR", "value")

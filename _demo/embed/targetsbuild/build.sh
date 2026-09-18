@@ -211,10 +211,9 @@ fi
 for target in "${targets_to_build[@]}"; do
 	# WebAssembly ecosystem profiles need their own linker, output form, and
 	# runtime probe. The wasm-runtime CI job exercises them instead of treating
-	# JS modules, WASI modules, components, and freestanding libraries as a
-	# generic hello.elf embedded target.
+	# JS and WASI modules as a generic hello.elf embedded target.
 	case "$target" in
-		emscripten|emscripten-memory64|wasi|wasip1|wasip2|wasm|wasm-unknown)
+		emscripten|emscripten-memory64|wasi|wasip1|wasm)
 			echo 🔀 $target "(covered by WebAssembly profile tests)"
 			delegated_targets+=("$target")
 			continue

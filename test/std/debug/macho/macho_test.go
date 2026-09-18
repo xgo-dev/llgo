@@ -6,11 +6,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
+
+	"github.com/xgo-dev/llgo/test/internal/binaryfixture"
 )
 
 func buildDarwinFixture(t *testing.T) string {
 	t.Helper()
+	if runtime.GOARCH == "wasm" {
+		return binaryfixture.MachO(t)
+	}
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.go")
 	if err := os.WriteFile(src, []byte("package main\nfunc main(){}\n"), 0o644); err != nil {
@@ -53,7 +59,12 @@ func TestOpenMachoFixtureAndCoreMethods(t *testing.T) {
 		t.Fatalf("Section.Open read: %v", err)
 	}
 
-	seg := f.Segment("__TEXT")
+	segmentName := "__TEXT"
+	if f.Type == macho.TypeObj {
+		// Mach-O object files put their sections in one unnamed segment.
+		segmentName = ""
+	}
+	seg := f.Segment(segmentName)
 	if seg == nil {
 		t.Fatal("Segment(__TEXT)=nil")
 	}

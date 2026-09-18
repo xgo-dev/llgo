@@ -19,6 +19,9 @@ import (
 	"time"
 )
 
+// Certificate fixtures validate X.509 behavior, not RSA key strength.
+const testRSAKeyBits = 1024
+
 func TestErrorConstants(t *testing.T) {
 	if x509.ErrUnsupportedAlgorithm == nil {
 		t.Error("ErrUnsupportedAlgorithm is nil")
@@ -224,7 +227,7 @@ func TestOID(t *testing.T) {
 }
 
 func generateSelfSignedCert(t *testing.T) (*x509.Certificate, crypto.PrivateKey) {
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
 	if err != nil {
 		t.Fatalf("Failed to generate private key: %v", err)
 	}
@@ -433,7 +436,7 @@ func TestSetFallbackRoots(t *testing.T) {
 }
 
 func TestMarshalPKCS1PrivateKey(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,7 +456,7 @@ func TestMarshalPKCS1PrivateKey(t *testing.T) {
 }
 
 func TestMarshalPKCS1PublicKey(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +477,7 @@ func TestMarshalPKCS1PublicKey(t *testing.T) {
 }
 
 func TestMarshalPKCS8PrivateKey(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -497,7 +500,7 @@ func TestMarshalPKCS8PrivateKey(t *testing.T) {
 }
 
 func TestMarshalPKIXPublicKey(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -578,7 +581,7 @@ func TestEncryptDecryptPEMBlock(t *testing.T) {
 }
 
 func TestCreateCertificateRequest(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -828,7 +831,7 @@ func TestEd25519(t *testing.T) {
 }
 
 func TestCertificateWithURIs(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
 	if err != nil {
 		t.Fatal(err)
 	}

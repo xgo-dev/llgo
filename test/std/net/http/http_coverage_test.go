@@ -1,6 +1,7 @@
 package http_test
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -8,6 +9,22 @@ import (
 	"testing"
 	"time"
 )
+
+func localServerClient(t *testing.T, server *httptest.Server) *http.Client {
+	t.Helper()
+	client := server.Client()
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("test server transport has type %T, want *http.Transport", client.Transport)
+	}
+	transport = transport.Clone()
+	// On js/wasm the zero-value Transport uses browser Fetch, which cannot
+	// reach Go's in-module fake listener. An explicit dialer selects the normal
+	// Go transport and therefore exercises the same server in every profile.
+	transport.DialContext = (&net.Dialer{}).DialContext
+	client.Transport = transport
+	return client
+}
 
 // Test all status code constants
 func TestAllStatusCodes(t *testing.T) {
@@ -116,9 +133,8 @@ func TestClientMethods(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-	}
+	client := localServerClient(t, ts)
+	client.Timeout = 5 * time.Second
 
 	// Test Get
 	resp, err := client.Get(ts.URL)
@@ -164,6 +180,10 @@ func TestConvenienceFunctions(t *testing.T) {
 		w.Write([]byte("OK"))
 	}))
 	defer ts.Close()
+
+	oldClient := http.DefaultClient
+	http.DefaultClient = localServerClient(t, ts)
+	defer func() { http.DefaultClient = oldClient }()
 
 	// Test Get
 	resp, err := http.Get(ts.URL)

@@ -2,7 +2,6 @@ package types_test
 
 import (
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -20,7 +19,7 @@ func _() {
 
 	var errors []types.Error
 	conf := types.Config{
-		Importer: importer.Default(),
+		Importer: testImporter(t),
 		Error: func(err error) {
 			if terr, ok := err.(types.Error); ok {
 				errors = append(errors, terr)

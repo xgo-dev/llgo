@@ -1,0 +1,238 @@
+name: WebAssembly full acceptance
+
+on:
+  pull_request:
+    paths:
+      - 'dev/wasmstdlib/**'
+      - '.github/workflows/wasm-acceptance.yml'
+      - 'test/**'
+      - 'runtime/**'
+      - 'cl/**'
+      - 'ssa/**'
+      - 'internal/build/**'
+      - 'targets/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wasm-acceptance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    name: real-browser GoJS callback
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: -tags=llvm22
+      LLGO_BUILD_CACHE: 'on'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-deps
+        with:
+          llvm-version: 22
+      - uses: emscripten-core/setup-emsdk@v15
+        with:
+          version: '4.0.21'
+      - uses: ./.github/actions/setup-go
+      - name: Set up Chrome
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          install-dependencies: true
+      - name: Require the hosted browser
+        env:
+          BROWSER_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+        run: |
+          test -x "$BROWSER_BIN"
+          "$BROWSER_BIN" --version
+      - name: Build LLGo
+        run: go build -o "$RUNNER_TEMP/llgo" ./cmd/llgo
+      - name: Run the GoJS artifact in Chrome
+        env:
+          BROWSER_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          LLGO: ${{ runner.temp }}/llgo
+        run: dev/test_wasm_browser.sh
+
+  goroot-smoke:
+    name: wasm GOROOT sentinels (${{ matrix.profile }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [J32-GoJS, J32-Emscripten, J64-Emscripten, W32-WASI]
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: -tags=llvm22
+      LLGO_BUILD_CACHE: 'on'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-deps
+        with:
+          llvm-version: 22
+      - uses: emscripten-core/setup-emsdk@v15
+        if: ${{ matrix.profile == 'J32-GoJS' || matrix.profile == 'J32-Emscripten' || matrix.profile == 'J64-Emscripten' }}
+        with:
+          version: '4.0.21'
+      - uses: actions/setup-node@v7
+        if: ${{ matrix.profile != 'W32-WASI' }}
+        with:
+          node-version: '24'
+      - uses: ./.github/actions/setup-binaryen
+      - uses: bytecodealliance/actions/wasmtime/setup@v1
+        if: ${{ matrix.profile == 'W32-WASI' }}
+        with:
+          version: '39.0.1'
+      - uses: ./.github/actions/setup-go
+      - name: Build LLGo and host-side GOROOT runner
+        run: |
+          go build -o "$RUNNER_TEMP/llgo" ./cmd/llgo
+          go test -c -o "$RUNNER_TEMP/goroot-runner" ./test/goroot
+      - name: Exercise representative runnable cases
+        env:
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          set -o pipefail
+          target_goroot="$(go env GOROOT)"
+          (
+            cd test/goroot
+            "$RUNNER_TEMP/goroot-runner" -test.v -test.run '^TestGoRootRunCases$' \
+              -test.count=1 -test.timeout=40m \
+              -goroot "$target_goroot" -llgo "$RUNNER_TEMP/llgo" \
+              -wasm-profile "$PROFILE" -directive-mode ci \
+              -case '^(helloworld\.go|bom\.go)$' \
+              -max-rss-mib 4096 -rss-warn-mib 1024 \
+              -min-memory-free-percent 15 -min-swap-free-mib 512
+          ) 2>&1 | tee "$RUNNER_TEMP/goroot-$PROFILE.log"
+      - name: Preserve sentinel log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: wasm-goroot-sentinel-${{ matrix.profile }}
+          path: ${{ runner.temp }}/goroot-${{ matrix.profile }}.log
+          if-no-files-found: error
+
+  goroot:
+    name: wasm GOROOT (J32-GoJS, ${{ matrix.shard }}/9)
+    needs: goroot-smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        # Seven shards took up to 51 minutes of measured case execution, and
+        # other runners disconnected after over an hour without uploading logs.
+        # Replaying all 2,316 case times across nine shards estimates at most
+        # 41 minutes, leaving more setup and runner-variance headroom.
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: -tags=llvm22
+      LLGO_BUILD_CACHE: 'on'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-deps
+        with:
+          llvm-version: 22
+      - uses: emscripten-core/setup-emsdk@v15
+        with:
+          version: '4.0.21'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - uses: ./.github/actions/setup-binaryen
+      - uses: ./.github/actions/setup-go
+      - name: Build LLGo and host-side GOROOT runner
+        run: |
+          go build -o "$RUNNER_TEMP/llgo" ./cmd/llgo
+          go test -c -o "$RUNNER_TEMP/goroot-runner" ./test/goroot
+      - name: Execute GOROOT shard
+        env:
+          PROFILE: J32-GoJS
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -o pipefail
+          target_goroot="$(go env GOROOT)"
+          (
+            cd test/goroot
+            "$RUNNER_TEMP/goroot-runner" -test.v -test.run '^TestGoRootRunCases$' \
+              -test.count=1 -test.timeout=175m \
+              -goroot "$target_goroot" -llgo "$RUNNER_TEMP/llgo" \
+              -wasm-profile "$PROFILE" -directive-mode coverage \
+              -progress 60s -shard-index "$SHARD" -shard-total 9 \
+              -max-rss-mib 4096 -rss-warn-mib 1024 \
+              -min-memory-free-percent 15 -min-swap-free-mib 512
+          ) 2>&1 | tee "$RUNNER_TEMP/goroot-$PROFILE-$SHARD.log"
+      - name: Preserve complete shard log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: wasm-goroot-J32-GoJS-${{ matrix.shard }}
+          path: ${{ runner.temp }}/goroot-J32-GoJS-${{ matrix.shard }}.log
+          if-no-files-found: error
+
+  packages:
+    name: wasm test acceptance (${{ matrix.profile }}, ${{ matrix.shard }}/${{ matrix.profile == 'W32-WASI' && 5 || 3 }})
+    needs: goroot-smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [J32-GoJS, J32-Emscripten, J64-Emscripten, W32-WASI]
+        # Three shards keep the JavaScript providers below an hour. WASI's
+        # Binaryen/Asyncify links need five without multiplying its corpus.
+        shard: [0, 1, 2]
+        include:
+          - profile: W32-WASI
+            shard: 3
+          - profile: W32-WASI
+            shard: 4
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: -tags=llvm22
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-deps
+        with:
+          llvm-version: 22
+      - uses: emscripten-core/setup-emsdk@v15
+        if: ${{ matrix.profile == 'J32-GoJS' || matrix.profile == 'J32-Emscripten' || matrix.profile == 'J64-Emscripten' }}
+        with:
+          version: '4.0.21'
+      - uses: actions/setup-node@v7
+        if: ${{ matrix.profile != 'W32-WASI' }}
+        with:
+          node-version: '24'
+      - uses: ./.github/actions/setup-binaryen
+      - uses: bytecodealliance/actions/wasmtime/setup@v1
+        if: ${{ matrix.profile == 'W32-WASI' }}
+        with:
+          version: '39.0.1'
+      - uses: ./.github/actions/setup-go
+      - name: Check acceptance accounting
+        run: go test ./dev/wasmstdlib -count=1
+      - name: Build LLGo
+        run: go build -o "$RUNNER_TEMP/llgo" ./cmd/llgo
+      - name: Execute every discovered test package in this shard
+        env:
+          PROFILE: ${{ matrix.profile }}
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ matrix.profile == 'W32-WASI' && 5 || 3 }}
+        run: |
+          go run ./dev/wasmstdlib -full -profile "$PROFILE" \
+            -shard "$SHARD" -shards "$SHARDS" -llgo "$RUNNER_TEMP/llgo" \
+            -report "$RUNNER_TEMP/acceptance.json"
+      - name: Preserve all results and individual package logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: wasm-acceptance-${{ matrix.profile }}-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/acceptance.json
+            ${{ runner.temp }}/acceptance.json.logs/
+          if-no-files-found: error
