@@ -59,9 +59,9 @@ func TestRecursivePointerTypeBuilds(t *testing.T) {
 		t.Fatal("recursive pointer type lost value")
 	}
 
-	recursivePeanoCountArg = recursivePeano(makeRecursivePeano(4096))
+	recursivePeanoCountArg = recursivePeano(makeRecursivePeano(recursivePeanoDepth))
 	countRecursivePeano()
-	if recursivePeanoCountResult != 4096 {
-		t.Fatalf("recursive Peano pointer count = %d, want 4096", recursivePeanoCountResult)
+	if recursivePeanoCountResult != recursivePeanoDepth {
+		t.Fatalf("recursive Peano pointer count = %d, want %d", recursivePeanoCountResult, recursivePeanoDepth)
 	}
 }

@@ -3,11 +3,27 @@ package httptest_test
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func localServerClient(t *testing.T, server *httptest.Server) *http.Client {
+	t.Helper()
+	client := server.Client()
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("test server transport has type %T, want *http.Transport", client.Transport)
+	}
+	transport = transport.Clone()
+	// Browser Fetch cannot connect to js/wasm's in-module fake network. An
+	// explicit dialer keeps these as end-to-end httptest server checks.
+	transport.DialContext = (&net.Dialer{}).DialContext
+	client.Transport = transport
+	return client
+}
 
 // Test DefaultRemoteAddr constant
 func TestDefaultRemoteAddr(t *testing.T) {
@@ -157,7 +173,7 @@ func TestNewServer(t *testing.T) {
 	}
 
 	// Make request to server
-	resp, err := http.Get(srv.URL)
+	resp, err := localServerClient(t, srv).Get(srv.URL)
 	if err != nil {
 		t.Fatalf("GET failed: %v", err)
 	}
@@ -192,7 +208,7 @@ func TestNewTLSServer(t *testing.T) {
 	}
 
 	// Use server's client which has the right TLS config
-	client := srv.Client()
+	client := localServerClient(t, srv)
 	resp, err := client.Get(srv.URL)
 	if err != nil {
 		t.Fatalf("GET failed: %v", err)
@@ -231,7 +247,7 @@ func TestNewUnstartedServer(t *testing.T) {
 	}
 
 	// Make request to started server
-	resp, err := http.Get(srv.URL)
+	resp, err := localServerClient(t, srv).Get(srv.URL)
 	if err != nil {
 		t.Fatalf("GET failed: %v", err)
 	}
@@ -267,7 +283,7 @@ func TestServerMethods(t *testing.T) {
 	}
 
 	// Test Client
-	client := srv.Client()
+	client := localServerClient(t, srv)
 	if client == nil {
 		t.Error("Server Client is nil")
 	}
@@ -328,7 +344,7 @@ func TestServerStartTLS(t *testing.T) {
 		t.Errorf("Server URL = %q, want https:// prefix", srv.URL)
 	}
 
-	client := srv.Client()
+	client := localServerClient(t, srv)
 	resp, err := client.Get(srv.URL)
 	if err != nil {
 		t.Fatalf("GET failed: %v", err)

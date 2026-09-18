@@ -38,8 +38,21 @@ var (
 
 func init() {
 	_, callerInitFile, callerInitLine, _ = runtime.Caller(0)
-	if os.Getenv(callerPanicChild) == "1" {
+	panicChild := os.Getenv(callerPanicChild) == "1"
+	repanicMode := ""
+	// Wasm guests cannot spawn a subprocess. The host acceptance driver reuses
+	// the test binary and requests fatal panic paths through argv.
+	for _, arg := range os.Args[1:] {
+		panicChild = panicChild || arg == "-llgo.caller-panic-child"
+		if strings.HasPrefix(arg, "-llgo.caller-repanic-child=") {
+			repanicMode = strings.TrimPrefix(arg, "-llgo.caller-repanic-child=")
+		}
+	}
+	if panicChild {
 		callerPanicCaller() // PANIC_INIT_MARK
+	}
+	if repanicMode != "" && !runCallerRepanicChild(repanicMode) {
+		panic("unknown caller repanic child mode: " + repanicMode)
 	}
 }
 
@@ -55,7 +68,7 @@ func callerPanicCaller() {
 
 func testCallerPanicTraceback(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "-test.run=^$")
-	cmd.Env = append(os.Environ(), callerPanicChild+"=1")
+	cmd.Env = append(os.Environ(), callerPanicChild+"=1", "GOTRACEBACK=single")
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("panic child unexpectedly succeeded:\n%s", output)
@@ -138,6 +151,33 @@ func callerWrappedRepanic(indirect bool) {
 func callerSliceRepanic() {
 	defer func() { panic(recover()) }()
 	panic([]int{1}) // SLICE_REPANIC_ORIGIN_MARK
+}
+
+//go:noinline
+func callerNestedRepanic() {
+	defer func() { panic(recover()) }()
+	func() {
+		defer func() { panic(recover()) }()
+		callerRepanicOrigin()
+	}()
+}
+
+func runCallerRepanicChild(mode string) bool {
+	switch mode {
+	case "same":
+		callerNestedRepanic()
+	case "different":
+		callerReplacementPanic()
+	case "later":
+		callerLaterSameValuePanic()
+	case "wrapper", "indirect-wrapper":
+		callerWrappedRepanic(mode == "indirect-wrapper")
+	case "slice":
+		callerSliceRepanic()
+	default:
+		return false
+	}
+	return true
 }
 
 func testCallerRepanicTraceback(t *testing.T) {

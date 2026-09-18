@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"io"
+	"runtime"
 	"runtime/pprof"
 	"testing"
 	"time"
@@ -86,6 +87,23 @@ func cpuProfileContains(t *testing.T, data []byte, function string) bool {
 // sampled and symbolized.
 func collectCPUProfile(t *testing.T, work func(time.Duration)) {
 	t.Helper()
+	if runtime.GOARCH == "wasm" {
+		// Go's wasm runtime has no OS CPU sampling timer. Start/Stop still
+		// produce a valid profile with CPU sample-type metadata, but waiting
+		// longer cannot make it sample the hot loop. Retain statistical symbol
+		// assertions below for platforms which have a sampler.
+		var buf bytes.Buffer
+		if err := pprof.StartCPUProfile(&buf); err != nil {
+			t.Fatal(err)
+		}
+		work(time.Millisecond)
+		pprof.StopCPUProfile()
+		raw := readCPUProfile(t, buf.Bytes())
+		if !bytes.Contains(raw, []byte("cpu")) || !bytes.Contains(raw, []byte("nanoseconds")) {
+			t.Fatal("CPU profile is missing its sample-type metadata")
+		}
+		return
+	}
 	deadline := time.Now().Add(10 * time.Second)
 	duration := 500 * time.Millisecond
 	for {

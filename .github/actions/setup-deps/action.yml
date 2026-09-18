@@ -804,10 +804,13 @@ runs:
       if: runner.os == 'Linux'
       shell: bash
       run: |
+        set -euo pipefail
         # Install LLVM if requested
         if [[ "${{ inputs.install-llvm }}" == "true" ]]; then
           echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{inputs.llvm-version}} main" | sudo tee /etc/apt/sources.list.d/llvm.list
-          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          # Some Linux runners resolve IPv6 addresses without an IPv6 route.
+          # Retry transient DNS errors, but keep HTTPS and bounded failures.
+          wget -4 --retry-on-host-error --tries=3 --timeout=15 --waitretry=2 -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
           sudo apt-get update
           sudo apt-get install -y llvm-${{inputs.llvm-version}}-dev clang-${{inputs.llvm-version}} libclang-${{inputs.llvm-version}}-dev lld-${{inputs.llvm-version}} libunwind-${{inputs.llvm-version}}-dev libc++-${{inputs.llvm-version}}-dev
           echo "PATH=/usr/lib/llvm-${{inputs.llvm-version}}/bin:$PATH" >> $GITHUB_ENV

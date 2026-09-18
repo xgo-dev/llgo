@@ -40,23 +40,12 @@ func TestPointerValue(t *testing.T) {
 }
 
 func TestPointerGC(t *testing.T) {
-	var wp weak.Pointer[int]
-
-	func() {
-		x := new(int)
-		*x = 123
-		wp = weak.Make(x)
-
-		val := wp.Value()
-		if val == nil || *val != 123 {
-			t.Fatal("weak pointer should be valid before GC")
-		}
-	}()
+	wp := makeCollectableWeakPointer(123, nil)
 
 	deadline := time.Now().Add(3 * time.Second)
-	for wp.Value() != nil && time.Now().Before(deadline) {
-		runtime.Gosched()
+	for !weakPointerCleared(wp) && time.Now().Before(deadline) {
 		runtime.GC()
+		runtime.Gosched()
 		time.Sleep(time.Millisecond)
 	}
 	if val := wp.Value(); val != nil {
@@ -65,22 +54,17 @@ func TestPointerGC(t *testing.T) {
 }
 
 func TestPointerGCWithCleanup(t *testing.T) {
-	var wp weak.Pointer[int]
 	cleaned := make(chan struct{}, 1)
-
-	func() {
-		x := new(int)
-		*x = 456
+	wp := makeCollectableWeakPointer(456, func(x *int) {
 		runtime.AddCleanup(x, func(struct{}) {
 			cleaned <- struct{}{}
 		}, struct{}{})
-		wp = weak.Make(x)
-	}()
+	})
 
 	deadline := time.Now().Add(3 * time.Second)
-	for wp.Value() != nil && time.Now().Before(deadline) {
-		runtime.Gosched()
+	for !weakPointerCleared(wp) && time.Now().Before(deadline) {
 		runtime.GC()
+		runtime.Gosched()
 		time.Sleep(time.Millisecond)
 	}
 	if val := wp.Value(); val != nil {
@@ -91,6 +75,30 @@ func TestPointerGCWithCleanup(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("cleanup did not run after the weak pointer became nil")
 	}
+}
+
+func makeCollectableWeakPointer(value int, register func(*int)) weak.Pointer[int] {
+	result := make(chan weak.Pointer[int], 1)
+	done := make(chan struct{})
+	go func() {
+		x := new(int)
+		*x = value
+		if register != nil {
+			register(x)
+		}
+		result <- weak.Make(x)
+		close(done)
+	}()
+	wp := <-result
+	<-done
+	return wp
+}
+
+//go:noinline
+func weakPointerCleared(wp weak.Pointer[int]) bool {
+	// Keep the temporary strong pointer out of the frame that starts the next
+	// collection. Conservative collectors may otherwise retain its stale bits.
+	return wp.Value() == nil
 }
 
 func TestPointerZeroValue(t *testing.T) {

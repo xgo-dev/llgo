@@ -37,6 +37,7 @@ var (
 	flagGOROOT        = flag.String("goroot", os.Getenv("LLGO_GOROOT"), "Go toolchain root whose GOROOT/test sources should be used")
 	flagGoCmd         = flag.String("go", os.Getenv("LLGO_GO"), "go binary used as baseline (default: <goroot>/bin/go)")
 	flagLLGO          = flag.String("llgo", os.Getenv("LLGO_TEST_LLGO"), "llgo binary used for comparisons (default: build from current checkout)")
+	flagWasmProfile   = flag.String("wasm-profile", "", "target profile for host-driven wasm execution: J32-GoJS, J32-Emscripten, J64-Emscripten, or W32-WASI")
 	flagDirs          = flag.String("dirs", strings.Join(defaultGoRootTestDirs, ","), "comma-separated GOROOT/test subdirectories to scan")
 	flagCase          = flag.String("case", os.Getenv("LLGO_GOROOT_CASE"), "regexp selecting cases by relative path")
 	flagLimit         = flag.Int("limit", 0, "maximum number of matching cases to run")
@@ -294,6 +295,15 @@ func TestGoRootRunCases(t *testing.T) {
 	}
 
 	envInfo := loadToolchainEnv(t, goCmd)
+	wasmProfile, wasmTarget, err := selectGOROOTWasmProfile(*flagWasmProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wasmTarget {
+		envInfo.GOOS = wasmProfile.goos
+		envInfo.GOARCH = "wasm"
+		envInfo.CGOEnabled = "0"
+	}
 	targetPlatform := expectationPlatform(envInfo.GOOS, envInfo.GOARCH, os.Getenv("LLGO_WINDOWS_ABI"))
 	hostPlatform := expectationPlatform(runtime.GOOS, runtime.GOARCH, os.Getenv("LLGO_WINDOWS_ABI"))
 	testRoot := filepath.Join(goroot, "test")
@@ -346,7 +356,7 @@ func TestGoRootRunCases(t *testing.T) {
 		llgoBin = buildLLGOBinary(t, repoRoot, goCmd)
 	}
 
-	fmt.Fprintf(os.Stderr, "goroot=%s goversion=%s platform=%s shard=%d/%d cases=%d directive_mode=%s\n", goroot, envInfo.GOVERSION, targetPlatform, *flagShardI, *flagShardN, len(cases), mode.Name)
+	fmt.Fprintf(os.Stderr, "goroot=%s goversion=%s platform=%s wasm_profile=%s shard=%d/%d cases=%d directive_mode=%s\n", goroot, envInfo.GOVERSION, targetPlatform, *flagWasmProfile, *flagShardI, *flagShardN, len(cases), mode.Name)
 	progress, stopProgress := startGorootProgress(len(cases), *flagProgress)
 	defer stopProgress()
 	for i, tc := range cases {
@@ -2542,7 +2552,7 @@ func runLLGOCompiler(repoRoot, goroot, llgoBin string, tc testCase, opts directi
 		args = append(args, "-d=ssa/check/on")
 	}
 	args = append(args, sourcePath)
-	env := runnerEnv(repoRoot, goroot, ws.gopath, opts.ExtraEnv)
+	env := gorootTargetEnv(runnerEnv(repoRoot, goroot, ws.gopath, opts.ExtraEnv))
 	return runProgram(ws.workDir, llgoBin, env, timeout, args...)
 }
 
@@ -2631,6 +2641,7 @@ func runErrorCheckAndRunCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin stri
 		return err
 	}
 	env := runnerEnv(repoRoot, goroot, ws.gopath, append(opts.ExtraEnv, "GO111MODULE=on"))
+	compilerEnv := gorootTargetEnv(env)
 	var diagnosticErrs []error
 	for index, pkg := range pkgs {
 		pkgDir := ws.workDir
@@ -2645,7 +2656,7 @@ func runErrorCheckAndRunCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin stri
 			args = append(args, fullPath)
 			sources = append(sources, diagnosticSource{full: fullPath, short: fileName})
 		}
-		stdout, stderr, exitCode, elapsed, runErr := runProgram(pkgDir, llgoBin, env, buildTimeout, args...)
+		stdout, stderr, exitCode, elapsed, runErr := runProgram(pkgDir, llgoBin, compilerEnv, buildTimeout, args...)
 		expectFailure := opts.WantError && index == len(pkgs)-2
 		if runErr != nil {
 			diagnosticErrs = append(diagnosticErrs, commandFailure("llgo tool compile", elapsed, runErr, stdout, stderr, exitCode))
@@ -2680,8 +2691,8 @@ func runSingleFileCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc
 	if !*flagKeep {
 		defer ws.cleanup()
 	}
-	goBin := filepath.Join(ws.rootDir, "go.out")
-	llgoOut := filepath.Join(ws.rootDir, "llgo.out")
+	goBin := gorootArtifactPath(ws.rootDir, "go", false)
+	llgoOut := gorootArtifactPath(ws.rootDir, "llgo", true)
 	metrics := caseMetrics{}
 	sourceFiles, programArgs := splitSourceFiles(tc.FileName, opts.ProgramArgs)
 	buildTarget := tc.FileName
@@ -2725,7 +2736,8 @@ func runSingleFileCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc
 	}
 	env := runnerEnv(repoRoot, goroot, ws.gopath, extraEnv)
 
-	goBuildStdout, goBuildStderr, goBuildExit, goBuildDur, err := runProgram(ws.workDir, goCmd, env, buildTimeout, append([]string{"build"}, append(opts.BuildFlags, "-o", goBin, buildTarget)...)...)
+	targetEnv := gorootTargetEnv(env)
+	goBuildStdout, goBuildStderr, goBuildExit, goBuildDur, err := runProgram(ws.workDir, goCmd, targetEnv, buildTimeout, gorootBuildArgs(false, opts.BuildFlags, goBin, buildTarget)...)
 	metrics.goBuild += goBuildDur
 	if cmdErr := requireSuccessfulExit(err, goBuildExit); cmdErr != nil {
 		return commandFailure("baseline go build", goBuildDur, cmdErr, goBuildStdout, goBuildStderr, goBuildExit)
@@ -2733,7 +2745,7 @@ func runSingleFileCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc
 	if err := ensureBuiltBinary(goBin, "baseline go build"); err != nil {
 		return err
 	}
-	llgoBuildStdout, llgoBuildStderr, llgoBuildExit, llgoBuildDur, err := runProgram(ws.workDir, llgoBin, env, buildTimeout, append([]string{"build"}, append(opts.BuildFlags, "-o", llgoOut, buildTarget)...)...)
+	llgoBuildStdout, llgoBuildStderr, llgoBuildExit, llgoBuildDur, err := runProgram(ws.workDir, llgoBin, targetEnv, buildTimeout, gorootBuildArgs(true, opts.BuildFlags, llgoOut, buildTarget)...)
 	metrics.llgoBuild += llgoBuildDur
 	if cmdErr := requireSuccessfulExit(err, llgoBuildExit); cmdErr != nil {
 		return commandFailure("llgo build", llgoBuildDur, cmdErr, llgoBuildStdout, llgoBuildStderr, llgoBuildExit)
@@ -2748,12 +2760,12 @@ func runSingleFileCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc
 	}
 	runEnv := restoreProcessEnv(append([]string{}, env...), "GO111MODULE")
 	runEnv = restoreProcessEnv(runEnv, "GOPATH")
-	goStdout, goStderr, goExit, goRunDur, err := runProgram(runDir, goBin, runEnv, opts.Timeout, programArgs...)
+	goStdout, goStderr, goExit, goRunDur, err := runGOROOTArtifact(runDir, goBin, false, runEnv, opts.Timeout, programArgs...)
 	metrics.goRun += goRunDur
 	if cmdErr := requireSuccessfulExit(err, goExit); cmdErr != nil {
 		return commandFailure("baseline go run", goRunDur, cmdErr, goStdout, goStderr, goExit)
 	}
-	llgoStdout, llgoStderr, llgoExit, llgoRunDur, err := runProgram(runDir, llgoOut, runEnv, opts.Timeout, programArgs...)
+	llgoStdout, llgoStderr, llgoExit, llgoRunDur, err := runGOROOTArtifact(runDir, llgoOut, true, runEnv, opts.Timeout, programArgs...)
 	metrics.llgoRun += llgoRunDur
 	if cmdErr := requireSuccessfulExit(err, llgoExit); cmdErr != nil {
 		return commandFailure("llgo run", llgoRunDur, cmdErr, llgoStdout, llgoStderr, llgoExit)
@@ -2920,11 +2932,12 @@ func directoryBuildFlags(opts directiveOptions) (goFlags, llgoFlags []string) {
 
 func runBuildAndCompare(t *testing.T, casePath, workDir, rootDir string, env []string, goCmd, llgoBin string, goBuildFlags, llgoBuildFlags, programArgs []string, buildTimeout, runTimeout time.Duration) error {
 	t.Helper()
-	goBin := filepath.Join(rootDir, "go.out")
-	llgoOut := filepath.Join(rootDir, "llgo.out")
+	goBin := gorootArtifactPath(rootDir, "go", false)
+	llgoOut := gorootArtifactPath(rootDir, "llgo", true)
 	metrics := caseMetrics{}
+	targetEnv := gorootTargetEnv(env)
 
-	goBuildStdout, goBuildStderr, goBuildExit, goBuildDur, err := runProgram(workDir, goCmd, env, buildTimeout, append([]string{"build"}, append(goBuildFlags, "-o", goBin, ".")...)...)
+	goBuildStdout, goBuildStderr, goBuildExit, goBuildDur, err := runProgram(workDir, goCmd, targetEnv, buildTimeout, gorootBuildArgs(false, goBuildFlags, goBin, ".")...)
 	metrics.goBuild += goBuildDur
 	if cmdErr := requireSuccessfulExit(err, goBuildExit); cmdErr != nil {
 		return commandFailure("baseline go build", goBuildDur, cmdErr, goBuildStdout, goBuildStderr, goBuildExit)
@@ -2932,7 +2945,7 @@ func runBuildAndCompare(t *testing.T, casePath, workDir, rootDir string, env []s
 	if err := ensureBuiltBinary(goBin, "baseline go build"); err != nil {
 		return err
 	}
-	llgoBuildStdout, llgoBuildStderr, llgoBuildExit, llgoBuildDur, err := runProgram(workDir, llgoBin, env, buildTimeout, append([]string{"build"}, append(llgoBuildFlags, "-o", llgoOut, ".")...)...)
+	llgoBuildStdout, llgoBuildStderr, llgoBuildExit, llgoBuildDur, err := runProgram(workDir, llgoBin, targetEnv, buildTimeout, gorootBuildArgs(true, llgoBuildFlags, llgoOut, ".")...)
 	metrics.llgoBuild += llgoBuildDur
 	if cmdErr := requireSuccessfulExit(err, llgoBuildExit); cmdErr != nil {
 		return commandFailure("llgo build", llgoBuildDur, cmdErr, llgoBuildStdout, llgoBuildStderr, llgoBuildExit)
@@ -2941,12 +2954,12 @@ func runBuildAndCompare(t *testing.T, casePath, workDir, rootDir string, env []s
 		return err
 	}
 
-	goStdout, goStderr, goExit, goRunDur, err := runProgram(workDir, goBin, env, runTimeout, programArgs...)
+	goStdout, goStderr, goExit, goRunDur, err := runGOROOTArtifact(workDir, goBin, false, env, runTimeout, programArgs...)
 	metrics.goRun += goRunDur
 	if cmdErr := requireSuccessfulExit(err, goExit); cmdErr != nil {
 		return commandFailure("baseline go run", goRunDur, cmdErr, goStdout, goStderr, goExit)
 	}
-	llgoStdout, llgoStderr, llgoExit, llgoRunDur, err := runProgram(workDir, llgoOut, env, runTimeout, programArgs...)
+	llgoStdout, llgoStderr, llgoExit, llgoRunDur, err := runGOROOTArtifact(workDir, llgoOut, true, env, runTimeout, programArgs...)
 	metrics.llgoRun += llgoRunDur
 	if cmdErr := requireSuccessfulExit(err, llgoExit); cmdErr != nil {
 		return commandFailure("llgo run", llgoRunDur, cmdErr, llgoStdout, llgoStderr, llgoExit)
@@ -3053,18 +3066,16 @@ func toolchainGoModVersion(goroot string) (string, error) {
 }
 
 func runGeneratedProgram(ws caseWorkspace, tool string, env []string, fileName, label string, buildTimeout, runTimeout time.Duration) ([]byte, []byte, int, time.Duration, time.Duration, error) {
-	out := filepath.Join(ws.rootDir, label+"-generated.out")
-	if runtime.GOOS == "windows" {
-		out += ".exe"
-	}
-	buildStdout, buildStderr, buildExit, buildDur, err := runProgram(ws.workDir, tool, env, buildTimeout, "build", "-o", out, fileName)
+	isLLGO := label == "llgo"
+	out := gorootArtifactPath(ws.rootDir, label+"-generated", isLLGO)
+	buildStdout, buildStderr, buildExit, buildDur, err := runProgram(ws.workDir, tool, gorootTargetEnv(env), buildTimeout, gorootBuildArgs(isLLGO, nil, out, fileName)...)
 	if cmdErr := requireSuccessfulExit(err, buildExit); cmdErr != nil {
 		return nil, nil, 0, buildDur, 0, commandFailure(label+" generated build", buildDur, cmdErr, buildStdout, buildStderr, buildExit)
 	}
 	if err := ensureBuiltBinary(out, label+" generated build"); err != nil {
 		return nil, nil, 0, buildDur, 0, err
 	}
-	stdout, stderr, exitCode, runDur, err := runProgram(ws.workDir, out, env, runTimeout)
+	stdout, stderr, exitCode, runDur, err := runGOROOTArtifact(ws.workDir, out, isLLGO, env, runTimeout)
 	if cmdErr := requireSuccessfulExit(err, exitCode); cmdErr != nil {
 		return nil, nil, 0, buildDur, runDur, commandFailure(label+" generated run", runDur, cmdErr, stdout, stderr, exitCode)
 	}

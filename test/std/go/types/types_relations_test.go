@@ -2,7 +2,6 @@ package types_test
 
 import (
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
 	gotypes "go/types"
@@ -21,7 +20,7 @@ func mustCheck(t *testing.T, src string) (*token.FileSet, *gotypes.Package, *got
 		Defs:  map[*ast.Ident]gotypes.Object{},
 		Uses:  map[*ast.Ident]gotypes.Object{},
 	}
-	conf := gotypes.Config{Importer: importer.Default()}
+	conf := gotypes.Config{Importer: testImporter(t)}
 	pkg, err := conf.Check("example.org/rel", fset, []*ast.File{file}, info)
 	if err != nil {
 		t.Fatalf("Config.Check: %v", err)

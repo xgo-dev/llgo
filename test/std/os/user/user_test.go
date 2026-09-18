@@ -1,3 +1,5 @@
+//go:build !llgo || !js || !wasm || llgo.wasm.emscripten
+
 package user_test
 
 import (

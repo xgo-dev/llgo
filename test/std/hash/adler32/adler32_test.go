@@ -1,6 +1,7 @@
 package adler32_test
 
 import (
+	"encoding"
 	"hash"
 	"hash/adler32"
 	"io"
@@ -148,11 +149,36 @@ func TestIncremental(t *testing.T) {
 }
 
 func TestBinaryMarshaling(t *testing.T) {
-	// TODO: Adler-32 binary unmarshaling currently resets hash to initial state
-	// The hash/adler32 package implements the binary marshaling interfaces but
-	// the unmarshaling behavior appears to reset the hash to its initial state
-	// rather than restoring the saved state. This needs further investigation.
-	t.Skip("TODO: Adler-32 binary unmarshaling currently resets hash to initial state")
+	for _, g := range golden {
+		h, restored := adler32.New(), adler32.New()
+		half := len(g.in) / 2
+		if _, err := io.WriteString(h, g.in[:half]); err != nil {
+			t.Fatal(err)
+		}
+		state, err := h.(encoding.BinaryMarshaler).MarshalBinary()
+		if err != nil {
+			t.Fatalf("MarshalBinary(%q): %v", g.in, err)
+		}
+		prefixed, err := h.(encoding.BinaryAppender).AppendBinary(make([]byte, 4))
+		if err != nil {
+			t.Fatalf("AppendBinary(%q): %v", g.in, err)
+		}
+		if string(prefixed[4:]) != string(state) {
+			t.Fatalf("AppendBinary(%q) state differs from MarshalBinary", g.in)
+		}
+		if err := restored.(encoding.BinaryUnmarshaler).UnmarshalBinary(state); err != nil {
+			t.Fatalf("UnmarshalBinary(%q): %v", g.in, err)
+		}
+		if _, err := io.WriteString(h, g.in[half:]); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.WriteString(restored, g.in[half:]); err != nil {
+			t.Fatal(err)
+		}
+		if got, restoredSum := h.Sum32(), restored.Sum32(); got != g.out || restoredSum != got {
+			t.Fatalf("restored checksum(%q) = %#x, full = %#x, want %#x", g.in, restoredSum, got, g.out)
+		}
+	}
 }
 
 func TestHash32Interface(t *testing.T) {

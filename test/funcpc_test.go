@@ -5,13 +5,20 @@ package test
 
 import (
 	"reflect"
+	"runtime"
 	"testing"
 	"unsafe"
 )
 
 func funcPCABI0(f interface{}) uintptr {
 	words := (*[2]unsafe.Pointer)(unsafe.Pointer(&f))
-	return *(*uintptr)(unsafe.Pointer(words[1]))
+	pc := *(*uintptr)(unsafe.Pointer(words[1]))
+	if runtime.GOARCH == "wasm" {
+		// Raw wasm function pointers are table indices. The runtime exposes the
+		// index with its low two bits reserved for synthetic caller markers.
+		pc <<= 2
+	}
+	return pc
 }
 
 func TestFuncPCABI0(t *testing.T) {

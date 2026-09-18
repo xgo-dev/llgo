@@ -55,7 +55,7 @@ func makeFunc(typ Type, fn func(args []Value) (results []Value), recoverTo unsaf
 	return makeProviderFunc(ftyp, fn, recoverTo)
 }
 
-// call crosses the libffi entry stub as a transparent wrapper. This mirrors
+// call crosses the provider's entry stub as a transparent wrapper. This mirrors
 // the Go runtime's treatment of reflect.makeFuncStub and methodValueCall as
 // wrapper frames when deciding whether recover is called directly.
 func (fd *funcData) call(in []Value) []Value {

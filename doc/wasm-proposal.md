@@ -4,6 +4,42 @@ Status: draft. Tracking issue: [xgo-dev/llgo#2152](https://github.com/xgo-dev/ll
 
 R1 through R3, including R2.1, are merged and remain the delivered foundation of this proposal. W1-W3 build on that foundation to complete the supported WebAssembly profiles before advanced engine features are added.
 
+## Design overview
+
+- Go source layer: all three profiles use the official Go WebAssembly 64-bit word model. Go `int`, `uint`, `uintptr`, and pointer storage are 64-bit; valid Memory32 addresses use only the low 32 bits. Most pure Go standard-library code can therefore be shared, and implementations should prefer the same selected GOROOT sources.
+
+- Memory ABI:
+
+  - J32 (wasm32 with JavaScript) and W32 (wasm32 with WASI Preview 1): Core Wasm Memory32, `i32` addresses, and the ILP32 C ABI.
+  - J64 (wasm64 with JavaScript): Memory64, `i64` addresses, and the LP64 C ABI, extending the same Go data model to a wider address space.
+  - Differences belong in address lowering, Go/C boundaries, libffi, memory accesses, and host glue; ordinary Go source does not require separate forks for these differences.
+  - C types use `github.com/goplus/lib/c`; Go and C `int` need not have the same width. The compiler and boundary adapters perform the required checked width conversions.
+
+- Host ABI:
+
+  - JavaScript: `syscall/js`, event-loop integration, browser/Node services, and JavaScript callbacks.
+  - WASI: imports for filesystem access, clocks, randomness, arguments, exit, and other WASI services.
+  - Standard-library host files selected by `js && wasm` and `wasip1 && wasm` therefore remain different.
+
+- Provider:
+
+  - J32-GoJS (wasm32 with the Go-compatible JavaScript provider) and J32-Emscripten (wasm32 with the Emscripten JavaScript provider) share Go API semantics, while import names, JavaScript glue, filesystem implementations, and artifact packaging may differ.
+  - Both are providers of the same J32 (wasm32 with JavaScript) profile and share its Go data model; provider selection does not define another Go ABI.
+
+```text
+Shared Go sources and Go data model
+│
+├── Memory32 ── ILP32 C boundary
+│      ├── JavaScript / GoJS provider
+│      ├── JavaScript / Emscripten provider
+│      └── WASI Preview 1 provider
+│
+└── Memory64 ── LP64 C boundary
+       └── JavaScript / Emscripten provider
+```
+
+Assembly/runtime boundary: reuse applicable host-independent Go wasm assembly through Plan 9 translation to LLVM IR and target lowering. Code tied to the gc compiler's calling convention, stack layout, GC, scheduler, or runtime entry points requires LLGo adaptation. Source/API compatibility does not require identical generated function signatures or binary compatibility with gc compiler objects or artifacts for other targets.
+
 ## Delivered milestones: R1-R3 (merged)
 
 | Milestone | Delivered scope | Merged PRs |
@@ -26,8 +62,6 @@ A hosted profile is the product of a memory ABI and a host ABI. Source compatibi
 | W32 | Memory32 | WASI Preview 1 | required |
 | W64 | Memory64 | WASI | deferred |
 
-Memory32 uses Core Wasm `i32` addresses and the ILP32 C ABI. Memory64 uses `i64` addresses and the LP64 C ABI. Go's language model is not a separate profile: `int`, `uint`, `uintptr`, and pointer storage follow the official Go WebAssembly 64-bit word model; a valid Memory32 address has zero high bits. C types use `github.com/goplus/lib/c`, and every Go/C or host boundary performs the required checked width conversion. Go and C `int` do not need to have the same width.
-
 The supported public entries are:
 
 | Entry | Profile | Initial provider |
@@ -39,11 +73,11 @@ The supported public entries are:
 
 `-target wasm` remains an alias of `emscripten`, and `-target wasip1` remains an alias of `wasi`. Existing target JSON names and build tags such as `llgo.wasm.emscripten` remain stable; J32/J64/W32 are profile metadata, not replacements for those identifiers. The unsupported `-target wasm-unknown` and `-target wasip2` definitions are removed. WASI Preview 2 requires a separate Component Model proposal.
 
-J32 has two provider acceptance paths: the Go-compatible JavaScript shim and Emscripten. They share Go source semantics but not necessarily the same import names, glue, or artifact packaging. J64 initially uses Emscripten. W32 runs on a WASI runtime and may link C through wasi-libc. Provider and capability selection is part of the build and cache identity.
+These four entries are acceptance paths for three profiles. Memory ABI, host/provider, and capability selection are part of the build and cache identity.
 
 ## Compatibility contract
 
-- J32 and W32 implement the official Go WebAssembly sizes, alignment, standard build constraints, runtime behavior, and applicable standard-library surface. Binary compatibility with Go compiler object files is not required.
+- All supported profiles, including J64 (wasm64 with JavaScript), follow the shared Go sizes, alignment, and source-reuse rules above, standard build constraints, and the applicable Go runtime behavior and standard-library surface for their selected host.
 - The J32 Go provider reuses the selected GOROOT's `syscall/js` source and does not expose emval as its Go-facing API. Its initial host adapter may reuse Emscripten glue, filesystem services, and the WebAssembly libffi backend; this is source/API compatibility, not stock `wasm_exec.js` binary compatibility.
 - J32 and J64 expose `syscall/js` through their selected JavaScript provider. C code remains available through the explicit C ABI; arbitrary Emscripten-dependent libraries require the Emscripten provider.
 - W32 uses the Go WASI Preview 1 host contract and can use wasi-libc without becoming a separate C profile.
@@ -57,7 +91,7 @@ LLGo's Core Wasm C ABI is unrelated to the WIT Canonical ABI. Future WASI Previe
 
 ## Acceptance
 
-A feature is implemented only when CI executes it on every applicable path. The minimum hosted matrix contains four paths: J32/GoJS, J32/Emscripten, J64/Emscripten Memory64, and W32/WASI. Tests use real Node, browser, and Wasmtime execution where applicable and cover `llgo build/run/test`, artifacts, host callbacks and exit, C boundaries, reflection, GC and suspension, `test/**`, `test/std`, and every applicable GOROOT case. Only reviewed `xfail` and `notapplicable` classifications may be excluded. Each W-stage PR carries focused executable CI; compile-only coverage does not count. Final acceptance also checks compiler coverage, `cprintf`/`println`/`fmtprintf` and reflection size, runtime benchmarks, native and embedded regressions, and removal of diagnostic or superseded changes.
+A feature is implemented only when CI executes it on every applicable path. The minimum hosted matrix contains four paths: J32/GoJS, J32/Emscripten, J64/Emscripten Memory64, and W32/WASI. Tests use real Node, browser, and Wasmtime execution where applicable and cover `llgo build/run/test`, artifacts, host callbacks and exit, C boundaries, reflection, GC and suspension, `test/**`, `test/std`, and every applicable GOROOT case. The complete GOROOT corpus runs on the canonical Go-compatible J32/GoJS path, while all four paths run GOROOT sentinels and the complete applicable repository package suite; this avoids multiplying more than two thousand compiler conformance cases by provider paths whose differences are covered by target integration tests. Only reviewed `xfail` and `notapplicable` classifications may be excluded. Each W-stage PR carries focused executable CI; compile-only coverage does not count. Final acceptance also checks compiler coverage, `cprintf`/`println`/`fmtprintf` and reflection size, runtime benchmarks, native and embedded regressions, and removal of diagnostic or superseded changes.
 
 ## Remaining PR plan: W1-W3
 
@@ -71,7 +105,7 @@ Complete the GoJS, Emscripten, and WASI providers; consolidate output/FS behavio
 
 ### W3: full compatibility acceptance and consolidation
 
-Run and classify the full applicable `test/**` and GOROOT corpus across the four paths, retire unnecessary skips, finish issues exposed by those tests, audit the accumulated diff, split out independently useful fixes, and enforce coverage, size, performance, native, and embedded gates. W3 completes the currently supported WebAssembly scope.
+Run and classify the full applicable `test/**` suite on all four paths, the complete applicable GOROOT corpus on J32/GoJS, and GOROOT sentinels on every path; retire unnecessary skips, finish issues exposed by those tests, audit the accumulated diff, split out independently useful fixes, and enforce coverage, size, performance, native, and embedded gates. W3 completes the currently supported WebAssembly scope.
 
 ## Deferred work
 
@@ -84,6 +118,42 @@ W64, WASI Preview 2 and WIT components, threads and Atomics, WasmGC, Exception H
 状态：草案。跟踪 issue：[xgo-dev/llgo#2152](https://github.com/xgo-dev/llgo/issues/2152)。
 
 R1 至 R3（包括 R2.1）已经合并，作为本提案已交付的基础继续保留。W1-W3 在此基础上完成当前支持的 WebAssembly profile，再推进高级引擎特性。
+
+## 设计总览
+
+- Go 源码层：三个 profile 都采用官方 Go WebAssembly 的 64 位 word model；Go `int`、`uint`、`uintptr` 和指针存储均为 64 位，合法 Memory32 地址只使用低 32 位。因此绝大多数纯 Go 标准库代码可以共用，实现应优先复用所选 GOROOT 的同一套源码。
+
+- Memory ABI：
+
+  - J32（wasm32 + JavaScript）和 W32（wasm32 + WASI Preview 1）：Core Wasm Memory32，使用 `i32` 地址，C ABI 为 ILP32。
+  - J64（wasm64 + JavaScript）：Memory64，使用 `i64` 地址，C ABI 为 LP64，将同一 Go 数据模型扩展到更大的地址空间。
+  - 差异集中在地址 lowering、Go/C 边界、libffi、内存访问和 host glue，无须为这些差异分叉普通 Go 源码。
+  - C 类型使用 `github.com/goplus/lib/c`；Go 与 C 的 `int` 不必同宽。编译器和边界适配器执行必要的带检查宽度转换。
+
+- Host ABI：
+
+  - JavaScript：`syscall/js`、事件循环接入、浏览器/Node 服务、JS 回调。
+  - WASI：文件系统、时钟、随机数、参数、退出等 WASI imports。
+  - 因此，由 `js && wasm` 与 `wasip1 && wasm` 选择的标准库 host 文件仍然不同。
+
+- Provider：
+
+  - J32-GoJS（wasm32 + Go 兼容 JavaScript provider）与 J32-Emscripten（wasm32 + Emscripten JavaScript provider）的 Go API 语义相同，但 import 名称、JS glue、FS 实现和产物包装可以不同。
+  - 它们属于同一 J32（wasm32 + JavaScript）profile 的两个 provider，共享 Go 数据模型；provider 选择不定义另一套 Go ABI。
+
+```text
+共同的 Go 源码与 Go 数据模型
+│
+├── Memory32 ── ILP32 C boundary
+│      ├── JavaScript / GoJS provider
+│      ├── JavaScript / Emscripten provider
+│      └── WASI Preview 1 provider
+│
+└── Memory64 ── LP64 C boundary
+       └── JavaScript / Emscripten provider
+```
+
+汇编/runtime 边界：适用且与 host 无关的 Go wasm 汇编通过 Plan 9 翻译为 LLVM IR，再按目标 lowering 以实现复用。依赖 gc 编译器调用约定、栈布局、GC、调度器或 runtime 入口的代码需要 LLGo 适配。源码/API 兼容不要求生成的函数签名相同，也不要求与 gc 编译器 object 文件或其他目标产物二进制兼容。
 
 ## 已交付里程碑：R1-R3（已合并）
 
@@ -107,8 +177,6 @@ Hosted profile 是 Memory ABI 与 Host ABI 的组合。源码兼容、C 互操�
 | W32 | Memory32 | WASI Preview 1 | 必须完成 |
 | W64 | Memory64 | WASI | 延期 |
 
-Memory32 使用 Core Wasm `i32` 地址和 ILP32 C ABI；Memory64 使用 `i64` 地址和 LP64 C ABI。Go 语言模型不是另一个 profile：`int`、`uint`、`uintptr` 和指针存储遵循官方 Go WebAssembly 的 64 位 word 模型，合法 Memory32 地址的高位为零。C 类型通过 `github.com/goplus/lib/c` 表达，Go/C 或 host 边界执行必要的带检查宽度转换；Go 与 C 的 `int` 不需要同宽。
-
 保留的公共入口如下：
 
 | 入口 | Profile | 初始 provider |
@@ -120,11 +188,11 @@ Memory32 使用 Core Wasm `i32` 地址和 ILP32 C ABI；Memory64 使用 `i64` �
 
 `-target wasm` 保留为 `emscripten` 的 alias，`-target wasip1` 保留为 `wasi` 的 alias。现有 target JSON 名称以及 `llgo.wasm.emscripten` 等 build tag 保持稳定；J32/J64/W32 是 profile 元数据，不替换这些标识。删除当前不支持的 `-target wasm-unknown` 和 `-target wasip2` 定义。WASI Preview 2 需要单独的 Component Model 提案。
 
-J32 有两条 provider 验收路径：Go 兼容 JavaScript shim 和 Emscripten。二者共享 Go 源码语义，但 import 名称、glue 和产物打包不要求相同。J64 初期使用 Emscripten；W32 运行在 WASI runtime 上，并可通过 wasi-libc 链接 C。Provider 与 capability 选择必须进入构建和缓存标识。
+这四个入口是三个 profile 的验收路径。Memory ABI、host/provider 和 capability 选择须进入构建和缓存标识。
 
 ## 兼容约定
 
-- J32 和 W32 实现官方 Go WebAssembly 的尺寸、对齐、标准 build constraints、runtime 行为和适用标准库，不要求与 Go 编译器 object 文件二进制兼容。
+- 包括 J64（wasm64 + JavaScript）在内的所有受支持 profile，都遵循上述共同 Go 尺寸、对齐及源码复用规则、标准 build constraints，以及所选 host 下适用的 Go runtime 行为和标准库。
 - J32 Go provider 复用所选 GOROOT 的 `syscall/js` 源码，并且不把 emval 暴露为 Go 侧 API。初始 host adapter 可以复用 Emscripten glue、文件系统服务和 WebAssembly libffi 后端；这里保证的是源码/API 兼容，而不是 stock `wasm_exec.js` 二进制兼容。
 - J32 和 J64 通过所选 JavaScript provider 提供 `syscall/js`。C 代码通过显式 C ABI 使用；依赖 Emscripten runtime 的任意 C 库仍要求 Emscripten provider。
 - W32 使用 Go WASI Preview 1 host contract，并可使用 wasi-libc，不再因此拆出单独 C profile。
@@ -138,7 +206,7 @@ LLGo Core Wasm C ABI 与 WIT Canonical ABI 无关。未来 WASI Preview 2 将在
 
 ## 验收
 
-功能只有在 CI 对所有适用路径实际执行后才算完成。最小 hosted 矩阵包含四条路径：J32/GoJS、J32/Emscripten、J64/Emscripten Memory64、W32/WASI。测试按适用范围在真实 Node、浏览器和 Wasmtime 中运行，覆盖 `llgo build/run/test`、产物、host 回调与退出、C 边界、反射、GC 与挂起、`test/**`、`test/std` 以及全部适用 GOROOT case；只允许排除经过审查的 `xfail` 和 `notapplicable`。每个 W 阶段 PR 自带聚焦的可执行 CI，compile-only 不算覆盖。最终验收还检查编译器覆盖率、`cprintf`/`println`/`fmtprintf` 与反射体积、runtime benchmark、native/embedded 回归，以及诊断和被取代变更的清理。
+功能只有在 CI 对所有适用路径实际执行后才算完成。最小 hosted 矩阵包含四条路径：J32/GoJS、J32/Emscripten、J64/Emscripten Memory64、W32/WASI。测试按适用范围在真实 Node、浏览器和 Wasmtime 中运行，覆盖 `llgo build/run/test`、产物、host 回调与退出、C 边界、反射、GC 与挂起、`test/**`、`test/std` 以及全部适用 GOROOT case。完整 GOROOT corpus 在规范性的 Go 兼容 J32/GoJS 路径运行，四条路径都运行 GOROOT sentinel 和完整的适用仓库 package suite；这样无需把两千多个编译器一致性 case 机械乘以 host provider，而 provider 差异由 target 集成测试覆盖。只允许排除经过审查的 `xfail` 和 `notapplicable`。每个 W 阶段 PR 自带聚焦的可执行 CI，compile-only 不算覆盖。最终验收还检查编译器覆盖率、`cprintf`/`println`/`fmtprintf` 与反射体积、runtime benchmark、native/embedded 回归，以及诊断和被取代变更的清理。
 
 ## 后续 PR 规划：W1-W3
 
@@ -152,7 +220,7 @@ LLGo Core Wasm C ABI 与 WIT Canonical ABI 无关。未来 WASI Preview 2 将在
 
 ### W3：完整兼容验收与收敛
 
-在四条路径上运行并分类全部适用 `test/**` 与 GOROOT case，清理不必要的 skip，修复测试暴露的问题，审计累计 diff，把可独立复用的修复拆出，并执行覆盖率、体积、性能、native 和 embedded gate。W3 完成当前支持的 WebAssembly 范围。
+在四条路径上运行并分类全部适用 `test/**`，在 J32/GoJS 上运行完整适用 GOROOT corpus，并在每条路径运行 GOROOT sentinel；清理不必要的 skip，修复测试暴露的问题，审计累计 diff，把可独立复用的修复拆出，并执行覆盖率、体积、性能、native 和 embedded gate。W3 完成当前支持的 WebAssembly 范围。
 
 ## 延期范围
 

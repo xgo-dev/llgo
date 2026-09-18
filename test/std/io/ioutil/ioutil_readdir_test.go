@@ -1,5 +1,3 @@
-//go:build !llgo
-
 package ioutil_test
 
 import (

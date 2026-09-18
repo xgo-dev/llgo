@@ -2,7 +2,6 @@ package types_test
 
 import (
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -29,7 +28,7 @@ func typeCheck(t *testing.T, src string, info *types.Info) checkedPackage {
 	}
 	ensureInfoMaps(info)
 
-	conf := types.Config{Importer: importer.Default()}
+	conf := types.Config{Importer: testImporter(t)}
 	pkg, err := conf.Check("test/p", fset, []*ast.File{file}, info)
 	if err != nil {
 		t.Fatalf("type-check failed: %v", err)
