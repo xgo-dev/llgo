@@ -3,6 +3,13 @@
 package build
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"go/types"
+
+	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/packages"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,5 +70,61 @@ DATA ·cfEntry(SB)/8, $cftramp<>(SB)
 	}
 	if out, err := exec.Command(conf.OutFile).CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "ok" {
 		t.Fatalf("run: %v\n%s", err, out)
+	}
+	t.Run("reject mismatched DATA", func(t *testing.T) {
+		bad := strings.ReplaceAll(files["callback.s"], "GLOBL ·entry(SB), RODATA, $8", "GLOBL ·entry(SB), RODATA, $16")
+		if err := os.WriteFile(filepath.Join(dir, "callback.s"), []byte(bad), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Do([]string{"."}, conf); err == nil || !strings.Contains(err.Error(), "Go size 8 but DATA size 16") {
+			t.Fatalf("mismatched DATA: %v", err)
+		}
+	})
+
+}
+
+func TestForeignARM64SelectionAndErrors(t *testing.T) {
+	const valid = "#include \"textflag.h\"\nTEXT callback<>(SB), NOSPLIT, $0\n JMP imported(SB)\n"
+	const imports = "//go:cgo_import_dynamic imported strlen\n"
+	cases := []struct {
+		name, goos, decl, asm, want string
+		handled                     bool
+		badTemp                     bool
+	}{
+		{name: "other target", goos: "linux"},
+		{name: "no imports", goos: "darwin", asm: valid},
+		{name: "Go ABI", goos: "darwin", decl: imports, asm: "TEXT ·f(SB), NOSPLIT, $0\nRET\n"},
+		{name: "conflicting import", goos: "darwin", decl: imports + "//go:cgo_import_dynamic imported other\n", asm: valid, want: "conflicting dynamic import", handled: true},
+		{name: "invalid instruction", goos: "darwin", decl: imports, asm: valid + "NOT_AN_INSTRUCTION\n", want: "assemble foreign ABI code", handled: true},
+		{name: "undeclared import", goos: "darwin", decl: imports, asm: strings.ReplaceAll(valid, "JMP imported", "JMP undeclared"), want: "undeclared foreign symbol", handled: true},
+		{name: "compiler failure", goos: "darwin", decl: imports, asm: valid, want: "missing-clang", handled: true},
+		{name: "temporary directory failure", goos: "darwin", decl: imports, asm: valid, want: "missing", handled: true, badTemp: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.badTemp {
+				t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+				t.Setenv("TMP", os.Getenv("TMPDIR"))
+				t.Setenv("TEMP", os.Getenv("TMPDIR"))
+			}
+			file, err := parser.ParseFile(token.NewFileSet(), "imports.go", "package p\n"+tc.decl, parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := &context{buildConf: &Config{Goos: tc.goos, Goarch: "arm64"}, commands: commandEnv{environ: os.Environ()}}
+			ctx.crossCompile = crosscompile.Export{CC: filepath.Join(t.TempDir(), "missing-clang")}
+			pkg := &packages.Package{PkgPath: "probe", Types: types.NewPackage("probe", "p"), Syntax: []*ast.File{file}}
+			_, handled, err := compileForeignARM64Asm(ctx, nil, pkg, "callback.s", []byte(tc.asm))
+			if handled != tc.handled {
+				t.Fatalf("handled=%v, want %v", handled, tc.handled)
+			}
+			if tc.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error=%v, want %q", err, tc.want)
+			}
+		})
 	}
 }
