@@ -3,19 +3,23 @@
 package build
 
 import (
+	"debug/macho"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"go/types"
-
-	"github.com/xgo-dev/llgo/internal/crosscompile"
-	"github.com/xgo-dev/llgo/internal/packages"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/packages"
+	llssa "github.com/xgo-dev/llgo/ssa"
+	llvm "github.com/xgo-dev/llvm"
 )
 
 func TestForeignARM64Callback(t *testing.T) {
@@ -80,7 +84,6 @@ DATA ·cfEntry(SB)/8, $cftramp<>(SB)
 			t.Fatalf("mismatched DATA: %v", err)
 		}
 	})
-
 }
 
 func TestForeignARM64SelectionAndErrors(t *testing.T) {
@@ -124,6 +127,79 @@ func TestForeignARM64SelectionAndErrors(t *testing.T) {
 				}
 			} else if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error=%v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// Object generation and DATA binding need no Darwin SDK or execution host.
+// Exercise the real assembly driver on every CI host; only TestForeignARM64Callback
+// needs native darwin/arm64 execution.
+func TestForeignARM64CrossCompileObject(t *testing.T) {
+	for _, size := range []int{8, 16} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			dir := t.TempDir()
+			src := fmt.Sprintf(`#include "textflag.h"
+TEXT callback<>(SB), NOSPLIT, $0
+ JMP imported(SB)
+GLOBL ·entry(SB), RODATA, $%d
+DATA ·entry(SB)/8, $callback<>(SB)
+`, size)
+			sfile := filepath.Join(dir, "callback.s")
+			if err := os.WriteFile(sfile, []byte(src), 0600); err != nil {
+				t.Fatal(err)
+			}
+			file, err := parser.ParseFile(token.NewFileSet(), "imports.go", "package p\n//go:cgo_import_dynamic imported strlen\n", parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prog := llssa.NewProgram(&llssa.Target{GOOS: "darwin", GOARCH: "arm64"})
+			defer prog.Dispose()
+			pkg := &packages.Package{ID: "probe", PkgPath: "probe", Dir: dir, Types: types.NewPackage("probe", "p"), Syntax: []*ast.File{file}, OtherFiles: []string{sfile}}
+			apkg := &aPackage{Package: pkg, LPkg: prog.NewPackage("p", "probe")}
+			mod := apkg.LPkg.Module()
+			global := llvm.AddGlobal(mod, mod.Context().Int64Type(), "probe.entry")
+			global.SetInitializer(llvm.ConstNull(global.GlobalValueType()))
+			ctx := &context{prog: prog, buildConf: &Config{Goos: "darwin", Goarch: "arm64"}, commands: commandEnv{environ: os.Environ()}, crossCompile: crosscompile.Export{CC: "clang", CCFLAGS: []string{"--target=arm64-apple-darwin"}}, plan9asmReady: true, plan9asmMode: plan9asmEnvAll}
+			objects, err := compilePkgSFiles(ctx, apkg, pkg, false)
+			for _, object := range objects {
+				defer os.Remove(object)
+			}
+			if size != 8 {
+				if err == nil || !strings.Contains(err.Error(), "Go size 8 but DATA size 16") {
+					t.Fatalf("invalid DATA: %v", err)
+				}
+				if global.IsDeclaration() {
+					t.Fatal("invalid DATA changed Go global")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(objects) != 1 {
+				t.Fatalf("objects=%v", objects)
+			}
+			if !global.IsDeclaration() || global.Linkage() != llvm.ExternalLinkage {
+				t.Fatal("Go global did not bind to native DATA")
+			}
+			obj, err := macho.Open(objects[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer obj.Close()
+			if obj.Cpu != macho.CpuArm64 || obj.Type != macho.TypeObj {
+				t.Fatalf("unexpected object header: %+v", obj.FileHeader)
+			}
+			found := false
+			for _, sym := range obj.Symtab.Syms {
+				// debug/macho strips the leading underscore from Go symbol names.
+				if sym.Name == "probe.entry" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("native object missing DATA symbol")
 			}
 		})
 	}
