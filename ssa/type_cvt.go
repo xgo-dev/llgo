@@ -218,12 +218,7 @@ func (p goTypes) cvtNamed(t *types.Named) (raw *types.Named, cvt bool) {
 	return named, true
 }
 
-type conversionNeedState struct {
-	visiting bool
-	seen     bool
-}
-
-type conversionNeedQuery map[*types.Named]conversionNeedState
+type conversionNeedQuery map[*types.Named]bool
 
 func (p goTypes) namedNeedsTypeConversion(t *types.Named) bool {
 	if requirement := p.cvtneed[t]; requirement != conversionUnknown {
@@ -235,18 +230,17 @@ func (p goTypes) namedNeedsTypeConversion(t *types.Named) bool {
 		// A complete negative query proves that every named type it reached is
 		// also conversion-free. Negative results observed only on a cycle
 		// back-edge are never stored here.
-		for named, state := range query {
-			if state.seen {
-				p.cvtneed[named] = conversionNotNeeded
-			}
+		for named := range query {
+			p.cvtneed[named] = conversionNotNeeded
 		}
 	}
 	return needed
 }
 
 // needsTypeConversion reports whether cvtType changes any part of typ. The
-// recursion set deliberately belongs to one query: a cycle back-edge alone is
-// not a conversion, but another member of that cycle may still require one.
+// visited set deliberately belongs to one query: a repeated edge alone is not
+// a conversion, but another member of that graph may still require one. Keep
+// completed nodes visited as well, so shared subgraphs are not re-traversed.
 // Keep its traversal and conversion predicates in lock-step with cvtType.
 func (p goTypes) needsTypeConversion(typ types.Type, query conversionNeedQuery) bool {
 	switch t := typ.(type) {
@@ -288,18 +282,11 @@ func (p goTypes) needsTypeConversion(typ types.Type, query conversionNeedQuery) 
 		if requirement := p.cvtneed[t]; requirement != conversionUnknown {
 			return requirement == conversionNeeded
 		}
-		state := query[t]
-		state.seen = true
-		if state.visiting {
-			query[t] = state
+		if query[t] {
 			return false
 		}
-		state.visiting = true
-		query[t] = state
+		query[t] = true
 		ret := p.needsTypeConversion(t.Underlying(), query)
-		state = query[t]
-		state.visiting = false
-		query[t] = state
 		if ret {
 			p.cvtneed[t] = conversionNeeded
 		}
