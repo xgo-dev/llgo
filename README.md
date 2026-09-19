@@ -65,6 +65,15 @@ The supported WebAssembly profiles combine a memory ABI with a host ABI.
 JavaScript and WASI host contracts. See the [WebAssembly proposal](doc/wasm-proposal.md)
 for the compatibility contract and acceptance plan.
 
+WebAssembly goroutine stacks have fixed sizes. For deeply recursive workloads,
+set `-goroutine-stack-size=2MB` when building (the existing `-pthread-stack-size`
+flag remains an alias). This sets both the goroutine stack and its Asyncify
+buffer; it does not change the main goroutine's stack. JavaScript-hosted builds
+check stack bounds and abort on overflow instead of corrupting linear memory.
+These checks remain enabled in optimized builds: checking each stack-pointer
+update adds code and execution overhead, but a return-time cookie check alone
+cannot prevent a goroutine from overwriting adjacent memory.
+
 
 ## C/C++ support
 

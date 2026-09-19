@@ -500,6 +500,9 @@ func TestEmscriptenTargetProfiles(t *testing.T) {
 			if !slices.Contains(export.LDFLAGS, "-sENVIRONMENT=web,worker,node") {
 				t.Errorf("named target does not enable its Node emulator: %v", export.LDFLAGS)
 			}
+			if !slices.Contains(export.LDFLAGS, "-sSTACK_OVERFLOW_CHECK=2") {
+				t.Fatalf("named target does not check Fiber stack bounds: %v", export.LDFLAGS)
+			}
 			if !slices.Contains(export.LDFLAGS, emscriptenAsyncifyImports) {
 				t.Errorf("named target does not mark interruptible host wait and ffi_call_js as async: %v", export.LDFLAGS)
 			}
@@ -662,6 +665,9 @@ func TestRawWasmProfiles(t *testing.T) {
 	}
 	if js.WasmProfile != WasmProfileJ32 || js.WasmProvider != WasmProviderGoJS || js.LLVMTarget != "wasm32-unknown-emscripten" {
 		t.Fatalf("raw js/wasm = profile/provider %q/%q, LLVM profile %q", js.WasmProfile, js.WasmProvider, js.LLVMTarget)
+	}
+	if !slices.Contains(js.LDFLAGS, "-sSTACK_OVERFLOW_CHECK=2") {
+		t.Fatalf("raw js/wasm does not check Fiber stack bounds: %v", js.LDFLAGS)
 	}
 	if !slices.Contains(js.LDFLAGS, "-sENVIRONMENT=web,worker") ||
 		slices.Contains(js.LDFLAGS, "-sENVIRONMENT=web,worker,node") {

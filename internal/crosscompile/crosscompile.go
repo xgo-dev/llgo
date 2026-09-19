@@ -815,6 +815,9 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, wasiThreads, forceEspC
 			emscriptenAsyncifyImports,
 			emscriptenAsyncifyRemove,
 			"-sSTACK_SIZE=5242880", // 5MB
+			// Fibers have fixed-size stacks. Check every stack-pointer change
+			// before an overflow can overwrite another goroutine's memory.
+			"-sSTACK_OVERFLOW_CHECK=2",
 		}...)
 		appendEmscriptenLibffiSearchPath(&export, llgoRoot, wasmProfile)
 	default:

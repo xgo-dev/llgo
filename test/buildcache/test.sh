@@ -51,6 +51,23 @@ extract_cache_status() {
     grep "^CACHE" | grep "buildcache" | sort
 }
 
+# Keep compiler/setup diagnostics separate from the snapshot, which contains
+# only cache decisions. Otherwise an initial SDK/download failure is discarded
+# by grep and the next test misleadingly reports cache misses.
+capture_cache_build() {
+    local command="$1"
+    local output="$2"
+    local log="${output%.txt}.log"
+    if ! eval "$command" > "$log" 2>&1; then
+        cat "$log" >&2
+        return 1
+    fi
+    if ! extract_cache_status < "$log" > "$output"; then
+        cat "$log" >&2
+        return 1
+    fi
+}
+
 # Helper function to compare with snapshot
 compare_snapshot() {
     local test_name="$1"
@@ -115,7 +132,7 @@ run_test_suite() {
     # ===========================================================
     test_01_first_build() {
         clear_cache
-        if ! eval "$build_cmd" 2>&1 | extract_cache_status > "$BUILD_TEMP_DIR/cache_${mode}_01.txt"; then
+        if ! capture_cache_build "$build_cmd" "$BUILD_TEMP_DIR/cache_${mode}_01.txt"; then
             echo -e "${RED}Build failed${NC}"
             return 1
         fi
@@ -133,7 +150,7 @@ run_test_suite() {
     # TEST 2: Second build - dependencies CACHE HIT
     # ===========================================================
     test_02_second_build() {
-        if ! eval "$build_cmd" 2>&1 | extract_cache_status > "$BUILD_TEMP_DIR/cache_${mode}_02.txt"; then
+        if ! capture_cache_build "$build_cmd" "$BUILD_TEMP_DIR/cache_${mode}_02.txt"; then
             echo -e "${RED}Build failed${NC}"
             return 1
         fi
@@ -151,7 +168,7 @@ run_test_suite() {
     # TEST 3: Force rebuild with -a flag - all CACHE MISS
     # ===========================================================
     test_03_force_rebuild() {
-        if ! eval "${build_cmd/build/build -a}" 2>&1 | extract_cache_status > "$BUILD_TEMP_DIR/cache_${mode}_03.txt"; then
+        if ! capture_cache_build "${build_cmd/build/build -a}" "$BUILD_TEMP_DIR/cache_${mode}_03.txt"; then
             echo -e "${RED}Build failed${NC}"
             return 1
         fi
@@ -180,7 +197,7 @@ run_test_suite() {
 
         # Build and capture output
         local build_result=0
-        if ! eval "$build_cmd" 2>&1 | extract_cache_status > "$BUILD_TEMP_DIR/cache_${mode}_04.txt"; then
+        if ! capture_cache_build "$build_cmd" "$BUILD_TEMP_DIR/cache_${mode}_04.txt"; then
             build_result=1
         fi
 
@@ -217,7 +234,7 @@ run_test_suite() {
         find "$CACHE_DIR" -type d -name "*dep2*" -exec rm -rf {} + 2>/dev/null || true
 
         # Build and capture output
-        if ! eval "$build_cmd" 2>&1 | extract_cache_status > "$BUILD_TEMP_DIR/cache_${mode}_05.txt"; then
+        if ! capture_cache_build "$build_cmd" "$BUILD_TEMP_DIR/cache_${mode}_05.txt"; then
             echo -e "${RED}Build failed${NC}"
             return 1
         fi
@@ -246,7 +263,7 @@ run_test_suite() {
         find "$CACHE_DIR" -type d -name "*dep3*" -exec rm -rf {} + 2>/dev/null || true
 
         # Build and capture output
-        if ! eval "$build_cmd" 2>&1 | extract_cache_status > "$BUILD_TEMP_DIR/cache_${mode}_06.txt"; then
+        if ! capture_cache_build "$build_cmd" "$BUILD_TEMP_DIR/cache_${mode}_06.txt"; then
             echo -e "${RED}Build failed${NC}"
             return 1
         fi

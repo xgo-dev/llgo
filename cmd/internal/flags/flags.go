@@ -222,7 +222,8 @@ func AddBuildFlags(fs *flag.FlagSet) {
 	addPCLNFlag(fs)
 	fs.StringVar(&Tags, "tags", "", "Build tags")
 	fs.StringVar(&BuildEnv, "buildenv", "", "Build environment")
-	fs.Var(&PthreadStackSize, "pthread-stack-size", "Stack size for pthread-backed goroutines, e.g. 32MB or 1024KB (0 uses the platform default)")
+	fs.Var(&PthreadStackSize, "goroutine-stack-size", "Stack size for native threads and WebAssembly goroutines, e.g. 2MB (0 uses the platform default)")
+	fs.Var(&PthreadStackSize, "pthread-stack-size", "Alias for -goroutine-stack-size")
 	if buildenv.Dev {
 		fs.BoolVar(&CheckLinkArgs, "check-linkargs", false, "check link args valid")
 		fs.BoolVar(&CheckLLFiles, "check-llfiles", false, "check .ll files valid")
