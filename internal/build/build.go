@@ -581,8 +581,9 @@ func Build(inv Invocation) (result []Package, resultErr error) {
 		// Hosted wasm profiles need renamed //export symbols for allocator and
 		// host entries even when selected through raw GOOS/GOARCH rather than a
 		// named -target.
-		ExportRename: conf.Target != "" || export.WasmProfile != crosscompile.WasmProfileNone,
-		ShadowStack:  useShadowStack(conf.Goarch),
+		ExportRename:       conf.Target != "" || export.WasmProfile != crosscompile.WasmProfileNone,
+		ShadowStack:        useShadowStack(conf.Goarch),
+		FunctionAttributes: new(cl.FunctionAttributes),
 	}
 	preloadOptions := frontendOptions
 	llssaInitOnce.Do(func() {
