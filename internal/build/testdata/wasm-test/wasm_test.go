@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"math"
+	"os"
 	"reflect"
 	"runtime"
 	"strings"
@@ -18,6 +19,38 @@ func TestStandardLibraryWasmAssembly(t *testing.T) {
 	const wantSHA256 = "336154bf67f765f8f75d16a0accee61b5ee5f6a75b2a2905703df913bd550f3e"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte("wasm"))); got != wantSHA256 {
 		t.Fatalf("sha256.Sum256(wasm) = %s, want %s", got, wantSHA256)
+	}
+}
+
+func TestStatMissingPathIsNotExist(t *testing.T) {
+	// Relative so WASI can resolve through the preopened working directory.
+	// Absolute paths outside preopens return EBADF ("Bad file number")
+	// instead of ENOENT. On js/wasm this still uses fs.statSync.
+	_, err := os.Stat("llgo-pr2539-definitely-does-not-exist")
+	if err == nil {
+		t.Fatal("Stat of missing path succeeded")
+	}
+	if !os.IsNotExist(err) {
+		t.Fatalf("Stat missing path: %v, want os.IsNotExist", err)
+	}
+}
+
+func TestSyncFileIO(t *testing.T) {
+	path := "llgo-fs-sync.txt"
+	const want = "hello-sync\n"
+	if err := os.WriteFile(path, []byte(want), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(path) })
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("ReadFile = %q, want %q", got, want)
+	}
+	if _, err := fmt.Println("hello-println"); err != nil {
+		t.Fatalf("fmt.Println: %v", err)
 	}
 }
 
