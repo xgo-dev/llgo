@@ -103,52 +103,48 @@ func recur2[T Integer](n T) T {
 // CHECK-NEXT:   %[[TMP6:[0-9]+]] = add i64 %[[TMP4]], 1
 // CHECK-NEXT:   %[[TMP7:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 0
 // CHECK-NEXT:   %[[TMP8:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 1
-// CHECK-NEXT:   %[[TMP9:[0-9]+]] = icmp slt i64 %[[TMP4]], 0
-// CHECK-NEXT:   %[[TMP10:[0-9]+]] = icmp uge i64 %[[TMP4]], %[[TMP8]]
-// CHECK-NEXT:   %[[TMP11:[0-9]+]] = or i1 %[[TMP10]], %[[TMP9]]
-// CHECK-NEXT:   br i1 %[[TMP11]], label %_llgo_[[BB7:[0-9]+]], label %_llgo_[[BB8]]
+// CHECK-NEXT:   %[[TMP9:[0-9]+]] = icmp uge i64 %[[TMP4]], %[[TMP8]]
+// CHECK-NEXT:   br i1 %[[TMP9]], label %_llgo_[[BB7:[0-9]+]], label %_llgo_[[BB8]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB3]]:
-// CHECK-NEXT:   %[[TMP12:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 1
+// CHECK-NEXT:   %[[TMP10:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 1
 // CHECK-NEXT:   br label %_llgo_[[BB4:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB4]]:
-// CHECK-NEXT:   %[[TMP13:[0-9]+]] = phi i64 [ 0, %_llgo_[[BB3]] ], [ %[[TMP28:[0-9]+]], %_llgo_[[BB10:[0-9]+]] ]
-// CHECK-NEXT:   %[[TMP14:[0-9]+]] = phi i64 [ -1, %_llgo_[[BB3]] ], [ %[[TMP15:[0-9]+]], %_llgo_[[BB10]] ]
-// CHECK-NEXT:   %[[TMP15]] = add i64 %[[TMP14]], 1
-// CHECK-NEXT:   %[[TMP16:[0-9]+]] = icmp slt i64 %[[TMP15]], %[[TMP12]]
-// CHECK-NEXT:   br i1 %[[TMP16]], label %_llgo_[[BB5:[0-9]+]], label %_llgo_[[BB6:[0-9]+]]
+// CHECK-NEXT:   %[[TMP11:[0-9]+]] = phi i64 [ 0, %_llgo_[[BB3]] ], [ %[[TMP24:[0-9]+]], %_llgo_[[BB10:[0-9]+]] ]
+// CHECK-NEXT:   %[[TMP12:[0-9]+]] = phi i64 [ -1, %_llgo_[[BB3]] ], [ %[[TMP13:[0-9]+]], %_llgo_[[BB10]] ]
+// CHECK-NEXT:   %[[TMP13]] = add i64 %[[TMP12]], 1
+// CHECK-NEXT:   %[[TMP14:[0-9]+]] = icmp slt i64 %[[TMP13]], %[[TMP10]]
+// CHECK-NEXT:   br i1 %[[TMP14]], label %_llgo_[[BB5:[0-9]+]], label %_llgo_[[BB6:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB5]]:
-// CHECK-NEXT:   %[[TMP17:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 0
-// CHECK-NEXT:   %[[TMP18:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 1
-// CHECK-NEXT:   %[[TMP19:[0-9]+]] = icmp slt i64 %[[TMP15]], 0
-// CHECK-NEXT:   %[[TMP20:[0-9]+]] = icmp uge i64 %[[TMP15]], %[[TMP18]]
-// CHECK-NEXT:   %[[TMP21:[0-9]+]] = or i1 %[[TMP20]], %[[TMP19]]
-// CHECK-NEXT:   br i1 %[[TMP21]], label %_llgo_[[BB9:[0-9]+]], label %_llgo_[[BB10]]
+// CHECK-NEXT:   %[[TMP15:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 0
+// CHECK-NEXT:   %[[TMP16:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 1
+// CHECK-NEXT:   %[[TMP17:[0-9]+]] = icmp uge i64 %[[TMP13]], %[[TMP16]]
+// CHECK-NEXT:   br i1 %[[TMP17]], label %_llgo_[[BB9:[0-9]+]], label %_llgo_[[BB10]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB6]]:
-// CHECK-NEXT:   %[[TMP22:[0-9]+]] = sub i64 %[[TMP0]], 1
-// CHECK-NEXT:   %[[TMP23:[0-9]+]] = call i64 @"main.recur1[main.T.1.0]"(i64 %[[TMP22]])
-// CHECK-NEXT:   %[[TMP24:[0-9]+]] = add i64 %[[TMP13]], %[[TMP23]]
-// CHECK-NEXT:   ret i64 %[[TMP24]]
+// CHECK-NEXT:   %[[TMP18:[0-9]+]] = sub i64 %[[TMP0]], 1
+// CHECK-NEXT:   %[[TMP19:[0-9]+]] = call i64 @"main.recur1[main.T.1.0]"(i64 %[[TMP18]])
+// CHECK-NEXT:   %[[TMP20:[0-9]+]] = add i64 %[[TMP11]], %[[TMP19]]
+// CHECK-NEXT:   ret i64 %[[TMP20]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB7]]:
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicIndex"(i64 %[[TMP4]], i64 %[[TMP8]])
 // CHECK-NEXT:   br label %_llgo_[[BB7]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB8]]:
-// CHECK-NEXT:   %[[TMP25:[0-9]+]] = getelementptr inbounds i64, ptr %[[TMP7]], i64 %[[TMP4]]
-// CHECK-NEXT:   store i64 %[[TMP6]], ptr %[[TMP25]], align 8
+// CHECK-NEXT:   %[[TMP21:[0-9]+]] = getelementptr inbounds i64, ptr %[[TMP7]], i64 %[[TMP4]]
+// CHECK-NEXT:   store i64 %[[TMP6]], ptr %[[TMP21]], align 8
 // CHECK-NEXT:   br label %_llgo_[[BB1]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB9]]:
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicIndex"(i64 %[[TMP15]], i64 %[[TMP18]])
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicIndex"(i64 %[[TMP13]], i64 %[[TMP16]])
 // CHECK-NEXT:   br label %_llgo_[[BB9]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB10]]:
-// CHECK-NEXT:   %[[TMP26:[0-9]+]] = getelementptr inbounds i64, ptr %[[TMP17]], i64 %[[TMP15]]
-// CHECK-NEXT:   %[[TMP27:[0-9]+]] = load i64, ptr %[[TMP26]], align 8
-// CHECK-NEXT:   %[[TMP28]] = add i64 %[[TMP13]], %[[TMP27]]
+// CHECK-NEXT:   %[[TMP22:[0-9]+]] = getelementptr inbounds i64, ptr %[[TMP15]], i64 %[[TMP13]]
+// CHECK-NEXT:   %[[TMP23:[0-9]+]] = load i64, ptr %[[TMP22]], align 8
+// CHECK-NEXT:   %[[TMP24]] = add i64 %[[TMP11]], %[[TMP23]]
 // CHECK-NEXT:   br label %_llgo_[[BB4]]
 // CHECK-NEXT: }

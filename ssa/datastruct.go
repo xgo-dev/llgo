@@ -205,37 +205,23 @@ func isConstantUint(x Expr) (v uint64, ok bool) {
 	return
 }
 
-func checkRange(idx Expr, max Expr) (checkMin, checkMax bool) {
+// indexNeedsCheck reports whether idx may be outside [0, max).
+// Constant indexes proven in range against a constant max need no check.
+func indexNeedsCheck(idx Expr, max Expr) bool {
 	if idx.kind == vkSigned {
-		if v, ok := isConstantInt(idx); ok {
-			if v < 0 {
-				checkMin = true
-			}
-			if m, ok := isConstantInt(max); ok {
-				if v >= m {
-					checkMax = true
-				}
-			} else {
-				checkMax = true
-			}
-		} else {
-			checkMin = true
-			checkMax = true
+		v, ok := isConstantInt(idx)
+		if !ok || v < 0 {
+			return true
 		}
-	} else {
-		if v, ok := isConstantUint(idx); ok {
-			if m, ok := isConstantUint(max); ok {
-				if v >= m {
-					checkMax = true
-				}
-			} else {
-				checkMax = true
-			}
-		} else {
-			checkMax = true
-		}
+		m, ok := isConstantInt(max)
+		return !ok || v >= m
 	}
-	return
+	v, ok := isConstantUint(idx)
+	if !ok {
+		return true
+	}
+	m, ok := isConstantUint(max)
+	return !ok || v >= m
 }
 
 func (b Builder) boundsArg(idx Expr) (Expr, bool) {
@@ -248,13 +234,13 @@ func (b Builder) boundsArg(idx Expr) (Expr, bool) {
 	return idx, signed
 }
 
-// check index >= 0 && index < max and size to uint
+// checkIndex panics if idx is outside [0, max) and converts idx to the native
+// word size for GEP. max is a non-negative len/cap, so a single unsigned
+// comparison idx >=u max also rejects signed negatives (they become large
+// unsigned values). On 32-bit targets a 64-bit index is still compared as i64
+// and truncated only after that check.
 func (b Builder) checkIndex(idx Expr, max Expr) Expr {
 	prog := b.Prog
-	var checkMin, checkMax bool
-	if !prog.disableBoundsChecks {
-		checkMin, checkMax = checkRange(idx, max)
-	}
 	// GEP indexes use the native word size. Keep a wider index intact until
 	// after its bounds check: truncating first can turn an out-of-range uint64
 	// into an apparently valid 32-bit index.
@@ -281,29 +267,13 @@ func (b Builder) checkIndex(idx Expr, max Expr) Expr {
 	if !extended {
 		nativeIdx = toNative(idx)
 	}
-	checkIdx, checkLimit := nativeIdx, max
-	if extended {
-		checkIdx, _ = b.boundsArg(idx)
-		checkLimit, _ = b.boundsArg(max)
-	}
-	// check range expr
-	var check Expr
-	if checkMin {
-		zero := llvm.ConstInt(checkIdx.ll, 0, false)
-		check = Expr{llvm.CreateICmp(b.impl, llvm.IntSLT, checkIdx.impl, zero), prog.Bool()}
-	}
-	if checkMax {
-		// max is a non-negative len/cap value. Unsigned comparison is valid for
-		// both signed and unsigned indexes, and signed negatives fail as large
-		// unsigned values.
-		r := Expr{llvm.CreateICmp(b.impl, llvm.IntUGE, checkIdx.impl, checkLimit.impl), prog.Bool()}
-		if check.IsNil() {
-			check = r
-		} else {
-			check = Expr{b.impl.CreateOr(r.impl, check.impl, ""), prog.Bool()}
+	if indexNeedsCheck(idx, max) {
+		checkIdx, checkLimit := nativeIdx, max
+		if extended {
+			checkIdx, _ = b.boundsArg(idx)
+			checkLimit, _ = b.boundsArg(max)
 		}
-	}
-	if !check.IsNil() {
+		check := Expr{llvm.CreateICmp(b.impl, llvm.IntUGE, checkIdx.impl, checkLimit.impl), prog.Bool()}
 		blks := b.Func.MakeBlocks(2)
 		b.If(check, blks[0], blks[1])
 		b.SetBlockEx(blks[0], AtEnd, false)
