@@ -41,14 +41,16 @@ var knownResults = map[string]string{
 }
 
 var platformLabels = map[string]string{
-	"darwin/arm64":        "🍎🦾⁶⁴",
-	"linux/amd64":         "🐧💻⁶⁴",
-	"windows-msvc/amd64":  "🪟 MSVC 💻⁶⁴",
-	"windows-msvc/arm64":  "🪟 MSVC 🦾⁶⁴",
-	"windows-msvc/386":    "🪟 MSVC 💻³²",
-	"windows-mingw/amd64": "🪟 GNU 💻⁶⁴",
-	"windows-mingw/arm64": "🪟 GNU 🦾⁶⁴",
-	"windows-mingw/386":   "🪟 GNU 💻³²",
+	"darwin/arm64":        "🍎 🦾",
+	"linux/amd64":         "🐧 🖥️",
+	"windows-msvc/amd64":  "🪟 🟦 MSVC 🖥️",
+	"windows-msvc/arm64":  "🪟 🟦 MSVC 🦾",
+	"windows-msvc/386":    "🪟 🟦 MSVC 💾",
+	"windows-mingw/amd64": "🪟 🦬 GNU 🖥️",
+	"windows-mingw/arm64": "🪟 🦬 GNU 🦾",
+	"windows-mingw/386":   "🪟 🦬 GNU 💾",
+	"js/wasm":             "🕸️ 📜 JS",
+	"wasip1/wasm":         "🕸️ 🔌 WASI",
 }
 
 var mismatches = map[string]bool{
@@ -76,6 +78,7 @@ func main() {
 	platforms := flag.String("platforms", "", "comma-separated platforms in report order")
 	versions := flag.String("versions", "", "comma-separated exact Go versions in report order")
 	runURL := flag.String("run-url", "", "workflow run URL")
+	mentionOnMismatch := flag.String("mention-on-mismatch", "", "GitHub user/team to mention when expectation mismatches occur")
 	flag.Parse()
 
 	if *platforms == "" || *versions == "" {
@@ -97,7 +100,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "goroot-report: %v\n", err)
 		os.Exit(1)
 	}
-	report, err := renderReport(records, splitList(*platforms), splitList(*versions), *runURL)
+	report, err := renderReport(records, splitList(*platforms), splitList(*versions), *runURL, *mentionOnMismatch)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "goroot-report: %v\n", err)
 		os.Exit(1)
@@ -134,7 +137,7 @@ func parseResults(r io.Reader) ([]caseResult, error) {
 	return results, nil
 }
 
-func renderReport(results []caseResult, platforms, versions []string, runURL string) (string, error) {
+func renderReport(results []caseResult, platforms, versions []string, runURL, mentionOnMismatch string) (string, error) {
 	if len(platforms) == 0 || len(versions) == 0 {
 		return "", errors.New("platform and version lists must not be empty")
 	}
@@ -203,6 +206,9 @@ func renderReport(results []caseResult, platforms, versions []string, runURL str
 		out.WriteString("\nNo expected-pass failures or expected-fail passes were reported.\n")
 	} else {
 		out.WriteString("\n✅ pass · 🟡 expected failure · ❌ unexpected failure · ⚠️ unexpected pass · 🔀 flaky · ➖ not applicable · ⏭️ host skip · 💥 resource guard · 🛠️ configuration · `·` unavailable\n")
+		if mentionOnMismatch != "" {
+			fmt.Fprintf(&out, "\n> [!WARNING]\n> Expectation mismatches detected (unexpected failure / unexpected pass).\n> @%s please identify which PR introduced this issue.\n", strings.TrimPrefix(mentionOnMismatch, "@"))
+		}
 	}
 	return out.String(), nil
 }

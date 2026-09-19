@@ -2,6 +2,13 @@
 
 This directory contains compatibility tests for the Go standard library on llgo. The tests run with real Go 1.20 through Go 1.27 toolchains and matching module versions, so release tags and available standard-library APIs reflect the version being checked. Go 1.27 receives full coverage on Linux, macOS, and both Windows ABI profiles; Go 1.20 through Go 1.26 each run a representative, resource-bounded package set in one consolidated Linux job.
 
+## CI Execution Policy
+
+- **Core standard library gate**: Essential packages (`bufio`, `bytes`, `encoding/binary`, `encoding/json`, `errors`, `fmt`, `io`, `math/bits`, `sort`, `strconv`, `strings`, `sync`, `sync/atomic`) run on every pull request and push together with the core compiler tests in `.github/workflows/llgo.yml`.
+- **Full daily standard library suite**: Full native and WebAssembly standard library suites run once daily in `.github/workflows/std.yml`. If any unexpected failure occurs, `@fennoai` is automatically mentioned for triage, and a daily report issue `[STD daily] YYYY-MM-DD` is created/updated.
+- **On-demand PR verification**: Adding the `go-test-std` label to a pull request runs the full standard library suite without waiting for the daily schedule.
+- **Manual workflow dispatch**: The workflow can also be triggered directly via `workflow_dispatch`. Both scheduled and manual runs generate an Actions Step Summary matching the report issue.
+
 ## Directory Structure
 
 ```

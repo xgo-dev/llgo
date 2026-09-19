@@ -65,6 +65,7 @@ views:
     table:
       rows: [platform, benchmark]
       columns: [metric]
+      collapsed: true
       missing: error
       empty: error
       dimensions:

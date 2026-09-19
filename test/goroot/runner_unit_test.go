@@ -444,11 +444,10 @@ func TestWasmObservedResourceExceptions(t *testing.T) {
 	cfg := loadXFailConfig(t, repo, filepath.Join("test", "goroot", "xfail.yaml"))
 	notApplicable := loadNotApplicableConfig(t, repo, filepath.Join("test", "goroot", "notapplicable.yaml"))
 	rangegen := testCase{RelPath: "rangegen.go", Directive: "runoutput"}
-	if match, _ := cfg.MatchHostSkip("go1.27.0", "linux/amd64", rangegen); !match {
-		t.Fatal("Go 1.27 linux/amd64 rangegen did not match its host resource skip")
-	}
-	if match, reason := cfg.MatchHostSkip("go1.26.7", "linux/amd64", rangegen); match {
-		t.Fatalf("Go 1.26 linux/amd64 rangegen unexpectedly matched host skip: %s", reason)
+	for _, version := range []string{"go1.26.7", "go1.27.0"} {
+		if match, _ := cfg.MatchHostSkip(version, "linux/amd64", rangegen); !match {
+			t.Errorf("%s linux/amd64 rangegen did not match its host resource skip", version)
+		}
 	}
 	for _, tt := range []struct {
 		tc            testCase
@@ -458,7 +457,7 @@ func TestWasmObservedResourceExceptions(t *testing.T) {
 		{testCase{RelPath: "winbatch.go", Directive: "run"}, 4 * time.Minute, 0},
 		{testCase{RelPath: "fixedbugs/issue78081.go", Directive: "run"}, 6 * time.Minute, 0},
 		{testCase{RelPath: "fixedbugs/issue79186.go", Directive: "run"}, 2 * time.Minute, 90 * time.Second},
-		{testCase{RelPath: "fixedbugs/issue5162.go", Directive: "runoutput"}, 4 * time.Minute, 0},
+		{testCase{RelPath: "fixedbugs/issue5162.go", Directive: "runoutput"}, 5 * time.Minute, 0},
 	} {
 		tc := tt.tc
 		timeout, _, match := cfg.MatchTimeout("go1.27.0", "js/wasm", tc)
@@ -525,7 +524,7 @@ func TestWindowsIssue25897aIsFlakyWithTimeout(t *testing.T) {
 	cfg := loadXFailConfig(t, repo, filepath.Join("test", "goroot", "xfail.yaml"))
 	tc := testCase{RelPath: "fixedbugs/issue25897a.go", Directive: "run"}
 	for _, version := range []string{"go1.26.7", "go1.27.0"} {
-		for _, platform := range []string{"windows-msvc/386", "windows-mingw/386", "windows-msvc/amd64", "windows-mingw/amd64"} {
+		for _, platform := range []string{"windows-msvc/386", "windows-mingw/386", "windows-msvc/amd64", "windows-mingw/amd64", "windows-msvc/arm64", "windows-mingw/arm64"} {
 			if match, _ := cfg.MatchFlaky(version, platform, tc); !match {
 				t.Errorf("%s did not match flake for %s/%s", tc.RelPath, version, platform)
 			}

@@ -231,7 +231,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: ${{ runner.tool_cache }}\llgo-vcpkg\${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}
-        key: llgo-vcpkg-${{ inputs.windows-arch }}-windows-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}
+        key: llgo-vcpkg-${{ inputs.windows-arch }}-windows-${{ runner.arch }}-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}
 
     - name: Install Windows MSVC dependencies
       if: runner.os == 'Windows' && inputs.install-llvm == 'true' && inputs.windows-abi == 'msvc' && steps.windows_vcpkg_cache.outputs.cache-hit != 'true'
@@ -263,9 +263,10 @@ runs:
         if ($LASTEXITCODE -ne 0) {
           throw "Bootstrapping vcpkg failed with exit code $LASTEXITCODE"
         }
+        $hostVcpkgTriplet = if ($env:RUNNER_ARCH -eq "ARM64") { "arm64-windows" } else { "x64-windows" }
         & (Join-Path $sourceRoot "vcpkg.exe") install `
           "--triplet=$($target.VcpkgTriplet)" `
-          --host-triplet=x64-windows `
+          "--host-triplet=$hostVcpkgTriplet" `
           "--x-manifest-root=$manifestRoot" `
           "--x-install-root=$installRoot" `
           --clean-after-build
@@ -286,6 +287,7 @@ runs:
         $hostArch = if ($env:RUNNER_ARCH -eq "ARM64") { "aarch64" } else { "x86_64" }
         $hostTriple = if ($env:RUNNER_ARCH -eq "ARM64") { "aarch64-pc-windows-msvc" } else { "x86_64-pc-windows-msvc" }
         $hostGoArch = if ($env:RUNNER_ARCH -eq "ARM64") { "arm64" } else { "amd64" }
+        $hostVcpkgTriplet = if ($env:RUNNER_ARCH -eq "ARM64") { "arm64-windows" } else { "x64-windows" }
 
         $llvmRoot = Join-Path $env:RUNNER_TOOL_CACHE "llgo-llvm\clang+llvm-$env:LLVM_VERSION-$hostArch-pc-windows-msvc"
         if (-not (Test-Path (Join-Path $llvmRoot "bin\llvm-config.exe"))) {
@@ -297,7 +299,10 @@ runs:
         . (Join-Path $env:GITHUB_WORKSPACE ".github\windows\msvc-target.ps1")
         $target = Get-LLGoWindowsMSVCTarget -GoArch "${{ inputs.windows-arch }}"
         $vcpkgTripletRoot = Join-Path $vcpkgRoot $target.VcpkgTriplet
-        $vcpkgHostRoot = Join-Path $vcpkgRoot "x64-windows"
+        $vcpkgHostRoot = Join-Path $vcpkgRoot $hostVcpkgTriplet
+        if (-not (Test-Path (Join-Path $vcpkgHostRoot "tools\pkgconf\pkgconf.exe")) -and (Test-Path (Join-Path $vcpkgRoot "x64-windows\tools\pkgconf\pkgconf.exe"))) {
+          $vcpkgHostRoot = Join-Path $vcpkgRoot "x64-windows"
+        }
         $pkgconf = Join-Path $vcpkgHostRoot "tools\pkgconf\pkgconf.exe"
         if (-not (Test-Path (Join-Path $vcpkgTripletRoot "include\gc\gc.h"))) {
           throw "The cached $($target.VcpkgTriplet) dependency installation is incomplete"

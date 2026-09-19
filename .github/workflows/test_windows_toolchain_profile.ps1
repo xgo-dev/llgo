@@ -108,8 +108,7 @@ Assert-Success "Reading LLVM metadata through the profile-local pkg-config"
 
 $compilerArgs = @()
 if ($Profile -eq "msvc") {
-  # Official LLVM is an x64 host compiler in every MSVC lane. Apply the
-  # activated target explicitly before checking cross-architecture output.
+  # Apply the activated target explicitly before checking cross-architecture output.
   $compilerArgs = @("--target=$env:LLGO_WINDOWS_TARGET_TRIPLE")
 }
 $compilerTarget = (& clang @compilerArgs -dumpmachine).Trim()
@@ -174,8 +173,9 @@ try {
     # ARM64 lane is one example). Keep the standalone full-target LLVM profile
     # selected by setup-deps ahead of it while retaining DevShell's SDK, CRT,
     # and linker environment.
+    $hostArch = if ($env:RUNNER_ARCH -eq "ARM64") { "arm64" } else { "x64" }
     $vsDevLine = 'call "' + $vsDevCmd + '" -no_logo -arch=' + $target.VisualStudio +
-      ' -host_arch=x64 && set "PATH=' + $profileClangDir + ';%PATH%" && set "CC=" && set "CXX=" && cd /d "' + $sourceDir +
+      ' -host_arch=' + $hostArch + ' && set "PATH=' + $profileClangDir + ';%PATH%" && set "CC=" && set "CXX=" && cd /d "' + $sourceDir +
       '" && "' + $llgo + '" build -o "' + $vsDevExe + '" .'
     & $env:ComSpec /d /s /c $vsDevLine
     Assert-Success "Building from a fresh Visual Studio Developer Shell"

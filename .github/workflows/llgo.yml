@@ -16,64 +16,47 @@ concurrency:
 
 jobs:
   llgo:
-    name: llgo + test (${{ matrix.os }}${{ matrix.windows_abi && format(', {0}', matrix.windows_abi) || '' }}${{ matrix.windows_arch && format(', {0}', matrix.windows_arch) || '' }}, LLVM ${{ matrix.llvm }}, Go 1.27, shard 0/${{ matrix.shard_total }})
-    # Combined-job validation stayed below 25 min on macOS and 33 min on
-    # Windows amd64, including a cold dependency run. Keep the 60-min headroom
-    # and the larger existing limits for Windows 386 and ARM64.
-    timeout-minutes: ${{ matrix.windows_arch == 'arm64' && 120 || matrix.windows_arch == '386' && 90 || 60 }}
+    name: llgo + test (${{ matrix.os }}${{ matrix.windows_abi && format(', {0}', matrix.windows_abi) || '' }}${{ matrix.windows_arch && format(', {0}', matrix.windows_arch) || '' }}, LLVM ${{ matrix.llvm }}, Go 1.27)
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        # The compiler-owned integration checks and the first (or only) full
-        # Go 1.27 test shard use the same native toolchain profile. Keep them in
-        # one job so checkout, dependency setup, and tool builds happen once.
-        # The two historically slow profiles retain an independent shard 1.
         include:
           - os: ubuntu-latest
             runner: [qiniu, ubuntu-24.04-large]
             llvm: 22
-            shard_total: "2"
-            check_symbols: true
-            std_buildmodes: true
           - os: macos-latest
             llvm: 22
-            shard_total: "1"
           - os: windows-2022
             llvm: 22
             windows_abi: msvc
             windows_arch: amd64
             host_go_arch: x64
-            shard_total: "1"
           - os: windows-2022
             llvm: 22
             windows_abi: mingw
             windows_arch: amd64
             host_go_arch: x64
-            shard_total: "1"
           - os: windows-11-arm
             llvm: 22
             windows_abi: msvc
             windows_arch: arm64
             host_go_arch: arm64
-            shard_total: "2"
           - os: windows-11-arm
             llvm: 22
             windows_abi: mingw
             windows_arch: arm64
             host_go_arch: arm64
-            shard_total: "1"
           - os: windows-2022
             llvm: 22
             windows_abi: msvc
             windows_arch: "386"
             host_go_arch: x64
-            shard_total: "1"
           - os: windows-2022
             llvm: 22
             windows_abi: mingw
             windows_arch: "386"
             host_go_arch: x64
-            shard_total: "1"
     runs-on: ${{ github.repository_owner == 'xgo-dev' && matrix.runner || matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -127,14 +110,11 @@ jobs:
             -Profile "${{ matrix.windows_abi }}" `
             -GoArch "${{ matrix.windows_arch || 'amd64' }}"
 
-      - name: Run Go 1.27 LLGo tests
+      - name: Run Go 1.27 LLGo core tests
         env:
           LLGO_BUILD_CACHE: "1"
           LLGO_TEST_BENCH_GO126: "1"
-          LLGO_TEST_CHECK_SYMBOLS: ${{ matrix.check_symbols && '1' || '0' }}
-          LLGO_TEST_STD_BUILDMODES: ${{ matrix.std_buildmodes && '1' || '0' }}
-          SHARD_INDEX: "0"
-          SHARD_TOTAL: ${{ matrix.shard_total }}
+          LLGO_TEST_SUITE: "core"
         shell: bash
         run: |
           set -euo pipefail
@@ -146,7 +126,6 @@ jobs:
           fi
           export LLGO="$RUNNER_TEMP/llgo-bin/llgo${tool_suffix}"
           export LLGO_TEST_LLGEN="$RUNNER_TEMP/llgo-bin/llgen${tool_suffix}"
-          export CHECK_STD_SYMBOLS="$RUNNER_TEMP/llgo-bin/check_std_symbols${tool_suffix}"
           dev/test_go_version.sh 1.27
 
           if [[ "$RUNNER_OS" == Windows ]]; then
@@ -154,12 +133,13 @@ jobs:
             (cd runtime && "$LLGO" test -v -run '^TestSlotGCAllocation$' -count=20 -timeout=2m ./internal/clite/tls)
           fi
 
-      - name: Check std symbol coverage
-        # Split profiles leave this profile-wide check on shard 1. Unsharded
-        # non-amd64 profiles run it here after their full package test.
-        if: runner.os == 'Windows' && matrix.windows_arch != 'amd64' && matrix.shard_total == '1'
-        shell: bash
-        run: bash doc/_readme/scripts/check_std_cover.sh
+      - name: Test Hello World with Go 1.20
+        if: matrix.os == 'ubuntu-latest'
+        uses: ./.github/actions/test-helloworld
+        with:
+          go-version: "1.20"
+          embedded: "false"
+          mod-version: "1.20"
 
       - name: Test Hello World with go.mod 1.21 through 1.26
         if: matrix.os == 'ubuntu-latest'
@@ -440,124 +420,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Cygwin host-shell qualification failed with exit code $LASTEXITCODE"
           }
-
-  test:
-    name: test (${{ matrix.lane }}, ${{ matrix.os }}${{ matrix.windows_abi && format(', {0}', matrix.windows_abi) || '' }}${{ matrix.windows_arch && format(', {0}', matrix.windows_arch) || '' }}, Go ${{ matrix.go_version }}, shard ${{ matrix.shard_index }}/${{ matrix.shard_total }})
-    timeout-minutes: ${{ matrix.windows_arch == 'arm64' && 120 || matrix.windows_arch == '386' && 90 || 60 }}
-    strategy:
-      fail-fast: false
-      matrix:
-        # LLGo and its checker are always built with .go-version. Each job then
-        # selects a real target toolchain and matching alternate module file.
-        # Go 1.20-1.26 share one focused compatibility lane. Go 1.27 is the
-        # primary release and runs the complete test tree on every native
-        # toolchain profile. Its shard 0 now shares the matching integration
-        # job above. Only the second shards for Ubuntu and Windows ARM64 MSVC
-        # remain here, preserving their established parallel split.
-        include:
-          - os: ubuntu-latest
-            runner: [qiniu, ubuntu-24.04-large]
-            llvm: 22
-            go_version: "1.20-1.26"
-            lane: compatibility
-            shard_index: "0"
-            shard_total: "1"
-            check_symbols: true
-          - os: ubuntu-latest
-            runner: [qiniu, ubuntu-24.04-large]
-            llvm: 22
-            go_version: "1.27"
-            lane: full
-            shard_index: "1"
-            shard_total: "2"
-            check_symbols: true
-            std_buildmodes: true
-          - os: windows-11-arm
-            llvm: 22
-            go_version: "1.27"
-            lane: full
-            shard_index: "1"
-            shard_total: "2"
-            windows_abi: msvc
-            windows_arch: arm64
-            host_go_arch: arm64
-    runs-on: ${{ github.repository_owner == 'xgo-dev' && matrix.runner || matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install dependencies
-        uses: ./.github/actions/setup-deps
-        with:
-          llvm-version: ${{matrix.llvm}}
-          windows-abi: ${{ matrix.windows_abi || 'msvc' }}
-          windows-arch: ${{ matrix.windows_arch || 'amd64' }}
-      - name: Install further optional dependencies for demos
-        if: matrix.lane == 'full'
-        uses: ./.github/actions/setup-demo-deps
-        with:
-          windows-abi: ${{ matrix.windows_abi || 'msvc' }}
-          windows-arch: ${{ matrix.windows_arch || 'amd64' }}
-
-      - name: Set up Go for build
-        uses: ./.github/actions/setup-go
-        with:
-          architecture: ${{ matrix.host_go_arch || '' }}
-
-      - name: Build LLGo and test tools
-        shell: bash
-        run: |
-          dev/build_ci_tools.sh "$RUNNER_TEMP/llgo-bin"
-          echo "$RUNNER_TEMP/llgo-bin" >> "$GITHUB_PATH"
-          echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
-
-      - name: Activate native Windows target
-        if: runner.os == 'Windows'
-        uses: ./.github/actions/activate-windows-target
-        with:
-          windows-abi: ${{ matrix.windows_abi }}
-          windows-arch: ${{ matrix.windows_arch }}
-
-      - name: Run versioned LLGo tests
-        env:
-          # The compatibility driver gives every target release an isolated
-          # XDG cache. Full lanes run one target release per runner job.
-          LLGO_BUILD_CACHE: "1"
-          LLGO_TEST_BENCH_GO126: "1"
-          LLGO_TEST_CHECK_SYMBOLS: ${{ matrix.check_symbols && '1' || '0' }}
-          LLGO_TEST_STD_BUILDMODES: ${{ matrix.std_buildmodes && '1' || '0' }}
-          SHARD_INDEX: ${{ matrix.shard_index }}
-          SHARD_TOTAL: ${{ matrix.shard_total }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          tool_suffix=
-          if [[ "$RUNNER_OS" == Windows ]]; then
-            tool_suffix=.exe
-            export LLGO_STDIO_NOBUF=1
-          fi
-          export LLGO="$RUNNER_TEMP/llgo-bin/llgo${tool_suffix}"
-          export LLGO_TEST_LLGEN="$RUNNER_TEMP/llgo-bin/llgen${tool_suffix}"
-          export CHECK_STD_SYMBOLS="$RUNNER_TEMP/llgo-bin/check_std_symbols${tool_suffix}"
-          if [[ "${{ matrix.lane }}" == compatibility ]]; then
-            dev/test_go_versions.sh 1.20 1.21 1.22 1.23 1.24 1.25 1.26
-          else
-            dev/test_go_version.sh "${{ matrix.go_version }}"
-          fi
-
-      - name: Check std symbol coverage
-        # Balance the other profile-wide check onto shard 1 when the profile
-        # is split; unsharded profiles retain their existing coverage.
-        if: runner.os == 'Windows' && matrix.windows_arch != 'amd64' && (matrix.shard_total == '1' || matrix.shard_index == '1')
-        shell: bash
-        run: bash doc/_readme/scripts/check_std_cover.sh
-
-      - name: Test Hello World with Go 1.20
-        if: matrix.lane == 'compatibility'
-        uses: ./.github/actions/test-helloworld
-        with:
-          go-version: "1.20"
-          embedded: "false"
-          mod-version: "1.20"
 
   cross-compile:
     timeout-minutes: 30

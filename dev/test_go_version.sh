@@ -90,74 +90,146 @@ export LLGO_BUILD_CACHE="${LLGO_BUILD_CACHE:-off}"
 
 requested_packages=("$@")
 if [[ "${#requested_packages[@]}" -eq 0 ]]; then
-	case "${target_minor}" in
-		1.20|1.21)
-			requested_packages=(./test/std/bufio ./test/std/bytes ./test/std/encoding/json ./test/std/math/bits ./test/goroot)
+	case "${LLGO_TEST_SUITE:-}" in
+		core)
+			requested_packages=(./test/...)
 			;;
-		1.22)
-			requested_packages=(./test/std/bufio ./test/std/bytes ./test/std/encoding/json ./test/std/go/version ./test/goroot)
+		std)
+			case "${target_minor}" in
+				1.20|1.21)
+					requested_packages=(./test/std/bufio ./test/std/bytes ./test/std/encoding/json ./test/std/math/bits)
+					;;
+				1.22)
+					requested_packages=(./test/std/bufio ./test/std/bytes ./test/std/encoding/json ./test/std/go/version)
+					;;
+				1.23)
+					requested_packages=(./test/std/iter ./test/std/maps ./test/std/slices ./test/std/structs ./test/std/unique)
+					;;
+				1.24)
+					requested_packages=(./test/std/bytes ./test/std/crypto/hkdf ./test/std/crypto/pbkdf2 ./test/std/weak)
+					;;
+				1.25)
+					requested_packages=(
+						./test/std/crypto
+						./test/std/crypto/ecdsa
+						./test/std/crypto/sha3
+						./test/std/go/ast
+						./test/std/go/token
+						./test/std/go/types
+						./test/std/hash
+						./test/std/hash/maphash
+						./test/std/io/fs
+						./test/std/log/slog
+						./test/std/mime/multipart
+						./test/std/net/http
+						./test/std/os
+						./test/std/reflect
+						./test/std/runtime/trace
+						./test/std/sync
+						./test/std/testing
+						./test/std/testing/fstest
+						./test/std/testing/synctest
+						./test/std/unicode
+					)
+					;;
+				1.26)
+					requested_packages=(
+						./test/std/bytes
+						./test/std/crypto
+						./test/std/crypto/ecdh
+						./test/std/crypto/fips140
+						./test/std/crypto/hpke
+						./test/std/crypto/mlkem
+						./test/std/crypto/mlkem/mlkemtest
+						./test/std/crypto/rsa
+						./test/std/crypto/x509
+						./test/std/errors
+						./test/std/go/ast
+						./test/std/go/token
+						./test/std/log/slog
+						./test/std/net
+						./test/std/net/http
+						./test/std/net/netip
+						./test/std/os
+						./test/std/reflect
+						./test/std/testing
+						./test/std/testing/cryptotest
+					)
+					;;
+				*) requested_packages=(./test/std/...) ;;
+			esac
 			;;
-		1.23)
-			requested_packages=(./test/std/iter ./test/std/maps ./test/std/slices ./test/std/structs ./test/std/unique ./test/goroot)
+		*)
+			case "${target_minor}" in
+				1.20|1.21)
+					requested_packages=(./test/std/bufio ./test/std/bytes ./test/std/encoding/json ./test/std/math/bits ./test/goroot)
+					;;
+				1.22)
+					requested_packages=(./test/std/bufio ./test/std/bytes ./test/std/encoding/json ./test/std/go/version ./test/goroot)
+					;;
+				1.23)
+					requested_packages=(./test/std/iter ./test/std/maps ./test/std/slices ./test/std/structs ./test/std/unique ./test/goroot)
+					;;
+				1.24)
+					requested_packages=(./test/std/bytes ./test/std/crypto/hkdf ./test/std/crypto/pbkdf2 ./test/std/weak ./test/goroot)
+					;;
+				1.25)
+					# Cover every package with Go 1.25-specific symbol checks without
+					# repeating the full test tree reserved for the primary release.
+					requested_packages=(
+						./test/std/crypto
+						./test/std/crypto/ecdsa
+						./test/std/crypto/sha3
+						./test/std/go/ast
+						./test/std/go/token
+						./test/std/go/types
+						./test/std/hash
+						./test/std/hash/maphash
+						./test/std/io/fs
+						./test/std/log/slog
+						./test/std/mime/multipart
+						./test/std/net/http
+						./test/std/os
+						./test/std/reflect
+						./test/std/runtime/trace
+						./test/std/sync
+						./test/std/testing
+						./test/std/testing/fstest
+						./test/std/testing/synctest
+						./test/std/unicode
+						./test/goroot
+					)
+					;;
+				1.26)
+					# Keep the compatibility lane focused on packages that contain Go
+					# 1.26-specific checks. Go 1.27 owns the complete test matrix.
+					requested_packages=(
+						./test/std/bytes
+						./test/std/crypto
+						./test/std/crypto/ecdh
+						./test/std/crypto/fips140
+						./test/std/crypto/hpke
+						./test/std/crypto/mlkem
+						./test/std/crypto/mlkem/mlkemtest
+						./test/std/crypto/rsa
+						./test/std/crypto/x509
+						./test/std/errors
+						./test/std/go/ast
+						./test/std/go/token
+						./test/std/log/slog
+						./test/std/net
+						./test/std/net/http
+						./test/std/net/netip
+						./test/std/os
+						./test/std/reflect
+						./test/std/testing
+						./test/std/testing/cryptotest
+						./test/goroot
+					)
+					;;
+				*) requested_packages=(./test/...) ;;
+			esac
 			;;
-		1.24)
-			requested_packages=(./test/std/bytes ./test/std/crypto/hkdf ./test/std/crypto/pbkdf2 ./test/std/weak ./test/goroot)
-			;;
-		1.25)
-			# Cover every package with Go 1.25-specific symbol checks without
-			# repeating the full test tree reserved for the primary release.
-			requested_packages=(
-				./test/std/crypto
-				./test/std/crypto/ecdsa
-				./test/std/crypto/sha3
-				./test/std/go/ast
-				./test/std/go/token
-				./test/std/go/types
-				./test/std/hash
-				./test/std/hash/maphash
-				./test/std/io/fs
-				./test/std/log/slog
-				./test/std/mime/multipart
-				./test/std/net/http
-				./test/std/os
-				./test/std/reflect
-				./test/std/runtime/trace
-				./test/std/sync
-				./test/std/testing
-				./test/std/testing/fstest
-				./test/std/testing/synctest
-				./test/std/unicode
-				./test/goroot
-			)
-			;;
-		1.26)
-			# Keep the compatibility lane focused on packages that contain Go
-			# 1.26-specific checks. Go 1.27 owns the complete test matrix.
-			requested_packages=(
-				./test/std/bytes
-				./test/std/crypto
-				./test/std/crypto/ecdh
-				./test/std/crypto/fips140
-				./test/std/crypto/hpke
-				./test/std/crypto/mlkem
-				./test/std/crypto/mlkem/mlkemtest
-				./test/std/crypto/rsa
-				./test/std/crypto/x509
-				./test/std/errors
-				./test/std/go/ast
-				./test/std/go/token
-				./test/std/log/slog
-				./test/std/net
-				./test/std/net/http
-				./test/std/net/netip
-				./test/std/os
-				./test/std/reflect
-				./test/std/testing
-				./test/std/testing/cryptotest
-				./test/goroot
-			)
-			;;
-		*) requested_packages=(./test/...) ;;
 	esac
 fi
 
@@ -165,6 +237,38 @@ packages_file="${work_dir}/packages.txt"
 go list -modfile="${modfile}" -tags=llgo "${requested_packages[@]}" | sort -u >"${packages_file}"
 packages=()
 while IFS= read -r package; do
+	if [[ "${LLGO_TEST_SUITE:-}" == "core" ]]; then
+		case "${package}" in
+			github.com/xgo-dev/llgo/test/goroot|github.com/xgo-dev/llgo/test/goroot/*)
+				continue
+				;;
+			github.com/xgo-dev/llgo/test/std/bufio|\
+			github.com/xgo-dev/llgo/test/std/bytes|\
+			github.com/xgo-dev/llgo/test/std/encoding/binary|\
+			github.com/xgo-dev/llgo/test/std/encoding/json|\
+			github.com/xgo-dev/llgo/test/std/errors|\
+			github.com/xgo-dev/llgo/test/std/fmt|\
+			github.com/xgo-dev/llgo/test/std/io|\
+			github.com/xgo-dev/llgo/test/std/math/bits|\
+			github.com/xgo-dev/llgo/test/std/sort|\
+			github.com/xgo-dev/llgo/test/std/strconv|\
+			github.com/xgo-dev/llgo/test/std/strings|\
+			github.com/xgo-dev/llgo/test/std/sync|\
+			github.com/xgo-dev/llgo/test/std/sync/*)
+				;;
+			github.com/xgo-dev/llgo/test/std|github.com/xgo-dev/llgo/test/std/*)
+				continue
+				;;
+		esac
+	elif [[ "${LLGO_TEST_SUITE:-}" == "std" ]]; then
+		case "${package}" in
+			github.com/xgo-dev/llgo/test/std|github.com/xgo-dev/llgo/test/std/*)
+				;;
+			*)
+				continue
+				;;
+		esac
+	fi
 	packages+=("${package}")
 done <"${packages_file}"
 

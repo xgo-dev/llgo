@@ -1,6 +1,11 @@
 # Windows platform selectors may use windows/ARCH for both ABIs or the more
 # specific windows-msvc/ARCH and windows-mingw/ARCH forms.
 host_skips:
+  - version: go1.26
+    platform: linux/amd64
+    directive: runoutput
+    case: rangegen.go
+    reason: the Go 1.26 generator exceeds the hosted runner's 4 GiB process-group limit before LLGo is invoked; see issue #2630
   - version: go1.27
     platform: linux/amd64
     directive: runoutput
@@ -44,8 +49,8 @@ timeouts:
   - platform: js/wasm
     directive: runoutput
     case: fixedbugs/issue5162.go
-    timeout: 4m
-    reason: building the 768 generated array-comparison functions took 168.8s on GoJS, leaving only 11s below the default build limit
+    timeout: 5m
+    reason: building the 768 generated array-comparison functions took 241.8s on loaded GoJS CI, exhausting the previous 4m budget
   - platform: darwin/arm64
     directive: run
     case: fixedbugs/issue79186.go
@@ -103,6 +108,11 @@ timeouts:
     case: fixedbugs/issue25897a.go
     timeout: 90s
     reason: the single-P continuous-GC loop needs load-dependent runtime slack on Windows 386
+  - platform: windows/arm64
+    directive: run
+    case: fixedbugs/issue25897a.go
+    timeout: 90s
+    reason: the single-P continuous-GC loop needs load-dependent runtime slack on Windows ARM64
   - platform: windows/386
     directive: run
     case: fixedbugs/issue30041.go
@@ -194,6 +204,10 @@ flakes:
     directive: run
     case: fixedbugs/issue25897a.go
     reason: reflect-generated goroutines under a single-P continuous-GC loop can complete or exceed the run timeout on Windows 386
+  - platform: windows/arm64
+    directive: run
+    case: fixedbugs/issue25897a.go
+    reason: reflect-generated goroutines under a single-P continuous-GC loop can complete or exceed the run timeout on Windows ARM64
   - platform: windows/386
     directive: run
     case: abi/uglyfib.go
