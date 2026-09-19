@@ -2071,7 +2071,7 @@ func f() {
 	pkg := prog.NewPackage("foo", "foo")
 	owner := pkg.NewFunc("f", llssa.NoArgsNoRet, llssa.InGo)
 
-	ctx := &context{funcs: map[*ssa.Function]llssa.Function{root: owner}}
+	ctx := &context{funcs: map[*ssa.Function]*aFunction{root: {Function: root, impl: owner}}}
 	if got := ctx.deferStackOwner(root); got != owner {
 		t.Fatalf("deferStackOwner(root) = %v, want %v", got, owner)
 	}
@@ -2226,7 +2226,7 @@ func f() {}
 		goProg: ssapkg.Prog,
 		goTyps: ssapkg.Pkg,
 		goPkg:  ssapkg,
-		funcs:  map[*ssa.Function]llssa.Function{},
+		funcs:  map[*ssa.Function]*aFunction{},
 	}
 	_ = files
 
@@ -2238,7 +2238,7 @@ func f() {}
 	if owner == nil {
 		t.Fatal("deferStackOwner should lazily compile missing owner")
 	}
-	if ctx.funcs[root] != owner {
+	if ctx.funcs[root].impl != owner {
 		t.Fatal("compiled owner should be cached")
 	}
 }

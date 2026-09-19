@@ -310,6 +310,13 @@ func (p Program) validateLocalities(pkgPath string, packageEntries map[string]Va
 	for name, target := range p.packageSyntax.linknames {
 		links[name] = strings.TrimPrefix(target, "go:")
 	}
+	for name, entries := range p.packageSyntax.functions {
+		for _, fn := range entries {
+			if target, ok := fn.Linkname(); ok {
+				links[name] = strings.TrimPrefix(target, "go:")
+			}
+		}
+	}
 	p.packageSyntax.mu.RUnlock()
 	for name := range links {
 		if strings.HasPrefix(name, prefix) && linknameReachesLocal(name, links, localNames) {

@@ -26,25 +26,21 @@ import (
 // so those Programs can share it directly for concurrent read-only access.
 // One-shot compiler users keep the same Program-local mutation behavior.
 type packageSyntaxData struct {
-	mu                   sync.RWMutex
-	linknames            map[string]string
-	wasmImports          map[string]wasmImport
-	exports              map[string]string
-	closureEnvDirectives map[closureEnvDirectiveKey]none
-	parsedPackages       map[*types.Package]struct{}
-	noInterface          map[string]none
-	typeBackgrounds      map[string]Background
+	mu              sync.RWMutex
+	linknames       map[string]string
+	exports         map[string]string
+	parsedPackages  map[*types.Package]struct{}
+	typeBackgrounds map[string]Background
+	functions       map[string][]*FunctionDeclaration
 }
 
 func newPackageSyntaxData() *packageSyntaxData {
 	return &packageSyntaxData{
-		linknames:            make(map[string]string),
-		wasmImports:          make(map[string]wasmImport),
-		exports:              make(map[string]string),
-		closureEnvDirectives: make(map[closureEnvDirectiveKey]none),
-		parsedPackages:       make(map[*types.Package]struct{}),
-		noInterface:          make(map[string]none),
-		typeBackgrounds:      make(map[string]Background),
+		linknames:       make(map[string]string),
+		exports:         make(map[string]string),
+		parsedPackages:  make(map[*types.Package]struct{}),
+		typeBackgrounds: make(map[string]Background),
+		functions:       make(map[string][]*FunctionDeclaration),
 	}
 }
 
@@ -57,7 +53,11 @@ type wasmImport struct {
 // will later preserve the symbol exists.
 func (p Program) SetPackageExport(name, export string) {
 	p.packageSyntax.mu.Lock()
-	p.packageSyntax.exports[name] = export
+	if fn := p.packageSyntax.namedFunction(name); fn != nil {
+		fn.SetExport(export)
+	} else {
+		p.packageSyntax.exports[name] = export
+	}
 	p.packageSyntax.mu.Unlock()
 }
 
@@ -65,6 +65,9 @@ func (p Program) SetPackageExport(name, export string) {
 func (p Program) PackageExport(name string) (string, bool) {
 	p.packageSyntax.mu.RLock()
 	export, ok := p.packageSyntax.exports[name]
+	if fn := p.packageSyntax.namedFunction(name); fn != nil {
+		export, ok = fn.Export()
+	}
 	p.packageSyntax.mu.RUnlock()
 	return export, ok
 }
