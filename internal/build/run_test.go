@@ -24,9 +24,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 )
 
@@ -109,6 +111,24 @@ func TestRunNativeTest(t *testing.T) {
 		}
 		if got := stderr.String(); !strings.Contains(got, "exit code 3") {
 			t.Fatalf("stderr = %q, want exit code", got)
+		}
+	})
+
+	t.Run("signal exit", func(t *testing.T) {
+		var stderr bytes.Buffer
+		conf := &Config{RunArgs: append(args, "signal")}
+		program := testProgram{app: executable, pkgDir: t.TempDir(), pkgName: "signal"}
+		err := runNativeTest(commands, program, conf, io.Discard, &stderr)
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("runNativeTest error = %v, want signal termination", err)
+		}
+		status, ok := exitErr.Sys().(syscall.WaitStatus)
+		if !ok || !status.Signaled() || status.Signal() != syscall.SIGKILL {
+			t.Fatalf("process status = %v, want SIGKILL", exitErr.Sys())
+		}
+		if got, want := stderr.String(), executable+": "+exitErr.Error()+"\n"; got != want {
+			t.Fatalf("stderr = %q, want signal diagnostic %q", got, want)
 		}
 	})
 
@@ -214,6 +234,10 @@ func TestRunNativeTestHelper(t *testing.T) {
 			fmt.Fprint(os.Stderr, "stderr")
 		case "exit":
 			os.Exit(3)
+		case "signal":
+			if err := syscall.Kill(os.Getpid(), syscall.SIGKILL); err != nil {
+				t.Fatalf("kill helper: %v", err)
+			}
 		}
 		return
 	}
