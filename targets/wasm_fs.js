@@ -1,5 +1,8 @@
-// wasm_fs.js: browser host shim for Go syscall/fs_js.go on LLGo/Emscripten.
-// Provides globalThis.fs, process, and path. Load before the generated main.js.
+// wasm_fs.js: browser host shim for Go syscall/fs_js.go on Emscripten.
+// GoJS uses wasm_exec.js instead. Node Emscripten tests use node:fs via
+// emscripten-node-polyfills.mjs. This file is only for browser Emscripten:
+// it exposes globalThis.fs, process, and path on top of Module.FS.
+// Load before the generated main.js.
 //
 // Bind the shim to the Emscripten module instance before Go runs:
 //
@@ -28,6 +31,66 @@
   if (global.Module && typeof global.Module === "object") {
     llgoAttachWasmFS(global.Module);
   }
+
+  // Chrome rejects TextDecoder.decode and crypto.getRandomValues on views of
+  // growable WebAssembly.Memory. Patch the globals so Emscripten glue and
+  // this shim both copy onto a fixed-length buffer first.
+  function copyOffResizable(value) {
+    if (ArrayBuffer.isView(value)) {
+      return Uint8Array.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+    }
+    if (value instanceof ArrayBuffer) {
+      return Uint8Array.from(new Uint8Array(value));
+    }
+    return value;
+  }
+
+  function resizableBuffer(value) {
+    if (!value) return null;
+    if (value instanceof ArrayBuffer) {
+      return value.resizable || value.growable ? value : null;
+    }
+    const buffer = value.buffer;
+    return buffer && (buffer.resizable || buffer.growable) ? buffer : null;
+  }
+
+  if (global.TextDecoder && !global.TextDecoder.prototype.__llgoResizableSafe) {
+    const Native = global.TextDecoder;
+    class LLGoTextDecoder extends Native {
+      decode(input, options) {
+        if (resizableBuffer(input)) input = copyOffResizable(input);
+        return super.decode(input, options);
+      }
+    }
+    LLGoTextDecoder.prototype.__llgoResizableSafe = true;
+    try {
+      global.TextDecoder = LLGoTextDecoder;
+    } catch (_) {}
+  }
+
+  (function patchCryptoGetRandomValues() {
+    const cryptoObj = global.crypto;
+    if (!cryptoObj || typeof cryptoObj.getRandomValues !== "function") return;
+    if (cryptoObj.getRandomValues.__llgoCopyResizable) return;
+    const orig = cryptoObj.getRandomValues.bind(cryptoObj);
+    function getRandomValues(view) {
+      if (!resizableBuffer(view)) return orig(view);
+      let offset = 0;
+      const total = view.byteLength;
+      while (offset < total) {
+        const n = Math.min(65536, total - offset);
+        const tmp = new Uint8Array(n);
+        orig(tmp);
+        view.set(tmp, offset);
+        offset += n;
+      }
+      return view;
+    }
+    getRandomValues.__llgoCopyResizable = true;
+    try {
+      cryptoObj.getRandomValues = getRandomValues;
+    } catch (_) {}
+  })();
 
   if (global.fs) return;
 
@@ -118,14 +181,10 @@
     }
   }
 
-  // Copy off wasm memory / resizable ArrayBuffer views without changing the
-  // element type (Uint8Array.from would coerce DataView/Uint16Array values).
   function toUint8(buf) {
-    if (buf instanceof Uint8Array) return buf.slice();
-    if (ArrayBuffer.isView(buf)) {
-      return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength).slice();
+    if (buf instanceof Uint8Array || ArrayBuffer.isView(buf) || buf instanceof ArrayBuffer) {
+      return copyOffResizable(buf);
     }
-    if (buf instanceof ArrayBuffer) return new Uint8Array(buf.slice(0));
     return new Uint8Array(buf);
   }
 
@@ -218,10 +277,8 @@
   }
 
   function addSyncMethods(fs) {
-    // read and fsync can block the host (stdin, pipes, slow disks). The Go
-    // fsCall path keeps those methods async even when *Sync exists, so do not
-    // synthesize blocking wrappers that would freeze the single-threaded
-    // scheduler if anything selected them by method existence.
+    // Go's fsCall uses the async Node APIs. *Sync exists so the host looks
+    // like Node. Do not wrap read/fsync: those can block stdin or disks.
     const skipSync = { read: true, fsync: true };
     const names = Object.keys(fs);
     for (let i = 0; i < names.length; i++) {

@@ -1778,6 +1778,7 @@ func TestExecuteMainLinkPublishesEmscriptenBrowserHost(t *testing.T) {
 		buildConf: &Config{
 			Mode:      ModeBuild,
 			BuildMode: BuildModeExe,
+			Target:    "emscripten",
 			Goos:      "js",
 			Goarch:    "wasm",
 			PCLNMode:  PCLNNone,
@@ -1846,6 +1847,7 @@ func TestExecuteMainLinkRejectsWasmFSJSCollision(t *testing.T) {
 		buildConf: &Config{
 			Mode:      ModeBuild,
 			BuildMode: BuildModeExe,
+			Target:    "emscripten",
 			Goos:      "js",
 			Goarch:    "wasm",
 			PCLNMode:  PCLNNone,
@@ -1878,6 +1880,7 @@ func TestExecuteMainLinkReportsEmscriptenBrowserHostError(t *testing.T) {
 		buildConf: &Config{
 			Mode:      ModeBuild,
 			BuildMode: BuildModeExe,
+			Target:    "emscripten",
 			Goos:      "js",
 			Goarch:    "wasm",
 			PCLNMode:  PCLNNone,

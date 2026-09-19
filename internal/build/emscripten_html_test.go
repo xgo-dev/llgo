@@ -60,6 +60,7 @@ func TestRemoveStaleEmscriptenGlueSkipsNonEmscriptenOutput(t *testing.T) {
 		conf *Config
 	}{
 		{name: "native", conf: &Config{BuildMode: BuildModeExe, Goos: runtime.GOOS}},
+		{name: "gojs", conf: &Config{BuildMode: BuildModeExe, Goos: "js"}},
 		{name: "wasi", conf: &Config{BuildMode: BuildModeExe, Target: "wasi", Goos: "wasip1"}},
 		{name: "archive", conf: &Config{BuildMode: BuildModeCArchive, Target: "emscripten", Goos: "js"}},
 		{name: "nil config"},
@@ -102,15 +103,26 @@ func TestNeedsEmscriptenBrowserHost(t *testing.T) {
 		want   bool
 	}{
 		{
-			name:   "js html",
+			name:   "gojs html skips host shim",
 			conf:   &Config{BuildMode: BuildModeExe, Goos: "js"},
 			output: "main.html",
-			want:   true,
 		},
 		{
 			name:   "emscripten html",
 			conf:   &Config{BuildMode: BuildModeExe, Target: "emscripten"},
 			output: "app.html",
+			want:   true,
+		},
+		{
+			name:   "emscripten js copies host shim",
+			conf:   &Config{BuildMode: BuildModeExe, Target: "emscripten"},
+			output: "main.js",
+			want:   true,
+		},
+		{
+			name:   "emscripten mjs copies host shim",
+			conf:   &Config{BuildMode: BuildModeExe, Target: "emscripten"},
+			output: "main.mjs",
 			want:   true,
 		},
 		{
@@ -131,20 +143,23 @@ func TestNeedsEmscriptenBrowserHost(t *testing.T) {
 			output: "app.html",
 		},
 		{
-			name:   "js js copies host shim",
+			name:   "gojs js skips host shim",
 			conf:   &Config{BuildMode: BuildModeExe, Goos: "js"},
 			output: "main.js",
-			want:   true,
 		},
 		{
-			name:   "js mjs copies host shim",
+			name:   "gojs mjs skips host shim",
 			conf:   &Config{BuildMode: BuildModeExe, Goos: "js"},
 			output: "main.mjs",
-			want:   true,
 		},
 		{
 			name:   "js wasm skips host shim",
 			conf:   &Config{BuildMode: BuildModeExe, Goos: "js"},
+			output: "main.wasm",
+		},
+		{
+			name:   "emscripten wasm skips host shim",
+			conf:   &Config{BuildMode: BuildModeExe, Target: "emscripten"},
 			output: "main.wasm",
 		},
 		{
@@ -556,7 +571,11 @@ func TestPublishEmscriptenBrowserHost(t *testing.T) {
 		t.Fatalf("native target: %v", err)
 	}
 	js := &context{buildConf: &Config{BuildMode: BuildModeExe, Goos: "js"}}
-	if err := publishEmscriptenBrowserHostFrom(js, "main.html", false, ""); err == nil {
+	if err := publishEmscriptenBrowserHostFrom(js, "main.html", false, ""); err != nil {
+		t.Fatalf("GoJS host publish: %v", err)
+	}
+	emscripten := &context{buildConf: &Config{BuildMode: BuildModeExe, Target: "emscripten", Goos: "js"}}
+	if err := publishEmscriptenBrowserHostFrom(emscripten, "main.html", false, ""); err == nil {
 		t.Fatal("empty LLGO_ROOT succeeded")
 	}
 
@@ -567,7 +586,7 @@ func TestPublishEmscriptenBrowserHost(t *testing.T) {
 	if err := os.WriteFile(htmlPath, []byte(`<html><script type=module>import initModule from"./main.js"</script></html>`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ctx := &context{buildConf: &Config{BuildMode: BuildModeExe, Goos: "js", PrintCommands: true}}
+	ctx := &context{buildConf: &Config{BuildMode: BuildModeExe, Target: "emscripten", Goos: "js", PrintCommands: true}}
 	if err := publishEmscriptenBrowserHost(ctx, htmlPath, true); err != nil {
 		t.Fatal(err)
 	}

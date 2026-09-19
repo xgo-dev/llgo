@@ -48,7 +48,8 @@ function encoder() {
 {
   const native = globalThis.TextDecoder;
   const ctx = loadShim();
-  assert(ctx.TextDecoder === native, "shim must not replace global TextDecoder");
+  assert(ctx.TextDecoder !== native, "shim wraps TextDecoder for resizable wasm memory");
+  assert(ctx.TextDecoder.prototype.__llgoResizableSafe, "wrapped decoder is marked safe");
   const dec = new ctx.TextDecoder("utf-8");
   const bytes = Uint8Array.of(65, 66);
   assertEq(dec.decode(new DataView(bytes.buffer)), "AB", "DataView decode");
@@ -106,6 +107,33 @@ function encoder() {
   ctx.fs.writeSync(1, hello.subarray(0, 1));
   ctx.fs.writeSync(1, hello.subarray(1));
   assertEq(printed.join("\n"), "你好", "split UTF-8 writes must decode as a stream");
+}
+
+{
+  class ChromeTextDecoder extends globalThis.TextDecoder {
+    decode(input, options) {
+      const buffer = ArrayBuffer.isView(input) ? input.buffer : input;
+      if (buffer && (buffer.resizable || buffer.growable)) {
+        throw new TypeError("The provided ArrayBuffer value must not be resizable");
+      }
+      return super.decode(input, options);
+    }
+  }
+  const printed = [];
+  const ctx = loadShim({ TextDecoder: ChromeTextDecoder });
+  ctx.llgoAttachWasmFS({ print: (line) => printed.push(line) });
+  let view;
+  try {
+    const ab = new ArrayBuffer(16, { maxByteLength: 64 });
+    view = new Uint8Array(ab, 0, 6);
+  } catch (_) {
+    view = null;
+  }
+  if (view && view.buffer.resizable) {
+    view.set(encoder().encode("hello\n"));
+    ctx.fs.writeSync(1, view);
+    assertEq(printed.join("\n"), "hello", "stdout copies off resizable wasm memory");
+  }
 }
 
 {

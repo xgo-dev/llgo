@@ -40,10 +40,12 @@ func TestReflectMakeFuncComplex64(t *testing.T) {
 }
 
 func TestFSCallAsyncFallback(t *testing.T) {
+	// Official fsCall uses fs.write, not writeSync. Hide writeSync so a host
+	// that also exposes the Sync API cannot mask a broken callback path.
 	fs := js.Global().Get("fs")
 	syncWrite := fs.Get("writeSync")
 	if syncWrite.IsUndefined() {
-		t.Fatal("fs.writeSync is required to test the async fallback")
+		t.Fatal("host writeSync is required to test the callback path in isolation")
 	}
 	fs.Set("writeSync", js.Undefined())
 	t.Cleanup(func() { fs.Set("writeSync", syncWrite) })
@@ -137,9 +139,9 @@ func TestFsyncDoesNotFreezeScheduler(t *testing.T) {
 }
 
 // installDelayedFSMethod replaces fs.name with a JS function that invokes its
-// callback after 300ms, and installs a busy-wait nameSync. If fsCall selected
-// the Sync method by existence, the Go timer in the caller cannot fire until
-// the busy-wait completes.
+// callback after 300ms, and installs a busy-wait nameSync. Official fsCall
+// must use the async method; if anything picked *Sync, the Go timer could not
+// fire until the busy-wait finished.
 func installDelayedFSMethod(t *testing.T, name, syncName string, params []any, body string) {
 	t.Helper()
 	fs := js.Global().Get("fs")
@@ -220,16 +222,19 @@ func TestJSFuncDispatchesAfterGoCall(t *testing.T) {
 	defer callback.Release()
 
 	got := callback.Invoke()
-	if !got.IsUndefined() {
-		t.Fatalf("Invoke() = %v, want undefined for async FuncOf", got)
+	if got.Type() != js.TypeNumber {
+		t.Fatalf("Invoke() type = %s, want number", got.Type())
+	}
+	if got.Int() != 7 {
+		t.Fatalf("Invoke() = %d, want 7", got.Int())
 	}
 	select {
 	case n := <-done:
 		if n != 7 {
 			t.Fatalf("callback result = %d, want 7", n)
 		}
-	case <-time.After(time.Second):
-		t.Fatal("js.FuncOf callback did not run after Invoke returned")
+	default:
+		t.Fatal("js.FuncOf callback did not run during Invoke")
 	}
 }
 

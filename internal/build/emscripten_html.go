@@ -38,18 +38,24 @@ func emscriptenBrowserHostExt(output string) string {
 	}
 }
 
-func needsEmscriptenBrowserHost(conf *Config, output string) bool {
-	if conf == nil || conf.BuildMode != BuildModeExe || emscriptenBrowserHostExt(output) == "" {
+func isEmscriptenNamedTarget(conf *Config) bool {
+	if conf == nil {
 		return false
-	}
-	if conf.Goos == "js" {
-		return true
 	}
 	switch conf.Target {
 	case "emscripten", "emscripten-memory64", "wasm":
 		return true
 	}
 	return false
+}
+
+func needsEmscriptenBrowserHost(conf *Config, output string) bool {
+	if conf == nil || conf.BuildMode != BuildModeExe || emscriptenBrowserHostExt(output) == "" {
+		return false
+	}
+	// GoJS uses wasm_exec.js / Node fs. Only named Emscripten targets need
+	// the Module.FS → Node-shaped fs sidecar.
+	return isEmscriptenNamedTarget(conf)
 }
 
 func publishEmscriptenBrowserHost(ctx *context, output string, verbose bool) error {
