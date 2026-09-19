@@ -30,6 +30,7 @@ import (
 
 	"github.com/xgo-dev/llvm"
 
+	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -1161,5 +1162,69 @@ func TestFuncInfoTableFPChainOff(t *testing.T) {
 	emitFuncInfoTable(ctx, src, nil, nil)
 	if ir := src.String(); !strings.Contains(ir, "@__llgo_fp_chain = global i8 0") {
 		t.Fatalf("missing fp_chain=0 in:\n%s", ir)
+	}
+}
+
+// snapshotPkg builds a Package backed by a link snapshot so metadata collection
+// can be exercised without an LLVM module.
+func snapshotPkg(pkgPath, symbol string) Package {
+	return &aPackage{
+		Package: &packages.Package{PkgPath: pkgPath},
+		linkSnapshot: &packageLinkSnapshot{
+			funcInfo:   []funcInfoRecord{{symbol: symbol, name: symbol, file: "x.go", line: 1, column: 1}},
+			pcLineInfo: []pcLineRecord{{id: funcInfoSymbolID(symbol), symbol: symbol, line: 1}},
+		},
+	}
+}
+
+// TestFilterOutRuntimePkgs verifies that runtime-tree packages are removed from
+// the metadata collection set while non-runtime packages and nil entries are
+// preserved, so a NeedRt=false program does not leak runtime funcinfo/PC-line
+// records into the synthetic main module. See issue #2609.
+func TestFilterOutRuntimePkgs(t *testing.T) {
+	rt := env.LLGoRuntimePkg
+	app := snapshotPkg("example.com/main", "example.com/main.main")
+	rtRoot := snapshotPkg(rt, "runtime.FunctionPC")
+	rtChild := snapshotPkg(rt+"/internal/clite", "runtime.gorInit")
+	lib := snapshotPkg("github.com/goplus/lib/c", "c.printf")
+	// A package sharing a runtime-like prefix but outside the tree must survive.
+	notRT := snapshotPkg(rt+"x/pkg", "rtx.Helper")
+
+	order := []Package{app, rtRoot, nil, rtChild, lib, notRT}
+	got := filterOutRuntimePkgs(order)
+
+	if len(got) != 4 {
+		t.Fatalf("filterOutRuntimePkgs kept %d packages, want 4: %+v", len(got), got)
+	}
+	for _, pkg := range got {
+		if pkg != nil && pkg.Package != nil && isRuntimePkg(pkg.PkgPath) {
+			t.Fatalf("runtime package survived filtering: %s", pkg.PkgPath)
+		}
+	}
+
+	// Collected metadata over the filtered set must exclude runtime symbols.
+	funcInfo := collectFuncInfo(got)
+	pcLines := collectPCLineInfo(got)
+	for _, rec := range funcInfo {
+		if strings.HasPrefix(rec.symbol, "runtime.") {
+			t.Fatalf("runtime funcinfo leaked after filtering: %s", rec.symbol)
+		}
+	}
+	for _, rec := range pcLines {
+		if strings.HasPrefix(rec.symbol, "runtime.") {
+			t.Fatalf("runtime pc-line leaked after filtering: %s", rec.symbol)
+		}
+	}
+	if len(funcInfo) != 3 {
+		t.Fatalf("collectFuncInfo returned %d records, want 3: %+v", len(funcInfo), funcInfo)
+	}
+
+	// Adding an otherwise unused runtime helper must not change the filtered
+	// metadata, matching the NeedRt=false stability requirement.
+	extra := snapshotPkg(rt+"/internal/extra", "runtime.unusedHelper")
+	withExtra := filterOutRuntimePkgs(append(order, extra))
+	if len(collectFuncInfo(withExtra)) != len(funcInfo) {
+		t.Fatalf("adding an unused runtime helper changed funcinfo count: %d vs %d",
+			len(collectFuncInfo(withExtra)), len(funcInfo))
 	}
 }

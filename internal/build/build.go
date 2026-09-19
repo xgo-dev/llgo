@@ -2152,7 +2152,8 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	}
 
 	// Only link runtime objects when needed (or for host builds where runtime is always required).
-	if needRuntime || needPyInit || ctx.buildConf.Target == "" {
+	linkRuntime := needRuntime || needPyInit || ctx.buildConf.Target == ""
+	if linkRuntime {
 		linkArgs = append(linkArgs, rtLinkArgs...)
 		archiveInputs = append(archiveInputs, rtLinkInputs...)
 	}
@@ -2163,8 +2164,17 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	var funcInfo []funcInfoRecord
 	var pcLineInfo []pcLineRecord
 	if ctx.buildConf.PCLNMode != PCLNNone {
-		funcInfo = prepareFuncInfoTableRecords(collectFuncInfo(linkedOrder), nil)
-		pcLineInfo = collectPCLineInfo(linkedOrder)
+		// When the runtime tree is not linked into the executable, its function
+		// bodies are absent, so their funcinfo/PC-line metadata must not be copied
+		// into the synthetic main module. Metadata for the generated
+		// runtime.main/runtime.goexit frames is produced by genMainModule, not by
+		// linkedOrder, so excluding the runtime packages here keeps those records.
+		metadataOrder := linkedOrder
+		if !linkRuntime {
+			metadataOrder = filterOutRuntimePkgs(linkedOrder)
+		}
+		funcInfo = prepareFuncInfoTableRecords(collectFuncInfo(metadataOrder), nil)
+		pcLineInfo = collectPCLineInfo(metadataOrder)
 	}
 	packageInits, err := linkedPackageInitNames(pkg, linkedOrder)
 	if err != nil {
@@ -2414,6 +2424,20 @@ func linkedModuleGlobals(pkgs []Package) map[string]none {
 func isRuntimePkg(pkgPath string) bool {
 	rtRoot := env.LLGoRuntimePkg
 	return pkgPath == rtRoot || strings.HasPrefix(pkgPath, rtRoot+"/")
+}
+
+// filterOutRuntimePkgs returns the packages in order with the llgo runtime tree
+// removed. It is used to keep runtime metadata out of the synthetic main module
+// when the runtime archives are not linked into the executable.
+func filterOutRuntimePkgs(pkgs []Package) []Package {
+	out := make([]Package, 0, len(pkgs))
+	for _, pkg := range pkgs {
+		if pkg != nil && pkg.Package != nil && isRuntimePkg(pkg.PkgPath) {
+			continue
+		}
+		out = append(out, pkg)
+	}
+	return out
 }
 
 func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose bool) error {
