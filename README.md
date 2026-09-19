@@ -434,6 +434,8 @@ A real Go executable must remain in an absolute PATH directory. If `go` is a sym
 
 ## Development tools
 
+`llgo list` provides a Go-compatible package query backed by the real Go toolchain while adding LLGo's source-selection build tags to package queries. Module queries keep caller-supplied and explicit target tags but do not add LLGo's defaults. It supports the list queries used by `golang.org/x/tools/go/packages`, including `list -f '{{context.GOARCH}} {{context.Compiler}}' -- unsafe`; the reported `gc` context identifies Go frontend and type-size compatibility, not LLGo's LLVM backend. Use `-target name` to apply a resolved LLGo target's GOOS, GOARCH, and build tags without installing its toolchain. When `go/packages` requests `-export=true`, paths in the `Export` field refer to Go frontend type data in Go's build cache, not LLGo package archives.
+
 * [pydump](_xtool/pydump): It is the first production program compiled with `llgo` rather than `go`. It outputs symbol information (functions, variables, and constants) from a Python library in JSON format, preparing for the generation of corresponding packages in `llgo`.
 * [pysigfetch](https://github.com/goplus/hdq/tree/main/chore/pysigfetch): It generates symbol information by extracting information from Python's documentation site. This tool is not part of the `llgo` project, but we depend on it.
 * [llpyg](chore/llpyg): It is used to automatically convert Python libraries into Go packages that `llgo` can import. It depends on `pydump` and `pysigfetch` to accomplish the task.
