@@ -28,6 +28,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/exportdata"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -921,6 +922,10 @@ func TestCollectFingerprintDependencies(t *testing.T) {
 	if err := os.WriteFile(depFile, []byte("package dep"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	versionedFile := filepath.Join(td, "versioned.go")
+	if err := os.WriteFile(versionedFile, []byte("package dep\nfunc Rare() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	mainFile := filepath.Join(td, "main.go")
 	if err := os.WriteFile(mainFile, []byte("package main"), 0644); err != nil {
 		t.Fatal(err)
@@ -942,7 +947,7 @@ func TestCollectFingerprintDependencies(t *testing.T) {
 	depWithVersion := &aPackage{Package: &packages.Package{
 		ID:      "example.com/depver",
 		PkgPath: "example.com/depver",
-		GoFiles: []string{depFile},
+		GoFiles: []string{versionedFile},
 		Module:  &gopackages.Module{Path: "example.com/depver", Version: "v1.0.0"},
 	}}
 	ctx.pkgByID[depPkg.ID] = depPkg
@@ -973,7 +978,7 @@ func TestCollectFingerprintDependencies(t *testing.T) {
 	for _, dep := range data.Deps {
 		switch dep.ID {
 		case "example.com/depver":
-			seenVersion = dep.Version == "v1.0.0" && dep.Fingerprint == ""
+			seenVersion = dep.Version == "v1.0.0" && dep.Fingerprint != "" && dep.Fingerprint == depWithVersion.Fingerprint
 		case "example.com/dep":
 			seenFingerprint = dep.Fingerprint == depPkg.Fingerprint && dep.Version == ""
 		}
@@ -983,6 +988,17 @@ func TestCollectFingerprintDependencies(t *testing.T) {
 	}
 	if !seenFingerprint {
 		t.Fatalf("workspace dependency not recorded with fingerprint: %+v", data.Deps)
+	}
+	// A versioned dependency's effective source may change through an overlay.
+	// Its callers must not retain the old archive solely because the version is unchanged.
+	before := mainPkg.Fingerprint
+	ctx.buildConf.Overlay = map[string][]byte{versionedFile: []byte("package dep\n//llgo:cold\nfunc Rare() {}\n")}
+	mainPkg.Fingerprint, depPkg.Fingerprint, depWithVersion.Fingerprint = "", "", ""
+	if err := ctx.collectFingerprint(mainPkg); err != nil {
+		t.Fatal(err)
+	}
+	if mainPkg.Fingerprint == before {
+		t.Fatal("dependency overlay did not invalidate caller")
 	}
 }
 
@@ -1060,7 +1076,7 @@ replace github.com/pmezard/go-difflib v1.0.0 => ../depWork
 		return nil
 	}
 
-	if dep := get("github.com/davecgh/go-spew"); dep == nil || dep.Version != "v1.1.0" || dep.Fingerprint != "" {
+	if dep := get("github.com/davecgh/go-spew"); dep == nil || dep.Version != "v1.1.0" || dep.Fingerprint == "" {
 		t.Fatalf("version replace expected version only: %+v", dep)
 	}
 	if dep := get("github.com/matryer/is"); dep == nil || dep.Version != "" || dep.Fingerprint == "" {
@@ -1452,6 +1468,14 @@ func TestTryLoadFromCache_LoadsPackageMeta(t *testing.T) {
 		}(),
 		ObjFiles: []string{objFile.Name()},
 	}
+	data, err := decodeManifest(pkg.Manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg.Fingerprint, err = manifestInputFingerprint(data)
+	if err != nil {
+		t.Fatal(err)
+	}
 	pkg.Meta, _ = builder.Build()
 
 	if err := ctx.saveToCache(pkg); err != nil {
@@ -1509,18 +1533,31 @@ func TestTryLoadFromCacheRejectsBadMeta(t *testing.T) {
 		},
 		Fingerprint: "badmeta123",
 	}
+	m := newManifestBuilder()
+	m.env.Goos = "darwin"
+	m.pkg.PkgPath = "example.com/badmeta"
+	data, err := decodeManifest(m.Build())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg.Fingerprint, err = manifestInputFingerprint(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data.Exports = &exportdata.Package{Version: exportdata.Version}
+	manifest, err := buildManifestYAML(data)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cm := ctx.ensureCacheManager()
-	paths := cm.PackagePaths("arm64-apple-darwin", "example.com/badmeta", "badmeta123")
+	paths := cm.PackagePaths("arm64-apple-darwin", "example.com/badmeta", pkg.Fingerprint)
 	if err := cm.EnsureDir(paths); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(paths.Archive, []byte("archive"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m := newManifestBuilder()
-	m.env.Goos = "darwin"
-	m.pkg.PkgPath = "example.com/badmeta"
-	if err := writeManifest(paths.Manifest, m.Build()); err != nil {
+	if err := writeManifest(paths.Manifest, manifest); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(paths.Meta, []byte("bad meta"), 0o644); err != nil {
@@ -1556,18 +1593,31 @@ func TestTryLoadFromCacheIgnoresMetaWhenPackageMetaDisabled(t *testing.T) {
 		},
 		Fingerprint: "nometa123",
 	}
+	m := newManifestBuilder()
+	m.env.Goos = "darwin"
+	m.pkg.PkgPath = "example.com/nometa"
+	data, err := decodeManifest(m.Build())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg.Fingerprint, err = manifestInputFingerprint(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data.Exports = &exportdata.Package{Version: exportdata.Version}
+	manifest, err := buildManifestYAML(data)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cm := ctx.ensureCacheManager()
-	paths := cm.PackagePaths("arm64-apple-darwin", "example.com/nometa", "nometa123")
+	paths := cm.PackagePaths("arm64-apple-darwin", "example.com/nometa", pkg.Fingerprint)
 	if err := cm.EnsureDir(paths); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(paths.Archive, []byte("archive"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m := newManifestBuilder()
-	m.env.Goos = "darwin"
-	m.pkg.PkgPath = "example.com/nometa"
-	if err := writeManifest(paths.Manifest, m.Build()); err != nil {
+	if err := writeManifest(paths.Manifest, manifest); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(paths.Meta, []byte("bad meta"), 0o644); err != nil {

@@ -962,6 +962,7 @@ type aPackage struct {
 	strs   map[string]llvm.Value
 	goStrs map[string]llvm.Value
 	fnlink func(string) string
+	fninit func(Function, *types.Func)
 
 	iRoutine int
 
@@ -1041,7 +1042,9 @@ func (p Package) rtFunc(fnName string) Expr {
 		name = p.fnlink(name)
 	}
 	sig := fn.Type().(*types.Signature)
-	return p.NewFunc(name, sig, InGo).Expr
+	ret := p.NewFunc(name, sig, InGo)
+	p.initFunction(ret, fn)
+	return ret.Expr
 }
 
 // rtEnvFunc returns a runtime entry whose source-level signature excludes its
@@ -1056,7 +1059,9 @@ func (p Package) rtEnvFunc(fnName string) Expr {
 	}
 	sig := fn.Type().(*types.Signature)
 	env := types.NewVar(token.NoPos, nil, "$env", types.Typ[types.UnsafePointer])
-	return p.NewEnvFunc(name, sig, InGo, env, false).Expr
+	ret := p.NewEnvFunc(name, sig, InGo, env, false)
+	p.initFunction(ret, fn)
+	return ret.Expr
 }
 
 // RuntimeFunc returns a declaration for a function in LLGo's internal runtime.
@@ -1083,6 +1088,18 @@ func (p Package) String() string {
 // SetResolveLinkname sets a function to resolve linkname.
 func (p Package) SetResolveLinkname(fn func(string) string) {
 	p.fnlink = fn
+}
+
+// SetFunctionInitializer supplies source properties for runtime and method
+// declarations created by the backend, including entries already in the module.
+func (p Package) SetFunctionInitializer(fn func(Function, *types.Func)) {
+	p.fninit = fn
+}
+
+func (p Package) initFunction(fn Function, source *types.Func) {
+	if p.fninit != nil {
+		p.fninit(fn, source)
+	}
 }
 
 // -----------------------------------------------------------------------------
