@@ -2620,7 +2620,7 @@ func (p *context) implicitDeferResultSlot(index int) llssa.Expr {
 
 func (p *context) returnNeedsImplicitRunDefers(ret *ssa.Return) bool {
 	fn := ret.Parent()
-	if fn == nil || fn.Synthetic != "" || ret.Block() == fn.Recover {
+	if fn == nil || fn.Synthetic == rangeOverFuncYieldSynthetic || ret.Block() == fn.Recover {
 		return false
 	}
 	if previousNonDebugInstrIsRunDefers(ret) {

@@ -2336,12 +2336,13 @@ func (p *context) callDeferStack(b llssa.Builder, act llssa.DoAction, call *ssa.
 	})
 }
 
-// Range-over-func yield closures defer into their enclosing non-synthetic
-// function frame, so walk past synthetic wrappers before selecting the owner.
+// Range-over-func yield closures defer into their enclosing function frame.
+// Only yield closures are transparent: generic instances are also synthetic,
+// but own real frames and must retain their deferred calls.
 // If the owner function has not been compiled yet, this helper will compile it
 // lazily so the explicit defer stack has a concrete LLVM function to target.
 func (p *context) deferStackOwner(fn *ssa.Function) llssa.Function {
-	for fn != nil && fn.Synthetic != "" {
+	for fn != nil && fn.Synthetic == rangeOverFuncYieldSynthetic {
 		fn = fn.Parent()
 	}
 	if fn == nil {
