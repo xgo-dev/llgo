@@ -20,7 +20,6 @@ import (
 	"go/types"
 	"strings"
 
-	"golang.org/x/tools/go/callgraph/rta"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 	"golang.org/x/tools/go/types/typeutil"
@@ -39,7 +38,7 @@ func configureWasmReflectBridges(ctx *context) {
 	}
 	target := ctx.prog.Target()
 	wasiProvider := target.GOARCH == "wasm" && target.WasmProvider == "wasi"
-	target.WasmReflectBridges = wasiProvider && wasmProgramUseFor(ctx).usesWasmReflectBridges()
+	target.WasmReflectBridges = wasiProvider && programUseFor(ctx).usesWasmReflectBridges()
 }
 
 // configureWasmFuncInfoEntries keeps table-index metadata out of ordinary
@@ -60,43 +59,14 @@ func configureWasmFuncInfoEntries(ctx *context) {
 		target.WasmFuncInfoEntries = true
 		return
 	}
-	target.WasmFuncInfoEntries = wasmProgramUseFor(ctx).usesRuntimeFuncForPC()
-}
-
-type wasmProgramUse struct {
-	rooted    bool
-	reachable map[*ssa.Function]struct{ AddrTaken bool }
-	all       map[*ssa.Function]bool
-}
-
-func wasmProgramUseFor(ctx *context) *wasmProgramUse {
-	if ctx == nil {
-		return nil
-	}
-	ctx.wasmProgramUseOnce.Do(func() {
-		ctx.wasmProgramUse = analyzeWasmProgramUse(ctx.progSSA, wasmReflectRoots(ctx))
-	})
-	return ctx.wasmProgramUse
-}
-
-func analyzeWasmProgramUse(prog *ssa.Program, roots []*ssa.Function) *wasmProgramUse {
-	use := &wasmProgramUse{rooted: len(roots) != 0}
-	if prog == nil {
-		return use
-	}
-	if use.rooted {
-		use.reachable = rta.Analyze(roots, false).Reachable
-	} else {
-		use.all = ssautil.AllFunctions(prog)
-	}
-	return use
+	target.WasmFuncInfoEntries = programUseFor(ctx).usesRuntimeFuncForPC()
 }
 
 // analyzeWasmInitialUse keeps feature analysis local to one initial package.
 // Executables use RTA from init/main. Entry-less packages have no whole-program
 // roots, so start RTA from their own functions rather than the union SSA program.
-func analyzeWasmInitialUse(prog *ssa.Program, pkg *types.Package) *wasmProgramUse {
-	use := &wasmProgramUse{all: make(map[*ssa.Function]bool)}
+func analyzeWasmInitialUse(prog *ssa.Program, pkg *types.Package) *programUse {
+	use := &programUse{all: make(map[*ssa.Function]bool)}
 	if prog == nil || pkg == nil {
 		return use
 	}
@@ -109,7 +79,7 @@ func analyzeWasmInitialUse(prog *ssa.Program, pkg *types.Package) *wasmProgramUs
 		if init := ssaPkg.Func("init"); init != nil {
 			roots = append(roots, init)
 		}
-		return analyzeWasmProgramUse(prog, roots)
+		return analyzeProgramUse(prog, roots)
 	}
 	var roots []*ssa.Function
 	for fn := range ssautil.AllFunctions(prog) {
@@ -118,33 +88,26 @@ func analyzeWasmInitialUse(prog *ssa.Program, pkg *types.Package) *wasmProgramUs
 		}
 	}
 	if len(roots) != 0 {
-		return analyzeWasmProgramUse(prog, roots)
+		return analyzeProgramUse(prog, roots)
 	}
 	return use
 }
 
 func programUsesRuntimeFuncForPC(prog *ssa.Program, roots []*ssa.Function) bool {
-	return analyzeWasmProgramUse(prog, roots).usesRuntimeFuncForPC()
+	return analyzeProgramUse(prog, roots).usesRuntimeFuncForPC()
 }
 
-func (use *wasmProgramUse) usesRuntimeFuncForPC() bool {
+func (use *programUse) usesRuntimeFuncForPC() bool {
 	if use == nil {
 		return false
 	}
-	if use.rooted {
-		for fn := range use.reachable {
-			if isRuntimeFuncForPC(fn) {
-				return true
-			}
+	found := false
+	use.eachFunction(func(fn *ssa.Function) {
+		if !found && isRuntimeFuncForPC(fn) {
+			found = true
 		}
-		return false
-	}
-	for fn := range use.all {
-		if isRuntimeFuncForPC(fn) {
-			return true
-		}
-	}
-	return false
+	})
+	return found
 }
 
 func isRuntimeFuncForPC(fn *ssa.Function) bool {
@@ -152,76 +115,61 @@ func isRuntimeFuncForPC(fn *ssa.Function) bool {
 		fn.Pkg.Pkg.Path() == "runtime" && fn.Name() == "FuncForPC"
 }
 
-func wasmReflectRoots(ctx *context) (roots []*ssa.Function) {
-	if ctx == nil || ctx.progSSA == nil {
-		return nil
-	}
-	for _, pkg := range ctx.initial {
-		if pkg == nil || pkg.Types == nil {
-			continue
-		}
-		ssaPkg := ctx.progSSA.Package(pkg.Types)
-		if ssaPkg == nil {
-			continue
-		}
-		for _, name := range []string{"init", "main"} {
-			if fn := ssaPkg.Func(name); fn != nil {
-				roots = append(roots, fn)
-			}
-		}
-	}
-	return roots
-}
-
 func programUsesWasmReflectBridges(prog *ssa.Program, roots []*ssa.Function) bool {
-	return analyzeWasmProgramUse(prog, roots).usesWasmReflectBridges()
+	return analyzeProgramUse(prog, roots).usesWasmReflectBridges()
 }
 
-func (use *wasmProgramUse) usesWasmReflectBridges() bool {
+func (use *programUse) usesWasmReflectBridges() bool {
 	if use == nil {
 		return false
 	}
-	if use.rooted {
-		for fn := range use.reachable {
-			if functionCallsWasmReflectBridge(fn) {
-				return true
-			}
+	found := false
+	use.eachFunction(func(fn *ssa.Function) {
+		if !found && functionCallsWasmReflectBridge(fn) {
+			found = true
 		}
+	})
+	if found {
+		return true
+	}
+	if use.rooted {
 		// RTA conservatively retains wrapper methods for address-taken
 		// reflect.Value values. Require an actual direct call above, or a
 		// plausible indirect function/interface call here, so ordinary value
 		// inspection (notably fmt) does not turn on every typed bridge.
-		return programMayCallWasmReflectBridgeIndirectly(use.reachable)
-	}
-	for fn := range use.all {
-		if functionCallsWasmReflectBridge(fn) {
-			return true
-		}
+		return programMayCallWasmReflectBridgeIndirectly(use)
 	}
 	return false
 }
 
-func programMayCallWasmReflectBridgeIndirectly(reachable map[*ssa.Function]struct{ AddrTaken bool }) bool {
+func programMayCallWasmReflectBridgeIndirectly(use *programUse) bool {
+	if use == nil {
+		return false
+	}
 	var functionSignatures typeutil.Map
-	for fn := range reachable {
-		if fn == nil || ssaFunctionPackagePath(fn) != reflectPackagePath {
-			continue
+	found := false
+	use.eachFunction(func(fn *ssa.Function) {
+		if found || fn == nil || ssaFunctionPackagePath(fn) != reflectPackagePath {
+			return
 		}
 		// RTA creates thunks and bound wrappers only when a method is used as
 		// a function value. Plain pointer wrappers retain the original name.
 		if name, suffix, ok := strings.Cut(fn.Name(), "$"); ok {
 			if fn.Parent() == nil && suffix != "" && isWasmReflectBridgeName(name) {
-				return true
+				found = true
 			}
-			continue
+			return
 		}
 		if isWasmReflectBridgeFunction(fn) && fn.Signature.Recv() == nil {
 			functionSignatures.Set(fn.Signature, struct{}{})
 		}
+	})
+	if found {
+		return true
 	}
-	for fn := range reachable {
-		if fn == nil || ssaFunctionPackagePath(fn) == reflectPackagePath {
-			continue
+	use.eachFunction(func(fn *ssa.Function) {
+		if found || fn == nil || ssaFunctionPackagePath(fn) == reflectPackagePath {
+			return
 		}
 		for _, block := range fn.Blocks {
 			for _, instruction := range block.Instrs {
@@ -231,15 +179,17 @@ func programMayCallWasmReflectBridgeIndirectly(reachable map[*ssa.Function]struc
 				}
 				common := call.Common()
 				if common.IsInvoke() && common.Method != nil && isWasmReflectBridgeName(common.Method.Name()) {
-					return true
+					found = true
+					return
 				}
 				if !common.IsInvoke() && functionSignatures.At(common.Signature()) != nil {
-					return true
+					found = true
+					return
 				}
 			}
 		}
-	}
-	return false
+	})
+	return found
 }
 
 func functionCallsWasmReflectBridge(fn *ssa.Function) bool {
@@ -278,19 +228,4 @@ func isWasmReflectBridgeName(name string) bool {
 	default:
 		return false
 	}
-}
-
-func ssaFunctionPackagePath(fn *ssa.Function) string {
-	if fn == nil {
-		return ""
-	}
-	if pkg := fn.Package(); pkg != nil && pkg.Pkg != nil {
-		return pkg.Pkg.Path()
-	}
-	if obj := fn.Object(); obj != nil {
-		if pkg := obj.Pkg(); pkg != nil {
-			return pkg.Path()
-		}
-	}
-	return ""
 }

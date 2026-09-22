@@ -1,4 +1,4 @@
-//go:build !llgo || !wasm || !wasip1
+//go:build (!llgo || !wasm || !wasip1) && !llgo_noffi
 
 package reflect
 

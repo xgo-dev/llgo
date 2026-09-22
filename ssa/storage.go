@@ -215,11 +215,28 @@ func (b Builder) fromStorageValue(t Type, value llvm.Value) llvm.Value {
 func (p Program) toStorageConstant(t Type, value llvm.Value) llvm.Value {
 	if p.needsWidePointerStorage(t) {
 		storage := p.widePointerStorageType()
+		if value.Type() == storage {
+			return value
+		}
 		parts := storage.StructElementTypes()
 		return p.ctx.ConstStruct([]llvm.Value{
 			value,
 			llvm.ConstNull(parts[1]),
 		}, false)
+	}
+	if value.Type() == t.ll {
+		return value
+	}
+	if p.usesWideGoStorage() && t.kind == vkArray {
+		if arr, ok := types.Unalias(t.raw.Type).(*types.Array); ok {
+			elem := p.Index(t)
+			n := int(arr.Len())
+			elems := make([]llvm.Value, n)
+			for i := 0; i < n; i++ {
+				elems[i] = p.toStorageConstant(elem, value.Operand(i))
+			}
+			return llvm.ConstArray(p.storageType(elem), elems)
+		}
 	}
 	return p.fitLLVMConstant(value, t, t.ll)
 }

@@ -39,6 +39,95 @@ func TestConstBool(t *testing.T) {
 	}
 }
 
+func TestSetFinalizerLoweringTargetsRuntimeOnly(t *testing.T) {
+	const source = `package foo
+import "runtime"
+type T int
+func finalizer(*T) {}
+func runtimeCall(p *T) { runtime.SetFinalizer(p, finalizer) }
+func clearRuntimeCall(p *T) { runtime.SetFinalizer(p, nil) }
+func deferredRuntimeCall(p *T) { defer runtime.SetFinalizer(p, finalizer) }
+func SetFinalizer(any, any) {}
+func userCall(p *T) { SetFinalizer(p, finalizer) }`
+	_, module := mustCompileLLPkgFromSrc(t, source)
+	runtimeCall := mustNamedFunction(t, module, "foo.runtimeCall").String()
+	if !strings.Contains(runtimeCall, "SetFinalizerPtr") || strings.Contains(runtimeCall, "runtime.SetFinalizer(") {
+		t.Fatal("runtime.SetFinalizer was not lowered")
+	}
+	clear := mustNamedFunction(t, module, "foo.clearRuntimeCall").String()
+	if !strings.Contains(clear, "SetFinalizerPtr") || strings.Contains(clear, "runtime.SetFinalizer(") {
+		t.Fatal("nil runtime.SetFinalizer was not lowered")
+	}
+	deferred := mustNamedFunction(t, module, "foo.deferredRuntimeCall").String()
+	if !strings.Contains(deferred, "SetFinalizerPtr") || strings.Contains(deferred, "runtime.SetFinalizer(") {
+		t.Fatal("deferred runtime.SetFinalizer was not lowered")
+	}
+	if strings.Contains(mustNamedFunction(t, module, "foo.userCall").String(), "SetFinalizerPtr") {
+		t.Fatal("user-defined SetFinalizer was lowered")
+	}
+}
+
+func TestSetFinalizerLoweringSkipsWasm(t *testing.T) {
+	const source = `package foo
+import "runtime"
+type T int
+func finalizer(*T) {}
+func runtimeCall(p *T) { runtime.SetFinalizer(p, finalizer) }`
+	ssaPkg, _, files := buildGoSSAPkg(t, source)
+	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
+	if _, err := NewPackage(prog, ssaPkg, files); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSetFinalizerNamedInterfaceLowering(t *testing.T) {
+	const source = `package foo
+import "runtime"
+type T int
+func (p *T) Value() int { return int(*p) }
+func finalizeAny(v any) {}
+func finalizeIface(v interface{ Value() int }) {}
+func runtimeAny(p *T) { runtime.SetFinalizer(p, finalizeAny) }
+func runtimeIface(p *T) { runtime.SetFinalizer(p, finalizeIface) }`
+	_, module := mustCompileLLPkgFromSrc(t, source)
+	for _, name := range []string{"foo.runtimeAny", "foo.runtimeIface"} {
+		ir := mustNamedFunction(t, module, name).String()
+		if !strings.Contains(ir, "SetFinalizerPtr") || strings.Contains(ir, "runtime.SetFinalizer(") {
+			t.Fatalf("%s was not lowered:\n%s", name, ir)
+		}
+	}
+}
+
+func TestMethodValueInterfaceEmitsThunk(t *testing.T) {
+	const source = `package foo
+import "reflect"
+type T int
+func (t *T) M(x int) int { return 40 + x }
+func use() int {
+	return reflect.ValueOf(new(T)).MethodByName("M").Interface().(func(int) int)(2)
+}`
+	_, module := mustCompileLLPkgFromSrc(t, source)
+	ir := module.String()
+	if !strings.Contains(ir, "$methodvalue") {
+		t.Fatalf("missing method value thunk:\n%s", ir)
+	}
+}
+
+func TestSetFinalizerClosureIsNotLowered(t *testing.T) {
+	const source = `package foo
+import "runtime"
+type T int
+func runtimeCall(p *T) {
+	n := 1
+	runtime.SetFinalizer(p, func(*T) { _ = n })
+}`
+	_, module := mustCompileLLPkgFromSrc(t, source)
+	ir := mustNamedFunction(t, module, "foo.runtimeCall").String()
+	if strings.Contains(ir, "SetFinalizerPtr") {
+		t.Fatal("capturing finalizer closure should not be lowered")
+	}
+}
+
 func TestCompileTailUnreachableOmitsSyntheticReturn(t *testing.T) {
 	_, m := mustCompileLLPkgFromSrc(t, `
 package foo

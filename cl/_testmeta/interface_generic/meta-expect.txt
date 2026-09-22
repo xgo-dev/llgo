@@ -11,6 +11,7 @@ _llgo_main.Box[int]:
 *_llgo_main.Box[int]:
     _llgo_main.Box[int]
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequalptr
+    main.(*Box[int]).Value$methodvalue
 _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA:
     _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA$out
 _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA$out:
@@ -28,6 +29,9 @@ _llgo_main.Box[int]:
     github.com/xgo-dev/llgo/runtime/internal/runtime.structequal
 github.com/xgo-dev/llgo/cl/_testmeta/interface_generic.struct$lOhriNu2BrWBR2Mh8k-KggMYlAw0Wx-2ftE2_gNyubg$fields:
     _llgo_int
+main.(*Box[int]).Value$methodvalue:
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+    main.(*Box[int]).Value
 main.init:
     main.init$guard
 main.main:

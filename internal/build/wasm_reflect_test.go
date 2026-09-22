@@ -80,8 +80,8 @@ func TestConfigureWasmReflectBridges(t *testing.T) {
 	}
 
 	configureWasmReflectBridges(nil)
-	if roots := wasmReflectRoots(nil); roots != nil {
-		t.Fatalf("wasmReflectRoots(nil) = %v", roots)
+	if roots := programUseRoots(nil); roots != nil {
+		t.Fatalf("programUseRoots(nil) = %v", roots)
 	}
 }
 
@@ -179,12 +179,12 @@ func main() {
 	}
 
 	configureWasmReflectBridges(ctx)
-	analysis := ctx.wasmProgramUse
+	analysis := ctx.programUse
 	if analysis == nil {
 		t.Fatal("reflection configuration did not analyze the WebAssembly program")
 	}
 	configureWasmFuncInfoEntries(ctx)
-	if ctx.wasmProgramUse != analysis {
+	if ctx.programUse != analysis {
 		t.Fatal("reflection bridges and function metadata used different program analyses")
 	}
 	if !target.WasmReflectBridges || !target.WasmFuncInfoEntries {

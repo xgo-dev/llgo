@@ -455,6 +455,91 @@ func TestWasm32NativeStructAndGCRootStorage(t *testing.T) {
 	}
 }
 
+func TestWasm32ToStorageConstantWidePointerAndArray(t *testing.T) {
+	prog := newJ32Program(t)
+	ptr := prog.Pointer(prog.Byte())
+	nullPtr := llvm.ConstNull(ptr.ll)
+	stored := prog.toStorageConstant(ptr, nullPtr)
+	storage := prog.widePointerStorageType()
+	if stored.Type() != storage {
+		t.Fatalf("wide pointer storage type = %s, want %s", stored.Type(), storage)
+	}
+	if got := prog.toStorageConstant(ptr, stored); got != stored {
+		t.Fatal("already-wide pointer storage was rewritten")
+	}
+
+	array := prog.rawType(types.NewArray(ptr.RawType(), 2))
+	if array.kind != vkArray {
+		t.Fatalf("array kind = %d, want vkArray", array.kind)
+	}
+	elem0 := llvm.ConstIntToPtr(llvm.ConstInt(prog.ctx.Int32Type(), 1, false), ptr.ll)
+	elem1 := llvm.ConstIntToPtr(llvm.ConstInt(prog.ctx.Int32Type(), 2, false), ptr.ll)
+	logical := llvm.ConstArray(ptr.ll, []llvm.Value{elem0, elem1})
+	if logical.Type() == array.ll {
+		t.Fatal("logical pointer array already used wide storage")
+	}
+	if logical.OperandsCount() != 2 {
+		t.Fatalf("logical array has %d operands, want 2", logical.OperandsCount())
+	}
+	converted := prog.toStorageConstant(array, logical)
+	want := llvm.ArrayType(prog.storageType(prog.Index(array)), 2)
+	if converted.Type() != want {
+		t.Fatalf("array storage type = %s, want %s", converted.Type(), want)
+	}
+	if converted.OperandsCount() != 2 {
+		t.Fatalf("converted array has %d elements, want 2", converted.OperandsCount())
+	}
+	for i := 0; i < 2; i++ {
+		if converted.Operand(i).Type() != storage {
+			t.Fatalf("element %d type = %s, want %s", i, converted.Operand(i).Type(), storage)
+		}
+	}
+}
+
+func TestWasm32AbiTypeDescriptorsVerify(t *testing.T) {
+	prog := newJ32Program(t)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	goPkg := types.NewPackage("example.com/pkg", "pkg")
+	named := types.NewNamed(types.NewTypeName(token.NoPos, goPkg, "T", nil), types.NewStruct(nil, nil), nil)
+	namedRecv := types.NewVar(token.NoPos, goPkg, "", named)
+	named.AddMethod(types.NewFunc(token.NoPos, goPkg, "M", types.NewSignatureType(namedRecv, nil, nil, nil, nil, false)))
+
+	errStr := types.NewNamed(types.NewTypeName(token.NoPos, goPkg, "errUnmarshalChaCha8", nil), types.Typ[types.String], nil)
+	errRecv := types.NewVar(token.NoPos, goPkg, "", errStr)
+	errResults := types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.String]))
+	errStr.AddMethod(types.NewFunc(token.NoPos, goPkg, "Error", types.NewSignatureType(errRecv, nil, nil, nil, errResults, false)))
+
+	fnType := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, nil, "x", types.Typ[types.Int])),
+		types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.String])),
+		false)
+
+	pkg := prog.NewPackage("pkg", goPkg.Path())
+	fn := pkg.NewFunc("example.com/pkg.use", NoArgsNoRet, InGo)
+	b := fn.MakeBody(1)
+	b.abiType(named)
+	b.abiType(types.NewPointer(named))
+	b.abiType(errStr)
+	b.abiType(types.NewPointer(errStr))
+	b.abiType(fnType)
+	b.Return()
+	b.EndBuild()
+
+	ir := pkg.Module().String()
+	if !strings.Contains(ir, `[1 x { ptr, i32 }] [{ ptr, i32 } { ptr @"example.com/pkg.(*T).M$methodvalue", i32 0 }]`) {
+		t.Fatalf("J32 method-value thunk array was not stored as Go64 wide pointers:\n%s", ir)
+	}
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("J32 type descriptors failed LLVM verification: %v\n%s", err, ir)
+	}
+}
+
 func TestWasm32DirectInterfaceUnwrapsPointerStorage(t *testing.T) {
 	prog := newJ32Program(t)
 	prog.SetRuntime(func() *types.Package {

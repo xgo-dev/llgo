@@ -178,6 +178,25 @@ func TestMethodArray(t *testing.T) {
 		t.Fatalf("methodArray returned %d fields, want 4", elemTy.StructElementTypesCount())
 	}
 
+	ptrTy := llvm.PointerType(ctx.Int8Type(), 0)
+	nullPtr := llvm.ConstNull(ptrTy)
+	thunks := llvm.ConstArray(ptrTy, []llvm.Value{nullPtr, nullPtr})
+	initWithThunks := llvm.ConstStruct([]llvm.Value{
+		llvm.ConstNull(ctx.Int8Type()),
+		methods,
+		thunks,
+	}, false)
+	methodsVal, elemTy, ok = methodArray(initWithThunks)
+	if !ok {
+		t.Fatal("methodArray failed to skip a trailing method-value thunk array")
+	}
+	if methodsVal.OperandsCount() != 2 {
+		t.Fatalf("methodArray behind thunks returned %d methods, want 2", methodsVal.OperandsCount())
+	}
+	if elemTy.StructName() != abiMethodTypeName {
+		t.Fatalf("methodArray behind thunks returned %s, want %s", elemTy.StructName(), abiMethodTypeName)
+	}
+
 	arrayOfInts := llvm.ConstArray(ctx.Int8Type(), []llvm.Value{intValue})
 	wrongFieldsTy := ctx.StructType([]llvm.Type{ctx.Int8Type(), ctx.Int8Type(), ctx.Int8Type()}, false)
 	wrongFields := llvm.ConstNamedStruct(wrongFieldsTy, []llvm.Value{intValue, intValue, intValue})
@@ -202,6 +221,77 @@ func TestMethodArray(t *testing.T) {
 				t.Fatalf("methodArray recognized invalid initializer: %s", tt.name)
 			}
 		})
+	}
+}
+
+func TestEmitStrongTypeOverridesRewritesMethodValueThunks(t *testing.T) {
+	srcCtx := llvm.NewContext()
+	defer srcCtx.Dispose()
+	dstCtx := llvm.NewContext()
+	defer dstCtx.Dispose()
+
+	ir := `
+%"github.com/xgo-dev/llgo/runtime/abi.Method" = type { %runtime.String, ptr, ptr, ptr }
+%runtime.String = type { ptr, i64 }
+
+@drop.name = private constant [4 x i8] c"Drop"
+@run.name = private constant [3 x i8] c"Run"
+@method.type = external constant i8
+
+@_llgo_main.Task = weak_odr constant { i32, [2 x %"github.com/xgo-dev/llgo/runtime/abi.Method"], [2 x ptr] } {
+  i32 2,
+  [2 x %"github.com/xgo-dev/llgo/runtime/abi.Method"] [
+    %"github.com/xgo-dev/llgo/runtime/abi.Method" { %runtime.String { ptr @drop.name, i64 4 }, ptr @method.type, ptr @Drop, ptr @Drop },
+    %"github.com/xgo-dev/llgo/runtime/abi.Method" { %runtime.String { ptr @run.name, i64 3 }, ptr @method.type, ptr @Run, ptr @Run }
+  ],
+  [2 x ptr] [ptr @DropThunk, ptr @RunThunk]
+}, align 8
+
+declare void @Drop()
+declare void @Run()
+declare void @DropThunk()
+declare void @RunThunk()
+`
+	path := filepath.Join(t.TempDir(), "thunks.ll")
+	if err := os.WriteFile(path, []byte(ir), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := parseModule(t, &srcCtx, path)
+	defer src.Dispose()
+	dst := dstCtx.NewModule("dst")
+	defer dst.Dispose()
+
+	EmitStrongTypeOverrides(dst, []llvm.Module{src}, map[string][]int{
+		"_llgo_main.Task": {1},
+	}, false)
+	if err := llvm.VerifyModule(dst, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("thunk override is invalid: %v\n%s", err, dst.String())
+	}
+
+	global := dst.NamedGlobal("_llgo_main.Task")
+	if global.IsNil() {
+		t.Fatal("missing rewritten ABI type")
+	}
+	init := global.Initializer()
+	if init.OperandsCount() != 3 {
+		t.Fatalf("ABI type has %d fields, want 3", init.OperandsCount())
+	}
+	thunks := init.Operand(2)
+	if thunks.OperandsCount() != 2 {
+		t.Fatalf("thunk array has %d slots, want 2", thunks.OperandsCount())
+	}
+	if got := thunks.Operand(0).Name(); got != unreachableMethodName {
+		t.Fatalf("dropped thunk = %q, want %q", got, unreachableMethodName)
+	}
+	if got := thunks.Operand(1).Name(); got != "RunThunk" {
+		t.Fatalf("live thunk = %q, want RunThunk", got)
+	}
+	methods := init.Operand(1)
+	if got := methodPointerName(methods.Operand(0).Operand(2)); got != unreachableMethodName {
+		t.Fatalf("dropped method ifn = %q, want %q", got, unreachableMethodName)
+	}
+	if got := methodPointerName(methods.Operand(1).Operand(2)); got != "Run" {
+		t.Fatalf("live method ifn = %q, want Run", got)
 	}
 }
 

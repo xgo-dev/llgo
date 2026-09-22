@@ -105,6 +105,8 @@ const (
 	// import is not listed, Asyncify cannot unwind a sleeping Go function
 	// invoked by reflect.Value.Call / MakeFunc.
 	emscriptenAsyncifyImports = "-sASYNCIFY_IMPORTS=llgo_wasm_host_wait_async,ffi_call_js"
+	// noffi / llgo_methodvalue_noffi builds have no libffi JS trampoline.
+	emscriptenAsyncifyImportsNoffi = "-sASYNCIFY_IMPORTS=llgo_wasm_host_wait_async"
 	// libffi's JavaScript closure trampoline recreates its temporary return and
 	// argument buffers during rewind. Keep the three thin entry functions out
 	// of Asyncify so each replay observes the current trampoline buffers; their
@@ -821,7 +823,37 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, wasiThreads, forceEspC
 		err = errors.New("unsupported GOOS for WebAssembly: " + goos)
 		return
 	}
+	if ltoMode.Enabled() {
+		// Wasm package IR is compiled with clang/emcc -c. Without -flto,
+		// clang fully lowers lto-pre-link IR through wasm isel. Pass the
+		// LTO flag so those compiles emit bitcode and the linker can DCE
+		// unused method-value thunks under -lto=full.
+		flag := ltoMode.ClangFlag()
+		export.CCFLAGS = append(export.CCFLAGS, flag)
+		export.LDFLAGS = append(export.LDFLAGS, flag)
+	}
 	return
+}
+
+// ApplyEmscriptenNoffiAsyncify drops libffi-only Asyncify flags. noffi and
+// llgo_methodvalue_noffi builds use ABI method-value thunks instead of
+// llgo_reflect_bind*_js, so those ASYNCIFY_REMOVE patterns do not match.
+func ApplyEmscriptenNoffiAsyncify(export *Export) {
+	if export == nil {
+		return
+	}
+	flags := make([]string, 0, len(export.LDFLAGS))
+	for _, flag := range export.LDFLAGS {
+		switch flag {
+		case emscriptenAsyncifyRemove:
+			continue
+		case emscriptenAsyncifyImports:
+			flags = append(flags, emscriptenAsyncifyImportsNoffi)
+			continue
+		}
+		flags = append(flags, flag)
+	}
+	export.LDFLAGS = flags
 }
 
 func appendEmscriptenLibffiSearchPath(export *Export, llgoRoot string, wasmProfile WasmProfile) {

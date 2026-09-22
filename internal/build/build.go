@@ -134,15 +134,20 @@ type OutFmtDetails struct {
 type ModuleHook func(pkg Package)
 
 type Config struct {
-	Goos               string
-	Goarch             string
-	GO386              string // 386 floating-point implementation: sse2 or softfloat
-	GOAMD64            string // amd64 microarchitecture level: v1 through v4
-	GOARM              string // arm architecture and floating-point implementation
-	GOARM64            string // arm64 ISA version and optional lse/crypto extensions
-	Target             string // target name (e.g., "rp2040", "wasi") - takes precedence over Goos/Goarch
-	OptLevel           optlevel.Level
-	LTO                lto.Mode
+	Goos     string
+	Goarch   string
+	GO386    string // 386 floating-point implementation: sse2 or softfloat
+	GOAMD64  string // amd64 microarchitecture level: v1 through v4
+	GOARM    string // arm architecture and floating-point implementation
+	GOARM64  string // arm64 ISA version and optional lse/crypto extensions
+	Target   string // target name (e.g., "rp2040", "wasi") - takes precedence over Goos/Goarch
+	OptLevel optlevel.Level
+	LTO      lto.Mode
+	// CheckFFI selects reflect/runtime without libffi when the package graph
+	// does not use libffi. A Go SSA reachability scan decides this before the
+	// LLVM backend and LTO run, so those stages execute once. WASI Preview 1
+	// skips the scan: it has no host libffi and uses typed reflection bridges.
+	CheckFFI           bool
 	LTOPlugin          lto.PassPlugin
 	BinPath            string
 	AppExt             string  // ".exe" on Windows, empty on Unix
@@ -227,6 +232,7 @@ type Config struct {
 	// fixtures that intentionally avoid importing github.com/goplus/lib/py.
 	// Production callers leave this nil; the provider is evaluated once per Do.
 	TestPythonPackage func() *types.Package
+	noFFIRestart      bool // internal: this build already restarted with noffi reflect tags
 }
 
 type Rewrites map[string]string
@@ -532,6 +538,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	export, err := crosscompile.UseWithGOARMAndToolchain(conf.Goos, conf.Goarch, conf.GOARM, conf.Target, IsWasiThreadsEnabled(), forceEspClang, conf.OptLevel, conf.ltoMode(), conf.goGlobalDCEEnabled(), nativeInput)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup crosscompile: %w", err)
+	}
+	if hasBuildTag(conf.Tags, "llgo_noffi") {
+		crosscompile.ApplyEmscriptenNoffiAsyncify(&export)
 	}
 	// Update GOOS/GOARCH from export if target was used
 	if conf.Target != "" && export.GOOS != "" {
@@ -890,15 +899,18 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	allPkgs = append(allPkgs, depPkgs...)
+	if shouldScanFFI(ctx.buildConf) && hasLinkedReflect(allPkgs) && !programUsesLibffi(ctx) {
+		err = errRestartWithoutFFI
+	}
 	var nativeTestRoots []*packages.Package
-	if mode == ModeTest && !inv.compileOnly {
+	if err == nil && mode == ModeTest && !inv.compileOnly {
 		for _, pkg := range initial {
 			if needLink(pkg, mode) {
 				nativeTestRoots = append(nativeTestRoots, pkg)
 			}
 		}
 	}
-	if canUseNativeTestDAG(ctx, len(nativeTestRoots)) {
+	if err == nil && canUseNativeTestDAG(ctx, len(nativeTestRoots)) {
 		dagResult, buildErr := runNativeTestDAG(ctx, allPkgs, nativeTestRoots, conf, verbose)
 		fallback = nil
 		ctx.disposeBackendPrograms()
@@ -925,7 +937,20 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		}
 		return allPkgs, errors.Join(errs...)
 	}
-	allPkgs, err = buildAllPkgs(ctx, allPkgs, verbose)
+	if err == nil {
+		allPkgs, err = buildAllPkgs(ctx, allPkgs, verbose)
+	}
+	if errors.Is(err, errRestartWithoutFFI) {
+		if verbose {
+			fmt.Fprintln(os.Stderr, "check-libffi: no libffi uses; compiling reflect/runtime without libffi")
+		}
+		restarted := conf.clone()
+		restarted.Tags = appendBuildTag(restarted.Tags, "llgo_noffi")
+		restarted.Tags = appendBuildTag(restarted.Tags, "llgo_methodvalue_noffi")
+		restarted.noFFIRestart = true
+		return Build(Invocation{Args: inv.Args, Config: restarted, Dir: dir,
+			compileOnly: inv.compileOnly, disableMultiFallback: inv.disableMultiFallback})
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -975,6 +1000,54 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 
 	return allPkgs, errors.Join(linkErrs...)
+}
+
+// errRestartWithoutFFI asks Build to reload with noffi tags after a Go SSA
+// scan found no libffi uses. The LLVM backend and LTO then run once on the
+// noffi graph instead of compiling the libffi graph first.
+var errRestartWithoutFFI = errors.New("restart build without libffi")
+
+func shouldScanFFI(conf *Config) bool {
+	return conf != nil && conf.CheckFFI && !conf.noFFIRestart && !hasBuildTag(conf.Tags, "llgo_noffi") && !wasiSkipsLibffiScan(conf)
+}
+
+// wasiSkipsLibffiScan reports WASI Preview 1 targets. They have no host libffi
+// and use typed reflection bridges, so the noffi restart must not run.
+func wasiSkipsLibffiScan(conf *Config) bool {
+	if conf == nil {
+		return false
+	}
+	switch conf.Goos {
+	case "wasip1", "wasi":
+		return true
+	}
+	target := conf.Target
+	return target == "wasi" || target == "wasip1" || strings.HasPrefix(target, "wasi")
+}
+
+func hasLinkedReflect(pkgs []*aPackage) bool {
+	for _, pkg := range pkgs {
+		if pkg != nil && pkg.Package != nil && pkg.PkgPath == "reflect" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasBuildTag(tags, want string) bool {
+	for _, tag := range strings.Split(tags, ",") {
+		if strings.TrimSpace(tag) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func appendBuildTag(tags, tag string) string {
+	if tags == "" {
+		return tag
+	}
+	return tags + "," + tag
 }
 
 func useShadowStack(goarch string) bool {
@@ -1533,8 +1606,8 @@ type context struct {
 
 	buildTrace *buildTracer
 
-	wasmProgramUseOnce sync.Once
-	wasmProgramUse     *wasmProgramUse
+	programUseOnce sync.Once
+	programUse     *programUse
 }
 
 // backendAbiTypes snapshots Go-owned type identities from isolated Programs
@@ -2211,7 +2284,6 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 				methodByName[k] = none{}
 			}
 		}
-
 		linkArgs = append(linkArgs, aPkg.LinkArgs...)
 		if aPkg.ArchiveFile != "" {
 			archiveInputs = append(archiveInputs, aPkg.ArchiveFile)

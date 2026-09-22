@@ -8,6 +8,8 @@ _llgo_main.T:
 *_llgo_main.T:
     _llgo_main.T
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequalptr
+    main.(*T).M$methodvalue
+    main.(*T).N$methodvalue
 _llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo:
     _llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo$imethods
     github.com/xgo-dev/llgo/runtime/internal/runtime.interequal
@@ -16,14 +18,22 @@ _llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo$imethods:
 _llgo_main.T:
     *_llgo_main.T
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequal0
+    main.(*T).M$methodvalue
+    main.(*T).N$methodvalue
 main.(*T).M:
     github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
     github.com/xgo-dev/llgo/runtime/internal/runtime.PanicWrapNilPointer
     main.T.M
+main.(*T).M$methodvalue:
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+    main.(*T).M
 main.(*T).N:
     github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
     github.com/xgo-dev/llgo/runtime/internal/runtime.PanicWrapNilPointer
     main.T.N
+main.(*T).N$methodvalue:
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
+    main.(*T).N
 main.init:
     main.init$guard
 main.main:

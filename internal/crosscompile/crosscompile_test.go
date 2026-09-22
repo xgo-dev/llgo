@@ -308,6 +308,37 @@ func TestUseWASILTOEnablesSjLjAtLink(t *testing.T) {
 	}
 }
 
+func TestUseWasmLTOCompilesIRToBitcode(t *testing.T) {
+	js, err := use("js", "wasm", false, false, optlevel.O2, lto.Full, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(js.CCFLAGS, "-flto=full") {
+		t.Fatalf("js/wasm CCFLAGS missing -flto=full: %v", js.CCFLAGS)
+	}
+	if !slices.Contains(js.LDFLAGS, "-flto=full") {
+		t.Fatalf("js/wasm LDFLAGS missing -flto=full: %v", js.LDFLAGS)
+	}
+
+	thin, err := use("js", "wasm", false, false, optlevel.O2, lto.Thin, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(thin.CCFLAGS, "-flto=thin") {
+		t.Fatalf("js/wasm CCFLAGS missing -flto=thin: %v", thin.CCFLAGS)
+	}
+
+	off, err := use("js", "wasm", false, false, optlevel.O2, lto.Off, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, flag := range off.CCFLAGS {
+		if strings.HasPrefix(flag, "-flto") {
+			t.Fatalf("js/wasm CCFLAGS unexpectedly enable LTO: %v", off.CCFLAGS)
+		}
+	}
+}
+
 func TestUseTarget(t *testing.T) {
 	// Test cases for target-based configuration
 	testCases := []struct {
@@ -652,6 +683,32 @@ func TestEmscriptenLibffiSearchPath(t *testing.T) {
 	}
 	if slices.Contains(wasi.LDFLAGS, wantL) || slices.Contains(wasi.LDFLAGS, emscriptenAllowTableGrowth) {
 		t.Errorf("wasip1/wasm LDFLAGS %v unexpectedly include Emscripten libffi flags", wasi.LDFLAGS)
+	}
+}
+
+func TestApplyEmscriptenNoffiAsyncify(t *testing.T) {
+	ApplyEmscriptenNoffiAsyncify(nil)
+
+	js, err := use("js", "wasm", false, false, optlevel.O2, lto.Off, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(js.LDFLAGS, emscriptenAsyncifyRemove) {
+		t.Fatalf("js/wasm LDFLAGS %v do not keep libffi bind entries out of Asyncify", js.LDFLAGS)
+	}
+	if !slices.Contains(js.LDFLAGS, emscriptenAsyncifyImports) {
+		t.Fatalf("js/wasm LDFLAGS %v do not mark ffi_call_js as async", js.LDFLAGS)
+	}
+
+	ApplyEmscriptenNoffiAsyncify(&js)
+	if slices.Contains(js.LDFLAGS, emscriptenAsyncifyRemove) {
+		t.Fatalf("noffi js/wasm LDFLAGS %v still name missing llgo_reflect_bind*_js patterns", js.LDFLAGS)
+	}
+	if slices.Contains(js.LDFLAGS, emscriptenAsyncifyImports) {
+		t.Fatalf("noffi js/wasm LDFLAGS %v still import ffi_call_js", js.LDFLAGS)
+	}
+	if !slices.Contains(js.LDFLAGS, emscriptenAsyncifyImportsNoffi) {
+		t.Fatalf("noffi js/wasm LDFLAGS %v dropped the host wait import", js.LDFLAGS)
 	}
 }
 
