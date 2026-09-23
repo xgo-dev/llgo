@@ -13,8 +13,8 @@ never LLVM values. Consumers must not modify published records.
    identities and therefore distinct records.
 2. The loader registers each selected AST with the Store. A File snapshot records
    normalized comment groups, function properties, package-wide links, internal
-   directives, embed directives, cgo pragmas and C preambles. Existing syntax
-   dialects remain separate where their accepted spelling or precedence differs.
+   directives and embed directives. Existing syntax dialects remain separate where
+   their accepted spelling or precedence differs.
 3. `cl.ParsePkgSyntaxWithOptions` validates trust and declaration placement and
    creates a `directive.Package`. Declaration records belong to source nodes in
    a particular `types.Package` instance. Type-dependent locality and embed checks
@@ -40,7 +40,7 @@ never LLVM values. Consumers must not modify published records.
 | Declaration | Link/export names; symbol creation and export preservation |
 | Type | Go/C/stdcall background; ABI and layout |
 | Comment group | Locality/internal directive inputs and placement diagnostics |
-| File/package | Embed patterns, cgo flags/imports/preambles, source patch commands and package skip decisions |
+| File/package | Embed patterns, source patch commands and package skip decisions |
 
 Source declarations that share a linker name remain distinct. Object keys retain
 receiver aliases and generic origin identity; package keys distinguish test and
@@ -54,6 +54,15 @@ The refactor preserves diagnostic timing: recognition can record a malformed
 value early, while the existing owning phase reports it. It also preserves
 source-order precedence, exact legacy spellings, trailing-comment rules,
 internal-directive trust checks and existing invalid-directive behavior.
+
+## Cgo scope
+
+Cgo-specific processing is outside this refactor. C preambles, `#cgo` commands,
+`go:cgo_ldflag`, and `go:cgo_import_dynamic` retain their existing parsing and
+consumption paths in `internal/build`, including platform-specific import and
+link handling. Their parsed flags, imports and preambles are not stored in the
+directive Store or subject to its discovery freeze. General declaration link/export records remain shared
+compiler infrastructure.
 
 ## Standalone entrypoints and remaining source use
 
@@ -76,5 +85,6 @@ Source-free cache hits and serialized declaration exports require separate work.
 - A compiler test removes original comments after preparation and verifies the
   resulting LLVM module and attributes.
 - Generic instance and patch replacement tests verify source/object association.
-- Existing compiler, loader, locality, embed, cgo and source-patch suites preserve
+- Existing compiler, loader, locality, embed and source-patch suites preserve
   diagnostics and runtime behavior across the migrated consumers.
+- Existing cgo tests check interoperability with the unchanged cgo pipeline.
