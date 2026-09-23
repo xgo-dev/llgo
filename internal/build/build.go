@@ -3103,7 +3103,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 		if aPkg.AltPkg != nil {
 			pragmaSyntax = append(pragmaSyntax, aPkg.AltPkg.Syntax...)
 		}
-		if err := lowerWindowsCgoImportPointers(ctx.buildConf.Goos, ctx.buildConf.Goarch, pkgPath, ctx.prog.Directives().Files(pragmaSyntax), ret.Module()); err != nil {
+		if err := lowerWindowsCgoImportPointers(ctx.buildConf.Goos, ctx.buildConf.Goarch, pkgPath, pragmaSyntax, ret.Module()); err != nil {
 			return err
 		}
 	}
@@ -3154,7 +3154,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 		return fmt.Errorf("build LLGoFiles of %v failed: %w", pkgPath, err)
 	}
 	aPkg.appendTemporaryObjFiles(llgoFiles...)
-	if aliasObjs, err := buildGoCgoAliasObjects(ctx, pkgPath, ctx.prog.Directives().Files(aPkg.Package.Syntax), printCmds); err != nil {
+	if aliasObjs, err := buildGoCgoAliasObjects(ctx, pkgPath, aPkg.Package.Syntax, printCmds); err != nil {
 		return err
 	} else {
 		aPkg.ObjFiles = append(aPkg.ObjFiles, aliasObjs...)
@@ -3176,7 +3176,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 			return fmt.Errorf("build alternate LLGoFiles of %v failed: %w", pkgPath, err)
 		}
 		aPkg.appendTemporaryObjFiles(altLLGoFiles...)
-		if aliasObjs, err := buildGoCgoAliasObjects(ctx, pkgPath, ctx.prog.Directives().Files(aPkg.AltPkg.Syntax), printCmds); err != nil {
+		if aliasObjs, err := buildGoCgoAliasObjects(ctx, pkgPath, aPkg.AltPkg.Syntax, printCmds); err != nil {
 			return err
 		} else {
 			aPkg.ObjFiles = append(aPkg.ObjFiles, aliasObjs...)

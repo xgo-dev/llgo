@@ -21,13 +21,11 @@ type Store struct {
 // File contains source-order file directives and declaration associations.
 // All slices and maps are read-only after publication by Store.File.
 type File struct {
-	Preambles     []Preamble
 	EmbedComments map[*ast.Comment]bool
 	Syntax        *ast.File
 	Groups        map[*ast.CommentGroup]*Group
 	Functions     map[*ast.FuncDecl]Function
 	GoLinks       []Link
-	Cgo           Cgo
 	PatchSkip     Skip
 	Internal      []Directive
 }
@@ -122,7 +120,6 @@ func (s *Store) File(file *ast.File) *File {
 			if link, ok := packageLink(c); ok {
 				f.GoLinks = append(f.GoLinks, link)
 			}
-			f.Cgo.add(c)
 			if IsEmbedComment(c) {
 				f.EmbedComments[c] = true
 			}
@@ -150,9 +147,6 @@ func (s *Store) File(file *ast.File) *File {
 			s.functions[n] = f.Functions[n]
 		case *ast.GenDecl:
 			add(n.Doc)
-			if n.Tok == token.IMPORT && n.Doc != nil && len(n.Specs) == 1 && n.Specs[0].(*ast.ImportSpec).Path.Value == `"unsafe"` {
-				f.Preambles = append(f.Preambles, Preamble{n.Doc.Pos(), PreambleLines(n.Doc.Text())})
-			}
 		case *ast.ValueSpec:
 			add(n.Doc)
 			add(n.Comment)

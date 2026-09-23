@@ -67,8 +67,6 @@ func env() {}
 func plain() {}
 //go:linkname env shared.symbol
 //go:linkname plain shared.symbol
-//go:cgo_ldflag "-lm"
-//go:cgo_import_dynamic local remote "libc"
 `, "\n", "\r\n"))
 	store := new(Store)
 	f := store.File(file)
@@ -80,9 +78,6 @@ func plain() {}
 	}
 	if plain.ClosureEnv || plain.NoInline || plain.Linkname != env.Linkname || env.Linkname != "shared.symbol" {
 		t.Fatalf("aliased declarations lost identity: %+v / %+v", env, plain)
-	}
-	if !reflect.DeepEqual(f.Cgo.LDFlags, []string{"-lm"}) || !reflect.DeepEqual(f.Cgo.Imports, []DynamicImport{{"local", "remote"}}) {
-		t.Fatalf("cgo = %+v", f.Cgo)
 	}
 	store.Freeze()
 	// Mutating/removing the original comments must not change any subsequent
@@ -99,7 +94,7 @@ func plain() {}
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 20; j++ {
-				if store.File(file) != f || !store.Function(env.Source).NoInline || f.Cgo.Imports[0].Alias != "remote" {
+				if store.File(file) != f || !store.Function(env.Source).NoInline || f.GoLinks[0].Target != "shared.symbol" {
 					t.Error("snapshot changed")
 				}
 			}
@@ -151,11 +146,8 @@ func (Alias) M() {}
 	}
 }
 
-func TestEmbedAndCgoDialectsStayIndependent(t *testing.T) {
+func TestEmbedAndFunctionDialectsStayIndependent(t *testing.T) {
 	_, file := parseSource(t, `package p
-/*
- * go:cgo_import_dynamic local remote
- */
 // go:embed "a b" c
 var data string
 // llgo:env
@@ -166,7 +158,7 @@ func f() {}
 	if !g.Embed.Present || !reflect.DeepEqual(g.Embed.Patterns, []string{"a b", "c"}) || g.Has("go:embed") {
 		t.Fatalf("embed dialect = %+v", g)
 	}
-	if len(r.Cgo.Imports) != 1 || !r.Functions[file.Decls[1].(*ast.FuncDecl)].ClosureEnv {
+	if !r.Functions[file.Decls[1].(*ast.FuncDecl)].ClosureEnv {
 		t.Fatalf("file = %+v", r)
 	}
 }
