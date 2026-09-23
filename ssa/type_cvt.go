@@ -182,8 +182,8 @@ func (p goTypes) shouldConvertAlias(t *types.Alias) bool {
 }
 
 func (p goTypes) shouldConvertNamed(t *types.Named) bool {
-	background, ok := p.packageSyntax.typeCallConv(namedLinkname(t))
-	return !ok || !isNativeCallConv(background)
+	background, ok := p.packageSyntax.namedBackground(t)
+	return !ok || !isNativeFuncBackground(background)
 }
 
 func (p goTypes) cvtNamed(t *types.Named) (raw *types.Named, cvt bool) {

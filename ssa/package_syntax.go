@@ -17,10 +17,14 @@
 package ssa
 
 import (
+	"go/ast"
 	"go/token"
 	"go/types"
+	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/xgo-dev/llgo/internal/directive"
 )
 
 // packageSyntaxData is Go-owned metadata collected before LLVM package
@@ -29,7 +33,9 @@ import (
 // One-shot compiler users keep the same Program-local mutation behavior.
 type packageSyntaxData struct {
 	mu                    sync.RWMutex
-	hasNativeTypeMetadata atomic.Bool
+	source                directive.Store
+	declarations          map[*types.Package]*directive.Package
+	effective             map[*types.Package]*types.Package
 	linknames             map[string]string
 	wasmImports           map[string]wasmImport
 	exports               map[string]string
@@ -37,12 +43,15 @@ type packageSyntaxData struct {
 	parsedPackages        map[*types.Package]struct{}
 	noInterface           map[string]none
 	typeCallConvs         map[string]CallConv
+	hasNativeTypeMetadata atomic.Bool
 	nativeStructFields    map[token.Pos]bool
 	nativeStructVars      map[*types.Var]bool
 }
 
 func newPackageSyntaxData() *packageSyntaxData {
 	return &packageSyntaxData{
+		declarations:         make(map[*types.Package]*directive.Package),
+		effective:            make(map[*types.Package]*types.Package),
 		linknames:            make(map[string]string),
 		wasmImports:          make(map[string]wasmImport),
 		exports:              make(map[string]string),
@@ -96,9 +105,108 @@ func (p Program) packageTypeCallConv(name string) (CallConv, bool) {
 	return background, ok
 }
 
-func (p *packageSyntaxData) typeCallConv(name string) (CallConv, bool) {
+// Directives owns the source snapshots shared by coordinator and backends.
+func (p Program) Directives() *directive.Store { return &p.packageSyntax.source }
+func (p Program) SetPackageDirectives(pkg *types.Package, records *directive.Package) {
+	p.packageSyntax.mu.Lock()
+	defer p.packageSyntax.mu.Unlock()
+	p.packageSyntax.declarations[pkg] = records
+}
+func (p Program) PackageDirectives(pkg *types.Package) *directive.Package {
+	p.packageSyntax.mu.RLock()
+	defer p.packageSyntax.mu.RUnlock()
+	return p.packageSyntax.declarations[pkg]
+}
+
+// SetDirectivePackage records the effective patch view for object-based type
+// and symbol queries. Function source properties retain their source identity.
+func (p Program) SetDirectivePackage(original, effective *types.Package) {
+	p.packageSyntax.mu.Lock()
+	defer p.packageSyntax.mu.Unlock()
+	p.packageSyntax.effective[original] = effective
+}
+func (p Program) effectivePackageDirectives(pkg *types.Package) *directive.Package {
+	p.packageSyntax.mu.RLock()
+	defer p.packageSyntax.mu.RUnlock()
+	if effective := p.packageSyntax.effective[pkg]; effective != nil {
+		pkg = effective
+	}
+	return p.packageSyntax.declarations[pkg]
+}
+
+// FunctionDirectives supports source functions, imported objects and generic
+// origins without deriving declaration identity from a linker symbol.
+func (p Program) FunctionDirectives(pkg *types.Package, obj *types.Func, syntax *ast.FuncDecl) (directive.Function, bool) {
+	if obj != nil {
+		obj = obj.Origin()
+	}
+	p.packageSyntax.mu.RLock()
+	defer p.packageSyntax.mu.RUnlock()
+	if r := p.packageSyntax.declarations[pkg]; r != nil {
+		if d, ok := r.Objects[obj].(*directive.FunctionDecl); ok {
+			return d.Function, true
+		}
+		if d := r.Functions[syntax]; d != nil {
+			return d.Function, true
+		}
+	}
+	// Patched functions may retain their original types.Object package.
+	if obj != nil {
+		if r := p.packageSyntax.declarations[obj.Pkg()]; r != nil {
+			if d, ok := r.Objects[obj].(*directive.FunctionDecl); ok {
+				return d.Function, true
+			}
+		}
+	}
+	return directive.Function{}, false
+}
+
+// LinknameFor resolves a source declaration in its owning package instance.
+// The global name index remains available for runtime names and alias chains.
+func (p Program) LinknameFor(pkg *types.Package, obj types.Object, fullName string) (string, bool) {
+	if fn, ok := obj.(*types.Func); ok {
+		obj = fn.Origin()
+	}
+	if r := p.effectivePackageDirectives(pkg); r != nil {
+		rec := r.Objects[obj]
+		if rec == nil {
+			rec = r.Names[strings.TrimPrefix(fullName, PathOf(pkg)+".")]
+		}
+		switch d := rec.(type) {
+		case *directive.FunctionDecl:
+			return d.Linkname, d.HasLinkname
+		case *directive.VariableDecl:
+			return d.Linkname, d.HasLinkname
+		}
+		return "", false
+	}
+	return p.Linkname(fullName)
+}
+func (p *packageSyntaxData) namedBackground(t *types.Named) (Background, bool) {
 	p.mu.RLock()
-	background, ok := p.typeCallConvs[name]
-	p.mu.RUnlock()
-	return background, ok
+	defer p.mu.RUnlock()
+	obj := t.Origin().Obj()
+	pkg := obj.Pkg()
+	if effective := p.effective[pkg]; effective != nil {
+		pkg = effective
+	}
+	if r := p.declarations[pkg]; r != nil {
+		rec := r.Objects[obj]
+		if rec == nil {
+			rec = r.Names[obj.Name()]
+		}
+		if d, ok := rec.(*directive.TypeDecl); ok && d.Background != "" {
+			switch d.Background {
+			case "C":
+				return InC, true
+			case "stdcall":
+				return InStdcall, true
+			default:
+				return InGo, true
+			}
+		}
+		return InGo, false
+	}
+	bg, ok := p.typeBackgrounds[namedLinkname(t)]
+	return bg, ok
 }

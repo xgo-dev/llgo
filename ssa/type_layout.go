@@ -31,8 +31,8 @@ func (p Program) hasNativeStructLayout(raw *types.Named) bool {
 	if !p.packageSyntax.hasNativeTypeMetadata.Load() {
 		return false
 	}
-	background, ok := p.packageTypeCallConv(namedLinkname(raw))
-	return ok && isNativeCallConv(background)
+	background, ok := p.packageSyntax.namedBackground(raw)
+	return ok && isNativeFuncBackground(background)
 }
 
 func (p Program) setStructLayout(typ types.Type, layout *structLayout) {
