@@ -676,6 +676,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		return prog.TypeSizes(sizes)
 	}
 	dedup := packages.NewDeduper()
+	dedup.SetDirectives(prog.Directives())
 	var syntaxErr error
 	var syntaxErrMu sync.Mutex
 	recordSyntaxErr := func(err error) {
@@ -836,6 +837,13 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		prepareSpan.done()
 		return nil, err
 	}
+	for _, roots := range [][]*packages.Package{initial, altPkgs} {
+		packages.Visit(roots, nil, func(pkg *packages.Package) {
+			if records := prog.PackageDirectives(pkg.Types); records != nil {
+				records.Bind(pkg.TypesInfo)
+			}
+		})
+	}
 	if err := prepareLocalVariables(prog, initial, altPkgs); err != nil {
 		prepareSpan.done()
 		return nil, err
@@ -845,7 +853,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 
 	output := conf.OutFile != ""
 	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
-		patches: patches, callerTracking: cl.NewCallerTracking(),
+		patches: patches, callerTracking: cl.NewCallerTracking(prog.Directives()),
 		initial: initial, mode: mode,
 		fingerprinting:  make(map[string]bool),
 		pkgs:            map[*packages.Package]Package{},
@@ -898,6 +906,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	recordPackageSSAInstructions(ctx)
 	callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
 	ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
+	ctx.prog.Directives().Freeze()
 	callerSpan.done()
 	ctx.frontendOptions.ReceiverNilChecks = collectReceiverNilChecks(initial, altPkgs)
 	if features == nil {
@@ -1700,6 +1709,12 @@ func preloadPatchedPackageSyntax(prog llssa.Program, patches cl.Patches, dedup p
 		if err := cl.ParsePkgSyntaxWithOptions(prog, fset, patch.Types, files, packageOptions); err != nil {
 			return err
 		}
+		records := prog.PackageDirectives(patch.Types)
+		if original := dedup.Check(pkgPath); original != nil {
+			records.Bind(original.TypesInfo)
+			prog.SetDirectivePackage(original.Types, patch.Types)
+		}
+		records.Bind(alt.TypesInfo)
 	}
 	return nil
 }
@@ -2983,7 +2998,7 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 	if showDetail {
 		fmt.Fprintf(os.Stderr, "==> Compile %s\n", pkgPath)
 	}
-	embedMap, err := goembed.LoadDirectives(ctx.conf.Fset, syntax)
+	embedMap, err := goembed.LoadRecords(ctx.conf.Fset, ctx.prog.Directives().Files(syntax))
 	if err != nil {
 		return nil, fmt.Errorf("load go:embed directives for %s failed: %w", pkgPath, err)
 	}
@@ -3088,7 +3103,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 		if aPkg.AltPkg != nil {
 			pragmaSyntax = append(pragmaSyntax, aPkg.AltPkg.Syntax...)
 		}
-		if err := lowerWindowsCgoImportPointers(ctx.buildConf.Goos, ctx.buildConf.Goarch, pkgPath, pragmaSyntax, ret.Module()); err != nil {
+		if err := lowerWindowsCgoImportPointers(ctx.buildConf.Goos, ctx.buildConf.Goarch, pkgPath, ctx.prog.Directives().Files(pragmaSyntax), ret.Module()); err != nil {
 			return err
 		}
 	}
@@ -3139,7 +3154,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 		return fmt.Errorf("build LLGoFiles of %v failed: %w", pkgPath, err)
 	}
 	aPkg.appendTemporaryObjFiles(llgoFiles...)
-	if aliasObjs, err := buildGoCgoAliasObjects(ctx, pkgPath, aPkg.Package.Syntax, printCmds); err != nil {
+	if aliasObjs, err := buildGoCgoAliasObjects(ctx, pkgPath, ctx.prog.Directives().Files(aPkg.Package.Syntax), printCmds); err != nil {
 		return err
 	} else {
 		aPkg.ObjFiles = append(aPkg.ObjFiles, aliasObjs...)
@@ -3161,7 +3176,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 			return fmt.Errorf("build alternate LLGoFiles of %v failed: %w", pkgPath, err)
 		}
 		aPkg.appendTemporaryObjFiles(altLLGoFiles...)
-		if aliasObjs, err := buildGoCgoAliasObjects(ctx, pkgPath, aPkg.AltPkg.Syntax, printCmds); err != nil {
+		if aliasObjs, err := buildGoCgoAliasObjects(ctx, pkgPath, ctx.prog.Directives().Files(aPkg.AltPkg.Syntax), printCmds); err != nil {
 			return err
 		} else {
 			aPkg.ObjFiles = append(aPkg.ObjFiles, aliasObjs...)

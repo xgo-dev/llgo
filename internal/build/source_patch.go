@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	llruntime "github.com/xgo-dev/llgo/runtime"
 	"golang.org/x/tools/go/ast/astutil"
 )
@@ -376,20 +377,10 @@ func collectSourcePatchDirectives(src []byte) (sourcePatchDirectives, error) {
 		return sourcePatchDirectives{}, err
 	}
 	d := sourcePatchDirectives{skips: make(map[string]struct{})}
-	for _, group := range file.Comments {
-		for _, comment := range group.List {
-			line := strings.TrimSpace(comment.Text)
-			skipAll, names, ok := parseSourcePatchDirective(line)
-			if !ok {
-				continue
-			}
-			if skipAll {
-				d.skipAll = true
-			}
-			for _, name := range names {
-				d.skips[name] = struct{}{}
-			}
-		}
+	records := new(directive.Store).File(file)
+	d.skipAll = records.PatchSkip.All
+	for _, name := range records.PatchSkip.Names {
+		d.skips[name] = struct{}{}
 	}
 	for _, decl := range file.Decls {
 		for _, name := range declPatchKeys(decl) {
@@ -407,62 +398,12 @@ func collectSourcePatchDirectives(src []byte) (sourcePatchDirectives, error) {
 //
 // Unlike cl/import.go directives, these are consumed only while constructing the
 // load-time overlay and are rewritten to plain comments before type checking.
-func parseSourcePatchDirective(line string) (skipAll bool, names []string, ok bool) {
-	const (
-		llgo1 = "//llgo:"
-		llgo2 = "// llgo:"
-		go1   = "//go:"
-	)
-	if strings.HasPrefix(line, go1) {
-		return false, nil, false
-	}
-	var tail string
-	switch {
-	case strings.HasPrefix(line, llgo1):
-		tail = line[len(llgo1):]
-	case strings.HasPrefix(line, llgo2):
-		tail = line[len(llgo2):]
-	default:
-		return false, nil, false
-	}
-	switch {
-	case tail == "skipall":
-		return true, nil, true
-	case strings.HasPrefix(tail, "skip "):
-		return false, strings.Fields(tail[len("skip "):]), true
-	default:
-		return false, nil, false
-	}
+func parseSourcePatchDirective(line string) (bool, []string, bool) {
+	return directive.SourcePatch(line)
 }
 
 func sanitizeSourcePatchDirectiveLines(src []byte) []byte {
-	out := slices.Clone(src)
-	lines := bytes.SplitAfter(out, []byte{'\n'})
-	changed := false
-	markDirective := func(line []byte, prefix []byte) bool {
-		idx := bytes.Index(line, prefix)
-		if idx < 0 {
-			return false
-		}
-		line[idx+len(prefix)-1] = '_'
-		return true
-	}
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(string(line))
-		if _, _, ok := parseSourcePatchDirective(trimmed); !ok {
-			continue
-		}
-		switch {
-		case markDirective(line, []byte("//llgo:")):
-			changed = true
-		case markDirective(line, []byte("// llgo:")):
-			changed = true
-		}
-	}
-	if !changed {
-		return src
-	}
-	return out
+	return directive.SanitizeSourcePatchLines(src)
 }
 
 func buildInjectedSourcePatchFile(filename string, src []byte) []byte {

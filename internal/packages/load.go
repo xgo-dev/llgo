@@ -33,6 +33,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -87,12 +88,13 @@ type Cached struct {
 }
 
 type aDeduper struct {
-	cache     sync.Map
-	checked   sync.Map
-	setpath   func(path string, name string) string
-	preload   func(pkg *packages.Package)
-	prepare   func([]*Package, *Config) error
-	llgoFiles map[string][]string
+	directives *directive.Store
+	cache      sync.Map
+	checked    sync.Map
+	setpath    func(path string, name string) string
+	preload    func(pkg *packages.Package)
+	prepare    func([]*Package, *Config) error
+	llgoFiles  map[string][]string
 }
 
 type Deduper = *aDeduper
@@ -100,6 +102,8 @@ type Deduper = *aDeduper
 func NewDeduper() Deduper {
 	return &aDeduper{}
 }
+
+func (p Deduper) SetDirectives(store *directive.Store) { p.directives = store }
 
 func (p Deduper) SetPreload(fn func(pkg *packages.Package)) {
 	p.preload = fn
@@ -436,7 +440,12 @@ func (tc *typecheckContext) typecheckPackage(pkg *Package) {
 	}
 
 	pkgGoVersion := tc.targetGoVersion(pkg)
-	normalizeEmbedDriverDiagnostics(pkg.Errors, fset, pkg.Syntax, pkgGoVersion)
+	store := new(directive.Store)
+	if tc.dedup != nil && tc.dedup.directives != nil {
+		store = tc.dedup.directives
+	}
+	store.Files(pkg.Syntax)
+	normalizeEmbedDriverDiagnostics(pkg.Errors, fset, pkg.Syntax, pkgGoVersion, store)
 
 	if tc.origMode&NeedTypes == 0 && tc.origMode&NeedTypesInfo == 0 {
 		return
@@ -514,13 +523,17 @@ func (tc *typecheckContext) typecheckPackage(pkg *Package) {
 
 const embedPatternDriverDiagnostic = "pattern //: invalid pattern syntax"
 
-func normalizeEmbedDriverDiagnostics(errs []packages.Error, fset *token.FileSet, files []*ast.File, goVersion string) {
+func normalizeEmbedDriverDiagnostics(errs []packages.Error, fset *token.FileSet, files []*ast.File, goVersion string, stores ...*directive.Store) {
+	store := new(directive.Store)
+	if len(stores) > 0 {
+		store = stores[0]
+	}
 	for i := range errs {
 		if errs[i].Msg != embedPatternDriverDiagnostic {
 			continue
 		}
 		for _, file := range files {
-			context := embedDirectiveContextAt(fset, file, errs[i].Pos)
+			context := embedDirectiveContextAt(fset, file, errs[i].Pos, store)
 			switch {
 			case context == embedDirectiveLocalVar:
 				errs[i].Msg = "go:embed cannot apply to var inside func"
@@ -542,13 +555,17 @@ const (
 	embedDirectiveLocalVar
 )
 
-func embedDirectiveContextAt(fset *token.FileSet, file *ast.File, errorPos string) embedDirectiveContext {
+func embedDirectiveContextAt(fset *token.FileSet, file *ast.File, errorPos string, stores ...*directive.Store) embedDirectiveContext {
+	store := new(directive.Store)
+	if len(stores) > 0 {
+		store = stores[0]
+	}
 	if fset == nil || file == nil {
 		return embedDirectiveUnknown
 	}
 	for _, group := range file.Comments {
 		for _, comment := range group.List {
-			if !isEmbedDirectiveComment(comment) || !sameDiagnosticLine(errorPos, fset.Position(comment.Pos())) {
+			if !store.File(file).EmbedComments[comment] || !sameDiagnosticLine(errorPos, fset.Position(comment.Pos())) {
 				continue
 			}
 			if localVarHasDocComment(file, comment) {
@@ -565,20 +582,7 @@ func embedDirectiveContextAt(fset *token.FileSet, file *ast.File, errorPos strin
 	return embedDirectiveUnknown
 }
 
-func isEmbedDirectiveComment(comment *ast.Comment) bool {
-	if comment == nil || !strings.HasPrefix(comment.Text, "//") {
-		return false
-	}
-	text := strings.TrimSpace(strings.TrimPrefix(comment.Text, "//"))
-	if text == "go:embed" {
-		return true
-	}
-	if !strings.HasPrefix(text, "go:embed") || len(text) == len("go:embed") {
-		return false
-	}
-	next := text[len("go:embed")]
-	return next == ' ' || next == '\t'
-}
+func isEmbedDirectiveComment(comment *ast.Comment) bool { return directive.IsEmbedComment(comment) }
 
 func sameDiagnosticLine(errorPos string, commentPos token.Position) bool {
 	if errorPos == "" || commentPos.Filename == "" || commentPos.Line == 0 {
