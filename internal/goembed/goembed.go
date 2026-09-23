@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"golang.org/x/mod/module"
 )
 
@@ -27,11 +28,17 @@ type VarData struct {
 type VarMap map[string]VarData
 
 func LoadDirectives(fset *token.FileSet, files []*ast.File) (VarMap, error) {
+	return LoadRecords(fset, new(directive.Store).Files(files))
+}
+
+// LoadRecords resolves files from previously parsed directive records.
+func LoadRecords(fset *token.FileSet, files []*directive.File) (VarMap, error) {
 	if len(files) == 0 {
 		return nil, nil
 	}
 	byVar := make(VarMap)
-	for _, file := range files {
+	for _, source := range files {
+		file := source.Syntax
 		if file == nil {
 			continue
 		}
@@ -47,7 +54,7 @@ func LoadDirectives(fset *token.FileSet, files []*ast.File) (VarMap, error) {
 				continue
 			}
 			if len(gen.Specs) > 1 {
-				if _, hasDirective, _ := ParsePatterns(gen.Doc); hasDirective {
+				if _, hasDirective, _ := directive.EmbedPatterns(source.Group(gen.Doc)); hasDirective {
 					pos := positionFor(fset, gen.Doc.Pos())
 					return nil, fmt.Errorf("%s: misplaced go:embed directive", pos)
 				}
@@ -57,11 +64,11 @@ func LoadDirectives(fset *token.FileSet, files []*ast.File) (VarMap, error) {
 				if !ok {
 					continue
 				}
-				docs := []*ast.CommentGroup{spec.Doc}
+				docs := []*directive.Group{source.Group(spec.Doc)}
 				if len(gen.Specs) == 1 {
-					docs = append([]*ast.CommentGroup{gen.Doc}, docs...)
+					docs = append([]*directive.Group{source.Group(gen.Doc)}, docs...)
 				}
-				patterns, hasDirective, err := ParsePatterns(docs...)
+				patterns, hasDirective, err := directive.EmbedPatterns(docs...)
 				if err != nil {
 					pos := positionFor(fset, spec.Pos())
 					return nil, fmt.Errorf("%s: %v", pos, err)
@@ -102,96 +109,17 @@ func FileImportsEmbed(file *ast.File) bool {
 	return false
 }
 
-func ParsePatterns(docs ...*ast.CommentGroup) (patterns []string, hasDirective bool, err error) {
+// ParsePatterns is the standalone API; compilation clients use LoadRecords.
+func ParsePatterns(docs ...*ast.CommentGroup) ([]string, bool, error) {
+	store := new(directive.Store)
+	groups := make([]*directive.Group, 0, len(docs))
 	for _, doc := range docs {
-		if doc == nil {
-			continue
-		}
-		for _, c := range doc.List {
-			if c == nil {
-				continue
-			}
-			line := strings.TrimSpace(strings.TrimPrefix(c.Text, "//"))
-			args, ok := ParseDirective(line)
-			if !ok {
-				continue
-			}
-			hasDirective = true
-			if args == "" {
-				return nil, hasDirective, fmt.Errorf("invalid //go:embed: missing pattern")
-			}
-			fields, err := SplitArgs(args)
-			if err != nil {
-				return nil, hasDirective, err
-			}
-			for _, f := range fields {
-				if uq, err := strconv.Unquote(f); err == nil {
-					patterns = append(patterns, uq)
-				} else {
-					if len(f) > 0 && (f[0] == '"' || f[0] == '`') {
-						return nil, hasDirective, fmt.Errorf("invalid //go:embed quoted pattern %q", f)
-					}
-					patterns = append(patterns, f)
-				}
-			}
-		}
+		groups = append(groups, store.Group(doc))
 	}
-	return patterns, hasDirective, nil
+	return directive.EmbedPatterns(groups...)
 }
-
-func ParseDirective(line string) (args string, ok bool) {
-	if !strings.HasPrefix(line, "go:embed") {
-		return "", false
-	}
-	if len(line) == len("go:embed") {
-		return "", true
-	}
-	ch := line[len("go:embed")]
-	if ch != ' ' && ch != '\t' {
-		return "", false
-	}
-	return strings.TrimSpace(line[len("go:embed"):]), true
-}
-
-func SplitArgs(s string) ([]string, error) {
-	var out []string
-	for i := 0; i < len(s); {
-		for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
-			i++
-		}
-		if i >= len(s) {
-			break
-		}
-		start := i
-		if s[i] == '"' || s[i] == '`' {
-			quote := s[i]
-			i++
-			closed := false
-			for i < len(s) {
-				if s[i] == quote {
-					i++
-					closed = true
-					break
-				}
-				if quote == '"' && s[i] == '\\' && i+1 < len(s) {
-					i += 2
-					continue
-				}
-				i++
-			}
-			if !closed {
-				return nil, fmt.Errorf("invalid //go:embed quoted pattern")
-			}
-			out = append(out, s[start:i])
-			continue
-		}
-		for i < len(s) && s[i] != ' ' && s[i] != '\t' {
-			i++
-		}
-		out = append(out, s[start:i])
-	}
-	return out, nil
-}
+func ParseDirective(line string) (string, bool) { return directive.EmbedDirective(line) }
+func SplitArgs(s string) ([]string, error)      { return directive.SplitEmbedArgs(s) }
 
 func ResolvePatterns(pkgDir string, patterns []string) ([]FileData, error) {
 	var pat string

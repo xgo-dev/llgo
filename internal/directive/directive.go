@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-// Package directive parses Go and LLGo source directives without assigning
-// feature-specific semantics to them.
+// Package directive discovers Go and LLGo source directives and owns immutable
+// source records shared by package preparation, analyses, and lowering.
 package directive
 
 import (
@@ -69,7 +69,7 @@ func ParseGroup(doc *ast.CommentGroup) []Directive {
 	if doc == nil {
 		return nil
 	}
-	ret := make([]Directive, 0, len(doc.List))
+	ret := make([]Directive, 0)
 	for _, comment := range doc.List {
 		if parsed, ok := Parse(comment); ok {
 			ret = append(ret, parsed)

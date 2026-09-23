@@ -144,9 +144,11 @@ var content string
 		Syntax:  []*ast.File{file},
 	}}
 	ctx := &context{
+		prog:      llssa.NewProgram(nil),
 		conf:      &packages.Config{Fset: fset},
 		buildConf: &Config{PrintPackages: true},
 	}
+	t.Cleanup(ctx.prog.Dispose)
 	readStderr := captureStderr(t)
 	externs, err := preparePackageModule(ctx, pkg, true)
 	if err == nil || !strings.Contains(err.Error(), "only allowed in Go files that import") {
@@ -453,10 +455,12 @@ func TestBuildPackageGroupReturnsCoordinatorBuildError(t *testing.T) {
 	t.Setenv(llgoBuildCache, "off")
 	fset, pkg := invalidEmbedPackage(t)
 	ctx := &context{
+		prog:      llssa.NewProgram(nil),
 		conf:      &packages.Config{Fset: fset},
 		mode:      ModeGen,
 		buildConf: &Config{},
 	}
+	t.Cleanup(ctx.prog.Dispose)
 	err := buildPackageGroup(ctx, []*packageBuildTask{newPackageBuildTask(pkg)}, false)
 	if err == nil || !strings.Contains(err.Error(), "only allowed in Go files that import") {
 		t.Fatalf("coordinator build error = %v", err)
@@ -487,7 +491,10 @@ func TestBuildPackageGroupReturnsParallelBuildError(t *testing.T) {
 func TestBuildAllPkgsReturnsPackageGroupErrors(t *testing.T) {
 	t.Setenv(llgoBuildCache, "off")
 	newContext := func(fset *token.FileSet) *context {
+		prog := llssa.NewProgram(nil)
+		t.Cleanup(prog.Dispose)
 		return &context{
+			prog:      prog,
 			conf:      &packages.Config{Fset: fset},
 			mode:      ModeGen,
 			buildConf: &Config{},

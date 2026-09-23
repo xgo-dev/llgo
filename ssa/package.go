@@ -23,8 +23,10 @@ import (
 	"log"
 	"runtime"
 	"strconv"
+	"strings"
 	"unsafe"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/optlevel"
@@ -470,6 +472,16 @@ func (p Program) isNoInterfaceMethod(fn *types.Func) bool {
 	}
 	sig, ok := fn.Type().(*types.Signature)
 	if !ok || sig.Recv() == nil {
+		return false
+	}
+	if records := p.effectivePackageDirectives(fn.Pkg()); records != nil {
+		if r, ok := records.Objects[fn.Origin()].(*directive.FunctionDecl); ok {
+			return r.NoInterface
+		}
+		name := strings.TrimPrefix(FuncName(fn.Pkg(), fn.Name(), sig.Recv(), true), PathOf(fn.Pkg())+".")
+		if r, ok := records.Names[name].(*directive.FunctionDecl); ok {
+			return r.NoInterface
+		}
 		return false
 	}
 	p.packageSyntax.mu.RLock()

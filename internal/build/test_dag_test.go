@@ -399,7 +399,10 @@ func TestRunNativeTestDAGPropagatesPackageFailures(t *testing.T) {
 	t.Run("preparation", func(t *testing.T) {
 		fset, pkg := invalidEmbedPackage(t)
 		conf := &Config{Mode: ModeTest}
+		prog := llssa.NewProgram(nil)
+		defer prog.Dispose()
 		ctx := &context{
+			prog:      prog,
 			conf:      &packages.Config{Fset: fset},
 			mode:      ModeGen,
 			buildConf: conf,

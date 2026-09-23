@@ -789,7 +789,7 @@ func TestIntVal(t *testing.T) {
 }
 
 func TestErrImport(t *testing.T) {
-	var ctx context
+	ctx := context{prog: llssa.NewProgram(nil)}
 	pkg := types.NewPackage("foo", "foo")
 	ctx.importPkg(pkg, nil)
 
@@ -798,6 +798,7 @@ func TestErrImport(t *testing.T) {
 		types.NewConst(0, alt, "LLGoPackage", types.Typ[types.String], constant.MakeString("noinit")),
 	)
 	ctx.patches = Patches{"foo": Patch{Alt: &ssa.Package{Pkg: alt}, Types: alt}}
+	ctx.prepareImportSource(pkg)
 	ctx.importPkg(pkg, &pkgInfo{})
 }
 
