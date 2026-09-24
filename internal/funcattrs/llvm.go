@@ -13,7 +13,7 @@ func Apply(ctx llvm.Context, fn llvm.Value, sig *types.Signature, attrs []Attrib
 		return err
 	}
 	for _, attr := range attrs {
-		if attr.Name == "sameas" || (attr.Target.Scope == Result && sig.Results().Len() != 1) {
+		if attr.Name == "access" || attr.Name == "noalias" || attr.Name == "sameas" || (attr.Target.Scope == Result && sig.Results().Len() != 1) {
 			continue
 		}
 		index := 1 + environment
@@ -75,7 +75,7 @@ func Apply(ctx llvm.Context, fn llvm.Value, sig *types.Signature, attrs []Attrib
 
 // CopyValueAttributes is used only when ABI conversion preserves the whole value.
 func CopyValueAttributes(from, to llvm.Value, old, new int) {
-	for _, name := range []string{"nonnull", "range", "returned"} {
+	for _, name := range []string{"nonnull", "range", "returned", "noalias", "readnone", "readonly", "writeonly"} {
 		if name == "returned" && from.GlobalValueType().ReturnType() != to.GlobalValueType().ReturnType() {
 			continue
 		}

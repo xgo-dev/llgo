@@ -16,7 +16,7 @@ func TestFunctionAttributes(t *testing.T) {
 		{"//llgo:noreturn\nfunc _() {}", "requires a named function"},
 		{"//llgo:cold(x)\nfunc F()", "takes no arguments"},
 		{"//llgo:noreturn x\nfunc F()", "takes no arguments"},
-		{"//llgo:param(0) access(read)\nfunc F(p *int) *int", "unsupported attribute"},
+		{"//llgo:param(0) unknown\nfunc F(p *int) *int", "unsupported attribute"},
 	} {
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, "attrs.go", "package p\n"+tc.source, parser.ParseComments)

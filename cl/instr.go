@@ -2055,6 +2055,7 @@ func (p *context) recordRuntimeLocation(b llssa.Builder, pos token.Pos, fn strin
 // otherwise reserve separate aggregate argument slots in every recursive
 // frame, even though all those strings refer to immutable compiler literals.
 func (p *context) callRuntimeLocation(b llssa.Builder, fn string, entry, name, file, line llssa.Expr) llssa.Expr {
+	b.Func.CheckImplicitRuntimeEffects("compiler-generated shadow stack location update")
 	push := fn == "PushCallerLocationFrame"
 	if target := p.prog.Target(); target != nil && target.GOARCH == "wasm" {
 		return b.Call(
@@ -2247,6 +2248,7 @@ func (p *context) popCallerLocationFrame(b llssa.Builder) {
 	if p.callerFrameMark.IsNil() {
 		return
 	}
+	b.Func.CheckImplicitRuntimeEffects("compiler-generated shadow stack frame removal")
 	b.Call(p.runtimeFunc("PopCallerLocationFrame", popCallerLocationFrameSig()), p.callerFrameMark)
 }
 
