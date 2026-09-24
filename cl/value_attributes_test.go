@@ -90,7 +90,7 @@ func Copy(p unsafe.Pointer) unsafe.Pointer { return p }
 		p := backend.NewPackage(name, name)
 		fn := p.NewFunc("shared_copy", sig, llssa.InGo)
 		ctx := &context{prog: backend, fset: fset}
-		ctx.initFunctionAttributes(fn, pkg.Scope().Lookup("Copy").(*types.Func))
+		ctx.initFunctionAttributes(fn, pkg.Scope().Lookup("Copy").(*types.Func), sig)
 		if !strings.Contains(p.String(), "declare nonnull ptr @shared_copy(ptr") {
 			t.Fatalf("%s lost contract:\n%s", name, p.String())
 		}

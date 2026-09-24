@@ -600,7 +600,7 @@ func (b Builder) abiMethodFuncs(t types.Type, m *types.Selection) (ifn, tfn llvm
 	// definition; MethodSymbolName must see identical inputs here.
 	mSymbolName := MethodSymbolName(pkg, obj, obj.Name())
 	tfnFn := b.abiMethodFunc(anonymous, pkg, mSymbolName, mSig)
-	b.Pkg.initFunction(tfnFn, obj)
+	b.Pkg.initFunction(tfnFn, obj, mSig)
 	// Tfn is used as a method-expression funcval. Its explicit receiver is
 	// already part of that semantic signature, so it is a no-env entry.
 	tfn = tfnFn.impl
@@ -609,7 +609,7 @@ func (b Builder) abiMethodFuncs(t types.Type, m *types.Selection) (ifn, tfn llvm
 		pRecv := types.NewVar(token.NoPos, pkg, "", types.NewPointer(mSig.Recv().Type()))
 		pSig := types.NewSignature(pRecv, mSig.Params(), mSig.Results(), mSig.Variadic())
 		ifnFn := b.abiMethodFunc(anonymous, pkg, mSymbolName, pSig)
-		b.Pkg.initFunction(ifnFn, obj)
+		b.Pkg.initFunction(ifnFn, obj, pSig)
 		ifn = ifnFn.impl
 	}
 	return

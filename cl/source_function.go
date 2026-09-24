@@ -100,7 +100,7 @@ func (p *context) patchedFunctionProperties(obj *types.Func) (functionProperties
 }
 
 // Backend-created entries consume prepared records without reopening sources.
-func (p *context) initFunctionAttributes(fn llssa.Function, obj *types.Func) {
+func (p *context) initFunctionAttributes(fn llssa.Function, obj *types.Func, signature *types.Signature) {
 	properties, ok := p.patchedFunctionProperties(obj)
 	if !ok {
 		properties, _ = p.prog.FunctionDirectives(obj.Pkg(), obj, nil)
@@ -110,7 +110,6 @@ func (p *context) initFunctionAttributes(fn llssa.Function, obj *types.Func) {
 	if properties.ContractError != nil {
 		panic(properties.ContractError)
 	}
-	signature := fn.Type.RawType().(*types.Signature)
 	source := obj.Type().(*types.Signature)
 	if source.Recv() != nil && signature.Recv() != nil && !types.Identical(source.Recv().Type(), signature.Recv().Type()) {
 		// A pointer-receiver wrapper receives an address containing the source
