@@ -193,11 +193,11 @@ jobs:
             go_test+=("-overlay=$LLGO_GO_TEST_OVERLAY")
           fi
 
-          # Compiler fixtures owned by cl exercise ssa in-process. Instrument
-          # both packages in this single test binary so coverage follows those
-          # calls without restoring duplicate fixture tests under ssa.
+          # Compiler fixtures exercise SSA and directive contract lowering in-process.
+          # Instrument their implementation packages so coverage follows these
+          # calls as well as the direct package tests above.
           "${go_test[@]}" -v -timeout 45m \
-            -coverpkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/ssa \
+            -coverpkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/ssa,github.com/xgo-dev/llgo/internal/directive,github.com/xgo-dev/llgo/internal/funcattrs \
             -coverprofile="coverage-compiler.txt" -covermode=atomic \
             -bench '^BenchmarkGo126' -benchtime=1x ./cl
           "${go_test[@]}" -timeout 45m ./test/go
