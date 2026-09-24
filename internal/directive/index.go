@@ -48,6 +48,8 @@ type Group struct {
 }
 
 type Function struct {
+	Cold           bool
+	NoReturn       bool
 	ClosureEnv     bool
 	NoInline       bool
 	NoSplit        bool

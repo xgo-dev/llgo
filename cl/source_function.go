@@ -5,6 +5,7 @@ import (
 	"go/types"
 
 	"github.com/xgo-dev/llgo/internal/directive"
+	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -39,7 +40,7 @@ func (p *context) sourceFunction(fn *ssa.Function) *sourceFunction {
 			pkg = obj.Pkg()
 		}
 		syntax, _ := source.Syntax().(*ast.FuncDecl)
-		if syntax != nil || source.Synthetic == "" {
+		if syntax != nil || source.Synthetic == "" || obj != nil && source.Prog.FuncValue(obj) == source {
 			var found bool
 			f.functionProperties, found = p.prog.FunctionDirectives(pkg, obj, syntax)
 			if !found && !p.options.PreloadedSyntax {
@@ -49,4 +50,55 @@ func (p *context) sourceFunction(fn *ssa.Function) *sourceFunction {
 	}
 	p.sourceFunctions[fn] = f
 	return f
+}
+
+func applyFunctionProperties(fn llssa.Function, properties functionProperties) {
+	if properties.Cold {
+		fn.SetCold()
+	}
+	if properties.NoReturn {
+		fn.SetNoReturn()
+	}
+}
+
+// A replaced body supplies the callable contract. Keep sourceFunction's source
+// properties separate: analyses of the original body still need its own flags.
+func (p *context) applyFunctionAttributes(fn llssa.Function, source *ssa.Function) {
+	properties := p.sourceFunction(source).functionProperties
+	origin := source
+	if generic := source.Origin(); generic != nil {
+		origin = generic
+	}
+	if obj, ok := origin.Object().(*types.Func); ok {
+		if replacement, ok := p.patchedFunctionProperties(obj); ok {
+			properties = replacement
+		}
+	}
+	applyFunctionProperties(fn, properties)
+}
+
+func (p *context) patchedFunctionProperties(obj *types.Func) (functionProperties, bool) {
+	if obj.Pkg() != nil {
+		if patch, ok := p.patches[llssa.PathOf(obj.Pkg())]; ok {
+			if records := p.prog.PackageDirectives(patch.Types); records != nil {
+				if r, ok := records.Objects[obj.Origin()].(*directive.FunctionDecl); ok {
+					return r.Function, true
+				}
+				_, name := typesFuncName(llssa.PathOf(obj.Pkg()), obj)
+				if r, ok := records.Names[name].(*directive.FunctionDecl); ok {
+					return r.Function, true
+				}
+			}
+		}
+	}
+	return functionProperties{}, false
+}
+
+// Backend-created entries consume prepared records without reopening sources.
+func (p *context) initFunctionAttributes(fn llssa.Function, obj *types.Func) {
+	properties, ok := p.patchedFunctionProperties(obj)
+	if !ok {
+		properties, _ = p.prog.FunctionDirectives(obj.Pkg(), obj, nil)
+	}
+	applyFunctionProperties(fn, properties)
 }
