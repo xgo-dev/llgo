@@ -28,6 +28,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/funcattrs"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/ssa/abi"
@@ -119,10 +120,11 @@ func Initialize(flags InitFlags) {
 // -----------------------------------------------------------------------------
 
 type aProgram struct {
-	ctx   llvm.Context
-	typs  typeutil.Map // rawType -> Type
-	sizes types.Sizes  // provided by Go compiler
-	gocvt goTypes
+	valuePlans map[llvm.Value]funcattrs.ValuePlan
+	ctx        llvm.Context
+	typs       typeutil.Map // rawType -> Type
+	sizes      types.Sizes  // provided by Go compiler
+	gocvt      goTypes
 
 	patchType func(types.Type) types.Type
 

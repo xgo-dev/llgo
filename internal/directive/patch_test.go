@@ -49,7 +49,7 @@ func TestIndexAssociatesConstructedSyntax(t *testing.T) {
 	if _, ok := index.LookupFunction(&ast.FuncDecl{}); ok {
 		t.Fatal("unprepared function appeared in snapshot")
 	}
-	if index.Function(nil) != (Function{}) || index.Group(nil).Has("go:noinline") {
+	if !reflect.DeepEqual(index.Function(nil), Function{}) || index.Group(nil).Has("go:noinline") {
 		t.Fatal("nil syntax acquired directives")
 	}
 }

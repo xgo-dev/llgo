@@ -165,6 +165,7 @@ func MapIterNext(it *llgoMapIter) (ok bool, k unsafe.Pointer, v unsafe.Pointer) 
 	return
 }
 
+//llgo:result nonnegative
 func MapLen(h *Map) int {
 	if h == nil {
 		return 0

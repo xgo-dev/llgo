@@ -75,6 +75,11 @@ func (p *context) applyFunctionAttributes(fn llssa.Function, source *ssa.Functio
 		}
 	}
 	applyFunctionProperties(fn, properties)
+	properties = properties.WithPositions(p.fset)
+	if properties.ContractError != nil {
+		panic(properties.ContractError)
+	}
+	fn.ApplyValueAttributes(source.Signature, properties.Values)
 }
 
 func (p *context) patchedFunctionProperties(obj *types.Func) (functionProperties, bool) {
@@ -101,4 +106,22 @@ func (p *context) initFunctionAttributes(fn llssa.Function, obj *types.Func) {
 		properties, _ = p.prog.FunctionDirectives(obj.Pkg(), obj, nil)
 	}
 	applyFunctionProperties(fn, properties)
+	properties = properties.WithPositions(p.fset)
+	if properties.ContractError != nil {
+		panic(properties.ContractError)
+	}
+	signature := fn.Type.RawType().(*types.Signature)
+	source := obj.Type().(*types.Signature)
+	if source.Recv() != nil && signature.Recv() != nil && !types.Identical(source.Recv().Type(), signature.Recv().Type()) {
+		// A pointer-receiver wrapper receives an address containing the source
+		// value. Source receiver promises describe the loaded value, not its home.
+		values := properties.Values[:0:0]
+		for _, attr := range properties.Values {
+			if attr.Target.Scope != directive.Receiver {
+				values = append(values, attr)
+			}
+		}
+		properties.Values = values
+	}
+	fn.ApplyValueAttributes(signature, properties.Values)
 }

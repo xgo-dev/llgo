@@ -2789,6 +2789,9 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 	}
 	if !options.PreloadedSyntax {
 		prog.PackageDirectives(pkgTypes).BindScope(pkgTypes)
+		if err = prog.ValidateDirectiveContracts(pkgProg.Fset); err != nil {
+			return nil, nil, err
+		}
 	}
 	if err = prog.ValidateLocalitiesFor(pkgTypes); err != nil {
 		return nil, nil, err

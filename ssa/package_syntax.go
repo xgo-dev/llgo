@@ -18,7 +18,9 @@ package ssa
 
 import (
 	"go/ast"
+	"go/token"
 	"go/types"
+	"sort"
 	"strings"
 	"sync"
 
@@ -202,4 +204,69 @@ func (p *packageSyntaxData) namedBackground(t *types.Named) (Background, bool) {
 	}
 	bg, ok := p.typeBackgrounds[namedLinkname(t)]
 	return bg, ok
+}
+
+// ValidateDirectiveContracts checks concrete signatures and known link aliases
+// before workers start. It compares declarations without merging their records.
+func (p Program) ValidateDirectiveContracts(fset *token.FileSet) error {
+	type declaration struct {
+		symbol string
+		pos    token.Pos
+		attrs  []directive.Attribute
+		sig    *types.Signature
+	}
+	var declarations []declaration
+	p.packageSyntax.mu.RLock()
+	defer p.packageSyntax.mu.RUnlock()
+	for pkg, records := range p.packageSyntax.declarations {
+		if effective := p.packageSyntax.effective[pkg]; effective != nil && effective != pkg {
+			continue
+		}
+		for obj, raw := range records.Objects {
+			fn, ok := obj.(*types.Func)
+			if !ok {
+				continue
+			}
+			rec, ok := raw.(*directive.FunctionDecl)
+			if !ok {
+				continue
+			}
+			props := rec.Function.WithPositions(fset)
+			if props.ContractError != nil {
+				return props.ContractError
+			}
+			symbol := FullName(pkg, rec.Name)
+			if rec.HasLinkname {
+				symbol = rec.Linkname
+			}
+			seen := make(map[string]bool)
+			for !seen[symbol] {
+				seen[symbol] = true
+				next, ok := p.packageSyntax.linknames[symbol]
+				if !ok {
+					break
+				}
+				symbol = next
+			}
+			declarations = append(declarations, declaration{symbol, rec.Pos, props.Values, fn.Type().(*types.Signature)})
+		}
+	}
+	sort.Slice(declarations, func(i, j int) bool {
+		if declarations[i].symbol != declarations[j].symbol {
+			return declarations[i].symbol < declarations[j].symbol
+		}
+		return declarations[i].pos < declarations[j].pos
+	})
+	known := make(map[string][]directive.Attribute)
+	for _, d := range declarations {
+		if err := directive.Validate(d.attrs, d.sig, p.Int().ll.IntTypeWidth(), true); err != nil {
+			return err
+		}
+		merged, err := directive.Merge(known[d.symbol], d.attrs)
+		if err != nil {
+			return err
+		}
+		known[d.symbol] = merged
+	}
+	return nil
 }
