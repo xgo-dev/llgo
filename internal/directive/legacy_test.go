@@ -38,7 +38,7 @@ func TestLegacyLinkDialect(t *testing.T) {
 	// The legacy attachment rule stops at an ordinary comment, unlike the
 	// package preloader's normalized declaration-link search.
 	doc := &ast.CommentGroup{List: []*ast.Comment{{Text: "//llgo:link F C.old"}, {Text: "// ordinary"}, {Text: "//export F"}, nil, {Text: "//go:noinline"}}}
-	g := new(Store).Group(doc)
+	g := new(Index).Group(doc)
 	links := g.LegacyLinks(true)
 	if len(links) != 1 || !links[0].Export || links[0].Target != "F" {
 		t.Fatalf("export links = %+v", links)
@@ -55,13 +55,13 @@ func TestImportedLinkSnapshotsCacheSuccessAndFailure(t *testing.T) {
 	if err := os.WriteFile(name, []byte(source), 0600); err != nil {
 		t.Fatal(err)
 	}
-	store := new(Store)
-	got := store.ReadLegacyLinks(name)
+	index := new(Index)
+	got := index.ReadLegacyLinks(name)
 	if len(got) != 3 || got[0].Target != "runtime.f" || got[1].Target != "C.g" || !got[2].Export {
 		t.Fatalf("imported links = %+v", got)
 	}
 	missing := filepath.Join(dir, "missing.go")
-	if links := store.ReadLegacyLinks(missing); len(links) != 0 {
+	if links := index.ReadLegacyLinks(missing); len(links) != 0 {
 		t.Fatalf("missing file links = %+v", links)
 	}
 	if err := os.Remove(name); err != nil {
@@ -70,11 +70,11 @@ func TestImportedLinkSnapshotsCacheSuccessAndFailure(t *testing.T) {
 	if err := os.WriteFile(missing, []byte(source), 0600); err != nil {
 		t.Fatal(err)
 	}
-	store.Freeze()
-	if !reflect.DeepEqual(store.ReadLegacyLinks(name), got) {
+	index.Freeze()
+	if !reflect.DeepEqual(index.ReadLegacyLinks(name), got) {
 		t.Fatal("prepared source was reread")
 	}
-	if len(store.ReadLegacyLinks(missing)) != 0 {
+	if len(index.ReadLegacyLinks(missing)) != 0 {
 		t.Fatal("failed discovery was retried after freeze")
 	}
 }
@@ -82,15 +82,15 @@ func TestImportedLinkSnapshotsCacheSuccessAndFailure(t *testing.T) {
 func TestFreezeClosesEveryDiscoveryEntry(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
-		discover func(*Store)
+		discover func(*Index)
 	}{
-		{"file", func(s *Store) { s.File(&ast.File{}) }},
-		{"group", func(s *Store) { s.Group(&ast.CommentGroup{}) }},
-		{"function", func(s *Store) { s.Function(&ast.FuncDecl{}) }},
-		{"import", func(s *Store) { s.ReadLegacyLinks("unprepared.go") }},
+		{"file", func(s *Index) { s.File(&ast.File{}) }},
+		{"group", func(s *Index) { s.Group(&ast.CommentGroup{}) }},
+		{"function", func(s *Index) { s.Function(&ast.FuncDecl{}) }},
+		{"import", func(s *Index) { s.ReadLegacyLinks("unprepared.go") }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			s := new(Store)
+			s := new(Index)
 			s.Freeze()
 			defer func() {
 				r := recover()

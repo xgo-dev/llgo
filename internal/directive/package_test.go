@@ -38,7 +38,7 @@ type Last int
 //go:linkname single final.symbol
 //go:linkname absent ignored
 `)
-	p := Collect(new(Store).Files([]*ast.File{file}), true, false)
+	p := Collect(new(Index).Files([]*ast.File{file}), true, false)
 	for name, target := range map[string]string{"public": "public", "Xautomatic": "automatic", "Automatic": "Automatic", "explicit": "C.custom"} {
 		d := p.Names[name].(*FunctionDecl)
 		if !d.HasLinkname || d.Linkname != target {
@@ -69,7 +69,7 @@ type Last int
 	if !p.Skip.All || !reflect.DeepEqual(p.Skip.Names, []string{"imported", "removed"}) {
 		t.Fatalf("skip = %+v", p.Skip)
 	}
-	renamed := Collect(new(Store).Files([]*ast.File{file}), false, true).Names["invalid"].(*FunctionDecl)
+	renamed := Collect(new(Index).Files([]*ast.File{file}), false, true).Names["invalid"].(*FunctionDecl)
 	if renamed.Err != nil || renamed.ExportName != "wrong" {
 		t.Fatalf("renamed export = %+v", renamed)
 	}
@@ -85,7 +85,7 @@ func F() {}
 //go:linkname F file.symbol
 //go:linkname malformed
 `)
-	d := Collect(new(Store).Files([]*ast.File{file}), false, false).Names["F"].(*FunctionDecl)
+	d := Collect(new(Index).Files([]*ast.File{file}), false, false).Names["F"].(*FunctionDecl)
 	if d.Linkname != "last" {
 		t.Fatalf("link without unsafe = %q", d.Linkname)
 	}
@@ -114,7 +114,7 @@ func TestBindingUsesEffectiveDeclarationsAndPositions(t *testing.T) {
 	replacement := parse("replacement.go", "package p\n//go:noinline\nfunc F() {}\nvar V string\n//llgo:type C\ntype T string\n")
 	oldPkg, oldInfo := checkRecordSource(t, fset, original)
 	newPkg, newInfo := checkRecordSource(t, fset, replacement)
-	files := new(Store).Files([]*ast.File{original, replacement})
+	files := new(Index).Files([]*ast.File{original, replacement})
 	for _, scoped := range []bool{false, true} {
 		t.Run(map[bool]string{false: "checker objects", true: "standalone scope"}[scoped], func(t *testing.T) {
 			p := Collect(files, false, false)
@@ -160,7 +160,7 @@ type Pair[X, Y any] struct{}
 func (*Pair[X, Y]) Pointer() {}
 `)
 	pkg, info := checkRecordSource(t, fset, file)
-	p := Collect(new(Store).Files([]*ast.File{file}), false, false)
+	p := Collect(new(Index).Files([]*ast.File{file}), false, false)
 	p.BindScope(pkg)
 	for decl, r := range p.Functions {
 		if got := p.Objects[info.Defs[decl.Name]]; got != r {
@@ -173,7 +173,7 @@ func (*Pair[X, Y]) Pointer() {}
 	// A different checked package at different source positions must not bind.
 	otherSet, other := parseSource(t, "package p\n\ntype T struct{}\nfunc (*T) M() {}\n")
 	otherPkg, _ := checkRecordSource(t, otherSet, other)
-	unmatched := Collect(new(Store).Files([]*ast.File{file}), false, false)
+	unmatched := Collect(new(Index).Files([]*ast.File{file}), false, false)
 	unmatched.BindScope(otherPkg)
 	if len(unmatched.Objects) != 0 {
 		t.Fatalf("unrelated declarations bound: %v", unmatched.Objects)

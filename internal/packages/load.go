@@ -88,7 +88,7 @@ type Cached struct {
 }
 
 type aDeduper struct {
-	directives *directive.Store
+	directives *directive.Index
 	cache      sync.Map
 	checked    sync.Map
 	setpath    func(path string, name string) string
@@ -103,7 +103,7 @@ func NewDeduper() Deduper {
 	return &aDeduper{}
 }
 
-func (p Deduper) SetDirectives(store *directive.Store) { p.directives = store }
+func (p Deduper) SetDirectives(index *directive.Index) { p.directives = index }
 
 func (p Deduper) SetPreload(fn func(pkg *packages.Package)) {
 	p.preload = fn
@@ -440,12 +440,12 @@ func (tc *typecheckContext) typecheckPackage(pkg *Package) {
 	}
 
 	pkgGoVersion := tc.targetGoVersion(pkg)
-	store := new(directive.Store)
+	index := new(directive.Index)
 	if tc.dedup != nil && tc.dedup.directives != nil {
-		store = tc.dedup.directives
+		index = tc.dedup.directives
 	}
-	store.Files(pkg.Syntax)
-	normalizeEmbedDriverDiagnostics(pkg.Errors, fset, pkg.Syntax, pkgGoVersion, store)
+	index.Files(pkg.Syntax)
+	normalizeEmbedDriverDiagnostics(pkg.Errors, fset, pkg.Syntax, pkgGoVersion, index)
 
 	if tc.origMode&NeedTypes == 0 && tc.origMode&NeedTypesInfo == 0 {
 		return
@@ -523,17 +523,17 @@ func (tc *typecheckContext) typecheckPackage(pkg *Package) {
 
 const embedPatternDriverDiagnostic = "pattern //: invalid pattern syntax"
 
-func normalizeEmbedDriverDiagnostics(errs []packages.Error, fset *token.FileSet, files []*ast.File, goVersion string, stores ...*directive.Store) {
-	store := new(directive.Store)
-	if len(stores) > 0 {
-		store = stores[0]
+func normalizeEmbedDriverDiagnostics(errs []packages.Error, fset *token.FileSet, files []*ast.File, goVersion string, indexes ...*directive.Index) {
+	index := new(directive.Index)
+	if len(indexes) > 0 {
+		index = indexes[0]
 	}
 	for i := range errs {
 		if errs[i].Msg != embedPatternDriverDiagnostic {
 			continue
 		}
 		for _, file := range files {
-			context := embedDirectiveContextAt(fset, file, errs[i].Pos, store)
+			context := embedDirectiveContextAt(fset, file, errs[i].Pos, index)
 			switch {
 			case context == embedDirectiveLocalVar:
 				errs[i].Msg = "go:embed cannot apply to var inside func"
@@ -555,17 +555,17 @@ const (
 	embedDirectiveLocalVar
 )
 
-func embedDirectiveContextAt(fset *token.FileSet, file *ast.File, errorPos string, stores ...*directive.Store) embedDirectiveContext {
-	store := new(directive.Store)
-	if len(stores) > 0 {
-		store = stores[0]
+func embedDirectiveContextAt(fset *token.FileSet, file *ast.File, errorPos string, indexes ...*directive.Index) embedDirectiveContext {
+	index := new(directive.Index)
+	if len(indexes) > 0 {
+		index = indexes[0]
 	}
 	if fset == nil || file == nil {
 		return embedDirectiveUnknown
 	}
 	for _, group := range file.Comments {
 		for _, comment := range group.List {
-			if !store.File(file).EmbedComments[comment] || !sameDiagnosticLine(errorPos, fset.Position(comment.Pos())) {
+			if !index.File(file).EmbedComments[comment] || !sameDiagnosticLine(errorPos, fset.Position(comment.Pos())) {
 				continue
 			}
 			if localVarHasDocComment(file, comment) {
