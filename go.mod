@@ -11,7 +11,7 @@ require (
 	github.com/qiniu/x v1.18.3
 	github.com/xgo-dev/llgo/runtime v0.0.0-00010101000000-000000000000
 	github.com/xgo-dev/llvm v0.10.0
-	github.com/xgo-dev/plan9asm v0.5.3
+	github.com/xgo-dev/plan9asm v0.6.0
 	go.bug.st/serial v1.6.4
 	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/mod v0.41.0
