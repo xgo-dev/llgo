@@ -6,10 +6,11 @@ import (
 	"sync"
 )
 
-// Store owns immutable directive records for one compilation. AST identity is
-// the cache key: overlays and reparsed patch files are distinct source views.
-// No records or LLVM values are shared between independent compilations.
-type Store struct {
+// Index prepares and indexes directive records for one compilation. AST identity
+// is the key: overlays and reparsed patch files are distinct source views.
+// Freeze ends preparation; published records are immutable. No records or LLVM
+// values are shared between independent compilations.
+type Index struct {
 	frozen    bool
 	imports   map[string][]LegacyLink
 	mu        sync.Mutex
@@ -19,7 +20,7 @@ type Store struct {
 }
 
 // File contains source-order file directives and declaration associations.
-// All slices and maps are read-only after publication by Store.File.
+// All slices and maps are read-only after publication by Index.File.
 type File struct {
 	EmbedComments map[*ast.Comment]bool
 	Syntax        *ast.File
@@ -65,7 +66,7 @@ type Skip struct {
 	Names []string
 }
 
-func (s *Store) Group(doc *ast.CommentGroup) *Group {
+func (s *Index) Group(doc *ast.CommentGroup) *Group {
 	if doc == nil {
 		return &Group{}
 	}
@@ -73,7 +74,7 @@ func (s *Store) Group(doc *ast.CommentGroup) *Group {
 	defer s.mu.Unlock()
 	return s.group(doc)
 }
-func (s *Store) group(doc *ast.CommentGroup) *Group {
+func (s *Index) group(doc *ast.CommentGroup) *Group {
 	if doc == nil {
 		return &Group{}
 	}
@@ -90,7 +91,7 @@ func (s *Store) group(doc *ast.CommentGroup) *Group {
 	s.groups[doc] = g
 	return g
 }
-func (s *Store) File(file *ast.File) *File {
+func (s *Index) File(file *ast.File) *File {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.files == nil {
@@ -162,7 +163,7 @@ func (s *Store) File(file *ast.File) *File {
 	s.files[file] = f
 	return f
 }
-func (s *Store) Files(files []*ast.File) []*File {
+func (s *Index) Files(files []*ast.File) []*File {
 	out := make([]*File, 0, len(files))
 	for _, f := range files {
 		if f != nil {
@@ -188,7 +189,7 @@ func (g *Group) Has(name string) bool {
 
 // Function prepares a declaration when a standalone SSA client supplies syntax
 // without files. Normal build clients already registered it through File.
-func (s *Store) Function(d *ast.FuncDecl) Function {
+func (s *Index) Function(d *ast.FuncDecl) Function {
 	if d == nil {
 		return Function{}
 	}
@@ -209,7 +210,7 @@ func (s *Store) Function(d *ast.FuncDecl) Function {
 }
 
 // LookupFunction reads a prepared standalone declaration without discovery.
-func (s *Store) LookupFunction(d *ast.FuncDecl) (Function, bool) {
+func (s *Index) LookupFunction(d *ast.FuncDecl) (Function, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.functions[d]
@@ -218,4 +219,4 @@ func (s *Store) LookupFunction(d *ast.FuncDecl) (Function, bool) {
 
 // Freeze closes discovery at the coordinator/worker boundary. Existing records
 // remain readable; a missed preload is diagnosed instead of silently reparsed.
-func (s *Store) Freeze() { s.mu.Lock(); s.frozen = true; s.mu.Unlock() }
+func (s *Index) Freeze() { s.mu.Lock(); s.frozen = true; s.mu.Unlock() }

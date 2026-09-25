@@ -33,7 +33,7 @@ import (
 // One-shot compiler users keep the same Program-local mutation behavior.
 type packageSyntaxData struct {
 	mu                    sync.RWMutex
-	source                directive.Store
+	source                directive.Index
 	declarations          map[*types.Package]*directive.Package
 	effective             map[*types.Package]*types.Package
 	linknames             map[string]string
@@ -106,7 +106,7 @@ func (p Program) packageTypeCallConv(name string) (CallConv, bool) {
 }
 
 // Directives owns the source snapshots shared by coordinator and backends.
-func (p Program) Directives() *directive.Store { return &p.packageSyntax.source }
+func (p Program) Directives() *directive.Index { return &p.packageSyntax.source }
 func (p Program) SetPackageDirectives(pkg *types.Package, records *directive.Package) {
 	p.packageSyntax.mu.Lock()
 	defer p.packageSyntax.mu.Unlock()

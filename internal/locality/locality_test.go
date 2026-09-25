@@ -258,7 +258,7 @@ func TestDirectiveDiagnostics(t *testing.T) {
 	if err := ValidateNonPackageVar(nil, typeDecl); err == nil || !strings.Contains(err.Error(), "package-level var") {
 		t.Fatalf("type spec validation error = %v", err)
 	}
-	if directiveStore(nil).Group(&ast.CommentGroup{List: []*ast.Comment{{Text: "//go:noinline"}}}).Has("go:embed") {
+	if directiveIndex(nil).Group(&ast.CommentGroup{List: []*ast.Comment{{Text: "//go:noinline"}}}).Has("go:embed") {
 		t.Fatal("hasDirective matched an unrelated directive")
 	}
 }

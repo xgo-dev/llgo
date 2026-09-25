@@ -52,7 +52,7 @@ func ParseLegacyLink(line string, allowExport bool) LegacyLink {
 // ReadLegacyLinks is the single source-discovery fallback for standalone
 // compiler clients that supply imported type objects without dependency ASTs.
 // The driver path supplies File records instead. Failed reads are cached too.
-func (s *Store) ReadLegacyLinks(filename string) []LegacyLink {
+func (s *Index) ReadLegacyLinks(filename string) []LegacyLink {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.imports == nil {

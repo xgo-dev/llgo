@@ -23,12 +23,12 @@ func TestEmbedRecordPatternsAndDeferredErrors(t *testing.T) {
 		{"// ordinary", false, nil, ""},
 	} {
 		t.Run(tt.line, func(t *testing.T) {
-			store := new(Store)
+			index := new(Index)
 			doc := &ast.CommentGroup{List: []*ast.Comment{nil, {Text: tt.line}}}
-			record := store.Group(doc)
+			record := index.Group(doc)
 			doc.List = nil
-			store.Freeze()
-			patterns, present, err := EmbedPatterns(store.Group(nil), record)
+			index.Freeze()
+			patterns, present, err := EmbedPatterns(index.Group(nil), record)
 			if present != tt.present || !reflect.DeepEqual(patterns, tt.patterns) {
 				t.Fatalf("patterns = %q, %v", patterns, present)
 			}
@@ -37,9 +37,9 @@ func TestEmbedRecordPatternsAndDeferredErrors(t *testing.T) {
 			}
 		})
 	}
-	store := new(Store)
-	a := store.Group(&ast.CommentGroup{List: []*ast.Comment{{Text: "//go:embed first"}}})
-	b := store.Group(&ast.CommentGroup{List: []*ast.Comment{{Text: "//go:embed second"}}})
+	index := new(Index)
+	a := index.Group(&ast.CommentGroup{List: []*ast.Comment{{Text: "//go:embed first"}}})
+	b := index.Group(&ast.CommentGroup{List: []*ast.Comment{{Text: "//go:embed second"}}})
 	if p, has, err := EmbedPatterns(a, b); err != nil || !has || !reflect.DeepEqual(p, []string{"first", "second"}) {
 		t.Fatalf("combined patterns = %v, %v, %v", p, has, err)
 	}

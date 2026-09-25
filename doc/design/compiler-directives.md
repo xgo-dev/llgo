@@ -1,7 +1,7 @@
 # Compiler directive records
 
 `internal/directive` owns comment recognition and source records for Go and LLGo
-compiler directives. A compilation owns one `directive.Store`; coordinator and
+compiler directives. A compilation owns one `directive.Index`; coordinator and
 backend Programs share it through `packageSyntaxData`. Records contain Go data,
 never LLVM values. Consumers must not modify published records.
 
@@ -11,7 +11,7 @@ never LLVM values. Consumers must not modify published records.
    The overlay builder consumes them before type checking. Directive neutralizing
    preserves byte offsets and line endings. Reparsed overlays have distinct AST
    identities and therefore distinct records.
-2. The loader registers each selected AST with the Store. A File snapshot records
+2. The loader registers each selected AST with the Index. A File snapshot records
    normalized comment groups, function properties, package-wide links, internal
    directives and embed directives. Existing syntax dialects remain separate where
    their accepted spelling or precedence differs.
@@ -24,7 +24,7 @@ never LLVM values. Consumers must not modify published records.
    type information. Replaced declarations cannot override the active name record.
    Standalone clients without `types.Info` use position-checked `BindScope`.
 5. Caller analysis prepares its function records before backend workers start.
-   The driver freezes the Store; attempting to discover an unprepared file,
+   The driver freezes the Index; attempting to discover an unprepared file,
    comment group, function or imported source after that boundary panics.
 6. Lowering queries records. A backend-local `sourceFunction` embeds the x/tools
    SSA function and carries its source properties. Generic instances consult their
@@ -61,7 +61,7 @@ Cgo-specific processing is outside this refactor. C preambles, `#cgo` commands,
 `go:cgo_ldflag`, and `go:cgo_import_dynamic` retain their existing parsing and
 consumption paths in `internal/build`, including platform-specific import and
 link handling. Their parsed flags, imports and preambles are not stored in the
-directive Store or subject to its discovery freeze. General declaration link/export records remain shared
+directive Index or subject to its discovery freeze. General declaration link/export records remain shared
 compiler infrastructure.
 
 ## Standalone entrypoints and remaining source use
@@ -69,9 +69,9 @@ compiler infrastructure.
 Standalone compiler clients may provide imported type objects without dependency
 ASTs. Dependency SSA declarations with available syntax are also snapshotted
 during preparation. The preparation phase discovers and caches legacy imported link directives
-through `Store.ReadLegacyLinks`, including failed reads. Lowering applies the
+through `Index.ReadLegacyLinks`, including failed reads. Lowering applies the
 prepared records without opening those files. Independent helper APIs may create
-a temporary Store; the normal build path passes its shared Store throughout.
+a temporary Index; the normal build path passes its shared Index throughout.
 
 This does not remove Go parsing, type checking, SSA construction, patch AST
 transformation, embedded resource reads, debug source-line reads or syntax-based
