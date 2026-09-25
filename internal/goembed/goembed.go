@@ -28,7 +28,7 @@ type VarData struct {
 type VarMap map[string]VarData
 
 func LoadDirectives(fset *token.FileSet, files []*ast.File) (VarMap, error) {
-	return LoadRecords(fset, new(directive.Store).Files(files))
+	return LoadRecords(fset, new(directive.Index).Files(files))
 }
 
 // LoadRecords resolves files from previously parsed directive records.
@@ -111,10 +111,10 @@ func FileImportsEmbed(file *ast.File) bool {
 
 // ParsePatterns is the standalone API; compilation clients use LoadRecords.
 func ParsePatterns(docs ...*ast.CommentGroup) ([]string, bool, error) {
-	store := new(directive.Store)
+	index := new(directive.Index)
 	groups := make([]*directive.Group, 0, len(docs))
 	for _, doc := range docs {
-		groups = append(groups, store.Group(doc))
+		groups = append(groups, index.Group(doc))
 	}
 	return directive.EmbedPatterns(groups...)
 }

@@ -242,10 +242,10 @@ func ordinaryGeneric() { dep.OrdinaryGeneric[int](uintptr(unsafe.Pointer(new(int
 }
 
 func testUintptrEscapesRoots(fn *ssa.Function) map[ssa.Value]struct{} {
-	store := new(directive.Store)
+	index := new(directive.Index)
 	return uintptrEscapesRoots(fn, func(f *ssa.Function) bool {
 		if d, ok := f.Syntax().(*ast.FuncDecl); ok {
-			return store.Group(d.Doc).Function.UintptrEscapes
+			return index.Group(d.Doc).Function.UintptrEscapes
 		}
 		return false
 	})

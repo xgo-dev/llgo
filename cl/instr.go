@@ -1025,7 +1025,7 @@ type callerTrackingFuncSets struct {
 	recoverPanicSites map[*ssa.Function]bool
 }
 
-func computeRuntimeCallerFuncSets(directives *directive.Store, recover *recoverFacts, pkg *ssa.Package, funcs, base, trackable map[*ssa.Function]bool, baseSet func(*ssa.Package) map[*ssa.Function]bool) callerTrackingFuncSets {
+func computeRuntimeCallerFuncSets(directives *directive.Index, recover *recoverFacts, pkg *ssa.Package, funcs, base, trackable map[*ssa.Function]bool, baseSet func(*ssa.Package) map[*ssa.Function]bool) callerTrackingFuncSets {
 	frames := make(map[*ssa.Function]bool, len(base))
 	for fn := range base {
 		frames[fn] = true
@@ -1263,7 +1263,7 @@ func (a *runtimeCallerAnalysis) callTargets(fn *ssa.Function, call *ssa.CallComm
 // Precompute before workers start; recover facts also synchronize lazy queries
 // for nested and synthetic functions that are not package members.
 type CallerTracking struct {
-	directives  *directive.Store
+	directives  *directive.Index
 	base        map[*ssa.Package]map[*ssa.Function]bool
 	extended    map[*ssa.Package]callerTrackingFuncSets
 	recover     *recoverFacts
@@ -1412,13 +1412,13 @@ func uniqueCallerTrackingPackages(pkgs []*ssa.Package) []*ssa.Package {
 }
 
 // NewCallerTracking creates the frontend-analysis caches for one compilation.
-func NewCallerTracking(stores ...*directive.Store) *CallerTracking {
-	store := new(directive.Store)
-	if len(stores) > 0 && stores[0] != nil {
-		store = stores[0]
+func NewCallerTracking(indexes ...*directive.Index) *CallerTracking {
+	index := new(directive.Index)
+	if len(indexes) > 0 && indexes[0] != nil {
+		index = indexes[0]
 	}
 	return &CallerTracking{
-		directives: store,
+		directives: index,
 		base:       make(map[*ssa.Package]map[*ssa.Function]bool),
 		extended:   make(map[*ssa.Package]callerTrackingFuncSets),
 		recover:    newRecoverFacts(),

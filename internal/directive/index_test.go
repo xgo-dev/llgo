@@ -46,7 +46,7 @@ func TestGroupCompatibility(t *testing.T) {
 			for _, line := range strings.Split(tt.comments, "\n") {
 				doc.List = append(doc.List, &ast.Comment{Text: line})
 			}
-			g := new(Store).Group(doc)
+			g := new(Index).Group(doc)
 			if g.Function.NoInline != tt.noinline || g.NoInterface != tt.nointerface || g.TypeBackground != tt.bg || !reflect.DeepEqual(g.Skip.Names, tt.skip) {
 				t.Fatalf("group = %+v", g)
 			}
@@ -68,8 +68,8 @@ func plain() {}
 //go:linkname env shared.symbol
 //go:linkname plain shared.symbol
 `, "\n", "\r\n"))
-	store := new(Store)
-	f := store.File(file)
+	index := new(Index)
+	f := index.File(file)
 	p := Collect([]*File{f}, false, false)
 	env := p.Functions[file.Decls[1].(*ast.FuncDecl)]
 	plain := p.Functions[file.Decls[2].(*ast.FuncDecl)]
@@ -79,7 +79,7 @@ func plain() {}
 	if plain.ClosureEnv || plain.NoInline || plain.Linkname != env.Linkname || env.Linkname != "shared.symbol" {
 		t.Fatalf("aliased declarations lost identity: %+v / %+v", env, plain)
 	}
-	store.Freeze()
+	index.Freeze()
 	// Mutating/removing the original comments must not change any subsequent
 	// consumer. A consumer that reparses comments would observe the poison text.
 	for _, g := range file.Comments {
@@ -94,7 +94,7 @@ func plain() {}
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 20; j++ {
-				if store.File(file) != f || !store.Function(env.Source).NoInline || f.GoLinks[0].Target != "shared.symbol" {
+				if index.File(file) != f || !index.Function(env.Source).NoInline || f.GoLinks[0].Target != "shared.symbol" {
 					t.Error("snapshot changed")
 				}
 			}
@@ -105,14 +105,14 @@ func plain() {}
 
 func TestFreezeRejectsDiscovery(t *testing.T) {
 	_, file := parseSource(t, "package p\n")
-	store := new(Store)
-	store.Freeze()
+	index := new(Index)
+	index.Freeze()
 	defer func() {
 		if recover() == nil {
 			t.Error("late discovery accepted")
 		}
 	}()
-	store.File(file)
+	index.File(file)
 }
 
 func TestBindReceiverAliasAndPackageVariants(t *testing.T) {
@@ -131,7 +131,7 @@ func (Alias) M() {}
 		if err != nil {
 			t.Fatal(err)
 		}
-		records := Collect(new(Store).Files([]*ast.File{file}), false, false)
+		records := Collect(new(Index).Files([]*ast.File{file}), false, false)
 		records.Bind(info)
 		method := pkg.Scope().Lookup("T").Type().(*types.Named).Method(0)
 		r, ok := records.Objects[method].(*FunctionDecl)
@@ -153,7 +153,7 @@ var data string
 // llgo:env
 func f() {}
 `)
-	r := new(Store).File(file)
+	r := new(Index).File(file)
 	g := r.Group(file.Decls[0].(*ast.GenDecl).Doc)
 	if !g.Embed.Present || !reflect.DeepEqual(g.Embed.Patterns, []string{"a b", "c"}) || g.Has("go:embed") {
 		t.Fatalf("embed dialect = %+v", g)

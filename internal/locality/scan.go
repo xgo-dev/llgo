@@ -37,9 +37,9 @@ type Variable struct {
 
 // ScanPackageVar validates and collects locality directives on a package-level
 // var declaration.
-func ScanPackageVar(fset *token.FileSet, decl *ast.GenDecl, stores ...*directive.Store) ([]Variable, error) {
-	store := directiveStore(stores)
-	declKind, declPos, err := FromDoc(fset, decl.Doc, store)
+func ScanPackageVar(fset *token.FileSet, decl *ast.GenDecl, indexes ...*directive.Index) ([]Variable, error) {
+	index := directiveIndex(indexes)
+	declKind, declPos, err := FromDoc(fset, decl.Doc, index)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +49,7 @@ func ScanPackageVar(fset *token.FileSet, decl *ast.GenDecl, stores ...*directive
 		if !ok {
 			continue
 		}
-		specKind, specPos, err := FromDoc(fset, spec.Doc, store)
+		specKind, specPos, err := FromDoc(fset, spec.Doc, index)
 		if err != nil {
 			return nil, err
 		}
@@ -60,10 +60,10 @@ func ScanPackageVar(fset *token.FileSet, decl *ast.GenDecl, stores ...*directive
 		if kind == None {
 			continue
 		}
-		if store.Group(decl.Doc).Has("go:embed") || store.Group(spec.Doc).Has("go:embed") {
+		if index.Group(decl.Doc).Has("go:embed") || index.Group(spec.Doc).Has("go:embed") {
 			return nil, errorAt(fset, spec.Pos(), "%s and //go:embed cannot apply to the same variable declaration", Directive(kind))
 		}
-		if store.Group(decl.Doc).Has("go:linkname") || store.Group(spec.Doc).Has("go:linkname") {
+		if index.Group(decl.Doc).Has("go:linkname") || index.Group(spec.Doc).Has("go:linkname") {
 			return nil, errorAt(fset, spec.Pos(), "%s cannot apply to a //go:linkname variable", Directive(kind))
 		}
 		for _, ident := range spec.Names {
@@ -84,9 +84,9 @@ func ScanPackageVar(fset *token.FileSet, decl *ast.GenDecl, stores ...*directive
 
 // ValidateNonPackageVar rejects locality directives on declarations other
 // than package-level vars, including grouped import/type/const specs.
-func ValidateNonPackageVar(fset *token.FileSet, decl *ast.GenDecl, stores ...*directive.Store) error {
-	store := directiveStore(stores)
-	if err := ValidateDoc(fset, decl.Doc, store); err != nil {
+func ValidateNonPackageVar(fset *token.FileSet, decl *ast.GenDecl, indexes ...*directive.Index) error {
+	index := directiveIndex(indexes)
+	if err := ValidateDoc(fset, decl.Doc, index); err != nil {
 		return err
 	}
 	for _, node := range decl.Specs {
@@ -99,7 +99,7 @@ func ValidateNonPackageVar(fset *token.FileSet, decl *ast.GenDecl, stores ...*di
 		case *ast.ValueSpec:
 			doc = spec.Doc
 		}
-		if err := ValidateDoc(fset, doc, store); err != nil {
+		if err := ValidateDoc(fset, doc, index); err != nil {
 			return err
 		}
 	}
@@ -108,8 +108,8 @@ func ValidateNonPackageVar(fset *token.FileSet, decl *ast.GenDecl, stores ...*di
 
 // ValidateFuncBody rejects locality directives on declarations nested inside
 // a function or function literal.
-func ValidateFuncBody(fset *token.FileSet, body *ast.BlockStmt, stores ...*directive.Store) error {
-	store := directiveStore(stores)
+func ValidateFuncBody(fset *token.FileSet, body *ast.BlockStmt, indexes ...*directive.Index) error {
+	index := directiveIndex(indexes)
 	if body == nil {
 		return nil
 	}
@@ -124,7 +124,7 @@ func ValidateFuncBody(fset *token.FileSet, body *ast.BlockStmt, stores ...*direc
 		}
 		decl, ok := stmt.Decl.(*ast.GenDecl)
 		if ok {
-			firstErr = ValidateNonPackageVar(fset, decl, store)
+			firstErr = ValidateNonPackageVar(fset, decl, index)
 		}
 		return firstErr == nil
 	})
@@ -132,11 +132,11 @@ func ValidateFuncBody(fset *token.FileSet, body *ast.BlockStmt, stores ...*direc
 }
 
 // FromDoc returns the locality directive attached to doc.
-func FromDoc(fset *token.FileSet, doc *ast.CommentGroup, stores ...*directive.Store) (Kind, token.Pos, error) {
-	store := directiveStore(stores)
+func FromDoc(fset *token.FileSet, doc *ast.CommentGroup, indexes ...*directive.Index) (Kind, token.Pos, error) {
+	index := directiveIndex(indexes)
 	var kind Kind
 	var pos token.Pos
-	for _, directive := range store.Group(doc).Items {
+	for _, directive := range index.Group(doc).Items {
 		var next Kind
 		switch directive.Name {
 		case "llgointernal:tls":
@@ -163,9 +163,9 @@ func FromDoc(fset *token.FileSet, doc *ast.CommentGroup, stores ...*directive.St
 }
 
 // ValidateDoc rejects a locality directive outside a package-level var.
-func ValidateDoc(fset *token.FileSet, doc *ast.CommentGroup, stores ...*directive.Store) error {
-	store := directiveStore(stores)
-	kind, pos, err := FromDoc(fset, doc, store)
+func ValidateDoc(fset *token.FileSet, doc *ast.CommentGroup, indexes ...*directive.Index) error {
+	index := directiveIndex(indexes)
+	kind, pos, err := FromDoc(fset, doc, index)
 	if err != nil {
 		return err
 	}
@@ -186,11 +186,11 @@ func mergeAt(fset *token.FileSet, a Kind, apos token.Pos, b Kind, bpos token.Pos
 	return merged, apos, nil
 }
 
-func directiveStore(stores []*directive.Store) *directive.Store {
-	if len(stores) > 0 && stores[0] != nil {
-		return stores[0]
+func directiveIndex(indexes []*directive.Index) *directive.Index {
+	if len(indexes) > 0 && indexes[0] != nil {
+		return indexes[0]
 	}
-	return new(directive.Store)
+	return new(directive.Index)
 }
 
 func errorAt(fset *token.FileSet, pos token.Pos, format string, args ...any) error {

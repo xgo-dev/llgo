@@ -377,7 +377,7 @@ func collectSourcePatchDirectives(src []byte) (sourcePatchDirectives, error) {
 		return sourcePatchDirectives{}, err
 	}
 	d := sourcePatchDirectives{skips: make(map[string]struct{})}
-	records := new(directive.Store).File(file)
+	records := new(directive.Index).File(file)
 	d.skipAll = records.PatchSkip.All
 	for _, name := range records.PatchSkip.Names {
 		d.skips[name] = struct{}{}

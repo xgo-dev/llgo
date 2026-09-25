@@ -43,18 +43,18 @@ type symInfo struct {
 }
 
 type pkgSymInfo struct {
-	store *directive.Store
+	index *directive.Index
 	files map[string][]directive.LegacyLink // file => parsed links
 	syms  map[string]symInfo                // name => isVar
 }
 
-func newPkgSymInfo(stores ...*directive.Store) *pkgSymInfo {
-	store := new(directive.Store)
-	if len(stores) > 0 {
-		store = stores[0]
+func newPkgSymInfo(indexes ...*directive.Index) *pkgSymInfo {
+	index := new(directive.Index)
+	if len(indexes) > 0 {
+		index = indexes[0]
 	}
 	return &pkgSymInfo{
-		store: store,
+		index: index,
 		files: make(map[string][]directive.LegacyLink),
 		syms:  make(map[string]symInfo),
 	}
@@ -65,7 +65,7 @@ func (p *pkgSymInfo) addSym(fset *token.FileSet, pos token.Pos, fullName, inPkgN
 	if fp := f.Position(pos); fp.Line > 2 {
 		file := fp.Filename
 		if _, ok := p.files[file]; !ok {
-			p.files[file] = p.store.ReadLegacyLinks(file)
+			p.files[file] = p.index.ReadLegacyLinks(file)
 		}
 		p.syms[inPkgName] = symInfo{file, fullName, isVar}
 	}
@@ -256,7 +256,7 @@ func (p *context) collectSkipNames(line string) bool {
 }
 
 func (p *context) collectSkipNamesByDoc(doc *ast.CommentGroup) {
-	skip := new(directive.Store).Group(doc).Skip
+	skip := new(directive.Index).Group(doc).Skip
 	p.skipall = p.skipall || skip.All
 	for _, name := range skip.Names {
 		p.skips[name] = none{}
@@ -293,7 +293,7 @@ func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.Fil
 }
 
 func (p *context) processLinknameByDoc(doc *ast.CommentGroup, fullName, inPkgName string, isVar, allowExport bool) bool {
-	for _, r := range new(directive.Store).Group(doc).LegacyLinks(allowExport) {
+	for _, r := range new(directive.Index).Group(doc).LegacyLinks(allowExport) {
 		ret := p.applyLegacyLink(r, func(name string, export bool) (string, bool, bool) {
 			return fullName, isVar, name == inPkgName || export && p.options.ExportRename
 		})
@@ -305,7 +305,7 @@ func (p *context) processLinknameByDoc(doc *ast.CommentGroup, fullName, inPkgNam
 }
 
 func (p *context) processNoInterfaceByDoc(doc *ast.CommentGroup, fullName string) {
-	if new(directive.Store).Group(doc).NoInterface {
+	if new(directive.Index).Group(doc).NoInterface {
 		p.prog.SetNoInterfaceMethod(fullName)
 	}
 }
@@ -758,8 +758,8 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 	if pkg == nil || prog.PackageSyntaxParsed(pkg) {
 		return nil
 	}
-	store := prog.Directives()
-	sources := store.Files(files)
+	index := prog.Directives()
+	sources := index.Files(files)
 	if err := validateInternalRecords(fset, pkg.Path(), sources, options.AllowInternalDirectives); err != nil {
 		return err
 	}
@@ -769,10 +769,10 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 		for _, node := range file.Syntax.Decls {
 			switch decl := node.(type) {
 			case *ast.FuncDecl:
-				if err := locality.ValidateDoc(fset, decl.Doc, store); err != nil {
+				if err := locality.ValidateDoc(fset, decl.Doc, index); err != nil {
 					return err
 				}
-				if err := locality.ValidateFuncBody(fset, decl.Body, store); err != nil {
+				if err := locality.ValidateFuncBody(fset, decl.Body, index); err != nil {
 					return err
 				}
 				r := records.Functions[decl]
@@ -811,7 +811,7 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 							}
 						}
 					}
-					vars, err := locality.ScanPackageVar(fset, decl, store)
+					vars, err := locality.ScanPackageVar(fset, decl, index)
 					if err != nil {
 						return err
 					}
@@ -819,7 +819,7 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 						prog.DeclareLocality(pkg, v.Name, v.Info)
 					}
 				} else {
-					if err := locality.ValidateNonPackageVar(fset, decl, store); err != nil {
+					if err := locality.ValidateNonPackageVar(fset, decl, index); err != nil {
 						return err
 					}
 					if decl.Tok == token.TYPE {
@@ -840,7 +840,7 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 }
 
 func validateInternalDirectives(fset *token.FileSet, pkgPath string, files []*ast.File, allow bool) error {
-	return validateInternalRecords(fset, pkgPath, new(directive.Store).Files(files), allow)
+	return validateInternalRecords(fset, pkgPath, new(directive.Index).Files(files), allow)
 }
 func validateInternalRecords(fset *token.FileSet, pkgPath string, files []*directive.File, allow bool) error {
 	if allow || pkgPath == env.LLGoRuntimePkg || strings.HasPrefix(pkgPath, env.LLGoRuntimePkg+"/") {
@@ -855,7 +855,7 @@ func validateInternalRecords(fset *token.FileSet, pkgPath string, files []*direc
 }
 
 func typeBackground(doc *ast.CommentGroup) string {
-	return new(directive.Store).Group(doc).TypeBackground
+	return new(directive.Index).Group(doc).TypeBackground
 }
 
 func toBackground(bg string) llssa.Background {
