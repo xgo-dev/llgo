@@ -125,7 +125,7 @@ func preparePackageBuilds(ctx *context, tasks []*packageBuildTask, verbose bool)
 		// Program, but do not execute two such merges concurrently.
 		task.parallel = task.isolated && !patched
 	}
-	return nil
+	return ctx.preparePackageExports()
 }
 
 // buildPackageGroup prepares the group serially, then runs eligible package

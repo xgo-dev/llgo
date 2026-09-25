@@ -704,6 +704,7 @@ var llgoInstrs = map[string]int{
 // funcOf returns a function by name and set ftype = goFunc, cFunc, etc.
 // or returns nil and set ftype = llgoCstr, llgoAlloca, llgoUnreachable, etc.
 func (p *context) funcOf(fn *ssa.Function) (aFn llssa.Function, pyFn llssa.PyObjRef, ftype int) {
+	source := p.function(fn)
 	pkgTypes, name, ftype := p.funcName(fn)
 	switch ftype {
 	case pyFunc:
@@ -734,6 +735,9 @@ func (p *context) funcOf(fn *ssa.Function) (aFn llssa.Function, pyFn llssa.PyObj
 				aFn.Inline(llssa.NoInline)
 			}
 		}
+	}
+	if aFn != nil {
+		source.applyAttributes(aFn)
 	}
 	return
 }
