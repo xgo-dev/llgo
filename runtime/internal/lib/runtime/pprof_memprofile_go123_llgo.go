@@ -2,7 +2,11 @@
 
 package runtime
 
-import _ "unsafe"
+import (
+	_ "unsafe"
+
+	llrt "github.com/xgo-dev/llgo/runtime/internal/runtime"
+)
 
 type pprofMemProfileRecord struct {
 	AllocBytes, FreeBytes     int64
@@ -12,6 +16,12 @@ type pprofMemProfileRecord struct {
 
 //go:linkname pprof_memProfileInternal runtime.pprof_memProfileInternal
 func pprof_memProfileInternal(p []pprofMemProfileRecord, inuseZero bool) (n int, ok bool) {
+	previous := llrt.MemProfilePause()
+	defer llrt.MemProfileResume(previous)
+	return pprofMemProfileInternal(p, inuseZero)
+}
+
+func pprofMemProfileInternal(p []pprofMemProfileRecord, inuseZero bool) (n int, ok bool) {
 	n, _ = MemProfile(nil, inuseZero)
 	if len(p) < n {
 		return n, false
@@ -19,12 +29,17 @@ func pprof_memProfileInternal(p []pprofMemProfileRecord, inuseZero bool) (n int,
 	if n == 0 {
 		return 0, true
 	}
-	var records [64]MemProfileRecord
-	if n > len(records) {
-		return n, false
+	// Size dynamically with slack and retry: a fixed cap makes pprof's
+	// retry-until-ok loop spin forever once the bucket set outgrows it.
+	records := make([]MemProfileRecord, n+n/4+16)
+	for attempt := 0; ; attempt++ {
+		n, ok = MemProfile(records, inuseZero)
+		if ok || attempt >= 3 {
+			break
+		}
+		records = make([]MemProfileRecord, n+n/4+16)
 	}
-	n, ok = MemProfile(records[:n], inuseZero)
-	if !ok {
+	if !ok || len(p) < n {
 		return n, false
 	}
 	for i := 0; i < n; i++ {

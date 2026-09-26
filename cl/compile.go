@@ -666,12 +666,20 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	noInlineDirective := hasNoInlineDirective(f)
 	runtimeStackNoInline := needsRuntimeStackNoInline(pkgTypes, f)
 	pcLineNoInline := p.needsPCLineNoInline(f)
+	profileFrameNoInline := p.needsMemoryProfileFrame(f)
 	usesRecover := p.functionUsesRecover(f)
-	if disableInline || noInlineDirective || runtimeStackNoInline || pcLineNoInline || usesRecover {
+	noInline := disableInline || noInlineDirective || runtimeStackNoInline || pcLineNoInline || profileFrameNoInline || usesRecover
+	if noInline {
 		fn.Inline(llssa.NoInline)
 	}
-	if noInlineDirective || runtimeStackNoInline || pcLineNoInline || usesRecover {
+	if noInlineDirective || runtimeStackNoInline || pcLineNoInline || profileFrameNoInline || usesRecover {
 		fn.DisableTailCalls()
+	}
+	if !noInline && p.prog.MemoryProfilingEnabled() && pkg.Path() == llssa.PkgRuntime &&
+		f.Name() == "recordMemProfileAlloc" {
+		// Keep the unsampled allocation path in the allocator; only the
+		// stack-capturing slow path needs its own physical frame.
+		fn.Inline(llssa.AlwaysInline)
 	}
 	p.funcs[f] = fn
 	isCgo := isCgoExternSymbol(f)
@@ -825,13 +833,13 @@ func needsRuntimeStackNoInline(pkg *types.Package, f *ssa.Function) bool {
 	if pkg == nil || f == nil || f.Signature.Recv() != nil {
 		return false
 	}
-	switch pkg.Path() {
-	case "runtime", "github.com/xgo-dev/llgo/runtime/internal/lib/runtime":
+	path := pkg.Path()
+	if isPublicRuntimePath(path) {
 		switch f.Name() {
 		case "Caller", "Callers", "callers":
 			return true
 		}
-	case "github.com/xgo-dev/llgo/runtime/internal/clite/debug":
+	} else if path == "github.com/xgo-dev/llgo/runtime/internal/clite/debug" {
 		return f.Name() == "StackTrace"
 	}
 	return false
@@ -845,6 +853,18 @@ func (p *context) needsPCLineNoInline(f *ssa.Function) bool {
 		return false
 	}
 	return p.pkg != nil && canTrackCallerFramesForPackage(p.pkg.Path())
+}
+
+// Heap profiles need physical allocation frames even on targets that omit
+// PC-line site records (for example Darwin builds with DWARF).
+func (p *context) needsMemoryProfileFrame(f *ssa.Function) bool {
+	// The recorder is runtime plumbing, removed from reported stacks. Keeping
+	// its physical frame would force a call on every profiled allocation.
+	if p != nil && p.pkg != nil && p.pkg.Path() == llssa.PkgRuntime && f != nil && f.Name() == "recordMemProfileAlloc" {
+		return false
+	}
+	return p != nil && f != nil && p.pkg != nil && p.prog.MemoryProfilingEnabled() &&
+		p.runtimeCallerFuncs[f] && canTrackCallerFramesForPackage(p.pkg.Path())
 }
 
 func (p *context) getFuncBodyPos(f *ssa.Function) token.Position {
@@ -1693,6 +1713,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			return
 		}
 		elem := p.type_(t.Elem(), llssa.InGo)
+		if v.Heap && p.prog.MemoryProfilingEnabled() {
+			p.emitPCLineLabel(b, v.Pos())
+		}
 		hoistToEntry := true
 		if p.goFn != nil && (p.goFn.Synthetic == "package initializer" || p.goFn.Name() == "init") {
 			inLoop := false
@@ -2443,7 +2466,7 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 		}
 		if p.options.DebugSymbols && p.localityAllowsGlobalDebug(v) {
 			pos := p.fset.Position(v.Pos())
-			b.DIGlobal(val, v.Name(), pos)
+			b.DIGlobal(p.localityGlobalDebugValue(v, val), v.Name(), pos)
 		}
 		return val
 	case *ssa.Const:

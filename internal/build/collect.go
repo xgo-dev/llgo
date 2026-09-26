@@ -219,6 +219,7 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 		// Only the runtime embeds this setting; goroutine callers have a
 		// configuration-independent ABI. Match SetPthreadStackSize in Build.
 		m.pkg.PthreadStackSize = max(0, c.buildConf.PthreadStackSize)
+		m.pkg.MemoryProfiling = c.buildConf.memoryProfiling
 	}
 
 	// Go source files

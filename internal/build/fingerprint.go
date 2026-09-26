@@ -172,6 +172,7 @@ func (s *commonSection) empty() bool {
 
 type packageSection struct {
 	PthreadStackSize int64            `yaml:"pthread_stack_size,omitempty"`
+	MemoryProfiling  bool             `yaml:"memory_profiling,omitempty"`
 	PkgPath          string           `yaml:"pkg_path,omitempty"`
 	PkgID            string           `yaml:"pkg_id,omitempty"`
 	GoFiles          []fileDigest     `yaml:"go_files,omitempty"`
@@ -183,7 +184,8 @@ type packageSection struct {
 
 func (s *packageSection) empty() bool {
 	return s.PkgPath == "" && s.PkgID == "" && len(s.GoFiles) == 0 && len(s.AltGoFiles) == 0 &&
-		len(s.OtherFiles) == 0 && len(s.LLGoFiles) == 0 && len(s.RewriteVars) == 0 && s.PthreadStackSize == 0
+		len(s.OtherFiles) == 0 && len(s.LLGoFiles) == 0 && len(s.RewriteVars) == 0 &&
+		s.PthreadStackSize == 0 && !s.MemoryProfiling
 }
 
 // manifestBuilder builds manifest text with sorted sections.

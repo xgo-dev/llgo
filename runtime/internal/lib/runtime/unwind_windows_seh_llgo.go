@@ -126,6 +126,35 @@ func fpCallers(skip int, pc []uintptr) int {
 	return windowsContextCallers(context, skip, pc, true)
 }
 
+// Heap sampling runs from the allocator. Symbolizing each frame here can
+// allocate or reenter the runtime, and is much slower than the OS unwind on
+// Windows. Preserve raw PCs; MemProfile symbolizes them outside this path.
+//
+//go:noinline
+func fpProfileCallers(pc []uintptr) int {
+	if len(pc) == 0 {
+		return 0
+	}
+	var storage windowsFaultContextStorage
+	context := storage.context()
+	if c_windowsCaptureContext(context, windowsFaultContextPCOffset) == nil {
+		return 0
+	}
+	n := 0
+	for i := 0; n < len(pc) && i < maxPanicSpliceFrames; i++ {
+		if !windowsUnwindOne(context) {
+			break
+		}
+		ret := context.pc()
+		if !prebuiltTextContains(ret) {
+			break
+		}
+		pc[n] = ret
+		n++
+	}
+	return n
+}
+
 func platformFaultCallers(raw unsafe.Pointer, _ uintptr, pc []uintptr) int {
 	// Keep the OS-owned exception record intact. Windows still owns it while
 	// the vectored handler is active, even though LLGo leaves through its

@@ -5,6 +5,7 @@ package build
 import (
 	"bytes"
 	"encoding/json"
+	"go/token"
 	"go/types"
 	"os"
 	"path/filepath"
@@ -17,7 +18,51 @@ import (
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	xpackages "golang.org/x/tools/go/packages"
+	gossa "golang.org/x/tools/go/ssa"
 )
+
+func TestGroupInitialTestsByMemoryProfile(t *testing.T) {
+	pprofTypes := types.NewPackage("runtime/pprof", "pprof")
+	testdepsTypes := types.NewPackage("testing/internal/testdeps", "testdeps")
+	testdepsTypes.SetImports([]*types.Package{pprofTypes})
+	plainTypes := types.NewPackage("example.com/plain.test", "main")
+	plainTypes.SetImports([]*types.Package{testdepsTypes})
+	profiledTypes := types.NewPackage("example.com/profiled.test", "main")
+	profiledTypes.SetImports([]*types.Package{testdepsTypes, pprofTypes})
+
+	ssaProg := gossa.NewProgram(token.NewFileSet(), 0)
+	for _, pkg := range []*types.Package{pprofTypes, testdepsTypes, plainTypes, profiledTypes} {
+		ssaProg.CreatePackage(pkg, nil, nil, true)
+	}
+	pprof := &packages.Package{Types: pprofTypes}
+	testdeps := &packages.Package{Types: testdepsTypes, Imports: map[string]*packages.Package{"runtime/pprof": pprof}}
+	plain := &packages.Package{Types: plainTypes, Imports: map[string]*packages.Package{"testing/internal/testdeps": testdeps}}
+	profiled := &packages.Package{Types: profiledTypes, Imports: map[string]*packages.Package{
+		"testing/internal/testdeps": testdeps,
+		"runtime/pprof":             pprof,
+	}}
+	prog := llssa.NewProgram(&llssa.Target{GOARCH: "amd64"})
+	defer prog.Dispose()
+	ctx := &context{
+		prog: prog, progSSA: ssaProg, mode: ModeTest,
+		buildConf: NewDefaultConf(ModeTest), initial: []*packages.Package{plain, profiled},
+	}
+	groups := groupInitialBuildsWithProfiles(ctx, nil, true)
+	if len(groups) != 2 || groups[0].features.memoryProfile || !groups[1].features.memoryProfile ||
+		!slices.Equal(groups[0].pkgs, []*packages.Package{plain}) ||
+		!slices.Equal(groups[1].pkgs, []*packages.Package{profiled}) {
+		t.Fatalf("profiled and ordinary tests shared a build group: %+v", groups)
+	}
+	ctx.buildConf.RunArgs = []string{"-test.memprofile=heap.out"}
+	if !initialUsesMemoryProfile(ctx, plain) {
+		t.Fatal("explicit -test.memprofile did not enable profiling")
+	}
+	ctx.buildConf.RunArgs = nil
+	ctx.buildConf.CompileOnly = true
+	if !initialUsesMemoryProfile(ctx, plain) {
+		t.Fatal("go test -c binary cannot accept a later -test.memprofile flag")
+	}
+}
 
 func TestGroupInitialBuilds(t *testing.T) {
 	prog := llssa.NewProgram(&llssa.Target{GOARCH: "amd64"})

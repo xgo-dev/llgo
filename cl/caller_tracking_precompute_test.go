@@ -19,12 +19,85 @@
 package cl
 
 import (
+	"go/types"
 	"reflect"
 	"sync"
 	"testing"
 
 	gossa "golang.org/x/tools/go/ssa"
 )
+
+func TestMemProfileConsumerIgnoresUnusedTestdeps(t *testing.T) {
+	pprof := types.NewPackage("runtime/pprof", "pprof")
+	testdeps := types.NewPackage("testing/internal/testdeps", "testdeps")
+	testdeps.SetImports([]*types.Package{pprof})
+	pkgs := []*gossa.Package{{Pkg: pprof}, {Pkg: testdeps}}
+	if got := MemProfileConsumer(pkgs, true); got != "" {
+		t.Fatalf("unused testdeps enabled profiling: %s", got)
+	}
+	if got := MemProfileConsumer(pkgs, false); got != "runtime/pprof" {
+		t.Fatalf("requested test profile consumer = %q", got)
+	}
+
+	user := types.NewPackage("example.com/user", "user")
+	user.SetImports([]*types.Package{pprof})
+	pkgs = append(pkgs, &gossa.Package{Pkg: user})
+	if got := MemProfileConsumer(pkgs, true); got != "runtime/pprof" {
+		t.Fatalf("explicit pprof import consumer = %q", got)
+	}
+}
+
+func TestMemProfileConsumerDistinguishesCPUAndHeapUse(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		source string
+		want   bool
+	}{
+		{name: "rate only", source: `package root
+import "runtime"
+func Use() int { runtime.MemProfileRate = 4096; return runtime.MemProfileRate }
+`},
+		{name: "CPU only", source: `package root
+import (
+	"io"
+	"runtime/pprof"
+)
+func Use() { _ = pprof.StartCPUProfile(io.Discard); pprof.StopCPUProfile() }
+`},
+		{name: "blank pprof import", source: `package root
+import _ "runtime/pprof"
+func Use() {}
+`, want: true},
+		{name: "heap lookup", source: `package root
+import "runtime/pprof"
+func Use() { _ = pprof.Lookup("heap") }
+`, want: true},
+		{name: "indirect heap lookup", source: `package root
+import "runtime/pprof"
+func Use() func(string) *pprof.Profile { return pprof.Lookup }
+`, want: true},
+		{name: "heap writer", source: `package root
+import (
+	"io"
+	"runtime/pprof"
+)
+func Use() { _ = pprof.WriteHeapProfile(io.Discard) }
+`, want: true},
+		{name: "runtime reader", source: `package root
+import "runtime"
+func Use() { runtime.MemProfile(nil, false) }
+`, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, root := buildCallerFrameSSAProgram(t,
+				"example.com/dep", "package dep\nfunc Dummy() {}",
+				"example.com/root", tc.source)
+			if got := MemProfileConsumer([]*gossa.Package{root}, false) != ""; got != tc.want {
+				t.Errorf("MemProfileConsumer = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
 
 func TestCallerTrackingPrecomputeSupportsConcurrentReads(t *testing.T) {
 	var nilTracking *CallerTracking
@@ -124,6 +197,35 @@ func Plain() { dep.Quiet() }
 		if got, want := precomputed.extended[pkg], lazy.extended[pkg]; !reflect.DeepEqual(got, want) {
 			t.Fatalf("precomputed extended set for %s differs from lazy set", pkg.Pkg.Path())
 		}
+	}
+}
+
+func TestCallerTrackingPrecomputePinsCrossPackageMemoryProfileAllocations(t *testing.T) {
+	dep, root := buildCallerFrameSSAProgram(t,
+		"example.com/dep", `package dep
+func Alloc() *[64]byte { return new([64]byte) }
+func Plain() int { return 1 }
+`,
+		"example.com/root", `package root
+import (
+	"example.com/dep"
+	"runtime"
+)
+func UseAlloc() *[64]byte { return dep.Alloc() }
+func Plain() int { return dep.Plain() }
+func Report(records []runtime.MemProfileRecord) { runtime.MemProfile(records, false) }
+`)
+	tracking := NewCallerTracking()
+	tracking.SetMemoryProfileAttribution(true)
+	tracking.Precompute([]*gossa.Package{dep, root})
+	if !runtimeCallerFuncSet(tracking, dep)[dep.Func("Alloc")] {
+		t.Fatal("cross-package allocation leaf was not pinned")
+	}
+	if !runtimeCallerFuncSet(tracking, root)[root.Func("UseAlloc")] {
+		t.Fatal("cross-package allocation wrapper was not pinned")
+	}
+	if runtimeCallerFuncSet(tracking, dep)[dep.Func("Plain")] || runtimeCallerFuncSet(tracking, root)[root.Func("Plain")] {
+		t.Fatal("unrelated cross-package path was pinned")
 	}
 }
 

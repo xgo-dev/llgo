@@ -114,6 +114,12 @@ func fpCallers(skip int, pc []uintptr) int {
 	return n
 }
 
+// Non-Windows frame-pointer walks already record raw PCs without symbolizing
+// them. Keep profile capture on the same path as other physical stack walks.
+func fpProfileCallers(pc []uintptr) int {
+	return fpCallers(0, pc)
+}
+
 func init() {
 	c_installFaultHandler(onFault)
 }

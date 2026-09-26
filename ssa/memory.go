@@ -24,6 +24,8 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
+var threadLocalAddressIntrinsic = llvm.LookupIntrinsicID("llvm.threadlocal.address")
+
 // -----------------------------------------------------------------------------
 
 func (b Builder) aggregateAllocU(t Type, flds ...llvm.Value) llvm.Value {
@@ -215,6 +217,14 @@ func (b Builder) AllocaT(t Type) (ret Expr) {
 	prog.requireStorageAlignment(ret.impl, t)
 	ret.Type = prog.Pointer(t)
 	return
+}
+
+// ThreadLocalAddress materializes one reusable native TLS address.
+func (b Builder) ThreadLocalAddress(v Global) Expr {
+	return Expr{
+		b.impl.CreateIntrinsic(v.impl.Type(), threadLocalAddressIntrinsic, []llvm.Value{v.impl}, ""),
+		v.Type,
+	}
 }
 
 /* TODO(xsw):

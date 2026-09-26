@@ -30,6 +30,10 @@ func compileLogicalGLSSource(t *testing.T, src string) (llssa.Program, string) {
 }
 
 func compileLocalitySourceMode(t *testing.T, src string, options Options, logicalGLS bool) (llssa.Program, string) {
+	return compileLocalitySourceTarget(t, src, options, logicalGLS, nil)
+}
+
+func compileLocalitySourceTarget(t *testing.T, src string, options Options, logicalGLS bool, target *llssa.Target) (llssa.Program, string) {
 	t.Helper()
 	options.AllowInternalDirectives = true
 	fset := token.NewFileSet()
@@ -44,8 +48,12 @@ func compileLocalitySourceMode(t *testing.T, src string, options Options, logica
 	if err != nil {
 		t.Fatal(err)
 	}
-	prog := ssatest.NewProgramEx(t, nil, imp)
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	prog := ssatest.NewProgramEx(t, target, imp)
+	goarch := runtime.GOARCH
+	if target != nil {
+		goarch = target.GOARCH
+	}
+	prog.TypeSizes(types.SizesFor("gc", goarch))
 	prog.SetRuntime(localityRuntimePackage())
 	prog.EnableLogicalGoroutineLocality(logicalGLS)
 	if err := ParsePkgSyntaxWithOptions(prog, fset, pkg, files, options); err != nil {
@@ -159,6 +167,41 @@ func value() *int { return pointer }
 	}
 	if strings.Contains(accessor, "currentLocalContext") {
 		t.Fatalf("accessor still depends on runtime context layout:\n%s", accessor)
+	}
+}
+
+func TestNativeTLSAddressIsReusedWithinDominatingPath(t *testing.T) {
+	_, ir := compileLocalitySource(t, `package locality
+
+//llgointernal:tls
+var counter int
+
+func add() int {
+	counter++
+	counter++
+	return counter
+}
+`)
+	add := llvmFunction(t, ir, "example.com/locality.add")
+	if got := strings.Count(add, "@llvm.threadlocal.address"); got != 1 {
+		t.Fatalf("native TLS address resolutions = %d, want one:\n%s", got, add)
+	}
+}
+
+func TestWasmTLSKeepsDirectGlobalAddress(t *testing.T) {
+	_, ir := compileLocalitySourceTarget(t, `package locality
+
+//llgointernal:tls
+var counter int
+
+func add() int {
+	counter++
+	return counter
+}
+`, Options{}, false, &llssa.Target{GOOS: "js", GOARCH: "wasm"})
+	add := llvmFunction(t, ir, "example.com/locality.add")
+	if strings.Contains(add, "@llvm.threadlocal.address") {
+		t.Fatalf("wasm TLS unexpectedly uses the native address intrinsic:\n%s", add)
 	}
 }
 

@@ -19,12 +19,15 @@ func pprof_memProfileInternal(p []pprofMemProfileRecord, inuseZero bool) (n int,
 	if n == 0 {
 		return 0, true
 	}
-	var records [64]MemProfileRecord
-	if n > len(records) {
-		return n, false
+	records := make([]MemProfileRecord, n+n/4+16)
+	for attempt := 0; attempt < 4; attempt++ {
+		n, ok = MemProfile(records, inuseZero)
+		if ok {
+			break
+		}
+		records = make([]MemProfileRecord, n+n/4+16)
 	}
-	n, ok = MemProfile(records[:n], inuseZero)
-	if !ok {
+	if !ok || len(p) < n {
 		return n, false
 	}
 	for i := 0; i < n; i++ {
