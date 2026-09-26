@@ -208,7 +208,7 @@ func G() {}
 		prog.Directives().Function(goPkg.Func(name).Syntax().(*ast.FuncDecl))
 	}
 	ctx := &context{prog: prog}
-	f, g := ctx.sourceFunction(goPkg.Func("F")), ctx.sourceFunction(goPkg.Func("G"))
+	f, g := ctx.functionDirectives(goPkg.Func("F")), ctx.functionDirectives(goPkg.Func("G"))
 	if !f.Cold || g.Cold || f.NoReturn || g.NoReturn {
 		t.Fatal("source properties crossed linkname aliases")
 	}
