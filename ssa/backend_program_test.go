@@ -44,7 +44,7 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	coordinator.SetPackageExport("example.com/p.Entry", "entry")
 	coordinator.SetNoInterfaceMethod("example.com/p.T.Hidden")
 	coordinator.SetTypeBackground("example.com/p.CType", InC)
-	coordinator.SetClosureEnvDirective(fset, "example.com/p.Entry", token.Pos(7))
+	coordinator.DeclareFunction(pkg, fset, "example.com/p.Entry", token.Pos(7)).SetExplicitEnv(true)
 	coordinator.MarkPackageSyntaxParsed(pkg)
 	coordinator.SetLocalityInfo("example.com/p.Value", LocalityInfo{Locality: ThreadLocal})
 	coordinator.SetPython(func() *types.Package { return nil })
@@ -72,7 +72,7 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	if export, ok := backend.PackageExport("example.com/p.Entry"); !ok || export != "entry" {
 		t.Fatalf("PackageExport = (%q, %v), want (entry, true)", export, ok)
 	}
-	if !backend.HasClosureEnvDirective(fset, "example.com/p.Entry", token.Pos(7)) || !backend.PackageSyntaxParsed(pkg) {
+	if !backend.SourceFunctionDeclaration(pkg, fset, "example.com/p.Entry", token.Pos(7)).HasExplicitEnv() || !backend.PackageSyntaxParsed(pkg) {
 		t.Fatal("backend Program lost prepared syntax metadata")
 	}
 	if background, ok := backend.packageTypeBackground("example.com/p.CType"); !ok || background != InC {

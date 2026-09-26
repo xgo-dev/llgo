@@ -459,23 +459,18 @@ func (p Program) EnableCodeViewDebugInfo(enable bool) {
 }
 
 func (p Program) SetNoInterfaceMethod(fullName string) {
-	p.packageSyntax.mu.Lock()
-	p.packageSyntax.noInterface[fullName] = none{}
-	p.packageSyntax.mu.Unlock()
+	fn := p.NamedFunctionDeclaration(fullName)
+	if fn == nil {
+		fn = p.DeclareFunction(nil, nil, fullName, token.NoPos)
+	}
+	fn.SetNoInterface(true)
 }
 
 func (p Program) isNoInterfaceMethod(fn *types.Func) bool {
-	if fn == nil {
+	if fn == nil || fn.Type().(*types.Signature).Recv() == nil {
 		return false
 	}
-	sig, ok := fn.Type().(*types.Signature)
-	if !ok || sig.Recv() == nil {
-		return false
-	}
-	p.packageSyntax.mu.RLock()
-	_, ok = p.packageSyntax.noInterface[FuncName(fn.Pkg(), fn.Name(), sig.Recv(), true)]
-	p.packageSyntax.mu.RUnlock()
-	return ok
+	return p.FunctionDeclarationOf(fn).NoInterface()
 }
 
 // SetRuntime sets the runtime.
@@ -497,33 +492,21 @@ func (p Program) SetTypeBackground(fullName string, bg Background) {
 
 func (p Program) SetLinkname(name, link string) {
 	p.packageSyntax.mu.Lock()
-	p.packageSyntax.linknames[name] = link
+	if fn := p.packageSyntax.namedFunction(name); fn != nil {
+		fn.SetLinkname(link)
+	} else {
+		p.packageSyntax.linknames[name] = link
+	}
 	p.packageSyntax.mu.Unlock()
 }
 
 func (p Program) Linkname(name string) (link string, ok bool) {
 	p.packageSyntax.mu.RLock()
 	link, ok = p.packageSyntax.linknames[name]
-	p.packageSyntax.mu.RUnlock()
-	return
-}
-
-// SetWasmImport records a //go:wasmimport directive before its declaration is
-// lowered into the package's LLVM module.
-func (p Program) SetWasmImport(name, module, importName string) {
-	p.packageSyntax.mu.Lock()
-	p.packageSyntax.wasmImports[name] = wasmImport{module: module, name: importName}
-	p.packageSyntax.mu.Unlock()
-}
-
-// WasmImport returns the WebAssembly host import attached to name.
-func (p Program) WasmImport(name string) (module, importName string, ok bool) {
-	p.packageSyntax.mu.RLock()
-	entry, ok := p.packageSyntax.wasmImports[name]
-	p.packageSyntax.mu.RUnlock()
-	if ok {
-		module, importName = entry.module, entry.name
+	if fn := p.packageSyntax.namedFunction(name); fn != nil {
+		link, ok = fn.Linkname()
 	}
+	p.packageSyntax.mu.RUnlock()
 	return
 }
 
@@ -533,38 +516,19 @@ func (p Program) WasmImport(name string) (module, importName string, ok bool) {
 func (p Program) HasLinknameTarget(target string) bool {
 	p.packageSyntax.mu.RLock()
 	defer p.packageSyntax.mu.RUnlock()
+	for _, entries := range p.packageSyntax.functions {
+		for _, fn := range entries {
+			if link, ok := fn.Linkname(); ok && link == target {
+				return true
+			}
+		}
+	}
 	for _, link := range p.packageSyntax.linknames {
 		if link == target {
 			return true
 		}
 	}
 	return false
-}
-
-type closureEnvDirectiveKey struct {
-	fset *token.FileSet
-	name string
-	pos  token.Pos
-}
-
-// SetClosureEnvDirective records that a source function declaration has the
-// llgo:env directive. name and pos identify the source declaration rather
-// than its resolved linker symbol, so aliases retain independent ABI metadata.
-func (p Program) SetClosureEnvDirective(fset *token.FileSet, name string, pos token.Pos) {
-	key := closureEnvDirectiveKey{fset: fset, name: name, pos: pos}
-	p.packageSyntax.mu.Lock()
-	p.packageSyntax.closureEnvDirectives[key] = none{}
-	p.packageSyntax.mu.Unlock()
-}
-
-// HasClosureEnvDirective reports whether a source function declaration has the
-// cached llgo:env directive.
-func (p Program) HasClosureEnvDirective(fset *token.FileSet, name string, pos token.Pos) bool {
-	key := closureEnvDirectiveKey{fset: fset, name: name, pos: pos}
-	p.packageSyntax.mu.RLock()
-	_, ok := p.packageSyntax.closureEnvDirectives[key]
-	p.packageSyntax.mu.RUnlock()
-	return ok
 }
 
 func (p Program) runtime() *types.Package {

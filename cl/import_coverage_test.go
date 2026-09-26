@@ -70,12 +70,15 @@ func (A) StackedHidden() {}
 		t.Fatal(err)
 	}
 
-	ctx := &context{prog: prog}
-	ctx.processNoInterfaceByDoc(nil, "example.com/p.NilDoc")
-	ctx.processNoInterfaceByDoc(&ast.CommentGroup{List: []*ast.Comment{
+	if hasNoInterfaceDirective(nil) {
+		t.Fatal("nil doc has nointerface")
+	}
+	if !hasNoInterfaceDirective(&ast.CommentGroup{List: []*ast.Comment{
 		{Text: "// not a directive"},
 		{Text: "//go:nointerface"},
-	}}, "example.com/p.NonDirectiveStops")
+	}}) {
+		t.Fatal("missing trailing nointerface directive")
+	}
 
 	if !prog.PackageSyntaxParsed(pkg) {
 		t.Fatal("package syntax was not marked as parsed")
@@ -322,12 +325,12 @@ func plain() {}
 	for _, node := range file.Decls {
 		decl := node.(*ast.FuncDecl)
 		fullName, _ := astFuncName(pkg.Path(), decl)
-		got := prog.HasClosureEnvDirective(fset, fullName, decl.Pos())
+		got := prog.SourceFunctionDeclaration(pkg, fset, fullName, decl.Pos()).HasExplicitEnv()
 		if got != want[decl.Name.Name] {
 			t.Fatalf("HasClosureEnvDirective(%s) = %v, want %v", decl.Name.Name, got, want[decl.Name.Name])
 		}
 	}
-	if prog.HasClosureEnvDirective(fset, "example.com/p.missing", token.NoPos) {
+	if prog.SourceFunctionDeclaration(pkg, fset, "example.com/p.missing", token.NoPos).HasExplicitEnv() {
 		t.Fatal("missing declaration unexpectedly has cached directives")
 	}
 }
@@ -355,12 +358,12 @@ func malformed()
 	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
 		t.Fatal(err)
 	}
-	module, name, ok := prog.WasmImport("example.com/p.fdRead")
+	module, name, ok := prog.NamedFunctionDeclaration("example.com/p.fdRead").WasmImport()
 	if !ok || module != "wasi_snapshot_preview1" || name != "fd_read" {
 		t.Fatalf("WasmImport(fdRead) = (%q, %q, %v), want (wasi_snapshot_preview1, fd_read, true)", module, name, ok)
 	}
 	for _, symbol := range []string{"value", "malformed"} {
-		if module, name, ok := prog.WasmImport("example.com/p." + symbol); ok {
+		if module, name, ok := prog.NamedFunctionDeclaration("example.com/p." + symbol).WasmImport(); ok {
 			t.Fatalf("WasmImport(%s) = (%q, %q, true), want no import", symbol, module, name)
 		}
 	}
