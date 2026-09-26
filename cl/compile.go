@@ -627,7 +627,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			panic("conflicting closure environment ABI for " + name)
 		}
 		if fn.HasBody() {
-			p.applyFunctionAttributes(fn, callable)
+			p.applyFunctionAttributes(fn, f.Signature, callable)
 			return fn, nil, goFunc
 		}
 	}
@@ -652,7 +652,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			fn = pkg.NewFuncEx(name, sig, background, false, p.needsLinkOnce(f))
 		}
 	}
-	p.applyFunctionAttributes(fn, callable)
+	p.applyFunctionAttributes(fn, f.Signature, callable)
 	if p.prog.Target().GOARCH == "wasm" && source.Decl != nil {
 		if w := source.Decl.WasmImport; w != nil {
 			fn.SetWasmImport(w.Module, w.Name)
@@ -2789,6 +2789,9 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 	}
 	if !options.PreloadedSyntax {
 		prog.PackageDirectives(pkgTypes).BindScope(pkgTypes)
+		if err = prog.ValidateDirectiveContracts(pkgProg.Fset); err != nil {
+			return nil, nil, err
+		}
 	}
 	if err = prog.ValidateLocalitiesFor(pkgTypes); err != nil {
 		return nil, nil, err

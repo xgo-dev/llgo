@@ -89,7 +89,7 @@ func (p *context) callableDeclaration(pkg *types.Package, obj *types.Func, name 
 
 // applyFunctionAttributes consumes the declaration already selected with the
 // callable symbol. It does not resolve source identities or patches again.
-func (p *context) applyFunctionAttributes(fn llssa.Function, decl *directive.FunctionDecl) {
+func (p *context) applyFunctionAttributes(fn llssa.Function, signature *types.Signature, decl *directive.FunctionDecl) {
 	if decl == nil {
 		return
 	}
@@ -99,11 +99,29 @@ func (p *context) applyFunctionAttributes(fn llssa.Function, decl *directive.Fun
 	if decl.NoReturn {
 		fn.SetNoReturn()
 	}
+	properties := decl.Function.WithPositions(p.fset)
+	if properties.ContractError != nil {
+		panic(properties.ContractError)
+	}
+	fn.ApplyValueAttributes(signature, properties.Values)
 }
 
 // Backend-created entries consume prepared records without constructing Go SSA.
-func (p *context) initFunctionAttributes(fn llssa.Function, obj *types.Func) {
+func (p *context) initFunctionAttributes(fn llssa.Function, obj *types.Func, signature *types.Signature) {
 	decl := p.prog.FunctionDeclaration(obj.Pkg(), obj, nil)
 	decl = p.callableDeclaration(obj.Pkg(), obj, "", decl)
-	p.applyFunctionAttributes(fn, decl)
+	source := obj.Type().(*types.Signature)
+	if decl != nil && source.Recv() != nil && signature.Recv() != nil && !types.Identical(source.Recv().Type(), signature.Recv().Type()) {
+		// Receiver promises describe the loaded value, not the address received by
+		// an ABI wrapper. Filter a local copy without changing the source record.
+		adjusted := *decl
+		adjusted.Values = nil
+		for _, attr := range decl.Values {
+			if attr.Target.Scope != directive.Receiver {
+				adjusted.Values = append(adjusted.Values, attr)
+			}
+		}
+		decl = &adjusted
+	}
+	p.applyFunctionAttributes(fn, signature, decl)
 }

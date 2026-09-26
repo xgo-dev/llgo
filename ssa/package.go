@@ -28,6 +28,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/funcattrs"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/ssa/abi"
@@ -119,10 +120,11 @@ func Initialize(flags InitFlags) {
 // -----------------------------------------------------------------------------
 
 type aProgram struct {
-	ctx   llvm.Context
-	typs  typeutil.Map // rawType -> Type
-	sizes types.Sizes  // provided by Go compiler
-	gocvt goTypes
+	valuePlans map[llvm.Value]funcattrs.ValuePlan
+	ctx        llvm.Context
+	typs       typeutil.Map // rawType -> Type
+	sizes      types.Sizes  // provided by Go compiler
+	gocvt      goTypes
 
 	patchType func(types.Type) types.Type
 
@@ -978,7 +980,7 @@ type aPackage struct {
 	strs   map[string]llvm.Value
 	goStrs map[string]llvm.Value
 	fnlink func(string) string
-	fninit func(Function, *types.Func)
+	fninit func(Function, *types.Func, *types.Signature)
 
 	iRoutine int
 
@@ -1059,7 +1061,7 @@ func (p Package) rtFunc(fnName string) Expr {
 	}
 	sig := fn.Type().(*types.Signature)
 	ret := p.NewFunc(name, sig, InGo)
-	p.initFunction(ret, fn)
+	p.initFunction(ret, fn, sig)
 	return ret.Expr
 }
 
@@ -1076,7 +1078,7 @@ func (p Package) rtEnvFunc(fnName string) Expr {
 	sig := fn.Type().(*types.Signature)
 	env := types.NewVar(token.NoPos, nil, "$env", types.Typ[types.UnsafePointer])
 	ret := p.NewEnvFunc(name, sig, InGo, env, false)
-	p.initFunction(ret, fn)
+	p.initFunction(ret, fn, sig)
 	return ret.Expr
 }
 
@@ -1108,13 +1110,13 @@ func (p Package) SetResolveLinkname(fn func(string) string) {
 
 // SetFunctionInitializer supplies source properties for runtime and method
 // declarations created by the backend, including entries already in the module.
-func (p Package) SetFunctionInitializer(fn func(Function, *types.Func)) {
+func (p Package) SetFunctionInitializer(fn func(Function, *types.Func, *types.Signature)) {
 	p.fninit = fn
 }
 
-func (p Package) initFunction(fn Function, source *types.Func) {
+func (p Package) initFunction(fn Function, source *types.Func, signature *types.Signature) {
 	if p.fninit != nil {
-		p.fninit(fn, source)
+		p.fninit(fn, source, signature)
 	}
 }
 

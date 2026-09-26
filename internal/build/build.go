@@ -844,6 +844,10 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 			}
 		})
 	}
+	if err := prog.ValidateDirectiveContracts(cfg.Fset); err != nil {
+		prepareSpan.done()
+		return nil, err
+	}
 	if err := prepareLocalVariables(prog, initial, altPkgs); err != nil {
 		prepareSpan.done()
 		return nil, err
@@ -2359,6 +2363,9 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	ctx.stripDarwinLTOLocals = false
 	entryPkg := genMainModule(ctx, llssa.PkgRuntime, pkg, &preparation.gen)
 	cExports := preparation.gen.cExports
+	if err := ctx.prog.MaterializeValueAttributes(entryPkg.LPkg.Module()); err != nil {
+		return nil, err
+	}
 	if _, err := lowerMainCExportModule(ctx, entryPkg.LPkg, cExports); err != nil {
 		return nil, err
 	}
@@ -3095,6 +3102,9 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	ret := aPkg.LPkg
 
 	ctx.cTransformer.SetSkipFuncs(cabiSkipFuncsForPlan9Asm(ctx, pkgPath, ret.Module()))
+	if err := ctx.prog.MaterializeValueAttributes(ret.Module()); err != nil {
+		return err
+	}
 	lowerLargeAggregates(ctx.prog, ret.Module())
 	ctx.cTransformer.TransformModule(ret.Path(), ret.Module())
 	ctx.cTransformer.SetSkipFuncs(nil)

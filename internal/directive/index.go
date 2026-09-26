@@ -61,6 +61,8 @@ type Group struct {
 }
 
 type Function struct {
+	Values         []Attribute
+	ContractError  error
 	Cold           bool
 	NoReturn       bool
 	ClosureEnv     bool
@@ -156,7 +158,7 @@ func (s *Index) File(file *ast.File) *File {
 		switch n := n.(type) {
 		case *ast.FuncDecl:
 			add(n.Doc)
-			f.Functions[n] = s.group(n.Doc).Function
+			f.Functions[n] = functionRecord(n, s.group(n.Doc))
 			if s.functions == nil {
 				s.functions = make(map[*ast.FuncDecl]*FunctionDecl)
 			}
@@ -219,7 +221,7 @@ func (s *Index) Function(d *ast.FuncDecl) Function {
 	if s.functions == nil {
 		s.functions = make(map[*ast.FuncDecl]*FunctionDecl)
 	}
-	p := &FunctionDecl{Source: d, Function: s.group(d.Doc).Function}
+	p := &FunctionDecl{Source: d, Function: functionRecord(d, s.group(d.Doc))}
 	s.functions[d] = p
 	return p.Function
 }

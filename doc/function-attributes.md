@@ -35,5 +35,50 @@ clients preparing imports use `ParsePkgSyntaxWithOptions` and then bind their
 checked `types.Info` (or use `BindScope` when only checked types are available).
 No additional comment index or backend source scanner is required.
 
-Value and pointer attributes are added in separate follow-up changes. Cgo-specific
-parsing and handling remain outside this feature.
+## Parameters and results
+
+Select a whole Go value with `param(name)` / `param(index)`, `result(name)` /
+`result(index)`, or `receiver`. Indices are zero based and exclude receivers and
+hidden ABI arguments. Unnamed and blank values use indices. `result` alone selects
+the sole result and is invalid for zero or multiple results.
+
+```go
+//llgo:result(out) nonnull sameas(p)
+//llgo:result(count) range(0, 64)
+func Make(p *int, n uint32) (out *int, count uint32) {
+    if p == nil { panic("nil pointer") }
+    return p, n & 63
+}
+```
+
+| Attribute | Supported values | Meaning |
+| --- | --- | --- |
+| `nonnull` | Pointer parameters and results, including unsafe.Pointer | The selected pointer is not nil. |
+| `range(lo, hi)` | Integer parameters and results | A nonempty, non-wrapping, half-open interval of integer literals within the type's domain. |
+| `nonnegative` | Integer parameters and results | Nonnegative at the target's Go integer width; unrestricted for unsigned types. |
+| `sameas(name)` | Integer or pointer results | Equals the entry value of the named parameter; integer types must agree and pointer conversions preserve the pointer. |
+
+Multiple attributes on a selector line are separated by whitespace. `range` and
+`nonnegative` intersect; an empty intersection is invalid. Identical repetitions
+are accepted. Incompatible explicit contracts on known link aliases are diagnosed
+without merging source declaration records. Generic type checks are deferred to
+concrete instances when necessary.
+
+Input facts hold at entry. Result facts hold after normal return, including changes
+made by defers. A result's `nonnull` does not prohibit nil input followed by panic.
+`sameas` retains the call and all side effects, and forwards the already-evaluated
+input rather than reloading memory after the call.
+
+Before ABI conversion, the backend emits value assumptions on entry, normal returns,
+and known calls' normal continuations. Multiple results use logical tuple paths.
+ABI conversion carries these expressions through packing, splitting, and indirect
+storage; restrictions never apply to transfer-storage addresses by accident.
+Direct matching values also receive LLVM attributes. `returned` is used only when
+the single LLVM result has the input's representation.
+
+The build driver materializes module-local value plans before ABI conversion.
+Standalone backend clients call `Program.MaterializeValueAttributes` at the same
+boundary. Source records remain Go data shared across backends; LLVM plans are local.
+
+Pointer access and alias restrictions follow separately. Cgo-specific parsing
+and handling remain outside this feature.
