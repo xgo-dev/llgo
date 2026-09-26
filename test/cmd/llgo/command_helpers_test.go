@@ -1,3 +1,5 @@
+//go:build !wasm
+
 /*
  * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
  *
@@ -15,6 +17,10 @@
  */
 
 package llgocmd
+
+// These are host command-line compatibility tests: the test process invokes
+// Go/LLGo and the produced host executable. A wasm module cannot spawn those
+// host tools; wasm target execution is covered by internal/build and dev tests.
 
 import (
 	"bytes"

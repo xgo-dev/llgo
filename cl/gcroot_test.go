@@ -109,6 +109,34 @@ func keep(h holder) holder {
 	}
 }
 
+func TestCompileThreadLocalGCRoots(t *testing.T) {
+	const src = `package main
+
+func use(*int)
+
+func keep(p *int) *int {
+	use(p)
+	return p
+}
+`
+	ir := cltest.CompileIREx(t, src, "gcroot_tls.go", false, func(prog llssa.Program) {
+		prog.EnableGCRoots(true)
+		prog.EnableThreadLocalGCRoots(true)
+	})
+	for _, want := range []string{
+		`thread_local`,
+		`github.com/xgo-dev/llgo/runtime/internal/gcroot.currentRootChain`,
+		`github.com/xgo-dev/llgo/runtime/internal/gcroot.sjljReplaying`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("thread-local compiler roots missing %q:\n%s", want, ir)
+		}
+	}
+	if strings.Contains(ir, `@llvm_gc_root_chain`) || strings.Contains(ir, `@llvm_gc_root_sjlj_replaying`) {
+		t.Fatalf("thread-local roots also emitted single-worker state:\n%s", ir)
+	}
+}
+
 func TestCompileGCRootsDisabled(t *testing.T) {
 	const src = `package main
 

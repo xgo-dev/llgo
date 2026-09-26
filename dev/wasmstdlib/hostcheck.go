@@ -21,7 +21,11 @@ func fullChildCommand(p profile, root, goRoot, artifact, arg string) command {
 		args = []string{filepath.Join(goRoot, "lib", "wasm", "go_"+p.GOOS+"_wasm_exec"), artifact, arg}
 		env["GOWASIRUNTIME"] = "wasmtime"
 	case p.Target == "wasi":
-		args = []string{"wasmtime", "run", "-W", "exceptions=y", "--dir=" + root, artifact, arg}
+		if wasiThreadsSelected(p) {
+			args = []string{"iwasm", "--max-threads=128", "--stack-size=1048576", "--heap-size=0", "--dir=" + root, "--dir=/tmp", artifact, arg}
+		} else {
+			args = []string{"wasmtime", "run", "-W", "exceptions=y", "--dir=" + root, artifact, arg}
+		}
 	default:
 		runner := "emscripten-runner.mjs"
 		if p.Target == "emscripten-memory64" {

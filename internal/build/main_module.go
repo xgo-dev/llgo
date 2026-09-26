@@ -231,7 +231,7 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 		packageInits: packageInits,
 	})
 
-	if needStart(ctx) {
+	if needStart(ctx) && !ctx.crossCompile.WasmRuntime.RunMainTask {
 		defineStart(mainPkg, entryFn, argvValueType)
 	}
 	emitFuncInfoEntrySites(ctx, mainPkg)
@@ -469,7 +469,8 @@ type entryFunctions struct {
 func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa.Global, argvType llssa.Type, fns entryFunctions) llssa.Function {
 	prog := pkg.Prog
 	entryName := processEntrySymbol
-	if !needStart(ctx) && isWasmTarget(ctx.buildConf.Goos) {
+	if isWasmTarget(ctx.buildConf.Goos) &&
+		(!needStart(ctx) || ctx.crossCompile.WasmRuntime.RunMainTask) {
 		entryName = "__main_argc_argv"
 	}
 	sig := newEntrySignature(argvType.RawType())
@@ -485,7 +486,11 @@ func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa
 	// user program has no TLS/GLS declarations. Root that state on the host
 	// entry stack before runtime.init and keep it installed while logical Go
 	// stacks are dispatched by RunWasmMain.
-	hasLocalContext := prog.NeedsLocalContext() || fns.wasmRunMain != nil
+	// The WASI pthread runtime uses thread-local state during runtime.init,
+	// including caller-location storage. A small program may have no user
+	// locality declarations, so the linked-program query alone is insufficient.
+	hasLocalContext := prog.NeedsLocalContext() || fns.wasmRunMain != nil ||
+		(ctx.buildConf.Goos == "wasip1" && IsWasiThreadsEnabled())
 	if hasLocalContext {
 		localCtx, previousLocalCtx = b.EnterLocalContext()
 	}

@@ -2,9 +2,9 @@
 
 Status: active. Profile and source-compatibility work is tracked in [xgo-dev/llgo#2152](https://github.com/xgo-dev/llgo/issues/2152); the supported execution and toolchain decisions are tracked in [#2632](https://github.com/xgo-dev/llgo/issues/2632).
 
-The supported build uses the LLGo-patched Binaryen release. Browser execution keeps Emscripten Fiber/Asyncify and advances to a bounded Web Worker pool. W32 advances to WASI threads on WAMR; single-thread WASI is retired only after threaded GC passes. These execution milestones proceed alongside W1-W3 rather than waiting for W3 to finish.
+The supported build uses the LLGo-patched Binaryen release. Browser execution keeps Emscripten Fiber/Asyncify and advances to a bounded Web Worker pool. W32 advances to WASI threads on WAMR; single-thread WASI is retired only after threaded GC passes. These execution milestones proceed alongside the profile/ABI, host-provider, and compatibility-acceptance work.
 
-R1 through R3, including R2.1, are merged and remain the delivered foundation of this proposal. W1-W3 build on that foundation to complete the supported WebAssembly profiles before advanced engine features are added.
+R1 through R3, including R2.1, are merged and remain the delivered foundation of this proposal. The remaining implementation work builds on that foundation to complete the supported WebAssembly profiles before advanced engine features are added.
 
 ## Design overview
 
@@ -51,13 +51,13 @@ Assembly/runtime boundary: reuse applicable host-independent Go wasm assembly th
 | R2.1: object lifecycles | Finalizers, cleanup callbacks, weak-reference expiration, callback ordering and cancellation, and executable lifecycle regressions. | [#2492](https://github.com/xgo-dev/llgo/pull/2492) |
 | R3: toolchain workflows | Compile-only test artifacts and named-target routing; explicit ownership of the Asyncify/optimization pipeline; executable scheduler, GC, lifecycle, callback, and test-command integration checks. | [#2511](https://github.com/xgo-dev/llgo/pull/2511), [#2488](https://github.com/xgo-dev/llgo/pull/2488) |
 
-These merged milestones establish the runtime/toolchain baseline. The revised Go data model, independent host providers, standard-library completeness, and full compatibility and size/performance acceptance remain the W1-W3 work defined below.
+These merged milestones establish the runtime/toolchain baseline. The revised Go data model, independent host providers, standard-library completeness, and full compatibility and size/performance acceptance remain the implementation work defined below.
 
 ## Profile model
 
 A hosted profile is the product of a memory ABI and a host ABI. Source compatibility, C interoperability, runtime providers, and optional engine features are capabilities of that profile, not additional profiles.
 
-| Profile | Memory ABI | Host ABI | W1-W3 scope |
+| Profile | Memory ABI | Host ABI | Current scope |
 | --- | --- | --- | --- |
 | J32 | Memory32 | JavaScript | required |
 | J64 | Memory64 | JavaScript | required |
@@ -85,29 +85,31 @@ These four entries are acceptance paths for three profiles. Memory ABI, host/pro
 - W32 uses the Go WASI Preview 1 host contract and can use wasi-libc without becoming a separate C profile.
 - Host adapters own imports, startup, filesystems, callbacks, timers, process exit, and artifact sidecars. Runtime scheduling, GC, panic/defer/recover, reflection semantics, and caller metadata remain provider-independent where possible.
 
+The opt-in bounded Emscripten worker mode keeps each goroutine on one physical worker. Emscripten `syscall/js` handles are JavaScript-realm-local, so a goroutine that uses them keeps ordinary descendants on that worker. `github.com/xgo-dev/llgo/runtime/wasmworkers.GoIndependent` starts work in the pool only when its closure carries no JS value or thread-local C state. Passing a `js.Value` between unrelated workers is not yet supported; resolving that boundary is required before treating multi-worker mode as the default Go-compatible JavaScript provider.
+
 ## Reflection and foreign calls
 
 `reflect.Value.Call`, `CallSlice`, methods, and `reflect.MakeFunc` are required capabilities, not profile definitions. J32/GoJS, J32/Emscripten, and J64/Emscripten use the WebAssembly libffi backend from [#2549](https://github.com/xgo-dev/llgo/pull/2549), which provides generic dynamic calls without generating a bridge for every function signature. W32/WASI has no JavaScript table adapter, so it uses compact compiler-generated typed bridges deduplicated by lowered signature and emitted only when whole-program reachability finds a dynamic reflection call. The selected backend must preserve GC roots, suspension, panic/recover, closures, aggregate ABI lowering, and deterministic errors. Typed-bridge size and compile-time cost must remain confined to WASI and are measured in acceptance.
 
-LLGo's Core Wasm C ABI is unrelated to the WIT Canonical ABI. Future WASI Preview 2 support will add generated WIT lift/lower adapters outside the ordinary Go and C calling conventions; it is not part of W1-W3.
+LLGo's Core Wasm C ABI is unrelated to the WIT Canonical ABI. Future WASI Preview 2 support will add generated WIT lift/lower adapters outside the ordinary Go and C calling conventions; it is not part of the current scope.
 
 ## Acceptance
 
-A feature is implemented only when CI executes it on every applicable path. The minimum hosted matrix contains four paths: J32/GoJS, J32/Emscripten, J64/Emscripten Memory64, and W32/WASI. Tests use real Node, browser, and Wasmtime execution where applicable and cover `llgo build/run/test`, artifacts, host callbacks and exit, C boundaries, reflection, GC and suspension, `test/**`, `test/std`, and every applicable GOROOT case. The complete GOROOT corpus runs on the canonical Go-compatible J32/GoJS path, while all four paths run GOROOT sentinels and the complete applicable repository package suite; this avoids multiplying more than two thousand compiler conformance cases by provider paths whose differences are covered by target integration tests. Only reviewed `xfail` and `notapplicable` classifications may be excluded. Each W-stage PR carries focused executable CI; compile-only coverage does not count. Final acceptance also checks compiler coverage, `cprintf`/`println`/`fmtprintf` and reflection size, runtime benchmarks, native and embedded regressions, and removal of diagnostic or superseded changes.
+A feature is implemented only when CI executes it on every applicable path. The minimum hosted matrix contains four paths: J32/GoJS, J32/Emscripten, J64/Emscripten Memory64, and W32/WASI. Tests use real Node, browser, and Wasmtime execution where applicable and cover `llgo build/run/test`, artifacts, host callbacks and exit, C boundaries, reflection, GC and suspension, `test/**`, `test/std`, and every applicable GOROOT case. The complete GOROOT corpus runs on the canonical Go-compatible J32/GoJS path, while all four paths run GOROOT sentinels and the complete applicable repository package suite; this avoids multiplying more than two thousand compiler conformance cases by provider paths whose differences are covered by target integration tests. Only reviewed `xfail` and `notapplicable` classifications may be excluded. Each implementation PR carries focused executable CI; compile-only coverage does not count. Final acceptance also checks compiler coverage, `cprintf`/`println`/`fmtprintf` and reflection size, runtime benchmarks, native and embedded regressions, and removal of diagnostic or superseded changes.
 
-## Remaining PR plan: W1-W3
+## Remaining implementation work
 
-### W1: profiles and ABI foundation
+### Profiles and ABI foundation
 
 Replace the five-profile split with J32/J64/W32 while preserving stable target identifiers and the `wasm`/`wasip1` compatibility aliases, remove unsupported target definitions, implement the official Go 64-bit word model over Memory32, define checked Go/C/host boundary conversion, and include profile/provider identity in compilation and caches. Add ABI, target, cache, C-boundary, and basic execution CI for all four acceptance paths.
 
-### W2: host, reflection, and standard-library completeness
+### Host providers, reflection, and standard-library completeness
 
-Complete the GoJS, Emscripten, and WASI providers; consolidate output/FS behavior with [#2539](https://github.com/xgo-dev/llgo/pull/2539); preserve synchronous nested callbacks, external events, memory growth, and exit status; select the measured reflection backend; and close applicable standard-library gaps. Run Node, browser, Wasmtime, reflection, GC/suspension, and focused `test/std` CI in this PR.
+Complete the GoJS, Emscripten, and WASI providers; consolidate output/FS behavior with [#2539](https://github.com/xgo-dev/llgo/pull/2539); preserve synchronous nested callbacks, external events, memory growth, and exit status; select the measured reflection backend; and close applicable standard-library gaps. Run Node, browser, Wasmtime, reflection, GC/suspension, and focused `test/std` CI for these paths.
 
-### W3: full compatibility acceptance and consolidation
+### Full compatibility acceptance and consolidation
 
-Run and classify the full applicable `test/**` suite on all four paths, the complete applicable GOROOT corpus on J32/GoJS, and GOROOT sentinels on every path; retire unnecessary skips, finish issues exposed by those tests, audit the accumulated diff, split out independently useful fixes, and enforce coverage, size, performance, native, and embedded gates. W3 completes the currently supported WebAssembly scope.
+Run and classify the full applicable `test/**` suite on all four paths, the complete applicable GOROOT corpus on J32/GoJS, and GOROOT sentinels on every path; retire unnecessary skips, finish issues exposed by those tests, audit the accumulated diff, split out independently useful fixes, and enforce coverage, size, performance, native, and embedded gates. This completes the currently supported WebAssembly scope.
 
 ## Deferred work
 
@@ -119,9 +121,9 @@ W64, WASI Preview 2 and WIT components, a WasmGC heap, and JSPI/stackless execut
 
 状态：推进中。Profile 与源码兼容性由 [xgo-dev/llgo#2152](https://github.com/xgo-dev/llgo/issues/2152) 跟踪；正式执行架构与工具链决定由 [#2632](https://github.com/xgo-dev/llgo/issues/2632) 跟踪。
 
-正式构建使用 LLGo 打补丁的 Binaryen 版本。浏览器保留 Emscripten Fiber/Asyncify，并推进到有上限的 Web Worker 池。W32 以 WAMR 上的 WASI threads 为目标；只有在线程 GC 验收通过后才移除单线程 WASI。这些运行时工作与 W1-W3 并行推进，不等待 W3 结束。
+正式构建使用 LLGo 打补丁的 Binaryen 版本。浏览器保留 Emscripten Fiber/Asyncify，并推进到有上限的 Web Worker 池。W32 以 WAMR 上的 WASI threads 为目标；只有在线程 GC 验收通过后才移除单线程 WASI。这些运行时工作与 profile/ABI、host provider 和兼容性验收工作并行推进。
 
-R1 至 R3（包括 R2.1）已经合并，作为本提案已交付的基础继续保留。W1-W3 在此基础上完成当前支持的 WebAssembly profile，再推进高级引擎特性。
+R1 至 R3（包括 R2.1）已经合并，作为本提案已交付的基础继续保留。后续实现工作在此基础上完成当前支持的 WebAssembly profile，再推进高级引擎特性。
 
 ## 设计总览
 
@@ -168,13 +170,13 @@ R1 至 R3（包括 R2.1）已经合并，作为本提案已交付的基础继续
 | R2.1：对象生命周期 | Finalizer、cleanup callback、弱引用失效、回调顺序与取消，以及实际执行的生命周期回归测试。 | [#2492](https://github.com/xgo-dev/llgo/pull/2492) |
 | R3：工具链流程 | 编译后不执行的测试产物与 named-target 路由；明确 Asyncify/优化流水线的处理归属；实际执行调度、GC、生命周期、callback 和测试命令集成检查。 | [#2511](https://github.com/xgo-dev/llgo/pull/2511), [#2488](https://github.com/xgo-dev/llgo/pull/2488) |
 
-这些已合并阶段构成 runtime/工具链基础。新的 Go 数据模型、独立 host provider、标准库完整性，以及完整兼容验收和体积/性能验收，仍由下述 W1-W3 完成。
+这些已合并阶段构成 runtime/工具链基础。新的 Go 数据模型、独立 host provider、标准库完整性，以及完整兼容验收和体积/性能验收，仍由下述实现工作完成。
 
 ## Profile 模型
 
 Hosted profile 是 Memory ABI 与 Host ABI 的组合。源码兼容、C 互操作、runtime provider 和可选引擎特性都是 profile 的能力，不再拆成额外 profile。
 
-| Profile | Memory ABI | Host ABI | W1-W3 范围 |
+| Profile | Memory ABI | Host ABI | 当前范围 |
 | --- | --- | --- | --- |
 | J32 | Memory32 | JavaScript | 必须完成 |
 | J64 | Memory64 | JavaScript | 必须完成 |
@@ -202,29 +204,31 @@ Hosted profile 是 Memory ABI 与 Host ABI 的组合。源码兼容、C 互操�
 - W32 使用 Go WASI Preview 1 host contract，并可使用 wasi-libc，不再因此拆出单独 C profile。
 - Host adapter 负责 imports、启动、文件系统、回调、定时器、进程退出和产物 sidecar。调度、GC、panic/defer/recover、反射语义和 caller metadata 在可行范围内保持 provider 无关。
 
+当前有界 Emscripten Worker 模式需显式启用，每个 goroutine 固定在一个物理 Worker。Emscripten 的 `syscall/js` 句柄属于创建它的 JavaScript realm，因此使用这些句柄的 goroutine 会让普通子 goroutine 留在同一 Worker。只有闭包不携带 JS 值或 C 线程局部状态时，才可用 `github.com/xgo-dev/llgo/runtime/wasmworkers.GoIndependent` 将独立任务分配到池中。尚不支持在无亲缘关系的 Worker 间传递 `js.Value`；在把多 Worker 模式作为默认的 Go 兼容 JavaScript provider 前，必须解决这一边界。
+
 ## 反射与外部调用
 
 `reflect.Value.Call`、`CallSlice`、方法和 `reflect.MakeFunc` 是必须能力，不是 profile 定义。J32/GoJS、J32/Emscripten 和 J64/Emscripten 使用 [#2549](https://github.com/xgo-dev/llgo/pull/2549) 的 WebAssembly libffi 后端，以通用动态调用避免为每个函数签名生成 bridge。W32/WASI 没有 JavaScript table adapter，因此使用按 lowering 后签名去重的 compact typed bridge，并且只在 whole-program 可达性分析发现动态反射调用时生成。最终后端必须正确处理 GC root、挂起、panic/recover、闭包、聚合 ABI lowering 和确定性错误；typed bridge 的体积与编译时间开销必须严格限制在 WASI，并在验收中测量。
 
-LLGo Core Wasm C ABI 与 WIT Canonical ABI 无关。未来 WASI Preview 2 将在普通 Go/C 调用约定之外生成 WIT lift/lower adapter，不属于 W1-W3。
+LLGo Core Wasm C ABI 与 WIT Canonical ABI 无关。未来 WASI Preview 2 将在普通 Go/C 调用约定之外生成 WIT lift/lower adapter，不属于当前范围。
 
 ## 验收
 
-功能只有在 CI 对所有适用路径实际执行后才算完成。最小 hosted 矩阵包含四条路径：J32/GoJS、J32/Emscripten、J64/Emscripten Memory64、W32/WASI。测试按适用范围在真实 Node、浏览器和 Wasmtime 中运行，覆盖 `llgo build/run/test`、产物、host 回调与退出、C 边界、反射、GC 与挂起、`test/**`、`test/std` 以及全部适用 GOROOT case。完整 GOROOT corpus 在规范性的 Go 兼容 J32/GoJS 路径运行，四条路径都运行 GOROOT sentinel 和完整的适用仓库 package suite；这样无需把两千多个编译器一致性 case 机械乘以 host provider，而 provider 差异由 target 集成测试覆盖。只允许排除经过审查的 `xfail` 和 `notapplicable`。每个 W 阶段 PR 自带聚焦的可执行 CI，compile-only 不算覆盖。最终验收还检查编译器覆盖率、`cprintf`/`println`/`fmtprintf` 与反射体积、runtime benchmark、native/embedded 回归，以及诊断和被取代变更的清理。
+功能只有在 CI 对所有适用路径实际执行后才算完成。最小 hosted 矩阵包含四条路径：J32/GoJS、J32/Emscripten、J64/Emscripten Memory64、W32/WASI。测试按适用范围在真实 Node、浏览器和 Wasmtime 中运行，覆盖 `llgo build/run/test`、产物、host 回调与退出、C 边界、反射、GC 与挂起、`test/**`、`test/std` 以及全部适用 GOROOT case。完整 GOROOT corpus 在规范性的 Go 兼容 J32/GoJS 路径运行，四条路径都运行 GOROOT sentinel 和完整的适用仓库 package suite；这样无需把两千多个编译器一致性 case 机械乘以 host provider，而 provider 差异由 target 集成测试覆盖。只允许排除经过审查的 `xfail` 和 `notapplicable`。每个实现 PR 自带聚焦的可执行 CI，compile-only 不算覆盖。最终验收还检查编译器覆盖率、`cprintf`/`println`/`fmtprintf` 与反射体积、runtime benchmark、native/embedded 回归，以及诊断和被取代变更的清理。
 
-## 后续 PR 规划：W1-W3
+## 后续实现工作
 
-### W1：Profile 与 ABI 基础
+### Profile 与 ABI 基础
 
-把五 profile 模型收敛为 J32/J64/W32，同时保留稳定 target 标识及 `wasm`/`wasip1` 兼容 alias，删除不支持的 target 定义，实现 Memory32 上的官方 Go 64 位 word 模型，定义带检查的 Go/C/host 边界转换，并把 profile/provider 纳入编译与缓存标识。本 PR 为四条验收路径加入 ABI、target、cache、C 边界与基础执行 CI。
+把五 profile 模型收敛为 J32/J64/W32，同时保留稳定 target 标识及 `wasm`/`wasip1` 兼容 alias，删除不支持的 target 定义，实现 Memory32 上的官方 Go 64 位 word 模型，定义带检查的 Go/C/host 边界转换，并把 profile/provider 纳入编译与缓存标识。为四条验收路径加入 ABI、target、cache、C 边界与基础执行 CI。
 
-### W2：Host、反射与标准库完整性
+### Host provider、反射与标准库完整性
 
-完成 GoJS、Emscripten 和 WASI provider；结合 [#2539](https://github.com/xgo-dev/llgo/pull/2539) 统一输出与 FS；保证同步嵌套回调、外部事件、内存增长和退出状态；根据测量选择反射后端；补齐适用标准库缺口。本 PR 运行 Node、浏览器、Wasmtime、反射、GC/挂起和聚焦的 `test/std` CI。
+完成 GoJS、Emscripten 和 WASI provider；结合 [#2539](https://github.com/xgo-dev/llgo/pull/2539) 统一输出与 FS；保证同步嵌套回调、外部事件、内存增长和退出状态；根据测量选择反射后端；补齐适用标准库缺口。为这些路径运行 Node、浏览器、Wasmtime、反射、GC/挂起和聚焦的 `test/std` CI。
 
-### W3：完整兼容验收与收敛
+### 完整兼容验收与收敛
 
-在四条路径上运行并分类全部适用 `test/**`，在 J32/GoJS 上运行完整适用 GOROOT corpus，并在每条路径运行 GOROOT sentinel；清理不必要的 skip，修复测试暴露的问题，审计累计 diff，把可独立复用的修复拆出，并执行覆盖率、体积、性能、native 和 embedded gate。W3 完成当前支持的 WebAssembly 范围。
+在四条路径上运行并分类全部适用 `test/**`，在 J32/GoJS 上运行完整适用 GOROOT corpus，并在每条路径运行 GOROOT sentinel；清理不必要的 skip，修复测试暴露的问题，审计累计 diff，把可独立复用的修复拆出，并执行覆盖率、体积、性能、native 和 embedded gate。此项完成当前支持的 WebAssembly 范围。
 
 ## 延期范围
 

@@ -64,28 +64,32 @@ func TestP521(t *testing.T) {
 }
 
 func TestGenerateKey(t *testing.T) {
-	curves := []elliptic.Curve{
-		elliptic.P224(),
-		elliptic.P256(),
-		elliptic.P384(),
-		elliptic.P521(),
+	curves := []struct {
+		name  string
+		curve elliptic.Curve
+	}{
+		{"P224", elliptic.P224()},
+		{"P256", elliptic.P256()},
+		{"P384", elliptic.P384()},
+		{"P521", elliptic.P521()},
 	}
 
-	for _, curve := range curves {
-		priv, x, y, err := elliptic.GenerateKey(curve, rand.Reader)
-		if err != nil {
-			t.Errorf("GenerateKey() error = %v", err)
-			continue
-		}
-		if len(priv) == 0 {
-			t.Error("GenerateKey() returned empty private key")
-		}
-		if x == nil || y == nil {
-			t.Error("GenerateKey() returned nil coordinates")
-		}
-		if !curve.IsOnCurve(x, y) {
-			t.Error("Generated point is not on curve")
-		}
+	for _, tc := range curves {
+		t.Run(tc.name, func(t *testing.T) {
+			priv, x, y, err := elliptic.GenerateKey(tc.curve, rand.Reader)
+			if err != nil {
+				t.Fatalf("GenerateKey() error = %v", err)
+			}
+			if len(priv) == 0 {
+				t.Error("GenerateKey() returned empty private key")
+			}
+			if x == nil || y == nil {
+				t.Fatal("GenerateKey() returned nil coordinates")
+			}
+			if !tc.curve.IsOnCurve(x, y) {
+				t.Error("Generated point is not on curve")
+			}
+		})
 	}
 }
 

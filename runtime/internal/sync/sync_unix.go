@@ -133,5 +133,5 @@ func (cond *Cond) Broadcast() c.Int {
 }
 
 func (cond *Cond) Wait(m *Mutex) c.Int {
-	return pthreadCondWait(cond, m)
+	return condWait(cond, m)
 }

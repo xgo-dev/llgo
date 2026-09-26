@@ -1,5 +1,8 @@
-//go:build llgo
-// +build llgo
+//go:build llgo && !wasm
+// +build llgo,!wasm
+
+// Go's cgo frontend does not define a wasm target ABI. The LLGo Emscripten
+// and WASI C boundaries are exercised by target-specific LLGoFiles fixtures.
 
 package cgo
 

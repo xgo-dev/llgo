@@ -21,6 +21,7 @@ package wasmcontext
 import (
 	"unsafe"
 
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	"github.com/xgo-dev/llgo/runtime/internal/clite/emscripten"
 )
 
@@ -30,7 +31,9 @@ type Entry = emscripten.FiberEntry
 type Context struct {
 	fiber         emscripten.Fiber
 	stack         unsafe.Pointer
+	stackSize     uintptr
 	asyncifyStack unsafe.Pointer
+	asyncifySize  uintptr
 }
 
 func (ctx *Context) Init(entry Entry, arg unsafe.Pointer, stackSize uintptr, alloc func(uintptr) unsafe.Pointer, free func(unsafe.Pointer)) bool {
@@ -39,7 +42,9 @@ func (ctx *Context) Init(entry Entry, arg unsafe.Pointer, stackSize uintptr, all
 		return false
 	}
 	ctx.stack = stack
+	ctx.stackSize = stackSize
 	ctx.asyncifyStack = asyncifyStack
+	ctx.asyncifySize = asyncifySize
 	emscripten.FiberInit(
 		&ctx.fiber,
 		entry,
@@ -58,11 +63,27 @@ func (ctx *Context) InitCurrent(alloc func(uintptr) unsafe.Pointer) bool {
 		return false
 	}
 	ctx.asyncifyStack = asyncifyStack
+	ctx.asyncifySize = defaultAsyncifyStackSize
 	emscripten.FiberInitCurrent(&ctx.fiber, asyncifyStack, defaultAsyncifyStackSize)
 	return true
 }
 
+// ResetCurrent rebinds an existing system context to a fresh host callback
+// entry. The Asyncify stack allocation remains owned by ctx.
+func (ctx *Context) ResetCurrent() {
+	emscripten.FiberInitCurrent(&ctx.fiber, ctx.asyncifyStack, defaultAsyncifyStackSize)
+}
+
 func (ctx *Context) Close(free func(unsafe.Pointer)) {
+	// Retired fiber storage can remain reachable after its explicit root is
+	// released. Clear saved Go pointers so a later conservative scan cannot
+	// keep objects from a finished goroutine alive indefinitely.
+	if ctx.stack != nil {
+		c.Memset(ctx.stack, 0, ctx.stackSize)
+	}
+	if ctx.asyncifyStack != nil {
+		c.Memset(ctx.asyncifyStack, 0, ctx.asyncifySize)
+	}
 	freeStorage(ctx.stack, ctx.asyncifyStack, free)
 	*ctx = Context{}
 }

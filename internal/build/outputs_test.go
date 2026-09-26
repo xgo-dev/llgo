@@ -13,24 +13,63 @@ import (
 	"github.com/xgo-dev/llgo/internal/flash"
 )
 
-func TestBuildOutFmtsIsolatesImplicitNativeTestOutput(t *testing.T) {
-	details, err := buildOutFmts("example.test", &Config{
-		Mode: ModeTest, BuildMode: BuildModeExe,
-	}, false, &crosscompile.Export{})
-	if err != nil {
-		t.Fatal(err)
+func TestBuildOutFmtsIsolatesImplicitExecutionOutputs(t *testing.T) {
+	tests := []struct {
+		name string
+		conf Config
+	}{
+		{name: "native test", conf: Config{Mode: ModeTest, BuildMode: BuildModeExe}},
+		{name: "native run", conf: Config{Mode: ModeRun, BuildMode: BuildModeExe}},
+		{name: "Emscripten run", conf: Config{Mode: ModeRun, BuildMode: BuildModeExe, Target: "emscripten", AppExt: ".mjs"}},
+		{name: "Emscripten test", conf: Config{Mode: ModeTest, BuildMode: BuildModeExe, Target: "emscripten", AppExt: ".mjs"}},
+		{name: "WASI test", conf: Config{Mode: ModeTest, BuildMode: BuildModeExe, Target: "wasi", AppExt: ".wasm"}},
 	}
-	t.Cleanup(func() { removeOutFmts(details) })
-	if details.tempDir == "" || filepath.Dir(details.Out) != details.tempDir {
-		t.Fatalf("output %q is not isolated in temp directory %q", details.Out, details.tempDir)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			details, err := buildOutFmts("example.test", &test.conf, false, &crosscompile.Export{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { removeOutFmts(details) })
+			if details.tempDir == "" || filepath.Dir(details.Out) != details.tempDir {
+				t.Fatalf("output %q is not isolated in temp directory %q", details.Out, details.tempDir)
+			}
+			if err := os.WriteFile(filepath.Join(details.tempDir, ".link-sidecar"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			tempDir := details.tempDir
+			removeOutFmts(details)
+			if _, err := os.Stat(tempDir); !os.IsNotExist(err) {
+				t.Fatalf("temporary output directory still exists: %v", err)
+			}
+		})
 	}
-	if err := os.WriteFile(filepath.Join(details.tempDir, ".link-sidecar"), nil, 0o600); err != nil {
-		t.Fatal(err)
+}
+
+func TestBuildOutFmtsPreservesUserOwnedExecutionOutputs(t *testing.T) {
+	tests := []struct {
+		name string
+		conf Config
+	}{
+		{
+			name: "explicit run output",
+			conf: Config{Mode: ModeRun, BuildMode: BuildModeExe, Target: "emscripten", AppExt: ".mjs", OutFile: "app.mjs"},
+		},
+		{
+			name: "compile-only test output",
+			conf: Config{Mode: ModeTest, BuildMode: BuildModeExe, Target: "wasi", AppExt: ".wasm", CompileOnly: true},
+		},
 	}
-	tempDir := details.tempDir
-	removeOutFmts(details)
-	if _, err := os.Stat(tempDir); !os.IsNotExist(err) {
-		t.Fatalf("temporary output directory still exists: %v", err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			details, err := buildOutFmts("example.test", &test.conf, false, &crosscompile.Export{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if details.tempDir != "" {
+				t.Fatalf("user-owned output %q uses temporary directory %q", details.Out, details.tempDir)
+			}
+		})
 	}
 }
 

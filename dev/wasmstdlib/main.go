@@ -53,6 +53,17 @@ func selectProfile(name string) (profile, error) {
 	return profile{}, fmt.Errorf("unknown profile %q", name)
 }
 
+func wasiThreadsSelected(p profile) bool {
+	if p.Reference || p.Target != "wasi" {
+		return false
+	}
+	switch strings.ToLower(os.Getenv("LLGO_WASI_THREADS")) {
+	case "1", "true", "on":
+		return true
+	}
+	return false
+}
+
 func sourceContext(p profile) (tags, cgo string) {
 	if p.Reference {
 		return "", "0"
@@ -64,7 +75,11 @@ func sourceContext(p profile) (tags, cgo string) {
 	case "emscripten-memory64":
 		return tags + ",llgo.wasm.emscripten,llgo.wasm.emscripten.memory64", "1"
 	case "wasi":
-		return tags + ",llgo.wasm.wasi", "1"
+		tags += ",llgo.wasm.wasi"
+		if wasiThreadsSelected(p) {
+			tags += ",llgo.wasi_threads"
+		}
+		return tags, "1"
 	default:
 		return tags, cgo
 	}
@@ -376,6 +391,8 @@ func run(name, reportPath, goCmd, llgo string) (retErr error) {
 	r.Implementation, r.Contract = "llgo", "LLGo profile behavior; not official-Go binary compatibility"
 	if p.Reference {
 		r.Implementation, r.Contract = "go-reference", "official Go compiler and host helper; not LLGo output"
+	} else if wasiThreadsSelected(p) {
+		r.Contract += "; WAMR WASI threads"
 	}
 	root, err := getwdForRun()
 	if err != nil {
@@ -438,7 +455,7 @@ func run(name, reportPath, goCmd, llgo string) (retErr error) {
 	for _, e := range r.Packages {
 		counts[e.Status]++
 	}
-	summary := fmt.Sprintf("### W2 standard-library slice: %s\n\n%s\n\nGo version: %s; slice result: %s.\n\nPassed packages: %d; failed: %d; not run: %d; source-excluded (unclassified): %d.\n\nOnly this slice was checked; the complete inventory is a W3 gate.\n", name, r.Contract, r.GoVersion, r.Result, counts["pass"], counts["fail"], counts["not-run"], counts["source-excluded"])
+	summary := fmt.Sprintf("### Focused standard-library slice: %s\n\n%s\n\nGo version: %s; slice result: %s.\n\nPassed packages: %d; failed: %d; not run: %d; source-excluded (unclassified): %d.\n\nOnly this slice was checked; the full compatibility audit remains.\n", name, r.Contract, r.GoVersion, r.Result, counts["pass"], counts["fail"], counts["not-run"], counts["source-excluded"])
 	fmt.Print(summary)
 	if path := os.Getenv("GITHUB_STEP_SUMMARY"); path != "" {
 		f, openErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)

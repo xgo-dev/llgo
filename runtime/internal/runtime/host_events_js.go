@@ -1,10 +1,12 @@
-//go:build llgo && js && wasm
+//go:build llgo && js && wasm && !llgo.wasm.workers
 
 // Copyright 2018 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license.
 // See LICENSES/Go-BSD-3-Clause.txt at the repository root for license terms.
 
 package runtime
+
+func MarkCurrentJSRealm() {}
 
 // Adapted from Go's runtime/lock_js.go handleEvent and beforeIdle. An event
 // must return on its original G, after its handler and other runnable work

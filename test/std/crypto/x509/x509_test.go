@@ -10,17 +10,42 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	_ "embed"
 	"encoding/asn1"
 	"encoding/pem"
 	"math/big"
-	"net"
 	"net/url"
 	"testing"
 	"time"
 )
 
-// Certificate fixtures validate X.509 behavior, not RSA key strength.
-const testRSAKeyBits = 1024
+// The tests exercise X.509 encoding and validation, not RSA key generation.
+//
+//go:embed testdata/llgo-key.pem
+var testRSAKeyPEM []byte
+
+//go:embed testdata/llgo-cert-1.pem
+var testCert1PEM []byte
+
+//go:embed testdata/llgo-cert-2.pem
+var testCert2PEM []byte
+
+func testRSAKey(t *testing.T) *rsa.PrivateKey {
+	t.Helper()
+	block, _ := pem.Decode(testRSAKeyPEM)
+	if block == nil {
+		t.Fatal("failed to decode test RSA key")
+	}
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	priv, ok := key.(*rsa.PrivateKey)
+	if !ok {
+		t.Fatalf("test key has type %T, want *rsa.PrivateKey", key)
+	}
+	return priv
+}
 
 func TestErrorConstants(t *testing.T) {
 	if x509.ErrUnsupportedAlgorithm == nil {
@@ -226,43 +251,35 @@ func TestOID(t *testing.T) {
 	}
 }
 
-func generateSelfSignedCert(t *testing.T) (*x509.Certificate, crypto.PrivateKey) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+// Pre-signed fixtures keep certificate parsing tests practical in WAMR's
+// interpreter; tests for signing still create certificates, CSRs, and CRLs.
+func loadSelfSignedCert(t *testing.T, serials ...int64) (*x509.Certificate, crypto.PrivateKey) {
+	fixture := testCert1PEM
+	if len(serials) != 0 && serials[0] == 2 {
+		fixture = testCert2PEM
+	}
+	block, _ := pem.Decode(fixture)
+	if block == nil {
+		t.Fatal("failed to decode test certificate")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		t.Fatalf("Failed to generate private key: %v", err)
+		t.Fatal(err)
 	}
-
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{
-			Organization: []string{"Test Org"},
-			CommonName:   "test.example.com",
-		},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		DNSNames:              []string{"test.example.com"},
-		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &priv.PublicKey, priv)
-	if err != nil {
-		t.Fatalf("Failed to create certificate: %v", err)
-	}
-
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		t.Fatalf("Failed to parse certificate: %v", err)
-	}
-
-	return cert, priv
+	return cert, testRSAKey(t)
 }
 
 func TestCreateCertificate(t *testing.T) {
-	cert, _ := generateSelfSignedCert(t)
+	template, priv := loadSelfSignedCert(t)
+	rsaKey := priv.(*rsa.PrivateKey)
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &rsaKey.PublicKey, rsaKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if cert.Subject.CommonName != "test.example.com" {
 		t.Errorf("Certificate CommonName = %q, want test.example.com", cert.Subject.CommonName)
@@ -274,7 +291,7 @@ func TestCreateCertificate(t *testing.T) {
 }
 
 func TestParseCertificate(t *testing.T) {
-	cert, _ := generateSelfSignedCert(t)
+	cert, _ := loadSelfSignedCert(t)
 
 	if cert.Version != 3 {
 		t.Errorf("Certificate Version = %d, want 3", cert.Version)
@@ -286,8 +303,8 @@ func TestParseCertificate(t *testing.T) {
 }
 
 func TestParseCertificates(t *testing.T) {
-	cert1, _ := generateSelfSignedCert(t)
-	cert2, _ := generateSelfSignedCert(t)
+	cert1, _ := loadSelfSignedCert(t)
+	cert2, _ := loadSelfSignedCert(t, 2)
 
 	combined := append(cert1.Raw, cert2.Raw...)
 	certs, err := x509.ParseCertificates(combined)
@@ -300,20 +317,20 @@ func TestParseCertificates(t *testing.T) {
 }
 
 func TestCertificateEqual(t *testing.T) {
-	cert, _ := generateSelfSignedCert(t)
+	cert, _ := loadSelfSignedCert(t)
 
 	if !cert.Equal(cert) {
 		t.Error("Certificate.Equal returned false for same certificate")
 	}
 
-	cert2, _ := generateSelfSignedCert(t)
+	cert2, _ := loadSelfSignedCert(t, 2)
 	if cert.Equal(cert2) {
 		t.Error("Certificate.Equal returned true for different certificates")
 	}
 }
 
 func TestCertificateCheckSignatureFrom(t *testing.T) {
-	cert, _ := generateSelfSignedCert(t)
+	cert, _ := loadSelfSignedCert(t)
 
 	if err := cert.CheckSignatureFrom(cert); err != nil {
 		t.Errorf("CheckSignatureFrom failed for self-signed cert: %v", err)
@@ -321,7 +338,7 @@ func TestCertificateCheckSignatureFrom(t *testing.T) {
 }
 
 func TestCertificateVerifyHostname(t *testing.T) {
-	cert, _ := generateSelfSignedCert(t)
+	cert, _ := loadSelfSignedCert(t)
 
 	if err := cert.VerifyHostname("test.example.com"); err != nil {
 		t.Errorf("VerifyHostname failed: %v", err)
@@ -347,7 +364,7 @@ func TestCertPool(t *testing.T) {
 		t.Fatal("NewCertPool returned nil")
 	}
 
-	cert, _ := generateSelfSignedCert(t)
+	cert, _ := loadSelfSignedCert(t)
 	pool.AddCert(cert)
 
 	subjects := pool.Subjects()
@@ -371,7 +388,7 @@ func TestCertPool(t *testing.T) {
 }
 
 func TestCertPoolAppendCertsFromPEM(t *testing.T) {
-	cert, _ := generateSelfSignedCert(t)
+	cert, _ := loadSelfSignedCert(t)
 
 	pemBlock := &pem.Block{
 		Type:  "CERTIFICATE",
@@ -393,7 +410,7 @@ func TestCertPoolAppendCertsFromPEM(t *testing.T) {
 
 func TestCertPoolAddCertWithConstraint(t *testing.T) {
 	pool := x509.NewCertPool()
-	cert, _ := generateSelfSignedCert(t)
+	cert, _ := loadSelfSignedCert(t)
 
 	constraint := func(chain []*x509.Certificate) error {
 		if len(chain) == 0 {
@@ -436,10 +453,7 @@ func TestSetFallbackRoots(t *testing.T) {
 }
 
 func TestMarshalPKCS1PrivateKey(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
-	if err != nil {
-		t.Fatal(err)
-	}
+	priv := testRSAKey(t)
 
 	der := x509.MarshalPKCS1PrivateKey(priv)
 	if len(der) == 0 {
@@ -456,10 +470,7 @@ func TestMarshalPKCS1PrivateKey(t *testing.T) {
 }
 
 func TestMarshalPKCS1PublicKey(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
-	if err != nil {
-		t.Fatal(err)
-	}
+	priv := testRSAKey(t)
 
 	pub := &priv.PublicKey
 	der := x509.MarshalPKCS1PublicKey(pub)
@@ -477,10 +488,7 @@ func TestMarshalPKCS1PublicKey(t *testing.T) {
 }
 
 func TestMarshalPKCS8PrivateKey(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
-	if err != nil {
-		t.Fatal(err)
-	}
+	priv := testRSAKey(t)
 
 	der, err := x509.MarshalPKCS8PrivateKey(priv)
 	if err != nil {
@@ -500,10 +508,7 @@ func TestMarshalPKCS8PrivateKey(t *testing.T) {
 }
 
 func TestMarshalPKIXPublicKey(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
-	if err != nil {
-		t.Fatal(err)
-	}
+	priv := testRSAKey(t)
 
 	der, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
 	if err != nil {
@@ -581,10 +586,7 @@ func TestEncryptDecryptPEMBlock(t *testing.T) {
 }
 
 func TestCreateCertificateRequest(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
-	if err != nil {
-		t.Fatal(err)
-	}
+	priv := testRSAKey(t)
 
 	template := &x509.CertificateRequest{
 		Subject: pkix.Name{
@@ -614,7 +616,7 @@ func TestCreateCertificateRequest(t *testing.T) {
 }
 
 func TestCreateRevocationList(t *testing.T) {
-	cert, priv := generateSelfSignedCert(t)
+	cert, priv := loadSelfSignedCert(t)
 
 	template := &x509.RevocationList{
 		Number:     big.NewInt(1),
@@ -655,7 +657,7 @@ func TestCreateRevocationList(t *testing.T) {
 }
 
 func TestParseCRL(t *testing.T) {
-	cert, priv := generateSelfSignedCert(t)
+	cert, priv := loadSelfSignedCert(t)
 
 	revokedCerts := []pkix.RevokedCertificate{
 		{
@@ -692,7 +694,7 @@ func TestParseCRL(t *testing.T) {
 }
 
 func TestCheckSignature(t *testing.T) {
-	cert, priv := generateSelfSignedCert(t)
+	cert, priv := loadSelfSignedCert(t)
 
 	data := []byte("test data to sign")
 	signer, ok := priv.(crypto.Signer)
@@ -714,7 +716,7 @@ func TestCheckSignature(t *testing.T) {
 }
 
 func TestVerifyOptions(t *testing.T) {
-	cert, _ := generateSelfSignedCert(t)
+	cert, _ := loadSelfSignedCert(t)
 
 	pool := x509.NewCertPool()
 	pool.AddCert(cert)
@@ -746,7 +748,7 @@ func TestCertificateInvalidError(t *testing.T) {
 }
 
 func TestUnknownAuthorityError(t *testing.T) {
-	cert, _ := generateSelfSignedCert(t)
+	cert, _ := loadSelfSignedCert(t)
 
 	err := x509.UnknownAuthorityError{
 		Cert: cert,
@@ -831,10 +833,7 @@ func TestEd25519(t *testing.T) {
 }
 
 func TestCertificateWithURIs(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
-	if err != nil {
-		t.Fatal(err)
-	}
+	priv := testRSAKey(t)
 
 	uri, _ := url.Parse("https://example.com/resource")
 

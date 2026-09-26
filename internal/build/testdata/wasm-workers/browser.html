@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>LLGo WebAssembly worker runtime test</title>
+<body data-result="running"><output id="status">running</output>
+<script type="module">
+const body = document.body;
+const statusText = document.querySelector("#status");
+try {
+  if (!crossOriginIsolated || typeof SharedArrayBuffer === "undefined") {
+    throw new Error("cross-origin isolation is unavailable");
+  }
+  const name = new URLSearchParams(location.search).get("module");
+  if (!name || !/^[a-z0-9_.-]+\.mjs$/i.test(name)) {
+    throw new Error("invalid module name");
+  }
+  const module = await import(`./${name}`);
+  const output = [];
+  const exit = new Promise((resolve, reject) => {
+    module.default({
+      arguments: [name],
+      print(line) {
+        output.push(String(line));
+      },
+      printErr(line) {
+        output.push(String(line));
+      },
+      onAbort(reason) {
+        reject(new Error(`module aborted: ${reason}`));
+      },
+      onExit(status) {
+        resolve(status);
+      },
+    }).catch(reject);
+  });
+  const status = await exit;
+  if (status !== 0) {
+    throw new Error(`module exited with status ${status}`);
+  }
+  if (!output.some(line => /wasm (workers|hardening) ok/.test(line))) {
+    throw new Error(`module produced no success marker: ${output.join("\n")}`);
+  }
+  body.dataset.result = "pass";
+  statusText.textContent = "pass";
+} catch (error) {
+  body.dataset.result = "fail";
+  statusText.textContent = error?.stack || String(error);
+}
+</script>
+</html>

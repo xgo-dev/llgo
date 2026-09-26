@@ -1,9 +1,40 @@
 package sync_test
 
 import (
+	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 )
+
+const poolGCMarker = uint64(0x5a17c0de)
+
+//go:noinline
+func poolValueRoundTrip(t *testing.T, pool *sync.Pool, collections int) {
+	t.Helper()
+	value := pool.Get()
+	item, ok := value.(*[2]uint64)
+	if !ok || item[0] != poolGCMarker {
+		t.Fatalf("Pool.Get after %d collections = %T %v", collections, value, value)
+	}
+	pool.Put(item)
+}
+
+func TestPoolAfterGC(t *testing.T) {
+	pool := sync.Pool{New: func() any { return &[2]uint64{poolGCMarker, 1} }}
+	for i, want := range []string{"0", "1", "2", "3"} {
+		poolValueRoundTrip(t, &pool, i)
+		if got := fmt.Sprintf("%d", i); got != want {
+			t.Fatalf("fmt.Sprintf = %q, want %q", got, want)
+		}
+		runtime.GC()
+		pressure := make([][]byte, 128)
+		for j := range pressure {
+			pressure[j] = make([]byte, 128)
+		}
+		runtime.KeepAlive(pressure)
+	}
+}
 
 func TestPoolBasic(t *testing.T) {
 	var pool sync.Pool

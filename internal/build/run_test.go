@@ -20,31 +20,184 @@ package build
 
 import (
 	"bytes"
+	stdcontext "context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
+
+	"github.com/xgo-dev/llgo/internal/crosscompile"
 )
 
 func TestRunInEmulatorValidation(t *testing.T) {
 	commands := commandEnv{dir: t.TempDir(), environ: os.Environ()}
-	if err := runInEmulator(commands, "", nil, "", "", &Config{CompileOnly: true}, ModeRun, false); err != nil {
+	if err := runInEmulator(commands, "", "", nil, "", "", &Config{CompileOnly: true}, ModeRun, false); err != nil {
 		t.Fatalf("compile-only emulator run failed: %v", err)
 	}
-	if err := runInEmulator(commands, "", nil, "", "", &Config{Target: "demo"}, ModeRun, false); err == nil {
+	if err := runInEmulator(commands, "", "", nil, "", "", &Config{Target: "demo"}, ModeRun, false); err == nil {
 		t.Fatal("missing emulator succeeded")
+	} else {
+		var runnerErr *runnerFailure
+		if !errors.As(err, &runnerErr) || runnerErr.status != runnerStatusNotConfigured || runnerErr.target != "demo" {
+			t.Fatalf("missing emulator error = %#v, want classified runner failure", err)
+		}
 	}
-	if err := runEmuCmd(commands, nil, "'", nil, false, false); err == nil || !strings.Contains(err.Error(), "parse") {
+	details := runnerDetails{phase: "run", target: "demo", artifact: "firmware.elf", packageName: "example/main"}
+	if err := runEmuCmd(commands, nil, "'", nil, false, false, details); err == nil || !strings.Contains(err.Error(), "parse") {
 		t.Fatalf("malformed emulator command error = %v", err)
 	}
-	if err := runEmuCmd(commands, nil, "   ", nil, false, false); err == nil || !strings.Contains(err.Error(), "empty") {
+	if err := runEmuCmd(commands, nil, "   ", nil, false, false, details); err == nil || !strings.Contains(err.Error(), "empty") {
 		t.Fatalf("empty emulator command error = %v", err)
+	}
+}
+
+func TestWASIThreadedEmulatorHostContract(t *testing.T) {
+	dir := t.TempDir()
+	runner := filepath.Join(dir, "iwasm")
+	argsFile := filepath.Join(dir, "args")
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\n", argsFile)
+	if err := os.WriteFile(runner, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	commands := commandEnv{dir: dir, environ: append(os.Environ(), "PATH="+dir, "LLGO_STRESS_PROFILE=quick")}
+	artifact := filepath.Join(dir, "program.wasm")
+	err := runEmuCmd(commands, map[string]string{"": artifact}, crosscompile.WASIThreadedEmulator,
+		[]string{"-test.v"}, false, false, runnerDetails{phase: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if got, want := args[3], "--dir="+dir; got != want {
+		t.Fatalf("WAMR working directory = %q, want %q", got, want)
+	}
+	if got, want := args[len(args)-3:], []string{"--env=LLGO_STRESS_PROFILE=quick", artifact, "-test.v"}; !slices.Equal(got, want) {
+		t.Fatalf("runner tail = %q, want %q", got, want)
+	}
+}
+
+func TestRunInEmulatorFailureDiagnostics(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := commandEnv{dir: t.TempDir(), environ: os.Environ()}
+	artifact := filepath.Join(t.TempDir(), "program.mjs")
+	template := fmt.Sprintf("%q -test.run=^TestRunNativeTestHelper$ -- exit %q", executable, "{}")
+	conf := &Config{Target: "emscripten", RunArgs: []string{"ignored-program-argument"}}
+	err = runInEmulator(commands, template, "emscripten", map[string]string{"": artifact, "out": artifact}, "", "example/main", conf, ModeRun, false)
+	if err == nil {
+		t.Fatal("runner with non-zero exit status unexpectedly succeeded")
+	}
+
+	var runnerErr *runnerFailure
+	if !errors.As(err, &runnerErr) {
+		t.Fatalf("error type = %T, want *runnerFailure: %v", err, err)
+	}
+	if runnerErr.phase != "run" || runnerErr.target != "emscripten" || runnerErr.profile != "emscripten" ||
+		runnerErr.artifact != artifact || runnerErr.packageName != "example/main" || runnerErr.status != runnerStatusExit || runnerErr.exitCode != 3 {
+		t.Fatalf("runner failure = %+v", runnerErr)
+	}
+	for _, want := range []string{
+		"phase=run",
+		"target=emscripten",
+		"profile=emscripten",
+		fmt.Sprintf("artifact=%q", artifact),
+		fmt.Sprintf("runner=%q", executable),
+		`package="example/main"`,
+		"status=exit",
+		"exit_code=3",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("runner error %q does not contain %q", err, want)
+		}
+	}
+}
+
+func TestRunInEmulatorUnavailableRunner(t *testing.T) {
+	commands := commandEnv{dir: t.TempDir(), environ: os.Environ()}
+	missing := filepath.Join(t.TempDir(), "missing-runner")
+	artifact := filepath.Join(t.TempDir(), "program.wasm")
+	conf := &Config{Target: "wasi"}
+	err := runInEmulator(commands, fmt.Sprintf("%q %q", missing, "{}"), "wasi-preview1",
+		map[string]string{"": artifact, "out": artifact}, "", "example/test", conf, ModeTest, false)
+	if err == nil {
+		t.Fatal("missing runner unexpectedly succeeded")
+	}
+
+	var runnerErr *runnerFailure
+	if !errors.As(err, &runnerErr) {
+		t.Fatalf("error type = %T, want *runnerFailure: %v", err, err)
+	}
+	if runnerErr.status != runnerStatusUnavailable || runnerErr.runner != missing || runnerErr.exitCode != -1 {
+		t.Fatalf("runner failure = %+v", runnerErr)
+	}
+	for _, want := range []string{
+		"phase=test",
+		"target=wasi",
+		"profile=wasi-preview1",
+		fmt.Sprintf("artifact=%q", artifact),
+		fmt.Sprintf("runner=%q", missing),
+		`package="example/test"`,
+		"status=unavailable",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("runner error %q does not contain %q", err, want)
+		}
+	}
+}
+
+func TestRunInEmulatorTimeout(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := commandEnv{dir: t.TempDir(), environ: os.Environ()}
+	artifact := filepath.Join(t.TempDir(), "program.mjs")
+	template := fmt.Sprintf("%q -test.run=^TestRunNativeTestHelper$ -- hang %q", executable, "{}")
+	conf := &Config{Target: "emscripten", RunnerTimeout: 50 * time.Millisecond}
+
+	started := time.Now()
+	err = runInEmulator(commands, template, "emscripten", map[string]string{"": artifact, "out": artifact}, "", "example/main", conf, ModeRun, false)
+	if err == nil {
+		t.Fatal("hanging runner unexpectedly succeeded")
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("hanging runner took %s to stop", elapsed)
+	}
+
+	var runnerErr *runnerFailure
+	if !errors.As(err, &runnerErr) {
+		t.Fatalf("error type = %T, want *runnerFailure: %v", err, err)
+	}
+	if runnerErr.status != runnerStatusTimeout || runnerErr.exitCode != -1 || runnerErr.timeout != 50*time.Millisecond {
+		t.Fatalf("runner failure = %+v", runnerErr)
+	}
+	if !errors.Is(err, stdcontext.DeadlineExceeded) {
+		t.Fatalf("runner error does not wrap context deadline: %v", err)
+	}
+	for _, want := range []string{
+		"phase=run",
+		"target=emscripten",
+		"profile=emscripten",
+		"status=timeout",
+		"timeout=50ms",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("runner error %q does not contain %q", err, want)
+		}
 	}
 }
 
@@ -102,6 +255,23 @@ func TestRunNativeTest(t *testing.T) {
 		}
 	})
 
+	t.Run("Go-compatible wasm runner timeout", func(t *testing.T) {
+		program := testProgram{
+			app:       "program.wasm",
+			pkgDir:    t.TempDir(),
+			pkgName:   "wasm",
+			runner:    fmt.Sprintf("%q -test.run=^TestRunNativeTestHelper$ -- hang %q", executable, "{}"),
+			runnerEnv: map[string]string{"": "program.wasm"},
+			profile:   "j32",
+		}
+		err := runNativeTest(commands, program, &Config{RunnerTimeout: 50 * time.Millisecond}, io.Discard, io.Discard)
+		var runnerErr *runnerFailure
+		if !errors.As(err, &runnerErr) || runnerErr.status != runnerStatusTimeout || runnerErr.profile != "j32" ||
+			!errors.Is(err, stdcontext.DeadlineExceeded) {
+			t.Fatalf("Go-compatible wasm runner timeout = %v, want j32 timeout", err)
+		}
+	})
+
 	t.Run("exit error", func(t *testing.T) {
 		var stderr bytes.Buffer
 		conf := &Config{RunArgs: append(args, "exit")}
@@ -145,6 +315,7 @@ func TestRunNativeTest(t *testing.T) {
 }
 
 func TestGoCompatibleWasmRunner(t *testing.T) {
+	t.Setenv("LLGO_WASI_THREADS", "0")
 	js := goCompatibleWasmRunner(&Config{Goos: "js", Goarch: "wasm"})
 	if !strings.Contains(js, "emscripten-runner.mjs") || !strings.Contains(js, "--browser-only") || !strings.Contains(js, "{}") {
 		t.Fatalf("js runner = %q", js)
@@ -182,6 +353,13 @@ func TestGoCompatibleWasmRunner(t *testing.T) {
 	}
 	if got := goCompatibleWasmRunner(&Config{Goos: "plan9", Goarch: "wasm"}); got != "" {
 		t.Fatalf("unsupported wasm host acquired raw runner %q", got)
+	}
+}
+
+func TestGoCompatibleWASIThreadRunner(t *testing.T) {
+	t.Setenv("LLGO_WASI_THREADS", "1")
+	if got := goCompatibleWasmRunner(&Config{Goos: "wasip1", Goarch: "wasm"}); got != crosscompile.WASIThreadedEmulator {
+		t.Fatalf("WASI thread runner = %q, want %q", got, crosscompile.WASIThreadedEmulator)
 	}
 }
 
@@ -239,6 +417,8 @@ func TestRunNativeTestHelper(t *testing.T) {
 				t.Fatalf("kill helper: %v", err)
 			}
 			panic("SIGKILL returned without terminating the helper")
+		case "hang":
+			time.Sleep(time.Hour)
 		}
 		return
 	}

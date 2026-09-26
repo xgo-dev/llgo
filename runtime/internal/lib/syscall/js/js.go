@@ -32,6 +32,7 @@ type Value struct {
 }
 
 func floatValue(f float64) Value {
+	ensureEmvalGlobals()
 	if f == 0 {
 		return valueZero
 	}
@@ -42,6 +43,7 @@ func floatValue(f float64) Value {
 }
 
 func intValue(i int) Value {
+	ensureEmvalGlobals()
 	if i == 0 {
 		return valueZero
 	}
@@ -77,6 +79,7 @@ var (
 
 // Equal reports whether v and w are equal according to JavaScript's === operator.
 func (v Value) Equal(w Value) bool {
+	ensureEmvalGlobals()
 	return emval_equals(v, w) && v.ref != valueNaN.ref
 }
 
@@ -102,11 +105,21 @@ func (v Value) IsNull() bool {
 
 // IsNaN reports whether v is the JavaScript value "NaN".
 func (v Value) IsNaN() bool {
+	ensureEmvalGlobals()
 	return v.ref == valueNaN.ref
 }
 
 // Global returns the JavaScript global object, usually "window" or "global".
 func Global() Value {
+	ensureEmvalGlobals()
+	return valueGlobal
+}
+
+// GlobalForHost is used by LLGo's worker-local filesystem adapter during
+// package initialization. Its handles stay in TLS and are never handed to a
+// child goroutine, so this setup must not pin the main goroutine to one realm.
+func GlobalForHost() Value {
+	initEmvalGlobals()
 	return valueGlobal
 }
 
@@ -125,6 +138,7 @@ func Global() Value {
 //
 // Panics if x is not one of the expected types.
 func ValueOf(x any) Value {
+	ensureEmvalGlobals()
 	switch x := x.(type) {
 	case Value:
 		return x
@@ -538,6 +552,7 @@ func (v Value) New(args ...any) (res Value) {
 // func valueNew(v ref, args []ref) (ref, bool)
 
 func (v Value) isNumber() bool {
+	initEmvalGlobals()
 	return v.ref == valueZero.ref ||
 		v.ref == valueNaN.ref ||
 		(v.ref != valueUndefined.ref && emval_is_number(v))
@@ -583,6 +598,7 @@ func (v Value) Bool() bool {
 // false, 0, "", null, undefined, and NaN are "falsy", and everything else is
 // "truthy". See https://developer.mozilla.org/en-US/docs/Glossary/Truthy.
 func (v Value) Truthy() bool {
+	ensureEmvalGlobals()
 	switch v.Type() {
 	case TypeUndefined, TypeNull:
 		return false

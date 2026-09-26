@@ -584,6 +584,7 @@ func TestFullStressCommandsUseQuickProfile(t *testing.T) {
 }
 
 func TestFullSourceContextMatchesCompilerProfiles(t *testing.T) {
+	t.Setenv("LLGO_WASI_THREADS", "0")
 	tests := []struct {
 		name, wantCGO string
 		wantTags      []string
@@ -646,15 +647,30 @@ func TestFullSourceExclusionsAreProfileSpecific(t *testing.T) {
 }
 
 func TestFullLongTimeoutIsTargeted(t *testing.T) {
-	for _, pkg := range []string{"test/std/crypto/dsa", "test/std/crypto/rsa", "test/std/go/types", "test/std/os", "test/std/runtime/pprof", "test/_stress/runtime/example"} {
-		if got := fullTestTimeout(pkg); got != "3m" {
+	wasi := profile{Name: "W32-WASI"}
+	for _, pkg := range []string{"test/std/crypto/dsa", "test/std/crypto/rsa", "test/std/go/types", "test/std/os", "test/std/runtime/pprof", "test/std/testing", "test/_stress/runtime/example"} {
+		if got := fullTestTimeout(wasi, pkg); got != "3m" {
 			t.Fatalf("%s timeout = %q", pkg, got)
 		}
 	}
-	if got := fullTestTimeout("test/std/crypto/aes"); got != "60s" {
+	if got := fullTestTimeout(wasi, "test/go"); got != "12m" {
+		t.Fatalf("W32 test/go timeout = %q", got)
+	}
+	if got := fullTestTimeout(wasi, "test/std/crypto/ecdh"); got != "3m" {
+		t.Fatalf("W32 test/std/crypto/ecdh timeout = %q", got)
+	}
+	for _, pkg := range []string{"test/std/net/http/httptest", "test/std/crypto/x509"} {
+		if got := fullTestTimeout(wasi, pkg); got != "3m" {
+			t.Fatalf("W32 %s timeout = %q", pkg, got)
+		}
+		if got := fullTestTimeout(profile{Name: "J32-Emscripten"}, pkg); got != "60s" {
+			t.Fatalf("J32 %s timeout = %q", pkg, got)
+		}
+	}
+	if got := fullTestTimeout(wasi, "test/std/crypto/aes"); got != "60s" {
 		t.Fatalf("default timeout = %q", got)
 	}
-	if got := fullTestTimeout("test/_stress/runtime/timer"); got != "3m" {
+	if got := fullTestTimeout(wasi, "test/_stress/runtime/timer"); got != "3m" {
 		t.Fatalf("stress timeout = %q", got)
 	}
 }
@@ -668,7 +684,10 @@ func TestFullCommandTimeoutIsTargeted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, pkg := range []string{"test/std/net/rpc", "test/std/net/rpc/jsonrpc"} {
+	if got := fullCommandTimeout(wasi, "test/go"); got != "20m" {
+		t.Fatalf("W32 test/go command timeout = %q", got)
+	}
+	for _, pkg := range []string{"test/std/net/rpc", "test/std/net/rpc/jsonrpc", "test/std/crypto/rsa", "test/std/crypto/ecdh"} {
 		if got := fullCommandTimeout(wasi, pkg); got != "10m" {
 			t.Errorf("W32 %s command timeout = %q, want 10m", pkg, got)
 		}

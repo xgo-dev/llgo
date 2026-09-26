@@ -54,9 +54,12 @@ func checkWasmImporter(t *testing.T, imp types.Importer) {
 	if pkg, err := imp.Import("unsafe"); err != nil || pkg != types.Unsafe {
 		t.Fatalf("builtin unsafe import = %v, %v", pkg, err)
 	}
-	// Default gc archive resolution invokes the host go command. The guest
-	// cannot spawn it; this is not an assertion that archive decoding succeeded.
-	if _, err := imp.Import("fmt"); err == nil || !strings.Contains(strings.ToLower(err.Error()), "not implemented") {
+	// Default gc archive resolution needs host compiler artifacts. A guest
+	// without a host Go command reports "not implemented"; a preopened but
+	// archive-free GOROOT reports "cannot find package" instead.
+	if _, err := imp.Import("fmt"); err == nil ||
+		!strings.Contains(strings.ToLower(err.Error()), "not implemented") &&
+			!strings.Contains(strings.ToLower(err.Error()), "cannot find package") {
 		t.Fatalf("gc archive resolution = %v, want unavailable host compiler", err)
 	}
 }

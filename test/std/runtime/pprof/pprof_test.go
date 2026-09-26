@@ -36,7 +36,13 @@ func cpuProfileWork(d time.Duration) uint64 {
 	// Like Go's pprof CPU hog, require actual work as well as elapsed time.
 	// A busy runner must not spend the whole sampling interval descheduled and
 	// then finish after only checking the wall clock.
-	for batches := 0; batches < 500 || time.Since(start) < d; batches++ {
+	minimumBatches := 500
+	if runtime.GOARCH == "wasm" {
+		// The classic WASI interpreter executes 500 batches for minutes, while
+		// wasm has no CPU sampler and only needs real work during the interval.
+		minimumBatches = 1
+	}
+	for batches := 0; batches < minimumBatches || time.Since(start) < d; batches++ {
 		x = cpuProfileHotLoop(x)
 	}
 	cpuProfileSink = x

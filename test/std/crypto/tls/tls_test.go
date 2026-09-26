@@ -3,12 +3,9 @@ package tls_test
 import (
 	"context"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"math/big"
+	_ "embed"
 	"net"
 	"os"
 	"path/filepath"
@@ -16,51 +13,18 @@ import (
 	"time"
 )
 
-// Certificate fixtures need only exercise TLS parsing and configuration.
-const testRSAKeyBits = 1024
+// These test-only PEM fixtures remain valid from 2000 through 2100. Generating
+// an RSA key in every TLS test can take minutes in a classic Wasm interpreter.
+var (
+	//go:embed testdata/llgo-cert.pem
+	fixtureCertPEM []byte
+	//go:embed testdata/llgo-key.pem
+	fixtureKeyPEM []byte
+)
 
 func generateTestCert(t *testing.T) ([]byte, []byte) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
-	if err != nil {
-		t.Fatalf("Failed to generate private key: %v", err)
-	}
-
-	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{
-			Organization: []string{"Test Org"},
-		},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true,
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
-	if err != nil {
-		t.Fatalf("Failed to create certificate: %v", err)
-	}
-
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	keyDER, err := x509.MarshalPKCS8PrivateKey(priv)
-	if err != nil {
-		t.Fatalf("Failed to marshal private key: %v", err)
-	}
-	parsedKey, err := x509.ParsePKCS8PrivateKey(keyDER)
-	if err != nil {
-		t.Fatalf("Failed to parse private key: %v", err)
-	}
-	parsedRSA, ok := parsedKey.(*rsa.PrivateKey)
-	if !ok {
-		t.Fatalf("Parsed private key has type %T, want *rsa.PrivateKey", parsedKey)
-	}
-	if !parsedRSA.Equal(priv) {
-		t.Fatal("Parsed private key differs from generated key")
-	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
-
-	return certPEM, keyPEM
+	t.Helper()
+	return append([]byte(nil), fixtureCertPEM...), append([]byte(nil), fixtureKeyPEM...)
 }
 
 func TestCipherSuiteName(t *testing.T) {

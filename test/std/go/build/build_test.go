@@ -5,6 +5,7 @@ import (
 	"go/build"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -93,10 +94,29 @@ func TestImportDirNoGoError(t *testing.T) {
 
 func TestContextImportAndSrcDirs(t *testing.T) {
 	ctx := build.Default
+	if build.ToolDir == "" {
+		t.Fatal("ToolDir must not be empty")
+	}
 
 	dirs := ctx.SrcDirs()
 	if len(dirs) == 0 {
-		t.Fatal("SrcDirs returned no directories")
+		if runtime.GOARCH != "wasm" {
+			t.Fatal("SrcDirs returned no directories")
+		}
+		// The WASI host may not expose the installed GOROOT sources. Check a
+		// package inside its preopened temporary directory instead.
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "local.go"), []byte("package localfixture\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		pkg, err := ctx.Import(".", dir, build.FindOnly)
+		if err != nil {
+			t.Fatalf("Context.Import(local) returned error: %v", err)
+		}
+		if pkg.Dir != dir {
+			t.Fatalf("Context.Import(local).Dir = %q, want %q (path=%q, name=%q)", pkg.Dir, dir, pkg.ImportPath, pkg.Name)
+		}
+		return
 	}
 
 	var mode build.ImportMode = build.FindOnly
@@ -111,9 +131,6 @@ func TestContextImportAndSrcDirs(t *testing.T) {
 		t.Fatalf("Import(fmt).ImportPath = %q, want fmt", pkg.ImportPath)
 	}
 
-	if build.ToolDir == "" {
-		t.Fatal("ToolDir must not be empty")
-	}
 }
 
 func TestPackageDirectivesAndIsCommand(t *testing.T) {

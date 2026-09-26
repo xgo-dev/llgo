@@ -284,17 +284,36 @@ func TestUseWASIThreadsImportsMemory(t *testing.T) {
 	if !slices.Contains(export.CCFLAGS, "-pthread") {
 		t.Fatalf("CCFLAGS do not enable WASI threads: %v", export.CCFLAGS)
 	}
+	if i := slices.Index(export.CCFLAGS, "-target"); i < 0 || i+1 == len(export.CCFLAGS) || export.CCFLAGS[i+1] != "wasm32-wasip1-threads" {
+		t.Fatalf("CCFLAGS do not select the WASI threads startup files: %v", export.CCFLAGS)
+	}
+	if i := slices.Index(export.LDFLAGS, "-target"); i < 0 || i+1 == len(export.LDFLAGS) || export.LDFLAGS[i+1] != "wasm32-wasip1-threads" {
+		t.Fatalf("LDFLAGS do not select the WASI threads startup files: %v", export.LDFLAGS)
+	}
 	if !slices.Contains(export.BuildTags, "llgo.wasi_threads") {
 		t.Fatalf("BuildTags do not select the WASI pthread backend: %v", export.BuildTags)
 	}
 	if !slices.Contains(export.LDFLAGS, "-Wl,--import-memory") {
 		t.Fatalf("LDFLAGS do not import shared host memory: %v", export.LDFLAGS)
 	}
+	if slices.Contains(export.LDFLAGS, "-lwasi-emulated-pthread") {
+		t.Fatalf("LDFLAGS select the single-thread pthread shim: %v", export.LDFLAGS)
+	}
 	if !slices.Contains(export.LDFLAGS, "-Wl,--initial-memory=67108864") {
 		t.Fatalf("WASI pthread initial-memory contract changed: %v", export.LDFLAGS)
 	}
+	if !slices.Contains(export.LDFLAGS, "-Wl,--max-memory=268435456") {
+		t.Fatalf("WASI pthread memory has no room for additional GC arenas: %v", export.LDFLAGS)
+	}
 	if export.WasmPostLink.Asyncify {
 		t.Fatal("WASI pthread mode requests single-worker Asyncify processing")
+	}
+	named, err := Use("", "", "wasi", true, false, optlevel.O2, lto.Off, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if named.Emulator != WASIThreadedEmulator {
+		t.Fatalf("named WASI thread emulator = %q, want %q", named.Emulator, WASIThreadedEmulator)
 	}
 }
 
@@ -511,6 +530,15 @@ func TestEmscriptenTargetProfiles(t *testing.T) {
 			}
 			if !slices.Contains(export.LDFLAGS, emscriptenAsyncifyRemove) {
 				t.Errorf("named target does not preserve current libffi closure buffers during replay: %v", export.LDFLAGS)
+			}
+			if !slices.Contains(export.LDFLAGS, "-sALLOW_TABLE_GROWTH=1") {
+				t.Errorf("named target does not allow dynamic libffi closure entries: %v", export.LDFLAGS)
+			}
+			if !slices.Contains(export.LDFLAGS, "-sNODE_HOST_ENV=1") {
+				t.Errorf("named target does not propagate Node environment variables: %v", export.LDFLAGS)
+			}
+			if !slices.Contains(export.LDFLAGS, "-sEXPORTED_RUNTIME_METHODS=cwrap,allocateUTF8,stringToUTF8,UTF8ToString,FS,setValue,getValue,ENV") {
+				t.Errorf("named target does not expose its browser environment map: %v", export.LDFLAGS)
 			}
 			if !slices.Contains(export.LDFLAGS, "-sEXIT_RUNTIME=1") {
 				t.Errorf("named target does not let fatal Asyncify programs exit: %v", export.LDFLAGS)

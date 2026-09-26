@@ -14,13 +14,29 @@ import (
 	llruntime "github.com/xgo-dev/llgo/runtime/internal/runtime"
 )
 
+// Emscripten callback IDs and emval queues belong to one JavaScript worker.
+//
+//llgointernal:tls
 var (
-	funcsMu                sync.Mutex
-	funcs                         = make(map[uint32]func(Value, []Value) any)
-	nextFuncID             uint32 = 1
-	activeCallbacks        uint32
-	callbackPollRegistered bool
+	funcsMu         sync.Mutex
+	funcs           map[uint32]func(Value, []Value) any
+	nextFuncID      uint32
+	activeCallbacks uint32
 )
+
+var callbackPoll struct {
+	sync.Mutex
+	registered bool
+}
+
+func ensureCallbackPoll() {
+	callbackPoll.Lock()
+	if !callbackPoll.registered {
+		llruntime.RegisterWasmCallbackPoll(pollCallbacks)
+		callbackPoll.registered = true
+	}
+	callbackPoll.Unlock()
+}
 
 // Func is a wrapped Go function to be called by JavaScript.
 type Func struct {
@@ -38,12 +54,16 @@ type Func struct {
 //
 // Func.Release must be called to free up resources when the function will not be invoked any more.
 func FuncOf(fn func(this Value, args []Value) any) Func {
+	ensureEmvalGlobals()
 	funcsMu.Lock()
-	if !callbackPollRegistered {
+	if funcs == nil {
+		funcs = make(map[uint32]func(Value, []Value) any)
+		nextFuncID = 1
+		// The installed JavaScript closure retains its queue, so install it
+		// once per worker even if all callbacks are later released.
 		emval_install_invoke()
-		llruntime.RegisterWasmCallbackPoll(pollCallbacks)
-		callbackPollRegistered = true
 	}
+	ensureCallbackPoll()
 	id := nextFuncID
 	nextFuncID++
 	funcs[id] = fn
@@ -89,10 +109,15 @@ func (c Func) Release() {
 }
 
 func stopCallbackPollLocked() {
-	if len(funcs) == 0 && activeCallbacks == 0 && !emval_has_pending_invoke() {
-		llruntime.RegisterWasmCallbackPoll(nil)
-		callbackPollRegistered = false
+	if keepWasmCallbackPoll || len(funcs) != 0 || activeCallbacks != 0 || emval_has_pending_invoke() {
+		return
 	}
+	callbackPoll.Lock()
+	if callbackPoll.registered {
+		llruntime.RegisterWasmCallbackPoll(nil)
+		callbackPoll.registered = false
+	}
+	callbackPoll.Unlock()
 }
 
 func retainCallback() {
@@ -102,19 +127,30 @@ func retainCallback() {
 }
 
 func dispatchSynchronousCallback(handle c.Ulong) {
-	retainCallback()
-	runCallback(uintptr(handle))
+	// Bounded workers keep their callback poll installed. An external JS
+	// callback can enter on the scheduler's system fiber without a G, so it
+	// must not acquire funcsMu before HandleWasmEvent starts its handler G.
+	if !keepWasmCallbackPoll {
+		retainCallback()
+	}
+	runCallback(uintptr(handle), llruntime.SchedulerProcID())
 }
 
-func runCallback(handle uintptr) {
-	llruntime.HandleWasmEvent(func() { dispatchCallback(handle) })
-	funcsMu.Lock()
-	activeCallbacks--
-	stopCallbackPollLocked()
-	funcsMu.Unlock()
+func runCallback(handle uintptr, owner int) {
+	llruntime.HandleWasmEvent(func() { dispatchCallback(handle, owner) })
+	if !keepWasmCallbackPoll {
+		funcsMu.Lock()
+		activeCallbacks--
+		stopCallbackPollLocked()
+		funcsMu.Unlock()
+	}
 }
 
-func dispatchCallback(handle uintptr) {
+func dispatchCallback(handle uintptr, owner int) {
+	if current := llruntime.SchedulerProcID(); current != owner {
+		panic("syscall/js: callback dispatched outside its JavaScript realm")
+	}
+	llruntime.MarkCurrentJSRealm()
 	defer cEmvalDecref(handle)
 	cb := Value{ref: ref(handle)}
 	id := uint32(cb.Get("id").Int())
@@ -140,6 +176,7 @@ func dispatchCallback(handle uintptr) {
 }
 
 func pollCallbacks() {
+	pollEmvalReleases()
 	// The host sets a byte in wasm memory when it enqueues the first event, so
 	// an idle scheduler does not cross the wasm/JavaScript boundary merely to
 	// inspect an empty JavaScript array.
@@ -148,8 +185,14 @@ func pollCallbacks() {
 		if handle == 0 {
 			break
 		}
-		retainCallback()
-		go runCallback(handle)
+		// Only single-worker builds can remove the poll hook while a
+		// callback is pending. Bounded workers keep it installed, and polling
+		// may run without a G on the scheduler's system fiber.
+		if !keepWasmCallbackPoll {
+			retainCallback()
+		}
+		owner := llruntime.SchedulerProcID()
+		go runCallback(handle, owner)
 	}
 	llruntime.PollWasmEvent()
 }

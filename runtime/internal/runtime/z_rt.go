@@ -197,7 +197,7 @@ var RecoverMark func()
 const (
 	// LLGoFiles: the frame-pointer helper must live in the runtime core —
 	// programs that never import "runtime" still link Recover.
-	LLGoFiles = "_wrap/fp.c" + platformSetjmpLLGoFiles + platformFaultLLGoFiles + platformLLGoFiles
+	LLGoFiles = "_wrap/fp.c" + platformSetjmpLLGoFiles + platformFaultLLGoFiles + platformLLGoFiles + wasiGCLLGoFiles
 )
 
 //go:linkname c_framepointer C.llgo_framepointer

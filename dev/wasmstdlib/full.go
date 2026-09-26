@@ -76,7 +76,7 @@ func fullProfile(name string) (profile, error) {
 }
 
 func fullCommand(p profile, goCmd, llgo, goRoot, pkg string) command {
-	args := []string{"test", "-v", "-count=1", "-timeout=" + fullTestTimeout(pkg)}
+	args := []string{"test", "-v", "-count=1", "-timeout=" + fullTestTimeout(p, pkg)}
 	env := map[string]string{}
 	program := llgo
 	if p.Reference {
@@ -128,6 +128,15 @@ func fullCommandTimeout(p profile, pkg string) string {
 		switch pkg {
 		case "test/std/net/rpc", "test/std/net/rpc/jsonrpc":
 			return "10m"
+		case "test/std/crypto/rsa", "test/std/crypto/ecdh":
+			// The crypto test binaries can take over two minutes to build on
+			// this target before their key-operation tests start.
+			return "10m"
+		case "test/go":
+			// This package runs child-process probes and a full suite whose
+			// reflect.MakeFunc/GC startup stress alone takes over three minutes
+			// in WAMR classic Release.
+			return "20m"
 		}
 	}
 	return "5m"
@@ -148,11 +157,31 @@ func fullNeedsPCLN(pkg string) bool {
 	return pkg == "test"
 }
 
-func fullTestTimeout(pkg string) string {
+func fullTestTimeout(p profile, pkg string) string {
 	// Keep the global default strict while allowing reviewed, finite wasm work
 	// enough time to finish.
+	if p.Name == "W32-WASI" {
+		switch pkg {
+		case "test/go":
+			// The complete interpreter run reaches several long stress cases;
+			// the isolated reflect.MakeFunc/GC startup test took 217 seconds.
+			return "12m"
+		case "test/std/crypto/ecdh":
+			// P521 key generation and shared-secret checks exceed the default
+			// minute in WAMR classic Release.
+			return "3m"
+		case "test/std/net/http/httptest":
+			// Two real TLS handshakes took about 50 and 75 seconds in WAMR's
+			// classic interpreter during the reviewed full-package run.
+			return "3m"
+		case "test/std/crypto/x509":
+			// Certificate signatures, CSR/CRL signing, and Ed25519 validation
+			// exceed a minute together in WAMR's classic interpreter.
+			return "3m"
+		}
+	}
 	switch pkg {
-	case "test/std/crypto/dsa", "test/std/crypto/rsa", "test/std/go/types", "test/std/os", "test/std/runtime/pprof":
+	case "test/std/crypto/dsa", "test/std/crypto/rsa", "test/std/go/types", "test/std/os", "test/std/runtime/pprof", "test/std/testing":
 		return "3m"
 	}
 	if strings.HasPrefix(pkg, "test/_stress/") {

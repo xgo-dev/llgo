@@ -31,13 +31,16 @@ type mOS struct{}
 // newosproc provides the current host-thread backend for newm.
 func newosproc(mp *m, stackSize uintptr) int {
 	return int(thread.CreateDetached(
-		stackSize,
-		thread.RoutineFunc(mstart),
+		pthreadStackSize(stackSize),
+		thread.RoutineFunc(wasiGCThreadStart),
 		c.Pointer(unsafe.Pointer(mp)),
 	))
 }
 
 func goexitBackend(gp *g) {
+	if gp.isMain {
+		parkInitialWasiThread(gp)
+	}
 	leaveCurrentLocalContext()
 	mp := gp.m
 	mexit(mp)

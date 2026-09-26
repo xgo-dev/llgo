@@ -61,10 +61,8 @@ func gorootTargetEnv(env []string) []string {
 func gorootRuntimeEnv(env []string) []string {
 	out := gorootTargetEnv(env)
 	if _, ok := activeGOROOTWasmProfile(); ok {
-		// Official Go's current js/wasm and wasip1/wasm ports do not create
-		// operating-system threads. These profiles intentionally exercise the
-		// same single-worker contract in LLGo while the native driver and the
-		// compiler may continue to use the CI job's wider GOMAXPROCS setting.
+		// Keep the official Go baseline deterministic. The LLGo pthread backend
+		// is selected separately by LLGO_WASI_THREADS and can still create Ms.
 		out = upsertEnv(out, "GOMAXPROCS=1")
 	}
 	return out
@@ -119,6 +117,10 @@ func gorootArtifactCommand(dir, artifact string, llgo bool, env []string, progra
 	if !ok {
 		return artifact, programArgs, env, nil
 	}
+	if p.runner == "wasmtime" && wasiThreadsInEnv(envEntry(env, "LLGO_WASI_THREADS")) {
+		args := []string{"--max-threads=128", "--stack-size=1048576", "--heap-size=0", "--dir=" + dir, "--dir=/tmp", artifact}
+		return "iwasm", append(args, programArgs...), gorootRuntimeEnv(env), nil
+	}
 	if !llgo {
 		goroot := envEntry(env, "GOROOT")
 		if goroot == "" {
@@ -145,6 +147,14 @@ func gorootArtifactCommand(dir, artifact string, llgo bool, env []string, progra
 	args = append(args, artifact)
 	args = append(args, programArgs...)
 	return "node", args, gorootRuntimeEnv(env), nil
+}
+
+func wasiThreadsInEnv(value string) bool {
+	switch strings.ToLower(value) {
+	case "1", "true", "on":
+		return true
+	}
+	return false
 }
 
 // uintptrescapes deliberately forces stack growth with 4096 recursive frames.

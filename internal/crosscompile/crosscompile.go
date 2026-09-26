@@ -62,9 +62,17 @@ type Export struct {
 	Emulator     string // Emulator command template (e.g., "qemu-system-arm -M {} -kernel {}")
 	DebugInfo    DebugInfoPolicy
 	WasmPostLink WasmPostLink
+	WasmRuntime  WasmRuntime
 
 	// Flashing/Debugging configuration
 	Device flash.Device // Device configuration for flashing/debugging
+}
+
+// WasmRuntime describes entry behavior implemented by the selected runtime.
+type WasmRuntime struct {
+	// RunMainTask asks the host-provided entry point to invoke LLGo's logical
+	// Go main task. Emscripten's PROXY_TO_PTHREAD owns main in worker mode.
+	RunMainTask bool
 }
 
 // NativeToolchain describes the externally visible ABI and the tools used to
@@ -88,6 +96,13 @@ type NativeToolchain struct {
 type WasmProfile string
 
 const (
+	// WASIThreadedEmulator runs the shared-memory module with WAMR's classic
+	// interpreter. wasi-libc manages its own heap inside the module memory.
+	// The runner resolves the working-directory preopen to an absolute path
+	// before execution and also grants Go's default /tmp directory.
+	// The 64-client select stress needs more than 64 concurrent pthreads.
+	WASIThreadedEmulator = `iwasm --max-threads=128 --stack-size=1048576 --heap-size=0 --dir=. --dir=/tmp "{}"`
+
 	WasmProfileNone WasmProfile = ""
 	WasmProfileJ32  WasmProfile = "j32"
 	WasmProfileJ64  WasmProfile = "j64"
@@ -692,8 +707,12 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, wasiThreads, forceEspC
 		}
 		// WASI-SDK configuration
 		triple := "wasm32-wasip1"
+		clangTriple := targetTriple
 		if wasiThreads {
 			triple = "wasm32-wasip1-threads"
+			// Clang selects crt1 from the target triple, independently of -L.
+			// The threads crt1 initializes the main pthread TLS before Go runs.
+			clangTriple = triple
 		}
 
 		// Set up flags for the WASI-SDK or wasi-libc
@@ -706,7 +725,7 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, wasiThreads, forceEspC
 		// Add compiler flags
 		export.CCFLAGS = []string{
 			level.Flag(),
-			"-target", targetTriple,
+			"-target", clangTriple,
 			"--sysroot=" + sysrootDir,
 			"-resource-dir=" + libclangDir,
 			"-matomics",
@@ -764,8 +783,8 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, wasiThreads, forceEspC
 			export.LDFLAGS = append(
 				export.LDFLAGS,
 				"-Wl,--initial-memory=67108864", // Preserve the shared-memory backend's host contract.
+				"-Wl,--max-memory=268435456",    // Leave room for libc and additional Go GC arenas.
 				"-Wl,--import-memory",
-				"-lwasi-emulated-pthread",
 				"-lpthread",
 			)
 		} else {
@@ -805,10 +824,14 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, wasiThreads, forceEspC
 			"-DPLATFORM_WEB",
 			"-sEXPORT_KEEPALIVE=1",
 			"-sEXPORT_ES6=1",
+			// Emscripten pthread workers instantiate the module in a fresh JS
+			// realm. Import Node's environment there as well as in the launcher,
+			// and expose ENV so browser hosts can provide the equivalent map.
+			"-sNODE_HOST_ENV=1",
 			"-sALLOW_MEMORY_GROWTH=1",
 			emscriptenAllowTableGrowth,
 			"-sRESERVED_FUNCTION_POINTERS=1",
-			"-sEXPORTED_RUNTIME_METHODS=cwrap,allocateUTF8,stringToUTF8,UTF8ToString,FS,setValue,getValue",
+			"-sEXPORTED_RUNTIME_METHODS=cwrap,allocateUTF8,stringToUTF8,UTF8ToString,FS,setValue,getValue,ENV",
 			"-sWASM=1",
 			"-sEXPORT_ALL=1",
 			"-sASYNCIFY=1",
@@ -1193,6 +1216,9 @@ func UseWithGOARMAndToolchain(goos, goarch, goarm, targetName string, wasiThread
 	export.GOOS = config.GOOS
 	export.GOARCH = config.GOARCH
 	export.Emulator = env.ExpandEnvWithDefault(config.Emulator, buildEnvMap(env.LLGoROOT()), "{}")
+	if wasiThreads && wasmProvider == WasmProviderWASI && (targetName == "wasi" || targetName == "wasip1") {
+		export.Emulator = WASIThreadedEmulator
+	}
 	export.BuildTags = appendUniqueStrings(export.BuildTags, config.BuildTags...)
 	if wasmProvider == WasmProviderEmscripten {
 		// The existing raw js/wasm path remains browser/worker-only. Named

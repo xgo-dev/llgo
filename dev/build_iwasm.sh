@@ -134,7 +134,9 @@ mkdir -p wasm-micro-runtime/product-mini/platforms/${PLATFORM}/build
 cd wasm-micro-runtime/product-mini/platforms/${PLATFORM}/build
 
 # The test helper executes Wasm bytecode only, so AOT is unnecessary; LLGo's
-# generated modules require reference-types support.
+# generated modules require reference-types support. WAMR 2.4.5's debug
+# interpreter leaves a termination signal after a caught Wasm exception;
+# a later branch then aborts LLVM's SjLj path for Go panic/recover.
 cmake "${CMAKE_GENERATOR_ARGS[@]}" \
     -D WAMR_BUILD_EXCE_HANDLING=1 \
     -D WAMR_BUILD_AOT=0 \
@@ -144,7 +146,7 @@ cmake "${CMAKE_GENERATOR_ARGS[@]}" \
     -D WAMR_BUILD_LIB_WASI_THREADS=1 \
     -D WAMR_BUILD_LIB_PTHREAD=1 \
     -D CMAKE_BUILD_TYPE=Debug \
-    -D WAMR_BUILD_DEBUG_INTERP=1 \
+    -D WAMR_BUILD_DEBUG_INTERP=0 \
     ..
 
 echo "Compiling iwasm..."

@@ -153,12 +153,15 @@ func ReadGCStats() GCStats {
 	lock(&gcMutex)
 	lazyInit()
 
-	for block := uintptr(0); block < endBlock; block++ {
-		bstate := gcStateOf(block)
-		if bstate == blockStateFree {
-			heapIdle += uint64(bytesPerBlock)
-		} else {
-			heapInuse += uint64(bytesPerBlock)
+	for segmentIndex := 0; segmentIndex < heapSegmentCount; segmentIndex++ {
+		segment := &heapSegments[segmentIndex]
+		for block := segment.first; block < segment.last; block++ {
+			bstate := gcStateOf(block)
+			if bstate == blockStateFree {
+				heapIdle += uint64(bytesPerBlock)
+			} else {
+				heapInuse += uint64(bytesPerBlock)
+			}
 		}
 	}
 
@@ -167,7 +170,7 @@ func ReadGCStats() GCStats {
 	stats := GCStats{
 		Alloc:      (gcTotalBlocks - gcFreedBlocks) * uint64(bytesPerBlock),
 		TotalAlloc: gcTotalAlloc,
-		Sys:        uint64(heapEnd - heapStart),
+		Sys:        uint64(heapReservedSize()),
 		Mallocs:    gcMallocs,
 		Frees:      gcFrees,
 		HeapAlloc:  (gcTotalBlocks - gcFreedBlocks) * uint64(bytesPerBlock),
@@ -176,7 +179,7 @@ func ReadGCStats() GCStats {
 		HeapInuse:  heapInuse,
 		StackInuse: uint64(stackInuse),
 		StackSys:   uint64(stackSys),
-		GCSys:      uint64(heapEnd - uintptr(metadataStart)),
+		GCSys:      uint64(heapMetadataSize()),
 		NumGC:      gcNumGC,
 	}
 

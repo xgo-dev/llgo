@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/xgo-dev/llgo/cmd/internal/base"
 	"github.com/xgo-dev/llgo/cmd/internal/flags"
@@ -22,6 +23,8 @@ var Cmd = &base.Command{
 }
 
 var goBuildFlags *base.PassArgs
+
+const testRunnerExitGrace = 30 * time.Second
 
 func init() {
 	Cmd.Run = runCmd
@@ -73,6 +76,13 @@ func runCmd(cmd *base.Command, args []string) {
 
 	// Build test binary arguments from flags
 	conf.RunArgs = buildTestArgs(testBinaryArgs)
+	runnerTimeout, err := testRunnerTimeout(flags.TestTimeout)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		mockable.Exit(1)
+		return
+	}
+	conf.RunnerTimeout = runnerTimeout
 	conf.TestFailFast = flags.TestFailfast
 	conf.TestJSON = flags.TestJSON
 	conf.TestRunSequential = testRunsMustBeSequential()
@@ -126,6 +136,24 @@ func interspersedTestFlags(fs *flag.FlagSet, args []string) ([]string, error) {
 		}
 	}
 	return append(options, packages...), nil
+}
+
+// testRunnerTimeout gives the guest test watchdog time to print its panic and
+// terminate the host normally. A non-positive -timeout retains testing's
+// documented behavior and disables both watchdogs.
+func testRunnerTimeout(value string) (time.Duration, error) {
+	testTimeout, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid value %q for -timeout: %w", value, err)
+	}
+	if testTimeout <= 0 {
+		return 0, nil
+	}
+	const maxDuration = time.Duration(1<<63 - 1)
+	if testTimeout > maxDuration-testRunnerExitGrace {
+		return maxDuration, nil
+	}
+	return testTimeout + testRunnerExitGrace, nil
 }
 
 func testRunsMustBeSequential() bool {

@@ -35,6 +35,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -63,6 +64,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/pclnpost"
 	"github.com/xgo-dev/llgo/internal/quoted"
 	"github.com/xgo-dev/llgo/internal/typepatch"
+	"github.com/xgo-dev/llgo/internal/wasmworkers"
 	"github.com/xgo-dev/llgo/ssa/abi"
 	xenv "github.com/xgo-dev/llgo/xtool/env"
 	gllvm "github.com/xgo-dev/llvm"
@@ -153,6 +155,7 @@ type Config struct {
 	Port               string  // target port for flashing
 	BaudRate           int     // baudrate for serial communication
 	RunArgs            []string
+	RunnerTimeout      time.Duration // Host execution limit; zero disables it.
 	Mode               Mode
 	BuildMode          BuildMode // Build mode: exe, c-archive, c-shared
 	GenExpect          bool      // only valid for ModeCmpTest
@@ -570,6 +573,10 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if conf.Target != "" && export.GOARCH != "" {
 		conf.Goarch = export.GOARCH
 	}
+	wasmWorkers, err := configureWasmWorkers(conf, &export)
+	if err != nil {
+		return nil, err
+	}
 	wasmGC, err := configureWasmGC(conf, &export)
 	if err != nil {
 		return nil, err
@@ -657,7 +664,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	prog.EnableDeadcodeDrop(conf.deadcodeDropEnabled())
 	prog.EnableGCRoots(wasmGC)
 	prog.EnableLogicalGoroutineLocality(usesSingleWorkerWasmScheduler(conf))
-	prog.EnableCooperativeSafepoints(wasmGC)
+	prog.EnableThreadLocalGCRoots(wasmGC &&
+		(wasmWorkers.Enabled() || conf.Goos == "wasip1" && IsWasiThreadsEnabled()))
+	prog.EnableCooperativeSafepoints(wasmGC || wasmWorkers.Enabled())
 	if conf.PthreadStackSize > 0 {
 		prog.SetPthreadStackSize(uint64(conf.PthreadStackSize))
 	}
@@ -1194,6 +1203,7 @@ func executeInitialPackageLink(ctx *context, link *initialPackageLink, verbose, 
 					pkgName:   strings.TrimSuffix(link.pkg.PkgPath, ".test"),
 					runner:    runner,
 					runnerEnv: envMap,
+					profile:   string(linkCtx.crossCompile.WasmProfile),
 				}
 				if cleanupTemp {
 					program.temporaryOutputs = link.outFmts
@@ -1202,12 +1212,12 @@ func executeInitialPackageLink(ctx *context, link *initialPackageLink, verbose, 
 				return program, nil
 			}
 			if runner != "" && link.conf.Mode == ModeRun {
-				return nil, runInEmulator(linkCtx.commands, runner, envMap, link.pkg.Dir, link.pkg.PkgPath, link.conf, link.conf.Mode, verbose)
+				return nil, runInEmulator(linkCtx.commands, runner, string(linkCtx.crossCompile.WasmProfile), envMap, link.pkg.Dir, link.pkg.PkgPath, link.conf, link.conf.Mode, verbose)
 			}
 			return nil, runNative(linkCtx, link.outFmts.Out, link.pkg.Dir, link.pkg.PkgPath, link.conf, link.conf.Mode)
 		}
 		if namedTargetUsesEmulatorPath(link.conf) {
-			return nil, runInEmulator(linkCtx.commands, linkCtx.crossCompile.Emulator, envMap, link.pkg.Dir, link.pkg.PkgPath, link.conf, link.conf.Mode, verbose)
+			return nil, runInEmulator(linkCtx.commands, linkCtx.crossCompile.Emulator, string(linkCtx.crossCompile.WasmProfile), envMap, link.pkg.Dir, link.pkg.PkgPath, link.conf, link.conf.Mode, verbose)
 		}
 		if err := flash.FlashDevice(linkCtx.crossCompile.Device, envMap, linkCtx.buildConf.Port, verbose); err != nil {
 			return nil, err
@@ -1231,6 +1241,9 @@ func goCompatibleWasmRunner(conf *Config) string {
 	case "js":
 		return fmt.Sprintf("node %q --browser-only %q", filepath.Join(env.LLGoROOT(), "targets", "emscripten-runner.mjs"), "{}")
 	case "wasip1":
+		if IsWasiThreadsEnabled() {
+			return crosscompile.WASIThreadedEmulator
+		}
 		runtimeCommand := WasmRuntime()
 		switch runtimeCommand {
 		case "wasmtime":
@@ -1391,6 +1404,39 @@ func DefaultBuildTags() string {
 	return "llgo,math_big_pure_go,purego"
 }
 
+func configureWasmWorkers(conf *Config, export *crosscompile.Export) (wasmworkers.Config, error) {
+	config, err := wasmworkers.Parse(os.Getenv(llgoWasmWorkers))
+	if err != nil {
+		return config, err
+	}
+	if err := config.ValidateTarget(conf.Goos, conf.Goarch, export.WasmProfile, export.WasmProvider); err != nil {
+		return config, err
+	}
+	if !config.Enabled() {
+		return config, nil
+	}
+	preJS := wasmworkers.PreJSPath(env.LLGoROOT())
+	if _, err := os.Stat(preJS); err != nil {
+		return config, fmt.Errorf("locate WebAssembly worker host shim: %w", err)
+	}
+	workers := strconv.Itoa(config.Count)
+	export.BuildTags = append(export.BuildTags, "llgo.wasm.workers")
+	export.CCFLAGS = append(export.CCFLAGS, "-pthread", "-DLLGO_WASM_WORKERS="+workers)
+	export.LDFLAGS = append(export.LDFLAGS,
+		"--pre-js", preJS,
+		"-pthread",
+		"-sPTHREAD_POOL_SIZE="+workers,
+		"-sPROXY_TO_PTHREAD=1",
+		"-sEXIT_RUNTIME=1",
+		// EXPORT_ALL eagerly reads memory views while a pthread worker is still
+		// waiting for Emscripten to deliver its shared WebAssembly.Memory. The
+		// profile already lists the public runtime methods it needs explicitly.
+		"-sEXPORT_ALL=0",
+	)
+	export.WasmRuntime.RunMainTask = true
+	return config, nil
+}
+
 func configureWasmGC(conf *Config, export *crosscompile.Export) (bool, error) {
 	explicit := slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.gc.linear")
 	if conf.Goarch != "wasm" {
@@ -1406,13 +1452,12 @@ func configureWasmGC(conf *Config, export *crosscompile.Export) (bool, error) {
 		defaultEnabled = true
 	case crosscompile.WasmProfileW32:
 		if IsWasiThreadsEnabled() {
-			if explicit {
-				return false, errors.New("llgo.wasm.gc.linear requires single-worker WASI (set LLGO_WASI_THREADS=0)")
+			if slices.Contains(splitSourcePatchBuildTags(conf.Tags), "nogc") {
+				if explicit {
+					return false, errors.New("WASI threads cannot combine nogc with llgo.wasm.gc.linear")
+				}
+				return false, nil
 			}
-			if !slices.Contains(splitSourcePatchBuildTags(conf.Tags), "nogc") {
-				return false, errors.New("WASI threads currently require -tags nogc until a threaded collector is available")
-			}
-			return false, nil
 		}
 		defaultEnabled = true
 	case crosscompile.WasmProfileNone:
@@ -3918,6 +3963,7 @@ const llgoTrace = "LLGO_TRACE"
 const llgoOptimize = "LLGO_OPTIMIZE"
 const llgoWasmRuntime = "LLGO_WASM_RUNTIME"
 const llgoWasiThreads = "LLGO_WASI_THREADS"
+const llgoWasmWorkers = "LLGO_WASM_WORKERS"
 const llgoStdioNobuf = "LLGO_STDIO_NOBUF"
 const llgoFullRpath = "LLGO_FULL_RPATH"
 const llgoBuildCache = "LLGO_BUILD_CACHE"

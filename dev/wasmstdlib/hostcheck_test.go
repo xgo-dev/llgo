@@ -13,6 +13,7 @@ import (
 )
 
 func TestFullChildCommandProfiles(t *testing.T) {
+	t.Setenv("LLGO_WASI_THREADS", "0")
 	for _, name := range []string{"J32-GoJS", "J32-Emscripten", "J64-Emscripten", "W32-WASI", "GoJS-reference", "GoWASI-reference"} {
 		p, err := fullProfile(name)
 		if err != nil {
@@ -42,6 +43,20 @@ func TestFullChildCommandProfiles(t *testing.T) {
 			if !slices.Contains(cmd.Args, "node") || !strings.Contains(joined, "emscripten") {
 				t.Fatalf("%s missing JS runner: %+v", name, cmd)
 			}
+		}
+	}
+}
+
+func TestFullChildCommandWASIThreads(t *testing.T) {
+	t.Setenv("LLGO_WASI_THREADS", "1")
+	p, err := fullProfile("W32-WASI")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := fullPanicCommand(p, "/repo", "/goroot", "/compiled-test")
+	for _, want := range []string{"iwasm", "--max-threads=128", "--heap-size=0", "--dir=/tmp", "/compiled-test"} {
+		if !slices.Contains(cmd.Args, want) {
+			t.Fatalf("threaded W32 child command missing %q: %+v", want, cmd)
 		}
 	}
 }

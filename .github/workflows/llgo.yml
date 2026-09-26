@@ -507,7 +507,7 @@ jobs:
 
           iwasm --stack-size=819200000 --heap-size=800000000 hello.wasm
 
-      - name: Test WASI pthread backend (WAMR)
+      - name: Test WASI pthread backend and threaded GC (WAMR)
         shell: bash
         run: python3 dev/test_wasm_wasi_threads.py
 
@@ -554,7 +554,7 @@ jobs:
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: prepare
     name: wasm-runtime (${{ matrix.suite }})
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -622,6 +622,11 @@ jobs:
           LLGO_BUILD_CACHE: "1"
         run: dev/test_wasm_runtime_go_versions.sh 1.24 1.27
 
+      - name: Test wasm coverage reporting
+        if: matrix.suite == 'runtime'
+        shell: bash
+        run: dev/wasm_ci_report_test.sh
+
       - name: Test single-worker wasm schedulers
         shell: bash
         env:
@@ -629,6 +634,15 @@ jobs:
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
           LLGO_BUILD_CACHE: "1"
         run: dev/test_wasm_single_worker.sh "${{ matrix.suite }}"
+
+      - name: Test bounded browser workers
+        if: matrix.suite == 'runtime'
+        shell: bash
+        env:
+          CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
+          LLGO: ${{ runner.temp }}/llgo-bin/llgo
+          LLGO_BUILD_CACHE: "1"
+        run: dev/test_wasm_workers.sh
 
       - name: Compare JavaScript call semantics with Go
         if: matrix.suite == 'test-command'
@@ -638,3 +652,14 @@ jobs:
             -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" \
             -run '^TestJS(Call|Host)' -count=1 -timeout=30s \
             ./internal/build/testdata/wasm-test
+
+      - name: Test wasm standard-library packages
+        if: matrix.suite == 'runtime'
+        timeout-minutes: 20
+        shell: bash
+        env:
+          LLGO: ${{ runner.temp }}/llgo-bin/llgo
+          LLGO_BUILD_CACHE: "off"
+        run: |
+          bash dev/test_wasm_stdlib_test.sh
+          bash dev/test_wasm_stdlib.sh

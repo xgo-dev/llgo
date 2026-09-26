@@ -22,11 +22,11 @@ assert_wasm_module() {
 
 run_node() {
 	local runner="$1"
-	local module="$2"
+	shift
 	if command -v timeout >/dev/null 2>&1; then
-		timeout 60s "${node_cmd}" "${repo_root}/targets/${runner}" "${module}"
+		timeout 60s "${node_cmd}" "${repo_root}/targets/${runner}" "$@"
 	else
-		"${node_cmd}" "${repo_root}/targets/${runner}" "${module}"
+		"${node_cmd}" "${repo_root}/targets/${runner}" "$@"
 	fi
 }
 
@@ -81,7 +81,7 @@ run_node emscripten-runner.mjs "${work_dir}/grouped/cprintf.mjs"
 raw_js="${work_dir}/raw-js.mjs"
 GOOS=js GOARCH=wasm "${llgo_cmd}" build -o "${raw_js}" "${fixture}"
 assert_wasm_module "${work_dir}/raw-js.wasm"
-run_node emscripten-runner.mjs "${raw_js}"
+run_node emscripten-runner.mjs --browser-only "${raw_js}"
 
 build_wasi wasi wasi
 

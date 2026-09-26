@@ -13,7 +13,7 @@ import (
 )
 
 func TestEncryptOAEPWithOptions(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 1024)
+	key, err := fixtureKey(1)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -21,6 +21,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"time"
 
 	"github.com/xgo-dev/llgo/cmd/internal/base"
 	"github.com/xgo-dev/llgo/cmd/internal/flags"
@@ -47,6 +49,7 @@ var CmpTestCmd = &base.Command{
 var (
 	runGoBuildFlags     *base.PassArgs
 	cmpTestGoBuildFlags *base.PassArgs
+	runTimeout          time.Duration
 )
 
 func init() {
@@ -57,6 +60,7 @@ func init() {
 	flags.AddBuildFlags(&Cmd.Flag)
 	flags.AddEmulatorFlags(&Cmd.Flag)
 	flags.AddEmbeddedFlags(&Cmd.Flag) // for -target support
+	Cmd.Flag.DurationVar(&runTimeout, "timeout", 0, "Timeout for the executed program (0 disables)")
 
 	cmpTestGoBuildFlags = flags.CaptureGoBuildFlags(CmpTestCmd)
 	flags.AddCommonFlags(&CmpTestCmd.Flag)
@@ -94,8 +98,19 @@ func runCmdEx(cmd *base.Command, args []string, mode build.Mode, goBuildFlags *b
 	args, runArgs, err := parseRunArgs(args)
 	check(err)
 	conf.RunArgs = runArgs
+	if mode == build.ModeRun {
+		conf.RunnerTimeout = runTimeout
+	}
 	_, err = build.Do(args, conf)
 	if err != nil {
+		// Preserve a directly executed native program's exit status after
+		// Build cleanup. A Wasm runner error keeps LLGo's classified status 1.
+		if mode == build.ModeRun && conf.Target == "" && conf.Goarch != "wasm" {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) && exitErr.ExitCode() > 0 {
+				mockable.Exit(exitErr.ExitCode())
+			}
+		}
 		fmt.Fprintln(os.Stderr, err)
 		mockable.Exit(1)
 	}

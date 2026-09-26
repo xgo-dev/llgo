@@ -1,5 +1,8 @@
-//go:build llgo
-// +build llgo
+//go:build llgo && !wasm
+// +build llgo,!wasm
+
+// These tests exercise import "C", whose Go frontend has no wasm target ABI.
+// WebAssembly C calls and callbacks are covered by the wasm target fixtures.
 
 package cgo
 

@@ -838,19 +838,23 @@ func TestConfigureWasmGC(t *testing.T) {
 	}
 }
 
-func TestConfigureWasmGCRejectsWASIThreads(t *testing.T) {
+func TestConfigureWasmGCWASIThreads(t *testing.T) {
 	t.Setenv("LLGO_WASI_THREADS", "1")
 	conf := Config{Goos: "wasip1", Goarch: "wasm", Tags: "llgo.wasm.gc.linear"}
-	if _, err := configureWasmGC(&conf, &crosscompile.Export{WasmProfile: crosscompile.WasmProfileW32}); err == nil {
-		t.Fatal("expected llgo.wasm.gc.linear with WASI threads to fail")
+	if enabled, err := configureWasmGC(&conf, &crosscompile.Export{WasmProfile: crosscompile.WasmProfileW32}); err != nil || !enabled {
+		t.Fatalf("explicit WASI threaded GC = %v, %v; want true, nil", enabled, err)
 	}
 	conf.Tags = ""
-	if _, err := configureWasmGC(&conf, &crosscompile.Export{WasmProfile: crosscompile.WasmProfileW32}); err == nil || !strings.Contains(err.Error(), "-tags nogc") {
-		t.Fatalf("WASI threads without a collector returned %v, want an actionable error", err)
+	if enabled, err := configureWasmGC(&conf, &crosscompile.Export{WasmProfile: crosscompile.WasmProfileW32}); err != nil || !enabled || !slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.gc.linear") {
+		t.Fatalf("default WASI threaded GC = %v, %v, tags %q; want enabled", enabled, err, conf.Tags)
 	}
 	conf.Tags = "nogc"
 	if enabled, err := configureWasmGC(&conf, &crosscompile.Export{WasmProfile: crosscompile.WasmProfileW32}); err != nil || enabled {
-		t.Fatalf("experimental WASI threads with nogc = %v, %v; want false, nil", enabled, err)
+		t.Fatalf("WASI threads with nogc = %v, %v; want false, nil", enabled, err)
+	}
+	conf.Tags = "nogc,llgo.wasm.gc.linear"
+	if _, err := configureWasmGC(&conf, &crosscompile.Export{WasmProfile: crosscompile.WasmProfileW32}); err == nil {
+		t.Fatal("WASI threads accepted conflicting collector tags")
 	}
 }
 
@@ -886,6 +890,80 @@ func TestUsesSingleWorkerWasmScheduler(t *testing.T) {
 	}
 	if usesSingleWorkerWasmScheduler(nil) {
 		t.Fatal("nil configuration selected the single-worker scheduler")
+	}
+}
+
+func TestConfigureWasmWorkers(t *testing.T) {
+	t.Setenv(llgoWasmWorkers, "2")
+	conf := Config{Goos: "js", Goarch: "wasm"}
+	export := crosscompile.Export{WasmProfile: crosscompile.WasmProfileJ32, WasmProvider: crosscompile.WasmProviderEmscripten}
+	config, err := configureWasmWorkers(&conf, &export)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Count != 2 || !config.Enabled() {
+		t.Fatalf("worker config = %+v", config)
+	}
+	if !slices.Contains(export.BuildTags, "llgo.wasm.workers") {
+		t.Fatalf("worker build tag missing from %q", export.BuildTags)
+	}
+	for _, want := range []string{"-pthread", "-DLLGO_WASM_WORKERS=2"} {
+		if !slices.Contains(export.CCFLAGS, want) {
+			t.Fatalf("CCFLAGS %q missing %q", export.CCFLAGS, want)
+		}
+	}
+	for _, want := range []string{
+		"-pthread",
+		"-sPTHREAD_POOL_SIZE=2",
+		"-sPROXY_TO_PTHREAD=1",
+		"-sEXIT_RUNTIME=1",
+		"-sEXPORT_ALL=0",
+	} {
+		if !slices.Contains(export.LDFLAGS, want) {
+			t.Fatalf("LDFLAGS %q missing %q", export.LDFLAGS, want)
+		}
+	}
+	if !export.WasmRuntime.RunMainTask {
+		t.Fatal("worker runtime did not select the host-owned main entry")
+	}
+	if enabled, err := configureWasmGC(&conf, &export); err != nil {
+		t.Fatalf("default worker GC selection failed: %v", err)
+	} else if !enabled {
+		t.Fatal("worker runtime did not enable the wasm collector")
+	}
+	if !slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.gc.linear") {
+		t.Fatalf("worker GC tag missing from %q", conf.Tags)
+	}
+}
+
+func TestConfigureWasmWorkersRejectsUnsupportedTargets(t *testing.T) {
+	t.Setenv(llgoWasmWorkers, "2")
+	for _, test := range []struct {
+		name   string
+		conf   Config
+		export crosscompile.Export
+	}{
+		{name: "raw js wasm", conf: Config{Goos: "js", Goarch: "wasm"}},
+		{name: "WASI", conf: Config{Goos: "wasip1", Goarch: "wasm"}, export: crosscompile.Export{WasmProfile: crosscompile.WasmProfileW32, WasmProvider: crosscompile.WasmProviderWASI}},
+		{name: "native", conf: Config{Goos: "linux", Goarch: "amd64"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := configureWasmWorkers(&test.conf, &test.export); err == nil {
+				t.Fatal("worker configuration unexpectedly succeeded")
+			}
+		})
+	}
+}
+
+func TestConfigureWasmWorkersDisabledOutsideWasm(t *testing.T) {
+	t.Setenv(llgoWasmWorkers, "1")
+	conf := Config{Goos: "linux", Goarch: "amd64"}
+	config, err := configureWasmWorkers(&conf, &crosscompile.Export{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Enabled() {
+		t.Fatalf("worker config = %+v, want disabled", config)
 	}
 }
 

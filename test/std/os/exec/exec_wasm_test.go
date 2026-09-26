@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -66,7 +67,14 @@ func TestWasmProcessCreationUnsupported(t *testing.T) {
 			case "CombinedOutput":
 				_, err = cmd.CombinedOutput()
 			}
-			if !errors.Is(err, syscall.ENOSYS) {
+			var pathErr *os.PathError
+			wasiDevNullUnavailable := runtime.GOOS == "wasip1" &&
+				(method == "Output" || method == "CombinedOutput") &&
+				errors.As(err, &pathErr) && pathErr.Op == "open" &&
+				pathErr.Path == os.DevNull && errors.Is(pathErr.Err, syscall.EBADF)
+			// WAMR cannot open /dev/null here. Official Go and LLGo both
+			// encounter that host error before reaching StartProcess.
+			if !errors.Is(err, syscall.ENOSYS) && !wasiDevNullUnavailable {
 				t.Fatalf("%s = %v, want ENOSYS", method, err)
 			}
 			if cmd.Process != nil || cmd.ProcessState != nil {

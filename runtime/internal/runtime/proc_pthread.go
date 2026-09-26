@@ -25,6 +25,8 @@ import "unsafe"
 type runtimeContextPlatform struct {
 	m m
 	p p
+	// systemG is excluded from the WASI user-goroutine deadlock count.
+	systemG bool
 
 	// foreignThreadAttached records that LLGo, rather than the selected GC
 	// backend's thread-creation API, attached this host thread. Keep ownership
@@ -81,6 +83,7 @@ func mstart(arg unsafe.Pointer) unsafe.Pointer {
 	}
 	gp := mp.curg
 	pp := mp.p
+	registerWasiGCThread()
 
 	setg(gp)
 	casgstatus(gp, _Grunnable, _Grunning)
@@ -105,7 +108,7 @@ func mexit(mp *m) {
 	// for its whole initial call. Both return and Goexit converge here.
 	releaseStartArg(gp)
 	ownedByLifecycle := currentGUsesLifecycle()
-	if !ownedByLifecycle {
+	if !ownedByLifecycle && !ctx.platform.systemG {
 		releaseGAndCheckDeadlock()
 	}
 
@@ -120,6 +123,9 @@ func mexit(mp *m) {
 	setg(nil)
 	if !ownedByLifecycle {
 		freeRuntimeContext(ctx)
+	}
+	if !ownedByLifecycle {
+		unregisterWasiGCThread()
 	}
 }
 
