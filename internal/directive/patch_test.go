@@ -43,10 +43,10 @@ func TestIndexAssociatesConstructedSyntax(t *testing.T) {
 	}
 	fn.Doc = nil
 	index.Freeze()
-	if props, ok := index.LookupFunction(fn); !ok || !props.NoInline {
-		t.Fatalf("prepared function = %+v, %v", props, ok)
+	if props := index.FunctionDeclaration(fn); props == nil || !props.NoInline {
+		t.Fatalf("prepared function = %+v", props)
 	}
-	if _, ok := index.LookupFunction(&ast.FuncDecl{}); ok {
+	if decl := index.FunctionDeclaration(&ast.FuncDecl{}); decl != nil {
 		t.Fatal("unprepared function appeared in snapshot")
 	}
 	if !reflect.DeepEqual(index.Function(nil), Function{}) || index.Group(nil).Has("go:noinline") {
