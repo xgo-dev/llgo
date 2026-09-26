@@ -26,9 +26,11 @@ never LLVM values. Consumers must not modify published records.
 5. Caller analysis prepares its function records before backend workers start.
    The driver freezes the Index; attempting to discover an unprepared file,
    comment group, function or imported source after that boundary panics.
-6. Lowering queries prepared `directive.Function` records directly through
-   `cl.functionDirectives`, without another wrapper or cache. Generic instances
-   consult their origin. Synthetic wrappers retain explicit propagation rules (for example,
+6. Lowering associates each SSA function with a prepared `FunctionDecl` through
+   `cl.sourceFunction`. This two-field view retains the concrete SSA function and
+   a declaration pointer; generic instances use their origin's declaration.
+   Function naming selects a patch declaration only when needed and passes it to
+   callable attribute lowering. Body analyses keep using the source declaration. Synthetic wrappers retain explicit propagation rules (for example,
    uintptr escapes) instead of inheriting every property. LLVM attributes are
    applied after function creation using existing constructors.
 
