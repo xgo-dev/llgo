@@ -104,6 +104,9 @@ type envSection struct {
 	Goamd64          string           `yaml:"GOAMD64,omitempty"`
 	Goarm            string           `yaml:"GOARM,omitempty"`
 	Goarm64          string           `yaml:"GOARM64,omitempty"`
+	Goexperiment     string           `yaml:"GOEXPERIMENT,omitempty"`
+	SourceGoVersion  string           `yaml:"SOURCE_GO_VERSION,omitempty"`
+	ToolTags         []string         `yaml:"TOOL_TAGS,omitempty"`
 	GoVersion        string           `yaml:"GO_VERSION,omitempty"`
 	LlgoVersion      string           `yaml:"LLGO_VERSION,omitempty"`
 	LlgoCompilerHash string           `yaml:"LLGO_COMPILER_HASH,omitempty"`
@@ -113,7 +116,7 @@ type envSection struct {
 }
 
 func (s *envSection) empty() bool {
-	return s.Goos == "" && s.Goarch == "" && s.Go386 == "" && s.Goamd64 == "" && s.Goarm == "" && s.Goarm64 == "" && s.LlvmTriple == "" && s.LlgoVersion == "" && s.LlgoCompilerHash == "" && s.GoVersion == "" && s.LlvmVersion == "" && len(s.Vars) == 0
+	return s.Goos == "" && s.Goarch == "" && s.Go386 == "" && s.Goamd64 == "" && s.Goarm == "" && s.Goarm64 == "" && s.Goexperiment == "" && s.SourceGoVersion == "" && len(s.ToolTags) == 0 && s.LlvmTriple == "" && s.LlgoVersion == "" && s.LlgoCompilerHash == "" && s.GoVersion == "" && s.LlvmVersion == "" && len(s.Vars) == 0
 }
 
 type commonSection struct {

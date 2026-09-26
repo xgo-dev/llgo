@@ -37,6 +37,10 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if mode := os.Getenv("LLGO_TEST_GO_CONFIG_HELPER"); mode != "" {
+		runGoConfigHelper(mode)
+		os.Exit(0)
+	}
 	if os.Getenv("LLGO_TEST_NODE_HELPER") == "1" && strings.TrimSuffix(strings.ToLower(filepath.Base(os.Args[0])), ".exe") == "node" {
 		os.Exit(0)
 	}
