@@ -89,20 +89,24 @@ func TestWasmPostLinkArgs(t *testing.T) {
 
 func TestWasmPreAsyncifyArgs(t *testing.T) {
 	target := &crosscompile.Export{WasmPostLink: crosscompile.WasmPostLink{Asyncify: true}}
-	if got, want := wasmPreAsyncifyArgs(target, "in.wasm", "out.wasm", optlevel.Oz),
+	if got, want := wasmPreAsyncifyArgs(target, "in.wasm", "out.wasm", false, optlevel.Oz),
 		[]string{"-Oz", "in.wasm", "-o", "out.wasm"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("wasmPreAsyncifyArgs() = %v, want %v", got, want)
 	}
-	if got := wasmPreAsyncifyArgs(target, "in", "out", optlevel.O0); got != nil {
+	if got, want := wasmPreAsyncifyArgs(target, "in.wasm", "out.wasm", true, optlevel.O2),
+		[]string{"-O2", "-g", "in.wasm", "-o", "out.wasm"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("wasmPreAsyncifyArgs(debug) = %v, want %v", got, want)
+	}
+	if got := wasmPreAsyncifyArgs(target, "in", "out", false, optlevel.O0); got != nil {
 		t.Fatalf("wasmPreAsyncifyArgs(O0) = %v, want nil", got)
 	}
-	if got := wasmPreAsyncifyArgs(target, "in", "out", optlevel.Unset); got != nil {
+	if got := wasmPreAsyncifyArgs(target, "in", "out", false, optlevel.Unset); got != nil {
 		t.Fatalf("wasmPreAsyncifyArgs(unset) = %v, want nil", got)
 	}
-	if got := wasmPreAsyncifyArgs(nil, "in", "out", optlevel.O2); got != nil {
+	if got := wasmPreAsyncifyArgs(nil, "in", "out", false, optlevel.O2); got != nil {
 		t.Fatalf("wasmPreAsyncifyArgs(nil) = %v, want nil", got)
 	}
-	if got := wasmPreAsyncifyArgs(&crosscompile.Export{}, "in", "out", optlevel.O2); got != nil {
+	if got := wasmPreAsyncifyArgs(&crosscompile.Export{}, "in", "out", false, optlevel.O2); got != nil {
 		t.Fatalf("wasmPreAsyncifyArgs(disabled) = %v, want nil", got)
 	}
 }

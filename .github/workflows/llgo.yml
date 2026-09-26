@@ -614,6 +614,14 @@ jobs:
           LLGO_BUILD_CACHE: "1"
         run: dev/test_wasm_target_profiles.sh
 
+      - name: Verify final WebAssembly DWARF
+        if: matrix.suite == 'runtime'
+        shell: bash
+        env:
+          LLGO: ${{ runner.temp }}/llgo-bin/llgo
+          LLGO_BUILD_CACHE: "1"
+        run: python3 dev/test_wasm_debug_info.py --profile j32 --profile j64 --profile w32
+
       - name: Build standard runtime for wasm
         if: matrix.suite == 'runtime'
         shell: bash

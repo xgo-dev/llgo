@@ -56,14 +56,18 @@ func wasmPostLinkArgs(target *crosscompile.Export, input, output string, debug b
 	return append(args, input, "-o", output)
 }
 
-func wasmPreAsyncifyArgs(target *crosscompile.Export, input, output string, level optlevel.Level) []string {
+func wasmPreAsyncifyArgs(target *crosscompile.Export, input, output string, debug bool, level optlevel.Level) []string {
 	if target == nil || !target.WasmPostLink.Asyncify || !level.IsValid() || level == optlevel.O0 {
 		return nil
 	}
 	// Clang normally runs this optimization after wasm-ld. Keep it explicit so
 	// LLGo can disable clang's implicit wasm-opt pass without changing the
 	// established optimization order or binary size.
-	return []string{level.Flag(), input, "-o", output}
+	args := []string{level.Flag()}
+	if debug {
+		args = append(args, "-g")
+	}
+	return append(args, input, "-o", output)
 }
 
 func prepareWasmLinkOutput(conf *Config, target *crosscompile.Export, output string) (string, error) {
@@ -112,6 +116,7 @@ func postLinkWasm(ctx *context, input, output string, verbose bool) error {
 		&ctx.crossCompile,
 		input,
 		input,
+		shouldEmitDebugInfo(ctx.buildConf, &ctx.crossCompile),
 		ctx.buildConf.OptLevel,
 	)
 	if preAsyncifyArgs != nil {
