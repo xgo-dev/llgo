@@ -283,6 +283,7 @@ type panicPCStore struct {
 	recFP2    uintptr
 	recovered recoveredPanic
 	pcs       [64]uintptr
+	longPCs   []uintptr
 }
 
 func panicPCStoreForG() *panicPCStore {
@@ -305,9 +306,22 @@ func storePanicPCs(pcs []uintptr, armed int32) {
 	p := panicPCStoreForG()
 	n := len(pcs)
 	if n > len(p.pcs) {
-		n = len(p.pcs)
+		if armed != 0 {
+			// The native thread owns this reserved C buffer until recovery
+			// finishes. Borrow it without allocating in exception context.
+			p.longPCs = pcs
+		} else {
+			// A new Go panic must not reuse the borrowed fault buffer: its
+			// pages may be discarded once the prior recovery completes.
+			p.longPCs = append([]uintptr(nil), pcs...)
+		}
+	} else {
+		p.longPCs = nil
+		copy(p.pcs[:n], pcs[:n])
 	}
-	copy(p.pcs[:n], pcs)
+	if armed == 0 && p.fault != 0 {
+		releaseFaultSnapshot()
+	}
 	p.n = int32(n)
 	p.armed = armed
 	p.fault = armed
@@ -327,6 +341,9 @@ func PanicPCs() []uintptr {
 	p := panicPCStoreForG()
 	if p.n == 0 {
 		return nil
+	}
+	if len(p.longPCs) != 0 {
+		return p.longPCs
 	}
 	return p.pcs[:p.n]
 }
@@ -390,6 +407,9 @@ func bindCallerLocationPC(pc uintptr, frame CallerFrame) {
 }
 
 func FrameForPC(pc uintptr) (CallerFrame, bool) {
+	if !callerLocationAvailable() {
+		return CallerFrame{}, false
+	}
 	if pc&callerPCMask != 0 {
 		if frame, ok := syntheticFrameForPC(pc); ok {
 			return frame, true

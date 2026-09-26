@@ -42,6 +42,8 @@ enum {
     llgo_exception_continue_search = 0,
 };
 
+extern int llgo_traceback_windows_fault_recover(void);
+
 static llgo_fault_callback llgo_fault_go;
 static _Thread_local int llgo_in_fault;
 static _Thread_local uintptr_t llgo_fault_pcs[64];
@@ -75,6 +77,8 @@ llgo_fault_handler(llgo_exception_pointers *exception)
         return llgo_exception_continue_search;
     }
 
+    if (llgo_traceback_windows_fault_recover())
+        return -1; /* EXCEPTION_CONTINUE_EXECUTION */
     llgo_in_fault = 1;
     /* Recoverable faults in Go text leave through LLGo's non-local panic
      * path. The callback returns normally for a foreign thread, non-Go text,

@@ -26,7 +26,7 @@ func Rethrow(link *Defer) {
 		gp.movePanicToDefer(node, link)
 		if link == nil {
 			TracePanic(node.arg)
-			if PanicTraceback == nil || !PanicTraceback(2) {
+			if TracebackEnabled() && (PanicTraceback == nil || !PanicTraceback(2)) {
 				debug.PrintStack(2)
 			}
 			c.Free(unsafe.Pointer(node))

@@ -417,6 +417,12 @@ func (p Package) newFunc(
 	if envType != nil {
 		p.Prog.markClosureEnvFunction(fn, 0)
 	}
+	if target := p.Prog.Target(); target.GOOS == "windows" && (target.GOARCH == "amd64" || target.GOARCH == "arm64") {
+		// Hardware faults and other-thread snapshots can interrupt any
+		// instruction, even in a function LLVM proves nounwind. Win64 frame
+		// registers are not linked records; RtlVirtualUnwind needs .pdata.
+		fn.AddFunctionAttr(p.Prog.ctx.CreateEnumAttribute(llvm.AttributeKindID("uwtable"), 2))
+	}
 	if bg == InGo {
 		fn.AddFunctionAttr(p.nullPointerIsValidAttr)
 		// Keep frame pointers so the runtime can walk real stacks (FP chain)

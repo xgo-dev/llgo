@@ -7,6 +7,8 @@ import (
 
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	rtdebug "github.com/xgo-dev/llgo/runtime/internal/runtime"
+	"github.com/xgo-dev/llgo/runtime/internal/stacktrace"
+	"github.com/xgo-dev/llgo/runtime/internal/traceback"
 )
 
 // Hardware-fault stacks: a SA_SIGINFO handler captures the interrupted
@@ -19,9 +21,6 @@ import (
 
 //go:linkname c_installFaultHandler C.llgo_install_fault_handler
 func c_installFaultHandler(cb func(uintptr, uintptr, int32))
-
-//go:linkname c_dynunwindPCBuf C.llgo_dynunwind_pcbuf
-func c_dynunwindPCBuf() unsafe.Pointer
 
 //go:linkname c_dynunwindPCCount C.llgo_dynunwind_pccount
 func c_dynunwindPCCount() int32
@@ -91,13 +90,19 @@ func fpCallers(skip int, pc []uintptr) int {
 		return 0
 	}
 	initRuntimeFuncPCFrames()
+	var low, high uintptr
+	stacktrace.Bounds(&low, &high)
 	fp := uintptr(c_framepointer())
-	n := 0
-	const maxFrames = 4096
+	n, lastGo := 0, 0
+	const maxFrames = maxPanicSpliceFrames
 	for i := 0; fp != 0 && n < len(pc) && i < maxFrames; i++ {
+		if high != 0 && (fp < low || fp > high-2*unsafe.Sizeof(uintptr(0))) {
+			break
+		}
 		prev := *(*uintptr)(unsafe.Pointer(fp))
 		ret := *(*uintptr)(unsafe.Pointer(fp + unsafe.Sizeof(uintptr(0))))
-		if ret < minLegalPC || !prebuiltTextContains(ret) {
+		inGo := prebuiltTextContains(ret - 1)
+		if ret < minLegalPC || high == 0 && !inGo {
 			break
 		}
 		if skip > 0 {
@@ -105,95 +110,66 @@ func fpCallers(skip int, pc []uintptr) int {
 		} else {
 			pc[n] = ret
 			n++
+			if inGo {
+				lastGo = n
+			}
 		}
 		if prev <= fp || prev-fp > maxFPStride || prev&(unsafe.Sizeof(uintptr(0))-1) != 0 {
 			break
 		}
 		fp = prev
 	}
-	return n
+	// Preserve C library frames between Go activations, while dropping the
+	// native thread/process startup tail after the outermost Go frame.
+	if n == len(pc) {
+		return n
+	}
+	return lastGo
 }
 
 func init() {
 	c_installFaultHandler(onFault)
 }
 
-// Fault snapshot: written once in the fault handler, consumed by the
-// panic traceback (the process either recovers — dropping the snapshot's
-// relevance — or dies printing it; a concurrent fault on another thread
-// is a lost race on a doomed process).
-var (
-	faultPCs [64]uintptr
-	faultN   int32
-	// faultActive distinguishes a hardware-fault panic from an ordinary
-	// panic even when external PCLN data was unavailable in signal context
-	// and no symbolizable snapshot could be captured.
-	faultActive int32
-	// index into the dynunwind name table per pc, -1 when the pc came
-	// from the FP-chain resume.
-	faultNameIdx [64]int32
-)
-
+// Each native thread reserves its fault buffer before entering Go user code.
+// Capture performs no Go allocation, including for a deep interrupted stack.
 func onFault(pc, fp uintptr, sig int32) {
-	faultActive = 1
-	faultN = 0
-	if fpUnwindAvailable() {
-		n := 0
+	var pcs []uintptr
+	if buf := stacktrace.FaultBuffer(); buf != nil {
+		pcs = unsafe.Slice(buf, stacktrace.MaxFrames)
+	}
+	n := 0
+	if len(pcs) != 0 {
 		if dn := int(c_dynunwindPCCount()); dn > 0 {
-			buf := (*[64]uintptr)(c_dynunwindPCBuf())
-			if dn > len(faultPCs) {
-				dn = len(faultPCs)
+			if dn > len(pcs) {
+				dn = len(pcs)
 			}
-			for i := 0; i < dn; i++ {
-				faultPCs[i] = buf[i]
-				faultNameIdx[i] = int32(i)
-			}
-			// Frame 0 is the fault pc itself; +1 keeps the pc-1
-			// return-address convention landing on the faulting
-			// instruction (gc's sigpanic does the same).
-			faultPCs[0]++
+			// dynunwind writes directly into this thread's reserved buffer.
+			pcs[0]++
 			n = dn
-			// libunwind stops where unwind info runs out; resume with the
-			// FP chain from its final cursor position.
-			if efp := c_dynunwindEndFP(); efp != 0 && n < len(faultPCs) {
-				m := fpWalkFrom(efp, faultPCs[n:])
-				if m > 0 && faultPCs[n] == faultPCs[n-1] {
-					copy(faultPCs[n:], faultPCs[n+1:n+m])
+			if efp := c_dynunwindEndFP(); efp != 0 && n < len(pcs) {
+				m := fpWalkFrom(efp, pcs[n:])
+				if m > 0 && pcs[n] == pcs[n-1] {
+					copy(pcs[n:], pcs[n+1:n+m])
 					m--
-				}
-				for i := 0; i < m; i++ {
-					faultNameIdx[n+i] = -1
 				}
 				n += m
 			}
 		} else {
 			if pc != 0 {
-				faultPCs[0] = pc + 1
-				faultNameIdx[0] = -1
+				pcs[0] = pc + 1
 				n = 1
 			}
-			m := fpWalkFrom(fp, faultPCs[n:])
-			for i := 0; i < m; i++ {
-				faultNameIdx[n+i] = -1
-			}
-			n += m
+			n += fpWalkFrom(fp, pcs[n:])
 		}
-		faultN = int32(n)
-		rtdebug.StoreFaultPCs(faultPCs[:n])
 	}
-	// Capture done: re-arm the recursion guard before this fault turns
-	// into an ordinary (recoverable) panic.
+	rtdebug.StoreFaultPCs(pcs[:n])
 	c_faultCaptureDone()
 	rtdebug.PanicSignal(int(sig))
 }
 
-func clearFaultTraceback() {
-	faultActive = 0
-	faultN = 0
-}
-
 func faultTracebackActive() bool {
-	return faultActive != 0
+	return rtdebug.PanicPCsAreFault() && rtdebug.PanicActive()
 }
 
 // fpWalkFrom walks the frame-pointer chain from an arbitrary frame pointer
@@ -202,7 +178,7 @@ func faultTracebackActive() bool {
 // program-text bound is applied at print time.
 func fpWalkFrom(fp uintptr, pc []uintptr) int {
 	n := 0
-	const maxFrames = 4096
+	const maxFrames = maxTracebackFrames
 	wordSize := unsafe.Sizeof(uintptr(0))
 	for i := 0; fp != 0 && n < len(pc) && i < maxFrames; i++ {
 		if fp&(wordSize-1) != 0 || !memReadable(fp) || !memReadable(fp+wordSize) {
@@ -232,54 +208,71 @@ func stringContainsDot(s string) bool {
 	return false
 }
 
+// faultPCSymbol preserves leading C symbols, including static names supplied
+// by libunwind that Go's nearest-function table cannot identify.
+func faultPCSymbol(pc uintptr, index int) pcSymbol {
+	sym := frameSymbol(pc - 1)
+	if dyn := c.GoString(c_dynunwindName(int32(index))); dyn != "" &&
+		(sym.function == "" || !stringContainsDot(dyn)) {
+		sym.function, sym.file, sym.line, sym.entry = dyn, "", 0, 0
+	}
+	return sym
+}
+
 // faultTraceback prints the gc-style traceback for an unrecovered panic
 // that originated in a hardware fault; other panics fall back to the
 // clite dump (reports false).
 func faultTraceback(skip int) bool {
-	if faultN == 0 || !fpUnwindAvailable() {
+	pcs := rtdebug.PanicPCs()
+	if !rtdebug.PanicPCsAreFault() || len(pcs) == 0 {
 		return false
 	}
-	initRuntimeFuncPCFrames()
-	print("goroutine 1 [running]:\n")
-	printed := 0
-	printedInText := 0
-	for i := 0; i < int(faultN); i++ {
-		pc := faultPCs[i]
-		inText := prebuiltTextContains(pc)
-		sym := frameSymbol(pc - 1)
+	// Missing external metadata must never cause file I/O in a fault path.
+	// Raw PCs still identify the interrupted code for offline symbolization.
+	ready := fpUnwindAvailable()
+	if ready {
+		initRuntimeFuncPCFrames()
+	}
+	system := traceback.Level(rtdebug.TracebackSetting()) > 1
+	if ready {
+		pcs = trimNativeTracebackTail(pcs)
+	}
+	count := 0
+	for i, pc := range pcs {
+		if ready {
+			sym := faultPCSymbol(pc, i)
+			if stringContainsDot(sym.function) && !visibleTracebackFrame(sym.function, system) {
+				continue
+			}
+		}
+		count++
+	}
+	print("goroutine ", goid(), " [running]:\n")
+	shown := 0
+	for i, pc := range pcs {
+		var sym pcSymbol
+		if ready {
+			sym = faultPCSymbol(pc, i)
+		}
+		if ready && stringContainsDot(sym.function) && !visibleTracebackFrame(sym.function, system) {
+			continue
+		}
+		if count > traceback.InnerFrames+traceback.OuterFrames &&
+			shown >= traceback.InnerFrames && shown < count-traceback.OuterFrames {
+			if shown == traceback.InnerFrames {
+				print("...", count-traceback.InnerFrames-traceback.OuterFrames, " frames elided...\n")
+			}
+			shown++
+			continue
+		}
+		shown++
 		name := sym.function
-		if faultNameIdx[i] >= 0 {
-			// libunwind's proc name: the nongnu flavor reads .symtab and
-			// names static C symbols dladdr cannot see. A dot-less name is
-			// a C symbol — prefer it over the table's nearest-below
-			// attribution, which cannot see foreign functions linked
-			// between Go functions and misnames them.
-			if dyn := c.GoString(c_dynunwindName(faultNameIdx[i])); dyn != "" {
-				if name == "" || !stringContainsDot(dyn) {
-					name = dyn
-					sym.file = ""
-					sym.line = 0
-					sym.entry = 0
-				}
-			}
-		}
-		if !inText {
-			// Frames outside the program's own text: keep leading library
-			// frames (the fault may sit inside libc/libssl), but once the
-			// module's frames have been shown the rest is startup plumbing
-			// below main (__libc_start_main, _start) — cut it. Unnamed
-			// out-of-text slots are unidentifiable either way.
-			if printedInText > 0 || name == "" {
-				break
-			}
-		}
+
 		if name == "" {
 			name = unknownFunctionName(pc)
 		}
 		print(name, "(...)\n\t")
 		if sym.file == "" {
-			// No line info (C frame): print the raw pc — resolvable
-			// offline (addr2line/atos) — instead of a ???:0 placeholder.
 			print("pc=0x", string(appendHexUint(nil, pc-1)))
 		} else {
 			print(sym.file, ":", sym.line)
@@ -288,10 +281,7 @@ func faultTraceback(skip int) bool {
 			}
 		}
 		print("\n")
-		printed++
-		if inText {
-			printedInText++
-		}
 	}
-	return printed > 0
+	print(string(appendCurrentCreatedBy(nil)))
+	return shown != 0
 }

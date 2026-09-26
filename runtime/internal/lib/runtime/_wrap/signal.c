@@ -13,6 +13,19 @@
 #include <string.h>
 #include <unistd.h>
 
+extern void llgo_traceback_urgent_action(void (*)(int));
+/* All SIGURG actions in this file are simple one-argument handlers. */
+static int llgo_signal_sigaction(int sig, const struct sigaction *action,
+                                  struct sigaction *old)
+{
+    if (sig == SIGURG && action && !old && !(action->sa_flags & SA_SIGINFO)) {
+        llgo_traceback_urgent_action(action->sa_handler);
+        return 0;
+    }
+    return sigaction(sig, action, old);
+}
+#define sigaction(signum, action, old) llgo_signal_sigaction(signum, action, old)
+
 _Static_assert(SIGPIPE == 13, "runtime signalPipe assumes SIGPIPE is 13");
 
 #define LLGO_SIGNAL_COUNT 65

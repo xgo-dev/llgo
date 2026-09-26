@@ -22,6 +22,8 @@ import "unsafe"
 
 type LocalContext struct{}
 
+func callerLocationAvailable() bool { return true }
+
 func EnterLocalContext(ctx *LocalContext) uintptr {
 	return 0
 }

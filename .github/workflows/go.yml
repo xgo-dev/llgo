@@ -202,6 +202,11 @@ jobs:
             -bench '^BenchmarkGo126' -benchtime=1x ./cl
           "${go_test[@]}" -timeout 45m ./test/go
 
+      - name: Test traceback formatter with coverage
+        shell: bash
+        working-directory: runtime
+        run: go test -coverprofile=../coverage-traceback.txt -covermode=atomic ./internal/traceback
+
       - name: Test with embedded emulator env
         env:
           LLGO_EMBED_TESTS: "1"
@@ -230,7 +235,7 @@ jobs:
         with:
           token: ${{secrets.CODECOV_TOKEN}}
           use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-          files: coverage-main-host.txt,coverage-compiler-host.txt
+          files: coverage-main-host.txt,coverage-compiler-host.txt,coverage-traceback.txt
           flags: go-tests
           disable_search: true
 

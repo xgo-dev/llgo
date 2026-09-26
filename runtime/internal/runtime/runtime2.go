@@ -46,9 +46,11 @@ type g struct {
 	recoverPanic unsafe.Pointer
 	m            *m
 
-	atomicstatus uint32
-	goid         uint64
-	parentGoid   uint64
+	atomicstatus    uint32
+	goid            uint64
+	parentGoid      uint64
+	createdPC       uintptr
+	tracebackThread unsafe.Pointer
 
 	startfn  goroutineFunc
 	startarg unsafe.Pointer

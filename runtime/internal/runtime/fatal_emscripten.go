@@ -13,6 +13,7 @@ func fatal(s string) {
 }
 
 func exitPanic() {
+	crashAfterPanic()
 	// A pending Asyncify host wait keeps the Emscripten runtime alive after
 	// exit(2). Force the process to terminate so fatal scheduler errors retain
 	// Go's observable non-zero-exit behavior.

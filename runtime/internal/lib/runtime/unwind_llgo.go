@@ -6,6 +6,7 @@ import (
 	"unsafe"
 
 	rtdebug "github.com/xgo-dev/llgo/runtime/internal/runtime"
+	"github.com/xgo-dev/llgo/runtime/internal/traceback"
 )
 
 // c_framepointer returns its caller's frame pointer while the C helper frame
@@ -16,7 +17,6 @@ func c_framepointer() unsafe.Pointer
 
 func init() {
 	rtdebug.PanicTraceback = panicTraceback
-	rtdebug.PanicRecovered = clearFaultTraceback
 	rtdebug.PanicPCSnapshot = capturePanicPCs
 	rtdebug.RecoverMark = recoverMark
 }
@@ -27,12 +27,25 @@ func capturePanicPCs(v any) {
 	if !rtdebug.SavePanicCallerFrames(v) || !fpUnwindAvailable() {
 		return
 	}
-	var pcs [64]uintptr
-	n := fpCallers(0, pcs[:])
-	rtdebug.StorePanicPCs(pcs[:n])
+	var small [64]uintptr
+	pcs := small[:]
+	for {
+		n := fpCallers(0, pcs)
+		if n < len(pcs) || len(pcs) >= maxPanicSpliceFrames {
+			rtdebug.StorePanicPCs(pcs[:n])
+			return
+		}
+		// The defer owner may be far below the panic site. Keep walking
+		// until the snapshot includes it, so a later recover/repanic can
+		// join the original stack to the live one.
+		pcs = make([]uintptr, len(pcs)*2)
+	}
 }
 
-const maxPanicSpliceFrames = 4096
+// Bounds frame walks if a damaged chain still appears monotonic. Deep Go
+// recursion can legitimately exceed a few thousand frames, so this must not
+// be the limit on useful panic snapshots.
+const maxPanicSpliceFrames = maxTracebackFrames
 
 // callerFramePointer returns the frame of its Go caller. llgo_framepointer
 // returns this helper's frame; consume its saved link immediately, before
@@ -47,10 +60,9 @@ func callerFramePointer() uintptr {
 	return *(*uintptr)(unsafe.Pointer(fp))
 }
 
-// trimPlumbingPCs drops leading pcs attributed to the LLGo runtime core
-// (panic machinery, the capture path) and cuts the tail at the first pc
-// outside the program text — fault snapshots are captured without the
-// text bound (see fpWalkFrom).
+// trimPlumbingPCs drops leading runtime capture frames. The physical walker
+// bounds the chain; C library frames between Go activations must survive so
+// the snapshot can still join a recovering caller outside the callback.
 func trimPlumbingPCs(pcs []uintptr) []uintptr {
 	initRuntimeFuncPCFrames()
 	head := 0
@@ -72,27 +84,7 @@ func trimPlumbingPCs(pcs []uintptr) []uintptr {
 	if head > 0 {
 		head--
 	}
-	pcs = pcs[head:]
-	if rtdebug.PanicPCsAreFault() {
-		// Fault snapshots come from a genuine interrupted context and the
-		// chain-discipline guards already bounded the walk; keep unnamed
-		// frames (linux dladdr cannot name non-dynamic C symbols — they
-		// display as raw pcs, like gc does for unknown frames).
-		return pcs
-	}
-	for i := 0; i < len(pcs); i++ {
-		if prebuiltTextContains(pcs[i]) {
-			continue
-		}
-		// Outside the Go text range: C frames in this binary (and its
-		// libraries) still resolve to a symbol via dladdr — keep those;
-		// cut at the first pc nothing can name (wild slots past the last
-		// FP-disciplined frame).
-		if frameSymbol(pcs[i]-1).function == "" {
-			return pcs[:i]
-		}
-	}
-	return pcs
+	return pcs[head:]
 }
 
 // spliceCallers rebuilds the caller view a deferred function should see
@@ -116,18 +108,21 @@ func spliceCallers(cur []uintptr) []uintptr {
 	// replaced by the whole snapshot: it already contains the owner and its
 	// callers, with the owner's pc on the panic path instead of the longjmp
 	// resume site.
-	for i := 0; i < len(cur); i++ {
-		entry := frameSymbol(cur[i] - 1).entry
-		if entry == 0 {
-			continue
+	// Both chains can now be thousands of frames deep. Index distinct
+	// functions once instead of re-symbolizing the snapshot for every live
+	// frame; recursive activations need only one map entry.
+	entries := make(map[uintptr]bool)
+	for _, pc := range snap {
+		if entry := frameSymbol(pc - 1).entry; entry != 0 {
+			entries[entry] = true
 		}
-		for j := 0; j < len(snap); j++ {
-			if frameSymbol(snap[j]-1).entry == entry {
-				out := make([]uintptr, 0, i+len(snap))
-				out = append(out, cur[:i]...)
-				out = append(out, snap...)
-				return out
-			}
+	}
+	for i, pc := range cur {
+		if entries[frameSymbol(pc-1).entry] {
+			out := make([]uintptr, 0, i+len(snap))
+			out = append(out, cur[:i]...)
+			out = append(out, snap...)
+			return out
 		}
 	}
 	return cur
@@ -149,8 +144,16 @@ func callersWithPanicSplice(skip int, pc []uintptr) int {
 		// One frame deeper than the extern.go call sites used to be.
 		return fpCallers(skip+1, pc)
 	}
-	var raw [128]uintptr
-	n := fpCallers(1, raw[:])
+	var small [128]uintptr
+	raw := small[:]
+	n := 0
+	for {
+		n = fpCallers(1, raw)
+		if n < len(raw) || len(raw) >= maxTracebackFrames {
+			break
+		}
+		raw = make([]uintptr, len(raw)*2)
+	}
 	if n <= 0 {
 		return 0
 	}
@@ -178,6 +181,9 @@ func panicTraceback(skip int) bool {
 	// chain (fault pc through the Go callers) instead of walking the
 	// live stack, whose walk would start inside the fault plumbing.
 	if faultTraceback(skip) {
+		if rtdebug.TracebackSetting()&traceback.All != 0 {
+			print(string(appendOtherTracebacks(nil, traceback.Level(rtdebug.TracebackSetting()) > 1, 0)))
+		}
 		return true
 	}
 	if faultTracebackActive() {
@@ -192,8 +198,16 @@ func panicTraceback(skip int) bool {
 	if !fpUnwindAvailable() {
 		return false
 	}
-	var pcs [64]uintptr
-	n := fpCallers(skip, pcs[:])
+	var small [64]uintptr
+	pcs := small[:]
+	n := 0
+	for {
+		n = fpCallers(skip, pcs)
+		if n < len(pcs) || len(pcs) >= maxTracebackFrames {
+			break
+		}
+		pcs = make([]uintptr, len(pcs)*2)
+	}
 	if n <= 0 {
 		return false
 	}
@@ -201,44 +215,30 @@ func panicTraceback(skip int) bool {
 	// faults inside C code) carries the frames the longjmp unwinding
 	// already removed; splice them in like Callers does.
 	view := spliceCallers(pcs[:n])
-	print("goroutine 1 [running]:\n")
+	out := appendTracebackHeader(nil)
 	frames := CallersFrames(view)
-	skippingPlumbing := true
+	system := traceback.Level(rtdebug.TracebackSetting()) > 1
+	var window traceback.Window
+	first := true
 	for {
 		frame, more := frames.Next()
 		name := frame.Function
 		if name == "" {
 			name = unknownFunctionName(frame.PC)
 		}
-		// The frames between the hook and the panic site are runtime
-		// plumbing (Rethrow, Panic, ...); their depth varies by panic
-		// path, so filter by package rather than a fixed skip.
-		if skippingPlumbing {
-			if hasPrefix(name, "github.com/xgo-dev/llgo/runtime/internal/") {
-				if more {
-					continue
-				}
-				break
-			}
-			skippingPlumbing = false
+		if traceback.Visible(name, system, first) {
+			first = false
+			out = window.Append(out, tracebackFrame(frame))
 		}
-		print(name, "(...)\n\t")
-		if frame.File == "" {
-			print("???")
-		} else {
-			print(frame.File)
-		}
-		print(":", frame.Line)
-		// gc appends the frame pc's offset from the function entry; the
-		// value is codegen-specific, only the format matches.
-		if frame.Entry != 0 && frame.PC >= frame.Entry {
-			print(" +0x", string(appendHexUint(nil, uintptr(frame.PC-frame.Entry))))
-		}
-		print("\n")
 		if !more {
 			break
 		}
 	}
+	out = appendCurrentCreatedBy(window.Finish(out))
+	if rtdebug.TracebackSetting()&traceback.All != 0 {
+		out = appendOtherTracebacks(out, system, 0)
+	}
+	print(string(out))
 	return true
 }
 
@@ -261,4 +261,19 @@ var runtimeFPChain uint8
 // would fall back to dlsym anyway).
 func fpUnwindAvailable() bool {
 	return runtimePCLNReady() && runtimeFPChain != 0 && runtimeFuncInfoTable != nil && runtimeFuncInfoCount > 0
+}
+
+// Stop after the last Go activation, retaining native frames before it. A
+// dynamic library can sit between a Go callback and its original Go caller.
+func trimNativeTracebackTail(pcs []uintptr) []uintptr {
+	last := 0
+	for i, pc := range pcs {
+		if prebuiltTextContains(pc - 1) {
+			last = i + 1
+		}
+	}
+	if last != 0 {
+		return pcs[:last]
+	}
+	return pcs
 }

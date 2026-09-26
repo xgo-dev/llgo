@@ -8,4 +8,12 @@ func panicCallerSnapshotAvailable() bool {
 	return getg().panicPCs.n != 0
 }
 
-func clearPanicCallerSnapshot() {}
+func clearPanicCallerSnapshot() {
+	p := &getg().panicPCs
+	if p.fault != 0 {
+		releaseFaultSnapshot()
+	}
+	p.n = 0
+	p.longPCs = nil
+	p.fault = 0
+}

@@ -77,9 +77,6 @@ func Recover(token unsafe.Pointer) (ret any) {
 		gp.recoverPanic = nil
 		ret = node.arg
 		c.Free(unsafe.Pointer(node))
-		if PanicRecovered != nil {
-			PanicRecovered()
-		}
 		// The deferred function that recovers keeps observing the panic
 		// stack until it returns (gc runs defers on top of it). The public
 		// runtime marks its frame so the pc snapshot stays spliceable that
@@ -175,7 +172,6 @@ func (gp *g) panicIsSuspended(ptr unsafe.Pointer) bool {
 // while unwinding. LLGo stores Goexit separately on g, so it performs the
 // equivalent state transition before starting its longjmp unwind.
 func (gp *g) abortPanics() {
-	discarded := gp.panic_ != nil
 	for gp.panic_ != nil {
 		node := (*panicNode)(gp.panic_)
 		gp.panic_ = node.prev
@@ -185,9 +181,6 @@ func (gp *g) abortPanics() {
 	gp.recoverPanic = nil
 	gp.panicPCs.recovered = recoveredPanic{}
 	clearPanicCallerSnapshot()
-	if discarded && PanicRecovered != nil {
-		PanicRecovered()
-	}
 }
 
 // RecoverMark, set by the public runtime package, records the recovering
@@ -197,7 +190,7 @@ var RecoverMark func()
 const (
 	// LLGoFiles: the frame-pointer helper must live in the runtime core —
 	// programs that never import "runtime" still link Recover.
-	LLGoFiles = "_wrap/fp.c" + platformSetjmpLLGoFiles + platformFaultLLGoFiles + platformLLGoFiles
+	LLGoFiles = "_wrap/fp.c" + tracebackLLGoFiles + platformSetjmpLLGoFiles + platformFaultLLGoFiles + platformLLGoFiles
 )
 
 //go:linkname c_framepointer C.llgo_framepointer
@@ -245,10 +238,6 @@ func TracePanic(v any) {
 // Go-style stack trace for an unrecovered panic and reports whether it
 // printed anything; the clite frame dump remains the fallback.
 var PanicTraceback func(skip int) bool
-
-// PanicRecovered, when set by the public runtime package, releases auxiliary
-// traceback state associated with a recovered panic.
-var PanicRecovered func()
 
 // PanicSignal converts a hardware signal into the same Go panic the
 // legacy signal handler raised.

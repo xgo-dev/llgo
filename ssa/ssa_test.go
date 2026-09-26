@@ -2273,6 +2273,12 @@ func assertPkg(t *testing.T, p Package, expected string) {
 	t.Helper()
 	got := StripModuleTarget(p.String())
 	want := StripModuleTarget(expected)
+	if target := p.Prog.Target(); target.GOOS == "windows" && (target.GOARCH == "amd64" || target.GOARCH == "arm64") {
+		// Win64 functions carry unwind tables even when LLVM marks them
+		// nounwind. Keep the IR expectations shared across host platforms;
+		// TestWindowsUnwindTablesForNoUnwindFunctions checks the actual COFF.
+		want = strings.ReplaceAll(want, "null_pointer_is_valid", "null_pointer_is_valid uwtable")
+	}
 	if got != want {
 		t.Fatalf("\n==> got:\n%s\n==> expected:\n%s\n", got, want)
 	}
@@ -2589,11 +2595,22 @@ func TestPrintf(t *testing.T) {
 	rets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int32]))
 	sig := types.NewSignatureType(nil, nil, nil, params, rets, true)
 	pkg.NewFunc("printf", sig, InC)
-	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+	expected := `; ModuleID = 'foo/bar'
 source_filename = "foo/bar"
 
 declare i32 @printf(ptr, ...)
-`)
+`
+	if target := prog.Target(); target.GOOS == "windows" && (target.GOARCH == "amd64" || target.GOARCH == "arm64") {
+		expected = `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+; Function Attrs: uwtable
+declare i32 @printf(ptr, ...) #0
+
+attributes #0 = { uwtable }
+`
+	}
+	assertPkg(t, pkg, expected)
 }
 
 func TestBinOp(t *testing.T) {

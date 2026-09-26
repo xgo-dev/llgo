@@ -59,9 +59,9 @@ func fpCallers(skip int, pc []uintptr) int {
 	}
 	initRuntimeFuncPCFrames()
 	fp := uintptr(c_framepointer())
-	n := 0
+	n, lastGo := 0, 0
 	var callee pcSymbol
-	const maxFrames = 4096
+	const maxFrames = maxPanicSpliceFrames
 	wordSize := unsafe.Sizeof(uintptr(0))
 	for i := 0; fp != 0 && n < len(pc) && i < maxFrames; i++ {
 		if fp&(wordSize-1) != 0 || !memReadable(fp) || !memReadable(fp+wordSize) {
@@ -69,7 +69,7 @@ func fpCallers(skip int, pc []uintptr) int {
 		}
 		prev := *(*uintptr)(unsafe.Pointer(fp))
 		ret := *(*uintptr)(unsafe.Pointer(fp + wordSize))
-		if ret < minLegalPC || !prebuiltTextContains(ret) {
+		if ret < minLegalPC {
 			break
 		}
 		caller := frameSymbol(ret - 1)
@@ -87,12 +87,18 @@ func fpCallers(skip int, pc []uintptr) int {
 		} else {
 			pc[n] = ret
 			n++
+			if prebuiltTextContains(ret - 1) {
+				lastGo = n
+			}
 		}
 		callee = caller
 		if !validPrev {
 			break
 		}
 		fp = prev
+	}
+	if n < len(pc) {
+		return lastGo
 	}
 	return n
 }

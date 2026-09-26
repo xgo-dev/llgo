@@ -39,7 +39,9 @@ func (s *chanSignal) unlock() {
 }
 
 func (s *chanSignal) park() {
+	TracebackWaiting(true)
 	s.cond.Wait(&s.mutex)
+	TracebackWaiting(false)
 }
 
 func (s *chanSignal) ready() {

@@ -42,6 +42,16 @@ def matrix_size(job):
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_traceback_coverage_uses_bash_on_every_host(self):
+        steps = load("go.yml")["jobs"]["test"]["steps"]
+        step = next(step for step in steps
+                    if step.get("name") == "Test traceback formatter with coverage")
+        # PowerShell splits the unquoted -coverprofile=../... argument and Go
+        # treats its value as a package. Preserve the shell when moving steps.
+        self.assertEqual(step["shell"], "bash")
+        self.assertEqual(step["working-directory"], "runtime")
+        self.assertIn("-coverprofile=../coverage-traceback.txt", step["run"])
+
     def test_windows_exception_overlay_reaches_compiler_and_language_tests(self):
         step = next(step for step in load("go.yml")["jobs"]["test"]["steps"]
                     if step.get("id") == "test_coverage")

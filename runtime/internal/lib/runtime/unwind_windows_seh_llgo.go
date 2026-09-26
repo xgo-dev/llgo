@@ -72,7 +72,7 @@ func windowsUnwindOne(context *windowsFaultContext) bool {
 }
 
 func windowsContextCallers(context *windowsFaultContext, skip int, pc []uintptr, boundToGoText bool) int {
-	n := 0
+	n, lastGo := 0, 0
 	var callee pcSymbol
 	if current := context.pc(); current >= minLegalPC {
 		callee = frameSymbol(current - 1)
@@ -82,9 +82,6 @@ func windowsContextCallers(context *windowsFaultContext, skip int, pc []uintptr,
 			break
 		}
 		ret := context.pc()
-		if boundToGoText && !prebuiltTextContains(ret) {
-			break
-		}
 		caller := frameSymbol(ret - 1)
 		if pcSymbolIsWrapper(caller) && elideWrapperCalling(callee.function) {
 			callee = caller
@@ -97,6 +94,9 @@ func windowsContextCallers(context *windowsFaultContext, skip int, pc []uintptr,
 		}
 		pc[n] = ret
 		n++
+		if prebuiltTextContains(ret - 1) {
+			lastGo = n
+		}
 		// RtlVirtualUnwind can continue through the Windows CRT after the C
 		// process entry. The entry is deliberately published as the logical
 		// runtime.goexit frame, which is also the end of a Go caller chain.
@@ -106,6 +106,9 @@ func windowsContextCallers(context *windowsFaultContext, skip int, pc []uintptr,
 			break
 		}
 		callee = caller
+	}
+	if boundToGoText && n < len(pc) {
+		return lastGo
 	}
 	return n
 }

@@ -35,6 +35,11 @@ type localBlock struct {
 	cacheSlot *uintptr
 }
 
+// A callback entered from a native thread can have a G before an entry-local
+// context has been installed. Its stack can still be unwound, but generated
+// package-local caches cannot be accessed until that context exists.
+func callerLocationAvailable() bool { return currentLocalContext != 0 }
+
 // EnterLocalContext installs ctx when the current thread has no local owner.
 // A nonzero result means this is a nested Go entry that inherited the returned
 // context; in that case ctx is not installed.

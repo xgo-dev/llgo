@@ -23,6 +23,8 @@ import (
 
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	rtdebug "github.com/xgo-dev/llgo/runtime/internal/runtime"
+	"github.com/xgo-dev/llgo/runtime/internal/stacktrace"
+	"github.com/xgo-dev/llgo/runtime/internal/traceback"
 )
 
 //go:linkname c_windowsFaultPCBuf C.llgo_windows_fault_pcbuf
@@ -42,9 +44,12 @@ func init() {
 func storeWindowsFaultSnapshot(context unsafe.Pointer) bool {
 	// Faults are recoverable and different goroutines run on different host
 	// threads, so capture into the handler's thread-local scratch storage.
-	// StoreFaultPCs copies the snapshot into the current G before panic's
-	// non-local jump unwinds the handler stack.
-	pcs := (*[64]uintptr)(c_windowsFaultPCBuf())
+	// StoreFaultPCs retains this storage until the recovering activation ends,
+	// including after panic's non-local jump unwinds the handler stack.
+	pcs := (*[64]uintptr)(c_windowsFaultPCBuf())[:]
+	if buf := stacktrace.FaultBuffer(); buf != nil {
+		pcs = unsafe.Slice(buf, stacktrace.MaxFrames)
+	}
 	pc, fp := windowsFaultPCFP(context)
 	originPC := pc
 	textPC := pc
@@ -110,7 +115,7 @@ func windowsFaultStackCallerPC(sp uintptr) uintptr {
 
 func windowsFPWalkFrom(fp uintptr, pcs []uintptr) int {
 	n := 0
-	const maxFrames = 4096
+	const maxFrames = maxTracebackFrames
 	wordSize := unsafe.Sizeof(uintptr(0))
 	for i := 0; fp != 0 && n < len(pcs) && i < maxFrames; i++ {
 		if fp&(wordSize-1) != 0 || !memReadable(fp) || !memReadable(fp+wordSize) {
@@ -134,8 +139,6 @@ func windowsFPWalkFrom(fp uintptr, pcs []uintptr) int {
 // Windows fault snapshots live in the current G. Keep a recovered snapshot
 // available while its deferred frame can still observe runtime.Callers; the
 // next panic replaces it. PanicActive supplies the separate in-flight bit.
-func clearFaultTraceback() {}
-
 func faultTracebackActive() bool {
 	return rtdebug.PanicPCsAreFault() && rtdebug.PanicActive()
 }
@@ -158,33 +161,32 @@ func trimLogicalGoTail(pcs []uintptr) []uintptr {
 
 func faultTraceback(skip int) bool {
 	pcs := rtdebug.PanicPCs()
-	if !rtdebug.PanicPCsAreFault() || len(pcs) == 0 || !fpUnwindAvailable() {
+	if !rtdebug.PanicPCsAreFault() || len(pcs) == 0 {
 		return false
 	}
-	initRuntimeFuncPCFrames()
-	pcs = trimLogicalGoTail(pcs)
-	print("goroutine 1 [running]:\n")
+	ready := fpUnwindAvailable()
+	if ready {
+		initRuntimeFuncPCFrames()
+		pcs = trimLogicalGoTail(pcs)
+		pcs = trimNativeTracebackTail(pcs)
+	}
+	system := traceback.Level(rtdebug.TracebackSetting()) > 1
+	out := appendTracebackHeader(nil)
+	var window traceback.Window
 	printed := 0
 	for _, pc := range pcs {
-		if !prebuiltTextContains(pc) {
-			break
-		}
-		sym := frameSymbol(pc - 1)
-		name := sym.function
-		if name == "" {
-			name = unknownFunctionName(pc)
-		}
-		print(name, "(...)\n\t")
-		if sym.file == "" {
-			print("pc=0x", string(appendHexUint(nil, pc-1)))
-		} else {
-			print(sym.file, ":", sym.line)
-			if sym.entry != 0 && pc >= sym.entry {
-				print(" +0x", string(appendHexUint(nil, pc-sym.entry)))
+		var sym pcSymbol
+		if ready {
+			sym = frameSymbol(pc - 1)
+			if !visibleTracebackFrame(sym.function, system) {
+				continue
 			}
 		}
-		print("\n")
+		out = window.Append(out, traceback.Frame{PC: pc - 1, Entry: sym.entry,
+			Function: sym.function, File: sym.file, Line: sym.line})
 		printed++
 	}
-	return printed > 0
+	out = appendCurrentCreatedBy(window.Finish(out))
+	print(string(out))
+	return printed != 0
 }

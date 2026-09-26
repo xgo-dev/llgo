@@ -43,3 +43,8 @@ func ClearThreadDefer() {
 func goid() uint64 {
 	return getg().goid
 }
+
+func TracebackParent() (uint64, uintptr) {
+	gp := getg()
+	return gp.parentGoid, gp.createdPC
+}

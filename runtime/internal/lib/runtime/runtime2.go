@@ -8,6 +8,7 @@ import (
 	_ "unsafe"
 
 	psync "github.com/xgo-dev/llgo/runtime/internal/sync"
+	"github.com/xgo-dev/llgo/runtime/internal/traceback"
 )
 
 // Layout of in-memory per-function information prepared by linker
@@ -21,76 +22,55 @@ type _func struct {
 //go:linkname goid github.com/xgo-dev/llgo/runtime/internal/runtime.goid
 func goid() uint64
 
+//go:noinline
 func Stack(buf []byte, all bool) int {
-	var pcs [64]uintptr
-	n := Callers(0, pcs[:])
-	out := make([]byte, 0, 1024)
-	out = append(out, "goroutine "...)
-	out = appendInt(out, int(goid()))
-	out = append(out, " [running]:\n"...)
-	frames := CallersFrames(pcs[:n])
+	if len(buf) == 0 {
+		return 0
+	}
+	out := appendTracebackHeader(buf[:0:len(buf)])
+	if len(out) >= len(buf) {
+		return copy(buf, out)
+	}
+	var small [64]uintptr
+	pcs := small[:]
+	n := 0
 	for {
-		frame, more := frames.Next()
-		if frame.Function == "" {
-			frame.Function = unknownFunctionName(frame.PC)
-		}
-		out = append(out, frame.Function...)
-		out = append(out, "()\n\t"...)
-		if frame.File == "" {
-			out = append(out, "???"...)
-		} else {
-			out = append(out, frame.File...)
-		}
-		out = append(out, ':')
-		out = appendInt(out, frame.Line)
-		if frame.Entry != 0 && frame.PC >= frame.Entry {
-			out = append(out, " +0x"...)
-			out = appendHexUint(out, uintptr(frame.PC-frame.Entry))
-		}
-		out = append(out, '\n')
-		if !more {
+		// Skip runtime.Callers and runtime.Stack itself, as Go does.
+		n = Callers(2, pcs)
+		if n < len(pcs) || len(pcs) >= maxTracebackFrames {
 			break
 		}
+		pcs = make([]uintptr, len(pcs)*2)
 	}
-	if len(out) > len(buf) {
-		copy(buf, out[:len(buf)])
-		return len(buf)
+	if n > 0 {
+		var window traceback.Window
+		first := true
+		frames := CallersFrames(pcs[:n])
+		for {
+			frame, more := frames.Next()
+			if traceback.Visible(frame.Function, false, first) {
+				first = false
+				out = window.Append(out, tracebackFrame(frame))
+			}
+			if !more || len(out) >= len(buf) {
+				break
+			}
+		}
+		out = window.Finish(out)
 	}
-	copy(buf, out)
-	return len(out)
+	out = appendCurrentCreatedBy(out)
+	if all && len(out) < len(buf) {
+		out = appendOtherTracebacks(out, false, len(buf))
+	}
+	return copy(buf, out)
 }
 
 func appendHexUint(buf []byte, v uintptr) []byte {
-	const digits = "0123456789abcdef"
-	if v == 0 {
-		return append(buf, '0')
-	}
-	var tmp [16]byte
-	i := len(tmp)
-	for v > 0 {
-		i--
-		tmp[i] = digits[v&0xf]
-		v >>= 4
-	}
-	return append(buf, tmp[i:]...)
+	return traceback.AppendHex(buf, v)
 }
 
 func appendInt(out []byte, v int) []byte {
-	if v == 0 {
-		return append(out, '0')
-	}
-	if v < 0 {
-		out = append(out, '-')
-		v = -v
-	}
-	var digits [20]byte
-	i := len(digits)
-	for v > 0 {
-		i--
-		digits[i] = byte('0' + v%10)
-		v /= 10
-	}
-	return append(out, digits[i:]...)
+	return traceback.AppendInt(out, v)
 }
 
 type traceError string

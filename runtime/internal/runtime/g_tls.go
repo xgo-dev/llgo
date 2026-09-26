@@ -22,6 +22,7 @@ import (
 	"unsafe"
 
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
+	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
 	"github.com/xgo-dev/llgo/runtime/internal/thread"
 )
 
@@ -45,15 +46,27 @@ var currentGHasLifecycle bool
 // gLifecycleKey is not used to locate the current G. It only retains the
 // thread-local destructor needed for contexts lazily created on main or foreign
 // threads, which have no runtime-owned mexit path.
-var gLifecycleKey = newGLifecycleKey()
+var gLifecycleKey thread.Key
+var gLifecycleKeyState uint32
 
-func newGLifecycleKey() thread.Key {
-	var key thread.Key
-	if ret := key.Create(gLifecycleDestructor(destroyG)); ret != 0 {
-		c.Fprintf(c.Stderr, c.Str("runtime: thread-local key creation failed (error=%d)\n"), ret)
-		panic("runtime: failed to create getg lifecycle key")
+// Runtime dependencies can allocate during their init functions (for example,
+// when coverage is enabled). getg must therefore work before this package's
+// variable initializers run. This bootstrap uses only C and atomic operations.
+func ensureGLifecycleKey() {
+	if atomic.Load(&gLifecycleKeyState) == 2 {
+		return
 	}
-	return key
+	if _, won := atomic.CompareAndExchange(&gLifecycleKeyState, 0, 1); won {
+		if ret := gLifecycleKey.Create(gLifecycleDestructor(destroyG)); ret != 0 {
+			c.Fprintf(c.Stderr, c.Str("runtime: thread-local key creation failed (error=%d)\n"), ret)
+			c.Exit(2)
+		}
+		atomic.Store(&gLifecycleKeyState, 2)
+		return
+	}
+	for atomic.Load(&gLifecycleKeyState) != 2 {
+		c.Usleep(1)
+	}
 }
 
 func getg() *g {
@@ -86,14 +99,17 @@ func setg(gp *g) {
 		}
 	}
 	currentG = uintptr(unsafe.Pointer(gp))
+	attachTraceback(gp)
 }
 
 func setAutoG(gp *g) c.Int {
+	ensureGLifecycleKey()
 	if ret := gLifecycleKey.Set(c.Pointer(unsafe.Pointer(gp))); ret != 0 {
 		return ret
 	}
 	currentG = uintptr(unsafe.Pointer(gp))
 	currentGHasLifecycle = true
+	attachTraceback(gp)
 	return 0
 }
 
@@ -111,6 +127,7 @@ func destroyG(ptr c.Pointer) {
 		c.Free(gp.panic_)
 	}
 	ctx := gp.context
+	unregisterTraceback(gp)
 	if ctx != nil && ctx.root != nil {
 		root := ctx.root
 		ctx.root = nil

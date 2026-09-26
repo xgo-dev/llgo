@@ -14,7 +14,7 @@ var (
 )
 
 //go:linkname setTraceback runtime/debug.SetTraceback
-func setTraceback(level string) {}
+func setTraceback(level string) { llrt.SetTraceback(level) }
 
 //go:linkname readGCStats runtime/debug.readGCStats
 func readGCStats(_ *[]uint64) {}
