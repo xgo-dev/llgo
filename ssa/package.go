@@ -504,12 +504,16 @@ func (p Program) SetRuntime(runtime any) {
 	}
 }
 
+// SetTypeBackground updates the compatibility index for types in packages
+// without directive records. It does not override package directive records.
 func (p Program) SetTypeBackground(fullName string, bg Background) {
 	p.packageSyntax.mu.Lock()
 	p.packageSyntax.typeBackgrounds[fullName] = bg
 	p.packageSyntax.mu.Unlock()
 }
 
+// SetLinkname updates the global index used by Linkname and by LinknameFor for
+// packages without directive records. It does not override package records.
 func (p Program) SetLinkname(name, link string) {
 	p.packageSyntax.mu.Lock()
 	p.packageSyntax.linknames[name] = link

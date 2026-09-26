@@ -157,7 +157,9 @@ func (p Program) FunctionDeclaration(pkg *types.Package, obj *types.Func, syntax
 }
 
 // LinknameFor resolves a source declaration in its owning package instance.
-// The global name index remains available for runtime names and alias chains.
+// Package records are authoritative, including absent declarations and links:
+// a global entry may belong to another package instance with the same path.
+// Only packages without records fall back to the global name index.
 func (p Program) LinknameFor(pkg *types.Package, obj types.Object, fullName string) (string, bool) {
 	if fn, ok := obj.(*types.Func); ok {
 		obj = fn.Origin()
@@ -177,6 +179,10 @@ func (p Program) LinknameFor(pkg *types.Package, obj types.Object, fullName stri
 	}
 	return p.Linkname(fullName)
 }
+
+// namedBackground uses the effective package's records, including an absent
+// type or background. Only packages without records use typeBackgrounds, which
+// cannot distinguish package instances sharing an import path.
 func (p *packageSyntaxData) namedBackground(t *types.Named) (Background, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
