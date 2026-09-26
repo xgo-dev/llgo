@@ -120,11 +120,12 @@ func Initialize(flags InitFlags) {
 // -----------------------------------------------------------------------------
 
 type aProgram struct {
-	valuePlans map[llvm.Value]funcattrs.ValuePlan
-	ctx        llvm.Context
-	typs       typeutil.Map // rawType -> Type
-	sizes      types.Sizes  // provided by Go compiler
-	gocvt      goTypes
+	valuePlans     map[llvm.Value]funcattrs.ValuePlan
+	pointerEffects map[string][]funcattrs.Attribute
+	ctx            llvm.Context
+	typs           typeutil.Map // rawType -> Type
+	sizes          types.Sizes  // provided by Go compiler
+	gocvt          goTypes
 
 	patchType func(types.Type) types.Type
 

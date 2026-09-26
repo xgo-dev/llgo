@@ -27,6 +27,7 @@ import (
 // -----------------------------------------------------------------------------
 
 func (b Builder) aggregateAllocU(t Type, flds ...llvm.Value) llvm.Value {
+	b.Func.CheckImplicitRuntimeEffects("compiler-generated heap allocation for closure or defer state")
 	prog := b.Prog
 	size := prog.SizeOf(t)
 	ptr := b.allocUninited(prog.IntVal(size, prog.Uintptr())).impl
@@ -145,6 +146,7 @@ func (b Builder) AllocEx(elem Type, heap bool, hoistToEntry bool) (ret Expr) {
 	pkg := b.Pkg
 	size := SizeOf(prog, elem)
 	if !heap && prog.SizeOf(elem) > llabi.MaxStackVarSize {
+		b.Func.CheckImplicitRuntimeEffects("compiler-generated heap allocation for a large local")
 		heap = true
 	}
 	if heap {

@@ -80,5 +80,38 @@ The build driver materializes module-local value plans before ABI conversion.
 Standalone backend clients call `Program.MaterializeValueAttributes` at the same
 boundary. Source records remain Go data shared across backends; LLVM plans are local.
 
-Pointer access and alias restrictions follow separately. Cgo-specific parsing
-and handling remain outside this feature.
+## Pointer access and alias restrictions
+
+Pointer parameters and receivers additionally accept:
+
+- `access(none)`, `access(read)`, `access(write)`, or `access(readwrite)`: restrict
+  accesses through that pointer and pointers derived from it, throughout the call.
+  Other parameters and globals remain unrestricted by this attribute alone.
+- `noalias`: accessed memory that is modified during the call must be accessed
+  only through this pointer or pointers derived from it. Shared reads of unmodified
+  memory remain valid. This does not imply nonnull, pointer inequality, or no capture.
+
+```go
+//llgo:param(dst) access(write) noalias
+//llgo:param(src) access(read)
+func CopyOne(dst, src *int) { *dst = *src }
+```
+
+These restrictions include callees. They use LLVM parameter attributes, preserving
+logical parameter indices across receivers, environments, aggregate arguments and
+sret. `access(readwrite)` adds no LLVM restriction. The compiler never infers a
+function-wide memory restriction from an individual pointer's access mode.
+
+For explicit GC-root or cooperative-safepoint modes, pointer restrictions are
+currently omitted from LLVM definitions and imports alike: collector/scheduler
+accesses are not yet modeled precisely. Value contracts remain enabled. In other
+modes, retained pointer restrictions are rejected at their source annotation if
+lowering inserts an unmodeled runtime protocol, such as defer state, closure heap
+allocation, local-context access, shadow-stack updates or late ABI allocation.
+This conservative diagnostic does not prove arbitrary source implementations.
+
+Overlapping runtime copies receive access restrictions but no noalias promise.
+The runtime annotations cover audited read/copy/clear helpers; ordinary packages
+use the same mechanism.
+
+Cgo-specific parsing and handling remain outside this feature.
