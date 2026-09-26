@@ -30,6 +30,7 @@ import (
 
 	"golang.org/x/tools/go/ssa"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
@@ -704,7 +705,7 @@ var llgoInstrs = map[string]int{
 // funcOf returns a function by name and set ftype = goFunc, cFunc, etc.
 // or returns nil and set ftype = llgoCstr, llgoAlloca, llgoUnreachable, etc.
 func (p *context) funcOf(fn *ssa.Function) (aFn llssa.Function, pyFn llssa.PyObjRef, ftype int) {
-	pkgTypes, name, ftype := p.funcName(fn)
+	pkgTypes, name, ftype, _ := p.funcName(p.sourceFunction(fn))
 	switch ftype {
 	case pyFunc:
 		if kind, mod := pkgKindByScope(pkgTypes.Scope()); kind == PkgPyModule {
@@ -1012,7 +1013,7 @@ func callerTrackingFuncSetsForPackage(c *CallerTracking, pkg *ssa.Package) calle
 	}
 	base := runtimeCallerBaseSet(c, pkg)
 	funcs, trackable := collectRuntimeCallerFunctions(pkg)
-	sets := computeRuntimeCallerFuncSets(c.recoverAnalysis(), pkg, funcs, base, trackable, func(dep *ssa.Package) map[*ssa.Function]bool {
+	sets := computeRuntimeCallerFuncSets(c.directives, c.recoverAnalysis(), pkg, funcs, base, trackable, func(dep *ssa.Package) map[*ssa.Function]bool {
 		return runtimeCallerBaseSet(c, dep)
 	})
 	c.extended[pkg] = sets
@@ -1024,7 +1025,7 @@ type callerTrackingFuncSets struct {
 	recoverPanicSites map[*ssa.Function]bool
 }
 
-func computeRuntimeCallerFuncSets(recover *recoverFacts, pkg *ssa.Package, funcs, base, trackable map[*ssa.Function]bool, baseSet func(*ssa.Package) map[*ssa.Function]bool) callerTrackingFuncSets {
+func computeRuntimeCallerFuncSets(directives *directive.Index, recover *recoverFacts, pkg *ssa.Package, funcs, base, trackable map[*ssa.Function]bool, baseSet func(*ssa.Package) map[*ssa.Function]bool) callerTrackingFuncSets {
 	frames := make(map[*ssa.Function]bool, len(base))
 	for fn := range base {
 		frames[fn] = true
@@ -1045,7 +1046,8 @@ func computeRuntimeCallerFuncSets(recover *recoverFacts, pkg *ssa.Package, funcs
 		// so statement anchors are free of the usual inlining cost — their
 		// panic-traceback lines become exact instead of
 		// declaration-adjacent.
-		if hasNoInlineDirective(fn) {
+		decl, _ := fn.Syntax().(*ast.FuncDecl)
+		if directives.Function(decl).NoInline {
 			frames[fn] = true
 			continue
 		}
@@ -1261,6 +1263,7 @@ func (a *runtimeCallerAnalysis) callTargets(fn *ssa.Function, call *ssa.CallComm
 // Precompute before workers start; recover facts also synchronize lazy queries
 // for nested and synthetic functions that are not package members.
 type CallerTracking struct {
+	directives  *directive.Index
 	base        map[*ssa.Package]map[*ssa.Function]bool
 	extended    map[*ssa.Package]callerTrackingFuncSets
 	recover     *recoverFacts
@@ -1316,7 +1319,7 @@ func (c *CallerTracking) Precompute(pkgs []*ssa.Package) {
 		base[i] = analyses[i].base
 	}
 	for i := range pkgs {
-		extended[i] = computeRuntimeCallerFuncSets(c.recoverAnalysis(), pkgs[i], analyses[i].funcs, base[i], analyses[i].trackable, func(dep *ssa.Package) map[*ssa.Function]bool {
+		extended[i] = computeRuntimeCallerFuncSets(c.directives, c.recoverAnalysis(), pkgs[i], analyses[i].funcs, base[i], analyses[i].trackable, func(dep *ssa.Package) map[*ssa.Function]bool {
 			j, ok := index[dep]
 			if !ok {
 				panic("caller-tracking dependency was not precomputed")
@@ -1408,12 +1411,14 @@ func uniqueCallerTrackingPackages(pkgs []*ssa.Package) []*ssa.Package {
 	return unique
 }
 
-// NewCallerTracking creates the frontend-analysis caches for one compilation.
-func NewCallerTracking() *CallerTracking {
+// NewCallerTracking creates frontend-analysis caches sharing the compilation
+// directive index. The caller supplies a non-nil index.
+func NewCallerTracking(index *directive.Index) *CallerTracking {
 	return &CallerTracking{
-		base:     make(map[*ssa.Package]map[*ssa.Function]bool),
-		extended: make(map[*ssa.Package]callerTrackingFuncSets),
-		recover:  newRecoverFacts(),
+		directives: index,
+		base:       make(map[*ssa.Package]map[*ssa.Function]bool),
+		extended:   make(map[*ssa.Package]callerTrackingFuncSets),
+		recover:    newRecoverFacts(),
 	}
 }
 

@@ -17,7 +17,6 @@
 package cl
 
 import (
-	"bytes"
 	"fmt"
 	"go/ast"
 	"go/constant"
@@ -44,13 +43,15 @@ type symInfo struct {
 }
 
 type pkgSymInfo struct {
-	files map[string][]byte  // file => content
-	syms  map[string]symInfo // name => isVar
+	index *directive.Index
+	files map[string][]directive.LegacyLink // file => parsed links
+	syms  map[string]symInfo                // name => isVar
 }
 
-func newPkgSymInfo() *pkgSymInfo {
+func newPkgSymInfo(index *directive.Index) *pkgSymInfo {
 	return &pkgSymInfo{
-		files: make(map[string][]byte),
+		index: index,
+		files: make(map[string][]directive.LegacyLink),
 		syms:  make(map[string]symInfo),
 	}
 }
@@ -60,29 +61,21 @@ func (p *pkgSymInfo) addSym(fset *token.FileSet, pos token.Pos, fullName, inPkgN
 	if fp := f.Position(pos); fp.Line > 2 {
 		file := fp.Filename
 		if _, ok := p.files[file]; !ok {
-			b, err := os.ReadFile(file)
-			if err == nil {
-				p.files[file] = b
-			}
+			p.files[file] = p.index.ReadLegacyLinks(file)
 		}
 		p.syms[inPkgName] = symInfo{file, fullName, isVar}
 	}
 }
 
 func (p *pkgSymInfo) initLinknames(ctx *context) {
-	sep := []byte{'\n'}
-	commentPrefix := []byte{'/', '/'}
-	for file, b := range p.files {
-		lines := bytes.Split(b, sep)
-		for _, line := range lines {
-			if bytes.HasPrefix(line, commentPrefix) {
-				ctx.initLinkname(string(line), true, func(inPkgName string, isExport bool) (fullName string, isVar, ok bool) {
-					if sym, ok := p.syms[inPkgName]; ok && file == sym.file {
-						return sym.fullName, sym.isVar, true
-					}
-					return
-				})
-			}
+	for file, links := range p.files {
+		for _, link := range links {
+			ctx.applyLegacyLink(link, func(name string, isExport bool) (string, bool, bool) {
+				if sym, ok := p.syms[name]; ok && file == sym.file {
+					return sym.fullName, sym.isVar, true
+				}
+				return "", false, false
+			})
 		}
 	}
 }
@@ -137,7 +130,7 @@ func pkgKindByScope(scope *types.Scope) (int, string) {
 	return PkgNormal, ""
 }
 
-func (p *context) importPkg(pkg *types.Package, i *pkgInfo) {
+func (p *context) importSourcePackage(pkg *types.Package) (*types.Package, int) {
 	pkgPath := llssa.PathOf(pkg)
 	scope := pkg.Scope()
 	kind, _ := pkgKindByScope(scope)
@@ -149,16 +142,44 @@ func (p *context) importPkg(pkg *types.Package, i *pkgInfo) {
 				goto start
 			}
 		}
-		return
+		return pkg, kind
 	}
 start:
+	return pkg, kind
+}
+
+func (p *context) importPkg(pkg *types.Package, i *pkgInfo) {
+	source, kind := p.importSourcePackage(pkg)
+	if kind == PkgNormal {
+		return
+	}
 	i.kind = kind
 	if p.options.PreloadedSyntax {
 		return
 	}
+	if syms, ok := p.importSources[source]; ok {
+		syms.initLinknames(p)
+		return
+	}
+	panic("import directives were not prepared for " + source.Path())
+}
+
+func (p *context) prepareImportSource(pkg *types.Package) {
+	pkgPath := llssa.PathOf(pkg)
+	source, kind := p.importSourcePackage(pkg)
+	if kind == PkgNormal {
+		return
+	}
+	if p.importSources == nil {
+		p.importSources = make(map[*types.Package]*pkgSymInfo)
+	}
+	if _, ok := p.importSources[source]; ok {
+		return
+	}
+	scope := source.Scope()
 	fset := p.fset
 	names := scope.Names()
-	syms := newPkgSymInfo()
+	syms := newPkgSymInfo(p.prog.Directives())
 	for _, name := range names {
 		obj := scope.Lookup(name)
 		switch obj := obj.(type) {
@@ -183,307 +204,58 @@ start:
 			}
 		}
 	}
-	syms.initLinknames(p)
+	p.importSources[source] = syms
 }
 
-func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
-	preloaded := p.options.PreloadedSyntax
-	for _, file := range files {
-		for _, decl := range file.Decls {
-			switch decl := decl.(type) {
-			case *ast.FuncDecl:
-				fullName, inPkgName := astFuncName(pkgPath, decl)
-				if preloaded {
-					if exportName, ok := p.prog.PackageExport(fullName); ok {
-						p.pkg.SetExport(fullName, exportName)
-					}
-					continue
-				}
-				p.processNoInterfaceByDoc(decl.Doc, fullName)
-				if !p.processLinknameByDoc(decl.Doc, fullName, inPkgName, false, true) && cPkg {
-					// package C (https://github.com/xgo-dev/llgo/issues/1165)
-					if decl.Recv == nil && token.IsExported(inPkgName) {
-						exportName := strings.TrimPrefix(inPkgName, "X")
-						p.prog.SetLinkname(fullName, exportName)
-						p.pkg.SetExport(fullName, exportName)
-					}
-				}
-			case *ast.GenDecl:
-				switch decl.Tok {
-				case token.VAR:
-					if len(decl.Specs) == 1 {
-						if names := decl.Specs[0].(*ast.ValueSpec).Names; len(names) == 1 {
-							inPkgName := names[0].Name
-							fullName := pkgPath + "." + inPkgName
-							if preloaded {
-								if exportName, ok := p.prog.PackageExport(fullName); ok {
-									p.pkg.SetExport(fullName, exportName)
-								}
-							} else {
-								p.processLinknameByDoc(decl.Doc, fullName, inPkgName, true, true)
-							}
-						}
-					}
-				case token.CONST:
-					fallthrough
-				case token.TYPE:
-					p.collectSkipNamesByDoc(decl.Doc)
-				case token.IMPORT:
-					if doc := decl.Doc; doc != nil {
-						if n := len(doc.List); n > 0 {
-							line := doc.List[n-1].Text
-							if p.collectSkipNames(line) {
-								// Deprecate on import since conflict with cgo
-								fmt.Fprintf(os.Stderr, "DEPRECATED: llgo:skip on import is deprecated %v\n", line)
-							}
-						}
-					}
+func (p *context) initDirectives(pkgPath string) {
+	// Every compile entry prepares records before constructing its context.
+	records := p.prog.PackageDirectives(p.goTyps)
+	for _, r := range records.Functions {
+		if records.Names[r.Name] == r && r.ExportName != "" {
+			p.pkg.SetExport(pkgPath+"."+r.Name, r.ExportName)
+		}
+	}
+	for _, r := range records.Variables {
+		if records.Names[r.Name] == r && r.ExportName != "" {
+			p.pkg.SetExport(pkgPath+"."+r.Name, r.ExportName)
+		}
+	}
+	p.skipall = records.Skip.All
+	for _, name := range records.Skip.Names {
+		p.skips[name] = none{}
+	}
+	for _, file := range records.Files {
+		for _, node := range file.Syntax.Decls {
+			if d, ok := node.(*ast.GenDecl); ok && d.Tok == token.IMPORT {
+				g := file.Group(d.Doc)
+				if g.LastSkip {
+					fmt.Fprintf(os.Stderr, "DEPRECATED: llgo:skip on import is deprecated %v\n", g.LastLine)
 				}
 			}
 		}
 	}
 }
 
-// Collect skip names and skip other annotations, such as go: and llgo:
-// llgo:skip symbol1 symbol2 ...
-// llgo:skipall
-func (p *context) collectSkipNames(line string) bool {
-	const (
-		llgo1   = "//llgo:"
-		llgo2   = "// llgo:"
-		go1     = "//go:"
-		skip    = "skip"
-		skipAll = "skipall"
-	)
-	if strings.HasPrefix(line, go1) {
-		return true
+func (p *context) applyLegacyLink(r directive.LegacyLink, f func(string, bool) (string, bool, bool)) int {
+	if !r.Valid {
+		return r.Status
 	}
-	var skipLine string
-	if strings.HasPrefix(line, llgo1) {
-		skipLine = line[len(llgo1):]
-	} else if strings.HasPrefix(line, llgo2) {
-		skipLine = line[len(llgo2):]
+	if full, _, ok := f(r.Local, r.Export); ok {
+		p.prog.SetLinkname(full, r.Target)
+		if r.Export {
+			p.pkg.SetExport(full, r.Target)
+		}
 	} else {
-		return false
-	}
-	if strings.HasPrefix(skipLine, skip) {
-		p.collectSkip(skipLine, len(skip))
-	}
-	return true
-}
-
-func (p *context) collectSkipNamesByDoc(doc *ast.CommentGroup) {
-	if doc != nil {
-		for n := len(doc.List) - 1; n >= 0; n-- {
-			line := doc.List[n].Text
-			if !p.collectSkipNames(line) {
-				break
-			}
+		if r.Export && p.options.ExportRename {
+			return r.Status
 		}
-	}
-}
-
-func (p *context) collectSkip(line string, prefix int) {
-	line = line[prefix:]
-	if line == "all" {
-		p.skipall = true
-		return
-	}
-	if len(line) == 0 || line[0] != ' ' {
-		return
-	}
-	names := strings.Split(line[1:], " ")
-	for _, name := range names {
-		if name != "" {
-			p.skips[name] = none{}
+		if r.Export {
+			panic(fmt.Sprintf("export comment has wrong name %q", r.Local))
 		}
+		fmt.Fprintln(os.Stderr, "==>", r.Raw)
+		fmt.Fprintf(os.Stderr, "llgo: linkname %s not found and ignored\n", r.Local)
 	}
-}
-
-// collectDeclarationDirectives caches source metadata needed after the syntax
-// pass. funcPos is token.NoPos for non-function declarations.
-func collectDeclarationDirectives(prog llssa.Program, fset *token.FileSet, doc *ast.CommentGroup, fullName, inPkgName string, funcPos token.Pos) {
-	_, _ = collectDeclarationDirectivesWithOptions(prog, fset, doc, fullName, inPkgName, funcPos, Options{})
-}
-
-func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.FileSet, doc *ast.CommentGroup, fullName, inPkgName string, funcPos token.Pos, options Options) (bool, error) {
-	directives := directive.ParseGroup(doc)
-	linkCollected := false
-	hasClosureEnv := false
-	wasmImportSeen := false
-	for n := len(directives) - 1; n >= 0; n-- {
-		item := directives[n]
-		switch item.Name {
-		case "go:linkname", "llgo:link":
-			if linkCollected {
-				continue
-			}
-			fields := strings.Fields(item.Args)
-			if len(fields) >= 2 && fields[0] == inPkgName {
-				prog.SetLinkname(fullName, strings.Join(fields[1:], " "))
-				linkCollected = true
-			}
-		case "export":
-			if linkCollected || item.Args == "" {
-				continue
-			}
-			if item.Args != inPkgName && !options.ExportRename {
-				return false, fmt.Errorf("export comment has wrong name %q", item.Args)
-			}
-			prog.SetLinkname(fullName, item.Args)
-			prog.SetPackageExport(fullName, item.Args)
-			linkCollected = true
-		case "llgo:env":
-			if funcPos.IsValid() {
-				hasClosureEnv = true
-			}
-		case "go:wasmimport":
-			if !funcPos.IsValid() || wasmImportSeen {
-				continue
-			}
-			wasmImportSeen = true
-			fields := strings.Fields(item.Args)
-			if len(fields) == 2 {
-				prog.SetWasmImport(fullName, fields[0], fields[1])
-			}
-		}
-	}
-	if hasClosureEnv {
-		prog.SetClosureEnvDirective(fset, fullName, funcPos)
-	}
-	return linkCollected, nil
-}
-
-// collectGoLinknames follows cmd/compile's package-scoped go:linkname behavior.
-func collectGoLinknames(prog llssa.Program, comments []*ast.CommentGroup, syms map[string]string) {
-	const prefix = "//go:linkname "
-	for _, group := range comments {
-		for _, comment := range group.List {
-			if !strings.HasPrefix(comment.Text, prefix) {
-				continue
-			}
-			fields := strings.Fields(comment.Text[len(prefix):])
-			if len(fields) < 2 {
-				continue
-			}
-			if fullName, ok := syms[fields[0]]; ok {
-				prog.SetLinkname(fullName, strings.Join(fields[1:], " "))
-			}
-		}
-	}
-}
-
-func (p *context) processLinknameByDoc(doc *ast.CommentGroup, fullName, inPkgName string, isVar, allowExport bool) bool {
-	if doc != nil {
-		for n := len(doc.List) - 1; n >= 0; n-- {
-			line := doc.List[n].Text
-			ret := p.initLinkname(line, allowExport, func(name string, isExport bool) (_ string, _, ok bool) {
-				return fullName, isVar, name == inPkgName || (isExport && p.options.ExportRename)
-			})
-			if ret != unknownDirective {
-				return ret == hasLinkname
-			}
-		}
-	}
-	return false
-}
-
-func (p *context) processNoInterfaceByDoc(doc *ast.CommentGroup, fullName string) {
-	if doc == nil {
-		return
-	}
-	for n := len(doc.List) - 1; n >= 0; n-- {
-		line := doc.List[n].Text
-		if line == "//go:nointerface" {
-			p.prog.SetNoInterfaceMethod(fullName)
-			return
-		}
-		if !strings.HasPrefix(line, "//go:") {
-			return
-		}
-	}
-}
-
-const (
-	noDirective = iota
-	hasLinkname
-	unknownDirective = -1
-)
-
-func (p *context) initLinkname(line string, allowExport bool, f func(inPkgName string, isExport bool) (fullName string, isVar, ok bool)) int {
-	const (
-		linkname  = "//go:linkname "
-		llgolink  = "//llgo:link "
-		llgolink2 = "// llgo:link "
-		export    = "//export "
-		directive = "//go:"
-	)
-	if strings.HasPrefix(line, linkname) {
-		p.initLink(line, len(linkname), false, f)
-		return hasLinkname
-	} else if strings.HasPrefix(line, llgolink2) {
-		p.initLink(line, len(llgolink2), false, f)
-		return hasLinkname
-	} else if strings.HasPrefix(line, llgolink) {
-		p.initLink(line, len(llgolink), false, f)
-		return hasLinkname
-	} else if allowExport && strings.HasPrefix(line, export) {
-		// rewrite //export FuncName to //export FuncName FuncName
-		funcName := strings.TrimSpace(line[len(export):])
-		line = line + " " + funcName
-		p.initLink(line, len(export), true, f)
-		return hasLinkname
-	} else if strings.HasPrefix(line, directive) {
-		// skip unknown annotation but continue to parse the next annotation
-		return unknownDirective
-	}
-	return noDirective
-}
-
-func (p *context) initLink(line string, prefix int, export bool, f func(inPkgName string, isExport bool) (fullName string, isVar, ok bool)) {
-	text := strings.TrimSpace(line[prefix:])
-	if idx := strings.IndexByte(text, ' '); idx > 0 {
-		inPkgName := text[:idx]
-		if fullName, _, ok := f(inPkgName, export); ok {
-			link := strings.TrimLeft(text[idx+1:], " ")
-			p.prog.SetLinkname(fullName, link)
-			if export {
-				p.pkg.SetExport(fullName, link)
-			}
-		} else {
-			// Export with different names already processed by initLinknameByDoc
-			if export && p.options.ExportRename {
-				return
-			}
-			if export {
-				panic(fmt.Sprintf("export comment has wrong name %q", inPkgName))
-			}
-			fmt.Fprintln(os.Stderr, "==>", line)
-			fmt.Fprintf(os.Stderr, "llgo: linkname %s not found and ignored\n", inPkgName)
-		}
-	}
-}
-
-func recvTypeName(typ ast.Expr) string {
-retry:
-	switch t := typ.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.IndexExpr:
-		return trecvTypeName(t.X, t.Index)
-	case *ast.IndexListExpr:
-		return trecvTypeName(t.X, t.Indices...)
-	case *ast.ParenExpr:
-		typ = t.X
-		goto retry
-	}
-	panic("unreachable")
-}
-
-// TODO(xsw): support generic type
-func trecvTypeName(t ast.Expr, indices ...ast.Expr) string {
-	_ = indices
-	return t.(*ast.Ident).Name
+	return r.Status
 }
 
 // inPkgName:
@@ -492,18 +264,8 @@ func trecvTypeName(t ast.Expr, indices ...ast.Expr) string {
 // fullName:
 // - func: pkg.name
 // - method: pkg.(T).name, pkg.(*T).name
-func astFuncName(pkgPath string, fn *ast.FuncDecl) (fullName, inPkgName string) {
-	name := fn.Name.Name
-	if recv := fn.Recv; recv != nil && len(recv.List) == 1 {
-		var method string
-		t := recv.List[0].Type
-		if tp, ok := t.(*ast.StarExpr); ok {
-			method = "(*" + recvTypeName(tp.X) + ")." + name
-		} else {
-			method = recvTypeName(t) + "." + name
-		}
-		return pkgPath + "." + method, method
-	}
+func astFuncName(pkgPath string, fn *ast.FuncDecl) (string, string) {
+	name := directive.FuncName(fn)
 	return pkgPath + "." + name, name
 }
 
@@ -713,7 +475,9 @@ func extractTrampolineCName(name string) string {
 	return base
 }
 
-func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
+func (p *context) funcName(source sourceFunction) (*types.Package, string, int, *directive.FunctionDecl) {
+	fn := source.SSA
+	decl := source.Decl
 	var pkg *types.Package
 	var orgName string
 	if origin := fn.Origin(); origin != nil {
@@ -723,14 +487,14 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 	} else {
 		fname := fn.Name()
 		if checkCgo(fname) && !cgoIgnored(fname) {
-			return nil, fname, llgoInstr
+			return nil, fname, llgoInstr, decl
 		}
 		if strings.HasPrefix(fname, "_cgoexp_") {
-			return nil, fname, ignoredFunc
+			return nil, fname, ignoredFunc, decl
 		}
 		if isCgoExternSymbol(fn) {
 			if _, ok := llgoInstrs[fname]; ok {
-				return nil, fname, llgoInstr
+				return nil, fname, llgoInstr, decl
 			}
 		}
 		if fnPkg := fn.Pkg; fnPkg != nil {
@@ -747,25 +511,42 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 		p.ensureLoaded(pkg)
 		orgName = funcName(pkg, fn, false)
 	}
-	if v, ok := p.prog.Linkname(orgName); ok {
+	obj := fn.Object()
+	// Promoted method wrappers can expose the embedded method's object. Their
+	// receiver and symbol belong to the wrapper, so do not inherit its linkname.
+	if fn.Origin() == nil && fn.Synthetic != "" && fn.Syntax() == nil {
+		obj = nil
+	}
+	functionObj, _ := obj.(*types.Func)
+	decl = p.callableDeclaration(pkg, functionObj, strings.TrimPrefix(orgName, llssa.PathOf(pkg)+"."), decl)
+	var link string
+	var linked bool
+	// Package declarations carry a name even when they have no link directive.
+	// Unnamed standalone snapshots contain only source properties.
+	if decl != nil && decl.Name != "" {
+		link, linked = decl.Linkname, decl.HasLinkname
+	} else {
+		link, linked = p.prog.LinknameFor(p.directivePackage(pkg), obj, orgName)
+	}
+	if v, ok := link, linked; ok {
 		if p.options.CExportWrappers {
 			if export, ok := p.pkg.ExportFuncs()[orgName]; ok && export == v {
-				return pkg, funcName(pkg, fn, false), goFunc
+				return pkg, funcName(pkg, fn, false), goFunc, decl
 			}
 		}
 		if strings.HasPrefix(v, "C.") {
-			return nil, v[2:], cFunc
+			return nil, v[2:], cFunc, decl
 		}
 		if strings.HasPrefix(v, "stdcall.") {
-			return nil, v[len("stdcall."):], stdcallFunc
+			return nil, v[len("stdcall."):], stdcallFunc, decl
 		}
 		if strings.HasPrefix(v, "py.") {
-			return pkg, v[3:], pyFunc
+			return pkg, v[3:], pyFunc, decl
 		}
 		if strings.HasPrefix(v, "llgo.") {
-			return nil, v[5:], llgoInstr
+			return nil, v[5:], llgoInstr, decl
 		}
-		return pkg, v, goFunc
+		return pkg, v, goFunc, decl
 	}
 	// Stdlib compiler intrinsics that are defined as `panic("intrinsic")` in
 	// source form. LLGo doesn't run Go escape analysis, so we can lower these to
@@ -773,7 +554,7 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 	//
 	// See: $(GOROOT)/src/hash/maphash/maphash.go: escapeForHash.
 	if orgName == "hash/maphash.escapeForHash" {
-		return nil, "skip", llgoInstr
+		return nil, "skip", llgoInstr, decl
 	}
 	// The 386 C ABI returns floating-point values through x87. Loading a
 	// signaling NaN into x87 quiets it, so a normal call to the standard
@@ -783,16 +564,16 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 	if target := p.prog.Target(); target != nil && target.GOARCH == "386" {
 		switch orgName {
 		case "math.Float32frombits":
-			return nil, "float32FromBits", llgoInstr
+			return nil, "float32FromBits", llgoInstr, decl
 		case "math.Float32bits":
-			return nil, "float32Bits", llgoInstr
+			return nil, "float32Bits", llgoInstr, decl
 		case "math.Float64frombits":
-			return nil, "float64FromBits", llgoInstr
+			return nil, "float64FromBits", llgoInstr, decl
 		case "math.Float64bits":
-			return nil, "float64Bits", llgoInstr
+			return nil, "float64Bits", llgoInstr, decl
 		}
 	}
-	return pkg, funcName(pkg, fn, false), goFunc
+	return pkg, funcName(pkg, fn, false), goFunc, decl
 }
 
 const (
@@ -806,7 +587,7 @@ func (p *context) varName(pkg *types.Package, v *ssa.Global) (vName string, vtyp
 	name := llssa.FullName(pkg, v.Name())
 	// TODO(lijie): need a bettery way to process linkname (maybe alias)
 	if !isCgoCfpvar(v.Name()) && !isCgoVar(v.Name()) {
-		if v, ok := p.prog.Linkname(name); ok {
+		if v, ok := p.prog.LinknameFor(p.directivePackage(pkg), v.Object(), name); ok {
 			if strings.HasPrefix(v, "stdcall.") {
 				panic(fmt.Errorf("stdcall linkname namespace applies only to functions: %s", name))
 			}
@@ -882,129 +663,100 @@ func ParsePkgSyntax(prog llssa.Program, fset *token.FileSet, pkg *types.Package,
 // ParsePkgSyntaxWithOptions collects all Program-side declaration metadata.
 // LLVM Package effects such as preserving //export symbols are applied later.
 func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *types.Package, files []*ast.File, options Options) error {
-	if pkg == nil {
+	if pkg == nil || prog.PackageSyntaxParsed(pkg) {
 		return nil
 	}
-	if prog.PackageSyntaxParsed(pkg) {
-		return nil
-	}
-	if err := validateInternalDirectives(fset, pkg.Path(), files, options.AllowInternalDirectives); err != nil {
+	index := prog.Directives()
+	sources := index.Files(files)
+	if err := validateInternalRecords(fset, pkg.Path(), sources, options.AllowInternalDirectives); err != nil {
 		return err
 	}
-	ctx := &context{prog: prog, options: options}
-	pkgPath := llssa.PathOf(pkg)
-	syms := make(map[string]string)
-	var fileComments []*ast.CommentGroup
-	for _, file := range files {
-		for _, imp := range file.Imports {
-			if imp.Path.Value == `"unsafe"` {
-				fileComments = append(fileComments, file.Comments...)
-				break
-			}
-		}
-		for _, decl := range file.Decls {
-			switch decl := decl.(type) {
+	records := directive.Collect(sources, pkg.Name() == "C", options.ExportRename)
+	path := llssa.PathOf(pkg)
+	for _, file := range sources {
+		for _, node := range file.Syntax.Decls {
+			switch decl := node.(type) {
 			case *ast.FuncDecl:
-				if err := locality.ValidateDoc(fset, decl.Doc); err != nil {
+				if err := locality.ValidateDoc(fset, decl.Doc, index); err != nil {
 					return err
 				}
-				if err := locality.ValidateFuncBody(fset, decl.Body); err != nil {
+				if err := locality.ValidateFuncBody(fset, decl.Body, index); err != nil {
 					return err
 				}
-				fullName, inPkgName := astFuncName(pkgPath, decl)
-				syms[inPkgName] = fullName
-				hasLinkname, err := collectDeclarationDirectivesWithOptions(prog, fset, decl.Doc, fullName, inPkgName, decl.Pos(), options)
-				if err != nil {
-					return err
+				r := records.Functions[decl]
+				if r.Err != nil {
+					return r.Err
 				}
-				if !hasLinkname && pkg.Name() == "C" && decl.Recv == nil && token.IsExported(inPkgName) {
-					exportName := strings.TrimPrefix(inPkgName, "X")
-					prog.SetLinkname(fullName, exportName)
-					prog.SetPackageExport(fullName, exportName)
+				full := path + "." + r.Name
+				if r.HasLinkname {
+					prog.SetLinkname(full, r.Linkname)
 				}
-				ctx.processNoInterfaceByDoc(decl.Doc, fullName)
+				if records.Names[r.Name] == r && r.ExportName != "" {
+					prog.SetPackageExport(full, r.ExportName)
+				}
+				if r.NoInterface {
+					prog.SetNoInterfaceMethod(full)
+				}
+				if r.ClosureEnv {
+					prog.SetClosureEnvDirective(fset, full, decl.Pos())
+				}
+				if w := r.WasmImport; w != nil {
+					prog.SetWasmImport(full, w.Module, w.Name)
+				}
 			case *ast.GenDecl:
 				if decl.Tok == token.VAR {
 					for _, spec := range decl.Specs {
-						for _, name := range spec.(*ast.ValueSpec).Names {
-							syms[name.Name] = pkgPath + "." + name.Name
-						}
-					}
-					if len(decl.Specs) == 1 {
-						if names := decl.Specs[0].(*ast.ValueSpec).Names; len(names) == 1 {
-							inPkgName := names[0].Name
-							if _, err := collectDeclarationDirectivesWithOptions(prog, fset, decl.Doc, pkgPath+"."+inPkgName, inPkgName, token.NoPos, options); err != nil {
-								return err
+						for _, id := range spec.(*ast.ValueSpec).Names {
+							r := records.Variables[id]
+							if r.Err != nil {
+								return r.Err
+							}
+							if r.HasLinkname {
+								prog.SetLinkname(path+"."+r.Name, r.Linkname)
+							}
+							if records.Names[r.Name] == r && r.ExportName != "" {
+								prog.SetPackageExport(path+"."+r.Name, r.ExportName)
 							}
 						}
 					}
-					vars, err := locality.ScanPackageVar(fset, decl)
+					vars, err := locality.ScanPackageVar(fset, decl, index)
 					if err != nil {
 						return err
 					}
-					for _, variable := range vars {
-						prog.DeclareLocality(pkg, variable.Name, variable.Info)
+					for _, v := range vars {
+						prog.DeclareLocality(pkg, v.Name, v.Info)
 					}
-					continue
-				}
-				if err := locality.ValidateNonPackageVar(fset, decl); err != nil {
-					return err
-				}
-				if decl.Tok == token.TYPE {
-					handleTypeDecl(prog, pkg, decl)
+				} else {
+					if err := locality.ValidateNonPackageVar(fset, decl, index); err != nil {
+						return err
+					}
+					if decl.Tok == token.TYPE {
+						for _, spec := range decl.Specs {
+							r := records.Types[spec.(*ast.TypeSpec)]
+							if r.Background != "" {
+								prog.SetTypeBackground(pkg.Path()+"."+r.Name, toBackground(r.Background))
+							}
+						}
+					}
 				}
 			}
 		}
 	}
-	collectGoLinknames(prog, fileComments, syms)
+	prog.SetPackageDirectives(pkg, records)
 	prog.MarkPackageSyntaxParsed(pkg)
 	return nil
 }
 
-func validateInternalDirectives(fset *token.FileSet, pkgPath string, files []*ast.File, allow bool) error {
+func validateInternalRecords(fset *token.FileSet, pkgPath string, files []*directive.File, allow bool) error {
 	if allow || pkgPath == env.LLGoRuntimePkg || strings.HasPrefix(pkgPath, env.LLGoRuntimePkg+"/") {
 		return nil
 	}
 	for _, file := range files {
-		for _, group := range file.Comments {
-			for _, comment := range group.List {
-				d, ok := directive.Parse(comment)
-				if ok && strings.HasPrefix(d.Name, "llgointernal:") {
-					return fmt.Errorf("%s: //%s is only allowed in the Go standard library or %s", fset.Position(d.Pos), d.Name, env.LLGoRuntimePkg)
-				}
-			}
+		for _, d := range file.Internal {
+			return fmt.Errorf("%s: //%s is only allowed in the Go standard library or %s", fset.Position(d.Pos), d.Name, env.LLGoRuntimePkg)
 		}
 	}
 	return nil
-}
-
-func handleTypeDecl(prog llssa.Program, pkg *types.Package, decl *ast.GenDecl) {
-	if len(decl.Specs) == 1 {
-		if bg := typeBackground(decl.Doc); bg != "" {
-			inPkgName := decl.Specs[0].(*ast.TypeSpec).Name.Name
-			prog.SetTypeBackground(pkg.Path()+"."+inPkgName, toBackground(bg))
-		}
-	}
-}
-
-const (
-	llgotype  = "//llgo:type "
-	llgotype2 = "// llgo:type "
-)
-
-func typeBackground(doc *ast.CommentGroup) (bg string) {
-	if doc != nil {
-		if n := len(doc.List); n > 0 {
-			line := doc.List[n-1].Text
-			if strings.HasPrefix(line, llgotype) {
-				return strings.TrimSpace(line[len(llgotype):])
-			}
-			if strings.HasPrefix(line, llgotype2) {
-				return strings.TrimSpace(line[len(llgotype2):])
-			}
-		}
-	}
-	return
 }
 
 func toBackground(bg string) llssa.Background {
@@ -1036,3 +788,47 @@ func replaceGoName(v string, pos int) string {
 }
 
 // -----------------------------------------------------------------------------
+
+// directivePackage selects the effective declaration view for a package patch.
+// Source properties still belong to each individual source declaration.
+func (p *context) directivePackage(pkg *types.Package) *types.Package {
+	if pkg != nil {
+		if patch, ok := p.patches[llssa.PathOf(pkg)]; ok && patch.Types != nil {
+			return patch.Types
+		}
+	}
+	return pkg
+}
+
+// prepareImportSources is the standalone entrypoint's discovery boundary.
+// All dependency source fallback happens here, before lowering begins.
+func (p *context) prepareImportSources() {
+	seen := make(map[*types.Package]bool)
+	var visit func(*types.Package)
+	visit = func(pkg *types.Package) {
+		if pkg == nil || seen[pkg] {
+			return
+		}
+		seen[pkg] = true
+		if pkg != p.goTyps {
+			p.prepareImportSource(pkg)
+		}
+		for _, dep := range pkg.Imports() {
+			visit(dep)
+		}
+	}
+	for _, pkg := range p.goProg.AllPackages() {
+		visit(pkg.Pkg)
+		// Standalone SSA clients can supply dependency bodies without their
+		// AST files. Snapshot those declarations at the same boundary.
+		funcs, _ := collectRuntimeCallerFunctions(pkg)
+		for fn := range funcs {
+			if origin := fn.Origin(); origin != nil {
+				fn = origin
+			}
+			if decl, ok := fn.Syntax().(*ast.FuncDecl); ok {
+				p.prog.Directives().Function(decl)
+			}
+		}
+	}
+}

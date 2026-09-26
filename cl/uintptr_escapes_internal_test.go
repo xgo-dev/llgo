@@ -3,6 +3,7 @@
 package cl
 
 import (
+	"github.com/xgo-dev/llgo/internal/directive"
 	"go/ast"
 	"go/importer"
 	"go/parser"
@@ -139,7 +140,7 @@ func convert(p unsafe.Pointer) { named(Word(uintptr(p))) }
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fn := pkg.Func(test.name)
-			roots := uintptrEscapesRoots(fn)
+			roots := testUintptrEscapesRoots(fn)
 			if len(roots) != test.want {
 				t.Fatalf("roots = %v, want %d", roots, test.want)
 			}
@@ -195,17 +196,17 @@ func unmarkedBound() { f := Outer{}.Ordinary; f(uintptr(unsafe.Pointer(new(int))
 func invoked(i interface{ Marked(uintptr) }, p unsafe.Pointer) { i.Marked(uintptr(p)) }
 `)
 	for _, name := range []string{"method", "expression", "bound"} {
-		if roots := uintptrEscapesRoots(pkg.Func(name)); len(roots) != 1 {
+		if roots := testUintptrEscapesRoots(pkg.Func(name)); len(roots) != 1 {
 			t.Errorf("%s roots = %v, want one conversion source", name, roots)
 		}
 	}
-	if hasUintptrEscapesDirective(nil) {
+	if hasUintptrEscapesDirective(nil, nil) {
 		t.Fatal("nil callee has directive")
 	}
-	if roots := uintptrEscapesRoots(pkg.Func("unmarkedBound")); len(roots) != 0 {
+	if roots := testUintptrEscapesRoots(pkg.Func("unmarkedBound")); len(roots) != 0 {
 		t.Fatalf("ordinary bound method inherited pointer semantics: %v", roots)
 	}
-	if roots := uintptrEscapesRoots(pkg.Func("invoked")); len(roots) != 0 {
+	if roots := testUintptrEscapesRoots(pkg.Func("invoked")); len(roots) != 0 {
 		t.Fatalf("interface call inherited implementation pragma: %v", roots)
 	}
 }
@@ -229,13 +230,23 @@ func ordinary() { dep.Ordinary(uintptr(unsafe.Pointer(new(int)))) }
 func ordinaryGeneric() { dep.OrdinaryGeneric[int](uintptr(unsafe.Pointer(new(int)))) }
 `)
 	for _, name := range []string{"direct", "generic"} {
-		if roots := uintptrEscapesRoots(pkg.Func(name)); len(roots) != 1 {
+		if roots := testUintptrEscapesRoots(pkg.Func(name)); len(roots) != 1 {
 			t.Errorf("cross-package %s roots = %v, want one conversion source", name, roots)
 		}
 	}
 	for _, name := range []string{"ordinary", "ordinaryGeneric"} {
-		if roots := uintptrEscapesRoots(pkg.Func(name)); len(roots) != 0 {
+		if roots := testUintptrEscapesRoots(pkg.Func(name)); len(roots) != 0 {
 			t.Fatalf("ordinary imported %s inherited pointer semantics: %v", name, roots)
 		}
 	}
+}
+
+func testUintptrEscapesRoots(fn *ssa.Function) map[ssa.Value]struct{} {
+	index := new(directive.Index)
+	return uintptrEscapesRoots(fn, func(f *ssa.Function) bool {
+		if d, ok := f.Syntax().(*ast.FuncDecl); ok {
+			return index.Group(d.Doc).Function.UintptrEscapes
+		}
+		return false
+	})
 }

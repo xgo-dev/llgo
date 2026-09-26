@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/goplus/gogen/packages"
+	"github.com/xgo-dev/llgo/internal/directive"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	gossa "golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -200,7 +201,7 @@ func generic[T any]() { runtime.Caller(0) }
 func genericCaller() { generic[int]() }
 func plain() {}
 `)
-	callerCaches := NewCallerTracking()
+	callerCaches := NewCallerTracking(new(directive.Index))
 	if !packageUsesRuntimeCaller(callerCaches, ssapkg) {
 		t.Fatal("package should report runtime caller usage")
 	}
@@ -345,7 +346,7 @@ func pinned() {}
 
 func unrelated() {}
 `)
-	tracking := NewCallerTracking()
+	tracking := NewCallerTracking(new(directive.Index))
 	set := runtimeCallerFuncSet(tracking, ssapkg)
 	for _, name := range []string{"staticOwner", "staticLeaf", "staticNested", "deferredLeaf", "deferredNested", "closureObserverOwner", "closureDeferredLeaf", "dynamicOwner", "dynamicEntry", "dynamicLeaf", "unresolvedOwner", "unresolvedCandidate", "unresolvedCandidate2"} {
 		if !set[ssapkg.Func(name)] {
@@ -551,7 +552,7 @@ func storePanicLeaf(p *int) {
 }
 
 func TestRuntimeCallerAnalysisEdgeCases(t *testing.T) {
-	callerCaches := NewCallerTracking()
+	callerCaches := NewCallerTracking(new(directive.Index))
 	if fnUsesRuntimeCaller(callerCaches, nil) {
 		t.Fatal("nil function should not use runtime caller metadata")
 	}
@@ -674,7 +675,7 @@ type T struct{}
 func (T) Call() { runtime.Caller(0) }
 var _ = T{}
 `)
-	methodOnlySet := runtimeCallerFuncSet(NewCallerTracking(), methodOnlyPkg)
+	methodOnlySet := runtimeCallerFuncSet(NewCallerTracking(new(directive.Index)), methodOnlyPkg)
 	if methodOnlySet == nil {
 		t.Fatal("a method calling runtime.Caller must be tracked (slog.(*Logger).Info escaped exactly this way)")
 	}
@@ -738,7 +739,7 @@ func f() { runtime.Caller(0) }
 				fn:                 fn,
 				goFn:               goFn,
 				trackCallerFrames:  tt.track,
-				runtimeCallerFuncs: runtimeCallerFuncSet(NewCallerTracking(), ssapkg),
+				runtimeCallerFuncs: runtimeCallerFuncSet(NewCallerTracking(new(directive.Index)), ssapkg),
 			}
 			if got := ctx.shouldTrackCallerFrames(); got != tt.want {
 				t.Fatalf("shouldTrackCallerFrames() = %v, want %v", got, tt.want)
@@ -946,7 +947,7 @@ func top() {
 		goFn:               ssapkg.Func("top"),
 		fset:               token.NewFileSet(),
 		trackCallerFrames:  true,
-		runtimeCallerFuncs: runtimeCallerFuncSet(NewCallerTracking(), ssapkg),
+		runtimeCallerFuncs: runtimeCallerFuncSet(NewCallerTracking(new(directive.Index)), ssapkg),
 	}
 	var b llssa.Builder
 	ctx.pushCallerLocationFrame(b, nil)
@@ -1295,7 +1296,7 @@ func Logs() bool { return dep.Where() }
 
 func Plain() int { return dep.Quiet() }
 `)
-	crossCaches := NewCallerTracking()
+	crossCaches := NewCallerTracking(new(directive.Index))
 	if !runtimeCallerBaseSet(crossCaches, depSSA)[depSSA.Func("Where")] {
 		t.Fatal("dep.Where must be in its own package's base set")
 	}
@@ -1322,7 +1323,7 @@ func pinned() {}
 
 func helper() {}
 `)
-	set := runtimeCallerFuncSet(NewCallerTracking(), ssapkg)
+	set := runtimeCallerFuncSet(NewCallerTracking(new(directive.Index)), ssapkg)
 	for _, name := range []string{"main", "init", "pinned"} {
 		if !set[ssapkg.Func(name)] {
 			t.Fatalf("%s must be pinned in the tracking set", name)

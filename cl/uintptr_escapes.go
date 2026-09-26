@@ -29,7 +29,7 @@ import (
 // the callee can publish its uintptr parameters. Go/defer argument records and
 // variadic backing arrays are scanned heap allocations and retain the values
 // while the call is pending; the callee roots cover the executing call.
-func uintptrEscapesRoots(fn *ssa.Function) map[ssa.Value]struct{} {
+func uintptrEscapesRoots(fn *ssa.Function, lookup func(*ssa.Function) bool) map[ssa.Value]struct{} {
 	roots := make(map[ssa.Value]struct{})
 	// Repeated calls in one function share immutable directive facts, without
 	// introducing mutable state shared by parallel package backends.
@@ -37,7 +37,7 @@ func uintptrEscapesRoots(fn *ssa.Function) map[ssa.Value]struct{} {
 	hasDirective := func(callee *ssa.Function) bool {
 		value, ok := directives[callee]
 		if !ok {
-			value = hasUintptrEscapesDirective(callee)
+			value = hasUintptrEscapesDirective(callee, lookup)
 			directives[callee] = value
 		}
 		return value
@@ -117,7 +117,7 @@ func uintptrEscapesRoots(fn *ssa.Function) map[ssa.Value]struct{} {
 	return roots
 }
 
-func hasUintptrEscapesDirective(fn *ssa.Function) bool {
+func hasUintptrEscapesDirective(fn *ssa.Function, lookup func(*ssa.Function) bool) bool {
 	seen := make(map[*ssa.Function]bool)
 	var visit func(*ssa.Function) bool
 	visit = func(fn *ssa.Function) bool {
@@ -130,7 +130,7 @@ func hasUintptrEscapesDirective(fn *ssa.Function) bool {
 		if origin := fn.Origin(); origin != nil && visit(origin) {
 			return true
 		}
-		if hasFuncDirective(fn, "go:uintptrescapes") {
+		if lookup(fn) {
 			return true
 		}
 		// SSA promoted-method wrappers, thunks (method expressions), and

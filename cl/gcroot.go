@@ -53,7 +53,10 @@ func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
 		typ := p.type_(value.Type(), llssa.InGo)
 		return p.prog.GCRootCount(typ) != 0
 	}, p.isGCSafepoint)
-	for value := range uintptrEscapesRoots(fn) {
+	for value := range uintptrEscapesRoots(fn, func(f *ssa.Function) bool {
+		decl := p.sourceFunction(f).Decl
+		return decl != nil && decl.UintptrEscapes
+	}) {
 		planned[value] = struct{}{}
 	}
 	if p.safepointEntry {
