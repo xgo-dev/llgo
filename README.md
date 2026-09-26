@@ -330,6 +330,48 @@ llgo run .
 
 Use the platform package manager instructions below whenever possible.
 
+### with Pixi (development)
+
+[Pixi](https://pixi.sh/latest/installation/) is a single executable; it
+installs the versions pinned in [the development lock file](dev/pixi.lock)
+without a separate Conda installation. From the repository root:
+
+```sh
+pixi shell --manifest-path dev/pixi.toml
+go build ./cmd/llgo
+./llgo version
+```
+
+Pixi runs natively on Linux x86-64/ARM64, macOS Intel/ARM64, and Windows
+x86-64. On Windows, run `llgo.exe version` in PowerShell. It provides the
+compiler toolchain and common native libraries; specialized C packages such as
+cJSON are outside the default environment. See [development tooling](dev/README.md)
+for the platform matrix and CI checks.
+
+### with Nix (development)
+
+The [Nix flake](dev/flake.nix) provides Go 1.27, LLVM/Clang/LLD 22, and LLGo's
+native build dependencies. Enable Nix's `nix-command` and `flakes` features if
+your installation requires it. From the repository root:
+
+```sh
+nix develop ./dev
+go build ./cmd/llgo
+./llgo version
+```
+
+The lock file in `dev/` pins the package versions so the same development environment can
+be recreated later. Intel macOS uses the Nixpkgs 26.05 Darwin branch, which is
+supported through the end of 2026; newer Nixpkgs no longer supports that
+platform. The shell uses the LLVM bindings' `byollvm` build tag to find
+Nix-provided headers and libraries. If you pass `-tags` explicitly to a Go
+command, include `byollvm` in that tag list.
+
+Nix development shells run natively on Linux and macOS (x86-64 and ARM64).
+On Windows, use Nix inside WSL2. NixOS itself is a Linux distribution and is
+not required for this shell. Python, LLDB, and target-specific cross-compilers
+are optional and are not included in the default shell.
+
 ### on macOS
 
 <!-- embedme doc/_readme/scripts/install_macos.sh#L2-L1000 -->

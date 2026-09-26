@@ -1,0 +1,52 @@
+name: Pixi development environment
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ["**"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  unix:
+    name: Pixi (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - macos-15
+          - macos-15-intel
+    steps:
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
+        with:
+          pixi-version: v0.81.0
+          working-directory: dev
+          frozen: true
+      - name: Check and build in the Pixi environment
+        run: pixi run --manifest-path dev/pixi.toml --frozen bash "$GITHUB_WORKSPACE/dev/check_devenv.sh"
+
+  windows:
+    name: Pixi (Windows 2025 native)
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
+        with:
+          pixi-version: v0.81.0
+          working-directory: dev
+          frozen: true
+      - name: Check and build in the Pixi environment
+        shell: pwsh
+        run: pixi run --manifest-path dev/pixi.toml --frozen pwsh -File "$env:GITHUB_WORKSPACE/dev/check_devenv.ps1"

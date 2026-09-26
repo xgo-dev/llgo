@@ -1,0 +1,68 @@
+name: Nix development shell
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ["**"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  unix:
+    name: Nix (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - macos-15
+          - macos-15-intel
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - name: Check and build in the Nix shell
+        run: |
+          nix --extra-experimental-features 'nix-command flakes' flake check ./dev --no-build
+          nix --extra-experimental-features 'nix-command flakes' develop ./dev --command bash dev/check_devenv.sh
+
+  windows-wsl:
+    name: Nix (Windows 2025 / WSL2)
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7.0.0
+        with:
+          distribution: Ubuntu-24.04
+          wsl-version: '2'
+          wsl-shell-user: runner
+          additional-packages: curl xz-utils ca-certificates git
+      - name: Prepare the Nix store
+        shell: wsl-bash -u root {0}
+        run: |
+          mkdir -p /nix
+          chown runner:runner /nix
+      - name: Install Nix in WSL2
+        shell: wsl-bash {0}
+        run: |
+          curl --fail --location --silent --show-error https://nixos.org/nix/install -o /tmp/install-nix.sh
+          sh /tmp/install-nix.sh --no-daemon --yes --no-channel-add --no-modify-profile
+          "$HOME/.nix-profile/bin/nix" --version
+      - name: Check and build in the Nix shell
+        shell: wsl-bash {0}
+        run: |
+          export PATH="$HOME/.nix-profile/bin:$PATH"
+          mkdir -p "$HOME/llgo"
+          cp -R . "$HOME/llgo/"
+          cd "$HOME/llgo"
+          nix --extra-experimental-features 'nix-command flakes' flake check ./dev --no-build
+          nix --extra-experimental-features 'nix-command flakes' develop ./dev --command bash dev/check_devenv.sh

@@ -1,0 +1,10 @@
+@echo off
+set "GOFLAGS=-tags=byollvm"
+set "CGO_ENABLED=1"
+set "CC=clang"
+set "CXX=clang++"
+set "LLVM_CONFIG=llvm-config"
+set "CGO_CXXFLAGS=-std=c++17"
+set "LLGO_ROOT=%PIXI_PROJECT_ROOT%\.."
+for /f "delims=" %%F in ('llvm-config --cflags') do set "CGO_CPPFLAGS=%%F"
+for /f "delims=" %%F in ('llvm-config --ldflags --link-shared --libs all --system-libs') do set "CGO_LDFLAGS=%%F"

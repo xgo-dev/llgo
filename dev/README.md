@@ -1,6 +1,26 @@
 # Dev tooling
 
-This directory contains scripts for running LLGo locally and inside reusable Linux dev containers.
+This directory contains reproducible host environments and scripts for running
+LLGo locally or inside reusable Linux dev containers.
+
+## Host development environments
+
+| Environment | Configuration | Native platforms | Start from the repository root |
+| --- | --- | --- | --- |
+| [Pixi](https://pixi.sh/latest/installation/) | `pixi.toml`, `pixi.lock` | Linux x86-64/ARM64, macOS Intel/ARM64, Windows x86-64 | `pixi shell --manifest-path dev/pixi.toml` |
+| [Nix](https://nix.dev/install-nix) | `flake.nix`, `flake.lock` | Linux x86-64/ARM64, macOS Intel/ARM64 | `nix develop ./dev` |
+
+Both shells provide Go 1.27, LLVM/Clang/LLD 22, and the native libraries used
+by LLGo. Pixi needs only its standalone executable; it downloads the pinned
+packages on first use. Nix runs on Windows through WSL2, while Pixi runs on
+native Windows. The Windows Pixi shell targets the x86-64 host and uses the
+system's Windows SDK and C runtime. Specialized optional packages such as
+cJSON, Python, and LLDB are not part of Pixi's default environment.
+
+CI builds LLGo and runs a small compiled program in each environment on all
+listed platforms; the Nix CI also checks Windows through WSL2.
+
+## Containers and scripts
 
 ## Prerequisites
 
