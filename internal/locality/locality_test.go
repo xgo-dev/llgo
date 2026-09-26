@@ -7,6 +7,8 @@ import (
 	"go/types"
 	"strings"
 	"testing"
+
+	"github.com/xgo-dev/llgo/internal/directive"
 )
 
 func TestKindEncodingAndNames(t *testing.T) {
@@ -68,7 +70,7 @@ var (
 )
 `)
 	decl := file.Decls[0].(*ast.GenDecl)
-	if _, err := ScanPackageVar(fset, decl); err == nil || !strings.Contains(err.Error(), "cannot apply to the same variable declaration") {
+	if _, err := ScanPackageVar(fset, decl, new(directive.Index)); err == nil || !strings.Contains(err.Error(), "cannot apply to the same variable declaration") {
 		t.Fatalf("ScanPackageVar conflict error = %v", err)
 	}
 
@@ -79,7 +81,7 @@ var (
 	first, second = 1, 2
 )
 `)
-	vars, err := ScanPackageVar(fset, file.Decls[0].(*ast.GenDecl))
+	vars, err := ScanPackageVar(fset, file.Decls[0].(*ast.GenDecl), new(directive.Index))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +136,7 @@ func TestScanPackageVarBranches(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := ScanPackageVar(nil, test.decl); err == nil || !strings.Contains(err.Error(), test.want) {
+			if _, err := ScanPackageVar(nil, test.decl, new(directive.Index)); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("ScanPackageVar error = %v, want %q", err, test.want)
 			}
 		})
@@ -144,7 +146,7 @@ func TestScanPackageVarBranches(t *testing.T) {
 		&ast.ImportSpec{},
 		&ast.ValueSpec{Names: []*ast.Ident{ast.NewIdent("Value")}},
 	}}
-	if vars, err := ScanPackageVar(nil, ordinary); err != nil || len(vars) != 0 {
+	if vars, err := ScanPackageVar(nil, ordinary, new(directive.Index)); err != nil || len(vars) != 0 {
 		t.Fatalf("ordinary ScanPackageVar = %+v, %v", vars, err)
 	}
 }
@@ -239,27 +241,24 @@ func TestDirectiveDiagnostics(t *testing.T) {
 		for _, line := range strings.Split(test.comment, "\n") {
 			doc.List = append(doc.List, &ast.Comment{Text: line})
 		}
-		if _, _, err := FromDoc(nil, doc); err == nil || !strings.Contains(err.Error(), test.want) {
+		if _, _, err := FromDoc(nil, doc, new(directive.Index)); err == nil || !strings.Contains(err.Error(), test.want) {
 			t.Fatalf("FromDoc(%q) error = %v", test.comment, err)
 		}
 	}
-	if err := ValidateDoc(nil, nil); err != nil {
+	if err := ValidateDoc(nil, nil, new(directive.Index)); err != nil {
 		t.Fatal(err)
 	}
-	if kind, _, err := FromDoc(nil, &ast.CommentGroup{List: []*ast.Comment{{Text: "//go:noinline"}}}); err != nil || kind != None {
+	if kind, _, err := FromDoc(nil, &ast.CommentGroup{List: []*ast.Comment{{Text: "//go:noinline"}}}, new(directive.Index)); err != nil || kind != None {
 		t.Fatalf("ordinary directive = %v, %v", kind, err)
 	}
-	if err := ValidateFuncBody(nil, nil); err != nil {
+	if err := ValidateFuncBody(nil, nil, new(directive.Index)); err != nil {
 		t.Fatal(err)
 	}
 	typeDecl := &ast.GenDecl{Tok: token.TYPE, Specs: []ast.Spec{
 		&ast.TypeSpec{Name: ast.NewIdent("T"), Doc: &ast.CommentGroup{List: []*ast.Comment{{Text: "//llgointernal:tls"}}}},
 	}}
-	if err := ValidateNonPackageVar(nil, typeDecl); err == nil || !strings.Contains(err.Error(), "package-level var") {
+	if err := ValidateNonPackageVar(nil, typeDecl, new(directive.Index)); err == nil || !strings.Contains(err.Error(), "package-level var") {
 		t.Fatalf("type spec validation error = %v", err)
-	}
-	if directiveIndex(nil).Group(&ast.CommentGroup{List: []*ast.Comment{{Text: "//go:noinline"}}}).Has("go:embed") {
-		t.Fatal("hasDirective matched an unrelated directive")
 	}
 }
 
@@ -303,7 +302,7 @@ var value = makeValue()
 	if err != nil {
 		t.Fatal(err)
 	}
-	vars, err := ScanPackageVar(fset, file.Decls[1].(*ast.GenDecl))
+	vars, err := ScanPackageVar(fset, file.Decls[1].(*ast.GenDecl), new(directive.Index))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,21 +453,22 @@ func parseFile(t *testing.T, src string) (*token.FileSet, *ast.File) {
 }
 
 func validateFile(fset *token.FileSet, file *ast.File) error {
+	index := new(directive.Index)
 	for _, node := range file.Decls {
 		switch decl := node.(type) {
 		case *ast.FuncDecl:
-			if err := ValidateDoc(fset, decl.Doc); err != nil {
+			if err := ValidateDoc(fset, decl.Doc, index); err != nil {
 				return err
 			}
-			if err := ValidateFuncBody(fset, decl.Body); err != nil {
+			if err := ValidateFuncBody(fset, decl.Body, index); err != nil {
 				return err
 			}
 		case *ast.GenDecl:
 			if decl.Tok == token.VAR {
-				if _, err := ScanPackageVar(fset, decl); err != nil {
+				if _, err := ScanPackageVar(fset, decl, index); err != nil {
 					return err
 				}
-			} else if err := ValidateNonPackageVar(fset, decl); err != nil {
+			} else if err := ValidateNonPackageVar(fset, decl, index); err != nil {
 				return err
 			}
 		}
