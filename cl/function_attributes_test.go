@@ -205,8 +205,8 @@ func TestFunctionAttributesPackagePatch(t *testing.T) {
 			}
 		}
 	}
-
 }
+
 func TestFunctionAttributesDoNotMergeSourceAliases(t *testing.T) {
 	goPkg, _, _ := buildGoSSAPkg(t, `package p
 import _ "unsafe"
