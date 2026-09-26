@@ -155,44 +155,58 @@ func TestFunctionAttributesImportedDeclaration(t *testing.T) {
 }
 
 func TestFunctionAttributesPackagePatch(t *testing.T) {
-	for _, preloaded := range []bool{false, true} {
-		fset := token.NewFileSet()
-		goProg := ssa.NewProgram(fset, ssa.SanityCheckFunctions)
-		build := func(path, source string) (*ssa.Package, *ast.File) {
-			file, err := parser.ParseFile(fset, path+".go", "package p\n"+source, parser.ParseComments)
+	for _, linkname := range []string{"", "patchedF"} {
+		for _, preloaded := range []bool{false, true} {
+			fset := token.NewFileSet()
+			goProg := ssa.NewProgram(fset, ssa.SanityCheckFunctions)
+			build := func(path, source string) (*ssa.Package, *ast.File) {
+				file, err := parser.ParseFile(fset, path+".go", "package p\n"+source, parser.ParseComments)
+				if err != nil {
+					t.Fatal(err)
+				}
+				info := newLocalityTypeInfo()
+				owner, err := (&types.Config{}).Check(path, fset, []*ast.File{file}, info)
+				if err != nil {
+					t.Fatal(err)
+				}
+				pkg := goProg.CreatePackage(owner, []*ast.File{file}, info, true)
+				pkg.Build()
+				return pkg, file
+			}
+			original, originalFile := build("p", "//llgo:noreturn\nfunc F() { for {} }\nfunc Call() { F() }")
+			replacement := "//llgo:cold\nfunc F() {}"
+			if linkname != "" {
+				replacement = "//llgo:link F " + linkname + "\n" + replacement
+			}
+			alternate, alternateFile := build(abi.PatchPathPrefix+"p", replacement)
+			patches := Patches{"p": {Alt: alternate, Types: typepatch.Clone(alternate.Pkg)}}
+			files := []*ast.File{originalFile, alternateFile}
+			prog := newLLSSAProg(t)
+			defer prog.Dispose()
+			options := Options{}
+			if preloaded {
+				if err := ParsePkgSyntaxWithOptions(prog, fset, patches["p"].Types, files, options); err != nil {
+					t.Fatal(err)
+				}
+				options.PreloadedSyntax = true
+			}
+			pkg, _, err := NewPackageExWithEmbedMetaOptions(prog, nil, patches, nil, original, files, nil, false, options)
 			if err != nil {
 				t.Fatal(err)
 			}
-			info := newLocalityTypeInfo()
-			owner, err := (&types.Config{}).Check(path, fset, []*ast.File{file}, info)
-			if err != nil {
-				t.Fatal(err)
+			symbol := linkname
+			if symbol == "" {
+				symbol = "p.F"
 			}
-			pkg := goProg.CreatePackage(owner, []*ast.File{file}, info, true)
-			pkg.Build()
-			return pkg, file
-		}
-		original, originalFile := build("p", "//llgo:noreturn\nfunc F() { for {} }\nfunc Call() { F() }")
-		alternate, alternateFile := build(abi.PatchPathPrefix+"p", "//llgo:cold\nfunc F() {}")
-		patches := Patches{"p": {Alt: alternate, Types: typepatch.Clone(alternate.Pkg)}}
-		files := []*ast.File{originalFile, alternateFile}
-		prog := newLLSSAProg(t)
-		defer prog.Dispose()
-		options := Options{}
-		if preloaded {
-			if err := ParsePkgSyntaxWithOptions(prog, fset, patches["p"].Types, files, options); err != nil {
-				t.Fatal(err)
+			checkFunctionAttributes(t, pkg.Module().NamedFunction(symbol), true, false)
+			caller := pkg.Module().NamedFunction("p.Call").String()
+			if !strings.Contains(caller, "@"+symbol+"(") || strings.Contains(caller, "unreachable") {
+				t.Fatalf("call did not use the replacement symbol and attributes:\n%s", caller)
 			}
-			options.PreloadedSyntax = true
 		}
-		pkg, _, err := NewPackageExWithEmbedMetaOptions(prog, nil, patches, nil, original, files, nil, false, options)
-		if err != nil {
-			t.Fatal(err)
-		}
-		checkFunctionAttributes(t, pkg.Module().NamedFunction("p.F"), true, false)
 	}
-}
 
+}
 func TestFunctionAttributesDoNotMergeSourceAliases(t *testing.T) {
 	goPkg, _, _ := buildGoSSAPkg(t, `package p
 import _ "unsafe"
