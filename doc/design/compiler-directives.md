@@ -52,7 +52,11 @@ alternate views with the same import path. Effective patch selection precedes
 linkname, type-background and nointerface lookup. Synthetic promoted-method
 wrappers do not inherit their embedded method object's linkname. Legacy string-keyed maps remain derived compatibility indexes
 for runtime names, link alias chains and existing Program APIs; source-backed
-lookups use package records first.
+lookups treat package records as authoritative, including declarations with no
+directive and names absent from the records. They consult the global indexes
+only when the package has no records, preventing attributes from leaking between
+package instances with the same path. `SetLinkname` and `SetTypeBackground` update
+the compatibility indexes without overriding package records.
 
 The refactor preserves diagnostic timing: recognition can record a malformed
 value early, while the existing owning phase reports it. It also preserves
@@ -72,7 +76,10 @@ compiler infrastructure.
 
 Standalone compiler clients may provide imported type objects without dependency
 ASTs. Dependency SSA declarations with available syntax are also snapshotted
-during preparation. The preparation phase discovers and caches legacy imported link directives
+during preparation. These function snapshots contain source properties and leave
+`Declaration` empty. Package-collected function records always have a non-empty
+`Name`, so function naming can distinguish them without another package lookup.
+The preparation phase discovers and caches legacy imported link directives
 through `Index.ReadLegacyLinks`, including failed reads. Lowering applies the
 prepared records without opening those files. Independent helper APIs may create
 a temporary Index; the normal build path passes its shared Index throughout.

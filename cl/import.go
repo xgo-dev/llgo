@@ -521,8 +521,9 @@ func (p *context) funcName(source sourceFunction) (*types.Package, string, int, 
 	decl = p.callableDeclaration(pkg, functionObj, strings.TrimPrefix(orgName, llssa.PathOf(pkg)+"."), decl)
 	var link string
 	var linked bool
-	// Standalone imported-source metadata still uses the legacy link index.
-	if decl != nil && p.prog.PackageDirectives(p.directivePackage(pkg)) != nil {
+	// Package declarations carry a name even when they have no link directive.
+	// Unnamed standalone snapshots contain only source properties.
+	if decl != nil && decl.Name != "" {
 		link, linked = decl.Linkname, decl.HasLinkname
 	} else {
 		link, linked = p.prog.LinknameFor(p.directivePackage(pkg), obj, orgName)
