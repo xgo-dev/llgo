@@ -9,81 +9,81 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// functionDirectives looks up prepared properties for a Go SSA function.
-// Generic instances use their source declaration; synthetic wrappers without
-// one do not inherit the wrapped function's directives.
-func (p *context) functionDirectives(fn *ssa.Function) directive.Function {
-	if fn == nil {
-		return directive.Function{}
-	}
-	if origin := fn.Origin(); origin != nil {
-		fn = origin
-	}
-	syntax, _ := fn.Syntax().(*ast.FuncDecl)
-	obj, _ := fn.Object().(*types.Func)
-	if syntax == nil && fn.Synthetic != "" && (obj == nil || fn.Prog.FuncValue(obj) != fn) {
-		return directive.Function{}
-	}
-	var pkg *types.Package
-	if fn.Pkg != nil {
-		pkg = fn.Pkg.Pkg
-	} else if obj != nil {
-		pkg = obj.Pkg()
-	}
-	properties, found := p.prog.FunctionDirectives(pkg, obj, syntax)
-	if !found && !p.options.PreloadedSyntax {
-		properties, _ = p.prog.Directives().LookupFunction(syntax)
-	}
-	return properties
+// sourceFunction keeps the concrete SSA body/signature with its source record.
+// Generic instances share their origin's declaration. Patch selection belongs
+// to call target resolution and never changes this association.
+type sourceFunction struct {
+	SSA  *ssa.Function
+	Decl *directive.FunctionDecl
 }
 
-func applyFunctionProperties(fn llssa.Function, properties directive.Function) {
-	if properties.Cold {
+func (p *context) sourceFunction(fn *ssa.Function) sourceFunction {
+	if source, ok := p.sourceFunctions[fn]; ok {
+		return source
+	}
+	source := sourceFunction{SSA: fn}
+	if fn != nil {
+		if origin := fn.Origin(); origin != nil {
+			fn = origin
+		}
+		syntax, _ := fn.Syntax().(*ast.FuncDecl)
+		obj, _ := fn.Object().(*types.Func)
+		if syntax != nil || fn.Synthetic == "" || obj != nil && fn.Prog.FuncValue(obj) == fn {
+			var pkg *types.Package
+			if fn.Pkg != nil {
+				pkg = fn.Pkg.Pkg
+			} else if obj != nil {
+				pkg = obj.Pkg()
+			}
+			source.Decl = p.prog.FunctionDeclaration(pkg, obj, syntax)
+			if source.Decl == nil && !p.options.PreloadedSyntax {
+				source.Decl = p.prog.Directives().FunctionDeclaration(syntax)
+			}
+		}
+	}
+	if p.sourceFunctions == nil {
+		p.sourceFunctions = make(map[*ssa.Function]sourceFunction)
+	}
+	p.sourceFunctions[source.SSA] = source
+	return source
+}
+
+// callableDeclaration selects a patch record only for packages with patches.
+// Backend-created entries also use this selection without constructing Go SSA.
+func (p *context) callableDeclaration(pkg *types.Package, obj *types.Func, name string, source *directive.FunctionDecl) *directive.FunctionDecl {
+	if patch, ok := p.patches[llssa.PathOf(pkg)]; ok {
+		if records := p.prog.PackageDirectives(patch.Types); records != nil {
+			if obj != nil {
+				if decl, ok := records.Objects[obj.Origin()].(*directive.FunctionDecl); ok {
+					return decl
+				}
+			}
+			if decl, ok := records.Names[name].(*directive.FunctionDecl); ok {
+				return decl
+			}
+		}
+	}
+	return source
+}
+
+// applyFunctionAttributes consumes the declaration already selected with the
+// callable symbol. It does not resolve source identities or patches again.
+func (p *context) applyFunctionAttributes(fn llssa.Function, decl *directive.FunctionDecl) {
+	if decl == nil {
+		return
+	}
+	if decl.Cold {
 		fn.SetCold()
 	}
-	if properties.NoReturn {
+	if decl.NoReturn {
 		fn.SetNoReturn()
 	}
 }
 
-// A replaced body supplies the callable contract. Keep the original source
-// properties separate: analyses of the original body still need its own flags.
-func (p *context) applyFunctionAttributes(fn llssa.Function, source *ssa.Function) {
-	properties := p.functionDirectives(source)
-	origin := source
-	if generic := source.Origin(); generic != nil {
-		origin = generic
-	}
-	if obj, ok := origin.Object().(*types.Func); ok {
-		if replacement, ok := p.patchedFunctionProperties(obj); ok {
-			properties = replacement
-		}
-	}
-	applyFunctionProperties(fn, properties)
-}
-
-func (p *context) patchedFunctionProperties(obj *types.Func) (directive.Function, bool) {
-	if obj.Pkg() != nil {
-		if patch, ok := p.patches[llssa.PathOf(obj.Pkg())]; ok {
-			if records := p.prog.PackageDirectives(patch.Types); records != nil {
-				if r, ok := records.Objects[obj.Origin()].(*directive.FunctionDecl); ok {
-					return r.Function, true
-				}
-				_, name := typesFuncName(llssa.PathOf(obj.Pkg()), obj)
-				if r, ok := records.Names[name].(*directive.FunctionDecl); ok {
-					return r.Function, true
-				}
-			}
-		}
-	}
-	return directive.Function{}, false
-}
-
-// Backend-created entries consume prepared records without reopening sources.
+// Backend-created entries consume prepared records without constructing Go SSA.
 func (p *context) initFunctionAttributes(fn llssa.Function, obj *types.Func) {
-	properties, ok := p.patchedFunctionProperties(obj)
-	if !ok {
-		properties, _ = p.prog.FunctionDirectives(obj.Pkg(), obj, nil)
-	}
-	applyFunctionProperties(fn, properties)
+	decl := p.prog.FunctionDeclaration(obj.Pkg(), obj, nil)
+	_, name := typesFuncName(llssa.PathOf(obj.Pkg()), obj)
+	decl = p.callableDeclaration(obj.Pkg(), obj, name, decl)
+	p.applyFunctionAttributes(fn, decl)
 }

@@ -127,9 +127,9 @@ func (p Program) effectivePackageDirectives(pkg *types.Package) *directive.Packa
 	return p.packageSyntax.declarations[pkg]
 }
 
-// FunctionDirectives supports source functions, imported objects and generic
+// FunctionDeclaration supports source functions, imported objects and generic
 // origins without deriving declaration identity from a linker symbol.
-func (p Program) FunctionDirectives(pkg *types.Package, obj *types.Func, syntax *ast.FuncDecl) (directive.Function, bool) {
+func (p Program) FunctionDeclaration(pkg *types.Package, obj *types.Func, syntax *ast.FuncDecl) *directive.FunctionDecl {
 	if obj != nil {
 		obj = obj.Origin()
 	}
@@ -137,21 +137,21 @@ func (p Program) FunctionDirectives(pkg *types.Package, obj *types.Func, syntax 
 	defer p.packageSyntax.mu.RUnlock()
 	if r := p.packageSyntax.declarations[pkg]; r != nil {
 		if d, ok := r.Objects[obj].(*directive.FunctionDecl); ok {
-			return d.Function, true
+			return d
 		}
 		if d := r.Functions[syntax]; d != nil {
-			return d.Function, true
+			return d
 		}
 	}
 	// Patched functions may retain their original types.Object package.
 	if obj != nil && obj.Pkg() != pkg {
 		if r := p.packageSyntax.declarations[obj.Pkg()]; r != nil {
 			if d, ok := r.Objects[obj].(*directive.FunctionDecl); ok {
-				return d.Function, true
+				return d
 			}
 		}
 	}
-	return directive.Function{}, false
+	return nil
 }
 
 // LinknameFor resolves a source declaration in its owning package instance.

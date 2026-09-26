@@ -155,8 +155,15 @@ func Use() int { return F(1) }
 		for _, instr := range block.Instrs {
 			if call, ok := instr.(*ssa.Call); ok {
 				fn := call.Common().StaticCallee()
-				if fn == nil || fn.Origin() == nil || !ctx.functionDirectives(fn).NoInline {
+				source := ctx.sourceFunction(fn)
+				if fn == nil || fn.Origin() == nil || source.Decl == nil || !source.Decl.NoInline {
 					t.Fatalf("generic instance lost source property: %v", fn)
+				}
+				if source.SSA != fn || source.SSA.Signature.Params().At(0).Type() != types.Typ[types.Int] {
+					t.Fatal("generic source association lost the instantiated signature")
+				}
+				if source.Decl != ctx.sourceFunction(fn.Origin()).Decl {
+					t.Fatal("generic instance did not retain the origin declaration")
 				}
 				return
 			}
@@ -185,7 +192,7 @@ func TestStandalonePropertiesPreparedWithoutFiles(t *testing.T) {
 	ctx.prepareImportSources()
 	file.Decls[0].(*ast.FuncDecl).Doc = nil
 	prog.Directives().Freeze()
-	if !ctx.functionDirectives(ssaPkg.Func("F")).UintptrEscapes {
+	if !ctx.sourceFunction(ssaPkg.Func("F")).Decl.UintptrEscapes {
 		t.Fatal("standalone dependency lost prepared uintptr property")
 	}
 }

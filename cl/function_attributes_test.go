@@ -208,7 +208,7 @@ func G() {}
 		prog.Directives().Function(goPkg.Func(name).Syntax().(*ast.FuncDecl))
 	}
 	ctx := &context{prog: prog}
-	f, g := ctx.functionDirectives(goPkg.Func("F")), ctx.functionDirectives(goPkg.Func("G"))
+	f, g := ctx.sourceFunction(goPkg.Func("F")).Decl, ctx.sourceFunction(goPkg.Func("G")).Decl
 	if !f.Cold || g.Cold || f.NoReturn || g.NoReturn {
 		t.Fatal("source properties crossed linkname aliases")
 	}
@@ -289,8 +289,8 @@ func Box(value *T) any { return value }
 			// The backend also looks up methods without their Go SSA syntax.
 			typ := goPkg.Pkg.Scope().Lookup("T").Type()
 			method := types.NewMethodSet(types.NewPointer(typ)).Lookup(goPkg.Pkg, "Stop").Obj().(*types.Func)
-			properties, ok := prog.FunctionDirectives(goPkg.Pkg, method, nil)
-			if !ok || !properties.Cold || !properties.NoReturn {
+			properties := prog.FunctionDeclaration(goPkg.Pkg, method, nil)
+			if properties == nil || !properties.Cold || !properties.NoReturn {
 				t.Fatal("alias receiver lost source attributes")
 			}
 
