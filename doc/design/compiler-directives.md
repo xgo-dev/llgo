@@ -23,7 +23,9 @@ never LLVM values. Consumers must not modify published records.
    Patch views bind their effective declarations using both original and alternate
    type information. Replaced declarations cannot override the active name record.
    Standalone clients without `types.Info` use position-checked `BindScope`.
-5. Caller analysis prepares its function records before backend workers start.
+5. Analysis and diagnostic helpers take the compilation Index explicitly;
+   standalone callers create their Index at the entrypoint. Caller analysis
+   prepares its function records before backend workers start.
    The driver freezes the Index; attempting to discover an unprepared file,
    comment group, function or imported source after that boundary panics.
 6. Lowering associates each SSA function with a prepared `FunctionDecl` through

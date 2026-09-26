@@ -37,8 +37,7 @@ type Variable struct {
 
 // ScanPackageVar validates and collects locality directives on a package-level
 // var declaration.
-func ScanPackageVar(fset *token.FileSet, decl *ast.GenDecl, indexes ...*directive.Index) ([]Variable, error) {
-	index := directiveIndex(indexes)
+func ScanPackageVar(fset *token.FileSet, decl *ast.GenDecl, index *directive.Index) ([]Variable, error) {
 	declKind, declPos, err := FromDoc(fset, decl.Doc, index)
 	if err != nil {
 		return nil, err
@@ -84,8 +83,7 @@ func ScanPackageVar(fset *token.FileSet, decl *ast.GenDecl, indexes ...*directiv
 
 // ValidateNonPackageVar rejects locality directives on declarations other
 // than package-level vars, including grouped import/type/const specs.
-func ValidateNonPackageVar(fset *token.FileSet, decl *ast.GenDecl, indexes ...*directive.Index) error {
-	index := directiveIndex(indexes)
+func ValidateNonPackageVar(fset *token.FileSet, decl *ast.GenDecl, index *directive.Index) error {
 	if err := ValidateDoc(fset, decl.Doc, index); err != nil {
 		return err
 	}
@@ -108,8 +106,7 @@ func ValidateNonPackageVar(fset *token.FileSet, decl *ast.GenDecl, indexes ...*d
 
 // ValidateFuncBody rejects locality directives on declarations nested inside
 // a function or function literal.
-func ValidateFuncBody(fset *token.FileSet, body *ast.BlockStmt, indexes ...*directive.Index) error {
-	index := directiveIndex(indexes)
+func ValidateFuncBody(fset *token.FileSet, body *ast.BlockStmt, index *directive.Index) error {
 	if body == nil {
 		return nil
 	}
@@ -132,8 +129,7 @@ func ValidateFuncBody(fset *token.FileSet, body *ast.BlockStmt, indexes ...*dire
 }
 
 // FromDoc returns the locality directive attached to doc.
-func FromDoc(fset *token.FileSet, doc *ast.CommentGroup, indexes ...*directive.Index) (Kind, token.Pos, error) {
-	index := directiveIndex(indexes)
+func FromDoc(fset *token.FileSet, doc *ast.CommentGroup, index *directive.Index) (Kind, token.Pos, error) {
 	var kind Kind
 	var pos token.Pos
 	for _, directive := range index.Group(doc).Items {
@@ -163,8 +159,7 @@ func FromDoc(fset *token.FileSet, doc *ast.CommentGroup, indexes ...*directive.I
 }
 
 // ValidateDoc rejects a locality directive outside a package-level var.
-func ValidateDoc(fset *token.FileSet, doc *ast.CommentGroup, indexes ...*directive.Index) error {
-	index := directiveIndex(indexes)
+func ValidateDoc(fset *token.FileSet, doc *ast.CommentGroup, index *directive.Index) error {
 	kind, pos, err := FromDoc(fset, doc, index)
 	if err != nil {
 		return err
@@ -184,13 +179,6 @@ func mergeAt(fset *token.FileSet, a Kind, apos token.Pos, b Kind, bpos token.Pos
 		return merged, bpos, nil
 	}
 	return merged, apos, nil
-}
-
-func directiveIndex(indexes []*directive.Index) *directive.Index {
-	if len(indexes) > 0 && indexes[0] != nil {
-		return indexes[0]
-	}
-	return new(directive.Index)
 }
 
 func errorAt(fset *token.FileSet, pos token.Pos, format string, args ...any) error {
