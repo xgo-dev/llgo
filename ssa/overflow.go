@@ -1,6 +1,7 @@
 package ssa
 
 import (
+	"go/token"
 	"go/types"
 
 	"github.com/xgo-dev/llvm"
@@ -19,7 +20,10 @@ func (b Builder) UMulOverflow(a, c Expr) Expr {
 	// where Go aggregates use a different alignment (for example 386).
 	retTy := prog.ctx.StructType([]llvm.Type{a.impl.Type(), prog.tyInt1()}, false)
 	ret := b.impl.CreateIntrinsic(retTy, llvm.LookupIntrinsicID("llvm.umul.with.overflow"), []llvm.Value{a.impl, c.impl}, "")
-	resultType := prog.Struct(t, prog.Bool())
+	resultType := prog.rawType(types.NewTuple(
+		types.NewVar(token.NoPos, nil, "", t.RawType()),
+		types.NewVar(token.NoPos, nil, "", types.Typ[types.Bool]),
+	))
 	if retTy != resultType.ll {
 		// Normalize before the tuple can escape through a function-value
 		// wrapper, which returns the complete Go aggregate at once.

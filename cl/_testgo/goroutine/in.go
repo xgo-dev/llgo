@@ -12,7 +12,7 @@ package main
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" [[GOROUTINE_TEXT:%[0-9]+]])
 // CHECK: [[GOROUTINE_ENV:%[0-9]+]] = load { ptr }, ptr %{{[0-9]+}}
 // CHECK-NEXT: [[GOROUTINE_DONE:%[0-9]+]] = extractvalue { ptr } [[GOROUTINE_ENV]], 0
-// CHECK-NEXT: store i1 true, ptr [[GOROUTINE_DONE]]
+// CHECK-NEXT: store i8 1, ptr [[GOROUTINE_DONE]]
 // CHECK-LABEL: define ptr @"main._llgo_routine$1"(ptr
 // CHECK: [[ROUTINE1_ARGS:%[0-9]+]] = load { %"{{.*}}String" }, ptr [[ROUTINE1_ROOT:%[0-9]+]]
 // CHECK-NEXT: [[ROUTINE1_TEXT:%[0-9]+]] = extractvalue { %"{{.*}}String" } [[ROUTINE1_ARGS]], 0

@@ -164,7 +164,7 @@ func (p Program) storageType(t Type) llvm.Type {
 	if p.needsWidePointerStorage(t) {
 		return p.widePointerStorageType()
 	}
-	return t.ll
+	return p.llvmMemType(t)
 }
 
 func (p Program) requireStorageAlignment(value llvm.Value, t Type) {
@@ -194,6 +194,9 @@ func (p Program) widePointerStorageType() llvm.Type {
 }
 
 func (b Builder) toStorageValue(t Type, value llvm.Value) llvm.Value {
+	if t.kind == vkBool {
+		return b.toMemory(Expr{value, t})
+	}
 	if b.Prog.needsWidePointerStorage(t) {
 		storage := b.Prog.widePointerStorageType()
 		parts := storage.StructElementTypes()
@@ -205,6 +208,9 @@ func (b Builder) toStorageValue(t Type, value llvm.Value) llvm.Value {
 }
 
 func (b Builder) fromStorageValue(t Type, value llvm.Value) llvm.Value {
+	if t.kind == vkBool {
+		return b.fromMemory(value, t).impl
+	}
 	if b.Prog.needsWidePointerStorage(t) {
 		return b.impl.CreateExtractValue(value, 0, "")
 	}
@@ -213,6 +219,9 @@ func (b Builder) fromStorageValue(t Type, value llvm.Value) llvm.Value {
 }
 
 func (p Program) toStorageConstant(t Type, value llvm.Value) llvm.Value {
+	if t.kind == vkBool {
+		return p.boolToMemConst(value)
+	}
 	if p.needsWidePointerStorage(t) {
 		storage := p.widePointerStorageType()
 		parts := storage.StructElementTypes()

@@ -513,10 +513,9 @@ func (p Program) toLLVMFields(raw *types.Struct, native bool) (fields []llvm.Typ
 			fieldRaw := p.patch(raw.Field(i).Type())
 			field := p.rawType(fieldRaw)
 			if native {
-				fields[i] = p.withNativeStorage(field).ll
-			} else {
-				fields[i] = p.storageType(field)
+				field = p.withNativeStorage(field)
 			}
+			fields[i] = p.storageType(field)
 		}
 	}
 	return

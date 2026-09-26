@@ -59,7 +59,7 @@ func (b Builder) getField(x Expr, idx int) Expr {
 	tfld := b.Prog.Field(x.Type, idx)
 	fld := llvm.CreateExtractValue(b.impl, x.impl, idx)
 	fld = b.unwrapStructField(x.Type, idx, fld)
-	return Expr{fld, tfld}
+	return b.fromMemory(fld, tfld)
 }
 
 // -----------------------------------------------------------------------------
@@ -631,7 +631,7 @@ func (b Builder) Lookup(x, key Expr, commaOk bool) (ret Expr) {
 		valuePtr.Type = prog.Pointer(vtyp)
 		val := b.Load(valuePtr)
 		ok := b.getField(vals, 1).impl
-		t := prog.Struct(vtyp, prog.Bool())
+		t := prog.commaOk(vtyp)
 		return b.aggregateValue(t, val.impl, ok)
 	} else {
 		val := b.Call(b.Pkg.rtFunc(name), args...)
@@ -879,7 +879,7 @@ func (b Builder) Next(typ Type, iter Expr, isString bool) Expr {
 	vtyp := prog.Type(typ.raw.Type.Underlying().(*types.Map).Elem(), InGo)
 	rets := b.InlineCall(b.Pkg.rtFunc("MapIterNext"), iter)
 	ok := b.getField(rets, 0).impl
-	t := prog.Struct(prog.Bool(), ktyp, vtyp)
+	t := prog.resultTuple(prog.Bool(), ktyp, vtyp)
 	blks := b.Func.MakeBlocks(3)
 	b.If(Expr{ok, prog.Bool()}, blks[0], blks[1])
 	b.SetBlockEx(blks[2], AtEnd, false)
@@ -981,7 +981,7 @@ func (b Builder) Recv(ch Expr, commaOk bool) (ret Expr) {
 	}
 	b.StackRestore(sp)
 	if commaOk {
-		t := prog.Struct(etyp, prog.Bool())
+		t := prog.commaOk(etyp)
 		return b.aggregateValue(t, val.impl, ok.impl)
 	} else {
 		return val
@@ -1074,7 +1074,7 @@ func (b Builder) Select(states []*SelectState, blocking bool) (ret Expr) {
 		}
 	}
 	b.StackRestore(sp)
-	return b.aggregateValue(b.Prog.Struct(typs...), results...)
+	return b.aggregateValue(b.Prog.resultTuple(typs...), results...)
 }
 
 func (b Builder) selectOpsSlice(t Type, ops []Expr) Expr {

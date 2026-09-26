@@ -69,6 +69,61 @@ func buildConf(arch string) (conf *build.Config, targetAbi string) {
 	return
 }
 
+func TestBoolAggregateMatchesCLayout(t *testing.T) {
+	conf := build.NewDefaultConf(build.ModeGen)
+	var pack, notRet, notParam llvm.Type
+	conf.ModuleHook = func(p build.Package) {
+		if !strings.Contains(p.PkgPath, "boolpack") {
+			return
+		}
+		mod := p.LPkg.Module()
+		echo := mod.NamedFunction(p.PkgPath + ".Echo")
+		if echo.IsNil() {
+			t.Fatalf("Echo not found:\n%s", mod.String())
+		}
+		pack = echo.GlobalValueType().ParamTypes()[0]
+		not := mod.NamedFunction(p.PkgPath + ".Not")
+		if not.IsNil() {
+			t.Fatalf("Not not found:\n%s", mod.String())
+		}
+		notRet = not.GlobalValueType().ReturnType()
+		notParam = not.GlobalValueType().ParamTypes()[0]
+	}
+	pkgs, err := build.Do([]string{"./_testdata/boolpack"}, conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := pkgs[0]
+	defer pkg.LPkg.Prog.Dispose()
+	if pack.C == nil {
+		t.Fatal("did not observe Pack type before CABI lowering")
+	}
+	if pack.TypeKind() != llvm.StructTypeKind {
+		t.Fatalf("Pack param kind = %v, want struct {i8,i8,i8}", pack.TypeKind())
+	}
+	fields := pack.StructElementTypes()
+	if len(fields) != 3 {
+		t.Fatalf("Pack fields = %d, want 3", len(fields))
+	}
+	for i, f := range fields {
+		if f.TypeKind() != llvm.IntegerTypeKind || f.IntTypeWidth() != 8 {
+			t.Fatalf("Pack field %d = %s, want i8 (C _Bool/char)", i, f.String())
+		}
+	}
+	td := pkg.LPkg.Prog.TargetData()
+	if got, want := td.TypeAllocSize(pack), uint64(3); got != want {
+		t.Fatalf("Pack LLVM size = %d, want 3 to match C struct {_Bool; char; _Bool}", got)
+	}
+	if notRet.IntTypeWidth() != 1 || notParam.IntTypeWidth() != 1 {
+		t.Fatalf("Not should be i1(i1) like Clang _Bool, got ret=%s param=%s", notRet.String(), notParam.String())
+	}
+	tr := cabi.NewTransformer(pkg.LPkg.Prog, "", "", false)
+	info := tr.GetTypeInfo(pack.Context(), llvm.FunctionType(pack.Context().VoidType(), nil, false), pack, 1)
+	if info.Size != 3 {
+		t.Fatalf("cabi Sizeof(Pack) = %d, want 3 (C layout); llvm=%s", info.Size, pack.String())
+	}
+}
+
 func TestBuild(t *testing.T) {
 	for _, arch := range archs {
 		conf, _ := buildConf(arch)

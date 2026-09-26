@@ -86,11 +86,12 @@ func main() {
 
 // CHECK-LABEL: define void @main.init(){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP0:[0-9]+]] = load i1, ptr @"main.init$guard", align 1
-// CHECK-NEXT:   br i1 %[[TMP0]], label %_llgo_[[BB2:[0-9]+]], label %_llgo_[[BB1:[0-9]+]]
+// CHECK-NEXT:   %[[TMP0:[0-9]+]] = load i8, ptr @"main.init$guard", align 1
+// CHECK-NEXT:   %[[TMP0I1:[0-9]+]] = trunc i8 %[[TMP0]] to i1
+// CHECK-NEXT:   br i1 %[[TMP0I1]], label %_llgo_[[BB2:[0-9]+]], label %_llgo_[[BB1:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB1]]:
-// CHECK-NEXT:   store i1 true, ptr @"main.init$guard", align 1
+// CHECK-NEXT:   store i8 1, ptr @"main.init$guard", align 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/abi.init"()
 // CHECK-NEXT:   %[[TMP1:[0-9]+]] = alloca [25 x ptr], align 8
 // CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP1]], i8 0, i64 200, i1 false)

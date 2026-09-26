@@ -65,7 +65,8 @@ func (p Function) NewGCRoots(count int) []Expr {
 	prev := b.Load(chain)
 	nextSlot := llvm.CreateStructGEP(b.impl, frameType, frame, 0)
 	reentered := llvm.CreateICmp(b.impl, llvm.IntEQ, prev.impl, frame)
-	sjljReplaying := llvm.CreateLoad(b.impl, prog.Bool().ll, p.gcRootSJLJReplaying())
+	sjljLoaded := llvm.CreateLoad(b.impl, prog.storageType(prog.Bool()), p.gcRootSJLJReplaying())
+	sjljReplaying := b.fromMemory(sjljLoaded, prog.Bool()).impl
 	// SJLJ/Asyncify replays discarded function entries on the way back to a
 	// setjmp. Their stack slots must be reused without publishing dead frames.
 	reusingFrame := b.impl.CreateOr(reentered, sjljReplaying, "")
@@ -115,9 +116,9 @@ func (p Function) gcRootChain() llvm.Value {
 func (p Function) gcRootSJLJReplaying() llvm.Value {
 	global := p.Pkg.mod.NamedGlobal(gcRootSJLJReplayingName)
 	if global.IsNil() {
-		global = llvm.AddGlobal(p.Pkg.mod, p.Prog.Bool().ll, gcRootSJLJReplayingName)
+		global = llvm.AddGlobal(p.Pkg.mod, p.Prog.storageType(p.Prog.Bool()), gcRootSJLJReplayingName)
 	}
-	global.SetInitializer(llvm.ConstNull(p.Prog.Bool().ll))
+	global.SetInitializer(llvm.ConstNull(p.Prog.storageType(p.Prog.Bool())))
 	global.SetLinkage(llvm.LinkOnceAnyLinkage)
 	global.SetAlignment(1)
 	return global
