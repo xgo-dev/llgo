@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
@@ -27,26 +28,13 @@ func TestReplaceGoNameRuntimeBranch(t *testing.T) {
 }
 
 func TestTypeBackgroundAndParsePkgSyntaxCoverage(t *testing.T) {
-	if got := typeBackground(nil); got != "" {
-		t.Fatalf("typeBackground(nil)=%q, want empty", got)
-	}
-
-	doc1 := &ast.CommentGroup{List: []*ast.Comment{{Text: "//llgo:type C"}}}
-	if got := typeBackground(doc1); got != "C" {
-		t.Fatalf("typeBackground(//llgo:type C)=%q, want C", got)
-	}
-	doc2 := &ast.CommentGroup{List: []*ast.Comment{{Text: "// llgo:type C"}}}
-	if got := typeBackground(doc2); got != "C" {
-		t.Fatalf("typeBackground(// llgo:type C)=%q, want C", got)
-	}
-	doc3 := &ast.CommentGroup{List: []*ast.Comment{{Text: "//llgo:type stdcall"}}}
-	if got := typeBackground(doc3); got != "stdcall" {
-		t.Fatalf("typeBackground(//llgo:type stdcall)=%q, want stdcall", got)
-	}
-
 	src := `package p
 //llgo:type C
 type A int
+// llgo:type C
+type Spaced int
+//llgo:type stdcall
+type Stdcall int
 type (
 	B int
 	C int
@@ -58,6 +46,10 @@ func (A) Hidden() {}
 //go:other
 //go:nointerface
 func (A) StackedHidden() {}
+func (A) Plain() {}
+// ordinary comment
+//go:nointerface
+func (A) HiddenAfterComment() {}
 `
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "p.go", src, parser.ParseComments)
@@ -70,12 +62,17 @@ func (A) StackedHidden() {}
 		t.Fatal(err)
 	}
 
-	ctx := &context{prog: prog}
-	ctx.processNoInterfaceByDoc(nil, "example.com/p.NilDoc")
-	ctx.processNoInterfaceByDoc(&ast.CommentGroup{List: []*ast.Comment{
-		{Text: "// not a directive"},
-		{Text: "//go:nointerface"},
-	}}, "example.com/p.NonDirectiveStops")
+	records := prog.PackageDirectives(pkg)
+	for name, want := range map[string]string{"A": "C", "Spaced": "C", "Stdcall": "stdcall", "B": "", "C": ""} {
+		if got := records.Names[name].(*directive.TypeDecl).Background; got != want {
+			t.Errorf("%s background = %q, want %q", name, got, want)
+		}
+	}
+	for name, want := range map[string]bool{"A.Hidden": true, "A.StackedHidden": true, "A.Plain": false, "A.HiddenAfterComment": true} {
+		if got := records.Names[name].(*directive.FunctionDecl).NoInterface; got != want {
+			t.Errorf("%s nointerface = %v, want %v", name, got, want)
+		}
+	}
 
 	if !prog.PackageSyntaxParsed(pkg) {
 		t.Fatal("package syntax was not marked as parsed")
@@ -165,7 +162,7 @@ func TestPkgSymInfoAddSymAndInitLinknamesCoverage(t *testing.T) {
 		t.Fatalf("failed to find Foo position")
 	}
 
-	syms := newPkgSymInfo()
+	syms := newPkgSymInfo(new(directive.Index))
 	syms.addSym(fset, fnPos, "example.com/p.Foo", "Foo", false)
 
 	tf := fset.File(file.Pos())
@@ -264,7 +261,15 @@ func TestParsePkgSyntaxCollectsLinknames(t *testing.T) {
 		})
 	}
 	prog := llssa.NewProgram(nil)
-	collectDeclarationDirectives(prog, nil, &ast.CommentGroup{List: []*ast.Comment{{Text: "//go:linkname Other C.other"}}}, llssa.PkgRuntime+".Sigsetjmp", "Sigsetjmp", token.NoPos)
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "mismatch.go", "package runtime\n//go:linkname Other C.other\nfunc Sigsetjmp()\n", parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ParsePkgSyntax(prog, fset, types.NewPackage(llssa.PkgRuntime, "runtime"), []*ast.File{file}); err != nil {
+		t.Fatal(err)
+	}
+
 	if _, ok := prog.Linkname(llssa.PkgRuntime + ".Sigsetjmp"); ok {
 		t.Fatal("mismatched linkname was collected")
 	}
@@ -366,15 +371,18 @@ func malformed()
 	}
 }
 
-func TestCollectDeclarationDirectivesIgnoresOtherDirectives(t *testing.T) {
+func TestParsePkgSyntaxIgnoresNonLinkDirectives(t *testing.T) {
 	prog := llssa.NewProgram(nil)
-	doc := &ast.CommentGroup{List: []*ast.Comment{
-		{Text: "//go:noinline"},
-		{Text: "//llgointernal:tls"},
-	}}
-	const fullName = "example.com/p.Value"
-	collectDeclarationDirectives(prog, nil, doc, fullName, "Value", token.NoPos)
-	if _, ok := prog.Linkname(fullName); ok {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "nonlink.go", "package p\n//go:noinline\n//llgointernal:tls\nvar value int\n", parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := types.NewPackage("example.com/p", "p")
+	if err := ParsePkgSyntaxWithOptions(prog, fset, pkg, []*ast.File{file}, Options{AllowInternalDirectives: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := prog.Linkname("example.com/p.value"); ok {
 		t.Fatal("non-link directives installed a linkname")
 	}
 }

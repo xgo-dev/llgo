@@ -144,7 +144,7 @@ func (p Program) FunctionDirectives(pkg *types.Package, obj *types.Func, syntax 
 		}
 	}
 	// Patched functions may retain their original types.Object package.
-	if obj != nil {
+	if obj != nil && obj.Pkg() != pkg {
 		if r := p.packageSyntax.declarations[obj.Pkg()]; r != nil {
 			if d, ok := r.Objects[obj].(*directive.FunctionDecl); ok {
 				return d.Function, true

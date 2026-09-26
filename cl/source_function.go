@@ -9,50 +9,35 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// sourceFunction is a backend-local view of immutable declaration properties.
-// LLVM functions continue to be created through the existing constructors;
-// properties such as NoInline are applied after creation.
-type functionProperties = directive.Function
-
-type sourceFunction struct {
-	*ssa.Function
-	functionProperties
+// functionDirectives looks up prepared properties for a Go SSA function.
+// Generic instances use their source declaration; synthetic wrappers without
+// one do not inherit the wrapped function's directives.
+func (p *context) functionDirectives(fn *ssa.Function) directive.Function {
+	if fn == nil {
+		return directive.Function{}
+	}
+	if origin := fn.Origin(); origin != nil {
+		fn = origin
+	}
+	syntax, _ := fn.Syntax().(*ast.FuncDecl)
+	obj, _ := fn.Object().(*types.Func)
+	if syntax == nil && fn.Synthetic != "" && (obj == nil || fn.Prog.FuncValue(obj) != fn) {
+		return directive.Function{}
+	}
+	var pkg *types.Package
+	if fn.Pkg != nil {
+		pkg = fn.Pkg.Pkg
+	} else if obj != nil {
+		pkg = obj.Pkg()
+	}
+	properties, found := p.prog.FunctionDirectives(pkg, obj, syntax)
+	if !found && !p.options.PreloadedSyntax {
+		properties, _ = p.prog.Directives().LookupFunction(syntax)
+	}
+	return properties
 }
 
-func (p *context) sourceFunction(fn *ssa.Function) *sourceFunction {
-	if p.sourceFunctions == nil {
-		p.sourceFunctions = make(map[*ssa.Function]*sourceFunction)
-	}
-	if f := p.sourceFunctions[fn]; f != nil {
-		return f
-	}
-	f := &sourceFunction{Function: fn}
-	if fn != nil {
-		source := fn
-		if origin := fn.Origin(); origin != nil {
-			source = origin
-		}
-		obj, _ := source.Object().(*types.Func)
-		var pkg *types.Package
-		if source.Pkg != nil {
-			pkg = source.Pkg.Pkg
-		} else if obj != nil {
-			pkg = obj.Pkg()
-		}
-		syntax, _ := source.Syntax().(*ast.FuncDecl)
-		if syntax != nil || source.Synthetic == "" || obj != nil && source.Prog.FuncValue(obj) == source {
-			var found bool
-			f.functionProperties, found = p.prog.FunctionDirectives(pkg, obj, syntax)
-			if !found && !p.options.PreloadedSyntax {
-				f.functionProperties, _ = p.prog.Directives().LookupFunction(syntax)
-			}
-		}
-	}
-	p.sourceFunctions[fn] = f
-	return f
-}
-
-func applyFunctionProperties(fn llssa.Function, properties functionProperties) {
+func applyFunctionProperties(fn llssa.Function, properties directive.Function) {
 	if properties.Cold {
 		fn.SetCold()
 	}
@@ -61,10 +46,10 @@ func applyFunctionProperties(fn llssa.Function, properties functionProperties) {
 	}
 }
 
-// A replaced body supplies the callable contract. Keep sourceFunction's source
+// A replaced body supplies the callable contract. Keep the original source
 // properties separate: analyses of the original body still need its own flags.
 func (p *context) applyFunctionAttributes(fn llssa.Function, source *ssa.Function) {
-	properties := p.sourceFunction(source).functionProperties
+	properties := p.functionDirectives(source)
 	origin := source
 	if generic := source.Origin(); generic != nil {
 		origin = generic
@@ -77,7 +62,7 @@ func (p *context) applyFunctionAttributes(fn llssa.Function, source *ssa.Functio
 	applyFunctionProperties(fn, properties)
 }
 
-func (p *context) patchedFunctionProperties(obj *types.Func) (functionProperties, bool) {
+func (p *context) patchedFunctionProperties(obj *types.Func) (directive.Function, bool) {
 	if obj.Pkg() != nil {
 		if patch, ok := p.patches[llssa.PathOf(obj.Pkg())]; ok {
 			if records := p.prog.PackageDirectives(patch.Types); records != nil {
@@ -91,7 +76,7 @@ func (p *context) patchedFunctionProperties(obj *types.Func) (functionProperties
 			}
 		}
 	}
-	return functionProperties{}, false
+	return directive.Function{}, false
 }
 
 // Backend-created entries consume prepared records without reopening sources.
