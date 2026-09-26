@@ -1411,12 +1411,9 @@ func uniqueCallerTrackingPackages(pkgs []*ssa.Package) []*ssa.Package {
 	return unique
 }
 
-// NewCallerTracking creates the frontend-analysis caches for one compilation.
-func NewCallerTracking(indexes ...*directive.Index) *CallerTracking {
-	index := new(directive.Index)
-	if len(indexes) > 0 && indexes[0] != nil {
-		index = indexes[0]
-	}
+// NewCallerTracking creates frontend-analysis caches sharing the compilation
+// directive index. The caller supplies a non-nil index.
+func NewCallerTracking(index *directive.Index) *CallerTracking {
 	return &CallerTracking{
 		directives: index,
 		base:       make(map[*ssa.Package]map[*ssa.Function]bool),
