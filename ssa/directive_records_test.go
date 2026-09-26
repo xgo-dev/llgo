@@ -47,8 +47,8 @@ func TestEffectiveDirectivePackageForTypesAndMethods(t *testing.T) {
 		t.Fatal("lost replacement nointerface")
 	}
 	// A function's source properties are independent of the effective ABI view.
-	props, ok := backend.FunctionDirectives(pkg, named.Method(0), original.Decls[1].(*ast.FuncDecl))
-	if !ok || props.NoInterface {
+	props := backend.FunctionDeclaration(pkg, named.Method(0), original.Decls[1].(*ast.FuncDecl))
+	if props == nil || props.NoInterface {
 		t.Fatal("original source properties were merged with replacement")
 	}
 }
