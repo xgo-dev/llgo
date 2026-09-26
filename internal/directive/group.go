@@ -8,8 +8,6 @@ import (
 
 func scanGroup(doc *ast.CommentGroup) *Group {
 	g := &Group{Items: ParseGroup(doc)}
-	g.legacy = lastLegacyLink(doc, true)
-	g.legacyNoExport = lastLegacyLink(doc, false)
 	for _, d := range g.Items {
 		switch d.Name {
 		case "llgo:env":
@@ -42,14 +40,13 @@ func scanGroup(doc *ast.CommentGroup) *Group {
 		}
 		line := doc.List[i].Text
 		if line == "//go:nointerface" {
-			g.NoInterface = true
+			g.Function.NoInterface = true
 			break
 		}
 		if !strings.HasPrefix(line, "//go:") {
 			break
 		}
 	}
-	g.Function.NoInterface = g.NoInterface
 	for i := len(doc.List) - 1; i >= 0; i-- {
 		if doc.List[i] == nil {
 			continue
@@ -154,28 +151,4 @@ func SourcePatch(line string) (all bool, names []string, ok bool) {
 		return false, strings.Fields(tail[len("skip "):]), true
 	}
 	return
-}
-
-func (g *Group) LegacyLinks(allowExport bool) []LegacyLink {
-	if allowExport {
-		return g.legacy
-	}
-	return g.legacyNoExport
-}
-
-func lastLegacyLink(doc *ast.CommentGroup, allowExport bool) []LegacyLink {
-	for i := len(doc.List) - 1; i >= 0; i-- {
-		if doc.List[i] == nil {
-			continue
-		}
-		r := ParseLegacyLink(doc.List[i].Text, allowExport)
-		if r.Status == UnknownDirective {
-			continue
-		}
-		if r.Status == HasLinkname {
-			return []LegacyLink{r}
-		}
-		break
-	}
-	return nil
 }

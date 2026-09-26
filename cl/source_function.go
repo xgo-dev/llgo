@@ -8,45 +8,30 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// sourceFunction is a backend-local view of immutable declaration properties.
-// LLVM functions continue to be created through the existing constructors;
-// properties such as NoInline are applied after creation.
-type functionProperties = directive.Function
-
-type sourceFunction struct {
-	*ssa.Function
-	functionProperties
-}
-
-func (p *context) sourceFunction(fn *ssa.Function) *sourceFunction {
-	if p.sourceFunctions == nil {
-		p.sourceFunctions = make(map[*ssa.Function]*sourceFunction)
+// functionDirectives looks up prepared properties for a Go SSA function.
+// Generic instances use their source declaration; synthetic wrappers without
+// one do not inherit the wrapped function's directives.
+func (p *context) functionDirectives(fn *ssa.Function) directive.Function {
+	if fn == nil {
+		return directive.Function{}
 	}
-	if f := p.sourceFunctions[fn]; f != nil {
-		return f
+	if origin := fn.Origin(); origin != nil {
+		fn = origin
 	}
-	f := &sourceFunction{Function: fn}
-	if fn != nil {
-		source := fn
-		if origin := fn.Origin(); origin != nil {
-			source = origin
-		}
-		obj, _ := source.Object().(*types.Func)
-		var pkg *types.Package
-		if source.Pkg != nil {
-			pkg = source.Pkg.Pkg
-		} else if obj != nil {
-			pkg = obj.Pkg()
-		}
-		syntax, _ := source.Syntax().(*ast.FuncDecl)
-		if syntax != nil || source.Synthetic == "" {
-			var found bool
-			f.functionProperties, found = p.prog.FunctionDirectives(pkg, obj, syntax)
-			if !found && !p.options.PreloadedSyntax {
-				f.functionProperties, _ = p.prog.Directives().LookupFunction(syntax)
-			}
-		}
+	syntax, _ := fn.Syntax().(*ast.FuncDecl)
+	if syntax == nil && fn.Synthetic != "" {
+		return directive.Function{}
 	}
-	p.sourceFunctions[fn] = f
-	return f
+	obj, _ := fn.Object().(*types.Func)
+	var pkg *types.Package
+	if fn.Pkg != nil {
+		pkg = fn.Pkg.Pkg
+	} else if obj != nil {
+		pkg = obj.Pkg()
+	}
+	properties, found := p.prog.FunctionDirectives(pkg, obj, syntax)
+	if !found && !p.options.PreloadedSyntax {
+		properties, _ = p.prog.Directives().LookupFunction(syntax)
+	}
+	return properties
 }

@@ -155,7 +155,7 @@ func Use() int { return F(1) }
 		for _, instr := range block.Instrs {
 			if call, ok := instr.(*ssa.Call); ok {
 				fn := call.Common().StaticCallee()
-				if fn == nil || fn.Origin() == nil || !ctx.sourceFunction(fn).NoInline {
+				if fn == nil || fn.Origin() == nil || !ctx.functionDirectives(fn).NoInline {
 					t.Fatalf("generic instance lost source property: %v", fn)
 				}
 				return
@@ -185,7 +185,7 @@ func TestStandalonePropertiesPreparedWithoutFiles(t *testing.T) {
 	ctx.prepareImportSources()
 	file.Decls[0].(*ast.FuncDecl).Doc = nil
 	prog.Directives().Freeze()
-	if !ctx.sourceFunction(ssaPkg.Func("F")).UintptrEscapes {
+	if !ctx.functionDirectives(ssaPkg.Func("F")).UintptrEscapes {
 		t.Fatal("standalone dependency lost prepared uintptr property")
 	}
 }
