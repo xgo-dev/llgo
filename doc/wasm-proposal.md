@@ -85,6 +85,8 @@ These four entries are acceptance paths for three profiles. Memory ABI, host/pro
 - W32 uses the Go WASI Preview 1 host contract and can use wasi-libc without becoming a separate C profile.
 - Host adapters own imports, startup, filesystems, callbacks, timers, process exit, and artifact sidecars. Runtime scheduling, GC, panic/defer/recover, reflection semantics, and caller metadata remain provider-independent where possible.
 
+The opt-in bounded Emscripten worker mode keeps each goroutine on one physical worker. Emscripten `syscall/js` handles are JavaScript-realm-local, so a goroutine that uses them keeps ordinary descendants on that worker. `github.com/xgo-dev/llgo/runtime/wasmworkers.GoIndependent` starts work in the pool only when its closure carries no JS value or thread-local C state. Passing a `js.Value` between unrelated workers is not yet supported; resolving that boundary is required before treating multi-worker mode as the default Go-compatible JavaScript provider.
+
 ## Reflection and foreign calls
 
 `reflect.Value.Call`, `CallSlice`, methods, and `reflect.MakeFunc` are required capabilities, not profile definitions. J32/GoJS, J32/Emscripten, and J64/Emscripten use the WebAssembly libffi backend from [#2549](https://github.com/xgo-dev/llgo/pull/2549), which provides generic dynamic calls without generating a bridge for every function signature. W32/WASI has no JavaScript table adapter, so it uses compact compiler-generated typed bridges deduplicated by lowered signature and emitted only when whole-program reachability finds a dynamic reflection call. The selected backend must preserve GC roots, suspension, panic/recover, closures, aggregate ABI lowering, and deterministic errors. Typed-bridge size and compile-time cost must remain confined to WASI and are measured in acceptance.
@@ -201,6 +203,8 @@ Hosted profile 是 Memory ABI 与 Host ABI 的组合。源码兼容、C 互操�
 - J32 和 J64 通过所选 JavaScript provider 提供 `syscall/js`。C 代码通过显式 C ABI 使用；依赖 Emscripten runtime 的任意 C 库仍要求 Emscripten provider。
 - W32 使用 Go WASI Preview 1 host contract，并可使用 wasi-libc，不再因此拆出单独 C profile。
 - Host adapter 负责 imports、启动、文件系统、回调、定时器、进程退出和产物 sidecar。调度、GC、panic/defer/recover、反射语义和 caller metadata 在可行范围内保持 provider 无关。
+
+当前有界 Emscripten Worker 模式需显式启用，每个 goroutine 固定在一个物理 Worker。Emscripten 的 `syscall/js` 句柄属于创建它的 JavaScript realm，因此使用这些句柄的 goroutine 会让普通子 goroutine 留在同一 Worker。只有闭包不携带 JS 值或 C 线程局部状态时，才可用 `github.com/xgo-dev/llgo/runtime/wasmworkers.GoIndependent` 将独立任务分配到池中。尚不支持在无亲缘关系的 Worker 间传递 `js.Value`；在把多 Worker 模式作为默认的 Go 兼容 JavaScript provider 前，必须解决这一边界。
 
 ## 反射与外部调用
 

@@ -70,6 +70,11 @@ func main() {
 		repanicTracebackCaller()
 		return
 	}
+	if schedulerHangMode() != 0 {
+		for {
+			runtime.Gosched()
+		}
+	}
 	if schedulerMainGoexitMode() != 0 {
 		testMainGoexit()
 		return

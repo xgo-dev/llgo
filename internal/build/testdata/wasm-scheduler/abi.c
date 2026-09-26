@@ -20,3 +20,7 @@ int llgo_test_scheduler_panic_traceback(void) {
 int llgo_test_scheduler_repanic_traceback(void) {
 	return getenv("LLGO_WASM_SCHEDULER_REPANIC_TRACEBACK") != NULL;
 }
+
+int llgo_test_scheduler_hang(void) {
+	return getenv("LLGO_WASM_SCHEDULER_HANG") != NULL;
+}

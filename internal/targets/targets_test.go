@@ -489,7 +489,7 @@ func TestEmscriptenRunnerReportsInstantiationFailure(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tempDir, "invalid.wasm"), []byte("invalid wasm"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(node, filepath.Join(root, "targets", "emscripten-runner.mjs"), module)
+	cmd := exec.Command(node, filepath.Join(root, "targets", "emscripten-runner.mjs"), "--browser-only", module)
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("runner accepted an invalid WebAssembly module:\n%s", output)

@@ -444,6 +444,42 @@ func TestNeedsWasmRuntimeScheduler(t *testing.T) {
 	}
 }
 
+func TestGenMainModuleEmscriptenWorkerEntry(t *testing.T) {
+	llvm.InitializeAllTargets()
+	t.Setenv(llgoStdioNobuf, "")
+	prog := llssa.NewProgram(nil)
+	installLocalContextTestRuntime(prog)
+	ctx := &context{
+		prog: prog,
+		buildConf: &Config{
+			BuildMode: BuildModeExe,
+			Goos:      "js",
+			Goarch:    "wasm",
+			Target:    "emscripten",
+		},
+		crossCompile: crosscompile.Export{
+			WasmProfile:  crosscompile.WasmProfileJ32,
+			WasmProvider: crosscompile.WasmProviderEmscripten,
+			WasmRuntime:  crosscompile.WasmRuntime{RunMainTask: true},
+		},
+	}
+	pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
+	mod := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{})
+	ir := mod.LPkg.String()
+	for _, want := range []string{
+		`define hidden ptr @__llgo_wasm_main(ptr %0)`,
+		`define hidden i32 @__main_argc_argv(`,
+		`call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.RunWasmMain"()`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("worker main module IR missing %q:\n%s", want, ir)
+		}
+	}
+	if strings.Contains(ir, "define weak void @_start()") || strings.Contains(ir, "define i32 @main(") {
+		t.Fatalf("worker main module emitted an entry owned by Emscripten:\n%s", ir)
+	}
+}
+
 func TestGenMainModuleLibrary(t *testing.T) {
 	llvm.InitializeAllTargets()
 	t.Setenv(llgoStdioNobuf, "")

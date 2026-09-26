@@ -20,6 +20,7 @@ const wasmURL = new URL(moduleURL);
 wasmURL.pathname = wasmURL.pathname.replace(/\.[^/.]+$/, ".wasm");
 const moduleOptions = {
 	arguments: nodeProcess.argv.slice(moduleArg + 1),
+	ENV: { ...nodeProcess.env },
 	preRun: [module => {
 		if (module.ENV != null) {
 			Object.assign(module.ENV, nodeProcess.env);
@@ -30,21 +31,21 @@ let rejectInstantiation;
 const instantiationFailure = new Promise((_, reject) => {
 	rejectInstantiation = reject;
 });
-try {
-	// Browser-only GoJS output deliberately has no Node loader. Supplying the
-	// adjacent binary lets this runner validate that same output in CI without
-	// changing the generated host contract.
-	const wasmBinary = await readFile(wasmURL);
-	moduleOptions.instantiateWasm = (imports, receiveInstance) => {
-		WebAssembly.instantiate(wasmBinary, imports).then(
-			result => receiveInstance(result.instance),
-			rejectInstantiation,
-		);
-	};
-} catch (error) {
-	// Unit-test factories and single-file modules do not have a sibling binary.
-	if (error?.code !== "ENOENT") {
-		throw error;
+if (browserOnly) {
+	try {
+		// Raw GoJS output excludes Emscripten's Node loader.
+		const wasmBinary = await readFile(wasmURL);
+		moduleOptions.instantiateWasm = (imports, receiveInstance) => {
+			WebAssembly.instantiate(wasmBinary, imports).then(
+				result => receiveInstance(result.instance),
+				rejectInstantiation,
+			);
+		};
+	} catch (error) {
+		// Unit-test factories and single-file modules have no sibling binary.
+		if (error?.code !== "ENOENT") {
+			throw error;
+		}
 	}
 }
 if (browserOnly) {

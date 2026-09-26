@@ -324,6 +324,45 @@ func TestSyscallSourcePatchPreservesTargetImplementations(t *testing.T) {
 	if changed || len(files) != 0 {
 		t.Fatalf("wasm syscall patch changed = %v, files = %v, want official implementation", changed, files)
 	}
+
+	changed, overlay, files, err := applySourcePatchForPkg(nil, nil, env.LLGoRuntimeDir(), runtime.GOROOT(), pkgPath, sourcePatchBuildContext{
+		goos:       "js",
+		goarch:     "wasm",
+		goversion:  runtime.Version(),
+		buildFlags: []string{"-tags=llgo.wasm.workers"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || len(files) != 1 || filepath.Base(files[0]) != "fs_js_wasm_workers.go" {
+		t.Fatalf("worker syscall patch changed = %v, files = %v, want only the worker handle patch", changed, files)
+	}
+	original := filepath.Join(runtime.GOROOT(), "src", "syscall", "fs_js.go")
+	filtered := string(overlay[original])
+	parsed, err := parser.ParseFile(token.NewFileSet(), original, filtered, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse filtered syscall source: %v", err)
+	}
+	workerLocal := map[string]bool{
+		"jsProcess": true, "jsPath": true, "jsFS": true, "constants": true, "uint8Array": true,
+	}
+	for _, decl := range parsed.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.VAR {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			for _, name := range spec.(*ast.ValueSpec).Names {
+				if workerLocal[name.Name] {
+					t.Fatalf("official syscall source retained worker-local declaration %q:\n%s", name.Name, filtered)
+				}
+			}
+		}
+	}
+	patchFile := filepath.Join(runtime.GOROOT(), "src", "syscall", "z_llgo_patch_fs_js_wasm_workers.go")
+	if patch := string(overlay[patchFile]); !strings.Contains(patch, "//llgointernal:tls") {
+		t.Fatalf("worker syscall patch does not make host handles physical TLS:\n%s", patch)
+	}
 }
 
 func TestArmBaremetalAtomicSourcePatchReplacesAsm(t *testing.T) {

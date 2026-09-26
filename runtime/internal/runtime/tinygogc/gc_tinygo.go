@@ -304,12 +304,12 @@ func Alloc(size uintptr) unsafe.Pointer {
 					// Ensure there is at least 33% headroom.
 					// This percentage was arbitrarily chosen, and may need to
 					// be tuned in the future.
-					growHeap()
+					growHeapWithWorldStopped()
 				}
 			} else {
 				// Even after garbage collection, no free memory could be found.
 				// Try to increase heap size.
-				if growHeap() {
+				if growHeapWithWorldStopped() {
 					// Success, the heap was increased in size. Try again with a
 					// larger heap.
 				} else {
@@ -442,6 +442,7 @@ func GC() uintptr {
 // free bytes in the heap after the GC is finished.
 func gc() (freeBytes uintptr) {
 	lazyInit()
+	gcStopWorld()
 
 	if gcDebug {
 		println("running collection cycle...")
@@ -455,14 +456,11 @@ func gc() (freeBytes uintptr) {
 	preserveFinalizableObjects()
 	markHeads.reset()
 
-	// If we're using threads, resume all other threads before starting the
-	// sweep.
-	gcResumeWorld()
-
 	// Sweep phase: free all non-marked objects and unmark marked objects for
 	// the next collection cycle.
 	freeBytes = sweep()
 	gcNumGC++
+	gcResumeWorld()
 
 	return
 }
@@ -639,8 +637,17 @@ func growHeap() bool {
 	return true
 }
 
-func gcResumeWorld() {
-	// Nothing to do here (single threaded).
+// growHeapWithWorldStopped prevents another worker from entering host code
+// with an Emscripten heap view while WebAssembly.Memory grows. Emscripten
+// refreshes JS typed-array views after a grow, but a view already in use by a
+// different worker can otherwise observe the old buffer midway through a
+// syscall/js operation. The world hooks are no-ops on single-worker and
+// bare-metal targets.
+func growHeapWithWorldStopped() bool {
+	gcStopWorld()
+	grew := growHeap()
+	gcResumeWorld()
+	return grew
 }
 
 //go:linkname getsp llgo.stackSave

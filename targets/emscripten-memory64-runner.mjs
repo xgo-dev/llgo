@@ -42,6 +42,11 @@ if (typeof loaded.default !== "function") {
 }
 await runEmscriptenModule(loaded.default, {
 	arguments: process.argv.slice(3),
+	// Recent Emscripten releases snapshot Module.ENV before preRun. Supplying
+	// the object at factory construction keeps os.Getenv consistent while the
+	// callback below preserves compatibility with releases that initialize it
+	// during preRun.
+	ENV: { ...process.env },
 	preRun: [module => {
 		if (module.ENV != null) {
 			Object.assign(module.ENV, process.env);

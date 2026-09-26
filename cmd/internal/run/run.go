@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/xgo-dev/llgo/cmd/internal/base"
 	"github.com/xgo-dev/llgo/cmd/internal/flags"
@@ -47,6 +48,7 @@ var CmpTestCmd = &base.Command{
 var (
 	runGoBuildFlags     *base.PassArgs
 	cmpTestGoBuildFlags *base.PassArgs
+	runTimeout          time.Duration
 )
 
 func init() {
@@ -57,6 +59,7 @@ func init() {
 	flags.AddBuildFlags(&Cmd.Flag)
 	flags.AddEmulatorFlags(&Cmd.Flag)
 	flags.AddEmbeddedFlags(&Cmd.Flag) // for -target support
+	Cmd.Flag.DurationVar(&runTimeout, "timeout", 0, "Timeout for the executed program (0 disables)")
 
 	cmpTestGoBuildFlags = flags.CaptureGoBuildFlags(CmpTestCmd)
 	flags.AddCommonFlags(&CmpTestCmd.Flag)
@@ -94,6 +97,9 @@ func runCmdEx(cmd *base.Command, args []string, mode build.Mode, goBuildFlags *b
 	args, runArgs, err := parseRunArgs(args)
 	check(err)
 	conf.RunArgs = runArgs
+	if mode == build.ModeRun {
+		conf.RunnerTimeout = runTimeout
+	}
 	_, err = build.Do(args, conf)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

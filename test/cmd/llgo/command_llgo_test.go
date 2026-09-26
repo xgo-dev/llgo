@@ -1,4 +1,4 @@
-//go:build llgo
+//go:build llgo && !wasm
 
 package llgocmd
 

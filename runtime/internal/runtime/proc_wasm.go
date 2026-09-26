@@ -1,4 +1,4 @@
-//go:build llgo && js && wasm
+//go:build llgo && js && wasm && !llgo.wasm.workers
 
 /*
  * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
@@ -295,6 +295,9 @@ func SchedulerStateForTesting() (runq uintptr, mid int64, pid int32) {
 }
 
 func SchedulerMultiplexesGoroutinesForTesting() bool { return true }
+
+// SchedulerProcID identifies the only physical worker in this profile.
+func SchedulerProcID() int { return 0 }
 
 func GMPForTesting() (goid, parentGoid uint64, mid int64, pid int32, gstatus, pstatus uint32, linked bool) {
 	gp := getg()

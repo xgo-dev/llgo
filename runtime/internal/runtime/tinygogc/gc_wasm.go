@@ -54,11 +54,7 @@ func gcGrowMemory(oldHeapEnd uintptr) uintptr {
 }
 
 func gcMarkReachable() {
-	sp := uintptr(getsp())
-	top := gcWasmStackTop()
-	if sp < top {
-		markRoots(sp, top)
-	}
+	gcMarkStackRoots()
 	if globalsStart < globalsEnd {
 		markRoots(globalsStart, globalsEnd)
 	}

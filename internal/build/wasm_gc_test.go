@@ -31,4 +31,16 @@ func TestWasmGCRootFrameLinksRuntimeChain(t *testing.T) {
 	if !strings.Contains(runtimeIR, "@llvm_gc_root_chain") {
 		t.Fatalf("runtime package does not consume the compiler root chain:\n%s", runtimeIR)
 	}
+	for _, name := range []string{
+		"SwitchAtBoundary",
+		"BeginRebuild",
+		"AdoptCurrent",
+		"SuspendCurrent",
+		"PublishCurrent",
+	} {
+		body := llvmFunctionBody(t, runtimeIR, name)
+		if strings.Contains(body, "alloca ") {
+			t.Fatalf("root-chain boundary %s acquired a compiler root frame:\n%s", name, body)
+		}
+	}
 }

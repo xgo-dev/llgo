@@ -30,7 +30,7 @@ func TestVisitAndSwitchContexts(t *testing.T) {
 		stackEntry: stackEntry{m: &m.frameMap},
 		roots:      [2]unsafe.Pointer{firstValue, secondValue},
 	}
-	currentRootChain = unsafe.Pointer(&entry.stackEntry)
+	currentRootChain = uintptr(unsafe.Pointer(&entry.stackEntry))
 
 	var first, second Context
 	RegisterActive(&first)
@@ -49,7 +49,7 @@ func TestVisitAndSwitchContexts(t *testing.T) {
 	}
 
 	Switch(&second)
-	if first.chain != unsafe.Pointer(&entry.stackEntry) || currentRootChain != nil {
+	if first.chain != unsafe.Pointer(&entry.stackEntry) || currentRootChain != 0 {
 		t.Fatal("Switch did not save the active chain and restore the next chain")
 	}
 	Unregister(&first)
@@ -85,13 +85,13 @@ func TestRestoreChain(t *testing.T) {
 
 	first := unsafe.Pointer(uintptr(0x11))
 	second := unsafe.Pointer(uintptr(0x22))
-	currentRootChain = first
-	if currentRootChain != first {
-		t.Fatalf("current root chain = %p, want %p", currentRootChain, first)
+	currentRootChain = uintptr(first)
+	if got := CurrentChain(); got != first {
+		t.Fatalf("current root chain = %p, want %p", got, first)
 	}
 	RestoreChain(second)
-	if currentRootChain != second {
-		t.Fatalf("current root chain after restore = %p, want %p", currentRootChain, second)
+	if got := CurrentChain(); got != second {
+		t.Fatalf("current root chain after restore = %p, want %p", got, second)
 	}
 }
 
@@ -102,13 +102,13 @@ func TestAdoptCurrent(t *testing.T) {
 	var first, second Context
 	RegisterActive(&first)
 	Register(&second)
-	currentRootChain = unsafe.Pointer(uintptr(0x11))
+	currentRootChain = uintptr(0x11)
 
 	AdoptCurrent(&second)
-	if active != &second {
+	if activeContext != uintptr(unsafe.Pointer(&second)) {
 		t.Fatal("AdoptCurrent did not replace the active context")
 	}
-	if currentRootChain != unsafe.Pointer(uintptr(0x11)) {
+	if currentRootChain != uintptr(0x11) {
 		t.Fatal("AdoptCurrent changed the chain restored by the stack switch")
 	}
 }
@@ -120,7 +120,7 @@ func TestBeginAndFinishRebuild(t *testing.T) {
 	firstChain := unsafe.Pointer(uintptr(0x11))
 	staleSecondChain := unsafe.Pointer(uintptr(0x22))
 	var first, second Context
-	currentRootChain = firstChain
+	currentRootChain = uintptr(firstChain)
 	RegisterActive(&first)
 	Register(&second)
 	second.chain = staleSecondChain
@@ -129,7 +129,7 @@ func TestBeginAndFinishRebuild(t *testing.T) {
 	if first.chain != firstChain {
 		t.Fatalf("source chain = %p, want %p", first.chain, firstChain)
 	}
-	if active != &second || second.chain != nil || currentRootChain != nil {
+	if activeContext != uintptr(unsafe.Pointer(&second)) || second.chain != nil || currentRootChain != 0 {
 		t.Fatal("BeginRebuild did not switch ownership and clear stale root links")
 	}
 	if !Rebuilding() {
@@ -137,14 +137,14 @@ func TestBeginAndFinishRebuild(t *testing.T) {
 	}
 
 	rebuiltSecondChain := unsafe.Pointer(uintptr(0x33))
-	currentRootChain = rebuiltSecondChain
+	currentRootChain = uintptr(rebuiltSecondChain)
 	FinishRebuild()
 	if Rebuilding() {
 		t.Fatal("FinishRebuild left the replay active")
 	}
 
 	SwitchAtBoundary(&first)
-	if second.chain != rebuiltSecondChain || currentRootChain != firstChain {
+	if second.chain != rebuiltSecondChain || currentRootChain != uintptr(firstChain) {
 		t.Fatal("rebuilt root links were not preserved by the next switch")
 	}
 }
@@ -154,12 +154,12 @@ func TestBeginAndFinishSJLJReplay(t *testing.T) {
 	t.Cleanup(resetForTest)
 
 	chain := unsafe.Pointer(uintptr(0x11))
-	currentRootChain = chain
+	currentRootChain = uintptr(chain)
 	BeginSJLJReplay()
 	if !sjljReplaying || !Rebuilding() {
 		t.Fatal("BeginSJLJReplay did not mark the replay active")
 	}
-	if currentRootChain != chain {
+	if currentRootChain != uintptr(chain) {
 		t.Fatal("BeginSJLJReplay changed the destination root chain")
 	}
 
@@ -180,6 +180,38 @@ func TestFinishSJLJReplayDoesNotEndAsyncifyRebuild(t *testing.T) {
 	}
 }
 
+func TestPublishAndSwitchToSystem(t *testing.T) {
+	resetForTest()
+	t.Cleanup(resetForTest)
+
+	var ctx Context
+	RegisterActive(&ctx)
+	currentRootChain = uintptr(0x44)
+	PublishCurrent()
+	if ctx.chain != unsafe.Pointer(uintptr(0x44)) {
+		t.Fatalf("published chain = %p, want %p", ctx.chain, unsafe.Pointer(uintptr(0x44)))
+	}
+
+	SwitchAtBoundary(nil)
+	if activeContext != 0 || currentRootChain != 0 {
+		t.Fatalf("system boundary retained active=%#x chain=%#x", activeContext, currentRootChain)
+	}
+}
+
+func TestSuspendCurrentDropsDiscardedStack(t *testing.T) {
+	resetForTest()
+	t.Cleanup(resetForTest)
+
+	var ctx Context
+	RegisterActive(&ctx)
+	currentRootChain = uintptr(0x55)
+	SuspendCurrent(uintptr(unsafe.Pointer(&ctx)))
+	if ctx.chain != nil || activeContext != 0 || currentRootChain != 0 {
+		t.Fatalf("suspended context retained chain=%p active=%#x current=%#x", ctx.chain, activeContext, currentRootChain)
+	}
+	assertPanics(t, func() { SuspendCurrent(uintptr(unsafe.Pointer(&ctx))) })
+}
+
 func assertPanics(t *testing.T, fn func()) {
 	t.Helper()
 	defer func() {
@@ -192,8 +224,8 @@ func assertPanics(t *testing.T, fn func()) {
 
 func resetForTest() {
 	contexts = nil
-	active = nil
+	activeContext = 0
 	rebuilding = false
 	sjljReplaying = false
-	currentRootChain = nil
+	currentRootChain = 0
 }

@@ -62,6 +62,12 @@ func (ctx *Context) InitCurrent(alloc func(uintptr) unsafe.Pointer) bool {
 	return true
 }
 
+// ResetCurrent rebinds an existing system context to a fresh host callback
+// entry. The Asyncify stack allocation remains owned by ctx.
+func (ctx *Context) ResetCurrent() {
+	emscripten.FiberInitCurrent(&ctx.fiber, ctx.asyncifyStack, defaultAsyncifyStackSize)
+}
+
 func (ctx *Context) Close(free func(unsafe.Pointer)) {
 	freeStorage(ctx.stack, ctx.asyncifyStack, free)
 	*ctx = Context{}

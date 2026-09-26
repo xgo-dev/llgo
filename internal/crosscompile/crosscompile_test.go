@@ -512,6 +512,15 @@ func TestEmscriptenTargetProfiles(t *testing.T) {
 			if !slices.Contains(export.LDFLAGS, emscriptenAsyncifyRemove) {
 				t.Errorf("named target does not preserve current libffi closure buffers during replay: %v", export.LDFLAGS)
 			}
+			if !slices.Contains(export.LDFLAGS, "-sALLOW_TABLE_GROWTH=1") {
+				t.Errorf("named target does not allow dynamic libffi closure entries: %v", export.LDFLAGS)
+			}
+			if !slices.Contains(export.LDFLAGS, "-sNODE_HOST_ENV=1") {
+				t.Errorf("named target does not propagate Node environment variables: %v", export.LDFLAGS)
+			}
+			if !slices.Contains(export.LDFLAGS, "-sEXPORTED_RUNTIME_METHODS=cwrap,allocateUTF8,stringToUTF8,UTF8ToString,FS,setValue,getValue,ENV") {
+				t.Errorf("named target does not expose its browser environment map: %v", export.LDFLAGS)
+			}
 			if !slices.Contains(export.LDFLAGS, "-sEXIT_RUNTIME=1") {
 				t.Errorf("named target does not let fatal Asyncify programs exit: %v", export.LDFLAGS)
 			}

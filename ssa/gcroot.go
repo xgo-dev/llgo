@@ -19,12 +19,15 @@ package ssa
 import (
 	"go/types"
 
+	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llvm"
 )
 
 const (
-	gcRootChainName         = "llvm_gc_root_chain"
-	gcRootSJLJReplayingName = "llvm_gc_root_sjlj_replaying"
+	gcRootChainName          = "llvm_gc_root_chain"
+	gcRootSJLJReplayingName  = "llvm_gc_root_sjlj_replaying"
+	threadLocalGCRootChain   = env.LLGoRuntimePkg + "/internal/gcroot.currentRootChain"
+	threadLocalSJLJReplaying = env.LLGoRuntimePkg + "/internal/gcroot.sjljReplaying"
 )
 
 // EnableGCRoots controls compiler-maintained GC roots.
@@ -35,6 +38,17 @@ func (p Program) EnableGCRoots(enable bool) {
 // GCRootsEnabled reports whether compiler-maintained GC roots are enabled.
 func (p Program) GCRootsEnabled() bool {
 	return p.enableGCRoots
+}
+
+// EnableThreadLocalGCRoots gives each native worker an independent compiler
+// root chain and SJLJ replay flag. The runtime provides matching TLS globals.
+func (p Program) EnableThreadLocalGCRoots(enable bool) {
+	p.threadLocalGCRoots = enable
+}
+
+// ThreadLocalGCRootsEnabled reports whether compiler roots are worker-local.
+func (p Program) ThreadLocalGCRootsEnabled() bool {
+	return p.threadLocalGCRoots
 }
 
 // NewGCRoots reserves count pointer roots in one compiler-maintained frame.
@@ -66,8 +80,8 @@ func (p Function) NewGCRoots(count int) []Expr {
 	nextSlot := llvm.CreateStructGEP(b.impl, frameType, frame, 0)
 	reentered := llvm.CreateICmp(b.impl, llvm.IntEQ, prev.impl, frame)
 	sjljReplaying := llvm.CreateLoad(b.impl, prog.Bool().ll, p.gcRootSJLJReplaying())
-	// SJLJ/Asyncify replays discarded function entries on the way back to a
-	// setjmp. Their stack slots must be reused without publishing dead frames.
+	// SJLJ replays discarded function entries on the way back to a setjmp.
+	// Their stack slots must be reused without publishing dead frames.
 	reusingFrame := b.impl.CreateOr(reentered, sjljReplaying, "")
 
 	frameMap := p.newGCRootMap(count)
@@ -101,24 +115,34 @@ func (b Builder) SetGCRoot(root, value Expr) {
 }
 
 func (p Function) gcRootChain() llvm.Value {
-	global := p.Pkg.mod.NamedGlobal(gcRootChainName)
+	name := gcRootChainName
+	if p.Prog.threadLocalGCRoots {
+		name = threadLocalGCRootChain
+	}
+	global := p.Pkg.mod.NamedGlobal(name)
 	if global.IsNil() {
 		storageType := p.Prog.storageType(p.Prog.VoidPtr())
-		global = llvm.AddGlobal(p.Pkg.mod, storageType, gcRootChainName)
+		global = llvm.AddGlobal(p.Pkg.mod, storageType, name)
 	}
 	global.SetInitializer(llvm.ConstNull(global.GlobalValueType()))
 	global.SetLinkage(llvm.LinkOnceAnyLinkage)
+	global.SetThreadLocal(p.Prog.threadLocalGCRoots)
 	global.SetAlignment(int(p.Prog.AlignOf(p.Prog.VoidPtr())))
 	return global
 }
 
 func (p Function) gcRootSJLJReplaying() llvm.Value {
-	global := p.Pkg.mod.NamedGlobal(gcRootSJLJReplayingName)
+	name := gcRootSJLJReplayingName
+	if p.Prog.threadLocalGCRoots {
+		name = threadLocalSJLJReplaying
+	}
+	global := p.Pkg.mod.NamedGlobal(name)
 	if global.IsNil() {
-		global = llvm.AddGlobal(p.Pkg.mod, p.Prog.Bool().ll, gcRootSJLJReplayingName)
+		global = llvm.AddGlobal(p.Pkg.mod, p.Prog.Bool().ll, name)
 	}
 	global.SetInitializer(llvm.ConstNull(p.Prog.Bool().ll))
 	global.SetLinkage(llvm.LinkOnceAnyLinkage)
+	global.SetThreadLocal(p.Prog.threadLocalGCRoots)
 	global.SetAlignment(1)
 	return global
 }

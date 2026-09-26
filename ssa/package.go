@@ -249,6 +249,7 @@ type aProgram struct {
 	enableDeadcodeDrop    bool
 	enableGCRoots         bool
 	logicalGoroutineLocal bool
+	threadLocalGCRoots    bool
 	enableSafepoints      bool
 	disableBoundsChecks   bool
 	pthreadStackSize      uint64
@@ -374,6 +375,7 @@ func (p Program) NewBackendProgram() Program {
 	backend.enableDeadcodeDrop = p.enableDeadcodeDrop
 	backend.enableGCRoots = p.enableGCRoots
 	backend.logicalGoroutineLocal = p.logicalGoroutineLocal
+	backend.threadLocalGCRoots = p.threadLocalGCRoots
 	backend.enableSafepoints = p.enableSafepoints
 	backend.disableBoundsChecks = p.disableBoundsChecks
 	backend.pthreadStackSize = p.pthreadStackSize
