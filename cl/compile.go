@@ -77,6 +77,9 @@ type Options struct {
 	// ReceiverNilChecks retains pointer-method selection semantics erased
 	// during Go SSA construction. It is collected from checked source info.
 	ReceiverNilChecks *ReceiverNilChecks
+	// FunctionAttributes carries source comments across package and cache boundaries.
+	// A shared index must be populated before concurrent backend compilation.
+	FunctionAttributes *FunctionAttributes
 }
 
 // SetDebug sets debug flags.
@@ -395,7 +398,7 @@ func (p *context) compileMethodsIf(pkg llssa.Package, typ types.Type, keep func(
 			if keep != nil && !keep(ssaMthd) {
 				continue
 			}
-			p.compileFuncDecl(pkg, ssaMthd)
+			p.compileFuncDecl(pkg, p.function(ssaMthd))
 		}
 	}
 }
@@ -581,7 +584,8 @@ func hasInstantiatedRecv(recv *types.Var) bool {
 	return false
 }
 
-func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Function, llssa.PyObjRef, int) {
+func (p *context) compileFuncDecl(pkg llssa.Package, source aFunction) (llssa.Function, llssa.PyObjRef, int) {
+	f := source.Function
 	pkgTypes, name, ftype := p.funcName(f)
 	if ftype != goFunc {
 		return nil, nil, ignoredFunc
@@ -631,6 +635,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			panic("conflicting closure environment ABI for " + name)
 		}
 		if fn.HasBody() {
+			source.applyAttributes(fn)
 			return fn, nil, goFunc
 		}
 	}
@@ -655,6 +660,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			fn = pkg.NewFuncEx(name, sig, background, false, p.needsLinkOnce(f))
 		}
 	}
+	source.applyAttributes(fn)
 	if p.prog.Target().GOARCH == "wasm" {
 		if decl, ok := f.Syntax().(*ast.FuncDecl); ok {
 			fullName, _ := astFuncName(llssa.PathOf(pkgTypes), decl)
@@ -693,7 +699,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			parentInits := p.inits
 			p.inits = nil
 			for _, af := range f.AnonFuncs {
-				p.compileFuncDecl(pkg, af)
+				p.compileFuncDecl(pkg, p.function(af))
 			}
 			childInits = append(childInits, p.inits...)
 			p.inits = parentInits
@@ -2406,7 +2412,7 @@ func (p *context) compileFunction(v *ssa.Function) (goFn llssa.Function, pyFn ll
 	// TODO(xsw) v.Pkg == nil: means auto generated function?
 	if v.Pkg == p.goPkg || v.Pkg == nil {
 		// function in this package
-		goFn, pyFn, kind = p.compileFuncDecl(p.pkg, v)
+		goFn, pyFn, kind = p.compileFuncDecl(p.pkg, p.function(v))
 		if kind != ignoredFunc {
 			return
 		}
@@ -2804,6 +2810,10 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		pkg.Pkg = pkgTypes
 		patch.Alt.Pkg = pkgTypes
 	}
+	if options.FunctionAttributes == nil {
+		options.FunctionAttributes = new(FunctionAttributes)
+		options.FunctionAttributes.collect(pkgTypes, files)
+	}
 	if !options.PreloadedSyntax {
 		if err = ParsePkgSyntaxWithOptions(prog, pkgProg.Fset, pkgTypes, files, options); err != nil {
 			return nil, nil, err
@@ -2865,6 +2875,7 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 	ctx.prog.SetPatch(ctx.patchType)
 	ctx.prog.SetCompileMethods(ctx.checkCompileMethods)
 	ret.SetResolveLinkname(ctx.resolveLinkname)
+	ret.SetFunctionInitializer(ctx.initFunctionAttributes)
 
 	if hasPatch {
 		skips := ctx.skips
@@ -2949,7 +2960,7 @@ func processPkg(ctx *context, ret llssa.Package, pkg *ssa.Package) {
 				// Do not try to build generic (non-instantiated) functions.
 				continue
 			}
-			ctx.compileFuncDecl(ret, member)
+			ctx.compileFuncDecl(ret, ctx.function(member))
 		case *ssa.Type:
 			ctx.compileType(ret, member)
 		case *ssa.Global:
