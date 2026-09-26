@@ -1,5 +1,21 @@
 //go:build !llgo
 
+/*
+ * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package cl
 
 import (
@@ -75,9 +91,13 @@ func plain() {}
 func TestLinknameRecordsKeepPackageIdentity(t *testing.T) {
 	prog := ssatest.NewProgramEx(t, nil, importer.Default())
 	defer prog.Dispose()
-	for _, target := range []string{"C.first", "C.second"} {
+	for _, target := range []string{"", "C.first", "C.second"} {
 		fset := token.NewFileSet()
-		file, err := parser.ParseFile(fset, "variant.go", "package p\n//llgo:link F "+target+"\nfunc F() {}\n", parser.ParseComments)
+		source := "package p\n"
+		if target != "" {
+			source += "//llgo:link F " + target + "\n"
+		}
+		file, err := parser.ParseFile(fset, "variant.go", source+"func F() {}\n", parser.ParseComments)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -88,7 +108,7 @@ func TestLinknameRecordsKeepPackageIdentity(t *testing.T) {
 		// Verify the earlier variant even after the global compatibility index has
 		// been overwritten by another package with exactly the same path.
 		defer func() {
-			if got, ok := prog.LinknameFor(pkg, nil, "example.com/p.F"); !ok || got != target {
+			if got, ok := prog.LinknameFor(pkg, nil, "example.com/p.F"); ok != (target != "") || got != target {
 				t.Errorf("variant %s = %s, %v", target, got, ok)
 			}
 		}()
@@ -194,5 +214,54 @@ func TestStandalonePropertiesPreparedWithoutFiles(t *testing.T) {
 	prog.Directives().Freeze()
 	if !ctx.sourceFunction(ssaPkg.Func("F")).Decl.UintptrEscapes {
 		t.Fatal("standalone dependency lost prepared uintptr property")
+	}
+}
+
+func TestFunctionNameUsesPackageRecordsOrStandaloneLinks(t *testing.T) {
+	for _, packageRecords := range []bool{true, false} {
+		name := "standalone"
+		if packageRecords {
+			name = "package"
+		}
+		t.Run(name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "p.go", "package p\n//go:noinline\nfunc F() {}\n", parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info := newLocalityTypeInfo()
+			pkg, err := new(types.Config).Check("example.com/p", fset, []*ast.File{file}, info)
+			if err != nil {
+				t.Fatal(err)
+			}
+			goProg := ssa.NewProgram(fset, ssa.SanityCheckFunctions)
+			ssaPkg := goProg.CreatePackage(pkg, []*ast.File{file}, info, true)
+			ssaPkg.Build()
+			prog := ssatest.NewProgramEx(t, nil, importer.Default())
+			defer prog.Dispose()
+			if packageRecords {
+				if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
+					t.Fatal(err)
+				}
+				prog.PackageDirectives(pkg).Bind(info)
+			} else {
+				prog.Directives().Function(file.Decls[0].(*ast.FuncDecl))
+			}
+			prog.SetLinkname(pkg.Path()+".F", "C.legacy")
+			prog.Directives().Freeze()
+			ctx := &context{prog: prog, goTyps: pkg}
+			source := ctx.sourceFunction(ssaPkg.Func("F"))
+			gotPkg, gotName, kind, decl := ctx.funcName(source)
+			if decl == nil || decl != source.Decl || !decl.NoInline {
+				t.Fatal("function naming lost the source properties")
+			}
+			if packageRecords {
+				if gotPkg != pkg || gotName != pkg.Path()+".F" || kind != goFunc {
+					t.Fatalf("package declaration inherited a global link: %v, %s, %d", gotPkg, gotName, kind)
+				}
+			} else if gotPkg != nil || gotName != "legacy" || kind != cFunc {
+				t.Fatalf("standalone declaration lost its legacy link: %v, %s, %d", gotPkg, gotName, kind)
+			}
+		})
 	}
 }

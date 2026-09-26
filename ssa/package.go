@@ -522,8 +522,8 @@ func (p Program) SetRuntime(runtime any) {
 	}
 }
 
-// SetTypeCallConv sets the default calling convention for the named type, controlling
-// how that type (and functions using it) are lowered.
+// SetTypeCallConv updates the compatibility index for types in packages
+// without directive records. It does not override package directive records.
 // For a programmatically constructed native struct, supply its original fields
 // so types.Sizes.Offsetsof can identify the enclosing layout without a named
 // type or source positions. Source loaders instead call SetNativeStructFields
@@ -540,6 +540,8 @@ func (p Program) SetTypeCallConv(typFullName string, cc CallConv, fields ...*typ
 	p.packageSyntax.mu.Unlock()
 }
 
+// SetLinkname updates the global index used by Linkname and by LinknameFor for
+// packages without directive records. It does not override package records.
 func (p Program) SetLinkname(name, link string) {
 	p.packageSyntax.mu.Lock()
 	p.packageSyntax.linknames[name] = link
