@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/xgo-dev/llgo/internal/directive"
 )
 
 func TestLoadExWithGoVersion(t *testing.T) {
@@ -166,7 +168,7 @@ const x = ""`,
 				{Pos: filename + ":" + strconv.Itoa(tt.errorLine) + ":20", Msg: embedPatternDriverDiagnostic},
 				{Pos: filename + ":1:1", Msg: "unrelated driver diagnostic"},
 			}
-			normalizeEmbedDriverDiagnostics(errs, fset, []*ast.File{file}, tt.goVersion)
+			normalizeEmbedDriverDiagnostics(errs, fset, []*ast.File{file}, tt.goVersion, new(directive.Index))
 			if errs[0].Msg != tt.want {
 				t.Fatalf("normalized embed error = %q, want %q", errs[0].Msg, tt.want)
 			}
@@ -201,10 +203,10 @@ func TestEmbedDiagnosticHelperBoundaries(t *testing.T) {
 	})
 
 	t.Run("nil syntax context", func(t *testing.T) {
-		if got := embedDirectiveContextAt(nil, &ast.File{}, "case.go:1:1"); got != embedDirectiveUnknown {
+		if got := embedDirectiveContextAt(nil, &ast.File{}, "case.go:1:1", new(directive.Index)); got != embedDirectiveUnknown {
 			t.Fatalf("nil fileset context = %v, want unknown", got)
 		}
-		if got := embedDirectiveContextAt(token.NewFileSet(), nil, "case.go:1:1"); got != embedDirectiveUnknown {
+		if got := embedDirectiveContextAt(token.NewFileSet(), nil, "case.go:1:1", new(directive.Index)); got != embedDirectiveUnknown {
 			t.Fatalf("nil file context = %v, want unknown", got)
 		}
 	})

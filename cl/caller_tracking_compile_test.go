@@ -47,7 +47,7 @@ func Where() string {
 
 	prog := ssatest.NewProgramEx(t, nil, imp)
 	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
-	ct := cl.NewCallerTracking()
+	ct := cl.NewCallerTracking(prog.Directives())
 	ret, _, err := cl.NewPackageExWithEmbed(prog, ct, nil, nil, fooPkg, files, nil)
 	if err != nil {
 		t.Fatalf("NewPackageExWithEmbed failed: %v", err)

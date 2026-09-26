@@ -23,6 +23,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	gossa "golang.org/x/tools/go/ssa"
 )
 
@@ -45,11 +46,11 @@ func Logs() { dep.Where() }
 func CrossOwner() { defer dep.Inspect(); CrossLeaf() }
 func CrossLeaf() {}
 `)
-	lazyCrossPackageSites := recoverPanicSiteFuncSet(NewCallerTracking(), root)
+	lazyCrossPackageSites := recoverPanicSiteFuncSet(NewCallerTracking(new(directive.Index)), root)
 	if !lazyCrossPackageSites[root.Func("CrossOwner")] || !lazyCrossPackageSites[root.Func("CrossLeaf")] {
 		t.Fatal("lazy analysis lost the subtree below a cross-package recovering defer")
 	}
-	tracking := NewCallerTracking()
+	tracking := NewCallerTracking(new(directive.Index))
 	tracking.Precompute([]*gossa.Package{dep, root})
 	if !runtimeCallerBaseSet(tracking, dep)[dep.Func("Where")] {
 		t.Fatal("precomputed base set lost runtime caller function")
@@ -108,14 +109,14 @@ func Logs() { dep.Where() }
 func Plain() { dep.Quiet() }
 `)
 	pkgs := []*gossa.Package{root, dep}
-	lazy := NewCallerTracking()
+	lazy := NewCallerTracking(new(directive.Index))
 	for _, pkg := range pkgs {
 		runtimeCallerBaseSet(lazy, pkg)
 	}
 	for _, pkg := range pkgs {
 		runtimeCallerFuncSet(lazy, pkg)
 	}
-	precomputed := NewCallerTracking()
+	precomputed := NewCallerTracking(new(directive.Index))
 	precomputed.Precompute(pkgs)
 	for _, pkg := range pkgs {
 		if got, want := precomputed.base[pkg], lazy.base[pkg]; !reflect.DeepEqual(got, want) {
@@ -152,7 +153,7 @@ func Logs() { dep.Where() }
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			tracking := NewCallerTracking()
+			tracking := NewCallerTracking(new(directive.Index))
 			tracking.Precompute([]*gossa.Package{dep})
 			defer func() {
 				if recover() == nil {

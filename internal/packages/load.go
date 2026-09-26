@@ -523,11 +523,7 @@ func (tc *typecheckContext) typecheckPackage(pkg *Package) {
 
 const embedPatternDriverDiagnostic = "pattern //: invalid pattern syntax"
 
-func normalizeEmbedDriverDiagnostics(errs []packages.Error, fset *token.FileSet, files []*ast.File, goVersion string, indexes ...*directive.Index) {
-	index := new(directive.Index)
-	if len(indexes) > 0 {
-		index = indexes[0]
-	}
+func normalizeEmbedDriverDiagnostics(errs []packages.Error, fset *token.FileSet, files []*ast.File, goVersion string, index *directive.Index) {
 	for i := range errs {
 		if errs[i].Msg != embedPatternDriverDiagnostic {
 			continue
@@ -555,11 +551,7 @@ const (
 	embedDirectiveLocalVar
 )
 
-func embedDirectiveContextAt(fset *token.FileSet, file *ast.File, errorPos string, indexes ...*directive.Index) embedDirectiveContext {
-	index := new(directive.Index)
-	if len(indexes) > 0 {
-		index = indexes[0]
-	}
+func embedDirectiveContextAt(fset *token.FileSet, file *ast.File, errorPos string, index *directive.Index) embedDirectiveContext {
 	if fset == nil || file == nil {
 		return embedDirectiveUnknown
 	}
