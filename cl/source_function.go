@@ -3,6 +3,7 @@ package cl
 import (
 	"go/ast"
 	"go/types"
+	"strings"
 
 	"github.com/xgo-dev/llgo/internal/directive"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -58,6 +59,10 @@ func (p *context) callableDeclaration(pkg *types.Package, obj *types.Func, name 
 					return decl
 				}
 			}
+			if name == "" && obj != nil {
+				fullName := llssa.FuncName(pkg, obj.Name(), obj.Type().(*types.Signature).Recv(), true)
+				name = strings.TrimPrefix(fullName, llssa.PathOf(pkg)+".")
+			}
 			if decl, ok := records.Names[name].(*directive.FunctionDecl); ok {
 				return decl
 			}
@@ -83,7 +88,6 @@ func (p *context) applyFunctionAttributes(fn llssa.Function, decl *directive.Fun
 // Backend-created entries consume prepared records without constructing Go SSA.
 func (p *context) initFunctionAttributes(fn llssa.Function, obj *types.Func) {
 	decl := p.prog.FunctionDeclaration(obj.Pkg(), obj, nil)
-	_, name := typesFuncName(llssa.PathOf(obj.Pkg()), obj)
-	decl = p.callableDeclaration(obj.Pkg(), obj, name, decl)
+	decl = p.callableDeclaration(obj.Pkg(), obj, "", decl)
 	p.applyFunctionAttributes(fn, decl)
 }
