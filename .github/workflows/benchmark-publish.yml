@@ -24,7 +24,7 @@ jobs:
     steps:
       # A docs-only run succeeds with skipped benchmark jobs and no artifacts.
       # Inspect the triggering run without checking out or executing PR code.
-      - uses: actions/github-script@v8
+      - uses: actions/github-script@v9
         id: artifacts
         with:
           script: |
