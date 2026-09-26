@@ -26,9 +26,9 @@ never LLVM values. Consumers must not modify published records.
 5. Caller analysis prepares its function records before backend workers start.
    The driver freezes the Index; attempting to discover an unprepared file,
    comment group, function or imported source after that boundary panics.
-6. Lowering queries records. A backend-local `sourceFunction` embeds the x/tools
-   SSA function and carries its source properties. Generic instances consult their
-   origin. Synthetic wrappers retain explicit propagation rules (for example,
+6. Lowering queries prepared `directive.Function` records directly through
+   `cl.functionDirectives`, without another wrapper or cache. Generic instances
+   consult their origin. Synthetic wrappers retain explicit propagation rules (for example,
    uintptr escapes) instead of inheriting every property. LLVM attributes are
    applied after function creation using existing constructors.
 

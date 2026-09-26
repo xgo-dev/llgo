@@ -28,7 +28,7 @@ func (p *context) prepareCooperativeSafepoints(fn *ssa.Function, isCgo bool) {
 	p.safepointEntry = false
 	p.safepoints = nil
 	if !p.prog.CooperativeSafepointsEnabled() || fn == nil || len(fn.Blocks) == 0 ||
-		isCgo || p.sourceFunction(fn).NoSplit {
+		isCgo || p.functionDirectives(fn).NoSplit {
 		return
 	}
 	// Package-less SSA wrappers only forward into a declared function and may

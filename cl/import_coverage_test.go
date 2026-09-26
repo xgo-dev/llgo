@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
@@ -25,53 +26,13 @@ func TestReplaceGoNameRuntimeBranch(t *testing.T) {
 }
 
 func TestTypeBackgroundAndParsePkgSyntaxCoverage(t *testing.T) {
-	callConvFset := token.NewFileSet()
-	callConvBg := func(doc *ast.CommentGroup) string {
-		cc, err := typeCallConv(callConvFset, doc)
-		if err != nil {
-			t.Fatalf("typeCallConv(%v) error: %v", doc, err)
-		}
-		return cc.bg
-	}
-
-	if got := callConvBg(nil); got != "" {
-		t.Fatalf("typeCallConv(nil)=%q, want empty", got)
-	}
-
-	// Deprecated //llgo:type forms still resolve to the same background.
-	doc1 := &ast.CommentGroup{List: []*ast.Comment{{Text: "//llgo:type C"}}}
-	if got := callConvBg(doc1); got != "C" {
-		t.Fatalf("typeCallConv(//llgo:type C)=%q, want C", got)
-	}
-	doc2 := &ast.CommentGroup{List: []*ast.Comment{{Text: "// llgo:type C"}}}
-	if got := callConvBg(doc2); got != "C" {
-		t.Fatalf("typeCallConv(// llgo:type C)=%q, want C", got)
-	}
-	doc3 := &ast.CommentGroup{List: []*ast.Comment{{Text: "//llgo:type stdcall"}}}
-	if got := callConvBg(doc3); got != "stdcall" {
-		t.Fatalf("typeCallConv(//llgo:type stdcall)=%q, want stdcall", got)
-	}
-
-	// New directives resolve to the matching background.
-	doc4 := &ast.CommentGroup{List: []*ast.Comment{{Text: "//llgo:cdecl"}}}
-	if got := callConvBg(doc4); got != "C" {
-		t.Fatalf("typeCallConv(//llgo:cdecl)=%q, want C", got)
-	}
-	doc5 := &ast.CommentGroup{List: []*ast.Comment{{Text: "// llgo:stdcall"}}}
-	if got := callConvBg(doc5); got != "stdcall" {
-		t.Fatalf("typeCallConv(// llgo:stdcall)=%q, want stdcall", got)
-	}
-
-	// A //llgo:type with an unrelated argument is not a calling-convention
-	// directive and leaves the background unset.
-	doc6 := &ast.CommentGroup{List: []*ast.Comment{{Text: "//llgo:type Python"}}}
-	if got := callConvBg(doc6); got != "" {
-		t.Fatalf("typeCallConv(//llgo:type Python)=%q, want empty", got)
-	}
-
 	src := `package p
 //llgo:cdecl
 type A int
+// llgo:type C
+type Spaced int
+//llgo:type stdcall
+type Stdcall int
 type (
 	B int
 	C int
@@ -83,6 +44,10 @@ func (A) Hidden() {}
 //go:other
 //go:nointerface
 func (A) StackedHidden() {}
+func (A) Plain() {}
+// ordinary comment
+//go:nointerface
+func (A) HiddenAfterComment() {}
 `
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "p.go", src, parser.ParseComments)
@@ -95,12 +60,17 @@ func (A) StackedHidden() {}
 		t.Fatal(err)
 	}
 
-	ctx := &context{prog: prog}
-	ctx.processNoInterfaceByDoc(nil, "example.com/p.NilDoc")
-	ctx.processNoInterfaceByDoc(&ast.CommentGroup{List: []*ast.Comment{
-		{Text: "// not a directive"},
-		{Text: "//go:nointerface"},
-	}}, "example.com/p.NonDirectiveStops")
+	records := prog.PackageDirectives(pkg)
+	for name, want := range map[string]string{"A": "C", "Spaced": "C", "Stdcall": "stdcall", "B": "", "C": ""} {
+		if got := records.Names[name].(*directive.TypeDecl).Background; got != want {
+			t.Errorf("%s background = %q, want %q", name, got, want)
+		}
+	}
+	for name, want := range map[string]bool{"A.Hidden": true, "A.StackedHidden": true, "A.Plain": false, "A.HiddenAfterComment": true} {
+		if got := records.Names[name].(*directive.FunctionDecl).NoInterface; got != want {
+			t.Errorf("%s nointerface = %v, want %v", name, got, want)
+		}
+	}
 
 	if !prog.PackageSyntaxParsed(pkg) {
 		t.Fatal("package syntax was not marked as parsed")
@@ -190,7 +160,7 @@ func TestPkgSymInfoAddSymAndInitLinknamesCoverage(t *testing.T) {
 		t.Fatalf("failed to find Foo position")
 	}
 
-	syms := newPkgSymInfo()
+	syms := newPkgSymInfo(new(directive.Index))
 	syms.addSym(fset, fnPos, "example.com/p.Foo", "Foo", false)
 
 	tf := fset.File(file.Pos())
@@ -309,7 +279,15 @@ func TestParsePkgSyntaxCollectsLinknames(t *testing.T) {
 		})
 	}
 	prog := llssa.NewProgram(nil)
-	collectDeclarationDirectives(prog, nil, &ast.CommentGroup{List: []*ast.Comment{{Text: "//go:linkname Other C.other"}}}, llssa.PkgRuntime+".Sigsetjmp", "Sigsetjmp", token.NoPos)
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "mismatch.go", "package runtime\n//go:linkname Other C.other\nfunc Sigsetjmp()\n", parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ParsePkgSyntax(prog, fset, types.NewPackage(llssa.PkgRuntime, "runtime"), []*ast.File{file}); err != nil {
+		t.Fatal(err)
+	}
+
 	if _, ok := prog.Linkname(llssa.PkgRuntime + ".Sigsetjmp"); ok {
 		t.Fatal("mismatched linkname was collected")
 	}
@@ -411,15 +389,18 @@ func malformed()
 	}
 }
 
-func TestCollectDeclarationDirectivesIgnoresOtherDirectives(t *testing.T) {
+func TestParsePkgSyntaxIgnoresNonLinkDirectives(t *testing.T) {
 	prog := llssa.NewProgram(nil)
-	doc := &ast.CommentGroup{List: []*ast.Comment{
-		{Text: "//go:noinline"},
-		{Text: "//llgointernal:tls"},
-	}}
-	const fullName = "example.com/p.Value"
-	collectDeclarationDirectives(prog, nil, doc, fullName, "Value", token.NoPos)
-	if _, ok := prog.Linkname(fullName); ok {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "nonlink.go", "package p\n//go:noinline\n//llgointernal:tls\nvar value int\n", parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := types.NewPackage("example.com/p", "p")
+	if err := ParsePkgSyntaxWithOptions(prog, fset, pkg, []*ast.File{file}, Options{AllowInternalDirectives: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := prog.Linkname("example.com/p.value"); ok {
 		t.Fatal("non-link directives installed a linkname")
 	}
 }
