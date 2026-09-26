@@ -2852,6 +2852,7 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 	ctx.prog.SetPatch(ctx.patchType)
 	ctx.prog.SetCompileMethods(ctx.checkCompileMethods)
 	ret.SetResolveLinkname(ctx.resolveLinkname)
+	ret.SetFunctionInitializer(ctx.initFunctionAttributes)
 
 	if hasPatch {
 		skips := ctx.skips
