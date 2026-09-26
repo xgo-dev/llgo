@@ -475,7 +475,9 @@ func extractTrampolineCName(name string) string {
 	return base
 }
 
-func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
+func (p *context) funcName(source sourceFunction) (*types.Package, string, int, *directive.FunctionDecl) {
+	fn := source.SSA
+	decl := source.Decl
 	var pkg *types.Package
 	var orgName string
 	if origin := fn.Origin(); origin != nil {
@@ -485,14 +487,14 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 	} else {
 		fname := fn.Name()
 		if checkCgo(fname) && !cgoIgnored(fname) {
-			return nil, fname, llgoInstr
+			return nil, fname, llgoInstr, decl
 		}
 		if strings.HasPrefix(fname, "_cgoexp_") {
-			return nil, fname, ignoredFunc
+			return nil, fname, ignoredFunc, decl
 		}
 		if isCgoExternSymbol(fn) {
 			if _, ok := llgoInstrs[fname]; ok {
-				return nil, fname, llgoInstr
+				return nil, fname, llgoInstr, decl
 			}
 		}
 		if fnPkg := fn.Pkg; fnPkg != nil {
@@ -515,25 +517,35 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 	if fn.Origin() == nil && fn.Synthetic != "" && fn.Syntax() == nil {
 		obj = nil
 	}
-	if v, ok := p.prog.LinknameFor(p.directivePackage(pkg), obj, orgName); ok {
+	functionObj, _ := obj.(*types.Func)
+	decl = p.callableDeclaration(pkg, functionObj, strings.TrimPrefix(orgName, llssa.PathOf(pkg)+"."), decl)
+	var link string
+	var linked bool
+	// Standalone imported-source metadata still uses the legacy link index.
+	if decl != nil && p.prog.PackageDirectives(p.directivePackage(pkg)) != nil {
+		link, linked = decl.Linkname, decl.HasLinkname
+	} else {
+		link, linked = p.prog.LinknameFor(p.directivePackage(pkg), obj, orgName)
+	}
+	if v, ok := link, linked; ok {
 		if p.options.CExportWrappers {
 			if export, ok := p.pkg.ExportFuncs()[orgName]; ok && export == v {
-				return pkg, funcName(pkg, fn, false), goFunc
+				return pkg, funcName(pkg, fn, false), goFunc, decl
 			}
 		}
 		if strings.HasPrefix(v, "C.") {
-			return nil, v[2:], cFunc
+			return nil, v[2:], cFunc, decl
 		}
 		if strings.HasPrefix(v, "stdcall.") {
-			return nil, v[len("stdcall."):], stdcallFunc
+			return nil, v[len("stdcall."):], stdcallFunc, decl
 		}
 		if strings.HasPrefix(v, "py.") {
-			return pkg, v[3:], pyFunc
+			return pkg, v[3:], pyFunc, decl
 		}
 		if strings.HasPrefix(v, "llgo.") {
-			return nil, v[5:], llgoInstr
+			return nil, v[5:], llgoInstr, decl
 		}
-		return pkg, v, goFunc
+		return pkg, v, goFunc, decl
 	}
 	// Stdlib compiler intrinsics that are defined as `panic("intrinsic")` in
 	// source form. LLGo doesn't run Go escape analysis, so we can lower these to
@@ -541,7 +553,7 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 	//
 	// See: $(GOROOT)/src/hash/maphash/maphash.go: escapeForHash.
 	if orgName == "hash/maphash.escapeForHash" {
-		return nil, "skip", llgoInstr
+		return nil, "skip", llgoInstr, decl
 	}
 	// The 386 C ABI returns floating-point values through x87. Loading a
 	// signaling NaN into x87 quiets it, so a normal call to the standard
@@ -551,16 +563,16 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 	if target := p.prog.Target(); target != nil && target.GOARCH == "386" {
 		switch orgName {
 		case "math.Float32frombits":
-			return nil, "float32FromBits", llgoInstr
+			return nil, "float32FromBits", llgoInstr, decl
 		case "math.Float32bits":
-			return nil, "float32Bits", llgoInstr
+			return nil, "float32Bits", llgoInstr, decl
 		case "math.Float64frombits":
-			return nil, "float64FromBits", llgoInstr
+			return nil, "float64FromBits", llgoInstr, decl
 		case "math.Float64bits":
-			return nil, "float64Bits", llgoInstr
+			return nil, "float64Bits", llgoInstr, decl
 		}
 	}
-	return pkg, funcName(pkg, fn, false), goFunc
+	return pkg, funcName(pkg, fn, false), goFunc, decl
 }
 
 const (

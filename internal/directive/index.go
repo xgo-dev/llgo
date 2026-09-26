@@ -16,7 +16,7 @@ type Index struct {
 	mu        sync.Mutex
 	files     map[*ast.File]*File
 	groups    map[*ast.CommentGroup]*Group
-	functions map[*ast.FuncDecl]Function
+	functions map[*ast.FuncDecl]*FunctionDecl
 }
 
 // File contains source-order file directives and declaration associations.
@@ -144,9 +144,9 @@ func (s *Index) File(file *ast.File) *File {
 			add(n.Doc)
 			f.Functions[n] = functionRecord(n, s.group(n.Doc))
 			if s.functions == nil {
-				s.functions = make(map[*ast.FuncDecl]Function)
+				s.functions = make(map[*ast.FuncDecl]*FunctionDecl)
 			}
-			s.functions[n] = f.Functions[n]
+			s.functions[n] = &FunctionDecl{Source: n, Function: f.Functions[n]}
 		case *ast.GenDecl:
 			add(n.Doc)
 		case *ast.ValueSpec:
@@ -196,26 +196,25 @@ func (s *Index) Function(d *ast.FuncDecl) Function {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if p, ok := s.functions[d]; ok {
-		return p
+	if p := s.functions[d]; p != nil {
+		return p.Function
 	}
 	if s.frozen {
 		panic("function directives were not prepared before lowering")
 	}
 	if s.functions == nil {
-		s.functions = make(map[*ast.FuncDecl]Function)
+		s.functions = make(map[*ast.FuncDecl]*FunctionDecl)
 	}
-	p := functionRecord(d, s.group(d.Doc))
+	p := &FunctionDecl{Source: d, Function: functionRecord(d, s.group(d.Doc))}
 	s.functions[d] = p
-	return p
+	return p.Function
 }
 
-// LookupFunction reads a prepared standalone declaration without discovery.
-func (s *Index) LookupFunction(d *ast.FuncDecl) (Function, bool) {
+// FunctionDeclaration reads a prepared standalone declaration without discovery.
+func (s *Index) FunctionDeclaration(d *ast.FuncDecl) *FunctionDecl {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, ok := s.functions[d]
-	return p, ok
+	return s.functions[d]
 }
 
 // Freeze closes discovery at the coordinator/worker boundary. Existing records
