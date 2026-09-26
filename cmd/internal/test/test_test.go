@@ -6,6 +6,7 @@ import (
 	"flag"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/xgo-dev/llgo/cmd/internal/flags"
 )
@@ -161,6 +162,33 @@ func TestTestRunsMustBeSequential(t *testing.T) {
 	flags.TestFuzz = "FuzzOne"
 	if !testRunsMustBeSequential() {
 		t.Fatal("fuzzing must force sequential test execution")
+	}
+}
+
+func TestTestRunnerTimeout(t *testing.T) {
+	maxDuration := time.Duration(1<<63 - 1)
+	tests := []struct {
+		value   string
+		want    time.Duration
+		wantErr bool
+	}{
+		{value: "10m", want: 10*time.Minute + testRunnerExitGrace},
+		{value: "250ms", want: 250*time.Millisecond + testRunnerExitGrace},
+		{value: "0", want: 0},
+		{value: "-1s", want: 0},
+		{value: maxDuration.String(), want: maxDuration},
+		{value: "not-a-duration", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			got, err := testRunnerTimeout(tt.value)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("testRunnerTimeout(%q) error = %v, wantErr %v", tt.value, err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Fatalf("testRunnerTimeout(%q) = %s, want %s", tt.value, got, tt.want)
+			}
+		})
 	}
 }
 

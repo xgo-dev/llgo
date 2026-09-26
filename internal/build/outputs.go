@@ -107,6 +107,21 @@ func isDir(path string) bool {
 	return err == nil && info.IsDir()
 }
 
+func implicitExecutionTempPrefix(conf *Config) string {
+	if conf.OutFile != "" {
+		return ""
+	}
+	switch conf.Mode {
+	case ModeRun, ModeCmpTest:
+		return "llgo-run-*"
+	case ModeTest:
+		if !conf.CompileOnly {
+			return "llgo-test-*"
+		}
+	}
+	return ""
+}
+
 // applyPrefix applies build mode specific naming conventions
 func applyPrefix(baseName string, buildMode BuildMode, target string, goos string) string {
 	// Determine the effective OS for naming conventions
@@ -182,13 +197,13 @@ func buildOutFmts(pkgName string, conf *Config, multiPkg bool, crossCompile *cro
 
 	// Determine base name and directory
 	baseName, dir := determineBaseNameAndDir(pkgName, conf, multiPkg)
-	if conf.Target == "" && conf.Mode == ModeTest && !conf.CompileOnly && conf.OutFile == "" {
-		// codesign examines an executable's parent directory while deciding
-		// whether it belongs to a bundle. Keep each implicit test binary in a
-		// small LLGo-owned directory instead of making every link scan the shared
-		// system temp directory. The directory is removed after the test runs.
+	if prefix := implicitExecutionTempPrefix(conf); prefix != "" {
+		// Keep every implicit execution artifact in one LLGo-owned directory.
+		// Besides avoiding broad codesign scans of the system temp directory,
+		// this lets cleanup reclaim target-owned sidecars such as Emscripten's
+		// sibling .wasm module without guessing their names.
 		var err error
-		details.tempDir, err = os.MkdirTemp("", "llgo-test-*")
+		details.tempDir, err = os.MkdirTemp("", prefix)
 		if err != nil {
 			return nil, err
 		}

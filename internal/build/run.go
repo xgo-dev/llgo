@@ -18,14 +18,16 @@ package build
 
 import (
 	"bytes"
+	stdcontext "context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
-	"github.com/xgo-dev/llgo/internal/mockable"
 	"github.com/xgo-dev/llgo/internal/shellparse"
 )
 
@@ -37,6 +39,7 @@ type testProgram struct {
 	temporaryOutputs *OutFmtDetails
 	runner           string
 	runnerEnv        map[string]string
+	profile          string
 }
 
 type testRunResult struct {
@@ -48,6 +51,103 @@ type testProgramResult struct {
 	program testProgram
 	output  []byte
 	err     error
+}
+
+const (
+	runnerStatusInvalidCommand = "invalid-command"
+	runnerStatusNotConfigured  = "not-configured"
+	runnerStatusUnavailable    = "unavailable"
+	runnerStatusExit           = "exit"
+	runnerStatusStart          = "start-error"
+	runnerStatusTimeout        = "timeout"
+	runnerStatusOutputTimeout  = "output-timeout"
+)
+
+// runnerDetails identifies the command boundary that owns a host process.
+// Keep this independent from the target command template: aliases such as
+// wasm and wasip1 can share a runner while retaining their selected target and
+// physical ABI in diagnostics.
+type runnerDetails struct {
+	phase       string
+	target      string
+	profile     string
+	artifact    string
+	packageName string
+	timeout     time.Duration
+}
+
+// runnerFailure preserves the host-runner outcome while adding enough build
+// context to reproduce it. In particular, a missing runner and a program that
+// deliberately exits non-zero must not collapse into the same bare exec error.
+type runnerFailure struct {
+	runnerDetails
+	runner   string
+	status   string
+	exitCode int
+	err      error
+}
+
+func (e *runnerFailure) Error() string {
+	var message strings.Builder
+	message.WriteString("runner failed")
+	if e.phase != "" {
+		fmt.Fprintf(&message, ": phase=%s", e.phase)
+	}
+	if e.target != "" {
+		fmt.Fprintf(&message, " target=%s", e.target)
+	}
+	if e.profile != "" {
+		fmt.Fprintf(&message, " profile=%s", e.profile)
+	}
+	if e.artifact != "" {
+		fmt.Fprintf(&message, " artifact=%q", e.artifact)
+	}
+	if e.runner != "" {
+		fmt.Fprintf(&message, " runner=%q", e.runner)
+	}
+	if e.packageName != "" {
+		fmt.Fprintf(&message, " package=%q", e.packageName)
+	}
+	if e.status != "" {
+		fmt.Fprintf(&message, " status=%s", e.status)
+	}
+	if e.status == runnerStatusTimeout && e.timeout > 0 {
+		fmt.Fprintf(&message, " timeout=%s", e.timeout)
+	}
+	if e.exitCode >= 0 {
+		fmt.Fprintf(&message, " exit_code=%d", e.exitCode)
+	}
+	if e.err != nil {
+		fmt.Fprintf(&message, ": %v", e.err)
+	}
+	return message.String()
+}
+
+func (e *runnerFailure) Unwrap() error {
+	return e.err
+}
+
+func newRunnerFailure(details runnerDetails, runner, status string, exitCode int, err error) error {
+	return &runnerFailure{
+		runnerDetails: details,
+		runner:        runner,
+		status:        status,
+		exitCode:      exitCode,
+		err:           err,
+	}
+}
+
+func runnerPhase(mode Mode) string {
+	switch mode {
+	case ModeRun:
+		return "run"
+	case ModeTest:
+		return "test"
+	case ModeCmpTest:
+		return "cmptest"
+	default:
+		return "execute"
+	}
 }
 
 func runNativeTest(commands commandEnv, program testProgram, conf *Config, stdout, stderr io.Writer) error {
@@ -62,7 +162,9 @@ func runNativeTest(commands commandEnv, program testProgram, conf *Config, stdou
 			commands.dir = program.pkgDir
 			commands.environ = withEnv(commands.environ, "PWD="+program.pkgDir)
 		}
-		return runEmuCmdTo(commands, program.runnerEnv, program.runner, conf.RunArgs, false, conf.PrintCommands, stdout, stderr)
+		return runEmuCmdTo(commands, program.runnerEnv, program.runner, conf.RunArgs, false, conf.PrintCommands,
+			runnerDetails{phase: "test", target: conf.Target, profile: program.profile, artifact: program.app, packageName: program.pkgName, timeout: conf.RunnerTimeout},
+			stdout, stderr)
 	}
 	if conf.PrintCommands {
 		fmt.Fprintf(stderr, "%s %s\n", program.app, strings.Join(conf.RunArgs, " "))
@@ -196,6 +298,7 @@ func runNative(ctx *context, app, pkgDir, pkgName string, conf *Config, mode Mod
 
 	switch mode {
 	case ModeRun:
+		details := runnerDetails{phase: "run", target: conf.Target, artifact: app, packageName: pkgName, timeout: conf.RunnerTimeout}
 		args := make([]string, 0, len(conf.RunArgs)+1)
 		if isWasmTarget(conf.Goos) {
 			wasmer := os.ExpandEnv(WasmRuntime())
@@ -221,42 +324,38 @@ func runNative(ctx *context, app, pkgDir, pkgName string, conf *Config, mode Mod
 		if conf.PrintCommands {
 			fmt.Fprintf(os.Stderr, "%s %s\n", app, strings.Join(args, " "))
 		}
-		cmd := exec.Command(app, args...)
-		ctx.commands.configure(cmd)
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		err := cmd.Run()
-		if err != nil {
-			return err
-		}
-		if s := cmd.ProcessState; s != nil {
-			mockable.Exit(s.ExitCode())
-		}
+		return runRunnerCommand(ctx.commands, app, args, details, os.Stdout, os.Stderr)
 	case ModeCmpTest:
 		cmpTest(ctx.commands, pkgDir, pkgName, app, conf.GenExpect, conf.RunArgs)
 	}
 	return nil
 }
 
-func runInEmulator(commands commandEnv, emulator string, envMap map[string]string, pkgDir, pkgName string, conf *Config, mode Mode, verbose bool) error {
+func runInEmulator(commands commandEnv, emulator, profile string, envMap map[string]string, pkgDir, pkgName string, conf *Config, mode Mode, verbose bool) error {
 	// Skip execution if CompileOnly is true
 	if conf.CompileOnly {
 		return nil
 	}
+	details := runnerDetails{
+		phase:       runnerPhase(mode),
+		target:      conf.Target,
+		profile:     profile,
+		artifact:    envMap["out"],
+		packageName: pkgName,
+		timeout:     conf.RunnerTimeout,
+	}
 
 	if emulator == "" {
-		return fmt.Errorf("target %s does not have emulator configured", conf.Target)
+		err := fmt.Errorf("target %s does not have an emulator configured", conf.Target)
+		return newRunnerFailure(details, "", runnerStatusNotConfigured, -1, err)
 	}
 	if verbose {
 		fmt.Fprintf(os.Stderr, "Using emulator: %s\n", emulator)
 	}
 
 	switch mode {
-	case ModeRun:
-		return runEmuCmd(commands, envMap, emulator, conf.RunArgs, verbose, conf.PrintCommands)
-	case ModeTest:
-		return runEmuCmd(commands, envMap, emulator, conf.RunArgs, verbose, conf.PrintCommands)
+	case ModeRun, ModeTest:
+		return runEmuCmd(commands, envMap, emulator, conf.RunArgs, verbose, conf.PrintCommands, details)
 	case ModeCmpTest:
 		cmpTest(commands, pkgDir, pkgName, envMap["out"], conf.GenExpect, conf.RunArgs)
 		return nil
@@ -265,11 +364,11 @@ func runInEmulator(commands commandEnv, emulator string, envMap map[string]strin
 }
 
 // runEmuCmd runs the application in emulator by formatting the emulator command template
-func runEmuCmd(commands commandEnv, envMap map[string]string, emulatorTemplate string, runArgs []string, verbose bool, printCmds bool) error {
-	return runEmuCmdTo(commands, envMap, emulatorTemplate, runArgs, verbose, printCmds, os.Stdout, os.Stderr)
+func runEmuCmd(commands commandEnv, envMap map[string]string, emulatorTemplate string, runArgs []string, verbose bool, printCmds bool, details runnerDetails) error {
+	return runEmuCmdTo(commands, envMap, emulatorTemplate, runArgs, verbose, printCmds, details, os.Stdout, os.Stderr)
 }
 
-func runEmuCmdTo(commands commandEnv, envMap map[string]string, emulatorTemplate string, runArgs []string, verbose bool, printCmds bool, stdout, stderr io.Writer) error {
+func runEmuCmdTo(commands commandEnv, envMap map[string]string, emulatorTemplate string, runArgs []string, verbose bool, printCmds bool, details runnerDetails, stdout, stderr io.Writer) error {
 	// Expand the emulator command template
 	emulatorCmd := emulatorTemplate
 	for placeholder, path := range envMap {
@@ -289,10 +388,12 @@ func runEmuCmdTo(commands commandEnv, envMap map[string]string, emulatorTemplate
 	// Parse command and arguments safely handling quoted strings
 	cmdParts, err := shellparse.Parse(emulatorCmd)
 	if err != nil {
-		return fmt.Errorf("failed to parse emulator command: %w", err)
+		return newRunnerFailure(details, "", runnerStatusInvalidCommand, -1,
+			fmt.Errorf("failed to parse emulator command: %w", err))
 	}
 	if len(cmdParts) == 0 {
-		return fmt.Errorf("empty emulator command")
+		return newRunnerFailure(details, "", runnerStatusInvalidCommand, -1,
+			errors.New("empty emulator command"))
 	}
 
 	// Add run arguments to the end
@@ -301,17 +402,54 @@ func runEmuCmdTo(commands commandEnv, envMap map[string]string, emulatorTemplate
 		fmt.Fprintf(stderr, "%s %s\n", cmdParts[0], strings.Join(cmdParts[1:], " "))
 	}
 
-	// Execute the emulator command
-	cmd := exec.Command(cmdParts[0], cmdParts[1:]...)
+	return runRunnerCommand(commands, cmdParts[0], cmdParts[1:], details, stdout, stderr)
+}
+
+func runRunnerCommand(commands commandEnv, name string, args []string, details runnerDetails, stdout, stderr io.Writer) error {
+	// The test binary owns its Go-level timeout;
+	// this outer deadline also covers a host runner that stops forwarding exit
+	// or otherwise hangs after the guest should have terminated.
+	var runContext stdcontext.Context = stdcontext.Background()
+	cancel := func() {}
+	if details.timeout > 0 {
+		runContext, cancel = stdcontext.WithTimeout(runContext, details.timeout)
+	}
+	defer cancel()
+	cmd := exec.CommandContext(runContext, name, args...)
 	commands.configure(cmd)
 	cmd.Stdin = os.Stdin
+	if details.timeout > 0 {
+		restore := configureRunnerCancellation(cmd)
+		defer restore()
+		cmd.WaitDelay = time.Second
+	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	err = cmd.Run()
-	if err != nil {
-		return err
+	err := cmd.Run()
+	if err != nil && details.timeout > 0 && cmd.Process != nil && cmd.Cancel != nil {
+		// A failed runner can leave descendants holding output pipes. Wait
+		// preserves a nonzero exit status over ErrWaitDelay, so clean up after
+		// either result while keeping the original failure for diagnostics.
+		_ = cmd.Cancel()
 	}
-	// A nil Run error is already exit status zero. Returning normally keeps the
-	// caller's cleanup and trace defers reachable.
+	if err != nil {
+		status := runnerStatusStart
+		exitCode := -1
+		var exitErr *exec.ExitError
+		switch {
+		case errors.Is(runContext.Err(), stdcontext.DeadlineExceeded):
+			status = runnerStatusTimeout
+			err = fmt.Errorf("runner exceeded %s: %w", details.timeout, stdcontext.DeadlineExceeded)
+		case errors.Is(err, exec.ErrWaitDelay):
+			status = runnerStatusOutputTimeout
+		case errors.As(err, &exitErr):
+			status = runnerStatusExit
+			exitCode = exitErr.ExitCode()
+		case errors.Is(err, exec.ErrNotFound), errors.Is(err, os.ErrNotExist):
+			status = runnerStatusUnavailable
+		}
+		return newRunnerFailure(details, name, status, exitCode, err)
+	}
+	// Returning normally keeps cleanup of implicit modules and target sidecars reachable.
 	return nil
 }

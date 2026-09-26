@@ -35,6 +35,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -153,6 +154,7 @@ type Config struct {
 	Port               string  // target port for flashing
 	BaudRate           int     // baudrate for serial communication
 	RunArgs            []string
+	RunnerTimeout      time.Duration // Host execution limit; zero disables it.
 	Mode               Mode
 	BuildMode          BuildMode // Build mode: exe, c-archive, c-shared
 	GenExpect          bool      // only valid for ModeCmpTest
@@ -1194,6 +1196,7 @@ func executeInitialPackageLink(ctx *context, link *initialPackageLink, verbose, 
 					pkgName:   strings.TrimSuffix(link.pkg.PkgPath, ".test"),
 					runner:    runner,
 					runnerEnv: envMap,
+					profile:   string(linkCtx.crossCompile.WasmProfile),
 				}
 				if cleanupTemp {
 					program.temporaryOutputs = link.outFmts
@@ -1202,12 +1205,12 @@ func executeInitialPackageLink(ctx *context, link *initialPackageLink, verbose, 
 				return program, nil
 			}
 			if runner != "" && link.conf.Mode == ModeRun {
-				return nil, runInEmulator(linkCtx.commands, runner, envMap, link.pkg.Dir, link.pkg.PkgPath, link.conf, link.conf.Mode, verbose)
+				return nil, runInEmulator(linkCtx.commands, runner, string(linkCtx.crossCompile.WasmProfile), envMap, link.pkg.Dir, link.pkg.PkgPath, link.conf, link.conf.Mode, verbose)
 			}
 			return nil, runNative(linkCtx, link.outFmts.Out, link.pkg.Dir, link.pkg.PkgPath, link.conf, link.conf.Mode)
 		}
 		if namedTargetUsesEmulatorPath(link.conf) {
-			return nil, runInEmulator(linkCtx.commands, linkCtx.crossCompile.Emulator, envMap, link.pkg.Dir, link.pkg.PkgPath, link.conf, link.conf.Mode, verbose)
+			return nil, runInEmulator(linkCtx.commands, linkCtx.crossCompile.Emulator, string(linkCtx.crossCompile.WasmProfile), envMap, link.pkg.Dir, link.pkg.PkgPath, link.conf, link.conf.Mode, verbose)
 		}
 		if err := flash.FlashDevice(linkCtx.crossCompile.Device, envMap, linkCtx.buildConf.Port, verbose); err != nil {
 			return nil, err

@@ -18,3 +18,6 @@ func schedulerPanicTracebackMode() int32
 
 //go:linkname schedulerRepanicTracebackMode C.llgo_test_scheduler_repanic_traceback
 func schedulerRepanicTracebackMode() int32
+
+//go:linkname schedulerHangMode C.llgo_test_scheduler_hang
+func schedulerHangMode() int32
