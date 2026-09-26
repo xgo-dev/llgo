@@ -348,6 +348,9 @@ func ParseError() c.Int
   	return 0
   }
   ```
+
+  For an alias receiver such as `type Chain = *Reader` with `func (Chain) Other(...)`, both `Chain.Other` and `(Chain).Other` are valid local names in `//llgo:link`. They resolve to the underlying `(*Reader).Other` linker symbol.
+
 - Constructor
 
   - Explicitly Constructor:

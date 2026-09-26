@@ -610,7 +610,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	// ParsePkgSyntax is the sole //llgo:env extractor. Lowering only consumes
 	// its source-declaration cache; imported env entries use NewEnvFunc.
 	if decl, ok := f.Syntax().(*ast.FuncDecl); ok {
-		fullName, _ := astFuncName(llssa.PathOf(pkgTypes), decl)
+		fullName := declarationFuncName(llssa.PathOf(pkgTypes), decl, f.Object(), f.Signature.Recv())
 		hasExplicitEnv = p.prog.HasClosureEnvDirective(p.goProg.Fset, fullName, decl.Pos())
 	}
 	hasCtx := hasFreeVars && !elideFreeVarEnv || hasExplicitEnv
@@ -657,7 +657,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	}
 	if p.prog.Target().GOARCH == "wasm" {
 		if decl, ok := f.Syntax().(*ast.FuncDecl); ok {
-			fullName, _ := astFuncName(llssa.PathOf(pkgTypes), decl)
+			fullName := declarationFuncName(llssa.PathOf(pkgTypes), decl, f.Object(), f.Signature.Recv())
 			if module, importName, ok := p.prog.WasmImport(fullName); ok {
 				fn.SetWasmImport(module, importName)
 			}

@@ -2602,6 +2602,30 @@ func Invalid() {}
 	}
 }
 
+func TestDoRejectsMisspelledMethodLink(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "invalid_link.go")
+	if err := os.WriteFile(file, []byte(`package main
+
+type Data struct{}
+type Ptr = *Data
+// llgo:link Ptr.Curosr C.test_cursor
+func (Ptr) Cursor() int32 { return -1 }
+func main() { println(Ptr(nil).Cursor()) }
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	conf := NewDefaultConf(ModeBuild)
+	conf.OutFile = filepath.Join(dir, "invalid_link")
+	_, err := Do([]string{file}, conf)
+	if err == nil || !strings.Contains(err.Error(), "invalid_link.go:5:1:") || !strings.Contains(err.Error(), `local name "Ptr.Curosr" does not match declaration "Ptr.Cursor"`) {
+		t.Fatalf("Do error = %v, want positioned method-link diagnostic", err)
+	}
+	if _, err := os.Stat(conf.OutFile); !os.IsNotExist(err) {
+		t.Fatalf("invalid link produced an output file: %v", err)
+	}
+}
+
 func TestIsStandardLibraryPackage(t *testing.T) {
 	goroot := t.TempDir()
 	src := filepath.Join(goroot, "src")
