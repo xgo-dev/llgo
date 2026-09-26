@@ -53,7 +53,8 @@ func resolveSourceGoConfig(commands commandEnv, experiment string) (sourceGoConf
 	if err != nil {
 		return cfg, sourceGoConfigError("resolve Go tool tags", err)
 	}
-	// Keep an explicitly empty snapshot distinct from an unspecified context.
+	// Start with a non-nil slice so an explicitly empty snapshot stays
+	// distinct from an unspecified context, which inherits host tool tags.
 	cfg.toolTags = append([]string{}, strings.FieldsFunc(strings.TrimSpace(string(output)), func(r rune) bool { return r == ',' })...)
 	slices.Sort(cfg.toolTags)
 	cfg.toolTags = slices.Compact(cfg.toolTags)

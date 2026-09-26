@@ -112,9 +112,11 @@ func TestCompileWithConfigRejectsFileAsOutputDir(t *testing.T) {
 }
 
 func TestUseCrossCompileSDK(t *testing.T) {
-	// Skip long-running tests unless explicitly enabled
-	if testing.Short() {
-		t.Skip("Skipping test in short mode")
+	// This test checks SDK flags, so use a local SDK fixture instead of
+	// depending on a release download and external network availability.
+	writeWasmTargetFixture(t, "", "")
+	if err := os.MkdirAll(filepath.Join(os.Getenv("LLGO_ROOT"), "crosscompile", "wasi-libc"), 0o755); err != nil {
+		t.Fatal(err)
 	}
 
 	// Test cases

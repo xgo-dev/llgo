@@ -1,6 +1,8 @@
 package build
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -267,4 +269,57 @@ func TestBuildSelectsGOEXPERIMENTSources(t *testing.T) {
 			}
 		})
 	}
+}
+
+// runGoConfigHelper runs in a copy of the test executable named go (or go.exe).
+func runGoConfigHelper(mode string) {
+	if len(os.Args) > 1 && os.Args[1] == "list" {
+		fmt.Fprintln(os.Stderr, "tool tags unavailable")
+		os.Exit(7)
+	}
+	switch mode {
+	case "invalid-json":
+		fmt.Println("invalid JSON")
+	case "missing-root":
+		fmt.Println(`{"GOVERSION":"go1.27.0"}`)
+	case "missing-version":
+		fmt.Println(`{"GOROOT":"test-root"}`)
+	case "list-failure":
+		fmt.Println(`{"GOROOT":"test-root","GOVERSION":"go1.27.0"}`)
+	}
+}
+
+func TestSourceGoConfigErrors(t *testing.T) {
+	bin := t.TempDir()
+	writeBuildTestTool(t, bin, "go")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, tc := range []struct{ mode, want string }{
+		{"invalid-json", "decode Go source configuration:"},
+		{"missing-root", "Go source configuration is missing GOROOT or GOVERSION"},
+		{"missing-version", "Go source configuration is missing GOROOT or GOVERSION"},
+		{"list-failure", "resolve Go tool tags: tool tags unavailable:"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			commands := experimentCommands(t, "")
+			commands.environ = withEnv(commands.environ, "LLGO_TEST_GO_CONFIG_HELPER="+tc.mode)
+			_, err := resolveSourceGoConfig(commands, "")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("resolveSourceGoConfig() error = %v, want %q", err, tc.want)
+			}
+			if tc.mode == "list-failure" {
+				var exit *exec.ExitError
+				if !errors.As(err, &exit) || exit.ExitCode() != 7 {
+					t.Fatalf("error does not preserve subprocess exit status: %v", err)
+				}
+			}
+		})
+	}
+	t.Run("start-failure", func(t *testing.T) {
+		commands := experimentCommands(t, "")
+		commands.dir = filepath.Join(commands.dir, "missing")
+		_, err := resolveSourceGoConfig(commands, "")
+		if err == nil || !strings.Contains(err.Error(), "resolve Go source configuration:") || !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("expected source configuration error preserving missing-directory cause, got %v", err)
+		}
+	})
 }
