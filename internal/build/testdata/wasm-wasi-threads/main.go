@@ -28,6 +28,9 @@ func gStateForTesting() (count uint64, mainExited bool)
 
 func main() {
 	checkClocks()
+	if workerStackBounds() != 1 {
+		panic("WAMR main-thread C stack bounds unavailable")
+	}
 	_, _, mainMID, _, _, _, linked := gmpForTesting()
 	if !linked {
 		panic("main G/M/P is not linked")
