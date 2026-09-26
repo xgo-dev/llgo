@@ -48,11 +48,7 @@ type pkgSymInfo struct {
 	syms  map[string]symInfo                // name => isVar
 }
 
-func newPkgSymInfo(indexes ...*directive.Index) *pkgSymInfo {
-	index := new(directive.Index)
-	if len(indexes) > 0 {
-		index = indexes[0]
-	}
+func newPkgSymInfo(index *directive.Index) *pkgSymInfo {
 	return &pkgSymInfo{
 		index: index,
 		files: make(map[string][]directive.LegacyLink),
@@ -211,12 +207,9 @@ func (p *context) prepareImportSource(pkg *types.Package) {
 	p.importSources[source] = syms
 }
 
-func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
+func (p *context) initDirectives(pkgPath string) {
 	// Every compile entry prepares records before constructing its context.
 	records := p.prog.PackageDirectives(p.goTyps)
-	if records == nil {
-		panic("missing package directives for " + pkgPath)
-	}
 	for _, r := range records.Functions {
 		if records.Names[r.Name] == r && r.ExportName != "" {
 			p.pkg.SetExport(pkgPath+"."+r.Name, r.ExportName)
@@ -243,82 +236,6 @@ func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
 	}
 }
 
-// Collect skip names and skip other annotations, such as go: and llgo:
-// llgo:skip symbol1 symbol2 ...
-// llgo:skipall
-func (p *context) collectSkipNames(line string) bool {
-	all, names, ok := directive.LegacySkip(line)
-	p.skipall = p.skipall || all
-	for _, name := range names {
-		p.skips[name] = none{}
-	}
-	return ok
-}
-
-func (p *context) collectSkipNamesByDoc(doc *ast.CommentGroup) {
-	skip := new(directive.Index).Group(doc).Skip
-	p.skipall = p.skipall || skip.All
-	for _, name := range skip.Names {
-		p.skips[name] = none{}
-	}
-}
-
-// collectDeclarationDirectives caches source metadata needed after the syntax
-// pass. funcPos is token.NoPos for non-function declarations.
-func collectDeclarationDirectives(prog llssa.Program, fset *token.FileSet, doc *ast.CommentGroup, fullName, inPkgName string, funcPos token.Pos) {
-	_, _ = collectDeclarationDirectivesWithOptions(prog, fset, doc, fullName, inPkgName, funcPos, Options{})
-}
-
-func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.FileSet, doc *ast.CommentGroup, fullName, inPkgName string, funcPos token.Pos, options Options) (bool, error) {
-	g := prog.Directives().Group(doc)
-	l, ok, err := g.DeclarationLink(inPkgName, options.ExportRename)
-	if err != nil {
-		return false, err
-	}
-	if ok {
-		prog.SetLinkname(fullName, l.Target)
-		if l.Export {
-			prog.SetPackageExport(fullName, l.Target)
-		}
-	}
-	if funcPos.IsValid() {
-		if g.Function.ClosureEnv {
-			prog.SetClosureEnvDirective(fset, fullName, funcPos)
-		}
-		if w := g.Function.WasmImport; w != nil {
-			prog.SetWasmImport(fullName, w.Module, w.Name)
-		}
-	}
-	return ok, nil
-}
-
-func (p *context) processLinknameByDoc(doc *ast.CommentGroup, fullName, inPkgName string, isVar, allowExport bool) bool {
-	for _, r := range new(directive.Index).Group(doc).LegacyLinks(allowExport) {
-		ret := p.applyLegacyLink(r, func(name string, export bool) (string, bool, bool) {
-			return fullName, isVar, name == inPkgName || export && p.options.ExportRename
-		})
-		if ret != unknownDirective {
-			return ret == hasLinkname
-		}
-	}
-	return false
-}
-
-func (p *context) processNoInterfaceByDoc(doc *ast.CommentGroup, fullName string) {
-	if new(directive.Index).Group(doc).NoInterface {
-		p.prog.SetNoInterfaceMethod(fullName)
-	}
-}
-
-const (
-	noDirective = iota
-	hasLinkname
-	unknownDirective = -1
-)
-
-func (p *context) initLinkname(line string, allowExport bool, f func(string, bool) (string, bool, bool)) int {
-	return p.applyLegacyLink(directive.ParseLegacyLink(line, allowExport), f)
-}
 func (p *context) applyLegacyLink(r directive.LegacyLink, f func(string, bool) (string, bool, bool)) int {
 	if !r.Valid {
 		return r.Status
@@ -339,28 +256,6 @@ func (p *context) applyLegacyLink(r directive.LegacyLink, f func(string, bool) (
 		fmt.Fprintf(os.Stderr, "llgo: linkname %s not found and ignored\n", r.Local)
 	}
 	return r.Status
-}
-
-func recvTypeName(typ ast.Expr) string {
-retry:
-	switch t := typ.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.IndexExpr:
-		return trecvTypeName(t.X, t.Index)
-	case *ast.IndexListExpr:
-		return trecvTypeName(t.X, t.Indices...)
-	case *ast.ParenExpr:
-		typ = t.X
-		goto retry
-	}
-	panic("unreachable")
-}
-
-// TODO(xsw): support generic type
-func trecvTypeName(t ast.Expr, indices ...ast.Expr) string {
-	_ = indices
-	return t.(*ast.Ident).Name
 }
 
 // inPkgName:
@@ -839,9 +734,6 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 	return nil
 }
 
-func validateInternalDirectives(fset *token.FileSet, pkgPath string, files []*ast.File, allow bool) error {
-	return validateInternalRecords(fset, pkgPath, new(directive.Index).Files(files), allow)
-}
 func validateInternalRecords(fset *token.FileSet, pkgPath string, files []*directive.File, allow bool) error {
 	if allow || pkgPath == env.LLGoRuntimePkg || strings.HasPrefix(pkgPath, env.LLGoRuntimePkg+"/") {
 		return nil
@@ -852,10 +744,6 @@ func validateInternalRecords(fset *token.FileSet, pkgPath string, files []*direc
 		}
 	}
 	return nil
-}
-
-func typeBackground(doc *ast.CommentGroup) string {
-	return new(directive.Index).Group(doc).TypeBackground
 }
 
 func toBackground(bg string) llssa.Background {

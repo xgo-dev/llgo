@@ -34,12 +34,9 @@ type File struct {
 // Group preserves the different attachment and spelling rules of the existing
 // language. These facts are computed once, including negative/invalid results.
 type Group struct {
-	legacy         []LegacyLink
-	legacyNoExport []LegacyLink
 	Items          []Directive
 	Function       Function
 	Links          []Link
-	NoInterface    bool
 	TypeBackground string
 	Skip           Skip
 	LastSkip       bool

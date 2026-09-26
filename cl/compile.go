@@ -168,7 +168,6 @@ type context struct {
 	methodNilDerefChecks map[*ssa.UnOp]none
 	recvNilDerefChecks   map[*ssa.UnOp]token.Pos
 	vargs                map[*ssa.Alloc][]llssa.Expr // varargs
-	sourceFunctions      map[*ssa.Function]*sourceFunction
 	importSources        map[*types.Package]*pkgSymInfo
 	funcs                map[*ssa.Function]llssa.Function
 	linkOnceFns          map[*ssa.Function]none
@@ -607,7 +606,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	fn := pkg.FuncOf(name)
 	hasFreeVars := len(f.FreeVars) > 0
 	elideFreeVarEnv := p.canElideZeroSizedClosureEnv(f)
-	source := p.sourceFunction(f)
+	source := p.functionDirectives(f)
 	hasExplicitEnv := source.ClosureEnv
 	hasCtx := hasFreeVars && !elideFreeVarEnv || hasExplicitEnv
 	var ctx *types.Var
@@ -2843,7 +2842,7 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		}
 	}
 	ctx.initPyModule()
-	ctx.initFiles(pkgPath, files, pkgName == "C")
+	ctx.initDirectives(pkgPath)
 	ctx.prog.SetPatch(ctx.patchType)
 	ctx.prog.SetCompileMethods(ctx.checkCompileMethods)
 	ret.SetResolveLinkname(ctx.resolveLinkname)

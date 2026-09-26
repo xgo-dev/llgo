@@ -47,7 +47,7 @@ func TestGroupCompatibility(t *testing.T) {
 				doc.List = append(doc.List, &ast.Comment{Text: line})
 			}
 			g := new(Index).Group(doc)
-			if g.Function.NoInline != tt.noinline || g.NoInterface != tt.nointerface || g.TypeBackground != tt.bg || !reflect.DeepEqual(g.Skip.Names, tt.skip) {
+			if g.Function.NoInline != tt.noinline || g.Function.NoInterface != tt.nointerface || g.TypeBackground != tt.bg || !reflect.DeepEqual(g.Skip.Names, tt.skip) {
 				t.Fatalf("group = %+v", g)
 			}
 		})

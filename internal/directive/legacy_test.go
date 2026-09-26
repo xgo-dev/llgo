@@ -35,17 +35,7 @@ func TestLegacyLinkDialect(t *testing.T) {
 			}
 		})
 	}
-	// The legacy attachment rule stops at an ordinary comment, unlike the
-	// package preloader's normalized declaration-link search.
-	doc := &ast.CommentGroup{List: []*ast.Comment{{Text: "//llgo:link F C.old"}, {Text: "// ordinary"}, {Text: "//export F"}, nil, {Text: "//go:noinline"}}}
-	g := new(Index).Group(doc)
-	links := g.LegacyLinks(true)
-	if len(links) != 1 || !links[0].Export || links[0].Target != "F" {
-		t.Fatalf("export links = %+v", links)
-	}
-	if len(g.LegacyLinks(false)) != 0 {
-		t.Fatal("disallowed export exposed an earlier link")
-	}
+
 }
 
 func TestImportedLinkSnapshotsCacheSuccessAndFailure(t *testing.T) {

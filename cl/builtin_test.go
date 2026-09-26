@@ -23,11 +23,13 @@ import (
 	"fmt"
 	"go/ast"
 	"go/constant"
+	"go/parser"
 	"go/token"
 	"go/types"
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
@@ -420,19 +422,21 @@ func TestToBackground(t *testing.T) {
 	}
 }
 
-func TestCollectSkipNames(t *testing.T) {
-	ctx := &context{skips: make(map[string]none)}
-	ctx.collectSkipNames("//llgo:skipall")
-	ctx.collectSkipNames("//llgo:skip")
-	ctx.collectSkipNames("//llgo:skip abs")
-}
-
-func TestCollectSkipNamesByDoc(t *testing.T) {
+func TestPackageSkipDirectives(t *testing.T) {
 	ftest := func(comments string, wantSkips []string, wantAll bool) {
 		t.Helper()
-		ctx := &context{skips: make(map[string]none)}
-		doc := parseComments(t, comments)
-		ctx.collectSkipNamesByDoc(doc)
+		prog := llssa.NewProgram(nil)
+		pkg := types.NewPackage("example.com/p", "p")
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, "skip.go", "package p\n"+strings.TrimSpace(comments)+"\nconst Value = 0\n", parser.ParseComments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
+			t.Fatal(err)
+		}
+		ctx := &context{prog: prog, goTyps: pkg, skips: make(map[string]none)}
+		ctx.initDirectives(pkg.Path())
 
 		// Check skipall
 		if wantAll != ctx.skipall {
@@ -514,19 +518,6 @@ func TestCollectSkipNamesByDoc(t *testing.T) {
 	)
 }
 
-func parseComments(t *testing.T, text string) *ast.CommentGroup {
-	t.Helper()
-	var comments []*ast.Comment
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		comments = append(comments, &ast.Comment{Text: line})
-	}
-	return &ast.CommentGroup{List: comments}
-}
-
 func TestReplaceGoName(t *testing.T) {
 	if ret := replaceGoName("foo", 0); ret != "foo" {
 		t.Fatal("replaceGoName:", ret)
@@ -559,27 +550,6 @@ func ssaAlloc(refs ...ssa.Instruction) *ssa.Alloc {
 
 func setRefs(v ssa.Value, refs ...ssa.Instruction) {
 	*v.Referrers() = refs
-}
-
-func TestRecvTypeName(t *testing.T) {
-	if ret := recvTypeName(&ast.IndexExpr{
-		X:     &ast.Ident{Name: "Pointer"},
-		Index: &ast.Ident{Name: "T"},
-	}); ret != "Pointer" {
-		t.Fatal("recvTypeName IndexExpr:", ret)
-	}
-	if ret := recvTypeName(&ast.IndexListExpr{
-		X:       &ast.Ident{Name: "Pointer"},
-		Indices: []ast.Expr{&ast.Ident{Name: "T"}},
-	}); ret != "Pointer" {
-		t.Fatal("recvTypeName IndexListExpr:", ret)
-	}
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("recvTypeName: no error?")
-		}
-	}()
-	recvTypeName(&ast.BadExpr{})
 }
 
 func TestRecvType(t *testing.T) {
@@ -804,18 +774,18 @@ func TestErrImport(t *testing.T) {
 
 func TestErrInitLinkname(t *testing.T) {
 	var ctx context
-	ctx.initLinkname("//llgo:link abc", true, func(name string, isExport bool) (string, bool, bool) {
+	ctx.applyLegacyLink(directive.ParseLegacyLink("//llgo:link abc", true), func(name string, isExport bool) (string, bool, bool) {
 		return "", false, false
 	})
-	ctx.initLinkname("//go:linkname Printf printf", true, func(name string, isExport bool) (string, bool, bool) {
+	ctx.applyLegacyLink(directive.ParseLegacyLink("//go:linkname Printf printf", true), func(name string, isExport bool) (string, bool, bool) {
 		return "", false, false
 	})
 	defer func() {
 		if r := recover(); r == nil {
-			t.Fatal("initLinkname: no error?")
+			t.Fatal("applyLegacyLink: no error?")
 		}
 	}()
-	ctx.initLinkname("//go:linkname Printf printf", true, func(name string, isExport bool) (string, bool, bool) {
+	ctx.applyLegacyLink(directive.ParseLegacyLink("//go:linkname Printf printf", true), func(name string, isExport bool) (string, bool, bool) {
 		return "foo.Printf", false, name == "Printf"
 	})
 }
@@ -982,13 +952,13 @@ func TestHandleExportDiffName(t *testing.T) {
 				options: Options{ExportRename: tt.enableExportRename},
 			}
 
-			// Call initLinkname with closure that mimics initLinknameByDoc behavior
-			ret := ctx.initLinkname(tt.line, true, func(name string, isExport bool) (string, bool, bool) {
+			// Apply the parsed legacy link to the selected declaration.
+			ret := ctx.applyLegacyLink(directive.ParseLegacyLink(tt.line, true), func(name string, isExport bool) (string, bool, bool) {
 				return tt.fullName, false, name == tt.inPkgName || (isExport && ctx.options.ExportRename)
 			})
 
 			// Verify result
-			hasLinkname := (ret == hasLinkname)
+			hasLinkname := (ret == directive.HasLinkname)
 			if hasLinkname != tt.wantHasLinkname {
 				t.Errorf("hasLinkname = %v, want %v", hasLinkname, tt.wantHasLinkname)
 			}
@@ -1009,81 +979,35 @@ func TestHandleExportDiffName(t *testing.T) {
 	}
 }
 
-func TestInitLinknameByDocExportDiffNames(t *testing.T) {
-	tests := []struct {
-		name               string
-		enableExportRename bool
-		doc                *ast.CommentGroup
-		fullName           string
-		inPkgName          string
-		wantExported       bool // Whether the symbol should be exported with different name
-		wantLinkname       string
-		wantExport         string
-	}{
-		{
-			name:               "WithExportDiffNames_DifferentNameExported",
-			enableExportRename: true,
-			doc: &ast.CommentGroup{
-				List: []*ast.Comment{
-					{Text: "//export IRQ_Handler"},
-				},
-			},
-			fullName:     "pkg.HandleInterrupt",
-			inPkgName:    "HandleInterrupt",
-			wantExported: true,
-			wantLinkname: "IRQ_Handler",
-			wantExport:   "IRQ_Handler",
-		},
-		{
-			name:               "WithoutExportDiffNames_NotExported",
-			enableExportRename: false,
-			doc: &ast.CommentGroup{
-				List: []*ast.Comment{
-					{Text: "//export DifferentName"},
-				},
-			},
-			fullName:     "pkg.HandleInterrupt",
-			inPkgName:    "HandleInterrupt",
-			wantExported: false,
-			// Without enableExportRename, it goes through normal flow which expects same name
-			// The symbol "DifferentName" won't be found, so no export happens
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Without ExportRename, export with different names will panic.
-			if !tt.wantExported && !tt.enableExportRename {
-				defer func() {
-					if r := recover(); r == nil {
-						t.Error("expected panic for export with different name when enableExportRename=false")
-					}
-				}()
-			}
-
-			// Setup context
+func TestPackageExportRename(t *testing.T) {
+	for _, rename := range []bool{false, true} {
+		t.Run(fmt.Sprint(rename), func(t *testing.T) {
 			prog := llssa.NewProgram(nil)
-			pkg := prog.NewPackage("test", "test")
-			ctx := &context{
-				prog:    prog,
-				pkg:     pkg,
-				options: Options{ExportRename: tt.enableExportRename},
+			pkg := types.NewPackage("pkg", "pkg")
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "export.go", "package pkg\n//export IRQ_Handler\nfunc HandleInterrupt() {}\n", parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
 			}
-
-			// Call initLinknameByDoc
-			ctx.processLinknameByDoc(tt.doc, tt.fullName, tt.inPkgName, false, true)
-
-			// Verify export behavior
-			exports := pkg.ExportFuncs()
-			if tt.wantExported {
-				// Should have exported the symbol with different name
-				if export, ok := exports[tt.fullName]; !ok || export != tt.wantExport {
-					t.Errorf("export = %q (ok=%v), want %q", export, ok, tt.wantExport)
+			err = ParsePkgSyntaxWithOptions(prog, fset, pkg, []*ast.File{file}, Options{ExportRename: rename})
+			if !rename {
+				if err == nil || !strings.Contains(err.Error(), "export comment has wrong name") {
+					t.Fatalf("export mismatch error = %v", err)
 				}
-				// Check linkname was also set
-				if link, ok := prog.Linkname(tt.fullName); !ok || link != tt.wantLinkname {
-					t.Errorf("linkname = %q (ok=%v), want %q", link, ok, tt.wantLinkname)
-				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			backend := prog.NewPackage("pkg", "pkg")
+			ctx := &context{prog: prog, pkg: backend, goTyps: pkg, skips: make(map[string]none)}
+			ctx.initDirectives(pkg.Path())
+			const full = "pkg.HandleInterrupt"
+			if got, ok := prog.Linkname(full); !ok || got != "IRQ_Handler" {
+				t.Fatalf("linkname = %q, %v", got, ok)
+			}
+			if got := backend.ExportFuncs()[full]; got != "IRQ_Handler" {
+				t.Fatalf("export = %q", got)
 			}
 		})
 	}
@@ -1128,7 +1052,7 @@ func TestInitLinkExportDiffNames(t *testing.T) {
 				options: Options{ExportRename: tt.enableExportRename},
 			}
 
-			ctx.initLinkname(tt.line, true, func(inPkgName string, isExport bool) (fullName string, isVar, ok bool) {
+			ctx.applyLegacyLink(directive.ParseLegacyLink(tt.line, true), func(inPkgName string, isExport bool) (fullName string, isVar, ok bool) {
 				// Simulate initLinknames scenario: symbol not found (like in decl packages)
 				return "", false, false
 			})
