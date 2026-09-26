@@ -42,13 +42,13 @@
         "columns": [
           "metric"
         ],
-        "collapsed": false,
+        "collapsed": true,
         "missing": "error",
         "empty": "error",
         "max-rows": 200,
         "dimensions": {
           "benchmark": {
-            "title": "Profile and compiler",
+            "title": "Example, profile and compiler",
             "trim-prefix": "BenchmarkWasmSize/"
           }
         },
@@ -81,13 +81,13 @@
         "columns": [
           "metric"
         ],
-        "collapsed": false,
+        "collapsed": true,
         "missing": "error",
         "empty": "error",
         "max-rows": 200,
         "dimensions": {
           "benchmark": {
-            "title": "Profile",
+            "title": "Example and profile",
             "trim-prefix": "BenchmarkWasmBuild/"
           }
         },
