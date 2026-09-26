@@ -66,6 +66,98 @@ func TestWebAssemblyTargetDefaultExtension(t *testing.T) {
 	if got := defaultAppExt(&Config{BuildMode: BuildModeExe, Target: "esp32"}); got != ".elf" {
 		t.Errorf("embedded target extension = %q, want .elf", got)
 	}
+	if got := defaultAppExt(&Config{BuildMode: BuildModeExe, Goos: "js", OutFile: "main.html"}); got != ".html" {
+		t.Errorf("js html output extension = %q, want .html", got)
+	}
+	if got := defaultAppExt(&Config{BuildMode: BuildModeExe, Goos: "js", Target: "emscripten", OutFile: "main.html"}); got != ".html" {
+		t.Errorf("emscripten html output extension = %q, want .html", got)
+	}
+	for _, ext := range []string{".wasm", ".mjs", ".html", ".js"} {
+		out := "main" + ext
+		got := defaultAppExt(&Config{BuildMode: BuildModeExe, Target: "emscripten-memory64", OutFile: out})
+		if got != ext {
+			t.Errorf("emscripten-memory64 -o %s extension = %q, want %q", out, got, ext)
+		}
+		got = defaultAppExt(&Config{BuildMode: BuildModeExe, Target: "emscripten", OutFile: out})
+		if got != ext {
+			t.Errorf("emscripten -o %s extension = %q, want %q", out, got, ext)
+		}
+	}
+}
+
+func TestEmscriptenDriverOutput(t *testing.T) {
+	conf := &Config{Target: "emscripten-memory64", Goos: "js"}
+	if got := emscriptenDriverOutput(conf, "main.wasm"); got != "main.mjs" {
+		t.Fatalf("emscriptenDriverOutput(main.wasm) = %q, want main.mjs", got)
+	}
+	if got, want := emscriptenDriverOutput(conf, filepath.Join("out", "app.wasm")), filepath.Join("out", "app.mjs"); got != want {
+		t.Fatalf("emscriptenDriverOutput(out/app.wasm) = %q, want %q", got, want)
+	}
+	if got := emscriptenDriverOutput(conf, "main.mjs"); got != "main.mjs" {
+		t.Fatalf("emscriptenDriverOutput(main.mjs) = %q, want main.mjs", got)
+	}
+	if got := emscriptenDriverOutput(nil, "main.wasm"); got != "main.wasm" {
+		t.Fatalf("emscriptenDriverOutput(nil, main.wasm) = %q, want main.wasm", got)
+	}
+	if got := emscriptenDriverOutput(&Config{Target: "wasi"}, "main.wasm"); got != "main.wasm" {
+		t.Fatalf("emscriptenDriverOutput(wasi, main.wasm) = %q, want main.wasm", got)
+	}
+}
+
+func TestExplicitOutputFile(t *testing.T) {
+	if explicitOutputFile(nil, false) {
+		t.Fatal("nil config")
+	}
+	if explicitOutputFile(&Config{Mode: ModeBuild, OutFile: "app"}, true) {
+		t.Fatal("multi-pkg")
+	}
+	if explicitOutputFile(&Config{Mode: ModeBuild}, false) {
+		t.Fatal("empty OutFile")
+	}
+	if explicitOutputFile(&Config{Mode: ModeBuild, OutFile: "out/"}, false) {
+		t.Fatal("trailing slash")
+	}
+	if explicitOutputFile(&Config{Mode: ModeBuild, OutFile: `out\`}, false) {
+		t.Fatal("trailing backslash")
+	}
+	dir := t.TempDir()
+	if explicitOutputFile(&Config{Mode: ModeBuild, OutFile: dir}, false) {
+		t.Fatal("output directory")
+	}
+	if explicitOutputFile(&Config{Mode: ModeRun, OutFile: "app"}, false) {
+		t.Fatal("run mode")
+	}
+	if !explicitOutputFile(&Config{Mode: ModeBuild, OutFile: "app"}, false) {
+		t.Fatal("native file")
+	}
+	if explicitOutputFile(&Config{Mode: ModeBuild, Target: "esp32", OutFile: "app.html"}, false) {
+		t.Fatal("non-js named target")
+	}
+	if !explicitOutputFile(&Config{Mode: ModeBuild, Target: "emscripten", Goos: "js", OutFile: "app.html"}, false) {
+		t.Fatal("emscripten html")
+	}
+}
+
+func TestEmscriptenExplicitOutputPath(t *testing.T) {
+	for _, target := range []string{"emscripten", "emscripten-memory64", "wasm"} {
+		for _, out := range []string{"main.wasm", "main.mjs", "main.html", "main.js", "out/app.wasm"} {
+			conf := &Config{
+				Mode:      ModeBuild,
+				BuildMode: BuildModeExe,
+				Target:    target,
+				Goos:      "js",
+				OutFile:   out,
+			}
+			conf.AppExt = defaultAppExt(conf)
+			result, err := buildOutFmts("hello", conf, false, &crosscompile.Export{})
+			if err != nil {
+				t.Fatalf("%s -o %s: %v", target, out, err)
+			}
+			if !sameHostPath(result.Out, out) {
+				t.Errorf("%s -o %s: Out = %q, want %q", target, out, result.Out, out)
+			}
+		}
+	}
 }
 
 func sameHostPath(got, want string) bool {

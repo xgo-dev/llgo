@@ -313,16 +313,24 @@ func TestSyscallSourcePatchPreservesTargetImplementations(t *testing.T) {
 		})
 	}
 
-	changed, _, files, err := applySourcePatchForPkg(nil, nil, env.LLGoRuntimeDir(), runtime.GOROOT(), pkgPath, sourcePatchBuildContext{
-		goos:      "wasip1",
-		goarch:    "wasm",
-		goversion: runtime.Version(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if changed || len(files) != 0 {
-		t.Fatalf("wasm syscall patch changed = %v, files = %v, want official implementation", changed, files)
+	for _, wasm := range []struct {
+		goos   string
+		goarch string
+	}{
+		{goos: "wasip1", goarch: "wasm"},
+		{goos: "js", goarch: "wasm"},
+	} {
+		changed, _, files, err := applySourcePatchForPkg(nil, nil, env.LLGoRuntimeDir(), runtime.GOROOT(), pkgPath, sourcePatchBuildContext{
+			goos:      wasm.goos,
+			goarch:    wasm.goarch,
+			goversion: runtime.Version(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if changed || len(files) != 0 {
+			t.Fatalf("%s/%s syscall patch changed = %v, files = %v, want official implementation", wasm.goos, wasm.goarch, changed, files)
+		}
 	}
 }
 
