@@ -19,6 +19,7 @@ package cl
 import (
 	"go/ast"
 	"go/types"
+	"strings"
 
 	"github.com/xgo-dev/llgo/internal/directive"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -43,8 +44,8 @@ func (p *context) sourceFunction(fn *ssa.Function) sourceFunction {
 			fn = origin
 		}
 		syntax, _ := fn.Syntax().(*ast.FuncDecl)
-		if syntax != nil || fn.Synthetic == "" {
-			obj, _ := fn.Object().(*types.Func)
+		obj, _ := fn.Object().(*types.Func)
+		if syntax != nil || fn.Synthetic == "" || obj != nil && fn.Prog.FuncValue(obj) == fn {
 			var pkg *types.Package
 			if fn.Pkg != nil {
 				pkg = fn.Pkg.Pkg
@@ -74,10 +75,35 @@ func (p *context) callableDeclaration(pkg *types.Package, obj *types.Func, name 
 					return decl
 				}
 			}
+			if name == "" && obj != nil {
+				fullName := llssa.FuncName(pkg, obj.Name(), obj.Type().(*types.Signature).Recv(), true)
+				name = strings.TrimPrefix(fullName, llssa.PathOf(pkg)+".")
+			}
 			if decl, ok := records.Names[name].(*directive.FunctionDecl); ok {
 				return decl
 			}
 		}
 	}
 	return source
+}
+
+// applyFunctionAttributes consumes the declaration already selected with the
+// callable symbol. It does not resolve source identities or patches again.
+func (p *context) applyFunctionAttributes(fn llssa.Function, decl *directive.FunctionDecl) {
+	if decl == nil {
+		return
+	}
+	if decl.Cold {
+		fn.SetCold()
+	}
+	if decl.NoReturn {
+		fn.SetNoReturn()
+	}
+}
+
+// Backend-created entries consume prepared records without constructing Go SSA.
+func (p *context) initFunctionAttributes(fn llssa.Function, obj *types.Func) {
+	decl := p.prog.FunctionDeclaration(obj.Pkg(), obj, nil)
+	decl = p.callableDeclaration(obj.Pkg(), obj, "", decl)
+	p.applyFunctionAttributes(fn, decl)
 }

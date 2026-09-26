@@ -239,7 +239,11 @@ func (p *Package) BindScope(pkg *types.Package) {
 				t = ptr.X
 			}
 			if recv := pkg.Scope().Lookup(ReceiverName(t)); recv != nil {
-				if named, ok := types.Unalias(recv.Type()).(*types.Named); ok {
+				receiver := types.Unalias(recv.Type())
+				if ptr, ok := receiver.(*types.Pointer); ok {
+					receiver = types.Unalias(ptr.Elem())
+				}
+				if named, ok := receiver.(*types.Named); ok {
 					for i := 0; i < named.NumMethods(); i++ {
 						m := named.Method(i)
 						if m.Name() == d.Name.Name {

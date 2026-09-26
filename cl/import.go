@@ -668,6 +668,11 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 	}
 	index := prog.Directives()
 	sources := index.Files(files)
+	for _, source := range sources {
+		if err := source.ValidateFunctionAttributes(fset); err != nil {
+			return err
+		}
+	}
 	if err := validateInternalRecords(fset, pkg.Path(), sources, options.AllowInternalDirectives); err != nil {
 		return err
 	}

@@ -26,6 +26,10 @@ func scanGroup(doc *ast.CommentGroup) *Group {
 	g := &Group{Items: ParseGroup(doc)}
 	for _, d := range g.Items {
 		switch d.Name {
+		case "llgo:cold":
+			g.Function.Cold = true
+		case "llgo:noreturn":
+			g.Function.NoReturn = true
 		case "llgo:env":
 			g.Function.ClosureEnv = true
 		case "go:nosplit":
