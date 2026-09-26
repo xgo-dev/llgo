@@ -606,6 +606,15 @@ jobs:
           dev/build_ci_tools.sh "$RUNNER_TEMP/llgo-bin"
           echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
+      - name: Compare WebAssembly EH encodings and Go/C++ boundary
+        if: matrix.suite == 'runtime'
+        timeout-minutes: 10
+        shell: bash
+        env:
+          CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
+          LLGO: ${{ runner.temp }}/llgo-bin/llgo
+        run: python3 dev/compare_wasm_eh.py --browser
+
       - name: Test WebAssembly target profiles
         if: matrix.suite == 'runtime'
         shell: bash
