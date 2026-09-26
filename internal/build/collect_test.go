@@ -109,6 +109,30 @@ func TestSourcePatchBodyChangesPackageFingerprint(t *testing.T) {
 	}
 }
 
+func TestCollectEnvInputsUsesSourceGOROOTVersion(t *testing.T) {
+	manifest := func(goVersion string) (string, string) {
+		t.Helper()
+		m := newManifestBuilder()
+		ctx := &context{buildConf: &Config{Goos: "linux", Goarch: "amd64"}, llvmVersion: "test", goVersion: goVersion}
+		ctx.collectEnvInputs(m)
+		if m.env.GoVersion != goVersion {
+			t.Fatalf("GoVersion = %q, want source GOROOT GOVERSION %q", m.env.GoVersion, goVersion)
+		}
+		return m.Build(), m.Fingerprint()
+	}
+	leftManifest, leftFP := manifest("go1.21.13")
+	rightManifest, rightFP := manifest("go1.22.5")
+	if !strings.Contains(leftManifest, "GO_VERSION: go1.21.13") {
+		t.Fatalf("manifest missing source GOROOT GOVERSION:\n%s", leftManifest)
+	}
+	if !strings.Contains(rightManifest, "GO_VERSION: go1.22.5") {
+		t.Fatalf("manifest missing source GOROOT GOVERSION:\n%s", rightManifest)
+	}
+	if leftFP == rightFP {
+		t.Fatal("different source GOROOT GOVERSION values must separate cache fingerprints")
+	}
+}
+
 func TestCollectFingerprint(t *testing.T) {
 	td := t.TempDir()
 

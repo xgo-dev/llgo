@@ -771,6 +771,7 @@ func TestNewBackendTaskUsesPackageLocalState(t *testing.T) {
 		plan9asmReady:   true,
 		plan9asmMode:    plan9asmEnvSelected,
 		plan9asmPkgs:    map[string]bool{"example.com/p": true},
+		goVersion:       "go1.21.13",
 	}
 
 	task := coordinator.newBackendTask(backendSession{})
@@ -794,6 +795,9 @@ func TestNewBackendTaskUsesPackageLocalState(t *testing.T) {
 	}
 	if task.plan9asmPkgs["example.com/p"] != coordinator.plan9asmPkgs["example.com/p"] {
 		t.Fatal("backend task lost prepared Plan9 package policy")
+	}
+	if task.goVersion != coordinator.goVersion {
+		t.Fatal("backend task lost source GOROOT GOVERSION")
 	}
 }
 
