@@ -58,6 +58,12 @@ only when the package has no records, preventing attributes from leaking between
 package instances with the same path. `SetLinkname` and `SetTypeBackground` update
 the compatibility indexes without overriding package records.
 
+Package collection resolves local receiver aliases, including pointer aliases
+and cross-file chains, to canonical method names. Directive matching retains the
+source receiver spelling and accepts parenthesized value receiver names. Link
+validation consumes prepared groups and reports malformed or detached LLGo links
+and unresolved Go method links with source positions.
+
 The refactor preserves diagnostic timing: recognition can record a malformed
 value early, while the existing owning phase reports it. It also preserves
 source-order precedence, exact legacy spellings, trailing-comment rules,

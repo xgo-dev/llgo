@@ -165,9 +165,11 @@ func TestBindScopeReceiverAliasesAndGenerics(t *testing.T) {
 	fset, file := parseSource(t, `package p
 type T struct{}
 type Alias = T
+type Ptr = *Alias
 func (T) A() {}
 //go:nointerface
 func (*Alias) M() {}
+func (Ptr) P() {}
 type Generic[X any] struct{}
 //go:noinline
 func (Generic[X]) Value() {}
@@ -183,7 +185,7 @@ func (*Pair[X, Y]) Pointer() {}
 			t.Errorf("method %s not bound: %v", r.Name, got)
 		}
 	}
-	if !p.Names["(*Alias).M"].(*FunctionDecl).NoInterface || !p.Names["Generic.Value"].(*FunctionDecl).NoInline || !p.Names["(*Pair).Pointer"].(*FunctionDecl).ClosureEnv {
+	if !p.Names["(*T).M"].(*FunctionDecl).NoInterface || !p.Names["Generic.Value"].(*FunctionDecl).NoInline || !p.Names["(*Pair).Pointer"].(*FunctionDecl).ClosureEnv {
 		t.Fatal("receiver source properties lost")
 	}
 	// A different checked package at different source positions must not bind.
@@ -204,5 +206,38 @@ func TestParenthesizedGenericReceiverSelector(t *testing.T) {
 	fn := &ast.FuncDecl{Name: ast.NewIdent("M"), Recv: &ast.FieldList{List: []*ast.Field{{Type: &ast.StarExpr{X: expr}}}}}
 	if got := FuncName(fn); got != "(*Pair).M" {
 		t.Fatalf("selector = %q", got)
+	}
+}
+
+func TestValidateLinks(t *testing.T) {
+	for _, tt := range []struct {
+		source string
+		want   string
+	}{
+		{"//llgo:link (Ptr).M C.m\nfunc (Ptr) M() {}", ""},
+		{"//llgo:link Wrong.M C.m\nfunc (Ptr) M() {}", `local name "Wrong.M" does not match declaration "Ptr.M"`},
+		{"//llgo:link Ptr.M\nfunc (Ptr) M() {}", "requires a local name and a target"},
+		{"func (Ptr) M() {}\n//llgo:link Ptr.M C.m", "is not attached to a declaration"},
+		{"func (Ptr) M() {}\n//llgo:link Ptr.M", "requires a local name and a target"},
+		{"func (Ptr) M() {}\n//go:linkname Wrong.M C.m", `local method "Wrong.M" not found`},
+		{"func (Ptr) M() {}\n//go:linkname (Ptr).M C.m", ""},
+		{"//llgo:link v C.v\nvar v int", ""},
+		{"//llgo:link other C.v\nvar v int", `local name "other" does not match declaration "v"`},
+		{"var (a int; b int)\n//go:linkname a C.a", ""},
+		{"//llgo:link a C.a\nvar a, b int", "is not attached to a declaration"},
+		{"func F() {}\n//go:linkname F", ""},
+	} {
+		t.Run(tt.source, func(t *testing.T) {
+			fset, file := parseSource(t, "package p\nimport _ \"unsafe\"\ntype T struct{}\ntype Ptr = *T\n"+tt.source+"\n")
+			records := Collect(new(Index).Files([]*ast.File{file}), false, false)
+			err := records.ValidateLinks(fset)
+			if tt.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tt.want) || !strings.Contains(err.Error(), ".go:") {
+				t.Fatalf("error = %v, want source position and %q", err, tt.want)
+			}
+		})
 	}
 }

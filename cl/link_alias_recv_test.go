@@ -163,6 +163,8 @@ func TestLinkedAliasReceiverImport(t *testing.T) {
 		prog := llssa.NewProgram(nil)
 		defer prog.Dispose()
 		ctx := &context{prog: prog, fset: fset}
+		ctx.prepareImportSource(pkg)
+		prog.Directives().Freeze()
 		ctx.importPkg(pkg, &pkgInfo{})
 		if link, ok := prog.Linkname(want); !ok || link != "C.test_cursor" {
 			t.Fatalf("imported Linkname(%q) = (%q, %v), want (C.test_cursor, true)", want, link, ok)

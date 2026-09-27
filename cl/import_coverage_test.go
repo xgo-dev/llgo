@@ -188,7 +188,7 @@ func TestPkgSymInfoAddSymAndInitLinknamesCoverage(t *testing.T) {
 }
 
 func TestAstAndTypesFuncNameCoverage(t *testing.T) {
-	full, inPkg := astFuncName("example.com/p", &ast.FuncDecl{Name: &ast.Ident{Name: "F"}}, nil)
+	full, inPkg := astFuncName("example.com/p", &ast.FuncDecl{Name: &ast.Ident{Name: "F"}})
 	if full != "example.com/p.F" || inPkg != "F" {
 		t.Fatalf("astFuncName(func)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.F", "F")
 	}
@@ -199,7 +199,7 @@ func TestAstAndTypesFuncNameCoverage(t *testing.T) {
 			{Type: &ast.StarExpr{X: &ast.ParenExpr{X: &ast.Ident{Name: "T"}}}},
 		}},
 	}
-	full, inPkg = astFuncName("example.com/p", ptrRecv, nil)
+	full, inPkg = astFuncName("example.com/p", ptrRecv)
 	if full != "example.com/p.(*T).M" || inPkg != "(*T).M" {
 		t.Fatalf("astFuncName(method ptr)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.(*T).M", "(*T).M")
 	}
@@ -231,23 +231,28 @@ func TestAstAndTypesFuncNameCoverage(t *testing.T) {
 	}
 }
 
-func TestDeclarationFuncNameWithoutObject(t *testing.T) {
+func TestDeclarationPropertiesWithoutObject(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "p.go", `package p
+type T struct{}
+type Alias = *T
+//llgo:env
+//go:wasmimport test method
+func (Alias) M() {}
+`, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prog := llssa.NewProgram(nil)
+	defer prog.Dispose()
 	pkg := types.NewPackage("example.com/p", "p")
-	tObj := types.NewTypeName(token.NoPos, pkg, "T", nil)
-	named := types.NewNamed(tObj, types.NewStruct(nil, nil), nil)
-	aliasObj := types.NewTypeName(token.NoPos, pkg, "Alias", nil)
-	alias := types.NewAlias(aliasObj, types.NewPointer(named))
-	decl := &ast.FuncDecl{
-		Name: ast.NewIdent("M"),
-		Recv: &ast.FieldList{List: []*ast.Field{{Type: ast.NewIdent("Alias")}}},
+	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
+		t.Fatal(err)
 	}
-	recv := types.NewVar(token.NoPos, pkg, "", alias)
-	if got, want := declarationFuncName(pkg.Path(), decl, nil, recv), "example.com/p.(*T).M"; got != want {
-		t.Fatalf("declarationFuncName without object = %q, want %q", got, want)
-	}
-	decl.Recv = nil
-	if got, want := declarationFuncName(pkg.Path(), decl, nil, nil), "example.com/p.M"; got != want {
-		t.Fatalf("declarationFuncName without receiver = %q, want %q", got, want)
+	decl := file.Decls[2].(*ast.FuncDecl)
+	record := prog.FunctionDeclaration(pkg, nil, decl)
+	if record == nil || !record.ClosureEnv || record.WasmImport == nil || record.WasmImport.Name != "method" {
+		t.Fatalf("declaration without object lost source properties: %+v", record)
 	}
 }
 
@@ -346,7 +351,7 @@ func plain() {}
 	want := map[string]bool{"env": true, "spaced": true, "plain": false}
 	for _, node := range file.Decls {
 		decl := node.(*ast.FuncDecl)
-		fullName, _ := astFuncName(pkg.Path(), decl, nil)
+		fullName, _ := astFuncName(pkg.Path(), decl)
 		got := prog.HasClosureEnvDirective(fset, fullName, decl.Pos())
 		if got != want[decl.Name.Name] {
 			t.Fatalf("HasClosureEnvDirective(%s) = %v, want %v", decl.Name.Name, got, want[decl.Name.Name])

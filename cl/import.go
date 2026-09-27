@@ -64,6 +64,9 @@ func (p *pkgSymInfo) addSym(fset *token.FileSet, pos token.Pos, fullName, inPkgN
 			p.files[file] = p.index.ReadLegacyLinks(file)
 		}
 		p.syms[inPkgName] = symInfo{file, fullName, isVar}
+		if alias := directive.ParenthesizedMethodName(inPkgName); alias != "" {
+			p.syms[alias] = symInfo{file, fullName, isVar}
+		}
 	}
 }
 
@@ -269,18 +272,28 @@ func astFuncName(pkgPath string, fn *ast.FuncDecl) (string, string) {
 	return pkgPath + "." + name, name
 }
 
+// Keep the source receiver spelling for matching directives, but register them
+// under the unaliased receiver used by SSA and the linker.
+func typesRecvName(typ types.Type) (canonical, source string) {
+	switch t := typ.(type) {
+	case *types.Alias:
+		canonical, _ = typesRecvName(types.Unalias(t))
+		return canonical, t.Obj().Name()
+	case *types.Pointer:
+		canonical, source = typesRecvName(t.Elem())
+		return "(*" + canonical + ")", "(*" + source + ")"
+	case *types.Named:
+		return t.Obj().Name(), t.Obj().Name()
+	}
+	panic(fmt.Errorf("invalid recv type: %v", typ))
+}
+
 func typesFuncName(pkgPath string, fn *types.Func) (fullName, inPkgName string) {
 	sig := fn.Type().(*types.Signature)
 	name := fn.Name()
 	if recv := sig.Recv(); recv != nil {
-		var method string
-		t := recv.Type()
-		if tp, ok := t.(*types.Pointer); ok {
-			method = "(*" + tp.Elem().(*types.Named).Obj().Name() + ")." + name
-		} else {
-			method = t.(*types.Named).Obj().Name() + "." + name
-		}
-		return pkgPath + "." + method, method
+		canonical, source := typesRecvName(recv.Type())
+		return pkgPath + "." + canonical + "." + name, source + "." + name
 	}
 	return pkgPath + "." + name, name
 }
@@ -672,6 +685,9 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 		return err
 	}
 	records := directive.Collect(sources, pkg.Name() == "C", options.ExportRename)
+	if err := records.ValidateLinks(fset); err != nil {
+		return err
+	}
 	path := llssa.PathOf(pkg)
 	for _, file := range sources {
 		for _, node := range file.Syntax.Decls {
