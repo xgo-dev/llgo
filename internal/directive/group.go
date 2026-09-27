@@ -100,22 +100,31 @@ func (g *Group) DeclarationLink(name string, exportRename bool) (Link, bool, err
 			}
 			return l, true, nil
 		}
-		if l.Local == name {
+		if l.Local == name || l.Local == ParenthesizedMethodName(name) {
 			return l, true, nil
 		}
 	}
 	return Link{}, false, nil
 }
 func packageLink(c *ast.Comment) (Link, bool) {
-	const prefix = "//go:linkname "
-	if !strings.HasPrefix(c.Text, prefix) {
+	d, ok := Parse(c)
+	if !ok || d.Name != "go:linkname" {
 		return Link{}, false
 	}
-	fields := strings.Fields(c.Text[len(prefix):])
+	fields := strings.Fields(d.Args)
 	if len(fields) < 2 {
 		return Link{}, false
 	}
 	return Link{Local: fields[0], Target: strings.Join(fields[1:], " "), Pos: c.Pos()}, true
+}
+
+// ParenthesizedMethodName accepts (T).M as an alternative to T.M, including
+// aliases for pointer types. Pointer receivers already use (*T).M.
+func ParenthesizedMethodName(name string) string {
+	if i := strings.IndexByte(name, '.'); i > 0 && name[0] != '(' {
+		return "(" + name[:i] + ")" + name[i:]
+	}
+	return ""
 }
 func isInternal(d Directive) bool { return strings.HasPrefix(d.Name, "llgointernal:") }
 
