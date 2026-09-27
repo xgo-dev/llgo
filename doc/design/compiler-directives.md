@@ -60,9 +60,10 @@ the compatibility indexes without overriding package records.
 
 Package collection resolves local receiver aliases, including pointer aliases
 and cross-file chains, to canonical method names. Directive matching retains the
-source receiver spelling and accepts parenthesized value receiver names. Link
-validation consumes prepared groups and reports malformed or detached LLGo links
-and unresolved Go method links with source positions.
+source receiver spelling and accepts parenthesized value receiver names. Collection
+validates and associates links together, reusing its symbol index for package-wide
+links and diagnostics. Malformed or detached LLGo links and unresolved Go method
+links are reported with source positions.
 
 The refactor preserves diagnostic timing: recognition can record a malformed
 value early, while the existing owning phase reports it. It also preserves

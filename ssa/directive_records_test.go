@@ -51,7 +51,10 @@ func TestPackageDirectiveRecordsAreAuthoritative(t *testing.T) {
 				if mode == "no directives" {
 					files = prog.Directives().Files([]*ast.File{file})
 				}
-				records := directive.Collect(files, false, false)
+				records, err := directive.Collect(fset, files, false, false)
+				if err != nil {
+					t.Fatal(err)
+				}
 				records.Bind(info)
 				prog.SetPackageDirectives(pkg, records)
 			}
@@ -98,11 +101,17 @@ func TestEffectiveDirectivePackageForTypesAndMethods(t *testing.T) {
 	}
 	prog := NewProgram(nil)
 	defer prog.Dispose()
-	orig := directive.Collect(prog.Directives().Files([]*ast.File{original}), false, false)
+	orig, err := directive.Collect(fset, prog.Directives().Files([]*ast.File{original}), false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	orig.Bind(info)
 	prog.SetPackageDirectives(pkg, orig)
 	effective := types.NewPackage(pkg.Path(), pkg.Name())
-	records := directive.Collect(prog.Directives().Files([]*ast.File{original, replacement}), false, false)
+	records, err := directive.Collect(fset, prog.Directives().Files([]*ast.File{original, replacement}), false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	records.Bind(info)
 	prog.SetPackageDirectives(effective, records)
 	prog.SetDirectivePackage(pkg, effective)

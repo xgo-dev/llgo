@@ -71,7 +71,7 @@ func TestGroupCompatibility(t *testing.T) {
 }
 
 func TestPackageAssociationAndFrozenSnapshots(t *testing.T) {
-	_, file := parseSource(t, strings.ReplaceAll(`package p
+	fset, file := parseSource(t, strings.ReplaceAll(`package p
 import _ "unsafe"
 //llgo:env
 //go:noinline
@@ -86,7 +86,10 @@ func plain() {}
 `, "\n", "\r\n"))
 	index := new(Index)
 	f := index.File(file)
-	p := Collect([]*File{f}, false, false)
+	p, err := Collect(fset, []*File{f}, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	env := p.Functions[file.Decls[1].(*ast.FuncDecl)]
 	plain := p.Functions[file.Decls[2].(*ast.FuncDecl)]
 	if !env.ClosureEnv || !env.NoInline || !env.NoSplit || !env.UintptrEscapes || env.WasmImport != nil {
@@ -110,7 +113,7 @@ func plain() {}
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 20; j++ {
-				if index.File(file) != f || !index.Function(env.Source).NoInline || f.GoLinks[0].Target != "shared.symbol" {
+				if index.File(file) != f || !index.Function(env.Source).NoInline || p.Functions[env.Source].Linkname != "shared.symbol" {
 					t.Error("snapshot changed")
 				}
 			}
@@ -147,7 +150,10 @@ func (Alias) M() {}
 		if err != nil {
 			t.Fatal(err)
 		}
-		records := Collect(new(Index).Files([]*ast.File{file}), false, false)
+		records, err := Collect(fset, new(Index).Files([]*ast.File{file}), false, false)
+		if err != nil {
+			t.Fatal(err)
+		}
 		records.Bind(info)
 		method := pkg.Scope().Lookup("T").Type().(*types.Named).Method(0)
 		r, ok := records.Objects[method].(*FunctionDecl)
