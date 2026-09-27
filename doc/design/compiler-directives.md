@@ -22,12 +22,13 @@ never LLVM values. Consumers must not modify published records.
 4. After type checking, `Package.Bind` associates records with checker objects.
    Patch views bind their effective declarations using both original and alternate
    type information. Replaced declarations cannot override the active name record.
-   Standalone clients without `types.Info` use position-checked `BindScope`.
+   Tests using export-data importers bind reparsed dependency syntax through
+   `internal/testsyntax`; this adaptation stays outside the production Index.
 5. Analysis and diagnostic helpers take the compilation Index explicitly;
    standalone callers create their Index at the entrypoint. Caller analysis
    prepares its function records before backend workers start.
    The driver freezes the Index; attempting to discover an unprepared file,
-   comment group, function or imported source after that boundary panics.
+   comment group or function after that boundary panics.
 6. Lowering associates each SSA function with a prepared `FunctionDecl` through
    `cl.sourceFunction`. This two-field view retains the concrete SSA function and
    a declaration pointer; generic instances use their origin's declaration.
@@ -81,15 +82,23 @@ compiler infrastructure.
 
 ## Standalone entrypoints and remaining source use
 
-Standalone compiler clients may provide imported type objects without dependency
-ASTs. Dependency SSA declarations with available syntax are also snapshotted
-during preparation. These function snapshots contain source properties and leave
-`Declaration` empty. Package-collected function records always have a non-empty
-`Name`, so function naming can distinguish them without another package lookup.
-The preparation phase discovers and caches legacy imported link directives
-through `Index.ReadLegacyLinks`, including failed reads. Lowering applies the
-prepared records without opening those files. Independent helper APIs may create
-a temporary Index; the normal build path passes its shared Index throughout.
+All `cl.NewPackage*` entrypoints consume prepared package records. Callers first
+collect directives with `cl.ParsePkgSyntaxWithOptions` and bind checked objects
+with `Package.Bind`. They prepare the root package and the source dependencies
+needed by compilation before freezing the Index. The compiler reports a missing
+root record instead of discovering directives during lowering.
+
+There is no `PreloadedSyntax` mode switch, imported-file legacy parser, or
+standalone function-declaration fallback. Functions with source syntax use their
+package's prepared declaration records, including generic origins.
+
+Tests built with export-data importers use `internal/testsyntax` to load the
+build-selected ASTs of LLGo dependencies and feed them to the same collector.
+The test adapter matches exported objects to reparsed declarations by name and
+source position, accounting for omitted export-data columns. Tests that own
+dependency bodies prepare those ASTs explicitly. The production build driver
+already has dependency syntax and `types.Info` and uses its existing preparation
+phase.
 
 This does not remove Go parsing, type checking, SSA construction, patch AST
 transformation, embedded resource reads, debug source-line reads or syntax-based
