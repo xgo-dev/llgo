@@ -37,7 +37,8 @@ func TestFunctionPropertiesSurviveCommentRemoval(t *testing.T) {
 	const source = `package p
 //go:noinline
 //go:nosplit
-func marked() {}
+//go:uintptrescapes
+func marked(p uintptr) {}
 func plain() {}
 `
 	fset := token.NewFileSet()
@@ -72,6 +73,10 @@ func plain() {}
 	prog.Directives().Freeze()
 	backend := prog.NewBackendProgram()
 	defer backend.Dispose()
+	ctx := &context{prog: backend}
+	if decl := ctx.sourceFunction(ssaPkg.Func("marked")).Decl; decl == nil || !decl.UintptrEscapes {
+		t.Fatal("prepared uintptr property lost after comment removal")
+	}
 	compiled, _, err := NewPackageExWithEmbedMetaOptions(backend, tracking, nil, nil, ssaPkg, files, goembed.VarMap{}, false, Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -190,34 +195,6 @@ func Use() int { return F(1) }
 		}
 	}
 	t.Fatal("missing generic call")
-}
-
-func TestDependencyPropertiesUsePreparedRecords(t *testing.T) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "dependency.go", "package dep\n//go:uintptrescapes\nfunc F(p uintptr) {}\n", parser.ParseComments)
-	if err != nil {
-		t.Fatal(err)
-	}
-	info := newLocalityTypeInfo()
-	pkg, err := new(types.Config).Check("example.com/dep", fset, []*ast.File{file}, info)
-	if err != nil {
-		t.Fatal(err)
-	}
-	goProg := ssa.NewProgram(fset, ssa.SanityCheckFunctions)
-	ssaPkg := goProg.CreatePackage(pkg, []*ast.File{file}, info, true)
-	ssaPkg.Build()
-	prog := ssatest.NewProgramEx(t, nil, importer.Default())
-	defer prog.Dispose()
-	ctx := &context{prog: prog, goProg: goProg, fset: fset}
-	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
-		t.Fatal(err)
-	}
-	prog.PackageDirectives(pkg).Bind(info)
-	file.Decls[0].(*ast.FuncDecl).Doc = nil
-	prog.Directives().Freeze()
-	if !ctx.sourceFunction(ssaPkg.Func("F")).Decl.UintptrEscapes {
-		t.Fatal("dependency lost prepared uintptr property")
-	}
 }
 
 func TestFunctionNameUsesPackageRecords(t *testing.T) {
