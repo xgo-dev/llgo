@@ -59,13 +59,7 @@ func TestIndexAssociatesConstructedSyntax(t *testing.T) {
 	}
 	fn.Doc = nil
 	index.Freeze()
-	if props := index.FunctionDeclaration(fn); props == nil || !props.NoInline {
-		t.Fatalf("prepared function = %+v", props)
-	}
-	if decl := index.FunctionDeclaration(&ast.FuncDecl{}); decl != nil {
-		t.Fatal("unprepared function appeared in snapshot")
-	}
-	if index.Function(nil) != (Function{}) || index.Group(nil).Has("go:noinline") {
-		t.Fatal("nil syntax acquired directives")
+	if !index.Function(fn).NoInline {
+		t.Fatal("function properties were reread after freeze")
 	}
 }

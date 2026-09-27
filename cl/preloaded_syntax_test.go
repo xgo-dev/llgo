@@ -58,6 +58,8 @@ func Plain() {}
 			if err := ParsePkgSyntaxWithOptions(coordinator, fset, pkg, files, Options{ExportRename: true}); err != nil {
 				t.Fatal(err)
 			}
+			coordinator.PackageDirectives(pkg).Bind(info)
+			coordinator.Directives().Freeze()
 			backend := coordinator.NewBackendProgram()
 			defer backend.Dispose()
 
@@ -66,7 +68,7 @@ func Plain() {}
 			ssaPkg.Build()
 			compiled, _, err := NewPackageExWithEmbedMetaOptions(
 				backend, nil, nil, nil, ssaPkg, files, goembed.VarMap{}, false,
-				Options{ExportRename: true, CExportWrappers: true, PreloadedSyntax: true},
+				Options{ExportRename: true, CExportWrappers: true},
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -101,5 +103,18 @@ func Plain() {}
 				t.Fatalf("unexpected automatic exports for package %s: %v", pkgName, compiled.ExportFuncs())
 			}
 		})
+	}
+}
+
+func TestCompilationRequiresPreparedSyntax(t *testing.T) {
+	pkg, _, files := buildGoSSAPkg(t, "package p\nfunc F() {}\n")
+	prog := newLLSSAProg(t)
+	defer prog.Dispose()
+	_, err := NewPackage(prog, pkg, files)
+	if err == nil || !strings.Contains(err.Error(), "prepare directive records before compilation") {
+		t.Fatalf("unprepared compilation error = %v", err)
+	}
+	if prog.PackageDirectives(pkg.Pkg) != nil {
+		t.Fatal("compilation discovered source records")
 	}
 }

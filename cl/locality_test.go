@@ -57,6 +57,7 @@ func compileLocalitySourceMode(t *testing.T, src string, options Options, logica
 	goProg := ssa.NewProgram(fset, ssa.SanityCheckFunctions)
 	ssaPkg := goProg.CreatePackage(pkg, files, info, true)
 	ssaPkg.Build()
+	prog.PackageDirectives(pkg).Bind(info)
 	compiled, _, err := NewPackageExWithEmbedMetaOptions(
 		prog, nil, nil, nil, ssaPkg, files, nil, false, options,
 	)
@@ -67,6 +68,9 @@ func compileLocalitySourceMode(t *testing.T, src string, options Options, logica
 }
 
 func newLocalityTestPackage(prog llssa.Program, pkg *ssa.Package, files []*ast.File) (llssa.Package, error) {
+	if err := prepareTestSyntax(prog, pkg, files, Options{AllowInternalDirectives: true}); err != nil {
+		return nil, err
+	}
 	compiled, _, err := NewPackageExWithEmbedMetaOptions(
 		prog, nil, nil, nil, pkg, files, nil, false,
 		Options{AllowInternalDirectives: true},

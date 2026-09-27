@@ -52,9 +52,6 @@ func (p *context) sourceFunction(fn *ssa.Function) sourceFunction {
 				pkg = obj.Pkg()
 			}
 			source.Decl = p.prog.FunctionDeclaration(pkg, obj, syntax)
-			if source.Decl == nil && !p.options.PreloadedSyntax {
-				source.Decl = p.prog.Directives().FunctionDeclaration(syntax)
-			}
 		}
 	}
 	if p.sourceFunctions == nil {

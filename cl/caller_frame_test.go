@@ -385,7 +385,7 @@ func ordinary(b bool) { if b { for {} } }
 	} {
 		t.Run(target.GOARCH, func(t *testing.T) {
 			prog := newLLSSAProgForTarget(t, target)
-			pkg, err := NewPackage(prog, ssapkg, files)
+			pkg, err := compileTestPackage(prog, ssapkg, files)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -460,7 +460,7 @@ func pinnedPanicSite() {
 	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
-	pkg, err := NewPackage(prog, ssapkg, files)
+	pkg, err := compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -549,7 +549,7 @@ func branchStorePanicLeaf(p *int, branch bool) {
 			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: test.goos, GOARCH: test.goarch})
 			prog.EnableFuncInfoMetadata(true)
 			prog.EnableFuncInfoSites(true)
-			pkg, err := NewPackage(prog, ssapkg, files)
+			pkg, err := compileTestPackage(prog, ssapkg, files)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -831,6 +831,9 @@ func f() {
 }
 `)
 	prog := newLLSSAProg(t)
+	if err := prepareTestSyntax(prog, ssapkg, files, Options{}); err != nil {
+		t.Fatal(err)
+	}
 	pkg, _, err := NewPackageExWithEmbedMetaOptions(
 		prog, nil, nil, nil, ssapkg, files, nil, false, Options{ShadowStack: true},
 	)
@@ -869,7 +872,7 @@ func leaf() {}
 	prog.Target().GOARCH = "amd64"
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
-	pkg, err := NewPackage(prog, ssapkg, files)
+	pkg, err := compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -907,7 +910,7 @@ func top() {
 	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "386"})
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
-	pkg, err := NewPackage(prog, ssapkg, files)
+	pkg, err := compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -937,7 +940,7 @@ func top() {
 	prog.Target().GOARCH = "amd64"
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
-	pkg, err := NewPackage(prog, ssapkg, files)
+	pkg, err := compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1017,7 +1020,7 @@ func top() {
 	prog.Target().GOARCH = "amd64"
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(false)
-	pkg, err := NewPackage(prog, ssapkg, files)
+	pkg, err := compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1047,7 +1050,7 @@ func top() {
 	prog.Target().GOARCH = "arm64"
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
-	pkg, err := NewPackage(prog, ssapkg, files)
+	pkg, err := compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1079,7 +1082,7 @@ func top() {
 	prog.Target().GOARCH = "arm64"
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
-	pkg, err := NewPackage(prog, ssapkg, files)
+	pkg, err := compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1111,7 +1114,7 @@ func top() {
 	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "windows", GOARCH: "386"})
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
-	pkg, err := NewPackage(prog, ssapkg, files)
+	pkg, err := compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1138,6 +1141,9 @@ func renamedPC() uintptr {
 `)
 	prog := newLLSSAProg(t)
 	prog.SetLinkname("command-line-arguments.renamedPC", "main.renamedPCSymbol")
+	if err := prepareTestSyntax(prog, ssapkg, files, Options{}); err != nil {
+		t.Fatal(err)
+	}
 	pkg, _, err := NewPackageExWithEmbedMetaOptions(
 		prog, nil, nil, nil, ssapkg, files, nil, false, Options{ShadowStack: true},
 	)
@@ -1163,7 +1169,7 @@ func f() {
 `)
 	prog := newLLSSAProg(t)
 	prog.Target().Target = "esp32"
-	pkg, err := NewPackage(prog, ssapkg, files)
+	pkg, err := compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1175,7 +1181,7 @@ func f() {
 func f() {}
 `)
 	prog = newLLSSAProg(t)
-	pkg, err = NewPackage(prog, ssapkg, files)
+	pkg, err = compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1192,7 +1198,7 @@ func f() { _ = runtime.FuncForPC(0) }
 	prog.Target().GOARCH = "amd64"
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
-	pkg, err = NewPackage(prog, ssapkg, files)
+	pkg, err = compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1219,6 +1225,9 @@ func f() {
 }
 `)
 	prog := newLLSSAProg(t)
+	if err := prepareTestSyntax(prog, ssapkg, files, Options{}); err != nil {
+		t.Fatal(err)
+	}
 	pkg, _, err := NewPackageExWithEmbedMetaOptions(
 		prog, nil, nil, nil, ssapkg, files, nil, false, Options{ShadowStack: true},
 	)

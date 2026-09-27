@@ -72,7 +72,7 @@ func plain() {}
 	prog.Directives().Freeze()
 	backend := prog.NewBackendProgram()
 	defer backend.Dispose()
-	compiled, _, err := NewPackageExWithEmbedMetaOptions(backend, tracking, nil, nil, ssaPkg, files, goembed.VarMap{}, false, Options{PreloadedSyntax: true})
+	compiled, _, err := NewPackageExWithEmbedMetaOptions(backend, tracking, nil, nil, ssaPkg, files, goembed.VarMap{}, false, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func Use() int { return F(1) }
 	t.Fatal("missing generic call")
 }
 
-func TestStandalonePropertiesPreparedWithoutFiles(t *testing.T) {
+func TestDependencyPropertiesUsePreparedRecords(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "dependency.go", "package dep\n//go:uintptrescapes\nfunc F(p uintptr) {}\n", parser.ParseComments)
 	if err != nil {
@@ -209,59 +209,46 @@ func TestStandalonePropertiesPreparedWithoutFiles(t *testing.T) {
 	prog := ssatest.NewProgramEx(t, nil, importer.Default())
 	defer prog.Dispose()
 	ctx := &context{prog: prog, goProg: goProg, fset: fset}
-	ctx.prepareImportSources()
+	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
+		t.Fatal(err)
+	}
+	prog.PackageDirectives(pkg).Bind(info)
 	file.Decls[0].(*ast.FuncDecl).Doc = nil
 	prog.Directives().Freeze()
 	if !ctx.sourceFunction(ssaPkg.Func("F")).Decl.UintptrEscapes {
-		t.Fatal("standalone dependency lost prepared uintptr property")
+		t.Fatal("dependency lost prepared uintptr property")
 	}
 }
 
-func TestFunctionNameUsesPackageRecordsOrStandaloneLinks(t *testing.T) {
-	for _, packageRecords := range []bool{true, false} {
-		name := "standalone"
-		if packageRecords {
-			name = "package"
-		}
-		t.Run(name, func(t *testing.T) {
-			fset := token.NewFileSet()
-			file, err := parser.ParseFile(fset, "p.go", "package p\n//go:noinline\nfunc F() {}\n", parser.ParseComments)
-			if err != nil {
-				t.Fatal(err)
-			}
-			info := newLocalityTypeInfo()
-			pkg, err := new(types.Config).Check("example.com/p", fset, []*ast.File{file}, info)
-			if err != nil {
-				t.Fatal(err)
-			}
-			goProg := ssa.NewProgram(fset, ssa.SanityCheckFunctions)
-			ssaPkg := goProg.CreatePackage(pkg, []*ast.File{file}, info, true)
-			ssaPkg.Build()
-			prog := ssatest.NewProgramEx(t, nil, importer.Default())
-			defer prog.Dispose()
-			if packageRecords {
-				if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
-					t.Fatal(err)
-				}
-				prog.PackageDirectives(pkg).Bind(info)
-			} else {
-				prog.Directives().Function(file.Decls[0].(*ast.FuncDecl))
-			}
-			prog.SetLinkname(pkg.Path()+".F", "C.legacy")
-			prog.Directives().Freeze()
-			ctx := &context{prog: prog, goTyps: pkg}
-			source := ctx.sourceFunction(ssaPkg.Func("F"))
-			gotPkg, gotName, kind, decl := ctx.funcName(source)
-			if decl == nil || decl != source.Decl || !decl.NoInline {
-				t.Fatal("function naming lost the source properties")
-			}
-			if packageRecords {
-				if gotPkg != pkg || gotName != pkg.Path()+".F" || kind != goFunc {
-					t.Fatalf("package declaration inherited a global link: %v, %s, %d", gotPkg, gotName, kind)
-				}
-			} else if gotPkg != nil || gotName != "legacy" || kind != cFunc {
-				t.Fatalf("standalone declaration lost its legacy link: %v, %s, %d", gotPkg, gotName, kind)
-			}
-		})
+func TestFunctionNameUsesPackageRecords(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "p.go", "package p\n//go:noinline\nfunc F() {}\n", parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := newLocalityTypeInfo()
+	pkg, err := new(types.Config).Check("example.com/p", fset, []*ast.File{file}, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	goProg := ssa.NewProgram(fset, ssa.SanityCheckFunctions)
+	ssaPkg := goProg.CreatePackage(pkg, []*ast.File{file}, info, true)
+	ssaPkg.Build()
+	prog := ssatest.NewProgramEx(t, nil, importer.Default())
+	defer prog.Dispose()
+	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
+		t.Fatal(err)
+	}
+	prog.PackageDirectives(pkg).Bind(info)
+	prog.SetLinkname(pkg.Path()+".F", "C.legacy")
+	prog.Directives().Freeze()
+	ctx := &context{prog: prog, goTyps: pkg}
+	source := ctx.sourceFunction(ssaPkg.Func("F"))
+	gotPkg, gotName, kind, decl := ctx.funcName(source)
+	if decl == nil || decl != source.Decl || !decl.NoInline {
+		t.Fatal("function naming lost the source properties")
+	}
+	if gotPkg != pkg || gotName != pkg.Path()+".F" || kind != goFunc {
+		t.Fatalf("package declaration inherited a global link: %v, %s, %d", gotPkg, gotName, kind)
 	}
 }
