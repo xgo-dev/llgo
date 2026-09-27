@@ -55,6 +55,10 @@ func savedPromotedExpression(p *P) { f := (*P).M; f(p, arg()) }
 	}
 	prog := newLLSSAProg(t)
 	defer prog.Dispose()
+	if err := prepareTestSyntax(prog, ssaPkg, files, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	prog.Directives().Freeze()
 	pkg, _, err := newPackageEx(prog, nil, nil, nil, ssaPkg, files, nil, false, Options{ReceiverNilChecks: checks})
 	if err != nil {
 		t.Fatal(err)
@@ -136,6 +140,16 @@ func Invoke(p *dep.T, arg func() int) { dep.Call(p, arg, 1); dep.Bound(p, 1)(arg
 	checks := CollectReceiverNilChecks([]*ast.File{rootFile, depFile}, rootInfo, depInfo)
 	prog := newLLSSAProg(t)
 	defer prog.Dispose()
+	// This test owns dependency bodies as well as the root syntax.
+	if err := ParsePkgSyntax(prog, fset, dep, []*ast.File{depFile}); err != nil {
+		t.Fatal(err)
+	}
+	prog.PackageDirectives(dep).Bind(depInfo)
+	if err := ParsePkgSyntax(prog, fset, root, []*ast.File{rootFile}); err != nil {
+		t.Fatal(err)
+	}
+	prog.PackageDirectives(root).Bind(rootInfo)
+	prog.Directives().Freeze()
 	pkg, _, err := newPackageEx(prog, nil, nil, nil, rootSSA, []*ast.File{rootFile}, nil, false, Options{ReceiverNilChecks: checks})
 	if err != nil {
 		t.Fatal(err)
@@ -286,6 +300,10 @@ func promoted(value *U) { value.M() }
 	}
 	prog := newLLSSAProg(t)
 	defer prog.Dispose()
+	if err := prepareTestSyntax(prog, ssaPkg, files, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	prog.Directives().Freeze()
 	pkg, _, err := newPackageEx(prog, nil, nil, nil, ssaPkg, files, nil, false, Options{ReceiverNilChecks: checks})
 	if err != nil {
 		t.Fatal(err)

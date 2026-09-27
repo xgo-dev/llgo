@@ -58,6 +58,9 @@ func compileWithRewritesModeTarget(t *testing.T, src string, rewrites map[string
 		goarch = target.GOARCH
 	}
 	prog.TypeSizes(types.SizesFor("gc", goarch))
+	if err := prepareTestSyntax(prog, pkg, []*ast.File{file}, Options{}); err != nil {
+		t.Fatal(err)
+	}
 	ret, _, err := NewPackageEx(prog, nil, rewrites, pkg, []*ast.File{file})
 	if err != nil {
 		t.Fatalf("NewPackageEx failed: %v", err)

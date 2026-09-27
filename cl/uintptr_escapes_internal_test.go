@@ -49,7 +49,7 @@ func caller() { two(uintptr(source()), laterArgument()) }
 			if prog.PointerSize() != tc.pointerSize || prog.GoWordSize() != 8 {
 				t.Fatalf("physical pointer/Go word sizes = %d/%d, want %d/8", prog.PointerSize(), prog.GoWordSize(), tc.pointerSize)
 			}
-			pkg, err := NewPackage(prog, ssaPkg, files)
+			pkg, err := compileTestPackage(prog, ssaPkg, files)
 			if err != nil {
 				t.Fatal(err)
 			}

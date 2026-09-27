@@ -61,6 +61,10 @@ var anonymous = func(seed int) int {
 		OptLevel: optlevel.O0,
 	})
 	defer prog.Dispose()
+	if err := prepareTestSyntax(prog, ssaPkg, []*ast.File{file}, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	prog.Directives().Freeze()
 	pkg, _, err := newPackageEx(prog, nil, nil, nil, ssaPkg, []*ast.File{file}, nil, false, Options{
 		Debug:        true,
 		DebugSymbols: true,

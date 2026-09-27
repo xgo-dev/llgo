@@ -870,9 +870,14 @@ func CompileIREx(t *testing.T, src any, fname string, dbg bool, configure func(l
 		configure(prog)
 	}
 
+	options := cl.Options{Debug: dbg, DebugSymbols: dbg}
+	if err := PrepareSyntax(prog, foo, files, options); err != nil {
+		t.Fatal(err)
+	}
+	prog.Directives().Freeze()
 	ret, _, err := cl.NewPackageExWithEmbedMetaOptions(
 		prog, nil, nil, nil, foo, files, nil, false,
-		cl.Options{Debug: dbg, DebugSymbols: dbg},
+		options,
 	)
 	if err != nil {
 		t.Fatal("cl.NewPackageExWithEmbedMetaOptions failed:", err)

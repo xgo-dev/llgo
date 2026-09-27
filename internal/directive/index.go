@@ -27,11 +27,10 @@ import (
 // values are shared between independent compilations.
 type Index struct {
 	frozen    bool
-	imports   map[string][]LegacyLink
 	mu        sync.Mutex
 	files     map[*ast.File]*File
 	groups    map[*ast.CommentGroup]*Group
-	functions map[*ast.FuncDecl]*FunctionDecl
+	functions map[*ast.FuncDecl]Function
 }
 
 // File contains source-order file directives and declaration associations.
@@ -145,9 +144,9 @@ func (s *Index) File(file *ast.File) *File {
 			add(n.Doc)
 			f.Functions[n] = s.group(n.Doc).Function
 			if s.functions == nil {
-				s.functions = make(map[*ast.FuncDecl]*FunctionDecl)
+				s.functions = make(map[*ast.FuncDecl]Function)
 			}
-			s.functions[n] = &FunctionDecl{Source: n, Function: f.Functions[n]}
+			s.functions[n] = f.Functions[n]
 		case *ast.GenDecl:
 			add(n.Doc)
 		case *ast.ValueSpec:
@@ -189,33 +188,26 @@ func (g *Group) Has(name string) bool {
 	return false
 }
 
-// Function prepares a declaration when a standalone SSA client supplies syntax
-// without files. Normal build clients already registered it through File.
+// Function returns source properties used by caller analysis. File preparation
+// registers package declarations before lowering begins.
 func (s *Index) Function(d *ast.FuncDecl) Function {
 	if d == nil {
 		return Function{}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if p := s.functions[d]; p != nil {
-		return p.Function
+	if p, ok := s.functions[d]; ok {
+		return p
 	}
 	if s.frozen {
 		panic("function directives were not prepared before lowering")
 	}
 	if s.functions == nil {
-		s.functions = make(map[*ast.FuncDecl]*FunctionDecl)
+		s.functions = make(map[*ast.FuncDecl]Function)
 	}
-	p := &FunctionDecl{Source: d, Function: s.group(d.Doc).Function}
+	p := s.group(d.Doc).Function
 	s.functions[d] = p
-	return p.Function
-}
-
-// FunctionDeclaration reads a prepared standalone declaration without discovery.
-func (s *Index) FunctionDeclaration(d *ast.FuncDecl) *FunctionDecl {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.functions[d]
+	return p
 }
 
 // Freeze closes discovery at the coordinator/worker boundary. Existing records

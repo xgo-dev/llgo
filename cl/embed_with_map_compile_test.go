@@ -15,6 +15,7 @@ import (
 
 	"github.com/goplus/gogen/packages"
 	"github.com/xgo-dev/llgo/cl"
+	"github.com/xgo-dev/llgo/cl/cltest"
 	"github.com/xgo-dev/llgo/internal/goembed"
 	"github.com/xgo-dev/llgo/ssa/ssatest"
 	"golang.org/x/tools/go/ssa"
@@ -57,6 +58,9 @@ var files embed.FS
 
 	prog := ssatest.NewProgramEx(t, nil, imp)
 	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	if err := cltest.PrepareSyntax(prog, fooPkg, files, cl.Options{}); err != nil {
+		t.Fatal(err)
+	}
 	ret, _, err := cl.NewPackageExWithEmbed(prog, nil, nil, nil, fooPkg, files, embedMap)
 	if err != nil {
 		t.Fatalf("NewPackageExWithEmbed failed: %v", err)

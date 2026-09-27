@@ -462,7 +462,7 @@ func callbackPC() uintptr { return funcPCABI0(callback) }
 	}
 	prog := newLLSSAProgForTarget(t, target)
 	defer prog.Dispose()
-	pkg, err := NewPackage(prog, ssaPkg, files)
+	pkg, err := compileTestPackage(prog, ssaPkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}

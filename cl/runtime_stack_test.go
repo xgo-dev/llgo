@@ -51,7 +51,7 @@ func Size() uintptr { return goroutineStackSize }
 			defer prog.Dispose()
 			prog.TypeSizes(types.SizesFor("gc", "amd64"))
 			prog.SetPthreadStackSize(tc.size)
-			pkg, err := NewPackage(prog, ssaPkg, files)
+			pkg, err := compileTestPackage(prog, ssaPkg, files)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -41,7 +41,7 @@ func Defer64(a, b Word) { defer multiply(a, b) }
 			ssapkg, _, files := buildGoSSAPkg(t, src)
 			prog := newLLSSAProgForTarget(t, &target)
 			defer prog.Dispose()
-			pkg, err := NewPackage(prog, ssapkg, files)
+			pkg, err := compileTestPackage(prog, ssapkg, files)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -98,7 +98,7 @@ func TestUMulOverflowInvalidDeclarations(t *testing.T) {
 					t.Fatalf("diagnostic = %q, want %q", got, tc.want)
 				}
 			}()
-			_, err := NewPackage(prog, ssapkg, files)
+			_, err := compileTestPackage(prog, ssapkg, files)
 			if err != nil {
 				panic(err)
 			}

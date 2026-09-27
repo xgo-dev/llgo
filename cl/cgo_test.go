@@ -62,7 +62,7 @@ func mustCompileLLPkgFromSrc(t *testing.T, src string) (llssa.Package, llvm.Modu
 	t.Helper()
 	ssaPkg, _, files := buildGoSSAPkg(t, src)
 	prog := newLLSSAProg(t)
-	pkg, err := NewPackage(prog, ssaPkg, files)
+	pkg, err := compileTestPackage(prog, ssaPkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}

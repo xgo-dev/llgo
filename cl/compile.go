@@ -70,9 +70,6 @@ type Options struct {
 	// the final-link module supplies the public C entry points.
 	CExportWrappers bool
 	ShadowStack     bool
-	// PreloadedSyntax means all Program-side source metadata was collected
-	// before lowering and is now shared read-only by backend Programs.
-	PreloadedSyntax bool
 	// ReceiverNilChecks retains pointer-method selection semantics erased
 	// during Go SSA construction. It is collected from checked source info.
 	ReceiverNilChecks *ReceiverNilChecks
@@ -168,7 +165,6 @@ type context struct {
 	methodNilDerefChecks map[*ssa.UnOp]none
 	recvNilDerefChecks   map[*ssa.UnOp]token.Pos
 	vargs                map[*ssa.Alloc][]llssa.Expr // varargs
-	importSources        map[*types.Package]*pkgSymInfo
 	funcs                map[*ssa.Function]llssa.Function
 	sourceFunctions      map[*ssa.Function]sourceFunction
 	linkOnceFns          map[*ssa.Function]none
@@ -2718,7 +2714,7 @@ type Patch struct {
 // Patches is patches of some packages.
 type Patches = map[string]Patch
 
-// NewPackage compiles a Go package to LLVM IR package.
+// NewPackage compiles a Go package with prepared directive records to LLVM IR.
 // Deprecated: use NewPackageExWithEmbedMetaOptions with explicit Options.
 func NewPackage(prog llssa.Program, pkg *ssa.Package, files []*ast.File) (ret llssa.Package, err error) {
 	ret, _, err = NewPackageEx(prog, nil, nil, pkg, files)
@@ -2764,7 +2760,9 @@ func NewPackageExWithEmbedMeta(prog llssa.Program, ct *CallerTracking, patches P
 }
 
 // NewPackageExWithEmbedMetaOptions is NewPackageExWithEmbedMeta with explicit
-// per-package frontend options.
+// per-package frontend options. Callers must prepare directive records for the
+// package and its source dependencies with ParsePkgSyntaxWithOptions and bind
+// them to checked objects before compiling. Compilation does not discover directives.
 func NewPackageExWithEmbedMetaOptions(prog llssa.Program, ct *CallerTracking, patches Patches, rewrites map[string]string, pkg *ssa.Package, files []*ast.File, embedMap goembed.VarMap, metaCollect bool, options Options) (ret llssa.Package, externs []string, err error) {
 	return newPackageEx(prog, ct, patches, rewrites, pkg, files, &embedMap, metaCollect, options)
 }
@@ -2780,13 +2778,8 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		pkg.Pkg = pkgTypes
 		patch.Alt.Pkg = pkgTypes
 	}
-	if !options.PreloadedSyntax {
-		if err = ParsePkgSyntaxWithOptions(prog, pkgProg.Fset, pkgTypes, files, options); err != nil {
-			return nil, nil, err
-		}
-	}
-	if !options.PreloadedSyntax {
-		prog.PackageDirectives(pkgTypes).BindScope(pkgTypes)
+	if prog.PackageDirectives(pkgTypes) == nil {
+		return nil, nil, fmt.Errorf("package %s: prepare directive records before compilation", pkgPath)
 	}
 	if err = prog.ValidateLocalitiesFor(pkgTypes); err != nil {
 		return nil, nil, err
@@ -2830,9 +2823,6 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		trackCallerFrames:  filesUseRuntimeCaller(files) || packageUsesRuntimeCaller(ct, pkg),
 		runtimeCallerFuncs: runtimeCallerFuncSet(ct, pkg),
 		panicSiteFuncs:     recoverPanicSiteFuncSet(ct, pkg),
-	}
-	if !options.PreloadedSyntax {
-		ctx.prepareImportSources()
 	}
 	if embedMap != nil {
 		ctx.embedMap = *embedMap

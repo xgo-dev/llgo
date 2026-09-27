@@ -849,7 +849,6 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		return nil, err
 	}
 	prepareSpan.done()
-	frontendOptions.PreloadedSyntax = true
 
 	output := conf.OutFile != ""
 	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,

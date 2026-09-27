@@ -20,7 +20,7 @@ func U64(x float64) uint64 { return uint64(x) }
 `
 	ssaPkg, _, files := buildGoSSAPkg(t, src)
 	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
-	pkg, err := NewPackage(prog, ssaPkg, files)
+	pkg, err := compileTestPackage(prog, ssaPkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}

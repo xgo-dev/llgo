@@ -17,6 +17,7 @@ import (
 
 	"github.com/goplus/gogen/packages"
 	"github.com/xgo-dev/llgo/cl"
+	"github.com/xgo-dev/llgo/cl/cltest"
 	"github.com/xgo-dev/llgo/ssa/ssatest"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -40,6 +41,9 @@ func compileSource(t *testing.T, src, file string) string {
 
 	prog := ssatest.NewProgramEx(t, nil, imp)
 	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	if err := cltest.PrepareSyntax(prog, foo, files, cl.Options{}); err != nil {
+		t.Fatal(err)
+	}
 	ret, err := cl.NewPackage(prog, foo, files)
 	if err != nil {
 		t.Fatalf("cl.NewPackage failed: %v", err)

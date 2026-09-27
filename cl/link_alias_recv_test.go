@@ -156,14 +156,18 @@ func TestLinkedAliasReceiverImport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		pkg, err := (&types.Config{Importer: importer.Default()}).Check("p", fset, []*ast.File{file}, nil)
+		info := &types.Info{Defs: make(map[*ast.Ident]types.Object)}
+		pkg, err := (&types.Config{Importer: importer.Default()}).Check("p", fset, []*ast.File{file}, info)
 		if err != nil {
 			t.Fatal(err)
 		}
 		prog := llssa.NewProgram(nil)
 		defer prog.Dispose()
 		ctx := &context{prog: prog, fset: fset}
-		ctx.prepareImportSource(pkg)
+		if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
+			t.Fatal(err)
+		}
+		prog.PackageDirectives(pkg).Bind(info)
 		prog.Directives().Freeze()
 		ctx.importPkg(pkg, &pkgInfo{})
 		if link, ok := prog.Linkname(want); !ok || link != "C.test_cursor" {

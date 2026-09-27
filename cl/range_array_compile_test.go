@@ -398,7 +398,7 @@ func lenSlice(s []int) int { return len(s) }
 	defer func() { *refs = oldRefs }()
 
 	prog := newLLSSAProg(t)
-	pkg, err := NewPackage(prog, ssaPkg, files)
+	pkg, err := compileTestPackage(prog, ssaPkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}

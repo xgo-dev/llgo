@@ -24,6 +24,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/goembed"
@@ -63,7 +64,7 @@ func XDefault() {}
 	ssaPkg.Build()
 	compiled, _, err := NewPackageExWithEmbedMetaOptions(
 		backend, nil, nil, nil, ssaPkg, files, goembed.VarMap{}, false,
-		Options{ExportRename: true, CExportWrappers: true, PreloadedSyntax: true},
+		Options{ExportRename: true, CExportWrappers: true},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -84,5 +85,18 @@ func XDefault() {}
 		if fn := compiled.FuncOf(want); fn != nil {
 			t.Errorf("FuncOf(%q) = %q, want final-link wrapper only", want, fn.Name())
 		}
+	}
+}
+
+func TestCompilationRequiresPreparedSyntax(t *testing.T) {
+	pkg, _, files := buildGoSSAPkg(t, "package p\nfunc F() {}\n")
+	prog := newLLSSAProg(t)
+	defer prog.Dispose()
+	_, err := NewPackage(prog, pkg, files)
+	if err == nil || !strings.Contains(err.Error(), "prepare directive records before compilation") {
+		t.Fatalf("unprepared compilation error = %v", err)
+	}
+	if prog.PackageDirectives(pkg.Pkg) != nil {
+		t.Fatal("compilation discovered source records")
 	}
 }

@@ -144,82 +144,26 @@ func TestBindingUsesEffectiveDeclarationsAndPositions(t *testing.T) {
 	}
 	original := parse("original.go", "package p\nfunc F() {}\nvar V int\ntype T int\n")
 	replacement := parse("replacement.go", "package p\n//go:noinline\nfunc F() {}\nvar V string\n//llgo:type C\ntype T string\n")
-	oldPkg, oldInfo := checkRecordSource(t, fset, original)
+	_, oldInfo := checkRecordSource(t, fset, original)
 	newPkg, newInfo := checkRecordSource(t, fset, replacement)
 	files := new(Index).Files([]*ast.File{original, replacement})
-	for _, scoped := range []bool{false, true} {
-		t.Run(map[bool]string{false: "checker objects", true: "standalone scope"}[scoped], func(t *testing.T) {
-			p, err := Collect(fset, files, false, false)
-			if err != nil {
-				t.Fatal(err)
-			}
-			p.Bind(nil)
-			p.BindScope(nil)
-			if scoped {
-				p.BindScope(oldPkg)
-			} else {
-				p.Bind(oldInfo)
-			}
-			if len(p.Objects) != 0 {
-				t.Fatalf("inactive originals bound: %v", p.Objects)
-			}
-			if scoped {
-				p.BindScope(newPkg)
-			} else {
-				p.Bind(newInfo)
-			}
-			for _, name := range []string{"F", "V", "T"} {
-				if got := p.Objects[newPkg.Scope().Lookup(name)]; got != p.Names[name] {
-					t.Errorf("%s binding = %v", name, got)
-				}
-			}
-			if !p.Names["F"].(*FunctionDecl).NoInline || p.Names["T"].(*TypeDecl).Background != "C" {
-				t.Fatal("replacement properties lost")
-			}
-		})
-	}
-}
-
-func TestBindScopeReceiverAliasesAndGenerics(t *testing.T) {
-	fset, file := parseSource(t, `package p
-type T struct{}
-type Alias = T
-type Ptr = *Alias
-func (T) A() {}
-//go:nointerface
-func (*Alias) M() {}
-func (Ptr) P() {}
-type Generic[X any] struct{}
-//go:noinline
-func (Generic[X]) Value() {}
-type Pair[X, Y any] struct{}
-//llgo:env
-func (*Pair[X, Y]) Pointer() {}
-`)
-	pkg, info := checkRecordSource(t, fset, file)
-	p, err := Collect(fset, new(Index).Files([]*ast.File{file}), false, false)
+	p, err := Collect(fset, files, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.BindScope(pkg)
-	for decl, r := range p.Functions {
-		if got := p.Objects[info.Defs[decl.Name]]; got != r {
-			t.Errorf("method %s not bound: %v", r.Name, got)
+	p.Bind(nil)
+	p.Bind(oldInfo)
+	if len(p.Objects) != 0 {
+		t.Fatalf("inactive originals bound: %v", p.Objects)
+	}
+	p.Bind(newInfo)
+	for _, name := range []string{"F", "V", "T"} {
+		if got := p.Objects[newPkg.Scope().Lookup(name)]; got != p.Names[name] {
+			t.Errorf("%s binding = %v", name, got)
 		}
 	}
-	if !p.Names["(*T).M"].(*FunctionDecl).NoInterface || !p.Names["Generic.Value"].(*FunctionDecl).NoInline || !p.Names["(*Pair).Pointer"].(*FunctionDecl).ClosureEnv {
-		t.Fatal("receiver source properties lost")
-	}
-	// A different checked package at different source positions must not bind.
-	otherSet, other := parseSource(t, "package p\n\ntype T struct{}\nfunc (*T) M() {}\n")
-	otherPkg, _ := checkRecordSource(t, otherSet, other)
-	unmatched, err := Collect(fset, new(Index).Files([]*ast.File{file}), false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	unmatched.BindScope(otherPkg)
-	if len(unmatched.Objects) != 0 {
-		t.Fatalf("unrelated declarations bound: %v", unmatched.Objects)
+	if !p.Names["F"].(*FunctionDecl).NoInline || p.Names["T"].(*TypeDecl).Background != "C" {
+		t.Fatal("replacement properties lost")
 	}
 }
 

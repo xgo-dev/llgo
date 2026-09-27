@@ -36,53 +36,6 @@ import (
 
 // -----------------------------------------------------------------------------
 
-type symInfo struct {
-	file     string
-	fullName string
-	isVar    bool
-}
-
-type pkgSymInfo struct {
-	index *directive.Index
-	files map[string][]directive.LegacyLink // file => parsed links
-	syms  map[string]symInfo                // name => isVar
-}
-
-func newPkgSymInfo(index *directive.Index) *pkgSymInfo {
-	return &pkgSymInfo{
-		index: index,
-		files: make(map[string][]directive.LegacyLink),
-		syms:  make(map[string]symInfo),
-	}
-}
-
-func (p *pkgSymInfo) addSym(fset *token.FileSet, pos token.Pos, fullName, inPkgName string, isVar bool) {
-	f := fset.File(pos)
-	if fp := f.Position(pos); fp.Line > 2 {
-		file := fp.Filename
-		if _, ok := p.files[file]; !ok {
-			p.files[file] = p.index.ReadLegacyLinks(file)
-		}
-		p.syms[inPkgName] = symInfo{file, fullName, isVar}
-		if alias := directive.ParenthesizedMethodName(inPkgName); alias != "" {
-			p.syms[alias] = symInfo{file, fullName, isVar}
-		}
-	}
-}
-
-func (p *pkgSymInfo) initLinknames(ctx *context) {
-	for file, links := range p.files {
-		for _, link := range links {
-			ctx.applyLegacyLink(link, func(name string, isExport bool) (string, bool, bool) {
-				if sym, ok := p.syms[name]; ok && file == sym.file {
-					return sym.fullName, sym.isVar, true
-				}
-				return "", false, false
-			})
-		}
-	}
-}
-
 // PkgKindOf returns the kind of a package.
 func PkgKindOf(pkg *types.Package) (int, string) {
 	scope := pkg.Scope()
@@ -133,81 +86,16 @@ func pkgKindByScope(scope *types.Scope) (int, string) {
 	return PkgNormal, ""
 }
 
-func (p *context) importSourcePackage(pkg *types.Package) (*types.Package, int) {
-	pkgPath := llssa.PathOf(pkg)
-	scope := pkg.Scope()
-	kind, _ := pkgKindByScope(scope)
-	if kind == PkgNormal {
-		if patch, ok := p.patches[pkgPath]; ok {
-			pkg = patch.Alt.Pkg
-			scope = pkg.Scope()
-			if kind, _ = pkgKindByScope(scope); kind != PkgNormal {
-				goto start
-			}
-		}
-		return pkg, kind
-	}
-start:
-	return pkg, kind
-}
-
 func (p *context) importPkg(pkg *types.Package, i *pkgInfo) {
-	source, kind := p.importSourcePackage(pkg)
+	kind, _ := pkgKindByScope(pkg.Scope())
 	if kind == PkgNormal {
-		return
-	}
-	i.kind = kind
-	if p.options.PreloadedSyntax {
-		return
-	}
-	if syms, ok := p.importSources[source]; ok {
-		syms.initLinknames(p)
-		return
-	}
-	panic("import directives were not prepared for " + source.Path())
-}
-
-func (p *context) prepareImportSource(pkg *types.Package) {
-	pkgPath := llssa.PathOf(pkg)
-	source, kind := p.importSourcePackage(pkg)
-	if kind == PkgNormal {
-		return
-	}
-	if p.importSources == nil {
-		p.importSources = make(map[*types.Package]*pkgSymInfo)
-	}
-	if _, ok := p.importSources[source]; ok {
-		return
-	}
-	scope := source.Scope()
-	fset := p.fset
-	names := scope.Names()
-	syms := newPkgSymInfo(p.prog.Directives())
-	for _, name := range names {
-		obj := scope.Lookup(name)
-		switch obj := obj.(type) {
-		case *types.Func:
-			if pos := obj.Pos(); pos != token.NoPos {
-				fullName, inPkgName := typesFuncName(pkgPath, obj)
-				syms.addSym(fset, pos, fullName, inPkgName, false)
-			}
-		case *types.TypeName:
-			if !obj.IsAlias() {
-				if t, ok := obj.Type().(*types.Named); ok {
-					for i, n := 0, t.NumMethods(); i < n; i++ {
-						fn := t.Method(i)
-						fullName, inPkgName := typesFuncName(pkgPath, fn)
-						syms.addSym(fset, fn.Pos(), fullName, inPkgName, false)
-					}
-				}
-			}
-		case *types.Var:
-			if pos := obj.Pos(); pos != token.NoPos {
-				syms.addSym(fset, pos, pkgPath+"."+name, name, true)
-			}
+		if patch, ok := p.patches[llssa.PathOf(pkg)]; ok {
+			kind, _ = pkgKindByScope(patch.Alt.Pkg.Scope())
 		}
 	}
-	p.importSources[source] = syms
+	if kind != PkgNormal {
+		i.kind = kind
+	}
 }
 
 func (p *context) initDirectives(pkgPath string) {
@@ -239,66 +127,6 @@ func (p *context) initDirectives(pkgPath string) {
 	}
 }
 
-func (p *context) applyLegacyLink(r directive.LegacyLink, f func(string, bool) (string, bool, bool)) int {
-	if !r.Valid {
-		return r.Status
-	}
-	if full, _, ok := f(r.Local, r.Export); ok {
-		p.prog.SetLinkname(full, r.Target)
-		if r.Export {
-			p.pkg.SetExport(full, r.Target)
-		}
-	} else {
-		if r.Export && p.options.ExportRename {
-			return r.Status
-		}
-		if r.Export {
-			panic(fmt.Sprintf("export comment has wrong name %q", r.Local))
-		}
-		fmt.Fprintln(os.Stderr, "==>", r.Raw)
-		fmt.Fprintf(os.Stderr, "llgo: linkname %s not found and ignored\n", r.Local)
-	}
-	return r.Status
-}
-
-// inPkgName:
-// - func: name
-// - method: T.name, (*T).name
-// fullName:
-// - func: pkg.name
-// - method: pkg.(T).name, pkg.(*T).name
-func astFuncName(pkgPath string, fn *ast.FuncDecl) (string, string) {
-	name := directive.FuncName(fn)
-	return pkgPath + "." + name, name
-}
-
-// Keep the source receiver spelling for matching directives, but register them
-// under the unaliased receiver used by SSA and the linker.
-func typesRecvName(typ types.Type) (canonical, source string) {
-	switch t := typ.(type) {
-	case *types.Alias:
-		canonical, _ = typesRecvName(types.Unalias(t))
-		return canonical, t.Obj().Name()
-	case *types.Pointer:
-		canonical, source = typesRecvName(t.Elem())
-		return "(*" + canonical + ")", "(*" + source + ")"
-	case *types.Named:
-		return t.Obj().Name(), t.Obj().Name()
-	}
-	panic(fmt.Errorf("invalid recv type: %v", typ))
-}
-
-func typesFuncName(pkgPath string, fn *types.Func) (fullName, inPkgName string) {
-	sig := fn.Type().(*types.Signature)
-	name := fn.Name()
-	if recv := sig.Recv(); recv != nil {
-		canonical, source := typesRecvName(recv.Type())
-		return pkgPath + "." + canonical + "." + name, source + "." + name
-	}
-	return pkgPath + "." + name, name
-}
-
-// TODO(xsw): may can use typesFuncName
 // fullName:
 // - func: pkg.name
 // - method: pkg.(T).name, pkg.(*T).name
@@ -534,9 +362,8 @@ func (p *context) funcName(source sourceFunction) (*types.Package, string, int, 
 	decl = p.callableDeclaration(pkg, functionObj, strings.TrimPrefix(orgName, llssa.PathOf(pkg)+"."), decl)
 	var link string
 	var linked bool
-	// Package declarations carry a name even when they have no link directive.
-	// Unnamed standalone snapshots contain only source properties.
-	if decl != nil && decl.Name != "" {
+	// A prepared declaration is authoritative even without a link directive.
+	if decl != nil {
 		link, linked = decl.Linkname, decl.HasLinkname
 	} else {
 		link, linked = p.prog.LinknameFor(p.directivePackage(pkg), obj, orgName)
@@ -814,37 +641,4 @@ func (p *context) directivePackage(pkg *types.Package) *types.Package {
 		}
 	}
 	return pkg
-}
-
-// prepareImportSources is the standalone entrypoint's discovery boundary.
-// All dependency source fallback happens here, before lowering begins.
-func (p *context) prepareImportSources() {
-	seen := make(map[*types.Package]bool)
-	var visit func(*types.Package)
-	visit = func(pkg *types.Package) {
-		if pkg == nil || seen[pkg] {
-			return
-		}
-		seen[pkg] = true
-		if pkg != p.goTyps {
-			p.prepareImportSource(pkg)
-		}
-		for _, dep := range pkg.Imports() {
-			visit(dep)
-		}
-	}
-	for _, pkg := range p.goProg.AllPackages() {
-		visit(pkg.Pkg)
-		// Standalone SSA clients can supply dependency bodies without their
-		// AST files. Snapshot those declarations at the same boundary.
-		funcs, _ := collectRuntimeCallerFunctions(pkg)
-		for fn := range funcs {
-			if origin := fn.Origin(); origin != nil {
-				fn = origin
-			}
-			if decl, ok := fn.Syntax().(*ast.FuncDecl); ok {
-				p.prog.Directives().Function(decl)
-			}
-		}
-	}
 }

@@ -29,7 +29,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xgo-dev/llgo/internal/directive"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
@@ -768,26 +767,7 @@ func TestErrImport(t *testing.T) {
 		types.NewConst(0, alt, "LLGoPackage", types.Typ[types.String], constant.MakeString("noinit")),
 	)
 	ctx.patches = Patches{"foo": Patch{Alt: &ssa.Package{Pkg: alt}, Types: alt}}
-	ctx.prepareImportSource(pkg)
 	ctx.importPkg(pkg, &pkgInfo{})
-}
-
-func TestErrInitLinkname(t *testing.T) {
-	var ctx context
-	ctx.applyLegacyLink(directive.ParseLegacyLink("//llgo:link abc", true), func(name string, isExport bool) (string, bool, bool) {
-		return "", false, false
-	})
-	ctx.applyLegacyLink(directive.ParseLegacyLink("//go:linkname Printf printf", true), func(name string, isExport bool) (string, bool, bool) {
-		return "", false, false
-	})
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("applyLegacyLink: no error?")
-		}
-	}()
-	ctx.applyLegacyLink(directive.ParseLegacyLink("//go:linkname Printf printf", true), func(name string, isExport bool) (string, bool, bool) {
-		return "foo.Printf", false, name == "Printf"
-	})
 }
 
 func TestErrVarOf(t *testing.T) {
@@ -943,25 +923,20 @@ func TestHandleExportDiffName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup context
 			prog := llssa.NewProgram(nil)
-			pkg := prog.NewPackage("test", "test")
-			ctx := &context{
-				prog:    prog,
-				pkg:     pkg,
-				options: Options{ExportRename: tt.enableExportRename},
+			defer prog.Dispose()
+			pkg := prog.NewPackage("pkg", "pkg")
+			pkgTypes := types.NewPackage("pkg", "pkg")
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "export.go", "package pkg\n"+tt.line+"\nfunc "+tt.inPkgName+"() {}\n", parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
 			}
-
-			// Apply the parsed legacy link to the selected declaration.
-			ret := ctx.applyLegacyLink(directive.ParseLegacyLink(tt.line, true), func(name string, isExport bool) (string, bool, bool) {
-				return tt.fullName, false, name == tt.inPkgName || (isExport && ctx.options.ExportRename)
-			})
-
-			// Verify result
-			hasLinkname := (ret == directive.HasLinkname)
-			if hasLinkname != tt.wantHasLinkname {
-				t.Errorf("hasLinkname = %v, want %v", hasLinkname, tt.wantHasLinkname)
+			if err := ParsePkgSyntaxWithOptions(prog, fset, pkgTypes, []*ast.File{file}, Options{ExportRename: tt.enableExportRename}); err != nil {
+				t.Fatal(err)
 			}
+			ctx := &context{prog: prog, pkg: pkg, goTyps: pkgTypes, skips: make(map[string]none)}
+			ctx.initDirectives(pkgTypes.Path())
 
 			if tt.wantHasLinkname {
 				// Check linkname was set
@@ -1009,53 +984,6 @@ func TestPackageExportRename(t *testing.T) {
 			if got := backend.ExportFuncs()[full]; got != "IRQ_Handler" {
 				t.Fatalf("export = %q", got)
 			}
-		})
-	}
-}
-
-func TestInitLinkExportDiffNames(t *testing.T) {
-	tests := []struct {
-		name               string
-		enableExportRename bool
-		line               string
-		wantPanic          bool
-	}{
-		{
-			name:               "ExportDiffNames_Enabled_NoError",
-			enableExportRename: true,
-			line:               "//export IRQ_Handler",
-			wantPanic:          false,
-		},
-		{
-			name:               "ExportDiffNames_Disabled_Panic",
-			enableExportRename: false,
-			line:               "//export IRQ_Handler",
-			wantPanic:          true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.wantPanic {
-				defer func() {
-					if r := recover(); r == nil {
-						t.Error("expected panic but didn't panic")
-					}
-				}()
-			}
-
-			prog := llssa.NewProgram(nil)
-			pkg := prog.NewPackage("test", "test")
-			ctx := &context{
-				prog:    prog,
-				pkg:     pkg,
-				options: Options{ExportRename: tt.enableExportRename},
-			}
-
-			ctx.applyLegacyLink(directive.ParseLegacyLink(tt.line, true), func(inPkgName string, isExport bool) (fullName string, isVar, ok bool) {
-				// Simulate initLinknames scenario: symbol not found (like in decl packages)
-				return "", false, false
-			})
 		})
 	}
 }
