@@ -757,17 +757,24 @@ func TestIntVal(t *testing.T) {
 	intVal(&ssa.Parameter{})
 }
 
-func TestErrImport(t *testing.T) {
-	ctx := context{prog: llssa.NewProgram(nil)}
+func TestImportPkgKind(t *testing.T) {
+	ctx := context{}
 	pkg := types.NewPackage("foo", "foo")
-	ctx.importPkg(pkg, nil)
+	info := new(pkgInfo)
+	ctx.importPkg(pkg, info)
+	if info.kind != PkgNormal {
+		t.Fatalf("ordinary package kind = %d, want %d", info.kind, PkgNormal)
+	}
 
 	alt := types.NewPackage("bar", "bar")
 	alt.Scope().Insert(
 		types.NewConst(0, alt, "LLGoPackage", types.Typ[types.String], constant.MakeString("noinit")),
 	)
-	ctx.patches = Patches{"foo": Patch{Alt: &ssa.Package{Pkg: alt}, Types: alt}}
-	ctx.importPkg(pkg, &pkgInfo{})
+	ctx.patches = Patches{"foo": {Alt: &ssa.Package{Pkg: alt}, Types: alt}}
+	ctx.importPkg(pkg, info)
+	if info.kind != PkgNoInit {
+		t.Fatalf("patched package kind = %d, want %d", info.kind, PkgNoInit)
+	}
 }
 
 func TestErrVarOf(t *testing.T) {
@@ -868,104 +875,29 @@ func TestInstantiate(t *testing.T) {
 	}
 }
 
-func TestHandleExportDiffName(t *testing.T) {
-	tests := []struct {
-		name               string
-		enableExportRename bool
-		line               string
-		fullName           string
-		inPkgName          string
-		wantHasLinkname    bool
-		wantLinkname       string
-		wantExport         string
+func TestPackageExportRename(t *testing.T) {
+	for _, tt := range []struct {
+		name, local, comment, want string
+		rename, wantError          bool
 	}{
-		{
-			name:               "ExportDiffNames_DifferentName",
-			enableExportRename: true,
-			line:               "//export IRQ_Handler",
-			fullName:           "pkg.HandleInterrupt",
-			inPkgName:          "HandleInterrupt",
-			wantHasLinkname:    true,
-			wantLinkname:       "IRQ_Handler",
-			wantExport:         "IRQ_Handler",
-		},
-		{
-			name:               "ExportDiffNames_SameName",
-			enableExportRename: true,
-			line:               "//export SameName",
-			fullName:           "pkg.SameName",
-			inPkgName:          "SameName",
-			wantHasLinkname:    true,
-			wantLinkname:       "SameName",
-			wantExport:         "SameName",
-		},
-		{
-			name:               "ExportDiffNames_WithSpaces",
-			enableExportRename: true,
-			line:               "//export   Timer_Callback  ",
-			fullName:           "pkg.OnTimerTick",
-			inPkgName:          "OnTimerTick",
-			wantHasLinkname:    true,
-			wantLinkname:       "Timer_Callback",
-			wantExport:         "Timer_Callback",
-		},
-		{
-			name:               "ExportDiffNames_Disabled_MatchingName",
-			enableExportRename: false,
-			line:               "//export Func",
-			fullName:           "pkg.Func",
-			inPkgName:          "Func",
-			wantHasLinkname:    true,
-			wantLinkname:       "Func",
-			wantExport:         "Func",
-		},
-	}
-
-	for _, tt := range tests {
+		{"different name", "HandleInterrupt", "IRQ_Handler", "IRQ_Handler", true, false},
+		{"same name", "SameName", "SameName", "SameName", true, false},
+		{"spaces", "OnTimerTick", "  Timer_Callback  ", "Timer_Callback", true, false},
+		{"disabled matching name", "Func", "Func", "Func", false, false},
+		{"disabled mismatched name", "HandleInterrupt", "IRQ_Handler", "", false, true},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
 			prog := llssa.NewProgram(nil)
 			defer prog.Dispose()
-			pkg := prog.NewPackage("pkg", "pkg")
-			pkgTypes := types.NewPackage("pkg", "pkg")
-			fset := token.NewFileSet()
-			file, err := parser.ParseFile(fset, "export.go", "package pkg\n"+tt.line+"\nfunc "+tt.inPkgName+"() {}\n", parser.ParseComments)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := ParsePkgSyntaxWithOptions(prog, fset, pkgTypes, []*ast.File{file}, Options{ExportRename: tt.enableExportRename}); err != nil {
-				t.Fatal(err)
-			}
-			ctx := &context{prog: prog, pkg: pkg, goTyps: pkgTypes, skips: make(map[string]none)}
-			ctx.initDirectives(pkgTypes.Path())
-
-			if tt.wantHasLinkname {
-				// Check linkname was set
-				if link, ok := prog.Linkname(tt.fullName); !ok || link != tt.wantLinkname {
-					t.Errorf("linkname = %q (ok=%v), want %q", link, ok, tt.wantLinkname)
-				}
-
-				// Check export was set
-				exports := pkg.ExportFuncs()
-				if export, ok := exports[tt.fullName]; !ok || export != tt.wantExport {
-					t.Errorf("export = %q (ok=%v), want %q", export, ok, tt.wantExport)
-				}
-			}
-		})
-	}
-}
-
-func TestPackageExportRename(t *testing.T) {
-	for _, rename := range []bool{false, true} {
-		t.Run(fmt.Sprint(rename), func(t *testing.T) {
-			prog := llssa.NewProgram(nil)
 			pkg := types.NewPackage("pkg", "pkg")
 			fset := token.NewFileSet()
-			file, err := parser.ParseFile(fset, "export.go", "package pkg\n//export IRQ_Handler\nfunc HandleInterrupt() {}\n", parser.ParseComments)
+			source := "package pkg\n//export " + tt.comment + "\nfunc " + tt.local + "() {}\n"
+			file, err := parser.ParseFile(fset, "export.go", source, parser.ParseComments)
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = ParsePkgSyntaxWithOptions(prog, fset, pkg, []*ast.File{file}, Options{ExportRename: rename})
-			if !rename {
+			err = ParsePkgSyntaxWithOptions(prog, fset, pkg, []*ast.File{file}, Options{ExportRename: tt.rename})
+			if tt.wantError {
 				if err == nil || !strings.Contains(err.Error(), "export comment has wrong name") {
 					t.Fatalf("export mismatch error = %v", err)
 				}
@@ -977,12 +909,12 @@ func TestPackageExportRename(t *testing.T) {
 			backend := prog.NewPackage("pkg", "pkg")
 			ctx := &context{prog: prog, pkg: backend, goTyps: pkg, skips: make(map[string]none)}
 			ctx.initDirectives(pkg.Path())
-			const full = "pkg.HandleInterrupt"
-			if got, ok := prog.Linkname(full); !ok || got != "IRQ_Handler" {
-				t.Fatalf("linkname = %q, %v", got, ok)
+			full := "pkg." + tt.local
+			if got, ok := prog.Linkname(full); !ok || got != tt.want {
+				t.Fatalf("linkname = %q, %v; want %q, true", got, ok, tt.want)
 			}
-			if got := backend.ExportFuncs()[full]; got != "IRQ_Handler" {
-				t.Fatalf("export = %q", got)
+			if got := backend.ExportFuncs()[full]; got != tt.want {
+				t.Fatalf("export = %q, want %q", got, tt.want)
 			}
 		})
 	}

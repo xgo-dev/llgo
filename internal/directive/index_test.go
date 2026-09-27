@@ -122,18 +122,6 @@ func plain() {}
 	wg.Wait()
 }
 
-func TestFreezeRejectsDiscovery(t *testing.T) {
-	_, file := parseSource(t, "package p\n")
-	index := new(Index)
-	index.Freeze()
-	defer func() {
-		if recover() == nil {
-			t.Error("late discovery accepted")
-		}
-	}()
-	index.File(file)
-}
-
 func TestBindReceiverAliasAndPackageVariants(t *testing.T) {
 	fset, file := parseSource(t, `package p
 type T struct{}

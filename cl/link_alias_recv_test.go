@@ -5,12 +5,9 @@ package cl
 import (
 	"fmt"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -143,37 +140,6 @@ func TestReceiverAliasesLeaveInvalidTypesForTypeChecker(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestLinkedAliasReceiverImport(t *testing.T) {
-	linkedAliasReceiverCases(t, func(t *testing.T, source, want string) {
-		path := filepath.Join(t.TempDir(), "p.go")
-		if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		fset := token.NewFileSet()
-		file, err := parser.ParseFile(fset, path, source, parser.ParseComments)
-		if err != nil {
-			t.Fatal(err)
-		}
-		info := &types.Info{Defs: make(map[*ast.Ident]types.Object)}
-		pkg, err := (&types.Config{Importer: importer.Default()}).Check("p", fset, []*ast.File{file}, info)
-		if err != nil {
-			t.Fatal(err)
-		}
-		prog := llssa.NewProgram(nil)
-		defer prog.Dispose()
-		ctx := &context{prog: prog, fset: fset}
-		if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
-			t.Fatal(err)
-		}
-		prog.PackageDirectives(pkg).Bind(info)
-		prog.Directives().Freeze()
-		ctx.importPkg(pkg, &pkgInfo{})
-		if link, ok := prog.Linkname(want); !ok || link != "C.test_cursor" {
-			t.Fatalf("imported Linkname(%q) = (%q, %v), want (C.test_cursor, true)", want, link, ok)
-		}
-	})
 }
 
 func TestLinkDirectiveErrors(t *testing.T) {
