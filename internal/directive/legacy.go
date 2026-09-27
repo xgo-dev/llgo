@@ -28,14 +28,15 @@ const (
 )
 
 type LegacyLink struct {
-	Link
-	Status int
-	Valid  bool
-	Raw    string
+	Local, Target string
+	Export        bool
+	Status        int
+	Valid         bool
+	Raw           string
 }
 
 // ParseLegacyLink preserves the standalone compiler/importer's historical
-// space-sensitive grammar. Package preloading uses Group.DeclarationLink.
+// space-sensitive grammar. Package preloading uses Collect.
 func ParseLegacyLink(line string, allowExport bool) LegacyLink {
 	r := LegacyLink{Raw: line}
 	var text string

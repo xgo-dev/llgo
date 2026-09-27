@@ -684,8 +684,8 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 	if err := validateInternalRecords(fset, pkg.Path(), sources, options.AllowInternalDirectives); err != nil {
 		return err
 	}
-	records := directive.Collect(sources, pkg.Name() == "C", options.ExportRename)
-	if err := records.ValidateLinks(fset); err != nil {
+	records, err := directive.Collect(fset, sources, pkg.Name() == "C", options.ExportRename)
+	if err != nil {
 		return err
 	}
 	path := llssa.PathOf(pkg)

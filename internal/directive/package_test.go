@@ -27,7 +27,7 @@ import (
 )
 
 func TestCollectDeclarationContracts(t *testing.T) {
-	_, file := parseSource(t, `package C
+	fset, file := parseSource(t, `package C
 //llgo:skip imported
 import _ "unsafe"
 //export public
@@ -37,11 +37,16 @@ func Automatic() {}
 func private() {}
 //llgo:link explicit C.custom
 func explicit() {}
+//llgo:link exported ignored.symbol
+//export exported
+func exported() {}
+//export ignored
+//llgo:link linked C.linked
+func linked() {}
 //export wrong
 func invalid() {}
 //llgo:link single attached
 var single int
-//llgo:link many ignored
 var many, other int
 //llgo:type C
 type Native func()
@@ -54,14 +59,17 @@ type Last int
 //go:linkname single final.symbol
 //go:linkname absent ignored
 `)
-	p := Collect(new(Index).Files([]*ast.File{file}), true, false)
-	for name, target := range map[string]string{"public": "public", "Xautomatic": "automatic", "Automatic": "Automatic", "explicit": "C.custom"} {
+	p, err := Collect(fset, new(Index).Files([]*ast.File{file}), true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, target := range map[string]string{"public": "public", "Xautomatic": "automatic", "Automatic": "Automatic", "explicit": "C.custom", "exported": "exported", "linked": "C.linked"} {
 		d := p.Names[name].(*FunctionDecl)
-		if !d.HasLinkname || d.Linkname != target {
+		if d.Err != nil || !d.HasLinkname || d.Linkname != target {
 			t.Errorf("%s link = %+v", name, d)
 		}
 	}
-	for _, name := range []string{"public", "Xautomatic", "Automatic"} {
+	for _, name := range []string{"public", "Xautomatic", "Automatic", "exported"} {
 		d := p.Names[name].(*FunctionDecl)
 		if d.ExportName != d.Linkname {
 			t.Errorf("%s export = %q", name, d.ExportName)
@@ -85,23 +93,31 @@ type Last int
 	if !p.Skip.All || !reflect.DeepEqual(p.Skip.Names, []string{"imported", "removed"}) {
 		t.Fatalf("skip = %+v", p.Skip)
 	}
-	renamed := Collect(new(Index).Files([]*ast.File{file}), false, true).Names["invalid"].(*FunctionDecl)
+	renamedPackage, err := Collect(fset, new(Index).Files([]*ast.File{file}), false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed := renamedPackage.Names["invalid"].(*FunctionDecl)
 	if renamed.Err != nil || renamed.ExportName != "wrong" {
 		t.Fatalf("renamed export = %+v", renamed)
 	}
 }
 
 func TestPackageLinksRequireUnsafe(t *testing.T) {
-	_, file := parseSource(t, `package p
+	fset, file := parseSource(t, `package p
 //llgo:link F first
-//llgo:link other unrelated
+//go:linkname other unrelated
 //llgo:link F last
 func F() {}
 
 //go:linkname F file.symbol
 //go:linkname malformed
 `)
-	d := Collect(new(Index).Files([]*ast.File{file}), false, false).Names["F"].(*FunctionDecl)
+	p, err := Collect(fset, new(Index).Files([]*ast.File{file}), false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := p.Names["F"].(*FunctionDecl)
 	if d.Linkname != "last" {
 		t.Fatalf("link without unsafe = %q", d.Linkname)
 	}
@@ -133,7 +149,10 @@ func TestBindingUsesEffectiveDeclarationsAndPositions(t *testing.T) {
 	files := new(Index).Files([]*ast.File{original, replacement})
 	for _, scoped := range []bool{false, true} {
 		t.Run(map[bool]string{false: "checker objects", true: "standalone scope"}[scoped], func(t *testing.T) {
-			p := Collect(files, false, false)
+			p, err := Collect(fset, files, false, false)
+			if err != nil {
+				t.Fatal(err)
+			}
 			p.Bind(nil)
 			p.BindScope(nil)
 			if scoped {
@@ -178,7 +197,10 @@ type Pair[X, Y any] struct{}
 func (*Pair[X, Y]) Pointer() {}
 `)
 	pkg, info := checkRecordSource(t, fset, file)
-	p := Collect(new(Index).Files([]*ast.File{file}), false, false)
+	p, err := Collect(fset, new(Index).Files([]*ast.File{file}), false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	p.BindScope(pkg)
 	for decl, r := range p.Functions {
 		if got := p.Objects[info.Defs[decl.Name]]; got != r {
@@ -191,7 +213,10 @@ func (*Pair[X, Y]) Pointer() {}
 	// A different checked package at different source positions must not bind.
 	otherSet, other := parseSource(t, "package p\n\ntype T struct{}\nfunc (*T) M() {}\n")
 	otherPkg, _ := checkRecordSource(t, otherSet, other)
-	unmatched := Collect(new(Index).Files([]*ast.File{file}), false, false)
+	unmatched, err := Collect(fset, new(Index).Files([]*ast.File{file}), false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	unmatched.BindScope(otherPkg)
 	if len(unmatched.Objects) != 0 {
 		t.Fatalf("unrelated declarations bound: %v", unmatched.Objects)
@@ -209,13 +234,16 @@ func TestParenthesizedGenericReceiverSelector(t *testing.T) {
 	}
 }
 
-func TestValidateLinks(t *testing.T) {
+func TestCollectLinkDiagnostics(t *testing.T) {
 	for _, tt := range []struct {
 		source string
 		want   string
 	}{
 		{"//llgo:link (Ptr).M C.m\nfunc (Ptr) M() {}", ""},
 		{"//llgo:link Wrong.M C.m\nfunc (Ptr) M() {}", `local name "Wrong.M" does not match declaration "Ptr.M"`},
+		{"//llgo:link Wrong.M C.m\n//llgo:link Ptr.M C.valid\nfunc (Ptr) M() {}", `local name "Wrong.M" does not match declaration "Ptr.M"`},
+		{"//llgo:link Wrong C.f\n//export F\nfunc F() {}", `local name "Wrong" does not match declaration "F"`},
+		{"//llgo:link Ptr.M\n//llgo:link Ptr.M C.valid\nfunc (Ptr) M() {}", "requires a local name and a target"},
 		{"//llgo:link Ptr.M\nfunc (Ptr) M() {}", "requires a local name and a target"},
 		{"func (Ptr) M() {}\n//llgo:link Ptr.M C.m", "is not attached to a declaration"},
 		{"func (Ptr) M() {}\n//llgo:link Ptr.M", "requires a local name and a target"},
@@ -229,8 +257,7 @@ func TestValidateLinks(t *testing.T) {
 	} {
 		t.Run(tt.source, func(t *testing.T) {
 			fset, file := parseSource(t, "package p\nimport _ \"unsafe\"\ntype T struct{}\ntype Ptr = *T\n"+tt.source+"\n")
-			records := Collect(new(Index).Files([]*ast.File{file}), false, false)
-			err := records.ValidateLinks(fset)
+			_, err := Collect(fset, new(Index).Files([]*ast.File{file}), false, false)
 			if tt.want == "" {
 				if err != nil {
 					t.Fatal(err)

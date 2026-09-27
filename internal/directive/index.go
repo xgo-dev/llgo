@@ -18,7 +18,6 @@ package directive
 
 import (
 	"go/ast"
-	"go/token"
 	"sync"
 )
 
@@ -42,7 +41,6 @@ type File struct {
 	Syntax        *ast.File
 	Groups        map[*ast.CommentGroup]*Group
 	Functions     map[*ast.FuncDecl]Function
-	GoLinks       []Link
 	PatchSkip     Skip
 	Internal      []Directive
 }
@@ -52,7 +50,6 @@ type File struct {
 type Group struct {
 	Items          []Directive
 	Function       Function
-	Links          []Link
 	TypeBackground string
 	Skip           Skip
 	LastSkip       bool
@@ -69,11 +66,6 @@ type Function struct {
 	WasmImport     *WasmImport
 }
 type WasmImport struct{ Module, Name string }
-type Link struct {
-	Local, Target string
-	Export        bool
-	Pos           token.Pos
-}
 type Skip struct {
 	All   bool
 	Names []string
@@ -130,9 +122,6 @@ func (s *Index) File(file *ast.File) *File {
 		for _, c := range g.List {
 			if c == nil {
 				continue
-			}
-			if link, ok := packageLink(c); ok {
-				f.GoLinks = append(f.GoLinks, link)
 			}
 			if IsEmbedComment(c) {
 				f.EmbedComments[c] = true

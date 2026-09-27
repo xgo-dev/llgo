@@ -17,7 +17,6 @@
 package directive
 
 import (
-	"fmt"
 	"go/ast"
 	"strings"
 )
@@ -39,14 +38,6 @@ func scanGroup(doc *ast.CommentGroup) *Group {
 			g.Function.WasmImport = nil
 			if fields := strings.Fields(d.Args); len(fields) == 2 {
 				g.Function.WasmImport = &WasmImport{fields[0], fields[1]}
-			}
-		case "go:linkname", "llgo:link":
-			if fields := strings.Fields(d.Args); len(fields) >= 2 {
-				g.Links = append(g.Links, Link{Local: fields[0], Target: strings.Join(fields[1:], " "), Pos: d.Pos})
-			}
-		case "export":
-			if d.Args != "" {
-				g.Links = append(g.Links, Link{Local: d.Args, Target: d.Args, Export: true, Pos: d.Pos})
 			}
 		}
 	}
@@ -87,35 +78,6 @@ func scanGroup(doc *ast.CommentGroup) *Group {
 	}
 	g.Embed = scanEmbed(doc)
 	return g
-}
-
-// DeclarationLink follows the preloader's reverse-order precedence. Export
-// name validation depends on the declaration and is deferred until association.
-func (g *Group) DeclarationLink(name string, exportRename bool) (Link, bool, error) {
-	for i := len(g.Links) - 1; i >= 0; i-- {
-		l := g.Links[i]
-		if l.Export {
-			if l.Local != name && !exportRename {
-				return Link{}, false, fmt.Errorf("export comment has wrong name %q", l.Local)
-			}
-			return l, true, nil
-		}
-		if l.Local == name || l.Local == ParenthesizedMethodName(name) {
-			return l, true, nil
-		}
-	}
-	return Link{}, false, nil
-}
-func packageLink(c *ast.Comment) (Link, bool) {
-	d, ok := Parse(c)
-	if !ok || d.Name != "go:linkname" {
-		return Link{}, false
-	}
-	fields := strings.Fields(d.Args)
-	if len(fields) < 2 {
-		return Link{}, false
-	}
-	return Link{Local: fields[0], Target: strings.Join(fields[1:], " "), Pos: c.Pos()}, true
 }
 
 // ParenthesizedMethodName accepts (T).M as an alternative to T.M, including

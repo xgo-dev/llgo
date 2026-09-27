@@ -66,9 +66,12 @@ type Package struct {
 	Skip      Skip
 }
 
-func Collect(files []*File, cPackage, exportRename bool) *Package {
+// Collect associates and validates links while building package records. Export
+// mismatches remain on Declaration.Err for the declaration's owning phase.
+func Collect(fset *token.FileSet, files []*File, cPackage, exportRename bool) (*Package, error) {
 	p := &Package{Names: make(map[string]any), Functions: make(map[*ast.FuncDecl]*FunctionDecl), Variables: make(map[*ast.Ident]*VariableDecl), Types: make(map[*ast.TypeSpec]*TypeDecl), Objects: make(map[types.Object]any), Files: files}
 	syms := make(map[string]*Declaration)
+	attached := make(map[*ast.CommentGroup]bool)
 	aliases := receiverAliases(files)
 	for _, file := range files {
 		for _, decl := range file.Syntax.Decls {
@@ -77,7 +80,10 @@ func Collect(files []*File, cPackage, exportRename bool) *Package {
 				sourceName := FuncName(d)
 				name := canonicalFuncName(d, aliases)
 				rec := &FunctionDecl{Declaration: Declaration{Name: name, Pos: d.Pos()}, Source: d, Function: file.Functions[d]}
-				rec.Err = associateLink(&rec.Declaration, file.Group(d.Doc), sourceName, exportRename)
+				if err := associateLink(fset, &rec.Declaration, file.Group(d.Doc), sourceName, exportRename); err != nil {
+					return nil, err
+				}
+				attached[d.Doc] = true
 				if !rec.HasLinkname && cPackage && d.Recv == nil && token.IsExported(name) {
 					rec.HasLinkname = true
 					rec.Linkname = name
@@ -99,7 +105,10 @@ func Collect(files []*File, cPackage, exportRename bool) *Package {
 						for _, id := range spec.(*ast.ValueSpec).Names {
 							rec := &VariableDecl{Declaration: Declaration{Name: id.Name, Pos: id.Pos()}, Source: id}
 							if len(d.Specs) == 1 && len(spec.(*ast.ValueSpec).Names) == 1 {
-								rec.Err = associateLink(&rec.Declaration, file.Group(d.Doc), id.Name, exportRename)
+								if err := associateLink(fset, &rec.Declaration, file.Group(d.Doc), id.Name, exportRename); err != nil {
+									return nil, err
+								}
+								attached[d.Doc] = true
 							}
 							p.Variables[id] = rec
 							p.Names[id.Name] = rec
@@ -133,37 +142,74 @@ func Collect(files []*File, cPackage, exportRename bool) *Package {
 			}
 		}
 	}
-	// The existing package-wide link pass runs after attached declarations, and
-	// only scans files importing unsafe. Keep that ordering and scope exactly.
+	// Package-wide Go links override attached links, in source order, only in
+	// files importing unsafe. Reuse the declaration index for link diagnostics.
 	for _, file := range files {
 		unsafe := false
 		for _, imp := range file.Syntax.Imports {
-			if imp.Path.Value == `"unsafe"` {
-				unsafe = true
-				break
-			}
+			unsafe = unsafe || imp.Path.Value == `"unsafe"`
 		}
-		if unsafe {
-			for _, l := range file.GoLinks {
-				if d := syms[l.Local]; d != nil {
-					d.Linkname = l.Target
-					d.HasLinkname = true
+		for _, doc := range file.Syntax.Comments {
+			for _, item := range file.Group(doc).Items {
+				if item.Name == "llgo:link" {
+					if attached[doc] {
+						continue
+					}
+					fields := strings.Fields(item.Args)
+					if len(fields) < 2 {
+						return nil, fmt.Errorf("%s: //llgo:link requires a local name and a target", fset.Position(item.Pos))
+					}
+					return nil, fmt.Errorf("%s: //llgo:link local name %q is not attached to a declaration", fset.Position(item.Pos), fields[0])
+				}
+				if item.Name != "go:linkname" || !unsafe {
+					continue
+				}
+				fields := strings.Fields(item.Args)
+				if len(fields) < 2 {
+					continue
+				}
+				if d := syms[fields[0]]; d != nil {
+					d.Linkname, d.HasLinkname = strings.Join(fields[1:], " "), true
+				} else if strings.Contains(fields[0], ".") {
+					return nil, fmt.Errorf("%s: //go:linkname local method %q not found", fset.Position(item.Pos), fields[0])
 				}
 			}
 		}
 	}
-	return p
+	return p, nil
 }
-func associateLink(d *Declaration, g *Group, sourceName string, rename bool) error {
-	l, ok, err := g.DeclarationLink(sourceName, rename)
-	if err != nil {
-		return err
-	}
-	if ok {
-		d.Linkname = l.Target
-		d.HasLinkname = true
-		if l.Export {
-			d.ExportName = l.Target
+
+// associateLink validates every LLGo link while selecting the last applicable
+// link/export. Export mismatches remain deferred declaration errors.
+func associateLink(fset *token.FileSet, d *Declaration, g *Group, sourceName string, rename bool) error {
+	selected := false
+	for i := len(g.Items) - 1; i >= 0; i-- {
+		item := g.Items[i]
+		switch item.Name {
+		case "go:linkname", "llgo:link":
+			fields := strings.Fields(item.Args)
+			if item.Name == "llgo:link" {
+				if len(fields) < 2 {
+					return fmt.Errorf("%s: //llgo:link requires a local name and a target", fset.Position(item.Pos))
+				}
+				if fields[0] != sourceName && fields[0] != ParenthesizedMethodName(sourceName) {
+					return fmt.Errorf("%s: //llgo:link local name %q does not match declaration %q", fset.Position(item.Pos), fields[0], sourceName)
+				}
+			}
+			if !selected && len(fields) >= 2 && (fields[0] == sourceName || fields[0] == ParenthesizedMethodName(sourceName)) {
+				d.Linkname, d.HasLinkname = strings.Join(fields[1:], " "), true
+				selected = true
+			}
+		case "export":
+			if selected || item.Args == "" {
+				continue
+			}
+			selected = true
+			if item.Args != sourceName && !rename {
+				d.Err = fmt.Errorf("export comment has wrong name %q", item.Args)
+			} else {
+				d.Linkname, d.HasLinkname, d.ExportName = item.Args, true, item.Args
+			}
 		}
 	}
 	return nil
@@ -265,84 +311,6 @@ func receiverAliases(files []*File) map[string]ast.Expr {
 	return aliases
 }
 
-// ValidateLinks diagnoses malformed or detached LLGo links and unresolved Go
-// method links using prepared groups. Declaration names retain source spelling.
-func (p *Package) ValidateLinks(fset *token.FileSet) error {
-	syms := make(map[string]bool)
-	attached := make(map[*ast.CommentGroup]bool)
-	validate := func(doc *ast.CommentGroup, g *Group, name string) error {
-		syms[name] = true
-		if alias := ParenthesizedMethodName(name); alias != "" {
-			syms[alias] = true
-		}
-		attached[doc] = true
-		for i := len(g.Items) - 1; i >= 0; i-- {
-			d := g.Items[i]
-			if d.Name != "llgo:link" {
-				continue
-			}
-			fields := strings.Fields(d.Args)
-			if len(fields) < 2 {
-				return fmt.Errorf("%s: //llgo:link requires a local name and a target", fset.Position(d.Pos))
-			}
-			if fields[0] != name && fields[0] != ParenthesizedMethodName(name) {
-				return fmt.Errorf("%s: //llgo:link local name %q does not match declaration %q", fset.Position(d.Pos), fields[0], name)
-			}
-		}
-		return nil
-	}
-	for _, file := range p.Files {
-		for _, node := range file.Syntax.Decls {
-			switch d := node.(type) {
-			case *ast.FuncDecl:
-				if err := validate(d.Doc, file.Group(d.Doc), FuncName(d)); err != nil {
-					return err
-				}
-			case *ast.GenDecl:
-				if d.Tok != token.VAR {
-					continue
-				}
-				for _, spec := range d.Specs {
-					for _, name := range spec.(*ast.ValueSpec).Names {
-						syms[name.Name] = true
-					}
-				}
-				if len(d.Specs) == 1 {
-					if names := d.Specs[0].(*ast.ValueSpec).Names; len(names) == 1 {
-						if err := validate(d.Doc, file.Group(d.Doc), names[0].Name); err != nil {
-							return err
-						}
-					}
-				}
-			}
-		}
-	}
-	for _, file := range p.Files {
-		unsafe := false
-		for _, imp := range file.Syntax.Imports {
-			unsafe = unsafe || imp.Path.Value == `"unsafe"`
-		}
-		for _, doc := range file.Syntax.Comments {
-			for _, d := range file.Group(doc).Items {
-				if d.Name != "llgo:link" && (d.Name != "go:linkname" || !unsafe) {
-					continue
-				}
-				fields := strings.Fields(d.Args)
-				if d.Name == "llgo:link" {
-					if len(fields) < 2 {
-						return fmt.Errorf("%s: //llgo:link requires a local name and a target", fset.Position(d.Pos))
-					}
-					if !attached[doc] {
-						return fmt.Errorf("%s: //llgo:link local name %q is not attached to a declaration", fset.Position(d.Pos), fields[0])
-					}
-				} else if len(fields) >= 2 && !syms[fields[0]] && strings.Contains(fields[0], ".") {
-					return fmt.Errorf("%s: //go:linkname local method %q not found", fset.Position(d.Pos), fields[0])
-				}
-			}
-		}
-	}
-	return nil
-}
 func ReceiverName(t ast.Expr) string {
 	switch t := t.(type) {
 	case *ast.Ident:
