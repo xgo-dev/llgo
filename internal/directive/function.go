@@ -24,8 +24,10 @@ func (f *File) ValidateFunctionAttributes(fset *token.FileSet) error {
 				name = name[:i]
 			}
 			switch name {
-			case "llgo:param", "llgo:result", "llgo:receiver":
-				return fmt.Errorf("%s: %s attributes are not yet supported", fset.Position(d.Pos), name)
+			case "llgo:param", "llgo:result", "llgo:receiver", "llgo:nonnull", "llgo:range", "llgo:nonnegative", "llgo:sameas", "llgo:access", "llgo:noalias":
+				if !allowed[doc] {
+					return fmt.Errorf("%s: %s requires a named function or method declaration", fset.Position(d.Pos), name)
+				}
 			case "llgo:cold", "llgo:noreturn":
 				if !allowed[doc] {
 					return fmt.Errorf("%s: %s requires a named function or method declaration", fset.Position(d.Pos), name)
@@ -33,6 +35,13 @@ func (f *File) ValidateFunctionAttributes(fset *token.FileSet) error {
 				if name != d.Name || d.Args != "" {
 					return fmt.Errorf("%s: %s takes no arguments", fset.Position(d.Pos), name)
 				}
+			}
+		}
+	}
+	for _, node := range f.Syntax.Decls {
+		if decl, ok := node.(*ast.FuncDecl); ok {
+			if err := f.Functions[decl].WithPositions(fset).ContractError; err != nil {
+				return err
 			}
 		}
 	}

@@ -136,6 +136,12 @@ func TestFunctionAttributesCacheAndUnwind(t *testing.T) {
 
 func checkRuntimeFunctionAttributes(t *testing.T, mod llvm.Module) {
 	t.Helper()
+	for _, name := range []string{"AllocU", "AllocZ", "AllocRoot"} {
+		fn := mod.NamedFunction(ssa.PkgRuntime + "." + name)
+		if fn.IsNil() || fn.GetEnumAttributeAtIndex(0, llvm.AttributeKindID("nonnull")).IsNil() {
+			t.Errorf("runtime.%s lost source nonnull", name)
+		}
+	}
 	for _, tc := range []struct {
 		name           string
 		cold, noreturn bool

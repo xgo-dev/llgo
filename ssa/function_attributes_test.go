@@ -20,7 +20,7 @@ func TestBackendFunctionInitializer(t *testing.T) {
 	// becomes known through a backend-generated runtime call.
 	entry := pkg.NewFunc(PkgRuntime+".Halt", halt.Type().(*types.Signature), InGo)
 	var sources []*types.Func
-	pkg.SetFunctionInitializer(func(fn Function, source *types.Func) {
+	pkg.SetFunctionInitializer(func(fn Function, source *types.Func, signature *types.Signature) {
 		sources = append(sources, source)
 		fn.SetCold()
 		fn.SetNoReturn()

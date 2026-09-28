@@ -1791,7 +1791,7 @@ func TestMakeClosureWithCtx(t *testing.T) {
 		"define i64 @inner(ptr ",
 		"i64 %1)",
 		`call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU"(i64 8)`,
-		`declare nonnull ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU"(i64)`,
+		`declare ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU"(i64)`,
 		"insertvalue { ptr, ptr } { ptr @inner, ptr undef }",
 	} {
 		if !strings.Contains(ir, want) {

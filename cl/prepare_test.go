@@ -10,13 +10,17 @@ import (
 )
 
 func prepareTestSyntax(prog llssa.Program, pkg *ssa.Package, files []*ast.File, options Options) error {
-	return testsyntax.Prepare(pkg, files, func(dep *types.Package, syntax []*ast.File) error {
+	err := testsyntax.Prepare(pkg, files, func(dep *types.Package, syntax []*ast.File) error {
 		if err := ParsePkgSyntaxWithOptions(prog, pkg.Prog.Fset, dep, syntax, options); err != nil {
 			return err
 		}
 		testsyntax.BindScope(prog.PackageDirectives(dep), pkg.Prog.Fset, dep)
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	return prog.ValidateDirectiveContracts(pkg.Prog.Fset)
 }
 
 func compileTestPackage(prog llssa.Program, pkg *ssa.Package, files []*ast.File) (llssa.Package, error) {

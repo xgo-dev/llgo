@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/funcattrs"
 	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 )
@@ -398,6 +399,15 @@ func (p *Transformer) transformFunc(m llvm.Module, fn llvm.Value) bool {
 		}
 	}
 	copyClosureEnvFunctionAttrs(fn, nfn, paramMap)
+	if info.Return.Kind == AttrNone {
+		funcattrs.CopyValueAttributes(fn, nfn, 0, 0)
+	}
+	for i, param := range info.Params {
+		if param.Kind == AttrNone {
+			funcattrs.CopyValueAttributes(fn, nfn, i+1, paramMap[i])
+		}
+	}
+
 	if !preloweredSRet.IsNil() {
 		nfn.AddAttributeAtIndex(1, preloweredSRet)
 	}

@@ -58,8 +58,14 @@ func compileLocalitySourceMode(t *testing.T, src string, options Options, logica
 	ssaPkg := goProg.CreatePackage(pkg, files, info, true)
 	ssaPkg.Build()
 	prog.PackageDirectives(pkg).Bind(info)
+	if err := prog.ValidateDirectiveContracts(fset); err != nil {
+		t.Fatal(err)
+	}
+	tracking := NewCallerTracking(prog.Directives())
+	tracking.Precompute(goProg.AllPackages())
+	prog.Directives().Freeze()
 	compiled, _, err := NewPackageExWithEmbedMetaOptions(
-		prog, nil, nil, nil, ssaPkg, files, nil, false, options,
+		prog, tracking, nil, nil, ssaPkg, files, nil, false, options,
 	)
 	if err != nil {
 		t.Fatal(err)
