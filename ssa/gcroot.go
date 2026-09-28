@@ -43,6 +43,7 @@ func (p Function) NewGCRoots(count int) []Expr {
 	if count <= 0 {
 		return nil
 	}
+	p.CheckImplicitRuntimeEffects("compiler-generated GC root publication")
 	if !p.gcRootPrev.IsNil() {
 		panic("ssa: GC roots already reserved")
 	}

@@ -48,6 +48,7 @@ func StringCat(a, b String) String {
 
 // CStrCopy copies a Go string to a C string buffer and returns it.
 //
+//llgo:param(dest) access(write)
 //llgo:result sameas(dest)
 func CStrCopy(dest unsafe.Pointer, s String) *int8 {
 	n := s.len

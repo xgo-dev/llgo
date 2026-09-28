@@ -479,6 +479,7 @@ func (p *context) localPackageBase(b llssa.Builder, owner *localPackage, logical
 			return base
 		}
 	}
+	b.Func.CheckImplicitRuntimeEffects("compiler-generated local package storage lookup")
 	blockFunc := owner.blockFunc
 	if logicalGLS {
 		blockFunc = owner.glsBlockFunc
@@ -504,6 +505,7 @@ func (p *context) ensureLocalInitializer(b llssa.Builder, owner *localPackage, k
 			return
 		}
 	}
+	b.Func.CheckImplicitRuntimeEffects("compiler-generated local package initialization")
 	b.Call(initializer.ensure.Expr)
 	if state.block != nil {
 		if state.packageEnsures == nil {
