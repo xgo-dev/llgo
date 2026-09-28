@@ -31,6 +31,9 @@ func (e errorAddressString) Addr() uintptr {
 
 // PanicSignalAddr converts an unexpected memory fault enabled through
 // runtime/debug.SetPanicOnFault and preserves the best-effort fault address.
+//
+//llgo:cold
+//llgo:noreturn
 func PanicSignalAddr(addr uintptr) {
 	panic(errorAddressString{
 		msg:  "invalid memory address or nil pointer dereference",

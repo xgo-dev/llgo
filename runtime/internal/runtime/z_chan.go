@@ -151,6 +151,8 @@ func NewChan(eltSize, cap int) *Chan {
 	return ret
 }
 
+//llgo:cold
+//llgo:noreturn
 func panicMakeChanSize() {
 	panic(errorString("makechan: size out of range"))
 }
@@ -172,6 +174,8 @@ func ChanCap(p *Chan) int {
 	return p.dataqsiz
 }
 
+//llgo:cold
+//llgo:noreturn
 func panicSendOnClosedChan() {
 	panic("send on closed channel")
 }

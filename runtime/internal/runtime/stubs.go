@@ -113,6 +113,7 @@ func memclrHasPointers(ptr unsafe.Pointer, n uintptr) {
 func memclrNoHeapPointers(ptr unsafe.Pointer, n uintptr) {
 }
 
+//llgo:cold
 func throw(s string) {
 	print("fatal error: ", s, "\n")
 }
