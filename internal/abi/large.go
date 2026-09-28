@@ -21,9 +21,10 @@ const (
 // AggregateLoweringConfig describes the Go runtime ABI used by lowering-created
 // allocations and roots. GoWordSize can exceed the physical Wasm address size.
 type AggregateLoweringConfig struct {
-	GoWordSize int
-	GCRoots    bool
-	Wasm       bool
+	CheckEffects func(llvm.Value, string) error
+	GoWordSize   int
+	GCRoots      bool
+	Wasm         bool
 }
 
 // LowerLargeAggregates converts oversized direct aggregate returns and copies
@@ -65,6 +66,7 @@ type aggregateRoot struct {
 }
 
 type largeAggregateLowerer struct {
+	checkEffects func(llvm.Value, string) error
 	td           llvm.TargetData
 	goWordSize   int
 	roots        bool
@@ -81,10 +83,11 @@ func newLargeAggregateLowerer(td llvm.TargetData, config AggregateLoweringConfig
 		goWordSize = td.PointerSize()
 	}
 	return largeAggregateLowerer{
-		td:         td,
-		goWordSize: goWordSize,
-		roots:      config.GCRoots,
-		wasm:       config.Wasm,
+		td:           td,
+		checkEffects: config.CheckEffects,
+		goWordSize:   goWordSize,
+		roots:        config.GCRoots,
+		wasm:         config.Wasm,
 	}
 }
 
@@ -405,6 +408,11 @@ func setCopyVolatile(ctx llvm.Context, copy llvm.Value, volatile bool) {
 }
 
 func (l *largeAggregateLowerer) allocResult(m llvm.Module, ctx llvm.Context, b llvm.Builder, typ llvm.Type) llvm.Value {
+	if l.checkEffects != nil {
+		if err := l.checkEffects(b.GetInsertBlock().Parent(), "large ABI result allocation"); err != nil {
+			panic(err)
+		}
+	}
 	intType := ctx.IntType(l.goWordSize * 8)
 	ptrType := llvm.PointerType(ctx.Int8Type(), 0)
 	fnType := llvm.FunctionType(ptrType, []llvm.Type{intType}, false)

@@ -1,6 +1,7 @@
 package ssa
 
 import (
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/funcattrs"
 	"github.com/xgo-dev/llvm"
 	"go/types"
@@ -17,6 +18,30 @@ func (f Function) ApplyValueAttributes(sig *types.Signature, attrs []funcattrs.A
 	}
 	if err := funcattrs.Apply(p.ctx, fn, sig, attrs, offset, p.Int().ll.IntTypeWidth()); err != nil {
 		panic(err)
+	}
+	// Scanning collectors and cooperative scheduling introduce accesses that
+	// are not yet modeled by pointer contracts. Definitions and imports use the
+	// same weaker LLVM policy in these modes, while retaining value guarantees.
+	if !p.GCRootsEnabled() && !p.CooperativeSafepointsEnabled() {
+		if err := funcattrs.ApplyPointerEffects(p.ctx, fn, sig, attrs, offset); err != nil {
+			panic(err)
+		}
+		var effects []funcattrs.Attribute
+		for _, attr := range attrs {
+			if attr.Name == "access" || attr.Name == "noalias" {
+				effects = append(effects, attr)
+			}
+		}
+		if len(effects) != 0 {
+			if p.pointerEffects == nil {
+				p.pointerEffects = make(map[string][]funcattrs.Attribute)
+			}
+			merged, err := directive.Merge(p.pointerEffects[fn.Name()], effects)
+			if err != nil {
+				panic(err)
+			}
+			p.pointerEffects[fn.Name()] = merged
+		}
 	}
 	plan, err := funcattrs.PrepareResultAttributes(p.ctx, fn, sig, attrs, offset, p.Int().ll.IntTypeWidth(), func(index int) []int {
 		path := []int{index}
