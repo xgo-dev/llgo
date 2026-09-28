@@ -2,6 +2,7 @@
 
 package runtime
 
+//llgo:cold
 func fatal(s string) {
 	print("fatal error: ", s, "\n")
 }

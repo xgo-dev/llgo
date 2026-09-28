@@ -197,6 +197,9 @@ const (
 func c_framepointer() unsafe.Pointer
 
 // Panic panics with a value.
+//
+//llgo:cold
+//llgo:noreturn
 func Panic(v any) {
 	if v == nil {
 		v = &PanicNilError{}
@@ -214,6 +217,8 @@ func Panic(v any) {
 
 	Rethrow(gp.defer_)
 }
+
+//llgo:noreturn
 func Goexit() {
 	gp := getg()
 	gp.abortPanics()
@@ -228,6 +233,8 @@ func init() {
 // -----------------------------------------------------------------------------
 
 // TracePanic prints panic message.
+//
+//llgo:cold
 func TracePanic(v any) {
 	print("panic: ")
 	printany(v)
@@ -241,6 +248,9 @@ var PanicTraceback func(skip int) bool
 
 // PanicSignal converts a hardware signal into the same Go panic the
 // legacy signal handler raised.
+//
+//llgo:cold
+//llgo:noreturn
 func PanicSignal(sig int) {
 	switch sig {
 	case 8: // SIGFPE

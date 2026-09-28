@@ -182,14 +182,20 @@ func MakeSlice(len, cap int, etSize int) Slice {
 	return Slice{AllocZ(mem), len, cap}
 }
 
+//llgo:cold
+//llgo:noreturn
 func panicmakeslicelen() {
 	panic(errorString("makeslice: len out of range"))
 }
 
+//llgo:cold
+//llgo:noreturn
 func panicmakeslicecap() {
 	panic(errorString("makeslice: cap out of range"))
 }
 
+//llgo:cold
+//llgo:noreturn
 func panicgrowslicelen() {
 	panic(errorString("growslice: len out of range"))
 }
