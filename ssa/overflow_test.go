@@ -4,6 +4,7 @@ package ssa
 
 import (
 	"fmt"
+	"go/token"
 	"go/types"
 	"strings"
 	"testing"
@@ -24,7 +25,10 @@ func TestUMulOverflowResultLayout(t *testing.T) {
 				typ := prog.toType(types.Typ[kind])
 				a := Expr{llvm.ConstInt(typ.ll, 3, false), typ}
 				result := b.UMulOverflow(a, a)
-				want := prog.Struct(typ, prog.Bool())
+				want := prog.rawType(types.NewTuple(
+					types.NewVar(token.NoPos, nil, "", typ.RawType()),
+					types.NewVar(token.NoPos, nil, "", types.Typ[types.Bool]),
+				))
 				if result.impl.Type() != want.ll {
 					t.Fatalf("%s result LLVM type = %s, want %s", typ.RawType(), result.impl.Type(), want.ll)
 				}

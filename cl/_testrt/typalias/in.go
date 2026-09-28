@@ -15,10 +15,11 @@ type Foo = struct {
 var format = [...]int8{'H', 'e', 'l', 'l', 'o', ' ', '%', 'd', '\n', 0}
 
 // CHECK-LABEL: define void @main.Print(ptr %0){{.*}} {
-// CHECK: [[PRINT_OK_FIELD:%[0-9]+]] = getelementptr inbounds nuw { i32, i1 }, ptr %0, i32 0, i32 1
-// CHECK-NEXT: [[PRINT_OK:%[0-9]+]] = load i1, ptr [[PRINT_OK_FIELD]]
-// CHECK-NEXT: br i1 [[PRINT_OK]], label %{{[^,]+}}, label %{{[^ ]+}}
-// CHECK: [[PRINT_A_FIELD:%[0-9]+]] = getelementptr inbounds nuw { i32, i1 }, ptr %0, i32 0, i32 0
+// CHECK: [[PRINT_OK_FIELD:%[0-9]+]] = getelementptr inbounds nuw { i32, i8 }, ptr %0, i32 0, i32 1
+// CHECK-NEXT: [[PRINT_OK:%[0-9]+]] = load i8, ptr [[PRINT_OK_FIELD]]
+// CHECK-NEXT: [[PRINT_OK_I1:%[0-9]+]] = trunc i8 [[PRINT_OK]] to i1
+// CHECK-NEXT: br i1 [[PRINT_OK_I1]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: [[PRINT_A_FIELD:%[0-9]+]] = getelementptr inbounds nuw { i32, i8 }, ptr %0, i32 0, i32 0
 // CHECK-NEXT: [[PRINT_A:%[0-9]+]] = load i32, ptr [[PRINT_A_FIELD]]
 // CHECK-NEXT: call void (ptr, ...) @printf(ptr @main.format, i32 [[PRINT_A]])
 
@@ -30,10 +31,10 @@ func Print(p *Foo) {
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: [[MAIN_FOO:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT: [[MAIN_A:%[0-9]+]] = getelementptr inbounds nuw { i32, i1 }, ptr [[MAIN_FOO]], i32 0, i32 0
-// CHECK-NEXT: [[MAIN_OK:%[0-9]+]] = getelementptr inbounds nuw { i32, i1 }, ptr [[MAIN_FOO]], i32 0, i32 1
+// CHECK-NEXT: [[MAIN_A:%[0-9]+]] = getelementptr inbounds nuw { i32, i8 }, ptr [[MAIN_FOO]], i32 0, i32 0
+// CHECK-NEXT: [[MAIN_OK:%[0-9]+]] = getelementptr inbounds nuw { i32, i8 }, ptr [[MAIN_FOO]], i32 0, i32 1
 // CHECK-NEXT: store i32 100, ptr [[MAIN_A]]
-// CHECK-NEXT: store i1 true, ptr [[MAIN_OK]]
+// CHECK-NEXT: store i8 1, ptr [[MAIN_OK]]
 // CHECK-NEXT: call void @main.Print(ptr [[MAIN_FOO]])
 func main() {
 	foo := &Foo{100, true}

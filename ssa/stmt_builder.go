@@ -245,7 +245,7 @@ func (b Builder) If(cond Expr, thenb, elseb BasicBlock) {
 		panic("mismatched function")
 	}
 	dbgInstrf("If %v, _llgo_%v, _llgo_%v\n", cond.impl, thenb.idx, elseb.idx)
-	b.impl.CreateCondBr(cond.impl, thenb.first, elseb.first)
+	b.impl.CreateCondBr(b.boolI1(cond), thenb.first, elseb.first)
 }
 
 // IfThen emits an if-then instruction.

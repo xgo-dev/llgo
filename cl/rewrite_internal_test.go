@@ -1065,7 +1065,7 @@ func Use() (bool, int8, uint16, float64, complex128, int) {
 `
 	ir := compileWithRewrites(t, src, nil)
 	for _, want := range []string{
-		"@staticinit.StaticBool = global i1 true",
+		"@staticinit.StaticBool = global i8 1",
 		"@staticinit.StaticInt = global i8 -7",
 		"@staticinit.StaticUint = global i16 42",
 		"@staticinit.StaticFloat = global double 1.500000e+00",

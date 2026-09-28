@@ -127,12 +127,24 @@ func (prog Program) wrapStructConstant(t Type, index int, value llvm.Value) llvm
 }
 
 func (prog Program) wrapStructConstantAs(t Type, structType llvm.Type, index int, value llvm.Value) llvm.Value {
-	value = prog.toStorageConstant(prog.Field(t, index), value)
+	elemType := prog.Field(t, index)
+	elem := structType.StructElementTypes()[index]
 	layout, ok := prog.structLayout(t)
-	if !ok || index >= len(layout.wrapped) || !layout.wrapped[index] {
+	wrapped := ok && index < len(layout.wrapped) && layout.wrapped[index]
+	mem := elem
+	if wrapped && mem.TypeKind() == llvm.StructTypeKind && len(mem.StructElementTypes()) > 0 {
+		mem = mem.StructElementTypes()[0]
+	}
+	if elemType.kind == vkBool {
+		if isLLVMInt1(value.Type()) && mem.TypeKind() == llvm.IntegerTypeKind && mem.IntTypeWidth() == 8 {
+			value = prog.boolToMemConst(value)
+		}
+	} else {
+		value = prog.toStorageConstant(elemType, value)
+	}
+	if !wrapped {
 		return value
 	}
-	elem := structType.StructElementTypes()[index]
 	parts := elem.StructElementTypes()
 	values := []llvm.Value{value}
 	if len(parts) == 2 {

@@ -24,12 +24,12 @@ package main
 // CHECK: [[RECV_OP1_0:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" undef, ptr [[RECV_CH1]], 0
 // CHECK-NEXT: [[RECV_OP1_1:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[RECV_OP1_0]], ptr [[RECV_BUF1]], 1
 // CHECK-NEXT: [[RECV_OP1_2:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[RECV_OP1_1]], i32 16, 2
-// CHECK-NEXT: [[RECV_OP1:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[RECV_OP1_2]], i1 false, 3
+// CHECK-NEXT: [[RECV_OP1:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[RECV_OP1_2]], i8 0, 3
 // CHECK: call void @llvm.memset.p0.i64(ptr [[RECV_BUF2]], i8 0, i64 16, i1 false)
 // CHECK: [[RECV_OP2_0:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" undef, ptr [[RECV_CH2]], 0
 // CHECK-NEXT: [[RECV_OP2_1:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[RECV_OP2_0]], ptr [[RECV_BUF2]], 1
 // CHECK-NEXT: [[RECV_OP2_2:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[RECV_OP2_1]], i32 16, 2
-// CHECK-NEXT: [[RECV_OP2:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[RECV_OP2_2]], i1 false, 3
+// CHECK-NEXT: [[RECV_OP2:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[RECV_OP2_2]], i8 0, 3
 // CHECK: store %"{{.*}}ChanOp" [[RECV_OP1]], ptr %{{[0-9]+}}
 // CHECK: store %"{{.*}}ChanOp" [[RECV_OP2]], ptr %{{[0-9]+}}
 // CHECK: [[RECV_CASES:%[0-9]+]] = insertvalue %"{{.*}}Slice" %{{[0-9]+}}, i64 2, 2
@@ -77,12 +77,12 @@ package main
 // CHECK-NEXT: [[SEND_OP1_0:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" undef, ptr [[SEND_CH1]], 0
 // CHECK-NEXT: [[SEND_OP1_1:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[SEND_OP1_0]], ptr [[SEND_BUF1]], 1
 // CHECK-NEXT: [[SEND_OP1_2:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[SEND_OP1_1]], i32 8, 2
-// CHECK-NEXT: [[SEND_OP1:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[SEND_OP1_2]], i1 true, 3
+// CHECK-NEXT: [[SEND_OP1:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[SEND_OP1_2]], i8 1, 3
 // CHECK: store i64 200, ptr [[SEND_BUF2:%[0-9]+]]
 // CHECK-NEXT: [[SEND_OP2_0:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" undef, ptr [[SEND_CH2]], 0
 // CHECK-NEXT: [[SEND_OP2_1:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[SEND_OP2_0]], ptr [[SEND_BUF2]], 1
 // CHECK-NEXT: [[SEND_OP2_2:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[SEND_OP2_1]], i32 8, 2
-// CHECK-NEXT: [[SEND_OP2:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[SEND_OP2_2]], i1 true, 3
+// CHECK-NEXT: [[SEND_OP2:%[0-9]+]] = insertvalue %"{{.*}}ChanOp" [[SEND_OP2_2]], i8 1, 3
 // CHECK: store %"{{.*}}ChanOp" [[SEND_OP1]], ptr %{{[0-9]+}}
 // CHECK: store %"{{.*}}ChanOp" [[SEND_OP2]], ptr %{{[0-9]+}}
 // CHECK: [[SEND_CASES:%[0-9]+]] = insertvalue %"{{.*}}Slice" %{{[0-9]+}}, i64 2, 2
