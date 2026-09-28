@@ -708,7 +708,7 @@ func (p *context) funcOf(fn *ssa.Function) (aFn llssa.Function, pyFn llssa.PyObj
 	pkgTypes, name, ftype, callable := p.funcName(p.sourceFunction(fn))
 	defer func() {
 		if aFn != nil {
-			p.applyFunctionAttributes(aFn, callable)
+			p.applyFunctionAttributes(aFn, fn.Signature, callable)
 		}
 	}()
 	switch ftype {

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -103,6 +104,7 @@ func TestAssertNilDerefColdCall(t *testing.T) {
 					ptr = prog.Nil(prog.VoidPtr())
 				case "allocated":
 					allocator := pkg.NewFunc(PkgRuntime+".AllocU", prog.tyMalloc(), InGo)
+					allocator.ApplyValueAttributes(prog.tyMalloc(), []directive.Attribute{{Target: directive.Target{Scope: directive.Result}, Name: "nonnull"}})
 					ptr = b.Call(allocator.Expr, prog.IntVal(8, prog.Uintptr()))
 				case "constant":
 					ptr = b.Convert(prog.VoidPtr(), prog.IntVal(1, prog.Uintptr()))

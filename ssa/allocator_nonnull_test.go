@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -27,6 +28,9 @@ func TestAllocatorNonNullAcrossModules(t *testing.T) {
 				for _, name := range []string{"AllocU", "AllocZ", "AllocRoot", "Nullable"} {
 					fn := pkg.NewFunc(PkgRuntime+"."+name, prog.tyMalloc(), InGo)
 					want := name != "Nullable"
+					if want {
+						fn.ApplyValueAttributes(prog.tyMalloc(), []directive.Attribute{{Target: directive.Target{Scope: directive.Result}, Name: "nonnull"}})
+					}
 					if got := !fn.impl.GetEnumAttributeAtIndex(0, kind).IsNil(); got != want {
 						t.Fatalf("%s in %s: nonnull = %v, want %v", name, module, got, want)
 					}
