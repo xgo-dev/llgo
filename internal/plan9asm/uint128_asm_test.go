@@ -1,7 +1,6 @@
 package plan9asm
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llvm"
@@ -9,6 +8,8 @@ import (
 
 // modernc.org/libc's 128-bit overflow wrapper passes two Uint128 values
 // through an ABI0 frame before calling its Go implementation.
+// Y__ is the assembly wrapper; X__ declares its Go call target.
+// This test checks signature lowering, not ABI0 call execution (plan9asm#44).
 func TestTranslateUint128ABI0Wrapper(t *testing.T) {
 	pkg := mustTestPackage(t, "example.com/libc", `package libc
 type Uint128 struct { Lo, Hi uint64 }
@@ -43,8 +44,34 @@ RET
 	if err := llvm.VerifyModule(tr.Module, llvm.ReturnStatusAction); err != nil {
 		t.Fatalf("invalid LLVM module: %v", err)
 	}
-	ir := tr.Module.String()
-	if !strings.Contains(ir, "extractvalue { i64, i64 } %arg1, 0") || !strings.Contains(ir, "extractvalue { i64, i64 } %arg2, 1") {
-		t.Fatalf("missing 128-bit argument fields in LLVM IR:\n%s", ir)
+	wrapper := tr.Module.NamedFunction("example.com/libc.Y__builtin_mul_overflowUint128")
+	if wrapper.IsNil() || wrapper.ParamsCount() != 4 {
+		t.Fatal("missing wrapper or incorrect parameter count")
+	}
+	for i, name := range []string{"a", "b"} {
+		arg := wrapper.Param(i + 1)
+		if arg.Type().TypeKind() != llvm.StructTypeKind {
+			t.Fatalf("%s is not a struct: %s", name, arg.Type())
+		}
+		fields := arg.Type().StructElementTypes()
+		i64 := tr.Module.Context().Int64Type()
+		if len(fields) != 2 || fields[0] != i64 || fields[1] != i64 {
+			t.Fatalf("%s does not contain two i64 fields: %s", name, arg.Type())
+		}
+		var extracted [2]bool
+		for block := wrapper.FirstBasicBlock(); !block.IsNil(); block = llvm.NextBasicBlock(block) {
+			for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+				if inst.InstructionOpcode() != llvm.ExtractValue || inst.Operand(0) != arg {
+					continue
+				}
+				indices := inst.Indices()
+				if len(indices) == 1 && indices[0] < 2 {
+					extracted[indices[0]] = true
+				}
+			}
+		}
+		if extracted != [2]bool{true, true} {
+			t.Fatalf("%s fields extracted = %v, want both Lo and Hi", name, extracted)
+		}
 	}
 }
