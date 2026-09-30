@@ -77,6 +77,10 @@ type Options struct {
 	// ReceiverNilChecks retains pointer-method selection semantics erased
 	// during Go SSA construction. It is collected from checked source info.
 	ReceiverNilChecks *ReceiverNilChecks
+	// StaticByteArrays are package-level [N]byte payloads extracted after
+	// type checking and before ssa.Package.Build so go/ssa does not emit
+	// one store per element. Keys use StaticByteArrayKey(PathOf(pkg), name).
+	StaticByteArrays map[string][]byte
 }
 
 // SetDebug sets debug flags.
@@ -223,7 +227,35 @@ type context struct {
 	staticInitStores     map[*ssa.Store]none
 	staticInitInstrs     map[ssa.Instruction]none
 	staticMapSliceValues map[*ssa.MapUpdate]llssa.Expr
+	staticByteArrays     map[string][]byte
 	locality             localityLowering
+}
+
+func (p *context) initStaticByteArrayGlobal(define bool, gbl *ssa.Global, g llssa.Global) bool {
+	if !define || len(p.staticByteArrays) == 0 || gbl.Pkg == nil || gbl.Pkg.Pkg == nil {
+		return false
+	}
+	data, ok := p.staticByteArrays[StaticByteArrayKey(llssa.PathOf(gbl.Pkg.Pkg), gbl.Name())]
+	if !ok {
+		return false
+	}
+	ptr, ok := types.Unalias(gbl.Type()).(*types.Pointer)
+	if !ok {
+		return false
+	}
+	arr, ok := types.Unalias(ptr.Elem()).Underlying().(*types.Array)
+	if !ok || arr.Len() != int64(len(data)) {
+		return false
+	}
+	// Length is the restore-time check. Byte contents are trusted because
+	// StripLargeStaticByteArrays only accepts INT/CHAR literals; any future
+	// relaxation of that parser must keep the payload byte-exact.
+	basic, ok := arr.Elem().Underlying().(*types.Basic)
+	if !ok || (basic.Kind() != types.Byte && basic.Kind() != types.Uint8) {
+		return false
+	}
+	g.Init(p.prog.ConstByteArray(p.type_(ptr.Elem(), llssa.InGo), data))
+	return true
 }
 
 func (p *context) rewriteValue(name string) (string, bool) {
@@ -417,6 +449,9 @@ func (p *context) compileGlobal(pkg llssa.Package, gbl *ssa.Global) {
 		return
 	}
 	if p.tryEmbedGlobalInit(pkg, gbl, g, name) {
+		return
+	}
+	if p.initStaticByteArrayGlobal(define, gbl, g) {
 		return
 	}
 	if value, ok := p.rewriteValue(name); ok {
@@ -2857,8 +2892,9 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		loaded: map[*types.Package]*pkgInfo{
 			types.Unsafe: {kind: PkgDeclOnly}, // TODO(xsw): PkgNoInit or PkgDeclOnly?
 		},
-		cgoSymbols: make([]string, 0, 128),
-		rewrites:   rewrites,
+		cgoSymbols:       make([]string, 0, 128),
+		rewrites:         rewrites,
+		staticByteArrays: options.StaticByteArrays,
 
 		trackCallerFrames:  filesUseRuntimeCaller(files) || packageUsesRuntimeCaller(ct, pkg),
 		runtimeCallerFuncs: runtimeCallerFuncSet(ct, pkg),
