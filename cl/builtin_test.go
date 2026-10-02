@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/constant"
+	"go/parser"
 	"go/token"
 	"go/types"
 	"strings"
@@ -417,19 +418,21 @@ func TestToBackground(t *testing.T) {
 	}
 }
 
-func TestCollectSkipNames(t *testing.T) {
-	ctx := &context{skips: make(map[string]none)}
-	ctx.collectSkipNames("//llgo:skipall")
-	ctx.collectSkipNames("//llgo:skip")
-	ctx.collectSkipNames("//llgo:skip abs")
-}
-
-func TestCollectSkipNamesByDoc(t *testing.T) {
+func TestPackageSkipDirectives(t *testing.T) {
 	ftest := func(comments string, wantSkips []string, wantAll bool) {
 		t.Helper()
-		ctx := &context{skips: make(map[string]none)}
-		doc := parseComments(t, comments)
-		ctx.collectSkipNamesByDoc(doc)
+		prog := llssa.NewProgram(nil)
+		pkg := types.NewPackage("example.com/p", "p")
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, "skip.go", "package p\n"+strings.TrimSpace(comments)+"\nconst Value = 0\n", parser.ParseComments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
+			t.Fatal(err)
+		}
+		ctx := &context{prog: prog, goTyps: pkg, skips: make(map[string]none)}
+		ctx.initDirectives(pkg.Path())
 
 		// Check skipall
 		if wantAll != ctx.skipall {
@@ -511,19 +514,6 @@ func TestCollectSkipNamesByDoc(t *testing.T) {
 	)
 }
 
-func parseComments(t *testing.T, text string) *ast.CommentGroup {
-	t.Helper()
-	var comments []*ast.Comment
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		comments = append(comments, &ast.Comment{Text: line})
-	}
-	return &ast.CommentGroup{List: comments}
-}
-
 func TestReplaceGoName(t *testing.T) {
 	if ret := replaceGoName("foo", 0); ret != "foo" {
 		t.Fatal("replaceGoName:", ret)
@@ -556,27 +546,6 @@ func ssaAlloc(refs ...ssa.Instruction) *ssa.Alloc {
 
 func setRefs(v ssa.Value, refs ...ssa.Instruction) {
 	*v.Referrers() = refs
-}
-
-func TestRecvTypeName(t *testing.T) {
-	if ret := recvTypeName(&ast.IndexExpr{
-		X:     &ast.Ident{Name: "Pointer"},
-		Index: &ast.Ident{Name: "T"},
-	}); ret != "Pointer" {
-		t.Fatal("recvTypeName IndexExpr:", ret)
-	}
-	if ret := recvTypeName(&ast.IndexListExpr{
-		X:       &ast.Ident{Name: "Pointer"},
-		Indices: []ast.Expr{&ast.Ident{Name: "T"}},
-	}); ret != "Pointer" {
-		t.Fatal("recvTypeName IndexListExpr:", ret)
-	}
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("recvTypeName: no error?")
-		}
-	}()
-	recvTypeName(&ast.BadExpr{})
 }
 
 func TestRecvType(t *testing.T) {
@@ -785,35 +754,24 @@ func TestIntVal(t *testing.T) {
 	intVal(&ssa.Parameter{})
 }
 
-func TestErrImport(t *testing.T) {
-	var ctx context
+func TestImportPkgKind(t *testing.T) {
+	ctx := context{}
 	pkg := types.NewPackage("foo", "foo")
-	ctx.importPkg(pkg, nil)
+	info := new(pkgInfo)
+	ctx.importPkg(pkg, info)
+	if info.kind != PkgNormal {
+		t.Fatalf("ordinary package kind = %d, want %d", info.kind, PkgNormal)
+	}
 
 	alt := types.NewPackage("bar", "bar")
 	alt.Scope().Insert(
 		types.NewConst(0, alt, "LLGoPackage", types.Typ[types.String], constant.MakeString("noinit")),
 	)
-	ctx.patches = Patches{"foo": Patch{Alt: &ssa.Package{Pkg: alt}, Types: alt}}
-	ctx.importPkg(pkg, &pkgInfo{})
-}
-
-func TestErrInitLinkname(t *testing.T) {
-	var ctx context
-	ctx.initLinkname("//llgo:link abc", true, func(name string, isExport bool) (string, bool, bool) {
-		return "", false, false
-	})
-	ctx.initLinkname("//go:linkname Printf printf", true, func(name string, isExport bool) (string, bool, bool) {
-		return "", false, false
-	})
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("initLinkname: no error?")
-		}
-	}()
-	ctx.initLinkname("//go:linkname Printf printf", true, func(name string, isExport bool) (string, bool, bool) {
-		return "foo.Printf", false, name == "Printf"
-	})
+	ctx.patches = Patches{"foo": {Alt: &ssa.Package{Pkg: alt}, Types: alt}}
+	ctx.importPkg(pkg, info)
+	if info.kind != PkgNoInit {
+		t.Fatalf("patched package kind = %d, want %d", info.kind, PkgNoInit)
+	}
 }
 
 func TestErrVarOf(t *testing.T) {
@@ -914,220 +872,47 @@ func TestInstantiate(t *testing.T) {
 	}
 }
 
-func TestHandleExportDiffName(t *testing.T) {
-	tests := []struct {
-		name               string
-		enableExportRename bool
-		line               string
-		fullName           string
-		inPkgName          string
-		wantHasLinkname    bool
-		wantLinkname       string
-		wantExport         string
+func TestPackageExportRename(t *testing.T) {
+	for _, tt := range []struct {
+		name, local, comment, want string
+		rename, wantError          bool
 	}{
-		{
-			name:               "ExportDiffNames_DifferentName",
-			enableExportRename: true,
-			line:               "//export IRQ_Handler",
-			fullName:           "pkg.HandleInterrupt",
-			inPkgName:          "HandleInterrupt",
-			wantHasLinkname:    true,
-			wantLinkname:       "IRQ_Handler",
-			wantExport:         "IRQ_Handler",
-		},
-		{
-			name:               "ExportDiffNames_SameName",
-			enableExportRename: true,
-			line:               "//export SameName",
-			fullName:           "pkg.SameName",
-			inPkgName:          "SameName",
-			wantHasLinkname:    true,
-			wantLinkname:       "SameName",
-			wantExport:         "SameName",
-		},
-		{
-			name:               "ExportDiffNames_WithSpaces",
-			enableExportRename: true,
-			line:               "//export   Timer_Callback  ",
-			fullName:           "pkg.OnTimerTick",
-			inPkgName:          "OnTimerTick",
-			wantHasLinkname:    true,
-			wantLinkname:       "Timer_Callback",
-			wantExport:         "Timer_Callback",
-		},
-		{
-			name:               "ExportDiffNames_Disabled_MatchingName",
-			enableExportRename: false,
-			line:               "//export Func",
-			fullName:           "pkg.Func",
-			inPkgName:          "Func",
-			wantHasLinkname:    true,
-			wantLinkname:       "Func",
-			wantExport:         "Func",
-		},
-	}
-
-	for _, tt := range tests {
+		{"different name", "HandleInterrupt", "IRQ_Handler", "IRQ_Handler", true, false},
+		{"same name", "SameName", "SameName", "SameName", true, false},
+		{"spaces", "OnTimerTick", "  Timer_Callback  ", "Timer_Callback", true, false},
+		{"disabled matching name", "Func", "Func", "Func", false, false},
+		{"disabled mismatched name", "HandleInterrupt", "IRQ_Handler", "", false, true},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup context
 			prog := llssa.NewProgram(nil)
-			pkg := prog.NewPackage("test", "test")
-			ctx := &context{
-				prog:    prog,
-				pkg:     pkg,
-				options: Options{ExportRename: tt.enableExportRename},
+			defer prog.Dispose()
+			pkg := types.NewPackage("pkg", "pkg")
+			fset := token.NewFileSet()
+			source := "package pkg\n//export " + tt.comment + "\nfunc " + tt.local + "() {}\n"
+			file, err := parser.ParseFile(fset, "export.go", source, parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
 			}
-
-			// Call initLinkname with closure that mimics initLinknameByDoc behavior
-			ret := ctx.initLinkname(tt.line, true, func(name string, isExport bool) (string, bool, bool) {
-				return tt.fullName, false, name == tt.inPkgName || (isExport && ctx.options.ExportRename)
-			})
-
-			// Verify result
-			hasLinkname := (ret == hasLinkname)
-			if hasLinkname != tt.wantHasLinkname {
-				t.Errorf("hasLinkname = %v, want %v", hasLinkname, tt.wantHasLinkname)
-			}
-
-			if tt.wantHasLinkname {
-				// Check linkname was set
-				if link, ok := prog.Linkname(tt.fullName); !ok || link != tt.wantLinkname {
-					t.Errorf("linkname = %q (ok=%v), want %q", link, ok, tt.wantLinkname)
+			err = ParsePkgSyntaxWithOptions(prog, fset, pkg, []*ast.File{file}, Options{ExportRename: tt.rename})
+			if tt.wantError {
+				if err == nil || !strings.Contains(err.Error(), "export comment has wrong name") {
+					t.Fatalf("export mismatch error = %v", err)
 				}
-
-				// Check export was set
-				exports := pkg.ExportFuncs()
-				if export, ok := exports[tt.fullName]; !ok || export != tt.wantExport {
-					t.Errorf("export = %q (ok=%v), want %q", export, ok, tt.wantExport)
-				}
+				return
 			}
-		})
-	}
-}
-
-func TestInitLinknameByDocExportDiffNames(t *testing.T) {
-	tests := []struct {
-		name               string
-		enableExportRename bool
-		doc                *ast.CommentGroup
-		fullName           string
-		inPkgName          string
-		wantExported       bool // Whether the symbol should be exported with different name
-		wantLinkname       string
-		wantExport         string
-	}{
-		{
-			name:               "WithExportDiffNames_DifferentNameExported",
-			enableExportRename: true,
-			doc: &ast.CommentGroup{
-				List: []*ast.Comment{
-					{Text: "//export IRQ_Handler"},
-				},
-			},
-			fullName:     "pkg.HandleInterrupt",
-			inPkgName:    "HandleInterrupt",
-			wantExported: true,
-			wantLinkname: "IRQ_Handler",
-			wantExport:   "IRQ_Handler",
-		},
-		{
-			name:               "WithoutExportDiffNames_NotExported",
-			enableExportRename: false,
-			doc: &ast.CommentGroup{
-				List: []*ast.Comment{
-					{Text: "//export DifferentName"},
-				},
-			},
-			fullName:     "pkg.HandleInterrupt",
-			inPkgName:    "HandleInterrupt",
-			wantExported: false,
-			// Without enableExportRename, it goes through normal flow which expects same name
-			// The symbol "DifferentName" won't be found, so no export happens
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Without ExportRename, export with different names will panic.
-			if !tt.wantExported && !tt.enableExportRename {
-				defer func() {
-					if r := recover(); r == nil {
-						t.Error("expected panic for export with different name when enableExportRename=false")
-					}
-				}()
+			if err != nil {
+				t.Fatal(err)
 			}
-
-			// Setup context
-			prog := llssa.NewProgram(nil)
-			pkg := prog.NewPackage("test", "test")
-			ctx := &context{
-				prog:    prog,
-				pkg:     pkg,
-				options: Options{ExportRename: tt.enableExportRename},
+			backend := prog.NewPackage("pkg", "pkg")
+			ctx := &context{prog: prog, pkg: backend, goTyps: pkg, skips: make(map[string]none)}
+			ctx.initDirectives(pkg.Path())
+			full := "pkg." + tt.local
+			if got, ok := prog.Linkname(full); !ok || got != tt.want {
+				t.Fatalf("linkname = %q, %v; want %q, true", got, ok, tt.want)
 			}
-
-			// Call initLinknameByDoc
-			ctx.processLinknameByDoc(tt.doc, tt.fullName, tt.inPkgName, false, true)
-
-			// Verify export behavior
-			exports := pkg.ExportFuncs()
-			if tt.wantExported {
-				// Should have exported the symbol with different name
-				if export, ok := exports[tt.fullName]; !ok || export != tt.wantExport {
-					t.Errorf("export = %q (ok=%v), want %q", export, ok, tt.wantExport)
-				}
-				// Check linkname was also set
-				if link, ok := prog.Linkname(tt.fullName); !ok || link != tt.wantLinkname {
-					t.Errorf("linkname = %q (ok=%v), want %q", link, ok, tt.wantLinkname)
-				}
+			if got := backend.ExportFuncs()[full]; got != tt.want {
+				t.Fatalf("export = %q, want %q", got, tt.want)
 			}
-		})
-	}
-}
-
-func TestInitLinkExportDiffNames(t *testing.T) {
-	tests := []struct {
-		name               string
-		enableExportRename bool
-		line               string
-		wantPanic          bool
-	}{
-		{
-			name:               "ExportDiffNames_Enabled_NoError",
-			enableExportRename: true,
-			line:               "//export IRQ_Handler",
-			wantPanic:          false,
-		},
-		{
-			name:               "ExportDiffNames_Disabled_Panic",
-			enableExportRename: false,
-			line:               "//export IRQ_Handler",
-			wantPanic:          true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.wantPanic {
-				defer func() {
-					if r := recover(); r == nil {
-						t.Error("expected panic but didn't panic")
-					}
-				}()
-			}
-
-			prog := llssa.NewProgram(nil)
-			pkg := prog.NewPackage("test", "test")
-			ctx := &context{
-				prog:    prog,
-				pkg:     pkg,
-				options: Options{ExportRename: tt.enableExportRename},
-			}
-
-			ctx.initLinkname(tt.line, true, func(inPkgName string, isExport bool) (fullName string, isVar, ok bool) {
-				// Simulate initLinknames scenario: symbol not found (like in decl packages)
-				return "", false, false
-			})
 		})
 	}
 }

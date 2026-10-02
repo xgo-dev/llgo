@@ -1,0 +1,326 @@
+/*
+ * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package directive
+
+import (
+	"fmt"
+	"go/ast"
+	"go/token"
+	"go/types"
+	"strings"
+)
+
+// Declaration is identified by its source node and package instance, never by
+// its final linker symbol. Link/Export are declaration properties.
+// Name uses the canonical receiver; Source retains aliases for directive matching.
+type Declaration struct {
+	Err         error
+	Name        string
+	Pos         token.Pos
+	Linkname    string
+	HasLinkname bool
+	ExportName  string
+}
+
+// FunctionDecl collected for a package has a non-empty Declaration.Name.
+// Standalone snapshots from Index contain only Source and Function, leaving
+// Declaration zero-valued; their link names come from the legacy import index.
+type FunctionDecl struct {
+	Declaration
+	Source *ast.FuncDecl
+	Function
+}
+type VariableDecl struct {
+	Declaration
+	Source *ast.Ident
+}
+type TypeDecl struct {
+	Declaration
+	Source     *ast.TypeSpec
+	Background string
+}
+
+// Package is the authoritative source metadata for one types.Package. Object
+// bindings are added after checking, before concurrent lowering starts.
+type Package struct {
+	Names     map[string]any
+	Functions map[*ast.FuncDecl]*FunctionDecl
+	Variables map[*ast.Ident]*VariableDecl
+	Types     map[*ast.TypeSpec]*TypeDecl
+	Objects   map[types.Object]any
+	Files     []*File
+	Skip      Skip
+}
+
+// Collect associates and validates links while building package records. Export
+// mismatches remain on Declaration.Err for the declaration's owning phase.
+func Collect(fset *token.FileSet, files []*File, cPackage, exportRename bool) (*Package, error) {
+	p := &Package{Names: make(map[string]any), Functions: make(map[*ast.FuncDecl]*FunctionDecl), Variables: make(map[*ast.Ident]*VariableDecl), Types: make(map[*ast.TypeSpec]*TypeDecl), Objects: make(map[types.Object]any), Files: files}
+	syms := make(map[string]*Declaration)
+	attached := make(map[*ast.CommentGroup]bool)
+	aliases := receiverAliases(files)
+	for _, file := range files {
+		for _, decl := range file.Syntax.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				sourceName := FuncName(d)
+				name := canonicalFuncName(d, aliases)
+				rec := &FunctionDecl{Declaration: Declaration{Name: name, Pos: d.Pos()}, Source: d, Function: file.Functions[d]}
+				if err := associateLink(fset, &rec.Declaration, file.Group(d.Doc), sourceName, exportRename); err != nil {
+					return nil, err
+				}
+				attached[d.Doc] = true
+				if !rec.HasLinkname && cPackage && d.Recv == nil && token.IsExported(name) {
+					rec.HasLinkname = true
+					rec.Linkname = name
+					if name[0] == 'X' {
+						rec.Linkname = name[1:]
+					}
+					rec.ExportName = rec.Linkname
+				}
+				p.Functions[d] = rec
+				p.Names[name] = rec
+				syms[sourceName] = &rec.Declaration
+				if alias := ParenthesizedMethodName(sourceName); alias != "" {
+					syms[alias] = &rec.Declaration
+				}
+			case *ast.GenDecl:
+				switch d.Tok {
+				case token.VAR:
+					for _, spec := range d.Specs {
+						for _, id := range spec.(*ast.ValueSpec).Names {
+							rec := &VariableDecl{Declaration: Declaration{Name: id.Name, Pos: id.Pos()}, Source: id}
+							if len(d.Specs) == 1 && len(spec.(*ast.ValueSpec).Names) == 1 {
+								if err := associateLink(fset, &rec.Declaration, file.Group(d.Doc), id.Name, exportRename); err != nil {
+									return nil, err
+								}
+								attached[d.Doc] = true
+							}
+							p.Variables[id] = rec
+							p.Names[id.Name] = rec
+							syms[id.Name] = &rec.Declaration
+						}
+					}
+				case token.TYPE, token.CONST:
+					skip := file.Group(d.Doc).Skip
+					p.Skip.All = p.Skip.All || skip.All
+					p.Skip.Names = append(p.Skip.Names, skip.Names...)
+					if d.Tok == token.TYPE {
+						for _, spec := range d.Specs {
+							spec := spec.(*ast.TypeSpec)
+							bg := ""
+							if len(d.Specs) == 1 {
+								bg = file.Group(d.Doc).TypeBackground
+							}
+							p.Types[spec] = &TypeDecl{Declaration: Declaration{Name: spec.Name.Name, Pos: spec.Pos()}, Source: spec, Background: bg}
+							p.Names[spec.Name.Name] = p.Types[spec]
+						}
+					}
+				case token.IMPORT:
+					g := file.Group(d.Doc)
+					// The deprecated import spelling consumes only the last comment.
+					if g.LastSkip {
+						all, names, _ := LegacySkip(g.LastLine)
+						p.Skip.All = p.Skip.All || all
+						p.Skip.Names = append(p.Skip.Names, names...)
+					}
+				}
+			}
+		}
+	}
+	// Package-wide Go links override attached links, in source order, only in
+	// files importing unsafe. Reuse the declaration index for link diagnostics.
+	for _, file := range files {
+		unsafe := false
+		for _, imp := range file.Syntax.Imports {
+			unsafe = unsafe || imp.Path.Value == `"unsafe"`
+		}
+		for _, doc := range file.Syntax.Comments {
+			for _, item := range file.Group(doc).Items {
+				if item.Name == "llgo:link" {
+					if attached[doc] {
+						continue
+					}
+					fields := strings.Fields(item.Args)
+					if len(fields) < 2 {
+						return nil, fmt.Errorf("%s: //llgo:link requires a local name and a target", fset.Position(item.Pos))
+					}
+					return nil, fmt.Errorf("%s: //llgo:link local name %q is not attached to a declaration", fset.Position(item.Pos), fields[0])
+				}
+				if item.Name != "go:linkname" || !unsafe {
+					continue
+				}
+				fields := strings.Fields(item.Args)
+				if len(fields) < 2 {
+					continue
+				}
+				if d := syms[fields[0]]; d != nil {
+					d.Linkname, d.HasLinkname = strings.Join(fields[1:], " "), true
+				} else if strings.Contains(fields[0], ".") {
+					return nil, fmt.Errorf("%s: //go:linkname local method %q not found", fset.Position(item.Pos), fields[0])
+				}
+			}
+		}
+	}
+	return p, nil
+}
+
+// associateLink validates every LLGo link while selecting the last applicable
+// link/export. Export mismatches remain deferred declaration errors.
+func associateLink(fset *token.FileSet, d *Declaration, g *Group, sourceName string, rename bool) error {
+	selected := false
+	for i := len(g.Items) - 1; i >= 0; i-- {
+		item := g.Items[i]
+		switch item.Name {
+		case "go:linkname", "llgo:link":
+			fields := strings.Fields(item.Args)
+			if item.Name == "llgo:link" {
+				if len(fields) < 2 {
+					return fmt.Errorf("%s: //llgo:link requires a local name and a target", fset.Position(item.Pos))
+				}
+				if fields[0] != sourceName && fields[0] != ParenthesizedMethodName(sourceName) {
+					return fmt.Errorf("%s: //llgo:link local name %q does not match declaration %q", fset.Position(item.Pos), fields[0], sourceName)
+				}
+			}
+			if !selected && len(fields) >= 2 && (fields[0] == sourceName || fields[0] == ParenthesizedMethodName(sourceName)) {
+				d.Linkname, d.HasLinkname = strings.Join(fields[1:], " "), true
+				selected = true
+			}
+		case "export":
+			if selected || item.Args == "" {
+				continue
+			}
+			selected = true
+			if item.Args != sourceName && !rename {
+				d.Err = fmt.Errorf("export comment has wrong name %q", item.Args)
+			} else {
+				d.Linkname, d.HasLinkname, d.ExportName = item.Args, true, item.Args
+			}
+		}
+	}
+	return nil
+}
+
+// Bind uses checker object identity, including receiver aliases and generic
+// origins. Call only during package preparation, before publishing to workers.
+func (p *Package) Bind(info *types.Info) {
+	if info == nil {
+		return
+	}
+	for d, r := range p.Functions {
+		if p.Names[r.Name] != r {
+			continue
+		}
+		if o := info.Defs[d.Name]; o != nil {
+			p.Objects[o] = r
+		}
+	}
+	for id, r := range p.Variables {
+		if p.Names[r.Name] != r {
+			continue
+		}
+		if o := info.Defs[id]; o != nil {
+			p.Objects[o] = r
+		}
+	}
+	for d, r := range p.Types {
+		if p.Names[r.Name] != r {
+			continue
+		}
+		if o := info.Defs[d.Name]; o != nil {
+			p.Objects[o] = r
+		}
+	}
+}
+
+// FuncName is a source selector, not a linker name. It is also used by patches.
+func FuncName(fn *ast.FuncDecl) string {
+	name := fn.Name.Name
+	if fn.Recv != nil && len(fn.Recv.List) == 1 {
+		t := ast.Unparen(fn.Recv.List[0].Type)
+		if p, ok := t.(*ast.StarExpr); ok {
+			return "(*" + ReceiverName(p.X) + ")." + name
+		}
+		return ReceiverName(t) + "." + name
+	}
+	return name
+}
+
+// canonicalFuncName resolves local receiver aliases before type checking, while
+// FuncName retains the spelling used to match a declaration's directives.
+func canonicalFuncName(fn *ast.FuncDecl, aliases map[string]ast.Expr) string {
+	if fn.Recv == nil || len(fn.Recv.List) != 1 {
+		return fn.Name.Name
+	}
+	t := ast.Unparen(fn.Recv.List[0].Type)
+	pointer := false
+	if ptr, ok := t.(*ast.StarExpr); ok {
+		t, pointer = ptr.X, true
+	}
+	name := ReceiverName(t)
+	// Bound the walk so invalid alias cycles remain the type checker's concern.
+	for n := 0; n < len(aliases); n++ {
+		rhs, ok := aliases[name]
+		if !ok {
+			break
+		}
+		rhs = ast.Unparen(rhs)
+		ptr, isPtr := rhs.(*ast.StarExpr)
+		if isPtr {
+			rhs = ast.Unparen(ptr.X)
+		}
+		ident, ok := rhs.(*ast.Ident)
+		if !ok {
+			break
+		}
+		name, pointer = ident.Name, pointer || isPtr
+	}
+	if pointer {
+		name = "(*" + name + ")"
+	}
+	return name + "." + fn.Name.Name
+}
+
+func receiverAliases(files []*File) map[string]ast.Expr {
+	aliases := make(map[string]ast.Expr)
+	for _, file := range files {
+		for _, decl := range file.Syntax.Decls {
+			if decl, ok := decl.(*ast.GenDecl); ok && decl.Tok == token.TYPE {
+				for _, spec := range decl.Specs {
+					if spec := spec.(*ast.TypeSpec); spec.Assign.IsValid() {
+						aliases[spec.Name.Name] = spec.Type
+					}
+				}
+			}
+		}
+	}
+	return aliases
+}
+
+func ReceiverName(t ast.Expr) string {
+	switch t := t.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.IndexExpr:
+		return ReceiverName(t.X)
+	case *ast.IndexListExpr:
+		return ReceiverName(t.X)
+	case *ast.ParenExpr:
+		return ReceiverName(t.X)
+	}
+	panic("unreachable")
+}

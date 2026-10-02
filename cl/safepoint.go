@@ -24,11 +24,12 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-func (p *context) prepareCooperativeSafepoints(fn *ssa.Function, isCgo bool) {
+func (p *context) prepareCooperativeSafepoints(source sourceFunction, isCgo bool) {
+	fn := source.SSA
 	p.safepointEntry = false
 	p.safepoints = nil
 	if !p.prog.CooperativeSafepointsEnabled() || fn == nil || len(fn.Blocks) == 0 ||
-		isCgo || hasFuncDirective(fn, "go:nosplit") {
+		isCgo || source.Decl != nil && source.Decl.NoSplit {
 		return
 	}
 	// Package-less SSA wrappers only forward into a declared function and may

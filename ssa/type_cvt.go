@@ -182,7 +182,7 @@ func (p goTypes) shouldConvertAlias(t *types.Alias) bool {
 }
 
 func (p goTypes) shouldConvertNamed(t *types.Named) bool {
-	background, ok := p.packageSyntax.typeBackground(namedLinkname(t))
+	background, ok := p.packageSyntax.namedBackground(t)
 	return !ok || !isNativeFuncBackground(background)
 }
 

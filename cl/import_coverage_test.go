@@ -5,11 +5,10 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
@@ -24,26 +23,13 @@ func TestReplaceGoNameRuntimeBranch(t *testing.T) {
 }
 
 func TestTypeBackgroundAndParsePkgSyntaxCoverage(t *testing.T) {
-	if got := typeBackground(nil); got != "" {
-		t.Fatalf("typeBackground(nil)=%q, want empty", got)
-	}
-
-	doc1 := &ast.CommentGroup{List: []*ast.Comment{{Text: "//llgo:type C"}}}
-	if got := typeBackground(doc1); got != "C" {
-		t.Fatalf("typeBackground(//llgo:type C)=%q, want C", got)
-	}
-	doc2 := &ast.CommentGroup{List: []*ast.Comment{{Text: "// llgo:type C"}}}
-	if got := typeBackground(doc2); got != "C" {
-		t.Fatalf("typeBackground(// llgo:type C)=%q, want C", got)
-	}
-	doc3 := &ast.CommentGroup{List: []*ast.Comment{{Text: "//llgo:type stdcall"}}}
-	if got := typeBackground(doc3); got != "stdcall" {
-		t.Fatalf("typeBackground(//llgo:type stdcall)=%q, want stdcall", got)
-	}
-
 	src := `package p
 //llgo:type C
 type A int
+// llgo:type C
+type Spaced int
+//llgo:type stdcall
+type Stdcall int
 type (
 	B int
 	C int
@@ -55,6 +41,10 @@ func (A) Hidden() {}
 //go:other
 //go:nointerface
 func (A) StackedHidden() {}
+func (A) Plain() {}
+// ordinary comment
+//go:nointerface
+func (A) HiddenAfterComment() {}
 `
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "p.go", src, parser.ParseComments)
@@ -67,12 +57,17 @@ func (A) StackedHidden() {}
 		t.Fatal(err)
 	}
 
-	ctx := &context{prog: prog}
-	ctx.processNoInterfaceByDoc(nil, "example.com/p.NilDoc")
-	ctx.processNoInterfaceByDoc(&ast.CommentGroup{List: []*ast.Comment{
-		{Text: "// not a directive"},
-		{Text: "//go:nointerface"},
-	}}, "example.com/p.NonDirectiveStops")
+	records := prog.PackageDirectives(pkg)
+	for name, want := range map[string]string{"A": "C", "Spaced": "C", "Stdcall": "stdcall", "B": "", "C": ""} {
+		if got := records.Names[name].(*directive.TypeDecl).Background; got != want {
+			t.Errorf("%s background = %q, want %q", name, got, want)
+		}
+	}
+	for name, want := range map[string]bool{"A.Hidden": true, "A.StackedHidden": true, "A.Plain": false, "A.HiddenAfterComment": true} {
+		if got := records.Names[name].(*directive.FunctionDecl).NoInterface; got != want {
+			t.Errorf("%s nointerface = %v, want %v", name, got, want)
+		}
+	}
 
 	if !prog.PackageSyntaxParsed(pkg) {
 		t.Fatal("package syntax was not marked as parsed")
@@ -137,117 +132,28 @@ func TestParsePkgSyntaxReportsLocalityErrors(t *testing.T) {
 	}
 }
 
-func TestPkgSymInfoAddSymAndInitLinknamesCoverage(t *testing.T) {
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "p.go")
-	src := "package p\n\n//go:linkname Foo c_foo\nfunc Foo()\n"
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
-	}
-
+func TestDeclarationPropertiesWithoutObject(t *testing.T) {
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, srcPath, src, parser.ParseComments)
+	file, err := parser.ParseFile(fset, "p.go", `package p
+type T struct{}
+type Alias = *T
+//llgo:env
+//go:wasmimport test method
+func (Alias) M() {}
+`, parser.ParseComments)
 	if err != nil {
-		t.Fatalf("ParseFile failed: %v", err)
+		t.Fatal(err)
 	}
-
-	var fnPos token.Pos
-	for _, decl := range file.Decls {
-		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "Foo" {
-			fnPos = fn.Name.Pos()
-			break
-		}
-	}
-	if fnPos == token.NoPos {
-		t.Fatalf("failed to find Foo position")
-	}
-
-	syms := newPkgSymInfo()
-	syms.addSym(fset, fnPos, "example.com/p.Foo", "Foo", false)
-
-	tf := fset.File(file.Pos())
-	syms.addSym(fset, tf.LineStart(2), "example.com/p.Skip", "Skip", false)
-	if _, ok := syms.syms["Skip"]; ok {
-		t.Fatalf("symbol with line<=2 should be skipped")
-	}
-
-	// cover os.ReadFile error branch inside addSym.
-	ff := fset.AddFile(filepath.Join(dir, "missing.go"), -1, 100)
-	ff.SetLines([]int{0, 10, 20, 30, 40, 50})
-	syms.addSym(fset, ff.LineStart(4), "example.com/p.Miss", "Miss", false)
-	if _, ok := syms.syms["Miss"]; !ok {
-		t.Fatalf("symbol should still be recorded when file read fails")
-	}
-
 	prog := llssa.NewProgram(nil)
-	ctx := &context{prog: prog}
-	syms.initLinknames(ctx)
-	if got, ok := prog.Linkname("example.com/p.Foo"); !ok || got != "c_foo" {
-		t.Fatalf("linkname = (%q,%v), want (%q,%v)", got, ok, "c_foo", true)
-	}
-}
-
-func TestAstAndTypesFuncNameCoverage(t *testing.T) {
-	full, inPkg := astFuncName("example.com/p", &ast.FuncDecl{Name: &ast.Ident{Name: "F"}}, nil)
-	if full != "example.com/p.F" || inPkg != "F" {
-		t.Fatalf("astFuncName(func)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.F", "F")
-	}
-
-	ptrRecv := &ast.FuncDecl{
-		Name: &ast.Ident{Name: "M"},
-		Recv: &ast.FieldList{List: []*ast.Field{
-			{Type: &ast.StarExpr{X: &ast.ParenExpr{X: &ast.Ident{Name: "T"}}}},
-		}},
-	}
-	full, inPkg = astFuncName("example.com/p", ptrRecv, nil)
-	if full != "example.com/p.(*T).M" || inPkg != "(*T).M" {
-		t.Fatalf("astFuncName(method ptr)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.(*T).M", "(*T).M")
-	}
-
+	defer prog.Dispose()
 	pkg := types.NewPackage("example.com/p", "p")
-	tObj := types.NewTypeName(token.NoPos, pkg, "T", nil)
-	named := types.NewNamed(tObj, types.NewStruct(nil, nil), nil)
-
-	methodPtr := types.NewFunc(token.NoPos, pkg, "M", types.NewSignature(
-		types.NewVar(token.NoPos, pkg, "", types.NewPointer(named)), nil, nil, false,
-	))
-	full, inPkg = typesFuncName(pkg.Path(), methodPtr)
-	if full != "example.com/p.(*T).M" || inPkg != "(*T).M" {
-		t.Fatalf("typesFuncName(method ptr)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.(*T).M", "(*T).M")
+	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
+		t.Fatal(err)
 	}
-
-	methodVal := types.NewFunc(token.NoPos, pkg, "N", types.NewSignature(
-		types.NewVar(token.NoPos, pkg, "", named), nil, nil, false,
-	))
-	full, inPkg = typesFuncName(pkg.Path(), methodVal)
-	if full != "example.com/p.T.N" || inPkg != "T.N" {
-		t.Fatalf("typesFuncName(method val)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.T.N", "T.N")
-	}
-
-	fn := types.NewFunc(token.NoPos, pkg, "Top", types.NewSignature(nil, nil, nil, false))
-	full, inPkg = typesFuncName(pkg.Path(), fn)
-	if full != "example.com/p.Top" || inPkg != "Top" {
-		t.Fatalf("typesFuncName(func)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.Top", "Top")
-	}
-}
-
-func TestDeclarationFuncNameWithoutObject(t *testing.T) {
-	pkg := types.NewPackage("example.com/p", "p")
-	tObj := types.NewTypeName(token.NoPos, pkg, "T", nil)
-	named := types.NewNamed(tObj, types.NewStruct(nil, nil), nil)
-	aliasObj := types.NewTypeName(token.NoPos, pkg, "Alias", nil)
-	alias := types.NewAlias(aliasObj, types.NewPointer(named))
-	decl := &ast.FuncDecl{
-		Name: ast.NewIdent("M"),
-		Recv: &ast.FieldList{List: []*ast.Field{{Type: ast.NewIdent("Alias")}}},
-	}
-	recv := types.NewVar(token.NoPos, pkg, "", alias)
-	if got, want := declarationFuncName(pkg.Path(), decl, nil, recv), "example.com/p.(*T).M"; got != want {
-		t.Fatalf("declarationFuncName without object = %q, want %q", got, want)
-	}
-	decl.Recv = nil
-	if got, want := declarationFuncName(pkg.Path(), decl, nil, nil), "example.com/p.M"; got != want {
-		t.Fatalf("declarationFuncName without receiver = %q, want %q", got, want)
+	decl := file.Decls[2].(*ast.FuncDecl)
+	record := prog.FunctionDeclaration(pkg, nil, decl)
+	if record == nil || !record.ClosureEnv || record.WasmImport == nil || record.WasmImport.Name != "method" {
+		t.Fatalf("declaration without object lost source properties: %+v", record)
 	}
 }
 
@@ -281,7 +187,15 @@ func TestParsePkgSyntaxCollectsLinknames(t *testing.T) {
 		})
 	}
 	prog := llssa.NewProgram(nil)
-	collectDeclarationDirectives(prog, nil, &ast.CommentGroup{List: []*ast.Comment{{Text: "//go:linkname Other C.other"}}}, llssa.PkgRuntime+".Sigsetjmp", "Sigsetjmp", token.NoPos)
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "mismatch.go", "package runtime\n//go:linkname Other C.other\nfunc Sigsetjmp()\n", parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ParsePkgSyntax(prog, fset, types.NewPackage(llssa.PkgRuntime, "runtime"), []*ast.File{file}); err != nil {
+		t.Fatal(err)
+	}
+
 	if _, ok := prog.Linkname(llssa.PkgRuntime + ".Sigsetjmp"); ok {
 		t.Fatal("mismatched linkname was collected")
 	}
@@ -338,7 +252,7 @@ func plain() {}
 	want := map[string]bool{"env": true, "spaced": true, "plain": false}
 	for _, node := range file.Decls {
 		decl := node.(*ast.FuncDecl)
-		fullName, _ := astFuncName(pkg.Path(), decl, nil)
+		fullName := pkg.Path() + "." + directive.FuncName(decl)
 		got := prog.HasClosureEnvDirective(fset, fullName, decl.Pos())
 		if got != want[decl.Name.Name] {
 			t.Fatalf("HasClosureEnvDirective(%s) = %v, want %v", decl.Name.Name, got, want[decl.Name.Name])
@@ -383,15 +297,18 @@ func malformed()
 	}
 }
 
-func TestCollectDeclarationDirectivesIgnoresOtherDirectives(t *testing.T) {
+func TestParsePkgSyntaxIgnoresNonLinkDirectives(t *testing.T) {
 	prog := llssa.NewProgram(nil)
-	doc := &ast.CommentGroup{List: []*ast.Comment{
-		{Text: "//go:noinline"},
-		{Text: "//llgointernal:tls"},
-	}}
-	const fullName = "example.com/p.Value"
-	collectDeclarationDirectives(prog, nil, doc, fullName, "Value", token.NoPos)
-	if _, ok := prog.Linkname(fullName); ok {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "nonlink.go", "package p\n//go:noinline\n//llgointernal:tls\nvar value int\n", parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := types.NewPackage("example.com/p", "p")
+	if err := ParsePkgSyntaxWithOptions(prog, fset, pkg, []*ast.File{file}, Options{AllowInternalDirectives: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := prog.Linkname("example.com/p.value"); ok {
 		t.Fatal("non-link directives installed a linkname")
 	}
 }
