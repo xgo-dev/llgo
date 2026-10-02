@@ -26,13 +26,13 @@ func TestLargeAggregateThreshold(t *testing.T) {
 	if !l.isLargeAggregate(llvm.ArrayType(ctx.Int8Type(), int(MaxImplicitStackVarSize+1))) {
 		t.Fatal("aggregate above the implicit stack limit was not classified as large")
 	}
-	l.copyMinSize = MinWasmAggregateCopySize
+	l.copyMinSize = MinAggregateCopySize
 	if l.isLargeCopy(ctx.Int64Type()) {
-		t.Fatal("scalar type was classified as a Wasm aggregate copy")
+		t.Fatal("scalar type was classified as an aggregate copy")
 	}
 }
 
-func TestLowerWasmAggregateCopies(t *testing.T) {
+func TestLowerAggregateCopies(t *testing.T) {
 	const testIR = `
 define void @copy(ptr %src, ptr %dst) {
 entry:
@@ -59,10 +59,10 @@ entry:
 	td := llvm.NewTargetData("e-p:32:32-i64:64-n32:64-S128")
 	defer td.Dispose()
 	config := AggregateLoweringConfig{GoWordSize: 8, GCRoots: true, Wasm: true}
-	if got := LowerWasmAggregateCopies(td, mod, config); got != 1 {
+	if got := LowerAggregateCopies(td, mod, config); got != 1 {
 		t.Fatalf("lowered %d copies, want 1", got)
 	}
-	if got := LowerWasmAggregateCopies(td, mod, config); got != 0 {
+	if got := LowerAggregateCopies(td, mod, config); got != 0 {
 		t.Fatalf("second pass lowered %d copies, want 0", got)
 	}
 	if body := mod.NamedFunction("copy").String(); !strings.Contains(body, "@llvm.memmove") {
@@ -73,7 +73,57 @@ entry:
 	}
 }
 
-func TestLowerWasmAggregateCopiesNestedConvergence(t *testing.T) {
+func TestLowerAggregateCopiesAllocUDebugLoc(t *testing.T) {
+	const testIR = `
+define void @copy(ptr %src, ptr %dst, ptr %other) !dbg !3 {
+entry:
+  %v = load [4096 x i8], ptr %src, !dbg !4
+  call void @mutate(ptr %src), !dbg !4
+  store [4096 x i8] %v, ptr %dst, !dbg !4
+  store [4096 x i8] %v, ptr %other, !dbg !4
+  ret void, !dbg !4
+}
+declare void @mutate(ptr)
+!llvm.dbg.cu = !{!0}
+!llvm.module.flags = !{!2}
+!0 = distinct !DICompileUnit(language: DW_LANG_C, file: !1, producer: "t", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)
+!1 = !DIFile(filename: "t.c", directory: "/")
+!2 = !{i32 2, !"Debug Info Version", i32 3}
+!3 = distinct !DISubprogram(name: "copy", scope: !1, file: !1, line: 1, type: !5, spFlags: DISPFlagDefinition, unit: !0)
+!4 = !DILocation(line: 1, column: 1, scope: !3)
+!5 = !DISubroutineType(types: !6)
+!6 = !{null}
+`
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	path := filepath.Join(t.TempDir(), "dbg_copy.ll")
+	if err := os.WriteFile(path, []byte(testIR), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	buf, err := llvm.NewMemoryBufferFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod, err := ctx.ParseIR(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mod.Dispose()
+	td := llvm.NewTargetData("e-m:o-i64:64-i128:128-n32:64-S128")
+	defer td.Dispose()
+	if got := LowerAggregateCopies(td, mod, AggregateLoweringConfig{GoWordSize: 8}); got != 1 {
+		t.Fatalf("lowered %d copies, want 1:\n%s", got, mod.String())
+	}
+	body := mod.NamedFunction("copy").String()
+	if !strings.Contains(body, "AllocU") || !strings.Contains(body, "!dbg") {
+		t.Fatalf("AllocU snapshot missing debug location:\n%s", body)
+	}
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("debug function with AllocU snapshot failed verify: %v\n%s", err, mod.String())
+	}
+}
+
+func TestLowerAggregateCopiesNestedConvergence(t *testing.T) {
 	for _, depth := range []int{1, 8, 32} {
 		t.Run(fmt.Sprint(depth), func(t *testing.T) {
 			var ir strings.Builder
@@ -106,10 +156,10 @@ func TestLowerWasmAggregateCopiesNestedConvergence(t *testing.T) {
 			td := llvm.NewTargetData("e-p:32:32-i64:64-n32:64-S128")
 			defer td.Dispose()
 			config := AggregateLoweringConfig{GoWordSize: 8, GCRoots: true, Wasm: true}
-			if got := LowerWasmAggregateCopies(td, mod, config); got != depth+1 {
+			if got := LowerAggregateCopies(td, mod, config); got != depth+1 {
 				t.Fatalf("lowered %d copies, want %d", got, depth+1)
 			}
-			if got := LowerWasmAggregateCopies(td, mod, config); got != 0 {
+			if got := LowerAggregateCopies(td, mod, config); got != 0 {
 				t.Fatalf("second pass lowered %d copies, want 0", got)
 			}
 			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {

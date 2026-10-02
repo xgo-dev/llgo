@@ -11,9 +11,10 @@ const (
 	// MaxImplicitStackVarSize matches cmd/compile's default limit for
 	// compiler-generated temporaries.
 	MaxImplicitStackVarSize uint64 = 64 * 1024
-	// MinWasmAggregateCopySize is the point at which Wasm aggregate loads and
+	// MinAggregateCopySize is the point at which aggregate loads and
 	// stores are lowered to memory intrinsics to avoid LLVM scalarization.
-	MinWasmAggregateCopySize uint64 = 4 * 1024
+	// Return types and the native stack/return ABI still use MaxImplicitStackVarSize.
+	MinAggregateCopySize uint64 = 4 * 1024
 
 	runtimeAllocU = "github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU"
 )
@@ -33,12 +34,14 @@ func LowerLargeAggregates(td llvm.TargetData, m llvm.Module, config AggregateLow
 	l.transformModule(m)
 }
 
-// LowerWasmAggregateCopies applies the same snapshot lowering to copies of at
-// least 4 KiB. LLVM scalarizes these too, notably in reflection's by-value
-// wrappers. Return types and the native stack/return ABI limits are unchanged.
-func LowerWasmAggregateCopies(td llvm.TargetData, m llvm.Module, config AggregateLoweringConfig) int {
+// LowerAggregateCopies applies snapshot lowering to copies of at least 4 KiB
+// on every target. LLVM scalarizes these too, notably in reflection's by-value
+// wrappers and mid-size array literals. Return types and the native stack/return
+// ABI limits are unchanged. config.Wasm still selects the wasm GC-root frame
+// layout and is independent of this pass.
+func LowerAggregateCopies(td llvm.TargetData, m llvm.Module, config AggregateLoweringConfig) int {
 	l := newLargeAggregateLowerer(td, config)
-	l.copyMinSize = MinWasmAggregateCopySize
+	l.copyMinSize = MinAggregateCopySize
 	changed := 0
 	// The pass is monotonic: every rewrite removes one qualifying aggregate
 	// load, and can expose only projections into a strictly nested aggregate.
@@ -218,7 +221,7 @@ func (l *largeAggregateLowerer) transformStoredLoad(m llvm.Module, load llvm.Val
 		load.EraseFromParentAsInstruction()
 		return
 	}
-	snapshot := l.allocResult(m, ctx, b, typ)
+	snapshot := l.allocResult(m, ctx, b, typ, load.InstructionDebugLoc())
 	// This allocation is a new safepoint that was absent from the frontend's
 	// root plan. Keep the source alive before allocating, not only the result
 	// afterwards; reflection wrappers can have no original allocation at all.
@@ -238,7 +241,7 @@ func (l *largeAggregateLowerer) transformCall(m llvm.Module, call llvm.Value) {
 	defer b.Dispose()
 	b.SetInsertPointBefore(call)
 
-	result := l.allocResult(m, ctx, b, retType)
+	result := l.allocResult(m, ctx, b, retType, call.InstructionDebugLoc())
 	params := make([]llvm.Value, 1, oldType.ParamTypesCount()+1)
 	params[0] = result
 	reflectMethodByName := call.GetCallSiteStringAttribute(-1, "llgo.reflect.methodbyname")
@@ -404,7 +407,7 @@ func setCopyVolatile(ctx llvm.Context, copy llvm.Value, volatile bool) {
 	}
 }
 
-func (l *largeAggregateLowerer) allocResult(m llvm.Module, ctx llvm.Context, b llvm.Builder, typ llvm.Type) llvm.Value {
+func (l *largeAggregateLowerer) allocResult(m llvm.Module, ctx llvm.Context, b llvm.Builder, typ llvm.Type, loc llvm.Metadata) llvm.Value {
 	intType := ctx.IntType(l.goWordSize * 8)
 	ptrType := llvm.PointerType(ctx.Int8Type(), 0)
 	fnType := llvm.FunctionType(ptrType, []llvm.Type{intType}, false)
@@ -414,6 +417,7 @@ func (l *largeAggregateLowerer) allocResult(m llvm.Module, ctx llvm.Context, b l
 	}
 	size := llvm.ConstInt(intType, l.td.TypeAllocSize(typ), false)
 	result := llvm.CreateCall(b, fnType, fn, []llvm.Value{size})
+	result.InstructionSetDebugLoc(loc)
 	l.allocations = append(l.allocations, result)
 	return result
 }

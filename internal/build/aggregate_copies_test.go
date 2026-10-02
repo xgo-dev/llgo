@@ -11,8 +11,8 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-func wasmAggregateConfig(bits int, roots bool) abi.AggregateLoweringConfig {
-	return abi.AggregateLoweringConfig{GoWordSize: bits / 8, GCRoots: roots, Wasm: true}
+func aggregateCopyConfig(bits int, roots, wasm bool) abi.AggregateLoweringConfig {
+	return abi.AggregateLoweringConfig{GoWordSize: bits / 8, GCRoots: roots, Wasm: wasm}
 }
 
 func parseWasmAggregateIR(t *testing.T, source string) llvm.Module {
@@ -38,7 +38,7 @@ func parseWasmAggregateIR(t *testing.T, source string) llvm.Module {
 	return mod
 }
 
-func TestLowerWasmAggregateCopies(t *testing.T) {
+func TestLowerAggregateCopies(t *testing.T) {
 	for _, bits := range []int{32, 64} {
 		t.Run(fmt.Sprint(bits), func(t *testing.T) {
 			td := llvm.NewTargetData(fmt.Sprintf("e-p:%d:%d-i64:64-n32:64-S128", bits, bits))
@@ -67,7 +67,7 @@ func TestLowerWasmAggregateCopies(t *testing.T) {
 					if tc.intrinsic != "" {
 						want = 1
 					}
-					if got := lowerWasmAggregateCopies("wasm", td, mod, wasmAggregateConfig(bits, true)); got != want {
+					if got := lowerAggregateCopies(td, mod, aggregateCopyConfig(bits, true, true)); got != want {
 						t.Fatalf("lowered %d operations, want %d:\n%s", got, want, mod.String())
 					}
 					if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
@@ -87,21 +87,23 @@ func TestLowerWasmAggregateCopies(t *testing.T) {
 					if strings.Contains(body, "alloca ") || strings.Contains(body, "AllocU") || strings.Contains(body, "load ") || strings.Contains(body, "store ") {
 						t.Fatalf("copy allocated storage or retained aggregate accesses:\n%s", body)
 					}
-					if got := lowerWasmAggregateCopies("wasm", td, mod, wasmAggregateConfig(bits, true)); got != 0 {
+					if got := lowerAggregateCopies(td, mod, aggregateCopyConfig(bits, true, true)); got != 0 {
 						t.Fatal("copy lowering is not idempotent")
 					}
 				})
 			}
 			mod := parseWasmAggregateIR(t, "define void @copy(ptr %p) { store volatile [8192 x i8] zeroinitializer, ptr %p\nret void }")
-			before := mod.String()
-			if lowerWasmAggregateCopies("amd64", td, mod, wasmAggregateConfig(bits, true)) != 0 || mod.String() != before {
-				t.Fatal("changed native aggregate operations")
+			if got := lowerAggregateCopies(td, mod, aggregateCopyConfig(bits, true, false)); got != 1 {
+				t.Fatalf("native copy lowering changed %d operations, want 1:\n%s", got, mod.String())
+			}
+			if body := mod.NamedFunction("copy").String(); !strings.Contains(body, "@llvm.memset") {
+				t.Fatalf("native zero store was not lowered to memset:\n%s", body)
 			}
 		})
 	}
 }
 
-func TestLowerWasmAggregateCopiesSnapshots(t *testing.T) {
+func TestLowerAggregateCopiesSnapshots(t *testing.T) {
 	const source = `
 %WithPointer = type { ptr, [8192 x i8] }
 declare void @mutate(ptr)
@@ -129,7 +131,7 @@ define [8192 x i8] @identity([8192 x i8] %value) {
 				defer td.Dispose()
 				mod := parseWasmAggregateIR(t, source)
 				identity := mod.NamedFunction("identity").String()
-				if got := lowerWasmAggregateCopies("wasm", td, mod, wasmAggregateConfig(bits, roots)); got != 1 {
+				if got := lowerAggregateCopies(td, mod, aggregateCopyConfig(bits, roots, true)); got != 1 {
 					t.Fatalf("lowered %d copies, want one snapshot", got)
 				}
 				if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
@@ -164,7 +166,7 @@ define [8192 x i8] @identity([8192 x i8] %value) {
 						}
 					}
 				}
-				if allocations != 1 || lowerWasmAggregateCopies("wasm", td, mod, wasmAggregateConfig(bits, roots)) != 0 {
+				if allocations != 1 || lowerAggregateCopies(td, mod, aggregateCopyConfig(bits, roots, true)) != 0 {
 					t.Fatal("snapshot allocation was duplicated")
 				}
 			})
@@ -172,7 +174,7 @@ define [8192 x i8] @identity([8192 x i8] %value) {
 	}
 }
 
-func TestLowerWasmAggregateCopiesNestedSnapshots(t *testing.T) {
+func TestLowerAggregateCopiesNestedSnapshots(t *testing.T) {
 	const source = `
 %Deferred = type { ptr, { i32, [8192 x i8] } }
 declare void @mutate(ptr)
@@ -196,7 +198,7 @@ second:
 				td := llvm.NewTargetData(fmt.Sprintf("e-p:%d:%d-i64:64-n32:64-S128", bits, bits))
 				defer td.Dispose()
 				mod := parseWasmAggregateIR(t, source)
-				if got := lowerWasmAggregateCopies("wasm", td, mod, wasmAggregateConfig(bits, roots)); got != 2 {
+				if got := lowerAggregateCopies(td, mod, aggregateCopyConfig(bits, roots, true)); got != 2 {
 					t.Fatalf("lowered %d copies, want the closure and its array argument", got)
 				}
 				if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
@@ -210,7 +212,7 @@ second:
 				if strings.Contains(body, "llvm_gc_root_chain") != roots {
 					t.Fatalf("nested snapshot root publication does not match GC policy:\n%s", body)
 				}
-				if got := lowerWasmAggregateCopies("wasm", td, mod, wasmAggregateConfig(bits, roots)); got != 0 {
+				if got := lowerAggregateCopies(td, mod, aggregateCopyConfig(bits, roots, true)); got != 0 {
 					t.Fatalf("another pass still lowered %d copies", got)
 				}
 			})
