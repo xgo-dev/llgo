@@ -1,6 +1,7 @@
 package plan9asm
 
 import (
+	"fmt"
 	"go/ast"
 	"go/importer"
 	"go/parser"
@@ -14,6 +15,43 @@ import (
 	llpackages "github.com/xgo-dev/llgo/internal/packages"
 	extplan9asm "github.com/xgo-dev/plan9asm"
 )
+
+func TestTranslateGOAMD64CPUDetectionLevel(t *testing.T) {
+	pkg := mustTestPackage(t, "internal/cpu", "package cpu\nfunc getGOAMD64level() int32\n")
+	asm := []byte(`TEXT ·getGOAMD64level(SB),NOSPLIT,$0-4
+#ifdef GOAMD64_v4
+ MOVL $4, ret+0(FP)
+#else
+#ifdef GOAMD64_v3
+ MOVL $3, ret+0(FP)
+#else
+#ifdef GOAMD64_v2
+ MOVL $2, ret+0(FP)
+#else
+ MOVL $1, ret+0(FP)
+#endif
+#endif
+#endif
+ RET
+`)
+	for _, level := range []string{"", "v1", "v2", "v3", "v4"} {
+		t.Run(level, func(t *testing.T) {
+			tr, err := TranslateSourceModuleForPkgWithOptions(pkg, "cpu_x86.s", asm, "linux", "amd64", TranslateOptions{GOAMD64: level})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tr.Module.Dispose()
+			want := byte('1')
+			if level != "" {
+				want = level[1]
+			}
+			ir := tr.Module.NamedFunction("internal/cpu.getGOAMD64level").String()
+			if !strings.Contains(ir, fmt.Sprintf("ret i32 %c", want)) {
+				t.Fatalf("wrong CPU baseline for %q:\n%s", level, ir)
+			}
+		})
+	}
+}
 
 func mustTestPackage(t *testing.T, pkgPath, src string) *llpackages.Package {
 	t.Helper()

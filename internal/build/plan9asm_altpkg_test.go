@@ -17,12 +17,16 @@ func TestPlan9AsmTranslateOptions(t *testing.T) {
 		{name: "386 sse2", conf: Config{Goarch: "386", GO386: "sse2"}, want: extplan9asm.X87Auto},
 		{name: "386 softfloat", conf: Config{Goarch: "386", GO386: "softfloat"}, want: extplan9asm.X87Software},
 		{name: "other architecture", conf: Config{Goarch: "amd64", GO386: "softfloat"}, want: extplan9asm.X87Auto},
+		{name: "amd64 v3", conf: Config{Goarch: "amd64", GOAMD64: "v3"}, want: extplan9asm.X87Auto},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			got := plan9asmTranslateOptions(&test.conf)
 			if got.GOARM != test.conf.GOARM {
 				t.Fatalf("GOARM = %q, want %q", got.GOARM, test.conf.GOARM)
+			}
+			if got.GOAMD64 != test.conf.GOAMD64 {
+				t.Fatalf("GOAMD64 = %q, want %q", got.GOAMD64, test.conf.GOAMD64)
 			}
 			if got.X87Mode != test.want {
 				t.Fatalf("X87Mode = %v, want %v", got.X87Mode, test.want)
