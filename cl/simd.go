@@ -32,6 +32,7 @@ const (
 	simdScalarShift
 	simdVectorShift
 	simdSignedShift
+	simdConvert
 )
 
 type simdOperation struct {
@@ -96,6 +97,9 @@ var simdOperations = map[simdKey]simdOperation{
 // These registrations share lowering but retain exact declaration names and
 // signature checks. Source Go slice helpers keep their own bounds checks.
 func init() {
+	for _, name := range []string{"ConvertToInt8", "ConvertToUint8", "ConvertToInt16", "ConvertToUint16", "ConvertToInt32", "ConvertToUint32", "ConvertToInt64", "ConvertToUint64", "ConvertToFloat32", "ConvertToFloat64"} {
+		simdOperations[simdKey{"numeric", name}] = simdOperation{llssa.SIMDConvert, simdConvert, 0}
+	}
 	for _, name := range []string{"Mask8x16", "Mask16x8", "Mask32x4", "Mask64x2"} {
 		simdOperations[simdKey{"", name + "FromBits"}] = simdOperation{llssa.SIMDMaskFromBits, simdMaskFromBits, 0}
 	}
@@ -221,12 +225,16 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 		}
 	case simdTernary:
 		params = []types.Type{vector, vector}
-	case simdBitcast:
+	case simdBitcast, simdConvert:
 		if sig.Results().Len() != 1 {
 			return false
 		}
 		result = sig.Results().At(0).Type()
-		if _, ok := llssa.SIMDNumericShape(result); !ok {
+		shape, ok := llssa.SIMDNumericShape(result)
+		if !ok || d.signature == simdConvert && shape.Len() < lanes.Len() {
+			return false
+		}
+		if d.signature == simdConvert && shape.Len() != lanes.Len() && lanes.Elem().Underlying().(*types.Basic).Info()&types.IsFloat == 0 && shape.Elem().Underlying().(*types.Basic).Info()&types.IsFloat == 0 {
 			return false
 		}
 	case simdUnary:

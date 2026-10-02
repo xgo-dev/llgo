@@ -9,22 +9,22 @@ import (
 	_ "unsafe"
 )
 
-//go:linkname simdConvert simd/archsimd.Float32x4.ConvertToInt32
-func simdConvert(x archsimd.Float32x4) archsimd.Int32x4
+//go:linkname simdAverage simd/archsimd.Uint8x16.Average
+func simdAverage(x, y archsimd.Uint8x16) archsimd.Uint8x16
 
 func TestUnimplementedSIMD(t *testing.T) {
-	var x archsimd.Float32x4
-	method := x.ConvertToInt32
+	var x archsimd.Uint8x16
+	method := x.Average
 	for _, tc := range []struct {
 		name   string
 		call   func()
 		symbol string
 	}{
-		{"direct", func() { x.ConvertToInt32() }, "simd/archsimd.Float32x4.ConvertToInt32"},
-		{"method value", func() { method() }, "simd/archsimd.Float32x4.ConvertToInt32"},
-		{"method expression", func() { indirectConvert(archsimd.Float32x4.ConvertToInt32, x) }, "simd/archsimd.Float32x4.ConvertToInt32"},
-		{"deferred", func() { defer x.ConvertToInt32() }, "simd/archsimd.Float32x4.ConvertToInt32"},
-		{"linkname", func() { simdConvert(x) }, "simd/archsimd.Float32x4.ConvertToInt32"},
+		{"direct", func() { x.Average(x) }, "simd/archsimd.Uint8x16.Average"},
+		{"method value", func() { method(x) }, "simd/archsimd.Uint8x16.Average"},
+		{"method expression", func() { indirectAverage(archsimd.Uint8x16.Average, x, x) }, "simd/archsimd.Uint8x16.Average"},
+		{"deferred", func() { defer x.Average(x) }, "simd/archsimd.Uint8x16.Average"},
+		{"linkname", func() { simdAverage(x, x) }, "simd/archsimd.Uint8x16.Average"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			defer func() {
@@ -38,12 +38,12 @@ func TestUnimplementedSIMD(t *testing.T) {
 		})
 	}
 	// Go helper bodies remain executable; the fallback applies to declarations.
-	if x.Len() != 4 {
+	if x.Len() != 16 {
 		t.Fatal("Go helper was replaced by the fallback")
 	}
 }
 
 //go:noinline
-func indirectConvert(f func(archsimd.Float32x4) archsimd.Int32x4, x archsimd.Float32x4) archsimd.Int32x4 {
-	return f(x)
+func indirectAverage(f func(archsimd.Uint8x16, archsimd.Uint8x16) archsimd.Uint8x16, x, y archsimd.Uint8x16) archsimd.Uint8x16 {
+	return f(x, y)
 }

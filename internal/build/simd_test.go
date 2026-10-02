@@ -36,6 +36,7 @@ func store(p *[4]float32, x archsimd.Float32x4) { x.StoreArray(p) }
 func arithmetic(x, y archsimd.Float32x4) archsimd.Float32x4 { return x.Mul(y).Div(y).Sqrt().Round() }
 func bitcast(x archsimd.Uint32x4) archsimd.Float32x4 { return x.BitsToFloat32() }
 func abs(x archsimd.Int32x4) archsimd.Int32x4 { return x.Abs() }
+func conversion(x archsimd.Float32x4) archsimd.Float32x4 { return x.ConvertToInt32().ConvertToFloat32() }
 func minmax(x, y archsimd.Float32x4) archsimd.Float32x4 { return x.Min(y).Max(y) }
 func round32(x archsimd.Float32x4) archsimd.Float32x4 { return x.Round() }
 func round64(x archsimd.Float64x2) archsimd.Float64x2 { return x.Round() }
@@ -116,6 +117,7 @@ func TestSIMD128LLVM(t *testing.T) {
 				}
 			}
 			for name, instructions := range map[string][]string{
+				"conversion": {"@llvm.fptosi.sat.v4i32.v4f32", "sitofp <4 x i32>"},
 				"arithmetic": {"fmul <4 x float>", "fdiv <4 x float>", "@llvm.sqrt.v4f32"},
 				"bitcast":    {"bitcast <4 x i32>", "to <4 x float>"},
 				"abs":        {"@llvm.abs.v4i32", "i1 false"},
@@ -220,7 +222,7 @@ func TestSIMDIntrinsicDefinitions(t *testing.T) {
 				if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 					t.Fatal(err)
 				}
-				if fn := mod.NamedFunction("simd/archsimd.Float32x4.ConvertToInt32"); fn.IsNil() || !strings.Contains(fn.String(), "PanicSIMDUnimplemented") {
+				if fn := mod.NamedFunction("simd/archsimd.Uint8x16.Average"); fn.IsNil() || !strings.Contains(fn.String(), "PanicSIMDUnimplemented") {
 					t.Fatal("missing explicit unsupported implementation")
 				}
 				if fn := mod.NamedFunction("simd/archsimd.Float32x4.Add"); fn.IsNil() || !strings.Contains(fn.String(), "fadd <4 x float>") {
