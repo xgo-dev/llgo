@@ -89,8 +89,8 @@ var simdOperations = map[simdKey]simdOperation{
 	{"numeric", "Shift"}:         {llssa.SIMDShift, simdSignedShift, types.IsInteger},
 	{"numeric", "AddSaturated"}:  {llssa.SIMDAddSaturated, simdBinary, types.IsInteger},
 	{"numeric", "SubSaturated"}:  {llssa.SIMDSubSaturated, simdBinary, types.IsInteger},
-	{"numeric", "Min"}:           {llssa.SIMDMin, simdBinary, types.IsInteger},
-	{"numeric", "Max"}:           {llssa.SIMDMax, simdBinary, types.IsInteger},
+	{"numeric", "Min"}:           {llssa.SIMDMin, simdBinary, 0},
+	{"numeric", "Max"}:           {llssa.SIMDMax, simdBinary, 0},
 }
 
 // These registrations share lowering but retain exact declaration names and

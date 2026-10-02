@@ -9,22 +9,22 @@ import (
 	_ "unsafe"
 )
 
-//go:linkname simdMin simd/archsimd.Float32x4.Min
-func simdMin(x, y archsimd.Float32x4) archsimd.Float32x4
+//go:linkname simdConvert simd/archsimd.Float32x4.ConvertToInt32
+func simdConvert(x archsimd.Float32x4) archsimd.Int32x4
 
 func TestUnimplementedSIMD(t *testing.T) {
 	var x archsimd.Float32x4
-	method := x.Min
+	method := x.ConvertToInt32
 	for _, tc := range []struct {
 		name   string
 		call   func()
 		symbol string
 	}{
-		{"direct", func() { x.Min(x) }, "simd/archsimd.Float32x4.Min"},
-		{"method value", func() { method(x) }, "simd/archsimd.Float32x4.Min"},
-		{"method expression", func() { indirect(archsimd.Float32x4.Min, x, x) }, "simd/archsimd.Float32x4.Min"},
-		{"deferred", func() { defer x.Min(x) }, "simd/archsimd.Float32x4.Min"},
-		{"linkname", func() { simdMin(x, x) }, "simd/archsimd.Float32x4.Min"},
+		{"direct", func() { x.ConvertToInt32() }, "simd/archsimd.Float32x4.ConvertToInt32"},
+		{"method value", func() { method() }, "simd/archsimd.Float32x4.ConvertToInt32"},
+		{"method expression", func() { indirectConvert(archsimd.Float32x4.ConvertToInt32, x) }, "simd/archsimd.Float32x4.ConvertToInt32"},
+		{"deferred", func() { defer x.ConvertToInt32() }, "simd/archsimd.Float32x4.ConvertToInt32"},
+		{"linkname", func() { simdConvert(x) }, "simd/archsimd.Float32x4.ConvertToInt32"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			defer func() {
@@ -41,4 +41,9 @@ func TestUnimplementedSIMD(t *testing.T) {
 	if x.Len() != 4 {
 		t.Fatal("Go helper was replaced by the fallback")
 	}
+}
+
+//go:noinline
+func indirectConvert(f func(archsimd.Float32x4) archsimd.Int32x4, x archsimd.Float32x4) archsimd.Int32x4 {
+	return f(x)
 }

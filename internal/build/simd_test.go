@@ -36,6 +36,7 @@ func store(p *[4]float32, x archsimd.Float32x4) { x.StoreArray(p) }
 func arithmetic(x, y archsimd.Float32x4) archsimd.Float32x4 { return x.Mul(y).Div(y).Sqrt().Round() }
 func bitcast(x archsimd.Uint32x4) archsimd.Float32x4 { return x.BitsToFloat32() }
 func abs(x archsimd.Int32x4) archsimd.Int32x4 { return x.Abs() }
+func minmax(x, y archsimd.Float32x4) archsimd.Float32x4 { return x.Min(y).Max(y) }
 func round32(x archsimd.Float32x4) archsimd.Float32x4 { return x.Round() }
 func round64(x archsimd.Float64x2) archsimd.Float64x2 { return x.Round() }
 func compare(x, y archsimd.Float32x4) archsimd.Mask32x4 { return x.Equal(y) }
@@ -128,6 +129,12 @@ func TestSIMD128LLVM(t *testing.T) {
 					}
 				}
 			}
+			if target.arch != "amd64" {
+				ir := mod.NamedFunction("main.minmax").String()
+				if !strings.Contains(ir, "@llvm.minimum.v4f32") || !strings.Contains(ir, "@llvm.maximum.v4f32") {
+					t.Fatalf("missing IEEE vector min/max:\n%s", ir)
+				}
+			}
 			if target.arch != "amd64" && !strings.Contains(mod.NamedFunction("main.round32").String(), "@llvm.roundeven.v4f32") {
 				t.Fatal("missing native vector roundeven")
 			}
@@ -213,7 +220,7 @@ func TestSIMDIntrinsicDefinitions(t *testing.T) {
 				if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 					t.Fatal(err)
 				}
-				if fn := mod.NamedFunction("simd/archsimd.Float32x4.Min"); fn.IsNil() || !strings.Contains(fn.String(), "PanicSIMDUnimplemented") {
+				if fn := mod.NamedFunction("simd/archsimd.Float32x4.ConvertToInt32"); fn.IsNil() || !strings.Contains(fn.String(), "PanicSIMDUnimplemented") {
 					t.Fatal("missing explicit unsupported implementation")
 				}
 				if fn := mod.NamedFunction("simd/archsimd.Float32x4.Add"); fn.IsNil() || !strings.Contains(fn.String(), "fadd <4 x float>") {

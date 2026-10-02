@@ -152,7 +152,12 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 	switch op {
 	case SIMDShiftAllLeft, SIMDShiftAllRight, SIMDShiftLeft, SIMDShiftRight, SIMDShift:
 		return b.simdShift(op, args[0], args[1])
-	case SIMDAddSaturated, SIMDSubSaturated, SIMDMin, SIMDMax:
+	case SIMDMin, SIMDMax:
+		if simdLanes(args[0].RawType()).Elem().Underlying().(*types.Basic).Info()&types.IsFloat != 0 {
+			return b.simdFloatMinMax(op, args[0], args[1])
+		}
+		return b.simdIntegerIntrinsic(op, args[0], args[1])
+	case SIMDAddSaturated, SIMDSubSaturated:
 		return b.simdIntegerIntrinsic(op, args[0], args[1])
 	case SIMDMaskFromBits:
 		n := int(simdLanes(result.RawType()).Len())
@@ -488,4 +493,23 @@ func (b Builder) simdRoundEven(x Expr) Expr {
 	smallResult := b.impl.CreateOr(sign, b.impl.CreateSelect(greaterHalf, constant(bias<<fraction), constant(0), ""), "")
 	result := b.impl.CreateSelect(small, smallResult, b.impl.CreateSelect(valid, rounded, bits, ""), "")
 	return Expr{b.impl.CreateBitCast(result, x.ll, ""), x.Type}
+}
+
+func (b Builder) simdFloatMinMax(op SIMDOp, x, y Expr) Expr {
+	if b.Prog.Target().GOARCH == "amd64" {
+		// MINPS/MAXPS return the second operand for unordered or equal lanes,
+		// including opposite signed zeroes. Keep the operand order intact.
+		pred := llvm.FloatOLT
+		if op == SIMDMax {
+			pred = llvm.FloatOGT
+		}
+		cond := b.impl.CreateFCmp(pred, x.impl, y.impl, "")
+		return Expr{b.impl.CreateSelect(cond, x.impl, y.impl, ""), x.Type}
+	}
+	name := "llvm.minimum"
+	if op == SIMDMax {
+		name = "llvm.maximum"
+	}
+	value := b.impl.CreateIntrinsic(x.ll, llvm.LookupIntrinsicID(name), []llvm.Value{x.impl, y.impl}, "")
+	return Expr{value, x.Type}
 }
