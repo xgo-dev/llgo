@@ -49,9 +49,7 @@ func main() {
 // CHECK: [[H_GENERIC_STREAM:%.*]] = call ptr @"{{.*}}AllocZ"(i64 16)
 // CHECK: [[H_STREAM_FIELD:%.*]] = getelementptr inbounds nuw %"{{.*}}GenericServerStream[main.Request,main.Response]", ptr [[H_GENERIC_STREAM]], i32 0, i32 0
 // CHECK: store %"{{.*}}iface" %1, ptr [[H_STREAM_FIELD]]
-// CHECK: [[H_STREAM_ITAB:%.*]] = call ptr @"{{.*}}NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_{{.*}}GenericServerStream[main.Request,main.Response]")
-// CHECK: [[H_STREAM_IFACE0:%.*]] = insertvalue %"{{.*}}iface" undef, ptr [[H_STREAM_ITAB]], 0
-// CHECK: [[H_STREAM_IFACE:%.*]] = insertvalue %"{{.*}}iface" [[H_STREAM_IFACE0]], ptr [[H_GENERIC_STREAM]], 1
+// CHECK: [[H_STREAM_IFACE:%.*]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[H_GENERIC_STREAM]], 1
 // CHECK: [[H_SERVER_DATA:%.*]] = call ptr @"{{.*}}IfacePtrData"(%"{{.*}}iface" [[H_REF_IFACE]])
 // CHECK: [[H_SERVER_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[H_REF_IFACE]], 0
 // CHECK: [[H_METHOD_SLOT:%.*]] = getelementptr ptr, ptr [[H_SERVER_ITAB]], i64 3
@@ -68,9 +66,7 @@ func main() {
 // main supplies the value implementations of ReflectionServer and ServerStream.
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: [[M_SERVER:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_main.server, ptr undef }, ptr {{%.*}}, 1
-// CHECK: [[M_STREAM_ITAB:%.*]] = call ptr @"{{.*}}NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.stream)
-// CHECK: [[M_STREAM0:%.*]] = insertvalue %"{{.*}}iface" undef, ptr [[M_STREAM_ITAB]], 0
-// CHECK: [[M_STREAM:%.*]] = insertvalue %"{{.*}}iface" [[M_STREAM0]], ptr {{%.*}}, 1
+// CHECK: [[M_STREAM:%.*]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr {{%.*}}, 1
 // CHECK: call %"{{.*}}iface" @main.handler(%"{{.*}}eface" [[M_SERVER]], %"{{.*}}iface" [[M_STREAM]])
 
 // CHECK-LABEL: define %"{{.*}}iface" @main.server.ServerReflectionInfo(%main.server %0, %"{{.*}}iface" %1){{.*}} {

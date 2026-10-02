@@ -44,6 +44,10 @@ _llgo_iface$Jvxc0PCI_drlfK7S5npMGdZkQLeRkQ_x2e2CifPE6w8$imethods:
     _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA
 _llgo_int:
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequal64
+_llgo_itab$L6GQSFD-CkxSQ2Op7Cyz91O-GPspzTl0qt0pCN0TtXM:
+    *_llgo_github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.Box[int]
+    _llgo_iface$Jvxc0PCI_drlfK7S5npMGdZkQLeRkQ_x2e2CifPE6w8
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.(*Box[int]).Value
 _llgo_string:
     github.com/xgo-dev/llgo/runtime/internal/runtime.strequal
 github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.(*Box[int]).Drop:
@@ -63,14 +67,12 @@ main.init:
     github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.init
     main.init$guard
 main.main:
-    *_llgo_github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.Box[int]
     *_llgo_github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.Box[string]
-    _llgo_iface$Jvxc0PCI_drlfK7S5npMGdZkQLeRkQ_x2e2CifPE6w8
+    _llgo_itab$L6GQSFD-CkxSQ2Op7Cyz91O-GPspzTl0qt0pCN0TtXM
     github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/api.UseInt
     github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.NewIntBox
     github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.NewStringBox
     github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.UseStringBox
-    github.com/xgo-dev/llgo/runtime/internal/runtime.NewItab
     github.com/xgo-dev/llgo/runtime/internal/runtime.PrintByte
     github.com/xgo-dev/llgo/runtime/internal/runtime.PrintInt
     main.sink
