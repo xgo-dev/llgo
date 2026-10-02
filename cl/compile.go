@@ -708,7 +708,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	if simdDecl {
 		b := fn.MakeBody(1)
 		if simd.op == llssa.SIMDUnimplemented {
-			b.SIMD(simd.op, b.Str(name))
+			b.SIMD(simd.op, p.prog.Void(), b.Str(name))
 			b.Unreachable()
 		} else {
 			n := sig.Params().Len()
@@ -719,7 +719,12 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			for i := range args {
 				args[i] = fn.Param(i)
 			}
-			b.Return(b.SIMD(simd.op, args...))
+			result := b.SIMD(simd.op, p.simdResultType(f.Signature), args...)
+			if sig.Results().Len() == 0 {
+				b.Return()
+			} else {
+				b.Return(result)
+			}
 		}
 		b.EndBuild()
 		b.Dispose()

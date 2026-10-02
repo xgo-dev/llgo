@@ -20,6 +20,10 @@ const (
 	SIMDExtractLane
 	SIMDInsertLane
 	SIMDUnimplemented
+	SIMDLoad
+	SIMDStore
+	SIMDBroadcast
+	SIMDSplatLane0
 )
 
 // SIMDNumericShape validates the official numeric aggregate representation.
@@ -80,12 +84,32 @@ func simdLanes(typ types.Type) *types.Array {
 // SIMD applies the selected operation's feature requirements before lowering.
 // These seven implementations need only baseline native instructions; wasm
 // requires SIMD128. Future feature-specific implementations extend this entry.
-func (b Builder) SIMD(op SIMDOp, args ...Expr) Expr {
+func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 	if op == SIMDUnimplemented {
+		if len(args) != 1 || !types.Identical(args[0].RawType(), types.Typ[types.String]) {
+			panic("SIMD fallback requires an intrinsic name string")
+		}
 		return b.Call(b.Pkg.rtFunc("PanicSIMDUnimplemented"), args...)
 	}
 	b.simdFeatures(op)
 	switch op {
+	case SIMDLoad:
+		ptr := args[0]
+		b.AssertNilDeref(ptr)
+		v := llvm.CreateLoad(b.impl, result.ll, ptr.impl)
+		v.SetAlignment(int(b.Prog.AlignOf(b.Prog.Elem(ptr.Type))))
+		return Expr{v, result}
+	case SIMDStore:
+		ptr := args[1]
+		b.AssertNilDeref(ptr)
+		v := b.impl.CreateStore(args[0].impl, ptr.impl)
+		v.SetAlignment(int(b.Prog.AlignOf(b.Prog.Elem(ptr.Type))))
+		return Expr{v, b.Prog.Void()}
+	case SIMDBroadcast:
+		v := b.impl.CreateInsertElement(llvm.Undef(result.ll), args[0].impl, llvm.ConstInt(b.Prog.tyInt32(), 0, false), "")
+		return b.simdSplatLane0(Expr{v, result})
+	case SIMDSplatLane0:
+		return b.simdSplatLane0(args[0])
 	case SIMDExtractLane:
 		return b.simdGetElem(args[0], args[1])
 	case SIMDInsertLane:
@@ -97,7 +121,7 @@ func (b Builder) SIMD(op SIMDOp, args ...Expr) Expr {
 
 func (b Builder) simdFeatures(op SIMDOp) {
 	switch op {
-	case SIMDAdd, SIMDSub, SIMDAnd, SIMDOr, SIMDXor, SIMDExtractLane, SIMDInsertLane:
+	case SIMDAdd, SIMDSub, SIMDAnd, SIMDOr, SIMDXor, SIMDExtractLane, SIMDInsertLane, SIMDLoad, SIMDStore, SIMDBroadcast, SIMDSplatLane0:
 	default:
 		panic("unsupported SIMD operation")
 	}
@@ -256,4 +280,12 @@ func llvmTypeHasVector(t llvm.Type) bool {
 		}
 	}
 	return false
+}
+
+func (b Builder) simdSplatLane0(x Expr) Expr {
+	mask := make([]llvm.Value, simdLanes(x.RawType()).Len())
+	for i := range mask {
+		mask[i] = llvm.ConstInt(b.Prog.tyInt32(), 0, false)
+	}
+	return Expr{b.impl.CreateShuffleVector(x.impl, llvm.Undef(x.ll), llvm.ConstVector(mask, false), ""), x.Type}
 }

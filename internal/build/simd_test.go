@@ -31,6 +31,8 @@ func loop(x archsimd.Float32x4, n int) (archsimd.Float32x4, int) {
  for i := 0; i < n; i++ { x = x.Add(x) }
  return x, n
 }
+func load(p *[4]float32) archsimd.Float32x4 { return archsimd.LoadFloat32x4Array(p) }
+func store(p *[4]float32, x archsimd.Float32x4) { x.StoreArray(p) }
 func fixed(x archsimd.Float32x4) float32 { return x.GetElem(1) }
 func boxed(x any) archsimd.Float32x4 { return x.(archsimd.Float32x4) }
 func invoke(x, y archsimd.Float32x4) { defer x.Add(y); go x.Sub(y) }
@@ -83,6 +85,12 @@ func TestSIMD128LLVM(t *testing.T) {
 			}
 			if fixed := mod.NamedFunction("main.fixed").String(); strings.Contains(fixed, "PanicSIMDImmediate") || strings.Contains(fixed, "br ") {
 				t.Fatalf("valid constant lane retained a bounds branch:\n%s", fixed)
+			}
+			for _, name := range []string{"load", "store"} {
+				ir := mod.NamedFunction("main." + name).String()
+				if !strings.Contains(ir, name+" <4 x float>") || !strings.Contains(ir, "align 4") {
+					t.Fatalf("%s does not use element-aligned vector memory:\n%s", name, ir)
+				}
 			}
 			identity := mod.NamedFunction("main.identity")
 			if identity.GlobalValueType().ReturnType().TypeKind() != llvm.VectorTypeKind || identity.GlobalValueType().ParamTypes()[0].TypeKind() != llvm.VectorTypeKind {
@@ -195,8 +203,8 @@ func main() { println(broadcast(1).GetElem(0)) }
 			t.Fatal("linkname target body was discarded")
 		}
 		callee := mod.NamedFunction("simd/archsimd.Float32x4.broadcast1To4")
-		if callee.IsNil() || callee.IsDeclaration() || !strings.Contains(callee.String(), "PanicSIMDUnimplemented") {
-			t.Fatal("transitive unsupported intrinsic lacks a panic implementation")
+		if callee.IsNil() || callee.IsDeclaration() || !strings.Contains(callee.String(), "shufflevector") {
+			t.Fatal("transitive broadcast intrinsic lacks a vector implementation")
 		}
 		return
 	}

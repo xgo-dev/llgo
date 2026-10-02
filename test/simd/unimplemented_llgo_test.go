@@ -26,8 +26,6 @@ func TestUnimplementedSIMD(t *testing.T) {
 		{"deferred", func() { defer x.Div(x) }, "simd/archsimd.Float32x4.Div"},
 		{"linkname", func() { simdDiv(x, x) }, "simd/archsimd.Float32x4.Div"},
 		{"mask result", func() { x.Equal(x) }, "simd/archsimd.Float32x4.Equal"},
-		{"package function", func() { archsimd.LoadFloat32x4Array(new([4]float32)) }, "simd/archsimd.LoadFloat32x4Array"},
-		{"helper", func() { archsimd.BroadcastFloat32x4(1) }, "simd/archsimd."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			defer func() {
