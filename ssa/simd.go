@@ -37,11 +37,36 @@ const (
 	SIMDTrunc
 	SIMDRound
 	SIMDBitcast
+	SIMDEqual
+	SIMDNotEqual
+	SIMDLess
+	SIMDLessEqual
+	SIMDGreater
+	SIMDGreaterEqual
+	SIMDToMask
+	SIMDBitSelect
+	SIMDBitSelectNot
+	SIMDBlend
+	SIMDMaskFromBits
+	SIMDMaskToBits
 )
 
 // SIMDNumericShape validates the official numeric aggregate representation.
 // Keep storage knowledge here, separate from operation selection and features.
 func SIMDNumericShape(typ types.Type) (*types.Array, bool) {
+	lanes, ok := SIMDVectorShape(typ)
+	return lanes, ok && !strings.HasPrefix(types.Unalias(typ).(*types.Named).Obj().Name(), "Mask")
+}
+
+// SIMDMaskShape recognizes the four SIMD128 masks. Masks use canonical zero
+// or all-one integer lanes, preserving their public Go storage representation.
+func SIMDMaskShape(typ types.Type) (*types.Array, bool) {
+	lanes, ok := SIMDVectorShape(typ)
+	return lanes, ok && strings.HasPrefix(types.Unalias(typ).(*types.Named).Obj().Name(), "Mask")
+}
+
+// SIMDVectorShape validates numeric and mask SIMD128 storage.
+func SIMDVectorShape(typ types.Type) (*types.Array, bool) {
 	named, ok := types.Unalias(typ).(*types.Named)
 	if !ok || named.Obj().Pkg() == nil || named.Obj().Pkg().Path() != "simd/archsimd" {
 		return nil, false
@@ -73,6 +98,9 @@ func SIMDNumericShape(typ types.Type) (*types.Array, bool) {
 	}
 	name := elem.Name()
 	expected := fmt.Sprintf("%s%sx%d", strings.ToUpper(name[:1]), name[1:], lanes.Len())
+	if strings.HasPrefix(named.Obj().Name(), "Mask") && elem.Info()&types.IsInteger != 0 && elem.Info()&types.IsUnsigned == 0 {
+		expected = fmt.Sprintf("Mask%dx%d", bits, lanes.Len())
+	}
 	if named.Obj().Name() != expected || lanes.Len()*bits != 128 {
 		return nil, false
 	}
@@ -87,7 +115,7 @@ func SIMDNumericShape(typ types.Type) (*types.Array, bool) {
 }
 
 func simdLanes(typ types.Type) *types.Array {
-	lanes, ok := SIMDNumericShape(typ)
+	lanes, ok := SIMDVectorShape(typ)
 	if !ok {
 		panic("unsupported SIMD numeric storage: " + typ.String())
 	}
@@ -113,6 +141,32 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return Expr{v, result}
 	}
 	switch op {
+	case SIMDMaskFromBits:
+		n := int(simdLanes(result.RawType()).Len())
+		bits := b.impl.CreateTrunc(args[0].impl, b.Prog.ctx.IntType(n), "")
+		mask := b.impl.CreateBitCast(bits, llvm.VectorType(b.Prog.Bool().ll, n), "")
+		return Expr{b.impl.CreateSExt(mask, result.ll, ""), result}
+	case SIMDMaskToBits:
+		n := int(simdLanes(args[0].RawType()).Len())
+		mask := llvm.CreateICmp(b.impl, llvm.IntNE, args[0].impl, llvm.ConstNull(args[0].ll))
+		bits := b.impl.CreateBitCast(mask, b.Prog.ctx.IntType(n), "")
+		return Expr{b.impl.CreateZExt(bits, result.ll, ""), result}
+	case SIMDEqual, SIMDNotEqual, SIMDLess, SIMDLessEqual, SIMDGreater, SIMDGreaterEqual:
+		return b.simdCompare(op, result, args[0], args[1])
+	case SIMDToMask:
+		cond := llvm.CreateICmp(b.impl, llvm.IntNE, args[0].impl, llvm.ConstNull(args[0].ll))
+		return Expr{b.impl.CreateSExt(cond, result.ll, ""), result}
+	case SIMDBitSelect, SIMDBitSelectNot, SIMDBlend:
+		x, y, mask := args[0].impl, args[1].impl, args[2].impl
+		if op == SIMDBlend {
+			cond := llvm.CreateICmp(b.impl, llvm.IntSLT, mask, llvm.ConstNull(mask.Type()))
+			return Expr{b.impl.CreateSelect(cond, y, x, ""), result}
+		}
+		if op == SIMDBitSelectNot {
+			x, y = y, x
+		}
+		v := b.impl.CreateOr(b.impl.CreateAnd(x, mask, ""), b.impl.CreateAnd(y, b.impl.CreateNot(mask, ""), ""), "")
+		return Expr{v, result}
 	case SIMDBitcast:
 		return Expr{b.impl.CreateBitCast(args[0].impl, result.ll, ""), result}
 	case SIMDNeg, SIMDNot, SIMDAbs:
@@ -143,6 +197,39 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 	default:
 		panic("unsupported SIMD operation")
 	}
+}
+
+func (b Builder) simdCompare(op SIMDOp, result Type, x, y Expr) Expr {
+	info := simdLanes(x.RawType()).Elem().Underlying().(*types.Basic).Info()
+	var cond llvm.Value
+	if info&types.IsFloat != 0 {
+		pred := map[SIMDOp]llvm.FloatPredicate{
+			SIMDEqual: llvm.FloatOEQ, SIMDNotEqual: llvm.FloatUNE,
+			SIMDLess: llvm.FloatOLT, SIMDLessEqual: llvm.FloatOLE,
+			SIMDGreater: llvm.FloatOGT, SIMDGreaterEqual: llvm.FloatOGE,
+		}[op]
+		cond = b.impl.CreateFCmp(pred, x.impl, y.impl, "")
+	} else {
+		pred := map[SIMDOp]llvm.IntPredicate{
+			SIMDEqual: llvm.IntEQ, SIMDNotEqual: llvm.IntNE,
+			SIMDLess: llvm.IntSLT, SIMDLessEqual: llvm.IntSLE,
+			SIMDGreater: llvm.IntSGT, SIMDGreaterEqual: llvm.IntSGE,
+		}[op]
+		if info&types.IsUnsigned != 0 {
+			switch pred {
+			case llvm.IntSLT:
+				pred = llvm.IntULT
+			case llvm.IntSLE:
+				pred = llvm.IntULE
+			case llvm.IntSGT:
+				pred = llvm.IntUGT
+			case llvm.IntSGE:
+				pred = llvm.IntUGE
+			}
+		}
+		cond = llvm.CreateICmp(b.impl, pred, x.impl, y.impl)
+	}
+	return Expr{b.impl.CreateSExt(cond, result.ll, ""), result}
 }
 
 var simdFloatUnary = map[SIMDOp]string{

@@ -38,6 +38,9 @@ func bitcast(x archsimd.Uint32x4) archsimd.Float32x4 { return x.BitsToFloat32() 
 func abs(x archsimd.Int32x4) archsimd.Int32x4 { return x.Abs() }
 func round32(x archsimd.Float32x4) archsimd.Float32x4 { return x.Round() }
 func round64(x archsimd.Float64x2) archsimd.Float64x2 { return x.Round() }
+func compare(x, y archsimd.Float32x4) archsimd.Mask32x4 { return x.Equal(y) }
+func maskpass(x archsimd.Mask32x4) (archsimd.Mask32x4, int) { return x, 1 }
+func maskbits(x archsimd.Mask32x4) archsimd.Int32x4 { return x.ToInt32x4() }
 func fixed(x archsimd.Float32x4) float32 { return x.GetElem(1) }
 func boxed(x any) archsimd.Float32x4 { return x.(archsimd.Float32x4) }
 func invoke(x, y archsimd.Float32x4) { defer x.Add(y); go x.Sub(y) }
@@ -52,10 +55,22 @@ func main() {
 }
 `
 
+const simdMaskBitmapSource = `package main
+import "simd/archsimd"
+func maskFrom8(x uint16) archsimd.Mask8x16 { return archsimd.Mask8x16FromBits(x) }
+func maskTo8(x archsimd.Mask8x16) uint16 { return x.ToBits() }
+func maskFrom16(x uint8) archsimd.Mask16x8 { return archsimd.Mask16x8FromBits(x) }
+func maskTo16(x archsimd.Mask16x8) uint8 { return x.ToBits() }
+func maskFrom32(x uint8) archsimd.Mask32x4 { return archsimd.Mask32x4FromBits(x) }
+func maskTo32(x archsimd.Mask32x4) uint8 { return x.ToBits() }
+func maskFrom64(x uint8) archsimd.Mask64x2 { return archsimd.Mask64x2FromBits(x) }
+func maskTo64(x archsimd.Mask64x2) uint8 { return x.ToBits() }
+`
+
 func simdTestDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for name, text := range map[string]string{"go.mod": "module simdtest\n\ngo 1.27\n", "main.go": simd128Source} {
+	for name, text := range map[string]string{"go.mod": "module simdtest\n\ngo 1.27\n", "main.go": simd128Source, "bitmap_amd64.go": simdMaskBitmapSource} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -111,6 +126,22 @@ func TestSIMD128LLVM(t *testing.T) {
 			}
 			if target.arch != "amd64" && !strings.Contains(mod.NamedFunction("main.round32").String(), "@llvm.roundeven.v4f32") {
 				t.Fatal("missing native vector roundeven")
+			}
+			if ir := mod.NamedFunction("main.compare").String(); !strings.Contains(ir, "fcmp oeq <4 x float>") || !strings.Contains(ir, "sext <4 x i1>") {
+				t.Fatalf("comparison does not produce canonical vector mask:\n%s", ir)
+			}
+			maskpass := mod.NamedFunction("main.maskpass")
+			params := maskpass.GlobalValueType().ParamTypes()
+			if params[len(params)-1].TypeKind() != llvm.VectorTypeKind || !strings.Contains(maskpass.String(), "sret({ <4 x i32>, i64 })") {
+				t.Fatalf("mask loses vector ABI across multiple-result calls:\n%s", maskpass.String())
+			}
+			if target.arch == "amd64" {
+				for _, name := range []string{"maskFrom8", "maskFrom16", "maskFrom32", "maskFrom64", "maskTo8", "maskTo16", "maskTo32", "maskTo64"} {
+					ir := mod.NamedFunction("main." + name).String()
+					if strings.Contains(ir, "call ") || !strings.Contains(ir, "bitcast") {
+						t.Fatalf("mask bitmap conversion uses an external call:\n%s", ir)
+					}
+				}
 			}
 			identity := mod.NamedFunction("main.identity")
 			if identity.GlobalValueType().ReturnType().TypeKind() != llvm.VectorTypeKind || identity.GlobalValueType().ParamTypes()[0].TypeKind() != llvm.VectorTypeKind {

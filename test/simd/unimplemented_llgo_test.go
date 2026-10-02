@@ -25,7 +25,6 @@ func TestUnimplementedSIMD(t *testing.T) {
 		{"method expression", func() { indirect(archsimd.Float32x4.Min, x, x) }, "simd/archsimd.Float32x4.Min"},
 		{"deferred", func() { defer x.Min(x) }, "simd/archsimd.Float32x4.Min"},
 		{"linkname", func() { simdMin(x, x) }, "simd/archsimd.Float32x4.Min"},
-		{"mask result", func() { x.Equal(x) }, "simd/archsimd.Float32x4.Equal"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			defer func() {

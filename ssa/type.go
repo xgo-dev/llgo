@@ -531,7 +531,7 @@ func (p Program) toLLVMTuple(t *types.Tuple) llvm.Type {
 	// Tuples containing vectors are compiler values, not source Go structs.
 	// Preserve their vector components across multiple-result calls as well.
 	for i := 0; i < t.Len(); i++ {
-		if _, ok := SIMDNumericShape(t.At(i).Type()); ok {
+		if _, ok := SIMDVectorShape(t.At(i).Type()); ok {
 			return p.ctx.StructType(p.toLLVMTypes(t, t.Len()), false)
 		}
 	}
@@ -678,7 +678,7 @@ func (p Program) toNamed(raw *types.Named) Type {
 			break
 		}
 	}
-	if lanes, ok := SIMDNumericShape(raw); ok {
+	if lanes, ok := SIMDVectorShape(raw); ok {
 		typ := &aType{llvm.VectorType(p.rawType(lanes.Elem()).ll, int(lanes.Len())), rawType{raw}, vkSIMD}
 		p.named[name] = typ
 		return typ
