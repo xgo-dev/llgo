@@ -22,6 +22,9 @@ import (
 	"encoding/binary"
 	"go/token"
 	"go/types"
+	"math"
+	"strconv"
+	"strings"
 
 	"github.com/xgo-dev/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
@@ -46,9 +49,22 @@ func (b Builder) newItab(tintf, typ Expr) Expr {
 
 func (b Builder) staticItab(rawIntf *types.Interface, concrete types.Type, tintf, typ Expr) (Expr, bool) {
 	prog := b.Prog
-	if !prog.enableGoGlobalDCE || !prog.enableLTOPluginMarker ||
-		rawIntf.NumMethods() == 0 || concrete == nil {
+	if rawIntf.NumMethods() == 0 || concrete == nil {
 		return Expr{}, false
+	}
+	// Deadcode-drop treats Fun[] as live uses. Skip the static vtable and let
+	// T2I call NewItab, matching LTO method-drop.
+	if !prog.useRuntimeStaticItab() && !prog.enableLTOPluginMarker {
+		return Expr{}, false
+	}
+	rawIntf = rawIntf.Complete()
+	intfName, _ := prog.abi.TypeName(rawIntf)
+	typeName, _ := prog.abi.TypeName(concrete)
+	sum := sha256.Sum256([]byte(intfName + "\x00" + typeName))
+	name := "_llgo_itab$" + base64.RawURLEncoding.EncodeToString(sum[:])
+	itabTy := prog.Pointer(prog.rtType("Itab"))
+	if global := b.Pkg.VarOf(name); global != nil {
+		return Expr{global.impl, itabTy}, true
 	}
 	if !types.AssignableTo(concrete, rawIntf) {
 		return Expr{}, false
@@ -64,14 +80,6 @@ func (b Builder) staticItab(rawIntf *types.Interface, concrete types.Type, tintf
 		methods[i] = method
 	}
 
-	intfName, _ := prog.abi.TypeName(rawIntf)
-	typeName, _ := prog.abi.TypeName(concrete)
-	sum := sha256.Sum256([]byte(intfName + "\x00" + typeName))
-	name := "_llgo_itab$" + base64.RawURLEncoding.EncodeToString(sum[:])
-	if global := b.Pkg.VarOf(name); global != nil {
-		return Expr{global.impl, prog.Pointer(prog.rtType("Itab"))}, true
-	}
-
 	ptr := prog.VoidPtr()
 	funArray := prog.rawType(types.NewArray(ptr.RawType(), int64(len(methods))))
 	staticType := prog.rawType(types.NewStruct([]*types.Var{
@@ -80,13 +88,20 @@ func (b Builder) staticItab(rawIntf *types.Interface, concrete types.Type, tintf
 		types.NewVar(token.NoPos, nil, "hash", types.Typ[types.Uint32]),
 		types.NewVar(token.NoPos, nil, "fun", funArray.RawType()),
 	}, nil))
-	global := b.Pkg.NewVarEx(name, prog.Pointer(staticType))
 	funcs := make([]llvm.Value, len(methods))
 	for i, method := range methods {
-		funcs[i], _ = b.abiMethodFuncs(concrete, method)
+		ifn, _ := b.abiMethodFuncs(concrete, method)
+		if ifn.IsNil() {
+			return Expr{}, false
+		}
+		funcs[i] = ifn
 	}
-	hashBytes := sha256.Sum256([]byte(typeName))
-	hash := binary.LittleEndian.Uint32(hashBytes[:4])
+	hash, ok := typeHashFromGlobal(typ.impl)
+	if !ok {
+		hashBytes := sha256.Sum256([]byte(typeName))
+		hash = binary.LittleEndian.Uint32(hashBytes[:4])
+	}
+	global := b.Pkg.NewVarEx(name, prog.Pointer(staticType))
 	global.impl.SetInitializer(prog.constStructValue(staticType, []llvm.Value{
 		tintf.impl,
 		typ.impl,
@@ -101,28 +116,122 @@ func (b Builder) staticItab(rawIntf *types.Interface, concrete types.Type, tintf
 	}))
 	global.impl.SetGlobalConstant(true)
 	b.Pkg.setODRLinkage(global.impl, llvm.WeakODRLinkage)
+	// The T2I site is the only reference so --gc-sections/-dead_strip can
+	// drop itabs that belong to dead functions.
 
-	// Describe each function slot with private LLGo metadata. The template is a
-	// compile-time certificate, not a runtime vtable, so it must not participate
-	// in LLVM's type-test candidate sets before the plugin consumes it.
-	slotKind := prog.ctx.MDKindID("llgo.static.itab.slot")
-	funOffset := uint64(prog.td.ElementOffset(staticType.ll, 3))
-	stride := uint64(prog.td.TypeAllocSize(prog.storageType(ptr)))
-	interfaceTypeID := prog.interfaceCapabilityKey(rawIntf)
-	for i := range methods {
-		offset := funOffset + uint64(i)*stride
-		typeID := interfaceMethodCapabilityKeyFromID(interfaceTypeID, i)
-		node := prog.ctx.MDNode([]llvm.Metadata{
-			llvm.ConstInt(prog.Int64().ll, offset, false).ConstantAsMetadata(),
-			prog.ctx.MDString(typeID),
-		})
-		global.impl.AddMetadata(slotKind, node)
+	if prog.enableLTOPluginMarker {
+		slotKind := prog.ctx.MDKindID("llgo.static.itab.slot")
+		funOffset := uint64(prog.td.ElementOffset(staticType.ll, 3))
+		stride := uint64(prog.td.TypeAllocSize(prog.storageType(ptr)))
+		interfaceTypeID := prog.interfaceCapabilityKey(rawIntf)
+		for i := range methods {
+			offset := funOffset + uint64(i)*stride
+			typeID := interfaceMethodCapabilityKeyFromID(interfaceTypeID, i)
+			node := prog.ctx.MDNode([]llvm.Metadata{
+				llvm.ConstInt(prog.Int64().ll, offset, false).ConstantAsMetadata(),
+				prog.ctx.MDString(typeID),
+			})
+			global.impl.AddMetadata(slotKind, node)
+		}
+		// Keep the template until the LTO plugin consumes it. Runtime T2I
+		// still uses NewItab so GlobalDCE can drop unused itab methods.
+		b.Pkg.markLLVMUsed(global.impl)
 	}
-	// Keep the otherwise-dormant template through package optimization without
-	// perturbing function IR. The LTO plugin removes this compiler.used entry
-	// after using the template as a compile-time devirtualization certificate.
-	b.Pkg.markLLVMUsed(global.impl)
-	return Expr{global.impl, prog.Pointer(prog.rtType("Itab"))}, true
+	return Expr{global.impl, itabTy}, true
+}
+
+// staticIfaceBox puts a compile-time constant in a read-only global and
+// returns its address, matching cmd/compile's static temps / staticuint64s
+// for non-direct interface data. Integers and bools stay IfaceIndir (data is
+// a pointer to the copy), so reflect and equality keep Go's layout.
+func (b Builder) staticIfaceBox(typ Type, x Expr) (llvm.Value, bool) {
+	if x.impl.IsNil() || x.impl.IsAConstant().IsNil() {
+		return llvm.Value{}, false
+	}
+	if box, ok := b.Pkg.ifaceBoxByValue[x.impl]; ok {
+		return box, true
+	}
+	prog := b.Prog
+	// Zero-sized values alias the shared module sentinel. Mutating that
+	// global's const/linkage would affect every zero-sized alloc in the package.
+	if prog.td.TypeAllocSize(prog.storageType(typ)) == 0 {
+		return llvm.Value{}, false
+	}
+	typeName, _ := prog.abi.TypeName(typ.raw.Type)
+	// Hash the constant's bits, not LLVM's printed form. Value.String() uses
+	// module-local names like @0, so same-length strings in different
+	// packages collided under Windows COMDAT any and mixed panic payloads.
+	sum := sha256.Sum256([]byte(typeName + "\x00" + constantFingerprint(x.impl)))
+	name := "_llgo_ifacebox$" + base64.RawURLEncoding.EncodeToString(sum[:])
+	if g := b.Pkg.VarOf(name); g != nil {
+		b.Pkg.cacheIfaceBox(x.impl, g.impl)
+		return g.impl, true
+	}
+	g := b.Pkg.NewVarEx(name, prog.Pointer(typ))
+	if g.isZeroSizedAlias || g.impl.IsNil() {
+		return llvm.Value{}, false
+	}
+	g.Init(x)
+	g.impl.SetGlobalConstant(true)
+	g.impl.SetUnnamedAddr(true)
+	b.Pkg.setODRLinkage(g.impl, llvm.WeakODRLinkage)
+	b.Pkg.cacheIfaceBox(x.impl, g.impl)
+	return g.impl, true
+}
+
+func (p Package) cacheIfaceBox(val, box llvm.Value) {
+	if p.ifaceBoxByValue == nil {
+		p.ifaceBoxByValue = make(map[llvm.Value]llvm.Value)
+	}
+	p.ifaceBoxByValue[val] = box
+}
+
+func constantFingerprint(v llvm.Value) string {
+	if v.IsNil() {
+		return "-"
+	}
+	if !v.IsAConstantInt().IsNil() {
+		return "i" + strconv.FormatUint(v.ZExtValue(), 16)
+	}
+	if !v.IsAConstantFP().IsNil() {
+		value, _ := v.DoubleValue()
+		switch v.Type().TypeKind() {
+		case llvm.FloatTypeKind:
+			return "f32:" + strconv.FormatUint(uint64(math.Float32bits(float32(value))), 16)
+		case llvm.DoubleTypeKind:
+			return "f64:" + strconv.FormatUint(math.Float64bits(value), 16)
+		}
+	}
+	if !v.IsAConstantPointerNull().IsNil() {
+		return "n"
+	}
+	if !v.IsAConstantAggregateZero().IsNil() {
+		return "z"
+	}
+	if !v.IsAFunction().IsNil() {
+		return "f:" + v.Name()
+	}
+	if !v.IsAGlobalVariable().IsNil() {
+		if init := v.Initializer(); !init.IsNil() {
+			if init.IsConstantString() {
+				return "b:" + init.ConstGetAsString()
+			}
+			return "g{" + constantFingerprint(init) + "}"
+		}
+		return "gn:" + v.Name()
+	}
+	n := v.OperandsCount()
+	if n == 0 {
+		if v.IsConstantString() {
+			return "b:" + v.ConstGetAsString()
+		}
+		return "?"
+	}
+	parts := make([]string, n)
+	for i := 0; i < n; i++ {
+		parts[i] = constantFingerprint(v.Operand(i))
+	}
+	return "(" + strings.Join(parts, ",") + ")"
 }
 
 func (b Builder) unsafeInterface(rawIntf *types.Interface, concrete types.Type, t Expr, data llvm.Value) llvm.Value {
@@ -130,13 +239,29 @@ func (b Builder) unsafeInterface(rawIntf *types.Interface, concrete types.Type, 
 		return b.unsafeEface(t.impl, data)
 	}
 	tintf := b.abiType(rawIntf)
-	// Emit a constant template for LTO analysis. Keep the runtime NewItab call
-	// even after devirtualization so dynamically-created interfaces continue to
-	// share the runtime's canonical itab pointer. Every template disappears
-	// before GlobalDCE.
-	b.staticItab(rawIntf, concrete, tintf, t)
-	itab := b.newItab(tintf, t)
-	return b.unsafeIface(itab.impl, data)
+	itab, ok := b.staticItab(rawIntf, concrete, tintf, t)
+	if ok && b.Prog.useRuntimeStaticItab() {
+		return b.unsafeIface(itab.impl, data)
+	}
+	dyn := b.newItab(tintf, t)
+	return b.unsafeIface(dyn.impl, data)
+}
+
+// typeHashFromGlobal reads Hash (field 2 of abi.Type) from a type descriptor
+// global so the itab matches NewItab's typ.Hash.
+func typeHashFromGlobal(typ llvm.Value) (uint32, bool) {
+	if typ.IsNil() || typ.IsAGlobalVariable().IsNil() {
+		return 0, false
+	}
+	init := typ.Initializer()
+	if init.IsNil() || init.OperandsCount() <= 2 {
+		return 0, false
+	}
+	h := init.Operand(2)
+	if h.IsNil() || h.IsAConstantInt().IsNil() {
+		return 0, false
+	}
+	return uint32(h.ZExtValue()), true
 }
 
 func iMethodOf(rawIntf *types.Interface, method *types.Func) int {
@@ -238,6 +363,9 @@ func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
 	b.recordUseIface(typ)
 	tabi := b.abiType(typ.raw.Type)
 	if !directIfaceType(typ.raw.Type) {
+		if box, ok := b.staticIfaceBox(typ, x); ok {
+			return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, box), tinter}
+		}
 		vptr := b.AllocU(typ)
 		b.Store(vptr, x)
 		return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, vptr.impl), tinter}
@@ -245,6 +373,9 @@ func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
 	kind, _, lvl := abi.DataKindOf(typ.raw.Type, 0, prog.is32Bits)
 	switch kind {
 	case abi.Indirect:
+		if box, ok := b.staticIfaceBox(typ, x); ok {
+			return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, box), tinter}
+		}
 		vptr := b.AllocU(typ)
 		b.Store(vptr, x)
 		return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, vptr.impl), tinter}

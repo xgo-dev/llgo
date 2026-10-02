@@ -18,7 +18,9 @@ package ssa
 
 import (
 	"fmt"
+	"go/token"
 	"go/types"
+	"sync/atomic"
 
 	"github.com/xgo-dev/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
@@ -169,6 +171,15 @@ func (b Builder) IndexAddr(x, idx Expr) Expr {
 			b.AssertNilDeref(x)
 		}
 	}
+	indices := []llvm.Value{idx.impl}
+	return Expr{llvm.CreateInBoundsGEP(b.impl, prog.storageType(telem), x.impl, indices), pt}
+}
+
+func (b Builder) mapLitIndexAddr(x, idx Expr) Expr {
+	prog := b.Prog
+	telem := prog.Index(x.Type)
+	pt := prog.Pointer(telem)
+	idx = b.physicalPointerIndex(idx)
 	indices := []llvm.Value{idx.impl}
 	return Expr{llvm.CreateInBoundsGEP(b.impl, prog.storageType(telem), x.impl, indices), pt}
 }
@@ -665,6 +676,80 @@ func (b Builder) MapUpdate(m, k, v Expr) {
 	ret := b.Call(b.Pkg.rtFunc(kind.assignName()), typ, m, arg)
 	ret.Type = b.Prog.Pointer(v.Type)
 	b.Store(ret, v)
+}
+
+func llvmConstant(v Expr) bool {
+	return !v.impl.IsNil() && !v.impl.IsAConstant().IsNil()
+}
+
+var mapLitSeq atomic.Uint64
+
+func (b Builder) mapLitArray(suffix string, elems []Expr) Expr {
+	n := len(elems)
+	prog := b.Prog
+	arrTy := prog.Type(types.NewArray(elems[0].raw.Type, int64(n)), InGo)
+	if n > 0 {
+		ok := true
+		for _, e := range elems {
+			if !llvmConstant(e) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			name := fmt.Sprintf("%s.$maplit%d.%s", b.Func.Name(), mapLitSeq.Add(1), suffix)
+			g := b.Pkg.NewVarEx(name, prog.Pointer(arrTy))
+			g.Init(prog.ConstArray(arrTy, elems))
+			if !g.impl.IsNil() {
+				g.impl.SetLinkage(llvm.PrivateLinkage)
+				g.impl.SetGlobalConstant(true)
+				g.impl.SetUnnamedAddr(true)
+			}
+			return g.Expr
+		}
+	}
+	ptr := b.AllocaT(arrTy)
+	intTy := prog.Int()
+	for i, e := range elems {
+		b.Store(b.mapLitIndexAddr(ptr, prog.IntVal(uint64(i), intTy)), e)
+	}
+	return ptr
+}
+
+func (b Builder) StructLit(typ Type, fields []Expr) Expr {
+	vals := make([]llvm.Value, len(fields))
+	for i, f := range fields {
+		vals[i] = f.impl
+	}
+	return b.aggregateValue(typ, vals...)
+}
+
+func (b Builder) MapLitLoop(m Expr, keys, vals []Expr) {
+	n := len(keys)
+	if n == 0 || n != len(vals) {
+		panic("MapLitLoop: mismatched keys and values")
+	}
+	prog := b.Prog
+	intTy := prog.Int()
+	nVal := prog.IntVal(uint64(n), intTy)
+	one := prog.IntVal(1, intTy)
+	zero := prog.IntVal(0, intTy)
+	keyArr := b.mapLitArray("k", keys)
+	valArr := b.mapLitArray("v", vals)
+	iPtr := b.AllocaT(intTy)
+	b.Store(iPtr, zero)
+	blks := b.Func.MakeBlocks(3)
+	condBlk, bodyBlk, doneBlk := blks[0], blks[1], blks[2]
+	b.Jump(condBlk)
+	b.SetBlockEx(condBlk, AtEnd, false)
+	i := b.Load(iPtr)
+	b.If(b.BinOp(token.LSS, i, nVal), bodyBlk, doneBlk)
+	b.SetBlockEx(bodyBlk, AtEnd, false)
+	b.MapUpdate(m, b.Load(b.mapLitIndexAddr(keyArr, i)), b.Load(b.mapLitIndexAddr(valArr, i)))
+	b.Store(iPtr, b.BinOp(token.ADD, i, one))
+	b.Jump(condBlk)
+	b.SetBlockEx(doneBlk, AtEnd, false)
+	b.blk.last = doneBlk.last
 }
 
 type mapFastKind uint8

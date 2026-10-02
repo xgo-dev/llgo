@@ -231,6 +231,7 @@ type context struct {
 	staticInitStores     map[*ssa.Store]none
 	staticInitInstrs     map[ssa.Instruction]none
 	staticMapSliceValues map[*ssa.MapUpdate]llssa.Expr
+	mapLitLoops          map[*ssa.MapUpdate]*mapLitPlan
 	locality             localityLowering
 }
 
@@ -767,6 +768,8 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			}
 			p.prepareExportedLocalContext(f)
 			p.bvals = make(map[ssa.Value]llssa.Expr)
+			p.mapLitLoops = collectLargeMapLits(f)
+			p.applyMapLitPlans(p.mapLitLoops)
 			p.methodNilDerefChecks, p.recvNilDerefChecks = collectMethodNilDerefChecks(f, p.options.ReceiverNilChecks)
 			p.prepareCooperativeSafepoints(f, isCgo)
 			p.prepareGCRoots(f, hasCtx)
@@ -2386,6 +2389,9 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		elseb := fn.Block(succs[1].Index)
 		b.If(cond, thenb, elseb)
 	case *ssa.MapUpdate:
+		if p.compileMapLitUpdate(b, v) {
+			return
+		}
 		m := p.compileValue(b, v.Map)
 		key := p.compileValue(b, v.Key)
 		var val llssa.Expr
