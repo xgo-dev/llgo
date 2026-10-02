@@ -33,6 +33,11 @@ func loop(x archsimd.Float32x4, n int) (archsimd.Float32x4, int) {
 }
 func load(p *[4]float32) archsimd.Float32x4 { return archsimd.LoadFloat32x4Array(p) }
 func store(p *[4]float32, x archsimd.Float32x4) { x.StoreArray(p) }
+func arithmetic(x, y archsimd.Float32x4) archsimd.Float32x4 { return x.Mul(y).Div(y).Sqrt().Round() }
+func bitcast(x archsimd.Uint32x4) archsimd.Float32x4 { return x.BitsToFloat32() }
+func abs(x archsimd.Int32x4) archsimd.Int32x4 { return x.Abs() }
+func round32(x archsimd.Float32x4) archsimd.Float32x4 { return x.Round() }
+func round64(x archsimd.Float64x2) archsimd.Float64x2 { return x.Round() }
 func fixed(x archsimd.Float32x4) float32 { return x.GetElem(1) }
 func boxed(x any) archsimd.Float32x4 { return x.(archsimd.Float32x4) }
 func invoke(x, y archsimd.Float32x4) { defer x.Add(y); go x.Sub(y) }
@@ -92,6 +97,21 @@ func TestSIMD128LLVM(t *testing.T) {
 					t.Fatalf("%s does not use element-aligned vector memory:\n%s", name, ir)
 				}
 			}
+			for name, instructions := range map[string][]string{
+				"arithmetic": {"fmul <4 x float>", "fdiv <4 x float>", "@llvm.sqrt.v4f32"},
+				"bitcast":    {"bitcast <4 x i32>", "to <4 x float>"},
+				"abs":        {"@llvm.abs.v4i32", "i1 false"},
+			} {
+				ir := mod.NamedFunction("main." + name).String()
+				for _, instruction := range instructions {
+					if !strings.Contains(ir, instruction) {
+						t.Fatalf("%s missing %s:\n%s", name, instruction, ir)
+					}
+				}
+			}
+			if target.arch != "amd64" && !strings.Contains(mod.NamedFunction("main.round32").String(), "@llvm.roundeven.v4f32") {
+				t.Fatal("missing native vector roundeven")
+			}
 			identity := mod.NamedFunction("main.identity")
 			if identity.GlobalValueType().ReturnType().TypeKind() != llvm.VectorTypeKind || identity.GlobalValueType().ParamTypes()[0].TypeKind() != llvm.VectorTypeKind {
 				t.Fatalf("identity does not use a vector ABI:\n%s", identity.String())
@@ -129,6 +149,9 @@ func TestSIMD128LLVM(t *testing.T) {
 			if !strings.Contains(string(asm.Bytes()), want) {
 				t.Fatalf("missing %s in assembly", want)
 			}
+			if target.arch == "amd64" && strings.Contains(string(asm.Bytes()), "roundeven") {
+				t.Fatal("baseline rounding requires nonportable libm roundeven")
+			}
 
 		})
 	}
@@ -155,7 +178,7 @@ func TestSIMDIntrinsicDefinitions(t *testing.T) {
 				if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 					t.Fatal(err)
 				}
-				if fn := mod.NamedFunction("simd/archsimd.Float32x4.Div"); fn.IsNil() || !strings.Contains(fn.String(), "PanicSIMDUnimplemented") {
+				if fn := mod.NamedFunction("simd/archsimd.Float32x4.Min"); fn.IsNil() || !strings.Contains(fn.String(), "PanicSIMDUnimplemented") {
 					t.Fatal("missing explicit unsupported implementation")
 				}
 				if fn := mod.NamedFunction("simd/archsimd.Float32x4.Add"); fn.IsNil() || !strings.Contains(fn.String(), "fadd <4 x float>") {

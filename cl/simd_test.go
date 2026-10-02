@@ -23,7 +23,7 @@ func TestSIMDOperationIdentity(t *testing.T) {
 	// A test-only package-function registration exercises the same signature
 	// family without adding an operation to the supported official API.
 	key := simdKey{"", "Sum"}
-	simdOperations[key] = simdOperation{llssa.SIMDAdd, simdBinary, false}
+	simdOperations[key] = simdOperation{llssa.SIMDAdd, simdBinary, 0}
 	defer delete(simdOperations, key)
 	for _, tc := range []struct {
 		name, path, arch, source string

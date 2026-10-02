@@ -9,22 +9,22 @@ import (
 	_ "unsafe"
 )
 
-//go:linkname simdDiv simd/archsimd.Float32x4.Div
-func simdDiv(x, y archsimd.Float32x4) archsimd.Float32x4
+//go:linkname simdMin simd/archsimd.Float32x4.Min
+func simdMin(x, y archsimd.Float32x4) archsimd.Float32x4
 
 func TestUnimplementedSIMD(t *testing.T) {
 	var x archsimd.Float32x4
-	method := x.Div
+	method := x.Min
 	for _, tc := range []struct {
 		name   string
 		call   func()
 		symbol string
 	}{
-		{"direct", func() { x.Div(x) }, "simd/archsimd.Float32x4.Div"},
-		{"method value", func() { method(x) }, "simd/archsimd.Float32x4.Div"},
-		{"method expression", func() { indirect(archsimd.Float32x4.Div, x, x) }, "simd/archsimd.Float32x4.Div"},
-		{"deferred", func() { defer x.Div(x) }, "simd/archsimd.Float32x4.Div"},
-		{"linkname", func() { simdDiv(x, x) }, "simd/archsimd.Float32x4.Div"},
+		{"direct", func() { x.Min(x) }, "simd/archsimd.Float32x4.Min"},
+		{"method value", func() { method(x) }, "simd/archsimd.Float32x4.Min"},
+		{"method expression", func() { indirect(archsimd.Float32x4.Min, x, x) }, "simd/archsimd.Float32x4.Min"},
+		{"deferred", func() { defer x.Min(x) }, "simd/archsimd.Float32x4.Min"},
+		{"linkname", func() { simdMin(x, x) }, "simd/archsimd.Float32x4.Min"},
 		{"mask result", func() { x.Equal(x) }, "simd/archsimd.Float32x4.Equal"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

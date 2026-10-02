@@ -23,38 +23,54 @@ const (
 	simdLoad
 	simdStore
 	simdBroadcast
+	simdBitcast
 )
 
 type simdOperation struct {
-	op          llssa.SIMDOp
-	signature   simdSignature
-	integerOnly bool
+	op        llssa.SIMDOp
+	signature simdSignature
+	elements  types.BasicInfo
 }
 
 // The default entry gives not-yet-implemented intrinsic declarations a defined,
 // recoverable failure. Adding an implementation replaces this fallback for that
 // operation; functions with Go bodies continue through normal compilation.
 var simdOperations = map[simdKey]simdOperation{
-	{"*", "*"}:                {llssa.SIMDUnimplemented, simdUnsupported, false},
-	{"numeric", "Add"}:        {llssa.SIMDAdd, simdBinary, false},
-	{"numeric", "Sub"}:        {llssa.SIMDSub, simdBinary, false},
-	{"numeric", "And"}:        {llssa.SIMDAnd, simdBinary, true},
-	{"numeric", "Or"}:         {llssa.SIMDOr, simdBinary, true},
-	{"numeric", "Xor"}:        {llssa.SIMDXor, simdBinary, true},
-	{"numeric", "GetElem"}:    {llssa.SIMDExtractLane, simdExtract, false},
-	{"numeric", "SetElem"}:    {llssa.SIMDInsertLane, simdInsert, false},
-	{"numeric", "StoreArray"}: {llssa.SIMDStore, simdStore, false},
+	{"*", "*"}:                {llssa.SIMDUnimplemented, simdUnsupported, 0},
+	{"numeric", "Add"}:        {llssa.SIMDAdd, simdBinary, 0},
+	{"numeric", "Sub"}:        {llssa.SIMDSub, simdBinary, 0},
+	{"numeric", "And"}:        {llssa.SIMDAnd, simdBinary, types.IsInteger},
+	{"numeric", "Or"}:         {llssa.SIMDOr, simdBinary, types.IsInteger},
+	{"numeric", "Xor"}:        {llssa.SIMDXor, simdBinary, types.IsInteger},
+	{"numeric", "GetElem"}:    {llssa.SIMDExtractLane, simdExtract, 0},
+	{"numeric", "SetElem"}:    {llssa.SIMDInsertLane, simdInsert, 0},
+	{"numeric", "StoreArray"}: {llssa.SIMDStore, simdStore, 0},
+	{"numeric", "Mul"}:        {llssa.SIMDMul, simdBinary, 0},
+	{"numeric", "Div"}:        {llssa.SIMDDiv, simdBinary, types.IsFloat},
+	{"numeric", "AndNot"}:     {llssa.SIMDAndNot, simdBinary, types.IsInteger},
+	{"numeric", "OrNot"}:      {llssa.SIMDOrNot, simdBinary, types.IsInteger},
+	{"numeric", "Not"}:        {llssa.SIMDNot, simdUnary, types.IsInteger},
+	{"numeric", "Neg"}:        {llssa.SIMDNeg, simdUnary, 0},
+	{"numeric", "Abs"}:        {llssa.SIMDAbs, simdUnary, 0},
+	{"numeric", "Sqrt"}:       {llssa.SIMDSqrt, simdUnary, types.IsFloat},
+	{"numeric", "Ceil"}:       {llssa.SIMDCeil, simdUnary, types.IsFloat},
+	{"numeric", "Floor"}:      {llssa.SIMDFloor, simdUnary, types.IsFloat},
+	{"numeric", "Trunc"}:      {llssa.SIMDTrunc, simdUnary, types.IsFloat},
+	{"numeric", "Round"}:      {llssa.SIMDRound, simdUnary, types.IsFloat},
 }
 
 // These registrations share lowering but retain exact declaration names and
 // signature checks. Source Go slice helpers keep their own bounds checks.
 func init() {
+	for _, name := range []string{"ToBits", "BitsToInt8", "BitsToInt16", "BitsToInt32", "BitsToInt64", "BitsToFloat32", "BitsToFloat64", "ReshapeToUint8s", "ReshapeToUint16s", "ReshapeToUint32s", "ReshapeToUint64s"} {
+		simdOperations[simdKey{"numeric", name}] = simdOperation{llssa.SIMDBitcast, simdBitcast, 0}
+	}
 	for _, name := range []string{"Int8x16", "Uint8x16", "Int16x8", "Uint16x8", "Int32x4", "Uint32x4", "Int64x2", "Uint64x2", "Float32x4", "Float64x2"} {
-		simdOperations[simdKey{"", "Load" + name + "Array"}] = simdOperation{llssa.SIMDLoad, simdLoad, false}
-		simdOperations[simdKey{"", "Broadcast" + name}] = simdOperation{llssa.SIMDBroadcast, simdBroadcast, false}
+		simdOperations[simdKey{"", "Load" + name + "Array"}] = simdOperation{llssa.SIMDLoad, simdLoad, 0}
+		simdOperations[simdKey{"", "Broadcast" + name}] = simdOperation{llssa.SIMDBroadcast, simdBroadcast, 0}
 	}
 	for _, lanes := range []int{2, 4, 8, 16} {
-		simdOperations[simdKey{"numeric", fmt.Sprintf("broadcast1To%d", lanes)}] = simdOperation{llssa.SIMDSplatLane0, simdUnary, false}
+		simdOperations[simdKey{"numeric", fmt.Sprintf("broadcast1To%d", lanes)}] = simdOperation{llssa.SIMDSplatLane0, simdUnary, 0}
 	}
 }
 
@@ -112,12 +128,20 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	if !ok {
 		return false
 	}
-	if d.integerOnly && lanes.Elem().Underlying().(*types.Basic).Info()&types.IsInteger == 0 {
+	if d.elements != 0 && lanes.Elem().Underlying().(*types.Basic).Info()&d.elements == 0 {
 		return false
 	}
 	var params []types.Type
 	result := vector
 	switch d.signature {
+	case simdBitcast:
+		if sig.Results().Len() != 1 {
+			return false
+		}
+		result = sig.Results().At(0).Type()
+		if _, ok := llssa.SIMDNumericShape(result); !ok {
+			return false
+		}
 	case simdUnary:
 		// Receiver only.
 	case simdLoad, simdStore:

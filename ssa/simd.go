@@ -24,6 +24,19 @@ const (
 	SIMDStore
 	SIMDBroadcast
 	SIMDSplatLane0
+	SIMDMul
+	SIMDDiv
+	SIMDAndNot
+	SIMDOrNot
+	SIMDNot
+	SIMDNeg
+	SIMDAbs
+	SIMDSqrt
+	SIMDCeil
+	SIMDFloor
+	SIMDTrunc
+	SIMDRound
+	SIMDBitcast
 )
 
 // SIMDNumericShape validates the official numeric aggregate representation.
@@ -81,9 +94,9 @@ func simdLanes(typ types.Type) *types.Array {
 	return lanes
 }
 
-// SIMD applies the selected operation's feature requirements before lowering.
-// These seven implementations need only baseline native instructions; wasm
-// requires SIMD128. Future feature-specific implementations extend this entry.
+// SIMD lowers a validated source operation. LLVM legalizes these operations
+// for the native baseline; wasm needs the SIMD128 feature. The result type is
+// explicit for loads and conversions whose result differs from their operands.
 func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 	if op == SIMDUnimplemented {
 		if len(args) != 1 || !types.Identical(args[0].RawType(), types.Typ[types.String]) {
@@ -92,7 +105,18 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return b.Call(b.Pkg.rtFunc("PanicSIMDUnimplemented"), args...)
 	}
 	b.simdFeatures(op)
+	if op == SIMDRound && b.Prog.Target().GOARCH == "amd64" {
+		return b.simdRoundEven(args[0])
+	}
+	if name, ok := simdFloatUnary[op]; ok {
+		v := b.impl.CreateIntrinsic(result.ll, llvm.LookupIntrinsicID(name), []llvm.Value{args[0].impl}, "")
+		return Expr{v, result}
+	}
 	switch op {
+	case SIMDBitcast:
+		return Expr{b.impl.CreateBitCast(args[0].impl, result.ll, ""), result}
+	case SIMDNeg, SIMDNot, SIMDAbs:
+		return b.simdUnary(op, args[0])
 	case SIMDLoad:
 		ptr := args[0]
 		b.AssertNilDeref(ptr)
@@ -114,17 +138,19 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return b.simdGetElem(args[0], args[1])
 	case SIMDInsertLane:
 		return b.simdSetElem(args[0], args[1], args[2])
-	default:
+	case SIMDAdd, SIMDSub, SIMDMul, SIMDDiv, SIMDAnd, SIMDOr, SIMDXor, SIMDAndNot, SIMDOrNot:
 		return b.simdBinary(op, args[0], args[1])
-	}
-}
-
-func (b Builder) simdFeatures(op SIMDOp) {
-	switch op {
-	case SIMDAdd, SIMDSub, SIMDAnd, SIMDOr, SIMDXor, SIMDExtractLane, SIMDInsertLane, SIMDLoad, SIMDStore, SIMDBroadcast, SIMDSplatLane0:
 	default:
 		panic("unsupported SIMD operation")
 	}
+}
+
+var simdFloatUnary = map[SIMDOp]string{
+	SIMDSqrt: "llvm.sqrt", SIMDCeil: "llvm.ceil", SIMDFloor: "llvm.floor",
+	SIMDTrunc: "llvm.trunc", SIMDRound: "llvm.roundeven",
+}
+
+func (b Builder) simdFeatures(op SIMDOp) {
 	b.requireSIMDFeatures()
 }
 
@@ -185,6 +211,18 @@ func (b Builder) simdBinary(op SIMDOp, x, y Expr) Expr {
 		} else {
 			v = b.impl.CreateSub(a, c, "")
 		}
+	case SIMDMul:
+		if floating {
+			v = b.impl.CreateFMul(a, c, "")
+		} else {
+			v = b.impl.CreateMul(a, c, "")
+		}
+	case SIMDDiv:
+		v = b.impl.CreateFDiv(a, c, "")
+	case SIMDAndNot:
+		v = b.impl.CreateAnd(a, b.impl.CreateNot(c, ""), "")
+	case SIMDOrNot:
+		v = b.impl.CreateOr(a, b.impl.CreateNot(c, ""), "")
 	case SIMDAnd:
 		v = b.impl.CreateAnd(a, c, "")
 	case SIMDOr:
@@ -288,4 +326,66 @@ func (b Builder) simdSplatLane0(x Expr) Expr {
 		mask[i] = llvm.ConstInt(b.Prog.tyInt32(), 0, false)
 	}
 	return Expr{b.impl.CreateShuffleVector(x.impl, llvm.Undef(x.ll), llvm.ConstVector(mask, false), ""), x.Type}
+}
+
+func (b Builder) simdUnary(op SIMDOp, x Expr) Expr {
+	floating := simdLanes(x.RawType()).Elem().Underlying().(*types.Basic).Info()&types.IsFloat != 0
+	var v llvm.Value
+	switch op {
+	case SIMDNeg:
+		if floating {
+			v = llvm.CreateFNeg(b.impl, x.impl)
+		} else {
+			v = llvm.CreateNeg(b.impl, x.impl)
+		}
+	case SIMDNot:
+		v = b.impl.CreateNot(x.impl, "")
+	case SIMDAbs:
+		if floating {
+			v = b.impl.CreateIntrinsic(x.ll, llvm.LookupIntrinsicID("llvm.fabs"), []llvm.Value{x.impl}, "")
+		} else {
+			// Signed minimum keeps its two's-complement bit pattern, never poison.
+			v = b.impl.CreateIntrinsic(x.ll, llvm.LookupIntrinsicID("llvm.abs"), []llvm.Value{x.impl, llvm.ConstInt(b.Prog.Bool().ll, 0, false)}, "")
+		}
+	default:
+		panic("invalid SIMD unary operation")
+	}
+	return Expr{v, x.Type}
+}
+
+// SSE2 has no rounding instruction. LLVM's roundeven fallback calls a C23
+// libm function that is unavailable on some supported systems. Round the
+// significand with integer vectors instead, independently of the FP mode.
+func (b Builder) simdRoundEven(x Expr) Expr {
+	lanes := simdLanes(x.RawType())
+	width, fraction, bias := 32, uint64(23), uint64(127)
+	if lanes.Elem().Underlying().(*types.Basic).Kind() == types.Float64 {
+		width, fraction, bias = 64, 52, 1023
+	}
+	integer := b.Prog.ctx.IntType(width)
+	vector := llvm.VectorType(integer, int(lanes.Len()))
+	constant := func(value uint64) llvm.Value {
+		values := make([]llvm.Value, lanes.Len())
+		for i := range values {
+			values[i] = llvm.ConstInt(integer, value, false)
+		}
+		return llvm.ConstVector(values, false)
+	}
+	bits := b.impl.CreateBitCast(x.impl, vector, "")
+	sign := b.impl.CreateAnd(bits, constant(uint64(1)<<(width-1)), "")
+	magnitude := b.impl.CreateAnd(bits, constant((uint64(1)<<(width-1))-1), "")
+	exponent := b.impl.CreateLShr(magnitude, constant(fraction), "")
+	small := llvm.CreateICmp(b.impl, llvm.IntULT, exponent, constant(bias))
+	hasFraction := llvm.CreateICmp(b.impl, llvm.IntULT, exponent, constant(bias+fraction))
+	valid := b.impl.CreateAnd(b.impl.CreateNot(small, ""), hasFraction, "")
+	// Every shift is in range even in lanes discarded by the final select.
+	e := b.impl.CreateSelect(valid, b.impl.CreateSub(exponent, constant(bias), ""), constant(0), "")
+	odd := b.impl.CreateAnd(b.impl.CreateLShr(bits, b.impl.CreateSub(constant(fraction), e, ""), ""), constant(1), "")
+	increment := b.impl.CreateLShr(b.impl.CreateAdd(constant((uint64(1)<<(fraction-1))-1), odd, ""), e, "")
+	mask := b.impl.CreateLShr(constant((uint64(1)<<fraction)-1), e, "")
+	rounded := b.impl.CreateAnd(b.impl.CreateAdd(bits, increment, ""), b.impl.CreateNot(mask, ""), "")
+	greaterHalf := llvm.CreateICmp(b.impl, llvm.IntUGT, magnitude, constant((bias-1)<<fraction))
+	smallResult := b.impl.CreateOr(sign, b.impl.CreateSelect(greaterHalf, constant(bias<<fraction), constant(0), ""), "")
+	result := b.impl.CreateSelect(small, smallResult, b.impl.CreateSelect(valid, rounded, bits, ""), "")
+	return Expr{b.impl.CreateBitCast(result, x.ll, ""), x.Type}
 }
