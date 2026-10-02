@@ -82,11 +82,18 @@ func TestCPUInitializationMatchesGo(t *testing.T) {
 	if runtime.GOARCH == "arm64" {
 		debugOptions = debugOptions[:4]
 	}
-	for _, level := range []optlevel.Level{optlevel.O0, optlevel.O2} {
-		t.Run(level.String(), func(t *testing.T) {
+	for _, mode := range []struct {
+		name  string
+		level optlevel.Level
+		lto   lto.Mode
+	}{
+		{"O0", optlevel.O0, lto.Off}, {"O2", optlevel.O2, lto.Off},
+		{"O2-thin", optlevel.O2, lto.Thin}, {"O2-full", optlevel.O2, lto.Full},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
 			conf := NewDefaultConf(ModeBuild)
-			conf.GOEXPERIMENT, conf.OptLevel, conf.LTO = "simd", level, lto.Off
-			conf.OutFile = filepath.Join(dir, "llgo-"+level.String())
+			conf.GOEXPERIMENT, conf.OptLevel, conf.LTO = "simd", mode.level, mode.lto
+			conf.OutFile = filepath.Join(dir, "llgo-"+mode.name)
 			if runtime.GOOS == "windows" {
 				conf.OutFile += ".exe"
 			}
