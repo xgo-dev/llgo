@@ -49,6 +49,15 @@ const (
 	SIMDBlend
 	SIMDMaskFromBits
 	SIMDMaskToBits
+	SIMDShiftAllLeft
+	SIMDShiftAllRight
+	SIMDShiftLeft
+	SIMDShiftRight
+	SIMDShift
+	SIMDAddSaturated
+	SIMDSubSaturated
+	SIMDMin
+	SIMDMax
 )
 
 // SIMDNumericShape validates the official numeric aggregate representation.
@@ -141,6 +150,10 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return Expr{v, result}
 	}
 	switch op {
+	case SIMDShiftAllLeft, SIMDShiftAllRight, SIMDShiftLeft, SIMDShiftRight, SIMDShift:
+		return b.simdShift(op, args[0], args[1])
+	case SIMDAddSaturated, SIMDSubSaturated, SIMDMin, SIMDMax:
+		return b.simdIntegerIntrinsic(op, args[0], args[1])
 	case SIMDMaskFromBits:
 		n := int(simdLanes(result.RawType()).Len())
 		bits := b.impl.CreateTrunc(args[0].impl, b.Prog.ctx.IntType(n), "")

@@ -29,6 +29,9 @@ const (
 	simdTernary
 	simdMaskFromBits
 	simdMaskToBits
+	simdScalarShift
+	simdVectorShift
+	simdSignedShift
 )
 
 type simdOperation struct {
@@ -41,44 +44,53 @@ type simdOperation struct {
 // recoverable failure. Adding an implementation replaces this fallback for that
 // operation; functions with Go bodies continue through normal compilation.
 var simdOperations = map[simdKey]simdOperation{
-	{"*", "*"}:                  {llssa.SIMDUnimplemented, simdUnsupported, 0},
-	{"numeric", "Add"}:          {llssa.SIMDAdd, simdBinary, 0},
-	{"numeric", "Sub"}:          {llssa.SIMDSub, simdBinary, 0},
-	{"numeric", "And"}:          {llssa.SIMDAnd, simdBinary, types.IsInteger},
-	{"numeric", "Or"}:           {llssa.SIMDOr, simdBinary, types.IsInteger},
-	{"numeric", "Xor"}:          {llssa.SIMDXor, simdBinary, types.IsInteger},
-	{"numeric", "GetElem"}:      {llssa.SIMDExtractLane, simdExtract, 0},
-	{"numeric", "SetElem"}:      {llssa.SIMDInsertLane, simdInsert, 0},
-	{"numeric", "StoreArray"}:   {llssa.SIMDStore, simdStore, 0},
-	{"numeric", "Mul"}:          {llssa.SIMDMul, simdBinary, 0},
-	{"numeric", "Div"}:          {llssa.SIMDDiv, simdBinary, types.IsFloat},
-	{"numeric", "AndNot"}:       {llssa.SIMDAndNot, simdBinary, types.IsInteger},
-	{"numeric", "OrNot"}:        {llssa.SIMDOrNot, simdBinary, types.IsInteger},
-	{"numeric", "Not"}:          {llssa.SIMDNot, simdUnary, types.IsInteger},
-	{"numeric", "Neg"}:          {llssa.SIMDNeg, simdUnary, 0},
-	{"numeric", "Abs"}:          {llssa.SIMDAbs, simdUnary, 0},
-	{"numeric", "Sqrt"}:         {llssa.SIMDSqrt, simdUnary, types.IsFloat},
-	{"numeric", "Ceil"}:         {llssa.SIMDCeil, simdUnary, types.IsFloat},
-	{"numeric", "Floor"}:        {llssa.SIMDFloor, simdUnary, types.IsFloat},
-	{"numeric", "Trunc"}:        {llssa.SIMDTrunc, simdUnary, types.IsFloat},
-	{"numeric", "Round"}:        {llssa.SIMDRound, simdUnary, types.IsFloat},
-	{"numeric", "Equal"}:        {llssa.SIMDEqual, simdCompare, 0},
-	{"numeric", "NotEqual"}:     {llssa.SIMDNotEqual, simdCompare, 0},
-	{"numeric", "Less"}:         {llssa.SIMDLess, simdCompare, 0},
-	{"numeric", "LessEqual"}:    {llssa.SIMDLessEqual, simdCompare, 0},
-	{"numeric", "Greater"}:      {llssa.SIMDGreater, simdCompare, 0},
-	{"numeric", "GreaterEqual"}: {llssa.SIMDGreaterEqual, simdCompare, 0},
-	{"numeric", "ToMask"}:       {llssa.SIMDToMask, simdToMask, types.IsInteger},
-	{"numeric", "asMask"}:       {llssa.SIMDBitcast, simdToMask, types.IsInteger},
-	{"numeric", "bitSelect"}:    {llssa.SIMDBitSelect, simdTernary, types.IsInteger},
-	{"numeric", "BitSelect"}:    {llssa.SIMDBitSelect, simdTernary, types.IsInteger},
-	{"numeric", "bitSelectNot"}: {llssa.SIMDBitSelectNot, simdTernary, types.IsInteger},
-	{"numeric", "blend"}:        {llssa.SIMDBlend, simdTernary, types.IsInteger},
-	{"mask", "And"}:             {llssa.SIMDAnd, simdBinary, 0},
-	{"mask", "Or"}:              {llssa.SIMDOr, simdBinary, 0},
-	{"mask", "Xor"}:             {llssa.SIMDXor, simdBinary, 0},
-	{"mask", "AndNot"}:          {llssa.SIMDAndNot, simdBinary, 0},
-	{"mask", "Not"}:             {llssa.SIMDNot, simdUnary, 0},
+	{"*", "*"}:                   {llssa.SIMDUnimplemented, simdUnsupported, 0},
+	{"numeric", "Add"}:           {llssa.SIMDAdd, simdBinary, 0},
+	{"numeric", "Sub"}:           {llssa.SIMDSub, simdBinary, 0},
+	{"numeric", "And"}:           {llssa.SIMDAnd, simdBinary, types.IsInteger},
+	{"numeric", "Or"}:            {llssa.SIMDOr, simdBinary, types.IsInteger},
+	{"numeric", "Xor"}:           {llssa.SIMDXor, simdBinary, types.IsInteger},
+	{"numeric", "GetElem"}:       {llssa.SIMDExtractLane, simdExtract, 0},
+	{"numeric", "SetElem"}:       {llssa.SIMDInsertLane, simdInsert, 0},
+	{"numeric", "StoreArray"}:    {llssa.SIMDStore, simdStore, 0},
+	{"numeric", "Mul"}:           {llssa.SIMDMul, simdBinary, 0},
+	{"numeric", "Div"}:           {llssa.SIMDDiv, simdBinary, types.IsFloat},
+	{"numeric", "AndNot"}:        {llssa.SIMDAndNot, simdBinary, types.IsInteger},
+	{"numeric", "OrNot"}:         {llssa.SIMDOrNot, simdBinary, types.IsInteger},
+	{"numeric", "Not"}:           {llssa.SIMDNot, simdUnary, types.IsInteger},
+	{"numeric", "Neg"}:           {llssa.SIMDNeg, simdUnary, 0},
+	{"numeric", "Abs"}:           {llssa.SIMDAbs, simdUnary, 0},
+	{"numeric", "Sqrt"}:          {llssa.SIMDSqrt, simdUnary, types.IsFloat},
+	{"numeric", "Ceil"}:          {llssa.SIMDCeil, simdUnary, types.IsFloat},
+	{"numeric", "Floor"}:         {llssa.SIMDFloor, simdUnary, types.IsFloat},
+	{"numeric", "Trunc"}:         {llssa.SIMDTrunc, simdUnary, types.IsFloat},
+	{"numeric", "Round"}:         {llssa.SIMDRound, simdUnary, types.IsFloat},
+	{"numeric", "Equal"}:         {llssa.SIMDEqual, simdCompare, 0},
+	{"numeric", "NotEqual"}:      {llssa.SIMDNotEqual, simdCompare, 0},
+	{"numeric", "Less"}:          {llssa.SIMDLess, simdCompare, 0},
+	{"numeric", "LessEqual"}:     {llssa.SIMDLessEqual, simdCompare, 0},
+	{"numeric", "Greater"}:       {llssa.SIMDGreater, simdCompare, 0},
+	{"numeric", "GreaterEqual"}:  {llssa.SIMDGreaterEqual, simdCompare, 0},
+	{"numeric", "ToMask"}:        {llssa.SIMDToMask, simdToMask, types.IsInteger},
+	{"numeric", "asMask"}:        {llssa.SIMDBitcast, simdToMask, types.IsInteger},
+	{"numeric", "bitSelect"}:     {llssa.SIMDBitSelect, simdTernary, types.IsInteger},
+	{"numeric", "BitSelect"}:     {llssa.SIMDBitSelect, simdTernary, types.IsInteger},
+	{"numeric", "bitSelectNot"}:  {llssa.SIMDBitSelectNot, simdTernary, types.IsInteger},
+	{"numeric", "blend"}:         {llssa.SIMDBlend, simdTernary, types.IsInteger},
+	{"mask", "And"}:              {llssa.SIMDAnd, simdBinary, 0},
+	{"mask", "Or"}:               {llssa.SIMDOr, simdBinary, 0},
+	{"mask", "Xor"}:              {llssa.SIMDXor, simdBinary, 0},
+	{"mask", "AndNot"}:           {llssa.SIMDAndNot, simdBinary, 0},
+	{"mask", "Not"}:              {llssa.SIMDNot, simdUnary, 0},
+	{"numeric", "ShiftAllLeft"}:  {llssa.SIMDShiftAllLeft, simdScalarShift, types.IsInteger},
+	{"numeric", "ShiftAllRight"}: {llssa.SIMDShiftAllRight, simdScalarShift, types.IsInteger},
+	{"numeric", "ShiftLeft"}:     {llssa.SIMDShiftLeft, simdVectorShift, types.IsInteger},
+	{"numeric", "ShiftRight"}:    {llssa.SIMDShiftRight, simdVectorShift, types.IsInteger},
+	{"numeric", "Shift"}:         {llssa.SIMDShift, simdSignedShift, types.IsInteger},
+	{"numeric", "AddSaturated"}:  {llssa.SIMDAddSaturated, simdBinary, types.IsInteger},
+	{"numeric", "SubSaturated"}:  {llssa.SIMDSubSaturated, simdBinary, types.IsInteger},
+	{"numeric", "Min"}:           {llssa.SIMDMin, simdBinary, types.IsInteger},
+	{"numeric", "Max"}:           {llssa.SIMDMax, simdBinary, types.IsInteger},
 }
 
 // These registrations share lowering but retain exact declaration names and
@@ -166,6 +178,22 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	var params []types.Type
 	result := vector
 	switch d.signature {
+	case simdScalarShift:
+		params = []types.Type{types.Typ[types.Uint64]}
+	case simdVectorShift, simdSignedShift:
+		if sig.Params().Len() != 1 {
+			return false
+		}
+		counts := sig.Params().At(0).Type()
+		shape, ok := llssa.SIMDNumericShape(counts)
+		if !ok || shape.Len() != lanes.Len() {
+			return false
+		}
+		info := shape.Elem().Underlying().(*types.Basic).Info()
+		if info&types.IsInteger == 0 || (info&types.IsUnsigned != 0) != (d.signature == simdVectorShift) {
+			return false
+		}
+		params = []types.Type{counts}
 	case simdMaskFromBits, simdMaskToBits:
 		if _, ok := llssa.SIMDMaskShape(vector); !ok {
 			return false

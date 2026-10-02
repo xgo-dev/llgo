@@ -41,6 +41,8 @@ func round64(x archsimd.Float64x2) archsimd.Float64x2 { return x.Round() }
 func compare(x, y archsimd.Float32x4) archsimd.Mask32x4 { return x.Equal(y) }
 func maskpass(x archsimd.Mask32x4) (archsimd.Mask32x4, int) { return x, 1 }
 func maskbits(x archsimd.Mask32x4) archsimd.Int32x4 { return x.ToInt32x4() }
+func shift(x archsimd.Int32x4, n uint64) archsimd.Int32x4 { return x.ShiftAllLeft(n).ShiftAllRight(n) }
+func saturated(x, y archsimd.Int8x16) archsimd.Int8x16 { return x.AddSaturated(y).SubSaturated(y).Min(y).Max(y) }
 func fixed(x archsimd.Float32x4) float32 { return x.GetElem(1) }
 func boxed(x any) archsimd.Float32x4 { return x.(archsimd.Float32x4) }
 func invoke(x, y archsimd.Float32x4) { defer x.Add(y); go x.Sub(y) }
@@ -116,6 +118,8 @@ func TestSIMD128LLVM(t *testing.T) {
 				"arithmetic": {"fmul <4 x float>", "fdiv <4 x float>", "@llvm.sqrt.v4f32"},
 				"bitcast":    {"bitcast <4 x i32>", "to <4 x float>"},
 				"abs":        {"@llvm.abs.v4i32", "i1 false"},
+				"shift":      {"icmp uge i64", "shl <4 x i32>", "ashr <4 x i32>"},
+				"saturated":  {"@llvm.sadd.sat.v16i8", "@llvm.ssub.sat.v16i8", "@llvm.smin.v16i8", "@llvm.smax.v16i8"},
 			} {
 				ir := mod.NamedFunction("main." + name).String()
 				for _, instruction := range instructions {
