@@ -24,17 +24,10 @@ func main() {
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // The named string uses an exact (panicking) assertion, then deliberately fails
 // a comma-ok assertion to the underlying unnamed string type.
-// CHECK: [[T_DATA:%.*]] = call ptr @"{{.*}}AllocU"(i64 16)
-// CHECK: [[T_EFACE:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_main.T, ptr undef }, ptr [[T_DATA]], 1
-// CHECK: [[T_DYN_TYPE:%.*]] = extractvalue %"{{.*}}eface" [[T_EFACE]], 0
-// CHECK-NEXT: [[IS_T:%.*]] = icmp eq ptr [[T_DYN_TYPE]], @_llgo_main.T
-// CHECK: br i1 [[IS_T]], label %{{.*}}, label %{{.*}}
-// CHECK: [[T_DYN_DATA:%.*]] = extractvalue %"{{.*}}eface" [[T_EFACE]], 1
-// CHECK-NEXT: [[T_VALUE:%.*]] = load %"{{.*}}String", ptr [[T_DYN_DATA]]
+// CHECK: br i1 true, label %{{.*}}, label %{{.*}}
+// CHECK: [[T_VALUE:%.*]] = load %"{{.*}}String", ptr @"_llgo_ifacebox${{.*}}"
 // CHECK-NEXT: call void @"{{.*}}PrintString"(%"{{.*}}String" [[T_VALUE]])
-// CHECK: [[STRING_DYN_TYPE:%.*]] = extractvalue %"{{.*}}eface" [[T_EFACE]], 0
-// CHECK-NEXT: [[IS_STRING:%.*]] = icmp eq ptr [[STRING_DYN_TYPE]], @_llgo_string
-// CHECK: call void @"{{.*}}PanicTypeAssert"(ptr null, ptr [[T_DYN_TYPE]], ptr @_llgo_main.T)
+// CHECK: call void @"{{.*}}PanicTypeAssert"(ptr null, ptr @_llgo_main.T, ptr @_llgo_main.T)
 // CHECK-NEXT: unreachable
 // CHECK: [[STRING_OK_RESULT:%.*]] = phi { %"{{.*}}String", i1 } [ {{%.*}}, %{{.*}} ], [ zeroinitializer, %{{.*}} ]
 // CHECK: [[STRING_VALUE:%.*]] = extractvalue { %"{{.*}}String", i1 } [[STRING_OK_RESULT]], 0
@@ -59,12 +52,8 @@ func main() {
 // CHECK: call void @"{{.*}}PrintBool"(i1 [[A_OK]])
 // A named slice uses its named descriptor while the asserted payload retains
 // the ordinary three-word slice representation.
-// CHECK: [[BYTES_DATA:%.*]] = call ptr @"{{.*}}AllocU"(i64 24)
-// CHECK: [[BYTES_EFACE:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_main.MyBytes, ptr undef }, ptr [[BYTES_DATA]], 1
-// CHECK: [[BYTES_TYPE:%.*]] = extractvalue %"{{.*}}eface" [[BYTES_EFACE]], 0
-// CHECK-NEXT: [[IS_BYTES:%.*]] = icmp eq ptr [[BYTES_TYPE]], @_llgo_main.MyBytes
-// CHECK: [[BYTES_PAYLOAD:%.*]] = extractvalue %"{{.*}}eface" [[BYTES_EFACE]], 1
-// CHECK-NEXT: load %"{{.*}}Slice", ptr [[BYTES_PAYLOAD]]
+// CHECK: br i1 true, label %{{.*}}, label %{{.*}}
+// CHECK: load %"{{.*}}Slice", ptr @"_llgo_ifacebox${{.*}}"
 // CHECK: [[BYTES_RESULT:%.*]] = phi { %"{{.*}}Slice", i1 } [ {{.*}}, %{{.*}} ], [ zeroinitializer, %{{.*}} ]
 // CHECK: [[BYTES_OK:%.*]] = extractvalue { %"{{.*}}Slice", i1 } [[BYTES_RESULT]], 1
 // CHECK: call void @"{{.*}}PrintBool"(i1 [[BYTES_OK]])

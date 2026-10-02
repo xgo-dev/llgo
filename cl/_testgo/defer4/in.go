@@ -23,9 +23,7 @@ package main
 // CHECK: store ptr [[D4_FAIL_OLD_HEAD]], ptr %{{[0-9]+}}
 // CHECK: store %"{{.*}}String" { ptr @[[D4_BYE]], i64 3 }, ptr %{{[0-9]+}}
 // CHECK-NEXT: store ptr [[D4_FAIL_NODE]], ptr [[D4_FAIL_HEAD]]
-// CHECK: store %"{{.*}}String" { ptr @[[D4_PANIC]], i64 13 }, ptr [[D4_PANIC_BOX:%[0-9]+]]
-// CHECK-NEXT: [[D4_PANIC_EFACE:%[0-9]+]] = insertvalue %"{{.*}}eface" { ptr @_llgo_string, ptr undef }, ptr [[D4_PANIC_BOX]], 1
-// CHECK-NEXT: call void @"{{.*}}Panic"(%"{{.*}}eface" [[D4_PANIC_EFACE]])
+// CHECK: call void @"{{.*}}Panic"(%"{{.*}}eface" { ptr @_llgo_string, ptr @"_llgo_ifacebox${{.*}}" })
 // CHECK: [[D4_PENDING_NODE:%[0-9]+]] = load ptr, ptr [[D4_FAIL_HEAD]]
 // CHECK-NEXT: [[D4_HAS_NODE:%[0-9]+]] = icmp ne ptr [[D4_PENDING_NODE]], null
 // CHECK-NEXT: br i1 [[D4_HAS_NODE]], label %{{.*}}, label %{{.*}}
