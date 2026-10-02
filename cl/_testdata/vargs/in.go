@@ -24,9 +24,7 @@ func test(a ...any) {
 // assertion-to-C-varargs data flow. Bounds-loop details are owned elsewhere.
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: [[ARGS:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 48)
-// CHECK: [[BOX:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 8)
-// CHECK-NEXT: store i64 1, ptr [[BOX]]
-// CHECK-NEXT: [[EFACE:%[0-9]+]] = insertvalue %"{{.*}}eface" { ptr @_llgo_int, ptr undef }, ptr [[BOX]], 1
+// CHECK: store %"{{.*}}eface" { ptr @_llgo_int, ptr @"_llgo_ifacebox${{.*}}" }, ptr {{%[0-9]+}}
 // CHECK: [[SLICE_LEN:%[0-9]+]] = insertvalue %"{{.*}}Slice" {{.*}}, i64 3, 1
 // CHECK-NEXT: [[SLICE:%[0-9]+]] = insertvalue %"{{.*}}Slice" [[SLICE_LEN]], i64 3, 2
 // CHECK-NEXT: call void @main.test(%"{{.*}}Slice" [[SLICE]])

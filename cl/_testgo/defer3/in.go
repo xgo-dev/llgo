@@ -20,9 +20,7 @@ package main
 // CHECK: store ptr [[D3_FAIL_OLD_HEAD]], ptr %{{[0-9]+}}
 // CHECK: store %"{{.*}}String" { ptr @[[D3_BYE]], i64 3 }, ptr %{{[0-9]+}}
 // CHECK-NEXT: store ptr [[D3_FAIL_NODE]], ptr [[D3_FAIL_HEAD]]
-// CHECK: store %"{{.*}}String" { ptr @[[D3_PANIC]], i64 13 }, ptr [[D3_PANIC_BOX:%[0-9]+]]
-// CHECK-NEXT: [[D3_PANIC_EFACE:%[0-9]+]] = insertvalue %"{{.*}}eface" { ptr @_llgo_string, ptr undef }, ptr [[D3_PANIC_BOX]], 1
-// CHECK-NEXT: call void @"{{.*}}Panic"(%"{{.*}}eface" [[D3_PANIC_EFACE]])
+// CHECK: call void @"{{.*}}Panic"(%"{{.*}}eface" { ptr @_llgo_string, ptr @"_llgo_ifacebox${{.*}}" })
 // CHECK: [[D3_RUN_NODE:%[0-9]+]] = load ptr, ptr [[D3_FAIL_HEAD]]
 // CHECK: [[D3_RUN_PAYLOAD:%[0-9]+]] = extractvalue { ptr, i64, %"{{.*}}String" } %{{[0-9]+}}, 2
 // CHECK-NEXT: call void @"{{.*}}FreeDeferNode"(ptr [[D3_RUN_NODE]])

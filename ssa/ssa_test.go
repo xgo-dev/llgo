@@ -22,6 +22,7 @@ import (
 	"go/importer"
 	"go/token"
 	"go/types"
+	"math"
 	"os"
 	"reflect"
 	"runtime"
@@ -743,8 +744,8 @@ func TestDevLTOGlobalDCEConcreteInterfaceEmitsStaticItabTemplate(t *testing.T) {
 		t.Fatal("unassignable concrete type emitted a static itab template")
 	}
 	prog.EnableLTOPluginMarkers(false)
-	if _, ok := b.staticItab(intf, concrete, b.abiType(intf), b.abiType(concrete)); ok {
-		t.Fatal("static itab template emitted without LTO plugin markers")
+	if _, ok := b.staticItab(intf, concrete, b.abiType(intf), b.abiType(concrete)); !ok {
+		t.Fatal("runtime static itab was not emitted without LTO plugin markers")
 	}
 	prog.EnableLTOPluginMarkers(true)
 	noInterface := types.NewNamed(
@@ -768,7 +769,6 @@ func TestDevLTOGlobalDCEConcreteInterfaceEmitsStaticItabTemplate(t *testing.T) {
 	interfaceTypeID := prog.interfaceCapabilityKey(intf)
 	for _, want := range []string{
 		`_llgo_itab$`,
-		`@llvm.compiler.used`,
 		`!"go.method.M:func()"`,
 		`!"go.method.N:func()"`,
 		`!llgo.static.itab.slot`,
@@ -782,7 +782,10 @@ func TestDevLTOGlobalDCEConcreteInterfaceEmitsStaticItabTemplate(t *testing.T) {
 		}
 	}
 	if !strings.Contains(ir, `call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.NewItab"`) {
-		t.Fatalf("static itab template replaced NewItab before LTO proof:\n%s", ir)
+		t.Fatalf("LTO T2I dropped NewItab; method-drop DCE needs the runtime call:\n%s", ir)
+	}
+	if !strings.Contains(ir, `@llvm.compiler.used`) {
+		t.Fatalf("missing compiler.used for LTO itab template:\n%s", ir)
 	}
 	for _, typeID := range []string{
 		prog.interfaceMethodCapabilityKey(intf, 0),
@@ -795,6 +798,380 @@ func TestDevLTOGlobalDCEConcreteInterfaceEmitsStaticItabTemplate(t *testing.T) {
 	}
 	if strings.Contains(ir, `!llgo.interface.type`) || strings.Contains(ir, `!llgo.interface.method`) {
 		t.Fatalf("interface declaration remained attached to a type descriptor:\n%s", ir)
+	}
+}
+
+func TestDeadcodeDropT2IUsesNewItab(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.EnableDeadcodeDrop(true)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkgTypes := types.NewPackage("example.com/deadcodedrop", "deadcodedrop")
+	concrete := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkgTypes, "T", nil),
+		types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, pkgTypes, "", concrete)
+	methodSig := types.NewSignatureType(recv, nil, nil, nil, nil, false)
+	concrete.AddMethod(types.NewFunc(token.NoPos, pkgTypes, "Read", methodSig))
+	concrete.AddMethod(types.NewFunc(token.NoPos, pkgTypes, "Write", methodSig))
+	interfaceMethodSig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	intf := types.NewInterfaceType([]*types.Func{
+		types.NewFunc(token.NoPos, pkgTypes, "Read", interfaceMethodSig),
+		types.NewFunc(token.NoPos, pkgTypes, "Write", interfaceMethodSig),
+	}, nil)
+	intf.Complete()
+
+	pkg := prog.NewPackage("deadcodedrop", pkgTypes.Path())
+	returns := types.NewTuple(types.NewVar(token.NoPos, nil, "", intf))
+	fn := pkg.NewFunc("Make", types.NewSignatureType(nil, nil, nil, nil, returns, false), InGo)
+	b := fn.MakeBody(1)
+	b.Return(b.MakeInterface(prog.Type(intf, InGo), prog.Zero(prog.Type(concrete, InGo))))
+	if _, ok := b.staticItab(intf, concrete, b.abiType(intf), b.abiType(concrete)); ok {
+		t.Fatal("deadcode-drop T2I emitted a static itab vtable")
+	}
+	b.EndBuild()
+
+	ir := pkg.String()
+	if strings.Contains(ir, `_llgo_itab$`) {
+		t.Fatalf("deadcode-drop T2I emitted a static itab global:\n%s", ir)
+	}
+	if !strings.Contains(ir, `call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.NewItab"`) {
+		t.Fatalf("deadcode-drop T2I dropped NewItab:\n%s", ir)
+	}
+}
+
+func TestTypeHashFromGlobal(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("thash", "thash")
+
+	if _, ok := typeHashFromGlobal(llvm.Value{}); ok {
+		t.Fatal("nil value produced a hash")
+	}
+	if _, ok := typeHashFromGlobal(prog.IntVal(1, prog.Int()).impl); ok {
+		t.Fatal("non-global produced a hash")
+	}
+	g := pkg.NewVarEx("noinit", prog.Pointer(prog.Int()))
+	if _, ok := typeHashFromGlobal(g.impl); ok {
+		t.Fatal("uninitialized global produced a hash")
+	}
+
+	two := prog.rawType(types.NewStruct([]*types.Var{
+		types.NewVar(token.NoPos, nil, "a", types.Typ[types.Int]),
+		types.NewVar(token.NoPos, nil, "b", types.Typ[types.Int]),
+	}, nil))
+	g2 := pkg.NewVarEx("two", prog.Pointer(two))
+	g2.impl.SetInitializer(prog.constStructValue(two, []llvm.Value{
+		prog.IntVal(1, prog.Int()).impl,
+		prog.IntVal(2, prog.Int()).impl,
+	}))
+	if _, ok := typeHashFromGlobal(g2.impl); ok {
+		t.Fatal("two-field struct produced a hash")
+	}
+
+	ptr := prog.VoidPtr()
+	null := llvm.ConstPointerNull(prog.tyVoidPtr())
+	bad := prog.rawType(types.NewStruct([]*types.Var{
+		types.NewVar(token.NoPos, nil, "a", ptr.RawType()),
+		types.NewVar(token.NoPos, nil, "b", ptr.RawType()),
+		types.NewVar(token.NoPos, nil, "c", ptr.RawType()),
+	}, nil))
+	g3 := pkg.NewVarEx("badhash", prog.Pointer(bad))
+	g3.impl.SetInitializer(prog.constStructValue(bad, []llvm.Value{null, null, null}))
+	if _, ok := typeHashFromGlobal(g3.impl); ok {
+		t.Fatal("non-int hash field produced a hash")
+	}
+
+	okTy := prog.rawType(types.NewStruct([]*types.Var{
+		types.NewVar(token.NoPos, nil, "a", ptr.RawType()),
+		types.NewVar(token.NoPos, nil, "b", ptr.RawType()),
+		types.NewVar(token.NoPos, nil, "h", types.Typ[types.Uint32]),
+	}, nil))
+	g4 := pkg.NewVarEx("okhash", prog.Pointer(okTy))
+	g4.impl.SetInitializer(prog.constStructValue(okTy, []llvm.Value{
+		null, null, prog.IntVal(0x11, prog.Uint32()).impl,
+	}))
+	h, ok := typeHashFromGlobal(g4.impl)
+	if !ok || h != 0x11 {
+		t.Fatalf("hash=%#x ok=%v", h, ok)
+	}
+}
+
+func TestRuntimeStaticItabUsesVtableAndInitItabs(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkgTypes := types.NewPackage("example.com/runtimeitab", "runtimeitab")
+	concrete := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkgTypes, "T", nil),
+		types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, pkgTypes, "", concrete)
+	methodSig := types.NewSignatureType(recv, nil, nil, nil, nil, false)
+	concrete.AddMethod(types.NewFunc(token.NoPos, pkgTypes, "M", methodSig))
+	interfaceMethodSig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	intf := types.NewInterfaceType([]*types.Func{
+		types.NewFunc(token.NoPos, pkgTypes, "M", interfaceMethodSig),
+	}, nil)
+	intf.Complete()
+
+	pkg := prog.NewPackage("runtimeitab", pkgTypes.Path())
+	returns := types.NewTuple(types.NewVar(token.NoPos, nil, "", intf))
+	fn := pkg.NewFunc("Make", types.NewSignatureType(nil, nil, nil, nil, returns, false), InGo)
+	b := fn.MakeBody(1)
+	tabi := b.abiType(intf)
+	tcon := b.abiType(concrete)
+	itab1, ok1 := b.staticItab(intf, concrete, tabi, tcon)
+	itab2, ok2 := b.staticItab(intf, concrete, tabi, tcon)
+	if !ok1 || !ok2 || itab1.impl != itab2.impl {
+		t.Fatal("repeated T2I did not reuse the static itab global")
+	}
+	b.Return(b.MakeInterface(prog.Type(intf, InGo), prog.Zero(prog.Type(concrete, InGo))))
+	b.EndBuild()
+
+	ir := pkg.String()
+	if !strings.Contains(ir, `_llgo_itab$`) {
+		t.Fatalf("missing static itab global:\n%s", ir)
+	}
+	if strings.Contains(ir, `call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.NewItab"`) {
+		t.Fatalf("runtime T2I still called NewItab:\n%s", ir)
+	}
+	if strings.Contains(ir, `RegisterStaticItab`) {
+		t.Fatalf("T2I must not register itabs from package init:\n%s", ir)
+	}
+}
+
+func TestStaticIfaceBoxFingerprintsDistinguishSameLengthStrings(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("boxfp", "boxfp")
+	empty := types.NewInterfaceType(nil, nil)
+	empty.Complete()
+	rets := types.NewTuple(
+		types.NewVar(token.NoPos, nil, "", empty),
+		types.NewVar(token.NoPos, nil, "", empty),
+	)
+	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, rets, false), InGo)
+	b := fn.MakeBody(1)
+	tany := prog.Type(empty, InGo)
+	e1 := b.MakeInterface(tany, pkg.ConstString(strings.Repeat("a", 28)))
+	e2 := b.MakeInterface(tany, pkg.ConstString(strings.Repeat("b", 28)))
+	b.Return(e1, e2)
+	b.EndBuild()
+	ir := pkg.String()
+	seen := map[string]bool{}
+	for _, line := range strings.Split(ir, "\n") {
+		if i := strings.Index(line, `@"_llgo_ifacebox$`); i >= 0 {
+			rest := line[i+2:]
+			end := strings.Index(rest, `"`)
+			if end > 0 {
+				seen[rest[:end]] = true
+			}
+		}
+	}
+	if len(seen) < 2 {
+		t.Fatalf("same-length strings shared an ifacebox name: %v\n%s", seen, ir)
+	}
+}
+
+func TestConstantFingerprintFloats(t *testing.T) {
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+
+	f32 := ctx.FloatType()
+	f64 := ctx.DoubleType()
+	tests := []struct {
+		name string
+		x    llvm.Value
+		y    llvm.Value
+	}{
+		{"float32 values", llvm.ConstFloat(f32, 0), llvm.ConstFloat(f32, 3.14)},
+		{"float64 values", llvm.ConstFloat(f64, 0), llvm.ConstFloat(f64, 3.14)},
+		{"signed float32 zero", llvm.ConstFloat(f32, 0), llvm.ConstFloat(f32, math.Copysign(0, -1))},
+		{"signed float64 zero", llvm.ConstFloat(f64, 0), llvm.ConstFloat(f64, math.Copysign(0, -1))},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if x, y := constantFingerprint(test.x), constantFingerprint(test.y); x == y {
+				t.Fatalf("fingerprints collide: %q", x)
+			}
+		})
+	}
+
+	c1 := ctx.ConstStruct([]llvm.Value{llvm.ConstFloat(f64, 1), llvm.ConstFloat(f64, 2)}, false)
+	c2 := ctx.ConstStruct([]llvm.Value{llvm.ConstFloat(f64, 1), llvm.ConstFloat(f64, 3)}, false)
+	if x, y := constantFingerprint(c1), constantFingerprint(c2); x == y {
+		t.Fatalf("complex fingerprints collide: %q", x)
+	}
+}
+
+func TestStaticIfaceBoxReusesLLVMValue(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("boxreuse", "boxreuse")
+	empty := types.NewInterfaceType(nil, nil)
+	empty.Complete()
+	rets := types.NewTuple(types.NewVar(token.NoPos, nil, "", empty))
+	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, rets, false), InGo)
+	b := fn.MakeBody(1)
+	tany := prog.Type(empty, InGo)
+	c := prog.IntVal(42, prog.Int64())
+	e1 := b.MakeInterface(tany, c)
+	e2 := b.MakeInterface(tany, c)
+	if len(pkg.ifaceBoxByValue) != 1 {
+		t.Fatalf("pointer cache size = %d, want 1", len(pkg.ifaceBoxByValue))
+	}
+	b.Return(e1)
+	_ = e2
+	b.EndBuild()
+	ir := pkg.String()
+	seen := map[string]bool{}
+	for _, line := range strings.Split(ir, "\n") {
+		if i := strings.Index(line, `@"_llgo_ifacebox$`); i >= 0 {
+			rest := line[i+2:]
+			end := strings.Index(rest, `"`)
+			if end > 0 {
+				seen[rest[:end]] = true
+			}
+		}
+	}
+	if len(seen) != 1 {
+		t.Fatalf("repeated boxing of the same constant created %d boxes: %v\n%s", len(seen), seen, ir)
+	}
+}
+
+func TestConstantFingerprintKinds(t *testing.T) {
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	mod := ctx.NewModule("fpkinds")
+	defer mod.Dispose()
+
+	var none llvm.Value
+	if got := constantFingerprint(none); got != "-" {
+		t.Fatalf("nil fingerprint = %q, want -", got)
+	}
+
+	ptr := llvm.PointerType(ctx.Int8Type(), 0)
+	if got := constantFingerprint(llvm.ConstPointerNull(ptr)); got != "n" {
+		t.Fatalf("null fingerprint = %q, want n", got)
+	}
+
+	fn := llvm.AddFunction(mod, "fp.fn", llvm.FunctionType(ctx.VoidType(), nil, false))
+	if got := constantFingerprint(fn); got != "f:fp.fn" {
+		t.Fatalf("function fingerprint = %q, want f:fp.fn", got)
+	}
+
+	g := llvm.AddGlobal(mod, ctx.Int32Type(), "fp.g")
+	if got := constantFingerprint(g); got != "gn:fp.g" {
+		t.Fatalf("uninitialized global fingerprint = %q, want gn:fp.g", got)
+	}
+
+	g.SetInitializer(llvm.ConstInt(ctx.Int32Type(), 7, false))
+	if got := constantFingerprint(g); got != "g{i7}" {
+		t.Fatalf("initialized global fingerprint = %q, want g{i7}", got)
+	}
+
+	sg := llvm.AddGlobal(mod, llvm.ArrayType(ctx.Int8Type(), 2), "fp.s")
+	sg.SetInitializer(ctx.ConstString("hi", false))
+	if got := constantFingerprint(sg); got != "b:hi" {
+		t.Fatalf("string global fingerprint = %q, want b:hi", got)
+	}
+
+	str := ctx.ConstString("ab", false)
+	if got := constantFingerprint(str); got != "b:ab" {
+		t.Fatalf("constant string fingerprint = %q, want b:ab", got)
+	}
+
+	if got := constantFingerprint(llvm.Undef(ctx.Int32Type())); got != "?" {
+		t.Fatalf("undef fingerprint = %q, want ?", got)
+	}
+}
+
+func TestStaticIfaceBoxReusesByName(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("boxname", "boxname")
+	empty := types.NewInterfaceType(nil, nil)
+	empty.Complete()
+	rets := types.NewTuple(types.NewVar(token.NoPos, nil, "", empty))
+	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, rets, false), InGo)
+	b := fn.MakeBody(1)
+	tany := prog.Type(empty, InGo)
+	first := b.MakeInterface(tany, prog.IntVal(42, prog.Int64()))
+	pkg.ifaceBoxByValue = nil
+	second := b.MakeInterface(tany, prog.IntVal(42, prog.Int64()))
+	if first.impl.IsNil() || second.impl.IsNil() {
+		t.Fatal("MakeInterface returned a nil iface")
+	}
+	if len(pkg.ifaceBoxByValue) != 1 {
+		t.Fatalf("name-cache reuse size = %d, want 1", len(pkg.ifaceBoxByValue))
+	}
+	b.Return(first)
+	b.EndBuild()
+	ir := pkg.String()
+	if strings.Count(ir, `_llgo_ifacebox$`) == 0 {
+		t.Fatalf("missing ifacebox after VarOf reuse:\n%s", ir)
+	}
+}
+
+func TestStaticIfaceBoxSkipsZeroSizedTypes(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("boxzero", "boxzero")
+	empty := types.NewInterfaceType(nil, nil)
+	empty.Complete()
+	z := types.NewStruct(nil, nil)
+	rets := types.NewTuple(types.NewVar(token.NoPos, nil, "", empty))
+	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, rets, false), InGo)
+	b := fn.MakeBody(1)
+	e := b.MakeInterface(prog.Type(empty, InGo), prog.Zero(prog.Type(z, InGo)))
+	b.Return(e)
+	b.EndBuild()
+	zero := pkg.Module().NamedGlobal(moduleZeroName)
+	if !zero.IsNil() && zero.Linkage() == llvm.WeakODRLinkage {
+		t.Fatal("zero-sized iface box mutated the shared sentinel linkage")
+	}
+	ir := pkg.String()
+	if strings.Contains(ir, `_llgo_ifacebox$`) {
+		t.Fatalf("zero-sized value used an ifacebox:\n%s", ir)
 	}
 }
 

@@ -51,6 +51,10 @@ _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw$imethods:
     _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk
 _llgo_int:
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequal64
+_llgo_itab$ARsbupbM5LJaIg5IQKIp4jqIVyeW-KWKFWg1yvba33A:
+    _llgo_github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.Source
+    _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.(*Source).Read
 _llgo_string:
     github.com/xgo-dev/llgo/runtime/internal/runtime.strequal
 _llgo_uint8:
@@ -59,10 +63,8 @@ main.init:
     github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.init
     main.init$guard
 main.main:
-    _llgo_github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.Source
-    _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw
+    _llgo_itab$ARsbupbM5LJaIg5IQKIp4jqIVyeW-KWKFWg1yvba33A
     github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU
-    github.com/xgo-dev/llgo/runtime/internal/runtime.NewItab
     main.use
 main.use:
     github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrData
