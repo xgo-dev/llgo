@@ -59,6 +59,9 @@ const (
 	SIMDMin
 	SIMDMax
 	SIMDConvert
+	SIMDLookupOrZero
+	SIMDPermuteOrZero
+	SIMDPermute
 )
 
 // SIMDNumericShape validates the official numeric aggregate representation.
@@ -151,6 +154,8 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return Expr{v, result}
 	}
 	switch op {
+	case SIMDLookupOrZero, SIMDPermuteOrZero, SIMDPermute:
+		return b.simdPermute(op, args[0], args[1])
 	case SIMDConvert:
 		return b.simdConvert(result, args[0])
 	case SIMDShiftAllLeft, SIMDShiftAllRight, SIMDShiftLeft, SIMDShiftRight, SIMDShift:

@@ -5,6 +5,7 @@ package build
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -74,7 +75,12 @@ func maskTo64(x archsimd.Mask64x2) uint8 { return x.ToBits() }
 func simdTestDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for name, text := range map[string]string{"go.mod": "module simdtest\n\ngo 1.27\n", "main.go": simd128Source, "bitmap_amd64.go": simdMaskBitmapSource} {
+	for name, text := range map[string]string{
+		"go.mod": "module simdtest\n\ngo 1.27\n", "main.go": simd128Source, "bitmap_amd64.go": simdMaskBitmapSource,
+		"lookup_arm64.go":  `package main; import "simd/archsimd"; func lookup(x,y archsimd.Int8x16) archsimd.Int8x16 { return x.LookupOrZero(y) }`,
+		"lookup_wasm.go":   `package main; import "simd/archsimd"; func lookup(x,y archsimd.Int8x16) archsimd.Int8x16 { return x.LookupOrZero(y) }`,
+		"permute_amd64.go": `package main; import "simd/archsimd"; func permute(x archsimd.Uint8x16, y archsimd.Int8x16) archsimd.Uint8x16 { return x.PermuteOrZero(y) }`,
+	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -88,6 +94,9 @@ func TestSIMD128LLVM(t *testing.T) {
 		t.Run(target.arch, func(t *testing.T) {
 			conf := NewDefaultConf(ModeGen)
 			conf.Goos, conf.Goarch, conf.GOEXPERIMENT = target.os, target.arch, "simd"
+			if target.arch == "amd64" {
+				conf.GOAMD64 = "v1"
+			}
 			pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
 			if err != nil {
 				t.Fatal(err)
@@ -193,6 +202,15 @@ func TestSIMD128LLVM(t *testing.T) {
 			if !strings.Contains(string(asm.Bytes()), want) {
 				t.Fatalf("missing %s in assembly", want)
 			}
+			if target.arch == "amd64" && regexp.MustCompile(`(?m)^\s+v[a-z][a-z0-9]*\s`).Match(asm.Bytes()) {
+				t.Fatal("GOAMD64=v1 emitted an AVX instruction")
+			}
+			if target.arch != "amd64" {
+				wantLookup := map[string]string{"arm64": "tbl", "wasm": "i8x16.swizzle"}[target.arch]
+				if !strings.Contains(string(asm.Bytes()), wantLookup) {
+					t.Fatalf("missing lookup instruction %s", wantLookup)
+				}
+			}
 			if target.arch == "amd64" && strings.Contains(string(asm.Bytes()), "roundeven") {
 				t.Fatal("baseline rounding requires nonportable libm roundeven")
 			}
@@ -207,6 +225,9 @@ func TestSIMDIntrinsicDefinitions(t *testing.T) {
 		t.Run(target.os+"/"+target.arch, func(t *testing.T) {
 			conf := NewDefaultConf(ModeGen)
 			conf.Goos, conf.Goarch, conf.GOEXPERIMENT = target.os, target.arch, "simd"
+			if target.arch == "amd64" {
+				conf.GOAMD64 = "v1"
+			}
 			pkgs, err := Build(Invocation{Args: []string{".", "simd/archsimd"}, Config: conf, Dir: dir})
 			if err != nil {
 				t.Fatal(err)

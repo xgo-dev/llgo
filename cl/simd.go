@@ -30,8 +30,8 @@ const (
 	simdMaskFromBits
 	simdMaskToBits
 	simdScalarShift
-	simdVectorShift
-	simdSignedShift
+	simdUnsignedVector
+	simdSignedVector
 	simdConvert
 )
 
@@ -85,12 +85,15 @@ var simdOperations = map[simdKey]simdOperation{
 	{"mask", "Not"}:              {llssa.SIMDNot, simdUnary, 0},
 	{"numeric", "ShiftAllLeft"}:  {llssa.SIMDShiftAllLeft, simdScalarShift, types.IsInteger},
 	{"numeric", "ShiftAllRight"}: {llssa.SIMDShiftAllRight, simdScalarShift, types.IsInteger},
-	{"numeric", "ShiftLeft"}:     {llssa.SIMDShiftLeft, simdVectorShift, types.IsInteger},
-	{"numeric", "ShiftRight"}:    {llssa.SIMDShiftRight, simdVectorShift, types.IsInteger},
-	{"numeric", "Shift"}:         {llssa.SIMDShift, simdSignedShift, types.IsInteger},
+	{"numeric", "ShiftLeft"}:     {llssa.SIMDShiftLeft, simdUnsignedVector, types.IsInteger},
+	{"numeric", "ShiftRight"}:    {llssa.SIMDShiftRight, simdUnsignedVector, types.IsInteger},
+	{"numeric", "Shift"}:         {llssa.SIMDShift, simdSignedVector, types.IsInteger},
 	{"numeric", "AddSaturated"}:  {llssa.SIMDAddSaturated, simdBinary, types.IsInteger},
 	{"numeric", "SubSaturated"}:  {llssa.SIMDSubSaturated, simdBinary, types.IsInteger},
 	{"numeric", "Min"}:           {llssa.SIMDMin, simdBinary, 0},
+	{"numeric", "LookupOrZero"}:  {llssa.SIMDLookupOrZero, simdBinary, types.IsInteger},
+	{"numeric", "PermuteOrZero"}: {llssa.SIMDPermuteOrZero, simdSignedVector, types.IsInteger},
+	{"numeric", "Permute"}:       {llssa.SIMDPermute, simdUnsignedVector, types.IsInteger},
 	{"numeric", "Max"}:           {llssa.SIMDMax, simdBinary, 0},
 }
 
@@ -179,12 +182,15 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	if d.elements != 0 && lanes.Elem().Underlying().(*types.Basic).Info()&d.elements == 0 {
 		return false
 	}
+	if (d.op == llssa.SIMDLookupOrZero || d.op == llssa.SIMDPermuteOrZero) && lanes.Len() != 16 {
+		return false
+	}
 	var params []types.Type
 	result := vector
 	switch d.signature {
 	case simdScalarShift:
 		params = []types.Type{types.Typ[types.Uint64]}
-	case simdVectorShift, simdSignedShift:
+	case simdUnsignedVector, simdSignedVector:
 		if sig.Params().Len() != 1 {
 			return false
 		}
@@ -194,7 +200,7 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 			return false
 		}
 		info := shape.Elem().Underlying().(*types.Basic).Info()
-		if info&types.IsInteger == 0 || (info&types.IsUnsigned != 0) != (d.signature == simdVectorShift) {
+		if info&types.IsInteger == 0 || (info&types.IsUnsigned != 0) != (d.signature == simdUnsignedVector) {
 			return false
 		}
 		params = []types.Type{counts}
