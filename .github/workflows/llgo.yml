@@ -681,6 +681,12 @@ jobs:
         shell: bash
         run: python3 dev/test_wasm_wasi_threads.py
 
+      - name: Test dev WASI Thin and Full LTO
+        shell: bash
+        run: |
+          go build -tags=dev -o "$RUNNER_TEMP/llgo-dev" ./cmd/llgo
+          LLGO="$RUNNER_TEMP/llgo-dev" python3 dev/test_wasm_wasi_lto.py
+
   windows-gnu-cross:
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: prepare

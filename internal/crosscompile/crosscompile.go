@@ -773,6 +773,9 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, forceEspClang bool, le
 			"-mbulk-memory",
 		}
 		export.CCFLAGS = append(export.CCFLAGS, "-pthread")
+		if ltoMode.Enabled() {
+			export.CCFLAGS = append(export.CCFLAGS, ltoMode.ClangFlag())
+		}
 		export.CFLAGS = []string{
 			"-I" + includeDir,
 			"-Qunused-arguments",
@@ -782,6 +785,12 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, forceEspClang bool, le
 		export.LDFLAGS = append(export.LDFLAGS, export.CCFLAGS...)
 		export.LDFLAGS = append(export.LDFLAGS, "-fwasm-exceptions")
 		if ltoMode.Enabled() {
+			// Clang does not forward -fwasm-exceptions to the LTO backend.
+			// Without an explicit exception model, codegen drops SjLj catch pads.
+			export.LDFLAGS = append(export.LDFLAGS, "-Wl,--mllvm=-exception-model=wasm")
+			// ThinLTO compiles Go modules independently of the C modules that
+			// carry these features. Preserve shared memory, TLS and Wasm EH.
+			export.LDFLAGS = append(export.LDFLAGS, "-Xlinker", "--mllvm=-mattr=+atomics,+bulk-memory,+exception-handling")
 			export.LDFLAGS = append(export.LDFLAGS, "-Wl,--mllvm=-wasm-enable-sjlj")
 			export.LDFLAGS = append(export.LDFLAGS, "-Wl,--mllvm=-wasm-use-legacy-eh=false")
 		}
