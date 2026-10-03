@@ -1,0 +1,5 @@
+#!/bin/sh
+
+# LLGo uses LLD, which needs an explicit sysroot for absolute glibc paths.
+target="$(uname -m)-conda-linux-gnu"
+exec "$CONDA_PREFIX/bin/$target-clang++" "$@" "-Wl,--sysroot=$CONDA_PREFIX/$target/sysroot"

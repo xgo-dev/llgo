@@ -1,6 +1,49 @@
 # Dev tooling
 
-This directory contains scripts for running LLGo locally and inside reusable Linux dev containers.
+This directory contains reproducible host environments and scripts for running
+LLGo locally or inside reusable Linux dev containers.
+
+## Host development environments
+
+| Environment | Configuration | Native platforms | Start from the repository root |
+| --- | --- | --- | --- |
+| [Pixi](https://pixi.sh/latest/installation/) | `pixi.toml`, `pixi.lock` | Linux x86-64/ARM64, macOS Intel/ARM64, Windows x86-64 | `pixi shell --manifest-path dev/pixi.toml` |
+| [Nix](https://nix.dev/install-nix) | `flake.nix`, `flake.lock` | Linux x86-64/ARM64, macOS Intel/ARM64 | `nix develop ./dev` |
+
+Both shells provide Go 1.27, LLVM/Clang/LLD 22, and the native libraries used
+by LLGo. Pixi needs only its standalone executable; it downloads the pinned
+packages on first use. Nix runs on Windows through WSL2, while Pixi runs on
+native Windows. The Windows Pixi shell targets the x86-64 host and uses the
+system's Windows SDK and C runtime. Specialized optional packages such as
+cJSON, Python, and LLDB are not part of Pixi's default environment.
+
+CI builds LLGo and runs a small compiled program in each environment on all
+listed platforms; the Nix CI also checks Windows through WSL2.
+
+On Windows, `pixi shell` starts a temporary PowerShell script. If PowerShell's
+execution policy is `Restricted`, allow local scripts for the current session
+before starting the shell (this does not change the user or machine policy):
+
+```powershell
+Set-ExecutionPolicy -Scope Process RemoteSigned
+pixi shell --manifest-path .\dev\pixi.toml
+```
+
+If the same worktree is shared with macOS over a mapped Windows drive, keep
+Windows' Pixi environment on the local disk so it does not reuse macOS's
+`dev/.pixi/envs/default`. Pixi resolves mapped shares to UNC paths, where its
+automatic Windows batch activation is unreliable. From the repository root on
+the mapped drive, use a CMD shell with explicit activation instead:
+
+```powershell
+pixi config set --global detached-environments true
+pixi run --manifest-path .\dev\pixi.toml --frozen cmd /k "call dev\activate_pixi.bat"
+```
+
+The first command is a one-time setting for the Windows user. `exit` leaves the
+CMD shell. The mapped drive must be available in the session running Pixi.
+
+## Containers and scripts
 
 ## Prerequisites
 
