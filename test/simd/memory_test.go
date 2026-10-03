@@ -106,8 +106,6 @@ func TestSIMDMemoryBounds(t *testing.T) {
 	}{
 		{"short load", func() { archsimd.LoadFloat32x4(make([]float32, 3)) }},
 		{"short store", func() { v.Store(make([]float32, 3)) }},
-		{"nil array load", func() { memoryResult = archsimd.LoadFloat32x4Array(nil) }},
-		{"nil array store", func() { v.StoreArray(nil) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			defer func() {

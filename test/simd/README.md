@@ -53,13 +53,20 @@ GOEXPERIMENT=simd llgo test -O2 -target wasi -emulator -count=1 -timeout=2m ./te
 GOEXPERIMENT=simd llgo test -O2 -target emscripten -emulator -count=1 -timeout=2m ./test/simd/...
 ```
 
-WASI execution requires Wasmtime and LLGo's supported Binaryen (`WASMOPT`).
+LLGo WASI execution uses the threaded W32 profile and WAMR (`iwasm`), built
+with `bash dev/build_iwasm.sh`. The official Go WASI comparison uses Wasmtime.
 Emscripten execution requires a compatible SDK and Node.js. The local
 qualification used Go 1.27.0, LLVM 22.1.8, Emscripten 6.0.8, and Node 24.19.0.
 Existing CI runs native amd64/arm64 at O0/O2 and WASI at O2.
 
-The complete O0 Wasm test executable exceeds the engines' local-variable
-limits. A small executable covers SIMD initialization, cross-package calls,
+The current WAMR 2.4.5 classic-interpreter profile rejects `v128` function
+types with `unknown value type`, even though its build reports SIMD enabled.
+The WASI suite is therefore blocked at module loading; the same failure is
+reproducible on the main-branch baseline and an import-free `v128` identity
+module. Emscripten provides executable Wasm SIMD coverage independently.
+
+The complete O0 Emscripten test executable exceeds Node's local-variable
+limit. A small executable covers SIMD initialization, cross-package calls,
 recovery, and scheduling at O0 without importing the testing framework:
 
 ```sh
@@ -92,11 +99,12 @@ the compilation baseline. The amd64 assembly check explicitly uses
 use separate LLGo-only scalar-reference cases when that hardware is not
 available; this does not qualify native AVX512 execution.
 
-Two reference limitations remain visible rather than skipped:
+Reference boundaries:
 
-- With official Go 1.27.0 on WASI, the nil-array SIMD load/store cases in
-  `TestSIMDMemoryBounds` return without a panic. LLGo passes those assertions;
-  the other shared WASI cases passed in the local comparison.
+- Official Go 1.27.0 on WASI does not panic for nil SIMD array loads/stores.
+  `memory_nil_test.go` therefore checks the nil-panic contract under LLGo on
+  every target and under official native Go. Shared WASI tests still cover
+  short-slice bounds; LLGo WASI retains both nil assertions.
 - Running the full standard-library `internal/cpu` test package under LLGo
   currently hits duplicate symbols from the original/test package archives.
   This was reproduced without the CPU-initialization change. The dedicated
