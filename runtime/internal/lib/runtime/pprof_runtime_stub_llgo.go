@@ -49,7 +49,43 @@ type BlockProfileRecord struct {
 	Stack  []uintptr
 }
 
+// trimMemProfileStack drops the allocator/runtime plumbing the physical
+// capture recorded above the allocation site (AllocZ, the capture path
+// itself) so record stacks start at user code like gc's.
+func trimMemProfileStack(stk [32]uintptr) [32]uintptr {
+	i := 0
+	for i < len(stk) && stk[i] != 0 {
+		if !isRuntimePlumbingFrame(stk[i]) {
+			break
+		}
+		i++
+	}
+	if i == 0 {
+		return stk
+	}
+	var out [32]uintptr
+	copy(out[:], stk[i:])
+	return out
+}
+
+// isRuntimePlumbingFrame reports whether pc belongs to LLGo runtime
+// plumbing (allocator and capture hooks).
+func isRuntimePlumbingFrame(pc uintptr) bool {
+	name := frameSymbol(pc - 1).function
+	if name == "" {
+		return false
+	}
+	return hasPrefix(name, "github.com/xgo-dev/llgo/runtime/internal/") ||
+		name == "runtime.captureMemProfileStack"
+}
+
 func MemProfile(p []MemProfileRecord, inuseZero bool) (n int, ok bool) {
+	previous := llrt.MemProfilePause()
+	defer llrt.MemProfileResume(previous)
+	return memProfile(p, inuseZero)
+}
+
+func memProfile(p []MemProfileRecord, inuseZero bool) (n int, ok bool) {
 	n, _ = llrt.MemProfile(nil, inuseZero)
 	if len(p) < n {
 		return n, false
@@ -57,19 +93,24 @@ func MemProfile(p []MemProfileRecord, inuseZero bool) (n int, ok bool) {
 	if n == 0 {
 		return 0, true
 	}
-	var records [64]llrt.MemProfileRecord
-	if n > len(records) {
-		return n, false
+	// The internal record also carries ObjectSize for Go 1.27's pprof API.
+	// Sampling is paused by MemProfile, so this temporary buffer is safe.
+	records := make([]llrt.MemProfileRecord, n+n/4+16)
+	for attempt := 0; attempt < 4; attempt++ {
+		n, ok = llrt.MemProfile(records, inuseZero)
+		if ok {
+			break
+		}
+		records = make([]llrt.MemProfileRecord, n+n/4+16)
 	}
-	n, ok = llrt.MemProfile(records[:n], inuseZero)
-	if !ok {
+	if !ok || len(p) < n {
 		return n, false
 	}
 	for i := 0; i < n; i++ {
 		p[i] = MemProfileRecord{
 			AllocBytes: records[i].AllocBytes, FreeBytes: records[i].FreeBytes,
 			AllocObjects: records[i].AllocObjects, FreeObjects: records[i].FreeObjects,
-			Stack0: records[i].Stack0,
+			Stack0: trimMemProfileStack(records[i].Stack0),
 		}
 	}
 	return n, true

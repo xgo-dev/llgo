@@ -3,6 +3,7 @@
 package runtime
 
 import (
+	latomic "sync/atomic"
 	"unsafe"
 
 	rtdebug "github.com/xgo-dev/llgo/runtime/internal/runtime"
@@ -19,6 +20,20 @@ func init() {
 	rtdebug.PanicTraceback = panicTraceback
 	rtdebug.PanicPCSnapshot = capturePanicPCs
 	rtdebug.RecoverMark = recoverMark
+	installMemProfileHooks()
+}
+
+// installMemProfileHooks is a separate call so whole-program executable
+// builds that do not consume memory profiles can omit the complete setup and
+// capture path without changing runtime APIs.
+func installMemProfileHooks() {
+	// Table initialization may allocate. Complete it before installing the
+	// allocator hook so the first sample never initializes it from AllocZ/U.
+	// Only profile-enabled programs reach this setup; ordinary test binaries
+	// are kept in a separate build group.
+	initRuntimeFuncPCFrames()
+	rtdebug.MemProfileStackCapture = captureMemProfileStack
+	rtdebug.MemProfileRatePtr = &MemProfileRate
 }
 
 // capturePanicPCs runs at panic time, before any longjmp unwinding, and
@@ -46,6 +61,22 @@ func capturePanicPCs(v any) {
 // recursion can legitimately exceed a few thousand frames, so this must not
 // be the limit on useful panic snapshots.
 const maxPanicSpliceFrames = maxTracebackFrames
+
+// captureMemProfileStack walks the physical stack at a sampled allocation.
+// The leading allocator plumbing (AllocZ/AllocU, this capture path) is
+// trimmed at read time by the MemProfile wrapper, where symbolization is
+// safe and cached.
+func captureMemProfileStack(pcs []uintptr) int {
+	if !fpUnwindAvailable() {
+		return 0
+	}
+	// Defensively avoid waiting on the frame-table init latch if future init
+	// ordering changes. The table is normally ready before this hook is set.
+	if latomic.LoadUint32(&runtimeFuncPCInitState) == runtimeFuncInfoInitBusy {
+		return 0
+	}
+	return fpProfileCallers(pcs)
+}
 
 // callerFramePointer returns the frame of its Go caller. llgo_framepointer
 // returns this helper's frame; consume its saved link immediately, before
@@ -165,10 +196,6 @@ func callersWithPanicSplice(skip int, pc []uintptr) int {
 		return 0
 	}
 	return copy(pc, view[skip:])
-}
-
-func hasPrefix(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }
 
 // panicTraceback prints a Go-style stack trace for an unrecovered panic:

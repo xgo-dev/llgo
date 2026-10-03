@@ -5,7 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/packages"
+	"golang.org/x/tools/go/ssa"
 )
 
 // These settings affect package code, not just the final link. Independent
@@ -16,6 +18,8 @@ type initialBuildFeatures struct {
 	localContext    bool
 	reflectBridges  bool
 	funcInfoEntries bool
+	// The allocator and frame attributes differ for heap-profile consumers.
+	memoryProfile bool
 }
 
 type initialBuildGroup struct {
@@ -31,6 +35,10 @@ type initialBuildPlan struct {
 }
 
 func groupInitialBuilds(ctx *context, alts []*packages.Package) []initialBuildGroup {
+	return groupInitialBuildsWithProfiles(ctx, alts, false)
+}
+
+func groupInitialBuildsWithProfiles(ctx *context, alts []*packages.Package, profileReady bool) []initialBuildGroup {
 	if len(ctx.initial) < 2 || ctx.mode == ModeGen {
 		return nil
 	}
@@ -46,6 +54,9 @@ func groupInitialBuilds(ctx *context, alts []*packages.Package) []initialBuildGr
 			features.reflectBridges = target.WasmProvider == "wasi" && use.usesWasmReflectBridges()
 			features.funcInfoEntries = ctx.buildConf.BuildMode != BuildModeExe || use.usesRuntimeFuncForPC()
 		}
+		if profileReady && ctx.mode == ModeTest {
+			features.memoryProfile = initialUsesMemoryProfile(ctx, pkg)
+		}
 		index, ok := indexes[features]
 		if !ok {
 			index = len(groups)
@@ -55,6 +66,23 @@ func groupInitialBuilds(ctx *context, alts []*packages.Package) []initialBuildGr
 		groups[index].pkgs = append(groups[index].pkgs, pkg)
 	}
 	return groups
+}
+
+// A test binary's testdeps import is not a heap-profile request. Split only
+// roots with a real consumer from ordinary tests; their runtime objects and
+// noinline decisions cannot safely share one compiled program or cache key.
+func initialUsesMemoryProfile(ctx *context, root *packages.Package) bool {
+	var deps []*ssa.Package
+	packages.Visit([]*packages.Package{root}, func(pkg *packages.Package) bool {
+		if pkg.Types != nil {
+			if ssaPkg := ctx.progSSA.Package(pkg.Types); ssaPkg != nil {
+				deps = append(deps, ssaPkg)
+			}
+		}
+		return true
+	}, nil)
+	return testMemoryProfileRequired(ctx.mode, ctx.buildConf) ||
+		cl.MemProfileConsumer(deps, true) != ""
 }
 
 func initialGroupInvocations(inv Invocation, ctx *context, groups []initialBuildGroup) []Invocation {

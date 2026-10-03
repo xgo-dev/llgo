@@ -404,10 +404,10 @@ xfails:
   - directive: errorcheck
     case: bombad.go
     reason: llgo parser recovery emits additional byte-order-mark diagnostics
-
-  - directive: run
+  - platform: js/wasm
+    directive: run
     case: heapsampling.go
-    reason: LLGo does not currently report the heap-profile samples required by this runtime test
+    reason: LLGo does not currently report the heap-profile samples required by this runtime test on WebAssembly
   - platform: js/wasm
     directive: run
     case: cmplxdivide.go
