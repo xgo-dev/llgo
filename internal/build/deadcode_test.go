@@ -73,6 +73,14 @@ func TestDCEEntryRootCandidates(t *testing.T) {
 	}
 }
 
+func TestApplyDeadcodeDropRejectsMissingMetadata(t *testing.T) {
+	pkg := &aPackage{Package: &packages.Package{PkgPath: "example.com/missing"}}
+	err := applyDeadcodeDropOverrides([]Package{pkg}, nil, false, false)
+	if err == nil || !strings.Contains(err.Error(), "missing dead-code metadata for linked package example.com/missing") {
+		t.Fatalf("applyDeadcodeDropOverrides() = %v, want missing metadata diagnostic", err)
+	}
+}
+
 func TestDCEEntryRootCandidatesIncludesCExports(t *testing.T) {
 	prog := llssa.NewProgram(nil)
 	defer prog.Dispose()

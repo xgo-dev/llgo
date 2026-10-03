@@ -316,16 +316,32 @@ func TestUseWASIThreadsImportsMemory(t *testing.T) {
 	}
 }
 
-func TestUseWASILTOEnablesSjLjAtLink(t *testing.T) {
+func TestUseWASILTOFlags(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping the external WASI SDK link test in short mode")
 	}
-	export, err := use("wasip1", "wasm", false, optlevel.O2, lto.Thin, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Contains(export.LDFLAGS, "-Wl,--mllvm=-wasm-enable-sjlj") {
-		t.Fatalf("LDFLAGS do not enable Wasm SjLj for LTO: %v", export.LDFLAGS)
+	for _, mode := range []lto.Mode{lto.Thin, lto.Full} {
+		for _, level := range []optlevel.Level{optlevel.O0, optlevel.Oz} {
+			t.Run(mode.String()+"/"+level.String(), func(t *testing.T) {
+				export, err := use("wasip1", "wasm", false, level, mode, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !slices.Contains(export.CCFLAGS, mode.ClangFlag()) {
+					t.Fatalf("CCFLAGS do not emit LTO bitcode: %v", export.CCFLAGS)
+				}
+				for _, flag := range []string{
+					mode.ClangFlag(),
+					"-Wl,--mllvm=-wasm-enable-sjlj",
+					"-Wl,--mllvm=-exception-model=wasm",
+					"-Wl," + ltoLinkerOptFlag(level),
+				} {
+					if !slices.Contains(export.LDFLAGS, flag) {
+						t.Fatalf("LDFLAGS missing %q: %v", flag, export.LDFLAGS)
+					}
+				}
+			})
+		}
 	}
 }
 

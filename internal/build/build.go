@@ -2554,16 +2554,22 @@ func fullRpathArgs(toolchain crosscompile.NativeToolchain, linkArgs []string) (r
 	return rpathArgs
 }
 
-func linkedPackageMetas(pkgs []Package) []*meta.PackageMeta {
+func linkedPackageMetas(pkgs []Package) ([]*meta.PackageMeta, error) {
 	metas := make([]*meta.PackageMeta, 0, len(pkgs))
 	for _, pkg := range pkgs {
+		if pkg.Meta == nil {
+			return nil, fmt.Errorf("missing dead-code metadata for linked package %s", pkg.PkgPath)
+		}
 		metas = append(metas, pkg.Meta)
 	}
-	return metas
+	return metas, nil
 }
 
 func applyDeadcodeDropOverrides(pkgs []Package, entryPkg Package, needRuntime bool, verbose bool) error {
-	metas := linkedPackageMetas(pkgs)
+	metas, err := linkedPackageMetas(pkgs)
+	if err != nil {
+		return err
+	}
 	summary, err := meta.NewGlobalSummary(metas)
 	if err != nil {
 		return err
@@ -3391,6 +3397,8 @@ func printCompletedPackage(conf *Config, pkg *aPackage) {
 
 func exportObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Package) (string, error) {
 	applySizeOptimizationAttributes(pkg.Module(), ctx.buildConf.OptLevel)
+	applyWASILTOFeatures(ctx, pkg.Module())
+	applyEmscriptenEHFeature(ctx, pkg.Module())
 	if useInMemoryNativeCodegen(ctx) {
 		return exportObjectInMemory(ctx, pkgPath, exportFile, pkg)
 	}
@@ -3398,6 +3406,8 @@ func exportObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Pac
 }
 
 func exportPackageObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Package) (string, packageArchiveBuffer, error) {
+	applyWASILTOFeatures(ctx, pkg.Module())
+	applyEmscriptenEHFeature(ctx, pkg.Module())
 	if !useInMemoryNativeCodegen(ctx) {
 		path, err := exportObjectWithClang(ctx, pkgPath, exportFile, []byte(pkg.String()))
 		return path, packageArchiveBuffer{}, err
@@ -3417,6 +3427,46 @@ func exportPackageObject(ctx *context, pkgPath string, exportFile string, pkg ll
 		fmt.Fprintf(os.Stderr, "# using %s\n", kind)
 	}
 	return "", packageArchiveBuffer{name: name, buffer: buf}, nil
+}
+
+// Clang's -fwasm-exceptions controls object codegen, but it does not attach
+// features to functions in LLVM IR input. Preserve the WASI backend contract
+// in bitcode so the linker's LTO SjLj pass can lower setjmp/longjmp.
+func applyWASILTOFeatures(ctx *context, mod gllvm.Module) {
+	if !ctx.buildConf.ltoEnabled() || ctx.crossCompile.WasmProfile != crosscompile.WasmProfileW32 {
+		return
+	}
+	// Keep sorted to match the merged attributes below, including when a
+	// function starts without target-features. Keep this contract in sync with
+	// the WASI compiler flags in internal/crosscompile/crosscompile.go.
+	const required = "+atomics,+bulk-memory,+exception-handling,+mutable-globals,+nontrapping-fptoint,+sign-ext"
+	attr := mod.Context().CreateStringAttribute("target-features", required)
+	requiredFeatures := strings.Split(required, ",")
+	for fn := mod.FirstFunction(); !fn.IsNil(); fn = gllvm.NextFunction(fn) {
+		if fn.IsDeclaration() {
+			continue
+		}
+		features := required
+		for _, existing := range fn.GetFunctionAttributes() {
+			if existing.IsString() && existing.GetStringKind() == "target-features" {
+				merged := slices.Clone(requiredFeatures)
+				for _, feature := range strings.Split(existing.GetStringValue(), ",") {
+					// The mandatory profile features supersede both positive
+					// and negative copies; retain unrelated per-function ones.
+					if feature != "" && !slices.Contains(requiredFeatures, "+"+strings.TrimLeft(feature, "+-")) {
+						merged = append(merged, feature)
+					}
+				}
+				slices.Sort(merged)
+				features = strings.Join(slices.Compact(merged), ",")
+			}
+		}
+		if features == required {
+			fn.AddFunctionAttr(attr)
+		} else {
+			fn.AddFunctionAttr(mod.Context().CreateStringAttribute("target-features", features))
+		}
+	}
 }
 
 func useInMemoryNativeCodegen(ctx *context) bool {

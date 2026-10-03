@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
+import { spawnBrowser } from "./browser-process.mjs";
 
 const [browser, url] = process.argv.slice(2);
 if (!browser || !url) {
@@ -12,7 +12,7 @@ if (!browser || !url) {
 // worker even after the Node acceptance run has passed.
 const deadline = Date.now() + 90_000;
 const profile = await mkdtemp(join(tmpdir(), "llgo-wasm-chrome-"));
-const chrome = spawn(browser, [
+const { child: chrome, stop: stopChrome } = spawnBrowser(browser, [
   "--headless=new",
   "--no-sandbox",
   "--disable-gpu",
@@ -21,8 +21,7 @@ const chrome = spawn(browser, [
   `--user-data-dir=${profile}`,
   "--remote-debugging-port=0",
   "about:blank",
-], { stdio: ["ignore", "ignore", "pipe"] });
-const chromeExit = new Promise(resolve => chrome.once("exit", resolve));
+]);
 
 let chromeLog = "";
 chrome.stderr.setEncoding("utf8");
@@ -150,14 +149,7 @@ try {
   process.exitCode = 1;
 } finally {
   client?.socket.close();
-  if (chrome.exitCode === null && chrome.signalCode === null) {
-    chrome.kill("SIGTERM");
-    await Promise.race([chromeExit, delay(2_000)]);
-    if (chrome.exitCode === null && chrome.signalCode === null) {
-      chrome.kill("SIGKILL");
-      await chromeExit;
-    }
-  }
+  stopChrome();
   // Chrome's child processes can still flush profile files after its main
   // process exits. Node retries ENOTEMPTY for a recursive removal here.
   await rm(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });

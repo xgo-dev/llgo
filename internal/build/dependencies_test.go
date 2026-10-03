@@ -72,6 +72,7 @@ func TestLinkedPackageClosureUsesOnlyRootAndEffectiveDependencies(t *testing.T) 
 	}}
 	basePkg, altPkg := wrapped(base), wrapped(altOnly)
 	unrelatedPkg, runtimeWrapped := wrapped(unrelated), wrapped(runtimePkg)
+	runtimeWrapped.ArchiveFile = "runtime.a"
 	unrelatedDepPkg := wrapped(unrelatedDep)
 	ctx := &context{
 		pkgs: map[*packages.Package]Package{
@@ -90,5 +91,17 @@ func TestLinkedPackageClosureUsesOnlyRootAndEffectiveDependencies(t *testing.T) 
 	}
 	if want := []string{"alt-only", "base", "root", "runtime"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("linkedPackageClosure = %v, want %v", got, want)
+	}
+}
+
+func TestLinkedPackageClosureSkipsUnbuiltRuntime(t *testing.T) {
+	root := &packages.Package{ID: "root", PkgPath: "root", ExportFile: "root.a"}
+	runtimePkg := &packages.Package{ID: llssa.PkgRuntime, PkgPath: llssa.PkgRuntime, ExportFile: "go-runtime.a"}
+	rootBuilt := &aPackage{Package: root, ArchiveFile: "root.a"}
+	runtimeLoaded := &aPackage{Package: runtimePkg}
+	ctx := &context{pkgs: map[*packages.Package]Package{root: rootBuilt, runtimePkg: runtimeLoaded}}
+	got := linkedPackageClosure(ctx, root, []Package{rootBuilt, runtimeLoaded})
+	if len(got) != 1 || got[0] != rootBuilt {
+		t.Fatalf("C-only link includes unbuilt runtime: %v", got)
 	}
 }

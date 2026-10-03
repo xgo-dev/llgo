@@ -79,7 +79,9 @@ func linkedPackageClosure(ctx *context, root *packages.Package, built []*aPackag
 	}
 	visit(root)
 	for _, pkg := range built {
-		if pkg.PkgPath == llssa.PkgRuntime {
+		// Runtime packages are preloaded even for C-only entry points. They
+		// have a Go export file but no built archive or backend in that case.
+		if pkg.PkgPath == llssa.PkgRuntime && pkg.ArchiveFile != "" {
 			visit(pkg.Package)
 		}
 	}

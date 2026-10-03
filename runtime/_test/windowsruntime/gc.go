@@ -2,7 +2,10 @@
 
 package main
 
-import "runtime"
+import (
+	"runtime"
+	"time"
+)
 
 type windowsGCProbe struct {
 	value int
@@ -102,8 +105,11 @@ func checkGC() {
 
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
-	for attempt := 0; attempt < 8; attempt++ {
-		runtime.Gosched()
+	// Receiving created does not wait for the creator's OS thread to exit.
+	// Its conservative stack roots can retain the probe until thread teardown
+	// unregisters them, so allow that teardown to run between collections.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
 		runtime.GC()
 		select {
 		case value := <-finalized:
@@ -118,6 +124,7 @@ func checkGC() {
 			return
 		default:
 		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	panic("Windows GC did not run the finalizer")
 }

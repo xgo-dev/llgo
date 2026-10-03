@@ -10,7 +10,59 @@ import (
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/lto"
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llvm"
 )
+
+func TestWASILTOFunctionFeatures(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		profile crosscompile.WasmProfile
+		mode    lto.Mode
+		want    bool
+	}{
+		{"WASI full", crosscompile.WasmProfileW32, lto.Full, true},
+		{"WASI thin", crosscompile.WasmProfileW32, lto.Thin, true},
+		{"WASI no LTO", crosscompile.WasmProfileW32, lto.Off, false},
+		{"browser", crosscompile.WasmProfileJ32, lto.Full, false},
+		{"native", crosscompile.WasmProfileNone, lto.Full, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			lc := llvm.NewContext()
+			defer lc.Dispose()
+			mod := lc.NewModule("features")
+			defer mod.Dispose()
+			fnType := llvm.FunctionType(lc.VoidType(), nil, false)
+			fn := llvm.AddFunction(mod, "function", fnType)
+			builder := lc.NewBuilder()
+			builder.SetInsertPointAtEnd(lc.AddBasicBlock(fn, "entry"))
+			builder.CreateRetVoid()
+			plain := llvm.AddFunction(mod, "plain", fnType)
+			builder.SetInsertPointAtEnd(lc.AddBasicBlock(plain, "entry"))
+			builder.CreateRetVoid()
+			builder.Dispose()
+			fn.AddFunctionAttr(lc.CreateStringAttribute("target-features", "+simd128,-atomics,-exception-handling"))
+			llvm.AddFunction(mod, "declaration", fnType)
+			ctx := &context{buildConf: &Config{LTO: test.mode}, crossCompile: crosscompile.Export{WasmProfile: test.profile}}
+			applyWASILTOFeatures(ctx, mod)
+			ir := mod.String()
+			for _, feature := range []string{"+atomics", "+bulk-memory", "+exception-handling"} {
+				if strings.Contains(ir, feature) != test.want {
+					t.Fatalf("feature %q, want present=%v:\n%s", feature, test.want, ir)
+				}
+			}
+			if !strings.Contains(ir, "+simd128") || strings.Contains(ir, "declare void @declaration() #") {
+				t.Fatalf("existing features or declaration changed:\n%s", ir)
+			}
+			if test.want && (strings.Contains(ir, "-atomics") || strings.Contains(ir, "-exception-handling")) {
+				t.Fatalf("required features still have negative counterparts:\n%s", ir)
+			}
+			applyWASILTOFeatures(ctx, mod)
+			if mod.String() != ir {
+				t.Fatal("applying LTO features twice changed the module")
+			}
+		})
+	}
+}
 
 func TestUseInMemoryNativeCodegenConf(t *testing.T) {
 	t.Run("native host", func(t *testing.T) {

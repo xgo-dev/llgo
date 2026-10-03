@@ -378,3 +378,6 @@ jobs:
         run: |
           LLGO_DEMO_LLGORUN_FLAGS="-deadcodedrop" \
             bash .github/workflows/test_demo.sh
+
+      - name: Test C-only embedded deadcode-drop builds
+        run: python3 test/sizebuild/runtest.py --target=esp32c3
