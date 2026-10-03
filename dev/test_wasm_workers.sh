@@ -149,6 +149,7 @@ run_browser_acceptance() {
 	local module
 	for module in workers-emscripten.mjs workers-memory64.mjs hardening-workers-emscripten.mjs hardening-workers-memory64.mjs \
 		fs-single-emscripten.mjs fs-workers-emscripten.mjs fs-single-emscripten-memory64.mjs fs-workers-emscripten-memory64.mjs; do
+		echo "browser worker acceptance: ${module}"
 		run_with_timeout "${node_cmd}" "${worker_fixture}/browser-runner.mjs" \
 			"${browser}" "http://127.0.0.1:8123/browser.html?module=${module}"
 	done
@@ -164,6 +165,8 @@ require_tool "${wasm_tools_cmd}"
 require_tool "${wasm_opt_cmd}"
 require_tool curl
 export WASMOPT="${wasm_opt_cmd}"
+
+"${node_cmd}" --test "${repo_root}/test/wasm/workers/browser-process.test.mjs"
 
 # Preserve the single-worker R2 behavior while adding the worker backend.
 run_single_hardening emscripten emscripten-runner.mjs hardening-single-emscripten

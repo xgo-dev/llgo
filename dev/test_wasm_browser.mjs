@@ -4,12 +4,14 @@ import http from "node:http";
 import path from "node:path";
 import process from "node:process";
 
-if (process.argv.length !== 4) {
-	throw new Error("usage: node test_wasm_browser.mjs <module.mjs> <expected-output>");
+if (process.argv.length < 4) {
+	throw new Error("usage: node test_wasm_browser.mjs <module.mjs> <expected-output> [program-args...]");
 }
 
 const modulePath = path.resolve(process.argv[2]);
 const expected = process.argv[3];
+const programArgs = process.argv.slice(4);
+const requireExit = process.env.LLGO_BROWSER_REQUIRE_EXIT === "1";
 const root = path.dirname(modulePath);
 const moduleName = path.basename(modulePath);
 const browserProfile = path.join(root, `.chrome-profile-${process.pid}`);
@@ -44,7 +46,9 @@ function page() {
 const result = document.querySelector("#result");
 const output = [];
 const expected = ${JSON.stringify(expected)};
+const requireExit = ${JSON.stringify(requireExit)};
 let finished = false;
+let successfulExit = false;
 const finish = (status, detail) => {
 	if (finished) return;
 	finished = true;
@@ -55,7 +59,7 @@ const finish = (status, detail) => {
 const write = value => {
 	output.push(String(value));
 	result.textContent = output.join("\\n");
-	if (result.textContent.includes(expected)) finish("success", result.textContent);
+	if (result.textContent.includes(expected) && (!requireExit || successfulExit)) finish("success", result.textContent);
 };
 for (const method of ["log", "info", "warn", "error"]) {
 	const original = console[method].bind(console);
@@ -66,7 +70,18 @@ for (const method of ["log", "info", "warn", "error"]) {
 }
 try {
 	const loaded = await import(${JSON.stringify(`/${moduleName}`)});
-	await loaded.default({ print: write, printErr: write });
+	await loaded.default({
+		arguments: ${JSON.stringify(programArgs)}, print: write, printErr: write,
+		onAbort(reason) { finish("failure", String(reason)); },
+		onExit(status) {
+			if (status !== 0) {
+				finish("failure", "exit " + status + ": " + result.textContent);
+				return;
+			}
+			successfulExit = true;
+			if (result.textContent.includes(expected)) finish("success", result.textContent);
+		},
+	});
 } catch (error) {
 	write(error?.stack || error);
 	finish("failure", result.textContent);
@@ -79,6 +94,8 @@ setTimeout(() => {
 
 const server = http.createServer(async (request, response) => {
 	try {
+		response.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+		response.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
 		const url = new URL(request.url, "http://localhost");
 		if (url.pathname === "/__result") {
 			const status = url.searchParams.get("status");

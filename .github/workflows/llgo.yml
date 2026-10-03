@@ -859,6 +859,16 @@ jobs:
           python3 -m unittest discover -s dev -p test_wasm_debug_info_test.py
           python3 dev/test_wasm_debug_info.py --profile j32 --profile j64 --profile w32 --artifact embedded --artifact external
 
+      - name: Test optimized Emscripten runtime boundaries
+        if: matrix.suite == 'runtime'
+        env:
+          LLGO: ${{ runner.temp }}/llgo-bin/llgo
+          LLGO_BUILD_CACHE: "1"
+          CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
+        run: |
+          node --test test/wasm/optimization/asyncify-exports.test.mjs
+          python3 test/wasm/optimization/test.py --browser
+
       - name: Build standard runtime for wasm
         if: matrix.suite == 'runtime'
         shell: bash
@@ -889,16 +899,26 @@ jobs:
           LLGO_BUILD_CACHE: "1"
         run: dev/test_wasm_workers.sh
 
-      - name: Test SIMD behavior on WASI
+      - name: Test SIMD behavior in WebAssembly
         if: matrix.suite == 'test-command'
         shell: bash
         env:
           GOEXPERIMENT: simd
+          LLGO_BUILD_CACHE: "1"
         run: |
           GOOS=wasip1 GOARCH=wasm go test -exec=wasmtime -count=1 -timeout=2m ./test/simd/...
-          # The unoptimized testing framework exceeds Wasmtime's locals limit.
-          "$RUNNER_TEMP/llgo-bin/llgo" test -O2 -target wasi -emulator \
-            -v -count=1 -timeout=2m ./test/simd/...
+          "$RUNNER_TEMP/llgo-bin/llgo" test -O2 -target wasi -c \
+            -o "$RUNNER_TEMP/simd.test.wasm" ./test/simd/...
+          # WAMR 2.4.5 needs its classic interpreter for EH, which cannot run
+          # SIMD. Native Wasm EH keeps SIMD values out of JS invoke wrappers.
+          # Exercise cold and cached packages without changing the default EH.
+          for attempt in 1 2; do
+            rebuild=()
+            if [[ "$attempt" == 1 ]]; then rebuild=(-a); fi
+            EMCC_CFLAGS='-fwasm-exceptions -sSUPPORT_LONGJMP=wasm -sWASM_LEGACY_EXCEPTIONS=1' \
+              "$RUNNER_TEMP/llgo-bin/llgo" test "${rebuild[@]}" -O2 -target emscripten -emulator \
+              -v -count=1 -timeout=2m ./test/simd/...
+          done
 
       - name: Compare JavaScript call semantics with Go
         if: matrix.suite == 'test-command'

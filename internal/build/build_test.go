@@ -967,6 +967,33 @@ func TestUsesSingleWorkerWasmScheduler(t *testing.T) {
 	}
 }
 
+func TestConfigureWasmAsyncifyExports(t *testing.T) {
+	t.Setenv(llgoWasmWorkers, "1")
+	for _, tc := range []struct {
+		name     string
+		provider crosscompile.WasmProvider
+		flags    []string
+		want     bool
+	}{
+		{"Emscripten Asyncify", crosscompile.WasmProviderEmscripten, []string{"-sASYNCIFY=1"}, true},
+		{"GoJS Asyncify", crosscompile.WasmProviderGoJS, []string{"-sASYNCIFY=1"}, true},
+		{"Emscripten without Asyncify", crosscompile.WasmProviderEmscripten, nil, false},
+		{"GoJS without Asyncify", crosscompile.WasmProviderGoJS, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conf := &Config{Goos: "js", Goarch: "wasm"}
+			export := crosscompile.Export{WasmProfile: crosscompile.WasmProfileJ32, WasmProvider: tc.provider, LDFLAGS: tc.flags}
+			if _, err := configureWasmWorkers(conf, &export); err != nil {
+				t.Fatal(err)
+			}
+			shim := filepath.Join(env.LLGoROOT(), "targets", "emscripten-asyncify-exports.js")
+			if got := slices.Contains(export.LDFLAGS, shim); got != tc.want {
+				t.Fatalf("Asyncify shim present = %v, want %v; flags %v", got, tc.want, export.LDFLAGS)
+			}
+		})
+	}
+}
+
 func TestConfigureWasmWorkers(t *testing.T) {
 	t.Setenv(llgoWasmWorkers, "2")
 	conf := Config{Goos: "js", Goarch: "wasm"}

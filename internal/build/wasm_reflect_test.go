@@ -215,6 +215,10 @@ func TestProgramUsesWasmReflectBridges(t *testing.T) {
 	}{
 		{"no reflection", `package p; func f() int { return 1 }`, false},
 		{"metadata only", `package p; import "reflect"; func f() reflect.Type { return reflect.TypeOf(1) }`, false},
+		{"method value", `package p; import "reflect"; func f(v reflect.Value) any { return v.Method(0).Interface() }`, true},
+		{"named method value", `package p; import "reflect"; func f(v reflect.Value) any { return v.MethodByName("M").Interface() }`, true},
+		{"type method metadata", `package p; import "reflect"; func f(t reflect.Type) reflect.Method { return t.Method(0) }`, false},
+		{"named type method metadata", `package p; import "reflect"; func f(t reflect.Type) (reflect.Method, bool) { return t.MethodByName("M") }`, false},
 		{"value call", `package p; import "reflect"; func f(v reflect.Value) { v.Call(nil) }`, true},
 		{"call slice", `package p; import "reflect"; func f(v reflect.Value) { v.CallSlice(nil) }`, true},
 		{"make func", `package p; import "reflect"; func f(t reflect.Type, fn func([]reflect.Value) []reflect.Value) { reflect.MakeFunc(t, fn) }`, true},
@@ -238,6 +242,12 @@ func TestProgramUsesWasmReflectBridgesReachability(t *testing.T) {
 		want bool
 	}{
 		{"dead call", `package main; import "reflect"; func dead(v reflect.Value) { v.Call(nil) }; func main() {}`, false},
+		{"dead method value", `package main; import "reflect"; func dead(v reflect.Value) any { return v.Method(0).Interface() }; func main() {}`, false},
+		{"method value invocation", `package main; import "reflect"; type T int; func (t T) Add(x int) int { return int(t)+x }; func main() { reflect.ValueOf(T(40)).MethodByName("Add").Interface().(func(int) int)(2) }`, true},
+		{"bound method lookup", `package main; import "reflect"; func main() { lookup := reflect.Value{}.MethodByName; _ = lookup("M") }`, true},
+		{"interface method lookup", `package main; import "reflect"; type lookup interface { Method(int) reflect.Value }; func main() { var v lookup = reflect.Value{}; _ = v.Method(0) }`, true},
+		{"bound type method metadata", `package main; import "reflect"; func main() { lookup := reflect.TypeOf(0).Method; _ = lookup(0) }`, false},
+		{"named type method metadata", `package main; import "reflect"; func main() { _, _ = reflect.TypeOf(0).MethodByName("M") }`, false},
 		{"reachable call", `package main; import "reflect"; func live(v reflect.Value) { v.Call(nil) }; func main() { live(reflect.Value{}) }`, true},
 		{"function value call", `package main; import "reflect"; var call = reflect.Value.Call; func main() { call(reflect.Value{}, nil) }`, true},
 		{"bound method call", `package main; import "reflect"; func main() { call := reflect.Value{}.Call; call(nil) }`, true},

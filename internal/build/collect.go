@@ -116,6 +116,11 @@ func (c *context) collectEnvInputs(m *manifestBuilder) {
 		llgoStdioNobuf,
 		llgoFullRpath,
 	}
+	if c.buildConf.Goos == "js" && c.buildConf.Goarch == "wasm" {
+		// emcc consumes this for both LLVM IR codegen and linking. In
+		// particular, native Wasm SjLj objects cannot reuse JS SjLj objects.
+		envVars = append(envVars, "EMCC_CFLAGS")
+	}
 	for _, envVar := range envVars {
 		if v := os.Getenv(envVar); v != "" {
 			m.env.Vars = m.env.Vars.Add(envVar, v)

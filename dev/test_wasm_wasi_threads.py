@@ -144,6 +144,11 @@ def main():
         run_probe(env, directory, "threaded-gc", "wasm-wasi-threaded-gc",
                   "", "wasi threaded gc ok", 180)
         run_arena_boundaries(env, directory)
+        for _ in range(2):
+            # The second build exercises the bridge-enabled package cache.
+            run_llgo(env, ["run", "-target", "wasi", "-emulator",
+                           str(ROOT / "test/wasm/reflect-method-value")],
+                     "wasm reflect method values: 42 42 42 42 42")
         run_llgo(env, ["run", "-target", "wasi", "-emulator",
                        str(ROOT / "internal/build/testdata/wasm-wasi-threads")],
                  "wasi threads ok")

@@ -836,7 +836,7 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, forceEspClang bool, le
 		export.CFLAGS = []string{}
 		// Add WebAssembly linker flags for Emscripten
 		export.LDFLAGS = []string{
-			emscriptenLinkLevel(level).Flag(),
+			level.Flag(),
 			"-target", targetTriple,
 			"-Wno-override-module",
 			"-Wl,--error-limit=0",
@@ -892,20 +892,6 @@ func appendEmscriptenLibffiSearchPath(export *Export, llgoRoot string, wasmProfi
 		dir = wasm64LibffiRelDir
 	}
 	export.LDFLAGS = append(export.LDFLAGS, "-L"+filepath.Join(llgoRoot, dir))
-}
-
-func emscriptenLinkLevel(level optlevel.Level) optlevel.Level {
-	// Emscripten 6.0.8 runs JS/wasm MetaDCE at -O3, -Os, and -Oz. That pass
-	// removes the Asyncify control exports from LLGo's already-linked module
-	// while leaving generated JS references to them, so the executable fails
-	// before main. Keep the requested level for every source/object compile and
-	// use the highest link level that does not enable the broken MetaDCE pass.
-	switch level {
-	case optlevel.O3, optlevel.Os, optlevel.Oz:
-		return optlevel.O2
-	default:
-		return level
-	}
 }
 
 func appendUniqueStrings(dst []string, values ...string) []string {

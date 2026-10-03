@@ -579,11 +579,14 @@ func TestEmscriptenAsyncifyLinkOptimization(t *testing.T) {
 			if !slices.Contains(export.CCFLAGS, level.Flag()) {
 				t.Fatalf("compiler flags %v do not preserve requested %s", export.CCFLAGS, level)
 			}
-			if !slices.Contains(export.LDFLAGS, "-O2") || slices.Contains(export.LDFLAGS, level.Flag()) {
-				t.Fatalf("link flags %v do not avoid Emscripten MetaDCE for %s", export.LDFLAGS, level)
+			if !slices.Contains(export.LDFLAGS, level.Flag()) || slices.Contains(export.LDFLAGS, "-O2") {
+				t.Fatalf("link flags %v do not preserve requested %s", export.LDFLAGS, level)
 			}
 			if slices.Contains(export.LDFLAGS, "-sASSERTIONS=1") {
 				t.Fatalf("link flags use assertions to disable MetaDCE: %v", export.LDFLAGS)
+			}
+			if !slices.Contains(export.LDFLAGS, "-sEXPORT_ALL=1") {
+				t.Fatalf("link flags changed the public Module export contract: %v", export.LDFLAGS)
 			}
 		})
 	}
