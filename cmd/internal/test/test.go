@@ -200,7 +200,11 @@ func buildTestArgs(customArgs []string) []string {
 		}
 	}
 
-	appendBool(flags.Verbose, "-test.v")
+	if flags.TestJSON {
+		args = append(args, "-test.v=test2json")
+	} else {
+		appendBool(flags.Verbose, "-test.v")
+	}
 	appendString(flags.TestRun, "-test.run=")
 	appendString(flags.TestBench, "-test.bench=")
 	appendString(flags.TestList, "-test.list=")
@@ -214,7 +218,6 @@ func buildTestArgs(customArgs []string) []string {
 	appendBool(flags.TestFailfast, "-test.failfast")
 	appendString(flags.TestShuffle, "-test.shuffle=")
 
-	appendBool(flags.TestJSON, "-test.json")
 	appendBool(flags.TestFullpath, "-test.fullpath")
 
 	appendBool(flags.TestBenchmem, "-test.benchmem")

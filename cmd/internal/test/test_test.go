@@ -287,7 +287,8 @@ func TestBuildTestArgs(t *testing.T) {
 				flags.TestGoCoverDir = "/tmp/cover"
 			},
 			customArgs:  nil,
-			wantContain: []string{"-test.json", "-test.gocoverdir=/tmp/cover"},
+			wantContain: []string{"-test.v=test2json", "-test.gocoverdir=/tmp/cover"},
+			wantAbsent:  []string{"-test.json", "-test.v"},
 		},
 		{
 			name: "coverage is configured by the build driver",

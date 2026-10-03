@@ -197,8 +197,9 @@ type Config struct {
 	TestRunSequential bool
 	// TestFailFast stops launching test binaries after the first failure.
 	TestFailFast bool
-	// TestJSON suppresses parent-generated plain-text success summaries.
+	// TestJSON streams package-attributed test2json events.
 	TestJSON          bool
+	testOutput        *testOutputPolicy
 	LinkOptions       LinkOptions
 	DebugArtifactMode DebugArtifactMode
 	// DebugArtifactModeSet distinguishes an explicit mode from the build default.
@@ -802,6 +803,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		}
 	}
 	if mode == ModeTest {
+		configureTestOutput(conf, inv.Args, initial)
 		initial, err = filterTestPackages(initial, conf.OutFile)
 		if err != nil {
 			return nil, err
@@ -1269,24 +1271,28 @@ func executeInitialPackageLink(ctx *context, link *initialPackageLink, verbose, 
 			return nil, flash.FlashDevice(linkCtx.crossCompile.Device, envMap, linkCtx.buildConf.Port, verbose)
 		}
 	case ModeRun, ModeTest, ModeCmpTest:
+		if link.conf.Mode == ModeTest && (link.conf.Target == "" || namedTargetUsesEmulatorPath(link.conf) && !link.conf.CompileOnly) {
+			runner := goCompatibleWasmRunner(link.conf)
+			if link.conf.Target != "" {
+				runner = linkCtx.crossCompile.Emulator
+			}
+			program := &testProgram{
+				coverage:  link.conf.coverage != nil,
+				app:       link.outFmts.Out,
+				pkgDir:    link.pkg.Dir,
+				pkgName:   strings.TrimSuffix(link.pkg.PkgPath, ".test"),
+				runner:    runner,
+				runnerEnv: envMap,
+				profile:   string(linkCtx.crossCompile.WasmProfile),
+			}
+			if cleanupTemp {
+				program.temporaryOutputs = link.outFmts
+				cleanupTemp = false // runNativeTest now owns the temporary output.
+			}
+			return program, nil
+		}
 		if link.conf.Target == "" {
 			runner := goCompatibleWasmRunner(link.conf)
-			if link.conf.Mode == ModeTest {
-				program := &testProgram{
-					coverage:  link.conf.coverage != nil,
-					app:       link.outFmts.Out,
-					pkgDir:    link.pkg.Dir,
-					pkgName:   strings.TrimSuffix(link.pkg.PkgPath, ".test"),
-					runner:    runner,
-					runnerEnv: envMap,
-					profile:   string(linkCtx.crossCompile.WasmProfile),
-				}
-				if cleanupTemp {
-					program.temporaryOutputs = link.outFmts
-					cleanupTemp = false // runNativeTest now owns the temporary output.
-				}
-				return program, nil
-			}
 			if runner != "" && link.conf.Mode == ModeRun {
 				return nil, runInEmulator(linkCtx.commands, runner, string(linkCtx.crossCompile.WasmProfile), envMap, link.pkg.Dir, link.pkg.PkgPath, link.conf, link.conf.Mode, verbose)
 			}

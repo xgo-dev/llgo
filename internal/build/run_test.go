@@ -21,6 +21,7 @@ package build
 import (
 	"bytes"
 	stdcontext "context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -491,6 +492,19 @@ func TestRunNativeTestHelper(t *testing.T) {
 			panic("SIGKILL returned without terminating the helper")
 		case "hang":
 			time.Sleep(time.Hour)
+		case "wait":
+			fmt.Fprintln(os.Stdout, "waiting stdout")
+			fmt.Fprintln(os.Stderr, "waiting stderr")
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				if _, err := os.Stat(args[i+2]); err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("parent did not release helper")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
 		}
 		return
 	}
@@ -517,7 +531,7 @@ func TestRunNativeTestProgramsSequential(t *testing.T) {
 		t.Fatalf("runNativeTestPrograms result = %+v", result)
 	}
 	for _, name := range []string{"a", "b"} {
-		if !strings.Contains(stdout.String(), "ok  \t"+name+"\n") {
+		if !strings.Contains(stdout.String(), "ok  \t"+name+"\t") {
 			t.Errorf("stdout does not contain result for %s: %q", name, stdout.String())
 		}
 	}
@@ -546,7 +560,7 @@ func TestRunNativeTestProgramsReportsRunnerTimeout(t *testing.T) {
 	if !result.failed || result.skipped != 0 {
 		t.Fatalf("runNativeTestPrograms result = %+v", result)
 	}
-	for _, want := range []string{"phase=test", "profile=j32", "status=timeout", "FAIL\texample/wasm"} {
+	for _, want := range []string{"phase=test", "profile=j32", "status=timeout"} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Errorf("stderr %q does not contain %q", stderr.String(), want)
 		}
@@ -576,7 +590,7 @@ func TestRunTestProgramsLimitAndFailure(t *testing.T) {
 	var maximum atomic.Int32
 
 	go func() {
-		done <- runTestPrograms(testPrograms("a", "b", "c", "d"), 2, false, false, &stdout, &stderr,
+		done <- runTestPrograms(testPrograms("a", "b", "c", "d"), 2, &Config{RunArgs: []string{"-test.v"}}, &stdout, &stderr,
 			func(program testProgram, output io.Writer) error {
 				now := active.Add(1)
 				for {
@@ -620,13 +634,13 @@ func TestRunTestProgramsLimitAndFailure(t *testing.T) {
 			t.Errorf("stdout does not contain output for %s: %q", name, stdout.String())
 		}
 	}
-	if got, want := stderr.String(), "FAIL\td\n"; got != want {
-		t.Fatalf("stderr = %q, want %q", got, want)
+	if !strings.Contains(stdout.String(), "FAIL\td\t") || stderr.Len() != 0 {
+		t.Fatalf("result output: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 }
 
 func TestRunTestProgramsParallelismBoundsAndOutput(t *testing.T) {
-	if got := runTestPrograms(nil, 1, false, false, io.Discard, io.Discard, nil); got != (testRunResult{}) {
+	if got := runTestPrograms(nil, 1, &Config{}, io.Discard, io.Discard, nil); got != (testRunResult{}) {
 		t.Fatalf("empty run result = %+v", got)
 	}
 
@@ -637,7 +651,7 @@ func TestRunTestProgramsParallelismBoundsAndOutput(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			result := runTestPrograms(testPrograms("pkg"), parallelism, false, false, &stdout, &stderr,
+			result := runTestPrograms(testPrograms("pkg"), parallelism, &Config{RunArgs: []string{"-test.v"}}, &stdout, &stderr,
 				func(_ testProgram, output io.Writer) error {
 					fmt.Fprint(output, "output")
 					return nil
@@ -645,8 +659,8 @@ func TestRunTestProgramsParallelismBoundsAndOutput(t *testing.T) {
 			if result.failed || result.skipped != 0 {
 				t.Fatalf("runTestPrograms result = %+v", result)
 			}
-			if got, want := stdout.String(), "output\nok  \tpkg\n"; got != want {
-				t.Fatalf("stdout = %q, want %q", got, want)
+			if got := stdout.String(); !strings.HasPrefix(got, "output\nok  \tpkg\t") || !strings.HasSuffix(got, "s\n") {
+				t.Fatalf("stdout = %q, want output and timed package result", got)
 			}
 			if stderr.Len() != 0 {
 				t.Fatalf("stderr = %q, want empty", stderr.String())
@@ -657,7 +671,7 @@ func TestRunTestProgramsParallelismBoundsAndOutput(t *testing.T) {
 
 func TestRunTestProgramsFailFast(t *testing.T) {
 	var runs atomic.Int32
-	result := runTestPrograms(testPrograms("a", "b", "c"), 1, true, false, io.Discard, io.Discard,
+	result := runTestPrograms(testPrograms("a", "b", "c"), 1, &Config{TestFailFast: true}, io.Discard, io.Discard,
 		func(testProgram, io.Writer) error {
 			runs.Add(1)
 			return errors.New("failed")
@@ -675,17 +689,103 @@ func TestRunTestProgramsFailFast(t *testing.T) {
 
 func TestRunTestProgramsJSONOutput(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	result := runTestPrograms(testPrograms("json"), 1, false, true, &stdout, &stderr,
+	result := runTestPrograms(testPrograms("json"), 1, &Config{TestJSON: true}, &stdout, &stderr,
 		func(testProgram, io.Writer) error {
 			return nil
 		})
 	if result.failed || result.skipped != 0 {
 		t.Fatalf("runTestPrograms result = %+v", result)
 	}
-	if stdout.Len() != 0 {
-		t.Fatalf("JSON success output includes a plain-text package result: %q", stdout.String())
+	var passed bool
+	for _, line := range bytes.Split(bytes.TrimSpace(stdout.Bytes()), []byte("\n")) {
+		var event struct{ Action, Package string }
+		if err := json.Unmarshal(line, &event); err != nil {
+			t.Fatalf("invalid JSON event: %s: %v", line, err)
+		}
+		passed = passed || event.Action == "pass" && event.Package == "json"
+	}
+	if !passed {
+		t.Fatalf("missing JSON package pass event: %s", stdout.String())
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("JSON success stderr = %q", stderr.String())
+	}
+}
+
+func TestRunNativeTestProgramsStreamsBeforeExit(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name  string
+		count int
+		conf  Config
+	}{
+		{name: "local", count: 1, conf: Config{testOutput: &testOutputPolicy{stream: true, direct: true}}},
+		{name: "single verbose", count: 1, conf: Config{RunArgs: []string{"-test.v"}}},
+		{name: "multiple verbose p1", count: 2, conf: Config{BuildParallelism: 1, RunArgs: []string{"-test.v"}}},
+		{name: "parallel json", count: 2, conf: Config{BuildParallelism: 2, TestJSON: true}},
+	} {
+		for _, runner := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/runner=%t", tc.name, runner), func(t *testing.T) {
+				release := filepath.Join(t.TempDir(), "release")
+				defer os.WriteFile(release, nil, 0600)
+				conf := tc.conf
+				conf.RunArgs = append(slices.Clone(conf.RunArgs), "-test.run=^TestRunNativeTestHelper$", "--", "wait", release)
+				programs := testPrograms("a")
+				if tc.count == 2 {
+					programs = testPrograms("a", "b")
+				}
+				for i := range programs {
+					programs[i].app, programs[i].pkgDir = executable, t.TempDir()
+					if runner {
+						programs[i].runner = fmt.Sprintf("%q", executable)
+					}
+				}
+				stdout := &observedTestOutput{changed: make(chan struct{}, 1)}
+				stderr := &observedTestOutput{}
+				done := make(chan testRunResult, 1)
+				go func() {
+					done <- runNativeTestPrograms(commandEnv{environ: os.Environ()}, programs, &conf, stdout, stderr)
+				}()
+				deadline := time.NewTimer(5 * time.Second)
+				defer deadline.Stop()
+				for {
+					output := stdout.String()
+					// With -p=1, only the first child may start before release.
+					want := tc.count
+					if conf.BuildParallelism == 1 {
+						want = 1
+					}
+					if strings.Count(output, "waiting stdout") >= want && strings.Count(output, "waiting stderr") >= want {
+						break
+					}
+					select {
+					case <-stdout.changed:
+					case result := <-done:
+						t.Fatalf("test exited before parent release: %+v\nstdout=%s\nstderr=%s", result, stdout.String(), stderr.String())
+					case <-deadline.C:
+						t.Fatalf("output was buffered while the child waited for parent release: %s", stdout.String())
+					}
+				}
+				select {
+				case result := <-done:
+					t.Fatalf("test unexpectedly exited before release: %+v", result)
+				default:
+				}
+				if err := os.WriteFile(release, nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case result := <-done:
+					if result.failed {
+						t.Fatalf("test failed after release: %+v\n%s\n%s", result, stdout.String(), stderr.String())
+					}
+				case <-deadline.C:
+					t.Fatal("test did not exit after parent release")
+				}
+			})
+		}
 	}
 }

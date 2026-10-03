@@ -17,10 +17,10 @@
 package build
 
 import (
-	"bytes"
 	"container/heap"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -388,6 +388,9 @@ func runNativeTestDAG(ctx *context, allPkgs []*aPackage, roots []*packages.Packa
 		}
 	}()
 	runResults := make([]testProgramResult, len(roots))
+	stdout := &lockedTestWriter{w: os.Stdout}
+	stderr := &lockedTestWriter{w: os.Stderr}
+	report := testResultReporter(len(roots), stdout)
 	packageFanout := make([]int, len(packageTasks))
 	packageConsumers := make(map[*aPackage]int, len(packageTasks))
 	for rootIndex, root := range roots {
@@ -473,10 +476,12 @@ func runNativeTestDAG(ctx *context, allPkgs []*aPackage, roots []*packages.Packa
 			},
 			skipped: func() {
 				result.tests.skipped++
+				report(rootIndex, nil)
 			},
 			blocked: func() {
 				result.tests.failed = true
 				fmt.Fprintf(os.Stderr, "FAIL\t%s [build failed]\n", strings.TrimSuffix(root.PkgPath, ".test"))
+				report(rootIndex, nil)
 			},
 			run: func() error {
 				linked := result.links[rootIndex].program
@@ -490,15 +495,14 @@ func runNativeTestDAG(ctx *context, allPkgs []*aPackage, roots []*packages.Packa
 					return err
 				}
 				program := *linked
-				var output bytes.Buffer
 				span := ctx.buildTrace.startWorker("test", program.pkgName)
 				defer span.done()
-				err := runNativeTest(ctx.commands, program, conf, &output, &output)
-				runResults[rootIndex] = testProgramResult{program: program, output: output.Bytes(), err: err}
-				return err
+				runResults[rootIndex] = runTestProgram(program, conf, len(roots), stdout, stderr,
+					func(output io.Writer) error { return runNativeTest(ctx.commands, program, conf, output, output) })
+				return runResults[rootIndex].err
 			},
 			complete: func(err error) {
-				reportTestProgramResult(os.Stdout, os.Stderr, runResults[rootIndex], conf.TestJSON)
+				report(rootIndex, &runResults[rootIndex])
 				if err != nil {
 					result.tests.failed = true
 				}

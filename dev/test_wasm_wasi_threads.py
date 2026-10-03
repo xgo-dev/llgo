@@ -150,7 +150,7 @@ def main():
         run_llgo(env, ["run", "-target", "wasi", "-emulator",
                        str(ROOT / "internal/build/testdata/wasm-wasi-threaded-fs")],
                  "wasi threaded filesystem ok")
-        run_llgo(env, ["test", "-target", "wasi", "-emulator",
+        run_llgo(env, ["test", "-v", "-target", "wasi", "-emulator",
                        str(ROOT / "test/std/errors")], "PASS")
         # Compiling test/go on a cold CI runner and running the GC race are
         # separate budgets. Verbose, inherited output identifies a slow test
@@ -179,17 +179,17 @@ def main():
                             "-test.run=" + pattern],
                            env=env, check=True, timeout=300)
             print(f"WAMR GC test {name}: {time.monotonic() - started:.2f}s", flush=True)
-        run_llgo(env, ["test", "-target", "wasi", "-emulator", "-run",
+        run_llgo(env, ["test", "-v", "-target", "wasi", "-emulator", "-run",
                        "^TestPoolAfterGC$", str(ROOT / "test/std/sync")], "PASS",
                  timeout=300)
-        run_llgo(env, ["test", "-target", "wasi", "-emulator",
+        run_llgo(env, ["test", "-v", "-target", "wasi", "-emulator",
                        str(ROOT / "test/std/go/importer")], "PASS")
-        run_llgo(env, ["test", "-target", "wasi", "-emulator", "-run",
+        run_llgo(env, ["test", "-v", "-target", "wasi", "-emulator", "-run",
                        "^(TestTBasicMethods|FuzzExample)$",
                        str(ROOT / "test/std/testing")], "PASS")
-        run_llgo(env, ["test", "-target", "wasi", "-emulator",
+        run_llgo(env, ["test", "-v", "-target", "wasi", "-emulator",
                        str(ROOT / "test/std/weak")], "PASS")
-        run_llgo(env, ["test", "-target", "wasi", "-emulator",
+        run_llgo(env, ["test", "-v", "-target", "wasi", "-emulator",
                        "-run", "^TestConcurrentSelectProposeReplyStress$",
                        str(ROOT / "test")], "PASS")
         subprocess.run(

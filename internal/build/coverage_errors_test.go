@@ -56,7 +56,7 @@ func TestCoverageRunErrors(t *testing.T) {
 	}
 	conf.TestJSON = true
 	if err := runCoveredTest(commandEnv{}, program, conf, &stdout, &stderr); err == nil {
-		t.Fatal("ignored test2json start failure")
+		t.Fatal("ignored test process start failure in JSON mode")
 	}
 	if err := c.merge(dir); err == nil {
 		t.Fatal("accepted a directory as an input profile")

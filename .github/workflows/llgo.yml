@@ -889,15 +889,21 @@ jobs:
           LLGO_BUILD_CACHE: "1"
         run: dev/test_wasm_workers.sh
 
-      - name: Test SIMD behavior on WASI
+      - name: Test SIMD behavior on WebAssembly
         if: matrix.suite == 'test-command'
         shell: bash
         env:
           GOEXPERIMENT: simd
         run: |
           GOOS=wasip1 GOARCH=wasm go test -exec=wasmtime -count=1 -timeout=2m ./test/simd/...
-          # The unoptimized testing framework exceeds Wasmtime's locals limit.
-          "$RUNNER_TEMP/llgo-bin/llgo" test -O2 -target wasi -emulator \
+          # WAMR's classic interpreter supports the legacy EH required by
+          # LLGo's WASI pthread runtime, but cannot execute SIMD instructions.
+          # Keep vector arguments inside Wasm during panic/recover. Use the
+          # LLVM version that produced LLGo's IR for native Wasm SjLj lowering.
+          env EM_LLVM_ROOT="$(llvm-config --bindir)" \
+            EMCC_CFLAGS="-fwasm-exceptions -sSUPPORT_LONGJMP=wasm" \
+            EM_CACHE="$RUNNER_TEMP/simd-emcc-cache" LLGO_BUILD_CACHE=off \
+            "$RUNNER_TEMP/llgo-bin/llgo" test -O2 -target emscripten -emulator \
             -v -count=1 -timeout=2m ./test/simd/...
 
       - name: Compare JavaScript call semantics with Go

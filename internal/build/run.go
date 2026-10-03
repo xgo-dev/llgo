@@ -17,7 +17,6 @@
 package build
 
 import (
-	"bytes"
 	stdcontext "context"
 	"errors"
 	"fmt"
@@ -51,6 +50,7 @@ type testRunResult struct {
 }
 
 type testProgramResult struct {
+	index   int
 	program testProgram
 	output  []byte
 	err     error
@@ -165,6 +165,11 @@ func runnerPhase(mode Mode) string {
 }
 
 func runNativeTest(commands commandEnv, program testProgram, conf *Config, stdout, stderr io.Writer) error {
+	if conf.TestJSON {
+		copyConf := *conf
+		copyConf.RunArgs = testJSONArgs(conf.RunArgs)
+		conf = &copyConf
+	}
 	if conf.coverage != nil {
 		return runCoveredTest(commands, program, conf, stdout, stderr)
 	}
@@ -179,6 +184,11 @@ func runNativeTest(commands commandEnv, program testProgram, conf *Config, stdou
 		return runEmuCmdTo(commands, program.runnerEnv, program.runner, conf.RunArgs, false, conf.PrintCommands,
 			runnerDetails{phase: "test", target: conf.Target, profile: program.profile, artifact: program.app, packageName: program.pkgName, timeout: conf.RunnerTimeout},
 			stdout, stderr)
+	}
+	if conf.Target != "" {
+		details := runnerDetails{phase: "test", target: conf.Target, profile: program.profile, artifact: program.app, packageName: program.pkgName}
+		return newRunnerFailure(details, "", runnerStatusNotConfigured, -1,
+			fmt.Errorf("target %s does not have an emulator configured", conf.Target))
 	}
 	if conf.PrintCommands {
 		fmt.Fprintf(stderr, "%s %s\n", program.app, strings.Join(conf.RunArgs, " "))
@@ -223,42 +233,25 @@ func runNativeTestPrograms(commands commandEnv, programs []testProgram, conf *Co
 	if conf.CompileOnly {
 		return testRunResult{}
 	}
+	if conf.testOutput == nil {
+		copyConf := *conf
+		copyConf.testOutput = newTestOutputPolicy(conf, false, len(programs))
+		conf = &copyConf
+	}
 	parallelism := conf.BuildParallelism
 	if conf.TestRunSequential {
 		parallelism = 1
 	}
-	return runTestPrograms(programs, parallelism, conf.TestFailFast, conf.TestJSON, stdout, stderr,
+	return runTestPrograms(programs, parallelism, conf, stdout, stderr,
 		func(program testProgram, output io.Writer) error {
 			return runNativeTest(commands, program, conf, output, output)
 		})
 }
 
-func reportTestProgramResult(stdout, stderr io.Writer, result testProgramResult, json bool) {
-	if len(result.output) != 0 {
-		_, _ = stdout.Write(result.output)
-		if result.output[len(result.output)-1] != '\n' {
-			fmt.Fprintln(stdout)
-		}
-	}
-	var failure *runnerFailure
-	if errors.As(result.err, &failure) {
-		fmt.Fprintln(stderr, failure)
-	}
-	if result.program.coverage {
-		return // Coverage reporting includes the Go-compatible package record.
-	}
-	if result.err != nil {
-		fmt.Fprintf(stderr, "FAIL\t%s\n", result.program.pkgName)
-	} else if !json {
-		fmt.Fprintf(stdout, "ok  \t%s\n", result.program.pkgName)
-	}
-}
-
 func runTestPrograms(
 	programs []testProgram,
 	parallelism int,
-	failFast bool,
-	json bool,
+	conf *Config,
 	stdout, stderr io.Writer,
 	run func(testProgram, io.Writer) error,
 ) testRunResult {
@@ -276,18 +269,23 @@ func runTestPrograms(
 	}
 
 	results := make(chan testProgramResult, parallelism)
-	start := func(program testProgram) {
+	stdout = &lockedTestWriter{w: stdout}
+	stderr = &lockedTestWriter{w: stderr}
+	report := testResultReporter(len(programs), stdout)
+	start := func(index int) {
+		program := programs[index]
 		go func() {
-			var output bytes.Buffer
-			err := run(program, &output)
-			results <- testProgramResult{program: program, output: output.Bytes(), err: err}
+			result := runTestProgram(program, conf, len(programs), stdout, stderr,
+				func(output io.Writer) error { return run(program, output) })
+			result.index = index
+			results <- result
 		}()
 	}
 
 	next := 0
 	running := 0
 	for next < len(programs) && running < parallelism {
-		start(programs[next])
+		start(next)
 		next++
 		running++
 	}
@@ -295,13 +293,13 @@ func runTestPrograms(
 	var result testRunResult
 	for running != 0 {
 		completed := <-results
-		reportTestProgramResult(stdout, stderr, completed, json)
+		report(completed.index, &completed)
 		if completed.err != nil {
 			result.failed = true
 		}
 		running--
-		if next < len(programs) && !(failFast && result.failed) {
-			start(programs[next])
+		if next < len(programs) && !(conf.TestFailFast && result.failed) {
+			start(next)
 			next++
 			running++
 		}

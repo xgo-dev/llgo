@@ -1489,8 +1489,8 @@ func TestExtest(t *testing.T) {
 	if testingBuilds != 1 {
 		t.Errorf("testing package builds = %d, want 1 shared build", testingBuilds)
 	}
-	if count := strings.Count(got, "PASS\n"); count != 4 {
-		t.Errorf("PASS count = %d, want 4; output:\n%s", count, got)
+	if strings.Contains(got, "PASS\n") {
+		t.Errorf("non-verbose package-list mode exposed successful test output:\n%s", got)
 	}
 	for _, pkg := range []string{
 		"github.com/xgo-dev/llgo/cl/_testgo/runextest",
@@ -1498,7 +1498,7 @@ func TestExtest(t *testing.T) {
 		"github.com/xgo-dev/llgo/cl/_testgo/runextest/bar/barinner",
 		"github.com/xgo-dev/llgo/cl/_testgo/runextest/foo",
 	} {
-		if !strings.Contains(got, "ok  \t"+pkg+"\n") {
+		if !strings.Contains(got, "ok  \t"+pkg+"\t") {
 			t.Errorf("output does not contain result for %s:\n%s", pkg, got)
 		}
 	}
@@ -1995,6 +1995,16 @@ func TestExecuteInitialPackageLinkCompileOnlyNamedTargetDoesNotExecute(t *testin
 	}
 	if data, err := os.ReadFile(output); err != nil || string(data) != "linked" {
 		t.Fatalf("linked output = %q, %v", data, err)
+	}
+	// Executed emulator tests must join the same output-aware test batch as
+	// native programs. The linker helper writes an opaque artifact, so any
+	// attempt to launch it here would fail this assertion.
+	conf.CompileOnly, conf.Emulator = false, true
+	ctx.crossCompile.Emulator = "host-runner {}"
+	link.plan = &mainLinkPlan{outputPath: output}
+	program, err = executeInitialPackageLink(ctx, link, false, false)
+	if err != nil || program == nil || program.runner != ctx.crossCompile.Emulator || program.pkgName != "example.com/wasm-test" {
+		t.Fatalf("emulator test did not return a deferred test program: %+v, %v", program, err)
 	}
 }
 

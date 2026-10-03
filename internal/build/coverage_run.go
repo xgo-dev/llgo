@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 )
@@ -139,10 +138,7 @@ func runCoveredTest(commands commandEnv, program testProgram, conf *Config, stdo
 	copyConf := *conf
 	copyConf.coverage = nil
 	if conf.TestJSON {
-		args = slices.DeleteFunc(args, func(arg string) bool {
-			return arg == "-test.json" || arg == "-test.v" || strings.HasPrefix(arg, "-test.v=")
-		})
-		args = append(args, "-test.v=test2json")
+		args = testJSONArgs(args)
 	}
 	copyConf.RunArgs = args
 	if conf.PrintCommands {
@@ -151,46 +147,50 @@ func runCoveredTest(commands commandEnv, program testProgram, conf *Config, stdo
 		copyConf.PrintCommands = false
 	}
 	var output bytes.Buffer
-	var converter *exec.Cmd
-	var input io.WriteCloser
 	var testOutput io.Writer = &output
-	if conf.TestJSON {
-		// Start before the test so test2json measures real elapsed time and
-		// preserves event timestamps, even when the parent buffers packages.
-		converter = c.commands.configure(exec.Command(c.goCommand, "tool", "test2json", "-t", "-p", program.pkgName))
-		converter.Stdout = stdout
-		converter.Stderr = stderr
-		input, err = converter.StdinPipe()
-		if err != nil {
-			return err
+	policy := conf.testOutput
+	if policy == nil {
+		policy = newTestOutputPolicy(conf, c.local, 1)
+	}
+	stream := policy.stream
+	var metadata testOutputMetadata
+	if stream {
+		testOutput = stdout
+		if !policy.direct {
+			if conf.TestJSON {
+				metadata.coverageLimit = 128 + len(c.options.Packages)
+				testOutput = io.MultiWriter(stdout, &metadata)
+			} else {
+				testOutput = io.MultiWriter(stdout, &output)
+			}
 		}
-		if err := converter.Start(); err != nil {
-			input.Close()
-			return err
-		}
-		testOutput = io.MultiWriter(&output, input)
 	}
 	start := time.Now()
 	err = runNativeTest(commands, program, &copyConf, testOutput, testOutput)
 	elapsed := time.Since(start)
+	if metadata.written && metadata.last != '\n' || output.Len() != 0 && output.Bytes()[output.Len()-1] != '\n' {
+		fmt.Fprintln(testOutput)
+	}
 	mergeErr := c.merge(profile)
 	err = errors.Join(err, mergeErr)
 	var report bytes.Buffer
-	show := c.local
-	for _, arg := range args {
-		show = show || arg == "-test.v" || arg == "-test.v=true" ||
-			strings.HasPrefix(arg, "-test.bench=") || strings.HasPrefix(arg, "-test.list=")
-	}
-	if !conf.TestJSON && (show || err != nil) {
+	if !stream && (policy.show || err != nil) {
 		report.Write(output.Bytes())
 	}
 	if mergeErr != nil {
 		fmt.Fprintln(&report, mergeErr)
 	}
 	if err != nil {
-		fmt.Fprintf(&report, "FAIL\t%s\t%.3fs\n", program.pkgName, elapsed.Seconds())
+		prefix := ""
+		if conf.TestJSON {
+			prefix = "\x16"
+		}
+		fmt.Fprintf(&report, "%sFAIL\t%s\t%.3fs\n", prefix, program.pkgName, elapsed.Seconds())
 	} else {
 		suffix := ""
+		if !c.local && len(metadata.coverage) != 0 {
+			suffix = "\t" + string(metadata.coverage)
+		}
 		for _, line := range strings.Split(output.String(), "\n") {
 			if index := strings.Index(line, "coverage: "); !c.local && index >= 0 {
 				// Go 1.20 prefixes this line with the package path. Like
@@ -199,17 +199,12 @@ func runCoveredTest(commands commandEnv, program testProgram, conf *Config, stdo
 				break
 			}
 		}
-		if bytes.Contains(output.Bytes(), []byte("testing: warning: no tests to run")) {
+		if metadata.noTests || bytes.Contains(output.Bytes(), []byte(noTestsMarker)) {
 			suffix += " [no tests to run]"
 		}
 		fmt.Fprintf(&report, "ok  \t%s\t%.3fs%s\n", program.pkgName, elapsed.Seconds(), suffix)
 	}
-	if conf.TestJSON {
-		_, writeErr := input.Write(report.Bytes())
-		err = errors.Join(err, writeErr, input.Close(), converter.Wait())
-	} else {
-		_, writeErr := stdout.Write(report.Bytes())
-		err = errors.Join(err, writeErr)
-	}
+	_, writeErr := stdout.Write(report.Bytes())
+	err = errors.Join(err, writeErr)
 	return err
 }
