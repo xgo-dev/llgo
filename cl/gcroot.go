@@ -193,13 +193,18 @@ func (p *context) functionHasGCSafepoint(fn *ssa.Function) bool {
 
 func (p *context) isGCSafepoint(instr ssa.Instruction) bool {
 	if load, ok := instr.(*ssa.UnOp); ok && load.Op == token.MUL {
-		switch load.Type().Underlying().(type) {
-		case *types.Array, *types.Struct:
-			// ABI lowering snapshots large aggregate loads on the heap after
-			// this root plan is built. Account for that added allocation now.
-			size := p.prog.SizeOf(p.type_(load.Type(), llssa.InGo))
-			if size > llabi.MaxImplicitStackVarSize ||
-				(p.prog.Target().GOARCH == "wasm" && size >= llabi.MinWasmAggregateCopySize) {
+		// ABI lowering may snapshot these loads with AllocU after this root
+		// plan is built. Keep the predicate in sync with abi.ShouldSnapshotAggregateLoad.
+		size := p.prog.SizeOf(p.type_(load.Type(), llssa.InGo))
+		ptrSize := p.prog.PointerSize()
+		wasm := p.prog.Target().GOARCH == "wasm"
+		switch t := load.Type().Underlying().(type) {
+		case *types.Array:
+			if llabi.ShouldSnapshotAggregateLoad(true, int(t.Len()), false, size, ptrSize, wasm) {
+				return true
+			}
+		case *types.Struct:
+			if llabi.ShouldSnapshotAggregateLoad(false, 0, true, size, ptrSize, wasm) {
 				return true
 			}
 		}
