@@ -56,7 +56,9 @@ trap 'rm -rf "${TEMP_DIR}"' EXIT
 cd "${TEMP_DIR}"
 
 echo "Cloning wasm-micro-runtime ${WAMR_VERSION}..."
-git clone --branch "${WAMR_VERSION}" --depth 1 https://github.com/wasm-micro-runtime/wasm-micro-runtime.git
+# Keep source line endings aligned with the LF patches on Windows as well.
+git -c core.autocrlf=false -c core.eol=lf clone \
+    --branch "${WAMR_VERSION}" --depth 1 https://github.com/wasm-micro-runtime/wasm-micro-runtime.git
 
 # Keep exception propagation within one interpreter thread until it escapes
 # the Wasm invocation. Otherwise a caught longjmp can terminate sibling Gs.
