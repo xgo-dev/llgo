@@ -354,10 +354,10 @@ func (tc *typecheckContext) typecheckPackage(pkg *Package) {
 		if tc.dedup.setpath != nil {
 			pkg.PkgPath = tc.dedup.setpath(pkg.PkgPath, pkg.Name)
 		}
-		// Source-patch files are selected per import path and intentionally
-		// shared by the ordinary and test-augmented variants.
-		if _, ok := tc.dedup.checked.Load(pkg.PkgPath); !ok {
-			tc.dedup.checked.Store(pkg.PkgPath, struct{}{})
+		// Source patches are selected by import path, but each package variant
+		// needs the files. A test-augmented package has a distinct file list.
+		if _, ok := tc.dedup.checked.Load(pkg.ID); !ok {
+			tc.dedup.checked.Store(pkg.ID, struct{}{})
 			if files, ok := tc.dedup.llgoFiles[pkg.PkgPath]; ok {
 				pkg.CompiledGoFiles = append(pkg.CompiledGoFiles, files...)
 			}

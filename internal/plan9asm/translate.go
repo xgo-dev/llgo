@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	archcfg "github.com/xgo-dev/llgo/internal/goarch"
 	"github.com/xgo-dev/llgo/internal/packages"
 	intllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
 	llssaabi "github.com/xgo-dev/llgo/ssa/abi"
@@ -34,6 +35,7 @@ type ModuleTranslation struct {
 type TranslateOptions struct {
 	AnnotateSource bool
 	GOARM          string
+	GOAMD64        string
 	// X87Mode controls explicit 386 x87 assembly lowering. The zero value uses
 	// the Go-compatible hardware lowering.
 	X87Mode extplan9asm.X87Mode
@@ -103,6 +105,15 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 		if imp != nil && imp.Types != nil {
 			imports[path] = imp.Types
 		}
+	}
+	if goarch == "amd64" {
+		level, err := archcfg.ResolveAMD64(opt.GOAMD64)
+		if err != nil {
+			return nil, err
+		}
+		// Match cmd/asm's feature macro, including getGOAMD64level used by
+		// internal/cpu to decide which baseline features GODEBUG may disable.
+		src = append([]byte("#define GOAMD64_"+level+"\n"), src...)
 	}
 
 	tr, err := extplan9asm.TranslateGoModule(extplan9asm.GoPackage{

@@ -66,18 +66,6 @@ func windows_QueryPerformanceFrequency() int64 {
 	return c_queryPerformanceFrequency()
 }
 
-// Go 1.27 moved the Windows processor-feature query behind this runtime hook.
-// Keep the same thin boundary as the official runtime implementation: the
-// standard library sees a Go bool, while the native call uses Win32 BOOL.
-
-//go:linkname c_isProcessorFeaturePresent stdcall.IsProcessorFeaturePresent
-func c_isProcessorFeaturePresent(processorFeature uint32) int32
-
-//go:linkname cpu_isProcessorFeaturePresent internal/cpu.isProcessorFeaturePresent
-func cpu_isProcessorFeaturePresent(processorFeature uint32) bool {
-	return c_isProcessorFeaturePresent(processorFeature) != 0
-}
-
 // syscall.Setenv and syscall.Unsetenv have already updated the Win32
 // environment before calling these hooks. LLGo only needs to propagate the
 // runtime-observed GODEBUG change.

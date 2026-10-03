@@ -15,7 +15,7 @@ import (
 )
 
 func plan9asmTranslateOptions(conf *Config) llplan9asm.TranslateOptions {
-	opt := llplan9asm.TranslateOptions{GOARM: conf.GOARM}
+	opt := llplan9asm.TranslateOptions{GOARM: conf.GOARM, GOAMD64: conf.GOAMD64}
 	if conf.Goarch == "386" && conf.GO386 == "softfloat" {
 		opt.X87Mode = extplan9asm.X87Software
 	}

@@ -53,13 +53,16 @@ func TestDeduperKeepsTestPackageIdentities(t *testing.T) {
 	dir := t.TempDir()
 	baseFile := filepath.Join(dir, "helper.go")
 	testFile := filepath.Join(dir, "helper_test.go")
-	writeLoadTestFile(t, baseFile, "package helper\nconst Value = 1\n")
+	patchFile := filepath.Join(dir, "patch.go")
+	writeLoadTestFile(t, baseFile, "package helper\nconst Value = Patched\n")
 	writeLoadTestFile(t, testFile, "package helper\nconst TestOnly = 2\n")
+	writeLoadTestFile(t, patchFile, "package helper\nconst Patched = 1\n")
 	const path = "example.com/helper"
 	const testID = path + " [" + path + ".test]"
 	for _, order := range [][]string{{path, testID}, {testID, path}} {
 		t.Run(order[0], func(t *testing.T) {
 			dedup := NewDeduper()
+			dedup.SetLLGoFiles(map[string][]string{path: {patchFile}})
 			tc := &typecheckContext{dedup: dedup, cfg: loadTestConfig(dir), fset: token.NewFileSet(), origMode: NeedTypes | NeedTypesInfo}
 			makePackage := func(id string) *Package {
 				pkg := &Package{ID: id, PkgPath: path, Name: "helper", CompiledGoFiles: []string{baseFile}}

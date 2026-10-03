@@ -9,25 +9,22 @@ import (
 	_ "unsafe"
 )
 
-//go:linkname simdDiv simd/archsimd.Float32x4.Div
-func simdDiv(x, y archsimd.Float32x4) archsimd.Float32x4
+//go:linkname simdAverage simd/archsimd.Uint8x16.Average
+func simdAverage(x, y archsimd.Uint8x16) archsimd.Uint8x16
 
 func TestUnimplementedSIMD(t *testing.T) {
-	var x archsimd.Float32x4
-	method := x.Div
+	var x archsimd.Uint8x16
+	method := x.Average
 	for _, tc := range []struct {
 		name   string
 		call   func()
 		symbol string
 	}{
-		{"direct", func() { x.Div(x) }, "simd/archsimd.Float32x4.Div"},
-		{"method value", func() { method(x) }, "simd/archsimd.Float32x4.Div"},
-		{"method expression", func() { indirect(archsimd.Float32x4.Div, x, x) }, "simd/archsimd.Float32x4.Div"},
-		{"deferred", func() { defer x.Div(x) }, "simd/archsimd.Float32x4.Div"},
-		{"linkname", func() { simdDiv(x, x) }, "simd/archsimd.Float32x4.Div"},
-		{"mask result", func() { x.Equal(x) }, "simd/archsimd.Float32x4.Equal"},
-		{"package function", func() { archsimd.LoadFloat32x4Array(new([4]float32)) }, "simd/archsimd.LoadFloat32x4Array"},
-		{"helper", func() { archsimd.BroadcastFloat32x4(1) }, "simd/archsimd."},
+		{"direct", func() { x.Average(x) }, "simd/archsimd.Uint8x16.Average"},
+		{"method value", func() { method(x) }, "simd/archsimd.Uint8x16.Average"},
+		{"method expression", func() { indirectAverage(archsimd.Uint8x16.Average, x, x) }, "simd/archsimd.Uint8x16.Average"},
+		{"deferred", func() { defer x.Average(x) }, "simd/archsimd.Uint8x16.Average"},
+		{"linkname", func() { simdAverage(x, x) }, "simd/archsimd.Uint8x16.Average"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			defer func() {
@@ -41,7 +38,12 @@ func TestUnimplementedSIMD(t *testing.T) {
 		})
 	}
 	// Go helper bodies remain executable; the fallback applies to declarations.
-	if x.Len() != 4 {
+	if x.Len() != 16 {
 		t.Fatal("Go helper was replaced by the fallback")
 	}
+}
+
+//go:noinline
+func indirectAverage(f func(archsimd.Uint8x16, archsimd.Uint8x16) archsimd.Uint8x16, x, y archsimd.Uint8x16) archsimd.Uint8x16 {
+	return f(x, y)
 }
