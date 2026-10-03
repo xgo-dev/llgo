@@ -27,7 +27,13 @@ func fullChildCommand(p profile, root, goRoot, artifact, arg string) command {
 		if p.Target == "emscripten-memory64" {
 			runner = "emscripten-memory64-runner.mjs"
 		}
-		args = []string{"node", filepath.Join(root, "targets", runner), artifact, arg}
+		args = []string{"node", filepath.Join(root, "targets", runner)}
+		if p.Target == "" && p.GOOS == "js" {
+			// Raw GoJS glue omits Emscripten's Node loader. Supply its
+			// sibling WASM binary in the same browser mode as llgo test.
+			args = append(args, "--browser-only")
+		}
+		args = append(args, artifact, arg)
 	}
 	return command{"timeout", append([]string{"--kill-after=10s", "30s"}, args...), env}
 }

@@ -43,6 +43,16 @@ func TestFullChildCommandProfiles(t *testing.T) {
 			if !slices.Contains(cmd.Args, "node") || !strings.Contains(joined, "emscripten") {
 				t.Fatalf("%s missing JS runner: %+v", name, cmd)
 			}
+			want := []string{"--kill-after=10s", "30s", "node", filepath.Join("/repo", "targets", "emscripten-runner.mjs")}
+			if name == "J32-GoJS" {
+				want = append(want, "--browser-only")
+			} else if name == "J64-Emscripten" {
+				want[3] = filepath.Join("/repo", "targets", "emscripten-memory64-runner.mjs")
+			}
+			want = append(want, "/compiled-test", "-llgo.caller-panic-child")
+			if !slices.Equal(cmd.Args, want) {
+				t.Fatalf("%s child command = %v, want %v", name, cmd.Args, want)
+			}
 		}
 	}
 }
