@@ -82,6 +82,24 @@ def run_arena_boundaries(env, directory):
             raise SystemExit(f"WAMR arena boundary {size} failed: {result.returncode}")
 
 
+def run_simd_boundary(directory):
+    module = pathlib.Path(directory) / "classic-simd.wasm"
+    subprocess.run(
+        [os.environ.get("WASM_TOOLS", "wasm-tools"), "parse",
+         str(ROOT / "internal/build/testdata/wasm-wasi-simd/classic.wat"),
+         "-o", str(module)], check=True, timeout=30,
+    )
+    subprocess.run([IWASM, "--heap-size=0", str(module)], check=True, timeout=30)
+    result = subprocess.run(
+        [IWASM, "--heap-size=0", "-f", "out_of_bounds", str(module)],
+        capture_output=True, text=True, timeout=30,
+    )
+    if (result.returncode == 0
+            or "out of bounds memory access" not in result.stdout + result.stderr):
+        raise SystemExit(f"WAMR SIMD memory access did not trap: {result}")
+    print("wasi SIMD stack, memory and exception boundary ok", flush=True)
+
+
 def main():
     iwasm = shutil.which(IWASM)
     if iwasm is None:
@@ -92,6 +110,7 @@ def main():
     env.pop("LLGO_WASI_THREADS", None)
     env["PATH"] = str(pathlib.Path(iwasm).resolve().parent) + os.pathsep + env["PATH"]
     with tempfile.TemporaryDirectory(prefix="llgo-wasi-threads-") as directory:
+        run_simd_boundary(directory)
         run_probe(env, directory, "startup", "wasm-wasi-thread-startup", "nogc",
                   "wasi thread startup ok", 30, max_threads=32)
         # WAMR can translate the terminal Wasm exception to process status 1

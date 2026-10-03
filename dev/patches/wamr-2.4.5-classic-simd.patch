@@ -1,0 +1,1178 @@
+WAMR 2.4.5: execute SIMD in the classic interpreter used for legacy EH.
+
+Reuse the fixed-width SIMD operations and SIMDe 0.8.2 dependency from the
+fast interpreter, with the classic value stack, original Wasm immediates,
+and memory bounds checks. Preserve all four cells through locals, globals,
+select/drop, calls, and exception payloads. Copy catch values from the
+saved payload to avoid overlap; rethrow reads that payload after the tag.
+Do not rewrite v128 locals into the classic interpreter's 32/64-bit fast-local instructions.
+
+LLGo regression: internal/build/testdata/wasm-wasi-simd/classic.wat.
+
+diff --git a/build-scripts/runtime_lib.cmake b/build-scripts/runtime_lib.cmake
+index f7639f6..40ac80a 100644
+--- a/build-scripts/runtime_lib.cmake
++++ b/build-scripts/runtime_lib.cmake
+@@ -169,8 +169,8 @@ endif ()
+ # include the build config template file
+ include (${CMAKE_CURRENT_LIST_DIR}/config_common.cmake)
+
+-if (WAMR_BUILD_SIMD EQUAL 1 AND WAMR_BUILD_FAST_INTERP EQUAL 1)
+-    if (WAMR_BUILD_PLATFORM STREQUAL "windows")
++if (WAMR_BUILD_SIMD EQUAL 1 AND WAMR_BUILD_INTERP EQUAL 1)
++    if (WAMR_BUILD_PLATFORM STREQUAL "windows" AND WAMR_BUILD_FAST_INTERP EQUAL 1)
+         message(STATUS "SIMDe doesnt support platform " ${WAMR_BUILD_PLATFORM})
+         set(WAMR_BUILD_SIMDE 0)
+     else()
+diff --git a/core/iwasm/interpreter/wasm_interp_classic.c b/core/iwasm/interpreter/wasm_interp_classic.c
+index 61fccd7..7d9c37d 100644
+--- a/core/iwasm/interpreter/wasm_interp_classic.c
++++ b/core/iwasm/interpreter/wasm_interp_classic.c
+@@ -28,6 +28,29 @@
+ #include "../fast-jit/jit_compiler.h"
+ #endif
+
++
++#if WASM_ENABLE_SIMDE != 0
++#include "simde/wasm/simd128.h"
++
++static simde_v128_t
++classic_to_simde(V128 value)
++{
++    simde_v128_t result;
++    bh_memcpy_s(&result, sizeof(result), &value, sizeof(value));
++    return result;
++}
++
++#define SIMD_V128_TO_SIMDE_V128(value) classic_to_simde(value)
++#define SIMDE_V128_TO_SIMD_V128(value, result) \
++    bh_memcpy_s(&(result), sizeof(result), &(value), sizeof(value))
++#define POP_V128() (frame_sp -= 4, GET_V128_FROM_ADDR(frame_sp))
++#define PUSH_V128(value) do { \
++    V128 simd_value = (value); \
++    PUT_V128_TO_ADDR(frame_sp, simd_value); \
++    frame_sp += 4; \
++} while (0)
++#endif
++
+ typedef int32 CellType_I32;
+ typedef int64 CellType_I64;
+ typedef float32 CellType_F32;
+@@ -1712,17 +1735,18 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+                 exception_tag_index = *((uint32 *)tgtframe_sp);
+                 tgtframe_sp++;
+
+-                /* get tag type */
+-                uint8 tag_type_index =
+-                    module->module->tags[exception_tag_index]->type;
+-                uint32 cell_num_to_copy =
+-                    wasm_types[tag_type_index]->param_cell_num;
++                /* Resolve the same tag type used by throw, including imports. */
++                WASMFuncType *tag_type =
++                    module->e->tags[exception_tag_index].is_import_tag
++                        ? module->e->tags[exception_tag_index]
++                              .u.tag_import->tag_type
++                        : module->e->tags[exception_tag_index].u.tag->tag_type;
++                uint32 cell_num_to_copy = tag_type->param_cell_num;
+
+                 /* move exception parameters (if there are any) onto top
+                  * of stack */
+                 if (cell_num_to_copy > 0) {
+-                    word_copy(frame_sp, tgtframe_sp - cell_num_to_copy,
+-                              cell_num_to_copy);
++                    word_copy(frame_sp, tgtframe_sp, cell_num_to_copy);
+                 }
+
+                 frame_sp += cell_num_to_copy;
+@@ -1826,13 +1850,13 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+                                                         - cell_num_to_copy,
+                                                     cell_num_to_copy);
+                                                 frame_sp += cell_num_to_copy;
+-                                                /* push exception values for
+-                                                 * catch
+-                                                 */
++                                                /* Copy the saved payload.
++                                                 * The original range can
++                                                 * overlap the destination
++                                                 * for a multi-cell value. */
+                                                 word_copy(
+                                                     frame_sp,
+-                                                    frame_sp_old
+-                                                        - cell_num_to_copy,
++                                                    frame_sp - cell_num_to_copy,
+                                                     cell_num_to_copy);
+                                                 frame_sp += cell_num_to_copy;
+                                             }
+@@ -2456,6 +2480,38 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+                 goto call_func_from_interp;
+             }
+
++#if WASM_ENABLE_SIMDE != 0
++            HANDLE_OP(WASM_OP_DROP_128)
++            {
++                frame_sp -= 4;
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(WASM_OP_SELECT_128)
++            {
++                cond = (uint32)POP_I32();
++                frame_sp -= 4;
++                if (!cond)
++                    word_copy(frame_sp - 4, frame_sp, 4);
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(WASM_OP_GET_GLOBAL_V128)
++            {
++                read_leb_uint32(frame_ip, frame_ip_end, global_idx);
++                global = globals + global_idx;
++                global_addr = get_global_addr(global_data, global);
++                PUSH_V128(GET_V128_FROM_ADDR((uint32 *)global_addr));
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(WASM_OP_SET_GLOBAL_V128)
++            {
++                read_leb_uint32(frame_ip, frame_ip_end, global_idx);
++                global = globals + global_idx;
++                global_addr = get_global_addr(global_data, global);
++                PUT_V128_TO_ADDR((uint32 *)global_addr, POP_V128());
++                HANDLE_OP_END();
++            }
++#include "wasm_interp_classic_simd.h"
++#endif
+             /* parametric instructions */
+             HANDLE_OP(WASM_OP_DROP)
+             {
+@@ -2511,6 +2567,14 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+                 type = *frame_ip++;
+
+                 cond = (uint32)POP_I32();
++#if WASM_ENABLE_SIMDE != 0
++                if (type == VALUE_TYPE_V128) {
++                    frame_sp -= 4;
++                    if (!cond)
++                        word_copy(frame_sp - 4, frame_sp, 4);
++                }
++                else
++#endif
+                 if (type == VALUE_TYPE_I64 || type == VALUE_TYPE_F64
+ #if WASM_ENABLE_GC != 0 && UINTPTR_MAX == UINT64_MAX
+                     || wasm_is_type_reftype(type)
+@@ -4168,6 +4232,11 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+                     case VALUE_TYPE_F64:
+                         PUSH_I64(GET_I64_FROM_ADDR(frame_lp + local_offset));
+                         break;
++#if WASM_ENABLE_SIMDE != 0
++                    case VALUE_TYPE_V128:
++                        PUSH_V128(GET_V128_FROM_ADDR(frame_lp + local_offset));
++                        break;
++#endif
+                     default:
+ #if WASM_ENABLE_GC != 0
+                         if (wasm_is_type_reftype(local_type)) {
+@@ -4220,6 +4289,11 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+                         PUT_I64_TO_ADDR((uint32 *)(frame_lp + local_offset),
+                                         POP_I64());
+                         break;
++#if WASM_ENABLE_SIMDE != 0
++                    case VALUE_TYPE_V128:
++                        PUT_V128_TO_ADDR(frame_lp + local_offset, POP_V128());
++                        break;
++#endif
+                     default:
+ #if WASM_ENABLE_GC != 0
+                         if (wasm_is_type_reftype(local_type)) {
+@@ -4267,6 +4341,13 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+                         PUT_I64_TO_ADDR((uint32 *)(frame_lp + local_offset),
+                                         GET_I64_FROM_ADDR(frame_sp - 2));
+                         break;
++#if WASM_ENABLE_SIMDE != 0
++                    case VALUE_TYPE_V128:
++                        PUT_V128_TO_ADDR(
++                            frame_lp + local_offset,
++                            GET_V128_FROM_ADDR(frame_sp - 4));
++                        break;
++#endif
+                     default:
+ #if WASM_ENABLE_GC != 0
+                         if (wasm_is_type_reftype(local_type)) {
+@@ -6585,10 +6666,15 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+         HANDLE_OP(WASM_OP_CATCH_ALL)
+         HANDLE_OP(EXT_OP_TRY)
+ #endif
+-        /* SIMD isn't supported by interpreter, but when JIT is
+-           enabled, `iwasm --interp <wasm_file>` may be run to
+-           trigger the SIMD opcode in interpreter */
++        /* Without SIMDe, an explicit interpreter invocation of a module
++           loaded for JIT must still reject SIMD instructions. */
++#if WASM_ENABLE_SIMDE == 0
+         HANDLE_OP(WASM_OP_SIMD_PREFIX)
++#else
++        HANDLE_OP(EXT_OP_SET_LOCAL_FAST_V128)
++        HANDLE_OP(EXT_OP_TEE_LOCAL_FAST_V128)
++        HANDLE_OP(EXT_OP_COPY_STACK_TOP_V128)
++#endif
+         HANDLE_OP(WASM_OP_UNUSED_0x16)
+         HANDLE_OP(WASM_OP_UNUSED_0x17)
+         HANDLE_OP(WASM_OP_UNUSED_0x27)
+diff --git a/core/iwasm/interpreter/wasm_interp_classic_simd.h b/core/iwasm/interpreter/wasm_interp_classic_simd.h
+new file mode 100644
+index 0000000..7b633a7
+--- /dev/null
++++ b/core/iwasm/interpreter/wasm_interp_classic_simd.h
+@@ -0,0 +1,774 @@
++/*
++ * Copyright (C) 2019 Intel Corporation.  All rights reserved.
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ *
++ * SIMD opcode semantics from wasm_interp_fast.c, using the classic
++ * interpreter's value stack and original Wasm immediates.
++ */
++#define SIMD_CASE(op, action) \
++    case op:                  \
++    {                         \
++        action;               \
++        break;                \
++    }
++
++HANDLE_OP(WASM_OP_SIMD_PREFIX)
++{
++    uint32 simd_opcode;
++    read_leb_uint32(frame_ip, frame_ip_end, simd_opcode);
++
++    switch (simd_opcode) {
++        /* Memory */
++        case SIMD_v128_load:
++        {
++            uint32 flags;
++            mem_offset_t offset, addr;
++            read_leb_memarg(frame_ip, frame_ip_end, flags);
++            read_leb_mem_offset(frame_ip, frame_ip_end, offset);
++            addr = POP_MEM_OFFSET();
++            CHECK_MEMORY_OVERFLOW(16);
++            PUSH_V128(LOAD_V128(maddr));
++            break;
++        }
++#define SIMD_LOAD_OP(simde_func)                             \
++    do {                                                     \
++        uint32 flags;                                        \
++        mem_offset_t offset, addr;                           \
++        read_leb_memarg(frame_ip, frame_ip_end, flags);      \
++        read_leb_mem_offset(frame_ip, frame_ip_end, offset); \
++        addr = POP_MEM_OFFSET();                             \
++        CHECK_MEMORY_OVERFLOW(8);                            \
++                                                             \
++        simde_v128_t simde_result = simde_func(maddr);       \
++                                                             \
++        V128 result;                                         \
++        SIMDE_V128_TO_SIMD_V128(simde_result, result);       \
++        PUSH_V128(result);                                   \
++                                                             \
++    } while (0)
++            SIMD_CASE(SIMD_v128_load8x8_s,
++                      SIMD_LOAD_OP(simde_wasm_i16x8_load8x8));
++            SIMD_CASE(SIMD_v128_load8x8_u,
++                      SIMD_LOAD_OP(simde_wasm_u16x8_load8x8));
++            SIMD_CASE(SIMD_v128_load16x4_s,
++                      SIMD_LOAD_OP(simde_wasm_i32x4_load16x4));
++            SIMD_CASE(SIMD_v128_load16x4_u,
++                      SIMD_LOAD_OP(simde_wasm_u32x4_load16x4));
++            SIMD_CASE(SIMD_v128_load32x2_s,
++                      SIMD_LOAD_OP(simde_wasm_i64x2_load32x2));
++            SIMD_CASE(SIMD_v128_load32x2_u,
++                      SIMD_LOAD_OP(simde_wasm_u64x2_load32x2));
++#define SIMD_LOAD_SPLAT_OP(simde_func, width)                \
++    do {                                                     \
++        uint32 flags;                                        \
++        mem_offset_t offset, addr;                           \
++        read_leb_memarg(frame_ip, frame_ip_end, flags);      \
++        read_leb_mem_offset(frame_ip, frame_ip_end, offset); \
++        addr = POP_MEM_OFFSET();                             \
++        CHECK_MEMORY_OVERFLOW(width / 8);                    \
++                                                             \
++        simde_v128_t simde_result = simde_func(maddr);       \
++                                                             \
++        V128 result;                                         \
++        SIMDE_V128_TO_SIMD_V128(simde_result, result);       \
++                                                             \
++        PUSH_V128(result);                                   \
++    } while (0)
++
++            SIMD_CASE(SIMD_v128_load8_splat,
++                      SIMD_LOAD_SPLAT_OP(simde_wasm_v128_load8_splat, 8));
++            SIMD_CASE(SIMD_v128_load16_splat,
++                      SIMD_LOAD_SPLAT_OP(simde_wasm_v128_load16_splat, 16));
++            SIMD_CASE(SIMD_v128_load32_splat,
++                      SIMD_LOAD_SPLAT_OP(simde_wasm_v128_load32_splat, 32));
++            SIMD_CASE(SIMD_v128_load64_splat,
++                      SIMD_LOAD_SPLAT_OP(simde_wasm_v128_load64_splat, 64));
++        case SIMD_v128_store:
++        {
++            uint32 flags;
++            mem_offset_t offset, addr;
++            read_leb_memarg(frame_ip, frame_ip_end, flags);
++            read_leb_mem_offset(frame_ip, frame_ip_end, offset);
++            V128 data = POP_V128();
++            addr = POP_MEM_OFFSET();
++
++            CHECK_MEMORY_OVERFLOW(16);
++            STORE_V128(maddr, data);
++            break;
++        }
++
++        /* Basic */
++        case SIMD_v128_const:
++        {
++            uint8 *orig_ip = frame_ip;
++
++            frame_ip += sizeof(V128);
++
++            PUSH_V128(LOAD_V128(orig_ip));
++            break;
++        }
++        /* TODO: Add a faster SIMD implementation */
++        case SIMD_v8x16_shuffle:
++        {
++            V128 indices;
++            bh_memcpy_s(&indices, sizeof(V128), frame_ip, sizeof(V128));
++            frame_ip += sizeof(V128);
++
++            V128 v2 = POP_V128();
++            V128 v1 = POP_V128();
++
++            V128 result;
++            for (int i = 0; i < 16; i++) {
++                uint8_t index = indices.i8x16[i];
++                if (index < 16) {
++                    result.i8x16[i] = v1.i8x16[index];
++                }
++                else {
++                    result.i8x16[i] = v2.i8x16[index - 16];
++                }
++            }
++
++            PUSH_V128(result);
++            break;
++        }
++        case SIMD_v8x16_swizzle:
++        {
++            V128 v2 = POP_V128();
++            V128 v1 = POP_V128();
++            simde_v128_t simde_result = simde_wasm_i8x16_swizzle(
++                SIMD_V128_TO_SIMDE_V128(v1), SIMD_V128_TO_SIMDE_V128(v2));
++
++            V128 result;
++            SIMDE_V128_TO_SIMD_V128(simde_result, result);
++
++            PUSH_V128(result);
++            break;
++        }
++
++        /* Splat */
++#define SIMD_SPLAT_OP(simde_func, pop_func, val_type)  \
++    do {                                               \
++        val_type v = pop_func();                       \
++                                                       \
++        simde_v128_t simde_result = simde_func(v);     \
++                                                       \
++        V128 result;                                   \
++        SIMDE_V128_TO_SIMD_V128(simde_result, result); \
++                                                       \
++        PUSH_V128(result);                             \
++    } while (0)
++
++#define SIMD_SPLAT_OP_I32(simde_func) SIMD_SPLAT_OP(simde_func, POP_I32, uint32)
++#define SIMD_SPLAT_OP_I64(simde_func) SIMD_SPLAT_OP(simde_func, POP_I64, uint64)
++#define SIMD_SPLAT_OP_F32(simde_func) \
++    SIMD_SPLAT_OP(simde_func, POP_F32, float32)
++#define SIMD_SPLAT_OP_F64(simde_func) \
++    SIMD_SPLAT_OP(simde_func, POP_F64, float64)
++
++        case SIMD_i8x16_splat:
++        {
++            val = POP_I32();
++
++            simde_v128_t simde_result = simde_wasm_i8x16_splat(val);
++
++            V128 result;
++            SIMDE_V128_TO_SIMD_V128(simde_result, result);
++
++            PUSH_V128(result);
++            break;
++        }
++            SIMD_CASE(SIMD_i16x8_splat,
++                      SIMD_SPLAT_OP_I32(simde_wasm_i16x8_splat));
++            SIMD_CASE(SIMD_i32x4_splat,
++                      SIMD_SPLAT_OP_I32(simde_wasm_i32x4_splat));
++            SIMD_CASE(SIMD_i64x2_splat,
++                      SIMD_SPLAT_OP_I64(simde_wasm_i64x2_splat));
++            SIMD_CASE(SIMD_f32x4_splat,
++                      SIMD_SPLAT_OP_F32(simde_wasm_f32x4_splat));
++            SIMD_CASE(SIMD_f64x2_splat,
++                      SIMD_SPLAT_OP_F64(simde_wasm_f64x2_splat));
++#define SIMD_LANE_HANDLE_UNALIGNED_ACCESS()
++
++#define SIMD_EXTRACT_LANE_OP(register, return_type, push_elem) \
++    do {                                                       \
++        uint8 lane = *frame_ip++;                              \
++        SIMD_LANE_HANDLE_UNALIGNED_ACCESS();                   \
++        V128 v = POP_V128();                                   \
++        push_elem((return_type)(v.register[lane]));            \
++    } while (0)
++#define SIMD_REPLACE_LANE_OP(register, return_type, pop_elem) \
++    do {                                                      \
++        uint8 lane = *frame_ip++;                             \
++        SIMD_LANE_HANDLE_UNALIGNED_ACCESS();                  \
++        return_type replacement = pop_elem();                 \
++        V128 v = POP_V128();                                  \
++        v.register[lane] = replacement;                       \
++        PUSH_V128(v);                                         \
++    } while (0)
++            SIMD_CASE(SIMD_i8x16_extract_lane_s,
++                      SIMD_EXTRACT_LANE_OP(i8x16, int8, PUSH_I32));
++            SIMD_CASE(SIMD_i8x16_extract_lane_u,
++                      SIMD_EXTRACT_LANE_OP(i8x16, uint8, PUSH_I32));
++            SIMD_CASE(SIMD_i8x16_replace_lane,
++                      SIMD_REPLACE_LANE_OP(i8x16, int8, POP_I32));
++            SIMD_CASE(SIMD_i16x8_extract_lane_s,
++                      SIMD_EXTRACT_LANE_OP(i16x8, int16, PUSH_I32));
++            SIMD_CASE(SIMD_i16x8_extract_lane_u,
++                      SIMD_EXTRACT_LANE_OP(i16x8, uint16, PUSH_I32));
++            SIMD_CASE(SIMD_i16x8_replace_lane,
++                      SIMD_REPLACE_LANE_OP(i16x8, int16, POP_I32));
++            SIMD_CASE(SIMD_i32x4_extract_lane,
++                      SIMD_EXTRACT_LANE_OP(i32x4, int32, PUSH_I32));
++            SIMD_CASE(SIMD_i32x4_replace_lane,
++                      SIMD_REPLACE_LANE_OP(i32x4, int32, POP_I32));
++            SIMD_CASE(SIMD_i64x2_extract_lane,
++                      SIMD_EXTRACT_LANE_OP(i64x2, int64, PUSH_I64));
++            SIMD_CASE(SIMD_i64x2_replace_lane,
++                      SIMD_REPLACE_LANE_OP(i64x2, int64, POP_I64));
++            SIMD_CASE(SIMD_f32x4_extract_lane,
++                      SIMD_EXTRACT_LANE_OP(f32x4, float32, PUSH_F32));
++            SIMD_CASE(SIMD_f32x4_replace_lane,
++                      SIMD_REPLACE_LANE_OP(f32x4, float32, POP_F32));
++            SIMD_CASE(SIMD_f64x2_extract_lane,
++                      SIMD_EXTRACT_LANE_OP(f64x2, float64, PUSH_F64));
++            SIMD_CASE(SIMD_f64x2_replace_lane,
++                      SIMD_REPLACE_LANE_OP(f64x2, float64, POP_F64));
++
++#define SIMD_DOUBLE_OP(simde_func)                                           \
++    do {                                                                     \
++        V128 v2 = POP_V128();                                                \
++        V128 v1 = POP_V128();                                                \
++                                                                             \
++        simde_v128_t simde_result = simde_func(SIMD_V128_TO_SIMDE_V128(v1),  \
++                                               SIMD_V128_TO_SIMDE_V128(v2)); \
++                                                                             \
++        V128 result;                                                         \
++        SIMDE_V128_TO_SIMD_V128(simde_result, result);                       \
++                                                                             \
++        PUSH_V128(result);                                                   \
++    } while (0)
++
++        /* i8x16 comparison operations */
++        case SIMD_i8x16_eq:
++        {
++            V128 v2 = POP_V128();
++            V128 v1 = POP_V128();
++
++            simde_v128_t simde_result = simde_wasm_i8x16_eq(
++                SIMD_V128_TO_SIMDE_V128(v1), SIMD_V128_TO_SIMDE_V128(v2));
++
++            V128 result;
++            SIMDE_V128_TO_SIMD_V128(simde_result, result);
++
++            PUSH_V128(result);
++            break;
++        }
++            SIMD_CASE(SIMD_i8x16_ne, SIMD_DOUBLE_OP(simde_wasm_i8x16_ne));
++            SIMD_CASE(SIMD_i8x16_lt_s, SIMD_DOUBLE_OP(simde_wasm_i8x16_lt));
++            SIMD_CASE(SIMD_i8x16_lt_u, SIMD_DOUBLE_OP(simde_wasm_u8x16_lt));
++            SIMD_CASE(SIMD_i8x16_gt_s, SIMD_DOUBLE_OP(simde_wasm_i8x16_gt));
++            SIMD_CASE(SIMD_i8x16_gt_u, SIMD_DOUBLE_OP(simde_wasm_u8x16_gt));
++            SIMD_CASE(SIMD_i8x16_le_s, SIMD_DOUBLE_OP(simde_wasm_i8x16_le));
++            SIMD_CASE(SIMD_i8x16_le_u, SIMD_DOUBLE_OP(simde_wasm_u8x16_le));
++            SIMD_CASE(SIMD_i8x16_ge_s, SIMD_DOUBLE_OP(simde_wasm_i8x16_ge));
++            SIMD_CASE(SIMD_i8x16_ge_u, SIMD_DOUBLE_OP(simde_wasm_u8x16_ge));
++
++            /* i16x8 comparison operations */
++            SIMD_CASE(SIMD_i16x8_eq, SIMD_DOUBLE_OP(simde_wasm_i16x8_eq));
++            SIMD_CASE(SIMD_i16x8_ne, SIMD_DOUBLE_OP(simde_wasm_i16x8_ne));
++            SIMD_CASE(SIMD_i16x8_lt_s, SIMD_DOUBLE_OP(simde_wasm_i16x8_lt));
++            SIMD_CASE(SIMD_i16x8_lt_u, SIMD_DOUBLE_OP(simde_wasm_u16x8_lt));
++            SIMD_CASE(SIMD_i16x8_gt_s, SIMD_DOUBLE_OP(simde_wasm_i16x8_gt));
++            SIMD_CASE(SIMD_i16x8_gt_u, SIMD_DOUBLE_OP(simde_wasm_u16x8_gt));
++            SIMD_CASE(SIMD_i16x8_le_s, SIMD_DOUBLE_OP(simde_wasm_i16x8_le));
++            SIMD_CASE(SIMD_i16x8_le_u, SIMD_DOUBLE_OP(simde_wasm_u16x8_le));
++            SIMD_CASE(SIMD_i16x8_ge_s, SIMD_DOUBLE_OP(simde_wasm_i16x8_ge));
++            SIMD_CASE(SIMD_i16x8_ge_u, SIMD_DOUBLE_OP(simde_wasm_u16x8_ge));
++
++            /*  i32x4 comparison operations */
++            SIMD_CASE(SIMD_i32x4_eq, SIMD_DOUBLE_OP(simde_wasm_i32x4_eq));
++            SIMD_CASE(SIMD_i32x4_ne, SIMD_DOUBLE_OP(simde_wasm_i32x4_ne));
++            SIMD_CASE(SIMD_i32x4_lt_s, SIMD_DOUBLE_OP(simde_wasm_i32x4_lt));
++            SIMD_CASE(SIMD_i32x4_lt_u, SIMD_DOUBLE_OP(simde_wasm_u32x4_lt));
++            SIMD_CASE(SIMD_i32x4_gt_s, SIMD_DOUBLE_OP(simde_wasm_i32x4_gt));
++            SIMD_CASE(SIMD_i32x4_gt_u, SIMD_DOUBLE_OP(simde_wasm_u32x4_gt));
++            SIMD_CASE(SIMD_i32x4_le_s, SIMD_DOUBLE_OP(simde_wasm_i32x4_le));
++            SIMD_CASE(SIMD_i32x4_le_u, SIMD_DOUBLE_OP(simde_wasm_u32x4_le));
++            SIMD_CASE(SIMD_i32x4_ge_s, SIMD_DOUBLE_OP(simde_wasm_i32x4_ge));
++            SIMD_CASE(SIMD_i32x4_ge_u, SIMD_DOUBLE_OP(simde_wasm_u32x4_ge));
++
++            /* f32x4 comparison operations */
++            SIMD_CASE(SIMD_f32x4_eq, SIMD_DOUBLE_OP(simde_wasm_f32x4_eq));
++            SIMD_CASE(SIMD_f32x4_ne, SIMD_DOUBLE_OP(simde_wasm_f32x4_ne));
++            SIMD_CASE(SIMD_f32x4_lt, SIMD_DOUBLE_OP(simde_wasm_f32x4_lt));
++            SIMD_CASE(SIMD_f32x4_gt, SIMD_DOUBLE_OP(simde_wasm_f32x4_gt));
++            SIMD_CASE(SIMD_f32x4_le, SIMD_DOUBLE_OP(simde_wasm_f32x4_le));
++            SIMD_CASE(SIMD_f32x4_ge, SIMD_DOUBLE_OP(simde_wasm_f32x4_ge));
++
++            /* f64x2 comparison operations */
++            SIMD_CASE(SIMD_f64x2_eq, SIMD_DOUBLE_OP(simde_wasm_f64x2_eq));
++            SIMD_CASE(SIMD_f64x2_ne, SIMD_DOUBLE_OP(simde_wasm_f64x2_ne));
++            SIMD_CASE(SIMD_f64x2_lt, SIMD_DOUBLE_OP(simde_wasm_f64x2_lt));
++            SIMD_CASE(SIMD_f64x2_gt, SIMD_DOUBLE_OP(simde_wasm_f64x2_gt));
++            SIMD_CASE(SIMD_f64x2_le, SIMD_DOUBLE_OP(simde_wasm_f64x2_le));
++            SIMD_CASE(SIMD_f64x2_ge, SIMD_DOUBLE_OP(simde_wasm_f64x2_ge));
++
++            /* v128 bitwise operations */
++#define SIMD_V128_BITWISE_OP_COMMON(result_expr_0, result_expr_1) \
++    do {                                                          \
++        V128 result;                                              \
++        result.i64x2[0] = (result_expr_0);                        \
++        result.i64x2[1] = (result_expr_1);                        \
++        PUSH_V128(result);                                        \
++    } while (0)
++
++        case SIMD_v128_not:
++        {
++            V128 value = POP_V128();
++            SIMD_V128_BITWISE_OP_COMMON(~value.i64x2[0], ~value.i64x2[1]);
++            break;
++        }
++        case SIMD_v128_and:
++        {
++            V128 v2 = POP_V128();
++            V128 v1 = POP_V128();
++            SIMD_V128_BITWISE_OP_COMMON(v1.i64x2[0] & v2.i64x2[0],
++                                        v1.i64x2[1] & v2.i64x2[1]);
++            break;
++        }
++        case SIMD_v128_andnot:
++        {
++            V128 v2 = POP_V128();
++            V128 v1 = POP_V128();
++            SIMD_V128_BITWISE_OP_COMMON(v1.i64x2[0] & (~v2.i64x2[0]),
++                                        v1.i64x2[1] & (~v2.i64x2[1]));
++            break;
++        }
++        case SIMD_v128_or:
++        {
++            V128 v2 = POP_V128();
++            V128 v1 = POP_V128();
++            SIMD_V128_BITWISE_OP_COMMON(v1.i64x2[0] | v2.i64x2[0],
++                                        v1.i64x2[1] | v2.i64x2[1]);
++            break;
++        }
++        case SIMD_v128_xor:
++        {
++            V128 v2 = POP_V128();
++            V128 v1 = POP_V128();
++            SIMD_V128_BITWISE_OP_COMMON(v1.i64x2[0] ^ v2.i64x2[0],
++                                        v1.i64x2[1] ^ v2.i64x2[1]);
++            break;
++        }
++        case SIMD_v128_bitselect:
++        {
++            V128 v1 = POP_V128();
++            V128 v2 = POP_V128();
++            V128 v3 = POP_V128();
++
++            simde_v128_t simde_result = simde_wasm_v128_bitselect(
++                SIMD_V128_TO_SIMDE_V128(v3), SIMD_V128_TO_SIMDE_V128(v2),
++                SIMD_V128_TO_SIMDE_V128(v1));
++
++            V128 result;
++            SIMDE_V128_TO_SIMD_V128(simde_result, result);
++
++            PUSH_V128(result);
++            break;
++        }
++        case SIMD_v128_any_true:
++        {
++            V128 value = POP_V128();
++            PUSH_I32(value.i64x2[0] != 0 || value.i64x2[1] != 0);
++            break;
++        }
++
++#define SIMD_LOAD_LANE_COMMON(vec, register, lane, width)            \
++    do {                                                             \
++        CHECK_MEMORY_OVERFLOW(width / 8);                            \
++        if (width == 64) {                                           \
++            vec.register[lane] = GET_I64_FROM_ADDR((uint32 *)maddr); \
++        }                                                            \
++        else {                                                       \
++            vec.register[lane] = *(uint##width *)(maddr);            \
++        }                                                            \
++        PUSH_V128(vec);                                              \
++    } while (0)
++
++#define SIMD_LOAD_LANE_OP(register, width)                   \
++    do {                                                     \
++        uint32 flags;                                        \
++        mem_offset_t offset, addr;                           \
++        read_leb_memarg(frame_ip, frame_ip_end, flags);      \
++        read_leb_mem_offset(frame_ip, frame_ip_end, offset); \
++        V128 vec = POP_V128();                               \
++        addr = POP_MEM_OFFSET();                             \
++        int lane = *frame_ip++;                              \
++        SIMD_LANE_HANDLE_UNALIGNED_ACCESS();                 \
++        SIMD_LOAD_LANE_COMMON(vec, register, lane, width);   \
++    } while (0)
++
++            SIMD_CASE(SIMD_v128_load8_lane, SIMD_LOAD_LANE_OP(i8x16, 8));
++            SIMD_CASE(SIMD_v128_load16_lane, SIMD_LOAD_LANE_OP(i16x8, 16));
++            SIMD_CASE(SIMD_v128_load32_lane, SIMD_LOAD_LANE_OP(i32x4, 32));
++            SIMD_CASE(SIMD_v128_load64_lane, SIMD_LOAD_LANE_OP(i64x2, 64));
++#define SIMD_STORE_LANE_OP(register, width)                  \
++    do {                                                     \
++        uint32 flags;                                        \
++        mem_offset_t offset, addr;                           \
++        read_leb_memarg(frame_ip, frame_ip_end, flags);      \
++        read_leb_mem_offset(frame_ip, frame_ip_end, offset); \
++        V128 vec = POP_V128();                               \
++        addr = POP_MEM_OFFSET();                             \
++        int lane = *frame_ip++;                              \
++        SIMD_LANE_HANDLE_UNALIGNED_ACCESS();                 \
++        CHECK_MEMORY_OVERFLOW(width / 8);                    \
++        if (width == 64) {                                   \
++            STORE_I64(maddr, vec.register[lane]);            \
++        }                                                    \
++        else {                                               \
++            *(uint##width *)(maddr) = vec.register[lane];    \
++        }                                                    \
++    } while (0)
++
++            SIMD_CASE(SIMD_v128_store8_lane, SIMD_STORE_LANE_OP(i8x16, 8));
++
++            SIMD_CASE(SIMD_v128_store16_lane, SIMD_STORE_LANE_OP(i16x8, 16));
++
++            SIMD_CASE(SIMD_v128_store32_lane, SIMD_STORE_LANE_OP(i32x4, 32));
++
++            SIMD_CASE(SIMD_v128_store64_lane, SIMD_STORE_LANE_OP(i64x2, 64));
++#define SIMD_LOAD_ZERO_OP(register, width)                   \
++    do {                                                     \
++        uint32 flags;                                        \
++        mem_offset_t offset, addr;                           \
++        read_leb_memarg(frame_ip, frame_ip_end, flags);      \
++        read_leb_mem_offset(frame_ip, frame_ip_end, offset); \
++        addr = POP_MEM_OFFSET();                             \
++        int32 lane = 0;                                      \
++        V128 vec = { 0 };                                    \
++        SIMD_LOAD_LANE_COMMON(vec, register, lane, width);   \
++    } while (0)
++
++            SIMD_CASE(SIMD_v128_load32_zero, SIMD_LOAD_ZERO_OP(i32x4, 32));
++            SIMD_CASE(SIMD_v128_load64_zero, SIMD_LOAD_ZERO_OP(i64x2, 64));
++
++#define SIMD_SINGLE_OP(simde_func)                                           \
++    do {                                                                     \
++        V128 v1 = POP_V128();                                                \
++                                                                             \
++        simde_v128_t simde_result = simde_func(SIMD_V128_TO_SIMDE_V128(v1)); \
++                                                                             \
++        V128 result;                                                         \
++        SIMDE_V128_TO_SIMD_V128(simde_result, result);                       \
++                                                                             \
++        PUSH_V128(result);                                                   \
++    } while (0)
++
++            /* Float conversion */
++            SIMD_CASE(SIMD_f32x4_demote_f64x2_zero,
++                      SIMD_SINGLE_OP(simde_wasm_f32x4_demote_f64x2_zero));
++            SIMD_CASE(SIMD_f64x2_promote_low_f32x4_zero,
++                      SIMD_SINGLE_OP(simde_wasm_f64x2_promote_low_f32x4));
++
++            /* i8x16 operations */
++            SIMD_CASE(SIMD_i8x16_abs, SIMD_SINGLE_OP(simde_wasm_i8x16_abs));
++            SIMD_CASE(SIMD_i8x16_neg, SIMD_SINGLE_OP(simde_wasm_i8x16_neg));
++            SIMD_CASE(SIMD_i8x16_popcnt,
++                      SIMD_SINGLE_OP(simde_wasm_i8x16_popcnt));
++        case SIMD_i8x16_all_true:
++        {
++            V128 v1 = POP_V128();
++
++            bool result =
++                simde_wasm_i8x16_all_true(SIMD_V128_TO_SIMDE_V128(v1));
++
++            PUSH_I32(result);
++            break;
++        }
++
++        case SIMD_i8x16_bitmask:
++        {
++            V128 v1 = POP_V128();
++
++            uint32_t result =
++                simde_wasm_i8x16_bitmask(SIMD_V128_TO_SIMDE_V128(v1));
++
++            PUSH_I32(result);
++            break;
++        }
++            SIMD_CASE(SIMD_i8x16_narrow_i16x8_s,
++                      SIMD_DOUBLE_OP(simde_wasm_i8x16_narrow_i16x8));
++            SIMD_CASE(SIMD_i8x16_narrow_i16x8_u,
++                      SIMD_DOUBLE_OP(simde_wasm_u8x16_narrow_i16x8));
++            SIMD_CASE(SIMD_f32x4_ceil, SIMD_SINGLE_OP(simde_wasm_f32x4_ceil));
++            SIMD_CASE(SIMD_f32x4_floor, SIMD_SINGLE_OP(simde_wasm_f32x4_floor));
++            SIMD_CASE(SIMD_f32x4_trunc, SIMD_SINGLE_OP(simde_wasm_f32x4_trunc));
++            SIMD_CASE(SIMD_f32x4_nearest,
++                      SIMD_SINGLE_OP(simde_wasm_f32x4_nearest));
++#define SIMD_LANE_SHIFT(simde_func)                     \
++    do {                                                \
++        int32 c = POP_I32();                            \
++        V128 v1 = POP_V128();                           \
++                                                        \
++        simde_v128_t simde_result =                     \
++            simde_func(SIMD_V128_TO_SIMDE_V128(v1), c); \
++                                                        \
++        V128 result;                                    \
++        SIMDE_V128_TO_SIMD_V128(simde_result, result);  \
++                                                        \
++        PUSH_V128(result);                              \
++    } while (0)
++            SIMD_CASE(SIMD_i8x16_shl, SIMD_LANE_SHIFT(simde_wasm_i8x16_shl));
++            SIMD_CASE(SIMD_i8x16_shr_s, SIMD_LANE_SHIFT(simde_wasm_i8x16_shr));
++            SIMD_CASE(SIMD_i8x16_shr_u, SIMD_LANE_SHIFT(simde_wasm_u8x16_shr));
++            SIMD_CASE(SIMD_i8x16_add, SIMD_DOUBLE_OP(simde_wasm_i8x16_add));
++            SIMD_CASE(SIMD_i8x16_add_sat_s,
++                      SIMD_DOUBLE_OP(simde_wasm_i8x16_add_sat));
++            SIMD_CASE(SIMD_i8x16_add_sat_u,
++                      SIMD_DOUBLE_OP(simde_wasm_u8x16_add_sat));
++            SIMD_CASE(SIMD_i8x16_sub, SIMD_DOUBLE_OP(simde_wasm_i8x16_sub));
++            SIMD_CASE(SIMD_i8x16_sub_sat_s,
++                      SIMD_DOUBLE_OP(simde_wasm_i8x16_sub_sat));
++            SIMD_CASE(SIMD_i8x16_sub_sat_u,
++                      SIMD_DOUBLE_OP(simde_wasm_u8x16_sub_sat));
++            SIMD_CASE(SIMD_f64x2_ceil, SIMD_SINGLE_OP(simde_wasm_f64x2_ceil));
++            SIMD_CASE(SIMD_f64x2_floor, SIMD_SINGLE_OP(simde_wasm_f64x2_floor));
++            SIMD_CASE(SIMD_i8x16_min_s, SIMD_DOUBLE_OP(simde_wasm_i8x16_min));
++            SIMD_CASE(SIMD_i8x16_min_u, SIMD_DOUBLE_OP(simde_wasm_u8x16_min));
++            SIMD_CASE(SIMD_i8x16_max_s, SIMD_DOUBLE_OP(simde_wasm_i8x16_max));
++            SIMD_CASE(SIMD_i8x16_max_u, SIMD_DOUBLE_OP(simde_wasm_u8x16_max));
++            SIMD_CASE(SIMD_f64x2_trunc, SIMD_SINGLE_OP(simde_wasm_f64x2_trunc));
++            SIMD_CASE(SIMD_i8x16_avgr_u, SIMD_DOUBLE_OP(simde_wasm_u8x16_avgr));
++            SIMD_CASE(SIMD_i16x8_extadd_pairwise_i8x16_s,
++                      SIMD_SINGLE_OP(simde_wasm_i16x8_extadd_pairwise_i8x16));
++            SIMD_CASE(SIMD_i16x8_extadd_pairwise_i8x16_u,
++                      SIMD_SINGLE_OP(simde_wasm_u16x8_extadd_pairwise_u8x16));
++            SIMD_CASE(SIMD_i32x4_extadd_pairwise_i16x8_s,
++                      SIMD_SINGLE_OP(simde_wasm_i32x4_extadd_pairwise_i16x8));
++            SIMD_CASE(SIMD_i32x4_extadd_pairwise_i16x8_u,
++                      SIMD_SINGLE_OP(simde_wasm_u32x4_extadd_pairwise_u16x8));
++
++            /* i16x8 operations */
++            SIMD_CASE(SIMD_i16x8_abs, SIMD_SINGLE_OP(simde_wasm_i16x8_abs));
++            SIMD_CASE(SIMD_i16x8_neg, SIMD_SINGLE_OP(simde_wasm_i16x8_neg));
++            SIMD_CASE(SIMD_i16x8_q15mulr_sat_s,
++                      SIMD_DOUBLE_OP(simde_wasm_i16x8_q15mulr_sat));
++        case SIMD_i16x8_all_true:
++        {
++            V128 v1 = POP_V128();
++
++            bool result =
++                simde_wasm_i16x8_all_true(SIMD_V128_TO_SIMDE_V128(v1));
++
++            PUSH_I32(result);
++            break;
++        }
++        case SIMD_i16x8_bitmask:
++        {
++            V128 v1 = POP_V128();
++
++            uint32_t result =
++                simde_wasm_i16x8_bitmask(SIMD_V128_TO_SIMDE_V128(v1));
++
++            PUSH_I32(result);
++            break;
++        }
++            SIMD_CASE(SIMD_i16x8_narrow_i32x4_s,
++                      SIMD_DOUBLE_OP(simde_wasm_i16x8_narrow_i32x4));
++            SIMD_CASE(SIMD_i16x8_narrow_i32x4_u,
++                      SIMD_DOUBLE_OP(simde_wasm_u16x8_narrow_i32x4));
++            SIMD_CASE(SIMD_i16x8_extend_low_i8x16_s,
++                      SIMD_SINGLE_OP(simde_wasm_i16x8_extend_low_i8x16));
++            SIMD_CASE(SIMD_i16x8_extend_high_i8x16_s,
++                      SIMD_SINGLE_OP(simde_wasm_i16x8_extend_high_i8x16));
++            SIMD_CASE(SIMD_i16x8_extend_low_i8x16_u,
++                      SIMD_SINGLE_OP(simde_wasm_u16x8_extend_low_u8x16));
++            SIMD_CASE(SIMD_i16x8_extend_high_i8x16_u,
++                      SIMD_SINGLE_OP(simde_wasm_u16x8_extend_high_u8x16));
++            SIMD_CASE(SIMD_i16x8_shl, SIMD_LANE_SHIFT(simde_wasm_i16x8_shl));
++            SIMD_CASE(SIMD_i16x8_shr_s, SIMD_LANE_SHIFT(simde_wasm_i16x8_shr));
++            SIMD_CASE(SIMD_i16x8_shr_u, SIMD_LANE_SHIFT(simde_wasm_u16x8_shr));
++            SIMD_CASE(SIMD_i16x8_add, SIMD_DOUBLE_OP(simde_wasm_i16x8_add));
++            SIMD_CASE(SIMD_i16x8_add_sat_s,
++                      SIMD_DOUBLE_OP(simde_wasm_i16x8_add_sat));
++            SIMD_CASE(SIMD_i16x8_add_sat_u,
++                      SIMD_DOUBLE_OP(simde_wasm_u16x8_add_sat));
++            SIMD_CASE(SIMD_i16x8_sub, SIMD_DOUBLE_OP(simde_wasm_i16x8_sub));
++            SIMD_CASE(SIMD_i16x8_sub_sat_s,
++                      SIMD_DOUBLE_OP(simde_wasm_i16x8_sub_sat));
++            SIMD_CASE(SIMD_i16x8_sub_sat_u,
++                      SIMD_DOUBLE_OP(simde_wasm_u16x8_sub_sat));
++            SIMD_CASE(SIMD_f64x2_nearest,
++                      SIMD_SINGLE_OP(simde_wasm_f64x2_nearest));
++            SIMD_CASE(SIMD_i16x8_mul, SIMD_DOUBLE_OP(simde_wasm_i16x8_mul));
++            SIMD_CASE(SIMD_i16x8_min_s, SIMD_DOUBLE_OP(simde_wasm_i16x8_min));
++            SIMD_CASE(SIMD_i16x8_min_u, SIMD_DOUBLE_OP(simde_wasm_u16x8_min));
++            SIMD_CASE(SIMD_i16x8_max_s, SIMD_DOUBLE_OP(simde_wasm_i16x8_max));
++            SIMD_CASE(SIMD_i16x8_max_u, SIMD_DOUBLE_OP(simde_wasm_u16x8_max));
++            SIMD_CASE(SIMD_i16x8_avgr_u, SIMD_DOUBLE_OP(simde_wasm_u16x8_avgr));
++            SIMD_CASE(SIMD_i16x8_extmul_low_i8x16_s,
++                      SIMD_DOUBLE_OP(simde_wasm_i16x8_extmul_low_i8x16));
++            SIMD_CASE(SIMD_i16x8_extmul_high_i8x16_s,
++                      SIMD_DOUBLE_OP(simde_wasm_i16x8_extmul_high_i8x16));
++            SIMD_CASE(SIMD_i16x8_extmul_low_i8x16_u,
++                      SIMD_DOUBLE_OP(simde_wasm_u16x8_extmul_low_u8x16));
++            SIMD_CASE(SIMD_i16x8_extmul_high_i8x16_u,
++                      SIMD_DOUBLE_OP(simde_wasm_u16x8_extmul_high_u8x16));
++
++            /* i32x4 operations */
++            SIMD_CASE(SIMD_i32x4_abs, SIMD_SINGLE_OP(simde_wasm_i32x4_abs));
++            SIMD_CASE(SIMD_i32x4_neg, SIMD_SINGLE_OP(simde_wasm_i32x4_neg));
++        case SIMD_i32x4_all_true:
++        {
++            V128 v1 = POP_V128();
++
++            bool result =
++                simde_wasm_i32x4_all_true(SIMD_V128_TO_SIMDE_V128(v1));
++
++            PUSH_I32(result);
++            break;
++        }
++        case SIMD_i32x4_bitmask:
++        {
++            V128 v1 = POP_V128();
++
++            uint32_t result =
++                simde_wasm_i32x4_bitmask(SIMD_V128_TO_SIMDE_V128(v1));
++
++            PUSH_I32(result);
++            break;
++        }
++            SIMD_CASE(SIMD_i32x4_extend_low_i16x8_s,
++                      SIMD_SINGLE_OP(simde_wasm_i32x4_extend_low_i16x8));
++            SIMD_CASE(SIMD_i32x4_extend_high_i16x8_s,
++                      SIMD_SINGLE_OP(simde_wasm_i32x4_extend_high_i16x8));
++            SIMD_CASE(SIMD_i32x4_extend_low_i16x8_u,
++                      SIMD_SINGLE_OP(simde_wasm_u32x4_extend_low_u16x8));
++            SIMD_CASE(SIMD_i32x4_extend_high_i16x8_u,
++                      SIMD_SINGLE_OP(simde_wasm_u32x4_extend_high_u16x8));
++            SIMD_CASE(SIMD_i32x4_shl, SIMD_LANE_SHIFT(simde_wasm_i32x4_shl));
++            SIMD_CASE(SIMD_i32x4_shr_s, SIMD_LANE_SHIFT(simde_wasm_i32x4_shr));
++            SIMD_CASE(SIMD_i32x4_shr_u, SIMD_LANE_SHIFT(simde_wasm_u32x4_shr));
++            SIMD_CASE(SIMD_i32x4_add, SIMD_DOUBLE_OP(simde_wasm_i32x4_add));
++            SIMD_CASE(SIMD_i32x4_sub, SIMD_DOUBLE_OP(simde_wasm_i32x4_sub));
++            SIMD_CASE(SIMD_i32x4_mul, SIMD_DOUBLE_OP(simde_wasm_i32x4_mul));
++            SIMD_CASE(SIMD_i32x4_min_s, SIMD_DOUBLE_OP(simde_wasm_i32x4_min));
++            SIMD_CASE(SIMD_i32x4_min_u, SIMD_DOUBLE_OP(simde_wasm_u32x4_min));
++            SIMD_CASE(SIMD_i32x4_max_s, SIMD_DOUBLE_OP(simde_wasm_i32x4_max));
++            SIMD_CASE(SIMD_i32x4_max_u, SIMD_DOUBLE_OP(simde_wasm_u32x4_max));
++            SIMD_CASE(SIMD_i32x4_dot_i16x8_s,
++                      SIMD_DOUBLE_OP(simde_wasm_i32x4_dot_i16x8));
++            SIMD_CASE(SIMD_i32x4_extmul_low_i16x8_s,
++                      SIMD_DOUBLE_OP(simde_wasm_i32x4_extmul_low_i16x8));
++            SIMD_CASE(SIMD_i32x4_extmul_high_i16x8_s,
++                      SIMD_DOUBLE_OP(simde_wasm_i32x4_extmul_high_i16x8));
++            SIMD_CASE(SIMD_i32x4_extmul_low_i16x8_u,
++                      SIMD_DOUBLE_OP(simde_wasm_u32x4_extmul_low_u16x8));
++            SIMD_CASE(SIMD_i32x4_extmul_high_i16x8_u,
++                      SIMD_DOUBLE_OP(simde_wasm_u32x4_extmul_high_u16x8));
++
++            /* i64x2 operations */
++            SIMD_CASE(SIMD_i64x2_abs, SIMD_SINGLE_OP(simde_wasm_i64x2_abs));
++            SIMD_CASE(SIMD_i64x2_neg, SIMD_SINGLE_OP(simde_wasm_i64x2_neg));
++        case SIMD_i64x2_all_true:
++        {
++            V128 v1 = POP_V128();
++
++            bool result =
++                simde_wasm_i64x2_all_true(SIMD_V128_TO_SIMDE_V128(v1));
++
++            PUSH_I32(result);
++            break;
++        }
++        case SIMD_i64x2_bitmask:
++        {
++            V128 v1 = POP_V128();
++
++            uint32_t result =
++                simde_wasm_i64x2_bitmask(SIMD_V128_TO_SIMDE_V128(v1));
++
++            PUSH_I32(result);
++            break;
++        }
++            SIMD_CASE(SIMD_i64x2_extend_low_i32x4_s,
++                      SIMD_SINGLE_OP(simde_wasm_i64x2_extend_low_i32x4));
++            SIMD_CASE(SIMD_i64x2_extend_high_i32x4_s,
++                      SIMD_SINGLE_OP(simde_wasm_i64x2_extend_high_i32x4));
++            SIMD_CASE(SIMD_i64x2_extend_low_i32x4_u,
++                      SIMD_SINGLE_OP(simde_wasm_u64x2_extend_low_u32x4));
++            SIMD_CASE(SIMD_i64x2_extend_high_i32x4_u,
++                      SIMD_SINGLE_OP(simde_wasm_u64x2_extend_high_u32x4));
++            SIMD_CASE(SIMD_i64x2_shl, SIMD_LANE_SHIFT(simde_wasm_i64x2_shl));
++            SIMD_CASE(SIMD_i64x2_shr_s, SIMD_LANE_SHIFT(simde_wasm_i64x2_shr));
++            SIMD_CASE(SIMD_i64x2_shr_u, SIMD_LANE_SHIFT(simde_wasm_u64x2_shr));
++            SIMD_CASE(SIMD_i64x2_add, SIMD_DOUBLE_OP(simde_wasm_i64x2_add));
++            SIMD_CASE(SIMD_i64x2_sub, SIMD_DOUBLE_OP(simde_wasm_i64x2_sub));
++            SIMD_CASE(SIMD_i64x2_mul, SIMD_DOUBLE_OP(simde_wasm_i64x2_mul));
++            SIMD_CASE(SIMD_i64x2_eq, SIMD_DOUBLE_OP(simde_wasm_i64x2_eq));
++            SIMD_CASE(SIMD_i64x2_ne, SIMD_DOUBLE_OP(simde_wasm_i64x2_ne));
++            SIMD_CASE(SIMD_i64x2_lt_s, SIMD_DOUBLE_OP(simde_wasm_i64x2_lt));
++            SIMD_CASE(SIMD_i64x2_gt_s, SIMD_DOUBLE_OP(simde_wasm_i64x2_gt));
++            SIMD_CASE(SIMD_i64x2_le_s, SIMD_DOUBLE_OP(simde_wasm_i64x2_le));
++            SIMD_CASE(SIMD_i64x2_ge_s, SIMD_DOUBLE_OP(simde_wasm_i64x2_ge));
++            SIMD_CASE(SIMD_i64x2_extmul_low_i32x4_s,
++                      SIMD_DOUBLE_OP(simde_wasm_i64x2_extmul_low_i32x4));
++            SIMD_CASE(SIMD_i64x2_extmul_high_i32x4_s,
++                      SIMD_DOUBLE_OP(simde_wasm_i64x2_extmul_high_i32x4));
++            SIMD_CASE(SIMD_i64x2_extmul_low_i32x4_u,
++                      SIMD_DOUBLE_OP(simde_wasm_u64x2_extmul_low_u32x4));
++            SIMD_CASE(SIMD_i64x2_extmul_high_i32x4_u,
++                      SIMD_DOUBLE_OP(simde_wasm_u64x2_extmul_high_u32x4));
++
++            /* f32x4 opertions */
++            SIMD_CASE(SIMD_f32x4_abs, SIMD_SINGLE_OP(simde_wasm_f32x4_abs));
++            SIMD_CASE(SIMD_f32x4_neg, SIMD_SINGLE_OP(simde_wasm_f32x4_neg));
++            SIMD_CASE(SIMD_f32x4_sqrt, SIMD_SINGLE_OP(simde_wasm_f32x4_sqrt));
++            SIMD_CASE(SIMD_f32x4_add, SIMD_DOUBLE_OP(simde_wasm_f32x4_add));
++            SIMD_CASE(SIMD_f32x4_sub, SIMD_DOUBLE_OP(simde_wasm_f32x4_sub));
++            SIMD_CASE(SIMD_f32x4_mul, SIMD_DOUBLE_OP(simde_wasm_f32x4_mul));
++            SIMD_CASE(SIMD_f32x4_div, SIMD_DOUBLE_OP(simde_wasm_f32x4_div));
++            SIMD_CASE(SIMD_f32x4_min, SIMD_DOUBLE_OP(simde_wasm_f32x4_min));
++            SIMD_CASE(SIMD_f32x4_max, SIMD_DOUBLE_OP(simde_wasm_f32x4_max));
++            SIMD_CASE(SIMD_f32x4_pmin, SIMD_DOUBLE_OP(simde_wasm_f32x4_pmin));
++            SIMD_CASE(SIMD_f32x4_pmax, SIMD_DOUBLE_OP(simde_wasm_f32x4_pmax));
++
++            /* f64x2 operations */
++            SIMD_CASE(SIMD_f64x2_abs, SIMD_SINGLE_OP(simde_wasm_f64x2_abs));
++            SIMD_CASE(SIMD_f64x2_neg, SIMD_SINGLE_OP(simde_wasm_f64x2_neg));
++            SIMD_CASE(SIMD_f64x2_sqrt, SIMD_SINGLE_OP(simde_wasm_f64x2_sqrt));
++            SIMD_CASE(SIMD_f64x2_add, SIMD_DOUBLE_OP(simde_wasm_f64x2_add));
++            SIMD_CASE(SIMD_f64x2_sub, SIMD_DOUBLE_OP(simde_wasm_f64x2_sub));
++            SIMD_CASE(SIMD_f64x2_mul, SIMD_DOUBLE_OP(simde_wasm_f64x2_mul));
++            SIMD_CASE(SIMD_f64x2_div, SIMD_DOUBLE_OP(simde_wasm_f64x2_div));
++            SIMD_CASE(SIMD_f64x2_min, SIMD_DOUBLE_OP(simde_wasm_f64x2_min));
++            SIMD_CASE(SIMD_f64x2_max, SIMD_DOUBLE_OP(simde_wasm_f64x2_max));
++            SIMD_CASE(SIMD_f64x2_pmin, SIMD_DOUBLE_OP(simde_wasm_f64x2_pmin));
++            SIMD_CASE(SIMD_f64x2_pmax, SIMD_DOUBLE_OP(simde_wasm_f64x2_pmax));
++
++            /* Conversion operations */
++            SIMD_CASE(SIMD_i32x4_trunc_sat_f32x4_s,
++                      SIMD_SINGLE_OP(simde_wasm_i32x4_trunc_sat_f32x4));
++            SIMD_CASE(SIMD_i32x4_trunc_sat_f32x4_u,
++                      SIMD_SINGLE_OP(simde_wasm_u32x4_trunc_sat_f32x4));
++            SIMD_CASE(SIMD_f32x4_convert_i32x4_s,
++                      SIMD_SINGLE_OP(simde_wasm_f32x4_convert_i32x4));
++            SIMD_CASE(SIMD_f32x4_convert_i32x4_u,
++                      SIMD_SINGLE_OP(simde_wasm_f32x4_convert_u32x4));
++            SIMD_CASE(SIMD_i32x4_trunc_sat_f64x2_s_zero,
++                      SIMD_SINGLE_OP(simde_wasm_i32x4_trunc_sat_f64x2_zero));
++            SIMD_CASE(SIMD_i32x4_trunc_sat_f64x2_u_zero,
++                      SIMD_SINGLE_OP(simde_wasm_u32x4_trunc_sat_f64x2_zero));
++            SIMD_CASE(SIMD_f64x2_convert_low_i32x4_s,
++                      SIMD_SINGLE_OP(simde_wasm_f64x2_convert_low_i32x4));
++            SIMD_CASE(SIMD_f64x2_convert_low_i32x4_u,
++                      SIMD_SINGLE_OP(simde_wasm_f64x2_convert_low_u32x4));
++
++        default:
++            wasm_set_exception(module, "unsupported SIMD opcode");
++            goto got_exception;
++    }
++    HANDLE_OP_END();
++}
++
++#undef SIMD_CASE
+diff --git a/core/iwasm/interpreter/wasm_interp_fast.c b/core/iwasm/interpreter/wasm_interp_fast.c
+index 1c744f9..ed81bb1 100644
+--- a/core/iwasm/interpreter/wasm_interp_fast.c
++++ b/core/iwasm/interpreter/wasm_interp_fast.c
+@@ -7520,6 +7520,9 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+         HANDLE_OP(WASM_OP_GET_LOCAL)
+         HANDLE_OP(WASM_OP_DROP)
+         HANDLE_OP(WASM_OP_DROP_64)
++#if WASM_ENABLE_SIMDE != 0
++        HANDLE_OP(WASM_OP_DROP_128)
++#endif
+         HANDLE_OP(WASM_OP_BLOCK)
+         HANDLE_OP(WASM_OP_LOOP)
+         HANDLE_OP(WASM_OP_END)
+diff --git a/core/iwasm/interpreter/wasm_loader.c b/core/iwasm/interpreter/wasm_loader.c
+index d3f4720..5a44320 100644
+--- a/core/iwasm/interpreter/wasm_loader.c
++++ b/core/iwasm/interpreter/wasm_loader.c
+@@ -320,7 +320,7 @@ is_byte_a_type(uint8 type)
+
+ #if WASM_ENABLE_SIMD != 0
+ #if (WASM_ENABLE_WAMR_COMPILER != 0) || (WASM_ENABLE_JIT != 0) \
+-    || (WASM_ENABLE_FAST_INTERP != 0)
++    || (WASM_ENABLE_FAST_INTERP != 0) || (WASM_ENABLE_SIMDE != 0)
+ static V128
+ read_i8x16(uint8 *p_buf, char *error_buf, uint32 error_buf_size)
+ {
+@@ -828,7 +828,7 @@ load_init_expr(WASMModule *module, const uint8 **p_buf, const uint8 *buf_end,
+                 break;
+ #if WASM_ENABLE_SIMD != 0
+ #if (WASM_ENABLE_WAMR_COMPILER != 0) || (WASM_ENABLE_JIT != 0) \
+-    || (WASM_ENABLE_FAST_INTERP != 0)
++    || (WASM_ENABLE_FAST_INTERP != 0) || (WASM_ENABLE_SIMDE != 0)
+             /* v128.const */
+             case INIT_EXPR_TYPE_V128_CONST:
+             {
+@@ -4489,7 +4489,7 @@ load_export_section(const uint8 *buf, const uint8 *buf_end, WASMModule *module,
+                     }
+ #if WASM_ENABLE_SIMD != 0
+ #if (WASM_ENABLE_WAMR_COMPILER != 0) || (WASM_ENABLE_JIT != 0) \
+-    || (WASM_ENABLE_FAST_INTERP != 0)
++    || (WASM_ENABLE_FAST_INTERP != 0) || (WASM_ENABLE_SIMDE != 0)
+                     /* TODO: check func type, if it has v128 param or result,
+                              report error */
+ #endif
+@@ -7633,6 +7633,7 @@ wasm_loader_find_block_addr(WASMExecEnv *exec_env, BlockAddr *block_addr_cache,
+             case WASM_OP_DROP_64:
+             case WASM_OP_SELECT_64:
+ #if WASM_ENABLE_SIMDE != 0
++            case WASM_OP_DROP_128:
+             case WASM_OP_SELECT_128:
+ #endif
+                 break;
+@@ -8073,7 +8074,7 @@ wasm_loader_find_block_addr(WASMExecEnv *exec_env, BlockAddr *block_addr_cache,
+
+ #if WASM_ENABLE_SIMD != 0
+ #if (WASM_ENABLE_WAMR_COMPILER != 0) || (WASM_ENABLE_JIT != 0) \
+-    || (WASM_ENABLE_FAST_INTERP != 0)
++    || (WASM_ENABLE_FAST_INTERP != 0) || (WASM_ENABLE_SIMDE != 0)
+             case WASM_OP_SIMD_PREFIX:
+             {
+                 uint32 opcode1;
+@@ -10631,7 +10632,7 @@ check_memory_access_align(uint8 opcode, uint32 align, char *error_buf,
+
+ #if WASM_ENABLE_SIMD != 0
+ #if (WASM_ENABLE_WAMR_COMPILER != 0) || (WASM_ENABLE_JIT != 0) \
+-    || (WASM_ENABLE_FAST_INTERP != 0)
++    || (WASM_ENABLE_FAST_INTERP != 0) || (WASM_ENABLE_SIMDE != 0)
+ static bool
+ check_simd_memory_access_align(uint8 opcode, uint32 align, char *error_buf,
+                                uint32 error_buf_size)
+@@ -13120,10 +13121,13 @@ re_scan:
+                     }
+ #if WASM_ENABLE_SIMD != 0
+ #if (WASM_ENABLE_WAMR_COMPILER != 0) || (WASM_ENABLE_JIT != 0) \
+-    || (WASM_ENABLE_FAST_INTERP != 0)
++    || (WASM_ENABLE_FAST_INTERP != 0) || (WASM_ENABLE_SIMDE != 0)
+                     else if (*(loader_ctx->frame_ref - 1) == VALUE_TYPE_V128) {
+                         loader_ctx->frame_ref -= 4;
+                         loader_ctx->stack_cell_num -= 4;
++#if WASM_ENABLE_FAST_INTERP == 0 && WASM_ENABLE_SIMDE != 0
++                        *(p - 1) = WASM_OP_DROP_128;
++#endif
+ #if WASM_ENABLE_FAST_INTERP != 0
+                         skip_label();
+                         loader_ctx->frame_offset -= 4;
+@@ -13217,9 +13221,11 @@ re_scan:
+                             break;
+ #if WASM_ENABLE_SIMD != 0
+ #if (WASM_ENABLE_WAMR_COMPILER != 0) || (WASM_ENABLE_JIT != 0) \
+-    || (WASM_ENABLE_FAST_INTERP != 0)
++    || (WASM_ENABLE_FAST_INTERP != 0) || (WASM_ENABLE_SIMDE != 0)
+                         case VALUE_TYPE_V128:
+-#if WASM_ENABLE_SIMDE != 0
++#if WASM_ENABLE_FAST_INTERP == 0 && WASM_ENABLE_SIMDE != 0
++                            *(p - 1) = WASM_OP_SELECT_128;
++#elif WASM_ENABLE_SIMDE != 0
+                             if (loader_ctx->p_code_compiled) {
+                                 uint8 opcode_tmp = WASM_OP_SELECT_128;
+ #if WASM_ENABLE_LABELS_AS_VALUES != 0
+@@ -13789,7 +13795,7 @@ re_scan:
+ #else
+ #if (WASM_ENABLE_WAMR_COMPILER == 0) && (WASM_ENABLE_JIT == 0) \
+     && (WASM_ENABLE_FAST_JIT == 0) && (WASM_ENABLE_DEBUG_INTERP == 0)
+-                if (local_offset < 0x80
++                if (local_offset < 0x80 && local_type != VALUE_TYPE_V128
+ #if WASM_ENABLE_GC != 0
+                     && !wasm_is_type_reftype(local_type)
+ #endif
+@@ -13871,7 +13877,7 @@ re_scan:
+ #else
+ #if (WASM_ENABLE_WAMR_COMPILER == 0) && (WASM_ENABLE_JIT == 0) \
+     && (WASM_ENABLE_FAST_JIT == 0) && (WASM_ENABLE_DEBUG_INTERP == 0)
+-                if (local_offset < 0x80
++                if (local_offset < 0x80 && local_type != VALUE_TYPE_V128
+ #if WASM_ENABLE_GC != 0
+                     && !wasm_is_type_reftype(local_type)
+ #endif
+@@ -13953,7 +13959,7 @@ re_scan:
+ #else
+ #if (WASM_ENABLE_WAMR_COMPILER == 0) && (WASM_ENABLE_JIT == 0) \
+     && (WASM_ENABLE_FAST_JIT == 0) && (WASM_ENABLE_DEBUG_INTERP == 0)
+-                if (local_offset < 0x80
++                if (local_offset < 0x80 && local_type != VALUE_TYPE_V128
+ #if WASM_ENABLE_GC != 0
+                     && !wasm_is_type_reftype(local_type)
+ #endif
+@@ -14027,6 +14033,11 @@ re_scan:
+ #endif
+                     *p_org = WASM_OP_GET_GLOBAL_64;
+                 }
++#if WASM_ENABLE_SIMDE != 0
++                else if (global_type == VALUE_TYPE_V128) {
++                    *p_org = WASM_OP_GET_GLOBAL_V128;
++                }
++#endif
+ #else /* else of WASM_ENABLE_FAST_INTERP */
+                 if (global_type == VALUE_TYPE_I64
+                     || global_type == VALUE_TYPE_F64) {
+@@ -14109,6 +14120,11 @@ re_scan:
+ #endif
+                     *p_org = WASM_OP_SET_GLOBAL_64;
+                 }
++#if WASM_ENABLE_SIMDE != 0
++                else if (global_type == VALUE_TYPE_V128) {
++                    *p_org = WASM_OP_SET_GLOBAL_V128;
++                }
++#endif
+                 else if (module->aux_stack_size > 0
+                          && global_idx == module->aux_stack_top_global_index) {
+ #if WASM_ENABLE_DEBUG_INTERP != 0
+@@ -15974,7 +15990,7 @@ re_scan:
+
+ #if WASM_ENABLE_SIMD != 0
+ #if (WASM_ENABLE_WAMR_COMPILER != 0) || (WASM_ENABLE_JIT != 0) \
+-    || (WASM_ENABLE_FAST_INTERP != 0)
++    || (WASM_ENABLE_FAST_INTERP != 0) || (WASM_ENABLE_SIMDE != 0)
+             case WASM_OP_SIMD_PREFIX:
+             {
+                 uint32 opcode1;
+diff --git a/core/iwasm/interpreter/wasm_opcode.h b/core/iwasm/interpreter/wasm_opcode.h
+index 1147384..3c7fe80 100644
+--- a/core/iwasm/interpreter/wasm_opcode.h
++++ b/core/iwasm/interpreter/wasm_opcode.h
+@@ -285,6 +285,7 @@ typedef enum WASMOpcode {
+     WASM_OP_GET_GLOBAL_V128 = 0xe0,
+     WASM_OP_SET_GLOBAL_V128 = 0xe1,
+     WASM_OP_SELECT_128 = 0xe2,
++    WASM_OP_DROP_128 = 0xe3,
+ #endif
+
+     /* Post-MVP extend op prefix */
+@@ -797,7 +798,8 @@ typedef enum WASMAtomicEXTOpcode {
+         SET_GOTO_TABLE_ELEM(EXT_OP_COPY_STACK_TOP_V128), /* 0xdf */ \
+         SET_GOTO_TABLE_ELEM(WASM_OP_GET_GLOBAL_V128),    /* 0xe0 */ \
+         SET_GOTO_TABLE_ELEM(WASM_OP_SET_GLOBAL_V128),    /* 0xe1 */ \
+-        SET_GOTO_TABLE_ELEM(WASM_OP_SELECT_128),         /* 0xe2 */
++        SET_GOTO_TABLE_ELEM(WASM_OP_SELECT_128),         /* 0xe2 */ \
++        SET_GOTO_TABLE_ELEM(WASM_OP_DROP_128),           /* 0xe3 */
+
+ #else
+ #define DEF_EXT_V128_HANDLE()

@@ -28,6 +28,7 @@ IWASM_BUILD_ID=$(
         "${LLGO_WINDOWS_ABI:-}" "${MINGW_PREFIX:-}" "${CC:-}" "${CXX:-}" \
         "$(git hash-object "${SCRIPT_DIR}/build_iwasm.sh")" \
         "$(git hash-object "${SCRIPT_DIR}/patches/wamr-2.4.5-threaded-eh.patch")" \
+        "$(git hash-object "${SCRIPT_DIR}/patches/wamr-2.4.5-classic-simd.patch")" \
         "$(git hash-object "${SCRIPT_DIR}/patches/wamr-2.4.5-posix-signal.patch")" \
         "$(git hash-object "${SCRIPT_DIR}/patches/wamr-2.4.5-mingw.patch")" \
         | git hash-object --stdin
@@ -63,6 +64,10 @@ git -C wasm-micro-runtime apply \
     "${SCRIPT_DIR}/patches/wamr-2.4.5-threaded-eh.patch"
 git -C wasm-micro-runtime apply \
     "${SCRIPT_DIR}/patches/wamr-2.4.5-posix-signal.patch"
+# Keep legacy EH and pthreads on the classic interpreter, and reuse WAMR's
+# SIMDe-backed SIMD operations with its value stack and bytecode decoder.
+git -C wasm-micro-runtime apply \
+    "${SCRIPT_DIR}/patches/wamr-2.4.5-classic-simd.patch"
 
 CMAKE_GENERATOR_ARGS=()
 case "$(uname -s)" in
@@ -146,10 +151,12 @@ cd wasm-micro-runtime/product-mini/platforms/${PLATFORM}/build
 # generated modules require reference-types support. WAMR 2.4.5's debug
 # interpreter leaves a termination signal after a caught Wasm exception;
 # a later branch then aborts LLVM's SjLj path for Go panic/recover.
-cmake "${CMAKE_GENERATOR_ARGS[@]}" \
+# The conditional expansion also works with nounset on macOS's Bash 3.2.
+cmake ${CMAKE_GENERATOR_ARGS[@]+"${CMAKE_GENERATOR_ARGS[@]}"} \
     -D WAMR_BUILD_EXCE_HANDLING=1 \
     -D WAMR_BUILD_AOT=0 \
     -D WAMR_BUILD_FAST_INTERP=0 \
+    -D WAMR_BUILD_SIMD=1 \
     -D WAMR_BUILD_REF_TYPES=1 \
     -D WAMR_BUILD_SHARED_MEMORY=1 \
     -D WAMR_BUILD_LIB_WASI_THREADS=1 \

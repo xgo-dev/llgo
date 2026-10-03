@@ -5,6 +5,15 @@ that backend; they do not introduce an M:N scheduler on native or WASI targets.
 
 ## Fixed failure modes
 
+- The classic interpreter rejected `v128` types even when its build reported
+  SIMD enabled. WAMR's fast interpreter has SIMD operations, but cannot run
+  the legacy EH used by this backend. The classic-SIMD patch reuses those
+  SIMDe-backed operations with the classic value stack, Wasm immediates and
+  memory checks. Locals, globals, select/drop, calls and exception payloads
+  retain all four vector cells. Catch copies use the saved payload rather
+  than an overlapping original range, and rethrow reads the saved payload
+  after its tag. The existing classic interpreter, EH and pthread profile
+  remains enabled. SIMDe stays at WAMR's pinned version 0.8.2.
 - WAMR 2.4.5's classic interpreter briefly broadcast thread termination while
   propagating a catchable exception to a Wasm caller. The interpreter patch
   keeps that propagation local. The original deferred-Goexit artifact passed
@@ -73,3 +82,9 @@ Goexit, finalizers, reflection with concurrent GC, retained roots, heap growth,
 uncooperative C, timers, filesystems, selected standard-library tests and a
 GOROOT sentinel. The full package audit remains a separate gate; passing this
 focused suite is not a claim of complete standard-library compatibility.
+
+The `wasm-wasi-simd/classic.wat` fixture exercises vector locals and globals,
+unaligned memory, indirect calls, select/drop and block scanning, cross-call
+catch/rethrow, and an out-of-bounds vector load. It runs before the threaded
+acceptance probes. The executable Go SIMD suite additionally runs in the
+existing WASI CI job with `GOEXPERIMENT=simd`.
