@@ -729,6 +729,9 @@ jobs:
   wasm-browser-debug:
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: prepare
+    permissions:
+      contents: read
+      id-token: write
     name: wasm-browser-debug
     timeout-minutes: 20
     runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
