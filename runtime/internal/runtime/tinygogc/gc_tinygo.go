@@ -483,7 +483,7 @@ func freeObject(ptr unsafe.Pointer) {
 func GC() uintptr {
 	lock(&gcMutex)
 	freeBytes := gc()
-	unlock(&gcMutex)
+	unlockForGC(&gcMutex)
 	scheduleFinalizers()
 	return freeBytes
 }

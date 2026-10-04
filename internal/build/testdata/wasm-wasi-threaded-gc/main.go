@@ -292,7 +292,7 @@ func testIdleForeignThread(baseline uint64) {
 }
 
 // LLVM lowers this recover path through legacy Wasm EH. It must keep working
-// on the WAMR build used by CI, including a collection in the active defer.
+// on the Wasmer release used by CI, including a collection in the active defer.
 func recoverPayload(collect bool) (ok bool) {
 	value := &payload{value: 0x5678}
 	defer func() {

@@ -4086,7 +4086,7 @@ const llgoShadowStack = "LLGO_SHADOW_STACK"
 // for Plan9 asm translation debug
 const llgoPlan9ASMPkgs = "LLGO_PLAN9ASM_PKGS"
 
-const defaultWasmRuntime = "iwasm"
+const defaultWasmRuntime = "wasmer"
 
 func defaultEnv(env string, defVal string) string {
 	envVal := os.Getenv(env)
@@ -4187,7 +4187,7 @@ func shouldRunLLVMPasses(mode Mode) bool {
 
 func validateWASIThreads(conf *Config) error {
 	if conf.Goos == "wasip1" && conf.Goarch == "wasm" && !isEnvOn(llgoWasiThreads, true) {
-		return errors.New("single-thread WASI is no longer supported; unset LLGO_WASI_THREADS and use WAMR with WASI threads")
+		return errors.New("single-thread WASI is no longer supported; unset LLGO_WASI_THREADS and use Wasmer with WASI threads")
 	}
 	return nil
 }

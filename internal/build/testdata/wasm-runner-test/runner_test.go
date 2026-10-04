@@ -11,7 +11,7 @@ func TestRawWasmRunner(t *testing.T) {
 	if runtime.GOARCH != "wasm" {
 		t.Fatalf("GOARCH = %q, want wasm", runtime.GOARCH)
 	}
-	// Match Go's go_wasip1_wasm_exec contract: the default WAMR adapter
+	// Match Go's go_wasip1_wasm_exec contract: the default Wasmer adapter
 	// inherits PWD and PATH without exposing every host environment variable.
 	if got := os.Getenv("PWD"); got == "" {
 		t.Fatal("WASI runner did not inherit PWD")

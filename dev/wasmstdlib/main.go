@@ -385,7 +385,7 @@ func run(name, reportPath, goCmd, llgo string) (retErr error) {
 	if p.Reference {
 		r.Implementation, r.Contract = "go-reference", "official Go compiler and host helper; not LLGo output"
 	} else if wasiThreadsSelected(p) {
-		r.Contract += "; WAMR WASI threads"
+		r.Contract += "; Wasmer WASI threads"
 	}
 	root, err := getwdForRun()
 	if err != nil {

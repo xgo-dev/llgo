@@ -153,6 +153,7 @@ def main():
     addr2line = os.environ.get("LLVM_ADDR2LINE", "llvm-addr2line")
     env = os.environ.copy()
     env["LLGO_ROOT"] = str(ROOT)
+    env["RUST_LOG"] = "off"
     with tempfile.TemporaryDirectory(prefix="llgo-wasm-debug-") as directory:
         for profile, opt, artifact in itertools.product(profiles, opts, artifacts):
             stem = Path(directory) / f"{profile}-O{opt}-{artifact}"
@@ -170,12 +171,12 @@ def main():
                 check_external_pair(module, debug_module)
             check_module(debug_module, dwarfdump=dwarfdump, addr2line=addr2line)
             if profile == "w32":
-                command = [os.environ.get("IWASM", "iwasm"), "--max-threads=128",
-                           "--stack-size=1048576", "--heap-size=0", str(module)]
+                command = [os.environ.get("WASMER", "wasmer"), "run", "--enable-exceptions", "--enable-simd",
+                           "--stack-size=1048576", str(module)]
             else:
                 runner = "emscripten-memory64-runner.mjs" if profile == "j64" else "emscripten-runner.mjs"
                 command = [os.environ.get("NODE", "node"), str(ROOT / "targets" / runner), str(output)]
-            result = run(command, timeout=60)
+            result = run(command, env=env, timeout=60)
             if "wasm debug ok" not in result.splitlines():
                 raise RuntimeError(f"{profile} O{opt}: fixture did not complete:\n{result}")
             print(f"{profile} O{opt} {artifact}: final DWARF, Go/C++ source lines and runtime passed", flush=True)

@@ -100,3 +100,19 @@ func wasiGCStackPointer() unsafe.Pointer
 
 //go:linkname wasiGCStackTop C.llgo_gc_stack_top
 func wasiGCStackTop() uintptr
+
+func wasiGCAllocatorLock(mutex unsafe.Pointer) {
+	wasiGCAllocatorWait(mutex, uintptr(gcroot.CurrentChain()),
+		uintptr(wasiGCStackPointer()), wasiGCStackTop())
+}
+
+//go:linkname wasiGCAllocatorWait C.llgo_wasi_gc_allocator_lock
+func wasiGCAllocatorWait(mutex unsafe.Pointer, chain, bottom, top uintptr)
+
+func wasiGCAllocatorFinish(mutex unsafe.Pointer) {
+	wasiGCAllocatorHandoff(mutex, uintptr(gcroot.CurrentChain()),
+		uintptr(wasiGCStackPointer()), wasiGCStackTop())
+}
+
+//go:linkname wasiGCAllocatorHandoff C.llgo_wasi_gc_allocator_finish
+func wasiGCAllocatorHandoff(mutex unsafe.Pointer, chain, bottom, top uintptr)

@@ -212,7 +212,8 @@ func TestUseCrossCompileSDK(t *testing.T) {
 							t.Error("Missing -resource-dir flag in CCFLAGS")
 						}
 						if !slices.Contains(export.CCFLAGS, "-fwasm-exceptions") ||
-							!hasMllvmOption(export.CCFLAGS, "-wasm-enable-sjlj") {
+							!hasMllvmOption(export.CCFLAGS, "-wasm-enable-sjlj") ||
+							!hasMllvmOption(export.CCFLAGS, "-wasm-use-legacy-eh=false") {
 							t.Errorf("CCFLAGS do not enable WebAssembly SjLj lowering: %v", export.CCFLAGS)
 						}
 						if export.WasmPostLink.Asyncify {
@@ -324,7 +325,8 @@ func TestUseWASILTOEnablesSjLjAtLink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(export.LDFLAGS, "-Wl,--mllvm=-wasm-enable-sjlj") {
+	if !slices.Contains(export.LDFLAGS, "-Wl,--mllvm=-wasm-enable-sjlj") ||
+		!slices.Contains(export.LDFLAGS, "-Wl,--mllvm=-wasm-use-legacy-eh=false") {
 		t.Fatalf("LDFLAGS do not enable Wasm SjLj for LTO: %v", export.LDFLAGS)
 	}
 }

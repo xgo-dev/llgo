@@ -97,12 +97,13 @@ type NativeToolchain struct {
 type WasmProfile string
 
 const (
-	// WASIThreadedEmulator runs the shared-memory module with WAMR's classic
-	// interpreter. wasi-libc manages its own heap inside the module memory.
+	// WASIThreadedEmulator runs shared-memory modules with standard Wasm EH
+	// and SIMD. Wasmer chooses an available backend; the pinned Windows CLI
+	// uses V8 and supported Unix builds prefer Cranelift for these modules.
+	// wasi-libc manages its own heap inside the module memory.
 	// The runner resolves the working-directory preopen to an absolute path
 	// before execution and also grants Go's default /tmp directory.
-	// The 64-client select stress needs more than 64 concurrent pthreads.
-	WASIThreadedEmulator = `iwasm --max-threads=128 --stack-size=1048576 --heap-size=0 --dir=. --dir=/tmp "{}"`
+	WASIThreadedEmulator = `wasmer run --enable-exceptions --enable-simd --stack-size=1048576 --volume=. --volume=/tmp "{}"`
 
 	WasmProfileNone WasmProfile = ""
 	WasmProfileJ32  WasmProfile = "j32"
@@ -784,11 +785,13 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, forceEspClang bool, le
 		export.LDFLAGS = append(export.LDFLAGS, "-fwasm-exceptions")
 		if ltoMode.Enabled() {
 			export.LDFLAGS = append(export.LDFLAGS, "-Wl,--mllvm=-wasm-enable-sjlj")
+			export.LDFLAGS = append(export.LDFLAGS, "-Wl,--mllvm=-wasm-use-legacy-eh=false")
 		}
 		export.CCFLAGS = append(
 			export.CCFLAGS,
 			"-fwasm-exceptions",
 			"-mllvm", "-wasm-enable-sjlj",
+			"-mllvm", "-wasm-use-legacy-eh=false",
 		)
 		export.LDFLAGS = append(export.LDFLAGS, []string{
 			"-Wno-override-module",

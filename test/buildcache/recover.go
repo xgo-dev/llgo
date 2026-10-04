@@ -1,4 +1,4 @@
-//go:build llgo && !wasip1
+//go:build llgo
 
 package main
 

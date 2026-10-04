@@ -58,8 +58,8 @@ this frontend. Debugger frame selection refers to the paused Wasm execution
 frame rather than a logical Go goroutine.
 
 WASI source sessions remain unavailable for current W32 pthread artifacts.
-Their shared `env.memory`, `wasi.thread-spawn` and `env.pthread_exit` imports
+Their shared `env.memory`, `wasi.thread-spawn` and `wasix_32v1.thread_exit` imports
 require a compatible runtime debugger; the current Wasmtime backend cannot
 provide that contract. `llgo debug -target=wasi` reports the limitation and
-`llgo run -target=wasi` continues to use WAMR. No thread imports are replaced
+`llgo run -target=wasi` continues to use Wasmer. No thread imports are replaced
 with synthetic stubs.

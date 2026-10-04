@@ -8,3 +8,5 @@ type mutex struct{}
 func lock(m *mutex) {}
 
 func unlock(m *mutex) {}
+
+func unlockForGC(m *mutex) { unlock(m) }

@@ -19,7 +19,7 @@ The automatic backend depends on the selected target:
 | --- | --- | --- |
 | Native Darwin/Linux/Windows | LLDB | Local process |
 | Non-Wasm embedded | GDB | Target `debug-server`, OpenOCD, or `-remote` |
-| WASI | Unavailable | W32 pthread execution uses WAMR; source debugging is a subsequent phase |
+| WASI | Unavailable | W32 pthread execution uses Wasmer; source debugging is a subsequent phase |
 | Browser Wasm | Chrome DevTools | LLGo language extension and the generated Emscripten host |
 
 Use `-backend=gdb` or `-backend=lldb` to override a native or GDB Remote
@@ -124,9 +124,9 @@ are preserved; the launcher does not substitute host imports.
 Browser debugging currently covers the paused Wasm execution frame. Full
 goroutine views and multi-worker frame coordination remain a later phase.
 WASI source sessions are explicitly rejected: current W32 modules require
-shared `env.memory`, `wasi.thread-spawn`, and `env.pthread_exit`, which the
+shared `env.memory`, `wasi.thread-spawn`, and `wasix_32v1.thread_exit`, which the
 current Wasmtime debug backend does not implement. Use `llgo run -target=wasi`
-with WAMR for execution; retaining valid DWARF does not provide a runtime
+with Wasmer for execution; retaining valid DWARF does not provide a runtime
 debugger transport. See [browser debugging](../dev/browser-debugging.md).
 
 Debug information can also be packaged without starting a debugger:

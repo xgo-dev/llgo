@@ -1,6 +1,6 @@
 # WASI threaded GC
 
-The WAMR WASI pthread backend runs one goroutine per pthread.
+The Wasmer WASI pthread backend runs one goroutine per pthread.
 It supports collection with multiple application threads: one thread stops
 the others and performs serial, non-moving, conservative mark-and-sweep.
 Marking and sweeping do not run in parallel with application code or on
@@ -31,5 +31,5 @@ Go roots retained by C or host TLS.
 
 `dev/test_wasm_wasi_threads.py` exercises collection with worker-private roots,
 thread entry/exit, an idle foreign thread, blocked C calls, timers and panic
-recovery. It also allocates just below, at and above 32 MiB in separate WAMR
+recovery. It also allocates just below, at and above 32 MiB in separate Wasmer
 processes so an earlier large arena cannot hide a sizing regression.

@@ -329,7 +329,7 @@ func runNative(ctx *context, app, pkgDir, pkgName string, conf *Config, mode Mod
 			case "wasmtime":
 				args = append(args, "--wasm", "multi-memory=true", app)
 				args = append(args, conf.RunArgs...)
-			case "iwasm":
+			case "wasmer":
 				return runEmuCmd(ctx.commands, map[string]string{"": app}, crosscompile.WASIThreadedEmulator,
 					conf.RunArgs, false, conf.PrintCommands, details)
 			default:
@@ -416,9 +416,14 @@ func runEmuCmdTo(commands commandEnv, envMap map[string]string, emulatorTemplate
 			errors.New("empty emulator command"))
 	}
 	if emulatorTemplate == crosscompile.WASIThreadedEmulator {
-		// A relative preopen can leave WAMR's guest cwd pointing at a removed
-		// temporary directory after testing.Chdir restores ".". Preopen the
-		// actual working directory so guest Getwd/Chdir stay stable.
+		if details.phase == "test" {
+			// Wasmer tracing and guest stderr share the same stream. Disable
+			// engine tracing at its source for tests, while keeping module
+			// caching and guest output intact. Ordinary runs retain RUST_LOG.
+			commands.environ = withEnv(commands.environ, "RUST_LOG=off")
+		}
+		// Map the actual working directory so guest PWD, Getwd and Chdir
+		// agree even when a test temporarily changes its working directory.
 		cwd := commands.dir
 		if cwd == "" {
 			cwd = "."
@@ -426,17 +431,20 @@ func runEmuCmdTo(commands commandEnv, envMap map[string]string, emulatorTemplate
 		cwd, err = filepath.Abs(cwd)
 		if err != nil {
 			return newRunnerFailure(details, "", runnerStatusInvalidCommand, -1,
-				fmt.Errorf("resolve WAMR working directory: %w", err))
+				fmt.Errorf("resolve Wasmer working directory: %w", err))
 		}
+		workVolume, tempVolume, guestCwd := wasiHostDirectories(cwd, os.TempDir(), runtime.GOOS == "windows")
 		for i, part := range cmdParts {
-			if part == "--dir=." {
-				cmdParts[i] = "--dir=" + cwd
+			if part == "--volume=." {
+				cmdParts[i] = "--volume=" + workVolume
+			} else if part == "--volume=/tmp" {
+				cmdParts[i] = "--volume=" + tempVolume
 			}
 		}
-		// iwasm does not inherit host environment variables into the guest.
+		// wasmer does not inherit host environment variables into the guest.
 		// Preserve the raw WASI run/test PWD and PATH contract without exposing
 		// every host variable. PWD follows the package directory/preopen.
-		cmdParts = slices.Insert(cmdParts, len(cmdParts)-1, "--env=PWD="+cwd)
+		cmdParts = slices.Insert(cmdParts, len(cmdParts)-1, "--env=PWD="+guestCwd)
 		if path := commands.lookup("PATH"); path != "" {
 			cmdParts = slices.Insert(cmdParts, len(cmdParts)-1, "--env=PATH="+path)
 		}
@@ -445,6 +453,8 @@ func runEmuCmdTo(commands commandEnv, envMap map[string]string, emulatorTemplate
 			cmdParts = slices.Insert(cmdParts, len(cmdParts)-1,
 				"--env=LLGO_STRESS_PROFILE="+stress)
 		}
+		// Guest flags such as -test.v must not be parsed as Wasmer options.
+		cmdParts = append(cmdParts, "--")
 	}
 
 	// Add run arguments to the end
@@ -454,6 +464,15 @@ func runEmuCmdTo(commands commandEnv, envMap map[string]string, emulatorTemplate
 	}
 
 	return runRunnerCommand(commands, cmdParts[0], cmdParts[1:], details, stdout, stderr)
+}
+
+func wasiHostDirectories(cwd, tempDir string, windows bool) (workVolume, tempVolume, guestCwd string) {
+	if windows {
+		// Wasmer splits a volume at its last colon. Give drive-letter host
+		// paths explicit POSIX guest names, including Go's default /tmp.
+		return cwd + ":/work", tempDir + ":/tmp", "/work"
+	}
+	return cwd, "/tmp", cwd
 }
 
 func runRunnerCommand(commands commandEnv, name string, args []string, details runnerDetails, stdout, stderr io.Writer) error {

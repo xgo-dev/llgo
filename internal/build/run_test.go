@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/targets"
 )
 
 func TestRunInEmulatorValidation(t *testing.T) {
@@ -60,9 +61,84 @@ func TestRunInEmulatorValidation(t *testing.T) {
 	}
 }
 
-func TestWASIThreadedEmulatorHostContract(t *testing.T) {
+func TestWASIHostDirectories(t *testing.T) {
+	work, temp, cwd := wasiHostDirectories(`C:\project with spaces`, `D:\Temp`, true)
+	if work != `C:\project with spaces:/work` || temp != `D:\Temp:/tmp` || cwd != "/work" {
+		t.Fatalf("Windows WASI directories = %q, %q, %q", work, temp, cwd)
+	}
+	work, temp, cwd = wasiHostDirectories("/project with spaces", "/host-temp", false)
+	if work != "/project with spaces" || temp != "/tmp" || cwd != "/project with spaces" {
+		t.Fatalf("Unix WASI directories = %q, %q, %q", work, temp, cwd)
+	}
+}
+
+func TestWASIRunnerIsolatesEngineLogging(t *testing.T) {
 	dir := t.TempDir()
-	runner := filepath.Join(dir, "iwasm")
+	// Guest stderr may itself look like an engine log. It must survive intact;
+	// the runner controls the engine's logger instead of filtering the stream.
+	guestLog := `{"level":"WARN","target":"wasmer","fields":{"message":"guest stderr"}}`
+	script := "#!/bin/sh\n" +
+		"if [ \"$RUST_LOG\" != off ]; then echo 'engine diagnostic' >&2; fi\n" +
+		"echo 'guest stdout'\n" +
+		"echo '" + guestLog + "' >&2\nexit 7\n"
+	if err := os.WriteFile(filepath.Join(dir, "wasmer"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	commands := commandEnv{dir: dir, environ: withEnv(os.Environ(), "RUST_LOG=warn")}
+	for _, phase := range []string{"test", "run"} {
+		t.Run(phase, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := runEmuCmdTo(commands, map[string]string{"": "program.wasm"},
+				crosscompile.WASIThreadedEmulator, nil, false, false,
+				runnerDetails{phase: phase}, &stdout, &stderr)
+			var failure *runnerFailure
+			if !errors.As(err, &failure) || failure.exitCode != 7 || failure.status != runnerStatusExit {
+				t.Fatalf("runner failure = %v, want exit 7", err)
+			}
+			wantErr := guestLog + "\n"
+			if phase == "run" {
+				wantErr = "engine diagnostic\n" + wantErr
+			}
+			if stdout.String() != "guest stdout\n" || stderr.String() != wantErr {
+				t.Fatalf("stdout = %q, stderr = %q; want guest output and stderr %q", stdout.String(), stderr.String(), wantErr)
+			}
+		})
+	}
+	if commands.lookup("RUST_LOG") != "warn" {
+		t.Fatal("test runner changed the caller's logging environment")
+	}
+}
+
+func TestWASIThreadedEmulatorHostContract(t *testing.T) {
+	testWASIThreadedEmulatorHostContract(t, crosscompile.WASIThreadedEmulator)
+}
+
+func TestWASIInheritedTargetHostContract(t *testing.T) {
+	dir := t.TempDir()
+	data, err := os.ReadFile("../../targets/wasi.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "wasi.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "downstream.json"), []byte(`{"inherits":["wasi"]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := targets.NewLoader(dir).Load("downstream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Exercise the resolved template through the runner: checking only the
+	// built-in target names hides template drift behind their explicit override.
+	testWASIThreadedEmulatorHostContract(t, config.Emulator)
+}
+
+func testWASIThreadedEmulatorHostContract(t *testing.T, emulator string) {
+	t.Helper()
+	dir := t.TempDir()
+	runner := filepath.Join(dir, "wasmer")
 	argsFile := filepath.Join(dir, "args")
 	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\n", argsFile)
 	if err := os.WriteFile(runner, []byte(script), 0755); err != nil {
@@ -71,7 +147,7 @@ func TestWASIThreadedEmulatorHostContract(t *testing.T) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	commands := commandEnv{dir: dir, environ: append(os.Environ(), "PATH="+dir, "LLGO_STRESS_PROFILE=quick", "LLGO_PRIVATE_SENTINEL=not-forwarded")}
 	artifact := filepath.Join(dir, "program.wasm")
-	err := runEmuCmd(commands, map[string]string{"": artifact}, crosscompile.WASIThreadedEmulator,
+	err := runEmuCmd(commands, map[string]string{"": artifact}, emulator,
 		[]string{"-test.v"}, false, false, runnerDetails{phase: "test"})
 	if err != nil {
 		t.Fatal(err)
@@ -81,22 +157,27 @@ func TestWASIThreadedEmulatorHostContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if got, want := args[3], "--dir="+dir; got != want {
-		t.Fatalf("WAMR working directory = %q, want %q", got, want)
+	for _, flag := range []string{"--cranelift", "--v8", "--llvm", "--singlepass", "--disable-cache"} {
+		if slices.Contains(args, flag) {
+			t.Fatalf("runner overrides Wasmer defaults with %q", flag)
+		}
+	}
+	if want := "--volume=" + dir; !slices.Contains(args, want) {
+		t.Fatalf("Wasmer arguments %q omit working directory %q", args, want)
 	}
 	for _, want := range []string{"--env=PWD=" + dir, "--env=PATH=" + dir} {
 		if !slices.Contains(args, want) {
-			t.Fatalf("WAMR arguments omit %q: %q", want, args)
+			t.Fatalf("Wasmer arguments omit %q: %q", want, args)
 		}
 	}
 	if slices.Contains(args, "--env=LLGO_PRIVATE_SENTINEL=not-forwarded") {
-		t.Fatal("WAMR forwarded an unrelated host environment variable")
+		t.Fatal("Wasmer forwarded an unrelated host environment variable")
 	}
-	if got, want := args[len(args)-3:], []string{"--env=LLGO_STRESS_PROFILE=quick", artifact, "-test.v"}; !slices.Equal(got, want) {
+	if got, want := args[len(args)-4:], []string{"--env=LLGO_STRESS_PROFILE=quick", artifact, "--", "-test.v"}; !slices.Equal(got, want) {
 		t.Fatalf("runner tail = %q, want %q", got, want)
 	}
 	commands.dir = ""
-	if err := runEmuCmd(commands, map[string]string{"": artifact}, crosscompile.WASIThreadedEmulator,
+	if err := runEmuCmd(commands, map[string]string{"": artifact}, emulator,
 		nil, false, false, runnerDetails{phase: "test"}); err != nil {
 		t.Fatal(err)
 	}
@@ -109,19 +190,19 @@ func TestWASIThreadedEmulatorHostContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := args[3], "--dir="+cwd; got != want {
-		t.Fatalf("WAMR default working directory = %q, want %q", got, want)
+	if want := "--volume=" + cwd; !slices.Contains(args, want) {
+		t.Fatalf("Wasmer arguments %q omit default working directory %q", args, want)
 	}
 }
 
-func TestNativeWAMRRunUsesThreadedHostContract(t *testing.T) {
+func TestNativeWasmerRunUsesThreadedHostContract(t *testing.T) {
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "args")
-	if err := os.WriteFile(filepath.Join(dir, "iwasm"), []byte(fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\n", argsFile)), 0755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "wasmer"), []byte(fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\n", argsFile)), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv(llgoWasmRuntime, "iwasm")
+	t.Setenv(llgoWasmRuntime, "wasmer")
 	commands := commandEnv{dir: dir, environ: os.Environ()}
 	conf := &Config{Goos: "wasip1", Goarch: "wasm", RunArgs: []string{"hello world"}}
 	artifact := filepath.Join(dir, "app.wasm")
@@ -133,12 +214,12 @@ func TestNativeWAMRRunUsesThreadedHostContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := strings.Split(strings.TrimSpace(string(data)), "\n")
-	for _, want := range []string{"--max-threads=128", "--stack-size=1048576", "--heap-size=0", "--dir=" + dir, "--env=PWD=" + dir} {
+	for _, want := range []string{"run", "--enable-exceptions", "--enable-simd", "--stack-size=1048576", "--volume=" + dir, "--env=PWD=" + dir} {
 		if !slices.Contains(args, want) {
-			t.Fatalf("WAMR arguments omit %q: %q", want, args)
+			t.Fatalf("Wasmer arguments omit %q: %q", want, args)
 		}
 	}
-	if !slices.Equal(args[len(args)-2:], []string{artifact, "hello world"}) {
+	if !slices.Equal(args[len(args)-3:], []string{artifact, "--", "hello world"}) {
 		t.Fatalf("artifact/arguments = %q", args)
 	}
 }
@@ -154,7 +235,7 @@ func TestWASIThreadedEmulatorReportsInvalidWorkingDirectory(t *testing.T) {
 	}
 	err := runEmuCmd(commandEnv{environ: os.Environ()}, map[string]string{"": "program.wasm"},
 		crosscompile.WASIThreadedEmulator, nil, false, false, runnerDetails{phase: "test"})
-	if err == nil || !strings.Contains(err.Error(), "resolve WAMR working directory") {
+	if err == nil || !strings.Contains(err.Error(), "resolve Wasmer working directory") {
 		t.Fatalf("runner error = %v, want working-directory failure", err)
 	}
 }

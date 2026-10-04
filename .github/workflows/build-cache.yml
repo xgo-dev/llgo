@@ -61,17 +61,17 @@ jobs:
       - name: Set up Binaryen
         uses: ./.github/actions/setup-binaryen
 
-      - name: Restore LLGo and cache WAMR
+      - name: Restore LLGo and cache Wasmer
         uses: ./.github/actions/setup-llgo-cache
         with:
           # This workflow deliberately clears package objects to test cache
           # behavior, so restoring that large directory would be pure waste.
           build-cache-mode: off
-          wamr-cache-mode: readwrite
+          wasmer-cache-mode: readwrite
 
-      - name: Install WAMR (for wasm tests)
+      - name: Install Wasmer (for wasm tests)
         shell: bash
-        run: bash dev/build_iwasm.sh
+        run: bash dev/install_wasmer.sh
 
       - name: Install llgo (dev mode)
         shell: bash

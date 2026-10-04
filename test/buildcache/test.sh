@@ -68,6 +68,22 @@ capture_cache_build() {
     fi
 }
 
+# Preserve the runner's diagnostic when a cached executable fails. Successful
+# runs remain quiet so the cache snapshot output stays readable.
+capture_cache_run() {
+    local command="$1"
+    local log="$BUILD_TEMP_DIR/run.log"
+    local status
+    if eval "$command" > "$log" 2>&1; then
+        return 0
+    else
+        status=$?
+        cat "$log" >&2
+        echo "Runner exited with status $status" >&2
+        return "$status"
+    fi
+}
+
 # Helper function to compare with snapshot
 compare_snapshot() {
     local test_name="$1"
@@ -137,7 +153,7 @@ run_test_suite() {
             return 1
         fi
         if [ -n "$run_cmd" ]; then
-            if ! eval "$run_cmd" > /dev/null 2>&1; then
+            if ! capture_cache_run "$run_cmd"; then
                 echo -e "${RED}Run failed${NC}"
                 return 1
             fi
@@ -155,7 +171,7 @@ run_test_suite() {
             return 1
         fi
         if [ -n "$run_cmd" ]; then
-            if ! eval "$run_cmd" > /dev/null 2>&1; then
+            if ! capture_cache_run "$run_cmd"; then
                 echo -e "${RED}Run failed${NC}"
                 return 1
             fi
@@ -173,7 +189,7 @@ run_test_suite() {
             return 1
         fi
         if [ -n "$run_cmd" ]; then
-            if ! eval "$run_cmd" > /dev/null 2>&1; then
+            if ! capture_cache_run "$run_cmd"; then
                 echo -e "${RED}Run failed${NC}"
                 return 1
             fi
@@ -210,7 +226,7 @@ run_test_suite() {
         fi
 
         if [ -n "$run_cmd" ]; then
-            if ! eval "$run_cmd" > /dev/null 2>&1; then
+            if ! capture_cache_run "$run_cmd"; then
                 echo -e "${RED}Run failed${NC}"
                 return 1
             fi
@@ -239,7 +255,7 @@ run_test_suite() {
             return 1
         fi
         if [ -n "$run_cmd" ]; then
-            if ! eval "$run_cmd" > /dev/null 2>&1; then
+            if ! capture_cache_run "$run_cmd"; then
                 echo -e "${RED}Run failed${NC}"
                 return 1
             fi
@@ -268,7 +284,7 @@ run_test_suite() {
             return 1
         fi
         if [ -n "$run_cmd" ]; then
-            if ! eval "$run_cmd" > /dev/null 2>&1; then
+            if ! capture_cache_run "$run_cmd"; then
                 echo -e "${RED}Run failed${NC}"
                 return 1
             fi
@@ -294,44 +310,44 @@ run_test_suite "native" \
     "" \
     "$BUILD_TEMP_DIR/buildcache.out"
 
-# Run WASM tests - always use iwasm from the os.UserCacheDir-compatible
-# location shared with dev/build_iwasm.sh.
-LLGO_IWASM_DIR="$CACHE_ROOT/bin"
-IWASM_NAME="iwasm"
+# Run WASM tests - always use wasmer from the os.UserCacheDir-compatible
+# location shared with dev/install_wasmer.sh.
+LLGO_WASMER_DIR="$CACHE_ROOT/bin"
+WASMER_NAME="wasmer"
 case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)
         # This script runs under Git Bash. Keep the native cache location,
         # but convert it before the command is reparsed by eval below;
         # otherwise backslashes in C:\Users\... are consumed as escapes.
-        LLGO_IWASM_DIR="$(cygpath -u "$CACHE_ROOT")/bin"
-        IWASM_NAME="iwasm.exe"
+        LLGO_WASMER_DIR="$(cygpath -u "$CACHE_ROOT")/bin"
+        WASMER_NAME="wasmer.exe"
         ;;
 esac
-LLGO_IWASM="$LLGO_IWASM_DIR/$IWASM_NAME"
+LLGO_WASMER="$LLGO_WASMER_DIR/$WASMER_NAME"
 
-# Build iwasm if it doesn't exist in llgo cache
-if [ ! -f "$LLGO_IWASM" ]; then
+# Install Wasmer if it doesn't exist in llgo cache
+if [ ! -f "$LLGO_WASMER" ]; then
     echo ""
-    echo -e "${YELLOW}iwasm not found in llgo cache, building it...${NC}"
-    if [ -f "$SCRIPT_DIR/../../dev/build_iwasm.sh" ]; then
-        bash "$SCRIPT_DIR/../../dev/build_iwasm.sh"
+    echo -e "${YELLOW}wasmer not found in llgo cache, installing it...${NC}"
+    if [ -f "$SCRIPT_DIR/../../dev/install_wasmer.sh" ]; then
+        bash "$SCRIPT_DIR/../../dev/install_wasmer.sh"
     else
-        echo -e "${RED}Error: dev/build_iwasm.sh not found${NC}"
+        echo -e "${RED}Error: dev/install_wasmer.sh not found${NC}"
         echo -e "${BLUE}Skipping WASM tests${NC}"
-        LLGO_IWASM=""
+        LLGO_WASMER=""
     fi
 fi
 
-if [ -n "$LLGO_IWASM" ] && [ -f "$LLGO_IWASM" ]; then
+if [ -n "$LLGO_WASMER" ] && [ -f "$LLGO_WASMER" ]; then
     echo ""
-    echo -e "${BLUE}Using iwasm: $LLGO_IWASM${NC}"
+    echo -e "${BLUE}Using wasmer: $LLGO_WASMER${NC}"
     run_test_suite "wasm" \
         "GOOS=wasip1 GOARCH=wasm llgo build -o $BUILD_TEMP_DIR/buildcache.wasm -tags=nogc -compiler-verbose ." \
         "$BUILD_TEMP_DIR/buildcache.wasm" \
-        "$LLGO_IWASM --stack-size=819200000 --heap-size=800000000 $BUILD_TEMP_DIR/buildcache.wasm"
+        "RUST_LOG=off $LLGO_WASMER run --enable-exceptions --enable-simd --stack-size=1048576 $BUILD_TEMP_DIR/buildcache.wasm"
 else
     echo ""
-    echo -e "${BLUE}Skipping WASM tests (iwasm not available)${NC}"
+    echo -e "${BLUE}Skipping WASM tests (wasmer not available)${NC}"
 fi
 
 # ===========================================================

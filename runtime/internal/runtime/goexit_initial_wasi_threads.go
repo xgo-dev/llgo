@@ -4,9 +4,9 @@ package runtime
 
 import c "github.com/xgo-dev/llgo/runtime/internal/clite"
 
-// WAMR's pthread_exit does not terminate its initial execution environment.
-// Keep that environment alive until the final worker reports the Goexit
-// deadlock. A return from pthread_exit would resume the dead main goroutine.
+// Keep the initial Wasm invocation alive until the final worker reports the
+// Goexit deadlock. Returning from the entry point can finish the host process
+// before its workers; this parked thread no longer participates in Go GC.
 func parkInitialWasiThread(gp *g) {
 	releaseStartArg(gp)
 	casgstatus(gp, _Grunning, _Gdead)

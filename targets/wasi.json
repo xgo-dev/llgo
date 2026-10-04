@@ -6,5 +6,5 @@
 	"goarch": "wasm",
 	"wasm-profile": "w32",
 	"wasm-provider": "wasi",
-	"emulator": "iwasm --max-threads=128 --stack-size=1048576 --heap-size=0 --dir=. --dir=/tmp \"{}\""
+	"emulator": "wasmer run --enable-exceptions --enable-simd --stack-size=1048576 --volume=. --volume=/tmp \"{}\""
 }
