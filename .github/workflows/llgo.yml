@@ -681,7 +681,7 @@ jobs:
         shell: bash
         run: python3 dev/test_wasm_wasi_threads.py
 
-      - name: Test dev WASI Thin and Full LTO
+      - name: Test dev WASI Thin and Full LTO (Wasmer)
         shell: bash
         run: |
           go build -tags=dev -o "$RUNNER_TEMP/llgo-dev" ./cmd/llgo
