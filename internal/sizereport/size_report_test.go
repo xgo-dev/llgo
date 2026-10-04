@@ -1,4 +1,4 @@
-package build
+package sizereport
 
 import (
 	"bytes"
@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"golang.org/x/tools/go/packages"
 )
 
 const sampleReadelf = `Sections [
@@ -170,7 +168,7 @@ func TestParseReadelfRealBinary(t *testing.T) {
 
 func TestNameResolver(t *testing.T) {
 	pkgs := []Package{
-		&aPackage{Package: &packages.Package{PkgPath: "github.com/foo/bar", Module: &packages.Module{Path: "github.com/foo"}}},
+		{Path: "github.com/foo/bar", Module: "github.com/foo"},
 	}
 	symbol := "_github.com/foo/bar.Type.method"
 	if got := newNameResolver("package", pkgs).resolve(symbol); got != "github.com/foo/bar" {
@@ -203,11 +201,32 @@ func TestModuleNameFromSymbolSpecialBrackets(t *testing.T) {
 		{"[]_llgo_float64", "llgo_float64"},
 		{"[200]_llgo_int8", "llgo_int8"},
 		{"*[]_llgo_Pointer", "llgo_Pointer"},
+		{"", "(anonymous)"}, {"_", "_"}, {". ", "."},
+		{"main.main@VERSION", "main"}, {"plain", "plain"},
 	}
 	for _, tc := range cases {
 		if got := moduleNameFromSymbol(tc.sym); got != tc.want {
 			t.Fatalf("%q => %q, want %q", tc.sym, got, tc.want)
 		}
+	}
+}
+
+func TestNameResolverNormalizationAndCache(t *testing.T) {
+	pkgs := []Package{{}, {Path: "main"}}
+	for _, level := range []string{" PACKAGE ", " MODULE ", ""} {
+		r := newNameResolver(level, pkgs)
+		for i := 0; i < 2; i++ {
+			for symbol, want := range map[string]string{
+				"_main.main@VERSION": "main", "_foreign.call suffix": "foreign", "": "(anonymous)",
+			} {
+				if got := r.resolve(symbol); got != want {
+					t.Fatalf("level %q symbol %q = %q, want %q", level, symbol, got, want)
+				}
+			}
+		}
+	}
+	if got := newNameResolver("full", nil).resolve(""); got != "(anonymous)" {
+		t.Fatalf("unnamed full symbol = %q", got)
 	}
 }
 

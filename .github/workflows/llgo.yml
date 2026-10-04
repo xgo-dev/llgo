@@ -889,16 +889,26 @@ jobs:
           LLGO_BUILD_CACHE: "1"
         run: dev/test_wasm_workers.sh
 
-      - name: Test SIMD behavior on WASI
+      - name: Test SIMD behavior in WebAssembly
         if: matrix.suite == 'test-command'
         shell: bash
         env:
           GOEXPERIMENT: simd
+          LLGO_BUILD_CACHE: "1"
         run: |
           GOOS=wasip1 GOARCH=wasm go test -exec=wasmtime -count=1 -timeout=2m ./test/simd/...
-          # The unoptimized testing framework exceeds Wasmtime's locals limit.
-          "$RUNNER_TEMP/llgo-bin/llgo" test -O2 -target wasi -emulator \
-            -v -count=1 -timeout=2m ./test/simd/...
+          "$RUNNER_TEMP/llgo-bin/llgo" test -O2 -target wasi -c \
+            -o "$RUNNER_TEMP/simd.test.wasm" ./test/simd/...
+          # WAMR's EH interpreter cannot run SIMD. Native Wasm EH keeps
+          # v128 values out of Emscripten's JS invoke wrappers.
+          # Verify both cold and cached packages with the complete suite.
+          for attempt in 1 2; do
+            rebuild=()
+            if [[ "$attempt" == 1 ]]; then rebuild=(-a); fi
+            EMCC_CFLAGS='-fwasm-exceptions -sSUPPORT_LONGJMP=wasm -sWASM_LEGACY_EXCEPTIONS=1' \
+              "$RUNNER_TEMP/llgo-bin/llgo" test "${rebuild[@]}" -O2 -target emscripten -emulator \
+              -v -count=1 -timeout=2m ./test/simd/...
+          done
 
       - name: Compare JavaScript call semantics with Go
         if: matrix.suite == 'test-command'

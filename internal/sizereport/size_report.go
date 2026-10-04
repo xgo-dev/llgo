@@ -1,9 +1,11 @@
-package build
+// Package sizereport measures final binary artifacts independently of the compiler.
+package sizereport
 
 import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -12,9 +14,25 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/xgo-dev/llgo/xtool/env/llvm"
 )
+
+// Package describes the names needed for symbol aggregation without loading
+// compiler packages or LLVM modules.
+type Package struct {
+	Path   string
+	Module string
+}
+
+// Artifact is the final build-output metadata included in a report.
+type Artifact struct {
+	Path   string
+	Format string
+	Role   string
+	Size   int64
+}
+
+// ErrUnsupportedFormat lets the build layer supply its native tool fallback.
+var ErrUnsupportedFormat = errors.New("unsupported size report format")
 
 type sectionKind int
 
@@ -65,7 +83,7 @@ type readelfData struct {
 	symbols  map[int][]symbolInfo
 }
 
-type moduleSize struct {
+type Module struct {
 	Name   string
 	Code   uint64
 	ROData uint64
@@ -73,36 +91,41 @@ type moduleSize struct {
 	BSS    uint64
 }
 
-func (m *moduleSize) Flash() uint64 {
+func (m *Module) Flash() uint64 {
 	return m.Code + m.ROData + m.Data
 }
 
-func (m *moduleSize) RAM() uint64 {
+func (m *Module) RAM() uint64 {
 	return m.Data + m.BSS
 }
 
-type sizeReport struct {
-	Binary  string
-	Modules map[string]*moduleSize
-	Total   moduleSize
+type Report struct {
+	Binary    string
+	Modules   map[string]*Module
+	Total     Module
+	Format    string
+	FileSize  uint64
+	Wasm      *wasmSizeDetails
+	Artifacts []Artifact
+	Warnings  []string
 }
 
-func (r *sizeReport) module(name string) *moduleSize {
+func (r *Report) module(name string) *Module {
 	if name == "" {
 		name = "(anonymous)"
 	}
 	if r.Modules == nil {
-		r.Modules = make(map[string]*moduleSize)
+		r.Modules = make(map[string]*Module)
 	}
 	m, ok := r.Modules[name]
 	if !ok {
-		m = &moduleSize{Name: name}
+		m = &Module{Name: name}
 		r.Modules[name] = m
 	}
 	return m
 }
 
-func (r *sizeReport) add(name string, kind sectionKind, size uint64) {
+func (r *Report) add(name string, kind sectionKind, size uint64) {
 	if size == 0 {
 		return
 	}
@@ -123,52 +146,106 @@ func (r *sizeReport) add(name string, kind sectionKind, size uint64) {
 	}
 }
 
-func reportBinarySize(path, format, level string, pkgs []Package) error {
-	report, err := collectBinarySize(path, pkgs, level)
-	if err != nil {
-		return err
-	}
+// Write emits a text or JSON report and propagates output failures.
+func Write(w io.Writer, report *Report, format string) error {
 	switch format {
 	case "", "text":
-		printTextReport(os.Stdout, report)
+		var buf bytes.Buffer
+		printTextReport(&buf, report)
+		_, err := w.Write(buf.Bytes())
+		return err
 	case "json":
-		return emitJSONReport(os.Stdout, report)
+		return emitJSONReport(w, report)
 	default:
 		return fmt.Errorf("unknown size format %q (valid: text,json)", format)
 	}
-	return nil
 }
 
-func collectBinarySize(path string, pkgs []Package, level string) (*sizeReport, error) {
-	cmd, err := llvm.New("").Readelf("--elf-output-style=LLVM", "--all", path)
+// Collect measures a final Wasm, ELF or PE artifact.
+func Collect(path string, pkgs []Package, level string) (*Report, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("llvm-readelf: %w", err)
+		return nil, err
 	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	stdout, err := cmd.StdoutPipe()
+	defer f.Close()
+	info, err := f.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("llvm-readelf stdout: %w", err)
+		return nil, err
 	}
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("failed to execute llvm-readelf: %w", err)
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("size report input %q is not a regular file", path)
 	}
-	parsed, parseErr := parseReadelfOutput(stdout)
-	closeErr := stdout.Close()
-	waitErr := cmd.Wait()
-	if waitErr != nil {
-		return nil, fmt.Errorf("llvm-readelf failed: %w\n%s", waitErr, stderr.String())
+	var magic [4]byte
+	if _, err := io.ReadFull(f, magic[:]); err != nil {
+		return nil, fmt.Errorf("read binary header: %w", err)
 	}
-	if parseErr != nil {
-		return nil, fmt.Errorf("parsing llvm-readelf output failed: %w", parseErr)
+	var report *Report
+	format := "native"
+	switch string(magic[:]) {
+	case "\x00asm":
+		format = "wasm"
+		if _, err = f.Seek(0, io.SeekStart); err == nil {
+			var raw []byte
+			raw, err = readWasmSizeBytes(f, info.Size())
+			if err == nil {
+				report, err = collectWasmSize(path, raw, pkgs, level)
+			}
+		}
+	case "\x7fELF":
+		format = "elf"
+		report, err = collectELFSize(path, pkgs, level)
+	default:
+		if string(magic[:2]) != "MZ" {
+			return nil, ErrUnsupportedFormat
+		}
+		format = "pe"
+		report, err = collectPESize(path, pkgs, level)
 	}
-	if closeErr != nil {
-		return nil, fmt.Errorf("closing llvm-readelf stdout pipe failed: %w", closeErr)
+	if err != nil {
+		return nil, err
+	}
+	report.Format = format
+	report.FileSize = uint64(info.Size())
+	return report, nil
+}
+
+// Read only the stat-sized artifact and allocate its backing buffer once.
+// Growing ReadAll buffers can otherwise double peak memory for large modules.
+func readWasmSizeBytes(r io.Reader, size int64) ([]byte, error) {
+	if size < 0 || uint64(size) > uint64(^uint(0)>>1) {
+		return nil, fmt.Errorf("WebAssembly file size %d cannot fit in memory on this host", size)
+	}
+	raw := make([]byte, int(size))
+	if _, err := io.ReadFull(r, raw); err != nil {
+		return nil, fmt.Errorf("reading WebAssembly artifact: %w", err)
+	}
+	// A changing file must not produce a report for a silently truncated prefix.
+	var extra [1]byte
+	if _, err := io.ReadFull(r, extra[:]); err != io.EOF {
+		if err != nil {
+			return nil, fmt.Errorf("checking WebAssembly artifact size: %w", err)
+		}
+		return nil, fmt.Errorf("WebAssembly artifact grew while reading its size")
+	}
+	return raw, nil
+}
+
+// ReadReadelf measures a native artifact from the build layer's llvm-readelf
+// output. Tool discovery and invocation stay outside this package.
+func ReadReadelf(path string, output io.Reader, pkgs []Package, level string) (*Report, error) {
+	parsed, err := parseReadelfOutput(output)
+	if err != nil {
+		return nil, err
 	}
 	report := buildSizeReport(path, parsed, pkgs, level)
 	if report == nil || len(report.Modules) == 0 {
 		return nil, fmt.Errorf("size report: no allocatable sections found in %s", path)
 	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	report.Format, report.FileSize = "native", uint64(info.Size())
 	return report, nil
 }
 
@@ -356,8 +433,8 @@ func classifySection(name, segment string) sectionKind {
 	return sectionUnknown
 }
 
-func buildSizeReport(path string, data *readelfData, pkgs []Package, level string) *sizeReport {
-	report := &sizeReport{Binary: path, Modules: make(map[string]*moduleSize)}
+func buildSizeReport(path string, data *readelfData, pkgs []Package, level string) *Report {
+	report := &Report{Binary: path, Modules: make(map[string]*Module)}
 	if data == nil {
 		return report
 	}
@@ -439,53 +516,95 @@ func buildSizeReport(path string, data *readelfData, pkgs []Package, level strin
 	return report
 }
 
-func emitJSONReport(w io.Writer, report *sizeReport) error {
+func emitJSONReport(w io.Writer, report *Report) error {
 	type moduleJSON struct {
-		Name   string `json:"name"`
-		Code   uint64 `json:"code"`
-		ROData uint64 `json:"rodata"`
-		Data   uint64 `json:"data"`
-		BSS    uint64 `json:"bss"`
-		Flash  uint64 `json:"flash"`
-		RAM    uint64 `json:"ram"`
+		Name   string  `json:"name"`
+		Code   uint64  `json:"code"`
+		ROData uint64  `json:"rodata"`
+		Data   uint64  `json:"data"`
+		BSS    uint64  `json:"bss"`
+		Flash  *uint64 `json:"flash,omitempty"`
+		RAM    *uint64 `json:"ram,omitempty"`
+	}
+	moduleValue := func(m *Module) moduleJSON {
+		value := moduleJSON{Name: m.Name, Code: m.Code, ROData: m.ROData, Data: m.Data, BSS: m.BSS}
+		if report.Wasm == nil {
+			flash, ram := m.Flash(), m.RAM()
+			value.Flash, value.RAM = &flash, &ram
+		}
+		return value
 	}
 	mods := report.sortedModules()
 	jsonMods := make([]moduleJSON, 0, len(mods))
 	for _, m := range mods {
-		jsonMods = append(jsonMods, moduleJSON{
-			Name:   m.Name,
-			Code:   m.Code,
-			ROData: m.ROData,
-			Data:   m.Data,
-			BSS:    m.BSS,
-			Flash:  m.Flash(),
-			RAM:    m.RAM(),
-		})
+		jsonMods = append(jsonMods, moduleValue(m))
+	}
+	total := moduleValue(&report.Total)
+	total.Name = "total"
+	type artifactJSON struct {
+		Path   string `json:"path"`
+		Format string `json:"format"`
+		Role   string `json:"role"`
+		Size   int64  `json:"size"`
+	}
+	artifacts := make([]artifactJSON, 0, len(report.Artifacts))
+	for _, a := range report.Artifacts {
+		artifacts = append(artifacts, artifactJSON{Path: a.Path, Format: a.Format, Role: a.Role, Size: a.Size})
 	}
 	payload := struct {
-		Binary  string       `json:"binary"`
-		Modules []moduleJSON `json:"modules"`
-		Total   moduleJSON   `json:"total"`
+		Version   int              `json:"version"`
+		Stage     string           `json:"stage"`
+		Format    string           `json:"format"`
+		FileSize  uint64           `json:"file_size"`
+		Binary    string           `json:"binary"`
+		Modules   []moduleJSON     `json:"modules"`
+		Total     moduleJSON       `json:"total"`
+		Wasm      *wasmSizeDetails `json:"wasm,omitempty"`
+		Artifacts []artifactJSON   `json:"artifacts"`
+		Warnings  []string         `json:"warnings,omitempty"`
 	}{
-		Binary:  filepath.Clean(report.Binary),
-		Modules: jsonMods,
-		Total: moduleJSON{
-			Name:   "total",
-			Code:   report.Total.Code,
-			ROData: report.Total.ROData,
-			Data:   report.Total.Data,
-			BSS:    report.Total.BSS,
-			Flash:  report.Total.Flash(),
-			RAM:    report.Total.RAM(),
-		},
+		Version:   1,
+		Stage:     "final",
+		Format:    report.Format,
+		FileSize:  report.FileSize,
+		Binary:    filepath.Clean(report.Binary),
+		Modules:   jsonMods,
+		Total:     total,
+		Wasm:      report.Wasm,
+		Artifacts: artifacts,
+		Warnings:  report.Warnings,
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(payload)
 }
 
-func printTextReport(w io.Writer, report *sizeReport) {
+func printTextReport(w io.Writer, report *Report) {
 	fmt.Fprintf(w, "\nSize report for %s\n", filepath.Clean(report.Binary))
+	fmt.Fprintf(w, "Final file: %d bytes (%s)\n", report.FileSize, report.Format)
+	for _, a := range report.Artifacts {
+		fmt.Fprintf(w, "Artifact: %d bytes, %s, %s, %s\n", a.Size, a.Role, a.Format, a.Path)
+	}
+	for _, warning := range report.Warnings {
+		fmt.Fprintf(w, "Warning: %s\n", warning)
+	}
+	if report.Wasm != nil {
+		fmt.Fprintln(w, "   code    data | module (encoded function bodies / stored data bytes)")
+		for _, m := range report.sortedModules() {
+			fmt.Fprintf(w, "%7d %7d | %s\n", m.Code, m.Data, m.Name)
+		}
+		fmt.Fprintf(w, "%7d %7d | total\n", report.Total.Code, report.Total.Data)
+		fmt.Fprintf(w, "Custom sections: %d bytes; other encoding: %d bytes\n", report.Wasm.CustomBytes, report.Wasm.StructureBytes)
+		for i, memory := range report.Wasm.Memories {
+			fmt.Fprintf(w, "Memory %d: initial=%d", i, memory.InitialBytes)
+			if memory.MaximumBytes != nil {
+				fmt.Fprintf(w, " maximum=%d", *memory.MaximumBytes)
+			}
+			fmt.Fprintf(w, " imported=%t shared=%t memory64=%t\n", memory.Imported, memory.Shared, memory.Memory64)
+		}
+		fmt.Fprintln(w, "Memory limits include reservations; static BSS and peak RAM are not inferred.")
+		return
+	}
 	fmt.Fprintln(w, "   code  rodata    data     bss |   flash     ram | module")
 	fmt.Fprintln(w, "------------------------------- | --------------- | ----------------")
 	for _, m := range report.sortedModules() {
@@ -495,8 +614,8 @@ func printTextReport(w io.Writer, report *sizeReport) {
 	fmt.Fprintf(w, "%7d %7d %7d %7d | %7d %7d | total\n", report.Total.Code, report.Total.ROData, report.Total.Data, report.Total.BSS, report.Total.Flash(), report.Total.RAM())
 }
 
-func (r *sizeReport) sortedModules() []*moduleSize {
-	mods := make([]*moduleSize, 0, len(r.Modules))
+func (r *Report) sortedModules() []*Module {
+	mods := make([]*Module, 0, len(r.Modules))
 	for _, m := range r.Modules {
 		mods = append(mods, m)
 	}
@@ -556,8 +675,13 @@ func moduleNameFromSymbol(raw string) string {
 
 func parseNameField(field string) string {
 	val := strings.TrimSpace(field)
-	if idx := strings.Index(val, "("); idx >= 0 {
-		val = strings.TrimSpace(val[:idx])
+	// Only remove readelf's trailing string-table index. Parentheses in a
+	// Go method name, e.g. pkg.(*T).Method, are part of the symbol.
+	if idx := strings.LastIndex(val, " ("); idx >= 0 && strings.HasSuffix(val, ")") {
+		index := strings.TrimPrefix(val[idx+2:len(val)-1], "0x")
+		if _, err := strconv.ParseUint(index, 16, 64); err == nil {
+			val = val[:idx]
+		}
 	}
 	return val
 }
@@ -604,28 +728,4 @@ func parseUintField(field string) (uint64, error) {
 		return strconv.ParseUint(val[2:], 16, 64)
 	}
 	return strconv.ParseUint(val, 10, 64)
-}
-
-func ensureSizeReporting(conf *Config) error {
-	if !conf.SizeReport {
-		return nil
-	}
-	switch strings.ToLower(conf.SizeLevel) {
-	case "", "module":
-		conf.SizeLevel = "module"
-	case "package", "full":
-		conf.SizeLevel = strings.ToLower(conf.SizeLevel)
-	default:
-		return fmt.Errorf("invalid size level %q (valid: full,module,package)", conf.SizeLevel)
-	}
-	cmd, err := llvm.New("").Readelf("--version")
-	if err != nil {
-		return fmt.Errorf("llvm-readelf not available: %w", err)
-	}
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("llvm-readelf not available: %w", err)
-	}
-	return nil
 }

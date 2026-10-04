@@ -4,6 +4,8 @@ package build
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -240,7 +242,7 @@ func TestReportBuildArtifacts(t *testing.T) {
 	}
 	var report bytes.Buffer
 	conf := &Config{DebugArtifactMode: DebugArtifactNone, DebugArtifactModeSet: true}
-	if err := reportBuildArtifacts(conf, &OutFmtDetails{Out: path}, &report); err != nil {
+	if err := reportBuildOutputs(conf, &OutFmtDetails{Out: path}, nil, io.Discard, &report); err != nil {
 		t.Fatal(err)
 	}
 	want := "llgo: artifact role=deployment format=executable size=4 path=" + strconv.Quote(path) + "\n"
@@ -250,20 +252,85 @@ func TestReportBuildArtifacts(t *testing.T) {
 
 	report.Reset()
 	conf.DebugArtifactModeSet = false
-	if err := reportBuildArtifacts(conf, &OutFmtDetails{Out: path}, &report); err != nil || report.Len() != 0 {
+	if err := reportBuildOutputs(conf, &OutFmtDetails{Out: path}, nil, io.Discard, &report); err != nil || report.Len() != 0 {
 		t.Fatalf("implicit artifact report = %q, %v", report.String(), err)
 	}
 	conf.DebugArtifactModeSet = true
-	if err := reportBuildArtifacts(conf, &OutFmtDetails{Out: path + ".missing"}, &report); err == nil {
+	if err := reportBuildOutputs(conf, &OutFmtDetails{Out: path + ".missing"}, nil, io.Discard, &report); err == nil {
 		t.Fatal("reportBuildArtifacts() succeeded with a missing artifact")
 	}
 
 	conf.Target = "cortex-m-qemu"
 	conf.DebugArtifactMode = DebugArtifactHost
-	if err := reportBuildArtifacts(conf, &OutFmtDetails{Out: path}, &report); err != nil {
+	if err := reportBuildOutputs(conf, &OutFmtDetails{Out: path}, nil, io.Discard, &report); err != nil {
 		t.Fatal(err)
 	}
 	if got := report.String(); !strings.Contains(got, "role=debug format=elf size=4") {
 		t.Fatalf("target artifact report = %q", got)
+	}
+}
+
+type artifactRemovingWriter struct {
+	bytes.Buffer
+	path string
+}
+
+func (w *artifactRemovingWriter) Write(p []byte) (int, error) {
+	n, err := w.Buffer.Write(p)
+	if err == nil && w.path != "" {
+		err = os.Remove(w.path)
+		w.path = ""
+	}
+	return n, err
+}
+
+func TestReportBuildOutputsSharesArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	out := &OutFmtDetails{Out: filepath.Join(dir, "app.wasm"), PCLN: filepath.Join(dir, "app.pclntab")}
+	if err := os.WriteFile(out.Out, sizeWasmFixture(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(out.PCLN, []byte("symbols"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	conf := &Config{Mode: ModeBuild, SizeReport: true, SizeFormat: "json", Goarch: "wasm", DebugArtifactMode: DebugArtifactNone, DebugArtifactModeSet: true}
+	// Removing a sidecar after the first report is written proves that the
+	// second report consumes the same snapshot rather than re-statting files.
+	output := artifactRemovingWriter{path: out.PCLN}
+	var listing bytes.Buffer
+	if err := reportBuildOutputs(conf, out, nil, &output, &listing); err != nil {
+		t.Fatal(err)
+	}
+	var payload struct{ Artifacts []Artifact }
+	if err := json.Unmarshal(output.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Artifacts) != 2 || payload.Artifacts[1].Size != 7 {
+		t.Fatalf("JSON artifact snapshot = %+v", payload.Artifacts)
+	}
+	if want := "role=runtime-symbols format=pclntab size=7 path=" + strconv.Quote(out.PCLN); !strings.Contains(listing.String(), want) {
+		t.Fatalf("listing does not use the same snapshot: %s", listing.String())
+	}
+	if err := reportBuildOutputs(conf, out, nil, io.Discard, io.Discard); err == nil {
+		t.Fatal("a new build report must reject the missing sidecar")
+	}
+}
+
+func TestReportBuildOutputsErrors(t *testing.T) {
+	if err := reportBuildOutputs(nil, nil, nil, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := reportBuildOutputs(&Config{}, nil, nil, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "app.wasm")
+	if err := os.WriteFile(path, sizeWasmFixture(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	conf := &Config{Mode: ModeBuild, SizeReport: true, SizeFormat: "json", DebugArtifactMode: DebugArtifactNone, DebugArtifactModeSet: true}
+	for _, outputs := range [][2]io.Writer{{sizeFailWriter{}, io.Discard}, {io.Discard, sizeFailWriter{}}} {
+		if err := reportBuildOutputs(conf, &OutFmtDetails{Out: path}, nil, outputs[0], outputs[1]); err == nil {
+			t.Fatal("report write error was ignored")
+		}
 	}
 }

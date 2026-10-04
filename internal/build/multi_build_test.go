@@ -243,12 +243,20 @@ func TestModeBuildSinglePackageAcceptsOutputDirectory(t *testing.T) {
 	}
 	conf := multiBuildConfig()
 	conf.OutFile = out
-	conf.SizeReport = true
-	conf.SizeFormat = "invalid" // A report failure is intentionally non-fatal after a successful build.
 	if _, err := Build(Invocation{Args: []string{"./cmd/only"}, Config: conf, Dir: root}); err != nil {
 		t.Fatal(err)
 	}
 	assertBuiltProgram(t, filepath.Join(out, "only"+conf.AppExt), "only")
+}
+
+func TestModeBuildRejectsInvalidSizeFormat(t *testing.T) {
+	conf := multiBuildConfig()
+	conf.SizeReport = true
+	conf.SizeFormat = "invalid"
+	if _, err := Build(Invocation{Config: conf, Dir: t.TempDir()}); err == nil ||
+		!strings.Contains(err.Error(), "invalid size format") {
+		t.Fatalf("size report configuration error = %v", err)
+	}
 }
 
 func multiBuildConfig() *Config {

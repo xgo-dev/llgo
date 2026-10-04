@@ -1240,18 +1240,13 @@ func executeInitialPackageLink(ctx *context, link *initialPackageLink, verbose, 
 	if err != nil {
 		return nil, err
 	}
-	if link.conf.Mode == ModeBuild && link.conf.SizeReport {
-		if err := reportBinarySize(link.outFmts.Out, link.conf.SizeFormat, link.conf.SizeLevel, link.allPkgs); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: size report failed: %v\n", err)
-		}
-	}
 	if linkCtx.buildConf.BuildMode == BuildModeCArchive || linkCtx.buildConf.BuildMode == BuildModeCShared {
 		libname := strings.TrimSuffix(filepath.Base(link.outFmts.Out), link.conf.AppExt)
 		headerPath := filepath.Join(filepath.Dir(link.outFmts.Out), libname) + ".h"
 		if err := header.GenHeaderFile(linkCtx.prog, cHeaderPackages(link.allPkgs), libname, headerPath, verbose); err != nil {
 			return nil, err
 		}
-		return nil, reportBuildArtifacts(link.conf, link.outFmts, os.Stderr)
+		return nil, reportBuildOutputs(link.conf, link.outFmts, link.allPkgs, os.Stdout, os.Stderr)
 	}
 
 	envMap := link.outFmts.ToEnvMap()
@@ -1260,7 +1255,7 @@ func executeInitialPackageLink(ctx *context, link *initialPackageLink, verbose, 
 			return nil, err
 		}
 	}
-	if err := reportBuildArtifacts(link.conf, link.outFmts, os.Stderr); err != nil {
+	if err := reportBuildOutputs(link.conf, link.outFmts, link.allPkgs, os.Stdout, os.Stderr); err != nil {
 		return nil, err
 	}
 	switch link.conf.Mode {
@@ -3391,6 +3386,7 @@ func printCompletedPackage(conf *Config, pkg *aPackage) {
 
 func exportObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Package) (string, error) {
 	applySizeOptimizationAttributes(pkg.Module(), ctx.buildConf.OptLevel)
+	applyEmscriptenEHFeature(ctx, pkg.Module())
 	if useInMemoryNativeCodegen(ctx) {
 		return exportObjectInMemory(ctx, pkgPath, exportFile, pkg)
 	}
@@ -3398,6 +3394,7 @@ func exportObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Pac
 }
 
 func exportPackageObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Package) (string, packageArchiveBuffer, error) {
+	applyEmscriptenEHFeature(ctx, pkg.Module())
 	if !useInMemoryNativeCodegen(ctx) {
 		path, err := exportObjectWithClang(ctx, pkgPath, exportFile, []byte(pkg.String()))
 		return path, packageArchiveBuffer{}, err

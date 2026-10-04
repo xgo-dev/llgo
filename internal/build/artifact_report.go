@@ -173,17 +173,38 @@ func primaryArtifactFormat(conf *Config, path string) string {
 	}
 }
 
-func reportBuildArtifacts(conf *Config, out *OutFmtDetails, w io.Writer) error {
-	if conf == nil || (!conf.DebugArtifactModeSet && conf.Target == "") {
+// reportBuildOutputs shares one artifact snapshot between the size report and
+// the artifact listing after all output transformations have completed.
+func reportBuildOutputs(conf *Config, out *OutFmtDetails, pkgs []Package, sizeOutput, artifactOutput io.Writer) error {
+	if conf == nil {
+		return nil
+	}
+	wantSize := conf.Mode == ModeBuild && conf.SizeReport
+	wantArtifacts := conf.DebugArtifactModeSet || conf.Target != ""
+	if !wantSize && !wantArtifacts {
 		return nil
 	}
 	artifacts, err := CollectArtifacts(conf, out)
 	if err != nil {
 		return err
 	}
+	if wantSize {
+		if err := reportFinalSize(conf, out, pkgs, artifacts, sizeOutput); err != nil {
+			return err
+		}
+	}
+	if wantArtifacts {
+		return reportBuildArtifacts(artifacts, artifactOutput)
+	}
+	return nil
+}
+
+func reportBuildArtifacts(artifacts []Artifact, w io.Writer) error {
 	for _, artifact := range artifacts {
-		fmt.Fprintf(w, "llgo: artifact role=%s format=%s size=%d path=%q\n",
-			artifact.Role, artifact.Format, artifact.Size, artifact.Path)
+		if _, err := fmt.Fprintf(w, "llgo: artifact role=%s format=%s size=%d path=%q\n",
+			artifact.Role, artifact.Format, artifact.Size, artifact.Path); err != nil {
+			return err
+		}
 	}
 	return nil
 }
