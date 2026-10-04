@@ -89,7 +89,7 @@ func TestBrowserAndWASISessionBoundaries(t *testing.T) {
 		}
 	}
 	err := runSession(session{backend: backendWasmtime, target: &targets.Config{DebugServer: "must-not-execute"}}, nil, nil, nil)
-	for _, requirement := range []string{"W32 pthread", "env.memory", "wasi.thread-spawn", "env.pthread_exit", "WAMR"} {
+	for _, requirement := range []string{"W32 pthread", "env.memory", "wasi.thread-spawn", "wasix_32v1.thread_exit", "Wasmer"} {
 		if err == nil || !strings.Contains(err.Error(), requirement) {
 			t.Fatalf("WASI diagnostic must identify %q: %v", requirement, err)
 		}

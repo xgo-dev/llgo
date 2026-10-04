@@ -5,13 +5,30 @@
 memory, and the threaded linear collector by default. WASI output no longer
 runs Binaryen Asyncify. Native and embedded pthread backends are unchanged.
 
-WAMR is the first supported runner. Build the pinned, patched interpreter with
-`bash dev/build_iwasm.sh`, and add the printed cache `bin` directory to `PATH`.
-The public run/test commands configure WAMR's thread limit, stack, and preopens.
-The runner grants the absolute package working directory and `/tmp` rather than
-the entire host filesystem. The GOROOT comparison runs both W32 artifacts with WAMR. Only the separate
+Wasmer 7.5.0 is the default runner. Install the pinned official binary with
+`bash dev/install_wasmer.sh`, and add the printed cache `bin` directory to `PATH`.
+The installer verifies the release archive's SHA-256 digest and carries no
+runtime patches. The public run/test commands select Cranelift, enable standard
+Wasm EH and SIMD, and configure the stack and directory mappings. Wasmer's
+compiled-module cache is disabled to keep cache diagnostics out of guest output.
+
+LLVM emits standard EH directly with `-wasm-use-legacy-eh=false`, including at
+LTO link time. The module imports `wasi.thread-spawn` and
+`wasix_32v1.thread_exit` in addition to Preview 1 and shared `env.memory`.
+The latter is a small runtime adapter for `pthread_exit`; this host contract
+requires that WASIX extension, not just a generic Preview 1 runner.
+
+On Unix, the runner grants the absolute package working directory and `/tmp`.
+On Windows, those guest paths are `/work` and `/tmp`, mapped to the package
+and host temporary directories. Guest flags follow a `--` separator. Only
+`PWD`, `PATH` and the optional `LLGO_STRESS_PROFILE` are forwarded into the guest.
+The GOROOT comparison runs both W32 artifacts with Wasmer. Only the separate
 `dev/wasmstdlib` official-Go reference profile uses Wasmtime; that does not imply
 support for executing LLGo's threaded W32 artifact there.
+
+The installer supports the official macOS arm64, Linux amd64/aarch64/riscv64,
+and Windows amd64 archives. Wasmer 7.5.0 has no prebuilt macOS Intel archive;
+on that host, build the CLI from source and put it on `PATH`.
 
 The former `LLGO_WASI_THREADS=1` opt-in is unnecessary and remains accepted.
 Setting it to `0`/`false`/`off` now produces a migration error instead of silently
@@ -34,6 +51,7 @@ DWARF and source-line mapping at O0/O2. `dev/test_wasm_target_profiles.sh`
 covers named and raw profile builds. Full compatibility audit results are
 reported separately and must not be inferred from these focused checks.
 
-This default switch depends on the WAMR stability and EH work in #2695, which
-in turn depends on #2669. Browser filesystem integration is tracked in #2696.
+The pthread/GC groundwork was introduced in #2669 and #2695. The former WAMR
+stability patches are superseded by this runner migration. Browser filesystem
+integration is tracked in #2696.
 WasmGC, W64, JSPI, and WASI Preview 2/components remain separate proposals.

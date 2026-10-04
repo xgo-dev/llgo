@@ -27,7 +27,7 @@ func selectGOROOTWasmProfile(name string) (gorootWasmProfile, bool, error) {
 	case "J64-Emscripten":
 		return gorootWasmProfile{name: name, target: "emscripten-memory64", goos: "js", llgoSuffix: ".mjs", runner: "emscripten-memory64-runner.mjs"}, true, nil
 	case "W32-WASI":
-		return gorootWasmProfile{name: name, target: "wasi", goos: "wasip1", llgoSuffix: ".wasm", runner: "iwasm"}, true, nil
+		return gorootWasmProfile{name: name, target: "wasi", goos: "wasip1", llgoSuffix: ".wasm", runner: "wasmer"}, true, nil
 	case "J32-GoJS":
 		return gorootWasmProfile{name: name, goos: "js", llgoSuffix: ".mjs", runner: "emscripten-runner.mjs", browserOnly: true}, true, nil
 	default:
@@ -62,7 +62,7 @@ func gorootRuntimeEnv(env []string) []string {
 	out := gorootTargetEnv(env)
 	if _, ok := activeGOROOTWasmProfile(); ok {
 		// Keep the official Go baseline deterministic. The LLGo pthread backend
-		// uses WAMR and can still create Ms.
+		// uses Wasmer and can still create Ms.
 		out = upsertEnv(out, "GOMAXPROCS=1")
 	}
 	return out
@@ -117,9 +117,9 @@ func gorootArtifactCommand(dir, artifact string, llgo bool, env []string, progra
 	if !ok {
 		return artifact, programArgs, env, nil
 	}
-	if p.runner == "iwasm" {
-		args := []string{"--max-threads=128", "--stack-size=1048576", "--heap-size=0", "--dir=" + dir, "--dir=/tmp", artifact}
-		return "iwasm", append(args, programArgs...), gorootRuntimeEnv(env), nil
+	if p.runner == "wasmer" {
+		args := []string{"run", "--cranelift", "--disable-cache", "--enable-exceptions", "--enable-simd", "--stack-size=1048576", "--volume=" + dir, "--volume=/tmp", artifact, "--"}
+		return "wasmer", append(args, programArgs...), gorootRuntimeEnv(env), nil
 	}
 	if !llgo {
 		goroot := envEntry(env, "GOROOT")

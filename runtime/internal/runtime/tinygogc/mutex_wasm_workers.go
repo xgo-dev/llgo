@@ -20,3 +20,5 @@ func unlock(m *mutex) {
 
 //go:linkname gcAllocatorYield github.com/xgo-dev/llgo/runtime/internal/runtime.wasmGCAllocatorYield
 func gcAllocatorYield()
+
+func unlockForGC(m *mutex) { unlock(m) }

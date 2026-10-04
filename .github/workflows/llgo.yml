@@ -625,7 +625,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        # WASI output is host-independent; keep this source build on Ubuntu.
+        # WASI output is host-independent; keep this qualification on Ubuntu.
         # Native Darwin coverage remains in the primary LLGo lanes and release
         # artifact smoke tests.
         os: [ubuntu-latest]
@@ -644,14 +644,14 @@ jobs:
       - name: Set up Binaryen
         uses: ./.github/actions/setup-binaryen
 
-      - name: Restore LLGo and cache WAMR
+      - name: Restore LLGo and cache Wasmer
         uses: ./.github/actions/setup-llgo-cache
         with:
-          wamr-cache-mode: readwrite
+          wasmer-cache-mode: readwrite
 
-      - name: Install WAMR
+      - name: Install Wasmer
         shell: bash
-        run: bash dev/build_iwasm.sh
+        run: bash dev/install_wasmer.sh
 
       - name: Install llgo
         run: |
@@ -670,16 +670,22 @@ jobs:
           # Check file type
           file hello.wasm
 
-          iwasm --max-threads=128 --stack-size=1048576 --heap-size=0 hello.wasm
+          RUST_LOG=off wasmer run --cranelift --enable-exceptions --enable-simd --stack-size=1048576 hello.wasm
 
       - name: Set up wasm-tools for EH fixtures
         uses: bytecodealliance/actions/wasm-tools/setup@v1
         with:
           version: "1.243.0"
 
-      - name: Test WASI pthread backend and threaded GC (WAMR)
+      - name: Test WASI pthread backend and threaded GC (Wasmer)
         shell: bash
         run: python3 dev/test_wasm_wasi_threads.py
+
+      - name: Test dev WASI Thin and Full LTO (Wasmer)
+        shell: bash
+        run: |
+          go build -tags=dev -o "$RUNNER_TEMP/llgo-dev" ./cmd/llgo
+          LLGO="$RUNNER_TEMP/llgo-dev" python3 dev/test_wasm_wasi_lto.py
 
   windows-gnu-cross:
     if: needs.prepare.outputs.run_code_ci == 'true'
@@ -723,6 +729,9 @@ jobs:
   wasm-browser-debug:
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: prepare
+    permissions:
+      contents: read
+      id-token: write
     name: wasm-browser-debug
     timeout-minutes: 20
     runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
@@ -811,13 +820,13 @@ jobs:
         with:
           version: "39.0.1"
 
-      - name: Restore WAMR cache
+      - name: Restore Wasmer cache
         uses: ./.github/actions/setup-llgo-cache
         with:
-          wamr-cache-mode: readwrite
+          wasmer-cache-mode: readwrite
 
-      - name: Install WAMR for W32
-        run: bash dev/build_iwasm.sh
+      - name: Install Wasmer for W32
+        run: bash dev/install_wasmer.sh
 
       - name: Set up wasm-tools
         uses: bytecodealliance/actions/wasm-tools/setup@v1
@@ -896,9 +905,10 @@ jobs:
           GOEXPERIMENT: simd
         run: |
           GOOS=wasip1 GOARCH=wasm go test -exec=wasmtime -count=1 -timeout=2m ./test/simd/...
-          # The unoptimized testing framework exceeds Wasmtime's locals limit.
-          "$RUNNER_TEMP/llgo-bin/llgo" test -O2 -target wasi -emulator \
-            -v -count=1 -timeout=2m ./test/simd/...
+          for opt in 0 2; do
+            "$RUNNER_TEMP/llgo-bin/llgo" test "-O${opt}" -target wasi -emulator \
+              -v -count=1 -timeout=2m ./test/simd/...
+          done
 
       - name: Compare JavaScript call semantics with Go
         if: matrix.suite == 'test-command'

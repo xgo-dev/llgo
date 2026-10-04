@@ -18,7 +18,7 @@ func TestGOROOTWasmProfiles(t *testing.T) {
 		"J32-GoJS":       {"", "js", ".mjs", "emscripten-runner.mjs"},
 		"J32-Emscripten": {"emscripten", "js", ".mjs", "emscripten-runner.mjs"},
 		"J64-Emscripten": {"emscripten-memory64", "js", ".mjs", "emscripten-memory64-runner.mjs"},
-		"W32-WASI":       {"wasi", "wasip1", ".wasm", "iwasm"},
+		"W32-WASI":       {"wasi", "wasip1", ".wasm", "wasmer"},
 	}
 	for name, expected := range want {
 		got, ok, err := selectGOROOTWasmProfile(name)
@@ -71,8 +71,8 @@ func TestGOROOTWasiRunCommand(t *testing.T) {
 	withGOROOTWasmProfile(t, "W32-WASI")
 	env := []string{"GOROOT=/go", "LLGO_ROOT=/llgo"}
 	app, args, targetEnv, err := gorootArtifactCommand("/work", "out.wasm", true, env, "arg")
-	want := []string{"--max-threads=128", "--stack-size=1048576", "--heap-size=0", "--dir=/work", "--dir=/tmp", "out.wasm", "arg"}
-	if err != nil || app != "iwasm" || !reflect.DeepEqual(args, want) || envEntry(targetEnv, "GOWASIRUNTIME") != "wasmtime" {
+	want := []string{"run", "--cranelift", "--disable-cache", "--enable-exceptions", "--enable-simd", "--stack-size=1048576", "--volume=/work", "--volume=/tmp", "out.wasm", "--", "arg"}
+	if err != nil || app != "wasmer" || !reflect.DeepEqual(args, want) || envEntry(targetEnv, "GOWASIRUNTIME") != "wasmtime" {
 		t.Fatalf("WASI command: %q %v %v %v", app, args, targetEnv, err)
 	}
 }
@@ -81,14 +81,14 @@ func TestGOROOTWasiThreadRunCommand(t *testing.T) {
 	withGOROOTWasmProfile(t, "W32-WASI")
 	env := []string{"GOROOT=/go", "LLGO_ROOT=/llgo", "LLGO_WASI_THREADS=1"}
 	app, args, _, err := gorootArtifactCommand("/work", "out.wasm", true, env, "arg")
-	want := []string{"--max-threads=128", "--stack-size=1048576", "--heap-size=0", "--dir=/work", "--dir=/tmp", "out.wasm", "arg"}
-	if err != nil || app != "iwasm" || !reflect.DeepEqual(args, want) {
+	want := []string{"run", "--cranelift", "--disable-cache", "--enable-exceptions", "--enable-simd", "--stack-size=1048576", "--volume=/work", "--volume=/tmp", "out.wasm", "--", "arg"}
+	if err != nil || app != "wasmer" || !reflect.DeepEqual(args, want) {
 		t.Fatalf("WASI thread command: %q %v %v", app, args, err)
 	}
 	app, args, _, err = gorootArtifactCommand("/work", "go.wasm", false, env)
-	want = []string{"--max-threads=128", "--stack-size=1048576", "--heap-size=0", "--dir=/work", "--dir=/tmp", "go.wasm"}
-	if err != nil || app != "iwasm" || !reflect.DeepEqual(args, want) {
-		t.Fatalf("official Go WAMR command: %q %v %v", app, args, err)
+	want = []string{"run", "--cranelift", "--disable-cache", "--enable-exceptions", "--enable-simd", "--stack-size=1048576", "--volume=/work", "--volume=/tmp", "go.wasm", "--"}
+	if err != nil || app != "wasmer" || !reflect.DeepEqual(args, want) {
+		t.Fatalf("official Go Wasmer command: %q %v %v", app, args, err)
 	}
 }
 

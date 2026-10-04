@@ -29,7 +29,7 @@ func gStateForTesting() (count uint64, mainExited bool)
 func main() {
 	checkClocks()
 	if workerStackBounds(0) != 1 {
-		panic("WAMR main-thread C stack bounds unavailable")
+		panic("Wasmer main-thread C stack bounds unavailable")
 	}
 	_, _, mainMID, _, _, _, linked := gmpForTesting()
 	if !linked {
@@ -50,7 +50,7 @@ func main() {
 			defer wait.Done()
 			checkClocks()
 			if workerStackBounds(1) != 1 {
-				panic("WAMR pthread C stack bounds unavailable")
+				panic("Wasmer pthread C stack bounds unavailable")
 			}
 			_, _, mid, _, _, _, linked := gmpForTesting()
 			if !linked {
@@ -75,7 +75,7 @@ func main() {
 		panic("not all WASI pthreads ran")
 	}
 
-	// This checks Go bookkeeping only. WAMR releases host thread slots after
+	// This checks Go bookkeeping only. Wasmer releases host thread slots after
 	// mexit; the runner reserves slots for every thread created by this probe.
 	waitForBaseline(baseline)
 	for round := 0; round < 12; round++ {

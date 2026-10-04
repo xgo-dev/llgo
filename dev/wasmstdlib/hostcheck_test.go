@@ -36,7 +36,7 @@ func TestFullChildCommandProfiles(t *testing.T) {
 				t.Fatalf("%s must use the official Go host helper: %+v", name, cmd)
 			}
 		case p.Target == "wasi":
-			if !slices.Contains(cmd.Args, "iwasm") || !slices.Contains(cmd.Args, "--max-threads=128") {
+			if !slices.Contains(cmd.Args, "wasmer") || !slices.Contains(cmd.Args, "--enable-exceptions") {
 				t.Fatalf("%s missing WASI runner: %+v", name, cmd)
 			}
 		default:
@@ -54,7 +54,7 @@ func TestFullChildCommandWASIThreads(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := fullPanicCommand(p, "/repo", "/goroot", "/compiled-test")
-	for _, want := range []string{"iwasm", "--max-threads=128", "--heap-size=0", "--dir=/tmp", "/compiled-test"} {
+	for _, want := range []string{"wasmer", "--enable-exceptions", "--enable-simd", "--volume=/tmp", "/compiled-test"} {
 		if !slices.Contains(cmd.Args, want) {
 			t.Fatalf("threaded W32 child command missing %q: %+v", want, cmd)
 		}

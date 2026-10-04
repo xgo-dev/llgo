@@ -1,5 +1,5 @@
 name: "Set up LLGo CI cache"
-description: "Restore LLGo package builds, cross-compilation toolchains, and WAMR"
+description: "Restore LLGo package builds, cross-compilation toolchains, and Wasmer"
 inputs:
   build-cache-mode:
     description: "LLGo package build cache mode: off, restore, or readwrite"
@@ -9,8 +9,8 @@ inputs:
     description: "Cross-compilation download cache mode: off, restore, or readwrite"
     required: false
     default: "restore"
-  wamr-cache-mode:
-    description: "WAMR cache mode: off, restore, or readwrite"
+  wasmer-cache-mode:
+    description: "Wasmer cache mode: off, restore, or readwrite"
     required: false
     default: "off"
 
@@ -23,7 +23,7 @@ runs:
       env:
         BUILD_CACHE_MODE: ${{ inputs.build-cache-mode }}
         CROSSCOMPILE_CACHE_MODE: ${{ inputs.crosscompile-cache-mode }}
-        WAMR_CACHE_MODE: ${{ inputs.wamr-cache-mode }}
+        WASMER_CACHE_MODE: ${{ inputs.wasmer-cache-mode }}
       run: |
         set -euo pipefail
 
@@ -41,10 +41,10 @@ runs:
             exit 1
             ;;
         esac
-        case "$WAMR_CACHE_MODE" in
+        case "$WASMER_CACHE_MODE" in
           off|restore|readwrite) ;;
           *)
-            echo "Unsupported WAMR cache mode: $WAMR_CACHE_MODE" >&2
+            echo "Unsupported Wasmer cache mode: $WASMER_CACHE_MODE" >&2
             exit 1
             ;;
         esac
@@ -104,16 +104,16 @@ runs:
         restore-keys: |
           llgo-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.llgo_cache.outputs.profile }}-${{ steps.llgo_cache.outputs.go-version }}-clang-${{ steps.llgo_cache.outputs.clang-version }}-${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
 
-    - name: Restore WAMR
-      if: inputs.wamr-cache-mode == 'restore'
+    - name: Restore Wasmer
+      if: inputs.wasmer-cache-mode == 'restore'
       uses: actions/cache/restore@v6
       with:
         path: ${{ steps.llgo_cache.outputs.root }}/bin
-        key: llgo-iwasm-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.llgo_cache.outputs.profile }}-${{ hashFiles('dev/build_iwasm.sh', 'dev/patches/wamr-*.patch') }}
+        key: llgo-wasmer-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.llgo_cache.outputs.profile }}-${{ hashFiles('dev/install_wasmer.sh') }}
 
-    - name: Cache WAMR
-      if: inputs.wamr-cache-mode == 'readwrite'
+    - name: Cache Wasmer
+      if: inputs.wasmer-cache-mode == 'readwrite'
       uses: actions/cache@v6
       with:
         path: ${{ steps.llgo_cache.outputs.root }}/bin
-        key: llgo-iwasm-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.llgo_cache.outputs.profile }}-${{ hashFiles('dev/build_iwasm.sh', 'dev/patches/wamr-*.patch') }}
+        key: llgo-wasmer-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.llgo_cache.outputs.profile }}-${{ hashFiles('dev/install_wasmer.sh') }}

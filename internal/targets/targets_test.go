@@ -334,9 +334,9 @@ func TestWebAssemblyProfileTargets(t *testing.T) {
 				}
 			}
 			if test.provider == "wasi" {
-				// WAMR is built with EH support; it has no Wasmtime proposal flag.
-				if !strings.HasPrefix(config.Emulator, "iwasm ") || !strings.Contains(config.Emulator, "--max-threads=128") {
-					t.Errorf("WASI profile omits its threaded WAMR runner: %+v", config)
+				// Standard Wasm EH and SIMD must be enabled together with threads.
+				if !strings.HasPrefix(config.Emulator, "wasmer ") || !strings.Contains(config.Emulator, "--enable-exceptions") {
+					t.Errorf("WASI profile omits its threaded Wasmer runner: %+v", config)
 				}
 			}
 		})

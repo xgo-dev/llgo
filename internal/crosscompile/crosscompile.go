@@ -97,12 +97,11 @@ type NativeToolchain struct {
 type WasmProfile string
 
 const (
-	// WASIThreadedEmulator runs the shared-memory module with WAMR's classic
-	// interpreter. wasi-libc manages its own heap inside the module memory.
+	// WASIThreadedEmulator runs shared-memory modules with standard Wasm EH
+	// and SIMD. wasi-libc manages its own heap inside the module memory.
 	// The runner resolves the working-directory preopen to an absolute path
 	// before execution and also grants Go's default /tmp directory.
-	// The 64-client select stress needs more than 64 concurrent pthreads.
-	WASIThreadedEmulator = `iwasm --max-threads=128 --stack-size=1048576 --heap-size=0 --dir=. --dir=/tmp "{}"`
+	WASIThreadedEmulator = `wasmer run --cranelift --enable-exceptions --enable-simd --stack-size=1048576 --volume=. --volume=/tmp "{}"`
 
 	WasmProfileNone WasmProfile = ""
 	WasmProfileJ32  WasmProfile = "j32"
@@ -774,6 +773,9 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, forceEspClang bool, le
 			"-mbulk-memory",
 		}
 		export.CCFLAGS = append(export.CCFLAGS, "-pthread")
+		if ltoMode.Enabled() {
+			export.CCFLAGS = append(export.CCFLAGS, ltoMode.ClangFlag())
+		}
 		export.CFLAGS = []string{
 			"-I" + includeDir,
 			"-Qunused-arguments",
@@ -783,12 +785,20 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, forceEspClang bool, le
 		export.LDFLAGS = append(export.LDFLAGS, export.CCFLAGS...)
 		export.LDFLAGS = append(export.LDFLAGS, "-fwasm-exceptions")
 		if ltoMode.Enabled() {
+			// Clang does not forward -fwasm-exceptions to the LTO backend.
+			// Without an explicit exception model, codegen drops SjLj catch pads.
+			export.LDFLAGS = append(export.LDFLAGS, "-Wl,--mllvm=-exception-model=wasm")
+			// ThinLTO compiles Go modules independently of the C modules that
+			// carry these features. Preserve shared memory, TLS and Wasm EH.
+			export.LDFLAGS = append(export.LDFLAGS, "-Xlinker", "--mllvm=-mattr=+atomics,+bulk-memory,+exception-handling")
 			export.LDFLAGS = append(export.LDFLAGS, "-Wl,--mllvm=-wasm-enable-sjlj")
+			export.LDFLAGS = append(export.LDFLAGS, "-Wl,--mllvm=-wasm-use-legacy-eh=false")
 		}
 		export.CCFLAGS = append(
 			export.CCFLAGS,
 			"-fwasm-exceptions",
 			"-mllvm", "-wasm-enable-sjlj",
+			"-mllvm", "-wasm-use-legacy-eh=false",
 		)
 		export.LDFLAGS = append(export.LDFLAGS, []string{
 			"-Wno-override-module",

@@ -199,7 +199,7 @@ func runSession(s session, stdin io.Reader, stdout, stderr io.Writer) error {
 }
 
 func wasiDebuggerUnavailable() error {
-	return errors.New("llgo debug: WASI source-debug sessions are unavailable for W32 pthread modules: the current Wasmtime backend does not implement shared env.memory, wasi.thread-spawn and env.pthread_exit; use llgo run -target=wasi with WAMR for execution")
+	return errors.New("llgo debug: WASI source-debug sessions are unavailable for W32 pthread modules: the current Wasmtime backend does not implement shared env.memory, wasi.thread-spawn and wasix_32v1.thread_exit; use llgo run -target=wasi with Wasmer for execution")
 }
 
 func validateBackendOptions(selected backend, opts options) error {

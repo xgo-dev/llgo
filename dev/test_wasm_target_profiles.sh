@@ -5,7 +5,11 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 llgo_cmd="${LLGO:-llgo}"
 node_cmd="${NODE:-node}"
-iwasm_cmd="${IWASM:-iwasm}"
+wasmer_cmd="${WASMER:-wasmer}"
+wasmer_backend=--cranelift
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) wasmer_backend=--v8 ;;
+esac
 fixture="${repo_root}/internal/build/testdata/wasm-profile"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/llgo-wasm-target-profiles.XXXXXX")"
 trap 'rm -rf "${work_dir}"' EXIT
@@ -52,9 +56,9 @@ build_wasi() {
 	"${llgo_cmd}" build -target "${target}" -o "${module}" "${fixture}"
 	assert_wasm_module "${module}"
 	if command -v timeout >/dev/null 2>&1; then
-		timeout 60s "${iwasm_cmd}" --max-threads=128 --stack-size=1048576 --heap-size=0 "${module}"
+		RUST_LOG=off timeout 60s "${wasmer_cmd}" run "${wasmer_backend}" --enable-exceptions --enable-simd --stack-size=1048576 "${module}"
 	else
-		"${iwasm_cmd}" --max-threads=128 --stack-size=1048576 --heap-size=0 "${module}"
+		RUST_LOG=off "${wasmer_cmd}" run "${wasmer_backend}" --enable-exceptions --enable-simd --stack-size=1048576 "${module}"
 	fi
 }
 
@@ -89,9 +93,9 @@ raw_wasi="${work_dir}/raw-wasip1.wasm"
 GOOS=wasip1 GOARCH=wasm "${llgo_cmd}" build -o "${raw_wasi}" "${fixture}"
 assert_wasm_module "${raw_wasi}"
 if command -v timeout >/dev/null 2>&1; then
-	timeout 60s "${iwasm_cmd}" --max-threads=128 --stack-size=1048576 --heap-size=0 "${raw_wasi}"
+	RUST_LOG=off timeout 60s "${wasmer_cmd}" run "${wasmer_backend}" --enable-exceptions --enable-simd --stack-size=1048576 "${raw_wasi}"
 else
-	"${iwasm_cmd}" --max-threads=128 --stack-size=1048576 --heap-size=0 "${raw_wasi}"
+	RUST_LOG=off "${wasmer_cmd}" run "${wasmer_backend}" --enable-exceptions --enable-simd --stack-size=1048576 "${raw_wasi}"
 fi
 
 echo "WebAssembly target profile checks passed"

@@ -180,7 +180,7 @@ func TestDriverReportAndSummary(t *testing.T) {
 		if err := run("W32-WASI", path, program, program); err != nil {
 			t.Fatal(err)
 		}
-		if r := readReport(t, path); !strings.Contains(r.Contract, "WAMR WASI threads") {
+		if r := readReport(t, path); !strings.Contains(r.Contract, "Wasmer WASI threads") {
 			t.Fatalf("threaded WASI contract = %q", r.Contract)
 		}
 	})

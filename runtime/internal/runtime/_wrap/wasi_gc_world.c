@@ -83,6 +83,49 @@ static void world_end_wait(void) {
   world_unlock();
 }
 
+#if defined(__wasm__)
+// TinyGC has one allocator mutex. Let an explicit collector hand it to a
+// pending allocator before collecting again, without imposing FIFO handoff
+// costs on every allocation.
+static _Atomic uint32_t allocator_waiters;
+static _Atomic uint32_t allocator_generation;
+static _Atomic uint32_t allocator_yielders;
+
+void llgo_wasi_gc_allocator_lock(pthread_mutex_t *mutex, uintptr_t chain,
+                                 uintptr_t bottom, uintptr_t top) {
+  atomic_fetch_add(&allocator_waiters, 1);
+  world_begin_wait(chain, bottom, top);
+  if (pthread_mutex_lock(mutex) != 0)
+    __builtin_trap();
+  atomic_fetch_sub(&allocator_waiters, 1);
+  atomic_fetch_add(&allocator_generation, 1);
+  if (atomic_load(&allocator_yielders) != 0)
+    __builtin_wasm_memory_atomic_notify((int *)&allocator_generation, INT32_MAX);
+  world_end_wait();
+}
+
+void llgo_wasi_gc_allocator_finish(pthread_mutex_t *mutex, uintptr_t chain,
+                                   uintptr_t bottom, uintptr_t top) {
+  if (atomic_load(&allocator_waiters) == 0) {
+    if (pthread_mutex_unlock(mutex) != 0)
+      __builtin_trap();
+    return;
+  }
+  // Publish roots before unlocking: the next owner may itself collect while
+  // this caller waits for the handoff in C.
+  world_begin_wait(chain, bottom, top);
+  atomic_fetch_add(&allocator_yielders, 1);
+  uint32_t generation = atomic_load(&allocator_generation);
+  if (pthread_mutex_unlock(mutex) != 0)
+    __builtin_trap();
+  while (atomic_load(&allocator_generation) == generation)
+    __builtin_wasm_memory_atomic_wait32((int *)&allocator_generation,
+                                       generation, -1);
+  atomic_fetch_sub(&allocator_yielders, 1);
+  world_end_wait();
+}
+#endif
+
 void llgo_wasi_gc_mutex_lock(pthread_mutex_t *mutex, uintptr_t chain,
                              uintptr_t bottom, uintptr_t top) {
   world_begin_wait(chain, bottom, top);

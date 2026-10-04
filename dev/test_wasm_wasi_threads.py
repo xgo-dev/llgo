@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Exercise the default WASI pthread backend under WAMR."""
+"""Exercise the default WASI pthread backend under Wasmer."""
 
 import os
 import pathlib
@@ -12,11 +12,40 @@ import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LLGO = os.environ.get("LLGO", "llgo")
-IWASM = os.environ.get("IWASM", "iwasm")
+WASMER = os.environ.get("WASMER", "wasmer")
+
+
+def wasmer_command(module, *args):
+    return [WASMER, "run", "--v8" if os.name == "nt" else "--cranelift", "--enable-exceptions", "--enable-simd",
+            "--stack-size=1048576", "--volume=" + str(ROOT), "--volume=/tmp",
+            str(module), "--", *args]
+
+
+def run_output_cache_probe(env, directory):
+    module = pathlib.Path(directory) / "runner-output.wasm"
+    cache = pathlib.Path(directory) / "runner-cache"
+    subprocess.run([os.environ.get("WASM_TOOLS", "wasm-tools"), "parse",
+                    str(ROOT / "internal/build/testdata/wasm-wasi-runner-output/main.wat"),
+                    "-o", str(module)], check=True, timeout=30)
+    command = wasmer_command(module)
+    command[2:2] = ["--cache-dir", str(cache)]
+    previous_cache = None
+    for state in ("cold", "warm"):
+        result = subprocess.run(command, env=env, capture_output=True, timeout=30)
+        expected_stderr = b'{"level":"WARN","target":"wasmer","fields":{"message":"guest stderr"}}\n'
+        if (result.returncode != 7 or result.stdout != b"guest stdout\n"
+                or result.stderr != expected_stderr):
+            raise SystemExit(f"Wasmer {state} cache changed guest output/status: {result}")
+        artifacts = {str(p.relative_to(cache)): (p.stat().st_size, p.stat().st_mtime_ns)
+                     for p in cache.rglob("*.bin")}
+        if not artifacts or (previous_cache is not None and artifacts != previous_cache):
+            raise SystemExit(f"Wasmer {state} module cache was not reused: {artifacts}")
+        previous_cache = artifacts
+    print("wasi cold/warm cache and guest stdout/stderr/exit status ok", flush=True)
 
 
 def run_probe(env, directory, name, fixture, tags, marker, timeout,
-              max_threads=8, expected_exit=0, args=(), runs=1):
+              expected_exit=0, args=(), runs=1):
     module = pathlib.Path(directory) / f"{name}.wasm"
     command = [LLGO, "build", "-target", "wasi"]
     if tags:
@@ -31,9 +60,8 @@ def run_probe(env, directory, name, fixture, tags, marker, timeout,
     allowed_exits = (expected_exit,) if isinstance(expected_exit, int) else expected_exit
     for attempt in range(runs):
         result = subprocess.run(
-            [IWASM, f"--max-threads={max_threads}", "--stack-size=1048576",
-             "--heap-size=0", "--dir=" + str(ROOT), "--dir=/tmp", str(module), *args],
-            capture_output=True,
+            wasmer_command(module, *args),
+            env=env, capture_output=True,
             text=True,
             timeout=timeout,
         )
@@ -43,7 +71,7 @@ def run_probe(env, directory, name, fixture, tags, marker, timeout,
         lines = result.stdout.splitlines() + result.stderr.splitlines()
         if result.returncode not in allowed_exits or any(m not in lines for m in markers):
             raise SystemExit(
-                f"WAMR {name} probe {attempt + 1}/{runs} failed "
+                f"Wasmer {name} probe {attempt + 1}/{runs} failed "
                 f"with exit code {result.returncode}")
 
 
@@ -71,33 +99,40 @@ def run_arena_boundaries(env, directory):
     for size in ((32 << 20) - (128 << 10), (32 << 20) - 1,
                  32 << 20, (32 << 20) + 1, 33 << 20):
         result = subprocess.run(
-            [IWASM, "--max-threads=8", "--stack-size=1048576", "--heap-size=0",
-             str(module), str(size)], capture_output=True, text=True, timeout=180,
+            wasmer_command(module, str(size)), env=env, capture_output=True, text=True, timeout=180,
         )
-        print(f"WAMR arena boundary: {size} bytes")
+        print(f"Wasmer arena boundary: {size} bytes")
         print(result.stdout, end="")
         print(result.stderr, end="")
         lines = result.stdout.splitlines() + result.stderr.splitlines()
         if result.returncode != 0 or "wasi gc arena boundary ok" not in lines:
-            raise SystemExit(f"WAMR arena boundary {size} failed: {result.returncode}")
+            raise SystemExit(f"Wasmer arena boundary {size} failed: {result.returncode}")
 
 
 def main():
-    iwasm = shutil.which(IWASM)
-    if iwasm is None:
-        raise SystemExit(f"WAMR runner not found: {IWASM}")
+    wasmer = shutil.which(WASMER)
+    if wasmer is None:
+        raise SystemExit(f"Wasmer runner not found: {WASMER}")
 
     env = os.environ.copy()
     env["LLGO_ROOT"] = str(ROOT)
+    # Keep inherited Rust diagnostics out of guest-output assertions.
+    env["RUST_LOG"] = "off"
     env.pop("LLGO_WASI_THREADS", None)
-    env["PATH"] = str(pathlib.Path(iwasm).resolve().parent) + os.pathsep + env["PATH"]
+    env["PATH"] = str(pathlib.Path(wasmer).resolve().parent) + os.pathsep + env["PATH"]
     with tempfile.TemporaryDirectory(prefix="llgo-wasi-threads-") as directory:
+        run_output_cache_probe(env, directory)
+        simd = pathlib.Path(directory) / "simd-threads-eh.wasm"
+        subprocess.run([os.environ.get("WASM_TOOLS", "wasm-tools"), "parse",
+                        str(ROOT / "internal/build/testdata/wasm-wasi-simd/threads.wat"),
+                        "-o", str(simd)], check=True, timeout=30)
+        subprocess.run(wasmer_command(simd), env=env, check=True, timeout=30)
+        print("wasi SIMD/thread/standard-EH boundary ok", flush=True)
         run_probe(env, directory, "startup", "wasm-wasi-thread-startup", "nogc",
-                  "wasi thread startup ok", 30, max_threads=32)
-        # WAMR can translate the terminal Wasm exception to process status 1
-        # instead of preserving the guest's status 2. Both are nonzero exits.
+                  "wasi thread startup ok", 30)
+        # Accept a host error (1) or the guest fatal status (2), never success.
         deadlock_exits = (1, 2)
-        # LLVM lowers both Go defer/Goexit and C setjmp/longjmp through legacy
+        # LLVM lowers both Go defer/Goexit and C setjmp/longjmp through standard
         # Wasm EH. A caught exception must not terminate unrelated pthreads.
         for tags in ("nogc", ""):
             suffix = tags or "gc"
@@ -120,10 +155,10 @@ def main():
         subprocess.run([os.environ.get("WASM_TOOLS", "wasm-tools"), "parse",
                         str(ROOT / "internal/build/testdata/wasm-wasi-goexit-defer/uncaught.wat"),
                         "-o", str(uncaught)], check=True, timeout=30)
-        result = subprocess.run([IWASM, str(uncaught)], capture_output=True,
+        result = subprocess.run(wasmer_command(uncaught), env=env, capture_output=True,
                                 text=True, timeout=30)
-        if result.returncode == 0 or "uncaught wasm exception" not in result.stdout + result.stderr:
-            raise SystemExit(f"WAMR swallowed an escaping exception: {result}")
+        if result.returncode == 0 or "Uncaught exception with payload: [I32(42)]" not in result.stdout + result.stderr:
+            raise SystemExit(f"Wasmer swallowed an escaping exception: {result}")
         run_probe(env, directory, "main-goexit", "wasm-wasi-main-goexit", "nogc",
                   "fatal error: no goroutines (main called runtime.Goexit) - deadlock!",
                   30, expected_exit=deadlock_exits)
@@ -159,10 +194,9 @@ def main():
         started = time.monotonic()
         subprocess.run([LLGO, "test", "-c", "-target", "wasi", "-o", str(module),
                         str(ROOT / "test/go")], env=env, check=True, timeout=300)
-        print(f"WAMR GC test compilation: {time.monotonic() - started:.2f}s", flush=True)
+        print(f"Wasmer GC test compilation: {time.monotonic() - started:.2f}s", flush=True)
         # The two startup shapes each race 20 goroutines against continuous
-        # full GC. The classic interpreter takes over two minutes per shape
-        # on CI. Give each an independent runtime/deadline, and keep finalizer,
+        # full GC. Give each an independent runtime/deadline, and keep finalizer,
         # callback GC and first-use symbol lookup in a third invocation. All
         # cases and repetition counts remain enabled; a stalled case still
         # fails within 300 seconds with its last active test visible.
@@ -174,11 +208,9 @@ def main():
         )
         for name, pattern in runtime_cases:
             started = time.monotonic()
-            subprocess.run([IWASM, "--max-threads=128", "--stack-size=1048576", "--heap-size=0",
-                            "--dir=" + str(ROOT), "--dir=/tmp", str(module), "-test.v",
-                            "-test.run=" + pattern],
+            subprocess.run(wasmer_command(module, "-test.v", "-test.run=" + pattern),
                            env=env, check=True, timeout=300)
-            print(f"WAMR GC test {name}: {time.monotonic() - started:.2f}s", flush=True)
+            print(f"Wasmer GC test {name}: {time.monotonic() - started:.2f}s", flush=True)
         run_llgo(env, ["test", "-target", "wasi", "-emulator", "-run",
                        "^TestPoolAfterGC$", str(ROOT / "test/std/sync")], "PASS",
                  timeout=300)
@@ -194,7 +226,7 @@ def main():
                        str(ROOT / "test")], "PASS")
         subprocess.run(
             ["go", "run", "./dev/wasmstdlib", "-profile", "W32-WASI",
-             "-llgo", LLGO, "-report", str(pathlib.Path(directory) / "w32-wamr.json")],
+             "-llgo", LLGO, "-report", str(pathlib.Path(directory) / "w32-wasmer.json")],
             check=True, cwd=ROOT, env=env, timeout=600,
         )
         goroot = subprocess.check_output(["go", "env", "GOROOT"], env=env,
