@@ -44,6 +44,14 @@ checks through `BINARYEN_EXTRA_PASSES` at O0/O2/Thin/Full LTO, independently of
 Emscripten `ASSERTIONS=0`. Environment options and package link directives may
 not request `asyncify-ignore-unwind-from-catch`.
 
+This is a compatibility regression from the previous JavaScript EH path,
+not merely an existing LLGo restriction. With the pre-change compiler from
+`ec9c2488b` and C++ JavaScript EH enabled, the direct and indirect catch-callback
+fixtures both sleep, resume, and return normally at O0 and O2 in Node and Chrome
+on Emscripten wasm32. Switching those callbacks to native Wasm EH loses that
+behavior. The assertions below detect the loss; they do not restore support.
+The default-policy change therefore remains a draft with this known regression.
+
 Do not enable `asyncify-asserts` globally for LLGo applications: this option also
 checks uninstrumented functions, including the reflection closure trampolines
 that deliberately forward a suspension without replaying their temporary
