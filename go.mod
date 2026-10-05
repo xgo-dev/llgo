@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/goplus/cobra v1.9.12 //xgo:class
-	github.com/goplus/gogen v1.24.8
+	github.com/goplus/gogen v1.25.3
 	github.com/goplus/lib v0.5.3
 	github.com/goplus/mod v0.22.0
 	github.com/mattn/go-tty v0.0.8
