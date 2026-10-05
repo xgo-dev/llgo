@@ -588,6 +588,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup crosscompile: %w", err)
 	}
+	if err := validateEmscriptenSjLj(commands, &export); err != nil {
+		return nil, err
+	}
 	// Update GOOS/GOARCH from export if target was used
 	if conf.Target != "" && export.GOOS != "" {
 		conf.Goos = export.GOOS
@@ -1874,14 +1877,19 @@ func (c *context) irClangConfig() clang.Config {
 		// cmd/llgo puts the LLVM installation selected at build time first in
 		// PATH. Do not inherit emcc's command prefix here: only its target and
 		// optimization flags are relevant when consuming LLVM IR. Preserve the
-		// backend settings emcc normally supplies: the SjLj pass lowers the
+		// backend settings emcc normally supplies: native SjLj lowers the
 		// setjmp/longjmp used by LLGo's panic path, while the other two keep its
-		// WebAssembly code-generation policy unchanged.
+		// WebAssembly code-generation policy unchanged. Retain emcc's legacy
+		// Wasm EH encoding for the Asyncify pass (this is not JavaScript EH).
 		config.CC = "clang"
 		config.CCArgs = nil
-		config.CCFLAGS = append(slices.Clone(config.CCFLAGS),
+		config.CCFLAGS = slices.DeleteFunc(slices.Clone(config.CCFLAGS), func(flag string) bool {
+			return flag == "-sSUPPORT_LONGJMP=wasm"
+		})
+		config.CCFLAGS = append(config.CCFLAGS,
 			"-mllvm", "-combiner-global-alias-analysis=false",
-			"-mllvm", "-enable-emscripten-sjlj",
+			"-mllvm", "-wasm-enable-sjlj",
+			"-mllvm", "-wasm-use-legacy-eh",
 			"-mllvm", "-disable-lsr",
 		)
 	}

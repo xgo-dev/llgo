@@ -1457,3 +1457,24 @@ func TestUseTargetCodegenFlagsOnlyAddedToLDFlagsWithLTO(t *testing.T) {
 		t.Fatalf("missing full LTO ccflag: %v", fullLTO.CCFLAGS)
 	}
 }
+
+func TestEmscriptenNativeSjLjProfiles(t *testing.T) {
+	for _, target := range []string{"", "emscripten", "emscripten-memory64"} {
+		for _, mode := range []lto.Mode{lto.Off, lto.Thin, lto.Full} {
+			t.Run(target+"/"+mode.String(), func(t *testing.T) {
+				export, err := Use("js", "wasm", target, false, optlevel.O2, mode, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for name, flags := range map[string][]string{"compile": export.CCFLAGS, "link": export.LDFLAGS} {
+					if !slices.Contains(flags, "-sSUPPORT_LONGJMP=wasm") {
+						t.Fatalf("%s flags lack native SjLj: %v", name, flags)
+					}
+					if !slices.Contains(flags, "-fwasm-exceptions") {
+						t.Fatalf("%s does not select native C++ exceptions for bindings", name)
+					}
+				}
+			})
+		}
+	}
+}

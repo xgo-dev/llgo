@@ -1,17 +1,19 @@
 package build
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/xtool/safesplit"
 	"github.com/xgo-dev/llvm"
 )
 
-// Emscripten can select native Wasm SjLj through SUPPORT_LONGJMP=wasm. LLVM
+// Emscripten uses native Wasm SjLj through SUPPORT_LONGJMP=wasm. LLVM
 // requires the feature on each caller's IR function, even when emcc receives
-// -fwasm-exceptions. Declaring the capability does not select the EH mode:
-// Emscripten's default JS SjLj and explicit native SjLj keep their own lowering.
+// -fwasm-exceptions. The cross-compilation profile selects native SjLj;
+// function attributes must retain the capability through optimization and LTO.
 func applyEmscriptenEHFeature(ctx *context, mod llvm.Module) {
 	profile := ctx.crossCompile.WasmProfile
 	if profile != crosscompile.WasmProfileJ32 && profile != crosscompile.WasmProfileJ64 {
@@ -43,4 +45,28 @@ func applyEmscriptenEHFeature(ctx *context, mod llvm.Module) {
 		}
 		fn.AddFunctionAttr(mod.Context().CreateStringAttribute("target-features", strings.Join(features, ",")))
 	}
+}
+
+// Go panic/recover and the runtime's C helpers must use the same SjLj ABI.
+// EMCC_CFLAGS is appended by emcc after our profile flags, so reject attempts
+// to restore JavaScript SjLj rather than silently compiling incompatible code.
+func validateEmscriptenSjLj(commands commandEnv, target *crosscompile.Export) error {
+	if target.WasmProvider != crosscompile.WasmProviderGoJS && target.WasmProvider != crosscompile.WasmProviderEmscripten {
+		return nil
+	}
+	for _, name := range []string{"CCFLAGS", "CFLAGS", "LDFLAGS", "EMCC_CFLAGS"} {
+		args := safesplit.SplitPkgConfigFlags(commands.lookup(name))
+		for i := 0; i < len(args); i++ {
+			arg := args[i]
+			if arg == "-s" && i+1 < len(args) {
+				i++
+				arg += args[i]
+			}
+			value, setting := strings.CutPrefix(arg, "-sSUPPORT_LONGJMP=")
+			if setting && strings.Trim(value, "\"'") != "wasm" || arg == "-sSUPPORT_LONGJMP" || strings.HasPrefix(arg, "-enable-emscripten-sjlj") {
+				return fmt.Errorf("%s contains %q: LLGo requires -sSUPPORT_LONGJMP=wasm for Go panic/recover", name, arg)
+			}
+		}
+	}
+	return nil
 }

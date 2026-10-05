@@ -94,3 +94,34 @@ func TestEmscriptenFlagsSeparatePackageFingerprints(t *testing.T) {
 		})
 	}
 }
+
+func TestEmscriptenRejectsIncompatibleSjLj(t *testing.T) {
+	for _, flags := range []string{
+		"-sSUPPORT_LONGJMP=emscripten", "-s SUPPORT_LONGJMP=emscripten",
+		"-sSUPPORT_LONGJMP=0", "-sSUPPORT_LONGJMP=1", "-sSUPPORT_LONGJMP",
+		"-sSUPPORT_LONGJMP=wasm -sSUPPORT_LONGJMP=emscripten",
+		"-mllvm -enable-emscripten-sjlj",
+	} {
+		for _, name := range []string{"CCFLAGS", "CFLAGS", "LDFLAGS", "EMCC_CFLAGS"} {
+			t.Run(name+"/"+flags, func(t *testing.T) {
+				commands := commandEnv{environ: []string{name + "=" + flags}}
+				for _, provider := range []crosscompile.WasmProvider{crosscompile.WasmProviderGoJS, crosscompile.WasmProviderEmscripten, crosscompile.WasmProviderWASI} {
+					err := validateEmscriptenSjLj(commands, &crosscompile.Export{WasmProvider: provider})
+					if provider == crosscompile.WasmProviderWASI {
+						if err != nil {
+							t.Fatal(err)
+						}
+					} else if err == nil || !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), "panic/recover") {
+						t.Fatalf("provider %s did not diagnose conflicting %s: %v", provider, name, err)
+					}
+				}
+			})
+		}
+	}
+	for _, flags := range []string{"", "-sSUPPORT_LONGJMP=wasm", "-s SUPPORT_LONGJMP='wasm'", "-fwasm-exceptions -sSUPPORT_LONGJMP=wasm"} {
+		commands := commandEnv{environ: []string{"EMCC_CFLAGS=" + flags}}
+		if err := validateEmscriptenSjLj(commands, &crosscompile.Export{WasmProvider: crosscompile.WasmProviderGoJS}); err != nil {
+			t.Fatalf("valid native flags %q: %v", flags, err)
+		}
+	}
+}
