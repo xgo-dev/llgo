@@ -125,3 +125,29 @@ func TestEmscriptenRejectsIncompatibleSjLj(t *testing.T) {
 		}
 	}
 }
+
+func TestEmscriptenCatchSuspensionOptions(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"-sASSERTIONS=0"}, ""},
+		{[]string{"-sBINARYEN_EXTRA_PASSES=--pass-arg=asyncify-asserts"}, ""},
+		{[]string{"-s", "BINARYEN_EXTRA_PASSES=--pass-arg=asyncify-asserts,--vacuum"}, ""},
+		{[]string{"-sBINARYEN_EXTRA_PASSES="}, ""},
+		{[]string{"-s", "BINARYEN_EXTRA_PASSES=--vacuum"}, ""},
+		{[]string{"-sBINARYEN_EXTRA_PASSES=--pass-arg=asyncify-asserts,--pass-arg=asyncify-ignore-unwind-from-catch"}, "cannot ignore"},
+		{[]string{"--pass-arg=asyncify-ignore-unwind-from-catch"}, "cannot ignore"},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			err := validateEmscriptenEHArgs("package link arguments", tc.args)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want %q", err, tc.want)
+			}
+		})
+	}
+}

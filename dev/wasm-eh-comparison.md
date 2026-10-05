@@ -4,8 +4,8 @@ Run `python3 dev/compare_wasm_eh.py` with Emscripten, Node, `wasm-tools`,
 `llvm-dwarfdump`, and the selected Binaryen installation on `PATH`. Set
 `EM_BINARYEN_ROOT` to select a complete Binaryen installation; optionally set
 `LLGO` to include GoJS, Emscripten wasm32, and Memory64 panic/recover tests. Pass `--browser`
-to execute all six C++ variants and, with `LLGO`, the Go O0/O2/Thin/Full LTO cases and both
-Go/C++ wrappers in Chrome as well.
+to execute all six C++ variants and, with `LLGO`, the Go O0/O2/Thin/Full LTO cases
+and the Go/C++ boundary matrix in Chrome as well.
 Individual tool paths can be set with `EMXX`, `NODE`, `WASM_TOOLS`,
 `LLVM_DWARFDUMP`, and `WASMOPT`; `WASMOPT` takes precedence over
 `EM_BINARYEN_ROOT`.
@@ -37,9 +37,29 @@ This change does not replace that abstraction with direct Go-to-LLVM exception
 lowering, nor does it change Fiber/Asyncify scheduling. Engines must support
 native Wasm exceptions; a JavaScript fallback is no longer selected.
 
-Emscripten warns about mixing Asyncify with `-fwasm-exceptions`. Treat this
-combination as requiring LLGo's pinned toolchain and runtime qualification,
-not arbitrary SDK interchangeability. The Go regression verifies the absence
+Emscripten warns about mixing Asyncify with `-fwasm-exceptions`. Binaryen has
+partial support: suspension while a Wasm catch is active is unsupported. The
+boundary acceptance matrix explicitly enables its existing `asyncify-asserts`
+checks through `BINARYEN_EXTRA_PASSES` at O0/O2/Thin/Full LTO, independently of
+Emscripten `ASSERTIONS=0`. Environment options and package link directives may
+not request `asyncify-ignore-unwind-from-catch`.
+
+Do not enable `asyncify-asserts` globally for LLGo applications: this option also
+checks uninstrumented functions, including the reflection closure trampolines
+that deliberately forward a suspension without replaying their temporary
+argument buffers. The existing `TestReflectCallAndMethod` passes with the
+default profile and traps with those extra assertions. The pinned Binaryen
+does not expose a catch-only assertion switch. This PR therefore keeps the
+default assertion policy, uses the extra checks only in the focused acceptance
+matrix, and makes no new Binaryen or Emscripten patch. The generic warning remains.
+
+The focused checks are runtime assertions, not a static suspension analysis or
+complete support for suspending from arbitrary foreign exception handlers. An unsupported
+path can still compile, and passing fixtures do not qualify arbitrary SDKs,
+nested exception/control-flow combinations, or user-provided Asyncify exclusion
+lists. Keep the warning and the explicit foreign-exception boundary below.
+
+The Go regression verifies the absence
 of JS `invoke_*` imports and the presence of native EH, then executes deferred
 panic recovery and Goexit across suspension and GC at O0/O2 and O2 Thin/Full
 LTO in Node and Chrome. LTO flags reach both compiler and linker drivers, and
@@ -48,6 +68,27 @@ The scheduler, timers, GC, lifecycle, callbacks, and multi-worker suites remain
 required acceptance checks. C++ exceptions must still be caught inside a C++
 wrapper and returned as a C ABI status; unwinding a foreign exception through
 Go or a suspended goroutine is not supported by this change.
+
+The Go/C++ matrix tests all three browser targets at O0/O2/Thin/Full LTO, with
+general Emscripten assertions disabled. After a caught C++ exception returns,
+Go sleeps, collects, panics, and sleeps/collects again in its recovering defer.
+Separate direct and indirect callbacks deliberately sleep while the C++ catch
+is still active; both must enter the callback, fail with an `unreachable` trap,
+and never report a resumed callback. A timeout or an unrelated crash fails the
+test. These negative callbacks do not throw and are declared `noexcept` on the
+C++ side; they do not establish coverage of every C++ cleanup/unwind shape.
+
+The catch-status fixture uses a `noinline` implementation behind a volatile
+function pointer. LLVM's `noinline` attribute alone does not keep the boundary
+through Binaryen's post-link inlining. Code after a source-level catch can also
+be moved inside the Wasm catch by optimization, so merely moving a sleep after
+the closing brace is insufficient.
+
+Qualification also found that a late Go defer could allocate its jump buffer
+below the fixed Wasm shadow-stack frame. A caught native C++ exception could
+discard that allocation and later calls overwrite it, leaving a subsequent Go
+panic unable to find its setjmp. Wasm jump buffers are now reserved in the
+function entry block; this regression must pass with optimization and LTO.
 
 ## Encoding comparison and historical measurements
 

@@ -2799,6 +2799,11 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 
 	buildArgs = append(buildArgs, objFiles...)
 
+	if ctx.crossCompile.WasmProvider == crosscompile.WasmProviderGoJS || ctx.crossCompile.WasmProvider == crosscompile.WasmProviderEmscripten {
+		if err := validateEmscriptenEHArgs("link arguments", buildArgs); err != nil {
+			return err
+		}
+	}
 	cmd := ctx.linker()
 	buildArgs = append(buildArgs, defaultWASIHeapArgs(ctx, cmd, buildArgs)...)
 	cmd.Verbose = printCmds

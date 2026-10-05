@@ -55,17 +55,28 @@ func validateEmscriptenSjLj(commands commandEnv, target *crosscompile.Export) er
 		return nil
 	}
 	for _, name := range []string{"CCFLAGS", "CFLAGS", "LDFLAGS", "EMCC_CFLAGS"} {
-		args := safesplit.SplitPkgConfigFlags(commands.lookup(name))
-		for i := 0; i < len(args); i++ {
-			arg := args[i]
-			if arg == "-s" && i+1 < len(args) {
-				i++
-				arg += args[i]
-			}
-			value, setting := strings.CutPrefix(arg, "-sSUPPORT_LONGJMP=")
-			if setting && strings.Trim(value, "\"'") != "wasm" || arg == "-sSUPPORT_LONGJMP" || strings.HasPrefix(arg, "-enable-emscripten-sjlj") {
-				return fmt.Errorf("%s contains %q: LLGo requires -sSUPPORT_LONGJMP=wasm for Go panic/recover", name, arg)
-			}
+		if err := validateEmscriptenEHArgs(name, safesplit.SplitPkgConfigFlags(commands.lookup(name))); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// The same checks apply to package link directives, which are appended after
+// the profile flags.
+func validateEmscriptenEHArgs(name string, args []string) error {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "-s" && i+1 < len(args) {
+			i++
+			arg += args[i]
+		}
+		value, setting := strings.CutPrefix(arg, "-sSUPPORT_LONGJMP=")
+		if setting && strings.Trim(value, "\"'") != "wasm" || arg == "-sSUPPORT_LONGJMP" || strings.HasPrefix(arg, "-enable-emscripten-sjlj") {
+			return fmt.Errorf("%s contains %q: LLGo requires -sSUPPORT_LONGJMP=wasm for Go panic/recover", name, arg)
+		}
+		if strings.Contains(arg, "asyncify-ignore-unwind-from-catch") {
+			return fmt.Errorf("%s contains %q: LLGo cannot ignore unsupported Asyncify suspension inside a Wasm catch", name, arg)
 		}
 	}
 	return nil
