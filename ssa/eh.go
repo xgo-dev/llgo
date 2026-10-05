@@ -75,7 +75,15 @@ func (b Builder) AllocaSigjmpBuf() Expr {
 	sigjmpBufTy := prog.rtType("SigjmpBuf") // Get type from runtime (target architecture)
 	n := prog.SizeOf(sigjmpBufTy)           // Get size for target architecture
 	size := prog.IntVal(n, prog.Uintptr())
-	ret := b.Alloca(size)
+	var ret Expr
+	if prog.target.GOARCH == "wasm" {
+		// A Wasm catch restores the function's fixed shadow-stack pointer.
+		// Keep the jump buffer in that fixed frame: a later-block alloca is
+		// dynamic and a caught C++ exception can discard it before Go panics.
+		ret = Expr{llvm.CreateArrayAlloca(b.Func.entryAllocaBuilder(), prog.tyInt8(), size.impl), prog.VoidPtr()}
+	} else {
+		ret = b.Alloca(size)
+	}
 	if prog.target.effectiveGOOS() == "windows" {
 		// UCRT jmp_buf uses up to 16-byte alignment on supported Windows
 		// architectures. CreateArrayAlloca otherwise inherits byte alignment
