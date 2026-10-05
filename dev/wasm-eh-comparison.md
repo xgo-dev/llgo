@@ -4,7 +4,7 @@ Run `python3 dev/compare_wasm_eh.py` with Emscripten, Node, `wasm-tools`,
 `llvm-dwarfdump`, and the selected Binaryen installation on `PATH`. Set
 `EM_BINARYEN_ROOT` to select a complete Binaryen installation; optionally set
 `LLGO` to include GoJS, Emscripten wasm32, and Memory64 panic/recover tests. Pass `--browser`
-to execute all six C++ variants and, with `LLGO`, the Go O0/O2 cases and both
+to execute all six C++ variants and, with `LLGO`, the Go O0/O2/Thin/Full LTO cases and both
 Go/C++ wrappers in Chrome as well.
 Individual tool paths can be set with `EMXX`, `NODE`, `WASM_TOOLS`,
 `LLVM_DWARFDUMP`, and `WASMOPT`; `WASMOPT` takes precedence over
@@ -41,7 +41,9 @@ Emscripten warns about mixing Asyncify with `-fwasm-exceptions`. Treat this
 combination as requiring LLGo's pinned toolchain and runtime qualification,
 not arbitrary SDK interchangeability. The Go regression verifies the absence
 of JS `invoke_*` imports and the presence of native EH, then executes deferred
-panic recovery and Goexit across suspension and GC at O0/O2 in Node and Chrome.
+panic recovery and Goexit across suspension and GC at O0/O2 and O2 Thin/Full
+LTO in Node and Chrome. LTO flags reach both compiler and linker drivers, and
+SDK `emar` indexes bitcode so a newer SDK is not read by an older host LLVM.
 The scheduler, timers, GC, lifecycle, callbacks, and multi-worker suites remain
 required acceptance checks. C++ exceptions must still be caught inside a C++
 wrapper and returned as a C ABI status; unwinding a foreign exception through

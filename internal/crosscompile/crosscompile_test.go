@@ -1473,6 +1473,9 @@ func TestEmscriptenNativeSjLjProfiles(t *testing.T) {
 					if !slices.Contains(flags, "-fwasm-exceptions") {
 						t.Fatalf("%s does not select native C++ exceptions for bindings", name)
 					}
+					if mode.Enabled() && !slices.Contains(flags, mode.ClangFlag()) {
+						t.Fatalf("%s flags do not enable requested %s LTO: %v", name, mode, flags)
+					}
 				}
 			})
 		}

@@ -123,19 +123,23 @@ def run_go_baseline(directory, llgo, node, wasm_tools, env, browser):
             target_env.update(GOOS="js", GOARCH="wasm")
             target_args = []
         runner = "emscripten-memory64-runner.mjs" if target.endswith("memory64") else "emscripten-runner.mjs"
-        for level in (0, 2):
-            script = directory / f"go-panic-recover-{target}-O{level}.mjs"
-            run([llgo, "build", f"-O{level}", *target_args, "-o", str(script), str(GO)], env=target_env)
+        for level, lto in ((0, None), (2, None), (2, "thin"), (2, "full")):
+            variant = f"O{level}" + (f"-{lto}" if lto else "")
+            script = directory / f"go-panic-recover-{target}-{variant}.mjs"
+            lto_args = [f"-lto={lto}", "-x"] if lto else []
+            build_output = run([llgo, "build", f"-O{level}", *lto_args, *target_args, "-o", str(script), str(GO)], env=target_env)
+            if lto and f"-flto={lto}" not in build_output:
+                raise RuntimeError(f"{target} {lto} did not reach the compiler driver")
             wat = run([wasm_tools, "print", str(script.with_suffix(".wasm"))])
             if not re.search(r"\b(catch|catch_all|try_table)\b", wat) or re.search(r'\(import "env" "invoke_', wat):
                 raise RuntimeError(f"{target} did not use native Wasm SjLj")
             runner_args = ["--browser-only"] if target == "gojs" else []
             output = run([node, str(ROOT / "targets" / runner), *runner_args, str(script)], env=target_env)
             if "js" not in output.splitlines():
-                raise RuntimeError(f"Go panic/recover {target} O{level} failed:\n{output}")
+                raise RuntimeError(f"Go panic/recover {target} {variant} failed:\n{output}")
             if browser:
                 run_browser(script, "js", node, target_env)
-            print(f"Go suspended panic/recover/Goexit {target} O{level}: passed", flush=True)
+            print(f"Go suspended panic/recover/Goexit {target} {variant}: passed", flush=True)
 
 
 def run_go_cpp_boundary(directory, llgo, node, env, browser):

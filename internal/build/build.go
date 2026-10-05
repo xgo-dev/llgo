@@ -2967,6 +2967,9 @@ func (c *context) archiver() string {
 	if ar := os.Getenv("LLGO_AR"); ar != "" {
 		return ar
 	}
+	if ar := c.emscriptenArchiver(); ar != "" {
+		return ar
+	}
 	// First check toolchain directory (for cross-compilation)
 	if llvmAr := siblingTool(c.crossCompile.CC, "llvm-ar"); llvmAr != "" {
 		return llvmAr
@@ -2987,6 +2990,9 @@ func (c *context) archiveMerger() (string, error) {
 	if ar := os.Getenv("LLGO_AR"); ar != "" {
 		return ar, nil
 	}
+	if ar := c.emscriptenArchiver(); ar != "" {
+		return ar, nil
+	}
 	if llvmAr := siblingTool(c.crossCompile.CC, "llvm-ar"); llvmAr != "" {
 		return llvmAr, nil
 	}
@@ -2994,6 +3000,24 @@ func (c *context) archiveMerger() (string, error) {
 		return llvmAr, nil
 	}
 	return "", errors.New("llvm-ar is required to create a flat c-archive")
+}
+
+// Emscripten C++ bitcode can be newer than LLGo's linked LLVM. Its emar
+// wrapper selects the SDK's matching llvm-ar for both objects and MRI merges.
+func (c *context) emscriptenArchiver() string {
+	provider := c.crossCompile.WasmProvider
+	if provider != crosscompile.WasmProviderGoJS && provider != crosscompile.WasmProviderEmscripten {
+		return ""
+	}
+	if cc, err := exec.LookPath(c.crossCompile.CC); err == nil {
+		if ar := siblingTool(cc, "emar"); ar != "" {
+			return ar
+		}
+	}
+	if ar, err := exec.LookPath("emar"); err == nil {
+		return ar
+	}
+	return ""
 }
 
 func siblingTool(compiler, name string) string {

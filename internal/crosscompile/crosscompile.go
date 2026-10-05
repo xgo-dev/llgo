@@ -895,6 +895,10 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, forceEspClang bool, le
 			// before an overflow can overwrite another goroutine's memory.
 			"-sSTACK_OVERFLOW_CHECK=2",
 		}...)
+		if ltoMode.Enabled() {
+			export.CCFLAGS = append(export.CCFLAGS, ltoMode.ClangFlag())
+			export.LDFLAGS = append(export.LDFLAGS, ltoMode.ClangFlag())
+		}
 		appendEmscriptenLibffiSearchPath(&export, llgoRoot, wasmProfile)
 	default:
 		err = errors.New("unsupported GOOS for WebAssembly: " + goos)
