@@ -94,3 +94,60 @@ func TestEmscriptenFlagsSeparatePackageFingerprints(t *testing.T) {
 		})
 	}
 }
+
+func TestEmscriptenRejectsIncompatibleSjLj(t *testing.T) {
+	for _, flags := range []string{
+		"-sSUPPORT_LONGJMP=emscripten", "-s SUPPORT_LONGJMP=emscripten",
+		"-sSUPPORT_LONGJMP=0", "-sSUPPORT_LONGJMP=1", "-sSUPPORT_LONGJMP",
+		"-sSUPPORT_LONGJMP=wasm -sSUPPORT_LONGJMP=emscripten",
+		"-mllvm -enable-emscripten-sjlj",
+	} {
+		for _, name := range []string{"CCFLAGS", "CFLAGS", "LDFLAGS", "EMCC_CFLAGS"} {
+			t.Run(name+"/"+flags, func(t *testing.T) {
+				commands := commandEnv{environ: []string{name + "=" + flags}}
+				for _, provider := range []crosscompile.WasmProvider{crosscompile.WasmProviderGoJS, crosscompile.WasmProviderEmscripten, crosscompile.WasmProviderWASI} {
+					err := validateEmscriptenSjLj(commands, &crosscompile.Export{WasmProvider: provider})
+					if provider == crosscompile.WasmProviderWASI {
+						if err != nil {
+							t.Fatal(err)
+						}
+					} else if err == nil || !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), "panic/recover") {
+						t.Fatalf("provider %s did not diagnose conflicting %s: %v", provider, name, err)
+					}
+				}
+			})
+		}
+	}
+	for _, flags := range []string{"", "-sSUPPORT_LONGJMP=wasm", "-s SUPPORT_LONGJMP='wasm'", "-fwasm-exceptions -sSUPPORT_LONGJMP=wasm"} {
+		commands := commandEnv{environ: []string{"EMCC_CFLAGS=" + flags}}
+		if err := validateEmscriptenSjLj(commands, &crosscompile.Export{WasmProvider: crosscompile.WasmProviderGoJS}); err != nil {
+			t.Fatalf("valid native flags %q: %v", flags, err)
+		}
+	}
+}
+
+func TestEmscriptenCatchSuspensionOptions(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"-sASSERTIONS=0"}, ""},
+		{[]string{"-sBINARYEN_EXTRA_PASSES=--pass-arg=asyncify-asserts"}, ""},
+		{[]string{"-s", "BINARYEN_EXTRA_PASSES=--pass-arg=asyncify-asserts,--vacuum"}, ""},
+		{[]string{"-sBINARYEN_EXTRA_PASSES="}, ""},
+		{[]string{"-s", "BINARYEN_EXTRA_PASSES=--vacuum"}, ""},
+		{[]string{"-sBINARYEN_EXTRA_PASSES=--pass-arg=asyncify-asserts,--pass-arg=asyncify-ignore-unwind-from-catch"}, "cannot ignore"},
+		{[]string{"--pass-arg=asyncify-ignore-unwind-from-catch"}, "cannot ignore"},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			err := validateEmscriptenEHArgs("package link arguments", tc.args)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want %q", err, tc.want)
+			}
+		})
+	}
+}

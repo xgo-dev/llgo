@@ -588,6 +588,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup crosscompile: %w", err)
 	}
+	if err := validateEmscriptenSjLj(commands, &export); err != nil {
+		return nil, err
+	}
 	// Update GOOS/GOARCH from export if target was used
 	if conf.Target != "" && export.GOOS != "" {
 		conf.Goos = export.GOOS
@@ -1874,14 +1877,19 @@ func (c *context) irClangConfig() clang.Config {
 		// cmd/llgo puts the LLVM installation selected at build time first in
 		// PATH. Do not inherit emcc's command prefix here: only its target and
 		// optimization flags are relevant when consuming LLVM IR. Preserve the
-		// backend settings emcc normally supplies: the SjLj pass lowers the
+		// backend settings emcc normally supplies: native SjLj lowers the
 		// setjmp/longjmp used by LLGo's panic path, while the other two keep its
-		// WebAssembly code-generation policy unchanged.
+		// WebAssembly code-generation policy unchanged. Retain emcc's legacy
+		// Wasm EH encoding for the Asyncify pass (this is not JavaScript EH).
 		config.CC = "clang"
 		config.CCArgs = nil
-		config.CCFLAGS = append(slices.Clone(config.CCFLAGS),
+		config.CCFLAGS = slices.DeleteFunc(slices.Clone(config.CCFLAGS), func(flag string) bool {
+			return flag == "-sSUPPORT_LONGJMP=wasm"
+		})
+		config.CCFLAGS = append(config.CCFLAGS,
 			"-mllvm", "-combiner-global-alias-analysis=false",
-			"-mllvm", "-enable-emscripten-sjlj",
+			"-mllvm", "-wasm-enable-sjlj",
+			"-mllvm", "-wasm-use-legacy-eh",
 			"-mllvm", "-disable-lsr",
 		)
 	}
@@ -2791,6 +2799,11 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 
 	buildArgs = append(buildArgs, objFiles...)
 
+	if ctx.crossCompile.WasmProvider == crosscompile.WasmProviderGoJS || ctx.crossCompile.WasmProvider == crosscompile.WasmProviderEmscripten {
+		if err := validateEmscriptenEHArgs("link arguments", buildArgs); err != nil {
+			return err
+		}
+	}
 	cmd := ctx.linker()
 	buildArgs = append(buildArgs, defaultWASIHeapArgs(ctx, cmd, buildArgs)...)
 	cmd.Verbose = printCmds
@@ -2959,6 +2972,9 @@ func (c *context) archiver() string {
 	if ar := os.Getenv("LLGO_AR"); ar != "" {
 		return ar
 	}
+	if ar := c.emscriptenArchiver(); ar != "" {
+		return ar
+	}
 	// First check toolchain directory (for cross-compilation)
 	if llvmAr := siblingTool(c.crossCompile.CC, "llvm-ar"); llvmAr != "" {
 		return llvmAr
@@ -2979,6 +2995,9 @@ func (c *context) archiveMerger() (string, error) {
 	if ar := os.Getenv("LLGO_AR"); ar != "" {
 		return ar, nil
 	}
+	if ar := c.emscriptenArchiver(); ar != "" {
+		return ar, nil
+	}
 	if llvmAr := siblingTool(c.crossCompile.CC, "llvm-ar"); llvmAr != "" {
 		return llvmAr, nil
 	}
@@ -2986,6 +3005,24 @@ func (c *context) archiveMerger() (string, error) {
 		return llvmAr, nil
 	}
 	return "", errors.New("llvm-ar is required to create a flat c-archive")
+}
+
+// Emscripten C++ bitcode can be newer than LLGo's linked LLVM. Its emar
+// wrapper selects the SDK's matching llvm-ar for both objects and MRI merges.
+func (c *context) emscriptenArchiver() string {
+	provider := c.crossCompile.WasmProvider
+	if provider != crosscompile.WasmProviderGoJS && provider != crosscompile.WasmProviderEmscripten {
+		return ""
+	}
+	if cc, err := exec.LookPath(c.crossCompile.CC); err == nil {
+		if ar := siblingTool(cc, "emar"); ar != "" {
+			return ar
+		}
+	}
+	if ar, err := exec.LookPath("emar"); err == nil {
+		return ar
+	}
+	return ""
 }
 
 func siblingTool(compiler, name string) string {

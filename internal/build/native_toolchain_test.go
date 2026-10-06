@@ -210,7 +210,7 @@ func TestIRCompilerUsesMatchingLLVMForEmscriptenMemory64(t *testing.T) {
 	ctx := &context{crossCompile: crosscompile.Export{
 		CC:      "emcc",
 		CCArgs:  []string{"--emcc-prefix"},
-		CCFLAGS: []string{"-target", "wasm64-unknown-emscripten"},
+		CCFLAGS: []string{"-target", "wasm64-unknown-emscripten", "-sSUPPORT_LONGJMP=wasm", "-fwasm-exceptions"},
 	}}
 	config := ctx.irClangConfig()
 	if config.CC != "emcc" || !reflect.DeepEqual(config.CCArgs, []string{"--emcc-prefix"}) {
@@ -225,8 +225,10 @@ func TestIRCompilerUsesMatchingLLVMForEmscriptenMemory64(t *testing.T) {
 	}
 	wantFlags := []string{
 		"-target", "wasm64-unknown-emscripten",
+		"-fwasm-exceptions",
 		"-mllvm", "-combiner-global-alias-analysis=false",
-		"-mllvm", "-enable-emscripten-sjlj",
+		"-mllvm", "-wasm-enable-sjlj",
+		"-mllvm", "-wasm-use-legacy-eh",
 		"-mllvm", "-disable-lsr",
 	}
 	if !reflect.DeepEqual(config.CCFLAGS, wantFlags) {

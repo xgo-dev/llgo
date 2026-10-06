@@ -113,36 +113,100 @@ def compare_optimization_level(directory, level, emxx, wasm_opt, wasm_tools, dwa
     print(f"O{level}: " + ", ".join(f"{name}={size} bytes" for name, size in sizes.items()))
 
 
-def run_go_baseline(directory, llgo, node, env, browser):
-    script = directory / "go-panic-recover.mjs"
+def run_go_baseline(directory, llgo, node, wasm_tools, env, browser):
     go_env = env.copy()
     go_env["LLGO_ROOT"] = str(ROOT)
-    run([llgo, "build", "-target", "emscripten", "-o", str(script), str(GO)], env=go_env)
-    output = run([node, str(ROOT / "targets/emscripten-runner.mjs"), str(script)], env=go_env)
-    if "js" not in output.splitlines():
-        raise RuntimeError(f"Go panic/recover baseline failed:\n{output}")
-    if browser:
-        run_browser(script, "js", node, go_env)
-    print("Go panic/recover baseline: passed")
+    for target in ("gojs", "emscripten", "emscripten-memory64"):
+        target_env = go_env.copy()
+        target_args = ["-target", target]
+        if target == "gojs":
+            target_env.update(GOOS="js", GOARCH="wasm")
+            target_args = []
+        runner = "emscripten-memory64-runner.mjs" if target.endswith("memory64") else "emscripten-runner.mjs"
+        for level, lto in ((0, None), (2, None), (2, "thin"), (2, "full")):
+            variant = f"O{level}" + (f"-{lto}" if lto else "")
+            script = directory / f"go-panic-recover-{target}-{variant}.mjs"
+            lto_args = [f"-lto={lto}", "-x"] if lto else []
+            build_output = run([llgo, "build", f"-O{level}", *lto_args, *target_args, "-o", str(script), str(GO)], env=target_env)
+            if lto and f"-flto={lto}" not in build_output:
+                raise RuntimeError(f"{target} {lto} did not reach the compiler driver")
+            wat = run([wasm_tools, "print", str(script.with_suffix(".wasm"))])
+            if not re.search(r"\b(catch|catch_all|try_table)\b", wat) or re.search(r'\(import "env" "invoke_', wat):
+                raise RuntimeError(f"{target} did not use native Wasm SjLj")
+            runner_args = ["--browser-only"] if target == "gojs" else []
+            output = run([node, str(ROOT / "targets" / runner), *runner_args, str(script)], env=target_env)
+            if "js" not in output.splitlines():
+                raise RuntimeError(f"Go panic/recover {target} {variant} failed:\n{output}")
+            if browser:
+                run_browser(script, "js", node, target_env)
+            print(f"Go suspended panic/recover/Goexit {target} {variant}: passed", flush=True)
+
+
+def require_catch_suspension_trap(args, env):
+    # A timeout, an unrelated crash, or merely entering the callback does not
+    # establish that the Asyncify catch assertion ran.
+    result = subprocess.run(args, capture_output=True, text=True, env=env, timeout=90)
+    output = result.stdout + result.stderr
+    if (result.returncode == 0 or "catch suspend entered" not in output
+            or not re.search(r"RuntimeError:.*unreachable", output)
+            or "unsupported catch suspension resumed" in output):
+        raise RuntimeError(f"catch suspension did not trap at its guard: {args}\n{output}")
 
 
 def run_go_cpp_boundary(directory, llgo, node, env, browser):
     go_env = env.copy()
     go_env["LLGO_ROOT"] = str(ROOT)
-    # LLGoFiles expands one env-provided compiler argument. Keep C++ EH
-    # inside the wrapper and use JS EH only for that C++ translation unit.
-    go_env["LLGO_EH_CFLAGS"] = "-fexceptions"
-    for level in (0, 2):
-        script = directory / f"go-cpp-boundary-O{level}.mjs"
-        run([llgo, "build", f"-O={level}", "-target", "emscripten", "-o",
-             str(script), str(GO_CPP)], env=go_env)
-        output = run([node, str(ROOT / "targets/emscripten-runner.mjs"),
-                      str(script)], env=go_env)
-        if "go cpp boundary ok" not in output.splitlines():
-            raise RuntimeError(f"Go/C++ wrapper at O{level} failed:\n{output}")
-        if browser:
-            run_browser(script, "go cpp boundary ok", node, go_env)
-    print("Go/C++ catch-status-panic wrapper: passed at O0 and O2")
+    go_env["LLGO_EH_CFLAGS"] = "-fwasm-exceptions"
+    # Exercise Binaryen's existing catch checks independently of Emscripten's
+    # general assertions, including optimized/LTO links. Do not enable these
+    # module-wide by default: the same option also asserts in intentionally
+    # uninstrumented reflection trampolines, rejecting valid suspension there.
+    go_env["EMCC_CFLAGS"] = (go_env.get("EMCC_CFLAGS", "")
+                            + " -sASSERTIONS=0"
+                            + " -sBINARYEN_EXTRA_PASSES=--pass-arg=asyncify-asserts")
+    if browser:
+        # Exported Go callbacks pull in the syscall host during initialization.
+        # The real browser needs the same filesystem bootstrap as a deployed
+        # Emscripten page; Node runners already provide their native host.
+        shutil.copyfile(ROOT / "targets/wasm_fs.js", directory / "wasm_fs.js")
+    for target in ("gojs", "emscripten", "emscripten-memory64"):
+        target_env = go_env.copy()
+        target_args = ["-target", target]
+        if target == "gojs":
+            target_env.update(GOOS="js", GOARCH="wasm")
+            target_args = []
+        runner = "emscripten-memory64-runner.mjs" if target.endswith("memory64") else "emscripten-runner.mjs"
+        runner_args = ["--browser-only"] if target == "gojs" else []
+        for level, lto in ((0, None), (2, None), (2, "thin"), (2, "full")):
+            variant = f"O{level}" + (f"-{lto}" if lto else "")
+            script = directory / f"go-cpp-boundary-{target}-{variant}.mjs"
+            lto_args = [f"-lto={lto}", "-x"] if lto else []
+            trace = run([llgo, "build", f"-O{level}", *lto_args, *target_args,
+                         "-o", str(script), str(GO_CPP)], env=target_env)
+            if lto and f"-flto={lto}" not in trace:
+                raise RuntimeError(f"C++ boundary {target} {lto} did not reach the driver")
+            command = [node, str(ROOT / "targets" / runner), *runner_args, str(script)]
+            output = run(command, env=target_env)
+            if "go cpp boundary ok" not in output.splitlines():
+                raise RuntimeError(f"Go/C++ wrapper {target} {variant} failed:\n{output}")
+            if browser:
+                browser_script = script.with_name("browser-" + script.name)
+                browser_script.write_text(
+                    'import "./wasm_fs.js";\n'
+                    f'import create from "./{script.name}";\n'
+                    'export default options => {\n'
+                    '  globalThis.llgoAttachWasmFS(options);\n'
+                    '  return create(options);\n'
+                    '};\n')
+                run_browser(browser_script, "go cpp boundary ok", node, target_env)
+            for mode in ("direct", "indirect"):
+                require_catch_suspension_trap([*command, mode], target_env)
+                if browser:
+                    require_catch_suspension_trap(
+                        [node, str(ROOT / "dev/test_wasm_browser.mjs"), str(browser_script),
+                         "go cpp boundary ok", mode], target_env)
+            print(f"Go/C++ boundary {target} {variant}: suspended recovery passed; "
+                  "direct/indirect catch suspension trapped", flush=True)
 
 
 def main():
@@ -166,7 +230,7 @@ def main():
             compare_optimization_level(directory, level, emxx, wasm_opt,
                                        wasm_tools, dwarfdump, node, env, args.browser)
         if llgo := os.environ.get("LLGO"):
-            run_go_baseline(directory, llgo, node, env, args.browser)
+            run_go_baseline(directory, llgo, node, wasm_tools, env, args.browser)
             run_go_cpp_boundary(directory, llgo, node, env, args.browser)
 
 

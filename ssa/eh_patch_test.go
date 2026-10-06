@@ -6,6 +6,7 @@ import (
 
 	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llgo/ssa/ssatest"
+	"github.com/xgo-dev/llvm"
 )
 
 func TestSetjmpLongjmpIRPaths(t *testing.T) {
@@ -75,6 +76,38 @@ func TestWindowsSigjmpBufferAlignment(t *testing.T) {
 				t.Fatalf("expected a 16-byte-aligned Windows/%s jmp_buf allocation, got:\n%s", arch, ir)
 			}
 		})
+	}
+}
+
+func TestWasmLateDeferBufferUsesFixedFrame(t *testing.T) {
+	prog := ssatest.NewProgram(t, &ssa.Target{GOOS: "js", GOARCH: "wasm"})
+	pkg := prog.NewPackage("foo", "foo")
+	fn := pkg.NewFunc("f", ssa.NoArgsNoRet, ssa.InGo)
+	b := fn.MakeBody(2)
+	b.Jump(fn.Block(1))
+	b.SetBlock(fn.Block(1))
+	jb := b.AllocaSigjmpBuf()
+	b.Sigsetjmp(jb, prog.IntVal(0, prog.CInt()))
+	b.Return()
+	b.EndBuild()
+
+	// A buffer reserved after the entry block is a dynamic shadow-stack
+	// allocation. A caught native exception can discard it while the defer
+	// frame still points at it, and subsequent calls overwrite the saved jump.
+	entry := pkg.Module().NamedFunction("f").EntryBasicBlock()
+	allocations := 0
+	for block := entry; !block.IsNil(); block = llvm.NextBasicBlock(block) {
+		for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+			if !inst.IsAAllocaInst().IsNil() {
+				allocations++
+				if block != entry {
+					t.Fatalf("jmp_buf is not in the fixed function frame:\n%s", pkg.Module().String())
+				}
+			}
+		}
+	}
+	if allocations != 1 {
+		t.Fatalf("got %d jump-buffer allocations, want 1", allocations)
 	}
 }
 

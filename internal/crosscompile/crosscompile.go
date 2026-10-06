@@ -842,10 +842,14 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, forceEspClang bool, le
 		// Emscripten configuration using system installation
 		// Specify emcc as the compiler
 		export.CC = "emcc"
-		// Add compiler flags
+		// Keep Go/C non-local returns and C++ bindings on the native Wasm
+		// exception ABI. Embind helpers can reference C++ exception support
+		// even when the entry package itself contains only Go source.
 		export.CCFLAGS = []string{
 			level.Flag(),
 			"-target", targetTriple,
+			"-sSUPPORT_LONGJMP=wasm",
+			"-fwasm-exceptions",
 			"-Qunused-arguments",
 			"-Wno-unused-command-line-argument",
 		}
@@ -854,6 +858,8 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, forceEspClang bool, le
 		export.LDFLAGS = []string{
 			level.Flag(),
 			"-target", targetTriple,
+			"-sSUPPORT_LONGJMP=wasm",
+			"-fwasm-exceptions",
 			"-Wno-override-module",
 			"-Wl,--error-limit=0",
 			"-s", "ALLOW_MEMORY_GROWTH=1",
@@ -889,6 +895,10 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, forceEspClang bool, le
 			// before an overflow can overwrite another goroutine's memory.
 			"-sSTACK_OVERFLOW_CHECK=2",
 		}...)
+		if ltoMode.Enabled() {
+			export.CCFLAGS = append(export.CCFLAGS, ltoMode.ClangFlag())
+			export.LDFLAGS = append(export.LDFLAGS, ltoMode.ClangFlag())
+		}
 		appendEmscriptenLibffiSearchPath(&export, llgoRoot, wasmProfile)
 	default:
 		err = errors.New("unsupported GOOS for WebAssembly: " + goos)
