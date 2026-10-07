@@ -36,6 +36,11 @@ declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
 declare i1 @fma() "llgo.cpu.query"="x86.fma"
 declare <4 x float> @external(<4 x float>) "llgo.fmv.avx2-entry"
 declare <4 x float> @assembly(<4 x float>)
+declare void @consume(ptr)
+define void @addressOnly() {
+  call void @consume(ptr @avx2)
+  ret void
+}
 define <4 x float> @helper(<4 x float> %x) "llgo.fmv.avx2-entry" {
   %y = call <4 x float> @external(<4 x float> %x)
   ret <4 x float> %y
@@ -112,6 +117,9 @@ func TestEarlySpecialization(t *testing.T) {
 	}
 	if !mod.NamedFunction("wide.__llgo_fmv_avx2").IsNil() || !mod.NamedFunction("assembly.__llgo_fmv_avx2").IsNil() {
 		t.Fatal("unsupported ABI or unpromised external entry specialized")
+	}
+	if !mod.NamedFunction("addressOnly.__llgo_fmv_avx2").IsNil() {
+		t.Fatal("taking a query's address must not establish a CPU guard")
 	}
 	for _, want := range []string{`!"root.__llgo_fmv_avx2", !"example.root"`, `!"root.__llgo_fmv_avx2", !"example.go"`, `"target-features"="+avx,+avx2"`} {
 		if !strings.Contains(mod.String(), want) {

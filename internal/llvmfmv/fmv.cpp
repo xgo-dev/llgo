@@ -56,14 +56,6 @@ bool supported(const Function &F) {
   return true;
 }
 
-Function *guardQuery(Function &F) {
-  for (auto &I : instructions(F))
-    if (auto *C = dyn_cast<CallInst>(&I))
-      if (isQuery(C->getCalledFunction()))
-        return C->getCalledFunction();
-  return nullptr;
-}
-
 std::string hexID(uint64_t ID) {
   std::string S = utohexstr(ID, true);
   return std::string(16 - S.size(), '0') + S;
@@ -71,6 +63,9 @@ std::string hexID(uint64_t ID) {
 
 // Runtime tables intentionally use strings, so CloneFunction cannot update
 // them. PC-site IDs must also follow a clone if the original is eliminated.
+// Keep these layouts in sync with ssa/funcinfo.go:
+// funcinfo = {version, symbol, Go name, file, line, column[, flags]}
+// pcline   = {version, id, symbol, file, line, column}
 void cloneSourceInfo(Module &M, Function &F, Function &V,
                      std::set<uint64_t> &UsedIDs) {
   LLVMContext &C = M.getContext();
@@ -200,18 +195,28 @@ std::string run(Module &M) {
     return "";
   SmallVector<Function *> Originals;
   DenseMap<Function *, Function *> Roots, Variants;
+  // Discover roots from direct uses of trusted queries. Ordinary packages
+  // without SIMD must not pay for a scan of every instruction in the module.
+  for (auto &F : M) {
+    if (!isQuery(&F))
+      continue;
+    for (User *U : F.users())
+      if (auto *Call = dyn_cast<CallInst>(U))
+        if (Call->getCalledFunction() == &F)
+          Roots[Call->getFunction()] = &F;
+  }
   for (auto &F : M) {
     if (F.hasFnAttribute(Done) || !supported(F))
       continue;
-    Function *Query = F.isDeclaration() ? nullptr : guardQuery(F);
+    Function *Query = Roots.lookup(&F);
     if (!F.hasFnAttribute(Entry) && !Query)
       continue;
     if (M.getNamedValue((F.getName() + Suffix).str()))
       return "SIMD FMV symbol collision: " + (F.getName() + Suffix).str();
     Originals.push_back(&F);
-    if (Query)
-      Roots[&F] = Query;
   }
+  if (Originals.empty())
+    return "";
   std::set<uint64_t> UsedIDs;
   if (auto *Info = M.getNamedMetadata("llgo.pcline"))
     for (auto *Row : Info->operands())
