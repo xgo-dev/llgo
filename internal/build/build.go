@@ -56,6 +56,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/goarch"
 	"github.com/xgo-dev/llgo/internal/goembed"
 	"github.com/xgo-dev/llgo/internal/header"
+	"github.com/xgo-dev/llgo/internal/llvmfmv"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/mockable"
@@ -3323,6 +3324,9 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	pkgPath := pkg.PkgPath
 	ret := aPkg.LPkg
 
+	if err := llvmfmv.Run(ret.Module()); err != nil {
+		return fmt.Errorf("%s: %w", pkgPath, err)
+	}
 	ctx.cTransformer.SetSkipFuncs(cabiSkipFuncsForPlan9Asm(ctx, pkgPath, ret.Module()))
 	lowerLargeAggregates(ctx.prog, ret.Module())
 	ctx.cTransformer.TransformModule(ret.Path(), ret.Module())

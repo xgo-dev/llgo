@@ -39,6 +39,46 @@ checks direct, indirect, deferred, and linkname calls. SIMD reflection,
 portable `simd` specialization, general FMV, and 256/512-bit vectors remain
 outside this implemented stage.
 
+## CPU-guarded SIMD128 specialization
+
+On amd64, functions calling the official `archsimd.X86.AVX2` query get an
+AVX2 version when their LLVM signature contains only scalars, pointers, and
+vectors up to 128 bits. The original entry checks the effective runtime query
+and tail-forwards to that version only when enabled. Function addresses retain
+the original entry. The AVX2 version folds that query and removes dead branches
+even at O0, before aggregate ABI lowering and target optimization.
+
+Direct calls from specialized code to eligible SIMD128 functions use matching
+AVX2 versions, including across packages without LTO. Only functions with Go
+bodies or compiler-generated SIMD intrinsic bodies promise those entries;
+bodyless assembly declarations retain their original calls. Ordinary calls
+and indirect calls retain the baseline entry. Aggregate signatures and
+arbitrary feature combinations are not yet specialized.
+
+The transform is compiled into LLGo through a small C interface to LLVM C++.
+It runs independently of the optimization level and LTO plugin. LLVM itself
+uses the existing build's library linkage. Specialized functions retain their
+Go source identity and get distinct runtime PC-line records.
+
+`GOAMD64` still controls the compilation baseline. The dispatcher observes
+the post-`GODEBUG=cpu.*` AVX2 query; instruction capability does not imply
+other observable query results. In particular, the AVX and FMA queries remain
+dynamic when AVX2 is enabled. This does not implement portable `simd` width
+selection or 256/512-bit vector calling conventions.
+
+Run the native matrix with:
+
+```sh
+LLGO=/path/to/llgo bash dev/test_native_simd.sh
+```
+
+On amd64 it runs O0 without LTO and O2 without LTO, with ThinLTO, and with
+Full LTO. Each binary runs the complete SIMD suite, then the FMV tests with
+AVX2, AVX, FMA, and all optional CPU features disabled in separate processes.
+The FMV tests cover initialization, direct and indirect entry calls,
+cross-package calls, independent CPU queries, and source-level stack traces.
+On other native SIMD targets the script retains the O0/O2 suite.
+
 ## Running
 
 From the repository root, using the built LLGo binary on `PATH`:

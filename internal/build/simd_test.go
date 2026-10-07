@@ -218,8 +218,8 @@ func TestSIMD128LLVM(t *testing.T) {
 			if !strings.Contains(string(asm.Bytes()), want) {
 				t.Fatalf("missing %s in assembly", want)
 			}
-			if target.arch == "amd64" && regexp.MustCompile(`(?m)^\s+v[a-z][a-z0-9]*\s`).Match(asm.Bytes()) {
-				t.Fatal("GOAMD64=v1 emitted an AVX instruction")
+			if target.arch == "amd64" {
+				assertSIMDBaselineAssembly(t, string(asm.Bytes()))
 			}
 			if target.arch != "amd64" {
 				wantLookup := map[string]string{"arm64": "tbl", "wasm": "i8x16.swizzle"}[target.arch]
@@ -232,6 +232,22 @@ func TestSIMD128LLVM(t *testing.T) {
 			}
 
 		})
+	}
+}
+
+// Linux assembly marks each function explicitly. AVX is legal only inside the
+// guarded variants; check every baseline body, including unguarded helpers.
+func assertSIMDBaselineAssembly(t *testing.T, asm string) {
+	t.Helper()
+	bodies := regexp.MustCompile(`(?ms)^\s*\.type\s+([^\n]+),@function\n(.*?)^\s*\.size\s+[^\n]+`).FindAllStringSubmatch(asm, -1)
+	if len(bodies) == 0 {
+		t.Fatal("no assembly functions found")
+	}
+	avx := regexp.MustCompile(`(?m)^\s+v[a-z][a-z0-9]*\s`)
+	for _, body := range bodies {
+		if !strings.Contains(body[1], ".__llgo_fmv_avx2") && avx.MatchString(body[2]) {
+			t.Fatalf("GOAMD64=v1 baseline %s emitted AVX:\n%s", body[1], body[2])
+		}
 	}
 }
 

@@ -674,6 +674,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			fn = pkg.NewFuncEx(name, sig, background, false, p.needsLinkOnce(f))
 		}
 	}
+	p.markSIMDFMV(fn, f)
 	if p.prog.Target().GOARCH == "wasm" {
 		if decl, ok := f.Syntax().(*ast.FuncDecl); ok {
 			fullName := declarationFuncName(llssa.PathOf(pkgTypes), decl, f.Object(), f.Signature.Recv())

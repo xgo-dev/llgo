@@ -320,8 +320,7 @@ jobs:
           GOEXPERIMENT: simd
         run: |
           go test -count=1 -timeout=2m ./test/simd/...
-          llgo test -O0 -count=1 -timeout=2m ./test/simd/...
-          llgo test -O2 -count=1 -timeout=2m ./test/simd/...
+          bash dev/test_native_simd.sh
 
       - name: Test demos
         run: bash .github/workflows/test_demo.sh
