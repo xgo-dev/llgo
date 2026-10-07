@@ -26,3 +26,6 @@ require (
 )
 
 replace github.com/xgo-dev/llgo/runtime => ./runtime
+
+// Pending the generic IR utility APIs in https://github.com/xgo-dev/llvm/pull/56.
+replace github.com/xgo-dev/llvm => github.com/zhouguangyuan0718/go-llvm v0.0.0-20261007051311-3fc63121b044

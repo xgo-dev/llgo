@@ -55,10 +55,13 @@ bodyless assembly declarations retain their original calls. Ordinary calls
 and indirect calls retain the baseline entry. Aggregate signatures and
 arbitrary feature combinations are not yet specialized.
 
-The transform is compiled into LLGo through a small C interface to LLVM C++.
-It runs independently of the optimization level and LTO plugin. LLVM itself
-uses the existing build's library linkage. Specialized functions retain their
-Go source identity and get distinct runtime PC-line records.
+The transform is implemented in Go using the LLVM Go API. It discovers CPU
+queries, clones eligible functions, rewrites direct calls and creates dispatch
+blocks without registering a custom LLVM pass. Generic LLVM cloning and local
+CFG utilities preserve instruction and debug metadata and remove dead branches
+even at O0. The transform runs independently of the optimization level and LTO
+plugin. Specialized functions retain their Go source identity and get distinct
+runtime PC-line records.
 
 `GOAMD64` still controls the compilation baseline. The dispatcher observes
 the post-`GODEBUG=cpu.*` AVX2 query; instruction capability does not imply

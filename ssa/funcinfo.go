@@ -30,7 +30,7 @@ const (
 	FuncInfoFlagWrapper uint32 = 1
 )
 
-// internal/llvmfmv/fmv.cpp also reads these versioned row layouts when cloning
+// internal/llvmfmv/source.go also reads these versioned row layouts when cloning
 // functions. Update its symbol and PC-site remapping when changing the schema.
 
 // EnableFuncInfoMetadata controls emission of DCE-safe function source

@@ -144,12 +144,18 @@ func TestOtherTargetUnchanged(t *testing.T) {
 }
 
 func TestSymbolCollision(t *testing.T) {
-	mod := parseModule(t, fixture+"\ndeclare void @root.__llgo_fmv_avx2()\n")
-	before := mod.String()
-	if err := Run(mod); err == nil || !strings.Contains(err.Error(), "symbol collision") {
-		t.Fatalf("expected collision diagnostic, got %v", err)
-	}
-	if mod.String() != before {
-		t.Fatal("collision partially mutated module")
+	for _, symbol := range []string{
+		"declare void @root.__llgo_fmv_avx2()",
+		"@root.__llgo_fmv_avx2 = global i8 0",
+		"@root.__llgo_fmv_avx2 = alias <4 x float> (<4 x float>, ptr), ptr @root",
+	} {
+		mod := parseModule(t, fixture+"\n"+symbol+"\n")
+		before := mod.String()
+		if err := Run(mod); err == nil || !strings.Contains(err.Error(), "symbol collision") {
+			t.Fatalf("expected collision diagnostic for %s, got %v", symbol, err)
+		}
+		if mod.String() != before {
+			t.Fatal("collision partially mutated module")
+		}
 	}
 }
