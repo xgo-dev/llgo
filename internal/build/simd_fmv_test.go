@@ -79,19 +79,36 @@ func testSIMDFMVLLVM(t *testing.T, goos, baseline, level string) {
 	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(mod.String(), "__llgo_fmv_avx2") {
-		t.Fatalf("missing AVX2 specialization:\n%s", mod.String())
-	}
-	if !strings.Contains(mod.String(), `linkageName: "main.guarded.__llgo_fmv_avx2"`) {
-		t.Fatal("specialized debug subprogram lost its linker identity")
-	}
 	guard := mod.NamedFunction("main.guarded").String()
-	fast := mod.NamedFunction("main.guarded.__llgo_fmv_avx2").String()
-	if !strings.Contains(guard, "musttail call") || !strings.Contains(guard, "X86Features.AVX2") ||
-		strings.Contains(fast, "X86Features.AVX2") || strings.Contains(fast, "fsub") ||
-		!strings.Contains(fast, "main.local.__llgo_fmv_avx2") ||
-		!strings.Contains(fast, "fmvtest/kernel.Compute.__llgo_fmv_avx2") {
-		t.Fatalf("invalid dispatch or specialization:\n%s\n%s", guard, fast)
+	fast := guard
+	suffix := ""
+	if baseline == "v3" || baseline == "v4" {
+		if strings.Contains(mod.String(), "__llgo_fmv") {
+			t.Fatalf("baseline feature generated redundant versions:\n%s", mod.String())
+		}
+	} else {
+		suffix = ".__llgo_fmv_avx2"
+		if !strings.Contains(mod.String(), `linkageName: "main.guarded.__llgo_fmv_avx2"`) {
+			t.Fatal("specialized debug subprogram lost its linker identity")
+		}
+		baselineBody := mod.NamedFunction("main.guarded.__llgo_fmv_baseline").String()
+		if goos == "windows" {
+			for _, name := range []string{"main.guarded", "main.guarded.__llgo_fmv_resolve"} {
+				fn := mod.NamedFunction(name)
+				if fn.Param(0).Type().TypeKind() != llvm.PointerTypeKind || strings.Contains(fn.String(), "alloca") || strings.Contains(fn.String(), "load <4 x float>") {
+					t.Fatalf("Win64 tail transfer must forward caller-owned vector storage:\n%s", fn.String())
+				}
+			}
+		}
+		fast = mod.NamedFunction("main.guarded" + suffix).String()
+		if !strings.Contains(guard, "musttail call") || !strings.Contains(guard, "load atomic ptr") ||
+			strings.Contains(guard, "X86Features.AVX2") || strings.Contains(baselineBody, "X86Features.AVX2") || !strings.Contains(baselineBody, "fsub") {
+			t.Fatalf("invalid dispatch or baseline:\n%s\n%s", guard, baselineBody)
+		}
+	}
+	if strings.Contains(fast, "X86Features.AVX2") || strings.Contains(fast, "fsub") ||
+		!strings.Contains(fast, "main.local"+suffix) || !strings.Contains(fast, "fmvtest/kernel.Compute"+suffix) {
+		t.Fatalf("invalid specialization:\n%s", fast)
 	}
 	if !strings.Contains(fast, "@fmv.externalAssembly(") || !mod.NamedFunction("fmv.externalAssembly.__llgo_fmv_avx2").IsNil() {
 		t.Fatal("bodyless assembly declaration must keep its baseline entry")
@@ -101,7 +118,7 @@ func testSIMDFMVLLVM(t *testing.T, goos, baseline, level string) {
 		t.Fatal(err)
 	}
 	defer kernels[0].LPkg.Prog.Dispose()
-	kernel := kernels[0].LPkg.Module().NamedFunction("fmvtest/kernel.Compute.__llgo_fmv_avx2")
+	kernel := kernels[0].LPkg.Module().NamedFunction("fmvtest/kernel.Compute" + suffix)
 	if kernel.IsNil() || kernel.BasicBlocksCount() == 0 {
 		t.Fatal("cross-package specialized definition missing")
 	}

@@ -43,10 +43,14 @@ outside this implemented stage.
 
 On amd64, functions calling the official `archsimd.X86.AVX2` query get an
 AVX2 version when their LLVM signature contains only scalars, pointers, and
-vectors up to 128 bits. The original entry checks the effective runtime query
-and tail-forwards to that version only when enabled. Function addresses retain
-the original entry. The AVX2 version folds that query and removes dead branches
-even at O0, before aggregate ABI lowering and target optimization.
+vectors up to 128 bits. The original entry loads a cached implementation and
+tail-forwards to it. A separate resolver selects the baseline or AVX2 body from
+the immutable, post-`GODEBUG` CPU snapshot on first use. Before CPU initialization
+it tail-forwards to the baseline without caching. Function addresses retain the
+original entry. Both bodies fold the selected AVX2 query and remove dead branches
+even at O0, before aggregate ABI lowering and target optimization. GOAMD64=v3/v4
+already require AVX2, so they fold the query without generating extra versions,
+a resolver, or a cache slot.
 
 Direct calls from specialized code to eligible SIMD128 functions use matching
 AVX2 versions, including across packages without LTO. Only functions with Go
@@ -62,6 +66,28 @@ CFG utilities preserve instruction and debug metadata and remove dead branches
 even at O0. The transform runs independently of the optimization level and LTO
 plugin. Specialized functions retain their Go source identity and get distinct
 runtime PC-line records.
+
+Inlining follows the same FMV policy as GoALLC: the public dispatcher and the
+physical implementations remain eligible for normal, feature-compatible LLVM
+inlining. The lazy resolver is noinline, and its pre-initialization baseline
+edge has a call-site noinline attribute so it stays tail-only. Explicit source
+noinline directives and disabled inlining remain honored. LLGo's existing
+runtime-frame requirements remain on the physical body, not the synthetic
+dispatcher. LLVM lowers a cloned musttail call to an ordinary call when the
+dispatcher is inlined into a caller with a continuation.
+
+The dispatcher retains its runtime function identity but has no synthetic debug
+subprogram. LLVM therefore attributes an inlined dispatcher to its real call
+site, preserving outer inline chains without adding a second source execution
+frame. The baseline/AVX2 implementations keep their own debug subprograms and
+the original Go display name. These are FMV-specific identity rules; LLGo's
+general runtime inline-frame representation remains separate from GoALLC's
+GoObj inline-tree format.
+
+On Windows/amd64, the compiler exposes the native indirect SIMD128 parameter
+ABI before creating dispatchers. Tail transfers forward the caller's parameter
+storage, avoiding vector temporaries in a resolver frame that the jump releases.
+Vector results keep their native register ABI.
 
 `GOAMD64` still controls the compilation baseline. The dispatcher observes
 the post-`GODEBUG=cpu.*` AVX2 query; instruction capability does not imply

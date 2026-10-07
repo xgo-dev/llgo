@@ -3324,10 +3324,11 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	pkgPath := pkg.PkgPath
 	ret := aPkg.LPkg
 
-	if err := llvmfmv.Run(ret.Module()); err != nil {
+	ctx.cTransformer.SetSkipFuncs(cabiSkipFuncsForPlan9Asm(ctx, pkgPath, ret.Module()))
+	ctx.cTransformer.LowerWindowsVectorParams(ret.Module())
+	if err := llvmfmv.Run(ret.Module(), ctx.buildConf.GOAMD64); err != nil {
 		return fmt.Errorf("%s: %w", pkgPath, err)
 	}
-	ctx.cTransformer.SetSkipFuncs(cabiSkipFuncsForPlan9Asm(ctx, pkgPath, ret.Module()))
 	lowerLargeAggregates(ctx.prog, ret.Module())
 	ctx.cTransformer.TransformModule(ret.Path(), ret.Module())
 	ctx.cTransformer.SetSkipFuncs(nil)

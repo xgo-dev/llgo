@@ -148,12 +148,16 @@ type CallInstr struct {
 }
 
 func (p *Transformer) TransformModule(path string, m llvm.Module) {
+	p.transformModule(m, nil)
+}
+
+func (p *Transformer) transformModule(m llvm.Module, acceptCallConv func(llvm.CallConv) bool) {
 	ctx := m.Context()
 	var fns []llvm.Value
 	var callInstrs []CallInstr
 	fn := m.FirstFunction()
 	for !fn.IsNil() {
-		if !p.shouldSkipFunc(fn.Name()) && p.isWrapFunctionType(ctx, fn.GlobalValueType()) {
+		if !p.shouldSkipFunc(fn.Name()) && (acceptCallConv == nil || acceptCallConv(fn.FunctionCallConv())) && p.isWrapFunctionType(ctx, fn.GlobalValueType()) {
 			fns = append(fns, fn)
 		}
 		bb := fn.FirstBasicBlock()
@@ -161,7 +165,7 @@ func (p *Transformer) TransformModule(path string, m llvm.Module) {
 			instr := bb.FirstInstruction()
 			for !instr.IsNil() {
 				if call := instr.IsACallInst(); !call.IsNil() {
-					if p.shouldSkipCall(call) {
+					if p.shouldSkipCall(call) || (acceptCallConv != nil && !acceptCallConv(call.InstructionCallConv())) {
 						instr = llvm.NextInstruction(instr)
 						continue
 					}
@@ -778,6 +782,7 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 	}
 
 	updateCallAttr := func(replacement llvm.Value) {
+		replacement.InstructionSetDebugLoc(call.InstructionDebugLoc())
 		replacement.SetInstructionCallConv(call.InstructionCallConv())
 		for i, list := range attrs {
 			for _, attr := range list {

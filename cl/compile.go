@@ -693,6 +693,9 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	if noInlineDirective || runtimeStackNoInline || pcLineNoInline || usesRecover {
 		fn.DisableTailCalls()
 	}
+	if !disableInline && !noInlineDirective && (runtimeStackNoInline || pcLineNoInline || usesRecover) {
+		fn.AllowSIMDDispatcherInlining()
+	}
 	p.funcs[f] = fn
 	isCgo := isCgoExternSymbol(f)
 	if (len(f.Blocks) != 0 || simdDecl) && p.prog.FuncInfoMetadataEnabled() {

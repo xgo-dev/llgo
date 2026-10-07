@@ -85,20 +85,30 @@ define <8 x float> @wide(<8 x float> %x) "llgo.fmv.avx2-entry" {
 
 func TestEarlySpecialization(t *testing.T) {
 	mod := parseModule(t, fixture)
-	if err := Run(mod); err != nil {
+	if err := Run(mod, "v1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 		t.Fatalf("%v\n%s", err, mod.String())
 	}
 	root := mod.NamedFunction("root").String()
+	baseline := mod.NamedFunction("root.__llgo_fmv_baseline").String()
+	resolver := mod.NamedFunction("root.__llgo_fmv_resolve").String()
 	variant := mod.NamedFunction("root.__llgo_fmv_avx2").String()
 	if !strings.Contains(mod.NamedGlobal("address").String(), "ptr @root") || strings.Contains(mod.NamedGlobal("address").String(), "__llgo_fmv") {
 		t.Fatal("function address no longer names baseline entry")
 	}
-	for _, want := range []string{"call i1 @avx2()", "musttail call <4 x float> @root.__llgo_fmv_avx2", "fallback:"} {
+	for _, want := range []string{"load atomic ptr, ptr @root.__llgo_fmv_slot monotonic", "musttail call <4 x float> %target"} {
 		if !strings.Contains(root, want) {
-			t.Errorf("baseline missing %q:\n%s", want, root)
+			t.Errorf("dispatcher missing %q:\n%s", want, root)
+		}
+	}
+	if strings.Contains(root, "@avx2(") || strings.Contains(baseline, "@avx2(") || !strings.Contains(baseline, "ret <4 x float> zeroinitializer") {
+		t.Fatalf("dispatcher or baseline retains an effective query:\n%s\n%s", root, baseline)
+	}
+	for _, want := range []string{"fmv.uninitialized:", "musttail call <4 x float> @root.__llgo_fmv_baseline", "store atomic ptr %selected, ptr @root.__llgo_fmv_slot monotonic"} {
+		if !strings.Contains(resolver, want) {
+			t.Errorf("resolver missing %q:\n%s", want, resolver)
 		}
 	}
 	for _, want := range []string{"@helper.__llgo_fmv_avx2(", "@fma()", "%indirect(", "@assembly("} {
@@ -127,7 +137,7 @@ func TestEarlySpecialization(t *testing.T) {
 		}
 	}
 	before := mod.String()
-	if err := Run(mod); err != nil {
+	if err := Run(mod, "v1"); err != nil {
 		t.Fatal(err)
 	}
 	if mod.String() != before {
@@ -138,7 +148,7 @@ func TestEarlySpecialization(t *testing.T) {
 func TestOtherTargetUnchanged(t *testing.T) {
 	mod := parseModule(t, strings.Replace(fixture, "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", 1))
 	before := mod.String()
-	if err := Run(mod); err != nil || mod.String() != before {
+	if err := Run(mod, "v1"); err != nil || mod.String() != before {
 		t.Fatalf("non-amd64 module changed: %v", err)
 	}
 }
@@ -148,10 +158,14 @@ func TestSymbolCollision(t *testing.T) {
 		"declare void @root.__llgo_fmv_avx2()",
 		"@root.__llgo_fmv_avx2 = global i8 0",
 		"@root.__llgo_fmv_avx2 = alias <4 x float> (<4 x float>, ptr), ptr @root",
+		"@root.__llgo_fmv_baseline = global i8 0",
+		"declare void @root.__llgo_fmv_resolve()",
+		"@root.__llgo_fmv_slot = global ptr null",
+		"@\"github.com/xgo-dev/llgo/runtime/internal/runtime.CPUFeatures\" = global i8 0",
 	} {
 		mod := parseModule(t, fixture+"\n"+symbol+"\n")
 		before := mod.String()
-		if err := Run(mod); err == nil || !strings.Contains(err.Error(), "symbol collision") {
+		if err := Run(mod, "v1"); err == nil || !strings.Contains(err.Error(), "symbol collision") {
 			t.Fatalf("expected collision diagnostic for %s, got %v", symbol, err)
 		}
 		if mod.String() != before {
@@ -186,7 +200,7 @@ func TestUnsupportedSignaturesUnchanged(t *testing.T) {
 declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
 `+function)
 			before := mod.String()
-			if err := Run(mod); err != nil || mod.String() != before {
+			if err := Run(mod, "v1"); err != nil || mod.String() != before {
 				t.Fatalf("unsupported ABI was changed: %v\n%s", err, mod.String())
 			}
 		})
@@ -208,7 +222,7 @@ fallback:
   ret void
 }
 `)
-	if err := Run(mod); err != nil {
+	if err := Run(mod, "v1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
@@ -217,8 +231,8 @@ fallback:
 	root := mod.NamedFunction("root").String()
 	variant := mod.NamedFunction("root.__llgo_fmv_avx2").String()
 	for _, want := range []string{
-		"call fastcc i1 @avx2({} zeroinitializer)",
-		"musttail call fastcc void @root.__llgo_fmv_avx2(ptr nonnull %p)",
+		"load atomic ptr, ptr @root.__llgo_fmv_slot monotonic",
+		"musttail call fastcc void %target(ptr nonnull %p)",
 	} {
 		if !strings.Contains(root, want) {
 			t.Fatalf("dispatch lost receiver or call ABI %q:\n%s", want, root)

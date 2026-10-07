@@ -70,8 +70,51 @@ func TestSIMDFMVTraceback(t *testing.T) {
 	var pcs [20]uintptr
 	var n int
 	fmvTrace(archsimd.BroadcastFloat32x4(1), &pcs, &n)
-	frames := runtime.CallersFrames(pcs[:n])
-	count := 0
+	checkFMVTrace(t, pcs[:n], "fmvTrace")
+}
+
+// This entry must remain eligible for inlining. Its synthetic dispatcher can
+// disappear into fmvInlineTraceCaller while its selected implementation still
+// contributes exactly one source execution frame.
+func fmvInlineTrace(x archsimd.Float32x4, pcs *[20]uintptr, n *int) archsimd.Float32x4 {
+	if archsimd.X86.AVX2() {
+		x = x.Add(archsimd.BroadcastFloat32x4(2))
+	} else {
+		x = x.Sub(archsimd.BroadcastFloat32x4(2))
+	}
+	*n = runtime.Callers(0, pcs[:])
+	return x
+}
+
+//go:noinline
+func fmvInlineTraceCaller(x archsimd.Float32x4, pcs *[20]uintptr, n *int) archsimd.Float32x4 {
+	// The continuation must execute after the inlined dispatch. Keeping its
+	// result observable also prevents a tail transfer from removing this frame.
+	return fmvInlineTrace(x, pcs, n).Mul(archsimd.BroadcastFloat32x4(3))
+}
+
+func TestSIMDFMVInlineTraceback(t *testing.T) {
+	var pcs [20]uintptr
+	var n int
+	x := fmvInlineTraceCaller(archsimd.BroadcastFloat32x4(5), &pcs, &n)
+	var lanes [4]float32
+	x.StoreArray(&lanes)
+	want := float32(9)
+	if archsimd.X86.AVX2() {
+		want = 21
+	}
+	for _, got := range lanes {
+		if got != want {
+			t.Fatalf("inlined dispatcher continuation returned %g, want %g", got, want)
+		}
+	}
+	checkFMVTrace(t, pcs[:n], "fmvInlineTrace", "fmvInlineTraceCaller")
+}
+
+func checkFMVTrace(t *testing.T, pcs []uintptr, names ...string) {
+	t.Helper()
+	frames := runtime.CallersFrames(pcs)
+	counts := make([]int, len(names))
 	var trace []runtime.Frame
 	for {
 		frame, more := frames.Next()
@@ -79,17 +122,21 @@ func TestSIMDFMVTraceback(t *testing.T) {
 		if strings.Contains(frame.Function, "__llgo_fmv") {
 			t.Fatalf("compiler variant leaked into traceback: %+v", frame)
 		}
-		if strings.HasSuffix(frame.Function, ".fmvTrace") {
-			count++
-			if !strings.HasSuffix(frame.File, "fmv_amd64_test.go") || frame.Line == 0 {
-				t.Fatalf("missing source location: %+v", frame)
+		for i, name := range names {
+			if strings.HasSuffix(frame.Function, "."+name) {
+				counts[i]++
+				if !strings.HasSuffix(frame.File, "fmv_amd64_test.go") || frame.Line == 0 {
+					t.Fatalf("missing source location: %+v", frame)
+				}
 			}
 		}
 		if !more {
 			break
 		}
 	}
-	if count != 1 {
-		t.Fatalf("expected one fmvTrace frame, got %d; frames: %+v", count, trace)
+	for i, name := range names {
+		if counts[i] != 1 {
+			t.Fatalf("expected one %s frame, got %d; frames: %+v", name, counts[i], trace)
+		}
 	}
 }

@@ -53,7 +53,7 @@ func metadataFields(fields []llvm.Value) []llvm.Metadata {
 	return mds
 }
 
-func (s *sourceInfo) clone(fn, variant llvm.Value) {
+func (s *sourceInfo) cloneEntry(fn, variant llvm.Value) {
 	ctx := s.mod.Context()
 	name := variant.Name()
 	// LLVM's CloneFunction gives the implementation its own subprogram and
@@ -66,6 +66,12 @@ func (s *sourceInfo) clone(fn, variant llvm.Value) {
 		mds[1] = ctx.MDString(name)
 		s.mod.AddNamedMetadataOperand("llgo.funcinfo", ctx.MDNode(mds))
 	}
+}
+
+func (s *sourceInfo) clone(fn, variant llvm.Value) {
+	s.cloneEntry(fn, variant)
+	ctx := s.mod.Context()
+	name := variant.Name()
 	var replacements []string
 	for _, fields := range s.lines[fn.Name()] {
 		old := fields[1].ZExtValue()

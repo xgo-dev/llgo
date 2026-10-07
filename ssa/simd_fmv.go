@@ -14,3 +14,13 @@ func (f Function) MarkSIMDFMV(available bool, query string) {
 		f.impl.AddFunctionAttr(f.Prog.ctx.CreateStringAttribute("llgo.cpu.query", query))
 	}
 }
+
+// AllowSIMDDispatcherInlining separates a compiler-required physical source
+// frame from the synthetic FMV entry. The implementation retains its frame;
+// the tail-only dispatcher may inline without changing the source call stack.
+// Callers must not set this for an explicit noinline directive or -l.
+func (f Function) AllowSIMDDispatcherInlining() {
+	if f.Prog.Target().GOARCH == "amd64" {
+		f.impl.AddFunctionAttr(f.Prog.ctx.CreateStringAttribute("llgo.fmv.inline-entry", ""))
+	}
+}
