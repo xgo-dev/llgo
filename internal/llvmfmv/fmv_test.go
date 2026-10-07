@@ -159,3 +159,72 @@ func TestSymbolCollision(t *testing.T) {
 		}
 	}
 }
+
+func TestUnsupportedSignaturesUnchanged(t *testing.T) {
+	for name, function := range map[string]string{
+		"aggregate_parameter": `define i32 @unsupported({i32} %x) {
+  %q = call i1 @avx2()
+  ret i32 0
+}`,
+		"aggregate_result": `define {i32} @unsupported() {
+  %q = call i1 @avx2()
+  ret {i32} zeroinitializer
+}`,
+		"wide_parameter": `define void @unsupported(<8 x float> %x) {
+  %q = call i1 @avx2()
+  ret void
+}`,
+		"variadic": `define void @unsupported(i32 %n, ...) {
+  %q = call i1 @avx2()
+  ret void
+}`,
+		"naked":         `declare void @unsupported() naked "llgo.fmv.avx2-entry"`,
+		"returns_twice": `declare i32 @unsupported(ptr) returns_twice "llgo.fmv.avx2-entry"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			mod := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"
+declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
+`+function)
+			before := mod.String()
+			if err := Run(mod); err != nil || mod.String() != before {
+				t.Fatalf("unsupported ABI was changed: %v\n%s", err, mod.String())
+			}
+		})
+	}
+}
+
+func TestZeroSizedReceiverAndVoidDispatch(t *testing.T) {
+	mod := parseModule(t, `
+target triple = "x86_64-unknown-linux-gnu"
+declare fastcc i1 @avx2({}) "llgo.cpu.query"="x86.avx2"
+define fastcc void @root(ptr nonnull %p) {
+  %ok = call fastcc i1 @avx2({} zeroinitializer)
+  br i1 %ok, label %fast, label %fallback
+fast:
+  store i32 1, ptr %p
+  ret void
+fallback:
+  store i32 0, ptr %p
+  ret void
+}
+`)
+	if err := Run(mod); err != nil {
+		t.Fatal(err)
+	}
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	root := mod.NamedFunction("root").String()
+	variant := mod.NamedFunction("root.__llgo_fmv_avx2").String()
+	for _, want := range []string{
+		"call fastcc i1 @avx2({} zeroinitializer)",
+		"musttail call fastcc void @root.__llgo_fmv_avx2(ptr nonnull %p)",
+	} {
+		if !strings.Contains(root, want) {
+			t.Fatalf("dispatch lost receiver or call ABI %q:\n%s", want, root)
+		}
+	}
+	if strings.Contains(variant, "@avx2(") || strings.Contains(variant, "store i32 0") || !strings.Contains(variant, "store i32 1") {
+		t.Fatalf("zero-sized receiver query did not specialize:\n%s", variant)
+	}
+}
