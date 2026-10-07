@@ -743,8 +743,8 @@ func TestDevLTOGlobalDCEConcreteInterfaceEmitsStaticItabTemplate(t *testing.T) {
 		t.Fatal("unassignable concrete type emitted a static itab template")
 	}
 	prog.EnableLTOPluginMarkers(false)
-	if _, ok := b.staticItab(intf, concrete, b.abiType(intf), b.abiType(concrete)); ok {
-		t.Fatal("static itab template emitted without LTO plugin markers")
+	if _, ok := b.staticItab(intf, concrete, b.abiType(intf), b.abiType(concrete)); !ok {
+		t.Fatal("runtime static itab was not emitted without LTO plugin markers")
 	}
 	prog.EnableLTOPluginMarkers(true)
 	noInterface := types.NewNamed(
@@ -768,7 +768,6 @@ func TestDevLTOGlobalDCEConcreteInterfaceEmitsStaticItabTemplate(t *testing.T) {
 	interfaceTypeID := prog.interfaceCapabilityKey(intf)
 	for _, want := range []string{
 		`_llgo_itab$`,
-		`@llvm.compiler.used`,
 		`!"go.method.M:func()"`,
 		`!"go.method.N:func()"`,
 		`!llgo.static.itab.slot`,
@@ -782,7 +781,10 @@ func TestDevLTOGlobalDCEConcreteInterfaceEmitsStaticItabTemplate(t *testing.T) {
 		}
 	}
 	if !strings.Contains(ir, `call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.NewItab"`) {
-		t.Fatalf("static itab template replaced NewItab before LTO proof:\n%s", ir)
+		t.Fatalf("LTO T2I dropped NewItab; method-drop DCE needs the runtime call:\n%s", ir)
+	}
+	if !strings.Contains(ir, `@llvm.compiler.used`) {
+		t.Fatalf("missing compiler.used for LTO itab template:\n%s", ir)
 	}
 	for _, typeID := range []string{
 		prog.interfaceMethodCapabilityKey(intf, 0),
@@ -795,6 +797,156 @@ func TestDevLTOGlobalDCEConcreteInterfaceEmitsStaticItabTemplate(t *testing.T) {
 	}
 	if strings.Contains(ir, `!llgo.interface.type`) || strings.Contains(ir, `!llgo.interface.method`) {
 		t.Fatalf("interface declaration remained attached to a type descriptor:\n%s", ir)
+	}
+}
+
+func TestDeadcodeDropT2IUsesNewItab(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.EnableDeadcodeDrop(true)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkgTypes := types.NewPackage("example.com/deadcodedrop", "deadcodedrop")
+	concrete := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkgTypes, "T", nil),
+		types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, pkgTypes, "", concrete)
+	methodSig := types.NewSignatureType(recv, nil, nil, nil, nil, false)
+	concrete.AddMethod(types.NewFunc(token.NoPos, pkgTypes, "Read", methodSig))
+	concrete.AddMethod(types.NewFunc(token.NoPos, pkgTypes, "Write", methodSig))
+	interfaceMethodSig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	intf := types.NewInterfaceType([]*types.Func{
+		types.NewFunc(token.NoPos, pkgTypes, "Read", interfaceMethodSig),
+		types.NewFunc(token.NoPos, pkgTypes, "Write", interfaceMethodSig),
+	}, nil)
+	intf.Complete()
+
+	pkg := prog.NewPackage("deadcodedrop", pkgTypes.Path())
+	returns := types.NewTuple(types.NewVar(token.NoPos, nil, "", intf))
+	fn := pkg.NewFunc("Make", types.NewSignatureType(nil, nil, nil, nil, returns, false), InGo)
+	b := fn.MakeBody(1)
+	b.Return(b.MakeInterface(prog.Type(intf, InGo), prog.Zero(prog.Type(concrete, InGo))))
+	if _, ok := b.staticItab(intf, concrete, b.abiType(intf), b.abiType(concrete)); ok {
+		t.Fatal("deadcode-drop T2I emitted a static itab vtable")
+	}
+	b.EndBuild()
+
+	ir := pkg.String()
+	if strings.Contains(ir, `_llgo_itab$`) {
+		t.Fatalf("deadcode-drop T2I emitted a static itab global:\n%s", ir)
+	}
+	if !strings.Contains(ir, `call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.NewItab"`) {
+		t.Fatalf("deadcode-drop T2I dropped NewItab:\n%s", ir)
+	}
+}
+
+func TestTypeHashFromGlobal(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("thash", "thash")
+
+	if _, ok := typeHashFromGlobal(llvm.Value{}); ok {
+		t.Fatal("nil value produced a hash")
+	}
+	if _, ok := typeHashFromGlobal(prog.IntVal(1, prog.Int()).impl); ok {
+		t.Fatal("non-global produced a hash")
+	}
+	g := pkg.NewVarEx("noinit", prog.Pointer(prog.Int()))
+	if _, ok := typeHashFromGlobal(g.impl); ok {
+		t.Fatal("uninitialized global produced a hash")
+	}
+
+	two := prog.rawType(types.NewStruct([]*types.Var{
+		types.NewVar(token.NoPos, nil, "a", types.Typ[types.Int]),
+		types.NewVar(token.NoPos, nil, "b", types.Typ[types.Int]),
+	}, nil))
+	g2 := pkg.NewVarEx("two", prog.Pointer(two))
+	g2.impl.SetInitializer(prog.constStructValue(two, []llvm.Value{
+		prog.IntVal(1, prog.Int()).impl,
+		prog.IntVal(2, prog.Int()).impl,
+	}))
+	if _, ok := typeHashFromGlobal(g2.impl); ok {
+		t.Fatal("two-field struct produced a hash")
+	}
+
+	ptr := prog.VoidPtr()
+	null := llvm.ConstPointerNull(prog.tyVoidPtr())
+	bad := prog.rawType(types.NewStruct([]*types.Var{
+		types.NewVar(token.NoPos, nil, "a", ptr.RawType()),
+		types.NewVar(token.NoPos, nil, "b", ptr.RawType()),
+		types.NewVar(token.NoPos, nil, "c", ptr.RawType()),
+	}, nil))
+	g3 := pkg.NewVarEx("badhash", prog.Pointer(bad))
+	g3.impl.SetInitializer(prog.constStructValue(bad, []llvm.Value{null, null, null}))
+	if _, ok := typeHashFromGlobal(g3.impl); ok {
+		t.Fatal("non-int hash field produced a hash")
+	}
+
+	okTy := prog.rawType(types.NewStruct([]*types.Var{
+		types.NewVar(token.NoPos, nil, "a", ptr.RawType()),
+		types.NewVar(token.NoPos, nil, "b", ptr.RawType()),
+		types.NewVar(token.NoPos, nil, "h", types.Typ[types.Uint32]),
+	}, nil))
+	g4 := pkg.NewVarEx("okhash", prog.Pointer(okTy))
+	g4.impl.SetInitializer(prog.constStructValue(okTy, []llvm.Value{
+		null, null, prog.IntVal(0x11, prog.Uint32()).impl,
+	}))
+	h, ok := typeHashFromGlobal(g4.impl)
+	if !ok || h != 0x11 {
+		t.Fatalf("hash=%#x ok=%v", h, ok)
+	}
+}
+
+func TestRuntimeStaticItabUsesVtableAndInitItabs(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkgTypes := types.NewPackage("example.com/runtimeitab", "runtimeitab")
+	concrete := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkgTypes, "T", nil),
+		types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, pkgTypes, "", concrete)
+	methodSig := types.NewSignatureType(recv, nil, nil, nil, nil, false)
+	concrete.AddMethod(types.NewFunc(token.NoPos, pkgTypes, "M", methodSig))
+	interfaceMethodSig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	intf := types.NewInterfaceType([]*types.Func{
+		types.NewFunc(token.NoPos, pkgTypes, "M", interfaceMethodSig),
+	}, nil)
+	intf.Complete()
+
+	pkg := prog.NewPackage("runtimeitab", pkgTypes.Path())
+	returns := types.NewTuple(types.NewVar(token.NoPos, nil, "", intf))
+	fn := pkg.NewFunc("Make", types.NewSignatureType(nil, nil, nil, nil, returns, false), InGo)
+	b := fn.MakeBody(1)
+	tabi := b.abiType(intf)
+	tcon := b.abiType(concrete)
+	itab1, ok1 := b.staticItab(intf, concrete, tabi, tcon)
+	itab2, ok2 := b.staticItab(intf, concrete, tabi, tcon)
+	if !ok1 || !ok2 || itab1.impl != itab2.impl {
+		t.Fatal("repeated T2I did not reuse the static itab global")
+	}
+	b.Return(b.MakeInterface(prog.Type(intf, InGo), prog.Zero(prog.Type(concrete, InGo))))
+	b.EndBuild()
+
+	ir := pkg.String()
+	if !strings.Contains(ir, `_llgo_itab$`) {
+		t.Fatalf("missing static itab global:\n%s", ir)
+	}
+	if strings.Contains(ir, `call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.NewItab"`) {
+		t.Fatalf("runtime T2I still called NewItab:\n%s", ir)
+	}
+	if strings.Contains(ir, `RegisterStaticItab`) {
+		t.Fatalf("T2I must not register itabs from package init:\n%s", ir)
 	}
 }
 
