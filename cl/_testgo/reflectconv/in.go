@@ -32,10 +32,7 @@ type namedFunc func(int) int
 // CHECK-NEXT: [[CAPTURED_EFACE:%[0-9]+]] = insertvalue %"{{.*}}eface" { ptr @{{.*}}, ptr undef }, ptr [[CAPTURED_BOX]], 1
 // CHECK-NEXT: [[CAPTURED_VALUE:%[0-9]+]] = call %reflect.Value @reflect.ValueOf(%"{{.*}}eface" [[CAPTURED_EFACE]])
 // CHECK-NEXT: call ptr @reflect.Value.UnsafePointer(%reflect.Value [[CAPTURED_VALUE]])
-// CHECK: [[DECLARED_BOX:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 16)
-// CHECK-NEXT: store { ptr, ptr } { ptr @main.numericConversions, ptr null }, ptr [[DECLARED_BOX]]
-// CHECK-NEXT: [[DECLARED_EFACE:%[0-9]+]] = insertvalue %"{{.*}}eface" { ptr @{{.*}}, ptr undef }, ptr [[DECLARED_BOX]], 1
-// CHECK-NEXT: [[DECLARED_VALUE:%[0-9]+]] = call %reflect.Value @reflect.ValueOf(%"{{.*}}eface" [[DECLARED_EFACE]])
+// CHECK: [[DECLARED_VALUE:%[0-9]+]] = call %reflect.Value @reflect.ValueOf(%"{{.*}}eface" { ptr @{{.*}}, ptr @"_llgo_ifacebox${{.*}}" })
 // CHECK-NEXT: call ptr @reflect.Value.UnsafePointer(%reflect.Value [[DECLARED_VALUE]])
 
 // CHECK-LABEL: define void @main.main(){{.*}} {

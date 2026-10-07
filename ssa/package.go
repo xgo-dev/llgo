@@ -430,6 +430,12 @@ func (p Program) DeadcodeDropEnabled() bool {
 	return p.enableDeadcodeDrop
 }
 
+// useRuntimeStaticItab reports whether T2I can use a compiler-emitted itab as
+// the live vtable. LTO and deadcode-drop keep Fun[] from pinning unused methods.
+func (p Program) useRuntimeStaticItab() bool {
+	return !p.enableLTOPluginMarker && !p.enableDeadcodeDrop
+}
+
 // DisableBoundsChecks controls index, slice, and slice-to-array conversion
 // bounds checks. Other dynamic validity checks, including nil pointer and
 // unsafe builtin checks, are not affected.
@@ -987,6 +993,7 @@ type aPackage struct {
 	llvmUsedValues []llvm.Value
 
 	abiTypeFakeUseCache map[llvm.Value][]llvm.Value
+	ifaceBoxByValue     map[llvm.Value]llvm.Value
 
 	wasmReflectBridges map[string]wasmReflectBridgePair
 }

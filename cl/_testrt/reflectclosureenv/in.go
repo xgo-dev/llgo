@@ -66,7 +66,7 @@ type receiver struct {
 // CHECK-DAG: [[MAIN_NESTED_VALUE:%.*]] = call %reflect.Value @reflect.ValueOf(%"{{.*}}eface" [[MAIN_NESTED_BOX]])
 // CHECK-DAG: call void @main.checkInt(%reflect.Value [[MAIN_NESTED_VALUE]], %"{{.*}}Slice" [[MAIN_INTS]])
 // MakeFunc receives the type of the nine-argument literal and the slice callback main$2.
-// CHECK-DAG: [[FUNC_TYPE:%.*]] = call %"{{.*}}iface" @reflect.TypeOf(%"{{.*}}eface" %{{.*}})
+// CHECK-DAG: [[FUNC_TYPE:%.*]] = call %"{{.*}}iface" @reflect.TypeOf(%"{{.*}}eface" { ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr @"_llgo_ifacebox${{.*}}" })
 // CHECK-DAG: [[MADE:%.*]] = call %reflect.Value @reflect.MakeFunc(%"{{.*}}iface" [[FUNC_TYPE]], { ptr, ptr } { ptr @"main.main$2", ptr null })
 // CHECK-DAG: call void @main.checkInt(%reflect.Value [[MADE]], %"{{.*}}Slice" [[MAIN_INTS]])
 // MethodByName is performed on receiver{base: 10} and checked with the same arguments.
