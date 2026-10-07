@@ -3241,17 +3241,16 @@ func lowerMainCExportModule(ctx *context, pkg llssa.Package, exports []cExport) 
 		return false, nil
 	}
 	ctx.cTransformer.TransformModule(pkg.Path(), mod)
+	// C ABI lowering can introduce 4-64 KiB aggregate snapshots in export
+	// wrappers. Apply the same post-C-ABI copy pass as package modules.
+	lowerAggregateCopies(ctx.prog.TargetData(), mod, llabi.AggregateLoweringConfig{
+		GoWordSize: ctx.prog.GoWordSize(),
+		GCRoots:    ctx.prog.GCRootsEnabled(),
+		Wasm:       ctx.buildConf.Goarch == "wasm",
+	})
 	if ctx.buildConf.Goarch != "wasm" {
 		return true, nil
 	}
-
-	// C ABI lowering can introduce 4-64 KiB aggregate snapshots in export
-	// wrappers. Apply the same post-C-ABI Wasm passes as package modules.
-	lowerWasmAggregateCopies(ctx.buildConf.Goarch, ctx.prog.TargetData(), mod, llabi.AggregateLoweringConfig{
-		GoWordSize: ctx.prog.GoWordSize(),
-		GCRoots:    ctx.prog.GCRootsEnabled(),
-		Wasm:       true,
-	})
 	applySizeOptimizationAttributes(mod, ctx.buildConf.OptLevel)
 	if err := optimizeLLVMModule(ctx, pkg.Path(), mod); err != nil {
 		return true, err
@@ -3297,10 +3296,10 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 			return err
 		}
 	}
-	lowerWasmAggregateCopies(ctx.buildConf.Goarch, ctx.prog.TargetData(), ret.Module(), llabi.AggregateLoweringConfig{
+	lowerAggregateCopies(ctx.prog.TargetData(), ret.Module(), llabi.AggregateLoweringConfig{
 		GoWordSize: ctx.prog.GoWordSize(),
 		GCRoots:    ctx.prog.GCRootsEnabled(),
-		Wasm:       true,
+		Wasm:       ctx.buildConf.Goarch == "wasm",
 	})
 	applySizeOptimizationAttributes(ret.Module(), ctx.buildConf.OptLevel)
 	printCmds := ctx.shouldPrintCommands(verbose)

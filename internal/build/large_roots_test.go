@@ -43,40 +43,57 @@ func TestLowerLargeAggregatesGCPolicy(t *testing.T) {
 	}
 }
 
-func TestLowerMainCExportModuleWasmCopies(t *testing.T) {
+func TestLowerMainCExportModuleCopies(t *testing.T) {
 	llvm.InitializeAllTargets()
 	llvm.InitializeAllTargetMCs()
 	llvm.InitializeAllTargetInfos()
-	target := &llssa.Target{
-		GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "emscripten",
-	}
-	prog := llssa.NewProgram(target)
-	defer prog.Dispose()
-	pkg := prog.NewPackage("large", "large")
-	sig := newSignature([]types.Type{types.NewArray(types.Typ[types.Uint8], 8192)}, nil)
-	exports := []cExport{{goName: "large.impl", cName: "large_export", sig: sig}}
-	defineCExportWrappers(pkg, exports, nil)
-	ctx := &context{
-		prog:         prog,
-		buildConf:    &Config{Goos: "js", Goarch: "wasm"},
-		cTransformer: cabi.NewTransformer(prog, target.Spec().Triple, "", true),
-	}
-	if changed, err := lowerMainCExportModule(ctx, pkg, nil); err != nil || changed {
-		t.Fatalf("empty C export module lowering = (%t, %v), want (false, nil)", changed, err)
-	}
-	changed, err := lowerMainCExportModule(ctx, pkg, exports)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !changed {
-		t.Fatal("Wasm C export module skipped lowering")
-	}
-	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
-		t.Fatal(err)
-	}
-	body := pkg.Module().NamedFunction("large_export").String()
-	if strings.Contains(body, "load [8192 x i8]") || strings.Contains(body, "store [8192 x i8]") ||
-		!strings.Contains(body, "@llvm.mem") {
-		t.Fatalf("C export wrapper retained a large aggregate copy:\n%s", body)
+	for _, tc := range []struct {
+		name, goos, goarch string
+		target             *llssa.Target
+	}{
+		{
+			name:   "wasm",
+			goos:   "js",
+			goarch: "wasm",
+			target: &llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "emscripten"},
+		},
+		{
+			name:   "native",
+			goos:   "linux",
+			goarch: "amd64",
+			target: &llssa.Target{GOOS: "linux", GOARCH: "amd64"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog := llssa.NewProgram(tc.target)
+			defer prog.Dispose()
+			pkg := prog.NewPackage("large", "large")
+			sig := newSignature([]types.Type{types.NewArray(types.Typ[types.Uint8], 8192)}, nil)
+			exports := []cExport{{goName: "large.impl", cName: "large_export", sig: sig}}
+			defineCExportWrappers(pkg, exports, nil)
+			ctx := &context{
+				prog:         prog,
+				buildConf:    &Config{Goos: tc.goos, Goarch: tc.goarch},
+				cTransformer: cabi.NewTransformer(prog, tc.target.Spec().Triple, "", true),
+			}
+			if changed, err := lowerMainCExportModule(ctx, pkg, nil); err != nil || changed {
+				t.Fatalf("empty C export module lowering = (%t, %v), want (false, nil)", changed, err)
+			}
+			changed, err := lowerMainCExportModule(ctx, pkg, exports)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !changed {
+				t.Fatal("C export module skipped lowering")
+			}
+			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+			body := pkg.Module().NamedFunction("large_export").String()
+			if strings.Contains(body, "load [8192 x i8]") || strings.Contains(body, "store [8192 x i8]") ||
+				!strings.Contains(body, "@llvm.mem") {
+				t.Fatalf("C export wrapper retained a large aggregate copy:\n%s", body)
+			}
+		})
 	}
 }
