@@ -57,19 +57,20 @@ func TestSIMDFMVDispatch(t *testing.T) {
 }
 
 //go:noinline
-func fmvTrace(x archsimd.Float32x4, pcs *[20]uintptr) archsimd.Float32x4 {
+func fmvTrace(x archsimd.Float32x4, pcs *[20]uintptr, n *int) archsimd.Float32x4 {
 	if archsimd.X86.AVX2() {
-		runtime.Callers(0, pcs[:])
+		*n = runtime.Callers(0, pcs[:])
 		return vectorcall.Echo(x, false)
 	}
-	runtime.Callers(0, pcs[:])
+	*n = runtime.Callers(0, pcs[:])
 	return x
 }
 
 func TestSIMDFMVTraceback(t *testing.T) {
 	var pcs [20]uintptr
-	fmvTrace(archsimd.BroadcastFloat32x4(1), &pcs)
-	frames := runtime.CallersFrames(pcs[:])
+	var n int
+	fmvTrace(archsimd.BroadcastFloat32x4(1), &pcs, &n)
+	frames := runtime.CallersFrames(pcs[:n])
 	count := 0
 	var trace []runtime.Frame
 	for {

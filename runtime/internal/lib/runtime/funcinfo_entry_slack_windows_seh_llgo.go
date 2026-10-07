@@ -9,6 +9,18 @@ package runtime
 // and must not resolve to the next densely packed function's anchor.
 const runtimeFuncPCEntrySlack = 64
 
+// runtimeFuncPCSiteEntry groups LTO inline copies by the real PE function.
+// A leaf without unwind metadata keeps its anchor; equal-PC copies can still
+// be deduplicated in their original record order.
+func runtimeFuncPCSiteEntry(pc uintptr) uintptr {
+	var imageBase uintptr
+	entry := c_windowsLookupFunctionEntry(pc, &imageBase)
+	if entry == nil {
+		return pc
+	}
+	return imageBase + uintptr(*(*uint32)(entry))
+}
+
 func runtimeFuncPCMayUseEntrySlack(pc uintptr) bool {
 	var imageBase uintptr
 	entry := c_windowsLookupFunctionEntry(pc, &imageBase)
