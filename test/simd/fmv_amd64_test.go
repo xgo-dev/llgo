@@ -71,8 +71,10 @@ func TestSIMDFMVTraceback(t *testing.T) {
 	fmvTrace(archsimd.BroadcastFloat32x4(1), &pcs)
 	frames := runtime.CallersFrames(pcs[:])
 	count := 0
+	var trace []runtime.Frame
 	for {
 		frame, more := frames.Next()
+		trace = append(trace, frame)
 		if strings.Contains(frame.Function, "__llgo_fmv") {
 			t.Fatalf("compiler variant leaked into traceback: %+v", frame)
 		}
@@ -87,6 +89,6 @@ func TestSIMDFMVTraceback(t *testing.T) {
 		}
 	}
 	if count != 1 {
-		t.Fatalf("expected one fmvTrace frame, got %d", count)
+		t.Fatalf("expected one fmvTrace frame, got %d; frames: %+v", count, trace)
 	}
 }

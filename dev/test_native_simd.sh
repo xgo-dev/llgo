@@ -13,8 +13,13 @@ if [[ "$(go env GOARCH)" != amd64 ]]; then
 fi
 
 export GOAMD64=v1
-output=$(mktemp -d)
-trap 'rm -rf "$output"' EXIT
+if [[ -n "${LLGO_SIMD_ARTIFACT_DIR:-}" ]]; then
+  output=$LLGO_SIMD_ARTIFACT_DIR
+  mkdir -p "$output"
+else
+  output=$(mktemp -d)
+  trap 'rm -rf "$output"' EXIT
+fi
 
 for profile in O0-off O2-off O2-thin O2-full; do
   opt=${profile%%-*}
