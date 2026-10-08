@@ -71,6 +71,9 @@ type Options struct {
 	// the final-link module supplies the public C entry points.
 	CExportWrappers bool
 	ShadowStack     bool
+	// DebuggerFrames retains logical stacks for every eligible function in
+	// opt-in Wasm debugger builds, including parked goroutines.
+	DebuggerFrames bool
 	// PreloadedSyntax means all Program-side source metadata was collected
 	// before lowering and is now shared read-only by backend Programs.
 	PreloadedSyntax bool
@@ -2930,7 +2933,7 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		cgoSymbols: make([]string, 0, 128),
 		rewrites:   rewrites,
 
-		trackCallerFrames:  filesUseRuntimeCaller(files) || packageUsesRuntimeCaller(ct, pkg),
+		trackCallerFrames:  options.DebuggerFrames || filesUseRuntimeCaller(files) || packageUsesRuntimeCaller(ct, pkg),
 		runtimeCallerFuncs: runtimeCallerFuncSet(ct, pkg),
 		panicSiteFuncs:     recoverPanicSiteFuncSet(ct, pkg),
 	}

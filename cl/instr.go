@@ -930,7 +930,7 @@ func (p *context) shouldTrackCallerFrames() bool {
 	if p == nil || p.pkg == nil || p.fn == nil || p.goFn == nil || !p.trackCallerFrames {
 		return false
 	}
-	if !p.runtimeCallerFuncs[p.goFn] {
+	if !p.options.DebuggerFrames && !p.runtimeCallerFuncs[p.goFn] {
 		return false
 	}
 	if target := p.prog.Target(); target != nil && target.Target != "" && target.GOARCH != "wasm" {

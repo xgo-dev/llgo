@@ -1181,6 +1181,7 @@ func f() {
 	helper()
 	runtime.Caller(0)
 }
+
 `)
 	prog := newLLSSAProg(t)
 	pkg, _, err := NewPackageExWithEmbedMetaOptions(
@@ -1195,6 +1196,34 @@ func f() {
 	}
 	if strings.Contains(ir, "SetCallerLine") || strings.Contains(ir, "PushCallerFrame") {
 		t.Fatalf("caller location tracking should not emit old TLS instrumentation:\n%s", ir)
+	}
+}
+
+func TestDebuggerCallerFramesAreOptIn(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+func helper() {}
+func f() { helper() }
+`)
+	for _, enabled := range []bool{false, true} {
+		prog := newLLSSAProg(t)
+		pkg, _, err := NewPackageExWithEmbedMetaOptions(
+			prog, nil, nil, nil, ssapkg, files, nil, false,
+			Options{ShadowStack: true, DebuggerFrames: enabled},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ir := pkg.Module().String()
+		start := strings.Index(ir, `define void @"example.com/foo.f"`)
+		if start < 0 {
+			t.Fatal("missing test function")
+		}
+		ir = ir[start : start+strings.Index(ir[start:], "\n}")+2]
+		for _, symbol := range []string{"PushCallerLocationFrame", "PopCallerLocationFrame", "RecordPanicLocation"} {
+			if strings.Contains(ir, symbol) != enabled {
+				t.Fatalf("DebuggerFrames=%v: unexpected presence of %s:\n%s", enabled, symbol, ir)
+			}
+		}
 	}
 }
 

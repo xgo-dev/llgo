@@ -15,6 +15,8 @@ entry points and their tool requirements.
   simulator, then checks that DWARF leaves flash bytes unchanged.
 - [Physical probes](hardware/README.md) reuses the embedded fixture on a real
   target. It requires explicit opt-in and is not part of normal CI.
+- [Wasm logical stacks](wasm/README.md) exercises the installed Chrome extension
+  with Memory32/64, parked goroutines, GC, and 1/2/4 workers.
 
 Run the native LLDB suite from the repository root:
 

@@ -3,6 +3,7 @@ const test = require('node:test');
 const debuggerSchema = require('../../../../internal/debugabi/schema_v1.json');
 
 require('./plugin.js');
+require('./goroutines.js');
 
 const {LLGoLanguageExtensionPlugin} = globalThis.LLGoLanguageExtension;
 
@@ -358,7 +359,7 @@ test('LLGo language extension consumes common interface, function, map and chann
   assert.equal(queue.description, 'len=2 cap=3');
   assert.deepEqual((await plugin.getProperties(queue.objectId)).map(item => item.value.value), [11, 12]);
   assert.ok(!(await plugin.listVariablesInScope(context)).some(variable => variable.name === '$goroutines'));
-  assert.equal(await plugin.evaluate('$goroutines', context, 'stop'), null);
+  assert.match((await plugin.evaluate('$goroutines', context, 'stop')).value, /build with llgo.wasm.debugger/);
 });
 
 

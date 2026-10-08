@@ -51,11 +51,21 @@ module. The sidecar is debugger data; it does not replace the JavaScript host
 or executable module. Missing or mismatched sidecars are reported before
 starting the program.
 
-At optimized levels, variables without a recoverable DWARF location are shown
-as unavailable or optimized out. Full goroutine reconstruction, cross-worker
-frame coordination and complete runtime-object views are not implemented by
-this frontend. Debugger frame selection refers to the paused Wasm execution
-frame rather than a logical Go goroutine.
+`llgo debug` enables `llgo.wasm.debugger` for browser builds. Add `$goroutines`
+to DevTools Watch to inspect live logical goroutines, including parked fibers:
+IDs, parent IDs, state, last processor, and innermost-first function/file/line
+stacks. For an artifact built separately, pass `-tags=llgo.wasm.debugger`.
+The tag participates in the package cache key. Ordinary builds do not enable
+the registry or extra caller-frame tracking.
+
+For multi-worker programs, pause the other threads in DevTools before reading
+shared runtime state. The extension reports registry/stack changes observed
+during inspection; these guards do not replace pausing all workers. The
+frontend does not automatically coordinate worker pauses. Its logical stack
+view does not expose parked-frame locals or switch the execution context.
+Debugger frame selection and local variables still refer to the paused Wasm
+execution frame. Optimized DWARF locations can be unavailable or optimized out;
+complete runtime-object views remain a later phase.
 
 WASI source sessions remain unavailable for current W32 pthread artifacts.
 Their shared `env.memory`, `wasi.thread-spawn` and `wasix_32v1.thread_exit` imports

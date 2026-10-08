@@ -3,7 +3,8 @@
 
 Requires LLGO, LLGO_BROWSER_CHROME (Chrome for Testing or Chromium), LLVM,
 Emscripten and the pinned LLGo Binaryen. Tests set a source breakpoint through
-the installed extension, read a real paused C++ local, and observe the Go completion output.
+the installed extension, inspect real paused locals and parked logical Go
+stacks after GC, and observe the Go completion output.
 """
 
 import os
@@ -14,9 +15,9 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def run(command, env):
+def run(command, env, cwd=ROOT):
     print("+", " ".join(map(str, command)), flush=True)
-    subprocess.run(command, cwd=ROOT, env=env, check=True, timeout=300)
+    subprocess.run(command, cwd=cwd, env=env, check=True, timeout=300)
 
 
 def main():
@@ -48,6 +49,17 @@ def main():
                              "-coverpkg=./internal/browserdebug,./internal/wasmdebug,./internal/debugabi",
                              f"-coverprofile={coverage_dir / f'{profile}-{mode}.out'}"]
                 run(test + ["./internal/browserdebug", "./cmd/internal/browser"], env)
+            for workers in (1, 2, 4):
+                mode = "external" if workers == 4 else "embedded"
+                stem = Path(directory) / f"{profile}-goroutines-{workers}"
+                env["LLGO_WASM_WORKERS"] = str(workers)
+                run([llgo, "build", "-target", target, "-O0",
+                     "-tags=llgo.wasm.debugger", f"-debug-artifact={mode}",
+                     "-o", str(stem.with_suffix(".mjs")), "."], env, ROOT / "test/debug/wasm")
+                env["LLGO_BROWSER_DEBUG_ARTIFACT"] = str(stem.with_suffix(".wasm"))
+                run(["go", "test", "-count=1", "-timeout=3m", "-v",
+                     "./cmd/internal/browser", "-run=^TestChromeLanguageExtension$"], env)
+            env.pop("LLGO_WASM_WORKERS", None)
 
 
 if __name__ == "__main__":

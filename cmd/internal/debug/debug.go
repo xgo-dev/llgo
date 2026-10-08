@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/xgo-dev/llgo/cmd/internal/base"
@@ -172,6 +173,12 @@ func run(packageArgs, debuggerArgs []string, opts options, stdin io.Reader, stdo
 	}
 	if err := validateSessionTarget(conf, target, selected, opts); err != nil {
 		return err
+	}
+	if selected == backendBrowser && !slices.Contains(strings.Fields(strings.ReplaceAll(conf.Tags, ",", " ")), "llgo.wasm.debugger") {
+		if conf.Tags != "" {
+			conf.Tags += ","
+		}
+		conf.Tags += "llgo.wasm.debugger"
 	}
 
 	cleanup, artifact, err := prepareArtifact(conf)

@@ -121,8 +121,10 @@ unavailable. Each session accepts only its own extension's CORS origin.
 browser sessions. The generated Emscripten host, profile and worker settings
 are preserved; the launcher does not substitute host imports.
 
-Browser debugging currently covers the paused Wasm execution frame. Full
-goroutine views and multi-worker frame coordination remain a later phase.
+Browser debugging supports paused Wasm locals and an opt-in `$goroutines`
+watch view of logical Go source stacks, including parked fibers. Pause all
+worker threads before reading shared state; automatic worker coordination
+and parked-frame local-variable inspection remain a later phase.
 WASI source sessions are explicitly rejected: current W32 modules require
 shared `env.memory` and `wasi.thread-spawn`, which the
 current Wasmtime debug backend does not implement. Use `llgo run -target=wasi`

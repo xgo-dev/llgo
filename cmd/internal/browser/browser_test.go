@@ -26,7 +26,7 @@ func TestExtensionJavaScript(t *testing.T) {
 	if err != nil {
 		t.Skip("node is unavailable")
 	}
-	command := exec.Command(node, "--test", filepath.Join("extension", "plugin_test.js"), filepath.Join("testdata", "page_test.js"))
+	command := exec.Command(node, "--test", filepath.Join("extension", "plugin_test.js"), filepath.Join("extension", "goroutines_test.js"), filepath.Join("testdata", "page_test.js"))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("language extension tests: %v\n%s", err, output)
 	}
@@ -165,7 +165,7 @@ func TestWriteExtensionAndChromeVersion(t *testing.T) {
 	if err := session.WriteExtension(directory); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"manifest.json", "devtools.html", "plugin.js"} {
+	for _, name := range []string{"manifest.json", "devtools.html", "goroutines.js", "plugin.js"} {
 		if info, err := os.Stat(filepath.Join(directory, name)); err != nil || info.Size() == 0 {
 			t.Fatalf("extension file %s: %v, %+v", name, err, info)
 		}

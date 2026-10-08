@@ -136,6 +136,25 @@
           "4": "waiting",
           "6": "dead"
         }
+      },
+      "wasm_goroutine": {
+        "registry_version": 1,
+        "registry_symbol": "wasmDebuggerRegistry",
+        "version": "version",
+        "epoch": "epoch",
+        "head": "head",
+        "next": "next",
+        "sequence": "sequence",
+        "goroutine": "gp",
+        "callers": "callers",
+        "id": "goid",
+        "parent_id": "parentGoid",
+        "status": "atomicstatus",
+        "processor_id": "processorID",
+        "stack": "stack",
+        "function": "Function",
+        "file": "File",
+        "line": "Line"
       }
     }
   }

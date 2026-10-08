@@ -57,6 +57,9 @@ var extensionPage []byte
 //go:embed extension/plugin.js
 var extensionPlugin []byte
 
+//go:embed extension/goroutines.js
+var extensionGoroutines []byte
+
 //go:embed page.html
 var sessionPage string
 
@@ -282,6 +285,7 @@ func (s *Session) WriteExtension(directory string) error {
 		"manifest.json": manifestJSON,
 		"devtools.html": extensionPage,
 		"plugin.js":     extensionPlugin,
+		"goroutines.js": extensionGoroutines,
 	} {
 		if err := os.WriteFile(filepath.Join(directory, name), data, 0o644); err != nil {
 			return err

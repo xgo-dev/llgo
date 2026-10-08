@@ -302,6 +302,26 @@
       const trimmed = expression.trim();
       if (!trimmed) return null;
       const module = this.module(context.rawModuleId);
+      if (trimmed === '$goroutines') {
+        const records = await globalThis.LLGoWasmGoroutines.read(this, module, context, stopId);
+        if (records === null) {
+          return {type: 'string', value: 'goroutine inspection unavailable: build with llgo.wasm.debugger', hasChildren: false};
+        }
+        const properties = records.map(record => ({name: String(record.id), value: {
+          type: 'object', className: 'Go goroutine',
+          description: `goroutine ${record.id} [${record.state}] P${record.processor ?? '<unattached>'}`,
+          properties: [
+          {name: 'id', value: {type: 'string', value: record.id, hasChildren: false}},
+          {name: 'parent', value: {type: 'string', value: record.parent, hasChildren: false}},
+          {name: 'state', value: {type: 'string', value: record.state, hasChildren: false}},
+          {name: 'processor', value: {type: 'string', value: record.processor ?? '<unattached>', hasChildren: false}},
+          {name: 'frames', value: {type: 'array', description: `${record.frames.length} logical frames`,
+            properties: record.frames.map((frame, index) => ({name: String(index), value: {
+              type: 'string', value: `${frame.function} (${frame.file}:${frame.line})`, hasChildren: false,
+            }}))}},
+        ]}}));
+        return this.snapshotObject(module, {type: 'array', description: `${records.length} Go goroutines`}, properties);
+      }
       const variables = this.activeVariables(module, context.codeOffset);
       const variable = variables.filter(item => trimmed === item.name || trimmed.startsWith(item.name + '.'))
           .sort((left, right) => right.name.length - left.name.length)[0];
@@ -559,13 +579,10 @@
 
     async readGoString(module, type, address, stopId, limit) {
       const spec = module.layout?.string;
-      const dataField = fieldByName(type, spec?.data);
-      const lengthField = fieldByName(type, spec?.length);
-      if (!spec || !dataField || !lengthField) return null;
-      const pointer = await this.readUnsigned(
-          address + BigInt(dataField.offset), module.record.pointer_size, stopId);
-      const length = await this.readUnsigned(
-          address + BigInt(lengthField.offset), module.record.pointer_size, stopId);
+      if (!spec) return null;
+      const pointer = await this.readNamedUnsigned(module, type, address, spec.data, stopId);
+      const length = await this.readNamedUnsigned(module, type, address, spec.length, stopId);
+      if (pointer === null || length === null) return null;
       if (length > BigInt(limit) || (length !== 0n && pointer === 0n)) return null;
       const raw = length === 0n ? new ArrayBuffer(0) : await this.languageServices.getWasmLinearMemory(
           numberAddress(pointer), Number(length), stopId);
@@ -657,10 +674,28 @@
       return id;
     }
 
+    snapshotObject(module, summary, properties) {
+      const objectId = this.storeObject(module, null, null, null, 'snapshot', {properties});
+      return {...summary, objectId, hasChildren: properties.length !== 0};
+    }
+
     async getProperties(objectId) {
       const object = this.objects.get(objectId);
       if (!object) return [];
       const module = this.module(object.rawModuleId);
+      if (object.kind === 'snapshot') {
+        if (!object.resolvedProperties) {
+          object.children = [];
+          object.resolvedProperties = object.properties.map(property => {
+            if (!property.value.properties) return property;
+            const {properties, ...summary} = property.value;
+            const value = this.snapshotObject(module, summary, properties);
+            object.children.push(value.objectId);
+            return {...property, value};
+          });
+        }
+        return object.resolvedProperties;
+      }
       const type = resolveType(module, object.type);
       if (object.kind === 'pointer') {
         if (object.address === 0n) return [];
@@ -825,7 +860,11 @@
       return result;
     }
 
-    async releaseObject(objectId) { this.objects.delete(objectId); }
+    async releaseObject(objectId) {
+      const object = this.objects.get(objectId);
+      this.objects.delete(objectId);
+      for (const child of object?.children || []) await this.releaseObject(child);
+    }
 
     async readUnsigned(address, size, stopId) {
       const raw = await this.languageServices.getWasmLinearMemory(numberAddress(address), size, stopId);
