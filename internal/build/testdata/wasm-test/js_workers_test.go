@@ -30,17 +30,17 @@ type workerFinalizerBarrier struct {
 	padding [128]uintptr
 }
 
-func TestWorkerJSRealmInheritance(t *testing.T) {
+func TestWorkerSharedJSValues(t *testing.T) {
 	object := js.ValueOf(map[string]any{"value": 42})
 	owner := schedulerProcID()
 	result := make(chan workerCallbackResult, 1)
 	go func() {
-		// The intermediate G has not used syscall/js itself. Its child still
-		// needs the original realm when the handle is passed through a closure.
+		// Neither descendant needs to stay on the originating Go worker to
+		// use a JavaScript value passed through the closure.
 		go func() {
 			worker := schedulerProcID()
-			if worker != owner || object.Get("value").Int() != 42 {
-				result <- workerCallbackResult{origin: owner, callback: worker, err: fmt.Errorf("JavaScript value moved from worker %d to %d", owner, worker)}
+			if value := object.Get("value").Int(); value != 42 {
+				result <- workerCallbackResult{origin: owner, callback: worker, err: fmt.Errorf("JavaScript value = %d on worker %d, want 42", value, worker)}
 				return
 			}
 			result <- workerCallbackResult{origin: owner, callback: worker}
@@ -89,7 +89,7 @@ func TestWorkerEmvalFinalizersStayInRealm(t *testing.T) {
 		owners[result.origin] = true
 	}
 	if len(owners) < 2 {
-		t.Fatalf("JavaScript values were created on %d worker, want at least 2", len(owners))
+		t.Fatalf("JavaScript values were used on %d worker, want at least 2", len(owners))
 	}
 
 	finalizersDone := make(chan struct{})
@@ -346,8 +346,8 @@ func TestWorkerHostCallbackRealms(t *testing.T) {
 			if result.err != nil {
 				t.Fatal(result.err)
 			}
-			if result.callback != result.origin {
-				t.Fatalf("callback worker = %d, want origin worker %d", result.callback, result.origin)
+			if result.callback != 0 {
+				t.Fatalf("callback worker = %d, want shared JS worker 0 (caller %d)", result.callback, result.origin)
 			}
 			workers[result.origin] = true
 		case <-timeout:

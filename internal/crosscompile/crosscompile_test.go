@@ -583,9 +583,6 @@ func TestEmscriptenTargetProfiles(t *testing.T) {
 			if !slices.Contains(export.LDFLAGS, emscriptenAsyncifyImports) {
 				t.Errorf("named target does not mark interruptible host wait and ffi_call_js as async: %v", export.LDFLAGS)
 			}
-			if !slices.Contains(export.LDFLAGS, emscriptenAsyncifyRemove) {
-				t.Errorf("named target does not preserve current libffi closure buffers during replay: %v", export.LDFLAGS)
-			}
 			if !slices.Contains(export.LDFLAGS, "-sALLOW_TABLE_GROWTH=1") {
 				t.Errorf("named target does not allow dynamic libffi closure entries: %v", export.LDFLAGS)
 			}

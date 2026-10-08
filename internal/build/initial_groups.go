@@ -43,7 +43,7 @@ func groupInitialBuilds(ctx *context, alts []*packages.Package) []initialBuildGr
 		}
 		if target.GOARCH == "wasm" {
 			use := analyzeWasmInitialUse(ctx.progSSA, pkg.Types)
-			features.reflectBridges = target.WasmProvider == "wasi" && use.usesWasmReflectBridges()
+			features.reflectBridges = (target.WasmProvider == "wasi" || target.GOOS == "js") && use.usesWasmReflectBridges()
 			features.funcInfoEntries = ctx.buildConf.BuildMode != BuildModeExe || use.usesRuntimeFuncForPC()
 		}
 		index, ok := indexes[features]

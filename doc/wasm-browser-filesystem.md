@@ -21,6 +21,12 @@ only metadata. The bridge validates methods and buffer ranges and installs
 its worker wrappers once. Read completion copies only the returned bytes into
 the caller's requested offset, preserving bytes outside that range.
 
+In the bounded Go scheduler, `syscall/js` uses Go main's worker-zero realm.
+Filesystem handles cached in other Go workers' TLS refer to that same realm;
+their calls park the calling G and execute on worker zero before entering the
+filesystem bridge. The bridge's browser runtime-thread proxy remains necessary
+for `Module.FS` and Go/C interoperability.
+
 Node continues using `node:fs`. Its worker `process.cwd/chdir` methods proxy to
 the runtime thread so cwd changes are visible across workers. Node's C filesystem
 remains Emscripten's virtual filesystem, as before.

@@ -62,6 +62,9 @@ func sourceContext(p profile) (tags, cgo string) {
 		return "", "0"
 	}
 	tags, cgo = "llgo,osusergo,llgo.wasm.gc.linear", "0"
+	if workers, _ := strconv.Atoi(os.Getenv("LLGO_WASM_WORKERS")); (p.Target == "emscripten" || p.Target == "emscripten-memory64") && workers > 1 {
+		tags += ",llgo.wasm.workers"
+	}
 	switch p.Target {
 	case "emscripten":
 		return tags + ",llgo.wasm.emscripten", "1"

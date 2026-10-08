@@ -348,6 +348,7 @@ func TestProfilesAndCommands(t *testing.T) {
 
 func TestProfileSourceContexts(t *testing.T) {
 	t.Setenv("LLGO_WASI_THREADS", "")
+	t.Setenv("LLGO_WASM_WORKERS", "")
 	tests := map[string]struct{ tags, cgo string }{
 		"J32-GoJS":         {"llgo,osusergo,llgo.wasm.gc.linear", "0"},
 		"J32-Emscripten":   {"llgo,osusergo,llgo.wasm.gc.linear,llgo.wasm.emscripten", "1"},
@@ -364,6 +365,23 @@ func TestProfileSourceContexts(t *testing.T) {
 		tags, cgo := sourceContext(p)
 		if tags != expected.tags || cgo != expected.cgo {
 			t.Errorf("%s source context = (%q, %q), want (%q, %q)", name, tags, cgo, expected.tags, expected.cgo)
+		}
+	}
+}
+
+func TestWorkerProfileSourceContexts(t *testing.T) {
+	for _, workers := range []string{"1", "2", "4"} {
+		t.Setenv("LLGO_WASM_WORKERS", workers)
+		for _, name := range []string{"J32-GoJS", "J32-Emscripten", "J64-Emscripten", "W32-WASI", "GoJS-reference", "GoWASI-reference"} {
+			p, err := selectProfile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tags, _ := sourceContext(p)
+			want := workers != "1" && (p.Target == "emscripten" || p.Target == "emscripten-memory64")
+			if strings.Contains(tags, "llgo.wasm.workers") != want {
+				t.Errorf("%s workers=%s source tags = %q", name, workers, tags)
+			}
 		}
 	}
 }

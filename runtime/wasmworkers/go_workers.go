@@ -7,10 +7,9 @@ package wasmworkers
 import llruntime "github.com/xgo-dev/llgo/runtime/internal/runtime"
 
 // GoIndependent starts fn on a scheduler worker chosen from the configured
-// pool. The closure must not carry syscall/js values, Emscripten handles, or
-// thread-local C state from its caller. It may create its own values after it
-// starts. An ordinary go statement inherits the caller's JavaScript realm
-// after the caller has used syscall/js.
+// pool. syscall/js values may be shared: their operations run in the shared
+// Go main worker's JavaScript realm. The closure must not carry raw Emscripten
+// handles or thread-local C state from its caller.
 func GoIndependent(fn func()) {
 	llruntime.SpawnIndependentWasmG(fn)
 }

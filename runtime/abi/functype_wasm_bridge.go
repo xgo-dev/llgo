@@ -1,12 +1,12 @@
-//go:build llgo && wasm && wasip1
+//go:build llgo && wasm && (wasip1 || js)
 
 package abi
 
 import "unsafe"
 
-// FuncType carries compiler-generated entries because the WASI host cannot
-// supply libffi closures or dynamically typed indirect calls. JavaScript and
-// Emscripten profiles retain the smaller libffi descriptor layout.
+// FuncType carries compiler-generated entries shared by all Wasm instances.
+// WASI has no libffi closures, and Emscripten's dynamic function-table entries
+// are local to the worker that installed them.
 type FuncType struct {
 	Type
 	In    []*Type

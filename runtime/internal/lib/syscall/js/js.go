@@ -79,6 +79,10 @@ var (
 
 // Equal reports whether v and w are equal according to JavaScript's === operator.
 func (v Value) Equal(w Value) bool {
+	if isRemoteJSWorker() {
+		return remoteEqual(v, w)
+	}
+
 	ensureEmvalGlobals()
 	return emval_equals(v, w) && v.ref != valueNaN.ref
 }
@@ -105,21 +109,31 @@ func (v Value) IsNull() bool {
 
 // IsNaN reports whether v is the JavaScript value "NaN".
 func (v Value) IsNaN() bool {
+	if isRemoteJSWorker() {
+		return remoteIsNaN(v)
+	}
+
 	ensureEmvalGlobals()
 	return v.ref == valueNaN.ref
 }
 
 // Global returns the JavaScript global object, usually "window" or "global".
 func Global() Value {
+	if isRemoteJSWorker() {
+		return remoteGlobal()
+	}
+
 	ensureEmvalGlobals()
 	return valueGlobal
 }
 
-// GlobalForHost is used by LLGo's worker-local filesystem adapter during
-// package initialization and lazy initialization on other workers. Its handles
-// stay in TLS and are never handed to a child goroutine, so this setup must
-// not pin the current goroutine to one realm.
+// GlobalForHost initializes LLGo's filesystem adapter. Like Global, its handles
+// belong to Go's main JS worker.
 func GlobalForHost() Value {
+	if isRemoteJSWorker() {
+		return remoteGlobalForHost()
+	}
+
 	initEmvalGlobals()
 	return valueGlobal
 }
@@ -139,6 +153,10 @@ func GlobalForHost() Value {
 //
 // Panics if x is not one of the expected types.
 func ValueOf(x any) Value {
+	if isRemoteJSWorker() {
+		return remoteValueOf(x)
+	}
+
 	ensureEmvalGlobals()
 	switch x := x.(type) {
 	case Value:
@@ -248,6 +266,7 @@ func (t Type) isObject() bool {
 // Type returns the JavaScript type of the value v. It is similar to JavaScript's typeof operator,
 // except that it returns TypeNull instead of TypeObject for null.
 func (v Value) Type() Type {
+	// Reserved refs are valid in every realm; resolve them before remote dispatch.
 	if v.ref == 0 {
 		return TypeUndefined
 	}
@@ -259,6 +278,10 @@ func (v Value) Type() Type {
 	case valueTrue.ref, valueFalse.ref:
 		return TypeBoolean
 	}
+	if isRemoteJSWorker() {
+		return remoteType(v)
+	}
+
 	if emval_is_number(v) {
 		return TypeNumber
 	} else if emval_is_string(v) {
@@ -279,6 +302,10 @@ func (v Value) Type() Type {
 // Get returns the JavaScript property p of value v.
 // It panics if v is not a JavaScript object.
 func (v Value) Get(p string) Value {
+	if isRemoteJSWorker() {
+		return remoteGet(v, p)
+	}
+
 	if vType := v.Type(); !vType.isObject() {
 		panic(&ValueError{"Value.Get", vType})
 	}
@@ -291,6 +318,11 @@ func (v Value) Get(p string) Value {
 // Set sets the JavaScript property p of value v to ValueOf(x).
 // It panics if v is not a JavaScript object.
 func (v Value) Set(p string, x any) {
+	if isRemoteJSWorker() {
+		remoteSet(v, p, x)
+		return
+	}
+
 	if vType := v.Type(); !vType.isObject() {
 		panic(&ValueError{"Value.Set", vType})
 	}
@@ -313,6 +345,11 @@ func (v Value) Set(p string, x any) {
 // Delete deletes the JavaScript property p of value v.
 // It panics if v is not a JavaScript object.
 func (v Value) Delete(p string) {
+	if isRemoteJSWorker() {
+		remoteDelete(v, p)
+		return
+	}
+
 	if vType := v.Type(); !vType.isObject() {
 		panic(&ValueError{"Value.Delete", vType})
 	}
@@ -333,6 +370,10 @@ func (v Value) Delete(p string) {
 // Index returns JavaScript index i of value v.
 // It panics if v is not a JavaScript object.
 func (v Value) Index(i int) Value {
+	if isRemoteJSWorker() {
+		return remoteIndex(v, i)
+	}
+
 	if vType := v.Type(); !vType.isObject() {
 		panic(&ValueError{"Value.Index", vType})
 	}
@@ -348,6 +389,11 @@ func (v Value) Index(i int) Value {
 // SetIndex sets the JavaScript index i of value v to ValueOf(x).
 // It panics if v is not a JavaScript object.
 func (v Value) SetIndex(i int, x any) {
+	if isRemoteJSWorker() {
+		remoteSetIndex(v, i, x)
+		return
+	}
+
 	if vType := v.Type(); !vType.isObject() {
 		panic(&ValueError{"Value.SetIndex", vType})
 	}
@@ -396,6 +442,10 @@ func (v Value) SetIndex(i int, x any) {
 // Length returns the JavaScript property "length" of v.
 // It panics if v is not a JavaScript object.
 func (v Value) Length() int {
+	if isRemoteJSWorker() {
+		return remoteLength(v)
+	}
+
 	if vType := v.Type(); !vType.isObject() {
 		panic(&ValueError{"Value.Length", vType})
 	}
@@ -412,6 +462,10 @@ func (v Value) Length() int {
 // It panics if v has no method m.
 // The arguments get mapped to JavaScript values according to the ValueOf function.
 func (v Value) Call(m string, args ...any) (res Value) {
+	if isRemoteJSWorker() {
+		return remoteCall(v, m, args...)
+	}
+
 	var err c.Int
 	if len(args) == 0 {
 		res = emval_method_call(v, c.AllocaCStr(m), c.SizeT(len(m)), nil, 0, &err)
@@ -465,6 +519,10 @@ func (v Value) Call(m string, args ...any) (res Value) {
 // It panics if v is not a JavaScript function.
 // The arguments get mapped to JavaScript values according to the ValueOf function.
 func (v Value) Invoke(args ...any) (res Value) {
+	if isRemoteJSWorker() {
+		return remoteInvoke(v, args...)
+	}
+
 	var err c.Int
 	if len(args) == 0 {
 		res = emval_call(v, nil, 0, 0, &err)
@@ -511,6 +569,10 @@ func (v Value) Invoke(args ...any) (res Value) {
 // It panics if v is not a JavaScript function.
 // The arguments get mapped to JavaScript values according to the ValueOf function.
 func (v Value) New(args ...any) (res Value) {
+	if isRemoteJSWorker() {
+		return remoteNew(v, args...)
+	}
+
 	var err c.Int
 	if len(args) == 0 {
 		res = emval_call(v, nil, 0, 1, &err)
@@ -560,6 +622,10 @@ func (v Value) isNumber() bool {
 }
 
 func (v Value) float(method string) float64 {
+	if isRemoteJSWorker() {
+		return remoteFloat(v, method)
+	}
+
 	if !v.isNumber() {
 		panic(&ValueError{method, v.Type()})
 	}
@@ -599,6 +665,10 @@ func (v Value) Bool() bool {
 // false, 0, "", null, undefined, and NaN are "falsy", and everything else is
 // "truthy". See https://developer.mozilla.org/en-US/docs/Glossary/Truthy.
 func (v Value) Truthy() bool {
+	if isRemoteJSWorker() {
+		return remoteTruthy(v)
+	}
+
 	ensureEmvalGlobals()
 	switch v.Type() {
 	case TypeUndefined, TypeNull:
@@ -621,6 +691,10 @@ func (v Value) Truthy() bool {
 // it does not panic if v's Type is not TypeString. Instead, it returns a string of the form "<T>"
 // or "<T: V>" where T is v's type and V is a string representation of v's value.
 func (v Value) String() string {
+	if isRemoteJSWorker() {
+		return remoteString(v)
+	}
+
 	switch v.Type() {
 	case TypeString:
 		return jsString(v)
@@ -667,6 +741,10 @@ func jsString(v Value) string {
 
 // InstanceOf reports whether v is an instance of type t according to JavaScript's instanceof operator.
 func (v Value) InstanceOf(t Value) bool {
+	if isRemoteJSWorker() {
+		return remoteInstanceOf(v, t)
+	}
+
 	return emval_instanceof(v, t)
 	// r := valueInstanceOf(v.ref, t.ref)
 	// runtime.KeepAlive(v)
@@ -693,6 +771,10 @@ func (e *ValueError) Error() string {
 // It panics if src is not a Uint8Array or Uint8ClampedArray.
 // It returns the number of bytes copied, which will be the minimum of the lengths of src and dst.
 func CopyBytesToGo(dst []byte, src Value) int {
+	if isRemoteJSWorker() {
+		return remoteCopyBytesToGo(dst, src)
+	}
+
 	n, ok := emval_copy_bytes(dst, src, true)
 	if !ok {
 		panic("syscall/js: CopyBytesToGo: expected src to be a Uint8Array or Uint8ClampedArray")
@@ -736,6 +818,10 @@ func CopyBytesToGo(dst []byte, src Value) int {
 // It panics if dst is not a Uint8Array or Uint8ClampedArray.
 // It returns the number of bytes copied, which will be the minimum of the lengths of src and dst.
 func CopyBytesToJS(dst Value, src []byte) int {
+	if isRemoteJSWorker() {
+		return remoteCopyBytesToJS(dst, src)
+	}
+
 	n, ok := emval_copy_bytes(src, dst, false)
 	if !ok {
 		panic("syscall/js: CopyBytesToJS: expected dst to be a Uint8Array or Uint8ClampedArray")

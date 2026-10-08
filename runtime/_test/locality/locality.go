@@ -30,14 +30,10 @@ import (
 	"github.com/xgo-dev/llgo/runtime/_test/locality/testdata/localityscope"
 )
 
-//go:linkname schedulerMultiplexesGoroutinesForTesting github.com/xgo-dev/llgo/runtime/internal/runtime.SchedulerMultiplexesGoroutinesForTesting
-func schedulerMultiplexesGoroutinesForTesting() bool
-
-var initializerSequence int
+var initializerSequence int32
 
 func nextLocalValue(base int) int {
-	initializerSequence++
-	return base + initializerSequence
+	return base + int(atomic.AddInt32(&initializerSequence, 1))
 }
 
 //llgointernal:tls
@@ -77,11 +73,13 @@ func TestTLSAndGLSIsolation(t *testing.T) {
 	tlsCounter = 11
 	glsCounter = 22
 	parentSet := snapshotLocality()
+	parentTLSAddress := &tlsCounter
 
 	type childResult struct {
-		first localitySnapshot
-		again localitySnapshot
-		set   localitySnapshot
+		first      localitySnapshot
+		again      localitySnapshot
+		set        localitySnapshot
+		tlsAddress *int
 	}
 	done := make(chan childResult)
 	go func() {
@@ -89,12 +87,14 @@ func TestTLSAndGLSIsolation(t *testing.T) {
 		again := snapshotLocality()
 		tlsCounter = 31
 		glsCounter = 32
-		done <- childResult{first: first, again: again, set: snapshotLocality()}
+		done <- childResult{first: first, again: again, set: snapshotLocality(), tlsAddress: &tlsCounter}
 	}()
 	child := <-done
 
-	multiplexed := schedulerMultiplexesGoroutinesForTesting()
-	if multiplexed {
+	// A bounded scheduler can place the child on the same or another worker.
+	// TLS is shared only when both Gs use the same physical TLS address.
+	sameWorker := child.tlsAddress == parentTLSAddress
+	if sameWorker {
 		if child.first.tlsCounter != parentSet.tlsCounter || child.first.glsCounter != 0 {
 			t.Fatalf("multiplexed child locality = %+v, parent = %+v", child.first, parentSet)
 		}
@@ -104,7 +104,7 @@ func TestTLSAndGLSIsolation(t *testing.T) {
 	if child.first != child.again {
 		t.Fatalf("child initializer ran more than once: first=%+v again=%+v", child.first, child.again)
 	}
-	if multiplexed {
+	if sameWorker {
 		if child.first.initializedTLS != parentInitial.initializedTLS || child.first.initializedGLS == parentInitial.initializedGLS {
 			t.Fatalf("multiplexed child initialization: parent=%+v child=%+v", parentInitial, child.first)
 		}
@@ -115,7 +115,7 @@ func TestTLSAndGLSIsolation(t *testing.T) {
 		t.Fatalf("child local writes were lost: %+v", child.set)
 	}
 	wantParent := parentSet
-	if multiplexed {
+	if sameWorker {
 		wantParent.tlsCounter = child.set.tlsCounter
 	}
 	if got := snapshotLocality(); got != wantParent {
@@ -200,6 +200,10 @@ func TestRecursiveInitializerObservesPartialValue(t *testing.T) {
 	}
 }
 
+// Count initialization on this physical worker, rather than aggregating other
+// workers that may have initialized the same TLS group earlier.
+//
+//llgointernal:tls
 var lateInitializerAttempts int
 
 func nextLateValue() int {
@@ -449,6 +453,7 @@ func TestCrossPackageMixedInitializerGroup(t *testing.T) {
 		address       *int
 		addressStable bool
 		calls         int
+		tlsAddress    *int
 	}
 	done := make(chan result)
 	go func() {
@@ -460,18 +465,18 @@ func TestCrossPackageMixedInitializerGroup(t *testing.T) {
 			address:       address,
 			addressStable: address == localityscope.MixedScalarAddress(),
 			calls:         localityscope.MixedCalls(),
+			tlsAddress:    &tlsCounter,
 		}
 	}()
 	got := <-done
-	// TLS belongs to the worker, unlike the GLS groups tested above. Logical
-	// goroutines multiplexed on one worker must reuse its initialized block.
-	multiplexed := schedulerMultiplexesGoroutinesForTesting()
+	// Check package-block TLS against an independent native TLS address.
+	sameWorker := got.tlsAddress == &tlsCounter
 	wantCalls := before + 1
-	if multiplexed {
+	if sameWorker {
 		wantCalls = before
 	}
 	if got.scalar == 0 || got.pointer == nil || !got.addressStable || got.calls != wantCalls ||
-		(got.address == parentAddress) != multiplexed {
+		(got.address == parentAddress) != sameWorker {
 		t.Fatalf("cross-package mixed initializer = %+v, baseline %d", got, before)
 	}
 }

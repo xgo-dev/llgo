@@ -45,20 +45,25 @@ func TestGroupInitialBuilds(t *testing.T) {
 }
 
 func TestGroupInitialWasmFeatures(t *testing.T) {
-	for _, provider := range []string{"wasi", "gojs", "emscripten"} {
-		t.Run(provider, func(t *testing.T) {
+	for _, target := range []*llssa.Target{
+		{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32", WasmProvider: "wasi"},
+		{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "gojs"},
+		{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "emscripten"},
+		{GOOS: "js", GOARCH: "wasm", WasmProfile: "j64", WasmProvider: "emscripten"},
+	} {
+		t.Run(target.WasmProfile+"/"+target.WasmProvider, func(t *testing.T) {
 			for _, source := range []string{
 				`package main; import ("reflect"; "runtime"); func main() { reflect.ValueOf(func() {}).Call(nil); _ = runtime.FuncForPC(0) }`,
 				`package library; import ("reflect"; "runtime"); func Use() { reflect.ValueOf(func() {}).Call(nil); _ = runtime.FuncForPC(0) }`,
 			} {
 				pkg := buildWasmReflectTestProgram(t, source)
-				prog := llssa.NewProgram(&llssa.Target{GOARCH: "wasm", WasmProvider: provider})
+				prog := llssa.NewProgram(target)
 				ctx := &context{prog: prog, progSSA: pkg.Prog, buildConf: &Config{BuildMode: BuildModeExe}, initial: []*packages.Package{
 					{Types: types.NewPackage("example.com/plain", "plain")}, {Types: pkg.Pkg},
 				}}
 				groups := groupInitialBuilds(ctx, nil)
 				if len(groups) != 2 || groups[0].features.funcInfoEntries || groups[0].features.reflectBridges ||
-					!groups[1].features.funcInfoEntries || groups[1].features.reflectBridges != (provider == "wasi") {
+					!groups[1].features.funcInfoEntries || !groups[1].features.reflectBridges {
 					t.Fatalf("Wasm features leaked across initial programs for %s: %+v", pkg.Pkg.Name(), groups)
 				}
 				prog.Dispose()

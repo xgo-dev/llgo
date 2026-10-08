@@ -120,15 +120,10 @@ const (
 	emscriptenAllowTableGrowth   = "-sALLOW_TABLE_GROWTH=1"
 	// libffi calls the target through the JS import ffi_call_js. If that
 	// import is not listed, Asyncify cannot unwind a sleeping Go function
-	// invoked by reflect.Value.Call / MakeFunc.
+	// invoked through the C libffi API. Go reflection uses static typed entries.
 	emscriptenAsyncifyImports = "-sASYNCIFY_IMPORTS=llgo_wasm_host_wait_async,ffi_call_js"
-	// libffi's JavaScript closure trampoline recreates its temporary return and
-	// argument buffers during rewind. Keep the three thin entry functions out
-	// of Asyncify so each replay observes the current trampoline buffers; their
-	// separately instrumented callees retain the suspended Go invocation.
-	emscriptenAsyncifyRemove = `-sASYNCIFY_REMOVE=["*llgo_reflect_bind0_js*","*llgo_reflect_bind1_js*","*llgo_reflect_bindn_js*"]`
-	wasm32LibffiRelDir       = "runtime/internal/clite/ffi/wasm32"
-	wasm64LibffiRelDir       = "runtime/internal/clite/ffi/wasm64"
+	wasm32LibffiRelDir        = "runtime/internal/clite/ffi/wasm32"
+	wasm64LibffiRelDir        = "runtime/internal/clite/ffi/wasm64"
 )
 
 func (profile WasmProfile) valid() bool {
@@ -883,7 +878,6 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, forceEspClang bool, le
 			"-sEXPORT_ALL=1",
 			"-sASYNCIFY=1",
 			emscriptenAsyncifyImports,
-			emscriptenAsyncifyRemove,
 			"-sSTACK_SIZE=5242880", // 5MB
 			// Fibers have fixed-size stacks. Check every stack-pointer change
 			// before an overflow can overwrite another goroutine's memory.

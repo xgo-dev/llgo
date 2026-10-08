@@ -17,7 +17,9 @@ func TestWasmReflectBridgeProviderSelection(t *testing.T) {
 		target   *Target
 		expected bool
 	}{
-		{"GoJS J32", &Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "gojs", WasmReflectBridges: true}, false},
+		{"GoJS J32", &Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "gojs", WasmReflectBridges: true}, true},
+		{"active Emscripten J32", &Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "emscripten", WasmReflectBridges: true}, true},
+		{"active Emscripten J64", &Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j64", WasmProvider: "emscripten", WasmReflectBridges: true}, true},
 		{"WASI W32", &Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32", WasmProvider: "wasi", WasmReflectBridges: true}, true},
 		{"unused GoJS J32", &Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "gojs"}, false},
 		{"Emscripten J32", &Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "emscripten"}, false},

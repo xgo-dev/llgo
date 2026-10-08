@@ -28,8 +28,10 @@ import (
 
 const reflectPackagePath = "reflect"
 
-// configureWasmReflectBridges enables the typed fallback only for WASI
-// programs that can use Go's dynamic reflection entry points.
+// configureWasmReflectBridges enables typed Wasm entries for programs that
+// can use Go's dynamic reflection entry points. Emscripten workers have
+// separate function tables, so dynamically installed libffi entries cannot
+// be called by a different worker.
 // Executables are restricted to functions reachable from init and main so
 // dead reflection helpers in the standard library do not affect every build.
 // Library builds, which have no executable roots, remain conservative.
@@ -38,8 +40,8 @@ func configureWasmReflectBridges(ctx *context) {
 		return
 	}
 	target := ctx.prog.Target()
-	wasiProvider := target.GOARCH == "wasm" && target.WasmProvider == "wasi"
-	target.WasmReflectBridges = wasiProvider && wasmProgramUseFor(ctx).usesWasmReflectBridges()
+	wasmProvider := target.GOARCH == "wasm" && (target.WasmProvider == "wasi" || target.GOOS == "js")
+	target.WasmReflectBridges = wasmProvider && wasmProgramUseFor(ctx).usesWasmReflectBridges()
 }
 
 // configureWasmFuncInfoEntries keeps table-index metadata out of ordinary

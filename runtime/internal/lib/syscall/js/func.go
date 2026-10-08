@@ -8,24 +8,22 @@
 package js
 
 import (
-	"sync"
-
 	"github.com/xgo-dev/llgo/runtime/internal/clite"
 	llruntime "github.com/xgo-dev/llgo/runtime/internal/runtime"
 )
 
-// Emscripten callback IDs and emval queues belong to one JavaScript worker.
+// Emscripten callback IDs and emval queues belong to Go's main JS worker.
 //
 //llgointernal:tls
 var (
-	funcsMu         sync.Mutex
+	funcsMu         funcMutex
 	funcs           map[uint32]func(Value, []Value) any
 	nextFuncID      uint32
 	activeCallbacks uint32
 )
 
 var callbackPoll struct {
-	sync.Mutex
+	funcMutex
 	registered bool
 }
 
@@ -51,20 +49,25 @@ type Func struct {
 // external events resume the scheduler and run on a new G. A callback may
 // block on Go goroutines or timers, but must not wait for another asynchronous
 // JS event: its caller still owns the JS event loop, as in the Go runtime.
+// In bounded-worker builds, fn executes on Go's main JS worker even if the
+// Func is created or invoked by a G on another worker.
 //
 // Func.Release must be called to free up resources when the function will not be invoked any more.
 func FuncOf(fn func(this Value, args []Value) any) Func {
+	if isRemoteJSWorker() {
+		return remoteFuncOf(fn)
+	}
+
 	ensureEmvalGlobals()
+	// Install the bridge and poll before entering the registry critical
+	// section: host setup and poll registration can suspend this G.
+	emval_install_invoke()
+	ensureCallbackPoll()
 	funcsMu.Lock()
 	if funcs == nil {
 		funcs = make(map[uint32]func(Value, []Value) any)
 		nextFuncID = 1
 	}
-	// Each JavaScript worker has its own Module. Install _llgo_invoke on
-	// this worker before wrapping; a process-wide C++ guard would leave
-	// later workers with a missing invoke.
-	emval_install_invoke()
-	ensureCallbackPoll()
 	id := nextFuncID
 	nextFuncID++
 	funcs[id] = fn
@@ -103,9 +106,16 @@ func itoa(buf []byte, val uint64) []byte {
 // The function must not be invoked after calling Release.
 // It is allowed to call Release while the function is still running.
 func (c Func) Release() {
+	if isRemoteJSWorker() {
+		remoteRelease(c)
+		return
+	}
+
 	funcsMu.Lock()
 	delete(funcs, c.id)
-	stopCallbackPollLocked()
+	if !keepWasmCallbackPoll {
+		stopCallbackPollLocked()
+	}
 	funcsMu.Unlock()
 }
 
@@ -151,7 +161,6 @@ func dispatchCallback(handle uintptr, owner int) {
 	if current := llruntime.SchedulerProcID(); current != owner {
 		panic("syscall/js: callback dispatched outside its JavaScript realm")
 	}
-	llruntime.MarkCurrentJSRealm()
 	defer cEmvalDecref(handle)
 	cb := Value{ref: ref(handle)}
 	id := uint32(cb.Get("id").Int())

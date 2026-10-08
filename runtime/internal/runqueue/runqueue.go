@@ -70,6 +70,46 @@ func (q *Queue[T]) Pop() T {
 	return node
 }
 
+// Remove takes a particular node without changing the order of other nodes.
+func (q *Queue[T]) Remove(node T) T {
+	var zero T
+	if node == zero || !node.RunqueueQueued() {
+		return zero
+	}
+	var previous T
+	for current := q.head; current != zero; current = current.RunqueueNext() {
+		if current == node {
+			return q.RemoveAfter(previous)
+		}
+		previous = current
+	}
+	return zero
+}
+
+// RemoveAfter removes the node following previous in constant time. The caller
+// must obtain previous by traversing q; zero means remove the front node.
+func (q *Queue[T]) RemoveAfter(previous T) T {
+	var zero T
+	if previous == zero {
+		return q.Pop()
+	}
+	node := previous.RunqueueNext()
+	if node == zero {
+		return zero
+	}
+	previous.SetRunqueueNext(node.RunqueueNext())
+	if q.tail == node {
+		q.tail = previous
+	}
+	node.SetRunqueueNext(zero)
+	node.SetRunqueueQueued(false)
+	q.size--
+	return node
+}
+
 func (q *Queue[T]) Len() uintptr {
 	return q.size
 }
+
+// Front returns the oldest queued node without removing it.
+func (q *Queue[T]) Front() T { return q.head }

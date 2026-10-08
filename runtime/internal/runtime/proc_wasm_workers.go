@@ -34,9 +34,9 @@ const maxWasmWorkers = 16
 
 func SchedulerMultiplexesGoroutinesForTesting() bool { return true }
 
-// SpawnIndependentWasmG starts work that captures no syscall/js values in a
-// worker chosen by the scheduler. Ordinary descendants inherit their
-// parent's JS realm because Emscripten emval handles are worker-local.
+// SpawnIndependentWasmG starts work on a worker chosen by the scheduler.
+// Public syscall/js operations are dispatched to worker zero; raw C TLS and
+// Emscripten handles must stay on their physical worker.
 func SpawnIndependentWasmG(fn func()) {
 	gp := getg()
 	if gp == nil {
@@ -44,7 +44,7 @@ func SpawnIndependentWasmG(fn func()) {
 		return
 	}
 	// The go statement below still enters newprocBackend through NewProc.
-	// Override both inherited realm affinity and callback-event pinning for
+	// Override callback-event pinning for
 	// exactly that spawn, without changing ordinary descendants of this G.
 	previous := gp.context.platform.independentSpawn
 	gp.context.platform.independentSpawn = true
@@ -59,8 +59,10 @@ type runtimeContextPlatform struct {
 	runqNext         *g
 	runqQueued       bool
 	owner            *wasmWorker
-	jsRealm          bool
 	independentSpawn bool
+	spawnWorker      *wasmWorker
+	jsCallbackID     uint32
+	jsCalls          chan *wasmJSCall
 	// Keep runqQueued inside unsafe.Sizeof(runtimeContext{}) on wasm32. LLVM
 	// aligns the preceding uint64 G fields more strictly than go/types does.
 	layoutEnd [8]byte
@@ -79,6 +81,7 @@ type wasmWorker struct {
 	localContext    LocalContext
 	pollingCallback bool
 	jsEvents        []*wasmJSEvent
+	nextJSEventID   uint32
 	syncEventDepth  int
 	index           int
 	safepointBudget pollbudget.Budget
@@ -308,9 +311,11 @@ func newprocBackend(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, cal
 	var worker *wasmWorker
 	current := currentWasmWorker()
 	independent := callergp != nil && callergp.context.platform.independentSpawn
-	if callergp == nil || !independent && current != nil &&
-		(current.pollingCallback || len(current.jsEvents) != 0 || current.syncEventDepth != 0 ||
-			callergp != nil && callergp.context.platform.jsRealm) {
+	if callergp != nil {
+		worker = callergp.context.platform.spawnWorker
+	}
+	if worker == nil && (callergp == nil || !independent && current != nil &&
+		(current.pollingCallback || len(current.jsEvents) != 0 || current.syncEventDepth != 0)) {
 		// Host callbacks carry thread-local JavaScript handles. Dispatch the G
 		// from the same physical worker/JS realm that received the callback.
 		worker = current
@@ -319,8 +324,8 @@ func newprocBackend(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, cal
 		worker = nextWasmWorker()
 	}
 	gp.context.platform.owner = worker
-	if callergp != nil && !independent {
-		gp.context.platform.jsRealm = callergp.context.platform.jsRealm
+	if worker == current && callergp != nil {
+		gp.context.platform.jsCallbackID = callergp.context.platform.jsCallbackID
 	}
 	if !initWasmFiber(gp, wasmcontext.Entry(wasmGStart), unsafe.Pointer(gp), stackSize) {
 		releaseG()
@@ -374,6 +379,10 @@ func wasmGStart(arg unsafe.Pointer) {
 }
 
 func finishWasmG(gp *g) {
+	if calls := gp.context.platform.jsCalls; calls != nil {
+		gp.context.platform.jsCalls = nil
+		close(calls)
+	}
 	releaseStartArg(gp)
 	casgstatus(gp, _Grunning, _Gdead)
 	atomic.Add(&wasmMultiSched.active, ^uint32(0))
@@ -437,7 +446,9 @@ func enqueueWasmG(worker *wasmWorker, gp *g) {
 		fatal("runtime: enqueue on nil WebAssembly worker")
 		return
 	}
-	worker.lock.Lock(CooperativeSafepoint)
+	// G may already be runnable but not queued. Stop for GC in place: a
+	// fiber switch here could lose it or reenter its status transition.
+	worker.lock.Lock(wasmGCAllocatorYield)
 	ok := worker.runq.Push(gp)
 	worker.lock.Unlock()
 	if !ok {
@@ -448,14 +459,52 @@ func enqueueWasmG(worker *wasmWorker, gp *g) {
 }
 
 func popWasmWorkerRunq(worker *wasmWorker) *g {
-	worker.lock.Lock(CooperativeSafepoint)
-	gp := worker.runq.Pop()
+	worker.lock.Lock(wasmGCAllocatorYield)
+	var gp *g
+	var e *wasmJSEvent
+	if n := len(worker.jsEvents); n != 0 {
+		e = worker.jsEvents[n-1]
+		// Drain the callback's runnable children before returning to JS, without
+		// opening unrelated host callback stacks. For an active callback,
+		// alternate with Go work so Gosched still lets other Gs progress.
+		if e.returned {
+			gp = popWasmCallbackChild(worker, e)
+		}
+		if gp == nil && (e.returned || e.resume) {
+			gp = worker.runq.Remove(e.gp)
+			e.resume = false
+		}
+		if gp == nil && readgstatus(e.gp) == _Grunnable {
+			// A yielding callback may need a child G queued behind unrelated
+			// JS callers. Run that task before opening another host callback stack.
+			gp = popWasmCallbackChild(worker, e)
+			e.resume = true
+		}
+	}
+	if gp == nil {
+		gp = worker.runq.Pop()
+		if e != nil {
+			e.resume = true
+		}
+	}
 	worker.lock.Unlock()
 	return gp
 }
 
+// The worker queue lock must be held by the caller.
+func popWasmCallbackChild(worker *wasmWorker, event *wasmJSEvent) *g {
+	var previous *g
+	for candidate := worker.runq.Front(); candidate != nil; candidate = candidate.RunqueueNext() {
+		if candidate != event.gp && candidate.context.platform.jsCallbackID == event.id {
+			return worker.runq.RemoveAfter(previous)
+		}
+		previous = candidate
+	}
+	return nil
+}
+
 func wasmWorkerRunqLen(worker *wasmWorker) uintptr {
-	worker.lock.Lock(CooperativeSafepoint)
+	worker.lock.Lock(wasmGCAllocatorYield)
 	size := worker.runq.Len()
 	worker.lock.Unlock()
 	return size
@@ -479,6 +528,7 @@ func waitWasmWorkerRunq(worker *wasmWorker) *g {
 		// the sequence, so the futex wait returns instead of losing the wake.
 		sequence := atomic.Load(&worker.wake)
 		wasmWorkerStopForGC(worker)
+		PollWasmEvent()
 		if gp := popWasmWorkerRunq(worker); gp != nil {
 			return gp
 		}

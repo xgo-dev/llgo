@@ -811,7 +811,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [runtime, test-command]
+        suite: [runtime, workers, test-command]
     runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
     steps:
       - uses: actions/checkout@v7
@@ -832,7 +832,7 @@ jobs:
           node-version: "24"
 
       - name: Set up Chrome for browser acceptance
-        if: matrix.suite == 'runtime'
+        if: matrix.suite != 'test-command'
         id: setup-chrome
         uses: browser-actions/setup-chrome@v2
         with:
@@ -842,16 +842,19 @@ jobs:
         uses: ./.github/actions/setup-binaryen
 
       - name: Set up Wasmtime
+        if: matrix.suite != 'workers'
         uses: bytecodealliance/actions/wasmtime/setup@v1
         with:
           version: "39.0.1"
 
       - name: Restore Wasmer cache
+        if: matrix.suite != 'workers'
         uses: ./.github/actions/setup-llgo-cache
         with:
           wasmer-cache-mode: readwrite
 
       - name: Install Wasmer for W32
+        if: matrix.suite != 'workers'
         run: bash dev/install_wasmer.sh
 
       - name: Set up wasm-tools
@@ -931,6 +934,7 @@ jobs:
         run: dev/wasm_ci_report_test.sh
 
       - name: Test single-worker wasm schedulers
+        if: matrix.suite != 'workers'
         shell: bash
         env:
           CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
@@ -939,7 +943,7 @@ jobs:
         run: dev/test_wasm_single_worker.sh "${{ matrix.suite }}"
 
       - name: Test bounded browser workers
-        if: matrix.suite == 'runtime'
+        if: matrix.suite == 'workers'
         shell: bash
         env:
           CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}

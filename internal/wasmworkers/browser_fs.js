@@ -1,7 +1,7 @@
 // Browser syscall/js hosts share the Emscripten runtime thread's FS, including
 // C's file descriptors and cwd. Never create a separate MEMFS on each worker.
 addToLibrary({
-  $llgoBrowserFS__deps: ['llgo_browser_fs_call', 'llgo_browser_fs_result', '$stringToNewUTF8', '$UTF8ToString', 'malloc', 'free', '$FS'],
+  $llgoBrowserFS__deps: ['llgo_browser_fs_call', 'llgo_browser_fs_result', '$stringToUTF8', '$lengthBytesUTF8', '$UTF8ToString', 'llgo_browser_fs_malloc', 'llgo_browser_fs_free', '$FS'],
   $llgoBrowserFS__postset: 'llgoBrowserFS.install();',
   $llgoBrowserFS: {
     installed: false,
@@ -37,15 +37,19 @@ addToLibrary({
           }
           // Allocate on the requesting worker: malloc may block. Only metadata
           // crosses JSON; byte payloads use shared linear memory in both widths.
-          payload = _malloc(Math.max(1, length));
+          payload = _llgo_browser_fs_malloc(Math.max(1, length));
           if (!payload) throw Object.assign(new Error('filesystem buffer allocation failed'), { code: 'ENOMEM' });
           const pointer = Number(payload);
           if (name !== 'read') HEAPU8.set(buffer.subarray(offset, offset + length), pointer);
           args = [args[0], { pointer, length }, 0, length, args[4]];
         }
-        request = stringToNewUTF8(JSON.stringify({ target, name, args }));
+        // Each allocation may collect: JS numbers do not publish Go roots.
+        const text = JSON.stringify({ target, name, args });
+        const requestSize = lengthBytesUTF8(text) + 1;
+        request = _llgo_browser_fs_malloc(requestSize);
+        stringToUTF8(text, request, requestSize);
         const size = _llgo_browser_fs_call(request);
-        response = _malloc(size);
+        response = _llgo_browser_fs_malloc(size);
         if (!response) throw Object.assign(new Error('filesystem response allocation failed'), { code: 'ENOMEM' });
         _llgo_browser_fs_result(request, response);
         const reply = JSON.parse(UTF8ToString(response));
@@ -65,10 +69,10 @@ addToLibrary({
       } finally {
         if (request) {
           _llgo_browser_fs_result(request, 0);
-          _free(request);
+          _llgo_browser_fs_free(request);
         }
-        if (response) _free(response);
-        if (payload) _free(payload);
+        if (response) _llgo_browser_fs_free(response);
+        if (payload) _llgo_browser_fs_free(payload);
       }
     },
     install() {

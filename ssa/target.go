@@ -59,7 +59,7 @@ func (p *Target) usesWasmReflectBridges() bool {
 	if p == nil || p.effectiveGOARCH() != "wasm" {
 		return false
 	}
-	return p.WasmReflectBridges && p.WasmProvider == "wasi"
+	return p.WasmReflectBridges && (p.WasmProvider == "wasi" || p.effectiveGOOS() == "js")
 }
 
 func (p *Target) effectiveGOOS() string {

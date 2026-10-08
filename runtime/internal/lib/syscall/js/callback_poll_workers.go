@@ -2,6 +2,6 @@
 
 package js
 
-// The hook polls all JavaScript worker realms. A callback on one worker must
-// not disable polling while another worker still has registered functions.
+// Keep the shared poll hook installed while worker schedulers can enter it.
+// Registered functions and emval handles are owned by Go's main JS worker.
 const keepWasmCallbackPoll = true

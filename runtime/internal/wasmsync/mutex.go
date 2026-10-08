@@ -46,3 +46,6 @@ func (m *Mutex) Unlock() {
 		wasmworkers.WakeOne(&m.state)
 	}
 }
+
+// Contended reports whether another worker is waiting for this mutex.
+func (m *Mutex) Contended() bool { return atomic.Load(&m.waiters) != 0 }
