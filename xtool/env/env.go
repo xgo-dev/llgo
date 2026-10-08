@@ -69,8 +69,8 @@ func expandEnvWithCmd(s, dir string, environ []string) (string, bool) {
 		subcmd := strings.TrimSpace(m[2 : len(m)-1])
 		args := parseSubcmd(subcmd)
 		cmd := args[0]
-		if cmd != "pkg-config" && cmd != "llvm-config" {
-			fmt.Fprintf(os.Stderr, "expand cmd only support pkg-config and llvm-config: '%s'\n", subcmd)
+		if cmd != "pkg-config" && cmd != "llvm-config" && !(cmd == "llar" && len(args) > 1 && args[1] == "install") {
+			fmt.Fprintf(os.Stderr, "expand cmd only supports pkg-config, llvm-config and llar install: '%s'\n", subcmd)
 			return ""
 		}
 		config = true

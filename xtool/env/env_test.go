@@ -15,6 +15,22 @@ const helperEnvironment = "LLGO_ENV_TEST_HELPER"
 
 func TestMain(m *testing.M) {
 	if os.Getenv(helperEnvironment) == "1" {
+		if strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe") == "llar" {
+			switch strings.Join(os.Args[1:], " ") {
+			case "install owner/repo@v1.2.3":
+				fmt.Print("-L/native\\ lib\n-lfixture\n")
+				os.Exit(0)
+			case "install fixture/fail":
+				os.Exit(7)
+			case "install fixture/empty":
+				os.Exit(0)
+			case "install owner/repo@v1.2.3 --os linux --arch arm64":
+				// Exercise the existing working-directory and environment response below.
+			default:
+				fmt.Print("-lunsupported-command")
+				os.Exit(0)
+			}
+		}
 		dir, err := os.Getwd()
 		if err != nil {
 			os.Exit(2)
@@ -44,27 +60,71 @@ func TestExpandEnvUsesProcessEnvironment(t *testing.T) {
 	if got := ExpandEnvToArgs(""); got != nil {
 		t.Fatalf("ExpandEnvToArgs(empty) = %q, want nil", got)
 	}
+
+	t.Run("llar install metadata", func(t *testing.T) {
+		dir := t.TempDir()
+		tool := filepath.Join(dir, "llar")
+		if runtime.GOOS == "windows" {
+			tool += ".exe"
+		}
+		copyExecutable(t, tool)
+		t.Setenv("PATH", dir)
+		t.Setenv(helperEnvironment, "1")
+		const metadata = "-L/native\\ lib\n-lfixture\n"
+		const expression = "$(llar install owner/repo@v1.2.3)"
+		want := []string{"-L/native lib", "-lfixture"}
+		if got := ExpandEnvToArgs(expression); !reflect.DeepEqual(got, want) {
+			t.Fatalf("llar metadata = %q, want %q", got, want)
+		}
+		if got, want := ExpandEnv(expression), strings.ReplaceAll(strings.TrimSpace(metadata), "\n", " "); got != want {
+			t.Fatalf("ExpandEnv(llar install) = %q, want %q", got, want)
+		}
+		if got := ExpandEnvToArgs("$(llar install fixture/fail)"); got != nil {
+			t.Fatalf("failed llar install = %q, want nil", got)
+		}
+		if got := ExpandEnvToArgs("$(llar install fixture/empty)"); got != nil {
+			t.Fatalf("empty llar metadata = %q, want nil", got)
+		}
+
+		// A helper allowed to run these commands would return nonempty metadata.
+		for _, expression := range []string{"$(llar)", "$(llar make owner/repo)", "$(llar test owner/repo)"} {
+			if got := ExpandEnvToArgs(expression); got != nil {
+				t.Fatalf("unsupported command %q produced %q", expression, got)
+			}
+		}
+	})
 }
 
 func TestExpandEnvToArgsWithConfiguresSubprocess(t *testing.T) {
-	dir := t.TempDir()
-	tool := filepath.Join(dir, "pkg-config")
-	if runtime.GOOS == "windows" {
-		tool += ".exe"
-	}
-	copyExecutable(t, tool)
-	got := ExpandEnvToArgsWith(
-		"$(pkg-config --libs fixture)",
-		dir,
-		[]string{"PATH=" + dir, "LLGO_ENV_TEST=request", helperEnvironment + "=1"},
-	)
-	if len(got) != 2 || got[0] != "-Lrequest" || !strings.HasPrefix(got[1], "-I") {
-		t.Fatalf("ExpandEnvToArgsWith = %q, want -Lrequest and one include directory", got)
-	}
-	gotInfo, gotErr := os.Stat(strings.TrimPrefix(got[1], "-I"))
-	wantInfo, wantErr := os.Stat(dir)
-	if gotErr != nil || wantErr != nil || !os.SameFile(gotInfo, wantInfo) {
-		t.Fatalf("subprocess working directory = %q, want same directory as %q", got[1][2:], dir)
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("LLGO_ENV_TEST", "ambient")
+	for _, test := range []struct {
+		command, args string
+	}{
+		{"pkg-config", "--libs fixture"},
+		{"llar", "install owner/repo@v1.2.3 --os linux --arch arm64"},
+	} {
+		t.Run(test.command, func(t *testing.T) {
+			dir := t.TempDir()
+			tool := filepath.Join(dir, test.command)
+			if runtime.GOOS == "windows" {
+				tool += ".exe"
+			}
+			copyExecutable(t, tool)
+			got := ExpandEnvToArgsWith(
+				"$("+test.command+" "+test.args+")",
+				dir,
+				[]string{"PATH=" + dir, "LLGO_ENV_TEST=request", helperEnvironment + "=1"},
+			)
+			if len(got) != 2 || got[0] != "-Lrequest" || !strings.HasPrefix(got[1], "-I") {
+				t.Fatalf("ExpandEnvToArgsWith = %q, want -Lrequest and one include directory", got)
+			}
+			gotInfo, gotErr := os.Stat(strings.TrimPrefix(got[1], "-I"))
+			wantInfo, wantErr := os.Stat(dir)
+			if gotErr != nil || wantErr != nil || !os.SameFile(gotInfo, wantInfo) {
+				t.Fatalf("subprocess working directory = %q, want same directory as %q", got[1][2:], dir)
+			}
+		})
 	}
 }
 
