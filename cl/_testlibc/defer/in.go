@@ -31,7 +31,7 @@ func printf(format *int8, __llgo_va_list ...any) int32
 // CHECK: [[GO_DEFER_DATA:%.*]] = call ptr @"{{.*}}GetThreadDefer"()
 // CHECK: [[COND:%.*]] = call i1 @main.f(%"{{.*}}String" { ptr [[HELLO]], i64 5 })
 // CHECK: [[PREV_DEFER:%.*]] = call ptr @"{{.*}}GetThreadDefer"()
-// CHECK: [[FRAME:%.*]] = call ptr @"{{.*}}AllocU"(i64 48)
+// CHECK: [[FRAME:%.*]] = call noalias dereferenceable(48) ptr @"{{.*}}AllocU"(i64 48)
 // CHECK: store ptr [[PREV_DEFER]], ptr {{%.*}}
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[FRAME]])
 // CHECK: [[FLAGS:%.*]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[FRAME]], i32 0, i32 1
@@ -43,14 +43,14 @@ func printf(format *int8, __llgo_va_list ...any) int32
 // CHECK-NEXT: [[FORMAT_FLAGS:%.*]] = or i64 [[FORMAT_FLAGS0]], 1
 // CHECK-NEXT: store i64 [[FORMAT_FLAGS]], ptr [[FLAGS]]
 // CHECK: [[FORMAT_PREV:%.*]] = load ptr, ptr [[HEAD]]
-// CHECK: [[FORMAT_NODE:%.*]] = call ptr @"{{.*}}AllocU"(i64 32)
+// CHECK: [[FORMAT_NODE:%.*]] = call noalias dereferenceable(32) ptr @"{{.*}}AllocU"(i64 32)
 // CHECK: store ptr [[FORMAT_PREV]], ptr {{%.*}}
 // CHECK: store ptr [[FORMAT]], ptr {{%.*}}
 // CHECK: store ptr [[CSTR]], ptr {{%.*}}
 // CHECK: store ptr [[FORMAT_NODE]], ptr [[HEAD]]
 // Common path: bye is always the newest node.
 // CHECK: [[BYE_PREV:%.*]] = load ptr, ptr [[HEAD]]
-// CHECK: [[BYE_NODE:%.*]] = call ptr @"{{.*}}AllocU"(i64 24)
+// CHECK: [[BYE_NODE:%.*]] = call noalias dereferenceable(24) ptr @"{{.*}}AllocU"(i64 24)
 // CHECK: store ptr [[BYE_PREV]], ptr {{%.*}}
 // CHECK: store i64 2, ptr {{%.*}}
 // CHECK: store ptr [[BYE]], ptr {{%.*}}
@@ -60,7 +60,7 @@ func printf(format *int8, __llgo_va_list ...any) int32
 // CHECK-NEXT: [[WORLD_FLAGS:%.*]] = or i64 [[WORLD_FLAGS0]], 2
 // CHECK-NEXT: store i64 [[WORLD_FLAGS]], ptr [[FLAGS]]
 // CHECK: [[WORLD_PREV:%.*]] = load ptr, ptr [[HEAD]]
-// CHECK: [[WORLD_NODE:%.*]] = call ptr @"{{.*}}AllocU"(i64 24)
+// CHECK: [[WORLD_NODE:%.*]] = call noalias dereferenceable(24) ptr @"{{.*}}AllocU"(i64 24)
 // CHECK: store ptr [[WORLD_PREV]], ptr {{%.*}}
 // CHECK: store ptr [[WORLD]], ptr {{%.*}}
 // CHECK: store ptr [[WORLD_NODE]], ptr [[HEAD]]

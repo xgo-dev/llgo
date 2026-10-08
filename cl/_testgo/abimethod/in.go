@@ -399,7 +399,7 @@ type I2 interface {
 
 // The promoted bytes.Buffer.String method remains the implementation behind fmt.Stringer.
 // CHECK-LABEL: define void @main.testAnonymousBuffer(){{.*}} {
-// CHECK: [[BUF_OWNER:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK: [[BUF_OWNER:%[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK: [[BUF_FIELD:%[0-9]+]] = getelementptr inbounds nuw { i64, ptr }, ptr [[BUF_OWNER]], i32 0, i32 1
 // CHECK-NEXT: [[BUF:%[0-9]+]] = call ptr @bytes.NewBufferString(
 // CHECK: store ptr [[BUF]], ptr [[BUF_FIELD]]
@@ -421,7 +421,7 @@ type I2 interface {
 
 // IP.Store and IP.Load must operate on the same Pointer[any] interface value.
 // CHECK-LABEL: define void @main.testGeneric(){{.*}} {
-// CHECK: [[P_OBJECT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[P_OBJECT:%[0-9]+]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
 // CHECK-NEXT: [[P_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.Pointer{{\[.*\]}}")
 // CHECK: [[P_I0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr [[P_ITAB]], 0
 // CHECK-NEXT: [[P_IFACE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" [[P_I0]], ptr [[P_OBJECT]], 1
@@ -460,7 +460,7 @@ type I2 interface {
 
 // Named T and *T select the proper descriptor and dispatch through the requested interface method.
 // CHECK-LABEL: define void @main.testNamed1(){{.*}} {
-// CHECK: [[N1_OBJECT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[N1_OBJECT:%[0-9]+]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
 // CHECK: [[N1_FIELD:%[0-9]+]] = getelementptr inbounds nuw %main.T, ptr [[N1_OBJECT]], i32 0, i32 0
 // CHECK-NEXT: store i64 100, ptr [[N1_FIELD]]
 // CHECK-NEXT: [[N1_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T")
@@ -480,7 +480,7 @@ type I2 interface {
 
 // CHECK-LABEL: define void @main.testNamed2(){{.*}} {
 // CHECK: [[N2_VALUE:%[0-9]+]] = load %main.T, ptr %{{[0-9]+}}
-// CHECK-NEXT: [[N2_OBJECT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT: [[N2_OBJECT:%[0-9]+]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK-NEXT: store %main.T [[N2_VALUE]], ptr [[N2_OBJECT]]
 // CHECK-NEXT: [[N2_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.T)
 // CHECK-NEXT: [[N2_I0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr [[N2_ITAB]], 0
@@ -498,7 +498,7 @@ type I2 interface {
 // CHECK-NEXT: br i1 [[N2_BAD]],
 
 // CHECK-LABEL: define void @main.testNamed3(){{.*}} {
-// CHECK: [[N3_OBJECT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[N3_OBJECT:%[0-9]+]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
 // CHECK: [[N3_FIELD:%[0-9]+]] = getelementptr inbounds nuw %main.T, ptr [[N3_OBJECT]], i32 0, i32 0
 // CHECK-NEXT: store i64 100, ptr [[N3_FIELD]]
 // CHECK-NEXT: [[N3_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T")

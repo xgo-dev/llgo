@@ -28,7 +28,7 @@ func main() {
 // CHECK: call void @"{{.*}}PrintInt"(i64 [[RESET_VALUE]])
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: [[ITEM:%.*]] = call ptr @"{{.*}}AllocZ"(i64 8)
+// CHECK: [[ITEM:%.*]] = call noalias dereferenceable(8) ptr @"{{.*}}AllocZ"(i64 8)
 // CHECK-NEXT: [[ITEM_VALUE:%.*]] = getelementptr inbounds nuw %main.item, ptr [[ITEM]], i32 0, i32 0
 // CHECK-NEXT: store i64 42, ptr [[ITEM_VALUE]]
 // CHECK: [[ITEM_ITAB:%.*]] = call ptr @"{{.*}}NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.item")
@@ -46,7 +46,7 @@ func main() {
 // CHECK-NEXT: [[RESET_CALL0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[RESET_METHOD]], 0
 // CHECK-NEXT: [[RESET_CALL:%.*]] = insertvalue { ptr, ptr } [[RESET_CALL0]], ptr [[RESET_RECEIVER]], 1
 // CHECK: [[PREV_DEFER:%.*]] = call ptr @"{{.*}}GetThreadDefer"()
-// CHECK: [[FRAME:%.*]] = call ptr @"{{.*}}AllocU"(i64 48)
+// CHECK: [[FRAME:%.*]] = call noalias dereferenceable(48) ptr @"{{.*}}AllocU"(i64 48)
 // CHECK: store ptr [[PREV_DEFER]], ptr {{%.*}}
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[FRAME]])
 // CHECK: [[HEAD:%.*]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[FRAME]], i32 0, i32 5
@@ -54,7 +54,7 @@ func main() {
 // CHECK-NEXT: icmp ne ptr [[HEAD_CANDIDATE]], null
 // CHECK: call void @"{{.*}}Rethrow"(ptr [[PREV_DEFER]])
 // CHECK: [[OLD_HEAD:%.*]] = load ptr, ptr [[HEAD]]
-// CHECK: [[NODE:%.*]] = call ptr @"{{.*}}AllocU"(i64 32)
+// CHECK: [[NODE:%.*]] = call noalias dereferenceable(32) ptr @"{{.*}}AllocU"(i64 32)
 // CHECK: [[NODE_PREV:%.*]] = getelementptr inbounds nuw { ptr, i64, { ptr, ptr } }, ptr [[NODE]], i32 0, i32 0
 // CHECK-NEXT: store ptr [[OLD_HEAD]], ptr [[NODE_PREV]]
 // CHECK: [[NODE_CALL:%.*]] = getelementptr inbounds nuw { ptr, i64, { ptr, ptr } }, ptr [[NODE]], i32 0, i32 2

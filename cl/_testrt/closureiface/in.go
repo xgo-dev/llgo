@@ -19,13 +19,13 @@ func main() {
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP0:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK-NEXT:   %[[TMP0:[0-9]+]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
 // CHECK-NEXT:   store i64 200, ptr %[[TMP0]], align 8
-// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %[[TMP1]], i32 0, i32 0
 // CHECK-NEXT:   store ptr %[[TMP0]], ptr %[[TMP2]], align 8
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.main$1", ptr undef }, ptr %[[TMP1]], 1
-// CHECK-NEXT:   %[[TMP4:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   %[[TMP4:[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK-NEXT:   store { ptr, ptr } %[[TMP3]], ptr %[[TMP4]], align 8
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_closure$QIHBTaw1IFobr8yvWpq-2AJFm3xBNhdW_aNBicqUBGk", ptr undef }, ptr %[[TMP4]], 1
 // CHECK-NEXT:   %[[TMP6:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[TMP5]], 0
@@ -33,7 +33,7 @@ func main() {
 // CHECK-NEXT:   br i1 %[[TMP7]], label %_llgo_[[BB3:[0-9]+]], label %_llgo_[[BB4:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB1:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP8:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   %[[TMP8:[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB5]], i64 5 }, ptr %[[TMP8]], align 8
 // CHECK-NEXT:   %[[TMP9:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %[[TMP8]], 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %[[TMP9]])

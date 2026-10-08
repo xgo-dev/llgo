@@ -10,7 +10,7 @@ package main
 // CHECK: @[[D4_WORLD:[0-9]+]] = private unnamed_addr constant [5 x i8] c"world"
 // CHECK-LABEL: define void @main.fail(){{.*}} {
 // CHECK: [[D4_FAIL_PREV:%[0-9]+]] = call ptr @"{{.*}}GetThreadDefer"()
-// CHECK: [[D4_FAIL_FRAME:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 48)
+// CHECK: [[D4_FAIL_FRAME:%[0-9]+]] = call noalias dereferenceable(48) ptr @"{{.*}}AllocU"(i64 48)
 // CHECK: store ptr [[D4_FAIL_PREV]], ptr %{{[0-9]+}}
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[D4_FAIL_FRAME]])
 // CHECK: [[D4_FAIL_HEAD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[D4_FAIL_FRAME]], i32 0, i32 5
@@ -19,7 +19,7 @@ package main
 // CHECK-NEXT: call void @"{{.*}}EndRecoverFrame"(%"{{.*}}recoverState" [[D4_RECOVER_STATE]])
 // CHECK: call void @"{{.*}}Rethrow"(ptr [[D4_FAIL_PREV]])
 // CHECK: [[D4_FAIL_OLD_HEAD:%[0-9]+]] = load ptr, ptr [[D4_FAIL_HEAD]]
-// CHECK-NEXT: [[D4_FAIL_NODE:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 32)
+// CHECK-NEXT: [[D4_FAIL_NODE:%[0-9]+]] = call noalias dereferenceable(32) ptr @"{{.*}}AllocU"(i64 32)
 // CHECK: store ptr [[D4_FAIL_OLD_HEAD]], ptr %{{[0-9]+}}
 // CHECK: store %"{{.*}}String" { ptr @[[D4_BYE]], i64 3 }, ptr %{{[0-9]+}}
 // CHECK-NEXT: store ptr [[D4_FAIL_NODE]], ptr [[D4_FAIL_HEAD]]
@@ -50,7 +50,7 @@ package main
 // CHECK: call void @"{{.*}}PrintString"(%"{{.*}}String" [[D4_RECOVER_STRING]])
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: [[D4_MAIN_PREV:%[0-9]+]] = call ptr @"{{.*}}GetThreadDefer"()
-// CHECK: [[D4_MAIN_FRAME:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 48)
+// CHECK: [[D4_MAIN_FRAME:%[0-9]+]] = call noalias dereferenceable(48) ptr @"{{.*}}AllocU"(i64 48)
 // CHECK: store ptr [[D4_MAIN_PREV]], ptr %{{[0-9]+}}
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[D4_MAIN_FRAME]])
 // CHECK: store %"{{.*}}String" { ptr @[[D4_HELLO]], i64 5 }, ptr %{{[0-9]+}}

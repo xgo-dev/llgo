@@ -62,7 +62,7 @@ func main() {
 // CHECK-LABEL: define ptr @main.basicType(
 // CHECK-SAME: i64 %[[TMP0:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 72)
+// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call noalias dereferenceable(72) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 72)
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = getelementptr inbounds nuw %"{{.*}}/runtime/abi.Type", ptr %[[TMP1]], i32 0, i32 0
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = icmp uge i64 %[[TMP0]], 25
 // CHECK-NEXT:   br i1 %[[TMP3]], label %_llgo_[[BB1:[0-9]+]], label %_llgo_[[BB2:[0-9]+]]

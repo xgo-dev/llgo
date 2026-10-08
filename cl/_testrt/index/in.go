@@ -81,7 +81,7 @@ type S []int
 
 // Named pointer-to-array indexing and named-slice indexing use different
 // lowering. The slice predicate, length and data pointer must stay associated.
-// CHECK: %[[NAMED_ARRAY:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK: %[[NAMED_ARRAY:[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK: call void @llvm.memset.p0.i64(ptr %[[NAMED_TMP]], i8 0, i64 16, i1 false)
 // CHECK: %[[NAMED_INIT_0:[0-9]+]] = getelementptr inbounds i64, ptr %[[NAMED_TMP]], i64 0
 // CHECK: %[[NAMED_INIT_1:[0-9]+]] = getelementptr inbounds i64, ptr %[[NAMED_TMP]], i64 1
@@ -91,7 +91,7 @@ type S []int
 // CHECK: store [2 x i64] %[[NAMED_VALUE]], ptr %[[NAMED_ARRAY]]
 // CHECK: %[[NAMED_ELEM:[0-9]+]] = getelementptr inbounds i64, ptr %[[NAMED_ARRAY]], i64 1
 // CHECK: load i64, ptr %[[NAMED_ELEM]]
-// CHECK: %[[SLICE_DATA_RAW:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 32)
+// CHECK: %[[SLICE_DATA_RAW:[0-9]+]] = call noalias dereferenceable(32) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 32)
 // CHECK: %[[SLICE0:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %[[SLICE_DATA_RAW]], 0
 // CHECK: %[[SLICE1:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[SLICE0]], i64 4, 1
 // CHECK: %[[SLICE:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[SLICE1]], i64 4, 2

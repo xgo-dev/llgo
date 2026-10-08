@@ -7,7 +7,7 @@ package main
 // CHECK: [[LOOP_TEXT:@[0-9]+]] = private unnamed_addr constant [4 x i8] c"loop"
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: [[PREV_DEFER:%.*]] = call ptr @"{{.*}}GetThreadDefer"()
-// CHECK: [[FRAME:%.*]] = call ptr @"{{.*}}AllocU"(i64 48)
+// CHECK: [[FRAME:%.*]] = call noalias dereferenceable(48) ptr @"{{.*}}AllocU"(i64 48)
 // CHECK: store ptr [[PREV_DEFER]], ptr {{%.*}}
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[FRAME]])
 // CHECK: [[HEAD:%.*]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[FRAME]], i32 0, i32 5
@@ -15,7 +15,7 @@ package main
 // CHECK: [[IN_RANGE:%.*]] = icmp slt i64 [[I]], 3
 // CHECK: br i1 [[IN_RANGE]], label %{{.*}}, label %{{.*}}
 // CHECK: [[OLD_HEAD:%.*]] = load ptr, ptr [[HEAD]]
-// CHECK: [[NODE:%.*]] = call ptr @"{{.*}}AllocU"(i64 40)
+// CHECK: [[NODE:%.*]] = call noalias dereferenceable(40) ptr @"{{.*}}AllocU"(i64 40)
 // CHECK: store ptr [[OLD_HEAD]], ptr %{{.*}}
 // CHECK: store %"{{.*}}String" { ptr [[LOOP_TEXT]], i64 4 }, ptr %{{.*}}
 // CHECK: store i64 [[I]], ptr %{{.*}}

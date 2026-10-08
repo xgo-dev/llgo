@@ -47,10 +47,10 @@ func (m *outer) M() {}
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP0:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   %[[TMP0:[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK-NEXT:   store { ptr, ptr } { ptr @"main.(*outer).M$thunk", ptr null }, ptr %[[TMP0]], align 8
 // CHECK-NEXT:   %[[TMP1:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_closure$p06T23YeLPAu3v8p2hFtiY7Rlq6V9sr5dXePfqXtx6M", ptr undef }, ptr %[[TMP0]], 1
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK-NEXT:   store { ptr, ptr } { ptr @"main.(*InnerInt).M$thunk", ptr null }, ptr %[[TMP2]], align 8
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_closure$WmZDdXg-2mo-o0lqY2QOZoNsd6Ks2TbzdX4upfVJ3j8", ptr undef }, ptr %[[TMP2]], 1
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[TMP1]], 0
@@ -58,7 +58,7 @@ func (m *outer) M() {}
 // CHECK-NEXT:   br i1 %[[TMP5]], label %_llgo_[[BB3:[0-9]+]], label %_llgo_[[BB4:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB1:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   %[[TMP6:[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB17]], i64 47 }, ptr %[[TMP6]], align 8
 // CHECK-NEXT:   %[[TMP7:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %[[TMP6]], 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %[[TMP7]])

@@ -35,7 +35,7 @@ func TestAllocLargeLocalOnHeap(t *testing.T) {
 	if strings.Contains(ir, "alloca [131073 x i8]") {
 		t.Fatalf("local above the explicit stack limit remained on the stack:\n%s", ir)
 	}
-	if !strings.Contains(ir, `call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ"(i64 131073)`) {
+	if !strings.Contains(ir, `call noalias dereferenceable(131073) ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ"(i64 131073)`) {
 		t.Fatalf("large local was not allocated with runtime.AllocZ:\n%s", ir)
 	}
 	if !pkg.NeedRuntime {

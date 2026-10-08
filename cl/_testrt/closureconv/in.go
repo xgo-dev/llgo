@@ -29,10 +29,10 @@ func add(a int, b int) int {
 }
 
 // CHECK-LABEL: define %main.Func @main.demo1(i64 %0){{.*}} {
-// CHECK: [[DEMO1_CALL:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
+// CHECK: [[DEMO1_CALL:%.*]] = call noalias dereferenceable(24) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
 // CHECK: [[DEMO1_N:%.*]] = getelementptr inbounds nuw %main.Call, ptr [[DEMO1_CALL]], i32 0, i32 1
 // CHECK: store i64 %0, ptr [[DEMO1_N]]
-// CHECK: [[DEMO1_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK: [[DEMO1_ENV:%.*]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK: [[DEMO1_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr [[DEMO1_ENV]], i32 0, i32 0
 // CHECK: store ptr [[DEMO1_CALL]], ptr [[DEMO1_ENV_SLOT]]
 // CHECK: [[DEMO1_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.(*Call).add$bound", ptr undef }, ptr [[DEMO1_ENV]], 1
@@ -50,8 +50,8 @@ func demo1(n int) Func {
 }
 
 // CHECK-LABEL: define %main.Func @main.demo2(){{.*}} {
-// CHECK: [[DEMO2_CALL:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
-// CHECK: [[DEMO2_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK: [[DEMO2_CALL:%.*]] = call noalias dereferenceable(24) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
+// CHECK: [[DEMO2_ENV:%.*]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK: [[DEMO2_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr [[DEMO2_ENV]], i32 0, i32 0
 // CHECK: store ptr [[DEMO2_CALL]], ptr [[DEMO2_ENV_SLOT]]
 // CHECK: [[DEMO2_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.(*Call).add$bound", ptr undef }, ptr [[DEMO2_ENV]], 1
@@ -82,9 +82,9 @@ func demo4() Func {
 }
 
 // CHECK-LABEL: define %main.Func @main.demo5(i64 %0){{.*}} {
-// CHECK: [[DEMO5_CAPTURE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[DEMO5_CAPTURE:%.*]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
 // CHECK: store i64 %0, ptr [[DEMO5_CAPTURE]]
-// CHECK: [[DEMO5_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK: [[DEMO5_ENV:%.*]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK: [[DEMO5_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr [[DEMO5_ENV]], i32 0, i32 0
 // CHECK: store ptr [[DEMO5_CAPTURE]], ptr [[DEMO5_ENV_SLOT]]
 // CHECK: [[DEMO5_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.demo5$1", ptr undef }, ptr [[DEMO5_ENV]], 1

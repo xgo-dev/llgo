@@ -16,7 +16,10 @@
 
 package cabi
 
-import "github.com/xgo-dev/llvm"
+import (
+	"github.com/xgo-dev/llgo/internal/llvmattr"
+	"github.com/xgo-dev/llvm"
+)
 
 // These semantic attributes are supported on both functions and call sites.
 // The binding exposes enumeration for function attributes but only individual
@@ -44,34 +47,34 @@ func remapFunctionAttribute(ctx llvm.Context, attr llvm.Attribute, info *FuncInf
 		effects := attr.GetEnumValue()
 		for _, ti := range info.Params {
 			if ti.Kind == AttrPointer {
-				effects |= 1 // ArgMem Ref
+				effects |= llvmattr.MemoryArgRead
 			}
 		}
 		if info.Return.Kind == AttrPointer {
-			effects |= 2 // ArgMem Mod
+			effects |= llvmattr.MemoryArgWrite
 		}
 		return ctx.CreateEnumAttribute(llvm.AttributeKindID("memory"), effects)
 	case llvm.AttributeKindID("allocsize"):
 		// allocsize uses zero-based indices, unlike LLVM attribute indices.
-		value := attr.GetEnumValue()
-		remap := func(index uint64) (uint64, bool) {
-			if index >= uint64(len(paramMap)) || paramMap[index] == 0 || info.Params[index].Kind != AttrNone {
+		element, count := llvmattr.AllocSizeArgs(attr.GetEnumValue())
+		remap := func(index uint32) (uint32, bool) {
+			if uint64(index) >= uint64(len(paramMap)) || paramMap[index] == 0 || info.Params[index].Kind != AttrNone {
 				return 0, false
 			}
-			return uint64(paramMap[index] - 1), true
+			return uint32(paramMap[index] - 1), true
 		}
-		first, ok := remap(value >> 32)
+		first, ok := remap(element)
 		if !ok {
 			return llvm.Attribute{}
 		}
-		second := value & 0xffffffff
-		if second != 0xffffffff {
+		second := count
+		if second != llvmattr.AllocSizeNoCount {
 			second, ok = remap(second)
 			if !ok {
 				return llvm.Attribute{}
 			}
 		}
-		return ctx.CreateEnumAttribute(llvm.AttributeKindID("allocsize"), first<<32|second)
+		return ctx.CreateEnumAttribute(llvm.AttributeKindID("allocsize"), llvmattr.AllocSize(first, second))
 	}
 	return attr
 }

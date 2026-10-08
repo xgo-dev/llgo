@@ -6,7 +6,7 @@ import "github.com/xgo-dev/llgo/cl/_testdata/foo"
 // CHECK-LABEL: define %"{{.*}}eface" @main.Foo(){{.*}} {
 // CHECK: store i64 1, ptr %{{[0-9]+}}
 // CHECK: [[FOO_STRUCT:%[0-9]+]] = load { i64 }, ptr %{{[0-9]+}}
-// CHECK-NEXT: [[FOO_BOX:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT: [[FOO_BOX:%[0-9]+]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK-NEXT: store { i64 } [[FOO_STRUCT]], ptr [[FOO_BOX]]
 // CHECK-NEXT: [[FOO_EFACE:%[0-9]+]] = insertvalue %"{{.*}}eface" { ptr [[LOCAL_STRUCT:@"[^"]*/cl/_testgo/strucintf\.struct\$[^"]+"]], ptr undef }, ptr [[FOO_BOX]], 1
 // CHECK-NEXT: ret %"{{.*}}eface" [[FOO_EFACE]]

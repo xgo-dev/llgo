@@ -107,7 +107,7 @@ func main() {
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %[[TMP9]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP0]], i8 0, i64 16, i1 false)
-// CHECK-NEXT:   %[[TMP11:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   %[[TMP11:[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK-NEXT:   store %"{{.*}}/cl/_testdata/foo.Foo" zeroinitializer, ptr %[[TMP11]], align 8
 // CHECK-NEXT:   %[[TMP12:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_{{.*}}/cl/_testdata/foo.Foo", ptr undef }, ptr %[[TMP11]], 1
 // CHECK-NEXT:   %[[TMP13:[0-9]+]] = call { %"{{.*}}/cl/_testdata/foo.Foo", i1 } @main.Bar(%"{{.*}}/runtime/internal/runtime.eface" %[[TMP12]])

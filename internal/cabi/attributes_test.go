@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/llvmattr"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 )
@@ -74,7 +75,7 @@ define %Large @roundtrip(%Large %v, ptr readonly captures(none) %p) memory(none)
 					}
 				}
 				attr := requireABIAttr(t, fn.GetEnumAttributeAtIndex, -1, "allocsize")
-				if attr.GetEnumValue() != uint64(sizeIndex)<<32|0xffffffff {
+				if attr.GetEnumValue() != llvmattr.AllocSize(uint32(sizeIndex), llvmattr.AllocSizeNoCount) {
 					t.Fatalf("bad allocsize: %s", fn.String())
 				}
 				requireABIAttr(t, fn.GetEnumAttributeAtIndex, len(types), "returned")
@@ -95,14 +96,14 @@ define %Large @roundtrip(%Large %v, ptr readonly captures(none) %p) memory(none)
 				requireABIAttr(t, fn.GetEnumAttributeAtIndex, last, "readonly")
 				requireABIAttr(t, fn.GetEnumAttributeAtIndex, last, "captures")
 				attr := requireABIAttr(t, fn.GetEnumAttributeAtIndex, -1, "memory")
-				if attr.GetEnumValue() != 3 {
+				if attr.GetEnumValue() != llvmattr.MemoryArgRead|llvmattr.MemoryArgWrite {
 					t.Fatalf("memory must include ABI reads/writes: %s", fn.String())
 				}
 				if name == "roundtrip" {
 					call := findAttributeCall(t, fn, "produce")
 					requireABIAttr(t, call.GetCallSiteEnumAttribute, last, "readonly")
 					requireABIAttr(t, call.GetCallSiteEnumAttribute, last, "captures")
-					if requireABIAttr(t, call.GetCallSiteEnumAttribute, -1, "memory").GetEnumValue() != 3 {
+					if requireABIAttr(t, call.GetCallSiteEnumAttribute, -1, "memory").GetEnumValue() != llvmattr.MemoryArgRead|llvmattr.MemoryArgWrite {
 						t.Fatal("call memory must include ABI reads/writes")
 					}
 				}
@@ -177,7 +178,9 @@ func TestRuntimeABIAttributes(t *testing.T) {
 				t.Fatalf("%v\n%s", err, mod.String())
 			}
 			function := func(name string) llvm.Value { return mod.NamedFunction(llssa.PkgRuntime + "." + name) }
-			requireABIAttr(t, function("CStrDup").GetEnumAttributeAtIndex, 0, "nonnull")
+			for _, attr := range []string{"nonnull", "noalias", "noundef"} {
+				requireABIAttr(t, function("CStrDup").GetEnumAttributeAtIndex, 0, attr)
+			}
 			requireABIAttr(t, function("CStrCopy").GetEnumAttributeAtIndex, 1, "returned")
 			from := function("StringFrom")
 			source := 1
@@ -192,9 +195,9 @@ func TestRuntimeABIAttributes(t *testing.T) {
 			for _, name := range []string{"StringEqual", "Complex128Div"} {
 				fn := function(name)
 				attr := requireABIAttr(t, fn.GetEnumAttributeAtIndex, -1, "memory")
-				want := uint64(0x55)
+				want := llvmattr.MemoryRead
 				if !fn.GetEnumAttributeAtIndex(1, llvm.AttributeKindID("sret")).IsNil() {
-					want |= 2
+					want |= llvmattr.MemoryArgWrite
 				}
 				if attr.GetEnumValue() != want {
 					t.Fatalf("bad memory effects: %s", fn.String())

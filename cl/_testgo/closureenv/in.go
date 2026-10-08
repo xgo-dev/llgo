@@ -17,9 +17,9 @@ package main
 // CHECK: ret i64 0
 // CHECK: ret i64 42
 // CHECK-LABEL: define { ptr, ptr } @main.zeroSizedPointerCapture(ptr %0){{.*}} {
-// CHECK: [[ZSP_VALUE:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[ZSP_VALUE:%[0-9]+]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
 // CHECK-NEXT: store ptr %0, ptr [[ZSP_VALUE]]
-// CHECK-NEXT: [[ZSP_ENV:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT: [[ZSP_ENV:%[0-9]+]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK: store ptr [[ZSP_VALUE]], ptr %{{[0-9]+}}
 // CHECK: [[ZSP_CLOSURE:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.zeroSizedPointerCapture$1", ptr undef }, ptr [[ZSP_ENV]], 1
 // CHECK-NEXT: ret { ptr, ptr } [[ZSP_CLOSURE]]

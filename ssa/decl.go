@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/llvmattr"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -420,7 +421,9 @@ func (p Package) newFunc(
 		llvmName = p.Prog.stdcallSymbolName(name)
 	}
 	fn := llvm.AddFunction(p.mod, llvmName, t.ll)
-	p.Prog.applyRuntimeAttributes(fn, name, envType != nil)
+	if envType == nil {
+		llvmattr.ApplyRuntimeFunction(p.Prog.ctx, fn, name, p.Prog.GCRootsEnabled())
+	}
 	if bg == InStdcall {
 		fn.SetFunctionCallConv(p.Prog.stdcallCallConv())
 	}

@@ -10,7 +10,7 @@ type data struct {
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // First read every len/cap operation from the same zero-valued struct.
-// CHECK: [[ZERO_DATA:%.*]] = call ptr @"{{.*}}AllocZ"(i64 56)
+// CHECK: [[ZERO_DATA:%.*]] = call noalias dereferenceable(56) ptr @"{{.*}}AllocZ"(i64 56)
 // CHECK: [[ZERO_STRING:%.*]] = load %"{{.*}}String", ptr {{%.*}}
 // CHECK-NEXT: [[ZERO_STRING_LEN:%.*]] = extractvalue %"{{.*}}String" [[ZERO_STRING]], 1
 // CHECK: [[ZERO_CHAN:%.*]] = load ptr, ptr {{%.*}}
@@ -30,7 +30,7 @@ type data struct {
 // CHECK: call void @"{{.*}}PrintInt"(i64 [[ZERO_CHAN_CAP]])
 // CHECK: call void @"{{.*}}PrintInt"(i64 [[ZERO_SLICE_CAP]])
 // Then construct and query the populated value, preserving channel/map/slice identities.
-// CHECK: [[VALUE_DATA:%.*]] = call ptr @"{{.*}}AllocZ"(i64 56)
+// CHECK: [[VALUE_DATA:%.*]] = call noalias dereferenceable(56) ptr @"{{.*}}AllocZ"(i64 56)
 // CHECK: [[VALUE_CHAN:%.*]] = call ptr @"{{.*}}NewChan"(i64 8, i64 2)
 // CHECK: [[VALUE_MAP:%.*]] = call ptr @"{{.*}}MakeMap"(ptr @"map[_llgo_int]_llgo_string", i64 1)
 // CHECK: [[VALUE_SLICE0:%.*]] = insertvalue %"{{.*}}Slice" undef, ptr {{%.*}}, 0

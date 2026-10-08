@@ -68,7 +68,7 @@ func main() {
 // CHECK-SAME: %"{{.*}}/runtime/internal/runtime.eface" %[[TMP0:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
 // CHECK-NEXT:   %[[TMP1:[0-9]+]] = alloca %main.eface, align 8
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %[[TMP0]], ptr %[[TMP2]], align 8
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.eface", ptr %[[TMP2]], align 8
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[TMP3]], 0
@@ -86,14 +86,14 @@ func main() {
 // CHECK-NEXT:   br i1 %[[TMP10]], label %_llgo_[[BB3:[0-9]+]], label %_llgo_[[BB4:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB2:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP11:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   %[[TMP11:[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB1]], i64 14 }, ptr %[[TMP11]], align 8
 // CHECK-NEXT:   %[[TMP12:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %[[TMP11]], 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %[[TMP12]])
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB3]]:
-// CHECK-NEXT:   %[[TMP13:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   %[[TMP13:[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB3]], i64 14 }, ptr %[[TMP13]], align 8
 // CHECK-NEXT:   %[[TMP14:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %[[TMP13]], 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %[[TMP14]])
@@ -124,7 +124,7 @@ func main() {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
 // CHECK-NEXT:   %[[TMP1:[0-9]+]] = alloca %main.u64parts, align 8
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = alloca %main.eface, align 8
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK-NEXT:   %[[TMP3:[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %[[TMP0]], ptr %[[TMP3]], align 8
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.eface", ptr %[[TMP3]], align 8
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[TMP4]], 0
@@ -146,14 +146,14 @@ func main() {
 // CHECK-NEXT:   br i1 %[[TMP13]], label %_llgo_[[BB3:[0-9]+]], label %_llgo_[[BB5:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB2:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP14:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   %[[TMP14:[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB5]], i64 14 }, ptr %[[TMP14]], align 8
 // CHECK-NEXT:   %[[TMP15:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %[[TMP14]], 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %[[TMP15]])
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB3]]:
-// CHECK-NEXT:   %[[TMP16:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT:   %[[TMP16:[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB6]], i64 14 }, ptr %[[TMP16]], align 8
 // CHECK-NEXT:   %[[TMP17:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %[[TMP16]], 1
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %[[TMP17]])
@@ -198,12 +198,12 @@ func main() {
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
 // CHECK-NEXT:   %[[TMP0:[0-9]+]] = call float @main.f32()
-// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 4)
+// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call noalias dereferenceable(4) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 4)
 // CHECK-NEXT:   store float %[[TMP0]], ptr %[[TMP1]], align 4
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_float32, ptr undef }, ptr %[[TMP1]], 1
 // CHECK-NEXT:   call void @main.check32(%"{{.*}}/runtime/internal/runtime.eface" %[[TMP2]])
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = call double @main.f64()
-// CHECK-NEXT:   %[[TMP4:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT:   %[[TMP4:[0-9]+]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK-NEXT:   store double %[[TMP3]], ptr %[[TMP4]], align 8
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_float64, ptr undef }, ptr %[[TMP4]], 1
 // CHECK-NEXT:   call void @main.check64(%"{{.*}}/runtime/internal/runtime.eface" %[[TMP5]])

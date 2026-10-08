@@ -48,7 +48,7 @@ func main() {
 // CHECK-NEXT:   %[[TMP11:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP5]], i32 0, i32 2
 // CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP3]], i8 0, i64 16, i1 false)
 // CHECK-NEXT:   %[[TMP12:[0-9]+]] = getelementptr inbounds nuw %"main.T3[interface{}]", ptr %[[TMP3]], i32 0, i32 0
-// CHECK-NEXT:   %[[TMP13:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT:   %[[TMP13:[0-9]+]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK-NEXT:   store i64 0, ptr %[[TMP13]], align 8
 // CHECK-NEXT:   %[[TMP14:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %[[TMP13]], 1
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %[[TMP14]], ptr %[[TMP12]], align 8
@@ -61,7 +61,7 @@ func main() {
 // CHECK-NEXT:   store ptr null, ptr %[[TMP16]], align 8
 // CHECK-NEXT:   store i64 0, ptr %[[TMP17]], align 8
 // CHECK-NEXT:   %[[TMP18:[0-9]+]] = load %main.cacheKey, ptr %[[TMP5]], align 8
-// CHECK-NEXT:   %[[TMP19:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 48)
+// CHECK-NEXT:   %[[TMP19:[0-9]+]] = call noalias dereferenceable(48) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 48)
 // CHECK-NEXT:   store %main.cacheKey %[[TMP18]], ptr %[[TMP19]], align 8
 // CHECK-NEXT:   %[[TMP20:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_main.cacheKey]_llgo_string", ptr %[[TMP6]], ptr %[[TMP19]])
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB29]], i64 5 }, ptr %[[TMP20]], align 8
@@ -75,7 +75,7 @@ func main() {
 // CHECK-NEXT:   %[[TMP25:[0-9]+]] = getelementptr inbounds nuw %main.cacheKey, ptr %[[TMP2]], i32 0, i32 2
 // CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP0]], i8 0, i64 16, i1 false)
 // CHECK-NEXT:   %[[TMP26:[0-9]+]] = getelementptr inbounds nuw %"main.T3[interface{}]", ptr %[[TMP0]], i32 0, i32 0
-// CHECK-NEXT:   %[[TMP27:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT:   %[[TMP27:[0-9]+]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK-NEXT:   store i64 0, ptr %[[TMP27]], align 8
 // CHECK-NEXT:   %[[TMP28:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr %[[TMP27]], 1
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.eface" %[[TMP28]], ptr %[[TMP26]], align 8
@@ -88,7 +88,7 @@ func main() {
 // CHECK-NEXT:   store ptr null, ptr %[[TMP30]], align 8
 // CHECK-NEXT:   store i64 0, ptr %[[TMP31]], align 8
 // CHECK-NEXT:   %[[TMP32:[0-9]+]] = load %main.cacheKey, ptr %[[TMP2]], align 8
-// CHECK-NEXT:   %[[TMP33:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 48)
+// CHECK-NEXT:   %[[TMP33:[0-9]+]] = call noalias dereferenceable(48) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 48)
 // CHECK-NEXT:   store %main.cacheKey %[[TMP32]], ptr %[[TMP33]], align 8
 // CHECK-NEXT:   %[[TMP34:[0-9]+]] = call { ptr, i1 } @"{{.*}}/runtime/internal/runtime.MapAccess2"(ptr @"map[_llgo_main.cacheKey]_llgo_string", ptr %[[TMP6]], ptr %[[TMP33]])
 // CHECK-NEXT:   %[[TMP35:[0-9]+]] = extractvalue { ptr, i1 } %[[TMP34]], 0
