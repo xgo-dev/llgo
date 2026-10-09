@@ -23,7 +23,7 @@ try {
       if (name.startsWith("fs-single-") && line === "wasm filesystem ok") resolve(0);
     };
     module.default({
-      arguments: [name],
+      arguments: name.startsWith("fs-workers-") ? [name, "--gc-stress"] : [name],
       print(line) {
         record(line);
       },
@@ -42,7 +42,7 @@ try {
   if (status !== 0) {
     throw new Error(`module exited with status ${status}: ${output.join("\n")}`);
   }
-  if (!output.some(line => /wasm (workers|hardening|filesystem) ok/.test(line))) {
+  if (!output.some(line => /wasm (workers|hardening|filesystem|js workers) ok/.test(line))) {
     throw new Error(`module produced no success marker: ${output.join("\n")}`);
   }
   body.dataset.result = "pass";

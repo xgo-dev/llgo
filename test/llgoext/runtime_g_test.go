@@ -145,6 +145,7 @@ func TestRuntimeGMPLinks(t *testing.T) {
 
 	seenG := map[uint64]bool{parent.goid: true}
 	seenM := map[int64]bool{parent.mid: true}
+	mProcs := map[int64]int32{parent.mid: parent.pid}
 	seenP := map[int32]bool{parent.pid: true}
 	multiplexed := runtimeSchedulerMultiplexesForTesting()
 	for i := 0; i < cap(results); i++ {
@@ -157,8 +158,13 @@ func TestRuntimeGMPLinks(t *testing.T) {
 			t.Fatalf("duplicate G id %d", state.goid)
 		}
 		if multiplexed {
-			if state.mid != parent.mid || state.pid != parent.pid {
-				t.Fatalf("multiplexed G %d used M/P %d/%d, want %d/%d", state.goid, state.mid, state.pid, parent.mid, parent.pid)
+			// A worker pool multiplexes Gs over several M/P pairs. Reused
+			// workers must retain their P, rather than all Gs using parent's M.
+			if pid, ok := mProcs[state.mid]; ok && state.pid != pid {
+				t.Fatalf("M %d changed P from %d to %d", state.mid, pid, state.pid)
+			}
+			if !seenM[state.mid] && seenP[state.pid] {
+				t.Fatalf("different Ms shared P %d", state.pid)
 			}
 		} else {
 			if seenM[state.mid] {
@@ -170,6 +176,7 @@ func TestRuntimeGMPLinks(t *testing.T) {
 		}
 		seenG[state.goid] = true
 		seenM[state.mid] = true
+		mProcs[state.mid] = state.pid
 		seenP[state.pid] = true
 	}
 }

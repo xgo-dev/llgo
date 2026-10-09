@@ -26,9 +26,13 @@ func check(err error) {
 }
 
 func main() {
-	// The single-worker browser runtime stays alive for host callbacks. Emit
-	// the completion marker only after all filesystem cleanup has finished.
-	defer func() { println("wasm filesystem ok") }()
+	testFilesystem()
+	// Single-worker browsers stay alive for callbacks. Only a successful
+	// return after cleanup emits the marker used by their acceptance runner.
+	println("wasm filesystem ok")
+}
+
+func testFilesystem() {
 	dir, err := os.MkdirTemp("", "llgo-browser-fs-")
 	check(err)
 	defer os.RemoveAll(dir)
@@ -40,9 +44,18 @@ func main() {
 	check(err)
 	done := make(chan int64)
 	workers := make(map[int64]bool)
-	for range 16 {
+	multiWorker := len(os.Args) > 1 && strings.Contains(os.Args[1], "workers")
+	gcStress := multiWorker && len(os.Args) > 2 && os.Args[2] == "--gc-stress"
+	operations := 16
+	if gcStress {
+		operations = 128
+	}
+	for range operations {
 		wasmworkers.GoIndependent(func() {
 			_, _, mid, _, _, _, _ := gmpForTesting()
+			if gcStress {
+				runtime.GC()
+			}
 			contents, err := os.ReadFile(name)
 			check(err)
 			if string(contents) != "Go file" {
@@ -62,10 +75,10 @@ func main() {
 			done <- mid
 		})
 	}
-	for range 16 {
+	for range operations {
 		workers[<-done] = true
 	}
-	if len(os.Args) > 1 && strings.Contains(os.Args[1], "workers") && len(workers) < 2 {
+	if multiWorker && len(workers) < 2 {
 		panic("filesystem test did not exercise distinct workers")
 	}
 	if _, err = os.Stat(filepath.Join(dir, "missing")); !os.IsNotExist(err) {

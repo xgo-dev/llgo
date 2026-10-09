@@ -9,6 +9,7 @@ import "unsafe"
 // physical pointer word finds both layouts: a Go pointer occupies the low word
 // of its slot, while C and host-toolchain pointers may occupy either word.
 const gcScanWordSize = uintptr(4)
+const gcScanZeroSpans = true
 
 func loadGCScanWord(addr uintptr) uintptr {
 	return uintptr(*(*uint32)(unsafe.Pointer(addr)))

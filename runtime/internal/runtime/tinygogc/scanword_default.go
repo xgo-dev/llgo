@@ -5,6 +5,7 @@ package tinygogc
 import "unsafe"
 
 const gcScanWordSize = uintptr(unsafe.Sizeof(uintptr(0)))
+const gcScanZeroSpans = false
 
 func loadGCScanWord(addr uintptr) uintptr {
 	return *(*uintptr)(unsafe.Pointer(addr))

@@ -9,11 +9,11 @@ import (
 
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	_ "github.com/xgo-dev/llgo/runtime/internal/embind"
-	llruntime "github.com/xgo-dev/llgo/runtime/internal/runtime"
 )
 
 // Emscripten emval handles belong to the JavaScript realm of the physical
-// worker that created them.
+// worker that created them. Public syscall/js operations use Go's main worker,
+// including when their Value is held by a G running on another worker.
 //
 //llgointernal:tls
 var (
@@ -37,7 +37,6 @@ var (
 )
 
 func ensureEmvalGlobals() {
-	llruntime.MarkCurrentJSRealm()
 	initEmvalGlobals()
 }
 

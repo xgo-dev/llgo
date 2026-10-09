@@ -8,6 +8,8 @@ for (const memory64 of [false, true]) {
   const memory = new WebAssembly.Memory({initial: 16, maximum: 128, shared: true});
   let heap = new Uint8Array(memory.buffer);
   const allocated = new Set();
+  const roots = new Set();
+  const sizes = new Map();
   let next = 64, largestRequest = 0;
   function malloc(size) {
     const pointer = next;
@@ -17,9 +19,15 @@ for (const memory64 of [false, true]) {
       heap = new Uint8Array(memory.buffer);
     }
     allocated.add(pointer);
+    sizes.set(pointer, size);
     return memory64 ? BigInt(pointer) : pointer;
   }
   function free(pointer) { assert.ok(allocated.delete(Number(pointer))); }
+  function collect() {
+    for (const pointer of allocated) {
+      if (!roots.has(pointer)) heap.fill(0, pointer, pointer + sizes.get(pointer));
+    }
+  }
   function stringToUTF8(value, pointer, size) {
     const bytes = new TextEncoder().encode(value);
     assert.ok(bytes.length < size);
@@ -40,9 +48,21 @@ for (const memory64 of [false, true]) {
     const ctx = vm.createContext({Uint8Array, ArrayBuffer, HEAPU8: heap, Module: {},
       ENVIRONMENT_IS_NODE: false, ENVIRONMENT_IS_PTHREAD: pthread,
       _malloc(size) {
+        collect();
         const pointer = malloc(size);
         ctx.HEAPU8 = heap;
         return pointer;
+      },
+      _llgo_browser_fs_malloc(size) {
+        collect();
+        const pointer = Number(malloc(size));
+        roots.add(pointer);
+        ctx.HEAPU8 = heap;
+        return pointer;
+      },
+      _llgo_browser_fs_free(pointer) {
+        assert.ok(roots.delete(Number(pointer)));
+        free(pointer);
       },
       updateMemoryViews() { ctx.HEAPU8 = heap; },
       _free: free, stringToUTF8, UTF8ToString,
@@ -142,6 +162,7 @@ for (const memory64 of [false, true]) {
   assert.ok(largeRead.subarray(-7).every(byte => byte === 99));
   assert.ok(largestRequest < 200, 'large payloads must not travel through JSON');
   assert.equal(allocated.size, 0);
+  assert.equal(roots.size, 0);
   assert.equal(Object.keys(main.llgoBrowserFSResponses).length, 0);
 }
 console.log('browser filesystem proxy contract passed');

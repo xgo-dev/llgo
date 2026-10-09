@@ -6,8 +6,6 @@
 
 package runtime
 
-func MarkCurrentJSRealm() {}
-
 // Adapted from Go's runtime/lock_js.go handleEvent and beforeIdle. An event
 // must return on its original G, after its handler and other runnable work
 // complete. Only the scheduler primitives differ from the Go implementation.

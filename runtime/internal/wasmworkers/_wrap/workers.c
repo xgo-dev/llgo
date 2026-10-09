@@ -42,11 +42,13 @@ static void llgo_wasm_worker_wait_finished(
   // Emscripten fibers use Asyncify underneath; switching fibers while this
   // host callback is still active can make its callback frame part of the
   // saved scheduler continuation.
-  emscripten_async_call(llgo_wasm_worker_resume, worker, 0);
+  // An immediate task also unwinds the host stack, without imposing the
+  // timer's minimum delay on every cross-worker channel handoff.
+  emscripten_set_immediate(llgo_wasm_worker_resume, worker);
 }
 
 void llgo_wasm_worker_resume_soon(void *worker) {
-  emscripten_async_call(llgo_wasm_worker_resume, worker, 0);
+  emscripten_set_immediate(llgo_wasm_worker_resume, worker);
 }
 
 int llgo_wasm_worker_count(void) {

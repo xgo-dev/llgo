@@ -10,6 +10,7 @@ wasm_tools_cmd="${WASM_TOOLS:-wasm-tools}"
 wasm_opt_cmd="${WASMOPT:-wasm-opt}"
 worker_fixture="${repo_root}/internal/build/testdata/wasm-workers"
 hardening_fixture="${repo_root}/internal/build/testdata/wasm-hardening"
+js_worker_fixture="${repo_root}/test/wasm/js-workers"
 test_fixture="${repo_root}/internal/build/testdata/wasm-test"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/llgo-wasm-workers.XXXXXX")"
 browser_server=
@@ -39,16 +40,17 @@ require_tool() {
 }
 
 run_emscripten() {
-	local target="$1"
-	local runner="$2"
-	local fixture="$3"
-	local expected="$4"
-	local name="$5"
-	shift 5
+	local workers="$1"
+	local target="$2"
+	local runner="$3"
+	local fixture="$4"
+	local expected="$5"
+	local name="$6"
+	shift 6
 	local module="${work_dir}/${name}.mjs"
 	local output="${work_dir}/${name}.out"
 
-	LLGO_WASM_WORKERS=2 "${llgo_cmd}" build -target "${target}" -o "${module}" "${fixture}"
+	LLGO_WASM_WORKERS="${workers}" "${llgo_cmd}" build -target "${target}" -o "${module}" "${fixture}"
 	"${wasm_tools_cmd}" validate --features all "${work_dir}/${name}.wasm"
 	run_with_timeout env "$@" "${node_cmd}" "${repo_root}/targets/${runner}" "${module}" "${name}" 2>&1 | tee "${output}"
 	grep -Fxq "${expected}" "${output}"
@@ -102,7 +104,9 @@ run_filesystem_acceptance() {
 			LLGO_WASM_WORKERS="${workers}" "${llgo_cmd}" build -target "${target}" \
 				-o "${module}" "${repo_root}/internal/build/testdata/wasm-browser-fs"
 			"${wasm_tools_cmd}" validate --features all "${module%.mjs}.wasm"
-			run_with_timeout "${node_cmd}" "${repo_root}/targets/${runner}" "${module}" "fs-${mode}" \
+			local stress_args=()
+			if [[ "${workers}" = 2 ]]; then stress_args=(--gc-stress); fi
+			run_with_timeout "${node_cmd}" "${repo_root}/targets/${runner}" "${module}" "fs-${mode}" "${stress_args[@]}" \
 				2>&1 | tee "${module}.out"
 			grep -Fxq "wasm filesystem ok" "${module}.out"
 		done
@@ -148,6 +152,7 @@ run_browser_acceptance() {
 
 	local module
 	for module in workers-emscripten.mjs workers-memory64.mjs hardening-workers-emscripten.mjs hardening-workers-memory64.mjs \
+		js-workers-2-emscripten.mjs js-workers-2-memory64.mjs js-workers-4-emscripten.mjs js-workers-4-memory64.mjs \
 		fs-single-emscripten.mjs fs-workers-emscripten.mjs fs-single-emscripten-memory64.mjs fs-workers-emscripten-memory64.mjs; do
 		echo "browser worker acceptance: ${module}"
 		run_with_timeout "${node_cmd}" "${worker_fixture}/browser-runner.mjs" \
@@ -173,14 +178,20 @@ run_single_hardening emscripten emscripten-runner.mjs hardening-single-emscripte
 run_single_hardening emscripten-memory64 emscripten-memory64-runner.mjs hardening-single-memory64
 
 # EC32 and EC64 run the same scheduler, GC, C-boundary, and lifecycle probes.
-run_emscripten emscripten emscripten-runner.mjs \
+run_emscripten 2 emscripten emscripten-runner.mjs \
 	"${worker_fixture}" "wasm workers ok" workers-emscripten
-run_emscripten emscripten-memory64 emscripten-memory64-runner.mjs \
+run_emscripten 2 emscripten-memory64 emscripten-memory64-runner.mjs \
 	"${worker_fixture}" "wasm workers ok" workers-memory64
-run_emscripten emscripten emscripten-runner.mjs \
+for workers in 2 4; do
+	run_emscripten "${workers}" emscripten emscripten-runner.mjs \
+		"${js_worker_fixture}" "wasm js workers ok" "js-workers-${workers}-emscripten"
+	run_emscripten "${workers}" emscripten-memory64 emscripten-memory64-runner.mjs \
+		"${js_worker_fixture}" "wasm js workers ok" "js-workers-${workers}-memory64"
+done
+run_emscripten 2 emscripten emscripten-runner.mjs \
 	"${hardening_fixture}" "wasm hardening ok" hardening-workers-emscripten \
 	LLGO_WASM_EXPECT_ARG=hardening-workers-emscripten LLGO_WASM_BLOCKED_G=1000
-run_emscripten emscripten-memory64 emscripten-memory64-runner.mjs \
+run_emscripten 2 emscripten-memory64 emscripten-memory64-runner.mjs \
 	"${hardening_fixture}" "wasm hardening ok" hardening-workers-memory64 \
 	LLGO_WASM_EXPECT_ARG=hardening-workers-memory64 LLGO_WASM_BLOCKED_G=1000
 

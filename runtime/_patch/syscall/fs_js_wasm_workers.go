@@ -10,9 +10,9 @@ import (
 //go:linkname llgoHostJSGlobal syscall/js.GlobalForHost
 func llgoHostJSGlobal() js.Value
 
-// Node objects are Emscripten emval handles owned by one JavaScript worker.
-// The upstream syscall implementation reads these names directly, so proxy
-// their methods through handles initialized on first use in each worker.
+// The upstream syscall implementation reads these names directly. Initialize
+// each worker's cached handles on first use; syscall/js routes their operations
+// through Go's main JavaScript realm.
 // Integer flags and the Go file table remain process-wide.
 type workerJSHostValue uint8
 

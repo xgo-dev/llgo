@@ -8,20 +8,14 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/wasmworkers"
 )
 
-// MarkCurrentJSRealm keeps descendants of a goroutine using syscall/js in
-// the same Emscripten realm. Emval handles are local to that realm.
-func MarkCurrentJSRealm() {
-	if gp := getg(); gp != nil {
-		gp.context.platform.jsRealm = true
-	}
-}
-
 // A synchronous JavaScript callback resumes the same goroutine that entered
 // its JavaScript call. Keep the event stack per physical worker: the callback
 // can temporarily park while other goroutines satisfy a channel operation.
 type wasmJSEvent struct {
 	gp       *g
+	id       uint32
 	returned bool
+	resume   bool
 }
 
 type wasmExternalJSEvent struct {
@@ -74,23 +68,33 @@ func HandleWasmEvent(handler func()) {
 		suspendWasmWorkerGCSystem(worker)
 		return
 	}
-	e := &wasmJSEvent{gp: getg()}
+	worker.nextJSEventID++
+	if worker.nextJSEventID == 0 {
+		worker.nextJSEventID++
+	}
+	gp := getg()
+	// Give a newly entered handler one resumption before unrelated JS callers
+	// can open more native callback stacks. Later yields alternate with Go work;
+	// nested events keep their own resume intent.
+	e := &wasmJSEvent{gp: gp, id: worker.nextJSEventID, resume: true}
+	previousCallbackID := gp.context.platform.jsCallbackID
+	gp.context.platform.jsCallbackID = e.id
 	worker.jsEvents = append(worker.jsEvents, e)
 	handler()
 	e.returned = true
 	gopark()
 	worker.jsEvents[len(worker.jsEvents)-1] = nil
 	worker.jsEvents = worker.jsEvents[:len(worker.jsEvents)-1]
+	gp.context.platform.jsCallbackID = previousCallbackID
 }
 
 func PollWasmEvent() {
 	worker := currentWasmWorker()
-	if worker == nil || getg() != nil || len(worker.jsEvents) == 0 ||
-		wasmWorkerRunqLen(worker) != 0 {
+	if worker == nil || getg() != nil || len(worker.jsEvents) == 0 {
 		return
 	}
 	e := worker.jsEvents[len(worker.jsEvents)-1]
-	if e.returned {
+	if e.returned && readgstatus(e.gp) == _Gwaiting {
 		goready(e.gp)
 	}
 }

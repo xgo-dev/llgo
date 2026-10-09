@@ -58,6 +58,13 @@ const blockStateByteAllTails = 0 |
 	uint8(blockStateTail<<(stateBits*1)) |
 	uint8(blockStateTail<<(stateBits*0))
 
+// A bounded, aligned word read handles 16 blocks at once. Byte decoding
+// remains the fallback for mixed states and partial segment boundaries.
+const (
+	blocksPerStateWord     = blocksPerStateByte * 4
+	blockStateWordAllTails = uint32(blockStateByteAllTails) * 0x01010101
+)
+
 var (
 	heapStart     uintptr        // start address of heap area
 	heapEnd       uintptr        // end address of heap area
@@ -220,7 +227,23 @@ func gcFindNextIn(segment *heapSegment, blockAddr uintptr) uintptr {
 	if gcStateOfIn(segment, blockAddr) == blockStateHead || gcStateOfIn(segment, blockAddr) == blockStateMark {
 		blockAddr++
 	}
-	for blockAddr < segment.last && gcStateOfIn(segment, blockAddr) == blockStateTail {
+	for blockAddr < segment.last {
+		if (blockAddr-segment.first)%blocksPerStateByte == 0 && segment.last-blockAddr >= blocksPerStateWord {
+			metadata := segment.metadata + (blockAddr-segment.first)/blocksPerStateByte
+			if metadata&3 == 0 && *(*uint32)(unsafe.Pointer(metadata)) == blockStateWordAllTails {
+				blockAddr += blocksPerStateWord
+				continue
+			}
+		}
+		// A full metadata byte containing only tails has no object boundary.
+		if (blockAddr-segment.first)%blocksPerStateByte == 0 &&
+			segment.last-blockAddr >= blocksPerStateByte && gcStateByteOfIn(segment, blockAddr) == blockStateByteAllTails {
+			blockAddr += blocksPerStateByte
+			continue
+		}
+		if gcStateOfIn(segment, blockAddr) != blockStateTail {
+			break
+		}
 		blockAddr++
 	}
 	return blockAddr
@@ -568,8 +591,20 @@ func startMark(root uintptr) {
 		start, end := gcAddressOfIn(segment, block), gcAddressOfIn(segment, endBlock)
 
 		for addr := start; addr != end; addr += gcScanWordSize {
+			// Fiber buffers contain large zero-filled spans. On Memory32, skip
+			// four null pointer words at once without skipping either half of
+			// a nonzero Go/C pointer. Bound and align both loads inside the object.
+			if gcScanZeroSpans && addr&7 == 0 && end-addr >= 16 &&
+				*(*uint64)(unsafe.Pointer(addr)) == 0 &&
+				*(*uint64)(unsafe.Pointer(addr + 8)) == 0 {
+				addr += 16 - gcScanWordSize
+				continue
+			}
 			// Load the word.
 			word := loadGCScanWord(addr)
+			if word == 0 {
+				continue
+			}
 
 			referencedSegment := segmentForAddress(word)
 			if referencedSegment == nil {
@@ -623,6 +658,23 @@ func finishMark() {
 		for segmentIndex := 0; segmentIndex < heapSegmentCount; segmentIndex++ {
 			segment := &heapSegments[segmentIndex]
 			for block := segment.first; block < segment.last; block++ {
+				if (block-segment.first)%blocksPerStateByte == 0 && segment.last-block >= blocksPerStateByte {
+					metadata := segment.metadata + (block-segment.first)/blocksPerStateByte
+					if metadata&3 == 0 && segment.last-block >= blocksPerStateWord {
+						states := *(*uint32)(unsafe.Pointer(metadata))
+						if states&(states>>1)&(blockStateWordAllTails>>1) == 0 {
+							block += blocksPerStateWord - 1
+							continue
+						}
+					}
+					stateByte := gcStateByteOfIn(segment, block)
+					// A mark has both state bits set. Skip complete bytes with
+					// no marked heads, including free space and object tails.
+					if stateByte&(stateByte>>1)&(blockStateByteAllTails>>1) == 0 {
+						block += blocksPerStateByte - 1
+						continue
+					}
+				}
 				if gcStateOfIn(segment, block) != blockStateMark {
 					continue
 				}
@@ -659,6 +711,43 @@ func sweep() (freeBytes uintptr) {
 	for segmentIndex := 0; segmentIndex < heapSegmentCount; segmentIndex++ {
 		segment := &heapSegments[segmentIndex]
 		for block := segment.first; block < segment.last; block++ {
+			// Free space and long object tails dominate grown heaps. Process
+			// complete metadata bytes without decoding each two-bit state.
+			if (block-segment.first)%blocksPerStateByte == 0 && segment.last-block >= blocksPerStateByte {
+				metadata := segment.metadata + (block-segment.first)/blocksPerStateByte
+				if metadata&3 == 0 && segment.last-block >= blocksPerStateWord {
+					states := *(*uint32)(unsafe.Pointer(metadata))
+					if states == 0 {
+						freeBytes += blocksPerStateWord * bytesPerBlock
+						block += blocksPerStateWord - 1
+						continue
+					}
+					if states == blockStateWordAllTails {
+						if freeCurrentObject {
+							*(*uint32)(unsafe.Pointer(metadata)) = 0
+							c.Memset(unsafe.Pointer(gcAddressOfIn(segment, block)), 0, blocksPerStateWord*bytesPerBlock)
+							freed += blocksPerStateWord
+						}
+						block += blocksPerStateWord - 1
+						continue
+					}
+				}
+				stateByte := gcStateByteOfIn(segment, block)
+				if stateByte == 0 {
+					freeBytes += blocksPerStateByte * bytesPerBlock
+					block += blocksPerStateByte - 1
+					continue
+				}
+				if stateByte == blockStateByteAllTails {
+					if freeCurrentObject {
+						*(*byte)(unsafe.Pointer(segment.metadata + (block-segment.first)/blocksPerStateByte)) = 0
+						c.Memset(unsafe.Pointer(gcAddressOfIn(segment, block)), 0, blocksPerStateByte*bytesPerBlock)
+						freed += blocksPerStateByte
+					}
+					block += blocksPerStateByte - 1
+					continue
+				}
+			}
 			switch gcStateOfIn(segment, block) {
 			case blockStateHead:
 				// Unmarked head. Free it, including all tail blocks following it.

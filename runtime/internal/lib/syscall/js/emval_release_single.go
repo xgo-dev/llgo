@@ -1,4 +1,4 @@
-//go:build js && wasm && !llgo.wasm.workers
+//go:build js && wasm && (!llgo || !llgo.wasm.workers)
 
 package js
 
