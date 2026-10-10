@@ -246,6 +246,12 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 	}
 	m.pkg.GoFiles = goFilesList
 
+	embedFiles, err := digestEmbedFiles(p.EmbedFiles)
+	if err != nil {
+		return fmt.Errorf("digest embed files: %w", err)
+	}
+	m.pkg.EmbedFiles = embedFiles
+
 	// Alt package files (if any)
 	if pkg.AltPkg != nil {
 		altPath := pkg.AltPkg.Package.PkgPath
@@ -254,6 +260,11 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 			return fmt.Errorf("digest alt go files: %w", err)
 		}
 		m.pkg.AltGoFiles = altList
+		altEmbedFiles, err := digestEmbedFiles(pkg.AltPkg.Package.EmbedFiles)
+		if err != nil {
+			return fmt.Errorf("digest alt embed files: %w", err)
+		}
+		m.pkg.AltEmbedFiles = altEmbedFiles
 	}
 
 	// Other files (C, assembly, etc.)
