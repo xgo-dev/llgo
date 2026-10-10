@@ -89,6 +89,10 @@ func TestCompileBaselineElidesVersions(t *testing.T) {
 			if strings.Contains(mod.String(), "__llgo_fmv") || strings.Contains(mod.NamedFunction("root").String(), "@avx2(") || !mod.NamedGlobal(featureSymbol).IsNil() {
 				t.Fatalf("compile baseline retained redundant versioning:\n%s", mod.String())
 			}
+			root := mod.NamedFunction("root").String()
+			if strings.Contains(root, "br i1") || strings.Contains(root, "slow:") || !strings.Contains(root, "call <4 x float> @helper(") {
+				t.Fatalf("compile baseline did not select the enabled branch:\n%s", root)
+			}
 			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 				t.Fatal(err)
 			}
@@ -178,21 +182,27 @@ func TestSourceInliningAttributes(t *testing.T) {
 }
 
 func TestPhysicalFrameDoesNotPinDispatcher(t *testing.T) {
-	mod := parseModule(t, strings.Replace(inlineFixture, `@root(<4 x float> %x) "target-cpu"`, `@root(<4 x float> %x) noinline "llgo.fmv.inline-entry" "target-cpu"`, 1))
-	if err := Run(mod, "v1"); err != nil {
-		t.Fatal(err)
-	}
-	if !mod.NamedFunction("root").GetEnumFunctionAttribute(llvm.AttributeKindID("noinline")).IsNil() {
-		t.Fatal("physical-frame policy leaked onto the synthetic dispatcher")
-	}
-	for _, suffix := range []string{baselineSuffix, variantSuffix} {
-		if mod.NamedFunction("root" + suffix).GetEnumFunctionAttribute(llvm.AttributeKindID("noinline")).IsNil() {
-			t.Fatal("dispatcher inlining removed the required physical source frame")
-		}
-	}
-	optimizePolicyModule(t, mod, "default<O2>")
-	if strings.Contains(mod.NamedFunction("caller").String(), "@root(") {
-		t.Fatal("caller retained the synthetic dispatcher call")
+	for _, pipeline := range []string{"default<O2>", "thinlto-pre-link<O2>,thinlto<O2>", "lto-pre-link<O2>,lto<O2>"} {
+		t.Run(pipeline, func(t *testing.T) {
+			mod := parseModule(t, strings.Replace(inlineFixture, `@root(<4 x float> %x) "target-cpu"`, `@root(<4 x float> %x) noinline "disable-tail-calls"="true" "llgo.fmv.inline-entry" "target-cpu"`, 1))
+			if err := Run(mod, "v1"); err != nil {
+				t.Fatal(err)
+			}
+			if !mod.NamedFunction("root").GetEnumFunctionAttribute(llvm.AttributeKindID("noinline")).IsNil() {
+				t.Fatal("physical-frame policy leaked onto the synthetic dispatcher")
+			}
+			for _, suffix := range []string{baselineSuffix, variantSuffix} {
+				impl := mod.NamedFunction("root" + suffix)
+				if impl.GetEnumFunctionAttribute(llvm.AttributeKindID("noinline")).IsNil() || stringAttribute(impl, "disable-tail-calls") != "true" {
+					t.Fatal("dispatcher inlining removed the required physical source frame")
+				}
+			}
+			optimizePolicyModule(t, mod, pipeline)
+			caller := mod.NamedFunction("caller").String()
+			if strings.Contains(caller, "@root(") || strings.Contains(caller, "musttail") || !strings.Contains(caller, "fmul") {
+				t.Fatalf("dispatcher did not inline while preserving its caller continuation:\n%s", caller)
+			}
+		})
 	}
 }
 

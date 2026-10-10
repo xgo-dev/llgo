@@ -302,6 +302,10 @@ func dispatch(mod llvm.Module, source *sourceInfo, fn, baseline, variant llvm.Va
 	if sp := resolver.Subprogram(); !sp.IsNil() {
 		b.SetCurrentDebugLocation(0, 0, sp, llvm.Metadata{})
 	}
+	// internal/cpu publishes the mask once before initializing its consumers.
+	// Pre-publication bootstrap calls are sequential and must not cache their
+	// fallback. After publication the mask is immutable; only the per-function
+	// slot can be updated concurrently and therefore needs atomic accesses.
 	features := b.CreateLoad(ctx.Int64Type(), mask, "features")
 	features.SetAlignment(8)
 	initialized := b.CreateAnd(features, llvm.ConstInt(ctx.Int64Type(), featureInitialized, false), "")
