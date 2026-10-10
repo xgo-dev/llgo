@@ -2,6 +2,10 @@
 **/out.txt text eol=lf
 *.ll text eol=lf
 *.sh text eol=lf
+dev/conda-tools/* text eol=lf
+dev/mise.lock text eol=lf
+dev/pixi.lock text eol=lf
+dev/activate_pixi.bat text eol=crlf
 _demo/go/export/libexport.h.want text eol=lf
 # Golden test output must retain its exact bytes during checkout.
 internal/test2json/testdata/*.test -text

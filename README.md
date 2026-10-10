@@ -330,6 +330,28 @@ llgo run .
 
 Use the platform package manager instructions below whenever possible.
 
+### with mise or Pixi (development)
+
+Install [mise](https://mise.jdx.dev/installing-mise.html) or
+[Pixi](https://pixi.prefix.dev/latest/installation/), then enter the environment
+from the repository root:
+
+```sh
+mise -C dev trust
+mise -C dev install --locked
+mise -C dev en
+```
+
+Or, with Pixi:
+
+```sh
+cd dev
+pixi shell --locked
+```
+
+In either shell, run `cd ..`, then use `go run ./cmd/llgo version` or
+`go build ./cmd/llgo`. See [development tooling](dev/README.md) for details.
+
 ### on macOS
 
 <!-- embedme doc/_readme/scripts/install_macos.sh#L2-L1000 -->

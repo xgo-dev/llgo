@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export CONDA_PREFIX=${LLGO_CLANG_PREFIX:?run inside the development environment}
+for script in "$CONDA_PREFIX"/etc/conda/activate.d/*.sh; do
+  # shellcheck disable=SC1090
+  [[ ! -f "$script" ]] || source "$script"
+done
+# LLD needs an explicit sysroot for absolute glibc paths in linker scripts.
+target="$(uname -m)-conda-linux-gnu"
+exec "$CONDA_PREFIX/bin/$target-clang++" "$@" "-Wl,--sysroot=$CONDA_PREFIX/$target/sysroot"

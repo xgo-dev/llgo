@@ -1,0 +1,50 @@
+min_version = "2026.10.7"
+
+[tool_config]
+locked = true
+
+[tools]
+go = "{{ read_file(path='../.go-version') | trim }}"
+"conda:llvmdev" = "22.1.8"
+"conda:clangxx" = "22.1.8"
+"conda:lld" = "22.1.8"
+"conda:pkg-config" = "0.29.2"
+"conda:bdw-gc" = "8.2.12"
+"conda:libffi" = "3.7.0"
+"conda:openssl" = "3.6.4"
+"conda:zlib" = "1.3.2"
+"conda:sqlite" = "3.53.4"
+"conda:libuv" = "1.52.1"
+
+[vars]
+native_libraries = "bdw-gc,libffi,openssl,zlib,sqlite,libuv"
+
+[env]
+GOFLAGS = "-tags=byollvm"
+GOTOOLCHAIN = "local"
+CGO_ENABLED = "1"
+LLGO_ROOT = "{{ config_root | dirname }}"
+LLGO_LLVM_PREFIX = { value = "{{ tools.llvmdev.path }}", tools = true }
+LLGO_CLANG_PREFIX = { value = "{{ tools.clangxx.path }}", tools = true }
+LLGO_LLD_PREFIX = { value = "{{ tools.lld.path }}", tools = true }
+# Use the full compiler prefix: clangxx is a metapackage, whose actual
+# executables are dependencies and are not exposed by mise's conda launchers.
+_.path = { path = [
+  "{% if os() == 'linux' %}{{ config_root }}/conda-tools{% else %}{{ env.LLGO_CLANG_PREFIX }}/{{ os(windows='Library/bin', macos='bin') }}{% endif %}",
+  "{{ env.LLGO_CLANG_PREFIX }}/{{ os(windows='Library/bin', linux='bin', macos='bin') }}",
+  "{{ env.LLGO_LLVM_PREFIX }}/{{ os(windows='Library/bin', linux='bin', macos='bin') }}",
+  "{{ env.LLGO_LLD_PREFIX }}/{{ os(windows='Library/bin', linux='bin', macos='bin') }}",
+  "{% for name in vars.native_libraries | split(pat=',') %}{{ tools[name].path }}/{{ os(windows='Library/bin', linux='bin', macos='bin') }}{% if not loop.last %}{{ os(windows=';', linux=':', macos=':') }}{% endif %}{% endfor %}",
+], tools = true }
+CPATH = { value = "{% for name in vars.native_libraries | split(pat=',') %}{{ tools[name].path }}/{{ os(windows='Library/include', linux='include', macos='include') }}{{ os(windows=';', linux=':', macos=':') }}{% endfor %}${CPATH:-}", tools = true }
+LIBRARY_PATH = { value = "{% for name in vars.native_libraries | split(pat=',') %}{{ tools[name].path }}/{{ os(windows='Library/lib', linux='lib', macos='lib') }}{{ os(windows=';', linux=':', macos=':') }}{% endfor %}${LIBRARY_PATH:-}", tools = true }
+PKG_CONFIG_PATH = { value = "{% for name in vars.native_libraries | split(pat=',') %}{{ tools[name].path }}/{{ os(windows='Library/lib/pkgconfig', linux='lib/pkgconfig', macos='lib/pkgconfig') }}{{ os(windows=';', linux=':', macos=':') }}{% endfor %}${PKG_CONFIG_PATH:-}", tools = true }
+# Preserve LIB on Windows so Clang can discover the SDK/CRT automatically or
+# use the caller's Visual Studio environment. pkg-config supplies native -L flags.
+LD_LIBRARY_PATH = { value = "{% if os() == 'linux' %}{{ env.LLGO_CLANG_PREFIX }}/lib:{{ env.LLGO_LLVM_PREFIX }}/lib:{{ env.LIBRARY_PATH }}:${LD_LIBRARY_PATH:-}{% else %}${LD_LIBRARY_PATH:-}{% endif %}", tools = true }
+CC = { value = "{% if os() == 'linux' %}\"{{ config_root }}/conda-tools/clang\"{% elif os() == 'windows' %}clang -fuse-ld=lld -fms-runtime-lib=dll{% else %}clang{% endif %}", tools = true }
+CXX = { value = "{% if os() == 'linux' %}\"{{ config_root }}/conda-tools/clang++\"{% elif os() == 'windows' %}clang++ -fuse-ld=lld -fms-runtime-lib=dll{% else %}clang++{% endif %}", tools = true }
+LLVM_CONFIG = "llvm-config"
+CGO_CPPFLAGS = { value = "{{ exec(command='llvm-config --cppflags') }}", tools = true }
+CGO_CXXFLAGS = "-std=c++17"
+CGO_LDFLAGS = { value = "{% if os() == 'windows' %}{{ exec(command='powershell.exe -NoProfile -ExecutionPolicy Bypass -File devenv_windows_ldflags.ps1') }}{% else %}{{ exec(command='llvm-config --ldflags --link-shared --libs all --system-libs') }} \"-Wl,-rpath,{{ env.LLGO_LLVM_PREFIX }}/lib\"{% endif %}", tools = true }

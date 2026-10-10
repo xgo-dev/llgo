@@ -1,0 +1,45 @@
+name: Mise development environment
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ["**"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+
+permissions:
+  contents: read
+
+jobs:
+  devenv:
+    name: Mise (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - macos-15
+          - macos-15-intel
+          - windows-2025
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        with:
+          version: 2026.10.7
+          install_args: --locked
+          working_directory: dev
+          env: true
+          export_path: true
+      - name: Build LLGo and check native dependencies
+        if: runner.os != 'Windows'
+        run: bash dev/check_devenv.sh
+      - name: Build LLGo and check native dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\dev\check_devenv.ps1

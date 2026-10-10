@@ -1,0 +1,43 @@
+name: Pixi development environment
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ["**"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+
+permissions:
+  contents: read
+
+jobs:
+  devenv:
+    name: Pixi (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - macos-15
+          - macos-15-intel
+          - windows-2025
+    steps:
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
+        with:
+          pixi-version: v0.81.0
+          working-directory: dev
+          locked: true
+      - name: Check the development environment
+        if: runner.os != 'Windows'
+        run: pixi run --manifest-path dev/pixi.toml --locked bash "$GITHUB_WORKSPACE/dev/check_devenv.sh"
+      - name: Check the development environment (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pixi run --manifest-path dev/pixi.toml --locked pwsh -File "$env:GITHUB_WORKSPACE/dev/check_devenv.ps1"
