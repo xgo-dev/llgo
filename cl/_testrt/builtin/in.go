@@ -22,7 +22,7 @@ const (
 )
 
 // CHECK-LABEL: define double @main.Float64frombits(i64 %0){{.*}} {
-// CHECK: [[BITS_ADDR:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[BITS_ADDR:%.*]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
 // CHECK: store i64 %0, ptr [[BITS_ADDR]]
 // CHECK: [[FLOAT:%.*]] = load double, ptr [[BITS_ADDR]]
 // CHECK: ret double [[FLOAT]]
@@ -67,11 +67,11 @@ func demo() {
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // make([]byte, 4, 10) must preserve both the requested length and capacity.
-// CHECK: [[D_STORAGE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 10)
+// CHECK: [[D_STORAGE:%.*]] = call noalias dereferenceable(10) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 10)
 // CHECK: [[D:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.NewSlice2"(ptr [[D_STORAGE]], i64 1, i64 10, i64 0, i64 4, i1 true, i1 true, i1 true)
 // append(s, 5, 6, 7, 8) forwards the materialized four-element tail.
 // CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringSlice2"(%"{{.*}}String" { ptr @{{.*}}, i64 5 }, i64 5, i64 5, i1 true, i1 true)
-// CHECK: [[INT_TAIL:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 32)
+// CHECK: [[INT_TAIL:%.*]] = call noalias dereferenceable(32) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 32)
 // CHECK: [[INT_TAIL_0:%.*]] = getelementptr inbounds i64, ptr [[INT_TAIL]], i64 0
 // CHECK: store i64 5, ptr [[INT_TAIL_0]]
 // CHECK: [[INT_TAIL_PTR:%.*]] = extractvalue %"{{.*}}Slice" %{{.*}}, 0

@@ -16,7 +16,7 @@ type Rectangle struct {
 // CHECK-LABEL: define ptr @"{{.*}}/cl/_testdata/geometry1370.NewRectangle"(
 // CHECK-SAME: double %[[TMP0:[0-9]+]], double %[[TMP1:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
+// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call noalias dereferenceable(24) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = getelementptr inbounds nuw %"{{.*}}/cl/_testdata/geometry1370.Rectangle", ptr %[[TMP2]], i32 0, i32 0
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = getelementptr inbounds nuw %"{{.*}}/cl/_testdata/geometry1370.Rectangle", ptr %[[TMP2]], i32 0, i32 1
 // CHECK-NEXT:   store double %[[TMP0]], ptr %[[TMP3]], align 8

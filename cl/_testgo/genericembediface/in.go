@@ -46,7 +46,7 @@ func main() {
 // CHECK: [[H_REF_ITAB:%.*]] = call ptr @"{{.*}}NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr [[H_DYN_TYPE]])
 // CHECK: [[H_REF_IFACE0:%.*]] = insertvalue %"{{.*}}iface" undef, ptr [[H_REF_ITAB]], 0
 // CHECK: [[H_REF_IFACE:%.*]] = insertvalue %"{{.*}}iface" [[H_REF_IFACE0]], ptr [[H_DYN_DATA]], 1
-// CHECK: [[H_GENERIC_STREAM:%.*]] = call ptr @"{{.*}}AllocZ"(i64 16)
+// CHECK: [[H_GENERIC_STREAM:%.*]] = call noalias dereferenceable(16) ptr @"{{.*}}AllocZ"(i64 16)
 // CHECK: [[H_STREAM_FIELD:%.*]] = getelementptr inbounds nuw %"{{.*}}GenericServerStream[main.Request,main.Response]", ptr [[H_GENERIC_STREAM]], i32 0, i32 0
 // CHECK: store %"{{.*}}iface" %1, ptr [[H_STREAM_FIELD]]
 // CHECK: [[H_STREAM_ITAB:%.*]] = call ptr @"{{.*}}NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_{{.*}}GenericServerStream[main.Request,main.Response]")

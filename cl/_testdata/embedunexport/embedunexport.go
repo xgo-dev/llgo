@@ -30,7 +30,7 @@ func (b *Base) setName(name string) {
 }
 
 // CHECK-LABEL: define ptr @"{{.*}}.NewBase"(%"{{.*}}.String" %0){{.*}} {
-// CHECK: [[NEW_BASE:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK: [[NEW_BASE:%[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK-NEXT: [[NEW_BASE_NAME:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}.Base", ptr [[NEW_BASE]], i32 0, i32 0
 // CHECK-NEXT: store %"{{.*}}/runtime/internal/runtime.String" %0, ptr [[NEW_BASE_NAME]]
 // CHECK-NEXT: ret ptr [[NEW_BASE]]

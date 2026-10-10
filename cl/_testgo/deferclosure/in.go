@@ -19,9 +19,9 @@ package main
 
 // CHECK-LABEL: define void @main.testDeferClosureValue(){{.*}} {
 // The captured 42 is stored in the closure environment before the function pair is deferred.
-// CHECK: [[VALUE_CAPTURE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[VALUE_CAPTURE:%.*]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
 // CHECK: store i64 42, ptr [[VALUE_CAPTURE]]
-// CHECK: [[VALUE_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK: [[VALUE_ENV:%.*]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK: store ptr [[VALUE_CAPTURE]], ptr %{{.*}}
 // CHECK: [[VALUE_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.testDeferClosureValue$1", ptr undef }, ptr [[VALUE_ENV]], 1
 // CHECK: [[VALUE_PREV_DEFER:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
@@ -68,7 +68,7 @@ package main
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" { ptr @{{.*}}, i64 19 })
 
 // CHECK-LABEL: define void @main.testDeferMethodLiteral(){{.*}} {
-// CHECK: [[METHOD_HANDLER:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK: [[METHOD_HANDLER:%.*]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK: call void @"main.(*Handler).SetHandler"(ptr [[METHOD_HANDLER]], { ptr, ptr } { ptr @"main.testDeferMethodLiteral$1", ptr null })
 // CHECK: call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
 // The deferred receiver and second literal are recorded independently.
@@ -86,10 +86,10 @@ package main
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %0)
 
 // CHECK-LABEL: define void @main.testDeferStructClosure(){{.*}} {
-// CHECK: [[STRUCT_PROCESSOR:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK: [[STRUCT_MSG:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK: [[STRUCT_PROCESSOR:%.*]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK: [[STRUCT_MSG:%.*]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK: store %"{{.*}}String" { ptr @{{.*}}, i64 8 }, ptr [[STRUCT_MSG]]
-// CHECK: [[STRUCT_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK: [[STRUCT_ENV:%.*]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK: store ptr [[STRUCT_MSG]], ptr %{{.*}}
 // CHECK: [[STRUCT_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.testDeferStructClosure$1", ptr undef }, ptr [[STRUCT_ENV]], 1
 // CHECK: call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()

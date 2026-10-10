@@ -396,7 +396,6 @@ func (p *Transformer) transformFunc(m llvm.Module, fn llvm.Value) bool {
 		return false
 	}
 	nft, attrs, paramMap := p.transformFuncType(ctx, &info)
-	preloweredSRet := fn.GetEnumAttributeAtIndex(1, llvm.AttributeKindID("sret"))
 	fname := fn.Name()
 	fn.SetName("")
 	nfn := llvm.AddFunction(m, fname, nft)
@@ -405,16 +404,10 @@ func (p *Transformer) transformFunc(m llvm.Module, fn llvm.Value) bool {
 			nfn.AddAttributeAtIndex(i, attr)
 		}
 	}
-	copyClosureEnvFunctionAttrs(fn, nfn, paramMap)
-	if !preloweredSRet.IsNil() {
-		nfn.AddAttributeAtIndex(1, preloweredSRet)
-	}
+	copyFunctionAttributes(ctx, fn, nfn, &info, paramMap)
 	nfn.SetLinkage(fn.Linkage())
 	nfn.SetComdat(fn.Comdat())
 	nfn.SetFunctionCallConv(fn.FunctionCallConv())
-	for _, attr := range fn.GetFunctionAttributes() {
-		nfn.AddAttributeAtIndex(-1, attr)
-	}
 	if sp := fn.Subprogram(); !sp.IsNil() {
 		nfn.SetSubprogram(sp)
 	}
@@ -707,7 +700,6 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 		return false
 	}
 	nft, attrs, paramMap := p.transformFuncType(ctx, &info)
-	preloweredSRet := call.GetCallSiteEnumAttribute(1, llvm.AttributeKindID("sret"))
 	reflectMethodByNameAttr := call.GetCallSiteStringAttribute(-1, "llgo.reflect.methodbyname")
 	b := ctx.NewBuilder()
 	b.SetInsertPointBefore(call)
@@ -784,9 +776,6 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 				replacement.AddCallSiteAttribute(i, attr)
 			}
 		}
-		if !preloweredSRet.IsNil() {
-			replacement.AddCallSiteAttribute(1, preloweredSRet)
-		}
 		if !reflectMethodByNameAttr.IsNil() {
 			replacement.AddCallSiteAttribute(-1, reflectMethodByNameAttr)
 		}
@@ -795,7 +784,7 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 				"llgo.reflect.methodbyname.name", "1",
 			))
 		}
-		copyClosureEnvCallAttrs(call, replacement, paramMap)
+		copyCallAttributes(ctx, call, replacement, &info, paramMap)
 	}
 
 	var instr llvm.Value
@@ -829,37 +818,6 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 	call.ReplaceAllUsesWith(instr)
 	call.EraseFromParentAsInstruction()
 	return true
-}
-
-var closureEnvAttributeKinds = []uint{
-	llvm.AttributeKindID("nest"),
-	llvm.AttributeKindID("swiftself"),
-}
-
-func copyClosureEnvFunctionAttrs(from, to llvm.Value, paramMap []int) {
-	for oldIndex, newIndex := range paramMap {
-		if newIndex == 0 {
-			continue
-		}
-		for _, kind := range closureEnvAttributeKinds {
-			if attr := from.GetEnumAttributeAtIndex(oldIndex+1, kind); !attr.IsNil() {
-				to.AddAttributeAtIndex(newIndex, attr)
-			}
-		}
-	}
-}
-
-func copyClosureEnvCallAttrs(from, to llvm.Value, paramMap []int) {
-	for oldIndex, newIndex := range paramMap {
-		if newIndex == 0 {
-			continue
-		}
-		for _, kind := range closureEnvAttributeKinds {
-			if attr := from.GetCallSiteEnumAttribute(oldIndex+1, kind); !attr.IsNil() {
-				to.AddCallSiteAttribute(newIndex, attr)
-			}
-		}
-	}
 }
 
 func (p *Transformer) callMemcpy(_ llvm.Module, ctx llvm.Context, b llvm.Builder, dst llvm.Value, src llvm.Value, size int) llvm.Value {

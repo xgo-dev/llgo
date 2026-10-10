@@ -26,7 +26,7 @@ type receiver struct {
 // CHECK-DAG: call void @"{{.*}}/runtime/internal/runtime.Panic"
 
 // CHECK-LABEL: define %"{{.*}}Slice" @main.floatArgs(){{.*}} {
-// CHECK-DAG: [[FLOAT_ARG_STORAGE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 216)
+// CHECK-DAG: [[FLOAT_ARG_STORAGE:%.*]] = call noalias dereferenceable(216) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 216)
 // CHECK-DAG: [[FLOAT_ARGS:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.NewSlice2"(ptr [[FLOAT_ARG_STORAGE]], i64 24, i64 9, i64 0, i64 9, i1 true, i1 true, i1 true)
 // CHECK-DAG: [[FLOAT_INDEX:%.*]] = add i64 %{{.*}}, 1
 // CHECK-DAG: [[FLOAT_ORDINAL:%.*]] = add i64 [[FLOAT_INDEX]], 1
@@ -40,7 +40,7 @@ type receiver struct {
 // CHECK-DAG: ret %"{{.*}}Slice" [[FLOAT_ARGS]]
 
 // CHECK-LABEL: define %"{{.*}}Slice" @main.intArgs(){{.*}} {
-// CHECK-DAG: [[INT_ARG_STORAGE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 216)
+// CHECK-DAG: [[INT_ARG_STORAGE:%.*]] = call noalias dereferenceable(216) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 216)
 // CHECK-DAG: [[INT_ARGS:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.NewSlice2"(ptr [[INT_ARG_STORAGE]], i64 24, i64 9, i64 0, i64 9, i1 true, i1 true, i1 true)
 // CHECK-DAG: [[INT_INDEX:%.*]] = add i64 %{{.*}}, 1
 // CHECK-DAG: [[INT_ORDINAL:%.*]] = add i64 [[INT_INDEX]], 1
@@ -143,7 +143,7 @@ type receiver struct {
 
 // ARM64-LABEL: define i64 @"main.makeNestedSum$1"(ptr swiftself %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
 // AMD64-LABEL: define i64 @"main.makeNestedSum$1"(ptr nest %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
-// CHECK: [[NESTED_VALUES:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 216)
+// CHECK: [[NESTED_VALUES:%.*]] = call noalias dereferenceable(216) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 216)
 // CHECK: [[NESTED_FIRST_PTR:%.*]] = getelementptr inbounds %reflect.Value, ptr [[NESTED_VALUES]], i64 0
 // CHECK: store i64 %1, ptr [[NESTED_FIRST_BOX_ADDR:%[-A-Za-z0-9_.]+]]
 // CHECK: [[NESTED_FIRST_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_int, ptr undef }, ptr [[NESTED_FIRST_BOX_ADDR]], 1

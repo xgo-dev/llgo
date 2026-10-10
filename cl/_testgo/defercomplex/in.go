@@ -12,12 +12,12 @@ package main
 // CHECK: @[[NESTED:[0-9]+]] = private unnamed_addr constant [6 x i8] c"nested"
 // CHECK: @[[NESTED_TAIL:[0-9]+]] = private unnamed_addr constant [11 x i8] c"nested-tail"
 // CHECK-LABEL: define %"{{.*}}Slice" @main.complexOrder(){{.*}} {
-// CHECK: [[RESULT_SLOT:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 24)
+// CHECK: [[RESULT_SLOT:%[0-9]+]] = call noalias dereferenceable(24) ptr @"{{.*}}AllocZ"(i64 24)
 // CHECK: store ptr [[RESULT_SLOT]], ptr [[RECORD_ENV_SLOT:%[0-9]+]]
 // CHECK: [[RECORD_FN:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.complexOrder$1", ptr undef }, ptr [[RECORD_ENV:%[0-9]+]], 1
 // CHECK-NEXT: [[FINAL_LABEL:%[0-9]+]] = call %"{{.*}}String" @main.label1(%"{{.*}}String" { ptr @[[CLEANUP_FINAL]], i64 13 }, i64 0)
 // CHECK-NEXT: [[PREVIOUS_DEFER:%[0-9]+]] = call ptr @"{{.*}}GetThreadDefer"()
-// CHECK: [[DEFER_FRAME:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 48)
+// CHECK: [[DEFER_FRAME:%[0-9]+]] = call noalias dereferenceable(48) ptr @"{{.*}}AllocU"(i64 48)
 // CHECK: store ptr [[PREVIOUS_DEFER]], ptr %{{[0-9]+}}
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[DEFER_FRAME]])
 // CHECK: [[DEFER_HEAD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[DEFER_FRAME]], i32 0, i32 5

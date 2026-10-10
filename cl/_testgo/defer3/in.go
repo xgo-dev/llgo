@@ -9,14 +9,14 @@ package main
 // CHECK: @[[D3_WORLD:[0-9]+]] = private unnamed_addr constant [5 x i8] c"world"
 // CHECK-LABEL: define void @main.fail(){{.*}} {
 // CHECK: [[D3_FAIL_PREV:%[0-9]+]] = call ptr @"{{.*}}GetThreadDefer"()
-// CHECK: [[D3_FAIL_FRAME:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 48)
+// CHECK: [[D3_FAIL_FRAME:%[0-9]+]] = call noalias dereferenceable(48) ptr @"{{.*}}AllocU"(i64 48)
 // CHECK: [[D3_FAIL_PREV_SLOT:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[D3_FAIL_FRAME]], i32 0, i32 2
 // CHECK-NEXT: store ptr [[D3_FAIL_PREV]], ptr [[D3_FAIL_PREV_SLOT]]
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[D3_FAIL_FRAME]])
 // CHECK: [[D3_FAIL_HEAD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[D3_FAIL_FRAME]], i32 0, i32 5
 // CHECK: call void @"{{.*}}Rethrow"(ptr [[D3_FAIL_PREV]])
 // CHECK: [[D3_FAIL_OLD_HEAD:%[0-9]+]] = load ptr, ptr [[D3_FAIL_HEAD]]
-// CHECK-NEXT: [[D3_FAIL_NODE:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 32)
+// CHECK-NEXT: [[D3_FAIL_NODE:%[0-9]+]] = call noalias dereferenceable(32) ptr @"{{.*}}AllocU"(i64 32)
 // CHECK: store ptr [[D3_FAIL_OLD_HEAD]], ptr %{{[0-9]+}}
 // CHECK: store %"{{.*}}String" { ptr @[[D3_BYE]], i64 3 }, ptr %{{[0-9]+}}
 // CHECK-NEXT: store ptr [[D3_FAIL_NODE]], ptr [[D3_FAIL_HEAD]]
@@ -32,7 +32,7 @@ package main
 // CHECK-NEXT: call void @"{{.*}}SetThreadDefer"(ptr [[D3_FAIL_RESTORE]])
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: [[D3_MAIN_PREV:%[0-9]+]] = call ptr @"{{.*}}GetThreadDefer"()
-// CHECK: [[D3_MAIN_FRAME:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 48)
+// CHECK: [[D3_MAIN_FRAME:%[0-9]+]] = call noalias dereferenceable(48) ptr @"{{.*}}AllocU"(i64 48)
 // CHECK: store ptr [[D3_MAIN_PREV]], ptr %{{[0-9]+}}
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[D3_MAIN_FRAME]])
 // CHECK: store %"{{.*}}String" { ptr @[[D3_HELLO]], i64 5 }, ptr %{{[0-9]+}}

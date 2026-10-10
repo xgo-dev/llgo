@@ -40,7 +40,7 @@ func (pt *M[T]) value() T {
 }
 
 // CHECK-LABEL: define void @main.demo(){{.*}} {
-// CHECK: %[[INT_OBJ:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: %[[INT_OBJ:[0-9]+]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
 // CHECK: %[[INT_ITAB:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.M[int]")
 // CHECK: %[[INT_IFACE0:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %[[INT_ITAB]], 0
 // CHECK: %[[INT_IFACE:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %[[INT_IFACE0]], ptr %[[INT_OBJ]], 1
@@ -55,7 +55,7 @@ func (pt *M[T]) value() T {
 // CHECK: %[[INT_RESULT:[0-9]+]] = call i64 %[[INT_CALL_CODE]](ptr %[[INT_CALL_DATA]])
 // CHECK: %[[INT_BAD:[0-9]+]] = icmp ne i64 %[[INT_RESULT]], 100
 // CHECK: br i1 %[[INT_BAD]]
-// CHECK: %[[FLOAT_OBJ:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: %[[FLOAT_OBJ:[0-9]+]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
 // CHECK: %[[FLOAT_ITAB:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.M[float64]")
 // CHECK: %[[FLOAT_IFACE0:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %[[FLOAT_ITAB]], 0
 // CHECK: %[[FLOAT_IFACE:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %[[FLOAT_IFACE0]], ptr %[[FLOAT_OBJ]], 1

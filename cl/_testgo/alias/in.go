@@ -60,7 +60,7 @@ func main() {
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP0:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK-NEXT:   %[[TMP0:[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK-NEXT:   %[[TMP1:[0-9]+]] = getelementptr inbounds nuw %main.Point, ptr %[[TMP0]], i32 0, i32 0
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = getelementptr inbounds nuw %main.Point, ptr %[[TMP0]], i32 0, i32 1
 // CHECK-NEXT:   store double 1.000000e+00, ptr %[[TMP1]], align 8

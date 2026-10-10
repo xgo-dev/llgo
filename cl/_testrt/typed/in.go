@@ -24,7 +24,7 @@ func main() {
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // The named string uses an exact (panicking) assertion, then deliberately fails
 // a comma-ok assertion to the underlying unnamed string type.
-// CHECK: [[T_DATA:%.*]] = call ptr @"{{.*}}AllocU"(i64 16)
+// CHECK: [[T_DATA:%.*]] = call noalias dereferenceable(16) ptr @"{{.*}}AllocU"(i64 16)
 // CHECK: [[T_EFACE:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_main.T, ptr undef }, ptr [[T_DATA]], 1
 // CHECK: [[T_DYN_TYPE:%.*]] = extractvalue %"{{.*}}eface" [[T_EFACE]], 0
 // CHECK-NEXT: [[IS_T:%.*]] = icmp eq ptr [[T_DYN_TYPE]], @_llgo_main.T
@@ -43,7 +43,7 @@ func main() {
 // CHECK: call void @"{{.*}}PrintBool"(i1 [[STRING_OK]])
 // The named array is boxed, matched by its named type, copied out, and returned
 // together with the comma-ok bit used by the print.
-// CHECK: [[A_DATA:%.*]] = call ptr @"{{.*}}AllocU"(i64 16)
+// CHECK: [[A_DATA:%.*]] = call noalias dereferenceable(16) ptr @"{{.*}}AllocU"(i64 16)
 // CHECK: [[A_EFACE:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_main.A, ptr undef }, ptr [[A_DATA]], 1
 // CHECK: [[A_DYN_TYPE:%.*]] = extractvalue %"{{.*}}eface" [[A_EFACE]], 0
 // CHECK-NEXT: [[IS_A:%.*]] = icmp eq ptr [[A_DYN_TYPE]], @_llgo_main.A
@@ -59,7 +59,7 @@ func main() {
 // CHECK: call void @"{{.*}}PrintBool"(i1 [[A_OK]])
 // A named slice uses its named descriptor while the asserted payload retains
 // the ordinary three-word slice representation.
-// CHECK: [[BYTES_DATA:%.*]] = call ptr @"{{.*}}AllocU"(i64 24)
+// CHECK: [[BYTES_DATA:%.*]] = call noalias dereferenceable(24) ptr @"{{.*}}AllocU"(i64 24)
 // CHECK: [[BYTES_EFACE:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_main.MyBytes, ptr undef }, ptr [[BYTES_DATA]], 1
 // CHECK: [[BYTES_TYPE:%.*]] = extractvalue %"{{.*}}eface" [[BYTES_EFACE]], 0
 // CHECK-NEXT: [[IS_BYTES:%.*]] = icmp eq ptr [[BYTES_TYPE]], @_llgo_main.MyBytes

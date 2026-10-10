@@ -8,10 +8,10 @@ import (
 // A declared function is represented as a closure pair with a nil environment,
 // and interface assertions use the closure type descriptor.
 // CHECK-LABEL: define void @main.check({ ptr, ptr } %0){{.*}} {
-// CHECK: %[[DECL_BOX:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK: %[[DECL_BOX:[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK-NEXT: store { ptr, ptr } { ptr @main.demo, ptr null }, ptr %[[DECL_BOX]]
 // CHECK: %[[DECL_EFACE:[0-9]+]] = insertvalue %"{{.*}}runtime.eface" { ptr @[[CLOSURE_TYPE:"_llgo_closure\$[^"]+"]], ptr undef }, ptr %[[DECL_BOX]], 1
-// CHECK: %[[ARG_BOX:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK: %[[ARG_BOX:[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK-NEXT: store { ptr, ptr } %0, ptr %[[ARG_BOX]]
 // CHECK: %[[ARG_EFACE:[0-9]+]] = insertvalue %"{{.*}}runtime.eface" { ptr @[[CLOSURE_TYPE]], ptr undef }, ptr %[[ARG_BOX]], 1
 // CHECK: %[[DECL_TYPE:[0-9]+]] = extractvalue %"{{.*}}runtime.eface" %[[DECL_EFACE]], 0
@@ -23,7 +23,7 @@ import (
 // CHECK-NEXT: %[[SAME_PTR:[0-9]+]] = icmp eq ptr %[[DECL_PTR]], %[[ARG_PTR]]
 // CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %[[SAME_PTR]])
 // CHECK-LABEL: define ptr @main.closurePtr(%"{{.*}}runtime.eface" %0){{.*}} {
-// CHECK: %[[EFACE_BOX:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK: %[[EFACE_BOX:[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK-NEXT: store %"{{.*}}runtime.eface" %0, ptr %[[EFACE_BOX]]
 // CHECK: %[[CLOSURE_SLOT:[0-9]+]] = getelementptr inbounds nuw %main.rtype, ptr %[[EFACE_BOX]], i32 0, i32 1
 // CHECK-NEXT: %[[CLOSURE:[0-9]+]] = load ptr, ptr %[[CLOSURE_SLOT]]

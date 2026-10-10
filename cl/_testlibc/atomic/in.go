@@ -36,7 +36,7 @@ func main() {
 	var v int64
 
 	// All operations target the same slot and retain sequential consistency.
-	// CHECK: [[V:%.*]] = call ptr @"{{.*}}AllocZ"(i64 8)
+	// CHECK: [[V:%.*]] = call noalias dereferenceable(8) ptr @"{{.*}}AllocZ"(i64 8)
 	// CHECK: store atomic i64 100, ptr [[V]] seq_cst
 	atomicStore(&v, 100)
 	// CHECK: [[LOADED:%.*]] = load atomic i64, ptr [[V]] seq_cst

@@ -52,12 +52,12 @@ func main() {
 // by a descriptor comparison. The pointer value uses an itab and a code/env
 // pair for the interface call.
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: %[[BOX:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 24)
+// CHECK: %[[BOX:[0-9]+]] = call noalias dereferenceable(24) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 24)
 // CHECK: store %"main.T[string,int]" %{{[0-9]+}}, ptr %[[BOX]], align 8
 // CHECK: %[[EBOX:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_main.T[string,int]", ptr undef }, ptr %[[BOX]], 1
 // CHECK: %[[ETYPE:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[EBOX]], 0
 // CHECK: icmp eq ptr %[[ETYPE]], @"_llgo_main.T[string,int]"
-// CHECK: %[[OBJ:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
+// CHECK: %[[OBJ:[0-9]+]] = call noalias dereferenceable(24) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
 // CHECK: %[[ITAB:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr {{.*}}, ptr @"*_llgo_main.T[string,int]")
 // CHECK: %[[IFACE0:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %[[ITAB]], 0
 // CHECK: %[[IFACE:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %[[IFACE0]], ptr %[[OBJ]], 1
@@ -70,7 +70,7 @@ func main() {
 // CHECK: %[[METHODENV:[0-9]+]] = extractvalue { ptr, ptr } %[[METHODPAIR]], 1
 // CHECK: %[[METHODCODE:[0-9]+]] = extractvalue { ptr, ptr } %[[METHODPAIR]], 0
 // CHECK: call void %[[METHODCODE]](ptr %[[METHODENV]])
-// CHECK: %[[ARRAY:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 32)
+// CHECK: %[[ARRAY:[0-9]+]] = call noalias dereferenceable(32) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 32)
 // CHECK: getelementptr [4 x i64], ptr %[[ARRAY]], i64 1
 // CHECK: getelementptr [4 x i64], ptr %[[ARRAY]], i64 1
 

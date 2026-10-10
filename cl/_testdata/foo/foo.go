@@ -12,7 +12,7 @@ package foo
 // CHECK-NEXT:   %[[TMP1:[0-9]+]] = getelementptr inbounds nuw { i64 }, ptr %[[TMP0]], i32 0, i32 0
 // CHECK-NEXT:   store i64 1, ptr %[[TMP1]], align 8
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = load { i64 }, ptr %[[TMP0]], align 8
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT:   %[[TMP3:[0-9]+]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK-NEXT:   store { i64 } %[[TMP2]], ptr %[[TMP3]], align 8
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_struct$K-dZ9QotZfVPz2a0YdRa9vmZUuDXPTqZOlMShKEDJtk", ptr undef }, ptr %[[TMP3]], 1
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.eface" %[[TMP4]]
@@ -29,7 +29,7 @@ func Bar() any {
 // CHECK-NEXT:   %[[TMP1:[0-9]+]] = getelementptr inbounds nuw { i64 }, ptr %[[TMP0]], i32 0, i32 0
 // CHECK-NEXT:   store i64 1, ptr %[[TMP1]], align 8
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = load { i64 }, ptr %[[TMP0]], align 8
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT:   %[[TMP3:[0-9]+]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK-NEXT:   store { i64 } %[[TMP2]], ptr %[[TMP3]], align 8
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"{{.*}}/cl/_testdata/foo.struct$MYpsoM99ZwFY087IpUOkIw1zjBA_sgFXVodmn1m-G88", ptr undef }, ptr %[[TMP3]], 1
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.eface" %[[TMP4]]

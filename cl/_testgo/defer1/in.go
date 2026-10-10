@@ -13,7 +13,7 @@ package main
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: [[PREV_DEFER:%.*]] = call ptr @"{{.*}}GetThreadDefer"()
-// CHECK: [[FRAME:%.*]] = call ptr @"{{.*}}AllocU"(i64 48)
+// CHECK: [[FRAME:%.*]] = call noalias dereferenceable(48) ptr @"{{.*}}AllocU"(i64 48)
 // CHECK: store ptr [[PREV_DEFER]], ptr {{%.*}}
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[FRAME]])
 // CHECK: [[FLAGS:%.*]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[FRAME]], i32 0, i32 1
@@ -23,7 +23,7 @@ package main
 // CHECK-NEXT: [[HELLO_FLAGS:%.*]] = or i64 [[HELLO_FLAGS0]], 1
 // CHECK-NEXT: store i64 [[HELLO_FLAGS]], ptr [[FLAGS]]
 // CHECK: [[HELLO_PREV:%.*]] = load ptr, ptr [[HEAD]]
-// CHECK: [[HELLO_NODE:%.*]] = call ptr @"{{.*}}AllocU"(i64 32)
+// CHECK: [[HELLO_NODE:%.*]] = call noalias dereferenceable(32) ptr @"{{.*}}AllocU"(i64 32)
 // CHECK: store ptr [[HELLO_PREV]], ptr {{%.*}}
 // CHECK: store i64 1, ptr {{%.*}}
 // CHECK: store %"{{.*}}String" { ptr [[HELLO]], i64 5 }, ptr {{%.*}}
@@ -32,7 +32,7 @@ package main
 // CHECK-NEXT: [[BYE_FLAGS:%.*]] = or i64 [[BYE_FLAGS0]], 2
 // CHECK-NEXT: store i64 [[BYE_FLAGS]], ptr [[FLAGS]]
 // CHECK: [[BYE_PREV:%.*]] = load ptr, ptr [[HEAD]]
-// CHECK: [[BYE_NODE:%.*]] = call ptr @"{{.*}}AllocU"(i64 32)
+// CHECK: [[BYE_NODE:%.*]] = call noalias dereferenceable(32) ptr @"{{.*}}AllocU"(i64 32)
 // CHECK: store ptr [[BYE_PREV]], ptr {{%.*}}
 // CHECK: store i64 2, ptr {{%.*}}
 // CHECK: store %"{{.*}}String" { ptr [[BYE]], i64 3 }, ptr {{%.*}}
@@ -42,7 +42,7 @@ package main
 // CHECK-NEXT: [[WORLD_FLAGS:%.*]] = or i64 [[WORLD_FLAGS0]], 4
 // CHECK-NEXT: store i64 [[WORLD_FLAGS]], ptr [[FLAGS]]
 // CHECK: [[WORLD_PREV:%.*]] = load ptr, ptr [[HEAD]]
-// CHECK: [[WORLD_NODE:%.*]] = call ptr @"{{.*}}AllocU"(i64 32)
+// CHECK: [[WORLD_NODE:%.*]] = call noalias dereferenceable(32) ptr @"{{.*}}AllocU"(i64 32)
 // CHECK: store ptr [[WORLD_PREV]], ptr {{%.*}}
 // CHECK: store i64 3, ptr {{%.*}}
 // CHECK: store %"{{.*}}String" { ptr [[WORLD]], i64 5 }, ptr {{%.*}}
@@ -109,7 +109,7 @@ func main() {
 // zLoopJoin preserves the former nextblock regression exactly: an empty range
 // before and after registration must not let block[0] movement bypass cleanup.
 // CHECK-LABEL: define void @main.zLoopJoin(){{.*}} {
-// CHECK: [[LOOP_FRAME:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 48)
+// CHECK: [[LOOP_FRAME:%[0-9]+]] = call noalias dereferenceable(48) ptr @"{{.*}}AllocU"(i64 48)
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[LOOP_FRAME]])
 // CHECK: [[LOOP_FLAGS:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[LOOP_FRAME]], i32 0, i32 1
 // CHECK: [[FIRST_INDEX:%[0-9]+]] = phi i64
