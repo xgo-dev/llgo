@@ -73,6 +73,14 @@ jobs:
           which clang
           clang --version
 
+      - name: Set up older Go for toolchain-switch regressions
+        uses: ./.github/actions/setup-go
+        env:
+          GOTOOLCHAIN: local
+        with:
+          go-version: 1.21.13
+          cache: 'false'
+
       - name: Set up Go
         uses: ./.github/actions/setup-go
 

@@ -311,6 +311,38 @@ func TestBuildSelectsGOEXPERIMENTSources(t *testing.T) {
 
 // runGoConfigHelper runs in a copy of the test executable named go (or go.exe).
 func runGoConfigHelper(mode string) {
+	if mode == "package-driver" || mode == "toolchain-driver" {
+		if os.Getenv("GO111MODULE") == "off" {
+			fmt.Fprintln(os.Stderr, "old launcher cannot handle selected GOEXPERIMENT")
+			os.Exit(19)
+		}
+		name := "go"
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		root := runtime.GOROOT()
+		if mode == "toolchain-driver" {
+			tool, err := os.Executable()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			data, err := os.ReadFile(tool + ".root")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			root = string(data)
+		}
+		cmd := exec.Command(filepath.Join(root, "bin", name), os.Args[1:]...)
+		cmd.Env = withEnv(os.Environ(), "GOROOT="+root)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "list" {
 		fmt.Fprintln(os.Stderr, "tool tags unavailable")
 		os.Exit(7)

@@ -23,7 +23,6 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/packages"
-	gopackages "golang.org/x/tools/go/packages"
 )
 
 // Hard-coded runtime package IDs belong to the selected Go coverage protocol.
@@ -298,7 +297,7 @@ func (c *coverageBuild) reloadCoverageCgo(p *packages.Package, conf *Config, cfg
 	if p.PkgPath == "command-line-arguments" {
 		patterns = p.GoFiles
 	}
-	loaded, err := gopackages.Load(&loader, patterns...)
+	loaded, err := packages.LoadMetadata(&loader, patterns...)
 	if err != nil {
 		return err
 	}

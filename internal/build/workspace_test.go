@@ -224,6 +224,104 @@ func TestWorkspaceRunAndInstall(t *testing.T) {
 	}
 }
 
+func TestWorkspaceSelectedGoDriver(t *testing.T) {
+	root := workspaceFixture(t)
+	bin := t.TempDir()
+	writeBuildTestTool(t, bin, "go")
+	parentPath := bin + string(os.PathListSeparator) + os.Getenv("PATH")
+	t.Setenv("PATH", parentPath)
+	t.Setenv("LLGO_TEST_GO_CONFIG_HELPER", "package-driver")
+	t.Setenv("GOWORK", filepath.Join(root, "go.work"))
+	dir := filepath.Join(root, "app", "cmd", "hello")
+	workspaceBuildRun(t, dir, nil, "41")
+	conf := workspaceConfig(ModeTest)
+	conf.Coverage = &CoverageConfig{Profile: filepath.Join(t.TempDir(), "coverage.out")}
+	if _, err := Build(Invocation{Dir: root, Args: []string{"./lib"}, Config: conf}); err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("PATH") != parentPath {
+		t.Fatal("build changed the parent PATH")
+	}
+}
+
+func TestWorkspaceToolchainSwitch(t *testing.T) {
+	oldRoot := olderGoTestRoot(t)
+	for _, direction := range []string{"up", "down"} {
+		t.Run(direction, func(t *testing.T) {
+			root := workspaceFixture(t)
+			bin := t.TempDir()
+			name := "go"
+			if runtime.GOOS == "windows" {
+				name += ".exe"
+			}
+			for version, goRoot := range map[string]string{runtime.Version(): runtime.GOROOT(), "go1.21.13": oldRoot} {
+				writeBuildTestTool(t, bin, version)
+				tool := filepath.Join(bin, version)
+				if runtime.GOOS == "windows" {
+					tool += ".exe"
+				}
+				writeFile(t, tool+".root", goRoot)
+			}
+			launcherRoot, selectedVersion := oldRoot, runtime.Version()
+			want := "41 true"
+			if direction == "down" {
+				launcherRoot, selectedVersion = runtime.GOROOT(), "go1.21.13"
+				writeFile(t, filepath.Join(root, "go.work"), "go 1.21\ntoolchain go1.21.13\nuse (\n ./app\n ./lib\n)\n")
+				writeFile(t, filepath.Join(root, "app", "go.mod"), "module example.com/workapp\ngo 1.21\nrequire example.com/worklib v0.0.0\n")
+				want = "41 false"
+			}
+			dir := filepath.Join(root, "app", "cmd", "hello")
+			writeFile(t, filepath.Join(dir, "main.go"), "package main\nimport \"example.com/worklib\"\nfunc main(){println(lib.Value(), selected)}\n")
+			writeFile(t, filepath.Join(dir, "new.go"), "//go:build go1.27\n\npackage main\nconst selected = true\n")
+			writeFile(t, filepath.Join(dir, "old.go"), "//go:build !go1.27\n\npackage main\nconst selected = false\n")
+			t.Setenv("GOROOT", "")
+			t.Setenv("GOEXPERIMENT", "")
+			t.Setenv("LLGO_TEST_GO_CONFIG_HELPER", "toolchain-driver")
+			t.Setenv("PATH", filepath.Join(launcherRoot, "bin")+string(os.PathListSeparator)+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("GOWORK", filepath.Join(root, "go.work"))
+			if direction == "up" {
+				t.Setenv("GOTOOLCHAIN", "auto")
+			} else {
+				t.Setenv("GOTOOLCHAIN", selectedVersion)
+			}
+			if got := strings.TrimSpace(string(workspaceGo(t, dir, "env", "GOVERSION"))); got != selectedVersion {
+				t.Fatalf("selected Go = %s, want %s", got, selectedVersion)
+			}
+			if got := strings.TrimSpace(string(workspaceGo(t, dir, "run", "."))); got != want {
+				t.Fatalf("Go control = %q, want %q", got, want)
+			}
+			workspaceBuildRun(t, dir, nil, want)
+		})
+	}
+}
+
+func olderGoTestRoot(t *testing.T) string {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := []string{filepath.Join(home, "sdk", "go1.21.13")}
+	if cache := os.Getenv("RUNNER_TOOL_CACHE"); cache != "" {
+		arch := map[string]string{"amd64": "x64", "arm64": "arm64", "386": "x86"}[runtime.GOARCH]
+		roots = append(roots, filepath.Join(cache, "go", "1.21.13", arch))
+	}
+	name := "go"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	for _, root := range roots {
+		if _, err := os.Stat(filepath.Join(root, "bin", name)); err == nil {
+			return root
+		}
+	}
+	if os.Getenv("CI") == "true" {
+		t.Fatal("Go 1.21.13 fixture is missing; CI must install it before the current Go toolchain")
+	}
+	t.Skip("Go 1.21.13 is not installed in the SDK or runner tool cache")
+	return ""
+}
+
 func TestWorkspaceVendorAndReplace(t *testing.T) {
 	root := workspaceFixture(t)
 	dir := filepath.Join(root, "app", "cmd", "hello")

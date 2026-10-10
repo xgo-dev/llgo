@@ -16,7 +16,6 @@ import (
 	"sync"
 
 	"github.com/xgo-dev/llgo/internal/packages"
-	gopackages "golang.org/x/tools/go/packages"
 )
 
 // CoverageConfig describes Go's source coverage for builds and tests. A non-nil
@@ -258,7 +257,7 @@ func (c *coverageBuild) prepare(
 	// to the existing package identities before the one shared type-check pass.
 	supportCfg := *cfg
 	supportCfg.Tests = false
-	support, err := gopackages.Load(&supportCfg, "runtime/coverage", "sync/atomic", "unsafe")
+	support, err := packages.LoadMetadata(&supportCfg, "runtime/coverage", "sync/atomic", "unsafe")
 	if err != nil {
 		return err
 	}
