@@ -10,7 +10,18 @@ import _ "unsafe"
 func init() {
 	llgoPrepareCPU()
 	Initialize(llgoCPUEnvironment())
+	// Publish once, after the official detector has applied GODEBUG. Bit zero
+	// distinguishes initialization from an initialized CPU with AVX2 disabled.
+	// Keep this layout in sync with internal/llvmfmv's feature bits.
+	features := uint64(1)
+	if X86.HasAVX2 {
+		features |= 2
+	}
+	llgoCPUFeatures = features
 }
+
+//go:linkname llgoCPUFeatures github.com/xgo-dev/llgo/runtime/internal/runtime.CPUFeatures
+var llgoCPUFeatures uint64
 
 //go:linkname llgoCPUEnvironment github.com/xgo-dev/llgo/runtime/internal/runtime.CPUEnvironment
 func llgoCPUEnvironment() string

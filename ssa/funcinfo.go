@@ -30,6 +30,9 @@ const (
 	FuncInfoFlagWrapper uint32 = 1
 )
 
+// internal/llvmfmv/source.go also reads these versioned row layouts when cloning
+// functions. Update its symbol and PC-site remapping when changing the schema.
+
 // EnableFuncInfoMetadata controls emission of DCE-safe function source
 // metadata. The metadata intentionally stores symbol names as strings instead
 // of function pointer operands, so it can be consumed before materializing a

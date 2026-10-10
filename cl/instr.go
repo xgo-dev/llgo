@@ -735,6 +735,9 @@ func (p *context) funcOf(fn *ssa.Function) (aFn llssa.Function, pyFn llssa.PyObj
 				aFn.Inline(llssa.NoInline)
 			}
 		}
+		if ftype == goFunc {
+			p.markSIMDFMV(aFn, fn)
+		}
 	}
 	return
 }

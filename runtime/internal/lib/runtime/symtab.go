@@ -940,6 +940,7 @@ func appendRuntimeFuncInfoEntryFrames(frames []runtimeFuncPCFrame, entries []uin
 	entryBase := unsafe.Pointer(&entries[0])
 	nframes := base
 	used := false
+	var nativeEntries map[uintptr]bool
 	for i := uintptr(0); i < nsite; i++ {
 		site := (*runtimeFuncInfoEntryRecord)(unsafe.Pointer(start + i*size))
 		if site == nil || site.pc == 0 || site.symbolID == 0 {
@@ -950,6 +951,21 @@ func appendRuntimeFuncInfoEntryFrames(frames []runtimeFuncPCFrame, entries []uin
 			continue
 		}
 		pc := rtdebug.FunctionPC(unsafe.Pointer(site.pc))
+		if GOOS == "windows" && (GOARCH == "amd64" || GOARCH == "arm64") {
+			// LTO carries an inlinee's entry-site asm into its caller. COFF
+			// keeps the caller's own record first, but the anchors can have
+			// identical PCs; sorting and arbitrary duplicate removal then
+			// loses the caller's identity. Keep the first record per physical
+			// PE function before sorting, and publish its true entry.
+			pc = runtimeFuncPCSiteEntry(pc)
+			if nativeEntries == nil {
+				nativeEntries = make(map[uintptr]bool)
+			}
+			if nativeEntries[pc] {
+				continue
+			}
+			nativeEntries[pc] = true
+		}
 		// Write the fields directly. A composite assignment here used to lower
 		// through a fresh stack temporary on every loop iteration, exhausting a
 		// fixed WebAssembly goroutine stack while indexing a large program.

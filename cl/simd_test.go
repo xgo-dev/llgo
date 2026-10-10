@@ -13,6 +13,39 @@ import (
 	"golang.org/x/tools/go/ssa/ssautil"
 )
 
+func TestSIMDFMVQueryIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, recv, signature string
+		want                        string
+	}{
+		{"official", "simd/archsimd", "X86Features", "AVX2() bool", "x86.avx2"},
+		{"other package", "example/archsimd", "X86Features", "AVX2() bool", ""},
+		{"other receiver", "simd/archsimd", "OtherFeatures", "AVX2() bool", ""},
+		{"pointer receiver", "simd/archsimd", "*X86Features", "AVX2() bool", ""},
+		{"other query", "simd/archsimd", "X86Features", "AVX() bool", ""},
+		{"argument", "simd/archsimd", "X86Features", "AVX2(int) bool", ""},
+		{"result", "simd/archsimd", "X86Features", "AVX2() int", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := token.NewFileSet()
+			file, err := parser.ParseFile(fs, "cpu.go", "package archsimd; type X86Features struct{}; type OtherFeatures struct{}; func ("+tc.recv+") "+tc.signature, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pkg, err := new(types.Config).Check(tc.path, fs, []*ast.File{file}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prog := ssa.NewProgram(fs, 0)
+			prog.CreatePackage(pkg, nil, nil, true)
+			named := pkg.Scope().Lookup(strings.TrimPrefix(tc.recv, "*")).Type().(*types.Named)
+			if got := simdCPUQuery(prog.FuncValue(named.Method(0))); got != tc.want {
+				t.Fatalf("query = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSIMDOperationIdentity(t *testing.T) {
 	const source = `package archsimd
  type v128 struct { _ [0]func() }
