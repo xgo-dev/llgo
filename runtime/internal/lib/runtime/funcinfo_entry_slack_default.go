@@ -7,6 +7,8 @@ package runtime
 // look-ahead window so function-value PCs still resolve to their metadata.
 const runtimeFuncPCEntrySlack = 64
 
+const runtimeFuncPCDedupBySiteEntry = false
+
 func runtimeFuncPCSiteEntry(pc uintptr) uintptr {
 	return pc
 }

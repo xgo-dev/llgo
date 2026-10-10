@@ -9,8 +9,9 @@ import (
 
 //go:noinline
 func capture(pcs *[16]uintptr, value *int) int {
-	// Cross-package LTO copies AddSeven's entry record into this function.
-	// That record must not replace capture's identity in CallersFrames.
+	// Cross-package LTO is expected to inline AddSeven here. Its copied entry
+	// record must remain after capture's own record so first-record dedup keeps
+	// capture's identity. If AddSeven stops inlining, this loses its trigger.
 	*value = arith.AddSeven(*value)
 	return runtime.Callers(1, pcs[:])
 }

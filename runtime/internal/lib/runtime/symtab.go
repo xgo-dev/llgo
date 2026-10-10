@@ -951,7 +951,7 @@ func appendRuntimeFuncInfoEntryFrames(frames []runtimeFuncPCFrame, entries []uin
 			continue
 		}
 		pc := rtdebug.FunctionPC(unsafe.Pointer(site.pc))
-		if GOOS == "windows" && (GOARCH == "amd64" || GOARCH == "arm64") {
+		if runtimeFuncPCDedupBySiteEntry {
 			// LTO carries an inlinee's entry-site asm into its caller. COFF
 			// keeps the caller's own record first, but the anchors can have
 			// identical PCs; sorting and arbitrary duplicate removal then
@@ -959,9 +959,13 @@ func appendRuntimeFuncInfoEntryFrames(frames []runtimeFuncPCFrame, entries []uin
 			// PE function before sorting, and publish its true entry.
 			pc = runtimeFuncPCSiteEntry(pc)
 			if nativeEntries == nil {
+				// This temporary map is only used when building the cached
+				// Windows table, never in Wasm's fixed-stack materialization loop.
 				nativeEntries = make(map[uintptr]bool)
 			}
 			if nativeEntries[pc] {
+				// An inline copy is not an entry for its source function.
+				// Leave entries[funcIndex] for that function's own record.
 				continue
 			}
 			nativeEntries[pc] = true
