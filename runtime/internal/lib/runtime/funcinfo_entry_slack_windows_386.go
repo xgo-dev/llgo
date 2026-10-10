@@ -8,6 +8,12 @@ package runtime
 // near the end of one function as the next function.
 const runtimeFuncPCEntrySlack = 0
 
+const runtimeFuncPCDedupBySiteEntry = false
+
+func runtimeFuncPCSiteEntry(pc uintptr) uintptr {
+	return pc
+}
+
 func runtimeFuncPCMayUseEntrySlack(uintptr) bool {
 	return false
 }
