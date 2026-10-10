@@ -5,7 +5,7 @@ package llgoext
 import _ "unsafe" // for go:linkname
 
 // Use LLGoFiles instead of import "C" so the same C boundary runs on Wasm.
-const LLGoFiles = "_wrap/variadic.c"
+const LLGoFiles = "_wrap/variadic.c; _wrap/narrow.c"
 
 //llgo:type C
 type Variadic func(marker int32, __llgo_va_list ...any) int32

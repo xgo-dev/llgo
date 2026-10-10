@@ -107,6 +107,8 @@ jobs:
             llvm: 22
           - os: macos-latest
             llvm: 22
+          - os: macos-15-intel
+            llvm: 22
           - os: windows-2022
             llvm: 22
             windows_abi: msvc
@@ -170,6 +172,11 @@ jobs:
         shell: bash
         run: |
           dev/build_ci_tools.sh "$RUNNER_TEMP/llgo-bin"
+          compiler_test="$RUNNER_TEMP/llgo-bin/build.test"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            compiler_test+=.exe
+          fi
+          go test -c -o "$compiler_test" ./internal/build
           echo "$RUNNER_TEMP/llgo-bin" >> "$GITHUB_PATH"
           echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
@@ -179,6 +186,17 @@ jobs:
         with:
           windows-abi: ${{ matrix.windows_abi }}
           windows-arch: ${{ matrix.windows_arch }}
+
+      - name: Run C ABI and foreign-thread regressions through the build API
+        working-directory: internal/build
+        shell: bash
+        run: |
+          compiler_test="$RUNNER_TEMP/llgo-bin/build.test"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            compiler_test+=.exe
+          fi
+          "$compiler_test" -test.v -test.count=1 -test.timeout=5m \
+            -test.run='^(TestNarrowCABI|TestCExportForeignThreadsFromExecutableAndDependency)$'
 
       - name: Check Windows native runtime and FFI
         if: runner.os == 'Windows'
@@ -624,6 +642,10 @@ jobs:
           # Ensure the changed GNU libunwind path actually ran.
           grep -Eq '\[dynunwind\] flavor=linux-nongnu frames=[1-9]' "$RUNNER_TEMP/arm64-faults.log"
           "$LLGO" test -v -count=1 -timeout=2m ./test/std/runtime ./test/std/sync
+      - name: Run C ABI and foreign-thread regressions through the build API
+        run: |
+          go test -v -count=1 -timeout=5m \
+            -run '^(TestNarrowCABI|TestCExportForeignThreadsFromExecutableAndDependency)$' ./internal/build
       - name: Run caller regressions in C shared libraries and archives
         run: dev/test_std_buildmodes.sh ./test/std/runtime
 

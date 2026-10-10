@@ -23,17 +23,23 @@ The ordinary current-version command remains:
 llgo test ./test/...
 ```
 
-Native C-export and nested callback execution checks are ordinary test cases in
-`cgo/export_threads_test.go`, run by both `go test ./test/cgo` and the native
-LLGo test suite. They build and execute `cgo/testdata/foreigncallback` to cover
-both main-package and dependency exports. The LLGo build helper uses
-`LLGO_TEST_LLGO` (set by the version runner), falling back to `llgo` on `PATH`.
-These cases use the normal build cache and run on the existing native CI
-matrix: Linux amd64, macOS arm64, and Windows amd64/arm64/386 with both MSVC
-and MinGW ABI profiles.
+Native C-export and nested callback checks are compiler integration tests in
+`internal/build/c_export_threads_test.go`. The host Go test process calls
+`internal/build.Do` to compile `cgo/testdata/foreigncallback`, then executes the
+generated program to cover main-package and dependency exports. CI builds the
+host test driver before selecting the target architecture, so these checks
+also run on Windows arm64/386 without starting a separate llgo compiler.
 The program reports Go-thread and C-thread reentry separately, after checking
 allocation/GC, retained outer values, and all nested defers. Compiler IR and
 symbol checks remain in `cl/_test*` and `internal/build`.
+
+Narrow C ABI execution cases live in `cgo/narrow_test.go` and
+`llgoext/narrow_test.go`. The compiler driver in
+`internal/build/narrow_abi_test.go` builds and runs them through the same API,
+including hosted Wasm profiles. Native CI executes them on Linux and macOS
+amd64/arm64, and Windows amd64/arm64/386 with both MSVC and MinGW profiles.
+Use command handlers directly for CLI parsing and command behavior tests;
+launch the CLI only when the process boundary itself is under test.
 
 Use the version runner for an older release or a smaller local package set:
 

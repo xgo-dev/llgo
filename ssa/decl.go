@@ -403,11 +403,12 @@ func (p Package) newFunc(
 		return v
 	}
 	t := p.Prog.FuncDecl(sig, bg)
+	entrySig := t.raw.Type.(*types.Signature)
 	var envType Type
 	if env != nil {
 		envType = p.Prog.Type(env.Type(), InGo)
 		rawEnv := types.NewParam(env.Pos(), env.Pkg(), env.Name(), envType.raw.Type)
-		entrySig := FuncAddCtx(rawEnv, t.raw.Type.(*types.Signature))
+		entrySig = FuncAddCtx(rawEnv, entrySig)
 		entry := Type(&aType{p.Prog.toLLVMFuncBackground(entrySig, bg), t.raw, vkFuncDecl})
 		if isNativeFuncBackground(bg) {
 			entry = p.Prog.withNativeStorage(entry)
@@ -420,6 +421,9 @@ func (p Package) newFunc(
 		llvmName = p.Prog.stdcallSymbolName(name)
 	}
 	fn := llvm.AddFunction(p.mod, llvmName, t.ll)
+	if isNativeFuncBackground(bg) {
+		p.Prog.nativeIntegerAttrs(entrySig, t.ll, fn.AddAttributeAtIndex)
+	}
 	switch name {
 	case "github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU",
 		"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ",

@@ -1555,6 +1555,7 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 		}
 	}
 	ret.impl = llvm.CreateCall(b.impl, ll, fn.impl, params)
+	b.setNativeIntegerCallAttrs(ret.impl, fn, sig)
 	if ret.Type != b.Prog.Void() {
 		ret.impl = b.fitLLVMResult(ret.impl, ret.Type)
 	}

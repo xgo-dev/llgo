@@ -405,7 +405,7 @@ func (p *Transformer) transformFunc(m llvm.Module, fn llvm.Value) bool {
 			nfn.AddAttributeAtIndex(i, attr)
 		}
 	}
-	copyClosureEnvFunctionAttrs(fn, nfn, paramMap)
+	copyFunctionABIAttrs(fn, nfn, paramMap)
 	if !preloweredSRet.IsNil() {
 		nfn.AddAttributeAtIndex(1, preloweredSRet)
 	}
@@ -795,7 +795,7 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 				"llgo.reflect.methodbyname.name", "1",
 			))
 		}
-		copyClosureEnvCallAttrs(call, replacement, paramMap)
+		copyCallABIAttrs(call, replacement, paramMap)
 	}
 
 	var instr llvm.Value
@@ -831,33 +831,48 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 	return true
 }
 
-var closureEnvAttributeKinds = []uint{
+var integerExtensionAttributeKinds = [...]uint{
+	llvm.AttributeKindID("signext"),
+	llvm.AttributeKindID("zeroext"),
+}
+
+var closureEnvAttributeKinds = [...]uint{
 	llvm.AttributeKindID("nest"),
 	llvm.AttributeKindID("swiftself"),
 }
 
-func copyClosureEnvFunctionAttrs(from, to llvm.Value, paramMap []int) {
-	for oldIndex, newIndex := range paramMap {
-		if newIndex == 0 {
-			continue
-		}
-		for _, kind := range closureEnvAttributeKinds {
-			if attr := from.GetEnumAttributeAtIndex(oldIndex+1, kind); !attr.IsNil() {
-				to.AddAttributeAtIndex(newIndex, attr)
+func copyFunctionABIAttrs(from, to llvm.Value, paramMap []int) {
+	fromType, toType := from.GlobalValueType(), to.GlobalValueType()
+	copyABIAttrs(fromType, toType, paramMap, from.GetEnumAttributeAtIndex, to.AddAttributeAtIndex)
+}
+
+func copyCallABIAttrs(from, to llvm.Value, paramMap []int) {
+	fromType, toType := from.CalledFunctionType(), to.CalledFunctionType()
+	copyABIAttrs(fromType, toType, paramMap, from.GetCallSiteEnumAttribute, to.AddCallSiteAttribute)
+}
+
+// copyABIAttrs preserves attributes on the replacement LLVM entry or call.
+// SSA codegen has already selected integer extension from Go signedness and
+// the target ABI. Keep those attributes only where the physical type survives
+// lowering; closure environment markers follow the environment parameter.
+func copyABIAttrs(from, to llvm.Type, paramMap []int, get func(int, uint) llvm.Attribute, add func(int, llvm.Attribute)) {
+	copyIndex := func(oldIndex, newIndex int, kinds []uint) {
+		for _, kind := range kinds {
+			if attr := get(oldIndex, kind); !attr.IsNil() {
+				add(newIndex, attr)
 			}
 		}
 	}
-}
-
-func copyClosureEnvCallAttrs(from, to llvm.Value, paramMap []int) {
+	fromParams, toParams := from.ParamTypes(), to.ParamTypes()
+	// paramMap uses zero-based source positions and one-based LLVM attribute
+	// indices, reserving zero for elided parameters. Attribute index 0 is return.
 	for oldIndex, newIndex := range paramMap {
 		if newIndex == 0 {
 			continue
 		}
-		for _, kind := range closureEnvAttributeKinds {
-			if attr := from.GetCallSiteEnumAttribute(oldIndex+1, kind); !attr.IsNil() {
-				to.AddCallSiteAttribute(newIndex, attr)
-			}
+		copyIndex(oldIndex+1, newIndex, closureEnvAttributeKinds[:])
+		if fromParams[oldIndex] == toParams[newIndex-1] {
+			copyIndex(oldIndex+1, newIndex, integerExtensionAttributeKinds[:])
 		}
 	}
 }

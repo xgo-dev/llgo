@@ -94,14 +94,9 @@ else
 	RUST_LOG=off "${wasmer_cmd}" run --enable-exceptions --enable-simd --stack-size=1048576 "${raw_wasi}"
 fi
 
-# LLGoFiles and go:linkname bypass the native-only Go cgo frontend. Execute
-# direct C ellipsis calls and native function values on every hosted profile.
-variadic_package="${repo_root}/test/llgoext"
-for target in emscripten emscripten-memory64 wasi; do
-	"${llgo_cmd}" test -target "${target}" -emulator -v -count=1 -timeout=90s \
-		-run '^TestLinkname.*CVariadicCall$' "${variadic_package}"
-done
-GOOS=js GOARCH=wasm "${llgo_cmd}" test -emulator -v -count=1 -timeout=90s \
-	-run '^TestLinkname.*CVariadicCall$' "${variadic_package}"
+# These are ABI execution tests, so compile through internal/build.Do rather
+# than invoking the CLI. LLGoFiles/go:linkname also work on Wasm without cgo.
+go test -v -count=1 -timeout=10m -run '^TestNarrowCABIHostedWasm$' \
+	"${repo_root}/internal/build" -args -narrow-cabi-wasm
 
 echo "WebAssembly target profile checks passed"

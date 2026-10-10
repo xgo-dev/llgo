@@ -265,6 +265,17 @@ runs:
       run: |
         set -euo pipefail
 
+        if [[ "${RUNNER_OS}" == "macOS" ]]; then
+          # Intel runners' python.org commands can interrupt Homebrew's
+          # initial link, leaving pip modules unavailable. Finish linking,
+          # then select the matching interpreter and embedding metadata.
+          brew link --overwrite python@3.12
+          python_prefix="$(brew --prefix python@3.12)"
+          export PATH="${python_prefix}/bin:${PATH}"
+          export PKG_CONFIG_PATH="${python_prefix}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+          echo "${python_prefix}/bin" >> "${GITHUB_PATH}"
+        fi
+
         pip3.12 install --user --break-system-packages numpy
         if [[ "${RUNNER_OS}" == "Linux" ]]; then
           # The demos use CPU tensors. The default PyPI wheel pulls CUDA
