@@ -16,7 +16,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/mod v0.41.0
 	golang.org/x/sys v0.48.0
-	golang.org/x/tools v0.50.1-0.20260925231102-d2d3de9f066e
+	golang.org/x/tools v0.51.0
 )
 
 require (
