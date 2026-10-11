@@ -28,6 +28,10 @@ func Ordinary(function func(marker int32, values ...any) int32, marker int32, in
 		t.Run(target.GOOS+"/"+target.GOARCH, func(t *testing.T) {
 			prog := newLLSSAProgForTarget(t, &target)
 			defer prog.Dispose()
+			if err := prepareTestSyntax(prog, ssaPkg, files, Options{}); err != nil {
+				t.Fatal(err)
+			}
+			prog.Directives().Freeze()
 			pkg, _, err := newPackageEx(prog, nil, nil, nil, ssaPkg, files, nil, false, Options{Debug: true, DebugSymbols: true})
 			if err != nil {
 				t.Fatal(err)

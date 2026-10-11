@@ -185,13 +185,12 @@ func (p Program) LinknameFor(pkg *types.Package, obj types.Object, fullName stri
 	return p.Linkname(fullName)
 }
 
-// namedBackground uses the effective package's records, including an absent
+// typeBackground uses the effective package's records, including an absent
 // type or background. Only packages without records use typeBackgrounds, which
 // cannot distinguish package instances sharing an import path.
-func (p *packageSyntaxData) namedBackground(t *types.Named) (Background, bool) {
+func (p *packageSyntaxData) typeBackground(obj *types.TypeName) (Background, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	obj := t.Origin().Obj()
 	pkg := obj.Pkg()
 	if effective := p.effective[pkg]; effective != nil {
 		pkg = effective
@@ -213,6 +212,6 @@ func (p *packageSyntaxData) namedBackground(t *types.Named) (Background, bool) {
 		}
 		return InGo, false
 	}
-	bg, ok := p.typeBackgrounds[namedLinkname(t)]
+	bg, ok := p.typeBackgrounds[typeNameLinkname(obj)]
 	return bg, ok
 }

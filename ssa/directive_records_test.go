@@ -34,10 +34,11 @@ func TestPackageDirectiveRecordsAreAuthoritative(t *testing.T) {
 	prog.SetLinkname("example.com/p.F", "C.f")
 	prog.SetLinkname("example.com/p.V", "C.v")
 	prog.SetTypeBackground("example.com/p.T", InC)
+	prog.SetTypeBackground("example.com/p.A", InC)
 	for _, mode := range []string{"no directives", "missing declarations", "no package records"} {
 		t.Run(mode, func(t *testing.T) {
 			fset := token.NewFileSet()
-			file, err := parser.ParseFile(fset, "p.go", "package p\nfunc F() {}\nvar V int\ntype T struct{}\n", 0)
+			file, err := parser.ParseFile(fset, "p.go", "package p\nfunc F() {}\nvar V int\ntype T struct{}\ntype A = func()\n", 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -75,9 +76,11 @@ func TestPackageDirectiveRecordsAreAuthoritative(t *testing.T) {
 			if fallback {
 				want = InC
 			}
-			named := pkg.Scope().Lookup("T").Type().(*types.Named)
-			if got, ok := prog.packageSyntax.namedBackground(named); ok != fallback || got != want {
-				t.Errorf("namedBackground = %v, %v; want %v, %v", got, ok, want, fallback)
+			for _, name := range []string{"T", "A"} {
+				obj := pkg.Scope().Lookup(name).(*types.TypeName)
+				if got, ok := prog.packageSyntax.typeBackground(obj); ok != fallback || got != want {
+					t.Errorf("typeBackground(%s) = %v, %v; want %v, %v", name, got, ok, want, fallback)
+				}
 			}
 		})
 	}
@@ -119,7 +122,7 @@ func TestEffectiveDirectivePackageForTypesAndMethods(t *testing.T) {
 	backend := prog.NewBackendProgram()
 	defer backend.Dispose()
 	named := pkg.Scope().Lookup("T").Type().(*types.Named)
-	if bg, ok := backend.packageSyntax.namedBackground(named); !ok || bg != InC {
+	if bg, ok := backend.packageSyntax.typeBackground(named.Origin().Obj()); !ok || bg != InC {
 		t.Fatalf("effective background = %v, %v", bg, ok)
 	}
 	if !backend.isNoInterfaceMethod(named.Method(0)) {

@@ -406,7 +406,7 @@ func (p *context) funcName(source sourceFunction) (*types.Package, string, int, 
 		return pkg, v, goFunc, decl
 	}
 	if _, ok := p.simdOperation(fn); ok {
-		return nil, "simd", llgoInstr
+		return nil, "simd", llgoInstr, decl
 	}
 	// Stdlib compiler intrinsics that are defined as `panic("intrinsic")` in
 	// source form. LLGo doesn't run Go escape analysis, so we can lower these to

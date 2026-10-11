@@ -31,7 +31,7 @@ func (p Program) hasNativeStructLayout(raw *types.Named) bool {
 	if !p.packageSyntax.hasNativeTypeMetadata.Load() {
 		return false
 	}
-	background, ok := p.packageSyntax.namedBackground(raw)
+	background, ok := p.packageSyntax.typeBackground(raw.Origin().Obj())
 	return ok && isNativeFuncBackground(background)
 }
 

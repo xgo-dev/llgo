@@ -132,6 +132,10 @@ func capture(seed int) func() int {
 		OptLevel: optlevel.O2,
 	})
 	defer optimizedProg.Dispose()
+	if err := prepareTestSyntax(optimizedProg, ssaPkg, []*ast.File{file}, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	optimizedProg.Directives().Freeze()
 	optimizedPkg, _, err := newPackageEx(optimizedProg, nil, nil, nil, ssaPkg, []*ast.File{file}, nil, false, Options{Debug: true, DebugSymbols: true})
 	if err != nil {
 		t.Fatal(err)

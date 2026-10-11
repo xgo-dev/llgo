@@ -36,7 +36,7 @@ func f() { runtime.Caller(0) }
 			ctx := &context{
 				prog: prog, pkg: pkg, fn: fn, goFn: ssapkg.Func("f"), fset: ssapkg.Prog.Fset,
 				options: Options{ShadowStack: true}, trackCallerFrames: true,
-				runtimeCallerFuncs: runtimeCallerFuncSet(NewCallerTracking(), ssapkg),
+				runtimeCallerFuncs: runtimeCallerFuncSet(NewCallerTracking(prog.Directives()), ssapkg),
 			}
 			pos := ctx.goFn.Pos()
 			ctx.recordPanicSite(b, pos)
