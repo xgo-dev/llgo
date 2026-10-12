@@ -47,13 +47,12 @@ type File struct {
 // Group preserves the different attachment and spelling rules of the existing
 // language. These facts are computed once, including negative/invalid results.
 type Group struct {
-	Items          []Directive
-	Function       Function
-	TypeBackground string
-	Skip           Skip
-	LastSkip       bool
-	LastLine       string
-	Embed          Embed
+	Items    []Directive
+	Function Function
+	Skip     Skip
+	LastSkip bool
+	LastLine string
+	Embed    Embed
 }
 
 type Function struct {

@@ -50,8 +50,9 @@ type VariableDecl struct {
 }
 type TypeDecl struct {
 	Declaration
-	Source     *ast.TypeSpec
-	Background string
+	Source      *ast.TypeSpec
+	Background  string
+	Deprecation string // positioned warning, emitted by package preparation
 }
 
 // Package is the authoritative source metadata for one types.Package. Object
@@ -66,8 +67,9 @@ type Package struct {
 	Skip      Skip
 }
 
-// Collect associates and validates links while building package records. Export
-// mismatches remain on Declaration.Err for the declaration's owning phase.
+// Collect associates and validates links and type calling conventions while
+// building package records. Export mismatches remain on Declaration.Err for
+// the declaration's owning phase.
 func Collect(fset *token.FileSet, files []*File, cPackage, exportRename bool) (*Package, error) {
 	p := &Package{Names: make(map[string]any), Functions: make(map[*ast.FuncDecl]*FunctionDecl), Variables: make(map[*ast.Ident]*VariableDecl), Types: make(map[*ast.TypeSpec]*TypeDecl), Objects: make(map[types.Object]any), Files: files}
 	syms := make(map[string]*Declaration)
@@ -120,13 +122,13 @@ func Collect(fset *token.FileSet, files []*File, cPackage, exportRename bool) (*
 					p.Skip.All = p.Skip.All || skip.All
 					p.Skip.Names = append(p.Skip.Names, skip.Names...)
 					if d.Tok == token.TYPE {
+						bg, warning, err := typeBackground(fset, d, file.Group(d.Doc).Items)
+						if err != nil {
+							return nil, err
+						}
 						for _, spec := range d.Specs {
 							spec := spec.(*ast.TypeSpec)
-							bg := ""
-							if len(d.Specs) == 1 {
-								bg = file.Group(d.Doc).TypeBackground
-							}
-							p.Types[spec] = &TypeDecl{Declaration: Declaration{Name: spec.Name.Name, Pos: spec.Pos()}, Source: spec, Background: bg}
+							p.Types[spec] = &TypeDecl{Declaration: Declaration{Name: spec.Name.Name, Pos: spec.Pos()}, Source: spec, Background: bg, Deprecation: warning}
 							p.Names[spec.Name.Name] = p.Types[spec]
 						}
 					}

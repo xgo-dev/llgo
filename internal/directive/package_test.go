@@ -50,7 +50,6 @@ var single int
 var many, other int
 //llgo:type C
 type Native func()
-//llgo:type stdcall
 type (Grouped func(); Another func())
 //llgo:skip removed
 const keep = 1
@@ -143,7 +142,7 @@ func TestBindingUsesEffectiveDeclarationsAndPositions(t *testing.T) {
 		return f
 	}
 	original := parse("original.go", "package p\nfunc F() {}\nvar V int\ntype T int\n")
-	replacement := parse("replacement.go", "package p\n//go:noinline\nfunc F() {}\nvar V string\n//llgo:type C\ntype T string\n")
+	replacement := parse("replacement.go", "package p\n//go:noinline\nfunc F() {}\nvar V string\n//llgo:cdecl\ntype T string\n")
 	_, oldInfo := checkRecordSource(t, fset, original)
 	newPkg, newInfo := checkRecordSource(t, fset, replacement)
 	files := new(Index).Files([]*ast.File{original, replacement})

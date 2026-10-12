@@ -142,6 +142,7 @@ func TestCdeclStdcallEquivalentToLegacyType(t *testing.T) {
 		target *llssa.Target
 	}{
 		{"cdecl", cdeclTmpl, "//llgo:cdecl", "//llgo:type C", nil},
+		{"cdecl alias", strings.Replace(cdeclTmpl, "type Callback func", "type Callback = func", 1), "//llgo:cdecl", "//llgo:type C", nil},
 		// //llgo:cdecl on a struct type (the opaque-C-struct case) must be
 		// honored exactly like the legacy //llgo:type C spelling.
 		{"cdecl struct", structTmpl, "//llgo:cdecl", "//llgo:type C", nil},
@@ -245,6 +246,11 @@ func TestTypeCallConvConflictsAndInvalidPlacement(t *testing.T) {
 			want: "single type declaration",
 		},
 		{
+			name: "legacy directive on grouped type block",
+			src:  "package p\n//llgo:type C\ntype (A func(); B func())\n",
+			want: "single type declaration",
+		},
+		{
 			name: "directive with argument",
 			src:  "package p\n//llgo:cdecl extra\ntype Callback func()\n",
 			want: "does not accept arguments",
@@ -252,9 +258,12 @@ func TestTypeCallConvConflictsAndInvalidPlacement(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := parseSyntaxCapturingStderr(t, "example.com/"+strings.ReplaceAll(c.name, " ", "-"), c.src)
+			stderr, err := parseSyntaxCapturingStderr(t, "example.com/"+strings.ReplaceAll(c.name, " ", "-"), c.src)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("ParsePkgSyntax error = %v, want %q", err, c.want)
+			}
+			if strings.Contains(stderr, "DEPRECATED") {
+				t.Fatalf("invalid directive also emitted a deprecation warning: %q", stderr)
 			}
 		})
 	}
@@ -265,7 +274,7 @@ func TestTypeCallConvConflictsAndInvalidPlacement(t *testing.T) {
 // //llgo:cdecl) is accepted and silent. A directive on a struct *field* carries
 // no calling-convention semantics yet and is silently ignored rather than
 // rejected. The directive's background value is checked separately via
-// typeCallConv in TestTypeBackgroundAndParsePkgSyntaxCoverage; IR-level
+// prepared records in TestTypeBackgroundAndParsePkgSyntaxCoverage; IR-level
 // equivalence with the legacy spelling is covered by
 // TestCdeclStdcallEquivalentToLegacyType.
 func TestCdeclOnStructTypeAccepted(t *testing.T) {

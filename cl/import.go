@@ -599,6 +599,9 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 					if decl.Tok == token.TYPE {
 						for _, spec := range decl.Specs {
 							r := records.Types[spec.(*ast.TypeSpec)]
+							if r.Deprecation != "" {
+								fmt.Fprintln(os.Stderr, r.Deprecation)
+							}
 							if r.Background != "" {
 								prog.SetTypeBackground(pkg.Path()+"."+r.Name, toBackground(r.Background))
 							}

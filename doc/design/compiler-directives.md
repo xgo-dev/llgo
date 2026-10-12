@@ -43,9 +43,16 @@ never LLVM values. Consumers must not modify published records.
 | --- | --- |
 | Function | Closure environment, noinline, nosplit, uintptr escapes, wasm imports, nointerface; call/declaration lowering, frame analysis, safepoints and GC roots |
 | Declaration | Link/export names; symbol creation and export preservation |
-| Type | Go/C/stdcall background; ABI and layout |
+| Type | `llgo:cdecl` / `llgo:stdcall` backgrounds; ABI and layout; positioned deprecation warnings for `llgo:type C/stdcall` |
 | Comment group | Locality/internal directive inputs and placement diagnostics |
 | File/package | Embed patterns, source patch commands and package skip decisions |
+
+Calling-convention directives are resolved from prepared `Group.Items` during
+collection. `llgo:cdecl` and `llgo:stdcall` set `TypeDecl.Background`; the legacy
+`llgo:type C/stdcall` forms also record a positioned deprecation warning for the
+preparation driver to emit. Conflicts, arguments and grouped declarations retain
+main's diagnostics. Field and TypeSpec comments retain their existing ignored
+behavior. Lowering reads the bound type record without rescanning comments.
 
 Source declarations that share a linker name remain distinct. Object keys retain
 receiver aliases and generic origin identity; package keys distinguish test and

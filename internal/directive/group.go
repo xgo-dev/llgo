@@ -69,12 +69,6 @@ func scanGroup(doc *ast.CommentGroup) *Group {
 		line := doc.List[len(doc.List)-1].Text
 		g.LastLine = line
 		_, _, g.LastSkip = LegacySkip(line)
-		for _, prefix := range []string{"//llgo:type ", "// llgo:type "} {
-			if strings.HasPrefix(line, prefix) {
-				g.TypeBackground = strings.TrimSpace(line[len(prefix):])
-				break
-			}
-		}
 	}
 	g.Embed = scanEmbed(doc)
 	return g

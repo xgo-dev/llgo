@@ -41,7 +41,6 @@ func TestGroupCompatibility(t *testing.T) {
 	tests := []struct {
 		name, comments        string
 		noinline, nointerface bool
-		bg                    string
 		skip                  []string
 	}{
 		{name: "noinline accepts arguments", comments: "//go:noinline ignored", noinline: true},
@@ -49,9 +48,6 @@ func TestGroupCompatibility(t *testing.T) {
 		{name: "nointerface trailing go annotations", comments: "//go:nointerface\n//go:other", nointerface: true},
 		{name: "nointerface stops at ordinary comment", comments: "//go:nointerface\n// ordinary"},
 		{name: "nointerface is exact", comments: "//go:nointerface "},
-		{name: "type only last line", comments: "//llgo:type C\n// ordinary"},
-		{name: "spaced type", comments: "// llgo:type stdcall", bg: "stdcall"},
-		{name: "type separator stays space", comments: "//llgo:type\tC"},
 		{name: "skip stops at ordinary comment", comments: "//llgo:skip old\n// ordinary\n// llgo:skip new one\n//go:other", skip: []string{"new", "one"}},
 	}
 	for _, tt := range tests {
@@ -63,7 +59,7 @@ func TestGroupCompatibility(t *testing.T) {
 				doc.List = append(doc.List, &ast.Comment{Text: line})
 			}
 			g := new(Index).Group(doc)
-			if g.Function.NoInline != tt.noinline || g.Function.NoInterface != tt.nointerface || g.TypeBackground != tt.bg || !reflect.DeepEqual(g.Skip.Names, tt.skip) {
+			if g.Function.NoInline != tt.noinline || g.Function.NoInterface != tt.nointerface || !reflect.DeepEqual(g.Skip.Names, tt.skip) {
 				t.Fatalf("group = %+v", g)
 			}
 		})
