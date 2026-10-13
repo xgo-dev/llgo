@@ -56,10 +56,7 @@ func recur2[T Integer](n T) T {
 // CHECK-NEXT:   br i1 %[[TMP1]], label %_llgo_[[BB1:[0-9]+]], label %_llgo_[[BB2:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB1]]:
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB0]], i64 5 }, ptr %[[TMP2]], align 8
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %[[TMP2]], 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %[[TMP3]])
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr @"_llgo_ifacebox${{.*}}" })
 // CHECK-NEXT:   unreachable
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB2]]:

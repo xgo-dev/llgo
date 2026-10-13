@@ -31,9 +31,7 @@ func main() {
 // CHECK: [[ITEM:%.*]] = call ptr @"{{.*}}AllocZ"(i64 8)
 // CHECK-NEXT: [[ITEM_VALUE:%.*]] = getelementptr inbounds nuw %main.item, ptr [[ITEM]], i32 0, i32 0
 // CHECK-NEXT: store i64 42, ptr [[ITEM_VALUE]]
-// CHECK: [[ITEM_ITAB:%.*]] = call ptr @"{{.*}}NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.item")
-// CHECK-NEXT: [[ITEM_IFACE0:%.*]] = insertvalue %"{{.*}}iface" undef, ptr [[ITEM_ITAB]], 0
-// CHECK-NEXT: [[ITEM_IFACE:%.*]] = insertvalue %"{{.*}}iface" [[ITEM_IFACE0]], ptr [[ITEM]], 1
+// CHECK: [[ITEM_IFACE:%.*]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[ITEM]], 1
 // CHECK-NEXT: call void @main.run(%"{{.*}}iface" [[ITEM_IFACE]])
 
 // run resolves Reset once, stores its code+receiver pair as the defer payload,
