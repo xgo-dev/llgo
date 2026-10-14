@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+
+	"github.com/xgo-dev/llgo/internal/packages"
 )
 
 // sourceGoConfig records the toolchain and effective feature tags used to select
@@ -26,7 +28,7 @@ func resolveSourceGoConfig(commands commandEnv, experiment string, buildFlags ..
 		commands.environ = withEnv(commands.environ, "GOEXPERIMENT="+experiment)
 	}
 	var cfg sourceGoConfig
-	cmd := commands.configure(exec.Command("go", "env", "-json", "GOROOT", "GOVERSION", "GOEXPERIMENT", "GOFLAGS"))
+	cmd := commands.configure(packages.GoCommand("env", "-json", "GOROOT", "GOVERSION", "GOEXPERIMENT", "GOFLAGS"))
 	output, err := cmd.Output()
 	if err != nil {
 		return cfg, sourceGoConfigError("resolve Go source configuration", err)

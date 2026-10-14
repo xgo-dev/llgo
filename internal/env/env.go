@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/xgo-dev/llgo/internal/packages"
 )
 
 const (
@@ -50,7 +51,7 @@ func GoEnvWithEnv(env []string, vars ...string) ([]string, error) {
 		return nil, fmt.Errorf("go env requires at least one variable")
 	}
 	args := append([]string{"env"}, vars...)
-	cmd := exec.Command("go", args...)
+	cmd := packages.GoCommand(args...)
 	if len(env) != 0 {
 		cmd.Env = env
 	}
