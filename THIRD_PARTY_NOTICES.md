@@ -72,6 +72,11 @@ executables; development- and test-only modules are not included.
 | `go.yaml.in/yaml/v3` | [MIT and Apache-2.0](LICENSES/Go-YAML-LICENSE.txt), [NOTICE](LICENSES/Go-YAML-NOTICE.txt) |
 | `golang.org/x/mod`, `x/sync`, `x/sys`, and `x/tools` | [BSD-3-Clause](LICENSES/Go-BSD-3-Clause.txt) |
 
+This development branch replaces `github.com/xgo-dev/plan9asm` with
+`github.com/cpunion/plan9asm` at commit `34a93b2081cf`, as pinned in `go.mod`.
+The replacement retains the Apache-2.0 license listed above. It must be
+replaced by an upstream dependency before release.
+
 ## LLVM/Clang
 
 LLGo can download the Espressif-maintained ESP LLVM/Clang 22 toolchain
