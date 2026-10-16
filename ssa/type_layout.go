@@ -51,13 +51,16 @@ func (p Program) structLayout(typ Type) (structLayout, bool) {
 }
 
 // toLLVMStructBody preserves the native target layout for C types. When Go's
-// language layout differs from LLVM's physical target layout (currently 386
-// and profiled wasm32), it wraps only affected fields and keeps the Go field
-// index as the outer LLVM element index.
+// language layout differs from LLVM's physical target layout, it wraps only the
+// affected fields and keeps the Go field index as the outer LLVM element index.
+// A fast path returns the native fields unchanged whenever LLVM already matches
+// the Go size, alignment and field offsets, so most structs on most targets are
+// untouched; the reconciliation only materializes padding that LLVM omits, such
+// as the alignment relaxations on 386 and profiled wasm32 or the trailing byte
+// Go reserves for a final zero-sized field.
 func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, *structLayout) {
 	fields := p.toLLVMFields(raw, native)
-	goarch := p.target.effectiveGOARCH()
-	if native || (goarch != "386" && !(goarch == "wasm" && p.target.WasmProfile != "")) || len(fields) == 0 {
+	if native || len(fields) == 0 {
 		return fields, nil
 	}
 

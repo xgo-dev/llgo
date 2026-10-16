@@ -187,3 +187,95 @@ func TestConstStructValueAsUsesDestinationLLVMType(t *testing.T) {
 		t.Fatalf("constant type = %s, want exact destination type %s", value.Type(), destination)
 	}
 }
+
+// TestGoStructTrailingZeroFieldLayout guards issue #2797: on amd64 (and every
+// non-386/wasm target) a Go struct whose final field is zero-sized must still
+// receive Go's trailing padding in its physical LLVM layout, so that compiled
+// indexing, array stride and the runtime type metadata all agree. Before the
+// fix the physical layout omitted the padding while the metadata kept it, which
+// corrupted safe reflect reads, writes and reflect.Copy.
+func TestGoStructTrailingZeroFieldLayout(t *testing.T) {
+	prog := NewProgram(&Target{GOOS: "linux", GOARCH: "amd64"})
+	defer prog.Dispose()
+	prog.TypeSizes(types.SizesFor("gc", "amd64"))
+
+	t.Run("final zero-length array field is padded to the Go size", func(t *testing.T) {
+		st := types.NewStruct([]*types.Var{
+			types.NewField(token.NoPos, nil, "Count", types.Typ[types.Int32], false),
+			types.NewField(token.NoPos, nil, "End", types.NewArray(types.Typ[types.Int32], 0), false),
+		}, nil)
+		typ := prog.Type(st, GoDecl)
+
+		if got, want := prog.SizeOf(typ), uint64(8); got != want {
+			t.Fatalf("physical struct size = %d, want %d", got, want)
+		}
+		if got, want := prog.OffsetOf(typ, 1), uint64(4); got != want {
+			t.Fatalf("physical trailing-field offset = %d, want %d", got, want)
+		}
+		if got, want := prog.AlignOf(typ), uint64(4); got != want {
+			t.Fatalf("physical struct alignment = %d, want %d", got, want)
+		}
+		// The Go field index stays the outer LLVM element index: the trailing
+		// field is wrapped with padding rather than appended as a sibling.
+		if got, want := len(typ.ll.StructElementTypes()), 2; got != want {
+			t.Fatalf("LLVM struct element count = %d, want %d", got, want)
+		}
+
+		// The physical layout must match the runtime type metadata exactly;
+		// a mismatch here is the #2797 bug.
+		b := &aBuilder{Prog: prog}
+		if got, want := uint64(prog.abi.Size(st)), prog.SizeOf(typ); got != want {
+			t.Fatalf("metadata size = %d, physical size = %d; must agree", got, want)
+		}
+		if got := b.abiStructFieldOffsets(st); len(got) != 2 || got[0] != 0 || got[1] != 4 {
+			t.Fatalf("metadata field offsets = %v, want [0 4]", got)
+		}
+	})
+
+	t.Run("array stride matches the padded element size", func(t *testing.T) {
+		st := types.NewStruct([]*types.Var{
+			types.NewField(token.NoPos, nil, "Count", types.Typ[types.Int32], false),
+			types.NewField(token.NoPos, nil, "End", types.NewArray(types.Typ[types.Int32], 0), false),
+		}, nil)
+		arr := types.NewArray(st, 4)
+		typ := prog.Type(arr, GoDecl)
+		if got, want := prog.SizeOf(typ), uint64(32); got != want {
+			t.Fatalf("[4]Tail physical size = %d, want %d (stride 8)", got, want)
+		}
+		if got, want := uint64(prog.abi.Size(arr)), prog.SizeOf(typ); got != want {
+			t.Fatalf("[4]Tail metadata size = %d, physical size = %d; must agree", got, want)
+		}
+	})
+
+	t.Run("final empty-struct field is padded to the Go size", func(t *testing.T) {
+		empty := types.NewStruct(nil, nil)
+		st := types.NewStruct([]*types.Var{
+			types.NewField(token.NoPos, nil, "I", types.Typ[types.Int32], false),
+			types.NewField(token.NoPos, nil, "Z", empty, false),
+		}, nil)
+		typ := prog.Type(st, GoDecl)
+		if got, want := prog.SizeOf(typ), uint64(8); got != want {
+			t.Fatalf("physical struct size = %d, want %d", got, want)
+		}
+		if got, want := prog.OffsetOf(typ, 1), uint64(4); got != want {
+			t.Fatalf("physical trailing-field offset = %d, want %d", got, want)
+		}
+	})
+
+	t.Run("ordinary struct is left unchanged by the fast path", func(t *testing.T) {
+		st := types.NewStruct([]*types.Var{
+			types.NewField(token.NoPos, nil, "A", types.Typ[types.Int32], false),
+			types.NewField(token.NoPos, nil, "B", types.Typ[types.Int32], false),
+		}, nil)
+		typ := prog.Type(st, GoDecl)
+		if got, want := prog.SizeOf(typ), uint64(8); got != want {
+			t.Fatalf("ordinary struct size = %d, want %d", got, want)
+		}
+		if got, want := len(typ.ll.StructElementTypes()), 2; got != want {
+			t.Fatalf("ordinary struct element count = %d, want %d", got, want)
+		}
+		if _, ok := prog.structLayout(typ); ok {
+			t.Fatal("ordinary struct unexpectedly carries wrapping layout metadata")
+		}
+	})
+}
