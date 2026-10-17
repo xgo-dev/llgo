@@ -1106,7 +1106,13 @@ func (p *context) debugRefValue(b llssa.Builder, value ssa.Value) (llssa.Expr, b
 }
 
 func (p *context) debugParams(b llssa.Builder, f *ssa.Function) {
-	for i, param := range f.Params {
+	params := f.Params
+	if llssa.HasNameValist(f.Signature) {
+		// C ellipsis has no fixed parameter slot. For example, the promoted
+		// CFmt.Printf wrapper has only its receiver before the variadic tail.
+		params = params[:len(params)-1]
+	}
+	for i, param := range params {
 		variable := param.Object().(*types.Var)
 		if p.debugAllocObjects[variable] {
 			continue

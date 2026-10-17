@@ -1,6 +1,7 @@
 package cl
 
 import (
+	"debug/dwarf"
 	"regexp"
 	"testing"
 
@@ -27,7 +28,7 @@ func Ordinary(function func(marker int32, values ...any) int32, marker int32, in
 		t.Run(target.GOOS+"/"+target.GOARCH, func(t *testing.T) {
 			prog := newLLSSAProgForTarget(t, &target)
 			defer prog.Dispose()
-			pkg, err := NewPackage(prog, ssaPkg, files)
+			pkg, _, err := newPackageEx(prog, nil, nil, nil, ssaPkg, files, nil, false, Options{Debug: true, DebugSymbols: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -48,6 +49,76 @@ func Ordinary(function func(marker int32, values ...any) int32, marker int32, in
 						t.Fatalf("missing expected call ABI:\n%s", text)
 					}
 				})
+			}
+			data := readDebugObject(t, prog, pkg.Module(), target.GOOS)
+			for _, test := range []struct {
+				name     string
+				variadic bool
+			}{
+				{"foo.Call", true},
+				{"foo.Ordinary", false},
+			} {
+				reader := data.Reader()
+				function, found := "", false
+				for {
+					entry, err := reader.Next()
+					if err != nil {
+						t.Fatal(err)
+					}
+					if entry == nil {
+						break
+					}
+					if entry.Tag == dwarf.TagSubprogram {
+						function, _ = entry.Val(dwarf.AttrName).(string)
+					}
+					if function != test.name || entry.Tag != dwarf.TagFormalParameter || entry.Val(dwarf.AttrName) != "function" {
+						continue
+					}
+					offset, ok := entry.Val(dwarf.AttrType).(dwarf.Offset)
+					if !ok {
+						t.Fatal("callback parameter has no type")
+					}
+					typ, err := data.Type(offset)
+					if err != nil {
+						t.Fatal(err)
+					}
+				unwrap:
+					for {
+						switch current := typ.(type) {
+						case *dwarf.TypedefType:
+							typ = current.Type
+						case *dwarf.PtrType:
+							typ = current.Type
+						case *dwarf.StructType:
+							// Ordinary Go function values store their code pointer
+							// in $f; native C callbacks are already pointers.
+							var code dwarf.Type
+							for _, field := range current.Field {
+								if field.Name == "$f" {
+									code = field.Type
+								}
+							}
+							if code == nil {
+								t.Fatalf("callback %s has no code pointer: %s", test.name, typ)
+							}
+							typ = code
+						default:
+							break unwrap
+						}
+					}
+					signature, ok := typ.(*dwarf.FuncType)
+					if !ok || len(signature.ParamType) != 2 {
+						t.Fatalf("callback %s has unexpected signature %s", test.name, typ)
+					}
+					_, variadic := signature.ParamType[1].(*dwarf.DotDotDotType)
+					if variadic != test.variadic {
+						t.Errorf("callback %s variadic = %v, want %v: %s", test.name, variadic, test.variadic, signature)
+					}
+					found = true
+				}
+				if !found {
+					t.Errorf("missing callback parameter for %s", test.name)
+				}
 			}
 		})
 	}

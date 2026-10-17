@@ -1,6 +1,11 @@
 package cl
 
 import (
+	"bytes"
+	"debug/dwarf"
+	"debug/elf"
+	"debug/macho"
+	"debug/pe"
 	"go/ast"
 	"go/importer"
 	"go/parser"
@@ -131,6 +136,149 @@ func inspectAddressable(seed int) [2]int {
 	// DebugRef after the field update must not replace it with a snapshot.
 	assertDebugRecords(t, optimizedIR, `name: "local"`, true, false)
 	assertDebugRecords(t, optimizedIR, `name: "backed"`, true, false)
+
+	// Reuse the native variadic method and ordinary Go variadic fixtures.
+	// A C ellipsis must have a DWARF marker, not a fictitious slice variable.
+	for _, fixture := range []struct {
+		path      string
+		functions []string
+		parameter string
+		variadic  bool
+	}{
+		{"_testrt/vamethod/in.go", []string{"main.CFmt.Printf", "main.(*CFmt).Printf"}, "arg0", true},
+		{"_testdata/vargs/in.go", []string{"main.test"}, "a", false},
+	} {
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, fixture.path, nil, parser.ParseComments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ssaPkg, _, err := ssautil.BuildPackage(&types.Config{Importer: importer.Default()}, fset,
+			types.NewPackage("main", "main"), []*ast.File{file},
+			ssa.SanityCheckFunctions|ssa.InstantiateGenerics|ssa.GlobalDebug)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, target := range []llssa.Target{
+			{GOOS: "linux", GOARCH: "amd64"},
+			{GOOS: "linux", GOARCH: "arm64"},
+			{GOOS: "darwin", GOARCH: "amd64"},
+			{GOOS: "darwin", GOARCH: "arm64"},
+			{GOOS: "windows", GOARCH: "amd64", LLVMTarget: "x86_64-pc-windows-msvc"},
+			{GOOS: "windows", GOARCH: "amd64", LLVMTarget: "x86_64-w64-windows-gnu"},
+			{GOOS: "windows", GOARCH: "arm64", LLVMTarget: "aarch64-pc-windows-msvc"},
+			{GOOS: "windows", GOARCH: "arm64", LLVMTarget: "aarch64-w64-windows-gnu"},
+			{GOOS: "windows", GOARCH: "386", LLVMTarget: "i686-pc-windows-msvc"},
+			{GOOS: "windows", GOARCH: "386", LLVMTarget: "i686-w64-windows-gnu"},
+		} {
+			for _, level := range []optlevel.Level{optlevel.O0, optlevel.O2} {
+				t.Run(fixture.path+"/"+target.GOOS+"/"+target.GOARCH+"/"+target.LLVMTarget+"/"+level.String(), func(t *testing.T) {
+					target.OptLevel = level
+					prog := newLLSSAProgForTarget(t, &target)
+					defer prog.Dispose()
+					pkg, _, err := newPackageEx(prog, nil, nil, nil, ssaPkg, []*ast.File{file}, nil, false, Options{Debug: true, DebugSymbols: true})
+					if err != nil {
+						t.Fatal(err)
+					}
+					data := readDebugObject(t, prog, pkg.Module(), target.GOOS)
+					for _, name := range fixture.functions {
+						reader := data.Reader()
+						found := false
+						for {
+							entry, err := reader.Next()
+							if err != nil {
+								t.Fatal(err)
+							}
+							if entry == nil {
+								break
+							}
+							if entry.Tag != dwarf.TagSubprogram || entry.Val(dwarf.AttrName) != name {
+								continue
+							}
+							found = true
+							var parameters []string
+							ellipsis := 0
+							for entry.Children {
+								child, err := reader.Next()
+								if err != nil {
+									t.Fatal(err)
+								}
+								if child == nil || child.Tag == 0 {
+									break
+								}
+								switch child.Tag {
+								case dwarf.TagFormalParameter:
+									parameter, _ := child.Val(dwarf.AttrName).(string)
+									parameters = append(parameters, parameter)
+								case dwarf.TagUnspecifiedParameters:
+									ellipsis++
+								}
+								reader.SkipChildren()
+							}
+							if len(parameters) != 1 || parameters[0] != fixture.parameter {
+								t.Errorf("%s fixed parameters = %v, want [%s]", name, parameters, fixture.parameter)
+							}
+							want := 0
+							if fixture.variadic {
+								want = 1
+							}
+							if ellipsis != want {
+								t.Errorf("%s has %d unspecified-parameters entries, want %d", name, ellipsis, want)
+							}
+						}
+						if !found {
+							t.Errorf("missing DWARF subprogram %s", name)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+// Decode emitted debug sections so tests cover the final DWARF tags as well
+// as LLVM metadata, including native COFF and Mach-O targets on any host.
+func readDebugObject(t *testing.T, prog llssa.Program, mod llvm.Module, goos string) *dwarf.Data {
+	t.Helper()
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	object, err := prog.TargetMachine().EmitToMemoryBuffer(mod, llvm.ObjectFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer object.Dispose()
+	reader := bytes.NewReader(object.Bytes())
+	var data *dwarf.Data
+	switch goos {
+	case "linux":
+		file, openErr := elf.NewFile(reader)
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		defer file.Close()
+		data, err = file.DWARF()
+	case "darwin":
+		file, openErr := macho.NewFile(reader)
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		defer file.Close()
+		data, err = file.DWARF()
+	case "windows":
+		file, openErr := pe.NewFile(reader)
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		defer file.Close()
+		data, err = file.DWARF()
+	default:
+		t.Fatalf("unsupported debug object format for %s", goos)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 func assertDebugLoopSnapshots(t *testing.T, function llvm.Value) {

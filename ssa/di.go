@@ -387,7 +387,14 @@ func (b diBuilder) createTypedefType(name string, ty Type, pos token.Position) D
 	)}
 	b.types[ty] = ret
 
-	underlyingType := b.diType(b.prog.rawType(ty.RawType().(*types.Named).Underlying()), pos)
+	underlying := ty.RawType().(*types.Named).Underlying()
+	rawUnderlying := b.prog.rawType(underlying)
+	if signature, ok := underlying.(*types.Signature); ok {
+		// Keep the shared LLVM cache unchanged, but preserve the source
+		// signature for DWARF. Go type identity ignores __llgo_va_list's name.
+		rawUnderlying = b.prog.toType(signature)
+	}
+	underlyingType := b.diType(rawUnderlying, pos)
 	typ := b.di.CreateTypedef(llvm.DITypedef{
 		Name:        name,
 		Type:        underlyingType.ll,
@@ -735,6 +742,11 @@ func (b diBuilder) createStructType(name string, ty Type, pos token.Position) (r
 		for i := 0; i < structType.NumFields(); i++ {
 			field := structType.Field(i)
 			tyField := b.prog.rawType(field.Type())
+			if signature, ok := field.Type().(*types.Signature); ok {
+				// A closure's $f must retain its own variadic convention even
+				// when a C callback with a Go-identical signature was cached first.
+				tyField = b.prog.toType(signature)
+			}
 			flags := 0
 			pos := b.positioner.Position(field.Pos())
 			fields[i] = b.createMemberTypeEx(field.Name(), ty, tyField, i, pos, flags)
@@ -769,7 +781,13 @@ func (b diBuilder) createFuncPtrType(name string, ty Type, pos token.Position) D
 	if results := sig.Results(); results.Len() != 0 {
 		params[0] = b.diType(b.prog.rawType(results), pos).ll
 	}
-	for i := 0; i < sig.Params().Len(); i++ {
+	n := sig.Params().Len()
+	if HasNameValist(sig) {
+		// A trailing null type emits DW_TAG_unspecified_parameters. The
+		// __llgo_va_list marker is not a fixed []any parameter.
+		n--
+	}
+	for i := 0; i < n; i++ {
 		params[i+1] = b.diType(b.prog.rawType(sig.Params().At(i).Type()), pos).ll
 	}
 	subroutine := b.di.CreateSubroutineType(llvm.DISubroutineType{
@@ -1136,6 +1154,9 @@ func (b Builder) DebugFunction(f Function, funcScope *types.Scope, pos token.Pos
 		paramTypes[0] = b.di().diType(rt, pos).ll
 		for i, t := range p.params {
 			paramTypes[i+1] = b.di().diType(t, pos).ll
+		}
+		if p.hasVArg {
+			paramTypes = append(paramTypes, llvm.Metadata{})
 		}
 		diFuncType := b.di().di.CreateSubroutineType(llvm.DISubroutineType{
 			File:       b.di().file(pos.Filename).ll,
