@@ -70,6 +70,10 @@ const (
 	SIMDCarrylessMultiply
 	SIMDCarrylessMultiplyLo
 	SIMDStoreMasked
+	SIMDExtendLo
+	SIMDExtendHi
+	SIMDSaturate
+	SIMDSaturateConcat
 )
 
 // SIMDNumericShape validates the official numeric aggregate representation.
@@ -181,6 +185,8 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return b.simdStoreMasked(args[0], args[1], args[2])
 	case SIMDLookupOrZero, SIMDPermuteOrZero, SIMDPermute:
 		return b.simdPermute(op, args[0], args[1])
+	case SIMDExtendLo, SIMDExtendHi, SIMDSaturate, SIMDSaturateConcat:
+		return b.simdIntegerResize(op, result, args)
 	case SIMDConvert:
 		return b.simdConvert(result, args[0])
 	case SIMDShiftAllLeft, SIMDShiftAllRight, SIMDShiftLeft, SIMDShiftRight, SIMDShift:
