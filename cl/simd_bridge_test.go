@@ -1,6 +1,7 @@
 package cl
 
 import (
+	"go/token"
 	"go/types"
 	"os"
 	"strings"
@@ -11,6 +12,54 @@ import (
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
+
+func TestSIMDFMVBridgeIdentity(t *testing.T) {
+	pkgs, err := packages.Load(&packages.Config{
+		Mode: packages.NeedName | packages.NeedTypes | packages.NeedImports | packages.NeedDeps,
+		Env:  append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "GOEXPERIMENT=simd"),
+	}, "simd/internal/bridge", "simd/archsimd", "simd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if packages.PrintErrors(pkgs) != 0 || len(pkgs) != 3 {
+		t.Fatal("could not load official SIMD types")
+	}
+	byPath := make(map[string]*types.Package)
+	for _, pkg := range pkgs {
+		byPath[pkg.PkgPath] = pkg.Types
+	}
+	bridge := byPath["simd/internal/bridge"]
+	arch := byPath["simd/archsimd"]
+	for _, name := range bridge.Scope().Names() {
+		obj, ok := bridge.Scope().Lookup(name).(*types.TypeName)
+		if !ok {
+			continue
+		}
+		want := false
+		if peer := arch.Scope().Lookup(name); peer != nil {
+			_, want = llssa.SIMDVectorShape(peer.Type())
+		}
+		if got := simdFMVVector(obj.Type()); got != want {
+			t.Errorf("%s eligibility = %t, want %t", name, got, want)
+		}
+	}
+	vector := bridge.Scope().Lookup("Uint32x4").Type()
+	alias := types.NewAlias(types.NewTypeName(token.NoPos, bridge, "Alias", nil), vector)
+	if !simdFMVVector(alias) {
+		t.Fatal("alias lost bridge eligibility")
+	}
+	other := types.NewPackage("example/bridge", "bridge")
+	for _, typ := range []types.Type{
+		byPath["simd"].Scope().Lookup("Uint32s").Type(),
+		types.NewPointer(vector),
+		types.NewNamed(types.NewTypeName(token.NoPos, other, "Uint32x4", nil), vector.Underlying(), nil),
+		types.NewNamed(types.NewTypeName(token.NoPos, bridge, "Uint32x4", nil), types.NewStruct(nil, nil), nil),
+	} {
+		if simdFMVVector(typ) {
+			t.Errorf("unexpected vector eligibility: %s", typ)
+		}
+	}
+}
 
 // The portable bridge composes archsimd operations, including private helpers.
 // Check that the entire static call graph of its 128-bit entries is supported,
