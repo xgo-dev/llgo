@@ -146,6 +146,15 @@ bodyless assembly declarations retain their original calls. Ordinary calls
 and indirect calls retain the original entry. Arbitrary feature
 combinations are not yet specialized.
 
+Midway's 128-bit bridge types also qualify for these direct-call variants,
+including when nested in arrays and structs. The compiler validates the bridge
+identity and storage against the corresponding official archsimd type while
+retaining its aggregate ABI. This lets an AVX2 implementation call another
+package's specialized portable function without LTO. Emulated bridge types do
+not qualify as vector callees. A CPU-querying function can still specialize in
+either representation: `simd=0` does not imply that AVX2 is disabled, and a
+128-bit representation does not imply that AVX2 is enabled.
+
 The transform is implemented in Go using the LLVM Go API. It discovers CPU
 queries, clones eligible functions, rewrites direct calls and creates dispatch
 blocks without registering a custom LLVM pass. Generic LLVM cloning and local
@@ -197,7 +206,10 @@ The FMV tests cover initialization, direct and indirect entry calls,
 cross-package calls, aggregate value copies and multiple results, closures,
 independent CPU queries, and source-level stack traces.
 The portable suite also runs each amd64 profile with the same CPU overrides
-and explicit emulated/128-bit requests. On other native SIMD targets the script
+and explicit emulated/128-bit requests, including these requests crossed
+with AVX2, AVX, FMA, and all optional CPU features disabled. The composition
+fixtures cover cross-package aggregates and arrays, function values, methods,
+interfaces, closures, generics, and initialization. On other native SIMD targets the script
 retains the O0/O2 suite and an additional portable emulation run.
 
 ## Running
