@@ -23,15 +23,49 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/clang"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/xtool/safesplit"
 )
 
+// darwinLTOObjectArgs keeps the native LTO output available to dsymutil after
+// Clang exits. Each link owns its directory so rebuilding an output cannot
+// overwrite an object still referenced by another executable's debug map.
+// The output owns the enclosing sidecar, which clean and temporary-output
+// cleanup reclaim along with the executable.
+func darwinLTOObjectArgs(ctx *context, app string, cmd *clang.Cmd, args []string) ([]string, error) {
+	conf := ctx.buildConf
+	if conf.Goos != "darwin" || conf.Target != "" || !conf.ltoEnabled() ||
+		!shouldEmitDebugInfo(conf, &ctx.crossCompile) {
+		return nil, nil
+	}
+	for _, arg := range cmd.LinkArguments(args...) {
+		if strings.Contains(arg, "object_path_lto") {
+			return nil, nil
+		}
+	}
+	root := darwinLTOObjectDir(app)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return nil, err
+	}
+	dir, err := os.MkdirTemp(root, "link-*")
+	if err != nil {
+		return nil, err
+	}
+	return []string{"-Xlinker", "-object_path_lto", "-Xlinker", filepath.Join(dir, "lto.o")}, nil
+}
+
+func darwinLTOObjectDir(app string) string {
+	return app + ".llgo-debug-lto"
+}
+
 type darwinSizeSymbolPlan struct {
 	linkerArgs     []string
 	stripLTOLocals bool
+	hiddenGlobals  []string
 }
 
 type darwinSizeCommand func(name string, args ...string) ([]byte, error)
@@ -66,8 +100,7 @@ func planDarwinSizeSymbolsFor(ctx *context, pkgs []*aPackage, linkArgs []string,
 	}
 	conf := ctx.buildConf
 	if !nativeDarwin || conf.Goos != "darwin" || conf.Target != "" ||
-		conf.BuildMode != BuildModeExe || !isSizeOptLevel(conf.OptLevel) ||
-		shouldEmitDebugInfo(conf, &ctx.crossCompile) {
+		conf.BuildMode != BuildModeExe || !isSizeOptLevel(conf.OptLevel) {
 		return darwinSizeSymbolPlan{}
 	}
 	// Without either the prebuilt table or site records, Darwin symbolization
@@ -84,16 +117,69 @@ func planDarwinSizeSymbolsFor(ctx *context, pkgs []*aPackage, linkArgs []string,
 	if hasDarwinExportControl(allLinkArgs) {
 		return darwinSizeSymbolPlan{}
 	}
+	if conf.ltoEnabled() && shouldEmitDebugInfo(conf, &ctx.crossCompile) {
+		// Preserve the established LTO visibility and inlining policy for
+		// DWARF builds.
+		return darwinSizeSymbolPlan{}
+	}
+	if conf.PCLNMode == PCLNEmbedded && !shouldEmitRuntimeEntrySites(ctx) {
+		// DWARF disables the in-body entry anchors to preserve LLDB's lexical
+		// scopes. The runtime still needs dlsym for function entries in this
+		// mode. Hide data/type definitions without adding export roots for
+		// otherwise dead functions, which would increase code size under LTO.
+		globals := make([]string, 0)
+		for name := range linkedModuleGlobals(pkgs) {
+			globals = append(globals, name)
+		}
+		sort.Strings(globals)
+		return darwinSizeSymbolPlan{hiddenGlobals: globals}
+	}
 
-	if conf.ltoEnabled() {
+	if conf.ltoEnabled() && !shouldEmitDebugInfo(conf, &ctx.crossCompile) {
 		// LTO internalizes ordinary Go definitions. Keep those local symbols
 		// through pclnpost, then remove them from the final signed executable.
 		return darwinSizeSymbolPlan{stripLTOLocals: true}
 	}
+	// DWARF builds retain their debug map for dsymutil. Export visibility is
+	// independent of that map, including when LTO produces the definitions.
 	// A main executable does not need to publish every package definition to
 	// dyld. Keeping them as private externs preserves the Mach-O symbol table
 	// for pclnpost and offline tools while eliminating the large export trie.
 	return darwinSizeSymbolPlan{linkerArgs: []string{"-Wl,-no_exported_symbols"}}
+}
+
+// darwinHiddenGlobalArgs hides data/type definitions without rooting functions
+// or changing the DWARF runtime's function export policy.
+func darwinHiddenGlobalArgs(output string, globals []string) ([]string, func(), error) {
+	return darwinHiddenGlobalArgsWith(output, globals, os.MkdirTemp, os.WriteFile)
+}
+
+func darwinHiddenGlobalArgsWith(output string, globals []string, mkdir func(string, string) (string, error), write func(string, []byte, os.FileMode) error) ([]string, func(), error) {
+	cleanup := func() {}
+	if globals == nil {
+		return nil, cleanup, nil
+	}
+	dir, err := mkdir(filepath.Dir(output), ".llgo-hidden-*")
+	if err != nil {
+		return nil, cleanup, fmt.Errorf("create Darwin hidden-global list: %w", err)
+	}
+	cleanup = func() { _ = os.RemoveAll(dir) }
+	path := filepath.Join(dir, "symbols")
+	// Escape type syntax so the exact glob cannot hide an unrelated symbol.
+	// Synthetic main-module globals are not in the package snapshots.
+	escape := strings.NewReplacer("\\", "\\\\", "*", "\\*", "?", "\\?", "[", "\\[", "]", "\\]", "{", "\\{", "}", "\\}")
+	var list strings.Builder
+	list.WriteString("___llgo_*\n")
+	for _, symbol := range globals {
+		list.WriteString("[_]")
+		list.WriteString(escape.Replace(symbol))
+		list.WriteByte('\n')
+	}
+	if err := write(path, []byte(list.String()), 0o600); err != nil {
+		cleanup()
+		return nil, func() {}, fmt.Errorf("write Darwin hidden-global list: %w", err)
+	}
+	return []string{"-Xlinker", "-unexported_symbols_list", "-Xlinker", path}, cleanup, nil
 }
 
 func isSizeOptLevel(level optlevel.Level) bool {

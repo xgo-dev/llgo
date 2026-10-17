@@ -68,7 +68,9 @@ func TestPlanDarwinSizeSymbols(t *testing.T) {
 		{name: "cross-host", conf: base},
 		{name: "named-target", conf: withTarget(base, "wasi"), native: true},
 		{name: "c-shared", conf: withBuildMode(base, BuildModeCShared), native: true},
-		{name: "preserve-dwarf", conf: withDWARF(base, DWARFPreserve), native: true},
+		{name: "preserve-dwarf", conf: withDWARF(base, DWARFPreserve), native: true, wantArgs: []string{"-Wl,-no_exported_symbols"}},
+		{name: "full-lto-preserve-dwarf", conf: withDWARF(withLTO(base, lto.Full), DWARFPreserve), native: true},
+		{name: "thin-lto-preserve-dwarf", conf: withDWARF(withLTO(base, lto.Thin), DWARFPreserve), native: true},
 		{name: "embedded-without-sites", conf: withPCLN(base, PCLNEmbedded), native: true},
 		{name: "explicit-export", conf: base, native: true, linkArgs: []string{"-Wl,-exported_symbol,_entry"}},
 		{name: "dynamic-lookup", conf: base, native: true, linkArgs: []string{"-Wl,-undefined,dynamic_lookup"}},
@@ -99,6 +101,71 @@ func TestHasDarwinExportControl(t *testing.T) {
 		if got := hasDarwinExportControl(tt.args); got != tt.want {
 			t.Errorf("hasDarwinExportControl(%v) = %v, want %v", tt.args, got, tt.want)
 		}
+	}
+}
+
+func TestDarwinDWARFGlobalVisibilityPlan(t *testing.T) {
+	t.Setenv("LDFLAGS", "")
+	prog := llssa.NewProgram(&llssa.Target{GOOS: "darwin", GOARCH: "arm64"})
+	defer prog.Dispose()
+	prog.EnableFuncInfoSites(true)
+	src := prog.NewPackage("example.com/p", "example.com/p")
+	src.EmitFuncInfo("example.com/p.panicSite", "example.com/p.panicSite", "panic.go", 1, 0)
+	src.NewVarEx("example.com/p.Value", prog.Pointer(prog.Int())).Init(prog.Zero(prog.Int()))
+	ctx := &context{prog: prog, buildConf: &Config{
+		Goos: "darwin", Goarch: "arm64", BuildMode: BuildModeExe, OptLevel: optlevel.Os,
+		PCLNMode: PCLNEmbedded, LinkOptions: LinkOptions{DWARF: DWARFPreserve},
+	}, crossCompile: configurableDebugInfo()}
+	plan := planDarwinSizeSymbolsFor(ctx, []*aPackage{{LPkg: src}}, nil, true)
+	want := []string{"example.com/p.Value"}
+	if !reflect.DeepEqual(plan.hiddenGlobals, want) || len(plan.linkerArgs) != 0 || plan.stripLTOLocals {
+		t.Fatalf("DWARF function exports = %+v, want %v", plan, want)
+	}
+	ctx.buildConf.PCLNMode = PCLNExternal
+	plan = planDarwinSizeSymbolsFor(ctx, nil, nil, true)
+	if len(plan.hiddenGlobals) != 0 || !reflect.DeepEqual(plan.linkerArgs, []string{"-Wl,-no_exported_symbols"}) {
+		t.Fatalf("external PCLN unnecessarily retained dynamic exports: %+v", plan)
+	}
+}
+
+func TestDarwinHiddenGlobalListLifecycle(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "app")
+	args, cleanup, err := darwinHiddenGlobalArgs(output, []string{"main.panicSite", "main.generic[*T]", "runtime.main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := args[3]
+	if data, err := os.ReadFile(path); err != nil || string(data) != "___llgo_*\n[_]main.panicSite\n[_]main.generic\\[\\*T\\]\n[_]runtime.main\n" {
+		t.Fatalf("export list = %q, %v", data, err)
+	}
+	cleanup()
+	if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {
+		t.Fatalf("link left its export list behind: %v", err)
+	}
+	args, cleanup, err = darwinHiddenGlobalArgs(output, nil)
+	cleanup()
+	if len(args) != 0 || err != nil {
+		t.Fatalf("empty exports = %v, %v", args, err)
+	}
+	if _, cleanup, err := darwinHiddenGlobalArgs(filepath.Join(output, "missing", "app"), []string{"_main.main"}); err == nil {
+		cleanup()
+		t.Fatal("created export list in a missing output directory")
+	}
+	var failedDir string
+	_, cleanup, err = darwinHiddenGlobalArgsWith(output, []string{"_main.main"}, os.MkdirTemp,
+		func(path string, data []byte, mode os.FileMode) error {
+			failedDir = filepath.Dir(path)
+			if err := os.WriteFile(path, data, mode); err != nil {
+				t.Fatal(err)
+			}
+			return errors.New("interrupted export-list write")
+		})
+	cleanup()
+	if err == nil || !strings.Contains(err.Error(), "interrupted export-list write") {
+		t.Fatalf("export-list failure = %v", err)
+	}
+	if _, err := os.Stat(failedDir); !os.IsNotExist(err) {
+		t.Fatalf("failed write left a partial export list: %v", err)
 	}
 }
 

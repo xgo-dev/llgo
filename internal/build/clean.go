@@ -91,7 +91,17 @@ func cleanMainPkg(pkg *packages.Package, conf *Config, verbose bool) error {
 }
 
 func removeExecutableArtifacts(executable string, verbose bool) error {
-	return errors.Join(removeFile(executable, verbose), removeFile(pclnSidecarPath(executable), verbose), removeFile(dwarfSidecarPath(executable), verbose))
+	return errors.Join(removeFile(executable, verbose), removeFile(pclnSidecarPath(executable), verbose), removeFile(dwarfSidecarPath(executable), verbose), removeArtifactDirectory(darwinLTOObjectDir(executable), verbose))
+}
+
+func removeArtifactDirectory(dir string, verbose bool) error {
+	if verbose {
+		fmt.Fprintln(os.Stderr, "Remove", dir)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("clean %s: %w", dir, err)
+	}
+	return nil
 }
 
 func cleanPkgs(initial []*packages.Package, verbose bool) error {

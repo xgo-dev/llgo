@@ -44,6 +44,9 @@ type LinkOptions struct {
 	// Go's implied -w rule; native symbol-table omission is implemented later.
 	OmitSymbolTable bool
 	DWARF           DWARFMode
+	// DisableDWARFCompression implements -compressdwarf=false. Native Linux
+	// links compress retained DWARF with zlib by default.
+	DisableDWARFCompression bool
 	// ExternalLinker and ExternalLinkerFlags retain the Go linker's -extld
 	// command and -extldflags argument-list spelling. The native toolchain
 	// resolver applies Go's quoted command parsing after target selection.
@@ -167,7 +170,13 @@ func debugInfoLinkerArgs(conf *Config, target *crosscompile.Export) []string {
 	if conf.Goos == "windows" && hasCOFFDebugFlag(conf.LinkOptions.ExternalLinkerFlags) {
 		return nil
 	}
-	return slices.Clone(target.DebugInfo.PreserveLinkFlags)
+	args := slices.Clone(target.DebugInfo.PreserveLinkFlags)
+	if conf.Target == "" && conf.Goos == "linux" &&
+		target.Toolchain.ObjectFormat == crosscompile.ObjectFormatELF &&
+		!conf.LinkOptions.DisableDWARFCompression {
+		args = append(args, "-Wl,--compress-debug-sections=zlib")
+	}
+	return args
 }
 
 // debugInfoCompilerArgs keeps package C/C++ sources on the same typed debug

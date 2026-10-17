@@ -143,6 +143,34 @@ func TestParseLinkFlagsEmptyExternalLinkerValues(t *testing.T) {
 	}
 }
 
+func TestParseLinkFlagsCompressDWARF(t *testing.T) {
+	for _, tt := range []struct {
+		flags        string
+		wantDisabled bool
+	}{
+		{"", false},
+		{"-compressdwarf=false", true},
+		{"--compressdwarf=0", true},
+		{"-compressdwarf=false -compressdwarf", false},
+		{"-compressdwarf=false -compressdwarf=true", false},
+	} {
+		opts, err := ParseLinkFlags([]string{"-ldflags=" + tt.flags})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if opts.Options.DisableDWARFCompression != tt.wantDisabled || len(opts.Ignored) != 0 {
+			t.Fatalf("%q: %+v", tt.flags, opts)
+		}
+	}
+	if _, err := ParseLinkFlags([]string{"-ldflags=-compressdwarf=invalid"}); err == nil {
+		t.Fatal("invalid compression boolean was accepted")
+	}
+	opts, err := ParseLinkFlags([]string{"-ldflags=-compressdwarf=false", "-ldflags=-w=false"})
+	if err != nil || opts.Options.DisableDWARFCompression {
+		t.Fatalf("last argument list must reset compression: %+v, %v", opts, err)
+	}
+}
+
 func TestParseLinkFlagsBoolSpellings(t *testing.T) {
 	trueValues := []string{"1", "t", "T", "true", "TRUE", "True"}
 	for _, value := range trueValues {
