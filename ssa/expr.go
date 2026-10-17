@@ -907,8 +907,8 @@ func (b Builder) arrayBinOp(op token.Token, x, y, xaddr, yaddr Expr) Expr {
 		elem := prog.Elem(x.Type)
 		ret := prog.BoolVal(true)
 		for i, n := 0, int(typ.Len()); i < n; i++ {
-			fx := b.impl.CreateExtractValue(x.impl, i, "")
-			fy := b.impl.CreateExtractValue(y.impl, i, "")
+			fx := b.arrayElement(x.impl, i)
+			fy := b.arrayElement(y.impl, i)
 			r := b.BinOp(token.EQL, Expr{fx, elem}, Expr{fy, elem})
 			ret = Expr{b.impl.CreateAnd(ret.impl, r.impl, ""), tret}
 		}
@@ -1021,6 +1021,15 @@ func (b Builder) UnOp(op token.Token, x Expr) (ret Expr) {
 //
 //	t1 = changetype *int <- IntPtr (t0)
 func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
+	if t.kind == vkArray && x.kind == vkArray && t.ll != x.ll &&
+		(t.ll.TypeKind() == llvm.VectorTypeKind || x.ll.TypeKind() == llvm.VectorTypeKind) {
+		array := t.RawType().Underlying().(*types.Array)
+		lanes := make([]llvm.Value, array.Len())
+		for i := range lanes {
+			lanes[i] = b.arrayElement(x.impl, i)
+		}
+		return b.aggregateValue(t, lanes...)
+	}
 	if t.kind == vkSIMD {
 		if x.kind == vkSIMD {
 			return Expr{x.impl, t}

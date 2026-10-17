@@ -1130,7 +1130,35 @@ func handleTypeDecl(prog llssa.Program, fset *token.FileSet, pkg *types.Package,
 		fmt.Fprintf(os.Stderr, "DEPRECATED: %s is deprecated at %s; use %s instead\n", cc.name, fset.Position(cc.pos), cc.replacement)
 	}
 	prog.SetTypeCallConv(pkg.Path()+"."+spec.Name.Name, toCallConv(cc.bg))
+	if st, ok := spec.Type.(*ast.StructType); ok {
+		var positions []token.Pos
+		for _, field := range st.Fields.List {
+			if len(field.Names) == 0 {
+				positions = append(positions, embeddedStructFieldPos(field.Type))
+			}
+			for _, name := range field.Names {
+				positions = append(positions, name.Pos())
+			}
+		}
+		prog.SetNativeStructFields(positions)
+	}
 	return nil
+}
+
+// go/types assigns an embedded field the position of its identifier, rather
+// than the start of a pointer or qualified type expression.
+func embeddedStructFieldPos(expr ast.Expr) token.Pos {
+	switch expr := expr.(type) {
+	case *ast.StarExpr:
+		return embeddedStructFieldPos(expr.X)
+	case *ast.SelectorExpr:
+		return expr.Sel.Pos()
+	case *ast.IndexExpr:
+		return embeddedStructFieldPos(expr.X)
+	case *ast.IndexListExpr:
+		return embeddedStructFieldPos(expr.X)
+	}
+	return expr.Pos()
 }
 
 // Directive names, normalized by the directive package (the "//" / "// "

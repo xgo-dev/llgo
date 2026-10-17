@@ -93,6 +93,9 @@ type goProgram aProgram
 // Alignof must implement the alignment guarantees required by the spec.
 // The result must be >= 1.
 func (p *goProgram) Alignof(T types.Type) int64 {
+	if layout, ok := p.vectorLayout(T, false); ok {
+		return layout.align
+	}
 	return p.sizes.Alignof(T)
 }
 
@@ -104,6 +107,9 @@ func (p *goProgram) Offsetsof(fields []*types.Var) (ret []int64) {
 	ptrSize := int64(prog.GoWordSize())
 	if abi.IsClosureFields(fields) {
 		return []int64{0, ptrSize}
+	}
+	if _, offsets, ok := p.vectorStructLayout(fields, prog.nativeFields(fields)); ok {
+		return offsets
 	}
 	extra := int64(0)
 	ret = p.sizes.Offsetsof(fields)
@@ -118,6 +124,9 @@ func (p *goProgram) Offsetsof(fields []*types.Var) (ret []int64) {
 // Sizeof must implement the size guarantees required by the spec.
 // A negative result indicates that T is too large.
 func (p *goProgram) Sizeof(T types.Type) int64 {
+	if layout, ok := p.vectorLayout(T, false); ok {
+		return layout.size
+	}
 	prog := Program(unsafe.Pointer(p))
 	ptrSize := int64(prog.GoWordSize())
 	baseSize := prog.sizes.Sizeof(T) + p.extraSize(T, ptrSize)
@@ -204,6 +213,9 @@ func (p Program) SizeOf(typ Type, n ...int64) uint64 {
 
 // AlignOf returns the ABI alignment of typ for the current target.
 func (p Program) AlignOf(typ Type) uint64 {
+	if typ.kind == vkArray && typ.ll.TypeKind() == llvm.VectorTypeKind {
+		return uint64(p.td.ABITypeAlignment(typ.ll))
+	}
 	if p.needsWidePointerStorage(typ) {
 		return uint64(p.GoWordSize())
 	}
@@ -680,6 +692,14 @@ func (p Program) toNamed(raw *types.Named) Type {
 	}
 	if lanes, ok := SIMDVectorShape(raw); ok {
 		typ := &aType{llvm.VectorType(p.rawType(lanes.Elem()).ll, int(lanes.Len())), rawType{raw}, vkSIMD}
+		p.named[name] = typ
+		return typ
+	}
+	if lanes, ok := p.cVectorArray(raw); ok {
+		// C vectors remain array-shaped in Go syntax (indexing, literals and
+		// equality), but both their values and storage have the native vector
+		// representation. Ordinary Go arrays keep their aggregate ABI.
+		typ := &aType{llvm.VectorType(p.rawType(lanes.Elem()).ll, int(lanes.Len())), rawType{raw}, vkArray}
 		p.named[name] = typ
 		return typ
 	}

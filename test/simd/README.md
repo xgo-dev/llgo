@@ -41,6 +41,38 @@ checks direct, indirect, deferred, and linkname calls. SIMD reflection,
 general FMV, and 256/512-bit vectors remain
 outside this implemented stage.
 
+## Native C vector interoperability
+
+`cinterop/` exercises named C vector typedefs imported through `import "C"`
+and hand-written `archsimd` bindings through `go:linkname`, C callbacks, and
+exported Go functions. Imported vectors retain their Go array syntax for
+literals, indexing, slicing, equality, and explicit array conversions, while
+LLGo uses native LLVM vectors for their values and storage. Clang type
+metadata distinguishes a C vector from an ordinary C or Go array.
+
+This boundary supports naturally aligned 128-bit C integer vectors and
+`float`/`double` vectors with 2, 4, 8, or 16 lanes. Wider/smaller vectors,
+non-native alignment, padded three-lane vectors, half-precision lanes, and
+anonymous vector fields require additional support and receive diagnostics.
+Vector unions and custom record alignment are not supported.
+Use a named vector typedef for each C vector field. Portable `simd` values
+need an explicit concrete representation before crossing a C boundary.
+
+Imported C vector fields and direct `archsimd` fields in `//llgo:cdecl`
+structs have native alignment. Their source `unsafe.Sizeof`/`Offsetof`
+results agree with the emitted storage. Ordinary Go `archsimd` storage stays
+unchanged; an array of `archsimd` values also retains Go storage, including
+inside a cdecl struct. Use imported C vector arrays for native vector arrays.
+ARM64 homogeneous aggregates of one to four equally sized short vectors
+use the native HVA ABI, including spilling the whole aggregate when vector
+registers run out.
+
+The shared import tests also run under official Go. LLGo-only tests check
+native layout, direct bindings, callbacks, and exports. Native CI includes
+these tests at O0/O2; the amd64 script also runs Thin/Full LTO and disabled
+CPU feature profiles. C vector widths beyond 128 bits, SIMD reflection calls,
+and C interop execution on Wasm are outside this qualification.
+
 ## Portable SIMD Midway
 
 With `GOEXPERIMENT=simd`, LLGo specializes portable `simd` source on amd64,
