@@ -50,10 +50,20 @@ func TestManifestNamesOwnersAndRegistration(t *testing.T) {
 	if len(surface.Commands) < 19 {
 		t.Fatal("incomplete Go command inventory")
 	}
+	for _, name := range strings.Fields(compat.TestBinaryFlags) {
+		bare := testcmd.Cmd.Flag.Lookup(name)
+		alias := testcmd.Cmd.Flag.Lookup(surface.TestFlagPrefix + name)
+		if bare == nil || alias == nil {
+			t.Errorf("test -%s must register both bare and test. spellings", name)
+		}
+	}
 	for command, names := range surface.Commands {
 		c := compat.Command(command)
 		if c.Status == "" || c.Owner == "" || c.Note == "" {
 			t.Errorf("missing command contract for %q", command)
+		}
+		if !slices.Contains([]string{"native", "delegated", "omitted", "rejected"}, c.Status) {
+			t.Errorf("%s has no final command contract: %+v", command, c)
 		}
 		if !slices.IsSorted(names) {
 			t.Errorf("%s flags are not sorted", command)
@@ -78,7 +88,14 @@ func TestManifestNamesOwnersAndRegistration(t *testing.T) {
 			if strings.TrimSpace(f.Usage) == "" {
 				t.Errorf("%s -%s has empty help", name, f.Name)
 			}
-			if !slices.Contains(surface.Commands[goName], f.Name) && compat.Extensions[f.Name] == "" {
+			flagName := f.Name
+			if name == "test" && strings.HasPrefix(flagName, surface.TestFlagPrefix) {
+				flagName = strings.TrimPrefix(flagName, surface.TestFlagPrefix)
+				if !slices.Contains(strings.Fields(compat.TestBinaryFlags), flagName) {
+					t.Errorf("%s -%s is not a test-binary alias", name, f.Name)
+				}
+			}
+			if !slices.Contains(surface.Commands[goName], flagName) && compat.Extensions[flagName] == "" {
 				t.Errorf("%s -%s has no manifest entry", name, f.Name)
 			}
 		})
@@ -86,7 +103,7 @@ func TestManifestNamesOwnersAndRegistration(t *testing.T) {
 			continue
 		}
 		for _, f := range surface.Commands[goName] {
-			record := compat.Flag(goName, f)
+			record := compat.Flag(name, f)
 			if record.Status != "rejected" && f != "args" && cmd.Flag.Lookup(f) == nil {
 				t.Errorf("%s -%s is advertised but not registered", name, f)
 			}

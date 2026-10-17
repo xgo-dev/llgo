@@ -1,14 +1,48 @@
 package compile
 
 import (
+	"bytes"
+	"flag"
 	"os"
 	"reflect"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/cmd/internal/compat"
 	"github.com/xgo-dev/llgo/internal/mockable"
 )
+
+func TestCompilerManifestAndRegistration(t *testing.T) {
+	surface := compat.GoSurface().Commands["tool compile"]
+	if len(surface) < 60 {
+		t.Fatal("missing public compiler flag inventory")
+	}
+	fs := newFlagSet(new(options))
+	fs.VisitAll(func(f *flag.Flag) {
+		found := false
+		for _, name := range surface {
+			found = found || f.Name == name
+		}
+		if !found || f.Usage == "" {
+			t.Errorf("compiler -%s lacks an inventory entry or help", f.Name)
+		}
+	})
+	for _, name := range surface {
+		record := compat.Flag("tool compile", name)
+		if record.Status != "rejected" {
+			if fs.Lookup(name) == nil {
+				t.Errorf("advertised compiler -%s has no registration", name)
+			}
+			continue
+		}
+		probe := newFlagSet(new(options))
+		probe.SetOutput(new(bytes.Buffer))
+		if err := probe.Parse([]string{"-" + name + "=probe", "missing.go"}); err == nil {
+			t.Errorf("rejected compiler -%s parsed successfully", name)
+		}
+	}
+}
 
 func TestGoCompilerFlagNamesAndTypes(t *testing.T) {
 	opts := new(options)
@@ -18,7 +52,7 @@ func TestGoCompilerFlagNamesAndTypes(t *testing.T) {
 		"-c=2",
 		"-C",
 		"-e",
-		"-l=4",
+		"-l=1",
 		"-lang=go1.17",
 		"-d=panic,ssa/check/on",
 		"case.go",
@@ -26,7 +60,7 @@ func TestGoCompilerFlagNamesAndTypes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.noBounds.value != 1 || opts.concurrency != 2 || opts.noColumns.value != 1 || opts.allErrors.value != 1 || opts.noInline.value != 4 {
+	if opts.noBounds.value != 1 || opts.concurrency != 2 || opts.noColumns.value != 1 || opts.allErrors.value != 1 || opts.noInline.value != 1 {
 		t.Fatalf("parsed flags: %+v", opts)
 	}
 	if opts.lang != "go1.17" {
@@ -92,20 +126,20 @@ func TestCountAndListFlags(t *testing.T) {
 }
 
 func TestUnsupportedCompilerFlags(t *testing.T) {
-	opts := &options{
-		dynlink:     true,
-		showOpt:     countFlag{value: 1},
-		live:        true,
-		race:        true,
-		smallFrames: true,
-		standard:    true,
-		runtimePkg:  true,
-		writeBar:    countFlag{set: true},
-		debug:       stringListFlag{"panic,libfuzzer", "ssa/check/on,ssa/check/seed=1,wb"},
+	for _, name := range []string{"+", "dynlink", "h", "live", "m", "race", "smallframes", "wb", "D", "I", "importcfg", "o", "p"} {
+		for _, value := range []string{"true", "false", "1"} {
+			fs := newFlagSet(new(options))
+			fs.SetOutput(new(bytes.Buffer))
+			if err := fs.Parse([]string{"-" + name + "=" + value, "missing.go"}); err == nil || !strings.Contains(err.Error(), "unsupported") {
+				t.Errorf("-%s=%s was not explicitly rejected: %v", name, value, err)
+			}
+		}
 	}
-	want := []string{"-dynlink", "-m", "-live", "-race", "-smallframes", "-+", "-wb", "-d=libfuzzer", "-d=wb"}
-	if got := opts.unsupported(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("unsupported=%v, want %v", got, want)
+	for _, value := range []int{-1, 2, 4} {
+		opts := &options{noInline: countFlag{value: value}}
+		if len(opts.unsupported()) == 0 {
+			t.Errorf("-l=%d was not rejected", value)
+		}
 	}
 }
 

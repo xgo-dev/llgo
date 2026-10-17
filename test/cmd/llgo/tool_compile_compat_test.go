@@ -45,13 +45,20 @@ func Identity[T any](v T) T { return v }
 `)
 		writeToolCompileSource(t, dir, "importcfg", "")
 		args := []string{
-			"-c=1", "-C", "-e", "-N", "-l=4", "-lang=go1.22", "-complete",
+			"-c=1", "-C", "-e", "-N", "-l=1", "-lang=go1.22", "-complete",
 			"-d=panic,ssa/check/on", "valid.go",
 		}
 		if toolCompilerName == "go" {
 			args = append([]string{"-p=compat", "-D=.", "-I=."}, args...)
 		}
 		checkToolCompileResult(t, dir, args, true, "")
+	})
+
+	t.Run("gc inliner level rejected", func(t *testing.T) {
+		if toolCompilerName == "go" {
+			t.Skip("gc-specific inliner levels are outside LLGo's portable subset")
+		}
+		checkToolCompileResult(t, t.TempDir(), []string{"-l=4", "missing.go"}, false, "only 0 and 1 are supported")
 	})
 
 	t.Run("SSA check seed", func(t *testing.T) {

@@ -25,12 +25,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
-run_with_timeout() {
+run_with_timeout_limit() {
+	local limit="$1"
+	shift
 	if command -v timeout >/dev/null 2>&1; then
-		timeout 300s "$@"
+		timeout "${limit}" "$@"
 	else
 		"$@"
 	fi
+}
+
+run_with_timeout() {
+	run_with_timeout_limit 300s "$@"
 }
 
 require_tool() {
@@ -89,12 +95,12 @@ run_worker_llgo_test() {
 run_worker_go_test() {
 	local target="$1"
 	local output="${work_dir}/test-go-${target}.out"
-	# Run the full Go-language package: the small reflection fixture alone
-	# does not exercise continuous collection after the larger live heap.
-	# Repeated full collections need headroom on CI; keep the test alarm
-	# below the outer 300s process limit, as for the other worker tests.
-	run_with_timeout env LLGO_WASM_WORKERS=2 "${llgo_cmd}" test \
-		-target "${target}" -emulator -v -count=1 -timeout=180s \
+	# The full language package repeatedly collects a large live heap. Slow
+	# Node worker runs have exhausted the old 180s alarm while tests were still
+	# progressing. Allow a 5m guest alarm and a separate 10m process budget
+	# covering package loading, compilation, Node startup and test shutdown.
+	run_with_timeout_limit 600s env LLGO_WASM_WORKERS=2 "${llgo_cmd}" test \
+		-target "${target}" -emulator -v -count=1 -timeout=300s \
 		"${repo_root}/test/go" 2>&1 | tee "${output}"
 	grep -Fxq "PASS" "${output}"
 }

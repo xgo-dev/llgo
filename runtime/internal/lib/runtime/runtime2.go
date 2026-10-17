@@ -183,4 +183,6 @@ func SetMutexProfileFraction(rate int) int {
 func SetBlockProfileRate(rate int) {
 }
 
-var MemProfileRate int = 512 * 1024
+// LLGo counts every allocation by size class. A period of one keeps pprof
+// writers from applying Go's probabilistic-sampling correction to exact counts.
+var MemProfileRate int = 1

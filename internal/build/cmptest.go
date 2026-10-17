@@ -27,7 +27,7 @@ import (
 	"path/filepath"
 )
 
-func cmpTest(commands commandEnv, dir, pkgPath, llApp string, genExpect bool, runArgs []string) {
+func cmpTest(commands commandEnv, dir, pkgPath, llApp string, genExpect bool, runArgs []string, goFiles ...string) {
 	var llgoOut, llgoErr bytes.Buffer
 	var llgoRunErr = runApp(commands, runArgs, dir, &llgoOut, &llgoErr, llApp)
 
@@ -50,7 +50,11 @@ func cmpTest(commands commandEnv, dir, pkgPath, llApp string, genExpect bool, ru
 	}
 
 	var goOut, goErr bytes.Buffer
-	var goRunErr = runApp(commands, runArgs, dir, &goOut, &goErr, "go", "run", pkgPath)
+	goArgs := []string{"run", pkgPath}
+	if len(goFiles) != 0 {
+		goArgs = append([]string{"run"}, goFiles...)
+	}
+	var goRunErr = runApp(commands, runArgs, dir, &goOut, &goErr, "go", goArgs...)
 
 	checkEqual("output", llgoOut.Bytes(), goOut.Bytes())
 	checkEqual("stderr", llgoErr.Bytes(), goErr.Bytes())

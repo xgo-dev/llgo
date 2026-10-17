@@ -158,10 +158,12 @@ type Config struct {
 	OutFile            string  // output file, or directory for ModeBuild package executables
 	OutFmts            OutFmts // Output format specifications (only for Target != "")
 	CompileOnly        bool    // compile test binary but do not run it (only valid for ModeTest)
+	RetainTestBinary   bool    // profiling keeps the test executable in the invocation directory
 	Emulator           bool    // run in emulator mode
 	Port               string  // target port for flashing
 	BaudRate           int     // baudrate for serial communication
 	RunArgs            []string
+	Exec               []string      // Explicit execution wrapper, before the artifact and RunArgs.
 	RunnerTimeout      time.Duration // Host execution limit; zero disables it.
 	Mode               Mode
 	BuildMode          BuildMode // Build mode: exe, c-archive, c-shared
@@ -285,6 +287,7 @@ func (c *Config) clone() *Config {
 		cloned.Coverage = &options
 	}
 	cloned.RunArgs = slices.Clone(c.RunArgs)
+	cloned.Exec = slices.Clone(c.Exec)
 	cloned.GoBuildFlags = slices.Clone(c.GoBuildFlags)
 	cloned.toolTags = slices.Clone(c.toolTags)
 	cloned.Overlay = cloneOverlay(c.Overlay)
@@ -854,6 +857,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	if mode == ModeTest {
 		configureTestOutput(conf, inv.Args, initial)
+		if conf.RetainTestBinary && testPackageCount(initial) > 1 {
+			return nil, fmt.Errorf("cannot use profiling flags with multiple test packages")
+		}
 		initial, err = filterTestPackages(initial, conf.OutFile)
 		if err != nil {
 			return nil, err
@@ -1314,7 +1320,14 @@ func executeInitialPackageLink(ctx *context, link *initialPackageLink, verbose, 
 			return nil, flash.FlashDevice(linkCtx.crossCompile.Device, envMap, linkCtx.buildConf.Port, verbose)
 		}
 	case ModeRun, ModeTest, ModeCmpTest:
-		if link.conf.Mode == ModeTest && (link.conf.Target == "" || namedTargetUsesEmulatorPath(link.conf) && !link.conf.CompileOnly) {
+		if link.conf.Mode == ModeCmpTest && link.pkg.PkgPath == "command-line-arguments" {
+			// The reference must compile the same selected files. The synthetic
+			// package name is not importable, and using the directory would also
+			// compile files the caller deliberately omitted.
+			cmpTest(linkCtx.commands, link.pkg.Dir, link.pkg.PkgPath, link.outFmts.Out, link.conf.GenExpect, link.conf.RunArgs, link.pkg.GoFiles...)
+			return nil, nil
+		}
+		if link.conf.Mode == ModeTest && (len(link.conf.Exec) != 0 || link.conf.Target == "" || namedTargetUsesEmulatorPath(link.conf) && !link.conf.CompileOnly) {
 			runner := goCompatibleWasmRunner(link.conf)
 			if link.conf.Target != "" {
 				runner = linkCtx.crossCompile.Emulator
@@ -1333,6 +1346,11 @@ func executeInitialPackageLink(ctx *context, link *initialPackageLink, verbose, 
 				cleanupTemp = false // runNativeTest now owns the temporary output.
 			}
 			return program, nil
+		}
+		if link.conf.Mode == ModeRun && len(link.conf.Exec) != 0 {
+			return nil, runWithExec(linkCtx.commands, link.outFmts.Out, link.conf,
+				runnerDetails{phase: "run", target: link.conf.Target, artifact: link.outFmts.Out, packageName: link.pkg.PkgPath, timeout: link.conf.RunnerTimeout},
+				os.Stdout, os.Stderr)
 		}
 		if link.conf.Target == "" {
 			runner := goCompatibleWasmRunner(link.conf)
@@ -2840,14 +2858,23 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 	linkOutput := app
 	moveExactWindowsOutput := false
 	if ctx.crossCompile.Toolchain.ObjectFormat == crosscompile.ObjectFormatCOFF &&
-		ctx.buildConf.Target == "" && ctx.buildConf.BuildMode == BuildModeExe &&
-		filepath.Ext(app) == "" {
-		// Clang's Windows driver appends .exe when -o has no extension, while
-		// cmd/go treats an explicit -o name as exact. Link to the conventional
-		// driver name, then publish the requested name after a successful link.
-		// Implicit outputs already carry Config.AppExt.
-		linkOutput = app + ".exe"
-		moveExactWindowsOutput = true
+		ctx.buildConf.Target == "" && filepath.Ext(app) == "" {
+		switch ctx.buildConf.BuildMode {
+		case BuildModeExe:
+			// Clang's Windows driver appends .exe when -o has no extension,
+			// while cmd/go treats an explicit -o name as exact. Implicit
+			// outputs already carry Config.AppExt.
+			linkOutput = app + ".exe"
+			moveExactWindowsOutput = true
+		case BuildModeCShared:
+			if ctx.crossCompile.Toolchain.ABI == crosscompile.PlatformABIGNU {
+				// MinGW's driver appends .exe even for -shared. Like cmd/link,
+				// suppress that suffix with a trailing dot. Windows resolves
+				// it to the requested name; cross-host links need a rename.
+				linkOutput = app + "."
+				moveExactWindowsOutput = runtime.GOOS != "windows"
+			}
+		}
 	}
 	buildArgs := []string{"-o", linkOutput}
 	buildArgs = append(buildArgs, linkArgs...)
@@ -2911,7 +2938,7 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 	if !moveExactWindowsOutput {
 		return nil
 	}
-	if ctx.mode == ModeTest && !ctx.buildConf.CompileOnly {
+	if ctx.buildConf.BuildMode == BuildModeExe && ctx.mode == ModeTest && !ctx.buildConf.CompileOnly {
 		// Keep the .exe sibling so os/exec's Windows PATHEXT lookup can run an
 		// extensionless explicit test output, while also publishing the exact
 		// file requested by -o.

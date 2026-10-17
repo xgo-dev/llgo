@@ -26,6 +26,15 @@ import (
 
 const finalizerTinyObjectsChildEnv = "LLGO_TEST_FINALIZER_TINY_OBJECTS_CHILD"
 
+func finalizerTestTimeout(timeout time.Duration) time.Duration {
+	if runtime.GOARCH == "wasm" {
+		// Linear-heap collection can take several seconds on hosted Node,
+		// and a finalizer may need more than one collection to become runnable.
+		return 10 * timeout
+	}
+	return timeout
+}
+
 func TestRuntimeSetFinalizerTinyObjects(t *testing.T) {
 	if runtime.GOARCH != "wasm" && os.Getenv(finalizerTinyObjectsChildEnv) == "" {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestRuntimeSetFinalizerTinyObjects$")
@@ -47,7 +56,7 @@ func TestRuntimeSetFinalizerTinyObjects(t *testing.T) {
 
 	done := make([]bool, n)
 	count := 0
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(finalizerTestTimeout(3 * time.Second))
 	for count <= n/2 {
 		runGCWithTimeout(t)
 		for {
@@ -149,7 +158,7 @@ func registerFinalizerForTest(register func()) {
 
 func waitForFinalizerValue(t *testing.T, finalized <-chan int, want int) {
 	t.Helper()
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(finalizerTestTimeout(3 * time.Second))
 	for {
 		runGCWithTimeout(t)
 		select {
@@ -174,7 +183,7 @@ func runGCWithTimeout(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(finalizerTestTimeout(2 * time.Second)):
 		t.Fatal("runtime.GC did not return")
 	}
 }

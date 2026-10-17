@@ -60,8 +60,12 @@ def inventory():
             for sub in subcommands(go("help", command)):
                 full = command + " " + sub
                 commands[full] = documented(full)
+    # Unlike prose help, compiler usage lists its registered flags directly.
+    # Its -h means halt-on-error, not parse-only help: never probe it with
+    # artifact/profile flags, which could create files before reporting usage.
+    commands["tool compile"] = set(re.findall(r"^\s+-([^\s]+)", go("tool", "compile", "-h"), re.M))
     for command, names in commands.items():
-        if command == "test":
+        if command in {"test", "tool compile"}:
             # go test forwards unknown flags to the test binary. Only the
             # documented flag headings above describe its public contract.
             continue

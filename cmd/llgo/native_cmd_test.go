@@ -48,6 +48,15 @@ func TestNativeCommandProcess(t *testing.T) {
 	}
 }
 
+func nativeCoverageDir(t *testing.T) string {
+	t.Helper()
+	// Let go test include subprocess execution in the parent's coverage profile.
+	if dir := os.Getenv("GOCOVERDIR"); dir != "" {
+		return dir
+	}
+	return t.TempDir()
+}
+
 func nativeCommand(t *testing.T, dir string, env []string, args ...string) (string, int) {
 	t.Helper()
 	self, err := os.Executable()
@@ -58,7 +67,7 @@ func nativeCommand(t *testing.T, dir string, env []string, args ...string) (stri
 	cmd := exec.Command(self, "-test.run=^TestNativeCommandProcess$")
 	cmd.Dir = dir
 	root, _ := filepath.Abs("../..")
-	coverage := t.TempDir()
+	coverage := nativeCoverageDir(t)
 	cmd.Env = append(os.Environ(), "GOCOVERDIR="+coverage, "LLGO_ROOT="+root, "GOENV=off", "GOFLAGS= ", "GOWORK=off", "GOTOOLCHAIN=local", "LLGO_TEST_NATIVE_ARGS="+string(data))
 	cmd.Env = append(cmd.Env, env...)
 	out, err := cmd.CombinedOutput()
@@ -140,7 +149,7 @@ func TestNativeUnsupportedControlsFailBeforeLoading(t *testing.T) {
 			}
 		}
 	}
-	for _, control := range []string{"-exec=wrapper", "-vet=off", "-artifacts"} {
+	for _, control := range []string{"-vet=off"} {
 		out, code := nativeCommand(t, dir, nil, "test", "./nonexistent-package", control)
 		if code == 0 || !strings.Contains(out, "unsupported") || strings.Contains(out, "nonexistent-package") {
 			t.Fatalf("post-package %s exit=%d output=%s", control, code, out)
@@ -162,13 +171,24 @@ func TestNativeUnsupportedControlsFailBeforeLoading(t *testing.T) {
 			t.Fatalf("%s exit=%d output=%s", control, code, out)
 		}
 	}
-	out, code = nativeCommand(t, dir, nil, "version", "missing.exe")
-	if code != 1 || !strings.Contains(out, "inspection") {
-		t.Fatalf("version exit=%d output=%s", code, out)
-	}
 	out, code = nativeCommand(t, dir, nil, "tool", "unknown")
 	if code == 0 || !strings.Contains(out, "unknown") {
 		t.Fatalf("tool exit=%d output=%s", code, out)
+	}
+}
+
+func TestNativeVersionInspectionDiagnostics(t *testing.T) {
+	dir := t.TempDir()
+	want := exec.Command("go", "version", "missing.exe")
+	want.Dir = dir
+	wantOutput, err := want.CombinedOutput()
+	exit, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("Go missing-file fixture: %v, %s", err, wantOutput)
+	}
+	out, code := nativeCommand(t, dir, nil, "version", "missing.exe")
+	if code != exit.ExitCode() || out != string(wantOutput) {
+		t.Fatalf("version: llgo=(%d,%q), go=(%d,%q)", code, out, exit.ExitCode(), wantOutput)
 	}
 }
 

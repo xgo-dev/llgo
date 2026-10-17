@@ -146,6 +146,7 @@ func TestMain(m *testing.M) {
 func TestConfigCloneDoesNotAliasInput(t *testing.T) {
 	input := &Config{
 		RunArgs:      []string{"run"},
+		Exec:         []string{"wrapper", "argument"},
 		GoBuildFlags: []string{"-tags=custom"},
 		Overlay:      map[string][]byte{"input.go": []byte("package input")},
 		Coverage:     &CoverageConfig{Mode: "count"},
@@ -157,6 +158,7 @@ func TestConfigCloneDoesNotAliasInput(t *testing.T) {
 	}
 	cloned := input.clone()
 	cloned.RunArgs[0] = "changed"
+	cloned.Exec[0] = "changed"
 	cloned.GoBuildFlags[0] = "-tags=changed"
 	cloned.Overlay["input.go"][0] = 'P'
 	cloned.GlobalRewrites["example.com/p"]["value"] = "changed"
@@ -165,6 +167,9 @@ func TestConfigCloneDoesNotAliasInput(t *testing.T) {
 
 	if got := input.RunArgs[0]; got != "run" {
 		t.Fatalf("input RunArgs changed to %q", got)
+	}
+	if got := input.Exec[0]; got != "wrapper" {
+		t.Fatalf("input execution wrapper changed to %q", got)
 	}
 	if got := input.GoBuildFlags[0]; got != "-tags=custom" {
 		t.Fatalf("input GoBuildFlags changed to %q", got)
