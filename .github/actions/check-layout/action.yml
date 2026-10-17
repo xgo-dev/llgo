@@ -1,0 +1,115 @@
+name: Check layouts with layoutlint
+description: Check supplied inputs with native LLDB and upload only failures
+inputs:
+  llgo:
+    description: Existing LLGo compiler executable
+    required: true
+  artifact-name:
+    description: Unique report directory and artifact name
+    required: true
+  args:
+    description: Existing layoutlint arguments, one per line without shell expansion
+    required: true
+  source-root:
+    description: Input working directory; defaults to the checkout
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Prepare Linux LLDB
+      if: runner.os == 'Linux'
+      id: linux
+      shell: bash
+      run: |
+        set -euo pipefail
+        debugger="$("${LLVM_CONFIG:-llvm-config}" --bindir)/lldb"
+        if [[ ! -x "$debugger" ]]; then
+          sudo apt-get install -y lldb-22
+        fi
+        test -x "$debugger"
+        echo "debugger=$debugger" >> "$GITHUB_OUTPUT"
+
+    - name: Locate macOS LLDB
+      if: runner.os == 'macOS'
+      id: macos
+      shell: bash
+      run: echo "debugger=$(xcrun --find lldb)" >> "$GITHUB_OUTPUT"
+
+    - name: Locate Windows LLDB
+      if: runner.os == 'Windows'
+      id: windows
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        if (-not $env:LLGO_LLDB -or -not (Test-Path -LiteralPath $env:LLGO_LLDB)) {
+          throw "Prepare target-native LLDB before check-layout"
+        }
+        "debugger=$env:LLGO_LLDB" >> $env:GITHUB_OUTPUT
+        "path=$env:PATH" >> $env:GITHUB_OUTPUT
+
+    - name: Run layoutlint
+      id: check
+      shell: bash
+      env:
+        LAYOUT_TOOL_ROOT: ${{ github.action_path }}/../../..
+        LAYOUT_SOURCE: ${{ inputs.source-root || github.workspace }}
+        LAYOUT_LLGO: ${{ inputs.llgo }}
+        LAYOUT_LLDB: ${{ steps.linux.outputs.debugger || steps.macos.outputs.debugger || steps.windows.outputs.debugger }}
+        LAYOUT_ARGS: ${{ inputs.args }}
+        LAYOUT_OUTPUT: ${{ runner.temp }}/${{ inputs.artifact-name }}
+        LAYOUT_WINDOWS_PATH: ${{ steps.windows.outputs.path }}
+      run: |
+        set -euo pipefail
+        if [[ "$RUNNER_OS" == Windows ]]; then
+          # Git Bash prepends its own MinGW DLLs. Prefer the selected native
+          # toolchain, while retaining Bash utilities at the end of PATH.
+          export PATH="$(cygpath -u -p "$LAYOUT_WINDOWS_PATH"):$PATH"
+        fi
+        layout_root=$(cd "$LAYOUT_TOOL_ROOT" && pwd)
+        layout_source=$(cd "$LAYOUT_SOURCE" && pwd)
+        layout_tools=$(mktemp -d "$(dirname "$LAYOUT_OUTPUT")/layoutlint-bin.XXXXXX")
+        trap 'rm -r -- "$layout_tools"' EXIT
+        layout_suffix=
+        if [[ "$RUNNER_OS" == Windows ]]; then
+          layout_root=$(cygpath -m "$layout_root")
+          layout_source=$(cygpath -m "$layout_source")
+          layout_tools=$(cygpath -m "$layout_tools")
+          layout_suffix=.exe
+        fi
+        layout_tool="$layout_tools/layoutlint$layout_suffix"
+        layout_args=()
+        while IFS= read -r layout_arg; do
+          layout_arg=${layout_arg%$'\r'}
+          [[ -z "$layout_arg" ]] || layout_args+=("$layout_arg")
+        done <<< "$LAYOUT_ARGS"
+        test "${#layout_args[@]}" -gt 0
+        export GOTOOLCHAIN=local GOWORK=off GOENV=off
+        GOFLAGS= go -C "$layout_root" build -o "$layout_tool" ./chore/layoutlint
+        export LLGO="$LAYOUT_LLGO" LLGO_LLDB="$LAYOUT_LLDB"
+        export LLGO_ROOT="${LLGO_ROOT-$layout_root}"
+        if [[ "$RUNNER_OS" == Windows && -n "${LLGO_WINDOWS_LLDB_PYTHON_HOME:-}" ]]; then
+          unset PYTHONHOME PYTHONPATH PYTHONUTF8 PYTHONIOENCODING
+          export PYTHONHOME="$LLGO_WINDOWS_LLDB_PYTHON_HOME"
+          export PATH="$(cygpath -u "$PYTHONHOME"):$PATH"
+          export PYTHONUTF8=1 PYTHONIOENCODING=utf-8
+          if [[ -n "${LLGO_WINDOWS_LLDB_PYTHONPATH:-}" ]]; then
+            export PYTHONPATH="$LLGO_WINDOWS_LLDB_PYTHONPATH"
+          fi
+        fi
+        layout_status=0
+        "$layout_tool" -root "$layout_source" -output "$LAYOUT_OUTPUT" "${layout_args[@]}" 2>&1 | tee "$LAYOUT_OUTPUT.log" || layout_status=$?
+        if (( layout_status != 0 )); then
+          mkdir -p "$LAYOUT_OUTPUT"
+          mv "$LAYOUT_OUTPUT.log" "$LAYOUT_OUTPUT/run.log"
+        else
+          rm "$LAYOUT_OUTPUT.log"
+        fi
+        exit "$layout_status"
+
+    - name: Upload failed observations and annotated source
+      if: always() && steps.check.outcome == 'failure'
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ runner.temp }}/${{ inputs.artifact-name }}
+        if-no-files-found: warn

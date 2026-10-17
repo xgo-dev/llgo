@@ -167,6 +167,7 @@ jobs:
         uses: ./.github/actions/setup-llgo-cache
 
       - name: Build LLGo and test tools
+        id: build_tools
         shell: bash
         run: |
           dev/build_ci_tools.sh "$RUNNER_TEMP/llgo-bin"
@@ -190,6 +191,28 @@ jobs:
             -Profile "${{ matrix.windows_abi }}" `
             -GoArch "${{ matrix.windows_arch || 'amd64' }}"
 
+      - name: Install MinGW LLDB for integration tests
+        if: ${{ matrix.os == 'windows-2022' && matrix.windows_abi == 'mingw' && matrix.windows_arch == 'amd64' }}
+        shell: msys2 {0}
+        env:
+          MSYS2_LLDB_PACKAGE_VERSION: "22.1.8-1"
+          MSYS2_PYTHON_PACKAGE_VERSION: "3.14.6-2"
+        run: |
+          set -euo pipefail
+          source .github/actions/setup-deps/pacman_retry.sh
+          repo=https://repo.msys2.org/mingw/clang64
+          prefix=mingw-w64-clang-x86_64
+          pacman_args=(--noconfirm -U)
+          for dependency in cc-libs expat bzip2 mpdecimal ncurses openssl sqlite3 tcl tk tzdata; do
+            pacman_args+=(--assume-installed "$prefix-$dependency")
+          done
+          pacman_with_retry "${pacman_args[@]}" \
+            "$repo/$prefix-python-$MSYS2_PYTHON_PACKAGE_VERSION-any.pkg.tar.zst" \
+            "$repo/$prefix-lldb-$MSYS2_LLDB_PACKAGE_VERSION-any.pkg.tar.zst"
+          lldb_path=/clang64/bin/lldb.exe
+          "$lldb_path" --version
+          echo "LLGO_LLDB=$(cygpath -m "$lldb_path")" >> "$GITHUB_ENV"
+
       - name: Run Go 1.27 LLGo core tests
         env:
           LLGO_BUILD_CACHE: "1"
@@ -208,11 +231,113 @@ jobs:
           fi
           export LLGO="$RUNNER_TEMP/llgo-bin/llgo${tool_suffix}"
           export LLGO_TEST_LLGEN="$RUNNER_TEMP/llgo-bin/llgen${tool_suffix}"
-          dev/test_go_version.sh 1.27
+          dev/test_go_version.sh 1.27 2>&1 | tee "$RUNNER_TEMP/llgo-core-tests.log"
 
-          python .github/scripts/check_llgo_coverage.py coverage-llgo.txt
+      - name: Prepare core layout inputs
+        id: layout_core
+        if: ${{ !cancelled() && steps.build_tools.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          layout_packages=$(awk '
+            { sub(/\r$/, "") }
+            /^Shard: [0-9]+\/[0-9]+; packages: [0-9]+$/ { remaining=$NF; found=1; next }
+            found && remaining > 0 {
+              sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "")
+              if (!seen[$0]++) print
+              if (--remaining == 0) exit
+            }
+            END { if (!found || remaining != 0) exit 1 }
+          ' "$RUNNER_TEMP/llgo-core-tests.log")
+          test -n "$layout_packages"
+          layout_source=$(mktemp -d "$RUNNER_TEMP/layoutlint-source.XXXXXX")
+          if [[ "$RUNNER_OS" == Windows ]]; then layout_source=$(cygpath -m "$layout_source"); fi
+          echo "source=$layout_source" >> "$GITHUB_OUTPUT"
+          git archive HEAD | tar -xf - -C "$layout_source"
+          cp .github/test-go.mod "$layout_source/go.mod"
+          cp .github/test-go.sum "$layout_source/go.sum"
+          GOFLAGS= go -C "$layout_source" mod edit -go=1.27 -replace="github.com/xgo-dev/llgo/runtime=$layout_source/runtime"
+          printf 'tests<<LAYOUT_INPUTS\n-test\n%s\nLAYOUT_INPUTS\n' "$layout_packages" >> "$GITHUB_OUTPUT"
 
+      - name: Check core test layouts
+        if: ${{ !cancelled() && steps.layout_core.outputs.tests != '' }}
+        uses: ./.github/actions/check-layout
+        env:
+          GOFLAGS: "-tags=llgo"
+        with:
+          llgo: ${{ env.LLGO_TEST_COMPILER || 'llgo' }}
+          artifact-name: layoutlint-${{ github.job }}-${{ strategy.job-index }}-tests
+          source-root: ${{ steps.layout_core.outputs.source }}
+          args: ${{ steps.layout_core.outputs.tests }}
+
+      - name: Remove the temporary core module
+        if: always() && steps.layout_core.outputs.source != ''
+        shell: bash
+        env:
+          LAYOUT_SOURCE: ${{ steps.layout_core.outputs.source }}
+        run: rm -r -- "$LAYOUT_SOURCE"
+
+      # These groups are disjoint from core test packages. Run them once per
+      # native target here, not again in Go, bootstrap or release workflows.
+      - &layout_inputs
+        name: Select layout fixture inputs
+        id: layout_inputs
+        if: ${{ !cancelled() && steps.build_tools.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for layout_group in compiler runtime; do
+            case "$layout_group" in
+              compiler) layout_dirs=(./cl/_test*/*) ;;
+              runtime) layout_dirs=(./runtime/_test/codegen/*) ;;
+            esac
+            echo "$layout_group<<LAYOUT_INPUTS"
+            for layout_dir in "${layout_dirs[@]}"; do
+              [[ -d "$layout_dir" && ${layout_dir##*/} != _* ]] || continue
+              [[ "$layout_group" != compiler || "$layout_dir" != ./cl/_testpy/* ]] || continue
+              # Match TestRunAndTestFromTestlibc: pthread_once is not a Windows input.
+              [[ "$RUNNER_OS" != Windows || "$layout_dir" != ./cl/_testlibc/once ]] || continue
+              if [[ "$layout_group" == runtime ]]; then layout_dir="./${layout_dir#./runtime/}"; fi
+              printf '%s\n' "$layout_dir"
+            done | LC_ALL=C sort -u
+            echo LAYOUT_INPUTS
+          done >> "$GITHUB_OUTPUT"
+      - &check_compiler_layout
+        name: Check compiler fixture layouts
+        if: ${{ !cancelled() && steps.layout_inputs.outcome == 'success' }}
+        uses: ./.github/actions/check-layout
+        env:
+          GOFLAGS: "-tags=llgo"
+        with:
+          llgo: ${{ env.LLGO || env.LLGO_TEST_COMPILER || 'llgo' }}
+          artifact-name: layoutlint-${{ github.job }}-${{ strategy.job-index || 0 }}-compiler
+          args: |
+            -test
+            ${{ steps.layout_inputs.outputs.compiler }}
+      - &check_runtime_layout
+        name: Check runtime fixture layouts
+        if: ${{ !cancelled() && steps.layout_inputs.outcome == 'success' }}
+        uses: ./.github/actions/check-layout
+        env:
+          GOFLAGS: "-tags=llgo"
+        with:
+          llgo: ${{ env.LLGO || env.LLGO_TEST_COMPILER || 'llgo' }}
+          artifact-name: layoutlint-${{ github.job }}-${{ strategy.job-index || 0 }}-runtime
+          source-root: ${{ github.workspace }}/runtime
+          args: ${{ steps.layout_inputs.outputs.runtime }}
+
+      - name: Check LLGo test coverage
+        run: python .github/scripts/check_llgo_coverage.py coverage-llgo.txt
+
+      - name: Run TLS regressions
+        shell: bash
+        env:
+          LLGO_BUILD_CACHE: "1"
+          LLGO_STDIO_NOBUF: ${{ runner.os == 'Windows' && '1' || '' }}
+        run: |
+          set -euo pipefail
           # Native thread and TLS regressions live outside test/.
+          LLGO="$(command -v llgo)"
           (cd runtime && "$LLGO" test -v -run '^TestSlot(GCAllocation|DestructorGCRegistration)$' -count=20 -timeout=2m ./internal/clite/tls)
           if [[ "$RUNNER_OS" != Windows ]]; then
             (cd runtime && "$LLGO" test -v -run '^Test(KeyNativeLayout|DetachedStateNativeValue)$' -timeout=2m ./internal/thread)
@@ -436,31 +561,6 @@ jobs:
           LLGO_GDB_INTEGRATION: "1"
         run: go test ./cmd/internal/gdb -run '^TestGDB(Integration|CompleteWorkerUnwind)$' -count=1 -v
 
-      - name: Install MinGW LLDB for integration tests
-        # R12 qualifies debugger behavior for the new GNU architectures. Keep
-        # R11 focused on their language/runtime and C interoperability gates.
-        if: ${{ matrix.os == 'windows-2022' && matrix.windows_abi == 'mingw' && matrix.windows_arch == 'amd64' }}
-        shell: msys2 {0}
-        env:
-          MSYS2_LLDB_PACKAGE_VERSION: "22.1.8-1"
-          MSYS2_PYTHON_PACKAGE_VERSION: "3.14.6-2"
-        run: |
-          set -euo pipefail
-          source .github/actions/setup-deps/pacman_retry.sh
-          repo=https://repo.msys2.org/mingw/clang64
-          prefix=mingw-w64-clang-x86_64
-          pacman_args=(--noconfirm -U)
-          for dependency in cc-libs expat bzip2 mpdecimal ncurses openssl sqlite3 tcl tk tzdata; do
-            pacman_args+=(--assume-installed "$prefix-$dependency")
-          done
-          pacman_with_retry "${pacman_args[@]}" \
-            "$repo/$prefix-python-$MSYS2_PYTHON_PACKAGE_VERSION-any.pkg.tar.zst" \
-            "$repo/$prefix-lldb-$MSYS2_LLDB_PACKAGE_VERSION-any.pkg.tar.zst"
-
-          lldb_path=/clang64/bin/lldb.exe
-          "$lldb_path" --version
-          echo "LLGO_LLDB=$(cygpath -m "$lldb_path")" >> "$GITHUB_ENV"
-
       - name: LLDB integration tests
         if: runner.os != 'Windows'
         run: |
@@ -623,6 +723,7 @@ jobs:
       - name: Install GNU libunwind for the changed fault-unwind path
         run: sudo timeout 5m apt-get install -y libunwind8
       - name: Build LLGo
+        id: build_tools
         run: |
           go build -o "$RUNNER_TEMP/llgo" ./cmd/llgo
           echo "LLGO=$RUNNER_TEMP/llgo" >> "$GITHUB_ENV"
@@ -648,6 +749,25 @@ jobs:
       - name: Run caller regressions in C shared libraries and archives
         run: dev/test_std_buildmodes.sh ./test/std/runtime
 
+      - name: Check native regression layouts
+        if: ${{ !cancelled() && steps.build_tools.outcome == 'success' }}
+        uses: ./.github/actions/check-layout
+        env:
+          GOFLAGS: "-tags=llgo"
+        with:
+          llgo: ${{ env.LLGO }}
+          artifact-name: layoutlint-${{ github.job }}-tests
+          args: |
+            -test
+            ./test/go
+            ./test/std/runtime
+            ./test/std/sync
+            ./test/cgo
+            ./test/llgoext
+      - *layout_inputs
+      - *check_compiler_layout
+      - *check_runtime_layout
+
   native-debuggers-intel:
     name: Native debuggers (macOS Intel, GDB values and registry)
     needs: prepare
@@ -665,6 +785,7 @@ jobs:
       - name: Set up Go
         uses: ./.github/actions/setup-go
       - name: Build LLGo
+        id: build_tools
         shell: bash
         run: |
           set -euo pipefail
@@ -676,6 +797,21 @@ jobs:
         run: |
           llgo test -v -count=1 -timeout=2m \
             -run '^(TestNarrowC|TestLinknameNarrowC)' ./test/cgo ./test/llgoext
+      - name: Check native regression layouts
+        if: ${{ !cancelled() && steps.build_tools.outcome == 'success' }}
+        uses: ./.github/actions/check-layout
+        env:
+          GOFLAGS: "-tags=llgo"
+        with:
+          llgo: llgo
+          artifact-name: layoutlint-${{ github.job }}-tests
+          args: |
+            -test
+            ./test/cgo
+            ./test/llgoext
+      - *layout_inputs
+      - *check_compiler_layout
+      - *check_runtime_layout
       - name: Install GDB
         uses: ./.github/actions/setup-gdb
       - name: Enable native GDB on the ephemeral Intel runner
