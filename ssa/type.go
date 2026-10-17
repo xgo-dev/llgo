@@ -764,9 +764,10 @@ func PathOf(pkg *types.Package) string {
 // - method: pkg.T.name, pkg.(*T).name
 func FuncName(pkg *types.Package, name string, recv *types.Var, org bool) string {
 	if recv != nil {
-		named, ptr := recvNamed(recv.Type())
+		typ, ptr := recvNamed(recv.Type())
 		var tName string
-		if named != nil {
+		switch named := typ.(type) {
+		case *types.Named:
 			if org {
 				tName = named.Obj().Name()
 			} else {
@@ -775,7 +776,14 @@ func FuncName(pkg *types.Package, name string, recv *types.Var, org bool) string
 			if ptr {
 				tName = "(*" + tName + ")"
 			}
-		} else {
+		case *types.Struct:
+			// An alias such as A = struct{T} must name the same promoted
+			// wrapper as struct{T}, including when the receiver is *A.
+			if ptr {
+				typ = types.NewPointer(typ)
+			}
+			tName = types.TypeString(typ, PathOf)
+		default:
 			tName = types.TypeString(recv.Type(), PathOf)
 		}
 		return PathOf(pkg) + "." + tName + "." + name
@@ -797,10 +805,10 @@ func MethodSymbolName(receiverPkg *types.Package, method *types.Func, name strin
 	return PathOf(method.Pkg()) + "." + name
 }
 
-func recvNamed(t types.Type) (typ *types.Named, ptr bool) {
+func recvNamed(t types.Type) (typ types.Type, ptr bool) {
 retry:
 	switch typ := t.(type) {
-	case *types.Named:
+	case *types.Named, *types.Struct:
 		return typ, ptr
 	case *types.Pointer:
 		t = typ.Elem()

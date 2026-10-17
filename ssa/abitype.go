@@ -596,6 +596,19 @@ func (b Builder) abiMethodFuncs(t types.Type, m *types.Selection) (ifn, tfn llvm
 	}
 	obj := m.Obj().(*types.Func)
 	mSig := m.Type().(*types.Signature)
+	if anonymous {
+		recv := mSig.Recv()
+		typ, ptr := recvNamed(recv.Type())
+		if _, ok := typ.(*types.Struct); ok {
+			// Unalias(*A) still contains A. Match FuncName's struct receiver
+			// so A = struct{T} uses *struct{T}.M in pointer method metadata.
+			if ptr {
+				typ = types.NewPointer(typ)
+			}
+			recv = types.NewVar(recv.Pos(), recv.Pkg(), recv.Name(), typ)
+			mSig = types.NewSignature(recv, mSig.Params(), mSig.Results(), mSig.Variadic())
+		}
+	}
 	// funcName uses this same receiver package for the emitted wrapper
 	// definition; MethodSymbolName must see identical inputs here.
 	mSymbolName := MethodSymbolName(pkg, obj, obj.Name())
