@@ -79,6 +79,10 @@ func writeExternalPCLN(ctx *context, out *OutFmtDetails, verbose bool) (err erro
 	if err := filterExternalPCLNJoins(&data, pcSiteOwners); err != nil {
 		return err
 	}
+	data, err = pclnmap.Prune(data)
+	if err != nil {
+		return fmt.Errorf("prune external pclntab: %w", err)
+	}
 	raw, err := pclnmap.Encode(data)
 	if err != nil {
 		return fmt.Errorf("encode external pclntab: %w", err)
