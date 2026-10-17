@@ -1790,7 +1790,8 @@ func machoHasStabs(t *testing.T, path string) bool {
 	}
 	const nStab = 0xe0
 	for _, symbol := range f.Symtab.Syms {
-		if symbol.Type&nStab != 0 {
+		// Apple strip emits an N_OPT radr marker even without any DWARF.
+		if symbol.Type&nStab != 0 && symbol.Type != 0x3c {
 			return true
 		}
 	}

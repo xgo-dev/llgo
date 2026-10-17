@@ -77,6 +77,9 @@ func CollectArtifacts(conf *Config, out *OutFmtDetails) ([]Artifact, error) {
 	default:
 		return nil, fmt.Errorf("unresolved debug artifact mode %s", conf.DebugArtifactMode)
 	}
+	if out.DSYM != "" {
+		primaryRole = ArtifactRoleDeployment
+	}
 	if out.Out == "" {
 		return nil, fmt.Errorf("primary artifact path is empty")
 	}
@@ -122,6 +125,37 @@ func CollectArtifacts(conf *Config, out *OutFmtDetails) ([]Artifact, error) {
 	}
 	if err := add(ArtifactRoleDebug, "wasm-dwarf", out.DWARF); err != nil {
 		return nil, err
+	}
+	if out.DSYM != "" {
+		info, err := os.Stat(out.DSYM)
+		if err != nil {
+			return nil, fmt.Errorf("stat dSYM artifact %q: %w", out.DSYM, err)
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("dSYM artifact %q is not a directory", out.DSYM)
+		}
+		var size int64
+		err = filepath.WalkDir(out.DSYM, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("dSYM resource %q is not a regular file", path)
+			}
+			size += info.Size()
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("stat dSYM artifact %q: %w", out.DSYM, err)
+		}
+		artifacts = append(artifacts, Artifact{Role: ArtifactRoleDebug, Format: "dsym", Path: out.DSYM, Size: size})
 	}
 	if err := add(ArtifactRoleRuntimeSymbols, "pclntab", out.PCLN); err != nil {
 		return nil, err

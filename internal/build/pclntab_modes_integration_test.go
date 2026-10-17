@@ -425,10 +425,8 @@ func TestPCLNExternalLinkOptionsIntegration(t *testing.T) {
 	setPCLNIntegrationEnv(t)
 	source := writePCLNIntegrationFixture(t)
 
-	// PR #2113 phase one consumes -s as typed intent and applies its Go
-	// semantics (-s implies -w), but deliberately does not remove the native
-	// symbol table yet. Keeping wantSymtab explicit makes the single expected
-	// change obvious when native symbol stripping is implemented.
+	// Runtime sidecar construction consumes linker symbols before -s strips
+	// ordinary names. Explicit -w=false retains debugger-owned DWARF.
 	tests := []struct {
 		name       string
 		options    LinkOptions
@@ -437,8 +435,8 @@ func TestPCLNExternalLinkOptionsIntegration(t *testing.T) {
 	}{
 		{name: "default", wantDebug: true, wantSymtab: true},
 		{name: "w", options: LinkOptions{DWARF: DWARFOmit}, wantSymtab: true},
-		{name: "s-implies-w", options: LinkOptions{OmitSymbolTable: true}, wantSymtab: true},
-		{name: "s-with-w-false", options: LinkOptions{OmitSymbolTable: true, DWARF: DWARFPreserve}, wantDebug: true, wantSymtab: true},
+		{name: "s-implies-w", options: LinkOptions{OmitSymbolTable: true}},
+		{name: "s-with-w-false", options: LinkOptions{OmitSymbolTable: true, DWARF: DWARFPreserve}, wantDebug: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -843,6 +841,15 @@ func pclnIntegrationHasDebugInfo(t *testing.T, path string) bool {
 	if runtime.GOOS == "linux" {
 		return elfHasDebugInfo(t, path)
 	}
+	if _, err := os.Stat(path + ".dSYM"); err == nil {
+		f, err := macho.Open(filepath.Join(path+".dSYM", "Contents", "Resources", "DWARF", filepath.Base(path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		_, err = f.DWARF()
+		return err == nil
+	}
 	return machoHasStabs(t, path)
 }
 
@@ -855,14 +862,35 @@ func pclnIntegrationHasSymbolTable(t *testing.T, path string) bool {
 			t.Fatal(err)
 		}
 		defer f.Close()
-		return f.Section(".symtab") != nil
+		// Retained DWARF can need a small set of debugger discovery symbols.
+		// Check ordinary Go names, independently of that required metadata.
+		symbols, err := f.Symbols()
+		if err != nil && err != elf.ErrNoSymbols {
+			t.Fatal(err)
+		}
+		for _, sym := range symbols {
+			if sym.Section != elf.SHN_UNDEF && (strings.HasPrefix(sym.Name, "main.") || strings.HasPrefix(sym.Name, "command-line-arguments.")) {
+				return true
+			}
+		}
+		return false
 	case "darwin":
 		f, err := macho.Open(path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer f.Close()
-		return f.Symtab != nil && len(f.Symtab.Syms) != 0
+		// Mach-O must keep dynamic-binding entries and the public functions
+		// used by DWARF runtime dlsym lookup. Test local Go names instead of
+		// requiring LC_SYMTAB itself to disappear.
+		if f.Symtab != nil {
+			for _, sym := range f.Symtab.Syms {
+				if sym.Sect != 0 && sym.Type&0xe0 == 0 && sym.Type&0x11 != 1 && (strings.HasPrefix(sym.Name, "main.") || strings.HasPrefix(sym.Name, "command-line-arguments.")) {
+					return true
+				}
+			}
+		}
+		return false
 	default:
 		panic(fmt.Sprintf("unexpected GOOS %q", runtime.GOOS))
 	}

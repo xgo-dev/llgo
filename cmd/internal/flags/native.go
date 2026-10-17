@@ -41,7 +41,7 @@ func rejectBool(fs *flag.FlagSet, name, reason string) {
 var buildFlagDescriptions = map[string]string{
 	"p":             "Maximum number of concurrent LLGo build jobs",
 	"gcflags":       "LLGo frontend options: -lang, -N, -l and global converthash settings (unpatterned or all=)",
-	"ldflags":       "LLGo linker options: -s, -w, -extld, -extldflags (unpatterned or all=)",
+	"ldflags":       "LLGo linker options: -s, -w, -compressdwarf, -extld, -extldflags (unpatterned or all=)",
 	"mod":           "Module selection mode: readonly, vendor or mod",
 	"modfile":       "Use an alternate module file for package selection",
 	"modcacherw":    "Leave newly downloaded module cache directories writable",

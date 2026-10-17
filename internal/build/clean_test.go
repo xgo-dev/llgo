@@ -28,6 +28,12 @@ func TestCleanMainPkgRemovesSidecars(t *testing.T) {
 		filepath.Join(sourceDir, "demo.exe"),
 	}
 	for _, executable := range outputs {
+		if err := os.MkdirAll(filepath.Join(executable+".dSYM", "Contents", "Resources", "DWARF"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(executable+".dSYM", "Contents", "Info.plist"), []byte("metadata"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 		for _, artifact := range []string{executable, pclnSidecarPath(executable), dwarfSidecarPath(executable)} {
 			if err := os.WriteFile(artifact, []byte("artifact"), 0o644); err != nil {
 				t.Fatal(err)
@@ -42,7 +48,7 @@ func TestCleanMainPkgRemovesSidecars(t *testing.T) {
 	cleanMainPkg(pkg, conf, false)
 
 	for _, executable := range outputs {
-		for _, artifact := range []string{executable, pclnSidecarPath(executable), dwarfSidecarPath(executable)} {
+		for _, artifact := range []string{executable, pclnSidecarPath(executable), dwarfSidecarPath(executable), executable + ".dSYM"} {
 			if _, err := os.Stat(artifact); !os.IsNotExist(err) {
 				t.Errorf("artifact %q still exists (stat error %v)", artifact, err)
 			}

@@ -26,8 +26,14 @@ cleanup() {
 trap cleanup EXIT
 
 run_with_timeout() {
+	run_with_timeout_limit 300 "$@"
+}
+
+run_with_timeout_limit() {
+	local seconds="$1"
+	shift
 	if command -v timeout >/dev/null 2>&1; then
-		timeout 300s "$@"
+		timeout "${seconds}s" "$@"
 	else
 		"$@"
 	fi
@@ -91,12 +97,22 @@ run_worker_go_test() {
 	local output="${work_dir}/test-go-${target}.out"
 	# Run the full Go-language package: the small reflection fixture alone
 	# does not exercise continuous collection after the larger live heap.
-	# Repeated full collections need headroom on CI; keep the test alarm
-	# below the outer 300s process limit, as for the other worker tests.
-	run_with_timeout env LLGO_WASM_WORKERS=2 "${llgo_cmd}" test \
-		-target "${target}" -emulator -v -count=1 -timeout=180s \
+	# Collection-heavy cases can exceed three minutes after the larger live
+	# heap. Budget this package separately, including compilation, while
+	# retaining the shorter limits on the small acceptance fixtures.
+	run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 "${llgo_cmd}" test \
+		-target "${target}" -emulator -v -count=1 -timeout=480s \
+		-skip '^TestRuntimeNumGoroutineIncludesNewProc$' \
 		"${repo_root}/test/go" 2>&1 | tee "${output}"
 	grep -Fxq "PASS" "${output}"
+	# Native tests isolate this assertion with os/exec. Wasm cannot spawn
+	# that subprocess itself; use a fresh test process so exiting goroutines
+	# from earlier tests cannot cancel the measured count increment.
+	run_with_timeout env LLGO_WASM_WORKERS=2 "${llgo_cmd}" test \
+		-target "${target}" -emulator -v -count=1 -timeout=180s \
+		-run '^TestRuntimeNumGoroutineIncludesNewProc$' \
+		"${repo_root}/test/go" 2>&1 | tee "${output}.numgoroutine"
+	grep -Fxq "PASS" "${output}.numgoroutine"
 }
 
 run_libffi_go_test() {

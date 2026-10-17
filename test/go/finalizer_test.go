@@ -149,7 +149,13 @@ func registerFinalizerForTest(register func()) {
 
 func waitForFinalizerValue(t *testing.T, finalized <-chan int, want int) {
 	t.Helper()
-	deadline := time.After(3 * time.Second)
+	timeout := 3 * time.Second
+	if runtime.GOARCH == "wasm" {
+		// Worker collections can take several seconds with the full test
+		// package's live heap. Allow both collection and callback delivery.
+		timeout = 15 * time.Second
+	}
+	deadline := time.After(timeout)
 	for {
 		runGCWithTimeout(t)
 		select {
@@ -167,6 +173,10 @@ func waitForFinalizerValue(t *testing.T, finalized <-chan int, want int) {
 
 func runGCWithTimeout(t *testing.T) {
 	t.Helper()
+	timeout := 2 * time.Second
+	if runtime.GOARCH == "wasm" {
+		timeout = 10 * time.Second
+	}
 	done := make(chan struct{})
 	go func() {
 		runtime.GC()
@@ -174,7 +184,7 @@ func runGCWithTimeout(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(timeout):
 		t.Fatal("runtime.GC did not return")
 	}
 }

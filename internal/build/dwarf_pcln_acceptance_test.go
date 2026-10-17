@@ -60,6 +60,32 @@ func checkFrames() {
 	}
 }
 
+//go:noinline
+func panicSite() {
+	panic("dwarf panic")
+}
+
+func checkRecoveredPanic() {
+	defer func() {
+		if recover() != "dwarf panic" {
+			panic("bad recovery")
+		}
+		var pcs [32]uintptr
+		n := runtime.Callers(1, pcs[:])
+		frames := runtime.CallersFrames(pcs[:n])
+		for {
+			frame, more := frames.Next()
+			if frame.Function == "main.panicSite" {
+				return
+			}
+			if !more {
+				panic("recovered stack lost panicSite")
+			}
+		}
+	}()
+	panicSite()
+}
+
 func main() {
 	var out strings.Builder
 	logger := log.New(&out, "", log.Lshortfile)
@@ -71,6 +97,7 @@ func main() {
 
 	checkCaller()
 	checkFrames()
+	checkRecoveredPanic()
 	os.Stdout.WriteString("PCLN_DWARF_OK\n")
 }
 `

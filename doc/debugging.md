@@ -1,5 +1,38 @@
 # LLGo debug sessions
 
+Native Linux links compress retained DWARF with zlib by default. Use
+`-ldflags=-compressdwarf=false` to keep it uncompressed; `-ldflags=-w` still
+omits DWARF entirely. Compression retains the ordinary symbol table and the
+runtime PCLN metadata.
+
+On macOS, size-optimized main executables limit automatic dynamic exports
+even when DWARF is enabled. Explicit exports, shared libraries, and dynamic
+lookup configurations keep their export policy. DWARF builds retain their
+function exports when the embedded runtime table needs `dlsym`; data and type
+definitions are hidden in non-LTO builds. LTO with DWARF keeps its existing
+visibility policy. Builds with function-entry sites can suppress all automatic
+exports. DWARF builds retain their debug maps, so `dsymutil program`
+can generate a separate `program.dSYM`.
+Full/ThinLTO debug objects are retained in an adjacent
+`program.llgo-debug-lto/` directory for this purpose. Each link retains a
+separate object so rebuilding cannot invalidate a copied older executable.
+Repeated explicit builds therefore retain historical objects until cleanup:
+`llgo clean` removes the default output's directory, and temporary `run`/`test`
+outputs reclaim it automatically. For a custom `-o program`, remove
+`program.llgo-debug-lto/` when disposing of its debug maps. Generate any dSYMs
+needed by retained executable copies before cleaning these objects.
+
+For native Linux and macOS executables and shared libraries, `-ldflags=-s`
+removes ordinary symbols after runtime PCLN packaging and implies `-w`. Use
+`-ldflags='-s -w=false'` to retain source-level debugging, including the few
+symbols used for debugger ABI/registry discovery. Linux retains its DWARF
+sections; macOS generates a matching adjacent `.dSYM` before removing
+the executable's debug map and re-signing. Build artifact reports include
+the complete dSYM bundle. Shared-library dynamic exports are preserved.
+`llgo clean` also removes the default output's adjacent dSYM bundle.
+Archives, Wasm, fixed targets, and other native object formats retain their
+existing symbol policy.
+
 `llgo debug` is the target-aware entry point for building and debugging an
 LLGo program:
 

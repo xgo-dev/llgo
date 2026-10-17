@@ -27,8 +27,20 @@ This initial matrix applies to native Darwin/Linux executable builds;
 generation, archive/shared, and fixed-target policies are outside this
 benchmark.
 
-The initial comparison matrix is the Cartesian product of
+Native Linux DWARF is zlib-compressed by default. Include an explicit
+`-ldflags=-compressdwarf=false` control when comparing debug-information
+volume, and distinguish executable size from compressed DWARF section size.
+Darwin DWARF measurements must include a separately generated dSYM when
+reporting complete debug artifacts. Size-optimized main executables restrict
+automatic dynamic exports independently of DWARF; this preserves debugger
+metadata and runtime PCLN. The default optimization level, LTO selection, and
+development-only Go global-DCE policy are unchanged.
+
+The comparison matrix is the Cartesian product of
 `embedded|external|none` and these linker groups: default, `-w`, `-s`, and
-`-s -w=false`. Until native symbol-table deletion is implemented, also assert
-that `-s` has the same byte counts as `-w`, and `-s -w=false` has the same byte
-counts as the default, when each pair uses the exact same output path.
+`-s -w=false`. Native Linux/Darwin `-s` removes ordinary symbols after PCLN
+finalization. Check that `-s` is smaller than `-w`, and that `-s -w=false`
+preserves usable DWARF while reducing executable symbol overhead. ELF retains
+dynamic symbols and debug sections when requested; Mach-O retains required
+dynamic-binding entries and generates a matching `.dSYM` before stripping.
+Record the complete dSYM bundle separately and include it in debug totals.

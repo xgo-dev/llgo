@@ -124,6 +124,7 @@ type OutFmts struct {
 type OutFmtDetails struct {
 	Out   string // Base output file path
 	DWARF string // External debugger-owned DWARF container (.debug.wasm)
+	DSYM  string // Native Darwin debugger-owned .dSYM bundle
 	PCLN  string // PCLN sidecar output file path (.pclntab)
 	Bin   string // Binary output file path (.bin)
 	Hex   string // Intel hex output file path (.hex)
@@ -1285,7 +1286,10 @@ func executeInitialPackageLink(ctx *context, link *initialPackageLink, verbose, 
 		if err := finalizeDebugArtifact(link.conf, link.outFmts, verbose); err != nil {
 			return err
 		}
-		return finalizeDarwinSizeExecutable(linkCtx, link.outFmts.Out, verbose)
+		if err := finalizeDarwinSizeExecutable(linkCtx, link.outFmts.Out, verbose); err != nil {
+			return err
+		}
+		return finalizeNativeSymbols(linkCtx, link.outFmts, verbose)
 	}()
 	if err != nil {
 		return nil, err
@@ -1381,6 +1385,7 @@ func newLinkExecutionContext(ctx *context, plan *mainLinkPlan) *context {
 		pclnExternal:         plan.pclnExternal,
 		linkRuntimeSites:     &plan.runtimeSites,
 		stripDarwinLTOLocals: plan.stripDarwinLTOLocals,
+		darwinHiddenGlobals:  plan.darwinHiddenGlobals,
 		goVersion:            ctx.goVersion,
 	}
 }
@@ -1403,6 +1408,12 @@ func removeOutFmts(outFmts *OutFmtDetails) {
 		// intermediate sidecars as well as the final test executable.
 		_ = os.RemoveAll(outFmts.tempDir)
 		return
+	}
+	if outFmts.Out != "" {
+		_ = os.RemoveAll(darwinLTOObjectDir(outFmts.Out))
+	}
+	if outFmts.DSYM != "" {
+		_ = os.RemoveAll(outFmts.DSYM)
 	}
 	for _, output := range []string{
 		outFmts.Out, outFmts.PCLN, outFmts.Bin, outFmts.Hex,
@@ -1776,6 +1787,10 @@ type context struct {
 	// already internalized ordinary Go symbols, but pclnpost still needs them
 	// until the runtime tables have been rewritten.
 	stripDarwinLTOLocals bool
+
+	// A non-nil list hides data/type globals while preserving function
+	// exports needed by the DWARF runtime dlsym path.
+	darwinHiddenGlobals []string
 
 	// linkRuntimeSites snapshots the backend-dependent site policy for linking.
 	linkRuntimeSites *bool
@@ -2391,6 +2406,7 @@ type mainLinkPlan struct {
 	linkArgs             []string
 	pclnExternal         *pclnmap.Data
 	stripDarwinLTOLocals bool
+	darwinHiddenGlobals  []string
 }
 
 // mainLinkPreparation separates shared package inspection from entry-module
@@ -2407,6 +2423,7 @@ type mainLinkPreparation struct {
 	linkArgs             []string
 	gen                  genConfig
 	stripDarwinLTOLocals bool
+	darwinHiddenGlobals  []string
 }
 
 func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPath string, verbose bool) error {
@@ -2547,6 +2564,7 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 		linkArgs:             linkArgs,
 		gen:                  gen,
 		stripDarwinLTOLocals: darwinSymbols.stripLTOLocals,
+		darwinHiddenGlobals:  darwinSymbols.hiddenGlobals,
 	}, nil
 }
 
@@ -2558,6 +2576,7 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	}
 	ctx.pclnExternal = nil
 	ctx.stripDarwinLTOLocals = false
+	ctx.darwinHiddenGlobals = nil
 	entryPkg := genMainModule(ctx, llssa.PkgRuntime, pkg, &preparation.gen)
 	cExports := preparation.gen.cExports
 	if _, err := lowerMainCExportModule(ctx, entryPkg.LPkg, cExports); err != nil {
@@ -2582,6 +2601,7 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	linkInputs = append(linkInputs, extraObjFiles...)
 	linkInputs = append(linkInputs, preparation.archiveInputs...)
 	ctx.stripDarwinLTOLocals = preparation.stripDarwinLTOLocals
+	ctx.darwinHiddenGlobals = preparation.darwinHiddenGlobals
 
 	return &mainLinkPlan{
 		runtimeSites:         shouldEmitRuntimeSites(ctx),
@@ -2590,6 +2610,7 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 		linkArgs:             preparation.linkArgs,
 		pclnExternal:         ctx.pclnExternal,
 		stripDarwinLTOLocals: preparation.stripDarwinLTOLocals,
+		darwinHiddenGlobals:  preparation.darwinHiddenGlobals,
 	}, nil
 }
 
@@ -2857,6 +2878,12 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 	}
 	defer cleanupSiteLayout()
 	buildArgs = append(buildArgs, siteLayoutArgs...)
+	hiddenGlobalArgs, cleanupHiddenGlobals, err := darwinHiddenGlobalArgs(app, ctx.darwinHiddenGlobals)
+	if err != nil {
+		return err
+	}
+	defer cleanupHiddenGlobals()
+	buildArgs = append(buildArgs, hiddenGlobalArgs...)
 	buildArgs = append(buildArgs, debugInfoLinkerArgs(ctx.buildConf, &ctx.crossCompile)...)
 	ltoPluginFlags, err := ctx.buildConf.LTOPlugin.LinkerFlags(ctx.buildConf.Goos)
 	if err != nil {
@@ -2900,12 +2927,20 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 		objFiles = compiledObjFiles
 	}
 
+	cmd := ctx.linker()
+	ltoObjectArgs, err := darwinLTOObjectArgs(ctx, app, cmd, buildArgs)
+	if err != nil {
+		return fmt.Errorf("retain Darwin LTO debug object: %w", err)
+	}
+	buildArgs = append(buildArgs, ltoObjectArgs...)
 	buildArgs = append(buildArgs, objFiles...)
 
-	cmd := ctx.linker()
 	buildArgs = append(buildArgs, defaultWASIHeapArgs(ctx, cmd, buildArgs)...)
 	cmd.Verbose = printCmds
 	if err := cmd.Link(buildArgs...); err != nil {
+		if len(ltoObjectArgs) != 0 {
+			_ = os.RemoveAll(filepath.Dir(ltoObjectArgs[len(ltoObjectArgs)-1]))
+		}
 		return err
 	}
 	if !moveExactWindowsOutput {
