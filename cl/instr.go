@@ -2076,6 +2076,14 @@ func (p *context) recordCallerLocationForCall(b llssa.Builder, call *ssa.CallCom
 	p.recordPanicLocation(b, call.Pos())
 }
 
+// pcLinePosition is the runtime-visible identity of a source location. Columns
+// do not participate: the runtime line table does not expose them.
+type pcLinePosition struct {
+	symbol string
+	file   string
+	line   int
+}
+
 func (p *context) emitPCLineLabel(b llssa.Builder, pos token.Pos) {
 	if p == nil || p.pkg == nil || p.fn == nil || !p.prog.FuncInfoSitesEnabled() || !p.shouldTrackCallerFrames() {
 		return
@@ -2103,8 +2111,20 @@ func (p *context) emitPCLineLabel(b llssa.Builder, pos token.Pos) {
 	}
 	p.lastPCLineFile = position.Filename
 	p.lastPCLineLine = position.Line
-	p.pcLineSeq++
-	id := pcLineID(p.fn.Name(), p.pcLineSeq)
+	// Distinct machine-code ranges can describe the same source line (branch
+	// arms, cold nil checks, and repeated stores). They still need independent
+	// DCE-associated anchors, but can share one address-free line-table row.
+	positionKey := pcLinePosition{p.fn.Name(), position.Filename, position.Line}
+	id, recorded := p.pcLineIDs[positionKey]
+	if !recorded {
+		if p.pcLineIDs == nil {
+			p.pcLineIDs = make(map[pcLinePosition]uint64)
+		}
+		p.pcLineSeq++
+		id = pcLineID(p.fn.Name(), p.pcLineSeq)
+		p.pcLineIDs[positionKey] = id
+		p.pkg.EmitPCLineInfo(id, p.fn.Name(), position.Filename, position.Line, position.Column)
+	}
 	label := pcLineLabelName(id)
 	if target.GOOS == "darwin" {
 		// Mach-O subsections-via-symbols treats every non-local symbol as an
@@ -2156,7 +2176,6 @@ func (p *context) emitPCLineLabel(b llssa.Builder, pos token.Pos) {
 			".quad " + uint64Hex(id) + "\n" +
 			".popsection",
 	)
-	p.pkg.EmitPCLineInfo(id, p.fn.Name(), position.Filename, position.Line, position.Column)
 }
 
 func canEmitPCLineLabelsForTarget(target *llssa.Target) bool {

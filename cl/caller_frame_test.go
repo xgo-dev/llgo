@@ -483,13 +483,19 @@ func pinnedPanicSite() {
 		}
 		return count
 	}
-	// The source block shares one anchor, while each cold nil-check block
-	// needs its own anchor in case the backend moves it after another line.
-	if got := countPCLine("example.com/foo.repeatedPanicLeaf", "repeated_panic_site.go", 345); got != 3 {
-		t.Fatalf("one source block and two nil-check blocks produced %d metadata records, want 3:\n%s", got, ir)
+	// Source and cold blocks retain independent anchors because the backend
+	// can reorder them, but every range for one source line shares one row.
+	if got := countPCLine("example.com/foo.repeatedPanicLeaf", "repeated_panic_site.go", 345); got != 1 {
+		t.Fatalf("repeated panic line produced %d metadata records, want 1:\n%s", got, ir)
 	}
-	if got := countPCLine("example.com/foo.branchPanicLeaf", "branch_panic_site.go", 456); got != 4 {
-		t.Fatalf("two source blocks and two nil-check blocks produced %d metadata records, want 4:\n%s", got, ir)
+	if got := countPCLine("example.com/foo.branchPanicLeaf", "branch_panic_site.go", 456); got != 1 {
+		t.Fatalf("branch panic line produced %d metadata records, want 1:\n%s", got, ir)
+	}
+	for name, want := range map[string]int{"repeatedPanicLeaf": 3, "branchPanicLeaf": 4} {
+		body := pkg.Module().NamedFunction("example.com/foo." + name).String()
+		if got := strings.Count(body, ".pushsection llgo_pcline"); got != want {
+			t.Fatalf("%s has %d machine-code anchors, want %d:\n%s", name, got, want, body)
+		}
 	}
 	if strings.Contains(ir, `!"non_recover_site.go"`) {
 		t.Fatalf("ordinary pinned function unexpectedly received implicit panic-site metadata:\n%s", ir)
@@ -508,23 +514,40 @@ func inspect() {
 func owner() {
 	defer inspect()
 	storePanicLeaf(nil)
+	branchStorePanicLeaf(nil, true)
 }
 
 func storePanicLeaf(p *int) {
 //line store_panic_site.go:167
 	*p = 1
 }
+
+func branchStorePanicLeaf(p *int, branch bool) {
+	if branch {
+//line shared_store_panic.go:267
+		*p = 1
+	} else {
+//line shared_store_panic.go:267
+		*p = 2
+	}
+}
 `
 	for _, test := range []struct {
-		goos string
+		goos   string
+		goarch string
 	}{
-		{goos: "linux"},
-		{goos: "darwin"},
-		{goos: "windows"},
+		{goos: "linux", goarch: "amd64"},
+		{goos: "linux", goarch: "arm64"},
+		{goos: "linux", goarch: "386"},
+		{goos: "darwin", goarch: "amd64"},
+		{goos: "darwin", goarch: "arm64"},
+		{goos: "windows", goarch: "amd64"},
+		{goos: "windows", goarch: "arm64"},
+		{goos: "windows", goarch: "386"},
 	} {
-		t.Run(test.goos, func(t *testing.T) {
+		t.Run(test.goos+"/"+test.goarch, func(t *testing.T) {
 			ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", source)
-			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: test.goos, GOARCH: "amd64"})
+			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: test.goos, GOARCH: test.goarch})
 			prog.EnableFuncInfoMetadata(true)
 			prog.EnableFuncInfoSites(true)
 			pkg, err := NewPackage(prog, ssapkg, files)
@@ -542,6 +565,20 @@ func storePanicLeaf(p *int) {
 			}
 			if !got {
 				t.Fatalf("store panic-site metadata is missing for %s:\n%s", test.goos, ir)
+			}
+			sharedRows := 0
+			for _, row := range strings.Split(ir, "\n") {
+				if strings.Contains(row, `!{i32 1, i64 `) &&
+					strings.Contains(row, `!"example.com/foo.branchStorePanicLeaf", !"shared_store_panic.go", i32 267`) {
+					sharedRows++
+				}
+			}
+			if sharedRows != 1 {
+				t.Fatalf("branch stores have %d shared source rows, want 1:\n%s", sharedRows, ir)
+			}
+			body := pkg.Module().NamedFunction("example.com/foo.branchStorePanicLeaf").String()
+			if got := strings.Count(body, ".pushsection"); got != 2 {
+				t.Fatalf("branch stores have %d code-range anchors, want 2:\n%s", got, body)
 			}
 		})
 	}

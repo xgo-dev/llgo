@@ -97,10 +97,10 @@ func (p Package) emitFuncInfo(symbol, name, file string, line, column int, flags
 	p.mod.AddNamedMetadataOperand(FuncInfoMetadataName, p.Prog.ctx.MDNode(fields))
 }
 
-// EmitPCLineInfo records a PC label id and its source position. The id names a
-// zero-byte label emitted in the function body; keeping the metadata string-only
-// lets dead functions be removed without the line table holding address
-// references to them.
+// EmitPCLineInfo records a source-row ID and its source position. Independent
+// zero-byte anchors for the same function/file/line can share the ID. Keeping
+// this metadata string-only lets dead functions be removed without the line
+// table holding address references to them.
 func (p Package) EmitPCLineInfo(id uint64, symbol, file string, line, column int) {
 	if id == 0 || symbol == "" {
 		return

@@ -1631,6 +1631,8 @@ func initRuntimePCLineFramesOnce() {
 		runtimeFuncInfoStringOffsets == nil {
 		return
 	}
+	// Bound distinct source rows per function; shared physical sites do not
+	// contribute additional rows to this limit.
 	if runtimePCLineCount > 1<<20 || runtimePCLineCount > runtimeFuncInfoCount*1024 {
 		return
 	}
@@ -1641,7 +1643,10 @@ func initRuntimePCLineFramesOnce() {
 		return
 	}
 	nsite := (end - start) / size
-	if nsite > runtimePCLineCount*1024 || nsite > 1<<22 {
+	// A source row can be shared by arbitrarily many code ranges, including
+	// generated branches with repeated //line directives. Bound the allocation
+	// by the number of physical sites, not their ratio to shared source rows.
+	if nsite > 1<<22 {
 		return
 	}
 	frames := make([]runtimePCLineFrame, nsite)

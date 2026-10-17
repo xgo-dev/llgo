@@ -195,6 +195,7 @@ type context struct {
 	safepointEntry       bool
 	safepoints           map[ssa.Instruction]struct{}
 	pcLineSeq            uint64
+	pcLineIDs            map[pcLinePosition]uint64
 	panicSitePos         token.Pos
 	// The runtime PC-line table stores file and line, but not column. Keep the
 	// last emitted position within one SSA basic block so repeated checks for a
