@@ -1,0 +1,39 @@
+name: PR closed
+run-name: 'PR #${{ github.event.pull_request.number }} closed'
+
+on:
+  pull_request_target:
+    types: [closed]
+
+# Cancellation uses GitHub's concurrency scheduler, including for Dependabot.
+# Never check out or execute PR code.
+# This cancels existing runs; later reruns and close/reopen races are out of scope.
+permissions: {}
+
+jobs:
+  cancel-pr-ci:
+    name: Cancel ${{ matrix.workflow }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep in sync with pull_request workflows; the contract test checks it.
+        workflow:
+          - Baseline benchmarks
+          - Build Cache
+          - CI policy
+          - Doc Link Checker
+          - Docs
+          - Format Check
+          - Go
+          - Installer shells
+          - LLGo
+          - Mise development environment
+          - Notify benchmarks
+          - Pixi development environment
+          - Release Build
+          - Targets
+    # Use workflow-level concurrency to replace an entire CI workflow run.
+    uses: ./.github/workflows/pr-ci-cancel.yml
+    with:
+      workflow: ${{ matrix.workflow }}
+      number: ${{ github.event.pull_request.number }}

@@ -27,6 +27,11 @@ def load(name):
     return yaml.load((WORKFLOWS / name).read_text(), Loader=yaml.BaseLoader)
 
 
+def workflow_paths():
+    return sorted(path for path in WORKFLOWS.iterdir()
+                  if path.suffix in {".yml", ".yaml"})
+
+
 def needs(job):
     value = job.get("needs", [])
     return [value] if isinstance(value, str) else value
@@ -44,6 +49,57 @@ def matrix_size(job):
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_pr_close_cancels_every_pr_workflow_with_native_concurrency(self):
+        workflow = load("pr-closed.yml")
+        self.assertEqual(workflow["on"], {"pull_request_target": {"types": ["closed"]}})
+        self.assertEqual(workflow["permissions"], {})
+        job = workflow["jobs"]["cancel-pr-ci"]
+        # Both merged and unmerged closes cancel PR CI; push-to-main CI is separate.
+        self.assertNotIn("if", job)
+        self.assertEqual(job["uses"], "./.github/workflows/pr-ci-cancel.yml")
+        self.assertEqual(job["with"], {
+            "workflow": "${{ matrix.workflow }}",
+            "number": "${{ github.event.pull_request.number }}"})
+        pr_workflows = [load(path.name)["name"] for path in workflow_paths()
+                        if "pull_request" in load(path.name).get("on", {})]
+        self.assertCountEqual(job["strategy"]["matrix"]["workflow"], pr_workflows)
+
+    def test_pr_jobs_and_reusable_jobs_have_no_unconditional_always(self):
+        pending = [path.name for path in workflow_paths()
+                   if "pull_request" in load(path.name).get("on", {})]
+        checked = set()
+        while pending:
+            filename = pending.pop()
+            if filename in checked:
+                continue
+            checked.add(filename)
+            for name, job in load(filename)["jobs"].items():
+                with self.subTest(workflow=filename, job=name):
+                    condition = " ".join(job.get("if", "").split())
+                    condition = condition.removeprefix("${{").removesuffix("}}").strip()
+                    # GitHub re-evaluates running jobs' conditions on cancellation.
+                    # Keep always-running gates cancelable, including matrix jobs
+                    # and jobs inside local reusable workflows such as ci-prepare.
+                    if "always()" in condition:
+                        self.assertEqual(condition, "always() && !cancelled()")
+                    reusable = job.get("uses", "")
+                    if reusable.startswith("./.github/workflows/"):
+                        pending.append(Path(reusable).name)
+
+    def test_pr_cancellation_uses_workflow_concurrency_without_pr_code_or_token(self):
+        workflow = load("pr-ci-cancel.yml")
+        self.assertEqual(workflow["on"], {"workflow_call": {"inputs": {
+            "workflow": {"type": "string", "required": "true"},
+            "number": {"type": "number", "required": "true"}}}})
+        self.assertEqual(workflow["permissions"], {})
+        self.assertEqual(workflow["concurrency"], {
+            "group": "${{ inputs.workflow }}-pull_request-${{ inputs.number }}",
+            "cancel-in-progress": "true"})
+        job = workflow["jobs"]["cancel"]
+        self.assertEqual(job["runs-on"], "ubuntu-24.04")
+        self.assertEqual(job["timeout-minutes"], "1")
+        self.assertEqual(job["steps"], [{"run": "true"}])
+
     def test_gdb_windows_acceptance_covers_both_abis_and_all_native_architectures(self):
         job = load("llgo.yml")["jobs"]["llgo"]
         entries = job["strategy"]["matrix"]["include"]
@@ -151,20 +207,21 @@ else:
                     self.assertIn("prepare", needs(job))
                     self.assertIn(f"needs.prepare.outputs.{flag} == 'true'", job["if"])
 
-    def test_main_push_is_not_path_filtered_and_cancels_older_main_runs(self):
-        for path in WORKFLOWS.glob("*.yml"):
+    def test_pr_and_main_concurrency_groups_are_isolated(self):
+        for path in workflow_paths():
             workflow = load(path.name)
             events = workflow.get("on", {})
-            if "push" not in events:
+            if "push" not in events and "pull_request" not in events:
                 continue
             with self.subTest(workflow=path.name):
-                push = events["push"] or {}
-                self.assertIn("main", push.get("branches", []))
-                self.assertNotIn("paths", push)
-                self.assertNotIn("paths-ignore", push)
+                if "push" in events:
+                    push = events["push"] or {}
+                    self.assertIn("main", push.get("branches", []))
+                    self.assertNotIn("paths", push)
+                    self.assertNotIn("paths-ignore", push)
                 concurrency = workflow["concurrency"]
-                # PRs retain their own groups; tags and other events keep
-                # unique run IDs and do not cancel each other.
+                # PR-only workflows must also match pr-ci-cancel.yml. Main,
+                # tags and other events keep groups separate from each PR.
                 self.assertEqual(concurrency["cancel-in-progress"],
                                  "${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}")
                 self.assertEqual(concurrency["group"],
@@ -277,7 +334,7 @@ else:
                     self.assertEqual(args[-1], "https://push.fury.io/uploads?as=xgo-dev")
 
     def test_runner_policy_is_not_duplicated_in_workflows(self):
-        for path in WORKFLOWS.glob("*.yml"):
+        for path in workflow_paths():
             workflow = load(path.name)
             for name, job in workflow["jobs"].items():
                 with self.subTest(workflow=path.name, job=name):
@@ -362,7 +419,7 @@ else:
                 self.assertEqual(values["pr_head_sha"], head)
                 self.assertEqual(values["pr_merge_base"], base)
 
-    def test_each_prepared_workflow_has_an_unskippable_gate(self):
+    def test_preparation_failures_are_reported_unless_workflow_is_cancelled(self):
         names = set()
         for filename in [*CODE_WORKFLOWS, "doc-link-checker.yml", "model-demo.yml"]:
             gate = load(filename)["jobs"]["ci-gate"]
@@ -370,7 +427,7 @@ else:
                 self.assertNotIn(gate["name"], names)
                 names.add(gate["name"])
                 self.assertEqual(needs(gate), ["prepare"])
-                self.assertEqual(gate["if"], "always()")
+                self.assertEqual(gate["if"], "always() && !cancelled()")
                 self.assertIn("needs.prepare.result", gate["steps"][0]["run"])
                 self.assertIn('= "success"', gate["steps"][0]["run"])
 

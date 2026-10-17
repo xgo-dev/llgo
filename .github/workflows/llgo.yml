@@ -21,7 +21,7 @@ jobs:
   ci-gate:
     name: CI gate (LLGo)
     needs: prepare
-    if: always()
+    if: always() && !cancelled()
     runs-on: ubuntu-24.04
     steps:
       - name: Verify CI preparation succeeded

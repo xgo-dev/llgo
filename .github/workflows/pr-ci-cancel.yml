@@ -1,0 +1,25 @@
+name: Cancel PR CI
+
+on:
+  workflow_call:
+    inputs:
+      workflow:
+        type: string
+        required: true
+      number:
+        type: number
+        required: true
+
+permissions: {}
+
+concurrency:
+  # Match existing PR CI groups; other PRs and main keep separate groups.
+  group: ${{ inputs.workflow }}-pull_request-${{ inputs.number }}
+  cancel-in-progress: true
+
+jobs:
+  cancel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - run: 'true'
