@@ -20,6 +20,9 @@ architecture.
 - Integer bitwise operations, saturated add/subtract, min/max, uniform shifts,
   the applicable variable shifts, rounded averages, uniform rotates, widening
   low-half multiplication, and carryless multiplication.
+- Integer low/high-lane extension, saturating narrowing with zero-filled upper
+  lanes, and AMD64 concatenating saturation. Sign/zero extension and signed or
+  unsigned saturation follow each architecture's official declarations.
 - Numeric bitcasts, signedness conversions, and SIMD128 numeric conversions,
   with defined results for NaN and out-of-range floating inputs.
 - Four mask shapes, comparisons, mask bitmaps where provided, and the official
@@ -30,7 +33,8 @@ architecture.
 
 Tests cover NaNs, signed zero, wrapping/saturation boundaries, large shift
 counts, every byte lookup index, element-aligned addresses, short slices,
-nil arrays, and values crossing interfaces, tuples, closures, package calls,
+nil arrays, exhaustive byte/word resize inputs, saturation boundaries at every
+integer width, and values crossing interfaces, tuples, closures, package calls,
 defer/recover, goroutines, and scheduling. The hex-encoding workload checks
 all tail lengths, unaligned input, and output sentinels against `encoding/hex`.
 It is a correctness workload, not a performance benchmark.
@@ -40,6 +44,14 @@ implementations panic with their symbol name; `unimplemented_llgo_test.go`
 checks direct, indirect, deferred, and linkname calls. SIMD reflection,
 general FMV, and 256/512-bit vectors remain
 outside this implemented stage.
+
+The integer resize suite covers every applicable SIMD128 `ExtendLo`, `ExtendHi`,
+`SaturateTo`, and `SaturateTo*Concat` declaration. Shared cases run under official
+Go and LLGo; AMD64 unary saturation requires AVX512 in the official compiler,
+so those cases use scalar references under LLGo at the v1 baseline. LLVM
+verification and O0/O2 code generation cover Linux/Windows amd64, ARM64, and
+WASM, including callable intrinsic definitions. This does not add wider-vector
+ABIs or instructions absent from an architecture's Go API.
 
 ## Portable SIMD Midway
 
@@ -193,6 +205,7 @@ LLGO=/path/to/llgo bash dev/test_native_simd.sh
 On amd64 it runs O0 without LTO and O2 without LTO, with ThinLTO, and with
 Full LTO. Each binary runs the complete SIMD suite, then the FMV and bridge-operation tests with
 AVX2, AVX, FMA, and all optional CPU features disabled in separate processes.
+The same overrides also exercise integer extension and narrowing.
 The FMV tests cover initialization, direct and indirect entry calls,
 cross-package calls, aggregate value copies and multiple results, closures,
 independent CPU queries, and source-level stack traces.

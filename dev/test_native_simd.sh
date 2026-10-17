@@ -40,7 +40,7 @@ for profile in O0-off O2-off O2-thin O2-full; do
   echo "SIMD: amd64 $profile"
   for suite in arch portable; do
     package=./test/simd
-    filter='^TestSIMD(FMV|Bridge)'
+    filter='^TestSIMD(FMV|Bridge|Extend|Narrow|Resize)'
     settings=(cpu.avx2=off cpu.avx=off cpu.fma=off cpu.all=off)
     if [[ "$suite" == portable ]]; then
       package+=/portable
