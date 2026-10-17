@@ -763,12 +763,20 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	// Assigned before package loading invokes the preload callback.
 	var sourcePatchGOROOT string
+	cVectorPrepared := make(map[string]bool)
 	dedup.SetPreload(func(pkg *packages.Package) {
 		if llruntime.SkipToBuild(pkg.PkgPath) {
 			return
 		}
 		if pkg.Name == "main" && pkg.ForTest != "" {
 			pkg.Types.Scope().Insert(types.NewConst(0, pkg.Types, abi.ForTestMarker, types.Typ[types.UntypedBool], constant.MakeBool(true)))
+		}
+		if !cVectorPrepared[pkg.ID] {
+			cVectorPrepared[pkg.ID] = true
+			cctx := &context{conf: cfg, buildConf: conf, crossCompile: export, commands: commands}
+			if err := prepareCVectorTypes(cctx, prog, pkg); err != nil {
+				recordSyntaxErr(err)
+			}
 		}
 		options := preloadOptions
 		options.AllowInternalDirectives = isStandardLibraryPackage(pkg, sourcePatchGOROOT)

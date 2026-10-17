@@ -67,6 +67,9 @@ func (p Program) withNativeStorage(t Type) Type {
 }
 
 func (p Program) nativeStorageLLVMType(raw types.Type, fallback llvm.Type) llvm.Type {
+	if fallback.TypeKind() == llvm.VectorTypeKind {
+		return fallback
+	}
 	if p.GoWordSize() <= p.PointerSize() {
 		return fallback
 	}

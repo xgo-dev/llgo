@@ -17,6 +17,7 @@
 package ssa
 
 import (
+	"go/token"
 	"go/types"
 	"sync"
 )
@@ -34,6 +35,8 @@ type packageSyntaxData struct {
 	parsedPackages       map[*types.Package]struct{}
 	noInterface          map[string]none
 	typeCallConvs        map[string]CallConv
+	cVectors             map[string]int
+	nativeStructFields   map[token.Pos]bool
 }
 
 func newPackageSyntaxData() *packageSyntaxData {
@@ -45,6 +48,8 @@ func newPackageSyntaxData() *packageSyntaxData {
 		parsedPackages:       make(map[*types.Package]struct{}),
 		noInterface:          make(map[string]none),
 		typeCallConvs:        make(map[string]CallConv),
+		cVectors:             make(map[string]int),
+		nativeStructFields:   make(map[token.Pos]bool),
 	}
 }
 

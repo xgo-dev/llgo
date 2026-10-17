@@ -65,6 +65,13 @@ func (b Builder) aggregateValue(t Type, flds ...llvm.Value) Expr {
 		stored := b.aggregateValue(b.Prog.rawType(t.RawType().Underlying()), flds...)
 		return Expr{b.simdFromStorage(stored.impl, t), t}
 	}
+	if t.ll.TypeKind() == llvm.VectorTypeKind {
+		vec := llvm.Undef(t.ll)
+		for i, lane := range flds {
+			vec = b.impl.CreateInsertElement(vec, lane, llvm.ConstInt(b.Prog.tyInt32(), uint64(i), false), "")
+		}
+		return Expr{vec, t}
+	}
 	agg := llvm.Undef(t.ll)
 	for i, fld := range flds {
 		agg = b.impl.CreateInsertValue(agg, b.wrapStructField(t, i, fld), i, "")
@@ -80,7 +87,7 @@ func (b Builder) aggregateInit(ptr llvm.Value, t Type, flds ...llvm.Value) {
 }
 
 func (b Builder) wrapStructField(t Type, index int, value llvm.Value) llvm.Value {
-	if t.kind == vkTuple && t.ll.StructElementTypes()[index] == b.Prog.aggregateElementType(t, index).ll {
+	if t.ll.TypeKind() == llvm.StructTypeKind && t.ll.StructElementTypes()[index] == b.Prog.aggregateElementType(t, index).ll {
 		return value
 	}
 	value = b.toStorageValue(b.Prog.aggregateElementType(t, index), value)
