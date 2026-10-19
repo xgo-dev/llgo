@@ -38,6 +38,8 @@ const (
 	simdCarrylessSelector
 	simdStoreMasked
 	simdIntegerResize
+	simdSplat
+	simdHalf
 )
 
 type simdOperation struct {
@@ -100,6 +102,10 @@ var simdOperations = map[simdKey]simdOperation{
 	{"numeric", "PermuteOrZero"}: {llssa.SIMDPermuteOrZero, simdSignedVector, types.IsInteger},
 	{"numeric", "Permute"}:       {llssa.SIMDPermute, simdUnsignedVector, types.IsInteger},
 	{"numeric", "Max"}:           {llssa.SIMDMax, simdBinary, 0},
+	{"numeric", "GetLo"}:         {llssa.SIMDGetLo, simdHalf, 0},
+	{"numeric", "GetHi"}:         {llssa.SIMDGetHi, simdHalf, 0},
+	{"numeric", "SetLo"}:         {llssa.SIMDSetLo, simdHalf, 0},
+	{"numeric", "SetHi"}:         {llssa.SIMDSetHi, simdHalf, 0},
 
 	{"numeric", "Average"}:                  {llssa.SIMDAverage, simdBinary, types.IsInteger},
 	{"numeric", "MulAdd"}:                   {llssa.SIMDFMA, simdTernary, types.IsFloat},
@@ -153,8 +159,18 @@ func init() {
 		simdOperations[simdKey{"", "Load" + name + "Array"}] = simdOperation{llssa.SIMDLoad, simdLoad, 0}
 		simdOperations[simdKey{"", "Broadcast" + name}] = simdOperation{llssa.SIMDBroadcast, simdBroadcast, 0}
 	}
-	for _, lanes := range []int{2, 4, 8, 16} {
-		simdOperations[simdKey{"numeric", fmt.Sprintf("broadcast1To%d", lanes)}] = simdOperation{llssa.SIMDSplatLane0, simdUnary, 0}
+	for _, lanes := range []int{2, 4, 8, 16, 32} {
+		simdOperations[simdKey{"numeric", fmt.Sprintf("broadcast1To%d", lanes)}] = simdOperation{llssa.SIMDSplatLane0, simdSplat, 0}
+	}
+	for _, name := range []string{"Int8x32", "Uint8x32", "Int16x16", "Uint16x16", "Int32x8", "Uint32x8", "Int64x4", "Uint64x4", "Float32x8", "Float64x4"} {
+		simdOperations[simdKey{"", "Load" + name + "Array"}] = simdOperation{llssa.SIMDLoad, simdLoad, 0}
+		simdOperations[simdKey{"", "Broadcast" + name}] = simdOperation{llssa.SIMDBroadcast, simdBroadcast, 0}
+	}
+	for _, name := range []string{"Mask8x32", "Mask16x16", "Mask32x8", "Mask64x4"} {
+		simdOperations[simdKey{"", name + "FromBits"}] = simdOperation{llssa.SIMDMaskFromBits, simdMaskFromBits, 0}
+	}
+	for _, name := range []string{"ToInt8x32", "ToInt16x16", "ToInt32x8", "ToInt64x4"} {
+		simdOperations[simdKey{"mask", name}] = simdOperation{llssa.SIMDBitcast, simdBitcast, 0}
 	}
 }
 
@@ -207,6 +223,12 @@ func lookupSIMD(fn *ssa.Function, arch string) (simdOperation, bool) {
 	if desc.op == llssa.SIMDLookupOrZero && arch != "arm64" && arch != "wasm" {
 		return fallback()
 	}
+	if desc.signature == simdSplat {
+		shape, _ := llssa.SIMDNumericShape(sig.Results().At(0).Type())
+		if key.name != fmt.Sprintf("broadcast1To%d", shape.Len()) {
+			return fallback()
+		}
+	}
 	if desc.signature == simdIntegerResize {
 		// The spelling describes the result shape, not just the operation.
 		shape, _ := llssa.SIMDNumericShape(sig.Results().At(0).Type())
@@ -236,6 +258,17 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	if !ok {
 		return false
 	}
+	// Extending type recognition must not silently enable width-specific
+	// handlers, or cross-width conversions with different lane semantics.
+	wide := simdVectorBits(vector) == 256
+	for _, tuple := range []*types.Tuple{sig.Params(), sig.Results()} {
+		for i := 0; i < tuple.Len(); i++ {
+			wide = wide || simdVectorBits(tuple.At(i).Type()) == 256
+		}
+	}
+	if wide && !d.supportsWide() {
+		return false
+	}
 	if d.elements != 0 && lanes.Elem().Underlying().(*types.Basic).Info()&d.elements == 0 {
 		return false
 	}
@@ -249,6 +282,34 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	var params []types.Type
 	result := vector
 	switch d.signature {
+	case simdSplat:
+		if sig.Results().Len() != 1 {
+			return false
+		}
+		result = sig.Results().At(0).Type()
+		shape, ok := llssa.SIMDNumericShape(result)
+		if !ok || !types.Identical(shape.Elem(), lanes.Elem()) || shape.Len() < lanes.Len() {
+			return false
+		}
+	case simdHalf:
+		if simdVectorBits(vector) != 256 || sig.Results().Len() != 1 {
+			return false
+		}
+		var half types.Type
+		if d.op == llssa.SIMDGetLo || d.op == llssa.SIMDGetHi {
+			result = sig.Results().At(0).Type()
+			half = result
+		} else {
+			if sig.Params().Len() != 1 {
+				return false
+			}
+			half = sig.Params().At(0).Type()
+			params = []types.Type{half}
+		}
+		shape, ok := llssa.SIMDNumericShape(half)
+		if !ok || simdVectorBits(half) != 128 || !types.Identical(shape.Elem(), lanes.Elem()) {
+			return false
+		}
 	case simdScalarShift:
 		params = []types.Type{types.Typ[types.Uint64]}
 	case simdCarrylessSelector:
@@ -332,6 +393,8 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 		bits := types.Typ[types.Uint8]
 		if lanes.Len() == 16 {
 			bits = types.Typ[types.Uint16]
+		} else if lanes.Len() == 32 {
+			bits = types.Typ[types.Uint32]
 		}
 		if d.signature == simdMaskFromBits {
 			params = []types.Type{bits}
@@ -344,7 +407,7 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 		}
 		result = sig.Results().At(0).Type()
 		mask, ok := llssa.SIMDMaskShape(result)
-		if !ok || mask.Len() != lanes.Len() {
+		if !ok || mask.Len() != lanes.Len() || simdVectorBits(result) != simdVectorBits(vector) {
 			return false
 		}
 		if d.signature == simdCompare {
@@ -359,6 +422,9 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 		result = sig.Results().At(0).Type()
 		shape, ok := llssa.SIMDNumericShape(result)
 		if !ok || d.signature == simdConvert && shape.Len() < lanes.Len() {
+			return false
+		}
+		if d.signature == simdBitcast && simdVectorBits(result) != simdVectorBits(vector) {
 			return false
 		}
 		if d.signature == simdConvert && shape.Len() != lanes.Len() {
@@ -405,6 +471,34 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 		}
 	}
 	return true
+}
+
+func simdVectorBits(typ types.Type) int64 {
+	if shape, ok := llssa.SIMDVectorShape(typ); ok {
+		return (&types.StdSizes{WordSize: 8, MaxAlign: 8}).Sizeof(shape) * 8
+	}
+	return 0
+}
+
+// The first wide stage consists of elementwise operations and memory/mask
+// primitives. Resizing, conversions and target-specific shuffles are qualified
+// separately rather than inheriting the SIMD128 implementation by name.
+func (d simdOperation) supportsWide() bool {
+	switch d.op {
+	case llssa.SIMDAdd, llssa.SIMDSub, llssa.SIMDMul, llssa.SIMDDiv,
+		llssa.SIMDShiftAllLeft, llssa.SIMDShiftAllRight,
+		llssa.SIMDAnd, llssa.SIMDOr, llssa.SIMDXor, llssa.SIMDAndNot, llssa.SIMDOrNot,
+		llssa.SIMDNeg, llssa.SIMDNot, llssa.SIMDAbs,
+		llssa.SIMDLoad, llssa.SIMDStore, llssa.SIMDStoreMasked, llssa.SIMDBroadcast,
+		llssa.SIMDSplatLane0, llssa.SIMDExtractLane, llssa.SIMDInsertLane,
+		llssa.SIMDGetLo, llssa.SIMDGetHi, llssa.SIMDSetLo, llssa.SIMDSetHi,
+		llssa.SIMDMaskFromBits, llssa.SIMDMaskToBits,
+		llssa.SIMDEqual, llssa.SIMDNotEqual, llssa.SIMDLess, llssa.SIMDLessEqual,
+		llssa.SIMDGreater, llssa.SIMDGreaterEqual, llssa.SIMDToMask,
+		llssa.SIMDBitcast, llssa.SIMDBitSelect, llssa.SIMDBitSelectNot, llssa.SIMDBlend:
+		return true
+	}
+	return false
 }
 
 func (p *context) simdOperation(fn *ssa.Function) (simdOperation, bool) {

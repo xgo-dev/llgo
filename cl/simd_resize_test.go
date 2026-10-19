@@ -122,6 +122,9 @@ func TestSIMDIntegerResizeDeclarations(t *testing.T) {
 				if _, ok := llssa.SIMDNumericShape(fn.Signature.Results().At(0).Type()); !ok {
 					continue
 				}
+				if simdVectorBits(fn.Signature.Recv().Type()) != 128 || simdVectorBits(fn.Signature.Results().At(0).Type()) != 128 {
+					continue // This regression qualifies the SIMD128 resize family.
+				}
 				var want llssa.SIMDOp
 				switch name := obj.Name(); {
 				case strings.HasPrefix(name, "ExtendLo"):
