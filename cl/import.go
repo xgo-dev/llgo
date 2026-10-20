@@ -1098,10 +1098,10 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 	for _, file := range files {
 		for _, group := range file.Comments {
 			for _, comment := range group.List {
-				if strings.HasPrefix(comment.Text, "//go:cgo_import_dynamic ") {
+				if strings.HasPrefix(comment.Text, "//go:cgo_import_dynamic ") || strings.HasPrefix(comment.Text, "//go:cgo_import_static ") {
 					fields := strings.Fields(comment.Text)
 					if len(fields) >= 2 && fields[1] != "_" {
-						prog.SetDynamicImport(fields[1])
+						prog.SetExternalImport(fields[1])
 					}
 				}
 			}

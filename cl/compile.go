@@ -432,7 +432,7 @@ func (p *context) compileGlobal(pkg llssa.Package, gbl *ssa.Global) {
 	if p.tryEmbedGlobalInit(pkg, gbl, g, name) {
 		return
 	}
-	dynamicImport := p.prog.IsDynamicImport(name)
+	externalImport := p.prog.IsExternalImport(name)
 	if info, _ := p.resolveLocality(gbl.Pkg.Pkg, llssa.FullName(gbl.Pkg.Pkg, gbl.Name())); define && vtype == goVar && info.Locality == llssa.LocalityNone {
 		init := p.staticGlobalInits[gbl]
 		if value, ok := p.rewriteValue(name); ok {
@@ -442,7 +442,7 @@ func (p *context) compileGlobal(pkg llssa.Package, gbl *ssa.Global) {
 				log.Printf("warning: ignoring rewrite for non-string variable %s (type: %v)", name, gbl.Type())
 			}
 		}
-		g.InitSharedGo(init, dynamicImport)
+		g.InitSharedGo(init, externalImport)
 		return
 	}
 	if value, ok := p.rewriteValue(name); ok {

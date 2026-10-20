@@ -965,8 +965,8 @@ var a int
 `, `; ModuleID = 'foo'
 source_filename = "foo"
 
-@foo.a = global i64 0, align 8
-@"foo.init$guard" = global i1 false, align 1
+@foo.a = common global i64 0, align 8
+@"foo.init$guard" = common global i1 false, align 1
 
 ; Function Attrs: null_pointer_is_valid
 define void @foo.init() #0 {
@@ -995,7 +995,7 @@ func fn(a int, b float64) int {
 `, `; ModuleID = 'foo'
 source_filename = "foo"
 
-@"foo.init$guard" = global i1 false, align 1
+@"foo.init$guard" = common global i1 false, align 1
 
 ; Function Attrs: null_pointer_is_valid
 define i64 @foo.fn(i64 %0, double %1) #0 {
@@ -1035,7 +1035,7 @@ func use(b bool) uint8 {
 `, `; ModuleID = 'foo'
 source_filename = "foo"
 
-@"foo.init$guard" = global i1 false, align 1
+@"foo.init$guard" = common global i1 false, align 1
 
 ; Function Attrs: null_pointer_is_valid
 define void @foo.init() #0 {
