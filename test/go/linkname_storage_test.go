@@ -75,6 +75,14 @@ func TestLinknameGoValueRepresentation(t *testing.T) {
 	if &a.Closure != &b.Closure || a.Closure == nil {
 		t.Fatal("closure storage is not shared")
 	}
+	// Invoke the initializer-created closure through both aliases before
+	// replacing it, checking that its captured state is shared as well.
+	if got := a.Closure(2); got != 22 {
+		t.Fatalf("initialized closure = %d", got)
+	}
+	if got := b.Closure(-2); got != 20 {
+		t.Fatalf("shared closure environment = %d", got)
+	}
 	original := a.Closure
 	t.Cleanup(func() { a.Closure = original })
 	n := 35
