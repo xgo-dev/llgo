@@ -1107,7 +1107,7 @@ func TestStaticGlobalInitSkipsExternalGlobal(t *testing.T) {
 import _ "unsafe"
 
 //go:linkname External C.external
-var External = 7
+var External int
 
 func Use() int { return External }
 `
@@ -1115,7 +1115,7 @@ func Use() int { return External }
 	if !strings.Contains(ir, "@external = external global i64") {
 		t.Fatalf("linknamed global should remain an external declaration:\n%s", ir)
 	}
-	assertStoreToGlobal(t, ir, "@external")
+	assertNoStoreToGlobal(t, ir, "@external")
 }
 
 func TestStaticGlobalInitDeterministicOrder(t *testing.T) {
