@@ -342,8 +342,12 @@ func (b Builder) Index(x, idx Expr, takeAddr func() (addr Expr, zero bool)) Expr
 		max = b.StringLen(x)
 	case *types.Array:
 		telem = prog.Index(x.Type)
-		ptr, zero = takeAddr()
 		max = prog.IntVal(uint64(t.Len()), prog.Int())
+		if x.ll.TypeKind() == llvm.VectorTypeKind {
+			idx = b.checkIndex(idx, max)
+			return Expr{b.impl.CreateExtractElement(x.impl, idx.impl, ""), telem}
+		}
+		ptr, zero = takeAddr()
 	}
 	idx = b.checkIndex(idx, max)
 	idx = b.physicalPointerIndex(idx)

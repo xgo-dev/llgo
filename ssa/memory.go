@@ -65,6 +65,13 @@ func (b Builder) aggregateValue(t Type, flds ...llvm.Value) Expr {
 		stored := b.aggregateValue(b.Prog.rawType(t.RawType().Underlying()), flds...)
 		return Expr{b.simdFromStorage(stored.impl, t), t}
 	}
+	if t.ll.TypeKind() == llvm.VectorTypeKind {
+		vec := llvm.Undef(t.ll)
+		for i, lane := range flds {
+			vec = b.impl.CreateInsertElement(vec, lane, llvm.ConstInt(b.Prog.tyInt32(), uint64(i), false), "")
+		}
+		return Expr{vec, t}
+	}
 	agg := llvm.Undef(t.ll)
 	for i, fld := range flds {
 		agg = b.impl.CreateInsertValue(agg, b.wrapStructField(t, i, fld), i, "")
@@ -83,7 +90,7 @@ func (b Builder) wrapStructField(t Type, index int, value llvm.Value) llvm.Value
 	if _, ok := simdTagIndex(t.RawType()); ok {
 		return llvm.ConstNull(t.ll.StructElementTypes()[index])
 	}
-	if t.kind == vkTuple && t.ll.StructElementTypes()[index] == b.Prog.aggregateElementType(t, index).ll {
+	if t.ll.TypeKind() == llvm.StructTypeKind && t.ll.StructElementTypes()[index] == value.Type() {
 		return value
 	}
 	value = b.toStorageValue(b.Prog.aggregateElementType(t, index), value)
@@ -514,6 +521,12 @@ func (b Builder) Load(ptr Expr) Expr {
 		return Expr{b.fromAtomicStorageValue(storageType, stored), telem}
 	}
 	stored := llvm.CreateLoad(b.impl, b.Prog.storageType(storageType), ptr.impl)
+	if lanes, ok := b.Prog.cVectorArray(storageType.raw.Type); ok {
+		// A legal slice-to-array-pointer conversion can produce this pointer
+		// from scalar-aligned storage, even across calls. Only vector-owned
+		// storage guarantees native alignment; do not infer it from *C.Vector.
+		stored.SetAlignment(int(b.Prog.sizes.Alignof(lanes.Elem())))
+	}
 	return Expr{b.fromStorageValue(storageType, stored), telem}
 }
 
@@ -540,7 +553,11 @@ func (b Builder) Store(ptr, val Expr) Expr {
 	if b.Prog.needsWidePointerStorage(storageType) {
 		return Expr{b.impl.CreateStore(b.toAtomicStorageValue(storageType, val.impl), ptr.impl), b.Prog.Void()}
 	}
-	return Expr{b.impl.CreateStore(b.toStorageValue(storageType, val.impl), ptr.impl), b.Prog.Void()}
+	stored := b.impl.CreateStore(b.toStorageValue(storageType, val.impl), ptr.impl)
+	if lanes, ok := b.Prog.cVectorArray(storageType.raw.Type); ok {
+		stored.SetAlignment(int(b.Prog.sizes.Alignof(lanes.Elem())))
+	}
+	return Expr{stored, b.Prog.Void()}
 }
 
 // Advance returns the pointer ptr advanced by offset.

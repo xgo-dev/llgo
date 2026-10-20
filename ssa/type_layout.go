@@ -65,7 +65,7 @@ func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, 
 	}
 	// Only presence is needed here. Computing the source layout would query
 	// sizes before the standalone SSA API's fallback below is initialized.
-	if goarch != "386" && !(goarch == "wasm" && p.target.WasmProfile != "") && !p.containsVectorStorage(raw) {
+	if goarch != "386" && !(goarch == "wasm" && p.target.WasmProfile != "") && !p.containsVectorStorage(raw, false) {
 		return fields, nil
 	}
 
