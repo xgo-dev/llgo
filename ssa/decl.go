@@ -275,9 +275,9 @@ func (g Global) InitNil() {
 // InitSharedGo defines ordinary package-level Go storage, including variables
 // referenced through linkname from a separately compiled package.
 // Zero definitions coalesce; a nonzero static initializer overrides them.
-// Keep runtime initialization in each package's init function. A dynamic
+// Keep runtime initialization in each package's init function. A cgo
 // import may replace zero storage, but never a nonzero static definition.
-func (g Global) InitSharedGo(v Expr, dynamicImport bool) {
+func (g Global) InitSharedGo(v Expr, externalImport bool) {
 	if g.isZeroSizedAlias {
 		return
 	}
@@ -292,13 +292,18 @@ func (g Global) InitSharedGo(v Expr, dynamicImport bool) {
 		}
 		return
 	}
-	if init.IsNull() && dynamicImport {
+	if init.IsNull() && externalImport {
 		return
 	}
 	g.impl.SetInitializer(init)
 	linkage := llvm.ExternalLinkage
 	if init.IsNull() {
 		linkage = llvm.CommonLinkage
+		if g.prog.Target().GOARCH == "wasm" {
+			// LLVM's Wasm backend cannot emit common symbols. Weak data
+			// definitions also coalesce zeros and yield to a strong initializer.
+			linkage = llvm.WeakAnyLinkage
+		}
 	}
 	g.impl.SetLinkage(linkage)
 }

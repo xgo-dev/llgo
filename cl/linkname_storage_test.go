@@ -37,7 +37,7 @@ var Initialized uintptr = 7
 	for _, target := range []*llssa.Target{
 		{GOOS: "darwin", GOARCH: "arm64"}, {GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "windows", GOARCH: "386"}, {GOOS: "windows", GOARCH: "amd64"},
-		{GOOS: "windows", GOARCH: "arm64"},
+		{GOOS: "windows", GOARCH: "arm64"}, {GOOS: "wasip1", GOARCH: "wasm"},
 	} {
 		t.Run(target.GOOS+"/"+target.GOARCH, func(t *testing.T) {
 			ir := compileWithRewritesTarget(t, source, nil, target)
@@ -46,8 +46,11 @@ var Initialized uintptr = 7
 				"@shared_callback = common global { ptr, ptr } zeroinitializer",
 				"@shared_native = external global ptr", `@"go:shared_value" = common global i32 0`,
 				"@static_import = external global i8", "@shared_import = external global i", "@shared.Default = external global i",
-				fmt.Sprintf("@shared.Initialized = global i%d 7", map[bool]int{true: 32, false: 64}[target.GOARCH == "386"]),
+				fmt.Sprintf("@shared.Initialized = global i%d 7", map[bool]int{true: 32, false: 64}[target.GOARCH == "386" || target.GOARCH == "wasm"]),
 			} {
+				if target.GOARCH == "wasm" {
+					want = strings.ReplaceAll(want, "common global", "weak global")
+				}
 				if !strings.Contains(ir, want) {
 					t.Errorf("missing %q:\n%s", want, ir)
 				}
