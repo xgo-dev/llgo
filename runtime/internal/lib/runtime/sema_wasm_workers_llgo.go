@@ -26,7 +26,9 @@ func (m *wasmSemaMutex) Unlock() {
 	m.mutex.Unlock()
 }
 
-func semaAcquire(addr *uint32, lifo bool) {
+func semaAcquire(addr *uint32, lifo bool) { semaAcquireInternal(addr, lifo, false) }
+
+func semaAcquireInternal(addr *uint32, lifo, durable bool) {
 	value := atomic.LoadUint32(addr)
 	if value != 0 && atomic.CompareAndSwapUint32(addr, value, value-1) {
 		return
@@ -38,7 +40,11 @@ func semaAcquire(addr *uint32, lifo bool) {
 		return
 	}
 	w := acquireWasmWaiter(0)
+	if durable {
+		w.synctest = llruntime.NewSynctestWaiter()
+	}
 	semaQueue(addr).push(w, lifo)
+	w.synctest.Block()
 	wasmWaitQueuesLock.Unlock()
 	w.waiter.Park()
 	wasmWaitQueuesLock.Lock()
@@ -48,22 +54,27 @@ func semaAcquire(addr *uint32, lifo bool) {
 
 func semaRelease(addr *uint32, handoff bool) {
 	key := uintptr(unsafe.Pointer(addr))
-	wasmWaitQueuesLock.Lock()
-	if q := semaQueues[key]; q != nil {
-		if w := q.pop(); w != nil {
-			if q.head == nil {
-				delete(semaQueues, key)
+	w := func() *wasmWaiter {
+		wasmWaitQueuesLock.Lock()
+		defer wasmWaitQueuesLock.Unlock()
+		if q := semaQueues[key]; q != nil {
+			if w := q.pop(); w != nil {
+				if q.head == nil {
+					delete(semaQueues, key)
+				}
+				w.synctest.Wake()
+				return w
 			}
-			wasmWaitQueuesLock.Unlock()
-			w.waiter.Ready()
-			if handoff {
-				llruntime.Gosched()
-			}
-			return
+		}
+		atomic.AddUint32(addr, 1)
+		return nil
+	}()
+	if w != nil {
+		w.waiter.Ready()
+		if handoff {
+			llruntime.Gosched()
 		}
 	}
-	atomic.AddUint32(addr, 1)
-	wasmWaitQueuesLock.Unlock()
 }
 
 //go:linkname sync_runtime_notifyListWait sync.runtime_notifyListWait
@@ -77,7 +88,9 @@ func sync_runtime_notifyListWait(l *notifyList, ticket uint32) {
 		return
 	}
 	w := acquireWasmWaiter(ticket)
+	w.synctest = llruntime.NewSynctestWaiter()
 	notifyQueue(l).push(w, false)
+	w.synctest.Block()
 	wasmWaitQueuesLock.Unlock()
 	w.waiter.Park()
 	wasmWaitQueuesLock.Lock()
@@ -87,50 +100,53 @@ func sync_runtime_notifyListWait(l *notifyList, ticket uint32) {
 
 //go:linkname sync_runtime_notifyListNotifyAll sync.runtime_notifyListNotifyAll
 func sync_runtime_notifyListNotifyAll(l *notifyList) {
-	wasmWaitQueuesLock.Lock()
-	wait := atomic.LoadUint32(&l.wait)
-	if atomic.LoadUint32(&l.notify) == wait {
-		wasmWaitQueuesLock.Unlock()
-		return
-	}
-	atomic.StoreUint32(&l.notify, wait)
-	key := uintptr(unsafe.Pointer(l))
-	q := notifyQueues[key]
-	if q == nil {
-		wasmWaitQueuesLock.Unlock()
-		return
-	}
-	delete(notifyQueues, key)
-	wasmWaitQueuesLock.Unlock()
-	for {
-		w := q.pop()
-		if w == nil {
-			return
+	q := func() *wasmWaitQueue {
+		wasmWaitQueuesLock.Lock()
+		defer wasmWaitQueuesLock.Unlock()
+		wait := atomic.LoadUint32(&l.wait)
+		if atomic.LoadUint32(&l.notify) == wait {
+			return nil
 		}
+		key := uintptr(unsafe.Pointer(l))
+		q := notifyQueues[key]
+		q.checkWake()
+		atomic.StoreUint32(&l.notify, wait)
+		delete(notifyQueues, key)
+		return q
+	}()
+	if q == nil {
+		return
+	}
+	for w := q.pop(); w != nil; w = q.pop() {
+		w.synctest.Wake()
 		w.waiter.Ready()
 	}
 }
 
 //go:linkname sync_runtime_notifyListNotifyOne sync.runtime_notifyListNotifyOne
 func sync_runtime_notifyListNotifyOne(l *notifyList) {
-	wasmWaitQueuesLock.Lock()
-	notify := atomic.LoadUint32(&l.notify)
-	if notify == atomic.LoadUint32(&l.wait) {
-		wasmWaitQueuesLock.Unlock()
-		return
-	}
-	atomic.StoreUint32(&l.notify, notify+1)
-	key := uintptr(unsafe.Pointer(l))
-	q := notifyQueues[key]
-	if q == nil {
-		wasmWaitQueuesLock.Unlock()
-		return
-	}
-	w := q.removeTicket(notify)
-	if q.head == nil {
-		delete(notifyQueues, key)
-	}
-	wasmWaitQueuesLock.Unlock()
+	w := func() *wasmWaiter {
+		wasmWaitQueuesLock.Lock()
+		defer wasmWaitQueuesLock.Unlock()
+		notify := atomic.LoadUint32(&l.notify)
+		if notify == atomic.LoadUint32(&l.wait) {
+			return nil
+		}
+		key := uintptr(unsafe.Pointer(l))
+		q := notifyQueues[key]
+		var w *wasmWaiter
+		if q != nil {
+			w = q.removeTicket(notify)
+			if q.head == nil {
+				delete(notifyQueues, key)
+			}
+		}
+		atomic.StoreUint32(&l.notify, notify+1)
+		if w != nil {
+			w.synctest.Wake()
+		}
+		return w
+	}()
 	if w != nil {
 		w.waiter.Ready()
 	}

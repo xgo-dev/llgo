@@ -241,7 +241,16 @@ else:
         upload = next(step for step in steps if step.get("name") == "Upload Linux packages to Fury")
         packages = [f".dist/llgo1.2.3.linux-{arch}.{fmt}"
                     for arch in ("amd64", "arm64") for fmt in ("deb", "rpm")]
-        for case in ("success", "created", "missing-token", "missing-package", "invalid-account", "http-failure", "transport-failure"):
+        cases = [(case, "xgo-dev", "bad/account" if case == "invalid-account" else "goplus", "goplus")
+                 for case in ("success", "created", "missing-token", "missing-package", "invalid-account",
+                              "http-failure", "transport-failure")]
+        cases += [("upstream-default", "xgo-dev", "", "goplus"),
+                  ("fork-default", "cpunion", "", "cpunion"),
+                  ("upstream-override", "xgo-dev", "custom-account", "custom-account"),
+                  ("fork-override", "cpunion", "custom-account", "custom-account")]
+        success_cases = {"success", "created", "upstream-default", "fork-default",
+                         "upstream-override", "fork-override"}
+        for case, owner, account, expected_account in cases:
             with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root / ".dist").mkdir()
@@ -263,21 +272,22 @@ else:
                                         capture_output=True, text=True, env={**os.environ,
                                             "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
                                             "FURY_TOKEN": "" if case == "missing-token" else "test-only-token",
-                                            "FURY_ACCOUNT": "bad/account" if case == "invalid-account" else "xgo-dev",
+                                            "FURY_ACCOUNT": account,
+                                            "GITHUB_REPOSITORY_OWNER": owner,
                                             "GITHUB_REF_NAME": "v1.2.3",
                                             "UPLOAD_LOG": str(log),
                                             "CURL_STATUS": "503" if case == "http-failure" else "201" if case == "created" else "200",
                                             "CURL_EXIT": "7" if case == "transport-failure" else "0"})
                 calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
-                self.assertEqual(result.returncode == 0, case in {"success", "created"}, result.stderr)
+                self.assertEqual(result.returncode == 0, case in success_cases, result.stderr)
                 self.assertNotIn("test-only-token", result.stdout + result.stderr)
-                expected_calls = 4 if case in {"success", "created"} else 1 if case.endswith("failure") else 0
+                expected_calls = 4 if case in success_cases else 1 if case.endswith("failure") else 0
                 self.assertEqual(len(calls), expected_calls)
                 for package, args in zip(packages, calls):
                     self.assertIn(f"file=@{package}", args)
                     self.assertIn("public=true", args)
                     self.assertIn("Authorization: test-only-token", args)
-                    self.assertEqual(args[-1], "https://push.fury.io/uploads?as=xgo-dev")
+                    self.assertEqual(args[-1], f"https://push.fury.io/uploads?as={expected_account}")
 
     def test_runner_policy_is_not_duplicated_in_workflows(self):
         for path in WORKFLOWS.glob("*.yml"):

@@ -2671,7 +2671,22 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			p.inCFunc = true
 			args := p.compileValues(b, args, kind)
 			p.inCFunc = false
-			if act == llssa.Call && p.forwardCVariadicWrapper(call) && b.CanForwardVarargs(aFn.Expr) {
+			forward := false
+			if isCVariadicWrapperForwarding(p.goFn, call) {
+				reason := p.cVariadicWrapperForwardingReason(p.goFn, call)
+				if reason == "" && (act != llssa.Call || !b.CanForwardVarargs(aFn.Expr)) {
+					reason = "incompatible fixed LLVM prototypes, calling conventions, or result conversion"
+				}
+				if reason == "" {
+					forward = true
+				} else {
+					if p.variadicErrors == nil {
+						p.variadicErrors = make(map[*ssa.Function]error)
+					}
+					p.variadicErrors[p.goFn] = p.cVariadicForwardingError(p.goFn, reason)
+				}
+			}
+			if forward {
 				// A tail transfer removes the synthetic frame itself, so no
 				// recover-frame alias may surround it (or run after the call).
 				ret = b.CallForwardVarargs(aFn.Expr, args...)
@@ -2832,8 +2847,17 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 	return
 }
 
-func (p *context) forwardCVariadicWrapper(call *ssa.CallCommon) bool {
-	fn := p.goFn
+func isCVariadicWrapperForwarding(fn *ssa.Function, call *ssa.CallCommon) bool {
+	if fn == nil || fn.Synthetic == "" || !llssa.HasNameValist(fn.Signature) ||
+		!llssa.HasNameValist(call.Signature()) || len(call.Args) == 0 || len(fn.Params) == 0 {
+		return false
+	}
+	param, ok := call.Args[len(call.Args)-1].(*ssa.Parameter)
+	return ok && param == fn.Params[len(fn.Params)-1]
+}
+
+// cVariadicWrapperForwardingReason returns an empty string when forwarding is supported.
+func (p *context) cVariadicWrapperForwardingReason(fn *ssa.Function, call *ssa.CallCommon) string {
 	callee := call.Signature()
 	// Promoted pointer methods adjust the receiver and return the C call's
 	// result. compileValues omits the incoming ellipsis marker: the wrapper
@@ -2841,40 +2865,35 @@ func (p *context) forwardCVariadicWrapper(call *ssa.CallCommon) bool {
 	// call. Wasm does not support variadic tail calls. Explicit -target
 	// profiles (including custom native profiles) remain excluded because
 	// their backend and storage ABI may not support this forwarding path.
-	// Excluded variadic wrappers keep their existing lowering, which can
-	// silently drop the incoming ellipsis. Correct forwarding or diagnostics
-	// for these forms is tracked in #2855.
 	target := p.prog.Target()
-	if target.GOARCH == "wasm" || target.Target != "" {
-		return false
+	if target.GOARCH == "wasm" {
+		return "WebAssembly does not support variadic tail forwarding"
 	}
-	if fn == nil || fn.Synthetic == "" {
-		return false
+	if target.Target != "" {
+		return fmt.Sprintf("explicit target profile %q does not support variadic forwarding", target.Target)
 	}
 	// Value receivers do not have LLVM's required matching fixed prototype.
 	if fn.Signature.Recv() == nil || !isPointerGoType(fn.Signature.Recv().Type()) ||
 		callee.Recv() == nil || !isPointerGoType(callee.Recv().Type()) {
-		return false
-	}
-	if !llssa.HasNameValist(fn.Signature) || !llssa.HasNameValist(callee) ||
-		len(call.Args) == 0 || len(fn.Params) == 0 {
-		return false
+		return "wrapper and callee must have pointer receivers"
 	}
 	// Tuple returns need extract/insert instructions after the call, while
 	// aggregate ABI lowering can replace the call and lose its tail marker.
 	// Neither path can preserve the immediate return required by musttail.
 	results := callee.Results()
-	if results.Len() > 1 || results.Len() == 1 && !isCVariadicForwardScalar(results.At(0).Type()) {
-		return false
+	if results.Len() > 1 {
+		return "multiple results cannot preserve the variadic tail call"
+	}
+	if results.Len() == 1 && !isCVariadicForwardScalar(results.At(0).Type()) {
+		return "non-scalar result requires unsupported ABI lowering"
 	}
 	params := callee.Params()
 	for i := 0; i < params.Len()-1; i++ {
 		if !isCVariadicForwardScalar(params.At(i).Type()) {
-			return false
+			return fmt.Sprintf("fixed parameter %q is not scalar", params.At(i).Name())
 		}
 	}
-	param, ok := call.Args[len(call.Args)-1].(*ssa.Parameter)
-	return ok && param == fn.Params[len(fn.Params)-1]
+	return ""
 }
 
 func isCVariadicForwardScalar(t types.Type) bool {

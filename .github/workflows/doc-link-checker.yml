@@ -49,6 +49,19 @@ jobs:
 
       - name: Link Checker
         id: lychee
+        # A bounded second attempt handles transient upstream HTTP failures.
+        # The retry below remains fatal, including for persistently broken links.
+        continue-on-error: true
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --max-concurrency 3 --retry-wait-time 15 README.md
+
+      - name: Wait before retrying failed links
+        if: steps.lychee.outcome == 'failure'
+        run: sleep 15
+
+      - name: Retry Link Checker
+        if: steps.lychee.outcome == 'failure'
         uses: lycheeverse/lychee-action@v2
         with:
           args: --max-concurrency 3 --retry-wait-time 15 README.md

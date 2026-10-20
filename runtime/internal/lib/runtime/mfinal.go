@@ -63,10 +63,11 @@ func initFinalizerState() {
 	finalizerState.queueMu.Init(nil)
 	finalizerState.ready.Init(nil)
 	finalizerState.m = make(map[uintptr]*finalizerEntry)
-	started := make(chan struct{})
-	go runFinalizers(started)
-	// Exclude the idle worker from NumGoroutine before returning to user code.
-	<-started
+	llruntime.SynctestOutside(func() {
+		started := make(chan struct{})
+		go runFinalizers(started)
+		<-started
+	})
 }
 
 func SetFinalizer(obj any, finalizer any) {

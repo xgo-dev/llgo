@@ -100,10 +100,10 @@ container images. These checks gate tag publishing and require no Fury token.
 Stable `vX.Y.Z` tags upload DEB/RPM packages to Gemfury as public packages after
 the release succeeds.
 Set the repository Actions secret `FURY_TOKEN` to an upload-only Gemfury Push
-token. The target account defaults to the repository owner (`xgo-dev` upstream);
-set the repository variable `FURY_ACCOUNT` to use another account. Prerelease
-tags publish their GitHub assets and container version tags without uploading
-to Fury.
+token. The upstream `xgo-dev` organization publishes to the Gemfury account
+`goplus`. Forks default to their repository owner. Set the repository variable
+`FURY_ACCOUNT` to override the target account. Prerelease tags publish their
+GitHub assets and container version tags without uploading to Fury.
 
 GHCR publishing uses `GITHUB_TOKEN` with `packages: write`. After the first
 publish, set the container package visibility to public to allow anonymous pulls.

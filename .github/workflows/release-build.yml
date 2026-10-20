@@ -602,10 +602,16 @@ jobs:
         if: steps.release-type.outputs.stable == 'true'
         env:
           FURY_TOKEN: ${{ secrets.FURY_TOKEN }}
-          FURY_ACCOUNT: ${{ vars.FURY_ACCOUNT || github.repository_owner }}
+          FURY_ACCOUNT: ${{ vars.FURY_ACCOUNT }}
         run: |
           set -euo pipefail
           : "${FURY_TOKEN:?Set the FURY_TOKEN Actions secret to a Gemfury Push token}"
+          if [[ -z "$FURY_ACCOUNT" ]]; then
+            FURY_ACCOUNT="$GITHUB_REPOSITORY_OWNER"
+            if [[ "$FURY_ACCOUNT" == 'xgo-dev' ]]; then
+              FURY_ACCOUNT=goplus
+            fi
+          fi
           if [[ ! "$FURY_ACCOUNT" =~ ^[A-Za-z0-9_-]+$ ]]; then
             echo 'Invalid FURY_ACCOUNT' >&2
             exit 1

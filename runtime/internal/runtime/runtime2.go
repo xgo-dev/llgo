@@ -39,12 +39,14 @@ const (
 // while the WebAssembly fiber scheduler shares one M/P across its Gs. Suspended
 // execution state is held by the backend-specific runtimeContext.
 type g struct {
-	defer_       *Defer
-	panic_       unsafe.Pointer
-	panicPCs     panicPCStore
-	recoverFrame unsafe.Pointer
-	recoverPanic unsafe.Pointer
-	m            *m
+	bubble        *SynctestBubble
+	bubbleBlocked bool
+	defer_        *Defer
+	panic_        unsafe.Pointer
+	panicPCs      panicPCStore
+	recoverFrame  unsafe.Pointer
+	recoverPanic  unsafe.Pointer
+	m             *m
 
 	atomicstatus    uint32
 	goid            uint64

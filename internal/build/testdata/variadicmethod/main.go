@@ -9,6 +9,14 @@ type Receiver int32
 //llgo:link (*Receiver).Check C.variadic_method_check
 func (*Receiver) Check(__llgo_va_list ...any) int32 { return 0 }
 
+type ValueReceiver int32
+
+//llgo:link ValueReceiver.Check C.variadic_method_value_check
+func (ValueReceiver) Check(__llgo_va_list ...any) int32 { return 0 }
+
+//go:linkname directValueCheck C.variadic_method_value_check
+func directValueCheck(marker int32, __llgo_va_list ...any) int32
+
 type Embedded struct {
 	padding [3]int64
 	*Receiver
@@ -53,6 +61,12 @@ func checkNil(value Checker) {
 }
 
 func main() {
+	// Direct calls supply their own ellipsis. The unused (*ValueReceiver)
+	// wrapper must not make these supported calls fail compilation.
+	value := ValueReceiver(7)
+	if value.Check(int32(100), int32(200)) != 42 || directValueCheck(7, int32(100), int32(200)) != 42 {
+		panic("direct C variadic arguments were corrupted")
+	}
 	marker := Receiver(7)
 	embedded := Embedded{Receiver: &marker}
 	nested := Nested{Embedded: &embedded}

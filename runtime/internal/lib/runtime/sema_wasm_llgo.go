@@ -10,9 +10,10 @@ import (
 )
 
 type wasmWaiter struct {
-	next   *wasmWaiter
-	waiter llruntime.SchedulerWaiter
-	ticket uint32
+	synctest *llruntime.SynctestWaiter
+	next     *wasmWaiter
+	waiter   llruntime.SchedulerWaiter
+	ticket   uint32
 }
 
 type wasmWaitQueue struct {
@@ -39,6 +40,7 @@ func acquireWasmWaiter(ticket uint32) *wasmWaiter {
 }
 
 func releaseWasmWaiter(w *wasmWaiter) {
+	w.synctest = nil
 	w.waiter = llruntime.SchedulerWaiter{}
 	w.ticket = 0
 	w.next = wasmWaiterFree
@@ -67,6 +69,7 @@ func (q *wasmWaitQueue) pop() *wasmWaiter {
 	if w == nil {
 		return nil
 	}
+	w.synctest.CheckWake()
 	q.head = w.next
 	if q.head == nil {
 		q.tail = nil
@@ -79,6 +82,7 @@ func (q *wasmWaitQueue) removeTicket(ticket uint32) *wasmWaiter {
 	var prev *wasmWaiter
 	for w := q.head; w != nil; w = w.next {
 		if w.ticket == ticket {
+			w.synctest.CheckWake()
 			if prev == nil {
 				q.head = w.next
 			} else {
@@ -93,6 +97,14 @@ func (q *wasmWaitQueue) removeTicket(ticket uint32) *wasmWaiter {
 		prev = w
 	}
 	return nil
+}
+
+func (q *wasmWaitQueue) checkWake() {
+	if q != nil {
+		for w := q.head; w != nil; w = w.next {
+			w.synctest.CheckWake()
+		}
+	}
 }
 
 var semaQueues map[uintptr]*wasmWaitQueue
@@ -135,8 +147,8 @@ func sync_runtime_SemacquireRWMutex(addr *uint32, lifo bool, _ int) {
 	semaAcquire(addr, lifo)
 }
 
-func syncWaitGroupAcquire(addr *uint32) {
-	semaAcquire(addr, false)
+func syncWaitGroupAcquire(addr *uint32, durable bool) {
+	semaAcquireInternal(addr, false, durable)
 }
 
 func runtime_SemacquireMutex(addr *uint32, lifo bool, _ int) {

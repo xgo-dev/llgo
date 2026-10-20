@@ -306,14 +306,23 @@ func TestSyscallSourcePatchPreservesTargetImplementations(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !changed || len(files) != 2 {
-				t.Fatalf("syscall patch changed = %v, files = %v, want two selected patches", changed, files)
+			wantCount := 2
+			if target.goos == "linux" {
+				wantCount++ // owned-thread entry points and credential pointers
 			}
+			if !changed || len(files) != wantCount {
+				t.Fatalf("syscall patch changed = %v, files = %v, want %d selected patches", changed, files, wantCount)
+			}
+			allThreads := false
 			for _, file := range files {
+				allThreads = allThreads || filepath.Base(file) == "allthreads_linux.go"
 				patchFile := filepath.Join(runtime.GOROOT(), "src", "syscall", "z_llgo_patch_"+filepath.Base(file))
 				if strings.Contains(string(overlay[patchFile]), "github.com/xgo-dev/llgo/runtime") {
 					t.Fatalf("overlay[%q] adds a private runtime dependency", patchFile)
 				}
+			}
+			if allThreads != (target.goos == "linux") {
+				t.Fatalf("all-thread patch selected = %v for %s", allThreads, target.goos)
 			}
 			for _, name := range target.asm {
 				asmFile := filepath.Join(runtime.GOROOT(), "src", "syscall", name)

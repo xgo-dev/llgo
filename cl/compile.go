@@ -180,6 +180,7 @@ type context struct {
 	recvNilDerefChecks   map[*ssa.UnOp]token.Pos
 	vargs                map[*ssa.Alloc][]llssa.Expr // varargs
 	funcs                map[*ssa.Function]llssa.Function
+	variadicErrors       map[*ssa.Function]error
 	linkOnceFns          map[*ssa.Function]none
 	stackDefers          map[*ssa.Function]bool
 	anonDefers           map[*ssa.Function]bool
@@ -3040,6 +3041,9 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 				}
 			}
 		}
+	}
+	if err = ctx.validateCVariadicWrapperUses(); err != nil {
+		return nil, nil, err
 	}
 	ret.MaterializePreserveSyms()
 	if metaCollect {

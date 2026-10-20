@@ -54,6 +54,7 @@ func (s *chanSignal) destroy() {
 }
 
 func chanBlockForever() {
+	NewSynctestWaiter().Block()
 	var signal chanSignal
 	signal.init()
 	signal.lock()

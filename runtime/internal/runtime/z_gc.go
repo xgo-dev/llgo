@@ -103,10 +103,11 @@ func initCleanupSlots() {
 	cleanupSlots.mu.Init(nil)
 	cleanupQueue.mu.Init(nil)
 	cleanupQueue.ready.Init(nil)
-	started := make(chan struct{})
-	go runCleanups(started)
-	// Exclude the idle worker from NumGoroutine before returning to user code.
-	<-started
+	SynctestOutside(func() {
+		started := make(chan struct{})
+		go runCleanups(started)
+		<-started
+	})
 }
 
 // BDWGC may invoke finalizers synchronously from any allocation, including
