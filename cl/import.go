@@ -943,18 +943,15 @@ func (p *context) varName(pkg *types.Package, v *ssa.Global) (vName string, vtyp
 				panic(fmt.Errorf("stdcall linkname namespace applies only to functions: %s", name))
 			}
 			if strings.HasPrefix(v, "go:") {
-				if llssa.PathOf(pkg) == "runtime" {
-					return v, goVar, true
-				}
-				return v, goVar, false
+				return v, goVar, true
 			}
 			if pos := strings.IndexByte(v, '.'); pos >= 0 {
 				if pos == 2 && v[0] == 'p' && v[1] == 'y' {
 					return v[3:], pyVar, false
 				}
-				return replaceGoName(v, pos), goVar, false
+				return replaceGoName(v, pos), goVar, true
 			}
-			return v, cVar, false
+			return v, goVar, true
 		}
 	}
 	return name, goVar, true
@@ -1097,6 +1094,18 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 	}
 	if err := collectPackageLinknames(prog, fset, files, syms, linkDocs); err != nil {
 		return err
+	}
+	for _, file := range files {
+		for _, group := range file.Comments {
+			for _, comment := range group.List {
+				if strings.HasPrefix(comment.Text, "//go:cgo_import_dynamic ") {
+					fields := strings.Fields(comment.Text)
+					if len(fields) >= 2 && fields[1] != "_" {
+						prog.SetDynamicImport(fields[1])
+					}
+				}
+			}
+		}
 	}
 	prog.MarkPackageSyntaxParsed(pkg)
 	return nil

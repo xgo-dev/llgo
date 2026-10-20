@@ -28,6 +28,7 @@ import (
 type packageSyntaxData struct {
 	mu                   sync.RWMutex
 	linknames            map[string]string
+	dynamicImports       map[string]none
 	wasmImports          map[string]wasmImport
 	exports              map[string]string
 	closureEnvDirectives map[closureEnvDirectiveKey]none
@@ -39,6 +40,7 @@ type packageSyntaxData struct {
 func newPackageSyntaxData() *packageSyntaxData {
 	return &packageSyntaxData{
 		linknames:            make(map[string]string),
+		dynamicImports:       make(map[string]none),
 		wasmImports:          make(map[string]wasmImport),
 		exports:              make(map[string]string),
 		closureEnvDirectives: make(map[closureEnvDirectiveKey]none),
@@ -51,6 +53,21 @@ func newPackageSyntaxData() *packageSyntaxData {
 type wasmImport struct {
 	module string
 	name   string
+}
+
+// SetDynamicImport records the literal local symbol of cgo_import_dynamic.
+// Imports can name ordinary package variables without any linkname directive.
+func (p Program) SetDynamicImport(name string) {
+	p.packageSyntax.mu.Lock()
+	p.packageSyntax.dynamicImports[name] = none{}
+	p.packageSyntax.mu.Unlock()
+}
+
+func (p Program) IsDynamicImport(name string) bool {
+	p.packageSyntax.mu.RLock()
+	_, ok := p.packageSyntax.dynamicImports[name]
+	p.packageSyntax.mu.RUnlock()
+	return ok
 }
 
 // SetPackageExport records an export directive before the LLVM Package that

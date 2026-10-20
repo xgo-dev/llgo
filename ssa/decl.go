@@ -199,7 +199,7 @@ func (p Package) doNewVar(name string, t Type) Global {
 func (p Package) doNewVarEx(name string, t Type, threadLocal bool) Global {
 	elem := p.Prog.Elem(t)
 	typ := p.Prog.storageType(elem)
-	if !threadLocal && p.Prog.td.TypeAllocSize(typ) == 0 {
+	if !threadLocal && p.Prog.td.TypeAllocSize(typ) == 0 && !p.Prog.HasLinknameTarget(name) {
 		var rt *types.Package
 		if p.Prog.rt != nil || p.Prog.rtget != nil {
 			rt = p.Prog.runtime()
@@ -270,6 +270,37 @@ func (g Global) InitNil() {
 		return
 	}
 	g.impl.SetInitializer(llvm.ConstNull(g.impl.GlobalValueType()))
+}
+
+// InitSharedGo defines ordinary package-level Go storage, including variables
+// referenced through linkname from a separately compiled package.
+// Zero definitions coalesce; a nonzero static initializer overrides them.
+// Keep runtime initialization in each package's init function. A dynamic
+// import may replace zero storage, but never a nonzero static definition.
+func (g Global) InitSharedGo(v Expr, dynamicImport bool) {
+	if g.isZeroSizedAlias {
+		return
+	}
+	init := llvm.ConstNull(g.impl.GlobalValueType())
+	if !v.IsNil() {
+		init = g.prog.toStorageConstant(g.prog.Elem(g.Type), v.impl)
+	}
+	previous := g.impl.Initializer()
+	if !previous.IsNil() && !previous.IsNull() {
+		if !init.IsNull() {
+			panic(fmt.Errorf("duplicate definition of Go variable %s", g.impl.Name()))
+		}
+		return
+	}
+	if init.IsNull() && dynamicImport {
+		return
+	}
+	g.impl.SetInitializer(init)
+	linkage := llvm.ExternalLinkage
+	if init.IsNull() {
+		linkage = llvm.CommonLinkage
+	}
+	g.impl.SetLinkage(linkage)
 }
 
 func (g Global) ReplaceAllUsesWith(v Expr) {

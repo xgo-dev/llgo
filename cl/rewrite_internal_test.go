@@ -1105,7 +1105,7 @@ var Dynamic = [2]int{value(), 9}
 func Use() int { return Dynamic[0] + Dynamic[1] }
 `
 	ir := compileWithRewrites(t, src, nil)
-	if !strings.Contains(ir, "@staticinit.Dynamic = global [2 x i64] zeroinitializer") {
+	if !strings.Contains(ir, "@staticinit.Dynamic = common global [2 x i64] zeroinitializer") {
 		t.Fatalf("dynamic global should keep zero initializer:\n%s", ir)
 	}
 	assertStoreToGlobal(t, ir, "@staticinit.Dynamic")
@@ -2474,7 +2474,7 @@ var G = Zero{}
 func Use() int { return G.Value + G.Array[1] }
 `
 	ir := compileWithRewrites(t, src, nil)
-	if !strings.Contains(ir, "@staticinit.G = global %staticinit.Zero zeroinitializer") {
+	if !strings.Contains(ir, "@staticinit.G = common global %staticinit.Zero zeroinitializer") {
 		t.Fatalf("missing zero static initializer:\n%s", ir)
 	}
 	assertNoStoreToGlobal(t, ir, "@staticinit.G")
