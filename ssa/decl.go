@@ -564,12 +564,10 @@ func newParams(fn Type, prog Program) (params []Type, hasVArg bool) {
 			n--
 		}
 		params = make([]Type, n)
-		bg := GoDecl
-		if prog.isNativeStorage(fn) {
-			bg = CDecl
-		}
 		for i := 0; i < n; i++ {
-			params[i] = prog.Type(in.At(i).Type(), bg)
+			// FuncDecl already lowered Go signatures. Converting again would
+			// mislabel a native callback pointer as a two-word Go closure.
+			params[i] = prog.childStorageType(fn, in.At(i).Type())
 		}
 	}
 	return

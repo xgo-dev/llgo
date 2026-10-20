@@ -203,10 +203,10 @@ func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
 			switch decl := decl.(type) {
 			case *ast.FuncDecl:
 				fullName, inPkgName := astFuncName(pkgPath, decl, aliases)
+				if exportName, ok := p.prog.PackageExport(fullName); ok {
+					p.pkg.SetExport(fullName, exportName)
+				}
 				if preloaded {
-					if exportName, ok := p.prog.PackageExport(fullName); ok {
-						p.pkg.SetExport(fullName, exportName)
-					}
 					continue
 				}
 				p.processNoInterfaceByDoc(decl.Doc, fullName)
@@ -318,6 +318,21 @@ func collectDeclarationDirectives(prog llssa.Program, fset *token.FileSet, doc *
 
 func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.FileSet, doc *ast.CommentGroup, fullName, inPkgName string, funcPos token.Pos, options Options) (bool, error) {
 	directives := directive.ParseGroup(doc)
+	var hasExport, hasNativeBinding bool
+	for _, item := range directives {
+		hasExport = hasExport || item.Name == "export"
+		if item.Name == "llgo:link" {
+			hasNativeBinding = true
+		} else if item.Name == "go:linkname" {
+			if fields := strings.Fields(item.Args); len(fields) == 2 {
+				_, _, native := nativeLinkTarget(fields[1])
+				hasNativeBinding = hasNativeBinding || native
+			}
+		}
+	}
+	if hasExport && hasNativeBinding {
+		return false, fmt.Errorf("%s: cannot combine //export with a native go:linkname or llgo:link binding", fset.Position(doc.Pos()))
+	}
 	linkCollected := false
 	hasClosureEnv := false
 	wasmImportSeen := false
@@ -338,7 +353,7 @@ func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.Fil
 				continue
 			}
 			if len(fields) >= 2 && (fields[0] == inPkgName || fields[0] == parenthesizedMethodName(inPkgName)) {
-				prog.SetLinkname(fullName, strings.Join(fields[1:], " "))
+				prog.SetLinknameDirective(fullName, strings.Join(fields[1:], " "), item.Name)
 				linkCollected = true
 			}
 		case "export":
@@ -413,7 +428,7 @@ func collectPackageLinknames(prog llssa.Program, fset *token.FileSet, files []*a
 					continue // Single-name go:linkname is a valid export annotation.
 				}
 				if fullName, ok := syms[fields[0]]; ok {
-					prog.SetLinkname(fullName, strings.Join(fields[1:], " "))
+					prog.SetLinknameDirective(fullName, strings.Join(fields[1:], " "), item.Name)
 				} else if strings.Contains(fields[0], ".") {
 					return fmt.Errorf("%s: //go:linkname local method %q not found", fset.Position(item.Pos), fields[0])
 				}
@@ -494,9 +509,20 @@ func (p *context) initLink(line string, prefix int, export bool, f func(inPkgNam
 	text := strings.TrimSpace(line[prefix:])
 	if idx := strings.IndexByte(text, ' '); idx > 0 {
 		inPkgName := text[:idx]
-		if fullName, _, ok := f(inPkgName, export); ok {
+		if fullName, isVar, ok := f(inPkgName, export); ok {
 			link := strings.TrimLeft(text[idx+1:], " ")
-			p.prog.SetLinkname(fullName, link)
+			if export {
+				p.prog.SetLinkname(fullName, link)
+			} else {
+				directiveName := "go:linkname"
+				if strings.HasPrefix(line, "//llgo:link ") || strings.HasPrefix(line, "// llgo:link ") {
+					directiveName = "llgo:link"
+				}
+				p.prog.SetLinknameDirective(fullName, link, directiveName)
+			}
+			if isVar && strings.HasPrefix(link, "stdcall.") {
+				p.prog.SetTypeCallConv(fullName+"$stdcall", llssa.Stdcall)
+			}
 			if export {
 				p.pkg.SetExport(fullName, link)
 			}
@@ -873,6 +899,9 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 		p.ensureLoaded(pkg)
 		orgName = funcName(pkg, fn, false)
 	}
+	if _, native := p.prog.NativeExport(orgName); native {
+		return pkg, orgName, goFunc
+	}
 	if v, ok := p.prog.Linkname(orgName); ok {
 		if p.options.CExportWrappers {
 			if export, ok := p.pkg.ExportFuncs()[orgName]; ok && export == v {
@@ -940,7 +969,7 @@ func (p *context) varName(pkg *types.Package, v *ssa.Global) (vName string, vtyp
 				return v[2:], cVar, false
 			}
 			if strings.HasPrefix(v, "stdcall.") {
-				panic(fmt.Errorf("stdcall linkname namespace applies only to functions: %s", name))
+				return strings.TrimPrefix(v, "stdcall."), cVar, false
 			}
 			if strings.HasPrefix(v, "go:") {
 				return v, goVar, true
@@ -972,7 +1001,7 @@ func (p *context) varOf(b llssa.Builder, v *ssa.Global) llssa.Expr {
 	}
 	ret := pkg.VarOf(name)
 	if ret == nil {
-		ret = pkg.NewVar(name, p.patchType(v.Type()), llssa.CallConv(vtype))
+		ret = pkg.NewVar(name, p.nativeVariableType(v), llssa.CallConv(vtype))
 	}
 	return ret.Expr
 }
@@ -1106,6 +1135,9 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 				}
 			}
 		}
+	}
+	if err := collectNativeLinkDefinitions(prog, fset, pkg, files, aliases); err != nil {
+		return err
 	}
 	prog.MarkPackageSyntaxParsed(pkg)
 	return nil

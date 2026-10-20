@@ -87,7 +87,7 @@ func TestUMulOverflowInvalidDeclarations(t *testing.T) {
 		{"mismatched-operands", "func mul(a uint, b uint64) (uint, bool)", "mul(a, uint64(a))", "same unsigned integer type"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			src := "package overflow\n//llgo:link mul llgo.umulOverflow\n" + tc.decl + "\nfunc bad(a uint) { " + tc.call + " }"
+			src := "package overflow\n//llgo:link mul llgo.umulOverflow\n" + tc.decl + " { panic(\"placeholder\") }\nfunc bad(a uint) { " + tc.call + " }"
 			ssapkg, _, files := buildGoSSAPkg(t, src)
 			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
 			defer prog.Dispose()

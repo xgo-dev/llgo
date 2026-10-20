@@ -254,16 +254,6 @@ func use() Value { return value }
 			want: "stdcall requires a function type",
 		},
 		{
-			name: "variable linkname", goos: "windows", goarch: "386",
-			src: `package p
-import _ "unsafe"
-//go:linkname value stdcall.value
-var value int
-func use() int { return value }
-`,
-			want: "stdcall linkname namespace applies only to functions",
-		},
-		{
 			name: "non-direct callback", goos: "windows", goarch: "386",
 			src: `package p
 import _ "unsafe"

@@ -90,3 +90,24 @@ func TestLinknameGoValueRepresentation(t *testing.T) {
 		t.Fatal("slice representation/initializer lost")
 	}
 }
+
+// The target is a literal linker name, even when a local Go declaration has
+// the same spelling and itself points elsewhere.
+//
+//go:linkname linknameChainA linknameChainB
+func linknameChainA() int
+
+//go:linkname linknameChainB linknameChainC
+func linknameChainB() int
+
+//go:linkname linknameProviderB linknameChainB
+func linknameProviderB() int { return 41 }
+
+//go:linkname linknameProviderC linknameChainC
+func linknameProviderC() int { return 42 }
+
+func TestLinknameLiteralTargets(t *testing.T) {
+	if linknameChainA() != 41 || linknameChainB() != 42 {
+		t.Fatal("linkname targets were recursively resolved")
+	}
+}

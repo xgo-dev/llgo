@@ -286,8 +286,8 @@ func TestParsePkgSyntaxCollectsLinknames(t *testing.T) {
 	}{
 		{name: "go-linkname", directive: "//go:linkname Sigsetjmp C.sigsetjmp\nfunc Sigsetjmp()\n", want: "C.sigsetjmp"},
 		{name: "go-linkname-after", directive: "func Sigsetjmp()\n//go:linkname Sigsetjmp C.sigsetjmp\n", want: "C.sigsetjmp"},
-		{name: "llgo-linkname", directive: "//llgo:link Sigsetjmp C.sigsetjmp\nfunc Sigsetjmp()\n", want: "C.sigsetjmp"},
-		{name: "llgo-linkname-spaced", directive: "// llgo:link Sigsetjmp C.sigsetjmp\nfunc Sigsetjmp()\n", want: "C.sigsetjmp"},
+		{name: "llgo-linkname", directive: "//llgo:link Sigsetjmp C.sigsetjmp\nfunc Sigsetjmp() {}\n", want: "C.sigsetjmp"},
+		{name: "llgo-linkname-spaced", directive: "// llgo:link Sigsetjmp C.sigsetjmp\nfunc Sigsetjmp() {}\n", want: "C.sigsetjmp"},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {

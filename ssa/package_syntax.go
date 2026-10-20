@@ -28,6 +28,8 @@ import (
 type packageSyntaxData struct {
 	mu                   sync.RWMutex
 	linknames            map[string]string
+	linkDirectives       map[string]string
+	nativeExports        map[string]NativeExportInfo
 	externalImports      map[string]none
 	wasmImports          map[string]wasmImport
 	exports              map[string]string
@@ -40,6 +42,8 @@ type packageSyntaxData struct {
 func newPackageSyntaxData() *packageSyntaxData {
 	return &packageSyntaxData{
 		linknames:            make(map[string]string),
+		linkDirectives:       make(map[string]string),
+		nativeExports:        make(map[string]NativeExportInfo),
 		externalImports:      make(map[string]none),
 		wasmImports:          make(map[string]wasmImport),
 		exports:              make(map[string]string),
@@ -111,4 +115,37 @@ func (p *packageSyntaxData) typeCallConv(name string) (CallConv, bool) {
 	background, ok := p.typeCallConvs[name]
 	p.mu.RUnlock()
 	return background, ok
+}
+
+// SetLinknameDirective retains the source form: llgo:link bodies are binding
+// placeholders, whereas go:linkname bodies are actual definitions.
+func (p Program) SetLinknameDirective(name, target, directive string) {
+	p.packageSyntax.mu.Lock()
+	p.packageSyntax.linknames[name] = target
+	p.packageSyntax.linkDirectives[name] = directive
+	p.packageSyntax.mu.Unlock()
+}
+
+func (p Program) LinknameDirective(name string) string {
+	p.packageSyntax.mu.RLock()
+	defer p.packageSyntax.mu.RUnlock()
+	return p.packageSyntax.linkDirectives[name]
+}
+
+type NativeExportInfo struct {
+	CallConv CallConv
+}
+
+func (p Program) SetNativeExport(name string, info NativeExportInfo) {
+	p.packageSyntax.mu.Lock()
+	p.packageSyntax.nativeExports[name] = info
+	p.packageSyntax.mu.Unlock()
+}
+
+// NativeExport reports an explicit native go:linkname definition's entry ABI.
+func (p Program) NativeExport(name string) (NativeExportInfo, bool) {
+	p.packageSyntax.mu.RLock()
+	cc, ok := p.packageSyntax.nativeExports[name]
+	p.packageSyntax.mu.RUnlock()
+	return cc, ok
 }
