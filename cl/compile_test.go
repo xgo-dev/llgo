@@ -40,6 +40,9 @@ import (
 
 func testCompile(t *testing.T, src, expected string) {
 	t.Helper()
+	if runtime.GOOS == "darwin" {
+		expected = strings.ReplaceAll(expected, "common global", "weak global")
+	}
 	if runtime.GOOS == "windows" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {
 		// Win64 definitions need unwind tables even when LLVM infers nounwind.
 		expected = strings.ReplaceAll(expected, "null_pointer_is_valid", "null_pointer_is_valid uwtable")
