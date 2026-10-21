@@ -299,9 +299,10 @@ func (g Global) InitSharedGo(v Expr, externalImport bool) error {
 	linkage := llvm.ExternalLinkage
 	if init.IsNull() {
 		linkage = llvm.CommonLinkage
-		if g.prog.Target().GOARCH == "wasm" {
-			// LLVM's Wasm backend cannot emit common symbols. Weak data
-			// definitions also coalesce zeros and yield to a strong initializer.
+		if target := g.prog.Target(); target.GOARCH == "wasm" || target.GOOS == "darwin" {
+			// Wasm cannot emit common symbols. Mach-O common definitions
+			// lose their DWARF address relocations during debug linking.
+			// Weak definitions coalesce zeros and yield to static data on both.
 			linkage = llvm.WeakAnyLinkage
 		}
 	}

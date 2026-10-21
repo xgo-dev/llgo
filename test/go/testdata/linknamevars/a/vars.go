@@ -37,3 +37,6 @@ var Empty struct{}
 // This definition is deliberately unannotated.
 var Default int
 var DefaultCopied = Default
+
+//go:linkname GoNamespace go:llgo_test_reserved_storage
+var GoNamespace int32

@@ -28,7 +28,7 @@ func TestLinknameTargetRebinding(t *testing.T) {
 }
 
 func TestSharedGoStorageDefinitions(t *testing.T) {
-	for _, target := range []*Target{{GOOS: "linux", GOARCH: "amd64"}, {GOOS: "wasip1", GOARCH: "wasm"}} {
+	for _, target := range []*Target{{GOOS: "linux", GOARCH: "amd64"}, {GOOS: "darwin", GOARCH: "arm64"}, {GOOS: "wasip1", GOARCH: "wasm"}} {
 		t.Run(target.GOARCH, func(t *testing.T) {
 			prog := NewProgram(target)
 			defer prog.Dispose()
@@ -62,7 +62,7 @@ func TestSharedGoStorageDefinitions(t *testing.T) {
 				}
 			}
 			want := llvm.CommonLinkage
-			if target.GOARCH == "wasm" {
+			if target.GOARCH == "wasm" || target.GOOS == "darwin" {
 				want = llvm.WeakAnyLinkage
 			}
 			if zero.impl.Initializer().IsNil() || !zero.impl.Initializer().IsNull() || zero.impl.Linkage() != want {
