@@ -277,9 +277,9 @@ func (g Global) InitNil() {
 // Zero definitions coalesce; a nonzero static initializer overrides them.
 // Keep runtime initialization in each package's init function. A cgo
 // import may replace zero storage, but never a nonzero static definition.
-func (g Global) InitSharedGo(v Expr, externalImport bool) {
+func (g Global) InitSharedGo(v Expr, externalImport bool) error {
 	if g.isZeroSizedAlias {
-		return
+		return nil
 	}
 	init := llvm.ConstNull(g.impl.GlobalValueType())
 	if !v.IsNil() {
@@ -288,12 +288,12 @@ func (g Global) InitSharedGo(v Expr, externalImport bool) {
 	previous := g.impl.Initializer()
 	if !previous.IsNil() && !previous.IsNull() {
 		if !init.IsNull() {
-			panic(fmt.Errorf("duplicate definition of Go variable %s", g.impl.Name()))
+			return fmt.Errorf("duplicate definition of Go variable symbol %q", g.impl.Name())
 		}
-		return
+		return nil
 	}
 	if init.IsNull() && externalImport {
-		return
+		return nil
 	}
 	g.impl.SetInitializer(init)
 	linkage := llvm.ExternalLinkage
@@ -306,6 +306,7 @@ func (g Global) InitSharedGo(v Expr, externalImport bool) {
 		}
 	}
 	g.impl.SetLinkage(linkage)
+	return nil
 }
 
 func (g Global) ReplaceAllUsesWith(v Expr) {

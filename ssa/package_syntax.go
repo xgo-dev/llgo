@@ -28,6 +28,7 @@ import (
 type packageSyntaxData struct {
 	mu                   sync.RWMutex
 	linknames            map[string]string
+	linknameTargets      map[string]int
 	externalImports      map[string]none
 	wasmImports          map[string]wasmImport
 	exports              map[string]string
@@ -40,6 +41,7 @@ type packageSyntaxData struct {
 func newPackageSyntaxData() *packageSyntaxData {
 	return &packageSyntaxData{
 		linknames:            make(map[string]string),
+		linknameTargets:      make(map[string]int),
 		externalImports:      make(map[string]none),
 		wasmImports:          make(map[string]wasmImport),
 		exports:              make(map[string]string),
@@ -57,6 +59,8 @@ type wasmImport struct {
 
 // SetExternalImport records the literal local symbol of a cgo import pragma.
 // Imports can name ordinary package variables without any linkname directive.
+// The namespace is build-wide: gc also looks up cgo locals by literal linker
+// symbol (version 0), so an import can replace eligible BSS in another package.
 func (p Program) SetExternalImport(name string) {
 	p.packageSyntax.mu.Lock()
 	p.packageSyntax.externalImports[name] = none{}
@@ -111,4 +115,17 @@ func (p *packageSyntaxData) typeCallConv(name string) (CallConv, bool) {
 	background, ok := p.typeCallConvs[name]
 	p.mu.RUnlock()
 	return background, ok
+}
+
+// setLinkname updates both indexes while the caller holds mu. Counts preserve a
+// target shared by multiple declarations when one declaration is rebound.
+func (p *packageSyntaxData) setLinkname(name, target string) {
+	if previous, ok := p.linknames[name]; ok {
+		p.linknameTargets[previous]--
+		if p.linknameTargets[previous] == 0 {
+			delete(p.linknameTargets, previous)
+		}
+	}
+	p.linknames[name] = target
+	p.linknameTargets[target]++
 }

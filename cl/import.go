@@ -1098,6 +1098,9 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 	for _, file := range files {
 		for _, group := range file.Comments {
 			for _, comment := range group.List {
+				// Only canonical gc line directives affect Go storage here.
+				// The build linker-options parser also accepts legacy spellings;
+				// those must not silently turn a Go definition into an extern.
 				if strings.HasPrefix(comment.Text, "//go:cgo_import_dynamic ") || strings.HasPrefix(comment.Text, "//go:cgo_import_static ") {
 					fields := strings.Fields(comment.Text)
 					if len(fields) >= 2 && fields[1] != "_" {
