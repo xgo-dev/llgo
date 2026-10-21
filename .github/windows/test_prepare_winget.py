@@ -21,19 +21,22 @@ class WinGetTests(unittest.TestCase):
             for arch in winget.ARCHITECTURES:
                 self.fixture(profile, arch)
 
-    def fixture(self, profile, arch, version='1.2.3', **overrides):
+    def fixture(self, profile, arch, version='1.2.3', compiler=None, **overrides):
         path = self.root / f'llgo{version}.windows-{arch}-{profile}.zip'
-        metadata = dict(version=version, goos='windows', goarch=arch, abi=profile, commit='a' * 40)
+        compiler = compiler if compiler is not None else f'host-compiler-{arch}'.encode()
+        metadata = dict(version=version, goos='windows', goarch=arch, abi=profile, commit='a' * 40,
+                        compiler_sha256=hashlib.sha256(compiler).hexdigest())
         metadata.update(overrides)
         with zipfile.ZipFile(path, 'w') as archive:
             archive.writestr('release.json', json.dumps(metadata))
-            for name in ('bin/llgo.exe', 'runtime/go.mod', 'WINDOWS.md'):
+            archive.writestr('bin/llgo.exe', compiler)
+            for name in ('runtime/go.mod', 'WINDOWS.md'):
                 archive.writestr(name, 'fixture')
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         path.with_suffix('.zip.sha256').write_text(f'{digest}  {path.name}\n')
         return path
 
-    def test_two_profiles_two_architectures_real_hashes(self):
+    def test_two_profiles_three_architectures_real_hashes(self):
         winget.prepare(self.root, self.output, '1.2.3')
         files = list(self.output.rglob('*.yaml'))
         self.assertEqual(len(files), 6)
@@ -42,10 +45,11 @@ class WinGetTests(unittest.TestCase):
             text = (path / f'XGo.LLGo.{label}.installer.yaml').read_text()
             self.assertIn('Architecture: x64', text)
             self.assertIn('Architecture: arm64', text)
+            self.assertIn('Architecture: x86', text)
             self.assertEqual('ArchiveBinariesDependOnPath: true' in text, label == 'MinGW')
             self.assertNotIn('ProductCode', text)
             self.assertNotIn('Scope:', text)
-            for arch in ('amd64', 'arm64'):
+            for arch in ('amd64', 'arm64', '386'):
                 archive = self.root / f'llgo1.2.3.windows-{arch}-{label.lower()}.zip'
                 self.assertIn(hashlib.sha256(archive.read_bytes()).hexdigest(), text)
                 self.assertIn('/releases/download/v1.2.3/' + archive.name, text)
@@ -86,6 +90,18 @@ class WinGetTests(unittest.TestCase):
         self.fixture('mingw', 'arm64', goarch='amd64')
         with self.assertRaisesRegex(ValueError, 'metadata'):
             winget.prepare(self.root, self.output, '1.2.3')
+
+    def test_different_host_compilers_rejected_before_output(self):
+        self.fixture('mingw', '386', compiler=b'different host compiler')
+        with self.assertRaisesRegex(ValueError, 'different host compilers'):
+            winget.prepare(self.root, self.output, '1.2.3')
+        self.assertFalse(self.output.exists())
+
+    def test_stale_compiler_hash_rejected_before_output(self):
+        self.fixture('msvc', 'amd64', compiler_sha256='0' * 64)
+        with self.assertRaisesRegex(ValueError, 'Compiler checksum'):
+            winget.prepare(self.root, self.output, '1.2.3')
+        self.assertFalse(self.output.exists())
 
     def test_mixed_commits_rejected(self):
         self.fixture('mingw', 'arm64', commit='b' * 40)

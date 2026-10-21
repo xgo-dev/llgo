@@ -48,11 +48,11 @@ silently measuring a different commit.
 `xgo-dev` repository uses its qiniu runners; workflows running in forks use
 GitHub-hosted Ubuntu 24.04. Consume them with `fromJSON(...)`.
 
-Prepare and the independent CI policy check select their runner directly from
-the workflow repository owner: they cannot wait for prepare outputs. These are
-the only bootstrap exceptions to centralized runner selection, and the contract
-tests check that their labels match the policy. CI gates use `linux_runner`,
-with a hosted fallback if preparation fails before producing outputs. This
+Prepare, the independent CI policy check, and PR-close cancellation select their
+runner directly from the workflow repository owner: they cannot wait for prepare
+outputs. These are the only bootstrap exceptions to centralized runner selection,
+and the contract tests check that their labels match the policy. CI gates use
+`linux_runner`, with a hosted fallback if preparation fails before producing outputs. This
 keeps ordinary PR startup and completion jobs out of the hosted runner queue.
 
 The amd64 Mise/Pixi environment checks, release artifact verification, Linux
@@ -78,6 +78,28 @@ use a separate main group and also cancel superseded runs. Tags and other
 events use `github.run_id` to keep their runs independent. Workflow-level concurrency cannot consume
 prepare outputs; `test_ci_workflows.py` enforces the common expression instead.
 The reusable prepare workflow has no concurrency group of its own.
+
+Closing or merging a PR cancels its existing CI runs. The `PR closed` workflow
+handles `pull_request_target: closed` using only the base commit's cleanup
+script (`github.sha`), never PR code, artifacts, dependencies or caches. Only
+that job receives Actions write permission. It uses qiniu upstream and hosted
+Ubuntu in forks. It does not enter any PR's concurrency group.
+
+The script snapshots active `pull_request` runs, matches their PR association,
+and cancels individual run IDs only when their creation/start time precedes the
+close event. Runs in the same second as the close and manual reruns are preserved.
+It rechecks each run and the live PR state before cancellation; a reopened PR or
+a different close event stops cleanup. Fork runs with no PR association require
+a matching head repository/branch used by exactly one historical PR; ambiguous
+heads are preserved. API failures fail the cleanup job without broad cancellation.
+GitHub does not provide an atomic run-attempt/state-and-cancel operation, so a
+run that finishes and is manually rerun between its final check and POST remains
+a narrow API race; new run IDs after a reopen are never cancellation candidates.
+
+Concurrency keys use workflow filenames, independent of display names. Contract
+tests discover both `.yml` and `.yaml` files and traverse all jobs and local
+reusable workflows. CI gates use `always() && !cancelled()` so cancellation can
+stop them too. The close policy takes effect after merge to main.
 
 Every workflow that uses prepare has a uniquely named `CI gate (...)` job. It
 runs even if prepare fails and reports that failure. Branch protection should

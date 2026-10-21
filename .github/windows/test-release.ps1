@@ -2,7 +2,7 @@ param(
   [Parameter(Mandatory = $true)]
   [ValidateSet('msvc', 'mingw')][string]$Profile,
   [Parameter(Mandatory = $true)]
-  [ValidateSet('amd64', 'arm64')][string]$GoArch,
+  [ValidateSet('amd64', 'arm64', '386')][string]$GoArch,
   [switch]$CheckOnly
 )
 
@@ -42,6 +42,10 @@ Assert-ReleaseESPPayload -Root (Join-Path $releaseRoot 'crosscompile/clang') -Go
 
 $llgo = Join-Path $releaseRoot 'bin/llgo.exe'
 $readObj = Join-Path $releaseRoot 'crosscompile/clang/bin/llvm-readobj.exe'
+if ($metadata.compiler_sha256 -notmatch '^[0-9a-f]{64}$' -or
+    (Get-FileHash -Algorithm SHA256 $llgo).Hash.ToLowerInvariant() -ne $metadata.compiler_sha256) {
+  throw 'The release compiler checksum does not match its shared host artifact'
+}
 Copy-ReleaseDLLs -ReadObj $readObj -Executable $llgo -GoArch $GoArch -Profile $Profile -CheckOnly
 $go = (Get-Command go).Source
 $buildInfo = Invoke-ReleaseCapture $go @('version', '-m', $llgo)
@@ -98,7 +102,7 @@ func main() {
   if ($LASTEXITCODE -ne 0) { throw 'Preparing the native release smoke test failed' }
   $program = Join-Path $work 'hello.exe'
   $trace = Invoke-ReleaseCapture $llgo @('build', '-x', '-o', $program, '.')
-  $arch = @{ amd64 = 'x86_64'; arm64 = 'aarch64' }[$GoArch]
+  $arch = @{ amd64 = 'x86_64'; arm64 = 'aarch64'; '386' = 'i686' }[$GoArch]
   $triple = if ($Profile -eq 'msvc') { "$arch-pc-windows-msvc" } else { "$arch-w64-windows-gnu" }
   if (-not $trace.Contains($triple)) { throw "Release smoke test did not select $triple`n$trace" }
   $null = Assert-ReleasePE -ReadObj $readObj -Path $program -GoArch $GoArch -Profile $Profile

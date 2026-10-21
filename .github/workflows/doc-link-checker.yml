@@ -11,7 +11,7 @@ on:
     - cron: "0 0 * * *"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
+  group: doc-link-checker.yml-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 jobs:
@@ -21,7 +21,7 @@ jobs:
   ci-gate:
     name: CI gate (Doc links)
     needs: prepare
-    if: always()
+    if: always() && !cancelled()
     runs-on: ${{ fromJSON(needs.prepare.outputs.linux_runner || '["ubuntu-24.04"]') }}
     steps:
       - name: Verify CI preparation succeeded

@@ -1,8 +1,24 @@
 # Using LLGo Windows releases
 
-Choose the release matching your host architecture (`amd64` or `arm64`) and native ABI (`msvc` or `mingw`). The release workflow produces a ZIP for each variant; check the [release assets](https://github.com/xgo-dev/llgo/releases) for the formats available in your version. Extract the entire archive and add its `bin` directory to PATH.
+Choose the release matching your host architecture (`386`, `amd64` or `arm64`) and native ABI (`msvc` or `mingw`). The release workflow produces a ZIP for each variant; check the [release assets](https://github.com/xgo-dev/llgo/releases) for the formats available in your version. Extract the entire archive and add its `bin` directory to PATH.
+
+For each architecture, the two ABI archives contain the same `llgo.exe`. The native C/C++ toolchain selects the ABI used by generated programs.
 
 The integrated package contains LLGo, its own DLL dependencies, `runtime`, `targets`, licenses, and the ESP Clang under `crosscompile/clang`. Native Windows development tools are installed separately.
+
+The `386` archives contain a PE32 LLGo compiler and PE32 ESP tools, validated
+under WoW64. Release CI builds their LLVM 22.1.8 SDK from pinned sources; that
+SDK is a build input, not an end-user dependency. The compiler host's static
+MinGW runtime does not select the ABI of user programs: the activated native
+MSVC/MinGW toolchain does.
+
+The installer uses the OS architecture by default. Set `LLGO_ARCH=386` to
+select the x86 archive on x64 Windows. Automatic development-dependency setup
+for x86 is unavailable; its installer defaults to `LLGO_INSTALL_DEPS=0`.
+Configure Go, a maintained i686 C/C++ toolchain and matching native libraries
+separately. The CI target setup in `.github/actions/setup-llvm-mingw`
+records the pinned MinGW dependency recipe; it does not require a discontinued
+MSYS2 CLANG32 installation.
 
 The PowerShell installer prepends LLGo's `bin` directory and, when it installs
 dependencies, Go, native LLVM, and vcpkg or MSYS2 tool directories to the
@@ -32,7 +48,7 @@ Go may need network access for an empty module cache. ESP builds may also need t
 
 1. Install Visual Studio **2022 Build Tools**, including C++ build tools and a Windows SDK. For ARM64, include the ARM64 compiler tools and SDK libraries.
 2. Install native **LLVM 22.1.8** for your host. Prebuilt LLGo needs the native Clang drivers and linker; it does not require rebuilding LLGo or linking LLVM's development libraries yourself.
-3. Install the native libraries with vcpkg using `x64-windows` or `arm64-windows`. Use the [release's vcpkg manifest](https://github.com/xgo-dev/llgo/blob/v1.0.2/.github/windows/vcpkg/vcpkg.json) and baseline. In v1.0.2, the baseline is `ddd0023b0eee70986e42ed49d9d4afb8098f212e` and libffi is pinned to **3.4.6**.
+3. Install the native libraries with vcpkg using `x64-windows`, `arm64-windows`, or `x86-windows`. Use the [release's vcpkg manifest](https://github.com/xgo-dev/llgo/blob/v1.0.2/.github/windows/vcpkg/vcpkg.json) and baseline. In v1.0.2, the baseline is `ddd0023b0eee70986e42ed49d9d4afb8098f212e` and libffi is pinned to **3.4.6**. For x86, the [setup-deps action](.github/actions/setup-deps/action.yml) records the native Clang, `i686-pc-windows-msvc` target, compiler-rt builtins, and vcpkg configuration used by CI.
 4. Enter the Visual Studio developer shell for the target architecture, providing `INCLUDE`, `LIB`, SDK tools, and CRT libraries.
 5. Add Go, native LLVM, LLGo, and the vcpkg triplet's `bin` directory to the current terminal PATH. Select the native ABI explicitly:
 
@@ -47,6 +63,11 @@ The VC++ Redistributable alone does not provide the SDK, headers, or link librar
 ## MinGW profile
 
 Use MSYS2 **CLANG64** for amd64 or **CLANGARM64** for arm64. Do not substitute the GCC-based MINGW64 environment for this LLVM profile.
+
+For `386`, use the maintained i686 toolchain and native dependency recipe in
+[setup-llvm-mingw](.github/actions/setup-llvm-mingw/action.yml), activated through
+[setup-deps](.github/actions/setup-deps/action.yml). The CLANG64 package commands
+below describe amd64; they do not provide the x86 environment.
 
 For the v1.0.2 tested toolchain, Clang, clang-libs, compiler-rt, LLVM, llvm-libs, llvm-tools, and LLD use package revision **22.1.8-2**; libc++ and libunwind use **22.1.8-1**. The [setup-deps action](https://github.com/xgo-dev/llgo/blob/v1.0.2/.github/actions/setup-deps/action.yml) contains the pinned package URLs. Install headers/CRT and the native libraries from the same MSYS2 environment, along with pkgconf. The v1.0.2 MSVC libffi pin does not apply to MinGW; MinGW validation also passed with libffi 3.8.0.
 

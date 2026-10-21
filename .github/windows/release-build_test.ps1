@@ -49,6 +49,34 @@ try {
   } finally {
     Pop-Location
   }
+  # A shared compiler is bound to one source/version/architecture. Reject
+  # stale or modified artifacts before either ABI archive can copy its bytes.
+  $hostRoot = Join-Path $temporary 'host-compiler'
+  New-Item -ItemType Directory -Force "$hostRoot/bin", "$hostRoot/licenses" | Out-Null
+  $hostExecutable = Join-Path $hostRoot 'bin/llgo.exe'
+  [IO.File]::WriteAllText($hostExecutable, 'host compiler bytes')
+  $metadata = @{ version = '1.2.3'; commit = ('a' * 40); date = '2026-10-19T00:00:00Z' }
+  $manifest = @{
+    version = $metadata.version; commit = $metadata.commit; date = $metadata.date
+    goarch = '386'; llvm_version = '22.1.8'
+    compiler_sha256 = (Get-FileHash -Algorithm SHA256 $hostExecutable).Hash.ToLowerInvariant()
+  }
+  $manifestPath = Join-Path $hostRoot 'compiler.json'
+  $manifest | ConvertTo-Json | Set-Content -Encoding utf8 $manifestPath
+  Assert-ReleaseCompilerArtifact -Root $hostRoot -Metadata $metadata -GoArch '386' -LLVMVersion '22.1.8'
+  foreach ($key in @('version', 'commit', 'date', 'goarch', 'llvm_version', 'compiler_sha256')) {
+    $invalid = $manifest.Clone()
+    $invalid[$key] = 'stale'
+    $invalid | ConvertTo-Json | Set-Content -Encoding utf8 $manifestPath
+    $rejected = $false
+    try { Assert-ReleaseCompilerArtifact -Root $hostRoot -Metadata $metadata -GoArch '386' -LLVMVersion '22.1.8' } catch { $rejected = $true }
+    if (-not $rejected) { throw "A compiler with stale $key was accepted" }
+  }
+  $manifest | ConvertTo-Json | Set-Content -Encoding utf8 $manifestPath
+  [IO.File]::WriteAllText($hostExecutable, 'tampered compiler bytes')
+  $rejected = $false
+  try { Assert-ReleaseCompilerArtifact -Root $hostRoot -Metadata $metadata -GoArch '386' -LLVMVersion '22.1.8' } catch { $rejected = $true }
+  if (-not $rejected) { throw 'A tampered shared compiler was accepted' }
   Write-Host 'Passed cached archive integrity and CGO linker argument checks'
 } finally {
   foreach ($name in $savedEnvironment.Keys) {

@@ -144,7 +144,7 @@ install_windows_release() {
     fi
 
     export LLGO_ABI=mingw
-    export LLGO_VERSION LLGO_INSTALL_DEPS LLGO_UPDATE_PATH LLGO_GO_VERSION
+    export LLGO_VERSION LLGO_INSTALL_DEPS LLGO_UPDATE_PATH LLGO_GO_VERSION LLGO_ARCH
     LLGO_INSTALL_ROOT="$(windows_native_path "$LLGO_INSTALL_ROOT")"
     export LLGO_INSTALL_ROOT
     if [[ -n "$local_archive" ]]; then
