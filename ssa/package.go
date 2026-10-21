@@ -510,7 +510,7 @@ func (p Program) SetTypeCallConv(typFullName string, cc CallConv) {
 
 func (p Program) SetLinkname(name, link string) {
 	p.packageSyntax.mu.Lock()
-	p.packageSyntax.linknames[name] = link
+	p.packageSyntax.setLinkname(name, link)
 	p.packageSyntax.mu.Unlock()
 }
 
@@ -546,12 +546,7 @@ func (p Program) WasmImport(name string) (module, importName string, ok bool) {
 func (p Program) HasLinknameTarget(target string) bool {
 	p.packageSyntax.mu.RLock()
 	defer p.packageSyntax.mu.RUnlock()
-	for _, link := range p.packageSyntax.linknames {
-		if link == target {
-			return true
-		}
-	}
-	return false
+	return p.packageSyntax.linknameTargets[target] != 0
 }
 
 type closureEnvDirectiveKey struct {

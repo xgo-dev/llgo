@@ -41,6 +41,7 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	pkg := types.NewPackage("example.com/p", "p")
 	fset := token.NewFileSet()
 	coordinator.SetLinkname("example.com/p.Entry", "entry")
+	coordinator.SetExternalImport("external")
 	coordinator.SetPackageExport("example.com/p.Entry", "entry")
 	coordinator.SetNoInterfaceMethod("example.com/p.T.Hidden")
 	coordinator.SetTypeCallConv("example.com/p.CType", CDecl)
@@ -68,6 +69,9 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	}
 	if !backend.HasLinknameTarget("entry") || backend.HasLinknameTarget("missing") {
 		t.Fatal("backend Program did not preserve linkname target lookup")
+	}
+	if !backend.IsExternalImport("external") || backend.IsExternalImport("missing") {
+		t.Fatal("backend lost the build-wide import symbol set")
 	}
 	if export, ok := backend.PackageExport("example.com/p.Entry"); !ok || export != "entry" {
 		t.Fatalf("PackageExport = (%q, %v), want (entry, true)", export, ok)

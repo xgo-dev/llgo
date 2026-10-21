@@ -28,6 +28,7 @@ import (
 type packageSyntaxData struct {
 	mu                   sync.RWMutex
 	linknames            map[string]string
+	linknameTargets      map[string]int
 	linkDirectives       map[string]string
 	nativeExports        map[string]NativeExportInfo
 	externalImports      map[string]none
@@ -42,6 +43,7 @@ type packageSyntaxData struct {
 func newPackageSyntaxData() *packageSyntaxData {
 	return &packageSyntaxData{
 		linknames:            make(map[string]string),
+		linknameTargets:      make(map[string]int),
 		linkDirectives:       make(map[string]string),
 		nativeExports:        make(map[string]NativeExportInfo),
 		externalImports:      make(map[string]none),
@@ -61,6 +63,8 @@ type wasmImport struct {
 
 // SetExternalImport records the literal local symbol of a cgo import pragma.
 // Imports can name ordinary package variables without any linkname directive.
+// The namespace is build-wide: gc also looks up cgo locals by literal linker
+// symbol (version 0), so an import can replace eligible BSS in another package.
 func (p Program) SetExternalImport(name string) {
 	p.packageSyntax.mu.Lock()
 	p.packageSyntax.externalImports[name] = none{}
@@ -121,7 +125,7 @@ func (p *packageSyntaxData) typeCallConv(name string) (CallConv, bool) {
 // placeholders, whereas go:linkname bodies are actual definitions.
 func (p Program) SetLinknameDirective(name, target, directive string) {
 	p.packageSyntax.mu.Lock()
-	p.packageSyntax.linknames[name] = target
+	p.packageSyntax.setLinkname(name, target)
 	p.packageSyntax.linkDirectives[name] = directive
 	p.packageSyntax.mu.Unlock()
 }
@@ -148,4 +152,17 @@ func (p Program) NativeExport(name string) (NativeExportInfo, bool) {
 	cc, ok := p.packageSyntax.nativeExports[name]
 	p.packageSyntax.mu.RUnlock()
 	return cc, ok
+}
+
+// setLinkname updates both indexes while the caller holds mu. Counts preserve a
+// target shared by multiple declarations when one declaration is rebound.
+func (p *packageSyntaxData) setLinkname(name, target string) {
+	if previous, ok := p.linknames[name]; ok {
+		p.linknameTargets[previous]--
+		if p.linknameTargets[previous] == 0 {
+			delete(p.linknameTargets, previous)
+		}
+	}
+	p.linknames[name] = target
+	p.linknameTargets[target]++
 }
