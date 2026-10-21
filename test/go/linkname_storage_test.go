@@ -119,3 +119,17 @@ func TestLinknameLiteralTargets(t *testing.T) {
 		t.Fatal("linkname targets were recursively resolved")
 	}
 }
+
+//go:linkname linknameReserved go:llgo_test_reserved_storage
+var linknameReserved int32
+
+func TestLinknameGoNamespaceStorage(t *testing.T) {
+	if &linknameReserved != &a.GoNamespace || linknameReserved != 0 {
+		t.Fatal("go: symbol did not retain shared zero storage")
+	}
+	defer func() { linknameReserved = 0 }()
+	linknameReserved = 42
+	if a.GoNamespace != 42 {
+		t.Fatal("go: symbol aliases do not share writes")
+	}
+}

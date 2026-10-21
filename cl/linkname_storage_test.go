@@ -56,7 +56,7 @@ var Initialized uintptr = 7
 				"@static_import = external global i8", "@shared_import = external global i", "@shared.Default = external global i",
 				fmt.Sprintf("@shared.Initialized = global i%d 7", map[bool]int{true: 32, false: 64}[target.GOARCH == "386" || target.GOARCH == "wasm"]),
 			} {
-				if target.GOARCH == "wasm" {
+				if target.GOARCH == "wasm" || target.GOOS == "darwin" {
 					want = strings.ReplaceAll(want, "common global", "weak global")
 				}
 				if !strings.Contains(ir, want) {
