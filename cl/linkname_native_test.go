@@ -36,6 +36,9 @@ func Reset() { Callback = nil }
 //go:linkname Twice stdcall.native_twice
 func Twice(int32) int32
 func Restore() { Callback = Twice }
+//go:linkname CCallback C.c_callback
+var CCallback func(int32) int32
+func Capture() func() { old := CCallback; return func() { CCallback = old } }
 //llgo:link Placeholder C.external_entry
 func Placeholder(int32) int32 { panic("native placeholder body") }
 //llgo:link GoPlaceholder plain_go_entry
@@ -118,6 +121,12 @@ func Calls(v int32) int32 { return Placeholder(v) + GoPlaceholder(v) }
 				}
 				if arch == "386" && !strings.Contains(mod.NamedFunction("native.Use").String(), "call x86_stdcallcc i32") {
 					t.Fatal("loaded callback lost stdcall")
+				}
+				// Restoring a captured Go funcval into a C function-pointer slot
+				// must store only its code pointer, never the two-word funcval.
+				restore := mod.NamedFunction("native.Capture$1").String()
+				if !strings.Contains(restore, "store ptr") || strings.Contains(restore, "store { ptr, ptr }") {
+					t.Fatalf("callback restore overwrites adjacent native storage:\n%s", restore)
 				}
 				assembly, err := prog.TargetMachine().EmitToMemoryBuffer(mod, llvm.AssemblyFile)
 				if err != nil {

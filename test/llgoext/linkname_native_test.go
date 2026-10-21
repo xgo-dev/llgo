@@ -47,3 +47,33 @@ func TestLinknameNativeFunctionDefinitions(t *testing.T) {
 		t.Fatalf("native-to-Go callback argument = %d", got)
 	}
 }
+
+func TestLinknameNativeCallbackStore(t *testing.T) {
+	// A captured Go funcval is two words; each C array element is one.
+	// Keeping the slots adjacent makes an oversized store fail on every host.
+	saved := nativeCallbackSlots[0]
+	restore := func() { nativeCallbackSlots[0] = saved }
+	nativeCallbackSlots[0] = nil
+	restore()
+	for i, fn := range nativeCallbackSlots {
+		if fn == nil {
+			t.Fatalf("callback slot %d was overwritten", i)
+		}
+		if got := fn(21); got != 42 {
+			t.Fatalf("callback slot %d returned %d", i, got)
+		}
+	}
+}
+
+func TestLinknameNativeCallbackRejectsClosure(t *testing.T) {
+	value := int32(7)
+	defer func() {
+		if recover() == nil {
+			t.Error("capturing Go closure accepted in a native callback slot")
+		}
+		if got := nativeCallbackSlots[0](21); got != 42 {
+			t.Errorf("rejected assignment changed the native callback: %d", got)
+		}
+	}()
+	nativeCallbackSlots[0] = func(v int32) int32 { return v + value }
+}

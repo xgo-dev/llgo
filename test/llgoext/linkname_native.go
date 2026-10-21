@@ -25,6 +25,9 @@ var nativePointer *int32
 //go:linkname nativeCallback C.llgo_ext_callback
 var nativeCallback func(int32) int32
 
+//go:linkname nativeCallbackSlots C.llgo_ext_callback_slots
+var nativeCallbackSlots [2]func(int32) int32
+
 //go:linkname nativeAddresses C.llgo_ext_addresses
 func nativeAddresses(unsafe.Pointer, unsafe.Pointer, unsafe.Pointer, unsafe.Pointer) int32
 

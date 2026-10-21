@@ -11,6 +11,7 @@ int32_t llgo_ext_array[3] = {2, 3, 5};
 int32_t *llgo_ext_pointer = &llgo_ext_counter;
 static int32_t twice(int32_t v) { return v * 2; }
 int32_t (*llgo_ext_callback)(int32_t) = twice;
+int32_t (*llgo_ext_callback_slots[2])(int32_t) = {twice, twice};
 int32_t llgo_ext_addresses(void *counter, void *array, void *pointer, void *callback) {
     return counter == &llgo_ext_counter && array == &llgo_ext_array &&
         pointer == &llgo_ext_pointer && callback == &llgo_ext_callback;
