@@ -521,7 +521,7 @@ func (p *context) initLink(line string, prefix int, export bool, f func(inPkgNam
 				p.prog.SetLinknameDirective(fullName, link, directiveName)
 			}
 			if isVar && strings.HasPrefix(link, "stdcall.") {
-				p.prog.SetTypeCallConv(fullName+"$stdcall", llssa.Stdcall)
+				p.prog.SetTypeCallConv(fullName+stdcallVariableTypeSuffix, llssa.Stdcall)
 			}
 			if export {
 				p.pkg.SetExport(fullName, link)

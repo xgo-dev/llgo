@@ -69,6 +69,9 @@ var Counter int32
 var Callback func(int32) int32
 ```
 
+Migration: existing native variable bindings with bare targets must add `C.`
+or `stdcall.`; bare targets now define Go-owned storage.
+
 These reference storage owned by native code and cannot have Go initializers.
 A function variable stores a native function pointer. `stdcall.` determines how
 to call that pointer; scalar variables use ordinary native storage. `llgo.` is

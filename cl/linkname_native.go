@@ -11,6 +11,8 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
+const stdcallVariableTypeSuffix = "$stdcall"
+
 func nativeLinkTarget(target string) (string, llssa.CallConv, bool) {
 	if strings.HasPrefix(target, "C.") {
 		return strings.TrimPrefix(target, "C."), llssa.CDecl, true
@@ -51,10 +53,10 @@ func collectNativeLinkDefinitions(prog llssa.Program, fset *token.FileSet, pkg *
 				if previous, ok := prog.PackageExport(name); ok && previous != native {
 					return fmt.Errorf("%s: conflicting native export names %q and %q", fset.Position(decl.Pos()), previous, native)
 				}
-				prog.SetPackageExport(name, native)
 				if decl.Type.TypeParams != nil {
 					return fmt.Errorf("%s: native export %s has an unsupported signature", fset.Position(decl.Pos()), decl.Name.Name)
 				}
+				prog.SetPackageExport(name, native)
 				prog.SetNativeExport(name, llssa.NativeExportInfo{CallConv: cc})
 			case *ast.GenDecl:
 				if decl.Tok != token.VAR {
@@ -79,7 +81,7 @@ func collectNativeLinkDefinitions(prog llssa.Program, fset *token.FileSet, pkg *
 							return fmt.Errorf("%s: native extern variable %s cannot have a Go initializer", fset.Position(ident.Pos()), ident.Name)
 						}
 						if cc == llssa.Stdcall {
-							prog.SetTypeCallConv(name+"$stdcall", llssa.Stdcall)
+							prog.SetTypeCallConv(name+stdcallVariableTypeSuffix, llssa.Stdcall)
 						}
 					}
 				}
@@ -99,7 +101,7 @@ func (p *context) nativeVariableType(v *ssa.Global) types.Type {
 	if strings.HasPrefix(target, "stdcall.") {
 		elem := typ.Underlying().(*types.Pointer).Elem()
 		if sig, ok := elem.Underlying().(*types.Signature); ok {
-			named := types.NewNamed(types.NewTypeName(v.Pos(), v.Pkg.Pkg, v.Name()+"$stdcall", nil), sig, nil)
+			named := types.NewNamed(types.NewTypeName(v.Pos(), v.Pkg.Pkg, v.Name()+stdcallVariableTypeSuffix, nil), sig, nil)
 			return types.NewPointer(named)
 		}
 	}

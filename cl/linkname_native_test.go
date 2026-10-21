@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	gpackages "github.com/goplus/gogen/packages"
 	"github.com/xgo-dev/llgo/internal/goembed"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llgo/ssa/ssatest"
@@ -31,6 +32,10 @@ var Callback func(int32) int32
 var Scalar int32
 func Use(v int32) int32 { return Callback(v) + Scalar }
 func AsGo() func(int32) int32 { return Callback }
+func Reset() { Callback = nil }
+//go:linkname Twice stdcall.native_twice
+func Twice(int32) int32
+func Restore() { Callback = Twice }
 //llgo:link Placeholder C.external_entry
 func Placeholder(int32) int32 { panic("native placeholder body") }
 //llgo:link GoPlaceholder plain_go_entry
@@ -54,7 +59,7 @@ func Calls(v int32) int32 { return Placeholder(v) + GoPlaceholder(v) }
 					t.Fatal(err)
 				}
 				files := []*ast.File{file}
-				imp := importer.Default()
+				imp := gpackages.NewImporter(fset)
 				prog := ssatest.NewProgramEx(t, &llssa.Target{GOOS: "windows", GOARCH: arch, LLVMTarget: triple}, imp)
 				prog.TypeSizes(types.SizesFor("gc", arch))
 				pkg := types.NewPackage("native", "native")
@@ -150,6 +155,14 @@ func TestLinknameNativeSyntaxDiagnostics(t *testing.T) {
 			}
 			prog := ssatest.NewProgramEx(t, nil, importer.Default())
 			err = ParsePkgSyntax(prog, fset, types.NewPackage("invalid", "invalid"), []*ast.File{file})
+			if tc.name == "generic-export" {
+				if _, ok := prog.PackageExport("invalid.F"); ok {
+					t.Error("rejected generic registered a package export")
+				}
+				if _, ok := prog.NativeExport("invalid.F"); ok {
+					t.Error("rejected generic registered a native export")
+				}
+			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("got %v, want %s", err, tc.want)
 			}

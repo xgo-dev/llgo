@@ -91,3 +91,19 @@ func TestSharedGoStorageDefinitions(t *testing.T) {
 		})
 	}
 }
+
+func TestLinknameDirectiveRebinding(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	prog.SetLinkname("p.A", "old")
+	prog.SetLinknameDirective("p.A", "shared", "go:linkname")
+	prog.SetLinknameDirective("p.B", "shared", "llgo:link")
+	prog.SetLinknameDirective("p.A", "other", "llgo:link")
+	if prog.HasLinknameTarget("old") || !prog.HasLinknameTarget("shared") || !prog.HasLinknameTarget("other") {
+		t.Fatal("directive rebinding broke target lookup")
+	}
+	prog.SetLinkname("p.B", "other")
+	if prog.HasLinknameTarget("shared") {
+		t.Fatal("last directive target was retained")
+	}
+}

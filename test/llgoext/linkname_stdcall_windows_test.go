@@ -21,8 +21,8 @@ func TestLinknameStdcall(t *testing.T) {
 	if got := asGo(21); got != 42 {
 		t.Fatalf("Go funcval conversion = %d", got)
 	}
-	original := stdcallCallback
-	t.Cleanup(func() { stdcallCallback = original })
+	// A Go closure cannot be stored back into a native function-pointer slot.
+	t.Cleanup(func() { stdcallCallback = stdcallTwice })
 	stdcallCallback = nil
 	if stdcallCallback != nil {
 		t.Fatal("nil function pointer not preserved")

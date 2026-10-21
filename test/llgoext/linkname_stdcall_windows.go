@@ -4,6 +4,9 @@ package llgoext
 
 import _ "unsafe"
 
+//go:linkname stdcallTwice stdcall.llgo_ext_std_twice
+func stdcallTwice(int32) int32
+
 //go:linkname stdcallEntry stdcall.llgo_ext_std_entry
 func stdcallEntry(v int32) int32 { return v + 7 }
 
