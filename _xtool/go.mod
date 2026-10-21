@@ -7,5 +7,5 @@ require (
 	github.com/llarhub/clang-c v0.6.1
 )
 
-// Explicit native variable bindings from goplus/lib#53; remove after its release.
-replace github.com/goplus/lib => github.com/cpunion/lib v0.0.0-20261021003434-95e56e9fa51c
+// Explicit native bindings from goplus/lib#53; remove after its release.
+replace github.com/goplus/lib => github.com/cpunion/lib v0.0.0-20261021012937-cbe6d613b5f0
