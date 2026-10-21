@@ -8,6 +8,12 @@ int32_t llgo_linkvar_scalar = 42;
 int32_t llgo_linkvar_array[3] = {3, 5, 7};
 int32_t *llgo_linkvar_pointer = &llgo_linkvar_scalar;
 int32_t (*llgo_linkvar_callback)(int32_t) = twice;
+int32_t (*llgo_linkvar_callbacks[2])(int32_t) = {twice, twice};
+
+void llgo_linkvar_reset_callbacks(void) {
+    llgo_linkvar_callbacks[0] = twice;
+    llgo_linkvar_callbacks[1] = twice;
+}
 
 int32_t llgo_linkvar_call(int32_t value) {
     return llgo_linkvar_callback(value);

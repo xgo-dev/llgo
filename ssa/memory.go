@@ -507,9 +507,17 @@ func (b Builder) Load(ptr Expr) Expr {
 func (b Builder) Store(ptr, val Expr) Expr {
 	raw := ptr.raw.Type
 	dbgInstrf("Store %v, %v, %v\n", raw, ptr.impl, val.impl)
-	val = checkExpr(val, raw.(*types.Pointer).Elem(), b)
-	b.assertStaticNilDeref(ptr)
 	storageType := b.Prog.Elem(ptr.Type)
+	if storageType.kind == vkFuncPtr && val.kind == vkClosure {
+		// The raw signature alone does not distinguish a C pointer slot from
+		// a Go funcval. Use the actual storage representation so a two-word
+		// Go value cannot overwrite the next native variable. ChangeType also
+		// rejects closure environments that a native callback cannot carry.
+		val = b.ChangeType(storageType, val)
+	} else {
+		val = checkExpr(val, raw.(*types.Pointer).Elem(), b)
+	}
+	b.assertStaticNilDeref(ptr)
 	if storageType.kind == vkSIMD {
 		stored := b.impl.CreateStore(val.impl, ptr.impl)
 		stored.SetAlignment(int(b.Prog.AlignOf(storageType)))

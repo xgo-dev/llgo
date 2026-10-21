@@ -48,3 +48,40 @@ func TestLinknameCVariables(t *testing.T) {
 		t.Fatalf("restored function pointer returned %d through C, want 46", got)
 	}
 }
+
+func TestLinknameCVariableCallbackStore(t *testing.T) {
+	resetLinkedCallbacks()
+	t.Cleanup(resetLinkedCallbacks)
+	// Each native slot is one word. Adjacent slots make an oversized Go
+	// funcval store fail regardless of the linker's global variable order.
+	saved := linkedCallbacks[0]
+	restore := func() { linkedCallbacks[0] = saved }
+	linkedCallbacks[0] = nil
+	if linkedCallbacks[1] == nil {
+		t.Fatal("clearing a native callback overwrote the adjacent slot")
+	}
+	restore()
+	for i, callback := range linkedCallbacks {
+		if callback == nil {
+			t.Fatalf("restoring a native callback overwrote slot %d", i)
+		}
+		if got := callback(21); got != 42 {
+			t.Fatalf("callback slot %d returned %d, want 42", i, got)
+		}
+	}
+}
+
+func TestLinknameCVariableCallbackRejectsClosure(t *testing.T) {
+	resetLinkedCallbacks()
+	t.Cleanup(resetLinkedCallbacks)
+	value := int32(7)
+	defer func() {
+		if recover() == nil {
+			t.Error("capturing Go closure accepted in a native callback slot")
+		}
+		if got := linkedCallbacks[0](21); got != 42 {
+			t.Errorf("rejected assignment changed the native callback: %d", got)
+		}
+	}()
+	linkedCallbacks[0] = func(v int32) int32 { return v + value }
+}

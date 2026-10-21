@@ -24,6 +24,13 @@ var linkedPointer *int32
 //go:linkname linkedCallback C.llgo_linkvar_callback
 var linkedCallback func(int32) int32
 
+//go:linkname linkedCallbacks C.llgo_linkvar_callbacks
+var linkedCallbacks [2]func(int32) int32
+
+func resetLinkedCallbacks() {
+	C.llgo_linkvar_reset_callbacks()
+}
+
 func linkedVarAddressesMatch() bool {
 	return C.llgo_linkvar_addresses(
 		unsafe.Pointer(&linkedScalar), unsafe.Pointer(&linkedArray),
