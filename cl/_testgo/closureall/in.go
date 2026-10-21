@@ -124,9 +124,7 @@ func makeWithFree(base int) Fn {
 // A method expression uses the receiver as an ordinary first argument.
 // CHECK: call i64 @"main.(*S).Add$thunk"(ptr [[S]], i64 8)
 // The interface method value keeps the same interface payload and checks it is non-nil.
-// CHECK: [[ITAB:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr {{.*}}, ptr @"*_llgo_main.S")
-// CHECK: [[IFACE_ITAB:%.*]] = insertvalue %"{{.*}}iface" undef, ptr [[ITAB]], 0
-// CHECK: [[IFACE:%.*]] = insertvalue %"{{.*}}iface" [[IFACE_ITAB]], ptr [[S]], 1
+// CHECK: [[IFACE:%.*]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[S]], 1
 // CHECK: [[IFACE_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[IFACE]])
 // CHECK: [[IFACE_OK:%.*]] = icmp ne ptr [[IFACE_TYPE]], null
 // CHECK: br i1 [[IFACE_OK]], label %{{.*}}, label %{{.*}}
