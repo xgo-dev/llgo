@@ -1104,7 +1104,7 @@ var Dynamic = [2]int{value(), 9}
 
 func Use() int { return Dynamic[0] + Dynamic[1] }
 `
-	ir := compileWithRewrites(t, src, nil)
+	ir := compileWithRewritesTarget(t, src, nil, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
 	if !strings.Contains(ir, "@staticinit.Dynamic = common global [2 x i64] zeroinitializer") {
 		t.Fatalf("dynamic global should keep zero initializer:\n%s", ir)
 	}
@@ -2473,7 +2473,7 @@ var G = Zero{}
 
 func Use() int { return G.Value + G.Array[1] }
 `
-	ir := compileWithRewrites(t, src, nil)
+	ir := compileWithRewritesTarget(t, src, nil, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
 	if !strings.Contains(ir, "@staticinit.G = common global %staticinit.Zero zeroinitializer") {
 		t.Fatalf("missing zero static initializer:\n%s", ir)
 	}
