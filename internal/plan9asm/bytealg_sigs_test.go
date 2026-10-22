@@ -2,7 +2,6 @@ package plan9asm
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -10,30 +9,16 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/packages"
+	"github.com/xgo-dev/llvm"
 	extplan9asm "github.com/xgo-dev/plan9asm"
 )
 
 func TestSigsForStdlibInternalBytealgArm64(t *testing.T) {
-	if runtime.GOARCH != "arm64" {
-		t.Skip("host is not arm64")
-	}
 	goroot := runtime.GOROOT()
 	if goroot == "" {
-		t.Skip("GOROOT not available")
+		t.Fatal("GOROOT not available")
 	}
-
-	cfg := &packages.Config{
-		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesSizes | packages.NeedTypesInfo | packages.NeedImports,
-		Env:  os.Environ(),
-	}
-	pkgs, err := packages.LoadEx(nil, nil, cfg, "internal/bytealg")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(pkgs) != 1 || pkgs[0].Types == nil {
-		t.Fatalf("load internal/bytealg: got %d pkgs, types=%v", len(pkgs), pkgs[0].Types)
-	}
-	pkg := pkgs[0]
+	pkg := loadStdlibInternalBytealgForTarget(t, "linux", "arm64")
 
 	sfiles := map[string]map[string]extplan9asm.FuncSig{
 		filepath.Join(goroot, "src", "internal", "bytealg", "compare_arm64.s"): {
@@ -43,10 +28,6 @@ func TestSigsForStdlibInternalBytealgArm64(t *testing.T) {
 			},
 			"runtime.cmpstring": {
 				Args: []extplan9asm.LLVMType{"{ ptr, i64 }", "{ ptr, i64 }"},
-				Ret:  extplan9asm.I64,
-			},
-			"internal/bytealg.cmpbody": {
-				Args: []extplan9asm.LLVMType{extplan9asm.Ptr, extplan9asm.I64, extplan9asm.Ptr, extplan9asm.I64},
 				Ret:  extplan9asm.I64,
 			},
 		},
@@ -91,74 +72,102 @@ func TestSigsForStdlibInternalBytealgArm64(t *testing.T) {
 			},
 		},
 	}
-	// Go 1.21 arm64 equal_arm64.s contains an extra helper TEXT memeqbody<>.
-	// Newer toolchains inline it into runtime·memequal and drop this symbol.
-	if src, err := os.ReadFile(filepath.Join(goroot, "src", "internal", "bytealg", "equal_arm64.s")); err == nil {
-		if string(src) != "" && containsTextSymbol(string(src), "memeqbody<>") {
-			sfiles[filepath.Join(goroot, "src", "internal", "bytealg", "equal_arm64.s")]["internal/bytealg.memeqbody"] = extplan9asm.FuncSig{
-				Args: []extplan9asm.LLVMType{extplan9asm.Ptr, extplan9asm.Ptr, extplan9asm.I64},
-				Ret:  extplan9asm.I1,
-			}
-		}
-	}
-	// Go toolchains may keep or drop indexbody<> in index_arm64.s.
-	if src, err := os.ReadFile(filepath.Join(goroot, "src", "internal", "bytealg", "index_arm64.s")); err == nil {
-		if string(src) != "" && containsTextSymbol(string(src), "indexbody<>") {
-			sfiles[filepath.Join(goroot, "src", "internal", "bytealg", "index_arm64.s")]["internal/bytealg.indexbody"] = extplan9asm.FuncSig{
-				Args:    []extplan9asm.LLVMType{extplan9asm.Ptr, extplan9asm.I64, extplan9asm.Ptr, extplan9asm.I64, extplan9asm.Ptr},
-				Ret:     extplan9asm.Void,
-				ArgRegs: []extplan9asm.Reg{"R0", "R1", "R2", "R3", "R9"},
-			}
-		}
-	}
-	// Go toolchains may keep or drop indexbytebody<> in indexbyte_arm64.s.
-	if src, err := os.ReadFile(filepath.Join(goroot, "src", "internal", "bytealg", "indexbyte_arm64.s")); err == nil {
-		if string(src) != "" && containsTextSymbol(string(src), "indexbytebody<>") {
-			sfiles[filepath.Join(goroot, "src", "internal", "bytealg", "indexbyte_arm64.s")]["internal/bytealg.indexbytebody"] = extplan9asm.FuncSig{
-				Args:    []extplan9asm.LLVMType{extplan9asm.Ptr, "i8", extplan9asm.I64, extplan9asm.Ptr},
-				Ret:     extplan9asm.Void,
-				ArgRegs: []extplan9asm.Reg{"R0", "R1", "R2", "R8"},
-			}
-		}
-	}
-	// Go toolchains may keep or drop countbytebody<> in count_arm64.s.
-	if src, err := os.ReadFile(filepath.Join(goroot, "src", "internal", "bytealg", "count_arm64.s")); err == nil {
-		if string(src) != "" && containsTextSymbol(string(src), "countbytebody<>") {
-			sfiles[filepath.Join(goroot, "src", "internal", "bytealg", "count_arm64.s")]["internal/bytealg.countbytebody"] = extplan9asm.FuncSig{
-				Args:    []extplan9asm.LLVMType{extplan9asm.Ptr, extplan9asm.I64, "i8", extplan9asm.Ptr},
-				Ret:     extplan9asm.Void,
-				ArgRegs: []extplan9asm.Reg{"R0", "R2", "R1", "R8"},
-			}
-		}
-	}
-
 	for path, wantSigs := range sfiles {
-		tr, err := TranslateFileForPkg(pkg, path, runtime.GOOS, "arm64", nil)
-		if err != nil {
-			t.Fatalf("translate %s: %v", path, err)
-		}
-		if len(tr.Functions) != len(wantSigs) {
-			t.Fatalf("func count %s: got %d, want %d", path, len(tr.Functions), len(wantSigs))
-		}
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			tr := requireBytealgPublicTextRoots(t, pkg, path, "linux", "arm64")
+			requireBytealgSignatures(t, tr, wantSigs)
+		})
+	}
+}
 
-		for _, fn := range tr.Functions {
-			if _, ok := wantSigs[fn.ResolvedSymbol]; !ok {
-				t.Fatalf("unexpected symbol %s in %s", fn.ResolvedSymbol, path)
-			}
-			if _, ok := tr.Signatures[fn.ResolvedSymbol]; !ok {
-				t.Fatalf("missing signature for %s in %s", fn.ResolvedSymbol, path)
-			}
+func requireBytealgSignatures(t *testing.T, tr *ModuleTranslation, want map[string]extplan9asm.FuncSig) {
+	t.Helper()
+	public := 0
+	for _, fn := range tr.Functions {
+		if strings.HasSuffix(fn.TextSymbol, "<>") {
+			continue // An explicitly declared custom helper is not a Go root.
 		}
-		for name, want := range wantSigs {
-			got, ok := tr.Signatures[name]
-			if !ok {
-				t.Fatalf("missing symbol %s in %s", name, path)
-			}
-			if err := checkSig(got, want); err != nil {
-				t.Fatalf("%s (%s): %v", name, path, err)
-			}
+		public++
+		expected, ok := want[fn.ResolvedSymbol]
+		if !ok {
+			t.Fatalf("unexpected public root %s", fn.ResolvedSymbol)
+		}
+		if err := checkSig(tr.Signatures[fn.ResolvedSymbol], expected); err != nil {
+			t.Fatalf("%s: %v", fn.ResolvedSymbol, err)
 		}
 	}
+	if public != len(want) {
+		t.Fatalf("public root count = %d, want %d", public, len(want))
+	}
+}
+
+// A private <> TEXT remains part of the complete source continuation proof,
+// not an independently callable Go signature. Compare the full original public
+// root inventory, rather than equating all physical TEXT nodes with Go entries.
+func requireBytealgPublicTextRoots(t *testing.T, pkg *packages.Package, path, goos, goarch string) *ModuleTranslation {
+	t.Helper()
+	opt := TranslateOptions{GOROOT: runtime.GOROOT()}
+	src, err := PreprocessFileForPkg(pkg, path, goos, goarch, opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arch := extplan9asm.ArchAMD64 // The parser's shared x86 grammar includes 386.
+	if goarch == "arm64" {
+		arch = extplan9asm.ArchARM64
+	}
+	file, err := extplan9asm.Parse(arch, string(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolve := resolveSymFuncForTarget(pkg.PkgPath, goos, goarch)
+	roots := map[string]bool{}
+	private := map[string]string{}
+	for _, fn := range file.Funcs {
+		name := resolve(fn.Sym)
+		if strings.HasSuffix(fn.Sym, "<>") {
+			private[fn.Sym] = name
+			continue
+		}
+		if roots[name] {
+			t.Fatalf("duplicate original public TEXT root %s", name)
+		}
+		roots[name] = true
+	}
+	if len(roots) == 0 {
+		t.Fatal("empty original public TEXT root inventory")
+	}
+	opt.SourcePreprocessed = true
+	tr, err := TranslateSourceModuleForPkgWithOptions(pkg, path, src, goos, goarch, opt)
+	if err != nil {
+		t.Fatalf("translate %s: %v", path, err)
+	}
+	t.Cleanup(tr.Module.Dispose)
+	if err := llvm.VerifyModule(tr.Module, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("invalid translated module: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, fn := range tr.Functions {
+		if strings.HasSuffix(fn.TextSymbol, "<>") {
+			if name, ok := private[fn.TextSymbol]; !ok || name != fn.ResolvedSymbol {
+				t.Fatalf("private helper metadata lacks its original source identity: %+v", fn)
+			}
+			continue
+		}
+		if !roots[fn.ResolvedSymbol] || seen[fn.ResolvedSymbol] {
+			t.Fatalf("duplicate or foreign public Go entry: %+v", fn)
+		}
+		seen[fn.ResolvedSymbol] = true
+		if _, ok := tr.Signatures[fn.ResolvedSymbol]; !ok {
+			t.Fatalf("missing public root signature: %s", fn.ResolvedSymbol)
+		}
+		if entry := tr.Module.NamedFunction(fn.ResolvedSymbol); entry.IsNil() || entry.BasicBlocksCount() == 0 {
+			t.Fatalf("missing public root definition: %s", fn.ResolvedSymbol)
+		}
+	}
+	if len(seen) != len(roots) {
+		t.Fatalf("public root union incomplete: got %v, want %v", seen, roots)
+	}
+	return tr
 }
 
 func containsTextSymbol(src, sym string) bool {
@@ -191,26 +200,11 @@ func checkSig(got, want extplan9asm.FuncSig) error {
 }
 
 func TestSigsForStdlibInternalBytealgArm64_CoversAllTextSymbols(t *testing.T) {
-	if runtime.GOARCH != "arm64" {
-		t.Skip("host is not arm64")
-	}
 	goroot := runtime.GOROOT()
 	if goroot == "" {
-		t.Skip("GOROOT not available")
+		t.Fatal("GOROOT not available")
 	}
-
-	cfg := &packages.Config{
-		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesSizes | packages.NeedTypesInfo | packages.NeedImports,
-		Env:  os.Environ(),
-	}
-	pkgs, err := packages.LoadEx(nil, nil, cfg, "internal/bytealg")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(pkgs) != 1 || pkgs[0].Types == nil {
-		t.Fatalf("load internal/bytealg: got %d pkgs, types=%v", len(pkgs), pkgs[0].Types)
-	}
-	pkg := pkgs[0]
+	pkg := loadStdlibInternalBytealgForTarget(t, "linux", "arm64")
 
 	sfiles := []string{
 		filepath.Join(goroot, "src", "internal", "bytealg", "compare_arm64.s"),
@@ -222,24 +216,8 @@ func TestSigsForStdlibInternalBytealgArm64_CoversAllTextSymbols(t *testing.T) {
 	sort.Strings(sfiles)
 
 	for _, path := range sfiles {
-		src, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
-		}
-		file, err := extplan9asm.Parse(extplan9asm.ArchARM64, string(src))
-		if err != nil {
-			t.Fatalf("parse %s: %v", path, err)
-		}
-		if len(file.Funcs) == 0 {
-			t.Fatalf("unexpected empty funcs: %s", path)
-		}
-
-		tr, err := TranslateFileForPkg(pkg, path, runtime.GOOS, "arm64", nil)
-		if err != nil {
-			t.Fatalf("translate %s: %v", path, err)
-		}
-		if got, want := len(tr.Signatures), len(file.Funcs); got != want {
-			t.Fatalf("%s: got %d signatures, want %d", path, got, want)
-		}
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			requireBytealgPublicTextRoots(t, pkg, path, "linux", "arm64")
+		})
 	}
 }

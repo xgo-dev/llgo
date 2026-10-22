@@ -185,6 +185,7 @@ type packageSection struct {
 	EmbedFiles       []embedFileDigest `yaml:"embed_files,omitempty"`
 	AltEmbedFiles    []embedFileDigest `yaml:"alt_embed_files,omitempty"`
 	OtherFiles       []fileDigest      `yaml:"other_files,omitempty"`
+	Plan9AsmFiles    []plan9AsmDigest  `yaml:"plan9asm_files,omitempty"`
 	LLGoFiles        []llgoFileDigest  `yaml:"llgo_files,omitempty"`
 	RewriteVars      orderedStringMap  `yaml:"rewrite_vars,omitempty"`
 }
@@ -192,7 +193,7 @@ type packageSection struct {
 func (s *packageSection) empty() bool {
 	return len(s.DeadInits) == 0 && s.PkgPath == "" && s.PkgID == "" && len(s.GoFiles) == 0 && len(s.AltGoFiles) == 0 &&
 		len(s.EmbedFiles) == 0 && len(s.AltEmbedFiles) == 0 &&
-		len(s.OtherFiles) == 0 && len(s.LLGoFiles) == 0 && len(s.RewriteVars) == 0 && s.PthreadStackSize == 0
+		len(s.OtherFiles) == 0 && len(s.Plan9AsmFiles) == 0 && len(s.LLGoFiles) == 0 && len(s.RewriteVars) == 0 && s.PthreadStackSize == 0
 }
 
 // manifestBuilder builds manifest text with sorted sections.

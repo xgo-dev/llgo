@@ -16,7 +16,8 @@ type Uint128 struct { Lo, Hi uint64 }
 func Y__builtin_mul_overflowUint128(t *byte, a, b Uint128, res uintptr) int32
 func X__builtin_mul_overflowUint128(t *byte, a, b Uint128, res uintptr) int32
 `)
-	asm := []byte(`TEXT ·Y__builtin_mul_overflowUint128(SB),$56-52
+	asm := []byte(`#include "funcdata.h"
+TEXT ·Y__builtin_mul_overflowUint128(SB),$56-52
 GO_ARGS
 NO_LOCAL_POINTERS
 MOVQ t+0(FP), AX

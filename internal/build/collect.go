@@ -290,6 +290,13 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 		}
 		m.pkg.OtherFiles = otherList
 	}
+	if c.mode != ModeGen {
+		asmInputs, err := digestPackagePlan9Asm(c, pkg, sfiles)
+		if err != nil {
+			return fmt.Errorf("digest Plan 9 assembly: %w", err)
+		}
+		m.pkg.Plan9AsmFiles = asmInputs
+	}
 
 	// ModeGen returns the in-memory Go LLVM module before C/C++/assembly
 	// LLGoFiles are compiled or archived, so it must not require the target
