@@ -21,7 +21,7 @@ func TestPlan9AsmTranslateOptions(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := plan9asmTranslateOptions(&test.conf)
+			got := plan9asmTranslateOptions(&context{buildConf: &test.conf})
 			if got.GOARM != test.conf.GOARM {
 				t.Fatalf("GOARM = %q, want %q", got.GOARM, test.conf.GOARM)
 			}
