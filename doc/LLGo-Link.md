@@ -6,9 +6,9 @@ Binding Go Symbols to C/C++/Python Symbols via //go:linkname and //llgo:link
 LLGo lets Go code call C, C++ and Python libraries, and lets Go code be called from C, by attaching an external symbol name to a Go declaration. It does this with two directives:
 
 - `//go:linkname`, the standard Go directive, whose *linkname* syntax LLGo extends with a calling-convention prefix.
-- `//llgo:link`, an LLGo-specific directive that does the same job for **methods**, which `//go:linkname` cannot handle.
+- `//llgo:link`, an LLGo-specific directive for placeholder function and **method** bindings. `//go:linkname` cannot be applied to methods.
 
-The core idea: **the prefix decides the ABI, and the presence of a body decides whether the declaration defines the symbol or references it.** These are two independent questions. A body never turns prefix interpretation off. `C.name` on a function with a body exports a C entry point, and `C.name` on a prototype references an external C function.
+For `//go:linkname`, **the prefix decides the ABI, and the presence of a body decides whether the declaration defines the symbol or references it.** These are two independent questions. A body never turns prefix interpretation off. `C.name` on a function with a body exports a C entry point, and `C.name` on a prototype references an external C function. In contrast, `//llgo:link` requires a placeholder body and only references its target; that body is ignored.
 
 Variables follow the same split, with one wrinkle: for a Go variable, the absence of an initializer does not mean the declaration is only a reference. Without an extension prefix, every such declaration is a (zero-initialized) definition, exactly as in gc. Extension prefixes (`C.`, `stdcall.`) mark *extern storage* instead.
 
@@ -38,6 +38,8 @@ For `//go:linkname <GoName> <target>`, read the declaration in two steps.
 | `name` / `pkg.name` | Defines a Go symbol using the Go ABI | References the Go symbol |
 | `C.name` | Exports a C ABI entry, with thread/GC boundary handling, similar to `//export` | References an external C function |
 | `stdcall.name` | Exports a `stdcall` entry with the same runtime boundary handling | References an external `stdcall` function |
+
+Targets are literal linker symbols, not names recursively resolved through another declaration's linkname. A bare target does not imply C. The single-argument form `//go:linkname Add` retains the default `pkgpath.Add` symbol; it does not create a bare `Add` symbol.
 
 Why the body does not disable prefix interpretation:
 
@@ -76,6 +78,8 @@ func Puts(s *Char) CInt
 
 With a body, the declaration exports a C ABI entry under that name.
 
+Calls from Go to that implementation keep the Go ABI. Native entries currently require non-generic, non-variadic functions with at most one result. Methods cannot define native entries this way. The native symbol must differ from the implementation's qualified Go name. Use a native linkname or `//export` on a declaration, not both.
+
 ### `stdcall.<name>`: stdcall functions
 
 Identical to `C.<name>`, except the entry or the call uses the `stdcall` convention. With a body, it exports a `stdcall` entry with the same runtime boundary handling as `C.<name>`.
@@ -86,6 +90,8 @@ func MessageBeep(typ uint32) int32
 ```
 
 `stdcall.` is available on Windows targets only. On any other target, a `stdcall.` linkname is rejected with a compile error, whether it is on a function or a variable and whether or not it has a body.
+
+On Windows 386 it selects stdcall; on Windows amd64 and arm64 it uses the platform C ABI. The native-entry restrictions above also apply.
 
 ### `py.<name>`: Python functions
 
@@ -100,7 +106,7 @@ func Sqrt(x *Object) *Object
 
 Here `math` is the Python module name, and `sqrt` is the function's name within it.
 
-`py.` is reference-only. A function with a `py.` linkname cannot have a body; it is rejected with a compile error, since Go declarations do not define Python module attributes.
+`py.` is reference-only. A function annotated with `//go:linkname` and a `py.` target cannot have a body; it is rejected with a compile error, since Go declarations do not define Python module attributes. Placeholder `//llgo:link` bindings retain their specialized Python behavior.
 
 ### `llgo.<name>`: compiler instructions
 
@@ -113,7 +119,7 @@ func Str(string) *Char
 
 `c.Str` is **not** a call to a function. It defines a C-style string constant. For example, `c.Str("Hello")` yields a constant `*c.Char` pointing at a 6-byte, `\0`-terminated string.
 
-`llgo.<name>` is allowed on prototypes only. A function with an `llgo.` linkname cannot have a body; it is rejected with a compile error, because an instruction has nothing to export or define. It is also not allowed on variables.
+For `//go:linkname`, `llgo.<name>` is allowed on prototypes only. A function with such a target cannot have a body; it is rejected with a compile error, because an instruction has nothing to export or define. Placeholder `//llgo:link` instruction bindings retain their specialized behavior. `llgo.<name>` is not allowed on variables.
 
 ## Linkname on variables
 
@@ -149,6 +155,8 @@ Rules:
 
 Native bindings must therefore not omit the prefix, even for scalars. Without the prefix the declaration is a Go definition with Go storage semantics, which is a different thing from an extern.
 
+Migration: existing native variable bindings with bare targets must add `C.` or `stdcall.`; bare targets now define Go-owned storage.
+
 ### Go variable semantics: no extension prefix
 
 Without an extension prefix (a bare `<name>` or `<pkgPath>.<name>`), variables have gc's Go semantics. Consider two packages that select the same symbol:
@@ -181,6 +189,8 @@ Two conclusions follow:
 
 Ordinary function variables keep Go function-value semantics. `//go:linkname Foo foo` with `var Foo func()` makes `Foo` a Go closure variable, exactly as an ordinary `func()` variable is. It is not a C function pointer. To get a native function pointer, spell the prefix out as shown above.
 
+Slices and strings also retain their ordinary Go representation. Explicit `go:cgo_import_static` and `go:cgo_import_dynamic` metadata can instead make an eligible zero definition an import, including a variable with its default package name. Windows dynamic import slots hold imported addresses. These cgo placeholders must not become ordinary Go zero storage.
+
 ### Go-defined variables seen from C
 
 Direct C `extern` access to a variable defined by Go is not guaranteed. The supported way for C to reach Go state is an exported accessor function (a function with a body under a `C.` linkname):
@@ -192,7 +202,16 @@ var state int32
 func getState() int32 { return state }
 ```
 
-## `//llgo:link` for methods
+## `//llgo:link` placeholder bindings
+
+`//llgo:link` requires a placeholder body for a function or method. LLGo ignores the body completely: the declaration only references its target and never exports an implementation. This applies to Go targets as well as `C.` and `stdcall.` targets. It is not interchangeable with a defining `//go:linkname`.
+
+```go
+//llgo:link Add C.native_add
+func Add(a, b int32) int32 { panic("placeholder") }
+```
+
+### Methods
 
 `//go:linkname` cannot be applied to methods, because a method has no standalone Go identifier to name. `//llgo:link` extends it for this case. The first argument is written as `TypeName.MethodName`, and the second argument is the same `<callconv>.<name>` linkname as above:
 
@@ -207,7 +226,7 @@ This binds the Go method `TranslationUnit.Cursor` to the C function `clang_getTr
 
 `//llgo:link` only references an external symbol. It has no export mode and no naming-only mode.
 
-**About the fake body.** A method annotated with `//llgo:link` carries a placeholder body (`return Cursor{}` above). This exists only to satisfy the Go compiler, which requires a method to have a body. The body has no runtime meaning: LLGo replaces the method with the external symbol. This is the one place where a body does not mean "define", and it is a property of `//llgo:link`, not of `//go:linkname`.
+**About the fake body.** A method annotated with `//llgo:link` carries a placeholder body (`return Cursor{}` above). This exists only to satisfy the Go compiler, which requires a method to have a body. The body has no runtime meaning: LLGo replaces the method with the external symbol. The same placeholder rule applies to function bindings and is a property of `//llgo:link`, not of `//go:linkname`.
 
 ## Summary of rules
 
@@ -220,7 +239,7 @@ This binds the Go method `TranslationUnit.Cursor` to the C function `clang_getTr
 | stdcall function | `//go:linkname` | `stdcall.<manglingName>` | Exports a stdcall entry, same boundary handling (Windows only) | References an external stdcall function (Windows only) |
 | Python function | `//go:linkname` | `py.<name>` | Rejected | References a Python module function; needs `const LLGoPackage = "py.<moduleName>"` |
 | Compiler instruction | `//go:linkname` | `llgo.<name>` | Rejected | Expanded by the compiler (e.g. `llgo.cstr`) |
-| Method | `//llgo:link` | `<callconv>.<name>` | Placeholder body, ignored | (not applicable; a method always needs a placeholder body) |
+| Function or method placeholder | `//llgo:link` | `<name>`, `<pkgPath>.<name>` or `<callconv>.<name>` | References the target; placeholder body ignored | Rejected; a placeholder body is required |
 
 On non-Windows targets, every `stdcall.` linkname (function or variable, with or without a body) is rejected with a compile error.
 
@@ -239,3 +258,6 @@ On non-Windows targets, every `stdcall.` linkname (function or variable, with or
 - A linkname on a variable without a prefix has `godecl` semantics and gc's merge rules, as in the official Go compiler.
 - Because `//llgo:link` is an ordinary comment to the Go toolchain, packages using it still parse and type-check with the standard Go compiler, which is why the placeholder body is needed.
 
+## Regression coverage
+
+[`test/go/linkname_storage_test.go`](../test/go/linkname_storage_test.go) runs ordinary linkname examples with both gc and LLGo. LLGo-only native entries, variables, stdcall and placeholder bindings belong in [`test/llgoext`](../test/llgoext). Compiler tests additionally check source-to-IR lowering and reject invalid native declarations.

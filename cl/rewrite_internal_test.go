@@ -254,16 +254,6 @@ func use() Value { return value }
 			want: "stdcall requires a function type",
 		},
 		{
-			name: "variable linkname", goos: "windows", goarch: "386",
-			src: `package p
-import _ "unsafe"
-//go:linkname value stdcall.value
-var value int
-func use() int { return value }
-`,
-			want: "stdcall linkname namespace applies only to functions",
-		},
-		{
 			name: "non-direct callback", goos: "windows", goarch: "386",
 			src: `package p
 import _ "unsafe"
@@ -1104,8 +1094,8 @@ var Dynamic = [2]int{value(), 9}
 
 func Use() int { return Dynamic[0] + Dynamic[1] }
 `
-	ir := compileWithRewrites(t, src, nil)
-	if !strings.Contains(ir, "@staticinit.Dynamic = global [2 x i64] zeroinitializer") {
+	ir := compileWithRewritesTarget(t, src, nil, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	if !strings.Contains(ir, "@staticinit.Dynamic = common global [2 x i64] zeroinitializer") {
 		t.Fatalf("dynamic global should keep zero initializer:\n%s", ir)
 	}
 	assertStoreToGlobal(t, ir, "@staticinit.Dynamic")
@@ -1117,7 +1107,7 @@ func TestStaticGlobalInitSkipsExternalGlobal(t *testing.T) {
 import _ "unsafe"
 
 //go:linkname External C.external
-var External = 7
+var External int
 
 func Use() int { return External }
 `
@@ -1125,7 +1115,7 @@ func Use() int { return External }
 	if !strings.Contains(ir, "@external = external global i64") {
 		t.Fatalf("linknamed global should remain an external declaration:\n%s", ir)
 	}
-	assertStoreToGlobal(t, ir, "@external")
+	assertNoStoreToGlobal(t, ir, "@external")
 }
 
 func TestStaticGlobalInitDeterministicOrder(t *testing.T) {
@@ -2473,8 +2463,8 @@ var G = Zero{}
 
 func Use() int { return G.Value + G.Array[1] }
 `
-	ir := compileWithRewrites(t, src, nil)
-	if !strings.Contains(ir, "@staticinit.G = global %staticinit.Zero zeroinitializer") {
+	ir := compileWithRewritesTarget(t, src, nil, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	if !strings.Contains(ir, "@staticinit.G = common global %staticinit.Zero zeroinitializer") {
 		t.Fatalf("missing zero static initializer:\n%s", ir)
 	}
 	assertNoStoreToGlobal(t, ir, "@staticinit.G")

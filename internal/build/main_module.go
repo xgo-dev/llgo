@@ -49,9 +49,10 @@ type genConfig struct {
 }
 
 type cExport struct {
-	goName string
-	cName  string
-	sig    *types.Signature
+	callConv llssa.CallConv
+	goName   string
+	cName    string
+	sig      *types.Signature
 }
 
 const (
@@ -384,40 +385,15 @@ func defineCExportWrappers(pkg llssa.Package, exports []cExport, ensureInit llss
 	if len(exports) == 0 {
 		return
 	}
-	enterForeignThread := pkg.NewFunc(
-		llssa.PkgRuntime+".EnterForeignThread",
-		newSignature(nil, []types.Type{types.Typ[types.Bool]}), llssa.GoDecl,
-	)
-	exitForeignThread := pkg.NewFunc(
-		llssa.PkgRuntime+".ExitForeignThread",
-		newSignature([]types.Type{types.Typ[types.Bool]}, nil), llssa.GoDecl,
-	)
 	for _, export := range exports {
-		implementation := pkg.NewFunc(export.goName, export.sig, llssa.GoDecl)
-		wrapperBackground := llssa.GoDecl
-		if target := pkg.Prog.Target(); target != nil && target.GOARCH == "wasm" && target.WasmProfile != "" {
-			// Go's wasm32 uintptr is 64-bit, while C size_t and uintptr_t at
-			// a Memory32 entry are 32-bit. Keep the implementation on the Go
-			// ABI and adapt widths at the externally visible wrapper.
-			wrapperBackground = llssa.CDecl
+		cc := export.callConv
+		if cc == 0 {
+			cc = llssa.GoDecl
+			if target := pkg.Prog.Target(); target != nil && target.GOARCH == "wasm" && target.WasmProfile != "" {
+				cc = llssa.CDecl
+			}
 		}
-		wrapper := pkg.NewFunc(export.cName, export.sig, wrapperBackground)
-		b := wrapper.MakeBody(1)
-		if ensureInit != nil {
-			b.Call(ensureInit.Expr)
-		}
-		registered := b.Call(enterForeignThread.Expr)
-		args := make([]llssa.Expr, export.sig.Params().Len())
-		for i := range args {
-			args[i] = wrapper.Param(i)
-		}
-		result := b.Call(implementation.Expr, args...)
-		b.Call(exitForeignThread.Expr, registered)
-		if export.sig.Results().Len() == 0 {
-			b.Return()
-		} else {
-			b.Return(result)
-		}
+		pkg.DefineNativeExport(export.goName, export.cName, export.sig, cc, ensureInit)
 	}
 }
 

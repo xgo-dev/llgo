@@ -28,6 +28,10 @@ import (
 type packageSyntaxData struct {
 	mu                   sync.RWMutex
 	linknames            map[string]string
+	linknameTargets      map[string]int
+	linkDirectives       map[string]string
+	nativeExports        map[string]NativeExportInfo
+	externalImports      map[string]none
 	wasmImports          map[string]wasmImport
 	exports              map[string]string
 	closureEnvDirectives map[closureEnvDirectiveKey]none
@@ -39,6 +43,10 @@ type packageSyntaxData struct {
 func newPackageSyntaxData() *packageSyntaxData {
 	return &packageSyntaxData{
 		linknames:            make(map[string]string),
+		linknameTargets:      make(map[string]int),
+		linkDirectives:       make(map[string]string),
+		nativeExports:        make(map[string]NativeExportInfo),
+		externalImports:      make(map[string]none),
 		wasmImports:          make(map[string]wasmImport),
 		exports:              make(map[string]string),
 		closureEnvDirectives: make(map[closureEnvDirectiveKey]none),
@@ -51,6 +59,23 @@ func newPackageSyntaxData() *packageSyntaxData {
 type wasmImport struct {
 	module string
 	name   string
+}
+
+// SetExternalImport records the literal local symbol of a cgo import pragma.
+// Imports can name ordinary package variables without any linkname directive.
+// The namespace is build-wide: gc also looks up cgo locals by literal linker
+// symbol (version 0), so an import can replace eligible BSS in another package.
+func (p Program) SetExternalImport(name string) {
+	p.packageSyntax.mu.Lock()
+	p.packageSyntax.externalImports[name] = none{}
+	p.packageSyntax.mu.Unlock()
+}
+
+func (p Program) IsExternalImport(name string) bool {
+	p.packageSyntax.mu.RLock()
+	_, ok := p.packageSyntax.externalImports[name]
+	p.packageSyntax.mu.RUnlock()
+	return ok
 }
 
 // SetPackageExport records an export directive before the LLVM Package that
@@ -94,4 +119,50 @@ func (p *packageSyntaxData) typeCallConv(name string) (CallConv, bool) {
 	background, ok := p.typeCallConvs[name]
 	p.mu.RUnlock()
 	return background, ok
+}
+
+// SetLinknameDirective retains the source form: llgo:link bodies are binding
+// placeholders, whereas go:linkname bodies are actual definitions.
+func (p Program) SetLinknameDirective(name, target, directive string) {
+	p.packageSyntax.mu.Lock()
+	p.packageSyntax.setLinkname(name, target)
+	p.packageSyntax.linkDirectives[name] = directive
+	p.packageSyntax.mu.Unlock()
+}
+
+func (p Program) LinknameDirective(name string) string {
+	p.packageSyntax.mu.RLock()
+	defer p.packageSyntax.mu.RUnlock()
+	return p.packageSyntax.linkDirectives[name]
+}
+
+type NativeExportInfo struct {
+	CallConv CallConv
+}
+
+func (p Program) SetNativeExport(name string, info NativeExportInfo) {
+	p.packageSyntax.mu.Lock()
+	p.packageSyntax.nativeExports[name] = info
+	p.packageSyntax.mu.Unlock()
+}
+
+// NativeExport reports an explicit native go:linkname definition's entry ABI.
+func (p Program) NativeExport(name string) (NativeExportInfo, bool) {
+	p.packageSyntax.mu.RLock()
+	cc, ok := p.packageSyntax.nativeExports[name]
+	p.packageSyntax.mu.RUnlock()
+	return cc, ok
+}
+
+// setLinkname updates both indexes while the caller holds mu. Counts preserve a
+// target shared by multiple declarations when one declaration is rebound.
+func (p *packageSyntaxData) setLinkname(name, target string) {
+	if previous, ok := p.linknames[name]; ok {
+		p.linknameTargets[previous]--
+		if p.linknameTargets[previous] == 0 {
+			delete(p.linknameTargets, previous)
+		}
+	}
+	p.linknames[name] = target
+	p.linknameTargets[target]++
 }

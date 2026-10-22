@@ -39,6 +39,10 @@ func linkedAliasReceiverCases(t *testing.T, test func(*testing.T, string, string
 			for _, directive := range []string{"go:linkname", "llgo:link", " llgo:link", "go:linkname-after"} {
 				t.Run(method+"/"+directive, func(t *testing.T) {
 					comment := fmt.Sprintf("//%s %s C.test_cursor", strings.TrimSuffix(directive, "-after"), method)
+					body := " { panic(\"binding placeholder\") }"
+					if strings.HasPrefix(directive, "go:linkname") {
+						body = "" // go:linkname prototypes bind; llgo:link bodies are placeholders.
+					}
 					after := ""
 					if strings.HasSuffix(directive, "-after") {
 						comment, after = "", comment
@@ -51,10 +55,10 @@ type Value = Data
 type Ptr = *Value
 type Chain = Ptr
 %s
-func (%s) Cursor() int32 { return -1 }
+func (%s) Cursor() int32%s
 func Call(p *Data) int32 { return p.Cursor() }
 %s
-`, comment, recv.name, after)
+`, comment, recv.name, body, after)
 					test(t, source, "p."+recv.want)
 				})
 			}
