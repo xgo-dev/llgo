@@ -16,6 +16,11 @@ import (
 
 func arm64TailSelectionFixture(t *testing.T, overlay, tuple bool) (*packages.Package, TranslateOptions, string) {
 	t.Helper()
+	return arm64TailSelectionPackageFixture(t, overlay, tuple, "example.com/abizero", "abizero")
+}
+
+func arm64TailSelectionPackageFixture(t *testing.T, overlay, tuple bool, packagePath, packageName string) (*packages.Package, TranslateOptions, string) {
+	t.Helper()
 	declaration := "func Slots(value uint64) (out uint64)\n"
 	assembly := `TEXT ·Slots(SB),516,$0-16
 MOVD value+0(FP),R0
@@ -50,15 +55,19 @@ RET
 	}
 	sizes := types.SizesFor("gc", "arm64")
 	pkg := &packages.Package{
-		PkgPath: "example.com/abizero", Name: "abizero",
+		PkgPath: packagePath, Name: packageName,
 		Fset: fset, TypesInfo: info, TypesSizes: sizes,
 	}
 	opt := TranslateOptions{Overlay: make(map[string][]byte)}
 	// A complete selection contains more than the one consumed declaration.
 	// Keep its order identical to the parser/type checker's selected input.
-	for i, body := range []string{declaration, "const Selected = 1\n"} {
+	otherSource := "const Selected = 1\n"
+	if packageName == "main" {
+		otherSource += "func main() {}\n"
+	}
+	for i, body := range []string{declaration, otherSource} {
 		filename := filepath.Join(dir, fmt.Sprintf("selected%d.go", i))
-		source := []byte("package abizero\n" + body)
+		source := []byte("package " + packageName + "\n" + body)
 		onDisk := source
 		if overlay {
 			// Stale disk content must not supersede the actual parser overlay.
