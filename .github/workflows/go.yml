@@ -235,6 +235,13 @@ jobs:
             # own source tree/cache and GOMAXPROCS=2. Discover every test,
             # verify exactly-once execution, and union statement coverage.
             build_tests=(python .github/scripts/run_build_tests.py --overlay "$LLGO_GO_TEST_OVERLAY")
+            if [[ "$RUNNER_OS" == macOS ]]; then
+              if [[ "$RUNNER_ARCH" != ARM64 ]]; then
+                echo "The macOS build suite must execute the native ARM64 atomic owners" >&2
+                return 1
+              fi
+              build_tests+=(--require-arm64-atomic)
+            fi
             if [[ "$RUNNER_OS" == Windows ]]; then
               build_tests+=("--ldflags=-linkmode=external -extldflags=-lsynchronization")
             fi

@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,26 @@ import time
 
 
 PACKAGE = "github.com/xgo-dev/llgo/internal/build"
+ARM64_ATOMIC_TESTS = (
+    "TestRuntimeAtomicARM64ActualWrappersMatchOriginalGo",
+    "TestRuntimeAtomicARM64OriginalSDKTests",
+)
+
+
+def arm64_atomic_result(machine, names, events):
+    """Require native execution from this suite, not a portable owner or SKIP."""
+    actions = {name: [] for name in ARM64_ATOMIC_TESTS}
+    for event in events:
+        if event.get("Package") == PACKAGE and event.get("Test") in actions:
+            actions[event["Test"]].append(event.get("Action"))
+    errors = []
+    if machine.lower() not in {"arm64", "aarch64"}:
+        errors.append(f"native atomic acceptance requires an ARM64 host, got {machine!r}")
+    for name, observed in actions.items():
+        if names.count(name) != 1 or observed != ["run", "pass"]:
+            errors.append(f"{name} requires one listed root and RUN/PASS, got {observed!r}")
+    return {"machine": machine, "actions": actions, "errors": errors,
+            "success": not errors}
 
 
 def shard_index(name, workers):
@@ -143,6 +164,7 @@ def run(args):
                      f"{len(tests)} tests, {len(benchmarks)} benchmarks")
             environment = {**os.environ, "GOMAXPROCS": str(args.gomaxprocs)}
             outcomes = []
+            native_events = []
             with subprocess.Popen(command, cwd=root,
                                   env=environment, stdout=subprocess.PIPE,
                                   stderr=subprocess.STDOUT, text=True,
@@ -157,24 +179,41 @@ def run(args):
                             and event.get("Action") in ("pass", "skip", "fail")
                             and event.get("Test") and "/" not in event["Test"]):
                         outcomes.append(event["Test"])
+                    if (args.require_arm64_atomic and isinstance(event, dict)
+                            and event.get("Package") == PACKAGE
+                            and event.get("Test") in ARM64_ATOMIC_TESTS
+                            and event.get("Action") in ("run", "pass", "skip", "fail")):
+                        native_events.append({key: event[key]
+                                              for key in ("Package", "Test", "Action")})
                 status = process.wait()
             if sorted(outcomes) != sorted(tests):
                 progress(f"Build shard {index + 1} did not report every selected test exactly once")
                 status = 1
             progress(f"Build shard {index + 1} exited with {status}")
             return {"shard": index, "status": status, "seconds": time.monotonic() - started,
-                    "reported_tests": len(outcomes), "selected_tests": len(tests)}
+                    "reported_tests": len(outcomes), "selected_tests": len(tests),
+                    "native_arm64_events": native_events}
 
         # Drain every worker even on failure; their logs and coverage remain
         # useful, and no compiler may outlive cleanup of its source directory.
         with ThreadPoolExecutor(args.workers) as pool:
             results = list(pool.map(worker, range(args.workers)))
         report.update(results=results, wall_seconds=time.monotonic() - started)
+        native_failed = False
+        if args.require_arm64_atomic:
+            native = arm64_atomic_result(platform.machine(), names,
+                                         [event for result in results
+                                          for event in result["native_arm64_events"]])
+            report["native_arm64_atomic"] = native
+            native_failed = not native["success"]
+            for error in native["errors"]:
+                progress(error)
         report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         available = [profile for profile in profiles if profile.is_file()]
         if available:
             merge_coverage(available, root / "coverage-build.txt")
-        if len(available) != args.workers or any(result["status"] for result in results):
+        if (native_failed or len(available) != args.workers
+                or any(result["status"] for result in results)):
             return 1
     return 0
 
@@ -195,6 +234,8 @@ def main():
     parser.add_argument("--gomaxprocs", type=int, default=2)
     parser.add_argument("--overlay", default="")
     parser.add_argument("--ldflags", default="")
+    parser.add_argument("--require-arm64-atomic", action="store_true",
+                        help="require both native ARM64 atomic tests to RUN and PASS")
     args = parser.parse_args()
     if args.gomaxprocs < 1:
         parser.error("--gomaxprocs must be positive")

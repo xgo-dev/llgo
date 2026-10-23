@@ -1,3 +1,6 @@
+import argparse
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -6,11 +9,94 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import run_build_tests
 
 
 class BuildShardsTest(unittest.TestCase):
+    def test_native_atomic_acceptance_requires_exact_run_pass_and_actual_host(self):
+        self.assertEqual(run_build_tests.ARM64_ATOMIC_TESTS, (
+            "TestRuntimeAtomicARM64ActualWrappersMatchOriginalGo",
+            "TestRuntimeAtomicARM64OriginalSDKTests",
+        ))
+        names = list(run_build_tests.ARM64_ATOMIC_TESTS)
+        events = [{"Package": run_build_tests.PACKAGE, "Test": name, "Action": action}
+                  for name in names for action in ("run", "pass")]
+        # Unrelated SDK alignment and helper SKIPs retain their original meaning.
+        events.append({"Package": run_build_tests.PACKAGE, "Test": "TestUnaligned64",
+                       "Action": "skip"})
+        for machine in ("arm64", "aarch64"):
+            self.assertTrue(run_build_tests.arm64_atomic_result(machine, names, events)["success"])
+        variants = {
+            "skip": events[:1] + [{**events[1], "Action": "skip"}] + events[2:],
+            "fail": events[:1] + [{**events[1], "Action": "fail"}] + events[2:],
+            "missing-terminal": events[:1] + events[2:],
+            "no-run": events[1:],
+            "duplicate-run": events[:1] + events,
+            "duplicate-terminal": events[:2] + events[1:],
+            "terminal-before-run": [events[1], events[0]] + events[2:],
+            "foreign-package": [{**event, "Package": "another/package"} for event in events],
+            "child-only": [{**event, "Test": event["Test"] + "/child"} for event in events],
+        }
+        for label, changed in variants.items():
+            with self.subTest(case=label):
+                result = run_build_tests.arm64_atomic_result("arm64", names, changed)
+                self.assertFalse(result["success"])
+        for machine, selected in (("x86_64", names), ("arm64", names[1:]),
+                                  ("arm64", names + names[:1])):
+            with self.subTest(machine=machine, selected=selected):
+                result = run_build_tests.arm64_atomic_result(machine, selected, events)
+                self.assertFalse(result["success"])
+
+    def test_native_atomic_gate_uses_the_same_drained_suite_report(self):
+        # Fake only the subprocess boundary: no Go or LLVM command runs here.
+        # The real runner still lists, partitions, drains and writes its report.
+        for terminal in ("pass", "skip"):
+            with self.subTest(terminal=terminal), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                names = list(run_build_tests.ARM64_ATOMIC_TESTS) + ["TestOptionalHelper"]
+                args = argparse.Namespace(workers=2, gomaxprocs=2, overlay="", ldflags="",
+                                          require_arm64_atomic=True)
+                commands = []
+
+                def start(command, **unused):
+                    commands.append(command)
+                    profile = next(word.split("=", 1)[1] for word in command
+                                   if word.startswith("-coverprofile="))
+                    Path(profile).write_text("mode: set\np/a.go:1.1,2.2 1 1\n")
+                    selected = next(word for word in command if word.startswith("-run="))
+                    events = []
+                    for name in names:
+                        if name not in selected:
+                            continue
+                        outcome = terminal if name in run_build_tests.ARM64_ATOMIC_TESTS else "skip"
+                        events += [{"Package": run_build_tests.PACKAGE,
+                                    "Test": name, "Action": action}
+                                   for action in ("run", outcome)]
+                    process = mock.MagicMock()
+                    process.__enter__.return_value = process
+                    process.stdout = iter(json.dumps(event) + "\n" for event in events)
+                    process.wait.return_value = 0
+                    return process
+
+                with mock.patch.object(run_build_tests, "__file__", str(root / ".github/scripts/runner.py")), \
+                        mock.patch.object(run_build_tests.platform, "machine", return_value="arm64"), \
+                        mock.patch.object(run_build_tests.subprocess, "check_output",
+                                          side_effect=["\n".join(names), b""]), \
+                        mock.patch.object(run_build_tests.subprocess, "Popen", side_effect=start), \
+                        mock.patch.dict(os.environ, {"RUNNER_TEMP": directory}), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    status = run_build_tests.run(args)
+                self.assertEqual(status, int(terminal != "pass"))
+                self.assertEqual(len(commands), 2)  # The gate does not rerun either root.
+                report = json.loads((root / "go-test-timings/build-shards.json").read_text())
+                self.assertEqual(len(report["results"]), 2)
+                self.assertTrue(all(result["status"] == 0 for result in report["results"]))
+                self.assertEqual(report["native_arm64_atomic"]["success"], terminal == "pass")
+                for actions in report["native_arm64_atomic"]["actions"].values():
+                    self.assertEqual(actions, ["run", terminal])
+
     def test_partition_keeps_existing_and_new_tests_exactly_once(self):
         names = [f"TestCase{i}" for i in range(100)] + ["ExampleBuild", "FuzzInputs", "BenchmarkGo126New"]
         groups = run_build_tests.partition(names, 2)
