@@ -54,13 +54,57 @@ jobs:
       - name: Set LLGO_ROOT
         run: echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
+      - name: Record self-host resources before build
+        if: runner.os == 'Linux'
+        run: &self-host-resource-evidence |
+          timeout 10s python3 - <<'PY' || printf '%s\n' '::warning::Resource diagnostics unavailable'
+          import os
+          from pathlib import Path, PurePosixPath
+          import re
+
+          def read(filename):
+              try:
+                  with open(filename) as stream:
+                      return stream.read(65536).strip()
+              except OSError as error:
+                  return f"unavailable: {error}"
+
+          print("CPU count:", os.cpu_count(), "affinity:", sorted(os.sched_getaffinity(0)))
+          print("/proc/meminfo:\n" + read("/proc/meminfo"))
+          membership = read("/proc/self/cgroup")
+          print("/proc/self/cgroup:\n" + membership)
+          members = [line.split(":", 2)[2] for line in membership.splitlines()
+                     if line.startswith("0::")]
+          found = False
+          for line in read("/proc/self/mountinfo").splitlines():
+              fields = line.split()
+              if "-" not in fields or fields[fields.index("-") + 1] != "cgroup2":
+                  continue
+              root, mount = [re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), value)
+                             for value in fields[3:5]]
+              for member in members:
+                  try:
+                      relative = PurePosixPath(member).relative_to(root)
+                  except ValueError:
+                      continue
+                  directory = Path(mount).joinpath(relative)
+                  if ".." in relative.parts or not directory.is_dir():
+                      continue
+                  found = True
+                  print("Process cgroup2:", directory, "mount root:", root)
+                  for name in ("cpu.max", "memory.max", "memory.current", "memory.peak", "memory.events"):
+                      print(name + ":\n" + read(directory / name))
+          if not found:
+              print("Process cgroup2 counters unavailable; no memory-limit/OOM conclusion")
+          PY
+
       - name: Build stage 1 with Go
         run: |
           set -euo pipefail
 
           stage1_dir="$RUNNER_TEMP/llgo-stage1"
           mkdir -p "$stage1_dir"
-          go build -o "$stage1_dir/llgo" ./cmd/llgo
+          GOMAXPROCS=2 go build -p=2 -o "$stage1_dir/llgo" ./cmd/llgo
           "$stage1_dir/llgo" version
 
       - name: Build stage 2 with LLGo
@@ -70,7 +114,12 @@ jobs:
           stage1="$RUNNER_TEMP/llgo-stage1/llgo"
           stage2_dir="$RUNNER_TEMP/llgo-stage2"
           mkdir -p "$stage2_dir"
-          "$stage1" build -o "$stage2_dir/llgo" ./cmd/llgo
+          build=("$stage1" build -p=1 -v -o "$stage2_dir/llgo" ./cmd/llgo)
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            GOMAXPROCS=2 /usr/bin/time -v "${build[@]}"
+          else
+            GOMAXPROCS=2 "${build[@]}"
+          fi
           "$stage2_dir/llgo" version
           file "$stage2_dir/llgo"
           echo "$stage2_dir" >> "$GITHUB_PATH"
@@ -90,6 +139,10 @@ jobs:
           test "$(command -v llgo)" = "$RUNNER_TEMP/llgo-stage2/llgo"
           (cd _demo/go && LLGO_BUILD_CACHE=off llgo run ./stdlib)
           (cd _demo/c && LLGO_BUILD_CACHE=off llgo run ./hello)
+
+      - name: Record self-host resources after build
+        if: always() && runner.os == 'Linux'
+        run: *self-host-resource-evidence
 
   llgo:
     permissions:
