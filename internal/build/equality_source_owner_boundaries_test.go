@@ -66,6 +66,11 @@ func TestEqualitySourceOwnerRequiresCurrentPhysicalSource(t *testing.T) {
 			goroot, runtimeDir := t.TempDir(), t.TempDir()
 			dir := filepath.Join(goroot, "src", "internal", "bytealg")
 			patchDir := filepath.Join(runtimeDir, "_patch", "internal", "bytealg")
+			for _, directory := range []string{dir, patchDir} {
+				if err := os.MkdirAll(directory, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
 			assemblyLanguageTestWrite(t, patchDir, "equal_native.go", runtimeEqualityOwnerPatchFixture)
 			assemblyLanguageTestWrite(t, dir, "other.go", "package bytealg\n")
 			filename := filepath.Join(dir, "equal_amd64.s")
