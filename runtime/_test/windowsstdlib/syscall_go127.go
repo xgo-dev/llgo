@@ -39,8 +39,21 @@ func cHighWord() uint64
 //go:linkname cStdcallSum12 stdcall.llgo_windows_sum12_stdcall
 func cStdcallSum12(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12 uintptr) uintptr
 
+//go:linkname cThunkRegisterCanary C.llgo_windows_syscall_register_canary
+func cThunkRegisterCanary(info unsafe.Pointer) int32
+
 func testDynamicWindowsSyscalls() {
 	const lastError = 1234
+	if runtime.GOARCH == "arm64" {
+		// Call the actual six-word native thunk directly: a C wrapper that
+		// happened to save x20 itself could otherwise conceal the defect.
+		block := struct {
+			fn, n, args, r1, r2, err uintptr
+		}{fn: uintptr(c.Func(cNoArguments))}
+		if cThunkRegisterCanary(unsafe.Pointer(&block)) != 1 || block.r1 != 7 || block.err != lastError {
+			panic("actual ARM64 thunk clobbered x19/x20/x29 or its native call result")
+		}
+	}
 	for _, n := range []int{0, 8, 12, 42, 43, 1026} {
 		arguments := make([]uintptr, n)
 		fn, want := uintptr(c.Func(cNoArguments)), uintptr(7)
