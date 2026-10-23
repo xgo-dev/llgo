@@ -24,36 +24,57 @@ func TestPackageAssemblyNativeObjectsCompileLinkAndRun(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/GenLL=%t", extension, genLL), func(t *testing.T) {
 				ctx, pkg, source, _ := nativeAssemblyTestFixture(t, extension)
 				ctx.buildConf.GenLL = genLL
-				objects, err := concatPkgLinkFiles(ctx, pkg, false)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer removeFiles(objects)
-				if len(objects) != 1 {
-					t.Fatalf("native assembly produced %d objects, want one", len(objects))
-				}
-				main := assemblyLanguageTestWrite(t, pkg.Dir, "main.c", "extern int answer(void);\nint main(void) { return answer() != 42; }\n")
-				executable := filepath.Join(pkg.Dir, "probe")
-				if runtime.GOOS == "windows" {
-					executable += ".exe"
-				}
-				if err := ctx.compiler().Compile(objects[0], main, "-o", executable); err != nil {
-					t.Fatal(err)
-				}
-				runCtx, cancel := stdcontext.WithTimeout(stdcontext.Background(), 30*time.Second)
-				defer cancel()
-				command := ctx.commands.configure(exec.CommandContext(runCtx, executable))
-				command.WaitDelay = 2 * time.Second
-				if output, err := command.CombinedOutput(); err != nil {
-					t.Fatalf("actual native object execution: %v\n%s", err, output)
-				}
-				// clang cannot lift native machine assembly to LLVM IR. GenLL
-				// must not publish its empty output or omit the real object.
-				if _, err := os.Stat(pkg.ExportFile + filepath.Base(source) + ".ll"); !os.IsNotExist(err) {
-					t.Fatalf("native assembly published an invalid LLVM IR sidecar: %v", err)
-				}
+				nativeAssemblyTestCompileAndRun(t, ctx, pkg, source)
 			})
 		}
+	}
+}
+
+func TestPackageAssemblyNativeIncludesFromOtherInvocationDir(t *testing.T) {
+	for _, extension := range []string{".s", ".S"} {
+		for _, flags := range []string{`-I"include space"`, `-I"${SRCDIR}/include space"`} {
+			t.Run(extension+"/"+flags, func(t *testing.T) {
+				ctx, pkg, source, _ := nativeAssemblyTestFixture(t, extension)
+				ctx.commands.dir = t.TempDir()
+				original := "package fixture\n/*\n#cgo CFLAGS: -DOWNER_FLAG=1 " + flags + "\n*/\nimport \"C\"\n"
+				if err := os.WriteFile(pkg.GoFiles[0], []byte(original), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				nativeAssemblyTestCompileAndRun(t, ctx, pkg, source)
+			})
+		}
+	}
+}
+
+func nativeAssemblyTestCompileAndRun(t *testing.T, ctx *context, pkg *packages.Package, source string) {
+	t.Helper()
+	objects, err := concatPkgLinkFiles(ctx, pkg, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer removeFiles(objects)
+	if len(objects) != 1 {
+		t.Fatalf("native assembly produced %d objects, want one", len(objects))
+	}
+	main := assemblyLanguageTestWrite(t, pkg.Dir, "main.c", "extern int answer(void);\nint main(void) { return answer() != 42; }\n")
+	executable := filepath.Join(pkg.Dir, "probe")
+	if runtime.GOOS == "windows" {
+		executable += ".exe"
+	}
+	if err := ctx.compiler().Compile(objects[0], main, "-o", executable); err != nil {
+		t.Fatal(err)
+	}
+	runCtx, cancel := stdcontext.WithTimeout(stdcontext.Background(), 30*time.Second)
+	defer cancel()
+	command := ctx.commands.configure(exec.CommandContext(runCtx, executable))
+	command.WaitDelay = 2 * time.Second
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("actual native object execution: %v\n%s", err, output)
+	}
+	// Native assembly must not publish an empty LLVM IR sidecar, including
+	// when GenLL requests debug output for the package's other source files.
+	if _, err := os.Stat(pkg.ExportFile + filepath.Base(source) + ".ll"); !os.IsNotExist(err) {
+		t.Fatalf("native assembly published an invalid LLVM IR sidecar: %v", err)
 	}
 }
 
