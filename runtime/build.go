@@ -88,6 +88,7 @@ var sourcePatchPkgs = map[string]struct{}{
 	"internal/bytealg":             {},
 	"internal/cpu":                 {},
 	"internal/runtime/atomic":      {},
+	"internal/runtime/gc/scan":     {},
 	"internal/runtime/maps":        {},
 	"internal/runtime/sys":         {},
 	"internal/sync":                {},
