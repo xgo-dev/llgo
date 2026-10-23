@@ -1,7 +1,7 @@
 package build
 
 import (
-	"context"
+	stdcontext "context"
 	"fmt"
 	"go/constant"
 	"go/token"
@@ -40,7 +40,7 @@ func TestPackageAssemblyNativeObjectsCompileLinkAndRun(t *testing.T) {
 				if err := ctx.compiler().Compile(objects[0], main, "-o", executable); err != nil {
 					t.Fatal(err)
 				}
-				runCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				runCtx, cancel := stdcontext.WithTimeout(stdcontext.Background(), 30*time.Second)
 				defer cancel()
 				command := ctx.commands.configure(exec.CommandContext(runCtx, executable))
 				command.WaitDelay = 2 * time.Second
