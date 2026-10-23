@@ -601,6 +601,53 @@ sys.exit(subprocess.call(command + ['./internal/build']))
         self.assertCountEqual([target for build in config["builds"] for target in build["targets"]],
                               ["darwin_amd64", "darwin_arm64", "linux_amd64", "linux_arm64"])
 
+    def test_self_host_bounds_builds_without_changing_runtime_acceptance(self):
+        job = load("llgo.yml")["jobs"]["self-host"]
+        steps = job["steps"]
+        named = {step.get("name"): step for step in steps}
+        first = named["Build stage 1 with Go"]
+        second = named["Build stage 2 with LLGo"]
+        self.assertIn('GOMAXPROCS=2 go build -p=2 -o "$stage1_dir/llgo" ./cmd/llgo',
+                      first["run"])
+        self.assertIn('build=("$stage1" build -p=1 -v -o "$stage2_dir/llgo" ./cmd/llgo)',
+                      second["run"])
+        self.assertIn('GOMAXPROCS=2 /usr/bin/time -v "${build[@]}"', second["run"])
+        self.assertIn('GOMAXPROCS=2 "${build[@]}"', second["run"])
+        self.assertIn('"$stage2_dir/llgo" version', second["run"])
+        self.assertIn('file "$stage2_dir/llgo"', second["run"])
+        for scope in [job, *steps]:
+            self.assertFalse({"GOMAXPROCS", "GOFLAGS", "GOMEMLIMIT"} &
+                             set(scope.get("env", {})))
+        for step in (first, second):
+            self.assertNotIn("continue-on-error", step)
+            self.assertNotIn("|| true", step["run"])
+        smoke = named["Test with stage 2"]["run"]
+        demos = named["Run demos with stage 2"]["run"]
+        self.assertIn('LLGO_BUILD_CACHE=off llgo test -timeout=10m ./test/std/io/ioutil', smoke)
+        self.assertIn("-run '^TestRuntimeGMPLinks$' ./test/llgoext", smoke)
+        self.assertIn('LLGO_BUILD_CACHE=off llgo run ./stdlib', demos)
+        self.assertIn('LLGO_BUILD_CACHE=off llgo run ./hello', demos)
+        for command in (smoke, demos):
+            self.assertNotIn("-p=", command)
+            self.assertNotIn("GOMAXPROCS", command)
+
+    def test_self_host_retains_before_and_after_resource_evidence(self):
+        steps = load("llgo.yml")["jobs"]["self-host"]["steps"]
+        named = {step.get("name"): step for step in steps}
+        before = named.get("Record self-host resources before build")
+        after = named.get("Record self-host resources after build")
+        self.assertIsNotNone(before, "self-host lacks actual pre-build resource evidence")
+        self.assertIsNotNone(after, "self-host lacks post-failure resource evidence")
+        self.assertEqual(before["if"], "runner.os == 'Linux'")
+        self.assertEqual(after["if"], "always() && runner.os == 'Linux'")
+        self.assertLess(steps.index(before), steps.index(named["Build stage 1 with Go"]))
+        self.assertGreater(steps.index(after), steps.index(named["Run demos with stage 2"]))
+        self.assertEqual(before["run"], after["run"])
+        for source in ("/proc/self/cgroup", "/proc/self/mountinfo", "/proc/meminfo",
+                       "memory.events", "memory.max", "memory.current"):
+            self.assertIn(source, before["run"])
+        self.assertIn("timeout 10s", before["run"])
+
     def test_windows_release_covers_all_architectures_with_native_x86_toolchains(self):
         jobs = load("release-build.yml")["jobs"]
         for name in ("build-windows", "test-windows-artifacts"):
