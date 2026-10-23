@@ -306,11 +306,13 @@ func TestRuntimeAtomicARM64RetainsOtherArchitectures(t *testing.T) {
 	if err := os.MkdirAll(patchDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	source, err := os.ReadFile(filepath.Join(env.LLGoRuntimeDir(), "_patch", "internal", "runtime", "atomic", "atomic_arm64.go"))
-	if err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"atomic_arm64.go", "atomic_rmw_arm64.go", "atomic_xchg8_arm64.go"} {
+		source, err := os.ReadFile(filepath.Join(env.LLGoRuntimeDir(), "_patch", "internal", "runtime", "atomic", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		assemblyLanguageTestWrite(t, patchDir, name, string(source))
 	}
-	assemblyLanguageTestWrite(t, patchDir, "atomic_arm64.go", string(source))
 	for _, target := range []struct{ goos, goarch string }{
 		{"linux", "amd64"}, {"linux", "386"}, {"linux", "arm"}, {"js", "wasm"},
 	} {
