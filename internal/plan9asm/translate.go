@@ -2,6 +2,7 @@ package plan9asm
 
 import (
 	"fmt"
+	"go/ast"
 	"go/types"
 	"regexp"
 	"strings"
@@ -120,16 +121,21 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 	}
 
 	imports := make(map[string]*types.Package, len(pkg.Imports))
+	importSyntax := make(map[string][]*ast.File, len(pkg.Imports))
 	for path, imp := range pkg.Imports {
 		if imp != nil && imp.Types != nil {
 			imports[path] = imp.Types
+			// Pass the same selected dependency graph as the type checker.
+			// Do not reload ambient source or infer storage from a symbol name.
+			importSyntax[path] = imp.Syntax
 		}
 	}
 	tr, err := extplan9asm.TranslateGoModule(extplan9asm.GoPackage{
-		Path:    symbolPkgPath,
-		Types:   pkg.Types,
-		Imports: imports,
-		Syntax:  pkg.Syntax,
+		Path:         symbolPkgPath,
+		Types:        pkg.Types,
+		Imports:      imports,
+		Syntax:       pkg.Syntax,
+		ImportSyntax: importSyntax,
 	}, src, extplan9asm.GoModuleOptions{
 		SourcePreprocessed: true,
 		FileName:           sfile,
