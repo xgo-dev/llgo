@@ -204,6 +204,65 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("continue-on-error", job)
         self.assertTrue(all("continue-on-error" not in step for step in job["steps"]))
 
+    def test_windows_386_atomic_contracts_build_on_host_and_execute_on_target(self):
+        job = load("llgo.yml")["jobs"]["llgo"]
+        lanes = [entry for entry in job["strategy"]["matrix"]["include"]
+                 if entry.get("windows_arch") == "386"]
+        self.assertEqual({entry["windows_abi"] for entry in lanes}, {"msvc", "mingw"})
+        self.assertEqual(len(lanes), 2)
+        self.assertTrue(all(entry["os"] == "windows-2022" and
+                            entry["host_go_arch"] == "x64" for entry in lanes))
+        steps = job["steps"]
+        build = next((step for step in steps if step.get("name") ==
+                      "Build host runner for Windows 386 atomic contracts"), None)
+        execute = next((step for step in steps if step.get("name") ==
+                        "Execute Windows 386 atomic contracts"), None)
+        self.assertIsNotNone(build, "the real 386 atomic roots have no CI host runner")
+        self.assertIsNotNone(execute, "the real 386 atomic roots have no native execution step")
+        activate = next(step for step in steps
+                        if step.get("name") == "Activate native Windows target")
+        self.assertLess(steps.index(build), steps.index(activate))
+        self.assertLess(steps.index(activate), steps.index(execute))
+        condition = "runner.os == 'Windows' && matrix.windows_arch == '386'"
+        for step in (build, execute):
+            self.assertEqual(step["if"], condition)
+            self.assertEqual(step["shell"], "pwsh")
+            self.assertNotIn("continue-on-error", step)
+            self.assertNotIn("GITHUB_ENV", step["run"])
+            self.assertIn('$ErrorActionPreference = "Stop"', step["run"])
+            self.assertIn("$LASTEXITCODE -ne 0", step["run"])
+
+        compile_script = build["run"]
+        self.assertIn('$env:GOARCH = "amd64"', compile_script)
+        self.assertIn("$env:CC = $env:LLGO_WINDOWS_HOST_CC", compile_script)
+        self.assertIn("$env:CXX = $env:LLGO_WINDOWS_HOST_CXX", compile_script)
+        self.assertIn('$hostBin = Join-Path $env:LLGO_MINGW_HOST_ROOT "bin"', compile_script)
+        self.assertIn('$env:CC = Join-Path $hostBin "clang.exe"', compile_script)
+        self.assertIn('$env:CXX = Join-Path $hostBin "clang++.exe"', compile_script)
+        self.assertIn("go test -c -tags=llgo_windows_386_cross", compile_script)
+        self.assertIn("./internal/build", compile_script)
+        self.assertIn("release-lib.ps1", compile_script)
+        self.assertIn("Copy-ReleaseDLLs", compile_script)
+        self.assertIn('-GoArch "amd64"', compile_script)
+        self.assertIn("-CheckOnly", compile_script)
+        self.assertNotIn("LLGO_WINDOWS_CROSS_CC", compile_script)
+
+        run_script = execute["run"]
+        self.assertIn("$env:LLGO_WINDOWS_CROSS_CC = $env:CC", run_script)
+        self.assertIn("$env:LLGO_WINDOWS_CROSS_CXX = $env:CXX", run_script)
+        self.assertNotIn("$env:CC =", run_script)
+        self.assertNotIn("$env:CXX =", run_script)
+        self.assertIn("^TestRuntimeAtomic386(CompletePackage|ActualWrappersMatchOriginalGo)$", run_script)
+        self.assertIn('"-test.list=$selector"', run_script)
+        self.assertIn('"-test.run=$selector"', run_script)
+        self.assertIn("-test.count=1", run_script)
+        self.assertIn("-test.v", run_script)
+        self.assertIn("TestRuntimeAtomic386CompletePackage", run_script)
+        self.assertIn("TestRuntimeAtomic386ActualWrappersMatchOriginalGo", run_script)
+        self.assertIn("Compare-Object", run_script)
+        self.assertIn("--- PASS:", run_script)
+        self.assertIn("--- (FAIL|SKIP):", run_script)
+
     def test_traceback_coverage_uses_bash_on_every_host(self):
         steps = load("go.yml")["jobs"]["test"]["steps"]
         step = next(step for step in steps
