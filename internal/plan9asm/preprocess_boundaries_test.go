@@ -13,7 +13,7 @@ import (
 func TestPreprocessSourceInputBoundaries(t *testing.T) {
 	for _, mutation := range []string{
 		"nil-package", "empty-file", "invalid-target", "expanded-limit", "absolute-include",
-		"escaping-include", "overlay-aliases", "include-total-limit", "disk-file-limit", "wasm-macros",
+		"escaping-include", "overlay-aliases", "include-total-limit", "disk-file-limit", "wasm-macros", "unreviewed-sdk-version",
 	} {
 		t.Run(mutation, func(t *testing.T) {
 			pkg, file, opt := preprocessFixture(t)
@@ -51,6 +51,9 @@ func TestPreprocessSourceInputBoundaries(t *testing.T) {
 				goos, arch = "js", "wasm"
 				t.Setenv("GOWASM", "satconv,signext")
 				source = []byte("#ifdef GOWASM_satconv\nWRONG\n#else\nRET\n#endif\n")
+			case "unreviewed-sdk-version":
+				writePreprocessFile(t, filepath.Join(opt.GOROOT, "VERSION"), "go1.99.1\n")
+				want = "requires an audited observed Go"
 			}
 			got, err := PreprocessSourceForPkg(pkg, file, source, goos, arch, opt)
 			if want == "" {
