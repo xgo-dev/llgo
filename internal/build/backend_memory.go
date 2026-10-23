@@ -24,15 +24,37 @@ import (
 
 const llvmGoHeapReleaseThreshold = 256 << 20
 
-var llvmGoHeapReleaseMu sync.Mutex
+var (
+	llvmGoHeapReleaseMu   sync.Mutex
+	llvmGoHeapReclamation llvmGoHeapReleaseBudget
+)
+
+type llvmGoHeapReleaseBudget struct {
+	lastReleaseTotalAlloc uint64
+}
 
 func shouldReleaseGoHeapForLLVM(stats runtime.MemStats) bool {
 	return stats.HeapIdle >= stats.HeapReleased &&
 		stats.HeapIdle-stats.HeapReleased >= llvmGoHeapReleaseThreshold
 }
 
-// LLVM's native allocations are outside the Go heap. Return a substantial
-// amount of already-unused Go heap memory before its optimizer needs space,
+func (budget *llvmGoHeapReleaseBudget) release(stats runtime.MemStats, reclaim func()) bool {
+	// Allocation traffic is a work budget, not a measure of garbage. It also
+	// covers dead objects that have not yet become idle spans after a GC.
+	allocated := stats.TotalAlloc >= budget.lastReleaseTotalAlloc &&
+		stats.TotalAlloc-budget.lastReleaseTotalAlloc >= llvmGoHeapReleaseThreshold
+	if !shouldReleaseGoHeapForLLVM(stats) && !allocated {
+		return false
+	}
+	reclaim()
+	// Keep allocations made during reclamation in the next interval. Ordinary
+	// GC and sub-threshold package boundaries do not reset this budget.
+	budget.lastReleaseTotalAlloc = stats.TotalAlloc
+	return true
+}
+
+// LLVM's native allocations are outside the Go heap. Reclaim Go pages before
+// its optimizer needs space after substantial idle memory or allocation work,
 // without forcing a full GC for every package or discarding live source data.
 func releaseGoHeapForLLVM() {
 	// The heap is process-wide. Sample under the same lock as collection so
@@ -42,7 +64,5 @@ func releaseGoHeapForLLVM() {
 
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
-	if shouldReleaseGoHeapForLLVM(stats) {
-		debug.FreeOSMemory()
-	}
+	llvmGoHeapReclamation.release(stats, debug.FreeOSMemory)
 }
