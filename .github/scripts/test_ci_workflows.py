@@ -252,13 +252,16 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("$env:LLGO_WINDOWS_CROSS_CXX = $env:CXX", run_script)
         self.assertNotIn("$env:CC =", run_script)
         self.assertNotIn("$env:CXX =", run_script)
-        self.assertIn("^TestRuntimeAtomic386(CompletePackage|ActualWrappersMatchOriginalGo)$", run_script)
+        self.assertIn("^(TestRuntimeAtomic386(CompletePackage|ActualWrappersMatchOriginalGo)|TestMapsRuntime386CompletePackage)$",
+                      run_script)
         self.assertIn('"-test.list=$selector"', run_script)
         for argument in ("-test.run=$selector", "-test.v", "-test.count=1", "-test.timeout=30m"):
             self.assertIn(f'"{argument}"', run_script)
         self.assertIn('$output = @(& $runner @arguments 2>&1)', run_script)
         self.assertIn("TestRuntimeAtomic386CompletePackage", run_script)
         self.assertIn("TestRuntimeAtomic386ActualWrappersMatchOriginalGo", run_script)
+        self.assertIn("'TestMapsRuntime386CompletePackage'", run_script)
+        self.assertIn("$listed.Count -ne 3", run_script)
         self.assertIn("Compare-Object", run_script)
         self.assertIn("--- PASS:", run_script)
         self.assertIn("--- (FAIL|SKIP):", run_script)
