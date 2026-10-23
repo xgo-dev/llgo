@@ -81,6 +81,7 @@ func TestRuntimeAtomic386CompletePackage(t *testing.T) {
 				t.Error("the complete atomic package lacks its actual definition", name)
 			}
 		}
+		runtimeAtomic386RequireOperations(t, module)
 		if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
 			t.Fatal("the complete 386 SDK atomic package has invalid LLVM IR", err)
 		}
