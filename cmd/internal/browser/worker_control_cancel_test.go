@@ -113,6 +113,12 @@ func (c *gatedCDPConn) Close() error {
 }
 
 func TestCDPCancelDuringWritePreservesSharedConnection(t *testing.T) {
+	t.Run("request", func(t *testing.T) { testCDPCancelDuringWrite(t, false) })
+	t.Run("connection", func(t *testing.T) { testCDPCancelDuringWrite(t, true) })
+}
+
+func testCDPCancelDuringWrite(t *testing.T, cancelConnection bool) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	observed := make(chan cdpMessage, 2)
@@ -155,8 +161,9 @@ func TestCDPCancelDuringWritePreservesSharedConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.CloseNow()
-	defer close(wire.release)
-	client := &cdpClient{conn: conn, pending: make(map[uint64]cdpPending), done: make(chan struct{})}
+	releaseWrite := sync.OnceFunc(func() { close(wire.release) })
+	defer releaseWrite()
+	client := &cdpClient{ctx: ctx, conn: conn, pending: make(map[uint64]cdpPending), done: make(chan struct{})}
 	wire.armed.Store(true)
 	request, cancelRequest := context.WithCancel(ctx)
 	defer cancelRequest()
@@ -169,19 +176,28 @@ func TestCDPCancelDuringWritePreservesSharedConnection(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("request did not enter its socket write")
 	}
-	cancelRequest()
-	select {
-	case <-wire.closed:
-		t.Fatal("canceling one CDP request closed the shared transport")
-	case <-time.After(50 * time.Millisecond):
+	if cancelConnection {
+		cancel()
+		select {
+		case <-wire.closed:
+		case <-time.After(5 * time.Second):
+			t.Fatal("connection shutdown did not interrupt its blocked write")
+		}
+	} else {
+		cancelRequest()
+		select {
+		case <-wire.closed:
+			t.Fatal("canceling one CDP request closed the shared transport")
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
-	wire.release <- struct{}{}
+	releaseWrite()
 	select {
 	case err := <-result:
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("canceled call = %v", err)
 		}
-	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
 		t.Fatal("canceled request did not return")
 	}
 	client.mu.Lock()
@@ -189,6 +205,9 @@ func TestCDPCancelDuringWritePreservesSharedConnection(t *testing.T) {
 	client.mu.Unlock()
 	if pending != 0 {
 		t.Fatalf("canceled call retains %d pending requests", pending)
+	}
+	if cancelConnection {
+		return
 	}
 	if err := client.wake(ctx, "surviving"); err != nil {
 		t.Fatalf("cannot send to surviving worker: %v", err)
