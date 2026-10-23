@@ -1,4 +1,4 @@
-//go:build go1.27 && (386 || llgo_386_cross)
+//go:build go1.27 && ((windows && 386) || llgo_windows_386_cross)
 
 package build
 
@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/optlevel"
-	xtoolllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -56,7 +55,8 @@ func TestRuntimeAtomic386CompletePackage(t *testing.T) {
 
 	conf := NewDefaultConf(ModeBuild)
 	conf.Goos, conf.Goarch = "windows", "386"
-	t.Setenv("CCFLAGS", "--target="+xtoolllvm.GetTargetTriple(conf.Goos, conf.Goarch))
+	// Use the configured real MSVC or MinGW compiler, including its sysroot.
+	// Cross hosts opt in explicitly; they cannot qualify with a host compiler.
 	conf.OptLevel, conf.ForceRebuild = optlevel.O0, true
 	conf.BinPath = t.TempDir()
 	modules := 0
