@@ -35,20 +35,29 @@ func TestGCScanRuntimePortableBodiesExecute(t *testing.T) {
 	t.Setenv("GOEXPERIMENT", "greenteagc")
 	dir := t.TempDir()
 	patchDir := filepath.Join(env.LLGoRuntimeDir(), "_patch", filepath.FromSlash(gcScanRuntimePackage))
-	body, err := os.ReadFile(filepath.Join(patchDir, "scan_amd64.go"))
+	ownerFile := filepath.Join(patchDir, "scan_amd64.go")
+	body, err := os.ReadFile(ownerFile)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := sourcePatchBuildContext{goos: runtime.GOOS, goarch: runtime.GOARCH, goversion: runtime.Version()}
-	_, overlay, _, err := applySourcePatchForPkg(nil, nil, env.LLGoRuntimeDir(), runtime.GOROOT(), gcScanRuntimePackage, ctx)
+	changed, overlay, _, err := applySourcePatchForPkg(nil, nil, env.LLGoRuntimeDir(), runtime.GOROOT(), gcScanRuntimePackage, ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if changed != (runtime.GOARCH == "amd64") {
+		t.Fatal("the production gc scan owner has unexpected architecture selection", runtime.GOARCH, changed)
+	}
+	sourceDir := filepath.Join(runtime.GOROOT(), "src", filepath.FromSlash(gcScanRuntimePackage))
+	generatedOwner := filepath.Join(sourceDir, "z_llgo_patch_scan_amd64.go")
 	if runtime.GOARCH != "amd64" {
 		// Explicitly select the same bodies for portable algorithm execution.
 		// Do not change the production architecture selection or CPU predicates.
 		body = bytes.TrimPrefix(body, []byte("//go:build amd64 && go1.26\n"))
-		overlay = map[string][]byte{filepath.Join(runtime.GOROOT(), "src", filepath.FromSlash(gcScanRuntimePackage), "z_llgo_gc_scan_execution.go"): body}
+		ownerFile = filepath.Join(sourceDir, "z_llgo_gc_scan_execution.go")
+		overlay = map[string][]byte{ownerFile: body}
+	} else if len(overlay[generatedOwner]) == 0 {
+		t.Fatal("the original Go oracle lacks its generated gc scan owner")
 	}
 	program, err := os.ReadFile("testdata/gc-scan-owner/main.go")
 	if err != nil {
@@ -95,13 +104,19 @@ func TestGCScanRuntimePortableBodiesExecute(t *testing.T) {
 	if want != "gc scan owners 26 classes 104 patterns 19 partial tails" {
 		t.Fatal("the independent Go execution denominator changed", want)
 	}
+	llgoOverlay := overlay
+	if runtime.GOARCH == "amd64" {
+		// Build selects the physical source patch itself. Only the stock-Go
+		// oracle needs its generated copy in the public cmd/go overlay.
+		llgoOverlay = map[string][]byte{mainFile: program}
+	}
 	conf := NewDefaultConf(ModeBuild)
 	conf.GOEXPERIMENT = "greenteagc"
 	conf.OptLevel, conf.LTO = optlevel.O0, lto.Off
-	conf.ForceRebuild, conf.Overlay = true, overlay
-	conf.SourceOverlay = make(map[string]SourceOverlayFile, len(replace))
-	for name, backing := range replace {
-		conf.SourceOverlay[name] = SourceOverlayFile{BackingFile: backing, Contents: overlay[name]}
+	conf.ForceRebuild, conf.Overlay = true, llgoOverlay
+	conf.SourceOverlay = make(map[string]SourceOverlayFile, len(llgoOverlay))
+	for name, source := range llgoOverlay {
+		conf.SourceOverlay[name] = SourceOverlayFile{BackingFile: replace[name], Contents: source}
 	}
 	conf.OutFile = filepath.Join(dir, "llgo"+extension)
 	modules := 0
@@ -110,6 +125,18 @@ func TestGCScanRuntimePortableBodiesExecute(t *testing.T) {
 			return
 		}
 		modules++
+		selectedOwners := 0
+		for _, name := range pkg.CompiledGoFiles {
+			if name == ownerFile {
+				selectedOwners++
+			}
+			if runtime.GOARCH == "amd64" && name == generatedOwner {
+				t.Fatal("LLGo selected the oracle's duplicate generated gc scan owner")
+			}
+		}
+		if selectedOwners != 1 {
+			t.Fatal("LLGo did not select the actual gc scan owner exactly once", ownerFile, selectedOwners)
+		}
 		module := pkg.LPkg.Module()
 		for _, name := range []string{"ExpandAVX512", "scanSpanPackedAVX512", "FilterNilAVX512"} {
 			fn := module.NamedFunction(gcScanRuntimePackage + "." + name)
