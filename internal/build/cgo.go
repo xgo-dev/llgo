@@ -428,7 +428,16 @@ func parseCgoFilePreambles(commands commandEnv, buildCtx *build.Context, fset *t
 					continue
 				}
 				doc := spec.Doc
-				if doc == nil && len(decl.Specs) == 1 {
+				if importPath == "unsafe" {
+					// Keep the rewritten-source path's declaration-only rule.
+					// An unsafe spec comment cannot establish C ownership:
+					// ordinary grouped imports may have Go documentation or
+					// imports commented out by source patches attached here.
+					if len(decl.Specs) != 1 {
+						continue
+					}
+					doc = decl.Doc
+				} else if doc == nil && len(decl.Specs) == 1 {
 					doc = decl.Doc
 				}
 				if doc == nil {
