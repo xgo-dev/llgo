@@ -86,8 +86,11 @@ func TestPackageAssemblyNativeHeaderChangesObjectFingerprint(t *testing.T) {
 				t.Helper()
 				// The existing per-context hash cache is intentionally not an
 				// independent observation of a later filesystem state.
-				fresh := *ctx
-				fresh.sfilesCache, fresh.llgoFilesCache, fresh.llgoFileHashCache = nil, nil, nil
+				fresh := &context{
+					mode: ctx.mode, conf: ctx.conf, buildConf: ctx.buildConf,
+					commands: ctx.commands, crossCompile: ctx.crossCompile, pkgs: ctx.pkgs,
+					plan9asmReady: ctx.plan9asmReady, plan9asmMode: ctx.plan9asmMode,
+				}
 				manifest := newManifestBuilder()
 				if err := fresh.collectPackageInputs(manifest, &aPackage{Package: pkg}); err != nil {
 					t.Fatal(err)
