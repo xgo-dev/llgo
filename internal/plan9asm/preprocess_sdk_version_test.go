@@ -23,12 +23,28 @@ func TestPreprocessSDKVersionFromSelectedBuildcfg(t *testing.T) {
 			}
 			writePreprocessFile(t, filepath.Join(opt.GOROOT, "src", "internal", "buildcfg", "zbootstrap.go"),
 				"package buildcfg\nconst version = `"+test.version+"`\n")
+			opt.GOARM64 = "v8.1"
 			t.Setenv("GOVERSION", "go1.99.0")
 			t.Setenv("GOROOT", t.TempDir())
 			got, err := PreprocessSourceForPkg(pkg, file,
-				[]byte("#ifdef GOARM64_v8_0\nmodern_arm64\n#else\nold_arm64\n#endif\n"), "linux", "arm64", opt)
+				[]byte("#ifdef GOARM64_LSE\nmodern_arm64\n#else\nold_arm64\n#endif\n"), "linux", "arm64", opt)
 			if err != nil || strings.TrimSpace(string(got)) != test.want {
 				t.Fatalf("selected SDK version macros = %q, %v; want %s", got, err, test.want)
+			}
+		})
+	}
+}
+
+func TestPreprocessOldSDKHasNoARM64FeatureMacros(t *testing.T) {
+	for _, profile := range []string{"", "v8.0", "v8.1", "v9.5,lse,crypto"} {
+		t.Run(profile, func(t *testing.T) {
+			pkg, file, opt := preprocessFixture(t)
+			writePreprocessFile(t, filepath.Join(opt.GOROOT, "VERSION"), "go1.22.2\n")
+			opt.GOARM64 = profile
+			output, err := PreprocessSourceForPkg(pkg, file,
+				[]byte("#ifdef GOARM64_LSE\nWRONG\n#else\nOLD_SDK\n#endif\n"), "linux", "arm64", opt)
+			if err != nil || string(output) != "OLD_SDK\n" {
+				t.Fatalf("old SDK must retain its original macro namespace: %q, %v", output, err)
 			}
 		})
 	}
