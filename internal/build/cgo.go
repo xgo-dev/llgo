@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/buildtags"
@@ -73,28 +74,13 @@ func buildCgo(ctx *context, pkg *aPackage, files []*ast.File, externs []string, 
 			llfiles = nil
 		}
 	}()
-	buildCtx := build.Default
-	if ctx.buildConf.Goos != "" {
-		buildCtx.GOOS = ctx.buildConf.Goos
-	}
-	if ctx.buildConf.Goarch != "" {
-		buildCtx.GOARCH = ctx.buildConf.Goarch
-	}
-	buildCtx.BuildTags = parseSourcePatchBuildTags(ctx.conf.BuildFlags)
+	buildCtx := cgoBuildContext(ctx)
 
 	srcFiles, preambles, cdecls, err := parseCgoWithCommandEnv(ctx.commands, &buildCtx, pkg, files)
 	if err != nil {
 		return
 	}
-	cflags, cxxflags, ldflags := collectCgoFlags(cdecls)
-	incDirs := make(map[string]none)
-	for _, preamble := range preambles {
-		dir, _ := filepath.Split(preamble.goFile)
-		if _, ok := incDirs[dir]; !ok {
-			incDirs[dir] = none{}
-			cflags = append(cflags, "-I"+dir)
-		}
-	}
+	cflags, cxxflags, ldflags := cgoCompilationFlags(preambles, cdecls)
 	for _, src := range srcFiles {
 		args := slices.Clone(cflags)
 		if src.isCXX {
@@ -139,6 +125,38 @@ func collectCgoFlags(decls []cgoDecl) (cflags, cxxflags, ldflags []string) {
 		cflags = append(cflags, decl.cflags...)
 		cxxflags = append(cxxflags, decl.cxxflags...)
 		ldflags = append(ldflags, decl.ldflags...)
+	}
+	return
+}
+
+func cgoBuildContext(ctx *context) build.Context {
+	buildCtx := build.Default
+	if ctx.buildConf != nil {
+		if ctx.buildConf.Goos != "" {
+			buildCtx.GOOS = ctx.buildConf.Goos
+		}
+		if ctx.buildConf.Goarch != "" {
+			buildCtx.GOARCH = ctx.buildConf.Goarch
+		}
+		if ctx.buildConf.toolTags != nil {
+			buildCtx.ToolTags = slices.Clone(ctx.buildConf.toolTags)
+		}
+	}
+	if ctx.conf != nil {
+		buildCtx.BuildTags = parseSourcePatchBuildTags(ctx.conf.BuildFlags)
+	}
+	return buildCtx
+}
+
+func cgoCompilationFlags(preambles []cgoPreamble, decls []cgoDecl) (cflags, cxxflags, ldflags []string) {
+	cflags, cxxflags, ldflags = collectCgoFlags(decls)
+	incDirs := make(map[string]none)
+	for _, preamble := range preambles {
+		dir, _ := filepath.Split(preamble.goFile)
+		if _, ok := incDirs[dir]; !ok {
+			incDirs[dir] = none{}
+			cflags = append(cflags, "-I"+dir)
+		}
 	}
 	return
 }
@@ -393,24 +411,35 @@ func parseCgoWithCommandEnv(commands commandEnv, buildCtx *build.Context, pkg *a
 		}
 	}
 
+	preambles, cdecls, err = parseCgoFilePreambles(commands, buildCtx, pkg.Fset, files, "unsafe")
+	return
+}
+
+func parseCgoFilePreambles(commands commandEnv, buildCtx *build.Context, fset *token.FileSet, files []*ast.File, importPath string) (preambles []cgoPreamble, decls []cgoDecl, err error) {
 	for _, file := range files {
-		for _, decl := range file.Decls {
-			switch decl := decl.(type) {
-			case *ast.GenDecl:
-				if decl.Tok == token.IMPORT {
-					if doc := decl.Doc; doc != nil && len(decl.Specs) == 1 {
-						spec := decl.Specs[0].(*ast.ImportSpec)
-						if spec.Path.Value == "\"unsafe\"" {
-							pos := pkg.Fset.Position(doc.Pos())
-							preamble, flags, err := parseCgoPreambleWithCommandEnv(commands, buildCtx, pos, doc.Text())
-							if err != nil {
-								panic(err)
-							}
-							preambles = append(preambles, preamble)
-							cdecls = append(cdecls, flags...)
-						}
-					}
+		for _, node := range file.Decls {
+			decl, ok := node.(*ast.GenDecl)
+			if !ok || decl.Tok != token.IMPORT {
+				continue
+			}
+			for _, item := range decl.Specs {
+				spec := item.(*ast.ImportSpec)
+				if spec.Path.Value != strconv.Quote(importPath) {
+					continue
 				}
+				doc := spec.Doc
+				if doc == nil && len(decl.Specs) == 1 {
+					doc = decl.Doc
+				}
+				if doc == nil {
+					continue
+				}
+				preamble, flags, err := parseCgoPreambleWithCommandEnv(commands, buildCtx, fset.Position(doc.Pos()), doc.Text())
+				if err != nil {
+					return nil, nil, err
+				}
+				preambles = append(preambles, preamble)
+				decls = append(decls, flags...)
 			}
 		}
 	}
