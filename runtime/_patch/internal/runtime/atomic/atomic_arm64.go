@@ -1,10 +1,11 @@
-//go:build arm64 && go1.24
+//go:build arm64 && go1.20
 
 package atomic
 
 import "unsafe"
 
-// LLGo owns the complete atomic_arm64.s group with real Go entry bodies.
+// These 42 Go entry bodies are common to the Go1.20+ atomic_arm64.s group.
+// Version-gated companion files complete the newer SDK inventories.
 // These private intrinsics retain exact widths and sequential consistency;
 // they do not implement native Go ABI0 frames or use the ARM baremetal fallback.
 
@@ -177,9 +178,6 @@ func Xadduintptr(ptr *uintptr, delta uintptr) uintptr {
 	return uintptr(atomicAdd64((*uint64)(unsafe.Pointer(ptr)), uint64(delta)))
 }
 
-func Xchg8(ptr *uint8, next uint8) uint8 {
-	return atomicXchg8(ptr, next)
-}
 func Xchg(ptr *uint32, next uint32) uint32 {
 	return atomicXchg32(ptr, next)
 }
@@ -207,22 +205,4 @@ func And(ptr *uint32, value uint32) {
 }
 func Or(ptr *uint32, value uint32) {
 	atomicOr32(ptr, value)
-}
-func And32(ptr *uint32, value uint32) uint32 {
-	return atomicAnd32(ptr, value)
-}
-func Or32(ptr *uint32, value uint32) uint32 {
-	return atomicOr32(ptr, value)
-}
-func And64(ptr *uint64, value uint64) uint64 {
-	return atomicAnd64(ptr, value)
-}
-func Or64(ptr *uint64, value uint64) uint64 {
-	return atomicOr64(ptr, value)
-}
-func Anduintptr(ptr *uintptr, value uintptr) uintptr {
-	return uintptr(atomicAnd64((*uint64)(unsafe.Pointer(ptr)), uint64(value)))
-}
-func Oruintptr(ptr *uintptr, value uintptr) uintptr {
-	return uintptr(atomicOr64((*uint64)(unsafe.Pointer(ptr)), uint64(value)))
 }

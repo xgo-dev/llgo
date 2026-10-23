@@ -153,3 +153,20 @@ func TestRuntimeAtomicARM64HistoricalSDKRejectsIncompleteOwners(t *testing.T) {
 		}
 	}
 }
+
+func TestRuntimeAtomicARM64HistoricalSDKRetainsOtherArchitectures(t *testing.T) {
+	profile := historicalAtomicProfile{"go1.22.2", "runtime/internal/atomic", 48}
+	root, _ := historicalAtomicFixture(t, profile, "")
+	for _, target := range []struct{ goos, goarch string }{
+		{"linux", "amd64"}, {"linux", "386"}, {"linux", "arm"}, {"js", "wasm"},
+	} {
+		t.Run(target.goos+"/"+target.goarch, func(t *testing.T) {
+			overlay, files, err := buildSourcePatchOverlayForGOROOT(nil, env.LLGoRuntimeDir(), root, sourcePatchBuildContext{
+				goos: target.goos, goarch: target.goarch, goversion: profile.version,
+			})
+			if err != nil || len(overlay) != 0 || len(files) != 0 {
+				t.Fatal("the historical ARM64 alias changed another architecture's owner", err, files)
+			}
+		})
+	}
+}

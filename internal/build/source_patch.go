@@ -61,7 +61,20 @@ func buildSourcePatchOverlayForGOROOT(base map[string][]byte, runtimeDir, goroot
 }
 
 func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot, pkgPath string, ctx sourcePatchBuildContext) (bool, map[string][]byte, []string, error) {
-	patchDir := filepath.Join(runtimeDir, "_patch", filepath.FromSlash(pkgPath))
+	patchPath := pkgPath
+	if pkgPath == "runtime/internal/atomic" {
+		goarch := ctx.goarch
+		if goarch == "" {
+			goarch = build.Default.GOARCH
+		}
+		if goarch != "arm64" {
+			return false, current, nil, nil
+		}
+		// Go1.23 moved the package. Both selected SDK paths use the same
+		// version-gated ARM64 bodies and complete source-owner validation.
+		patchPath = "internal/runtime/atomic"
+	}
+	patchDir := filepath.Join(runtimeDir, "_patch", filepath.FromSlash(patchPath))
 	entries, err := os.ReadDir(patchDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -205,10 +218,15 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 		changed = true
 	}
 
-	if pkgPath == "internal/runtime/atomic" && (buildCtx.GOARCH == "arm64" || buildCtx.GOARCH == "386") {
-		arch, entries := "ARM64", 49
+	if (pkgPath == "internal/runtime/atomic" || pkgPath == "runtime/internal/atomic") &&
+		(buildCtx.GOARCH == "arm64" || buildCtx.GOARCH == "386") {
+		arch, entries := "ARM64", 42
 		if buildCtx.GOARCH == "386" {
 			arch, entries = "386", 42
+		} else if slices.Contains(buildCtx.ReleaseTags, "go1.24") {
+			entries = 49
+		} else if slices.Contains(buildCtx.ReleaseTags, "go1.22") {
+			entries = 48
 		}
 		if skipAll {
 			return false, nil, nil, fmt.Errorf("%s atomic owner must retain the other package Go declarations", arch)

@@ -94,6 +94,7 @@ var sourcePatchPkgs = map[string]struct{}{
 	"internal/sync":                {},
 	"iter":                         {},
 	"runtime":                      {},
+	"runtime/internal/atomic":      {},
 	"runtime/metrics":              {},
 	"simd":                         {},
 	"simd/internal/bridge":         {},
