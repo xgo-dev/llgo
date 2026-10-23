@@ -43,8 +43,7 @@ func TestSigsForStdlibInternalBytealgAMD64(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.file, func(t *testing.T) {
 			path := filepath.Join(runtime.GOROOT(), "src", "internal", "bytealg", test.file)
-			translated := requireBytealgPublicTextRoots(t, pkg, path, "linux", "amd64")
-			requireBytealgSignatures(t, translated, test.sigs)
+			requireBytealgOriginalFileContract(t, pkg, path, "linux", "amd64", test.sigs)
 		})
 	}
 }

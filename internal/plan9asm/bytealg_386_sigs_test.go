@@ -40,8 +40,7 @@ func TestSigsForStdlibInternalBytealg386Helpers(t *testing.T) {
 
 	for path, wantSigs := range tests {
 		t.Run(filepath.Base(path), func(t *testing.T) {
-			tr := requireBytealgPublicTextRoots(t, pkg, path, "windows", "386")
-			requireBytealgSignatures(t, tr, wantSigs)
+			requireBytealgOriginalFileContract(t, pkg, path, "windows", "386", wantSigs)
 		})
 	}
 }
