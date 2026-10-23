@@ -144,6 +144,45 @@ func checkFilter() {
 	}
 }
 
+func checkPartialSizeClass(sizeClass, factor int) bool {
+	if 1024%factor == 0 {
+		return false // This class has no partial object in a 1024-word page.
+	}
+	object := 1024 / factor
+	var marks, want mask
+	marks[object/64] = uintptr(1) << (uint(object) % 64)
+	// Independent object-major expansion, clipped at the actual page boundary.
+	// Deliberately mark only the final partial object, unlike all 104 original
+	// full-object patterns. Its lower output bits must remain clear.
+	for within := 0; within < factor; within++ {
+		word := object*factor + within
+		if word >= 1024 {
+			break
+		}
+		want[word/64] |= uintptr(1) << (uint(word) % 64)
+	}
+	if factor == 3 {
+		require(object == 341 && want[15] == uintptr(1)<<63)
+	}
+	output := struct {
+		before uintptr
+		bits   mask
+		after  uintptr
+	}{before: sentinel, after: sentinel}
+	for i := range output.bits {
+		output.bits[i] = ^uintptr(0)
+	}
+	input := marks
+	expand(sizeClass, &marks, &output.bits)
+	require(output.bits == want && marks == input)
+	require(output.before == sentinel && output.after == sentinel)
+	output.bits = marks
+	expand(sizeClass, &output.bits, &output.bits)
+	require(output.bits == want)
+	require(output.before == sentinel && output.after == sentinel)
+	return true
+}
+
 func rejectsSizeClass(sizeClass int) {
 	rejected := false
 	func() {
@@ -157,14 +196,18 @@ func rejectsSizeClass(sizeClass int) {
 }
 
 func main() {
+	tails := 0
 	for i, factor := range factors {
 		for pattern := 0; pattern < 4; pattern++ {
 			checkSizeClass(i+1, factor, pattern)
+		}
+		if checkPartialSizeClass(i+1, factor) {
+			tails++
 		}
 	}
 	checkFilter()
 	for _, sizeClass := range []int{-1, 0, 27, 100000} {
 		rejectsSizeClass(sizeClass)
 	}
-	println("gc scan owners", len(factors), "classes", len(factors)*4, "patterns")
+	println("gc scan owners", len(factors), "classes", len(factors)*4, "patterns", tails, "partial tails")
 }
