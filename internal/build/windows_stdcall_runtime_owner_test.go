@@ -1,4 +1,4 @@
-//go:build go1.26
+//go:build go1.27
 
 package build
 
@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/optlevel"
-	xtoolllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -15,7 +14,10 @@ func TestWindowsStdCallARM64CompletePackage(t *testing.T) {
 	const path = "internal/runtime/syscall/windows"
 	conf := NewDefaultConf(ModeBuild)
 	conf.Goos, conf.Goarch = "windows", "arm64"
-	t.Setenv("CCFLAGS", "--target="+xtoolllvm.GetTargetTriple(conf.Goos, conf.Goarch))
+	// Windows toolchain selection probes CC/CXX before merging CCFLAGS.
+	// Select the actual target in those command prefixes on every host.
+	t.Setenv("CC", "clang --target=aarch64-w64-windows-gnu")
+	t.Setenv("CXX", "clang++ --target=aarch64-w64-windows-gnu")
 	conf.OptLevel, conf.ForceRebuild = optlevel.O0, true
 	conf.BinPath = t.TempDir()
 	modules := 0
