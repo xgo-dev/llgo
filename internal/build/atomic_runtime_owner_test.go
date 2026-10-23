@@ -219,13 +219,18 @@ func TestRuntimeAtomicARM64CompleteSDKAndBodyOwners(t *testing.T) {
 }
 
 func TestRuntimeAtomicARM64RejectsIncompleteOwner(t *testing.T) {
-	var assembly, patch strings.Builder
+	var assembly, patch, declarations strings.Builder
 	patch.WriteString("package atomic\nimport \"unsafe\"\n")
+	declarations.WriteString("package atomic\nimport \"unsafe\"\n")
 	for _, row := range runtimeAtomicRows() {
 		fmt.Fprintf(&assembly, "TEXT ·%s(SB),4,$0\nRET\n", row.name)
 		fmt.Fprintf(&patch, "%s { panic(\"syntax-only owner fixture\") }\n", row.declaration())
+		fmt.Fprintln(&declarations, row.declaration())
 	}
-	for _, mutation := range []string{"valid", "missing-body", "wrong-width", "new-public-text", "missing-text", "duplicate-text", "skip-all", "overlay-new-text"} {
+	for _, mutation := range []string{
+		"valid", "missing-body", "wrong-width", "new-public-text", "missing-text",
+		"duplicate-text", "skip-all", "overlay-new-text", "wrong-sdk-declaration",
+	} {
 		t.Run(mutation, func(t *testing.T) {
 			goroot, runtimeDir := t.TempDir(), t.TempDir()
 			dir := filepath.Join(goroot, "src", "internal", "runtime", "atomic")
@@ -251,11 +256,16 @@ func TestRuntimeAtomicARM64RejectsIncompleteOwner(t *testing.T) {
 				body += "\n//llgo:skipall\n"
 			}
 			asmFile := assemblyLanguageTestWrite(t, dir, "atomic_arm64.s", original)
+			assemblyLanguageTestWrite(t, dir, "stubs.go", declarations.String())
+			assemblyLanguageTestWrite(t, dir, "atomic_arm64.go", "package atomic\n")
 			other := assemblyLanguageTestWrite(t, dir, "other_arm64.s", "TEXT ·Other(SB),4,$0\nRET\n")
 			assemblyLanguageTestWrite(t, patchDir, "atomic_arm64.go", body)
 			base := make(map[string][]byte)
 			if mutation == "overlay-new-text" {
 				base[asmFile] = []byte(original + "TEXT ·FutureAtomic(SB),4,$0\nRET\n")
+			}
+			if mutation == "wrong-sdk-declaration" {
+				base[filepath.Join(dir, "stubs.go")] = []byte(strings.Replace(declarations.String(), "func Load8(ptr *uint8)", "func Load8(ptr *uint64)", 1))
 			}
 			_, overlay, _, err := applySourcePatchForPkg(base, nil, runtimeDir, goroot, "internal/runtime/atomic", sourcePatchBuildContext{
 				goos: "linux", goarch: "arm64", goversion: "go1.27.2",
@@ -271,6 +281,18 @@ func TestRuntimeAtomicARM64RejectsIncompleteOwner(t *testing.T) {
 			}
 			if _, changed := overlay[other]; changed {
 				t.Fatal("whole-package assembly suppression replaced an unrelated file")
+			}
+			_, repeated, _, err := applySourcePatchForPkg(overlay, nil, runtimeDir, goroot, "internal/runtime/atomic", sourcePatchBuildContext{
+				goos: "linux", goarch: "arm64", goversion: "go1.27.2",
+			})
+			if err != nil || !reflect.DeepEqual(repeated, overlay) {
+				t.Fatal("an intact reused atomic source view changed ownership", err)
+			}
+			repeated[filepath.Join(dir, "stubs.go")] = append(repeated[filepath.Join(dir, "stubs.go")], []byte("\nvar changedSelectedSource int\n")...)
+			if _, _, _, err := applySourcePatchForPkg(repeated, nil, runtimeDir, goroot, "internal/runtime/atomic", sourcePatchBuildContext{
+				goos: "linux", goarch: "arm64", goversion: "go1.27.2",
+			}); err == nil {
+				t.Fatal("a changed reused declaration view borrowed the previous owner marker")
 			}
 		})
 	}
@@ -294,6 +316,17 @@ func TestRuntimeAtomicARM64RetainsOtherArchitectures(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRuntimeAtomicARM64RetainsOlderSDKSelection(t *testing.T) {
+	// Go1.23 has this package but only 48 entries; older releases use the
+	// runtime/internal/atomic path. This tests selection, not their execution.
+	changed, _, _, err := applySourcePatchForPkg(nil, nil, env.LLGoRuntimeDir(), runtime.GOROOT(), "internal/runtime/atomic", sourcePatchBuildContext{
+		goos: "linux", goarch: "arm64", goversion: "go1.23.12",
+	})
+	if err != nil || changed {
+		t.Fatal("the Go1.24+ complete owner changed an older selected SDK route", err)
 	}
 }
 
