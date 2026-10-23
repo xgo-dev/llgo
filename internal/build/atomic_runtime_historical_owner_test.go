@@ -164,8 +164,21 @@ func TestRuntimeAtomicARM64HistoricalSDKRetainsOtherArchitectures(t *testing.T) 
 			overlay, files, err := buildSourcePatchOverlayForGOROOT(nil, env.LLGoRuntimeDir(), root, sourcePatchBuildContext{
 				goos: target.goos, goarch: target.goarch, goversion: profile.version,
 			})
-			if err != nil || len(overlay) != 0 || len(files) != 0 {
-				t.Fatal("the historical ARM64 alias changed another architecture's owner", err, files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Other runtime patches remain legitimate; only the two atomic
+			// package inventories must be untouched on these architectures.
+			for _, packagePath := range []string{"runtime/internal/atomic", "internal/runtime/atomic"} {
+				if len(files[packagePath]) != 0 {
+					t.Fatal("the historical ARM64 alias injected another architecture's atomic owner", packagePath)
+				}
+				dir := filepath.Join(root, "src", filepath.FromSlash(packagePath))
+				for name := range overlay {
+					if filepath.Dir(name) == dir {
+						t.Fatal("the historical ARM64 alias changed another architecture's atomic source", name)
+					}
+				}
 			}
 		})
 	}
