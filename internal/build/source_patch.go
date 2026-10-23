@@ -205,6 +205,56 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 		changed = true
 	}
 
+	if pkgPath == "internal/runtime/atomic" && buildCtx.GOARCH == "arm64" {
+		if skipAll {
+			return false, nil, nil, fmt.Errorf("ARM64 atomic owner must retain the other package Go declarations")
+		}
+		filename := filepath.Join(srcDir, "atomic_arm64.s")
+		assembly, err := readOverlay(filename)
+		if err != nil {
+			return false, nil, nil, fmt.Errorf("read ARM64 atomic assembly owner: %w", err)
+		}
+		reused := string(assembly) == "// replaced by LLGo source patch\n"
+		var bodies, declarations [][]byte
+		for name, source := range patchSrcs {
+			if reused && !bytes.Equal(base[filepath.Join(srcDir, "z_llgo_patch_"+name)], source.data) {
+				return false, nil, nil, fmt.Errorf("ARM64 atomic marker lacks its exact generated owner")
+			}
+			bodies = append(bodies, source.data)
+		}
+		if reused {
+			assembly, err = os.ReadFile(filename)
+			if err != nil {
+				return false, nil, nil, err
+			}
+		}
+		for _, name := range []string{"stubs.go", "atomic_arm64.go"} {
+			path := filepath.Join(srcDir, name)
+			source, err := readOverlay(path)
+			if err != nil {
+				return false, nil, nil, err
+			}
+			if reused {
+				original, err := os.ReadFile(path)
+				if err != nil {
+					return false, nil, nil, err
+				}
+				filtered, _, err := filterSourcePatchFile(original, skips)
+				if err != nil || !bytes.Equal(source, filtered) {
+					return false, nil, nil, fmt.Errorf("ARM64 atomic generated declaration view changed: %s", name)
+				}
+				source = original
+			}
+			declarations = append(declarations, source)
+		}
+		if err := validateAtomicARM64SourcePatchOwners(assembly, declarations, bodies); err != nil {
+			return false, nil, nil, fmt.Errorf("ARM64 atomic complete source owner: %w", err)
+		}
+		ensureOverlay()
+		out[filename] = []byte("// replaced by LLGo source patch\n")
+		changed = true
+	}
+
 	if llruntime.SourcePatchReplacesAsmForGOARCH(pkgPath, ctx.goarch) {
 		for _, entry := range srcEntries {
 			if entry.IsDir() {
