@@ -74,7 +74,7 @@ executables; development- and test-only modules are not included.
 | `golang.org/x/arch` | [BSD-3-Clause](LICENSES/Go-Arch-BSD-3-Clause.txt) |
 
 This development branch replaces `github.com/xgo-dev/plan9asm` with
-`github.com/cpunion/plan9asm` at commit `451bf650fccc`, as pinned in `go.mod`.
+`github.com/cpunion/plan9asm` at commit `da6521352eb1`, as pinned in `go.mod`.
 The replacement retains the Apache-2.0 license listed above. It must be
 replaced by an upstream dependency before release.
 
