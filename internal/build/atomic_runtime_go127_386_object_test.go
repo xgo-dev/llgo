@@ -17,6 +17,15 @@ import (
 // alignment panic calls, and all non-CAS operations. This is object evidence;
 // it does not grant native atomic execution coverage on a cross host.
 func TestRuntimeAtomic386CompletePackage(t *testing.T) {
+	if runtime.GOOS != "windows" || runtime.GOARCH != "386" {
+		cc, cxx := os.Getenv("LLGO_WINDOWS_CROSS_CC"), os.Getenv("LLGO_WINDOWS_CROSS_CXX")
+		if cc == "" || cxx == "" {
+			t.Fatal("the explicit Windows 386 cross role requires its real CC/CXX and sysroot")
+		}
+		// Set these only after Go has built this host test binary.
+		t.Setenv("CC", cc)
+		t.Setenv("CXX", cxx)
+	}
 	const atomicPackage = "internal/runtime/atomic"
 	names := strings.Fields(`
 		Cas Casint32 Casint64 Casuintptr CasRel
