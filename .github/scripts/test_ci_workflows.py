@@ -524,6 +524,24 @@ sys.exit(subprocess.call(command + ['./internal/build']))
             with self.subTest(workflow=filename):
                 self.assertEqual(count, expected)
 
+    def test_release_builds_bound_nested_concurrency_without_dropping_targets(self):
+        jobs = load("release-build.yml")["jobs"]
+        for job, name in (("build", "Run GoReleaser (Build & Test)"),
+                          ("release", "Run GoReleaser (Release)")):
+            with self.subTest(job=job):
+                step = next(step for step in jobs[job]["steps"] if step.get("name") == name)
+                command = step["run"].replace("\\\n", " ")
+                build = next(line for line in command.splitlines()
+                             if "docker run" in line and "release --" in line)
+                self.assertIn("-e GOMAXPROCS=2", build)
+                self.assertIn("-e GOFLAGS=-p=2", build)
+                self.assertIn("--parallelism=1", build)
+                self.assertNotIn("--single-target", build)
+                self.assertNotIn("continue-on-error", step)
+        config = yaml.safe_load((WORKFLOWS.parent.parent / ".goreleaser.yaml").read_text())
+        self.assertCountEqual([target for build in config["builds"] for target in build["targets"]],
+                              ["darwin_amd64", "darwin_arm64", "linux_amd64", "linux_arm64"])
+
     def test_windows_release_covers_all_architectures_with_native_x86_toolchains(self):
         jobs = load("release-build.yml")["jobs"]
         for name in ("build-windows", "test-windows-artifacts"):
