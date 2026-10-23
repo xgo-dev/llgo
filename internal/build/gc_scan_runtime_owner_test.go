@@ -245,8 +245,8 @@ func TestGCScanRuntimeAMD64SourceOwnerBoundaries(t *testing.T) {
 // complete actual AMD64 package/object is checked separately above.
 func TestGCScanRuntimePortableBodiesExecute(t *testing.T) {
 	// Go1.26 made this graph experimental; Go1.27 enables it by default.
-	// Select the real runtime import in both compilers, rather than relying on
-	// an unimported linkname target or inventing a private ABI carrier.
+	// The fixture explicitly imports the SDK owner: LLGo's alternate runtime
+	// does not retain the stock runtime's complete GC dependency graph.
 	t.Setenv("GOEXPERIMENT", "greenteagc")
 	dir := t.TempDir()
 	patchDir := filepath.Join(env.LLGoRuntimeDir(), "_patch", filepath.FromSlash(gcScanRuntimePackage))
@@ -265,6 +265,15 @@ func TestGCScanRuntimePortableBodiesExecute(t *testing.T) {
 		body = bytes.TrimPrefix(body, []byte("//go:build amd64 && go1.26\n"))
 		overlay = map[string][]byte{filepath.Join(runtime.GOROOT(), "src", filepath.FromSlash(gcScanRuntimePackage), "z_llgo_gc_scan_execution.go"): body}
 	}
+	program, err := os.ReadFile("testdata/gc-scan-owner/main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A virtual SDK child package may import the real internal owner without
+	// modifying the installed SDK or copying its implementation into the test.
+	mainPackage := gcScanRuntimePackage + "/llgotestmain"
+	mainFile := filepath.Join(runtime.GOROOT(), "src", filepath.FromSlash(mainPackage), "main.go")
+	overlay[mainFile] = program
 	replace := make(map[string]string)
 	for name, source := range overlay {
 		file := filepath.Join(dir, fmt.Sprintf("overlay-%d.go", len(replace)))
@@ -281,11 +290,6 @@ func TestGCScanRuntimePortableBodiesExecute(t *testing.T) {
 	if err := os.WriteFile(overlayFile, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	program, err := os.ReadFile("testdata/gc-scan-owner/main.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	mainFile := assemblyLanguageTestWrite(t, dir, "main.go", string(program))
 	command := func(binary string, args ...string) string {
 		t.Helper()
 		var output bytes.Buffer
@@ -301,7 +305,7 @@ func TestGCScanRuntimePortableBodiesExecute(t *testing.T) {
 	}
 	original := filepath.Join(dir, "original"+extension)
 	command(filepath.Join(runtime.GOROOT(), "bin", "go"+extension), "build", "-overlay="+overlayFile,
-		"-ldflags=-checklinkname=0", "-o", original, mainFile)
+		"-ldflags=-checklinkname=0", "-o", original, mainPackage)
 	want := command(original)
 	if want != "gc scan owners 26 classes 104 patterns" {
 		t.Fatal("the independent Go execution denominator changed", want)
@@ -331,7 +335,7 @@ func TestGCScanRuntimePortableBodiesExecute(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := Do([]string{mainFile}, conf); err != nil {
+	if _, err := Do([]string{mainPackage}, conf); err != nil {
 		t.Fatal("build actual portable gc scan bodies", err)
 	}
 	if modules != 1 {
