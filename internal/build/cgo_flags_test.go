@@ -14,8 +14,8 @@ func TestCgoDirectiveFlagsMatchGoQuoting(t *testing.T) {
 		`-I"include space" -DNAME='two words'`,
 		`-Iinclude\ space -DNAME=left' middle 'right`,
 		`-framework Cocoa -weak_framework Metal`,
-		`-DNAME="a\"b" -DOTHER='c\\d'`,
-		`-O2 "" '-DNAME=with -flag text'`,
+		`-DNAME="a\ b" -DOTHER='c\ d'`,
+		`-O2 '-DNAME=with -flag text'`,
 		"-I\tinclude -O2",
 		`-I"unterminated`,
 		`-Iunfinished\`,
@@ -57,5 +57,16 @@ func TestCgoDirectiveFlagsMatchGoQuoting(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestSplitCgoDirectiveFlagsPreservesLiteralTokens(t *testing.T) {
+	// go/build.ImportDir additionally applies safeCgoName, which rejects
+	// literal quotes and empty arguments after tokenization. Check the lexer
+	// separately: it must preserve intentional bytes, not strip every quote.
+	got, err := splitCgoDirectiveFlags(`-DNAME="a\"b" -DOTHER='c\\d' ""`)
+	want := []string{`-DNAME=a"b`, `-DOTHER=c\d`, ""}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("literal tokens = %q, %v; want %q", got, err, want)
 	}
 }
