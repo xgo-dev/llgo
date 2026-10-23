@@ -294,8 +294,14 @@ func TestRuntimeSourceOwnerSelectionBoundaries(t *testing.T) {
 				}
 				goroot, runtimeDir := t.TempDir(), t.TempDir()
 				patchDir := filepath.Join(runtimeDir, "_patch", filepath.FromSlash(pkg))
+				sourceDir := filepath.Join(goroot, "src", filepath.FromSlash(pkg))
+				for _, directory := range []string{sourceDir, patchDir} {
+					if err := os.MkdirAll(directory, 0o700); err != nil {
+						t.Fatal(err)
+					}
+				}
 				// Selection must fail before it can claim ownership of any SDK assembly.
-				assemblyLanguageTestWrite(t, filepath.Join(goroot, "src", filepath.FromSlash(pkg)), "unrelated.go", "package fixture\n")
+				assemblyLanguageTestWrite(t, sourceDir, "unrelated.go", "package fixture\n")
 				switch mutation {
 				case "skip-all":
 					body = append(bytes.Clone(body), []byte("\n//llgo:skipall\n")...)
