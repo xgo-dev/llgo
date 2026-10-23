@@ -1,7 +1,10 @@
 package plan9asm
 
 import (
+	"errors"
 	"fmt"
+	"go/ast"
+	"go/types"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -74,9 +77,131 @@ func TestSigsForStdlibInternalBytealgArm64(t *testing.T) {
 	}
 	for path, wantSigs := range sfiles {
 		t.Run(filepath.Base(path), func(t *testing.T) {
-			tr := requireBytealgPublicTextRoots(t, pkg, path, "linux", "arm64")
-			requireBytealgSignatures(t, tr, wantSigs)
+			requireBytealgOriginalFileContract(t, pkg, path, "linux", "arm64", wantSigs)
 		})
+	}
+}
+
+func requireBytealgOriginalFileContract(t *testing.T, pkg *packages.Package, path, goos, goarch string, want map[string]extplan9asm.FuncSig) {
+	t.Helper()
+	if filepath.Base(path) == "equal_"+goarch+".s" && (goarch == "386" || goarch == "amd64" || goarch == "arm64") {
+		requireBytealgGCClosureBoundary(t, pkg, path, goos, goarch, want)
+		return
+	}
+	tr := requireBytealgPublicTextRoots(t, pkg, path, goos, goarch)
+	if want != nil {
+		requireBytealgSignatures(t, tr, want)
+	}
+}
+
+// The complete original gc equality file needs gc's hidden {entry, size}
+// carrier. A Go signature alone does not supply it. LLGo's real Type*-bearing
+// runtime bodies have separate owner/public-entry execution tests in build;
+// they do not make this unmodified SDK assembly a supported closure entry.
+func requireBytealgGCClosureBoundary(t *testing.T, pkg *packages.Package, path, goos, goarch string, want map[string]extplan9asm.FuncSig) {
+	t.Helper()
+	word, hiddenLoad, arch := extplan9asm.I64, "MOVQ 8(DX),BX", extplan9asm.ArchAMD64
+	switch goarch {
+	case "386":
+		word, hiddenLoad = extplan9asm.I32, "MOVL 4(DX),BX"
+	case "arm64":
+		hiddenLoad, arch = "MOVD 8(R26),R2", extplan9asm.ArchARM64
+	}
+	expected := map[string]extplan9asm.FuncSig{
+		"runtime.memequal":        {Args: []extplan9asm.LLVMType{extplan9asm.Ptr, extplan9asm.Ptr, word}, Ret: extplan9asm.I1},
+		"runtime.memequal_varlen": {Args: []extplan9asm.LLVMType{extplan9asm.Ptr, extplan9asm.Ptr}, Ret: extplan9asm.I1},
+	}
+	if want != nil {
+		if len(want) != len(expected) {
+			t.Fatal("original equality signature inventory changed", want)
+		}
+		for name, sig := range expected {
+			if err := checkSig(want[name], sig); err != nil {
+				t.Fatalf("%s target signature: %v", name, err)
+			}
+		}
+	}
+	opt := TranslateOptions{GOROOT: runtime.GOROOT()}
+	src, err := PreprocessFileForPkg(pkg, path, goos, goarch, opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := extplan9asm.Parse(arch, string(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolve := resolveSymFuncForTarget(pkg.PkgPath, goos, goarch)
+	roots, hiddenLoads := map[string]bool{}, 0
+	compact := func(text string) string { return strings.Join(strings.Fields(text), "") }
+	for _, fn := range file.Funcs {
+		if strings.HasSuffix(fn.Sym, "<>") {
+			continue // Still retained in src and in the full translation below.
+		}
+		name := resolve(fn.Sym)
+		if _, ok := expected[name]; !ok || roots[name] {
+			t.Fatalf("duplicate or foreign original equality TEXT: %s", name)
+		}
+		if !shouldKeepResolvedFunc(pkg.PkgPath, goos, goarch, name) {
+			t.Fatal("the adapter must retain every original public equality root", name)
+		}
+		roots[name] = true
+		if name == "runtime.memequal_varlen" {
+			for _, instruction := range fn.Instrs {
+				if compact(instruction.Raw) == compact(hiddenLoad) {
+					hiddenLoads++
+				}
+			}
+		}
+	}
+	if len(roots) != len(expected) || hiddenLoads != 1 {
+		t.Fatalf("incomplete original equality source: roots=%v, hidden loads=%d", roots, hiddenLoads)
+	}
+	owners := map[string]bool{}
+	for _, file := range pkg.Syntax {
+		for _, declaration := range file.Decls {
+			fn, ok := declaration.(*ast.FuncDecl)
+			if !ok || fn.Doc == nil {
+				continue
+			}
+			for _, comment := range fn.Doc.List {
+				fields := strings.Fields(comment.Text)
+				if len(fields) != 3 || fields[0] != "//go:linkname" {
+					continue
+				}
+				name := fields[2]
+				wantSig, relevant := expected[name]
+				if !relevant {
+					continue
+				}
+				if fields[1] != fn.Name.Name || fn.Body != nil || owners[name] {
+					t.Fatal("original equality declaration lost its unique bodyless linkname owner", name)
+				}
+				typed, ok := pkg.Types.Scope().Lookup(fn.Name.Name).(*types.Func)
+				if !ok {
+					t.Fatal("original equality declaration lacks its selected Go types", name)
+				}
+				sig, err := extplan9asm.DeriveGoFuncABI0Signature(name, typed, goarch, types.SizesFor("gc", goarch))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := checkSig(sig, wantSig); err != nil {
+					t.Fatalf("%s actual target declaration: %v", name, err)
+				}
+				owners[name] = true
+			}
+		}
+	}
+	if len(owners) != len(expected) {
+		t.Fatal("original public equality signatures disappeared", owners)
+	}
+	opt.SourcePreprocessed = true
+	tr, err := TranslateSourceModuleForPkgWithOptions(pkg, path, src, goos, goarch, opt)
+	if tr != nil {
+		t.Cleanup(tr.Module.Dispose)
+		t.Fatal("unmodified gc equality unexpectedly acquired a closure entry")
+	}
+	if !errors.Is(err, extplan9asm.ErrProbeNeedsContext) || !strings.Contains(compact(err.Error()), compact(hiddenLoad)) {
+		t.Fatalf("complete gc equality must reject the exact missing hidden load %q: %v", hiddenLoad, err)
 	}
 }
 
@@ -217,7 +342,7 @@ func TestSigsForStdlibInternalBytealgArm64_CoversAllTextSymbols(t *testing.T) {
 
 	for _, path := range sfiles {
 		t.Run(filepath.Base(path), func(t *testing.T) {
-			requireBytealgPublicTextRoots(t, pkg, path, "linux", "arm64")
+			requireBytealgOriginalFileContract(t, pkg, path, "linux", "arm64", nil)
 		})
 	}
 }
