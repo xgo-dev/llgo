@@ -1,4 +1,4 @@
-//go:build go1.27 && (amd64 || llgo_amd64_cross)
+//go:build go1.27
 
 package build
 
@@ -15,21 +15,20 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
-	xtoolllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
 	llvmenv "github.com/xgo-dev/llgo/xtool/env/llvm"
 	"github.com/xgo-dev/llgo/xtool/nm"
 	"github.com/xgo-dev/llvm"
 )
 
-// Native AMD64 CI owns this complete selected-SDK package. Other hosts require
-// the explicit cross role and actual AMD64 tools; this is object evidence, not
-// native AES execution. ModeBuild releases the program after the live hook.
-func TestMapsRuntimeAMD64CompletePackage(t *testing.T) {
+// Keep the complete selected SDK package and original AES declarations on each
+// target. Object definitions are not native AES execution evidence. ModeBuild
+// releases the program after the live hook.
+func mapsRuntimeCompletePackage(t *testing.T, goos, goarch string) string {
+	t.Helper()
 	const mapsPackage = "internal/runtime/maps"
 	names := []string{"memHashAES", "memHash32AES", "memHash64AES"}
 	conf := NewDefaultConf(ModeBuild)
-	conf.Goos, conf.Goarch = runtime.GOOS, "amd64"
-	t.Setenv("CCFLAGS", "--target="+xtoolllvm.GetTargetTriple(conf.Goos, conf.Goarch))
+	conf.Goos, conf.Goarch = goos, goarch
 	conf.OptLevel, conf.ForceRebuild = optlevel.O0, true
 	conf.LTO = lto.Off
 	conf.BinPath = t.TempDir()
@@ -89,7 +88,7 @@ func TestMapsRuntimeAMD64CompletePackage(t *testing.T) {
 	}
 	pkgs, err := Build(Invocation{Args: []string{mapsPackage}, Config: conf})
 	if err != nil {
-		t.Fatal("compile the complete selected AMD64 SDK maps package", err)
+		t.Fatal("compile the complete selected SDK maps package", goos, goarch, err)
 	}
 	if modules != 1 {
 		t.Fatal("the complete SDK maps package was not observed exactly once", modules)
@@ -120,7 +119,7 @@ func TestMapsRuntimeAMD64CompletePackage(t *testing.T) {
 	}
 	for _, name := range names {
 		symbolName := mapsPackage + "." + name
-		if conf.Goos == "darwin" {
+		if conf.Goos == "darwin" || conf.Goos == "windows" && conf.Goarch == "386" {
 			symbolName = "_" + symbolName
 		}
 		definitions := 0
@@ -135,4 +134,5 @@ func TestMapsRuntimeAMD64CompletePackage(t *testing.T) {
 			t.Fatal("the real SDK archive lacks its unique compiled AES code definition", symbolName, definitions)
 		}
 	}
+	return pkg.ArchiveFile
 }
