@@ -115,9 +115,12 @@ jobs:
           stage2_dir="$RUNNER_TEMP/llgo-stage2"
           mkdir -p "$stage2_dir"
           build=("$stage1" build -p=1 -v -o "$stage2_dir/llgo" ./cmd/llgo)
-          if [[ "$RUNNER_OS" == Linux ]]; then
+          if [[ "$RUNNER_OS" == Linux && -x /usr/bin/time ]]; then
             GOMAXPROCS=2 /usr/bin/time -v "${build[@]}"
           else
+            if [[ "$RUNNER_OS" == Linux ]]; then
+              echo '::warning::GNU time unavailable; running the unchanged bootstrap command'
+            fi
             GOMAXPROCS=2 "${build[@]}"
           fi
           "$stage2_dir/llgo" version
