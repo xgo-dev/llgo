@@ -1,4 +1,4 @@
-//go:build go1.27
+//go:build go1.27 && (windows || llgo_windows_cross)
 
 package build
 
@@ -10,14 +10,13 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-func TestWindowsStdCallARM64CompletePackage(t *testing.T) {
+func windowsStdCallCompletePackage(t *testing.T, arch string) {
+	t.Helper()
 	const path = "internal/runtime/syscall/windows"
 	conf := NewDefaultConf(ModeBuild)
-	conf.Goos, conf.Goarch = "windows", "arm64"
-	// Windows toolchain selection probes CC/CXX before merging CCFLAGS.
-	// Select the actual target in those command prefixes on every host.
-	t.Setenv("CC", "clang --target=aarch64-w64-windows-gnu")
-	t.Setenv("CXX", "clang++ --target=aarch64-w64-windows-gnu")
+	conf.Goos, conf.Goarch = "windows", arch
+	// Inherit the lane's actual CC/CXX and sysroot. In particular, do not
+	// replace native MSVC with a bare GNU target lacking its dependency tree.
 	conf.OptLevel, conf.ForceRebuild = optlevel.O0, true
 	conf.BinPath = t.TempDir()
 	modules := 0
@@ -39,7 +38,7 @@ func TestWindowsStdCallARM64CompletePackage(t *testing.T) {
 	}
 	pkgs, err := Build(Invocation{Args: []string{path}, Config: conf})
 	if err != nil {
-		t.Fatal("compile the complete Windows ARM64 syscall package", err)
+		t.Fatal("compile the complete Windows syscall package", arch, err)
 	}
 	if modules != 1 {
 		t.Fatal("complete Windows syscall owner was not compiled exactly once", modules)

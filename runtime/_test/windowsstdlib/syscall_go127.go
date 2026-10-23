@@ -3,6 +3,7 @@
 package main
 
 import (
+	"math"
 	"runtime"
 	"syscall"
 	"unsafe"
@@ -93,4 +94,35 @@ func testDynamicWindowsSyscalls() {
 			panic("386 dynamic frame did not restore stdcall callee-pop stack")
 		}
 	}
+	testPublicStdCallReturns()
+}
+
+func testPublicStdCallReturns() {
+	var info stdCallInfo
+	var arguments [2]uintptr
+	var wantR1, wantR2 uintptr
+	switch runtime.GOARCH {
+	case "386":
+		info.fn = uintptr(c.Func(cHighWord))
+		wantR1, wantR2 = 0x89abcdef, 0x81234567
+	case "amd64":
+		info.fn = uintptr(c.Func(cAddDouble))
+		arguments = [2]uintptr{uintptr(math.Float64bits(1.25)), uintptr(math.Float64bits(2.5))}
+		info.n, info.args = 2, uintptr(unsafe.Pointer(&arguments[0]))
+		wantR2 = uintptr(math.Float64bits(3.75))
+	default:
+		return // ARM64 has no second result register in this SDK contract.
+	}
+	for _, throughC := range []bool{false, true} {
+		info.r1, info.r2 = 0, 0
+		if throughC {
+			cCallStdCallAddress(publicStdCallAddr(), &info)
+		} else {
+			publicStdCall(&info)
+		}
+		if info.r2 != wantR2 || runtime.GOARCH == "386" && info.r1 != wantR1 {
+			panic("public Go/C StdCall did not retain the real secondary return register")
+		}
+	}
+	runtime.KeepAlive(arguments)
 }
