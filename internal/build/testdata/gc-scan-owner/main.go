@@ -1,6 +1,9 @@
 package main
 
-import "unsafe"
+import (
+	_ "internal/runtime/gc/scan"
+	"unsafe"
+)
 
 type mask [16]uintptr
 
