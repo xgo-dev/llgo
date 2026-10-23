@@ -613,6 +613,9 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                       second["run"])
         self.assertIn('GOMAXPROCS=2 /usr/bin/time -v "${build[@]}"', second["run"])
         self.assertIn('GOMAXPROCS=2 "${build[@]}"', second["run"])
+        self.assertIn('[[ "$RUNNER_OS" == Linux && -x /usr/bin/time ]]', second["run"])
+        self.assertIn('::warning::GNU time unavailable; running the unchanged bootstrap command',
+                      second["run"])
         self.assertIn('"$stage2_dir/llgo" version', second["run"])
         self.assertIn('file "$stage2_dir/llgo"', second["run"])
         for scope in [job, *steps]:
