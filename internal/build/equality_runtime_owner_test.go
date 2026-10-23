@@ -44,14 +44,26 @@ func TestRuntimeEqualitySourcePatchOwnsOnlyCompleteEqualFile(t *testing.T) {
 			if llruntime.SourcePatchReplacesAsmForGOARCH("internal/bytealg", arch) {
 				t.Fatal("a two-entry equality bridge must not replace every bytealg assembly file")
 			}
-			for _, stem := range []string{"compare", "count", "index", "indexbyte"} {
-				path := filepath.Join(dir, stem+"_"+arch+".s")
-				if _, err := os.Stat(path); err != nil {
-					t.Fatal("required original non-equality assembly is absent", path, err)
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			otherSources := 0
+			for _, entry := range entries {
+				if entry.IsDir() || filepath.Ext(entry.Name()) != ".s" {
+					continue
 				}
+				path := filepath.Join(dir, entry.Name())
+				if path == equal {
+					continue
+				}
+				otherSources++
 				if _, replaced := overlay[path]; replaced {
 					t.Fatal("equality source patch swallowed an unrelated whole assembly owner", path)
 				}
+			}
+			if otherSources == 0 {
+				t.Fatal("original bytealg inventory has no other assembly sources")
 			}
 			runtimeEqualityRequireBodies(t, overlay, dir)
 		})
