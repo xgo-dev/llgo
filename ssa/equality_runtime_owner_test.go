@@ -51,7 +51,7 @@ func TestRuntimeEqualityRegularMemoryProducerRetainsTypeContext(t *testing.T) {
 					if prog.IsRegularMemory(test.typ) != test.regular {
 						t.Fatal("independent regular-memory fixture changed", test.name)
 					}
-					global := pkg.NewVarEx(test.name, prog.Uintptr())
+					global := pkg.NewVarEx(test.name, prog.Pointer(prog.Uintptr()))
 					fields := builder.abiCommonFields(test.typ, test.name, false, global.impl)
 					if test.regular && fields[0].ZExtValue() <= fields[1].ZExtValue() {
 						t.Fatal("fixture must distinguish real Size_ from PtrBytes")
