@@ -314,6 +314,10 @@ func TestGCScanRuntimePortableBodiesExecute(t *testing.T) {
 	conf.GOEXPERIMENT = "greenteagc"
 	conf.OptLevel, conf.LTO = optlevel.O0, lto.Off
 	conf.ForceRebuild, conf.Overlay = true, overlay
+	conf.SourceOverlay = make(map[string]SourceOverlayFile, len(replace))
+	for name, backing := range replace {
+		conf.SourceOverlay[name] = SourceOverlayFile{BackingFile: backing, Contents: overlay[name]}
+	}
 	conf.OutFile = filepath.Join(dir, "llgo"+extension)
 	modules := 0
 	conf.ModuleHook = func(pkg Package) {
