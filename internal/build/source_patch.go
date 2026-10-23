@@ -274,6 +274,25 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 		changed = true
 	}
 
+	if pkgPath == "internal/runtime/gc/scan" && ctx.goarch == "amd64" {
+		if skipAll || len(patchSrcs) != 1 {
+			return false, nil, nil, fmt.Errorf("AMD64 gc scan owner must retain the other SDK Go sources")
+		}
+		patch, ok := patchSrcs["scan_amd64.go"]
+		if !ok {
+			return false, nil, nil, fmt.Errorf("AMD64 gc scan owner lacks its complete Go body source")
+		}
+		view, err := gcScanSourcePatchView(srcDir, srcEntries, buildCtx, readOverlay, base, patch.data, skips)
+		if err != nil {
+			return false, nil, nil, fmt.Errorf("AMD64 gc scan complete source owner: %w", err)
+		}
+		ensureOverlay()
+		for filename, source := range view {
+			out[filename] = source
+		}
+		changed = true
+	}
+
 	if llruntime.SourcePatchReplacesAsmForGOARCH(pkgPath, ctx.goarch) {
 		for _, entry := range srcEntries {
 			if entry.IsDir() {

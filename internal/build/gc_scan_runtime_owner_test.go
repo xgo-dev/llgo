@@ -1,14 +1,25 @@
+//go:build go1.26
+
 package build
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"runtime"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	xtoolllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
 	"github.com/xgo-dev/llvm"
@@ -113,5 +124,220 @@ func TestGCScanRuntimeAMD64CompletePackage(t *testing.T) {
 	info, err := os.Stat(pkg.ArchiveFile)
 	if err != nil || info.Size() <= 8 {
 		t.Fatal("the complete SDK package has no nonempty object archive", err)
+	}
+}
+
+func TestGCScanRuntimeAMD64SourceOwnerBoundaries(t *testing.T) {
+	ctx := sourcePatchBuildContext{goos: runtime.GOOS, goarch: "amd64", goversion: runtime.Version()}
+	runtimeDir := env.LLGoRuntimeDir()
+	dir := filepath.Join(runtime.GOROOT(), "src", filepath.FromSlash(gcScanRuntimePackage))
+	patch := filepath.Join(runtimeDir, "_patch", filepath.FromSlash(gcScanRuntimePackage), "scan_amd64.go")
+	body, err := os.ReadFile(patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply := func(base map[string][]byte) (map[string][]byte, error) {
+		changed, overlay, _, err := applySourcePatchForPkg(base, nil, runtimeDir, runtime.GOROOT(), gcScanRuntimePackage, ctx)
+		if err == nil && !changed {
+			return nil, fmt.Errorf("missing complete source owner")
+		}
+		return overlay, err
+	}
+	good, err := apply(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"expand_amd64.s", "scan_amd64.s", "filter_amd64.s"} {
+		if string(good[filepath.Join(dir, name)]) != "// replaced by LLGo source patch\n" {
+			t.Fatal("missing whole assembly owner", name)
+		}
+	}
+	for _, name := range []string{"expand_amd64.go", "scan_amd64.go", "filter_amd64.go"} {
+		file, err := parser.ParseFile(token.NewFileSet(), name, good[filepath.Join(dir, name)], 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			if ident, ok := node.(*ast.Ident); ok && ident.Name == "gcExpandersAVX512" {
+				t.Fatal("the selected Go view retains a fake or unowned PC table")
+			}
+			return true
+		})
+	}
+	if _, err := apply(good); err != nil {
+		t.Fatal("the complete owner cannot be safely reused", err)
+	}
+	parsed := token.NewFileSet()
+	file, err := parser.ParseFile(parsed, patch, body, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var noBody []byte
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "ExpandAVX512" {
+			start, end := parsed.Position(fn.Body.Pos()).Offset, parsed.Position(fn.Body.End()).Offset
+			noBody = append(append([]byte{}, body[:start]...), body[end:]...)
+		}
+	}
+	if len(noBody) == 0 {
+		t.Fatal("missing-body negative did not modify the actual owner")
+	}
+	for _, test := range []struct {
+		name string
+		base map[string][]byte
+	}{
+		{"missing body", map[string][]byte{patch: bytes.Replace(body, []byte("func ExpandAVX512("), []byte("func MissingExpand("), 1)}},
+		{"declaration only", map[string][]byte{patch: noBody}},
+		{"wrong width", map[string][]byte{patch: bytes.Replace(body, []byte("n int32"), []byte("n int64"), 1)}},
+		{"empty source", map[string][]byte{filepath.Join(dir, "expand_amd64.s"): nil}},
+		{"new public TEXT", map[string][]byte{filepath.Join(dir, "scan_amd64.s"): []byte("TEXT ·Unexpected(SB),$0-0\nRET\n")}},
+		{"remaining PC consumer", map[string][]byte{filepath.Join(dir, "scan_go.go"): []byte("package scan\nfunc usePC() uintptr { return gcExpandersAVX512[1] }\n")}},
+		{"duplicate PC declaration", map[string][]byte{filepath.Join(dir, "scan_go.go"): []byte("package scan\nvar gcExpandersAVX512 [1]uintptr\n")}},
+		{"partial marker", map[string][]byte{filepath.Join(dir, "scan_amd64.s"): good[filepath.Join(dir, "scan_amd64.s")]}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := apply(test.base); err == nil {
+				t.Fatal("accepted an incomplete or changed gc scan owner")
+			}
+		})
+	}
+	t.Run("new assembly owner", func(t *testing.T) {
+		goroot := t.TempDir()
+		fixture := filepath.Join(goroot, "src", filepath.FromSlash(gcScanRuntimePackage))
+		if err := os.MkdirAll(fixture, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for name := range gcScanReviewedSources {
+			source, err := os.ReadFile(filepath.Join(dir, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assemblyLanguageTestWrite(t, fixture, name, string(source))
+		}
+		assemblyLanguageTestWrite(t, fixture, "new_amd64.s", "TEXT ·NewEntry(SB),$0-0\nRET\n")
+		if _, _, _, err := applySourcePatchForPkg(nil, nil, runtimeDir, goroot, gcScanRuntimePackage, ctx); err == nil {
+			t.Fatal("accepted a new assembly owner outside the complete reviewed group")
+		}
+	})
+	for _, arch := range []string{"arm64", "386"} {
+		t.Run("retain "+arch, func(t *testing.T) {
+			other := ctx
+			other.goarch = arch
+			changed, _, _, err := applySourcePatchForPkg(nil, nil, runtimeDir, runtime.GOROOT(), gcScanRuntimePackage, other)
+			if err != nil || changed {
+				t.Fatal("AMD64 owner changed another architecture", err)
+			}
+		})
+	}
+	t.Run("retain older SDK", func(t *testing.T) {
+		older := ctx
+		older.goversion = "go1.25.14"
+		changed, _, _, err := applySourcePatchForPkg(nil, nil, runtimeDir, runtime.GOROOT(), gcScanRuntimePackage, older)
+		if err != nil || changed {
+			t.Fatal("the Go1.26+ owner changed an older SDK route", err)
+		}
+	})
+}
+
+// Execute the identical portable Go bodies on the LLVM host, even if it cannot
+// execute AMD64 AVX512. The independent arithmetic oracle is in the program.
+// This is not an execution certificate for the replaced SDK assembly; the
+// complete actual AMD64 package/object is checked separately above.
+func TestGCScanRuntimePortableBodiesExecute(t *testing.T) {
+	// Go1.26 made this graph experimental; Go1.27 enables it by default.
+	// Select the real runtime import in both compilers, rather than relying on
+	// an unimported linkname target or inventing a private ABI carrier.
+	t.Setenv("GOEXPERIMENT", "greenteagc")
+	dir := t.TempDir()
+	patchDir := filepath.Join(env.LLGoRuntimeDir(), "_patch", filepath.FromSlash(gcScanRuntimePackage))
+	body, err := os.ReadFile(filepath.Join(patchDir, "scan_amd64.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := sourcePatchBuildContext{goos: runtime.GOOS, goarch: runtime.GOARCH, goversion: runtime.Version()}
+	_, overlay, _, err := applySourcePatchForPkg(nil, nil, env.LLGoRuntimeDir(), runtime.GOROOT(), gcScanRuntimePackage, ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOARCH != "amd64" {
+		// Explicitly select the same bodies for portable algorithm execution.
+		// Do not change the production architecture selection or CPU predicates.
+		body = bytes.TrimPrefix(body, []byte("//go:build amd64 && go1.26\n"))
+		overlay = map[string][]byte{filepath.Join(runtime.GOROOT(), "src", filepath.FromSlash(gcScanRuntimePackage), "z_llgo_gc_scan_execution.go"): body}
+	}
+	replace := make(map[string]string)
+	for name, source := range overlay {
+		file := filepath.Join(dir, fmt.Sprintf("overlay-%d.go", len(replace)))
+		if err := os.WriteFile(file, source, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		replace[name] = file
+	}
+	data, err := json.Marshal(struct{ Replace map[string]string }{replace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	overlayFile := filepath.Join(dir, "overlay.json")
+	if err := os.WriteFile(overlayFile, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	program, err := os.ReadFile("testdata/gc-scan-owner/main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainFile := assemblyLanguageTestWrite(t, dir, "main.go", string(program))
+	command := func(binary string, args ...string) string {
+		t.Helper()
+		var output bytes.Buffer
+		if err := runRunnerCommand(commandEnv{environ: os.Environ()}, binary, args,
+			runnerDetails{phase: "portable-gc-scan-owner", timeout: 5 * time.Minute}, &output, &output); err != nil {
+			t.Fatalf("actual gc scan command: %v\n%s", err, output.String())
+		}
+		return strings.TrimSpace(output.String())
+	}
+	extension := ""
+	if runtime.GOOS == "windows" {
+		extension = ".exe"
+	}
+	original := filepath.Join(dir, "original"+extension)
+	command(filepath.Join(runtime.GOROOT(), "bin", "go"+extension), "build", "-overlay="+overlayFile,
+		"-ldflags=-checklinkname=0", "-o", original, mainFile)
+	want := command(original)
+	if want != "gc scan owners 26 classes 104 patterns" {
+		t.Fatal("the independent Go execution denominator changed", want)
+	}
+	conf := NewDefaultConf(ModeBuild)
+	conf.GOEXPERIMENT = "greenteagc"
+	conf.OptLevel, conf.LTO = optlevel.O0, lto.Off
+	conf.ForceRebuild, conf.Overlay = true, overlay
+	conf.OutFile = filepath.Join(dir, "llgo"+extension)
+	modules := 0
+	conf.ModuleHook = func(pkg Package) {
+		if pkg.PkgPath != gcScanRuntimePackage {
+			return
+		}
+		modules++
+		module := pkg.LPkg.Module()
+		for _, name := range []string{"ExpandAVX512", "scanSpanPackedAVX512", "FilterNilAVX512"} {
+			fn := module.NamedFunction(gcScanRuntimePackage + "." + name)
+			if fn.IsNil() || fn.IsDeclaration() {
+				t.Fatal("executed portable SDK entry lacks its real body", name)
+			}
+		}
+		if !module.NamedGlobal(gcScanRuntimePackage + ".gcExpandersAVX512").IsNil() {
+			t.Fatal("portable owner manufactured a native PC table")
+		}
+		if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Do([]string{mainFile}, conf); err != nil {
+		t.Fatal("build actual portable gc scan bodies", err)
+	}
+	if modules != 1 {
+		t.Fatal("the actual portable gc scan module was not observed exactly once", modules)
+	}
+	if got := command(conf.OutFile); got != want {
+		t.Fatal("LLGo portable owner differs from the independent Go oracle", got, want)
 	}
 }
