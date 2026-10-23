@@ -14,10 +14,6 @@ import (
 
 // This is a complete runtime implementation selection, not permission to
 // discard native ABI0 result bytes. Unknown/new entry groups fail closed.
-func validateAtomicARM64SourcePatchOwners(assembly []byte, declarations, bodies [][]byte) error {
-	return validateAtomicSourcePatchOwners(assembly, declarations, bodies, "ARM64", 49)
-}
-
 func validateAtomicSourcePatchOwners(assembly []byte, declarations, bodies [][]byte, arch string, entries int) error {
 	want := make(map[string]bool)
 	text := regexp.MustCompile(`^TEXT\s+·([A-Za-z0-9_]+)\(SB\)\s*,`)

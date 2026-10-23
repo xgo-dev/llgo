@@ -27,7 +27,7 @@ func TestAtomicSourceOwnerParseBoundaries(t *testing.T) {
 		t.Run(mutation, func(t *testing.T) {
 			assembly, declarations, bodies := atomicSourceBoundaryInputs()
 			check := func() error {
-				return validateAtomicARM64SourcePatchOwners([]byte(assembly), [][]byte{[]byte(declarations)}, [][]byte{[]byte(bodies)})
+				return validateAtomicSourcePatchOwners([]byte(assembly), [][]byte{[]byte(declarations)}, [][]byte{[]byte(bodies)}, "ARM64", 49)
 			}
 			if err := check(); err != nil {
 				t.Fatal("complete independent source-identity fixture", err)
