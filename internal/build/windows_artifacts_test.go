@@ -77,12 +77,14 @@ int mainCRTStartup(void) { return answer_from_dll() == 42 ? 0 : 23; }
 			}
 			file.Close()
 			imports := strings.TrimSuffix(output, filepath.Ext(output)) + ".lib"
-			consumerCtx := *ctx
 			conf := *ctx.buildConf
 			conf.BuildMode = BuildModeExe
-			consumerCtx.buildConf = &conf
+			consumerCtx := &context{
+				mode: ctx.mode, buildConf: &conf,
+				crossCompile: ctx.crossCompile, commands: ctx.commands,
+			}
 			executable := output + "-consumer.exe"
-			if err := linkObjFiles(&consumerCtx, executable, []string{consumer, imports}, []string{"-nostdlib", "-Wl,--entry,mainCRTStartup"}, false); err != nil {
+			if err := linkObjFiles(consumerCtx, executable, []string{consumer, imports}, []string{"-nostdlib", "-Wl,--entry,mainCRTStartup"}, false); err != nil {
 				t.Fatal(err)
 			}
 			file, err = pe.Open(executable)
