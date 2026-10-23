@@ -1,13 +1,57 @@
 package build
 
 import (
+	"fmt"
 	"go/build"
+	"go/token"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestCgoPreambleFlagsMatchGoPackagePaths(t *testing.T) {
+	for index, flags := range []string{
+		`-Iheaders -I "include space" -Llibs -L "lib space"`,
+		`-I"${SRCDIR}/include space" -L"${SRCDIR}/lib space" -DROOT=${SRCDIR}`,
+	} {
+		for _, kind := range []string{"CPPFLAGS", "CFLAGS", "CXXFLAGS", "LDFLAGS"} {
+			t.Run(fmt.Sprintf("%s/case%d", kind, index), func(t *testing.T) {
+				dir := t.TempDir()
+				filename := filepath.Join(dir, "fixture.go")
+				preamble := "#cgo " + kind + ": " + flags + "\n"
+				source := "package fixture\n/*\n" + preamble + "*/\nimport \"C\"\n"
+				if err := os.WriteFile(filename, []byte(source), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				oracle := build.Default
+				oracle.CgoEnabled = true
+				pkg, err := oracle.ImportDir(dir, 0)
+				if err != nil {
+					t.Fatalf("original Go preamble: %v", err)
+				}
+				_, decls, err := parseCgoPreamble(token.Position{Filename: filename, Line: 2}, preamble)
+				if err != nil {
+					t.Fatal(err)
+				}
+				cflags, cxxflags, ldflags := collectCgoFlags(decls)
+				got, want := cflags, pkg.CgoCFLAGS
+				switch kind {
+				case "CPPFLAGS":
+					want = pkg.CgoCPPFLAGS
+				case "CXXFLAGS":
+					got, want = cxxflags, pkg.CgoCXXFLAGS
+				case "LDFLAGS":
+					got, want = ldflags, pkg.CgoLDFLAGS
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("preamble flags = %q; original Go package-relative flags = %q", got, want)
+				}
+			})
+		}
+	}
+}
 
 func TestCgoDirectiveFlagsMatchGoQuoting(t *testing.T) {
 	for _, flags := range []string{
