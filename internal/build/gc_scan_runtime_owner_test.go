@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/optlevel"
+	xtoolllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -72,6 +73,9 @@ func TestGCScanRuntimeAMD64CompleteOriginalFamily(t *testing.T) {
 func TestGCScanRuntimeAMD64CompletePackage(t *testing.T) {
 	conf := NewDefaultConf(ModeBuild)
 	conf.Goos, conf.Goarch = runtime.GOOS, "amd64"
+	// The package is cross-compiled on ARM64 hosts. Give the real IR compiler
+	// the same AMD64 target, including for dependencies with x86 inline asm.
+	t.Setenv("CCFLAGS", "--target="+xtoolllvm.GetTargetTriple(conf.Goos, conf.Goarch))
 	conf.OptLevel, conf.ForceRebuild = optlevel.O0, true
 	conf.BinPath = t.TempDir()
 	bodies := map[string]bool{}
