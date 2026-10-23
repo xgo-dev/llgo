@@ -173,12 +173,93 @@ jobs:
           echo "$RUNNER_TEMP/llgo-bin" >> "$GITHUB_PATH"
           echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
+      - name: Build host runner for Windows 386 atomic contracts
+        if: runner.os == 'Windows' && matrix.windows_arch == '386'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # LLVM is an amd64 host library. Build the test driver before the
+          # target action switches SDK libraries, pkg-config and DLL paths.
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          if ("${{ matrix.windows_abi }}" -eq "msvc") {
+            $env:CC = $env:LLGO_WINDOWS_HOST_CC
+            $env:CXX = $env:LLGO_WINDOWS_HOST_CXX
+            $readObj = (Get-Command llvm-readobj.exe -ErrorAction Stop).Source
+            $hostBin = Split-Path $readObj
+          } else {
+            $hostBin = Join-Path $env:LLGO_MINGW_HOST_ROOT "bin"
+            $env:CC = Join-Path $hostBin "clang.exe"
+            $env:CXX = Join-Path $hostBin "clang++.exe"
+            $readObj = Join-Path $hostBin "llvm-readobj.exe"
+          }
+          if (-not $env:CC -or -not $env:CXX) {
+            throw "The atomic host runner requires the selected host CC and CXX"
+          }
+          $runner = Join-Path $env:RUNNER_TEMP 'llgo-bin\atomic386-owner.test.exe'
+          go test -c -tags=llgo_windows_386_cross -o $runner ./internal/build
+          if ($LASTEXITCODE -ne 0) {
+            throw "Building the amd64 atomic contract runner failed: $LASTEXITCODE"
+          }
+
+          # Inspect this executable's own transitive imports, not llgo.exe's.
+          # Local amd64 DLLs keep it runnable with the later 386 target PATH.
+          . .\.github\windows\release-lib.ps1
+          Copy-ReleaseDLLs -ReadObj $readObj -Executable $runner -GoArch "amd64" `
+            -Profile "${{ matrix.windows_abi }}" -SourceDirectories @($hostBin)
+          Copy-ReleaseDLLs -ReadObj $readObj -Executable $runner -GoArch "amd64" `
+            -Profile "${{ matrix.windows_abi }}" -CheckOnly
+
       - name: Activate native Windows target
         if: runner.os == 'Windows'
         uses: ./.github/actions/activate-windows-target
         with:
           windows-abi: ${{ matrix.windows_abi }}
           windows-arch: ${{ matrix.windows_arch }}
+
+      - name: Execute Windows 386 atomic contracts
+        if: runner.os == 'Windows' && matrix.windows_arch == '386'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:GOARCH -ne "386" -or $env:LLGO_WINDOWS_TARGET_ACTIVE -ne "1" -or
+              -not $env:CC -or -not $env:CXX) {
+            throw "The 386 target must be active before native atomic qualification"
+          }
+          # The already-built host runner selects these only inside the LLGo
+          # invocation; do not build a host LLVM consumer using the target CC.
+          $env:LLGO_WINDOWS_CROSS_CC = $env:CC
+          $env:LLGO_WINDOWS_CROSS_CXX = $env:CXX
+          $runner = Join-Path $env:RUNNER_TEMP 'llgo-bin\atomic386-owner.test.exe'
+          $selector = '^TestRuntimeAtomic386(CompletePackage|ActualWrappersMatchOriginalGo)$'
+          $expected = @(
+            'TestRuntimeAtomic386CompletePackage',
+            'TestRuntimeAtomic386ActualWrappersMatchOriginalGo'
+          )
+          $listed = @(& $runner "-test.list=$selector")
+          if ($LASTEXITCODE -ne 0) {
+            throw "Listing the real 386 atomic roots failed: $LASTEXITCODE"
+          }
+          if ($listed.Count -ne 2 -or (Compare-Object $expected $listed)) {
+            throw "The native atomic runner did not select exactly both required roots: $listed"
+          }
+          $output = @(& $runner "-test.run=$selector" -test.v -test.count=1 -test.timeout=30m 2>&1)
+          $code = $LASTEXITCODE
+          $output | Out-Host
+          if ($code -ne 0) {
+            throw "Native 386 atomic qualification failed: $code"
+          }
+          foreach ($name in $expected) {
+            $escaped = [regex]::Escape($name)
+            $runs = @($output | Where-Object { "$_" -match "^=== RUN\s+$escaped`$" })
+            $passes = @($output | Where-Object { "$_" -match "^--- PASS: $escaped \(" })
+            if ($runs.Count -ne 1 -or $passes.Count -ne 1) {
+              throw "The actual 386 atomic root lacks its unique RUN/PASS: $name"
+            }
+          }
+          if ($output -match '^\s*--- (FAIL|SKIP):') {
+            throw "Native 386 atomic qualification cannot include failed or skipped tests"
+          }
 
       - name: Check Windows native runtime and FFI
         if: runner.os == 'Windows'
