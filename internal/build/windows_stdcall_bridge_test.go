@@ -145,12 +145,19 @@ func TestWindowsStdCallDynamicThunkCOFF(t *testing.T) {
 // requires an explicit save/restore review rather than silently clobbering it.
 func windowsStdCallRequirePreservedRegisters(t *testing.T, arch, disassembly string) {
 	t.Helper()
-	text := strings.ToLower(disassembly)
-	text = regexp.MustCompile(`\bfp\b`).ReplaceAllString(text, "x29")
-	text = regexp.MustCompile(`\blr\b`).ReplaceAllString(text, "x30")
-	compact := strings.Join(strings.Fields(text), "")
+	instructions, err := windowsStdCallDecodeInstructions(arch, disassembly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var operands, code []string
+	for _, instruction := range instructions {
+		operands = append(operands, instruction.operands)
+		code = append(code, instruction.opcode+" "+instruction.operands)
+	}
+	text := strings.Join(operands, "\n")
+	compact := strings.Join(strings.Fields(strings.Join(code, "\n")), "")
 	if arch == "arm64" {
-		for _, match := range regexp.MustCompile(`\b[xw]([0-9]+)\b`).FindAllStringSubmatch(text, -1) {
+		for _, match := range windowsStdCallARMGP.FindAllStringSubmatch(text, -1) {
 			n, err := strconv.Atoi(match[1])
 			if err != nil {
 				t.Fatal(err)
@@ -159,7 +166,7 @@ func windowsStdCallRequirePreservedRegisters(t *testing.T, arch, disassembly str
 				t.Fatal("assembled ARM64 thunk uses an unpreserved nonvolatile register", match[0], disassembly)
 			}
 		}
-		if regexp.MustCompile(`\b[vdqs](?:8|9|1[0-5])\b`).MatchString(text) {
+		if windowsStdCallARMSIMD.MatchString(text) {
 			t.Fatal("assembled ARM64 thunk uses an unpreserved SIMD register", disassembly)
 		}
 		for _, pattern := range []string{
@@ -184,6 +191,78 @@ func windowsStdCallRequirePreservedRegisters(t *testing.T, arch, disassembly str
 		if strings.Count(compact, "push"+register) != 1 || strings.Count(compact, "pop"+register) != 1 {
 			t.Fatal("assembled thunk lacks an exact preserved-register save/restore pair", register, disassembly)
 		}
+	}
+}
+
+var (
+	windowsStdCallARMGP   = regexp.MustCompile(`\b[xw]([0-9]+)\b`)
+	windowsStdCallARMSIMD = regexp.MustCompile(`\b[vdqs](?:8|9|1[0-5])\b`)
+)
+
+type windowsStdCallInstruction struct {
+	opcode, operands string
+}
+
+func windowsStdCallDecodeInstructions(arch, disassembly string) ([]windowsStdCallInstruction, error) {
+	// llvm-objdump is invoked with --no-show-raw-insn. Only an address and
+	// instruction may occupy these lines; file headers and symbol labels do not.
+	line := regexp.MustCompile(`(?m)^\s*[0-9a-f]+:\s+([^\n]+)$`)
+	opcode := regexp.MustCompile(`^[a-z][a-z0-9_.]*$`)
+	symbol := regexp.MustCompile(`<[^>]*>`)
+	var result []windowsStdCallInstruction
+	for _, match := range line.FindAllStringSubmatch(strings.ToLower(disassembly), -1) {
+		text, _, _ := strings.Cut(match[1], "//")
+		text, _, _ = strings.Cut(text, ";")
+		if arch != "arm64" {
+			text, _, _ = strings.Cut(text, "#") // ARM64 '#' denotes an immediate.
+		}
+		fields := strings.Fields(text)
+		if len(fields) == 0 {
+			continue
+		}
+		if !opcode.MatchString(fields[0]) {
+			return nil, fmt.Errorf("unrecognized actual thunk instruction %q", text)
+		}
+		operands := symbol.ReplaceAllString(strings.Join(fields[1:], " "), "")
+		operands = regexp.MustCompile(`\bfp\b`).ReplaceAllString(operands, "x29")
+		operands = regexp.MustCompile(`\blr\b`).ReplaceAllString(operands, "x30")
+		result = append(result, windowsStdCallInstruction{fields[0], operands})
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("actual thunk disassembly contains no decoded instructions")
+	}
+	return result, nil
+}
+
+func TestWindowsStdCallDisassemblyOperandBoundary(t *testing.T) {
+	for _, test := range []struct {
+		name, text string
+		gp, simd   bool
+	}{
+		{"address and symbol", "00000000 <d8>:\n d8: ldr x0, [x1] // d8 x20\n dc: bl 0xd8 <d8> ; x20", false, false},
+		{"real SIMD", " d8: fmov d8, d0", false, true},
+		{"real GP", " d8: ldr x20, [x19]\n dc: blr x20", true, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			instructions, err := windowsStdCallDecodeInstructions("arm64", test.text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gp, simd := false, false
+			for _, instruction := range instructions {
+				simd = simd || windowsStdCallARMSIMD.MatchString(instruction.operands)
+				for _, match := range windowsStdCallARMGP.FindAllStringSubmatch(instruction.operands, -1) {
+					index, err := strconv.Atoi(match[1])
+					if err != nil {
+						t.Fatal(err)
+					}
+					gp = gp || index >= 20 && index <= 28
+				}
+			}
+			if gp != test.gp || simd != test.simd {
+				t.Fatalf("decoded operand violation GP/SIMD=%v/%v, want %v/%v", gp, simd, test.gp, test.simd)
+			}
+		})
 	}
 }
 
