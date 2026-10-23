@@ -42,6 +42,8 @@ class InstallerShellTimeoutTests(unittest.TestCase):
                 self.assertIn("STUCK_SHELL_DIAGNOSTIC", stderr)
                 self.assertIn("timeout:", stderr)
                 self.assertIn("fish -ic (default)", stderr)
+                self.assertIn("startup or validation failed", stderr)
+                self.assertNotIn("did not find exactly one installed PATH entry", stderr)
                 with self.assertRaises(ProcessLookupError):
                     os.kill(int(pidfile.read_text()), 0)
             finally:
