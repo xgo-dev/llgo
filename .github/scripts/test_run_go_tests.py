@@ -71,6 +71,61 @@ class GoTestReportTests(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertTrue(output.startswith("compiler diagnostic\n[1, 2]\n"))
 
+    def test_cli_preserves_unicode_and_child_status_with_cp1252_stdout(self):
+        package, name = "example.com/\u4e2d\u6587\u2215", "TestUnicode/\u00b7\U0001f642"
+        diagnostic = "compiler diagnostic: \u4e2d\u6587 \u2215 \U0001f642\n"
+        script = Path(run_go_tests.__file__).resolve()
+        for status in (0, 23):
+            for timings_only in (False, True):
+                with self.subTest(status=status, timings_only=timings_only), \
+                        tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    terminal = {"Package": package, "Test": name, "Elapsed": 1.25,
+                                "Action": "fail" if status else "pass"}
+                    lines = [] if timings_only else [
+                        json.dumps({"Action": "output", "Output": diagnostic}, ensure_ascii=False),
+                        diagnostic.rstrip("\n"), json.dumps([diagnostic], ensure_ascii=False)]
+                    lines.append(json.dumps(terminal, ensure_ascii=False))
+                    payload = ("\n".join(lines) + "\n").encode("utf-8")
+                    source = root / "events.jsonl"
+                    source.write_bytes(payload)
+                    summary = root / "summary.md"
+                    child = ("import pathlib,sys; "
+                             "sys.stdout.buffer.write(pathlib.Path(sys.argv[1]).read_bytes()); "
+                             "sys.exit(int(sys.argv[2]))")
+                    result = subprocess.run(
+                        [sys.executable, str(script), "--output-dir", str(root), "build",
+                         sys.executable, "-c", child, str(source), str(status)],
+                        capture_output=True, timeout=15,
+                        env={**os.environ, "PYTHONIOENCODING": "cp1252:strict", "PYTHONUTF8": "0",
+                             "GITHUB_STEP_SUMMARY": str(summary)})
+                    self.assertEqual(result.returncode, status, result.stderr)
+                    rendered = result.stdout.decode("utf-8")
+                    if not timings_only:
+                        self.assertTrue(rendered.startswith(diagnostic + diagnostic))
+                        self.assertIn(json.dumps([diagnostic], ensure_ascii=False), rendered)
+                    self.assertEqual((root / "build.jsonl").read_bytes(), payload)
+                    self.assertEqual(json.loads((root / "build-times.json").read_text(encoding="utf-8")),
+                                     [terminal])
+                    timings = (root / "build-times.txt").read_text(encoding="utf-8")
+                    self.assertIn(timings, rendered)
+                    self.assertIn(f"1.25\t{terminal['Action']}\t{package}\t{name}", timings)
+                    report = summary.read_text(encoding="utf-8")
+                    self.assertIn(f"exit {status}", report)
+                    self.assertIn(package, report)
+                    self.assertIn(name, report)
+
+    def test_cli_preserves_unicode_command_diagnostics_with_cp1252_stderr(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            diagnostic = "\u4e2d\u6587\u2215\U0001f642"
+            result = subprocess.run(
+                [sys.executable, str(Path(run_go_tests.__file__).resolve()),
+                 "--output-dir", temporary, "build", sys.executable, "-c", "pass", diagnostic],
+                capture_output=True, timeout=15,
+                env={**os.environ, "PYTHONIOENCODING": "cp1252:strict", "PYTHONUTF8": "0"})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(diagnostic, result.stderr.decode("utf-8"))
+
     def test_native_log_pipe_preserves_large_output_stderr_and_exit_status(self):
         repo = Path(__file__).resolve().parents[2]
         payload = ("native output \u4e2d\u6587\r\n".encode("utf-8") * 400000)
