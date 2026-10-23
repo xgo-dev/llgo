@@ -299,11 +299,23 @@ func TestRuntimeAtomicARM64RejectsIncompleteOwner(t *testing.T) {
 }
 
 func TestRuntimeAtomicARM64RetainsOtherArchitectures(t *testing.T) {
+	// Isolate this actual ARM64 owner: the runtime also has an independently
+	// validated 386 owner, which may legitimately change the 386 selection.
+	runtimeDir := t.TempDir()
+	patchDir := filepath.Join(runtimeDir, "_patch", "internal", "runtime", "atomic")
+	if err := os.MkdirAll(patchDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.ReadFile(filepath.Join(env.LLGoRuntimeDir(), "_patch", "internal", "runtime", "atomic", "atomic_arm64.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assemblyLanguageTestWrite(t, patchDir, "atomic_arm64.go", string(source))
 	for _, target := range []struct{ goos, goarch string }{
 		{"linux", "amd64"}, {"linux", "386"}, {"linux", "arm"}, {"js", "wasm"},
 	} {
 		t.Run(target.goos+"/"+target.goarch, func(t *testing.T) {
-			overlay, _, err := buildSourcePatchOverlayForGOROOT(nil, env.LLGoRuntimeDir(), runtime.GOROOT(), sourcePatchBuildContext{
+			overlay, _, err := buildSourcePatchOverlayForGOROOT(nil, runtimeDir, runtime.GOROOT(), sourcePatchBuildContext{
 				goos: target.goos, goarch: target.goarch, goversion: runtime.Version(),
 			})
 			if err != nil {
