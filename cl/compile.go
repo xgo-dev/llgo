@@ -1223,7 +1223,13 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 		} else if p.state != pkgHasPatch {
 			// TODO(xsw): confirm pyMod don't need to call AfterInit
 			p.initAfter = func() {
-				pkg.AfterInit(b, ret)
+				// Symbol discovery finishes after ordinary function builders
+				// have been released. Own a fresh builder for this late insertion;
+				// do not rerun EndBuild's whole-function finalization.
+				after := fn.NewBuilder()
+				defer after.Dispose()
+				after.SetBlock(ret)
+				pkg.AfterInit(after, ret)
 			}
 		}
 	}
