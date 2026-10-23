@@ -11,7 +11,9 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -84,6 +86,16 @@ func TestWindowsStdCallDynamicThunkCOFF(t *testing.T) {
 				if !found {
 					t.Fatal("dynamic frame does not reference its actual CRT stack probe", probe)
 				}
+				objdump := filepath.Join(filepath.Dir(readobj), "llvm-objdump")
+				if runtime.GOOS == "windows" {
+					objdump += ".exe"
+				}
+				arguments := []string{"--disassemble", "--no-show-raw-insn"}
+				if arch.name != "arm64" {
+					arguments = append(arguments, "--x86-asm-syntax=intel")
+				}
+				arguments = append(arguments, object)
+				windowsStdCallRequirePreservedRegisters(t, arch.name, windowsStdCallCommand(t, objdump, arguments...))
 				bridgeObject := filepath.Join(t.TempDir(), "bridge.obj")
 				windowsStdCallCommand(t, clang, "--target="+arch.triple+"-"+abi,
 					"-ffreestanding", "-std=c11", "-c", adapter, "-o", bridgeObject)
@@ -124,6 +136,53 @@ func TestWindowsStdCallDynamicThunkCOFF(t *testing.T) {
 					t.Fatal("dynamic ARM64 frame lacks its decoded frame-pointer operation", unwind)
 				}
 			})
+		}
+	}
+}
+
+// Audit the real assembled instructions, not just SEH declarations. This
+// thunk needs only these preserved registers; any additional nonvolatile use
+// requires an explicit save/restore review rather than silently clobbering it.
+func windowsStdCallRequirePreservedRegisters(t *testing.T, arch, disassembly string) {
+	t.Helper()
+	text := strings.ToLower(disassembly)
+	text = regexp.MustCompile(`\bfp\b`).ReplaceAllString(text, "x29")
+	text = regexp.MustCompile(`\blr\b`).ReplaceAllString(text, "x30")
+	compact := strings.Join(strings.Fields(text), "")
+	if arch == "arm64" {
+		for _, match := range regexp.MustCompile(`\b[xw]([0-9]+)\b`).FindAllStringSubmatch(text, -1) {
+			n, err := strconv.Atoi(match[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n >= 20 && n <= 28 {
+				t.Fatal("assembled ARM64 thunk uses an unpreserved nonvolatile register", match[0], disassembly)
+			}
+		}
+		if regexp.MustCompile(`\b[vdqs](?:8|9|1[0-5])\b`).MatchString(text) {
+			t.Fatal("assembled ARM64 thunk uses an unpreserved SIMD register", disassembly)
+		}
+		for _, pattern := range []string{
+			`strx19,\[sp,#(?:16|0x10)\]`, `ldrx19,\[sp,#(?:16|0x10)\]`,
+			`stpx29,x30,\[sp,#-(?:32|0x20)\]!`, `ldpx29,x30,\[sp\],#(?:32|0x20)`,
+			`movx29,sp`, `movsp,x29`,
+		} {
+			if !regexp.MustCompile(pattern).MatchString(compact) {
+				t.Fatal("assembled ARM64 thunk lost a real save/restore instruction", pattern, disassembly)
+			}
+		}
+		return
+	}
+	registers := []string{"ebp", "ebx", "esi", "edi"}
+	if arch == "amd64" {
+		registers = []string{"rbp"}
+		if regexp.MustCompile(`\b(?:[re](?:bx|si|di)|r1[2-5][dwb]?|xmm(?:[6-9]|1[0-5]))\b`).MatchString(text) {
+			t.Fatal("assembled x64 thunk uses an unpreserved nonvolatile register", disassembly)
+		}
+	}
+	for _, register := range registers {
+		if strings.Count(compact, "push"+register) != 1 || strings.Count(compact, "pop"+register) != 1 {
+			t.Fatal("assembled thunk lacks an exact preserved-register save/restore pair", register, disassembly)
 		}
 	}
 }
