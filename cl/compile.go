@@ -840,6 +840,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			dbgGoSSADump(f)
 			dbgInstrln("==> FuncBody", name)
 			b := fn.NewBuilder()
+			defer b.Dispose()
 			if dbgEnabled {
 				pos := p.goProg.Fset.Position(f.Pos())
 				bodyPos := p.getFuncBodyPos(f)
