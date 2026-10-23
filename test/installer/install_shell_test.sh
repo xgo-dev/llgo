@@ -68,7 +68,7 @@ check_new_shell() {
         else
             local status=$?
             cat "$temporary/install.log" "$temporary/shell.log" >&2
-            fail "$shell_name $mode ($scenario) did not find exactly one installed PATH entry (exit $status)"
+            fail "$shell_name $mode ($scenario) startup or validation failed (exit $status)"
         fi
     done
 }
