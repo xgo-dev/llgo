@@ -465,6 +465,26 @@ func parseCgoPreambleWithCommandEnv(commands commandEnv, buildCtx *build.Context
 			if err != nil {
 				return
 			}
+			// Original #cgo flags are package-relative even when the native
+			// compiler runs in the invocation directory. pkg-config output
+			// has its own path convention and must not be rewritten here.
+			header, _, _ := strings.Cut(line, ":")
+			fields := strings.Fields(header)
+			if len(cgoDecls) != 0 && len(fields) != 0 {
+				switch fields[len(fields)-1] {
+				case "CPPFLAGS", "CFLAGS", "CXXFLAGS", "LDFLAGS":
+					sourceDir, pathErr := filepath.Abs(filepath.Dir(resolvePath(commands.dir, fname)))
+					if pathErr != nil {
+						err = fmt.Errorf("resolve #cgo source directory: %w", pathErr)
+						return
+					}
+					for i := range cgoDecls {
+						normalizeCgoDirectivePaths(cgoDecls[i].cflags, sourceDir)
+						normalizeCgoDirectivePaths(cgoDecls[i].cxxflags, sourceDir)
+						normalizeCgoDirectivePaths(cgoDecls[i].ldflags, sourceDir)
+					}
+				}
+			}
 			decls = append(decls, cgoDecls...)
 			b.WriteString(fmt.Sprintf("#line %d %q\n", fline, fname))
 		} else {
