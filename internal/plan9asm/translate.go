@@ -103,6 +103,10 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 	if err != nil {
 		return nil, err
 	}
+	selection, err := arm64TailSourceSelection(pkg, src, goarch, opt.Overlay)
+	if err != nil {
+		return nil, err
+	}
 
 	// Match the symbol identity used by LLGo's frontend. In particular, an
 	// executable package named main is linked as "main" even when go list
@@ -131,11 +135,12 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 		}
 	}
 	tr, err := extplan9asm.TranslateGoModule(extplan9asm.GoPackage{
-		Path:         symbolPkgPath,
-		Types:        pkg.Types,
-		Imports:      imports,
-		Syntax:       pkg.Syntax,
-		ImportSyntax: importSyntax,
+		Path:            symbolPkgPath,
+		Types:           pkg.Types,
+		Imports:         imports,
+		Syntax:          pkg.Syntax,
+		ImportSyntax:    importSyntax,
+		SourceSelection: selection,
 	}, src, extplan9asm.GoModuleOptions{
 		SourcePreprocessed: true,
 		FileName:           sfile,
@@ -159,6 +164,48 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 		funcs = append(funcs, FunctionInfo{TextSymbol: fn.TextSymbol, ResolvedSymbol: fn.ResolvedSymbol})
 	}
 	return &ModuleTranslation{Module: tr.Module, Signatures: tr.Signatures, Functions: funcs}, nil
+}
+
+// Only consumed ARM64 ABI0 private tails need the complete selected Go bytes.
+// Reuse the compiler's existing typed graph and parser overlay; do not reload
+// the package, infer declarations from assembly, or widen the x86 contracts.
+func arm64TailSourceSelection(pkg *packages.Package, src []byte, goarch string, overlay map[string][]byte) (*extplan9asm.GoSourceSelection, error) {
+	if goarch != "arm64" {
+		return nil, nil
+	}
+	file, err := extplan9asm.Parse(extplan9asm.ArchARM64, string(src))
+	if err != nil {
+		return nil, err
+	}
+	if !extplan9asm.GoARM64ABI0TailDeclarationBindingNeeded(file) {
+		return nil, nil
+	}
+	if pkg.Fset == nil || pkg.TypesInfo == nil || pkg.TypesSizes == nil ||
+		len(pkg.CompiledGoFiles) == 0 || len(pkg.CompiledGoFiles) > 256 ||
+		len(pkg.Syntax) != len(pkg.CompiledGoFiles) {
+		return nil, fmt.Errorf("%w: ARM64 ABI0 tail needs the complete actual selected Go package", extplan9asm.ErrProbeNeedsContext)
+	}
+	selection := &extplan9asm.GoSourceSelection{
+		Fset: pkg.Fset, TypesInfo: pkg.TypesInfo, Sizes: pkg.TypesSizes,
+		SelectedGoFiles: append([]string(nil), pkg.CompiledGoFiles...),
+		GoSources:       make(map[string][]byte, len(pkg.CompiledGoFiles)),
+	}
+	remaining := maxAssemblyInputBytes
+	for _, filename := range selection.SelectedGoFiles {
+		if _, duplicate := selection.GoSources[filename]; duplicate {
+			return nil, fmt.Errorf("%w: duplicate selected Go source %q", extplan9asm.ErrProbeNeedsContext, filename)
+		}
+		data, err := ReadFileWithOverlay(overlay, filename)
+		if err != nil {
+			return nil, fmt.Errorf("ARM64 ABI0 tail selected Go source %q: %w", filename, err)
+		}
+		if len(data) > remaining {
+			return nil, fmt.Errorf("%w: ARM64 ABI0 tail selected Go source exceeds its input bound", extplan9asm.ErrProbeNeedsContext)
+		}
+		remaining -= len(data)
+		selection.GoSources[filename] = data
+	}
+	return selection, nil
 }
 
 func shouldKeepResolvedFunc(pkgPath, goos, goarch, resolved string) bool {
