@@ -196,8 +196,8 @@ llgo_windows_syscall:
 	ldr x0, [x12]
 
 .Lcall_arm64:
-	ldr x20, [x19]
-	blr x20
+	ldr x16, [x19]
+	blr x16
 	str x0, [x19, #24]
 	str xzr, [x19, #32]
 	ldr w0, [x18, #0x68]
