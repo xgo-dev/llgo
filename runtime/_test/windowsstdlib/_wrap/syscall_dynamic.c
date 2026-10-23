@@ -30,6 +30,8 @@ int llgo_windows_unwind_seen(void)
 
 uintptr_t llgo_windows_no_arguments(void)
 {
+    if (GetLastError() != 0)
+        __builtin_trap();
     check_unwind();
     SetLastError(1234);
     return 7;
@@ -37,6 +39,8 @@ uintptr_t llgo_windows_no_arguments(void)
 
 uintptr_t llgo_windows_sum_variable(uintptr_t count, ...)
 {
+    if (GetLastError() != 0)
+        __builtin_trap();
     va_list arguments;
     va_start(arguments, count);
     uintptr_t result = 0;
@@ -53,7 +57,13 @@ uint64_t llgo_windows_high_word(void)
     return UINT64_C(0x8123456789abcdef);
 }
 
-uintptr_t __attribute__((stdcall)) llgo_windows_sum12_stdcall(
+#if defined(__i386__)
+#define LLGO_STDCALL __attribute__((stdcall))
+#else
+#define LLGO_STDCALL
+#endif
+
+uintptr_t LLGO_STDCALL llgo_windows_sum12_stdcall(
     uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t a4,
     uintptr_t a5, uintptr_t a6, uintptr_t a7, uintptr_t a8,
     uintptr_t a9, uintptr_t a10, uintptr_t a11, uintptr_t a12)

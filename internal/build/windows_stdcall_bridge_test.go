@@ -52,6 +52,7 @@ func windowsStdCallTools(t *testing.T) (clang, readobj string) {
 func TestWindowsStdCallDynamicThunkCOFF(t *testing.T) {
 	clang, readobj := windowsStdCallTools(t)
 	assembly := filepath.Join(env.LLGoRuntimeDir(), "internal", "lib", "runtime", "_wrap", "syscall_windows.S")
+	adapter := filepath.Join(filepath.Dir(assembly), "stdcall_windows_go127.c")
 	for _, arch := range []struct {
 		name, triple string
 		machine      uint16
@@ -82,6 +83,29 @@ func TestWindowsStdCallDynamicThunkCOFF(t *testing.T) {
 				}
 				if !found {
 					t.Fatal("dynamic frame does not reference its actual CRT stack probe", probe)
+				}
+				bridgeObject := filepath.Join(t.TempDir(), "bridge.obj")
+				windowsStdCallCommand(t, clang, "--target="+arch.triple+"-"+abi,
+					"-ffreestanding", "-std=c11", "-c", adapter, "-o", bridgeObject)
+				bridge, err := pe.Open(bridgeObject)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer bridge.Close()
+				if bridge.Machine != arch.machine {
+					t.Fatal("C adapter uses another machine ABI", bridge.Machine)
+				}
+				for _, name := range []string{"llgo_windows_stdcall_go127", "llgo_windows_stdcall_go127_addr"} {
+					if arch.name == "386" {
+						name = "_" + name
+					}
+					defined := false
+					for _, symbol := range bridge.Symbols {
+						defined = defined || symbol.Name == name && symbol.SectionNumber > 0
+					}
+					if !defined {
+						t.Fatal("C adapter lacks its actual C ABI entry", name)
+					}
 				}
 				if arch.name == "386" {
 					return // x86 uses its preserved EBP chain, not x64/ARM64 .pdata.

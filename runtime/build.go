@@ -101,6 +101,8 @@ var sourcePatchPkgs = map[string]struct{}{
 	"syscall":                      {},
 	"syscall/js":                   {},
 	"unique":                       {},
+
+	"internal/runtime/syscall/windows": {},
 }
 
 var sourcePatchAsmPkgs = map[string]map[string]struct{}{

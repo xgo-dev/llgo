@@ -255,6 +255,25 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 		changed = true
 	}
 
+	if pkgPath == "internal/runtime/syscall/windows" && ctx.goos == "windows" {
+		if skipAll || len(patchSrcs) != 1 {
+			return false, nil, nil, fmt.Errorf("Windows syscall owner must retain the other SDK sources")
+		}
+		patch, ok := patchSrcs["syscall_windows_go127.go"]
+		if !ok {
+			return false, nil, nil, fmt.Errorf("missing complete Go1.27 Windows syscall owner")
+		}
+		view, err := windowsStdCallSourcePatchView(srcDir, srcEntries, buildCtx, readOverlay, base, patch.data, skips)
+		if err != nil {
+			return false, nil, nil, fmt.Errorf("Windows syscall complete source owner: %w", err)
+		}
+		ensureOverlay()
+		for filename, source := range view {
+			out[filename] = source
+		}
+		changed = true
+	}
+
 	if llruntime.SourcePatchReplacesAsmForGOARCH(pkgPath, ctx.goarch) {
 		for _, entry := range srcEntries {
 			if entry.IsDir() {

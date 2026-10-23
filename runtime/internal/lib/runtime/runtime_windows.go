@@ -22,7 +22,7 @@ import _ "unsafe"
 
 const (
 	LLGoPackage = "link: -lkernel32"
-	LLGoFiles   = "_wrap/runtime_windows.c; _wrap/profile_windows.c; _wrap/syscall_windows.S; _wrap/debugtrap.c"
+	LLGoFiles   = "_wrap/runtime_windows.c; _wrap/profile_windows.c; _wrap/syscall_windows.S; _wrap/stdcall_windows_go127.c; _wrap/debugtrap.c"
 )
 
 //go:linkname c_maxprocs C.llgo_maxprocs
