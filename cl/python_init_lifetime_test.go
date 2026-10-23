@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	gpackages "github.com/goplus/gogen/packages"
+	"github.com/xgo-dev/llgo/internal/typepatch"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llgo/ssa/ssatest"
 	"github.com/xgo-dev/llvm"
@@ -35,20 +36,35 @@ func laterSqrt() func(*math.Object) *math.Object {
 	return func(value *math.Object) *math.Object { return math.Sqrt(value) }
 }
 `
-	for _, debug := range []bool{false, true} {
-		name := "plain"
-		if debug {
-			name = "debug"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		debug   bool
+		patch   bool
+		skipOld bool
+	}{
+		{name: "plain"},
+		{name: "debug", debug: true},
+		{name: "patch/plain", patch: true},
+		{name: "patch/debug", patch: true, debug: true},
+		{name: "patch_skip_old/plain", patch: true, skipOld: true},
+		{name: "patch_skip_old/debug", patch: true, skipOld: true, debug: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			fset := token.NewFileSet()
-			file, err := parser.ParseFile(fset, "python_init.go", source, parser.ParseComments)
+			originalSource := source
+			if test.patch {
+				originalSource = `package pyconsumer
+var OriginalMarker = oldMarker()
+func oldMarker() int { return 7 }
+`
+			}
+			file, err := parser.ParseFile(fset, "python_init.go", originalSource, parser.ParseComments)
 			if err != nil {
 				t.Fatal(err)
 			}
 			importer := gpackages.NewImporter(fset)
 			mode := gossa.SanityCheckFunctions | gossa.InstantiateGenerics
-			if debug {
+			if test.debug {
 				mode |= gossa.GlobalDebug
 			}
 			files := []*ast.File{file}
@@ -56,6 +72,42 @@ func laterSqrt() func(*math.Object) *math.Object {
 				types.NewPackage("pyconsumer", "pyconsumer"), files, mode)
 			if err != nil {
 				t.Fatal(err)
+			}
+			var patches Patches
+			if test.patch {
+				patchSource := source
+				if test.skipOld {
+					patchSource += "\n//llgo:skip init\nconst SkipOldInit = true\n"
+				}
+				patchFile, err := parser.ParseFile(fset, "python_patch.go", patchSource, parser.ParseComments)
+				if err != nil {
+					t.Fatal(err)
+				}
+				patchTypes := types.NewPackage("pyconsumer", "pyconsumer")
+				patchInfo := newLocalityTypeInfo()
+				patchInfo.FileVersions = make(map[*ast.File]string)
+				patchFiles := []*ast.File{patchFile}
+				checker := types.NewChecker(&types.Config{Importer: importer}, fset, patchTypes, patchInfo)
+				if err := checker.Files(patchFiles); err != nil {
+					t.Fatal(err)
+				}
+				var createImports func(*types.Package)
+				createImports = func(dependency *types.Package) {
+					if pkg.Prog.Package(dependency) != nil {
+						return
+					}
+					pkg.Prog.CreatePackage(dependency, nil, nil, true)
+					for _, imported := range dependency.Imports() {
+						createImports(imported)
+					}
+				}
+				for _, dependency := range patchTypes.Imports() {
+					createImports(dependency)
+				}
+				patchSSA := pkg.Prog.CreatePackage(patchTypes, patchFiles, patchInfo, false)
+				patchSSA.Build()
+				patches = Patches{"pyconsumer": {Alt: patchSSA, Types: typepatch.Clone(patchTypes)}}
+				files = append(files, patchFile)
 			}
 			prog := ssatest.NewProgramEx(t, nil, importer)
 			defer prog.Dispose()
@@ -68,8 +120,8 @@ func laterSqrt() func(*math.Object) *math.Object {
 				py.MarkComplete()
 				return py
 			})
-			compiled, _, err := NewPackageExWithEmbedMetaOptions(prog, nil, nil, nil,
-				pkg, files, nil, false, Options{Debug: debug, DebugSymbols: debug})
+			compiled, _, err := NewPackageExWithEmbedMetaOptions(prog, nil, patches, nil,
+				pkg, files, nil, false, Options{Debug: test.debug, DebugSymbols: test.debug})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -116,6 +168,22 @@ func laterSqrt() func(*math.Object) *math.Object {
 			}
 			if dependencies != 2 || loads != 2 || !userInit {
 				t.Fatal("incomplete deferred initialization", calls)
+			}
+			if test.patch {
+				oldInit := compiled.Module().NamedFunction("pyconsumer.init$hasPatch")
+				oldCalls := 0
+				for _, call := range calls {
+					if call == "pyconsumer.init$hasPatch" {
+						oldCalls++
+					}
+				}
+				if test.skipOld {
+					if oldCalls != 0 || !oldInit.IsNil() && len(oldInit.BasicBlocks()) != 0 {
+						t.Fatal("skipped original initializer was retained", calls)
+					}
+				} else if oldCalls != 1 || oldInit.IsNil() || len(oldInit.BasicBlocks()) == 0 {
+					t.Fatal("missing original initializer body or unique call", calls)
+				}
 			}
 			object, err := prog.TargetMachine().EmitToMemoryBuffer(compiled.Module(), llvm.ObjectFile)
 			if err != nil {
