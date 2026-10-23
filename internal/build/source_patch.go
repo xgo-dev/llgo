@@ -205,20 +205,24 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 		changed = true
 	}
 
-	if pkgPath == "internal/runtime/atomic" && buildCtx.GOARCH == "arm64" {
-		if skipAll {
-			return false, nil, nil, fmt.Errorf("ARM64 atomic owner must retain the other package Go declarations")
+	if pkgPath == "internal/runtime/atomic" && (buildCtx.GOARCH == "arm64" || buildCtx.GOARCH == "386") {
+		arch, entries := "ARM64", 49
+		if buildCtx.GOARCH == "386" {
+			arch, entries = "386", 42
 		}
-		filename := filepath.Join(srcDir, "atomic_arm64.s")
+		if skipAll {
+			return false, nil, nil, fmt.Errorf("%s atomic owner must retain the other package Go declarations", arch)
+		}
+		filename := filepath.Join(srcDir, "atomic_"+buildCtx.GOARCH+".s")
 		assembly, err := readOverlay(filename)
 		if err != nil {
-			return false, nil, nil, fmt.Errorf("read ARM64 atomic assembly owner: %w", err)
+			return false, nil, nil, fmt.Errorf("read %s atomic assembly owner: %w", arch, err)
 		}
 		reused := string(assembly) == "// replaced by LLGo source patch\n"
 		var bodies, declarations [][]byte
 		for name, source := range patchSrcs {
 			if reused && !bytes.Equal(base[filepath.Join(srcDir, "z_llgo_patch_"+name)], source.data) {
-				return false, nil, nil, fmt.Errorf("ARM64 atomic marker lacks its exact generated owner")
+				return false, nil, nil, fmt.Errorf("%s atomic marker lacks its exact generated owner", arch)
 			}
 			bodies = append(bodies, source.data)
 		}
@@ -228,7 +232,7 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 				return false, nil, nil, err
 			}
 		}
-		for _, name := range []string{"stubs.go", "atomic_arm64.go"} {
+		for _, name := range []string{"stubs.go", "atomic_" + buildCtx.GOARCH + ".go"} {
 			path := filepath.Join(srcDir, name)
 			source, err := readOverlay(path)
 			if err != nil {
@@ -241,14 +245,14 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 				}
 				filtered, _, err := filterSourcePatchFile(original, skips)
 				if err != nil || !bytes.Equal(source, filtered) {
-					return false, nil, nil, fmt.Errorf("ARM64 atomic generated declaration view changed: %s", name)
+					return false, nil, nil, fmt.Errorf("%s atomic generated declaration view changed: %s", arch, name)
 				}
 				source = original
 			}
 			declarations = append(declarations, source)
 		}
-		if err := validateAtomicARM64SourcePatchOwners(assembly, declarations, bodies); err != nil {
-			return false, nil, nil, fmt.Errorf("ARM64 atomic complete source owner: %w", err)
+		if err := validateAtomicSourcePatchOwners(assembly, declarations, bodies, arch, entries); err != nil {
+			return false, nil, nil, fmt.Errorf("%s atomic complete source owner: %w", arch, err)
 		}
 		ensureOverlay()
 		out[filename] = []byte("// replaced by LLGo source patch\n")
