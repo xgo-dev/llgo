@@ -129,7 +129,8 @@ func TestRuntimeEqualitySourcePatchRejectsIncompleteOwners(t *testing.T) {
 		"TEXT memeqbody<>(SB),4,$0-0\nRET\n"
 	for _, mutation := range []string{
 		"valid", "missing-body", "wrong-signature", "missing-env", "new-public-text",
-		"missing-public-text", "duplicate-text", "overlay-new-public-text", "overlay-missing-body",
+		"missing-public-text", "duplicate-text", "overlay-new-public-text", "overlay-missing-body", "unowned-marker",
+		"skip-all", "semicolon-text", "duplicate-go-body",
 	} {
 		t.Run(mutation, func(t *testing.T) {
 			goroot, runtimeDir := t.TempDir(), t.TempDir()
@@ -154,6 +155,13 @@ func TestRuntimeEqualitySourcePatchRejectsIncompleteOwners(t *testing.T) {
 				original = strings.Replace(original, "TEXT runtime·memequal_varlen<ABIInternal>(SB),4,$0-17\nRET\n", "", 1)
 			case "duplicate-text":
 				original += "TEXT runtime·memequal<ABIInternal>(SB),4,$0-25\nRET\n"
+			case "skip-all":
+				patch += "\n//llgo:skipall\n"
+			case "semicolon-text":
+				original = strings.Replace(original, "$0-25\n", "$0-25; TEXT runtime·newEqualityEntry(SB),4,$0-0\n", 1)
+			case "duplicate-go-body":
+				patch += "\n//go:linkname duplicate runtime.memequal\n" +
+					"func duplicate(a, b unsafe.Pointer, size uintptr) bool { return a == b }\n"
 			}
 			equal := assemblyLanguageTestWrite(t, dir, "equal_amd64.s", original)
 			other := assemblyLanguageTestWrite(t, dir, "compare_amd64.s", "TEXT ·Compare(SB),4,$0-0\nRET\n")
@@ -164,6 +172,9 @@ func TestRuntimeEqualitySourcePatchRejectsIncompleteOwners(t *testing.T) {
 			}
 			if mutation == "overlay-missing-body" {
 				base[patchFile] = []byte(strings.Replace(patch, "bool { return a == b }", "bool", 1))
+			}
+			if mutation == "unowned-marker" {
+				base[equal] = []byte("// replaced by LLGo source patch\n")
 			}
 			_, overlay, _, err := applySourcePatchForPkg(base, nil, runtimeDir, goroot, "internal/bytealg", sourcePatchBuildContext{
 				goos: "linux", goarch: "amd64", goversion: "go1.27.2",
@@ -179,6 +190,12 @@ func TestRuntimeEqualitySourcePatchRejectsIncompleteOwners(t *testing.T) {
 			}
 			if _, replaced := overlay[other]; replaced {
 				t.Fatal("complete equality owner also suppressed compare assembly")
+			}
+			_, repeated, _, err := applySourcePatchForPkg(overlay, nil, runtimeDir, goroot, "internal/bytealg", sourcePatchBuildContext{
+				goos: "linux", goarch: "amd64", goversion: "go1.27.2",
+			})
+			if err != nil || !reflect.DeepEqual(repeated, overlay) {
+				t.Fatal("reusing a complete selected source view must remain stable", err)
 			}
 		})
 	}

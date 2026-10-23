@@ -167,6 +167,44 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 		}
 	}
 
+	// The native equality bridge owns exactly one complete selected source,
+	// never the whole bytealg package and never an instruction-failure fallback.
+	if pkgPath == "internal/bytealg" && (ctx.goarch == "386" || ctx.goarch == "amd64" || ctx.goarch == "arm64") {
+		if skipAll {
+			return false, nil, nil, fmt.Errorf("runtime equality source patch must not replace all bytealg Go declarations")
+		}
+		filename := filepath.Join(srcDir, "equal_"+ctx.goarch+".s")
+		assembly, err := readOverlay(filename)
+		if err != nil {
+			return false, nil, nil, fmt.Errorf("read runtime equality assembly owner: %w", err)
+		}
+		if string(assembly) == "// replaced by LLGo source patch\n" {
+			// A reused Config contains our previous generated source view.
+			// Require that complete selection, then read/validate the physical
+			// SDK source afresh instead of reusing an earlier validation result.
+			for name := range patchSrcs {
+				generated := filepath.Join(srcDir, "z_llgo_patch_"+name)
+				if _, ok := base[generated]; !ok {
+					return false, nil, nil, fmt.Errorf("runtime equality replacement marker lacks its generated Go owner")
+				}
+			}
+			assembly, err = os.ReadFile(filename)
+			if err != nil {
+				return false, nil, nil, fmt.Errorf("reread runtime equality assembly owner: %w", err)
+			}
+		}
+		var bodies [][]byte
+		for _, source := range patchSrcs {
+			bodies = append(bodies, source.data)
+		}
+		if err := validateEqualitySourcePatchOwners(assembly, bodies); err != nil {
+			return false, nil, nil, fmt.Errorf("runtime equality source owner %s: %w", filename, err)
+		}
+		ensureOverlay()
+		out[filename] = []byte("// replaced by LLGo source patch\n")
+		changed = true
+	}
+
 	if llruntime.SourcePatchReplacesAsmForGOARCH(pkgPath, ctx.goarch) {
 		for _, entry := range srcEntries {
 			if entry.IsDir() {
