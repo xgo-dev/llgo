@@ -146,15 +146,17 @@ func PreprocessSourceForPkg(pkg *packages.Package, sfile string, src []byte, goo
 		}
 		return "", nil, fmt.Errorf("active include %q not found in package or selected GOROOT", name)
 	}
-	version, err := readAssemblyFile(nil, filepath.Join(root, "VERSION"))
+	version, err := assemblySDKVersion(root)
 	if err != nil {
 		return nil, fmt.Errorf("read selected SDK version: %w", err)
 	}
 	env["GOOS"], env["GOARCH"] = goos, goarch
-	env["GOVERSION"] = strings.TrimSpace(strings.SplitN(string(version), "\n", 2)[0])
+	env["GOVERSION"] = version
 	minor, _ := strconv.Atoi(strings.Split(strings.TrimPrefix(env["GOVERSION"], "go1."), ".")[0])
-	if goarch == "arm64" && minor < 23 && opt.GOARM64 == "" {
-		env["GOARM64"] = "" // This setting did not exist in older source SDKs.
+	if goarch == "arm64" && minor < 23 {
+		// The build driver normalizes its default to v8.0, but older SDKs
+		// never defined GOARM64 assembler macros, even for an explicit CPU.
+		env["GOARM64"] = ""
 	}
 	if goarch == "wasm" {
 		env["GOWASM"] = "" // cmd/asm registers no GOWASM_* macro.
