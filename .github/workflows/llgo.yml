@@ -287,17 +287,18 @@ jobs:
           $env:LLGO_WINDOWS_CROSS_CC = $env:CC
           $env:LLGO_WINDOWS_CROSS_CXX = $env:CXX
           $runner = Join-Path $env:RUNNER_TEMP 'llgo-bin\atomic386-owner.test.exe'
-          $selector = '^TestRuntimeAtomic386(CompletePackage|ActualWrappersMatchOriginalGo)$'
+          $selector = '^(TestRuntimeAtomic386(CompletePackage|ActualWrappersMatchOriginalGo)|TestMapsRuntime386CompletePackage)$'
           $expected = @(
             'TestRuntimeAtomic386CompletePackage',
-            'TestRuntimeAtomic386ActualWrappersMatchOriginalGo'
+            'TestRuntimeAtomic386ActualWrappersMatchOriginalGo',
+            'TestMapsRuntime386CompletePackage'
           )
           $listed = @(& $runner "-test.list=$selector")
           if ($LASTEXITCODE -ne 0) {
             throw "Listing the real 386 atomic roots failed: $LASTEXITCODE"
           }
-          if ($listed.Count -ne 2 -or (Compare-Object $expected $listed)) {
-            throw "The native atomic runner did not select exactly both required roots: $listed"
+          if ($listed.Count -ne 3 -or (Compare-Object $expected $listed)) {
+            throw "The native 386 runner did not select all three required roots: $listed"
           }
           $arguments = @(
             "-test.run=$selector",
