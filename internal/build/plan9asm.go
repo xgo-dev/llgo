@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -472,6 +473,21 @@ func pkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 		return nil, fmt.Errorf("package %s assembly files were not prepared before backend execution", pkg.PkgPath)
 	}
 	paths := selectedSFiles(pkg.OtherFiles)
+	if len(paths) != 0 {
+		inputs, err := llgoPkgFileInputs(ctx, pkg)
+		if err != nil {
+			return nil, err
+		}
+		// Explicit LLGoFiles and implicit cgo assembly are compiled by Clang,
+		// not Plan 9. All three Plan 9 consumers use this same owner list.
+		native := make(map[string]bool)
+		for _, input := range inputs {
+			if nativeAssemblyFile(input.path) {
+				native[filepath.Clean(input.path)] = true
+			}
+		}
+		paths = slices.DeleteFunc(paths, func(path string) bool { return native[filepath.Clean(path)] })
+	}
 
 	// internal/chacha8rand has highly optimized arch asm on amd64/arm64.
 	// Until full vector lowering lands, force the generic stub entry, which

@@ -19,6 +19,7 @@ package build
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -341,12 +342,13 @@ func digestEmbedFiles(paths []string) ([]embedFileDigest, error) {
 	return digests, nil
 }
 
-// llgoFileDigest records the preprocessed content and per-file flags of an
-// LLGoFiles input. These files are declared through a Go constant, so go list
-// does not include either them or their local includes in OtherFiles.
+// llgoFileDigest records compiler-observed inputs and per-file flags. C/C++
+// uses preprocessor output; native assembly uses a real object so GAS includes
+// are covered too. The same producer owns explicit and implicit cgo inputs.
 type llgoFileDigest struct {
 	Path             string   `yaml:"path"`
-	PreprocessedHash string   `yaml:"preprocessed_hash"`
+	PreprocessedHash string   `yaml:"preprocessed_hash,omitempty"`
+	ObjectHash       string   `yaml:"object_hash,omitempty"`
 	OverlayHash      string   `yaml:"overlay_hash,omitempty"`
 	CompilerArgs     []string `yaml:"compiler_args,omitempty"`
 }
@@ -365,28 +367,42 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 			path:         input.path,
 			compilerArgs: strings.Join(compilerArgs, "\x00"),
 		}
-		preprocessedHash, ok := ctx.llgoFileHashCache[cacheKey]
+		objectFingerprint := nativeAssemblyFile(input.path) || llgoFileIsAssembly(ctx, compilerArgs, input.path)
+		contentHash, ok := ctx.llgoFileHashCache[cacheKey]
 		if !ok {
-			hash := sha256.New()
-			cmd := ctx.compilerForSource(input.path)
-			cmd.Stdout = hash
-			preprocessArgs := append(slices.Clone(compilerArgs), "-E", input.path)
-			if err := cmd.Compile(preprocessArgs...); err != nil {
-				return nil, fmt.Errorf("preprocess file %q: %w", input.path, err)
+			if objectFingerprint {
+				var err error
+				contentHash, err = digestNativeAssemblyObject(ctx, input.path, compilerArgs)
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				hash := sha256.New()
+				cmd := ctx.compilerForSource(input.path)
+				cmd.Stdout = hash
+				preprocessArgs := append(slices.Clone(compilerArgs), "-E", input.path)
+				if err := cmd.Compile(preprocessArgs...); err != nil {
+					return nil, fmt.Errorf("preprocess file %q: %w", input.path, err)
+				}
+				contentHash = hex.EncodeToString(hash.Sum(nil))
 			}
-			preprocessedHash = hex.EncodeToString(hash.Sum(nil))
-			ctx.llgoFileHashCache[cacheKey] = preprocessedHash
+			ctx.llgoFileHashCache[cacheKey] = contentHash
 		}
 		overlayHash := ""
 		if content, ok := overlay[input.path]; ok {
 			overlayHash = digestBytes(content)
 		}
-		digests = append(digests, llgoFileDigest{
-			Path:             input.path,
-			PreprocessedHash: preprocessedHash,
-			OverlayHash:      overlayHash,
-			CompilerArgs:     append([]string(nil), input.compilerArgs...),
-		})
+		digest := llgoFileDigest{
+			Path:         input.path,
+			OverlayHash:  overlayHash,
+			CompilerArgs: append([]string(nil), input.compilerArgs...),
+		}
+		if objectFingerprint {
+			digest.ObjectHash = contentHash
+		} else {
+			digest.PreprocessedHash = contentHash
+		}
+		digests = append(digests, digest)
 	}
 	sort.Slice(digests, func(i, j int) bool {
 		if digests[i].Path != digests[j].Path {
@@ -395,6 +411,32 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 		return strings.Join(digests[i].CompilerArgs, "\x00") < strings.Join(digests[j].CompilerArgs, "\x00")
 	})
 	return digests, nil
+}
+
+// -E does not preprocess raw .s, and preprocessor depfiles omit GAS .include.
+// Hash a real object under the same source language/flags as clFile instead.
+// The temporary object is evidence for the key, never a cached compile result.
+func digestNativeAssemblyObject(ctx *context, source string, args []string) (hash string, err error) {
+	object, err := genLLGoFileOutput(source, ".o")
+	if err != nil {
+		return "", fmt.Errorf("create assembly fingerprint object for %s: %w", source, err)
+	}
+	defer func() {
+		if cleanupErr := os.Remove(object); cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
+			err = errors.Join(err, fmt.Errorf("remove assembly fingerprint object %s: %w", object, cleanupErr))
+		}
+	}()
+	command := ctx.compilerForSource(source)
+	command.Stdout = io.Discard
+	compileArgs := append(slices.Clone(args), "-c", source, "-o", object)
+	if err := command.Compile(compileArgs...); err != nil {
+		return "", fmt.Errorf("compile assembly fingerprint %s: %w", source, err)
+	}
+	info, err := os.Stat(object)
+	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+		return "", fmt.Errorf("missing or empty assembly fingerprint object for %s: %v", source, err)
+	}
+	return digestFile(object)
 }
 
 // digestFiles calculates digests for multiple files.
