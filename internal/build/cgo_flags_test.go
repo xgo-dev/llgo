@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -23,6 +24,9 @@ func TestCgoDirectiveFlagsMatchGoQuoting(t *testing.T) {
 			for _, kind := range []string{"CPPFLAGS", "CFLAGS", "CXXFLAGS", "LDFLAGS"} {
 				t.Run(kind, func(t *testing.T) {
 					dir := t.TempDir()
+					// go/build also resolves relative include paths. Use an
+					// absolute path to isolate its independent quoting oracle.
+					flags := strings.ReplaceAll(flags, "include", filepath.ToSlash(filepath.Join(dir, "include")))
 					source := "package fixture\n/*\n#cgo " + kind + ": " + flags + "\n*/\nimport \"C\"\n"
 					if err := os.WriteFile(filepath.Join(dir, "fixture.go"), []byte(source), 0o600); err != nil {
 						t.Fatal(err)

@@ -547,21 +547,21 @@ func parseCgoDeclWithCommandEnv(commands commandEnv, buildCtx *build.Context, li
 			cflags:  safesplit.SplitPkgConfigFlags(string(cflags)),
 			ldflags: safesplit.SplitPkgConfigFlags(string(ldflags)),
 		})
-	case "CPPFLAGS", "CFLAGS":
-		cgoDecls = append(cgoDecls, cgoDecl{
-			tag:    tag,
-			cflags: safesplit.SplitPkgConfigFlags(arg),
-		})
-	case "CXXFLAGS":
-		cgoDecls = append(cgoDecls, cgoDecl{
-			tag:      tag,
-			cxxflags: safesplit.SplitPkgConfigFlags(arg),
-		})
-	case "LDFLAGS":
-		cgoDecls = append(cgoDecls, cgoDecl{
-			tag:     tag,
-			ldflags: safesplit.SplitPkgConfigFlags(arg),
-		})
+	case "CPPFLAGS", "CFLAGS", "CXXFLAGS", "LDFLAGS":
+		args, parseErr := splitCgoDirectiveFlags(arg)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		parsed := cgoDecl{tag: tag}
+		switch flag {
+		case "CPPFLAGS", "CFLAGS":
+			parsed.cflags = args
+		case "CXXFLAGS":
+			parsed.cxxflags = args
+		case "LDFLAGS":
+			parsed.ldflags = args
+		}
+		cgoDecls = append(cgoDecls, parsed)
 	default:
 		err = fmt.Errorf("unsupported cgo flag type: %s", flag)
 	}
