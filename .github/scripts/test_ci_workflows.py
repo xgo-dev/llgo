@@ -267,11 +267,14 @@ else:
                 # This contract checks suite ordering and Windows options.
                 # The real shard executor has separate end-to-end Go tests.
                 (helper.parent / "run_build_tests.py").write_text(r"""
-import argparse, subprocess, sys
+import argparse, os, subprocess, sys
 parser = argparse.ArgumentParser()
 parser.add_argument('--overlay')
 parser.add_argument('--ldflags')
+parser.add_argument('--require-arm64-atomic', action='store_true')
 args = parser.parse_args()
+if args.require_arm64_atomic != (os.environ['RUNNER_OS'] == 'macOS'):
+    sys.exit('native ARM64 atomic gate was omitted or applied to another host')
 command = ['go', 'test', '-json', '-coverpkg=./...', '-coverprofile=coverage-build.txt']
 if args.overlay:
     command.append('-overlay=' + args.overlay)
@@ -284,6 +287,7 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                                         env={**os.environ,
                                              "PATH": directory + os.pathsep + os.environ["PATH"],
                                              "RUNNER_OS": runner, "LLGO_GO_TEST_OVERLAY": overlay,
+                                             "RUNNER_ARCH": "ARM64" if runner == "macOS" else "X64",
                                              "TEST_GO_LOG": str(log), "TEST_GO_FAILURE": failure,
                                              "GITHUB_STEP_SUMMARY": str(summary)})
                 if failure == "main":
@@ -326,6 +330,30 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                 self.assertFalse(any("github.com/xgo-dev/llgo/internal/build" in args
                                      for args in calls))
                 self.assertTrue(all("-json" in args for args in calls))
+
+    def test_macos_build_suite_requires_arm64_native_atomic_acceptance(self):
+        job = load("go.yml")["jobs"]["test"]
+        entries = job["strategy"]["matrix"]["include"]
+        self.assertIn("macos-latest", [entry["os"] for entry in entries])
+        step = next(step for step in job["steps"] if step.get("id") == "test_coverage")
+        self.assertNotIn("continue-on-error", job)
+        self.assertNotIn("continue-on-error", step)
+        # Exercise the existing function without invoking a Go or LLVM process.
+        body = step["run"].split("run_build_suite() {", 1)[1].split("\n}", 1)[0]
+        function = "run_build_suite() {" + body + "\n}\n"
+        script = function + 'python() { printf "%s\\n" "$@"; }\nrun_build_suite\n'
+        for arch in ("ARM64", "X64", ""):
+            with self.subTest(arch=arch):
+                result = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                                        env={**os.environ, "RUNNER_OS": "macOS", "RUNNER_ARCH": arch,
+                                             "LLGO_GO_TEST_OVERLAY": ""}, timeout=10)
+                if arch == "ARM64":
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.splitlines().count("--require-arm64-atomic"), 1)
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn("native ARM64 atomic owners", result.stderr)
 
     def test_cross_host_windows_checks_keep_every_host_target_pair(self):
         job = load("llgo.yml")["jobs"]["windows-gnu-cross"]
