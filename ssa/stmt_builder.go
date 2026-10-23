@@ -176,8 +176,10 @@ func notInit(instr llvm.Value) bool {
 		if n := instr.OperandsCount(); n == 1 {
 			fn := instr.Operand(0)
 			name := fn.Name()
-			// Skip .init calls
-			return !strings.HasSuffix(name, ".init")
+			// A patch retains the original initializer under this suffix.
+			// Pass it as well as dependency initializers before loading the
+			// Python symbols consumed by the patch's own initializers.
+			return !strings.HasSuffix(name, ".init") && !strings.HasSuffix(name, ".init$hasPatch")
 		}
 	}
 	return true
