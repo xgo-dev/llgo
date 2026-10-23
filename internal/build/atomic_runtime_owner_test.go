@@ -331,14 +331,14 @@ func TestRuntimeAtomicARM64RetainsOtherArchitectures(t *testing.T) {
 	}
 }
 
-func TestRuntimeAtomicARM64RetainsOlderSDKSelection(t *testing.T) {
-	// Go1.23 has this package but only 48 entries; older releases use the
-	// runtime/internal/atomic path. This tests selection, not their execution.
+func TestRuntimeAtomicARM64RejectsMismatchedSDKProfile(t *testing.T) {
+	// Go1.23 has only 48 entries. Applying that profile to the newer actual
+	// SDK must not silently suppress a source group with a different inventory.
 	changed, _, _, err := applySourcePatchForPkg(nil, nil, env.LLGoRuntimeDir(), runtime.GOROOT(), "internal/runtime/atomic", sourcePatchBuildContext{
 		goos: "linux", goarch: "arm64", goversion: "go1.23.12",
 	})
-	if err != nil || changed {
-		t.Fatal("the Go1.24+ complete owner changed an older selected SDK route", err)
+	if err == nil || changed {
+		t.Fatal("a mismatched selected SDK profile borrowed an atomic source owner", err)
 	}
 }
 
