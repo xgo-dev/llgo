@@ -19,13 +19,16 @@ package build
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/packages"
+	llssa "github.com/xgo-dev/llgo/ssa"
 	gllvm "github.com/xgo-dev/llvm"
 )
 
@@ -83,34 +86,48 @@ func TestNormalizeToArchiveUsesMemoryBuffer(t *testing.T) {
 }
 
 func TestCreatePackageArchiveFileWithExternalArchiver(t *testing.T) {
-	llvmCtx := gllvm.NewContext()
-	defer llvmCtx.Dispose()
-	mod := llvmCtx.NewModule("external-archive")
-	defer mod.Dispose()
-	mod.SetTarget(gllvm.DefaultTargetTriple())
-	gllvm.AddFunction(mod, "external_archive_symbol", gllvm.FunctionType(llvmCtx.Int32Type(), nil, false))
+	for _, mode := range []lto.Mode{lto.Off, lto.Full, lto.Thin} {
+		t.Run(mode.String(), func(t *testing.T) {
+			testPackageArchiveWithExternalArchiver(t, mode)
+		})
+	}
+}
 
-	buffer := gllvm.WriteBitcodeToMemoryBuffer(mod)
-	defer buffer.Dispose()
-	pkg := &aPackage{ObjBuffers: []packageArchiveBuffer{{name: "memory-member.bc", buffer: buffer}}}
+func testPackageArchiveWithExternalArchiver(t *testing.T, mode lto.Mode) {
+	t.Helper()
+	llssa.Initialize(llssa.InitAll)
+	prog := llssa.NewProgram(nil)
+	defer prog.Dispose()
+	llvmPkg := prog.NewPackage("archive", "example.com/archive")
+	mod := llvmPkg.Module()
+	llvmCtx := mod.Context()
+	fn := gllvm.AddFunction(mod, "external_archive_symbol", gllvm.FunctionType(llvmCtx.Int32Type(), nil, false))
+	builder := llvmCtx.NewBuilder()
+	defer builder.Dispose()
+	builder.SetInsertPointAtEnd(llvmCtx.AddBasicBlock(fn, "entry"))
+	builder.CreateRet(gllvm.ConstInt(llvmCtx.Int32Type(), 42, false))
+
+	// Match actual package emission: native objects without LTO, bitcode with
+	// LTO. Feeding bitcode to a non-LTO system archiver can silently drop it.
 	ctx := &context{
-		buildConf: &Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH},
+		prog:      prog,
+		buildConf: &Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH, LTO: mode},
 		commands:  commandEnv{environ: os.Environ()},
 	}
+	if runtime.GOOS == "windows" {
+		ctx.crossCompile.Toolchain.ObjectFormat = crosscompile.ObjectFormatCOFF
+	}
+	buffer, _, err := emitObjectToMemoryBuffer(ctx, llvmPkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer buffer.Dispose()
+	pkg := &aPackage{ObjBuffers: []packageArchiveBuffer{{name: "memory-member.bc", buffer: buffer}}}
 	archivePath := filepath.Join(t.TempDir(), "external.a")
 	if err := ctx.createPackageArchiveFileWithExternalArchiver(archivePath, pkg, false); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(archivePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.HasPrefix(data, []byte("!<arch>\n")) {
-		t.Fatalf("archive has invalid magic: %q", data[:8])
-	}
-	if !bytes.Contains(data, []byte("memory-member.bc")) {
-		t.Fatal("archive does not contain memory-member.bc")
-	}
+	checkExternalArchiveMember(t, ctx, archivePath, pkg.ObjBuffers[0])
 
 	t.Run("dispatch", func(t *testing.T) {
 		previous := useExternalPackageArchiver
@@ -121,13 +138,7 @@ func TestCreatePackageArchiveFileWithExternalArchiver(t *testing.T) {
 		if err := ctx.createPackageArchiveFile(archivePath, pkg, false); err != nil {
 			t.Fatal(err)
 		}
-		data, err := os.ReadFile(archivePath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.Contains(data, []byte("memory-member.bc")) {
-			t.Fatal("archive does not contain memory-member.bc")
-		}
+		checkExternalArchiveMember(t, ctx, archivePath, pkg.ObjBuffers[0])
 	})
 
 	t.Run("invalid members", func(t *testing.T) {
@@ -162,6 +173,44 @@ func TestCreatePackageArchiveFileWithExternalArchiver(t *testing.T) {
 			t.Fatal("createPackageArchiveFileWithExternalArchiver succeeded with a missing file member")
 		}
 	})
+}
+
+func checkExternalArchiveMember(t *testing.T, ctx *context, path string, member packageArchiveBuffer) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(data, []byte("!<arch>\n")) {
+		t.Fatalf("archive has invalid magic: %q", data[:min(len(data), 8)])
+	}
+	ar, err := exec.LookPath(ctx.archiver())
+	if err != nil {
+		t.Fatal(err)
+	}
+	members, err := ctx.commands.configure(exec.Command(ar, "t", path)).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s t: %v\n%s", ar, err, members)
+	}
+	count := 0
+	for _, name := range strings.Fields(string(members)) {
+		if name == member.name {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("archive requires exactly one %q member, got %d using %s: %q", member.name, count, ar, members)
+	}
+	cmd := ctx.commands.configure(exec.Command(ar, "p", path, member.name))
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	payload, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("%s p: %v\n%s", ar, err, &stderr)
+	}
+	if !bytes.Equal(payload, member.buffer.Bytes()) {
+		t.Fatalf("%s changed archive member %q: got %d bytes, want %d", ar, member.name, len(payload), len(member.buffer.Bytes()))
+	}
 }
 
 func TestPackageArchiveEdgeCases(t *testing.T) {
