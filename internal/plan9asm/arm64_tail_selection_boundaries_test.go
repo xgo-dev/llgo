@@ -58,7 +58,7 @@ func TestARM64TailSelectionSourceBounds(t *testing.T) {
 			before := append([]string(nil), pkg.CompiledGoFiles...)
 			selection, err := arm64TailSourceSelection(pkg, []byte(source), "arm64", opt.Overlay)
 			if err == nil || !strings.Contains(err.Error(), want) || selection != nil {
-				t.Fatalf("source selection %s = %v, %v; want %q", mutation, selection, err, want)
+				t.Fatalf("source selection %s: present=%t, error=%v; want %q", mutation, selection != nil, err, want)
 			}
 			if mutation != "file-bytes" && !errors.Is(err, extplan9asm.ErrProbeNeedsContext) {
 				t.Fatal("source-selection bound lost its context error identity", err)
