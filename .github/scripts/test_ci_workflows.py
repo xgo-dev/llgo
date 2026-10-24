@@ -908,15 +908,34 @@ sys.exit(subprocess.call(command + ['./internal/build']))
         self.assertEqual(jobs["test-linux-distributions"]["strategy"]["matrix"]["include"],
                          [{"os": "ubuntu-24.04", "goarch": "amd64"}, {"os": "ubuntu-24.04-arm", "goarch": "arm64"}])
         self.assertEqual(jobs["release"]["runs-on"], "ubuntu-latest")
+
+    def test_fedora_shell_exit_uses_standard_host_without_reducing_coverage(self):
         workflow = load("installer-shells.yml")
         self.assertEqual(workflow["jobs"]["prepare"]["uses"], PREPARE)
         installer = workflow["jobs"]["installer-shells"]
         self.assertIn("prepare", needs(installer))
         self.assertNotIn("if", installer)
+        self.assertNotIn("continue-on-error", installer)
+        self.assertEqual(installer["timeout-minutes"], "20")
         self.assertEqual(installer["runs-on"],
-                         "${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}")
-        self.assertCountEqual(installer["strategy"]["matrix"]["image"],
+                         "${{ matrix.runner || fromJSON(needs.prepare.outputs.linux_large_runner) }}")
+        strategy = installer["strategy"]
+        self.assertEqual(strategy["fail-fast"], "false")
+        matrix = strategy["matrix"]
+        self.assertNotIn("exclude", matrix)
+        self.assertCountEqual(matrix["image"],
                               ["ubuntu:24.04", "debian:12", "fedora:latest", "archlinux:latest", "alpine:latest", "opensuse/tumbleweed:latest"])
+        self.assertEqual(matrix["include"],
+                         [{"image": "fedora:latest", "runner": "ubuntu-24.04"}])
+        self.assertEqual(matrix_size(installer), 6)
+        steps = installer["steps"]
+        self.assertEqual(len(steps), 2)
+        startup = steps[1]
+        self.assertNotIn("if", startup)
+        self.assertNotIn("continue-on-error", startup)
+        self.assertEqual(startup["env"], {"INSTALLER_TEST_IMAGE": "${{ matrix.image }}"})
+        self.assertEqual(startup["run"],
+                         'bash test/installer/install_shell_distro_test.sh "$INSTALLER_TEST_IMAGE"')
 
     def test_prepare_exports_each_decision_and_has_no_caller_concurrency(self):
         workflow = load("ci-prepare.yml")
