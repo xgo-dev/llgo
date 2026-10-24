@@ -180,6 +180,7 @@ type context struct {
 	recvNilDerefChecks   map[*ssa.UnOp]token.Pos
 	vargs                map[*ssa.Alloc][]llssa.Expr // varargs
 	funcs                map[*ssa.Function]llssa.Function
+	variadicErrors       map[*ssa.Function]error
 	linkOnceFns          map[*ssa.Function]none
 	stackDefers          map[*ssa.Function]bool
 	anonDefers           map[*ssa.Function]bool
@@ -1766,10 +1767,11 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		} else {
 			if v.Op == token.MUL {
 				if t := p.type_(v.Type(), llssa.GoDecl); t.RawType() != nil && p.prog.SizeOf(t) == 0 {
-					p.assertNilDerefBase(b, v.X)
+					p.emitNilDerefBaseCheck(b, v.X)
 				}
 				if isInterfaceCompareDeref(v) {
-					p.assertNilDerefBase(b, v.X)
+					// Preserve p.bvals: a branch-local reload would break SSA dominance.
+					p.emitNilDerefBaseCheck(b, v.X)
 					b.AssertNilDeref(x)
 				}
 			}
@@ -2311,7 +2313,7 @@ func (p *context) needsWasmNilGuard(addr ssa.Value) bool {
 
 // assertNilDerefBase uses pointer-returning checks to rewrite p.bvals. Keep its
 // traversal in sync with emitNilDerefBaseCheck, which emits cold failure
-// branches without replacing cached addresses for delayed receiver checks.
+// branches while preserving cached addresses and their SSA dominance.
 func (p *context) assertNilDerefBase(b llssa.Builder, addr ssa.Value) {
 	switch addr := addr.(type) {
 	case *ssa.UnOp:
@@ -3021,6 +3023,9 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 	if fn := ctx.initAfter; fn != nil {
 		ctx.initAfter = nil
 		fn()
+	}
+	if err = ctx.validateCVariadicWrapperUses(); err != nil {
+		return nil, nil, err
 	}
 	ret.MaterializePreserveSyms()
 	if metaCollect {

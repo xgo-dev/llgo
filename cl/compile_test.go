@@ -34,6 +34,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/llgen"
 	"github.com/xgo-dev/llgo/internal/lto"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	llvmenv "github.com/xgo-dev/llgo/xtool/env/llvm"
 )
@@ -197,6 +198,9 @@ func TestRunAndTestRuntimeCodegen(t *testing.T) {
 
 func TestRunAndTestFromTestmeta(t *testing.T) {
 	conf := build.NewDefaultConf(build.ModeRun)
+	// These goldens inspect metadata captured before LLVM optimization.
+	// Still force a fresh compile and run every fixture, including imports.
+	conf.OptLevel = optlevel.O0
 	conf.CollectPackageMeta = true
 	cltest.RunAndTestFromDir(t, "", "./_testmeta", nil,
 		cltest.WithRunConfig(conf),

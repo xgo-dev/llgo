@@ -5,6 +5,10 @@ inputs:
     description: "LLGo package build cache mode: off, restore, or readwrite"
     required: false
     default: "restore"
+  build-cache-scope:
+    description: "Optional workload scope so independent suites do not race to save one partial package cache"
+    required: false
+    default: ""
   crosscompile-cache-mode:
     description: "Cross-compilation download cache mode: off, restore, or readwrite"
     required: false
@@ -22,6 +26,7 @@ runs:
       shell: bash
       env:
         BUILD_CACHE_MODE: ${{ inputs.build-cache-mode }}
+        BUILD_CACHE_SCOPE: ${{ inputs.build-cache-scope }}
         CROSSCOMPILE_CACHE_MODE: ${{ inputs.crosscompile-cache-mode }}
         WASMER_CACHE_MODE: ${{ inputs.wasmer-cache-mode }}
       run: |
@@ -48,6 +53,10 @@ runs:
             exit 1
             ;;
         esac
+        if [[ -n "$BUILD_CACHE_SCOPE" && ! "$BUILD_CACHE_SCOPE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+          echo "Unsupported build cache scope: $BUILD_CACHE_SCOPE" >&2
+          exit 1
+        fi
 
         source dev/llgo_cache_dir.sh
         cache_root="$(llgo_cache_dir)"
@@ -60,6 +69,7 @@ runs:
         fi
         echo "root=$cache_root" >> "$GITHUB_OUTPUT"
         echo "profile=$profile" >> "$GITHUB_OUTPUT"
+        echo "build-profile=${profile}${BUILD_CACHE_SCOPE:+-$BUILD_CACHE_SCOPE}" >> "$GITHUB_OUTPUT"
         echo "go-version=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
         echo "clang-version=$clang_version" >> "$GITHUB_OUTPUT"
 
@@ -91,18 +101,18 @@ runs:
       uses: actions/cache/restore@v6
       with:
         path: ${{ steps.llgo_cache.outputs.root }}/build
-        key: llgo-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.llgo_cache.outputs.profile }}-${{ steps.llgo_cache.outputs.go-version }}-clang-${{ steps.llgo_cache.outputs.clang-version }}-${{ github.sha }}
+        key: llgo-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.llgo_cache.outputs.build-profile }}-${{ steps.llgo_cache.outputs.go-version }}-clang-${{ steps.llgo_cache.outputs.clang-version }}-${{ github.sha }}
         restore-keys: |
-          llgo-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.llgo_cache.outputs.profile }}-${{ steps.llgo_cache.outputs.go-version }}-clang-${{ steps.llgo_cache.outputs.clang-version }}-${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
+          llgo-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.llgo_cache.outputs.build-profile }}-${{ steps.llgo_cache.outputs.go-version }}-clang-${{ steps.llgo_cache.outputs.clang-version }}-${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
 
     - name: Cache LLGo package builds
       if: inputs.build-cache-mode == 'readwrite'
       uses: actions/cache@v6
       with:
         path: ${{ steps.llgo_cache.outputs.root }}/build
-        key: llgo-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.llgo_cache.outputs.profile }}-${{ steps.llgo_cache.outputs.go-version }}-clang-${{ steps.llgo_cache.outputs.clang-version }}-${{ github.sha }}
+        key: llgo-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.llgo_cache.outputs.build-profile }}-${{ steps.llgo_cache.outputs.go-version }}-clang-${{ steps.llgo_cache.outputs.clang-version }}-${{ github.sha }}
         restore-keys: |
-          llgo-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.llgo_cache.outputs.profile }}-${{ steps.llgo_cache.outputs.go-version }}-clang-${{ steps.llgo_cache.outputs.clang-version }}-${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
+          llgo-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.llgo_cache.outputs.build-profile }}-${{ steps.llgo_cache.outputs.go-version }}-clang-${{ steps.llgo_cache.outputs.clang-version }}-${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
 
     - name: Restore Wasmer
       if: inputs.wasmer-cache-mode == 'restore'

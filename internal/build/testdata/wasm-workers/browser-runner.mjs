@@ -10,7 +10,7 @@ if (!browser || !url) {
 
 // The dedicated filesystem stress runs 128 collections across concurrent Gs;
 // allow its Memory64 root scans more time than ordinary worker smoke tests.
-const fsStress = new URL(url).searchParams.get("module")?.startsWith("fs-workers-");
+const fsStress = new URL(url).searchParams.get("module")?.startsWith("fs-");
 const deadline = Date.now() + (fsStress ? 240_000 : 90_000);
 const profile = await mkdtemp(join(tmpdir(), "llgo-wasm-chrome-"));
 const { child: chrome, stop: stopChrome } = spawnBrowser(browser, [

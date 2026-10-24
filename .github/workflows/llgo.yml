@@ -11,7 +11,7 @@ on:
     branches: ["**"]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
+  group: llgo.yml-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 jobs:
@@ -21,7 +21,7 @@ jobs:
   ci-gate:
     name: CI gate (LLGo)
     needs: prepare
-    if: always()
+    if: always() && !cancelled()
     runs-on: ${{ fromJSON(needs.prepare.outputs.linux_runner || '["ubuntu-24.04"]') }}
     steps:
       - name: Verify CI preparation succeeded
@@ -189,6 +189,22 @@ jobs:
             -LLGo $llgo `
             -Profile "${{ matrix.windows_abi }}" `
             -GoArch "${{ matrix.windows_arch || 'amd64' }}"
+
+      - name: Check BDWGC collection under the Windows heap lock
+        if: runner.os == 'Windows' && matrix.windows_abi == 'mingw' && matrix.windows_arch == '386'
+        shell: python {0}
+        run: |
+          import os
+          from pathlib import Path
+          import subprocess
+
+          compiler = Path(os.environ["LLGO_MINGW_TARGET_BIN"]) / "i686-w64-mingw32-clang.exe"
+          prefix = Path(os.environ["LLGO_MINGW_TARGET_VCPKG_ROOT"])
+          executable = Path(os.environ["RUNNER_TEMP"]) / "bdwgc-heap-lock.exe"
+          subprocess.run([str(compiler), "-O2", ".github/windows/test-bdwgc-heap-lock.c",
+                          "-I" + str(prefix / "include"), "-L" + str(prefix / "lib"),
+                          "-lgc", "-o", str(executable)], check=True)
+          subprocess.run([str(executable)], check=True, timeout=30)
 
       - name: Run Go 1.27 LLGo core tests
         env:
@@ -795,13 +811,22 @@ jobs:
   windows-gnu-cross:
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: prepare
-    name: windows GNU cross (${{ matrix.os }}, ${{ matrix.windows_arch }})
+    name: windows GNU cross (${{ matrix.os }}, ${{ matrix.windows_arch == 'all' && 'amd64 + arm64 + 386' || matrix.windows_arch }})
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-latest]
-        windows_arch: [amd64, arm64, "386"]
+        include:
+          - os: ubuntu-24.04
+            windows_arch: amd64
+          - os: ubuntu-24.04
+            windows_arch: arm64
+          - os: ubuntu-24.04
+            windows_arch: "386"
+          # Share the host compiler, llvm-mingw archive and vcpkg bootstrap
+          # across targets while retaining every macOS-to-Windows build.
+          - os: macos-latest
+            windows_arch: all
     runs-on: ${{ startsWith(matrix.os, 'ubuntu') && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -817,6 +842,7 @@ jobs:
           go-version: "1.27.0"
 
       - name: Build Unix host compiler
+        id: host_compiler
         shell: bash
         run: |
           go build -p=2 -o "$RUNNER_TEMP/llgo-host" ./cmd/llgo
@@ -825,11 +851,26 @@ jobs:
           # available to the following cross-host builds.
           echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
-      - name: Test cross-host windows/${{ matrix.windows_arch }}
+      - name: Test cross-host windows/amd64
+        if: ${{ !cancelled() && steps.host_compiler.outcome == 'success' && (matrix.windows_arch == 'all' || matrix.windows_arch == 'amd64') }}
         uses: ./.github/actions/test-windows-cross
         with:
           llgo: ${{ runner.temp }}/llgo-host
-          windows-arch: ${{ matrix.windows_arch }}
+          windows-arch: amd64
+
+      - name: Test cross-host windows/arm64
+        if: ${{ !cancelled() && steps.host_compiler.outcome == 'success' && (matrix.windows_arch == 'all' || matrix.windows_arch == 'arm64') }}
+        uses: ./.github/actions/test-windows-cross
+        with:
+          llgo: ${{ runner.temp }}/llgo-host
+          windows-arch: arm64
+
+      - name: Test cross-host windows/386
+        if: ${{ !cancelled() && steps.host_compiler.outcome == 'success' && (matrix.windows_arch == 'all' || matrix.windows_arch == '386') }}
+        uses: ./.github/actions/test-windows-cross
+        with:
+          llgo: ${{ runner.temp }}/llgo-host
+          windows-arch: "386"
 
   wasm-browser-debug:
     permissions:
@@ -879,7 +920,7 @@ jobs:
           version: "11.3.1"
           token: ${{ secrets.CODECOV_TOKEN }}
           use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-          files: coverage-browser/j32-embedded.out,coverage-browser/j32-external.out,coverage-browser/j64-embedded.out,coverage-browser/j64-external.out
+          files: coverage-browser/j32-embedded.out,coverage-browser/j32-external.out,coverage-browser/j64-embedded.out,coverage-browser/j64-external.out,coverage-browser/j32-goroutines-1.out,coverage-browser/j32-goroutines-2.out,coverage-browser/j32-goroutines-4.out,coverage-browser/j32-goroutines-2-optimized.out,coverage-browser/j64-goroutines-1.out,coverage-browser/j64-goroutines-2.out,coverage-browser/j64-goroutines-4.out,coverage-browser/j64-goroutines-2-optimized.out
           flags: go-tests
           disable_search: true
           fail_ci_if_error: true
@@ -928,11 +969,16 @@ jobs:
         with:
           version: "39.0.1"
 
-      - name: Restore Wasmer cache
-        if: matrix.suite != 'workers'
+      - name: Set up Go for building llgo
+        uses: ./.github/actions/setup-go
+
+      - name: Cache LLGo builds and WebAssembly toolchains
         uses: ./.github/actions/setup-llgo-cache
         with:
-          wasmer-cache-mode: readwrite
+          build-cache-mode: readwrite
+          build-cache-scope: wasm-${{ matrix.suite }}
+          crosscompile-cache-mode: readwrite
+          wasmer-cache-mode: ${{ matrix.suite != 'workers' && 'readwrite' || 'off' }}
 
       - name: Install Wasmer for W32
         if: matrix.suite != 'workers'
@@ -942,9 +988,6 @@ jobs:
         uses: bytecodealliance/actions/wasm-tools/setup@v1
         with:
           version: "1.243.0"
-
-      - name: Set up Go for building llgo
-        uses: ./.github/actions/setup-go
 
       - name: Install llgo
         run: |

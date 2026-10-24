@@ -84,7 +84,6 @@ func needsWasmRuntimeScheduler(ctx *context) bool {
 func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *genConfig) Package {
 	prog := ctx.prog
 	mainPkg := prog.NewPackage("", pkg.ID+".main")
-
 	argcVar := mainPkg.NewVarEx("__llgo_argc", prog.Pointer(prog.Int32()))
 	argcVar.Init(prog.Zero(prog.Int32()))
 

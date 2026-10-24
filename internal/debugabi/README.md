@@ -48,3 +48,12 @@ flag: direct interface data is the value itself, while indirect interface data
 points to value storage. The interface's payload address alone is insufficient
 to decide whether to dereference it. Debug-artifact processing transports this
 schema and record; it does not provide a concrete-value decoder either.
+
+Portable readers can use the optional `runtime_type.kind_types`, `uncommon_flag`,
+`named_flag`, `uncommon_type` and `package_path` fields to resolve named interface
+payloads by import path. Reflection's package-name spelling alone is ambiguous.
+The uncommon record follows the kind-specific metadata structure; readers use
+its DWARF size rather than fixed host offsets. `pointer_kind` and
+`pointer_element` allow pointer payloads to resolve their element recursively.
+Missing metadata leaves the concrete value unavailable. These fields describe
+the existing layout; they do not change its version or native adapter behavior.

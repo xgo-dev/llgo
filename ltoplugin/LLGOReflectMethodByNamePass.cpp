@@ -45,6 +45,8 @@ static constexpr char ReflectTypeMethodTypeIDPrefix[] =
 static constexpr char StaticItabSlotMetadata[] = "llgo.static.itab.slot";
 static constexpr char RuntimeStringCatSuffix[] =
     "runtime/internal/runtime.StringCat";
+static constexpr char RuntimeStringSliceSuffix[] =
+    "runtime/internal/runtime.StringSlice";
 static constexpr char RuntimeStringSlice2Suffix[] =
     "runtime/internal/runtime.StringSlice2";
 static constexpr unsigned MaxReflectMethodNames = 32;
@@ -170,11 +172,16 @@ bool isRuntimeStringCat(CallBase *CB) {
   return Callee && Callee->getName().ends_with(RuntimeStringCatSuffix);
 }
 
-bool isRuntimeStringSlice2(CallBase *CB) {
+unsigned runtimeStringSliceBoundsArgs(CallBase *CB) {
   if (!CB)
-    return false;
+    return 0;
   Function *Callee = CB->getCalledFunction();
-  return Callee && Callee->getName().ends_with(RuntimeStringSlice2Suffix);
+  if (!Callee)
+    return 0;
+  // Native signed bounds omit the two signedness flags of the generic entry.
+  if (Callee->getName().ends_with(RuntimeStringSliceSuffix))
+    return 2;
+  return Callee->getName().ends_with(RuntimeStringSlice2Suffix) ? 4 : 0;
 }
 
 bool consumeStringCallArgument(CallBase *CB, unsigned &NextArgIndex,
@@ -215,16 +222,17 @@ bool collectStringSetFromStringCat(CallBase *CB, const DataLayout &DL,
   return addConcatenatedNames(Names, Prefixes, Suffixes);
 }
 
-bool collectStringSetFromStringSlice2(CallBase *CB, const DataLayout &DL,
-                                      SmallVectorImpl<std::string> &Names,
-                                      unsigned Depth) {
-  if (!isRuntimeStringSlice2(CB))
+bool collectStringSetFromStringSlice(CallBase *CB, const DataLayout &DL,
+                                     SmallVectorImpl<std::string> &Names,
+                                     unsigned Depth) {
+  unsigned BoundsArgs = runtimeStringSliceBoundsArgs(CB);
+  if (!BoundsArgs)
     return false;
 
   SmallVector<std::string, 4> Bases;
   unsigned NextArgIndex = 0;
   if (!consumeStringCallArgument(CB, NextArgIndex, DL, Bases, Depth) ||
-      CB->arg_size() != NextArgIndex + 4)
+      CB->arg_size() != NextArgIndex + BoundsArgs)
     return false;
 
   SmallVector<uint64_t, 4> Lows;
@@ -981,7 +989,7 @@ bool collectStringSetFromStringValue(Value *StringValue, const DataLayout &DL,
     return collectStringSetFromStringConstant(C, DL, Names, Depth);
 
   if (auto *CB = dyn_cast<CallBase>(StringValue)) {
-    if (collectStringSetFromStringSlice2(CB, DL, Names, Depth))
+    if (collectStringSetFromStringSlice(CB, DL, Names, Depth))
       return true;
     if (collectStringSetFromStringCat(CB, DL, Names, Depth))
       return true;

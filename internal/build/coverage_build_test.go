@@ -245,7 +245,7 @@ func TestCoverageBuildAllFiles(t *testing.T) {
 	}
 	conf.Coverage = &CoverageConfig{Mode: "atomic", Packages: "all"}
 	_, err = Build(Invocation{
-		Args:   []string{"./internal/build/testdata/coverageapp/main.go"},
+		Args:   []string{"./internal/build/testdata/coveragefiles/main.go"},
 		Dir:    root,
 		Config: conf,
 	})
@@ -259,7 +259,8 @@ func TestCoverageBuildAllFiles(t *testing.T) {
 	}
 	cmd = exec.Command("go", "tool", "covdata", "percent", "-i="+dir)
 	output, err := cmd.CombinedOutput()
-	if err != nil || !bytes.Contains(output, []byte("command-line-arguments")) {
+	if err != nil || !bytes.Contains(output, []byte("command-line-arguments")) ||
+		!bytes.Contains(output, []byte("strconv")) {
 		t.Fatalf("-coverpkg=all omitted named files: %v\n%s", err, output)
 	}
 	profile := filepath.Join(dir, "cover.out")

@@ -23,3 +23,7 @@ package runtime
 func runtimeNano() int64 {
 	return nanotime1()
 }
+
+// internal/poll and external packages use this hook through go:linkname,
+// including on Windows and Wasm where the Unix poll adapter is not selected.
+func nanotime() int64 { return runtimeNano() }

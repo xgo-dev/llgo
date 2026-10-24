@@ -6,7 +6,10 @@
 
 package runtime
 
-import _ "unsafe"
+import (
+	rt "github.com/xgo-dev/llgo/runtime/internal/runtime"
+	_ "unsafe"
+)
 
 // This is the target-independent part of LLGo's local port of the Go runtime
 // timer implementation. Native and WebAssembly schedulers share the same
@@ -42,7 +45,7 @@ func timeSleep(ns int64) {
 	if ns <= 0 {
 		return
 	}
-	when := runtimeNano() + ns
+	when := synctestNano() + ns
 	if when < 0 {
 		when = maxTimerWhen
 	}
@@ -125,6 +128,12 @@ func timerHeapSiftDown(i int) bool {
 
 //go:linkname time_now time.now
 func time_now() (sec int64, nsec int32, mono int64) {
+	if b := rt.CurrentSynctestBubble(); b != nil {
+		now := b.Now()
+		// A fake monotonic epoch cannot be compared to real outside times.
+		// Keep fake nanoseconds for scheduling, but omit time.Time's reading.
+		return now / 1e9, int32(now % 1e9), 0
+	}
 	sec, nsec = walltime()
 	mono = runtimeNano()
 	return
@@ -137,10 +146,33 @@ func time_runtimeNow() (sec int64, nsec int32, mono int64) {
 
 //go:linkname time_runtimeNano time.runtimeNano
 func time_runtimeNano() int64 {
-	return runtimeNano()
+	return synctestNano()
 }
 
 //go:linkname time_runtimeIsBubbled time.runtimeIsBubbled
 func time_runtimeIsBubbled() bool {
-	return false
+	return rt.CurrentSynctestBubble() != nil
+}
+
+func synctestNano() int64 {
+	if b := rt.CurrentSynctestBubble(); b != nil {
+		return b.Now()
+	}
+	return runtimeNano()
+}
+
+func startSynctestTimer(r *runtimeTimer) bool {
+	if r.fake == nil && rt.CurrentSynctestBubble() == nil {
+		return false
+	}
+	if r.fake != nil {
+		r.fake.Check()
+	}
+	callback := snapshotRuntimeTimer(r)
+	if r.fake == nil {
+		r.fake = rt.NewSynctestTimer(r.when, r.period, callback.run)
+	} else {
+		r.fake.Reset(r.when, r.period, callback.run)
+	}
+	return true
 }

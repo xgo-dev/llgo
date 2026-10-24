@@ -28,6 +28,12 @@ void llgo_traceback_free(llgo_traceback_snapshot *);
 uintptr_t *llgo_traceback_fault_buffer(void);
 void llgo_traceback_release_fault_buffer(void);
 
+typedef struct llgo_allthreads_call {
+    uintptr_t trap, args[6];
+    uintptr_t r1, r2, error;
+} llgo_allthreads_call;
+void llgo_traceback_all_threads_syscall(llgo_allthreads_call *);
+
 llgo_traceback_snapshot *llgo_traceback_next(llgo_traceback_snapshot *);
 uintptr_t *llgo_traceback_info(llgo_traceback_snapshot *, uint64_t *,
                                uint64_t *, uintptr_t *, uintptr_t *, uint32_t *);

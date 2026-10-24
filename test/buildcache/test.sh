@@ -240,8 +240,9 @@ run_test_suite() {
     # TEST 5: Partial cache clear - only dep2
     # ===========================================================
     test_05_partial_clear_dep2() {
-        # Rebuild to populate cache
-        if ! eval "${build_cmd/build/build -a}" > /dev/null 2>&1; then
+        # Populate any missing entries without recompiling the runtime and
+        # every dependency. Test 03 independently checks forced rebuilds.
+        if ! eval "$build_cmd" > /dev/null 2>&1; then
             echo -e "${RED}Initial build failed${NC}"
             return 1
         fi
@@ -268,8 +269,8 @@ run_test_suite() {
     # TEST 6: Partial cache clear - dep2 and dep3
     # ===========================================================
     test_06_partial_clear_dep2_dep3() {
-        # Rebuild to populate cache
-        if ! eval "${build_cmd/build/build -a}" > /dev/null 2>&1; then
+        # A normal build restores the package removed by Test 05 as well.
+        if ! eval "$build_cmd" > /dev/null 2>&1; then
             echo -e "${RED}Initial build failed${NC}"
             return 1
         fi

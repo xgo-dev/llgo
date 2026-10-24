@@ -93,6 +93,17 @@ func (b Builder) StackSave() Expr {
 	}
 }
 
+// DebugFrameAddress captures this function's physical frame base, which the
+// Wasm debugger uses for parked DW_OP_fbreg locals after the fiber switches.
+func (b Builder) DebugFrameAddress() Expr {
+	return Expr{
+		b.impl.CreateIntrinsic(b.Prog.VoidPtr().ll, llvm.LookupIntrinsicID("llvm.frameaddress"), []llvm.Value{
+			llvm.ConstInt(b.Prog.Int32().ll, 0, false),
+		}, ""),
+		b.Prog.VoidPtr(),
+	}
+}
+
 // declare void @llvm.stackrestore.p0(ptr)
 func (b Builder) StackRestore(sp Expr) {
 	b.impl.CreateIntrinsic(b.Prog.Void().ll, llvm.LookupIntrinsicID("llvm.stackrestore"), []llvm.Value{sp.impl}, "")

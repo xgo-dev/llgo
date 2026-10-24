@@ -299,6 +299,52 @@
     async getInlinedCalleesRanges() { return []; }
 
     async evaluate(expression, context, stopId) {
+      const module = this.module(context.rawModuleId);
+      return this.withWorkerStop(module, () => this.evaluateAtStop(expression, context, stopId));
+    }
+
+    async workerStop(module, expected) {
+      if (!module.index.worker_control) return null;
+      const url = new URL('/__llgo/worker-state', module.rawModule.url).href;
+      for (let attempt = 0; ; ++attempt) {
+        const response = await this.fetcher(url, {cache: 'no-store'});
+        if (!response.ok) throw new Error('Cannot read browser worker control state');
+        const state = await response.json();
+        if (state.error) throw new Error(`Browser worker control: ${state.error}`);
+        if (!state.enabled) return null;
+        if (expected !== undefined && (!state.paused || state.stopId !== expected)) {
+          throw new Error('Browser workers resumed or changed; inspect the current stop again');
+        }
+        if (state.ready && state.paused) return state.stopId;
+        if (attempt === 100) throw new Error('Waiting for all browser workers to pause');
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    }
+
+    async withWorkerStop(module, inspect, expected) {
+      const stop = await this.workerStop(module, expected);
+      const result = await inspect();
+      if (stop !== null) {
+        const values = Array.isArray(result) ? result.map(property => property.value) : [result];
+        try {
+          await this.workerStop(module, stop);
+        } catch (error) {
+          // These handles were never returned to DevTools, which therefore
+          // cannot release them after a worker changed during the read.
+          for (const value of values) {
+            if (value?.objectId) await this.releaseObject(value.objectId);
+          }
+          throw error;
+        }
+        for (const value of values) {
+          const object = value?.objectId && this.objects.get(value.objectId);
+          if (object) object.workerStop = stop;
+        }
+      }
+      return result;
+    }
+
+    async evaluateAtStop(expression, context, stopId) {
       const trimmed = expression.trim();
       if (!trimmed) return null;
       const module = this.module(context.rawModuleId);
@@ -316,9 +362,10 @@
           {name: 'state', value: {type: 'string', value: record.state, hasChildren: false}},
           {name: 'processor', value: {type: 'string', value: record.processor ?? '<unattached>', hasChildren: false}},
           {name: 'frames', value: {type: 'array', description: `${record.frames.length} logical frames`,
-            properties: record.frames.map((frame, index) => ({name: String(index), value: {
-              type: 'string', value: `${frame.function} (${frame.file}:${frame.line})`, hasChildren: false,
-            }}))}},
+            properties: record.frames.map((frame, index) => ({name: String(index), value: frame.base ? {
+              type: 'object', description: `${frame.function} (${frame.file}:${frame.line})`,
+              parkedFrame: frame, stopId,
+            } : {type: 'string', value: `${frame.function} (${frame.file}:${frame.line})`, hasChildren: false}}))}},
         ]}}));
         return this.snapshotObject(module, {type: 'array', description: `${records.length} Go goroutines`}, properties);
       }
@@ -456,12 +503,12 @@
       }
       const mapSpec = module.layout?.map;
       if (mapSpec && (runtimeTypeMatches(originalType, type, mapSpec.type_pattern, true) ||
-          resolvePointee(module, type)?.name?.startsWith('hash<'))) {
+          runtimeTypeName(resolvePointee(module, type))?.startsWith('hash<'))) {
         return this.mapRemote(module, originalType, type, located, stopId, mapSpec);
       }
       const channelSpec = module.layout?.channel;
       if (channelSpec && (runtimeTypeMatches(originalType, type, channelSpec.type_pattern, true) ||
-          resolvePointee(module, type)?.name?.startsWith('hchan<'))) {
+          runtimeTypeName(resolvePointee(module, type))?.startsWith('hchan<'))) {
         return this.channelRemote(module, originalType, type, located, stopId, channelSpec);
       }
       if (type.kind === 'pointer') {
@@ -527,7 +574,7 @@
         return {type: 'null', value: null, description: 'nil', hasChildren: false};
       }
       const displayType = originalType.name || type.name;
-      if (type.name !== spec.empty_type) {
+      if (runtimeTypeName(type) !== spec.empty_type) {
         const itabType = lookupType(module, spec.itab_type);
         const concreteField = fieldByName(resolveType(module, itabType), spec.itab_concrete_type);
         if (!concreteField) return null;
@@ -536,7 +583,7 @@
         if (typePointer === 0n) return null;
       }
       const dynamicName = await this.runtimeTypeName(module, typePointer, stopId);
-      const dynamicType = dynamicName ? lookupType(module, dynamicName) : null;
+      const dynamicType = dynamicName ? await this.interfaceValueType(module, typePointer, dynamicName, stopId) : null;
       const runtimeSpec = module.layout?.runtime_type;
       const runtimeType = resolveType(module, lookupType(module, runtimeSpec?.type_name));
       const kind = runtimeSpec?.kind ? await this.readNamedUnsigned(
@@ -575,6 +622,39 @@
       const flags = await this.readUnsigned(
           address + BigInt(flagField.offset), Math.max(1, flagType?.size || 1), stopId);
       return (flags & BigInt(spec.extra_star_flag)) !== 0n ? `*${name}` : name;
+    }
+
+    async interfaceValueType(module, address, name, stopId, depth = 0) {
+      const spec = module.layout?.runtime_type;
+      if (!spec?.kind_types) return lookupType(module, name);
+      if (depth > 16) return null;
+      const base = resolveType(module, lookupType(module, spec.type_name));
+      const flags = await this.readNamedUnsigned(module, base, address, spec.tflag, stopId);
+      const rawKind = await this.readNamedUnsigned(module, base, address, spec.kind, stopId);
+      if (flags === null || rawKind === null) return null;
+      const kind = rawKind & BigInt(spec.kind_mask);
+      const layout = resolveType(module, lookupType(module, spec.kind_types[String(kind)] || spec.type_name));
+      // Reflection uses package names; DWARF uses import paths. Resolve named
+      // types through their metadata instead of guessing from a short name.
+      if ((flags & BigInt(spec.named_flag)) !== 0n) {
+        const uncommon = resolveType(module, lookupType(module, spec.uncommon_type));
+        const pathField = fieldByName(uncommon, spec.package_path);
+        if ((flags & BigInt(spec.uncommon_flag)) === 0n || !layout?.size || !pathField) return null;
+        const path = await this.readGoString(module, resolveType(module, module.types.get(pathField.type)),
+            address + BigInt(layout.size + pathField.offset), stopId, 4096);
+        if (path === null) return null;
+        const dot = name.indexOf('.');
+        return lookupType(module, path && dot >= 0 ? path + name.slice(dot) : name);
+      }
+      if (kind === BigInt(spec.pointer_kind)) {
+        const element = await this.readNamedUnsigned(module, layout, address, spec.pointer_element, stopId);
+        if (!element) return null;
+        const elementName = await this.runtimeTypeName(module, element, stopId);
+        const elementType = elementName && await this.interfaceValueType(module, element, elementName, stopId, depth + 1);
+        if (!elementType) return null;
+        return lookupType(module, '*' + runtimeTypeName(elementType));
+      }
+      return lookupType(module, name);
     }
 
     async readGoString(module, type, address, stopId, limit) {
@@ -683,16 +763,39 @@
       const object = this.objects.get(objectId);
       if (!object) return [];
       const module = this.module(object.rawModuleId);
+      const properties = await this.withWorkerStop(module, () => this.getPropertiesAtStop(objectId), object.workerStop);
+      object.children = [...new Set([...(object.children || []),
+        ...properties.map(property => property.value?.objectId).filter(Boolean)])];
+      return properties;
+    }
+
+    async getPropertiesAtStop(objectId) {
+      const object = this.objects.get(objectId);
+      if (!object) return [];
+      const module = this.module(object.rawModuleId);
       if (object.kind === 'snapshot') {
         if (!object.resolvedProperties) {
           object.children = [];
           object.resolvedProperties = object.properties.map(property => {
+            if (property.value.parkedFrame) {
+              const {parkedFrame, stopId, ...summary} = property.value;
+              const child = this.storeObject(module, null, null, stopId, 'parked-frame', {frame: parkedFrame});
+              object.children.push(child);
+              return {...property, value: {...summary, objectId: child, hasChildren: true}};
+            }
             if (!property.value.properties) return property;
             const {properties, ...summary} = property.value;
             const value = this.snapshotObject(module, summary, properties);
             object.children.push(value.objectId);
             return {...property, value};
           });
+        }
+        return object.resolvedProperties;
+      }
+      if (object.kind === 'parked-frame') {
+        if (!object.resolvedProperties) {
+          object.resolvedProperties = await globalThis.LLGoWasmGoroutines.locals(this, module, object.frame, object.stopId);
+          object.children = object.resolvedProperties.map(property => property.value.objectId).filter(Boolean);
         }
         return object.resolvedProperties;
       }
@@ -706,7 +809,7 @@
         const dataField = type.fields.find(field => field.name === module.layout.slice.data);
         const pointerType = dataField ? resolveType(module, module.types.get(dataField.type)) : null;
         const elem = pointerType?.elem ? module.types.get(pointerType.elem) : null;
-        if (!elem || elem.size <= 0) return [];
+        if (!hasStorageSize(elem)) return [];
         const count = Number(object.length > BigInt(MAX_CHILDREN) ? BigInt(MAX_CHILDREN) : object.length);
         const result = [];
         for (let index = 0; index < count; ++index) {
@@ -728,7 +831,7 @@
       if (object.kind === 'channel') return this.channelProperties(module, object);
       if (type.kind === 'array') {
         const elem = module.types.get(type.elem);
-        if (!elem || elem.size <= 0) return [];
+        if (!hasStorageSize(elem)) return [];
         const count = Math.min(type.count, MAX_CHILDREN);
         const result = [];
         for (let index = 0; index < count; ++index) {
@@ -751,7 +854,7 @@
 
     async channelProperties(module, object) {
       const {length, capacity, buffer, receiveIndex, elementType} = object;
-      if (!elementType || elementType.size <= 0 || capacity === 0n || buffer === 0n) return [];
+      if (!hasStorageSize(elementType) || capacity === 0n || buffer === 0n) return [];
       const count = Number(length > BigInt(MAX_CHILDREN) ? BigInt(MAX_CHILDREN) : length);
       const result = [];
       for (let index = 0; index < count; ++index) {
@@ -834,8 +937,8 @@
       const topType = resolveType(module, module.types.get(topArray.elem));
       const keyStorageType = resolveType(module, module.types.get(keyArray.elem));
       const valueStorageType = resolveType(module, module.types.get(valueArray.elem));
-      if (!topType || !keyStorageType || !valueStorageType || topType.size <= 0 ||
-          keyStorageType.size <= 0 || valueStorageType.size <= 0) return null;
+      if (!topType || topType.size <= 0 ||
+          !hasStorageSize(keyStorageType) || !hasStorageSize(valueStorageType)) return null;
       const indirectKey = keyField.name === spec.bucket_indirect_keys;
       const indirectValue = valueField.name === spec.bucket_indirect_values;
       const keyType = indirectKey ? resolvePointee(module, keyStorageType) : keyStorageType;
@@ -887,10 +990,23 @@
 
   function runtimeTypeMatches(originalType, resolvedType, pattern, regexp = false) {
     if (!pattern) return false;
-    const names = new Set([originalType?.name, resolvedType?.name].filter(Boolean));
+    const names = new Set([runtimeTypeName(originalType), runtimeTypeName(resolvedType)].filter(Boolean));
     if (!regexp) return names.has(pattern);
     const expression = new RegExp(pattern);
     return [...names].some(name => expression.test(name));
+  }
+
+  function runtimeTypeName(type) {
+    // debug/dwarf renders named DW_TAG_structure_type entries as "struct X".
+    // LLGo's runtime names (string, []T, interface{}, hash<...>) refer to X.
+    return type?.kind === 'struct' ? type.name?.replace(/^struct /, '') : type?.name;
+  }
+
+  function hasStorageSize(type) {
+    // Zero-sized Go values still occupy logical container slots. An incomplete
+    // DWARF declaration must not be mistaken for a known empty value.
+    return type && Number.isSafeInteger(type.size) && type.size >= 0 &&
+        (type.size !== 0 || type.complete === true);
   }
 
   function lookupType(module, name) {

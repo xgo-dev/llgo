@@ -1253,7 +1253,7 @@ func f() { helper() }
 			t.Fatal("missing test function")
 		}
 		ir = ir[start : start+strings.Index(ir[start:], "\n}")+2]
-		for _, symbol := range []string{"PushCallerLocationFrame", "PopCallerLocationFrame", "RecordPanicLocation"} {
+		for _, symbol := range []string{"PushCallerLocationFrame", "PopCallerLocationFrame", "RecordPanicLocation", "SetWasmCallerFrameBase", "llvm.frameaddress"} {
 			if strings.Contains(ir, symbol) != enabled {
 				t.Fatalf("DebuggerFrames=%v: unexpected presence of %s:\n%s", enabled, symbol, ir)
 			}

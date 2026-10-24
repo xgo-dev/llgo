@@ -17,13 +17,20 @@ inputs:
     description: "Windows target GOARCH: 386, amd64, or arm64"
     required: false
     default: "amd64"
+  windows-msvc-dependencies:
+    description: "MSVC dependencies: full (includes demos) or runtime (compiler and benchmarks)"
+    required: false
+    default: "full"
 
 runs:
   using: "composite"
   steps:
     - name: Validate Windows toolchain profile
       if: runner.os == 'Windows'
+      id: windows_profile
       shell: pwsh
+      env:
+        VCPKG_MANIFEST_HASH: ${{ inputs.windows-msvc-dependencies == 'runtime' && hashFiles('.github/windows/vcpkg-runtime/vcpkg.json') || hashFiles('.github/windows/vcpkg/vcpkg.json') }}
       run: |
         if ("${{ inputs.windows-abi }}" -notin @("msvc", "mingw")) {
           throw "Unsupported Windows ABI profile: ${{ inputs.windows-abi }}"
@@ -31,6 +38,12 @@ runs:
         if ("${{ inputs.windows-arch }}" -notin @("386", "amd64", "arm64")) {
           throw "Unsupported Windows target architecture: ${{ inputs.windows-arch }}"
         }
+        if ("${{ inputs.windows-msvc-dependencies }}" -notin @("full", "runtime")) {
+          throw "Unsupported MSVC dependencies: ${{ inputs.windows-msvc-dependencies }}"
+        }
+        $manifest = if ("${{ inputs.windows-msvc-dependencies }}" -eq "runtime") { ".github/windows/vcpkg-runtime" } else { ".github/windows/vcpkg" }
+        "manifest=$manifest" >> $env:GITHUB_OUTPUT
+        "manifest-hash=$env:VCPKG_MANIFEST_HASH" >> $env:GITHUB_OUTPUT
         Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_WINDOWS_ABI=${{ inputs.windows-abi }}"
         Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_WINDOWS_ARCH=${{ inputs.windows-arch }}"
 
@@ -230,20 +243,21 @@ runs:
       id: windows_vcpkg_cache
       uses: actions/cache@v6
       with:
-        path: ${{ runner.tool_cache }}\llgo-vcpkg\${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}
-        key: llgo-vcpkg-${{ inputs.windows-arch }}-windows-${{ runner.arch }}-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}
+        path: ${{ runner.tool_cache }}\llgo-vcpkg\${{ steps.windows_profile.outputs.manifest-hash }}
+        key: llgo-vcpkg-${{ inputs.windows-arch }}-windows-${{ runner.arch }}-${{ steps.windows_profile.outputs.manifest-hash }}
 
     - name: Install Windows MSVC dependencies
       if: runner.os == 'Windows' && inputs.install-llvm == 'true' && inputs.windows-abi == 'msvc' && steps.windows_vcpkg_cache.outputs.cache-hit != 'true'
       shell: pwsh
       env:
         VCPKG_BASELINE: ddd0023b0eee70986e42ed49d9d4afb8098f212e
-        VCPKG_MANIFEST_HASH: ${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}
+        VCPKG_MANIFEST_HASH: ${{ steps.windows_profile.outputs.manifest-hash }}
+        VCPKG_MANIFEST_DIR: ${{ steps.windows_profile.outputs.manifest }}
       run: |
         $ErrorActionPreference = "Stop"
         $sourceRoot = Join-Path $env:RUNNER_TEMP "llgo-vcpkg-source"
         $installRoot = Join-Path $env:RUNNER_TOOL_CACHE "llgo-vcpkg\$env:VCPKG_MANIFEST_HASH"
-        $manifestRoot = Join-Path $env:GITHUB_WORKSPACE ".github\windows\vcpkg"
+        $manifestRoot = Join-Path $env:GITHUB_WORKSPACE $env:VCPKG_MANIFEST_DIR
         . (Join-Path $env:GITHUB_WORKSPACE ".github\windows\msvc-target.ps1")
         $target = Get-LLGoWindowsMSVCTarget -GoArch "${{ inputs.windows-arch }}"
 
@@ -280,7 +294,7 @@ runs:
       env:
         LLVM_VERSION: "22.1.8"
         LLVM_TARGET_VERSION: "22.1.8"
-        VCPKG_MANIFEST_HASH: ${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}
+        VCPKG_MANIFEST_HASH: ${{ steps.windows_profile.outputs.manifest-hash }}
       run: |
         $ErrorActionPreference = "Stop"
 
@@ -519,7 +533,11 @@ runs:
         if (-not (Test-Path $targetBuiltins)) {
           throw "Clang's $($target.Triple) compiler-rt builtins were not found at $targetBuiltins"
         }
-        foreach ($package in @("llvm-${{ inputs.llvm-version }}", "bdw-gc", "libffi", "libuv", "openssl", "libcjson", "sqlite3", "zlib")) {
+        $packages = @("llvm-${{ inputs.llvm-version }}", "bdw-gc", "libffi", "libuv", "zlib")
+        if ("${{ inputs.windows-msvc-dependencies }}" -eq "full") {
+          $packages += @("openssl", "libcjson", "sqlite3")
+        }
+        foreach ($package in $packages) {
           & $pkgconfWrapper --modversion $package
           if ($LASTEXITCODE -ne 0) {
             throw "pkg-config metadata for $package is unavailable"

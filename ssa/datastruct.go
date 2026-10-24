@@ -377,6 +377,10 @@ func (b Builder) Index(x, idx Expr, takeAddr func() (addr Expr, zero bool)) Expr
 func (b Builder) Slice(x, low, high, max Expr) (ret Expr) {
 	dbgInstrf("Slice %v, %v, %v\n", x.impl, low.impl, high.impl)
 	prog := b.Prog
+	// Preserve the original widths before FitIntSize truncates wide indices.
+	// Only signed indices that fit a native int use the smaller string entry.
+	nativeIndices := (low.IsNil() || prog.SizeOf(low.Type) <= prog.SizeOf(prog.Int())) &&
+		(high.IsNil() || prog.SizeOf(high.Type) <= prog.SizeOf(prog.Int()))
 	var nCap Expr
 	var nEltSize Expr
 	var base Expr
@@ -415,6 +419,8 @@ func (b Builder) Slice(x, low, high, max Expr) (ret Expr) {
 		ret.Type = x.Type
 		if prog.disableBoundsChecks {
 			ret.impl = b.stringSliceUnchecked(x, low, high).impl
+		} else if nativeIndices && lowSigned && highSigned {
+			ret.impl = b.InlineCall(b.Pkg.rtFunc("StringSlice"), x, low, high).impl
 		} else {
 			ret.impl = b.InlineCall(b.Pkg.rtFunc("StringSlice2"), x, lowArg, highArg, prog.BoolVal(lowSigned), prog.BoolVal(highSigned)).impl
 		}

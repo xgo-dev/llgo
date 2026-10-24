@@ -955,6 +955,12 @@ func usesNativePlatformToolchain(hostGOOS, hostGOARCH, targetGOOS, targetGOARCH 
 
 // UseTarget loads configuration from a target name (e.g., "rp2040", "wasi")
 func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (export Export, err error) {
+	return useTarget(targetName, level, ltoMode, compileWithConfig)
+}
+
+func useTarget(targetName string, level optlevel.Level, ltoMode lto.Mode,
+	buildLibrary func(compile.CompileConfig, string, compile.CompileOptions) ([]string, error),
+) (export Export, err error) {
 	resolver := targets.NewDefaultResolver()
 
 	config, err := resolver.Resolve(targetName)
@@ -1179,7 +1185,7 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 		if err != nil {
 			return
 		}
-		libcLDFlags, err = compileWithConfig(compileConfig, outputDir, compile.CompileOptions{
+		libcLDFlags, err = buildLibrary(compileConfig, outputDir, compile.CompileOptions{
 			CC:      export.CC,
 			Linker:  export.Linker,
 			CCFLAGS: ccflags,
@@ -1205,7 +1211,7 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 		if err != nil {
 			return
 		}
-		rtLibLDFlags, err = compileWithConfig(compileConfig, outputDir, compile.CompileOptions{
+		rtLibLDFlags, err = buildLibrary(compileConfig, outputDir, compile.CompileOptions{
 			CC:      export.CC,
 			Linker:  export.Linker,
 			CCFLAGS: ccflags,

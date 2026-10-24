@@ -490,7 +490,7 @@ func (b diBuilder) createMapType(name string, ty Type, mapType *types.Map) DITyp
 	runtimeMap := b.prog.rtType("Map")
 	key := b.prog.rawType(mapType.Key())
 	elem := b.prog.rawType(mapType.Elem())
-	hashName := fmt.Sprintf("hash<%s,%s>", mapType.Key(), mapType.Elem())
+	hashName := fmt.Sprintf("hash<%s,%s>", diTypeName(mapType.Key()), diTypeName(mapType.Elem()))
 	hash := b.createSyntheticStructPlaceholder(hashName, runtimeMap, pos)
 	hashPtr := b.di.CreatePointerType(llvm.DIPointerType{
 		Name:        "*" + hashName,
@@ -506,7 +506,7 @@ func (b diBuilder) createMapType(name string, ty Type, mapType *types.Map) DITyp
 
 	bucket := b.createMapBucketType(mapType, key, elem, pos)
 	bucketPtr := b.createDIPointerType(
-		fmt.Sprintf("*bucket<%s,%s>", mapType.Key(), mapType.Elem()),
+		fmt.Sprintf("*bucket<%s,%s>", diTypeName(mapType.Key()), diTypeName(mapType.Elem())),
 		bucket.ll,
 	)
 	replacements := map[string]llvm.Metadata{
@@ -522,7 +522,7 @@ func (b diBuilder) createMapBucketType(mapType *types.Map, key, elem Type,
 	pos token.Position) DIType {
 	bucketStorage := b.prog.rawType(ssaabi.MapBucketType(mapType, b.prog.sizes))
 	bucketStruct := bucketStorage.RawType().Underlying().(*types.Struct)
-	name := fmt.Sprintf("bucket<%s,%s>", key.RawType(), elem.RawType())
+	name := fmt.Sprintf("bucket<%s,%s>", diTypeName(key.RawType()), diTypeName(elem.RawType()))
 	bucket := b.createSyntheticStructPlaceholder(name, bucketStorage, pos)
 	overflow := b.createDIPointerType("*"+name, bucket.ll)
 	fields := make([]llvm.Metadata, bucketStruct.NumFields())
@@ -558,7 +558,7 @@ func (b diBuilder) createChanType(name string, ty Type, chanType *types.Chan) DI
 	pos := token.Position{}
 	ptr := b.prog.VoidPtr()
 	runtimeChan := b.prog.rtType("Chan")
-	chanName := fmt.Sprintf("hchan<%s>", chanType.Elem())
+	chanName := fmt.Sprintf("hchan<%s>", diTypeName(chanType.Elem()))
 	channel := b.createSyntheticStructPlaceholder(chanName, runtimeChan, pos)
 	channelPtr := b.di.CreatePointerType(llvm.DIPointerType{
 		Name:        "*" + chanName,
@@ -576,11 +576,11 @@ func (b diBuilder) createChanType(name string, ty Type, chanType *types.Chan) DI
 	waiterPtrType := queueStruct.Field(structFieldIndex(queueStruct, "first")).Type().(*types.Pointer)
 	waiter := b.prog.rawType(waiterPtrType.Elem())
 
-	waiterName := fmt.Sprintf("sudog<%s>", chanType.Elem())
+	waiterName := fmt.Sprintf("sudog<%s>", diTypeName(chanType.Elem()))
 	typedWaiter := b.createSyntheticStructPlaceholder(waiterName, waiter, pos)
 	typedWaiterPtr := b.createDIPointerType("*"+waiterName, typedWaiter.ll)
 	elem := b.prog.rawType(chanType.Elem())
-	elemPtr := b.createDIPointerType("*"+chanType.Elem().String(), b.diType(elem, pos).ll)
+	elemPtr := b.createDIPointerType("*"+diTypeName(chanType.Elem()), b.diType(elem, pos).ll)
 	waiterReplacements := map[string]llvm.Metadata{
 		"prev": typedWaiterPtr,
 		"next": typedWaiterPtr,
@@ -591,7 +591,7 @@ func (b diBuilder) createChanType(name string, ty Type, chanType *types.Chan) DI
 	b.finishSyntheticStruct(typedWaiter, waiterName, waiter,
 		b.syntheticStructFields(typedWaiter, waiter, waiterReplacements, pos), pos)
 
-	queueName := fmt.Sprintf("waitq<%s>", chanType.Elem())
+	queueName := fmt.Sprintf("waitq<%s>", diTypeName(chanType.Elem()))
 	typedQueue := b.createSyntheticStructPlaceholder(queueName, queue, pos)
 	queueReplacements := map[string]llvm.Metadata{
 		"first": typedWaiterPtr,
@@ -835,11 +835,16 @@ func (b diBuilder) dbgValue(v Expr, dv DIVar, scope DIScope, pos token.Position,
 	)
 }
 
+// Match runtime metadata, including main packages and source overlays.
+func diTypeName(t types.Type) string {
+	return types.TypeString(t, ssaabi.PathOf)
+}
+
 func (b diBuilder) diType(t Type, pos token.Position) DIType {
 	if hasTypeParam(t.RawType()) {
 		return &aDIType{}
 	}
-	name := t.RawType().String()
+	name := diTypeName(t.RawType())
 	return b.diTypeEx(name, t, pos)
 }
 

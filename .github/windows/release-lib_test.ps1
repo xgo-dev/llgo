@@ -27,12 +27,12 @@ function Expect-Failure([scriptblock]$Operation, [string]$Pattern) {
 try {
   $systemDirectory = Join-Path $temporary 'system'
   New-Item -ItemType Directory $systemDirectory | Out-Null
-  foreach ($goArch in @('amd64', 'arm64')) {
+  foreach ($goArch in @('amd64', 'arm64', '386')) {
     $source = Join-Path $temporary $goArch
     $stage = Join-Path $temporary "$goArch stage"
     New-Item -ItemType Directory $source, $stage | Out-Null
-    $arch = @{ amd64 = 'x86_64'; arm64 = 'aarch64' }[$goArch]
-    $machine = @{ amd64 = 'x64'; arm64 = 'arm64' }[$goArch]
+    $arch = @{ amd64 = 'x86_64'; arm64 = 'aarch64'; '386' = 'i686' }[$goArch]
+    $machine = @{ amd64 = 'x64'; arm64 = 'arm64'; '386' = 'x86' }[$goArch]
     Set-Content (Join-Path $source 'leaf.c') '__declspec(dllexport) int leaf(void) { return 42; }'
     Set-Content (Join-Path $source 'middle.c') '__declspec(dllimport) int leaf(void); __declspec(dllexport) int middle(void) { return leaf(); }'
     Set-Content (Join-Path $source 'main.c') '__declspec(dllimport) int middle(void); int entry(void) { return middle(); }'
@@ -61,6 +61,27 @@ try {
     Remove-Item (Join-Path $stage 'leaf.dll')
     Expect-Failure { Copy-ReleaseDLLs @arguments -CheckOnly } 'leaf.dll.*absent'
     Copy-ReleaseDLLs @arguments
+    if ($goArch -eq '386' -and [Environment]::Is64BitOperatingSystem) {
+      # A DLL present only in the 64-bit OS directory must not satisfy a
+      # 32-bit release's dependency audit on a 64-bit build machine.
+      $savedSystemRoot = $env:SystemRoot
+      try {
+        $env:SystemRoot = Join-Path $temporary 'Windows'
+        $system32 = Join-Path $env:SystemRoot 'System32'
+        $systemX86 = Join-Path $env:SystemRoot 'SysWOW64'
+        New-Item -ItemType Directory -Force $system32, $systemX86 | Out-Null
+        Remove-Item (Join-Path $stage 'leaf.dll')
+        Copy-Item (Join-Path $source 'leaf.dll') $system32
+        $audit = $arguments.Clone()
+        $audit.Remove('SystemDirectory')
+        Expect-Failure { Copy-ReleaseDLLs @audit -CheckOnly } 'leaf.dll.*absent'
+        Copy-Item (Join-Path $source 'leaf.dll') $systemX86
+        Copy-ReleaseDLLs @audit -CheckOnly
+      } finally {
+        $env:SystemRoot = $savedSystemRoot
+      }
+      Copy-ReleaseDLLs @arguments
+    }
     $otherArch = if ($goArch -eq 'amd64') { 'arm64' } else { 'amd64' }
     Expect-Failure {
       Assert-ReleasePE -ReadObj $ReadObj -Path $executable -GoArch $otherArch -Profile 'mingw'

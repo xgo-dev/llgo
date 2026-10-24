@@ -2,6 +2,8 @@
 
 package runtime
 
+import rt "github.com/xgo-dev/llgo/runtime/internal/runtime"
+
 // runtimeTimer must match time.runtimeTimer (and runtime.timer) layout.
 type runtimeTimer struct {
 	pp       uintptr
@@ -12,6 +14,7 @@ type runtimeTimer struct {
 	seq      uintptr
 	nextwhen int64
 	status   uint32
+	fake     *rt.SynctestTimer
 }
 
 type runtimeTimerCallback struct {

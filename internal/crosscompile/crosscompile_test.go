@@ -392,6 +392,23 @@ func TestEnableWasmReflectLibffi(t *testing.T) {
 	}
 }
 
+// Configuration assertions do not need freshly compiled picolibc, newlib and
+// compiler-rt archives for every optimization/LTO combination. Keep real target
+// resolution and library plans; real compilation stays in TestUseTargetESPClang,
+// the compile package tests, and the ABI and embedded integration suites.
+func targetConfiguration(t *testing.T, name string, level optlevel.Level, mode lto.Mode) (Export, error) {
+	t.Helper()
+	skipDownload := needSkipDownload
+	needSkipDownload = true
+	defer func() { needSkipDownload = skipDownload }()
+	return useTarget(name, level, mode, func(cfg compile.CompileConfig, _ string, options compile.CompileOptions) ([]string, error) {
+		if len(cfg.Groups) == 0 || options.CC == "" {
+			t.Fatal("missing target library build plan")
+		}
+		return nil, nil
+	})
+}
+
 func TestUseTarget(t *testing.T) {
 	// Test cases for target-based configuration
 	testCases := []struct {
@@ -465,7 +482,7 @@ func TestUseTarget(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			export, err := UseTarget(tc.targetName, optlevel.Oz, lto.Thin)
+			export, err := targetConfiguration(t, tc.targetName, optlevel.Oz, lto.Thin)
 
 			if tc.expectError {
 				if err == nil {
@@ -1123,7 +1140,7 @@ func TestTargetDebugInfoPolicy(t *testing.T) {
 }
 
 func TestOptimizationFlagPlacement(t *testing.T) {
-	export, err := UseTarget("rp2040", optlevel.Oz, lto.Off)
+	export, err := targetConfiguration(t, "rp2040", optlevel.Oz, lto.Off)
 	if err != nil {
 		t.Fatalf("UseTargetWithOptLevel(rp2040) failed: %v", err)
 	}
@@ -1437,7 +1454,7 @@ func hasFlagValue(flags []string, flag, value string) bool {
 func TestUseTargetCodegenFlagsOnlyAddedToLDFlagsWithLTO(t *testing.T) {
 	const target = "k210"
 
-	noLTO, err := UseTarget(target, optlevel.Oz, lto.Off)
+	noLTO, err := targetConfiguration(t, target, optlevel.Oz, lto.Off)
 	if err != nil {
 		t.Fatalf("UseTarget(%q, off) error: %v", target, err)
 	}
@@ -1454,7 +1471,7 @@ func TestUseTargetCodegenFlagsOnlyAddedToLDFlagsWithLTO(t *testing.T) {
 		t.Fatalf("missing -mabi=lp64 in CCFLAGS: %v", noLTO.CCFLAGS)
 	}
 
-	withLTO, err := UseTarget(target, optlevel.Oz, lto.Thin)
+	withLTO, err := targetConfiguration(t, target, optlevel.Oz, lto.Thin)
 	if err != nil {
 		t.Fatalf("UseTarget(%q, thin) error: %v", target, err)
 	}
@@ -1474,7 +1491,7 @@ func TestUseTargetCodegenFlagsOnlyAddedToLDFlagsWithLTO(t *testing.T) {
 		t.Fatalf("missing -mllvm -target-abi=lp64 in LDFLAGS when LTO enabled: %v", withLTO.LDFLAGS)
 	}
 
-	fullLTO, err := UseTarget(target, optlevel.Oz, lto.Full)
+	fullLTO, err := targetConfiguration(t, target, optlevel.Oz, lto.Full)
 	if err != nil {
 		t.Fatalf("UseTarget(%q, full) error: %v", target, err)
 	}

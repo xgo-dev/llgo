@@ -243,6 +243,7 @@ else
     for active_index in "${!active_pids[@]}"; do
       if [ "${active_pids[$active_index]}" = "$finished_pid" ]; then
         cat "${active_logs[$active_index]}"
+        echo "Finished ${active_dirs[$active_index]} (exit $finished_status)"
         if [ "$finished_status" -ne 0 ]; then
           failed=$((failed+1))
           failed_cases="$failed_cases\n* :x: ${active_dirs[$active_index]}"
@@ -263,6 +264,7 @@ else
     idx=$((idx+1))
     log="$tmp_root/$(printf '%04d' "$idx").log"
     output_dir="$tmp_root/$(printf '%04d' "$idx")"
+    echo "Starting $label"
     (run_case "$d" "$target" "$output_dir") >"$log" 2>&1 &
     pid=$!
     active_pids+=("$pid")

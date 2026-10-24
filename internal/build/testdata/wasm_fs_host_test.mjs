@@ -33,6 +33,7 @@ function loadShim(extra = {}) {
     Object,
     Function,
     JSON,
+    queueMicrotask,
     ...extra,
   };
   context.globalThis = context;
@@ -79,6 +80,7 @@ function encoder() {
     assert(!err, `stderr write: ${err && err.message}`);
     assertEq(n, stderr.length, "stderr bytes written");
   });
+  await Promise.resolve();
   assertEq(printed.length, 0, "stdout without newline stays buffered");
   assertEq(printedErr.join("\n"), "stderr-line", "stderr must not mix with stdout");
   ctx.fs.writeSync(1, enc.encode("!\n"));
@@ -92,9 +94,11 @@ function encoder() {
   ctx.fs.writeSync(1, encoder().encode("no-nl"));
   assertEq(printed.length, 0, "partial stdout stays buffered");
   ctx.fs.fsync(1, (err) => { assert(!err, `fsync: ${err && err.message}`); });
+  await Promise.resolve();
   assertEq(printed.join("\n"), "no-nl", "fsync flushes stdout without newline");
   ctx.fs.writeSync(1, encoder().encode("again"));
   ctx.fs.close(1, (err) => { assert(!err, `close: ${err && err.message}`); });
+  await Promise.resolve();
   assertEq(printed.join("\n"), "no-nl\nagain", "close flushes remaining stdout");
 }
 
@@ -145,6 +149,8 @@ function encoder() {
     opened = true;
     assert(err && err.code === "ENOSYS", `open without FS: ${err && err.code}`);
   });
+  assert(!opened, "error callback must wait for the caller to return");
+  await Promise.resolve();
   assert(opened, "open callback ran");
   const mem = {
     files: Object.create(null),
@@ -160,10 +166,15 @@ function encoder() {
     getStreamChecked(fd) { return { fd }; },
   };
   ctx.llgoAttachWasmFS({ FS: mem, print: (line) => printed.push(line) });
+  opened = false;
   ctx.fs.open("/tmp/review.txt", 64, 0o666, (err, fd) => {
+    opened = true;
     assert(!err, `open with attached FS: ${err && err.message}`);
     assertEq(fd, 10, "open fd");
   });
+  assert(!opened, "success callback must wait for the caller to return");
+  await Promise.resolve();
+  assert(opened, "successful open callback ran");
   assertEq(ctx.fs.openSync("/tmp/review2.txt", 64, 0o666), 10, "openSync fd");
   const n = ctx.fs.writeSync(10, encoder().encode("hi"), 0, 2, null);
   assertEq(n, 2, "writeSync bytes");
@@ -175,6 +186,22 @@ function encoder() {
   assertEq(ctx.path.resolve("/a", "b", "/c", "d"), "/c/d", "path.resolve resets on absolute segment");
   assertEq(ctx.path.resolve(1, "x"), "/tmp/1/x", "path.resolve stringifies non-string segments");
   assertEq(ctx.process.cwd(), "/tmp", "process.cwd uses attached FS");
+
+  let depth = 0;
+  let maxDepth = 0;
+  let remaining = 128;
+  await new Promise((resolve, reject) => {
+    const next = () => ctx.fs.open("/tmp/review.txt", 64, 0o666, (err) => {
+      if (err) return reject(err);
+      depth++;
+      maxDepth = Math.max(maxDepth, depth);
+      if (--remaining) next();
+      else resolve();
+      depth--;
+    });
+    next();
+  });
+  assertEq(maxDepth, 1, "chained filesystem callbacks must not grow the JS stack");
 }
 
 {

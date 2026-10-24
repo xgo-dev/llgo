@@ -1,6 +1,15 @@
 #include <stdarg.h>
 #include <stdint.h>
 
+int32_t variadic_method_value_check(int32_t marker, ...) {
+    va_list args;
+    va_start(args, marker);
+    int a = va_arg(args, int);
+    int b = va_arg(args, int);
+    va_end(args);
+    return marker == 7 && a == 100 && b == 200 ? 42 : -1;
+}
+
 int32_t variadic_method_check(const int32_t *marker, ...) {
     if (*marker == 0) return 42;
     if (*marker != 7) return -1;

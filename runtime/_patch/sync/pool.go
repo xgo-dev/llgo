@@ -51,7 +51,7 @@ type Pool struct {
 
 	// Keep the standard-library field sequence: the overlay is compiled
 	// against the exported sync.Pool type data even though LLGo's 1:1 backend
-	// uses one dynamically allocated TLS local rather than a [P] array.
+	// stores each pool's local in a per-thread map behind one shared TLS key.
 	local     unsafe.Pointer // local fixed-size per-P pool, actual type is [P]poolLocal
 	localSize uintptr        // size of the local array
 
@@ -117,8 +117,8 @@ func (p *Pool) Get() any {
 }
 
 // pin returns the Pool cache for the current execution resource. LLGo's
-// current 1:1 P/M/thread binding lets the dynamic pthread TLS slot model the
-// per-P lifetime; the returned P id is therefore always zero.
+// current 1:1 P/M/thread binding lets a per-thread map entry model the per-P
+// lifetime; the returned P id is therefore always zero.
 func (p *Pool) pin() (*poolLocal, int) {
 	// Check whether p is nil to get a panic.
 	// Otherwise the nil dereference happens while the m is pinned,
@@ -160,8 +160,9 @@ func (p *Pool) getSlow(pid int) any {
 }
 
 // The standard cleanup operates on a per-P array stored in Pool.local. LLGo
-// stores a dynamic TLS handle there instead and releases its locals at thread
-// exit, so the runtime GC hook must not reinterpret that pointer.
+// stores an opaque pool identity there and retains pools and their locals in
+// per-thread maps until thread exit. The runtime GC hook must not reinterpret
+// that identity as an array. Periodic GC cleanup is currently unsupported.
 func poolCleanup() {}
 
 // Implemented in runtime. Keeping the dynamic TLS implementation behind these

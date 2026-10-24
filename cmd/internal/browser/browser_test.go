@@ -215,6 +215,14 @@ func TestChromeLanguageExtension(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
+	t.Logf("browser artifact build ID: %s", session.Bundle.Index.BuildID)
+	for role, path := range map[string]string{"deployment": session.Bundle.MainPath, "symbols": session.Bundle.SymbolsPath} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("browser artifact %s: %s (%d bytes)", role, filepath.Base(path), info.Size())
+	}
 	profile := t.TempDir()
 	profileData := filepath.Join(profile, "profile")
 	extension := filepath.Join(profile, "extension")
@@ -248,6 +256,7 @@ func TestChromeLanguageExtension(t *testing.T) {
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
+	session.StartWorkerControl(context.Background(), profileData)
 	done := make(chan error, 1)
 	go func() { done <- command.Wait() }()
 	defer func() {

@@ -54,7 +54,7 @@ Other targets may not provide every OS service or implementation-specific runtim
 
 | Target | Current coverage |
 | --- | --- |
-| Native | Linux amd64/arm64, macOS amd64/arm64, and Windows amd64/arm64 (MSVC and MinGW) release builds; primary CI on Linux amd64, macOS arm64, and Windows toolchain profiles |
+| Native | Linux amd64/arm64, macOS amd64/arm64, and Windows 386/amd64/arm64 (MSVC and MinGW) release builds; primary CI on Linux amd64, macOS arm64, and Windows toolchain profiles |
 | WebAssembly | `js/wasm` and `wasip1/wasm` builds; WASI and Emscripten CI coverage |
 | Embedded | [`-target`](doc/Embedded_Cmd.md) configurations for supported boards and MCUs, with selected QEMU/emulator smoke tests |
 
@@ -138,11 +138,11 @@ values, and pointers qualify.
 
 Value receivers, aggregate fixed parameters or results, multiple results,
 Wasm, and explicit `-target` profiles (including custom native profiles) remain
-outside this support. Their existing wrapper lowering can silently drop the
-incoming ellipsis; for example, a promoted value-receiver method called through
-an interface still loses arguments at O0. Valid LLVM IR for an excluded wrapper
-does not establish correct argument forwarding. Support and clear diagnostics
-for these forms are tracked in [#2855](https://github.com/xgo-dev/llgo/issues/2855).
+outside this support. Selecting an unsupported forwarding wrapper through an
+interface conversion, method expression, or bound method produces a compiler
+error naming the method, target, and reason forwarding is unsupported. Call the C-linked method
+or function directly with explicit C-compatible arguments when forwarding is
+unavailable. Unused synthetic wrappers do not prevent those direct calls.
 
 #### Windows API
 
@@ -425,7 +425,21 @@ Homebrew's versioned LLVM 22 formula does not ship LLDB and there is no `lldb@22
 
 ### on Linux
 
+The APT/YUM configurations below accept packages without GPG signature verification
+(`trusted=yes` / `gpgcheck=0`); downloads use HTTPS.
+
 #### Debian/Ubuntu
+
+Install the latest stable release for amd64 or arm64 from the APT repository:
+
+```sh
+echo 'deb [trusted=yes] https://pkgs.goplus.org/apt/ /' | sudo tee /etc/apt/sources.list.d/goplus.list
+sudo apt-get update
+sudo apt-get install -y llgo
+llgo version
+```
+
+For source builds, install the build dependencies:
 
 <!-- embedme doc/_readme/scripts/install_ubuntu.sh#L2-L1000 -->
 
@@ -453,9 +467,25 @@ export CGO_LDFLAGS="$($LLVM_CONFIG --ldflags) $($LLVM_CONFIG --libs all)"
 
 #### Fedora Linux 44 or newer
 
-Fedora 44 and 45 ship LLVM 22 as the default LLVM stack. Fedora 43 still
-ships LLVM 21 and is not a supported default-toolchain environment for this
-LLGo release.
+Install the latest stable release for amd64 or arm64 from the YUM/DNF repository:
+
+```sh
+sudo tee /etc/yum.repos.d/fury.repo > /dev/null <<'EOF'
+[fury]
+name=goplus (Gemfury)
+baseurl=https://pkgs.goplus.org/yum/
+enabled=1
+gpgcheck=0
+EOF
+sudo dnf install -y llgo
+llgo version
+```
+
+With YUM, use `sudo yum install -y llgo` for the installation command.
+
+For source builds, Fedora 44 and 45 ship LLVM 22 as the default LLVM stack.
+Fedora 43 still ships LLVM 21 and is not a supported default-toolchain
+environment for this LLGo release.
 
 ```sh
 sudo dnf install -y llvm-devel clang-devel lld lldb libcxx-devel llvm-libunwind-devel \
@@ -474,11 +504,11 @@ llgo run .
 
 ### on Windows
 
-The release workflow builds four integrated Windows variants, each as a ZIP: `llgo<VERSION>.windows-{amd64,arm64}-{msvc,mingw}.zip`. Check the [release assets](https://github.com/xgo-dev/llgo/releases) for availability in each version. Add the extracted `bin` directory to `PATH`; the archives keep the same `runtime`, `targets`, and `crosscompile/clang` layout as Unix releases. The MSVC compiler links LLVM statically; MinGW archives include the native LLVM and C++ DLL dependencies beside `llgo.exe`.
+The release workflow builds six integrated Windows variants, each as a ZIP: `llgo<VERSION>.windows-{386,amd64,arm64}-{msvc,mingw}.zip`. Check the [release assets](https://github.com/xgo-dev/llgo/releases) for availability in each version. Add the extracted `bin` directory to `PATH`; the archives keep the same `runtime`, `targets`, and `crosscompile/clang` layout as Unix releases. Each architecture's MSVC and MinGW archives contain the same statically linked, DLL-free `llgo.exe`.
 
 See [Windows release dependencies and PowerShell setup](WINDOWS.md) for the external tools, ABI-specific libraries, and pkg-config configuration needed to compile native programs. The document is included in every Windows ZIP.
 
-Use the archive matching your native architecture and toolchain profile. Native programs still need the corresponding SDK/CRT, Clang, and dependencies described below: Visual Studio's C++ developer environment for MSVC, or MSYS2 `CLANG64` (`amd64`) / `CLANGARM64` (`arm64`) for MinGW. The bundled ESP Clang matches the host architecture: ARM64 archives contain native ARM64 ESP tools and DLLs for both MSVC and MinGW variants.
+Use the archive matching your native architecture and toolchain profile. Native programs still need the corresponding SDK/CRT, Clang, and dependencies described below: Visual Studio's C++ developer environment for MSVC, or MSYS2 `CLANG64` (`amd64`) / `CLANGARM64` (`arm64`) for MinGW. For `386`, configure the native i686 MSVC or MinGW environment described in [WINDOWS.md](WINDOWS.md); automatic dependency installation is unavailable. The bundled ESP Clang matches the host architecture: ARM64 archives contain native ARM64 ESP tools and DLLs for both MSVC and MinGW variants.
 
 The recommended GNU-hosted setup is an MSYS2 `CLANG64` shell. Install the LLVM 22 stack and LLGo's native dependencies, then provide the versioned pkg-config metadata used by the Go/C++ bindings:
 

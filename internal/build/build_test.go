@@ -3,6 +3,7 @@ package build
 import (
 	"bytes"
 	"debug/macho"
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	gobuild "go/build"
@@ -1515,17 +1516,38 @@ func TestExtest(t *testing.T) {
 		outputChan <- data.String()
 	}()
 
-	var testingBuilds int
-	conf := &Config{Mode: ModeTest, BuildParallelism: 2}
-	conf.ModuleHook = func(pkg Package) {
-		if pkg.PkgPath == "testing" {
-			testingBuilds++
-		}
-	}
+	// ModuleHook forces the coordinator backend. Count the shared package
+	// through tracing so the same build also exercises the native parallel DAG.
+	trace := filepath.Join(t.TempDir(), "build.json")
+	conf := &Config{Mode: ModeTest, BuildParallelism: 2, BuildTrace: trace}
 	mockRun([]string{"../../cl/_testgo/runextest/..."}, conf)
 
 	w.Close()
 	got := <-outputChan
+	data, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []buildTraceEvent
+	if err := json.Unmarshal(data, &events); err != nil {
+		t.Fatal(err)
+	}
+	var testingBuilds int
+	var isolated bool
+	for _, event := range events {
+		if event.Phase != "X" {
+			continue
+		}
+		if event.Name == "backend+publish testing" {
+			testingBuilds++
+		}
+		if event.Args["class"] == "isolated" {
+			isolated = true
+		}
+	}
+	if !isolated {
+		t.Error("native test DAG did not use the isolated backend")
+	}
 	if testingBuilds != 1 {
 		t.Errorf("testing package builds = %d, want 1 shared build", testingBuilds)
 	}
@@ -1542,10 +1564,6 @@ func TestExtest(t *testing.T) {
 			t.Errorf("output does not contain result for %s:\n%s", pkg, got)
 		}
 	}
-}
-
-func TestExtestNativeTestDAG(t *testing.T) {
-	mockRun([]string{"../../cl/_testgo/runextest/..."}, &Config{Mode: ModeTest, BuildParallelism: 2})
 }
 
 func TestExtestNativeTestDAGFailFast(t *testing.T) {
@@ -3216,6 +3234,17 @@ func TestDoReportsAltPackageLocalityDirectiveError(t *testing.T) {
 	runtimePkgDir := filepath.Join(runtimeDir, "internal", "runtime")
 	if err := os.MkdirAll(runtimePkgDir, 0o755); err != nil {
 		t.Fatal(err)
+	}
+	// Keep the source-reuse entry points so this minimal runtime reaches the
+	// invalid locality directive below instead of failing source selection.
+	for _, name := range []string{"utf8.go", "utf8_index.go", "utf8_index_go127.go"} {
+		data, err := os.ReadFile(filepath.Join(env.LLGoRuntimeDir(), "internal", "runtime", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(runtimePkgDir, name), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(runtimeDir, "go.mod"), []byte("module github.com/xgo-dev/llgo/runtime\n\ngo 1.24.0\n"), 0o644); err != nil {
 		t.Fatal(err)

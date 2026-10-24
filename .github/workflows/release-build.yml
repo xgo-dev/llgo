@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
+  group: release-build.yml-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 env:
@@ -28,7 +28,7 @@ jobs:
   ci-gate:
     name: CI gate (Release build)
     needs: prepare
-    if: always()
+    if: always() && !cancelled()
     runs-on: ${{ fromJSON(needs.prepare.outputs.linux_runner || '["ubuntu-24.04"]') }}
     steps:
       - name: Verify CI preparation succeeded
@@ -196,14 +196,13 @@ jobs:
           retention-days: 3
           include-hidden-files: true
 
-  build-windows:
+  build-windows-compiler:
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: [prepare, build]
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        abi: [msvc, mingw]
         goarch: [amd64, arm64]
         include:
           - goarch: amd64
@@ -211,12 +210,12 @@ jobs:
           - goarch: arm64
             os: windows-11-arm
     runs-on: ${{ matrix.os }}
-    steps:
+    steps: &windows-compiler-steps
       - uses: actions/checkout@v7
       - name: Install build dependencies
         uses: ./.github/actions/setup-deps
         with:
-          windows-abi: ${{ matrix.abi }}
+          windows-abi: msvc
           windows-arch: ${{ matrix.goarch }}
       - name: Set up Go
         uses: ./.github/actions/setup-go
@@ -224,17 +223,17 @@ jobs:
           # On windows-11-arm, both MinGW and MSVC build natively.
           architecture: ${{ matrix.os == 'windows-11-arm' && 'arm64' || 'x64' }}
       - name: Cache ARM64 MSVC release SDK archive
-        if: matrix.abi == 'msvc' && matrix.goarch == 'arm64'
+        if: matrix.goarch == 'arm64'
         uses: actions/cache@v6
         with:
           path: ${{ runner.tool_cache }}/llgo-release-downloads/llvm-arm64
           key: llgo-release-llvm-archive-v1-de718c58ebbc5f61d58c17b90457fcf42983bc2c4a4aba3e010d108713bfd7f1
-      - name: Cache ESP release archive
+      - name: Cache Windows x86 LLVM SDK archive
+        if: matrix.goarch == '386'
         uses: actions/cache@v6
         with:
-          path: ${{ runner.tool_cache }}/llgo-release-downloads/esp
-          key: llgo-release-esp-archive-v2-${{ matrix.goarch }}-${{ hashFiles('.github/windows/build-release.ps1') }}
-          enableCrossOsArchive: true
+          path: ${{ runner.tool_cache }}/llgo-release-downloads/llvm-x86
+          key: llgo-release-llvm-x86-v1-${{ hashFiles('.github/windows/espressif-toolchain.json') }}
       - name: Download release metadata
         uses: actions/download-artifact@v8
         with:
@@ -252,11 +251,77 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'WinGet manifest tests failed' }
           ./.github/windows/release-lib_test.ps1
           ./.github/windows/release-build_test.ps1
+      - name: Build the shared host compiler
+        shell: pwsh
+        run: >-
+          ./.github/windows/build-compiler.ps1
+          -GoArch '${{ matrix.goarch }}'
+          -OutputDirectory '${{ runner.temp }}/llgo-windows-compiler'
+      - name: Upload shared host compiler
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-host-compiler-${{ matrix.goarch }}
+          path: ${{ runner.temp }}/llgo-windows-compiler
+          if-no-files-found: error
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 3
+
+  # Keep x86 host qualification separate while sharing compiler/packaging steps.
+  build-windows-compiler-x86:
+    if: needs.prepare.outputs.run_code_ci == 'true'
+    needs: [prepare, build]
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: ['386']
+        os: [windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps: *windows-compiler-steps
+
+  build-windows:
+    if: needs.prepare.outputs.run_code_ci == 'true'
+    needs: [prepare, build, build-windows-compiler]
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [msvc, mingw]
+        goarch: [amd64, arm64]
+        include:
+          - goarch: amd64
+            os: windows-2022
+          - goarch: arm64
+            os: windows-11-arm
+    runs-on: ${{ matrix.os }}
+    steps: &windows-package-steps
+      - uses: actions/checkout@v7
+      - name: Cache ESP release archive
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.tool_cache }}/llgo-release-downloads/esp
+          key: llgo-release-esp-archive-v3-${{ matrix.goarch }}-${{ hashFiles('.github/windows/espressif-toolchain.json') }}
+          enableCrossOsArchive: true
+      - name: Download release metadata
+        uses: actions/download-artifact@v8
+        with:
+          name: llgo-release-metadata
+          path: .windows-dist
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Download shared host compiler
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-host-compiler-${{ matrix.goarch }}
+          path: ${{ runner.temp }}/llgo-windows-compiler
       - name: Build integrated Windows archive
         shell: pwsh
         run: >-
           ./.github/windows/build-release.ps1
           -Profile '${{ matrix.abi }}' -GoArch '${{ matrix.goarch }}'
+          -HostCompilerDirectory '${{ runner.temp }}/llgo-windows-compiler'
       - name: Upload Windows archive
         uses: actions/upload-artifact@v7
         with:
@@ -268,6 +333,19 @@ jobs:
           retention-days: 3
           include-hidden-files: true
           compression-level: 0
+
+  build-windows-x86:
+    if: needs.prepare.outputs.run_code_ci == 'true'
+    needs: [prepare, build, build-windows-compiler-x86]
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [msvc, mingw]
+        goarch: ['386']
+        os: [windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps: *windows-package-steps
 
   test-windows-artifacts:
     if: needs.prepare.outputs.run_code_ci == 'true'
@@ -284,7 +362,7 @@ jobs:
           - goarch: arm64
             os: windows-11-arm
     runs-on: ${{ matrix.os }}
-    steps:
+    steps: &windows-test-steps
       - uses: actions/checkout@v7
       - name: Set up Go
         uses: ./.github/actions/setup-go
@@ -302,6 +380,7 @@ jobs:
             throw 'Could not determine the LLGo version from the Windows archive'
           }
           $env:LLGO_VERSION = $Matches[1]
+          $env:LLGO_ARCH = '${{ matrix.goarch }}'
           $env:LLGO_ABI = '${{ matrix.abi }}'
           $env:LLGO_ARCHIVE_PATH = $archive.FullName
           $env:LLGO_INSTALL_ROOT = Join-Path $env:RUNNER_TEMP 'llgo-release-install'
@@ -353,9 +432,22 @@ jobs:
           ./.github/windows/test-release.ps1
           -Profile '${{ matrix.abi }}' -GoArch '${{ matrix.goarch }}'
 
+  test-windows-artifacts-x86:
+    if: needs.prepare.outputs.run_code_ci == 'true'
+    needs: [prepare, build-windows-x86]
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [msvc, mingw]
+        goarch: ['386']
+        os: [windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps: *windows-test-steps
+
   prepare-winget:
     if: needs.prepare.outputs.run_code_ci == 'true'
-    needs: [prepare, test-windows-artifacts]
+    needs: [prepare, test-windows-artifacts, test-windows-artifacts-x86]
     runs-on: ${{ fromJSON(needs.prepare.outputs.linux_runner) }}
     steps:
       - uses: actions/checkout@v7
@@ -521,9 +613,11 @@ jobs:
     permissions:
       contents: write
       packages: write
-    needs: [prepare, prepare-winget, test-artifacts, test-windows-artifacts, test-linux-distributions, populate-linux-sysroot]
+    needs: [prepare, prepare-winget, test-artifacts, test-windows-artifacts, test-windows-artifacts-x86, test-linux-distributions, populate-linux-sysroot]
     runs-on: ubuntu-latest
     if: needs.prepare.outputs.run_code_ci == 'true' && (startsWith(github.ref, 'refs/tags/'))
+    outputs:
+      stable: ${{ steps.release-type.outputs.stable }}
     steps:
       - name: Check out code
         uses: actions/checkout@v7
@@ -550,15 +644,15 @@ jobs:
           pattern: llgo-windows-*
           merge-multiple: true
           path: .windows-dist
-      - name: Verify all four Windows ZIPs
+      - name: Verify all six Windows ZIPs
         shell: bash
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           cd .windows-dist
           archives=(llgo*.windows-*.zip)
-          test "${#archives[@]}" = 4
-          for arch in amd64 arm64; do
+          test "${#archives[@]}" = 6
+          for arch in 386 amd64 arm64; do
             for abi in msvc mingw; do
               archive="llgo${version}.windows-${arch}-${abi}.zip"
               test -s "$archive"
@@ -602,10 +696,16 @@ jobs:
         if: steps.release-type.outputs.stable == 'true'
         env:
           FURY_TOKEN: ${{ secrets.FURY_TOKEN }}
-          FURY_ACCOUNT: ${{ vars.FURY_ACCOUNT || github.repository_owner }}
+          FURY_ACCOUNT: ${{ vars.FURY_ACCOUNT }}
         run: |
           set -euo pipefail
           : "${FURY_TOKEN:?Set the FURY_TOKEN Actions secret to a Gemfury Push token}"
+          if [[ -z "$FURY_ACCOUNT" ]]; then
+            FURY_ACCOUNT="$GITHUB_REPOSITORY_OWNER"
+            if [[ "$FURY_ACCOUNT" == 'xgo-dev' ]]; then
+              FURY_ACCOUNT=goplus
+            fi
+          fi
           if [[ ! "$FURY_ACCOUNT" =~ ^[A-Za-z0-9_-]+$ ]]; then
             echo 'Invalid FURY_ACCOUNT' >&2
             exit 1
@@ -635,3 +735,12 @@ jobs:
               exit 1
             fi
           done
+
+  submit-winget:
+    needs: [prepare, release]
+    if: needs.prepare.outputs.run_code_ci == 'true' && github.repository == 'xgo-dev/llgo' && needs.release.outputs.stable == 'true'
+    uses: ./.github/workflows/winget.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets:
+      WINGET_PR_TOKEN: ${{ secrets.WINGET_PR_TOKEN }}

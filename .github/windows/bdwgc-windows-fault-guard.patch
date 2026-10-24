@@ -1,0 +1,19 @@
+--- a/win32_threads.c
++++ b/win32_threads.c
+@@ -1452,6 +1452,16 @@
+   if (!GC_thr_initialized)
+     ABORT("GC_stop_world() called before GC_thr_init()");
+   GC_ASSERT(I_HOLD_LOCK());
++
++# if defined(MSWIN32) && defined(__GNUC__) && defined(WRAP_MARK_SOME)
++  /* The first UCRT signal(SIGSEGV, ...) call on a thread allocates its
++   * exception-action table. Prepare it before suspending a thread that
++   * might hold the process heap lock (bdwgc issue #924). The scan guard
++   * can then reuse that table without allocating while the world is stopped.
++   * Restore the application's handler before proceeding. */
++  GC_setup_temporary_fault_handler();
++  GC_reset_fault_handler();
++# endif
+ 
+   /* This code is the same as in pthread_stop_world.c */
+ # ifdef PARALLEL_MARK

@@ -37,6 +37,7 @@ type sourcePatchBuildContext struct {
 	goversion  string
 	toolTags   []string
 	buildFlags []string
+	cgoEnabled *bool
 }
 
 func buildSourcePatchOverlayForGOROOT(base map[string][]byte, runtimeDir, goroot string, ctx sourcePatchBuildContext) (map[string][]byte, map[string][]string, error) {
@@ -297,6 +298,9 @@ func newSourcePatchMatchContext(goroot string, ctx sourcePatchBuildContext) (bui
 		buildCtx.GOARCH = ctx.goarch
 	}
 	buildCtx.BuildTags = parseSourcePatchBuildTags(ctx.buildFlags)
+	if ctx.cgoEnabled != nil {
+		buildCtx.CgoEnabled = *ctx.cgoEnabled
+	}
 	if ctx.toolTags != nil {
 		buildCtx.ToolTags = slices.Clone(ctx.toolTags)
 	}

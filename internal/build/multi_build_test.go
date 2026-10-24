@@ -284,7 +284,7 @@ func writeMultiBuildModule(t *testing.T, files map[string]string) string {
 }
 
 func mainSource(output string) string {
-	return "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"" + output + "\") }\n"
+	return "package main\nfunc main() { println(\"" + output + "\") }\n"
 }
 
 func assertBuiltProgram(t *testing.T, path, want string) {

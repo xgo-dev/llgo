@@ -44,10 +44,16 @@ func callSlice(source string) string {
 	return out[0].String()
 }
 
+func callUnsignedSlice(source string) string {
+	out := reflect.ValueOf(Known{}).MethodByName(source[uint64(2):uint64(7)]).Call(nil)
+	return out[0].String()
+}
+
 func main() {
 	v := reflect.ValueOf(Known{})
 	println(v.MethodByName("Direct").Call(nil)[0].String())
 	println(callConcat("Con", "cat"))
 	println(callSlice("__Slice__"))
+	println(callUnsignedSlice("__Slice__"))
 	println(callForward("Forward"))
 }

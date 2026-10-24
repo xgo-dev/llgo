@@ -376,12 +376,32 @@ func TestUnreadableTypePreservesVariableStorage(t *testing.T) {
 			{Attr: dwarf.AttrType, Val: dwarf.Offset(0x100)},
 			{Attr: dwarf.AttrLocation, Val: []byte{0x91, 0}},
 		},
-	}, scopeState{function: true}, 1)
+	}, scopeState{function: true, ranges: []AddressRange{{Start: 10, End: 20}}}, 1)
 	if len(builder.index.Variables) != 1 || builder.index.Variables[0].Type != "" || len(builder.index.Variables[0].Locations) != 1 {
 		t.Fatalf("unreadable type discarded readable storage or invented a type: %+v", builder.index.Variables)
 	}
 	if len(builder.index.Diagnostics) != 1 || !strings.Contains(builder.index.Diagnostics[0], "DWARF type at 0x100") {
 		t.Fatalf("missing type failure diagnostic: %v", builder.index.Diagnostics)
+	}
+}
+
+func TestUnlocatedFunctionsDoNotLeakLocals(t *testing.T) {
+	entry := &dwarf.Entry{Tag: dwarf.TagVariable, Field: []dwarf.Field{
+		{Attr: dwarf.AttrName, Val: "value"},
+		{Attr: dwarf.AttrLocation, Val: []byte{0xed, 0, 0, 0x9f}},
+	}}
+	builder := indexBuilder{}
+	builder.addVariable(entry, scopeState{function: true}, 1)
+	entry.Tag = dwarf.TagFormalParameter
+	builder.addVariable(entry, scopeState{}, 1)
+	if len(builder.index.Variables) != 0 {
+		t.Fatalf("unlocated declarations became visible in unrelated frames: %+v", builder.index.Variables)
+	}
+	builder.addVariable(entry, scopeState{function: true, ranges: []AddressRange{{Start: 10, End: 20}}}, 1)
+	entry.Tag = dwarf.TagVariable
+	builder.addVariable(entry, scopeState{}, 0)
+	if len(builder.index.Variables) != 2 || builder.index.Variables[0].Scope != "PARAMETER" || builder.index.Variables[1].Scope != "GLOBAL" {
+		t.Fatalf("lost live parameter or global: %+v", builder.index.Variables)
 	}
 }
 

@@ -66,7 +66,7 @@ func semaAcquire(addr *uint32) {
 	}
 }
 
-func semaRelease(addr *uint32) {
+func semaReleaseNative(addr *uint32) {
 	latomic.AddUint32(addr, 1)
 	st := getSemaState(addr)
 	st.mu.Lock()

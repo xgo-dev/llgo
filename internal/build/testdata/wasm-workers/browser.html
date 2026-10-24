@@ -24,7 +24,7 @@ try {
           name.startsWith("libffi-reflect-") && line === "42 42") resolve(0);
     };
     module.default({
-      arguments: name.startsWith("fs-workers-") ? [name, "--gc-stress"] : [name],
+      arguments: name.startsWith("fs-") ? [name, "--gc-stress"] : [name],
       print(line) {
         record(line);
       },

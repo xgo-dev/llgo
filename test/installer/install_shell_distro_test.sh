@@ -27,7 +27,9 @@ for image in "$@"; do
             setup='apk add --no-cache bash zsh fish tar gzip coreutils'
             ;;
         opensuse/*:*)
-            setup='sed -i s,http://,https://,g /etc/zypp/repos.d/*.repo && zypper --non-interactive refresh && zypper --non-interactive install --no-recommends bash zsh fish tar gzip'
+            # These packages and their dependencies are in OSS. Unrelated
+            # non-OSS and codec repositories must not gate shell startup tests.
+            setup='sed -i s,http://,https://,g /etc/zypp/repos.d/*.repo && zypper --non-interactive refresh --repo repo-oss && zypper --non-interactive install --no-recommends --repo repo-oss bash zsh fish tar gzip'
             ;;
         *) printf 'Unsupported shell-test image: %s\n' "$image" >&2; exit 1 ;;
     esac

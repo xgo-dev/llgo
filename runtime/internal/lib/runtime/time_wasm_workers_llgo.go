@@ -33,6 +33,9 @@ func ensureTimerScheduler() {
 }
 
 func startRuntimeTimer(r *runtimeTimer) {
+	if r != nil && startSynctestTimer(r) {
+		return
+	}
 	if r == nil {
 		return
 	}
@@ -53,6 +56,9 @@ func startRuntimeTimer(r *runtimeTimer) {
 }
 
 func stopRuntimeTimer(r *runtimeTimer) bool {
+	if r != nil && r.fake != nil {
+		return r.fake.Stop()
+	}
 	if r == nil {
 		return false
 	}
@@ -73,6 +79,15 @@ func stopRuntimeTimer(r *runtimeTimer) bool {
 }
 
 func resetRuntimeTimer(r *runtimeTimer, when, period int64, update func()) bool {
+	if r != nil && r.fake != nil {
+		r.fake.Check()
+		if update != nil {
+			update()
+		}
+		r.when, r.period = when, period
+		callback := snapshotRuntimeTimer(r)
+		return r.fake.Reset(when, period, callback.run)
+	}
 	if r == nil {
 		return false
 	}

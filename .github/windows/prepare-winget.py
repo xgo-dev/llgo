@@ -1,4 +1,4 @@
-"""Prepare reviewable WinGet manifests from four checksummed Windows release ZIPs.
+"""Prepare reviewable WinGet manifests from six checksummed Windows release ZIPs.
 
 This never uploads release assets or submits to winget-pkgs.
 """
@@ -10,8 +10,8 @@ import re
 import zipfile
 
 PROFILES = {'msvc': 'MSVC', 'mingw': 'MinGW'}
-ARCHITECTURES = {'amd64': 'x64', 'arm64': 'arm64'}
-SCHEMA = '1.9.0'
+ARCHITECTURES = {'amd64': 'x64', 'arm64': 'arm64', '386': 'x86'}
+SCHEMA = '1.12.0'
 REPOSITORY = 'https://github.com/xgo-dev/llgo'
 
 
@@ -26,12 +26,16 @@ def release_info(artifacts, version, arch, profile):
             if not archive.getinfo(required).file_size:
                 raise ValueError(f'Empty release component: {required}')
         metadata = json.loads(archive.read('release.json'))
+        with archive.open('bin/llgo.exe') as compiler:
+            compiler_hash = hashlib.file_digest(compiler, 'sha256').hexdigest()
     expected = {'version': version, 'goos': 'windows', 'goarch': arch, 'abi': profile}
     if any(metadata.get(k) != v for k, v in expected.items()):
         raise ValueError(f'ZIP metadata does not match {path.name}')
     if not re.fullmatch(r'[0-9a-f]{40}', metadata.get('commit', '')):
         raise ValueError(f'Missing release commit: {path.name}')
-    return metadata['commit'], f'{REPOSITORY}/releases/download/v{version}/{path.name}', checksum
+    if metadata.get('compiler_sha256') != compiler_hash:
+        raise ValueError(f'Compiler checksum does not match: {path.name}')
+    return metadata['commit'], f'{REPOSITORY}/releases/download/v{version}/{path.name}', checksum, compiler_hash
 
 
 def yaml_scalar(value):
@@ -50,12 +54,21 @@ def prepare(artifacts, output, version):
     # hash instead of a numeric tag, while paths must remain single components.
     if not re.fullmatch(r'[0-9A-Za-z][0-9A-Za-z.+-]*', version):
         raise ValueError('Invalid release version (omit the leading v)')
-    # Verify all four inputs before emitting anything; ABI/architecture mixing
+    # Verify all six inputs before emitting anything; ABI/architecture mixing
     # and stale hashes must fail before a candidate can reach winget-pkgs.
     releases = {(p, a): release_info(artifacts, version, a, p)
                 for p in PROFILES for a in ARCHITECTURES}
     if len({r[0] for r in releases.values()}) != 1:
         raise ValueError('Windows ZIPs belong to different source commits')
+    for arch in ARCHITECTURES:
+        if len({releases[p, arch][3] for p in PROFILES}) != 1:
+            raise ValueError(f'Windows {arch} profiles use different host compilers')
+    write_manifests(output, version, {key: (value[1], value[2]) for key, value in releases.items()})
+    print(f'Prepared local WinGet candidates in {output}; release publication and submission are separate steps.')
+
+
+def write_manifests(output, version, installers):
+    """Render the same manifests from verified local or published installers."""
     for profile, label in PROFILES.items():
         identifier = f'XGo.LLGo.{label}'
         directory = output / 'manifests' / 'x' / 'XGo' / 'LLGo' / label / version
@@ -81,10 +94,9 @@ def prepare(artifacts, output, version):
                       '  PortableCommandAlias: llgo\nUpgradeBehavior: uninstallPrevious\n'
                       'Commands:\n- llgo\nInstallers:\n')
         for arch, winget_arch in ARCHITECTURES.items():
-            _, url, checksum = releases[profile, arch]
+            url, checksum = installers[profile, arch]
             installer += f'- Architecture: {winget_arch}\n  InstallerUrl: {yaml_scalar(url)}\n  InstallerSha256: {checksum}\n'
         write_manifest(directory, f'{identifier}.installer.yaml', 'installer', installer)
-    print(f'Prepared local WinGet candidates in {output}; release publication and submission are separate steps.')
 
 
 if __name__ == '__main__':

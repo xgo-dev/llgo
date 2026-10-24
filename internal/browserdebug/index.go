@@ -453,11 +453,14 @@ func (b *indexBuilder) build() error {
 				b.index.Functions = append(b.index.Functions, Function{Name: name, Ranges: ranges})
 			}
 			current.function = true
+			// An abstract or eliminated function has no execution scope. Do not
+			// inherit the enclosing function's ranges for its local declarations.
+			current.ranges = ranges
+			if entry.Tag == dwarf.TagSubprogram {
+				current.frameBase = nil
+			}
 			if raw := entry.Val(dwarf.AttrFrameBase); raw != nil {
 				current.frameBase = b.locations(raw, "frame base")
-			}
-			if len(ranges) != 0 {
-				current.ranges = ranges
 			}
 		case dwarf.TagLexDwarfBlock, dwarf.TagTryDwarfBlock, dwarf.TagCatchDwarfBlock:
 			if len(ranges) != 0 {
@@ -628,6 +631,11 @@ func (b *indexBuilder) addVariable(entry *dwarf.Entry, state scopeState, depth i
 		value.Scope = "LOCAL"
 	} else {
 		value.Scope = "GLOBAL"
+	}
+	if value.Scope != "GLOBAL" && len(state.ranges) == 0 {
+		// Empty ranges mean unrestricted visibility in the transport index.
+		// Optimized-out functions must not leak locals into every paused frame.
+		return
 	}
 	value.Ranges = append(value.Ranges, state.ranges...)
 	value.FrameBase = append(value.FrameBase, state.frameBase...)

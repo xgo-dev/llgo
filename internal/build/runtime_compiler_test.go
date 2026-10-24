@@ -23,15 +23,6 @@ func TestRuntimeCompilerPackageCache(t *testing.T) {
 	cacheDir := t.TempDir()
 	cacheRootFunc = func() string { return cacheDir }
 	t.Cleanup(func() { cacheRootFunc = oldCacheRoot })
-	patch := filepath.Join(root, "runtime", "_patch", "runtime", "compiler.go")
-	source, err := os.ReadFile(patch)
-	if err != nil {
-		t.Fatal(err)
-	}
-	const declaration = `const Compiler = "llgo"`
-	if strings.Count(string(source), declaration) != 1 {
-		t.Fatal("runtime patch must contain exactly one Compiler declaration")
-	}
 	const identityPath = "github.com/xgo-dev/llgo/internal/build/testdata/runtimecompiler/identity"
 	fingerprints := make(map[string]string)
 	for phase, tc := range []struct {
@@ -53,7 +44,7 @@ func TestRuntimeCompilerPackageCache(t *testing.T) {
 				conf.OutFile += ".exe"
 			}
 			if tc.name != "llgo" {
-				conf.Overlay = map[string][]byte{patch: []byte(strings.Replace(string(source), declaration, `const Compiler = "`+tc.name+`"`, 1))}
+				conf.Overlay = runtimeCompilerOverlay(t, root, tc.name)
 			}
 			pkgs, err := Build(Invocation{
 				Args: []string{"."}, Config: conf,
@@ -92,4 +83,47 @@ func TestRuntimeCompilerPackageCache(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The cache regression needs only the re-exporting package. Exercise the much
+// larger go/build and go/importer dependency graph once under a non-gc runtime
+// identity, where accidentally selecting a backend from runtime.Compiler fails.
+func TestRuntimeCompilerToolchainPackages(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LLGO_ROOT", root)
+	conf := NewDefaultConf(ModeBuild)
+	conf.BuildParallelism = 2
+	conf.OutFile = filepath.Join(t.TempDir(), "toolchain")
+	if runtime.GOOS == "windows" {
+		conf.OutFile += ".exe"
+	}
+	conf.Overlay = runtimeCompilerOverlay(t, root, "llgo-cache")
+	_, err = Build(Invocation{
+		Args: []string{"."}, Config: conf,
+		Dir: filepath.Join(root, "internal", "build", "testdata", "runtimecompiler", "toolchain"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := exec.Command(conf.OutFile).CombinedOutput()
+	if err != nil || strings.TrimSpace(string(output)) != "llgo-cache" {
+		t.Fatalf("toolchain packages: %v\n%s", err, output)
+	}
+}
+
+func runtimeCompilerOverlay(t *testing.T, root, name string) map[string][]byte {
+	t.Helper()
+	patch := filepath.Join(root, "runtime", "_patch", "runtime", "compiler.go")
+	source, err := os.ReadFile(patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const declaration = `const Compiler = "llgo"`
+	if strings.Count(string(source), declaration) != 1 {
+		t.Fatal("runtime patch must contain exactly one Compiler declaration")
+	}
+	return map[string][]byte{patch: []byte(strings.Replace(string(source), declaration, `const Compiler = "`+name+`"`, 1))}
 }

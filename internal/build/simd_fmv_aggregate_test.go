@@ -13,15 +13,14 @@ import (
 
 func TestSIMDFMVAggregatesLLVM(t *testing.T) {
 	for _, goos := range []string{"linux", "darwin", "windows"} {
-		for _, level := range []string{"O0", "O2"} {
-			t.Run(goos+"/"+level, func(t *testing.T) {
-				dir := t.TempDir()
-				if err := os.Mkdir(filepath.Join(dir, "kernel"), 0700); err != nil {
-					t.Fatal(err)
-				}
-				for name, source := range map[string]string{
-					"go.mod": "module fmvaggregate\n\ngo 1.27\n",
-					"kernel/kernel.go": `package kernel
+		t.Run(goos, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Mkdir(filepath.Join(dir, "kernel"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			for name, source := range map[string]string{
+				"go.mod": "module fmvaggregate\n\ngo 1.27\n",
+				"kernel/kernel.go": `package kernel
 import "simd/archsimd"
 type Block struct { Value archsimd.Float32x4; Count int; Label string }
 //go:noinline
@@ -29,7 +28,7 @@ func Compute(x Block) (Block, int) { x.Value = x.Value.Add(x.Value); x.Count++; 
 //go:noinline
 func Array(x [2]archsimd.Float32x4) [2]archsimd.Float32x4 { x[0] = x[0].Add(x[1]); return x }
 `,
-					"main.go": `package main
+				"main.go": `package main
 import "simd/archsimd"
 import "fmvaggregate/kernel"
 //go:noinline
@@ -56,75 +55,60 @@ func large(x [8193]uint64) [8193]uint64 {
 }
 func main() {}
 `,
-				} {
-					if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0600); err != nil {
-						t.Fatal(err)
-					}
-				}
-				conf := NewDefaultConf(ModeGen)
-				conf.Goos, conf.Goarch, conf.GOAMD64, conf.GOEXPERIMENT = goos, "amd64", "v1", "simd"
-				pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
-				if err != nil {
+			} {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0600); err != nil {
 					t.Fatal(err)
 				}
-				defer pkgs[0].LPkg.Prog.Dispose()
-				mod := pkgs[0].LPkg.Module()
-				if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
-					t.Fatal(err)
+			}
+			conf := NewDefaultConf(ModeGen)
+			conf.Goos, conf.Goarch, conf.GOAMD64, conf.GOEXPERIMENT = goos, "amd64", "v1", "simd"
+			pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pkgs[0].LPkg.Prog.Dispose()
+			mod := pkgs[0].LPkg.Module()
+			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+			// These are FMV roots because they call the CPU query; pair and
+			// large have no SIMD values in their signatures.
+			for _, name := range []string{"main.guarded", "main.array", "main.pair", "main.one", "main.large"} {
+				fast := mod.NamedFunction(name + ".__llgo_fmv_avx2")
+				if fast.IsNil() {
+					t.Fatalf("function %s has no AVX2 implementation", name)
 				}
-				// These are FMV roots because they call the CPU query; pair and
-				// large have no SIMD values in their signatures.
-				for _, name := range []string{"main.guarded", "main.array", "main.pair", "main.one", "main.large"} {
-					fast := mod.NamedFunction(name + ".__llgo_fmv_avx2")
-					if fast.IsNil() {
-						t.Fatalf("function %s has no AVX2 implementation", name)
-					}
-					if strings.Contains(fast.String(), "X86Features.AVX2") {
-						t.Fatalf("unfolded query:\n%s", fast.String())
-					}
-					assertAggregateTailForwarding(t, mod.NamedFunction(name))
-					assertAggregateTailForwarding(t, mod.NamedFunction(name+".__llgo_fmv_resolve"))
+				if strings.Contains(fast.String(), "X86Features.AVX2") {
+					t.Fatalf("unfolded query:\n%s", fast.String())
 				}
-				for _, name := range []string{"Compute", "Array"} {
-					if mod.NamedFunction("fmvaggregate/kernel." + name + ".__llgo_fmv_avx2").IsNil() {
-						t.Fatalf("missing aggregate cross-package variant %s", name)
-					}
+				assertAggregateTailForwarding(t, mod.NamedFunction(name))
+				assertAggregateTailForwarding(t, mod.NamedFunction(name+".__llgo_fmv_resolve"))
+			}
+			for _, name := range []string{"Compute", "Array"} {
+				if mod.NamedFunction("fmvaggregate/kernel." + name + ".__llgo_fmv_avx2").IsNil() {
+					t.Fatalf("missing aggregate cross-package variant %s", name)
 				}
-				if !strings.Contains(mod.NamedFunction("main.guarded.__llgo_fmv_avx2").String(), "kernel.Compute.__llgo_fmv_avx2") {
-					t.Fatal("aggregate direct call did not specialize")
+			}
+			if !strings.Contains(mod.NamedFunction("main.guarded.__llgo_fmv_avx2").String(), "kernel.Compute.__llgo_fmv_avx2") {
+				t.Fatal("aggregate direct call did not specialize")
+			}
+			kernels, err := Build(Invocation{Args: []string{"./kernel"}, Config: conf, Dir: dir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer kernels[0].LPkg.Prog.Dispose()
+			for _, name := range []string{"Compute", "Array"} {
+				fn := kernels[0].LPkg.Module().NamedFunction("fmvaggregate/kernel." + name + ".__llgo_fmv_avx2")
+				if fn.IsNil() || fn.IsDeclaration() {
+					t.Fatalf("missing aggregate cross-package definition %s", name)
 				}
-				kernels, err := Build(Invocation{Args: []string{"./kernel"}, Config: conf, Dir: dir})
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer kernels[0].LPkg.Prog.Dispose()
-				for _, name := range []string{"Compute", "Array"} {
-					fn := kernels[0].LPkg.Module().NamedFunction("fmvaggregate/kernel." + name + ".__llgo_fmv_avx2")
-					if fn.IsNil() || fn.IsDeclaration() {
-						t.Fatalf("missing aggregate cross-package definition %s", name)
-					}
-				}
-				prog := pkgs[0].LPkg.Prog
-				mod.SetDataLayout(prog.DataLayout())
-				mod.SetTarget(prog.Target().Spec().Triple)
-				if level == "O2" {
-					opts := llvm.NewPassBuilderOptions()
-					defer opts.Dispose()
-					opts.SetVerifyEach(true)
-					if err := mod.RunPasses("default<O2>", prog.TargetMachine(), opts); err != nil {
-						t.Fatal(err)
-					}
-				}
-				asm, err := prog.TargetMachine().EmitToMemoryBuffer(mod, llvm.AssemblyFile)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer asm.Dispose()
+			}
+			simdCodegenVariants(t, []string{"O0", "O2"}, pkgs, func(t *testing.T, asm string) {
 				if goos == "linux" {
-					assertSIMDBaselineAssembly(t, string(asm.Bytes()))
+					assertSIMDBaselineAssembly(t, asm)
 				}
 			})
-		}
+		})
 	}
 }
 

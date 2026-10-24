@@ -55,7 +55,6 @@ static int dynamic_call(void) {
 }
 */
 import "C"
-import "fmt"
 
 //export DirectEntry
 func DirectEntry(x C.int) C.int { return x + 1 }
@@ -65,7 +64,7 @@ func DynamicOnly(x C.int) C.int { return x + 2 }
 
 func main() {
 	if C.direct_call() != 42 || C.dynamic_call() != 42 { panic("C export lookup failed") }
-	fmt.Println("C exports OK")
+	println("C exports OK")
 }
 `
 

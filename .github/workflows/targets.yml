@@ -8,7 +8,7 @@ on:
     branches: ["**"]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
+  group: targets.yml-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 jobs:
@@ -18,7 +18,7 @@ jobs:
   ci-gate:
     name: CI gate (Targets)
     needs: prepare
-    if: always()
+    if: always() && !cancelled()
     runs-on: ${{ fromJSON(needs.prepare.outputs.linux_runner || '["ubuntu-24.04"]') }}
     steps:
       - name: Verify CI preparation succeeded
@@ -27,12 +27,11 @@ jobs:
   llgo:
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: prepare
-    name: llgo (${{ matrix.test_dir }}, ${{ matrix.os }}, LLVM ${{ matrix.llvm }})
-    timeout-minutes: 30
+    name: llgo (empty + defer, ${{ matrix.os }}, LLVM ${{ matrix.llvm }})
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        test_dir: [empty, defer]
         os:
           - ubuntu-latest
         llvm: [22]
@@ -47,25 +46,41 @@ jobs:
       - name: Set up Go for build
         uses: ./.github/actions/setup-go
 
-      - name: Install
-        run: |
-          go install ./...
-          echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-llgo-cache
+        with:
+          build-cache-mode: readwrite
+          build-cache-scope: embedded-boards
+          crosscompile-cache-mode: readwrite
 
-      - name: Build targets (${{ matrix.test_dir }})
+      - name: Build compiler once for all boards
+        id: compiler
+        run: |
+          go build -tags=dev -o "$RUNNER_TEMP/llgo-targets" ./cmd/llgo
+          {
+            echo "LLGO_TEST_COMPILER=$RUNNER_TEMP/llgo-targets"
+            echo "LLGO_ROOT=$GITHUB_WORKSPACE"
+            echo "LLGO_BUILD_CACHE=1"
+          } >> "$GITHUB_ENV"
+
+      - name: Build targets (empty)
+        if: ${{ !cancelled() && steps.compiler.outcome == 'success' }}
         working-directory: _demo/embed/targetsbuild
-        run: bash build.sh "${{ matrix.test_dir }}"
+        run: bash build.sh empty
+
+      - name: Build targets (defer)
+        if: ${{ !cancelled() && steps.compiler.outcome == 'success' }}
+        working-directory: _demo/embed/targetsbuild
+        run: bash build.sh defer
 
   embedded-debug:
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: prepare
-    name: embedded debug (${{ matrix.os }}, ${{ matrix.backend }})
+    name: embedded debug (${{ matrix.os }}, gdb + lldb)
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, macos-15, windows-2022]
-        backend: [gdb, lldb]
     runs-on: ${{ matrix.os == 'ubuntu-24.04' && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os }}
     env:
       GOMAXPROCS: '4'
@@ -77,6 +92,7 @@ jobs:
           llvm-version: '22'
       - uses: ./.github/actions/setup-go
       - name: Build compiler
+        id: compiler
         shell: bash
         run: go install ./cmd/llgo
 
@@ -100,7 +116,7 @@ jobs:
           pacman_with_retry --noconfirm -S --needed mingw-w64-clang-x86_64-qemu
           echo "QEMU_SYSTEM_ARM=$(cygpath -m /clang64/bin/qemu-system-arm.exe)" >> "$GITHUB_ENV"
       - name: Install matching Windows LLDB Python runtime
-        if: runner.os == 'Windows' && matrix.backend == 'lldb'
+        if: runner.os == 'Windows'
         id: lldb-python
         uses: actions/setup-python@v7
         with:
@@ -109,7 +125,7 @@ jobs:
           architecture: x64
           update-environment: false
       - name: Configure matching Windows LLDB Python runtime
-        if: runner.os == 'Windows' && matrix.backend == 'lldb'
+        if: runner.os == 'Windows'
         shell: pwsh
         env:
           LLDB_PYTHON: ${{ steps.lldb-python.outputs.python-path }}
@@ -119,9 +135,16 @@ jobs:
             throw "The LLVM 22 LLDB Python runtime is incomplete: $prefix"
           }
           "LLGO_WINDOWS_LLDB_PYTHON_HOME=$prefix" >> $env:GITHUB_ENV
-      - name: Test preloaded and explicit-download Cortex-M sessions
+      # Separate steps keep both backends observable and run LLDB even when
+      # the GDB acceptance test fails, as the former fail-fast:false matrix did.
+      - name: Test GDB preloaded and explicit-download Cortex-M sessions
+        if: ${{ !cancelled() && steps.compiler.outcome == 'success' }}
         shell: bash
-        run: python3 test/debug/embedded/runtest.py --backend "${{ matrix.backend }}"
+        run: python3 test/debug/embedded/runtest.py --backend gdb
+      - name: Test LLDB preloaded and explicit-download Cortex-M sessions
+        if: ${{ !cancelled() && steps.compiler.outcome == 'success' }}
+        shell: bash
+        run: python3 test/debug/embedded/runtest.py --backend lldb
       - name: Test physical-probe opt-in guard
         shell: bash
         run: |

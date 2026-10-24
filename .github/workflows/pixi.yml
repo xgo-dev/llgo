@@ -7,7 +7,7 @@ on:
     branches: ["**"]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
+  group: pixi.yml-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 permissions:
@@ -17,7 +17,17 @@ jobs:
   prepare:
     uses: ./.github/workflows/ci-prepare.yml
 
+  ci-gate:
+    name: CI gate (Pixi)
+    needs: prepare
+    if: always() && !cancelled()
+    runs-on: ${{ fromJSON(needs.prepare.outputs.linux_runner || '["ubuntu-24.04"]') }}
+    steps:
+      - name: Verify CI preparation succeeded
+        run: test "${{ needs.prepare.result }}" = "success"
+
   devenv:
+    if: needs.prepare.outputs.run_code_ci == 'true'
     name: Pixi (${{ matrix.os }})
     needs: prepare
     runs-on: ${{ matrix.os == 'ubuntu-24.04' && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os }}

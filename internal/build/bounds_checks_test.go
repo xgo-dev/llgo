@@ -31,7 +31,7 @@ func TestDisableBoundsChecksIR(t *testing.T) {
 	}
 	for _, function := range []string{"sliceString", "sliceSlice", "sliceArray", "sliceArrayPointer", "sliceThree"} {
 		body := llvmFunctionBody(t, unchecked, function)
-		if strings.Contains(body, "StringSlice2") || strings.Contains(body, "NewSlice2") || strings.Contains(body, "NewSlice3Bounds") {
+		if strings.Contains(body, "StringSlice") || strings.Contains(body, "NewSlice2") || strings.Contains(body, "NewSlice3Bounds") {
 			t.Errorf("-B %s contains a slice bounds helper:\n%s", function, body)
 		}
 	}

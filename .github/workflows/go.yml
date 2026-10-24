@@ -11,7 +11,7 @@ on:
     branches: ["**"]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
+  group: go.yml-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 jobs:
@@ -21,7 +21,7 @@ jobs:
   ci-gate:
     name: CI gate (Go)
     needs: prepare
-    if: always()
+    if: always() && !cancelled()
     runs-on: ${{ fromJSON(needs.prepare.outputs.linux_runner || '["ubuntu-24.04"]') }}
     steps:
       - name: Verify CI preparation succeeded
@@ -74,7 +74,7 @@ jobs:
       - name: Clang information
         shell: bash
         run: |
-          echo $PATH
+          echo "$PATH"
           which clang
           clang --version
 
@@ -108,7 +108,7 @@ jobs:
 
       - name: Set LLGO_ROOT
         shell: bash
-        run: echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+        run: echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
       - name: Build
         shell: bash
@@ -189,13 +189,18 @@ jobs:
         id: test_coverage
         env:
           LLGO_GO_TEST_OVERLAY: ${{ steps.windows_go_runtime.outputs.overlay }}
+          # Keep all cross-target ABI goldens on Qiniu. The ordinary five
+          # target architectures still run on every host and Windows ABI.
+          LLGO_TEST_EXTENDED_ABI: ${{ runner.os == 'Linux' && '1' || '0' }}
         # Compiler fixtures build and run many programs under coverage; leave
         # enough headroom for the slower native toolchains.
         shell: bash
         run: |
           set -euo pipefail
 
-          go_test=(go test)
+          # These jobs do not use -race. Go's default set-mode coverage records
+          # the same covered statements without atomic counters in hot paths.
+          go_test=(go test -json)
           if [[ "$RUNNER_OS" == Windows ]]; then
             # Go's internal linker cannot consume every GNU COFF import
             # archive used by the race runtime and LLVM. Use the configured
@@ -207,54 +212,103 @@ jobs:
             fi
             export LLGO_STDIO_NOBUF=1
             # Keep the main batch's existing narrow fatal-signature quarantine.
-            # The separate cl and test/go invocations use a measured runtime
+            # The separate build, cl and test/go invocations use a measured runtime
             # overlay to reserve enough stack for hardware exception recovery.
-            main_go_test=(bash dev/go_test_windows.sh "${go_test[@]}")
+            main_go_test=(bash dev/go_test_windows.sh python .github/scripts/run_go_tests.py main "${go_test[@]}")
           else
-            main_go_test=("${go_test[@]}")
+            main_go_test=(python .github/scripts/run_go_tests.py main "${go_test[@]}")
+          fi
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            main_go_test+=(-p=2)
           fi
 
-          # Keep the direct language-behavior suite in a separate invocation.
-          # Its host Go coverage is not uploaded: test/ is measured by LLGo.
-          # Compiler-only source and diagnostic fixtures live in test/cmd/llgo;
-          # remaining test/go sources pass go test's default vet checks.
-          # Record coverage across packages so host runtime tests also measure
-          # the compiler they invoke.
-          go list ./... \
-            | grep -v '^github.com/xgo-dev/llgo/test/go$' \
-            | grep -v '^github.com/xgo-dev/llgo/cl$' \
-            | xargs "${main_go_test[@]}" -timeout 45m -coverprofile="coverage-main.txt" -covermode=atomic \
-                -coverpkg=./... -bench '^BenchmarkGo126' -benchtime=1x
-
-          # cl's error-path tests (e.g. TestErrInitLinkname) also recover nil
-          # dereferences. Apply the measured Windows exception-stack reserve
-          # before both cl and test/go (golang/go#81238).
+          # cl's error-path tests also recover nil dereferences. Keep the
+          # measured Windows exception-stack reserve on build, cl and test/go;
+          # main_go_test already captured the original, quarantined command.
           if [[ -n "$LLGO_GO_TEST_OVERLAY" ]]; then
             go_test+=("-overlay=$LLGO_GO_TEST_OVERLAY")
           fi
 
-          # Compiler fixtures owned by cl exercise ssa in-process. Instrument
-          # both packages in this single test binary so coverage follows those
-          # calls without restoring duplicate fixture tests under ssa.
-          "${go_test[@]}" -v -timeout 45m \
-            -coverpkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/ssa \
-            -coverprofile="coverage-compiler.txt" -covermode=atomic \
-            -bench '^BenchmarkGo126' -benchtime=1x ./cl
-          # Build-level SIMD fixtures exercise cl/ssa in-process too.
-          "${go_test[@]}" ./internal/build -run '^TestSIMD' -count=1 -timeout=10m \
-            -coverpkg=github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/ssa \
-            -coverprofile=coverage-simd.txt -covermode=atomic
-          "${go_test[@]}" -timeout 45m ./test/go
+          run_main_suite() {
+            # Linux leaves two bounded build processes alongside at most two
+            # main test packages. Each compiler has its package worker pool.
+            # The direct language suite retains its own invocation and is
+            # excluded from host coverage: test/ is measured by LLGo.
+            go list ./... \
+              | grep -v '^github.com/xgo-dev/llgo/test/go$' \
+              | grep -v '^github.com/xgo-dev/llgo/cl$' \
+              | grep -v '^github.com/xgo-dev/llgo/internal/build$' \
+              | xargs "${main_go_test[@]}" -timeout 45m -coverprofile="coverage-main.txt" -covermode=set \
+                  -coverpkg=./... -bench '^BenchmarkGo126' -benchtime=1x
+          }
+
+          run_compiler_suites() {
+            # cl owns the compiler fixtures and measures calls into ssa.
+            python .github/scripts/run_go_tests.py compiler "${go_test[@]}" -timeout 45m \
+              -coverpkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/ssa \
+              -coverprofile="coverage-compiler.txt" -covermode=set \
+              -bench '^BenchmarkGo126' -benchtime=1x ./cl
+            python .github/scripts/run_go_tests.py language "${go_test[@]}" -timeout 45m ./test/go
+          }
+
+          run_build_suite() {
+            # Split the longest package within this job. Each process has its
+            # own source tree/cache and GOMAXPROCS=2. Discover every test,
+            # verify exactly-once execution, and union statement coverage.
+            build_tests=(python .github/scripts/run_build_tests.py --overlay "$LLGO_GO_TEST_OVERLAY")
+            if [[ "$RUNNER_OS" == Windows ]]; then
+              build_tests+=("--ldflags=-linkmode=external -extldflags=-lsynchronization")
+            fi
+            python .github/scripts/run_go_tests.py build "${build_tests[@]}"
+          }
+
+          # Overlap improved Qiniu Linux timings, but regressed on hosted macOS.
+          # Keep the original serial order on other hosts until measured there.
+          if [[ "$RUNNER_OS" != Linux ]]; then
+            run_main_suite
+            run_build_suite
+            run_compiler_suites
+            exit 0
+          fi
+
+          run_main_suites() {
+            run_main_suite
+            run_compiler_suites
+          }
+
+          # Start the longest suite immediately and overlap independent packages.
+          # Separate summary files avoid interleaved Markdown; all JSON logs and
+          # coverage profiles already have distinct names. Drain both processes
+          # and propagate either failure before the later emulator/coverage steps.
+          # Relative paths also work for native Windows Python under Git Bash.
+          mkdir -p go-test-timings
+          summaries=$(mktemp -d go-test-timings/summaries.XXXXXX)
+          trap 'rm -rf "$summaries"' EXIT
+          GITHUB_STEP_SUMMARY="$summaries/build.md" run_build_suite &
+          build_pid=$!
+          GITHUB_STEP_SUMMARY="$summaries/main.md" run_main_suites &
+          main_pid=$!
+          status=0
+          wait "$main_pid" || status=$?
+          wait "$build_pid" || status=$?
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            for report in "$summaries/main.md" "$summaries/build.md"; do
+              if [[ -f "$report" ]]; then
+                cat "$report" >> "$GITHUB_STEP_SUMMARY"
+              fi
+            done
+          fi
+          exit "$status"
 
       - name: Test traceback formatter with coverage
         shell: bash
         working-directory: runtime
-        run: go test -coverprofile=../coverage-traceback.txt -covermode=atomic ./internal/traceback
+        run: python ../.github/scripts/run_go_tests.py --output-dir ../go-test-timings traceback go test -json -coverprofile=../coverage-traceback.txt -covermode=set ./internal/traceback
 
       - name: Test with embedded emulator env
         env:
           LLGO_EMBED_TESTS: "1"
-        run: go test -v -timeout 60m ./cl -run '^TestRunEmbedEmulator$'
+        run: python .github/scripts/run_go_tests.py embedded go test -json -timeout 60m ./cl -run '^TestRunEmbedEmulator$'
 
       - name: Check std symbol coverage
         shell: bash
@@ -268,10 +322,18 @@ jobs:
           python .github/scripts/test_filter_host_coverage.py
           # Keep all host tests, but only LLGo may contribute coverage for
           # test/. Filter records, not test packages, before Codecov merges them.
-          for profile in coverage-main coverage-compiler; do
+          for profile in coverage-main coverage-build coverage-compiler; do
             awk -f .github/scripts/filter_host_coverage.awk \
               "$profile.txt" > "$profile-host.txt"
           done
+
+      - name: Upload Go test timings
+        if: ${{ !cancelled() && hashFiles('go-test-timings/*.jsonl') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-test-timings-${{ matrix.os }}-${{ matrix.windows_abi || 'native' }}
+          path: go-test-timings/
+          retention-days: 7
 
       - name: Install Codecov CLI with Windows host Python
         if: runner.os == 'Windows' && steps.test_coverage.outputs.windows_runtime_corruption != 'true'
@@ -296,7 +358,7 @@ jobs:
           version: "11.3.1"
           token: ${{secrets.CODECOV_TOKEN}}
           use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-          files: coverage-main-host.txt,coverage-compiler-host.txt,coverage-traceback.txt,coverage-simd.txt
+          files: coverage-main-host.txt,coverage-build-host.txt,coverage-compiler-host.txt,coverage-traceback.txt
           flags: go-tests
           disable_search: true
 
@@ -368,7 +430,7 @@ jobs:
         uses: ./.github/actions/setup-demo-deps
 
       - name: Set LLGO_ROOT
-        run: echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+        run: echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
       - name: Build llgo with dev tag
         run: go install -tags=dev ./cmd/llgo

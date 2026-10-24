@@ -26,7 +26,8 @@ import (
 // -----------------------------------------------------------------------------
 
 type Chan struct {
-	mutex chanMutex
+	bubble *SynctestBubble
+	mutex  chanMutex
 
 	qcount   int
 	dataqsiz int
@@ -46,9 +47,10 @@ type chanWaitq struct {
 }
 
 type chanWaiter struct {
-	prev *chanWaiter
-	next *chanWaiter
-	all  *chanWaiter
+	synctest *SynctestWaiter
+	prev     *chanWaiter
+	next     *chanWaiter
+	all      *chanWaiter
 
 	ch   *Chan
 	elem unsafe.Pointer
@@ -65,7 +67,8 @@ type chanWaiter struct {
 }
 
 type selectState struct {
-	signal chanSignal
+	synctest *SynctestWaiter
+	signal   chanSignal
 
 	status waitStatus
 	chosen int
@@ -142,6 +145,7 @@ func NewChan(eltSize, cap int) *Chan {
 		panicMakeChanSize()
 	}
 	ret := new(Chan)
+	ret.bubble = CurrentSynctestBubble()
 	ret.elemsize = eltSize
 	ret.dataqsiz = cap
 	if cap > 0 {
@@ -194,6 +198,9 @@ func chanBuf(p *Chan, i int) unsafe.Pointer {
 
 func newChanWaiter(ch *Chan, elem unsafe.Pointer, eltSize int, send bool) *chanWaiter {
 	w := new(chanWaiter)
+	if ch.bubble != nil {
+		w.synctest = NewSynctestWaiter()
+	}
 	w.ch = ch
 	w.elem = elem
 	w.size = eltSize
@@ -244,6 +251,7 @@ func freeSelectWaiters(w *chanWaiter) {
 
 func (w *chanWaiter) wait() {
 	for !w.status.done() {
+		w.synctest.Block()
 		w.signal.park()
 	}
 	w.signal.unlock()
@@ -259,12 +267,14 @@ func (w *chanWaiter) finish(status waitStatus) {
 	if w.sel != nil {
 		w.sel.signal.lock()
 		w.sel.status = status
+		w.sel.synctest.Wake()
 		w.sel.signal.ready()
 		w.sel.signal.unlock()
 		return
 	}
 	w.signal.lock()
 	w.status = status
+	w.synctest.Wake()
 	w.signal.ready()
 	w.signal.unlock()
 }
@@ -359,6 +369,7 @@ func chanTrySendLocked(p *Chan, v unsafe.Pointer, eltSize int) (tryOK bool, clos
 }
 
 func ChanTrySend(p *Chan, v unsafe.Pointer, eltSize int) bool {
+	checkSynctestChannel(p)
 	if p == nil {
 		return false
 	}
@@ -372,6 +383,7 @@ func ChanTrySend(p *Chan, v unsafe.Pointer, eltSize int) bool {
 }
 
 func ChanSend(p *Chan, v unsafe.Pointer, eltSize int) bool {
+	checkSynctestChannel(p)
 	if p == nil {
 		blockForever()
 		return false
@@ -438,6 +450,7 @@ func chanTryRecvLocked(p *Chan, v unsafe.Pointer, eltSize int) (recvOK bool, try
 }
 
 func ChanTryRecv(p *Chan, v unsafe.Pointer, eltSize int) (recvOK bool, tryOK bool) {
+	checkSynctestChannel(p)
 	if p == nil {
 		return false, false
 	}
@@ -448,6 +461,7 @@ func ChanTryRecv(p *Chan, v unsafe.Pointer, eltSize int) (recvOK bool, tryOK boo
 }
 
 func ChanRecv(p *Chan, v unsafe.Pointer, eltSize int) (recvOK bool) {
+	checkSynctestChannel(p)
 	if p == nil {
 		blockForever()
 		return false
@@ -466,6 +480,7 @@ func ChanRecv(p *Chan, v unsafe.Pointer, eltSize int) (recvOK bool) {
 }
 
 func ChanClose(p *Chan) {
+	checkSynctestChannel(p)
 	if p == nil {
 		panic("close of nil channel")
 	}
@@ -577,6 +592,9 @@ func (l *selectChanList) add(ch *Chan) {
 
 // TrySelect executes a non-blocking select operation.
 func TrySelect(ops ...ChanOp) (isel int, recvOK, tryOK bool) {
+	for _, op := range ops {
+		checkSynctestChannel(op.C)
+	}
 	n := len(ops)
 	if n == 0 {
 		return
@@ -657,6 +675,15 @@ func Select(ops ...ChanOp) (isel int, recvOK bool) {
 	}
 
 	state := newSelectState()
+	durable := CurrentSynctestBubble() != nil
+	for _, op := range ops {
+		if op.C != nil && op.C.bubble == nil {
+			durable = false
+		}
+	}
+	if durable {
+		state.synctest = NewSynctestWaiter()
+	}
 
 	var waiters *chanWaiter
 	var lastWaiter *chanWaiter
@@ -683,6 +710,7 @@ func Select(ops ...ChanOp) (isel int, recvOK bool) {
 
 	state.signal.lock()
 	for !state.status.done() {
+		state.synctest.Block()
 		state.signal.park()
 	}
 	isel = state.chosen
@@ -732,3 +760,9 @@ func selectStart(n int) int {
 }
 
 // -----------------------------------------------------------------------------
+
+func checkSynctestChannel(p *Chan) {
+	if p != nil && p.bubble != nil && p.bubble != CurrentSynctestBubble() {
+		panic("channel operation from outside synctest bubble")
+	}
+}

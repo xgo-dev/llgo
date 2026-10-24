@@ -14,6 +14,8 @@
 #include <ucontext.h>
 #include <unistd.h>
 #if defined(__linux__)
+#include <fcntl.h>
+#include <linux/futex.h>
 #include <sys/syscall.h>
 #endif
 
@@ -29,6 +31,13 @@ typedef struct thread_node {
     unsigned request;
     uintptr_t *pcs;
     size_t count;
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+    /* All-thread calls share this registry and SIGURG transport. Existing
+     * debugger fields keep their offsets. Only this thread writes results. */
+    unsigned owned;
+    unsigned allcall_state;
+    uintptr_t allcall_r1, allcall_r2, allcall_error;
+#endif
 } thread_node;
 
 static pthread_mutex_t registry_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -49,6 +58,10 @@ static struct sigaction previous_urgent;
  * must never read a struct sigaction concurrently with os/signal changing it. */
 static void original_urgent(int sig) { (void)sig; }
 static void (*urgent_user)(int) = original_urgent;
+
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+static int handle_allthreads(thread_node *);
+#endif
 
 static void *map_buffer(void)
 {
@@ -156,6 +169,12 @@ static void urgent_handler(int sig, siginfo_t *info, void *raw)
 {
     int saved = errno;
     thread_node *node = current;
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+    if (node && handle_allthreads(node)) {
+        errno = saved;
+        return;
+    }
+#endif
     unsigned expected = 1;
     if (node && __atomic_compare_exchange_n(&node->request, &expected, 2, 0,
                                             __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
@@ -214,6 +233,9 @@ void *llgo_traceback_register(uint64_t id, uint64_t parent, uintptr_t created)
     if (!node)
         return 0;
     node->id = id; node->parent = parent; node->created = created;
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+    node->owned = parent != 0; /* NewProc children; main is marked at init. */
+#endif
     node->state = 1; /* runnable */
     pthread_mutex_lock(&registry_lock);
     node->next = llgo_debugger_threads_v1;
@@ -359,3 +381,5 @@ void llgo_traceback_free(llgo_traceback_snapshot *head)
         free(head); head = next;
     }
 }
+
+#include "allthreads_linux.h"

@@ -161,6 +161,43 @@ for (const memory64 of [false, true]) {
   assert.ok(largeRead.subarray(0, 7).every(byte => byte === 99));
   assert.ok(largeRead.subarray(-7).every(byte => byte === 99));
   assert.ok(largestRequest < 200, 'large payloads must not travel through JSON');
+
+  // Exercise the real browser shim: its public callbacks are asynchronous,
+  // but worker RPC must complete using the same synchronous FS host.
+  delete main.fs;
+  main.queueMicrotask = queueMicrotask;
+  vm.runInContext(fs.readFileSync(new URL('../../targets/wasm_fs.js', import.meta.url), 'utf8'), main);
+  main.llgoAttachWasmFS({FS: {
+    stat() { return {mode: 16384, size: 3}; },
+    getStreamChecked(fd) { return {fd}; },
+    read(stream, buffer, offset, length) {
+      buffer.set([10, 20, 30].slice(0, length), offset);
+      return Math.min(3, length);
+    },
+  }});
+  let completed = false;
+  main.fs.stat('/', (err, st) => {
+    assert.equal(err, null);
+    assert.ok(st.isDirectory());
+    completed = true;
+  });
+  assert.equal(completed, false);
+  await Promise.resolve();
+  assert.equal(completed, true);
+  completed = false;
+  worker.fs.stat('/', (err, st) => {
+    assert.equal(err, null);
+    assert.ok(st.isDirectory());
+    assert.equal(st.size, 3);
+    completed = true;
+  });
+  assert.equal(completed, true, 'worker reply must be available synchronously');
+  const read = new Uint8Array(3);
+  worker.fs.read(1, read, 0, 3, null, (err, n) => {
+    assert.equal(err, null);
+    assert.equal(n, 3);
+  });
+  assert.deepEqual(Array.from(read), [10, 20, 30]);
   assert.equal(allocated.size, 0);
   assert.equal(roots.size, 0);
   assert.equal(Object.keys(main.llgoBrowserFSResponses).length, 0);

@@ -19,15 +19,29 @@ import ci_policy
 WORKFLOWS = Path(__file__).resolve().parents[1] / "workflows"
 PREPARE = "./.github/workflows/ci-prepare.yml"
 CODE_WORKFLOWS = {
-    "llgo.yml": 23, "go.yml": 6, "targets.yml": 8, "build-cache.yml": 4,
-    "benchmark.yml": 9, "release-build.yml": 18, "doc.yml": 6, "fmt.yml": 1,
+    "llgo.yml": 21, "go.yml": 6, "targets.yml": 4, "build-cache.yml": 4,
+    "benchmark.yml": 9, "release-build.yml": 25, "doc.yml": 6, "fmt.yml": 1,
+    "mise.yml": 5, "pixi.yml": 5,
 }
-BOOTSTRAP_RUNNER_JOBS = {("ci-prepare.yml", "prepare"), ("ci-policy.yml", "policy")}
+BOOTSTRAP_RUNNER_JOBS = {
+    ("ci-prepare.yml", "prepare"), ("ci-policy.yml", "policy"),
+    ("pr-closed.yml", "cancel-pr-ci"),
+}
 
 
 def load(name):
     # BaseLoader preserves the GitHub Actions 'on' key instead of YAML 1.1's True.
     return yaml.load((WORKFLOWS / name).read_text(), Loader=yaml.BaseLoader)
+
+
+def workflow_paths():
+    return sorted(path for path in WORKFLOWS.iterdir()
+                  if path.suffix in {".yml", ".yaml"})
+
+
+def pr_workflows():
+    return {path.name: workflow for path in workflow_paths()
+            if "pull_request" in (workflow := load(path.name)).get("on", {})}
 
 
 def needs(job):
@@ -47,6 +61,54 @@ def matrix_size(job):
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_pr_close_covers_every_pr_workflow(self):
+        workflow = load("pr-closed.yml")
+        self.assertEqual(workflow["on"], {"pull_request_target": {"types": ["closed"]}})
+        self.assertEqual(workflow["permissions"], {})
+        self.assertNotIn("concurrency", workflow)
+        job = workflow["jobs"]["cancel-pr-ci"]
+        self.assertNotIn("if", job)
+        self.assertNotIn("concurrency", job)
+        self.assertEqual(job["permissions"], {
+            "actions": "write", "contents": "read", "pull-requests": "read"})
+        checkout, cancel = job["steps"]
+        self.assertEqual(checkout["uses"], "actions/checkout@v7")
+        self.assertEqual(checkout["with"], {
+            "ref": "${{ github.sha }}", "persist-credentials": "false",
+            "sparse-checkout": ".github/scripts", "sparse-checkout-cone-mode": "false"})
+        self.assertEqual(cancel["env"], {"GH_TOKEN": "${{ github.token }}"})
+        self.assertEqual(cancel["run"], "python3 .github/scripts/pr_ci.py")
+        self.assertEqual(job["timeout-minutes"], "5")
+        self.assertFalse((WORKFLOWS / "pr-ci-cancel.yml").exists())
+
+    def test_pr_jobs_and_local_reusable_jobs_remain_cancelable(self):
+        # Discover every job rather than keeping a job-name allowlist: new jobs
+        # and matrices are covered even when CODE_WORKFLOWS does not list them.
+        pending = list(pr_workflows())
+        checked = set()
+        while pending:
+            filename = pending.pop()
+            if filename in checked:
+                continue
+            checked.add(filename)
+            for name, job in load(filename)["jobs"].items():
+                with self.subTest(workflow=filename, job=name):
+                    condition = " ".join(job.get("if", "").split())
+                    condition = condition.removeprefix("${{").removesuffix("}}").strip()
+                    # Running job conditions are re-evaluated on cancellation.
+                    # Unconditional always() would keep even a gate running.
+                    if "always()" in condition:
+                        self.assertEqual(condition, "always() && !cancelled()")
+                    reusable = job.get("uses", "")
+                    if reusable.startswith("./.github/workflows/"):
+                        pending.append(Path(reusable).name)
+
+    def test_extended_cross_target_abi_matrix_runs_on_linux(self):
+        step = next(step for step in load("go.yml")["jobs"]["test"]["steps"]
+                    if step.get("id") == "test_coverage")
+        self.assertEqual(step["env"]["LLGO_TEST_EXTENDED_ABI"],
+                         "${{ runner.os == 'Linux' && '1' || '0' }}")
+
     def test_gdb_windows_acceptance_covers_both_abis_and_all_native_architectures(self):
         job = load("llgo.yml")["jobs"]["llgo"]
         entries = job["strategy"]["matrix"]["include"]
@@ -103,44 +165,237 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(step["working-directory"], "runtime")
         self.assertIn("-coverprofile=../coverage-traceback.txt", step["run"])
 
-    def test_windows_exception_overlay_reaches_compiler_and_language_tests(self):
+    def test_go_suite_scheduling_preserves_overlays_and_propagates_failures(self):
         step = next(step for step in load("go.yml")["jobs"]["test"]["steps"]
                     if step.get("id") == "test_coverage")
         script = step["run"].replace("${{ matrix.windows_abi }}", "msvc")
-        for runner, overlay in (("Linux", ""), ("Windows", ""),
-                                ("Windows", "C:/runner temp/runtime-overlay.json")):
-            with self.subTest(runner=runner, overlay=overlay), tempfile.TemporaryDirectory() as directory:
+        scenarios = [("Linux", "", ""), ("macOS", "", ""), ("Windows", "", ""),
+                     ("Windows", "C:/runner temp/runtime-overlay.json", "")]
+        scenarios += [(runner, "", suite) for runner in ("Linux", "macOS", "Windows")
+                      for suite in ("main", "build", "compiler", "language")]
+        for runner, overlay, failure in scenarios:
+            with self.subTest(runner=runner, overlay=overlay, failure=failure), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 log = root / "commands.jsonl"
+                summary = root / "summary.md"
                 fake_go = root / "go"
-                fake_go.write_text(f"#!{sys.executable}\n" + """
-import json, os, sys
+                fake_go.write_text(f"#!{sys.executable}\n" + r"""
+import json, os, sys, time
+from pathlib import Path
 if sys.argv[1] == 'list':
+    print('github.com/xgo-dev/llgo/cmd/internal/version')
     print('github.com/xgo-dev/llgo/internal/build')
 else:
-    with open(os.environ['TEST_GO_LOG'], 'a') as stream:
-        stream.write(json.dumps(sys.argv[1:]) + '\\n')
+    args = sys.argv[1:]
+    suite = next((name for package, name in (
+        ('./internal/build', 'build'), ('./cl', 'compiler'), ('./test/go', 'language'))
+        if package in args), 'main')
+    root = Path(os.environ['TEST_GO_LOG']).parent
+    with (root / 'commands.jsonl').open('a') as stream:
+        stream.write(json.dumps(args) + '\n')
+    (root / (suite + '.started')).touch()
+    if os.environ['RUNNER_OS'] == 'Linux' and suite in {'main', 'build'}:
+        peer = root / (('main' if suite == 'build' else 'build') + '.started')
+        deadline = time.monotonic() + 5
+        while not peer.exists():
+            if time.monotonic() > deadline:
+                sys.exit('independent suites did not overlap')
+            time.sleep(0.01)
+    elif os.environ['RUNNER_OS'] != 'Linux':
+        order = ['main', 'build', 'compiler', 'language']
+        index = order.index(suite)
+        if index and not (root / (order[index - 1] + '.finished')).exists():
+            sys.exit('host suites did not retain serial order')
+    (root / (suite + '.finished')).touch()
+    sys.exit(7 if suite == os.environ['TEST_GO_FAILURE'] else 0)
 """)
                 fake_go.chmod(0o755)
                 (root / "dev").mkdir()
                 (root / "dev/go_test_windows.sh").write_text('exec "$@"\n')
-                subprocess.run(["bash", "-c", script], cwd=root, check=True,
-                               capture_output=True, text=True, env={**os.environ,
-                                   "PATH": directory + os.pathsep + os.environ["PATH"],
-                                   "RUNNER_OS": runner, "LLGO_GO_TEST_OVERLAY": overlay,
-                                   "TEST_GO_LOG": str(log)})
+                helper = root / ".github/scripts/run_go_tests.py"
+                helper.parent.mkdir(parents=True)
+                shutil.copyfile(WORKFLOWS.parent / "scripts/run_go_tests.py", helper)
+                # This contract checks suite ordering and Windows options.
+                # The real shard executor has separate end-to-end Go tests.
+                (helper.parent / "run_build_tests.py").write_text(r"""
+import argparse, subprocess, sys
+parser = argparse.ArgumentParser()
+parser.add_argument('--overlay')
+parser.add_argument('--ldflags')
+args = parser.parse_args()
+command = ['go', 'test', '-json', '-coverpkg=./...', '-coverprofile=coverage-build.txt']
+if args.overlay:
+    command.append('-overlay=' + args.overlay)
+if args.ldflags:
+    command.append('-ldflags=' + args.ldflags)
+sys.exit(subprocess.call(command + ['./internal/build']))
+""")
+                result = subprocess.run(["bash", "-c", script], cwd=root,
+                                        capture_output=True, text=True, timeout=20,
+                                        env={**os.environ,
+                                             "PATH": directory + os.pathsep + os.environ["PATH"],
+                                             "RUNNER_OS": runner, "LLGO_GO_TEST_OVERLAY": overlay,
+                                             "TEST_GO_LOG": str(log), "TEST_GO_FAILURE": failure,
+                                             "GITHUB_STEP_SUMMARY": str(summary)})
+                if failure == "main":
+                    # GNU and BSD xargs map a child failure to different codes.
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                else:
+                    self.assertEqual(result.returncode, 7 if failure else 0,
+                                     result.stdout + result.stderr)
                 calls = [json.loads(line) for line in log.read_text().splitlines()]
-                self.assertEqual(len(calls), 4)
+                expected_suites = {"main", "build"}
+                if failure != "main":
+                    expected_suites.add("compiler")
+                if failure not in {"main", "compiler"}:
+                    expected_suites.add("language")
+                if runner != "Linux":
+                    order = ["main", "build", "compiler", "language"]
+                    expected_suites = set(order[:order.index(failure) + 1] if failure else order)
+                self.assertEqual(len(calls), len(expected_suites))
+                report = summary.read_text()
+                for suite in expected_suites:
+                    self.assertTrue((root / (suite + ".finished")).exists())
+                    self.assertIn(f"### Go tests: {suite} (exit {7 if suite == failure else 0})", report)
                 for package in ("./cl", "./internal/build", "./test/go"):
-                    args = next(args for args in calls if package in args)
-                    self.assertEqual([arg for arg in args if arg.startswith("-overlay=")],
-                                     [f"-overlay={overlay}"] if overlay else [])
-                simd = next(args for args in calls if "./internal/build" in args)
-                self.assertIn("^TestSIMD", simd)
-                self.assertIn("-coverprofile=coverage-simd.txt", simd)
-                self.assertIn(
-                    "-coverpkg=github.com/xgo-dev/llgo/internal/build,"
-                    "github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/ssa", simd)
+                    for args in (args for args in calls if package in args):
+                        self.assertEqual([arg for arg in args if arg.startswith("-overlay=")],
+                                         [f"-overlay={overlay}"] if overlay else [])
+                main = next(args for args in calls if "github.com/xgo-dev/llgo/cmd/internal/version" in args)
+                self.assertEqual("-p=2" in main, runner == "Linux")
+                self.assertFalse(any(arg.startswith("-overlay=") for arg in main))
+                # Every build case still runs exactly once with compiler coverage.
+                if "build" in expected_suites:
+                    build = next(args for args in calls if "./internal/build" in args)
+                    self.assertNotIn("-run", build)
+                    self.assertNotIn("-skip", build)
+                    self.assertIn("-coverprofile=coverage-build.txt", build)
+                    self.assertIn("-coverpkg=./...", build)
+                    self.assertEqual(sum("./internal/build" in args for args in calls), 1)
+                    self.assertEqual(any(arg.startswith("-ldflags=-linkmode=external") for arg in build),
+                                     runner == "Windows")
+                self.assertFalse(any("github.com/xgo-dev/llgo/internal/build" in args
+                                     for args in calls))
+                self.assertTrue(all("-json" in args for args in calls))
+
+    def test_cross_host_windows_checks_keep_every_host_target_pair(self):
+        job = load("llgo.yml")["jobs"]["windows-gnu-cross"]
+        entries = job["strategy"]["matrix"]["include"]
+        checks = [step for step in job["steps"]
+                  if step.get("uses") == "./.github/actions/test-windows-cross"]
+        actual = set()
+        for entry in entries:
+            for step in checks:
+                arch = step["with"]["windows-arch"]
+                if entry["windows_arch"] in {"all", arch}:
+                    actual.add((entry["os"], arch))
+                self.assertIn("!cancelled()", step["if"])
+                self.assertIn("steps.host_compiler.outcome == 'success'", step["if"])
+                self.assertIn(f"matrix.windows_arch == '{arch}'", step["if"])
+                self.assertNotIn("continue-on-error", step)
+        self.assertEqual(actual, {(host, arch) for host in ("ubuntu-24.04", "macos-latest")
+                                  for arch in ("amd64", "arm64", "386")})
+        self.assertEqual(sum(entry["os"] == "macos-latest" for entry in entries), 1)
+
+    def test_embedded_debuggers_share_setup_without_losing_backend_failures(self):
+        job = load("targets.yml")["jobs"]["embedded-debug"]
+        self.assertCountEqual(job["strategy"]["matrix"]["os"],
+                              ["ubuntu-24.04", "macos-15", "windows-2022"])
+        self.assertNotIn("backend", job["strategy"]["matrix"])
+        for backend in ("gdb", "lldb"):
+            step = next(step for step in job["steps"]
+                        if f"runtest.py --backend {backend}" in step.get("run", ""))
+            self.assertIn("!cancelled()", step["if"])
+            self.assertIn("steps.compiler.outcome == 'success'", step["if"])
+            self.assertNotIn("continue-on-error", step)
+
+    def test_all_board_fixtures_share_one_compiler_and_cache(self):
+        job = load("targets.yml")["jobs"]["llgo"]
+        self.assertEqual(matrix_size(job), 1)
+        steps = job["steps"]
+        compiler = next(step for step in steps if step.get("id") == "compiler")
+        self.assertIn("go build -tags=dev", compiler["run"])
+        self.assertIn("LLGO_TEST_COMPILER=", compiler["run"])
+        cache = next(step for step in steps
+                     if step.get("uses") == "./.github/actions/setup-llgo-cache")
+        self.assertEqual(cache["with"]["crosscompile-cache-mode"], "readwrite")
+        self.assertEqual(cache["with"]["build-cache-scope"], "embedded-boards")
+        for fixture in ("empty", "defer"):
+            step = next(step for step in steps
+                        if step.get("run") == f"bash build.sh {fixture}")
+            self.assertEqual(step["working-directory"], "_demo/embed/targetsbuild")
+            self.assertIn("!cancelled()", step["if"])
+            self.assertIn("steps.compiler.outcome == 'success'", step["if"])
+            self.assertNotIn("continue-on-error", step)
+
+    def test_wasm_caches_use_pinned_go_and_include_workers(self):
+        steps = load("llgo.yml")["jobs"]["wasm-runtime"]["steps"]
+        go = next(i for i, step in enumerate(steps)
+                  if step.get("uses") == "./.github/actions/setup-go")
+        cache = next(i for i, step in enumerate(steps)
+                     if step.get("uses") == "./.github/actions/setup-llgo-cache")
+        self.assertLess(go, cache)
+        self.assertNotIn("if", steps[cache])
+        self.assertEqual(steps[cache]["with"]["build-cache-mode"], "readwrite")
+        self.assertEqual(steps[cache]["with"]["build-cache-scope"], "wasm-${{ matrix.suite }}")
+        self.assertEqual(steps[cache]["with"]["crosscompile-cache-mode"], "readwrite")
+        self.assertIn("matrix.suite != 'workers'", steps[cache]["with"]["wasmer-cache-mode"])
+
+    def test_benchmark_runtime_manifest_keeps_versions_and_full_demo_dependencies(self):
+        root = WORKFLOWS.parents[1]
+        full = json.loads((root / ".github/windows/vcpkg/vcpkg.json").read_text())
+        runtime = json.loads((root / ".github/windows/vcpkg-runtime/vcpkg.json").read_text())
+        self.assertEqual(full["builtin-baseline"], runtime["builtin-baseline"])
+        self.assertEqual(full["overrides"], runtime["overrides"])
+        runtime_names = {dep if isinstance(dep, str) else dep["name"]
+                         for dep in runtime["dependencies"]}
+        full_names = {dep if isinstance(dep, str) else dep["name"]
+                      for dep in full["dependencies"]}
+        self.assertEqual(runtime_names, {"bdwgc", "libffi", "libuv", "pkgconf", "zlib"})
+        self.assertEqual(full_names - runtime_names, {"openssl", "cjson", "sqlite3"})
+        self.assertIn({"name": "pkgconf", "host": True}, runtime["dependencies"])
+        action = yaml.load((root / ".github/actions/setup-deps/action.yml").read_text(),
+                           Loader=yaml.BaseLoader)
+        self.assertEqual(action["inputs"]["windows-msvc-dependencies"]["default"], "full")
+        cache = next(step for step in action["runs"]["steps"]
+                     if step.get("id") == "windows_vcpkg_cache")
+        self.assertIn("steps.windows_profile.outputs.manifest-hash", cache["with"]["key"])
+        self.assertIn("steps.windows_profile.outputs.manifest-hash", cache["with"]["path"])
+        steps = load("benchmark.yml")["jobs"]["benchmark"]["steps"]
+        deps = next(step for step in steps
+                    if step.get("uses") == "./.github/actions/setup-deps")
+        self.assertEqual(deps["with"]["windows-msvc-dependencies"], "runtime")
+
+    def test_cache_scopes_preserve_legacy_keys_and_isolate_package_workloads(self):
+        root = WORKFLOWS.parents[1]
+        action = yaml.load((root / ".github/actions/setup-llgo-cache/action.yml").read_text(),
+                           Loader=yaml.BaseLoader)
+        resolve = action["runs"]["steps"][0]["run"]
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            for tool, output in (("go", "go1.27.0"), ("clang", "clang version 22.1.8")):
+                path = directory / tool
+                path.write_text(f"#!/bin/sh\necho '{output}'\n")
+                path.chmod(0o755)
+            profiles = []
+            for scope in ("", "embedded-boards", "wasm-runtime", "wasm-workers", "bad/scope"):
+                output = directory / "outputs"
+                output.write_text("")
+                result = subprocess.run(["bash", "-c", resolve], cwd=root,
+                    env={**os.environ, "PATH": f"{directory}{os.pathsep}{os.environ['PATH']}",
+                         "BUILD_CACHE_MODE": "readwrite", "CROSSCOMPILE_CACHE_MODE": "readwrite",
+                         "WASMER_CACHE_MODE": "off", "BUILD_CACHE_SCOPE": scope,
+                         "LLGO_WINDOWS_ABI": "native", "LLGO_WINDOWS_ARCH": "native",
+                         "GITHUB_OUTPUT": str(output)}, capture_output=True, text=True)
+                if scope == "bad/scope":
+                    self.assertNotEqual(result.returncode, 0)
+                    continue
+                self.assertEqual(result.returncode, 0, result.stderr)
+                values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+                self.assertEqual(values["profile"], "native-native")
+                self.assertEqual(values["build-profile"], "native-native" + (f"-{scope}" if scope else ""))
+                profiles.append(values["build-profile"])
+            self.assertEqual(len(profiles), len(set(profiles)))
 
     def test_code_and_document_jobs_consume_the_shared_decision(self):
         for filename in [*CODE_WORKFLOWS, "doc-link-checker.yml", "model-demo.yml"]:
@@ -154,24 +409,25 @@ else:
                     self.assertIn("prepare", needs(job))
                     self.assertIn(f"needs.prepare.outputs.{flag} == 'true'", job["if"])
 
-    def test_main_push_is_not_path_filtered_and_cancels_older_main_runs(self):
-        for path in WORKFLOWS.glob("*.yml"):
+    def test_pr_and_main_concurrency_groups_are_isolated(self):
+        for path in workflow_paths():
             workflow = load(path.name)
             events = workflow.get("on", {})
-            if "push" not in events:
+            if "push" not in events and "pull_request" not in events:
                 continue
             with self.subTest(workflow=path.name):
-                push = events["push"] or {}
-                self.assertIn("main", push.get("branches", []))
-                self.assertNotIn("paths", push)
-                self.assertNotIn("paths-ignore", push)
+                if "push" in events:
+                    push = events["push"] or {}
+                    self.assertIn("main", push.get("branches", []))
+                    self.assertNotIn("paths", push)
+                    self.assertNotIn("paths-ignore", push)
                 concurrency = workflow["concurrency"]
-                # PRs retain their own groups; tags and other events keep
-                # unique run IDs and do not cancel each other.
+                # Use the filename as a stable key, independent of display names.
+                # Retain main supersession and unique tag/manual run groups.
                 self.assertEqual(concurrency["cancel-in-progress"],
                                  "${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}")
                 self.assertEqual(concurrency["group"],
-                                 "${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}")
+                                 path.name + "-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}")
 
     def test_gated_pr_workflows_always_start_the_prepare_job(self):
         for filename in [*CODE_WORKFLOWS, "doc-link-checker.yml"]:
@@ -187,20 +443,81 @@ else:
         for filename, expected in CODE_WORKFLOWS.items():
             workflow = load(filename)
             count = sum(matrix_size(job) for name, job in workflow["jobs"].items()
-                        if name not in {"prepare", "ci-gate", "release"})
+                        if name not in {"prepare", "ci-gate", "release", "submit-winget"})
             with self.subTest(workflow=filename):
                 self.assertEqual(count, expected)
+
+    def test_windows_release_covers_all_architectures_with_native_x86_toolchains(self):
+        jobs = load("release-build.yml")["jobs"]
+        for name in ("build-windows", "test-windows-artifacts"):
+            matrix = jobs[name]["strategy"]["matrix"]
+            self.assertCountEqual(matrix["abi"], ["msvc", "mingw"])
+            self.assertCountEqual(matrix["goarch"], ["amd64", "arm64"])
+            x86 = jobs[name + "-x86"]["strategy"]["matrix"]
+            self.assertCountEqual(x86["abi"], ["msvc", "mingw"])
+            self.assertEqual(x86["goarch"], ["386"])
+            self.assertEqual(x86["os"], ["windows-2022"])
+            self.assertEqual(jobs[name]["steps"], jobs[name + "-x86"]["steps"])
+        self.assertIn("build-windows-compiler", needs(jobs["build-windows"]))
+        self.assertIn("build-windows-compiler-x86", needs(jobs["build-windows-x86"]))
+        compiler = jobs["build-windows-compiler"]
+        self.assertCountEqual(compiler["strategy"]["matrix"]["goarch"], ["amd64", "arm64"])
+        self.assertEqual(jobs["build-windows-compiler-x86"]["strategy"]["matrix"]["goarch"], ["386"])
+        self.assertEqual(compiler["steps"], jobs["build-windows-compiler-x86"]["steps"])
+        self.assertNotIn("abi", compiler["strategy"]["matrix"])
+        host = next(step for step in compiler["steps"]
+                    if step.get("uses") == "./.github/actions/setup-deps")
+        self.assertEqual(host["with"]["windows-abi"], "msvc")
+        upload = next(step for step in compiler["steps"]
+                      if step.get("name") == "Upload shared host compiler")
+        download = next(step for step in jobs["build-windows"]["steps"]
+                        if step.get("name") == "Download shared host compiler")
+        self.assertEqual(upload["with"]["name"], download["with"]["name"])
+    def test_windows_release_uses_checksum_pinned_official_toolchains(self):
+        jobs = load("release-build.yml")["jobs"]
+        self.assertNotIn("build-windows-x86-toolchains", jobs)
+        self.assertFalse((WORKFLOWS.parent / "windows/build-x86-toolchains.sh").exists())
+        pins = json.loads((WORKFLOWS.parent / "windows/espressif-toolchain.json").read_text())
+        self.assertRegex(pins["release"], r"^22\.1\.4_\d{8}$")
+        self.assertRegex(pins["producer_commit"], r"^[0-9a-f]{40}$")
+        self.assertEqual(pins["sdk"]["version"], "22.1.8")
+        self.assertEqual(pins["sdk"]["asset"], "llvm-sdk-22.1.8-i686-w64-mingw32.tar.xz")
+        self.assertRegex(pins["sdk"]["sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(set(pins["payloads"]), {"386", "amd64", "arm64"})
+        for arch, target in (("386", "i686"), ("amd64", "x86_64"), ("arm64", "aarch64")):
+            pin = pins["payloads"][arch]
+            self.assertEqual(pin["asset"], f"clang-esp-{pins['release']}-{target}-w64-mingw32.tar.xz")
+            self.assertRegex(pin["sha256"], r"^[0-9a-f]{64}$")
+        for name in ("build-windows-compiler", "build-windows-compiler-x86"):
+            step = next(step for step in jobs[name]["steps"]
+                        if step.get("name") == "Cache Windows x86 LLVM SDK archive")
+            self.assertEqual(step["if"], "matrix.goarch == '386'")
+            self.assertIn("espressif-toolchain.json", step["with"]["key"])
+            self.assertEqual(step["with"]["path"], "${{ runner.tool_cache }}/llgo-release-downloads/llvm-x86")
+        for name in ("build-windows", "build-windows-x86"):
+            step = next(step for step in jobs[name]["steps"]
+                        if step.get("name") == "Cache ESP release archive")
+            self.assertNotIn("if", step)
+            self.assertIn("espressif-toolchain.json", step["with"]["key"])
+        for filename in ("build-compiler.ps1", "build-release.ps1"):
+            script = (WORKFLOWS.parent / "windows" / filename).read_text()
+            self.assertIn("espressif-toolchain.json", script)
+            self.assertIn("https://github.com/xgo-dev/espressif-llvm-project-prebuilt/releases/download/", script)
+            self.assertNotIn("Expand-ReleaseLocalXz", script)
+            self.assertNotIn("cpunion/espressif", script)
 
     def test_release_artifact_dependencies_and_tag_guard_are_preserved(self):
         jobs = load("release-build.yml")["jobs"]
         for consumer, producer in {
             "build": "populate-linux-sysroot", "build-windows": "build",
             "test-windows-artifacts": "build-windows", "prepare-winget": "test-windows-artifacts",
+            "test-windows-artifacts-x86": "build-windows-x86",
             "test-artifacts": "build", "test-linux-distributions": "build",
         }.items():
             self.assertIn(producer, needs(jobs[consumer]))
         self.assertEqual(set(needs(jobs["release"])), {
-            "prepare", "prepare-winget", "test-artifacts", "test-windows-artifacts", "test-linux-distributions", "populate-linux-sysroot"})
+            "prepare", "prepare-winget", "test-artifacts", "test-windows-artifacts", "test-windows-artifacts-x86", "test-linux-distributions", "populate-linux-sysroot"})
+        self.assertIn("test-windows-artifacts-x86", needs(jobs["prepare-winget"]))
         self.assertIn("startsWith(github.ref, 'refs/tags/')", jobs["release"]["if"])
 
     def test_linux_distribution_ci_builds_packages_without_publishing(self):
@@ -236,12 +553,40 @@ else:
                 expected = "true" if tag in {"v1.2.3", "v0.0.0"} else "false"
                 self.assertEqual(output.read_text(), f"stable={expected}\n")
 
+    def test_winget_submission_follows_stable_release_and_has_a_read_only_preview(self):
+        jobs = load("release-build.yml")["jobs"]
+        call = jobs["submit-winget"]
+        self.assertEqual(set(needs(call)), {"prepare", "release"})
+        self.assertIn("github.repository == 'xgo-dev/llgo'", call["if"])
+        self.assertIn("needs.release.outputs.stable == 'true'", call["if"])
+        self.assertEqual(jobs["release"]["outputs"]["stable"], "${{ steps.release-type.outputs.stable }}")
+        self.assertEqual(call["uses"], "./.github/workflows/winget.yml")
+        workflow = load("winget.yml")
+        self.assertEqual(set(workflow["on"]), {"workflow_call", "workflow_dispatch"})
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
+        self.assertEqual(workflow["on"]["workflow_dispatch"]["inputs"]["dry_run"]["default"], "true")
+        self.assertEqual(workflow["on"]["workflow_call"]["inputs"]["dry_run"]["default"], "false")
+        job = workflow["jobs"]["submit"]
+        self.assertEqual(job["if"], "github.repository == 'xgo-dev/llgo' || inputs.dry_run")
+        step = next(step for step in job["steps"] if step.get("name") == "Submit release manifests")
+        self.assertEqual(step["env"]["WINGET_PR_TOKEN"], "${{ !inputs.dry_run && secrets.WINGET_PR_TOKEN || '' }}")
+        self.assertNotIn("${{", step["run"])
+
     def test_fury_upload_validates_packages_and_stops_on_failure(self):
         steps = load("release-build.yml")["jobs"]["release"]["steps"]
         upload = next(step for step in steps if step.get("name") == "Upload Linux packages to Fury")
         packages = [f".dist/llgo1.2.3.linux-{arch}.{fmt}"
                     for arch in ("amd64", "arm64") for fmt in ("deb", "rpm")]
-        for case in ("success", "created", "missing-token", "missing-package", "invalid-account", "http-failure", "transport-failure"):
+        cases = [(case, "xgo-dev", "bad/account" if case == "invalid-account" else "goplus", "goplus")
+                 for case in ("success", "created", "missing-token", "missing-package", "invalid-account",
+                              "http-failure", "transport-failure")]
+        cases += [("upstream-default", "xgo-dev", "", "goplus"),
+                  ("fork-default", "cpunion", "", "cpunion"),
+                  ("upstream-override", "xgo-dev", "custom-account", "custom-account"),
+                  ("fork-override", "cpunion", "custom-account", "custom-account")]
+        success_cases = {"success", "created", "upstream-default", "fork-default",
+                         "upstream-override", "fork-override"}
+        for case, owner, account, expected_account in cases:
             with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root / ".dist").mkdir()
@@ -263,24 +608,25 @@ else:
                                         capture_output=True, text=True, env={**os.environ,
                                             "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
                                             "FURY_TOKEN": "" if case == "missing-token" else "test-only-token",
-                                            "FURY_ACCOUNT": "bad/account" if case == "invalid-account" else "xgo-dev",
+                                            "FURY_ACCOUNT": account,
+                                            "GITHUB_REPOSITORY_OWNER": owner,
                                             "GITHUB_REF_NAME": "v1.2.3",
                                             "UPLOAD_LOG": str(log),
                                             "CURL_STATUS": "503" if case == "http-failure" else "201" if case == "created" else "200",
                                             "CURL_EXIT": "7" if case == "transport-failure" else "0"})
                 calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
-                self.assertEqual(result.returncode == 0, case in {"success", "created"}, result.stderr)
+                self.assertEqual(result.returncode == 0, case in success_cases, result.stderr)
                 self.assertNotIn("test-only-token", result.stdout + result.stderr)
-                expected_calls = 4 if case in {"success", "created"} else 1 if case.endswith("failure") else 0
+                expected_calls = 4 if case in success_cases else 1 if case.endswith("failure") else 0
                 self.assertEqual(len(calls), expected_calls)
                 for package, args in zip(packages, calls):
                     self.assertIn(f"file=@{package}", args)
                     self.assertIn("public=true", args)
                     self.assertIn("Authorization: test-only-token", args)
-                    self.assertEqual(args[-1], "https://push.fury.io/uploads?as=xgo-dev")
+                    self.assertEqual(args[-1], f"https://push.fury.io/uploads?as={expected_account}")
 
     def test_runner_policy_is_not_duplicated_in_workflows(self):
-        for path in WORKFLOWS.glob("*.yml"):
+        for path in workflow_paths():
             workflow = load(path.name)
             for name, job in workflow["jobs"].items():
                 with self.subTest(workflow=path.name, job=name):
@@ -309,7 +655,7 @@ else:
             with self.subTest(workflow=filename):
                 self.assertEqual(workflow["jobs"]["prepare"]["uses"], PREPARE)
                 self.assertIn("prepare", needs(job))
-                self.assertNotIn("if", job)  # These checks still run for docs-only PRs.
+                self.assertEqual(job["if"], "needs.prepare.outputs.run_code_ci == 'true'")
                 self.assertEqual(job["runs-on"],
                                  "${{ matrix.os == 'ubuntu-24.04' && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os }}")
                 self.assertCountEqual(job["strategy"]["matrix"]["os"],
@@ -365,6 +711,10 @@ else:
         checkout = job["steps"][0]
         self.assertEqual(checkout["with"]["fetch-depth"],
                          "${{ github.event_name == 'pull_request' && '0' || '1' }}")
+        self.assertGreater(int(checkout["env"]["GIT_HTTP_LOW_SPEED_LIMIT"]), 0)
+        self.assertGreater(int(checkout["env"]["GIT_HTTP_LOW_SPEED_TIME"]), 0)
+        retry_budget = 3 * int(checkout["env"]["GIT_HTTP_LOW_SPEED_TIME"]) + 2 * 20
+        self.assertLess(retry_budget, int(job["timeout-minutes"]) * 60)
         self.assertEqual(workflow["permissions"], {"contents": "read"})
 
     def test_pr_policy_comes_from_base_and_missing_base_enables_all_checks(self):
@@ -391,6 +741,7 @@ else:
                 git("add", ".")
                 git("commit", "-qm", "base")
                 base = git("rev-parse", "HEAD")
+                historical_blob = git("rev-parse", "HEAD:README.md")
 
                 if case == "docs-only":
                     (repo / "README.md").write_text("updated prose\n")
@@ -402,7 +753,32 @@ else:
                     (repo / "compiler.go").write_text("package compiler\n")
                 git("add", ".")
                 git("commit", "-qm", "pr")
+                if case == "base-policy":
+                    (repo / "README.md").write_text("final documentation edit\n")
+                    git("add", ".")
+                    git("commit", "-qm", "docs after code")
                 head = git("rev-parse", "HEAD")
+
+                # Exercise checkout's transport, including lazy retrieval of
+                # the trusted policy when the PR replaces its current blob.
+                git("config", "uploadpack.allowFilter", "true")
+                git("config", "uploadpack.allowAnySHA1InWant", "true")
+                remote = repo.as_uri()
+                repo = repo / "checkout"
+                repo.mkdir()
+                git("init", "-q")
+                git("config", "protocol.file.allow", "always")
+                git("remote", "add", "origin", remote)
+                fetch = ["fetch", "--quiet", "--no-tags"]
+                configured_filter = load("ci-prepare.yml")["jobs"]["prepare"]["steps"][0]["with"].get("filter")
+                if configured_filter:
+                    fetch.append("--filter=" + configured_filter)
+                git(*fetch, "origin", "+refs/heads/*:refs/remotes/origin/*")
+                git("checkout", "-q", "--detach", head)
+                self.assertEqual(git("rev-parse", "--is-shallow-repository"), "false")
+                if case != "missing-base-policy":
+                    self.assertIn("?" + historical_blob,
+                                  git("rev-list", "--objects", "--all", "--missing=print"))
 
                 event = repo / "event.json"
                 event.write_text(json.dumps({"pull_request": {
@@ -427,7 +803,7 @@ else:
                 self.assertEqual(values["pr_head_sha"], head)
                 self.assertEqual(values["pr_merge_base"], base)
 
-    def test_each_prepared_workflow_has_an_unskippable_gate(self):
+    def test_preparation_failures_are_reported_unless_workflow_is_cancelled(self):
         names = set()
         for filename in [*CODE_WORKFLOWS, "doc-link-checker.yml", "model-demo.yml"]:
             gate = load(filename)["jobs"]["ci-gate"]
@@ -435,7 +811,7 @@ else:
                 self.assertNotIn(gate["name"], names)
                 names.add(gate["name"])
                 self.assertEqual(needs(gate), ["prepare"])
-                self.assertEqual(gate["if"], "always()")
+                self.assertEqual(gate["if"], "always() && !cancelled()")
                 # On success the gate shares the qiniu pool. A failed prepare
                 # has no runner output, so keep its diagnostic job schedulable.
                 self.assertEqual(gate["runs-on"],

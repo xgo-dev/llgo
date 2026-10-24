@@ -65,7 +65,7 @@ func printWindowsConsole(text string) {
 		if r < runeSelf {
 			i++
 		} else {
-			r, i = decoderune(text, i)
+			r, i = decodeNonASCII(text, i)
 		}
 		if r < 0x10000 {
 			buffer[written] = uint16(r)

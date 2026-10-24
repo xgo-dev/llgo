@@ -54,18 +54,16 @@ func Compute(x, y archsimd.Float32x4) archsimd.Float32x4 { return x.Add(y) }
 
 func TestSIMDFMVLLVM(t *testing.T) {
 	for _, goos := range []string{"linux", "darwin", "windows"} {
-		for _, level := range []string{"O0", "O2"} {
-			t.Run(goos+"/v1/"+level, func(t *testing.T) {
-				testSIMDFMVLLVM(t, goos, "v1", level)
-			})
-		}
+		t.Run(goos+"/v1", func(t *testing.T) {
+			testSIMDFMVLLVM(t, goos, "v1", "O0", "O2")
+		})
 	}
-	t.Run("linux/v3/O2", func(t *testing.T) {
+	t.Run("linux/v3", func(t *testing.T) {
 		testSIMDFMVLLVM(t, "linux", "v3", "O2")
 	})
 }
 
-func testSIMDFMVLLVM(t *testing.T, goos, baseline, level string) {
+func testSIMDFMVLLVM(t *testing.T, goos, baseline string, levels ...string) {
 	conf := NewDefaultConf(ModeGen)
 	conf.Goos, conf.Goarch, conf.GOAMD64, conf.GOEXPERIMENT = goos, "amd64", baseline, "simd"
 	conf.LinkOptions.DWARF = DWARFPreserve
@@ -122,26 +120,60 @@ func testSIMDFMVLLVM(t *testing.T, goos, baseline, level string) {
 	if kernel.IsNil() || kernel.BasicBlocksCount() == 0 {
 		t.Fatal("cross-package specialized definition missing")
 	}
-	prog := pkgs[0].LPkg.Prog
-	mod.SetDataLayout(prog.DataLayout())
-	mod.SetTarget(prog.Target().Spec().Triple)
-	if level == "O2" {
-		opts := llvm.NewPassBuilderOptions()
-		defer opts.Dispose()
-		opts.SetVerifyEach(true)
-		if err := mod.RunPasses("default<O2>", prog.TargetMachine(), opts); err != nil {
+	simdCodegenVariants(t, levels, pkgs, func(t *testing.T, asm string) {
+		if goos == "linux" && baseline == "v1" {
+			assertSIMDBaselineAssembly(t, asm)
+		}
+		if !strings.Contains(asm, "vaddps") {
+			t.Fatal("AVX2 version did not select AVX instructions")
+		}
+	})
+}
+
+// The level selects only the LLVM pass pipeline. Generate and check the shared
+// input IR once, then read an independent bitcode copy for each pipeline so
+// code generation cannot mutate the input of the next case.
+func simdCodegenVariants(t *testing.T, levels []string, pkgs []*aPackage, check func(*testing.T, string)) {
+	t.Helper()
+	paths := make([]string, len(pkgs))
+	for i, pkg := range pkgs {
+		prog, mod := pkg.LPkg.Prog, pkg.LPkg.Module()
+		mod.SetDataLayout(prog.DataLayout())
+		mod.SetTarget(prog.Target().Spec().Triple)
+		paths[i] = filepath.Join(t.TempDir(), "input.bc")
+		bitcode := llvm.WriteBitcodeToMemoryBuffer(mod)
+		err := os.WriteFile(paths[i], bitcode.Bytes(), 0600)
+		bitcode.Dispose()
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	asm, err := prog.TargetMachine().EmitToMemoryBuffer(mod, llvm.AssemblyFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer asm.Dispose()
-	if goos == "linux" && baseline == "v1" {
-		assertSIMDBaselineAssembly(t, string(asm.Bytes()))
-	}
-	if !strings.Contains(string(asm.Bytes()), "vaddps") {
-		t.Fatal("AVX2 version did not select AVX instructions")
+	for _, level := range levels {
+		t.Run(level, func(t *testing.T) {
+			for i, pkg := range pkgs {
+				ctx := llvm.NewContext()
+				defer ctx.Dispose()
+				mod, err := ctx.ParseBitcodeFile(paths[i])
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer mod.Dispose()
+				machine := pkg.LPkg.Prog.TargetMachine()
+				if level == "O2" {
+					opts := llvm.NewPassBuilderOptions()
+					defer opts.Dispose()
+					opts.SetVerifyEach(true)
+					if err := mod.RunPasses("default<O2>", machine, opts); err != nil {
+						t.Fatal(err)
+					}
+				}
+				asm, err := machine.EmitToMemoryBuffer(mod, llvm.AssemblyFile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer asm.Dispose()
+				check(t, string(asm.Bytes()))
+			}
+		})
 	}
 }
