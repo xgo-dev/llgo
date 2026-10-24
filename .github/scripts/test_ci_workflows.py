@@ -158,6 +158,119 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(step["env"]["LLGO_TEST_EXTENDED_ABI"],
                          "${{ runner.os == 'Linux' && '1' || '0' }}")
 
+    def test_native_workloads_have_independent_bounded_jobs(self):
+        jobs = load("llgo.yml")["jobs"]
+        self.assertIn("native-simd", list(jobs))
+        self.assertIn("native-integration", list(jobs))
+        core = jobs["llgo"]
+        integration = jobs["native-integration"]
+        simd = jobs["native-simd"]
+        entries = core["strategy"]["matrix"]["include"]
+        self.assertEqual(matrix_size(core), 8)
+        self.assertEqual(integration["strategy"], core["strategy"])
+        self.assertEqual(simd["strategy"]["matrix"]["include"],
+                         [entry for entry in entries if entry.get("windows_arch") != "386"])
+        self.assertEqual(matrix_size(simd), 6)
+        for job in (core, integration, simd):
+            self.assertEqual(needs(job), ["prepare"])
+            self.assertEqual(job["if"], "needs.prepare.outputs.run_code_ci == 'true'")
+            self.assertEqual(job["timeout-minutes"], "60")
+            self.assertEqual(job["strategy"]["fail-fast"], "false")
+            self.assertEqual(job["runs-on"], core["runs-on"])
+            self.assertNotIn("continue-on-error", job)
+            self.assertTrue(all("continue-on-error" not in step for step in job["steps"]))
+
+        common = ["Install dependencies", "Install embedded dependencies",
+                  "Setup demo dependencies", "Set up Go for build", "Restore LLGo cache",
+                  "Build LLGo and test tools", "Activate native Windows target"]
+        core_steps = {step.get("name"): step for step in core["steps"]}
+        integration_steps = {step.get("name"): step for step in integration["steps"]}
+        self.assertEqual([step["name"] for step in integration["steps"]
+                          if step.get("name") in common], common)
+        for name in common:
+            self.assertEqual(integration_steps[name], core_steps[name])
+        for name in ("Execute Windows 386 atomic contracts", "Check Windows native runtime and FFI",
+                     "Run Go 1.27 LLGo core tests", "Upload LLGo test coverage to Codecov"):
+            self.assertIn(name, core_steps)
+            self.assertNotIn(name, integration_steps)
+        self.assertNotIn("Test SIMD behavior with Go and LLGo", core_steps)
+        self.assertNotIn("Test demos", core_steps)
+
+    def test_native_simd_keeps_the_complete_original_harness(self):
+        jobs = load("llgo.yml")["jobs"]
+        self.assertIn("native-simd", list(jobs))
+        job = jobs["native-simd"]
+        steps = {step.get("name"): step for step in job["steps"]}
+        deps = steps["Install dependencies"]
+        self.assertEqual(deps["uses"], "./.github/actions/setup-deps")
+        self.assertEqual(deps["with"]["windows-msvc-dependencies"], "runtime")
+        self.assertNotIn("Install embedded dependencies", steps)
+        self.assertNotIn("Setup demo dependencies", steps)
+        self.assertEqual(steps["Activate native Windows target"],
+                         next(step for step in jobs["llgo"]["steps"]
+                              if step.get("name") == "Activate native Windows target"))
+        test = steps["Test SIMD behavior with Go and LLGo"]
+        self.assertNotIn("if", test)
+        self.assertEqual(test["id"], "native_simd")
+        self.assertEqual(test["shell"], "bash")
+        self.assertEqual(test["env"], {
+            "GOEXPERIMENT": "simd",
+            "LLGO_SIMD_ARTIFACT_DIR": "${{ runner.temp }}/llgo-simd-matrix"})
+        self.assertEqual(test["run"].splitlines(), [
+            "(cd runtime && go test -count=1 -timeout=2m ./internal/runtime/math)",
+            "go test -count=1 -timeout=2m ./test/simd/...",
+            "bash dev/test_native_simd.sh"])
+        artifact = steps["Upload failed native SIMD executables"]
+        self.assertEqual(artifact["if"], "failure() && steps.native_simd.outcome == 'failure'")
+        self.assertEqual(artifact["with"]["path"], test["env"]["LLGO_SIMD_ARTIFACT_DIR"])
+        build = steps["Build SIMD compiler"]
+        self.assertIn('go build -o "$RUNNER_TEMP/llgo-bin/llgo${tool_suffix}" ./cmd/llgo', build["run"])
+        self.assertIn('echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"', build["run"])
+
+    def test_native_integration_preserves_ordered_post_core_gates(self):
+        jobs = load("llgo.yml")["jobs"]
+        self.assertIn("native-integration", list(jobs))
+        steps = jobs["native-integration"]["steps"]
+        names = [step.get("name") for step in steps]
+        start = names.index("Test Hello World with Go 1.20")
+        self.assertEqual(names[start:], [
+            "Test Hello World with Go 1.20",
+            "Test Hello World with go.mod 1.21 through 1.26",
+            "Test Hello World with go.mod 1.27",
+            "Test runtime module compatibility",
+            "Run caller regressions in C shared libraries and archives",
+            "Validate the native Windows toolchain profile",
+            "Test Windows CPU profiler context",
+            "Test demo without RPATH (expect failure)",
+            "Test static cargs without a runtime search path",
+            "Test demos",
+            "Test demos (embedded target)",
+            "Test demos (embedded target, build only)",
+            "Test C header generation",
+            "Test export with different symbol names on embedded targets",
+            "Test ESP serial smoke",
+            "Test ESP32-C3 startup regression",
+            "_xtool build tests",
+            "Show test result",
+            "Install LLDB for integration tests",
+            "GDB values, registry and complete worker unwind (Linux)",
+            "Install MinGW LLDB for integration tests",
+            "LLDB integration tests",
+            "LLDB integration tests (MSVC)",
+            "LLDB integration tests (MinGW)",
+            "LLDB integration tests (MinGW cross-architecture)",
+            "Native source-debug acceptance tests",
+            "Native debug metadata tests",
+            "Native debug metadata tests (Windows)",
+            "Set up the MSYS2 host shell for MSVC",
+            "Test from the MSYS2 host shell",
+            "Install Cygwin for host-shell qualification",
+            "Test from the Cygwin host shell",
+            "Install Windows GDB",
+            "GDB native values and registry (Windows)",
+            "GDB complete worker unwind (Windows amd64 and 386)"])
+        self.assertTrue(all(step.get("run") or step.get("uses") for step in steps[start:]))
+
     def test_gdb_windows_acceptance_covers_both_abis_and_all_native_architectures(self):
         job = load("llgo.yml")["jobs"]["llgo"]
         entries = job["strategy"]["matrix"]["include"]
