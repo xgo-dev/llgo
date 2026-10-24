@@ -30,3 +30,6 @@ replace github.com/xgo-dev/llgo/runtime => ./runtime
 
 // v0.51.0 plus the generic-method wrapper fix; remove when upstream includes it.
 replace golang.org/x/tools => github.com/xgo-dev/tools v0.51.1
+
+// Explicit native variable bindings from goplus/lib#53; remove after its release.
+replace github.com/goplus/lib => github.com/cpunion/lib v0.0.0-20261021003434-95e56e9fa51c

@@ -415,23 +415,37 @@ func (p *context) compileMethodsIf(pkg llssa.Package, typ types.Type, keep func(
 }
 
 // Global variable.
-func (p *context) compileGlobal(pkg llssa.Package, gbl *ssa.Global) {
+func (p *context) compileGlobal(pkg llssa.Package, gbl *ssa.Global) error {
 	typ := p.patchType(gbl.Type())
 	name, vtype, define := p.varName(gbl.Pkg.Pkg, gbl)
 	if vtype == pyVar {
-		return
+		return nil
 	}
 	dbgInstrln("==> NewVar", name, typ)
-	g, skip := p.localityGlobalStorage(pkg, gbl, name, typ, llssa.CallConv(vtype))
+	g, skip, info := p.localityGlobalStorage(pkg, gbl, name, typ, llssa.CallConv(vtype))
 	if skip {
-		return
+		return nil
 	}
 	if define && name == llssa.RuntimeGoroutineStackSizeVar {
 		p.prog.InitPthreadStackSize(g)
-		return
+		return nil
 	}
 	if p.tryEmbedGlobalInit(pkg, gbl, g, name) {
-		return
+		return nil
+	}
+	if define && vtype == goVar && info.Locality == llssa.LocalityNone {
+		init := p.staticGlobalInits[gbl]
+		if value, ok := p.rewriteValue(name); ok {
+			if p.isStringPtrType(gbl.Type()) {
+				init = pkg.ConstString(value)
+			} else {
+				log.Printf("warning: ignoring rewrite for non-string variable %s (type: %v)", name, gbl.Type())
+			}
+		}
+		if err := g.InitSharedGo(init, p.prog.IsExternalImport(name)); err != nil {
+			return fmt.Errorf("%s: %s: %w", p.fset.Position(gbl.Pos()), gbl.Name(), err)
+		}
+		return nil
 	}
 	if value, ok := p.rewriteValue(name); ok {
 		if p.isStringPtrType(gbl.Type()) {
@@ -447,6 +461,7 @@ func (p *context) compileGlobal(pkg llssa.Package, gbl *ssa.Global) {
 	} else if define {
 		g.InitNil()
 	}
+	return nil
 }
 
 func (p *context) makeClosureCtx(fn *ssa.Function, pkg *types.Package, vars []*ssa.FreeVar) *types.Var {
@@ -2987,12 +3002,16 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		if _, ok := skips["init"]; ok || ctx.skipall {
 			ctx.state |= pkgFNoOldInit
 		}
-		processPkg(ctx, ret, patch.Alt)
+		if err = processPkg(ctx, ret, patch.Alt); err != nil {
+			return nil, nil, err
+		}
 		ctx.state = pkgHasPatch
 		ctx.skips = skips
 	}
 	if !ctx.skipall {
-		processPkg(ctx, ret, pkg)
+		if err = processPkg(ctx, ret, pkg); err != nil {
+			return nil, nil, err
+		}
 	}
 	for len(ctx.inits) > 0 {
 		inits := ctx.inits
@@ -3022,7 +3041,7 @@ func initFnNameOfHasPatch(name string) string {
 	return name + "$hasPatch"
 }
 
-func processPkg(ctx *context, ret llssa.Package, pkg *ssa.Package) {
+func processPkg(ctx *context, ret llssa.Package, pkg *ssa.Package) error {
 	type namedMember struct {
 		name string
 		val  ssa.Member
@@ -3070,10 +3089,13 @@ func processPkg(ctx *context, ret llssa.Package, pkg *ssa.Package) {
 			ctx.compileType(ret, member)
 		case *ssa.Global:
 			if !isCgoFuncPtrVar(member.Name()) {
-				ctx.compileGlobal(ret, member)
+				if err := ctx.compileGlobal(ret, member); err != nil {
+					return err
+				}
 			}
 		}
 	}
+	return nil
 }
 
 func (p *context) type_(typ types.Type, cc llssa.CallConv) llssa.Type {
