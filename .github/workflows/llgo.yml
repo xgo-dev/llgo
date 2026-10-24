@@ -155,7 +155,7 @@ jobs:
     needs: prepare
     name: llgo + test (${{ matrix.os }}${{ matrix.windows_abi && format(', {0}', matrix.windows_abi) || '' }}${{ matrix.windows_arch && format(', {0}', matrix.windows_arch) || '' }}, LLVM ${{ matrix.llvm }}, Go 1.27)
     timeout-minutes: 60
-    strategy:
+    strategy: &native-test-strategy
       fail-fast: false
       matrix:
         include:
@@ -196,33 +196,38 @@ jobs:
     runs-on: ${{ startsWith(matrix.os, 'ubuntu') && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      - name: Install dependencies
+      - &native-install-deps
+        name: Install dependencies
         uses: ./.github/actions/setup-deps
         with:
           llvm-version: ${{matrix.llvm}}
           windows-abi: ${{ matrix.windows_abi || 'msvc' }}
           windows-arch: ${{ matrix.windows_arch || 'amd64' }}
-      - name: Install embedded dependencies
+      - &native-install-embed-deps
+        name: Install embedded dependencies
         uses: ./.github/actions/setup-embed-deps
-      - name: Setup demo dependencies
+      - &native-install-demo-deps
+        name: Setup demo dependencies
         uses: ./.github/actions/setup-demo-deps
         with:
           windows-abi: ${{ matrix.windows_abi || 'msvc' }}
           windows-arch: ${{ matrix.windows_arch || 'amd64' }}
-          # Only this compiler lane executes the LLDB integration suite. Test
-          # lanes still install the Python 3.12 demo ABI but skip the unrelated
-          # target-native debugger runtime.
+          # Native integration also uses this setup. Go coverage-only lanes
+          # install the Python demo ABI without the target-native debugger.
           install-lldb-python: "true"
 
-      - name: Set up Go for build
+      - &native-setup-go
+        name: Set up Go for build
         uses: ./.github/actions/setup-go
         with:
           architecture: ${{ matrix.host_go_arch || '' }}
 
-      - name: Restore LLGo cache
+      - &native-restore-cache
+        name: Restore LLGo cache
         uses: ./.github/actions/setup-llgo-cache
 
-      - name: Build LLGo and test tools
+      - &native-build-tools
+        name: Build LLGo and test tools
         shell: bash
         run: |
           dev/build_ci_tools.sh "$RUNNER_TEMP/llgo-bin"
@@ -266,7 +271,8 @@ jobs:
           Copy-ReleaseDLLs -ReadObj $readObj -Executable $runner -GoArch "amd64" `
             -Profile "${{ matrix.windows_abi }}" -CheckOnly
 
-      - name: Activate native Windows target
+      - &native-activate-target
+        name: Activate native Windows target
         if: runner.os == 'Windows'
         uses: ./.github/actions/activate-windows-target
         with:
@@ -422,6 +428,102 @@ jobs:
           disable_search: true
           fail_ci_if_error: true
 
+  # Core, SIMD and integration have independent deadlines. A slow host must not
+  # consume the entire budget before the later test families even start.
+  native-simd:
+    if: needs.prepare.outputs.run_code_ci == 'true'
+    needs: prepare
+    name: Native SIMD (${{ matrix.os }}${{ matrix.windows_abi && format(', {0}', matrix.windows_abi) || '' }}${{ matrix.windows_arch && format(', {0}', matrix.windows_arch) || '' }}, LLVM ${{ matrix.llvm }})
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            llvm: 22
+          - os: macos-latest
+            llvm: 22
+          - os: windows-2022
+            llvm: 22
+            windows_abi: msvc
+            windows_arch: amd64
+            host_go_arch: x64
+          - os: windows-2022
+            llvm: 22
+            windows_abi: mingw
+            windows_arch: amd64
+            host_go_arch: x64
+          - os: windows-11-arm
+            llvm: 22
+            windows_abi: msvc
+            windows_arch: arm64
+            host_go_arch: arm64
+          - os: windows-11-arm
+            llvm: 22
+            windows_abi: mingw
+            windows_arch: arm64
+            host_go_arch: arm64
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu') && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install dependencies
+        uses: ./.github/actions/setup-deps
+        with:
+          llvm-version: ${{ matrix.llvm }}
+          windows-abi: ${{ matrix.windows_abi || 'msvc' }}
+          windows-arch: ${{ matrix.windows_arch || 'amd64' }}
+          windows-msvc-dependencies: runtime
+      - *native-setup-go
+      - *native-restore-cache
+      - name: Build SIMD compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool_suffix=
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            tool_suffix=.exe
+          fi
+          mkdir -p "$RUNNER_TEMP/llgo-bin"
+          go build -o "$RUNNER_TEMP/llgo-bin/llgo${tool_suffix}" ./cmd/llgo
+          echo "$RUNNER_TEMP/llgo-bin" >> "$GITHUB_PATH"
+          echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+      - *native-activate-target
+      - name: Test SIMD behavior with Go and LLGo
+        id: native_simd
+        shell: bash
+        env:
+          GOEXPERIMENT: simd
+          LLGO_SIMD_ARTIFACT_DIR: ${{ runner.temp }}/llgo-simd-matrix
+        run: |
+          (cd runtime && go test -count=1 -timeout=2m ./internal/runtime/math)
+          go test -count=1 -timeout=2m ./test/simd/...
+          bash dev/test_native_simd.sh
+
+      - name: Upload failed native SIMD executables
+        if: failure() && steps.native_simd.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-simd-${{ matrix.os }}-${{ matrix.windows_abi || 'native' }}-${{ matrix.windows_arch || 'host' }}
+          path: ${{ runner.temp }}/llgo-simd-matrix
+          retention-days: 3
+
+  native-integration:
+    if: needs.prepare.outputs.run_code_ci == 'true'
+    needs: prepare
+    name: Native integration (${{ matrix.os }}${{ matrix.windows_abi && format(', {0}', matrix.windows_abi) || '' }}${{ matrix.windows_arch && format(', {0}', matrix.windows_arch) || '' }}, LLVM ${{ matrix.llvm }})
+    timeout-minutes: 60
+    strategy: *native-test-strategy
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu') && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - *native-install-deps
+      - *native-install-embed-deps
+      - *native-install-demo-deps
+      - *native-setup-go
+      - *native-restore-cache
+      - *native-build-tools
+      - *native-activate-target
+
       - name: Test Hello World with Go 1.20
         if: matrix.os == 'ubuntu-latest'
         uses: ./.github/actions/test-helloworld
@@ -487,26 +589,6 @@ jobs:
           export LLGO_FULL_RPATH=false
           pkg-config --libs cargs
           (cd ./_demo/c/cargs && llgo run .)
-
-      - name: Test SIMD behavior with Go and LLGo
-        id: native_simd
-        if: matrix.windows_arch != '386'
-        shell: bash
-        env:
-          GOEXPERIMENT: simd
-          LLGO_SIMD_ARTIFACT_DIR: ${{ runner.temp }}/llgo-simd-matrix
-        run: |
-          (cd runtime && go test -count=1 -timeout=2m ./internal/runtime/math)
-          go test -count=1 -timeout=2m ./test/simd/...
-          bash dev/test_native_simd.sh
-
-      - name: Upload failed native SIMD executables
-        if: failure() && steps.native_simd.outcome == 'failure'
-        uses: actions/upload-artifact@v7
-        with:
-          name: native-simd-${{ matrix.os }}-${{ matrix.windows_abi || 'native' }}-${{ matrix.windows_arch || 'host' }}
-          path: ${{ runner.temp }}/llgo-simd-matrix
-          retention-days: 3
 
       - name: Test demos
         run: bash .github/workflows/test_demo.sh

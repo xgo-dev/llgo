@@ -19,7 +19,7 @@ import ci_policy
 WORKFLOWS = Path(__file__).resolve().parents[1] / "workflows"
 PREPARE = "./.github/workflows/ci-prepare.yml"
 CODE_WORKFLOWS = {
-    "llgo.yml": 21, "go.yml": 6, "targets.yml": 4, "build-cache.yml": 4,
+    "llgo.yml": 35, "go.yml": 6, "targets.yml": 4, "build-cache.yml": 4,
     "benchmark.yml": 9, "release-build.yml": 24, "doc.yml": 6, "fmt.yml": 1,
     "mise.yml": 5, "pixi.yml": 5,
 }
@@ -272,7 +272,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertTrue(all(step.get("run") or step.get("uses") for step in steps[start:]))
 
     def test_gdb_windows_acceptance_covers_both_abis_and_all_native_architectures(self):
-        job = load("llgo.yml")["jobs"]["llgo"]
+        job = load("llgo.yml")["jobs"]["native-integration"]
         entries = job["strategy"]["matrix"]["include"]
         windows = {(entry["windows_abi"], entry["windows_arch"])
                    for entry in entries if entry["os"].startswith("windows")}
