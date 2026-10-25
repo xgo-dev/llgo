@@ -32,7 +32,7 @@ func TestRegularMemoryEqualLowering(t *testing.T) {
 	for _, tc := range []struct {
 		arch    string
 		enabled bool
-	}{{"wasm", true}, {"wasm", false}, {"amd64", true}} {
+	}{{"wasm", true}, {"wasm", false}, {"amd64", true}, {"amd64", false}} {
 		t.Run(fmt.Sprintf("%s/%v", tc.arch, tc.enabled), func(t *testing.T) {
 			ssapkg, _, files := buildGoSSAPkg(t, src)
 			prog := newLLSSAProgForTarget(t, &llssa.Target{GOARCH: tc.arch})
@@ -47,14 +47,23 @@ func TestRegularMemoryEqualLowering(t *testing.T) {
 				t.Fatal(err)
 			}
 			optimized := tc.arch == "wasm" && tc.enabled
-			for _, item := range []struct{ name, equal, fallback string }{
-				{"Zero", "memequal0", "arrayequal"}, {"One", "memequal8", "structequal"},
-				{"Two", "memequal16", "arrayequal"}, {"Four", "memequal32", "structequal"},
-				{"Eight", "memequal64", "arrayequal"}, {"Sixteen", "memequal128", "structequal"},
-				{"Large", "_llgo_memequal.24", "structequal"}, {"SameSize", "_llgo_memequal.24", "arrayequal"},
-				{"Float", "structequal", "structequal"}, {"String", "structequal", "structequal"},
-				{"Padded", "structequal", "structequal"}, {"Blank", "structequal", "structequal"},
-				{"Interface", "structequal", "structequal"},
+			for _, item := range []struct {
+				name, equal, fallback string
+				regular               bool
+			}{
+				{"Zero", "memequal0", "arrayequal", true},
+				{"One", "memequal8", "structequal", true},
+				{"Two", "memequal16", "arrayequal", true},
+				{"Four", "memequal32", "structequal", true},
+				{"Eight", "memequal64", "arrayequal", true},
+				{"Sixteen", "memequal128", "structequal", true},
+				{"Large", "_llgo_memequal.24", "structequal", true},
+				{"SameSize", "_llgo_memequal.24", "arrayequal", true},
+				{"Float", "structequal", "structequal", false},
+				{"String", "structequal", "structequal", false},
+				{"Padded", "structequal", "structequal", false},
+				{"Blank", "structequal", "structequal", false},
+				{"Interface", "structequal", "structequal", false},
 			} {
 				global := mod.NamedGlobal("_llgo_keys." + item.name)
 				if global.IsNil() {
@@ -63,6 +72,10 @@ func TestRegularMemoryEqualLowering(t *testing.T) {
 				want := item.fallback
 				if optimized {
 					want = item.equal
+				} else if tc.arch == "amd64" && item.regular {
+					// Native regular-memory equality keeps the concrete Type*
+					// environment, independently of dead-code elimination.
+					want = "memequal_varlen"
 				}
 				if !strings.Contains(global.Initializer().String(), want) {
 					t.Errorf("%s: missing %s in %s", item.name, want, global)
