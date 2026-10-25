@@ -2412,8 +2412,7 @@ func toFFIStructType(typ *abi.Type) *ffi.Type {
 		fields = append(fields, toFFIType(fs.Typ))
 		off = fs.Offset + fs.Typ.Size_
 	}
-	// Do not pad to typ.Size_: trailing zero-sized fields can enlarge the
-	// Go-visible size without consuming registers in llgo's callable ABI.
+	fields = padFFIZeroSizedStructTail(typ, fields, off)
 	return ffi.StructOf(fields...)
 }
 

@@ -97,7 +97,12 @@ func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, gl
 	prog := b.Prog
 	ab := prog.abi
 	// Size uintptr
-	fields = append(fields, prog.IntVal(uint64(ab.Size(t)), prog.Uintptr()).impl)
+	size := ab.Size(t)
+	if prog.hasNativeTypeLayout(t) {
+		// C structs do not acquire Go's extra storage for trailing zero-sized fields.
+		size = uintptr(prog.SizeOf(prog.rawType(t)))
+	}
+	fields = append(fields, prog.IntVal(uint64(size), prog.Uintptr()).impl)
 	// PtrBytes uintptr
 	fields = append(fields, prog.IntVal(uint64(ab.PtrBytes(t)), prog.Uintptr()).impl)
 	// Hash uint32

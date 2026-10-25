@@ -50,17 +50,27 @@ func (p Program) structLayout(typ Type) (structLayout, bool) {
 	return layout.(structLayout), true
 }
 
-// toLLVMStructBody preserves the native target layout for C types. When Go's
-// language layout differs from LLVM's physical target layout (currently 386
-// and profiled wasm32), it wraps only affected fields and keeps the Go field
-// index as the outer LLVM element index.
+// toLLVMStructBody selects the physical layout of a struct. C types retain
+// their native layout. Go/386 and profiled Wasm use the field-layout conversion
+// below; other targets retain LLVM field alignment and only correct zero-sized
+// tails. The latter path does not provide general Go alignment corrections.
 func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, *structLayout) {
 	fields := p.toLLVMFields(raw, native)
 	goarch := p.target.effectiveGOARCH()
-	if native || (goarch != "386" && !(goarch == "wasm" && p.target.WasmProfile != "")) || len(fields) == 0 {
+	switch {
+	case native || len(fields) == 0:
 		return fields, nil
+	case goarch == "386":
+		// Go requires four-byte int64/float64 field alignment, including on
+		// Windows/386 where the native LLVM layout requires eight bytes.
+	case goarch == "wasm" && p.target.WasmProfile != "":
+		// Profiles use Go's 64-bit word layout even on Memory32 targets.
+	default:
+		return p.padZeroSizedStructTail(fields), nil
 	}
 
+	// Both cases above continue through the existing field-layout conversion.
+	// Wrapping fields preserves their source indices for field access code.
 	sizes := p.sizes
 	if sizes == nil {
 		sizes = &types.StdSizes{WordSize: int64(p.GoWordSize()), MaxAlign: int64(p.GoWordSize())}
@@ -148,6 +158,22 @@ func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, 
 		}
 	}
 	return body, &structLayout{wrapped: wrapped}
+}
+
+// padZeroSizedStructTail takes a nonempty Go struct body and preserves its
+// existing fields and alignment. For { int64; struct{} } on a 64-bit target,
+// one extra byte lets LLVM round the size from 8 to 16, keeping the tail inside
+// the object. Existing tail padding, as in { float64; float32; struct{} },
+// already provides that space; adding a field there could change call ABI
+// classification even though the size remains 16.
+func (p Program) padZeroSizedStructTail(fields []llvm.Type) []llvm.Type {
+	if p.td.TypeAllocSize(fields[len(fields)-1]) == 0 {
+		typ := p.ctx.StructType(fields, false)
+		if size := p.td.TypeAllocSize(typ); size > 0 && p.td.ElementOffset(typ, len(fields)-1) == size {
+			return append(fields, p.tyInt8())
+		}
+	}
+	return fields
 }
 
 func (p Program) hasNativeTypeLayout(raw types.Type) bool {
