@@ -43,8 +43,8 @@ It is a correctness workload, not a performance benchmark.
 Go helper bodies are compiled normally. Remaining bodyless intrinsic
 implementations panic with their symbol name; `unimplemented_llgo_test.go`
 checks direct, indirect, deferred, and linkname calls. SIMD reflection,
-general FMV, and 256/512-bit vectors remain
-outside this implemented stage.
+general feature-combination FMV, and 512-bit vectors remain outside this stage.
+The initial amd64 SIMD256 coverage is described below.
 
 The integer resize suite covers every applicable SIMD128 `ExtendLo`, `ExtendHi`,
 `SaturateTo`, and `SaturateTo*Concat` declaration. Shared cases run under official
@@ -53,6 +53,51 @@ so those cases use scalar references under LLGo at the v1 baseline. LLVM
 verification and O0/O2 code generation cover Linux/Windows amd64, ARM64, and
 WASM, including callable intrinsic definitions. This does not add wider-vector
 ABIs or instructions absent from an architecture's Go API.
+
+## AMD64 SIMD256 foundation
+
+The ten numeric SIMD256 types and four mask shapes retain their official Go
+storage size/alignment, including arrays and nested structs. Computation uses
+LLVM vectors. The initial operation set covers loads/stores, broadcasting,
+arithmetic and bitwise operations, comparisons and masks, same-width bitcasts,
+uniform integer shifts, and 128-bit half extraction/insertion. Official Go helper
+bodies are reused, including byte multiplication and partial memory operations.
+A static-call-closure test checks their intrinsic dependencies. Conversions,
+integer resizing, and other wide target-specific operations are later stages;
+unimplemented intrinsic declarations retain the recoverable panic fallback.
+
+Wide Go parameters and results use an explicit memory carrier on amd64,
+including indirect calls, cross-package calls and multiple-result tuples.
+This carrier is fixed before FMV creates baseline/AVX2 bodies and tail-forwarding
+entries. Both implementations use the same pointer ABI; the selected body can
+use AVX2 internally without requiring AVX in its caller. Carrier loads/stores
+remain volatile so later argument/return promotion, including LTO, cannot
+silently recreate a feature-dependent YMM calling convention. This first stage
+does not introduce a separate register-vector ABI for calls between fast bodies.
+
+Runtime tests cover scalar-reference arithmetic, distinct upper/lower halves,
+mask bitmaps, partial stores at a guard page, initialization, many arguments,
+multiple results, source mutation during calls, interfaces, closures, recovery
+and goroutine scheduling. The native amd64 matrix includes these tests at O0/O2,
+Thin/Full LTO, and with optional CPU features disabled. Compiler tests check the
+pointer carriers and baseline instruction safety on Linux and Windows.
+
+Official Go controls require AVX2. Its mask bitmap constructors and some other
+256-bit operations require AVX512; LLGo's baseline implementations use scalar
+references where the control hardware cannot execute those instructions.
+Go 1.27.0 also restores only XMM0 on a recovered SIMD256 return, losing the
+upper half. LLGo keeps an executable recovery regression; the official failing
+control is retained separately (run on an AVX2-capable amd64 target):
+
+```sh
+GOEXPERIMENT=simd go run ./test/simd/testdata/upstream-simd256-recover
+GOEXPERIMENT=simd llgo run ./test/simd/testdata/upstream-simd256-recover
+```
+
+Portable `simd` still selects only emulation/128 bits. SIMD256 is currently an
+`archsimd` facility. By-value native C bindings using these wide `archsimd`
+types receive a diagnostic; explicit memory interfaces remain available. Native C vector ABI,
+portable256 selection, and SIMD512 need separate qualification.
 
 ## Portable SIMD Midway
 

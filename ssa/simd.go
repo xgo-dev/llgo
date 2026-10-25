@@ -74,6 +74,10 @@ const (
 	SIMDExtendHi
 	SIMDSaturate
 	SIMDSaturateConcat
+	SIMDGetLo
+	SIMDGetHi
+	SIMDSetLo
+	SIMDSetHi
 )
 
 // SIMDNumericShape validates the official numeric aggregate representation.
@@ -83,14 +87,14 @@ func SIMDNumericShape(typ types.Type) (*types.Array, bool) {
 	return lanes, ok && !strings.HasPrefix(types.Unalias(typ).(*types.Named).Obj().Name(), "Mask")
 }
 
-// SIMDMaskShape recognizes the four SIMD128 masks. Masks use canonical zero
+// SIMDMaskShape recognizes fixed-width SIMD masks. Masks use canonical zero
 // or all-one integer lanes, preserving their public Go storage representation.
 func SIMDMaskShape(typ types.Type) (*types.Array, bool) {
 	lanes, ok := SIMDVectorShape(typ)
 	return lanes, ok && strings.HasPrefix(types.Unalias(typ).(*types.Named).Obj().Name(), "Mask")
 }
 
-// SIMDVectorShape validates numeric and mask SIMD128 storage.
+// SIMDVectorShape validates numeric and mask SIMD128/256 storage.
 func SIMDVectorShape(typ types.Type) (*types.Array, bool) {
 	named, ok := types.Unalias(typ).(*types.Named)
 	if !ok || named.Obj().Pkg() == nil || named.Obj().Pkg().Path() != "simd/archsimd" {
@@ -126,11 +130,12 @@ func SIMDVectorShape(typ types.Type) (*types.Array, bool) {
 	if strings.HasPrefix(named.Obj().Name(), "Mask") && elem.Info()&types.IsInteger != 0 && elem.Info()&types.IsUnsigned == 0 {
 		expected = fmt.Sprintf("Mask%dx%d", bits, lanes.Len())
 	}
-	if named.Obj().Name() != expected || lanes.Len()*bits != 128 {
+	width := lanes.Len() * bits
+	if named.Obj().Name() != expected || width != 128 && width != 256 {
 		return nil, false
 	}
 	tag, ok := st.Field(0).Type().(*types.Named)
-	if !ok || tag.Obj().Pkg() != named.Obj().Pkg() || tag.Obj().Name() != "v128" {
+	if !ok || tag.Obj().Pkg() != named.Obj().Pkg() || tag.Obj().Name() != fmt.Sprintf("v%d", width) {
 		return nil, false
 	}
 	if (&types.StdSizes{WordSize: 8, MaxAlign: 8}).Sizeof(tag) != 0 {
@@ -145,6 +150,26 @@ func simdLanes(typ types.Type) *types.Array {
 		panic("unsupported SIMD numeric storage: " + typ.String())
 	}
 	return lanes
+}
+
+// Pointers and slices are explicit memory interfaces and do not carry a vector
+// by value. Go aggregates containing vectors still need the same native-boundary
+// restriction as a direct vector parameter or result.
+func containsWideSIMD(typ types.Type) bool {
+	if lanes, ok := SIMDVectorShape(typ); ok {
+		return (&types.StdSizes{WordSize: 8, MaxAlign: 8}).Sizeof(lanes) > 16
+	}
+	switch typ := typ.Underlying().(type) {
+	case *types.Array:
+		return typ.Len() != 0 && containsWideSIMD(typ.Elem())
+	case *types.Struct:
+		for i := 0; i < typ.NumFields(); i++ {
+			if containsWideSIMD(typ.Field(i).Type()) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // SIMD lowers a validated source operation. LLVM legalizes these operations
@@ -244,7 +269,11 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		v := b.impl.CreateInsertElement(llvm.Undef(result.ll), args[0].impl, llvm.ConstInt(b.Prog.tyInt32(), 0, false), "")
 		return b.simdSplatLane0(Expr{v, result})
 	case SIMDSplatLane0:
-		return b.simdSplatLane0(args[0])
+		mask := llvm.ConstNull(llvm.VectorType(b.Prog.tyInt32(), result.ll.VectorSize()))
+		v := b.impl.CreateShuffleVector(args[0].impl, llvm.Undef(args[0].ll), mask, "")
+		return Expr{v, result}
+	case SIMDGetLo, SIMDGetHi, SIMDSetLo, SIMDSetHi:
+		return b.simdHalf(op, result, args)
 	case SIMDExtractLane:
 		return b.simdGetElem(args[0], args[1])
 	case SIMDInsertLane:

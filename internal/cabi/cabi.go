@@ -250,6 +250,9 @@ type TypeInfo struct {
 	Align      int
 	ByValAlign int // explicit stack alignment for AttrPointer parameters
 	StackAlign int // alignstack attribute for direct HFA parameters
+	// PreservePointerABI prevents later argument/return promotion from restoring
+	// a feature-dependent vector ABI across baseline and specialized functions.
+	PreservePointerABI bool
 }
 
 func (p *TypeInfo) nativeType() llvm.Type {
@@ -450,6 +453,7 @@ func (p *Transformer) transformFunc(m llvm.Module, fn llvm.Value) bool {
 
 func loadIndirectParam(b llvm.Builder, info *TypeInfo, ptr llvm.Value) llvm.Value {
 	value := b.CreateLoad(info.nativeType(), ptr, "")
+	value.SetVolatile(info.PreservePointerABI)
 	if info.ByValAlign != 0 {
 		value.SetAlignment(info.ByValAlign)
 	}
@@ -605,7 +609,7 @@ func (p *Transformer) transformFuncBody(m llvm.Module, ctx llvm.Context, info *F
 			// store %typ %1, ptr %2, align 4
 			nv = aggregateFromNative(b, ti, loadIndirectParam(b, ti, params[index]))
 			// Reuse the incoming ABI storage for one proven parameter home.
-			if p.optimize && !ti.hasNativeLayoutConversion() {
+			if p.optimize && !ti.hasNativeLayoutConversion() && !ti.PreservePointerABI {
 				storageAlign := ti.Align
 				if ti.ByValAlign != 0 {
 					storageAlign = ti.ByValAlign
@@ -690,7 +694,8 @@ func (p *Transformer) transformFuncBody(m llvm.Module, ctx llvm.Context, info *F
 				// Note: We don't use memcpy optimization here because the source
 				// address content may be modified between load and ret.
 				// See: https://github.com/xgo-dev/llgo/issues/1608
-				b.CreateStore(nativeRet, params[0])
+				store := b.CreateStore(nativeRet, params[0])
+				store.SetVolatile(info.Return.PreservePointerABI)
 				rv = b.CreateRetVoid()
 			case AttrWidthType, AttrWidthType2:
 				if info.Return.Kind == AttrWidthType && p.optimize && !info.Return.hasNativeLayoutConversion() {

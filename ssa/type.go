@@ -568,6 +568,15 @@ func (p Program) toLLVMFunc(sig *types.Signature) llvm.Type {
 }
 
 func (p Program) toLLVMFuncBackground(sig *types.Signature, cc CallConv) llvm.Type {
+	if isNativeCallConv(cc) {
+		for _, tuple := range []*types.Tuple{sig.Params(), sig.Results()} {
+			for i := 0; i < tuple.Len(); i++ {
+				if containsWideSIMD(tuple.At(i).Type()) {
+					panic("256-bit SIMD values at native C call boundaries are not supported; use an explicit memory interface")
+				}
+			}
+		}
+	}
 	valueBackground := cc
 	if cc == Stdcall {
 		// Stdcall validation applies to the function type as a whole; its scalar
