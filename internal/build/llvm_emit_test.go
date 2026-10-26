@@ -13,7 +13,7 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-func TestWASILTOFunctionFeatures(t *testing.T) {
+func TestWASIFunctionFeatures(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		profile crosscompile.WasmProfile
@@ -22,7 +22,7 @@ func TestWASILTOFunctionFeatures(t *testing.T) {
 	}{
 		{"WASI full", crosscompile.WasmProfileW32, lto.Full, true},
 		{"WASI thin", crosscompile.WasmProfileW32, lto.Thin, true},
-		{"WASI no LTO", crosscompile.WasmProfileW32, lto.Off, false},
+		{"WASI no LTO", crosscompile.WasmProfileW32, lto.Off, true},
 		{"browser", crosscompile.WasmProfileJ32, lto.Full, false},
 		{"native", crosscompile.WasmProfileNone, lto.Full, false},
 	} {
@@ -43,7 +43,7 @@ func TestWASILTOFunctionFeatures(t *testing.T) {
 			fn.AddFunctionAttr(lc.CreateStringAttribute("target-features", "+simd128,-atomics,-exception-handling"))
 			llvm.AddFunction(mod, "declaration", fnType)
 			ctx := &context{buildConf: &Config{LTO: test.mode}, crossCompile: crosscompile.Export{WasmProfile: test.profile}}
-			applyWASILTOFeatures(ctx, mod)
+			applyWASIFeatures(ctx, mod)
 			ir := mod.String()
 			for _, feature := range []string{"+atomics", "+bulk-memory", "+exception-handling"} {
 				if strings.Contains(ir, feature) != test.want {
@@ -56,27 +56,40 @@ func TestWASILTOFunctionFeatures(t *testing.T) {
 			if test.want && (strings.Contains(ir, "-atomics") || strings.Contains(ir, "-exception-handling")) {
 				t.Fatalf("required features still have negative counterparts:\n%s", ir)
 			}
-			for _, attr := range plain.GetFunctionAttributes() {
-				if attr.IsString() && attr.GetStringKind() == "target-features" {
-					t.Fatal("function without target-features should inherit backend defaults")
+			plainFeatures := ""
+			if attr := plain.GetStringAttributeAtIndex(-1, "target-features"); attr.C != nil {
+				plainFeatures = attr.GetStringValue()
+			}
+			for _, feature := range []string{"+atomics", "+bulk-memory", "+exception-handling"} {
+				if strings.Contains(plainFeatures, feature) != test.want {
+					t.Fatalf("plain function feature %q, want present=%v: %s", feature, test.want, plainFeatures)
 				}
 			}
-			applyWASILTOFeatures(ctx, mod)
+			applyWASIFeatures(ctx, mod)
 			if mod.String() != ir {
-				t.Fatal("applying LTO features twice changed the module")
+				t.Fatal("applying WASI features twice changed the module")
 			}
 		})
 	}
 }
 
-func TestWASILTOFunctionFeaturesCodegen(t *testing.T) {
+func TestWASIFunctionFeaturesCodegen(t *testing.T) {
 	llssa.Initialize(llssa.InitAll)
 	target, err := llvm.GetTargetFromTriple("wasm32-unknown-wasip1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []lto.Mode{lto.Off, lto.Thin, lto.Full} {
-		t.Run(mode.String(), func(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		mode  lto.Mode
+		apply bool
+	}{
+		{"unmerged control", lto.Off, false},
+		{"off", lto.Off, true},
+		{"thin", lto.Thin, true},
+		{"full", lto.Full, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			mod := parseWasmAggregateIR(t, `
 target datalayout = "e-m:e-p:32:32-i64:64-n32:64-S128"
 target triple = "wasm32-unknown-wasip1"
@@ -89,8 +102,10 @@ define i32 @increment() #0 {
 declare ptr @llvm.threadlocal.address.p0(ptr)
 attributes #0 = { "target-features"="+simd128" }
 `)
-			ctx := &context{buildConf: &Config{LTO: mode}, crossCompile: crosscompile.Export{WasmProfile: crosscompile.WasmProfileW32}}
-			applyWASILTOFeatures(ctx, mod)
+			ctx := &context{buildConf: &Config{LTO: test.mode}, crossCompile: crosscompile.Export{WasmProfile: crosscompile.WasmProfileW32}}
+			if test.apply {
+				applyWASIFeatures(ctx, mod)
+			}
 			machine := target.CreateTargetMachine("wasm32-unknown-wasip1", "generic",
 				"+atomics,+bulk-memory,+exception-handling", llvm.CodeGenLevelDefault,
 				llvm.RelocStatic, llvm.CodeModelDefault)
@@ -101,11 +116,11 @@ attributes #0 = { "target-features"="+simd128" }
 			}
 			defer buf.Dispose()
 			assembly := string(buf.Bytes())
-			// Off is the unmerged input control: backend defaults alone strip
-			// TLS and atomics when every definition already has feature attributes.
+			// Keep an unmerged control: function attributes override backend
+			// defaults. Every real codegen mode must retain the threading features.
 			for _, instruction := range []string{"__tls_base", "i32.atomic.rmw.add"} {
-				if strings.Contains(assembly, instruction) != mode.Enabled() {
-					t.Fatalf("%s: expected preserved=%v:\n%s", instruction, mode.Enabled(), assembly)
+				if strings.Contains(assembly, instruction) != test.apply {
+					t.Fatalf("%s: expected preserved=%v:\n%s", instruction, test.apply, assembly)
 				}
 			}
 			if !strings.Contains(assembly, "simd128") {

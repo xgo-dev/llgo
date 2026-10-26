@@ -17,8 +17,8 @@ type macOSSDK struct {
 	parts   []int
 }
 
-// Keep native Darwin on the LLVM 22 toolchain. SDK 27 introduces text stubs
-// that LLD 22 cannot read; newer SDKs require a separate compatibility update.
+// LLVM 23 understands SDK 27 text stubs, including arm64e.x1 targets.
+// Validate the SDK metadata without imposing the former LLVM 22 version cap.
 func readMacOSSDK(path string) (macOSSDK, error) {
 	sdk := macOSSDK{}
 	canonical, err := filepath.EvalSymlinks(path)
@@ -63,8 +63,8 @@ func readMacOSSDK(path string) (macOSSDK, error) {
 		}
 		parts = append(parts, n)
 	}
-	if parts[0] < 1 || parts[0] >= 27 {
-		return sdk, fmt.Errorf("macOS SDK %s is unsupported; LLVM 22 requires an SDK older than 27", version)
+	if parts[0] < 1 {
+		return sdk, fmt.Errorf("invalid macOS SDK version %s", version)
 	}
 	return macOSSDK{path: canonical, version: version, parts: parts}, nil
 }
@@ -114,7 +114,7 @@ func selectMacOSSDK(explicit, preferred string, discover func() []string) (macOS
 	if len(candidates) != 0 {
 		return candidates[0], nil
 	}
-	return macOSSDK{}, fmt.Errorf("no supported macOS SDK found (active SDK: %q); install an SDK older than 27 with Xcode or Command Line Tools, or set SDKROOT to an installed older SDK", preferred)
+	return macOSSDK{}, fmt.Errorf("no supported macOS SDK found (active SDK: %q); install a macOS SDK with Xcode or Command Line Tools, or set SDKROOT to an installed SDK", preferred)
 }
 
 func installedMacOSSDKs(preferred, developer, home string) []string {

@@ -187,12 +187,12 @@ func main() {
 
 // CHECK-LABEL: define float @main.f32(){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   ret float 0x400921FB60000000
+// CHECK-NEXT:   ret float {{(0x400921FB60000000|f0x40490FDB)}}
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define double @main.f64(){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   ret double 0x400921FB53C8D4F1
+// CHECK-NEXT:   ret double {{f?}}0x400921FB53C8D4F1
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {

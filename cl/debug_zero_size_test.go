@@ -72,10 +72,17 @@ func check() int {
 				mod := pkg.Module()
 				mod.SetDataLayout(prog.DataLayout())
 				mod.SetTarget(target.triple)
+				if level == optlevel.Os {
+					for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+						if !fn.IsDeclaration() {
+							fn.AddFunctionAttr(mod.Context().CreateEnumAttribute(llvm.AttributeKindID("optsize"), 0))
+						}
+					}
+				}
 				options := llvm.NewPassBuilderOptions()
 				defer options.Dispose()
 				options.SetVerifyEach(true)
-				if err := mod.RunPasses("default<"+level.String()+">", prog.TargetMachine(), options); err != nil {
+				if err := mod.RunPasses("default<"+level.PipelineName()+">", prog.TargetMachine(), options); err != nil {
 					t.Fatal(err)
 				}
 				object, err := prog.TargetMachine().EmitToMemoryBuffer(mod, llvm.ObjectFile)

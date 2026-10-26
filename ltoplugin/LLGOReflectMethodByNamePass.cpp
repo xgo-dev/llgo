@@ -591,6 +591,17 @@ bool collectIndexConstants(Value *Index, SmallVectorImpl<Constant *> &Constants,
   return true;
 }
 
+// LLVM 23 canonicalizes aggregate GEP element types to byte arrays. Only
+// the allocation stride matters for enumerating elements of the underlying
+// array; requiring identical IR types would lose the proven finite bound.
+bool hasSameFixedAllocationSize(Type *A, Type *B, const DataLayout &DL) {
+  if (!A->isSized() || !B->isSized())
+    return false;
+  TypeSize ASize = DL.getTypeAllocSize(A);
+  TypeSize BSize = DL.getTypeAllocSize(B);
+  return !ASize.isScalable() && !BSize.isScalable() && ASize == BSize;
+}
+
 std::optional<uint64_t>
 firstIndexArrayBound(ArrayRef<Constant *> Bases, Type *ElemTy,
                      const DataLayout &DL) {
@@ -601,7 +612,8 @@ firstIndexArrayBound(ArrayRef<Constant *> Bases, Type *ElemTy,
     auto *GV = Root ? dyn_cast<GlobalVariable>(Root->stripPointerCasts())
                     : nullptr;
     auto *ArrayTy = GV ? dyn_cast<ArrayType>(GV->getValueType()) : nullptr;
-    if (!ArrayTy || ArrayTy->getElementType() != ElemTy || Offset != 0)
+    if (!ArrayTy || Offset != 0 ||
+        !hasSameFixedAllocationSize(ArrayTy->getElementType(), ElemTy, DL))
       return std::nullopt;
     uint64_t Current = ArrayTy->getNumElements();
     if (Bound && *Bound != Current)
@@ -708,7 +720,9 @@ bool enumerateLocalStringSlots(Value *Ptr, const DataLayout &DL,
     return false;
 
   auto *ArrayTy = dyn_cast<ArrayType>(Base->getAllocatedType());
-  if (!ArrayTy || ArrayTy->getElementType() != GEP->getSourceElementType())
+  if (!ArrayTy ||
+      !hasSameFixedAllocationSize(ArrayTy->getElementType(),
+                                  GEP->getSourceElementType(), DL))
     return false;
 
   SmallVector<Constant *, 4> Indices;
@@ -1569,7 +1583,7 @@ void insertMethodNameChecks(CallBase *GenericLoad, ArrayRef<std::string> Names,
   for (const std::string &Name : Names) {
     std::string TypeID = (Prefix + Name).str();
     Value *MDVal = MetadataAsValue::get(Ctx, MDString::get(Ctx, TypeID));
-    CallInst *Checked = B.CreateIntrinsic(
+    Value *Checked = B.CreateIntrinsic(
         Intrinsic::type_checked_load, {},
         {GenericLoad->getArgOperand(0), GenericLoad->getArgOperand(1), MDVal});
     OKs.push_back(B.CreateExtractValue(Checked, {1}));
