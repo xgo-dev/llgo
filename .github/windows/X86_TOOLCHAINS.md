@@ -2,7 +2,7 @@
 
 Official upstream LLVM 23 does not publish the native i686 development SDK
 needed for a 32-bit LLGo host. LLGo downloads the Windows x86 LLVM SDK from
-[xgo-dev/espressif-llvm-project-prebuilt's 23.1.4_20261025 release](https://github.com/xgo-dev/espressif-llvm-project-prebuilt/releases/tag/23.1.4_20261025).
+[xgo-dev/espressif-llvm-project-prebuilt's 23.1.4_20261026 release](https://github.com/xgo-dev/espressif-llvm-project-prebuilt/releases/tag/23.1.4_20261026).
 The same release supplies ESP tools for all three Windows host architectures.
 The payload producer's merge commit and the SDK producer's commit are recorded
 separately in `espressif-toolchain.json`.
