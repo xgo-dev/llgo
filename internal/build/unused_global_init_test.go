@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/cl"
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -72,11 +73,19 @@ func main() { Read() }
 func TestUnusedGlobalInitLinkAliases(t *testing.T) {
 	t.Setenv("LDFLAGS", "")
 	pkg := buildWasmReflectTestProgram(t, `package main; var M = map[string]int{"key":42}; func main() {}`)
-	for _, alias := range []string{"", "source", "target", "thread local", "goroutine local"} {
+	for _, alias := range []string{"", "source", "target", "thread local", "goroutine local", "stale source", "prepared source"} {
 		prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
 		name := llssa.FullName(pkg.Pkg, "M")
-		if alias == "source" {
+		if alias == "source" || alias == "stale source" {
 			prog.SetLinkname(name, "C.map")
+		}
+		if alias == "stale source" {
+			prog.SetPackageDirectives(pkg.Pkg, &directive.Package{})
+		}
+		if alias == "prepared source" {
+			prog.SetPackageDirectives(pkg.Pkg, &directive.Package{Names: map[string]any{
+				"M": &directive.VariableDecl{Declaration: directive.Declaration{Name: "M", Linkname: "C.map", HasLinkname: true}},
+			}})
 		}
 		if alias == "target" {
 			prog.SetLinkname("other.alias", name)
@@ -89,7 +98,7 @@ func TestUnusedGlobalInitLinkAliases(t *testing.T) {
 		}
 		ctx := &context{prog: prog, progSSA: pkg.Prog, buildConf: &Config{BuildMode: BuildModeExe, Goarch: "wasm"}}
 		configureUnusedGlobalInits(ctx)
-		if got := len(ctx.frontendOptions.UnusedGlobalInits.Names(pkg)) != 0; got != (alias == "") {
+		if got := len(ctx.frontendOptions.UnusedGlobalInits.Names(pkg)) != 0; got != (alias == "" || alias == "stale source") {
 			t.Fatalf("alias %q: pruned = %v", alias, got)
 		}
 		prog.Dispose()

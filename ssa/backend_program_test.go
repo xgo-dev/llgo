@@ -75,7 +75,7 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	if !backend.HasClosureEnvDirective(fset, "example.com/p.Entry", token.Pos(7)) || !backend.PackageSyntaxParsed(pkg) {
 		t.Fatal("backend Program lost prepared syntax metadata")
 	}
-	if background, ok := backend.packageTypeCallConv("example.com/p.CType"); !ok || background != CDecl {
+	if background, ok := backend.packageSyntax.typeCallConv(types.NewTypeName(token.NoPos, pkg, "CType", nil)); !ok || background != CDecl {
 		t.Fatalf("type background = (%v, %v), want (CDecl, true)", background, ok)
 	}
 	if locality, ok := backend.VariableLocality("example.com/p.Value"); !ok || locality.Locality != ThreadLocal {

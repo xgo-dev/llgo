@@ -85,7 +85,7 @@ func configureUnusedGlobalInits(ctx *context) {
 		if exported[name] || global.Pkg.Pkg.Name() == "C" {
 			return true
 		}
-		if _, alias := ctx.prog.Linkname(name); alias || ctx.prog.HasLinknameTarget(name) {
+		if _, alias := ctx.prog.LinknameFor(global.Pkg.Pkg, global.Object(), name); alias || ctx.prog.HasLinknameTarget(name) {
 			return true
 		}
 		if _, locality, ok, err := ctx.prog.ResolveLocalityFor(global.Pkg.Pkg, name); err != nil || ok && locality.Locality != llssa.LocalityNone {

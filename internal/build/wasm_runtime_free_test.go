@@ -10,10 +10,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa/ssautil"
 )
 
 func TestWasmRuntimeFreeFunctions(t *testing.T) {
@@ -221,5 +223,56 @@ func TestWasmRuntimeFreeFingerprint(t *testing.T) {
 	}
 	if (&commonSection{WasmRuntimeFree: true}).empty() {
 		t.Fatal("runtime-free cache field omitted")
+	}
+}
+
+func TestWasmRuntimeFreeUsesPreparedLinks(t *testing.T) {
+	t.Setenv("LDFLAGS", "")
+	for _, tc := range []struct {
+		name, link     string
+		prepared, want bool
+	}{
+		{"compatibility only", "", false, true},
+		{"no source link", "", true, false},
+		{"foreign callback boundary", "C.foreign", true, false},
+		{"known printf boundary", "C.printf", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			annotation := ""
+			if tc.link != "" {
+				annotation = "//llgo:link external " + tc.link + "\n"
+			}
+			source := "package main\n" + annotation + "func external(*byte, ...any) int32\nfunc main() { external(nil) }\n"
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "main.go", source, parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ssapkg, info, err := ssautil.BuildPackage(new(types.Config), fset, types.NewPackage("example.com/main", "main"), []*ast.File{file}, ssa.SanityCheckFunctions)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"})
+			defer prog.Dispose()
+			if tc.prepared {
+				if err := cl.ParsePkgSyntax(prog, fset, ssapkg.Pkg, []*ast.File{file}); err != nil {
+					t.Fatal(err)
+				}
+				prog.PackageDirectives(ssapkg.Pkg).Bind(info)
+			} else {
+				prog.Directives().File(file)
+			}
+			prog.Directives().Freeze()
+			// Another package instance can write this compatibility entry. It must
+			// not turn an unknown or foreign call into an accepted printf boundary.
+			prog.SetLinkname(llssa.FullName(ssapkg.Pkg, "external"), "C.printf")
+			pkg := &aPackage{Package: &packages.Package{ID: "main", PkgPath: "main", Types: ssapkg.Pkg, TypesInfo: info, Dir: t.TempDir(), Syntax: []*ast.File{file}}, SSA: ssapkg}
+			ctx := &context{prog: prog, progSSA: ssapkg.Prog, initial: []*packages.Package{pkg.Package}, pkgByID: map[string]Package{"main": pkg}, mode: ModeBuild,
+				buildConf: &Config{Goos: "wasip1", Goarch: "wasm", BuildMode: BuildModeExe, OptLevel: optlevel.Os}}
+			configureWasmRuntimeFree(ctx)
+			if ctx.wasmRuntimeFree != tc.want {
+				t.Fatalf("runtime-free = %v, want %v", ctx.wasmRuntimeFree, tc.want)
+			}
+		})
 	}
 }

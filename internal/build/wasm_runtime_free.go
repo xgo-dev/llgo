@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -33,12 +34,12 @@ func configureWasmRuntimeFree(ctx *context) {
 		if fn.Pkg == nil {
 			return ""
 		}
-		name, _ := ctx.prog.Linkname(llssa.FullName(fn.Pkg.Pkg, fn.Name()))
+		name, _ := ctx.prog.LinknameFor(fn.Pkg.Pkg, fn.Object(), llssa.FullName(fn.Pkg.Pkg, fn.Name()))
 		return name
 	}
 	globalSafe := func(global *ssa.Global) bool {
 		name := llssa.FullName(global.Pkg.Pkg, global.Name())
-		if _, linked := ctx.prog.Linkname(name); linked {
+		if _, linked := ctx.prog.LinknameFor(global.Pkg.Pkg, global.Object(), name); linked {
 			return false
 		}
 		_, locality, ok, err := ctx.prog.ResolveLocalityFor(global.Pkg.Pkg, name)
@@ -78,7 +79,11 @@ func configureWasmRuntimeFree(ctx *context) {
 			}
 			for _, decl := range file.Decls {
 				if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
-					if symbol, linked := ctx.prog.Linkname(llssa.FullName(pkg.Types, fn.Name.Name)); linked && !strings.HasPrefix(symbol, "llgo.") {
+					var obj types.Object
+					if pkg.TypesInfo != nil {
+						obj = pkg.TypesInfo.Defs[fn.Name]
+					}
+					if symbol, linked := ctx.prog.LinknameFor(pkg.Types, obj, llssa.FullName(pkg.Types, directive.FuncName(fn))); linked && !strings.HasPrefix(symbol, "llgo.") {
 						return
 					}
 				}

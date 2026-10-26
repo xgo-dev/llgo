@@ -36,9 +36,8 @@ type Declaration struct {
 	ExportName  string
 }
 
-// FunctionDecl collected for a package has a non-empty Declaration.Name.
-// Standalone snapshots from Index contain only Source and Function, leaving
-// Declaration zero-valued; their link names come from the legacy import index.
+// FunctionDecl combines declaration identity with the prepared source properties.
+// Index.Function returns only properties; declaration records are owned by Package.
 type FunctionDecl struct {
 	Declaration
 	Source *ast.FuncDecl

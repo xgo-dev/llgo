@@ -149,7 +149,7 @@ retry:
 		goto retry
 	case *types.Alias:
 		prog := Program(unsafe.Pointer(p))
-		if background, ok := prog.packageTypeCallConv(typeNameLinkname(t.Obj())); ok && isNativeCallConv(background) {
+		if background, ok := prog.packageSyntax.typeCallConv(t.Origin().Obj()); ok && isNativeCallConv(background) {
 			return 0
 		}
 		typ = t.Rhs()

@@ -98,13 +98,6 @@ func (p Program) markPackageSyntaxParsed(pkg *types.Package) {
 	p.packageSyntax.mu.Unlock()
 }
 
-func (p Program) packageTypeCallConv(name string) (CallConv, bool) {
-	p.packageSyntax.mu.RLock()
-	background, ok := p.packageSyntax.typeCallConvs[name]
-	p.packageSyntax.mu.RUnlock()
-	return background, ok
-}
-
 // Directives owns the source snapshots shared by coordinator and backends.
 func (p Program) Directives() *directive.Index { return &p.packageSyntax.source }
 func (p Program) SetPackageDirectives(pkg *types.Package, records *directive.Package) {
@@ -186,7 +179,7 @@ func (p Program) LinknameFor(pkg *types.Package, obj types.Object, fullName stri
 }
 
 // typeCallConv uses the effective package's records, including an absent
-// type or background. Only packages without records use typeCallConvs, which
+// type or calling convention. Only packages without records use typeCallConvs, which
 // cannot distinguish package instances sharing an import path.
 func (p *packageSyntaxData) typeCallConv(obj *types.TypeName) (CallConv, bool) {
 	p.mu.RLock()

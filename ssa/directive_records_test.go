@@ -72,6 +72,14 @@ func TestPackageDirectiveRecordsAreAuthoritative(t *testing.T) {
 					}
 				}
 			}
+			sizes := prog.TypeSizes(types.SizesFor("gc", "amd64"))
+			wantSize := int64(2 * prog.GoWordSize())
+			if fallback {
+				wantSize = int64(prog.GoWordSize())
+			}
+			if got := sizes.Sizeof(pkg.Scope().Lookup("A").Type()); got != wantSize {
+				t.Errorf("Sizeof(A) = %d, want %d", got, wantSize)
+			}
 			want := GoDecl
 			if fallback {
 				want = CDecl
@@ -95,8 +103,8 @@ func TestEffectiveDirectivePackageForTypesAndMethods(t *testing.T) {
 		}
 		return f
 	}
-	original := parse("package p\ntype T struct{}\nfunc (T) M() {}\n")
-	replacement := parse("package p\n//llgo:type C\ntype T struct{}\n//go:nointerface\nfunc (T) M() {}\n")
+	original := parse("package p\ntype T struct{}\nfunc (T) M() {}\ntype A = func()\n")
+	replacement := parse("package p\n//llgo:type C\ntype T struct{}\n//go:nointerface\nfunc (T) M() {}\n//llgo:cdecl\ntype A = func()\n")
 	info := &types.Info{Defs: make(map[*ast.Ident]types.Object)}
 	pkg, err := new(types.Config).Check("example.com/p", fset, []*ast.File{original}, info)
 	if err != nil {
@@ -124,6 +132,10 @@ func TestEffectiveDirectivePackageForTypesAndMethods(t *testing.T) {
 	named := pkg.Scope().Lookup("T").Type().(*types.Named)
 	if bg, ok := backend.packageSyntax.typeCallConv(named.Origin().Obj()); !ok || bg != CDecl {
 		t.Fatalf("effective background = %v, %v", bg, ok)
+	}
+	sizes := backend.TypeSizes(types.SizesFor("gc", "amd64"))
+	if got := sizes.Sizeof(pkg.Scope().Lookup("A").Type()); got != int64(backend.GoWordSize()) {
+		t.Errorf("effective alias size = %d, want one pointer", got)
 	}
 	if !backend.isNoInterfaceMethod(named.Method(0)) {
 		t.Fatal("lost replacement nointerface")
