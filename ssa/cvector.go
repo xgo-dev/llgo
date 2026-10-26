@@ -19,9 +19,13 @@ package ssa
 import (
 	"fmt"
 	"go/types"
+	"strings"
 
 	"github.com/xgo-dev/llvm"
 )
+
+// Keep registry keys split so ordinary named queries never allocate a linkname.
+type cVectorTypeName struct{ pkgPath, name string }
 
 // SetCVectorType restores the vector identity that cmd/cgo's Go array spelling
 // cannot express. The build driver obtains it from Clang, never from an array's
@@ -29,13 +33,18 @@ import (
 // 128-bit integer and floating vectors.
 func (p Program) SetCVectorType(name string, lanes int) {
 	p.packageSyntax.mu.Lock()
-	p.packageSyntax.cVectors[name] = lanes
+	key := cVectorTypeName{name: name}
+	if i := strings.LastIndexByte(name, '.'); i >= 0 {
+		key.pkgPath, key.name = name[:i], name[i+1:]
+	}
+	p.packageSyntax.cVectors[key] = lanes
+	p.packageSyntax.hasCVectorTypes.Store(true)
 	p.packageSyntax.hasNativeTypeMetadata.Store(true)
 	p.packageSyntax.mu.Unlock()
 }
 
 func (p Program) cVectorArray(raw types.Type) (*types.Array, bool) {
-	if !p.packageSyntax.hasNativeTypeMetadata.Load() {
+	if !p.packageSyntax.hasCVectorTypes.Load() {
 		return nil, false
 	}
 	named, ok := types.Unalias(raw).(*types.Named)
@@ -43,7 +52,11 @@ func (p Program) cVectorArray(raw types.Type) (*types.Array, bool) {
 		return nil, false
 	}
 	p.packageSyntax.mu.RLock()
-	n, ok := p.packageSyntax.cVectors[namedLinkname(named)]
+	key := cVectorTypeName{name: named.Obj().Name()}
+	if pkg := named.Obj().Pkg(); pkg != nil {
+		key.pkgPath = pkg.Path()
+	}
+	n, ok := p.packageSyntax.cVectors[key]
 	p.packageSyntax.mu.RUnlock()
 	if !ok {
 		return nil, false

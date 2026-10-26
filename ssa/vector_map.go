@@ -93,6 +93,12 @@ func (p Program) containsVectorStorage(t types.Type, native bool) bool {
 	}
 	switch t := types.Unalias(t).(type) {
 	case *types.Named:
+		// Rule out ordinary storage before constructing a native type linkname.
+		// The permissive precheck also includes native-only SIMD representations;
+		// the second check applies the actual enclosing calling convention.
+		if !p.containsVectorStorage(t.Underlying(), true) {
+			return false
+		}
 		return p.containsVectorStorage(t.Underlying(), p.hasNativeStructLayout(t))
 	case *types.Array:
 		return p.containsVectorStorage(t.Elem(), false)

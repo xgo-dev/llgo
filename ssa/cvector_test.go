@@ -264,3 +264,29 @@ func TestVectorMapDiagnostics(t *testing.T) {
 		}
 	}
 }
+
+func TestOrdinaryNamedLayoutWithCVectorMetadata(t *testing.T) {
+	prog := NewProgram(&Target{GOOS: "linux", GOARCH: "amd64"})
+	defer prog.Dispose()
+	base := types.SizesFor("gc", "amd64")
+	sizes := prog.TypeSizes(base)
+	prog.SetCVectorType("unrelated.Vector", 4)
+	prog.SetTypeCallConv("unrelated.Native", CDecl)
+	pkg := types.NewPackage("example.com/ordinary/package/path", "ordinary")
+	named := func(name string, typ types.Type) *types.Named {
+		return types.NewNamed(types.NewTypeName(token.NoPos, pkg, name, nil), typ, nil)
+	}
+	integer := named("Integer", types.Typ[types.Int64])
+	record := named("Record", types.NewStruct([]*types.Var{types.NewField(token.NoPos, pkg, "X", integer, false)}, nil))
+	for _, typ := range []types.Type{integer, record, named("Nested", types.NewArray(record, 8)), named("ScalarArray", types.NewArray(types.Typ[types.Float32], 4))} {
+		t.Run(typ.String(), func(t *testing.T) {
+			want := testing.AllocsPerRun(100, func() { base.Alignof(typ) })
+			if got := testing.AllocsPerRun(100, func() { sizes.Alignof(typ) }); got != want {
+				t.Fatalf("Alignof allocations = %g, baseline = %g", got, want)
+			}
+			if sizes.Sizeof(typ) != base.Sizeof(typ) || sizes.Alignof(typ) != base.Alignof(typ) {
+				t.Fatal("ordinary named layout changed")
+			}
+		})
+	}
+}

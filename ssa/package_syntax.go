@@ -30,6 +30,7 @@ import (
 type packageSyntaxData struct {
 	mu                    sync.RWMutex
 	hasNativeTypeMetadata atomic.Bool
+	hasCVectorTypes       atomic.Bool
 	linknames             map[string]string
 	wasmImports           map[string]wasmImport
 	exports               map[string]string
@@ -37,7 +38,7 @@ type packageSyntaxData struct {
 	parsedPackages        map[*types.Package]struct{}
 	noInterface           map[string]none
 	typeCallConvs         map[string]CallConv
-	cVectors              map[string]int
+	cVectors              map[cVectorTypeName]int
 	nativeStructFields    map[token.Pos]bool
 	nativeStructVars      map[*types.Var]bool
 }
@@ -51,7 +52,7 @@ func newPackageSyntaxData() *packageSyntaxData {
 		parsedPackages:       make(map[*types.Package]struct{}),
 		noInterface:          make(map[string]none),
 		typeCallConvs:        make(map[string]CallConv),
-		cVectors:             make(map[string]int),
+		cVectors:             make(map[cVectorTypeName]int),
 		nativeStructFields:   make(map[token.Pos]bool),
 		nativeStructVars:     make(map[*types.Var]bool),
 	}

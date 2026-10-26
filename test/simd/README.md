@@ -94,15 +94,16 @@ This boundary supports naturally aligned 128-bit C integer or `float`/`double`
 vectors (2, 4, 8, or 16 lanes in total; floating vectors have 2 or 4 lanes). Wider/smaller vectors,
 non-native alignment, padded three-lane vectors, half-precision lanes, and
 anonymous vector fields require additional support and receive diagnostics.
-Vector unions and custom record alignment are not supported.
-This includes vectors nested in arrays/records and field-level alignment
-attributes; these unsupported records receive diagnostics.
+Named vectors nested in ordinary arrays and structs are supported. Vector
+unions and records with custom alignment (including field-level alignment
+attributes) are rejected, even when the vector is reached through nested
+arrays or records.
 Use a named vector typedef for each C vector field. Portable `simd` values
 need an explicit concrete representation before crossing a C boundary.
 
 C and `archsimd` vector storage cannot appear by value in a map key or value, including
 inside arrays or structs. LLGo diagnoses these types before map lowering;
-convert to an ordinary Go array or store a pointer instead.
+convert to an array of scalars or store a pointer instead.
 Slice-to-vector copies and slice-to-vector-pointer conversions retain the
 source element's alignment for Go pointer loads/stores, including across calls.
 Vector-owned storage still has native alignment.
