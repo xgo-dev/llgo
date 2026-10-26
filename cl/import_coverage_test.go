@@ -283,14 +283,14 @@ func TestParsePkgSyntaxSkipsInvalidMethodReceivers(t *testing.T) {
 	for _, receiver := range []string{"bufio.Reader", "*bufio.Reader", "**T", "[]T", "map[int]T"} {
 		t.Run(receiver, func(t *testing.T) {
 			fset := token.NewFileSet()
-			file, err := parser.ParseFile(fset, "invalid.go", "package p\nfunc (b "+receiver+") M() {}", parser.ParseComments)
+			file, err := parser.ParseFile(fset, "invalid.go", "package p\n//export invalid_receiver\nfunc (b "+receiver+") M() {}", parser.ParseComments)
 			if err != nil {
 				t.Fatal(err)
 			}
 			prog := llssa.NewProgram(nil)
 			defer prog.Dispose()
 			pkg := types.NewPackage("example.com/p", "p")
-			if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
+			if err := ParsePkgSyntaxWithOptions(prog, fset, pkg, []*ast.File{file}, Options{ExportRename: true}); err != nil {
 				t.Fatal(err)
 			}
 			if !prog.PackageSyntaxParsed(pkg) {
@@ -298,8 +298,11 @@ func TestParsePkgSyntaxSkipsInvalidMethodReceivers(t *testing.T) {
 			}
 			// Both entry points collect metadata before lowering declarations.
 			for _, preloaded := range []bool{false, true} {
-				ctx := &context{prog: prog, options: Options{PreloadedSyntax: preloaded}}
+				ctx := &context{prog: prog, options: Options{PreloadedSyntax: preloaded, ExportRename: true}}
 				ctx.initFiles(pkg.Path(), []*ast.File{file}, false)
+			}
+			if prog.HasLinknameTarget("invalid_receiver") {
+				t.Fatal("invalid receiver collected export/linkname metadata")
 			}
 		})
 	}

@@ -643,6 +643,7 @@ func declarationFuncName(pkgPath string, decl *ast.FuncDecl, obj types.Object, r
 		canonical, _ := typesRecvName(recv.Type())
 		return pkgPath + "." + canonical + "." + decl.Name.Name
 	}
+	// SSA lowering follows go/types validation, so this receiver is valid.
 	fullName, _, _ := astFuncName(pkgPath, decl, nil)
 	return fullName
 }
