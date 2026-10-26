@@ -371,7 +371,3 @@ xfails:
     directive: run
     case: init1.go
     reason: the conservative linear collector retains enough loop-temporary pointers to grow memory past this Go allocator threshold
-  - platform: js/wasm
-    directive: errorcheck
-    case: fixedbugs/issue5089.go
-    reason: LLGo does not yet diagnose a method declaration on a non-local type

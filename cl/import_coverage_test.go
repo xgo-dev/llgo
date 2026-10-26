@@ -279,26 +279,42 @@ func TestDeclarationFuncNameWithoutObject(t *testing.T) {
 	}
 }
 
-func TestParsePkgSyntaxSkipsNonLocalMethodReceiver(t *testing.T) {
-	const src = `package p
-
-import "bufio"
-
-func (b *bufio.Reader) Buffered() int { return -1 }
-`
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "issue5089.go", src, parser.ParseComments)
-	if err != nil {
-		t.Fatal(err)
+func TestParsePkgSyntaxSkipsInvalidMethodReceivers(t *testing.T) {
+	for _, receiver := range []string{"bufio.Reader", "*bufio.Reader", "**T", "[]T", "map[int]T"} {
+		t.Run(receiver, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "invalid.go", "package p\nfunc (b "+receiver+") M() {}", parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prog := llssa.NewProgram(nil)
+			defer prog.Dispose()
+			pkg := types.NewPackage("example.com/p", "p")
+			if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
+				t.Fatal(err)
+			}
+			if !prog.PackageSyntaxParsed(pkg) {
+				t.Fatal("package syntax was not marked parsed")
+			}
+			// Both entry points collect metadata before lowering declarations.
+			for _, preloaded := range []bool{false, true} {
+				ctx := &context{prog: prog, options: Options{PreloadedSyntax: preloaded}}
+				ctx.initFiles(pkg.Path(), []*ast.File{file}, false)
+			}
+		})
 	}
-	prog := llssa.NewProgram(nil)
-	defer prog.Dispose()
-	pkg := types.NewPackage("example.com/p", "p")
-	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
-		t.Fatal(err)
-	}
-	if !prog.PackageSyntaxParsed(pkg) {
-		t.Fatal("package syntax was not marked parsed")
+}
+
+func TestAstFuncNameRejectsInvalidReceivers(t *testing.T) {
+	for _, fields := range [][]*ast.Field{
+		nil,
+		{{Type: ast.NewIdent("T")}, {Type: ast.NewIdent("T")}},
+		{{Type: &ast.BadExpr{}}},
+	} {
+		decl := &ast.FuncDecl{Name: ast.NewIdent("M"), Recv: &ast.FieldList{List: fields}}
+		if full, inPkg, ok := astFuncName("p", decl, nil); ok || full != "" || inPkg != "" {
+			t.Fatalf("invalid receiver returned (%q, %q, %v)", full, inPkg, ok)
+		}
 	}
 }
 
