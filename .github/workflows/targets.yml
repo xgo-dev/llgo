@@ -34,7 +34,7 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
-        llvm: [22]
+        llvm: [23]
     runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
     steps:
       - uses: actions/checkout@v7
@@ -89,7 +89,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-deps
         with:
-          llvm-version: '22'
+          llvm-version: '23'
       - uses: ./.github/actions/setup-go
       - name: Build compiler
         id: compiler
@@ -101,7 +101,7 @@ jobs:
       - uses: ./.github/actions/setup-gdb
       - name: Install Linux emulator and LLDB
         if: runner.os == 'Linux'
-        run: sudo apt-get install -y qemu-system-arm lldb-22
+        run: sudo apt-get install -y qemu-system-arm lldb-23
       - name: Install macOS emulator
         if: runner.os == 'macOS'
         run: brew install qemu
@@ -120,7 +120,7 @@ jobs:
         id: lldb-python
         uses: actions/setup-python@v7
         with:
-          # The LLVM 22.1.8 Windows LLDB installer links python311.dll.
+          # The LLVM 23.1.4 Windows LLDB installer links python311.dll.
           python-version: '3.11.9'
           architecture: x64
           update-environment: false
@@ -132,7 +132,7 @@ jobs:
         run: |
           $prefix = (& $env:LLDB_PYTHON -c "import sys; print(sys.base_prefix)").Trim()
           if (-not (Test-Path (Join-Path $prefix 'python311.dll'))) {
-            throw "The LLVM 22 LLDB Python runtime is incomplete: $prefix"
+            throw "The LLVM 23 LLDB Python runtime is incomplete: $prefix"
           }
           "LLGO_WINDOWS_LLDB_PYTHON_HOME=$prefix" >> $env:GITHUB_ENV
       # Separate steps keep both backends observable and run LLDB even when

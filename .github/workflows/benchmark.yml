@@ -39,59 +39,58 @@ jobs:
           - os: ubuntu-24.04
             id: linux
             display: Linux
-            timeout: 20
+            timeout: 40
           - os: macos-latest
             id: macos
             display: macOS
-            timeout: 20
+            timeout: 40
           - os: windows-2022
             id: windows-msvc
             display: Windows MSVC
             windows_abi: msvc
             windows_arch: amd64
             host_go_arch: x64
-            timeout: 30
+            timeout: 60
           - os: windows-2022
             id: windows-mingw
             display: Windows MinGW
             windows_abi: mingw
             windows_arch: amd64
             host_go_arch: x64
-            timeout: 30
+            timeout: 60
           - os: windows-11-arm
             id: windows-msvc-arm64
             display: Windows MSVC ARM64
             windows_abi: msvc
             windows_arch: arm64
             host_go_arch: arm64
-            timeout: 120
+            timeout: 180
           - os: windows-11-arm
             id: windows-mingw-arm64
             display: Windows MinGW ARM64
             windows_abi: mingw
             windows_arch: arm64
             host_go_arch: arm64
-            timeout: 120
+            timeout: 180
           - os: windows-2022
             id: windows-msvc-386
             display: Windows MSVC 386
             windows_abi: msvc
             windows_arch: "386"
             host_go_arch: x64
-            timeout: 90
+            timeout: 150
           - os: windows-2022
             id: windows-mingw-386
             display: Windows MinGW 386
             windows_abi: mingw
             windows_arch: "386"
             host_go_arch: x64
-            timeout: 90
+            timeout: 150
     runs-on: ${{ startsWith(matrix.os, 'ubuntu') && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os }}
     timeout-minutes: ${{ matrix.timeout }}
     env:
       GOMAXPROCS: "2"
       LLGO_ROOT: ${{ github.workspace }}
-      GOFLAGS: -tags=llvm22
     steps:
       - uses: actions/checkout@v7
         with:
@@ -126,10 +125,21 @@ jobs:
           path: .benchmark/head-source
           persist-credentials: false
 
-      - name: Install dependencies
-        uses: ./.github/actions/setup-deps
+      - name: Set up Go
+        uses: ./.github/actions/setup-go
         with:
-          llvm-version: 22
+          architecture: ${{ matrix.host_go_arch || '' }}
+
+      - name: Prepare base dependency actions
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: python .github/scripts/prepare_benchmark_base.py .benchmark/base-source
+
+      - name: Install base dependencies
+        if: github.event_name == 'pull_request'
+        uses: ./.benchmark/base-source/.github/actions/setup-deps
+        with:
+          # The base action chooses its own default LLVM version.
           windows-abi: ${{ matrix.windows_abi || 'msvc' }}
           windows-arch: ${{ matrix.windows_arch || 'amd64' }}
           windows-msvc-dependencies: runtime
@@ -149,10 +159,114 @@ jobs:
             )
           fi
 
-      - name: Set up Go
-        uses: ./.github/actions/setup-go
+      - name: Build base host compiler for a cross-architecture benchmark
+        if: github.event_name == 'pull_request' && runner.os == 'Windows' && matrix.windows_arch != 'amd64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/.benchmark"
+
+          build_host_compiler() {
+            local source_root="$1"
+            local output="$2"
+            (
+              cd "$source_root"
+              LLGO_ROOT="$PWD" go build -p=1 -o "$GITHUB_WORKSPACE/$output" ./cmd/llgo
+            )
+          }
+
+          build_host_compiler .benchmark/base-source .benchmark/base-llgo.exe || true
+
+      - name: Bundle base MinGW host compiler runtime
+        if: github.event_name == 'pull_request' && runner.os == 'Windows' && matrix.windows_abi == 'mingw' && matrix.windows_arch == '386'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $hostBin = Join-Path $env:LLGO_MINGW_HOST_ROOT "bin"
+          $objdump = Join-Path $hostBin "llvm-objdump.exe"
+          if (-not (Test-Path $objdump)) {
+            throw "The MinGW host llvm-objdump is unavailable: $objdump"
+          }
+
+          # Target DLL directories must remain first on PATH when benchmark
+          # programs run. Keep the host compiler architecture-safe without
+          # changing that target environment by placing its DLL closure beside
+          # the prebuilt compiler, which Windows searches before PATH.
+          $queue = [Collections.Generic.Queue[string]]::new()
+          Get-ChildItem "$env:GITHUB_WORKSPACE\.benchmark\base-llgo.exe" |
+            ForEach-Object { $queue.Enqueue($_.FullName) }
+          $copied = @{}
+          while ($queue.Count -ne 0) {
+            $binary = $queue.Dequeue()
+            foreach ($line in (& $objdump -p $binary)) {
+              if ($line -notmatch '^\s*DLL Name:\s*(\S+)\s*$') {
+                continue
+              }
+              $name = $Matches[1]
+              if ($copied.ContainsKey($name)) {
+                continue
+              }
+              $source = Join-Path $hostBin $name
+              if (-not (Test-Path $source)) {
+                continue
+              }
+              $destination = Join-Path "$env:GITHUB_WORKSPACE\.benchmark" $name
+              Copy-Item -LiteralPath $source -Destination $destination
+              $copied[$name] = $true
+              $queue.Enqueue($destination)
+            }
+          }
+          if ($copied.Count -eq 0) {
+            throw "No MinGW host runtime DLLs were discovered"
+          }
+
+      - name: Activate base native Windows target
+        if: github.event_name == 'pull_request' && runner.os == 'Windows' && matrix.windows_arch != 'amd64'
+        uses: ./.benchmark/base-source/.github/actions/activate-windows-target
         with:
-          architecture: ${{ matrix.host_go_arch || '' }}
+          windows-abi: ${{ matrix.windows_abi }}
+          windows-arch: ${{ matrix.windows_arch }}
+
+      - name: Measure pull request base
+        if: github.event_name == 'pull_request'
+        id: measure-base
+        # The first integrated Windows revision may have a base that cannot
+        # build on Windows. Still collect the head; comparisons start once the
+        # base contains Windows support.
+        continue-on-error: ${{ startsWith(matrix.id, 'windows-') }}
+        shell: bash
+        env:
+          LLGO_BENCHMARK_PREBUILT_LLGO: ${{ matrix.windows_arch && matrix.windows_arch != 'amd64' && '.benchmark/base-llgo.exe' || '' }}
+        run: |
+          benchmark/baseline/run.sh \
+            .benchmark/base-source \
+            .benchmark/base-llgo \
+            .benchmark/base-results
+
+      - name: Note unavailable Windows baseline
+        if: >-
+          github.event_name == 'pull_request' &&
+          startsWith(matrix.id, 'windows-') &&
+          steps.measure-base.outcome == 'failure'
+        shell: bash
+        run: |
+          echo '### Windows benchmark baseline' >> "$GITHUB_STEP_SUMMARY"
+          echo 'The pull request base does not yet build on Windows. The current revision is measured as new; same-runner comparisons begin when the base supports Windows.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Restore host architecture for current revision
+        if: github.event_name == 'pull_request' && runner.os == 'Windows' && matrix.windows_arch != 'amd64'
+        shell: pwsh
+        run: |
+          "GOARCH=$(go env GOHOSTARCH)" >> $env:GITHUB_ENV
+          "LLGO_WINDOWS_TARGET_ACTIVE=" >> $env:GITHUB_ENV
+
+      - name: Install dependencies
+        uses: ./.github/actions/setup-deps
+        with:
+          llvm-version: 23
+          windows-abi: ${{ matrix.windows_abi || 'msvc' }}
+          windows-arch: ${{ matrix.windows_arch || 'amd64' }}
+          windows-msvc-dependencies: runtime
 
       - name: Build host compilers for a cross-architecture benchmark
         if: runner.os == 'Windows' && matrix.windows_arch != 'amd64'
@@ -171,7 +285,6 @@ jobs:
           }
 
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-            build_host_compiler .benchmark/base-source .benchmark/base-llgo.exe || true
             build_host_compiler .benchmark/head-source .benchmark/llgo.exe
           else
             build_host_compiler . .benchmark/llgo.exe
@@ -193,7 +306,7 @@ jobs:
           # changing that target environment by placing its DLL closure beside
           # the prebuilt compiler, which Windows searches before PATH.
           $queue = [Collections.Generic.Queue[string]]::new()
-          Get-ChildItem "$env:GITHUB_WORKSPACE\.benchmark\*.exe" |
+          Get-ChildItem "$env:GITHUB_WORKSPACE\.benchmark\llgo.exe" |
             ForEach-Object { $queue.Enqueue($_.FullName) }
           $copied = @{}
           while ($queue.Count -ne 0) {
@@ -226,32 +339,6 @@ jobs:
         with:
           windows-abi: ${{ matrix.windows_abi }}
           windows-arch: ${{ matrix.windows_arch }}
-
-      - name: Measure pull request base
-        if: github.event_name == 'pull_request'
-        id: measure-base
-        # The first integrated Windows revision may have a base that cannot
-        # build on Windows. Still collect the head; comparisons start once the
-        # base contains Windows support.
-        continue-on-error: ${{ startsWith(matrix.id, 'windows-') }}
-        shell: bash
-        env:
-          LLGO_BENCHMARK_PREBUILT_LLGO: ${{ matrix.windows_arch && matrix.windows_arch != 'amd64' && '.benchmark/base-llgo.exe' || '' }}
-        run: |
-          benchmark/baseline/run.sh \
-            .benchmark/base-source \
-            .benchmark/base-llgo \
-            .benchmark/base-results
-
-      - name: Note unavailable Windows baseline
-        if: >-
-          github.event_name == 'pull_request' &&
-          startsWith(matrix.id, 'windows-') &&
-          steps.measure-base.outcome == 'failure'
-        shell: bash
-        run: |
-          echo '### Windows benchmark baseline' >> "$GITHUB_STEP_SUMMARY"
-          echo 'The pull request base does not yet build on Windows. The current revision is measured as new; same-runner comparisons begin when the base supports Windows.' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Measure current revision
         shell: bash
@@ -290,14 +377,13 @@ jobs:
     needs: prepare
     name: benchmark (WebAssembly)
     runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
-    timeout-minutes: 30
+    timeout-minutes: 50
     env:
       GOMAXPROCS: "2"
       LLGO_ROOT: ${{ github.workspace }}
       # Keep the existing println timing budget. Other examples are built once
       # for exact sizes; only W32 repeats reflectcall to measure bridge cost.
       LLGO_WASM_BENCH_BUILD_RUNS: "1"
-      GOFLAGS: -tags=llvm22
     steps:
       - uses: actions/checkout@v7
         with:
@@ -345,10 +431,14 @@ jobs:
           path: .benchmark/wasm-head-source
           persist-credentials: false
 
-      - name: Install dependencies
-        uses: ./.github/actions/setup-deps
-        with:
-          llvm-version: 22
+      - name: Prepare base dependency actions
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: python .github/scripts/prepare_benchmark_base.py .benchmark/wasm-base-source
+
+      - name: Install base dependencies
+        if: github.event_name == 'pull_request'
+        uses: ./.benchmark/wasm-base-source/.github/actions/setup-deps
 
       - name: Set up Emscripten
         uses: emscripten-core/setup-emsdk@v15
@@ -376,6 +466,11 @@ jobs:
             .benchmark/wasm-base-llgo \
             .benchmark/wasm-base-results \
             .benchmark/wasm-head-source
+
+      - name: Install dependencies
+        uses: ./.github/actions/setup-deps
+        with:
+          llvm-version: 23
 
       - name: Measure current revision
         shell: bash

@@ -4,7 +4,7 @@ inputs:
   llvm-version:
     description: "LLVM version to install"
     required: true
-    default: "22"
+    default: "23"
   install-llvm:
     description: "Whether to install LLVM"
     required: false
@@ -46,6 +46,7 @@ runs:
         "manifest-hash=$env:VCPKG_MANIFEST_HASH" >> $env:GITHUB_OUTPUT
         Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_WINDOWS_ABI=${{ inputs.windows-abi }}"
         Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_WINDOWS_ARCH=${{ inputs.windows-arch }}"
+        Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_WINDOWS_LLVM_VERSION=23.1.4"
 
     - name: Cache compressed full-target Windows LLVM archive
       if: runner.os == 'Windows' && inputs.install-llvm == 'true' && inputs.windows-abi == 'msvc'
@@ -53,8 +54,8 @@ runs:
       with:
         # Cache the host architecture's full LLVM archive: x64 on windows-2022
         # and native ARM64 on windows-11-arm.
-        path: ${{ runner.tool_cache }}\llgo-llvm-archives\${{ runner.arch == 'ARM64' && 'clang+llvm-22.1.8-aarch64-pc-windows-msvc.tar.xz' || 'clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz' }}
-        key: ${{ runner.arch == 'ARM64' && 'llgo-llvm-archive-22.1.8-aarch64-pc-windows-msvc-de718c58ebbc5f61d58c17b90457fcf42983bc2c4a4aba3e010d108713bfd7f1' || 'llgo-llvm-archive-22.1.8-x86_64-pc-windows-msvc-d96c2cc1736f4eb7fa43cb9bbdf56d93551a9ae0a9aadb9c99c3c3b2b712a234' }}
+        path: ${{ runner.tool_cache }}\llgo-llvm-archives\${{ runner.arch == 'ARM64' && 'clang+llvm-23.1.4-aarch64-pc-windows-msvc.tar.xz' || 'clang+llvm-23.1.4-x86_64-pc-windows-msvc.tar.xz' }}
+        key: llgo-llvm-archive-23.1.4-${{ runner.arch }}-${{ runner.arch == 'ARM64' && 'f0d2e32424850ffb9b6aef190587a8298353d858a8a7260f490c173fe98d6811' || '854bffcfc84528e0ee92490ff5c178920abd358a79c3e98f053e41e3e8e4c6d2' }}
 
     - name: Install full-target Windows LLVM
       if: runner.os == 'Windows' && inputs.install-llvm == 'true' && inputs.windows-abi == 'msvc'
@@ -63,18 +64,17 @@ runs:
         # The development archive contains llvm-config, headers, libraries,
         # Clang, LLD, and the WebAssembly backend required by LLGo's Windows
         # host and WASI cross-compilation paths.
-        LLVM_VERSION: "22.1.8"
+        LLVM_VERSION: "23.1.4"
       run: |
         $ErrorActionPreference = "Stop"
-        if ("${{ inputs.llvm-version }}" -ne "22") {
-          throw "Unsupported Windows LLVM version: ${{ inputs.llvm-version }}"
+        if ("${{ inputs.llvm-version }}" -ne "23") {
+          throw "LLGo requires LLVM 23, got ${{ inputs.llvm-version }}"
         }
-
         $hostArch = if ($env:RUNNER_ARCH -eq "ARM64") { "aarch64" } else { "x86_64" }
         $expectedSha256 = if ($env:RUNNER_ARCH -eq "ARM64") {
-          "de718c58ebbc5f61d58c17b90457fcf42983bc2c4a4aba3e010d108713bfd7f1"
+          "f0d2e32424850ffb9b6aef190587a8298353d858a8a7260f490c173fe98d6811"
         } else {
-          "d96c2cc1736f4eb7fa43cb9bbdf56d93551a9ae0a9aadb9c99c3c3b2b712a234"
+          "854bffcfc84528e0ee92490ff5c178920abd358a79c3e98f053e41e3e8e4c6d2"
         }
 
         $archiveName = "clang+llvm-$env:LLVM_VERSION-$hostArch-pc-windows-msvc.tar.xz"
@@ -128,16 +128,16 @@ runs:
       id: windows_target_llvm_cache
       uses: actions/cache@v6
       with:
-        path: ${{ runner.tool_cache }}\llgo-windows-support\22.1.8\${{ inputs.windows-arch }}
-        key: llgo-windows-support-22.1.8-${{ inputs.windows-arch }}-${{ inputs.windows-abi }}-16e5709785fef73c854646241c4a92c5cd574318d1b33c63330dd7721903e55c-76f44ef1ba6eeb5a65904e9500f042f588fade49952778ce48f0374daa934396-c68b26561883d5c7f33307aeb2b9b6c188eb705808b3f780dfce0be49f4e835d-native-lldb-v2
+        path: ${{ runner.tool_cache }}\llgo-windows-support\23.1.4\${{ inputs.windows-arch }}
+        key: llgo-windows-support-23.1.4-${{ inputs.windows-arch }}-${{ inputs.windows-abi }}-${{ hashFiles('.github/actions/setup-deps/action.yml') }}
 
     - name: Install Windows LLDB and target builtins
       if: runner.os == 'Windows' && inputs.install-llvm == 'true' && inputs.windows-arch != '386' && (inputs.windows-abi == 'msvc' || inputs.windows-arch != 'amd64') && steps.windows_target_llvm_cache.outputs.cache-hit != 'true'
       shell: pwsh
       env:
-        LLVM_VERSION: "22.1.8"
+        LLVM_VERSION: "23.1.4"
         LLVM_INSTALLER_ARCH: ${{ inputs.windows-arch == 'arm64' && 'woa64' || 'win64' }}
-        LLVM_INSTALLER_SHA256: ${{ inputs.windows-arch == 'arm64' && '76f44ef1ba6eeb5a65904e9500f042f588fade49952778ce48f0374daa934396' || '16e5709785fef73c854646241c4a92c5cd574318d1b33c63330dd7721903e55c' }}
+        LLVM_INSTALLER_SHA256: ${{ inputs.windows-arch == 'arm64' && 'b484f54264400f0a75b63704b1068da8086f0b14625575f6efea08813109b068' || '15e49aca3540991a6f28a0e57babab67da82155c4f73f79dd5e8666a851f9127' }}
         LLVM_BUILTINS_ARCH: ${{ inputs.windows-arch == 'arm64' && 'aarch64' || inputs.windows-arch == 'amd64' && 'x86_64' || 'i386' }}
       run: |
         $ErrorActionPreference = "Stop"
@@ -146,7 +146,7 @@ runs:
         # omits LLDB and only carries x64 compiler-rt. Official LLVM installers
         # supply x64/ARM64 LLDB and builtins. The separate Win32 step below
         # uses llvm-mingw's native i686 LLDB and bundled Python.
-        $installerName = "LLVM-$env:LLVM_VERSION-$env:LLVM_INSTALLER_ARCH.exe"
+        $installerName = "LLVM-$env:LLVM_VERSION-$env:LLVM_INSTALLER_ARCH.msi"
         $installer = Join-Path $env:RUNNER_TEMP $installerName
         $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$env:LLVM_VERSION/$installerName"
         & curl.exe --fail --location --retry 5 --retry-all-errors --output $installer $url
@@ -159,23 +159,19 @@ runs:
         }
 
         $extractRoot = Join-Path $env:RUNNER_TEMP "llgo-llvm-${{ inputs.windows-arch }}-extract"
-        $sevenZip = Join-Path $env:ProgramFiles "7-Zip\7z.exe"
-        if (-not (Test-Path $sevenZip)) {
-          throw "7-Zip was not found at $sevenZip"
+        $builtinsRelative = "lib\clang\23\lib\windows\clang_rt.builtins-$env:LLVM_BUILTINS_ARCH.lib"
+        # Administrative extraction preserves MSI's installed directory layout
+        # without registering LLVM or changing the runner's default toolchain.
+        $log = Join-Path $env:RUNNER_TEMP "llgo-llvm-msi-extract.log"
+        $arguments = "/a `"$installer`" /qn TARGETDIR=`"$extractRoot`" /L*v `"$log`""
+        $process = Start-Process msiexec.exe -ArgumentList $arguments -Wait -PassThru
+        if ($process.ExitCode -notin @(0, 3010)) {
+          Get-Content $log -Tail 80
+          throw "Extracting LLVM MSI failed with exit code $($process.ExitCode)"
         }
-        $builtinsRelative = "lib\clang\22\lib\windows\clang_rt.builtins-$env:LLVM_BUILTINS_ARCH.lib"
-        $extractPaths = @(
-          "bin\lldb.exe",
-          "bin\liblldb.dll",
-          "bin\lldb-argdumper.exe",
-          "bin\lldb-server.exe",
-          "lib\site-packages\lldb\*"
-        )
-        $extractPaths += $builtinsRelative
-        & $sevenZip x -y "-o$extractRoot" $installer @extractPaths
-        if ($LASTEXITCODE -ne 0) {
-          throw "Extracting LLVM ${{ inputs.windows-arch }} support failed with exit code $LASTEXITCODE"
-        }
+        $debuggers = @(Get-ChildItem $extractRoot -Recurse -File -Filter lldb.exe)
+        if ($debuggers.Count -ne 1) { throw 'Expected one LLDB executable in the LLVM MSI' }
+        $extractRoot = Split-Path (Split-Path $debuggers[0].FullName)
         $cacheRoot = Join-Path $env:RUNNER_TOOL_CACHE "llgo-windows-support\$env:LLVM_VERSION\${{ inputs.windows-arch }}"
         New-Item -ItemType Directory -Force $cacheRoot | Out-Null
         if ("${{ inputs.windows-arch }}" -ne "amd64" -and "${{ inputs.windows-abi }}" -eq "msvc") {
@@ -187,8 +183,11 @@ runs:
         }
         $lldbRoot = Join-Path $cacheRoot "lldb"
         New-Item -ItemType Directory -Force $lldbRoot | Out-Null
-        Copy-Item -LiteralPath (Join-Path $extractRoot "bin") -Destination $lldbRoot -Recurse
-        Copy-Item -LiteralPath (Join-Path $extractRoot "lib") -Destination $lldbRoot -Recurse
+        New-Item -ItemType Directory -Force (Join-Path $lldbRoot "bin"), (Join-Path $lldbRoot "lib/site-packages") | Out-Null
+        foreach ($tool in @("lldb.exe", "liblldb.dll", "lldb-argdumper.exe", "lldb-server.exe")) {
+          Copy-Item -LiteralPath (Join-Path $extractRoot "bin/$tool") -Destination (Join-Path $lldbRoot "bin")
+        }
+        Copy-Item -LiteralPath (Join-Path $extractRoot "lib/site-packages/lldb") -Destination (Join-Path $lldbRoot "lib/site-packages") -Recurse
         foreach ($required in @(
           (Join-Path $lldbRoot "bin\lldb.exe"),
           (Join-Path $lldbRoot "bin\liblldb.dll"),
@@ -203,8 +202,8 @@ runs:
       if: runner.os == 'Windows' && inputs.install-llvm == 'true' && inputs.windows-arch == '386' && steps.windows_target_llvm_cache.outputs.cache-hit != 'true'
       shell: pwsh
       env:
-        LLVM_MINGW_VERSION: "20260616"
-        LLVM_MINGW_SHA256: c68b26561883d5c7f33307aeb2b9b6c188eb705808b3f780dfce0be49f4e835d
+        LLVM_MINGW_VERSION: 20261020
+        LLVM_MINGW_SHA256: 8e8eaf7f0c178ffe0582a5d871dbf3ac50f0a54d71cf5d5edb2e3634f6f9f002
       run: |
         $ErrorActionPreference = "Stop"
         $asset = "llvm-mingw-$env:LLVM_MINGW_VERSION-ucrt-i686.zip"
@@ -221,7 +220,7 @@ runs:
         $extractRoot = Join-Path $env:RUNNER_TEMP "llgo-win32-lldb-extract"
         Expand-Archive -LiteralPath $archive -DestinationPath $extractRoot
         $sourceRoot = Join-Path $extractRoot "llvm-mingw-$env:LLVM_MINGW_VERSION-ucrt-i686"
-        $cacheRoot = Join-Path $env:RUNNER_TOOL_CACHE "llgo-windows-support\22.1.8\386"
+        $cacheRoot = Join-Path $env:RUNNER_TOOL_CACHE "llgo-windows-support\23.1.4\386"
         $lldbRoot = Join-Path $cacheRoot "lldb"
         New-Item -ItemType Directory -Force $lldbRoot | Out-Null
         # Preserve the debugger's DLLs and matching Python layout without
@@ -229,7 +228,7 @@ runs:
         Copy-Item -LiteralPath (Join-Path $sourceRoot "bin") -Destination $lldbRoot -Recurse
         Copy-Item -LiteralPath (Join-Path $sourceRoot "python") -Destination $lldbRoot -Recurse
         if ("${{ inputs.windows-abi }}" -eq "msvc") {
-          Copy-Item -LiteralPath (Join-Path $sourceRoot "lib\clang\22\lib\windows\libclang_rt.builtins-i386.a") `
+          Copy-Item -LiteralPath (Join-Path $sourceRoot "lib\clang\${{ inputs.llvm-version }}\lib\windows\libclang_rt.builtins-i386.a") `
             -Destination (Join-Path $cacheRoot "clang_rt.builtins-i386.lib")
         }
         foreach ($required in @("bin\lldb.exe", "bin\liblldb.dll", "python\bin\python3.exe", "python\lib\python3.14\site-packages\lldb\__init__.py")) {
@@ -292,8 +291,8 @@ runs:
       if: runner.os == 'Windows' && inputs.install-llvm == 'true' && inputs.windows-abi == 'msvc'
       shell: pwsh
       env:
-        LLVM_VERSION: "22.1.8"
-        LLVM_TARGET_VERSION: "22.1.8"
+        LLVM_VERSION: "23.1.4"
+        LLVM_TARGET_VERSION: "23.1.4"
         VCPKG_MANIFEST_HASH: ${{ steps.windows_profile.outputs.manifest-hash }}
       run: |
         $ErrorActionPreference = "Stop"
@@ -391,7 +390,7 @@ runs:
         $fileCheckRoot = Join-Path $env:RUNNER_TEMP "llgo-filecheck"
         $fileCheckSource = Join-Path $fileCheckRoot "FileCheck.cpp"
         $fileCheck = Join-Path $fileCheckRoot "FileCheck.exe"
-        $fileCheckSourceSHA256 = "394d3744e5b88e72e08693ae35510a2cea8a7bae209dbd31e08c2d288ef15b17"
+        $fileCheckSourceSHA256 = "3c6568b68c5c6d6ec8b9a2acb378a6949c9f5004ae009d2597b7f760f944f320"
         New-Item -ItemType Directory -Force $fileCheckRoot | Out-Null
         $fileCheckURL = "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-$env:LLVM_VERSION/llvm/utils/FileCheck/FileCheck.cpp"
         & curl.exe --fail --location --retry 5 --retry-all-errors --output $fileCheckSource $fileCheckURL
@@ -474,7 +473,7 @@ runs:
         # Go's Windows external linker detects LLD through the compiler command
         # prefix. Without this option it emits a GNU ld linker script that the
         # native MSVC linker dialect cannot consume.
-        # The upstream LLVM 22 development archive builds its static libraries
+        # The upstream LLVM development archive builds its static libraries
         # against the static MSVC runtime. Match it in FileCheck and all host
         # cgo objects so lld-link sees one RuntimeLibrary directive.
         Add-Content -Encoding utf8 $env:GITHUB_ENV "CC=clang --target=$hostTriple -fuse-ld=lld -fms-runtime-lib=static"
@@ -588,10 +587,10 @@ runs:
 
         llvm_major="${{ inputs.llvm-version }}"
         case "$llvm_major" in
-          22)
-            llvm_version=22.1.8
-            package_version=22.1.8-2
-            runtime_package_version=22.1.8-1
+          23)
+            llvm_version=23.1.3
+            package_version=23.1.3-1
+            runtime_package_version=23.1.3-1
             ;;
           *)
             echo "unsupported Windows LLVM version: $llvm_major" >&2
@@ -746,7 +745,7 @@ runs:
         Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_MINGW_HOST_PKGCONF=$pkgconf"
         Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_MINGW_HOST_ROOT=$mingwRoot"
         if ("${{ inputs.windows-arch }}" -ne "amd64") {
-          $lldbRoot = Join-Path $env:RUNNER_TOOL_CACHE "llgo-windows-support\22.1.8\${{ inputs.windows-arch }}\lldb"
+          $lldbRoot = Join-Path $env:RUNNER_TOOL_CACHE "llgo-windows-support\23.1.4\${{ inputs.windows-arch }}\lldb"
           $lldb = Join-Path $lldbRoot "bin\lldb.exe"
           if (-not (Test-Path $lldb)) {
             throw "lldb.exe was not found for Windows ${{ inputs.windows-arch }}"

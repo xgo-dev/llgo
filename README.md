@@ -357,10 +357,10 @@ llgo run .
 ## Dependencies
 
 - [Go 1.27](https://go.dev) for building LLGo; CI validates user packages separately with Go 1.20 through Go 1.27
-- [LLVM 22](https://llvm.org)
-- [Clang 22](https://clang.llvm.org)
-- [LLD 22](https://lld.llvm.org)
-- [LLDB](https://lldb.llvm.org) (LLVM 22 packages on Linux/Windows; Xcode's Apple LLDB on macOS)
+- [LLVM 23](https://llvm.org)
+- [Clang 23](https://clang.llvm.org)
+- [LLD 23](https://lld.llvm.org)
+- [LLDB](https://lldb.llvm.org) (LLVM 23 packages on Linux/Windows; Xcode's Apple LLDB on macOS)
 - [pkg-config 0.29+](https://gitlab.freedesktop.org/pkg-config/pkg-config)
 - [bdwgc/libgc 8.0+](https://www.hboehm.info/gc/)
 - [libffi](https://sourceware.org/libffi/)
@@ -400,20 +400,19 @@ In either shell, run `cd ..`, then use `go run ./cmd/llgo version` or
 
 ```sh
 brew update
-brew install llvm@22 lld@22 bdw-gc openssl cjson libffi libuv pkg-config
+brew install llvm@23 lld@23 bdw-gc openssl cjson libffi libuv pkg-config
 brew install python@3.12 # optional
-brew link --force --overwrite llvm@22 lld@22 libffi
+brew link --force --overwrite llvm@23 lld@23 libffi
 ./install.sh
 ```
 
-Native macOS builds use LLVM/LLD 22 and require a macOS SDK older than 27.
-LLGo keeps the active SDK when it meets that requirement; otherwise it selects
-the newest installed older SDK from Xcode or Command Line Tools. SDK 27 and
-newer are excluded. Set `SDKROOT` to pin an installed older SDK; an unsupported
-or missing explicit SDK is an error. If no older SDK is installed, install one
-before building. The selected SDK is used for both compilation and linking.
+Native macOS builds use LLVM/LLD 23, which supports the SDK 27 text-stub
+format. LLGo uses the active SDK when its compile-and-link probe succeeds,
+and otherwise tries installed alternatives. Set `SDKROOT` to pin an SDK;
+an incompatible or missing explicit SDK is an error. The selected SDK is
+used for both compilation and linking.
 
-Homebrew's versioned LLVM 22 formula does not ship LLDB and there is no `lldb@22` formula. LLGo checks common Homebrew and system locations, then `lldb` on `PATH`; use `LLGO_LLDB` or `llgo lldb -lldb` to select one explicitly.
+Homebrew's versioned LLVM 23 formula does not ship LLDB and there is no `lldb@23` formula. LLGo checks common Homebrew and system locations, then `lldb` on `PATH`; use `LLGO_LLDB` or `llgo lldb -lldb` to select one explicitly.
 
 ### on Linux
 
@@ -436,10 +435,10 @@ For source builds, install the build dependencies:
 <!-- embedme doc/_readme/scripts/install_ubuntu.sh#L2-L1000 -->
 
 ```sh
-echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-23 main" | sudo tee /etc/apt/sources.list.d/llvm.list
 wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
 sudo apt-get update
-sudo apt-get install -y llvm-22-dev clang-22 libclang-22-dev lld-22 lldb-22 libunwind-22-dev libc++-22-dev pkg-config libgc-dev libssl-dev zlib1g-dev libffi-dev libcjson-dev libsqlite3-dev libuv1-dev
+sudo apt-get install -y llvm-23-dev clang-23 libclang-23-dev lld-23 lldb-23 libunwind-23-dev libc++-23-dev pkg-config libgc-dev libssl-dev zlib1g-dev libffi-dev libcjson-dev libsqlite3-dev libuv1-dev
 sudo apt-get install -y python3.12-dev # optional
 ./install.sh
 ```
@@ -447,10 +446,10 @@ sudo apt-get install -y python3.12-dev # optional
 #### Alpine Linux
 
 ```sh
-apk add go llvm22-dev clang22-dev lld22 lldb pkgconf gc-dev libunwind-dev openssl-dev zlib-dev libffi-dev cjson-dev sqlite-dev libuv-dev
+apk add go llvm23-dev clang23-dev lld23 lldb pkgconf gc-dev libunwind-dev openssl-dev zlib-dev libffi-dev cjson-dev sqlite-dev libuv-dev
 apk add python3-dev # optional
 apk add g++ # build only
-export LLVM_CONFIG=/usr/lib/llvm22/bin/llvm-config
+export LLVM_CONFIG=/usr/lib/llvm23/bin/llvm-config
 export CGO_CPPFLAGS="$($LLVM_CONFIG --cppflags)"
 export CGO_CXXFLAGS=-std=c++17
 export CGO_LDFLAGS="$($LLVM_CONFIG --ldflags) $($LLVM_CONFIG --libs all)"
@@ -475,17 +474,9 @@ llgo version
 
 With YUM, use `sudo yum install -y llgo` for the installation command.
 
-For source builds, Fedora 44 and 45 ship LLVM 22 as the default LLVM stack.
-Fedora 43 still ships LLVM 21 and is not a supported default-toolchain
-environment for this LLGo release.
-
-```sh
-sudo dnf install -y llvm-devel clang-devel lld lldb libcxx-devel llvm-libunwind-devel \
-  pkgconf-pkg-config gc-devel openssl-devel libffi-devel libuv-devel \
-  cjson-devel sqlite-devel zlib-ng-compat-devel
-llvm-config --version # must report 22.x
-./install.sh
-```
+Source builds require LLVM 23. If your Fedora release supplies an older
+LLVM stack, use the pinned [Mise or Pixi development environment](dev/README.md)
+instead of the system LLVM packages.
 
 docker alpine 386 llgo environment
 ```
@@ -502,25 +493,25 @@ See [Windows release dependencies and PowerShell setup](WINDOWS.md) for the exte
 
 Use the archive matching your native architecture and toolchain profile. Native programs still need the corresponding SDK/CRT, Clang, and dependencies described below: Visual Studio's C++ developer environment for MSVC, or MSYS2 `CLANG64` (`amd64`) / `CLANGARM64` (`arm64`) for MinGW. For `386`, configure the native i686 MSVC or MinGW environment described in [WINDOWS.md](WINDOWS.md); automatic dependency installation is unavailable. The bundled ESP Clang matches the host architecture: ARM64 archives contain native ARM64 ESP tools and DLLs for both MSVC and MinGW variants.
 
-The recommended GNU-hosted setup is an MSYS2 `CLANG64` shell. Install the LLVM 22 stack and LLGo's native dependencies, then provide the versioned pkg-config metadata used by the Go/C++ bindings:
+The recommended GNU-hosted setup is an MSYS2 `CLANG64` shell. Install the LLVM 23 stack and LLGo's native dependencies, then provide the versioned pkg-config metadata used by the Go/C++ bindings:
 
 ```sh
 pacman -S --needed \
   mingw-w64-clang-x86_64-{clang,llvm,llvm-tools,lld,lldb,compiler-rt,libc++,libunwind} \
   mingw-w64-clang-x86_64-{gc,libffi,libuv,openssl,cjson,sqlite3,zlib,pkgconf}
-test "$(llvm-config --version | cut -d. -f1)" = 22
+test "$(llvm-config --version | cut -d. -f1)" = 23
 pc_dir="$MINGW_PREFIX/lib/pkgconfig"
 mkdir -p "$pc_dir"
 printf '%s\n' \
-  'Name: LLVM 22' \
-  'Description: LLVM 22 host compiler and linker flags' \
+  'Name: LLVM 23' \
+  'Description: LLVM 23 host compiler and linker flags' \
   "Version: $(llvm-config --version)" \
   "Cflags: $(llvm-config --cflags)" \
   "Libs: $(llvm-config --ldflags --libs all --system-libs)" \
-  > "$pc_dir/llvm-22.pc"
+  > "$pc_dir/llvm-23.pc"
 ```
 
-The native MSVC CI profile uses LLVM's official 22.1.8 development archive for headers, libraries, Clang, LLD, and all code-generation backends. That archive does not contain LLDB, so the profile also extracts LLDB from the matching official `win64` or `woa64` installer. LLVM 22 has no official Win32 installer; the Windows 386 lane uses the LLVM 22.1.8-based llvm-mingw 20260616 builtins and qualifies the official x64 LLDB under WoW64. The complete pinned setup, checksums, and generated `llvm-22.pc` are in `.github/actions/setup-deps/action.yml`.
+The native MSVC CI profile uses LLVM's official 23.1.4 development archive for headers, libraries, Clang, LLD, and all code-generation backends. LLDB is extracted from the matching official `win64` or `woa64` MSI. The Windows 386 lane uses the LLVM 23.1.4-based llvm-mingw 20261020 builtins and native i686 LLDB with its bundled Python runtime. MSYS2's LLVM packages are pinned separately to 23.1.3. The complete setup, checksums, and generated `llvm-23.pc` are in `.github/actions/setup-deps/action.yml`.
 
 
 ### Install from source
@@ -536,7 +527,7 @@ cd llgo
 ### Fallback release installers
 
 The Unix fallback installs LLGo and, by default, Go and native C libraries. It
-does not install LLVM/Clang/LLD 22; install those with the platform steps above
+does not install LLVM/Clang/LLD 23; install those with the platform steps above
 before compiling programs with LLGo.
 
 On macOS or Linux:

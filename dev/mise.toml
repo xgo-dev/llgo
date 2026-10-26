@@ -5,9 +5,9 @@ locked = true
 
 [tools]
 go = "{{ read_file(path='../.go-version') | trim }}"
-"conda:llvmdev" = "22.1.8"
-"conda:clangxx" = "22.1.8"
-"conda:lld" = "22.1.8"
+"conda:llvmdev" = "23.1.4"
+"conda:clangxx" = "23.1.4"
+"conda:lld" = "23.1.4"
 "conda:pkg-config" = "0.29.2"
 "conda:pkgconf" = { version = "3.0.8", os = ["windows"] }
 "conda:bdw-gc" = "8.2.12"

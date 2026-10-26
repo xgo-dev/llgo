@@ -7,7 +7,7 @@ inputs:
   llvm-version:
     description: "LLGo host LLVM major version"
     required: false
-    default: "22"
+    default: "23"
 
 runs:
   using: "composite"
@@ -16,8 +16,8 @@ runs:
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
-        if ("${{ inputs.llvm-version }}" -ne "22") {
-          throw "llvm-mingw 20260616 is paired with LLVM 22, not ${{ inputs.llvm-version }}"
+        if ("${{ inputs.llvm-version }}" -ne "23") {
+          throw "llvm-mingw 20261020 requires LLVM 23, got ${{ inputs.llvm-version }}"
         }
         if ("${{ inputs.windows-arch }}" -ne "386") {
           throw "The native llvm-mingw target currently qualifies windows/386, not windows/${{ inputs.windows-arch }}"
@@ -28,8 +28,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        if [[ "${{ inputs.llvm-version }}" != 22 ]]; then
-          echo "llvm-mingw 20260616 is paired with LLVM 22, not ${{ inputs.llvm-version }}" >&2
+        if [[ "${{ inputs.llvm-version }}" != 23 ]]; then
+          echo "llvm-mingw 20261020 requires LLVM 23, got ${{ inputs.llvm-version }}" >&2
           exit 1
         fi
         case "${{ inputs.windows-arch }}" in
@@ -45,15 +45,15 @@ runs:
       id: llvm_mingw_cache
       uses: actions/cache@v6
       with:
-        path: ${{ runner.tool_cache }}\llvm-mingw\20260616\ucrt-x86_64
-        key: llvm-mingw-20260616-ucrt-x86_64-b9b68a4d276e16fa25802aaba458e4638f64b3884c290aaccdc2d87083b6ca35
+        path: ${{ runner.tool_cache }}\llvm-mingw\20261020\ucrt-x86_64
+        key: llvm-mingw-20261020-ucrt-x86_64-fd5462b7f5d93b2ff981fcd3f9c7e427e47f3203c64ea91c27bcc444eebd74cd
 
     - name: Install llvm-mingw
       if: runner.os == 'Windows' && steps.llvm_mingw_cache.outputs.cache-hit != 'true'
       shell: pwsh
       env:
-        LLVM_MINGW_VERSION: "20260616"
-        LLVM_MINGW_SHA256: b9b68a4d276e16fa25802aaba458e4638f64b3884c290aaccdc2d87083b6ca35
+        LLVM_MINGW_VERSION: "20261020"
+        LLVM_MINGW_SHA256: fd5462b7f5d93b2ff981fcd3f9c7e427e47f3203c64ea91c27bcc444eebd74cd
       run: |
         $ErrorActionPreference = "Stop"
         $asset = "llvm-mingw-$env:LLVM_MINGW_VERSION-ucrt-x86_64.zip"
@@ -86,7 +86,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: ${{ runner.tool_cache }}\llgo-mingw-vcpkg\${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}\386
-        key: llgo-llvm-mingw-20260616-ucrt-386-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}-${{ hashFiles('.github/windows/bdwgc-windows-fault-guard.patch', '.github/windows/prepare-bdwgc-port.py') }}
+        key: llgo-llvm-mingw-20261020-ucrt-386-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}-${{ hashFiles('.github/windows/bdwgc-windows-fault-guard.patch', '.github/windows/prepare-bdwgc-port.py') }}
 
     - name: Build llvm-mingw target dependencies
       if: runner.os == 'Windows' && steps.llvm_mingw_vcpkg_cache.outputs.cache-hit != 'true'
@@ -99,7 +99,7 @@ runs:
         $sourceRoot = Join-Path $env:RUNNER_TEMP "llgo-mingw-vcpkg-source"
         $installRoot = Join-Path $env:RUNNER_TOOL_CACHE "llgo-mingw-vcpkg\$env:VCPKG_MANIFEST_HASH\386"
         $manifestRoot = Join-Path $env:GITHUB_WORKSPACE ".github\windows\vcpkg"
-        $llvmMingwRoot = Join-Path $env:RUNNER_TOOL_CACHE "llvm-mingw\20260616\ucrt-x86_64"
+        $llvmMingwRoot = Join-Path $env:RUNNER_TOOL_CACHE "llvm-mingw\20261020\ucrt-x86_64"
         $llvmMingwBin = Join-Path $llvmMingwRoot "bin"
         $env:PATH = "$llvmMingwBin;$env:PATH"
 
@@ -138,7 +138,7 @@ runs:
         VCPKG_MANIFEST_HASH: ${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}
       run: |
         $ErrorActionPreference = "Stop"
-        $llvmMingwRoot = Join-Path $env:RUNNER_TOOL_CACHE "llvm-mingw\20260616\ucrt-x86_64"
+        $llvmMingwRoot = Join-Path $env:RUNNER_TOOL_CACHE "llvm-mingw\20261020\ucrt-x86_64"
         $llvmMingwBin = Join-Path $llvmMingwRoot "bin"
         $llvmMingwRuntimeBin = Join-Path $llvmMingwRoot "i686-w64-mingw32\bin"
         $compiler = Join-Path $llvmMingwBin "i686-w64-mingw32-clang.exe"
@@ -229,24 +229,24 @@ runs:
       id: cross_host_llvm_mingw_cache
       uses: actions/cache@v6
       with:
-        path: ${{ runner.tool_cache }}/llvm-mingw/20260616/ucrt-${{ runner.os }}-${{ runner.arch }}
-        key: llvm-mingw-20260616-ucrt-${{ runner.os }}-${{ runner.arch }}-${{ runner.os == 'macOS' && '2cab02a2e964bd4aae981150a45985d07c657cfa8d244959eb9e2dcc5eedd7b1' || '534b92e067b22a6b4441f48ae9240a3341b17825d04d577eab0cf85c44b4deda' }}
+        path: ${{ runner.tool_cache }}/llvm-mingw/20261020/ucrt-${{ runner.os }}-${{ runner.arch }}
+        key: llvm-mingw-20261020-ucrt-${{ runner.os }}-${{ runner.arch }}-${{ runner.os == 'macOS' && 'e9c13e4ede38e715003ffc674d4d00a1088df8235439d1f0c16188ff0704c17e' || '55064b60b991a1e1e8090b8c2f84e82b22cfe5903d12c159d65064cf5e8ae335' }}
 
     - name: Install cross-host llvm-mingw
       if: runner.os != 'Windows' && env.LLGO_MINGW_CROSS_ROOT == '' && steps.cross_host_llvm_mingw_cache.outputs.cache-hit != 'true'
       shell: bash
       env:
-        LLVM_MINGW_VERSION: "20260616"
+        LLVM_MINGW_VERSION: "20261020"
       run: |
         set -euo pipefail
         case "$RUNNER_OS/$RUNNER_ARCH" in
           Linux/X64)
             asset="llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-x86_64.tar.xz"
-            sha256=534b92e067b22a6b4441f48ae9240a3341b17825d04d577eab0cf85c44b4deda
+            sha256=55064b60b991a1e1e8090b8c2f84e82b22cfe5903d12c159d65064cf5e8ae335
             ;;
           macOS/ARM64|macOS/X64)
             asset="llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-macos-universal.tar.xz"
-            sha256=2cab02a2e964bd4aae981150a45985d07c657cfa8d244959eb9e2dcc5eedd7b1
+            sha256=e9c13e4ede38e715003ffc674d4d00a1088df8235439d1f0c16188ff0704c17e
             ;;
           *)
             echo "llvm-mingw has no qualified $RUNNER_OS/$RUNNER_ARCH host archive" >&2
@@ -282,7 +282,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: ${{ runner.tool_cache }}/llgo-mingw-vcpkg/${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}/${{ runner.os }}-${{ runner.arch }}/${{ inputs.windows-arch }}
-        key: llgo-llvm-mingw-20260616-ucrt-${{ runner.os }}-${{ runner.arch }}-${{ inputs.windows-arch }}-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}-${{ hashFiles('.github/windows/bdwgc-windows-fault-guard.patch', '.github/windows/prepare-bdwgc-port.py') }}
+        key: llgo-llvm-mingw-20261020-ucrt-${{ runner.os }}-${{ runner.arch }}-${{ inputs.windows-arch }}-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}-${{ hashFiles('.github/windows/bdwgc-windows-fault-guard.patch', '.github/windows/prepare-bdwgc-port.py') }}
 
     - name: Build cross-host target dependencies
       if: runner.os != 'Windows' && steps.cross_host_vcpkg_cache.outputs.cache-hit != 'true'
@@ -301,7 +301,7 @@ runs:
         source_root="$RUNNER_TEMP/llgo-mingw-vcpkg-source"
         install_root="$RUNNER_TOOL_CACHE/llgo-mingw-vcpkg/$VCPKG_MANIFEST_HASH/${RUNNER_OS}-${RUNNER_ARCH}/${{ inputs.windows-arch }}"
         manifest_root="$GITHUB_WORKSPACE/.github/windows/vcpkg"
-        llvm_mingw_root="${LLGO_MINGW_CROSS_ROOT:-$RUNNER_TOOL_CACHE/llvm-mingw/20260616/ucrt-${RUNNER_OS}-${RUNNER_ARCH}}"
+        llvm_mingw_root="${LLGO_MINGW_CROSS_ROOT:-$RUNNER_TOOL_CACHE/llvm-mingw/20261020/ucrt-${RUNNER_OS}-${RUNNER_ARCH}}"
         export PATH="$llvm_mingw_root/bin:$PATH"
 
         # Do not let target-specific compiler variables from the invoking job
@@ -355,7 +355,7 @@ runs:
             ;;
         esac
 
-        llvm_mingw_root="${LLGO_MINGW_CROSS_ROOT:-$RUNNER_TOOL_CACHE/llvm-mingw/20260616/ucrt-${RUNNER_OS}-${RUNNER_ARCH}}"
+        llvm_mingw_root="${LLGO_MINGW_CROSS_ROOT:-$RUNNER_TOOL_CACHE/llvm-mingw/20261020/ucrt-${RUNNER_OS}-${RUNNER_ARCH}}"
         target_bin="$llvm_mingw_root/bin"
         runtime_bin="$llvm_mingw_root/$prefix/bin"
         compiler="$target_bin/$prefix-clang"

@@ -7,7 +7,7 @@ if ($env:GOFLAGS -ne '-tags=byollvm') { throw 'GOFLAGS must enable byollvm' }
 $goVersion = (go env GOVERSION) -replace '\.\d+$', ''
 $requiredGoVersion = ('go' + (Get-Content (Join-Path $env:LLGO_ROOT '.go-version')).Trim()) -replace '\.\d+$', ''
 if ($goVersion -ne $requiredGoVersion) { throw 'Go must match the major/minor version in .go-version' }
-if (-not ((llvm-config --version) -match '^22\.')) { throw 'LLVM 22 is required' }
+if (-not ((llvm-config --version) -match '^23\.')) { throw 'LLVM 23 is required' }
 if (-not (Test-Path (Join-Path $env:LLGO_ROOT 'runtime/go.mod'))) { throw 'LLGO_ROOT is incorrect' }
 
 Set-Location $env:LLGO_ROOT

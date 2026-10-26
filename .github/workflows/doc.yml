@@ -168,7 +168,7 @@ jobs:
             export GOBIN="$install_bin"
             export PATH="$path_bin:$base_path"
             if [[ "$install_mode" == "full" && "$RUNNER_OS" == "Linux" ]]; then
-              export PATH="/usr/lib/llvm-22/bin:$PATH"
+              export PATH="/usr/lib/llvm-23/bin:$PATH"
             fi
 
             if [[ "$install_mode" == "full" ]]; then

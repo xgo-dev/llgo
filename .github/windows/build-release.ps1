@@ -17,7 +17,7 @@ if ($LASTEXITCODE -ne 0 -or $metadata.commit -ne $commit) {
 if ($metadata.version -notmatch '^[0-9A-Za-z][0-9A-Za-z.+-]*$') {
   throw "Invalid release version: $($metadata.version)"
 }
-$llvmVersion = '22.1.8'
+$llvmVersion = '23.1.4'
 $buildTime = ([DateTimeOffset]$metadata.date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
 Assert-ReleaseCompilerArtifact -Root $HostCompilerDirectory -Metadata $metadata -GoArch $GoArch -LLVMVersion $llvmVersion
 $stage = Join-Path $env:RUNNER_TEMP "llgo-release-$GoArch-$Profile"

@@ -1,10 +1,11 @@
 # Windows x86 release toolchains
 
-Official upstream LLVM 22 does not publish the native i686 development SDK
+Official upstream LLVM 23 does not publish the native i686 development SDK
 needed for a 32-bit LLGo host. LLGo downloads the Windows x86 LLVM SDK from
-[xgo-dev/espressif-llvm-project-prebuilt's 22.1.4_20261020 release](https://github.com/xgo-dev/espressif-llvm-project-prebuilt/releases/tag/22.1.4_20261020).
+[xgo-dev/espressif-llvm-project-prebuilt's 23.1.4_20261025 release](https://github.com/xgo-dev/espressif-llvm-project-prebuilt/releases/tag/23.1.4_20261025).
 The same release supplies ESP tools for all three Windows host architectures.
-The producer's merge commit is recorded in `espressif-toolchain.json`.
+The payload producer's merge commit and the SDK producer's commit are recorded
+separately in `espressif-toolchain.json`.
 
 `espressif-toolchain.json` pins the release, asset names, and independent SHA-256
 values. Both compiler building and packaging consume these pins. Downloads
@@ -13,8 +14,8 @@ release checksum sidecars and extracted directory markers are not trust anchors.
 Each use extracts a fresh copy. LLGo no longer builds these toolchains from a
 personal fork or transfers source-built archives between CI jobs.
 
-The host SDK deliberately uses upstream LLVM 22.1.8, matching LLGo's other
-host SDKs. The separate ESP tools use Espressif LLVM 22.1.4 and run out of
+The host SDK deliberately uses upstream LLVM 23.1.4, matching LLGo's other
+host SDKs. The separate ESP tools use Espressif LLVM 23.1.4 and run out of
 process; their libraries are not linked into LLGo. The x86 SDK's manifest must
 still identify the pinned source revision, i686 host, and static link mode.
 `release.json` records the pinned ESP version and SHA-256 for every ABI archive.
