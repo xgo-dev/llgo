@@ -142,7 +142,7 @@ retry:
 	switch t := typ.(type) {
 	case *types.Named:
 		prog := Program(unsafe.Pointer(p))
-		if background, ok := prog.packageSyntax.typeBackground(t.Origin().Obj()); ok && isNativeFuncBackground(background) {
+		if background, ok := prog.packageSyntax.typeCallConv(t.Origin().Obj()); ok && isNativeCallConv(background) {
 			return 0
 		}
 		typ = t.Underlying()
@@ -667,7 +667,7 @@ func isPkgScope(parent, pkgScope *types.Scope) bool {
 }
 
 func (p Program) toNamed(raw *types.Named) Type {
-	if background, ok := p.packageSyntax.typeBackground(raw.Origin().Obj()); ok && background == InStdcall {
+	if background, ok := p.packageSyntax.typeCallConv(raw.Origin().Obj()); ok && background == Stdcall {
 		p.validateStdcallType(raw)
 	}
 	name := p.llvmNameOf(raw)

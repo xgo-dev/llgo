@@ -52,7 +52,7 @@ func (p *context) directFinalizer(call *ssa.CallCommon) (obj, fn *ssa.MakeInterf
 		return
 	}
 	if function, direct := fn.X.(*ssa.Function); direct {
-		if _, _, kind := p.funcName(function); kind != goFunc {
+		if _, _, kind, _ := p.funcName(p.sourceFunction(function)); kind != goFunc {
 			return
 		}
 	}

@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/goembed"
+
+	"github.com/xgo-dev/llgo/internal/directive"
 )
 
 func TestRewriteEmbeddedGlobals(t *testing.T) {
@@ -42,13 +44,17 @@ var (
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = Rewrite(fset, pkg, info, []*ast.File{file}); err != nil {
+	index := new(directive.Index)
+	if _, _, err = Rewrite(fset, pkg, info, []*ast.File{file}, index); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = cfg.Check("client", fset, []*ast.File{file}, testInfo()); err != nil {
 		t.Fatal(err)
 	}
-	embedded, err := goembed.LoadDirectives(fset, []*ast.File{file})
+	index.Invalidate([]*ast.File{file})
+	records := index.Files([]*ast.File{file})
+	index.Freeze()
+	embedded, err := goembed.LoadRecords(fset, records)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +105,7 @@ func TestRewriteRejectsGlobalBindings(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, _, err = Rewrite(fset, pkg, info, files)
+			_, _, err = Rewrite(fset, pkg, info, files, new(directive.Index))
 			if tc.reject {
 				if err == nil || !strings.Contains(err.Error(), "binding for SIMD-dependent global Value") || !strings.Contains(err.Error(), position) {
 					t.Fatalf("unexpected diagnostic: %v", err)
@@ -134,7 +140,7 @@ var Alias int
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = Rewrite(fset, pkg, info, []*ast.File{file})
+	_, _, err = Rewrite(fset, pkg, info, []*ast.File{file}, new(directive.Index))
 	if err == nil || !strings.Contains(err.Error(), "target SIMD-dependent global foreign.Value") {
 		t.Fatalf("unexpected diagnostic: %v", err)
 	}

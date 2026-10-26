@@ -190,6 +190,10 @@ func capture(seed int) func() int {
 					target.OptLevel = level
 					prog := newLLSSAProgForTarget(t, &target)
 					defer prog.Dispose()
+					if err := prepareTestSyntax(prog, ssaPkg, []*ast.File{file}, Options{}); err != nil {
+						t.Fatal(err)
+					}
+					prog.Directives().Freeze()
 					pkg, _, err := newPackageEx(prog, nil, nil, nil, ssaPkg, []*ast.File{file}, nil, false, Options{Debug: true, DebugSymbols: true})
 					if err != nil {
 						t.Fatal(err)

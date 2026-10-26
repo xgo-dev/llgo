@@ -805,7 +805,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	conf.toolTags = slices.Clone(sourceGo.toolTags)
 	if slices.Contains(sourceGo.toolTags, "goexperiment.simd") && (conf.Goarch == "amd64" || conf.Goarch == "arm64" || conf.Goarch == "wasm") {
 		cfg.Mode &^= packages.NeedExportFile
-		dedup.SetRewrite(rewritePortableSIMD)
+		dedup.SetRewrite(func(pkg *packages.Package) (bool, error) {
+			return rewritePortableSIMD(pkg, prog.Directives())
+		})
 	}
 	cfg.Env = sourceGo.apply(cfg.Env)
 	if err := applyPackageLoadFlags(cfg, sourceGo.GOFLAGS); err != nil {

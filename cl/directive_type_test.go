@@ -274,7 +274,7 @@ func TestTypeCallConvConflictsAndInvalidPlacement(t *testing.T) {
 // //llgo:cdecl) is accepted and silent. A directive on a struct *field* carries
 // no calling-convention semantics yet and is silently ignored rather than
 // rejected. The directive's background value is checked separately via
-// prepared records in TestTypeBackgroundAndParsePkgSyntaxCoverage; IR-level
+// prepared records in TestTypeCallConvAndParsePkgSyntaxCoverage; IR-level
 // equivalence with the legacy spelling is covered by
 // TestCdeclStdcallEquivalentToLegacyType.
 func TestCdeclOnStructTypeAccepted(t *testing.T) {

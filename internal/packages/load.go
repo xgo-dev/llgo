@@ -88,7 +88,7 @@ type Cached struct {
 }
 
 type aDeduper struct {
-	rewrite func(*Package) (bool, error)
+	rewrite    func(*Package) (bool, error)
 	directives *directive.Index
 	cache      sync.Map
 	checked    sync.Map
@@ -526,6 +526,8 @@ func (tc *typecheckContext) typecheckPackage(pkg *Package) {
 		if err != nil {
 			appendError(err)
 		} else if changed {
+			index.Invalidate(pkg.Syntax)
+			index.Files(pkg.Syntax)
 			pkg.Types = types.NewPackage(pkg.PkgPath, pkg.Name)
 			pkg.TypesInfo = newTypesInfo()
 			if tc.dedup.preload != nil {

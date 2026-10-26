@@ -54,8 +54,8 @@ func TestCollectPreparedCallingConventions(t *testing.T) {
 				t.Fatal(err)
 			}
 			record := records.Names["T"].(*TypeDecl)
-			if record.Background != tc.background {
-				t.Fatalf("background = %q, want %q", record.Background, tc.background)
+			if record.CallConv != tc.background {
+				t.Fatalf("background = %q, want %q", record.CallConv, tc.background)
 			}
 			if tc.replacement == "" {
 				if record.Deprecation != "" {

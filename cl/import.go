@@ -602,8 +602,8 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 							if r.Deprecation != "" {
 								fmt.Fprintln(os.Stderr, r.Deprecation)
 							}
-							if r.Background != "" {
-								prog.SetTypeBackground(pkg.Path()+"."+r.Name, toBackground(r.Background))
+							if r.CallConv != "" {
+								prog.SetTypeCallConv(pkg.Path()+"."+r.Name, toCallConv(r.CallConv))
 							}
 						}
 					}

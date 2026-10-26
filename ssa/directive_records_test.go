@@ -33,8 +33,8 @@ func TestPackageDirectiveRecordsAreAuthoritative(t *testing.T) {
 	// or from a caller of the compatibility APIs.
 	prog.SetLinkname("example.com/p.F", "C.f")
 	prog.SetLinkname("example.com/p.V", "C.v")
-	prog.SetTypeBackground("example.com/p.T", InC)
-	prog.SetTypeBackground("example.com/p.A", InC)
+	prog.SetTypeCallConv("example.com/p.T", CDecl)
+	prog.SetTypeCallConv("example.com/p.A", CDecl)
 	for _, mode := range []string{"no directives", "missing declarations", "no package records"} {
 		t.Run(mode, func(t *testing.T) {
 			fset := token.NewFileSet()
@@ -72,14 +72,14 @@ func TestPackageDirectiveRecordsAreAuthoritative(t *testing.T) {
 					}
 				}
 			}
-			want := InGo
+			want := GoDecl
 			if fallback {
-				want = InC
+				want = CDecl
 			}
 			for _, name := range []string{"T", "A"} {
 				obj := pkg.Scope().Lookup(name).(*types.TypeName)
-				if got, ok := prog.packageSyntax.typeBackground(obj); ok != fallback || got != want {
-					t.Errorf("typeBackground(%s) = %v, %v; want %v, %v", name, got, ok, want, fallback)
+				if got, ok := prog.packageSyntax.typeCallConv(obj); ok != fallback || got != want {
+					t.Errorf("typeCallConv(%s) = %v, %v; want %v, %v", name, got, ok, want, fallback)
 				}
 			}
 		})
@@ -122,7 +122,7 @@ func TestEffectiveDirectivePackageForTypesAndMethods(t *testing.T) {
 	backend := prog.NewBackendProgram()
 	defer backend.Dispose()
 	named := pkg.Scope().Lookup("T").Type().(*types.Named)
-	if bg, ok := backend.packageSyntax.typeBackground(named.Origin().Obj()); !ok || bg != InC {
+	if bg, ok := backend.packageSyntax.typeCallConv(named.Origin().Obj()); !ok || bg != CDecl {
 		t.Fatalf("effective background = %v, %v", bg, ok)
 	}
 	if !backend.isNoInterfaceMethod(named.Method(0)) {

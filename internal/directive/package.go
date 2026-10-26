@@ -51,7 +51,7 @@ type VariableDecl struct {
 type TypeDecl struct {
 	Declaration
 	Source      *ast.TypeSpec
-	Background  string
+	CallConv    string
 	Deprecation string // positioned warning, emitted by package preparation
 }
 
@@ -122,13 +122,13 @@ func Collect(fset *token.FileSet, files []*File, cPackage, exportRename bool) (*
 					p.Skip.All = p.Skip.All || skip.All
 					p.Skip.Names = append(p.Skip.Names, skip.Names...)
 					if d.Tok == token.TYPE {
-						bg, warning, err := typeBackground(fset, d, file.Group(d.Doc).Items)
+						bg, warning, err := typeCallConv(fset, d, file.Group(d.Doc).Items)
 						if err != nil {
 							return nil, err
 						}
 						for _, spec := range d.Specs {
 							spec := spec.(*ast.TypeSpec)
-							p.Types[spec] = &TypeDecl{Declaration: Declaration{Name: spec.Name.Name, Pos: spec.Pos()}, Source: spec, Background: bg, Deprecation: warning}
+							p.Types[spec] = &TypeDecl{Declaration: Declaration{Name: spec.Name.Name, Pos: spec.Pos()}, Source: spec, CallConv: bg, Deprecation: warning}
 							p.Names[spec.Name.Name] = p.Types[spec]
 						}
 					}

@@ -177,8 +177,8 @@ type context struct {
 	recvNilDerefChecks   map[*ssa.UnOp]token.Pos
 	vargs                map[*ssa.Alloc][]llssa.Expr // varargs
 	funcs                map[*ssa.Function]llssa.Function
-	variadicErrors map[*ssa.Function]error
-	sourceFunctions map[*ssa.Function]sourceFunction
+	variadicErrors       map[*ssa.Function]error
+	sourceFunctions      map[*ssa.Function]sourceFunction
 	linkOnceFns          map[*ssa.Function]none
 	stackDefers          map[*ssa.Function]bool
 	anonDefers           map[*ssa.Function]bool

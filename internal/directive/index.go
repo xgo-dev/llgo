@@ -47,6 +47,10 @@ type File struct {
 // Group preserves the different attachment and spelling rules of the existing
 // language. These facts are computed once, including negative/invalid results.
 type Group struct {
+	// Bindings conservatively recognizes external-binding comments for source
+	// rewriting and reachability, including whitespace spellings that are not
+	// active directives in Items.
+	Bindings []Directive
 	Items    []Directive
 	Function Function
 	Skip     Skip
@@ -163,6 +167,28 @@ func (s *Index) File(file *ast.File) *File {
 	s.files[file] = f
 	return f
 }
+
+// Invalidate retires snapshots of files changed by a source rewrite. The loader
+// prepares the rewritten view before its second type check and before Freeze.
+func (s *Index) Invalidate(files []*ast.File) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.frozen {
+		panic("cannot invalidate frozen directive records")
+	}
+	for _, file := range files {
+		if old := s.files[file]; old != nil {
+			for group := range old.Groups {
+				delete(s.groups, group)
+			}
+			for fn := range old.Functions {
+				delete(s.functions, fn)
+			}
+			delete(s.files, file)
+		}
+	}
+}
+
 func (s *Index) Files(files []*ast.File) []*File {
 	out := make([]*File, 0, len(files))
 	for _, f := range files {

@@ -21,14 +21,27 @@ func TestTypedRewriteBeforeImporters(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "dep"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	writeLoadTestFile(t, filepath.Join(dir, "dep", "dep.go"), "package dep\nvar Value = 1\n")
+	writeLoadTestFile(t, filepath.Join(dir, "dep", "dep.go"), "package dep\nvar Value = 1\n//go:noinline\nfunc F() {}\n")
 	writeLoadTestFile(t, filepath.Join(dir, "main.go"), "package main\nimport \"example.com/rewrite/dep\"\nvar Value = dep.Value\n")
 	dedup := NewDeduper()
+	index := new(directive.Index)
+	dedup.SetDirectives(index)
 	var original *types.Package
 	var preloads int
 	dedup.SetPreload(func(pkg *Package) {
 		if pkg.Name == "dep" {
 			preloads++
+			records := index.File(pkg.Syntax[0])
+			fn := pkg.Syntax[0].Decls[1].(*ast.FuncDecl)
+			if got := records.Functions[fn]; got.NoInline != (preloads == 1) || got.NoSplit != (preloads == 2) {
+				t.Fatalf("preload %d used stale directives: %+v", preloads, got)
+			}
+			if preloads == 2 {
+				generated := pkg.Syntax[0].Decls[2].(*ast.FuncDecl)
+				if !records.Functions[generated].NoInline {
+					t.Fatal("generated directive missing")
+				}
+			}
 		}
 	})
 	dedup.SetRewrite(func(pkg *Package) (bool, error) {
@@ -41,6 +54,12 @@ func TestTypedRewriteBeforeImporters(t *testing.T) {
 		}
 		value := pkg.Syntax[0].Decls[0].(*ast.GenDecl).Specs[0].(*ast.ValueSpec).Values[0].(*ast.BasicLit)
 		value.Kind, value.Value = token.STRING, `"rewritten"`
+		fn := pkg.Syntax[0].Decls[1].(*ast.FuncDecl)
+		fn.Doc.List[0].Text = "//go:nosplit"
+		pkg.Syntax[0].Decls = append(pkg.Syntax[0].Decls, &ast.FuncDecl{
+			Name: ast.NewIdent("Generated"), Type: &ast.FuncType{Params: &ast.FieldList{}}, Body: &ast.BlockStmt{},
+			Doc: &ast.CommentGroup{List: []*ast.Comment{{Text: "//go:noinline"}}},
+		})
 		return true, nil
 	})
 	pkgs, err := LoadEx(dedup, nil, loadTestConfig(dir), ".")

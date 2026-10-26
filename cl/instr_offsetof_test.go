@@ -350,7 +350,7 @@ func Result(shift uint) uintptr {
 			ssaPkg, _, files := buildGoSSAPkg(t, src)
 			prog := newLLSSAProgForTarget(t, target.arch)
 			t.Cleanup(prog.Dispose)
-			pkg, err := NewPackage(prog, ssaPkg, files)
+			pkg, err := compileTestPackage(prog, ssaPkg, files)
 			if err != nil {
 				t.Fatal(err)
 			}

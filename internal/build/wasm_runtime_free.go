@@ -83,10 +83,9 @@ func configureWasmRuntimeFree(ctx *context) {
 					}
 				}
 			}
-			for _, group := range file.Comments {
-				for _, comment := range group.List {
-					fields := strings.Fields(strings.TrimPrefix(comment.Text, "//"))
-					if len(fields) > 0 && (fields[0] == "export" || fields[0] == "go:wasmexport" || fields[0] == "llgo:export") {
+			for _, group := range ctx.prog.Directives().File(file).Groups {
+				for _, binding := range group.Bindings {
+					if binding.Name == "export" || binding.Name == "go:wasmexport" || binding.Name == "llgo:export" {
 						return
 					}
 				}

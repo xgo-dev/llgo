@@ -14,7 +14,11 @@ never LLVM values. Consumers must not modify published records.
 2. The loader registers each selected AST with the Index. A File snapshot records
    normalized comment groups, function properties, package-wide links, internal
    directives and embed directives. Existing syntax dialects remain separate where
-   their accepted spelling or precedence differs.
+   their accepted spelling or precedence differs. Midway consumes these records
+   during source rewriting. When a typed rewrite changes the AST, the loader
+   invalidates its old file/group/function snapshots and prepares the new view
+   before preloading a fresh package instance for the second type check.
+   Invalidation is forbidden after `Freeze()`.
 3. `cl.ParsePkgSyntaxWithOptions` validates trust and declaration placement and
    creates a `directive.Package`. Declaration records belong to source nodes in
    a particular `types.Package` instance. Type-dependent locality and embed checks
@@ -43,27 +47,35 @@ never LLVM values. Consumers must not modify published records.
 | --- | --- |
 | Function | Closure environment, noinline, nosplit, uintptr escapes, wasm imports, nointerface; call/declaration lowering, frame analysis, safepoints and GC roots |
 | Declaration | Link/export names; symbol creation and export preservation |
-| Type | `llgo:cdecl` / `llgo:stdcall` backgrounds; ABI and layout; positioned deprecation warnings for `llgo:type C/stdcall` |
+| Type | `llgo:cdecl` / `llgo:stdcall` calling conventions; ABI and layout; positioned deprecation warnings for `llgo:type C/stdcall` |
 | Comment group | Locality/internal directive inputs and placement diagnostics |
 | File/package | Embed patterns, source patch commands and package skip decisions |
 
 Calling-convention directives are resolved from prepared `Group.Items` during
-collection. `llgo:cdecl` and `llgo:stdcall` set `TypeDecl.Background`; the legacy
+collection. `llgo:cdecl` and `llgo:stdcall` set `TypeDecl.CallConv`; the legacy
 `llgo:type C/stdcall` forms also record a positioned deprecation warning for the
 preparation driver to emit. Conflicts, arguments and grouped declarations retain
 main's diagnostics. Field and TypeSpec comments retain their existing ignored
 behavior. Lowering reads the bound type record without rescanning comments.
 
+Global-initializer reachability and Wasm runtime selection also consume prepared
+comment groups. `Group.Bindings` preserves the conservative external-binding
+spellings used by reachability and Midway's filtering of generated functions,
+including tab-separated export hints. It does not broaden the active directive
+syntax in `Group.Items`. C-prefixed variable links retain native storage semantics
+through the same package/object-aware link lookup.
+
+
 Source declarations that share a linker name remain distinct. Object keys retain
 receiver aliases and generic origin identity; package keys distinguish test and
 alternate views with the same import path. Effective patch selection precedes
-linkname, type-background and nointerface lookup. Synthetic promoted-method
+linkname, calling-convention and nointerface lookup. Synthetic promoted-method
 wrappers do not inherit their embedded method object's linkname. Legacy string-keyed maps remain derived compatibility indexes
 for runtime names, link alias chains and existing Program APIs; source-backed
 lookups treat package records as authoritative, including declarations with no
 directive and names absent from the records. They consult the global indexes
 only when the package has no records, preventing attributes from leaking between
-package instances with the same path. `SetLinkname` and `SetTypeBackground` update
+package instances with the same path. `SetLinkname` and `SetTypeCallConv` update
 the compatibility indexes without overriding package records.
 
 Package collection resolves local receiver aliases, including pointer aliases

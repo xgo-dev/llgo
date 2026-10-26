@@ -76,7 +76,7 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 		t.Fatal("backend Program lost prepared syntax metadata")
 	}
 	if background, ok := backend.packageTypeCallConv("example.com/p.CType"); !ok || background != CDecl {
-		t.Fatalf("type background = (%v, %v), want (InC, true)", background, ok)
+		t.Fatalf("type background = (%v, %v), want (CDecl, true)", background, ok)
 	}
 	if locality, ok := backend.VariableLocality("example.com/p.Value"); !ok || locality.Locality != ThreadLocal {
 		t.Fatalf("locality = (%+v, %v), want ThreadLocal", locality, ok)

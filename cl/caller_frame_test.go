@@ -1250,6 +1250,10 @@ func f() { helper() }
 `)
 	for _, enabled := range []bool{false, true} {
 		prog := newLLSSAProg(t)
+		if err := prepareTestSyntax(prog, ssapkg, files, Options{}); err != nil {
+			t.Fatal(err)
+		}
+		prog.Directives().Freeze()
 		pkg, _, err := NewPackageExWithEmbedMetaOptions(
 			prog, nil, nil, nil, ssapkg, files, nil, false,
 			Options{ShadowStack: true, DebuggerFrames: enabled},

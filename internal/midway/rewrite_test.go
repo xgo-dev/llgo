@@ -8,6 +8,8 @@ import (
 	"go/types"
 	"strings"
 	"testing"
+
+	"github.com/xgo-dev/llgo/internal/directive"
 )
 
 func TestRewriteInferredAggregateTypes(t *testing.T) {
@@ -77,7 +79,7 @@ func Later() { _ = foreign.Make() }
 			}
 			later := file.Decls[2].(*ast.FuncDecl)
 			body := later.Body
-			changed, _, err := Rewrite(fset, pkg, info, []*ast.File{file})
+			changed, _, err := Rewrite(fset, pkg, info, []*ast.File{file}, new(directive.Index))
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("got %v, want first unnameable %s", err, tc.want)
 			}
@@ -109,7 +111,7 @@ func TestRewriteImportShadowingAcrossFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := Rewrite(fset, pkg, info, files); err != nil {
+	if _, _, err := Rewrite(fset, pkg, info, files, new(directive.Index)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cfg.Check("client", fset, files, testInfo()); err != nil {

@@ -86,7 +86,7 @@ type Last int
 	if p.Names["many"].(*VariableDecl).HasLinkname || p.Names["other"].(*VariableDecl).HasLinkname {
 		t.Fatal("multi-variable declaration consumed an attached link")
 	}
-	if p.Names["Native"].(*TypeDecl).Background != "C" || p.Names["Grouped"].(*TypeDecl).Background != "" {
+	if p.Names["Native"].(*TypeDecl).CallConv != "C" || p.Names["Grouped"].(*TypeDecl).CallConv != "" {
 		t.Fatal("type background attachment changed")
 	}
 	if !p.Skip.All || !reflect.DeepEqual(p.Skip.Names, []string{"imported", "removed"}) {
@@ -161,7 +161,7 @@ func TestBindingUsesEffectiveDeclarationsAndPositions(t *testing.T) {
 			t.Errorf("%s binding = %v", name, got)
 		}
 	}
-	if !p.Names["F"].(*FunctionDecl).NoInline || p.Names["T"].(*TypeDecl).Background != "C" {
+	if !p.Names["F"].(*FunctionDecl).NoInline || p.Names["T"].(*TypeDecl).CallConv != "C" {
 		t.Fatal("replacement properties lost")
 	}
 }

@@ -22,10 +22,10 @@ import (
 	"go/token"
 )
 
-// typeBackground resolves calling conventions from the prepared comment group.
+// typeCallConv resolves calling conventions from the prepared comment group.
 // Only declaration documentation has meaning; field and TypeSpec comments retain
 // main's behavior of being ignored. Warnings are recorded after validation.
-func typeBackground(fset *token.FileSet, decl *ast.GenDecl, items []Directive) (background, warning string, err error) {
+func typeCallConv(fset *token.FileSet, decl *ast.GenDecl, items []Directive) (background, warning string, err error) {
 	var pos token.Pos
 	var name, replacement string
 	for _, d := range items {

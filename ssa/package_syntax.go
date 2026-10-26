@@ -185,10 +185,10 @@ func (p Program) LinknameFor(pkg *types.Package, obj types.Object, fullName stri
 	return p.Linkname(fullName)
 }
 
-// typeBackground uses the effective package's records, including an absent
-// type or background. Only packages without records use typeBackgrounds, which
+// typeCallConv uses the effective package's records, including an absent
+// type or background. Only packages without records use typeCallConvs, which
 // cannot distinguish package instances sharing an import path.
-func (p *packageSyntaxData) typeBackground(obj *types.TypeName) (Background, bool) {
+func (p *packageSyntaxData) typeCallConv(obj *types.TypeName) (CallConv, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	pkg := obj.Pkg()
@@ -200,18 +200,18 @@ func (p *packageSyntaxData) typeBackground(obj *types.TypeName) (Background, boo
 		if rec == nil {
 			rec = r.Names[obj.Name()]
 		}
-		if d, ok := rec.(*directive.TypeDecl); ok && d.Background != "" {
-			switch d.Background {
+		if d, ok := rec.(*directive.TypeDecl); ok && d.CallConv != "" {
+			switch d.CallConv {
 			case "C":
-				return InC, true
+				return CDecl, true
 			case "stdcall":
-				return InStdcall, true
+				return Stdcall, true
 			default:
-				return InGo, true
+				return GoDecl, true
 			}
 		}
-		return InGo, false
+		return GoDecl, false
 	}
-	bg, ok := p.typeBackgrounds[typeNameLinkname(obj)]
+	bg, ok := p.typeCallConvs[typeNameLinkname(obj)]
 	return bg, ok
 }

@@ -30,13 +30,14 @@ func TestFreezeClosesEveryDiscoveryEntry(t *testing.T) {
 		{"file", func(s *Index) { s.File(&ast.File{}) }},
 		{"group", func(s *Index) { s.Group(&ast.CommentGroup{}) }},
 		{"function", func(s *Index) { s.Function(&ast.FuncDecl{}) }},
+		{"invalidation", func(s *Index) { s.Invalidate(nil) }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			s := new(Index)
 			s.Freeze()
 			defer func() {
 				r := recover()
-				if r == nil || !strings.Contains(r.(string), "not prepared before lowering") {
+				if r == nil || !strings.Contains(r.(string), "not prepared before lowering") && !strings.Contains(r.(string), "cannot invalidate frozen") {
 					t.Fatalf("discovery panic = %v", r)
 				}
 			}()

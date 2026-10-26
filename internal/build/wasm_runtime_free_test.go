@@ -191,6 +191,11 @@ func TestConfigureWasmRuntimeFree(t *testing.T) {
 				buildConf: &Config{Goos: "wasip1", Goarch: "wasm", BuildMode: BuildModeExe, OptLevel: optlevel.Os}}
 			ctx.frontendOptions.ShadowStack = true
 			test.change(t, ctx, pkg)
+			prog.Directives().Files(pkg.Syntax)
+			prog.Directives().Freeze()
+			if test.name == "export" {
+				pkg.Syntax[0].Comments[0].List[0].Text = "// changed after preparation"
+			}
 			configureWasmRuntimeFree(ctx)
 			if ctx.wasmRuntimeFree != test.want {
 				t.Fatalf("runtime-free = %v, want %v", ctx.wasmRuntimeFree, test.want)

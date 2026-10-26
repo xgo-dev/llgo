@@ -177,13 +177,13 @@ func typeNameLinkname(obj *types.TypeName) string {
 }
 
 func (p goTypes) shouldConvertAlias(t *types.Alias) bool {
-	background, ok := p.packageSyntax.typeBackground(t.Origin().Obj())
-	return !ok || !isNativeFuncBackground(background)
+	background, ok := p.packageSyntax.typeCallConv(t.Origin().Obj())
+	return !ok || !isNativeCallConv(background)
 }
 
 func (p goTypes) shouldConvertNamed(t *types.Named) bool {
-	background, ok := p.packageSyntax.typeBackground(t.Origin().Obj())
-	return !ok || !isNativeFuncBackground(background)
+	background, ok := p.packageSyntax.typeCallConv(t.Origin().Obj())
+	return !ok || !isNativeCallConv(background)
 }
 
 func (p goTypes) cvtNamed(t *types.Named) (raw *types.Named, cvt bool) {

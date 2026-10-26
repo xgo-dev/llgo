@@ -146,6 +146,9 @@ func TestUnusedGlobalInitExportAnnotation(t *testing.T) {
 	prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
 	defer prog.Dispose()
 	p := &packages.Package{ID: "main", PkgPath: "main", Types: pkg.Pkg, Syntax: []*ast.File{file}}
+	prog.Directives().File(file)
+	prog.Directives().Freeze()
+	file.Comments[0].List[0].Text = "// changed after preparation"
 	ctx := &context{prog: prog, progSSA: pkg.Prog, buildConf: &Config{BuildMode: BuildModeExe, Goarch: "wasm"},
 		pkgByID: map[string]*aPackage{"main": {Package: p, SSA: pkg}}}
 	for _, alternate := range []bool{false, true} {

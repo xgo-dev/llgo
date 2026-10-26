@@ -23,6 +23,19 @@ import (
 
 func scanGroup(doc *ast.CommentGroup) *Group {
 	g := &Group{Items: ParseGroup(doc)}
+	for _, comment := range doc.List {
+		if comment == nil {
+			continue
+		}
+		fields := strings.Fields(strings.TrimPrefix(comment.Text, "//"))
+		if len(fields) == 0 {
+			continue
+		}
+		switch fields[0] {
+		case "export", "go:wasmexport", "llgo:export", "go:linkname", "llgo:link":
+			g.Bindings = append(g.Bindings, Directive{Name: fields[0], Raw: comment.Text, Pos: comment.Pos()})
+		}
+	}
 	for _, d := range g.Items {
 		switch d.Name {
 		case "llgo:env":

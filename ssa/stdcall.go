@@ -110,8 +110,8 @@ func (p Program) isStdcallType(typ types.Type) bool {
 	if !ok {
 		return false
 	}
-	background, ok := p.packageSyntax.typeBackground(named.Origin().Obj())
-	return ok && background == InStdcall
+	background, ok := p.packageSyntax.typeCallConv(named.Origin().Obj())
+	return ok && background == Stdcall
 }
 
 func (b Builder) setNativeCallConv(call llvm.Value, fn Expr) {

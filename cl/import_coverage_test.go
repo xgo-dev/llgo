@@ -23,7 +23,7 @@ func TestReplaceGoNameRuntimeBranch(t *testing.T) {
 	}
 }
 
-func TestTypeBackgroundAndParsePkgSyntaxCoverage(t *testing.T) {
+func TestTypeCallConvAndParsePkgSyntaxCoverage(t *testing.T) {
 	src := `package p
 //llgo:cdecl
 type A int
@@ -60,7 +60,7 @@ func (A) HiddenAfterComment() {}
 
 	records := prog.PackageDirectives(pkg)
 	for name, want := range map[string]string{"A": "C", "Spaced": "C", "Stdcall": "stdcall", "B": "", "C": ""} {
-		if got := records.Names[name].(*directive.TypeDecl).Background; got != want {
+		if got := records.Names[name].(*directive.TypeDecl).CallConv; got != want {
 			t.Errorf("%s background = %q, want %q", name, got, want)
 		}
 	}
