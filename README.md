@@ -254,8 +254,8 @@ Examples built on these bindings:
 
 * [llama2-c](_demo/c/llama2-c): inference Llama 2 (the first LLGo AI example)
 * [mkjson](https://github.com/goplus/lib/tree/main/c/cjson/_demo/mkjson): create a JSON object and print it
-* [sqlitedemo](https://github.com/goplus/lib/tree/main/c/sqlite/_demo/sqlitedemo): a basic SQLite demo
-* [tetris](https://github.com/goplus/lib/tree/main/c/raylib/_demo/tetris): a Tetris game based on raylib
+* [sqlitedemo](https://github.com/llarhub/sqlite/tree/main/demo/sqlitedemo): a basic SQLite demo
+* [tetris](https://github.com/llarhub/raylib/tree/main/demo/tetris): a Tetris game based on raylib
 
 
 ## Python support

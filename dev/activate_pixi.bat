@@ -20,7 +20,7 @@ rem LLGo needs explicit native include and library search flags.
 set "PKG_CONFIG=pkgconf"
 set "PKG_CONFIG_ALLOW_SYSTEM_CFLAGS=1"
 set "PKG_CONFIG_ALLOW_SYSTEM_LIBS=1"
-set "CGO_CXXFLAGS=-std=c++17"
+set "CGO_CXXFLAGS=-O2 -g -std=c++17"
 set "LLGO_ROOT=%~dp0.."
 set "CGO_CPPFLAGS="
 for /f "usebackq delims=" %%F in (`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PIXI_PROJECT_ROOT%\devenv_windows_flags.ps1" -CppFlags`) do set "CGO_CPPFLAGS=%%F"

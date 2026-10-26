@@ -418,6 +418,7 @@ runs:
           -fms-runtime-lib=static `
           -std=c++17 `
           "-I$llvmIncludeDir" `
+          "-L$llvmLibDir" `
           $fileCheckSource `
           $fileCheckLibraries `
           $fileCheckSystemLibraries `
@@ -558,6 +559,10 @@ runs:
         # ARM64 images initialize MSYS2 before the job starts. Reuse that
         # installation instead of bootstrapping an x64 base under emulation.
         release: ${{ runner.arch != 'ARM64' }}
+        # A benchmark can install its base's older MSYS2 toolchain first.
+        # Give the head its own x64 installation; ARM64 uses the image's
+        # preinstalled native MSYS2 and upgrades its packages in place.
+        location: ${{ runner.arch != 'ARM64' && format('{0}/llgo-msys2-{1}', runner.temp, inputs.llvm-version) || '' }}
         path-type: inherit
         update: true
         # Cache dependency downloads below instead of bootstrap packages.
@@ -799,6 +804,21 @@ runs:
         if [[ "${{ inputs.install-llvm }}" == "true" ]]; then
           llvm_formula="llvm@${{inputs.llvm-version}}"
           lld_formula="lld@${{inputs.llvm-version}}"
+          # Runner images can predate the versioned aliases for the current
+          # LLVM release. Resolve the unversioned formula only when its major
+          # version matches the requested toolchain.
+          for tool in llvm lld; do
+            formula="${tool}@${{ inputs.llvm-version }}"
+            if ! brew info --json=v2 "$formula" >/dev/null 2>&1; then
+              version="$(brew info --json=v2 "$tool" | python3 -c 'import json,sys; print(json.load(sys.stdin)["formulae"][0]["versions"]["stable"])')"
+              if [[ "$version" != "${{ inputs.llvm-version }}."* ]]; then
+                echo "$tool has version $version, expected LLVM ${{ inputs.llvm-version }}" >&2
+                exit 1
+              fi
+              formula="$tool"
+            fi
+            if [[ "$tool" == llvm ]]; then llvm_formula="$formula"; else lld_formula="$formula"; fi
+          done
 
           # GitHub macOS runners may pre-link another LLVM/LLD version (for example llvm@18),
           # which makes lld@<target> fail during Homebrew's automatic link step.
