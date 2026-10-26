@@ -43,8 +43,9 @@ go test ./cl
 ```
 
 `runtime/` is a separate Go module: root-level `go test ./...` does not include
-its host-side tests. Run affected host-testable packages from that module, such
-as `go test ./internal/traceback`, as well as the relevant LLGo execution tests.
+its host-side tests. Run affected host-testable packages with an explicit module
+directory, such as `(cd runtime && go test ./internal/traceback)`, as well as the
+relevant LLGo execution tests.
 
 For broader checks, see [local CI](dev/README.md#5-run-local-ci-covers-most-checks) and the
 [workflow definitions](.github/workflows). Install the dependencies required by
