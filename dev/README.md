@@ -3,6 +3,8 @@
 This directory contains reproducible host environments and scripts for running
 LLGo locally or inside reusable Linux dev containers.
 
+For test selection and pull-request expectations, see [CONTRIBUTING.md](../CONTRIBUTING.md).
+
 ## Host development environment
 
 Choose [mise](https://mise.jdx.dev/installing-mise.html) 2026.10.7 or newer, or
