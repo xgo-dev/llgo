@@ -40,8 +40,7 @@ func (p Program) hasLegacyNativeTypeLayout(raw types.Type) bool {
 	}
 	switch t := types.Unalias(raw).(type) {
 	case *types.Named:
-		cc, ok := p.packageTypeCallConv(namedLinkname(t))
-		return ok && isNativeCallConv(cc)
+		return p.RepresentationOf(t).Storage == NativeRepresentation
 	case *types.Array:
 		return p.hasLegacyNativeTypeLayout(t.Elem())
 	}
