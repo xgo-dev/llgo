@@ -21,12 +21,13 @@ import (
 	"go/types"
 )
 
-// SetNativeStructFields supplies the context missing from types.Sizes.Offsetsof:
-// its argument contains fields, but not their enclosing named struct. Positions
-// must be the valid field identifiers from the same parsed declarations as the
-// type calling convention, including the first field. Synthetic structs must
-// not reuse those positions: Offsetsof has no enclosing type with which to
-// disambiguate them. Empty structs need no positions.
+// SetNativeStructFields retains the legacy field registration used by vector
+// source layout. Positions must be valid identifiers from the parsed fields,
+// including the first field. Empty structs need no positions.
+//
+// This cannot identify a unique enclosing type: go/types shares fields and
+// positions across definitions. Definition provenance is recorded separately;
+// replacing this registry requires an owner-aware source layout interface.
 func (p Program) SetNativeStructFields(positions []token.Pos) {
 	p.packageSyntax.mu.Lock()
 	defer p.packageSyntax.mu.Unlock()

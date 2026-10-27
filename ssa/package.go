@@ -510,12 +510,14 @@ func (p Program) SetRuntime(runtime any) {
 	}
 }
 
-// SetTypeCallConv sets the default calling convention for the named type, controlling
-// how that type (and functions using it) are lowered.
-// For a programmatically constructed native struct, supply its original fields
-// so types.Sizes.Offsetsof can identify the enclosing layout without a named
-// type or source positions. Source loaders instead call SetNativeStructFields
-// before type checking. Synthetic structs must not reuse registered fields.
+// SetTypeCallConv registers a native representation root. For function values
+// it also selects the native callback ABI. Ordinary Go functions accepting the
+// type retain their own declaration ABI; new defined types inherit storage via
+// SetTypeDefinition or SetTypeDefinitionSource, not a copied calling convention.
+// The optional fields retain the legacy vector Offsetsof registration for
+// programmatic clients. Source loaders use SetNativeStructFields instead.
+// Neither registry establishes definition provenance or uniquely identifies
+// an enclosing type when go/types shares fields between definitions.
 func (p Program) SetTypeCallConv(typFullName string, cc CallConv, fields ...*types.Var) {
 	p.packageSyntax.mu.Lock()
 	p.packageSyntax.typeCallConvs[typFullName] = cc
