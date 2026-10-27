@@ -584,7 +584,7 @@ jobs:
       - name: Install Cygwin for host-shell qualification
         if: ${{ matrix.os == 'windows-2022' && matrix.windows_arch == 'amd64' }}
         id: cygwin
-        uses: cygwin/cygwin-install-action@v6
+        uses: cygwin/cygwin-install-action@v7
         with:
           add-to-path: false
 
