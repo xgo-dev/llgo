@@ -363,6 +363,8 @@ jobs:
           LLGO_TEST_SUITE: "core"
           LLGO_TEST_COVERPROFILE: "coverage-llgo.txt"
           LLGO_TEST_COVERPKG: "github.com/xgo-dev/llgo/test/..."
+          # Stream active tests if this profile's runtime watchdog stalls.
+          LLGO_TEST_JSON: ${{ matrix.windows_arch == 'arm64' && matrix.windows_abi == 'mingw' && '1' || '0' }}
         shell: bash
         run: |
           set -euo pipefail
