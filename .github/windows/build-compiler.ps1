@@ -56,7 +56,7 @@ if ($GoArch -eq '386') {
   $llvmRoot = Join-Path $parent 'llvm-sdk'
   $manifest = Get-Content (Join-Path $llvmRoot 'LLGO-LLVM-MANIFEST.txt')
   if ($manifest -notcontains 'host_target=i686-w64-mingw32' -or $manifest -notcontains 'llvm_version=23.1.4' -or
-      $manifest -notcontains 'source_revision=7a941dfb2877a0b8cf30323fefa85ad019e0b0f5' -or
+      $manifest -notcontains 'source_revision=ac20bc743f30452a911d43def1cf57a5bbba655a' -or
       $manifest -notcontains 'link_mode=static') {
     throw 'The LLVM development SDK is not Windows x86/LLVM 23.1.4'
   }
