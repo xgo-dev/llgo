@@ -1510,6 +1510,58 @@ elif args[0] == "test" and any(a.endswith("/test/std/bytes") for a in args):
         self.assertNotIn("needs", job)
         self.assertTrue(any("unittest discover" in step.get("run", "") for step in job["steps"]))
 
+    def test_policy_installs_and_requires_all_executed_tool_dependencies(self):
+        job = load("ci-policy.yml")["jobs"]["policy"]
+        self.assertEqual(job["timeout-minutes"], "5")
+        steps = job["steps"]
+        self.assertTrue(steps[0].get("uses", "").startswith("actions/checkout@"))
+        go = [i for i, step in enumerate(steps)
+              if step.get("uses") == "./.github/actions/setup-go"]
+        node = [i for i, step in enumerate(steps)
+                if step.get("uses", "").startswith("actions/setup-node@")]
+        guards = [i for i, step in enumerate(steps)
+                  if step.get("name") == "Require policy test tools"]
+        tests = [i for i, step in enumerate(steps)
+                 if "unittest discover" in step.get("run", "")]
+        self.assertEqual(len(go), 1, "real Go fixtures require the project Go setup")
+        self.assertEqual(len(node), 1, "artifact probes require an explicit Node setup")
+        self.assertEqual(len(guards), 1, "required tools must fail before policy tests")
+        self.assertEqual(steps[go[0]].get("with"), {"cache": "false"})
+        self.assertEqual(steps[node[0]]["with"]["node-version"], "24")
+        for index in go + node + guards:
+            self.assertNotIn("if", steps[index])
+            self.assertNotIn("continue-on-error", steps[index])
+        self.assertLess(0, min(go + node))
+        self.assertLess(max(go + node), guards[0])
+        self.assertLess(guards[0], min(tests))
+        command = steps[guards[0]]["run"]
+        match = re.fullmatch(r"python - <<'PY'\n(.*?)\nPY\s*", command, flags=re.S)
+        self.assertIsNotNone(match, "execute the actual early-failure Python guard")
+        code = compile(match.group(1), "actual-policy-tool-guard", "exec")
+        with mock.patch.object(shutil, "which", return_value="/available/tool"):
+            exec(code, {})
+        for missing in ("go", "git", "node", "bash"):
+            with self.subTest(tool=missing), mock.patch.object(
+                    shutil, "which", side_effect=lambda tool:
+                    None if tool == missing else "/available/tool"):
+                with self.assertRaisesRegex(SystemExit, "required CI policy tools missing: " + missing):
+                    exec(code, {})
+
+    def test_missing_required_node_fails_before_starting_a_command(self):
+        real_which = shutil.which
+        with mock.patch.object(shutil, "which", side_effect=lambda tool:
+                               None if tool == "node" else real_which(tool)), \
+                mock.patch.object(subprocess, "run",
+                                  side_effect=AssertionError("must fail before starting a command")):
+            namespace = runpy.run_path(__file__)
+            result = unittest.TestResult()
+            namespace["WorkflowContractTests"](
+                "test_artifact_probe_handles_empty_partial_and_expired_results").run(result)
+            self.assertEqual(result.skipped, [], "missing CI tools must not become skips")
+            self.assertEqual(result.errors, [])
+            self.assertEqual(len(result.failures), 1)
+            self.assertIn("required CI tool is missing: node", result.failures[0][1])
+
     def test_benchmarks_use_the_prepared_revision_pair(self):
         for name in ("benchmark", "wasm-benchmark"):
             steps = load("benchmark.yml")["jobs"][name]["steps"]
@@ -1547,8 +1599,8 @@ elif args[0] == "test" and any(a.endswith("/test/std/bytes") for a in args):
             self.assertIn("artifacts", needs(jobs[name]))
             self.assertEqual(jobs[name]["if"], f"needs.artifacts.outputs.{suite} == 'true'")
 
-    @unittest.skipUnless(shutil.which("node"), "Node is needed to exercise github-script")
     def test_artifact_probe_handles_empty_partial_and_expired_results(self):
+        self.assertIsNotNone(shutil.which("node"), "required CI tool is missing: node")
         script = load("benchmark-publish.yml")["jobs"]["artifacts"]["steps"][0]["with"]["script"]
         cases = [[], [{"name": "unrelated", "expired": False}],
                  [{"name": "go-benchmark-llgo-baseline-linux", "expired": True}],

@@ -1,17 +1,21 @@
 import os
 from pathlib import Path
+import runpy
 import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "workflows" / "test_demo.sh"
 BASH = os.environ.get("LLGO_TEST_BASH") or shutil.which("bash")
 
 
-@unittest.skipUnless(BASH, "Bash is required for the demo scheduler")
 class DemoSchedulerTests(unittest.TestCase):
+    def setUp(self):
+        self.assertIsNotNone(BASH, "required CI tool is missing: bash")
+
     def run_demos(self, statuses, missing_wait_pid=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -69,6 +73,22 @@ chmod +x "$output"
 
     def test_reported_child_exit_127_is_a_failure(self):
         self.run_demos([0, 7, 127])
+
+
+class DemoSchedulerDependenciesTests(unittest.TestCase):
+    def test_missing_bash_fails_before_starting_a_command(self):
+        environment = {key: value for key, value in os.environ.items() if key != "LLGO_TEST_BASH"}
+        with mock.patch.dict(os.environ, environment, clear=True), \
+                mock.patch.object(shutil, "which", return_value=None), \
+                mock.patch.object(subprocess, "run",
+                                  side_effect=AssertionError("must fail before starting a command")):
+            namespace = runpy.run_path(__file__)
+            result = unittest.TestResult()
+            namespace["DemoSchedulerTests"]("test_missing_wait_pid_preserves_success").run(result)
+            self.assertEqual(result.skipped, [], "missing CI tools must not become skips")
+            self.assertEqual(result.errors, [])
+            self.assertEqual(len(result.failures), 1)
+            self.assertIn("required CI tool is missing: bash", result.failures[0][1])
 
 
 if __name__ == "__main__":

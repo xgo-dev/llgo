@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import runpy
 import shutil
 import subprocess
 import sys
@@ -15,6 +16,23 @@ import run_build_tests
 
 
 class BuildShardsTest(unittest.TestCase):
+    def test_missing_required_tools_fail_before_starting_a_command(self):
+        real_which = shutil.which
+        for missing in ("go", "git"):
+            with self.subTest(tool=missing), \
+                    mock.patch.object(shutil, "which", side_effect=lambda tool:
+                                      None if tool == missing else real_which(tool)), \
+                    mock.patch.object(subprocess, "run",
+                                      side_effect=AssertionError("must fail before starting a command")):
+                namespace = runpy.run_path(__file__)
+                result = unittest.TestResult()
+                namespace["BuildShardsTest"](
+                    "test_real_go_tests_keep_helpers_coverage_and_failures").run(result)
+                self.assertEqual(result.skipped, [], "missing CI tools must not become skips")
+                self.assertEqual(result.errors, [])
+                self.assertEqual(len(result.failures), 1)
+                self.assertIn("required CI tool is missing: " + missing, result.failures[0][1])
+
     def test_native_atomic_acceptance_requires_exact_run_pass_and_actual_host(self):
         self.assertEqual(run_build_tests.ARM64_ATOMIC_TESTS, (
             "TestRuntimeAtomicARM64ActualWrappersMatchOriginalGo",
@@ -123,8 +141,9 @@ class BuildShardsTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     run_build_tests.merge_coverage([first, second], output)
 
-    @unittest.skipUnless(shutil.which("go") and shutil.which("git"), "requires Go and Git")
     def test_real_go_tests_keep_helpers_coverage_and_failures(self):
+        for tool in ("go", "git"):
+            self.assertIsNotNone(shutil.which(tool), "required CI tool is missing: " + tool)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve() / "repo with spaces"
             root.mkdir()

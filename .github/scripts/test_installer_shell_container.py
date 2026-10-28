@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -23,6 +24,7 @@ import os
 from pathlib import Path
 import signal
 import sys
+import tempfile
 import time
 
 root = Path(os.environ["FAKE_DOCKER_ROOT"])
@@ -30,6 +32,16 @@ mode = os.environ["FAKE_DOCKER_MODE"]
 args = sys.argv[1:]
 with (root / "calls.jsonl").open("a") as output:
     output.write(json.dumps(args) + "\n")
+
+def publish_text(path, text):
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    os.close(descriptor)
+    temporary = Path(temporary)
+    try:
+        temporary.write_text(text)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 def stall():
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -43,14 +55,14 @@ if args[0] == "create":
     state = {"Id": cid, "Name": "/" + name,
              "Config": {"Labels": dict([label.split("=", 1)])},
              "State": {"Running": False, "Status": "created", "ExitCode": 0}}
-    (root / "state.json").write_text(json.dumps(state))
+    publish_text(root / "state.json", json.dumps(state))
     if mode in ("empty-cid", "create-hang-no-id"):
         cid = ""
     elif mode == "malicious-cid":
         cid = "--all"
     elif mode == "foreign-cid":
         cid = "b" * 64
-    Path(args[args.index("--cidfile") + 1]).write_text(cid)
+    publish_text(Path(args[args.index("--cidfile") + 1]), cid)
     if mode in ("create-hang", "create-hang-no-id"):
         stall()
     print(cid)
@@ -74,14 +86,14 @@ elif args[0] == "start":
         state["State"]["ExitCode"] = 256
     elif mode == "still-running":
         state["State"].update(Running=True, Status="running")
-    (root / "state.json").write_text(json.dumps(state))
-    (root / "started").write_text(str(os.getpid()))
-    (root / "watchdog.pid").write_text(str(os.getppid()))
+    publish_text(root / "state.json", json.dumps(state))
+    publish_text(root / "started", str(os.getpid()))
+    publish_text(root / "watchdog.pid", str(os.getppid()))
     print("CONTAINER_START_DIAGNOSTIC", flush=True)
     if mode == "orphan-child":
         if os.fork() == 0:
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
-            (root / "child.json").write_text(json.dumps({"pid": os.getpid(), "pgid": os.getpgrp()}))
+            publish_text(root / "child.json", json.dumps({"pid": os.getpid(), "pgid": os.getpgrp()}))
             stall()
         while True:
             time.sleep(1)
@@ -102,6 +114,77 @@ elif args[0] in ("kill", "rm"):
 else:
     sys.exit(2)
 '''
+
+
+class FakeDockerPublicationTests(unittest.TestCase):
+    def test_actual_fixture_publishes_complete_metadata_atomically(self):
+        class FixtureStopped(Exception):
+            pass
+
+        state = {"Id": CID, "Name": "/fixture",
+                 "Config": {"Labels": {"owner": "fixture"}},
+                 "State": {"Running": False, "Status": "created", "ExitCode": 0}}
+        exited = {**state, "State": {
+            "Running": False, "Status": "exited", "ExitCode": 0}}
+        publications = (
+            ("create-state", "create", "state.json", json.dumps(state)),
+            ("create-cid", "create", "container.cid", CID),
+            ("start-state", "start", "state.json", json.dumps(exited)),
+            ("start-ready", "start", "started", "1234"),
+            ("start-watchdog", "start", "watchdog.pid", "2345"),
+            ("orphan-child", "start", "child.json", json.dumps({"pid": 1234, "pgid": 3456})),
+        )
+        for label, command, filename, expected in publications:
+            for replacing in (False, True):
+                if command == "start" and filename == "state.json" and not replacing:
+                    continue  # start necessarily consumes the previous created state.
+                with self.subTest(publication=label, replacing=replacing), \
+                        tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    canonical = root / filename
+                    if command == "start":
+                        (root / "state.json").write_text(json.dumps(state))
+                    if replacing and filename != "state.json":
+                        canonical.write_text("previous complete value")
+                    elif replacing and command == "create":
+                        canonical.write_text("previous complete value")
+                    previous = canonical.read_text() if canonical.exists() else None
+                    observations = []
+
+                    def interrupted_write(path, text, *args, **kwargs):
+                        # Opening is real and truncates the writer's path. Observe
+                        # the canonical path before bytes are written, with no
+                        # scheduling, polling, sleeps or probability involved.
+                        with path.open("w", *args, **kwargs) as output:
+                            if text == expected:
+                                visible = canonical.read_text() if canonical.exists() else None
+                                observations.append(visible)
+                                self.assertEqual(visible, previous,
+                                                 "reader observed an incomplete published value")
+                            return output.write(text)
+
+                    args = ["docker", command]
+                    if command == "create":
+                        args += ["--label", "owner=fixture", "--name", "fixture",
+                                 "--cidfile", str(root / "container.cid")]
+                    with mock.patch.dict(os.environ, {
+                            "FAKE_DOCKER_ROOT": directory, "FAKE_DOCKER_MODE": "orphan-child"}), \
+                            mock.patch.object(sys, "argv", args), \
+                            mock.patch.object(os, "fork", return_value=0, create=True), \
+                            mock.patch.object(os, "getpid", return_value=1234), \
+                            mock.patch.object(os, "getppid", return_value=2345), \
+                            mock.patch.object(os, "getpgrp", return_value=3456, create=True), \
+                            mock.patch.object(signal, "signal"), \
+                            mock.patch.object(time, "sleep", side_effect=FixtureStopped), \
+                            mock.patch.object(Path, "write_text", interrupted_write):
+                        try:
+                            exec(compile(FAKE_DOCKER, "actual-fake-docker", "exec"), {})
+                        except SystemExit as error:
+                            self.assertEqual(error.code, 0)
+                        except FixtureStopped:
+                            self.assertEqual(command, "start")
+                    self.assertTrue(observations, "publication was not exercised")
+                    self.assertEqual(canonical.read_text(), expected)
 
 
 class InstallerShellContainerTests(unittest.TestCase):
