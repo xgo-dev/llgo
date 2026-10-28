@@ -3,13 +3,13 @@ package build
 import (
 	"go/ast"
 	"go/constant"
-	"go/parser"
 	"go/token"
 	"go/types"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -141,7 +141,8 @@ func TestConfigureWasmRuntimeFree(t *testing.T) {
 			p.Syntax[0].Comments = []*ast.CommentGroup{{List: []*ast.Comment{{Text: "//export\tcallback"}}}}
 		}, false},
 		{"linked Go entry", func(_ *testing.T, c *context, p *aPackage) {
-			c.prog.SetLinkname(llssa.FullName(p.Types, "main"), "C.callback")
+			decl := p.SSA.Func("main").Syntax().(*ast.FuncDecl)
+			decl.Doc = &ast.CommentGroup{List: []*ast.Comment{{Text: "//go:linkname main C.callback"}}}
 		}, false},
 		{"aliased global", func(_ *testing.T, c *context, p *aPackage) {
 			c.prog.SetLinkname(llssa.FullName(p.Types, "n"), "C.number")
@@ -177,11 +178,7 @@ func TestConfigureWasmRuntimeFree(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			const source = "package main; var n = 42; func next(n int) int { return n+1 }; func main() { println(next(n)) }"
-			ssaPkg := buildWasmReflectTestProgram(t, source)
-			file, err := parser.ParseFile(token.NewFileSet(), "main.go", source, parser.ParseComments)
-			if err != nil {
-				t.Fatal(err)
-			}
+			ssaPkg, file := buildWasmReflectTestPackage(t, source)
 			pkg := &aPackage{Package: &packages.Package{ID: "main", PkgPath: "main", Types: ssaPkg.Pkg, Dir: t.TempDir(), Syntax: []*ast.File{file}}, SSA: ssaPkg}
 			prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"})
 			defer prog.Dispose()
@@ -191,6 +188,10 @@ func TestConfigureWasmRuntimeFree(t *testing.T) {
 				buildConf: &Config{Goos: "wasip1", Goarch: "wasm", BuildMode: BuildModeExe, OptLevel: optlevel.Os}}
 			ctx.frontendOptions.ShadowStack = true
 			test.change(t, ctx, pkg)
+			if err := cl.ParsePkgSyntax(prog, ssaPkg.Prog.Fset, pkg.Types, pkg.Syntax); err != nil {
+				t.Fatal(err)
+			}
+			ctx.functions = cl.NewFunctionSet(prog, nil)
 			configureWasmRuntimeFree(ctx)
 			if ctx.wasmRuntimeFree != test.want {
 				t.Fatalf("runtime-free = %v, want %v", ctx.wasmRuntimeFree, test.want)

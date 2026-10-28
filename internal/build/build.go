@@ -961,8 +961,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	frontendOptions.PreloadedSyntax = true
 
 	output := conf.OutFile != ""
+	functions := cl.NewFunctionSet(prog, patches)
 	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
-		patches: patches, callerTracking: cl.NewCallerTracking(),
+		patches: patches, functions: functions, callerTracking: cl.NewCallerTracking(functions),
 		initial: initial, mode: mode,
 		fingerprinting:   make(map[string]bool),
 		pkgs:             map[*packages.Package]Package{},
@@ -1019,6 +1020,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
 	ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
+	ctx.functions.Prepare(ctx.progSSA)
 	callerSpan.done()
 	ctx.frontendOptions.ReceiverNilChecks = collectReceiverNilChecks(initial, altPkgs)
 	if features == nil {
@@ -1782,6 +1784,7 @@ type context struct {
 	dedup          packages.Deduper
 	patches        cl.Patches
 	callerTracking *cl.CallerTracking
+	functions      *cl.FunctionSet
 	fingerprinting map[string]bool
 	cacheDisabled  map[string]none
 	patchFiles     map[string][]string
@@ -1965,6 +1968,9 @@ func preloadPatchedPackageSyntax(prog llssa.Program, patches cl.Patches, dedup p
 		}
 		if err := cl.ParsePkgSyntaxWithOptions(prog, fset, patch.Types, files, packageOptions); err != nil {
 			return err
+		}
+		if original := dedup.Check(pkgPath); original != nil {
+			prog.UseFunctionBindings(original.Types, patch.Types)
 		}
 	}
 	return nil

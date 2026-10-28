@@ -43,11 +43,11 @@ func Logs() { dep.Where() }
 func CrossOwner() { defer dep.Inspect(); CrossLeaf() }
 func CrossLeaf() {}
 `)
-	lazyCrossPackageSites := recoverPanicSiteFuncSet(NewCallerTracking(), root)
+	lazyCrossPackageSites := recoverPanicSiteFuncSet(testCallerTracking(t, root.Prog), root)
 	if !lazyCrossPackageSites[root.Func("CrossOwner")] || !lazyCrossPackageSites[root.Func("CrossLeaf")] {
 		t.Fatal("lazy analysis lost the subtree below a cross-package recovering defer")
 	}
-	tracking := NewCallerTracking()
+	tracking := testCallerTracking(t, root.Prog)
 	tracking.Precompute([]*gossa.Package{dep, root})
 	if !runtimeCallerBaseSet(tracking, dep)[dep.Func("Where")] {
 		t.Fatal("precomputed base set lost runtime caller function")
@@ -106,14 +106,14 @@ func Logs() { dep.Where() }
 func Plain() { dep.Quiet() }
 `)
 	pkgs := []*gossa.Package{root, dep}
-	lazy := NewCallerTracking()
+	lazy := testCallerTracking(t, root.Prog)
 	for _, pkg := range pkgs {
 		runtimeCallerBaseSet(lazy, pkg)
 	}
 	for _, pkg := range pkgs {
 		runtimeCallerFuncSet(lazy, pkg)
 	}
-	precomputed := NewCallerTracking()
+	precomputed := testCallerTracking(t, root.Prog)
 	precomputed.Precompute(pkgs)
 	for _, pkg := range pkgs {
 		if got, want := precomputed.base[pkg], lazy.base[pkg]; !reflect.DeepEqual(got, want) {
@@ -150,7 +150,7 @@ func Logs() { dep.Where() }
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			tracking := NewCallerTracking()
+			tracking := testCallerTracking(t, root.Prog)
 			tracking.Precompute([]*gossa.Package{dep})
 			defer func() {
 				if recover() == nil {

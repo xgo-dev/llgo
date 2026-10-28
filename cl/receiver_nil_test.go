@@ -134,6 +134,9 @@ func Invoke(p *dep.T, arg func() int) { dep.Call(p, arg, 1); dep.Bound(p, 1)(arg
 	checks := CollectReceiverNilChecks([]*ast.File{rootFile, depFile}, rootInfo, depInfo)
 	prog := newLLSSAProg(t)
 	defer prog.Dispose()
+	if err := ParsePkgSyntax(prog, fset, dep, []*ast.File{depFile}); err != nil {
+		t.Fatal(err)
+	}
 	pkg, _, err := newPackageEx(prog, nil, nil, nil, rootSSA, []*ast.File{rootFile}, nil, false, Options{ReceiverNilChecks: checks})
 	if err != nil {
 		t.Fatal(err)

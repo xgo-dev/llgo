@@ -1,6 +1,7 @@
 package ssa
 
 import (
+	"go/ast"
 	"go/token"
 	"go/types"
 	"strings"
@@ -13,29 +14,19 @@ import (
 func TestClosureEnvDirectiveCacheUsesSourceIdentity(t *testing.T) {
 	prog := NewProgram(nil)
 	defer prog.Dispose()
-	fset := token.NewFileSet()
-	otherFset := token.NewFileSet()
-	const (
-		name = "example.com/p.entry"
-		pos  = token.Pos(7)
-	)
-	prog.SetClosureEnvDirective(fset, name, pos)
-	if !prog.HasClosureEnvDirective(fset, name, pos) {
-		t.Fatal("HasClosureEnvDirective() = false, want true")
+	pkg := types.NewPackage("example.com/p", "p")
+	decl := &ast.FuncDecl{Name: &ast.Ident{Name: "entry", NamePos: 7}}
+	info := &FunctionDirectives{ClosureEnv: true}
+	prog.SetFunctionDirectives(pkg, map[*ast.FuncDecl]*FunctionDirectives{decl: info}, map[string]*FunctionDirectives{"example.com/p.entry": info})
+	if got, ok := prog.FunctionDirectives(decl); !ok || !got.ClosureEnv {
+		t.Fatal("lost source directive")
 	}
-	for _, key := range []struct {
-		fset *token.FileSet
-		name string
-		pos  token.Pos
-	}{
-		{otherFset, name, pos},
-		{fset, "example.com/p.alias", pos},
-		{fset, name, pos + 1},
-	} {
-		if prog.HasClosureEnvDirective(key.fset, key.name, key.pos) {
-			t.Fatalf("distinct source declaration (%p, %q, %d) shared cached directives", key.fset, key.name, key.pos)
-		}
+	// Same token position and spelling in another AST is a distinct declaration.
+	other := &ast.FuncDecl{Name: &ast.Ident{Name: "entry", NamePos: 7}}
+	if _, ok := prog.FunctionDirectives(other); ok {
+		t.Fatal("distinct source declarations shared directives")
 	}
+
 }
 
 func TestClosureEnvABIForTarget(t *testing.T) {

@@ -96,11 +96,10 @@ func stop() {
 `)
 	call := findStaticCall(t, ssaPkg.Func("stop"), "unreachable")
 	ctx := &context{
-		prog:   llssa.NewProgram(nil),
+		prog:   testFunctionProgram(t, ssaPkg.Prog, map[string]string{"foo.unreachable": "llgo.unreachable"}),
 		goTyps: ssaPkg.Pkg,
 		loaded: make(map[*types.Package]*pkgInfo),
 	}
-	ctx.prog.SetLinkname("foo.unreachable", "llgo.unreachable")
 
 	if !ctx.isDirectTailUnreachableCall(call, []ssa.Instruction{new(ssa.DebugRef), new(ssa.RunDefers), new(ssa.Return)}) {
 		t.Fatal("debug references and one RunDefers should preserve the tail unreachable match")
@@ -127,7 +126,8 @@ func stop() {
 			if linkname == "" {
 				linkname = "llgo.unreachable"
 			}
-			ctx.prog.SetLinkname("foo.unreachable", linkname)
+			ctx.prog = testFunctionProgram(t, ssaPkg.Prog, map[string]string{"foo.unreachable": linkname})
+			ctx.functions = NewFunctionSet(ctx.prog, nil)
 			if ctx.isDirectTailUnreachableCall(tt.instr, tt.tail) {
 				t.Fatal("unexpected tail unreachable match")
 			}

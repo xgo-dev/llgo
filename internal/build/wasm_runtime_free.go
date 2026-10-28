@@ -30,11 +30,7 @@ func configureWasmRuntimeFree(ctx *context) {
 		return
 	}
 	linkname := func(fn *ssa.Function) string {
-		if fn.Pkg == nil {
-			return ""
-		}
-		name, _ := ctx.prog.Linkname(llssa.FullName(fn.Pkg.Pkg, fn.Name()))
-		return name
+		return ctx.functions.Function(fn).Directives.Linkname
 	}
 	globalSafe := func(global *ssa.Global) bool {
 		name := llssa.FullName(global.Pkg.Pkg, global.Name())
@@ -78,7 +74,7 @@ func configureWasmRuntimeFree(ctx *context) {
 			}
 			for _, decl := range file.Decls {
 				if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
-					if symbol, linked := ctx.prog.Linkname(llssa.FullName(pkg.Types, fn.Name.Name)); linked && !strings.HasPrefix(symbol, "llgo.") {
+					if info, prepared := ctx.prog.FunctionDirectives(fn); !prepared || info.Linkname != "" && !strings.HasPrefix(info.Linkname, "llgo.") {
 						return
 					}
 				}

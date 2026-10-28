@@ -17,7 +17,7 @@
 package ssa
 
 import (
-	"go/token"
+	"go/ast"
 	"go/types"
 	"testing"
 )
@@ -39,12 +39,13 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	coordinator.EnableCodeViewDebugInfo(true)
 
 	pkg := types.NewPackage("example.com/p", "p")
-	fset := token.NewFileSet()
+	decl := &ast.FuncDecl{}
+	info := &FunctionDirectives{ClosureEnv: true}
 	coordinator.SetLinkname("example.com/p.Entry", "entry")
 	coordinator.SetPackageExport("example.com/p.Entry", "entry")
 	coordinator.SetNoInterfaceMethod("example.com/p.T.Hidden")
 	coordinator.SetTypeCallConv("example.com/p.CType", CDecl)
-	coordinator.SetClosureEnvDirective(fset, "example.com/p.Entry", token.Pos(7))
+	coordinator.SetFunctionDirectives(pkg, map[*ast.FuncDecl]*FunctionDirectives{decl: info}, map[string]*FunctionDirectives{"example.com/p.Entry": info})
 	coordinator.MarkPackageSyntaxParsed(pkg)
 	coordinator.SetLocalityInfo("example.com/p.Value", LocalityInfo{Locality: ThreadLocal})
 	coordinator.SetPython(func() *types.Package { return nil })
@@ -72,7 +73,7 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	if export, ok := backend.PackageExport("example.com/p.Entry"); !ok || export != "entry" {
 		t.Fatalf("PackageExport = (%q, %v), want (entry, true)", export, ok)
 	}
-	if !backend.HasClosureEnvDirective(fset, "example.com/p.Entry", token.Pos(7)) || !backend.PackageSyntaxParsed(pkg) {
+	if got, ok := backend.FunctionDirectives(decl); !ok || !got.ClosureEnv || !backend.PackageSyntaxParsed(pkg) {
 		t.Fatal("backend Program lost prepared syntax metadata")
 	}
 	if background, ok := backend.packageTypeCallConv("example.com/p.CType"); !ok || background != CDecl {

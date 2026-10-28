@@ -493,6 +493,9 @@ func (p Program) isNoInterfaceMethod(fn *types.Func) bool {
 	if !ok || sig.Recv() == nil {
 		return false
 	}
+	if info, prepared := p.FunctionBinding(fn.Pkg(), FuncName(fn.Pkg(), fn.Name(), sig.Recv(), true)); prepared {
+		return info.NoInterface
+	}
 	p.packageSyntax.mu.RLock()
 	_, ok = p.packageSyntax.noInterface[FuncName(fn.Pkg(), fn.Name(), sig.Recv(), true)]
 	p.packageSyntax.mu.RUnlock()
@@ -541,25 +544,6 @@ func (p Program) Linkname(name string) (link string, ok bool) {
 	return
 }
 
-// SetWasmImport records a //go:wasmimport directive before its declaration is
-// lowered into the package's LLVM module.
-func (p Program) SetWasmImport(name, module, importName string) {
-	p.packageSyntax.mu.Lock()
-	p.packageSyntax.wasmImports[name] = wasmImport{module: module, name: importName}
-	p.packageSyntax.mu.Unlock()
-}
-
-// WasmImport returns the WebAssembly host import attached to name.
-func (p Program) WasmImport(name string) (module, importName string, ok bool) {
-	p.packageSyntax.mu.RLock()
-	entry, ok := p.packageSyntax.wasmImports[name]
-	p.packageSyntax.mu.RUnlock()
-	if ok {
-		module, importName = entry.module, entry.name
-	}
-	return
-}
-
 // HasLinknameTarget reports whether a declaration aliases target. It lets
 // build-time dead-code decisions preserve symbols that another package can
 // reference only through //go:linkname.
@@ -572,32 +556,6 @@ func (p Program) HasLinknameTarget(target string) bool {
 		}
 	}
 	return false
-}
-
-type closureEnvDirectiveKey struct {
-	fset *token.FileSet
-	name string
-	pos  token.Pos
-}
-
-// SetClosureEnvDirective records that a source function declaration has an
-// LLGo closure-environment directive. name and pos identify the declaration
-// than its resolved linker symbol, so aliases retain independent ABI metadata.
-func (p Program) SetClosureEnvDirective(fset *token.FileSet, name string, pos token.Pos) {
-	key := closureEnvDirectiveKey{fset: fset, name: name, pos: pos}
-	p.packageSyntax.mu.Lock()
-	p.packageSyntax.closureEnvDirectives[key] = none{}
-	p.packageSyntax.mu.Unlock()
-}
-
-// HasClosureEnvDirective reports whether a source function declaration has the
-// cached llgo:env directive.
-func (p Program) HasClosureEnvDirective(fset *token.FileSet, name string, pos token.Pos) bool {
-	key := closureEnvDirectiveKey{fset: fset, name: name, pos: pos}
-	p.packageSyntax.mu.RLock()
-	_, ok := p.packageSyntax.closureEnvDirectives[key]
-	p.packageSyntax.mu.RUnlock()
-	return ok
 }
 
 func (p Program) runtime() *types.Package {

@@ -26,7 +26,8 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
+func (p *context) prepareGCRoots(source *Function, hasClosureContext bool) {
+	fn := source.SSA
 	p.gcRoots = nil
 	p.gcClosureRoot = llssa.Nil
 	if !p.prog.GCRootsEnabled() {
@@ -53,7 +54,7 @@ func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
 		typ := p.type_(value.Type(), llssa.GoDecl)
 		return p.prog.GCRootCount(typ) != 0
 	}, p.isGCSafepoint)
-	for value := range uintptrEscapesRoots(fn) {
+	for value := range uintptrEscapesRoots(source, p.functions) {
 		planned[value] = struct{}{}
 	}
 	if p.safepointEntry {

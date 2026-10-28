@@ -17,6 +17,7 @@
 package ssa
 
 import (
+	"go/ast"
 	"go/token"
 	"go/types"
 	"sync"
@@ -28,12 +29,12 @@ import (
 // so those Programs can share it directly for concurrent read-only access.
 // One-shot compiler users keep the same Program-local mutation behavior.
 type packageSyntaxData struct {
+	functions             map[*ast.FuncDecl]*FunctionDirectives
+	functionNames         map[*types.Package]map[string]*FunctionDirectives
 	mu                    sync.RWMutex
 	hasNativeTypeMetadata atomic.Bool
 	linknames             map[string]string
-	wasmImports           map[string]wasmImport
 	exports               map[string]string
-	closureEnvDirectives  map[closureEnvDirectiveKey]none
 	parsedPackages        map[*types.Package]struct{}
 	noInterface           map[string]none
 	typeCallConvs         map[string]CallConv
@@ -43,21 +44,16 @@ type packageSyntaxData struct {
 
 func newPackageSyntaxData() *packageSyntaxData {
 	return &packageSyntaxData{
-		linknames:            make(map[string]string),
-		wasmImports:          make(map[string]wasmImport),
-		exports:              make(map[string]string),
-		closureEnvDirectives: make(map[closureEnvDirectiveKey]none),
-		parsedPackages:       make(map[*types.Package]struct{}),
-		noInterface:          make(map[string]none),
-		typeCallConvs:        make(map[string]CallConv),
-		nativeStructFields:   make(map[token.Pos]bool),
-		nativeStructVars:     make(map[*types.Var]bool),
+		functions:          make(map[*ast.FuncDecl]*FunctionDirectives),
+		functionNames:      make(map[*types.Package]map[string]*FunctionDirectives),
+		linknames:          make(map[string]string),
+		exports:            make(map[string]string),
+		parsedPackages:     make(map[*types.Package]struct{}),
+		noInterface:        make(map[string]none),
+		typeCallConvs:      make(map[string]CallConv),
+		nativeStructFields: make(map[token.Pos]bool),
+		nativeStructVars:   make(map[*types.Var]bool),
 	}
-}
-
-type wasmImport struct {
-	module string
-	name   string
 }
 
 // SetPackageExport records an export directive before the LLVM Package that

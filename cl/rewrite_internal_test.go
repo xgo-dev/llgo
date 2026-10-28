@@ -2255,7 +2255,9 @@ func f() {}
 		goPkg:  ssapkg,
 		funcs:  map[*ssa.Function]llssa.Function{},
 	}
-	_ = files
+	if err := ParsePkgSyntax(prog, fset, ssapkg.Pkg, files); err != nil {
+		t.Fatal(err)
+	}
 
 	root := ssapkg.Func("f")
 	if root == nil {
