@@ -201,6 +201,9 @@ func TestHelper(t *testing.T) {
  if os.Getenv("SHARD_HELPER") != "1" { t.Skip("subprocess only") }
  if ChildOnly() != 33 { t.Fatal("child") }
 }
+func BenchmarkGo126Fixture(b *testing.B) {
+ for i := 0; i < b.N; i++ { if First() != 11 { b.Fatal("benchmark") } }
+}
 """.replace("FIRST", names[0]).replace("SECOND", names[1]), encoding="utf-8")
             unused = root / "unused"
             unused.mkdir()
@@ -244,6 +247,45 @@ func TestHelper(t *testing.T) {
             self.assertTrue(child.endswith(" 1"), child)
             unused = next(line for line in results[1].splitlines() if "fixture.go:5." in line)
             self.assertTrue(unused.endswith(" 0"), unused)
+            # The core lists independently; two outer parts execute eight
+            # logical commands with two workers apiece. The collector is a
+            # real subprocess and must preserve helper-only and zero coverage.
+            common = ["--shards", "8", "--workers", "2", "--parts", "2",
+                      "--ldflags=" + ldflags]
+            collector = script.with_name("collect_build_test_parts.py")
+            shutil.copy2(Path(run_build_tests.__file__).with_name(collector.name), collector)
+            subprocess.run(["git", "add", ".github/scripts"], cwd=root, check=True,
+                           capture_output=True)
+            subprocess.run(["git", "-c", "user.name=CI fixture", "-c", "user.email=ci@example.invalid",
+                            "commit", "-qm", "fixture"], cwd=root, check=True, capture_output=True)
+            result = subprocess.run([sys.executable, str(script), *common, "--inventory-only"],
+                                    cwd=root, env=environment, capture_output=True, text=True, timeout=120)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            inventory = root / "go-test-timings/build-inventory.json"
+            parts = root / "parts"
+            for part in range(2):
+                result = subprocess.run([sys.executable, str(script), *common, "--part", str(part)],
+                                        cwd=root, env=environment, capture_output=True, text=True, timeout=120)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                report = json.loads((root / "go-test-timings/build-shards.json").read_text())
+                self.assertEqual(len(report["results"]), 4)
+                self.assertTrue(report["success"])
+                (root / "go-test-timings/build.jsonl").write_text(result.stdout, encoding="utf-8")
+                shutil.copytree(root / "go-test-timings", parts / str(part))
+            command = [sys.executable, str(collector), "--inventory", str(inventory),
+                       "--parts-directory", str(parts)]
+            result = subprocess.run(command, cwd=root, env=environment, capture_output=True,
+                                    text=True, timeout=120)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((root / "coverage-build.txt").read_text(), results[0])
+            # A missing part may retain its raw evidence but cannot publish
+            # the profile from the preceding successful collection.
+            (parts / "1/build-shards.json").unlink()
+            result = subprocess.run(command, cwd=root, env=environment, capture_output=True,
+                                    text=True, timeout=120)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("missing or duplicate build parts", result.stderr)
+            self.assertFalse((root / "coverage-build.txt").exists())
 
 
 if __name__ == "__main__":

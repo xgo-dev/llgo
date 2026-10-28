@@ -23,7 +23,7 @@ import ci_policy
 WORKFLOWS = Path(__file__).resolve().parents[1] / "workflows"
 PREPARE = "./.github/workflows/ci-prepare.yml"
 CODE_WORKFLOWS = {
-    "llgo.yml": 42, "go.yml": 6, "targets.yml": 4, "build-cache.yml": 4,
+    "llgo.yml": 42, "go.yml": 9, "targets.yml": 4, "build-cache.yml": 4,
     "benchmark.yml": 9, "release-build.yml": 24, "doc.yml": 6, "fmt.yml": 1,
     "mise.yml": 5, "pixi.yml": 5,
 }
@@ -525,7 +525,8 @@ else:
                 sys.exit('independent suites did not overlap')
             time.sleep(0.01)
     elif os.environ['RUNNER_OS'] != 'Linux':
-        order = ['main', 'build', 'compiler', 'language']
+        order = (['main', 'compiler', 'language'] if os.environ['RUNNER_OS'] == 'macOS'
+                 else ['main', 'build', 'compiler', 'language'])
         index = order.index(suite)
         if index and not (root / (order[index - 1] + '.finished')).exists():
             sys.exit('host suites did not retain serial order')
@@ -568,7 +569,8 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                     # GNU and BSD xargs map a child failure to different codes.
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 else:
-                    self.assertEqual(result.returncode, 7 if failure else 0,
+                    self.assertEqual(result.returncode, 7 if failure and not
+                                     (runner == "macOS" and failure == "build") else 0,
                                      result.stdout + result.stderr)
                 calls = [json.loads(line) for line in log.read_text().splitlines()]
                 expected_suites = {"main", "build"}
@@ -577,8 +579,10 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                 if failure not in {"main", "compiler"}:
                     expected_suites.add("language")
                 if runner != "Linux":
-                    order = ["main", "build", "compiler", "language"]
-                    expected_suites = set(order[:order.index(failure) + 1] if failure else order)
+                    order = (["main", "compiler", "language"] if runner == "macOS"
+                             else ["main", "build", "compiler", "language"])
+                    expected_suites = set(order[:order.index(failure) + 1]
+                                          if failure in order else order)
                 self.assertEqual(len(calls), len(expected_suites))
                 report = summary.read_text()
                 for suite in expected_suites:
@@ -606,16 +610,16 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                 self.assertTrue(all("-json" in args for args in calls))
 
     def test_macos_build_suite_requires_arm64_native_atomic_acceptance(self):
-        job = load("go.yml")["jobs"]["test"]
-        entries = job["strategy"]["matrix"]["include"]
+        jobs = load("go.yml")["jobs"]
+        entries = jobs["test"]["strategy"]["matrix"]["include"]
         self.assertIn("macos-latest", [entry["os"] for entry in entries])
-        step = next(step for step in job["steps"] if step.get("id") == "test_coverage")
+        job = jobs["macos-build"]
+        step = next(step for step in job["steps"] if step.get("name") == "Run this macOS build part")
         self.assertNotIn("continue-on-error", job)
         self.assertNotIn("continue-on-error", step)
         # Exercise the existing function without invoking a Go or LLVM process.
-        body = step["run"].split("run_build_suite() {", 1)[1].split("\n}", 1)[0]
-        function = "run_build_suite() {" + body + "\n}\n"
-        script = function + 'python() { printf "%s\\n" "$@"; }\nrun_build_suite\n'
+        script = ('python() { printf "%s\\n" "$@"; }\n' +
+                  step["run"].replace("${{ matrix.part }}", "0"))
         for arch in ("ARM64", "X64", ""):
             with self.subTest(arch=arch):
                 result = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
@@ -624,6 +628,8 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                 if arch == "ARM64":
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(result.stdout.splitlines().count("--require-arm64-atomic"), 1)
+                    for argument in ("--shards", "8", "--parts", "--workers", "--part"):
+                        self.assertIn(argument, result.stdout.splitlines())
                 else:
                     self.assertNotEqual(result.returncode, 0)
                     self.assertEqual(result.stdout, "")

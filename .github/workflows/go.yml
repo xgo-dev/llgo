@@ -162,6 +162,21 @@ jobs:
           import runpy
           runpy.run_path('dev/prepare_windows_go_test_runtime.py', run_name='__main__')
 
+      - name: List the complete macOS build inventory
+        if: runner.os == 'macOS'
+        env:
+          LLGO_TEST_EXTENDED_ABI: '0'
+        run: python .github/scripts/run_build_tests.py --inventory-only --shards 8 --workers 2 --parts 2 --require-arm64-atomic
+
+      - name: Upload the independent macOS build inventory
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-build-macos-inventory
+          path: go-test-timings/build-inventory.json
+          if-no-files-found: error
+          retention-days: 7
+
       # Every host uploads coverage: OS-specific ELF, Mach-O, and COFF paths
       # plus per-OS runtime shims are otherwise invisible to codecov/patch.
       - name: Test with coverage
@@ -235,13 +250,6 @@ jobs:
             # own source tree/cache and GOMAXPROCS=2. Discover every test,
             # verify exactly-once execution, and union statement coverage.
             build_tests=(python .github/scripts/run_build_tests.py --overlay "$LLGO_GO_TEST_OVERLAY")
-            if [[ "$RUNNER_OS" == macOS ]]; then
-              if [[ "$RUNNER_ARCH" != ARM64 ]]; then
-                echo "The macOS build suite must execute the native ARM64 atomic owners" >&2
-                return 1
-              fi
-              build_tests+=(--require-arm64-atomic)
-            fi
             if [[ "$RUNNER_OS" == Windows ]]; then
               build_tests+=("--ldflags=-linkmode=external -extldflags=-lsynchronization")
             fi
@@ -252,7 +260,9 @@ jobs:
           # Keep the original serial order on other hosts until measured there.
           if [[ "$RUNNER_OS" != Linux ]]; then
             run_main_suite
-            run_build_suite
+            if [[ "$RUNNER_OS" != macOS ]]; then
+              run_build_suite
+            fi
             run_compiler_suites
             exit 0
           fi
@@ -308,7 +318,11 @@ jobs:
           python .github/scripts/test_filter_host_coverage.py
           # Keep all host tests, but only LLGo may contribute coverage for
           # test/. Filter records, not test packages, before Codecov merges them.
-          for profile in coverage-main coverage-build coverage-compiler; do
+          profiles=(coverage-main coverage-compiler)
+          if [[ "$RUNNER_OS" != macOS ]]; then
+            profiles+=(coverage-build)
+          fi
+          for profile in "${profiles[@]}"; do
             awk -f .github/scripts/filter_host_coverage.awk \
               "$profile.txt" > "$profile-host.txt"
           done
@@ -344,7 +358,103 @@ jobs:
           version: "11.3.1"
           token: ${{secrets.CODECOV_TOKEN}}
           use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-          files: coverage-main-host.txt,coverage-build-host.txt,coverage-compiler-host.txt,coverage-traceback.txt
+          files: ${{ runner.os == 'macOS' && 'coverage-main-host.txt,coverage-compiler-host.txt,coverage-traceback.txt' || 'coverage-main-host.txt,coverage-build-host.txt,coverage-compiler-host.txt,coverage-traceback.txt' }}
+          flags: go-tests
+          disable_search: true
+
+  macos-build:
+    if: needs.prepare.outputs.run_code_ci == 'true'
+    needs: prepare
+    name: macOS build coverage (part ${{ matrix.part }})
+    runs-on: macos-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [0, 1]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-deps
+        with:
+          llvm-version: 22
+      - uses: ./.github/actions/setup-embed-deps
+      - name: Set up older Go for toolchain-switch regressions
+        uses: ./.github/actions/setup-go
+        env:
+          GOTOOLCHAIN: local
+        with:
+          go-version: 1.21.13
+          cache: 'false'
+      - uses: ./.github/actions/setup-go
+      - uses: ./.github/actions/setup-llgo-cache
+        with:
+          build-cache-mode: readwrite
+          crosscompile-cache-mode: readwrite
+      - uses: ./.github/actions/setup-demo-deps
+      - name: Set LLGO_ROOT
+        run: echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+      - name: Run this macOS build part
+        shell: bash
+        env:
+          LLGO_TEST_EXTENDED_ABI: '0'
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_ARCH" != ARM64 ]]; then
+            echo "The macOS build suite must execute the native ARM64 atomic owners" >&2
+            exit 1
+          fi
+          python .github/scripts/run_go_tests.py build \
+            python .github/scripts/run_build_tests.py --shards 8 --workers 2 --parts 2 \
+              --part "${{ matrix.part }}" --require-arm64-atomic
+      - name: Upload this build part and its original timings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-build-macos-part-${{ matrix.part }}
+          path: go-test-timings/
+          if-no-files-found: error
+          retention-days: 7
+
+  macos-build-coverage:
+    if: ${{ !cancelled() && needs.prepare.outputs.run_code_ci == 'true' }}
+    needs: [prepare, test, macos-build]
+    runs-on: ${{ fromJSON(needs.prepare.outputs.linux_runner) }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Require complete core and build jobs
+        run: |
+          test "${{ needs.test.result }}" = success
+          test "${{ needs.macos-build.result }}" = success
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v8
+        with:
+          name: go-build-macos-inventory
+          path: macos-build-inventory
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: go-build-macos-part-*
+          path: macos-build-parts
+          merge-multiple: false
+      - name: Verify all roots and merge complete build coverage
+        run: |
+          python .github/scripts/collect_build_test_parts.py \
+            --inventory macos-build-inventory/build-inventory.json \
+            --parts-directory macos-build-parts --require-arm64-atomic
+          awk -f .github/scripts/filter_host_coverage.awk coverage-build.txt > coverage-build-host.txt
+      - name: Upload complete macOS build coverage
+        uses: codecov/codecov-action@v7
+        with:
+          use_pypi: true
+          version: '11.3.1'
+          token: ${{ secrets.CODECOV_TOKEN }}
+          use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          files: coverage-build-host.txt
           flags: go-tests
           disable_search: true
 
