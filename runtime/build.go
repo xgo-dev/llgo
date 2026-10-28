@@ -85,13 +85,16 @@ var sourcePatchPkgs = map[string]struct{}{
 	"fmt":                          {},
 	"go/build":                     {},
 	"go/importer":                  {},
+	"internal/bytealg":             {},
 	"internal/cpu":                 {},
 	"internal/runtime/atomic":      {},
+	"internal/runtime/gc/scan":     {},
 	"internal/runtime/maps":        {},
 	"internal/runtime/sys":         {},
 	"internal/sync":                {},
 	"iter":                         {},
 	"runtime":                      {},
+	"runtime/internal/atomic":      {},
 	"runtime/metrics":              {},
 	"simd":                         {},
 	"simd/internal/bridge":         {},
@@ -100,6 +103,8 @@ var sourcePatchPkgs = map[string]struct{}{
 	"syscall":                      {},
 	"syscall/js":                   {},
 	"unique":                       {},
+
+	"internal/runtime/syscall/windows": {},
 }
 
 var sourcePatchAsmPkgs = map[string]map[string]struct{}{

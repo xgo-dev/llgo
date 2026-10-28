@@ -94,8 +94,6 @@ func (s *Session) checkedWorkerState(ctx context.Context) workerSnapshot {
 	}
 	// Drain transport notifications before accepting a shared-memory snapshot.
 	// These commands do not execute guest code and also work on paused targets.
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	results := make(chan error, len(state.sessions))
 	for _, session := range state.sessions {
 		go func(session string) {
@@ -158,6 +156,7 @@ type cdpPending struct {
 }
 
 type cdpClient struct {
+	ctx      context.Context
 	conn     *websocket.Conn
 	mu       sync.Mutex
 	next     uint64
@@ -183,7 +182,7 @@ func newCDPClient(ctx context.Context, endpoint string) (*cdpClient, error) {
 	}
 	conn.SetReadLimit(8 << 20)
 	client := &cdpClient{
-		conn: conn, pending: make(map[uint64]cdpPending),
+		ctx: ctx, conn: conn, pending: make(map[uint64]cdpPending),
 		events: make(chan cdpMessage, cdpEventCapacity), done: make(chan struct{}),
 	}
 	go func() {
@@ -257,7 +256,7 @@ func (c *cdpClient) call(ctx context.Context, session, method string, params any
 		delete(c.pending, id)
 		c.mu.Unlock()
 	}()
-	if err := wsjson.Write(ctx, c.conn, cdpMessage{ID: id, Method: method, SessionID: session, Params: data}); err != nil {
+	if err := c.write(ctx, cdpMessage{ID: id, Method: method, SessionID: session, Params: data}); err != nil {
 		return err
 	}
 	select {
@@ -276,6 +275,22 @@ func (c *cdpClient) call(ctx context.Context, session, method string, params any
 	}
 }
 
+func (c *cdpClient) write(ctx context.Context, message cdpMessage) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// websocket closes the whole connection if a write context is canceled.
+	// An HTTP snapshot request (or one exited worker) must not disconnect the
+	// other CDP sessions. Bound the wire write by the connection's lifetime and
+	// the same request timeout; only the reply wait uses the caller's context.
+	writing, cancel := context.WithTimeout(c.ctx, cdpRequestTimeout)
+	defer cancel()
+	if err := wsjson.Write(writing, c.conn, message); err != nil {
+		return err
+	}
+	return ctx.Err()
+}
+
 // An idle event loop may not acknowledge Debugger.pause until JavaScript next
 // executes. This no-op supplies that turn. Its reply is intentionally ignored:
 // evaluation cannot finish until the user resumes the now-paused target.
@@ -287,7 +302,7 @@ func (c *cdpClient) wake(ctx context.Context, session string) error {
 	c.next++
 	id := c.next
 	c.mu.Unlock()
-	return wsjson.Write(ctx, c.conn, cdpMessage{
+	return c.write(ctx, cdpMessage{
 		ID: id, SessionID: session, Method: "Runtime.evaluate",
 		Params: json.RawMessage(`{"expression":"void 0\n//# sourceURL=llgo-worker-control.js","silent":true,"returnByValue":true}`),
 	})

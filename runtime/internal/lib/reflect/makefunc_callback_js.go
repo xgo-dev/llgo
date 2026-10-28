@@ -44,10 +44,7 @@ func bindnJS(*ffi.Signature, unsafe.Pointer, *unsafe.Pointer, unsafe.Pointer)
 //export llgo_reflect_invoke_js
 func invokeJSMakeFunc(args *unsafe.Pointer, userdata unsafe.Pointer) unsafe.Pointer {
 	fd := (*funcData)(userdata)
-	ins := make([]Value, fd.nin)
-	for i := 0; i < fd.nin; i++ {
-		ins[i] = makeFuncArgValue(ffi.Index(args, uintptr(i)), fd.ftyp.In[i])
-	}
+	ins := makeFuncFFIArgs(fd, args)
 	out := fd.call(ins)
 	if len(fd.tout) != 0 {
 		out = validateMakeFuncResults(out, fd.ftyp, fd.tout)

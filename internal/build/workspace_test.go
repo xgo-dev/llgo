@@ -269,6 +269,10 @@ func TestWorkspaceToolchainSwitch(t *testing.T) {
 				writeFile(t, filepath.Join(root, "go.work"), "go 1.21\ntoolchain go1.21.13\nuse (\n ./app\n ./lib\n)\n")
 				writeFile(t, filepath.Join(root, "app", "go.mod"), "module example.com/workapp\ngo 1.21\nrequire example.com/worklib v0.0.0\n")
 				want = "41 false"
+			} else {
+				// Auto-selection must find the installed exact toolchain above,
+				// not download the minimum language-version patch (go1.27.0).
+				writeFile(t, filepath.Join(root, "go.work"), "go 1.27.0\ntoolchain "+selectedVersion+"\nuse (\n ./app\n ./lib\n)\n")
 			}
 			dir := filepath.Join(root, "app", "cmd", "hello")
 			writeFile(t, filepath.Join(dir, "main.go"), "package main\nimport \"example.com/worklib\"\nfunc main(){println(lib.Value(), selected)}\n")

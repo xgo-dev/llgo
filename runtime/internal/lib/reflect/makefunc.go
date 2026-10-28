@@ -149,6 +149,23 @@ func makeFuncArgValue(ptr unsafe.Pointer, typ *abi.Type) Value {
 	return v
 }
 
+// makeFuncFFIArgs restores the full Go parameter list from the native frame.
+// An omitted zero-sized parameter still has a valid, typed reflect.Value,
+// but must not consume the next scalar's register or stack argument slot.
+func makeFuncFFIArgs(fd *funcData, args *unsafe.Pointer) []Value {
+	in := make([]Value, fd.nin)
+	var slot uintptr
+	for i, typ := range fd.ftyp.In {
+		if ffiOmitEmptyArgs && typ.Size_ == 0 {
+			in[i] = Zero(toRType(typ))
+			continue
+		}
+		in[i] = makeFuncArgValue(ffi.Index(args, slot), typ)
+		slot++
+	}
+	return in
+}
+
 /*
 import (
 	"unsafe"

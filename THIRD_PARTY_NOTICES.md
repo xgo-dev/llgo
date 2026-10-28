@@ -71,6 +71,12 @@ executables; development- and test-only modules are not included.
 | `go.bug.st/serial` | [BSD-3-Clause](LICENSES/Go-Serial-BSD-3-Clause.txt) |
 | `go.yaml.in/yaml/v3` | [MIT and Apache-2.0](LICENSES/Go-YAML-LICENSE.txt), [NOTICE](LICENSES/Go-YAML-NOTICE.txt) |
 | `golang.org/x/mod`, `x/sync`, `x/sys`, and `x/tools` | [BSD-3-Clause](LICENSES/Go-BSD-3-Clause.txt) |
+| `golang.org/x/arch` | [BSD-3-Clause](LICENSES/Go-Arch-BSD-3-Clause.txt) |
+
+This development branch replaces `github.com/xgo-dev/plan9asm` with
+`github.com/cpunion/plan9asm` at commit `a5504a23c768`, as pinned in `go.mod`.
+The replacement retains the Apache-2.0 license listed above. It must be
+replaced by an upstream dependency before release.
 
 ## LLVM/Clang
 

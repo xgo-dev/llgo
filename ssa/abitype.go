@@ -136,6 +136,13 @@ func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, gl
 			typ := prog.Type(equal.raw.Type, GoDecl)
 			equal = checkExpr(equal, typ.raw.Type, b)
 		} else {
+			// LLGo's native equality bridge consumes this actual Type* through
+			// its own environment ABI, then passes Type.Size_ to memequal. It is
+			// not the gc funcval {entry, captured-size} or an assembly R26/DX ABI.
+			goarch := prog.Target().GOARCH
+			if (goarch == "386" || goarch == "amd64" || goarch == "arm64") && ab.IsRegularMemory(t) {
+				name = "memequal_varlen"
+			}
 			equal = b.Pkg.rtEnvFunc(name)
 			b.Pkg.recordAbiTypeFakeUse(global, equal.impl)
 			env := b.abiType(t)

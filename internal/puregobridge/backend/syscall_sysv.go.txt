@@ -1,0 +1,71 @@
+//go:build linux && amd64
+
+// Explicit LLGo backend for the verified purego v0.9.1 profile.
+package purego
+
+import (
+	"reflect"
+	"runtime"
+	"unsafe"
+
+	llgopurego "github.com/xgo-dev/llgo/runtime/compat/purego"
+)
+
+const (
+	// Unlike link-only packages, purego must run its Go initializers.
+	LLGoPackage = "llgo"
+	LLGoFiles   = "_llgo_compat/sysv_amd64.S"
+)
+
+// This is an adapter-private selector, not a Go ABI0 or native function
+// address. Never export it or accept another runtime trampoline here.
+const syscall15XABI0 uintptr = 1
+
+// Fail at compile time if the source frame and the verified native ABI diverge.
+var _ [200]byte = [unsafe.Sizeof(syscall15Args{})]byte{}
+var _ [8]byte = [unsafe.Offsetof(syscall15Args{}.a1)]byte{}
+var _ [56]byte = [unsafe.Offsetof(syscall15Args{}.a7)]byte{}
+var _ [128]byte = [unsafe.Offsetof(syscall15Args{}.f1)]byte{}
+var _ [192]byte = [unsafe.Offsetof(syscall15Args{}.arm64_r8)]byte{}
+
+//go:linkname llgoNativeCall C.llgo_purego_sysv_call
+func llgoNativeCall(arg unsafe.Pointer) int32
+
+func runtime_cgocall(selector uintptr, arg unsafe.Pointer) int32 {
+	if selector != syscall15XABI0 || arg == nil || (*syscall15Args)(arg).fn == 0 {
+		panic("purego: invalid explicit LLGo native call frame")
+	}
+	result := llgoNativeCall(arg)
+	runtime.KeepAlive(arg)
+	return result
+}
+
+func syscall_syscall15X(fn, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15 uintptr) (r1, r2, err uintptr) {
+	args := thePool.Get().(*syscall15Args)
+	defer thePool.Put(args)
+	*args = syscall15Args{
+		fn, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15,
+		a1, a2, a3, a4, a5, a6, a7, a8,
+		0,
+	}
+	runtime_cgocall(syscall15XABI0, unsafe.Pointer(args))
+	return args.a1, args.a2, 0
+}
+
+func NewCallback(fn any) uintptr {
+	typ := reflect.TypeOf(fn)
+	if typ == nil || typ.Kind() != reflect.Func {
+		panic("purego: callback must be a function")
+	}
+	marker := reflect.TypeOf(CDecl{})
+	omitCDecl := false
+	for i := 0; i < typ.NumIn(); i++ {
+		if typ.In(i).AssignableTo(marker) {
+			if i != 0 {
+				panic("purego: CDecl must be the first argument")
+			}
+			omitCDecl = true
+		}
+	}
+	return llgopurego.NewCallback(fn, omitCDecl)
+}

@@ -3,3 +3,5 @@
 package reflect
 
 const ffiCallSliceAsTriple = true
+
+const ffiOmitEmptyArgs = false

@@ -117,11 +117,13 @@ jobs:
           docker run \
             --rm \
             -e "GITHUB_TOKEN=${GITHUB_TOKEN}" \
+            -e GOMAXPROCS=2 \
+            -e GOFLAGS=-p=2 \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "$PWD:/go/src/llgo" \
             -w /go/src/llgo \
             "${GORELEASER_CROSS_IMAGE}" \
-            release --verbose --skip=publish,snapcraft,docker --snapshot --clean
+            release --parallelism=1 --verbose --skip=publish,snapcraft,docker --snapshot --clean
 
       - name: Upload Darwin AMD64 Artifacts
         uses: actions/upload-artifact@v7
@@ -655,6 +657,8 @@ jobs:
           docker run \
             --rm \
             -e "GITHUB_TOKEN=${GITHUB_TOKEN}" \
+            -e GOMAXPROCS=2 \
+            -e GOFLAGS=-p=2 \
             -e "DOCKER_IMAGE_REPO=ghcr.io/${GITHUB_REPOSITORY,,}" \
             -e DOCKER_CONFIG=/root/.docker \
             -v "$HOME/.docker:/root/.docker:ro" \
@@ -663,7 +667,7 @@ jobs:
             -v "$PWD:/go/src/llgo" \
             -w /go/src/llgo \
             "${GORELEASER_CROSS_IMAGE}" \
-            release --clean --verbose --skip snapcraft
+            release --parallelism=1 --clean --verbose --skip snapcraft
 
       - name: Upload Linux packages to Fury
         if: steps.release-type.outputs.stable == 'true'

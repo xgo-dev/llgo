@@ -2449,9 +2449,12 @@ func appendFFIPadding(fields []*ffi.Type, off, size uintptr) ([]*ffi.Type, uintp
 }
 
 func toFFISig(tin, tout []*abi.Type) (*ffi.Signature, error) {
-	args := make([]*ffi.Type, len(tin))
-	for i, in := range tin {
-		args[i] = toFFIType(in)
+	args := make([]*ffi.Type, 0, len(tin))
+	for _, in := range tin {
+		if ffiOmitEmptyArgs && in.Size_ == 0 {
+			continue
+		}
+		args = append(args, toFFIType(in))
 	}
 	return ffi.NewSignature(toFFIRetType(tout), args...)
 }
@@ -2591,6 +2594,9 @@ func (v Value) call(op string, in []Value) (out []Value) {
 	}
 	for i, arg := range in {
 		typ := tin[ioff+i]
+		if ffiOmitEmptyArgs && typ.Size_ == 0 {
+			continue
+		}
 		if ffiCallSliceAsTriple && typ.Kind() == abi.Slice {
 			h := (*unsafeheaderSlice)(arg.ptr)
 			ffiArgs = append(ffiArgs, ffi.TypePointer, ffi.TypeInt, ffi.TypeInt)

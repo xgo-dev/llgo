@@ -32,7 +32,7 @@ func TestRegularMemoryEqualLowering(t *testing.T) {
 	for _, tc := range []struct {
 		arch    string
 		enabled bool
-	}{{"wasm", true}, {"wasm", false}, {"amd64", true}} {
+	}{{"wasm", true}, {"wasm", false}, {"amd64", true}, {"amd64", false}, {"386", true}, {"386", false}, {"arm64", true}, {"arm64", false}} {
 		t.Run(fmt.Sprintf("%s/%v", tc.arch, tc.enabled), func(t *testing.T) {
 			ssapkg, _, files := buildGoSSAPkg(t, src)
 			prog := newLLSSAProgForTarget(t, &llssa.Target{GOARCH: tc.arch})
@@ -47,14 +47,14 @@ func TestRegularMemoryEqualLowering(t *testing.T) {
 				t.Fatal(err)
 			}
 			optimized := tc.arch == "wasm" && tc.enabled
-			for _, item := range []struct{ name, equal, fallback string }{
-				{"Zero", "memequal0", "arrayequal"}, {"One", "memequal8", "structequal"},
-				{"Two", "memequal16", "arrayequal"}, {"Four", "memequal32", "structequal"},
-				{"Eight", "memequal64", "arrayequal"}, {"Sixteen", "memequal128", "structequal"},
-				{"Large", "_llgo_memequal.24", "structequal"}, {"SameSize", "_llgo_memequal.24", "arrayequal"},
-				{"Float", "structequal", "structequal"}, {"String", "structequal", "structequal"},
-				{"Padded", "structequal", "structequal"}, {"Blank", "structequal", "structequal"},
-				{"Interface", "structequal", "structequal"},
+			for _, item := range []struct{ name, equal, native, fallback string }{
+				{"Zero", "memequal0", "memequal_varlen", "arrayequal"}, {"One", "memequal8", "memequal_varlen", "structequal"},
+				{"Two", "memequal16", "memequal_varlen", "arrayequal"}, {"Four", "memequal32", "memequal_varlen", "structequal"},
+				{"Eight", "memequal64", "memequal_varlen", "arrayequal"}, {"Sixteen", "memequal128", "memequal_varlen", "structequal"},
+				{"Large", "_llgo_memequal.24", "memequal_varlen", "structequal"}, {"SameSize", "_llgo_memequal.24", "memequal_varlen", "arrayequal"},
+				{"Float", "structequal", "structequal", "structequal"}, {"String", "structequal", "structequal", "structequal"},
+				{"Padded", "structequal", "structequal", "structequal"}, {"Blank", "structequal", "structequal", "structequal"},
+				{"Interface", "structequal", "structequal", "structequal"},
 			} {
 				global := mod.NamedGlobal("_llgo_keys." + item.name)
 				if global.IsNil() {
@@ -63,6 +63,10 @@ func TestRegularMemoryEqualLowering(t *testing.T) {
 				want := item.fallback
 				if optimized {
 					want = item.equal
+				} else if tc.arch != "wasm" {
+					// The qualified native bridge carries the Type* environment;
+					// Wasm DCE instead uses metadata-independent equality.
+					want = item.native
 				}
 				if !strings.Contains(global.Initializer().String(), want) {
 					t.Errorf("%s: missing %s in %s", item.name, want, global)

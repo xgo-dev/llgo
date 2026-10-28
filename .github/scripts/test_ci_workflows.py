@@ -19,7 +19,7 @@ import ci_policy
 WORKFLOWS = Path(__file__).resolve().parents[1] / "workflows"
 PREPARE = "./.github/workflows/ci-prepare.yml"
 CODE_WORKFLOWS = {
-    "llgo.yml": 21, "go.yml": 6, "targets.yml": 4, "build-cache.yml": 4,
+    "llgo.yml": 40, "go.yml": 6, "targets.yml": 4, "build-cache.yml": 4,
     "benchmark.yml": 9, "release-build.yml": 24, "doc.yml": 6, "fmt.yml": 1,
     "mise.yml": 5, "pixi.yml": 5,
 }
@@ -130,8 +130,201 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(step["env"]["LLGO_TEST_EXTENDED_ABI"],
                          "${{ runner.os == 'Linux' && '1' || '0' }}")
 
+    def test_native_workloads_have_independent_bounded_jobs(self):
+        jobs = load("llgo.yml")["jobs"]
+        self.assertIn("native-simd", list(jobs))
+        self.assertIn("native-integration", list(jobs))
+        core = jobs["llgo"]
+        integration = jobs["native-integration"]
+        simd = jobs["native-simd"]
+        entries = core["strategy"]["matrix"]["include"]
+        self.assertEqual(matrix_size(core), 8)
+        self.assertEqual(integration["strategy"], core["strategy"])
+        self.assertEqual(simd["strategy"]["matrix"]["include"],
+                         [entry for entry in entries if entry.get("windows_arch") != "386"])
+        self.assertEqual(matrix_size(simd), 6)
+        for job in (core, integration, simd):
+            self.assertEqual(needs(job), ["prepare"])
+            self.assertEqual(job["if"], "needs.prepare.outputs.run_code_ci == 'true'")
+            self.assertEqual(job["timeout-minutes"], "60")
+            self.assertEqual(job["strategy"]["fail-fast"], "false")
+            self.assertEqual(job["runs-on"], core["runs-on"])
+            self.assertNotIn("continue-on-error", job)
+            self.assertTrue(all("continue-on-error" not in step for step in job["steps"]))
+
+        common = ["Install dependencies", "Install embedded dependencies",
+                  "Setup demo dependencies", "Set up Go for build", "Restore LLGo cache",
+                  "Build LLGo and test tools", "Activate native Windows target"]
+        core_steps = {step.get("name"): step for step in core["steps"]}
+        integration_steps = {step.get("name"): step for step in integration["steps"]}
+        self.assertEqual([step["name"] for step in integration["steps"]
+                          if step.get("name") in common], common)
+        for name in common:
+            self.assertEqual(integration_steps[name], core_steps[name])
+        for name in ("Execute Windows 386 atomic contracts", "Check Windows native runtime and FFI",
+                     "Run Go 1.27 LLGo core tests", "Upload LLGo test coverage to Codecov"):
+            self.assertIn(name, core_steps)
+            self.assertNotIn(name, integration_steps)
+        self.assertNotIn("Test SIMD behavior with Go and LLGo", core_steps)
+        self.assertNotIn("Test demos", core_steps)
+
+    def test_native_simd_keeps_the_complete_original_harness(self):
+        jobs = load("llgo.yml")["jobs"]
+        self.assertIn("native-simd", list(jobs))
+        job = jobs["native-simd"]
+        steps = {step.get("name"): step for step in job["steps"]}
+        deps = steps["Install dependencies"]
+        self.assertEqual(deps["uses"], "./.github/actions/setup-deps")
+        self.assertEqual(deps["with"]["windows-msvc-dependencies"], "runtime")
+        self.assertNotIn("Install embedded dependencies", steps)
+        self.assertNotIn("Setup demo dependencies", steps)
+        self.assertEqual(steps["Activate native Windows target"],
+                         next(step for step in jobs["llgo"]["steps"]
+                              if step.get("name") == "Activate native Windows target"))
+        test = steps["Test SIMD behavior with Go and LLGo"]
+        self.assertNotIn("if", test)
+        self.assertEqual(test["id"], "native_simd")
+        self.assertEqual(test["shell"], "bash")
+        self.assertEqual(test["env"], {
+            "GOEXPERIMENT": "simd",
+            "LLGO_SIMD_ARTIFACT_DIR": "${{ runner.temp }}/llgo-simd-matrix"})
+        self.assertEqual(test["run"].splitlines(), [
+            "(cd runtime && go test -count=1 -timeout=2m ./internal/runtime/math)",
+            "go test -count=1 -timeout=2m ./test/simd/...",
+            "bash dev/test_native_simd.sh"])
+        artifact = steps["Upload failed native SIMD executables"]
+        self.assertEqual(artifact["if"], "failure() && steps.native_simd.outcome == 'failure'")
+        self.assertEqual(artifact["with"]["path"], test["env"]["LLGO_SIMD_ARTIFACT_DIR"])
+        build = steps["Build SIMD compiler"]
+        self.assertIn('go build -o "$RUNNER_TEMP/llgo-bin/llgo${tool_suffix}" ./cmd/llgo', build["run"])
+        self.assertIn('echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"', build["run"])
+
+    def test_native_integration_preserves_ordered_post_core_gates(self):
+        jobs = load("llgo.yml")["jobs"]
+        self.assertIn("native-integration", list(jobs))
+        steps = jobs["native-integration"]["steps"]
+        names = [step.get("name") for step in steps]
+        start = names.index("Test Hello World with Go 1.20")
+        self.assertEqual(names[start:], [
+            "Test Hello World with Go 1.20",
+            "Test Hello World with go.mod 1.21 through 1.26",
+            "Test Hello World with go.mod 1.27",
+            "Test runtime module compatibility",
+            "Test zero-sized reflection argument ABI",
+            "Run caller regressions in C shared libraries and archives",
+            "Validate the native Windows toolchain profile",
+            "Test Windows CPU profiler context",
+            "Test demo without RPATH (expect failure)",
+            "Test static cargs without a runtime search path",
+            "Test demos",
+            "Test demos (embedded target)",
+            "Test demos (embedded target, build only)",
+            "Test C header generation",
+            "Test export with different symbol names on embedded targets",
+            "Test ESP serial smoke",
+            "Test ESP32-C3 startup regression",
+            "_xtool build tests",
+            "Show test result",
+            "Install LLDB for integration tests",
+            "GDB values, registry and complete worker unwind (Linux)",
+            "Install MinGW LLDB for integration tests",
+            "LLDB integration tests",
+            "LLDB integration tests (MSVC)",
+            "LLDB integration tests (MinGW)",
+            "LLDB integration tests (MinGW cross-architecture)",
+            "Native source-debug acceptance tests",
+            "Native debug metadata tests",
+            "Native debug metadata tests (Windows)",
+            "Set up the MSYS2 host shell for MSVC",
+            "Test from the MSYS2 host shell",
+            "Install Cygwin for host-shell qualification",
+            "Test from the Cygwin host shell",
+            "Install Windows GDB",
+            "GDB native values and registry (Windows)",
+            "GDB complete worker unwind (Windows amd64 and 386)"])
+        self.assertTrue(all(step.get("run") or step.get("uses") for step in steps[start:]))
+
+    def test_source_abi_keeps_five_executed_llvm22_regressions(self):
+        job = load("llgo.yml")["jobs"]["source-abi"]
+        cases = ["sqlite", "purego", "turso", "libccallback", "crc32"]
+        self.assertEqual(job["strategy"], {
+            "fail-fast": "false", "matrix": {"case": cases}})
+        self.assertEqual(matrix_size(job), 5)
+        self.assertEqual(needs(job), ["prepare"])
+        self.assertEqual(job["if"], "needs.prepare.outputs.run_code_ci == 'true'")
+        self.assertEqual(job["runs-on"],
+                         "${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}")
+        self.assertEqual(job["timeout-minutes"], "45")
+        self.assertNotIn("continue-on-error", job)
+        for step in job["steps"]:
+            self.assertNotIn("continue-on-error", step)
+            self.assertNotIn("|| true", step.get("run", ""))
+        deps = next(step for step in job["steps"]
+                    if step.get("uses") == "./.github/actions/setup-deps")
+        self.assertEqual(deps["with"]["llvm-version"], "22")
+        self.assertNotIn("if", deps)
+        steps = {step.get("name"): step for step in job["steps"]}
+        build = steps["Build source ABI compiler"]
+        self.assertNotIn("if", build)
+        self.assertEqual(build["shell"], "bash")
+        self.assertIn('go build -o "$RUNNER_TEMP/llgo-bin/llgo" ./cmd/llgo', build["run"])
+        self.assertIn('echo "$RUNNER_TEMP/llgo-bin" >> "$GITHUB_PATH"', build["run"])
+        self.assertIn('echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"', build["run"])
+        test = steps["Test exact-version source ABI regression"]
+        self.assertNotIn("if", test)
+        self.assertEqual(test["id"], "source_abi")
+        self.assertEqual(test["shell"], "bash")
+        self.assertEqual(test["run"], "bash dev/test_source_abi.sh '${{ matrix.case }}'")
+        callback = steps["Test callback ABI and foreign-thread lifetime"]
+        self.assertEqual(callback["if"], "matrix.case == 'purego'")
+        self.assertEqual(callback["shell"], "bash")
+        self.assertEqual(callback["working-directory"], "runtime/_test/puregobridge")
+        self.assertEqual(callback["run"], "timeout -k 10s 10m llgo run .")
+        receipts = steps["Upload source ABI regression receipts"]
+        # !cancelled() also runs after a failed build/run or callback step.
+        self.assertEqual(receipts["if"],
+                         "${{ !cancelled() && steps.source_abi.outcome != 'skipped' }}")
+        self.assertEqual(receipts["uses"], "actions/upload-artifact@v7")
+        self.assertEqual(receipts["with"], {
+            "name": "source-abi-${{ matrix.case }}", "path": "_out/source-abi.*/",
+            "if-no-files-found": "error", "retention-days": "7"})
+        self.assertEqual([step["name"] for step in job["steps"][-4:]],
+                         [build["name"], test["name"], callback["name"], receipts["name"]])
+
+    def test_source_abi_script_retains_build_run_and_failure_receipts(self):
+        script = (WORKFLOWS.parent.parent / "dev/test_source_abi.sh").read_text()
+        self.assertIn("set -euo pipefail", script)
+        self.assertIn("cases=(sqlite purego turso libccallback crc32)", script)
+        self.assertIn('[[ $("$llgo" env LLGO_LLVM_VERSION) == 22.* ]]', script)
+        self.assertIn("grep -Eq 'clang version 22\\.'", script)
+        self.assertIn("compilers=(go llgo)", script)
+        self.assertIn("compilers=(go go-adapted llgo)", script)
+        self.assertIn('flags+=(-modfile="$stage/build.mod")', script)
+        self.assertIn('tool="$llgo"', script)
+        self.assertIn('timeout -k 10s 20m "$tool" build "${flags[@]}" -o "$binary" .', script)
+        self.assertIn('if ! timeout -k 10s 2m "$binary" > "$report/$name-$compiler.run.log" 2>&1; then\n'
+                      '        status=failed', script)
+        self.assertIn('else\n      status=failed\n    fi', script)
+        self.assertIn('"$name" "$compiler" "$phase" "$status" >> "$report/results.jsonl"', script)
+        self.assertIn('if [[ $status == failed ]]; then\n      failed=1', script)
+        self.assertTrue(script.rstrip().endswith('exit "$failed"'))
+        self.assertNotIn("|| true", script)
+
+    def test_zero_sized_reflection_gate_keeps_native_abi_boundary(self):
+        steps = load("llgo.yml")["jobs"]["native-integration"]["steps"]
+        test = next(step for step in steps
+                    if step.get("name") == "Test zero-sized reflection argument ABI")
+        # Windows AMD64 and 386 do not omit empty parameters; their existing
+        # ABI rules are not qualified by the newly added omission fix.
+        self.assertEqual(test["if"],
+                         "runner.os != 'Windows' || matrix.windows_arch == 'arm64'")
+        self.assertEqual(test["shell"], "bash")
+        self.assertEqual(test["working-directory"], "runtime/_test/reflectzeroabi")
+        self.assertEqual(test["run"].splitlines(), ["go run .", "llgo run ."])
+        self.assertNotIn("continue-on-error", test)
+
     def test_gdb_windows_acceptance_covers_both_abis_and_all_native_architectures(self):
-        job = load("llgo.yml")["jobs"]["llgo"]
+        job = load("llgo.yml")["jobs"]["native-integration"]
         entries = job["strategy"]["matrix"]["include"]
         windows = {(entry["windows_abi"], entry["windows_arch"])
                    for entry in entries if entry["os"].startswith("windows")}
@@ -175,6 +368,68 @@ class WorkflowContractTests(unittest.TestCase):
         execute.assert_called_once_with("sudo", ["sudo", "-n", "/native/gdb", "--version"])
         self.assertNotIn("continue-on-error", job)
         self.assertTrue(all("continue-on-error" not in step for step in job["steps"]))
+
+    def test_windows_386_atomic_contracts_build_on_host_and_execute_on_target(self):
+        job = load("llgo.yml")["jobs"]["llgo"]
+        lanes = [entry for entry in job["strategy"]["matrix"]["include"]
+                 if entry.get("windows_arch") == "386"]
+        self.assertEqual({entry["windows_abi"] for entry in lanes}, {"msvc", "mingw"})
+        self.assertEqual(len(lanes), 2)
+        self.assertTrue(all(entry["os"] == "windows-2022" and
+                            entry["host_go_arch"] == "x64" for entry in lanes))
+        steps = job["steps"]
+        build = next((step for step in steps if step.get("name") ==
+                      "Build host runner for Windows 386 atomic contracts"), None)
+        execute = next((step for step in steps if step.get("name") ==
+                        "Execute Windows 386 atomic contracts"), None)
+        self.assertIsNotNone(build, "the real 386 atomic roots have no CI host runner")
+        self.assertIsNotNone(execute, "the real 386 atomic roots have no native execution step")
+        activate = next(step for step in steps
+                        if step.get("name") == "Activate native Windows target")
+        self.assertLess(steps.index(build), steps.index(activate))
+        self.assertLess(steps.index(activate), steps.index(execute))
+        condition = "runner.os == 'Windows' && matrix.windows_arch == '386'"
+        for step in (build, execute):
+            self.assertEqual(step["if"], condition)
+            self.assertEqual(step["shell"], "pwsh")
+            self.assertNotIn("continue-on-error", step)
+            self.assertNotIn("GITHUB_ENV", step["run"])
+            self.assertIn('$ErrorActionPreference = "Stop"', step["run"])
+            self.assertIn("$LASTEXITCODE -ne 0", step["run"])
+
+        compile_script = build["run"]
+        self.assertIn('$env:GOARCH = "amd64"', compile_script)
+        self.assertIn("$env:CC = $env:LLGO_WINDOWS_HOST_CC", compile_script)
+        self.assertIn("$env:CXX = $env:LLGO_WINDOWS_HOST_CXX", compile_script)
+        self.assertIn('$hostBin = Join-Path $env:LLGO_MINGW_HOST_ROOT "bin"', compile_script)
+        self.assertIn('$env:CC = Join-Path $hostBin "clang.exe"', compile_script)
+        self.assertIn('$env:CXX = Join-Path $hostBin "clang++.exe"', compile_script)
+        self.assertIn("go test -c -tags=llgo_windows_386_cross", compile_script)
+        self.assertIn("./internal/build", compile_script)
+        self.assertIn("release-lib.ps1", compile_script)
+        self.assertIn("Copy-ReleaseDLLs", compile_script)
+        self.assertIn('-GoArch "amd64"', compile_script)
+        self.assertIn("-CheckOnly", compile_script)
+        self.assertNotIn("LLGO_WINDOWS_CROSS_CC", compile_script)
+
+        run_script = execute["run"]
+        self.assertIn("$env:LLGO_WINDOWS_CROSS_CC = $env:CC", run_script)
+        self.assertIn("$env:LLGO_WINDOWS_CROSS_CXX = $env:CXX", run_script)
+        self.assertNotIn("$env:CC =", run_script)
+        self.assertNotIn("$env:CXX =", run_script)
+        self.assertIn("^(TestRuntimeAtomic386(CompletePackage|ActualWrappersMatchOriginalGo)|TestMapsRuntime386CompletePackage)$",
+                      run_script)
+        self.assertIn('"-test.list=$selector"', run_script)
+        for argument in ("-test.run=$selector", "-test.v", "-test.count=1", "-test.timeout=30m"):
+            self.assertIn(f'"{argument}"', run_script)
+        self.assertIn('$output = @(& $runner @arguments 2>&1)', run_script)
+        self.assertIn("TestRuntimeAtomic386CompletePackage", run_script)
+        self.assertIn("TestRuntimeAtomic386ActualWrappersMatchOriginalGo", run_script)
+        self.assertIn("'TestMapsRuntime386CompletePackage'", run_script)
+        self.assertIn("$listed.Count -ne 3", run_script)
+        self.assertIn("Compare-Object", run_script)
+        self.assertIn("--- PASS:", run_script)
+        self.assertIn("--- (FAIL|SKIP):", run_script)
 
     def test_traceback_coverage_uses_bash_on_every_host(self):
         steps = load("go.yml")["jobs"]["test"]["steps"]
@@ -239,11 +494,14 @@ else:
                 # This contract checks suite ordering and Windows options.
                 # The real shard executor has separate end-to-end Go tests.
                 (helper.parent / "run_build_tests.py").write_text(r"""
-import argparse, subprocess, sys
+import argparse, os, subprocess, sys
 parser = argparse.ArgumentParser()
 parser.add_argument('--overlay')
 parser.add_argument('--ldflags')
+parser.add_argument('--require-arm64-atomic', action='store_true')
 args = parser.parse_args()
+if args.require_arm64_atomic != (os.environ['RUNNER_OS'] == 'macOS'):
+    sys.exit('native ARM64 atomic gate was omitted or applied to another host')
 command = ['go', 'test', '-json', '-coverpkg=./...', '-coverprofile=coverage-build.txt']
 if args.overlay:
     command.append('-overlay=' + args.overlay)
@@ -256,6 +514,7 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                                         env={**os.environ,
                                              "PATH": directory + os.pathsep + os.environ["PATH"],
                                              "RUNNER_OS": runner, "LLGO_GO_TEST_OVERLAY": overlay,
+                                             "RUNNER_ARCH": "ARM64" if runner == "macOS" else "X64",
                                              "TEST_GO_LOG": str(log), "TEST_GO_FAILURE": failure,
                                              "GITHUB_STEP_SUMMARY": str(summary)})
                 if failure == "main":
@@ -298,6 +557,30 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                 self.assertFalse(any("github.com/xgo-dev/llgo/internal/build" in args
                                      for args in calls))
                 self.assertTrue(all("-json" in args for args in calls))
+
+    def test_macos_build_suite_requires_arm64_native_atomic_acceptance(self):
+        job = load("go.yml")["jobs"]["test"]
+        entries = job["strategy"]["matrix"]["include"]
+        self.assertIn("macos-latest", [entry["os"] for entry in entries])
+        step = next(step for step in job["steps"] if step.get("id") == "test_coverage")
+        self.assertNotIn("continue-on-error", job)
+        self.assertNotIn("continue-on-error", step)
+        # Exercise the existing function without invoking a Go or LLVM process.
+        body = step["run"].split("run_build_suite() {", 1)[1].split("\n}", 1)[0]
+        function = "run_build_suite() {" + body + "\n}\n"
+        script = function + 'python() { printf "%s\\n" "$@"; }\nrun_build_suite\n'
+        for arch in ("ARM64", "X64", ""):
+            with self.subTest(arch=arch):
+                result = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                                        env={**os.environ, "RUNNER_OS": "macOS", "RUNNER_ARCH": arch,
+                                             "LLGO_GO_TEST_OVERLAY": ""}, timeout=10)
+                if arch == "ARM64":
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.splitlines().count("--require-arm64-atomic"), 1)
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn("native ARM64 atomic owners", result.stderr)
 
     def test_cross_host_windows_checks_keep_every_host_target_pair(self):
         job = load("llgo.yml")["jobs"]["windows-gnu-cross"]
@@ -467,6 +750,74 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                         if name not in {"prepare", "ci-gate", "release", "submit-winget"})
             with self.subTest(workflow=filename):
                 self.assertEqual(count, expected)
+
+    def test_release_builds_bound_nested_concurrency_without_dropping_targets(self):
+        jobs = load("release-build.yml")["jobs"]
+        for job, name in (("build", "Run GoReleaser (Build & Test)"),
+                          ("release", "Run GoReleaser (Release)")):
+            with self.subTest(job=job):
+                step = next(step for step in jobs[job]["steps"] if step.get("name") == name)
+                command = step["run"].replace("\\\n", " ")
+                build = next(line for line in command.splitlines()
+                             if "docker run" in line and "release --" in line)
+                self.assertIn("-e GOMAXPROCS=2", build)
+                self.assertIn("-e GOFLAGS=-p=2", build)
+                self.assertIn("--parallelism=1", build)
+                self.assertNotIn("--single-target", build)
+                self.assertNotIn("continue-on-error", step)
+        config = yaml.safe_load((WORKFLOWS.parent.parent / ".goreleaser.yaml").read_text())
+        self.assertCountEqual([target for build in config["builds"] for target in build["targets"]],
+                              ["darwin_amd64", "darwin_arm64", "linux_amd64", "linux_arm64"])
+
+    def test_self_host_bounds_builds_without_changing_runtime_acceptance(self):
+        job = load("llgo.yml")["jobs"]["self-host"]
+        steps = job["steps"]
+        named = {step.get("name"): step for step in steps}
+        first = named["Build stage 1 with Go"]
+        second = named["Build stage 2 with LLGo"]
+        self.assertIn('GOMAXPROCS=2 go build -p=2 -o "$stage1_dir/llgo" ./cmd/llgo',
+                      first["run"])
+        self.assertIn('build=("$stage1" build -p=1 -v -o "$stage2_dir/llgo" ./cmd/llgo)',
+                      second["run"])
+        self.assertIn('GOMAXPROCS=2 /usr/bin/time -v "${build[@]}"', second["run"])
+        self.assertIn('GOMAXPROCS=2 "${build[@]}"', second["run"])
+        self.assertIn('[[ "$RUNNER_OS" == Linux && -x /usr/bin/time ]]', second["run"])
+        self.assertIn('::warning::GNU time unavailable; running the unchanged bootstrap command',
+                      second["run"])
+        self.assertIn('"$stage2_dir/llgo" version', second["run"])
+        self.assertIn('file "$stage2_dir/llgo"', second["run"])
+        for scope in [job, *steps]:
+            self.assertFalse({"GOMAXPROCS", "GOFLAGS", "GOMEMLIMIT"} &
+                             set(scope.get("env", {})))
+        for step in (first, second):
+            self.assertNotIn("continue-on-error", step)
+            self.assertNotIn("|| true", step["run"])
+        smoke = named["Test with stage 2"]["run"]
+        demos = named["Run demos with stage 2"]["run"]
+        self.assertIn('LLGO_BUILD_CACHE=off llgo test -timeout=10m ./test/std/io/ioutil', smoke)
+        self.assertIn("-run '^TestRuntimeGMPLinks$' ./test/llgoext", smoke)
+        self.assertIn('LLGO_BUILD_CACHE=off llgo run ./stdlib', demos)
+        self.assertIn('LLGO_BUILD_CACHE=off llgo run ./hello', demos)
+        for command in (smoke, demos):
+            self.assertNotIn("-p=", command)
+            self.assertNotIn("GOMAXPROCS", command)
+
+    def test_self_host_retains_before_and_after_resource_evidence(self):
+        steps = load("llgo.yml")["jobs"]["self-host"]["steps"]
+        named = {step.get("name"): step for step in steps}
+        before = named.get("Record self-host resources before build")
+        after = named.get("Record self-host resources after build")
+        self.assertIsNotNone(before, "self-host lacks actual pre-build resource evidence")
+        self.assertIsNotNone(after, "self-host lacks post-failure resource evidence")
+        self.assertEqual(before["if"], "runner.os == 'Linux'")
+        self.assertEqual(after["if"], "always() && runner.os == 'Linux'")
+        self.assertLess(steps.index(before), steps.index(named["Build stage 1 with Go"]))
+        self.assertGreater(steps.index(after), steps.index(named["Run demos with stage 2"]))
+        self.assertEqual(before["run"], after["run"])
+        for source in ("/proc/self/cgroup", "/proc/self/mountinfo", "/proc/meminfo",
+                       "memory.events", "memory.max", "memory.current"):
+            self.assertIn(source, before["run"])
+        self.assertIn("timeout 10s", before["run"])
 
     def test_windows_release_covers_all_architectures_with_native_x86_toolchains(self):
         jobs = load("release-build.yml")["jobs"]
@@ -709,15 +1060,34 @@ sys.exit(subprocess.call(command + ['./internal/build']))
         self.assertEqual(jobs["test-linux-distributions"]["strategy"]["matrix"]["include"],
                          [{"os": "ubuntu-24.04", "goarch": "amd64"}, {"os": "ubuntu-24.04-arm", "goarch": "arm64"}])
         self.assertEqual(jobs["release"]["runs-on"], "ubuntu-latest")
+
+    def test_fedora_shell_exit_uses_standard_host_without_reducing_coverage(self):
         workflow = load("installer-shells.yml")
         self.assertEqual(workflow["jobs"]["prepare"]["uses"], PREPARE)
         installer = workflow["jobs"]["installer-shells"]
         self.assertIn("prepare", needs(installer))
         self.assertNotIn("if", installer)
+        self.assertNotIn("continue-on-error", installer)
+        self.assertEqual(installer["timeout-minutes"], "20")
         self.assertEqual(installer["runs-on"],
-                         "${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}")
-        self.assertCountEqual(installer["strategy"]["matrix"]["image"],
+                         "${{ matrix.runner || fromJSON(needs.prepare.outputs.linux_large_runner) }}")
+        strategy = installer["strategy"]
+        self.assertEqual(strategy["fail-fast"], "false")
+        matrix = strategy["matrix"]
+        self.assertNotIn("exclude", matrix)
+        self.assertCountEqual(matrix["image"],
                               ["ubuntu:24.04", "debian:12", "fedora:latest", "archlinux:latest", "alpine:latest", "opensuse/tumbleweed:latest"])
+        self.assertEqual(matrix["include"],
+                         [{"image": "fedora:latest", "runner": "ubuntu-24.04"}])
+        self.assertEqual(matrix_size(installer), 6)
+        steps = installer["steps"]
+        self.assertEqual(len(steps), 2)
+        startup = steps[1]
+        self.assertNotIn("if", startup)
+        self.assertNotIn("continue-on-error", startup)
+        self.assertEqual(startup["env"], {"INSTALLER_TEST_IMAGE": "${{ matrix.image }}"})
+        self.assertEqual(startup["run"],
+                         'bash test/installer/install_shell_distro_test.sh "$INSTALLER_TEST_IMAGE"')
 
     def test_prepare_exports_each_decision_and_has_no_caller_concurrency(self):
         workflow = load("ci-prepare.yml")
