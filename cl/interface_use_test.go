@@ -32,7 +32,7 @@ func Composite(x any) (struct{}, bool) { v, ok := x.(struct{}); return v, ok }
 			prog := newLLSSAProgForTarget(t, &llssa.Target{GOARCH: tc.arch})
 			defer prog.Dispose()
 			prog.EnableDeadcodeDrop(tc.enabled)
-			pkg, err := NewPackage(prog, ssapkg, files)
+			pkg, err := compileTestPackage(prog, ssapkg, files)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -82,7 +82,7 @@ func TestInterfaceKindUsedInvalidArguments(t *testing.T) {
 					t.Fatalf("diagnostic = %q, want %q", got, tc.want)
 				}
 			}()
-			if _, err := NewPackage(prog, ssapkg, files); err != nil {
+			if _, err := compileTestPackage(prog, ssapkg, files); err != nil {
 				panic(err)
 			}
 		})

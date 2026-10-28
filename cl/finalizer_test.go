@@ -53,6 +53,10 @@ func nativeValue(p *Item, f nativeCallback) { runtime.SetFinalizer(p, f) }
 			defer prog.Dispose()
 			prog.EnableDeadcodeDrop(tc.dce)
 			prog.EnableGCRoots(tc.gc)
+			if err := prepareTestSyntax(prog, ssapkg, files, Options{}); err != nil {
+				t.Fatal(err)
+			}
+			prog.Directives().Freeze()
 			pkg, _, err := NewPackageExWithEmbedMetaOptions(prog, nil, nil, nil, ssapkg, files, nil, false, Options{DebuggerFrames: tc.debug})
 			if err != nil {
 				t.Fatal(err)

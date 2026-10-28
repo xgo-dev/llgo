@@ -32,7 +32,7 @@ func Capture() func() {
 		t.Run(target.GOOS+"/"+target.GOARCH+"/"+target.LLVMTarget, func(t *testing.T) {
 			prog := newLLSSAProgForTarget(t, &target)
 			defer prog.Dispose()
-			pkg, err := NewPackage(prog, ssaPkg, files)
+			pkg, err := compileTestPackage(prog, ssaPkg, files)
 			if err != nil {
 				t.Fatal(err)
 			}

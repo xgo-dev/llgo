@@ -7,6 +7,8 @@ import (
 	"go/token"
 	"go/types"
 	"testing"
+
+	"github.com/xgo-dev/llgo/internal/directive"
 )
 
 type testImporter map[string]*types.Package
@@ -36,7 +38,7 @@ func testCheck(t *testing.T, imports testImporter, path, source string, rewrite 
 		t.Fatal(err)
 	}
 	if rewrite {
-		changed, _, err := Rewrite(fset, pkg, info, []*ast.File{file})
+		changed, _, err := Rewrite(fset, pkg, info, []*ast.File{file}, new(directive.Index))
 		if err != nil {
 			t.Fatal(err)
 		}

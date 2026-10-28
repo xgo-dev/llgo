@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/directive"
+
 	"golang.org/x/tools/go/ast/astutil"
 )
 
@@ -24,7 +26,7 @@ import (
 // Rewriting mutates files in place. On error, callers must treat both syntax
 // and type information as invalid; the loader marks the package IllTyped and
 // excludes it from its cache before any downstream compilation.
-func Rewrite(fset *token.FileSet, pkg *types.Package, info *types.Info, files []*ast.File) (changed bool, imports []string, err error) {
+func Rewrite(fset *token.FileSet, pkg *types.Package, info *types.Info, files []*ast.File, index *directive.Index) (changed bool, imports []string, err error) {
 	if !importsSIMD(pkg, make(map[*types.Package]bool)) || pkg.Path() == bridgePath || pkg.Path() == "simd/archsimd" {
 		return false, nil, nil
 	}
@@ -54,10 +56,10 @@ func Rewrite(fset *token.FileSet, pkg *types.Package, info *types.Info, files []
 		}
 	}
 	a := analyze(pkg, info, files)
-	if err := a.validateGlobalBindings(fset, files); err != nil {
+	if err := a.validateGlobalBindings(fset, index.Files(files)); err != nil {
 		return false, nil, err
 	}
-	r := &rewriter{fset: fset, a: a, imports: make(map[string]bool), dependencies: make(map[ast.Node][]*types.Var)}
+	r := &rewriter{directives: index, fset: fset, a: a, imports: make(map[string]bool), dependencies: make(map[ast.Node][]*types.Var)}
 	// Record initialization edges before any original body is replaced.
 	for _, file := range files {
 		for _, decl := range file.Decls {
@@ -198,6 +200,7 @@ func importsSIMD(pkg *types.Package, seen map[*types.Package]bool) bool {
 }
 
 type rewriter struct {
+	directives   *directive.Index
 	fset         *token.FileSet
 	a            *analysis
 	imports      map[string]bool
@@ -388,14 +391,17 @@ func (f *fileRewriter) specialize(node ast.Node, width int) ast.Node {
 	if fn, ok := result.(*ast.FuncDecl); ok && fn.Doc != nil {
 		// Export/link bindings belong to the retained entry declaration.
 		// Variants are implementation details and have different names.
+		bindings := make(map[token.Pos]bool)
+		for _, d := range f.directives.Group(node.(*ast.FuncDecl).Doc).Bindings {
+			if d.Name == "export" || d.Name == "go:linkname" || d.Name == "llgo:link" {
+				bindings[d.Pos] = true
+			}
+		}
 		comments := fn.Doc.List[:0]
 		for _, comment := range fn.Doc.List {
-			text := strings.TrimSpace(strings.TrimPrefix(comment.Text, "//"))
-			fields := strings.Fields(text)
-			if len(fields) != 0 && (fields[0] == "export" || fields[0] == "go:linkname" || fields[0] == "llgo:link") {
-				continue
+			if !bindings[comment.Pos()] {
+				comments = append(comments, comment)
 			}
-			comments = append(comments, comment)
 		}
 		fn.Doc.List = comments
 	}

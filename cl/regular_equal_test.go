@@ -38,7 +38,7 @@ func TestRegularMemoryEqualLowering(t *testing.T) {
 			prog := newLLSSAProgForTarget(t, &llssa.Target{GOARCH: tc.arch})
 			defer prog.Dispose()
 			prog.EnableDeadcodeDrop(tc.enabled)
-			pkg, err := NewPackage(prog, ssapkg, files)
+			pkg, err := compileTestPackage(prog, ssapkg, files)
 			if err != nil {
 				t.Fatal(err)
 			}

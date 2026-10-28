@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/xgo-dev/llgo/internal/directive"
 )
 
 func TestTypedRewriteBeforeImporters(t *testing.T) {
@@ -19,14 +21,27 @@ func TestTypedRewriteBeforeImporters(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "dep"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	writeLoadTestFile(t, filepath.Join(dir, "dep", "dep.go"), "package dep\nvar Value = 1\n")
+	writeLoadTestFile(t, filepath.Join(dir, "dep", "dep.go"), "package dep\nvar Value = 1\n//go:noinline\nfunc F() {}\n")
 	writeLoadTestFile(t, filepath.Join(dir, "main.go"), "package main\nimport \"example.com/rewrite/dep\"\nvar Value = dep.Value\n")
 	dedup := NewDeduper()
+	index := new(directive.Index)
+	dedup.SetDirectives(index)
 	var original *types.Package
 	var preloads int
 	dedup.SetPreload(func(pkg *Package) {
 		if pkg.Name == "dep" {
 			preloads++
+			records := index.File(pkg.Syntax[0])
+			fn := pkg.Syntax[0].Decls[1].(*ast.FuncDecl)
+			if got := records.Functions[fn]; got.NoInline != (preloads == 1) || got.NoSplit != (preloads == 2) {
+				t.Fatalf("preload %d used stale directives: %+v", preloads, got)
+			}
+			if preloads == 2 {
+				generated := pkg.Syntax[0].Decls[2].(*ast.FuncDecl)
+				if !records.Functions[generated].NoInline {
+					t.Fatal("generated directive missing")
+				}
+			}
 		}
 	})
 	dedup.SetRewrite(func(pkg *Package) (bool, error) {
@@ -39,6 +54,12 @@ func TestTypedRewriteBeforeImporters(t *testing.T) {
 		}
 		value := pkg.Syntax[0].Decls[0].(*ast.GenDecl).Specs[0].(*ast.ValueSpec).Values[0].(*ast.BasicLit)
 		value.Kind, value.Value = token.STRING, `"rewritten"`
+		fn := pkg.Syntax[0].Decls[1].(*ast.FuncDecl)
+		fn.Doc.List[0].Text = "//go:nosplit"
+		pkg.Syntax[0].Decls = append(pkg.Syntax[0].Decls, &ast.FuncDecl{
+			Name: ast.NewIdent("Generated"), Type: &ast.FuncType{Params: &ast.FieldList{}}, Body: &ast.BlockStmt{},
+			Doc: &ast.CommentGroup{List: []*ast.Comment{{Text: "//go:noinline"}}},
+		})
 		return true, nil
 	})
 	pkgs, err := LoadEx(dedup, nil, loadTestConfig(dir), ".")
@@ -270,7 +291,7 @@ const x = ""`,
 				{Pos: filename + ":" + strconv.Itoa(tt.errorLine) + ":20", Msg: embedPatternDriverDiagnostic},
 				{Pos: filename + ":1:1", Msg: "unrelated driver diagnostic"},
 			}
-			normalizeEmbedDriverDiagnostics(errs, fset, []*ast.File{file}, tt.goVersion)
+			normalizeEmbedDriverDiagnostics(errs, fset, []*ast.File{file}, tt.goVersion, new(directive.Index))
 			if errs[0].Msg != tt.want {
 				t.Fatalf("normalized embed error = %q, want %q", errs[0].Msg, tt.want)
 			}
@@ -305,10 +326,10 @@ func TestEmbedDiagnosticHelperBoundaries(t *testing.T) {
 	})
 
 	t.Run("nil syntax context", func(t *testing.T) {
-		if got := embedDirectiveContextAt(nil, &ast.File{}, "case.go:1:1"); got != embedDirectiveUnknown {
+		if got := embedDirectiveContextAt(nil, &ast.File{}, "case.go:1:1", new(directive.Index)); got != embedDirectiveUnknown {
 			t.Fatalf("nil fileset context = %v, want unknown", got)
 		}
-		if got := embedDirectiveContextAt(token.NewFileSet(), nil, "case.go:1:1"); got != embedDirectiveUnknown {
+		if got := embedDirectiveContextAt(token.NewFileSet(), nil, "case.go:1:1", new(directive.Index)); got != embedDirectiveUnknown {
 			t.Fatalf("nil file context = %v, want unknown", got)
 		}
 	})

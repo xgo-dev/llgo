@@ -19,7 +19,7 @@ import (
 // location into width-specific globals needs a matching ABI on both sides of
 // the binding, which Midway does not currently provide. Reject it instead of
 // silently allocating unrelated storage for the concrete references.
-func (a *analysis) validateGlobalBindings(fset *token.FileSet, files []*ast.File) error {
+func (a *analysis) validateGlobalBindings(fset *token.FileSet, files []*directive.File) error {
 	var packages map[string]*types.Package
 	var collect func(*types.Package)
 	collect = func(pkg *types.Package) {
@@ -38,7 +38,7 @@ func (a *analysis) validateGlobalBindings(fset *token.FileSet, files []*ast.File
 	for _, file := range files {
 		// Export directives bind the attached declaration, including when
 		// ExportRename gives its external symbol a different name.
-		for _, decl := range file.Decls {
+		for _, decl := range file.Syntax.Decls {
 			gd, ok := decl.(*ast.GenDecl)
 			if !ok || gd.Tok != token.VAR || len(gd.Specs) != 1 {
 				continue
@@ -47,14 +47,14 @@ func (a *analysis) validateGlobalBindings(fset *token.FileSet, files []*ast.File
 			if len(vs.Names) != 1 || !dependent(a.info.Defs[vs.Names[0]]) {
 				continue
 			}
-			for _, d := range directive.ParseGroup(gd.Doc) {
+			for _, d := range file.Group(gd.Doc).Items {
 				if d.Name == "export" {
 					return fmt.Errorf("%s: cannot specialize export binding for SIMD-dependent global %s", fset.Position(d.Pos), vs.Names[0].Name)
 				}
 			}
 		}
-		for _, group := range file.Comments {
-			for _, d := range directive.ParseGroup(group) {
+		for _, group := range file.Syntax.Comments {
+			for _, d := range file.Group(group).Items {
 				if d.Name != "go:linkname" && d.Name != "llgo:link" {
 					continue
 				}
@@ -92,10 +92,10 @@ func (a *analysis) validateGlobalBindings(fset *token.FileSet, files []*ast.File
 // Embedding is a storage initializer, not an ordinary RHS expression. Preserve
 // only its directives on the concrete globals; copying arbitrary declaration
 // metadata could also copy external bindings to the new storage.
-func embedDoc(groups ...*ast.CommentGroup) *ast.CommentGroup {
+func (f *fileRewriter) embedDoc(groups ...*ast.CommentGroup) *ast.CommentGroup {
 	var comments []*ast.Comment
 	for _, group := range groups {
-		for _, d := range directive.ParseGroup(group) {
+		for _, d := range f.directives.Group(group).Items {
 			if d.Name == "go:embed" {
 				comments = append(comments, &ast.Comment{Slash: d.Pos, Text: d.Raw})
 			}
@@ -174,7 +174,7 @@ func (f *fileRewriter) global(decl *ast.GenDecl, spec *ast.ValueSpec) (extra []a
 			continue
 		}
 		for _, width := range widths {
-			extra = append(extra, &ast.GenDecl{Doc: embedDoc(decl.Doc, spec.Doc), TokPos: pos, Tok: token.VAR, Specs: []ast.Spec{&ast.ValueSpec{
+			extra = append(extra, &ast.GenDecl{Doc: f.embedDoc(decl.Doc, spec.Doc), TokPos: pos, Tok: token.VAR, Specs: []ast.Spec{&ast.ValueSpec{
 				Names: []*ast.Ident{ident(id.Name+suffix(width), pos)}, Type: f.typeExpr(obj.Type(), width, pos),
 			}}})
 		}

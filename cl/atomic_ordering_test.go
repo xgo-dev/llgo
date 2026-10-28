@@ -34,6 +34,10 @@ func Asynchronous(p *uintptr, v uintptr) { go storeUnordered(p, v) }
 			ssaPkg, _, files := buildGoSSAPkg(t, source)
 			prog := newLLSSAProgForTarget(t, &target)
 			defer prog.Dispose()
+			if err := prepareTestSyntax(prog, ssaPkg, files, Options{}); err != nil {
+				t.Fatal(err)
+			}
+			prog.Directives().Freeze()
 			pkg, err := NewPackage(prog, ssaPkg, files)
 			if err != nil {
 				t.Fatal(err)

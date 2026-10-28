@@ -23,8 +23,10 @@ import (
 	"log"
 	"runtime"
 	"strconv"
+	"strings"
 	"unsafe"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/optlevel"
@@ -493,6 +495,16 @@ func (p Program) isNoInterfaceMethod(fn *types.Func) bool {
 	if !ok || sig.Recv() == nil {
 		return false
 	}
+	if records := p.effectivePackageDirectives(fn.Pkg()); records != nil {
+		if r, ok := records.Objects[fn.Origin()].(*directive.FunctionDecl); ok {
+			return r.NoInterface
+		}
+		name := strings.TrimPrefix(FuncName(fn.Pkg(), fn.Name(), sig.Recv(), true), PathOf(fn.Pkg())+".")
+		if r, ok := records.Names[name].(*directive.FunctionDecl); ok {
+			return r.NoInterface
+		}
+		return false
+	}
 	p.packageSyntax.mu.RLock()
 	_, ok = p.packageSyntax.noInterface[FuncName(fn.Pkg(), fn.Name(), sig.Recv(), true)]
 	p.packageSyntax.mu.RUnlock()
@@ -510,8 +522,8 @@ func (p Program) SetRuntime(runtime any) {
 	}
 }
 
-// SetTypeCallConv sets the default calling convention for the named type, controlling
-// how that type (and functions using it) are lowered.
+// SetTypeCallConv updates the compatibility index for types in packages
+// without directive records. It does not override package directive records.
 // For a programmatically constructed native struct, supply its original fields
 // so types.Sizes.Offsetsof can identify the enclosing layout without a named
 // type or source positions. Source loaders instead call SetNativeStructFields
@@ -528,6 +540,8 @@ func (p Program) SetTypeCallConv(typFullName string, cc CallConv, fields ...*typ
 	p.packageSyntax.mu.Unlock()
 }
 
+// SetLinkname updates the global index used by Linkname and by LinknameFor for
+// packages without directive records. It does not override package records.
 func (p Program) SetLinkname(name, link string) {
 	p.packageSyntax.mu.Lock()
 	p.packageSyntax.linknames[name] = link

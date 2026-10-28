@@ -32,7 +32,6 @@ import (
 
 	"github.com/xgo-dev/llgo/cl/blocks"
 	"github.com/xgo-dev/llgo/cl/ssawrap"
-	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/goembed"
 	"github.com/xgo-dev/llgo/internal/typepatch"
@@ -75,9 +74,6 @@ type Options struct {
 	// DebuggerFrames retains logical stacks for every eligible function in
 	// opt-in Wasm debugger builds, including parked goroutines.
 	DebuggerFrames bool
-	// PreloadedSyntax means all Program-side source metadata was collected
-	// before lowering and is now shared read-only by backend Programs.
-	PreloadedSyntax bool
 	// ReceiverNilChecks retains pointer-method selection semantics erased
 	// during Go SSA construction. It is collected from checked source info.
 	ReceiverNilChecks *ReceiverNilChecks
@@ -182,6 +178,7 @@ type context struct {
 	vargs                map[*ssa.Alloc][]llssa.Expr // varargs
 	funcs                map[*ssa.Function]llssa.Function
 	variadicErrors       map[*ssa.Function]error
+	sourceFunctions      map[*ssa.Function]sourceFunction
 	linkOnceFns          map[*ssa.Function]none
 	stackDefers          map[*ssa.Function]bool
 	anonDefers           map[*ssa.Function]bool
@@ -597,7 +594,8 @@ func hasInstantiatedRecv(recv *types.Var) bool {
 }
 
 func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Function, llssa.PyObjRef, int) {
-	pkgTypes, name, ftype := p.funcName(f)
+	source := p.sourceFunction(f)
+	pkgTypes, name, ftype, _ := p.funcName(source)
 	simd, simdDecl := lookupSIMD(f, p.prog.Target().GOARCH)
 	simdDecl = simdDecl && f.Pkg == p.goPkg
 	if simdDecl {
@@ -631,13 +629,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	fn := pkg.FuncOf(name)
 	hasFreeVars := len(f.FreeVars) > 0
 	elideFreeVarEnv := p.canElideZeroSizedClosureEnv(f)
-	hasExplicitEnv := false
-	// ParsePkgSyntax is the sole //llgo:env extractor. Lowering only consumes
-	// its source-declaration cache; imported env entries use NewEnvFunc.
-	if decl, ok := f.Syntax().(*ast.FuncDecl); ok {
-		fullName := declarationFuncName(llssa.PathOf(pkgTypes), decl, f.Object(), f.Signature.Recv())
-		hasExplicitEnv = p.prog.HasClosureEnvDirective(p.goProg.Fset, fullName, decl.Pos())
-	}
+	hasExplicitEnv := source.Decl != nil && source.Decl.ClosureEnv
 	hasCtx := hasFreeVars && !elideFreeVarEnv || hasExplicitEnv
 	var ctx *types.Var
 	if elideFreeVarEnv {
@@ -681,15 +673,12 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		}
 	}
 	p.markSIMDFMV(fn, f)
-	if p.prog.Target().GOARCH == "wasm" {
-		if decl, ok := f.Syntax().(*ast.FuncDecl); ok {
-			fullName := declarationFuncName(llssa.PathOf(pkgTypes), decl, f.Object(), f.Signature.Recv())
-			if module, importName, ok := p.prog.WasmImport(fullName); ok {
-				fn.SetWasmImport(module, importName)
-			}
+	if p.prog.Target().GOARCH == "wasm" && source.Decl != nil {
+		if w := source.Decl.WasmImport; w != nil {
+			fn.SetWasmImport(w.Module, w.Name)
 		}
 	}
-	noInlineDirective := hasNoInlineDirective(f)
+	noInlineDirective := source.Decl != nil && source.Decl.NoInline
 	runtimeStackNoInline := needsRuntimeStackNoInline(pkgTypes, f)
 	pcLineNoInline := p.needsPCLineNoInline(f)
 	usesRecover := p.functionUsesRecover(f)
@@ -814,7 +803,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			p.prepareExportedLocalContext(f)
 			p.bvals = make(map[ssa.Value]llssa.Expr)
 			p.methodNilDerefChecks, p.recvNilDerefChecks = collectMethodNilDerefChecks(f, p.options.ReceiverNilChecks)
-			p.prepareCooperativeSafepoints(f, isCgo)
+			p.prepareCooperativeSafepoints(source, isCgo)
 			p.prepareGCRoots(f, hasCtx)
 			p.initGCRoots(b, f)
 			off := make([]int, len(f.Blocks))
@@ -860,23 +849,6 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 // affected.
 func funcInfoDisplayName(goName string) string {
 	return normalizeRuntimeAnonFuncName(goName)
-}
-
-func hasNoInlineDirective(f *ssa.Function) bool {
-	return hasFuncDirective(f, "go:noinline")
-}
-
-func hasFuncDirective(f *ssa.Function, name string) bool {
-	decl, _ := f.Syntax().(*ast.FuncDecl)
-	if decl == nil || decl.Doc == nil {
-		return false
-	}
-	for _, item := range directive.ParseGroup(decl.Doc) {
-		if item.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 func needsRuntimeStackNoInline(pkg *types.Package, f *ssa.Function) bool {
@@ -1296,7 +1268,7 @@ func (p *context) isDirectTailUnreachableCall(instr ssa.Instruction, tail []ssa.
 	if !ok {
 		return false
 	}
-	_, name, kind := p.funcName(fn)
+	_, name, kind, _ := p.funcName(p.sourceFunction(fn))
 	if kind != llgoInstr || llgoInstrs[name] != llgoUnreachable {
 		return false
 	}
@@ -2539,7 +2511,7 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 			}
 		}
 	case *ssa.Function:
-		if _, _, ftype := p.funcName(v); ftype == llgoInstr {
+		if _, _, ftype, _ := p.funcName(p.sourceFunction(v)); ftype == llgoInstr {
 			v = ssawrap.MakeCallWrapper(p.goProg, v)
 		}
 		aFn, pyFn, _ := p.compileFunction(v)
@@ -2854,7 +2826,7 @@ type Patch struct {
 // Patches is patches of some packages.
 type Patches = map[string]Patch
 
-// NewPackage compiles a Go package to LLVM IR package.
+// NewPackage compiles a Go package with prepared directive records to LLVM IR.
 // Deprecated: use NewPackageExWithEmbedMetaOptions with explicit Options.
 func NewPackage(prog llssa.Program, pkg *ssa.Package, files []*ast.File) (ret llssa.Package, err error) {
 	ret, _, err = NewPackageEx(prog, nil, nil, pkg, files)
@@ -2900,7 +2872,9 @@ func NewPackageExWithEmbedMeta(prog llssa.Program, ct *CallerTracking, patches P
 }
 
 // NewPackageExWithEmbedMetaOptions is NewPackageExWithEmbedMeta with explicit
-// per-package frontend options.
+// per-package frontend options. Callers must prepare directive records for the
+// package and its source dependencies with ParsePkgSyntaxWithOptions and bind
+// them to checked objects before compiling. Compilation does not discover directives.
 func NewPackageExWithEmbedMetaOptions(prog llssa.Program, ct *CallerTracking, patches Patches, rewrites map[string]string, pkg *ssa.Package, files []*ast.File, embedMap goembed.VarMap, metaCollect bool, options Options) (ret llssa.Package, externs []string, err error) {
 	return newPackageEx(prog, ct, patches, rewrites, pkg, files, &embedMap, metaCollect, options)
 }
@@ -2923,10 +2897,8 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		pkg.Pkg = pkgTypes
 		patch.Alt.Pkg = pkgTypes
 	}
-	if !options.PreloadedSyntax {
-		if err = ParsePkgSyntaxWithOptions(prog, pkgProg.Fset, pkgTypes, files, options); err != nil {
-			return nil, nil, err
-		}
+	if prog.PackageDirectives(pkgTypes) == nil {
+		return nil, nil, fmt.Errorf("package %s: prepare directive records before compilation", pkgPath)
 	}
 	if err = prog.ValidateLocalitiesFor(pkgTypes); err != nil {
 		return nil, nil, err
@@ -2944,7 +2916,7 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 	}
 
 	if ct == nil {
-		ct = NewCallerTracking()
+		ct = NewCallerTracking(prog.Directives())
 	}
 	ctx := &context{
 		prog:             prog,
@@ -2974,13 +2946,13 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 	if embedMap != nil {
 		ctx.embedMap = *embedMap
 	} else {
-		ctx.embedMap, err = goembed.LoadDirectives(ctx.fset, files)
+		ctx.embedMap, err = goembed.LoadRecords(ctx.fset, prog.Directives().Files(files))
 		if err != nil {
 			panic(err)
 		}
 	}
 	ctx.initPyModule()
-	ctx.initFiles(pkgPath, files, cPkg)
+	ctx.initDirectives(pkgPath)
 	ctx.prog.SetPatch(ctx.patchType)
 	ctx.prog.SetCompileMethods(ctx.checkCompileMethods)
 	ret.SetResolveLinkname(ctx.resolveLinkname)

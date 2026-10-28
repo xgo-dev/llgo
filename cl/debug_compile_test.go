@@ -88,6 +88,10 @@ func capture(seed int) func() int {
 		OptLevel: optlevel.O0,
 	})
 	defer prog.Dispose()
+	if err := prepareTestSyntax(prog, ssaPkg, []*ast.File{file}, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	prog.Directives().Freeze()
 	pkg, _, err := newPackageEx(prog, nil, nil, nil, ssaPkg, []*ast.File{file}, nil, false, Options{
 		Debug:        true,
 		DebugSymbols: true,
@@ -128,6 +132,10 @@ func capture(seed int) func() int {
 		OptLevel: optlevel.O2,
 	})
 	defer optimizedProg.Dispose()
+	if err := prepareTestSyntax(optimizedProg, ssaPkg, []*ast.File{file}, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	optimizedProg.Directives().Freeze()
 	optimizedPkg, _, err := newPackageEx(optimizedProg, nil, nil, nil, ssaPkg, []*ast.File{file}, nil, false, Options{Debug: true, DebugSymbols: true})
 	if err != nil {
 		t.Fatal(err)
@@ -182,6 +190,10 @@ func capture(seed int) func() int {
 					target.OptLevel = level
 					prog := newLLSSAProgForTarget(t, &target)
 					defer prog.Dispose()
+					if err := prepareTestSyntax(prog, ssaPkg, []*ast.File{file}, Options{}); err != nil {
+						t.Fatal(err)
+					}
+					prog.Directives().Freeze()
 					pkg, _, err := newPackageEx(prog, nil, nil, nil, ssaPkg, []*ast.File{file}, nil, false, Options{Debug: true, DebugSymbols: true})
 					if err != nil {
 						t.Fatal(err)

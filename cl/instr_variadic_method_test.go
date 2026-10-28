@@ -81,7 +81,7 @@ func TestCVariadicMethodWrapperForwarding(t *testing.T) {
 			target.OptLevel = optlevel.O0
 			prog := newLLSSAProgForTarget(t, &target)
 			defer prog.Dispose()
-			pkg, err := NewPackage(prog, ssaPkg, files)
+			pkg, err := compileTestPackage(prog, ssaPkg, files)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -121,7 +121,7 @@ func use(w *Wrapper) { w.Check(7, 1.5, new(int8), int32(42)) }
 	ssaPkg, _, files := buildGoSSAPkg(t, source)
 	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64", OptLevel: optlevel.O0})
 	defer prog.Dispose()
-	pkg, err := NewPackage(prog, ssaPkg, files)
+	pkg, err := compileTestPackage(prog, ssaPkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func use(w *Wrapper) int32 { return w.Check(int32(42)) }
 	ssaPkg, _, files := buildGoSSAPkg(t, source)
 	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
-	pkg, err := NewPackage(prog, ssaPkg, files)
+	pkg, err := compileTestPackage(prog, ssaPkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestCVariadicIncompatibleSignatureIR(t *testing.T) {
 			ssaPkg, _, files := buildGoSSAPkg(t, source)
 			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
 			defer prog.Dispose()
-			pkg, err := NewPackage(prog, ssaPkg, files)
+			pkg, err := compileTestPackage(prog, ssaPkg, files)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -245,7 +245,7 @@ type Alias = Stringer
 				ssaPkg, _, files := buildGoSSAPkg(t, declarations+use.source)
 				prog := newLLSSAProgForTarget(t, &target)
 				defer prog.Dispose()
-				pkg, err := NewPackage(prog, ssaPkg, files)
+				pkg, err := compileTestPackage(prog, ssaPkg, files)
 				if err != nil {
 					t.Fatalf("unrelated interface exposed the C variadic method: %v", err)
 				}
@@ -297,7 +297,7 @@ func TestCVariadicUnsupportedWrapperUses(t *testing.T) {
 			ssaPkg, _, files := buildGoSSAPkg(t, source)
 			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
 			defer prog.Dispose()
-			_, err := NewPackage(prog, ssaPkg, files)
+			_, err := compileTestPackage(prog, ssaPkg, files)
 			if err == nil {
 				t.Fatal("unsupported incoming ellipsis was silently accepted")
 			}
@@ -328,7 +328,7 @@ func use(w *Wrapper) Checker { return w }
 			ssaPkg, _, files := buildGoSSAPkg(t, source)
 			prog := newLLSSAProgForTarget(t, &target)
 			defer prog.Dispose()
-			_, err := NewPackage(prog, ssaPkg, files)
+			_, err := compileTestPackage(prog, ssaPkg, files)
 			if err == nil {
 				t.Fatal("unqualified target silently accepted incoming C ellipsis")
 			}
@@ -361,7 +361,7 @@ func use(w *Wrapper) int32 { return w.Check(int32(100), int32(200)) }
 			ssaPkg, _, files := buildGoSSAPkg(t, source)
 			prog := newLLSSAProgForTarget(t, &target)
 			defer prog.Dispose()
-			pkg, err := NewPackage(prog, ssaPkg, files)
+			pkg, err := compileTestPackage(prog, ssaPkg, files)
 			if err != nil {
 				t.Fatalf("explicit C arguments do not require variadic forwarding: %v", err)
 			}

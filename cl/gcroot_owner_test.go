@@ -100,6 +100,10 @@ func static() { use(&global.A); use(&global.B) }
 			defer prog.Dispose()
 			prog.EnableGCRoots(tc.roots)
 			prog.EnableDeadcodeDrop(tc.dce)
+			if err := prepareTestSyntax(prog, ssapkg, files, Options{}); err != nil {
+				t.Fatal(err)
+			}
+			prog.Directives().Freeze()
 			pkg, _, err := NewPackageExWithEmbedMetaOptions(prog, nil, nil, nil, ssapkg, files, nil, false, Options{})
 			if err != nil {
 				t.Fatal(err)

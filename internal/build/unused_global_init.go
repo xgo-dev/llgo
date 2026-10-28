@@ -58,12 +58,13 @@ func configureUnusedGlobalInits(ctx *context) {
 	// A one-name go:linkname is an export annotation, with no alias entry in
 	// Program. Preserve those declarations as well as two-name link aliases.
 	inspect := func(pkg *types.Package, files []*ast.File) {
-		for _, file := range files {
-			for _, group := range file.Comments {
-				for _, comment := range group.List {
-					fields := strings.Fields(comment.Text)
-					if len(fields) >= 2 && fields[0] == "//go:linkname" {
-						exported[llssa.FullName(pkg, fields[1])] = true
+		for _, file := range ctx.prog.Directives().Files(files) {
+			for _, group := range file.Groups {
+				for _, item := range group.Items {
+					if item.Name == "go:linkname" {
+						if fields := strings.Fields(item.Args); len(fields) > 0 {
+							exported[llssa.FullName(pkg, fields[0])] = true
+						}
 					}
 				}
 			}
@@ -84,7 +85,7 @@ func configureUnusedGlobalInits(ctx *context) {
 		if exported[name] || global.Pkg.Pkg.Name() == "C" {
 			return true
 		}
-		if _, alias := ctx.prog.Linkname(name); alias || ctx.prog.HasLinknameTarget(name) {
+		if _, alias := ctx.prog.LinknameFor(global.Pkg.Pkg, global.Object(), name); alias || ctx.prog.HasLinknameTarget(name) {
 			return true
 		}
 		if _, locality, ok, err := ctx.prog.ResolveLocalityFor(global.Pkg.Pkg, name); err != nil || ok && locality.Locality != llssa.LocalityNone {

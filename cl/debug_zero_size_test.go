@@ -64,6 +64,10 @@ func check() int {
 					GOOS: target.goos, GOARCH: "arm64", LLVMTarget: target.triple, OptLevel: level,
 				})
 				defer prog.Dispose()
+				if err := prepareTestSyntax(prog, ssaPkg, []*ast.File{file}, Options{}); err != nil {
+					t.Fatal(err)
+				}
+				prog.Directives().Freeze()
 				pkg, _, err := newPackageEx(prog, nil, nil, nil, ssaPkg,
 					[]*ast.File{file}, nil, false, Options{Debug: true, DebugSymbols: true})
 				if err != nil {

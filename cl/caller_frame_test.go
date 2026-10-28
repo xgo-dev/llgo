@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/goplus/gogen/packages"
+	"github.com/xgo-dev/llgo/internal/directive"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	gossa "golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -195,7 +196,7 @@ func generic[T any]() { runtime.Caller(0) }
 func genericCaller() { generic[int]() }
 func plain() {}
 `)
-	callerCaches := NewCallerTracking()
+	callerCaches := NewCallerTracking(new(directive.Index))
 	if !packageUsesRuntimeCaller(callerCaches, ssapkg) {
 		t.Fatal("package should report runtime caller usage")
 	}
@@ -340,7 +341,7 @@ func pinned() {}
 
 func unrelated() {}
 `)
-	tracking := NewCallerTracking()
+	tracking := NewCallerTracking(new(directive.Index))
 	set := runtimeCallerFuncSet(tracking, ssapkg)
 	for _, name := range []string{"staticOwner", "staticLeaf", "staticNested", "deferredLeaf", "deferredNested", "closureObserverOwner", "closureDeferredLeaf", "dynamicOwner", "dynamicEntry", "dynamicLeaf", "unresolvedOwner", "unresolvedCandidate", "unresolvedCandidate2"} {
 		if !set[ssapkg.Func(name)] {
@@ -384,7 +385,7 @@ func ordinary(b bool) { if b { for {} } }
 	} {
 		t.Run(target.GOARCH, func(t *testing.T) {
 			prog := newLLSSAProgForTarget(t, target)
-			pkg, err := NewPackage(prog, ssapkg, files)
+			pkg, err := compileTestPackage(prog, ssapkg, files)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -459,7 +460,7 @@ func pinnedPanicSite() {
 	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
-	pkg, err := NewPackage(prog, ssapkg, files)
+	pkg, err := compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -548,7 +549,7 @@ func branchStorePanicLeaf(p *int, branch bool) {
 			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: test.goos, GOARCH: test.goarch})
 			prog.EnableFuncInfoMetadata(true)
 			prog.EnableFuncInfoSites(true)
-			pkg, err := NewPackage(prog, ssapkg, files)
+			pkg, err := compileTestPackage(prog, ssapkg, files)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -583,7 +584,7 @@ func branchStorePanicLeaf(p *int, branch bool) {
 }
 
 func TestRuntimeCallerAnalysisEdgeCases(t *testing.T) {
-	callerCaches := NewCallerTracking()
+	callerCaches := NewCallerTracking(new(directive.Index))
 	if fnUsesRuntimeCaller(callerCaches, nil) {
 		t.Fatal("nil function should not use runtime caller metadata")
 	}
@@ -706,7 +707,7 @@ type T struct{}
 func (T) Call() { runtime.Caller(0) }
 var _ = T{}
 `)
-	methodOnlySet := runtimeCallerFuncSet(NewCallerTracking(), methodOnlyPkg)
+	methodOnlySet := runtimeCallerFuncSet(NewCallerTracking(new(directive.Index)), methodOnlyPkg)
 	if methodOnlySet == nil {
 		t.Fatal("a method calling runtime.Caller must be tracked (slog.(*Logger).Info escaped exactly this way)")
 	}
@@ -770,7 +771,7 @@ func f() { runtime.Caller(0) }
 				fn:                 fn,
 				goFn:               goFn,
 				trackCallerFrames:  tt.track,
-				runtimeCallerFuncs: runtimeCallerFuncSet(NewCallerTracking(), ssapkg),
+				runtimeCallerFuncs: runtimeCallerFuncSet(NewCallerTracking(new(directive.Index)), ssapkg),
 			}
 			if got := ctx.shouldTrackCallerFrames(); got != tt.want {
 				t.Fatalf("shouldTrackCallerFrames() = %v, want %v", got, tt.want)
@@ -830,6 +831,9 @@ func f() {
 }
 `)
 	prog := newLLSSAProg(t)
+	if err := prepareTestSyntax(prog, ssapkg, files, Options{}); err != nil {
+		t.Fatal(err)
+	}
 	pkg, _, err := NewPackageExWithEmbedMetaOptions(
 		prog, nil, nil, nil, ssapkg, files, nil, false, Options{ShadowStack: true},
 	)
@@ -868,7 +872,7 @@ func leaf() {}
 	prog.Target().GOARCH = "amd64"
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
-	pkg, err := NewPackage(prog, ssapkg, files)
+	pkg, err := compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -906,7 +910,7 @@ func top() {
 	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "386"})
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
-	pkg, err := NewPackage(prog, ssapkg, files)
+	pkg, err := compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -936,7 +940,7 @@ func top() {
 	prog.Target().GOARCH = "amd64"
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
-	pkg, err := NewPackage(prog, ssapkg, files)
+	pkg, err := compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -978,7 +982,7 @@ func top() {
 		goFn:               ssapkg.Func("top"),
 		fset:               token.NewFileSet(),
 		trackCallerFrames:  true,
-		runtimeCallerFuncs: runtimeCallerFuncSet(NewCallerTracking(), ssapkg),
+		runtimeCallerFuncs: runtimeCallerFuncSet(NewCallerTracking(new(directive.Index)), ssapkg),
 	}
 	var b llssa.Builder
 	ctx.pushCallerLocationFrame(b, nil)
@@ -1016,7 +1020,7 @@ func top() {
 	prog.Target().GOARCH = "amd64"
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(false)
-	pkg, err := NewPackage(prog, ssapkg, files)
+	pkg, err := compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1046,7 +1050,7 @@ func top() {
 	prog.Target().GOARCH = "arm64"
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
-	pkg, err := NewPackage(prog, ssapkg, files)
+	pkg, err := compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1078,7 +1082,7 @@ func top() {
 	prog.Target().GOARCH = "arm64"
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
-	pkg, err := NewPackage(prog, ssapkg, files)
+	pkg, err := compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1110,7 +1114,7 @@ func top() {
 	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "windows", GOARCH: "386"})
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
-	pkg, err := NewPackage(prog, ssapkg, files)
+	pkg, err := compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1137,6 +1141,9 @@ func renamedPC() uintptr {
 `)
 	prog := newLLSSAProg(t)
 	prog.SetLinkname("command-line-arguments.renamedPC", "main.renamedPCSymbol")
+	if err := prepareTestSyntax(prog, ssapkg, files, Options{}); err != nil {
+		t.Fatal(err)
+	}
 	pkg, _, err := NewPackageExWithEmbedMetaOptions(
 		prog, nil, nil, nil, ssapkg, files, nil, false, Options{ShadowStack: true},
 	)
@@ -1162,7 +1169,7 @@ func f() {
 `)
 	prog := newLLSSAProg(t)
 	prog.Target().Target = "esp32"
-	pkg, err := NewPackage(prog, ssapkg, files)
+	pkg, err := compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1174,7 +1181,7 @@ func f() {
 func f() {}
 `)
 	prog = newLLSSAProg(t)
-	pkg, err = NewPackage(prog, ssapkg, files)
+	pkg, err = compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1191,7 +1198,7 @@ func f() { _ = runtime.FuncForPC(0) }
 	prog.Target().GOARCH = "amd64"
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
-	pkg, err = NewPackage(prog, ssapkg, files)
+	pkg, err = compileTestPackage(prog, ssapkg, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1218,6 +1225,9 @@ func f() {
 }
 `)
 	prog := newLLSSAProg(t)
+	if err := prepareTestSyntax(prog, ssapkg, files, Options{}); err != nil {
+		t.Fatal(err)
+	}
 	pkg, _, err := NewPackageExWithEmbedMetaOptions(
 		prog, nil, nil, nil, ssapkg, files, nil, false, Options{ShadowStack: true},
 	)
@@ -1240,6 +1250,10 @@ func f() { helper() }
 `)
 	for _, enabled := range []bool{false, true} {
 		prog := newLLSSAProg(t)
+		if err := prepareTestSyntax(prog, ssapkg, files, Options{}); err != nil {
+			t.Fatal(err)
+		}
+		prog.Directives().Freeze()
 		pkg, _, err := NewPackageExWithEmbedMetaOptions(
 			prog, nil, nil, nil, ssapkg, files, nil, false,
 			Options{ShadowStack: true, DebuggerFrames: enabled},
@@ -1355,7 +1369,7 @@ func Logs() bool { return dep.Where() }
 
 func Plain() int { return dep.Quiet() }
 `)
-	crossCaches := NewCallerTracking()
+	crossCaches := NewCallerTracking(new(directive.Index))
 	if !runtimeCallerBaseSet(crossCaches, depSSA)[depSSA.Func("Where")] {
 		t.Fatal("dep.Where must be in its own package's base set")
 	}
@@ -1382,7 +1396,7 @@ func pinned() {}
 
 func helper() {}
 `)
-	set := runtimeCallerFuncSet(NewCallerTracking(), ssapkg)
+	set := runtimeCallerFuncSet(NewCallerTracking(new(directive.Index)), ssapkg)
 	for _, name := range []string{"main", "init", "pinned"} {
 		if !set[ssapkg.Func(name)] {
 			t.Fatalf("%s must be pinned in the tracking set", name)

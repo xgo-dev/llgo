@@ -17,10 +17,14 @@
 package ssa
 
 import (
+	"go/ast"
 	"go/token"
 	"go/types"
+	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/xgo-dev/llgo/internal/directive"
 )
 
 // packageSyntaxData is Go-owned metadata collected before LLVM package
@@ -29,7 +33,9 @@ import (
 // One-shot compiler users keep the same Program-local mutation behavior.
 type packageSyntaxData struct {
 	mu                    sync.RWMutex
-	hasNativeTypeMetadata atomic.Bool
+	source                directive.Index
+	declarations          map[*types.Package]*directive.Package
+	effective             map[*types.Package]*types.Package
 	linknames             map[string]string
 	wasmImports           map[string]wasmImport
 	exports               map[string]string
@@ -37,12 +43,15 @@ type packageSyntaxData struct {
 	parsedPackages        map[*types.Package]struct{}
 	noInterface           map[string]none
 	typeCallConvs         map[string]CallConv
+	hasNativeTypeMetadata atomic.Bool
 	nativeStructFields    map[token.Pos]bool
 	nativeStructVars      map[*types.Var]bool
 }
 
 func newPackageSyntaxData() *packageSyntaxData {
 	return &packageSyntaxData{
+		declarations:         make(map[*types.Package]*directive.Package),
+		effective:            make(map[*types.Package]*types.Package),
 		linknames:            make(map[string]string),
 		wasmImports:          make(map[string]wasmImport),
 		exports:              make(map[string]string),
@@ -89,16 +98,121 @@ func (p Program) markPackageSyntaxParsed(pkg *types.Package) {
 	p.packageSyntax.mu.Unlock()
 }
 
-func (p Program) packageTypeCallConv(name string) (CallConv, bool) {
+// Directives owns the source snapshots shared by coordinator and backends.
+func (p Program) Directives() *directive.Index { return &p.packageSyntax.source }
+func (p Program) SetPackageDirectives(pkg *types.Package, records *directive.Package) {
+	p.packageSyntax.mu.Lock()
+	defer p.packageSyntax.mu.Unlock()
+	p.packageSyntax.declarations[pkg] = records
+	if records != nil {
+		for _, rec := range records.Names {
+			if d, ok := rec.(*directive.TypeDecl); ok && (d.CallConv == "C" || d.CallConv == "stdcall") {
+				p.packageSyntax.hasNativeTypeMetadata.Store(true)
+				break
+			}
+		}
+	}
+}
+func (p Program) PackageDirectives(pkg *types.Package) *directive.Package {
 	p.packageSyntax.mu.RLock()
-	background, ok := p.packageSyntax.typeCallConvs[name]
-	p.packageSyntax.mu.RUnlock()
-	return background, ok
+	defer p.packageSyntax.mu.RUnlock()
+	return p.packageSyntax.declarations[pkg]
 }
 
-func (p *packageSyntaxData) typeCallConv(name string) (CallConv, bool) {
+// SetDirectivePackage records the effective patch view for object-based type
+// and symbol queries. Function source properties retain their source identity.
+func (p Program) SetDirectivePackage(original, effective *types.Package) {
+	p.packageSyntax.mu.Lock()
+	defer p.packageSyntax.mu.Unlock()
+	p.packageSyntax.effective[original] = effective
+}
+func (p Program) effectivePackageDirectives(pkg *types.Package) *directive.Package {
+	p.packageSyntax.mu.RLock()
+	defer p.packageSyntax.mu.RUnlock()
+	if effective := p.packageSyntax.effective[pkg]; effective != nil {
+		pkg = effective
+	}
+	return p.packageSyntax.declarations[pkg]
+}
+
+// FunctionDeclaration supports source functions, imported objects and generic
+// origins without deriving declaration identity from a linker symbol.
+func (p Program) FunctionDeclaration(pkg *types.Package, obj *types.Func, syntax *ast.FuncDecl) *directive.FunctionDecl {
+	if obj != nil {
+		obj = obj.Origin()
+	}
+	p.packageSyntax.mu.RLock()
+	defer p.packageSyntax.mu.RUnlock()
+	if r := p.packageSyntax.declarations[pkg]; r != nil {
+		if d, ok := r.Objects[obj].(*directive.FunctionDecl); ok {
+			return d
+		}
+		if d := r.Functions[syntax]; d != nil {
+			return d
+		}
+	}
+	// Patched functions may retain their original types.Object package.
+	if obj != nil && obj.Pkg() != pkg {
+		if r := p.packageSyntax.declarations[obj.Pkg()]; r != nil {
+			if d, ok := r.Objects[obj].(*directive.FunctionDecl); ok {
+				return d
+			}
+		}
+	}
+	return nil
+}
+
+// LinknameFor resolves a source declaration in its owning package instance.
+// Package records are authoritative, including absent declarations and links:
+// a global entry may belong to another package instance with the same path.
+// Only packages without records fall back to the global name index.
+func (p Program) LinknameFor(pkg *types.Package, obj types.Object, fullName string) (string, bool) {
+	if fn, ok := obj.(*types.Func); ok {
+		obj = fn.Origin()
+	}
+	if r := p.effectivePackageDirectives(pkg); r != nil {
+		rec := r.Objects[obj]
+		if rec == nil {
+			rec = r.Names[strings.TrimPrefix(fullName, PathOf(pkg)+".")]
+		}
+		switch d := rec.(type) {
+		case *directive.FunctionDecl:
+			return d.Linkname, d.HasLinkname
+		case *directive.VariableDecl:
+			return d.Linkname, d.HasLinkname
+		}
+		return "", false
+	}
+	return p.Linkname(fullName)
+}
+
+// typeCallConv uses the effective package's records, including an absent
+// type or calling convention. Only packages without records use typeCallConvs, which
+// cannot distinguish package instances sharing an import path.
+func (p *packageSyntaxData) typeCallConv(obj *types.TypeName) (CallConv, bool) {
 	p.mu.RLock()
-	background, ok := p.typeCallConvs[name]
-	p.mu.RUnlock()
-	return background, ok
+	defer p.mu.RUnlock()
+	pkg := obj.Pkg()
+	if effective := p.effective[pkg]; effective != nil {
+		pkg = effective
+	}
+	if r := p.declarations[pkg]; r != nil {
+		rec := r.Objects[obj]
+		if rec == nil {
+			rec = r.Names[obj.Name()]
+		}
+		if d, ok := rec.(*directive.TypeDecl); ok && d.CallConv != "" {
+			switch d.CallConv {
+			case "C":
+				return CDecl, true
+			case "stdcall":
+				return Stdcall, true
+			default:
+				return GoDecl, true
+			}
+		}
+		return GoDecl, false
+	}
+	bg, ok := p.typeCallConvs[typeNameLinkname(obj)]
+	return bg, ok
 }

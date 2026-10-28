@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/packages"
+
+	"github.com/xgo-dev/llgo/internal/directive"
 )
 
 type midwayMetadataImporter struct{ simd *types.Package }
@@ -49,7 +51,7 @@ func TestRewritePortableSIMDMetadata(t *testing.T) {
 				simdMetadata.Imports[bridge.PkgPath] = bridge
 			}
 			pkg := &packages.Package{ID: "client", PkgPath: "client", Fset: fset, Syntax: []*ast.File{file}, Types: typed, TypesInfo: info, Imports: map[string]*packages.Package{"simd": simdMetadata}}
-			changed, err := rewritePortableSIMD(pkg)
+			changed, err := rewritePortableSIMD(pkg, new(directive.Index))
 			if tc.diagnostic != "" {
 				if changed || err == nil || !strings.Contains(err.Error(), tc.diagnostic) {
 					t.Fatalf("changed=%v error=%v, want %q", changed, err, tc.diagnostic)
