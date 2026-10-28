@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import runpy
 import shutil
 import subprocess
@@ -27,6 +28,10 @@ BOOTSTRAP_RUNNER_JOBS = {
     ("ci-prepare.yml", "prepare"), ("ci-policy.yml", "policy"),
     ("pr-closed.yml", "cancel-pr-ci"),
 }
+UBUNTU_APT_PREPARE = (
+    'sudo python3 .github/actions/setup-deps/ubuntu_apt.py /etc/apt '
+    '"$(dpkg --print-architecture)"'
+)
 
 
 def load(name):
@@ -88,6 +93,94 @@ class WorkflowContractTests(unittest.TestCase):
         smoke = next(step for step in job['steps'] if step.get('name') == 'Test Hello World')
         self.assertEqual(smoke['env']['LLGO_BUILD_CACHE'], '0')
         self.assertTrue(smoke['env']['LLVM_CONFIG'].endswith('/current/crosscompile/clang/bin/llvm-config'))
+
+    def assert_runner_apt_prepared(self, steps):
+        root = WORKFLOWS.parents[1]
+
+        def consumes_apt(step, seen=()):
+            script = step.get("run", "")
+            if re.search(r"\bapt(?:-get)?\s", script) or "doc/_readme/scripts/install_ubuntu.sh" in script:
+                return True
+            action = step.get("uses", "")
+            if not action.startswith("./.github/actions/"):
+                return False
+            self.assertNotIn(action, seen, "local action dependency cycle")
+            config = yaml.load((root / action[2:] / "action.yml").read_text(), Loader=yaml.BaseLoader)
+            return any(consumes_apt(child, (*seen, action))
+                       for child in config["runs"]["steps"])
+
+        checked_out = prepared = False
+        consumers = 0
+        for step in steps:
+            uses = step.get("uses", "")
+            if uses.startswith("actions/checkout@") and not step.get("if"):
+                checked_out = True
+            direct = step.get("run", "").strip() == UBUNTU_APT_PREPARE
+            setup = uses == "./.github/actions/setup-deps"
+            if direct or setup:
+                condition = step.get("if", "").removeprefix("${{").removesuffix("}}").strip()
+                if condition in ("", "runner.os == 'Linux'", "startsWith(matrix.os, 'ubuntu')"):
+                    self.assertTrue(checked_out, "APT setup needs the checked-out helper")
+                    self.assertNotIn("continue-on-error", step)
+                    if setup:
+                        action = yaml.load((root / ".github/actions/setup-deps/action.yml").read_text(),
+                                           Loader=yaml.BaseLoader)
+                        ubuntu = next(child for child in action["runs"]["steps"]
+                                      if child.get("name") == "Install Ubuntu dependencies")
+                        self.assertEqual(ubuntu["if"], "runner.os == 'Linux'")
+                        script = ubuntu["run"]
+                        self.assertLess(script.index('sudo python3 "$GITHUB_ACTION_PATH/ubuntu_apt.py"'),
+                                        script.index("apt_get update"))
+                    prepared = True
+            if consumes_apt(step):
+                consumers += 1
+                self.assertTrue(prepared, "runner APT transaction precedes Ubuntu mirror/download preparation")
+        return consumers
+
+    def test_runner_apt_consumers_prepare_mirrors_after_checkout(self):
+        consumers = 0
+        for path in workflow_paths():
+            for name, job in load(path.name).get("jobs", {}).items():
+                with self.subTest(workflow=path.name, job=name):
+                    consumers += self.assert_runner_apt_prepared(job.get("steps", []))
+        self.assertGreater(consumers, 10, "the APT owner inventory became empty or incomplete")
+
+    def test_docs_prepare_ubuntu_apt_before_both_installers(self):
+        for name in ("remote_install", "local_install"):
+            with self.subTest(job=name):
+                job = load("doc.yml")["jobs"][name]
+                self.assertEqual(job["timeout-minutes"], "30")
+                steps = job["steps"]
+                prepare = [step for step in steps if step.get("run", "").strip() == UBUNTU_APT_PREPARE]
+                self.assertEqual(len(prepare), 1, "Docs must prepare APT without installing extra Go/LLVM dependencies")
+                self.assertEqual(prepare[0]["if"], "startsWith(matrix.os, 'ubuntu')")
+                self.assert_runner_apt_prepared(steps)
+
+    def test_docs_apt_guard_rejects_missing_late_foreign_or_ignored_setup(self):
+        for name in ("remote_install", "local_install"):
+            original = load("doc.yml")["jobs"][name]["steps"]
+            complete = [step for step in original if step.get("run", "").strip() != UBUNTU_APT_PREPARE]
+            prepare = {"name": "Prepare Ubuntu APT", "if": "startsWith(matrix.os, 'ubuntu')", "run": UBUNTU_APT_PREPARE}
+            complete.insert(1, prepare)
+            self.assert_runner_apt_prepared(complete)
+            for mutation in ("missing", "late", "before checkout", "Windows only", "foreign helper", "ignore failure"):
+                with self.subTest(job=name, mutation=mutation):
+                    steps = json.loads(json.dumps(complete))
+                    setup = steps.pop(1)
+                    if mutation == "late":
+                        steps.append(setup)
+                    elif mutation == "before checkout":
+                        steps.insert(0, setup)
+                    elif mutation != "missing":
+                        if mutation == "Windows only":
+                            setup["if"] = "runner.os == 'Windows'"
+                        elif mutation == "foreign helper":
+                            setup["run"] = setup["run"].replace("ubuntu_apt.py", "foreign.py")
+                        else:
+                            setup["continue-on-error"] = "true"
+                        steps.insert(1, setup)
+                    with self.assertRaises(AssertionError):
+                        self.assert_runner_apt_prepared(steps)
 
     def test_macos_benchmark_installs_only_legacy_base_dependency(self):
         steps = load("benchmark.yml")["jobs"]["benchmark"]["steps"]

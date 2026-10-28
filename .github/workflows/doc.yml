@@ -37,6 +37,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Prepare Ubuntu APT
+        if: startsWith(matrix.os, 'ubuntu')
+        run: sudo python3 .github/actions/setup-deps/ubuntu_apt.py /etc/apt "$(dpkg --print-architecture)"
+
       - name: Test release installer helpers
         run: bash test/installer/install_sh_test.sh
 
@@ -89,6 +93,10 @@ jobs:
     runs-on: ${{ startsWith(matrix.os, 'ubuntu') && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os }}
     steps:
       - uses: actions/checkout@v7
+
+      - name: Prepare Ubuntu APT
+        if: startsWith(matrix.os, 'ubuntu')
+        run: sudo python3 .github/actions/setup-deps/ubuntu_apt.py /etc/apt "$(dpkg --print-architecture)"
 
       - name: Test local installer with LF and CRLF checkouts
         shell: bash
