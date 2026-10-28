@@ -34,7 +34,7 @@ chmod +x "$output"
                 case.mkdir(parents=True)
                 (case / "main.go").write_text("package main\n")
             environment = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
-                               LLGO_DEMO_JOBS="4")
+                               LLGO_DEMO_JOBS="4", LLGO_DEMO_OUTPUT_DIR=str(root / "logs"))
             environment.pop("LLGO_DEMO_LLGORUN_FLAGS", None)
             environment.pop("BASH_ENV", None)
             if missing_wait_pid:

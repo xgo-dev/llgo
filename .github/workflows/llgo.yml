@@ -592,11 +592,30 @@ jobs:
           pkg-config --libs cargs
           (cd ./_demo/c/cargs && llgo run .)
 
+      - name: Test bounded demo command ownership
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          python3 .github/scripts/test_run_logged_command.py
+          python3 -m unittest discover -s .github/scripts -p 'test_demo*.py' -v
+
+      - name: Test native Windows demo command ownership
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & (Join-Path $env:LLGO_WINDOWS_PYTHON_HOME 'python.exe') .github/scripts/test_run_logged_command.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Test demos
+        id: demos_host
+        env:
+          LLGO_DEMO_OUTPUT_DIR: ${{ runner.temp }}/llgo-demo-logs
         run: bash .github/workflows/test_demo.sh
 
       - name: Test demos (embedded target)
         if: runner.os != 'Windows' || matrix.windows_arch != 'arm64'
+        env:
+          LLGO_DEMO_OUTPUT_DIR: ${{ runner.temp }}/llgo-demo-logs
         run: bash .github/workflows/test_demo.sh --embedded
 
       # Espressif only publishes an x86-64 Windows QEMU. Its runtime coverage
@@ -604,7 +623,18 @@ jobs:
       # applicable firmware case with the same LLGo host toolchain.
       - name: Test demos (embedded target, build only)
         if: runner.os == 'Windows' && matrix.windows_arch == 'arm64'
+        env:
+          LLGO_DEMO_OUTPUT_DIR: ${{ runner.temp }}/llgo-demo-logs
         run: bash .github/workflows/test_demo.sh --embedded-build-only
+
+      - name: Upload demo stage logs
+        if: ${{ always() && (steps.demos_host.outcome == 'success' || steps.demos_host.outcome == 'failure' || steps.demos_host.outcome == 'cancelled') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: demo-stages-${{ matrix.os }}-${{ matrix.windows_abi || 'native' }}-${{ matrix.windows_arch || 'host' }}
+          path: ${{ runner.temp }}/llgo-demo-logs
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Test C header generation
         shell: bash
