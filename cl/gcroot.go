@@ -21,12 +21,13 @@ import (
 	"go/types"
 
 	llabi "github.com/xgo-dev/llgo/internal/abi"
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/gcrootplan"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 )
 
-func (p *context) prepareGCRoots(source *Function, hasClosureContext bool) {
+func (p *context) prepareGCRoots(source *directive.Function, hasClosureContext bool) {
 	fn := source.SSA
 	p.gcRoots = nil
 	p.gcClosureRoot = llssa.Nil

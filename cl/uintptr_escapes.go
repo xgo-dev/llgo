@@ -19,6 +19,7 @@ package cl
 import (
 	"go/types"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -28,7 +29,7 @@ import (
 // the callee can publish its uintptr parameters. Go/defer argument records and
 // variadic backing arrays are scanned heap allocations and retain the values
 // while the call is pending; the callee roots cover the executing call.
-func uintptrEscapesRoots(function *Function, functions *FunctionSet) map[ssa.Value]struct{} {
+func uintptrEscapesRoots(function *directive.Function, functions *directive.FunctionSet) map[ssa.Value]struct{} {
 	fn := function.SSA
 	roots := make(map[ssa.Value]struct{})
 	if function.Directives.UintptrEscapes {

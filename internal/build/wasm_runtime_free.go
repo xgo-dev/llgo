@@ -74,7 +74,7 @@ func configureWasmRuntimeFree(ctx *context) {
 			}
 			for _, decl := range file.Decls {
 				if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
-					if info, prepared := ctx.prog.FunctionDirectives(fn); !prepared || info.Linkname != "" && !strings.HasPrefix(info.Linkname, "llgo.") {
+					if info, prepared := ctx.prog.FunctionSources().Declaration(fn); !prepared || info.Linkname != "" && !strings.HasPrefix(info.Linkname, "llgo.") {
 						return
 					}
 				}

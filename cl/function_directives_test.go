@@ -23,6 +23,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
@@ -38,8 +39,8 @@ func testFunctionProgram(t *testing.T, goProg *ssa.Program, bindings ...map[stri
 	if goProg == nil {
 		return prog
 	}
-	declarations := make(map[*ast.FuncDecl]*llssa.FunctionDirectives)
-	names := make(map[*types.Package]map[string]*llssa.FunctionDirectives)
+	declarations := make(map[*ast.FuncDecl]*directive.FunctionDirectives)
+	names := make(map[*types.Package]map[string]*directive.FunctionDirectives)
 	for fn := range ssautil.AllFunctions(goProg) {
 		if origin := fn.Origin(); origin != nil {
 			fn = origin
@@ -52,14 +53,14 @@ func testFunctionProgram(t *testing.T, goProg *ssa.Program, bindings ...map[stri
 		var fullName, inPkgName string
 		if obj, ok := fn.Object().(*types.Func); ok {
 			pkg = obj.Pkg()
-			fullName, inPkgName = typesFuncName(llssa.PathOf(pkg), obj)
+			fullName, inPkgName = directive.FuncName(llssa.PathOf(pkg), obj)
 		} else if fn.Pkg != nil {
 			pkg = fn.Pkg.Pkg
 			fullName, inPkgName = astFuncName(llssa.PathOf(pkg), decl, nil)
 		} else {
 			continue
 		}
-		info, err := parseFunctionDirectives(goProg.Fset, decl.Doc, inPkgName, true, Options{})
+		info, err := directive.ParseFunction(goProg.Fset, decl.Doc, inPkgName, true, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -70,12 +71,12 @@ func testFunctionProgram(t *testing.T, goProg *ssa.Program, bindings ...map[stri
 		}
 		declarations[decl] = &info
 		if names[pkg] == nil {
-			names[pkg] = make(map[string]*llssa.FunctionDirectives)
+			names[pkg] = make(map[string]*directive.FunctionDirectives)
 		}
 		names[pkg][fullName] = &info
 	}
 	for pkg, named := range names {
-		prog.SetFunctionDirectives(pkg, declarations, named)
+		prog.FunctionSources().Set(pkg, declarations, named)
 	}
 	return prog
 }
@@ -131,7 +132,7 @@ func use() { marked[int](0); marked[string](0) }
 	if instances != 2 {
 		t.Fatalf("got %d generic instances, want 2", instances)
 	}
-	if got := functions.Function(pkg.Func("plain")).Directives; got != (llssa.FunctionDirectives{}) {
+	if got := functions.Function(pkg.Func("plain")).Directives; got != (directive.FunctionDirectives{}) {
 		t.Fatalf("plain function acquired directives: %+v", got)
 	}
 	tracking := NewCallerTracking(functions)
@@ -236,7 +237,7 @@ func ordinary(o Outer) { o.Marked(0) }
 		}
 		adapters++
 		got.UintptrEscapes = false
-		if got != (llssa.FunctionDirectives{}) {
+		if got != (directive.FunctionDirectives{}) {
 			t.Fatalf("adapter %s inherited body or binding directives: %+v", fn, got)
 		}
 	}
@@ -271,7 +272,7 @@ func F() {}
 		t.Fatal(err)
 	}
 	functions := NewFunctionSet(prog, nil)
-	results := make(chan *Function, 32)
+	results := make(chan *directive.Function, 32)
 	var wg sync.WaitGroup
 	for range cap(results) {
 		wg.Add(1)
@@ -284,32 +285,6 @@ func F() {}
 		if got != expected || !got.Directives.NoInline {
 			t.Fatal("concurrent callers received different or incomplete wrappers")
 		}
-	}
-}
-
-func TestFunctionDirectiveAttachmentRules(t *testing.T) {
-	tests := []struct {
-		doc  string
-		want bool
-	}{
-		{"//go:nointerface", true},
-		{"//go:nointerface\n//go:noinline", true},
-		{"//go:nointerface\n// unrelated prose", false},
-		{"//go:nointerface ", false},
-		{"// unrelated prose\n//go:nointerface", true},
-	}
-	for _, test := range tests {
-		t.Run(test.doc, func(t *testing.T) {
-			// Construct comments directly: go/parser may strip trailing spaces.
-			doc := new(ast.CommentGroup)
-			for _, line := range strings.Split(test.doc, "\n") {
-				doc.List = append(doc.List, &ast.Comment{Text: line})
-			}
-			got, err := parseFunctionDirectives(nil, doc, "T.M", true, Options{})
-			if err != nil || got.NoInterface != test.want {
-				t.Fatalf("nointerface = %v, error = %v; want %v", got.NoInterface, err, test.want)
-			}
-		})
 	}
 }
 
@@ -346,6 +321,8 @@ func collect()
 //go:uintptrescapes
 func marked(p uintptr) { collect() }
 func plain() {}
+//export exported
+func exported() {}
 `)
 	prog := newLLSSAProg(t)
 	defer prog.Dispose()
@@ -360,6 +337,9 @@ func plain() {}
 		}
 	}
 	files[0].Comments = nil
+	// The SSA bodies retain their syntax for construction, but consumers must
+	// not discover function attributes or exports by walking the input files.
+	files[0].Decls = nil
 	functions := NewFunctionSet(prog, nil)
 	tracking := NewCallerTracking(functions)
 	tracking.Precompute([]*ssa.Package{pkg})
@@ -371,6 +351,9 @@ func plain() {}
 	}
 	if err := llvm.VerifyModule(compiled.Module(), llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)
+	}
+	if got := compiled.ExportFuncs()["example.com/prepared.exported"]; got != "exported" {
+		t.Fatalf("prepared export was lost after removing function declarations: %q", got)
 	}
 	marked := compiled.Module().NamedFunction("example.com/prepared.marked").String()
 	if !strings.Contains(marked, "noinline") || !strings.Contains(marked, "llvm_gc_root_chain") || strings.Contains(marked, "CooperativeSafepoint") {

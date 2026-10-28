@@ -65,7 +65,7 @@ func prepareLocalVariables(prog llssa.Program, fset *token.FileSet, pkg *types.P
 	}
 	if lastFile != nil {
 		for _, node := range lastFile.Decls[oldDecls:] {
-			prog.RegisterGeneratedFunction(node.(*ast.FuncDecl))
+			prog.FunctionSources().RegisterGenerated(node.(*ast.FuncDecl))
 		}
 	}
 	for name, local := range prepared {

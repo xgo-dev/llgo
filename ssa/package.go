@@ -493,7 +493,7 @@ func (p Program) isNoInterfaceMethod(fn *types.Func) bool {
 	if !ok || sig.Recv() == nil {
 		return false
 	}
-	if info, prepared := p.FunctionBinding(fn.Pkg(), FuncName(fn.Pkg(), fn.Name(), sig.Recv(), true)); prepared {
+	if info, prepared := p.FunctionSources().Binding(fn.Pkg(), FuncName(fn.Pkg(), fn.Name(), sig.Recv(), true)); prepared {
 		return info.NoInterface
 	}
 	p.packageSyntax.mu.RLock()

@@ -19,12 +19,13 @@ package cl
 import (
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/safepointplan"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 )
 
-func (p *context) prepareCooperativeSafepoints(source *Function, isCgo bool) {
+func (p *context) prepareCooperativeSafepoints(source *directive.Function, isCgo bool) {
 	fn := source.SSA
 	p.safepointEntry = false
 	p.safepoints = nil

@@ -21,6 +21,8 @@ import (
 	"go/token"
 	"go/types"
 	"testing"
+
+	"github.com/xgo-dev/llgo/internal/directive"
 )
 
 func TestNoInterfaceUsesConcretePackageView(t *testing.T) {
@@ -36,18 +38,18 @@ func TestNoInterfaceUsesConcretePackageView(t *testing.T) {
 	original, hidden := newMethod()
 	replacement, visible := newMethod()
 	oldDecl, newDecl := new(ast.FuncDecl), new(ast.FuncDecl)
-	oldInfo, newInfo := &FunctionDirectives{NoInterface: true}, new(FunctionDirectives)
-	prog.SetFunctionDirectives(original, map[*ast.FuncDecl]*FunctionDirectives{oldDecl: oldInfo}, map[string]*FunctionDirectives{"example.com/p.T.M": oldInfo})
-	prog.SetFunctionDirectives(replacement, map[*ast.FuncDecl]*FunctionDirectives{newDecl: newInfo}, map[string]*FunctionDirectives{"example.com/p.T.M": newInfo})
+	oldInfo, newInfo := &directive.FunctionDirectives{NoInterface: true}, new(directive.FunctionDirectives)
+	prog.FunctionSources().Set(original, map[*ast.FuncDecl]*directive.FunctionDirectives{oldDecl: oldInfo}, map[string]*directive.FunctionDirectives{"example.com/p.T.M": oldInfo})
+	prog.FunctionSources().Set(replacement, map[*ast.FuncDecl]*directive.FunctionDirectives{newDecl: newInfo}, map[string]*directive.FunctionDirectives{"example.com/p.T.M": newInfo})
 	prog.SetNoInterfaceMethod("example.com/p.T.M")
 	if !prog.isNoInterfaceMethod(hidden) || prog.isNoInterfaceMethod(visible) {
 		t.Fatal("same-path package views shared nointerface state")
 	}
-	prog.UseFunctionBindings(original, replacement)
+	prog.FunctionSources().UseBindings(original, replacement)
 	if prog.isNoInterfaceMethod(hidden) {
 		t.Fatal("types.Func consumer did not select the prepared patch view")
 	}
-	if source, ok := prog.FunctionDirectives(oldDecl); !ok || !source.NoInterface {
+	if source, ok := prog.FunctionSources().Declaration(oldDecl); !ok || !source.NoInterface {
 		t.Fatal("selecting a patch changed the source declaration")
 	}
 }

@@ -20,6 +20,8 @@ import (
 	"go/ast"
 	"go/types"
 	"testing"
+
+	"github.com/xgo-dev/llgo/internal/directive"
 )
 
 func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
@@ -40,12 +42,12 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 
 	pkg := types.NewPackage("example.com/p", "p")
 	decl := &ast.FuncDecl{}
-	info := &FunctionDirectives{ClosureEnv: true}
+	info := &directive.FunctionDirectives{ClosureEnv: true}
 	coordinator.SetLinkname("example.com/p.Entry", "entry")
 	coordinator.SetPackageExport("example.com/p.Entry", "entry")
 	coordinator.SetNoInterfaceMethod("example.com/p.T.Hidden")
 	coordinator.SetTypeCallConv("example.com/p.CType", CDecl)
-	coordinator.SetFunctionDirectives(pkg, map[*ast.FuncDecl]*FunctionDirectives{decl: info}, map[string]*FunctionDirectives{"example.com/p.Entry": info})
+	coordinator.FunctionSources().Set(pkg, map[*ast.FuncDecl]*directive.FunctionDirectives{decl: info}, map[string]*directive.FunctionDirectives{"example.com/p.Entry": info})
 	coordinator.MarkPackageSyntaxParsed(pkg)
 	coordinator.SetLocalityInfo("example.com/p.Value", LocalityInfo{Locality: ThreadLocal})
 	coordinator.SetPython(func() *types.Package { return nil })
@@ -73,7 +75,7 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	if export, ok := backend.PackageExport("example.com/p.Entry"); !ok || export != "entry" {
 		t.Fatalf("PackageExport = (%q, %v), want (entry, true)", export, ok)
 	}
-	if got, ok := backend.FunctionDirectives(decl); !ok || !got.ClosureEnv || !backend.PackageSyntaxParsed(pkg) {
+	if got, ok := backend.FunctionSources().Declaration(decl); !ok || !got.ClosureEnv || !backend.PackageSyntaxParsed(pkg) {
 		t.Fatal("backend Program lost prepared syntax metadata")
 	}
 	if background, ok := backend.packageTypeCallConv("example.com/p.CType"); !ok || background != CDecl {

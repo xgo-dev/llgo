@@ -32,12 +32,12 @@ import (
 
 	"github.com/xgo-dev/llgo/cl/blocks"
 	"github.com/xgo-dev/llgo/cl/ssawrap"
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/goembed"
 	"github.com/xgo-dev/llgo/internal/typepatch"
-	"golang.org/x/tools/go/ssa"
-
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"golang.org/x/tools/go/ssa"
 )
 
 // -----------------------------------------------------------------------------
@@ -184,7 +184,7 @@ type context struct {
 	recvNilDerefChecks   map[*ssa.UnOp]token.Pos
 	vargs                map[*ssa.Alloc][]llssa.Expr // varargs
 	funcs                map[*ssa.Function]llssa.Function
-	functions            *FunctionSet
+	functions            *directive.FunctionSet
 	variadicErrors       map[*ssa.Function]error
 	linkOnceFns          map[*ssa.Function]none
 	stackDefers          map[*ssa.Function]bool
@@ -630,7 +630,7 @@ func hasInstantiatedRecv(recv *types.Var) bool {
 	return false
 }
 
-func (p *context) compileFuncDecl(pkg llssa.Package, source *Function) (llssa.Function, llssa.PyObjRef, int) {
+func (p *context) compileFuncDecl(pkg llssa.Package, source *directive.Function) (llssa.Function, llssa.PyObjRef, int) {
 	f := source.SSA
 	pkgTypes, name, ftype := p.funcName(f)
 	simd, simdDecl := lookupSIMD(f, p.prog.Target().GOARCH)

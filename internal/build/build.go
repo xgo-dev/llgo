@@ -38,9 +38,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
-
 	"github.com/xgo-dev/llgo/cl"
 	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llgo/internal/buildenv"
@@ -50,6 +47,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/dcepass"
 	"github.com/xgo-dev/llgo/internal/deadcode"
 	"github.com/xgo-dev/llgo/internal/debugabi"
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/firmware"
 	"github.com/xgo-dev/llgo/internal/flash"
@@ -68,12 +66,13 @@ import (
 	"github.com/xgo-dev/llgo/internal/quoted"
 	"github.com/xgo-dev/llgo/internal/typepatch"
 	"github.com/xgo-dev/llgo/internal/wasmworkers"
+	llruntime "github.com/xgo-dev/llgo/runtime"
+	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llgo/ssa/abi"
 	xenv "github.com/xgo-dev/llgo/xtool/env"
 	gllvm "github.com/xgo-dev/llvm"
-
-	llruntime "github.com/xgo-dev/llgo/runtime"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	"golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa/ssautil"
 )
 
 type Mode int
@@ -1784,7 +1783,7 @@ type context struct {
 	dedup          packages.Deduper
 	patches        cl.Patches
 	callerTracking *cl.CallerTracking
-	functions      *cl.FunctionSet
+	functions      *directive.FunctionSet
 	fingerprinting map[string]bool
 	cacheDisabled  map[string]none
 	patchFiles     map[string][]string
@@ -1970,7 +1969,7 @@ func preloadPatchedPackageSyntax(prog llssa.Program, patches cl.Patches, dedup p
 			return err
 		}
 		if original := dedup.Check(pkgPath); original != nil {
-			prog.UseFunctionBindings(original.Types, patch.Types)
+			prog.FunctionSources().UseBindings(original.Types, patch.Types)
 		}
 	}
 	return nil

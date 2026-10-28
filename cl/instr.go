@@ -28,10 +28,10 @@ import (
 	"sort"
 	"strings"
 
-	"golang.org/x/tools/go/ssa"
-
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"golang.org/x/tools/go/ssa"
 )
 
 var asmRegisterRegex = regexp.MustCompile(`\{[a-zA-Z]+\}`)
@@ -1038,7 +1038,7 @@ type callerTrackingFuncSets struct {
 	recoverPanicSites map[*ssa.Function]bool
 }
 
-func computeRuntimeCallerFuncSets(functions *FunctionSet, recover *recoverFacts, pkg *ssa.Package, funcs, base, trackable map[*ssa.Function]bool, baseSet func(*ssa.Package) map[*ssa.Function]bool) callerTrackingFuncSets {
+func computeRuntimeCallerFuncSets(functions *directive.FunctionSet, recover *recoverFacts, pkg *ssa.Package, funcs, base, trackable map[*ssa.Function]bool, baseSet func(*ssa.Package) map[*ssa.Function]bool) callerTrackingFuncSets {
 	frames := make(map[*ssa.Function]bool, len(base))
 	for fn := range base {
 		frames[fn] = true
@@ -1275,7 +1275,7 @@ func (a *runtimeCallerAnalysis) callTargets(fn *ssa.Function, call *ssa.CallComm
 // Precompute before workers start; recover facts also synchronize lazy queries
 // for nested and synthetic functions that are not package members.
 type CallerTracking struct {
-	functions   *FunctionSet
+	functions   *directive.FunctionSet
 	base        map[*ssa.Package]map[*ssa.Function]bool
 	extended    map[*ssa.Package]callerTrackingFuncSets
 	recover     *recoverFacts
@@ -1422,7 +1422,7 @@ func uniqueCallerTrackingPackages(pkgs []*ssa.Package) []*ssa.Package {
 }
 
 // NewCallerTracking creates the frontend-analysis caches for one compilation.
-func NewCallerTracking(functions *FunctionSet) *CallerTracking {
+func NewCallerTracking(functions *directive.FunctionSet) *CallerTracking {
 	return &CallerTracking{
 		functions: functions,
 		base:      make(map[*ssa.Package]map[*ssa.Function]bool),

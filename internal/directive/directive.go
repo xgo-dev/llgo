@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-// Package directive parses Go and LLGo source directives without assigning
-// feature-specific semantics to them.
+// Package directive parses Go and LLGo source directives and prepares
+// function directive values for SSA consumers.
 package directive
 
 import (
