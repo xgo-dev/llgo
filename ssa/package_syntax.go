@@ -104,6 +104,14 @@ func (p Program) SetPackageDirectives(pkg *types.Package, records *directive.Pac
 	p.packageSyntax.mu.Lock()
 	defer p.packageSyntax.mu.Unlock()
 	p.packageSyntax.declarations[pkg] = records
+	if records != nil {
+		for _, rec := range records.Names {
+			if d, ok := rec.(*directive.TypeDecl); ok && (d.CallConv == "C" || d.CallConv == "stdcall") {
+				p.packageSyntax.hasNativeTypeMetadata.Store(true)
+				break
+			}
+		}
+	}
 }
 func (p Program) PackageDirectives(pkg *types.Package) *directive.Package {
 	p.packageSyntax.mu.RLock()

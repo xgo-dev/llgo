@@ -115,6 +115,12 @@ LLVM type creation, native struct layout and stdcall checks. A source-free
 `SetTypeCallConv` entry cannot erase the extra Go closure word from an ordinary
 function alias when its package records say otherwise.
 
+Native struct preparation also registers source field identifier positions before
+type checking, including embedded fields, so `Offsetsof` can recover the native
+layout context from its field-only input. Registering prepared native type records
+sets the shared metadata-presence flag used by the layout fast path, including
+records installed directly and consumed through an effective patch package.
+
 `go:nointerface` queries likewise use the effective method record. Source body
 properties remain independent of this effective ABI/interface view.
 

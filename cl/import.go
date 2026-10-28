@@ -604,6 +604,18 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 							}
 							if r.CallConv != "" {
 								prog.SetTypeCallConv(pkg.Path()+"."+r.Name, toCallConv(r.CallConv))
+								if st, ok := r.Source.Type.(*ast.StructType); ok {
+									var positions []token.Pos
+									for _, field := range st.Fields.List {
+										if len(field.Names) == 0 {
+											positions = append(positions, embeddedStructFieldPos(field.Type))
+										}
+										for _, name := range field.Names {
+											positions = append(positions, name.Pos())
+										}
+									}
+									prog.SetNativeStructFields(positions)
+								}
 							}
 						}
 					}
@@ -626,6 +638,22 @@ func validateInternalRecords(fset *token.FileSet, pkgPath string, files []*direc
 		}
 	}
 	return nil
+}
+
+// go/types assigns an embedded field the position of its identifier, rather
+// than the start of a pointer or qualified type expression.
+func embeddedStructFieldPos(expr ast.Expr) token.Pos {
+	switch expr := expr.(type) {
+	case *ast.StarExpr:
+		return embeddedStructFieldPos(expr.X)
+	case *ast.SelectorExpr:
+		return expr.Sel.Pos()
+	case *ast.IndexExpr:
+		return embeddedStructFieldPos(expr.X)
+	case *ast.IndexListExpr:
+		return embeddedStructFieldPos(expr.X)
+	}
+	return expr.Pos()
 }
 
 func toCallConv(cc string) llssa.CallConv {

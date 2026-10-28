@@ -133,6 +133,9 @@ func TestEffectiveDirectivePackageForTypesAndMethods(t *testing.T) {
 	if bg, ok := backend.packageSyntax.typeCallConv(named.Origin().Obj()); !ok || bg != CDecl {
 		t.Fatalf("effective background = %v, %v", bg, ok)
 	}
+	if !backend.hasNativeStructLayout(named) {
+		t.Fatal("lost replacement native struct layout")
+	}
 	sizes := backend.TypeSizes(types.SizesFor("gc", "amd64"))
 	if got := sizes.Sizeof(pkg.Scope().Lookup("A").Type()); got != int64(backend.GoWordSize()) {
 		t.Errorf("effective alias size = %d, want one pointer", got)
