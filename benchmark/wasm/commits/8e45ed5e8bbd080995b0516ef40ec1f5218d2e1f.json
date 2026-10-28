@@ -1,0 +1,1286 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "llgo-wasm",
+  "source": {
+    "repository": "cpunion/llgo",
+    "sha": "8e45ed5e8bbd080995b0516ef40ec1f5218d2e1f",
+    "ref": "fix/wasm-math-bitcasts-20261028",
+    "url": "https://github.com/cpunion/llgo/commit/8e45ed5e8bbd080995b0516ef40ec1f5218d2e1f",
+    "runUrl": "https://github.com/xgo-dev/llgo/actions/runs/40622397963",
+    "timestamp": "2026-10-28T02:41:17Z"
+  },
+  "platforms": {
+    "wasm-linux": {
+      "schemaVersion": 1,
+      "suiteId": "llgo-wasm",
+      "shardId": "merged",
+      "source": {
+        "repository": "cpunion/llgo",
+        "sha": "8e45ed5e8bbd080995b0516ef40ec1f5218d2e1f",
+        "ref": "fix/wasm-math-bitcasts-20261028",
+        "url": "https://github.com/cpunion/llgo/commit/8e45ed5e8bbd080995b0516ef40ec1f5218d2e1f",
+        "runUrl": "https://github.com/xgo-dev/llgo/actions/runs/40622397963",
+        "timestamp": "2026-10-28T02:41:17Z"
+      },
+      "platform": {
+        "id": "wasm-linux",
+        "label": "WebAssembly",
+        "os": "linux",
+        "arch": "amd64"
+      },
+      "units": {
+        "module-bytes": {
+          "better": "lower",
+          "assume": "exact"
+        },
+        "glue-bytes": {
+          "better": "lower",
+          "assume": "exact"
+        },
+        "build-ns": {
+          "better": "lower"
+        }
+      },
+      "benchmarks": [
+        {
+          "name": "BenchmarkWasmBuild/j32-emscripten",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-build",
+          "chart": "group:wasm-build",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "build-ns": 9085954563
+              }
+            }
+          ],
+          "measurements": {
+            "build-ns": 9085954563
+          }
+        },
+        {
+          "name": "BenchmarkWasmBuild/j32-goos-js",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-build",
+          "chart": "group:wasm-build",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "build-ns": 7745223656
+              }
+            }
+          ],
+          "measurements": {
+            "build-ns": 7745223656
+          }
+        },
+        {
+          "name": "BenchmarkWasmBuild/j64-emscripten-memory64",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-build",
+          "chart": "group:wasm-build",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "build-ns": 7269968935
+              }
+            }
+          ],
+          "measurements": {
+            "build-ns": 7269968935
+          }
+        },
+        {
+          "name": "BenchmarkWasmBuild/reflectcall/w32-wasi",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-build",
+          "chart": "group:wasm-build",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "build-ns": 25289061722
+              }
+            }
+          ],
+          "measurements": {
+            "build-ns": 25289061722
+          }
+        },
+        {
+          "name": "BenchmarkWasmBuild/w32-goos-wasip1",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-build",
+          "chart": "group:wasm-build",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "build-ns": 3954144217
+              }
+            }
+          ],
+          "measurements": {
+            "build-ns": 3954144217
+          }
+        },
+        {
+          "name": "BenchmarkWasmBuild/w32-wasi",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-build",
+          "chart": "group:wasm-build",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "build-ns": 3575816610
+              }
+            }
+          ],
+          "measurements": {
+            "build-ns": 3575816610
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/cprintf/j32-emscripten/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 146960,
+                "glue-bytes": 88932
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 88932,
+            "module-bytes": 146960
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/cprintf/j32-goos-js/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 145367,
+                "glue-bytes": 72985
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 72985,
+            "module-bytes": 145367
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/cprintf/j64-emscripten-memory64/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 134345,
+                "glue-bytes": 92103
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 92103,
+            "module-bytes": 134345
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/cprintf/w32-goos-wasip1/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 15937,
+                "glue-bytes": 0
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 0,
+            "module-bytes": 15937
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/cprintf/w32-wasi/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 15937,
+                "glue-bytes": 0
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 0,
+            "module-bytes": 15937
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/fmtprintf/j32-emscripten/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 1832898,
+                "glue-bytes": 119484
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 119484,
+            "module-bytes": 1832898
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/fmtprintf/j32-goos-js/Go",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 2526852,
+                "glue-bytes": 0
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 0,
+            "module-bytes": 2526852
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/fmtprintf/j32-goos-js/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 1897635,
+                "glue-bytes": 90155
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 90155,
+            "module-bytes": 1897635
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/fmtprintf/j64-emscripten-memory64/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 1699972,
+                "glue-bytes": 122077
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 122077,
+            "module-bytes": 1699972
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/fmtprintf/w32-goos-wasip1/Go",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 2500019,
+                "glue-bytes": 0
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 0,
+            "module-bytes": 2500019
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/fmtprintf/w32-goos-wasip1/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 1255917,
+                "glue-bytes": 0
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 0,
+            "module-bytes": 1255917
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/fmtprintf/w32-wasi/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 1256364,
+                "glue-bytes": 0
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 0,
+            "module-bytes": 1256364
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/j32-emscripten/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 146158,
+                "glue-bytes": 88932
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 88932,
+            "module-bytes": 146158
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/j32-goos-js/Go",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 1895533,
+                "glue-bytes": 0
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 0,
+            "module-bytes": 1895533
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/j32-goos-js/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 144822,
+                "glue-bytes": 72985
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 72985,
+            "module-bytes": 144822
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/j64-emscripten-memory64/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 133598,
+                "glue-bytes": 92103
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 92103,
+            "module-bytes": 133598
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/reflectcall/j32-emscripten/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 1336960,
+                "glue-bytes": 95624
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 95624,
+            "module-bytes": 1336960
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/reflectcall/j32-goos-js/Go",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 2191221,
+                "glue-bytes": 0
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 0,
+            "module-bytes": 2191221
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/reflectcall/j32-goos-js/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 1352060,
+                "glue-bytes": 79673
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 79673,
+            "module-bytes": 1352060
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/reflectcall/j64-emscripten-memory64/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 1224278,
+                "glue-bytes": 99045
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 99045,
+            "module-bytes": 1224278
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/reflectcall/w32-goos-wasip1/Go",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 2205707,
+                "glue-bytes": 0
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 0,
+            "module-bytes": 2205707
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/reflectcall/w32-goos-wasip1/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 988854,
+                "glue-bytes": 0
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 0,
+            "module-bytes": 988854
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/reflectcall/w32-wasi/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 989267,
+                "glue-bytes": 0
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 0,
+            "module-bytes": 989267
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/w32-goos-wasip1/Go",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 1909947,
+                "glue-bytes": 0
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 0,
+            "module-bytes": 1909947
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/w32-goos-wasip1/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 18855,
+                "glue-bytes": 0
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 0,
+            "module-bytes": 18855
+          }
+        },
+        {
+          "name": "BenchmarkWasmSize/w32-wasi/LLGo",
+          "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+          "group": "wasm-size",
+          "chart": "group:wasm-size",
+          "samples": [
+            {
+              "iterations": 1,
+              "measurements": {
+                "module-bytes": 18855,
+                "glue-bytes": 0
+              }
+            }
+          ],
+          "measurements": {
+            "glue-bytes": 0,
+            "module-bytes": 18855
+          }
+        }
+      ]
+    }
+  },
+  "comparison": {
+    "source": {
+      "repository": "xgo-dev/llgo",
+      "sha": "748cf18118e4d2e9cd4f8e953490e50945572ef6",
+      "ref": "main",
+      "url": "https://github.com/xgo-dev/llgo/commit/748cf18118e4d2e9cd4f8e953490e50945572ef6",
+      "runUrl": "https://github.com/xgo-dev/llgo/actions/runs/40622397963",
+      "timestamp": "2026-10-28T02:41:17Z"
+    },
+    "platforms": {
+      "wasm-linux": {
+        "schemaVersion": 1,
+        "suiteId": "llgo-wasm",
+        "shardId": "merged",
+        "source": {
+          "repository": "xgo-dev/llgo",
+          "sha": "748cf18118e4d2e9cd4f8e953490e50945572ef6",
+          "ref": "main",
+          "url": "https://github.com/xgo-dev/llgo/commit/748cf18118e4d2e9cd4f8e953490e50945572ef6",
+          "runUrl": "https://github.com/xgo-dev/llgo/actions/runs/40622397963",
+          "timestamp": "2026-10-28T02:41:17Z"
+        },
+        "platform": {
+          "id": "wasm-linux",
+          "label": "WebAssembly",
+          "os": "linux",
+          "arch": "amd64"
+        },
+        "units": {
+          "module-bytes": {
+            "better": "lower",
+            "assume": "exact"
+          },
+          "glue-bytes": {
+            "better": "lower",
+            "assume": "exact"
+          },
+          "build-ns": {
+            "better": "lower"
+          }
+        },
+        "benchmarks": [
+          {
+            "name": "BenchmarkWasmBuild/j32-emscripten",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-build",
+            "chart": "group:wasm-build",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "build-ns": 9654605065
+                }
+              }
+            ],
+            "measurements": {
+              "build-ns": 9654605065
+            }
+          },
+          {
+            "name": "BenchmarkWasmBuild/j32-goos-js",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-build",
+            "chart": "group:wasm-build",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "build-ns": 9645164944
+                }
+              }
+            ],
+            "measurements": {
+              "build-ns": 9645164944
+            }
+          },
+          {
+            "name": "BenchmarkWasmBuild/j64-emscripten-memory64",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-build",
+            "chart": "group:wasm-build",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "build-ns": 7926435248
+                }
+              }
+            ],
+            "measurements": {
+              "build-ns": 7926435248
+            }
+          },
+          {
+            "name": "BenchmarkWasmBuild/reflectcall/w32-wasi",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-build",
+            "chart": "group:wasm-build",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "build-ns": 26278379968
+                }
+              }
+            ],
+            "measurements": {
+              "build-ns": 26278379968
+            }
+          },
+          {
+            "name": "BenchmarkWasmBuild/w32-goos-wasip1",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-build",
+            "chart": "group:wasm-build",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "build-ns": 4506612328
+                }
+              }
+            ],
+            "measurements": {
+              "build-ns": 4506612328
+            }
+          },
+          {
+            "name": "BenchmarkWasmBuild/w32-wasi",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-build",
+            "chart": "group:wasm-build",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "build-ns": 3875827194
+                }
+              }
+            ],
+            "measurements": {
+              "build-ns": 3875827194
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/cprintf/j32-emscripten/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 146960,
+                  "glue-bytes": 88932
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 88932,
+              "module-bytes": 146960
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/cprintf/j32-goos-js/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 145367,
+                  "glue-bytes": 72985
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 72985,
+              "module-bytes": 145367
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/cprintf/j64-emscripten-memory64/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 134345,
+                  "glue-bytes": 92103
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 92103,
+              "module-bytes": 134345
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/cprintf/w32-goos-wasip1/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 15937,
+                  "glue-bytes": 0
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 0,
+              "module-bytes": 15937
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/cprintf/w32-wasi/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 15937,
+                  "glue-bytes": 0
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 0,
+              "module-bytes": 15937
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/fmtprintf/j32-emscripten/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 1833117,
+                  "glue-bytes": 119484
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 119484,
+              "module-bytes": 1833117
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/fmtprintf/j32-goos-js/Go",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 2526852,
+                  "glue-bytes": 0
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 0,
+              "module-bytes": 2526852
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/fmtprintf/j32-goos-js/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 1897869,
+                  "glue-bytes": 90155
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 90155,
+              "module-bytes": 1897869
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/fmtprintf/j64-emscripten-memory64/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 1700203,
+                  "glue-bytes": 122077
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 122077,
+              "module-bytes": 1700203
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/fmtprintf/w32-goos-wasip1/Go",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 2500019,
+                  "glue-bytes": 0
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 0,
+              "module-bytes": 2500019
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/fmtprintf/w32-goos-wasip1/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 1255917,
+                  "glue-bytes": 0
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 0,
+              "module-bytes": 1255917
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/fmtprintf/w32-wasi/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 1256364,
+                  "glue-bytes": 0
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 0,
+              "module-bytes": 1256364
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/j32-emscripten/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 146158,
+                  "glue-bytes": 88932
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 88932,
+              "module-bytes": 146158
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/j32-goos-js/Go",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 1895533,
+                  "glue-bytes": 0
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 0,
+              "module-bytes": 1895533
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/j32-goos-js/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 144822,
+                  "glue-bytes": 72985
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 72985,
+              "module-bytes": 144822
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/j64-emscripten-memory64/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 133598,
+                  "glue-bytes": 92103
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 92103,
+              "module-bytes": 133598
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/reflectcall/j32-emscripten/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 1337545,
+                  "glue-bytes": 95624
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 95624,
+              "module-bytes": 1337545
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/reflectcall/j32-goos-js/Go",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 2191221,
+                  "glue-bytes": 0
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 0,
+              "module-bytes": 2191221
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/reflectcall/j32-goos-js/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 1352642,
+                  "glue-bytes": 79673
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 79673,
+              "module-bytes": 1352642
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/reflectcall/j64-emscripten-memory64/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 1224870,
+                  "glue-bytes": 99045
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 99045,
+              "module-bytes": 1224870
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/reflectcall/w32-goos-wasip1/Go",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 2205707,
+                  "glue-bytes": 0
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 0,
+              "module-bytes": 2205707
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/reflectcall/w32-goos-wasip1/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 989061,
+                  "glue-bytes": 0
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 0,
+              "module-bytes": 989061
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/reflectcall/w32-wasi/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 989454,
+                  "glue-bytes": 0
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 0,
+              "module-bytes": 989454
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/w32-goos-wasip1/Go",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 1909947,
+                  "glue-bytes": 0
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 0,
+              "module-bytes": 1909947
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/w32-goos-wasip1/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 18855,
+                  "glue-bytes": 0
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 0,
+              "module-bytes": 18855
+            }
+          },
+          {
+            "name": "BenchmarkWasmSize/w32-wasi/LLGo",
+            "package": "github.com/xgo-dev/llgo/benchmark/wasm",
+            "group": "wasm-size",
+            "chart": "group:wasm-size",
+            "samples": [
+              {
+                "iterations": 1,
+                "measurements": {
+                  "module-bytes": 18855,
+                  "glue-bytes": 0
+                }
+              }
+            ],
+            "measurements": {
+              "glue-bytes": 0,
+              "module-bytes": 18855
+            }
+          }
+        ]
+      }
+    }
+  }
+}
