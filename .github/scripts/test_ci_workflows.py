@@ -1,6 +1,9 @@
 """Guard the integration contract so workflow edits cannot silently bypass policy."""
 
+import copy
+import hashlib
 import json
+from collections import Counter
 import os
 from pathlib import Path
 import re
@@ -20,7 +23,7 @@ import ci_policy
 WORKFLOWS = Path(__file__).resolve().parents[1] / "workflows"
 PREPARE = "./.github/workflows/ci-prepare.yml"
 CODE_WORKFLOWS = {
-    "llgo.yml": 35, "go.yml": 6, "targets.yml": 4, "build-cache.yml": 4,
+    "llgo.yml": 42, "go.yml": 6, "targets.yml": 4, "build-cache.yml": 4,
     "benchmark.yml": 9, "release-build.yml": 24, "doc.yml": 6, "fmt.yml": 1,
     "mise.yml": 5, "pixi.yml": 5,
 }
@@ -687,7 +690,239 @@ sys.exit(subprocess.call(command + ['./internal/build']))
         self.assertEqual(steps[cache]["with"]["build-cache-mode"], "readwrite")
         self.assertEqual(steps[cache]["with"]["build-cache-scope"], "wasm-${{ matrix.suite }}")
         self.assertEqual(steps[cache]["with"]["crosscompile-cache-mode"], "readwrite")
-        self.assertIn("matrix.suite != 'workers'", steps[cache]["with"]["wasmer-cache-mode"])
+        self.assertEqual(steps[cache]["with"]["wasmer-cache-mode"],
+                         "${{ (matrix.suite == 'runtime' || matrix.suite == 'test-command' || "
+                         "matrix.suite == 'simd' || matrix.suite == 'stdlib-wasi') && 'readwrite' || 'off' }}")
+
+    def assert_wasm_runtime_partitions(self, job):
+        stdlib = {"stdlib-" + target: target for target in
+                  ("wasi", "emscripten", "emscripten-memory64")}
+        callers = {
+            "caller-j32-emscripten": ("J32-Emscripten", "emscripten"),
+            "caller-j64-emscripten": ("J64-Emscripten", "emscripten-memory64"),
+            "caller-j32-gojs": ("J32-GoJS", "js"),
+        }
+        matrix = job["strategy"]["matrix"]
+        self.assertCountEqual(matrix["suite"], ["runtime", "workers", "test-command", "simd",
+                                                *stdlib, *callers])
+        self.assertEqual(len(matrix["suite"]), 10)
+        self.assertEqual(job["timeout-minutes"], "60")
+        self.assertEqual(job["strategy"]["fail-fast"], "false")
+        self.assertNotIn("max-parallel", job["strategy"])
+        include = matrix["include"]
+        self.assertEqual(len(include), 6)
+        self.assertEqual({entry["suite"]: entry["stdlib-target"] for entry in include
+                          if entry["suite"].startswith("stdlib-")}, stdlib)
+        self.assertEqual({entry["suite"]: (entry["wasm-profile"], entry["wasm-target"])
+                          for entry in include if entry["suite"].startswith("caller-")}, callers)
+        steps = {step.get("name"): step for step in job["steps"]}
+        std = steps["Test wasm standard-library packages"]
+        caller = steps["Run caller and large-function regressions on browser targets"]
+        self.assertEqual(std["if"], "startsWith(matrix.suite, 'stdlib-')")
+        self.assertEqual(std["timeout-minutes"], "20")
+        self.assertEqual(std["env"]["LLGO_BUILD_CACHE"], "off")
+        self.assertEqual(std["env"]["WASM_STDLIB_TARGET"], "${{ matrix.stdlib-target }}")
+        self.assertEqual(caller["if"], "startsWith(matrix.suite, 'caller-')")
+        self.assertEqual(caller["timeout-minutes"], "15")
+        self.assertEqual(caller["env"]["LLGO_BUILD_CACHE"], "1")
+        self.assertEqual(caller["env"]["WASM_CALLER_PROFILE"], "${{ matrix.wasm-profile }}")
+        self.assertEqual(caller["env"]["WASM_CALLER_TARGET"], "${{ matrix.wasm-target }}")
+        for step in (std, caller):
+            self.assertNotIn("continue-on-error", step)
+            self.assertNotIn("for target in", step["run"])
+            self.assertNotIn("for profile in", step["run"])
+        self.assertEqual(steps["Test single-worker wasm schedulers"]["if"],
+                         "matrix.suite == 'runtime' || matrix.suite == 'test-command'")
+        for name in ("Test SIMD behavior on WebAssembly",
+                     "Test SIMD on JavaScript targets with off, Thin and Full LTO"):
+            self.assertEqual(steps[name]["if"], "matrix.suite == 'simd'")
+        # The split changes ownership, not any existing runtime, worker,
+        # SIMD/LTO or JS-call script. Bind complete bodies, not keywords.
+        unchanged = {
+            "Install Wasmer for W32": "b2231ab4857c56c9fb4cf999597a4e8b5bfd6d48b572800518b8fcd457f3decd",
+            "Install llgo": "c5c0592b9a8f31d778c9850ee99917f526c4573ccd3c5ae1676515ad64048124",
+            "Test reflected method calls and large initializers": "c4cdd5df4c87b38c34128b3a70368e50804f5319d433ece60fe65f58eef3e3b0",
+            "Compare WebAssembly EH encodings and Go/C++ boundary": "71fa2442751e2a7d916da2205382ecd9c853ae0f4503075b30e9165ec82572f0",
+            "Test WebAssembly target profiles": "62d5330ed8b1ce1a41aec4102ea26de5b28efb7d5ecf0904a9d44474e4841e62",
+            "Verify final WebAssembly DWARF": "13dcc317812a94ea68f19cf1ea39df09bc952c7a95fcc82ecd1ccf4bec44b181",
+            "Test optimized Emscripten runtime boundaries": "e849da6ad5854bc3740c42b36fa8dc67d9c771ccfc855efda16c7aa32fb26bf0",
+            "Build standard runtime for wasm": "c1ae58a27fbd2e5bae6ac9bc09f70ab0618684102a74d89d6c644fdbd0dcc40f",
+            "Test wasm coverage reporting": "5010a21bd099561990c4acfb0e576c631f5ae27d4864b2c4771bee4750b68924",
+            "Test single-worker wasm schedulers": "9d2e5c762b82303013a7ab4897f923256e3a1f5d455b3b60cb4714f972ff6c0d",
+            "Test bounded browser workers": "97b72a7858c1a1a11fb2c5ebaaa7dd8c028f374115aa3f70d1a52fca2385d6f4",
+            "Test SIMD behavior on WebAssembly": "1dd431a9845c8a34f4945973590385bcdea220d1f678d7f1cc406ec7fef13ef8",
+            "Test SIMD on JavaScript targets with off, Thin and Full LTO": "2c280e97b386174a4a3fb5b0672f7a0c62e5ad62396ead18980479fc752e6d67",
+            "Compare JavaScript call semantics with Go": "ce149b260e5963507567672ac0a037c5814aa0c1b37588f66cd35e04920d1ca5",
+        }
+        for name, digest in unchanged.items():
+            self.assertEqual(hashlib.sha256(steps[name]["run"].encode()).hexdigest(), digest, name)
+        for name in ("Test reflected method calls and large initializers",
+                     "Compare WebAssembly EH encodings and Go/C++ boundary",
+                     "Test WebAssembly target profiles", "Verify final WebAssembly DWARF",
+                     "Test optimized Emscripten runtime boundaries",
+                     "Build standard runtime for wasm", "Test wasm coverage reporting"):
+            self.assertEqual(steps[name]["if"], "matrix.suite == 'runtime'")
+        self.assertEqual(steps["Test bounded browser workers"]["if"], "matrix.suite == 'workers'")
+        self.assertEqual(steps["Compare JavaScript call semantics with Go"]["if"],
+                         "matrix.suite == 'test-command'")
+
+    def test_wasm_long_suites_partition_exact_targets_without_more_budget(self):
+        self.assert_wasm_runtime_partitions(load("llgo.yml")["jobs"]["wasm-runtime"])
+
+    def test_wasm_partition_policy_rejects_missing_duplicate_or_weakened_owners(self):
+        baseline = load("llgo.yml")["jobs"]["wasm-runtime"]
+        mutations = {
+            "missing suite": lambda job: job["strategy"]["matrix"]["suite"].pop(),
+            "duplicate suite": lambda job: job["strategy"]["matrix"]["suite"].append("stdlib-wasi"),
+            "job budget": lambda job: job.update({"timeout-minutes": "61"}),
+            "concurrency cap": lambda job: job["strategy"].update({"max-parallel": "3"}),
+            "missing target": lambda job: job["strategy"]["matrix"]["include"].pop(),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(mutation=name):
+                job = copy.deepcopy(baseline)
+                mutate(job)
+                with self.assertRaises(AssertionError):
+                    self.assert_wasm_runtime_partitions(job)
+
+    def test_wasm_partition_scripts_preserve_exact_command_multisets(self):
+        root = WORKFLOWS.parents[1]
+        job = load("llgo.yml")["jobs"]["wasm-runtime"]
+        steps = {step.get("name"): step for step in job["steps"]}
+        std = steps["Test wasm standard-library packages"]
+        caller = steps["Run caller and large-function regressions on browser targets"]
+        real_bash = shutil.which("bash")
+        self.assertIsNotNone(real_bash)
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary = Path(temporary)
+            binary = temporary / "bin"
+            binary.mkdir()
+            log = temporary / "calls.jsonl"
+            # Only command preservation is simulated here. The acceptance
+            # script's separate black-box tests exercise PASS/SKIP accounting.
+            fixture = f"#!{sys.executable}\n" + r'''
+import json, os, pathlib, shutil, sys
+tool = pathlib.Path(sys.argv[0]).name
+args = sys.argv[1:]
+if tool == "go" and args == ["env", "GOROOT"]:
+    print("/selected/goroot")
+    sys.exit(0)
+role = "devllgo" if tool == "llgo-map-metadata" else tool
+record = dict(tool=role, args=args, cwd=os.path.relpath(os.getcwd(), os.environ["FIXTURE_ROOT"]),
+              goos=os.environ.get("GOOS", ""), goarch=os.environ.get("GOARCH", ""),
+              cache=os.environ["LLGO_BUILD_CACHE"])
+with open(os.environ["FIXTURE_CALLS"], "a") as output:
+    output.write(json.dumps(record) + "\n")
+if tool == "bash":
+    if args == ["dev/test_wasm_stdlib_test.sh"]:
+        sys.exit(0)
+    os.execv(os.environ["FIXTURE_BASH"], [os.environ["FIXTURE_BASH"], *args])
+if tool == "go":
+    if args[0] == "build":
+        destination = pathlib.Path(args[args.index("-o") + 1])
+        shutil.copy2(os.environ["LLGO"], destination)
+    elif args[0] != "test":
+        sys.exit("unexpected Go command")
+elif args[0] == "test" and any(a.endswith("/test/std/bytes") for a in args):
+    for name in ("TestBytesBuffer", "TestStringsBuilder", "TestMarshalUnmarshal"):
+        print("--- PASS: " + name + " (0.00s)\nPASS")
+'''
+            for name in ("go", "llgo", "bash"):
+                path = binary / name
+                path.write_text(fixture)
+                path.chmod(0o755)
+
+            def record(tool, args, cache, cwd=".", goos="", goarch=""):
+                return tool, tuple(args), cache, cwd, goos, goarch
+
+            def normalized(value):
+                return value.replace(str(root), "$ROOT").replace(str(temporary), "$TMP")
+
+            def execute(step, values):
+                environment = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"],
+                                   RUNNER_TEMP=str(temporary), LLGO=str(binary / "llgo"),
+                                   TMPDIR=str(temporary), GITHUB_STEP_SUMMARY=str(temporary / "summary.md"),
+                                   LLGO_BUILD_CACHE=step["env"]["LLGO_BUILD_CACHE"],
+                                   FIXTURE_ROOT=str(root), FIXTURE_CALLS=str(log), FIXTURE_BASH=real_bash,
+                                   **values)
+                result = subprocess.run([real_bash, "-e", "-o", "pipefail", "-c", step["run"]],
+                                        cwd=root, env=environment, capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            expected = []
+            for target in ("wasi", "emscripten", "emscripten-memory64"):
+                execute(std, {"WASM_STDLIB_TARGET": target})
+                expected += [
+                    record("bash", ["dev/test_wasm_stdlib_test.sh"], "off"),
+                    record("bash", ["dev/test_wasm_stdlib.sh", target], "off"),
+                    record("go", ["build", "-tags=dev", "-o", "$TMP/llgo-map-metadata", "./cmd/llgo"], "off"),
+                    record("llgo", [
+                        "test", "-target", target, "-emulator", "-v", "-count=1", "-timeout=60s",
+                        "$ROOT/test/std/bytes", "$ROOT/test/std/strings", "$ROOT/test/std/encoding/json",
+                    ], "off"),
+                    record("llgo", [
+                        "test", "-target", target, "-emulator", "-v", "-count=1", "-timeout=2m",
+                        "./internal/wordmap",
+                    ], "off", "runtime"),
+                    record("llgo", [
+                        "test", "-target", target, "-emulator", "-v", "-count=1", "-timeout=2m",
+                        "-run", "^TestLiteral", "./test/std/fmt",
+                    ], "off"),
+                    record("llgo", [
+                        "run", "-target", target, "-emulator", "-O2",
+                        "./internal/build/testdata/wasm-fmt-literal-callers",
+                    ], "off"),
+                    record("llgo", [
+                        "run", "-target", target, "-emulator", "-tags=llgo.wasm.debugger",
+                        "./internal/build/testdata/wasm-fmt-literal-debugger",
+                    ], "off"),
+                    record("devllgo", [
+                        "run", "-target", target, "-emulator", "-deadcodedrop", "-Oz",
+                        "./internal/build/testdata/wasm-map-metadata",
+                    ], "off"),
+                ]
+            for profile, target in (("J32-Emscripten", "emscripten"),
+                                    ("J64-Emscripten", "emscripten-memory64"), ("J32-GoJS", "js")):
+                execute(caller, {"WASM_CALLER_PROFILE": profile, "WASM_CALLER_TARGET": target})
+                smoke = ["test", "-v", "-count=1", "-timeout=90s", "./test/std/runtime"]
+                if target == "js":
+                    expected.append(record("llgo", smoke, "1", goos="js", goarch="wasm"))
+                else:
+                    expected.append(record("llgo", smoke[:1] + ["-target", target, "-emulator"] + smoke[1:], "1"))
+                expected.append(record("go", [
+                    "test", "./test/goroot", "-v", "-run", "^TestGoRootRunCases$",
+                    "-count=1", "-timeout=10m", "-args", "-goroot", "/selected/goroot",
+                    "-llgo", "$TMP/bin/llgo", "-wasm-profile", profile,
+                    "-directive-mode", "ci", "-dirs", ".,fixedbugs", "-case",
+                    r"^(clearfat\.go|fixedbugs/issue(22662|5856)\.go)$", "-min-swap-free-mib=0",
+                ], "1"))
+            actual = []
+            for line in log.read_text().splitlines():
+                row = json.loads(line)
+                actual.append(record(row["tool"], [normalized(arg) for arg in row["args"]],
+                                     row["cache"], row["cwd"], row["goos"], row["goarch"]))
+            self.assertEqual(Counter(actual), Counter(expected))
+
+    def test_wasm_command_multiset_rejects_changed_packages_profiles_and_optimizations(self):
+        baseline = load("llgo.yml")
+        mutations = (
+            ("Test wasm standard-library packages", './internal/wordmap', './internal/omitted'),
+            ("Test wasm standard-library packages", 'test_wasm_stdlib.sh "$target"', 'test_wasm_stdlib.sh'),
+            ("Test wasm standard-library packages", '-O2', '-O0'),
+            ("Test wasm standard-library packages", '-deadcodedrop -Oz', '-Oz'),
+            ("Run caller and large-function regressions on browser targets", 'GOOS=js GOARCH=wasm', 'GOOS=wasip1 GOARCH=wasm'),
+            ("Run caller and large-function regressions on browser targets", '22662|5856', '22662'),
+        )
+        for name, before, after in mutations:
+            with self.subTest(step=name, mutation=before):
+                changed = copy.deepcopy(baseline)
+                step = next(step for step in changed["jobs"]["wasm-runtime"]["steps"]
+                            if step.get("name") == name)
+                self.assertIn(before, step["run"])
+                step["run"] = step["run"].replace(before, after, 1)
+                with mock.patch(__name__ + ".load", return_value=changed):
+                    with self.assertRaises(AssertionError):
+                        self.test_wasm_partition_scripts_preserve_exact_command_multisets()
 
     def test_benchmark_runtime_manifest_keeps_versions_and_full_demo_dependencies(self):
         root = WORKFLOWS.parents[1]

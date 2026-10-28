@@ -1210,7 +1210,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [runtime, workers, test-command]
+        suite:
+          - runtime
+          - workers
+          - test-command
+          - simd
+          - stdlib-wasi
+          - stdlib-emscripten
+          - stdlib-emscripten-memory64
+          - caller-j32-emscripten
+          - caller-j64-emscripten
+          - caller-j32-gojs
+        include:
+          - {suite: stdlib-wasi, stdlib-target: wasi}
+          - {suite: stdlib-emscripten, stdlib-target: emscripten}
+          - {suite: stdlib-emscripten-memory64, stdlib-target: emscripten-memory64}
+          - {suite: caller-j32-emscripten, wasm-profile: J32-Emscripten, wasm-target: emscripten}
+          - {suite: caller-j64-emscripten, wasm-profile: J64-Emscripten, wasm-target: emscripten-memory64}
+          - {suite: caller-j32-gojs, wasm-profile: J32-GoJS, wasm-target: js}
     runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
     steps:
       - uses: actions/checkout@v7
@@ -1220,18 +1237,20 @@ jobs:
           llvm-version: 22
 
       - name: Set up Emscripten
+        if: matrix.suite != 'stdlib-wasi'
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: "6.0.8"
 
       - name: Set up Node for Emscripten Memory64
+        if: matrix.suite != 'stdlib-wasi'
         # Keep memory64 JavaScript execution on the pinned Node LTS runtime.
         uses: actions/setup-node@v7
         with:
           node-version: "24"
 
       - name: Set up Chrome for browser acceptance
-        if: matrix.suite != 'test-command'
+        if: matrix.suite == 'runtime' || matrix.suite == 'workers'
         id: setup-chrome
         uses: browser-actions/setup-chrome@v2
         with:
@@ -1241,7 +1260,7 @@ jobs:
         uses: ./.github/actions/setup-binaryen
 
       - name: Set up Wasmtime
-        if: matrix.suite != 'workers'
+        if: matrix.suite == 'runtime' || matrix.suite == 'test-command' || matrix.suite == 'simd' || matrix.suite == 'stdlib-wasi'
         uses: bytecodealliance/actions/wasmtime/setup@v1
         with:
           version: "39.0.1"
@@ -1255,10 +1274,10 @@ jobs:
           build-cache-mode: readwrite
           build-cache-scope: wasm-${{ matrix.suite }}
           crosscompile-cache-mode: readwrite
-          wasmer-cache-mode: ${{ matrix.suite != 'workers' && 'readwrite' || 'off' }}
+          wasmer-cache-mode: ${{ (matrix.suite == 'runtime' || matrix.suite == 'test-command' || matrix.suite == 'simd' || matrix.suite == 'stdlib-wasi') && 'readwrite' || 'off' }}
 
       - name: Install Wasmer for W32
-        if: matrix.suite != 'workers'
+        if: matrix.suite == 'runtime' || matrix.suite == 'test-command' || matrix.suite == 'simd' || matrix.suite == 'stdlib-wasi'
         run: bash dev/install_wasmer.sh
 
       - name: Set up wasm-tools
@@ -1341,7 +1360,7 @@ jobs:
         run: dev/wasm_ci_report_test.sh
 
       - name: Test single-worker wasm schedulers
-        if: matrix.suite != 'workers'
+        if: matrix.suite == 'runtime' || matrix.suite == 'test-command'
         shell: bash
         env:
           CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
@@ -1359,7 +1378,7 @@ jobs:
         run: dev/test_wasm_workers.sh
 
       - name: Test SIMD behavior on WebAssembly
-        if: matrix.suite == 'test-command'
+        if: matrix.suite == 'simd'
         shell: bash
         env:
           GOEXPERIMENT: simd
@@ -1372,7 +1391,7 @@ jobs:
           LLGO="$RUNNER_TEMP/llgo-bin/llgo" bash dev/test_portable_simd_wasi.sh
 
       - name: Test SIMD on JavaScript targets with off, Thin and Full LTO
-        if: matrix.suite == 'test-command'
+        if: matrix.suite == 'simd'
         shell: bash
         env:
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
@@ -1389,43 +1408,44 @@ jobs:
             ./internal/build/testdata/wasm-test
 
       - name: Test wasm standard-library packages
-        if: matrix.suite == 'runtime'
+        if: startsWith(matrix.suite, 'stdlib-')
         timeout-minutes: 20
         shell: bash
         env:
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
           LLGO_BUILD_CACHE: "off"
+          WASM_STDLIB_TARGET: ${{ matrix.stdlib-target }}
         run: |
           bash dev/test_wasm_stdlib_test.sh
-          bash dev/test_wasm_stdlib.sh
+          target="$WASM_STDLIB_TARGET"
+          bash dev/test_wasm_stdlib.sh "$target"
           llgo_dev="$RUNNER_TEMP/llgo-map-metadata"
           go build -tags=dev -o "$llgo_dev" ./cmd/llgo
-          for target in wasi emscripten emscripten-memory64; do
-            (cd runtime && "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=2m ./internal/wordmap)
-            "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=2m \
-              -run '^TestLiteral' ./test/std/fmt
-            "$LLGO" run -target "$target" -emulator -O2 \
-              ./internal/build/testdata/wasm-fmt-literal-callers
-            "$LLGO" run -target "$target" -emulator -tags=llgo.wasm.debugger \
-              ./internal/build/testdata/wasm-fmt-literal-debugger
-            "$llgo_dev" run -target "$target" -emulator -deadcodedrop -Oz \
-              ./internal/build/testdata/wasm-map-metadata
-          done
+          (cd runtime && "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=2m ./internal/wordmap)
+          "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=2m \
+            -run '^TestLiteral' ./test/std/fmt
+          "$LLGO" run -target "$target" -emulator -O2 \
+            ./internal/build/testdata/wasm-fmt-literal-callers
+          "$LLGO" run -target "$target" -emulator -tags=llgo.wasm.debugger \
+            ./internal/build/testdata/wasm-fmt-literal-debugger
+          "$llgo_dev" run -target "$target" -emulator -deadcodedrop -Oz \
+            ./internal/build/testdata/wasm-map-metadata
 
       - name: Run caller and large-function regressions on browser targets
-        if: matrix.suite == 'test-command'
+        if: startsWith(matrix.suite, 'caller-')
         timeout-minutes: 15
         env:
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
           LLGO_BUILD_CACHE: "1"
+          WASM_CALLER_PROFILE: ${{ matrix.wasm-profile }}
+          WASM_CALLER_TARGET: ${{ matrix.wasm-target }}
         run: |
           set -euo pipefail
-          for target in emscripten emscripten-memory64; do
-            "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=90s ./test/std/runtime
-          done
-          GOOS=js GOARCH=wasm "$LLGO" test -v -count=1 -timeout=90s ./test/std/runtime
-          for profile in J32-Emscripten J64-Emscripten J32-GoJS; do
-            go test ./test/goroot -v -run '^TestGoRootRunCases$' -count=1 -timeout=10m -args \
-              -goroot "$(go env GOROOT)" -llgo "$LLGO" -wasm-profile "$profile" -directive-mode ci -dirs .,fixedbugs \
-              -case '^(clearfat\.go|fixedbugs/issue(22662|5856)\.go)$' -min-swap-free-mib=0
-          done
+          if [[ "$WASM_CALLER_TARGET" == js ]]; then
+            GOOS=js GOARCH=wasm "$LLGO" test -v -count=1 -timeout=90s ./test/std/runtime
+          else
+            "$LLGO" test -target "$WASM_CALLER_TARGET" -emulator -v -count=1 -timeout=90s ./test/std/runtime
+          fi
+          go test ./test/goroot -v -run '^TestGoRootRunCases$' -count=1 -timeout=10m -args \
+            -goroot "$(go env GOROOT)" -llgo "$LLGO" -wasm-profile "$WASM_CALLER_PROFILE" -directive-mode ci -dirs .,fixedbugs \
+            -case '^(clearfat\.go|fixedbugs/issue(22662|5856)\.go)$' -min-swap-free-mib=0
