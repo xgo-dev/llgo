@@ -72,7 +72,9 @@ class PosixGroup:
             # live members; never suppress real signal/query permission errors.
             if sys.platform != "darwin" or not self.exited:
                 raise
-            result = subprocess.run(["/bin/ps", "-A", "-o", "pgid=", "-o", "stat="],
+            # Select only the leased group; a full-machine census
+            # can exceed the cleanup deadline while parallel builds exit.
+            result = subprocess.run(["/bin/ps", "-g", str(self.process.pid), "-o", "pgid=", "-o", "stat="],
                                     capture_output=True, text=True, timeout=2)
             if result.returncode != 0:
                 raise OSError("could not inspect exited process group")
@@ -81,7 +83,9 @@ class PosixGroup:
                 raise OSError("empty process-group inspection output")
             for line in rows:
                 group, state = line.split()
-                if int(group) == self.process.pid and not state.startswith("Z"):
+                if int(group) != self.process.pid:
+                    raise OSError("unexpected process group in inspection output")
+                if not state.startswith("Z"):
                     raise
 
     def close(self):

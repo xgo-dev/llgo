@@ -92,8 +92,29 @@ class LoggedCommandTests(unittest.TestCase):
                                  signal=types.SimpleNamespace()):
             self.test_darwin_empty_group_requires_positive_bounded_evidence()
 
+    def test_darwin_cleanup_avoids_global_census_timeout(self):
+        owner = object.__new__(run_logged_command.PosixGroup)
+        owner.terminated, owner.exited = False, True
+        owner.process = types.SimpleNamespace(pid=123)
+
+        def inspect_group(command, **options):
+            if "-A" in command:
+                raise subprocess.TimeoutExpired(command, 2)
+            self.assertEqual(command,
+                             ["/bin/ps", "-g", "123", "-o", "pgid=", "-o", "stat="])
+            self.assertEqual(options, {"capture_output": True, "text": True, "timeout": 2})
+            return subprocess.CompletedProcess(command, 0, stdout="123 Z\n")
+
+        with mock.patch.object(run_logged_command, "signal", types.SimpleNamespace(
+                SIGKILL=mock.sentinel.posix_sigkill)), \
+                mock.patch.object(run_logged_command.sys, "platform", "darwin"), \
+                mock.patch.object(run_logged_command.os, "killpg", side_effect=PermissionError("denied"),
+                                  create=True), \
+                mock.patch.object(run_logged_command.subprocess, "run", side_effect=inspect_group):
+            owner.terminate()
+
     def test_darwin_empty_group_requires_positive_bounded_evidence(self):
-        cases = [("", 0, True), ("123 Z\n", 0, False), ("999 S\n", 0, False),
+        cases = [("", 0, True), ("123 Z\n", 0, False), ("999 S\n", 0, True),
                  ("123 S\n", 0, True), ("", 1, True), ("unparseable", 0, True)]
         for output, code, rejected in cases:
             with self.subTest(output=output, code=code):
@@ -114,7 +135,7 @@ class LoggedCommandTests(unittest.TestCase):
                         owner.terminate()
                         self.assertEqual(probe.call_args.kwargs["timeout"], 2)
                         self.assertEqual(probe.call_args.args[0],
-                                         ["/bin/ps", "-A", "-o", "pgid=", "-o", "stat="])
+                                         ["/bin/ps", "-g", "123", "-o", "pgid=", "-o", "stat="])
                     kill_group.assert_called_once_with(123, mock.sentinel.posix_sigkill)
 
     def test_windows_profile_requires_real_native_python_ownership(self):
