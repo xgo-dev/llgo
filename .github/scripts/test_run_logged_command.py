@@ -85,6 +85,13 @@ class LoggedCommandTests(unittest.TestCase):
             self.assertIn("terminate-rejected", errors)
             self.assertIn("close-rejected", errors)
 
+    def test_darwin_probe_does_not_require_host_posix_symbols(self):
+        # Native Windows has neither killpg nor SIGKILL. The Darwin contract
+        # probe must supply its own POSIX fixture without weakening that gate.
+        with mock.patch.multiple(run_logged_command, os=types.SimpleNamespace(),
+                                 signal=types.SimpleNamespace()):
+            self.test_darwin_empty_group_requires_positive_bounded_evidence()
+
     def test_darwin_empty_group_requires_positive_bounded_evidence(self):
         cases = [("", 0, True), ("123 Z\n", 0, False), ("999 S\n", 0, False),
                  ("123 S\n", 0, True), ("", 1, True), ("unparseable", 0, True)]
@@ -94,8 +101,11 @@ class LoggedCommandTests(unittest.TestCase):
                 owner.terminated, owner.exited = False, True
                 owner.process = mock.Mock(pid=123)
                 result = subprocess.CompletedProcess([], code, stdout=output)
-                with mock.patch.object(run_logged_command.sys, "platform", "darwin"), \
-                        mock.patch.object(run_logged_command.os, "killpg", side_effect=PermissionError("denied"), create=True), \
+                with mock.patch.object(run_logged_command, "signal", types.SimpleNamespace(
+                        SIGKILL=mock.sentinel.posix_sigkill)), \
+                        mock.patch.object(run_logged_command.sys, "platform", "darwin"), \
+                        mock.patch.object(run_logged_command.os, "killpg", side_effect=PermissionError("denied"),
+                                          create=True) as kill_group, \
                         mock.patch.object(run_logged_command.subprocess, "run", return_value=result) as probe:
                     if rejected:
                         with self.assertRaises((OSError, ValueError)):
@@ -105,6 +115,7 @@ class LoggedCommandTests(unittest.TestCase):
                         self.assertEqual(probe.call_args.kwargs["timeout"], 2)
                         self.assertEqual(probe.call_args.args[0],
                                          ["/bin/ps", "-A", "-o", "pgid=", "-o", "stat="])
+                    kill_group.assert_called_once_with(123, mock.sentinel.posix_sigkill)
 
     def test_windows_profile_requires_real_native_python_ownership(self):
         with tempfile.TemporaryDirectory() as temporary:
