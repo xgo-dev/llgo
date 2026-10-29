@@ -12,6 +12,14 @@ from run_build_tests import (PACKAGE, arm64_atomic_result, merge_coverage,
                              root_event, event_root, shard_index)
 
 
+def profile_identity(profile):
+    # Hosted images roll between otherwise identical jobs. Keep the observed
+    # revision in each artifact, but bind execution to every other profile
+    # field, including ImageOS, actual tools, target, flags and SDK inputs.
+    return {**profile, "environment": {key: value for key, value in profile["environment"].items()
+                                       if key != "ImageVersion"}}
+
+
 def read_events(path, owned):
     events, starts, passes = [], 0, 0
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -68,7 +76,10 @@ def collect(root, inventory_path, parts_directory, destination, require_arm64_at
     for path in reports:
         report = json.loads(path.read_text())
         for key in ("schema", "source", "profile", "names", "shards", "parts", "workers"):
-            if report[key] != expected[key]:
+            observed, required = report[key], expected[key]
+            if key == "profile":
+                observed, required = profile_identity(observed), profile_identity(required)
+            if observed != required:
                 raise ValueError(f"part {path}: mismatched {key}")
         part = report["part"]
         if type(part) is not int or part not in range(2) or part in seen_parts:

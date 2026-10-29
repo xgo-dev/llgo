@@ -52,10 +52,12 @@ class BuildPartsTests(unittest.TestCase):
                  "BenchmarkGo126Fixture"] + [f"TestCase{i}" for i in range(12)]
         groups = run_build_tests.partition(names, 8)
         header = {"schema": 1, "source": {"head": "a" * 40, "tracked_sha256": "source"},
-                  "profile": {"go": {"GOOS": "darwin", "GOARCH": "arm64"},
+                  "profile": {"go": {"GOVERSION": "go1.27.0", "GOOS": "darwin", "GOARCH": "arm64",
+                                      "GOFLAGS": "", "CGO_ENABLED": "1", "GOEXPERIMENT": "", "GOARM64": "v8.0"},
                               "machine": "arm64", "llvm_version": "22.1.8",
                               "gomaxprocs": 2, "covermode": "set", "coverpkg": "./...",
-                              "timeout": "45m", "benchtime": "1x", "require_arm64_atomic": True},
+                              "timeout": "45m", "benchtime": "1x", "require_arm64_atomic": True,
+                              "environment": {"ImageOS": "macos26", "ImageVersion": "20261013.0424.1"}},
                   "names": names, "shards": groups, "parts": 2, "workers": 2}
         inventory = root / "build-inventory.json"
         inventory.write_text(json.dumps(header))
@@ -96,6 +98,45 @@ class BuildPartsTests(unittest.TestCase):
             self.collect(root, inventory, parts)
             self.assertEqual((root / "coverage-build.txt").read_text(),
                              "mode: set\np/a.go:1.1,2.2 1 1\np/a.go:3.1,4.2 2 1\np/a.go:5.1,6.2 1 0\n")
+
+    def test_rolling_image_revision_is_retained_without_changing_profile_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inventory, parts, _ = self.parts_fixture(root)
+            path = parts / "1/build-shards.json"
+            report = json.loads(path.read_text())
+            report["profile"]["environment"]["ImageVersion"] = "20261021.0445.8"
+            self.write_report(path, report)
+            self.collect(root, inventory, parts)
+            self.assertTrue((root / "coverage-build.txt").is_file())
+            self.assertEqual(json.loads(path.read_text())["profile"]["environment"]["ImageVersion"],
+                             "20261021.0445.8")
+            self.assertEqual(json.loads(inventory.read_text())["profile"]["environment"]["ImageVersion"],
+                             "20261013.0424.1")
+
+    def test_image_revision_exception_keeps_semantic_profile_fields_strict(self):
+        variants = [("go", "GOVERSION", "go1.27.1"), ("go", "GOOS", "linux"),
+                    ("go", "GOARCH", "amd64"), ("go", "GOFLAGS", "-tags=changed"),
+                    ("go", "CGO_ENABLED", "0"), ("go", "GOEXPERIMENT", "changed"),
+                    ("go", "GOARM64", "v9.0"), ("profile", "llvm_version", "23.0.0"),
+                    ("profile", "ldflags", "-X changed"), ("profile", "overlay_sha256", "changed")]
+        variants += [("environment", key, "changed") for key in (
+            "ImageOS", "CC", "CXX", "CGO_CFLAGS", "CGO_CPPFLAGS", "CGO_CXXFLAGS",
+            "CGO_LDFLAGS", "SDKROOT", "DEVELOPER_DIR", "MACOSX_DEPLOYMENT_TARGET",
+            "PKG_CONFIG", "PKG_CONFIG_PATH", "PKG_CONFIG_LIBDIR", "LLGO_TEST_EXTENDED_ABI")]
+        for group, key, value in variants:
+            with self.subTest(group=group, key=key), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                inventory, parts, _ = self.parts_fixture(root)
+                path = parts / "1/build-shards.json"
+                report = json.loads(path.read_text())
+                report["profile"]["environment"]["ImageVersion"] = "20261021.0445.8"
+                changed = report["profile"] if group == "profile" else report["profile"][group]
+                changed[key] = value
+                self.write_report(path, report)
+                with self.assertRaisesRegex(ValueError, "mismatched profile"):
+                    self.collect(root, inventory, parts)
+                self.assertFalse((root / "coverage-build.txt").exists())
 
     def test_incomplete_duplicate_failed_stale_or_trimmed_parts_never_publish(self):
         mutations = ("missing-part", "duplicate-part", "failed-part", "duplicate-shard",
