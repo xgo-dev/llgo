@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	gpackages "github.com/goplus/gogen/packages"
+	"github.com/xgo-dev/llgo/internal/directive"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llgo/ssa/ssatest"
 	"github.com/xgo-dev/llvm"
@@ -2036,7 +2037,7 @@ func lifted() (result int) { return }
 `)
 
 	fn := ssaPkg.Func("f")
-	ctx := &context{goFn: fn}
+	ctx := &context{goFn: &directive.Function{SSA: fn}}
 	if got := (&context{}).namedResultSlot(0); got != nil {
 		t.Fatalf("nil function result slot = %v, want nil", got)
 	}
@@ -2049,11 +2050,11 @@ func lifted() (result int) { return }
 	if slot == nil || slot.Comment != "result" {
 		t.Fatalf("named result slot = %v, want result allocation", slot)
 	}
-	ctx.goFn = ssaPkg.Func("unnamed")
+	ctx.goFn = &directive.Function{SSA: ssaPkg.Func("unnamed")}
 	if got := ctx.namedResultSlot(0); got != nil {
 		t.Fatalf("unnamed result slot = %v, want nil", got)
 	}
-	ctx.goFn = ssaPkg.Func("lifted")
+	ctx.goFn = &directive.Function{SSA: ssaPkg.Func("lifted")}
 	if got := ctx.namedResultSlot(0); got != nil {
 		t.Fatalf("lifted named result slot = %v, want nil", got)
 	}

@@ -1017,7 +1017,7 @@ func (p *context) buildStaticInitExprNamed(typ types.Type, node *staticInitNode,
 		// compileFunction is required here rather than funcOf: source declarations
 		// carrying //llgo:env must be materialized with their environment ABI before
 		// NeedsEnv is checked. Such functions then fail closed to runtime init.
-		function, _, ftype := p.compileFunction(node.function)
+		function, _, ftype := p.compileFunction(p.sourceFunction(node.function))
 		if function == nil || ftype != goFunc || function.NeedsEnv() {
 			return llssa.Expr{}, false
 		}

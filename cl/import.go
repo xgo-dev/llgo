@@ -709,7 +709,8 @@ func extractTrampolineCName(name string) string {
 	return base
 }
 
-func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
+func (p *context) funcName(source *directive.Function) (*types.Package, string, int) {
+	fn := source.SSA
 	var pkg *types.Package
 	var orgName string
 	if origin := fn.Origin(); origin != nil {
@@ -743,7 +744,7 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 		p.ensureLoaded(pkg)
 		orgName = funcName(pkg, fn, false)
 	}
-	if v := p.sourceFunction(fn).Directives.Linkname; v != "" {
+	if v := source.Directives.Linkname; v != "" {
 		if p.options.CExportWrappers {
 			if export, ok := p.pkg.ExportFuncs()[orgName]; ok && export == v {
 				return pkg, funcName(pkg, fn, false), goFunc

@@ -1019,7 +1019,6 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
 	ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
-	ctx.functions.Prepare(ctx.progSSA)
 	callerSpan.done()
 	ctx.frontendOptions.ReceiverNilChecks = collectReceiverNilChecks(initial, altPkgs)
 	if features == nil {

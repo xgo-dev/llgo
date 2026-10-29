@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 )
@@ -34,11 +35,11 @@ func f() { runtime.Caller(0) }
 			fn := pkg.NewFunc("example.com/foo.f", llssa.NoArgsNoRet, llssa.GoDecl)
 			b := fn.MakeBody(1)
 			ctx := &context{
-				prog: prog, pkg: pkg, fn: fn, goFn: ssapkg.Func("f"), fset: ssapkg.Prog.Fset,
+				prog: prog, pkg: pkg, fn: fn, goFn: &directive.Function{SSA: ssapkg.Func("f")}, fset: ssapkg.Prog.Fset,
 				options: Options{ShadowStack: true}, trackCallerFrames: true,
 				runtimeCallerFuncs: runtimeCallerFuncSet(testCallerTracking(t, ssapkg.Prog), ssapkg),
 			}
-			pos := ctx.goFn.Pos()
+			pos := ctx.goFn.SSA.Pos()
 			ctx.recordPanicSite(b, pos)
 			ctx.recordPanicSite(b, pos)
 			ctx.recordCallerLocation(b, pos)

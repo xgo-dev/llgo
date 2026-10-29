@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/goplus/gogen/packages"
+	"github.com/xgo-dev/llgo/internal/directive"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	gossa "golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -768,7 +769,7 @@ func f() { runtime.Caller(0) }
 				prog:               prog,
 				pkg:                pkg,
 				fn:                 fn,
-				goFn:               goFn,
+				goFn:               &directive.Function{SSA: goFn},
 				trackCallerFrames:  tt.track,
 				runtimeCallerFuncs: runtimeCallerFuncSet(testCallerTracking(t, ssapkg.Prog), ssapkg),
 			}
@@ -975,7 +976,7 @@ func top() {
 		prog:               prog,
 		pkg:                pkg,
 		fn:                 fn,
-		goFn:               ssapkg.Func("top"),
+		goFn:               &directive.Function{SSA: ssapkg.Func("top")},
 		fset:               token.NewFileSet(),
 		trackCallerFrames:  true,
 		runtimeCallerFuncs: runtimeCallerFuncSet(testCallerTracking(t, ssapkg.Prog), ssapkg),

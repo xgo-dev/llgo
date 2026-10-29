@@ -46,7 +46,8 @@ function declaration, including a declaration with no annotations.
    preparation explicitly registers the empty directive values of the AST
    helpers it generates.
 4. After SSA construction and caller/method preparation,
-   `FunctionSet.Prepare` materializes the wrappers before backend workers start.
+   `CallerTracking.Precompute` calls `FunctionSet.Prepare` before directive-consuming
+   analysis and before backend workers start.
    Later SSA adapters can be wrapped using these same prepared source values;
    this operation does not parse annotations.
 5. Lowering, caller tracking, GC root planning and safepoint insertion read
@@ -58,10 +59,21 @@ The `internal/directive` package owns the attributes, source association and
 wrapper construction, including AST access, generic origins and transparent
 adapter inheritance. `cl.NewFunctionSet` only supplies patch package selection
 and the explicit symbol-binding fallback. Function directive consumers in `cl`
-use the wrapper directly and do not query AST declarations. AST access remains
+pass `*directive.Function` through `compileFunction`, `compileFuncDecl`,
+`funcOf`, `funcName` and closure-context construction. The current-function field
+also holds that wrapper. These paths read attributes without looking the wrapper
+up again. AST access remains
 in source preparation and inside the directive constructors.
 
-Direct compiler entrypoints prepare their supplied root files. Callers that
+Bare functions enter through SSA members, operands, static callees, anonymous
+functions and method/wrapper creation. These boundaries still use the shared
+pointer-keyed cache once to obtain a wrapper. Structural SSA analyses retain raw
+function identity; their directive-consuming steps receive prepared wrappers.
+This keeps upstream SSA unchanged and reduces repeated lookups inside compiler
+helpers, but does not eliminate the conversion cache.
+
+Direct compiler entrypoints prepare their supplied root files and imported
+symbol bindings before materializing wrappers. Callers that
 supply SSA dependencies with source must prepare those dependencies with
 `ParsePkgSyntax` first. Explicit bindings for export-object-only imports remain
 available through the existing symbol registration API.

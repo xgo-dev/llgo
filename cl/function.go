@@ -35,9 +35,30 @@ func NewFunctionSet(prog llssa.Program, patches Patches) *directive.FunctionSet 
 	return directive.NewFunctionSet(prog.FunctionSources(), replacements, prog.Linkname)
 }
 
+// sourceFunction is the conversion boundary for bare functions returned by
+// upstream SSA APIs. Internal compilation helpers pass the wrapper onward.
 func (p *context) sourceFunction(fn *ssa.Function) *directive.Function {
 	if p.functions == nil {
 		p.functions = NewFunctionSet(p.prog, p.patches)
 	}
 	return p.functions.Function(fn)
+}
+
+// preparedFunctions converts an SSA analysis input at its entry boundary.
+// The analysis itself receives wrappers and reads their attributes directly.
+func preparedFunctions(functions *directive.FunctionSet, input map[*ssa.Function]bool) []*directive.Function {
+	prepared := make([]*directive.Function, 0, len(input))
+	for fn := range input {
+		prepared = append(prepared, functions.Function(fn))
+	}
+	return prepared
+}
+
+// currentSSA supplies raw identity to SSA-only helpers, including contexts that
+// are not currently compiling a function. No directive lookup is involved.
+func (p *context) currentSSA() *ssa.Function {
+	if p.goFn == nil {
+		return nil
+	}
+	return p.goFn.SSA
 }

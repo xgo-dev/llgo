@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/goplus/gogen/packages"
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/typepatch"
 	"github.com/xgo-dev/llgo/ssa/ssatest"
 	"golang.org/x/tools/go/ssa"
@@ -90,7 +91,7 @@ func localType[T any]() any {
 `)
 
 	fn, local := firstGenericLocalNamed(t, ssapkg)
-	ctx := &context{goFn: fn}
+	ctx := &context{goFn: &directive.Function{SSA: fn}}
 	if !ctx.isGenericLocalType(local.Obj()) {
 		t.Fatalf("%s should be detected as a generic local type", local.Obj().Name())
 	}
@@ -182,7 +183,7 @@ func use() {
 		}
 		inner := outer.AnonFuncs[0]
 
-		ctx := &context{goFn: outer}
+		ctx := &context{goFn: &directive.Function{SSA: outer}}
 		patched := ctx.patchType(outer.Signature).(*types.Signature)
 		param := findLocalNamed(patched.Params().At(0).Type(), ssapkg.Pkg)
 		if param == nil {
@@ -199,7 +200,7 @@ func use() {
 		if hIndex < 0 {
 			t.Fatalf("Y inner closure free variables = %v, want h", inner.FreeVars)
 		}
-		closureCtx := ctx.makeClosureCtx(inner, ssapkg.Pkg, inner.FreeVars)
+		closureCtx := ctx.makeClosureCtx(&directive.Function{SSA: inner}, ssapkg.Pkg, inner.FreeVars)
 		ptr, ok := closureCtx.Type().(*types.Pointer)
 		if !ok {
 			t.Fatalf("closure context type = %T, want pointer", closureCtx.Type())
@@ -247,7 +248,7 @@ func use() {
 }
 `)
 	fn, local := firstGenericLocalNamed(t, ssapkg)
-	ctx := &context{goFn: fn}
+	ctx := &context{goFn: &directive.Function{SSA: fn}}
 
 	if ctx.isGenericLocalType(nil) {
 		t.Fatal("nil object should not be a generic local type")

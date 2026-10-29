@@ -28,7 +28,7 @@ func TestExcludeSafepointPackage(t *testing.T) {
 }
 
 func TestSafepointPackagePathUsesGenericOrigin(t *testing.T) {
-	pkg := buildLinkOnceSSAPackage(t, `package p
+	pkg, file := buildLinkOnceSSAPackage(t, `package p
 type Box[T any] struct{}
 func (Box[T]) M() {}
 `)
@@ -37,7 +37,7 @@ func (Box[T]) M() {}
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, fn := linkOnceTestMethodValue(t, pkg, boxInt, "M")
+	_, fn := linkOnceTestMethodValue(t, pkg, file, boxInt, "M")
 	if fn.Package() != nil || fn.Origin() == nil {
 		t.Fatalf("expected a package-less generic instance, got package=%v origin=%v", fn.Package(), fn.Origin())
 	}
@@ -47,13 +47,13 @@ func (Box[T]) M() {}
 }
 
 func TestSafepointPackagePathLeavesSyntheticWrapperUnowned(t *testing.T) {
-	pkg := buildLinkOnceSSAPackage(t, `package p
+	pkg, file := buildLinkOnceSSAPackage(t, `package p
 type Inner struct{}
 func (Inner) M() {}
 type Outer struct{ Inner }
 `)
 	outer := pkg.Pkg.Scope().Lookup("Outer").(*types.TypeName).Type()
-	_, fn := linkOnceTestMethodValue(t, pkg, types.NewPointer(outer), "M")
+	_, fn := linkOnceTestMethodValue(t, pkg, file, types.NewPointer(outer), "M")
 	if fn.Package() != nil || fn.Origin() != nil {
 		t.Fatalf("expected an unowned synthetic wrapper, got package=%v origin=%v", fn.Package(), fn.Origin())
 	}

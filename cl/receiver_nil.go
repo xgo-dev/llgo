@@ -103,8 +103,8 @@ func (p *context) checkMethodCallReceiver(b llssa.Builder, call *ssa.CallCommon)
 	// position. Keep the required base checks in the generated wrapper itself
 	// so storing (*Outer).M in a function value cannot bypass them. The final
 	// declared pointer receiver may still legally be nil.
-	if isPointerMethodWrapperCall(p.goFn, call) {
-		p.checkAddressedMethodReceiver(b, call.Args[0], receiverNilCheck{pos: p.goFn.Pos()})
+	if isPointerMethodWrapperCall(p.currentSSA(), call) {
+		p.checkAddressedMethodReceiver(b, call.Args[0], receiverNilCheck{pos: p.goFn.SSA.Pos()})
 		return
 	}
 	checks := p.options.ReceiverNilChecks

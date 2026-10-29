@@ -41,7 +41,16 @@ func testFunctionProgram(t *testing.T, goProg *ssa.Program, bindings ...map[stri
 	}
 	declarations := make(map[*ast.FuncDecl]*directive.FunctionDirectives)
 	names := make(map[*types.Package]map[string]*directive.FunctionDirectives)
-	for fn := range ssautil.AllFunctions(goProg) {
+	// Caller analysis also considers methods on unexported, otherwise unused
+	// types. AllFunctions alone does not include those source declarations.
+	functions := ssautil.AllFunctions(goProg)
+	for _, pkg := range goProg.AllPackages() {
+		members, _ := collectRuntimeCallerFunctions(pkg)
+		for fn := range members {
+			functions[fn] = true
+		}
+	}
+	for fn := range functions {
 		if origin := fn.Origin(); origin != nil {
 			fn = origin
 		}
@@ -362,5 +371,28 @@ func exported() {}
 	plain := compiled.Module().NamedFunction("example.com/prepared.plain").String()
 	if strings.Contains(plain, "noinline") || !strings.Contains(plain, "CooperativeSafepoint") {
 		t.Fatalf("unannotated function inherited another function's directives:\n%s", plain)
+	}
+}
+
+func TestFunctionNameConsumesPreparedWrapper(t *testing.T) {
+	pkg, files := buildCallerFrameSSAPackage(t, "example.com/preparedname", `package preparedname
+//go:linkname F C.prepared
+func F() {}
+`)
+	prog := llssa.NewProgram(nil)
+	defer prog.Dispose()
+	if err := ParsePkgSyntax(prog, pkg.Prog.Fset, pkg.Pkg, files); err != nil {
+		t.Fatal(err)
+	}
+	source := NewFunctionSet(prog, nil).Function(pkg.Func("F"))
+	// Symbol resolution receives an already prepared function, so it needs
+	// no wrapper registry and must not initialize one as a side effect.
+	ctx := &context{prog: prog, goTyps: pkg.Pkg, goProg: pkg.Prog}
+	_, name, kind := ctx.funcName(source)
+	if name != "prepared" || kind != cFunc {
+		t.Fatalf("binding = %q, %d", name, kind)
+	}
+	if ctx.functions != nil {
+		t.Fatal("symbol resolution queried the wrapper registry")
 	}
 }
