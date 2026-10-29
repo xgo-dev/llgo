@@ -7,7 +7,7 @@ LLGo locally or inside reusable Linux dev containers.
 
 Choose [mise](https://mise.jdx.dev/installing-mise.html) 2026.10.7 or newer, or
 [Pixi](https://pixi.prefix.dev/latest/installation/) 0.81.0 or newer. Both
-provide Go and install LLVM/Clang/LLD 22, pkg-config, and native libraries
+provide Go and install LLVM/Clang/LLD 23, pkg-config, and native libraries
 from conda-forge. Their configuration and lockfiles live in this directory.
 Use Go directly to run or build LLGo in either environment.
 

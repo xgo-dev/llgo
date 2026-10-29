@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	llabi "github.com/xgo-dev/llgo/internal/abi"
+	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -53,7 +55,8 @@ end:
 				llabi.PopGCRootFrame(mod, fn, frame)
 				options := llvm.NewPassBuilderOptions()
 				defer options.Dispose()
-				if err := mod.RunPasses("default<Os>", llvm.TargetMachine{}, options); err != nil {
+				applySizeOptimizationAttributes(mod, optlevel.Os)
+				if err := mod.RunPasses("default<O2>", llvm.TargetMachine{}, options); err != nil {
 					t.Fatal(err)
 				}
 				if mode != 0 {
@@ -61,6 +64,8 @@ end:
 						t.Fatalf("localized %d stores, want %d", moved, rootCount)
 					}
 				}
+				// Native SjLj requires explicit function capabilities in LLVM 23.
+				applyWASIFeatures(&context{crossCompile: crosscompile.Export{WasmProfile: crosscompile.WasmProfileW32}}, mod)
 				if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 					t.Fatal(err)
 				}

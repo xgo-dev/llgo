@@ -80,3 +80,12 @@ func (l Level) Flag() string {
 	}
 	return "-" + l.Name()
 }
+
+// PipelineName is the speed level understood by LLVM 23's PassBuilder.
+// Size policy is carried separately by optsize/minsize function attributes.
+func (l Level) PipelineName() string {
+	if l == Os || l == Oz {
+		return O2.Name()
+	}
+	return l.Name()
+}

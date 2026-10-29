@@ -33,7 +33,8 @@ func TestSelectMacOSSDK(t *testing.T) {
 	root := t.TempDir()
 	old := writeMacOSSDK(t, filepath.Join(root, "MacOSX26.9.sdk"), "26.9")
 	latest := writeMacOSSDK(t, filepath.Join(root, "MacOSX26.10.sdk"), "26.10")
-	unsupported := writeMacOSSDK(t, filepath.Join(root, "MacOSX27.sdk"), "27.0")
+	unsupported := writeMacOSSDK(t, filepath.Join(root, "Invalid.sdk"), "invalid")
+	current := writeMacOSSDK(t, filepath.Join(root, "MacOSX27.sdk"), "27.0")
 	future := writeMacOSSDK(t, filepath.Join(root, "MacOSX28.sdk"), "28.0")
 	unknown := writeMacOSSDK(t, filepath.Join(root, "MacOSX.sdk"), "")
 	alias := filepath.Join(root, "alias.sdk")
@@ -46,14 +47,17 @@ func TestSelectMacOSSDK(t *testing.T) {
 		want, wantErr             string
 	}{
 		{name: "keep active older SDK", preferred: old, paths: []string{latest}, want: old},
-		{name: "skip SDK 27 and sort numerically", preferred: unsupported, paths: []string{old, unsupported, alias, latest, future}, want: latest},
+		{name: "skip invalid SDK and sort numerically", preferred: unsupported, paths: []string{old, unsupported, alias, latest}, want: latest},
 		{name: "missing active SDK", preferred: filepath.Join(root, "missing.sdk"), paths: []string{old}, want: old},
 		{name: "xcrun unavailable", paths: []string{old}, want: old},
 		{name: "explicit older SDK", explicit: old, preferred: unsupported, want: old},
-		{name: "explicit SDK 27 fails", explicit: unsupported, paths: []string{latest}, wantErr: "SDKROOT"},
+		{name: "explicit SDK 27", explicit: current, paths: []string{latest}, want: current},
+		{name: "active SDK 27", preferred: current, paths: []string{latest}, want: current},
+		{name: "newer numeric SDK", paths: []string{current, future}, want: future},
+		{name: "explicit invalid SDK fails", explicit: unsupported, paths: []string{latest}, wantErr: "SDKROOT"},
 		{name: "explicit missing SDK fails", explicit: filepath.Join(root, "missing.sdk"), paths: []string{latest}, wantErr: "SDKROOT"},
-		{name: "only unsupported SDKs", preferred: unsupported, paths: []string{unsupported, future, unknown}, wantErr: "install an SDK older than 27"},
-		{name: "no SDKs", wantErr: "install an SDK older than 27"},
+		{name: "only unsupported SDKs", preferred: unsupported, paths: []string{unsupported, unknown}, wantErr: "install a macOS SDK"},
+		{name: "no SDKs", wantErr: "install a macOS SDK"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			discovered := false
@@ -86,8 +90,8 @@ func TestReadMacOSSDKVersion(t *testing.T) {
 	}{
 		{"MacOSX.sdk", "26.5", true},
 		{"MacOSX26.5.sdk", "", true},
-		{"MacOSX26.5.sdk", "27.0", false}, // Metadata is authoritative.
-		{"MacOSX27.sdk", "", false},
+		{"MacOSX26.5.sdk", "27.0", true}, // Metadata is authoritative.
+		{"MacOSX27.sdk", "", true},
 		{"MacOSX.sdk", "", false},
 		{"MacOSX.sdk", "garbage", false},
 		{"MacOSX.sdk", "26.bad", false},
@@ -168,8 +172,8 @@ func TestNativeMacOSSDKFlags(t *testing.T) {
 		}
 	}
 	t.Setenv("SDKROOT", writeMacOSSDK(t, filepath.Join(t.TempDir(), "MacOSX27.sdk"), "27.0"))
-	if _, err := use(runtime.GOOS, runtime.GOARCH, false, optlevel.O2, lto.Off, false); err == nil {
-		t.Fatal("native build accepted SDK 27")
+	if export, err := use(runtime.GOOS, runtime.GOARCH, false, optlevel.O2, lto.Off, false); err != nil || export.Toolchain.SDKVersion != "27.0" {
+		t.Fatalf("native SDK 27 selection: version=%q, error=%v", export.Toolchain.SDKVersion, err)
 	}
 }
 
@@ -230,15 +234,15 @@ func TestGetMacOSSDKEnvironment(t *testing.T) {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	old := writeMacOSSDK(t, filepath.Join(root, "active-old", "MacOSX26.sdk"), "26.0")
-	unsupported := writeMacOSSDK(t, filepath.Join(root, "active-new", "MacOSX27.sdk"), "27.0")
+	unsupported := writeMacOSSDK(t, filepath.Join(root, "active-invalid", "Invalid.sdk"), "invalid")
 	developer := filepath.Join(root, "Developer with spaces")
-	// A high pre-27 minor version makes this fixture win over any SDKs on the
+	// A high numeric version makes this fixture win over any SDKs on the
 	// test machine while exercising the real discovery and selection path.
-	fallback := writeMacOSSDK(t, filepath.Join(developer, "SDKs", "MacOSX26.999.sdk"), "26.999")
+	fallback := writeMacOSSDK(t, filepath.Join(developer, "SDKs", "MacOSX999.sdk"), "999")
 	for _, tc := range []struct{ name, explicit, active, developer, want string }{
 		{"active older SDK", "", old, "", old},
-		{"SDK 27 with DEVELOPER_DIR", "", unsupported, developer, fallback},
-		{"SDK 27 with xcode-select", "", unsupported, "", fallback},
+		{"invalid SDK with DEVELOPER_DIR", "", unsupported, developer, fallback},
+		{"invalid SDK with xcode-select", "", unsupported, "", fallback},
 		{"xcrun fails", "", "", developer, fallback},
 		{"explicit SDK without xcrun", old, "", "", old},
 	} {
@@ -327,5 +331,70 @@ func TestNativeMacOSSDKOverridesClangConfig(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// SDK 27 adds arm64e.x1 to otherwise ordinary text stubs. Exercise the actual
+// selected Clang/LLD pair, including both LTO modes, without requiring Xcode 27.
+func TestNativeMacOSSDK27TextStub(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("native Darwin toolchain")
+	}
+	compiler, err := exec.LookPath("clang++")
+	if err != nil {
+		t.Skip("clang++ is unavailable")
+	}
+	linker, err := exec.LookPath("ld64.lld")
+	if err != nil {
+		t.Skip("ld64.lld is unavailable")
+	}
+	root := t.TempDir()
+	sdk := writeMacOSSDK(t, filepath.Join(root, "SDK with spaces", "MacOSX27.sdk"), "27.0")
+	libDir := filepath.Join(sdk, "usr", "lib")
+	if err := os.MkdirAll(libDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stub := `--- !tapi-tbd
+tbd-version: 4
+targets: [ x86_64-macos, arm64-macos, arm64e.x1-macos ]
+install-name: '/usr/lib/libSystem.dylib'
+current-version: 1.0.0
+...
+`
+	if err := os.WriteFile(filepath.Join(libDir, "libSystem.tbd"), []byte(stub), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "probe.c")
+	if err := os.WriteFile(source, []byte("int sdk27_probe(void) { return 27; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeWasmTargetFixture(t, "", "")
+	t.Setenv("SDKROOT", sdk)
+	for _, name := range []string{"CCFLAGS", "CFLAGS", "LDFLAGS"} {
+		t.Setenv(name, "")
+	}
+	for _, mode := range []lto.Mode{lto.Off, lto.Thin, lto.Full} {
+		t.Run(mode.String(), func(t *testing.T) {
+			export, err := use(runtime.GOOS, runtime.GOARCH, false, optlevel.O2, mode, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			config := clang.NewConfig(compiler, export.CCFLAGS, export.CFLAGS, export.LDFLAGS, "")
+			config.LDFLAGS = append(config.LDFLAGS, "--ld-path="+linker)
+			var output bytes.Buffer
+			cc, ld := clang.NewCompiler(config), clang.NewLinker(config)
+			cc.Stdout, cc.Stderr, ld.Stdout, ld.Stderr = &output, &output, &output, &output
+			dir := t.TempDir()
+			object, library := filepath.Join(dir, "probe.o"), filepath.Join(dir, "probe.dylib")
+			if err := cc.Compile("-x", "c", "-c", source, "-o", object); err != nil {
+				t.Fatalf("compile: %v\n%s", err, output.String())
+			}
+			if err := ld.Link("-dynamiclib", "-nostdlib", object, "-lSystem", "-o", library); err != nil {
+				t.Fatalf("link SDK 27 stub: %v\n%s", err, output.String())
+			}
+			if info, err := os.Stat(library); err != nil || info.Size() == 0 {
+				t.Fatalf("missing linked library: %v", err)
+			}
+		})
 	}
 }

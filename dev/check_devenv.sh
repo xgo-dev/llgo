@@ -6,7 +6,7 @@ test "${GOFLAGS:-}" = '-tags=byollvm'
 go_version="$(go env GOVERSION)"
 required_go_version="go$(cat "$LLGO_ROOT/.go-version")"
 [[ "${go_version%.*}" == "${required_go_version%.*}" ]]
-[[ "$(llvm-config --version)" == 22.* ]]
+[[ "$(llvm-config --version)" == 23.* ]]
 [[ -f "$LLGO_ROOT/runtime/go.mod" ]]
 
 cd "$LLGO_ROOT"

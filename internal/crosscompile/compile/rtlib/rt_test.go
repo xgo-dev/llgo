@@ -15,23 +15,23 @@ func TestGetCompilerRTConfig_LibConfig(t *testing.T) {
 		t.Errorf("Expected Name '%s', got '%s'", expectedName, config.Name)
 	}
 
-	expectedVersion := "xtensa_release_22.1.4_20260903"
+	expectedVersion := "esp-23.1.4_20261027.1"
 	if config.Version != expectedVersion {
 		t.Errorf("Expected Version '%s', got '%s'", expectedVersion, config.Version)
 	}
 
-	expectedUrl := "https://github.com/goplus/compiler-rt/archive/refs/tags/xtensa_release_22.1.4_20260903.tar.gz"
+	expectedUrl := "https://github.com/xgo-dev/llvm-project/archive/refs/tags/esp-23.1.4_20261027.1.tar.gz"
 	if config.Url != expectedUrl {
 		t.Errorf("Expected Url '%s', got '%s'", expectedUrl, config.Url)
 	}
 
-	expectedArchiveSrcDir := "compiler-rt-xtensa_release_22.1.4_20260903"
+	expectedArchiveSrcDir := "llvm-project-esp-23.1.4_20261027.1/compiler-rt"
 	if config.ResourceSubDir != expectedArchiveSrcDir {
 		t.Errorf("Expected ResourceSubDir '%s', got '%s'", expectedArchiveSrcDir, config.ResourceSubDir)
 	}
 
 	// Test String() method
-	expectedString := "compiler-rt-xtensa_release_22.1.4_20260903"
+	expectedString := "compiler-rt-esp-23.1.4_20261027.1"
 	if config.String() != expectedString {
 		t.Errorf("Expected String() '%s', got '%s'", expectedString, config.String())
 	}

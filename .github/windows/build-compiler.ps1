@@ -20,7 +20,7 @@ if (Test-Path $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
 $bin = Join-Path $stage 'bin'
 New-Item -ItemType Directory -Force $bin | Out-Null
 
-$llvmVersion = '22.1.8'
+$llvmVersion = '23.1.4'
 $readObj = (Get-Command llvm-readobj.exe).Source
 $llvmRoot = Split-Path (Split-Path (Get-Command llvm-config.exe).Source)
 if ($GoArch -eq 'arm64') {
@@ -33,7 +33,7 @@ if ($GoArch -eq 'arm64') {
   $asset = $sdkName.Replace('+', '%2B') + '.tar.xz'
   Expand-ReleaseXz `
     -URL "https://github.com/llvm/llvm-project/releases/download/llvmorg-$llvmVersion/$asset" `
-    -SHA256 'de718c58ebbc5f61d58c17b90457fcf42983bc2c4a4aba3e010d108713bfd7f1' `
+    -SHA256 'f0d2e32424850ffb9b6aef190587a8298353d858a8a7260f490c173fe98d6811' `
     -CacheDirectory (Join-Path $env:RUNNER_TOOL_CACHE 'llgo-release-downloads/llvm-arm64') `
     -Destination $sdkParent `
     -Entries @("$sdkName/include/*", "$sdkName/lib/*", "$sdkName/bin/llvm-config.exe", "$sdkName/bin/*.dll")
@@ -55,10 +55,10 @@ if ($GoArch -eq '386') {
     -Destination $parent
   $llvmRoot = Join-Path $parent 'llvm-sdk'
   $manifest = Get-Content (Join-Path $llvmRoot 'LLGO-LLVM-MANIFEST.txt')
-  if ($manifest -notcontains 'host_target=i686-w64-mingw32' -or $manifest -notcontains 'llvm_version=22.1.8' -or
-      $manifest -notcontains 'source_revision=ca7933e47d3a3451d81e72ac174dcb5aa28b59d1' -or
+  if ($manifest -notcontains 'host_target=i686-w64-mingw32' -or $manifest -notcontains 'llvm_version=23.1.4' -or
+      $manifest -notcontains 'source_revision=ac20bc743f30452a911d43def1cf57a5bbba655a' -or
       $manifest -notcontains 'link_mode=static') {
-    throw 'The LLVM development SDK is not Windows x86/LLVM 22.1.8'
+    throw 'The LLVM development SDK is not Windows x86/LLVM 23.1.4'
   }
   $null = Assert-ReleasePE -ReadObj $readObj -Path (Join-Path $llvmRoot 'bin/llvm-config.exe') -GoArch '386' -Profile 'mingw'
 }

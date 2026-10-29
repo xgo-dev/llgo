@@ -105,12 +105,13 @@ func withPlatformSpecifiedFiles(baseDir, target string, files []string) []string
 }
 
 func GetCompilerRTConfig() compile.LibConfig {
-	const version = "xtensa_release_22.1.4_20260903"
+	// Use the same tagged source as the ESP compiler, including Xtensa builtins.
+	const version = "esp-23.1.4_20261027.1"
 	return compile.LibConfig{
 		Name:           "compiler-rt",
-		Url:            "https://github.com/goplus/compiler-rt/archive/refs/tags/" + version + ".tar.gz",
+		Url:            "https://github.com/xgo-dev/llvm-project/archive/refs/tags/" + version + ".tar.gz",
 		Version:        version,
-		ResourceSubDir: "compiler-rt-" + version,
+		ResourceSubDir: "llvm-project-" + version + "/compiler-rt",
 	}
 }
 

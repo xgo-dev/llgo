@@ -81,7 +81,7 @@ func TestFuncInfoTableMaterializesMetadataWithoutFunctionPointers(t *testing.T) 
 		"@__llgo_funcinfo_entry_end = global ptr @__stop_llgo_funcinfo_entry",
 		"@__llgo_pcline_count = global i64 0",
 		"@__llgo_funcinfo_hash_mask = global i64 1",
-		"module asm \".section llgo_funcinfo_entry",
+		"\".section llgo_funcinfo_entry",
 		`@"__llgo_funcinfo_table$data" = private unnamed_addr constant [1 x { i32, i32, i32, i32, i32, i32, i32 }]`,
 		`@"__llgo_funcinfo_string_offsets$data" = private unnamed_addr constant`,
 		`@"__llgo_funcinfo_hash$data" = private unnamed_addr constant [2 x i16]`,
@@ -276,7 +276,7 @@ func TestFuncInfoTableMaterializesEntrySites(t *testing.T) {
 	for _, want := range []string{
 		"@__llgo_funcinfo_entry_start = global ptr @__start_llgo_funcinfo_entry",
 		"@__llgo_funcinfo_entry_end = global ptr @__stop_llgo_funcinfo_entry",
-		"module asm \".section llgo_funcinfo_entry",
+		"\".section llgo_funcinfo_entry",
 	} {
 		if !strings.Contains(ir, want) {
 			t.Fatalf("funcinfo entry table IR missing %q:\n%s", want, ir)
@@ -300,7 +300,7 @@ func TestFuncInfoTableMaterializesEntrySites(t *testing.T) {
 	for _, want := range []string{
 		"@__llgo_funcinfo_entry_start = global ptr @__start_llgo_funcinfo_entry",
 		"@__llgo_funcinfo_entry_end = global ptr @__stop_llgo_funcinfo_entry",
-		"module asm \".section llgo_funcinfo_entry",
+		"\".section llgo_funcinfo_entry",
 	} {
 		if !strings.Contains(ltoIR, want) {
 			t.Fatalf("full LTO funcinfo table IR missing %q:\n%s", want, ltoIR)
@@ -491,7 +491,7 @@ func TestFuncInfoTableSitesDisabledKeepsTables(t *testing.T) {
 	for _, bad := range []string{
 		"@__start_llgo_funcinfo_entry",
 		"@__start_llgo_pcline",
-		"module asm \".section llgo_",
+		"\".section llgo_",
 	} {
 		if strings.Contains(ir, bad) {
 			t.Fatalf("sites disabled: funcinfo table IR should not contain %q:\n%s", bad, ir)
@@ -536,7 +536,7 @@ func TestFuncInfoTableMaterializesPCLineMetadata(t *testing.T) {
 		"@__llgo_pcsite_end = global ptr @__stop_llgo_pcline",
 		"@__llgo_pcline_count = global i64 1",
 		"@__llgo_funcinfo_string_count = global i64 6",
-		"module asm \".section llgo_pcline",
+		"\".section llgo_pcline",
 		`@"__llgo_pcline_table$data" = private unnamed_addr constant [1 x { i64, i32, i32, i32, i32 }]`,
 		"i64 4660",
 		"i32 23",

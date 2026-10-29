@@ -23,7 +23,7 @@ It does not test OpenOCD device drivers, `vFlash` erase behavior, or physical
 flash/probe hardware.
 
 Run it with QEMU's ARM system emulator, a GDB that supports ARM, LLDB, and the
-LLVM 22 tools and Python 3 on `PATH`. `LLGO_GDB`, `LLGO_LLDB`, `QEMU_SYSTEM_ARM`
+LLVM 23 tools and Python 3 on `PATH`. `LLGO_GDB`, `LLGO_LLDB`, `QEMU_SYSTEM_ARM`
 and `LLGO` can select their executables. Both modes share portable Python
 assertions with the physical-probe suite:
 

@@ -11,7 +11,7 @@ cd "$work"
 root=$(llgo env LLGO_ROOT)
 test "$root" = /usr/lib/llgo
 test "$(readlink /usr/bin/llgo)" = /usr/lib/llgo/bin/llgo
-[[ "$(llgo env LLGO_LLVM_VERSION)" == 22.* ]]
+[[ "$(llgo env LLGO_LLVM_VERSION)" == 23.* ]]
 test -f "$root/runtime/go.mod"
 test -f "$root/targets/esp32.json"
 test -x "$root/crosscompile/clang/bin/clang"

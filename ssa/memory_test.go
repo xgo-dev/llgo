@@ -117,7 +117,7 @@ func TestAssertNilDerefColdCall(t *testing.T) {
 				if name == "dynamic" {
 					entry := fn.impl.EntryBasicBlock()
 					branch := entry.LastInstruction()
-					if branch.InstructionOpcode() != llvm.Br || branch.SuccessorsCount() != 2 {
+					if branch.InstructionOpcode() != llvm.CondBr || branch.SuccessorsCount() != 2 {
 						t.Fatalf("dynamic nil check must branch before calling runtime:\n%s", fn.impl.String())
 					}
 					for inst := entry.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
@@ -134,7 +134,7 @@ func TestAssertNilDerefColdCall(t *testing.T) {
 						if next.InstructionOpcode() != llvm.Ret {
 							t.Fatalf("native nil failure must retain a separate formal return:\n%s", fn.impl.String())
 						}
-					} else if next.InstructionOpcode() != llvm.Br || next.SuccessorsCount() != 1 || next.Successor(0) != failure {
+					} else if next.InstructionOpcode() != llvm.UncondBr || next.SuccessorsCount() != 1 || next.Successor(0) != failure {
 						t.Fatalf("non-native nil failure must not rejoin the success path:\n%s", fn.impl.String())
 					}
 				}

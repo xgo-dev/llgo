@@ -233,9 +233,9 @@ function Assert-ReleaseCompilerArtifact {
 }
 
 function Get-ReleaseX86Bootstrap {
-  $version = '20260616'
+  $version = '20261020'
   $archive = Join-Path (Get-ReleaseTemporaryRoot) "llvm-mingw-$version-ucrt-x86_64.zip"
-  $checksum = 'b9b68a4d276e16fa25802aaba458e4638f64b3884c290aaccdc2d87083b6ca35'
+  $checksum = 'fd5462b7f5d93b2ff981fcd3f9c7e427e47f3203c64ea91c27bcc444eebd74cd'
   if (-not (Test-Path $archive)) {
     & curl.exe --fail --location --retry 5 --retry-all-errors --output $archive `
       "https://github.com/mstorsjo/llvm-mingw/releases/download/$version/llvm-mingw-$version-ucrt-x86_64.zip"

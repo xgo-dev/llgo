@@ -48,8 +48,8 @@ func zMixedUntypedFloat(i64 int64, u64 uint64) (uint64, int64, int64, uint64) {
 // behavior. uint32 must still convert through signed i64 before truncation.
 // CHECK-LABEL: define i32 @main.f32ToI32(
 // ARM64: call i32 @llvm.fptosi.sat.i32.f32(float
-// AMD64: fcmp olt float {{.*}}, 0xC1E0000000000000
-// AMD64: fcmp oge float {{.*}}, 0x41E0000000000000
+// AMD64: fcmp olt float {{.*}}, {{(0xC1E0000000000000|f0xCF000000)}}
+// AMD64: fcmp oge float {{.*}}, {{(0x41E0000000000000|f0x4F000000)}}
 // AMD64: fcmp uno float
 // AMD64: fptosi float {{.*}} to i32
 // AMD64: select i1 {{.*}}, i32 -2147483648, i32
@@ -57,8 +57,8 @@ func zMixedUntypedFloat(i64 int64, u64 uint64) (uint64, int64, int64, uint64) {
 
 // CHECK-LABEL: define i32 @main.f32ToU32(
 // ARM64: call i64 @llvm.fptosi.sat.i64.f32(float
-// AMD64: fcmp olt float {{.*}}, 0xC3E0000000000000
-// AMD64: fcmp oge float {{.*}}, 0x43E0000000000000
+// AMD64: fcmp olt float {{.*}}, {{(0xC3E0000000000000|f0xDF000000)}}
+// AMD64: fcmp oge float {{.*}}, {{(0x43E0000000000000|f0x5F000000)}}
 // AMD64: fptosi float {{.*}} to i64
 // AMD64: select i1 {{.*}}, i64 -9223372036854775808, i64
 // CHECK: trunc i64 {{.*}} to i32
@@ -66,8 +66,8 @@ func zMixedUntypedFloat(i64 int64, u64 uint64) (uint64, int64, int64, uint64) {
 
 // CHECK-LABEL: define i64 @main.f64ToUintptr(
 // ARM64: call i64 @llvm.fptoui.sat.i64.f64(double
-// AMD64: fcmp oge double {{.*}}, 0x43E0000000000000
-// AMD64: fsub double {{.*}}, 0x43E0000000000000
+// AMD64: fcmp oge double {{.*}}, {{f?}}0x43E0000000000000
+// AMD64: fsub double {{.*}}, {{f?}}0x43E0000000000000
 // AMD64: fptosi double {{.*}} to i64
 // AMD64: or i64
 // CHECK: ret i64

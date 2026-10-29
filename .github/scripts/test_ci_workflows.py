@@ -61,6 +61,45 @@ def matrix_size(job):
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_benchmark_base_uses_its_own_dependency_actions(self):
+        script = WORKFLOWS.parent / "scripts/prepare_benchmark_base.py"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = root / ".benchmark/base-source"
+            action = base / ".github/actions/setup-deps/action.yml"
+            action.parent.mkdir(parents=True)
+            action.write_text("uses: ./.github/actions/nested\nrun: bash .github/scripts/setup.sh\n"
+                              'script: .github\\windows\\setup.ps1\n'
+                              'temp: $env:RUNNER_TEMP\n')
+            module = base / "go.mod"
+            module.write_text("module example.test/base\n")
+            environment = root / "github-env"
+            result = subprocess.run([sys.executable, str(script), ".benchmark/base-source"],
+                                    cwd=root, capture_output=True, text=True,
+                                    env={**os.environ, "GITHUB_ENV": str(environment),
+                                         "RUNNER_TEMP": str(root / "temp")})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(action.read_text(),
+                             "uses: ./.benchmark/base-source/.github/actions/nested\n"
+                             "run: bash .benchmark/base-source/.github/scripts/setup.sh\n"
+                             'script: .benchmark/base-source/.github\\windows\\setup.ps1\n'
+                             'temp: $env:LLGO_BENCHMARK_BASE_TEMP\n')
+            self.assertEqual(module.read_text(), "module example.test/base\n")
+            temporary = root / "temp/llgo-benchmark-base"
+            self.assertTrue(temporary.is_dir())
+            self.assertEqual(environment.read_text(), f"LLGO_BENCHMARK_BASE_TEMP={temporary}\n")
+        jobs = load("benchmark.yml")["jobs"]
+        for name in ("benchmark", "wasm-benchmark"):
+            job = jobs[name]
+            self.assertNotIn("GOFLAGS", job["env"])
+            steps = job["steps"]
+            names = [step.get("name") for step in steps]
+            self.assertLess(names.index("Install base dependencies"), names.index("Measure pull request base"))
+            self.assertLess(names.index("Measure pull request base"), names.index("Install dependencies"))
+            self.assertLess(names.index("Install dependencies"), names.index("Measure current revision"))
+            head = steps[names.index("Install dependencies")]
+            self.assertEqual(head["with"]["llvm-version"], "23")
+
     def test_macos_benchmark_installs_only_legacy_base_dependency(self):
         steps = load("benchmark.yml")["jobs"]["benchmark"]["steps"]
         step = next(s for s in steps if s.get("name") == "Install legacy macOS linker for the benchmark base")
@@ -499,10 +538,11 @@ sys.exit(subprocess.call(command + ['./internal/build']))
         self.assertNotIn("build-windows-x86-toolchains", jobs)
         self.assertFalse((WORKFLOWS.parent / "windows/build-x86-toolchains.sh").exists())
         pins = json.loads((WORKFLOWS.parent / "windows/espressif-toolchain.json").read_text())
-        self.assertRegex(pins["release"], r"^22\.1\.4_\d{8}$")
+        self.assertRegex(pins["release"], r"^23\.1\.4_\d{8}(?:\.[1-9]\d*)?$")
         self.assertRegex(pins["producer_commit"], r"^[0-9a-f]{40}$")
-        self.assertEqual(pins["sdk"]["version"], "22.1.8")
-        self.assertEqual(pins["sdk"]["asset"], "llvm-sdk-22.1.8-i686-w64-mingw32.tar.xz")
+        self.assertEqual(pins["sdk"]["version"], "23.1.4")
+        self.assertRegex(pins["sdk"]["producer_commit"], r"^[0-9a-f]{40}$")
+        self.assertEqual(pins["sdk"]["asset"], "llvm-sdk-23.1.4-i686-w64-mingw32.tar.xz")
         self.assertRegex(pins["sdk"]["sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(set(pins["payloads"]), {"386", "amd64", "arm64"})
         for arch, target in (("386", "i686"), ("amd64", "x86_64"), ("arm64", "aarch64")):

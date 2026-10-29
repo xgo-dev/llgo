@@ -30,3 +30,6 @@ replace github.com/xgo-dev/llgo/runtime => ./runtime
 
 // v0.51.0 plus the generic-method wrapper fix; remove when upstream includes it.
 replace golang.org/x/tools => github.com/xgo-dev/tools v0.51.1
+
+// Temporary LLVM 23 bindings from xgo-dev/llvm#57; remove after its release.
+replace github.com/xgo-dev/llvm => github.com/zhouguangyuan0718/go-llvm v0.0.0-20261025094958-50cf8d2d8c29
