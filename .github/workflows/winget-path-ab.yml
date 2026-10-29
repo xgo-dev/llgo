@@ -6,7 +6,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: winget-release-validation-${{ github.ref }}
+  group: winget-release-validation-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 jobs:
   validate:
@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [path]
+        mode: [symlink]
         goarch: [amd64, arm64]
         include:
           - goarch: amd64
