@@ -1048,8 +1048,7 @@ func TestHandleExportDiffName(t *testing.T) {
 				}
 
 				// Check export was set
-				exports := pkg.ExportFuncs()
-				if export, ok := exports[tt.fullName]; !ok || export != tt.wantExport {
+				if export, ok := pkg.LookupExport(tt.fullName); !ok || export != tt.wantExport {
 					t.Errorf("export = %q (ok=%v), want %q", export, ok, tt.wantExport)
 				}
 			}
@@ -1063,7 +1062,7 @@ func TestPreparedDeclarationExportRename(t *testing.T) {
 			prog := llssa.NewProgram(nil)
 			defer prog.Dispose()
 			doc := &ast.CommentGroup{List: []*ast.Comment{{Text: "//export IRQ_Handler"}}}
-			_, _, err := collectDeclarationDirectivesWithOptions(prog, token.NewFileSet(), doc,
+			_, export, err := collectDeclarationDirectivesWithOptions(prog, token.NewFileSet(), doc,
 				"pkg.HandleInterrupt", "HandleInterrupt", token.Pos(1), Options{ExportRename: rename})
 			if !rename {
 				if err == nil || !strings.Contains(err.Error(), "export comment has wrong name") {
@@ -1077,8 +1076,8 @@ func TestPreparedDeclarationExportRename(t *testing.T) {
 			if link, ok := prog.Linkname("pkg.HandleInterrupt"); !ok || link != "IRQ_Handler" {
 				t.Fatalf("linkname = (%q, %v), want (IRQ_Handler, true)", link, ok)
 			}
-			if export, ok := prog.PackageExport("pkg.HandleInterrupt"); !ok || export != "IRQ_Handler" {
-				t.Fatalf("export = (%q, %v), want (IRQ_Handler, true)", export, ok)
+			if export != "IRQ_Handler" {
+				t.Fatalf("export = %q, want IRQ_Handler", export)
 			}
 		})
 	}

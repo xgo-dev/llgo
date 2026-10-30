@@ -701,11 +701,8 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			// generated at final link. Give that entry the native wasm ABI so
 			// Memory32 size_t/uintptr_t parameters remain i32 while the function
 			// body continues to use the Go 64-bit word model.
-			for _, exportName := range p.pkg.ExportFuncs() {
-				if exportName == name {
-					cc = llssa.CDecl
-					break
-				}
+			if p.pkg.IsExportedSymbol(name) {
+				cc = llssa.CDecl
 			}
 		}
 		if hasCtx {

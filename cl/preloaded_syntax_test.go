@@ -22,6 +22,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"maps"
 	"strings"
 	"testing"
 
@@ -32,7 +33,7 @@ import (
 
 func TestPreparedSyntaxFeedsCompilationEntryPoints(t *testing.T) {
 	for _, pkgName := range []string{"C", "callbacks"} {
-		for _, entry := range []string{"one-shot", "prepared-one-shot", "backend"} {
+		for _, entry := range []string{"one-shot", "prepared-one-shot", "backend", "patched-backend"} {
 			t.Run(pkgName+"/"+entry, func(t *testing.T) {
 				source := `package ` + pkgName + `
 
@@ -65,8 +66,19 @@ var Value int32
 				ssaPkg := goProg.CreatePackage(pkg, files, info, true)
 				ssaPkg.Build()
 				coordinator := ssatest.NewProgramEx(t, nil, imp)
+				preparedTypes := pkg
+				var patches Patches
+				if entry == "patched-backend" {
+					// The effective patch package has its own preparation identity.
+					// An empty original snapshot must not hide its exports.
+					coordinator.MarkPackageSyntaxParsed(pkg, nil)
+					preparedTypes = types.NewPackage(pkg.Path(), pkg.Name())
+					alt := goProg.CreatePackage(types.NewPackage(pkg.Path()+"/alt", pkg.Name()), nil, nil, true)
+					alt.Build()
+					patches = Patches{pkg.Path(): {Alt: alt, Types: preparedTypes}}
+				}
 				if entry != "one-shot" {
-					if err := ParsePkgSyntaxWithOptions(coordinator, fset, pkg, files, Options{ExportRename: true}); err != nil {
+					if err := ParsePkgSyntaxWithOptions(coordinator, fset, preparedTypes, files, Options{ExportRename: true}); err != nil {
 						t.Fatal(err)
 					}
 					// Once prepared, declaration bindings must not be rediscovered by
@@ -90,14 +102,15 @@ var Value int32
 					file.Decls = decls
 				}
 				backend := coordinator
-				if entry == "backend" {
+				preloaded := entry == "backend" || entry == "patched-backend"
+				if preloaded {
 					backend = coordinator.NewBackendProgram()
 					defer backend.Dispose()
 				}
 
 				compiled, _, err := NewPackageExWithEmbedMetaOptions(
-					backend, nil, nil, nil, ssaPkg, files, goembed.VarMap{}, false,
-					Options{ExportRename: true, CExportWrappers: true, PreloadedSyntax: entry == "backend"},
+					backend, nil, patches, nil, ssaPkg, files, goembed.VarMap{}, false,
+					Options{ExportRename: true, CExportWrappers: true, PreloadedSyntax: preloaded},
 				)
 				if err != nil {
 					t.Fatal(err)
@@ -111,8 +124,8 @@ var Value int32
 					if link, ok := backend.Linkname(fullName); !ok || link != cName {
 						t.Errorf("Linkname(%q) = (%q, %v), want (%q, true)", fullName, link, ok, cName)
 					}
-					if export, ok := compiled.ExportFuncs()[fullName]; !ok || export != cName {
-						t.Errorf("ExportFuncs()[%q] = (%q, %v), want (%q, true)", fullName, export, ok, cName)
+					if export, ok := compiled.LookupExport(fullName); !ok || export != cName {
+						t.Errorf("LookupExport(%q) = (%q, %v), want (%q, true)", fullName, export, ok, cName)
 					}
 					implName, absentName := fullName, cName
 					if pkgName == "C" {
@@ -128,14 +141,14 @@ var Value int32
 				if pkgName == "C" && !strings.Contains(compiled.String(), "@llvm.compiler.used") {
 					t.Fatal("package C lost its direct export reachability roots")
 				}
-				if got := compiled.ExportFuncs()[pkg.Path()+".Counter"]; got != "counter" {
+				if got, ok := compiled.LookupExport(pkg.Path() + ".Counter"); !ok || got != "counter" {
 					t.Errorf("variable export = %q, want counter", got)
 				}
 				if got, ok := backend.Linkname(pkg.Path() + ".Value"); !ok || got != "C.shared_value" {
 					t.Errorf("variable linkname = (%q, %v), want (C.shared_value, true)", got, ok)
 				}
-				if len(compiled.ExportFuncs()) != len(exports)+1 {
-					t.Fatalf("unexpected automatic exports for package %s: %v", pkgName, compiled.ExportFuncs())
+				if got := maps.Collect(compiled.Exports()); len(got) != len(exports)+1 {
+					t.Fatalf("unexpected automatic exports for package %s: %v", pkgName, got)
 				}
 			})
 		}

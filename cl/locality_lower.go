@@ -102,7 +102,7 @@ func (p *context) prepareExportedLocalContext(f *ssa.Function) {
 		return
 	}
 	fullName := funcName(f.Pkg.Pkg, f, false)
-	if _, exported := p.pkg.ExportFuncs()[fullName]; !exported {
+	if _, exported := p.pkg.LookupExport(fullName); !exported {
 		return
 	}
 	p.locality.function.entry = &localEntryContext{}

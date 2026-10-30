@@ -322,7 +322,6 @@ func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.Fil
 				return false, "", fmt.Errorf("export comment has wrong name %q", item.Args)
 			}
 			prog.SetLinkname(fullName, item.Args)
-			prog.SetPackageExport(fullName, item.Args)
 			exportName = item.Args
 			linkCollected = true
 		case "llgo:env":
@@ -836,7 +835,7 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 	}
 	if v, ok := p.prog.Linkname(orgName); ok {
 		if p.options.CExportWrappers {
-			if export, ok := p.pkg.ExportFuncs()[orgName]; ok && export == v {
+			if export, ok := p.pkg.LookupExport(orgName); ok && export == v {
 				return pkg, funcName(pkg, fn, false), goFunc
 			}
 		}
@@ -1011,7 +1010,6 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 				if !hasLinkname && cPkg && decl.Recv == nil && token.IsExported(inPkgName) {
 					exportName = strings.TrimPrefix(inPkgName, "X")
 					prog.SetLinkname(fullName, exportName)
-					prog.SetPackageExport(fullName, exportName)
 				}
 				if exportName != "" {
 					exports[fullName] = exportName

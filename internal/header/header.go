@@ -648,10 +648,9 @@ func genHeader(p ssa.Program, pkgs []ssa.Package, w io.Writer) error {
 
 	// Process all exported functions
 	for _, pkg := range pkgs {
-		exports := pkg.ExportFuncs()
 		// Sort functions for testing
-		exportNames := make([]string, 0, len(exports))
-		for name := range exports {
+		var exportNames []string
+		for name := range pkg.Exports() {
 			// Imported //export metadata may be recorded on the importing
 			// package as well. Only declarations owned by this package belong
 			// in its public header; otherwise internal runtime callbacks can
@@ -664,7 +663,7 @@ func genHeader(p ssa.Program, pkgs []ssa.Package, w io.Writer) error {
 		sort.Strings(exportNames)
 
 		for _, name := range exportNames { // name is goName
-			link := exports[name] // link is cName
+			link, _ := pkg.LookupExport(name) // link is cName
 			fn := pkg.FuncOf(name)
 			if fn == nil {
 				// Older/non-wrapper backends emit the implementation directly
