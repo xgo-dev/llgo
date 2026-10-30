@@ -12,16 +12,23 @@ import (
 
 func loadStdlibInternalBytealgForTarget(t *testing.T, goos, goarch string) *packages.Package {
 	t.Helper()
+	goroot := runtime.GOROOT()
+	if goroot == "" {
+		t.Fatal("GOROOT not available")
+	}
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesSizes | packages.NeedTypesInfo | packages.NeedImports,
-		Env:  append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch),
+		Env:  append(os.Environ(), "GOROOT="+goroot, "GOOS="+goos, "GOARCH="+goarch),
 	}
 	pkgs, err := packages.LoadEx(nil, nil, cfg, "internal/bytealg")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pkgs) != 1 || pkgs[0].Types == nil {
-		t.Fatalf("load internal/bytealg: got %d pkgs, types=%v", len(pkgs), pkgs[0].Types)
+	if len(pkgs) != 1 {
+		t.Fatalf("load internal/bytealg for %s/%s: got %d packages", goos, goarch, len(pkgs))
+	}
+	if pkgs[0] == nil || pkgs[0].Types == nil || len(pkgs[0].Errors) != 0 {
+		t.Fatalf("load internal/bytealg for %s/%s: missing types or package errors: %+v", goos, goarch, pkgs[0])
 	}
 	return pkgs[0]
 }
@@ -29,7 +36,7 @@ func loadStdlibInternalBytealgForTarget(t *testing.T, goos, goarch string) *pack
 func TestSigsForStdlibInternalBytealgArmHelpers(t *testing.T) {
 	goroot := runtime.GOROOT()
 	if goroot == "" {
-		t.Skip("GOROOT not available")
+		t.Fatal("GOROOT not available")
 	}
 	pkg := loadStdlibInternalBytealgForTarget(t, "linux", "arm")
 
@@ -65,18 +72,20 @@ func TestSigsForStdlibInternalBytealgArmHelpers(t *testing.T) {
 	}
 
 	for path, wantSigs := range tests {
-		tr, err := TranslateFileForPkg(pkg, path, "linux", "arm", nil)
-		if err != nil {
-			t.Fatalf("translate %s: %v", path, err)
-		}
-		for name, want := range wantSigs {
-			got, ok := tr.Signatures[name]
-			if !ok {
-				t.Fatalf("missing symbol %s in %s", name, path)
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			tr, err := TranslateFileForPkg(pkg, path, "linux", "arm", nil)
+			if err != nil {
+				t.Fatalf("translate %s: %v", path, err)
 			}
-			if err := checkSig(got, want); err != nil {
-				t.Fatalf("%s (%s): %v", name, path, err)
+			for name, want := range wantSigs {
+				got, ok := tr.Signatures[name]
+				if !ok {
+					t.Fatalf("missing symbol %s in %s", name, path)
+				}
+				if err := checkSig(got, want); err != nil {
+					t.Fatalf("%s (%s): %v", name, path, err)
+				}
 			}
-		}
+		})
 	}
 }

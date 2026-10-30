@@ -74,6 +74,10 @@ def run(command, output, suite, summary=None):
 
 
 def main():
+    # Redirected Windows streams may default to cp1252, but Go diagnostics and
+    # test names are UTF-8. Keep them intact on both the live log and stderr.
+    sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=Path("go-test-timings"))
     parser.add_argument("suite", choices=("main", "build", "compiler", "language",

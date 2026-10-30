@@ -4,6 +4,20 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
+if [[ $# -gt 1 ]]; then
+	echo "usage: test_wasm_stdlib.sh [wasi|emscripten|emscripten-memory64]" >&2
+	exit 2
+fi
+targets=(emscripten emscripten-memory64 wasi)
+if [[ $# -eq 1 ]]; then
+	case "$1" in
+	wasi|emscripten|emscripten-memory64) targets=("$1") ;;
+	*)
+		echo "unknown WebAssembly standard-library target: $1" >&2
+		exit 2
+		;;
+	esac
+fi
 source "${repo_root}/dev/wasm_ci_report.sh"
 llgo_cmd="${LLGO:-llgo}"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/llgo-wasm-stdlib.XXXXXX")"
@@ -61,6 +75,11 @@ run_stdlib() {
 	fi
 }
 
-wasm_ci_run_case EC32/emscripten stdlib-bytes-strings-json 3 0 0 0 0 run_stdlib emscripten
-wasm_ci_run_case EC64/emscripten-memory64 stdlib-bytes-strings-json 3 0 0 0 0 run_stdlib emscripten-memory64
-wasm_ci_run_case WC32/wasi stdlib-bytes-strings-json 3 0 0 0 0 run_stdlib wasi
+for target in "${targets[@]}"; do
+	case "${target}" in
+	emscripten) profile=EC32/emscripten ;;
+	emscripten-memory64) profile=EC64/emscripten-memory64 ;;
+	wasi) profile=WC32/wasi ;;
+	esac
+	wasm_ci_run_case "${profile}" stdlib-bytes-strings-json 3 0 0 0 0 run_stdlib "${target}"
+done
