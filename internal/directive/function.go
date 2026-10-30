@@ -39,45 +39,28 @@ type FunctionDirectives struct {
 	ExportName     string
 }
 
-// ParseFunction keeps the existing per-directive attachment rules.
+// parseFunction keeps the existing per-directive attachment rules.
 // It returns a value, with no discovery cache or declaration lookup machinery.
-func ParseFunction(fset *token.FileSet, doc *ast.CommentGroup, inPkgName string, function bool, exportRename bool) (info FunctionDirectives, err error) {
+func parseFunction(fset *token.FileSet, doc *ast.CommentGroup, inPkgName string, exportRename bool) (info FunctionDirectives, err error) {
+	info.Linkname, info.ExportName, err = parseBinding(fset, doc, inPkgName, exportRename)
+	if err != nil {
+		return info, err
+	}
 	directives := ParseGroup(doc)
 	wasmImportSeen := false
 	for n := len(directives) - 1; n >= 0; n-- {
 		item := directives[n]
 		switch item.Name {
 		case "go:noinline":
-			info.NoInline = function
+			info.NoInline = true
 		case "go:nosplit":
-			info.NoSplit = function
+			info.NoSplit = true
 		case "go:uintptrescapes":
-			info.UintptrEscapes = function
-		case "go:linkname", "llgo:link":
-			fields := strings.Fields(item.Args)
-			if item.Name == "llgo:link" {
-				if len(fields) < 2 {
-					return info, fmt.Errorf("%s: //llgo:link requires a local name and a target", fset.Position(item.Pos))
-				}
-				if fields[0] != inPkgName && fields[0] != ParenthesizedMethodName(inPkgName) {
-					return info, fmt.Errorf("%s: //llgo:link local name %q does not match declaration %q", fset.Position(item.Pos), fields[0], inPkgName)
-				}
-			}
-			if info.Linkname == "" && len(fields) >= 2 && (fields[0] == inPkgName || fields[0] == ParenthesizedMethodName(inPkgName)) {
-				info.Linkname = strings.Join(fields[1:], " ")
-			}
-		case "export":
-			if info.Linkname != "" || item.Args == "" {
-				continue
-			}
-			if item.Args != inPkgName && !exportRename {
-				return info, fmt.Errorf("export comment has wrong name %q", item.Args)
-			}
-			info.Linkname, info.ExportName = item.Args, item.Args
+			info.UintptrEscapes = true
 		case "llgo:env":
-			info.ClosureEnv = function
+			info.ClosureEnv = true
 		case "go:wasmimport":
-			if !function || wasmImportSeen {
+			if wasmImportSeen {
 				continue
 			}
 			wasmImportSeen = true
@@ -86,7 +69,7 @@ func ParseFunction(fset *token.FileSet, doc *ast.CommentGroup, inPkgName string,
 			}
 		}
 	}
-	if function && doc != nil {
+	if doc != nil {
 		for n := len(doc.List) - 1; n >= 0; n-- {
 			line := doc.List[n].Text
 			if line == "//go:nointerface" {
@@ -135,4 +118,38 @@ func FuncName(pkgPath string, fn *types.Func) (fullName, inPkgName string) {
 		return pkgPath + "." + canonical + "." + name, source + "." + name
 	}
 	return pkgPath + "." + name, name
+}
+
+// parseBinding is shared by function and variable preparation; function-only
+// pragmas are interpreted exclusively by parseFunction.
+func parseBinding(fset *token.FileSet, doc *ast.CommentGroup, inPkgName string, exportRename bool) (linkname, exportName string, err error) {
+	directives := ParseGroup(doc)
+	for n := len(directives) - 1; n >= 0; n-- {
+		item := directives[n]
+		switch item.Name {
+		case "go:linkname", "llgo:link":
+			fields := strings.Fields(item.Args)
+			if item.Name == "llgo:link" {
+				if len(fields) < 2 {
+					return "", "", fmt.Errorf("%s: //llgo:link requires a local name and a target", fset.Position(item.Pos))
+				}
+				if fields[0] != inPkgName && fields[0] != ParenthesizedMethodName(inPkgName) {
+					return "", "", fmt.Errorf("%s: //llgo:link local name %q does not match declaration %q", fset.Position(item.Pos), fields[0], inPkgName)
+				}
+			}
+			if linkname == "" && len(fields) >= 2 && (fields[0] == inPkgName || fields[0] == ParenthesizedMethodName(inPkgName)) {
+				linkname = strings.Join(fields[1:], " ")
+			}
+		case "export":
+			if linkname != "" || item.Args == "" {
+				continue
+			}
+			if item.Args != inPkgName && !exportRename {
+				return "", "", fmt.Errorf("export comment has wrong name %q", item.Args)
+			}
+			linkname, exportName = item.Args, item.Args
+
+		}
+	}
+	return linkname, exportName, nil
 }

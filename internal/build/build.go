@@ -47,7 +47,6 @@ import (
 	"github.com/xgo-dev/llgo/internal/dcepass"
 	"github.com/xgo-dev/llgo/internal/deadcode"
 	"github.com/xgo-dev/llgo/internal/debugabi"
-	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/firmware"
 	"github.com/xgo-dev/llgo/internal/flash"
@@ -960,9 +959,13 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	frontendOptions.PreloadedSyntax = true
 
 	output := conf.OutFile != ""
-	functions := cl.NewFunctionSet(prog, patches)
+	selected := make(map[string]*types.Package, len(patches))
+	for path, patch := range patches {
+		selected[path] = patch.Types
+	}
+	prog.BeginFunctionCompilation(selected)
 	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
-		patches: patches, functions: functions, callerTracking: cl.NewCallerTracking(functions),
+		patches: patches, callerTracking: cl.NewCallerTracking(prog.Functions()),
 		initial: initial, mode: mode,
 		fingerprinting:   make(map[string]bool),
 		pkgs:             map[*packages.Package]Package{},
@@ -1018,6 +1021,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		return nil, err
 	}
 	callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
+	prog.Functions().Prepare(ctx.progSSA)
 	ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
 	callerSpan.done()
 	ctx.frontendOptions.ReceiverNilChecks = collectReceiverNilChecks(initial, altPkgs)
@@ -1782,7 +1786,6 @@ type context struct {
 	dedup          packages.Deduper
 	patches        cl.Patches
 	callerTracking *cl.CallerTracking
-	functions      *directive.FunctionSet
 	fingerprinting map[string]bool
 	cacheDisabled  map[string]none
 	patchFiles     map[string][]string
@@ -1966,9 +1969,6 @@ func preloadPatchedPackageSyntax(prog llssa.Program, patches cl.Patches, dedup p
 		}
 		if err := cl.ParsePkgSyntaxWithOptions(prog, fset, patch.Types, files, packageOptions); err != nil {
 			return err
-		}
-		if original := dedup.Check(pkgPath); original != nil {
-			prog.FunctionSources().UseBindings(original.Types, patch.Types)
 		}
 	}
 	return nil

@@ -18,6 +18,7 @@ package cl
 
 import (
 	"go/ast"
+	"go/token"
 	"go/types"
 	"strings"
 	"sync"
@@ -39,8 +40,6 @@ func testFunctionProgram(t *testing.T, goProg *ssa.Program, bindings ...map[stri
 	if goProg == nil {
 		return prog
 	}
-	declarations := make(map[*ast.FuncDecl]*directive.FunctionDirectives)
-	names := make(map[*types.Package]map[string]*directive.FunctionDirectives)
 	// Caller analysis also considers methods on unexported, otherwise unused
 	// types. AllFunctions alone does not include those source declarations.
 	functions := ssautil.AllFunctions(goProg)
@@ -50,26 +49,27 @@ func testFunctionProgram(t *testing.T, goProg *ssa.Program, bindings ...map[stri
 			functions[fn] = true
 		}
 	}
+	seen := make(map[*ast.FuncDecl]bool)
 	for fn := range functions {
 		if origin := fn.Origin(); origin != nil {
 			fn = origin
 		}
 		decl, _ := fn.Syntax().(*ast.FuncDecl)
-		if decl == nil || declarations[decl] != nil {
+		if decl == nil || seen[decl] {
 			continue
 		}
 		var pkg *types.Package
-		var fullName, inPkgName string
+		var fullName string
 		if obj, ok := fn.Object().(*types.Func); ok {
 			pkg = obj.Pkg()
-			fullName, inPkgName = directive.FuncName(llssa.PathOf(pkg), obj)
+			fullName, _ = directive.FuncName(llssa.PathOf(pkg), obj)
 		} else if fn.Pkg != nil {
 			pkg = fn.Pkg.Pkg
-			fullName, inPkgName = astFuncName(llssa.PathOf(pkg), decl, nil)
+			fullName = llssa.FullName(pkg, decl.Name.Name)
 		} else {
 			continue
 		}
-		info, err := directive.ParseFunction(goProg.Fset, decl.Doc, inPkgName, true, false)
+		info, err := parseTestFunction(goProg.Fset, pkg, decl)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -78,25 +78,19 @@ func testFunctionProgram(t *testing.T, goProg *ssa.Program, bindings ...map[stri
 				info.Linkname = link
 			}
 		}
-		declarations[decl] = &info
-		if names[pkg] == nil {
-			names[pkg] = make(map[string]*directive.FunctionDirectives)
-		}
-		names[pkg][fullName] = &info
-	}
-	for pkg, named := range names {
-		prog.FunctionSources().Set(pkg, declarations, named)
+		seen[decl] = true
+		prog.Functions().Register(pkg, decl, fullName, info)
 	}
 	return prog
 }
 
 func testCallerTracking(t *testing.T, goProg *ssa.Program) *CallerTracking {
-	return NewCallerTracking(NewFunctionSet(testFunctionProgram(t, goProg), nil))
+	return NewCallerTracking(testFunctionRegistry(testFunctionProgram(t, goProg), nil))
 }
 
 func testUintptrEscapesRoots(t *testing.T, fn *ssa.Function) map[ssa.Value]struct{} {
 	t.Helper()
-	functions := NewFunctionSet(testFunctionProgram(t, fn.Prog), nil)
+	functions := testFunctionRegistry(testFunctionProgram(t, fn.Prog), nil)
 	return uintptrEscapesRoots(functions.Function(fn), functions)
 }
 
@@ -121,7 +115,7 @@ func use() { marked[int](0); marked[string](0) }
 			decl.Doc = nil
 		}
 	}
-	functions := NewFunctionSet(prog, nil)
+	functions := testFunctionRegistry(prog, nil)
 	functions.Prepare(pkg.Prog)
 	instances := 0
 	for fn := range ssautil.AllFunctions(pkg.Prog) {
@@ -173,7 +167,7 @@ func F() {}
 			t.Fatal(err)
 		}
 	}
-	functions := NewFunctionSet(prog, nil)
+	functions := testFunctionRegistry(prog, nil)
 	if got := functions.Function(plain.Func("F")).Directives; got.NoInline || got.Linkname != "" {
 		t.Fatalf("plain package view inherited another view: %+v", got)
 	}
@@ -201,7 +195,7 @@ func F() {}
 			if err := ParsePkgSyntax(prog, alt.Prog.Fset, alt.Pkg, altFiles); err != nil {
 				t.Fatal(err)
 			}
-			functions := NewFunctionSet(prog, Patches{"example.com/p": {Alt: alt, Types: alt.Pkg}})
+			functions := testFunctionRegistry(prog, Patches{"example.com/p": {Alt: alt, Types: alt.Pkg}})
 			got := functions.Function(original.Func("F"))
 			wantLink := ""
 			if replacement != "" {
@@ -234,7 +228,7 @@ func ordinary(o Outer) { o.Marked(0) }
 	if err := ParsePkgSyntax(prog, pkg.Prog.Fset, pkg.Pkg, files); err != nil {
 		t.Fatal(err)
 	}
-	functions := NewFunctionSet(prog, nil)
+	functions := testFunctionRegistry(prog, nil)
 	adapters := 0
 	for fn := range ssautil.AllFunctions(pkg.Prog) {
 		if fn.Syntax() != nil || fn.Synthetic == "" || fn.Name() == "init" {
@@ -267,7 +261,7 @@ func TestFunctionDirectivesRequirePreparation(t *testing.T) {
 			t.Fatal("unprepared source silently treated as an unannotated function")
 		}
 	}()
-	NewFunctionSet(prog, nil).Function(pkg.Func("F"))
+	testFunctionRegistry(prog, nil).Function(pkg.Func("F"))
 }
 
 func TestFunctionWrappersConcurrentIdentity(t *testing.T) {
@@ -280,7 +274,7 @@ func F() {}
 	if err := ParsePkgSyntax(prog, pkg.Prog.Fset, pkg.Pkg, files); err != nil {
 		t.Fatal(err)
 	}
-	functions := NewFunctionSet(prog, nil)
+	functions := testFunctionRegistry(prog, nil)
 	results := make(chan *directive.Function, 32)
 	var wg sync.WaitGroup
 	for range cap(results) {
@@ -315,7 +309,7 @@ func F(uintptr)
 	if fn.Syntax() != nil {
 		t.Fatal("fixture unexpectedly has source syntax")
 	}
-	got := NewFunctionSet(prog, nil).Function(fn)
+	got := testFunctionRegistry(prog, nil).Function(fn)
 	if got.SSA != fn || !got.Directives.NoInline || !got.Directives.UintptrEscapes ||
 		got.Directives.WasmModule != "host" || got.Directives.WasmName != "entry" || got.Directives.Linkname != "C.entry" {
 		t.Fatalf("imported declaration lost prepared directives: %+v", got)
@@ -349,7 +343,7 @@ func exported() {}
 	// The SSA bodies retain their syntax for construction, but consumers must
 	// not discover function attributes or exports by walking the input files.
 	files[0].Decls = nil
-	functions := NewFunctionSet(prog, nil)
+	functions := testFunctionRegistry(prog, nil)
 	tracking := NewCallerTracking(functions)
 	tracking.Precompute([]*ssa.Package{pkg})
 	backend := prog.NewBackendProgram()
@@ -384,15 +378,94 @@ func F() {}
 	if err := ParsePkgSyntax(prog, pkg.Prog.Fset, pkg.Pkg, files); err != nil {
 		t.Fatal(err)
 	}
-	source := NewFunctionSet(prog, nil).Function(pkg.Func("F"))
-	// Symbol resolution receives an already prepared function, so it needs
-	// no wrapper registry and must not initialize one as a side effect.
-	ctx := &context{prog: prog, goTyps: pkg.Pkg, goProg: pkg.Prog}
+	source := testFunctionRegistry(prog, nil).Function(pkg.Func("F"))
+	// The consumer has no prepared source for this function. A hidden lookup
+	// through its registry would panic instead of using the supplied wrapper.
+	consumer := llssa.NewProgram(nil)
+	defer consumer.Dispose()
+	ctx := &context{prog: consumer, goTyps: pkg.Pkg, goProg: pkg.Prog}
 	_, name, kind := ctx.funcName(source)
 	if name != "prepared" || kind != cFunc {
 		t.Fatalf("binding = %q, %d", name, kind)
 	}
-	if ctx.functions != nil {
-		t.Fatal("symbol resolution queried the wrapper registry")
+
+}
+
+func testFunctionRegistry(prog llssa.Program, patches Patches) *directive.Functions {
+	selected := make(map[string]*types.Package, len(patches))
+	for path, patch := range patches {
+		selected[path] = patch.Types
+	}
+	prog.BeginFunctionCompilation(selected)
+	return prog.Functions()
+}
+
+func parseTestFunction(fset *token.FileSet, pkg *types.Package, decl *ast.FuncDecl) (directive.FunctionDirectives, error) {
+	scratch := directive.NewFunctions(nil)
+	bindings, err := scratch.PreparePackage(fset, pkg, []*ast.File{{Decls: []ast.Decl{decl}}}, false, false)
+	for _, info := range bindings {
+		return info, err
+	}
+	return directive.FunctionDirectives{}, err
+}
+
+func testPreparedFunctionInfo(prog llssa.Program, pkg *types.Package, name string) (directive.FunctionDirectives, bool) {
+	fn := types.NewFunc(token.NoPos, pkg, name, types.NewSignatureType(nil, nil, nil, nil, nil, false))
+	return prog.Functions().ForObject(fn)
+}
+
+func testVariableBinding(doc *ast.CommentGroup, name string) (directive.FunctionDirectives, error) {
+	bindings, err := directive.NewFunctions(nil).PreparePackage(token.NewFileSet(), types.NewPackage("p", "p"), []*ast.File{{Decls: []ast.Decl{&ast.GenDecl{Doc: doc, Tok: token.VAR, Specs: []ast.Spec{&ast.ValueSpec{Names: []*ast.Ident{ast.NewIdent(name)}}}}}}}, false, false)
+	return bindings["p."+name], err
+}
+
+func TestFunctionCompilationSeparatesPatchSelectionAndBody(t *testing.T) {
+	original, files := buildCallerFrameSSAPackage(t, "example.com/selection", `package selection
+	type T struct{}
+	//go:noinline
+	//go:nointerface
+	//go:linkname T.M C.original
+	func (T) M() {}
+	`)
+	replacement, replacementFiles := buildCallerFrameSSAPackage(t, "example.com/selection", `package selection
+	type T struct{}
+	//go:linkname T.M C.replacement
+	func (T) M() {}
+	`)
+	prog := llssa.NewProgram(nil)
+	defer prog.Dispose()
+	for _, input := range []struct {
+		pkg   *ssa.Package
+		files []*ast.File
+	}{{original, files}, {replacement, replacementFiles}} {
+		if err := ParsePkgSyntax(prog, input.pkg.Prog.Fset, input.pkg.Pkg, input.files); err != nil {
+			t.Fatal(err)
+		}
+	}
+	method := original.Pkg.Scope().Lookup("T").Type().(*types.Named).Method(0)
+	raw := original.Prog.FuncValue(method)
+	before := prog.Functions().Function(raw)
+	backend := prog.NewBackendProgram()
+	defer backend.Dispose()
+	if backend.Functions() != prog.Functions() {
+		t.Fatal("backend did not share the compilation registry")
+	}
+
+	patches := map[string]*types.Package{original.Pkg.Path(): replacement.Pkg}
+	prog.BeginFunctionCompilation(patches)
+	delete(patches, original.Pkg.Path()) // The caller cannot mutate a published selection.
+	after := prog.Functions().Function(raw)
+	if after == before || after.SSA != raw || after.Directives.Linkname != "C.replacement" ||
+		!after.Directives.NoInline || !after.Directives.NoInterface {
+		t.Fatalf("patch changed source body or failed to select binding: %+v", after)
+	}
+	if info, prepared := prog.Functions().ForObject(method); !prepared || info.NoInterface {
+		t.Fatalf("type metadata did not select the effective method: %+v, %v", info, prepared)
+	}
+	if backend.Functions().Function(raw) != before || before.Directives.Linkname != "C.original" {
+		t.Fatal("another compilation changed the old backend's wrapper")
+	}
+	if info, prepared := backend.Functions().ForObject(method); !prepared || !info.NoInterface {
+		t.Fatal("another compilation changed the old backend's method metadata")
 	}
 }

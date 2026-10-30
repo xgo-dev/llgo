@@ -18,6 +18,7 @@ package ssa
 
 import (
 	"go/ast"
+	"go/token"
 	"go/types"
 	"testing"
 
@@ -47,7 +48,7 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	coordinator.SetPackageExport("example.com/p.Entry", "entry")
 	coordinator.SetNoInterfaceMethod("example.com/p.T.Hidden")
 	coordinator.SetTypeCallConv("example.com/p.CType", CDecl)
-	coordinator.FunctionSources().Set(pkg, map[*ast.FuncDecl]*directive.FunctionDirectives{decl: info}, map[string]*directive.FunctionDirectives{"example.com/p.Entry": info})
+	coordinator.Functions().Register(pkg, decl, "example.com/p.Entry", *info)
 	coordinator.MarkPackageSyntaxParsed(pkg)
 	coordinator.SetLocalityInfo("example.com/p.Value", LocalityInfo{Locality: ThreadLocal})
 	coordinator.SetPython(func() *types.Package { return nil })
@@ -60,7 +61,7 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	if backend.tm.C == coordinator.tm.C {
 		t.Fatal("backend Program shares the coordinator TargetMachine")
 	}
-	if backend.packageSyntax != coordinator.packageSyntax || backend.localities != coordinator.localities {
+	if backend.Functions() != coordinator.Functions() || backend.packageSyntax != coordinator.packageSyntax || backend.localities != coordinator.localities {
 		t.Fatal("backend Program did not share prepared Go metadata")
 	}
 	if backend.gocvt.typs == nil || len(backend.gocvt.typs) != 0 || backend.named == nil || backend.abiSymbol == nil {
@@ -75,7 +76,7 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	if export, ok := backend.PackageExport("example.com/p.Entry"); !ok || export != "entry" {
 		t.Fatalf("PackageExport = (%q, %v), want (entry, true)", export, ok)
 	}
-	if got, ok := backend.FunctionSources().Declaration(decl); !ok || !got.ClosureEnv || !backend.PackageSyntaxParsed(pkg) {
+	if got, ok := backend.Functions().ForObject(types.NewFunc(token.NoPos, pkg, "Entry", types.NewSignatureType(nil, nil, nil, nil, nil, false))); !ok || !got.ClosureEnv || !backend.PackageSyntaxParsed(pkg) {
 		t.Fatal("backend Program lost prepared syntax metadata")
 	}
 	if background, ok := backend.packageTypeCallConv("example.com/p.CType"); !ok || background != CDecl {

@@ -37,7 +37,7 @@ type Function struct {
 	Directives FunctionDirectives
 }
 
-func sourceDirectives(sources *FunctionSources, fn *ssa.Function) FunctionDirectives {
+func sourceDirectives(sources *functionSources, fn *ssa.Function) FunctionDirectives {
 	if fn == nil {
 		return FunctionDirectives{}
 	}
@@ -51,47 +51,89 @@ func sourceDirectives(sources *FunctionSources, fn *ssa.Function) FunctionDirect
 		if fn.Synthetic == "from type information" {
 			if obj, ok := fn.Object().(*types.Func); ok {
 				name, _ := FuncName(abi.PathOf(obj.Pkg()), obj)
-				info, _ := sources.Binding(obj.Pkg(), name)
+				info, _ := sources.binding(obj.Pkg(), name)
 				return info
 			}
 		}
 		return FunctionDirectives{}
 	}
-	info, ok := sources.Declaration(decl)
+	info, ok := sources.declaration(decl)
 	if !ok {
 		panic(fmt.Sprintf("function directives not prepared for %s", fn))
 	}
 	return info
 }
 
-// FunctionSet owns the Go function wrappers of one compilation. All source
+// Functions owns source preparation and Go function wrappers for a compilation. All source
 // snapshots must be published before use. Lazy SSA adapters may be wrapped
 // later, but this never parses source or changes an existing wrapper.
 // Function values are immutable after publication and shared by analyses and
 // isolated package backends. The mutex protects only the pointer-keyed cache.
-type FunctionSet struct {
-	sources   *FunctionSources
+type Functions struct {
+	sources   *functionSources
 	patches   map[string]*types.Package
 	linkname  func(string) (string, bool)
 	mu        sync.RWMutex
 	functions map[*ssa.Function]*Function
 }
 
-// NewFunctionSet creates the wrapper cache after package-source preparation.
-// patches must remain unchanged for the lifetime of the compilation.
-func NewFunctionSet(sources *FunctionSources, patches map[string]*types.Package, linkname func(string) (string, bool)) *FunctionSet {
-	return &FunctionSet{sources: sources, patches: patches, linkname: linkname, functions: make(map[*ssa.Function]*Function)}
+// NewFunctions creates the function preparation and wrapping state of a Program.
+// linkname supplies explicit bindings for declarations without prepared source.
+func NewFunctions(linkname func(string) (string, bool)) *Functions {
+	return &Functions{sources: newFunctionSources(), linkname: linkname, functions: make(map[*ssa.Function]*Function)}
+}
+
+// ForCompilation shares prepared source but starts a fresh wrapper cache and
+// patch selection. Existing compilations and their backends are not changed.
+func (p *Functions) ForCompilation(patches map[string]*types.Package) *Functions {
+	selected := make(map[string]*types.Package, len(patches))
+	for path, pkg := range patches {
+		selected[path] = pkg
+	}
+	return &Functions{sources: p.sources, patches: selected, linkname: p.linkname, functions: make(map[*ssa.Function]*Function)}
+}
+
+func (p *Functions) effectivePackage(pkg *types.Package) *types.Package {
+	if replacement := p.patches[abi.PathOf(pkg)]; replacement != nil {
+		return replacement
+	}
+	return pkg
+}
+
+// ForObject supplies effective declaration attributes to type metadata paths
+// that have no SSA body. It uses exactly the same patch selection as Function.
+// The bool reports whether the package was prepared, including known absence.
+func (p *Functions) ForObject(fn *types.Func) (FunctionDirectives, bool) {
+	if fn == nil || fn.Pkg() == nil {
+		return FunctionDirectives{}, false
+	}
+	fn = fn.Origin()
+	if recv := fn.Signature().Recv(); recv != nil {
+		typ := types.Unalias(recv.Type())
+		if ptr, ok := typ.(*types.Pointer); ok {
+			typ = types.Unalias(ptr.Elem())
+		}
+		if _, named := typ.(*types.Named); !named {
+			// Type rewriting can reconstruct interface methods with an
+			// unnamed receiver. They have no FuncDecl-style receiver name;
+			// retain the type-metadata spelling and prepared-absence rule.
+			name := abi.PathOf(fn.Pkg()) + "." + types.TypeString(recv.Type(), abi.PathOf) + "." + fn.Name()
+			return p.sources.binding(p.effectivePackage(fn.Pkg()), name)
+		}
+	}
+	name, _ := FuncName(abi.PathOf(fn.Pkg()), fn)
+	return p.sources.binding(p.effectivePackage(fn.Pkg()), name)
 }
 
 // Prepare materializes wrappers after SSA and method preparation, before
 // backend workers start. Functions created later use the same source snapshots.
-func (p *FunctionSet) Prepare(prog *ssa.Program) {
+func (p *Functions) Prepare(prog *ssa.Program) {
 	for fn := range ssautil.AllFunctions(prog) {
 		p.Function(fn)
 	}
 }
 
-func (p *FunctionSet) Function(fn *ssa.Function) *Function {
+func (p *Functions) Function(fn *ssa.Function) *Function {
 	p.mu.RLock()
 	source := p.functions[fn]
 	p.mu.RUnlock()
@@ -126,11 +168,7 @@ func (p *FunctionSet) Function(fn *ssa.Function) *Function {
 				}
 			}
 			if pkg != nil {
-				bindingPkg := pkg
-				if patch, ok := p.patches[abi.PathOf(pkg)]; ok {
-					bindingPkg = patch
-				}
-				if binding, prepared := p.sources.Binding(bindingPkg, name); prepared {
+				if binding, prepared := p.sources.binding(p.effectivePackage(pkg), name); prepared {
 					source.Directives.Linkname = binding.Linkname
 					source.Directives.ExportName = binding.ExportName
 				} else if origin.Syntax() == nil && p.linkname != nil {
@@ -148,7 +186,7 @@ func (p *FunctionSet) Function(fn *ssa.Function) *Function {
 	return source
 }
 
-func (p *FunctionSet) inheritsUintptrEscapes(fn *ssa.Function) bool {
+func (p *Functions) inheritsUintptrEscapes(fn *ssa.Function) bool {
 	seen := make(map[*ssa.Function]bool)
 	var visit func(*ssa.Function) bool
 	visit = func(fn *ssa.Function) bool {

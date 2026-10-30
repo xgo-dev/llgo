@@ -23,6 +23,7 @@ import (
 	"go/types"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/locality"
 	localitylayout "github.com/xgo-dev/llgo/internal/locality/layout"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -65,7 +66,8 @@ func prepareLocalVariables(prog llssa.Program, fset *token.FileSet, pkg *types.P
 	}
 	if lastFile != nil {
 		for _, node := range lastFile.Decls[oldDecls:] {
-			prog.FunctionSources().RegisterGenerated(node.(*ast.FuncDecl))
+			decl := node.(*ast.FuncDecl)
+			prog.Functions().Register(pkg, decl, llssa.FullName(pkg, decl.Name.Name), directive.FunctionDirectives{})
 		}
 	}
 	for name, local := range prepared {

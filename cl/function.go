@@ -17,36 +17,19 @@
 package cl
 
 import (
-	"go/types"
-
 	"github.com/xgo-dev/llgo/internal/directive"
-	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 )
-
-// NewFunctionSet connects prepared source directives to this compilation's
-// patch selection and explicit linker bindings. Construction and inheritance
-// rules belong to directive; cl consumes only the resulting function values.
-func NewFunctionSet(prog llssa.Program, patches Patches) *directive.FunctionSet {
-	replacements := make(map[string]*types.Package, len(patches))
-	for path, patch := range patches {
-		replacements[path] = patch.Types
-	}
-	return directive.NewFunctionSet(prog.FunctionSources(), replacements, prog.Linkname)
-}
 
 // sourceFunction is the conversion boundary for bare functions returned by
 // upstream SSA APIs. Internal compilation helpers pass the wrapper onward.
 func (p *context) sourceFunction(fn *ssa.Function) *directive.Function {
-	if p.functions == nil {
-		p.functions = NewFunctionSet(p.prog, p.patches)
-	}
-	return p.functions.Function(fn)
+	return p.prog.Functions().Function(fn)
 }
 
 // preparedFunctions converts an SSA analysis input at its entry boundary.
 // The analysis itself receives wrappers and reads their attributes directly.
-func preparedFunctions(functions *directive.FunctionSet, input map[*ssa.Function]bool) []*directive.Function {
+func preparedFunctions(functions *directive.Functions, input map[*ssa.Function]bool) []*directive.Function {
 	prepared := make([]*directive.Function, 0, len(input))
 	for fn := range input {
 		prepared = append(prepared, functions.Function(fn))

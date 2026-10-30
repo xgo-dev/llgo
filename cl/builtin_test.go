@@ -127,7 +127,6 @@ func stop() {
 				linkname = "llgo.unreachable"
 			}
 			ctx.prog = testFunctionProgram(t, ssaPkg.Prog, map[string]string{"foo.unreachable": linkname})
-			ctx.functions = NewFunctionSet(ctx.prog, nil)
 			if ctx.isDirectTailUnreachableCall(tt.instr, tt.tail) {
 				t.Fatal("unexpected tail unreachable match")
 			}
@@ -608,27 +607,6 @@ func ssaAlloc(refs ...ssa.Instruction) *ssa.Alloc {
 
 func setRefs(v ssa.Value, refs ...ssa.Instruction) {
 	*v.Referrers() = refs
-}
-
-func TestRecvTypeName(t *testing.T) {
-	if ret := recvTypeName(&ast.IndexExpr{
-		X:     &ast.Ident{Name: "Pointer"},
-		Index: &ast.Ident{Name: "T"},
-	}); ret != "Pointer" {
-		t.Fatal("recvTypeName IndexExpr:", ret)
-	}
-	if ret := recvTypeName(&ast.IndexListExpr{
-		X:       &ast.Ident{Name: "Pointer"},
-		Indices: []ast.Expr{&ast.Ident{Name: "T"}},
-	}); ret != "Pointer" {
-		t.Fatal("recvTypeName IndexListExpr:", ret)
-	}
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("recvTypeName: no error?")
-		}
-	}()
-	recvTypeName(&ast.BadExpr{})
 }
 
 func TestRecvType(t *testing.T) {

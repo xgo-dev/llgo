@@ -1277,7 +1277,7 @@ func (a *runtimeCallerAnalysis) callTargets(fn *ssa.Function, call *ssa.CallComm
 // Precompute before workers start; recover facts also synchronize lazy queries
 // for nested and synthetic functions that are not package members.
 type CallerTracking struct {
-	functions   *directive.FunctionSet
+	functions   *directive.Functions
 	base        map[*ssa.Package]map[*ssa.Function]bool
 	extended    map[*ssa.Package]callerTrackingFuncSets
 	recover     *recoverFacts
@@ -1320,16 +1320,6 @@ func (c *CallerTracking) Precompute(pkgs []*ssa.Package) {
 	// worker completion order.
 	runtimeTypes := callerTrackingRuntimeTypes(pkgs)
 	methods := callerTrackingMethods(pkgs, runtimeTypes)
-	// Wrap the completed SSA graph before any directive-consuming analysis.
-	// MethodValue above may create adapters; later adapters are converted at
-	// the SSA boundary that returns them.
-	prepared := make(map[*ssa.Program]bool)
-	for _, pkg := range pkgs {
-		if !prepared[pkg.Prog] {
-			c.functions.Prepare(pkg.Prog)
-			prepared[pkg.Prog] = true
-		}
-	}
 	analyses := make([]callerTrackingPackageAnalysis, len(pkgs))
 	base := make([]map[*ssa.Function]bool, len(pkgs))
 	extended := make([]callerTrackingFuncSets, len(pkgs))
@@ -1434,7 +1424,7 @@ func uniqueCallerTrackingPackages(pkgs []*ssa.Package) []*ssa.Package {
 }
 
 // NewCallerTracking creates the frontend-analysis caches for one compilation.
-func NewCallerTracking(functions *directive.FunctionSet) *CallerTracking {
+func NewCallerTracking(functions *directive.Functions) *CallerTracking {
 	return &CallerTracking{
 		functions: functions,
 		base:      make(map[*ssa.Package]map[*ssa.Function]bool),

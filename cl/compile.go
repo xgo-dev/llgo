@@ -184,7 +184,6 @@ type context struct {
 	recvNilDerefChecks   map[*ssa.UnOp]token.Pos
 	vargs                map[*ssa.Alloc][]llssa.Expr // varargs
 	funcs                map[*ssa.Function]llssa.Function
-	functions            *directive.FunctionSet
 	variadicErrors       map[*ssa.Function]error
 	linkOnceFns          map[*ssa.Function]none
 	stackDefers          map[*ssa.Function]bool
@@ -2962,11 +2961,15 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 
 	prepareFunctions := ct == nil
 	if prepareFunctions {
-		ct = NewCallerTracking(NewFunctionSet(prog, patches))
+		selected := make(map[string]*types.Package, len(patches))
+		for path, patch := range patches {
+			selected[path] = patch.Types
+		}
+		prog.BeginFunctionCompilation(selected)
+		ct = NewCallerTracking(prog.Functions())
 	}
 	ctx := &context{
 		prog:             prog,
-		functions:        ct.functions,
 		pkg:              ret,
 		fset:             pkgProg.Fset,
 		goProg:           pkgProg,
@@ -3005,7 +3008,7 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 				ctx.ensureLoaded(dep.Pkg)
 			}
 		}
-		ctx.functions.Prepare(pkgProg)
+		prog.Functions().Prepare(pkgProg)
 	}
 	ctx.trackCallerFrames = options.DebuggerFrames || filesUseRuntimeCaller(files) || packageUsesRuntimeCaller(ct, pkg)
 	ctx.runtimeCallerFuncs = runtimeCallerFuncSet(ct, pkg)

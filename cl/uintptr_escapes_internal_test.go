@@ -197,7 +197,7 @@ func invoked(i interface{ Marked(uintptr) }, p unsafe.Pointer) { i.Marked(uintpt
 			t.Errorf("%s roots = %v, want one conversion source", name, roots)
 		}
 	}
-	if NewFunctionSet(testFunctionProgram(t, nil), nil).Function(nil).Directives.UintptrEscapes {
+	if testFunctionRegistry(testFunctionProgram(t, nil), nil).Function(nil).Directives.UintptrEscapes {
 		t.Fatal("nil callee has directive")
 	}
 	if roots := testUintptrEscapesRoots(t, pkg.Func("unmarkedBound")); len(roots) != 0 {

@@ -21,8 +21,6 @@ import (
 	"go/types"
 	"sync"
 	"sync/atomic"
-
-	"github.com/xgo-dev/llgo/internal/directive"
 )
 
 // packageSyntaxData is Go-owned metadata collected before LLVM package
@@ -30,7 +28,6 @@ import (
 // so those Programs can share it directly for concurrent read-only access.
 // One-shot compiler users keep the same Program-local mutation behavior.
 type packageSyntaxData struct {
-	functions             *directive.FunctionSources
 	mu                    sync.RWMutex
 	hasNativeTypeMetadata atomic.Bool
 	linknames             map[string]string
@@ -44,7 +41,6 @@ type packageSyntaxData struct {
 
 func newPackageSyntaxData() *packageSyntaxData {
 	return &packageSyntaxData{
-		functions:          directive.NewFunctionSources(),
 		linknames:          make(map[string]string),
 		exports:            make(map[string]string),
 		parsedPackages:     make(map[*types.Package]struct{}),
@@ -96,9 +92,4 @@ func (p *packageSyntaxData) typeCallConv(name string) (CallConv, bool) {
 	background, ok := p.typeCallConvs[name]
 	p.mu.RUnlock()
 	return background, ok
-}
-
-// FunctionSources returns the shared, Go-owned function preparation state.
-func (p Program) FunctionSources() *directive.FunctionSources {
-	return p.packageSyntax.functions
 }

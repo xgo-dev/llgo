@@ -1,34 +1,14 @@
 package ssa
 
 import (
-	"go/ast"
 	"go/token"
 	"go/types"
 	"strings"
 	"testing"
 
 	"github.com/goplus/gogen/packages"
-	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llvm"
 )
-
-func TestClosureEnvDirectiveCacheUsesSourceIdentity(t *testing.T) {
-	prog := NewProgram(nil)
-	defer prog.Dispose()
-	pkg := types.NewPackage("example.com/p", "p")
-	decl := &ast.FuncDecl{Name: &ast.Ident{Name: "entry", NamePos: 7}}
-	info := &directive.FunctionDirectives{ClosureEnv: true}
-	prog.FunctionSources().Set(pkg, map[*ast.FuncDecl]*directive.FunctionDirectives{decl: info}, map[string]*directive.FunctionDirectives{"example.com/p.entry": info})
-	if got, ok := prog.FunctionSources().Declaration(decl); !ok || !got.ClosureEnv {
-		t.Fatal("lost source directive")
-	}
-	// Same token position and spelling in another AST is a distinct declaration.
-	other := &ast.FuncDecl{Name: &ast.Ident{Name: "entry", NamePos: 7}}
-	if _, ok := prog.FunctionSources().Declaration(other); ok {
-		t.Fatal("distinct source declarations shared directives")
-	}
-
-}
 
 func TestClosureEnvABIForTarget(t *testing.T) {
 	tests := []struct {

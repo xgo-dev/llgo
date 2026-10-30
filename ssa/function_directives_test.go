@@ -39,17 +39,18 @@ func TestNoInterfaceUsesConcretePackageView(t *testing.T) {
 	replacement, visible := newMethod()
 	oldDecl, newDecl := new(ast.FuncDecl), new(ast.FuncDecl)
 	oldInfo, newInfo := &directive.FunctionDirectives{NoInterface: true}, new(directive.FunctionDirectives)
-	prog.FunctionSources().Set(original, map[*ast.FuncDecl]*directive.FunctionDirectives{oldDecl: oldInfo}, map[string]*directive.FunctionDirectives{"example.com/p.T.M": oldInfo})
-	prog.FunctionSources().Set(replacement, map[*ast.FuncDecl]*directive.FunctionDirectives{newDecl: newInfo}, map[string]*directive.FunctionDirectives{"example.com/p.T.M": newInfo})
+	prog.Functions().Register(original, oldDecl, "example.com/p.T.M", *oldInfo)
+	prog.Functions().Register(replacement, newDecl, "example.com/p.T.M", *newInfo)
 	prog.SetNoInterfaceMethod("example.com/p.T.M")
 	if !prog.isNoInterfaceMethod(hidden) || prog.isNoInterfaceMethod(visible) {
 		t.Fatal("same-path package views shared nointerface state")
 	}
-	prog.FunctionSources().UseBindings(original, replacement)
+	originalFunctions := prog.Functions()
+	prog.BeginFunctionCompilation(map[string]*types.Package{original.Path(): replacement})
 	if prog.isNoInterfaceMethod(hidden) {
 		t.Fatal("types.Func consumer did not select the prepared patch view")
 	}
-	if source, ok := prog.FunctionSources().Declaration(oldDecl); !ok || !source.NoInterface {
+	if source, ok := originalFunctions.ForObject(hidden); !ok || !source.NoInterface {
 		t.Fatal("selecting a patch changed the source declaration")
 	}
 }

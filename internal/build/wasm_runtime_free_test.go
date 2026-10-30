@@ -191,7 +191,6 @@ func TestConfigureWasmRuntimeFree(t *testing.T) {
 			if err := cl.ParsePkgSyntax(prog, ssaPkg.Prog.Fset, pkg.Types, pkg.Syntax); err != nil {
 				t.Fatal(err)
 			}
-			ctx.functions = cl.NewFunctionSet(prog, nil)
 			configureWasmRuntimeFree(ctx)
 			if ctx.wasmRuntimeFree != test.want {
 				t.Fatalf("runtime-free = %v, want %v", ctx.wasmRuntimeFree, test.want)

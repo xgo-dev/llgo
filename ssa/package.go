@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"unsafe"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/optlevel"
@@ -238,6 +239,7 @@ type aProgram struct {
 	printfTy *types.Signature
 
 	paramObjPtr_  *types.Var
+	functions     *directive.Functions
 	packageSyntax *packageSyntaxData
 	localities    *localityInfos
 	abiSymbol     map[string]*AbiSymbol // abi symbol name => AbiSymbol
@@ -362,6 +364,7 @@ func NewProgram(target *Target) Program {
 	if goWordSize > prog.ptrSize {
 		prog.nativeStorage = make(map[Type]Type)
 	}
+	prog.functions = directive.NewFunctions(prog.Linkname)
 	prog.is32Bits = prog.GoWordSize() == 4
 	prog.abi.Init(uintptr(prog.GoWordSize()), (*goProgram)(unsafe.Pointer(prog)))
 	return prog
@@ -381,6 +384,7 @@ func (p Program) NewBackendProgram() Program {
 	backend.sizes = p.sizes
 	backend.rt, backend.rtget = p.rt, p.rtget
 	backend.py, backend.pyget = p.py, p.pyget
+	backend.functions = p.functions
 	backend.packageSyntax = p.packageSyntax
 	backend.gocvt.packageSyntax = p.packageSyntax
 	backend.localities = p.localities
@@ -398,6 +402,17 @@ func (p Program) NewBackendProgram() Program {
 	backend.debugInfoOptimized = p.debugInfoOptimized
 	backend.emitCodeViewDebugInfo = p.emitCodeViewDebugInfo
 	return backend
+}
+
+// Functions owns the function preparation and wrapping state for this
+// compilation. Isolated backend Programs share the same instance.
+func (p Program) Functions() *directive.Functions { return p.functions }
+
+// BeginFunctionCompilation selects patches in a fresh cache over prepared
+// source. Call before analyses or creating isolated backends. Existing
+// backends keep their original compilation's selection and wrappers.
+func (p Program) BeginFunctionCompilation(patches map[string]*types.Package) {
+	p.functions = p.functions.ForCompilation(patches)
 }
 
 func (p Program) Target() *Target {
@@ -493,7 +508,7 @@ func (p Program) isNoInterfaceMethod(fn *types.Func) bool {
 	if !ok || sig.Recv() == nil {
 		return false
 	}
-	if info, prepared := p.FunctionSources().Binding(fn.Pkg(), FuncName(fn.Pkg(), fn.Name(), sig.Recv(), true)); prepared {
+	if info, prepared := p.Functions().ForObject(fn); prepared {
 		return info.NoInterface
 	}
 	p.packageSyntax.mu.RLock()
