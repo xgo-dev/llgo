@@ -282,12 +282,6 @@ func (p *context) collectSkip(line string, prefix int) {
 	}
 }
 
-// collectDeclarationDirectives caches source metadata needed after the syntax
-// pass. funcPos is token.NoPos for non-function declarations.
-func collectDeclarationDirectives(prog llssa.Program, fset *token.FileSet, doc *ast.CommentGroup, fullName, inPkgName string, funcPos token.Pos) {
-	_, _, _ = collectDeclarationDirectivesWithOptions(prog, fset, doc, fullName, inPkgName, funcPos, Options{})
-}
-
 func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.FileSet, doc *ast.CommentGroup, fullName, inPkgName string, funcPos token.Pos, options Options) (bool, string, error) {
 	directives := directive.ParseGroup(doc)
 	var exportName string

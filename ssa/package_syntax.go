@@ -81,8 +81,8 @@ func (p Program) PackageSyntaxParsed(pkg *types.Package) bool {
 }
 
 // MarkPackageSyntaxParsed publishes the package's completed source preparation.
-// The temporary name index resolves duplicate declarations before publication;
-// backends only need a deterministic list, independent of the caller's map.
+// It sorts the caller's bindings into a deterministic snapshot independent of
+// the caller's map. Duplicate names have already been resolved by the caller.
 func (p Program) MarkPackageSyntaxParsed(pkg *types.Package, exports map[string]string) {
 	prepared := preparedPackage{}
 	if len(exports) != 0 {

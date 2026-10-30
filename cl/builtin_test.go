@@ -1030,7 +1030,7 @@ func TestHandleExportDiffName(t *testing.T) {
 				options: Options{ExportRename: tt.enableExportRename},
 			}
 
-			// Call initLinkname with closure that mimics initLinknameByDoc behavior
+			// Resolve this declaration's name, allowing export renames when enabled.
 			ret := ctx.initLinkname(tt.line, true, func(name string, isExport bool) (string, bool, bool) {
 				return tt.fullName, false, name == tt.inPkgName || (isExport && ctx.options.ExportRename)
 			})

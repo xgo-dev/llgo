@@ -119,6 +119,29 @@ func TestPreparedPackageExportsKeepPackageIdentity(t *testing.T) {
 	}
 }
 
+func TestPreparedPackageExportsEarlyStop(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	pkg := types.NewPackage("example.com/p", "p")
+	exports := map[string]string{"example.com/p.A": "a", "example.com/p.B": "b"}
+	prog.MarkPackageSyntaxParsed(pkg, exports)
+	seq := prog.PackageExports(pkg)
+	visited := 0
+	for name, export := range seq {
+		visited++
+		if name != "example.com/p.A" || export != "a" {
+			t.Fatalf("first export = (%q, %q), want (example.com/p.A, a)", name, export)
+		}
+		break
+	}
+	if visited != 1 {
+		t.Fatalf("visited %d exports, want 1", visited)
+	}
+	if got := maps.Collect(seq); !maps.Equal(got, exports) {
+		t.Fatalf("iteration after early stop = %v, want %v", got, exports)
+	}
+}
+
 func TestPackageExportSymbolReplacement(t *testing.T) {
 	prog := NewProgram(nil)
 	defer prog.Dispose()
