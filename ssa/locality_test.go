@@ -30,7 +30,7 @@ func TestLocalityInfos(t *testing.T) {
 	if prog.PackageSyntaxParsed(pkg) {
 		t.Fatal("new package was already marked as parsed")
 	}
-	prog.MarkPackageSyntaxParsed(pkg)
+	prog.MarkPackageSyntaxParsed(pkg, nil)
 	if !prog.PackageSyntaxParsed(pkg) {
 		t.Fatal("package syntax parsed marker was not retained")
 	}

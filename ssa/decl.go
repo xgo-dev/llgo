@@ -503,7 +503,7 @@ func (p Package) newFunc(
 	if instantiated {
 		p.setODRLinkage(fn, llvm.LinkOnceAnyLinkage)
 	}
-	if p.isPreservedName(name) {
+	if p.IsExportedSymbol(name) {
 		p.markLLVMUsed(fn)
 	}
 	ret := newFunction(fn, t, p, p.Prog, envType)

@@ -195,45 +195,17 @@ start:
 	syms.initLinknames(p)
 }
 
-func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
-	preloaded := p.options.PreloadedSyntax
-	aliases := receiverAliases(files)
+// initFiles applies package-local effects after ParsePkgSyntaxWithOptions has
+// prepared declaration bindings. Both one-shot and preloaded builds consume
+// those bindings here; lowering must not parse them a second time.
+func (p *context) initFiles(files []*ast.File) {
+	for name, export := range p.prog.PackageExports(p.goTyps) {
+		p.pkg.SetExport(name, export)
+	}
 	for _, file := range files {
 		for _, decl := range file.Decls {
-			switch decl := decl.(type) {
-			case *ast.FuncDecl:
-				fullName, inPkgName := astFuncName(pkgPath, decl, aliases)
-				if preloaded {
-					if exportName, ok := p.prog.PackageExport(fullName); ok {
-						p.pkg.SetExport(fullName, exportName)
-					}
-					continue
-				}
-				p.processNoInterfaceByDoc(decl.Doc, fullName)
-				if !p.processLinknameByDoc(decl.Doc, fullName, inPkgName, false, true) && cPkg {
-					// package C (https://github.com/xgo-dev/llgo/issues/1165)
-					if decl.Recv == nil && token.IsExported(inPkgName) {
-						exportName := strings.TrimPrefix(inPkgName, "X")
-						p.prog.SetLinkname(fullName, exportName)
-						p.pkg.SetExport(fullName, exportName)
-					}
-				}
-			case *ast.GenDecl:
+			if decl, ok := decl.(*ast.GenDecl); ok {
 				switch decl.Tok {
-				case token.VAR:
-					if len(decl.Specs) == 1 {
-						if names := decl.Specs[0].(*ast.ValueSpec).Names; len(names) == 1 {
-							inPkgName := names[0].Name
-							fullName := pkgPath + "." + inPkgName
-							if preloaded {
-								if exportName, ok := p.prog.PackageExport(fullName); ok {
-									p.pkg.SetExport(fullName, exportName)
-								}
-							} else {
-								p.processLinknameByDoc(decl.Doc, fullName, inPkgName, true, true)
-							}
-						}
-					}
 				case token.CONST:
 					fallthrough
 				case token.TYPE:
@@ -310,14 +282,9 @@ func (p *context) collectSkip(line string, prefix int) {
 	}
 }
 
-// collectDeclarationDirectives caches source metadata needed after the syntax
-// pass. funcPos is token.NoPos for non-function declarations.
-func collectDeclarationDirectives(prog llssa.Program, fset *token.FileSet, doc *ast.CommentGroup, fullName, inPkgName string, funcPos token.Pos) {
-	_, _ = collectDeclarationDirectivesWithOptions(prog, fset, doc, fullName, inPkgName, funcPos, Options{})
-}
-
-func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.FileSet, doc *ast.CommentGroup, fullName, inPkgName string, funcPos token.Pos, options Options) (bool, error) {
+func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.FileSet, doc *ast.CommentGroup, fullName, inPkgName string, funcPos token.Pos, options Options) (bool, string, error) {
 	directives := directive.ParseGroup(doc)
+	var exportName string
 	linkCollected := false
 	hasClosureEnv := false
 	wasmImportSeen := false
@@ -328,10 +295,10 @@ func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.Fil
 			fields := strings.Fields(item.Args)
 			if item.Name == "llgo:link" {
 				if len(fields) < 2 {
-					return false, fmt.Errorf("%s: //llgo:link requires a local name and a target", fset.Position(item.Pos))
+					return false, "", fmt.Errorf("%s: //llgo:link requires a local name and a target", fset.Position(item.Pos))
 				}
 				if fields[0] != inPkgName && fields[0] != parenthesizedMethodName(inPkgName) {
-					return false, fmt.Errorf("%s: //llgo:link local name %q does not match declaration %q", fset.Position(item.Pos), fields[0], inPkgName)
+					return false, "", fmt.Errorf("%s: //llgo:link local name %q does not match declaration %q", fset.Position(item.Pos), fields[0], inPkgName)
 				}
 			}
 			if linkCollected {
@@ -346,10 +313,10 @@ func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.Fil
 				continue
 			}
 			if item.Args != inPkgName && !options.ExportRename {
-				return false, fmt.Errorf("export comment has wrong name %q", item.Args)
+				return false, "", fmt.Errorf("export comment has wrong name %q", item.Args)
 			}
 			prog.SetLinkname(fullName, item.Args)
-			prog.SetPackageExport(fullName, item.Args)
+			exportName = item.Args
 			linkCollected = true
 		case "llgo:env":
 			if funcPos.IsValid() {
@@ -369,7 +336,7 @@ func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.Fil
 	if hasClosureEnv {
 		prog.SetClosureEnvDirective(fset, fullName, funcPos)
 	}
-	return linkCollected, nil
+	return linkCollected, exportName, nil
 }
 
 // A value receiver can be written either T.M or (T).M in a link directive.
@@ -423,29 +390,14 @@ func collectPackageLinknames(prog llssa.Program, fset *token.FileSet, files []*a
 	return nil
 }
 
-func (p *context) processLinknameByDoc(doc *ast.CommentGroup, fullName, inPkgName string, isVar, allowExport bool) bool {
-	if doc != nil {
-		for n := len(doc.List) - 1; n >= 0; n-- {
-			line := doc.List[n].Text
-			ret := p.initLinkname(line, allowExport, func(name string, isExport bool) (_ string, _, ok bool) {
-				return fullName, isVar, name == inPkgName || (isExport && p.options.ExportRename)
-			})
-			if ret != unknownDirective {
-				return ret == hasLinkname
-			}
-		}
-	}
-	return false
-}
-
-func (p *context) processNoInterfaceByDoc(doc *ast.CommentGroup, fullName string) {
+func collectNoInterfaceDirective(prog llssa.Program, doc *ast.CommentGroup, fullName string) {
 	if doc == nil {
 		return
 	}
 	for n := len(doc.List) - 1; n >= 0; n-- {
 		line := doc.List[n].Text
 		if line == "//go:nointerface" {
-			p.prog.SetNoInterfaceMethod(fullName)
+			prog.SetNoInterfaceMethod(fullName)
 			return
 		}
 		if !strings.HasPrefix(line, "//go:") {
@@ -501,7 +453,7 @@ func (p *context) initLink(line string, prefix int, export bool, f func(inPkgNam
 				p.pkg.SetExport(fullName, link)
 			}
 		} else {
-			// Export with different names already processed by initLinknameByDoc
+			// Renamed declaration exports were already collected during syntax preparation.
 			if export && p.options.ExportRename {
 				return
 			}
@@ -877,7 +829,7 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 	}
 	if v, ok := p.prog.Linkname(orgName); ok {
 		if p.options.CExportWrappers {
-			if export, ok := p.pkg.ExportFuncs()[orgName]; ok && export == v {
+			if export, ok := p.pkg.LookupExport(orgName); ok && export == v {
 				return pkg, funcName(pkg, fn, false), goFunc
 			}
 		}
@@ -1021,12 +973,12 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 	if err := validateInternalDirectives(fset, pkg.Path(), files, options.AllowInternalDirectives); err != nil {
 		return err
 	}
-	ctx := &context{prog: prog, options: options}
 	pkgPath := llssa.PathOf(pkg)
 	cPkg := IsCPackage(pkg.Name())
 	aliases := receiverAliases(files)
 	syms := make(map[string]string)
 	linkDocs := make(map[*ast.CommentGroup]bool)
+	exports := make(map[string]string)
 	for _, file := range files {
 		for _, decl := range file.Decls {
 			switch decl := decl.(type) {
@@ -1045,16 +997,18 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 				if decl.Doc != nil {
 					linkDocs[decl.Doc] = true
 				}
-				hasLinkname, err := collectDeclarationDirectivesWithOptions(prog, fset, decl.Doc, fullName, inPkgName, decl.Pos(), options)
+				hasLinkname, exportName, err := collectDeclarationDirectivesWithOptions(prog, fset, decl.Doc, fullName, inPkgName, decl.Pos(), options)
 				if err != nil {
 					return err
 				}
 				if !hasLinkname && cPkg && decl.Recv == nil && token.IsExported(inPkgName) {
-					exportName := strings.TrimPrefix(inPkgName, "X")
+					exportName = strings.TrimPrefix(inPkgName, "X")
 					prog.SetLinkname(fullName, exportName)
-					prog.SetPackageExport(fullName, exportName)
 				}
-				ctx.processNoInterfaceByDoc(decl.Doc, fullName)
+				if exportName != "" {
+					exports[fullName] = exportName
+				}
+				collectNoInterfaceDirective(prog, decl.Doc, fullName)
 			case *ast.GenDecl:
 				if decl.Tok == token.VAR {
 					for _, spec := range decl.Specs {
@@ -1068,8 +1022,13 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 							if decl.Doc != nil {
 								linkDocs[decl.Doc] = true
 							}
-							if _, err := collectDeclarationDirectivesWithOptions(prog, fset, decl.Doc, pkgPath+"."+inPkgName, inPkgName, token.NoPos, options); err != nil {
+							fullName := pkgPath + "." + inPkgName
+							_, exportName, err := collectDeclarationDirectivesWithOptions(prog, fset, decl.Doc, fullName, inPkgName, token.NoPos, options)
+							if err != nil {
 								return err
+							}
+							if exportName != "" {
+								exports[fullName] = exportName
 							}
 						}
 					}
@@ -1096,7 +1055,7 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 	if err := collectPackageLinknames(prog, fset, files, syms, linkDocs); err != nil {
 		return err
 	}
-	prog.MarkPackageSyntaxParsed(pkg)
+	prog.MarkPackageSyntaxParsed(pkg, exports)
 	return nil
 }
 

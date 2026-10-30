@@ -19,6 +19,9 @@ package ssa
 import (
 	"go/token"
 	"go/types"
+	"iter"
+	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 )
@@ -32,9 +35,8 @@ type packageSyntaxData struct {
 	hasNativeTypeMetadata atomic.Bool
 	linknames             map[string]string
 	wasmImports           map[string]wasmImport
-	exports               map[string]string
 	closureEnvDirectives  map[closureEnvDirectiveKey]none
-	parsedPackages        map[*types.Package]struct{}
+	preparedPackages      map[*types.Package]preparedPackage
 	noInterface           map[string]none
 	typeCallConvs         map[string]CallConv
 	nativeStructFields    map[token.Pos]bool
@@ -45,9 +47,8 @@ func newPackageSyntaxData() *packageSyntaxData {
 	return &packageSyntaxData{
 		linknames:            make(map[string]string),
 		wasmImports:          make(map[string]wasmImport),
-		exports:              make(map[string]string),
 		closureEnvDirectives: make(map[closureEnvDirectiveKey]none),
-		parsedPackages:       make(map[*types.Package]struct{}),
+		preparedPackages:     make(map[*types.Package]preparedPackage),
 		noInterface:          make(map[string]none),
 		typeCallConvs:        make(map[string]CallConv),
 		nativeStructFields:   make(map[token.Pos]bool),
@@ -60,33 +61,55 @@ type wasmImport struct {
 	name   string
 }
 
-// SetPackageExport records an export directive before the LLVM Package that
-// will later preserve the symbol exists.
-func (p Program) SetPackageExport(name, export string) {
-	p.packageSyntax.mu.Lock()
-	p.packageSyntax.exports[name] = export
-	p.packageSyntax.mu.Unlock()
+// preparedPackage is an immutable snapshot published after syntax preparation.
+// Its presence in preparedPackages also records packages with no exports.
+type preparedPackage struct {
+	exports []exportBinding
 }
 
-// PackageExport returns the preloaded export name for name.
-func (p Program) PackageExport(name string) (string, bool) {
-	p.packageSyntax.mu.RLock()
-	export, ok := p.packageSyntax.exports[name]
-	p.packageSyntax.mu.RUnlock()
-	return export, ok
+type exportBinding struct {
+	name   string
+	export string
 }
 
-func (p Program) packageSyntaxParsed(pkg *types.Package) bool {
+// PackageSyntaxParsed reports whether this concrete package has prepared metadata.
+func (p Program) PackageSyntaxParsed(pkg *types.Package) bool {
 	p.packageSyntax.mu.RLock()
-	_, ok := p.packageSyntax.parsedPackages[pkg]
+	_, ok := p.packageSyntax.preparedPackages[pkg]
 	p.packageSyntax.mu.RUnlock()
 	return ok
 }
 
-func (p Program) markPackageSyntaxParsed(pkg *types.Package) {
+// MarkPackageSyntaxParsed publishes the package's completed source preparation.
+// It sorts the caller's bindings into a deterministic snapshot independent of
+// the caller's map. Duplicate names have already been resolved by the caller.
+func (p Program) MarkPackageSyntaxParsed(pkg *types.Package, exports map[string]string) {
+	prepared := preparedPackage{}
+	if len(exports) != 0 {
+		prepared.exports = make([]exportBinding, 0, len(exports))
+		for _, name := range slices.Sorted(maps.Keys(exports)) {
+			prepared.exports = append(prepared.exports, exportBinding{name, exports[name]})
+		}
+	}
 	p.packageSyntax.mu.Lock()
-	p.packageSyntax.parsedPackages[pkg] = struct{}{}
+	p.packageSyntax.preparedPackages[pkg] = prepared
 	p.packageSyntax.mu.Unlock()
+}
+
+// PackageExports iterates the prepared exports of this concrete package.
+// The snapshot distinguishes packages with the same path, including an
+// explicitly prepared package with no exports.
+func (p Program) PackageExports(pkg *types.Package) iter.Seq2[string, string] {
+	p.packageSyntax.mu.RLock()
+	exports := p.packageSyntax.preparedPackages[pkg].exports
+	p.packageSyntax.mu.RUnlock()
+	return func(yield func(string, string) bool) {
+		for _, binding := range exports {
+			if !yield(binding.name, binding.export) {
+				return
+			}
+		}
+	}
 }
 
 func (p Program) packageTypeCallConv(name string) (CallConv, bool) {
