@@ -1077,27 +1077,27 @@ func validateInternalDirectives(fset *token.FileSet, pkgPath string, files []*as
 }
 
 func handleTypeDecl(prog llssa.Program, fset *token.FileSet, pkg *types.Package, decl *ast.GenDecl) error {
-	cc, err := typeCallConv(fset, decl.Doc)
+	cc, err := directive.ParseTypeCallConv(fset, decl.Doc)
 	if err != nil {
 		return err
 	}
-	if cc.bg == "" {
+	if cc.Background == "" {
 		return nil
 	}
 	if len(decl.Specs) != 1 {
-		return fmt.Errorf("%s: %s applies to a single type declaration, not a grouped type block", fset.Position(cc.pos), cc.name)
+		return fmt.Errorf("%s: %s applies to a single type declaration, not a grouped type block", fset.Position(cc.Pos), cc.Name)
 	}
 	spec, ok := decl.Specs[0].(*ast.TypeSpec)
 	if !ok {
-		return fmt.Errorf("%s: %s applies to a type declaration", fset.Position(cc.pos), cc.name)
+		return fmt.Errorf("%s: %s applies to a type declaration", fset.Position(cc.Pos), cc.Name)
 	}
 	// Emit the deprecation warning only after placement is validated, so an
 	// invalid use of a deprecated directive reports the placement error without
 	// also suggesting a replacement that would be equally invalid.
-	if cc.replacement != "" {
-		fmt.Fprintf(os.Stderr, "DEPRECATED: %s is deprecated at %s; use %s instead\n", cc.name, fset.Position(cc.pos), cc.replacement)
+	if cc.Replacement != "" {
+		fmt.Fprintf(os.Stderr, "DEPRECATED: %s is deprecated at %s; use %s instead\n", cc.Name, fset.Position(cc.Pos), cc.Replacement)
 	}
-	prog.SetTypeCallConv(pkg.Path()+"."+spec.Name.Name, toCallConv(cc.bg))
+	prog.SetTypeCallConv(pkg.Path()+"."+spec.Name.Name, toCallConv(cc.Background))
 	if st, ok := spec.Type.(*ast.StructType); ok {
 		var positions []token.Pos
 		for _, field := range st.Fields.List {
@@ -1127,68 +1127,6 @@ func embeddedStructFieldPos(expr ast.Expr) token.Pos {
 		return embeddedStructFieldPos(expr.X)
 	}
 	return expr.Pos()
-}
-
-// Directive names, normalized by the directive package (the "//" / "// "
-// prefix and any arguments are stripped). These identify directive spellings;
-// they are distinct from the background values ("C" / "stdcall") they map to.
-const (
-	nameType    = "llgo:type"
-	nameCdecl   = "llgo:cdecl"
-	nameStdcall = "llgo:stdcall"
-)
-
-// callConv is the calling-convention directive resolved for a type declaration.
-type callConv struct {
-	bg          string    // normalized background value: "C", "stdcall", or ""
-	name        string    // human-readable directive spelling for diagnostics
-	pos         token.Pos // position of the directive comment
-	replacement string    // non-empty when the directive is deprecated: the spelling to use instead
-}
-
-// typeCallConv scans doc for calling-convention directives on a type
-// declaration. It recognizes the new //llgo:cdecl and //llgo:stdcall forms as
-// well as the deprecated //llgo:type C / //llgo:type stdcall forms. For the
-// deprecated forms it records the replacement spelling in the returned
-// callConv; the caller emits the deprecation warning only once placement is
-// validated. More than one calling-convention directive on the same
-// declaration is reported as an error.
-func typeCallConv(fset *token.FileSet, doc *ast.CommentGroup) (cc callConv, err error) {
-	seen := false
-	for _, d := range directive.ParseGroup(doc) {
-		var bg, name, replacement string
-		switch d.Name {
-		case nameCdecl:
-			if d.Args != "" {
-				return cc, fmt.Errorf("%s: //llgo:cdecl does not accept arguments", fset.Position(d.Pos))
-			}
-			bg, name = "C", "//llgo:cdecl"
-		case nameStdcall:
-			if d.Args != "" {
-				return cc, fmt.Errorf("%s: //llgo:stdcall does not accept arguments", fset.Position(d.Pos))
-			}
-			bg, name = "stdcall", "//llgo:stdcall"
-		case nameType:
-			// //llgo:type has other forms beyond the two calling-convention
-			// values; only C and stdcall are affected by this task.
-			switch d.Args {
-			case "C":
-				bg, name, replacement = "C", "//llgo:type C", "//llgo:cdecl"
-			case "stdcall":
-				bg, name, replacement = "stdcall", "//llgo:type stdcall", "//llgo:stdcall"
-			default:
-				continue
-			}
-		default:
-			continue
-		}
-		if seen {
-			return cc, fmt.Errorf("%s: conflicting calling-convention directives on one type: %s and %s", fset.Position(d.Pos), cc.name, name)
-		}
-		cc = callConv{bg: bg, name: name, pos: d.Pos, replacement: replacement}
-		seen = true
-	}
-	return cc, nil
 }
 
 func toCallConv(cc string) llssa.CallConv {
