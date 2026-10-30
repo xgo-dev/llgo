@@ -99,8 +99,9 @@ runs:
         set -euo pipefail
         # A core upgrade can terminate its MSYS2 shell. Complete the upgrade
         # in a fresh process before installing the debugger.
-        pacman --noconfirm -Syu
-        pacman --noconfirm -S --needed "$GDB_PACKAGE"
+        source .github/actions/setup-deps/pacman_retry.sh
+        pacman_with_retry --noconfirm -Syu
+        pacman_with_retry --noconfirm -S --needed "$GDB_PACKAGE"
 
     - name: Export Windows GDB
       if: runner.os == 'Windows'
