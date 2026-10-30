@@ -19,6 +19,7 @@ package cl
 import (
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/safepointplan"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
@@ -28,7 +29,7 @@ func (p *context) prepareCooperativeSafepoints(fn *ssa.Function, isCgo bool) {
 	p.safepointEntry = false
 	p.safepoints = nil
 	if !p.prog.CooperativeSafepointsEnabled() || fn == nil || len(fn.Blocks) == 0 ||
-		isCgo || hasFuncDirective(fn, "go:nosplit") {
+		isCgo || directive.ReadFunctionPragmas(fn).NoSplit {
 		return
 	}
 	// Package-less SSA wrappers only forward into a declared function and may
