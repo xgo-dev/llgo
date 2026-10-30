@@ -19,6 +19,8 @@ package ssa
 import (
 	"go/token"
 	"go/types"
+	"iter"
+	"maps"
 	"sync"
 	"sync/atomic"
 )
@@ -34,7 +36,7 @@ type packageSyntaxData struct {
 	wasmImports           map[string]wasmImport
 	exports               map[string]string
 	closureEnvDirectives  map[closureEnvDirectiveKey]none
-	parsedPackages        map[*types.Package]struct{}
+	parsedPackages        map[*types.Package]map[string]string
 	noInterface           map[string]none
 	typeCallConvs         map[string]CallConv
 	nativeStructFields    map[token.Pos]bool
@@ -47,7 +49,7 @@ func newPackageSyntaxData() *packageSyntaxData {
 		wasmImports:          make(map[string]wasmImport),
 		exports:              make(map[string]string),
 		closureEnvDirectives: make(map[closureEnvDirectiveKey]none),
-		parsedPackages:       make(map[*types.Package]struct{}),
+		parsedPackages:       make(map[*types.Package]map[string]string),
 		noInterface:          make(map[string]none),
 		typeCallConvs:        make(map[string]CallConv),
 		nativeStructFields:   make(map[token.Pos]bool),
@@ -76,17 +78,30 @@ func (p Program) PackageExport(name string) (string, bool) {
 	return export, ok
 }
 
-func (p Program) packageSyntaxParsed(pkg *types.Package) bool {
+// PackageSyntaxParsed reports whether this concrete package has prepared metadata.
+func (p Program) PackageSyntaxParsed(pkg *types.Package) bool {
 	p.packageSyntax.mu.RLock()
 	_, ok := p.packageSyntax.parsedPackages[pkg]
 	p.packageSyntax.mu.RUnlock()
 	return ok
 }
 
-func (p Program) markPackageSyntaxParsed(pkg *types.Package) {
+// MarkPackageSyntaxParsed publishes the package's completed source preparation.
+// It copies exports so later changes to the caller's map cannot change backends.
+func (p Program) MarkPackageSyntaxParsed(pkg *types.Package, exports map[string]string) {
 	p.packageSyntax.mu.Lock()
-	p.packageSyntax.parsedPackages[pkg] = struct{}{}
+	p.packageSyntax.parsedPackages[pkg] = maps.Clone(exports)
 	p.packageSyntax.mu.Unlock()
+}
+
+// PackageExports iterates the prepared exports of this concrete package.
+// Unlike PackageExport's linker index, this snapshot distinguishes packages
+// with the same path and an explicitly prepared package with no exports.
+func (p Program) PackageExports(pkg *types.Package) iter.Seq2[string, string] {
+	p.packageSyntax.mu.RLock()
+	exports := p.packageSyntax.parsedPackages[pkg]
+	p.packageSyntax.mu.RUnlock()
+	return maps.All(exports)
 }
 
 func (p Program) packageTypeCallConv(name string) (CallConv, bool) {

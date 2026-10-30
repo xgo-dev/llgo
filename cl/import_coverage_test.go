@@ -95,9 +95,8 @@ func (A) StackedHidden() {}
 		t.Fatal(err)
 	}
 
-	ctx := &context{prog: prog}
-	ctx.processNoInterfaceByDoc(nil, "example.com/p.NilDoc")
-	ctx.processNoInterfaceByDoc(&ast.CommentGroup{List: []*ast.Comment{
+	collectNoInterfaceDirective(prog, nil, "example.com/p.NilDoc")
+	collectNoInterfaceDirective(prog, &ast.CommentGroup{List: []*ast.Comment{
 		{Text: "// not a directive"},
 		{Text: "//go:nointerface"},
 	}}, "example.com/p.NonDirectiveStops")

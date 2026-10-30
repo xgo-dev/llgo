@@ -1057,81 +1057,28 @@ func TestHandleExportDiffName(t *testing.T) {
 	}
 }
 
-func TestInitLinknameByDocExportDiffNames(t *testing.T) {
-	tests := []struct {
-		name               string
-		enableExportRename bool
-		doc                *ast.CommentGroup
-		fullName           string
-		inPkgName          string
-		wantExported       bool // Whether the symbol should be exported with different name
-		wantLinkname       string
-		wantExport         string
-	}{
-		{
-			name:               "WithExportDiffNames_DifferentNameExported",
-			enableExportRename: true,
-			doc: &ast.CommentGroup{
-				List: []*ast.Comment{
-					{Text: "//export IRQ_Handler"},
-				},
-			},
-			fullName:     "pkg.HandleInterrupt",
-			inPkgName:    "HandleInterrupt",
-			wantExported: true,
-			wantLinkname: "IRQ_Handler",
-			wantExport:   "IRQ_Handler",
-		},
-		{
-			name:               "WithoutExportDiffNames_NotExported",
-			enableExportRename: false,
-			doc: &ast.CommentGroup{
-				List: []*ast.Comment{
-					{Text: "//export DifferentName"},
-				},
-			},
-			fullName:     "pkg.HandleInterrupt",
-			inPkgName:    "HandleInterrupt",
-			wantExported: false,
-			// Without enableExportRename, it goes through normal flow which expects same name
-			// The symbol "DifferentName" won't be found, so no export happens
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Without ExportRename, export with different names will panic.
-			if !tt.wantExported && !tt.enableExportRename {
-				defer func() {
-					if r := recover(); r == nil {
-						t.Error("expected panic for export with different name when enableExportRename=false")
-					}
-				}()
-			}
-
-			// Setup context
+func TestPreparedDeclarationExportRename(t *testing.T) {
+	for _, rename := range []bool{false, true} {
+		t.Run(fmt.Sprint(rename), func(t *testing.T) {
 			prog := llssa.NewProgram(nil)
-			pkg := prog.NewPackage("test", "test")
-			ctx := &context{
-				prog:    prog,
-				pkg:     pkg,
-				options: Options{ExportRename: tt.enableExportRename},
+			defer prog.Dispose()
+			doc := &ast.CommentGroup{List: []*ast.Comment{{Text: "//export IRQ_Handler"}}}
+			_, _, err := collectDeclarationDirectivesWithOptions(prog, token.NewFileSet(), doc,
+				"pkg.HandleInterrupt", "HandleInterrupt", token.Pos(1), Options{ExportRename: rename})
+			if !rename {
+				if err == nil || !strings.Contains(err.Error(), "export comment has wrong name") {
+					t.Fatalf("expected mismatched export error, got %v", err)
+				}
+				return
 			}
-
-			// Call initLinknameByDoc
-			ctx.processLinknameByDoc(tt.doc, tt.fullName, tt.inPkgName, false, true)
-
-			// Verify export behavior
-			exports := pkg.ExportFuncs()
-			if tt.wantExported {
-				// Should have exported the symbol with different name
-				if export, ok := exports[tt.fullName]; !ok || export != tt.wantExport {
-					t.Errorf("export = %q (ok=%v), want %q", export, ok, tt.wantExport)
-				}
-				// Check linkname was also set
-				if link, ok := prog.Linkname(tt.fullName); !ok || link != tt.wantLinkname {
-					t.Errorf("linkname = %q (ok=%v), want %q", link, ok, tt.wantLinkname)
-				}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if link, ok := prog.Linkname("pkg.HandleInterrupt"); !ok || link != "IRQ_Handler" {
+				t.Fatalf("linkname = (%q, %v), want (IRQ_Handler, true)", link, ok)
+			}
+			if export, ok := prog.PackageExport("pkg.HandleInterrupt"); !ok || export != "IRQ_Handler" {
+				t.Fatalf("export = (%q, %v), want (IRQ_Handler, true)", export, ok)
 			}
 		})
 	}

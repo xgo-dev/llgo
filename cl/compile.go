@@ -3015,7 +3015,7 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		}
 	}
 	ctx.initPyModule()
-	ctx.initFiles(pkgPath, files, cPkg)
+	ctx.initFiles(files)
 	ctx.prog.SetPatch(ctx.patchType)
 	ctx.prog.SetCompileMethods(ctx.checkCompileMethods)
 	ret.SetResolveLinkname(ctx.resolveLinkname)

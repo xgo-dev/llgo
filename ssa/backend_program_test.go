@@ -19,6 +19,7 @@ package ssa
 import (
 	"go/token"
 	"go/types"
+	"maps"
 	"testing"
 )
 
@@ -45,7 +46,7 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	coordinator.SetNoInterfaceMethod("example.com/p.T.Hidden")
 	coordinator.SetTypeCallConv("example.com/p.CType", CDecl)
 	coordinator.SetClosureEnvDirective(fset, "example.com/p.Entry", token.Pos(7))
-	coordinator.MarkPackageSyntaxParsed(pkg)
+	coordinator.MarkPackageSyntaxParsed(pkg, map[string]string{"example.com/p.Entry": "entry"})
 	coordinator.SetLocalityInfo("example.com/p.Value", LocalityInfo{Locality: ThreadLocal})
 	coordinator.SetPython(func() *types.Package { return nil })
 
@@ -72,6 +73,9 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	if export, ok := backend.PackageExport("example.com/p.Entry"); !ok || export != "entry" {
 		t.Fatalf("PackageExport = (%q, %v), want (entry, true)", export, ok)
 	}
+	if exports := maps.Collect(backend.PackageExports(pkg)); len(exports) != 1 || exports["example.com/p.Entry"] != "entry" {
+		t.Fatalf("backend lost prepared package exports: %v", exports)
+	}
 	if !backend.HasClosureEnvDirective(fset, "example.com/p.Entry", token.Pos(7)) || !backend.PackageSyntaxParsed(pkg) {
 		t.Fatal("backend Program lost prepared syntax metadata")
 	}
@@ -90,5 +94,33 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 		!backend.enableFuncInfoMetadata || !backend.enableFuncInfoSites || backend.debugInfoOptimized ||
 		!backend.emitCodeViewDebugInfo {
 		t.Fatal("backend Program did not preserve coordinator configuration")
+	}
+}
+
+func TestPreparedPackageExportsKeepPackageIdentity(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	first := types.NewPackage("example.com/p", "p")
+	second := types.NewPackage("example.com/p", "p")
+	empty := types.NewPackage("example.com/p", "p")
+	unknown := types.NewPackage("example.com/p", "p")
+	exports := map[string]string{"example.com/p.Entry": "first_entry"}
+	prog.MarkPackageSyntaxParsed(first, exports)
+	exports["example.com/p.Entry"] = "second_entry"
+	prog.MarkPackageSyntaxParsed(second, exports)
+	prog.MarkPackageSyntaxParsed(empty, nil)
+	// The global linker index must not override a concrete package snapshot.
+	prog.SetPackageExport("example.com/p.Entry", "global_entry")
+	for pkg, want := range map[*types.Package]string{first: "first_entry", second: "second_entry"} {
+		got := maps.Collect(prog.PackageExports(pkg))
+		if len(got) != 1 || got["example.com/p.Entry"] != want {
+			t.Fatalf("prepared package exports = %v, want Entry: %s", got, want)
+		}
+	}
+	if !prog.PackageSyntaxParsed(empty) || len(maps.Collect(prog.PackageExports(empty))) != 0 {
+		t.Fatal("prepared empty package inherited another package's export")
+	}
+	if prog.PackageSyntaxParsed(unknown) || len(maps.Collect(prog.PackageExports(unknown))) != 0 {
+		t.Fatal("unknown package inherited another package's preparation")
 	}
 }
