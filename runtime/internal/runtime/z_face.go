@@ -109,6 +109,18 @@ func addItab(i *Itab) {
 	itabTable.Unlock()
 }
 
+// RegisterStaticItab records a compiler-emitted itab so NewItab/getitab
+// return the same pointer as T2I. Idempotent if the pair is already present.
+func RegisterStaticItab(i *Itab) {
+	if i == nil || i._type == nil {
+		return
+	}
+	if findItab(i.inter, i._type) != nil {
+		return
+	}
+	addItab(i)
+}
+
 // NewItab returns a new itab.
 func NewItab(inter *InterfaceType, typ *Type) *Itab {
 	if typ == nil {

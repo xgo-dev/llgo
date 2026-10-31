@@ -6,6 +6,7 @@ import "reflect"
 // SYMBOL-DAG: main{{.*}}A{{.*}}M
 // SYMBOL-DAG: main{{.*}}B{{.*}}M
 // SYMBOL-DAG: main{{.*}}C{{.*}}M
+// LTO still emits NewItab for mixed static/dynamic roots; the static template is DCE'd.
 // SYMBOL-NOT: _llgo_itab
 
 type I interface {
