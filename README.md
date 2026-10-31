@@ -584,6 +584,8 @@ Module maintenance does not inject LLGo-specific build tags. Go's `tidy` and `ve
 
 ## Development tools
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow and validation guidance.
+
 `llgo list` provides a Go-compatible package query backed by the real Go toolchain while adding LLGo's source-selection build tags to package queries. Module queries keep caller-supplied and explicit target tags but do not add LLGo's defaults. It supports the list queries used by `golang.org/x/tools/go/packages`, including `list -f '{{context.GOARCH}} {{context.Compiler}}' -- unsafe`; the reported `gc` context identifies Go frontend and type-size compatibility, not LLGo's LLVM backend. Use `-target name` to apply a resolved LLGo target's GOOS, GOARCH, and build tags without installing its toolchain. When `go/packages` requests `-export=true`, paths in the `Export` field refer to Go frontend type data in Go's build cache, not LLGo package archives.
 
 `llgo get`, `llgo fix`, `llgo generate`, and `llgo vet` use the Go toolchain with LLGo's build tags and accept `-target` to select the target GOOS, GOARCH, and tags. `llgo fmt` and `llgo work` forward arguments unchanged; `go fmt` already includes files excluded by build constraints.
@@ -598,7 +600,7 @@ Module maintenance does not inject LLGo-specific build tags. Go's `tidy` and `ve
 * [litgen](chore/litgen): It maintains explicitly opted-in, source-embedded FileCheck snapshots. It supports function/global selection, update-only operation, stale-check verification, and stable LLVM value abstractions. Small handwritten checks remain manual.
 * [ssadump](chore/ssadump): It is a Go SSA builder and interpreter.
 
-For local workflows and test-golden refresh commands, see [dev/README.md](dev/README.md#6-refresh-test-goldens).
+For local workflows and test-golden refresh commands, see [dev/README.md](dev/README.md#7-refresh-test-goldens).
 
 How do I generate these tools?
 
