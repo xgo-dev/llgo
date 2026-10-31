@@ -783,7 +783,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		}
 		options := preloadOptions
 		options.AllowInternalDirectives = isStandardLibraryPackage(pkg, sourcePatchGOROOT)
-		if err := cl.ParsePkgSyntaxWithOptions(prog, cfg.Fset, pkg.Types, pkg.Syntax, options); err != nil {
+		if err := cl.ParsePkgSyntaxWithOptions(prog, cfg.Fset, pkg.Types, pkg.Syntax, options, pkg.TypesInfo); err != nil {
 			recordSyntaxErr(err)
 		}
 	})

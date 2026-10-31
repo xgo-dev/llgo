@@ -1011,7 +1011,8 @@ func ParsePkgSyntax(prog llssa.Program, fset *token.FileSet, pkg *types.Package,
 
 // ParsePkgSyntaxWithOptions collects all Program-side declaration metadata.
 // LLVM Package effects such as preserving //export symbols are applied later.
-func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *types.Package, files []*ast.File, options Options) error {
+// An optional Info supplies live RHS bindings while the package is checked.
+func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *types.Package, files []*ast.File, options Options, typeInfo ...*types.Info) error {
 	if pkg == nil {
 		return nil
 	}
@@ -1096,6 +1097,11 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 	if err := collectPackageLinknames(prog, fset, files, syms, linkDocs); err != nil {
 		return err
 	}
+	var info *types.Info
+	if len(typeInfo) != 0 {
+		info = typeInfo[0]
+	}
+	registerTypeDefinitions(prog, fset, pkg, files, info)
 	prog.MarkPackageSyntaxParsed(pkg)
 	return nil
 }
