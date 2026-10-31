@@ -17,10 +17,13 @@
 package ssa
 
 import (
+	"go/ast"
 	"go/token"
 	"go/types"
 	"sync"
 	"sync/atomic"
+
+	"github.com/xgo-dev/llgo/internal/typesizes"
 )
 
 // packageSyntaxData is Go-owned metadata collected before LLVM package
@@ -28,6 +31,8 @@ import (
 // so those Programs can share it directly for concurrent read-only access.
 // One-shot compiler users keep the same Program-local mutation behavior.
 type packageSyntaxData struct {
+	nativeTypeNames       map[[2]string]CallConv
+	layout                typesizes.LLGoLayout
 	mu                    sync.RWMutex
 	hasNativeTypeMetadata atomic.Bool
 	linknames             map[string]string
@@ -41,8 +46,14 @@ type packageSyntaxData struct {
 	nativeStructVars      map[*types.Var]bool
 }
 
+// ParseLayoutSyntax registers source layout before unsafe constants are folded.
+func (p Program) ParseLayoutSyntax(fset *token.FileSet, pkg *types.Package, files []*ast.File, warn func(error)) error {
+	return p.packageSyntax.layout.ParseSyntax(fset, pkg, files, warn)
+}
+
 func newPackageSyntaxData() *packageSyntaxData {
 	return &packageSyntaxData{
+		nativeTypeNames:      make(map[[2]string]CallConv),
 		linknames:            make(map[string]string),
 		wasmImports:          make(map[string]wasmImport),
 		exports:              make(map[string]string),
@@ -102,3 +113,7 @@ func (p *packageSyntaxData) typeCallConv(name string) (CallConv, bool) {
 	p.mu.RUnlock()
 	return background, ok
 }
+
+// HasPackedLayout reports whether the source graph requires conservative
+// ordinary memory-access alignment. This also participates in build caching.
+func (p Program) HasPackedLayout() bool { return p.packageSyntax.layout.HasPacked() }

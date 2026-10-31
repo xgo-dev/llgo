@@ -32,6 +32,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/locality"
+	"github.com/xgo-dev/llgo/internal/typesizes"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
@@ -1018,6 +1019,9 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 	if prog.PackageSyntaxParsed(pkg) {
 		return nil
 	}
+	if err := prog.ParseLayoutSyntax(fset, pkg, files, func(err error) { fmt.Fprintln(os.Stderr, "WARNING:", err) }); err != nil {
+		return err
+	}
 	if err := validateInternalDirectives(fset, pkg.Path(), files, options.AllowInternalDirectives); err != nil {
 		return err
 	}
@@ -1118,20 +1122,16 @@ func validateInternalDirectives(fset *token.FileSet, pkgPath string, files []*as
 }
 
 func handleTypeDecl(prog llssa.Program, fset *token.FileSet, pkg *types.Package, decl *ast.GenDecl) error {
-	cc, err := typeCallConv(fset, decl.Doc)
+	parsed, err := typesizes.LLGoTypeDeclCallConv(fset, decl)
+	cc := callConv{bg: parsed.BG, name: parsed.Name, pos: parsed.Pos, replacement: parsed.Replacement}
 	if err != nil {
 		return err
 	}
 	if cc.bg == "" {
 		return nil
 	}
-	if len(decl.Specs) != 1 {
-		return fmt.Errorf("%s: %s applies to a single type declaration, not a grouped type block", fset.Position(cc.pos), cc.name)
-	}
-	spec, ok := decl.Specs[0].(*ast.TypeSpec)
-	if !ok {
-		return fmt.Errorf("%s: %s applies to a type declaration", fset.Position(cc.pos), cc.name)
-	}
+	// The shared parser validates declaration kind and placement.
+	spec := decl.Specs[0].(*ast.TypeSpec)
 	// Emit the deprecation warning only after placement is validated, so an
 	// invalid use of a deprecated directive reports the placement error without
 	// also suggesting a replacement that would be equally invalid.
@@ -1194,42 +1194,9 @@ type callConv struct {
 // callConv; the caller emits the deprecation warning only once placement is
 // validated. More than one calling-convention directive on the same
 // declaration is reported as an error.
-func typeCallConv(fset *token.FileSet, doc *ast.CommentGroup) (cc callConv, err error) {
-	seen := false
-	for _, d := range directive.ParseGroup(doc) {
-		var bg, name, replacement string
-		switch d.Name {
-		case nameCdecl:
-			if d.Args != "" {
-				return cc, fmt.Errorf("%s: //llgo:cdecl does not accept arguments", fset.Position(d.Pos))
-			}
-			bg, name = "C", "//llgo:cdecl"
-		case nameStdcall:
-			if d.Args != "" {
-				return cc, fmt.Errorf("%s: //llgo:stdcall does not accept arguments", fset.Position(d.Pos))
-			}
-			bg, name = "stdcall", "//llgo:stdcall"
-		case nameType:
-			// //llgo:type has other forms beyond the two calling-convention
-			// values; only C and stdcall are affected by this task.
-			switch d.Args {
-			case "C":
-				bg, name, replacement = "C", "//llgo:type C", "//llgo:cdecl"
-			case "stdcall":
-				bg, name, replacement = "stdcall", "//llgo:type stdcall", "//llgo:stdcall"
-			default:
-				continue
-			}
-		default:
-			continue
-		}
-		if seen {
-			return cc, fmt.Errorf("%s: conflicting calling-convention directives on one type: %s and %s", fset.Position(d.Pos), cc.name, name)
-		}
-		cc = callConv{bg: bg, name: name, pos: d.Pos, replacement: replacement}
-		seen = true
-	}
-	return cc, nil
+func typeCallConv(fset *token.FileSet, doc *ast.CommentGroup) (callConv, error) {
+	cc, err := typesizes.LLGoTypeCallConv(fset, doc)
+	return callConv{bg: cc.BG, name: cc.Name, pos: cc.Pos, replacement: cc.Replacement}, err
 }
 
 func toCallConv(cc string) llssa.CallConv {

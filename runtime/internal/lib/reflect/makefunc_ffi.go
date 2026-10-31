@@ -6,10 +6,14 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/xgo-dev/llgo/runtime/abi"
 	"github.com/xgo-dev/llgo/runtime/internal/ffi"
 )
 
 func makeProviderFunc(ftyp *funcType, fn func([]Value) []Value, recoverTo unsafe.Pointer) Value {
+	if ftyp.Make_ != nil || needsCompiledMakeFunc(ftyp) {
+		return makeCompiledFunc(ftyp, fn, recoverTo)
+	}
 	sig, err := toFFISig(ftyp.In, ftyp.Out)
 	if err != nil {
 		panic(err)
@@ -34,6 +38,36 @@ func makeProviderFunc(ftyp *funcType, fn func([]Value) []Value, recoverTo unsafe
 
 	fv := &closure{fn: ffiClosure.Fn}
 	return Value{closureOf(ftyp), unsafe.Pointer(fv), flagIndir | flag(Func)}
+}
+
+// FuncOf may construct a signature containing a packed type for which there
+// is no compiled entry. Such functions can still be called through reflection;
+// libffi must not infer natural offsets for their unaligned fields.
+func needsCompiledMakeFunc(ft *funcType) bool {
+	var packed func(*abi.Type) bool
+	packed = func(t *abi.Type) bool {
+		switch t.Kind() {
+		case abi.Array:
+			return packed((*abi.ArrayType)(unsafe.Pointer(t)).Elem)
+		case abi.Struct:
+			st := (*abi.StructType)(unsafe.Pointer(t))
+			for _, f := range st.Fields {
+				a := uintptr(f.Typ.Align_)
+				if a > uintptr(t.Align_) || f.Offset%a != 0 || packed(f.Typ) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for _, list := range [][]*abi.Type{ft.In, ft.Out} {
+		for _, t := range list {
+			if packed(t) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 var (

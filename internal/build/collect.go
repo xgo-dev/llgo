@@ -147,6 +147,9 @@ func (c *context) collectCommonInputs(m *manifestBuilder) {
 	if c.buildConf.Tags != "" {
 		m.common.BuildTags = strings.Split(c.buildConf.Tags, ",")
 	}
+	if c.prog != nil {
+		m.common.PackedLayout = c.prog.HasPackedLayout()
+	}
 	m.common.Target = c.buildConf.Target
 	m.common.WasmRuntimeFree = c.wasmRuntimeFree
 	m.common.TargetABI = c.crossCompile.TargetABI

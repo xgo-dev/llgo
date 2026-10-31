@@ -106,6 +106,9 @@ func (p Program) validateStdcallType(typ types.Type) {
 }
 
 func (p Program) isStdcallType(typ types.Type) bool {
+	if p.packageSyntax.layout.TypeAttrs(typ).CallConv == "stdcall" {
+		return true
+	}
 	named, ok := types.Unalias(typ).(*types.Named)
 	if !ok {
 		return false

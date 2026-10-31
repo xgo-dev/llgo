@@ -56,7 +56,19 @@ func (v Expr) IsNil() bool {
 
 // SetOrdering sets the ordering of the atomic operation.
 func (v Expr) SetOrdering(ordering AtomicOrdering) Expr {
-	v.memoryInstruction().SetOrdering(ordering)
+	inst := v.memoryInstruction()
+	inst.SetOrdering(ordering)
+	if ordering != OrderingNotAtomic && (!inst.IsALoadInst().IsNil() || !inst.IsAStoreInst().IsNil()) {
+		// Atomic accesses require natural alignment even in a graph containing
+		// packed storage. In particular, i64 atomics still require 8 on 386.
+		typ := inst.Type()
+		if !inst.IsAStoreInst().IsNil() {
+			typ = inst.Operand(0).Type()
+		}
+		td := llvm.NewTargetData(inst.InstructionParent().Parent().GlobalParent().DataLayout())
+		inst.SetAlignment(int(td.TypeStoreSize(typ)))
+		td.Dispose()
+	}
 	return v
 }
 
@@ -1022,6 +1034,7 @@ func (b Builder) UnOp(op token.Token, x Expr) (ret Expr) {
 //
 //	t1 = changetype *int <- IntPtr (t0)
 func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
+	b.checkPointerLayoutConversion(t, x.Type)
 	if t.kind == vkSIMD {
 		if x.kind == vkSIMD {
 			return Expr{x.impl, t}
@@ -1097,9 +1110,23 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 		xt := types.Unalias(x.RawType()).Underlying().(*types.Struct)
 		fields := make([]llvm.Value, xt.NumFields())
 		for i := 0; i < xt.NumFields(); i++ {
-			fields[i] = b.getField(x, i).impl
+			field := b.getField(x, i)
+			want := b.Prog.Field(t, i)
+			if field.Type != want {
+				field = b.ChangeType(want, field)
+			}
+			fields[i] = field.impl
 		}
 		ret.impl = b.aggregateValue(t, fields...).impl
+	} else if t.kind == vkArray && x.kind == vkArray && t.ll != x.ll {
+		value := llvm.Undef(t.ll)
+		from, to := b.Prog.Index(x.Type), b.Prog.Index(t)
+		for i := 0; i < int(t.RawType().Underlying().(*types.Array).Len()); i++ {
+			field := Expr{b.fromStorageValue(from, b.impl.CreateExtractValue(x.impl, i, "")), from}
+			field = b.ChangeType(to, field)
+			value = b.impl.CreateInsertValue(value, b.toStorageValue(to, field.impl), i, "")
+		}
+		ret.impl = value
 	} else {
 		if x.impl.Type().String() == t.ll.String() {
 			ret.impl = x.impl
@@ -1140,6 +1167,7 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 //
 //	t1 = convert []byte <- string (t0)
 func (b Builder) Convert(t Type, x Expr) (ret Expr) {
+	b.checkPointerLayoutConversion(t, x.Type)
 	dbgInstrf("Convert %v <- %v\n", t.RawType(), x.RawType())
 	dst := t.raw.Type
 	ret.Type = b.Prog.rawType(dst)
@@ -1252,7 +1280,7 @@ func (b Builder) Convert(t Type, x Expr) (ret Expr) {
 			}
 		}
 	}
-	if types.Identical(dst.Underlying(), x.RawType().Underlying()) {
+	if types.IdenticalIgnoreTags(dst.Underlying(), x.RawType().Underlying()) {
 		return b.ChangeType(t, x)
 	}
 	panic("todo")

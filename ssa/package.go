@@ -23,11 +23,13 @@ import (
 	"log"
 	"runtime"
 	"strconv"
+	"strings"
 	"unsafe"
 
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/optlevel"
+	"github.com/xgo-dev/llgo/internal/typesizes"
 	"github.com/xgo-dev/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/types/typeutil"
@@ -117,10 +119,11 @@ func Initialize(flags InitFlags) {
 // -----------------------------------------------------------------------------
 
 type aProgram struct {
-	ctx   llvm.Context
-	typs  typeutil.Map // rawType -> Type
-	sizes types.Sizes  // provided by Go compiler
-	gocvt goTypes
+	ctx         llvm.Context
+	typs        typeutil.Map // rawType -> Type
+	sizes       types.Sizes  // provided by Go compiler
+	sourceSizes *typesizes.LLGoSizes
+	gocvt       goTypes
 
 	patchType func(types.Type) types.Type
 
@@ -142,6 +145,8 @@ type aProgram struct {
 	// LLVM type is not a safe identity for this metadata.
 	structLayouts    typeutil.Map
 	hasStructLayouts bool
+	// Preserve structural identity when marking Win32 layout storage by name.
+	layoutStorageWrappers map[llvm.Type]llvm.Type
 	// nativeStorage caches transient Type views whose addressable storage is
 	// owned by a C/host ABI rather than by the Go data model. Canonical types
 	// map to their native view, while native views map to themselves.
@@ -362,6 +367,35 @@ func NewProgram(target *Target) Program {
 	if goWordSize > prog.ptrSize {
 		prog.nativeStorage = make(map[Type]Type)
 	}
+	prog.sourceSizes = typesizes.LLGoSizesFor(target.effectiveGOARCH())
+	if prog.sourceSizes == nil {
+		prog.sourceSizes = typesizes.LLGoSizesFor("amd64")
+	}
+	prog.sourceSizes.WordSize = int64(prog.GoWordSize())
+	prog.sourceSizes.PointerSize = int64(prog.PointerSize())
+	prog.sourceSizes.NativeAlign64 = int64(td.ABITypeAlignment(ctx.DoubleType()))
+	prog.sourceSizes.VectorAlign = prog.simdAlignments
+	prog.sourceSizes.Layout = &packageSyntax.layout
+	prog.sourceSizes.NativeType = func(t types.Type) bool {
+		obj, ok := t.(interface{ Obj() *types.TypeName })
+		if !ok {
+			return false
+		}
+		name := obj.Obj()
+		pkgPath := ""
+		if name.Pkg() != nil {
+			pkgPath = name.Pkg().Path()
+		}
+		prog.packageSyntax.mu.RLock()
+		cc, ok := prog.packageSyntax.nativeTypeNames[[2]string{pkgPath, name.Name()}]
+		prog.packageSyntax.mu.RUnlock()
+		return ok && isNativeCallConv(cc)
+	}
+	prog.sourceSizes.NativeField = func(field *types.Var) bool {
+		prog.packageSyntax.mu.RLock()
+		defer prog.packageSyntax.mu.RUnlock()
+		return prog.packageSyntax.nativeStructVars[field] || prog.packageSyntax.nativeStructFields[field.Pos()]
+	}
 	prog.is32Bits = prog.GoWordSize() == 4
 	prog.abi.Init(uintptr(prog.GoWordSize()), (*goProgram)(unsafe.Pointer(prog)))
 	return prog
@@ -382,6 +416,7 @@ func (p Program) NewBackendProgram() Program {
 	backend.rt, backend.rtget = p.rt, p.rtget
 	backend.py, backend.pyget = p.py, p.pyget
 	backend.packageSyntax = p.packageSyntax
+	backend.sourceSizes.Layout = &p.packageSyntax.layout
 	backend.gocvt.packageSyntax = p.packageSyntax
 	backend.localities = p.localities
 	backend.enableGoGlobalDCE = p.enableGoGlobalDCE
@@ -519,6 +554,11 @@ func (p Program) SetRuntime(runtime any) {
 func (p Program) SetTypeCallConv(typFullName string, cc CallConv, fields ...*types.Var) {
 	p.packageSyntax.mu.Lock()
 	p.packageSyntax.typeCallConvs[typFullName] = cc
+	pkgPath, name := "", typFullName
+	if i := strings.LastIndexByte(typFullName, '.'); i >= 0 {
+		pkgPath, name = typFullName[:i], typFullName[i+1:]
+	}
+	p.packageSyntax.nativeTypeNames[[2]string{pkgPath, name}] = cc
 	if isNativeCallConv(cc) {
 		if len(fields) != 0 {
 			p.packageSyntax.nativeStructVars[fields[0]] = true

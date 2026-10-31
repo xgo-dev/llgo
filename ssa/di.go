@@ -701,8 +701,6 @@ func structFieldIndex(structure *types.Struct, name string) int {
 }
 
 func (b diBuilder) doCreateStructType(name string, ty Type, pos token.Position, fn func(ty DIType) []llvm.Metadata) (ret DIType) {
-	structType := ty.RawType().Underlying()
-
 	scope := b.file(pos.Filename)
 	ret = &aDIType{b.di.CreateReplaceableCompositeType(
 		scope.ll,
@@ -712,7 +710,7 @@ func (b diBuilder) doCreateStructType(name string, ty Type, pos token.Position, 
 			File:        b.file(pos.Filename).ll,
 			Line:        pos.Line,
 			SizeInBits:  b.prog.SizeOf(ty) * 8,
-			AlignInBits: uint32(b.prog.sizes.Alignof(structType) * 8),
+			AlignInBits: uint32(b.prog.AlignOf(ty) * 8),
 		},
 	)}
 	b.types[ty] = ret
@@ -726,7 +724,7 @@ func (b diBuilder) doCreateStructType(name string, ty Type, pos token.Position, 
 			File:        b.file(pos.Filename).ll,
 			Line:        pos.Line,
 			SizeInBits:  b.prog.SizeOf(ty) * 8,
-			AlignInBits: uint32(b.prog.sizes.Alignof(structType) * 8),
+			AlignInBits: uint32(b.prog.AlignOf(ty) * 8),
 			Elements:    fields,
 		},
 	)

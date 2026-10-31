@@ -751,3 +751,28 @@ func f() {}
 		t.Fatalf("inline assembly debug metadata is invalid: %v\n%s", err, pkg.Module().String())
 	}
 }
+
+func TestDebugTupleUsesStorageAlignment(t *testing.T) {
+	prog := NewProgram(&Target{GOOS: "linux", GOARCH: "amd64"})
+	defer prog.Dispose()
+	// A self-hosted compiler gets strict LLGoSizes from go/types, which
+	// correctly rejects Tuple as a source-language storage type.
+	prog.TypeSizes(prog.sourceSizes)
+	pkg := prog.NewPackage("p", "example.com/p")
+	pkg.InitDebug("p", "example.com/p", token.NewFileSet())
+	results := types.NewTuple(
+		types.NewVar(token.NoPos, nil, "x", types.Typ[types.Int64]),
+		types.NewVar(token.NoPos, nil, "y", types.Typ[types.Int64]),
+	)
+	fn := pkg.NewFunc("example.com/p.pair", types.NewSignatureType(nil, nil, nil, nil, results, false), GoDecl)
+	body := fn.MakeBody(1)
+	defer body.Dispose()
+	pos := token.Position{Filename: "pair.go", Line: 1, Column: 1}
+	body.DebugFunction(fn, nil, pos, pos)
+	body.Return(prog.Zero(prog.Int64()), prog.Zero(prog.Int64()))
+	body.EndBuild()
+	pkg.FinalizeDebug()
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+}

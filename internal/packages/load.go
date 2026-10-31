@@ -538,6 +538,23 @@ func (tc *typecheckContext) typecheckPackage(pkg *Package) {
 	if typErr != nil && len(pkg.Errors) == 0 {
 		appendError(typErr)
 	}
+	if typErr == nil && len(pkg.Errors) == 0 {
+		if recorder, ok := pkg.TypesSizes.(interface{ RecordLayoutPackage(*types.Package) }); ok {
+			recorder.RecordLayoutPackage(pkg.Types)
+		}
+		if validator, ok := pkg.TypesSizes.(interface{ ValidateLayoutPackage(*types.Package) error }); ok {
+			if err := validator.ValidateLayoutPackage(pkg.Types); err != nil {
+				appendError(err)
+			}
+		}
+		if validator, ok := pkg.TypesSizes.(interface {
+			ValidateLayoutConversions(*token.FileSet, []*ast.File, *types.Info) error
+		}); ok {
+			if err := validator.ValidateLayoutConversions(fset, pkg.Syntax, pkg.TypesInfo); err != nil {
+				appendError(err)
+			}
+		}
+	}
 
 	illTyped := len(pkg.Errors) > 0
 	if !illTyped {

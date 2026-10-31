@@ -85,6 +85,7 @@ var sourcePatchPkgs = map[string]struct{}{
 	"fmt":                          {},
 	"go/build":                     {},
 	"go/importer":                  {},
+	"go/types":                     {},
 	"internal/cpu":                 {},
 	"internal/runtime/atomic":      {},
 	"internal/runtime/maps":        {},
