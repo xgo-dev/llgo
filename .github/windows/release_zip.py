@@ -30,7 +30,10 @@ def create(source, destination):
                 info.external_attr = (stat.S_IFDIR | 0o755) << 16 | 0x10
                 archive.writestr(info, b"", compress_type=zipfile.ZIP_STORED)
             else:
-                archive.write(path, name)
+                # Preserve already-compressed ESP payloads without inflating or
+                # recompressing their hard-linked tool aliases.
+                method = zipfile.ZIP_STORED if name.endswith('.tar.xz') else zipfile.ZIP_DEFLATED
+                archive.write(path, name, compress_type=method)
     verify(destination, source)
 
 

@@ -27,6 +27,11 @@ are also skipped. Each not-applicable entry documents both the
 toolchain-specific mechanism under test and why the corresponding behavior is
 not an LLGo compatibility goal.
 
+On GitHub-hosted macOS and Linux/Wasmer WASI runners, `gcgort.go` is a host
+skip: its nested goroutines can exhaust host threads with LLGo's 1:1 backend.
+The bounded `test/go` case `TestGCConcurrentTypedMutation` covers the same
+typed-store GC behavior. Local and self-hosted runs retain the original case.
+
 The runner keeps a small, explicit set of gc backend controls on the official
 Go baseline: `-l=4`, `-d=ssa/check/on`, `-d=softfloat`, and `-d=checkptr`
 (including `all=-d=checkptr`). LLGo executes the same source

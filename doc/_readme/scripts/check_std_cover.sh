@@ -7,9 +7,9 @@ cd "${ROOT_DIR}"
 
 go_list() {
   if [[ -n "${LLGO_TEST_MODFILE:-}" ]]; then
-    command go list "-modfile=${LLGO_TEST_MODFILE}" "$@"
+    command go list "-modfile=${LLGO_TEST_MODFILE}" -tags=llgo "$@"
   else
-    command go list "$@"
+    command go list -tags=llgo "$@"
   fi
 }
 
@@ -42,7 +42,9 @@ for pkg in "${packages[@]}"; do
   fi
   stdlib_pkg="${rel_path#test/std/}"
   covered_packages+=("${stdlib_pkg}")
-  if [[ "${stdlib_pkg}" == "runtime" ]]; then
+  # abicall contains supplemental LLGo runtime/host ABI regressions, rather
+  # than tests for a public standard-library package named runtime/abicall.
+  if [[ "${stdlib_pkg}" == "runtime" || "${stdlib_pkg}" == "runtime/abicall" ]]; then
     continue
   fi
   # These Go 1.27 packages currently have focused compatibility tests. Keep

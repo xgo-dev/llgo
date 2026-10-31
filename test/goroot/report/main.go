@@ -231,6 +231,7 @@ func renderReport(results []caseResult, platforms, versions []string, runURL, me
 		out.WriteString("\nNo failures or unexpected passes were reported.\n")
 	} else {
 		out.WriteString("\n✅ pass · 🟡 expected failure · ❌ unexpected failure · ⚠️ unexpected pass · 🔀 flaky · ➖ not applicable · ⏭️ host skip · 💥 resource guard · 🛠️ configuration · `·` unavailable\n")
+		out.WriteString("\nEach cell uses that platform and Go version's expectations. ✅ means no xfail matched; ⚠️ identifies a passing case with a matching xfail to review for removal.\n")
 		if mentionOnMismatch != "" && (unexpectedFailure || unexpectedPass) {
 			fmt.Fprintf(&out, "\n> [!WARNING]\n> @%s ", strings.TrimPrefix(mentionOnMismatch, "@"))
 			if unexpectedFailure {

@@ -8,11 +8,14 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/abi"
+	"github.com/xgo-dev/llgo/internal/cabi"
+	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
+	"golang.org/x/tools/go/packages"
 )
 
-func wasmAggregateConfig(bits int, roots bool) abi.AggregateLoweringConfig {
-	return abi.AggregateLoweringConfig{GoWordSize: bits / 8, GCRoots: roots, Wasm: true}
+func aggregateCopyConfig(bits int, roots, wasm bool) abi.AggregateLoweringConfig {
+	return abi.AggregateLoweringConfig{GoWordSize: bits / 8, GCRoots: roots, Wasm: wasm}
 }
 
 func parseWasmAggregateIR(t *testing.T, source string) llvm.Module {
@@ -38,7 +41,7 @@ func parseWasmAggregateIR(t *testing.T, source string) llvm.Module {
 	return mod
 }
 
-func TestLowerWasmAggregateCopies(t *testing.T) {
+func TestLowerAggregateCopies(t *testing.T) {
 	for _, bits := range []int{32, 64} {
 		t.Run(fmt.Sprint(bits), func(t *testing.T) {
 			td := llvm.NewTargetData(fmt.Sprintf("e-p:%d:%d-i64:64-n32:64-S128", bits, bits))
@@ -46,19 +49,22 @@ func TestLowerWasmAggregateCopies(t *testing.T) {
 			for _, tc := range []struct {
 				name, body, intrinsic string
 				volatile              bool
+				hostArrays            bool
 			}{
-				{"copy", "%v = load [8192 x i8], ptr %src\nstore [8192 x i8] %v, ptr %dst", "memmove", false},
-				{"volatile source", "%v = load volatile [8192 x i8], ptr %src\nstore [8192 x i8] %v, ptr %dst", "memmove", true},
-				{"volatile destination", "%v = load [8192 x i8], ptr %src\nstore volatile [8192 x i8] %v, ptr %dst", "memmove", true},
-				{"overlap", "%v = load volatile [8192 x i8], ptr %src\nstore volatile [8192 x i8] %v, ptr %src", "memmove", true},
-				{"zero", "store [8192 x i8] zeroinitializer, ptr %dst", "memset", false},
-				{"volatile zero", "store volatile [8192 x i8] zeroinitializer, ptr %dst", "memset", true},
-				{"pointer fields", "%v = load {ptr, [8192 x i8]}, ptr %src\nstore {ptr, [8192 x i8]} %v, ptr %dst", "memmove", false},
-				{"threshold", "%v = load [4096 x i8], ptr %src\nstore [4096 x i8] %v, ptr %dst", "memmove", false},
-				{"small", "%v = load [4095 x i8], ptr %src\nstore [4095 x i8] %v, ptr %dst", "", false},
-				{"scalar", "%v = load i64, ptr %src\nstore i64 %v, ptr %dst", "", false},
-				{"unsupported use", "%v = load [8192 x i8], ptr %src\n%w = insertvalue [8192 x i8] %v, i8 1, 0\nstore [8192 x i8] %w, ptr %dst", "", false},
-				{"unknown value", "store [8192 x i8] poison, ptr %dst", "", false},
+				{"copy", "%v = load [8192 x i8], ptr %src\nstore [8192 x i8] %v, ptr %dst", "memmove", false, false},
+				{"volatile source", "%v = load volatile [8192 x i8], ptr %src\nstore [8192 x i8] %v, ptr %dst", "memmove", true, false},
+				{"volatile destination", "%v = load [8192 x i8], ptr %src\nstore volatile [8192 x i8] %v, ptr %dst", "memmove", true, false},
+				{"overlap", "%v = load volatile [8192 x i8], ptr %src\nstore volatile [8192 x i8] %v, ptr %src", "memmove", true, false},
+				{"zero", "store [8192 x i8] zeroinitializer, ptr %dst", "memset", false, false},
+				{"volatile zero", "store volatile [8192 x i8] zeroinitializer, ptr %dst", "memset", true, false},
+				{"pointer fields", "%v = load {ptr, [8192 x i8]}, ptr %src\nstore {ptr, [8192 x i8]} %v, ptr %dst", "memmove", false, false},
+				{"threshold", "%v = load [4096 x i8], ptr %src\nstore [4096 x i8] %v, ptr %dst", "memmove", false, false},
+				{"multi-element array", "%v = load [256 x i32], ptr %src\nstore [256 x i32] %v, ptr %dst", "memmove", false, false},
+				{"small two-element array", "%v = load [2 x i64], ptr %src\nstore [2 x i64] %v, ptr %dst", "", false, false},
+				{"one-element array", "%v = load [1 x i64], ptr %src\nstore [1 x i64] %v, ptr %dst", "", false, false},
+				{"scalar", "%v = load i64, ptr %src\nstore i64 %v, ptr %dst", "", false, false},
+				{"unsupported use", "%v = load [8192 x i8], ptr %src\n%w = insertvalue [8192 x i8] %v, i8 1, 0\nstore [8192 x i8] %w, ptr %dst", "", false, false},
+				{"unknown value", "store [8192 x i8] poison, ptr %dst", "", false, false},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					mod := parseWasmAggregateIR(t, "declare void @other()\ndefine void @copy(ptr %dst, ptr %src) {\n"+tc.body+"\nret void\n}")
@@ -67,7 +73,8 @@ func TestLowerWasmAggregateCopies(t *testing.T) {
 					if tc.intrinsic != "" {
 						want = 1
 					}
-					if got := lowerWasmAggregateCopies("wasm", td, mod, wasmAggregateConfig(bits, true)); got != want {
+					cfg := aggregateCopyConfig(bits, true, !tc.hostArrays)
+					if got := lowerAggregateCopies(td, mod, cfg); got != want {
 						t.Fatalf("lowered %d operations, want %d:\n%s", got, want, mod.String())
 					}
 					if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
@@ -87,21 +94,23 @@ func TestLowerWasmAggregateCopies(t *testing.T) {
 					if strings.Contains(body, "alloca ") || strings.Contains(body, "AllocU") || strings.Contains(body, "load ") || strings.Contains(body, "store ") {
 						t.Fatalf("copy allocated storage or retained aggregate accesses:\n%s", body)
 					}
-					if got := lowerWasmAggregateCopies("wasm", td, mod, wasmAggregateConfig(bits, true)); got != 0 {
+					if got := lowerAggregateCopies(td, mod, cfg); got != 0 {
 						t.Fatal("copy lowering is not idempotent")
 					}
 				})
 			}
 			mod := parseWasmAggregateIR(t, "define void @copy(ptr %p) { store volatile [8192 x i8] zeroinitializer, ptr %p\nret void }")
-			before := mod.String()
-			if lowerWasmAggregateCopies("amd64", td, mod, wasmAggregateConfig(bits, true)) != 0 || mod.String() != before {
-				t.Fatal("changed native aggregate operations")
+			if got := lowerAggregateCopies(td, mod, aggregateCopyConfig(bits, true, false)); got != 1 {
+				t.Fatalf("native copy lowering changed %d operations, want 1:\n%s", got, mod.String())
+			}
+			if body := mod.NamedFunction("copy").String(); !strings.Contains(body, "@llvm.memset") {
+				t.Fatalf("native zero store was not lowered to memset:\n%s", body)
 			}
 		})
 	}
 }
 
-func TestLowerWasmAggregateCopiesSnapshots(t *testing.T) {
+func TestLowerAggregateCopiesSnapshots(t *testing.T) {
 	const source = `
 %WithPointer = type { ptr, [8192 x i8] }
 declare void @mutate(ptr)
@@ -129,7 +138,7 @@ define [8192 x i8] @identity([8192 x i8] %value) {
 				defer td.Dispose()
 				mod := parseWasmAggregateIR(t, source)
 				identity := mod.NamedFunction("identity").String()
-				if got := lowerWasmAggregateCopies("wasm", td, mod, wasmAggregateConfig(bits, roots)); got != 1 {
+				if got := lowerAggregateCopies(td, mod, aggregateCopyConfig(bits, roots, true)); got != 1 {
 					t.Fatalf("lowered %d copies, want one snapshot", got)
 				}
 				if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
@@ -164,7 +173,7 @@ define [8192 x i8] @identity([8192 x i8] %value) {
 						}
 					}
 				}
-				if allocations != 1 || lowerWasmAggregateCopies("wasm", td, mod, wasmAggregateConfig(bits, roots)) != 0 {
+				if allocations != 1 || lowerAggregateCopies(td, mod, aggregateCopyConfig(bits, roots, true)) != 0 {
 					t.Fatal("snapshot allocation was duplicated")
 				}
 			})
@@ -172,7 +181,7 @@ define [8192 x i8] @identity([8192 x i8] %value) {
 	}
 }
 
-func TestLowerWasmAggregateCopiesNestedSnapshots(t *testing.T) {
+func TestLowerAggregateCopiesNestedSnapshots(t *testing.T) {
 	const source = `
 %Deferred = type { ptr, { i32, [8192 x i8] } }
 declare void @mutate(ptr)
@@ -196,7 +205,7 @@ second:
 				td := llvm.NewTargetData(fmt.Sprintf("e-p:%d:%d-i64:64-n32:64-S128", bits, bits))
 				defer td.Dispose()
 				mod := parseWasmAggregateIR(t, source)
-				if got := lowerWasmAggregateCopies("wasm", td, mod, wasmAggregateConfig(bits, roots)); got != 2 {
+				if got := lowerAggregateCopies(td, mod, aggregateCopyConfig(bits, roots, true)); got != 2 {
 					t.Fatalf("lowered %d copies, want the closure and its array argument", got)
 				}
 				if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
@@ -210,10 +219,58 @@ second:
 				if strings.Contains(body, "llvm_gc_root_chain") != roots {
 					t.Fatalf("nested snapshot root publication does not match GC policy:\n%s", body)
 				}
-				if got := lowerWasmAggregateCopies("wasm", td, mod, wasmAggregateConfig(bits, roots)); got != 0 {
+				if got := lowerAggregateCopies(td, mod, aggregateCopyConfig(bits, roots, true)); got != 0 {
 					t.Fatalf("another pass still lowered %d copies", got)
 				}
 			})
 		}
+	}
+}
+
+func TestCompilePackageModuleLowersNativeArrayCopies(t *testing.T) {
+	llvm.InitializeAllTargets()
+	llvm.InitializeAllTargetMCs()
+	llvm.InitializeAllTargetInfos()
+	for _, tc := range []struct {
+		name, goos, goarch string
+		target             *llssa.Target
+	}{
+		{name: "native", goos: "linux", goarch: "amd64", target: &llssa.Target{GOOS: "linux", GOARCH: "amd64"}},
+		{name: "wasm", goos: "js", goarch: "wasm", target: &llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "emscripten"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog := llssa.NewProgram(tc.target)
+			defer prog.Dispose()
+			lpkg := prog.NewPackage("p", "p")
+			mod := lpkg.Module()
+			ctxIR := mod.Context()
+			typ := llvm.ArrayType(ctxIR.Int32Type(), 256)
+			ptr := llvm.PointerType(ctxIR.Int8Type(), 0)
+			fn := llvm.AddFunction(mod, "copy", llvm.FunctionType(ctxIR.VoidType(), []llvm.Type{ptr, ptr}, false))
+			b := ctxIR.NewBuilder()
+			defer b.Dispose()
+			b.SetInsertPointAtEnd(ctxIR.AddBasicBlock(fn, "entry"))
+			val := b.CreateLoad(typ, fn.FirstParam(), "")
+			b.CreateStore(val, llvm.NextParam(fn.FirstParam()))
+			b.CreateRetVoid()
+			ctx := &context{
+				prog:         prog,
+				mode:         ModeGen,
+				buildConf:    &Config{Goos: tc.goos, Goarch: tc.goarch},
+				cTransformer: cabi.NewTransformer(prog, tc.target.Spec().Triple, "", true),
+			}
+			pkg := &aPackage{
+				Package: &packages.Package{PkgPath: "p"},
+				LPkg:    lpkg,
+			}
+			if err := compilePackageModule(ctx, pkg, nil, false); err != nil {
+				t.Fatal(err)
+			}
+			body := mod.NamedFunction("copy").String()
+			if strings.Contains(body, "load [256 x i32]") || strings.Contains(body, "store [256 x i32]") ||
+				!strings.Contains(body, "@llvm.mem") {
+				t.Fatalf("%s compilePackageModule retained a first-class array copy:\n%s", tc.name, body)
+			}
+		})
 	}
 }

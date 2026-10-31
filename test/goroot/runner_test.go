@@ -418,10 +418,14 @@ func TestGoRootRunCases(t *testing.T) {
 }
 
 func hostedThreadResourceSkip(hostPlatform, targetPlatform, runnerEnvironment string, tc testCase) string {
-	// xfail.yaml host_skips cannot express the runner environment or native-only execution.
-	if runnerEnvironment != "github-hosted" || targetPlatform != hostPlatform ||
-		(hostPlatform != "darwin/arm64" && hostPlatform != "darwin/amd64") ||
-		tc.Directive != "run" || tc.RelPath != "gcgort.go" {
+	// xfail.yaml host_skips cannot express the runner environment or host/target pairing.
+	if runnerEnvironment != "github-hosted" || tc.Directive != "run" || tc.RelPath != "gcgort.go" {
+		return ""
+	}
+	if targetPlatform == "W32-WASI" && (hostPlatform == "linux/amd64" || hostPlatform == "linux/arm64") {
+		return "gcgort.go can exhaust hosted Linux/Wasmer threads with LLGo's 1:1 WASI backend; bounded coverage: TestGCConcurrentTypedMutation"
+	}
+	if targetPlatform != hostPlatform || (hostPlatform != "darwin/arm64" && hostPlatform != "darwin/amd64") {
 		return ""
 	}
 	// The original source stays unchanged. Its nested goroutines can exceed

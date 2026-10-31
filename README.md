@@ -422,6 +422,13 @@ The APT/YUM configurations below accept packages without GPG signature verificat
 
 #### Debian/Ubuntu
 
+The DEB contains LLGo's compiler, runtime, targets, licenses and a pinned ESP
+runtime archive, unpacked locally on the first embedded build. Native LLVM 22,
+Clang, LLD and native libraries are installed as system dependencies. Ubuntu
+26.04 provides LLVM 22 in its standard repositories; on older Debian/Ubuntu
+releases, enable the matching [apt.llvm.org LLVM 22 repository](https://apt.llvm.org/)
+before installing LLGo.
+
 Install the latest stable release for amd64 or arm64 from the APT repository:
 
 ```sh
@@ -458,6 +465,10 @@ export CGO_LDFLAGS="$($LLVM_CONFIG --ldflags) $($LLVM_CONFIG --libs all)"
 ```
 
 #### Fedora Linux 44 or newer
+
+The RPM contains LLGo and a pinned ESP runtime archive, unpacked locally for
+embedded builds. Native compilation uses the system LLVM/Clang/LLD 22 packages
+and native libraries.
 
 Install the latest stable release for amd64 or arm64 from the YUM/DNF repository:
 
@@ -496,11 +507,11 @@ llgo run .
 
 ### on Windows
 
-The release workflow builds six integrated Windows variants, each as a ZIP: `llgo<VERSION>.windows-{386,amd64,arm64}-{msvc,mingw}.zip`. Check the [release assets](https://github.com/xgo-dev/llgo/releases) for availability in each version. Add the extracted `bin` directory to `PATH`; the archives keep the same `runtime`, `targets`, and `crosscompile/clang` layout as Unix releases. Each architecture's MSVC and MinGW archives contain the same statically linked, DLL-free `llgo.exe`.
+The release workflow builds six compact Windows ZIPs: `llgo<VERSION>.windows-{386,amd64,arm64}-{msvc,mingw}.zip`. Each contains LLGo, its DLL dependencies, `runtime`, `targets` and licenses. Add the extracted `bin` directory to `PATH`. Each architecture's MSVC and MinGW archives contain the same statically linked `llgo.exe`. The pinned ESP runtime archive is bundled and unpacked locally into the user cache on the first ESP build.
 
 See [Windows release dependencies and PowerShell setup](WINDOWS.md) for the external tools, ABI-specific libraries, and pkg-config configuration needed to compile native programs. The document is included in every Windows ZIP.
 
-Use the archive matching your native architecture and toolchain profile. Native programs still need the corresponding SDK/CRT, Clang, and dependencies described below: Visual Studio's C++ developer environment for MSVC, or MSYS2 `CLANG64` (`amd64`) / `CLANGARM64` (`arm64`) for MinGW. For `386`, configure the native i686 MSVC or MinGW environment described in [WINDOWS.md](WINDOWS.md); automatic dependency installation is unavailable. The bundled ESP Clang matches the host architecture: ARM64 archives contain native ARM64 ESP tools and DLLs for both MSVC and MinGW variants.
+Use the archive matching your native architecture and toolchain profile. Native programs still need the corresponding SDK/CRT, Clang, and dependencies described below: Visual Studio's C++ developer environment for MSVC, or MSYS2 `CLANG64` (`amd64`) / `CLANGARM64` (`arm64`) for MinGW. For `386`, configure the native i686 MSVC or MinGW environment described in [WINDOWS.md](WINDOWS.md); automatic dependency installation is unavailable. Bundled ESP Clang matches the host architecture, including native i686 and ARM64 tools for those hosts.
 
 The recommended GNU-hosted setup is an MSYS2 `CLANG64` shell. Install the LLVM 22 stack and LLGo's native dependencies, then provide the versioned pkg-config metadata used by the Go/C++ bindings:
 

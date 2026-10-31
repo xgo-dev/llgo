@@ -184,6 +184,7 @@ func TestFullAuditAcceptsReviewedSourceExclusions(t *testing.T) {
 		"test/cgo",
 		"test/std/plugin",
 		"test/std/runtime/cgo",
+		"test/std/runtime/abicall",
 		"test/std/syscall",
 		"test/windows",
 	}
@@ -589,12 +590,14 @@ func TestFullProfileCommandsKeepLLGoAndReferenceDistinct(t *testing.T) {
 
 func TestFullAuditClassifiesExperimentalSIMDSeparately(t *testing.T) {
 	root := t.TempDir()
-	dir := filepath.Join(root, "test", "simd")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "simd_test.go"), []byte("//go:build goexperiment.simd\n\npackage simd\n"), 0644); err != nil {
-		t.Fatal(err)
+	for _, pkg := range []string{"test/simd", "test/simd/portable"} {
+		dir := filepath.Join(root, pkg)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "simd_test.go"), []byte("//go:build goexperiment.simd\n\npackage simd\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	structured := func(_ string, c command) ([]byte, error) {
 		if c.Args[0] == "env" {
@@ -620,12 +623,13 @@ func TestFullAuditClassifiesExperimentalSIMDSeparately(t *testing.T) {
 			if err := json.Unmarshal(data, &result); err != nil {
 				t.Fatal(err)
 			}
-			if len(result.Packages) != 1 {
+			if len(result.Packages) != 2 {
 				t.Fatalf("SIMD disappeared from the inventory: %s", data)
 			}
-			entry := result.Packages[0]
-			if entry.Package != "test/simd" || entry.Status != "separate-suite" || entry.Tests != 0 || !strings.Contains(entry.Reason, "W32-WASI") {
-				t.Fatalf("SIMD execution scope misreported: %+v", entry)
+			for _, entry := range result.Packages {
+				if entry.Status != "separate-suite" || entry.Tests != 0 || !strings.Contains(entry.Reason, "W32-WASI") {
+					t.Fatalf("SIMD execution scope misreported: %+v", entry)
+				}
 			}
 		})
 	}
