@@ -301,8 +301,22 @@ jobs:
             os: windows-2022
           - goarch: arm64
             os: windows-11-arm
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2022' && fromJSON(needs.prepare.outputs.windows_2022_runner) || matrix.os }}
     steps: &windows-package-steps
+      - name: Install Windows build tools on Qiniu
+        if: github.repository_owner == 'xgo-dev' && matrix.os == 'windows-2022'
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sevenZip = Join-Path $env:RUNNER_TEMP '7zip.msi'
+          Invoke-WebRequest -Uri 'https://github.com/ip7z/7zip/releases/download/26.05/7z2605-x64.msi' -OutFile $sevenZip
+          $process = Start-Process msiexec.exe -ArgumentList @('/i', "`"$sevenZip`"", '/qn', '/norestart') -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "7-Zip installer failed: $($process.ExitCode)" }
+          $installer = Join-Path $env:RUNNER_TEMP 'vs_buildtools.exe'
+          Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vs_BuildTools.exe' -OutFile $installer
+          $process = Start-Process -FilePath $installer -ArgumentList @('--quiet', '--wait', '--norestart', '--add', 'Microsoft.VisualStudio.Workload.VCTools', '--includeRecommended') -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Visual Studio installer failed or requires restart: $($process.ExitCode)" }
       - uses: actions/checkout@v7
       - name: Download release metadata
         uses: actions/download-artifact@v8
@@ -357,7 +371,7 @@ jobs:
         abi: [msvc, mingw]
         goarch: ['386']
         os: [windows-2022]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2022' && fromJSON(needs.prepare.outputs.windows_2022_runner) || matrix.os }}
     steps: *windows-package-steps
 
   test-windows-artifacts:
@@ -374,8 +388,22 @@ jobs:
             os: windows-2022
           - goarch: arm64
             os: windows-11-arm
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2022' && fromJSON(needs.prepare.outputs.windows_2022_runner) || matrix.os }}
     steps: &windows-test-steps
+      - name: Install Windows build tools on Qiniu
+        if: github.repository_owner == 'xgo-dev' && matrix.os == 'windows-2022'
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sevenZip = Join-Path $env:RUNNER_TEMP '7zip.msi'
+          Invoke-WebRequest -Uri 'https://github.com/ip7z/7zip/releases/download/26.05/7z2605-x64.msi' -OutFile $sevenZip
+          $process = Start-Process msiexec.exe -ArgumentList @('/i', "`"$sevenZip`"", '/qn', '/norestart') -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "7-Zip installer failed: $($process.ExitCode)" }
+          $installer = Join-Path $env:RUNNER_TEMP 'vs_buildtools.exe'
+          Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vs_BuildTools.exe' -OutFile $installer
+          $process = Start-Process -FilePath $installer -ArgumentList @('--quiet', '--wait', '--norestart', '--add', 'Microsoft.VisualStudio.Workload.VCTools', '--includeRecommended') -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Visual Studio installer failed or requires restart: $($process.ExitCode)" }
       - uses: actions/checkout@v7
       - name: Set up Go
         uses: ./.github/actions/setup-go
@@ -473,7 +501,7 @@ jobs:
         abi: [msvc, mingw]
         goarch: ['386']
         os: [windows-2022]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2022' && fromJSON(needs.prepare.outputs.windows_2022_runner) || matrix.os }}
     steps: *windows-test-steps
 
   prepare-winget:
