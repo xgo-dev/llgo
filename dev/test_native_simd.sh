@@ -38,7 +38,7 @@ for profile in O0-off O2-off O2-thin O2-full; do
     flags+=("-lto=$lto")
   fi
   echo "SIMD: amd64 $profile"
-  for suite in arch portable; do
+  for suite in arch portable cinterop; do
     package=./test/simd
     filter='^TestSIMD(FMV|Bridge|Extend|Narrow|Resize)'
     settings=(cpu.avx2=off cpu.avx=off cpu.fma=off cpu.all=off)
@@ -51,6 +51,10 @@ for profile in O0-off O2-off O2-thin O2-full; do
           settings+=("simd=$width,cpu.$feature=off")
         done
       done
+    fi
+    if [[ "$suite" == cinterop ]]; then
+      package+=/cinterop
+      filter='^TestSIMDCInterop'
     fi
     binary="$output/simd-$suite-$profile.exe"
     "$LLGO" test "${flags[@]}" -c -o "$binary" "$package"

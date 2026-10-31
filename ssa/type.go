@@ -213,6 +213,9 @@ func (p Program) SizeOf(typ Type, n ...int64) uint64 {
 
 // AlignOf returns the ABI alignment of typ for the current target.
 func (p Program) AlignOf(typ Type) uint64 {
+	if typ.kind == vkArray && typ.ll.TypeKind() == llvm.VectorTypeKind {
+		return uint64(p.td.ABITypeAlignment(typ.ll))
+	}
 	if p.needsWidePointerStorage(typ) {
 		return uint64(p.GoWordSize())
 	}
@@ -701,6 +704,14 @@ func (p Program) toNamed(raw *types.Named) Type {
 	}
 	if lanes, ok := SIMDVectorShape(raw); ok {
 		typ := &aType{llvm.VectorType(p.rawType(lanes.Elem()).ll, int(lanes.Len())), rawType{raw}, vkSIMD}
+		p.named[name] = typ
+		return typ
+	}
+	if lanes, ok := p.cVectorArray(raw); ok {
+		// C vectors remain array-shaped in Go syntax (indexing, literals and
+		// equality), but both their values and storage have the native vector
+		// representation. Ordinary Go arrays keep their aggregate ABI.
+		typ := &aType{llvm.VectorType(p.rawType(lanes.Elem()).ll, int(lanes.Len())), rawType{raw}, vkArray}
 		p.named[name] = typ
 		return typ
 	}

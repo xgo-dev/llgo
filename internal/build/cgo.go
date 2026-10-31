@@ -173,9 +173,23 @@ func collectCgoSymbols(externs []string) map[string]string {
 
 // clangASTNode represents a node in clang's AST
 type clangASTNode struct {
-	Kind  string         `json:"kind"`
-	Name  string         `json:"name,omitempty"`
-	Inner []clangASTNode `json:"inner,omitempty"`
+	ID          string          `json:"id,omitempty"`
+	Kind        string          `json:"kind"`
+	Name        string          `json:"name,omitempty"`
+	TagUsed     string          `json:"tagUsed,omitempty"`
+	Inner       []clangASTNode  `json:"inner,omitempty"`
+	NumElements int             `json:"numElements,omitempty"`
+	Value       json.RawMessage `json:"value,omitempty"`
+	Decl        *clangASTNode   `json:"decl,omitempty"`
+	Range       struct {
+		Begin struct {
+			Offset int `json:"offset"`
+		} `json:"begin"`
+	} `json:"range,omitempty"`
+	Type struct {
+		QualType          string `json:"qualType"`
+		DesugaredQualType string `json:"desugaredQualType,omitempty"`
+	} `json:"type,omitempty"`
 }
 
 func genExternDeclsByClang(compiler *llclang.Cmd, pkg *aPackage, src string, cflags []string, cgoSymbols map[string]string, verbose bool) (string, error) {

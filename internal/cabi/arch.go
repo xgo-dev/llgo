@@ -222,7 +222,10 @@ func (p *TypeInfoArm64) GetTypeInfo(ctx llvm.Context, ftyp llvm.Type, typ llvm.T
 				(types[1].TypeKind() == llvm.PointerTypeKind || types[1] == ctx.Int64Type()) {
 				return info
 			}
-			if checkTypes(types, ctx.FloatType()) || checkTypes(types, ctx.DoubleType()) {
+			// AAPCS64 treats homogeneous short-vector aggregates like HFAs.
+			// Keep them in one LLVM array so register exhaustion spills the
+			// whole aggregate, rather than independent vector components.
+			if checkTypes(types, ctx.FloatType()) || checkTypes(types, ctx.DoubleType()) || homogeneousShortVectors(p.td, types) {
 				if !bret {
 					// LLVM must see one HFA array, not independent struct fields:
 					// an exhausted FP bank spills the entire argument together.
@@ -257,6 +260,24 @@ func (p *TypeInfoArm64) GetTypeInfo(ctx llvm.Context, ftyp llvm.Type, typ llvm.T
 	}
 
 	return info
+}
+
+// AAPCS64 5.10.5 ignores short-vector lane types when testing homogeneity;
+// a float32x4 and an int8x16 are both fundamental 128-bit vector members.
+func homogeneousShortVectors(td llvm.TargetData, types []llvm.Type) bool {
+	if len(types) == 0 || types[0].TypeKind() != llvm.VectorTypeKind {
+		return false
+	}
+	bits := td.TypeSizeInBits(types[0])
+	if bits != 64 && bits != 128 {
+		return false
+	}
+	for _, typ := range types[1:] {
+		if typ.TypeKind() != llvm.VectorTypeKind || td.TypeSizeInBits(typ) != bits {
+			return false
+		}
+	}
+	return true
 }
 
 type TypeInfoArm struct {

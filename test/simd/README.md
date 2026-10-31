@@ -81,6 +81,43 @@ structs, and zero-length vector fields. Pointers to vectors and slices of vector
 use their ordinary scalar ABI and remain supported. WASM reflection bridges
 continue to support SIMD128 values.
 
+## Native C vector interoperability
+
+`cinterop/` exercises named C vector typedefs imported through `import "C"`
+and hand-written `archsimd` bindings through `go:linkname`, C callbacks, and
+exported Go functions. Imported vectors retain their Go array syntax for
+literals, indexing, slicing, equality, and explicit array conversions, while
+LLGo uses native LLVM vectors for their values and storage. Clang type
+metadata distinguishes a C vector from an ordinary C or Go array.
+
+This boundary supports naturally aligned 128-bit C integer or `float`/`double`
+vectors (2, 4, 8, or 16 lanes in total; floating vectors have 2 or 4 lanes). Wider/smaller vectors,
+non-native alignment, padded three-lane vectors, half-precision lanes, and
+anonymous vector fields require additional support and receive diagnostics.
+Named vectors nested in ordinary arrays and structs are supported. Vector
+unions and records with custom alignment (including field-level alignment
+attributes) are rejected, even when the vector is reached through nested
+arrays or records.
+Use a named vector typedef for each C vector field. Portable `simd` values
+need an explicit concrete representation before crossing a C boundary.
+
+C and `archsimd` vector storage cannot appear by value in a map key or value, including
+inside arrays or structs. LLGo diagnoses these types before map lowering;
+convert to an array of scalars or store a pointer instead.
+Slice-to-vector copies and slice-to-vector-pointer conversions retain the
+source element's alignment for Go pointer loads/stores, including across calls.
+Vector-owned storage still has native alignment.
+
+ARM64 homogeneous aggregates of one to four equally sized short vectors
+use the native HVA ABI, including spilling the whole aggregate when vector
+registers run out.
+
+The shared import tests also run under official Go. LLGo-only tests check
+native layout, direct bindings, callbacks, and exports. Native CI includes
+these tests at O0/O2; the amd64 script also runs Thin/Full LTO and disabled
+CPU feature profiles. C vector widths beyond 128 bits, SIMD reflection calls,
+and C interop execution on Wasm are outside this qualification.
+
 ## Portable SIMD Midway
 
 With `GOEXPERIMENT=simd`, LLGo specializes portable `simd` source on amd64,

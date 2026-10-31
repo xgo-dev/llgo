@@ -66,12 +66,22 @@ func (prog Program) ConstArray(t Type, values []Expr) Expr {
 	for i, value := range values {
 		fields[i] = prog.toStorageConstant(elem, value.impl)
 	}
+	if t.ll.TypeKind() == llvm.VectorTypeKind {
+		return Expr{llvm.ConstVector(fields, false), t}
+	}
 	return Expr{llvm.ConstArray(prog.storageType(elem), fields), t}
 }
 
 // ConstByteArray creates a compact LLVM constant for a Go byte array. Unlike
 // ConstArray, it does not allocate one LLVM value wrapper per array element.
 func (prog Program) ConstByteArray(t Type, value []byte) Expr {
+	if t.ll.TypeKind() == llvm.VectorTypeKind {
+		values := make([]Expr, len(value))
+		for i, lane := range value {
+			values[i] = prog.IntVal(uint64(lane), prog.Index(t))
+		}
+		return prog.ConstArray(t, values)
+	}
 	return Expr{prog.ctx.ConstString(string(value), false), t}
 }
 
@@ -130,7 +140,9 @@ func (prog Program) wrapStructConstantAs(t Type, structType llvm.Type, index int
 	if _, ok := simdTagIndex(t.RawType()); ok {
 		return llvm.ConstNull(structType.StructElementTypes()[index])
 	}
-	if t.kind != vkTuple || structType.StructElementTypes()[index] != prog.Field(t, index).ll {
+	// A native field can have an i32 type while its Go expression is i64.
+	// Only an actual storage-type match can bypass conversion.
+	if structType.StructElementTypes()[index] != value.Type() {
 		value = prog.toStorageConstant(prog.Field(t, index), value)
 	}
 	layout, ok := prog.structLayout(t)
