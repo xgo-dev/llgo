@@ -156,6 +156,11 @@ func lowerWindowsCgoImportPointers(goos, goarch, pkgPath string, files []*ast.Fi
 			// require an address-variable initializer.
 			continue
 		}
+		if init := global.Initializer(); !init.IsNil() && !init.IsNull() {
+			// Like gc, a static data definition takes precedence over the
+			// dynamic import. Only undefined/zero storage becomes an IAT slot.
+			continue
+		}
 		if global.GlobalValueType().TypeKind() != gllvm.PointerTypeKind {
 			return fmt.Errorf("%s: go:cgo_import_dynamic local %q is not a pointer variable", pkgPath, d.local)
 		}
