@@ -1051,8 +1051,25 @@ elif args[0] == "test" and any(a.endswith("/test/std/bytes") for a in args):
                 self.assertNotIn("--single-target", build)
                 self.assertNotIn("continue-on-error", step)
         config = yaml.safe_load((WORKFLOWS.parent.parent / ".goreleaser.yaml").read_text())
-        self.assertCountEqual([target for build in config["builds"] for target in build["targets"]],
-                              ["darwin_amd64", "darwin_arm64", "linux_amd64", "linux_arm64"])
+        # Linux archives and system packages intentionally have separate
+        # compilers: only the archives bundle the ESP-enabled target set.
+        expected_targets = {
+            "llgo-darwin-amd64": ["darwin_amd64"],
+            "llgo-darwin-arm64": ["darwin_arm64"],
+            "llgo-linux-amd64": ["linux_amd64"],
+            "llgo-linux-arm64": ["linux_arm64"],
+            "llgo-linux-amd64-system": ["linux_amd64"],
+            "llgo-linux-arm64-system": ["linux_arm64"],
+        }
+        self.assertEqual(len(config["builds"]), len(expected_targets))
+        self.assertEqual({build["id"]: build["targets"] for build in config["builds"]},
+                         expected_targets)
+        self.assertEqual(config["archives"][0]["ids"], [
+            "llgo-darwin-amd64", "llgo-darwin-arm64", "llgo-linux-amd64", "llgo-linux-arm64",
+        ])
+        self.assertEqual(config["nfpms"][0]["ids"], [
+            "llgo-linux-amd64-system", "llgo-linux-arm64-system",
+        ])
 
     def test_self_host_bounds_builds_without_changing_runtime_acceptance(self):
         job = load("llgo.yml")["jobs"]["self-host"]
