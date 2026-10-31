@@ -113,9 +113,7 @@ func main() {
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: [[IMPL_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 0)
 // CHECK: store %main.impl zeroinitializer, ptr [[IMPL_DATA]]
-// CHECK: [[IMPL_ITAB:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"{{.*}}/cl/_testgo/ifaceprom.iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.impl)
-// CHECK: [[MAIN_IFACE_0:%.*]] = insertvalue %"{{.*}}iface" undef, ptr [[IMPL_ITAB]], 0
-// CHECK: [[MAIN_IFACE:%.*]] = insertvalue %"{{.*}}iface" [[MAIN_IFACE_0]], ptr [[IMPL_DATA]], 1
+// CHECK: [[MAIN_IFACE:%.*]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[IMPL_DATA]], 1
 // CHECK: store %"{{.*}}iface" [[MAIN_IFACE]], ptr [[S_IFACE_FIELD:%.*]]
 // Direct s.I.one uses slot 3 and compares that call result with 1.
 // CHECK: [[DIRECT_ONE_IFACE:%.*]] = load %"{{.*}}iface", ptr %{{.*}}

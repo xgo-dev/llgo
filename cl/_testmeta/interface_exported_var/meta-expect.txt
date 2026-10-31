@@ -119,6 +119,16 @@ _llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw$imethods:
     _llgo_func$mBhSCdZCFK2IHVQVA73dFmon0gMcig2Q387khsbzmm8
     _llgo_func$mjkdaEUHPtpOYlUrWGfnskhhvdyc7k9Fk-vwWj3VftE
     _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
+_llgo_itab$vggDeT47dwPKM_RcBnGpsdpFFhF_4t_0ENclFcOmnik:
+    _llgo_encoding/binary.littleEndian
+    _llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw
+    encoding/binary.(*littleEndian).PutUint16
+    encoding/binary.(*littleEndian).PutUint32
+    encoding/binary.(*littleEndian).PutUint64
+    encoding/binary.(*littleEndian).String
+    encoding/binary.(*littleEndian).Uint16
+    encoding/binary.(*littleEndian).Uint32
+    encoding/binary.(*littleEndian).Uint64
 _llgo_string:
     github.com/xgo-dev/llgo/runtime/internal/runtime.strequal
 _llgo_uint16:
@@ -134,12 +144,11 @@ main.init:
     main.init$guard
 main.main:
     _llgo_encoding/binary.littleEndian
-    _llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw
+    _llgo_itab$vggDeT47dwPKM_RcBnGpsdpFFhF_4t_0ENclFcOmnik
     encoding/binary.LittleEndian
     github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU
     github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ
     github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrData
-    github.com/xgo-dev/llgo/runtime/internal/runtime.NewItab
     github.com/xgo-dev/llgo/runtime/internal/runtime.Typedmemmove
 
 [UseIface]

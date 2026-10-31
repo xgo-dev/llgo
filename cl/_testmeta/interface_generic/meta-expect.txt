@@ -22,6 +22,10 @@ _llgo_iface$Jvxc0PCI_drlfK7S5npMGdZkQLeRkQ_x2e2CifPE6w8$imethods:
     _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA
 _llgo_int:
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequal64
+_llgo_itab$NaWLg_FrV5MHzdWJlwBZcXuNDhDi5hcF1S0TD-W3lj8:
+    *_llgo_main.Box[int]
+    _llgo_iface$Jvxc0PCI_drlfK7S5npMGdZkQLeRkQ_x2e2CifPE6w8
+    main.(*Box[int]).Value
 _llgo_main.Box[int]:
     *_llgo_main.Box[int]
     github.com/xgo-dev/llgo/cl/_testmeta/interface_generic.struct$lOhriNu2BrWBR2Mh8k-KggMYlAw0Wx-2ftE2_gNyubg$fields
@@ -31,10 +35,8 @@ github.com/xgo-dev/llgo/cl/_testmeta/interface_generic.struct$lOhriNu2BrWBR2Mh8k
 main.init:
     main.init$guard
 main.main:
-    *_llgo_main.Box[int]
-    _llgo_iface$Jvxc0PCI_drlfK7S5npMGdZkQLeRkQ_x2e2CifPE6w8
+    _llgo_itab$NaWLg_FrV5MHzdWJlwBZcXuNDhDi5hcF1S0TD-W3lj8
     github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ
-    github.com/xgo-dev/llgo/runtime/internal/runtime.NewItab
     main.useInt
 main.useInt:
     github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrData
