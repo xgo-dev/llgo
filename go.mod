@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/goplus/cobra v1.9.12 //xgo:class
-	github.com/goplus/gogen v1.24.8
+	github.com/goplus/gogen v1.26.3
 	github.com/goplus/lib v0.6.3
 	github.com/goplus/mod v0.22.1
 	github.com/mattn/go-tty v0.0.8
