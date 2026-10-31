@@ -30,7 +30,7 @@ jobs:
     if: needs.prepare.outputs.run_code_ci == 'true'
     name: Mise (${{ matrix.os }})
     needs: prepare
-    runs-on: ${{ matrix.os == 'ubuntu-24.04' && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os }}
+    runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
     timeout-minutes: 30
     defaults:
       run:
@@ -39,11 +39,8 @@ jobs:
       fail-fast: false
       matrix:
         os:
+          # Other host profiles run daily in llgo-compat/ci's Development environments.
           - ubuntu-24.04
-          - ubuntu-24.04-arm
-          - macos-15
-          - macos-15-intel
-          - windows-2025
     steps:
       - uses: actions/checkout@v7
         with:
@@ -57,9 +54,4 @@ jobs:
           env: true
           export_path: true
       - name: Build LLGo and check native dependencies
-        if: runner.os != 'Windows'
         run: bash dev/check_devenv.sh
-      - name: Build LLGo and check native dependencies (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: .\dev\check_devenv.ps1

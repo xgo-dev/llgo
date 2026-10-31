@@ -30,7 +30,7 @@ jobs:
     if: needs.prepare.outputs.run_code_ci == 'true'
     name: Pixi (${{ matrix.os }})
     needs: prepare
-    runs-on: ${{ matrix.os == 'ubuntu-24.04' && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os }}
+    runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
     timeout-minutes: 30
     defaults:
       run:
@@ -39,11 +39,8 @@ jobs:
       fail-fast: false
       matrix:
         os:
+          # Other host profiles run daily in llgo-compat/ci's Development environments.
           - ubuntu-24.04
-          - ubuntu-24.04-arm
-          - macos-15
-          - macos-15-intel
-          - windows-2025
     steps:
       - uses: actions/checkout@v7
         with:
@@ -55,9 +52,4 @@ jobs:
           working-directory: llgo dev/dev
           locked: true
       - name: Check the development environment
-        if: runner.os != 'Windows'
         run: pixi run --manifest-path dev/pixi.toml --locked bash dev/check_devenv.sh
-      - name: Check the development environment (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: pixi run --manifest-path dev/pixi.toml --locked pwsh -File dev/check_devenv.ps1

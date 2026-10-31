@@ -193,9 +193,9 @@ jobs:
             # Keep the main batch's existing narrow fatal-signature quarantine.
             # The separate build, cl and test/go invocations use a measured runtime
             # overlay to reserve enough stack for hardware exception recovery.
-            main_go_test=(bash dev/go_test_windows.sh python .github/scripts/run_go_tests.py main "${go_test[@]}")
+            main_go_test=(bash dev/go_test_windows.sh python .github/scripts/run_go_tests.py --packages-from-stdin main "${go_test[@]}")
           else
-            main_go_test=(python .github/scripts/run_go_tests.py main "${go_test[@]}")
+            main_go_test=(python .github/scripts/run_go_tests.py --packages-from-stdin main "${go_test[@]}")
           fi
           if [[ "$RUNNER_OS" == Linux ]]; then
             main_go_test+=(-p=2)
@@ -213,11 +213,14 @@ jobs:
             # main test packages. Each compiler has its package worker pool.
             # The direct language suite retains its own invocation and is
             # excluded from host coverage: test/ is measured by LLGo.
+            # MSYS2 xargs can split this list into multiple invocations that
+            # overwrite the same timing and coverage files. Let the native
+            # Python subprocess receive every package in one invocation.
             go list ./... \
               | grep -v '^github.com/xgo-dev/llgo/test/go$' \
               | grep -v '^github.com/xgo-dev/llgo/cl$' \
               | grep -v '^github.com/xgo-dev/llgo/internal/build$' \
-              | xargs "${main_go_test[@]}" -timeout 45m -coverprofile="coverage-main.txt" -covermode=set \
+              | "${main_go_test[@]}" -timeout 45m -coverprofile="coverage-main.txt" -covermode=set \
                   -coverpkg=./... -bench '^BenchmarkGo126' -benchtime=1x
           }
 

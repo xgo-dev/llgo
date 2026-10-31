@@ -37,13 +37,15 @@ go build ./cmd/llgo
 The build creates `llgo` (`llgo.exe` on Windows). The environment stays loaded
 when you change directories; type `exit` to leave the shell.
 
-Both environments are checked in CI on these platforms:
+Both environments are checked on these platforms. Daily checks run in the
+Development environments workflow in [llgo-compat/ci](https://github.com/llgo-compat/ci).
 
-| Host | Architectures |
-| --- | --- |
-| Linux | x86-64, ARM64 |
-| macOS | Intel, ARM64 |
-| Windows | x86-64, native PowerShell/CMD |
+| Host | Architectures | CI cadence |
+| --- | --- | --- |
+| Linux | x86-64 | Every code change on Qiniu |
+| Linux | ARM64 | Daily |
+| macOS | Intel, ARM64 | Daily |
+| Windows | x86-64, native PowerShell/CMD | Daily |
 
 macOS requires the Xcode Command Line Tools (`xcode-select --install`). Windows
 requires the Visual Studio C++ Build Tools with the Windows SDK and the
@@ -56,7 +58,8 @@ Run the shared checks from the repository root in either development shell:
 bash dev/check_devenv.sh
 ```
 
-On Windows PowerShell, run `.\dev\check_devenv.ps1`. These scripts build LLGo,
+To run the checks locally on Windows PowerShell, use `.\dev\check_devenv.ps1`.
+These scripts build LLGo,
 run a compiled Go program, and check GC, libffi, OpenSSL, SQLite, libuv, and zlib.
 
 For a single command without entering a shell, use these commands from the
